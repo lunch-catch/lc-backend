@@ -10,6 +10,7 @@
 |---|---|
 | [auth.md](./auth.md) | 관리자, 점주, 사용자의 로그인과 토큰 재발급, 로그아웃. 점주 회원가입, 카카오 로그인 |
 | [admin.md](./admin.md) | 관리자 계정 발급, 점주와 사용자 관리, 입점 신청 조회, 플랫폼 설정값, 감사 로그 |
+| [owner.md](./owner.md) | 점주 자기 계정. 튜토리얼 확인 처리 |
 | [member.md](./member.md) | 온보딩, 위치 설정과 저장 위치, 회원정보, 탈퇴, 알림과 동의 설정, 관심 가게 |
 | [store.md](./store.md) | 점주 입점 흐름(약관부터 최종 등록까지), 사용자의 가게 목록, 검색, 상세 |
 | [campaign.md](./campaign.md) | 캠페인 등록 4단계, 조회, 활성화, 중단과 재개, 관리자의 캠페인 조회 |
@@ -29,7 +30,7 @@
 | 도메인 | 문서 | 절 | 기능 행 |
 |---|---|---|---|
 | `admin` | [admin.md](./admin.md), [auth.md](./auth.md) | 관리자 계정, 관리자 인증 | 4~7 |
-| `owner` | [admin.md](./admin.md), [auth.md](./auth.md) | 점주 관리, 점주 인증 | 10, 12, 31~34 |
+| `owner` | [owner.md](./owner.md), [admin.md](./admin.md), [auth.md](./auth.md) | 점주 계정, 점주 관리, 점주 인증 | 10, 12, 31~34 |
 | `member` | [member.md](./member.md), [admin.md](./admin.md), [auth.md](./auth.md) | 회원 정보, 사용자 관리, 카카오 로그인 | 11, 12, 62~66, 77~78, 87~90, 93 |
 | `store` | [store.md](./store.md), [admin.md](./admin.md) | 입점, 가게 조회, 입점 신청 조회 | 8~9, 35~42, 72~74 |
 | `campaign` | [campaign.md](./campaign.md) | 전체 | 13, 26, 43~48 |
