@@ -38,20 +38,6 @@
     </springProfile>
 
     <!-- ================================================================
-         통합 테스트: 로그를 남기지 않는다.
-
-         Testcontainers 기동, Flyway 마이그레이션, Hibernate 초기화가 클래스마다 반복되어
-         정작 무엇이 실패했는지가 묻힌다. 실패 원인은 로그가 아니라 JUnit 리포트
-         (build/test-results/integrationTest/*.xml)에 스택과 함께 남으므로 여기서 꺼도
-         진단 수단이 사라지지 않는다.
-
-         특정 테스트를 파고들 때는 이 블록의 레벨을 잠시 DEBUG 로 올린다.
-         ================================================================ -->
-    <springProfile name="integrationTest">
-        <root level="OFF"/>
-    </springProfile>
-
-    <!-- ================================================================
          프로덕션: JSON 구조화 로그 (ELK / Loki / CloudWatch 수집용)
          의존성: net.logstash.logback:logstash-logback-encoder:8.0
          - MDC 필드(traceId, method, uri, clientIp)가 JSON 키로 자동 포함

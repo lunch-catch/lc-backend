@@ -51,12 +51,12 @@ spring:
       data-source-properties:
         connectTimeout: 3000
         socketTimeout: 10000
-        # 선착순 발급(83행)이 JDBC 배치로 기록한다. 드라이버가 건별 INSERT 로 풀어 보내면
+        # 선착순 발급이 JDBC 배치로 기록한다. 드라이버가 건별 INSERT 로 풀어 보내면
         # 그 왕복이 그대로 병목이 된다. 전용 프로파일에만 넣으면 테스트와 운영이 서로 다른
         # 실패 모양을 보게 되어 그 분기를 검증할 수 없으므로 여기 둔다
         rewriteBatchedStatements: true
         characterEncoding: UTF-8
-        # 비기능 42행. 드라이버와 DB 세션 시간대를 Asia/Seoul 로 맞춘다.
+        # 드라이버와 DB 세션 시간대를 Asia/Seoul 로 맞춘다.
         # forceConnectionTimeZoneToSession 이 세션 쪽까지 바꾼다
         connectionTimeZone: Asia/Seoul
         forceConnectionTimeZoneToSession: true
@@ -74,8 +74,8 @@ spring:
     enabled: true
     baseline-on-migrate: true
 
-  # Refresh Token 회전과 Access Token valid-after 커트라인(94행), 선착순 순번(83행),
-  # serve 기록(67행), 당일 소진 카운터(98행)가 이 캐시를 쓴다.
+  # Refresh Token 회전과 Access Token valid-after 커트라인, 선착순 순번,
+  # serve 기록, 당일 소진 카운터가 이 캐시를 쓴다.
   # 엔진은 Valkey 이고 프로토콜이 같아 spring.data.redis 설정을 그대로 쓴다 (compose.yaml 참고).
   # 변수명을 compose 와 맞춘다. 한쪽만 바꾸면 컨테이너와 앱이 서로 다른 포트를 본다
   data:
@@ -95,7 +95,7 @@ spring:
     oauth2:
       client:
         registration:
-          # 사용자 로그인(62행)
+          # 사용자 로그인
           kakao:
             client-id: "${KAKAO_CLIENT_ID}"
             client-secret: "${KAKAO_CLIENT_SECRET}"
@@ -132,7 +132,7 @@ management:
 
   endpoint:
     health:
-      # liveness 와 readiness 를 나눈다. 기동 중인 앱은 살아 있지만 준비되지 않았다 (비기능 37행)
+      # liveness 와 readiness 를 나눈다. 기동 중인 앱은 살아 있지만 준비되지 않았다
       probes:
         enabled: true
       # 밖에서 볼 수 있으므로 상세를 숨긴다
@@ -167,24 +167,24 @@ app:
 cdn:
   base-url: "${CDN_BASE_URL:}"
 
-# 가게 이미지와 대표 메뉴(41행), 포스터 이미지(54행), 증빙 서류(37행, 38행)가 쓰는 버킷.
+# 가게 이미지와 대표 메뉴, 포스터 이미지, 증빙 서류가 쓰는 버킷.
 # presigned PUT 발급과 HeadObject 확인에 쓰인다
 s3:
   region: "${S3_REGION:ap-northeast-2}"
   media-bucket: "${S3_MEDIA_BUCKET:}"
-  # 증빙 서류는 비기능 27행이 10분 이하로 못 박았다. 600초가 그 상한이다
+  # 증빙 서류는 10분 이하로 둔다. 600초가 그 상한이다
   presigned-url-expiry-seconds: "${S3_PRESIGNED_URL_EXPIRY_SECONDS:600}"
 
 jwt:
   secret: "${JWT_SECRET}"
-  # Access 는 세 역할이 모두 30분이고 Refresh 만 역할마다 다르다 (94행)
+  # Access 는 세 역할이 모두 30분이고 Refresh 만 역할마다 다르다
   access-token-validity-ms: "${JWT_ACCESS_VALIDITY_MS:1800000}"
   refresh:
     # 관리자 1일
     admin-validity-ms: "${JWT_REFRESH_ADMIN_VALIDITY_MS:86400000}"
     # 점주 14일
     owner-validity-ms: "${JWT_REFRESH_OWNER_VALIDITY_MS:1209600000}"
-    # 사용자 14일. 자동 로그인을 체크하지 않으면 세션 쿠키로 내려 이 값을 쓰지 않는다 (64행)
+    # 사용자 14일. 자동 로그인을 체크하지 않으면 세션 쿠키로 내려 이 값을 쓰지 않는다
     member-validity-ms: "${JWT_REFRESH_MEMBER_VALIDITY_MS:1209600000}"
   cookie:
     secure: "${JWT_COOKIE_SECURE:false}"
@@ -247,9 +247,9 @@ resilience4j:
       kakaoUnlink:
         base-config: kakao-low-traffic
 
-      # 선착순 발급(83행)과 노출 차감(102행)의 회로는 여기 더한다.
+      # 선착순 발급과 노출 차감의 회로는 여기 더한다.
       #
       # 값을 미리 적지 않는다. 창을 건수 기준으로 두면 유입이 빠를수록 판정 근거의 시간 폭이
       # 좁아져 GC 정지 하나가 창을 통째로 덮는다. 그래서 시간 기준 창과 느림 문턱을 쓰는데,
-      # 그 문턱은 자기 앱의 지연 분포를 알아야 정할 수 있다. 비기능 14행(1만 건 10초)과
-      # 17행(초당 1만 건) 부하 시험을 돌린 뒤 실측으로 채운다
+      # 그 문턱은 자기 앱의 지연 분포를 알아야 정할 수 있다.
+      # 목표 처리량으로 부하 시험을 돌린 뒤 실측으로 채운다

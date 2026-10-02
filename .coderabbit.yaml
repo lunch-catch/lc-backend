@@ -110,10 +110,10 @@ reviews:
     - path: "src/main/java/**/*.java"
       instructions: |
         effective-java-guideline.md(EJ-)를 변경 위치와 무관하게 적용한다.
-        docs/architecture/런치캐치_백엔드_설계.md 1장과 2장의 경계 규약도 함께 본다.
-        다른 도메인의 entity 와 repository 를 직접 참조하지 않는지, 도메인 간 호출이 상대
-        도메인의 contract 인터페이스를 지나는지 본다. 의존 방향은 그 문서 2.2절 그래프를 따르고,
-        오른쪽에서 왼쪽으로 가는 새 간선은 순환 후보다.
+        domain-boundary-guideline.md(DPB-)를 함께 적용한다.
+        다른 도메인의 entity 와 repository 를 직접 참조하지 않는지(DPB-2-01), 도메인 간 호출이
+        상대 도메인의 contract 인터페이스를 지나는지(DPB-2-03) 본다. 의존 방향은 설계 문서
+        2.2절 그래프를 따르고, 오른쪽에서 왼쪽으로 가는 새 간선은 순환 후보다(DPB-4-01).
         WebClient.builder() 를 직접 부르지 않는지 본다. 공통 타임아웃과 풀 설정을 우회한다.
 
         품질 속성에서는 아래 셋의 [코드] 항목을 함께 본다.
@@ -165,13 +165,15 @@ reviews:
     # --- 도메인 간 계약 --------------------------------------------------------
     - path: "src/main/java/**/contract/**/*.java"
       instructions: |
-        설계 문서 1.3절과 2.4절을 적용한다. contract 에는 인터페이스와 record, enum 만 둔다.
+        domain-boundary-guideline.md 의 DPB-1-02 와 DPB-1-03 을 적용한다.
+        contract 에는 인터페이스와 record, enum 만 둔다.
         로직이 있으면 구현을 같은 도메인의 service 로 내리라고 제안한다.
         엔티티와 저장소를 드러내지 않는지 본다(AGG-4-05). 주고받는 타입은 record 다.
 
     - path: "src/main/java/**/*Event.java"
       instructions: |
-        설계 문서 2.4절을 적용한다. 이벤트 타입은 발행 도메인의 contract 패키지에 둔다.
+        domain-boundary-guideline.md 의 DPB-4-03 과 DPB-4-04 를 적용한다.
+        이벤트 타입은 발행 도메인의 contract 패키지에 둔다.
         페이로드에 식별자와 값만 싣고 엔티티를 싣지 않는다.
         새 이벤트를 만들면 설계 문서 2.4절의 표와 ArchitectureTest 의 EVENT_HOME 목록을
         함께 고쳤는지 확인한다. 한쪽만 고치면 문서와 테스트가 어긋난다.
@@ -195,7 +197,7 @@ reviews:
     # --- 인증 ----------------------------------------------------------------
     - path: "src/main/java/**/auth/**/*.java"
       instructions: |
-        기능 명세서 94행과 docs/api-spec/README.md 의 인증 절을 기준으로 본다.
+        docs/api-spec/README.md 의 인증 절을 기준으로 본다.
         Access 는 JWT 30분, Refresh 는 Opaque 이고 역할마다 수명이 다르다(관리자 1일, 점주와
         사용자 14일). 두 토큰은 HttpOnly 와 SameSite=Strict 쿠키로만 오간다.
         회전과 재사용 탐지, 로그아웃 시 valid-after 커트라인이 빠지지 않았는지 본다.
@@ -208,14 +210,16 @@ reviews:
         unit-testing-guideline.md(UT-)를 적용한다. 프로덕션 코드용 가이드(EJ-, 경계 규약)는
         여기 적용하지 않는다. 목 주입과 픽스처 빌더, 서술형 메서드명이 전부 지적으로 나온다.
         단위 테스트는 대상과 같은 패키지에 두고 이름은 ~Test 다.
-        스프링 컨텍스트를 띄우거나 Testcontainers 를 쓰면 통합 테스트다. src/integrationTest 로 옮긴다.
         커버리지 게이트가 service 패키지 메서드 100% 를 요구한다(BLD-1-01).
 
-    - path: "src/integrationTest/java/**/*.java"
-      instructions: |
-        unit-testing-guideline.md(UT-)를 적용한다. 이름은 ~IntegrationTest 로 끝나고
-        도메인 패키지 바로 아래에 둔다. 컨테이너는 IntegrationTestSupport 를 상속해 공유한다.
-        클래스마다 새로 띄우면 check 를 돌릴 때마다 그 값을 치른다.
+        통합 테스트를 쓰라고 제안하지 않는다. 팀이 권장 대상에서 뺐다(가이드 5장).
+        "실제 DB 로 확인하는 편이 낫다", "통합 테스트를 추가하라" 같은 지적을 만들지 않는다.
+        mock 으로 DB 를 대신했다는 것만으로 지적하지 않는다. 쓸지 말지는 작성자가 판단한다.
+
+        작성자가 통합 테스트를 쓴 경우에만 두 가지를 본다.
+        @SpringBootTest 로 실제 컨텍스트를 띄웠는지(@DataJpaTest 나 @WebMvcTest 같은 슬라이스는
+        쓰지 않는다), 이름이 ~IntegrationTest 로 끝나고 도메인 패키지 바로 아래에 있는지.
+        그 테스트가 service 메서드를 지나며 커버리지를 채우고 있으면 지적한다(BLD-1-04).
 
     - path: "src/test/java/**/ArchitectureTest.java"
       instructions: |
@@ -229,8 +233,8 @@ reviews:
       instructions: |
         Flyway 규약은 평평한 단일 디렉터리와 V{번호}__{스네이크케이스}.sql 이다.
         이미 배포된 마이그레이션을 고치면 지적한다. 새 파일을 더한다.
-        시간 컬럼의 기준 시간대는 Asia/Seoul 이고 날짜 함수(CURDATE, NOW)를 쓰지 않는다
-        (비기능 42행). 영업일은 애플리케이션이 계산해 넣는다.
+        시간 컬럼의 기준 시간대는 Asia/Seoul 이고 날짜 함수(CURDATE, NOW)를 쓰지 않는다.
+        영업일은 애플리케이션이 계산해 넣는다.
         도메인 간 연관은 FK 가 아니라 ID 컬럼이다.
 
         qa-compatibility-guideline.md(CMP-) 5장의 스키마 호환을 함께 본다. 컬럼이나 값을 지우면
@@ -240,9 +244,9 @@ reviews:
     - path: "build.gradle"
       instructions: |
         build-gate-guideline.md(BLD-)를 적용한다. 커버리지 대상이
-        com.launchcatch.*.service.* 로 좁혀져 있는지, check 가 integrationTest 와
-        jacocoTestCoverageVerification 과 coverageDataCheck 를 모두 부르는지 본다.
-        시험 JVM 시간대는 Asia/Seoul 고정이다(비기능 42행). UTC 로 바꾸면 지적한다.
+        com.launchcatch.*.service.* 로 좁혀져 있는지, check 가
+        jacocoTestCoverageVerification 과 coverageDataCheck 를 부르는지 본다.
+        시험 JVM 시간대는 Asia/Seoul 고정이다. UTC 로 바꾸면 지적한다.
 
     - path: ".github/workflows/**"
       instructions: |

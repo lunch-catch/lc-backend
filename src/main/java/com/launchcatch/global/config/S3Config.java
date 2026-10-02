@@ -13,8 +13,8 @@ import software.amazon.awssdk.services.s3.presigner.S3Presigner;
 /*
  * 파일 업로드가 쓰는 S3 클라이언트. presigned PUT 발급은 S3Presigner 가,
  * HeadObject/DeleteObject 같은 직접 호출은 S3Client 가 맡는다.
- * 증빙 서류(37행, 38행)와 가게 이미지(41행), 포스터 이미지(54행)가 같은 경로를 쓴다.
- * 증빙 서류는 관리자와 해당 점주만 10분 Presigned URL 로 본다(비기능 27행).
+ * 증빙 서류와 가게 이미지, 포스터 이미지가 같은 경로를 쓴다.
+ * 증빙 서류는 관리자와 해당 점주만 10분 Presigned URL 로 본다.
  * 둘 다 같은 리전 하나만 보므로 리전을 한 곳에서만 읽는다.
  */
 @Configuration

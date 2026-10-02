@@ -3,8 +3,6 @@ plugins {
     id 'org.springframework.boot' version '4.0.5'
     id 'io.spring.dependency-management' version '1.1.7'
     id 'jacoco'
-    // integrationTest 를 IDE 가 테스트 소스로 보게 하려고 쓴다 (아래 idea 블록)
-    id 'idea'
     id 'org.sonarqube' version '7.5.0.8588'
 }
 
@@ -21,35 +19,8 @@ repositories {
     mavenCentral()
 }
 
-/*
- * 통합 테스트를 단위 테스트와 분리한다.
- * 커버리지는 단위 테스트의 .exec 만 센다 (BLD-1-04).
- */
-sourceSets {
-    integrationTest {
-        compileClasspath += sourceSets.main.output
-        runtimeClasspath += sourceSets.main.output
-    }
-}
-
-/*
- * IDE 가 integrationTest 를 테스트 소스로 인식하게 한다.
- * Gradle 의 IDE 모델은 test 소스셋만 테스트로 표시하고 직접 만든 소스셋은 일반 소스로 넘긴다.
- * 그대로 두면 실행 아이콘이 뜨지 않고 프로덕션 코드로 취급되어 검사 규칙이 다르게 걸린다.
- */
-idea {
-    module {
-        testSources.from(sourceSets.integrationTest.java.srcDirs)
-        testResources.from(sourceSets.integrationTest.resources.srcDirs)
-    }
-}
-
 configurations {
     compileOnly.extendsFrom annotationProcessor
-    integrationTestImplementation.extendsFrom testImplementation
-    integrationTestCompileOnly.extendsFrom testCompileOnly
-    integrationTestAnnotationProcessor.extendsFrom testAnnotationProcessor
-    integrationTestRuntimeOnly.extendsFrom testRuntimeOnly
 }
 
 dependencies {
@@ -59,7 +30,7 @@ dependencies {
 
     /*
      * 로드 밸런서가 /actuator/health/readiness 를 찌르고 Prometheus 가 /actuator/prometheus 를 긁는다
-     * (비기능 37행, 38행). 이 의존성이 없으면 인스턴스가 healthy 가 되지 않는다.
+     *. 이 의존성이 없으면 인스턴스가 healthy 가 되지 않는다.
      */
     implementation 'org.springframework.boot:spring-boot-starter-actuator'
 
@@ -68,7 +39,7 @@ dependencies {
 
     /*
      * 로컬(JVM) 캐시. 인스턴스 사이에 공유할 필요가 없고 값이 한동안 불변인 조회에 쓴다.
-     * ops 의 플랫폼 설정값(27행)이 refreshAfterWrite 로 재배포 없이 바뀌는 자리이고,
+     * ops 의 플랫폼 설정값이 refreshAfterWrite 로 재배포 없이 바뀌는 자리이고,
      * 인메모리 캐시(Valkey)는 인스턴스 간 공유와 원자적 회전이 필요한 쪽을 맡는다.
      * 버전은 Boot BOM 이 관리한다.
      */
@@ -76,20 +47,20 @@ dependencies {
 
     /*
      * 외부 호출과 인메모리 캐시 호출에 회로를 건다.
-     * 11:00 선착순 발급(83행)과 결제 승인 콜백(49행)이 장애 때 처음 도는 경로라
+     * 11:00 선착순 발급과 결제 승인 콜백이 장애 때 처음 도는 경로라
      * 상태 전이(닫힘 -> 열림 -> 반열림)와 슬라이딩 윈도우 집계를 직접 짜는 위험을 안 지는 편이 낫다.
      * Boot BOM 이 관리하지 않아 버전을 직접 적는다.
      */
     implementation 'io.github.resilience4j:resilience4j-circuitbreaker:2.3.0'
 
     /*
-     * 역할 기반 인가(94행). 메서드 단위 보안으로 API 별 접근을 제어한다.
+     * 역할 기반 인가. 메서드 단위 보안으로 API 별 접근을 제어한다.
      * 서버 세션을 두지 않고 토큰을 쿠키로 주고받는다.
      */
     implementation 'org.springframework.boot:spring-boot-starter-security'
 
     /*
-     * 사용자 로그인(카카오 OIDC, 62행). ClientRegistration 과 ClientRegistrationRepository 는
+     * 사용자 로그인(카카오 OIDC). ClientRegistration 과 ClientRegistrationRepository 는
      * spring-security-oauth2-client 가, id_token 검증(NimbusJwtDecoder, JwtException)은
      * spring-security-oauth2-jose 가 준다. 이 스타터가 둘을 함께 끌어온다.
      */
@@ -97,16 +68,16 @@ dependencies {
 
     /*
      * 인메모리 캐시(Valkey). 여기 있는 것이 많다.
-     * Refresh Token 회전(CAS Lua 스크립트)과 Access Token valid-after 커트라인(94행),
-     * 선착순 발급 순번(83행), serve 기록 30분(67행), 당일 소진 카운터와 시간대별 목표(98행),
-     * 피드 속도 제한 분당 2회(67행).
+     * Refresh Token 회전(CAS Lua 스크립트)과 Access Token valid-after 커트라인,
+     * 선착순 발급 순번, serve 기록 30분, 당일 소진 카운터와 시간대별 목표,
+     * 피드 속도 제한 분당 2회.
      */
     implementation 'org.springframework.boot:spring-boot-starter-data-redis'
 
     /*
      * JwtTokenProvider 가 io.jsonwebtoken(JJWT) 0.12.x 플루언트 API 를 쓴다.
      * api 는 컴파일 타임에, impl 과 jackson 은 런타임에만 필요하다(서명 클레임 직렬화에 Jackson).
-     * 동적 QR 의 서명 토큰(85행)도 같은 라이브러리를 쓴다.
+     * 동적 QR 의 서명 토큰도 같은 라이브러리를 쓴다.
      */
     implementation 'io.jsonwebtoken:jjwt-api:0.12.7'
     runtimeOnly 'io.jsonwebtoken:jjwt-impl:0.12.7'
@@ -149,8 +120,8 @@ dependencies {
 
     /*
      * 파일 업로드. S3Presigner 로 업로드 URL 을 발급하고 HeadObject 로 실제 업로드를 확인한다.
-     * 증빙 서류(사업자등록증, 영업신고증)는 관리자와 해당 점주만 10분 Presigned URL 로 본다(비기능 27행).
-     * 가게 이미지와 대표 메뉴(41행), 포스터 이미지(54행)도 같은 경로를 쓴다.
+     * 증빙 서류(사업자등록증, 영업신고증)는 관리자와 해당 점주만 10분 Presigned URL 로 본다.
+     * 가게 이미지와 대표 메뉴, 포스터 이미지도 같은 경로를 쓴다.
      *
      * Java SDK v2 에 presigned POST 생성이 없어 PUT 만 쓴다. 그래서 s3 모듈 하나로 충분하다.
      * s3 모듈은 동기 HTTP 클라이언트를 직접 들여오지 않으므로(전이 의존은 비동기용 netty-nio-client 뿐)
@@ -161,7 +132,7 @@ dependencies {
     implementation 'software.amazon.awssdk:apache5-client'
 
     /*
-     * @Scheduled 메서드 공통 로깅(SchedulerLoggingAspect)과 관리 행위 감사 로그(103행)가
+     * @Scheduled 메서드 공통 로깅(SchedulerLoggingAspect)과 관리 행위 감사 로그가
      * 애노테이션 포인트컷(@annotation(...))을 쓴다. spring-aop 자체는 spring-data-jpa 가
      * @Transactional 프록시 때문에 이미 들여오지만, AspectJ 애노테이션 스타일 포인트컷을 실제로
      * 짜려면 aspectjweaver 가 클래스패스에 있어야 한다. 없으면 @Aspect 빈이 등록만 되고
@@ -169,7 +140,7 @@ dependencies {
      */
     implementation 'org.aspectj:aspectjweaver:1.9.22'
 
-    // logback-spring.xml 의 prod 프로필이 JSON 라인으로 로그를 남긴다(Loki 가 파싱하기 쉽도록, 비기능 41행).
+    // logback-spring.xml 의 prod 프로필이 JSON 라인으로 로그를 남긴다(Loki 가 파싱하기 쉽도록).
     implementation 'net.logstash.logback:logstash-logback-encoder:8.0'
 
     /*
@@ -197,34 +168,31 @@ dependencies {
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 
     /*
-     * 통합 테스트는 인메모리 DB 를 쓰지 않는다.
-     * 운영과 같은 mysql:8.4 와 valkey 9 를 Testcontainers 로 띄운다 (비기능 5행, 30행).
-     *
-     * Boot 4 는 @DataJpaTest 와 @AutoConfigureTestDatabase 를 각각
-     * spring-boot-data-jpa-test, spring-boot-jdbc-test 로 쪼갰다. 이 스타터가 둘을 함께 끌어온다.
-     * MockMvc 지원(@AutoConfigureMockMvc)도 spring-boot-starter-test 에서 분리되어
-     * spring-boot-starter-webmvc-test 로 빠졌다. API 계층까지 검증하는 통합 테스트에 필요하다.
+     * 테스트 소스셋에도 Lombok 을 건다.
+     * compileOnly.extendsFrom annotationProcessor 는 main 소스셋만 해당해서,
+     * 걸지 않으면 테스트 픽스처에 Lombok 을 쓰는 순간 컴파일이 깨진다.
      */
-    integrationTestImplementation 'org.springframework.boot:spring-boot-starter-data-jpa-test'
-    integrationTestImplementation 'org.springframework.boot:spring-boot-starter-webmvc-test'
-    integrationTestImplementation 'org.springframework.security:spring-security-test'
-    integrationTestImplementation 'org.springframework.boot:spring-boot-testcontainers'
+    testCompileOnly 'org.projectlombok:lombok'
+    testAnnotationProcessor 'org.projectlombok:lombok'
+
+    /*
+     * 통합 테스트용이다. 팀은 통합 테스트를 권장하지 않지만, 필요하다고 판단해 쓸 때는
+     * @SpringBootTest 로 실제 컨텍스트를 띄우고 외부 인프라까지 붙인다
+     * (unit-testing-guideline.md 5장). 그때 Gradle 을 손보지 않아도 되게 여기 둔다.
+     *
+     * 인메모리 DB 는 쓰지 않는다. 운영과 같은 mysql:8.4 와 valkey 9 를 띄운다.
+     * MockMvc 지원(@AutoConfigureMockMvc)은 Boot 4 에서 spring-boot-starter-test 에서 빠져
+     * spring-boot-starter-webmvc-test 로 갔다.
+     */
+    testImplementation 'org.springframework.boot:spring-boot-starter-webmvc-test'
+    testImplementation 'org.springframework.security:spring-security-test'
+    testImplementation 'org.springframework.boot:spring-boot-testcontainers'
     /*
      * Boot 4.0.5 의 BOM 이 Testcontainers 2.0.4 를 관리한다.
      * 2.x 에서 산출물 이름에 testcontainers- 접두사가 붙었다. 1.x 좌표(junit-jupiter, mysql)는 해석되지 않는다.
      */
-    integrationTestImplementation 'org.testcontainers:testcontainers-junit-jupiter'
-    integrationTestImplementation 'org.testcontainers:testcontainers-mysql'
-
-    /*
-     * 검증용 엔티티가 이 소스셋에 있으므로 APT 를 여기에도 건다.
-     * 걸지 않으면 Q클래스가 생성되지 않아 컴파일이 깨진다.
-     */
-    integrationTestCompileOnly 'org.projectlombok:lombok'
-    integrationTestAnnotationProcessor 'org.projectlombok:lombok'
-    integrationTestAnnotationProcessor 'com.querydsl:querydsl-apt::jakarta'
-    integrationTestAnnotationProcessor 'jakarta.annotation:jakarta.annotation-api'
-    integrationTestAnnotationProcessor 'jakarta.persistence:jakarta.persistence-api'
+    testImplementation 'org.testcontainers:testcontainers-junit-jupiter'
+    testImplementation 'org.testcontainers:testcontainers-mysql'
 }
 
 /*
@@ -252,7 +220,7 @@ tasks.named('bootJar') {
 /*
  * 시험 JVM 을 Asia/Seoul 로 고정한다.
  *
- * 비기능 42행이 애플리케이션과 DB 드라이버와 DB 세션의 시간대를 Asia/Seoul 로 통일하라고 못 박았다.
+ * 애플리케이션과 DB 드라이버와 DB 세션의 시간대를 Asia/Seoul 로 통일한다.
  * 영업일(business_date)과 모든 시각을 애플리케이션이 Clock 빈으로 계산해 넣고 관계형 DB 의
  * 날짜 함수(CURDATE, NOW)는 쓰지 않는다. 시험 JVM 만 다른 시간대면 00:00 과 09:00(UTC 자정)
  * 경계 시험이 운영과 다른 환경에서 도는 셈이 되어, 정작 잡아야 할 경계 버그를 놓친다.
@@ -262,24 +230,6 @@ tasks.named('bootJar') {
  */
 tasks.named('test') {
     useJUnitPlatform()
-    systemProperty 'user.timezone', 'Asia/Seoul'
-}
-
-tasks.register('integrationTest', Test) {
-    description = '통합 테스트를 실행한다.'
-    group = 'verification'
-    testClassesDirs = sourceSets.integrationTest.output.classesDirs
-    classpath = sourceSets.integrationTest.runtimeClasspath
-    useJUnitPlatform()
-    shouldRunAfter tasks.named('test')
-
-    /*
-     * application-integrationTest.yml 을 켠다.
-     * IDE 에서 테스트 클래스를 직접 실행하면 이 설정이 안 걸리므로 클래스에도 @ActiveProfiles 를 붙여 둔다.
-     */
-    systemProperty 'spring.profiles.active', 'integrationTest'
-
-    // 단위 시험과 같은 이유로 Asia/Seoul 로 고정한다. 근거는 test 태스크 위의 주석에 있다
     systemProperty 'user.timezone', 'Asia/Seoul'
 }
 
@@ -364,8 +314,7 @@ tasks.register('coverageDataCheck') {
 
 // BLD-1-05
 tasks.named('check') {
-    dependsOn tasks.named('integrationTest'),
-            tasks.named('jacocoTestCoverageVerification'),
+    dependsOn tasks.named('jacocoTestCoverageVerification'),
             tasks.named('coverageDataCheck')
 }
 

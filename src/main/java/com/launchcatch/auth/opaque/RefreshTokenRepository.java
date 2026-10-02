@@ -15,11 +15,16 @@ import org.springframework.stereotype.Repository;
  * Refresh Token 저장소. 인메모리 캐시만 다루고 업무 도메인을 전혀 모른다.
  * 캐시 장애 시 DataAccessException 을 그대로 던지며, 관계형 DB 백업과 폴백은 호출자 책임이다.
  *
- * 94행이 "SHA-256 해시를 관계형 DB 에 백업하고, 캐시 저장이 실패하면 DB 백업을 기준으로
- * 로그인을 유지한다" 고 정했다. 그 DB 쪽은 아직 없다. 스키마의 소유자가 드라이브의 ERD 이고
- * Flyway V1 이 들어오기 전이라, 여기서 테이블을 먼저 만들면 ERD 와 어긋난 채로 굳는다.
- * 그래서 이 클래스는 캐시만 책임지고, 폴백은 각 역할의 토큰 서비스가 DB 백업을 읽어
- * revokeIfActiveHashMatches 나 deleteByHash 를 부르는 모양으로 붙인다.
+ * 인증 정책은 SHA-256 해시를 관계형 DB 에 백업하고, 캐시 저장이 실패하면 DB 백업을 기준으로
+ * 로그인을 유지하는 쪽이다. 백업 컬럼은 V1 스키마에 이미 있다. admin, owner, member 세
+ * 테이블이 refresh_token_hash 와 refresh_token_expires_at 를 갖는다.
+ *
+ * 이 클래스는 캐시만 책임진다. 폴백은 각 역할의 토큰 서비스가 그 컬럼을 읽어
+ * revokeIfActiveHashMatches 나 deleteByHash 를 부르는 모양으로 붙인다. 캐시와 DB 를 한
+ * 클래스가 함께 다루면 캐시 장애 때 어느 쪽이 기준인지가 이 안에서 갈려 읽기 어려워진다.
+ *
+ * owner 에는 해시 인덱스가 없다. 폴백 조회를 붙일 때 admin 과 member 처럼
+ * idx_owner_refresh_token_hash 를 더하는 마이그레이션이 필요하다.
  *
  * Opaque 토큰이라 키 설계가 둘이다. 토큰만 봐서는 누구 것인지 알 수 없으므로 조회와 회전은
  * "토큰 해시 -> 소유자 정보" 인 기본 레코드로 한다. 그런데 로그아웃과 재사용 의심 처리에서는
@@ -30,8 +35,8 @@ import org.springframework.stereotype.Repository;
  *
  * 회전에 성공했을 때 옛 레코드를 곧바로 지우지 않고 tombstone 으로 남긴다. 죽은 토큰이 나중에
  * 재생되면 재사용 탐지는 되지만, 지워 버렸다면 그것이 누구 것이었는지 알 수 없어 그 계정의
- * 다른 세션을 끊는 조치를 할 수 없다. 94행이 "폐기된 Refresh 를 다시 쓰면 그 계정의 전체 세션을
- * 종료한다" 고 요구하므로 소유자 정보가 남아 있어야 한다. 그래서 compareAndRotate 의 결과가
+ * 다른 세션을 끊는 조치를 할 수 없다. 폐기된 Refresh 를 다시 쓰면 그 계정의 전체 세션을
+ * 종료해야 하므로 소유자 정보가 남아 있어야 한다. 그래서 compareAndRotate 의 결과가
  * Optional 하나가 아니라 SUCCESS, NOT_FOUND, REUSE_DETECTED 셋을 가르는 RotateOutcome 이다.
  */
 @Repository

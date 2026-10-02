@@ -11,14 +11,15 @@ import java.util.Set;
 import java.util.stream.Collectors;
 
 /*
- * 단위 테스트의 위치를 강제한다.
+ * 테스트의 위치와 이름을 강제한다.
  *
- * 통합 테스트가 여기 섞이면 단위 테스트로 실행되어 그 기록이 test.exec 에 남고
- * 커버리지에 합산된다. 통합 테스트를 커버리지에서 빼기로 한 정책이 그대로 뚫린다 (BLD-1-04).
+ * 단위 테스트는 대상과 같은 패키지에 두고 이름을 ~Test 로 끝낸다.
+ * 통합 테스트는 팀이 권장하지 않지만 필요하다고 판단해 쓸 때가 있다. 그때는
+ * @SpringBootTest 로 실제 컨텍스트를 띄우고 이름을 ~IntegrationTest 로 끝낸다
+ * (unit-testing-guideline.md 5장).
  *
- * Testcontainers 는 integrationTestImplementation 으로만 선언해 두어 여기서는
- * 애초에 컴파일되지 않는다. 그래도 규칙으로 남기는 이유는 누군가 의존성을
- * testImplementation 으로 옮기면 그 방어가 조용히 사라지기 때문이다.
+ * 이름을 강제하는 이유는 커버리지다. 둘이 같은 소스셋에 있어 실행 기록이 test.exec 하나로
+ * 모이므로, 어느 것이 계층을 가로지르는 테스트인지 이름으로만 가릴 수 있다.
  */
 @AnalyzeClasses(packages = TestPlacementTest.BASE, importOptions = TestPlacementTest.MainAndUnitTests.class)
 class TestPlacementTest {
@@ -27,6 +28,10 @@ class TestPlacementTest {
 
     private static final String MAIN = "/classes/java/main/";
     private static final String OWN = "/classes/java/test/";
+
+    private static final String INTEGRATION_SUFFIX = "IntegrationTest";
+    private static final String SPRING_BOOT_TEST =
+            "org.springframework.boot.test.context.SpringBootTest";
 
     static class MainAndUnitTests implements ImportOption {
         @Override
@@ -49,6 +54,10 @@ class TestPlacementTest {
                 .filter(JavaClass::isTopLevelClass)
                 .filter(c -> !c.getPackageName().equals(BASE))
                 .collect(Collectors.toList());
+    }
+
+    private static boolean bootsContext(JavaClass c) {
+        return c.isAnnotatedWith(SPRING_BOOT_TEST);
     }
 
     private static boolean underContract(JavaClass c) {
@@ -80,6 +89,9 @@ class TestPlacementTest {
     /*
      * 대상과 정확히 같은 패키지에 둔다.
      * Controller 나 contract 구현체를 package-private 으로 두면 패키지가 어긋나는 순간 닿지 못한다.
+     *
+     * 통합 테스트는 뺀다. 계층을 가로지르므로 대상이 한 패키지로 좁혀지지 않고,
+     * 도메인 패키지 바로 아래에 두는 편이 자연스럽다.
      */
     @ArchTest
     static void 프로덕션_패키지를_미러링한다(JavaClasses classes) {
@@ -88,28 +100,26 @@ class TestPlacementTest {
                 .map(JavaClass::getPackageName)
                 .collect(Collectors.toSet());
         List<String> bad = own(classes).stream()
+                .filter(c -> !c.getSimpleName().endsWith(INTEGRATION_SUFFIX))
                 .filter(c -> !mainPackages.contains(c.getPackageName()))
                 .map(c -> c.getName() + "  (패키지 " + c.getPackageName() + " 에 프로덕션 클래스가 없다)")
                 .collect(Collectors.toList());
         fail("단위 테스트 패키지", bad, "대상 클래스와 같은 패키지에 둔다");
     }
 
+    /*
+     * 컨텍스트를 띄우는 테스트는 이름으로 드러낸다.
+     * 소스셋이 하나라서 실행 기록이 test.exec 으로 모이고, 커버리지 숫자가 단위 테스트에서
+     * 나온 것인지 계층을 가로지르는 테스트에서 나온 것인지 이름 말고는 가릴 방법이 없다.
+     */
     @ArchTest
-    static void 스프링_컨텍스트를_띄우지_않는다(JavaClasses classes) {
+    static void 컨텍스트를_띄우는_테스트는_IntegrationTest로_끝난다(JavaClasses classes) {
         List<String> bad = own(classes).stream()
-                .filter(c -> c.isAnnotatedWith("org.springframework.boot.test.context.SpringBootTest"))
+                .filter(TestPlacementTest::bootsContext)
+                .filter(c -> !c.getSimpleName().endsWith(INTEGRATION_SUFFIX))
                 .map(JavaClass::getName)
                 .collect(Collectors.toList());
-        fail("단위 테스트 위치", bad, "컨텍스트를 띄우는 테스트는 통합 테스트다. src/integrationTest 로 옮긴다");
-    }
-
-    @ArchTest
-    static void 테스트컨테이너를_쓰지_않는다(JavaClasses classes) {
-        List<String> bad = own(classes).stream()
-                .filter(c -> c.getDirectDependenciesFromSelf().stream()
-                        .anyMatch(d -> d.getTargetClass().getPackageName().startsWith("org.testcontainers")))
-                .map(JavaClass::getName)
-                .collect(Collectors.toList());
-        fail("단위 테스트 위치", bad, "실제 DB 를 띄우는 테스트는 통합 테스트다. src/integrationTest 로 옮긴다");
+        fail("테스트 이름", bad,
+                "@SpringBootTest 로 컨텍스트를 띄우면 통합 테스트다. 이름을 ~IntegrationTest 로 끝낸다");
     }
 }
