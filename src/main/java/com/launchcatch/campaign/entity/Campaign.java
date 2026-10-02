@@ -1,6 +1,6 @@
 package com.launchcatch.campaign.entity;
 
-import com.launchcatch.global.entity.BaseMutableTimeEntity;
+import com.launchcatch.global.entity.BaseTimeEntity;
 import jakarta.persistence.AttributeOverride;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -26,7 +26,7 @@ import lombok.NoArgsConstructor;
 @AttributeOverride(name = "id", column = @Column(name = "campaign_id"))
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
-public class Campaign extends BaseMutableTimeEntity {
+public class Campaign extends BaseTimeEntity {
 
     @Enumerated(EnumType.STRING)
     @Column(name = "status", nullable = false, length = 20)
