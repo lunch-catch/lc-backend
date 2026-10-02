@@ -44,7 +44,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
     private static final String KEY_PREFIX = "authRateLimit:";
 
     /*
-     * 소비자가 셋이라 경로도 셋씩이다(docs/api/README.md 의 경로 절).
+     * 소비자가 셋이라 경로도 셋씩이다(docs/api-spec/README.md 의 경로 절).
      * 점주 회원가입(31행)도 열린 경로이지만 지금은 넣지 않는다. 가입은 사업자 검증이 뒤따라
      * 반복 호출의 이득이 적고, 넣으려면 그 경로의 상한을 따로 정해야 한다.
      */

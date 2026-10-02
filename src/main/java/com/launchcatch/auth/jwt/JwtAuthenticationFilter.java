@@ -22,7 +22,7 @@ import org.springframework.web.filter.OncePerRequestFilter;
  * 역할 넷의 토큰을 한 필터에서 처리한다. 체인을 역할마다 쪼개지 않고 role 클레임으로 주체를
  * 세운 뒤, 인가는 각 체인의 경로와 권한 선언이 맡는다.
  *
- * 토큰은 쿠키에서만 읽는다. docs/api/README.md 가 "클라이언트는 토큰 값을 읽거나 Authorization
+ * 토큰은 쿠키에서만 읽는다. docs/api-spec/README.md 가 "클라이언트는 토큰 값을 읽거나 Authorization
  * 헤더에 싣지 않는다" 고 못 박았다. 옮겨온 쪽은 Swagger 수동 시험용으로 헤더를 함께 받았는데,
  * 받아 주는 경로가 열려 있으면 명세가 금지한 사용법이 조용히 자리를 잡는다. 로컬에서 헤더로
  * 찔러 볼 일이 생기면 그때 프로필로 가르는 편이 낫다.

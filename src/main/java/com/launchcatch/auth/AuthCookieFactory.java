@@ -31,7 +31,7 @@ public class AuthCookieFactory {
     /*
      * Refresh 는 재발급과 로그아웃 경로에만 실린다.
      *
-     * 소비자가 셋이라 경로도 셋이다(docs/api/README.md 의 경로 절). 옮겨온 쪽은 회원과 관리자
+     * 소비자가 셋이라 경로도 셋이다(docs/api-spec/README.md 의 경로 절). 옮겨온 쪽은 회원과 관리자
      * 둘이어서 경로가 둘이었다.
      *
      * 끝의 슬래시가 중요하다. RFC 6265 5.1.4 의 path-match 는 경로가 같거나, 쿠키 path 가

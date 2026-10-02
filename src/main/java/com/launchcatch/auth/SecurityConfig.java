@@ -89,7 +89,7 @@ public class SecurityConfig {
      * 도메인 체인을 새로 추가하는 것을 잊어도 열리지 않고 막히는 쪽으로 실패한다.
      *
      * 로그인 전에 열리는 경로는 넷뿐이다. 로그인, 토큰 재발급, 점주 회원가입, 카카오 인가 코드
-     * 교환이다(docs/api/README.md 의 인증 절). 그 넷은 해당 도메인 체인이 permitAll 로 선언한다.
+     * 교환이다(docs/api-spec/README.md 의 인증 절). 그 넷은 해당 도메인 체인이 permitAll 로 선언한다.
      */
     @Bean
     @Order(Ordered.LOWEST_PRECEDENCE)
