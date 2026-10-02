@@ -8,7 +8,6 @@ import org.springframework.boot.webclient.WebClientCustomizer;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.client.reactive.ReactorClientHttpConnector;
-import org.springframework.web.reactive.function.client.WebClient;
 import reactor.netty.http.client.HttpClient;
 import reactor.netty.resources.ConnectionProvider;
 
@@ -58,33 +57,5 @@ public class WebClientConfig {
                 .clientConnector(new ReactorClientHttpConnector(httpClient))
                 .filter(TraceIdExchangeFilter.propagateTraceId())
                 .filter(ExternalApiLoggingExchangeFilter.logCalls());
-    }
-
-    /**
-     * 벤더 계층. 카카오 OIDC 토큰교환과 로그아웃, 연결 해제 호출 전용(62행, 65행, 89행).
-     * 공통 타임아웃/풀/필터는 위 defaultExternalApiCustomizer가 이미 적용한 builder를 받아서 시작하므로
-     * 여기선 카카오 고유의 것만 얹는다 — 지금은 얹을 게 없어서 build()만 호출한다.
-     *
-     * 카카오가 인증(kauth.kakao.com)과 API(kapi.kakao.com) 호스트
-     * 자체를 분리해놔서 WebClient 하나에 baseUrl 하나로 못 묶는다.
-     * 그래서 각 호출부가 지금처럼 절대경로 URI를 직접 준다.
-     *
-     * 나중에 카카오만 다른 속성이 필요해지면(예: logout/unlink 공통 Admin Key 헤더를 매번
-     * 반복해서 붙이는 대신 여기 기본값으로 박아두거나, 로그인 흐름 UX 때문에 토큰교환만 공통
-     * 5초보다 짧은 타임아웃을 원한다거나) 이 메서드의 체인을 늘리면 된다. 예:
-     *
-     *   return builder
-     *           .defaultHeader(HttpHeaders.AUTHORIZATION, "KakaoAK " + adminKey)
-     *           .clientConnector(new ReactorClientHttpConnector(
-     *                   HttpClient.create().responseTimeout(Duration.ofSeconds(3))))
-     *           .build();
-     *
-     * clientConnector를 여기서 다시 지정하면 공통 커스터마이저가 걸어둔 connector(타임아웃/풀)만
-     * 덮어쓰는 것이고, 트레이싱/로깅 필터는 builder에 이미 filter()로 붙어있어서 그대로
-     * 유지된다 — 필터까지 다시 정의할 필요는 없다.
-     */
-    @Bean
-    public WebClient kakaoApiWebClient(WebClient.Builder builder) {
-        return builder.build();
     }
 }
