@@ -62,7 +62,7 @@
 ### 경로
 
 ```
-/v1/...            사용자(USER)와 로그인 전 공개 경로
+/v1/...            사용자(MEMBER)와 로그인 전 공개 경로
 /v1/owner/...      점주(OWNER)
 /v1/admin/...      관리자(ADMIN, SUPER_ADMIN)
 ```
@@ -96,9 +96,9 @@ POST /v1/admin/templates/{templateId}:publish
 |---|---|---|---|---|
 | 관리자 | 자체 아이디와 비밀번호 | JWT 30분 | 1일 | `ADMIN`, `SUPER_ADMIN` |
 | 점주 | 이메일과 비밀번호 | JWT 30분 | 14일 | `OWNER` |
-| 사용자 | 카카오 OIDC (인가 코드) | JWT 30분 | 14일, 자동 로그인 미체크 시 세션 쿠키 | `USER` |
+| 사용자 | 카카오 OIDC (인가 코드) | JWT 30분 | 14일, 자동 로그인 미체크 시 세션 쿠키 | `MEMBER` |
 
-**토큰은 헤더가 아니라 쿠키로 오간다** (94행). 두 토큰 모두 `HttpOnly`, `SameSite=Strict` 쿠키로
+**토큰은 헤더가 아니라 쿠키로 오간다** (94행, 구현 방식 시트). 두 토큰 모두 `HttpOnly`, `SameSite=Strict` 쿠키로
 내려가고, 클라이언트는 토큰 값을 읽거나 `Authorization` 헤더에 싣지 않는다. 응답 본문에도 토큰을 넣지 않는다.
 
 ```
@@ -107,7 +107,7 @@ Set-Cookie: refreshToken=<opaque>; HttpOnly; SameSite=Strict; Path=/
 ```
 
 - **Refresh Token은 회전한다.** 재발급마다 새 토큰으로 바꾸고, 이미 바꾼 토큰이 다시 오면 그 계정의 세션을 전부 끊는다(64, 94행)
-- **로그아웃은 Access Token도 막는다.** 로그아웃 시각을 기준 시각(cutoff)으로 저장해 그 전에 발급된 Access Token을 거부한다(7, 34, 94행)
+- **로그아웃은 Access Token도 막는다.** 로그아웃 시각을 기준 시각(cutoff)으로 저장해 그 전에 발급된 Access Token을 거부한다(7, 34, 94행, 구현 방식 시트)
 - **권한은 역할로 판정한다.** 역할이 맞지 않으면 `403` 이다(94행). 기본값은 거부이고, 로그인 전에 열린 경로는 로그인, 토큰 재발급, 점주 회원가입, 카카오 인가 코드 교환뿐이다
 - **점주는 상태로 한 번 더 막는다.** `ONBOARDING` 점주는 입점 등록 API만 쓸 수 있고, `ACTIVE` 가 된 뒤 나머지 점주 API가 열린다(32행)
 - **로그인 실패는 사유를 구분하지 않는다.** 계정 없음, 비밀번호 불일치, 사용 불가 상태를 모두 같은 `401` 로 돌려준다(5, 32행)
@@ -186,8 +186,8 @@ GET /v1/stores?pageSize=20&pageToken=eyJ...&sort=DISTANCE
 
 | 식별자 | 형식 | 근거 |
 |---|---|---|
-| 대부분의 ID (`storeId`, `campaignId`, `memberId` 등) | 숫자 | `V1__init_schema.sql` 공통 규칙 5 |
-| `serveId` | UUIDv7, 36자 문자열 | 용어 정의 30행. DB에는 `BINARY(16)` |
+| 대부분의 ID (`storeId`, `campaignId`, `memberId` 등) | 숫자 | `전체.sql` 공통 규칙 5 |
+| `serveId` | UUIDv7, 36자 문자열 | 용어 정의 30행, 구현 방식 시트. DB에는 `BINARY(16)` |
 | QR 토큰 | 문자열 | 85행 서명 토큰, 60초, 1회용 |
 
 ### 시각
@@ -209,9 +209,9 @@ GET /v1/stores?pageSize=20&pageToken=eyJ...&sort=DISTANCE
 
 | 요청 | 중복을 막는 키 | 근거 |
 |---|---|---|
-| 노출 이벤트 수집 | `(serveId, 요청 사용자)` UNIQUE | 99행 |
+| 노출 이벤트 수집 | `(serveId, 요청 사용자)` UNIQUE | 99행, 구현 방식 시트 |
 | 스와이프 찜과 패스 | 같은 사용자의 같은 `serveId` 는 최초 1건만 | 68행 |
-| 선착순 쿠폰 발급 | `(eventId, 사용자)` UNIQUE. `eventId` 는 캠페인마다 하루 하나인 선착순 오픈 | 83행, 비기능 24행 |
+| 선착순 쿠폰 발급 | `(eventId, 사용자)` UNIQUE. `eventId` 는 캠페인마다 하루 하나인 선착순 오픈 | 83행, 비기능 24행, 구현 방식 시트 |
 | 결제 승인 콜백 | 결제 ID | 49행 |
 | QR 사용 처리 | QR 토큰 1회용 | 85행 |
 | 관심 가게 등록과 해제 | 이미 등록된 것을 다시 등록해도 성공 | 77행 |
@@ -228,7 +228,7 @@ GET /v1/stores?pageSize=20&pageToken=eyJ...&sort=DISTANCE
 
 ## 아직 정해지지 않은 것
 
-명세를 쓰면서 **요구사항에는 있으나 현재 스키마(`V1__init_schema.sql`)에 근거가 없는 것**들이다.
+명세를 쓰면서 **요구사항에는 있으나 현재 스키마(`전체.sql`)에 근거가 없는 것**들이다.
 API 를 확정하기 전에 결정이 필요하다.
 
 | 항목 | 요구사항 | 현재 스키마 |

@@ -26,8 +26,6 @@
 --   12. 운영 (ops)               최재웅   3개: platform_setting, platform_setting_history, batch_execution_log
 -- ============================================================================
 
-SET NAMES utf8mb4;
-SET FOREIGN_KEY_CHECKS = 0;
 
 
 -- ############################################################################
@@ -1525,4 +1523,3 @@ CREATE TABLE batch_execution_log (
     CONSTRAINT CHK_BATCH_STATUS CHECK (status IN ('RUNNING', 'SUCCESS', 'FAILED'))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
-SET FOREIGN_KEY_CHECKS = 1;
