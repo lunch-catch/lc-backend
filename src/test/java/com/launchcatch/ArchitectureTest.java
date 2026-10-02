@@ -22,7 +22,7 @@ import java.util.Set;
 
 /*
  * 계층과 도메인 경계를 빌드에서 강제한다 (비기능 31행).
- * 규칙의 근거는 docs/architecture/런치캐치_백엔드_구조와_의존_규칙.md 1.5절과 2.6절에 있다.
+ * 규칙의 근거는 docs/architecture/런치캐치_백엔드_설계.md 1.5절과 2.5절에 있다.
  *
  * 도메인이 생기기 전에 넣는다. 클래스가 쌓인 뒤에 넣으면 이미 깨진 것을 무더기로 만나
  * 고치는 대신 규칙을 끄게 된다.
@@ -158,7 +158,7 @@ class ArchitectureTest {
                     .should().dependOnClassesThat().resideInAnyPackage("..entity..", "..repository..")
                     .allowEmptyShould(true);
 
-    // --- 2.6절. 그래프를 지키는 테스트 -----------------------------------------------
+    // --- 2.5절. 그래프를 지키는 테스트 -----------------------------------------------
 
     /*
      * 규칙 1. 다른 도메인의 entity 와 repository 를 직접 쓰지 않는다.
