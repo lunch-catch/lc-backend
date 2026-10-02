@@ -15,33 +15,33 @@
 
 | 영역 | 점검 가이드 | 근거 문서 |
 |------|-------------|-----------|
-| 자바 작성 원칙 (Effective Java 기반) | [effective-java-guideline.md](./effective-java-guideline.md) | [effective-java-rationale.md](./effective-java-rationale.md) |
-| 단위 테스트 (Unit Testing 기반) | [unit-testing-guideline.md](./unit-testing-guideline.md) | [unit-testing-rationale.md](./unit-testing-rationale.md) |
-| API 설계 (Google AIP 기반) | [api-design-guideline.md](./api-design-guideline.md) | [api-design-rationale.md](./api-design-rationale.md) |
-| 엔티티 생성 패턴 | [entity-creation-guideline.md](./entity-creation-guideline.md) | [entity-creation-rationale.md](./entity-creation-rationale.md) |
-| JPA 연관 매핑 (애그리거트 경계) | [jpa-association-guideline.md](./jpa-association-guideline.md) | [jpa-association-rationale.md](./jpa-association-rationale.md) |
-| 빌드 게이트 (커버리지, 정적 분석) | [build-gate-guideline.md](./build-gate-guideline.md) | [build-gate-rationale.md](./build-gate-rationale.md) |
-| 응답과 예외 흐름 | [response-exception-flow.md](./response-exception-flow.md) | - |
-| 도메인 패키지 경계와 의존 방향 | [런치캐치_백엔드_설계.md](../architecture/런치캐치_백엔드_설계.md) | - |
+| 자바 작성 원칙 (Effective Java 기반) | [effective-java-guideline.md](./code-convention/effective-java-guideline.md) | [effective-java-rationale.md](./code-convention/effective-java-rationale.md) |
+| 단위 테스트 (Unit Testing 기반) | [unit-testing-guideline.md](./code-convention/unit-testing-guideline.md) | [unit-testing-rationale.md](./code-convention/unit-testing-rationale.md) |
+| API 설계 (Google AIP 기반) | [api-design-guideline.md](./code-convention/api-design-guideline.md) | [api-design-rationale.md](./code-convention/api-design-rationale.md) |
+| 엔티티 생성 패턴 | [entity-creation-guideline.md](./code-convention/entity-creation-guideline.md) | [entity-creation-rationale.md](./code-convention/entity-creation-rationale.md) |
+| JPA 연관 매핑 (애그리거트 경계) | [jpa-association-guideline.md](./code-convention/jpa-association-guideline.md) | [jpa-association-rationale.md](./code-convention/jpa-association-rationale.md) |
+| 빌드 게이트 (커버리지, 정적 분석) | [build-gate-guideline.md](./code-convention/build-gate-guideline.md) | [build-gate-rationale.md](./code-convention/build-gate-rationale.md) |
+| 응답과 예외 흐름 | [response-exception-flow.md](./code-convention/response-exception-flow.md) | - |
+| 도메인 패키지 경계와 의존 방향 | [런치캐치_백엔드_설계.md](./architecture/런치캐치_백엔드_설계.md) | - |
 
 ### 품질 속성 (`docs/software-quality`)
 
-진입점은 [quality-attributes.md](../software-quality/quality-attributes.md) 다. ISO/IEC 25010:2023 을
+진입점은 [quality-attributes.md](./software-quality/quality-attributes.md) 다. ISO/IEC 25010:2023 을
 기준 모델로 삼고, 영역마다 `*-guideline.md` 와 `*-rationale.md` 가 짝을 이룬다.
 
 | 영역 | 접두어 | 점검 가이드 |
 |------|--------|-------------|
-| 기능 적합성 | `FUN-` | [qa-functional-suitability-guideline.md](../software-quality/qa-functional-suitability-guideline.md) |
-| 성능 효율성 | `PERF-` | [qa-performance-efficiency-guideline.md](../software-quality/qa-performance-efficiency-guideline.md) |
-| 신뢰성 | `REL-` | [qa-reliability-guideline.md](../software-quality/qa-reliability-guideline.md) |
-| 보안 | `SEC-` | [qa-security-guideline.md](../software-quality/qa-security-guideline.md) |
-| 유지보수성 | `MNT-` | [qa-maintainability-guideline.md](../software-quality/qa-maintainability-guideline.md) |
-| 유연성과 확장성 | `FLX-` | [qa-flexibility-guideline.md](../software-quality/qa-flexibility-guideline.md) |
-| 호환성 | `CMP-` | [qa-compatibility-guideline.md](../software-quality/qa-compatibility-guideline.md) |
-| 데이터 정합성 | `DI-` | [qa-data-integrity-guideline.md](../software-quality/qa-data-integrity-guideline.md) |
-| 관측 가능성 | `OBS-` | [qa-observability-guideline.md](../software-quality/qa-observability-guideline.md) |
-| 인시던트 대응 | `INC-` | [qa-incident-response-guideline.md](../software-quality/qa-incident-response-guideline.md) |
-| 속성 간 트레이드오프 | `TRD-` | [qa-tradeoffs-guideline.md](../software-quality/qa-tradeoffs-guideline.md) |
+| 기능 적합성 | `FUN-` | [qa-functional-suitability-guideline.md](./software-quality/qa-functional-suitability-guideline.md) |
+| 성능 효율성 | `PERF-` | [qa-performance-efficiency-guideline.md](./software-quality/qa-performance-efficiency-guideline.md) |
+| 신뢰성 | `REL-` | [qa-reliability-guideline.md](./software-quality/qa-reliability-guideline.md) |
+| 보안 | `SEC-` | [qa-security-guideline.md](./software-quality/qa-security-guideline.md) |
+| 유지보수성 | `MNT-` | [qa-maintainability-guideline.md](./software-quality/qa-maintainability-guideline.md) |
+| 유연성과 확장성 | `FLX-` | [qa-flexibility-guideline.md](./software-quality/qa-flexibility-guideline.md) |
+| 호환성 | `CMP-` | [qa-compatibility-guideline.md](./software-quality/qa-compatibility-guideline.md) |
+| 데이터 정합성 | `DI-` | [qa-data-integrity-guideline.md](./software-quality/qa-data-integrity-guideline.md) |
+| 관측 가능성 | `OBS-` | [qa-observability-guideline.md](./software-quality/qa-observability-guideline.md) |
+| 인시던트 대응 | `INC-` | [qa-incident-response-guideline.md](./software-quality/qa-incident-response-guideline.md) |
+| 속성 간 트레이드오프 | `TRD-` | [qa-tradeoffs-guideline.md](./software-quality/qa-tradeoffs-guideline.md) |
 
 **자동 리뷰는 이 문서군의 `[코드]` 항목만 본다.** 전체 219개 중 79개다. 나머지 셋은
 PR 하나의 변경분으로 판정할 수 없다. `[설계]` 는 설계 리뷰와 ADR 에서, `[인프라]` 는 인프라
@@ -50,14 +50,14 @@ PR 하나의 변경분으로 판정할 수 없다. `[설계]` 는 설계 리뷰�
 수치에 붙은 등급은 근거의 성격이다. `A` 는 산술로 도출한 값, `B` 는 출처가 있는 값,
 `C` 는 근거 없이 정한 예시값이다. **`C` 로 지적하지 않는다.** 측정한 뒤 팀이 확정할 값이다.
 
-**경계 규약은 이 디렉터리가 아니라 설계 문서가 소유한다.** 계층, 도메인, `contract` 패키지, 의존 규칙 6개,
+**경계 규약은 가이드 문서가 아니라 설계 문서가 소유한다.** 계층, 도메인, `contract` 패키지, 의존 규칙 6개,
 그것을 지키는 아키텍처 테스트 12개가 모두 그 문서 1장과 2장에 있다. 같은 내용을 여기에 다시 적으면
 둘이 어긋나는 순간 어느 쪽이 기준인지 알 수 없게 된다.
 
 ## 봇 동작 규칙
 
 자동 리뷰 봇은 **CodeRabbit** 이다. 설정은 저장소 루트의 `.coderabbit.yaml` 에 있고, 아래 규칙과
-파일명 힌트를 그 파일의 `path_instructions` 로 전달한다. **판정 기준은 이 디렉터리의 가이드가
+파일명 힌트를 그 파일의 `path_instructions` 로 전달한다. **판정 기준은 두 디렉터리의 가이드가
 갖고 그 파일은 배선일 뿐이다.** 규칙을 바꿀 때는 가이드를 먼저 고치고 그 파일을 맞춘다.
 
 봇은 다음 규칙을 따른다.

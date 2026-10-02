@@ -64,7 +64,7 @@
 | 인시던트 대응과 복구 | [qa-incident-response-rationale.md](./qa-incident-response-rationale.md) | 매우 높음 |
 | 속성 간 트레이드오프 | [qa-tradeoffs-rationale.md](./qa-tradeoffs-rationale.md) | 설계 판단 기준 |
 
-자동 리뷰가 이 문서군을 어떻게 쓰는지는 [../code-convention/CODEREVIEW.md](../code-convention/CODEREVIEW.md) 가 정한다.
+자동 리뷰가 이 문서군을 어떻게 쓰는지는 [../CODEREVIEW.md](../CODEREVIEW.md) 가 정한다.
 
 ### 별도 문서를 두지 않은 특성
 
