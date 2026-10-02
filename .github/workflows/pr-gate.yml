@@ -2,6 +2,10 @@
 #
 # 판정은 전부 결정론적이다. 커버리지와 정적 분석만 보고, 사람 판단이 필요한 것은 리뷰에 남긴다.
 # 규약은 docs/code-convention/build-gate-guideline.md 에 있다.
+#
+# LLM 코드 리뷰는 CodeRabbit 이 맡고 이 워크플로와 무관하다. 설정은 루트의 .coderabbit.yaml 에 있다.
+# 그쪽은 지적만 남기고 차단하지 않는다(request_changes_workflow 와 commit_status 를 껐다).
+# 재현율이 측정되지 않은 판정으로 병합을 막으면 오탐이 쌓여 우회 문화가 생긴다.
 
 name: PR 게이트
 

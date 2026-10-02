@@ -1,0 +1,219 @@
+# CodeRabbit 자동 코드 리뷰 설정.
+#
+# 판정 기준은 이 파일이 아니라 docs/code-convention 이 갖는다. 진입점은 그 디렉터리의
+# CODEREVIEW.md 다. 이 파일은 그 규약을 CodeRabbit 에 전달하는 배선일 뿐이다.
+# 규칙을 바꿀 때는 가이드 문서를 먼저 고친다.
+#
+# 스키마: https://storage.googleapis.com/coderabbit_public_assets/schema.v2.json
+
+# CODEREVIEW.md 봇 규칙 6. 모든 리뷰 코멘트는 한국어로 작성한다
+language: ko-KR
+
+# 250자 상한이 있어 핵심만 적는다. 나머지는 아래 path_instructions 의 공통 항목에 있다
+tone_instructions: >-
+  한국어로 쓴다. 지적마다 [BLOCKER], [MAJOR], [MINOR], [NIT] 중 하나를 앞에 붙인다.
+  이유와 개선 방향을 함께 제시하고, 단정적 명령보다 근거를 들어 설명한다.
+  코드 식별자와 애너테이션, 파일 경로, 규칙 번호는 원문 그대로 둔다.
+
+reviews:
+  # 균형 잡힌 쪽. CODEREVIEW.md 가 "지적이 과도하게 많으면 BLOCKER 와 MAJOR 부터 정리해서
+  # 전달한다" 고 적은 것과 같은 방향이다. 더 깐깐하게 보려면 assertive 로 올린다
+  profile: chill
+
+  # 병합을 막는 게이트는 G-BUILD 하나뿐이다 (build-gate-guideline.md).
+  # LLM 판정은 재현율이 측정되지 않았으므로 차단하지 않고 지적만 남긴다.
+  # 오탐으로 병합이 막히기 시작하면 우회 문화가 생긴다
+  request_changes_workflow: false
+
+  # 기본값이 true 라 리뷰 진행 상태가 커밋 상태로 남는다. 그것이 브랜치 보호에서
+  # 필수 체크로 걸리는 순간 위 결정이 무너지므로 애초에 만들지 않는다.
+  # 리뷰 상태를 체크로 보고 싶으면 true 로 올리고, 대신 필수 체크로 걸지 않는다
+  commit_status: false
+  fail_commit_status: false
+
+  high_level_summary: true
+  review_status: true
+  collapse_walkthrough: true
+  abort_on_close: true
+
+  # 피드와 노출 과금처럼 흐름이 긴 변경에서 도움이 된다
+  sequence_diagrams: true
+  estimate_code_review_effort: true
+
+  # 리뷰 코멘트에 시 같은 장식을 넣지 않는다
+  poem: false
+
+  auto_review:
+    enabled: true
+    # 초안에는 돌지 않는다. 작성 중인 PR 에 지적이 쌓이면 읽지 않게 된다
+    drafts: false
+    # 지금 기본 브랜치는 main 하나다. develop 을 쓰기로 하면 여기에 더한다
+    base_branches:
+      - main
+    auto_incremental_review: true
+
+  path_filters:
+    # 생성물과 래퍼는 사람이 고치는 코드가 아니다
+    - "!build/**"
+    - "!gradle/wrapper/**"
+    - "!gradlew"
+    - "!gradlew.bat"
+    - "!.gradle/**"
+
+  path_instructions:
+    # --- 모든 파일에 적용되는 봇 규칙 (CODEREVIEW.md "봇 동작 규칙") -----------------
+    - path: "**"
+      instructions: |
+        판정 기준은 docs/code-convention 의 *-guideline.md 에 적힌 점검 항목으로 한정한다.
+        가이드에 없는 항목은 지적하지 않는다. 새 기준이 필요하면 가이드를 먼저 고치라고 제안한다.
+        *-rationale.md 는 설명을 보강할 때만 참고하고, 그것을 근거로 새 지적을 만들지 않는다.
+
+        한 사안은 한 번만 지적한다. 여러 가이드가 같은 문제를 다룰 때는 CODEREVIEW.md 의
+        "중복 지적 방지 소유권 우선순위" 표에 따라 그 사안을 소유한 가이드 하나만 기준으로 쓴다.
+        더 구체적이고 좁은 범위를 다루는 가이드가 소유한다.
+
+        가이드가 다루지 않는 사안(트랜잭션 경계, 잠금 전략, N+1 과 인덱스, 인가와 소유권 검증,
+        타임아웃과 서킷 브레이커, 엔티티 뼈대와 식별자 전략)은 지적하지 않는다. 사람 리뷰어의 몫이다.
+
+        외부 링크와 출처(AIP 번호, 책 항목 번호, URL)는 사람을 위한 참고다. 가져오지 말고
+        가이드 본문에 적힌 내용만으로 판단한다. 확인이 필요하면 그 사실을 코멘트로 남겨 사람에게 넘긴다.
+
+        문서와 주석에 em dash 와 middle dot 을 쓰지 않는다. 화살표는 -> 와 <- 로 쓴다 (CLAUDE.md).
+
+    # --- 프로덕션 자바 전체 -----------------------------------------------------
+    - path: "src/main/java/**/*.java"
+      instructions: |
+        effective-java-guideline.md(EJ-)를 변경 위치와 무관하게 적용한다.
+        docs/architecture/런치캐치_백엔드_설계.md 1장과 2장의 경계 규약도 함께 본다.
+        다른 도메인의 entity 와 repository 를 직접 참조하지 않는지, 도메인 간 호출이 상대
+        도메인의 contract 인터페이스를 지나는지 본다. 의존 방향은 그 문서 2.2절 그래프를 따르고,
+        오른쪽에서 왼쪽으로 가는 새 간선은 순환 후보다.
+        WebClient.builder() 를 직접 부르지 않는지 본다. 공통 타임아웃과 풀 설정을 우회한다.
+
+    # --- 엔티티 ---------------------------------------------------------------
+    - path: "src/main/java/**/entity/**/*.java"
+      instructions: |
+        entity-creation-guideline.md(EC-)와 jpa-association-guideline.md(AGG-)를 적용한다.
+        생성 경로는 EC- 가 보고, 연관 필드가 무엇을 가리키는지는 AGG- 가 본다.
+        다른 도메인 엔티티를 객체로 참조하지 않고 ID 필드로 두었는지(AGG-1-01),
+        @ManyToOne 과 @OneToOne 에 fetch = LAZY 를 명시했는지(AGG-4-01),
+        cascade 가 애그리거트 경계를 넘지 않는지(AGG-4-04) 본다.
+        시각 컬럼은 global.entity 의 베이스 엔티티 둘을 상속해 얻는다.
+
+    - path: "src/main/java/**/repository/**/*.java"
+      instructions: |
+        jpa-association-guideline.md(AGG-)를 적용한다. 저장소를 애그리거트 루트에만 두었는지
+        (AGG-3-03), 여러 건을 읽을 때 ID 목록으로 한 번에 받는지(AGG-1-03) 본다.
+        네이티브 쿼리 문자열 안에 다른 도메인의 테이블 이름이 들어가면 지적한다.
+        정적 분석이 잡지 못하는 자리라 리뷰가 유일한 방어선이다.
+
+    # --- 도메인 간 계약 --------------------------------------------------------
+    - path: "src/main/java/**/contract/**/*.java"
+      instructions: |
+        설계 문서 1.3절과 2.4절을 적용한다. contract 에는 인터페이스와 record, enum 만 둔다.
+        로직이 있으면 구현을 같은 도메인의 service 로 내리라고 제안한다.
+        엔티티와 저장소를 드러내지 않는지 본다(AGG-4-05). 주고받는 타입은 record 다.
+
+    - path: "src/main/java/**/*Event.java"
+      instructions: |
+        설계 문서 2.4절을 적용한다. 이벤트 타입은 발행 도메인의 contract 패키지에 둔다.
+        페이로드에 식별자와 값만 싣고 엔티티를 싣지 않는다.
+        새 이벤트를 만들면 설계 문서 2.4절의 표와 ArchitectureTest 의 EVENT_HOME 목록을
+        함께 고쳤는지 확인한다. 한쪽만 고치면 문서와 테스트가 어긋난다.
+
+    # --- API 표면 -------------------------------------------------------------
+    - path: "src/main/java/**/controller/**/*.java"
+      instructions: |
+        api-design-guideline.md(API-)와 docs/api-spec/README.md 의 공통 규약을 적용한다.
+        경로가 소비자별로 갈리는지(/v1, /v1/owner, /v1/admin), 리소스가 명사 복수형인지,
+        표준 메서드로 되는 것을 콜론 커스텀 메서드로 만들지 않았는지 본다.
+        응답은 ResponseEnvelope 로 감싸고 상태 코드는 ErrorCode 가 들고 있는 값을 쓴다.
+        목록은 pageSize 와 pageToken 커서 방식이고 정렬 키는 허용 목록으로 검증한다.
+        토큰은 쿠키로만 오간다. Authorization 헤더를 읽거나 응답 본문에 토큰을 실으면 지적한다.
+
+    - path: "src/main/java/**/global/exception/**/*.java"
+      instructions: |
+        response-exception-flow.md 를 적용한다. 도메인 오류 코드를 CommonErrorCode 에 넣지 않는다.
+        오류 문구는 ErrorCode 에서만 나온다. 던지는 자리에서 문장을 지어내면 지적한다.
+        도메인마다 예외 클래스 하나와 오류 코드 enum 하나를 두고, 실패 종류마다 클래스를 만들지 않는다.
+
+    # --- 인증 ----------------------------------------------------------------
+    - path: "src/main/java/**/auth/**/*.java"
+      instructions: |
+        기능 명세서 94행과 docs/api-spec/README.md 의 인증 절을 기준으로 본다.
+        Access 는 JWT 30분, Refresh 는 Opaque 이고 역할마다 수명이 다르다(관리자 1일, 점주와
+        사용자 14일). 두 토큰은 HttpOnly 와 SameSite=Strict 쿠키로만 오간다.
+        회전과 재사용 탐지, 로그아웃 시 valid-after 커트라인이 빠지지 않았는지 본다.
+        인메모리 캐시 장애에서 인증 전체가 닫히지 않는지(통과시키는 경로) 본다.
+        역할은 Role enum 하나가 단일 축이다. 트랙을 따로 두려 하면 지적한다.
+
+    # --- 테스트 ---------------------------------------------------------------
+    - path: "src/test/java/**/*.java"
+      instructions: |
+        unit-testing-guideline.md(UT-)를 적용한다. 프로덕션 코드용 가이드(EJ-, 경계 규약)는
+        여기 적용하지 않는다. 목 주입과 픽스처 빌더, 서술형 메서드명이 전부 지적으로 나온다.
+        단위 테스트는 대상과 같은 패키지에 두고 이름은 ~Test 다.
+        스프링 컨텍스트를 띄우거나 Testcontainers 를 쓰면 통합 테스트다. src/integrationTest 로 옮긴다.
+        커버리지 게이트가 service 패키지 메서드 100% 를 요구한다(BLD-1-01).
+
+    - path: "src/integrationTest/java/**/*.java"
+      instructions: |
+        unit-testing-guideline.md(UT-)를 적용한다. 이름은 ~IntegrationTest 로 끝나고
+        도메인 패키지 바로 아래에 둔다. 컨테이너는 IntegrationTestSupport 를 상속해 공유한다.
+        클래스마다 새로 띄우면 check 를 돌릴 때마다 그 값을 치른다.
+
+    - path: "src/test/java/**/ArchitectureTest.java"
+      instructions: |
+        설계 문서 1.5절과 2.5절의 규칙 목록이 기준이다. 규칙을 더하거나 지웠으면 그 문서의
+        표도 함께 고쳤는지 확인한다. 한쪽만 고치면 문서와 테스트가 어긋난다.
+        검사 대상이 0개인 규칙은 allowEmptyShould(true) 가 필요하다. 없으면 도메인이 생기기 전에
+        규칙이 실패해 끄게 된다.
+
+    # --- 스키마와 빌드 ---------------------------------------------------------
+    - path: "src/main/resources/db/migration/*.sql"
+      instructions: |
+        Flyway 규약은 평평한 단일 디렉터리와 V{번호}__{스네이크케이스}.sql 이다.
+        이미 배포된 마이그레이션을 고치면 지적한다. 새 파일을 더한다.
+        시간 컬럼의 기준 시간대는 Asia/Seoul 이고 날짜 함수(CURDATE, NOW)를 쓰지 않는다
+        (비기능 42행). 영업일은 애플리케이션이 계산해 넣는다.
+        도메인 간 연관은 FK 가 아니라 ID 컬럼이다.
+
+    - path: "build.gradle"
+      instructions: |
+        build-gate-guideline.md(BLD-)를 적용한다. 커버리지 대상이
+        com.launchcatch.*.service.* 로 좁혀져 있는지, check 가 integrationTest 와
+        jacocoTestCoverageVerification 과 coverageDataCheck 를 모두 부르는지 본다.
+        시험 JVM 시간대는 Asia/Seoul 고정이다(비기능 42행). UTC 로 바꾸면 지적한다.
+
+    - path: ".github/workflows/**"
+      instructions: |
+        build-gate-guideline.md(BLD-)를 적용한다. 병합을 막는 것은 G-BUILD 뿐이다.
+        LLM 판정이나 리뷰 상태를 차단 조건으로 만들면 지적한다.
+        액션은 버전을 고정해 쓴다.
+
+  tools:
+    # 한국어 산문에 영어 기준 지적이 쏟아진다. 문서 규칙은 CLAUDE.md 가 소유한다
+    markdownlint:
+      enabled: false
+    languagetool:
+      enabled: false
+    # 자바 정적 분석은 SonarQube 가 소유한다(BLD-2-01, BLD-2-02). 두 벌이면 같은 사안을 두 번 본다
+    pmd:
+      enabled: false
+    # 코틀린 전용이고 이 저장소에 코틀린이 없다
+    detekt:
+      enabled: false
+
+chat:
+  auto_reply: true
+
+knowledge_base:
+  code_guidelines:
+    enabled: true
+    # CLAUDE.md 는 기본으로 잡힌다. 나머지를 명시한다.
+    # 파일 이름은 대소문자를 가린다
+    filePatterns:
+      - "docs/code-convention/CODEREVIEW.md"
+      - "docs/code-convention/*-guideline.md"
+      - "docs/architecture/*.md"
+      - "docs/api-spec/*.md"
