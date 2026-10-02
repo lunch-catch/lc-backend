@@ -16,7 +16,7 @@
 | 단위 테스트 (Unit Testing 기반) | [unit-testing-guideline.md](./unit-testing-guideline.md) | [unit-testing-rationale.md](./unit-testing-rationale.md) |
 | API 설계 (Google AIP 기반) | [api-design-guideline.md](./api-design-guideline.md) | [api-design-rationale.md](./api-design-rationale.md) |
 | 엔티티 생성 패턴 | [entity-creation-guideline.md](./entity-creation-guideline.md) | [entity-creation-rationale.md](./entity-creation-rationale.md) |
-| JPA 연관 매핑 (애그리거트 경계) | [jpa-association-guideline.md](./jpa-association-guideline.md) | [런치캐치_JPA_연관_규칙.md](../architecture/런치캐치_JPA_연관_규칙.md) |
+| JPA 연관 매핑 (애그리거트 경계) | [jpa-association-guideline.md](./jpa-association-guideline.md) | [jpa-association-rationale.md](./jpa-association-rationale.md) |
 | 빌드 게이트 (커버리지, 정적 분석) | [build-gate-guideline.md](./build-gate-guideline.md) | [build-gate-rationale.md](./build-gate-rationale.md) |
 | 응답과 예외 흐름 | [response-exception-flow.md](./response-exception-flow.md) | - |
 | 도메인 패키지 경계와 의존 방향 | [런치캐치_백엔드_설계.md](../architecture/런치캐치_백엔드_설계.md) | - |
