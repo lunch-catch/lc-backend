@@ -43,6 +43,14 @@ reviews:
   # 리뷰 코멘트에 시 같은 장식을 넣지 않는다
   poem: false
 
+  pre_merge_checks:
+    # 기본값이 warning 에 임계 80% 다. 측정 대상에 한글 이름 테스트 메서드가 함께 들어가
+    # 어떤 PR 이든 임계를 넘지 못하고, 넘기려면 테스트마다 Javadoc 을 달아야 한다.
+    # 사전 점검은 차단하지 않지만 매번 뜨는 경고는 나머지 점검의 신호를 묻는다
+    docstrings:
+      # YAML 1.1 이 따옴표 없는 off 를 boolean false 로 읽어 스키마 검증에서 떨어진다
+      mode: "off"
+
   auto_review:
     enabled: true
     # 초안에는 돌지 않는다. 작성 중인 PR 에 지적이 쌓이면 읽지 않게 된다
