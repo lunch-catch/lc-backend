@@ -25,7 +25,7 @@ import org.springframework.web.filter.OncePerRequestFilter;
  * 사용자 로그인에는 비밀번호가 없어(카카오 OIDC) 브루트포스 대상이 아니지만, 요청 한 건이
  * 그대로 카카오 토큰 엔드포인트 호출로 이어진다. 막아 두지 않으면 한 클라이언트가 우리 스레드와
  * 카카오 앱 쿼터를 같이 태워 전체 로그인이 멈춘다. 점주와 관리자는 비밀번호 로그인이라
- * 브루트포스 자체가 대상이다. 5행과 32행이 실패 사유를 구분하지 않는 것도 같은 맥락이다.
+ * 브루트포스 자체가 대상이다. 로그인 실패 사유를 구분하지 않는 것도 같은 맥락이다.
  *
  * 새 라이브러리를 들이지 않고 이미 있는 인메모리 캐시로 IP 당 고정 윈도우 카운터만 둔다.
  * 분당 10회는 잠정값이라 팀 확인이 필요하다.
@@ -34,7 +34,7 @@ import org.springframework.web.filter.OncePerRequestFilter;
  * JwtAuthenticationFilter 의 커트라인 조회와 같은 이유다. 이 필터 하나 때문에 캐시 블립마다
  * 로그인 전체가 닫히면 안 된다.
  *
- * 피드 조회의 분당 2회 제한(67행)은 여기가 아니다. 그쪽은 IP 가 아니라 사용자 ID 기준이고
+ * 피드 조회의 분당 2회 제한은 여기가 아니다. 그쪽은 IP 가 아니라 사용자 ID 기준이고
  * 초과 시 429 와 함께 안내를 돌려줘야 해서 광고 서빙이 자기 카운터로 처리한다.
  */
 @Slf4j
@@ -45,7 +45,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
 
     /*
      * 소비자가 셋이라 경로도 셋씩이다(docs/api-spec/README.md 의 경로 절).
-     * 점주 회원가입(31행)도 열린 경로이지만 지금은 넣지 않는다. 가입은 사업자 검증이 뒤따라
+     * 점주 회원가입도 열린 경로이지만 지금은 넣지 않는다. 가입은 사업자 검증이 뒤따라
      * 반복 호출의 이득이 적고, 넣으려면 그 경로의 상한을 따로 정해야 한다.
      */
     private static final Set<String> LIMITED_PATHS = Set.of(

@@ -1,11 +1,11 @@
 -- ============================================================================
 -- 런치캐치 전체 스키마
--- 기준: 드라이브 erd 폴더 SQL 12개 + 통합 무결성 보강 (2026-10-01 16시), 요구사항 명세서 V45
+-- 기준: erd 폴더 SQL 12개 + 통합 무결성 보강 (2026-10-01 16시)
 -- 대상: MySQL 8.4, InnoDB, utf8mb4_0900_ai_ci
 -- ============================================================================
 --
 -- 공통 규칙
---   1. 다른 도메인 테이블은 FK 없이 ID 값으로만 참조한다(소프트 참조, V45 규칙 1). 테이블마다 머리 주석에 적었다
+--   1. 다른 도메인 테이블은 FK 없이 ID 값으로만 참조한다(소프트 참조). 테이블마다 머리 주석에 적었다
 --   2. 같은 도메인 안의 참조는 FK로 건다
 --   3. 코드 값과 컬럼 간 규칙은 CHECK로 막는다. 단, 대량 로그의 DB ENUM 컬럼에는 CHECK를 걸지 않는다(값 추가가 COPY가 됨)
 --   4. 시각은 모두 DATETIME(6), Asia/Seoul. business_date는 애플리케이션이 계산한다
@@ -143,7 +143,7 @@ CREATE TABLE member (
     member_id                  BIGINT        NOT NULL AUTO_INCREMENT,
     provider_user_id           VARCHAR(100)  NOT NULL                               COMMENT '카카오 회원번호',
     nickname                   VARCHAR(50)   NOT NULL,
-    profile_image_url          VARCHAR(512)                                         COMMENT '[13차 확정, 2026-10-01] 카카오 프로필 이미지 URL. 최초 가입 시에만 동기화(명세 62행), 사용자 직접 업로드는 범위 밖',
+    profile_image_url          VARCHAR(512)                                         COMMENT '[13차 확정, 2026-10-01] 카카오 프로필 이미지 URL. 최초 가입 시에만 동기화, 사용자 직접 업로드는 범위 밖',
     status                     VARCHAR(20)   NOT NULL DEFAULT 'ACTIVE',
     last_login_at              DATETIME(6),
     created_at                 DATETIME(6)   NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
@@ -735,7 +735,7 @@ CREATE TABLE point_policy (
     unit_price                BIGINT        NOT NULL,
     min_charge_amount         BIGINT        NOT NULL,
     min_daily_budget          BIGINT        NOT NULL,
-    bootstrap_daily_budget    BIGINT        NOT NULL                 COMMENT '기본 3,000P. 반경 내 7일 데이터 없는 신규 가게의 예산 추천 fallback(기능 21·45행)',
+    bootstrap_daily_budget    BIGINT        NOT NULL                 COMMENT '기본 3,000P. 반경 내 7일 데이터 없는 신규 가게의 예산 추천 fallback',
     recommended_daily_budget  BIGINT        NOT NULL,
     charge_products           JSON          NOT NULL                 COMMENT '[2026-10-01 신규] 허용 충전 금액 목록(예: [10000,30000,50000,100000]). P-01 1단계 검증과 P-04 응답에 씀',
     change_reason             VARCHAR(255)                           COMMENT '[2026-10-01 신규] 이 정책으로 변경한 사유(선택)',
@@ -1359,7 +1359,7 @@ CREATE TABLE notification_outbox (
 -- ############################################################################
 
 -- ----------------------------------------------------------------------------
--- daily_campaign_not_billed_analytics  |  캠페인·사유별 일별 미과금 노출 수(기능 60행 필수 데이터). impression_event(광고서빙 소유).billing_status=NOT_BILLED 집계
+-- daily_campaign_not_billed_analytics  |  캠페인과 사유별 일별 미과금 노출 수. impression_event(광고서빙 소유).billing_status=NOT_BILLED 집계
 --   소프트 참조: campaign_id -> campaign(캠페인)
 -- ----------------------------------------------------------------------------
 CREATE TABLE daily_campaign_not_billed_analytics (
@@ -1375,7 +1375,7 @@ CREATE TABLE daily_campaign_not_billed_analytics (
     CONSTRAINT ck_daily_campaign_not_billed_nonneg CHECK (not_billed_count >= 0),
     CONSTRAINT ck_daily_campaign_not_billed_reason CHECK (not_billed_reason IN ('NOT_BILLED_BUDGET', 'NOT_BILLED_PAUSED', 'NOT_BILLED_SOLD_OUT'))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
-  COMMENT='캠페인·사유별 일별 미과금 노출 수(기능 60행 필수 데이터). impression_event(광고서빙 소유).billing_status=NOT_BILLED 집계';
+  COMMENT='캠페인과 사유별 일별 미과금 노출 수. impression_event(광고서빙 소유).billing_status=NOT_BILLED 집계';
 
 -- ----------------------------------------------------------------------------
 -- daily_invalid_analytics  |  사유코드별 일별 무효 노출 지표. [2026-10-01] member_id 축 신규 추가, surrogate PK로 변경(campaign_id/member_id 조합별 분해 허용). [13차 확정] rate_limit_429_count 제거 — 피드 429 집계는 운영 모니터링(Grafana)으로 대체

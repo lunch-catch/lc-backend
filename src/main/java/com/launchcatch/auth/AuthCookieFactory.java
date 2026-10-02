@@ -8,7 +8,7 @@ import org.springframework.http.ResponseCookie;
 import org.springframework.stereotype.Component;
 
 /*
- * Access 와 Refresh 쿠키를 만들고 지우는 자리를 한 곳에 모은다 (94행).
+ * Access 와 Refresh 쿠키를 만들고 지우는 자리를 한 곳에 모은다.
  *
  * 두 토큰 모두 HttpOnly, SameSite=Strict 쿠키로 내려가고 응답 본문에는 토큰 문자열을 싣지
  * 않는다. 본문에 실으면 그 응답을 읽는 스크립트가 HttpOnly 여부와 무관하게 토큰을 그대로
@@ -70,7 +70,7 @@ public class AuthCookieFactory {
 
     /*
      * persistent 가 false 면 maxAge 를 주지 않아 세션 쿠키가 된다.
-     * 사용자가 자동 로그인을 체크하지 않은 경우가 그렇다. 브라우저를 닫으면 함께 사라진다(64행).
+     * 사용자가 자동 로그인을 체크하지 않은 경우가 그렇다. 브라우저를 닫으면 함께 사라진다.
      */
     public ResponseCookie refreshTokenCookie(String refreshToken, Role role, boolean persistent) {
         ResponseCookie.ResponseCookieBuilder builder =

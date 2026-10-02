@@ -195,7 +195,7 @@ reviews:
     # --- 인증 ----------------------------------------------------------------
     - path: "src/main/java/**/auth/**/*.java"
       instructions: |
-        기능 명세서 94행과 docs/api-spec/README.md 의 인증 절을 기준으로 본다.
+        docs/api-spec/README.md 의 인증 절을 기준으로 본다.
         Access 는 JWT 30분, Refresh 는 Opaque 이고 역할마다 수명이 다르다(관리자 1일, 점주와
         사용자 14일). 두 토큰은 HttpOnly 와 SameSite=Strict 쿠키로만 오간다.
         회전과 재사용 탐지, 로그아웃 시 valid-after 커트라인이 빠지지 않았는지 본다.
@@ -231,8 +231,8 @@ reviews:
       instructions: |
         Flyway 규약은 평평한 단일 디렉터리와 V{번호}__{스네이크케이스}.sql 이다.
         이미 배포된 마이그레이션을 고치면 지적한다. 새 파일을 더한다.
-        시간 컬럼의 기준 시간대는 Asia/Seoul 이고 날짜 함수(CURDATE, NOW)를 쓰지 않는다
-        (비기능 42행). 영업일은 애플리케이션이 계산해 넣는다.
+        시간 컬럼의 기준 시간대는 Asia/Seoul 이고 날짜 함수(CURDATE, NOW)를 쓰지 않는다.
+        영업일은 애플리케이션이 계산해 넣는다.
         도메인 간 연관은 FK 가 아니라 ID 컬럼이다.
 
         qa-compatibility-guideline.md(CMP-) 5장의 스키마 호환을 함께 본다. 컬럼이나 값을 지우면
@@ -244,7 +244,7 @@ reviews:
         build-gate-guideline.md(BLD-)를 적용한다. 커버리지 대상이
         com.launchcatch.*.service.* 로 좁혀져 있는지, check 가
         jacocoTestCoverageVerification 과 coverageDataCheck 를 부르는지 본다.
-        시험 JVM 시간대는 Asia/Seoul 고정이다(비기능 42행). UTC 로 바꾸면 지적한다.
+        시험 JVM 시간대는 Asia/Seoul 고정이다. UTC 로 바꾸면 지적한다.
 
     - path: ".github/workflows/**"
       instructions: |

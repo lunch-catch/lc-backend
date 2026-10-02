@@ -16,7 +16,7 @@ import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
 import org.springframework.web.reactive.function.client.WebClient;
 
 /*
- * 프론트 콜백형 로그인 흐름이라 Spring Security 의 oauth2Login() 필터 체인을 쓰지 않는다(62행).
+ * 프론트 콜백형 로그인 흐름이라 Spring Security 의 oauth2Login() 필터 체인을 쓰지 않는다.
  * 카카오가 프론트 주소로 code 를 붙여 리다이렉트하면 프론트가 그것을 받아 백엔드로 넘긴다.
  * 그 필터를 안 쓰므로 id_token 의 서명과 클레임 검증기를 직접 세워야 한다. 다만 검증 로직을
  * 손으로 짜지는 않고, Spring Security 가 원래 쓰던 NimbusJwtDecoder 를 필터 체인 밖에서
@@ -60,7 +60,7 @@ public class KakaoOidcConfig {
     }
 
     /**
-     * 벤더 계층. 카카오 OIDC 토큰교환과 로그아웃, 연결 해제 호출 전용(62행, 65행, 89행).
+     * 벤더 계층. 카카오 OIDC 토큰교환과 로그아웃, 연결 해제 호출 전용.
      * 공통 타임아웃/풀/필터는 위 defaultExternalApiCustomizer가 이미 적용한 builder를 받아서 시작하므로
      * 여기선 카카오 고유의 것만 얹는다 — 지금은 얹을 게 없어서 build()만 호출한다.
      *

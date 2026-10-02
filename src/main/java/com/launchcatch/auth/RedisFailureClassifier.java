@@ -7,7 +7,7 @@ import org.springframework.dao.QueryTimeoutException;
 /**
  * Redis(또는 DB) 장애 로그에서 타임아웃과 그 외 DataAccessException을 구별하기 위한 라벨.
  *
- * event= 이름은 건드리지 않는다. 알람과 대시보드(비기능 39행, 40행)가 그 이름에 의존하므로
+ * event= 이름은 건드리지 않는다. 알람과 대시보드가 그 이름에 의존하므로
  * 이름이 바뀌면 알람이 조용히 죽는다. 원인만 별도 필드(cause=)로 덧붙이는 용도로만 쓴다.
  *
  * Lettuce/Jedis 등 실제 드라이버 예외 타입에 직접 의존하지 않으려고 원인 체인을 훑으며
