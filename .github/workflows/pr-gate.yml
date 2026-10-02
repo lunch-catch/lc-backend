@@ -11,8 +11,7 @@ name: PR 게이트
 
 on:
   pull_request:
-    # 지금은 main 하나다. develop 을 쓰기로 하면 여기에 더한다
-    branches: [main]
+    branches: [main, develop]
     # synchronize 는 PR 이 열린 뒤의 push, reopened 는 닫힌 동안 움직인 base 를 위한 것이다
     types: [opened, synchronize, reopened]
 
@@ -33,6 +32,22 @@ jobs:
     env:
       SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
     steps:
+      # main 으로 가는 PR 은 develop, release/*, hotfix/* 에서만 받는다 (BLD-2-05).
+      # GitHub 의 브랜치 보호에는 base 를 제한하는 항목이 없고 조직 룰셋은 Team 플랜이
+      # 필요하므로 여기서 막는다. 체크아웃보다 앞에 두어 바로 떨어지게 한다.
+      - name: main 의 병합 출처 확인
+        if: github.base_ref == 'main'
+        env:
+          HEAD_REF: ${{ github.head_ref }}
+        run: |
+          case "$HEAD_REF" in
+            develop|release/*|hotfix/*)
+              echo "출처 $HEAD_REF 는 허용된다." ;;
+            *)
+              echo "::error::main 으로 가는 PR 은 develop, release/*, hotfix/* 에서만 받는다. 지금 출처는 $HEAD_REF 다. 기능 브랜치는 develop 으로 올린다."
+              exit 1 ;;
+          esac
+
       - name: 체크아웃
         uses: actions/checkout@v4
         with:

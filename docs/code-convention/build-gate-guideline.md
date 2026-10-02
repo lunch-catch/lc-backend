@@ -9,6 +9,7 @@
 |--------|-----------|------|------|
 | 커버리지 | Gradle `jacocoTestCoverageVerification` | `com.launchcatch.*.service.*` 메서드 100% | **병합 차단** |
 | 정적 분석 | SonarQube Quality Gate | **신규 Blocker 이슈 0건** | **병합 차단** |
+| 브랜치 전략 | `G-BUILD` 첫 스텝 | `main` 의 PR 출처가 `develop`, `release/*`, `hotfix/*` | **병합 차단** |
 
 ## 1. 커버리지
 
@@ -142,7 +143,27 @@ public void placeOrder(OrderCommand cmd) {
 의도된 엄격함이지만, 팀원이 로컬에서 먼저 돌리지 않으면 CI 실패로 알게 되어 왕복이 생긴다.
 
 
-## 3. 관련 문서
+## 3. 브랜치 전략
+
+기능 브랜치는 `develop` 에서 분기해 `develop` 으로 돌아온다. `main` 은 `develop`, `release/*`, `hotfix/*` 에서만 받는다.
+
+점검 항목
+* `BLD-3-01` `main` 과 `develop` 둘 다 `G-BUILD` 를 필수 상태 검사로 두었는가
+  `develop` 이 무방비면 기능 브랜치가 검사 없이 들어오고, `main` 으로 가는 PR 하나가 누적된 변경을 한꺼번에 받는다.
+  `BLD-2-03` 이 `main` 에 요구하는 것과 같은 설정을 `develop` 에도 둔다.
+* `BLD-3-02` `main` 으로 가는 PR 의 출처를 `develop`, `release/*`, `hotfix/*` 로 제한하는가
+  GitHub 의 브랜치 보호에는 base 를 제한하는 항목이 없고, 조직 룰셋은 Team 플랜부터 쓸 수 있다.
+  그래서 판정을 `G-BUILD` 의 첫 스텝에 둔다. `github.base_ref` 가 `main` 일 때만 돌고 `github.head_ref` 를 본다.
+  체크아웃 앞에 두어 출처가 틀리면 빌드를 시작하지 않고 떨어진다.
+* `BLD-3-03` PR 게이트 트리거의 `branches` 에 `main` 과 `develop` 이 모두 있는가
+  빠진 브랜치로 가는 PR 은 `G-BUILD` 가 돌지 않는다. 필수 상태 검사는 등록되어 있으므로 검사가 영원히 `pending` 으로 남아 병합이 막힌다.
+* `BLD-3-04` CodeRabbit 의 `reviews.auto_review.base_branches` 에 `develop` 이 있는가
+  이 목록은 기본 브랜치 외에 리뷰할 base 를 적는 곳이다. 기본 브랜치(`main`)는 항상 리뷰되므로 적지 않는다.
+  `develop` 을 빼면 기능 브랜치가 리뷰 없이 `develop` 에 들어간다.
+  그렇게 누적된 변경이 `main` 으로 가는 PR 하나에 몰리면 지적 수가 상한에 닿아 뒤쪽이 잘려 나간다.
+
+## 4. 관련 문서
+
 
 * 설계 근거: [build-gate-rationale.md](./build-gate-rationale.md)
 * 패키지 구조: [런치캐치_백엔드_설계.md](../architecture/런치캐치_백엔드_설계.md) 1.3절

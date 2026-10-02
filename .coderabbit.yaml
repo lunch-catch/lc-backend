@@ -60,9 +60,12 @@ reviews:
     enabled: true
     # 초안에는 돌지 않는다. 작성 중인 PR 에 지적이 쌓이면 읽지 않게 된다
     drafts: false
-    # 지금 기본 브랜치는 main 하나다. develop 을 쓰기로 하면 여기에 더한다
+    # 이 목록은 "기본 브랜치 외에" 리뷰할 base 를 적는 곳이다. 기본 브랜치(main)는
+    # 목록과 무관하게 항상 리뷰되므로 여기에 적지 않는다.
+    # 적지 않은 base 의 PR 은 자동 리뷰에서 빠진다. develop 을 빼면 기능 브랜치가
+    # 리뷰 없이 develop 에 들어가고, main 으로 가는 PR 하나에만 리뷰가 몰린다.
     base_branches:
-      - main
+      - develop
     auto_incremental_review: true
 
   path_filters:
@@ -583,6 +586,9 @@ reviews:
         LLM 판정이나 리뷰 상태를 차단 조건으로 만들면 지적한다.
         액션은 버전을 고정해 쓴다.
 
+        트리거의 branches 에서 main 이나 develop 이 빠지면 지적한다. 필수 상태 검사는
+        등록되어 있으므로 잡이 돌지 않으면 검사가 pending 으로 남아 병합이 영원히 막힌다.
+
         이 경로에서 쓸 항목이다. 지적할 때 근거를 아래 모양으로 붙인다.
         문서별로 묶고 해당 문서의 항목만 가운데점 없는 목록으로 나열한다.
         문서 이름은 링크로 걸고 전체 경로를 적지 않는다. 번호와 문장을 고쳐 쓰지 않는다.
@@ -593,6 +599,9 @@ reviews:
         - `BLD-2-02` 정적 분석 차단 조건이 신규 `Blocker` 이슈 0건인가
         - `BLD-2-03` 브랜치 보호의 필수 상태 검사에 `G-BUILD`가 등록되어 있는가
         - `BLD-2-04` `SonarCloud Code Analysis` 검사를 필수 상태 검사로 등록하지 않았는가
+        - `BLD-3-01` `main` 과 `develop` 둘 다 `G-BUILD` 를 필수 상태 검사로 두었는가
+        - `BLD-3-02` `main` 으로 가는 PR 의 출처를 `develop`, `release/*`, `hotfix/*` 로 제한하는가
+        - `BLD-3-03` PR 게이트 트리거의 `branches` 에 `main` 과 `develop` 이 모두 있는가
 
   tools:
     # 한국어 산문에 영어 기준 지적이 쏟아진다. 문서 규칙은 CLAUDE.md 가 소유한다
