@@ -72,7 +72,7 @@
 | N+1, 인덱스, 쿼리 성능 | 비기능 12~16행의 응답 시간 목표 |
 | 인가와 소유권 검증 | 기능 명세서 94행, 의존 규칙 5 |
 | 타임아웃, 재시도, 서킷 브레이커 | `application.yml` 의 resilience4j 설정과 그 주석 |
-| 엔티티 뼈대와 시각 컬럼, 식별자 전략 | `global.entity` 의 베이스 엔티티 둘, `docs/api-spec/README.md` 의 식별자 절 |
+| 엔티티 뼈대와 시각 컬럼, 식별자 전략 | `global.entity` 의 `BaseTimeEntity`, `docs/api-spec/README.md` 의 식별자 절 |
 
 경계 기준은 **품질 속성은 "얼마나 잘 하는가", 이 디렉터리는 "어떻게 쓰는가"(코드 관용과 패턴)**다.
 
@@ -173,7 +173,7 @@ ArchUnit 아키텍처 테스트로 "한 도메인이 다른 도메인의 `entity
   (참고: 런치캐치_백엔드_설계.md 2.4절)
 
 [MINOR] AuditLog.java:12
-  수정되지 않는 이력 테이블인데 BaseMutableTimeEntity 를 상속하고 있습니다.
-  BaseImmutableTimeEntity 가 적합해 보입니다.
-  (참고: global.entity 의 베이스 엔티티 둘)
+  시각 컬럼을 직접 선언하고 있습니다.
+  BaseTimeEntity 를 상속하면 created_at 과 updated_at 을 함께 얻습니다.
+  (참고: global.entity 의 BaseTimeEntity)
 ```
