@@ -16,9 +16,7 @@
 | 단위 테스트 (Unit Testing 기반) | [unit-testing-guideline.md](./unit-testing-guideline.md) | [unit-testing-rationale.md](./unit-testing-rationale.md) |
 | API 설계 (Google AIP 기반) | [api-design-guideline.md](./api-design-guideline.md) | [api-design-rationale.md](./api-design-rationale.md) |
 | JPA 사용 (RDB 관점) | [jpa-rdb-guideline.md](./jpa-rdb-guideline.md) | [jpa-rdb-rationale.md](./jpa-rdb-rationale.md) |
-| 베이스 엔티티 (PK, 시각 컬럼) | [base-entity-guideline.md](./base-entity-guideline.md) | [base-entity-rationale.md](./base-entity-rationale.md) |
 | 엔티티 생성 패턴 | [entity-creation-guideline.md](./entity-creation-guideline.md) | [entity-creation-rationale.md](./entity-creation-rationale.md) |
-| 식별자 전략 (내부, 외부, 비즈니스) | [identifier-strategy-guideline.md](./identifier-strategy-guideline.md) | [identifier-strategy-rationale.md](./identifier-strategy-rationale.md) |
 | 빌드 게이트 (커버리지, 정적 분석) | [build-gate-guideline.md](./build-gate-guideline.md) | [build-gate-rationale.md](./build-gate-rationale.md) |
 | 응답과 예외 흐름 | [response-exception-flow.md](./response-exception-flow.md) | - |
 | 도메인 패키지 경계와 의존 방향 | [런치캐치_백엔드_구조와_의존_규칙.md](../architecture/런치캐치_백엔드_구조와_의존_규칙.md) | - |
@@ -43,16 +41,13 @@
 같은 코드 한 줄에 여러 가이드가 걸릴 때, **더 구체적이고 좁은 범위를 다루는 가이드가 그 사안을 소유한다.**
 봇은 소유 가이드에서만 지적하고, 더 일반적인 가이드의 동일 항목은 발화하지 않는다.
 
-엔티티 관련 가이드가 셋이라 겹침이 가장 많다. 축을 나눠 소유를 정한다.
+엔티티 관련 가이드가 둘이라 겹침이 있다. 축을 나눠 소유를 정한다.
 
 | 사안 | 소유 가이드 | 지적 보류 |
 |------|-------------|-----------|
 | 엔티티 인스턴스 생성 (정적 팩터리, 검증 위치, 생성용 Lombok) | entity-creation-guideline.md | effective-java-guideline.md, jpa-rdb-guideline.md |
-| 엔티티 뼈대 (베이스 상속, PK 타입, Auditing, 시각 컬럼) | base-entity-guideline.md | jpa-rdb-guideline.md |
-| 외부 노출 식별자가 필요한가, UUID 버전, 난수원, 컬럼 스펙 | identifier-strategy-guideline.md | base-entity-guideline.md |
-| 어느 베이스를 상속하는가 | base-entity-guideline.md | identifier-strategy-guideline.md |
 | 연관관계 매핑, cascade, 자동 매핑, DTO 프로젝션 | jpa-rdb-guideline.md | - |
-| 엔티티 속성값의 저장 방식 (enum 대 코드 테이블) | entity-creation-guideline.md | base-entity-guideline.md |
+| 엔티티 속성값의 저장 방식 (enum 대 코드 테이블) | entity-creation-guideline.md | - |
 | 패키지 배치, 도메인 간 참조, 접근 제어자, 순환 의존 | 설계 문서 1장과 2장 | - |
 | 오류 코드와 예외 클래스 배치, 응답 봉투 | response-exception-flow.md | effective-java-guideline.md |
 | 자바 관용 (불변, 예외 흐름, 컬렉션 반환, 상속보다 조합) | effective-java-guideline.md | - |
@@ -77,9 +72,9 @@
 
 해석 원칙은 다음과 같다.
 
-- **같은 사안이라도 관점이 다르면 중복이 아니다.** 예를 들어 엔티티 클래스 하나에서 base-entity는 상속 대상을, entity-creation은 생성 경로를 보므로 둘 다 발화할 수 있다. 표는 "같은 문제를 같은 관점으로 두 번 지적하는 것"만 막는다.
+- **같은 사안이라도 관점이 다르면 중복이 아니다.** 예를 들어 엔티티 클래스 하나에서 jpa-rdb는 연관 매핑을, entity-creation은 생성 경로를 보므로 둘 다 발화할 수 있다. 표는 "같은 문제를 같은 관점으로 두 번 지적하는 것"만 막는다.
 - 우선순위가 불분명하면 더 좁은 범위를 다루는 가이드를 소유로 본다.
-- `id` 관련 지적은 대상이 갈린다. 내부 PK의 타입과 생성 전략은 base-entity, 외부 노출 식별자는 identifier-strategy, `id`를 생성 파라미터로 받는지는 entity-creation이 소유한다.
+- **엔티티 뼈대와 식별자 전략은 소유 문서가 없다.** 시각 컬럼은 `global` 의 베이스 엔티티 둘을 상속해 얻고, 식별자 규약은 `docs/api/README.md` 의 식별자 절이 정한다. 자동 리뷰 봇은 이 사안으로 지적하지 않는다.
 
 ## 가이드 적용 대상 판단
 
@@ -104,9 +99,7 @@ effective-java-guideline.md와 설계 문서의 경계 규칙은 변경 위치�
 | 가이드 | 적용 시그널 |
 |--------|-------------|
 | jpa-rdb-guideline.md | `@Entity`, `@ManyToOne`, `@OneToMany`, `@OneToOne`, `cascade`, `fetch`, `@Query`, `EntityManager`, `JdbcTemplate`, `@Transactional`, SQL 문자열, `.sql` 파일 |
-| base-entity-guideline.md | `@MappedSuperclass`, `@Id`, `@GeneratedValue`, `@CreatedDate`, `@LastModifiedDate`, `@EnableJpaAuditing`, 엔티티 클래스 선언 |
 | entity-creation-guideline.md | `@Entity` 클래스의 생성자와 정적 팩터리, `@Builder`, `@Setter`, `@Data`, `@NoArgsConstructor`, `@Enumerated` |
-| identifier-strategy-guideline.md | `UUID`, `BINARY(16)`, `SecureRandom`, `@UuidGenerator`, `serveId`, 응답 DTO의 식별자 필드 |
 | 설계 문서 1장과 2장 | 패키지 이동, import 문 변경, 접근 제어자 변경, `contract` 패키지의 인터페이스와 record, `~Event` 클래스, ArchUnit 테스트 |
 | response-exception-flow.md | `ErrorCode`, `BusinessException`, `ResponseEnvelope`, `@RestControllerAdvice`, 새 오류 코드 enum |
 | unit-testing-guideline.md | `@Test`, JUnit, Mockito, AssertJ, `@DataJpaTest`, `@SpringBootTest`, 테스트 클래스(`*Test`) |
@@ -120,8 +113,8 @@ effective-java-guideline.md와 설계 문서의 경계 규칙은 변경 위치�
 | 파일명 패턴 | 적용 문서 |
 |-------------|-----------|
 | `src/main/**` 의 모든 변경 | effective-java-guideline.md, 설계 문서 1장과 2장 |
-| `**/*Entity.java`, `**/entity/**` | base-entity-guideline.md, entity-creation-guideline.md, jpa-rdb-guideline.md |
-| `**/*Repository.java`, `**/*.sql`, `db/migration/**` | jpa-rdb-guideline.md, identifier-strategy-guideline.md |
+| `**/*Entity.java`, `**/entity/**` | entity-creation-guideline.md, jpa-rdb-guideline.md |
+| `**/*Repository.java`, `**/*.sql`, `db/migration/**` | jpa-rdb-guideline.md |
 | `**/*Controller.java`, `**/dto/**`, OpenAPI 명세 | api-design-guideline.md |
 | `**/contract/**`, `**/*Event.java` | 설계 문서 1.3절과 2.4절 |
 | `**/*Test.java`, `src/test/**`, `src/integrationTest/**` | unit-testing-guideline.md |
@@ -168,13 +161,8 @@ ArchUnit 아키텍처 테스트로 "한 도메인이 다른 도메인의 `entity
   adserving.contract 의 WishlistQueryService 를 통해 읽어 주세요.
   (참고: 런치캐치_백엔드_구조와_의존_규칙.md 2.4절)
 
-[MAJOR] CampaignResponse.java:7
-  serveId 를 Long 으로 담고 있습니다.
-  serveId 는 UUIDv7 이라 응답에는 36자 문자열로 내보냅니다.
-  (참고: identifier-strategy-guideline.md 3절, docs/api/README.md 식별자 절)
-
 [MINOR] AuditLog.java:12
   수정되지 않는 이력 테이블인데 BaseMutableTimeEntity 를 상속하고 있습니다.
   BaseImmutableTimeEntity 가 적합해 보입니다.
-  (참고: base-entity-guideline.md 1절)
+  (참고: global.entity 의 베이스 엔티티 둘)
 ```

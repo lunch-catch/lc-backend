@@ -61,8 +61,8 @@ public int hashCode() {
 **주의(JPA 엔티티는 예외)**: 위 패턴은 일반 자바 객체 기준이다. JPA `@Entity`는 이 패턴을 그대로 쓰면
 안 된다. id가 영속화 전 `null`이었다가 저장 시점에 PK로 바뀌면서 저장 전/후 hashCode가 달라져
 `Set`/`Map`에서 버킷을 잃어버리고, Hibernate 프록시는 런타임 클래스가 실제 엔티티 클래스와 달라
-`instanceof`/`getClass()` 비교가 오판할 수 있다(자세한 근거는 `design/base-entity-decisions.md`
-참고).
+`instanceof`/`getClass()` 비교가 오판할 수 있다. JPA 엔티티의 `equals` 와 `hashCode` 는
+[entity-creation-guideline.md](./entity-creation-guideline.md) G3 이 소유한다.
 
 ## 3. 클래스와 인터페이스
 

@@ -272,7 +272,7 @@ private Order(Long memberId, int totalPrice, String memo, Integer quantity) {
 
 **해시 컬렉션에 넣을 때만 필요하다.** 이 항목들은 그럴 때만 판정한다.
 
-이 프로젝트는 FK를 `Long`으로 들고 JPA 연관을 매핑하지 않으므로(`IDS-6-03`) `Set` 연관이 생기지 않는다.
+이 프로젝트는 도메인 간 연관을 ID로만 갖고 JPA 연관을 매핑하지 않으므로(설계 문서 2.1절 규칙 1) `Set` 연관이 생기지 않는다.
 엔티티를 `HashSet`이나 `HashMap`에 담는 코드도 없다. **그래서 대부분의 엔티티에 `equals`와 `hashCode`가 없는 것이 정상이다.**
 
 담는 코드가 생기면 그때 아래대로 작성한다.
@@ -352,7 +352,7 @@ public final class OrderFixture {
 * `EC-4-03` 사람에게 보일 문구를 상수 이름이 아니라 `displayName` 같은 필드로 분리했는가
 * `EC-4-04` 저장 컬럼 `length`를 넉넉히(20~30) 두었는가
 * `EC-4-05` 테이블로 승격한 경우 정수 대리키 + `code` UNIQUE 방식인가
-  베이스 엔티티 규칙은 [base-entity-guideline.md](./base-entity-guideline.md)를 따른다.
+  시각 컬럼은 `global.entity` 의 `BaseImmutableTimeEntity` 나 `BaseMutableTimeEntity` 를 상속해 얻는다.
 
 판단 기준은 정책의 유무가 아니라 **그 정책을 누가 관리하는가**다.
 

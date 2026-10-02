@@ -104,8 +104,8 @@ map.get(new Point(1, 2));   // null! 논리적으로 같지만 hashCode 가 달�
 
 **JPA 엔티티는 위 패턴이 그대로 안 맞는다.** id 기반 hashCode는 영속화 전(`null`) 후(PK) 값이
 바뀌어 저장 전에 `Set`/`Map`에 넣은 엔티티가 저장 후 버킷을 잃어버린다. `instanceof`/`getClass()`
-타입 비교도 Hibernate 프록시의 런타임 클래스가 실제 엔티티 클래스와 달라 오판할 수 있다(자세한
-근거는 `design/base-entity-decisions.md` 참고).
+타입 비교도 Hibernate 프록시의 런타임 클래스가 실제 엔티티 클래스와 달라 오판할 수 있다.
+그래서 엔티티의 `equals` 와 `hashCode` 는 entity-creation-guideline.md G3 의 규칙을 따른다.
 
 ### 왜 toString을 재정의하는가 (아이템 12)
 기본 toString은 `Order@1b6d3586`처럼 클래스명과 해시값만 보여 줘 디버깅과 로그에 쓸모가 없다.
