@@ -150,7 +150,7 @@ reviews:
         다른 도메인 엔티티를 객체로 참조하지 않고 ID 필드로 두었는지(AGG-1-01),
         @ManyToOne 과 @OneToOne 에 fetch = LAZY 를 명시했는지(AGG-4-01),
         cascade 가 애그리거트 경계를 넘지 않는지(AGG-4-04) 본다.
-        시각 컬럼은 global.entity 의 베이스 엔티티 둘을 상속해 얻는다.
+        시각 컬럼은 global.entity 의 BaseTimeEntity 를 상속해 얻는다. 직접 선언하면 지적한다.
 
     - path: "src/main/java/**/repository/**/*.java"
       instructions: |

@@ -353,7 +353,7 @@ public final class OrderFixture {
 * `EC-4-03` 사람에게 보일 문구를 상수 이름이 아니라 `displayName` 같은 필드로 분리했는가
 * `EC-4-04` 저장 컬럼 `length`를 넉넉히(20~30) 두었는가
 * `EC-4-05` 테이블로 승격한 경우 정수 대리키 + `code` UNIQUE 방식인가
-  시각 컬럼은 `global.entity` 의 `BaseImmutableTimeEntity` 나 `BaseMutableTimeEntity` 를 상속해 얻는다.
+  시각 컬럼은 `global.entity` 의 `BaseTimeEntity` 를 상속해 얻는다.
 
 판단 기준은 정책의 유무가 아니라 **그 정책을 누가 관리하는가**다.
 
