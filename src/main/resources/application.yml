@@ -36,8 +36,6 @@ spring:
       # 쿼리는 계속 돈다. 클라이언트가 기다리기를 그만두는 것뿐이다.
       #
       # Hikari 는 connection-timeout 과 validation-timeout 에 하한 250ms 를 강제한다. 그보다
-      # 작게 적으면 경고 로그와 함께 250 으로 덮어써서 적힌 값과 도는 값이 갈린다.
-      connection-timeout: 3000
       validation-timeout: 1000
       keepalive-time: 120000
       # MySQL wait_timeout 보다 짧아야 죽은 커넥션을 잡는다
@@ -109,12 +107,10 @@ spring:
             user-name-attribute: sub
 
   lifecycle:
-    timeout-per-shutdown-phase: 30s
 
 server:
   port: 8080
   # 처리 중인 요청을 마치고 내려간다. 대상 그룹 해제 지연과 짝을 이룬다
-  shutdown: graceful
   tomcat:
     threads:
       max: 200
