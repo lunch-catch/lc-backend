@@ -1,0 +1,44 @@
+# 값은 .env 로 덮는다. .env 가 없으면 아래 기본값으로 뜬다.
+# .env 는 추적하지 않으므로 각자 다른 포트를 써도 남의 설정을 건드리지 않는다. .env.example 을 복사해 쓴다
+services:
+  mysql:
+    # 통합 테스트의 Testcontainers 와 같은 태그를 쓴다. 로컬과 CI 가 어긋나면 검증이 의미를 잃는다
+    image: mysql:8.4
+    container_name: ${MYSQL_CONTAINER_NAME:-launchcatch-mysql}
+    ports:
+      # 왼쪽만 바꾼다. 컨테이너 안은 3306 으로 고정이고 호스트 포트만 사람마다 갈린다
+      - "${MYSQL_PORT:-3306}:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-launchcatch}
+      MYSQL_USER: ${MYSQL_USER:-launchcatch}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-launchcatch}
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_0900_ai_ci
+      # 비기능 42행. 애플리케이션과 드라이버와 DB 세션의 시간대를 Asia/Seoul 로 통일한다
+      - --default-time-zone=+09:00
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-p${MYSQL_ROOT_PASSWORD:-root}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # Refresh Token 회전(Lua 스크립트)과 Access Token valid-after 커트라인(94행),
+  # 선착순 발급 순번(83행), serve 기록(67행), 당일 소진 카운터(98행)가 이 캐시를 쓴다.
+  # 운영이 ElastiCache Valkey 9.0 이라 로컬도 9.0-alpine 으로 고정한다.
+  # 마이너 번호까지 적는다. 9-alpine 으로 적으면 그 안의 최신 마이너가 뜬다
+  valkey:
+    image: valkey/valkey:9.0-alpine
+    container_name: ${VALKEY_CONTAINER_NAME:-launchcatch-valkey}
+    ports:
+      - "${VALKEY_PORT:-6379}:6379"
+    labels:
+      # Spring 이 이미지 이름으로 서비스를 알아보는데 valkey 는 목록에 없다.
+      # 이 레이블이 있어야 캐시 클라이언트를 넣었을 때 접속 정보가 자동으로 주입된다
+      org.springframework.boot.service-connection: redis
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20

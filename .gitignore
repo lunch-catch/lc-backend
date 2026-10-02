@@ -1,0 +1,53 @@
+### Gradle ###
+.gradle/
+build/
+!gradle/wrapper/gradle-wrapper.jar
+!**/src/main/**/build/
+!**/src/test/**/build/
+
+### QueryDSL ###
+# Q클래스는 애노테이션 프로세서가 만든다. 커밋하면 소스와 어긋난다
+src/main/generated/
+
+### IDE ###
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+.settings/
+.project
+.classpath
+bin/
+
+### OS ###
+.DS_Store
+
+### Editor ###
+*.swp
+*.swo
+*~
+
+### Log ###
+*.log
+
+### 사람마다 다른 값 ###
+# .env.example 은 올린다. 실제 값이 든 .env 는 올리지 않는다
+.env
+.env.*
+!.env.example
+# application-local.yml.example 은 올린다. 실제 값이 든 application-local.yml 은 올리지 않는다
+src/main/resources/application-local.yml
+application-local.yaml
+application-local.yml
+application-local.properties
+
+### 비밀 ###
+*.pem
+*.key
+*.p12
+*.jks
+*.keystore
+
+
+.gradle-user/
