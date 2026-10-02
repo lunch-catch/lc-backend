@@ -474,7 +474,7 @@ reviews:
           ([CMP-5-02] lc-backend/docs/software-quality/qa-compatibility-guideline.md)
 
     # --- 실행 설정. 여기서만 [인프라] 항목을 쓴다 ---------------------------------
-    - path: "src/main/resources/{application.yml,application-*.yml,logback-spring.xml}"
+    - path: "src/main/resources/*.yml"
       instructions: |
         품질 속성의 [인프라] 항목 여덟을 쓴다. 파일 하나로 판정되는 것만 열었다.
         REL-2-03 DB 커넥션 획득과 쿼리 실행에 타임아웃이 있는지,
@@ -511,6 +511,50 @@ reviews:
           ([OBS-3-01] lc-backend/docs/software-quality/qa-observability-guideline.md)
         RED 또는 USE 관점의 기본 지표를 노출하는가
           ([OBS-4-01] lc-backend/docs/software-quality/qa-observability-guideline.md)
+
+        이 경로는 삭제도 본다. diff 에 `-` 줄만 있어도 지운 설정이 위 항목을 깨뜨리는지 확인한다.
+        타임아웃, 종료 처리, 크기 상한을 지우는 변경은 그 자체로 지적 대상이다.
+
+    - path: "src/main/resources/logback-spring.xml"
+      instructions: |
+        품질 속성의 [인프라] 항목 여덟을 쓴다. 파일 하나로 판정되는 것만 열었다.
+        REL-2-03 DB 커넥션 획득과 쿼리 실행에 타임아웃이 있는지,
+        REL-2-09 실패율 임계치로 호출을 끊는 설정이 있는지,
+        REL-5-02 readiness 와 liveness 가 분리되어 있는지,
+        REL-5-03 종료 시 처리 중인 요청을 마치는 설정이 있는지,
+        REL-5-04 liveness 가 외부 의존성 상태에 좌우되지 않는지,
+        SEC-3-05 요청 본문 크기 상한이 있는지,
+        OBS-3-01 운영 로그가 구조화된 형식으로 남는지,
+        OBS-4-01 기본 지표가 노출되는지 본다.
+
+        값의 적정성은 보지 않는다. 설정이 있는지 없는지만 본다. 임계치는 대부분 등급 C 이고
+        실측으로 확정할 값이라 주석에 그 뜻이 적혀 있다.
+
+        REL-2-02 와 REL-2-08 은 열지 않았다. 상위 호출자의 타임아웃 예산을 알아야 판정되므로
+        이 파일 하나로는 답할 수 없다.
+
+        시간대 관련 설정은 Asia/Seoul 고정이다. UTC 로 바꾸면 지적한다.
+
+        이 경로의 지적은 아래 문자열을 그대로 인용한다. 번호와 경로를 고쳐 쓰지 않는다.
+        DB 커넥션 획득과 쿼리 실행에도 타임아웃이 있는가
+          ([REL-2-03] lc-backend/docs/software-quality/qa-reliability-guideline.md)
+        실패율이 임계치를 넘으면 호출을 끊고 빠르게 실패하는가
+          ([REL-2-09] lc-backend/docs/software-quality/qa-reliability-guideline.md)
+        기동 완료 전에 트래픽을 받지 않는가 (readiness와 liveness 분리)
+          ([REL-5-02] lc-backend/docs/software-quality/qa-reliability-guideline.md)
+        종료 시 처리 중인 요청을 마치고 내려가는가 (graceful shutdown)
+          ([REL-5-03] lc-backend/docs/software-quality/qa-reliability-guideline.md)
+        liveness가 외부 의존성 상태에 좌우되지 않는가
+          ([REL-5-04] lc-backend/docs/software-quality/qa-reliability-guideline.md)
+        요청 본문 크기 상한이 설정되어 있는가
+          ([SEC-3-05] lc-backend/docs/software-quality/qa-security-guideline.md)
+        구조화된 형식(JSON)으로 남는가
+          ([OBS-3-01] lc-backend/docs/software-quality/qa-observability-guideline.md)
+        RED 또는 USE 관점의 기본 지표를 노출하는가
+          ([OBS-4-01] lc-backend/docs/software-quality/qa-observability-guideline.md)
+
+        이 경로는 삭제도 본다. diff 에 `-` 줄만 있어도 지운 설정이 위 항목을 깨뜨리는지 확인한다.
+        타임아웃, 종료 처리, 크기 상한을 지우는 변경은 그 자체로 지적 대상이다.
 
     - path: "build.gradle"
       instructions: |
