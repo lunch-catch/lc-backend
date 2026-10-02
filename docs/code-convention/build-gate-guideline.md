@@ -40,6 +40,9 @@
 * `BLD-2-03` 브랜치 보호의 필수 상태 검사에 `G-BUILD`가 등록되어 있는가
   커버리지와 정적 분석은 한 잡(`G-BUILD`) 안에서 함께 돌므로 등록되는 검사 이름은 하나다. 이것이 두 기준을 강제하는 유일한 수단이다.
   팀은 `G-PR`(LLM 판정)을 일부러 등록하지 않는다. 팀이 재현율이 측정되지 않은 판정으로 병합을 막으면 오탐이 쌓여 우회 문화가 생긴다.
+* `BLD-2-04` `SonarCloud Code Analysis` 검사를 필수 상태 검사로 등록하지 않았는가
+  SonarCloud GitHub 앱이 올리는 이 검사는 내장 `Sonar way` 게이트로 판정하므로 신규 코드 커버리지 80% 조건을 포함한다.
+  `BLD-2-01` 이 커버리지 판정 주체를 Gradle 하나로 둔 결정과 정면으로 어긋난다. 등록하면 그 결정이 무효가 된다.
 
 ### 무료 플랜에서 차단하는 방법
 
@@ -75,6 +78,35 @@ jacocoTestCoverageVerification {
 
 check.dependsOn integrationTest, jacocoTestCoverageVerification
 ```
+
+#### `SonarCloud Code Analysis` 검사가 빨간 것은 정상이다
+
+워크플로가 게이트를 기다리지 않아도 **SonarCloud GitHub 앱은 자기 검사를 따로 올린다.**
+그 판정은 내장 `Sonar way` 로 하므로 신규 코드 커버리지 80% 를 못 채우면 빨강이 된다.
+
+```
+new_coverage                    ERROR   실제 0.0%   기준 80%
+new_reliability_rating          OK
+new_security_rating             OK
+new_maintainability_rating      OK
+new_duplicated_lines_density    OK
+new_security_hotspots_reviewed  OK
+```
+
+커버리지 게이트가 `com.launchcatch.*.service.*` 만 보도록 좁혀져 있으므로, 문서나 설정,
+베이스 엔티티처럼 **그 범위 밖을 고치는 PR 은 거의 항상 이 검사가 빨강이다.** 설계대로다.
+
+**고치려 들지 않는다.** 손댈 자리가 셋 있는데 둘은 틀린 선택이다.
+
+| 하고 싶어지는 것 | 왜 안 되는가 |
+|---|---|
+| 필수 상태 검사에 등록해 빨강을 처리한다 | 커버리지 판정이 둘이 된다. `BLD-2-04` 가 막는다 |
+| 커버리지 게이트 범위를 전체로 넓혀 80% 를 채운다 | `BLD-1-01` 이 좁힌 이유가 사라진다. 엔티티와 설정에 의미 없는 테스트가 붙는다 |
+| Team 플랜의 커스텀 게이트에서 커버리지 조건을 뺀다 | 맞는 방향이다. 유료라 지금은 선택지가 아니다 |
+
+**그래서 이 검사는 읽을 거리이고 판정이 아니다.** 판정은 `G-BUILD` 하나다.
+빨간 검사가 상주하는 비용은 "빨강을 무시하는 습관" 인데, 필수 검사가 하나뿐이라 그 하나가
+빨강인 것과 구분된다. 새로 온 사람이 헷갈리지 않도록 이 절을 남긴다.
 
 ### 2.1 100% 기준과 "커버리지를 목표로 삼지 말라"는 원칙의 관계
 
