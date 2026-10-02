@@ -1,0 +1,99 @@
+# PR 게이트. 병합을 막는 유일한 코드 게이트다 (BLD-1-05, BLD-2-02).
+#
+# 판정은 전부 결정론적이다. 커버리지와 정적 분석만 보고, 사람 판단이 필요한 것은 리뷰에 남긴다.
+# 규약은 docs/code-architecture/build-gate-guideline.md 에 있다.
+
+name: PR 게이트
+
+on:
+  pull_request:
+    # 지금은 main 하나다. develop 을 쓰기로 하면 여기에 더한다
+    branches: [main]
+    # synchronize 는 PR 이 열린 뒤의 push, reopened 는 닫힌 동안 움직인 base 를 위한 것이다
+    types: [opened, synchronize, reopened]
+
+# 같은 PR 에 push 가 이어지면 앞선 실행을 취소한다
+concurrency:
+  group: pr-gate-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  build:
+    name: G-BUILD
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+    steps:
+      - name: 체크아웃
+        uses: actions/checkout@v4
+        with:
+          # SonarQube 가 신규 코드를 가리려고 blame 을 읽으므로 전체 이력이 필요하다
+          fetch-depth: 0
+
+      - name: JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      # check 는 test, integrationTest, jacocoTestCoverageVerification, coverageDataCheck 를 모두 부른다.
+      # 커버리지 기준은 com.launchcatch.*.service.* 의 메서드 100% 다.
+      # 통합 테스트가 Testcontainers 로 MySQL 8.4 와 Valkey 9 를 띄우므로 러너의 도커를 쓴다.
+      - name: 테스트와 커버리지
+        run: ./gradlew check --no-daemon
+
+      # SONAR_TOKEN 이 없으면 건너뛴다. 토큰을 넣기 전에도 커버리지 게이트는 돌아야 한다
+      - name: 정적 분석
+        if: env.SONAR_TOKEN != ''
+        run: ./gradlew sonar --no-daemon
+
+      # sonar 태스크는 분석 결과를 올리기만 하고 성공으로 끝난다. 차단은 여기서 한다.
+      #
+      # sonar.qualitygate.wait 을 쓰지 않는 이유는 무료 플랜이 내장 게이트 Sonar way 만
+      # 쓸 수 있어서다. 거기에는 "신규 코드 커버리지 80% 이상" 이 들어 있어, Gradle 의
+      # 서비스 계층 100% 기준과 커버리지 판정 주체가 둘이 된다 (BLD-2-01).
+      # 커스텀 게이트로 그 조건을 빼려면 Team 플랜이 필요하다.
+      # 이슈 검색 API 는 무료 플랜에서도 되므로 신규 Blocker 만 직접 센다 (BLD-2-02).
+      - name: 신규 Blocker 0건 확인
+        if: env.SONAR_TOKEN != ''
+        env:
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          KEY=lunch-catch_lc-backend
+          Q="componentKeys=$KEY&severities=BLOCKER&resolved=false&ps=100&pullRequest=$PR"
+          RES=$(curl -sS -u "$SONAR_TOKEN:" "https://sonarcloud.io/api/issues/search?$Q")
+          N=$(printf '%s' "$RES" | jq -r '.total // "err"')
+          echo "신규 Blocker ${N}건"
+          if [ "$N" = "err" ]; then
+            echo "::error::이슈 조회에 실패했다. 응답: $(printf '%s' "$RES" | head -c 300)"
+            exit 1
+          fi
+          if [ "$N" != "0" ]; then
+            printf '%s' "$RES" | jq -r '.issues[] | "::error file=\(.component | sub("^[^:]*:"; "")),line=\(.line // 1)::\(.message)"'
+            echo "신규 Blocker 가 남아 있어 병합을 막는다."
+            exit 1
+          fi
+
+      - name: 정적 분석을 건너뛴 이유
+        if: env.SONAR_TOKEN == ''
+        run: |
+          echo "::warning::SONAR_TOKEN 이 없어 정적 분석을 건너뛰었다. 저장소 Secrets 에 등록해야 한다."
+
+      - name: 테스트 리포트
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports
+          path: |
+            build/reports/tests/
+            build/reports/jacoco/
+          retention-days: 7
+          if-no-files-found: ignore
