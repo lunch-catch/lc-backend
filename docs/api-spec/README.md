@@ -2,8 +2,9 @@
 
 요구사항 명세서(`V48_런치캐치_요구사항명세서.xlsx`) 기능 100행을 리소스로 옮긴 것이다.
 설계 규칙과 패키지 배치는 [런치캐치_백엔드_설계.md](../architecture/런치캐치_백엔드_설계.md)
-을 따른다. 저장 구조는 아직 저장소에 없다. 드라이브 erd 폴더의 `전체.sql` 이 기준이며,
-Flyway `V1__init_schema.sql` 로 들어오면 그 경로로 바꾼다.
+을 따른다. 저장 구조는 Flyway 마이그레이션
+[V1__init_schema.sql](../../src/main/resources/db/migration/V1__init_schema.sql) 이다.
+드라이브 erd 폴더의 SQL 12개를 합친 것이고 테이블은 61개다.
 
 ## 문서
 
@@ -185,7 +186,7 @@ GET /v1/stores?pageSize=20&pageToken=eyJ...&sort=DISTANCE
 
 | 식별자 | 형식 | 근거 |
 |---|---|---|
-| 대부분의 ID (`storeId`, `campaignId`, `memberId` 등) | 숫자 | `전체.sql` 공통 규칙 5 |
+| 대부분의 ID (`storeId`, `campaignId`, `memberId` 등) | 숫자 | `V1__init_schema.sql` 공통 규칙 5 |
 | `serveId` | UUIDv7, 36자 문자열 | 용어 정의 30행. DB에는 `BINARY(16)` |
 | QR 토큰 | 문자열 | 85행 서명 토큰, 60초, 1회용 |
 
@@ -227,7 +228,7 @@ GET /v1/stores?pageSize=20&pageToken=eyJ...&sort=DISTANCE
 
 ## 아직 정해지지 않은 것
 
-명세를 쓰면서 **요구사항에는 있으나 현재 스키마(`전체.sql`)에 근거가 없는 것**들이다.
+명세를 쓰면서 **요구사항에는 있으나 현재 스키마(`V1__init_schema.sql`)에 근거가 없는 것**들이다.
 API 를 확정하기 전에 결정이 필요하다.
 
 | 항목 | 요구사항 | 현재 스키마 |
