@@ -6,6 +6,7 @@
 기준 스택은 Java, Spring Data JPA, MySQL 8.4, Lombok이다.
 각 항목이 왜 필요한지는 [entity-creation-rationale.md](./entity-creation-rationale.md)를 참고한다.
 이 문서는 [effective-java-guideline.md](./effective-java-guideline.md)의 객체 생성 항목(아이템 1, 2, 15, 17)을 엔티티 생성이라는 한 지점에 맞춰 구체화한 것이다.
+연관 필드가 무엇을 가리키는지는 [jpa-association-guideline.md](./jpa-association-guideline.md)가 소유한다.
 
 핵심 원칙은 하나다. **엔티티는 유효하지 않은 상태로 존재할 수 없어야 한다.**
 생성 경로가 여럿이면 그중 하나는 반드시 검증을 빠뜨리므로, 경로를 하나로 좁히고 그 하나에 검증을 모은다.
@@ -272,7 +273,7 @@ private Order(Long memberId, int totalPrice, String memo, Integer quantity) {
 
 **해시 컬렉션에 넣을 때만 필요하다.** 이 항목들은 그럴 때만 판정한다.
 
-이 프로젝트는 도메인 간 연관을 ID로만 갖고 JPA 연관을 매핑하지 않으므로(설계 문서 2.1절 규칙 1) `Set` 연관이 생기지 않는다.
+이 프로젝트는 도메인 간 연관을 ID로만 갖고 객체 연관을 애그리거트 안으로 한정하므로([jpa-association-guideline.md](./jpa-association-guideline.md) 1장과 3장) 도메인 경계를 넘는 `Set` 연관이 생기지 않는다.
 엔티티를 `HashSet`이나 `HashMap`에 담는 코드도 없다. **그래서 대부분의 엔티티에 `equals`와 `hashCode`가 없는 것이 정상이다.**
 
 담는 코드가 생기면 그때 아래대로 작성한다.
