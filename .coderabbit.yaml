@@ -60,9 +60,12 @@ reviews:
     enabled: true
     # 초안에는 돌지 않는다. 작성 중인 PR 에 지적이 쌓이면 읽지 않게 된다
     drafts: false
-    # 지금 기본 브랜치는 main 하나다. develop 을 쓰기로 하면 여기에 더한다
+    # 이 목록은 "기본 브랜치 외에" 리뷰할 base 를 적는 곳이다. 기본 브랜치(main)는
+    # 목록과 무관하게 항상 리뷰되므로 여기에 적지 않는다.
+    # 적지 않은 base 의 PR 은 자동 리뷰에서 빠진다. develop 을 빼면 기능 브랜치가
+    # 리뷰 없이 develop 에 들어가고, main 으로 가는 PR 하나에만 리뷰가 몰린다.
     base_branches:
-      - main
+      - develop
     auto_incremental_review: true
 
   path_filters:
@@ -577,11 +580,38 @@ reviews:
         - `BLD-1-06` `jacocoTestReport`가 `sonar` 태스크보다 먼저 도는가
         - `BLD-1-07` 검증 대상 클래스가 있는데 실행 데이터가 없는 상태를 막는가
 
+    # 이 파일이 조용히 망가지는 것을 막는 자리다. 리뷰 설정이 틀리면 아무것도 빨개지지 않고
+    # 리뷰만 멈춘다. GitHub 도 게이트도 이것을 막지 못한다.
+    - path: ".coderabbit.yaml"
+      instructions: |
+        리뷰 설정이 꺼지거나 좁아지는 변경을 지적한다.
+        base_branches 에서 develop 이 빠지면 기능 브랜치가 리뷰 없이 develop 에 들어간다.
+        기본 브랜치(main)는 이 목록과 무관하게 항상 리뷰되므로 거기에 적지 않는 것이 맞다.
+        auto_review.enabled 를 끄거나 path_filters 로 src 를 제외하는 변경도 같다.
+        리뷰를 건너뛰는 수단을 들이는 변경은 지적한다. ignore_title_keywords, labels,
+        ignore_usernames, description_keyword 가 그것이다. 필터는 base 와 head 를 함께
+        보지 못해서, main 쪽을 끄면 release/* 와 hotfix/* 의 유일한 리뷰 기회가 함께 꺼진다.
+        knowledge_base.code_guidelines.filePatterns 는 반드시 files 와 applyTo 를 쓰는
+        객체 형태여야 한다. 문자열 항목은 그 가이드를 자기 디렉터리 안에만 적용한다.
+
+        이 경로에서 쓸 항목이다. 지적할 때 근거를 아래 모양으로 붙인다.
+        문서별로 묶고 해당 문서의 항목만 가운데점 없는 목록으로 나열한다.
+        문서 이름은 링크로 걸고 전체 경로를 적지 않는다. 번호와 문장을 고쳐 쓰지 않는다.
+
+        근거 [build-gate-guideline.md](https://github.com/lunch-catch/lc-backend/blob/main/docs/code-convention/build-gate-guideline.md)
+
+        - `BLD-3-04` CodeRabbit 의 `reviews.auto_review.base_branches` 에 `develop` 이 있는가
+        - `BLD-3-05` 자동 리뷰를 건너뛰는 수단을 두지 않았는가
+
     - path: ".github/workflows/**"
       instructions: |
         build-gate-guideline.md(BLD-)를 적용한다. 병합을 막는 것은 G-BUILD 뿐이다.
         LLM 판정이나 리뷰 상태를 차단 조건으로 만들면 지적한다.
         액션은 버전을 고정해 쓴다.
+
+        main 의 병합 출처를 확인하는 스텝을 지우거나 조건을 넓히면 지적한다. 이 가드는
+        GitHub 설정으로 대신할 수 없어서(브랜치 보호에 base 제한 항목이 없다) 이 파일이
+        유일한 자리다. 그래서 게이트가 자기 자신을 지키지 못한다.
 
         이 경로에서 쓸 항목이다. 지적할 때 근거를 아래 모양으로 붙인다.
         문서별로 묶고 해당 문서의 항목만 가운데점 없는 목록으로 나열한다.
@@ -593,6 +623,7 @@ reviews:
         - `BLD-2-02` 정적 분석 차단 조건이 신규 `Blocker` 이슈 0건인가
         - `BLD-2-03` 브랜치 보호의 필수 상태 검사에 `G-BUILD`가 등록되어 있는가
         - `BLD-2-04` `SonarCloud Code Analysis` 검사를 필수 상태 검사로 등록하지 않았는가
+        - `BLD-3-02` `main` 으로 가는 PR 의 출처를 `develop`, `release/*`, `hotfix/*` 로 제한하는가
 
   tools:
     # 한국어 산문에 영어 기준 지적이 쏟아진다. 문서 규칙은 CLAUDE.md 가 소유한다
