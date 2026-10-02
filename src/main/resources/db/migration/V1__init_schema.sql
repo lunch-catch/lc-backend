@@ -10,6 +10,8 @@
 --   3. 코드 값과 컬럼 간 규칙은 CHECK로 막는다. 단, 대량 로그의 DB ENUM 컬럼에는 CHECK를 걸지 않는다(값 추가가 COPY가 됨)
 --   4. 시각은 모두 DATETIME(6), Asia/Seoul. business_date는 애플리케이션이 계산한다
 --   5. 대리 키는 BIGINT AUTO_INCREMENT. 앱이 먼저 만드는 식별자(serve_id)만 UUIDv7 BINARY(16)
+--   6. 모든 테이블에 created_at과 updated_at을 둔다. 이력과 로그도 예외가 없다.
+--      엔티티는 global.entity.BaseTimeEntity 하나를 상속해 두 컬럼을 얻는다
 --
 -- 목차
 --   1. 관리자 (admin)            정규동   2개: admin, audit_log
@@ -68,6 +70,7 @@ CREATE TABLE audit_log (
     target        VARCHAR(100)                           COMMENT '행위 대상',
     detail        TEXT                                   COMMENT '상세 내용',
     created_at    DATETIME(6)   NOT NULL,
+    updated_at    DATETIME(6)   NOT NULL,
 
     PRIMARY KEY (audit_log_id),
     KEY fk_audit_admin (admin_id),
@@ -144,6 +147,7 @@ CREATE TABLE member (
     status                     VARCHAR(20)   NOT NULL DEFAULT 'ACTIVE',
     last_login_at              DATETIME(6),
     created_at                 DATETIME(6)   NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    updated_at                 DATETIME(6)   NOT NULL,
     withdrawn_at               DATETIME(6),
     refresh_token_hash         CHAR(64)                                             COMMENT 'SHA-256. admin/owner와 동일하게 로컬 컬럼으로 관리(공용 인증 테이블 없음)',
     refresh_token_expires_at   DATETIME(6)                                          COMMENT 'refresh_token_hash와 짝',
@@ -204,6 +208,8 @@ CREATE TABLE member_profile (
     latitude                 DECIMAL(10,7)                           COMMENT 'store.latitude와 명명·타입 통일',
     longitude                DECIMAL(10,7)                           COMMENT 'store.longitude와 명명·타입 통일',
     onboarding_completed_at  DATETIME(6),
+    created_at               DATETIME(6)    NOT NULL,
+    updated_at               DATETIME(6)    NOT NULL,
 
     PRIMARY KEY (member_profile_id),
     UNIQUE KEY uq_member_profile_member (member_id),
@@ -460,6 +466,8 @@ CREATE TABLE campaign_daily_plan (
     business_date           DATE    NOT NULL,
     daily_budget            BIGINT  NOT NULL,
     unit_price              BIGINT  NOT NULL,
+    created_at              DATETIME(6)  NOT NULL,
+    updated_at              DATETIME(6)  NOT NULL,
 
     PRIMARY KEY (campaign_daily_plan_id),
     UNIQUE KEY uq_campaign_daily_plan_campaign_date (campaign_id, business_date),
@@ -479,6 +487,8 @@ CREATE TABLE campaign_hourly_target (
     campaign_daily_plan_id     BIGINT   NOT NULL                 COMMENT '같은 파일 내 테이블(campaign_daily_plan) 참조 — 실제 FK',
     hour                       TINYINT  NOT NULL,
     target_points              BIGINT   NOT NULL,
+    created_at                 DATETIME(6)  NOT NULL,
+    updated_at                 DATETIME(6)  NOT NULL,
 
     PRIMARY KEY (campaign_hourly_target_id),
     UNIQUE KEY uq_campaign_hourly_target_plan_hour (campaign_daily_plan_id, hour),
@@ -556,6 +566,7 @@ CREATE TABLE campaign_daily_report_history (
     after_data                        JSON          NOT NULL                 COMMENT '변경 후 데이터',
     changed_at                        DATETIME(6)   NOT NULL                 COMMENT '변경 시각',
     created_at                        DATETIME(6)   NOT NULL                 COMMENT '생성일시',
+    updated_at                        DATETIME(6)   NOT NULL,
 
     PRIMARY KEY (campaign_daily_report_history_id),
     KEY FK_CAMPAIGN_DAILY_REPORT_HISTORY_CAMPAIGN_DAILY_REPORT (campaign_daily_report_id),
@@ -612,6 +623,8 @@ CREATE TABLE campaign_status_log (
     actor_type              VARCHAR(20)   NOT NULL                 COMMENT 'ADMIN/OWNER/SYSTEM',
     reason                  VARCHAR(200)                           COMMENT '선택 입력',
     changed_at              DATETIME(6)   NOT NULL,
+    created_at              DATETIME(6)   NOT NULL,
+    updated_at              DATETIME(6)   NOT NULL,
 
     PRIMARY KEY (campaign_status_log_id),
     KEY FK_CAMPAIGN_STATUS_LOG_CAMPAIGN (campaign_id),
@@ -640,6 +653,8 @@ CREATE TABLE template (
     published_at      DATETIME(6),
     activated_by      BIGINT                                 COMMENT '계정 도메인 - 관리자 테이블 참조(활성화 관리)',
     activated_at      DATETIME(6),
+    created_at        DATETIME(6)   NOT NULL,
+    updated_at        DATETIME(6)   NOT NULL,
 
     PRIMARY KEY (template_id),
 
@@ -678,6 +693,7 @@ CREATE TABLE template_version (
     request_prompt       TEXT         NOT NULL                 COMMENT '관리자 요청 문장',
     html_content         TEXT         NOT NULL,
     created_at           DATETIME(6)  NOT NULL,
+    updated_at           DATETIME(6)  NOT NULL,
     deleted_at           DATETIME(6),
 
     PRIMARY KEY (template_version_id),
@@ -695,6 +711,8 @@ CREATE TABLE poster_moderation_result (
     result                       VARCHAR(10)   NOT NULL                 COMMENT 'PASS/FAIL',
     reason                       VARCHAR(200),
     checked_at                   DATETIME(6)   NOT NULL,
+    created_at                   DATETIME(6)   NOT NULL,
+    updated_at                   DATETIME(6)   NOT NULL,
 
     PRIMARY KEY (poster_moderation_result_id),
     KEY FK_POSTER_MODERATION_RESULT_POSTER (poster_id),
@@ -723,6 +741,8 @@ CREATE TABLE point_policy (
     change_reason             VARCHAR(255)                           COMMENT '[2026-10-01 신규] 이 정책으로 변경한 사유(선택)',
     effective_date            DATE          NOT NULL,
     created_by                BIGINT        NOT NULL                 COMMENT 'admin_id, 소프트 참조',
+    created_at                DATETIME(6)   NOT NULL,
+    updated_at                DATETIME(6)   NOT NULL,
 
     PRIMARY KEY (point_policy_id),
     UNIQUE KEY uq_point_policy_effective_date (effective_date),
@@ -752,6 +772,8 @@ CREATE TABLE payment (
     requested_at  DATETIME(6)   NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
     approved_at   DATETIME(6),
     canceled_at   DATETIME(6)                                          COMMENT '[2026-10-01 신규] 취소 확정 시각. CANCELLED일 때만 값 존재',
+    created_at    DATETIME(6)   NOT NULL,
+    updated_at    DATETIME(6)   NOT NULL,
 
     PRIMARY KEY (payment_id),
     UNIQUE KEY uq_payment_order_id (order_id),
@@ -780,6 +802,7 @@ CREATE TABLE payment_reconciliation_outbox (
     last_checked_at                   DATETIME(6),
     last_error                        VARCHAR(500),
     created_at                        DATETIME(6)   NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    updated_at                        DATETIME(6)   NOT NULL,
 
     PRIMARY KEY (payment_reconciliation_outbox_id),
     UNIQUE KEY uq_payment_reconciliation_outbox_payment (payment_id),
@@ -810,6 +833,8 @@ CREATE TABLE refund_request (
     requested_at       DATETIME(6)   NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
     processed_at       DATETIME(6),
     processed_by       BIGINT                                               COMMENT 'admin_id, 소프트 참조',
+    created_at         DATETIME(6)   NOT NULL,
+    updated_at         DATETIME(6)   NOT NULL,
     pending_dedup_key  BIGINT        GENERATED ALWAYS AS ((case when (`status` = 'REQUESTED') then `owner_id` else NULL end)) STORED,
 
     PRIMARY KEY (refund_request_id),
@@ -844,6 +869,7 @@ CREATE TABLE point_ledger (
     reason                 VARCHAR(255)                                         COMMENT 'ADJUST 사유(필수)',
     idempotency_key        VARCHAR(64)                                          COMMENT '[13차 확정] ADJUST 전용 멱등 키(P-19 Idempotency-Key 헤더). 같은 점주·같은 키의 조정은 1건만 기록',
     created_at             DATETIME(6)   NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    updated_at             DATETIME(6)   NOT NULL,
     day_reserve_dedup_key  VARCHAR(50)   GENERATED ALWAYS AS ((case when ((`entry_type` in ('RESERVE','RELEASE')) and (`payment_id` is null)) then concat(`campaign_id`,'|',`business_date`,'|',`entry_type`) else NULL end)) STORED,
 
     PRIMARY KEY (point_ledger_id),
@@ -886,6 +912,8 @@ CREATE TABLE settlement_mismatch (
     job_execution_id        BIGINT                                              COMMENT 'BatchExecutionLog(운영 도메인) 소프트 참조. Spring Batch 메타테이블 아님',
     resolved_at             DATETIME(6),
     resolved_by             BIGINT                                              COMMENT 'admin_id, 소프트 참조',
+    created_at              DATETIME(6)  NOT NULL,
+    updated_at              DATETIME(6)  NOT NULL,
 
     PRIMARY KEY (settlement_mismatch_id),
 
@@ -926,6 +954,8 @@ CREATE TABLE ad_candidate (
     state_changed_at     DATETIME(6)              COMMENT '캠페인이 알려준 마지막 전이 시각. 적재, 적재 직후 재조회, 통보 모두 이 값보다 늦을 때만 갱신',
     sold_out_at          DATETIME(6)              COMMENT '쿠폰 소진 통보 시각. NULL이 아니면 그날 후보 제외',
     loaded_at            DATETIME(6)    NOT NULL,
+    created_at           DATETIME(6)    NOT NULL,
+    updated_at           DATETIME(6)    NOT NULL,
 
     PRIMARY KEY (business_date, campaign_id),
     KEY idx_candidate_geo (business_date, latitude, longitude),
@@ -948,6 +978,7 @@ CREATE TABLE ad_candidate (
 CREATE TABLE feed_filter (
     member_id   BIGINT       NOT NULL,
     sort_type   VARCHAR(30)  NOT NULL DEFAULT 'DISTANCE'  COMMENT 'Java enum FeedSort: DISTANCE, DISCOUNT_RATE',
+    created_at  DATETIME(6)  NOT NULL,
     updated_at  DATETIME(6)  NOT NULL,
 
     PRIMARY KEY (member_id),
@@ -962,6 +993,8 @@ CREATE TABLE feed_filter (
 CREATE TABLE feed_filter_category (
     member_id      BIGINT       NOT NULL,
     category_code  VARCHAR(30)  NOT NULL,
+    created_at     DATETIME(6)  NOT NULL,
+    updated_at     DATETIME(6)  NOT NULL,
 
     PRIMARY KEY (member_id, category_code),
 
@@ -979,6 +1012,8 @@ CREATE TABLE feed_visit_daily (
     lat_rounded    DECIMAL(6,3)  NOT NULL,
     lng_rounded    DECIMAL(7,3)  NOT NULL,
     first_seen_at  DATETIME(6)   NOT NULL,
+    created_at     DATETIME(6)   NOT NULL,
+    updated_at     DATETIME(6)   NOT NULL,
 
     PRIMARY KEY (business_date, member_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
@@ -1004,6 +1039,8 @@ CREATE TABLE impression_log (
     invalid_reason  ENUM('EXPIRED_OR_UNKNOWN', 'NOT_OWNER'),
     billing_status  ENUM('BILLED', 'NOT_BILLED_BUDGET', 'NOT_BILLED_PAUSED', 'NOT_BILLED_SOLD_OUT')  COMMENT '유효일 때만. SOLD_OUT은 광고 서빙이 sold_out_at을 보고 판정 호출 없이 기록, 나머지는 campaign의 판정 결과',
     viewed_ms       INT                                 COMMENT '참고 지표(선택 데이터)',
+    created_at      DATETIME(6)               NOT NULL,
+    updated_at      DATETIME(6)               NOT NULL,
 
     PRIMARY KEY (serve_id, member_id),
     KEY idx_imp_campaign_date (campaign_id, business_date, billing_status),
@@ -1025,6 +1062,8 @@ CREATE TABLE serve_log (
     slot_type      ENUM('ALLOCATION', 'RELEVANCE')  NOT NULL  COMMENT '배분 / 관련성',
     slot_position  TINYINT      NOT NULL  COMMENT '1~10',
     served_at      DATETIME(6)  NOT NULL,
+    created_at     DATETIME(6)  NOT NULL,
+    updated_at     DATETIME(6)  NOT NULL,
 
     PRIMARY KEY (serve_id),
     KEY idx_serve_member_date (member_id, business_date),
@@ -1047,6 +1086,8 @@ CREATE TABLE swipe_log (
     category_code  VARCHAR(30)  NOT NULL  COMMENT 'ad_candidate에서 복사. 선호도 집계용',
     action         VARCHAR(30)  NOT NULL  COMMENT 'Java enum SwipeAction: WISH, PASS',
     occurred_at    DATETIME(6)  NOT NULL,
+    created_at     DATETIME(6)  NOT NULL,
+    updated_at     DATETIME(6)  NOT NULL,
 
     PRIMARY KEY (serve_id, member_id),
     KEY idx_swipe_member_date (member_id, business_date),
@@ -1067,6 +1108,8 @@ CREATE TABLE wishlist (
     store_id     BIGINT       NOT NULL,
     serve_id     BINARY(16)                            COMMENT '피드 찜이면 출처 serve_id, 가게 상세 찜이면 NULL',
     wished_at    DATETIME(6)  NOT NULL,
+    created_at   DATETIME(6)  NOT NULL,
+    updated_at   DATETIME(6)  NOT NULL,
 
     PRIMARY KEY (wishlist_id),
     UNIQUE KEY uk_wishlist_member_campaign (member_id, campaign_id),
@@ -1277,6 +1320,7 @@ CREATE TABLE notification_sent (
     notification_delivery_id  BIGINT       NOT NULL                 COMMENT '발송 성공한 알림 발송 정보 ID',
     sent_at                   DATETIME(6)  NOT NULL                 COMMENT 'FCM 발송 요청 성공 시각',
     created_at                DATETIME(6)  NOT NULL                 COMMENT '생성일시',
+    updated_at                DATETIME(6)  NOT NULL,
 
     PRIMARY KEY (notification_sent_id),
     UNIQUE KEY UK_NOTIFICATION_SENT_DELIVERY (notification_delivery_id),
@@ -1323,6 +1367,8 @@ CREATE TABLE daily_campaign_not_billed_analytics (
     campaign_id        BIGINT       NOT NULL            COMMENT '소프트 참조',
     not_billed_reason  VARCHAR(30)  NOT NULL,
     not_billed_count   BIGINT       NOT NULL DEFAULT 0,
+    created_at         DATETIME(6)  NOT NULL,
+    updated_at         DATETIME(6)  NOT NULL,
 
     PRIMARY KEY (date, campaign_id, not_billed_reason),
 
@@ -1343,6 +1389,8 @@ CREATE TABLE daily_invalid_analytics (
     member_id                      BIGINT                                COMMENT '[2026-10-01 신규] 사용자별 분해 시에만 값 존재(A-09 memberId 필터). NULL이면 해당 축 미분해',
     invalid_count                  BIGINT       NOT NULL DEFAULT 0,
     suspicious_concentration_flag  BOOLEAN      NOT NULL DEFAULT 0,
+    created_at                     DATETIME(6)  NOT NULL,
+    updated_at                     DATETIME(6)  NOT NULL,
 
     PRIMARY KEY (daily_invalid_analytics_id),
     KEY idx_daily_invalid_analytics_date_campaign (date, campaign_id, reason_code),
@@ -1363,6 +1411,8 @@ CREATE TABLE daily_member_analytics (
     active_member_count      INT   NOT NULL DEFAULT 0,
     withdrawn_count          INT   NOT NULL DEFAULT 0,
     suspended_count          INT   NOT NULL DEFAULT 0,
+    created_at               DATETIME(6)  NOT NULL,
+    updated_at               DATETIME(6)  NOT NULL,
 
     PRIMARY KEY (date),
 
@@ -1378,6 +1428,8 @@ CREATE TABLE daily_owner_spend (
     date          DATE    NOT NULL,
     owner_id      BIGINT  NOT NULL            COMMENT '소프트 참조',
     spent_amount  BIGINT  NOT NULL DEFAULT 0  COMMENT 'DEDUCT 합의 절댓값',
+    created_at    DATETIME(6)  NOT NULL,
+    updated_at    DATETIME(6)  NOT NULL,
 
     PRIMARY KEY (date, owner_id),
 
@@ -1397,6 +1449,8 @@ CREATE TABLE daily_segment_analytics (
     issue_count       BIGINT       NOT NULL DEFAULT 0,
     redeem_count      BIGINT       NOT NULL DEFAULT 0,
     spend_amount      BIGINT       NOT NULL DEFAULT 0,
+    created_at        DATETIME(6)  NOT NULL,
+    updated_at        DATETIME(6)  NOT NULL,
 
     PRIMARY KEY (date, category, region),
 
@@ -1416,6 +1470,8 @@ CREATE TABLE daily_settlement_analytics (
     refund_amount    BIGINT  NOT NULL DEFAULT 0,
     adjust_amount    BIGINT  NOT NULL DEFAULT 0  COMMENT '[2026-10-01 신규] 관리자 조정액(ADJUST 합, ±). CHECK에서 제외(음수 허용)',
     unspent_balance  BIGINT  NOT NULL DEFAULT 0  COMMENT '미소진 잔액 합계 = 점주 잔액 합 + 예약 중 포인트(그날 예약액 − 당일 소진)',
+    created_at       DATETIME(6)  NOT NULL,
+    updated_at       DATETIME(6)  NOT NULL,
 
     PRIMARY KEY (date),
 
@@ -1431,6 +1487,8 @@ CREATE TABLE daily_store_analytics (
     new_store_count         INT   NOT NULL DEFAULT 0,
     cumulative_store_count  INT   NOT NULL DEFAULT 0,
     active_campaign_count   INT   NOT NULL DEFAULT 0,
+    created_at              DATETIME(6)  NOT NULL,
+    updated_at              DATETIME(6)  NOT NULL,
 
     PRIMARY KEY (date),
 
@@ -1454,6 +1512,8 @@ CREATE TABLE event_log (
     issue_id      BIGINT,
     occurred_at   DATETIME(6)  NOT NULL,
     received_at   DATETIME(6)  NOT NULL,
+    created_at    DATETIME(6)  NOT NULL,
+    updated_at    DATETIME(6)  NOT NULL,
 
     PRIMARY KEY (event_log_id),
     UNIQUE KEY uq_event_log_event_id (event_id),
@@ -1481,6 +1541,7 @@ CREATE TABLE platform_setting (
     setting_value        VARCHAR(500)  NOT NULL                 COMMENT '단일 값 또는 콤마 구분 목록',
     description          VARCHAR(200),
     updated_by           BIGINT                                 COMMENT '관리자 ID',
+    created_at           DATETIME(6)   NOT NULL,
     updated_at           DATETIME(6)   NOT NULL,
 
     PRIMARY KEY (platform_setting_id),
@@ -1498,6 +1559,8 @@ CREATE TABLE platform_setting_history (
     after_value                  VARCHAR(500)  NOT NULL,
     changed_by                   BIGINT                                 COMMENT '관리자 ID',
     changed_at                   DATETIME(6)   NOT NULL,
+    created_at                   DATETIME(6)   NOT NULL,
+    updated_at                   DATETIME(6)   NOT NULL,
 
     PRIMARY KEY (platform_setting_history_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
@@ -1514,6 +1577,8 @@ CREATE TABLE batch_execution_log (
     finished_at             DATETIME(6)                            COMMENT '미완료 시 NULL',
     failure_reason          VARCHAR(500)                           COMMENT 'FAILED일 때만',
     processed_count         INT,
+    created_at              DATETIME(6)   NOT NULL,
+    updated_at              DATETIME(6)   NOT NULL,
 
     PRIMARY KEY (batch_execution_log_id),
     UNIQUE KEY UQ_BATCH_EXECUTION_LOG_JOB_NAME_BUSINESS_DATE (job_name, business_date),
