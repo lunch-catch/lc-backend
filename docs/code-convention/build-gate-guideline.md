@@ -165,11 +165,11 @@ public void placeOrder(OrderCommand cmd) {
   이 목록은 기본 브랜치 외에 리뷰할 base 를 적는 곳이다. 기본 브랜치(`main`)는 항상 리뷰되므로 적지 않는다.
   `develop` 을 빼면 기능 브랜치가 리뷰 없이 `develop` 에 들어간다.
   그렇게 누적된 변경이 `main` 으로 가는 PR 하나에 몰리면 지적 수가 상한에 닿아 뒤쪽이 잘려 나간다.
-* `BLD-3-05` `develop` -> `main` 릴리스 PR 의 제목이 `[Release]` 로 시작하는가
-  그 PR 은 이미 리뷰된 커밋의 합이다. 봇의 중복 억제는 같은 PR 안에서만 작동하므로, 새 PR 에서는 1차 전체 리뷰가 다시 돌고 변경이 커서 상한에 닿는다.
-  `reviews.auto_review.ignore_title_keywords` 에 `Release` 를 두어 그것만 건너뛴다.
-  `hotfix/*` 와 `release/*` 는 `develop` 을 거치지 않으므로 계속 리뷰한다. 필터가 base 로만 걸리고 head 로는 걸리지 않아서, `main` 을 통째로 끄면 가장 급한 변경이 함께 꺼진다.
-  판정은 사람이 한다. 제목을 안 지키면 리뷰가 그냥 돈다. 안전한 쪽으로 실패하므로 막을 필요가 없다.
+* `BLD-3-05` 자동 리뷰를 건너뛰는 수단을 두지 않았는가
+  `ignore_title_keywords`, `labels`, `ignore_usernames`, `description_keyword` 가 그 수단이다.
+  `develop` -> `main` 승격 PR 이 이미 리뷰된 커밋의 합이라 중복 리뷰를 받는 것은 사실이다. 그래도 끄지 않는다.
+  필터는 base 와 head 를 함께 보지 못한다. `main` 쪽을 끄는 어떤 조건이든 `release/*` 와 `hotfix/*` 를 함께 끄고, 그 둘은 `develop` 을 거치지 않아 그 PR 이 유일한 리뷰 기회다.
+  중복 리뷰의 비용은 지적이 상한에 닿아 뒤쪽이 잘리는 것이고, 끈 쪽의 비용은 가장 급한 변경이 아무 리뷰도 받지 않는 것이다. 두 비용이 같은 무게가 아니다.
 
 ## 4. 관련 문서
 
