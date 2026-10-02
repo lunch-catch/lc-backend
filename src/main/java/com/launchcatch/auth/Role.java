@@ -15,7 +15,7 @@ public enum Role {
     SUPER_ADMIN,
     ADMIN,
     OWNER,
-    USER;
+    MEMBER;
 
     /** Spring Security 가 비교하는 권한 문자열이다. 저장과 전송에는 name() 을 쓴다. */
     public String toAuthority() {

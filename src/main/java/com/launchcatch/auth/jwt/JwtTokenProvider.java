@@ -56,7 +56,7 @@ public class JwtTokenProvider {
         validity.put(Role.SUPER_ADMIN, adminRefreshValidityMs);
         validity.put(Role.ADMIN, adminRefreshValidityMs);
         validity.put(Role.OWNER, ownerRefreshValidityMs);
-        validity.put(Role.USER, memberRefreshValidityMs);
+        validity.put(Role.MEMBER, memberRefreshValidityMs);
         this.refreshTokenValidityMs = Map.copyOf(validity);
     }
 

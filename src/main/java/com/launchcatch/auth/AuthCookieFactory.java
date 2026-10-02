@@ -39,7 +39,7 @@ public class AuthCookieFactory {
      * `/v1/auth/tokens:refresh` 처럼 콜론 커스텀 메서드라 다음 글자가 콜론이어서, path 를
      * `/v1/auth/tokens` 로 좁히면 `:refresh` 요청에는 쿠키가 실리지 않는다.
      */
-    private static final String USER_REFRESH_COOKIE_PATH = "/v1/auth/";
+    private static final String MEMBER_REFRESH_COOKIE_PATH = "/v1/auth/";
     private static final String OWNER_REFRESH_COOKIE_PATH = "/v1/owner/auth/";
     private static final String ADMIN_REFRESH_COOKIE_PATH = "/v1/admin/auth/";
 
@@ -99,7 +99,7 @@ public class AuthCookieFactory {
         return switch (role) {
             case SUPER_ADMIN, ADMIN -> ADMIN_REFRESH_COOKIE_PATH;
             case OWNER -> OWNER_REFRESH_COOKIE_PATH;
-            case USER -> USER_REFRESH_COOKIE_PATH;
+            case MEMBER -> MEMBER_REFRESH_COOKIE_PATH;
         };
     }
 }
