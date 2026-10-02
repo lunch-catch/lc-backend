@@ -165,11 +165,11 @@ public void placeOrder(OrderCommand cmd) {
   이 목록은 기본 브랜치 외에 리뷰할 base 를 적는 곳이다. 기본 브랜치(`main`)는 항상 리뷰되므로 적지 않는다.
   `develop` 을 빼면 기능 브랜치가 리뷰 없이 `develop` 에 들어간다.
   그렇게 누적된 변경이 `main` 으로 가는 PR 하나에 몰리면 지적 수가 상한에 닿아 뒤쪽이 잘려 나간다.
-* `BLD-3-05` `develop` -> `main` 릴리스 PR 의 제목이 `[Release]` 로 시작하는가
-  그 PR 은 이미 리뷰된 커밋의 합이다. 봇의 중복 억제는 같은 PR 안에서만 작동하므로, 새 PR 에서는 1차 전체 리뷰가 다시 돌고 변경이 커서 상한에 닿는다.
-  `reviews.auto_review.ignore_title_keywords` 에 `Release` 를 두어 그것만 건너뛴다.
-  `hotfix/*` 와 `release/*` 는 `develop` 을 거치지 않으므로 계속 리뷰한다. 필터가 base 로만 걸리고 head 로는 걸리지 않아서, `main` 을 통째로 끄면 가장 급한 변경이 함께 꺼진다.
-  판정은 사람이 한다. 제목을 안 지키면 리뷰가 그냥 돈다. 안전한 쪽으로 실패하므로 막을 필요가 없다.
+* `BLD-3-05` 이미 리뷰된 변경만 담은 PR 에 `skip-review` 라벨을 붙였는가
+  `develop` -> `main` 승격 PR 이 그 경우다. 이미 리뷰된 커밋의 합인데, 봇의 중복 억제는 같은 PR 안에서만 작동하므로 새 PR 에서는 1차 전체 리뷰가 다시 돌고 변경이 커서 상한에 닿는다.
+  `reviews.auto_review.labels` 에 `!skip-review` 를 두어 그 라벨이 붙은 PR 만 건너뛴다.
+  **제목으로 거르지 않는다.** 필터는 base 와 head 를 함께 보지 못한다. 제목에 `Release` 를 걸면 `release/*` -> `main` PR 제목도 자연스럽게 `[Release]` 가 되어 함께 꺼진다. `hotfix/*` 와 `release/*` 는 `develop` 을 거치지 않아 그 PR 이 유일한 리뷰 기회다.
+  판정은 사람이 한다. 라벨을 안 붙이면 리뷰가 돈다. 안전한 쪽으로 실패하므로 막을 필요가 없다.
 
 ## 4. 관련 문서
 

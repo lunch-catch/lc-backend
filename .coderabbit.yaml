@@ -66,14 +66,17 @@ reviews:
     # 리뷰 없이 develop 에 들어가고, main 으로 가는 PR 하나에만 리뷰가 몰린다.
     base_branches:
       - develop
-    # develop -> main 릴리스 PR 은 이미 리뷰된 커밋의 합이다. 새 PR 이라 1차 전체 리뷰가
-    # 다시 돌고, 변경이 커서 지적 상한에 닿아 이미 말한 것을 처음부터 다시 말한다.
-    # 제목 규칙으로 그것만 건너뛴다. hotfix/* 와 release/* 는 develop 을 거치지 않으므로
-    # 계속 리뷰한다. base 로만 걸러지고 head 로는 안 걸려서, main 을 통째로 끄면
-    # 가장 급한 변경이 함께 꺼진다.
-    # 제목을 안 지키면 리뷰가 그냥 돈다. 안전한 쪽으로 실패한다.
-    ignore_title_keywords:
-      - "Release"
+    # 이미 리뷰된 변경만 담은 PR 을 건너뛴다. develop -> main 승격 PR 이 그 경우다.
+    # 새 PR 이라 1차 전체 리뷰가 다시 돌고, 변경이 커서 지적 상한에 닿아 이미 말한 것을
+    # 처음부터 다시 말한다.
+    #
+    # 제목으로 거르지 않는다. 필터는 base 와 head 를 함께 보지 못하므로
+    # release/* -> main PR 제목도 자연스럽게 [Release] 가 되어 함께 꺼진다.
+    # hotfix/* 와 release/* 는 develop 을 거치지 않아 그 PR 이 유일한 리뷰 기회다.
+    #
+    # 라벨은 PR 하나에 사람이 붙이는 행위다. 안 붙이면 리뷰가 돈다. 안전한 쪽으로 실패한다.
+    labels:
+      - "!skip-review"
     auto_incremental_review: true
 
   path_filters:
@@ -596,9 +599,9 @@ reviews:
         base_branches 에서 develop 이 빠지면 기능 브랜치가 리뷰 없이 develop 에 들어간다.
         기본 브랜치(main)는 이 목록과 무관하게 항상 리뷰되므로 거기에 적지 않는 것이 맞다.
         auto_review.enabled 를 끄거나 path_filters 로 src 를 제외하는 변경도 같다.
-        ignore_title_keywords 와 labels 를 넓히면 지적한다. Release 하나만 두는 이유는
-        develop -> main 릴리스 PR 이 이미 리뷰된 커밋의 합이라서다. 다른 말을 더하면
-        리뷰를 피하는 제목이 늘어난다.
+        labels 와 ignore_title_keywords 를 넓히면 지적한다. 건너뛰기를 제목이나 작성자로
+        거는 변경도 지적한다. 필터는 base 와 head 를 함께 보지 못해서 release/* 와
+        hotfix/* 의 유일한 리뷰 기회가 함께 꺼진다. 건너뛰기는 라벨 하나로만 건다.
         knowledge_base.code_guidelines.filePatterns 는 반드시 files 와 applyTo 를 쓰는
         객체 형태여야 한다. 문자열 항목은 그 가이드를 자기 디렉터리 안에만 적용한다.
 
@@ -609,7 +612,7 @@ reviews:
         근거 [build-gate-guideline.md](https://github.com/lunch-catch/lc-backend/blob/main/docs/code-convention/build-gate-guideline.md)
 
         - `BLD-3-04` CodeRabbit 의 `reviews.auto_review.base_branches` 에 `develop` 이 있는가
-        - `BLD-3-05` `develop` -> `main` 릴리스 PR 의 제목이 `[Release]` 로 시작하는가
+        - `BLD-3-05` 이미 리뷰된 변경만 담은 PR 에 `skip-review` 라벨을 붙였는가
 
     - path: ".github/workflows/**"
       instructions: |
