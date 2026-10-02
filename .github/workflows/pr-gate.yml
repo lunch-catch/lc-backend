@@ -1,7 +1,7 @@
 # PR 게이트. 병합을 막는 유일한 코드 게이트다 (BLD-1-05, BLD-2-02).
 #
 # 판정은 전부 결정론적이다. 커버리지와 정적 분석만 보고, 사람 판단이 필요한 것은 리뷰에 남긴다.
-# 규약은 docs/code-architecture/build-gate-guideline.md 에 있다.
+# 규약은 docs/code-convention/build-gate-guideline.md 에 있다.
 
 name: PR 게이트
 
