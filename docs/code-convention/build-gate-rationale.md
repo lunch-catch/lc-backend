@@ -139,9 +139,13 @@ service 외 영역의 커버리지 추세를 보면 어디에 테스트가 부�
 | 게이트 | 판정 주체 | 조건 |
 |--------|-----------|------|
 | 커버리지 | Gradle `jacocoTestCoverageVerification` | service 메서드 100% |
-| 정적 분석 | SonarQube Quality Gate | **Blocker 0건** |
+| 정적 분석 | 워크플로의 이슈 검색 단계 (`G-BUILD`) | **신규 Blocker 0건** |
 
-**SonarQube Quality Gate 에서 커버리지 조건을 제거한다.** SonarQube 는 커버리지 수치를 만들지 않고 JaCoCo 리포트를 읽어 표시할 뿐이다. 판정까지 SonarQube 에 맡기면 기본 게이트값(신규 코드 80% 등)이 Gradle 기준과 충돌한다.
+**SonarQube Quality Gate 에 커버리지 판정을 맡기지 않는다.** SonarQube 는 커버리지 수치를 만들지 않고 JaCoCo 리포트를 읽어 표시할 뿐이다. 판정까지 SonarQube 에 맡기면 기본 게이트값(신규 코드 80% 등)이 Gradle 기준과 충돌한다.
+
+> 초안은 Quality Gate 에서 커버리지 조건을 **빼는** 방식이었다. 무료 플랜은 커스텀 게이트를
+> 만들 수 없어 내장 `Sonar way` 의 조건을 뺄 수 없다는 것을 확인한 뒤, 게이트를 기다리지 않는
+> 방식으로 바꿨다. 판정 주체를 하나로 두는 결론은 같고 수단만 달라졌다 (`BLD-2-01`).
 
 정리하면 SonarQube 는 **버그, 취약점, 코드 스멜만 판정**하고 커버리지는 표시만 한다.
 
@@ -207,11 +211,18 @@ Quality Gate 조건은 설정 화면에서 선택하는 방식이므로 실제 �
 
 ```
 main 브랜치 보호
-  - 직접 push 금지
-  - PR 필수
-  - 필수 상태 검사: build (JaCoCo 게이트 포함)
-  - 필수 상태 검사: SonarQube Quality Gate
+  - PR 필수, 승인 1건
+  - 필수 상태 검사: G-BUILD (커버리지 게이트와 정적 분석이 이 잡 안에서 함께 돈다)
+  - force push 금지, 브랜치 삭제 금지
+  - 관리자에게는 적용하지 않는다 (enforce_admins: false)
 ```
+
+> 초안에는 `SonarQube Quality Gate` 도 필수 검사로 적혀 있었다. 그 검사는 내장 `Sonar way` 로
+> 판정해 신규 코드 커버리지 80% 를 포함하므로, 등록하면 커버리지 판정이 둘이 된다.
+> 지금은 등록하지 않으며 `BLD-2-04` 가 그것을 항목으로 못 박았다.
+>
+> `enforce_admins` 를 끈 것은 초기 셋업 때문이다. 저장소에 소스가 없는 동안 관리자가 main 에
+> 직접 올려 빌드 환경과 공통 코드를 넣었다. 팀이 기능 개발에 들어가면 켜는 편이 낫다.
 
 Git 서버 측 push 훅은 GitHub 가 제공하지 않고, 로컬 `pre-push` 훅은 `--no-verify` 로 우회된다. **push 자체는 자유롭게 하되 main 진입을 막는 구조다.**
 
