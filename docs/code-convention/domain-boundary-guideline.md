@@ -1,8 +1,14 @@
 # 도메인 경계 리뷰 가이드
 
-이 문서는 **점검 항목만 담는다.** 왜 그 규칙인지와 예시는
-[런치캐치_백엔드_설계.md](../architecture/런치캐치_백엔드_설계.md) 가 소유한다.
-짝이 되는 `*-rationale.md` 를 두지 않는 이유가 그것이다. 설명을 두 곳에 두면
+이 문서는 **점검 항목만 담는다.** 문서가 셋으로 나뉘고 역할이 다르다.
+
+| 문서 | 담는 것 |
+|---|---|
+| 이 문서 | 번호 붙인 점검 항목, 근거 절, 강제 수단 |
+| [domain-boundary-rationale.md](./domain-boundary-rationale.md) | 왜 리뷰 항목인가, 위반이 코드에서 어떤 모양인가, 테스트가 못 보는 것 |
+| [런치캐치_백엔드_설계.md](../architecture/런치캐치_백엔드_설계.md) | 규칙의 내용과 근거. 계층과 도메인과 의존 방향을 그렇게 정한 이유 |
+
+**규칙의 내용은 설계 문서가 소유한다.** 같은 설명을 가이드나 근거 문서에 옮기지 않는다.
 어긋나는 순간 어느 쪽이 기준인지 알 수 없게 된다.
 
 항목마다 **근거 절**과 **강제 수단**을 적었다. 대부분은 `ArchitectureTest` 가 빌드에서
@@ -92,6 +98,7 @@
 
 ## 관련 문서
 
-* 규칙의 근거와 예시: [런치캐치_백엔드_설계.md](../architecture/런치캐치_백엔드_설계.md)
+* 설계 근거: [domain-boundary-rationale.md](./domain-boundary-rationale.md)
+* 규칙의 내용과 예시: [런치캐치_백엔드_설계.md](../architecture/런치캐치_백엔드_설계.md)
 * 강제 수단: `src/test/java/com/launchcatch/ArchitectureTest.java` 의 규칙 12개
 * 애그리거트 경계의 연관 매핑: [jpa-association-guideline.md](./jpa-association-guideline.md) (`AGG-`)

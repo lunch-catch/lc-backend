@@ -20,7 +20,7 @@
 | API 설계 (Google AIP 기반) | [api-design-guideline.md](./code-convention/api-design-guideline.md) | [api-design-rationale.md](./code-convention/api-design-rationale.md) |
 | 엔티티 생성 패턴 | [entity-creation-guideline.md](./code-convention/entity-creation-guideline.md) | [entity-creation-rationale.md](./code-convention/entity-creation-rationale.md) |
 | JPA 연관 매핑 (애그리거트 경계) | [jpa-association-guideline.md](./code-convention/jpa-association-guideline.md) | [jpa-association-rationale.md](./code-convention/jpa-association-rationale.md) |
-| 도메인 경계와 의존 방향 | [domain-boundary-guideline.md](./code-convention/domain-boundary-guideline.md) | [런치캐치_백엔드_설계.md](./architecture/런치캐치_백엔드_설계.md) |
+| 도메인 경계와 의존 방향 | [domain-boundary-guideline.md](./code-convention/domain-boundary-guideline.md) | [domain-boundary-rationale.md](./code-convention/domain-boundary-rationale.md) |
 | 빌드 게이트 (커버리지, 정적 분석) | [build-gate-guideline.md](./code-convention/build-gate-guideline.md) | [build-gate-rationale.md](./code-convention/build-gate-rationale.md) |
 | 응답과 예외 흐름 | [response-exception-flow.md](./code-convention/response-exception-flow.md) | - |
 
@@ -52,9 +52,10 @@ PR 하나의 변경분으로 판정할 수 없다. `[설계]` 는 설계 리뷰�
 
 **경계 규약의 설명은 설계 문서가 소유한다.** 계층, 도메인, `contract` 패키지, 의존 규칙 6개,
 그것을 지키는 아키텍처 테스트 12개가 모두 그 문서 1장과 2장에 있다.
-`domain-boundary-guideline.md` 는 그것을 **번호 붙인 점검 항목으로만** 옮긴 것이고 설명을 담지 않는다.
-짝이 되는 `*-rationale.md` 를 두지 않는 이유가 그것이다. 설명을 두 곳에 두면 어긋나는 순간
-어느 쪽이 기준인지 알 수 없게 된다.
+`domain-boundary-guideline.md` 는 그것을 **번호 붙인 점검 항목으로만** 옮긴 것이고,
+`domain-boundary-rationale.md` 는 왜 그것이 리뷰 항목인지와 테스트가 못 보는 것을 다룬다.
+둘 다 규칙의 내용을 다시 설명하지 않는다. 설명을 두 곳에 두면 어긋나는 순간 어느 쪽이
+기준인지 알 수 없게 된다.
 
 ## 봇 동작 규칙
 
