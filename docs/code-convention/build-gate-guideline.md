@@ -9,6 +9,7 @@
 |--------|-----------|------|------|
 | 커버리지 | Gradle `jacocoTestCoverageVerification` | `com.launchcatch.*.service.*` 메서드 100% | **병합 차단** |
 | 정적 분석 | SonarQube Quality Gate | **신규 Blocker 이슈 0건** | **병합 차단** |
+| 브랜치 전략 | `G-BUILD` 첫 스텝 | `main` 의 PR 출처가 `develop`, `release/*`, `hotfix/*` | **병합 차단** |
 
 ## 1. 커버리지
 
@@ -142,7 +143,36 @@ public void placeOrder(OrderCommand cmd) {
 의도된 엄격함이지만, 팀원이 로컬에서 먼저 돌리지 않으면 CI 실패로 알게 되어 왕복이 생긴다.
 
 
-## 3. 관련 문서
+## 3. 브랜치 전략
+
+기능 브랜치는 `develop` 에서 분기해 `develop` 으로 돌아온다. `main` 은 `develop`, `release/*`, `hotfix/*` 에서만 받는다.
+
+점검 항목
+* `BLD-3-01` `main` 과 `develop` 둘 다 `G-BUILD` 를 필수 상태 검사로 두었는가
+  `develop` 이 무방비면 기능 브랜치가 검사 없이 들어오고, `main` 으로 가는 PR 하나가 누적된 변경을 한꺼번에 받는다.
+  `BLD-2-03` 이 `main` 에 요구하는 것과 같은 설정을 `develop` 에도 둔다.
+  판정은 사람이 한다. 브랜치 보호는 저장소 설정이라 어느 파일에도 없고, 자동 리뷰는 diff 만 본다.
+* `BLD-3-02` `main` 으로 가는 PR 의 출처를 `develop`, `release/*`, `hotfix/*` 로 제한하는가
+  이 항목과 `BLD-3-04` 만 자동 리뷰가 본다. 게이트가 자기 가드를 지키지 못하고, 리뷰 설정이 꺼져도 아무것도 빨개지지 않기 때문이다.
+  GitHub 의 브랜치 보호에는 base 를 제한하는 항목이 없고, 조직 룰셋은 Team 플랜부터 쓸 수 있다.
+  그래서 판정을 `G-BUILD` 의 첫 스텝에 둔다. `github.base_ref` 가 `main` 일 때만 돌고 `github.head_ref` 를 본다.
+  체크아웃 앞에 두어 출처가 틀리면 빌드를 시작하지 않고 떨어진다.
+* `BLD-3-03` PR 게이트 트리거의 `branches` 에 `main` 과 `develop` 이 모두 있는가
+  빠진 브랜치로 가는 PR 은 `G-BUILD` 가 돌지 않는다. 필수 상태 검사는 등록되어 있으므로 검사가 영원히 `pending` 으로 남아 병합이 막힌다.
+  판정은 GitHub 이 한다. `pull_request` 이벤트는 PR 쪽 워크플로 파일로 돌므로, 트리거를 지우는 PR 은 그 PR 자신이 막힌다.
+  자동 리뷰는 이 항목을 지적하지 않는다. 결정론적으로 막히는 것을 두 번 말하면 지적이 예산만 쓴다.
+* `BLD-3-04` CodeRabbit 의 `reviews.auto_review.base_branches` 에 `develop` 이 있는가
+  이 목록은 기본 브랜치 외에 리뷰할 base 를 적는 곳이다. 기본 브랜치(`main`)는 항상 리뷰되므로 적지 않는다.
+  `develop` 을 빼면 기능 브랜치가 리뷰 없이 `develop` 에 들어간다.
+  그렇게 누적된 변경이 `main` 으로 가는 PR 하나에 몰리면 지적 수가 상한에 닿아 뒤쪽이 잘려 나간다.
+* `BLD-3-05` `develop` -> `main` 릴리스 PR 의 제목이 `[Release]` 로 시작하는가
+  그 PR 은 이미 리뷰된 커밋의 합이다. 봇의 중복 억제는 같은 PR 안에서만 작동하므로, 새 PR 에서는 1차 전체 리뷰가 다시 돌고 변경이 커서 상한에 닿는다.
+  `reviews.auto_review.ignore_title_keywords` 에 `Release` 를 두어 그것만 건너뛴다.
+  `hotfix/*` 와 `release/*` 는 `develop` 을 거치지 않으므로 계속 리뷰한다. 필터가 base 로만 걸리고 head 로는 걸리지 않아서, `main` 을 통째로 끄면 가장 급한 변경이 함께 꺼진다.
+  판정은 사람이 한다. 제목을 안 지키면 리뷰가 그냥 돈다. 안전한 쪽으로 실패하므로 막을 필요가 없다.
+
+## 4. 관련 문서
+
 
 * 설계 근거: [build-gate-rationale.md](./build-gate-rationale.md)
 * 패키지 구조: [런치캐치_백엔드_설계.md](../architecture/런치캐치_백엔드_설계.md) 1.3절
