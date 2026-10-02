@@ -20,9 +20,9 @@
 | API 설계 (Google AIP 기반) | [api-design-guideline.md](./code-convention/api-design-guideline.md) | [api-design-rationale.md](./code-convention/api-design-rationale.md) |
 | 엔티티 생성 패턴 | [entity-creation-guideline.md](./code-convention/entity-creation-guideline.md) | [entity-creation-rationale.md](./code-convention/entity-creation-rationale.md) |
 | JPA 연관 매핑 (애그리거트 경계) | [jpa-association-guideline.md](./code-convention/jpa-association-guideline.md) | [jpa-association-rationale.md](./code-convention/jpa-association-rationale.md) |
+| 도메인 경계와 의존 방향 | [domain-boundary-guideline.md](./code-convention/domain-boundary-guideline.md) | [런치캐치_백엔드_설계.md](./architecture/런치캐치_백엔드_설계.md) |
 | 빌드 게이트 (커버리지, 정적 분석) | [build-gate-guideline.md](./code-convention/build-gate-guideline.md) | [build-gate-rationale.md](./code-convention/build-gate-rationale.md) |
 | 응답과 예외 흐름 | [response-exception-flow.md](./code-convention/response-exception-flow.md) | - |
-| 도메인 패키지 경계와 의존 방향 | [런치캐치_백엔드_설계.md](./architecture/런치캐치_백엔드_설계.md) | - |
 
 ### 품질 속성 (`docs/software-quality`)
 
@@ -50,9 +50,11 @@ PR 하나의 변경분으로 판정할 수 없다. `[설계]` 는 설계 리뷰�
 수치에 붙은 등급은 근거의 성격이다. `A` 는 산술로 도출한 값, `B` 는 출처가 있는 값,
 `C` 는 근거 없이 정한 예시값이다. **`C` 로 지적하지 않는다.** 측정한 뒤 팀이 확정할 값이다.
 
-**경계 규약은 가이드 문서가 아니라 설계 문서가 소유한다.** 계층, 도메인, `contract` 패키지, 의존 규칙 6개,
-그것을 지키는 아키텍처 테스트 12개가 모두 그 문서 1장과 2장에 있다. 같은 내용을 여기에 다시 적으면
-둘이 어긋나는 순간 어느 쪽이 기준인지 알 수 없게 된다.
+**경계 규약의 설명은 설계 문서가 소유한다.** 계층, 도메인, `contract` 패키지, 의존 규칙 6개,
+그것을 지키는 아키텍처 테스트 12개가 모두 그 문서 1장과 2장에 있다.
+`domain-boundary-guideline.md` 는 그것을 **번호 붙인 점검 항목으로만** 옮긴 것이고 설명을 담지 않는다.
+짝이 되는 `*-rationale.md` 를 두지 않는 이유가 그것이다. 설명을 두 곳에 두면 어긋나는 순간
+어느 쪽이 기준인지 알 수 없게 된다.
 
 ## 봇 동작 규칙
 
@@ -84,7 +86,7 @@ PR 하나의 변경분으로 판정할 수 없다. `[설계]` 는 설계 리뷰�
 | 엔티티 인스턴스 생성 (정적 팩터리, 검증 위치, 생성용 Lombok) | entity-creation-guideline.md | effective-java-guideline.md |
 | 연관 매핑 범위와 방식 (객체 연관 대 ID, fetch, cascade, 애그리거트 경계) | jpa-association-guideline.md | - |
 | 엔티티 속성값의 저장 방식 (enum 대 코드 테이블) | entity-creation-guideline.md | - |
-| 패키지 배치, 도메인 간 참조, 접근 제어자, 순환 의존 | 설계 문서 1장과 2장 | - |
+| 패키지 배치, 도메인 간 참조, 순환 의존 | domain-boundary-guideline.md (`DPB-`) | - |
 | 오류 코드와 예외 클래스 배치, 응답 봉투 | response-exception-flow.md | effective-java-guideline.md |
 | 자바 관용 (불변, 예외 흐름, 컬렉션 반환, 상속보다 조합) | effective-java-guideline.md | - |
 | 테스트 설계와 품질 (동작 검증, 테스트 더블, 구조, 격리) | unit-testing-guideline.md | - |
@@ -167,7 +169,7 @@ effective-java-guideline.md와 설계 문서의 경계 규칙은 변경 위치�
 |--------|-------------|
 | entity-creation-guideline.md | `@Entity` 클래스의 생성자와 정적 팩터리, `@Builder`, `@Setter`, `@Data`, `@NoArgsConstructor`, `@Enumerated` |
 | jpa-association-guideline.md | `@ManyToOne`, `@OneToMany`, `@OneToOne`, `@ManyToMany`, `@JoinColumn`, `cascade`, `fetch`, `orphanRemoval`, `@Embedded`, `@ElementCollection`, 엔티티의 `~Id` 필드 |
-| 설계 문서 1장과 2장 | 패키지 이동, import 문 변경, 접근 제어자 변경, `contract` 패키지의 인터페이스와 record, `~Event` 클래스, ArchUnit 테스트 |
+| domain-boundary-guideline.md | 패키지 이동, import 문 변경, 접근 제어자 변경, `contract` 패키지의 인터페이스와 record, `~Event` 클래스, ArchUnit 테스트 |
 | response-exception-flow.md | `ErrorCode`, `BusinessException`, `ResponseEnvelope`, `@RestControllerAdvice`, 새 오류 코드 enum |
 | unit-testing-guideline.md | `@Test`, JUnit, Mockito, AssertJ, `@DataJpaTest`, `@SpringBootTest`, 테스트 클래스(`*Test`) |
 | api-design-guideline.md | `@RestController`, `@RequestMapping`, `@GetMapping`/`@PostMapping`/`@PatchMapping`/`@DeleteMapping`, 요청과 응답 DTO, OpenAPI 명세 |
@@ -186,13 +188,13 @@ effective-java-guideline.md와 설계 문서의 경계 규칙은 변경 위치�
 
 | 파일명 패턴 | 적용 문서 |
 |-------------|-----------|
-| `src/main/**` 의 모든 변경 | effective-java-guideline.md, 설계 문서 1장과 2장 |
+| `src/main/**` 의 모든 변경 | effective-java-guideline.md, domain-boundary-guideline.md |
 | `**/*Entity.java`, `**/entity/**` | entity-creation-guideline.md, jpa-association-guideline.md |
 | `**/*Controller.java`, `**/dto/**`, OpenAPI 명세 | api-design-guideline.md |
-| `**/contract/**`, `**/*Event.java` | 설계 문서 1.3절과 2.4절 |
+| `**/contract/**`, `**/*Event.java` | domain-boundary-guideline.md (`DPB-1-*`, `DPB-4-*`) |
 | `**/*Repository.java` | jpa-association-guideline.md |
 | `**/*Test.java`, `src/test/**` | unit-testing-guideline.md |
-| `**/ArchitectureTest.java` | 설계 문서 1.5절과 2.5절 |
+| `**/ArchitectureTest.java` | domain-boundary-guideline.md, 설계 문서 1.5절과 2.5절 |
 | `src/main/**` 의 모든 변경 | 품질 속성 가이드의 `[코드]` 항목 (내용 시그널로 어느 영역인지 좁힌다) |
 | `**/auth/**`, `**/*Controller.java` | qa-security-guideline.md |
 | `**/service/**` | qa-data-integrity-guideline.md, qa-reliability-guideline.md |
