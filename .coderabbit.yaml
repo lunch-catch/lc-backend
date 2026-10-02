@@ -571,14 +571,34 @@ knowledge_base:
   code_guidelines:
     enabled: true
     # CLAUDE.md 는 기본으로 잡힌다. 나머지를 명시한다.
-    # 파일 이름은 대소문자를 가린다
+    #
+    # 반드시 files 와 applyTo 를 쓰는 객체 형태로 적는다. 문자열 항목은 그 가이드를
+    # "자기가 담긴 디렉터리와 하위 디렉터리" 에만 적용한다. docs/code-convention/*.md 를
+    # 문자열로 적으면 docs/code-convention 안의 파일을 리뷰할 때만 참조되고,
+    # src/main/java 를 리뷰할 때는 가이드가 아예 연결되지 않는다.
+    #
+    # 파일 이름은 대소문자를 가린다. files 와 applyTo 모두 콤마로 여러 글롭을 받는다
     filePatterns:
-      - "docs/CODEREVIEW.md"
-      - "docs/code-convention/*-guideline.md"
-      - "docs/software-quality/qa-*-guideline.md"
-      - "docs/software-quality/quality-attributes.md"
-      - "docs/architecture/*.md"
-      - "docs/api-spec/*.md"
+      # 리뷰 규약 진입점. 봇 동작 규칙과 인용 형식을 담아 모든 변경에 적용한다
+      - files: "docs/CODEREVIEW.md"
+        applyTo: "**"
+
+      # 코드 관용과 패턴. 자바와 자원, 빌드 설정에 적용한다
+      - files: "docs/code-convention/*-guideline.md"
+        applyTo: "src/**,build.gradle,.github/workflows/**,compose.yaml"
+
+      # 품질 속성. 같은 범위에 적용한다. [코드] 항목이 주된 대상이고
+      # [설계] 와 [인프라] 는 path_instructions 가 열어 준 경로에서만 쓴다
+      - files: "docs/software-quality/qa-*-guideline.md,docs/software-quality/quality-attributes.md"
+        applyTo: "src/**,build.gradle,.github/workflows/**,compose.yaml"
+
+      # 경계 규약의 설명. 프로덕션 자바에만 적용한다
+      - files: "docs/architecture/*.md"
+        applyTo: "src/main/java/**"
+
+      # API 공통 규약. 컨트롤러와 응답 포맷에 적용한다
+      - files: "docs/api-spec/*.md"
+        applyTo: "src/main/java/**/controller/**,src/main/java/**/global/response/**,src/main/java/**/global/exception/**"
 
 code_generation:
   docstrings:
