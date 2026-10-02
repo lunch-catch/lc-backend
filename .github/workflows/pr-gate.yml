@@ -48,9 +48,9 @@ jobs:
       - name: Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      # check 는 test, integrationTest, jacocoTestCoverageVerification, coverageDataCheck 를 모두 부른다.
+      # check 는 test, jacocoTestCoverageVerification, coverageDataCheck 를 부른다.
       # 커버리지 기준은 com.launchcatch.*.service.* 의 메서드 100% 다.
-      # 통합 테스트가 Testcontainers 로 MySQL 8.4 와 Valkey 9 를 띄우므로 러너의 도커를 쓴다.
+      # 통합 테스트를 쓰면 Testcontainers 가 MySQL 8.4 와 Valkey 9 를 띄우므로 러너의 도커가 필요하다.
       - name: 테스트와 커버리지
         run: ./gradlew check --no-daemon
 

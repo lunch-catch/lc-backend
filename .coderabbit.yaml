@@ -208,14 +208,16 @@ reviews:
         unit-testing-guideline.md(UT-)를 적용한다. 프로덕션 코드용 가이드(EJ-, 경계 규약)는
         여기 적용하지 않는다. 목 주입과 픽스처 빌더, 서술형 메서드명이 전부 지적으로 나온다.
         단위 테스트는 대상과 같은 패키지에 두고 이름은 ~Test 다.
-        스프링 컨텍스트를 띄우거나 Testcontainers 를 쓰면 통합 테스트다. src/integrationTest 로 옮긴다.
         커버리지 게이트가 service 패키지 메서드 100% 를 요구한다(BLD-1-01).
 
-    - path: "src/integrationTest/java/**/*.java"
-      instructions: |
-        unit-testing-guideline.md(UT-)를 적용한다. 이름은 ~IntegrationTest 로 끝나고
-        도메인 패키지 바로 아래에 둔다. 컨테이너는 IntegrationTestSupport 를 상속해 공유한다.
-        클래스마다 새로 띄우면 check 를 돌릴 때마다 그 값을 치른다.
+        통합 테스트를 쓰라고 제안하지 않는다. 팀이 권장 대상에서 뺐다(가이드 5장).
+        "실제 DB 로 확인하는 편이 낫다", "통합 테스트를 추가하라" 같은 지적을 만들지 않는다.
+        mock 으로 DB 를 대신했다는 것만으로 지적하지 않는다. 쓸지 말지는 작성자가 판단한다.
+
+        작성자가 통합 테스트를 쓴 경우에만 두 가지를 본다.
+        @SpringBootTest 로 실제 컨텍스트를 띄웠는지(@DataJpaTest 나 @WebMvcTest 같은 슬라이스는
+        쓰지 않는다), 이름이 ~IntegrationTest 로 끝나고 도메인 패키지 바로 아래에 있는지.
+        그 테스트가 service 메서드를 지나며 커버리지를 채우고 있으면 지적한다(BLD-1-04).
 
     - path: "src/test/java/**/ArchitectureTest.java"
       instructions: |
@@ -240,8 +242,8 @@ reviews:
     - path: "build.gradle"
       instructions: |
         build-gate-guideline.md(BLD-)를 적용한다. 커버리지 대상이
-        com.launchcatch.*.service.* 로 좁혀져 있는지, check 가 integrationTest 와
-        jacocoTestCoverageVerification 과 coverageDataCheck 를 모두 부르는지 본다.
+        com.launchcatch.*.service.* 로 좁혀져 있는지, check 가
+        jacocoTestCoverageVerification 과 coverageDataCheck 를 부르는지 본다.
         시험 JVM 시간대는 Asia/Seoul 고정이다(비기능 42행). UTC 로 바꾸면 지적한다.
 
     - path: ".github/workflows/**"

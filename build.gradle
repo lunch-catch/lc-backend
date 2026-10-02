@@ -3,8 +3,6 @@ plugins {
     id 'org.springframework.boot' version '4.0.5'
     id 'io.spring.dependency-management' version '1.1.7'
     id 'jacoco'
-    // integrationTest 를 IDE 가 테스트 소스로 보게 하려고 쓴다 (아래 idea 블록)
-    id 'idea'
     id 'org.sonarqube' version '7.5.0.8588'
 }
 
@@ -21,35 +19,8 @@ repositories {
     mavenCentral()
 }
 
-/*
- * 통합 테스트를 단위 테스트와 분리한다.
- * 커버리지는 단위 테스트의 .exec 만 센다 (BLD-1-04).
- */
-sourceSets {
-    integrationTest {
-        compileClasspath += sourceSets.main.output
-        runtimeClasspath += sourceSets.main.output
-    }
-}
-
-/*
- * IDE 가 integrationTest 를 테스트 소스로 인식하게 한다.
- * Gradle 의 IDE 모델은 test 소스셋만 테스트로 표시하고 직접 만든 소스셋은 일반 소스로 넘긴다.
- * 그대로 두면 실행 아이콘이 뜨지 않고 프로덕션 코드로 취급되어 검사 규칙이 다르게 걸린다.
- */
-idea {
-    module {
-        testSources.from(sourceSets.integrationTest.java.srcDirs)
-        testResources.from(sourceSets.integrationTest.resources.srcDirs)
-    }
-}
-
 configurations {
     compileOnly.extendsFrom annotationProcessor
-    integrationTestImplementation.extendsFrom testImplementation
-    integrationTestCompileOnly.extendsFrom testCompileOnly
-    integrationTestAnnotationProcessor.extendsFrom testAnnotationProcessor
-    integrationTestRuntimeOnly.extendsFrom testRuntimeOnly
 }
 
 dependencies {
@@ -197,34 +168,31 @@ dependencies {
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 
     /*
-     * 통합 테스트는 인메모리 DB 를 쓰지 않는다.
-     * 운영과 같은 mysql:8.4 와 valkey 9 를 Testcontainers 로 띄운다 (비기능 5행, 30행).
-     *
-     * Boot 4 는 @DataJpaTest 와 @AutoConfigureTestDatabase 를 각각
-     * spring-boot-data-jpa-test, spring-boot-jdbc-test 로 쪼갰다. 이 스타터가 둘을 함께 끌어온다.
-     * MockMvc 지원(@AutoConfigureMockMvc)도 spring-boot-starter-test 에서 분리되어
-     * spring-boot-starter-webmvc-test 로 빠졌다. API 계층까지 검증하는 통합 테스트에 필요하다.
+     * 테스트 소스셋에도 Lombok 을 건다.
+     * compileOnly.extendsFrom annotationProcessor 는 main 소스셋만 해당해서,
+     * 걸지 않으면 테스트 픽스처에 Lombok 을 쓰는 순간 컴파일이 깨진다.
      */
-    integrationTestImplementation 'org.springframework.boot:spring-boot-starter-data-jpa-test'
-    integrationTestImplementation 'org.springframework.boot:spring-boot-starter-webmvc-test'
-    integrationTestImplementation 'org.springframework.security:spring-security-test'
-    integrationTestImplementation 'org.springframework.boot:spring-boot-testcontainers'
+    testCompileOnly 'org.projectlombok:lombok'
+    testAnnotationProcessor 'org.projectlombok:lombok'
+
+    /*
+     * 통합 테스트용이다. 팀은 통합 테스트를 권장하지 않지만, 필요하다고 판단해 쓸 때는
+     * @SpringBootTest 로 실제 컨텍스트를 띄우고 외부 인프라까지 붙인다
+     * (unit-testing-guideline.md 5장). 그때 Gradle 을 손보지 않아도 되게 여기 둔다.
+     *
+     * 인메모리 DB 는 쓰지 않는다. 운영과 같은 mysql:8.4 와 valkey 9 를 띄운다 (비기능 5행, 30행).
+     * MockMvc 지원(@AutoConfigureMockMvc)은 Boot 4 에서 spring-boot-starter-test 에서 빠져
+     * spring-boot-starter-webmvc-test 로 갔다.
+     */
+    testImplementation 'org.springframework.boot:spring-boot-starter-webmvc-test'
+    testImplementation 'org.springframework.security:spring-security-test'
+    testImplementation 'org.springframework.boot:spring-boot-testcontainers'
     /*
      * Boot 4.0.5 의 BOM 이 Testcontainers 2.0.4 를 관리한다.
      * 2.x 에서 산출물 이름에 testcontainers- 접두사가 붙었다. 1.x 좌표(junit-jupiter, mysql)는 해석되지 않는다.
      */
-    integrationTestImplementation 'org.testcontainers:testcontainers-junit-jupiter'
-    integrationTestImplementation 'org.testcontainers:testcontainers-mysql'
-
-    /*
-     * 검증용 엔티티가 이 소스셋에 있으므로 APT 를 여기에도 건다.
-     * 걸지 않으면 Q클래스가 생성되지 않아 컴파일이 깨진다.
-     */
-    integrationTestCompileOnly 'org.projectlombok:lombok'
-    integrationTestAnnotationProcessor 'org.projectlombok:lombok'
-    integrationTestAnnotationProcessor 'com.querydsl:querydsl-apt::jakarta'
-    integrationTestAnnotationProcessor 'jakarta.annotation:jakarta.annotation-api'
-    integrationTestAnnotationProcessor 'jakarta.persistence:jakarta.persistence-api'
+    testImplementation 'org.testcontainers:testcontainers-junit-jupiter'
+    testImplementation 'org.testcontainers:testcontainers-mysql'
 }
 
 /*
@@ -262,24 +230,6 @@ tasks.named('bootJar') {
  */
 tasks.named('test') {
     useJUnitPlatform()
-    systemProperty 'user.timezone', 'Asia/Seoul'
-}
-
-tasks.register('integrationTest', Test) {
-    description = '통합 테스트를 실행한다.'
-    group = 'verification'
-    testClassesDirs = sourceSets.integrationTest.output.classesDirs
-    classpath = sourceSets.integrationTest.runtimeClasspath
-    useJUnitPlatform()
-    shouldRunAfter tasks.named('test')
-
-    /*
-     * application-integrationTest.yml 을 켠다.
-     * IDE 에서 테스트 클래스를 직접 실행하면 이 설정이 안 걸리므로 클래스에도 @ActiveProfiles 를 붙여 둔다.
-     */
-    systemProperty 'spring.profiles.active', 'integrationTest'
-
-    // 단위 시험과 같은 이유로 Asia/Seoul 로 고정한다. 근거는 test 태스크 위의 주석에 있다
     systemProperty 'user.timezone', 'Asia/Seoul'
 }
 
@@ -364,8 +314,7 @@ tasks.register('coverageDataCheck') {
 
 // BLD-1-05
 tasks.named('check') {
-    dependsOn tasks.named('integrationTest'),
-            tasks.named('jacocoTestCoverageVerification'),
+    dependsOn tasks.named('jacocoTestCoverageVerification'),
             tasks.named('coverageDataCheck')
 }
 

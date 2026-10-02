@@ -90,61 +90,68 @@ Order order = orderService.place(request);
 assertThat(order.getMemberId()).isEqualTo(1L);
 ```
 
-## 5. 통합 테스트와 의존성
+## 5. 테스트 배치와 외부 의존성
 
-통합 테스트는 `src/integrationTest/java` 에 둔다. 단위 테스트(`src/test/java`)와 소스셋이 다르다.
-`build.gradle` 이 소스셋을 나눠 두었고 `integrationTest` 태스크가 이 디렉터리만 실행한다.
-커버리지 게이트는 단위 테스트만 센다. 통합 테스트로는 서비스 메서드 100% 를 채울 수 없다.
+**팀은 통합 테스트를 권장하지 않는다.** 기본은 단위 테스트다. 느리고, 깨지는 이유가 많고,
+무엇이 틀렸는지 좁혀 주지 못한다. 리뷰에서 "통합 테스트를 쓰라" 고 요구하지 않는다.
+
+**필요하다고 판단해 쓸 때는 `@SpringBootTest` 로 쓴다.** 실제 Spring 컨텍스트를 띄우고
+여러 계층 또는 외부 인프라까지 연결해서 확인한다. `@DataJpaTest` 나 `@WebMvcTest` 같은
+슬라이스는 쓰지 않는다. 슬라이스는 "실제로 붙여 봤다" 를 주지 않으면서 통합 테스트의
+비용은 치르는 쪽이다. 인메모리 DB 도 쓰지 않는다. 방언과 잠금 동작이 달라 검증이 성립하지
+않으므로 운영과 같은 `mysql:8.4` 와 `valkey 9` 를 띄운다(비기능 5행, 30행).
+
+소스셋은 하나다. 단위 테스트와 통합 테스트가 모두 `src/test/java` 에 있다.
 
 **`contract` 에는 테스트를 두지 않는다.** 그 패키지에는 인터페이스와 record, enum 만 있어
 동작이 없다(설계 문서 1.3). 계약이 지켜지는지는 구현의 테스트가 본다. 구현은 같은 도메인의
 `service` 에 있다.
 
 **단위 테스트는 대상과 정확히 같은 패키지에, 통합 테스트는 도메인 패키지 바로 아래에 둔다.**
-통합 테스트는 계층을 가로지르므로 대상보다 위에 두는 편이 자연스럽다.
+통합 테스트는 계층을 가로지르므로 대상이 한 패키지로 좁혀지지 않는다.
 
 ```
-src/main/java/com/launchcatch/campaign/contract/CampaignQueryService.java        테스트 없음
+src/main/java/com/launchcatch/campaign/contract/CampaignQueryService.java     테스트 없음
 src/main/java/com/launchcatch/campaign/service/CampaignStatusService.java
 
-src/test/java/com/launchcatch/campaign/service/CampaignStatusServiceTest.java    같은 패키지
-
-src/integrationTest/java/com/launchcatch/campaign/CampaignIntegrationTest.java
+src/test/java/com/launchcatch/campaign/service/CampaignStatusServiceTest.java 같은 패키지
+src/test/java/com/launchcatch/campaign/CampaignIntegrationTest.java           도메인 바로 아래
 ```
 
 같은 패키지여야 package-private 클래스와 메서드에 닿는다.
 `Controller` 와 `contract` 인터페이스의 구현체를 package-private 으로 두면 패키지가 어긋나는 순간
 그 구현을 테스트할 수 없다.
 
-이름은 단위가 `~Test`, 통합이 `~IntegrationTest` 다.
+이름은 단위가 `~Test`, 통합이 `~IntegrationTest` 다. **이름이 유일한 구분 수단이다.**
+소스셋이 하나라 실행 기록이 `test.exec` 으로 모이므로, 커버리지 숫자가 단위 테스트에서 나온
+것인지 계층을 가로지르는 테스트에서 나온 것인지 이름 말고는 가릴 방법이 없다.
 
-**넷 다 빌드가 강제한다.** `TestPlacementTest` 와 `PlacementIntegrationTest` 가 각 소스셋에서 확인하며,
-어기면 `./gradlew check` 가 실패해 병합이 막힌다.
+**셋 다 빌드가 강제한다.** `TestPlacementTest` 가 `contract` 배치, 패키지 미러링,
+`@SpringBootTest` 의 이름을 확인하며, 어기면 `./gradlew check` 가 실패해 병합이 막힌다.
 
 외부 의존성은 종류에 따라 다르게 다뤄야 한다.
 
 점검 항목
-* `UT-5-01` 데이터베이스처럼 우리가 관리하고 외부에 노출되지 않는 의존성은 실제로 사용해 통합 테스트하는가
-  DB를 mock으로 대체하면 실제 쿼리와 매핑의 오류를 잡지 못한다.
-* `UT-5-02` 외부 결제 API처럼 우리가 통제할 수 없는 공유 의존성만 mock으로 대체하는가
-* `UT-5-03` 통합 테스트가 관리 의존성과의 실제 연동(쿼리, 트랜잭션, 매핑)을 검증하는가
-* `UT-5-04` 테스트 배치 규칙이 빌드에 묶여 있는가
-  `TestPlacementTest`와 `PlacementIntegrationTest`가 각 소스셋에서 위치, 패키지, 이름을 확인한다. 배치가 어긋나면 통합 테스트가 단위 테스트로 실행되어 커버리지에 합산되고, 통합 테스트를 제외한 `BLD-1-04`가 뚫린다.
+* `UT-5-01` 외부 결제 API처럼 우리가 통제할 수 없는 공유 의존성을 mock으로 대체하는가
+  통제할 수 없는 것을 실제로 부르면 테스트가 남의 사정으로 깨진다.
+* `UT-5-02` 통합 테스트를 쓸 때 `@SpringBootTest` 로 실제 컨텍스트를 띄우는가
+  슬라이스나 인메모리 DB 로 대신하면 "실제로 붙여 봤다" 가 성립하지 않는다.
+  **통합 테스트가 없다는 것만으로 지적하지 않는다.** 쓸지 말지는 작성자가 판단한다.
+* `UT-5-03` 통합 테스트의 이름이 `~IntegrationTest` 로 끝나는가
+  소스셋이 하나라 이름이 커버리지 해석의 유일한 단서다. `TestPlacementTest` 가 확인한다.
 
 ```java
-// 점검 대상: DB(관리 의존성)를 mock으로 대체해 실제 연동을 검증하지 못함
-when(orderRepository.save(any())).thenReturn(order);
-
-// 개선: 통합 테스트에서는 실제 DB를 사용해 매핑과 쿼리까지 검증
+// 점검 대상: 슬라이스로 통합을 흉내 낸다. 컨텍스트 일부만 떠서 실제 연동이 아니다
 @DataJpaTest
-class OrderRepositoryTest {
-    @Autowired OrderRepository orderRepository;
+class OrderRepositoryTest { }
+
+// 개선: 꼭 필요하면 컨텍스트를 전부 띄우고 실제 인프라에 붙인다
+@SpringBootTest
+@Testcontainers
+class OrderIntegrationTest {
 
     @Test
-    void 주문을_저장하고_조회한다() {
-        Order saved = orderRepository.save(new Order(...));
-        assertThat(orderRepository.findById(saved.getId())).isPresent();
-    }
+    void 주문을_저장하고_조회한다() { }
 }
 ```
 

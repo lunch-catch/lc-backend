@@ -148,7 +148,7 @@ PR 하나의 변경분으로 판정할 수 없다. `[설계]` 는 설계 리뷰�
 effective-java-guideline.md와 설계 문서의 경계 규칙은 변경 위치와 무관하게 모든 프로덕션 자바 PR에 항상 적용한다.
 나머지는 변경 내용을 기준으로 적용 여부를 판단한다.
 
-**테스트 코드(`src/test/**`, `src/integrationTest/**`)는 이 둘의 대상이 아니다.**
+**테스트 코드(`src/test/**`)는 이 둘의 대상이 아니다.**
 두 문서는 프로덕션 코드를 겨냥하므로 목 주입, 픽스처 빌더, 서술형 메서드명이 전부 지적으로 나온다.
 테스트는 unit-testing-guideline.md가 소유한다.
 예외는 `ArchitectureTest`다. 테스트 파일이지만 판정 대상이 경계 규칙 자체이므로 설계 문서를 적용한다.
@@ -191,7 +191,7 @@ effective-java-guideline.md와 설계 문서의 경계 규칙은 변경 위치�
 | `**/*Controller.java`, `**/dto/**`, OpenAPI 명세 | api-design-guideline.md |
 | `**/contract/**`, `**/*Event.java` | 설계 문서 1.3절과 2.4절 |
 | `**/*Repository.java` | jpa-association-guideline.md |
-| `**/*Test.java`, `src/test/**`, `src/integrationTest/**` | unit-testing-guideline.md |
+| `**/*Test.java`, `src/test/**` | unit-testing-guideline.md |
 | `**/ArchitectureTest.java` | 설계 문서 1.5절과 2.5절 |
 | `src/main/**` 의 모든 변경 | 품질 속성 가이드의 `[코드]` 항목 (내용 시그널로 어느 영역인지 좁힌다) |
 | `**/auth/**`, `**/*Controller.java` | qa-security-guideline.md |

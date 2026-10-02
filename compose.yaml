@@ -2,7 +2,7 @@
 # .env 는 추적하지 않으므로 각자 다른 포트를 써도 남의 설정을 건드리지 않는다. .env.example 을 복사해 쓴다
 services:
   mysql:
-    # 통합 테스트의 Testcontainers 와 같은 태그를 쓴다. 로컬과 CI 가 어긋나면 검증이 의미를 잃는다
+    # 통합 테스트를 쓸 때의 Testcontainers 와 같은 태그를 쓴다. 로컬과 CI 가 어긋나면 검증이 의미를 잃는다
     image: mysql:8.4
     container_name: ${MYSQL_CONTAINER_NAME:-launchcatch-mysql}
     ports:

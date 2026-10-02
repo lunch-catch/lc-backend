@@ -17,9 +17,10 @@
   `includes`로 좁히므로 팀에게 exclude 목록이 필요 없다. config, dto, entity, Q클래스가 자동으로 빠진다. 패키지 전체가 대상이며, 그 안에 `~Service`만 두도록 `DPB-4-10`이 막으므로 대상에서 빠지는 클래스가 생기지 않는다.
 * `BLD-1-02` 판정 단위가 클래스별(`element = 'CLASS'`), 카운터가 메서드(`counter = 'METHOD'`)인가
 * `BLD-1-03` 기준이 `minimum = 1.00`인가
-* `BLD-1-04` 커버리지 판정이 단위 테스트의 `.exec`만 읽는가
-  팀이 통합 테스트를 합산하면 계층을 가로질러 메서드를 지나가기만 해도 커버리지가 차서, 팀원이 서비스 로직을 단위 테스트 없이 통과시킬 수 있다.
-* `BLD-1-05` `check`가 `integrationTest`와 `jacocoTestCoverageVerification`에 의존하는가
+* `BLD-1-04` 통합 테스트로 커버리지를 채우지 않는가
+  계층을 가로지르는 테스트는 메서드를 지나가기만 해도 커버리지가 차서, 서비스 로직을 단위 테스트 없이 통과시킬 수 있다.
+  소스셋이 하나라 실행 기록이 `test.exec` 으로 모이므로 Gradle 이 둘을 가르지 못한다. 이름(`~IntegrationTest`)이 유일한 단서이고 판정은 리뷰어가 한다.
+* `BLD-1-05` `check`가 `jacocoTestCoverageVerification`과 `coverageDataCheck`에 의존하는가
 * `BLD-1-06` `jacocoTestReport`가 `sonar` 태스크보다 먼저 도는가
   순서가 바뀌면 SonarQube에 커버리지가 0으로 표시된다.
 * `BLD-1-07` 검증 대상 클래스가 있는데 실행 데이터가 없는 상태를 막는가
@@ -76,7 +77,7 @@ jacocoTestCoverageVerification {
     }
 }
 
-check.dependsOn integrationTest, jacocoTestCoverageVerification
+check.dependsOn jacocoTestCoverageVerification, coverageDataCheck
 ```
 
 #### `SonarCloud Code Analysis` 검사가 빨간 것은 정상이다

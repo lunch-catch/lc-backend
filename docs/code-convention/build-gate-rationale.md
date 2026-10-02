@@ -42,7 +42,7 @@ jacocoTestCoverageVerification {
     }
 }
 
-check.dependsOn integrationTest, jacocoTestCoverageVerification
+check.dependsOn jacocoTestCoverageVerification, coverageDataCheck
 ```
 
 #### 3.10.2 METHOD 카운터가 세는 것
@@ -100,13 +100,21 @@ Mockito 의 `@InjectMocks` 든 직접 `new` 든 스프링 주입이든 전부 �
 
 private 메서드가 계산된다는 점도 유의한다. 특정 분기에서만 호출되는 private 헬퍼가 있으면 그 분기를 타는 테스트가 필요하다. 즉 METHOD 기준이라도 **private 메서드를 통해서는 간접적으로 경로 검증이 강제된다.**
 
-#### 3.10.4 통합 테스트는 합산하지 않는다
+#### 3.10.4 통합 테스트로 커버리지를 채우지 않는다
 
 JaCoCo 는 실행마다 별도 `.exec` 파일을 만든다. 게이트는 그중 `test.exec` 만 읽는다.
 
 **합산하면 게이트가 무의미해진다.** 통합 테스트는 계층을 가로질러 실행되므로 서비스 메서드를 지나가기만 해도
 커버리지가 찬다. 그 메서드의 분기와 예외 경로를 하나도 확인하지 않고 100% 를 채울 수 있다.
 게이트의 목적이 "서비스 로직에 단위 테스트가 있는가" 라면 합산은 그 목적을 지운다.
+
+**초안은 소스셋을 나눠 이것을 Gradle 로 막았다.** `src/integrationTest` 를 따로 두고
+`integrationTest.exec` 를 게이트에서 뺐다. 팀이 통합 테스트를 권장 대상에서 빼면서 그 소스셋을
+없앴고, 지금은 단위와 통합이 같은 `src/test` 에 있어 실행 기록이 `test.exec` 하나로 모인다.
+
+그래서 **이 항목의 판정 주체가 Gradle 에서 리뷰어로 바뀌었다.** 통합 테스트는 이름을
+`~IntegrationTest` 로 끝내도록 `TestPlacementTest` 가 강제하므로, 커버리지가 그쪽에서 나온
+것인지 이름으로 가린다. 통합 테스트가 드물다는 전제에 기대는 방어라 전제가 깨지면 다시 나눈다.
 
 ```gradle
 jacocoTestReport {
@@ -120,9 +128,10 @@ jacocoTestReport {
 jacocoTestReport.dependsOn test
 ```
 
-통합 테스트는 여전히 `check` 에 묶여 있어 깨지면 병합이 막힌다. 커버리지 계산에만 들어가지 않는다.
+통합 테스트도 `test` 태스크에서 함께 돌므로 깨지면 `check` 가 실패해 병합이 막힌다.
 
-통합 테스트는 Testcontainers 로 `mysql:8.4` 를 띄운다. 인메모리 DB 를 쓰면 방언과 잠금 동작이 달라 조건부 UPDATE 검증이 성립하지 않는다.
+통합 테스트를 쓸 때는 `@SpringBootTest` 로 실제 컨텍스트를 띄우고 Testcontainers 로 `mysql:8.4` 를
+띄운다. 인메모리 DB 를 쓰면 방언과 잠금 동작이 달라 조건부 UPDATE 검증이 성립하지 않는다.
 
 #### 3.10.5 리포트는 전체를 생성한다
 
@@ -196,7 +205,7 @@ Quality Gate 조건은 설정 화면에서 선택하는 방식이므로 실제 �
 
 ```yaml
 - name: Test and Analyze
-  run: ./gradlew build integrationTest jacocoTestReport sonar
+  run: ./gradlew build jacocoTestReport sonar
   env:
     SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 ```
