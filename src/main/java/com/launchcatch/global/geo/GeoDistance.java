@@ -5,6 +5,11 @@ package com.launchcatch.global.geo;
  * 거를 때 쓴다. 지구를 반지름 하나의 구로 보는 하버사인 공식이라 한국 안의 거리에서는
  * 타원체 공식(Vincenty)과의 차이가 0.3% 안쪽이고, 계산이 짧아 후보 수천 건을
  * 한 요청에서 훑어도 부담이 없다.
+ *
+ * 좌표를 double 로 받는다. 스키마가 위경도를 DECIMAL(10,7) 로 두어 엔티티 쪽은
+ * BigDecimal 이지만, BigDecimal 에는 sin 과 cos 이 없어 삼각함수를 쓰는 순간
+ * double 로 내려와야 한다. 거리는 애초에 구 근사로 얻는 근사값이라 EJ-8-04 가 겨냥하는
+ * 금액 계산과 성질이 다르고, DECIMAL(10,7) 의 소수 7자리는 double 의 유효자리 안에 든다.
  */
 public final class GeoDistance {
 
@@ -33,8 +38,12 @@ public final class GeoDistance {
          * asin 을 쓰는 형태다. 교과서에 자주 나오는 atan2 형태와 값은 같지만,
          * 가까운 두 점에서 부동소수 오차가 덜 쌓인다.
          */
-        double h = Math.pow(Math.sin(deltaPhi / 2), 2)
-                + Math.cos(phi1) * Math.cos(phi2) * Math.pow(Math.sin(deltaLambda / 2), 2);
+        double sinHalfPhi = Math.sin(deltaPhi / 2);
+        double sinHalfLambda = Math.sin(deltaLambda / 2);
+        double h = sinHalfPhi * sinHalfPhi
+                + Math.cos(phi1) * Math.cos(phi2) * sinHalfLambda * sinHalfLambda;
+
+        // 반올림으로 h 가 1 을 넘으면 asin 이 NaN 을 낸다
         return 2 * EARTH_RADIUS_METERS * Math.asin(Math.sqrt(Math.min(1.0, h)));
     }
 }

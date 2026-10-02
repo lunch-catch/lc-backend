@@ -6,6 +6,10 @@ import static org.assertj.core.api.Assertions.within;
 
 import org.junit.jupiter.api.Test;
 
+/*
+ * 기대값은 운영 코드의 수식을 다시 쓰지 않고 바깥에서 따로 계산해 상수로 박았다.
+ * 테스트가 같은 수식을 다시 계산하면 그 수식이 틀려도 함께 틀려서 통과한다.
+ */
 class GeoDistanceTest {
 
     // 서울시청
@@ -27,32 +31,40 @@ class GeoDistanceTest {
     }
 
     @Test
-    void 서울시청과_강남역_사이는_약_8_8km다() {
+    void 서울시청과_강남역_사이는_8778m다() {
         // when
         double meters = GeoDistance.meters(
                 CITY_HALL_LATITUDE, CITY_HALL_LONGITUDE, GANGNAM_LATITUDE, GANGNAM_LONGITUDE);
 
         // then
-        assertThat(meters).isCloseTo(8_778, within(10.0));
+        assertThat(meters).isCloseTo(8_778.019, within(0.01));
     }
 
     @Test
-    void 위도_1도_차이는_약_111km다() {
+    void 위도_1도_차이는_111195m다() {
         // when
         double meters = GeoDistance.meters(37.0, 127.0, 38.0, 127.0);
 
         // then
-        assertThat(meters).isCloseTo(111_195, within(10.0));
+        assertThat(meters).isCloseTo(111_195.080, within(0.01));
     }
 
     @Test
-    void 같은_경도_차이라도_고위도에서_더_가깝다() {
+    void 적도에서_경도_1도_차이는_111195m다() {
         // when
-        double nearEquator = GeoDistance.meters(0.0, 127.0, 0.0, 128.0);
-        double inKorea = GeoDistance.meters(37.5, 127.0, 37.5, 128.0);
+        double meters = GeoDistance.meters(0.0, 127.0, 0.0, 128.0);
 
         // then
-        assertThat(inKorea).isLessThan(nearEquator);
+        assertThat(meters).isCloseTo(111_195.080, within(0.01));
+    }
+
+    @Test
+    void 위도_37_5도에서_경도_1도_차이는_88216m로_줄어든다() {
+        // when
+        double meters = GeoDistance.meters(37.5, 127.0, 37.5, 128.0);
+
+        // then
+        assertThat(meters).isCloseTo(88_216.573, within(0.01));
     }
 
     @Test
@@ -68,12 +80,12 @@ class GeoDistanceTest {
     }
 
     @Test
-    void 지구_반대편_두_점은_반바퀴_거리다() {
+    void 지구_반대편_두_점은_20015114m다() {
         // when
         double meters = GeoDistance.meters(0.0, 0.0, 0.0, 180.0);
 
         // then
-        assertThat(meters).isCloseTo(Math.PI * GeoDistance.EARTH_RADIUS_METERS, within(1.0));
+        assertThat(meters).isCloseTo(20_015_114.442, within(0.01));
     }
 
     @Test
