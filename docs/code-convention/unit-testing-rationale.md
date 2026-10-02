@@ -170,8 +170,8 @@ class OrderIntegrationTest { }
 ```
 
 인메모리 DB 도 같은 이유로 쓰지 않는다. 방언과 잠금 동작이 운영과 다르면 정작 확인하려던
-조건부 UPDATE 와 교착 상태가 재현되지 않는다. 운영과 같은 `mysql:8.4` 와 `valkey 9` 를 띄운다
-(비기능 5행, 30행).
+조건부 UPDATE 와 교착 상태가 재현되지 않는다. 운영과 같은 `mysql:8.4` 와 `valkey 9` 를 띄운다.
+태그는 `compose.yaml` 과 맞춘다. 로컬과 CI 와 테스트가 서로 다른 판을 쓰면 검증이 의미를 잃는다.
 
 ### 왜 이름으로 구분하는가
 초안은 `src/integrationTest` 소스셋을 따로 두어 Gradle 이 둘을 갈랐다. 통합 테스트를 권장

@@ -146,4 +146,4 @@ public void placeOrder(OrderCommand cmd) {
 
 * 설계 근거: [build-gate-rationale.md](./build-gate-rationale.md)
 * 패키지 구조: [런치캐치_백엔드_설계.md](../architecture/런치캐치_백엔드_설계.md) 1.3절
-* 기술 스택과 품질 요건: 요구사항 명세서 `비기능 명세서` 시트 29~32행
+* 판정 대상 설정: 저장소 루트의 `build.gradle` 과 `.github/workflows/pr-gate.yml`
