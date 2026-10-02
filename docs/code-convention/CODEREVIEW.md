@@ -1,7 +1,10 @@
 # 코드 리뷰 가이드라인
 
-이 디렉터리는 Pull Request 자동 코드 리뷰의 기준을 정의한다.
-이 문서(CODEREVIEW.md)는 진입점 역할을 하며, 공통 규칙과 각 영역 문서로의 링크, 그리고 변경 경로별 적용 매핑을 담는다.
+이 문서는 Pull Request 자동 코드 리뷰의 기준을 정의하는 진입점이다.
+공통 규칙과 각 영역 문서로의 링크, 그리고 변경 경로별 적용 매핑을 담는다.
+
+기준은 두 디렉터리에 있다. `docs/code-convention` 이 **어떻게 쓰는가**(코드 관용과 패턴)를,
+`docs/software-quality` 가 **얼마나 잘 하는가**(품질 속성)를 소유한다.
 
 대상 기술 스택은 Java 21, Spring Boot 4.x, MySQL 8.4, Valkey 9를 기준으로 한다.
 
@@ -21,6 +24,32 @@
 | 응답과 예외 흐름 | [response-exception-flow.md](./response-exception-flow.md) | - |
 | 도메인 패키지 경계와 의존 방향 | [런치캐치_백엔드_설계.md](../architecture/런치캐치_백엔드_설계.md) | - |
 
+### 품질 속성 (`docs/software-quality`)
+
+진입점은 [quality-attributes.md](../software-quality/quality-attributes.md) 다. ISO/IEC 25010:2023 을
+기준 모델로 삼고, 영역마다 `*-guideline.md` 와 `*-rationale.md` 가 짝을 이룬다.
+
+| 영역 | 접두어 | 점검 가이드 |
+|------|--------|-------------|
+| 기능 적합성 | `FUN-` | [qa-functional-suitability-guideline.md](../software-quality/qa-functional-suitability-guideline.md) |
+| 성능 효율성 | `PERF-` | [qa-performance-efficiency-guideline.md](../software-quality/qa-performance-efficiency-guideline.md) |
+| 신뢰성 | `REL-` | [qa-reliability-guideline.md](../software-quality/qa-reliability-guideline.md) |
+| 보안 | `SEC-` | [qa-security-guideline.md](../software-quality/qa-security-guideline.md) |
+| 유지보수성 | `MNT-` | [qa-maintainability-guideline.md](../software-quality/qa-maintainability-guideline.md) |
+| 유연성과 확장성 | `FLX-` | [qa-flexibility-guideline.md](../software-quality/qa-flexibility-guideline.md) |
+| 호환성 | `CMP-` | [qa-compatibility-guideline.md](../software-quality/qa-compatibility-guideline.md) |
+| 데이터 정합성 | `DI-` | [qa-data-integrity-guideline.md](../software-quality/qa-data-integrity-guideline.md) |
+| 관측 가능성 | `OBS-` | [qa-observability-guideline.md](../software-quality/qa-observability-guideline.md) |
+| 인시던트 대응 | `INC-` | [qa-incident-response-guideline.md](../software-quality/qa-incident-response-guideline.md) |
+| 속성 간 트레이드오프 | `TRD-` | [qa-tradeoffs-guideline.md](../software-quality/qa-tradeoffs-guideline.md) |
+
+**자동 리뷰는 이 문서군의 `[코드]` 항목만 본다.** 전체 219개 중 79개다. 나머지 셋은
+PR 하나의 변경분으로 판정할 수 없다. `[설계]` 는 설계 리뷰와 ADR 에서, `[인프라]` 는 인프라
+변경에서, `[프로세스]` 는 정기 점검에서 사람이 본다.
+
+수치에 붙은 등급은 근거의 성격이다. `A` 는 산술로 도출한 값, `B` 는 출처가 있는 값,
+`C` 는 근거 없이 정한 예시값이다. **`C` 로 지적하지 않는다.** 측정한 뒤 팀이 확정할 값이다.
+
 **경계 규약은 이 디렉터리가 아니라 설계 문서가 소유한다.** 계층, 도메인, `contract` 패키지, 의존 규칙 6개,
 그것을 지키는 아키텍처 테스트 12개가 모두 그 문서 1장과 2장에 있다. 같은 내용을 여기에 다시 적으면
 둘이 어긋나는 순간 어느 쪽이 기준인지 알 수 없게 된다.
@@ -33,7 +62,9 @@
 
 봇은 다음 규칙을 따른다.
 
-1. 지적의 기준은 점검 가이드 문서(`*-guideline.md`)의 점검 항목으로 한정한다.
+1. 지적의 기준은 두 디렉터리의 점검 가이드 문서(`*-guideline.md`)에 적힌 점검 항목으로 한정한다.
+   품질 속성 가이드는 `[코드]` 가 붙은 항목만 쓴다. `[설계]`, `[인프라]`, `[프로세스]` 는
+   PR 변경분으로 판정할 수 없으므로 지적하지 않고, 필요하면 사람이 볼 사안이라고만 적는다.
 2. 근거 문서(`*-rationale.md`)는 코멘트 설명을 보강할 때만 참고하고, 근거 문서를 바탕으로 새로운 지적을 만들지 않는다.
 3. 가이드에 없는 항목은 지적하지 않으며, 새 점검 기준이 필요하면 가이드 문서를 먼저 갱신한다.
 4. 가이드에 포함된 외부 링크와 출처(AIP 번호, 책 항목 번호, URL 등)는 사람 리뷰어와 작성자를 위한 참고일 뿐이다. 봇은 이 링크를 가져오지 않으며, 가이드 본문에 적힌 내용만으로 판단한다. 외부 페이지를 읽지 않으면 판단이 어려운 항목은 임의로 가져오지 말고, 확인이 필요하다는 점을 코멘트로 남겨 사람에게 넘긴다.
@@ -59,22 +90,52 @@
 | 테스트 설계와 품질 (동작 검증, 테스트 더블, 구조, 격리) | unit-testing-guideline.md | - |
 | API 표면 설계 (리소스, 표준 메서드, 필드명, 페이지네이션, 오류 구조) | api-design-guideline.md | - |
 | 커버리지 게이트와 정적 분석 설정 | build-gate-guideline.md | - |
+| 트랜잭션 경계와 길이, 외부 호출 위치 | qa-data-integrity-guideline.md (`DI-4-*`) | - |
+| 잠금 전략과 획득 순서, 갱신 손실 | qa-data-integrity-guideline.md (`DI-2-*`) | - |
+| N+1 과 쿼리 반복 | qa-performance-efficiency-guideline.md (`PERF-2-*`) | jpa-association-guideline.md |
+| 인가와 소유권 검증, 입력 검증, 인젝션 | qa-security-guideline.md (`SEC-1-*`, `SEC-2-*`, `SEC-3-*`) | - |
+| 타임아웃, 재시도, 멱등성 | qa-reliability-guideline.md (`REL-2-*`) | - |
+| 로그 내용과 상관관계 ID, 민감정보 마스킹 | qa-observability-guideline.md (`OBS-3-*`, `OBS-7-*`) | - |
+| 오류 응답이 내부를 노출하는지 | qa-compatibility-guideline.md (`CMP-4-04`) | response-exception-flow.md |
 
-### 이 디렉터리가 다루지 않는 사안
+품질 속성 가이드와 코드 관용 가이드가 같은 줄에 걸릴 때의 경계는 이렇다.
+**관용 가이드는 "이 프로젝트에서 그것을 어떤 모양으로 쓰는가" 를, 품질 속성 가이드는
+"그것이 충분한가" 를 본다.**
 
-아래는 시스템 품질 속성이라 코드 관용과는 다른 축이다. **지금은 소유 문서가 없으므로 사람 리뷰어가 본다.**
-자동 리뷰 봇은 이 사안으로 지적하지 않는다. 기준이 필요해지면 그때 가이드를 새로 만든다.
+예를 들어 지연 로딩 한 줄에서 `jpa-association-guideline.md` 는 `fetch = LAZY` 를 명시했는지를
+보고, `qa-performance-efficiency-guideline.md` 는 그 지연 로딩이 루프 안에서 N+1 을 만드는지를
+본다. 둘은 같은 사안의 다른 관점이라 중복이 아니다.
+
+오류 응답은 반대로 겹친다. `response-exception-flow.md` 가 "`ErrorCode` 에서만 문구가 나온다" 로
+이미 더 좁게 막으므로 `CMP-4-04` 는 그 규약을 지킨 코드에 발화하지 않는다.
+
+### 품질 속성은 어디가 보는가
+
+아래는 시스템 품질 속성이라 코드 관용과는 다른 축이다. **전에는 소유 문서가 없어 사람 리뷰어가
+전부 봤는데, `docs/software-quality` 를 들여오면서 소유 가이드를 갖게 되었다.**
+
+| 사안 | 소유 가이드 | 프로젝트의 구체값은 어디 |
+|------|-------------|--------------------------|
+| 트랜잭션 경계, 외부 호출 위치, 트랜잭션 길이 | `DI-4-*` | 설계 문서 2.4절의 이벤트 처리 기준 |
+| 잠금 전략, 획득 순서, 갱신 손실 | `DI-2-*` | 요구사항 명세서 `비즈니스 규칙` 시트, 비기능 17행 |
+| N+1, 인덱스, 쿼리 성능 | `PERF-2-*` | 비기능 12~16행의 응답 시간 목표 |
+| 인가와 소유권 검증 | `SEC-1-*` | 기능 명세서 94행, 의존 규칙 5 |
+| 타임아웃, 재시도, 서킷 브레이커 | `REL-2-*` | `application.yml` 의 resilience4j 설정과 그 주석 |
+
+**가이드는 유형을 주고 수치는 주지 않는다.** 임계치가 대부분 등급 `C`(근거 없는 예시값)라서
+"타임아웃이 설정되어 있는가" 는 판정하지만 "3초가 맞는가" 는 판정하지 않는다. 그 값은 오른쪽
+열의 프로젝트 문서가 정한다. 둘이 다르게 말하면 프로젝트 문서가 이긴다.
+
+그리고 `[코드]` 가 아닌 항목 140개는 소유 가이드가 있어도 **자동 리뷰가 지적하지 않는다.**
+`[설계]` 는 설계 리뷰와 ADR, `[인프라]` 는 인프라 변경, `[프로세스]` 는 정기 점검에서 사람이 본다.
+
+소유 문서가 아직 없는 것은 하나 남았다.
 
 | 사안 | 지금 어디를 근거로 보는가 |
 |------|--------------------------|
-| 트랜잭션 경계, 외부 호출 위치, 트랜잭션 길이 | 설계 문서 2.4절의 이벤트 처리 기준 |
-| 잠금 전략, 획득 순서, 갱신 손실 | 요구사항 명세서 `비즈니스 규칙` 시트, 비기능 17행 |
-| N+1, 인덱스, 쿼리 성능 | 비기능 12~16행의 응답 시간 목표 |
-| 인가와 소유권 검증 | 기능 명세서 94행, 의존 규칙 5 |
-| 타임아웃, 재시도, 서킷 브레이커 | `application.yml` 의 resilience4j 설정과 그 주석 |
 | 엔티티 뼈대와 시각 컬럼, 식별자 전략 | `global.entity` 의 베이스 엔티티 둘, `docs/api-spec/README.md` 의 식별자 절 |
 
-경계 기준은 **품질 속성은 "얼마나 잘 하는가", 이 디렉터리는 "어떻게 쓰는가"(코드 관용과 패턴)**다.
+경계 기준은 **품질 속성은 "얼마나 잘 하는가", `code-convention` 은 "어떻게 쓰는가"(코드 관용과 패턴)**다.
 
 해석 원칙은 다음과 같다.
 
@@ -111,6 +172,13 @@ effective-java-guideline.md와 설계 문서의 경계 규칙은 변경 위치�
 | unit-testing-guideline.md | `@Test`, JUnit, Mockito, AssertJ, `@DataJpaTest`, `@SpringBootTest`, 테스트 클래스(`*Test`) |
 | api-design-guideline.md | `@RestController`, `@RequestMapping`, `@GetMapping`/`@PostMapping`/`@PatchMapping`/`@DeleteMapping`, 요청과 응답 DTO, OpenAPI 명세 |
 | build-gate-guideline.md | `build.gradle` 의 jacoco, sonar, check 관련 블록, `.github/workflows/**` |
+| qa-security-guideline.md | 쿼리 문자열 조립, 요청 본문의 식별자를 그대로 쓰는 조회, 파일 업로드, 정렬 컬럼 바인딩, 비밀값 리터럴 |
+| qa-data-integrity-guideline.md | `@Transactional`, 잠금(`@Lock`, `@Version`, `SELECT FOR UPDATE`), 트랜잭션 안의 외부 호출, 수량 차감 |
+| qa-performance-efficiency-guideline.md | 반복문 안의 조회, 컬렉션 순회 중 연관 접근, 페이지네이션, 대량 조회 |
+| qa-reliability-guideline.md | `WebClient`, `RestClient`, 타임아웃과 재시도 설정, `@Retryable`, 서킷 브레이커, 멱등 키 |
+| qa-observability-guideline.md | 로깅 호출, MDC, 예외 처리에서 남기는 정보, 메트릭 등록 |
+| qa-compatibility-guideline.md | 응답 필드 제거나 이름 변경, enum 값 삭제, 마이그레이션의 컬럼 제거, 오류 응답 본문 |
+| qa-maintainability-guideline.md | 긴 메서드와 깊은 분기, 중복 블록, 죽은 코드, 설정 하드코딩 |
 
 ### 파일명 힌트 (보조)
 
@@ -125,6 +193,11 @@ effective-java-guideline.md와 설계 문서의 경계 규칙은 변경 위치�
 | `**/*Repository.java` | jpa-association-guideline.md |
 | `**/*Test.java`, `src/test/**`, `src/integrationTest/**` | unit-testing-guideline.md |
 | `**/ArchitectureTest.java` | 설계 문서 1.5절과 2.5절 |
+| `src/main/**` 의 모든 변경 | 품질 속성 가이드의 `[코드]` 항목 (내용 시그널로 어느 영역인지 좁힌다) |
+| `**/auth/**`, `**/*Controller.java` | qa-security-guideline.md |
+| `**/service/**` | qa-data-integrity-guideline.md, qa-reliability-guideline.md |
+| `**/repository/**` | qa-performance-efficiency-guideline.md |
+| `src/main/resources/db/migration/*.sql` | qa-compatibility-guideline.md |
 
 ### 도메인 경계 점검의 자동화
 
