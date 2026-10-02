@@ -5,7 +5,7 @@
 
 기준 스택은 Java, Spring Data JPA, MySQL 8.4, Lombok이다.
 각 항목이 왜 필요한지는 [entity-creation-rationale.md](./entity-creation-rationale.md)를 참고한다.
-이 문서는 [effective-java-guideline.md](./effective-java-guideline.md)의 객체 생성 항목(아이템 1, 2, 15, 17)과 [jpa-rdb-guideline.md](./jpa-rdb-guideline.md)의 엔티티 설계 항목을 엔티티 생성이라는 한 지점에 맞춰 구체화한 것이다.
+이 문서는 [effective-java-guideline.md](./effective-java-guideline.md)의 객체 생성 항목(아이템 1, 2, 15, 17)을 엔티티 생성이라는 한 지점에 맞춰 구체화한 것이다.
 
 핵심 원칙은 하나다. **엔티티는 유효하지 않은 상태로 존재할 수 없어야 한다.**
 생성 경로가 여럿이면 그중 하나는 반드시 검증을 빠뜨리므로, 경로를 하나로 좁히고 그 하나에 검증을 모은다.

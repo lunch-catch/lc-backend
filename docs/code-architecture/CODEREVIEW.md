@@ -15,7 +15,6 @@
 | 자바 작성 원칙 (Effective Java 기반) | [effective-java-guideline.md](./effective-java-guideline.md) | [effective-java-rationale.md](./effective-java-rationale.md) |
 | 단위 테스트 (Unit Testing 기반) | [unit-testing-guideline.md](./unit-testing-guideline.md) | [unit-testing-rationale.md](./unit-testing-rationale.md) |
 | API 설계 (Google AIP 기반) | [api-design-guideline.md](./api-design-guideline.md) | [api-design-rationale.md](./api-design-rationale.md) |
-| JPA 사용 (RDB 관점) | [jpa-rdb-guideline.md](./jpa-rdb-guideline.md) | [jpa-rdb-rationale.md](./jpa-rdb-rationale.md) |
 | 엔티티 생성 패턴 | [entity-creation-guideline.md](./entity-creation-guideline.md) | [entity-creation-rationale.md](./entity-creation-rationale.md) |
 | 빌드 게이트 (커버리지, 정적 분석) | [build-gate-guideline.md](./build-gate-guideline.md) | [build-gate-rationale.md](./build-gate-rationale.md) |
 | 응답과 예외 흐름 | [response-exception-flow.md](./response-exception-flow.md) | - |
@@ -41,12 +40,11 @@
 같은 코드 한 줄에 여러 가이드가 걸릴 때, **더 구체적이고 좁은 범위를 다루는 가이드가 그 사안을 소유한다.**
 봇은 소유 가이드에서만 지적하고, 더 일반적인 가이드의 동일 항목은 발화하지 않는다.
 
-엔티티 관련 가이드가 둘이라 겹침이 있다. 축을 나눠 소유를 정한다.
+엔티티를 다루는 가이드는 entity-creation 하나다. 겹치는 자리만 축을 나눠 소유를 정한다.
 
 | 사안 | 소유 가이드 | 지적 보류 |
 |------|-------------|-----------|
-| 엔티티 인스턴스 생성 (정적 팩터리, 검증 위치, 생성용 Lombok) | entity-creation-guideline.md | effective-java-guideline.md, jpa-rdb-guideline.md |
-| 연관관계 매핑, cascade, 자동 매핑, DTO 프로젝션 | jpa-rdb-guideline.md | - |
+| 엔티티 인스턴스 생성 (정적 팩터리, 검증 위치, 생성용 Lombok) | entity-creation-guideline.md | effective-java-guideline.md |
 | 엔티티 속성값의 저장 방식 (enum 대 코드 테이블) | entity-creation-guideline.md | - |
 | 패키지 배치, 도메인 간 참조, 접근 제어자, 순환 의존 | 설계 문서 1장과 2장 | - |
 | 오류 코드와 예외 클래스 배치, 응답 봉투 | response-exception-flow.md | effective-java-guideline.md |
@@ -67,14 +65,16 @@
 | N+1, 인덱스, 쿼리 성능 | 비기능 12~16행의 응답 시간 목표 |
 | 인가와 소유권 검증 | 기능 명세서 94행, 의존 규칙 5 |
 | 타임아웃, 재시도, 서킷 브레이커 | `application.yml` 의 resilience4j 설정과 그 주석 |
+| 연관관계 매핑, cascade, fetch, DTO 프로젝션 | 설계 문서 2.1절 규칙 1(연관은 ID 로만 갖는다) |
+| 엔티티 뼈대와 시각 컬럼, 식별자 전략 | `global.entity` 의 베이스 엔티티 둘, `docs/api/README.md` 의 식별자 절 |
 
 경계 기준은 **품질 속성은 "얼마나 잘 하는가", 이 디렉터리는 "어떻게 쓰는가"(코드 관용과 패턴)**다.
 
 해석 원칙은 다음과 같다.
 
-- **같은 사안이라도 관점이 다르면 중복이 아니다.** 예를 들어 엔티티 클래스 하나에서 jpa-rdb는 연관 매핑을, entity-creation은 생성 경로를 보므로 둘 다 발화할 수 있다. 표는 "같은 문제를 같은 관점으로 두 번 지적하는 것"만 막는다.
+- **같은 사안이라도 관점이 다르면 중복이 아니다.** 예를 들어 엔티티 클래스 하나에서 effective-java는 불변과 생성자 관용을, entity-creation은 생성 경로를 보므로 둘 다 발화할 수 있다. 표는 "같은 문제를 같은 관점으로 두 번 지적하는 것"만 막는다.
 - 우선순위가 불분명하면 더 좁은 범위를 다루는 가이드를 소유로 본다.
-- **엔티티 뼈대와 식별자 전략은 소유 문서가 없다.** 시각 컬럼은 `global` 의 베이스 엔티티 둘을 상속해 얻고, 식별자 규약은 `docs/api/README.md` 의 식별자 절이 정한다. 자동 리뷰 봇은 이 사안으로 지적하지 않는다.
+- **엔티티 뼈대와 식별자 전략, 연관관계 매핑은 소유 문서가 없다.** 위 "다루지 않는 사안" 표를 따른다.
 
 ## 가이드 적용 대상 판단
 
@@ -98,7 +98,6 @@ effective-java-guideline.md와 설계 문서의 경계 규칙은 변경 위치�
 
 | 가이드 | 적용 시그널 |
 |--------|-------------|
-| jpa-rdb-guideline.md | `@Entity`, `@ManyToOne`, `@OneToMany`, `@OneToOne`, `cascade`, `fetch`, `@Query`, `EntityManager`, `JdbcTemplate`, `@Transactional`, SQL 문자열, `.sql` 파일 |
 | entity-creation-guideline.md | `@Entity` 클래스의 생성자와 정적 팩터리, `@Builder`, `@Setter`, `@Data`, `@NoArgsConstructor`, `@Enumerated` |
 | 설계 문서 1장과 2장 | 패키지 이동, import 문 변경, 접근 제어자 변경, `contract` 패키지의 인터페이스와 record, `~Event` 클래스, ArchUnit 테스트 |
 | response-exception-flow.md | `ErrorCode`, `BusinessException`, `ResponseEnvelope`, `@RestControllerAdvice`, 새 오류 코드 enum |
@@ -113,8 +112,7 @@ effective-java-guideline.md와 설계 문서의 경계 규칙은 변경 위치�
 | 파일명 패턴 | 적용 문서 |
 |-------------|-----------|
 | `src/main/**` 의 모든 변경 | effective-java-guideline.md, 설계 문서 1장과 2장 |
-| `**/*Entity.java`, `**/entity/**` | entity-creation-guideline.md, jpa-rdb-guideline.md |
-| `**/*Repository.java`, `**/*.sql`, `db/migration/**` | jpa-rdb-guideline.md |
+| `**/*Entity.java`, `**/entity/**` | entity-creation-guideline.md |
 | `**/*Controller.java`, `**/dto/**`, OpenAPI 명세 | api-design-guideline.md |
 | `**/contract/**`, `**/*Event.java` | 설계 문서 1.3절과 2.4절 |
 | `**/*Test.java`, `src/test/**`, `src/integrationTest/**` | unit-testing-guideline.md |
