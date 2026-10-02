@@ -16,7 +16,7 @@
 | 단위 테스트 (Unit Testing 기반) | [unit-testing-guideline.md](./unit-testing-guideline.md) | [unit-testing-rationale.md](./unit-testing-rationale.md) |
 | API 설계 (Google AIP 기반) | [api-design-guideline.md](./api-design-guideline.md) | [api-design-rationale.md](./api-design-rationale.md) |
 | 엔티티 생성 패턴 | [entity-creation-guideline.md](./entity-creation-guideline.md) | [entity-creation-rationale.md](./entity-creation-rationale.md) |
-| JPA 연관 매핑 (애그리거트 경계) | [런치캐치_JPA_연관_규칙.md](../architecture/런치캐치_JPA_연관_규칙.md) | - |
+| JPA 연관 매핑 (애그리거트 경계) | [jpa-association-guideline.md](./jpa-association-guideline.md) | [런치캐치_JPA_연관_규칙.md](../architecture/런치캐치_JPA_연관_규칙.md) |
 | 빌드 게이트 (커버리지, 정적 분석) | [build-gate-guideline.md](./build-gate-guideline.md) | [build-gate-rationale.md](./build-gate-rationale.md) |
 | 응답과 예외 흐름 | [response-exception-flow.md](./response-exception-flow.md) | - |
 | 도메인 패키지 경계와 의존 방향 | [런치캐치_백엔드_설계.md](../architecture/런치캐치_백엔드_설계.md) | - |
@@ -42,12 +42,12 @@
 봇은 소유 가이드에서만 지적하고, 더 일반적인 가이드의 동일 항목은 발화하지 않는다.
 
 엔티티를 다루는 가이드가 둘이다. 축을 나눠 소유를 정한다. entity-creation 은 인스턴스를 어떻게
-만드는지를 보고, JPA 연관 규칙은 필드가 무엇을 가리키는지를 본다.
+만드는지를 보고, jpa-association 은 필드가 무엇을 가리키는지를 본다.
 
 | 사안 | 소유 가이드 | 지적 보류 |
 |------|-------------|-----------|
 | 엔티티 인스턴스 생성 (정적 팩터리, 검증 위치, 생성용 Lombok) | entity-creation-guideline.md | effective-java-guideline.md |
-| 연관 매핑 범위와 방식 (객체 연관 대 ID, fetch, cascade, 애그리거트 경계) | 런치캐치_JPA_연관_규칙.md | - |
+| 연관 매핑 범위와 방식 (객체 연관 대 ID, fetch, cascade, 애그리거트 경계) | jpa-association-guideline.md | - |
 | 엔티티 속성값의 저장 방식 (enum 대 코드 테이블) | entity-creation-guideline.md | - |
 | 패키지 배치, 도메인 간 참조, 접근 제어자, 순환 의존 | 설계 문서 1장과 2장 | - |
 | 오류 코드와 예외 클래스 배치, 응답 봉투 | response-exception-flow.md | effective-java-guideline.md |
@@ -74,7 +74,7 @@
 
 해석 원칙은 다음과 같다.
 
-- **같은 사안이라도 관점이 다르면 중복이 아니다.** 예를 들어 엔티티 클래스 하나에서 JPA 연관 규칙은 연관 필드가 무엇을 가리키는지를, entity-creation은 생성 경로를 보므로 둘 다 발화할 수 있다. 표는 "같은 문제를 같은 관점으로 두 번 지적하는 것"만 막는다.
+- **같은 사안이라도 관점이 다르면 중복이 아니다.** 예를 들어 엔티티 클래스 하나에서 jpa-association은 연관 필드가 무엇을 가리키는지를, entity-creation은 생성 경로를 보므로 둘 다 발화할 수 있다. 표는 "같은 문제를 같은 관점으로 두 번 지적하는 것"만 막는다.
 - 우선순위가 불분명하면 더 좁은 범위를 다루는 가이드를 소유로 본다.
 - **엔티티 뼈대와 식별자 전략은 소유 문서가 없다.** 위 "다루지 않는 사안" 표를 따른다.
 
@@ -101,7 +101,7 @@ effective-java-guideline.md와 설계 문서의 경계 규칙은 변경 위치�
 | 가이드 | 적용 시그널 |
 |--------|-------------|
 | entity-creation-guideline.md | `@Entity` 클래스의 생성자와 정적 팩터리, `@Builder`, `@Setter`, `@Data`, `@NoArgsConstructor`, `@Enumerated` |
-| 런치캐치_JPA_연관_규칙.md | `@ManyToOne`, `@OneToMany`, `@OneToOne`, `@ManyToMany`, `@JoinColumn`, `cascade`, `fetch`, `orphanRemoval`, `@Embedded`, `@ElementCollection`, 엔티티의 `~Id` 필드 |
+| jpa-association-guideline.md | `@ManyToOne`, `@OneToMany`, `@OneToOne`, `@ManyToMany`, `@JoinColumn`, `cascade`, `fetch`, `orphanRemoval`, `@Embedded`, `@ElementCollection`, 엔티티의 `~Id` 필드 |
 | 설계 문서 1장과 2장 | 패키지 이동, import 문 변경, 접근 제어자 변경, `contract` 패키지의 인터페이스와 record, `~Event` 클래스, ArchUnit 테스트 |
 | response-exception-flow.md | `ErrorCode`, `BusinessException`, `ResponseEnvelope`, `@RestControllerAdvice`, 새 오류 코드 enum |
 | unit-testing-guideline.md | `@Test`, JUnit, Mockito, AssertJ, `@DataJpaTest`, `@SpringBootTest`, 테스트 클래스(`*Test`) |
@@ -115,10 +115,10 @@ effective-java-guideline.md와 설계 문서의 경계 규칙은 변경 위치�
 | 파일명 패턴 | 적용 문서 |
 |-------------|-----------|
 | `src/main/**` 의 모든 변경 | effective-java-guideline.md, 설계 문서 1장과 2장 |
-| `**/*Entity.java`, `**/entity/**` | entity-creation-guideline.md, 런치캐치_JPA_연관_규칙.md |
+| `**/*Entity.java`, `**/entity/**` | entity-creation-guideline.md, jpa-association-guideline.md |
 | `**/*Controller.java`, `**/dto/**`, OpenAPI 명세 | api-design-guideline.md |
 | `**/contract/**`, `**/*Event.java` | 설계 문서 1.3절과 2.4절 |
-| `**/*Repository.java` | 런치캐치_JPA_연관_규칙.md |
+| `**/*Repository.java` | jpa-association-guideline.md |
 | `**/*Test.java`, `src/test/**`, `src/integrationTest/**` | unit-testing-guideline.md |
 | `**/ArchitectureTest.java` | 설계 문서 1.5절과 2.5절 |
 
