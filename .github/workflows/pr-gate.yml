@@ -72,6 +72,16 @@ jobs:
           PR: ${{ github.event.pull_request.number }}
         run: |
           KEY=lunch-catch_lc-backend
+
+          # 프로젝트 키가 틀리면 아래 이슈 검색이 오류 없이 total=0 을 돌려준다.
+          # 그러면 Blocker 가 있어도 이 단계가 통과해 거짓 초록이 된다.
+          # 그래서 프로젝트가 실재하는지 먼저 확인하고 없으면 여기서 막는다
+          if ! curl -sS -u "$SONAR_TOKEN:" "https://sonarcloud.io/api/components/show?component=$KEY" \
+               | jq -e '.component.key' >/dev/null 2>&1; then
+            echo "::error::SonarCloud 에 프로젝트 $KEY 가 없다. build.gradle 의 sonar.projectKey 와 이 값을 맞춘다."
+            exit 1
+          fi
+
           Q="componentKeys=$KEY&severities=BLOCKER&resolved=false&ps=100&pullRequest=$PR"
           RES=$(curl -sS -u "$SONAR_TOKEN:" "https://sonarcloud.io/api/issues/search?$Q")
           N=$(printf '%s' "$RES" | jq -r '.total // "err"')
