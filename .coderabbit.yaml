@@ -6,7 +6,7 @@
 #
 # 스키마: https://storage.googleapis.com/coderabbit_public_assets/schema.v2.json
 
-# CODEREVIEW.md 봇 규칙 6. 모든 리뷰 코멘트는 한국어로 작성한다
+# CODEREVIEW.md 봇 규칙 7. 모든 리뷰 코멘트는 한국어로 작성한다
 language: ko-KR
 
 # 250자 상한이 있어 핵심만 적는다. 나머지는 아래 path_instructions 의 공통 항목에 있다
@@ -95,6 +95,42 @@ reviews:
 
         품질 속성 가이드의 수치에는 등급이 붙어 있다. 등급 C 는 근거 없이 정한 예시값이므로
         그 수치를 어겼다고 지적하지 않는다. 설정이 있는지 없는지는 보되 값의 적정성은 보지 않는다.
+
+        지적마다 근거를 아래 한 줄 모양으로 붙인다. 형식을 지킨다.
+
+          점검 항목 내용 ([번호] 저장소/문서 경로)
+
+        예시다.
+          생성자 대신 정적 팩터리 메서드라는 선택지를 검토했는가
+          ([EJ-1-01] lc-backend/docs/code-convention/effective-java-guideline.md)
+
+        항목 내용은 가이드 문서의 문장을 그대로 옮긴다. 요약하거나 번역하거나 고쳐 쓰지 않는다.
+        번호와 경로를 추측하지 않는다. 가이드에서 찾지 못하면 그 지적을 만들지 않는다.
+
+        접두어별 문서 경로는 이렇다.
+          AGG   lc-backend/docs/code-convention/jpa-association-guideline.md
+          API   lc-backend/docs/code-convention/api-design-guideline.md
+          BLD   lc-backend/docs/code-convention/build-gate-guideline.md
+          DPB   lc-backend/docs/code-convention/domain-boundary-guideline.md
+          EC    lc-backend/docs/code-convention/entity-creation-guideline.md
+          EJ    lc-backend/docs/code-convention/effective-java-guideline.md
+          UT    lc-backend/docs/code-convention/unit-testing-guideline.md
+          CMP   lc-backend/docs/software-quality/qa-compatibility-guideline.md
+          DI    lc-backend/docs/software-quality/qa-data-integrity-guideline.md
+          FLX   lc-backend/docs/software-quality/qa-flexibility-guideline.md
+          FUN   lc-backend/docs/software-quality/qa-functional-suitability-guideline.md
+          INC   lc-backend/docs/software-quality/qa-incident-response-guideline.md
+          MNT   lc-backend/docs/software-quality/qa-maintainability-guideline.md
+          OBS   lc-backend/docs/software-quality/qa-observability-guideline.md
+          PERF  lc-backend/docs/software-quality/qa-performance-efficiency-guideline.md
+          REL   lc-backend/docs/software-quality/qa-reliability-guideline.md
+          SEC   lc-backend/docs/software-quality/qa-security-guideline.md
+          TRD   lc-backend/docs/software-quality/qa-tradeoffs-guideline.md
+
+        번호가 없는 규약 셋은 번호 자리에 절이나 제목을 적는다.
+          lc-backend/docs/code-convention/response-exception-flow.md
+          lc-backend/docs/architecture/런치캐치_백엔드_설계.md
+          lc-backend/docs/api-spec/README.md
 
         한 사안은 한 번만 지적한다. 여러 가이드가 같은 문제를 다룰 때는 CODEREVIEW.md 의
         "중복 지적 방지 소유권 우선순위" 표에 따라 그 사안을 소유한 가이드 하나만 기준으로 쓴다.
