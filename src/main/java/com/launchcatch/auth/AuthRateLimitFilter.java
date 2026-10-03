@@ -44,15 +44,14 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
     private static final String KEY_PREFIX = "authRateLimit:";
 
     /*
-     * 소비자별로 로그인과 재발급 둘씩이라 여섯이다(docs/api-spec/auth.md 의 목록).
+     * 소비자가 셋이라 경로도 셋씩이다(docs/api-spec/README.md 의 경로 절).
      * 점주 회원가입도 열린 경로이지만 지금은 넣지 않는다. 가입은 사업자 검증이 뒤따라
      * 반복 호출의 이득이 적고, 넣으려면 그 경로의 상한을 따로 정해야 한다.
-     * 로그아웃은 Access Token 이 있어야 부를 수 있어 이 필터의 대상이 아니다.
      */
     private static final Set<String> LIMITED_PATHS = Set.of(
-            "/v1/auth/kakao/login", "/v1/auth/refresh",
-            "/v1/owner/auth/login", "/v1/owner/auth/refresh",
-            "/v1/admin/auth/login", "/v1/admin/auth/refresh");
+            "/v1/auth/tokens", "/v1/auth/tokens:refresh",
+            "/v1/owner/auth/tokens", "/v1/owner/auth/tokens:refresh",
+            "/v1/admin/auth/tokens", "/v1/admin/auth/tokens:refresh");
 
     private static final int LIMIT = 10;
     private static final Duration WINDOW = Duration.ofMinutes(1);

@@ -29,20 +29,15 @@ public class AuthCookieFactory {
     private static final String ACCESS_TOKEN_COOKIE_PATH = "/";
 
     /*
-     * Refresh 는 재발급과 로그아웃 경로에만 실린다. 14일(관리자는 1일)짜리 토큰이라
-     * 모든 요청에 실으면 접근 로그와 프록시에 남는 면이 넓어진다. 쿠키 이름이 하나뿐이라
-     * 범위를 겹치게 두면 한 브라우저에서 역할을 바꿔 로그인할 때 서로를 덮어쓴다.
+     * Refresh 는 재발급과 로그아웃 경로에만 실린다.
      *
-     * 소비자가 셋이라 경로도 셋이다(docs/api-spec/auth.md 의 공통 토큰 정책). 옮겨온 쪽은
-     * 회원과 관리자 둘이어서 경로가 둘이었다.
+     * 소비자가 셋이라 경로도 셋이다(docs/api-spec/README.md 의 경로 절). 옮겨온 쪽은 회원과 관리자
+     * 둘이어서 경로가 둘이었다.
      *
-     * 끝의 슬래시를 붙여 둔다. RFC 6265 5.1.4 의 path-match 는 경로가 같거나, 쿠키 path 가
-     * 슬래시로 끝나거나, 요청 path 의 다음 글자가 슬래시여야 성립한다. 지금 경로는
-     * `/v1/auth/refresh` 처럼 슬래시로 이어지므로 셋 다 성립하지만, 뒤에 콜론 커스텀 메서드를
-     * 쓰는 경로가 생기면 슬래시로 끝나는 쪽만 남는다.
-     *
-     * 이 범위는 보안 경계가 아니다. 같은 오리진 안에서는 격리를 보장하지 않는다.
-     * 실제 방어는 HttpOnly 와 SameSite=Strict 이고 이것은 노출 면을 줄이는 층 하나다.
+     * 끝의 슬래시가 중요하다. RFC 6265 5.1.4 의 path-match 는 경로가 같거나, 쿠키 path 가
+     * 슬래시로 끝나거나, 요청 path 의 다음 글자가 슬래시여야 성립한다. 재발급이
+     * `/v1/auth/tokens:refresh` 처럼 콜론 커스텀 메서드라 다음 글자가 콜론이어서, path 를
+     * `/v1/auth/tokens` 로 좁히면 `:refresh` 요청에는 쿠키가 실리지 않는다.
      */
     private static final String MEMBER_REFRESH_COOKIE_PATH = "/v1/auth/";
     private static final String OWNER_REFRESH_COOKIE_PATH = "/v1/owner/auth/";

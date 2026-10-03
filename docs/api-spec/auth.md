@@ -14,18 +14,27 @@
 
 | 메서드 | 경로 | 하는 일 | 권한 | 행 |
 |---|---|---|---|---|
-| `POST` | `/v1/admin/auth/login` | 관리자 로그인 | 공개 | 5 |
-| `POST` | `/v1/admin/auth/refresh` | 관리자 토큰 재발급 | 공개(Refresh Token) | 6 |
-| `POST` | `/v1/admin/auth/logout` | 관리자 로그아웃 | ADMIN, SUPER_ADMIN | 7 |
+| `POST` | `/v1/admin/auth/tokens` | 관리자 로그인 | 공개 | 5 |
+| `POST` | `/v1/admin/auth/tokens:refresh` | 관리자 토큰 재발급 | 공개(Refresh Token) | 6 |
+| `DELETE` | `/v1/admin/auth/tokens` | 관리자 로그아웃 | ADMIN, SUPER_ADMIN | 7 |
 | `POST` | `/v1/owner/auth/signup` | 점주 회원가입 | 공개 | 31 |
-| `POST` | `/v1/owner/auth/login` | 점주 로그인 | 공개 | 32 |
-| `POST` | `/v1/owner/auth/refresh` | 점주 토큰 재발급 | 공개(Refresh Token) | 33 |
-| `POST` | `/v1/owner/auth/logout` | 점주 로그아웃 | OWNER | 34 |
-| `POST` | `/v1/auth/kakao/login` | 카카오 로그인(처음이면 가입) | 공개 | 62 |
-| `POST` | `/v1/auth/refresh` | 사용자 토큰 재발급(자동 로그인) | 공개(Refresh Token) | 64 |
-| `POST` | `/v1/auth/logout` | 사용자 로그아웃 | MEMBER | 65 |
+| `POST` | `/v1/owner/auth/tokens` | 점주 로그인 | 공개 | 32 |
+| `POST` | `/v1/owner/auth/tokens:refresh` | 점주 토큰 재발급 | 공개(Refresh Token) | 33 |
+| `DELETE` | `/v1/owner/auth/tokens` | 점주 로그아웃 | OWNER | 34 |
+| `POST` | `/v1/auth/tokens` | 카카오 로그인(처음이면 가입) | 공개 | 62 |
+| `POST` | `/v1/auth/tokens:refresh` | 사용자 토큰 재발급(자동 로그인) | 공개(Refresh Token) | 64 |
+| `DELETE` | `/v1/auth/tokens` | 사용자 로그아웃 | MEMBER | 65 |
 
 "공개"는 Access Token 없이 부를 수 있다는 뜻이다. README의 "로그인 전에 열린 경로"가 이 표의 공개 7개다.
+
+**경로는 동사가 아니라 리소스다.** 토큰이 리소스이고 로그인은 생성, 로그아웃은 삭제다.
+표준 메서드로 표현되지 않는 재발급만 콜론 커스텀 메서드로 쓴다
+(`API-3-01`, `API-3-08`, [api-design-guideline.md](../code-convention/api-design-guideline.md)).
+`/login`, `/logout` 같은 동사 경로는 그 항목에 걸린다.
+
+사용자 로그인 경로에 `kakao` 가 들어가지 않는다. 사용자의 로그인 수단이 카카오뿐이라
+토큰을 만드는 경로가 하나이고, 인가 코드는 본문으로 보낸다. 벤더 이름을 경로에 박으면
+수단이 늘거나 바뀔 때 경로가 따라 바뀐다.
 
 ## 성능 목표
 
@@ -65,6 +74,11 @@ Set-Cookie: refreshToken=<opaque>; HttpOnly; SameSite=Strict; Path=/v1/auth/; Ma
 `Path` 자체는 같은 오리진 안에서 격리를 보장하지 않는다. 진짜 방어는 `HttpOnly` 와
 `SameSite=Strict` 이고, `Path` 는 노출 면을 줄이는 층 하나로 둔다.
 
+끝의 슬래시가 필요하다. RFC 6265 5.1.4 의 path-match 는 쿠키 `Path` 가 요청 경로와 같거나,
+`Path` 가 `/` 로 끝나거나, 요청 경로의 다음 글자가 `/` 여야 성립한다. 재발급이
+`tokens:refresh` 라 다음 글자가 콜론이므로 `Path` 를 `/v1/auth/tokens` 로 좁히면
+그 요청에는 쿠키가 실리지 않는다. 그래서 한 단계 위인 `/v1/auth/` 에 둔다.
+
 - **토큰은 쿠키로만 오간다.** 응답 본문에 토큰을 싣지 않고, 클라이언트는 토큰 값을 읽거나 `Authorization` 헤더에 싣지 않는다
 - **사용자가 자동 로그인을 체크하지 않으면** `refreshToken` 쿠키에 `Max-Age` 를 붙이지 않는다(세션 쿠키). 브라우저를 닫으면 사라진다(64행)
 - **Refresh Token은 회전한다.** 재발급할 때마다 새 토큰을 주고 이전 토큰은 폐기한다. 이미 폐기된 토큰이 다시 오면 탈취로 보고 그 계정의 세션을 모두 끊는다(6, 64, 94행)
@@ -74,7 +88,7 @@ Set-Cookie: refreshToken=<opaque>; HttpOnly; SameSite=Strict; Path=/v1/auth/; Ma
 
 ## 관리자
 
-### `POST /v1/admin/auth/login`
+### `POST /v1/admin/auth/tokens`
 
 관리자 ID와 비밀번호로 로그인한다(5행).
 
@@ -118,7 +132,7 @@ Set-Cookie: refreshToken=<opaque>; HttpOnly; SameSite=Strict; Path=/v1/auth/; Ma
 | `401` | `AUTH-002` | 계정 없음, 비밀번호 불일치, 사용 불가 상태(`DELETED`). 셋을 구분하지 않는다 |
 | `503` | `AUTH-003` | 세션 저장 실패 |
 
-### `POST /v1/admin/auth/refresh`
+### `POST /v1/admin/auth/tokens:refresh`
 
 Refresh Token으로 두 토큰을 다시 받는다(6행). 요청 본문은 없고 `refreshToken` 쿠키만 보낸다.
 
@@ -137,7 +151,7 @@ Refresh Token으로 두 토큰을 다시 받는다(6행). 요청 본문은 없�
 | `401` | `AUTH-004` | Refresh Token이 없음, 유효하지 않음, 만료, 폐기됨 |
 | `401` | `AUTH-005` | 이미 교체된 Refresh Token의 재사용. 그 계정의 세션을 모두 끊는다 |
 
-### `POST /v1/admin/auth/logout`
+### `DELETE /v1/admin/auth/tokens`
 
 현재 로그인한 관리자의 세션을 끝낸다(7행). 요청 본문은 없다.
 
@@ -192,7 +206,7 @@ Refresh Token으로 두 토큰을 다시 받는다(6행). 요청 본문은 없�
 | `400` | `OWNER-001` | 이메일 형식 오류, 비밀번호 형식 오류, 필수값 누락 |
 | `409` | `OWNER-002` | 이미 가입한 이메일 |
 
-### `POST /v1/owner/auth/login`
+### `POST /v1/owner/auth/tokens`
 
 이메일과 비밀번호로 로그인한다(32행).
 
@@ -238,7 +252,7 @@ Refresh Token으로 두 토큰을 다시 받는다(6행). 요청 본문은 없�
 | `401` | `AUTH-002` | 계정 없음, 비밀번호 불일치, `SUSPENDED`, `WITHDRAWN`. 사유를 노출하지 않는다 |
 | `503` | `AUTH-003` | 세션 저장 실패 |
 
-### `POST /v1/owner/auth/refresh`
+### `POST /v1/owner/auth/tokens:refresh`
 
 관리자 재발급과 같다(33행). 추가로 Refresh Token에 연결된 점주의 **현재 상태**를 다시 확인한다.
 
@@ -252,7 +266,7 @@ Refresh Token으로 두 토큰을 다시 받는다(6행). 요청 본문은 없�
 | `401` | `AUTH-004` | Refresh Token이 없음, 유효하지 않음, 만료, 폐기됨, 재발급할 수 없는 계정 상태 |
 | `401` | `AUTH-005` | 이미 교체된 Refresh Token의 재사용 |
 
-### `POST /v1/owner/auth/logout`
+### `DELETE /v1/owner/auth/tokens`
 
 관리자 로그아웃과 같다(34행). 응답은 `204` 이고 두 쿠키를 지운다.
 
@@ -265,7 +279,7 @@ Refresh Token으로 두 토큰을 다시 받는다(6행). 요청 본문은 없�
 
 ## 사용자
 
-### `POST /v1/auth/kakao/login`
+### `POST /v1/auth/tokens`
 
 카카오 인가 코드를 받아 로그인한다. 처음 온 사용자면 가입까지 한다(62행).
 
@@ -322,7 +336,7 @@ Refresh Token으로 두 토큰을 다시 받는다(6행). 요청 본문은 없�
 | `403` | `MEMBER-002` | 정지 이력이 있는 회원번호의 재가입 |
 | `503` | `AUTH-003` | 세션 저장 실패 |
 
-### `POST /v1/auth/refresh`
+### `POST /v1/auth/tokens:refresh`
 
 관리자 재발급과 같다(64행). 카카오 재인증은 필요 없다.
 
@@ -331,7 +345,7 @@ Refresh Token으로 두 토큰을 다시 받는다(6행). 요청 본문은 없�
 
 **오류**: 관리자 재발급과 같다(`AUTH-004`, `AUTH-005`).
 
-### `POST /v1/auth/logout`
+### `DELETE /v1/auth/tokens`
 
 서비스 세션을 끝낸다(65행). 응답은 `204` 이고 두 쿠키를 지운다.
 
