@@ -9,8 +9,6 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
-import org.springframework.security.access.AccessDeniedException;
-import org.springframework.security.core.AuthenticationException;
 import org.springframework.validation.BindException;
 import org.springframework.web.HttpMediaTypeNotSupportedException;
 import org.springframework.web.HttpRequestMethodNotSupportedException;
@@ -112,23 +110,17 @@ public class GlobalExceptionHandler {
     }
 
     /*
-     * 인증과 인가 실패는 두 곳에서 난다. @PreAuthorize 같은 메서드 보안과, 토큰을 검사하는 보안 필터다.
-     * @RestControllerAdvice 는 디스패처 서블릿 안에서만 도는데, 필터는 그 바깥이다.
-     * 그래서 필터에서 난 것은 원래 여기까지 오지 않는다.
-     * SecurityConfig 가 그것을 MVC 예외 처리로 다시 넘겨 주기 때문에 둘 다 여기로 모인다.
+     * 인증과 인가 실패는 여기서 다루지 않는다. auth.exception.AuthExceptionHandler 가
+     * AUTH-006 과 AUTH-007 로 답한다(docs/api-spec/auth.md 의 접근 제어).
+     *
+     * 그 둘은 두 곳에서 난다. @PreAuthorize 같은 메서드 보안과, 토큰을 검사하는 보안 필터다.
+     * @RestControllerAdvice 는 디스패처 서블릿 안에서만 도는데 필터는 그 바깥이라 원래
+     * advice 까지 오지 않는다. ApiSecurityDefaults 가 그것을 MVC 예외 처리로 다시 넘기므로
+     * 둘 다 advice 로 모인다.
+     *
+     * 이 파일에 두면 global -> auth 의존이 생겨 설계 문서 1.1절의 방향이 뒤집힌다.
+     * 덕분에 이 파일은 Spring Security 를 아예 모른다.
      */
-    @ExceptionHandler(AuthenticationException.class)
-    public ResponseEntity<ResponseEnvelope<Void>> handleAuthentication(AuthenticationException e) {
-        log.warn("unauthenticated. detail={}", e.getMessage());
-        return toResponse(CommonErrorCode.UNAUTHENTICATED);
-    }
-
-    // 대상의 존재 여부를 드러내지 않도록 상세를 응답에 담지 않는다 (API-7-05)
-    @ExceptionHandler(AccessDeniedException.class)
-    public ResponseEntity<ResponseEnvelope<Void>> handleAccessDenied(AccessDeniedException e) {
-        log.warn("permission denied. detail={}", e.getMessage());
-        return toResponse(CommonErrorCode.PERMISSION_DENIED);
-    }
 
     // 매핑된 핸들러가 없는 경로이며, 리소스를 못 찾은 것과 다르다
     @ExceptionHandler(NoResourceFoundException.class)
