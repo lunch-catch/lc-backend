@@ -36,15 +36,47 @@ class DocReferenceTest {
     /** 백틱으로 감싼 마크다운 파일 이름. 경로가 붙어 있을 수도 있다. */
     private static final Pattern BACKTICK_DOC = Pattern.compile("`([A-Za-z0-9_./\\-]+\\.md)`");
 
+    private static final Path API_INDEX = Path.of("docs/api-spec/README.md");
+
+    /** `## 문서` 절 표의 머리 줄. 예고된 문서 목록이 그 아래에 있다. */
+    private static final Pattern INDEX_HEADER =
+            Pattern.compile("^\\|\\s*문서\\s*\\|\\s*다루는 것\\s*\\|");
+
+    /** 표의 구분 줄. 머리 줄 바로 다음 한 줄이다. */
+    private static final int SEPARATOR_ROWS = 1;
+
     /*
-     * 아직 쓰지 않은 API 문서다. api-spec/README.md 의 문서 표가 이것을 예고하고 있고,
-     * 링크로 적으면 깨지므로 백틱으로 적어 두었다.
+     * 아직 쓰지 않아도 되는 문서를 README 의 문서 표에서 읽는다. 여기 적지 않는다.
      *
-     * 하나를 쓰면 이 목록에서 뺀다. 목록이 비면 열두 문서가 다 쓰인 것이다.
+     * 그 표가 열두 문서를 예고하고 있고, 링크로 적으면 깨지므로 백틱으로 적혀 있다.
+     * 목록을 이 파일에 복사해 두면 팀원이 문서를 쓸 때마다 이 테스트를 고쳐야 하고,
+     * 고치지 않으면 올바른 작업이 떨어진다. 표가 소유하게 두면 그 일이 없다.
      */
-    private static final Set<String> PLANNED_API_DOCS = Set.of(
-            "admin.md", "owner.md", "member.md", "store.md", "campaign.md", "poster.md",
-            "billing.md", "feed.md", "coupon.md", "notification.md", "analytics.md");
+    private static Set<String> plannedDocs() {
+        List<String> lines;
+        try {
+            lines = Files.readAllLines(API_INDEX);
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+        Set<String> planned = new java.util.LinkedHashSet<>();
+        for (int header = 0; header < lines.size(); header++) {
+            if (!INDEX_HEADER.matcher(lines.get(header).strip()).find()) {
+                continue;
+            }
+            for (int row = header + 1 + SEPARATOR_ROWS; row < lines.size(); row++) {
+                String line = lines.get(row).strip();
+                if (!line.startsWith("|")) {
+                    break;
+                }
+                Matcher name = BACKTICK_DOC.matcher(line);
+                if (name.find()) {
+                    planned.add(name.group(1));
+                }
+            }
+        }
+        return planned;
+    }
 
     private static List<Path> markdownFiles() {
         try (Stream<Path> paths = Files.walk(DOCS)) {
@@ -92,13 +124,14 @@ class DocReferenceTest {
      */
     private static List<String> brokenBacktickRefs() {
         Set<String> names = docNames();
+        Set<String> planned = plannedDocs();
         return markdownFiles().stream()
                 .flatMap(doc -> BACKTICK_DOC.matcher(read(doc)).results()
                         .map(result -> result.group(1))
                         .filter(ref -> !ref.contains("*"))
                         .map(ref -> ref.substring(ref.lastIndexOf('/') + 1))
                         .filter(name -> !names.contains(name))
-                        .filter(name -> !PLANNED_API_DOCS.contains(name))
+                        .filter(name -> !planned.contains(name))
                         .map(name -> doc + " -> `" + name + "`"))
                 .distinct()
                 .toList();
@@ -124,19 +157,12 @@ class DocReferenceTest {
     }
 
     /*
-     * 아직 안 쓴 문서 목록이 실제와 맞아야 한다.
-     * 문서를 쓰고 목록에서 빼지 않으면, 그 이름의 오타가 영원히 걸리지 않는다.
+     * 예고 목록을 읽어 내지 못하면 백틱 검사가 아직 안 쓴 문서를 전부 깨진 참조로 본다.
+     * 표의 머리 줄 모양이 바뀌면 그 상태가 되므로 비어 있지 않은지 본다.
      */
     @Test
-    @DisplayName("아직 안 쓴 문서 목록에 이미 쓴 문서가 남아 있지 않다")
-    void 예고_목록이_최신이다() {
-        Set<String> names = docNames();
-        List<String> written = PLANNED_API_DOCS.stream()
-                .filter(names::contains)
-                .sorted()
-                .toList();
-        assertThat(written)
-                .as("이미 썼는데 PLANNED_API_DOCS 에 남아 있는 문서")
-                .isEmpty();
+    @DisplayName("README 의 문서 표에서 예고된 문서를 읽어 낸다")
+    void 예고_목록_탐색() {
+        assertThat(plannedDocs()).as("README 문서 표가 예고한 문서").isNotEmpty();
     }
 }
