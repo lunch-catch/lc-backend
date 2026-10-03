@@ -111,8 +111,12 @@ POST /v1/admin/templates/{templateId}:publish
 
 ```
 Set-Cookie: accessToken=<token>; HttpOnly; SameSite=Strict; Path=/
-Set-Cookie: refreshToken=<token>; HttpOnly; SameSite=Strict; Path=/
+Set-Cookie: refreshToken=<token>; HttpOnly; SameSite=Strict; Path=/v1/auth/
 ```
+
+**Access Token 은 `Path=/` 이고 Refresh Token 은 역할별로 좁다.** Refresh 는 재발급과
+로그아웃에서만 쓰므로 그 경로에만 실린다. 위 예시는 사용자 것이고 역할별 `Path` 와
+`Max-Age` 는 [auth.md](./auth.md) 의 공통 토큰 정책에 있다. 값을 여기 옮겨 적지 않는다.
 
 - **쿠키를 함께 보내야 한다.** 브라우저 `fetch` 는 `credentials: 'include'`, axios는 `withCredentials: true` 로 호출한다
 - **Access Token이 만료되면 재발급 후 다시 부른다.** `401` 에 `AUTH-006` 이 오면 역할에 맞는 재발급 API를 한 번 부르고 원래 요청을 다시 보낸다. 재발급도 `401` 이면 로그인 화면으로 보낸다. 재발급 API는 `auth.md`에 있다
@@ -125,6 +129,9 @@ Set-Cookie: refreshToken=<token>; HttpOnly; SameSite=Strict; Path=/
 ### 응답 봉투
 
 성공과 실패가 같은 모양이다. 클라이언트가 분기 전에 파싱을 끝낼 수 있다.
+
+**`204` 는 예외다.** 본문이 없으므로 봉투도 없다. 상태 코드가 `204` 면 본문을 파싱하지 않는다.
+삭제와 로그아웃이 그 경우다.
 
 ```json
 {
@@ -153,7 +160,7 @@ Set-Cookie: refreshToken=<token>; HttpOnly; SameSite=Strict; Path=/
 | `200` | 조회, 수정 성공 |
 | `201` | 생성 성공 |
 | `202` | 접수만 하고 응답에 의존하지 않는 요청. 예: 노출 이벤트 수집 |
-| `204` | 삭제나 로그아웃 성공, 본문 없음 |
+| `204` | 삭제나 로그아웃 성공. 본문이 없어 응답 봉투도 없다 |
 | `400` | 입력 형식이나 값이 잘못됨 |
 | `401` | 인증이 없거나 유효하지 않음, 로그인 실패 |
 | `403` | 인증은 됐으나 역할이나 상태가 맞지 않음 |
