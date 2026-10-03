@@ -116,8 +116,18 @@ jobs:
         run: |
           echo "::warning::SONAR_TOKEN 이 없어 정적 분석을 건너뛰었다. 저장소 Secrets 에 등록해야 한다."
 
+      # 판정하지 않는 스텝이다. 깨진 빌드의 원인을 로컬 재현 없이 보려고 올려 둔다 (BLD-2-05).
+      #
+      # 실패했을 때만 올린다. 통과한 빌드의 리포트는 볼 일이 없고, 커버리지는 SonarCloud 가
+      # 이미 보여 준다. 성공 경로에서 169개 파일을 매번 올리면 외부 서비스에 기댈 일만 늘어난다.
+      #
+      # continue-on-error 를 둔 이유는 이것이 실패해도 게이트가 막아서는 안 되기 때문이다.
+      # 2026-10-03 에 아티팩트 서비스가 CreateArtifact 를 5회 타임아웃해서, 테스트와 커버리지와
+      # 정적 분석이 모두 통과한 PR 의 병합이 막혔다. 차단 조건은 커버리지와 신규 Blocker 와
+      # 병합 출처 셋이고 파일 업로드는 거기 없다.
       - name: 테스트 리포트
-        if: always()
+        if: failure()
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: test-reports
