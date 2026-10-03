@@ -37,7 +37,7 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 public class AuthExceptionHandler {
 
     /*
-     * Access Token 이 없거나 유효하지 않거나 로그아웃 전에 발급된 경우다 (AUTH-006).
+     * Access Token 이 없거나 유효하지 않거나 로그아웃 전에 발급된 경우다 (AUTH-005).
      * 클라이언트는 이 코드를 보고 재발급을 한 번 부른다 (api-spec/README.md 의 인증 절).
      */
     @ExceptionHandler(AuthenticationException.class)
@@ -47,7 +47,7 @@ public class AuthExceptionHandler {
     }
 
     /*
-     * 인증은 됐으나 역할이 맞지 않는 경우다 (AUTH-007).
+     * 인증은 됐으나 역할이 맞지 않는 경우다 (AUTH-006).
      * 대상의 존재 여부를 드러내지 않도록 상세를 응답에 담지 않는다 (API-7-05).
      *
      * 점주 상태가 ONBOARDING 이라 막는 경우는 여기서 가리지 않는다. 이 모듈은 Role 만 알고
@@ -62,7 +62,7 @@ public class AuthExceptionHandler {
     /*
      * 로그 등급은 ErrorCode 가 정한다. 여기서 코드마다 따로 적으면 enum 의 선언과 어긋난다.
      *
-     * 예상된 답은 남기지 않고 접근 로그도 내린다. AUTH-006 이 그 경우다. Access 가 30분이라
+     * 예상된 답은 남기지 않고 접근 로그도 내린다. AUTH-005 이 그 경우다. Access 가 30분이라
      * 사용자마다 30분에 한 번은 이 응답을 받는데, 설계대로 도는 모습을 이상으로 남기면
      * 로그가 그 규모만큼 늘어난다. 세는 일은 지표가 한다.
      */

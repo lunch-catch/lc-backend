@@ -12,7 +12,7 @@ import org.springframework.http.HttpStatus;
  * 인증과 인가의 실패는 여기 두지 않는다. 그 실패를 만드는 조건이 토큰 수명과 회전, 로그아웃
  * 커트라인이라 인증 모듈이 소유하고, 응답의 성격도 그 정책에서 나온다. 예를 들어 로그인이
  * 필요하다는 답을 로그로 남기지 않는 근거는 Access 가 30분이라는 값인데 이 계층은 그것을
- * 모른다. auth.exception.AuthErrorCode 가 AUTH-006 과 AUTH-007 로 답한다.
+ * 모른다. auth.exception.AuthErrorCode 가 AUTH-005 과 AUTH-006 로 답한다.
  *
  * 거꾸로 요청 검증 실패는 여기 둔다. 판정이 전부 요청 타입의 애노테이션에서 나오고 위
  * 계층이 참여하는 부분이 없다. 경로마다 코드를 나누면 같은 실패에 다른 코드가 가고
