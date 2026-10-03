@@ -11,6 +11,9 @@ import org.springframework.http.HttpStatus;
  * 역할이 셋이지만 정책이 하나라 코드도 하나로 둔다. 점주 가입과 카카오 로그인의 실패는
  * 그 도메인이 아는 실패라 owner 와 member 의 ErrorCode 로 간다.
  *
+ * 점주 상태가 ONBOARDING 이라 막는 것도 여기 두지 않는다. 이 모듈은 Role 만 알고
+ * 점주 상태는 점주 도메인의 데이터다. 그 코드는 점주 도메인이 소유한다.
+ *
  * 사유를 구분하지 않는 코드가 둘 있다. AUTH-002 와 AUTH-004 다. 계정이 없는 것과 비밀번호가
  * 틀린 것과 쓸 수 없는 상태인 것을 한 코드로 묶는다. 구분해 주면 어느 아이디가 존재하는지
  * 알려주는 통로가 된다.
@@ -71,14 +74,7 @@ public enum AuthErrorCode implements ErrorCode {
 
     /* 역할이 맞지 않는다. 대상의 존재 여부를 드러내지 않도록 상세를 담지 않는다. */
     ROLE_NOT_ALLOWED(HttpStatus.FORBIDDEN, "AUTH-007",
-            "접근 권한이 없습니다."),
-
-    /*
-     * ONBOARDING 점주가 입점 등록 외의 API 를 부른 경우다.
-     * 점주 상태는 토큰을 받을 때 정해지므로, ACTIVE 가 된 뒤에는 재발급을 한 번 받아야 열린다.
-     */
-    ONBOARDING_NOT_COMPLETED(HttpStatus.FORBIDDEN, "AUTH-008",
-            "입점 등록을 완료한 뒤 이용할 수 있습니다.");
+            "접근 권한이 없습니다.");
 
     private final HttpStatus httpStatus;
     private final String code;

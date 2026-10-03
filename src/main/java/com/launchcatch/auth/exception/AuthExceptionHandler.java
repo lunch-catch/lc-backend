@@ -50,8 +50,8 @@ public class AuthExceptionHandler {
      * 인증은 됐으나 역할이 맞지 않는 경우다 (AUTH-007).
      * 대상의 존재 여부를 드러내지 않도록 상세를 응답에 담지 않는다 (API-7-05).
      *
-     * ONBOARDING 점주가 입점 등록 외 API 를 부른 경우(AUTH-008)는 여기서 가리지 않는다.
-     * 점주 상태를 알아야 하므로 그 판정은 점주 경로의 인가가 한다.
+     * 점주 상태가 ONBOARDING 이라 막는 경우는 여기서 가리지 않는다. 이 모듈은 Role 만 알고
+     * 점주 상태는 점주 도메인의 데이터다. 그 판정과 코드는 점주 도메인이 소유한다.
      */
     @ExceptionHandler(AccessDeniedException.class)
     public ResponseEntity<ResponseEnvelope<Void>> handleAccessDenied(
