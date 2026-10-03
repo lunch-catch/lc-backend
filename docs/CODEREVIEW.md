@@ -295,7 +295,7 @@ ArchUnit 아키텍처 테스트로 "한 도메인이 다른 도메인의 `entity
 [BLOCKER] IssueService.java:18
   다른 도메인의 내부 패키지(adserving.repository)를 import 하고 있습니다.
   adserving.contract 의 WishlistQueryService 를 통해 읽어 주세요.
-  (참고: 런치캐치_백엔드_설계.md 2.4절)
+  (참고: 런치캐치_도메인_구조와_의존성_설계.md 2.4절)
 
 [MINOR] AuditLog.java:12
   시각 컬럼을 직접 선언하고 있습니다.

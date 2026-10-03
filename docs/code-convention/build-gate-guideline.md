@@ -177,5 +177,5 @@ public void placeOrder(OrderCommand cmd) {
 
 
 * 설계 근거: [build-gate-rationale.md](./build-gate-rationale.md)
-* 패키지 구조: [런치캐치_백엔드_설계.md](../architecture/런치캐치_백엔드_설계.md) 1.3절
+* 패키지 구조: [런치캐치_도메인_구조와_의존성_설계.md](../architecture/런치캐치_도메인_구조와_의존성_설계.md) 1.3절
 * 판정 대상 설정: 저장소 루트의 `build.gradle` 과 `.github/workflows/pr-gate.yml`
