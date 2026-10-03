@@ -3,7 +3,7 @@
 점검 항목은 [domain-boundary-guideline.md](./domain-boundary-guideline.md) 에 있다.
 
 **이 문서는 규칙의 내용을 설명하지 않는다.** 계층이 셋인 이유, 도메인을 11개로 나눈 이유,
-의존 방향을 그렇게 정한 이유는 [런치캐치_백엔드_설계.md](../architecture/런치캐치_백엔드_설계.md)
+의존 방향을 그렇게 정한 이유는 [런치캐치_도메인_구조와_의존성_설계.md](../architecture/런치캐치_도메인_구조와_의존성_설계.md)
 1장과 2장이 소유한다. 같은 설명을 여기 옮기면 어긋나는 순간 기준이 사라진다.
 
 이 문서가 답하는 것은 셋이다.
@@ -206,6 +206,6 @@ Service 가 Service 를 부르는 것으로 보이기 때문이다. 막히는 �
 ## 관련 문서
 
 * 점검 항목: [domain-boundary-guideline.md](./domain-boundary-guideline.md)
-* 규칙의 내용과 근거: [런치캐치_백엔드_설계.md](../architecture/런치캐치_백엔드_설계.md) 1장과 2장
+* 규칙의 내용과 근거: [런치캐치_도메인_구조와_의존성_설계.md](../architecture/런치캐치_도메인_구조와_의존성_설계.md) 1장과 2장
 * 강제 수단: `src/test/java/com/launchcatch/ArchitectureTest.java`
 * 연관 매핑: [jpa-association-guideline.md](./jpa-association-guideline.md) (`AGG-`)

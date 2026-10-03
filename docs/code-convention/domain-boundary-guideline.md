@@ -6,7 +6,7 @@
 |---|---|
 | 이 문서 | 번호 붙인 점검 항목, 근거 절, 강제 수단 |
 | [domain-boundary-rationale.md](./domain-boundary-rationale.md) | 왜 리뷰 항목인가, 위반이 코드에서 어떤 모양인가, 테스트가 못 보는 것 |
-| [런치캐치_백엔드_설계.md](../architecture/런치캐치_백엔드_설계.md) | 규칙의 내용과 근거. 계층과 도메인과 의존 방향을 그렇게 정한 이유 |
+| [런치캐치_도메인_구조와_의존성_설계.md](../architecture/런치캐치_도메인_구조와_의존성_설계.md) | 규칙의 내용과 근거. 계층과 도메인과 의존 방향을 그렇게 정한 이유 |
 
 **규칙의 내용은 설계 문서가 소유한다.** 같은 설명을 가이드나 근거 문서에 옮기지 않는다.
 어긋나는 순간 어느 쪽이 기준인지 알 수 없게 된다.
@@ -99,6 +99,6 @@
 ## 관련 문서
 
 * 설계 근거: [domain-boundary-rationale.md](./domain-boundary-rationale.md)
-* 규칙의 내용과 예시: [런치캐치_백엔드_설계.md](../architecture/런치캐치_백엔드_설계.md)
+* 규칙의 내용과 예시: [런치캐치_도메인_구조와_의존성_설계.md](../architecture/런치캐치_도메인_구조와_의존성_설계.md)
 * 강제 수단: `src/test/java/com/launchcatch/ArchitectureTest.java` 의 규칙 12개
 * 애그리거트 경계의 연관 매핑: [jpa-association-guideline.md](./jpa-association-guideline.md) (`AGG-`)
