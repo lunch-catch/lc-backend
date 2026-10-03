@@ -52,6 +52,12 @@ class ErrorCodeCatalogTest {
     /** 표의 칸 수. 양 끝의 빈 칸까지 센다. */
     private static final int CELL_COUNT = 5;
 
+    /** 오류 코드 표가 있는 절의 제목. */
+    private static final String TABLE_HEADING = "## 오류 코드";
+
+    /** 표의 제목 줄과 구분 줄. 본문을 셀 때 뺀다. */
+    private static final int HEADER_ROWS = 2;
+
     private static List<ErrorCode> all() {
         return Stream.of(
                         CommonErrorCode.values(),
@@ -120,14 +126,46 @@ class ErrorCodeCatalogTest {
         return Optional.of(new Row(code, Integer.parseInt(status), cells[3].strip()));
     }
 
-    private static Set<Row> rowsInDoc() {
-        try (Stream<String> lines = Files.lines(AUTH_DOC)) {
-            return lines.map(ErrorCodeCatalogTest::parseRow)
-                    .flatMap(Optional::stream)
-                    .collect(toSet());
+    private static List<String> docLines() {
+        try {
+            return Files.readAllLines(AUTH_DOC);
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }
+    }
+
+    /*
+     * 오류 코드 절의 표 본문만 고른다.
+     *
+     * 읽히는 행만 모으면 형식이 틀린 행이 조용히 빠진다. 문서에 AUTH-009X 같은 행을 더해도
+     * 대조가 통과해 버린다. 그래서 표의 행을 먼저 모두 식별하고, 읽히지 않는 행은
+     * 아래 표_행_형식 이 드러낸다.
+     */
+    private static List<String> tableRows() {
+        List<String> lines = docLines();
+        int heading = lines.indexOf(TABLE_HEADING);
+        if (heading < 0) {
+            throw new IllegalStateException(AUTH_DOC + " 에 \"" + TABLE_HEADING + "\" 절이 없다");
+        }
+        List<String> rows = lines.subList(heading + 1, lines.size()).stream()
+                .takeWhile(line -> !line.startsWith("## "))
+                .map(String::strip)
+                .filter(line -> line.startsWith("|"))
+                .toList();
+        return rows.subList(Math.min(HEADER_ROWS, rows.size()), rows.size());
+    }
+
+    private static List<String> malformedRows() {
+        return tableRows().stream()
+                .filter(line -> parseRow(line).isEmpty())
+                .toList();
+    }
+
+    private static Set<Row> rowsInDoc() {
+        return tableRows().stream()
+                .map(ErrorCodeCatalogTest::parseRow)
+                .flatMap(Optional::stream)
+                .collect(toSet());
     }
 
     private static Set<Row> rowsInCode() {
@@ -171,6 +209,14 @@ class ErrorCodeCatalogTest {
         assertThat(messages())
                 .allMatch(message -> !message.isBlank() && message.equals(message.strip()),
                         "비어 있지 않고 앞뒤 공백이 없다");
+    }
+
+    @Test
+    @DisplayName("오류 코드 표의 모든 행이 코드와 상태 형식을 지킨다")
+    void 표_행_형식() {
+        assertThat(malformedRows())
+                .as("오류 코드 표에서 코드나 상태를 읽을 수 없는 행")
+                .isEmpty();
     }
 
     /*
