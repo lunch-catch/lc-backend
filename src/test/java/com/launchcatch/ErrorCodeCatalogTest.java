@@ -1,5 +1,11 @@
 package com.launchcatch;
 
+import static java.util.stream.Collectors.collectingAndThen;
+import static java.util.stream.Collectors.groupingBy;
+import static java.util.stream.Collectors.mapping;
+import static java.util.stream.Collectors.toList;
+import static java.util.stream.Collectors.toMap;
+import static java.util.stream.Collectors.toSet;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.launchcatch.auth.exception.AuthErrorCode;
@@ -8,14 +14,16 @@ import com.launchcatch.global.exception.ErrorCode;
 import com.launchcatch.member.exception.MemberErrorCode;
 import com.launchcatch.owner.exception.OwnerErrorCode;
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.regex.Matcher;
+import java.util.Optional;
+import java.util.Set;
+import java.util.TreeMap;
 import java.util.regex.Pattern;
+import java.util.stream.IntStream;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -25,14 +33,24 @@ import org.junit.jupiter.api.Test;
  *
  * 코드는 클라이언트가 화면을 분기하는 값이다. 번호가 겹치거나 비거나, 문서와 코드의 문장이
  * 갈리면 클라이언트가 어느 쪽을 믿을지 알 수 없다. 사람이 대조하면 놓치므로 여기서 막는다.
+ *
+ * 분기와 반복은 전부 아래 헬퍼에 둔다. 테스트 본문은 단언만 한다(UT-3-04).
  */
 class ErrorCodeCatalogTest {
 
-    /* `AUTH-001` 과 `400` 과 문장을 뽑는다. 코드가 첫 칸인 표만 걸리므로 절별 오류 표는 섞이지 않는다. */
-    private static final Pattern DOC_ROW = Pattern.compile(
-            "^\\|\\s*`([A-Z]+-\\d{3})`\\s*\\|\\s*`(\\d{3})`\\s*\\|\\s*(.+?)\\s*\\|$");
+    /** 명세의 오류 코드 표가 담은 한 줄. 코드, 상태, 문장이다. */
+    private record Row(String code, int status, String message) { }
 
-    private static final Pattern CODE_FORMAT = Pattern.compile("^[A-Z]+-\\d{3}$");
+    private static final Path AUTH_DOC = Path.of("docs/api-spec/auth.md");
+
+    /** auth.md 가 다루는 접두어. 공통 코드는 그 표에 없어 대조 대상이 아니다. */
+    private static final Set<String> DOC_PREFIXES = Set.of("AUTH", "OWNER", "MEMBER");
+
+    private static final Pattern CODE_FORMAT = Pattern.compile("^[A-Z]{2,10}-[0-9]{3}$");
+    private static final Pattern STATUS_FORMAT = Pattern.compile("^[0-9]{3}$");
+
+    /** 표의 칸 수. 양 끝의 빈 칸까지 센다. */
+    private static final int CELL_COUNT = 5;
 
     private static List<ErrorCode> all() {
         return Stream.of(
@@ -45,21 +63,94 @@ class ErrorCodeCatalogTest {
                 .toList();
     }
 
+    private static List<String> codes() {
+        return all().stream().map(ErrorCode::getCode).toList();
+    }
+
+    private static List<String> messages() {
+        return all().stream().map(ErrorCode::getMessage).toList();
+    }
+
+    private static String prefixOf(ErrorCode errorCode) {
+        return errorCode.getCode().split("-")[0];
+    }
+
+    private static int numberOf(ErrorCode errorCode) {
+        return Integer.parseInt(errorCode.getCode().split("-")[1]);
+    }
+
+    /** 접두어마다 쓰인 번호를 오름차순으로 모은다. */
+    private static Map<String, List<Integer>> numbersByPrefix() {
+        return all().stream().collect(groupingBy(
+                ErrorCodeCatalogTest::prefixOf,
+                TreeMap::new,
+                mapping(ErrorCodeCatalogTest::numberOf,
+                        collectingAndThen(toList(), found -> found.stream().sorted().toList()))));
+    }
+
+    /** 접두어마다 1부터 끊기지 않고 이어진 번호. 실제와 이것을 한 번에 견준다. */
+    private static Map<String, List<Integer>> expectedNumbersByPrefix() {
+        return numbersByPrefix().entrySet().stream().collect(toMap(
+                Map.Entry::getKey,
+                entry -> IntStream.rangeClosed(1, entry.getValue().size()).boxed().toList(),
+                (left, right) -> left,
+                TreeMap::new));
+    }
+
+    private static String unquote(String cell) {
+        return cell.replace("`", "").strip();
+    }
+
+    /*
+     * 표의 한 줄을 Row 로 읽는다. 코드가 첫 칸인 표만 읽히므로 절별 오류 표는 섞이지 않는다.
+     *
+     * 정규식으로 줄 전체를 받지 않는다. 문장 칸을 비탐욕 수량자로 잡으면 역추적이 생겨
+     * 입력 길이에 비례하지 않게 느려진다. 칸으로 끊고 칸마다 고정된 모양만 본다.
+     */
+    private static Optional<Row> parseRow(String line) {
+        String[] cells = line.strip().split("\\|", -1);
+        if (cells.length != CELL_COUNT) {
+            return Optional.empty();
+        }
+        String code = unquote(cells[1]);
+        String status = unquote(cells[2]);
+        if (!CODE_FORMAT.matcher(code).matches() || !STATUS_FORMAT.matcher(status).matches()) {
+            return Optional.empty();
+        }
+        return Optional.of(new Row(code, Integer.parseInt(status), cells[3].strip()));
+    }
+
+    private static Set<Row> rowsInDoc() {
+        try (Stream<String> lines = Files.lines(AUTH_DOC)) {
+            return lines.map(ErrorCodeCatalogTest::parseRow)
+                    .flatMap(Optional::stream)
+                    .collect(toSet());
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+    }
+
+    private static Set<Row> rowsInCode() {
+        return all().stream()
+                .filter(errorCode -> DOC_PREFIXES.contains(prefixOf(errorCode)))
+                .map(errorCode -> new Row(
+                        errorCode.getCode(),
+                        errorCode.getHttpStatus().value(),
+                        errorCode.getMessage()))
+                .collect(toSet());
+    }
+
     @Test
     @DisplayName("코드 형식은 도메인-번호 이고 세 자리 번호다")
     void 코드_형식() {
-        List<String> bad = all().stream()
-                .map(ErrorCode::getCode)
-                .filter(c -> !CODE_FORMAT.matcher(c).matches())
-                .toList();
-        assertThat(bad).as("도메인-번호 형식이 아닌 코드").isEmpty();
+        assertThat(codes())
+                .allMatch(code -> CODE_FORMAT.matcher(code).matches(), "도메인-번호 형식");
     }
 
     @Test
     @DisplayName("코드가 겹치지 않는다")
     void 코드_중복() {
-        List<String> codes = all().stream().map(ErrorCode::getCode).toList();
-        assertThat(codes).as("오류 코드").doesNotHaveDuplicates();
+        assertThat(codes()).doesNotHaveDuplicates();
     }
 
     /*
@@ -69,32 +160,17 @@ class ErrorCodeCatalogTest {
     @Test
     @DisplayName("접두어마다 번호가 1부터 끊기지 않는다")
     void 번호_연속() {
-        Map<String, List<Integer>> byPrefix = new LinkedHashMap<>();
-        for (ErrorCode e : all()) {
-            String[] parts = e.getCode().split("-");
-            byPrefix.computeIfAbsent(parts[0], k -> new ArrayList<>()).add(Integer.parseInt(parts[1]));
-        }
-        List<String> bad = new ArrayList<>();
-        byPrefix.forEach((prefix, numbers) -> {
-            List<Integer> sorted = numbers.stream().sorted().toList();
-            for (int i = 0; i < sorted.size(); i++) {
-                if (sorted.get(i) != i + 1) {
-                    bad.add(prefix + " 번호가 " + sorted);
-                    return;
-                }
-            }
-        });
-        assertThat(bad).as("번호가 끊긴 접두어").isEmpty();
+        assertThat(numbersByPrefix())
+                .as("접두어별로 쓰인 번호")
+                .isEqualTo(expectedNumbersByPrefix());
     }
 
     @Test
     @DisplayName("메시지는 비어 있지 않고 앞뒤 공백이 없다")
     void 메시지_형식() {
-        List<String> bad = all().stream()
-                .filter(e -> e.getMessage().isBlank() || !e.getMessage().equals(e.getMessage().strip()))
-                .map(ErrorCode::getCode)
-                .toList();
-        assertThat(bad).as("메시지가 비었거나 공백이 붙은 코드").isEmpty();
+        assertThat(messages())
+                .allMatch(message -> !message.isBlank() && message.equals(message.strip()),
+                        "비어 있지 않고 앞뒤 공백이 없다");
     }
 
     /*
@@ -106,38 +182,10 @@ class ErrorCodeCatalogTest {
      */
     @Test
     @DisplayName("auth.md 의 오류 코드 표와 코드가 일치한다")
-    void 문서와_일치() throws IOException {
-        Path doc = Path.of("docs/api-spec/auth.md");
-        assertThat(doc).as("오류 코드 표가 있는 명세").exists();
-
-        Map<String, ErrorCode> byCode = new LinkedHashMap<>();
-        all().forEach(e -> byCode.put(e.getCode(), e));
-
-        List<String> bad = new ArrayList<>();
-        int matched = 0;
-        for (String line : Files.readAllLines(doc)) {
-            Matcher m = DOC_ROW.matcher(line.strip());
-            if (!m.matches()) {
-                continue;
-            }
-            matched++;
-            String code = m.group(1);
-            int status = Integer.parseInt(m.group(2));
-            String message = m.group(3);
-
-            ErrorCode e = byCode.get(code);
-            if (e == null) {
-                bad.add(code + " 가 문서에만 있다");
-                continue;
-            }
-            if (e.getHttpStatus().value() != status) {
-                bad.add("%s 상태가 다르다. 문서 %d, 코드 %d".formatted(code, status, e.getHttpStatus().value()));
-            }
-            if (!e.getMessage().equals(message)) {
-                bad.add("%s 문장이 다르다.%n    문서 %s%n    코드 %s".formatted(code, message, e.getMessage()));
-            }
-        }
-        assertThat(matched).as("문서에서 읽은 오류 코드 행 수").isPositive();
-        assertThat(bad).as("문서와 어긋난 것").isEmpty();
+    void 문서와_일치() {
+        assertThat(rowsInDoc())
+                .as("auth.md 의 오류 코드 표")
+                .isNotEmpty()
+                .isEqualTo(rowsInCode());
     }
 }
