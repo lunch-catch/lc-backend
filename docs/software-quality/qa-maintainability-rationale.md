@@ -27,7 +27,7 @@
 도메인형 구조(package-by-feature)의 핵심은 각 도메인이 독립적으로 변경 가능한 단위라는 점이다.
 
 > **이 절의 점검 항목은 backend 저장소가 소유한다.**
-> 도메인 경계, 순환 의존, 내부 타입 교환의 판정 기준은 `docs/code-architecture/domain-package-boundary-guideline.md`에 있다.
+> 도메인 경계, 순환 의존, 내부 타입 교환의 판정 기준은 [domain-boundary-guideline.md](../code-convention/domain-boundary-guideline.md) 에 있다.
 > 그쪽이 패키지 구조와 ArchUnit 규칙까지 명시하고 있어 더 구체적이다. 이 문서는 배경과 자동화 방법만 남긴다.
 
 ```java

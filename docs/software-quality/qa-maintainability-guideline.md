@@ -7,8 +7,9 @@
 
 ## 1. 모듈성
 
-도메인 경계, 순환 의존, 내부 타입 교환의 판정 기준은 **backend 저장소가 소유한다.**
-`domain-package-boundary-guideline.md` 가 패키지 구조와 ArchUnit 규칙까지 명시하고 있어 더 구체적이다.
+도메인 경계, 순환 의존, 내부 타입 교환의 판정 기준은 **`docs/code-convention` 이 소유한다.**
+[domain-boundary-guideline.md](../code-convention/domain-boundary-guideline.md) 가 패키지 구조와
+ArchUnit 규칙까지 명시하고 있어 더 구체적이다.
 
 ## 2. 시험성
 
@@ -91,5 +92,5 @@ DORA 자신이 변경 실패율은 다른 지표와 다르게 움직이는 이�
 ## 7. 관련 문서
 
 * 시스템 차원의 분석성: [qa-observability-guideline.md](./qa-observability-guideline.md)
-* 도메인 경계: backend 의 `domain-package-boundary-guideline.md`
-* 테스트 설계: backend 의 `unit-testing-guideline.md`
+* 도메인 경계: [domain-boundary-guideline.md](../code-convention/domain-boundary-guideline.md)
+* 테스트 설계: [unit-testing-guideline.md](../code-convention/unit-testing-guideline.md)

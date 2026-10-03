@@ -34,7 +34,7 @@ HTTP 상태 코드가 이미 성공과 실패를 알려 주고, 본문에 같은
 |---|---|---|
 | `ResponseEnvelope<T>` | 모든 응답의 봉투. `success` / `fail` 팩터리를 가진다 | 공통. 손대지 않는다 |
 | `ErrorCode` | 상태, 코드, 문구 셋을 묶은 인터페이스 | 공통. 도메인이 구현한다 |
-| `CommonErrorCode` | 도메인과 무관한 프레임워크 경계 오류 9종 | 공통. 도메인 오류를 여기 넣지 않는다 |
+| `CommonErrorCode` | 도메인과 무관한 프레임워크 경계 오류 7종 | 공통. 도메인 오류를 여기 넣지 않는다. 인증과 인가도 넣지 않는다 |
 | `BusinessException` | 도메인 실패의 추상 뿌리. `ErrorCode` 를 들고 있다 | 공통. 도메인이 상속한다 |
 | `GlobalExceptionHandler` | 컨트롤러 경계까지 온 예외를 봉투로 바꾼다 | 공통. 도메인은 건드릴 일이 없다 |
 
@@ -57,6 +57,7 @@ flowchart TB
         Ctrl["Controller"]
         Svc["Service"]
         GEH["GlobalExceptionHandler"]
+        AEH["AuthExceptionHandler"]
     end
 
     HER["handlerExceptionResolver"]
@@ -65,16 +66,17 @@ flowchart TB
     F -->|"AuthenticationException"| ETF
     ETF --> EP
     EP -->|"되돌려 보낸다"| HER
-    HER --> GEH
+    HER --> AEH
 
     Ctrl -->|"요청 검증 실패"| GEH
     Svc -->|"BusinessException"| GEH
     Svc -->|"그 밖의 예외"| GEH
 
     GEH --> Resp
+    AEH --> Resp
 ```
 
-`SecurityConfig` 가 `AuthenticationEntryPoint` 와 `AccessDeniedHandler` 를 `handlerExceptionResolver` 로 넘기는 것이 이 그림의 핵심이다.
+`ApiSecurityDefaults` 가 `AuthenticationEntryPoint` 와 `AccessDeniedHandler` 를 `handlerExceptionResolver` 로 넘기는 것이 이 그림의 핵심이다.
 이 한 줄이 없으면 인증 실패만 봉투 밖으로 나가서 오류 응답이 두 종류가 된다.
 
 ## 4. 흐름별로 보기
@@ -180,19 +182,19 @@ sequenceDiagram
     participant ETF as ExceptionTranslationFilter
     participant EP as AuthenticationEntryPoint
     participant HER as handlerExceptionResolver
-    participant GEH as GlobalExceptionHandler
+    participant AEH as AuthExceptionHandler
 
     C->>F: GET /v1/orders (토큰 없음)
     F--)ETF: AuthenticationException
     Note over F,ETF: 아직 DispatcherServlet 바깥이라<br/>어드바이스가 닿지 않는다
     ETF->>EP: commence(request, response, exception)
     EP->>HER: resolveException(req, res, null, ex)
-    Note over EP,HER: SecurityConfig 가 걸어 둔 다리
-    HER->>GEH: handleAuthentication(ex)
-    GEH-->>C: 401 ResponseEnvelope.fail(UNAUTHENTICATED)
+    Note over EP,HER: ApiSecurityDefaults 가 걸어 둔 다리
+    HER->>AEH: handleAuthentication(ex)
+    AEH-->>C: 401 ResponseEnvelope.fail(LOGIN_REQUIRED)
 ```
 
-`SecurityConfig` 의 이 부분이 다리 역할을 한다.
+`ApiSecurityDefaults` 의 이 부분이 다리 역할을 한다.
 
 ```java
 .exceptionHandling(handling -> handling
@@ -205,8 +207,13 @@ sequenceDiagram
 `handler` 자리에 `null` 을 넘기는 것은 이 시점에 대응하는 컨트롤러 메서드가 없기 때문이다.
 `@ControllerAdvice` 에 등록된 핸들러는 그래도 찾아진다.
 
-인증되지 않은 요청은 401 `UNAUTHENTICATED`, 인증은 됐지만 권한이 없으면 403 `PERMISSION_DENIED` 가 나간다.
+인증되지 않은 요청은 401 `AUTH-005`, 인증은 됐지만 권한이 없으면 403 `AUTH-006` 이 나간다.
 403 응답에는 대상이 존재하는지에 대한 단서를 넣지 않는다. 존재 여부가 응답 차이로 새면 그것만으로 정보가 된다.
+
+**이 둘은 `GlobalExceptionHandler` 가 아니라 `auth.exception.AuthExceptionHandler` 가 받는다.**
+그 실패를 만드는 조건이 토큰 수명과 회전, 로그아웃 커트라인이라 인증 모듈이 소유하고
+`global` 은 그 정책을 모른다. `global` 에 두면 `global -> auth` 가 생겨 아키텍처 테스트가
+`기술_공통은_아무것도_의존하지_않는다` 와 `순환_의존이_없다` 를 함께 떨어뜨린다.
 
 > **필터를 새로 만들 때 지킬 것**
 > JWT 필터 같은 것을 추가하면, 그 안에서 나는 실패를 반드시 `AuthenticationException` 으로 바꿔 던진다.
@@ -243,8 +250,8 @@ sequenceDiagram
 | `BindException` | `INVALID_INPUT` | 400 | 본문 검증 실패 |
 | `ConstraintViolationException`, `HandlerMethodValidationException` | `INVALID_INPUT` | 400 | 경로 변수와 쿼리 파라미터 검증 실패 |
 | `HttpMessageNotReadableException` 외 2종 | `MALFORMED_REQUEST` | 400 | 본문 파싱 실패, 타입 불일치, 필수 파라미터 누락 |
-| `AuthenticationException` | `UNAUTHENTICATED` | 401 | 토큰이 없거나 유효하지 않음 |
-| `AccessDeniedException` | `PERMISSION_DENIED` | 403 | 권한 없음 |
+| `AuthenticationException` | `AuthErrorCode.LOGIN_REQUIRED` | 401 | 토큰이 없거나 유효하지 않음. `AuthExceptionHandler` 가 받는다 |
+| `AccessDeniedException` | `AuthErrorCode.ROLE_NOT_ALLOWED` | 403 | 권한 없음. `AuthExceptionHandler` 가 받는다 |
 | `NoResourceFoundException` | `ENDPOINT_NOT_FOUND` | 404 | 매핑된 경로가 없음 |
 | `HttpRequestMethodNotSupportedException` | `METHOD_NOT_ALLOWED` | 405 | 경로는 있으나 메서드가 다름 |
 | `MaxUploadSizeExceededException` | `CONTENT_TOO_LARGE` | 413 | 업로드 크기 초과 |
@@ -331,4 +338,4 @@ try {
 
 - `api-design-guideline.md` 오류 응답과 페이지네이션 점검 항목
 - `api-design-rationale.md` `metadata` 를 두지 않기로 한 근거
-- `domain-package-boundary-guideline.md` 도메인마다 예외 하나와 오류 코드 enum 하나를 두는 근거
+- [domain-boundary-guideline.md](./domain-boundary-guideline.md) 도메인 경계와 계층 의존의 판정 기준
