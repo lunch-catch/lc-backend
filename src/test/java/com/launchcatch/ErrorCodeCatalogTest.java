@@ -41,19 +41,32 @@ class ErrorCodeCatalogTest {
     /** 명세의 오류 코드 표가 담은 한 줄. 코드, 상태, 문장이다. */
     private record Row(String code, int status, String message) { }
 
-    private static final Path AUTH_DOC = Path.of("docs/api-spec/auth.md");
+    /** 오류 코드 표를 가진 문서 하나. 어느 절의 표이고 어떤 접두어를 담는지까지 적는다. */
+    private record DocTable(Path doc, String heading, Set<String> prefixes) { }
 
-    /** auth.md 가 다루는 접두어. 공통 코드는 그 표에 없어 대조 대상이 아니다. */
-    private static final Set<String> DOC_PREFIXES = Set.of("AUTH", "OWNER", "MEMBER");
+    /*
+     * 코드를 담은 표가 둘로 나뉘어 있다. 소유가 다르기 때문이다.
+     * 공통 코드는 어느 도메인에도 속하지 않아 README 의 공통 규약에 있고,
+     * 인증과 그 경로에서 나는 도메인 코드는 auth.md 에 있다.
+     */
+    private static final List<DocTable> TABLES = List.of(
+            new DocTable(Path.of("docs/api-spec/auth.md"), "## 오류 코드",
+                    Set.of("AUTH", "OWNER", "MEMBER")),
+            new DocTable(Path.of("docs/api-spec/README.md"), "### 공통 오류 코드",
+                    Set.of("COMMON")));
+
+    private static final Set<String> DOC_PREFIXES = TABLES.stream()
+            .flatMap(table -> table.prefixes().stream())
+            .collect(toSet());
 
     private static final Pattern CODE_FORMAT = Pattern.compile("^[A-Z]{2,10}-[0-9]{3}$");
     private static final Pattern STATUS_FORMAT = Pattern.compile("^[0-9]{3}$");
 
-    /** 표의 칸 수. 양 끝의 빈 칸까지 센다. */
-    private static final int CELL_COUNT = 5;
-
-    /** 오류 코드 표가 있는 절의 제목. */
-    private static final String TABLE_HEADING = "## 오류 코드";
+    /*
+     * 양 끝의 빈 칸까지 센 최소 칸 수. 코드, 상태, 문장 세 열이면 다섯이다.
+     * 열이 더 있는 표도 있어서 같은지가 아니라 이것보다 적지 않은지를 본다.
+     */
+    private static final int MIN_CELLS = 5;
 
     /** 표의 제목 줄과 구분 줄. 본문을 셀 때 뺀다. */
     private static final int HEADER_ROWS = 2;
@@ -115,7 +128,7 @@ class ErrorCodeCatalogTest {
      */
     private static Optional<Row> parseRow(String line) {
         String[] cells = line.strip().split("\\|", -1);
-        if (cells.length != CELL_COUNT) {
+        if (cells.length < MIN_CELLS) {
             return Optional.empty();
         }
         String code = unquote(cells[1]);
@@ -126,9 +139,9 @@ class ErrorCodeCatalogTest {
         return Optional.of(new Row(code, Integer.parseInt(status), cells[3].strip()));
     }
 
-    private static List<String> docLines() {
+    private static List<String> docLines(Path doc) {
         try {
-            return Files.readAllLines(AUTH_DOC);
+            return Files.readAllLines(doc);
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }
@@ -141,28 +154,33 @@ class ErrorCodeCatalogTest {
      * 대조가 통과해 버린다. 그래서 표의 행을 먼저 모두 식별하고, 읽히지 않는 행은
      * 아래 표_행_형식 이 드러낸다.
      */
-    private static List<String> tableRows() {
-        List<String> lines = docLines();
-        int heading = lines.indexOf(TABLE_HEADING);
+    private static List<String> tableRows(DocTable table) {
+        List<String> lines = docLines(table.doc());
+        int heading = lines.indexOf(table.heading());
         if (heading < 0) {
-            throw new IllegalStateException(AUTH_DOC + " 에 \"" + TABLE_HEADING + "\" 절이 없다");
+            throw new IllegalStateException(
+                    table.doc() + " 에 \"" + table.heading() + "\" 절이 없다");
         }
         List<String> rows = lines.subList(heading + 1, lines.size()).stream()
-                .takeWhile(line -> !line.startsWith("## "))
+                .takeWhile(line -> !line.startsWith("#"))
                 .map(String::strip)
                 .filter(line -> line.startsWith("|"))
                 .toList();
         return rows.subList(Math.min(HEADER_ROWS, rows.size()), rows.size());
     }
 
+    private static List<String> allTableRows() {
+        return TABLES.stream().flatMap(table -> tableRows(table).stream()).toList();
+    }
+
     private static List<String> malformedRows() {
-        return tableRows().stream()
+        return allTableRows().stream()
                 .filter(line -> parseRow(line).isEmpty())
                 .toList();
     }
 
     private static Set<Row> rowsInDoc() {
-        return tableRows().stream()
+        return allTableRows().stream()
                 .map(ErrorCodeCatalogTest::parseRow)
                 .flatMap(Optional::stream)
                 .collect(toSet());
@@ -222,15 +240,15 @@ class ErrorCodeCatalogTest {
     /*
      * 명세와 코드가 갈리지 않게 한다.
      *
-     * auth.md 의 "오류 코드" 표가 클라이언트가 읽는 계약이다. 표에 있는 코드가 코드에 없으면
+     * 문서의 오류 코드 표가 클라이언트가 읽는 계약이다. 표에 있는 코드가 코드에 없으면
      * 클라이언트가 못 오는 응답을 기다리고, 상태나 문장이 다르면 화면이 문서대로 안 돈다.
      * 이 검사가 없어서 문서를 고칠 때마다 사람이 눈으로 대조했고, 실제로 어긋난 채 올라갔다.
      */
     @Test
-    @DisplayName("auth.md 의 오류 코드 표와 코드가 일치한다")
+    @DisplayName("문서의 오류 코드 표와 코드가 일치한다")
     void 문서와_일치() {
         assertThat(rowsInDoc())
-                .as("auth.md 의 오류 코드 표")
+                .as("문서의 오류 코드 표")
                 .isNotEmpty()
                 .isEqualTo(rowsInCode());
     }

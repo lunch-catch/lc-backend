@@ -17,7 +17,7 @@ class AuthExceptionHandlerTest {
     private final AuthExceptionHandler handler = new AuthExceptionHandler();
 
     @Test
-    @DisplayName("인증 실패는 401 과 AUTH-006 으로 답한다")
+    @DisplayName("인증 실패는 401 과 AUTH-005 으로 답한다")
     void 인증_실패() {
         MockHttpServletRequest request = new MockHttpServletRequest();
 
@@ -26,7 +26,7 @@ class AuthExceptionHandlerTest {
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED);
         assertThat(response.getBody()).isNotNull();
-        assertThat(response.getBody().code()).isEqualTo("AUTH-006");
+        assertThat(response.getBody().code()).isEqualTo("AUTH-005");
         assertThat(response.getBody().message()).isEqualTo(AuthErrorCode.LOGIN_REQUIRED.getMessage());
         assertThat(response.getBody().data()).isNull();
     }
@@ -46,14 +46,14 @@ class AuthExceptionHandlerTest {
     }
 
     @Test
-    @DisplayName("인가 실패는 403 과 AUTH-007 으로 답한다")
+    @DisplayName("인가 실패는 403 과 AUTH-006 으로 답한다")
     void 인가_실패() {
         ResponseEntity<ResponseEnvelope<Void>> response =
                 handler.handleAccessDenied(new AccessDeniedException("role mismatch"), new MockHttpServletRequest());
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
         assertThat(response.getBody()).isNotNull();
-        assertThat(response.getBody().code()).isEqualTo("AUTH-007");
+        assertThat(response.getBody().code()).isEqualTo("AUTH-006");
         assertThat(response.getBody().message()).isEqualTo(AuthErrorCode.ROLE_NOT_ALLOWED.getMessage());
         assertThat(response.getBody().data()).isNull();
     }
