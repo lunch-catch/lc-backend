@@ -28,12 +28,21 @@ public enum CommonErrorCode implements ErrorCode {
      */
     MALFORMED_REQUEST(HttpStatus.BAD_REQUEST, "COMMON-003", "요청을 해석할 수 없습니다. 본문과 파라미터 형식을 확인해 주세요."),
 
-    // 자격 증명이 없거나 유효하지 않다 (AuthenticationException)
+    /*
+     * 자격 증명이 없거나 유효하지 않다. AuthenticationException
+     *
+     * 지금 이 코드로 응답하는 자리는 없다. auth.md 가 그 실패를 AUTH-006 으로 못 박아
+     * auth.exception.AuthExceptionHandler 가 답한다. 번호를 지우지 않는 이유는 둘이다.
+     * 공개된 계약이라 한 번 매긴 번호는 다른 뜻으로 돌려 쓰지 않고, 번호가 1부터 끊기지
+     * 않아야 한다는 규칙을 ErrorCodeCatalogTest 가 지킨다.
+     */
     UNAUTHENTICATED(HttpStatus.UNAUTHORIZED, "COMMON-004", "인증이 필요합니다. 로그인 후 다시 시도해 주세요."),
 
     /*
      * 인증은 됐으나 권한이 없다. AccessDeniedException
      * API-7-05 에 따라 대상의 존재 여부를 드러내지 않는다. 없는 것과 권한이 없는 것이 같은 응답이어야 한다.
+     *
+     * COMMON-004 와 같은 이유로 지금 응답하는 자리는 없다. auth.md 가 AUTH-007 로 정했다.
      */
     PERMISSION_DENIED(HttpStatus.FORBIDDEN, "COMMON-005", "접근 권한이 없습니다."),
 
