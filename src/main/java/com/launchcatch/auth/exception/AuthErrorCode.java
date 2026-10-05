@@ -35,10 +35,15 @@ public enum AuthErrorCode implements ErrorCode {
             "아이디 또는 비밀번호가 올바르지 않습니다."),
 
     /*
-     * 세션 저장과 폐기가 실패한 경우다. Valkey 가 닫혀 있으면 로그인과 로그아웃이 여기로 온다.
+     * Refresh Token 저장과 폐기가 실패한 경우다.
+     *
+     * 로그인은 관계형 DB 해시 백업에 실패했을 때만 여기로 온다. 인메모리 캐시 저장 실패는
+     * 오류가 아니고 DB 백업을 기준으로 로그인을 유지한다 (auth.md 의 오류 표). 로그아웃은
+     * 폐기에 실패하면 여기로 온다.
+     *
      * 5xx 라 handleBusiness 가 ERROR 로 남기고, toResponse 가 Retry-After 를 붙인다.
      */
-    SESSION_STORE_UNAVAILABLE(HttpStatus.SERVICE_UNAVAILABLE, "AUTH-002",
+    REFRESH_TOKEN_STORE_UNAVAILABLE(HttpStatus.SERVICE_UNAVAILABLE, "AUTH-002",
             "일시적으로 처리할 수 없습니다. 잠시 후 다시 시도해 주세요."),
 
     /*
@@ -56,7 +61,7 @@ public enum AuthErrorCode implements ErrorCode {
     },
 
     /*
-     * 이미 교체된 Refresh Token 이 다시 온 경우다. 탈취로 보고 그 계정의 세션을 모두 끊는다.
+     * 이미 교체된 Refresh Token 이 다시 온 경우다. 탈취로 보고 그 계정의 Refresh Token 을 모두 폐기한다.
      * 드물고 심각하므로 로그를 남긴다.
      */
     REFRESH_TOKEN_REUSED(HttpStatus.UNAUTHORIZED, "AUTH-004",

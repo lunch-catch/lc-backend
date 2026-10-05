@@ -120,7 +120,7 @@ Set-Cookie: refreshToken=<token>; HttpOnly; SameSite=Strict; Path=/v1/auth/
 
 - **쿠키를 함께 보내야 한다.** 브라우저 `fetch` 는 `credentials: 'include'`, axios는 `withCredentials: true` 로 호출한다
 - **Access Token이 만료되면 재발급 후 다시 부른다.** `401` 에 `AUTH-005` 이 오면 역할에 맞는 재발급 API를 한 번 부르고 원래 요청을 다시 보낸다. 재발급도 `401` 이면 로그인 화면으로 보낸다. 재발급 API는 `auth.md`에 있다
-- **Refresh Token은 회전한다.** 재발급마다 새 토큰으로 바뀌고, 이미 쓴 토큰이 다시 오면 그 계정의 세션을 모두 끊는다
+- **Refresh Token은 회전한다.** 재발급마다 새 토큰으로 바뀌고, 이미 쓴 토큰이 다시 오면 그 계정의 Refresh Token을 모두 폐기한다
 - **로그아웃하면 Access Token도 막힌다.** 만료 전이라도 로그아웃 이전에 받은 Access Token은 거부된다
 - **권한은 역할로 판정한다.** 역할이 맞지 않으면 `403` 이다. 로그인 없이 부를 수 있는 경로는 로그인, 토큰 재발급, 점주 회원가입, 카카오 로그인뿐이다
 - **점주는 상태로 한 번 더 막는다.** `ONBOARDING` 점주는 입점 등록 API만 쓸 수 있고, 가게 최종 등록으로 `ACTIVE` 가 된 뒤 나머지 점주 API가 열린다
