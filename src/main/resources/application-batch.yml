@@ -1,0 +1,9 @@
+# 배치 서버 전용 설정. 같은 jar 를 spring.profiles.active=batch 로 띄운 서버가 읽는다.
+# 배치 운영 문서 1장을 따른다
+launchcatch:
+  scheduler:
+    # 스케줄러를 켜는 곳은 여기뿐이다. 기본 프로필에는 이 값이 없어 앱 인스턴스는 꺼진 상태다.
+    #
+    # 장애 대응 중에는 프로필을 그대로 두고 환경변수 LAUNCHCATCH_SCHEDULER_ENABLED=false 로 끈다.
+    # 환경변수가 프로필 설정보다 우선이라 재배포 없이 멈춘다
+    enabled: true
