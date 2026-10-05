@@ -16,9 +16,10 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
-import org.testcontainers.containers.MySQLContainer;
+import org.testcontainers.mysql.MySQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
+import org.testcontainers.utility.DockerImageName;
 
 /*
  * 도메인별 마이그레이션이 실제 MySQL 에 모두 적용되는지 본다.
@@ -41,7 +42,7 @@ class FlywayMigrationIntegrationTest {
             Pattern.compile("CREATE TABLE(?: IF NOT EXISTS)?\\s+`?(\\w+)`?", Pattern.CASE_INSENSITIVE);
 
     @Container
-    static final MySQLContainer<?> MYSQL = new MySQLContainer<>("mysql:8.4");
+    static final MySQLContainer MYSQL = new MySQLContainer(DockerImageName.parse("mysql:8.4"));
 
     /** 운영 비밀이 아니라 컨텍스트를 띄우기 위한 자리 채움이다. */
     private static final String DUMMY_JWT_SECRET =
