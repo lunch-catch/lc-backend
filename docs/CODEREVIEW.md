@@ -249,7 +249,7 @@ effective-java-guideline.md와 설계 문서의 경계 규칙은 변경 위치�
 | `**/auth/**`, `**/*Controller.java` | qa-security-guideline.md |
 | `**/service/**` | qa-data-integrity-guideline.md, qa-reliability-guideline.md |
 | `**/repository/**` | qa-performance-efficiency-guideline.md |
-| `src/main/resources/db/migration/*.sql` | qa-compatibility-guideline.md |
+| `src/main/resources/db/migration/**/*.sql` | qa-compatibility-guideline.md |
 
 ### 도메인 경계 점검의 자동화
 

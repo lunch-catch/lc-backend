@@ -70,9 +70,11 @@ spring:
       hibernate:
         format_sql: true
 
+  # 마이그레이션은 FlywayConfig 가 도메인마다 따로 돌린다 (설계 문서 1.3절).
+  # 자동 설정을 켜면 db/migration 전체를 한 번에 훑어 버전 1 이 도메인 수만큼 걸려 멈춘다.
+  # 그래서 baseline 같은 나머지 설정도 여기가 아니라 그 코드에 있다
   flyway:
-    enabled: true
-    baseline-on-migrate: true
+    enabled: false
 
   # Refresh Token 회전과 Access Token valid-after 커트라인, 선착순 순번,
   # serve 기록, 당일 소진 카운터가 이 캐시를 쓴다.

@@ -35,8 +35,8 @@ import org.springframework.stereotype.Repository;
  *
  * 회전에 성공했을 때 옛 레코드를 곧바로 지우지 않고 tombstone 으로 남긴다. 죽은 토큰이 나중에
  * 재생되면 재사용 탐지는 되지만, 지워 버렸다면 그것이 누구 것이었는지 알 수 없어 그 계정의
- * 다른 세션을 끊는 조치를 할 수 없다. 폐기된 Refresh 를 다시 쓰면 그 계정의 전체 세션을
- * 종료해야 하므로 소유자 정보가 남아 있어야 한다. 그래서 compareAndRotate 의 결과가
+ * 다른 Refresh Token 을 폐기하는 조치를 할 수 없다. 폐기된 Refresh 를 다시 쓰면 그 계정의
+ * Refresh Token 을 모두 폐기해야 하므로 소유자 정보가 남아 있어야 한다. 그래서 compareAndRotate 의 결과가
  * Optional 하나가 아니라 SUCCESS, NOT_FOUND, REUSE_DETECTED 셋을 가르는 RotateOutcome 이다.
  */
 @Repository
@@ -96,7 +96,7 @@ public class RefreshTokenRepository {
 
     /*
      * 이 계정의 현재 Refresh Token 해시다. 보조 인덱스 기준이다.
-     * 로그아웃과 탈퇴, 재사용 탐지 뒤 세션 강제 종료에서 "무엇을 지워야 하는지" 를 알아내는 데 쓴다.
+     * 로그아웃과 탈퇴, 재사용 탐지 뒤 전체 폐기에서 "무엇을 지워야 하는지" 를 알아내는 데 쓴다.
      * 보조 인덱스가 캐시 축출이나 재시작으로 유실되면 empty 다. 그때는 호출부가 DB 백업으로 폴백한다.
      */
     public Optional<String> findActiveHash(Role role, Long id) {
@@ -106,7 +106,7 @@ public class RefreshTokenRepository {
     /*
      * 기본 레코드는 항상 지우고, 보조 인덱스는 지금도 이 해시를 가리킬 때만 함께 지운다.
      * 실패한 옛 폐기를 나중에 재시도하는 사이 새 로그인이나 재발급으로 보조 인덱스가 다른 해시를
-     * 가리킬 수 있으므로, 두 삭제를 Lua 로 원자 처리해 새 세션의 포인터를 지우지 않는다.
+     * 가리킬 수 있으므로, 두 삭제를 Lua 로 원자 처리해 새 Refresh Token 의 포인터를 지우지 않는다.
      */
     public void revokeIfActiveHashMatches(String tokenHash, Role role, Long id) {
         redisTemplate.execute(REVOKE_SCRIPT, List.of(primaryKey(tokenHash), activeKey(role, id)), tokenHash);

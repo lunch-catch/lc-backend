@@ -12,7 +12,7 @@ public class AuthException extends BusinessException {
         super(errorCode);
     }
 
-    /* 외부 호출이나 하위 계층의 예외를 옮길 때 쓴다. 세션 저장 실패가 그 경우다. */
+    /* 외부 호출이나 하위 계층의 예외를 옮길 때 쓴다. Refresh Token 저장 실패가 그 경우다. */
     public AuthException(AuthErrorCode errorCode, Throwable cause) {
         super(errorCode, cause);
     }
