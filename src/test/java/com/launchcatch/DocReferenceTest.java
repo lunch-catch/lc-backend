@@ -7,6 +7,7 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.text.Normalizer;
 import java.util.List;
 import java.util.Set;
 import java.util.regex.Matcher;
@@ -33,8 +34,13 @@ class DocReferenceTest {
     /** `[이름](상대경로)` 의 경로. 앵커(#)는 뺀다. */
     private static final Pattern RELATIVE_LINK = Pattern.compile("]\\((\\.{1,2}/[^)#]+)");
 
-    /** 백틱으로 감싼 마크다운 파일 이름. 경로가 붙어 있을 수도 있다. */
-    private static final Pattern BACKTICK_DOC = Pattern.compile("`([A-Za-z0-9_./\\-]+\\.md)`");
+    /*
+     * 백틱으로 감싼 마크다운 파일 이름. 경로가 붙어 있을 수도 있다.
+     * 한글 이름도 받는다. 설계 문서와 배치 운영 문서가 한글 이름이라, 빼면 그 둘을 가리키는
+     * 참조가 검사에서 조용히 빠진다.
+     */
+    private static final Pattern BACKTICK_DOC =
+            Pattern.compile("`([A-Za-z0-9_./\\-가-힣]+\\.md)`");
 
     private static final Path API_INDEX = Path.of("docs/api-spec/README.md");
 
@@ -97,8 +103,19 @@ class DocReferenceTest {
     /** docs 안에 있는 마크다운 파일 이름. 백틱 참조는 경로 없이 이름만 적는 경우가 많아 이름으로 찾는다. */
     private static Set<String> docNames() {
         return markdownFiles().stream()
-                .map(path -> path.getFileName().toString())
+                .map(path -> nfc(path.getFileName().toString()))
                 .collect(toSet());
+    }
+
+    /*
+     * 한글 이름을 NFC 로 맞춘다.
+     *
+     * macOS 는 파일 이름을 자모로 분해해(NFD) 저장하는 경우가 있고 문서 본문은 NFC 다. 같은
+     * 이름인데 바이트가 달라서, 맞추지 않으면 맥에서만 깨진 참조로 보인다. git 은 NFC 로
+     * 저장하므로 리눅스 CI 에서는 통과한다. 그렇게 갈리면 테스트를 믿을 수 없다.
+     */
+    private static String nfc(String name) {
+        return Normalizer.normalize(name, Normalizer.Form.NFC);
     }
 
     private static List<String> brokenLinks() {
@@ -129,7 +146,7 @@ class DocReferenceTest {
                 .flatMap(doc -> BACKTICK_DOC.matcher(read(doc)).results()
                         .map(result -> result.group(1))
                         .filter(ref -> !ref.contains("*"))
-                        .map(ref -> ref.substring(ref.lastIndexOf('/') + 1))
+                        .map(ref -> nfc(ref.substring(ref.lastIndexOf('/') + 1)))
                         .filter(name -> !names.contains(name))
                         .filter(name -> !planned.contains(name))
                         .map(name -> doc + " -> `" + name + "`"))
@@ -148,6 +165,41 @@ class DocReferenceTest {
      * 이 검사가 없어서 domain-package-boundary-guideline.md 를 가리키는 참조 다섯이 남아 있었다.
      * 그 파일은 fm-backend 쪽 이름이고 이 저장소에는 domain-boundary-guideline.md 가 있다.
      */
+    /*
+     * 경로를 적었으면 그 경로도 맞아야 한다.
+     *
+     * 위 검사는 이름만 보므로 접두어가 틀려도 통과한다. 실제로 설계 문서와 배치 운영 문서가
+     * 서로를 `claude/...` 로 가리키고 있었다. 둘 다 docs/architecture 에 있어 이름은 맞았고,
+     * 그래서 이름만 보는 검사에 걸리지 않았다.
+     *
+     * 저장소 기준과 적은 문서 기준 둘 다 받는다. 문서마다 표기가 갈려서 한쪽만 받으면
+     * 참을 가리키는 것도 걸린다.
+     */
+    private static List<String> brokenPathRefs() {
+        return markdownFiles().stream()
+                .flatMap(doc -> BACKTICK_DOC.matcher(read(doc)).results()
+                        .map(result -> result.group(1))
+                        .filter(ref -> ref.contains("/"))
+                        .filter(ref -> !ref.contains("*"))
+                        .filter(ref -> !resolves(doc, ref))
+                        .map(ref -> doc + " -> `" + ref + "`"))
+                .distinct()
+                .toList();
+    }
+
+    private static boolean resolves(Path doc, String ref) {
+        return Files.exists(Path.of(ref))
+                || Files.exists(doc.getParent().resolve(ref).normalize());
+    }
+
+    @Test
+    @DisplayName("경로까지 적은 백틱 참조는 그 경로가 실재한다")
+    void 백틱_경로() {
+        assertThat(brokenPathRefs())
+                .as("경로가 틀린 백틱 참조")
+                .isEmpty();
+    }
+
     @Test
     @DisplayName("백틱으로 적은 문서 이름이 실재한다")
     void 백틱_참조() {

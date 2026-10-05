@@ -231,6 +231,17 @@ tasks.named('bootJar') {
 tasks.named('test') {
     useJUnitPlatform()
     systemProperty 'user.timezone', 'Asia/Seoul'
+    /*
+     * docs 를 입력으로 선언한다 (BLD-1-08).
+     *
+     * 문서를 읽는 테스트가 넷이다. 오류 코드 표와 코드를 맞추고, 문서 참조가 실재하는지 보고,
+     * 설계 문서가 예고한 아키텍처 규칙이 실제로 있는지 본다. 선언하지 않으면 Gradle 이 docs
+     * 변경을 보지 못해 문서만 바꾼 PR 에서 test 가 UP-TO-DATE 로 건너뛰어진다.
+     * 그 PR 이 바로 이 테스트들이 막아야 하는 것이다.
+     */
+    inputs.dir(layout.projectDirectory.dir('docs'))
+            .withPropertyName('docs')
+            .withPathSensitivity(PathSensitivity.RELATIVE)
 }
 
 jacoco {
