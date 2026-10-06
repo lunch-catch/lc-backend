@@ -88,6 +88,25 @@ public class Member extends BaseTimeEntity {
         return new Member(providerUserId, nickname, profileImageUrl);
     }
 
+    public void recordLogin(LocalDateTime loggedInAt) {
+        this.lastLoginAt = loggedInAt;
+    }
+
+    public boolean hasSuspensionHistory() {
+        return suspendedAt != null;
+    }
+
+    public void reactivate(String nickname, String profileImageUrl, LocalDateTime loggedInAt) {
+        if (status != MemberStatus.WITHDRAWN) {
+            throw new IllegalStateException("only withdrawn member can reactivate");
+        }
+        this.nickname = requiredText(nickname, "nickname");
+        this.profileImageUrl = profileImageUrl;
+        this.status = MemberStatus.ACTIVE;
+        this.withdrawnAt = null;
+        this.lastLoginAt = loggedInAt;
+    }
+
     void attachProfile(MemberProfile profile) {
         this.profile = profile;
     }
