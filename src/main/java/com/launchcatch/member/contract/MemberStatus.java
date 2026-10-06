@@ -1,4 +1,4 @@
-package com.launchcatch.member.entity;
+package com.launchcatch.member.contract;
 
 public enum MemberStatus {
 

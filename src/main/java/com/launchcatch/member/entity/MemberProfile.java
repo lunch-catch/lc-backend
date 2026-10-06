@@ -59,4 +59,8 @@ public class MemberProfile extends BaseTimeEntity {
         member.attachProfile(profile);
         return profile;
     }
+
+    public boolean isOnboardingCompleted() {
+        return onboardingCompletedAt != null;
+    }
 }
