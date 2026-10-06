@@ -250,6 +250,36 @@ class BatchExecutionServiceTest {
         verifyNoInteractions(alert);
     }
 
+    /*
+     * 상한은 행이 들고 있다. 상한에 닿으면 저장소가 0건을 돌려주고 그것이 "더 돌리지 않는다" 다.
+     * 상한 값을 저장소에 넘기는 것은 WHERE 에서 판정하기 때문이다.
+     */
+    @Test
+    @DisplayName("자동 재실행을 기록한다")
+    void 자동_재실행_기록() {
+        when(logs.recordRetry(JOB, DATE, "교착", 2, NOW)).thenReturn(1);
+
+        assertThat(service.recordRetry(JOB, DATE, "교착")).isTrue();
+    }
+
+    @Test
+    @DisplayName("상한에 닿으면 자동 재실행을 기록하지 않는다")
+    void 자동_재실행_상한() {
+        when(logs.recordRetry(JOB, DATE, "교착", 2, NOW)).thenReturn(0);
+
+        assertThat(service.recordRetry(JOB, DATE, "교착")).isFalse();
+    }
+
+    /** retry_reason 도 500자 컬럼이다. 실패 사유와 같은 이유로 잘라 넣는다. */
+    @Test
+    @DisplayName("긴 재실행 사유도 컬럼 길이에 맞춘다")
+    void 긴_재실행_사유를_자른다() {
+        String reason = "나".repeat(600);
+        when(logs.recordRetry(JOB, DATE, reason.substring(0, 500), 2, NOW)).thenReturn(1);
+
+        assertThat(service.recordRetry(JOB, DATE, reason)).isTrue();
+    }
+
     @Test
     @DisplayName("실패한 행만 수동 재실행으로 되돌린다")
     void 수동_재실행() {

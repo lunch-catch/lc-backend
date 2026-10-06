@@ -222,6 +222,44 @@ class BatchExecutionIntegrationTest {
         assertThat(service.begin(JOB, DATE)).isEqualTo(StepOutcome.ALREADY_DONE);
     }
 
+    /*
+     * 상한을 WHERE 에서 판정한다.
+     * 코드에서만 세면 두 서버가 겹쳐 돌 때 셋이 될 수 있고, 그때는 chk_batch_retry 위반으로
+     * 저장이 거부되어 재실행 기록 자체가 사라진다.
+     */
+    @Test
+    @DisplayName("자동 재실행은 횟수를 올리고 상한에서 멈춘다")
+    void 자동_재실행_상한() {
+        service.claim(JOB, DATE);
+
+        assertThat(service.recordRetry(JOB, DATE, "교착")).isTrue();
+        assertThat(reload(JOB).getRetryCount()).isEqualTo(1);
+        assertThat(service.recordRetry(JOB, DATE, "락 대기 시간 초과")).isTrue();
+        assertThat(reload(JOB).getRetryCount()).isEqualTo(2);
+        assertThat(service.recordRetry(JOB, DATE, "교착")).isFalse();
+        assertThat(reload(JOB).getRetryCount()).isEqualTo(2);
+        assertThat(reload(JOB).getRetryReason()).isEqualTo("락 대기 시간 초과");
+    }
+
+    /*
+     * 수동 재실행이 재실행 횟수를 되돌리지 않으면, 그 뒤의 자동 재실행이 시작부터 상한이라
+     * 한 번도 돌지 않고 바로 실패한다. chk_batch_retry 가 횟수와 사유를 짝으로 요구한다.
+     */
+    @Test
+    @DisplayName("수동 재실행은 자동 재실행 횟수도 0으로 되돌린다")
+    void 수동_재실행이_횟수를_되돌린다() {
+        service.claim(JOB, DATE);
+        service.recordRetry(JOB, DATE, "교착");
+        service.recordRetry(JOB, DATE, "교착");
+        service.fail(JOB, DATE, "두 번 다시 돌려도 실패했다");
+
+        assertThat(service.retry(JOB, DATE)).isTrue();
+
+        BatchExecutionLog row = reload(JOB);
+        assertThat(row.getRetryCount()).isZero();
+        assertThat(row.getRetryReason()).isNull();
+    }
+
     @Test
     @DisplayName("멈춘 실행 중 단계는 이어받아 시작한다")
     void 멈춘_단계를_이어받아_시작한다() {

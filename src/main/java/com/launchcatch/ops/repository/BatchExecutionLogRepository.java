@@ -111,10 +111,37 @@ public interface BatchExecutionLogRepository extends JpaRepository<BatchExecutio
               @Param("now") LocalDateTime now);
 
     /*
+     * 자동 재실행 한 번을 기록한다. 상한에 닿았으면 0건이다.
+     *
+     * 상한을 WHERE 에 넣는다. 코드에서만 세면 두 서버가 겹쳐 돌 때 셋 이상이 될 수 있고,
+     * 그때는 chk_batch_retry 위반으로 저장이 거부되어 재실행 기록 자체가 사라진다.
+     * 0건을 "더 돌리지 않는다" 로 읽으면 판정과 기록이 한 문장에 있다.
+     */
+    @Transactional
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("""
+            UPDATE BatchExecutionLog l
+               SET l.retryCount = l.retryCount + 1, l.retryReason = :reason, l.updatedAt = :now
+             WHERE l.jobName = :jobName
+               AND l.businessDate = :businessDate
+               AND l.status = com.launchcatch.ops.entity.BatchStatus.RUNNING
+               AND l.retryCount < :maxRetries
+            """)
+    int recordRetry(@Param("jobName") String jobName,
+                    @Param("businessDate") LocalDate businessDate,
+                    @Param("reason") String reason,
+                    @Param("maxRetries") int maxRetries,
+                    @Param("now") LocalDateTime now);
+
+    /*
      * 실패한 행을 실행 중으로 되돌린다. 관리자의 수동 재실행이다.
      *
      * 상태가 FAILED 일 때만 걸리게 해서 두 번 눌러도 한 번만 실행된다.
      * chk_batch_failure_reason 과 chk_batch_finished 가 짝을 요구하므로 둘을 함께 비운다.
+     *
+     * 자동 재실행 횟수도 0 으로 되돌린다. 남겨 두면 다음 자동 재실행이 시작부터 상한이라
+     * 한 번도 돌지 않고 바로 FAILED 가 된다. chk_batch_retry 가 횟수와 사유를 짝으로
+     * 요구하므로 둘을 함께 비운다.
      */
     @Transactional
     @Modifying(clearAutomatically = true, flushAutomatically = true)
@@ -122,6 +149,7 @@ public interface BatchExecutionLogRepository extends JpaRepository<BatchExecutio
             UPDATE BatchExecutionLog l
                SET l.status = com.launchcatch.ops.entity.BatchStatus.RUNNING,
                    l.finishedAt = null, l.failureReason = null,
+                   l.retryCount = 0, l.retryReason = null,
                    l.ownerId = :ownerId, l.updatedAt = :now
              WHERE l.jobName = :jobName
                AND l.businessDate = :businessDate

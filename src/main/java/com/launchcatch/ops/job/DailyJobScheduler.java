@@ -2,7 +2,9 @@ package com.launchcatch.ops.job;
 
 import com.launchcatch.ops.entity.BatchExecutionLog;
 import com.launchcatch.ops.scheduler.DailyJob;
+import com.launchcatch.ops.scheduler.RetryBackoff;
 import com.launchcatch.ops.scheduler.StepOutcome;
+import com.launchcatch.ops.scheduler.TransientFailures;
 import com.launchcatch.ops.service.BatchExecutionService;
 import java.time.LocalDate;
 import java.util.List;
@@ -30,10 +32,13 @@ public class DailyJobScheduler {
 
     private final List<DailyJob> jobs;
     private final BatchExecutionService executions;
+    private final RetryBackoff backoff;
 
-    public DailyJobScheduler(List<DailyJob> jobs, BatchExecutionService executions) {
+    public DailyJobScheduler(List<DailyJob> jobs, BatchExecutionService executions,
+                             RetryBackoff backoff) {
         this.jobs = jobs;
         this.executions = executions;
+        this.backoff = backoff;
     }
 
     /*
@@ -114,15 +119,39 @@ public class DailyJobScheduler {
             executions.fail(BUNDLE, businessDate, job.jobName() + " 단계를 시작할 수 없다");
             return false;
         }
+        return attempt(job, businessDate, 1);
+    }
+
+    /*
+     * 한 번 돌려 보고, 일시적 오류면 기다렸다가 다시 돌린다.
+     *
+     * 다시 도는 것은 그 단계뿐이다. 묶음을 처음부터 돌리면 이미 성공한 단계가 다시 돌아,
+     * 멱등이라도 집계가 두 번 더해질 여지가 생긴다.
+     */
+    private boolean attempt(DailyJob job, LocalDate businessDate, int attempt) {
         try {
             job.run(businessDate);
             executions.succeed(job.jobName(), businessDate);
             return true;
         } catch (RuntimeException e) {
-            executions.fail(job.jobName(), businessDate, describe(e));
+            return retryOrFail(job, businessDate, attempt, e);
+        }
+    }
+
+    /*
+     * 셋 중 하나라도 아니면 실패로 확정한다.
+     * 일시적 오류인가, 상한이 남았는가(recordRetry 가 0건이면 닿았다), 기다릴 수 있는가.
+     */
+    private boolean retryOrFail(DailyJob job, LocalDate businessDate, int attempt, RuntimeException e) {
+        String reason = describe(e);
+        if (!TransientFailures.isTransient(e)
+                || !executions.recordRetry(job.jobName(), businessDate, reason)
+                || !backoff.pause(attempt)) {
+            executions.fail(job.jobName(), businessDate, reason);
             executions.fail(BUNDLE, businessDate, job.jobName() + " 단계가 실패했다");
             return false;
         }
+        return attempt(job, businessDate, attempt + 1);
     }
 
     private Set<String> stepNames() {

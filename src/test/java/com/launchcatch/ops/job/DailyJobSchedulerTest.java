@@ -5,10 +5,12 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.launchcatch.ops.entity.BatchExecutionLog;
 import com.launchcatch.ops.scheduler.DailyJob;
+import com.launchcatch.ops.scheduler.RetryBackoff;
 import com.launchcatch.ops.scheduler.StepOutcome;
 import com.launchcatch.ops.service.BatchExecutionService;
 import java.time.LocalDate;
@@ -19,6 +21,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.dao.QueryTimeoutException;
 
 /*
  * 묶음이 순서를 지키고, 멈춰야 할 때 멈추는지 본다.
@@ -35,6 +38,9 @@ class DailyJobSchedulerTest {
 
     @Mock
     private BatchExecutionService executions;
+
+    @Mock
+    private RetryBackoff backoff;
 
     private DailyJob job(String name) {
         return new DailyJob() {
@@ -65,7 +71,32 @@ class DailyJobSchedulerTest {
     }
 
     private DailyJobScheduler scheduler(DailyJob... jobs) {
-        return new DailyJobScheduler(List.of(jobs), executions);
+        return new DailyJobScheduler(List.of(jobs), executions, backoff);
+    }
+
+    /** 처음 몇 번만 던지고 그 뒤에는 성공하는 작업이다. 자동 재실행을 보려면 상태가 필요하다. */
+    private DailyJob failingTimes(String name, int failures, RuntimeException error) {
+        return new DailyJob() {
+            private int thrown;
+
+            @Override
+            public String jobName() {
+                return name;
+            }
+
+            @Override
+            public void run(LocalDate businessDate) {
+                if (thrown++ < failures) {
+                    throw error;
+                }
+            }
+        };
+    }
+
+    private void claimBundle() {
+        when(executions.businessDate()).thenReturn(DATE);
+        when(executions.claim(DailyJobScheduler.BUNDLE, DATE)).thenReturn(true);
+        when(executions.renew(DailyJobScheduler.BUNDLE, DATE)).thenReturn(true);
     }
 
     @Test
@@ -220,6 +251,74 @@ class DailyJobSchedulerTest {
         scheduler(job(FIRST)).takeOverStale();
 
         verify(executions).takeOverStale();
+    }
+
+    /*
+     * 일시적 오류는 그 단계만 다시 돌린다.
+     * 교착이나 락 대기 시간 초과로 그날 집계 전체가 멈추면 사람이 새벽에 깨야 한다.
+     */
+    @Test
+    @DisplayName("일시적 오류는 그 단계만 다시 돌려 성공시킨다")
+    void 일시적_오류는_다시_돌린다() {
+        claimBundle();
+        when(executions.begin(FIRST, DATE)).thenReturn(StepOutcome.STARTED);
+        when(executions.recordRetry(eq(FIRST), eq(DATE), anyString())).thenReturn(true);
+        when(backoff.pause(1)).thenReturn(true);
+
+        scheduler(failingTimes(FIRST, 1, new QueryTimeoutException("응답이 없다"))).runDailyBundle();
+
+        verify(executions).succeed(FIRST, DATE);
+        verify(executions).succeed(DailyJobScheduler.BUNDLE, DATE);
+        verify(executions, never()).fail(eq(FIRST), eq(DATE), anyString());
+    }
+
+    /*
+     * 상한은 행이 들고 있다. recordRetry 가 0건이면 더 돌리지 않는다.
+     * 코드가 세면 이어받은 서버가 상한을 처음부터 다시 쓴다.
+     */
+    @Test
+    @DisplayName("재실행 상한에 닿으면 실패로 확정한다")
+    void 상한에_닿으면_실패한다() {
+        claimBundle();
+        when(executions.begin(FIRST, DATE)).thenReturn(StepOutcome.STARTED);
+        when(executions.recordRetry(eq(FIRST), eq(DATE), anyString())).thenReturn(false);
+
+        scheduler(failingTimes(FIRST, 9, new QueryTimeoutException("응답이 없다"))).runDailyBundle();
+
+        verify(executions).fail(FIRST, DATE, "QueryTimeoutException: 응답이 없다");
+        verify(executions).fail(DailyJobScheduler.BUNDLE, DATE, FIRST + " 단계가 실패했다");
+        verifyNoInteractions(backoff);
+    }
+
+    /*
+     * 일시적 오류가 아니면 한 번도 다시 돌리지 않는다.
+     * 데이터가 어긋난 실패는 몇 번 돌려도 같은 자리에서 터지고, 관리자가 볼 기록만 덮어쓴다.
+     */
+    @Test
+    @DisplayName("일시적 오류가 아니면 바로 실패로 둔다")
+    void 일시적_오류가_아니면_바로_실패() {
+        claimBundle();
+        when(executions.begin(FIRST, DATE)).thenReturn(StepOutcome.STARTED);
+
+        scheduler(failingTimes(FIRST, 9, new IllegalStateException("원본이 어긋났다"))).runDailyBundle();
+
+        verify(executions).fail(FIRST, DATE, "IllegalStateException: 원본이 어긋났다");
+        verify(executions, never()).recordRetry(eq(FIRST), eq(DATE), anyString());
+        verifyNoInteractions(backoff);
+    }
+
+    /** 중단 신호를 받으면 더 기다리지 않고 실패로 둔다. 종료 중에 새 작업을 시작하지 않는다. */
+    @Test
+    @DisplayName("대기 중 중단 신호를 받으면 실패로 둔다")
+    void 중단되면_실패한다() {
+        claimBundle();
+        when(executions.begin(FIRST, DATE)).thenReturn(StepOutcome.STARTED);
+        when(executions.recordRetry(eq(FIRST), eq(DATE), anyString())).thenReturn(true);
+        when(backoff.pause(1)).thenReturn(false);
+
+        scheduler(failingTimes(FIRST, 9, new QueryTimeoutException("응답이 없다"))).runDailyBundle();
+
+        verify(executions).fail(FIRST, DATE, "QueryTimeoutException: 응답이 없다");
     }
 
     @Test

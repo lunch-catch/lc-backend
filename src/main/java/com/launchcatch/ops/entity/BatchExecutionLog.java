@@ -51,6 +51,18 @@ public class BatchExecutionLog extends BaseTimeEntity {
     @Column(name = "owner_id", nullable = false, length = 100)
     private String ownerId;
 
+    /*
+     * 일시적 오류로 자동 재실행한 횟수다. chk_batch_retry 가 0 에서 2 사이로 묶는다.
+     * 수동 재실행은 이것을 0 으로 되돌린다. 되돌리지 않으면 다음 자동 재실행이 시작부터 상한이라
+     * 한 번도 돌지 않는다.
+     */
+    @Column(name = "retry_count", nullable = false)
+    private int retryCount;
+
+    /** 마지막 자동 재실행 사유. chk_batch_retry 가 횟수와 짝을 요구한다. */
+    @Column(name = "retry_reason", length = 500)
+    private String retryReason;
+
     private BatchExecutionLog(String jobName, LocalDate businessDate, String ownerId) {
         this.jobName = jobName;
         this.businessDate = businessDate;

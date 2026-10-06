@@ -37,6 +37,13 @@ public class BatchExecutionService {
      */
     private static final Duration STALE_AFTER = Duration.ofMinutes(2);
 
+    /*
+     * 자동 재실행 상한이다. chk_batch_retry 가 DB 에서 같은 값으로 묶는다.
+     * 두 곳에 적히지만 한쪽만 바꾸면 저장이 거부되어 바로 드러난다. 코드에서만 세면
+     * 두 서버가 겹쳐 돌 때 상한을 넘길 수 있어 DB 쪽이 마지막 방어다.
+     */
+    private static final int MAX_AUTO_RETRIES = 2;
+
     private final BatchExecutionLogRepository logs;
     private final BatchAlert alert;
     private final Clock clock;
@@ -147,6 +154,17 @@ public class BatchExecutionService {
             }
         }
         return taken;
+    }
+
+    /*
+     * 자동 재실행 한 번을 기록한다. 상한에 닿았으면 false 다.
+     *
+     * 횟수를 코드가 들고 있지 않고 행이 들고 있다. 이어받은 서버도 같은 행을 보므로 서버가
+     * 바뀌어도 상한이 이어진다.
+     */
+    @Transactional
+    public boolean recordRetry(String jobName, LocalDate businessDate, String reason) {
+        return logs.recordRetry(jobName, businessDate, shorten(reason), MAX_AUTO_RETRIES, now()) == 1;
     }
 
     /*
