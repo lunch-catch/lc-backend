@@ -6,6 +6,8 @@ import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
+import jakarta.persistence.FetchType;
+import jakarta.persistence.OneToOne;
 import jakarta.persistence.Table;
 import java.time.LocalDateTime;
 import lombok.AccessLevel;
@@ -71,6 +73,9 @@ public class Member extends BaseTimeEntity {
     @Column(name = "suspension_reason", length = 500)
     private String suspensionReason;
 
+    @OneToOne(mappedBy = "member", fetch = FetchType.LAZY)
+    private MemberProfile profile;
+
     private Member(String providerUserId, String nickname, String profileImageUrl) {
         this.providerUserId = providerUserId;
         this.nickname = nickname;
@@ -80,5 +85,9 @@ public class Member extends BaseTimeEntity {
 
     public static Member create(String providerUserId, String nickname, String profileImageUrl) {
         return new Member(providerUserId, nickname, profileImageUrl);
+    }
+
+    void attachProfile(MemberProfile profile) {
+        this.profile = profile;
     }
 }
