@@ -121,6 +121,9 @@ public interface BatchExecutionLogRepository extends JpaRepository<BatchExecutio
      * 상한을 WHERE 에 넣는다. 코드에서만 세면 두 서버가 겹쳐 돌 때 셋 이상이 될 수 있고,
      * 그때는 chk_batch_retry 위반으로 저장이 거부되어 재실행 기록 자체가 사라진다.
      * 0건을 "더 돌리지 않는다" 로 읽으면 판정과 기록이 한 문장에 있다.
+     *
+     * 소유자도 조건이다. 없으면 임대를 잃은 서버가 새 소유자의 재실행 예산을 깎고 사유를
+     * 덮어쓴다. 재실행 횟수는 그 행을 들고 있는 서버만 쓸 수 있다.
      */
     @Transactional
     @Modifying(clearAutomatically = true, flushAutomatically = true)
@@ -130,11 +133,13 @@ public interface BatchExecutionLogRepository extends JpaRepository<BatchExecutio
              WHERE l.jobName = :jobName
                AND l.businessDate = :businessDate
                AND l.status = com.launchcatch.ops.entity.BatchStatus.RUNNING
+               AND l.ownerId = :ownerId
                AND l.retryCount < :maxRetries
             """)
     int recordRetry(@Param("jobName") String jobName,
                     @Param("businessDate") LocalDate businessDate,
                     @Param("reason") String reason,
+                    @Param("ownerId") String ownerId,
                     @Param("maxRetries") int maxRetries,
                     @Param("now") LocalDateTime now);
 

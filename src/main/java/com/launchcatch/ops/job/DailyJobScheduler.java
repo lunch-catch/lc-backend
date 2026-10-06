@@ -140,7 +140,10 @@ public class DailyJobScheduler {
 
     /*
      * 셋 중 하나라도 아니면 실패로 확정한다.
-     * 일시적 오류인가, 상한이 남았는가(recordRetry 가 0건이면 닿았다), 기다릴 수 있는가.
+     * 일시적 오류인가, 재실행을 기록할 수 있는가(상한에 닿았거나 내 것이 아니면 0건이다),
+     * 기다릴 수 있는가.
+     *
+     * 내 것이 아니어서 실패로 가는 경우에도 close 가 소유자를 보므로 남의 행을 닫지 않는다.
      */
     private boolean retryOrFail(DailyJob job, LocalDate businessDate, int attempt, RuntimeException e) {
         String reason = describe(e);
@@ -149,6 +152,16 @@ public class DailyJobScheduler {
                 || !backoff.pause(attempt)) {
             executions.fail(job.jobName(), businessDate, reason);
             executions.fail(BUNDLE, businessDate, job.jobName() + " 단계가 실패했다");
+            return false;
+        }
+        /*
+         * 기다린 사이에 임대를 잃었을 수 있다. 다시 돌리기 전에 확인한다.
+         * 확인하지 않으면 이어받은 서버와 같은 단계를 겹쳐 돌린다. 작업이 멱등이라도 겹쳐 돌면
+         * 집계가 두 번 더해질 여지가 생긴다.
+         */
+        if (!executions.renew(job.jobName(), businessDate)) {
+            log.warn("대기 중에 단계를 다른 서버가 이어받아 중단한다. job={} businessDate={}",
+                    job.jobName(), businessDate);
             return false;
         }
         return attempt(job, businessDate, attempt + 1);

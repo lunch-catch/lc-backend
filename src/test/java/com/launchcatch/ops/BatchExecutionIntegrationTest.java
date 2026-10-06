@@ -245,6 +245,19 @@ class BatchExecutionIntegrationTest {
      * 수동 재실행이 재실행 횟수를 되돌리지 않으면, 그 뒤의 자동 재실행이 시작부터 상한이라
      * 한 번도 돌지 않고 바로 실패한다. chk_batch_retry 가 횟수와 사유를 짝으로 요구한다.
      */
+    /*
+     * 재실행 예산은 그 행을 들고 있는 서버만 쓸 수 있다.
+     * 소유자 조건이 없으면 임대를 잃은 서버가 새 소유자의 예산을 깎고 사유를 덮어쓴다.
+     */
+    @Test
+    @DisplayName("내 소유가 아닌 행에는 자동 재실행을 기록하지 않는다")
+    void 남의_행에는_재실행을_기록하지_않는다() {
+        claimAs(JOB, OTHER);
+
+        assertThat(service.recordRetry(JOB, DATE, "교착")).isFalse();
+        assertThat(reload(JOB).getRetryCount()).isZero();
+    }
+
     @Test
     @DisplayName("수동 재실행은 자동 재실행 횟수도 0으로 되돌린다")
     void 수동_재실행이_횟수를_되돌린다() {

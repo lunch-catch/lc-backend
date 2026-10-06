@@ -177,10 +177,15 @@ public class BatchExecutionService {
      *
      * 횟수를 코드가 들고 있지 않고 행이 들고 있다. 이어받은 서버도 같은 행을 보므로 서버가
      * 바뀌어도 상한이 이어진다.
+     *
+     * 내 소유가 아니면 false 다. 임대를 잃은 서버가 새 소유자의 재실행 예산을 깎는 것을 막는다.
+     * 그래서 false 는 "상한에 닿았다" 와 "내 것이 아니다" 를 함께 뜻하고, 둘 다 더 돌리지
+     * 않는다는 결론이 같다.
      */
     @Transactional
     public boolean recordRetry(String jobName, LocalDate businessDate, String reason) {
-        return logs.recordRetry(jobName, businessDate, shorten(reason), MAX_AUTO_RETRIES, now()) == 1;
+        return logs.recordRetry(
+                jobName, businessDate, shorten(reason), ownerId, MAX_AUTO_RETRIES, now()) == 1;
     }
 
     /*

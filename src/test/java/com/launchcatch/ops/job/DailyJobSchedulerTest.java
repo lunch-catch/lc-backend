@@ -264,6 +264,7 @@ class DailyJobSchedulerTest {
         when(executions.begin(FIRST, DATE)).thenReturn(StepOutcome.STARTED);
         when(executions.recordRetry(eq(FIRST), eq(DATE), anyString())).thenReturn(true);
         when(backoff.pause(1)).thenReturn(true);
+        when(executions.renew(FIRST, DATE)).thenReturn(true);
 
         scheduler(failingTimes(FIRST, 1, new QueryTimeoutException("응답이 없다"))).runDailyBundle();
 
@@ -319,6 +320,27 @@ class DailyJobSchedulerTest {
         scheduler(failingTimes(FIRST, 9, new QueryTimeoutException("응답이 없다"))).runDailyBundle();
 
         verify(executions).fail(FIRST, DATE, "QueryTimeoutException: 응답이 없다");
+    }
+
+    /*
+     * 기다린 사이에 임대를 잃었으면 다시 돌리지 않는다.
+     *
+     * 확인하지 않으면 이어받은 서버와 같은 단계를 겹쳐 돌린다. 그리고 남의 행을 닫지도 않는다.
+     * 그 판정은 이어받은 쪽이 한다.
+     */
+    @Test
+    @DisplayName("대기 중에 임대를 잃으면 다시 돌리지 않는다")
+    void 대기_중_임대를_잃으면_멈춘다() {
+        claimBundle();
+        when(executions.begin(FIRST, DATE)).thenReturn(StepOutcome.STARTED);
+        when(executions.recordRetry(eq(FIRST), eq(DATE), anyString())).thenReturn(true);
+        when(backoff.pause(1)).thenReturn(true);
+        when(executions.renew(FIRST, DATE)).thenReturn(false);
+
+        scheduler(failingTimes(FIRST, 9, new QueryTimeoutException("응답이 없다"))).runDailyBundle();
+
+        verify(executions, never()).fail(eq(FIRST), eq(DATE), anyString());
+        verify(executions, never()).succeed(DailyJobScheduler.BUNDLE, DATE);
     }
 
     @Test

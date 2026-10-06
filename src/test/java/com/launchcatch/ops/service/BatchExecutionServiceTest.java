@@ -327,7 +327,7 @@ class BatchExecutionServiceTest {
     @Test
     @DisplayName("자동 재실행을 기록한다")
     void 자동_재실행_기록() {
-        when(logs.recordRetry(JOB, DATE, "교착", 2, NOW)).thenReturn(1);
+        when(logs.recordRetry(JOB, DATE, "교착", ME, 2, NOW)).thenReturn(1);
 
         assertThat(service.recordRetry(JOB, DATE, "교착")).isTrue();
     }
@@ -335,7 +335,7 @@ class BatchExecutionServiceTest {
     @Test
     @DisplayName("상한에 닿으면 자동 재실행을 기록하지 않는다")
     void 자동_재실행_상한() {
-        when(logs.recordRetry(JOB, DATE, "교착", 2, NOW)).thenReturn(0);
+        when(logs.recordRetry(JOB, DATE, "교착", ME, 2, NOW)).thenReturn(0);
 
         assertThat(service.recordRetry(JOB, DATE, "교착")).isFalse();
     }
@@ -345,7 +345,7 @@ class BatchExecutionServiceTest {
     @DisplayName("긴 재실행 사유도 컬럼 길이에 맞춘다")
     void 긴_재실행_사유를_자른다() {
         String reason = "나".repeat(600);
-        when(logs.recordRetry(JOB, DATE, reason.substring(0, 500), 2, NOW)).thenReturn(1);
+        when(logs.recordRetry(JOB, DATE, reason.substring(0, 500), ME, 2, NOW)).thenReturn(1);
 
         assertThat(service.recordRetry(JOB, DATE, reason)).isTrue();
     }
