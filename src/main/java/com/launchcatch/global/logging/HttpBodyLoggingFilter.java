@@ -70,6 +70,16 @@ public class HttpBodyLoggingFilter extends OncePerRequestFilter {
      * 좌표를 넣는 이유는 개인정보 정책이다. 노출 로그와 접속 기록에는 소수점 3자리로 반올림한
      * 값만 남기기로 했는데, 요청 바디가 그대로 로그에 찍히면 그 정책이 로그 쪽에서 뚫린다.
      *
+     * 도로명 주소와 위치 별칭을 넣는 이유도 같다. 회원이 저장한 위치는 집이나 회사 같은 실제 장소라
+     * 좌표와 같은 급의 개인정보이고, address 는 키 이름이 정확히 같을 때만 걸려서 roadAddress 는
+     * 따로 적어야 잡힌다. 점주가 가게를 등록할 때 보내는 roadAddress 도 함께 가려지지만, 요청 바디
+     * 로그에서 가게 주소를 못 보는 불편이 회원 위치가 새는 위험보다 작다.
+     *
+     * 관리자 비밀번호 변경 바디의 currentPassword 와 newPassword 는 password 와 키 이름이 정확히
+     * 달라서 따로 적어야 잡힌다. 대표자명과 기기 식별자 fid 도 개인정보라 같이 가린다. 카카오 회원번호
+     * (providerUserId, kakaoUserId, 연결 끊기 웹훅의 user_id)와 결제 키 paymentKey 는 값이 새면
+     * 계정이나 결제 건을 특정할 수 있어 넣는다.
+     *
      * 사업자등록번호는 증빙 서류와 같은 급으로 다룬다. 닉네임은 넣지 않는다. 본인이 정하는
      * 공개 표시용 값이라 개인정보로 볼 근거가 약하다.
      *
@@ -78,8 +88,10 @@ public class HttpBodyLoggingFilter extends OncePerRequestFilter {
      */
     private static final Pattern SENSITIVE_JSON_FIELD = Pattern.compile(
             "(?i)(\"(password|accessToken|refreshToken|token|qrToken|secret|authorization|idToken|clientSecret"
-                    + "|phone|address|name|sub|businessRegistrationNumber|businessNumber"
+                    + "|phone|address|roadAddress|locationNickname|name|sub|businessRegistrationNumber|businessNumber"
                     + "|lat|lng|latitude|longitude"
+                    + "|currentPassword|newPassword|representativeName|fid"
+                    + "|providerUserId|kakaoUserId|user_id|paymentKey"
                     + "|authorizationCode|state|nonce)\"\\s*:\\s*\")([^\"]*)(\")");
 
     // (OBS-3-04/SEC-4-02) application/x-www-form-urlencoded 바디("password=1234&token=eyJ...")는
@@ -88,8 +100,10 @@ public class HttpBodyLoggingFilter extends OncePerRequestFilter {
     // SENSITIVE_JSON_FIELD와 같은 키 목록을 쓴다 — 인코딩만 다를 뿐 같은 값이 새면 위험도가 같다.
     private static final Pattern SENSITIVE_FORM_FIELD = Pattern.compile(
             "(?i)((?:^|&)(?:password|accessToken|refreshToken|token|qrToken|secret|authorization|idToken|clientSecret"
-                    + "|phone|address|name|sub|businessRegistrationNumber|businessNumber"
+                    + "|phone|address|roadAddress|locationNickname|name|sub|businessRegistrationNumber|businessNumber"
                     + "|lat|lng|latitude|longitude"
+                    + "|currentPassword|newPassword|representativeName|fid"
+                    + "|providerUserId|kakaoUserId|user_id|paymentKey"
                     + "|authorizationCode|state|nonce)=)([^&]*)");
 
     // 위 키-값 패턴에 안 걸린 이메일/전화번호도 한 번 더 잡아서 부분 마스킹(키 이름이 다르거나
