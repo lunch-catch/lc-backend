@@ -103,7 +103,11 @@ public class MemberTokenService {
             TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
                 @Override
                 public void afterCommit() {
-                    kakaoLogoutClient.logout(providerUserId);
+                    try {
+                        kakaoLogoutClient.logout(providerUserId);
+                    } catch (RuntimeException e) {
+                        log.warn("event=KAKAO_LOGOUT_AFTER_COMMIT_FAILED memberId={}", memberId, e);
+                    }
                 }
             });
         }
