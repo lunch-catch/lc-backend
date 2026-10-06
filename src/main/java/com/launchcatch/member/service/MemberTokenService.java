@@ -53,7 +53,7 @@ public class MemberTokenService {
             log.warn("event=MEMBER_REFRESH_CACHE_SAVE_FAILED memberId={} cause={}",
                     member.getId(), RedisFailureClassifier.causeLabel(e), e);
         }
-        return new TokenPair(accessToken, refreshToken);
+        return new TokenPair(accessToken, refreshToken, member.getId());
     }
 
     @Transactional
@@ -135,7 +135,7 @@ public class MemberTokenService {
             compensateCacheRotation(newHash, memberId);
             throw new AuthException(AuthErrorCode.REFRESH_TOKEN_STORE_UNAVAILABLE);
         }
-        return new TokenPair(jwtTokenProvider.createAccessToken(memberId, ROLE), newRefreshToken);
+        return new TokenPair(jwtTokenProvider.createAccessToken(memberId, ROLE), newRefreshToken, memberId);
     }
 
     private TokenPair reissueFromDatabase(
@@ -158,7 +158,7 @@ public class MemberTokenService {
             log.warn("event=MEMBER_REFRESH_CACHE_SAVE_AFTER_DB_FALLBACK_FAILED memberId={} cause={}",
                     member.getId(), RedisFailureClassifier.causeLabel(e), e);
         }
-        return new TokenPair(jwtTokenProvider.createAccessToken(member.getId(), ROLE), newRefreshToken);
+        return new TokenPair(jwtTokenProvider.createAccessToken(member.getId(), ROLE), newRefreshToken, member.getId());
     }
 
     private void saveBackupOrThrow(Long memberId, String tokenHash, LocalDateTime expiresAt, LocalDateTime now) {
@@ -201,6 +201,6 @@ public class MemberTokenService {
         return LocalDateTime.now(clock);
     }
 
-    public record TokenPair(String accessToken, String refreshToken) {
+    public record TokenPair(String accessToken, String refreshToken, Long memberId) {
     }
 }

@@ -9,6 +9,8 @@ import com.launchcatch.global.response.ResponseEnvelope;
 import com.launchcatch.member.dto.KakaoAuthorizeResponse;
 import com.launchcatch.member.dto.KakaoLoginRequest;
 import com.launchcatch.member.dto.MemberLoginResponse;
+import com.launchcatch.member.contract.MemberInfo;
+import com.launchcatch.member.contract.MemberQueryService;
 import com.launchcatch.member.oauth.KakaoAuthorizationService;
 import com.launchcatch.member.service.MemberLoginService;
 import com.launchcatch.member.service.MemberTokenService;
@@ -37,6 +39,7 @@ public class MemberAuthController {
     private final MemberLoginService memberLoginService;
     private final MemberTokenService memberTokenService;
     private final AuthCookieFactory authCookieFactory;
+    private final MemberQueryService memberQueryService;
 
     @GetMapping("/kakao/authorize")
     public ResponseEnvelope<KakaoAuthorizeResponse> authorize(
@@ -59,12 +62,16 @@ public class MemberAuthController {
     }
 
     @PostMapping("/tokens:refresh")
-    public ResponseEntity<ResponseEnvelope<Void>> refresh(
+    public ResponseEntity<ResponseEnvelope<MemberLoginResponse>> refresh(
             @CookieValue(name = REFRESH_TOKEN_COOKIE, required = false) String refreshToken) {
         if (refreshToken == null || refreshToken.isBlank()) {
             throw new AuthException(AuthErrorCode.REFRESH_TOKEN_INVALID);
         }
-        return tokenResponse(memberTokenService.reissue(refreshToken), null);
+        MemberTokenService.TokenPair tokenPair = memberTokenService.reissue(refreshToken);
+        MemberInfo member = memberQueryService.findById(tokenPair.memberId())
+                .orElseThrow(() -> new AuthException(AuthErrorCode.REFRESH_TOKEN_INVALID));
+        return tokenResponse(tokenPair, new MemberLoginResponse(
+                member.memberId(), member.nickname(), false, member.onboardingCompleted()));
     }
 
     @DeleteMapping("/tokens")
