@@ -39,6 +39,7 @@ public class KakaoLogoutClient {
                     .block();
         } catch (RuntimeException e) {
             log.warn("event=KAKAO_LOGOUT_FAILED", e);
+            throw e;
         }
     }
 }
