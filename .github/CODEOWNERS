@@ -74,3 +74,18 @@
 /src/main/java/com/launchcatch/coupon/          @MinhyeokChoi99
 /src/main/resources/db/migration/coupon/        @MinhyeokChoi99
 /docs/api-spec/coupon.md                        @MinhyeokChoi99
+
+# --- contract 는 부르는 쪽도 함께 본다 ---------------------------------------
+# contract 는 도메인 간 유일한 접점이다. 그 모양이 바뀌면 부르는 도메인이 깨진다.
+# 소유자만 요청하면 깨질 사람이 모르는 채로 병합된다.
+#
+# 부르는 쪽은 설계 문서 2.2절 간선 표가 원본이다. 간선이 늘면 여기도 늘린다.
+# 이벤트 타입도 contract 에 있으므로 수신하는 도메인이 같은 줄로 덮인다.
+#
+# contract 밖의 내부 패키지는 다른 도메인이 볼 수 없으니 소유자만 본다. 그래서 위의
+# 도메인 규칙보다 아래에 둔다. 마지막에 맞는 줄이 이긴다.
+/src/main/java/com/launchcatch/campaign/contract/   @yongmaru789 @devjohnpark @muzimzz @MinhyeokChoi99
+/src/main/java/com/launchcatch/member/contract/     @muzimzz @devjohnpark @MinhyeokChoi99 @gyudongjeong
+/src/main/java/com/launchcatch/store/contract/      @gyudongjeong @devjohnpark @yongmaru789
+/src/main/java/com/launchcatch/adserving/contract/  @devjohnpark @MinhyeokChoi99 @gyudongjeong
+/src/main/java/com/launchcatch/billing/contract/    @muzimzz @devjohnpark
