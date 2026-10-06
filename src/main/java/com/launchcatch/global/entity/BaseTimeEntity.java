@@ -14,7 +14,7 @@ import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 
 /*
  * 모든 엔티티의 공통 뼈대. 식별자와 생성, 수정 시각을 갖는다.
- * V1 의 61개 테이블 전부가 created_at 과 updated_at 을 가지므로 베이스는 이것 하나다.
+ * V1 의 63개 테이블 전부가 created_at 과 updated_at 을 가지므로 베이스는 이것 하나다.
  *
  * 이력과 로그 테이블도 updated_at 을 갖는다. 뼈대를 둘로 나누면 "이 테이블은 수정되는가"
  * 라는 판단이 상속 선택으로 들어와, 나중에 보정이나 마스킹으로 한 번이라도 수정하는 순간
