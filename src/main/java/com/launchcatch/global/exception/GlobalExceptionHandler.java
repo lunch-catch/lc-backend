@@ -32,7 +32,16 @@ import java.util.stream.Collectors;
 @RestControllerAdvice
 public class GlobalExceptionHandler {
 
-    // 재시도까지 기다릴 초. 선착순처럼 몰리는 경로에서 곧바로 되돌아오는 것을 늦춘다
+    /*
+     * 재시도까지 기다릴 초. 선착순처럼 몰리는 경로에서 곧바로 되돌아오는 것을 늦춘다.
+     *
+     * 503 에는 이 값이 맞다. 잠시 뒤면 되는 상태라 "곧 다시" 가 답이다.
+     *
+     * 429 에는 모자란다. api-spec/README.md 가 "다시 요청할 수 있을 때까지 남은 초" 를
+     * 요구하는데, 그 값은 윈도우를 들고 있는 쪽만 안다. 속도 제한을 거는 쪽이 직접 헤더를
+     * 넣어야 한다. AuthRateLimitFilter 가 카운터의 남은 수명으로 그렇게 한다. 여기 값은
+     * 그것이 없을 때의 최소값일 뿐이다.
+     */
     private static final int RETRY_AFTER_SECONDS = 1;
 
     /**

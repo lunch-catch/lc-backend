@@ -8,6 +8,7 @@ import java.io.IOException;
 import java.time.Duration;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
 import java.util.regex.Pattern;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -16,6 +17,7 @@ import org.springframework.dao.DataAccessException;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.data.redis.core.script.RedisScript;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.filter.OncePerRequestFilter;
 
@@ -34,7 +36,7 @@ import org.springframework.web.filter.OncePerRequestFilter;
  * JwtAuthenticationFilter 의 커트라인 조회와 같은 이유다. 이 필터 하나 때문에 캐시 블립마다
  * 로그인 전체가 닫히면 안 된다.
  *
- * 피드 조회의 분당 2회 제한은 여기가 아니다. 그쪽은 IP 가 아니라 사용자 ID 기준이고
+ * 피드 조회의 최근 60초에 6회 제한은 여기가 아니다. 그쪽은 IP 가 아니라 사용자 ID 기준이고
  * 초과 시 429 와 함께 안내를 돌려줘야 해서 광고 서빙이 자기 카운터로 처리한다.
  */
 @Slf4j
@@ -77,12 +79,34 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
             return;
         }
 
-        if (isOverLimit(resolveClientIp(request))) {
+        String ip = resolveClientIp(request);
+        if (isOverLimit(ip)) {
             response.setStatus(HttpStatus.TOO_MANY_REQUESTS.value());
+            response.setHeader(HttpHeaders.RETRY_AFTER, String.valueOf(retryAfterSeconds(ip)));
             return;
         }
 
         filterChain.doFilter(request, response);
+    }
+
+    /*
+     * 다시 요청해도 되는 때까지 남은 초다 (api-spec/README.md 의 429).
+     *
+     * 고정 윈도우라 카운터 키의 남은 수명이 그 값이다. 윈도우 길이를 그대로 주면 끝까지 5초
+     * 남았는데도 60초를 기다리라고 말하게 된다.
+     *
+     * 수명을 읽지 못하면 윈도우 길이로 답한다. 헤더를 빼면 클라이언트가 곧바로 다시 눌러
+     * 막으려던 요청이 다시 몰린다.
+     */
+    private long retryAfterSeconds(String ip) {
+        try {
+            Long remaining = redisTemplate.getExpire(KEY_PREFIX + ip, TimeUnit.SECONDS);
+            return remaining != null && remaining > 0 ? remaining : WINDOW.toSeconds();
+        } catch (DataAccessException e) {
+            log.warn("event=RATE_LIMIT_TTL_FAILED ip={} cause={} 윈도우 길이로 답한다",
+                    ip, RedisFailureClassifier.causeLabel(e), e);
+            return WINDOW.toSeconds();
+        }
     }
 
     private boolean isOverLimit(String ip) {

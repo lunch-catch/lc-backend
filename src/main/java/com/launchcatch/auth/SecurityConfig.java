@@ -4,6 +4,7 @@ import java.util.List;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.security.autoconfigure.actuate.web.servlet.EndpointRequest;
 import org.springframework.context.annotation.Bean;
+import org.springframework.http.HttpHeaders;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
@@ -116,6 +117,14 @@ public class SecurityConfig {
         configuration.setAllowedOrigins(List.of(allowedOrigins.split(",")));
         configuration.setAllowedMethods(List.of("GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"));
         configuration.setAllowedHeaders(List.of("Content-Type"));
+        /*
+         * Retry-After 를 자바스크립트가 읽을 수 있게 한다 (api-spec/README.md 의 429).
+         *
+         * 브라우저는 다른 오리진의 응답에서 몇 개의 기본 헤더만 스크립트에 보여 준다. 여기에
+         * 적지 않으면 서버가 보낸 Retry-After 가 프론트에 아예 보이지 않는다. 그러면 언제 다시
+         * 눌러야 하는지 알 수 없어 곧바로 다시 누르고, 막으려던 요청이 다시 몰린다.
+         */
+        configuration.setExposedHeaders(List.of(HttpHeaders.RETRY_AFTER));
         configuration.setAllowCredentials(true);
 
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
