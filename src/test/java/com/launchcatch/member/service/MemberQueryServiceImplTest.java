@@ -8,6 +8,7 @@ import com.launchcatch.member.contract.MemberStatus;
 import com.launchcatch.member.entity.Member;
 import com.launchcatch.member.entity.MemberProfile;
 import com.launchcatch.member.repository.MemberRepository;
+import java.math.BigDecimal;
 import java.util.Optional;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -40,12 +41,23 @@ class MemberQueryServiceImplTest {
         when(member.getStatus()).thenReturn(MemberStatus.ACTIVE);
         when(member.getProfile()).thenReturn(memberProfile);
         when(memberProfile.isOnboardingCompleted()).thenReturn(true);
+        when(memberProfile.getLatitude()).thenReturn(new BigDecimal("37.5665000"));
+        when(memberProfile.getLongitude()).thenReturn(new BigDecimal("126.9780000"));
         when(member.isNotificationOptIn()).thenReturn(true);
         when(member.isLocationOptIn()).thenReturn(false);
 
         Optional<MemberInfo> result = memberQueryService.findById(1L);
 
-        assertThat(result).contains(new MemberInfo(1L, "점심헌터", MemberStatus.ACTIVE, true, true, false));
+        assertThat(result).contains(new MemberInfo(
+                1L,
+                "점심헌터",
+                MemberStatus.ACTIVE,
+                true,
+                true,
+                false,
+                new BigDecimal("37.5665000"),
+                new BigDecimal("126.9780000")
+        ));
     }
 
     @Test
@@ -60,7 +72,7 @@ class MemberQueryServiceImplTest {
 
         Optional<MemberInfo> result = memberQueryService.findById(1L);
 
-        assertThat(result).contains(new MemberInfo(1L, "점심헌터", MemberStatus.ACTIVE, false, false, false));
+        assertThat(result).contains(new MemberInfo(1L, "점심헌터", MemberStatus.ACTIVE, false, false, false, null, null));
     }
 
     @Test

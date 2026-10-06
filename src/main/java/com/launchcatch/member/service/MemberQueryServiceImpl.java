@@ -24,7 +24,9 @@ public class MemberQueryServiceImpl implements MemberQueryService {
                         member.getStatus(),
                         member.getProfile() != null && member.getProfile().isOnboardingCompleted(),
                         member.isNotificationOptIn(),
-                        member.isLocationOptIn()
+                        member.isLocationOptIn(),
+                        member.getProfile() == null ? null : member.getProfile().getLatitude(),
+                        member.getProfile() == null ? null : member.getProfile().getLongitude()
                 ));
     }
 }
