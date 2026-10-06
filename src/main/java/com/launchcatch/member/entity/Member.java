@@ -100,6 +100,9 @@ public class Member extends BaseTimeEntity {
         if (status != MemberStatus.WITHDRAWN) {
             throw new IllegalStateException("only withdrawn member can reactivate");
         }
+        if (hasSuspensionHistory()) {
+            throw new IllegalStateException("member with suspension history cannot reactivate");
+        }
         this.nickname = requiredText(nickname, "nickname");
         this.profileImageUrl = profileImageUrl;
         this.status = MemberStatus.ACTIVE;
