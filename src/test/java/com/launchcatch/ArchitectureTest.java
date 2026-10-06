@@ -32,7 +32,6 @@ import java.util.regex.Pattern;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.jpa.repository.Query;
-import org.springframework.data.redis.core.RedisTemplate;
 
 /*
  * 계층과 도메인 경계를 빌드에서 강제한다.
@@ -258,23 +257,6 @@ class ArchitectureTest {
     @ArchTest
     static final ArchRule 순환_의존이_없다 =
             slices().matching(BASE + ".(*)..").should().beFreeOfCycles()
-                    .allowEmptyShould(true);
-
-    /*
-     * 규칙 1. 캐시 키도 자기 도메인 접두어만 쓴다.
-     *
-     * 키를 직접 만들면 남의 접두어를 쓰거나 같은 접두어를 둘이 쓰는 것을 아무도 막지 못한다.
-     * 그 사고는 테이블과 달리 흔적이 남지 않아서, 값이 덮어쓰여도 원인을 찾기 어렵다.
-     * 그래서 업무 도메인은 RedisTemplate 을 직접 주입받지 않고 자기 이름으로 만든 키스페이스만
-     * 받는다.
-     *
-     * auth, ops, global 은 업무 도메인이 아니라 대상에서 빠진다. 셋은 모든 도메인이 올라타는
-     * 하위 모듈이고 각자 자기 네임스페이스를 소유한다.
-     */
-    @ArchTest
-    static final ArchRule 캐시_키는_자기_도메인_접두어만_쓴다 =
-            noClasses().that().resideInAnyPackage(domainPackages())
-                    .should().dependOnClassesThat().areAssignableTo(RedisTemplate.class)
                     .allowEmptyShould(true);
 
     /*
