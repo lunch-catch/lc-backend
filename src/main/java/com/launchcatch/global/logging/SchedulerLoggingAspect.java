@@ -2,6 +2,7 @@ package com.launchcatch.global.logging;
 
 import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
+import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Map;
@@ -30,24 +31,25 @@ public class SchedulerLoggingAspect {
     private static final String LAST_SUCCESS = "batch.job.last.success.timestamp";
 
     private final MeterRegistry meterRegistry;
+    private final Clock clock;
     private final Map<String, AtomicLong> lastSuccessByJob = new ConcurrentHashMap<>();
 
     @Around("@annotation(org.springframework.scheduling.annotation.Scheduled)")
     public Object logScheduledExecution(ProceedingJoinPoint joinPoint) throws Throwable {
         String job = joinPoint.getSignature().toShortString();
-        Instant start = Instant.now();
+        Instant start = clock.instant();
         log.info("event=SCHEDULER_START job={}", job);
         AtomicLong lastSuccess = lastSuccessGauge(job, start);
 
         try {
             Object result = joinPoint.proceed();
-            lastSuccess.set(Instant.now().getEpochSecond());
+            lastSuccess.set(clock.instant().getEpochSecond());
             log.info("event=SCHEDULER_END job={} durationMs={}",
-                    job, Duration.between(start, Instant.now()).toMillis());
+                    job, Duration.between(start, clock.instant()).toMillis());
             return result;
         } catch (Throwable ex) {
             log.error("event=SCHEDULER_FAILED job={} durationMs={}",
-                    job, Duration.between(start, Instant.now()).toMillis(), ex);
+                    job, Duration.between(start, clock.instant()).toMillis(), ex);
             throw ex;
         }
     }
