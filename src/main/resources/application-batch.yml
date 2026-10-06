@@ -16,3 +16,12 @@ launchcatch:
     # 장애 대응 중에는 프로필을 그대로 두고 환경변수 LAUNCHCATCH_SCHEDULER_ENABLED=false 로 끈다.
     # 환경변수가 프로필 설정보다 우선이라 재배포 없이 멈춘다
     enabled: true
+
+  batch:
+    # 배치 서버의 식별자다. batch_execution_log.owner_id 로 들어간다.
+    #
+    # 주지 않으면 BatchServerId 가 호스트 이름에 임의 접미사를 붙여 프로세스마다 다르게 만든다.
+    # 값을 줄 거면 서버마다 서로 달라야 한다. 두 서버가 같은 값을 쓰면 살아 있는 서버의 생존
+    # 신호가 죽은 서버의 행까지 갱신하고, 이어받기는 "내 것이 아닌 행" 만 찾으므로 그 행을
+    # 영원히 가져오지 않는다
+    owner-id: "${LAUNCHCATCH_BATCH_OWNER_ID:}"

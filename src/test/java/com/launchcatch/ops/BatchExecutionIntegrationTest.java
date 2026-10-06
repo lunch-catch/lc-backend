@@ -260,6 +260,21 @@ class BatchExecutionIntegrationTest {
         assertThat(row.getRetryReason()).isNull();
     }
 
+    /*
+     * 서버가 죽으면 묶음 행과 단계 행이 함께 오래된다. 이어받기는 둘을 함께 가져오고
+     * updated_at 을 지금으로 바꾼다. 그 뒤 묶음을 다시 도는 길에서 그 단계를 시작할 수 있어야
+     * "SUCCESS 가 아닌 첫 단계부터 다시 실행한다" 가 성립한다.
+     */
+    @Test
+    @DisplayName("이어받은 단계를 다시 시작할 수 있다")
+    void 이어받은_단계를_다시_시작한다() {
+        claimAs(JOB, OTHER);
+        makeStale(JOB);
+        assertThat(service.takeOverStale()).hasSize(1);
+
+        assertThat(service.begin(JOB, DATE)).isEqualTo(StepOutcome.STARTED);
+    }
+
     @Test
     @DisplayName("멈춘 실행 중 단계는 이어받아 시작한다")
     void 멈춘_단계를_이어받아_시작한다() {

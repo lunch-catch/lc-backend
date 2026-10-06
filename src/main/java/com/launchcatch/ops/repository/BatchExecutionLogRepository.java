@@ -93,6 +93,9 @@ public interface BatchExecutionLogRepository extends JpaRepository<BatchExecutio
      * 실행 중 행을 닫는다. 성공이면 사유가 없고 실패면 사유가 있다.
      * chk_batch_finished 가 "RUNNING 이 아니면 finished_at 이 있어야 한다" 를 요구하므로
      * 상태와 종료 시각을 같은 문장에서 함께 넣는다.
+     *
+     * 소유자도 조건이다. 생존 신호가 끊겼다가 늦게 깨어난 서버가 남이 들고 있는 실행을 닫는
+     * 것을 막는다.
      */
     @Transactional
     @Modifying(clearAutomatically = true, flushAutomatically = true)
@@ -103,11 +106,13 @@ public interface BatchExecutionLogRepository extends JpaRepository<BatchExecutio
              WHERE l.jobName = :jobName
                AND l.businessDate = :businessDate
                AND l.status = com.launchcatch.ops.entity.BatchStatus.RUNNING
+               AND l.ownerId = :ownerId
             """)
     int close(@Param("jobName") String jobName,
               @Param("businessDate") LocalDate businessDate,
               @Param("status") BatchStatus status,
               @Param("reason") String reason,
+              @Param("ownerId") String ownerId,
               @Param("now") LocalDateTime now);
 
     /*

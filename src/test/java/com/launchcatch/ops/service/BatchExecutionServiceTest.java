@@ -1,6 +1,7 @@
 package com.launchcatch.ops.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -12,6 +13,7 @@ import com.launchcatch.ops.entity.BatchExecutionLog;
 import com.launchcatch.ops.entity.BatchStatus;
 import com.launchcatch.ops.repository.BatchExecutionLogRepository;
 import com.launchcatch.ops.scheduler.BatchAlert;
+import com.launchcatch.ops.scheduler.BatchServerId;
 import com.launchcatch.ops.scheduler.StepOutcome;
 import java.time.Clock;
 import java.time.Instant;
@@ -25,6 +27,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import java.sql.SQLException;
+import org.hibernate.exception.ConstraintViolationException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.test.util.ReflectionTestUtils;
 
@@ -58,7 +62,24 @@ class BatchExecutionServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new BatchExecutionService(logs, alert, CLOCK, ME);
+        service = new BatchExecutionService(logs, alert, CLOCK, new BatchServerId(ME));
+    }
+
+    /*
+     * 두 서버가 같은 작업을 점유하려 할 때 실제로 오는 예외다.
+     * Spring 의 DuplicateKeyException 이 아니다. 그것은 JDBC 번역기가 내는 것이고, JPA
+     * 경로에서는 Hibernate 의 ConstraintViolationException 이 감싸여 온다.
+     */
+    private static DataIntegrityViolationException uniqueViolation() {
+        return constraintViolation(ConstraintViolationException.ConstraintKind.UNIQUE);
+    }
+
+    private static DataIntegrityViolationException constraintViolation(
+            ConstraintViolationException.ConstraintKind kind) {
+        return new DataIntegrityViolationException("could not execute statement",
+                new ConstraintViolationException("could not execute statement",
+                        new SQLException("violation", "23000", 1062), kind,
+                        "uk_batch_execution_log_job_name_business_date"));
     }
 
     private static BatchExecutionLog row(BatchStatus status, String owner) {
@@ -87,9 +108,25 @@ class BatchExecutionServiceTest {
     @DisplayName("유일 제약에 걸리면 점유하지 못한 것이다")
     void 점유_실패() {
         when(logs.saveAndFlush(any(BatchExecutionLog.class)))
-                .thenThrow(new DataIntegrityViolationException("uk_batch_execution_log_job_name_business_date"));
+                .thenThrow(uniqueViolation());
 
         assertThat(service.claim(JOB, DATE)).isFalse();
+    }
+
+    /*
+     * 유일 제약이 아닌 위반은 삼키지 않는다 (MNT-4-04).
+     *
+     * 길이 초과나 CHECK 위반까지 "이미 점유됐다" 로 읽으면 두 서버가 모두 점유에 실패하고도
+     * 스케줄러는 "다른 서버가 점유했다" 로 조용히 끝난다. 그날 작업이 하나도 돌지 않는다.
+     */
+    @Test
+    @DisplayName("유일 제약이 아닌 위반은 다시 던진다")
+    void 다른_제약_위반은_던진다() {
+        when(logs.saveAndFlush(any(BatchExecutionLog.class)))
+                .thenThrow(constraintViolation(ConstraintViolationException.ConstraintKind.CHECK));
+
+        assertThatThrownBy(() -> service.claim(JOB, DATE))
+                .isInstanceOf(DataIntegrityViolationException.class);
     }
 
     @Test
@@ -102,7 +139,7 @@ class BatchExecutionServiceTest {
     @DisplayName("이미 성공한 단계는 건너뛴다")
     void 단계_이미_완료() {
         when(logs.saveAndFlush(any(BatchExecutionLog.class)))
-                .thenThrow(new DataIntegrityViolationException("duplicate"));
+                .thenThrow(uniqueViolation());
         when(logs.findByJobNameAndBusinessDate(JOB, DATE))
                 .thenReturn(Optional.of(row(BatchStatus.SUCCESS, OTHER)));
 
@@ -117,7 +154,7 @@ class BatchExecutionServiceTest {
     @DisplayName("실패로 닫힌 단계는 막는다")
     void 단계_실패로_막힘() {
         when(logs.saveAndFlush(any(BatchExecutionLog.class)))
-                .thenThrow(new DataIntegrityViolationException("duplicate"));
+                .thenThrow(uniqueViolation());
         when(logs.findByJobNameAndBusinessDate(JOB, DATE))
                 .thenReturn(Optional.of(row(BatchStatus.FAILED, OTHER)));
 
@@ -125,11 +162,28 @@ class BatchExecutionServiceTest {
         verify(logs, never()).restartFailed(JOB, DATE, ME, NOW);
     }
 
+    /*
+     * 이어받기가 묶음 행과 단계 행을 함께 가져오고 updated_at 을 지금으로 바꾼다.
+     * 그 뒤 다시 이어받으려 하면 "2분보다 오래된" 조건에 걸리지 않아 0건이라, 내 것인지 먼저
+     * 보지 않으면 이어받은 묶음이 항상 실패로 닫힌다.
+     */
+    @Test
+    @DisplayName("이미 내 것인 실행 중 단계는 이어받지 않고 바로 시작한다")
+    void 내_것인_단계는_바로_시작() {
+        when(logs.saveAndFlush(any(BatchExecutionLog.class)))
+                .thenThrow(uniqueViolation());
+        when(logs.findByJobNameAndBusinessDate(JOB, DATE))
+                .thenReturn(Optional.of(row(BatchStatus.RUNNING, ME)));
+
+        assertThat(service.begin(JOB, DATE)).isEqualTo(StepOutcome.STARTED);
+        verify(logs, never()).takeOver(JOB, DATE, ME, NOW, STALE_BEFORE);
+    }
+
     @Test
     @DisplayName("멈춘 실행 중 단계는 이어받아 시작한다")
     void 단계_이어받기() {
         when(logs.saveAndFlush(any(BatchExecutionLog.class)))
-                .thenThrow(new DataIntegrityViolationException("duplicate"));
+                .thenThrow(uniqueViolation());
         when(logs.findByJobNameAndBusinessDate(JOB, DATE))
                 .thenReturn(Optional.of(row(BatchStatus.RUNNING, OTHER)));
         when(logs.takeOver(JOB, DATE, ME, NOW, STALE_BEFORE)).thenReturn(1);
@@ -145,7 +199,7 @@ class BatchExecutionServiceTest {
     @DisplayName("살아 있는 실행 중 단계는 가져오지 못한다")
     void 단계_이어받기_실패() {
         when(logs.saveAndFlush(any(BatchExecutionLog.class)))
-                .thenThrow(new DataIntegrityViolationException("duplicate"));
+                .thenThrow(uniqueViolation());
         when(logs.findByJobNameAndBusinessDate(JOB, DATE))
                 .thenReturn(Optional.of(row(BatchStatus.RUNNING, OTHER)));
         when(logs.takeOver(JOB, DATE, ME, NOW, STALE_BEFORE)).thenReturn(0);
@@ -158,7 +212,7 @@ class BatchExecutionServiceTest {
     @DisplayName("점유도 못 하고 행도 없으면 막는다")
     void 단계_행이_사라짐() {
         when(logs.saveAndFlush(any(BatchExecutionLog.class)))
-                .thenThrow(new DataIntegrityViolationException("duplicate"));
+                .thenThrow(uniqueViolation());
         when(logs.findByJobNameAndBusinessDate(JOB, DATE)).thenReturn(Optional.empty());
 
         assertThat(service.begin(JOB, DATE)).isEqualTo(StepOutcome.BLOCKED);
@@ -197,17 +251,33 @@ class BatchExecutionServiceTest {
     void 성공으로_닫는다() {
         service.succeed(JOB, DATE);
 
-        verify(logs).close(JOB, DATE, BatchStatus.SUCCESS, null, NOW);
+        verify(logs).close(JOB, DATE, BatchStatus.SUCCESS, null, ME, NOW);
         verifyNoInteractions(alert);
     }
 
     @Test
     @DisplayName("실패는 사유와 함께 닫고 관리자에게 알린다")
     void 실패로_닫는다() {
+        when(logs.close(JOB, DATE, BatchStatus.FAILED, "원본을 읽지 못했다", ME, NOW)).thenReturn(1);
+
         service.fail(JOB, DATE, "원본을 읽지 못했다");
 
-        verify(logs).close(JOB, DATE, BatchStatus.FAILED, "원본을 읽지 못했다", NOW);
         verify(alert).failed(JOB, DATE, "원본을 읽지 못했다");
+    }
+
+    /*
+     * 닫지 못했으면 알리지 않는다.
+     * 그 행은 이미 다른 서버가 들고 있어서 그쪽이 판정한다. 양쪽이 알리면 한 번의 장애가
+     * 두 번 울린다.
+     */
+    @Test
+    @DisplayName("내 소유가 아닌 행은 닫지 않고 알리지도 않는다")
+    void 남의_행은_닫지_않는다() {
+        when(logs.close(JOB, DATE, BatchStatus.FAILED, "원본을 읽지 못했다", ME, NOW)).thenReturn(0);
+
+        service.fail(JOB, DATE, "원본을 읽지 못했다");
+
+        verifyNoInteractions(alert);
     }
 
     /*
@@ -221,7 +291,7 @@ class BatchExecutionServiceTest {
 
         service.fail(JOB, DATE, reason);
 
-        verify(logs).close(JOB, DATE, BatchStatus.FAILED, reason.substring(0, 500), NOW);
+        verify(logs).close(JOB, DATE, BatchStatus.FAILED, reason.substring(0, 500), ME, NOW);
     }
 
     @Test
