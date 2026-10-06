@@ -78,8 +78,8 @@ public class Member extends BaseTimeEntity {
     private MemberProfile profile;
 
     private Member(String providerUserId, String nickname, String profileImageUrl) {
-        this.providerUserId = providerUserId;
-        this.nickname = nickname;
+        this.providerUserId = requiredText(providerUserId, "providerUserId");
+        this.nickname = requiredText(nickname, "nickname");
         this.profileImageUrl = profileImageUrl;
         this.status = MemberStatus.ACTIVE;
     }
@@ -90,5 +90,12 @@ public class Member extends BaseTimeEntity {
 
     void attachProfile(MemberProfile profile) {
         this.profile = profile;
+    }
+
+    private static String requiredText(String value, String fieldName) {
+        if (value == null || value.isBlank()) {
+            throw new IllegalArgumentException(fieldName + " must not be blank");
+        }
+        return value;
     }
 }

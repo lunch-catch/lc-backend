@@ -1,6 +1,7 @@
 package com.launchcatch.member.entity;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -18,5 +19,13 @@ class MemberProfileTest {
         assertThat(member.getProfile()).isSameAs(profile);
         assertThat(profile.getGender()).isNull();
         assertThat(profile.getAgeGroup()).isNull();
+    }
+
+    @Test
+    @DisplayName("회원 없이 프로필을 만들지 않는다")
+    void 회원_없이_프로필을_만들지_않는다() {
+        assertThatThrownBy(() -> MemberProfile.create(null))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("member must not be null");
     }
 }

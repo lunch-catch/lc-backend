@@ -38,6 +38,9 @@ public class KakaoUnlinkFailure extends BaseTimeEntity {
     }
 
     public static KakaoUnlinkFailure create(Member member) {
+        if (member == null) {
+            throw new IllegalArgumentException("member must not be null");
+        }
         return new KakaoUnlinkFailure(member);
     }
 }

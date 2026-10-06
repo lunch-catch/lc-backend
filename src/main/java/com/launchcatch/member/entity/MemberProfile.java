@@ -55,6 +55,9 @@ public class MemberProfile extends BaseTimeEntity {
     }
 
     public static MemberProfile create(Member member) {
+        if (member == null) {
+            throw new IllegalArgumentException("member must not be null");
+        }
         MemberProfile profile = new MemberProfile(member);
         member.attachProfile(profile);
         return profile;

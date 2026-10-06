@@ -1,6 +1,7 @@
 package com.launchcatch.member.entity;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -18,5 +19,13 @@ class KakaoUnlinkFailureTest {
         assertThat(failure.getProviderUserId()).isEqualTo("kakao-123");
         assertThat(failure.getAttemptCount()).isZero();
         assertThat(failure.isResolved()).isFalse();
+    }
+
+    @Test
+    @DisplayName("회원 없이 unlink 실패 행을 만들지 않는다")
+    void 회원_없이_unlink_실패_행을_만들지_않는다() {
+        assertThatThrownBy(() -> KakaoUnlinkFailure.create(null))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("member must not be null");
     }
 }
