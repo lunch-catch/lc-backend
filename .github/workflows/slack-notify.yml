@@ -1,0 +1,104 @@
+# 리뷰어로 등록된 사람을 Slack 에서 멘션한다.
+#
+# 이 워크플로는 이것 하나만 한다. 새 이슈와 병합과 승인은 GitHub 공식 Slack 앱이 맡는다.
+# 앱에는 리뷰 요청을 채널로 보내는 구독 옵션이 없고, 개인 DM 은 각자 /github signin 을
+# 해야 와서 누가 안 했는지 확인할 방법이 없다. 그 칸만 여기서 메운다.
+# 전체 알림 구성과 설정 절차는 docs/architecture/런치캐치_알림_운영.md 에 있다.
+#
+# 필요한 설정
+#   시크릿 SLACK_WEBHOOK_ACTIVITY  알림 채널의 Incoming Webhook URL. 없으면 알림만 건너뛴다
+#   시크릿 SLACK_MEMBER_IDS        깃허브 로그인 -> Slack 멤버 ID 의 JSON 맵. 없으면 @로그인 글자로 적는다
+#
+# 멤버 ID 를 변수가 아니라 시크릿에 두는 이유는 이 저장소가 public 이어서다.
+# Actions 로그도 공개되는데 변수는 마스킹되지 않는다. 자격증명은 아니지만 팀 메타데이터라
+# 공개 로그에 흘릴 이유가 없다. 시크릿이면 실수로 출력해도 가려진다.
+#
+# 포크에서 온 PR 은 시크릿을 받지 못해 알림이 조용히 꺼진다.
+# 팀원은 모두 이 저장소의 브랜치로 작업하므로 실사용 경로에는 영향이 없다.
+#
+# 이 워크플로는 아무것도 차단하지 않는다. 필수 체크는 G-BUILD 하나뿐이다 (BLD-1-05).
+# 그래서 실패를 숨기지 않는다. 여기 빨간 X 는 "알림이 깨졌다" 는 뜻이고 그것만 뜻한다.
+
+name: Slack 알림
+
+on:
+  # CODEOWNERS 자동 지정에도 뜬다. 초안 PR 은 Ready for review 시점에 뜬다.
+  # 리뷰어가 여럿이면 사람마다 한 번씩 뜨므로 contract 변경은 메시지가 넷까지 간다.
+  pull_request:
+    types: [review_requested]
+
+# 이벤트 페이로드만 읽는다. 저장소에 접근할 일이 없다.
+permissions: {}
+
+jobs:
+  notify:
+    name: 리뷰 요청 알림
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      # 이벤트 값을 ${{ }} 로 셸에 끼워 넣지 않는다. PR 제목에 $(...) 나 역따옴표가 들어오면
+      # 러너에서 실행된다. jq 가 $GITHUB_EVENT_PATH 파일을 직접 읽게 해서 셸을 아예 거치지 않는다.
+      - name: 알림 보내기
+        env:
+          WEBHOOK: ${{ secrets.SLACK_WEBHOOK_ACTIVITY }}
+          MEMBER_IDS: ${{ secrets.SLACK_MEMBER_IDS }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${WEBHOOK:-}" ]; then
+            echo "::warning::SLACK_WEBHOOK_ACTIVITY 가 없어 알림을 건너뛰었다. 저장소 Secrets 에 등록해야 한다."
+            exit 0
+          fi
+
+          IDS=${MEMBER_IDS:-}
+          if [ -z "$IDS" ]; then
+            IDS='{}'
+            echo "::warning::SLACK_MEMBER_IDS 가 없어 멘션 없이 @로그인 글자로 보낸다."
+          elif ! printf '%s' "$IDS" | jq -e 'type == "object"' >/dev/null 2>&1; then
+            echo '::error::SLACK_MEMBER_IDS 가 JSON 객체가 아니다. {"githubLogin":"U01ABCDEF"} 형식이어야 한다.'
+            exit 1
+          fi
+
+          # 맵에 없는 로그인은 @로그인 글자로 적는다. 멘션은 안 되지만 누구인지는 보인다.
+          # 팀을 리뷰어로 등록하면 requested_reviewer 가 없고 requested_team 이 온다.
+          PAYLOAD=$(jq -n \
+            --slurpfile e "$GITHUB_EVENT_PATH" \
+            --argjson ids "$IDS" '
+            # Slack 서식에 넣기 전에 & < > 를 엔터티로 바꾼다. & 를 먼저 바꿔야 한다.
+            # jq 의 JSON 인코딩은 Slack 의 서식 해석을 막지 않는다. 제목에 > 가 하나 있으면
+            # <url|라벨> 의 라벨이 거기서 끊기고 남은 글자가 본문으로 새어 나간다.
+            # 공격이 아니어도 깨진다. 제목에 화살표를 -> 로 적는 것은 흔한 표기다.
+            def esc: tostring | gsub("&"; "&amp;") | gsub("<"; "&lt;") | gsub(">"; "&gt;");
+
+            def ping($login):
+              (if $login == null then null else $ids[$login] end) as $id
+              | if $id then "<@\($id)>"
+                elif $login then "@\($login | esc)"
+                else "담당자" end;
+
+            $e[0] as $ev
+            | (if $ev.requested_reviewer then ping($ev.requested_reviewer.login)
+               else "@\($ev.requested_team.name | esc) 팀" end) as $target
+            | {text: "[리뷰 요청] \($target) <\($ev.pull_request.html_url)|#\($ev.pull_request.number) \($ev.pull_request.title | esc)> (\($ev.sender.login | esc) 요청)"}')
+
+          # 페이로드를 출력하지 않는다. 공개 로그에 Slack 멤버 ID 가 남는다.
+          echo "리뷰 요청 알림을 보낸다."
+
+          # 외부 호출이라 연결과 전체 시간을 모두 묶는다 (REL-2-01).
+          CODE=$(printf '%s' "$PAYLOAD" | curl -sS \
+            --connect-timeout 5 --max-time 10 --retry 2 --retry-connrefused \
+            -X POST "$WEBHOOK" -H 'Content-Type: application/json' --data-binary @- \
+            -o /dev/null -w '%{http_code}') || CODE=000
+
+          # 일시 장애와 설정 오류를 가른다 (BLD-2-05 의 취지).
+          #
+          # 전부 continue-on-error 로 덮으면 폐기된 웹훅을 영원히 모른다. 알림이 조용히
+          # 죽는 것이 이 워크플로가 막으려는 바로 그 실패라서 그 경우는 빨간 X 로 남긴다.
+          # Slack 이 흔들려 멈춘 것은 다음 PR 에서 알아서 복구되므로 경고로 끝낸다.
+          # curl 의 --retry 는 타임아웃과 5xx 와 429 만 다시 보내고 4xx 는 보내지 않는다.
+          case "$CODE" in
+            2*) ;;
+            4*) echo "::error::Slack 이 HTTP $CODE 로 거부했다. 웹훅이 폐기됐거나 URL 이 틀렸다. SLACK_WEBHOOK_ACTIVITY 를 다시 등록한다."
+                exit 1 ;;
+            *)  echo "::warning::Slack 호출이 실패했다(HTTP $CODE). 일시 장애로 보고 넘긴다." ;;
+          esac
