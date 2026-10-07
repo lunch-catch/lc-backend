@@ -60,11 +60,15 @@ public class JwtTokenProvider {
         this.refreshTokenValidityMs = Map.copyOf(validity);
     }
 
-    public String createAccessToken(Long id, Role role) {
+    public String createAccessToken(Long id, Role role) { return createAccessToken(id, role, null); }
+
+    /** 상태의 의미와 허용 여부는 호출하는 도메인이 판단한다. */
+    public String createAccessToken(Long id, Role role, String ownerStatus) {
         Instant now = clock.instant();
         return Jwts.builder()
                 .subject(String.valueOf(id))
                 .claim(ROLE_CLAIM, role.name())
+                .claim("ownerStatus", role == Role.OWNER ? ownerStatus : null)
                 .issuedAt(Date.from(now))
                 .expiration(Date.from(now.plusMillis(accessTokenValidityMs)))
                 .signWith(secretKey)
@@ -95,16 +99,16 @@ public class JwtTokenProvider {
         return Role.from(parseClaims(token).get(ROLE_CLAIM, String.class));
     }
 
+    public String getOwnerStatus(String token) {
+        return parseClaims(token).get("ownerStatus", String.class);
+    }
+
     public LocalDateTime getIssuedAt(String token) {
         Date issuedAt = parseClaims(token).getIssuedAt();
         return issuedAt == null ? null : LocalDateTime.ofInstant(issuedAt.toInstant(), ClockConfig.ZONE);
     }
 
-    public long getAccessTokenValidityMs() {
-        return accessTokenValidityMs;
-    }
+    public long getAccessTokenValidityMs() { return accessTokenValidityMs; }
 
-    public long refreshTokenValidityMs(Role role) {
-        return refreshTokenValidityMs.get(role);
-    }
+    public long refreshTokenValidityMs(Role role) { return refreshTokenValidityMs.get(role); }
 }

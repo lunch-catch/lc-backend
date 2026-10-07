@@ -17,8 +17,14 @@ public class CustomUserDetails implements UserDetails {
 
     private final Long id;
     private final Role role;
+    private final String ownerStatus;
 
     public CustomUserDetails(Long id, Role role) {
+        this(id, role, null);
+    }
+
+    public CustomUserDetails(Long id, Role role, String ownerStatus) {
+        this.ownerStatus = role == Role.OWNER ? ownerStatus : null;
         this.id = id;
         this.role = role;
     }
@@ -29,6 +35,10 @@ public class CustomUserDetails implements UserDetails {
 
     public Role getRole() {
         return role;
+    }
+
+    public String getOwnerStatus() {
+        return ownerStatus;
     }
 
     @Override
