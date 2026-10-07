@@ -28,6 +28,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.QueryTimeoutException;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 @ExtendWith(MockitoExtension.class)
 class MemberTokenServiceTest {
@@ -57,7 +59,9 @@ class MemberTokenServiceTest {
                 memberRepository,
                 kakaoLogoutClient,
                 clock);
-        when(jwtTokenProvider.refreshTokenValidityMs(Role.MEMBER)).thenReturn(1_209_600_000L);
+        org.mockito.Mockito.lenient()
+                .when(jwtTokenProvider.refreshTokenValidityMs(Role.MEMBER))
+                .thenReturn(1_209_600_000L);
     }
 
     @Test
@@ -113,6 +117,111 @@ class MemberTokenServiceTest {
         MemberTokenService.TokenPair result = service.reissue("old");
 
         assertThat(result.accessToken()).isEqualTo("access");
+        assertThat(result.memberId()).isEqualTo(1L);
         verify(refreshTokenRepository).save(anyString(), anyLong(), any(), org.mockito.ArgumentMatchers.anyBoolean(), any());
+    }
+
+    @Test
+    @DisplayName("캐시 Refresh Token을 정상적으로 회전하면 DB 백업도 함께 바꾼다")
+    void 캐시_토큰을_정상_회전한다() {
+        when(refreshTokenRepository.compareAndRotate(anyString(), anyString(), any()))
+                .thenReturn(RefreshTokenRepository.RotateOutcome.success(
+                        new RefreshTokenRepository.RefreshTokenData(1L, Role.MEMBER, true)));
+        when(memberRepository.findById(1L)).thenReturn(Optional.of(member));
+        when(member.getStatus()).thenReturn(MemberStatus.ACTIVE);
+        when(memberRepository.rotateRefreshTokenBackupIfMatches(
+                anyLong(), anyString(), anyString(), any(), any(), any(), any())).thenReturn(1);
+        when(jwtTokenProvider.createAccessToken(1L, Role.MEMBER)).thenReturn("access");
+
+        MemberTokenService.TokenPair result = service.reissue("old");
+
+        assertThat(result.accessToken()).isEqualTo("access");
+        assertThat(result.refreshToken()).isNotBlank();
+        assertThat(result.memberId()).isEqualTo(1L);
+    }
+
+    @Test
+    @DisplayName("캐시 회전 후 DB 백업 갱신이 실패하면 새 캐시 토큰을 철회한다")
+    void 캐시_회전_후_DB_백업_갱신_실패시_새_캐시_토큰을_철회한다() {
+        when(refreshTokenRepository.compareAndRotate(anyString(), anyString(), any()))
+                .thenReturn(RefreshTokenRepository.RotateOutcome.success(
+                        new RefreshTokenRepository.RefreshTokenData(1L, Role.MEMBER, true)));
+        when(memberRepository.findById(1L)).thenReturn(Optional.of(member));
+        when(member.getStatus()).thenReturn(MemberStatus.ACTIVE);
+        when(memberRepository.rotateRefreshTokenBackupIfMatches(
+                anyLong(), anyString(), anyString(), any(), any(), any(), any())).thenReturn(0);
+
+        assertThatThrownBy(() -> service.reissue("old"))
+                .isInstanceOf(AuthException.class)
+                .hasMessageContaining("일시적으로 처리할 수 없습니다");
+
+        verify(refreshTokenRepository).revokeIfActiveHashMatches(anyString(), org.mockito.ArgumentMatchers.eq(Role.MEMBER), org.mockito.ArgumentMatchers.eq(1L));
+    }
+
+    @Test
+    @DisplayName("캐시 토큰의 회원을 찾지 못하면 재발급을 거부한다")
+    void 캐시_토큰의_회원을_찾지_못하면_재발급을_거부한다() {
+        when(refreshTokenRepository.compareAndRotate(anyString(), anyString(), any()))
+                .thenReturn(RefreshTokenRepository.RotateOutcome.success(
+                        new RefreshTokenRepository.RefreshTokenData(1L, Role.MEMBER, true)));
+        when(memberRepository.findById(1L)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.reissue("old"))
+                .isInstanceOf(AuthException.class)
+                .hasMessageContaining("다시 로그인");
+    }
+
+    @Test
+    @DisplayName("캐시 장애 뒤 DB 백업에서 토큰을 찾지 못하면 재발급을 거부한다")
+    void 캐시_장애_뒤_DB_백업에서_토큰을_찾지_못하면_재발급을_거부한다() {
+        when(refreshTokenRepository.compareAndRotate(anyString(), anyString(), any()))
+                .thenThrow(new QueryTimeoutException("redis down"));
+        when(memberRepository.findByRefreshTokenHash(anyString())).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.reissue("old"))
+                .isInstanceOf(AuthException.class)
+                .hasMessageContaining("다시 로그인");
+    }
+
+    @Test
+    @DisplayName("재사용된 Refresh Token은 현재 토큰과 Access Token을 함께 철회한다")
+    void 재사용된_토큰은_모든_회원_토큰을_철회한다() {
+        when(refreshTokenRepository.compareAndRotate(anyString(), anyString(), any()))
+                .thenReturn(RefreshTokenRepository.RotateOutcome.reuseDetected(
+                        new RefreshTokenRepository.RefreshTokenData(1L, Role.MEMBER, true)));
+        when(refreshTokenRepository.findActiveHash(Role.MEMBER, 1L)).thenReturn(Optional.of("current-hash"));
+        when(memberRepository.clearRefreshTokenBackupIfHashMatches(anyLong(), anyString(), any())).thenReturn(1);
+
+        assertThatThrownBy(() -> service.reissue("reused"))
+                .isInstanceOf(AuthException.class)
+                .hasMessageContaining("모든 기기에서 로그아웃");
+
+        verify(refreshTokenRepository).revokeIfActiveHashMatches("current-hash", Role.MEMBER, 1L);
+        verify(accessTokenValidAfterRepository).invalidateBefore(
+                org.mockito.ArgumentMatchers.eq(Role.MEMBER),
+                org.mockito.ArgumentMatchers.eq(1L),
+                any(),
+                any());
+    }
+
+    @Test
+    @DisplayName("로그아웃 커밋 뒤에는 카카오 로그아웃을 요청한다")
+    void 로그아웃_커밋_뒤에는_카카오_로그아웃을_요청한다() {
+        when(memberRepository.findById(1L)).thenReturn(Optional.of(member));
+        when(member.getProviderUserId()).thenReturn("kakao-1");
+        when(refreshTokenRepository.findActiveHash(Role.MEMBER, 1L)).thenReturn(Optional.of("current-hash"));
+        when(memberRepository.clearRefreshTokenBackupIfHashMatches(anyLong(), anyString(), any())).thenReturn(1);
+
+        TransactionSynchronizationManager.initSynchronization();
+        try {
+            service.logout(1L);
+            for (TransactionSynchronization synchronization : TransactionSynchronizationManager.getSynchronizations()) {
+                synchronization.afterCommit();
+            }
+        } finally {
+            TransactionSynchronizationManager.clearSynchronization();
+        }
+
+        verify(kakaoLogoutClient).logout("kakao-1");
     }
 }
