@@ -1,0 +1,95 @@
+# PR 이 건드린 경로의 담당자를 GitHub 이 자동으로 리뷰어로 요청한다.
+#
+# 아래에서 맞는 줄이 여럿이면 마지막 줄이 이긴다(.gitignore 와 같다).
+# 그래서 넓은 규칙을 위에, 좁은 규칙을 아래에 둔다.
+#
+# 작성자는 자기 경로라도 요청받지 않는다. 그래서 혼자 소유한 경로를 그 사람이 고치면
+# 아무도 요청되지 않고, 승인 1건은 다른 사람이 줘야 한다.
+#
+# 이 파일은 경로만 본다. "이 변경이 누구에게 영향 있나" 는 모른다. 예를 들어 쿠폰이
+# campaign.contract 를 부르기만 하는 변경에는 캠페인 담당이 요청되지 않는다.
+# 그런 변경은 PR 본문에 적어 알린다.
+#
+# 여기 담당자가 바뀌면 시크릿 SLACK_MEMBER_IDS 도 함께 고친다. 이 파일이 리뷰어를 지정하고
+# 그 맵이 그 사람을 Slack 에서 찾는다. 한쪽만 고치면 알림이 멘션 없이 @로그인 글자로 떨어진다.
+# 전체 알림 구성은 docs/architecture/런치캐치_알림_운영.md 에 있다.
+
+# --- 적지 않은 경로의 기본 --------------------------------------------------
+*                                               @devjohnpark
+
+# --- 공용 모듈과 빌드. 바꾸면 전 도메인이 영향을 받는다 ----------------------
+/src/main/java/com/launchcatch/auth/            @devjohnpark
+/src/main/java/com/launchcatch/global/          @devjohnpark
+/docs/api-spec/auth.md                          @devjohnpark
+/docs/api-spec/README.md                        @devjohnpark
+/docs/architecture/                             @devjohnpark
+/docs/code-convention/                          @devjohnpark
+/docs/software-quality/                         @devjohnpark
+/docs/CODEREVIEW.md                             @devjohnpark
+/build.gradle                                   @devjohnpark
+/settings.gradle                                @devjohnpark
+/.github/                                       @devjohnpark
+/.coderabbit.yaml                               @devjohnpark
+/CLAUDE.md                                      @devjohnpark
+
+# --- 업무 도메인. 코드와 마이그레이션과 API 문서를 같은 사람이 갖는다 --------
+# 담당은 각 도메인 V1 마이그레이션 머리 주석이 원본이다.
+
+# 관리자, 점주, 가게, 알림  정규동
+/src/main/java/com/launchcatch/admin/           @gyudongjeong
+/src/main/resources/db/migration/admin/         @gyudongjeong
+/docs/api-spec/admin.md                         @gyudongjeong
+/src/main/java/com/launchcatch/owner/           @gyudongjeong
+/src/main/resources/db/migration/owner/         @gyudongjeong
+/docs/api-spec/owner.md                         @gyudongjeong
+/src/main/java/com/launchcatch/store/           @gyudongjeong
+/src/main/resources/db/migration/store/         @gyudongjeong
+/docs/api-spec/store.md                         @gyudongjeong
+/src/main/java/com/launchcatch/notification/    @gyudongjeong
+/src/main/resources/db/migration/notification/  @gyudongjeong
+/docs/api-spec/notification.md                  @gyudongjeong
+
+# 사용자, 정산, 분석  김현우
+/src/main/java/com/launchcatch/member/          @muzimzz
+/src/main/resources/db/migration/member/        @muzimzz
+/docs/api-spec/member.md                        @muzimzz
+/src/main/java/com/launchcatch/billing/         @muzimzz
+/src/main/resources/db/migration/billing/       @muzimzz
+/docs/api-spec/billing.md                       @muzimzz
+/src/main/java/com/launchcatch/analytics/       @muzimzz
+/src/main/resources/db/migration/analytics/     @muzimzz
+/docs/api-spec/analytics.md                     @muzimzz
+
+# 캠페인, 운영  최재웅
+/src/main/java/com/launchcatch/campaign/        @yongmaru789
+/src/main/resources/db/migration/campaign/      @yongmaru789
+/docs/api-spec/campaign.md                      @yongmaru789
+/docs/api-spec/poster.md                        @yongmaru789
+/src/main/java/com/launchcatch/ops/             @yongmaru789
+/src/main/resources/db/migration/ops/           @yongmaru789
+/docs/architecture/런치캐치_배치_운영.md         @yongmaru789
+
+# 광고 서빙  박준서
+/src/main/java/com/launchcatch/adserving/       @devjohnpark
+/src/main/resources/db/migration/adserving/     @devjohnpark
+/docs/api-spec/feed.md                          @devjohnpark
+
+# 쿠폰  최민혁
+/src/main/java/com/launchcatch/coupon/          @MinhyeokChoi99
+/src/main/resources/db/migration/coupon/        @MinhyeokChoi99
+/docs/api-spec/coupon.md                        @MinhyeokChoi99
+
+# --- contract 는 부르는 쪽도 함께 본다 ---------------------------------------
+# contract 는 도메인 간 유일한 접점이다. 그 모양이 바뀌면 부르는 도메인이 깨진다.
+# 소유자만 요청하면 깨질 사람이 모르는 채로 병합된다.
+#
+# 부르는 쪽은 설계 문서 2.2절 간선 표가 원본이다. 간선이 늘면 여기도 늘린다.
+# 이벤트 타입도 contract 에 있으므로 수신하는 도메인이 같은 줄로 덮인다.
+#
+# contract 밖의 내부 패키지는 다른 도메인이 볼 수 없으니 소유자만 본다. 그래서 위의
+# 도메인 규칙보다 아래에 둔다. 마지막에 맞는 줄이 이긴다.
+/src/main/java/com/launchcatch/campaign/contract/   @yongmaru789 @devjohnpark @muzimzz @MinhyeokChoi99
+/src/main/java/com/launchcatch/member/contract/     @muzimzz @devjohnpark @MinhyeokChoi99 @gyudongjeong
+/src/main/java/com/launchcatch/store/contract/      @gyudongjeong @devjohnpark @yongmaru789
+/src/main/java/com/launchcatch/adserving/contract/  @devjohnpark @MinhyeokChoi99 @gyudongjeong
+/src/main/java/com/launchcatch/billing/contract/    @muzimzz @devjohnpark
