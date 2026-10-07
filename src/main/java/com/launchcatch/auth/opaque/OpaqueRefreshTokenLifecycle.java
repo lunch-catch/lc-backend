@@ -112,6 +112,9 @@ public class OpaqueRefreshTokenLifecycle {
             String oldHash = TokenHasher.sha256(oldToken);
             backup = store(role).findValidByHash(oldHash, now)
                     .orElseThrow(() -> new AuthException(AuthErrorCode.REFRESH_TOKEN_INVALID));
+            if (backup.role() != role) {
+                throw new AuthException(AuthErrorCode.REFRESH_TOKEN_INVALID);
+            }
             String newHash = TokenHasher.sha256(newToken);
             if (!store(role).rotateIfMatches(backup.subjectId(), oldHash, newHash, now.plus(ttl), now)) {
                 throw new AuthException(AuthErrorCode.REFRESH_TOKEN_INVALID);

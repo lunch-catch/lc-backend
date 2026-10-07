@@ -3,6 +3,7 @@ package com.launchcatch.auth.opaque;
 import static org.mockito.ArgumentMatchers.any;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.when;
 
 import com.launchcatch.auth.Role;
@@ -84,5 +85,21 @@ class OpaqueRefreshTokenLifecycleTest {
                 .hasMessageContaining("다시 로그인");
         verify(refreshTokenRepository).revokeIfActiveHashMatches(
                 TokenHasher.sha256("new"), Role.OWNER, 1L);
+    }
+
+    @Test
+    void DB_폴백의_실제_역할이_요청_역할과_다르면_거부한다() {
+        when(backupStore.role()).thenReturn(Role.MEMBER);
+        when(refreshTokenRepository.compareAndRotate(any(), any(), any()))
+                .thenThrow(new QueryTimeoutException("redis down"));
+        when(backupStore.findValidByHash(any(), any())).thenReturn(Optional.of(
+                new RefreshTokenBackup(1L, Role.OWNER, TokenHasher.sha256("old"), LocalDateTime.now().plusDays(1))));
+        OpaqueRefreshTokenLifecycle lifecycle = new OpaqueRefreshTokenLifecycle(
+                refreshTokenRepository, accessTokenValidAfterRepository, List.of(backupStore));
+
+        assertThatThrownBy(() -> lifecycle.reissue("old", "new", Role.MEMBER, Duration.ofMinutes(30), LocalDateTime.now()))
+                .isInstanceOf(com.launchcatch.auth.exception.AuthException.class)
+                .hasMessageContaining("다시 로그인");
+        verify(backupStore, never()).rotateIfMatches(any(), any(), any(), any(), any());
     }
 }
