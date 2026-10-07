@@ -56,7 +56,7 @@ public class MemberTokenService {
         return new TokenPair(accessToken, refreshToken, member.getId());
     }
 
-    @Transactional
+    @Transactional(noRollbackFor = AuthException.class)
     public TokenPair reissue(String oldRefreshToken) {
         String newRefreshToken = OpaqueTokenGenerator.generate();
         LocalDateTime now = now();
