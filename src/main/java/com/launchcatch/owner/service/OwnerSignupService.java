@@ -7,7 +7,6 @@ import com.launchcatch.owner.entity.Owner;
 import com.launchcatch.owner.exception.OwnerErrorCode;
 import com.launchcatch.owner.exception.OwnerException;
 import com.launchcatch.owner.repository.OwnerRepository;
-import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -21,7 +20,7 @@ public class OwnerSignupService {
     private final TransactionTemplate transactionTemplate;
 
     public OwnerSignupService(OwnerRepository ownerRepository,
-                              @Qualifier("ownerPasswordEncoder") PasswordEncoder passwordEncoder,
+                              PasswordEncoder passwordEncoder,
                               PlatformTransactionManager transactionManager) {
         this.ownerRepository = ownerRepository;
         this.passwordEncoder = passwordEncoder;
