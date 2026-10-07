@@ -29,7 +29,12 @@ public class OpaqueRefreshTokenLifecycle {
         this.refreshTokenRepository = refreshTokenRepository;
         this.accessTokenValidAfterRepository = accessTokenValidAfterRepository;
         Map<Role, RefreshTokenBackupStore> stores = new EnumMap<>(Role.class);
-        backupStores.forEach(store -> stores.put(store.role(), store));
+        backupStores.forEach(store -> {
+            RefreshTokenBackupStore previous = stores.put(store.role(), store);
+            if (previous != null) {
+                throw new IllegalStateException("duplicate RefreshTokenBackupStore role: " + store.role());
+            }
+        });
         this.backupStores = Map.copyOf(stores);
     }
 

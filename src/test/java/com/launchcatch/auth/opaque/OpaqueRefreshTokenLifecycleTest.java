@@ -24,6 +24,7 @@ class OpaqueRefreshTokenLifecycleTest {
     @Mock RefreshTokenRepository refreshTokenRepository;
     @Mock AccessTokenValidAfterRepository accessTokenValidAfterRepository;
     @Mock RefreshTokenBackupStore backupStore;
+    @Mock RefreshTokenBackupStore duplicateBackupStore;
 
     @Test
     void 오래된_활성_포인터가_있어도_DB_해시로_폐기한다() {
@@ -128,5 +129,18 @@ class OpaqueRefreshTokenLifecycleTest {
                 .hasMessageContaining("모든 기기에서 로그아웃");
         verify(accessTokenValidAfterRepository).invalidateBefore(
                 eq(Role.MEMBER), eq(1L), eq(now), eq(accessTokenTtl));
+    }
+
+    @Test
+    void 같은_Role의_DB_백업_스토어가_둘이면_생성에_실패한다() {
+        when(backupStore.role()).thenReturn(Role.MEMBER);
+        when(duplicateBackupStore.role()).thenReturn(Role.MEMBER);
+
+        assertThatThrownBy(() -> new OpaqueRefreshTokenLifecycle(
+                refreshTokenRepository,
+                accessTokenValidAfterRepository,
+                List.of(backupStore, duplicateBackupStore)))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("MEMBER");
     }
 }
