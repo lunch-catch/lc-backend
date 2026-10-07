@@ -24,12 +24,14 @@ public interface MemberRepository extends JpaRepository<Member, Long> {
                    member.refreshTokenExpiresAt = :refreshTokenExpiresAt,
                    member.updatedAt = :updatedAt
              WHERE member.id = :memberId
+               AND member.status = :activeStatus
             """)
     int updateRefreshTokenBackup(
             @Param("memberId") Long memberId,
             @Param("refreshTokenHash") String refreshTokenHash,
             @Param("refreshTokenExpiresAt") LocalDateTime refreshTokenExpiresAt,
-            @Param("updatedAt") LocalDateTime updatedAt
+            @Param("updatedAt") LocalDateTime updatedAt,
+            @Param("activeStatus") MemberStatus activeStatus
     );
 
     @Modifying(clearAutomatically = true, flushAutomatically = true)

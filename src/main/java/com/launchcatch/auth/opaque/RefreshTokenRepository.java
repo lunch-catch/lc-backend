@@ -15,16 +15,11 @@ import org.springframework.stereotype.Repository;
  * Refresh Token 저장소. 인메모리 캐시만 다루고 업무 도메인을 전혀 모른다.
  * 캐시 장애 시 DataAccessException 을 그대로 던지며, 관계형 DB 백업과 폴백은 호출자 책임이다.
  *
- * 인증 정책은 SHA-256 해시를 관계형 DB 에 백업하고, 캐시 저장이 실패하면 DB 백업을 기준으로
- * 로그인을 유지하는 쪽이다. 백업 컬럼은 V1 스키마에 이미 있다. admin, owner, member 세
- * 테이블이 refresh_token_hash 와 refresh_token_expires_at 를 갖는다.
+ * 인증 정책은 SHA-256 해시를 관계형 DB 에 백업한다. 최초 발급은 캐시 저장이 실패해도 DB 백업으로
+ * 로그인을 유지하지만, 재발급은 재사용 탐지를 보존하기 위해 캐시 장애 시 fail-close 한다.
  *
- * 이 클래스는 캐시만 책임진다. 폴백은 각 역할의 토큰 서비스가 그 컬럼을 읽어
- * revokeIfActiveHashMatches 나 deleteByHash 를 부르는 모양으로 붙인다. 캐시와 DB 를 한
+ * 이 클래스는 캐시만 책임진다. 폐기는 각 역할의 DB 백업 해시와 이 저장소를 함께 사용한다. 캐시와 DB 를 한
  * 클래스가 함께 다루면 캐시 장애 때 어느 쪽이 기준인지가 이 안에서 갈려 읽기 어려워진다.
- *
- * owner 에는 해시 인덱스가 없다. 폴백 조회를 붙일 때 admin 과 member 처럼
- * idx_owner_refresh_token_hash 를 더하는 마이그레이션이 필요하다.
  *
  * Opaque 토큰이라 키 설계가 둘이다. 토큰만 봐서는 누구 것인지 알 수 없으므로 조회와 회전은
  * "토큰 해시 -> 소유자 정보" 인 기본 레코드로 한다. 그런데 로그아웃과 재사용 의심 처리에서는
@@ -48,7 +43,9 @@ public class RefreshTokenRepository {
     private static final String FIELD_DELIMITER = "\\|";
     private static final String REVOKED_SUFFIX = "|REVOKED";
 
+    private static final RedisScript<Long> SAVE_SCRIPT = loadSaveScript();
     private static final RedisScript<String> ROTATE_SCRIPT = loadRotateScript();
+    private static final RedisScript<Long> ROLLBACK_ROTATION_SCRIPT = loadRollbackRotationScript();
     private static final RedisScript<Long> REVOKE_SCRIPT = loadRevokeScript();
     private static final RedisScript<Long> DELETE_ACTIVE_KEY_IF_MATCHES_SCRIPT = loadDeleteActiveKeyIfMatchesScript();
 
@@ -57,8 +54,13 @@ public class RefreshTokenRepository {
     /** 로그인과 온보딩 발급 시 새 Refresh Token 을 저장한다. */
     public void save(String refreshToken, Long id, Role role, boolean remember, Duration ttl) {
         String hash = TokenHasher.sha256(refreshToken);
-        redisTemplate.opsForValue().set(primaryKey(hash), serialize(id, role, remember), ttl);
-        redisTemplate.opsForValue().set(activeKey(role, id), hash, ttl);
+        redisTemplate.execute(
+                SAVE_SCRIPT,
+                List.of(primaryKey(hash), activeKey(role, id)),
+                serialize(id, role, remember),
+                hash,
+                String.valueOf(ttl.toMillis())
+        );
     }
 
     /** @return 저장된 값이 있으면 그 소유자 정보. 없거나 만료됐으면 empty. */
@@ -69,8 +71,7 @@ public class RefreshTokenRepository {
 
     /*
      * 원자적 회전. 옛 토큰 자리의 레코드를 새 토큰 자리로 옮기고 옛 자리는 tombstone 으로 남긴다.
-     * 기본 레코드는 Lua 로 원자적으로 처리하고, 보조 인덱스는 회전에 성공한 뒤에 이어서 갱신한다.
-     * 기본 레코드 CAS 가 이미 승자를 하나로 정한 뒤라 그 갱신에 경쟁자가 없다.
+     * 기본 레코드의 이동, tombstone 처리, 보조 인덱스 갱신을 하나의 Lua 실행으로 처리한다.
      */
     public RotateOutcome compareAndRotate(String oldRefreshToken, String newRefreshToken, Duration ttl) {
         String oldHash = TokenHasher.sha256(oldRefreshToken);
@@ -79,7 +80,9 @@ public class RefreshTokenRepository {
         String value = redisTemplate.execute(
                 ROTATE_SCRIPT,
                 List.of(primaryKey(oldHash), primaryKey(newHash)),
-                String.valueOf(ttl.toMillis())
+                String.valueOf(ttl.toMillis()),
+                ACTIVE_KEY_PREFIX,
+                newHash
         );
         if (value == null) {
             return RotateOutcome.notFound();
@@ -90,8 +93,18 @@ public class RefreshTokenRepository {
         }
 
         RefreshTokenData data = parse(value);
-        redisTemplate.opsForValue().set(activeKey(data.role(), data.id()), newHash, ttl);
         return RotateOutcome.success(data);
+    }
+
+    /** DB 회전 실패가 확인됐을 때 Redis 회전을 이전 토큰 상태로 원자 복구한다. */
+    public boolean rollbackRotation(String oldHash, String newHash, Role role, Long id) {
+        Long rolledBack = redisTemplate.execute(
+                ROLLBACK_ROTATION_SCRIPT,
+                List.of(primaryKey(oldHash), primaryKey(newHash), activeKey(role, id)),
+                oldHash,
+                newHash
+        );
+        return rolledBack != null && rolledBack == 1L;
     }
 
     /*
@@ -164,10 +177,24 @@ public class RefreshTokenRepository {
     public record RefreshTokenData(Long id, Role role, boolean remember) {
     }
 
+    private static RedisScript<Long> loadSaveScript() {
+        DefaultRedisScript<Long> script = new DefaultRedisScript<>();
+        script.setLocation(new ClassPathResource("scripts/refresh_token_save.lua"));
+        script.setResultType(Long.class);
+        return script;
+    }
+
     private static RedisScript<String> loadRotateScript() {
         DefaultRedisScript<String> script = new DefaultRedisScript<>();
         script.setLocation(new ClassPathResource("scripts/refresh_token_rotate.lua"));
         script.setResultType(String.class);
+        return script;
+    }
+
+    private static RedisScript<Long> loadRollbackRotationScript() {
+        DefaultRedisScript<Long> script = new DefaultRedisScript<>();
+        script.setLocation(new ClassPathResource("scripts/refresh_token_rollback_rotation.lua"));
+        script.setResultType(Long.class);
         return script;
     }
 
