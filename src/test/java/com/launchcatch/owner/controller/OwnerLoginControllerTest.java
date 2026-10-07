@@ -23,12 +23,14 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.http.MediaType;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 class OwnerLoginControllerTest {
     private final OwnerLoginService service = mock(OwnerLoginService.class);
     private MockMvc mvc;
+    private AuthCookieFactory cookieFactory;
     private static final String BODY = "{\"email\":\"owner@example.com\",\"password\":\"password12\"}";
 
     @BeforeEach
@@ -36,7 +38,8 @@ class OwnerLoginControllerTest {
         JwtTokenProvider jwt = mock(JwtTokenProvider.class);
         when(jwt.getAccessTokenValidityMs()).thenReturn(Duration.ofMinutes(30).toMillis());
         when(jwt.refreshTokenValidityMs(Role.OWNER)).thenReturn(Duration.ofDays(14).toMillis());
-        mvc = MockMvcBuilders.standaloneSetup(new OwnerLoginController(service, new AuthCookieFactory(jwt)))
+        cookieFactory = new AuthCookieFactory(jwt);
+        mvc = MockMvcBuilders.standaloneSetup(new OwnerLoginController(service, cookieFactory))
                 .setControllerAdvice(new GlobalExceptionHandler()).build();
     }
 
@@ -62,6 +65,33 @@ class OwnerLoginControllerTest {
                 .anySatisfy(cookie -> assertThat(cookie).contains("refreshToken=test-refresh",
                         "Path=/v1/owner/auth/", "Max-Age=1209600", "HttpOnly", "SameSite=Strict"));
         assertThat(response.getContentAsString()).doesNotContain("test-access", "test-refresh", "password12");
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    void Secure_설정에_따라_두_인증_쿠키의_속성을_검증한다(boolean secure) throws Exception {
+        // standalone 테스트에서는 @Value 주입이 없으므로 설정값을 직접 지정한다.
+        ReflectionTestUtils.setField(cookieFactory, "secure", secure);
+        when(service.login(any())).thenReturn(new OwnerLoginResult(new OwnerLoginResponse(
+                "owner@example.com", Role.OWNER, OwnerStatus.ACTIVE, false),
+                "test-access", "test-refresh"));
+
+        var response = mvc.perform(post("/v1/owner/auth/tokens")
+                        .contentType(MediaType.APPLICATION_JSON).content(BODY))
+                .andExpect(status().isOk())
+                .andReturn().getResponse();
+
+        assertThat(response.getHeaders("Set-Cookie")).hasSize(2).allSatisfy(cookie -> {
+            assertThat(cookie).contains("HttpOnly", "SameSite=Strict");
+            // 속성 단위로 비교해 토큰 값이나 다른 속성의 문자열과 혼동하지 않는다.
+            var attributes = java.util.Arrays.stream(cookie.split(";"))
+                    .map(String::trim).toList();
+            if (secure) {
+                assertThat(attributes).contains("Secure");
+            } else {
+                assertThat(attributes).doesNotContain("Secure");
+            }
+        });
     }
 
     @ParameterizedTest
