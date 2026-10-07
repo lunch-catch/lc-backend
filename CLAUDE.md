@@ -33,20 +33,17 @@
 
 ## 이슈와 PR 규칙
 
-- 작업은 이슈를 먼저 연다. 브랜치는 그 이슈에서 만든다.
+1. 이슈를 먼저 연다.
+2. 그 이슈에서 브랜치를 만든다.
 
-      gh issue develop <이슈번호> --base develop --name <종류>/<이슈번호>-<설명> --checkout
+       gh issue develop <이슈번호> --base develop --name <종류>/<이슈번호>-<설명> --checkout
 
-  이슈 화면 우측 `Development` 의 `Create a branch` 도 같은 일을 한다.
-- PR 본문에 `Closes #<이슈번호>` 를 적는다. 자리는 조직 PR 템플릿의 `변경 이유` 절이다.
-- **`develop` 으로 가는 PR 에서는 `Closes` 가 이슈를 닫지 않는다.** GitHub 의 종료 연결은 base 가
-  기본 브랜치(`main`)인 PR 에만 걸린다. 기능 PR 은 전부 `develop` 으로 가므로 `Closes` 는 상호 참조만
-  남긴다. 이슈는 작업자가 직접 닫는다.
-- 그래서 관계를 눈에 보이게 하는 것은 첫 줄의 브랜치 링크다. `gh issue develop` 으로 만들면 이슈의
-  `Development` 칸에 그 브랜치가 등록되고, base 가 무엇이든 남는다. `Closes` 는 그 위에 덧붙이는 표기다.
-- 이슈를 만들지 않는 변경이 둘 있다. `main` 으로 가는 릴리스 PR 과, `main` 을 `develop` 으로 되병합하는
-  PR 이다. 합치는 일 자체는 작업이 아니다.
-- PR 본문과 제목에 Claude, Claude Code 등 생성 도구 언급을 넣지 않는다. 서명, 배지, 각주도 붙이지 않는다.
+3. PR 본문의 `변경 이유` 절에 `Closes #<이슈번호>` 를 적는다.
+4. 병합 뒤 이슈를 직접 닫는다. `develop` 병합으로는 자동으로 닫히지 않는다.
+
+릴리스 PR 과 되병합 PR 은 이슈를 만들지 않는다.
+
+PR 본문과 제목에 Claude, Claude Code 등 생성 도구 언급을 넣지 않는다. 서명, 배지, 각주도 붙이지 않는다.
 
 ## 커밋 규칙
 
