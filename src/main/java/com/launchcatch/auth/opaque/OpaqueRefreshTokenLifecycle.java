@@ -51,25 +51,31 @@ public class OpaqueRefreshTokenLifecycle {
     }
 
     public ReissueResult reissue(String oldRefreshToken, String newRefreshToken, Role role, Duration ttl, LocalDateTime now) {
+        RefreshTokenRepository.RotateOutcome outcome;
         try {
-            RefreshTokenRepository.RotateOutcome outcome = refreshTokenRepository.compareAndRotate(oldRefreshToken, newRefreshToken, ttl);
-            if (outcome.isReuseDetected()) {
-                revoke(outcome.data().role(), outcome.data().id(), now, ttl);
-                throw new AuthException(AuthErrorCode.REFRESH_TOKEN_REUSED);
-            }
-            if (!outcome.isSuccess() || outcome.data().role() != role) {
-                throw new AuthException(AuthErrorCode.REFRESH_TOKEN_INVALID);
-            }
-            String oldHash = TokenHasher.sha256(oldRefreshToken);
-            String newHash = TokenHasher.sha256(newRefreshToken);
+            outcome = refreshTokenRepository.compareAndRotate(oldRefreshToken, newRefreshToken, ttl);
+        } catch (DataAccessException redisFailure) {
+            return reissueFromDatabase(oldRefreshToken, newRefreshToken, role, ttl, now);
+        }
+        if (outcome.isReuseDetected()) {
+            revoke(outcome.data().role(), outcome.data().id(), now, ttl);
+            throw new AuthException(AuthErrorCode.REFRESH_TOKEN_REUSED);
+        }
+        if (!outcome.isSuccess() || outcome.data().role() != role) {
+            throw new AuthException(AuthErrorCode.REFRESH_TOKEN_INVALID);
+        }
+        String oldHash = TokenHasher.sha256(oldRefreshToken);
+        String newHash = TokenHasher.sha256(newRefreshToken);
+        try {
             if (!store(role).rotateIfMatches(outcome.data().id(), oldHash, newHash, now.plus(ttl), now)) {
                 compensate(newHash, role, outcome.data().id());
                 throw unavailable();
             }
-            return new ReissueResult(outcome.data().id(), newRefreshToken);
-        } catch (DataAccessException e) {
-            return reissueFromDatabase(oldRefreshToken, newRefreshToken, role, ttl, now);
+        } catch (DataAccessException dbFailure) {
+            compensate(newHash, role, outcome.data().id());
+            throw new AuthException(AuthErrorCode.REFRESH_TOKEN_STORE_UNAVAILABLE, dbFailure);
         }
+        return new ReissueResult(outcome.data().id(), newRefreshToken);
     }
 
     public void revoke(Role role, Long subjectId, LocalDateTime now, Duration accessTokenTtl) {
@@ -97,12 +103,17 @@ public class OpaqueRefreshTokenLifecycle {
     }
 
     private ReissueResult reissueFromDatabase(String oldToken, String newToken, Role role, Duration ttl, LocalDateTime now) {
-        String oldHash = TokenHasher.sha256(oldToken);
-        RefreshTokenBackup backup = store(role).findValidByHash(oldHash, now)
-                .orElseThrow(() -> new AuthException(AuthErrorCode.REFRESH_TOKEN_INVALID));
-        String newHash = TokenHasher.sha256(newToken);
-        if (!store(role).rotateIfMatches(backup.subjectId(), oldHash, newHash, now.plus(ttl), now)) {
-            throw new AuthException(AuthErrorCode.REFRESH_TOKEN_INVALID);
+        RefreshTokenBackup backup;
+        try {
+            String oldHash = TokenHasher.sha256(oldToken);
+            backup = store(role).findValidByHash(oldHash, now)
+                    .orElseThrow(() -> new AuthException(AuthErrorCode.REFRESH_TOKEN_INVALID));
+            String newHash = TokenHasher.sha256(newToken);
+            if (!store(role).rotateIfMatches(backup.subjectId(), oldHash, newHash, now.plus(ttl), now)) {
+                throw new AuthException(AuthErrorCode.REFRESH_TOKEN_INVALID);
+            }
+        } catch (DataAccessException dbFailure) {
+            throw new AuthException(AuthErrorCode.REFRESH_TOKEN_STORE_UNAVAILABLE, dbFailure);
         }
         try {
             refreshTokenRepository.save(newToken, backup.subjectId(), role, true, ttl);

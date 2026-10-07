@@ -1,6 +1,7 @@
 package com.launchcatch.auth.opaque;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -14,6 +15,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.dao.QueryTimeoutException;
 
 @ExtendWith(MockitoExtension.class)
 class OpaqueRefreshTokenLifecycleTest {
@@ -35,5 +37,36 @@ class OpaqueRefreshTokenLifecycleTest {
         verify(refreshTokenRepository).revokeIfActiveHashMatches("new-hash", Role.MEMBER, 1L);
         verify(refreshTokenRepository).deleteActiveKeyIfMatches(Role.MEMBER, 1L, "old-hash");
         verify(accessTokenValidAfterRepository).invalidateBefore(any(), any(), any(), any());
+    }
+
+    @Test
+    void Redis_회전_뒤_DB_회전이_실패하면_새_Redis_토큰을_보상_폐기한다() {
+        when(backupStore.role()).thenReturn(Role.MEMBER);
+        when(refreshTokenRepository.compareAndRotate(any(), any(), any()))
+                .thenReturn(RefreshTokenRepository.RotateOutcome.success(
+                        new RefreshTokenRepository.RefreshTokenData(1L, Role.MEMBER, true)));
+        when(backupStore.rotateIfMatches(any(), any(), any(), any(), any()))
+                .thenThrow(new QueryTimeoutException("db down"));
+        OpaqueRefreshTokenLifecycle lifecycle = new OpaqueRefreshTokenLifecycle(
+                refreshTokenRepository, accessTokenValidAfterRepository, List.of(backupStore));
+
+        assertThatThrownBy(() -> lifecycle.reissue("old", "new", Role.MEMBER, Duration.ofMinutes(30), LocalDateTime.now()))
+                .isInstanceOf(com.launchcatch.auth.exception.AuthException.class)
+                .hasMessageContaining("일시적으로 처리할 수 없습니다");
+        verify(refreshTokenRepository).revokeIfActiveHashMatches(TokenHasher.sha256("new"), Role.MEMBER, 1L);
+    }
+
+    @Test
+    void DB_폴백_조회가_실패해도_저장소_장애_오류로_변환한다() {
+        when(backupStore.role()).thenReturn(Role.MEMBER);
+        when(refreshTokenRepository.compareAndRotate(any(), any(), any()))
+                .thenThrow(new QueryTimeoutException("redis down"));
+        when(backupStore.findValidByHash(any(), any())).thenThrow(new QueryTimeoutException("db down"));
+        OpaqueRefreshTokenLifecycle lifecycle = new OpaqueRefreshTokenLifecycle(
+                refreshTokenRepository, accessTokenValidAfterRepository, List.of(backupStore));
+
+        assertThatThrownBy(() -> lifecycle.reissue("old", "new", Role.MEMBER, Duration.ofMinutes(30), LocalDateTime.now()))
+                .isInstanceOf(com.launchcatch.auth.exception.AuthException.class)
+                .hasMessageContaining("일시적으로 처리할 수 없습니다");
     }
 }
