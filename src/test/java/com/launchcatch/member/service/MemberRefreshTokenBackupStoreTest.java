@@ -31,7 +31,7 @@ class MemberRefreshTokenBackupStoreTest {
         when(member.getRefreshTokenHash()).thenReturn("old");
         when(member.getRefreshTokenExpiresAt()).thenReturn(now.plusMinutes(1));
         when(memberRepository.findById(1L)).thenReturn(Optional.of(member));
-        when(memberRepository.updateRefreshTokenBackup(any(), any(), any(), any())).thenReturn(1);
+        when(memberRepository.updateRefreshTokenBackup(any(), any(), any(), any(), any())).thenReturn(1);
         when(memberRepository.rotateRefreshTokenBackupIfMatches(any(), any(), any(), any(), any(), any(), any())).thenReturn(1);
         when(memberRepository.clearRefreshTokenBackupIfHashMatches(any(), any(), any())).thenReturn(1);
 

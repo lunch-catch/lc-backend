@@ -40,7 +40,8 @@ class MemberRefreshTokenBackupStore implements RefreshTokenBackupStore {
 
     @Override
     public boolean save(Long subjectId, String tokenHash, LocalDateTime expiresAt, LocalDateTime now) {
-        return memberRepository.updateRefreshTokenBackup(subjectId, tokenHash, expiresAt, now) == 1;
+        return memberRepository.updateRefreshTokenBackup(
+                subjectId, tokenHash, expiresAt, now, MemberStatus.ACTIVE) == 1;
     }
 
     @Override
