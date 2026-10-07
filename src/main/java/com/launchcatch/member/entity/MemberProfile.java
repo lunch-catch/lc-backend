@@ -75,4 +75,15 @@ public class MemberProfile extends BaseTimeEntity {
         this.ageGroup = ageGroup;
         this.onboardingCompletedAt = now;
     }
+
+    public void updateLocation(String locationNickname, String roadAddress, BigDecimal latitude, BigDecimal longitude) {
+        this.locationNickname = locationNickname;
+        this.roadAddress = roadAddress;
+        this.latitude = latitude;
+        this.longitude = longitude;
+    }
+
+    public void clearLocation() {
+        updateLocation(null, null, null, null);
+    }
 }
