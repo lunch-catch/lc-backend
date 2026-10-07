@@ -48,6 +48,7 @@ public class RefreshTokenRepository {
     private static final String FIELD_DELIMITER = "\\|";
     private static final String REVOKED_SUFFIX = "|REVOKED";
 
+    private static final RedisScript<Long> SAVE_SCRIPT = loadSaveScript();
     private static final RedisScript<String> ROTATE_SCRIPT = loadRotateScript();
     private static final RedisScript<Long> REVOKE_SCRIPT = loadRevokeScript();
     private static final RedisScript<Long> DELETE_ACTIVE_KEY_IF_MATCHES_SCRIPT = loadDeleteActiveKeyIfMatchesScript();
@@ -57,8 +58,13 @@ public class RefreshTokenRepository {
     /** 로그인과 온보딩 발급 시 새 Refresh Token 을 저장한다. */
     public void save(String refreshToken, Long id, Role role, boolean remember, Duration ttl) {
         String hash = TokenHasher.sha256(refreshToken);
-        redisTemplate.opsForValue().set(primaryKey(hash), serialize(id, role, remember), ttl);
-        redisTemplate.opsForValue().set(activeKey(role, id), hash, ttl);
+        redisTemplate.execute(
+                SAVE_SCRIPT,
+                List.of(primaryKey(hash), activeKey(role, id)),
+                serialize(id, role, remember),
+                hash,
+                String.valueOf(ttl.toMillis())
+        );
     }
 
     /** @return 저장된 값이 있으면 그 소유자 정보. 없거나 만료됐으면 empty. */
@@ -69,8 +75,7 @@ public class RefreshTokenRepository {
 
     /*
      * 원자적 회전. 옛 토큰 자리의 레코드를 새 토큰 자리로 옮기고 옛 자리는 tombstone 으로 남긴다.
-     * 기본 레코드는 Lua 로 원자적으로 처리하고, 보조 인덱스는 회전에 성공한 뒤에 이어서 갱신한다.
-     * 기본 레코드 CAS 가 이미 승자를 하나로 정한 뒤라 그 갱신에 경쟁자가 없다.
+     * 기본 레코드의 이동, tombstone 처리, 보조 인덱스 갱신을 하나의 Lua 실행으로 처리한다.
      */
     public RotateOutcome compareAndRotate(String oldRefreshToken, String newRefreshToken, Duration ttl) {
         String oldHash = TokenHasher.sha256(oldRefreshToken);
@@ -79,7 +84,9 @@ public class RefreshTokenRepository {
         String value = redisTemplate.execute(
                 ROTATE_SCRIPT,
                 List.of(primaryKey(oldHash), primaryKey(newHash)),
-                String.valueOf(ttl.toMillis())
+                String.valueOf(ttl.toMillis()),
+                ACTIVE_KEY_PREFIX,
+                newHash
         );
         if (value == null) {
             return RotateOutcome.notFound();
@@ -90,7 +97,6 @@ public class RefreshTokenRepository {
         }
 
         RefreshTokenData data = parse(value);
-        redisTemplate.opsForValue().set(activeKey(data.role(), data.id()), newHash, ttl);
         return RotateOutcome.success(data);
     }
 
@@ -162,6 +168,13 @@ public class RefreshTokenRepository {
     }
 
     public record RefreshTokenData(Long id, Role role, boolean remember) {
+    }
+
+    private static RedisScript<Long> loadSaveScript() {
+        DefaultRedisScript<Long> script = new DefaultRedisScript<>();
+        script.setLocation(new ClassPathResource("scripts/refresh_token_save.lua"));
+        script.setResultType(Long.class);
+        return script;
     }
 
     private static RedisScript<String> loadRotateScript() {
