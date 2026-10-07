@@ -80,7 +80,7 @@ public class MemberProfileService {
                 : new MemberResponse.Profile(profile.getGender(), profile.getAgeGroup());
         return new MemberResponse(
                 member.getId(), member.getNickname(), member.getProfileImageUrl(), member.getStatus(),
-                profile != null && profile.isOnboardingCompleted(), profileResponse,
+                profile != null && profile.isOnboardingCompleted(), member.isLocationOptIn(), profileResponse,
                 new MemberResponse.Consents(member.isNotificationOptIn(), offset(member.getNotificationOptInAt()),
                         member.isLocationOptIn(), offset(member.getLocationOptInAt())),
                 offset(member.getCreatedAt()));

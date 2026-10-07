@@ -11,6 +11,7 @@ public record MemberResponse(
         String profileImageUrl,
         MemberStatus status,
         boolean onboardingCompleted,
+        boolean feedAvailable,
         Profile profile,
         Consents consents,
         OffsetDateTime createdAt

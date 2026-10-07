@@ -56,6 +56,7 @@ class MemberProfileServiceTest {
                 new MemberOnboardingRequest(Gender.FEMALE, AgeGroup.AGE_20S, true, false));
 
         assertThat(response.onboardingCompleted()).isTrue();
+        assertThat(response.feedAvailable()).isTrue();
         assertThat(response.profile()).isEqualTo(new MemberResponse.Profile(Gender.FEMALE, AgeGroup.AGE_20S));
         assertThat(response.consents().locationOptIn()).isTrue();
         assertThat(response.consents().notificationOptIn()).isFalse();
@@ -84,6 +85,7 @@ class MemberProfileServiceTest {
 
         assertThat(response.profile()).isNull();
         assertThat(response.onboardingCompleted()).isFalse();
+        assertThat(response.feedAvailable()).isFalse();
     }
 
     @Test
@@ -111,6 +113,7 @@ class MemberProfileServiceTest {
         assertThat(response.nickname()).isEqualTo("새닉네임");
         assertThat(response.consents().notificationOptIn()).isTrue();
         assertThat(response.consents().locationOptIn()).isTrue();
+        assertThat(response.feedAvailable()).isTrue();
     }
 
     @Test
