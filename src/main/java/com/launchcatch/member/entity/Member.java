@@ -114,6 +114,29 @@ public class Member extends BaseTimeEntity {
         this.profile = profile;
     }
 
+    public void completeOnboarding(boolean notificationOptIn, boolean locationOptIn, LocalDateTime now) {
+        this.notificationOptIn = notificationOptIn;
+        this.notificationOptInAt = notificationOptIn ? now : null;
+        this.locationOptIn = locationOptIn;
+        this.locationOptInAt = locationOptIn ? now : null;
+    }
+
+    public void updateProfile(String nickname, Boolean notificationOptIn, Boolean locationOptIn, LocalDateTime now) {
+        if (nickname != null) {
+            this.nickname = requiredText(nickname, "nickname");
+        }
+        if (notificationOptIn != null && this.notificationOptIn != notificationOptIn) {
+            this.notificationOptIn = notificationOptIn;
+            this.notificationOptInAt = notificationOptIn ? now : null;
+            this.notificationWithdrawnAt = notificationOptIn ? null : now;
+        }
+        if (locationOptIn != null && this.locationOptIn != locationOptIn) {
+            this.locationOptIn = locationOptIn;
+            this.locationOptInAt = locationOptIn ? now : null;
+            this.locationWithdrawnAt = locationOptIn ? null : now;
+        }
+    }
+
     private static String requiredText(String value, String fieldName) {
         if (value == null || value.isBlank()) {
             throw new IllegalArgumentException(fieldName + " must not be blank");
