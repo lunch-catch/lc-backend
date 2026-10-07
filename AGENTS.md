@@ -12,36 +12,6 @@
 | `docs/architecture/` | 도메인 경계와 의존 방향, 운영 규칙. "왜 이 구조인가" 를 소유한다 | 패키지를 새로 만들거나 도메인을 가로지를 때 |
 | `docs/api-spec/` | HTTP API 명세. `README.md` 가 공통 규약(경로, 인증, 응답 봉투, 상태 코드, 식별자, 시각)과 문서 목록을 갖는다 | 엔드포인트를 만들거나 다른 도메인의 것을 부를 때 |
 
-`code-convention` 과 `software-quality` 는 `*-guideline.md` 와 `*-rationale.md` 가 짝을 이룬다.
-가이드는 점검 항목이라 판정에 쓰고, 근거는 그 항목이 왜 필요한지라서 판단이 애매할 때 읽는다.
-
-규칙 번호를 보고 어느 문서인지 찾는다.
-
-| 접두어 | 문서 |
-|---|---|
-| `EJ-` | `code-convention/effective-java-guideline.md` |
-| `UT-` | `code-convention/unit-testing-guideline.md` |
-| `API-` | `code-convention/api-design-guideline.md` |
-| `EC-` | `code-convention/entity-creation-guideline.md` |
-| `AGG-` | `code-convention/jpa-association-guideline.md` |
-| `DPB-` | `code-convention/domain-boundary-guideline.md` |
-| `BLD-` | `code-convention/build-gate-guideline.md` |
-| `FUN-` | `software-quality/qa-functional-suitability-guideline.md` |
-| `PERF-` | `software-quality/qa-performance-efficiency-guideline.md` |
-| `REL-` | `software-quality/qa-reliability-guideline.md` |
-| `SEC-` | `software-quality/qa-security-guideline.md` |
-| `MNT-` | `software-quality/qa-maintainability-guideline.md` |
-| `FLX-` | `software-quality/qa-flexibility-guideline.md` |
-| `CMP-` | `software-quality/qa-compatibility-guideline.md` |
-| `OBS-` | `software-quality/qa-observability-guideline.md` |
-| `DI-` | `software-quality/qa-data-integrity-guideline.md` |
-| `INC-` | `software-quality/qa-incident-response-guideline.md` |
-| `TRD-` | `software-quality/qa-tradeoffs-guideline.md` |
-
-`docs/` 가 전부는 아니다. 기능과 비기능 요구사항의 원본은 저장소가 아니라 구글 드라이브의
-요구사항명세서 스프레드시트다. `docs/api-spec/README.md` 가 그 기능 행 번호를 근거로 인용한다.
-명세서 내용이 필요하면 추측하지 말고 드라이브 최신본을 받아서 본다.
-
 ## 문서/주석 작성 규칙
 
 - `—`(em dash) 사용 금지.
