@@ -190,6 +190,8 @@ class MemberTokenServiceTest {
                 .thenReturn(RefreshTokenRepository.RotateOutcome.reuseDetected(
                         new RefreshTokenRepository.RefreshTokenData(1L, Role.MEMBER, true)));
         when(refreshTokenRepository.findActiveHash(Role.MEMBER, 1L)).thenReturn(Optional.of("current-hash"));
+        when(memberRepository.findById(1L)).thenReturn(Optional.of(member));
+        when(member.getRefreshTokenHash()).thenReturn("current-hash");
         when(memberRepository.clearRefreshTokenBackupIfHashMatches(anyLong(), anyString(), any())).thenReturn(1);
 
         assertThatThrownBy(() -> service.reissue("reused"))
@@ -209,6 +211,7 @@ class MemberTokenServiceTest {
     void 로그아웃_커밋_뒤에는_카카오_로그아웃을_요청한다() {
         when(memberRepository.findById(1L)).thenReturn(Optional.of(member));
         when(member.getProviderUserId()).thenReturn("kakao-1");
+        when(member.getRefreshTokenHash()).thenReturn("current-hash");
         when(refreshTokenRepository.findActiveHash(Role.MEMBER, 1L)).thenReturn(Optional.of("current-hash"));
         when(memberRepository.clearRefreshTokenBackupIfHashMatches(anyLong(), anyString(), any())).thenReturn(1);
 
@@ -223,5 +226,27 @@ class MemberTokenServiceTest {
         }
 
         verify(kakaoLogoutClient).logout("kakao-1");
+    }
+
+    @Test
+    @DisplayName("오래된 Redis 활성 포인터가 있어도 DB 해시 기준으로 로그아웃한다")
+    void 오래된_Redis_활성_포인터가_있어도_DB_해시_기준으로_로그아웃한다() {
+        when(refreshTokenRepository.findActiveHash(Role.MEMBER, 1L)).thenReturn(Optional.of("old-hash"));
+        when(memberRepository.findById(1L)).thenReturn(Optional.of(member));
+        when(member.getRefreshTokenHash()).thenReturn("new-hash");
+        when(memberRepository.clearRefreshTokenBackupIfHashMatches(
+                org.mockito.ArgumentMatchers.eq(1L),
+                org.mockito.ArgumentMatchers.eq("new-hash"),
+                any())).thenReturn(1);
+
+        service.revoke(1L);
+
+        verify(refreshTokenRepository).revokeIfActiveHashMatches("new-hash", Role.MEMBER, 1L);
+        verify(refreshTokenRepository).deleteActiveKeyIfMatches(Role.MEMBER, 1L, "old-hash");
+        verify(accessTokenValidAfterRepository).invalidateBefore(
+                org.mockito.ArgumentMatchers.eq(Role.MEMBER),
+                org.mockito.ArgumentMatchers.eq(1L),
+                any(),
+                any());
     }
 }

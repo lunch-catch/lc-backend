@@ -74,15 +74,21 @@ public class MemberTokenService {
 
     @Transactional
     public void revoke(Long memberId) {
-        String tokenHash = findCurrentHash(memberId);
         LocalDateTime now = now();
         try {
-            if (tokenHash != null) {
-                int cleared = memberRepository.clearRefreshTokenBackupIfHashMatches(memberId, tokenHash, now);
+            CurrentRefreshToken current = findCurrentRefreshToken(memberId);
+            if (current.databaseHash() != null) {
+                int cleared = memberRepository.clearRefreshTokenBackupIfHashMatches(
+                        memberId, current.databaseHash(), now);
                 if (cleared == 0) {
                     throw new AuthException(AuthErrorCode.REFRESH_TOKEN_STORE_UNAVAILABLE);
                 }
-                refreshTokenRepository.revokeIfActiveHashMatches(tokenHash, ROLE, memberId);
+                refreshTokenRepository.revokeIfActiveHashMatches(current.databaseHash(), ROLE, memberId);
+                if (current.hasStaleCachedHash()) {
+                    refreshTokenRepository.deleteActiveKeyIfMatches(ROLE, memberId, current.cachedHash());
+                }
+            } else if (current.cachedHash() != null) {
+                refreshTokenRepository.revokeIfActiveHashMatches(current.cachedHash(), ROLE, memberId);
             } else {
                 refreshTokenRepository.deleteActiveKey(ROLE, memberId);
             }
@@ -175,17 +181,18 @@ public class MemberTokenService {
         }
     }
 
-    private String findCurrentHash(Long memberId) {
+    private CurrentRefreshToken findCurrentRefreshToken(Long memberId) {
+        String cachedHash = null;
         try {
-            Optional<String> cached = refreshTokenRepository.findActiveHash(ROLE, memberId);
-            if (cached.isPresent()) {
-                return cached.get();
-            }
+            cachedHash = refreshTokenRepository.findActiveHash(ROLE, memberId).orElse(null);
         } catch (DataAccessException e) {
             log.warn("event=MEMBER_ACTIVE_REFRESH_CACHE_LOOKUP_FAILED memberId={} cause={}",
                     memberId, RedisFailureClassifier.causeLabel(e), e);
         }
-        return memberRepository.findById(memberId).map(Member::getRefreshTokenHash).orElse(null);
+        String databaseHash = memberRepository.findById(memberId)
+                .map(Member::getRefreshTokenHash)
+                .orElse(null);
+        return new CurrentRefreshToken(databaseHash, cachedHash);
     }
 
     private void compensateCacheRotation(String newHash, Long memberId) {
@@ -206,5 +213,12 @@ public class MemberTokenService {
     }
 
     public record TokenPair(String accessToken, String refreshToken, Long memberId) {
+    }
+
+    private record CurrentRefreshToken(String databaseHash, String cachedHash) {
+
+        private boolean hasStaleCachedHash() {
+            return cachedHash != null && !cachedHash.equals(databaseHash);
+        }
     }
 }
