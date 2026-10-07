@@ -75,6 +75,25 @@ class RefreshTokenRepositoryTest {
                 newHash);
     }
 
+    @Test
+    void rollbackRotation은_옛_레코드와_활성_포인터를_원자_복구한다() {
+        when(redisTemplate.execute(any(RedisScript.class), anyList(), any(Object[].class)))
+                .thenReturn(1L);
+        RefreshTokenRepository repository = new RefreshTokenRepository(redisTemplate);
+
+        boolean result = repository.rollbackRotation("old-hash", "new-hash", Role.MEMBER, 1L);
+
+        ArgumentCaptor<List<String>> keys = listCaptor();
+        ArgumentCaptor<Object[]> arguments = ArgumentCaptor.forClass(Object[].class);
+        verify(redisTemplate).execute(any(RedisScript.class), keys.capture(), arguments.capture());
+        assertThat(result).isTrue();
+        assertThat(keys.getValue()).containsExactly(
+                "refreshToken:old-hash",
+                "refreshToken:new-hash",
+                "activeRefreshToken:MEMBER:1");
+        assertThat(arguments.getValue()).containsExactly("old-hash", "new-hash");
+    }
+
     @SuppressWarnings("unchecked")
     private ArgumentCaptor<List<String>> listCaptor() {
         return (ArgumentCaptor<List<String>>) (ArgumentCaptor<?>) ArgumentCaptor.forClass(List.class);

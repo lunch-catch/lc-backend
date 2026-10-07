@@ -66,7 +66,7 @@ public class OpaqueRefreshTokenLifecycle {
         try {
             outcome = refreshTokenRepository.compareAndRotate(oldRefreshToken, newRefreshToken, refreshTokenTtl);
         } catch (DataAccessException redisFailure) {
-            return reissueFromDatabase(oldRefreshToken, newRefreshToken, role, refreshTokenTtl, now);
+            throw new AuthException(AuthErrorCode.REFRESH_TOKEN_STORE_UNAVAILABLE, redisFailure);
         }
         if (outcome.isReuseDetected()) {
             revoke(outcome.data().role(), outcome.data().id(), now, accessTokenTtl);
@@ -78,18 +78,23 @@ public class OpaqueRefreshTokenLifecycle {
         String oldHash = TokenHasher.sha256(oldRefreshToken);
         String newHash = TokenHasher.sha256(newRefreshToken);
         if (outcome.data().role() != role) {
-            compensate(newHash, outcome.data().role(), outcome.data().id());
+            rollbackRotationOrThrow(
+                    oldHash, newHash, outcome.data().role(), outcome.data().id());
             throw new AuthException(AuthErrorCode.REFRESH_TOKEN_INVALID);
         }
         try {
             if (!store(role).rotateIfMatches(
                     outcome.data().id(), oldHash, newHash, now.plus(refreshTokenTtl), now)) {
-                compensate(newHash, role, outcome.data().id());
-                throw unavailable();
+                if (!confirmOrRollbackDatabaseRotation(
+                        outcome.data().id(), role, oldHash, newHash)) {
+                    throw unavailable();
+                }
             }
         } catch (DataAccessException dbFailure) {
-            compensate(newHash, role, outcome.data().id());
-            throw new AuthException(AuthErrorCode.REFRESH_TOKEN_STORE_UNAVAILABLE, dbFailure);
+            if (!confirmOrRollbackDatabaseRotation(
+                    outcome.data().id(), role, oldHash, newHash)) {
+                throw new AuthException(AuthErrorCode.REFRESH_TOKEN_STORE_UNAVAILABLE, dbFailure);
+            }
         }
         return new ReissueResult(outcome.data().id(), newRefreshToken);
     }
@@ -118,28 +123,34 @@ public class OpaqueRefreshTokenLifecycle {
         }
     }
 
-    private ReissueResult reissueFromDatabase(String oldToken, String newToken, Role role, Duration ttl, LocalDateTime now) {
-        RefreshTokenBackup backup;
+    private boolean confirmOrRollbackDatabaseRotation(
+            Long subjectId, Role role, String oldHash, String newHash) {
+        String currentHash;
         try {
-            String oldHash = TokenHasher.sha256(oldToken);
-            backup = store(role).findValidByHash(oldHash, now)
-                    .orElseThrow(() -> new AuthException(AuthErrorCode.REFRESH_TOKEN_INVALID));
-            if (backup.role() != role) {
-                throw new AuthException(AuthErrorCode.REFRESH_TOKEN_INVALID);
-            }
-            String newHash = TokenHasher.sha256(newToken);
-            if (!store(role).rotateIfMatches(backup.subjectId(), oldHash, newHash, now.plus(ttl), now)) {
-                throw new AuthException(AuthErrorCode.REFRESH_TOKEN_INVALID);
-            }
-        } catch (DataAccessException dbFailure) {
-            throw new AuthException(AuthErrorCode.REFRESH_TOKEN_STORE_UNAVAILABLE, dbFailure);
+            currentHash = store(role).findCurrentHash(subjectId).orElse(null);
+        } catch (DataAccessException confirmationFailure) {
+            compensate(newHash, role, subjectId);
+            throw new AuthException(AuthErrorCode.REFRESH_TOKEN_STORE_UNAVAILABLE, confirmationFailure);
         }
+        if (newHash.equals(currentHash)) {
+            return true;
+        }
+        if (oldHash.equals(currentHash)) {
+            rollbackRotationOrThrow(oldHash, newHash, role, subjectId);
+            return false;
+        }
+        compensate(newHash, role, subjectId);
+        return false;
+    }
+
+    private void rollbackRotationOrThrow(String oldHash, String newHash, Role role, Long subjectId) {
         try {
-            refreshTokenRepository.save(newToken, backup.subjectId(), role, true, ttl);
-        } catch (DataAccessException e) {
-            log.warn("event=REFRESH_CACHE_SAVE_AFTER_DB_FALLBACK_FAILED role={} subjectId={}", role, backup.subjectId(), e);
+            if (!refreshTokenRepository.rollbackRotation(oldHash, newHash, role, subjectId)) {
+                throw unavailable();
+            }
+        } catch (DataAccessException rollbackFailure) {
+            throw new AuthException(AuthErrorCode.REFRESH_TOKEN_STORE_UNAVAILABLE, rollbackFailure);
         }
-        return new ReissueResult(backup.subjectId(), newToken);
     }
 
     private void compensate(String hash, Role role, Long subjectId) {

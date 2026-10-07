@@ -1,7 +1,6 @@
 package com.launchcatch.member.service;
 
 import com.launchcatch.auth.Role;
-import com.launchcatch.auth.opaque.RefreshTokenBackup;
 import com.launchcatch.auth.opaque.RefreshTokenBackupStore;
 import com.launchcatch.member.contract.MemberStatus;
 import com.launchcatch.member.entity.Member;
@@ -10,6 +9,8 @@ import java.time.LocalDateTime;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 
 @Component
 @RequiredArgsConstructor
@@ -25,15 +26,7 @@ class MemberRefreshTokenBackupStore implements RefreshTokenBackupStore {
     }
 
     @Override
-    public Optional<RefreshTokenBackup> findValidByHash(String tokenHash, LocalDateTime now) {
-        return memberRepository.findByRefreshTokenHash(tokenHash)
-                .filter(member -> member.getStatus() == MemberStatus.ACTIVE)
-                .filter(member -> member.getRefreshTokenExpiresAt() != null
-                        && member.getRefreshTokenExpiresAt().isAfter(now))
-                .map(member -> backup(member));
-    }
-
-    @Override
+    @Transactional(readOnly = true, propagation = Propagation.REQUIRES_NEW)
     public Optional<String> findCurrentHash(Long subjectId) {
         return memberRepository.findById(subjectId).map(Member::getRefreshTokenHash);
     }
@@ -45,6 +38,7 @@ class MemberRefreshTokenBackupStore implements RefreshTokenBackupStore {
     }
 
     @Override
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public boolean rotateIfMatches(
             Long subjectId, String oldTokenHash, String newTokenHash, LocalDateTime newExpiresAt, LocalDateTime now) {
         return memberRepository.rotateRefreshTokenBackupIfMatches(
@@ -56,7 +50,4 @@ class MemberRefreshTokenBackupStore implements RefreshTokenBackupStore {
         return memberRepository.clearRefreshTokenBackupIfHashMatches(subjectId, tokenHash, now) == 1;
     }
 
-    private RefreshTokenBackup backup(Member member) {
-        return new RefreshTokenBackup(member.getId(), ROLE, member.getRefreshTokenHash(), member.getRefreshTokenExpiresAt());
-    }
 }
