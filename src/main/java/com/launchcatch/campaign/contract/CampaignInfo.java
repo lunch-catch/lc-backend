@@ -12,6 +12,10 @@ public record CampaignInfo(
         LocalTime usableStartTime,
         LocalTime usableEndTime,
         LocalDate startDate,
-        LocalDate endDate
+        LocalDate endDate,
+        DiscountTargetType discountTargetType,
+        DiscountType discountType,
+        int discountValue,
+        Long targetMenuId
 ) {
 }
