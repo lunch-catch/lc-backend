@@ -1,0 +1,105 @@
+# 깃허브 활동을 Slack 에 알린다. 리뷰 요청, 승인, 병합, 새 이슈 넷이다.
+#
+# 필요한 설정
+#   시크릿 SLACK_WEBHOOK_ACTIVITY  알림 채널의 Incoming Webhook URL. 없으면 알림만 건너뛴다
+#   시크릿 SLACK_MEMBER_IDS        깃허브 로그인 -> Slack 멤버 ID 의 JSON 맵. 없으면 @로그인 글자로 적는다
+#
+# 멤버 ID 를 변수가 아니라 시크릿에 두는 이유는 이 저장소가 public 이어서다.
+# Actions 로그도 공개되는데 변수는 마스킹되지 않는다. 자격증명은 아니지만 팀 메타데이터라
+# 공개 로그에 흘릴 이유가 없다. 시크릿이면 실수로 출력해도 가려진다.
+#
+# 포크에서 온 PR 은 시크릿을 받지 못해 알림이 조용히 꺼진다.
+# 팀원은 모두 이 저장소의 브랜치로 작업하므로 실사용 경로에는 영향이 없다.
+#
+# 이 워크플로는 아무것도 차단하지 않는다. 필수 체크는 G-BUILD 하나뿐이다 (BLD-1-05).
+# 그래서 실패를 숨기지 않는다. 여기 빨간 X 는 "알림이 깨졌다" 는 뜻이고 그것만 뜻한다.
+
+name: Slack 알림
+
+on:
+  # review_requested 는 CODEOWNERS 자동 지정에도 뜬다. 초안 PR 은 ready_for_review 시점에 뜬다.
+  # 리뷰어가 여럿이면 사람마다 한 번씩 뜨므로 contract 변경은 메시지가 넷까지 간다.
+  pull_request:
+    types: [review_requested, closed]
+  pull_request_review:
+    types: [submitted]
+  issues:
+    types: [opened]
+
+# 이벤트 페이로드만 읽는다. 저장소에 접근할 일이 없다.
+permissions: {}
+
+jobs:
+  notify:
+    name: 알림
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # 병합이 아닌 닫기와 승인이 아닌 리뷰는 알리지 않는다.
+    # 웹훅 페이로드의 review.state 는 소문자지만 Actions 의 == 는 대소문자를 가리지 않는다.
+    if: >-
+      github.event_name == 'issues'
+      || (github.event_name == 'pull_request' && github.event.action == 'review_requested')
+      || (github.event_name == 'pull_request' && github.event.pull_request.merged == true)
+      || (github.event_name == 'pull_request_review' && github.event.review.state == 'approved')
+    steps:
+      # 이벤트 값을 ${{ }} 로 셸에 끼워 넣지 않는다. PR 제목에 $(...) 나 역따옴표가 들어오면
+      # 러너에서 실행된다. jq 가 $GITHUB_EVENT_PATH 파일을 직접 읽게 해서 셸을 아예 거치지 않는다.
+      - name: 알림 보내기
+        env:
+          WEBHOOK: ${{ secrets.SLACK_WEBHOOK_ACTIVITY }}
+          MEMBER_IDS: ${{ secrets.SLACK_MEMBER_IDS }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${WEBHOOK:-}" ]; then
+            echo "::warning::SLACK_WEBHOOK_ACTIVITY 가 없어 알림을 건너뛰었다. 저장소 Secrets 에 등록해야 한다."
+            exit 0
+          fi
+
+          IDS=${MEMBER_IDS:-}
+          if [ -z "$IDS" ]; then
+            IDS='{}'
+            echo "::warning::SLACK_MEMBER_IDS 가 없어 멘션 없이 @로그인 글자로 보낸다."
+          elif ! printf '%s' "$IDS" | jq -e 'type == "object"' >/dev/null 2>&1; then
+            echo '::error::SLACK_MEMBER_IDS 가 JSON 객체가 아니다. {"githubLogin":"U01ABCDEF"} 형식이어야 한다.'
+            exit 1
+          fi
+
+          # 맵에 없는 로그인은 @로그인 글자로 적는다. 멘션은 안 되지만 누구인지는 보인다.
+          PAYLOAD=$(jq -n \
+            --slurpfile e "$GITHUB_EVENT_PATH" \
+            --arg name "$GITHUB_EVENT_NAME" \
+            --argjson ids "$IDS" '
+            def ping($login):
+              (if $login == null then null else $ids[$login] end) as $id
+              | if $id then "<@\($id)>"
+                elif $login then "@\($login)"
+                else "담당자" end;
+
+            def link($pr): "<\($pr.html_url)|#\($pr.number) \($pr.title)>";
+
+            $e[0] as $ev
+            | if $name == "issues" then
+                "[이슈] <\($ev.issue.html_url)|#\($ev.issue.number) \($ev.issue.title)> by \($ev.issue.user.login)"
+
+              elif $name == "pull_request_review" then
+                "[승인] \(link($ev.pull_request)) 를 \($ev.review.user.login) 가 승인했다. \(ping($ev.pull_request.user.login))"
+
+              elif $ev.action == "review_requested" then
+                (if $ev.requested_reviewer then ping($ev.requested_reviewer.login)
+                 else "@\($ev.requested_team.name) 팀" end) as $target
+                | "[리뷰 요청] \($target) \(link($ev.pull_request)) (\($ev.sender.login) 요청)"
+
+              else
+                "[병합] \(link($ev.pull_request)) \($ev.pull_request.base.ref) <- \($ev.pull_request.head.ref), by \($ev.pull_request.merged_by.login // $ev.sender.login)"
+              end
+            | {text: .}')
+
+          # 페이로드를 출력하지 않는다. 공개 로그에 Slack 멤버 ID 가 남는다.
+          echo "$GITHUB_EVENT_NAME 알림을 보낸다."
+
+          # 외부 호출이라 연결과 전체 시간을 모두 묶는다 (REL-2-01).
+          printf '%s' "$PAYLOAD" | curl -fsS \
+            --connect-timeout 5 --max-time 10 --retry 2 --retry-connrefused \
+            -X POST "$WEBHOOK" -H 'Content-Type: application/json' --data-binary @- \
+            -o /dev/null
