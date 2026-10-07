@@ -19,6 +19,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 @ExtendWith(MockitoExtension.class)
 class MemberTokenServiceTest {
@@ -59,5 +61,22 @@ class MemberTokenServiceTest {
         when(jwtTokenProvider.getAccessTokenValidityMs()).thenReturn(30_000L);
         service().logout(1L);
         verify(refreshTokenLifecycle).revoke(any(), any(), any(), any());
+    }
+
+    @Test
+    void 로그아웃_커밋_뒤_카카오_세션을_종료한다() {
+        when(memberRepository.findById(1L)).thenReturn(Optional.of(member));
+        when(member.getProviderUserId()).thenReturn("kakao-1");
+        when(jwtTokenProvider.getAccessTokenValidityMs()).thenReturn(30_000L);
+        TransactionSynchronizationManager.initSynchronization();
+        try {
+            service().logout(1L);
+            for (TransactionSynchronization synchronization : TransactionSynchronizationManager.getSynchronizations()) {
+                synchronization.afterCommit();
+            }
+        } finally {
+            TransactionSynchronizationManager.clearSynchronization();
+        }
+        verify(kakaoLogoutClient).logout("kakao-1");
     }
 }
