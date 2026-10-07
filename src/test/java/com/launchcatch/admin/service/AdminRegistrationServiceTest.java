@@ -7,7 +7,6 @@ import static org.mockito.Mockito.*;
 
 import com.launchcatch.admin.dto.AdminRegistrationRequest;
 import com.launchcatch.admin.entity.Admin;
-import com.launchcatch.admin.entity.AdminRole;
 import com.launchcatch.admin.entity.AdminStatus;
 import com.launchcatch.admin.exception.AdminErrorCode;
 import com.launchcatch.admin.exception.AdminException;
@@ -43,8 +42,8 @@ class AdminRegistrationServiceTest {
     }
 
     @ParameterizedTest
-    @EnumSource(AdminRole.class)
-    void 최고관리자는_두_권한의_계정을_발급한다(AdminRole role) {
+    @EnumSource(value = Role.class, names = {"ADMIN", "SUPER_ADMIN"})
+    void 최고관리자는_두_권한의_계정을_발급한다(Role role) {
         var request = request(role.name());
         when(repository.saveAndFlush(any(Admin.class))).thenAnswer(i -> i.getArgument(0));
         var response = service.register(1L, Role.SUPER_ADMIN, request);
@@ -53,6 +52,7 @@ class AdminRegistrationServiceTest {
         assertThat(response.role()).isEqualTo(role.name());
         var captor = ArgumentCaptor.forClass(Admin.class);
         verify(repository).saveAndFlush(captor.capture());
+        assertThat(captor.getValue().getRole()).isEqualTo(role);
         assertThat(captor.getValue().getStatus()).isEqualTo(AdminStatus.ACTIVE);
         assertThat(encoder.matches(request.initialPassword(), captor.getValue().getPasswordHash())).isTrue();
         verify(audit).write(1L, "ADMIN_ACCOUNT_CREATE", request.loginId(), "role=" + role.name());

@@ -3,7 +3,6 @@ package com.launchcatch.admin.service;
 import com.launchcatch.admin.dto.AdminRegistrationRequest;
 import com.launchcatch.admin.dto.AdminRegistrationResponse;
 import com.launchcatch.admin.entity.Admin;
-import com.launchcatch.admin.entity.AdminRole;
 import com.launchcatch.admin.exception.AdminErrorCode;
 import com.launchcatch.admin.exception.AdminException;
 import com.launchcatch.admin.repository.AdminRepository;
@@ -78,7 +77,7 @@ public class AdminRegistrationService {
             Long issuerAdminId,
             AdminRegistrationRequest request,
             String passwordHash) {
-        AdminRole role = AdminRole.valueOf(request.role());
+        Role role = Role.valueOf(request.role());
         Admin admin = Admin.register(request.loginId(), passwordHash, request.name(), role);
         Admin saved = adminRepository.saveAndFlush(admin);
 

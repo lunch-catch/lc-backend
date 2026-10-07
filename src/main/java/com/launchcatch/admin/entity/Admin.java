@@ -1,5 +1,6 @@
 package com.launchcatch.admin.entity;
 
+import com.launchcatch.auth.Role;
 import com.launchcatch.global.entity.BaseTimeEntity;
 import jakarta.persistence.AttributeOverride;
 import jakarta.persistence.Column;
@@ -47,7 +48,7 @@ public class Admin extends BaseTimeEntity {
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 30)
-    private AdminRole role;
+    private Role role;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 30)
@@ -68,16 +69,19 @@ public class Admin extends BaseTimeEntity {
      * 이 팩터리로 ACTIVE 관리자 엔티티를 만든다. 외부에서 status를 주입할 수 없게 해 신규 계정은
      * 항상 활성 상태로 시작한다.
      */
-    public static Admin register(String loginId, String passwordHash, String name, AdminRole role) {
+    public static Admin register(String loginId, String passwordHash, String name, Role role) {
         return new Admin(loginId, passwordHash, name, role);
     }
 
-    private Admin(String loginId, String passwordHash, String name, AdminRole role) {
+    private Admin(String loginId, String passwordHash, String name, Role role) {
         validateLoginId(loginId);
         validatePasswordHash(passwordHash);
         validateName(name);
         if (role == null) {
             throw new IllegalArgumentException("role 은 필수다");
+        }
+        if (!role.isAdmin()) {
+            throw new IllegalArgumentException("role 은 ADMIN 또는 SUPER_ADMIN이어야 한다");
         }
         this.loginId = loginId;
         this.passwordHash = passwordHash;
