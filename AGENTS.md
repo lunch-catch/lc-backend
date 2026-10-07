@@ -49,4 +49,4 @@ PR 본문과 제목에 Claude, Claude Code 등 생성 도구 언급을 넣지 �
 
 ## 커밋 규칙
 
-- 커밋은 항상 로컬 git 설정(user.name/user.email, 현재 devjohnpark / devjohnpark@gmail.com)의 계정으로만 생성한다. 다른 author/committer 정보를 지정하지 않는다.
+- 커밋은 항상 로컬 git 설정(user.name/user.email)의 계정으로만 생성한다. 다른 author/committer 정보를 지정하지 않는다.
