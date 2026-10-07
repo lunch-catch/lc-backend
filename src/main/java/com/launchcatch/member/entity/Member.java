@@ -110,6 +110,23 @@ public class Member extends BaseTimeEntity {
         this.lastLoginAt = loggedInAt;
     }
 
+    public void withdraw(LocalDateTime now) {
+        if (status == MemberStatus.WITHDRAWN) {
+            throw new IllegalStateException("member is already withdrawn");
+        }
+        this.nickname = "탈퇴한 회원";
+        this.profileImageUrl = null;
+        this.lastLoginAt = null;
+        this.notificationOptIn = false;
+        this.notificationOptInAt = null;
+        this.notificationWithdrawnAt = null;
+        this.locationOptIn = false;
+        this.locationOptInAt = null;
+        this.locationWithdrawnAt = null;
+        this.status = MemberStatus.WITHDRAWN;
+        this.withdrawnAt = now;
+    }
+
     void attachProfile(MemberProfile profile) {
         this.profile = profile;
     }
