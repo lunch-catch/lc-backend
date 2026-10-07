@@ -32,9 +32,11 @@ public class OwnerSignupService {
         if (ownerRepository.existsByEmail(request.email())) {
             throw new OwnerException(OwnerErrorCode.EMAIL_ALREADY_EXISTS);
         }
+
         // BCrypt 연산 중 DB 트랜잭션을 점유하지 않는다.
         String passwordHash = passwordEncoder.encode(request.password());
         Owner owner = Owner.create(request.email(), passwordHash);
+
         try {
             transactionTemplate.executeWithoutResult(status -> ownerRepository.saveAndFlush(owner));
         } catch (DataIntegrityViolationException e) {
@@ -44,6 +46,7 @@ public class OwnerSignupService {
             }
             throw e;
         }
+
         return new OwnerSignupResponse(owner.getEmail(), owner.getRole(), owner.getStatus());
     }
 }

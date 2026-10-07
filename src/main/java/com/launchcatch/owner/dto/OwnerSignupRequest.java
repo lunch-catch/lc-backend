@@ -9,7 +9,5 @@ public record OwnerSignupRequest(
         @NotBlank @Size(min = 10, max = 20) String password
 ) {
     @Override
-    public String toString() {
-        return "OwnerSignupRequest[REDACTED]";
-    }
+    public String toString() { return "OwnerSignupRequest[REDACTED]"; }
 }

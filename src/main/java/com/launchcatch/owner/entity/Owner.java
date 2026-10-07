@@ -57,11 +57,13 @@ public class Owner extends BaseTimeEntity {
 
     private Owner(String email, String passwordHash) {
         if (email == null || email.isBlank() || email.length() > 255) {
-            throw new IllegalArgumentException("email must be nonblank and at most 255 characters");
+            throw new IllegalArgumentException("점주 이메일은 필수이며, 255자 이하여야 합니다.");
         }
+
         if (passwordHash == null || passwordHash.isBlank() || passwordHash.length() > 255) {
-            throw new IllegalArgumentException("passwordHash must be nonblank and at most 255 characters");
+            throw new IllegalArgumentException("점주 비밀번호 해시는 필수이며, 255자 이하여야 합니다.");
         }
+
         this.email = email;
         this.passwordHash = passwordHash;
         this.role = Role.OWNER;
@@ -69,7 +71,5 @@ public class Owner extends BaseTimeEntity {
         this.tutorialViewed = false;
     }
 
-    public static Owner create(String email, String passwordHash) {
-        return new Owner(email, passwordHash);
-    }
+    public static Owner create(String email, String passwordHash) { return new Owner(email, passwordHash); }
 }
