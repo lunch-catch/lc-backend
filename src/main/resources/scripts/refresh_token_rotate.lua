@@ -1,6 +1,8 @@
 -- KEYS[1] = 옛 Refresh Token 키(refreshToken:{옛 토큰 해시})
 -- KEYS[2] = 새 Refresh Token 키(refreshToken:{새 토큰 해시})
 -- ARGV[1] = 새 토큰 TTL(ms)
+-- ARGV[2] = 활성 포인터 키 접두사(activeRefreshToken:)
+-- ARGV[3] = 새 토큰 해시
 --
 -- Opaque 토큰이라 토큰 자체에는 아무 정보가 없다. 그래서 원자적 CAS 의 모양이
 -- "고정된 슬롯의 값이 옛 해시와 같으면 새 해시로 교체" 가 아니라, 키 자체가 토큰마다 다르므로
@@ -19,7 +21,8 @@
 -- 살아 있어야 재사용 탐지가 새지 않는다. 고정된 짧은 유예로는 그보다 늦은 시도를 못 잡는다.
 --
 -- Redis 가 싱글스레드라 이 스크립트 전체가 원자적으로 실행된다. 같은 옛 토큰으로 재발급 요청이
--- 동시에 둘 들어와도 하나만 정상 회전에 성공한다.
+-- 동시에 둘 들어와도 하나만 정상 회전에 성공한다. 기본 레코드 회전과 활성 포인터 갱신도 같은
+-- 실행에 넣어 둘 중 하나만 새 토큰을 가리키는 상태를 만들지 않는다.
 --
 -- 반환값 셋
 --   false                        : 이 키가 원래 없었거나 tombstone 까지 자연 만료됐다
@@ -36,6 +39,11 @@ if string.sub(value, -8) == '|REVOKED' then
 end
 
 local remainingTtl = redis.call('PTTL', KEYS[1])
+local id, role = string.match(value, '^([^|]+)|([^|]+)|')
+
+if not id or not role then
+    return redis.error_reply('invalid refresh token record')
+end
 
 redis.call('SET', KEYS[2], value, 'PX', ARGV[1])
 if remainingTtl > 0 then
@@ -46,4 +54,5 @@ else
     -- tombstone 없이 지운다.
     redis.call('DEL', KEYS[1])
 end
+redis.call('SET', ARGV[2] .. role .. ':' .. id, ARGV[3], 'PX', ARGV[1])
 return value
