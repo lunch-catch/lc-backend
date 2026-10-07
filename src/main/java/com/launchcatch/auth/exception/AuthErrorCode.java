@@ -84,7 +84,10 @@ public enum AuthErrorCode implements ErrorCode {
 
     /* 역할이 맞지 않는다. 대상의 존재 여부를 드러내지 않도록 상세를 담지 않는다. */
     ROLE_NOT_ALLOWED(HttpStatus.FORBIDDEN, "AUTH-006",
-            "접근 권한이 없습니다.");
+            "접근 권한이 없습니다."),
+
+    KAKAO_AUTHENTICATION_FAILED(HttpStatus.UNAUTHORIZED, "AUTH-007",
+            "카카오 인증에 실패했습니다. 다시 시도해 주세요.");
 
     private final HttpStatus httpStatus;
     private final String code;
