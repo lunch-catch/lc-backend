@@ -64,22 +64,41 @@ jobs:
           PAYLOAD=$(jq -n \
             --slurpfile e "$GITHUB_EVENT_PATH" \
             --argjson ids "$IDS" '
+            # Slack 서식에 넣기 전에 & < > 를 엔터티로 바꾼다. & 를 먼저 바꿔야 한다.
+            # jq 의 JSON 인코딩은 Slack 의 서식 해석을 막지 않는다. 제목에 > 가 하나 있으면
+            # <url|라벨> 의 라벨이 거기서 끊기고 남은 글자가 본문으로 새어 나간다.
+            # 공격이 아니어도 깨진다. 제목에 화살표를 -> 로 적는 것은 흔한 표기다.
+            def esc: tostring | gsub("&"; "&amp;") | gsub("<"; "&lt;") | gsub(">"; "&gt;");
+
             def ping($login):
               (if $login == null then null else $ids[$login] end) as $id
               | if $id then "<@\($id)>"
-                elif $login then "@\($login)"
+                elif $login then "@\($login | esc)"
                 else "담당자" end;
 
             $e[0] as $ev
             | (if $ev.requested_reviewer then ping($ev.requested_reviewer.login)
-               else "@\($ev.requested_team.name) 팀" end) as $target
-            | {text: "[리뷰 요청] \($target) <\($ev.pull_request.html_url)|#\($ev.pull_request.number) \($ev.pull_request.title)> (\($ev.sender.login) 요청)"}')
+               else "@\($ev.requested_team.name | esc) 팀" end) as $target
+            | {text: "[리뷰 요청] \($target) <\($ev.pull_request.html_url)|#\($ev.pull_request.number) \($ev.pull_request.title | esc)> (\($ev.sender.login | esc) 요청)"}')
 
           # 페이로드를 출력하지 않는다. 공개 로그에 Slack 멤버 ID 가 남는다.
           echo "리뷰 요청 알림을 보낸다."
 
           # 외부 호출이라 연결과 전체 시간을 모두 묶는다 (REL-2-01).
-          printf '%s' "$PAYLOAD" | curl -fsS \
+          CODE=$(printf '%s' "$PAYLOAD" | curl -sS \
             --connect-timeout 5 --max-time 10 --retry 2 --retry-connrefused \
             -X POST "$WEBHOOK" -H 'Content-Type: application/json' --data-binary @- \
-            -o /dev/null
+            -o /dev/null -w '%{http_code}') || CODE=000
+
+          # 일시 장애와 설정 오류를 가른다 (BLD-2-05 의 취지).
+          #
+          # 전부 continue-on-error 로 덮으면 폐기된 웹훅을 영원히 모른다. 알림이 조용히
+          # 죽는 것이 이 워크플로가 막으려는 바로 그 실패라서 그 경우는 빨간 X 로 남긴다.
+          # Slack 이 흔들려 멈춘 것은 다음 PR 에서 알아서 복구되므로 경고로 끝낸다.
+          # curl 의 --retry 는 타임아웃과 5xx 와 429 만 다시 보내고 4xx 는 보내지 않는다.
+          case "$CODE" in
+            2*) ;;
+            4*) echo "::error::Slack 이 HTTP $CODE 로 거부했다. 웹훅이 폐기됐거나 URL 이 틀렸다. SLACK_WEBHOOK_ACTIVITY 를 다시 등록한다."
+                exit 1 ;;
+            *)  echo "::warning::Slack 호출이 실패했다(HTTP $CODE). 일시 장애로 보고 넘긴다." ;;
+          esac
