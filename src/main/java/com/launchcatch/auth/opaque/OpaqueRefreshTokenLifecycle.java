@@ -50,15 +50,21 @@ public class OpaqueRefreshTokenLifecycle {
         }
     }
 
-    public ReissueResult reissue(String oldRefreshToken, String newRefreshToken, Role role, Duration ttl, LocalDateTime now) {
+    public ReissueResult reissue(
+            String oldRefreshToken,
+            String newRefreshToken,
+            Role role,
+            Duration refreshTokenTtl,
+            Duration accessTokenTtl,
+            LocalDateTime now) {
         RefreshTokenRepository.RotateOutcome outcome;
         try {
-            outcome = refreshTokenRepository.compareAndRotate(oldRefreshToken, newRefreshToken, ttl);
+            outcome = refreshTokenRepository.compareAndRotate(oldRefreshToken, newRefreshToken, refreshTokenTtl);
         } catch (DataAccessException redisFailure) {
-            return reissueFromDatabase(oldRefreshToken, newRefreshToken, role, ttl, now);
+            return reissueFromDatabase(oldRefreshToken, newRefreshToken, role, refreshTokenTtl, now);
         }
         if (outcome.isReuseDetected()) {
-            revoke(outcome.data().role(), outcome.data().id(), now, ttl);
+            revoke(outcome.data().role(), outcome.data().id(), now, accessTokenTtl);
             throw new AuthException(AuthErrorCode.REFRESH_TOKEN_REUSED);
         }
         if (!outcome.isSuccess()) {
@@ -71,7 +77,8 @@ public class OpaqueRefreshTokenLifecycle {
             throw new AuthException(AuthErrorCode.REFRESH_TOKEN_INVALID);
         }
         try {
-            if (!store(role).rotateIfMatches(outcome.data().id(), oldHash, newHash, now.plus(ttl), now)) {
+            if (!store(role).rotateIfMatches(
+                    outcome.data().id(), oldHash, newHash, now.plus(refreshTokenTtl), now)) {
                 compensate(newHash, role, outcome.data().id());
                 throw unavailable();
             }

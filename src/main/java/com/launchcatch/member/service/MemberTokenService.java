@@ -46,7 +46,13 @@ public class MemberTokenService {
         String newRefreshToken = OpaqueTokenGenerator.generate();
         Duration ttl = refreshTtl();
         OpaqueRefreshTokenLifecycle.ReissueResult result =
-                refreshTokenLifecycle.reissue(oldRefreshToken, newRefreshToken, ROLE, ttl, now());
+                refreshTokenLifecycle.reissue(
+                        oldRefreshToken,
+                        newRefreshToken,
+                        ROLE,
+                        ttl,
+                        Duration.ofMillis(jwtTokenProvider.getAccessTokenValidityMs()),
+                        now());
         return new TokenPair(jwtTokenProvider.createAccessToken(result.subjectId(), ROLE), result.refreshToken(), result.subjectId());
     }
 

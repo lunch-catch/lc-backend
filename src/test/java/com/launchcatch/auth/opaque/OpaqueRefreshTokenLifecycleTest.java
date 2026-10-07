@@ -1,6 +1,7 @@
 package com.launchcatch.auth.opaque;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.never;
@@ -51,7 +52,8 @@ class OpaqueRefreshTokenLifecycleTest {
         OpaqueRefreshTokenLifecycle lifecycle = new OpaqueRefreshTokenLifecycle(
                 refreshTokenRepository, accessTokenValidAfterRepository, List.of(backupStore));
 
-        assertThatThrownBy(() -> lifecycle.reissue("old", "new", Role.MEMBER, Duration.ofMinutes(30), LocalDateTime.now()))
+        assertThatThrownBy(() -> lifecycle.reissue(
+                "old", "new", Role.MEMBER, Duration.ofMinutes(30), Duration.ofMinutes(5), LocalDateTime.now()))
                 .isInstanceOf(com.launchcatch.auth.exception.AuthException.class)
                 .hasMessageContaining("일시적으로 처리할 수 없습니다");
         verify(refreshTokenRepository).revokeIfActiveHashMatches(TokenHasher.sha256("new"), Role.MEMBER, 1L);
@@ -66,7 +68,8 @@ class OpaqueRefreshTokenLifecycleTest {
         OpaqueRefreshTokenLifecycle lifecycle = new OpaqueRefreshTokenLifecycle(
                 refreshTokenRepository, accessTokenValidAfterRepository, List.of(backupStore));
 
-        assertThatThrownBy(() -> lifecycle.reissue("old", "new", Role.MEMBER, Duration.ofMinutes(30), LocalDateTime.now()))
+        assertThatThrownBy(() -> lifecycle.reissue(
+                "old", "new", Role.MEMBER, Duration.ofMinutes(30), Duration.ofMinutes(5), LocalDateTime.now()))
                 .isInstanceOf(com.launchcatch.auth.exception.AuthException.class)
                 .hasMessageContaining("일시적으로 처리할 수 없습니다");
     }
@@ -80,7 +83,8 @@ class OpaqueRefreshTokenLifecycleTest {
         OpaqueRefreshTokenLifecycle lifecycle = new OpaqueRefreshTokenLifecycle(
                 refreshTokenRepository, accessTokenValidAfterRepository, List.of(backupStore));
 
-        assertThatThrownBy(() -> lifecycle.reissue("old", "new", Role.MEMBER, Duration.ofMinutes(30), LocalDateTime.now()))
+        assertThatThrownBy(() -> lifecycle.reissue(
+                "old", "new", Role.MEMBER, Duration.ofMinutes(30), Duration.ofMinutes(5), LocalDateTime.now()))
                 .isInstanceOf(com.launchcatch.auth.exception.AuthException.class)
                 .hasMessageContaining("다시 로그인");
         verify(refreshTokenRepository).revokeIfActiveHashMatches(
@@ -97,9 +101,32 @@ class OpaqueRefreshTokenLifecycleTest {
         OpaqueRefreshTokenLifecycle lifecycle = new OpaqueRefreshTokenLifecycle(
                 refreshTokenRepository, accessTokenValidAfterRepository, List.of(backupStore));
 
-        assertThatThrownBy(() -> lifecycle.reissue("old", "new", Role.MEMBER, Duration.ofMinutes(30), LocalDateTime.now()))
+        assertThatThrownBy(() -> lifecycle.reissue(
+                "old", "new", Role.MEMBER, Duration.ofMinutes(30), Duration.ofMinutes(5), LocalDateTime.now()))
                 .isInstanceOf(com.launchcatch.auth.exception.AuthException.class)
                 .hasMessageContaining("다시 로그인");
         verify(backupStore, never()).rotateIfMatches(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void 재사용_탐지_폐기는_Access_Token_TTL을_사용한다() {
+        LocalDateTime now = LocalDateTime.of(2026, 10, 7, 12, 0);
+        Duration accessTokenTtl = Duration.ofMinutes(5);
+        when(backupStore.role()).thenReturn(Role.MEMBER);
+        when(refreshTokenRepository.compareAndRotate(any(), any(), any()))
+                .thenReturn(RefreshTokenRepository.RotateOutcome.reuseDetected(
+                        new RefreshTokenRepository.RefreshTokenData(1L, Role.MEMBER, true)));
+        when(refreshTokenRepository.findActiveHash(Role.MEMBER, 1L)).thenReturn(Optional.of("current"));
+        when(backupStore.findCurrentHash(1L)).thenReturn(Optional.of("current"));
+        when(backupStore.clearIfMatches(1L, "current", now)).thenReturn(true);
+        OpaqueRefreshTokenLifecycle lifecycle = new OpaqueRefreshTokenLifecycle(
+                refreshTokenRepository, accessTokenValidAfterRepository, List.of(backupStore));
+
+        assertThatThrownBy(() -> lifecycle.reissue(
+                "old", "new", Role.MEMBER, Duration.ofDays(14), accessTokenTtl, now))
+                .isInstanceOf(com.launchcatch.auth.exception.AuthException.class)
+                .hasMessageContaining("모든 기기에서 로그아웃");
+        verify(accessTokenValidAfterRepository).invalidateBefore(
+                eq(Role.MEMBER), eq(1L), eq(now), eq(accessTokenTtl));
     }
 }

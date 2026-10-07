@@ -48,7 +48,8 @@ class MemberTokenServiceTest {
     @Test
     void 재발급은_공통_lifecycle의_소유자로_accessToken을_발급한다() {
         when(jwtTokenProvider.refreshTokenValidityMs(Role.MEMBER)).thenReturn(600_000L);
-        when(refreshTokenLifecycle.reissue(any(), any(), any(), any(), any()))
+        when(jwtTokenProvider.getAccessTokenValidityMs()).thenReturn(30_000L);
+        when(refreshTokenLifecycle.reissue(any(), any(), any(), any(), any(), any()))
                 .thenReturn(new OpaqueRefreshTokenLifecycle.ReissueResult(1L, "new"));
         when(jwtTokenProvider.createAccessToken(1L, Role.MEMBER)).thenReturn("access");
         assertThat(service().reissue("old")).isEqualTo(new MemberTokenService.TokenPair("access", "new", 1L));
