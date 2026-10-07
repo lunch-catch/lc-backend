@@ -61,11 +61,15 @@ public class OpaqueRefreshTokenLifecycle {
             revoke(outcome.data().role(), outcome.data().id(), now, ttl);
             throw new AuthException(AuthErrorCode.REFRESH_TOKEN_REUSED);
         }
-        if (!outcome.isSuccess() || outcome.data().role() != role) {
+        if (!outcome.isSuccess()) {
             throw new AuthException(AuthErrorCode.REFRESH_TOKEN_INVALID);
         }
         String oldHash = TokenHasher.sha256(oldRefreshToken);
         String newHash = TokenHasher.sha256(newRefreshToken);
+        if (outcome.data().role() != role) {
+            compensate(newHash, outcome.data().role(), outcome.data().id());
+            throw new AuthException(AuthErrorCode.REFRESH_TOKEN_INVALID);
+        }
         try {
             if (!store(role).rotateIfMatches(outcome.data().id(), oldHash, newHash, now.plus(ttl), now)) {
                 compensate(newHash, role, outcome.data().id());

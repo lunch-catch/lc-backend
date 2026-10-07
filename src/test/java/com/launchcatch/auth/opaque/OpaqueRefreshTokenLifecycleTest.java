@@ -69,4 +69,20 @@ class OpaqueRefreshTokenLifecycleTest {
                 .isInstanceOf(com.launchcatch.auth.exception.AuthException.class)
                 .hasMessageContaining("일시적으로 처리할 수 없습니다");
     }
+
+    @Test
+    void 요청_역할과_Redis_토큰_역할이_다르면_회전된_토큰을_보상_폐기한다() {
+        when(backupStore.role()).thenReturn(Role.MEMBER);
+        when(refreshTokenRepository.compareAndRotate(any(), any(), any()))
+                .thenReturn(RefreshTokenRepository.RotateOutcome.success(
+                        new RefreshTokenRepository.RefreshTokenData(1L, Role.OWNER, true)));
+        OpaqueRefreshTokenLifecycle lifecycle = new OpaqueRefreshTokenLifecycle(
+                refreshTokenRepository, accessTokenValidAfterRepository, List.of(backupStore));
+
+        assertThatThrownBy(() -> lifecycle.reissue("old", "new", Role.MEMBER, Duration.ofMinutes(30), LocalDateTime.now()))
+                .isInstanceOf(com.launchcatch.auth.exception.AuthException.class)
+                .hasMessageContaining("다시 로그인");
+        verify(refreshTokenRepository).revokeIfActiveHashMatches(
+                TokenHasher.sha256("new"), Role.OWNER, 1L);
+    }
 }
