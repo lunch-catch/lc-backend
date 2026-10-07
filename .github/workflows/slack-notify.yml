@@ -1,4 +1,9 @@
-# 깃허브 활동을 Slack 에 알린다. 리뷰 요청, 승인, 병합, 새 이슈 넷이다.
+# 리뷰어로 등록된 사람을 Slack 에서 멘션한다.
+#
+# 이 워크플로는 이것 하나만 한다. 새 이슈와 병합과 승인은 GitHub 공식 Slack 앱이 맡는다.
+# 앱에는 리뷰 요청을 채널로 보내는 구독 옵션이 없고, 개인 DM 은 각자 /github signin 을
+# 해야 와서 누가 안 했는지 확인할 방법이 없다. 그 칸만 여기서 메운다.
+# 전체 알림 구성과 설정 절차는 docs/architecture/런치캐치_알림_운영.md 에 있다.
 #
 # 필요한 설정
 #   시크릿 SLACK_WEBHOOK_ACTIVITY  알림 채널의 Incoming Webhook URL. 없으면 알림만 건너뛴다
@@ -17,30 +22,19 @@
 name: Slack 알림
 
 on:
-  # review_requested 는 CODEOWNERS 자동 지정에도 뜬다. 초안 PR 은 ready_for_review 시점에 뜬다.
+  # CODEOWNERS 자동 지정에도 뜬다. 초안 PR 은 Ready for review 시점에 뜬다.
   # 리뷰어가 여럿이면 사람마다 한 번씩 뜨므로 contract 변경은 메시지가 넷까지 간다.
   pull_request:
-    types: [review_requested, closed]
-  pull_request_review:
-    types: [submitted]
-  issues:
-    types: [opened]
+    types: [review_requested]
 
 # 이벤트 페이로드만 읽는다. 저장소에 접근할 일이 없다.
 permissions: {}
 
 jobs:
   notify:
-    name: 알림
+    name: 리뷰 요청 알림
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    # 병합이 아닌 닫기와 승인이 아닌 리뷰는 알리지 않는다.
-    # 웹훅 페이로드의 review.state 는 소문자지만 Actions 의 == 는 대소문자를 가리지 않는다.
-    if: >-
-      github.event_name == 'issues'
-      || (github.event_name == 'pull_request' && github.event.action == 'review_requested')
-      || (github.event_name == 'pull_request' && github.event.pull_request.merged == true)
-      || (github.event_name == 'pull_request_review' && github.event.review.state == 'approved')
     steps:
       # 이벤트 값을 ${{ }} 로 셸에 끼워 넣지 않는다. PR 제목에 $(...) 나 역따옴표가 들어오면
       # 러너에서 실행된다. jq 가 $GITHUB_EVENT_PATH 파일을 직접 읽게 해서 셸을 아예 거치지 않는다.
@@ -66,9 +60,9 @@ jobs:
           fi
 
           # 맵에 없는 로그인은 @로그인 글자로 적는다. 멘션은 안 되지만 누구인지는 보인다.
+          # 팀을 리뷰어로 등록하면 requested_reviewer 가 없고 requested_team 이 온다.
           PAYLOAD=$(jq -n \
             --slurpfile e "$GITHUB_EVENT_PATH" \
-            --arg name "$GITHUB_EVENT_NAME" \
             --argjson ids "$IDS" '
             def ping($login):
               (if $login == null then null else $ids[$login] end) as $id
@@ -76,27 +70,13 @@ jobs:
                 elif $login then "@\($login)"
                 else "담당자" end;
 
-            def link($pr): "<\($pr.html_url)|#\($pr.number) \($pr.title)>";
-
             $e[0] as $ev
-            | if $name == "issues" then
-                "[이슈] <\($ev.issue.html_url)|#\($ev.issue.number) \($ev.issue.title)> by \($ev.issue.user.login)"
-
-              elif $name == "pull_request_review" then
-                "[승인] \(link($ev.pull_request)) 를 \($ev.review.user.login) 가 승인했다. \(ping($ev.pull_request.user.login))"
-
-              elif $ev.action == "review_requested" then
-                (if $ev.requested_reviewer then ping($ev.requested_reviewer.login)
-                 else "@\($ev.requested_team.name) 팀" end) as $target
-                | "[리뷰 요청] \($target) \(link($ev.pull_request)) (\($ev.sender.login) 요청)"
-
-              else
-                "[병합] \(link($ev.pull_request)) \($ev.pull_request.base.ref) <- \($ev.pull_request.head.ref), by \($ev.pull_request.merged_by.login // $ev.sender.login)"
-              end
-            | {text: .}')
+            | (if $ev.requested_reviewer then ping($ev.requested_reviewer.login)
+               else "@\($ev.requested_team.name) 팀" end) as $target
+            | {text: "[리뷰 요청] \($target) <\($ev.pull_request.html_url)|#\($ev.pull_request.number) \($ev.pull_request.title)> (\($ev.sender.login) 요청)"}')
 
           # 페이로드를 출력하지 않는다. 공개 로그에 Slack 멤버 ID 가 남는다.
-          echo "$GITHUB_EVENT_NAME 알림을 보낸다."
+          echo "리뷰 요청 알림을 보낸다."
 
           # 외부 호출이라 연결과 전체 시간을 모두 묶는다 (REL-2-01).
           printf '%s' "$PAYLOAD" | curl -fsS \
