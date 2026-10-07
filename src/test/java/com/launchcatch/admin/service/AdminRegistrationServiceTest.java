@@ -44,6 +44,7 @@ class AdminRegistrationServiceTest {
     @ParameterizedTest
     @EnumSource(value = Role.class, names = {"ADMIN", "SUPER_ADMIN"})
     void 최고관리자는_두_권한의_계정을_발급한다(Role role) {
+        givenActiveSuperAdminIssuer();
         var request = request(role.name());
         when(repository.saveAndFlush(any(Admin.class))).thenAnswer(i -> i.getArgument(0));
         var response = service.register(1L, Role.SUPER_ADMIN, request);
@@ -59,6 +60,7 @@ class AdminRegistrationServiceTest {
         var order = inOrder(encoder, transactions, repository, audit);
         order.verify(encoder).encode(request.initialPassword());
         order.verify(transactions).getTransaction(any());
+        order.verify(repository).findByIdForUpdate(1L);
         order.verify(repository).saveAndFlush(any());
         order.verify(audit).write(1L, "ADMIN_ACCOUNT_CREATE", request.loginId(), "role=" + role.name());
         order.verify(transactions).commit(transaction);
@@ -84,6 +86,7 @@ class AdminRegistrationServiceTest {
 
     @Test
     void DB_ID_유니크_위반만_중복으로_변환한다() {
+        givenActiveSuperAdminIssuer();
         var cause = new DataIntegrityViolationException("duplicate uk_admin_login_id");
         when(repository.saveAndFlush(any())).thenThrow(cause);
         assertThatThrownBy(() -> service.register(1L, Role.SUPER_ADMIN, request("ADMIN")))
@@ -95,6 +98,7 @@ class AdminRegistrationServiceTest {
 
     @Test
     void 다른_DB_제약_오류는_중복으로_변환하지_않는다() {
+        givenActiveSuperAdminIssuer();
         var cause = new DataIntegrityViolationException("chk_admin_role");
         when(repository.saveAndFlush(any())).thenThrow(cause);
         assertThatThrownBy(() -> service.register(1L, Role.SUPER_ADMIN, request("ADMIN"))).isSameAs(cause);
@@ -103,6 +107,7 @@ class AdminRegistrationServiceTest {
 
     @Test
     void 감사_로그_실패는_동일_트랜잭션을_롤백한다() {
+        givenActiveSuperAdminIssuer();
         when(repository.saveAndFlush(any(Admin.class))).thenAnswer(i -> i.getArgument(0));
         var cause = new DataIntegrityViolationException("audit_log write failed");
         doThrow(cause).when(audit).write(any(), any(), any(), any());
@@ -118,6 +123,68 @@ class AdminRegistrationServiceTest {
                 .isInstanceOf(IllegalArgumentException.class);
         verify(transactions, never()).getTransaction(any());
         verifyNoInteractions(audit);
+    }
+
+    @Test
+    void DB에_발급자가_없으면_거부한다() {
+        assertThatThrownBy(() -> service.register(1L, Role.SUPER_ADMIN, request("ADMIN")))
+                .isInstanceOf(AuthException.class)
+                .extracting(e -> ((AuthException) e).getErrorCode()).isEqualTo(AuthErrorCode.ROLE_NOT_ALLOWED);
+        verify(repository).findByIdForUpdate(1L);
+        verify(repository, never()).saveAndFlush(any());
+        verifyNoInteractions(audit);
+        verify(transactions).rollback(transaction);
+        verify(transactions, never()).commit(any());
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = Role.class, names = {"ADMIN", "OWNER", "MEMBER"})
+    void DB의_현재_권한이_최고관리자가_아니면_거부한다(Role role) {
+        Admin issuer = mock(Admin.class);
+        when(issuer.getStatus()).thenReturn(AdminStatus.ACTIVE);
+        when(issuer.getRole()).thenReturn(role);
+        when(repository.findByIdForUpdate(1L)).thenReturn(Optional.of(issuer));
+
+        assertThatThrownBy(() -> service.register(1L, Role.SUPER_ADMIN, request("ADMIN")))
+                .isInstanceOf(AuthException.class)
+                .extracting(e -> ((AuthException) e).getErrorCode()).isEqualTo(AuthErrorCode.ROLE_NOT_ALLOWED);
+        verify(repository, never()).saveAndFlush(any());
+        verifyNoInteractions(audit);
+        verify(transactions).rollback(transaction);
+        verify(transactions, never()).commit(any());
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = AdminStatus.class, names = "ACTIVE", mode = EnumSource.Mode.EXCLUDE)
+    void DB의_발급자가_비활성_상태이면_거부한다(AdminStatus status) {
+        Admin issuer = mock(Admin.class);
+        when(issuer.getStatus()).thenReturn(status);
+        when(repository.findByIdForUpdate(1L)).thenReturn(Optional.of(issuer));
+
+        assertThatThrownBy(() -> service.register(1L, Role.SUPER_ADMIN, request("ADMIN")))
+                .isInstanceOf(AuthException.class)
+                .extracting(e -> ((AuthException) e).getErrorCode()).isEqualTo(AuthErrorCode.ROLE_NOT_ALLOWED);
+        verify(repository, never()).saveAndFlush(any());
+        verifyNoInteractions(audit);
+        verify(transactions).rollback(transaction);
+        verify(transactions, never()).commit(any());
+    }
+
+    @Test
+    void 발급자_잠금_조회_실패는_그대로_전달하고_저장하지_않는다() {
+        var cause = new org.springframework.dao.CannotAcquireLockException("issuer lock failed");
+        when(repository.findByIdForUpdate(1L)).thenThrow(cause);
+
+        assertThatThrownBy(() -> service.register(1L, Role.SUPER_ADMIN, request("ADMIN"))).isSameAs(cause);
+        verify(repository, never()).saveAndFlush(any());
+        verifyNoInteractions(audit);
+        verify(transactions).rollback(transaction);
+        verify(transactions, never()).commit(any());
+    }
+
+    private void givenActiveSuperAdminIssuer() {
+        Admin issuer = Admin.register("superadmin", "password-hash", "최고관리자", Role.SUPER_ADMIN);
+        when(repository.findByIdForUpdate(1L)).thenReturn(Optional.of(issuer));
     }
 
     private static AdminRegistrationRequest request(String role) {

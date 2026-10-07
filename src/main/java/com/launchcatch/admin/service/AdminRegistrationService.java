@@ -3,6 +3,7 @@ package com.launchcatch.admin.service;
 import com.launchcatch.admin.dto.AdminRegistrationRequest;
 import com.launchcatch.admin.dto.AdminRegistrationResponse;
 import com.launchcatch.admin.entity.Admin;
+import com.launchcatch.admin.entity.AdminStatus;
 import com.launchcatch.admin.exception.AdminErrorCode;
 import com.launchcatch.admin.exception.AdminException;
 import com.launchcatch.admin.repository.AdminRepository;
@@ -77,6 +78,13 @@ public class AdminRegistrationService {
             Long issuerAdminId,
             AdminRegistrationRequest request,
             String passwordHash) {
+        // JWT 발급 이후 권한이나 상태가 바뀌었을 수 있어 현재 DB 값으로 다시 검사한다.
+        Admin issuer = adminRepository.findByIdForUpdate(issuerAdminId)
+                .orElseThrow(() -> new AuthException(AuthErrorCode.ROLE_NOT_ALLOWED));
+        if (issuer.getStatus() != AdminStatus.ACTIVE || issuer.getRole() != Role.SUPER_ADMIN) {
+            throw new AuthException(AuthErrorCode.ROLE_NOT_ALLOWED);
+        }
+
         Role role = Role.valueOf(request.role());
         Admin admin = Admin.register(request.loginId(), passwordHash, request.name(), role);
         Admin saved = adminRepository.saveAndFlush(admin);
