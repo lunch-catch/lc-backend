@@ -76,11 +76,12 @@ public class MemberProfileService {
 
     private MemberResponse response(Member member) {
         MemberProfile profile = member.getProfile();
-        MemberResponse.Profile profileResponse = profile == null || !profile.isOnboardingCompleted() ? null
+        boolean onboardingCompleted = profile != null && profile.isOnboardingCompleted();
+        MemberResponse.Profile profileResponse = !onboardingCompleted ? null
                 : new MemberResponse.Profile(profile.getGender(), profile.getAgeGroup());
         return new MemberResponse(
                 member.getId(), member.getNickname(), member.getProfileImageUrl(), member.getStatus(),
-                profile != null && profile.isOnboardingCompleted(), member.isLocationOptIn(), profileResponse,
+                onboardingCompleted, onboardingCompleted && member.isLocationOptIn(), profileResponse,
                 new MemberResponse.Consents(member.isNotificationOptIn(), offset(member.getNotificationOptInAt()),
                         member.isLocationOptIn(), offset(member.getLocationOptInAt())),
                 offset(member.getCreatedAt()));

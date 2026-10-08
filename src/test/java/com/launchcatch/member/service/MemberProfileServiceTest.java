@@ -102,6 +102,20 @@ class MemberProfileServiceTest {
     }
 
     @Test
+    @DisplayName("온보딩을 마치지 않았으면 위치에 동의했어도 피드를 쓸 수 없다")
+    void 온보딩을_마치지_않았으면_위치에_동의했어도_피드를_쓸_수_없다() throws Exception {
+        Member member = member();
+        member.updateProfile(null, null, true, java.time.LocalDateTime.of(2026, 10, 8, 9, 0));
+        when(memberRepository.findById(1L)).thenReturn(Optional.of(member));
+
+        MemberResponse response = memberProfileService.getMyProfile(1L);
+
+        assertThat(response.consents().locationOptIn()).isTrue();
+        assertThat(response.onboardingCompleted()).isFalse();
+        assertThat(response.feedAvailable()).isFalse();
+    }
+
+    @Test
     @DisplayName("내 정보 수정은 전달된 필드만 반영한다")
     void 내_정보_수정은_전달된_필드만_반영한다() throws Exception {
         Member member = member();
@@ -113,7 +127,8 @@ class MemberProfileServiceTest {
         assertThat(response.nickname()).isEqualTo("새닉네임");
         assertThat(response.consents().notificationOptIn()).isTrue();
         assertThat(response.consents().locationOptIn()).isTrue();
-        assertThat(response.feedAvailable()).isTrue();
+        // 온보딩을 마치지 않은 회원이라 위치에 동의해도 피드는 열리지 않는다
+        assertThat(response.feedAvailable()).isFalse();
     }
 
     @Test
