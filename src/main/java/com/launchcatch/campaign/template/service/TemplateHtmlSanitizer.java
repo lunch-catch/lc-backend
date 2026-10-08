@@ -1,6 +1,9 @@
 package com.launchcatch.campaign.template.service;
 
 import com.launchcatch.campaign.template.dto.TemplateSanitizeResult;
+import java.util.ArrayDeque;
+import java.util.Deque;
+import java.util.Iterator;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -52,21 +55,43 @@ public class TemplateHtmlSanitizer {
         return new TemplateSanitizeResult(document.body().html(), List.copyOf(removed));
     }
 
-    private void clean(Element parent, Set<String> removed) {
-        for (Element child : List.copyOf(parent.children())) {
+    /*
+     * 원래는 clean(child) 를 재귀로 부른 뒤 필요하면 unwrap() 하는 모양이었다. HTML 이
+     * 깊게 중첩되면 재귀 깊이가 그만큼 쌓여 StackOverflowError 가 날 수 있어, 콜스택 대신
+     * 힙에 쌓는 명시적 스택으로 바꾼다. 각 프레임(Frame)은 "이 엘리먼트의 자식 중 아직
+     * 안 본 것들"의 반복자와, 그 자식들을 다 보고 나서(원래 코드의 재귀 호출이 끝난 뒤와
+     * 같은 시점에) unwrap 할 대상을 함께 들고 있다. removed 에 담기는 순서와 최종 HTML 은
+     * 재귀 버전과 같다. ArrayDeque 는 null 원소를 받지 않아 unwrap 대상이 없는 프레임도
+     * Frame.unwrapTarget 을 null 로 두는 식으로 감싼다.
+     */
+    private void clean(Element root, Set<String> removed) {
+        Deque<Frame> frames = new ArrayDeque<>();
+        frames.push(new Frame(List.copyOf(root.children()).iterator(), null));
+        while (!frames.isEmpty()) {
+            Frame frame = frames.peek();
+            if (!frame.children().hasNext()) {
+                frames.pop();
+                if (frame.unwrapTarget() != null) {
+                    frame.unwrapTarget().unwrap();
+                }
+                continue;
+            }
+            Element child = frame.children().next();
             String tag = child.normalName();
             if (DROPPED_WITH_CONTENT.contains(tag)) {
                 removed.add(tag);
                 child.remove();
             } else if (ALLOWED_TAGS.contains(tag)) {
                 cleanAttributes(child, removed);
-                clean(child, removed);
+                frames.push(new Frame(List.copyOf(child.children()).iterator(), null));
             } else {
                 removed.add(tag);
-                clean(child, removed);
-                child.unwrap();
+                frames.push(new Frame(List.copyOf(child.children()).iterator(), child));
             }
         }
+    }
+
+    private record Frame(Iterator<Element> children, Element unwrapTarget) {
     }
 
     private void cleanAttributes(Element element, Set<String> removed) {
