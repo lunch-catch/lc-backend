@@ -61,6 +61,10 @@ public class Admin extends BaseTimeEntity {
     @Column(name = "refresh_token_expires_at")
     private LocalDateTime refreshTokenExpiresAt;
 
+    // 관리자 행 잠금 아래 증가시키며 Redis 게시 순서의 기준으로 사용한다.
+    @Column(name = "refresh_token_issuance_version", nullable = false)
+    private long refreshTokenIssuanceVersion;
+
     @Column(name = "deleted_at")
     private LocalDateTime deletedAt;
 
@@ -104,6 +108,7 @@ public class Admin extends BaseTimeEntity {
         if (!isActive()) {
             throw new IllegalStateException("비활성 관리자는 토큰을 발급받을 수 없다");
         }
+        this.refreshTokenIssuanceVersion = Math.incrementExact(refreshTokenIssuanceVersion);
         this.refreshTokenHash = tokenHash;
         this.refreshTokenExpiresAt = expiresAt;
     }

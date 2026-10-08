@@ -155,7 +155,7 @@ class AdminLoginSecurityIntegrationTest {
     @Test
     void Redis_저장_장애시_DB_백업후_로그인_성공을_유지한다() throws Exception {
         doThrow(new DataAccessResourceFailureException("Redis unavailable"))
-                .when(refreshTokens).save(any(), eq(1L), eq(Role.SUPER_ADMIN), eq(true), any());
+                .when(refreshTokens).saveIfNewer(any(), eq(1L), eq(Role.SUPER_ADMIN), eq(true), any(), org.mockito.ArgumentMatchers.anyLong());
         mvc.perform(post("/v1/admin/auth/tokens").contentType(MediaType.APPLICATION_JSON).content(BODY))
                 .andExpect(status().isOk()).andExpect(header().exists(HttpHeaders.SET_COOKIE));
     }

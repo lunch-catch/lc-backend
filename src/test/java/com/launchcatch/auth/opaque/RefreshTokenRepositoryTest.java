@@ -25,6 +25,45 @@ class RefreshTokenRepositoryTest {
     private StringRedisTemplate redisTemplate;
 
     @Test
+    void 순번_저장은_세_키와_정밀도_손실없는_순번을_Lua에_전달한다() {
+        when(redisTemplate.execute(any(RedisScript.class), anyList(), any(Object[].class))).thenReturn(1L);
+        var repository = new RefreshTokenRepository(redisTemplate);
+        assertThat(repository.saveIfNewer("raw", 1L, Role.ADMIN, true, Duration.ofDays(1), Long.MAX_VALUE)).isTrue();
+        ArgumentCaptor<List<String>> keys = listCaptor();
+        ArgumentCaptor<Object[]> args = ArgumentCaptor.forClass(Object[].class);
+        verify(redisTemplate).execute(any(RedisScript.class), keys.capture(), args.capture());
+        assertThat(keys.getValue()).containsExactly("refreshToken:" + TokenHasher.sha256("raw"),
+                "activeRefreshToken:ADMIN:1", "refreshTokenIssuanceVersion:ADMIN:1");
+        assertThat(args.getValue()).containsExactly("1|ADMIN|true", TokenHasher.sha256("raw"), "86400000",
+                "9223372036854775807");
+    }
+
+    @Test
+    void 더_최신_게시가_있으면_저장하지_않는다() {
+        when(redisTemplate.execute(any(RedisScript.class), anyList(), any(Object[].class))).thenReturn(0L);
+        assertThat(new RefreshTokenRepository(redisTemplate)
+                .saveIfNewer("raw", 1L, Role.ADMIN, true, Duration.ofDays(1), 1L)).isFalse();
+    }
+
+    @Test
+    void 순번_저장_결과가_없으면_장애로_처리한다() {
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> new RefreshTokenRepository(redisTemplate)
+                .saveIfNewer("raw", 1L, Role.ADMIN, true, Duration.ofDays(1), 1L))
+                .isInstanceOf(org.springframework.dao.DataAccessException.class);
+    }
+
+    @Test
+    void 잘못된_발급_순번과_TTL은_거부한다() {
+        var repository = new RefreshTokenRepository(redisTemplate);
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> repository
+                .saveIfNewer("raw", 1L, Role.ADMIN, true, Duration.ofDays(1), 0L))
+                .isInstanceOf(IllegalArgumentException.class);
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> repository
+                .saveIfNewer("raw", 1L, Role.ADMIN, true, Duration.ZERO, 1L))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
     void save는_기본_레코드와_활성_포인터를_하나의_Lua_실행으로_저장한다() {
         RefreshTokenRepository repository = new RefreshTokenRepository(redisTemplate);
         String refreshToken = "refresh-token";

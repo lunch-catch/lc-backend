@@ -25,7 +25,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 class AdminLoginTransactionServiceTest {
     private final AdminRepository repository = mock(AdminRepository.class);
     private final RefreshTokenRepository cache = mock(RefreshTokenRepository.class);
-    private final AdminLoginTransactionService service = new AdminLoginTransactionService(repository, cache);
+    private final AdminLoginTransactionService service = new AdminLoginTransactionService(repository);
     private final LocalDateTime now = LocalDateTime.of(2026, 10, 8, 12, 0);
     private final String hash = "a".repeat(64);
     private Admin admin;
@@ -82,14 +82,14 @@ class AdminLoginTransactionServiceTest {
     void 현재_DB_해시와_같은_토큰만_캐시에_게시한다() {
         String raw = "current-refresh-token";
         admin.issueRefreshToken(TokenHasher.sha256(raw), now.plusDays(1));
-        assertThat(service.publishRefreshTokenIfCurrent(1L, Role.SUPER_ADMIN, raw, Duration.ofDays(1))).isTrue();
-        verify(cache).save(raw, 1L, Role.SUPER_ADMIN, true, Duration.ofDays(1));
+        assertThat(service.isRefreshTokenCurrent(1L, Role.SUPER_ADMIN, raw)).isTrue();
+        verifyNoInteractions(cache);
     }
 
     @Test
     void 이전_로그인_토큰은_최신_캐시를_덮어쓰지_않는다() {
         admin.issueRefreshToken(TokenHasher.sha256("new-token"), now.plusDays(1));
-        assertThat(service.publishRefreshTokenIfCurrent(1L, Role.SUPER_ADMIN, "old-token", Duration.ofDays(1)))
+        assertThat(service.isRefreshTokenCurrent(1L, Role.SUPER_ADMIN, "old-token"))
                 .isFalse();
         verifyNoInteractions(cache);
     }
@@ -114,18 +114,8 @@ class AdminLoginTransactionServiceTest {
         verifyNoInteractions(cache);
     }
 
-    @Test
-    void 최종_DB_확인후_Redis_저장_장애만_허용한다() {
-        String raw = "current-refresh-token";
-        admin.issueRefreshToken(TokenHasher.sha256(raw), now.plusDays(1));
-        org.mockito.Mockito.doThrow(new org.springframework.dao.DataAccessResourceFailureException("Redis unavailable"))
-                .when(cache).save(raw, 1L, Role.SUPER_ADMIN, true, Duration.ofDays(1));
-        assertThat(service.publishRefreshTokenIfCurrent(1L, Role.SUPER_ADMIN, raw, Duration.ofDays(1))).isTrue();
-        assertThat(admin.getRefreshTokenHash()).isEqualTo(TokenHasher.sha256(raw));
-    }
-
     private void assertPublicationRejected(Role role) {
-        assertThatThrownBy(() -> service.publishRefreshTokenIfCurrent(1L, role, "raw", Duration.ofDays(1)))
+        assertThatThrownBy(() -> service.isRefreshTokenCurrent(1L, role, "raw"))
                 .isInstanceOf(AuthException.class)
                 .extracting(e -> ((AuthException) e).getErrorCode()).isEqualTo(AuthErrorCode.LOGIN_FAILED);
     }

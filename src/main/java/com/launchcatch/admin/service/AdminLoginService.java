@@ -10,6 +10,7 @@ import com.launchcatch.auth.exception.AuthException;
 import com.launchcatch.auth.jwt.JwtTokenProvider;
 import com.launchcatch.auth.opaque.OpaqueTokenGenerator;
 import com.launchcatch.auth.opaque.TokenHasher;
+import com.launchcatch.auth.opaque.RefreshTokenRepository;
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.time.Duration;
@@ -32,17 +33,19 @@ public class AdminLoginService {
     private final PasswordEncoder passwordEncoder;
     private final JwtTokenProvider jwtTokenProvider;
     private final AdminLoginTransactionService loginTransactionService;
+    private final RefreshTokenRepository refreshTokenRepository;
     private final Clock clock;
     private final String dummyPasswordHash;
 
     public AdminLoginService(
             AdminRepository adminRepository, PasswordEncoder passwordEncoder, JwtTokenProvider jwtTokenProvider,
             AdminLoginTransactionService loginTransactionService,
-            Clock clock) {
+            RefreshTokenRepository refreshTokenRepository, Clock clock) {
         this.adminRepository = adminRepository;
         this.passwordEncoder = passwordEncoder;
         this.jwtTokenProvider = jwtTokenProvider;
         this.loginTransactionService = loginTransactionService;
+        this.refreshTokenRepository = refreshTokenRepository;
         this.clock = clock;
         this.dummyPasswordHash = passwordEncoder.encode("dummy-password-for-admin-login");
     }
@@ -83,10 +86,12 @@ public class AdminLoginService {
         }
 
         try {
-            if (!loginTransactionService.publishRefreshTokenIfCurrent(
-                    state.adminId(), state.role(), refreshToken, ttl)) {
+            if (!loginTransactionService.isRefreshTokenCurrent(
+                    state.adminId(), state.role(), refreshToken)) {
                 log.info("event=ADMIN_LOGIN_CACHE_PUBLICATION_SKIPPED adminId={} reason=SUPERSEDED",
                         state.adminId());
+            } else {
+                publishRefreshToken(state, refreshToken, ttl);
             }
         } catch (AuthException e) {
             cleanupFailedLogin(state.adminId(), tokenHash, now, e);
@@ -98,6 +103,21 @@ public class AdminLoginService {
         }
         return new AdminLoginResult(new AdminLoginResponse(state.adminId(), state.name(), state.role()),
                 accessToken, refreshToken);
+    }
+
+    // DB 연결과 행 잠금을 반환한 뒤 순번 비교 Lua로 늦게 도착한 이전 게시를 거부한다.
+    private void publishRefreshToken(AdminLoginTransactionService.LoginDbState state, String refreshToken, Duration ttl) {
+        try {
+            if (!refreshTokenRepository.saveIfNewer(refreshToken, state.adminId(), state.role(), true,
+                    ttl, state.issuanceVersion())) {
+                log.info("event=ADMIN_LOGIN_CACHE_PUBLICATION_SKIPPED adminId={} reason=NEWER_PUBLICATION",
+                        state.adminId());
+            }
+        } catch (DataAccessException e) {
+            // 예외 메시지와 cause는 토큰을 포함할 수 있어 종류와 스택 프레임만 남긴다.
+            log.warn("event=ADMIN_LOGIN_CACHE_PUBLICATION_FAILED adminId={} errorType={} stack={}",
+                    state.adminId(), e.getClass().getSimpleName(), java.util.Arrays.toString(e.getStackTrace()));
+        }
     }
 
     // 다른 로그인의 백업을 지우지 않고 실패한 이번 로그인에서 기록한 해시만 조건부 제거한다.

@@ -41,6 +41,7 @@ class AdminLoginServiceTest {
     private final PasswordEncoder encoder = mock(PasswordEncoder.class);
     private final JwtTokenProvider jwt = mock(JwtTokenProvider.class);
     private final AdminLoginTransactionService transactions = mock(AdminLoginTransactionService.class);
+    private final com.launchcatch.auth.opaque.RefreshTokenRepository cache = mock(com.launchcatch.auth.opaque.RefreshTokenRepository.class);
     private final Clock clock = Clock.fixed(Instant.parse("2026-10-08T03:00:00Z"), ZoneId.of("Asia/Seoul"));
     private final AdminLoginRequest request = new AdminLoginRequest("admin01", "Freshman!2026");
     private AdminLoginService service;
@@ -48,7 +49,7 @@ class AdminLoginServiceTest {
     @BeforeEach
     void setUp() {
         when(encoder.encode(any())).thenReturn("dummy-hash");
-        service = new AdminLoginService(admins, encoder, jwt, transactions, clock);
+        service = new AdminLoginService(admins, encoder, jwt, transactions, cache, clock);
     }
 
     @ParameterizedTest
@@ -63,7 +64,7 @@ class AdminLoginServiceTest {
         assertThat(result.refreshToken()).matches("[A-Za-z0-9_-]{43}");
         verify(transactions).issueRefreshToken(1L, "password-hash", TokenHasher.sha256(result.refreshToken()),
                 LocalDateTime.now(clock).plusDays(1));
-        verify(transactions).publishRefreshTokenIfCurrent(1L, role, result.refreshToken(), Duration.ofDays(1));
+        verify(transactions).isRefreshTokenCurrent(1L, role, result.refreshToken());
     }
 
     @Test
@@ -115,7 +116,7 @@ class AdminLoginServiceTest {
         when(transactions.issueRefreshToken(eq(1L), any(), any(), any()))
                 .thenThrow(new DataAccessResourceFailureException("DB unavailable"));
         assertFailure(AuthErrorCode.REFRESH_TOKEN_STORE_UNAVAILABLE);
-        verify(transactions, never()).publishRefreshTokenIfCurrent(any(), any(), any(), any());
+        verify(transactions, never()).isRefreshTokenCurrent(any(), any(), any());
     }
 
     @Test
@@ -124,7 +125,7 @@ class AdminLoginServiceTest {
         when(transactions.issueRefreshToken(eq(1L), any(), any(), any()))
                 .thenThrow(new CannotCreateTransactionException("DB unavailable"));
         assertFailure(AuthErrorCode.REFRESH_TOKEN_STORE_UNAVAILABLE);
-        verify(transactions, never()).publishRefreshTokenIfCurrent(any(), any(), any(), any());
+        verify(transactions, never()).isRefreshTokenCurrent(any(), any(), any());
     }
 
     @Test
@@ -133,14 +134,14 @@ class AdminLoginServiceTest {
         when(transactions.issueRefreshToken(eq(1L), any(), any(), any()))
                 .thenThrow(new AuthException(AuthErrorCode.LOGIN_FAILED));
         assertFailure(AuthErrorCode.LOGIN_FAILED);
-        verify(transactions, never()).publishRefreshTokenIfCurrent(any(), any(), any(), any());
+        verify(transactions, never()).isRefreshTokenCurrent(any(), any(), any());
     }
 
     @Test
     void 최종_DB_조회_장애는_AUTH002이며_이번_백업을_정리한다() {
         prepare(Role.ADMIN);
         doThrow(new DataAccessResourceFailureException("DB unavailable"))
-                .when(transactions).publishRefreshTokenIfCurrent(eq(1L), eq(Role.ADMIN), any(), any());
+                .when(transactions).isRefreshTokenCurrent(eq(1L), eq(Role.ADMIN), any());
         assertFailure(AuthErrorCode.REFRESH_TOKEN_STORE_UNAVAILABLE);
         verify(transactions).clearRefreshTokenIfMatches(eq(1L), any(), eq(LocalDateTime.now(clock)));
     }
@@ -148,7 +149,7 @@ class AdminLoginServiceTest {
     @Test
     void 최종_트랜잭션_실패는_AUTH002이며_이번_백업을_정리한다() {
         prepare(Role.ADMIN);
-        when(transactions.publishRefreshTokenIfCurrent(eq(1L), any(), any(), any()))
+        when(transactions.isRefreshTokenCurrent(eq(1L), any(), any()))
                 .thenThrow(new CannotCreateTransactionException("DB unavailable during publication"));
         assertFailure(AuthErrorCode.REFRESH_TOKEN_STORE_UNAVAILABLE);
         verify(transactions).clearRefreshTokenIfMatches(eq(1L), any(), eq(LocalDateTime.now(clock)));
@@ -157,7 +158,7 @@ class AdminLoginServiceTest {
     @Test
     void 다른_로그인으로_교체된_토큰은_캐시에_게시하지_않는다() {
         prepare(Role.ADMIN);
-        when(transactions.publishRefreshTokenIfCurrent(eq(1L), any(), any(), any())).thenReturn(false);
+        when(transactions.isRefreshTokenCurrent(eq(1L), any(), any())).thenReturn(false);
         assertThat(service.login(request).response().adminId()).isEqualTo(1L);
     }
 
@@ -165,7 +166,7 @@ class AdminLoginServiceTest {
     void 토큰은_잠금후_확인한_최신_권한으로_발급한다() {
         prepare(Role.SUPER_ADMIN);
         when(transactions.issueRefreshToken(eq(1L), any(), any(), any()))
-                .thenReturn(new AdminLoginTransactionService.LoginDbState(1L, "관리자", Role.ADMIN));
+                .thenReturn(new AdminLoginTransactionService.LoginDbState(1L, "관리자", Role.ADMIN, 1L));
         when(jwt.createAccessToken(1L, Role.ADMIN)).thenReturn("admin-token");
         assertThat(service.login(request).response().role()).isEqualTo(Role.ADMIN);
         verify(jwt).createAccessToken(1L, Role.ADMIN);
@@ -177,7 +178,7 @@ class AdminLoginServiceTest {
         when(jwt.createAccessToken(1L, Role.ADMIN)).thenThrow(new IllegalStateException("signing failed"));
         assertThatThrownBy(() -> service.login(request)).isInstanceOf(IllegalStateException.class);
         verify(transactions).clearRefreshTokenIfMatches(eq(1L), any(), eq(LocalDateTime.now(clock)));
-        verify(transactions, never()).publishRefreshTokenIfCurrent(any(), any(), any(), any());
+        verify(transactions, never()).isRefreshTokenCurrent(any(), any(), any());
     }
 
     @Test
@@ -194,7 +195,7 @@ class AdminLoginServiceTest {
     void 최종_계정_검사_거부는_이번_해시만_정리하고_AUTH001을_유지한다() {
         prepare(Role.ADMIN);
         var rejected = new AuthException(AuthErrorCode.LOGIN_FAILED);
-        when(transactions.publishRefreshTokenIfCurrent(eq(1L), any(), any(), any())).thenThrow(rejected);
+        when(transactions.isRefreshTokenCurrent(eq(1L), any(), any())).thenThrow(rejected);
         var hash = org.mockito.ArgumentCaptor.forClass(String.class);
         assertThatThrownBy(() -> service.login(request)).isSameAs(rejected);
         verify(transactions).issueRefreshToken(eq(1L), any(), hash.capture(), any());
@@ -206,9 +207,24 @@ class AdminLoginServiceTest {
         prepare(Role.ADMIN);
         var rejected = new AuthException(AuthErrorCode.LOGIN_FAILED);
         var cleanup = new DataAccessResourceFailureException("cleanup failed");
-        when(transactions.publishRefreshTokenIfCurrent(eq(1L), any(), any(), any())).thenThrow(rejected);
+        when(transactions.isRefreshTokenCurrent(eq(1L), any(), any())).thenThrow(rejected);
         doThrow(cleanup).when(transactions).clearRefreshTokenIfMatches(eq(1L), any(), any());
         assertThatThrownBy(() -> service.login(request)).isSameAs(rejected).hasSuppressedException(cleanup);
+    }
+
+    @Test
+    void Redis_장애는_DB_최종검사_후_로그인을_유지한다() {
+        prepare(Role.ADMIN);
+        when(cache.saveIfNewer(any(), eq(1L), eq(Role.ADMIN), eq(true), any(), eq(1L)))
+                .thenThrow(new DataAccessResourceFailureException("Redis unavailable"));
+        assertThat(service.login(request).response().adminId()).isEqualTo(1L);
+    }
+
+    @Test
+    void 최신_게시가_있으면_이전_게시를_건너뛴다() {
+        prepare(Role.ADMIN);
+        when(cache.saveIfNewer(any(), eq(1L), eq(Role.ADMIN), eq(true), any(), eq(1L))).thenReturn(false);
+        assertThat(service.login(request).response().adminId()).isEqualTo(1L);
     }
 
     private void prepare(Role role) {
@@ -216,9 +232,10 @@ class AdminLoginServiceTest {
         when(encoder.matches(request.password(), "password-hash")).thenReturn(true);
         when(jwt.refreshTokenValidityMs(role)).thenReturn(Duration.ofDays(1).toMillis());
         when(transactions.issueRefreshToken(eq(1L), any(), any(), any()))
-                .thenReturn(new AdminLoginTransactionService.LoginDbState(1L, "관리자", role));
+                .thenReturn(new AdminLoginTransactionService.LoginDbState(1L, "관리자", role, 1L));
         when(jwt.createAccessToken(1L, role)).thenReturn("signed-access-token");
-        when(transactions.publishRefreshTokenIfCurrent(eq(1L), any(), any(), any())).thenReturn(true);
+        when(cache.saveIfNewer(any(), eq(1L), any(), eq(true), any(), eq(1L))).thenReturn(true);
+        when(transactions.isRefreshTokenCurrent(eq(1L), any(), any())).thenReturn(true);
     }
 
     private Admin admin(Role role) {
