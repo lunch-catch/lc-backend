@@ -77,6 +77,35 @@ class MemberLocationServiceTest {
         assertThat(member.getProfile().getLatitude()).isEqualTo(LATITUDE);
     }
 
+    // 위치 동의는 GPS 수집 여부일 뿐이라, 동의를 거부한 회원도 주소 검색으로 고른 대표 위치는 저장할 수 있다.
+    @Test
+    @DisplayName("위치 동의를 거부한 회원도 위치를 저장할 수 있다")
+    void 위치_동의를_거부한_회원도_위치를_저장할_수_있다() throws Exception {
+        Member member = member();
+        MemberProfile profile = MemberProfile.create(member);
+        when(memberRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(member));
+        when(memberProfileRepository.findByMember_Id(1L)).thenReturn(Optional.of(profile));
+
+        service.save(1L, request());
+
+        assertThat(member.isLocationOptIn()).isFalse();
+        assertThat(profile.getRoadAddress()).isEqualTo("서울특별시 중구 세종대로 110");
+    }
+
+    @Test
+    @DisplayName("GPS 모드는 좌표만 저장하고 별칭과 주소는 비운다")
+    void GPS_모드는_좌표만_저장하고_별칭과_주소는_비운다() throws Exception {
+        Member member = member();
+        MemberProfile profile = MemberProfile.create(member);
+        profile.updateLocation("집", "서울특별시 중구 세종대로 110", LATITUDE, LONGITUDE);
+        when(memberRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(member));
+        when(memberProfileRepository.findByMember_Id(1L)).thenReturn(Optional.of(profile));
+
+        MemberLocationResponse response = service.save(1L, new MemberLocationRequest(null, null, LATITUDE, LONGITUDE));
+
+        assertThat(response).isEqualTo(new MemberLocationResponse(null, null, LATITUDE, LONGITUDE));
+    }
+
     // 저장 위치는 반올림하지 않고 DECIMAL(10,7) 에 받은 값 그대로 남긴다.
     @Test
     @DisplayName("좌표는 반올림 없이 그대로 저장된다")

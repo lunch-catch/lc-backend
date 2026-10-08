@@ -7,6 +7,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
 
+import com.launchcatch.member.contract.MemberStatus;
 import com.launchcatch.member.dto.MemberOnboardingRequest;
 import com.launchcatch.member.dto.MemberResponse;
 import com.launchcatch.member.dto.MemberUpdateRequest;
@@ -75,7 +76,8 @@ class MemberProfileServiceTest {
 
         assertThatThrownBy(() -> memberProfileService.completeOnboarding(1L,
                 new MemberOnboardingRequest(Gender.FEMALE, AgeGroup.AGE_20S, true, false)))
-                .isInstanceOf(MemberException.class);
+                .isInstanceOfSatisfying(MemberException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(MemberErrorCode.ONBOARDING_ALREADY_COMPLETED));
     }
 
     @Test
@@ -115,6 +117,33 @@ class MemberProfileServiceTest {
                 new MemberUpdateRequest("새닉네임", null, null)))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessage("authenticated member does not exist");
+    }
+
+    @Test
+    @DisplayName("정지된 회원도 온보딩할 수 있다")
+    void 정지된_회원도_온보딩할_수_있다() throws Exception {
+        Member member = member();
+        suspend(member);
+        when(memberRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(member));
+        when(memberProfileRepository.save(any(MemberProfile.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        MemberResponse response = memberProfileService.completeOnboarding(1L,
+                new MemberOnboardingRequest(Gender.MALE, AgeGroup.AGE_40S, false, false));
+
+        assertThat(response.status()).isEqualTo(MemberStatus.SUSPENDED);
+        assertThat(response.onboardingCompleted()).isTrue();
+    }
+
+    @Test
+    @DisplayName("프로필 이미지가 없는 회원도 내 정보를 조회할 수 있다")
+    void 프로필_이미지가_없는_회원도_내_정보를_조회할_수_있다() throws Exception {
+        Member member = member();
+        when(memberRepository.findById(1L)).thenReturn(Optional.of(member));
+
+        MemberResponse response = memberProfileService.getMyProfile(1L);
+
+        assertThat(response.profileImageUrl()).isNull();
+        assertThat(response.nickname()).isEqualTo("점심헌터");
     }
 
     @Test
@@ -194,6 +223,12 @@ class MemberProfileServiceTest {
         assertThatThrownBy(() -> memberProfileService.getMyProfile(1L))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessage("authenticated member does not exist");
+    }
+
+    private void suspend(Member member) throws Exception {
+        Field field = Member.class.getDeclaredField("status");
+        field.setAccessible(true);
+        field.set(member, MemberStatus.SUSPENDED);
     }
 
     private Member member() throws Exception {

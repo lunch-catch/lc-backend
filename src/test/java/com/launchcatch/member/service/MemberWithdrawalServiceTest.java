@@ -16,6 +16,7 @@ import com.launchcatch.member.entity.KakaoUnlinkFailure;
 import com.launchcatch.member.entity.KakaoUnlinkStopReason;
 import com.launchcatch.member.entity.Member;
 import com.launchcatch.member.entity.MemberProfile;
+import com.launchcatch.member.exception.MemberErrorCode;
 import com.launchcatch.member.exception.MemberException;
 import com.launchcatch.member.oauth.KakaoIdTokenExchanger;
 import com.launchcatch.member.oauth.KakaoIdentity;
@@ -205,7 +206,8 @@ class MemberWithdrawalServiceTest {
         when(memberRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(member));
 
         assertThatThrownBy(() -> memberWithdrawalService.withdraw(1L, "code", "state"))
-                .isInstanceOf(MemberException.class);
+                .isInstanceOfSatisfying(MemberException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(MemberErrorCode.ALREADY_WITHDRAWN));
     }
 
     @Test
