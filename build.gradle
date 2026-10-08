@@ -193,6 +193,12 @@ dependencies {
      */
     testImplementation 'org.testcontainers:testcontainers-junit-jupiter'
     testImplementation 'org.testcontainers:testcontainers-mysql'
+
+    /*
+     * LLM 이 만든 템플릿 HTML 을 파싱하고 정화한다.
+     * 정화 규칙은 TemplateHtmlSanitizer 가 갖는다.
+     */
+    implementation 'org.jsoup:jsoup:1.23.2'
 }
 
 /*
