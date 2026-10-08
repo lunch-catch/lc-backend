@@ -60,15 +60,11 @@ public class JwtTokenProvider {
         this.refreshTokenValidityMs = Map.copyOf(validity);
     }
 
-    public String createAccessToken(Long id, Role role) { return createAccessToken(id, role, null); }
-
-    /** 상태의 의미와 허용 여부는 호출하는 도메인이 판단한다. */
-    public String createAccessToken(Long id, Role role, String ownerStatus) {
+    public String createAccessToken(Long id, Role role) {
         Instant now = clock.instant();
         return Jwts.builder()
                 .subject(String.valueOf(id))
                 .claim(ROLE_CLAIM, role.name())
-                .claim("ownerStatus", role == Role.OWNER ? ownerStatus : null)
                 .issuedAt(Date.from(now))
                 .expiration(Date.from(now.plusMillis(accessTokenValidityMs)))
                 .signWith(secretKey)
@@ -97,10 +93,6 @@ public class JwtTokenProvider {
     /** 목록에 없는 값이면 null 이다. 근거는 Role.from 의 주석에 있다. */
     public Role getRole(String token) {
         return Role.from(parseClaims(token).get(ROLE_CLAIM, String.class));
-    }
-
-    public String getOwnerStatus(String token) {
-        return parseClaims(token).get("ownerStatus", String.class);
     }
 
     public LocalDateTime getIssuedAt(String token) {

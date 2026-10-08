@@ -75,7 +75,7 @@ public class OwnerLoginService {
                 owner.recordLogin(TokenHasher.sha256(refreshToken), now.plus(ttl), now);
                 ownerRepository.saveAndFlush(owner);
                 String accessToken = jwtTokenProvider.createAccessToken(
-                        owner.getId(), Role.OWNER, owner.getStatus().name());
+                        owner.getId(), Role.OWNER);
                 Boolean tutorialViewed = owner.getStatus() == OwnerStatus.ACTIVE
                         ? owner.isTutorialViewed() : null;
                 return new OwnerLoginResult(new OwnerLoginResponse(owner.getEmail(), Role.OWNER,

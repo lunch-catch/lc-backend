@@ -50,14 +50,14 @@ class OwnerLoginServiceTest {
         when(repository.findByIdForLogin(7L)).thenReturn(Optional.of(owner));
         when(manager.getTransaction(any(TransactionDefinition.class))).thenReturn(new SimpleTransactionStatus());
         when(jwt.refreshTokenValidityMs(Role.OWNER)).thenReturn(Duration.ofDays(14).toMillis());
-        when(jwt.createAccessToken(eq(7L), eq(Role.OWNER), anyString())).thenReturn("test-access");
+        when(jwt.createAccessToken(7L, Role.OWNER)).thenReturn("test-access");
         service = new OwnerLoginService(repository, encoder, jwt, cache, clock, manager);
         clearInvocations(encoder);
     }
 
     @ParameterizedTest
     @EnumSource(value = OwnerStatus.class, names = {"ONBOARDING", "ACTIVE"})
-    void 로그인_성공은_해시와_시각을_저장하고_상태를_토큰에_반영한다(OwnerStatus status) {
+    void 로그인_성공은_해시와_시각을_저장하고_상태를_응답에_반영한다(OwnerStatus status) {
         ReflectionTestUtils.setField(owner, "status", status);
         var result = service.login(request);
         LocalDateTime now = LocalDateTime.ofInstant(clock.instant(), ClockConfig.ZONE);
@@ -73,7 +73,7 @@ class OwnerLoginServiceTest {
             assertThat(result.response().tutorialViewed()).isNull();
         }
         assertThat(result.toString()).doesNotContain(result.accessToken(), result.refreshToken(), request.email());
-        verify(jwt).createAccessToken(7L, Role.OWNER, status.name());
+        verify(jwt).createAccessToken(7L, Role.OWNER);
         var order = inOrder(manager, cache);
         order.verify(manager).commit(any());
         order.verify(cache).save(result.refreshToken(), 7L, Role.OWNER, true, Duration.ofDays(14));
