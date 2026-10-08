@@ -54,7 +54,13 @@ public class TemplateCreateService {
         Document document = Jsoup.parseBodyFragment(generate(requestPrompt));
         TemplateSanitizeResult sanitized = templateHtmlSanitizer.sanitize(document);
         templateSlotValidator.validate(document);
-        return transactionTemplate.execute(status -> save(name, requestPrompt, requestId, adminId, sanitized));
+        try {
+            return transactionTemplate.execute(status -> save(name, requestPrompt, requestId, adminId, sanitized));
+        } catch (DataIntegrityViolationException e) {
+            return templateVersionRepository.findByRequestId(requestId)
+                    .map(found -> toResponse(found, List.<String>of()))
+                    .orElseThrow(() -> e);
+        }
     }
 
     private String generate(String requestPrompt) {
@@ -72,8 +78,11 @@ public class TemplateCreateService {
      *
      * 같은 requestId 로 동시에 들어온 두 요청은 위의 조회를 둘 다 빈 상태로 지나칠 수 있다.
      * 그 경쟁은 request_id 의 UNIQUE 제약이 막는다: saveAndFlush 로 실제 INSERT 를 이
-     * 트랜잭션 안에서 바로 실행해 제약 위반을 여기서 잡고, 먼저 저장된 버전을 다시 읽어
-     * 그 응답을 돌려준다.
+     * 트랜잭션 안에서 바로 실행해 제약 위반을 이 시점에 드러낸다. 예외는 여기서 잡지
+     * 않고 그대로 던진다. 트랜잭션 안에서 잡으면 Spring 이 이미 rollback-only 로 표시해
+     * 둬서, transactionTemplate 이 커밋하려는 순간 UnexpectedRollbackException 이 터진다.
+     * 대신 트랜잭션을 깨끗이 롤백시키고(쿼터 증가분도 함께 롤백됨), 호출한 쪽인 create()
+     * 가 트랜잭션 밖에서 다시 조회해 먼저 저장된 버전으로 응답한다.
      */
     private TemplateCreateResponse save(
             String name, String requestPrompt, String requestId, Long adminId, TemplateSanitizeResult sanitized) {
@@ -83,13 +92,7 @@ public class TemplateCreateService {
         Template template = Template.createDraft(name);
         TemplateVersion version = template.addDraftVersion(
                 adminId, LocalDateTime.now(clock), requestPrompt, requestId, sanitized.html());
-        try {
-            templateRepository.saveAndFlush(template);
-        } catch (DataIntegrityViolationException e) {
-            return templateVersionRepository.findByRequestId(requestId)
-                    .map(found -> toResponse(found, List.<String>of()))
-                    .orElseThrow(() -> e);
-        }
+        templateRepository.saveAndFlush(template);
         return toResponse(version, sanitized.removedElements());
     }
 
