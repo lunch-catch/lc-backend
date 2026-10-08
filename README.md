@@ -70,7 +70,7 @@ cp application-local.yml.example application-local.yml   # 값을 채운다
 curl http://localhost:8081/actuator/health
 ```
 
-**다섯 값을 주지 않으면 애플리케이션이 뜨지 않는다.** `JWT_SECRET`, `KAKAO_CLIENT_ID`, `KAKAO_CLIENT_SECRET`, `KAKAO_APP_ID`, `KAKAO_ADMIN_KEY` 를 `application-local.yml` 이나 환경 변수 중 하나로 채운다. 매핑할 값과 막혔을 때 참고할 문서는 [로컬 실행](./docs/workflow/로컬_실행.md)에 있다.
+**설정 파일(`application-local.yml`)을 만들지 않으면 애플리케이션이 뜨지 않는다.** 매핑할 값과 막혔을 때 참고할 문서는 [로컬 실행](./docs/workflow/로컬_실행.md)에 있다.
 
 | 대상 | 주소 |
 |---|---|
