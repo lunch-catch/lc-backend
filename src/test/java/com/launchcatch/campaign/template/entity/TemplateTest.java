@@ -66,6 +66,24 @@ class TemplateTest {
     }
 
     @Test
+    @DisplayName("최신 버전은 버전 번호가 가장 큰 것이다")
+    void 최신_버전은_번호가_가장_크다() {
+        Template template = Template.createDraft("가을 신메뉴");
+        template.addDraftVersion(1L, NOW, "요청 하나", "req-1", "<div></div>");
+        TemplateVersion second = template.addDraftVersion(1L, NOW, "요청 둘", "req-2", "<p></p>");
+
+        assertThat(template.latestVersion()).isSameAs(second);
+    }
+
+    @Test
+    @DisplayName("버전이 하나도 없으면 최신 버전을 가져올 수 없다")
+    void 버전이_없으면_최신_버전을_가져올_수_없다() {
+        Template template = Template.createDraft("가을 신메뉴");
+
+        assertThatThrownBy(template::latestVersion).isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
     @DisplayName("버전 번호가 1보다 작으면 만들 수 없다")
     void 버전_번호는_양수여야_한다() {
         Template template = Template.createDraft("가을 신메뉴");

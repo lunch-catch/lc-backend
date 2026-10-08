@@ -11,6 +11,7 @@ import jakarta.persistence.OneToMany;
 import jakarta.persistence.Table;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import lombok.AccessLevel;
 import lombok.Getter;
@@ -83,6 +84,16 @@ public class Template extends BaseTimeEntity {
 
     private int nextVersionNumber() {
         return versions.stream().mapToInt(TemplateVersion::getVersionNumber).max().orElse(0) + 1;
+    }
+
+    /*
+     * createDraft() 직후 바로 addDraftVersion() 이 불려 버전이 최소 1개는 항상 있다.
+     * 그래서 없는 경우는 불변식이 깨진 것으로 보고 예외를 던진다.
+     */
+    public TemplateVersion latestVersion() {
+        return versions.stream()
+                .max(Comparator.comparingInt(TemplateVersion::getVersionNumber))
+                .orElseThrow(() -> new IllegalStateException("template has no version: id=" + getId()));
     }
 
     private static String requiredName(String value) {
