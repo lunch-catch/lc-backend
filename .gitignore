@@ -38,6 +38,8 @@ bin/
 !.env.example
 # application-local.yml.example 은 올린다. 실제 값이 든 application-local.yml 은 올리지 않는다
 src/main/resources/application-local.yml
+# 템플릿이 프로젝트 루트에 이 이름으로 복사하라고 한다. 확장자가 yml 인 줄이 빠져 있었다
+application-local.yml
 application-local.yaml
 application-local.properties
 

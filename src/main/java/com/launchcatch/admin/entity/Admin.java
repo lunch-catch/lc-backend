@@ -54,7 +54,10 @@ public class Admin extends BaseTimeEntity {
     @Column(nullable = false, length = 30)
     private AdminStatus status;
 
-    // 로그인마다 현재 Refresh Token의 해시와 만료 시각을 함께 갱신한다.
+    /*
+     * 기기 한 대분만 저장한다.
+     * 로그인마다 현재 Refresh Token의 해시와 만료 시각을 함께 갱신한다.
+     */
     @Column(name = "refresh_token_hash", length = 64)
     private String refreshTokenHash;
 

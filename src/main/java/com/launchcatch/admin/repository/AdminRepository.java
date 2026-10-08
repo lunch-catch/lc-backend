@@ -19,7 +19,7 @@ public interface AdminRepository extends JpaRepository<Admin, Long> {
     @Query("select a from Admin a where a.id = :id")
     Optional<Admin> findByIdForUpdate(@Param("id") Long id);
 
-    // JWT 발급 실패를 보상할 때 다른 로그인에서 저장한 토큰을 지우지 않는다.
+    // 로그인 실패를 보상할 때 다른 로그인에서 저장한 토큰을 지우지 않는다.
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("""
             update Admin a

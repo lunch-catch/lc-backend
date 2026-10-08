@@ -49,7 +49,8 @@ public class HttpBodyLoggingFilter extends OncePerRequestFilter {
 
     private static final List<String> EXCLUDED_PATH_PREFIXES = List.of(
             "/notifications/stream", // SSE 등 스트리밍 응답은 캐싱하면 안 됨
-            "/v1/admin/auth/" // 관리자 로그인 본문은 비밀번호를 포함하므로 캐싱과 로깅에서 제외한다.
+            "/v1/admin/auth/", // 관리자 로그인 본문은 비밀번호를 포함하므로 캐싱과 로깅에서 제외한다.
+            "/v1/admin/admins" // 초기 비밀번호를 포함하므로 요청/응답 본문 로깅 제외
     );
 
     // (OBS-3-05) 이 목록에 없는 Content-Type은 캐싱/로깅 대상에서 뺀다. 텍스트 계열이 아닌
@@ -91,7 +92,7 @@ public class HttpBodyLoggingFilter extends OncePerRequestFilter {
             "(?i)(\"(password|accessToken|refreshToken|token|qrToken|secret|authorization|idToken|clientSecret"
                     + "|phone|address|roadAddress|locationNickname|name|sub|businessRegistrationNumber|businessNumber"
                     + "|lat|lng|latitude|longitude"
-                    + "|currentPassword|newPassword|representativeName|fid"
+                    + "|initialPassword|currentPassword|newPassword|representativeName|fid"
                     + "|providerUserId|kakaoUserId|user_id|paymentKey"
                     + "|authorizationCode|state|nonce)\"\\s*:\\s*\")([^\"]*)(\")");
 
@@ -103,7 +104,7 @@ public class HttpBodyLoggingFilter extends OncePerRequestFilter {
             "(?i)((?:^|&)(?:password|accessToken|refreshToken|token|qrToken|secret|authorization|idToken|clientSecret"
                     + "|phone|address|roadAddress|locationNickname|name|sub|businessRegistrationNumber|businessNumber"
                     + "|lat|lng|latitude|longitude"
-                    + "|currentPassword|newPassword|representativeName|fid"
+                    + "|initialPassword|currentPassword|newPassword|representativeName|fid"
                     + "|providerUserId|kakaoUserId|user_id|paymentKey"
                     + "|authorizationCode|state|nonce)=)([^&]*)");
 
