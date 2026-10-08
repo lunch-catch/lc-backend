@@ -113,7 +113,7 @@ public class OwnerLoginService {
             log.info("event=OWNER_LOGIN_REFRESH_CACHE_SKIPPED ownerId={} reason=SUPERSEDED", ownerId);
             return;
         }
-        Duration remaining = Duration.between(LocalDateTime.ofInstant(clock.instant(), ClockConfig.ZONE), publication.expiresAt());
+        Duration remaining = Duration.between(clock.instant(), publication.expiresAt().atZone(ClockConfig.ZONE).toInstant());
         if (remaining.toMillis() <= 0) {
             throw new AuthException(AuthErrorCode.LOGIN_FAILED);
         }
