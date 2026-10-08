@@ -3,10 +3,13 @@ package com.launchcatch.campaign.template.entity;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.time.LocalDateTime;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 class TemplateTest {
+
+    private static final LocalDateTime NOW = LocalDateTime.of(2026, 10, 8, 10, 0);
 
     @Test
     @DisplayName("템플릿은 임시저장 상태이고 비활성이며 확정 HTML이 비어 있는 채로 만들어진다")
@@ -18,6 +21,8 @@ class TemplateTest {
         assertThat(template.isActive()).isFalse();
         assertThat(template.getHtmlContent()).isNull();
         assertThat(template.getPublishedAt()).isNull();
+        assertThat(template.getLastModifiedBy()).isNull();
+        assertThat(template.getLastModifiedAt()).isNull();
     }
 
     @Test
@@ -30,18 +35,20 @@ class TemplateTest {
     }
 
     @Test
-    @DisplayName("버전을 더하면 번호가 1부터 이어서 붙는다")
+    @DisplayName("버전을 더하면 번호가 1부터 이어서 붙고 최종 수정자와 시각이 갱신된다")
     void 버전_번호는_이어서_붙는다() {
         Template template = Template.createDraft("가을 신메뉴");
 
-        TemplateVersion first = template.addDraftVersion("요청 하나", "<div></div>");
-        TemplateVersion second = template.addDraftVersion("요청 둘", "<p></p>");
+        TemplateVersion first = template.addDraftVersion(1L, NOW, "요청 하나", "<div></div>");
+        TemplateVersion second = template.addDraftVersion(2L, NOW.plusMinutes(1), "요청 둘", "<p></p>");
 
         assertThat(first.getVersionNumber()).isEqualTo(1);
         assertThat(first.getRequestPrompt()).isEqualTo("요청 하나");
         assertThat(first.getHtmlContent()).isEqualTo("<div></div>");
         assertThat(first.getTemplate()).isSameAs(template);
         assertThat(second.getVersionNumber()).isEqualTo(2);
+        assertThat(template.getLastModifiedBy()).isEqualTo(2L);
+        assertThat(template.getLastModifiedAt()).isEqualTo(NOW.plusMinutes(1));
     }
 
     @Test
@@ -49,9 +56,9 @@ class TemplateTest {
     void 요청_문장이나_HTML이_비면_버전을_만들_수_없다() {
         Template template = Template.createDraft("가을 신메뉴");
 
-        assertThatThrownBy(() -> template.addDraftVersion(" ", "<div></div>"))
+        assertThatThrownBy(() -> template.addDraftVersion(1L, NOW, " ", "<div></div>"))
                 .isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> template.addDraftVersion("요청", null))
+        assertThatThrownBy(() -> template.addDraftVersion(1L, NOW, "요청", null))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 

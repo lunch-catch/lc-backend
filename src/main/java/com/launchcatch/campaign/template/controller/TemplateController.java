@@ -1,5 +1,6 @@
 package com.launchcatch.campaign.template.controller;
 
+import com.launchcatch.auth.CustomUserDetails;
 import com.launchcatch.campaign.template.dto.TemplateCreateRequest;
 import com.launchcatch.campaign.template.dto.TemplateCreateResponse;
 import com.launchcatch.campaign.template.service.TemplateCreateService;
@@ -12,6 +13,7 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -37,8 +39,10 @@ public class TemplateController {
             @ApiResponse(responseCode = "503", description = "POSTER-005: LLM 응답이 30초를 넘었습니다.")
     })
     public ResponseEntity<ResponseEnvelope<TemplateCreateResponse>> create(
-            @Valid @RequestBody TemplateCreateRequest request) {
-        TemplateCreateResponse response = templateCreateService.create(request.name(), request.requestPrompt());
+            @Valid @RequestBody TemplateCreateRequest request,
+            @AuthenticationPrincipal CustomUserDetails admin) {
+        TemplateCreateResponse response =
+                templateCreateService.create(request.name(), request.requestPrompt(), admin.getId());
         return ResponseEntity.status(HttpStatus.CREATED).body(ResponseEnvelope.success(response));
     }
 }

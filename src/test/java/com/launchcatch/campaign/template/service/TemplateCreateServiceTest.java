@@ -19,6 +19,10 @@ import com.launchcatch.campaign.template.entity.TemplateStatus;
 import com.launchcatch.campaign.template.repository.TemplateRepository;
 import com.launchcatch.global.entity.BaseTimeEntity;
 import java.lang.reflect.Field;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -40,6 +44,9 @@ class TemplateCreateServiceTest {
             + "<img data-slot=\"image\" alt=\"menu\">"
             + "</div>";
 
+    private static final Long ADMIN_ID = 1L;
+    private static final Clock FIXED_CLOCK = Clock.fixed(Instant.parse("2026-10-08T01:00:00Z"), ZoneOffset.UTC);
+
     @Mock
     private TemplateRepository templateRepository;
     @Mock
@@ -58,7 +65,8 @@ class TemplateCreateServiceTest {
                 new TemplateHtmlSanitizer(),
                 new TemplateSlotValidator(),
                 new TemplatePaletteValidator(),
-                transactionTemplate);
+                transactionTemplate,
+                FIXED_CLOCK);
         lenient().when(transactionTemplate.execute(any())).thenAnswer(invocation -> {
             TransactionCallback<?> callback = invocation.getArgument(0);
             return callback.doInTransaction(null);
@@ -76,7 +84,7 @@ class TemplateCreateServiceTest {
             return saved;
         });
 
-        TemplateCreateResponse response = service.create("가을 신메뉴", "가을 느낌");
+        TemplateCreateResponse response = service.create("가을 신메뉴", "가을 느낌", ADMIN_ID);
 
         assertThat(response.templateId()).isEqualTo(1L);
         assertThat(response.name()).isEqualTo("가을 신메뉴");
@@ -88,6 +96,8 @@ class TemplateCreateServiceTest {
         verify(templateRepository).save(captor.capture());
         assertThat(captor.getValue().isActive()).isFalse();
         assertThat(captor.getValue().getHtmlContent()).isNull();
+        assertThat(captor.getValue().getLastModifiedBy()).isEqualTo(ADMIN_ID);
+        assertThat(captor.getValue().getLastModifiedAt()).isEqualTo(LocalDateTime.now(FIXED_CLOCK));
     }
 
     @Test
@@ -95,7 +105,7 @@ class TemplateCreateServiceTest {
     void 템플릿이_10개면_거부한다() {
         when(templateRepository.count()).thenReturn(10L);
 
-        assertThatThrownBy(() -> service.create("가을 신메뉴", "가을 느낌"))
+        assertThatThrownBy(() -> service.create("가을 신메뉴", "가을 느낌", ADMIN_ID))
                 .isInstanceOfSatisfying(CampaignException.class, e ->
                         assertThat(e.getErrorCode()).isEqualTo(PosterErrorCode.TEMPLATE_LIMIT_EXCEEDED));
         verifyNoInteractions(templateHtmlGenerator);
@@ -109,7 +119,7 @@ class TemplateCreateServiceTest {
         TemplateGenerationTimeoutException timeout = new TemplateGenerationTimeoutException("30초 초과");
         when(templateHtmlGenerator.generate("가을 느낌")).thenThrow(timeout);
 
-        assertThatThrownBy(() -> service.create("가을 신메뉴", "가을 느낌"))
+        assertThatThrownBy(() -> service.create("가을 신메뉴", "가을 느낌", ADMIN_ID))
                 .isInstanceOfSatisfying(CampaignException.class, e -> {
                     assertThat(e.getErrorCode()).isEqualTo(PosterErrorCode.GENERATION_TIMEOUT);
                     assertThat(e.getCause()).isSameAs(timeout);
@@ -123,7 +133,7 @@ class TemplateCreateServiceTest {
         when(templateRepository.count()).thenReturn(0L);
         when(templateHtmlGenerator.generate("가을 느낌")).thenReturn("<div data-slot=\"eventName\">title</div>");
 
-        assertThatThrownBy(() -> service.create("가을 신메뉴", "가을 느낌"))
+        assertThatThrownBy(() -> service.create("가을 신메뉴", "가을 느낌", ADMIN_ID))
                 .isInstanceOfSatisfying(CampaignException.class, e ->
                         assertThat(e.getErrorCode()).isEqualTo(PosterErrorCode.SLOT_CONTRACT_VIOLATION));
         verifyNoInteractions(transactionTemplate);
@@ -136,7 +146,7 @@ class TemplateCreateServiceTest {
         when(templateRepository.count()).thenReturn(0L);
         when(templateHtmlGenerator.generate("가을 느낌")).thenReturn(VALID_HTML.replace("#000000", "#123456"));
 
-        assertThatThrownBy(() -> service.create("가을 신메뉴", "가을 느낌"))
+        assertThatThrownBy(() -> service.create("가을 신메뉴", "가을 느낌", ADMIN_ID))
                 .isInstanceOfSatisfying(CampaignException.class, e ->
                         assertThat(e.getErrorCode()).isEqualTo(PosterErrorCode.COLOR_NOT_ALLOWED));
         verifyNoInteractions(transactionTemplate);

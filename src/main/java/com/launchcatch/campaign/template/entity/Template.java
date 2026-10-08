@@ -48,6 +48,12 @@ public class Template extends BaseTimeEntity {
     @Column(name = "activated_at")
     private LocalDateTime activatedAt;
 
+    @Column(name = "last_modified_by")
+    private Long lastModifiedBy;
+
+    @Column(name = "last_modified_at")
+    private LocalDateTime lastModifiedAt;
+
     @Getter(AccessLevel.NONE)
     @OneToMany(mappedBy = "template", cascade = CascadeType.PERSIST)
     private List<TemplateVersion> versions = new ArrayList<>();
@@ -62,9 +68,11 @@ public class Template extends BaseTimeEntity {
         return new Template(name);
     }
 
-    public TemplateVersion addDraftVersion(String requestPrompt, String htmlContent) {
+    public TemplateVersion addDraftVersion(Long adminId, LocalDateTime now, String requestPrompt, String htmlContent) {
         TemplateVersion version = TemplateVersion.create(this, nextVersionNumber(), requestPrompt, htmlContent);
         versions.add(version);
+        this.lastModifiedBy = adminId;
+        this.lastModifiedAt = now;
         return version;
     }
 
