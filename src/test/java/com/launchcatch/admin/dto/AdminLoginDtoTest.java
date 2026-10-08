@@ -24,7 +24,8 @@ class AdminLoginDtoTest {
             assertThat(validator.validate(new AdminLoginRequest("admin01", "Freshman!2026"))).isEmpty();
             assertThat(validator.validate(new AdminLoginRequest("", ""))).hasSize(2);
             assertThat(validator.validate(new AdminLoginRequest(null, null))).hasSize(2);
-            assertThat(validator.validate(new AdminLoginRequest("a".repeat(51), "p".repeat(73)))).hasSize(2);
+            assertThat(validator.validate(new AdminLoginRequest("a".repeat(51), "Freshman!2026"))).hasSize(1);
+            assertThat(validator.validate(new AdminLoginRequest("admin01", "p".repeat(73)))).isEmpty();
         }
     }
 }

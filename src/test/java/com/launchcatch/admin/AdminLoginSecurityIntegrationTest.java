@@ -41,6 +41,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -121,6 +122,34 @@ class AdminLoginSecurityIntegrationTest {
         mvc.perform(post("/v1/admin/auth/tokens").contentType(MediaType.APPLICATION_JSON).content(BODY))
                 .andExpect(status().isUnauthorized()).andExpect(jsonPath("$.code").value("AUTH-001"))
                 .andExpect(header().doesNotExist(HttpHeaders.SET_COOKIE));
+    }
+
+    @ParameterizedTest
+    @CsvSource({"73, 0", "1, 24", "0, 25"})
+    void UTF8_72바이트_초과_비밀번호는_401_AUTH001이며_쿠키를_발급하지_않는다(
+            int asciiLength, int koreanLength) throws Exception {
+        String password = "a".repeat(asciiLength) + "가".repeat(koreanLength);
+        String body = "{\"loginId\":\"admin01\",\"password\":\"" + password + "\"}";
+        mvc.perform(post("/v1/admin/auth/tokens").contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isUnauthorized()).andExpect(jsonPath("$.code").value("AUTH-001"))
+                .andExpect(header().doesNotExist(HttpHeaders.SET_COOKIE));
+        org.mockito.Mockito.verifyNoInteractions(refreshTokens);
+        assertThat(admins.findByLoginId("admin01").orElseThrow().getRefreshTokenHash()).isNull();
+    }
+
+    @ParameterizedTest
+    @CsvSource({"72, 0", "0, 24"})
+    void UTF8_72바이트_비밀번호는_일치하면_로그인할_수_있다(
+            int asciiLength, int koreanLength) throws Exception {
+        String password = "a".repeat(asciiLength) + "가".repeat(koreanLength);
+        Admin admin = Admin.register("admin01", encoder.encode(password), "관리자", Role.SUPER_ADMIN);
+        ReflectionTestUtils.setField(admin, "id", 1L);
+        when(admins.findByLoginId("admin01")).thenReturn(Optional.of(admin));
+        when(admins.findByIdForUpdate(1L)).thenReturn(Optional.of(admin));
+        String body = "{\"loginId\":\"admin01\",\"password\":\"" + password + "\"}";
+        mvc.perform(post("/v1/admin/auth/tokens").contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.code").value("SUCCESS"))
+                .andExpect(header().exists(HttpHeaders.SET_COOKIE));
     }
 
     @Test
