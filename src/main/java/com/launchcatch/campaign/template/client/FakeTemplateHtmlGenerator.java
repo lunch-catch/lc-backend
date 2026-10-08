@@ -24,4 +24,9 @@ public class FakeTemplateHtmlGenerator implements TemplateHtmlGenerator {
     public String generate(String requestPrompt) {
         return HTML;
     }
+
+    @Override
+    public String revise(String previousHtml, String requestPrompt) {
+        return HTML;
+    }
 }
