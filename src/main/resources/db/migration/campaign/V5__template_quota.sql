@@ -8,7 +8,6 @@ CREATE TABLE template_quota (
 
                                 PRIMARY KEY (template_quota_id),
 
-                                CONSTRAINT chk_template_quota_single_row CHECK (template_quota_id = 1),
                                 CONSTRAINT chk_template_quota_current_count CHECK (current_count >= 0)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
