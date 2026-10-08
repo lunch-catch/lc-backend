@@ -11,6 +11,8 @@ import com.launchcatch.member.dto.MemberLocationRequest;
 import com.launchcatch.member.dto.MemberLocationResponse;
 import com.launchcatch.member.entity.Member;
 import com.launchcatch.member.entity.MemberProfile;
+import com.launchcatch.member.exception.MemberErrorCode;
+import com.launchcatch.member.exception.MemberException;
 import com.launchcatch.member.repository.MemberProfileRepository;
 import com.launchcatch.member.repository.MemberRepository;
 import java.lang.reflect.Field;
@@ -42,7 +44,9 @@ class MemberLocationServiceTest {
     @Test
     @DisplayName("저장은 기존 프로필의 위치를 덮어쓴다")
     void 저장은_기존_프로필의_위치를_덮어쓴다() throws Exception {
-        MemberProfile profile = MemberProfile.create(member());
+        Member member = member();
+        MemberProfile profile = MemberProfile.create(member);
+        when(memberRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(member));
         when(memberProfileRepository.findByMember_Id(1L)).thenReturn(Optional.of(profile));
 
         MemberLocationResponse response = service.save(1L, request());
@@ -62,7 +66,7 @@ class MemberLocationServiceTest {
     void 프로필이_없으면_만들어서_위치를_저장한다() throws Exception {
         Member member = member();
         when(memberProfileRepository.findByMember_Id(1L)).thenReturn(Optional.empty());
-        when(memberRepository.findById(1L)).thenReturn(Optional.of(member));
+        when(memberRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(member));
         when(memberProfileRepository.save(any(MemberProfile.class)))
                 .thenAnswer(invocation -> invocation.getArgument(0));
 
@@ -77,7 +81,9 @@ class MemberLocationServiceTest {
     @Test
     @DisplayName("좌표는 반올림 없이 그대로 저장된다")
     void 좌표는_반올림_없이_그대로_저장된다() throws Exception {
-        MemberProfile profile = MemberProfile.create(member());
+        Member member = member();
+        MemberProfile profile = MemberProfile.create(member);
+        when(memberRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(member));
         when(memberProfileRepository.findByMember_Id(1L)).thenReturn(Optional.of(profile));
 
         MemberLocationResponse response = service.save(1L, request());
@@ -88,6 +94,20 @@ class MemberLocationServiceTest {
         assertThat(response.longitude().scale()).isEqualTo(7);
     }
 
+    // 탈퇴가 먼저 끝났으면 잠금을 얻은 뒤 상태를 보고 거절한다. 프로필을 만들지 않는다.
+    @Test
+    @DisplayName("탈퇴한 회원은 위치를 저장하지 않는다")
+    void 탈퇴한_회원은_위치를_저장하지_않는다() throws Exception {
+        Member member = member();
+        member.withdraw(java.time.LocalDateTime.of(2026, 10, 8, 9, 0));
+        when(memberRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(member));
+
+        assertThatThrownBy(() -> service.save(1L, request()))
+                .isInstanceOfSatisfying(MemberException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(MemberErrorCode.ALREADY_WITHDRAWN));
+        verify(memberProfileRepository, never()).save(any(MemberProfile.class));
+    }
+
     /*
      * 인증을 통과한 토큰의 회원이 DB 에 없는 상태다.
      * 사용자 입력 오류가 아니라 서버 쪽 전제가 깨진 것이라 IllegalStateException 으로 둔다.
@@ -95,8 +115,7 @@ class MemberLocationServiceTest {
     @Test
     @DisplayName("인증된 회원이 없으면 위치를 저장하지 않는다")
     void 인증된_회원이_없으면_위치를_저장하지_않는다() {
-        when(memberProfileRepository.findByMember_Id(1L)).thenReturn(Optional.empty());
-        when(memberRepository.findById(1L)).thenReturn(Optional.empty());
+        when(memberRepository.findByIdForUpdate(1L)).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.save(1L, request()))
                 .isInstanceOf(IllegalStateException.class)

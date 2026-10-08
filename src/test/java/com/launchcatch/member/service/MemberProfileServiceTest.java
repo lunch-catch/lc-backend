@@ -2,6 +2,8 @@ package com.launchcatch.member.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
 
@@ -12,6 +14,7 @@ import com.launchcatch.member.entity.AgeGroup;
 import com.launchcatch.member.entity.Gender;
 import com.launchcatch.member.entity.Member;
 import com.launchcatch.member.entity.MemberProfile;
+import com.launchcatch.member.exception.MemberErrorCode;
 import com.launchcatch.member.exception.MemberException;
 import com.launchcatch.member.repository.MemberProfileRepository;
 import com.launchcatch.member.repository.MemberRepository;
@@ -49,7 +52,7 @@ class MemberProfileServiceTest {
     @DisplayName("온보딩은 프로필을 만들고 동의와 완료 시각을 저장한다")
     void 온보딩은_프로필을_만들고_동의와_완료_시각을_저장한다() throws Exception {
         Member member = member();
-        when(memberRepository.findById(1L)).thenReturn(Optional.of(member));
+        when(memberRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(member));
         when(memberProfileRepository.save(any(MemberProfile.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
         MemberResponse response = memberProfileService.completeOnboarding(1L,
@@ -68,11 +71,50 @@ class MemberProfileServiceTest {
         Member member = member();
         MemberProfile profile = MemberProfile.create(member);
         profile.completeOnboarding(Gender.MALE, AgeGroup.AGE_30S, java.time.LocalDateTime.now(CLOCK));
-        when(memberRepository.findById(1L)).thenReturn(Optional.of(member));
+        when(memberRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(member));
 
         assertThatThrownBy(() -> memberProfileService.completeOnboarding(1L,
                 new MemberOnboardingRequest(Gender.FEMALE, AgeGroup.AGE_20S, true, false)))
                 .isInstanceOf(MemberException.class);
+    }
+
+    @Test
+    @DisplayName("탈퇴한 회원은 온보딩할 수 없다")
+    void 탈퇴한_회원은_온보딩할_수_없다() throws Exception {
+        Member member = member();
+        member.withdraw(java.time.LocalDateTime.now(CLOCK));
+        when(memberRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(member));
+
+        assertThatThrownBy(() -> memberProfileService.completeOnboarding(1L,
+                new MemberOnboardingRequest(Gender.FEMALE, AgeGroup.AGE_20S, true, false)))
+                .isInstanceOfSatisfying(MemberException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(MemberErrorCode.ALREADY_WITHDRAWN));
+        verify(memberProfileRepository, never()).save(any(MemberProfile.class));
+    }
+
+    @Test
+    @DisplayName("탈퇴한 회원은 내 정보를 수정할 수 없다")
+    void 탈퇴한_회원은_내_정보를_수정할_수_없다() throws Exception {
+        Member member = member();
+        member.withdraw(java.time.LocalDateTime.now(CLOCK));
+        when(memberRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(member));
+
+        assertThatThrownBy(() -> memberProfileService.updateMyProfile(1L,
+                new MemberUpdateRequest("새닉네임", null, null)))
+                .isInstanceOfSatisfying(MemberException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(MemberErrorCode.ALREADY_WITHDRAWN));
+        assertThat(member.getNickname()).isEqualTo("탈퇴한 회원");
+    }
+
+    @Test
+    @DisplayName("인증된 회원이 없으면 쓰기 요청을 처리하지 않는다")
+    void 인증된_회원이_없으면_쓰기_요청을_처리하지_않는다() {
+        when(memberRepository.findByIdForUpdate(1L)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> memberProfileService.updateMyProfile(1L,
+                new MemberUpdateRequest("새닉네임", null, null)))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("authenticated member does not exist");
     }
 
     @Test
@@ -119,7 +161,7 @@ class MemberProfileServiceTest {
     @DisplayName("내 정보 수정은 전달된 필드만 반영한다")
     void 내_정보_수정은_전달된_필드만_반영한다() throws Exception {
         Member member = member();
-        when(memberRepository.findById(1L)).thenReturn(Optional.of(member));
+        when(memberRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(member));
 
         MemberResponse response = memberProfileService.updateMyProfile(1L,
                 new MemberUpdateRequest("새닉네임", true, true));
