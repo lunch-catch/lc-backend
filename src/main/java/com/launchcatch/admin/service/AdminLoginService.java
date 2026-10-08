@@ -78,12 +78,7 @@ public class AdminLoginService {
         try {
             accessToken = jwtTokenProvider.createAccessToken(state.adminId(), state.role());
         } catch (RuntimeException e) {
-            // 다른 로그인의 백업을 지우지 않고 이번 로그인에서 기록한 해시만 조건부 제거한다.
-            try {
-                loginTransactionService.clearRefreshTokenIfMatches(state.adminId(), tokenHash, now);
-            } catch (RuntimeException cleanupFailure) {
-                e.addSuppressed(cleanupFailure);
-            }
+            cleanupFailedLogin(state.adminId(), tokenHash, now, e);
             throw e;
         }
 
@@ -93,12 +88,24 @@ public class AdminLoginService {
                 log.info("event=ADMIN_LOGIN_CACHE_PUBLICATION_SKIPPED adminId={} reason=SUPERSEDED",
                         state.adminId());
             }
+        } catch (AuthException e) {
+            cleanupFailedLogin(state.adminId(), tokenHash, now, e);
+            throw e;
         } catch (DataAccessException | TransactionException e) {
-            // DB 백업이 확정된 뒤 캐시에 저장하므로 Redis 장애만으로 로그인을 실패시키지 않는다.
-            log.warn("event=ADMIN_LOGIN_CACHE_PUBLICATION_FAILED adminId={} errorType={}",
-                    state.adminId(), e.getClass().getSimpleName());
+            AuthException failure = new AuthException(AuthErrorCode.REFRESH_TOKEN_STORE_UNAVAILABLE, e);
+            cleanupFailedLogin(state.adminId(), tokenHash, now, failure);
+            throw failure;
         }
         return new AdminLoginResult(new AdminLoginResponse(state.adminId(), state.name(), state.role()),
                 accessToken, refreshToken);
+    }
+
+    // 다른 로그인의 백업을 지우지 않고 실패한 이번 로그인에서 기록한 해시만 조건부 제거한다.
+    private void cleanupFailedLogin(Long adminId, String tokenHash, LocalDateTime now, RuntimeException failure) {
+        try {
+            loginTransactionService.clearRefreshTokenIfMatches(adminId, tokenHash, now);
+        } catch (RuntimeException cleanupFailure) {
+            failure.addSuppressed(cleanupFailure);
+        }
     }
 }

@@ -114,6 +114,16 @@ class AdminLoginTransactionServiceTest {
         verifyNoInteractions(cache);
     }
 
+    @Test
+    void 최종_DB_확인후_Redis_저장_장애만_허용한다() {
+        String raw = "current-refresh-token";
+        admin.issueRefreshToken(TokenHasher.sha256(raw), now.plusDays(1));
+        org.mockito.Mockito.doThrow(new org.springframework.dao.DataAccessResourceFailureException("Redis unavailable"))
+                .when(cache).save(raw, 1L, Role.SUPER_ADMIN, true, Duration.ofDays(1));
+        assertThat(service.publishRefreshTokenIfCurrent(1L, Role.SUPER_ADMIN, raw, Duration.ofDays(1))).isTrue();
+        assertThat(admin.getRefreshTokenHash()).isEqualTo(TokenHasher.sha256(raw));
+    }
+
     private void assertPublicationRejected(Role role) {
         assertThatThrownBy(() -> service.publishRefreshTokenIfCurrent(1L, role, "raw", Duration.ofDays(1)))
                 .isInstanceOf(AuthException.class)

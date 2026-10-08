@@ -12,10 +12,13 @@ import java.time.LocalDateTime;
 import java.util.Objects;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DataAccessException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 class AdminLoginTransactionService {
@@ -58,7 +61,13 @@ class AdminLoginTransactionService {
         if (!Objects.equals(admin.getRefreshTokenHash(), TokenHasher.sha256(refreshToken))) {
             return false;
         }
-        refreshTokenRepository.save(refreshToken, adminId, role, true, ttl);
+        try {
+            refreshTokenRepository.save(refreshToken, adminId, role, true, ttl);
+        } catch (DataAccessException e) {
+            // 현재 DB 확인이 성공한 뒤의 Redis 저장 장애만 로그인 성공을 유지한다.
+            log.warn("event=ADMIN_LOGIN_CACHE_PUBLICATION_FAILED adminId={} errorType={}",
+                    adminId, e.getClass().getSimpleName());
+        }
         return true;
     }
 

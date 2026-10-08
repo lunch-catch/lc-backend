@@ -88,7 +88,7 @@ class AdminLoginSecurityIntegrationTest {
         ReflectionTestUtils.setField(admin, "id", 1L);
         when(admins.findByLoginId("admin01")).thenReturn(Optional.of(admin));
         when(admins.findByIdForUpdate(1L)).thenReturn(Optional.of(admin));
-        when(transactions.getTransaction(any())).thenReturn(new SimpleTransactionStatus());
+        when(transactions.getTransaction(any())).thenReturn(new SimpleTransactionStatus(), new SimpleTransactionStatus());
         mvc = MockMvcBuilders.webAppContextSetup(context).addFilters(loggingFilter, auditFilter)
                 .apply(springSecurity()).build();
     }
@@ -240,7 +240,47 @@ class AdminLoginSecurityIntegrationTest {
                 .andExpect(status().isUnauthorized()).andExpect(jsonPath("$.code").value("AUTH-001"))
                 .andExpect(header().doesNotExist(HttpHeaders.SET_COOKIE));
         org.mockito.Mockito.verifyNoInteractions(refreshTokens);
+        org.mockito.Mockito.verify(admins).clearRefreshTokenIfMatches(eq(1L), any(), any());
     }
+    @ParameterizedTest
+    @ValueSource(strings = {"DB_READ", "TRANSACTION_BEGIN", "TRANSACTION_COMMIT"})
+    void 최종_DB_검사_장애는_AUTH002이며_쿠키를_발급하지_않는다(String failure) throws Exception {
+        Admin admin = admins.findByLoginId("admin01").orElseThrow();
+        if ("DB_READ".equals(failure)) {
+            when(admins.findByIdForUpdate(1L)).thenReturn(Optional.of(admin))
+                    .thenThrow(new DataAccessResourceFailureException("final DB read failed"));
+        } else if ("TRANSACTION_BEGIN".equals(failure)) {
+            when(transactions.getTransaction(any())).thenReturn(new SimpleTransactionStatus(), new SimpleTransactionStatus())
+                    .thenThrow(new org.springframework.transaction.CannotCreateTransactionException("final transaction failed"))
+                    .thenReturn(new SimpleTransactionStatus());
+        } else {
+            org.mockito.Mockito.doNothing()
+                    .doThrow(new org.springframework.transaction.TransactionSystemException("final commit failed"))
+                    .doNothing().when(transactions).commit(any());
+        }
+        Logger logger = (Logger) LoggerFactory.getLogger(GlobalExceptionHandler.class);
+        var appender = new ListAppender<ILoggingEvent>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            mvc.perform(post("/v1/admin/auth/tokens").contentType(MediaType.APPLICATION_JSON).content(BODY))
+                    .andExpect(status().isServiceUnavailable()).andExpect(jsonPath("$.code").value("AUTH-002"))
+                    .andExpect(header().string(HttpHeaders.RETRY_AFTER, "1"))
+                    .andExpect(header().doesNotExist(HttpHeaders.SET_COOKIE));
+            org.mockito.Mockito.verify(admins).clearRefreshTokenIfMatches(eq(1L), any(), any());
+            assertThat(appender.list).anySatisfy(event -> {
+                assertThat(event.getLevel()).isEqualTo(Level.ERROR);
+                assertThat(event.getFormattedMessage()).contains("AUTH-002");
+            });
+            if (!"TRANSACTION_COMMIT".equals(failure)) {
+                org.mockito.Mockito.verifyNoInteractions(refreshTokens);
+            }
+        } finally {
+            logger.detachAppender(appender);
+            appender.stop();
+        }
+    }
+
     @Configuration(proxyBeanMethods = false)
     @EnableWebMvc
     @EnableTransactionManagement

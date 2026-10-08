@@ -137,19 +137,21 @@ class AdminLoginServiceTest {
     }
 
     @Test
-    void Redis_장애만_발생하면_DB_백업을_기준으로_로그인을_유지한다() {
+    void 최종_DB_조회_장애는_AUTH002이며_이번_백업을_정리한다() {
         prepare(Role.ADMIN);
-        doThrow(new DataAccessResourceFailureException("Redis unavailable"))
+        doThrow(new DataAccessResourceFailureException("DB unavailable"))
                 .when(transactions).publishRefreshTokenIfCurrent(eq(1L), eq(Role.ADMIN), any(), any());
-        assertThat(service.login(request).response().adminId()).isEqualTo(1L);
+        assertFailure(AuthErrorCode.REFRESH_TOKEN_STORE_UNAVAILABLE);
+        verify(transactions).clearRefreshTokenIfMatches(eq(1L), any(), eq(LocalDateTime.now(clock)));
     }
 
     @Test
-    void 캐시_게시_트랜잭션_실패도_이미_확정한_DB_백업을_기준으로_로그인을_유지한다() {
+    void 최종_트랜잭션_실패는_AUTH002이며_이번_백업을_정리한다() {
         prepare(Role.ADMIN);
         when(transactions.publishRefreshTokenIfCurrent(eq(1L), any(), any(), any()))
                 .thenThrow(new CannotCreateTransactionException("DB unavailable during publication"));
-        assertThat(service.login(request).response().adminId()).isEqualTo(1L);
+        assertFailure(AuthErrorCode.REFRESH_TOKEN_STORE_UNAVAILABLE);
+        verify(transactions).clearRefreshTokenIfMatches(eq(1L), any(), eq(LocalDateTime.now(clock)));
     }
 
     @Test
@@ -186,6 +188,27 @@ class AdminLoginServiceTest {
         when(jwt.createAccessToken(1L, Role.ADMIN)).thenThrow(failure);
         doThrow(cleanup).when(transactions).clearRefreshTokenIfMatches(eq(1L), any(), any());
         assertThatThrownBy(() -> service.login(request)).isSameAs(failure).hasSuppressedException(cleanup);
+    }
+
+    @Test
+    void 최종_계정_검사_거부는_이번_해시만_정리하고_AUTH001을_유지한다() {
+        prepare(Role.ADMIN);
+        var rejected = new AuthException(AuthErrorCode.LOGIN_FAILED);
+        when(transactions.publishRefreshTokenIfCurrent(eq(1L), any(), any(), any())).thenThrow(rejected);
+        var hash = org.mockito.ArgumentCaptor.forClass(String.class);
+        assertThatThrownBy(() -> service.login(request)).isSameAs(rejected);
+        verify(transactions).issueRefreshToken(eq(1L), any(), hash.capture(), any());
+        verify(transactions).clearRefreshTokenIfMatches(1L, hash.getValue(), LocalDateTime.now(clock));
+    }
+
+    @Test
+    void 거부후_보상_실패도_로그인을_성공으로_바꾸지_않는다() {
+        prepare(Role.ADMIN);
+        var rejected = new AuthException(AuthErrorCode.LOGIN_FAILED);
+        var cleanup = new DataAccessResourceFailureException("cleanup failed");
+        when(transactions.publishRefreshTokenIfCurrent(eq(1L), any(), any(), any())).thenThrow(rejected);
+        doThrow(cleanup).when(transactions).clearRefreshTokenIfMatches(eq(1L), any(), any());
+        assertThatThrownBy(() -> service.login(request)).isSameAs(rejected).hasSuppressedException(cleanup);
     }
 
     private void prepare(Role role) {
