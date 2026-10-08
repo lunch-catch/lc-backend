@@ -35,7 +35,14 @@ public class TemplateHtmlSanitizer {
             "url\\s*\\(|@import|expression\\s*\\(|javascript:", Pattern.CASE_INSENSITIVE);
 
     public TemplateSanitizeResult sanitize(String html) {
-        Document document = Jsoup.parseBodyFragment(html);
+        return sanitize(Jsoup.parseBodyFragment(html));
+    }
+
+    /*
+     * 같은 요청 안에서 슬롯·팔레트 검증도 이 결과를 이어서 쓸 수 있도록, 이미 파싱된
+     * Document 를 받는 자리를 따로 둔다. 파싱을 여러 번 하지 않으려는 것이다.
+     */
+    public TemplateSanitizeResult sanitize(Document document) {
         document.outputSettings().prettyPrint(false);
         Set<String> removed = new LinkedHashSet<>();
         clean(document.body(), removed);
@@ -76,7 +83,14 @@ public class TemplateHtmlSanitizer {
         return listed && !isUnsafeStyle(key, attribute.getValue());
     }
 
+    /*
+     * url(), @import, expression(), javascript: 를 그대로 찾는 블랙리스트다.
+     * CSS 는 역슬래시 이스케이프(예: \75rl() 는 url() 로 해석됨)로 이 글자들을 그대로
+     * 안 쓰면서도 브라우저가 똑같이 해석하게 만들 수 있어서, 역슬래시가 하나라도 있으면
+     * 그 자체로 안전하지 않다고 본다. 색상값에는 역슬래시가 쓰일 일이 없다.
+     */
     private boolean isUnsafeStyle(String key, String value) {
-        return "style".equals(key) && EXTERNAL_RESOURCE_IN_STYLE.matcher(value).find();
+        return "style".equals(key)
+                && (value.indexOf('\\') >= 0 || EXTERNAL_RESOURCE_IN_STYLE.matcher(value).find());
     }
 }

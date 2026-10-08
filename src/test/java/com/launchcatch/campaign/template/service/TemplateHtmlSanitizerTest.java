@@ -89,6 +89,16 @@ class TemplateHtmlSanitizerTest {
     }
 
     @Test
+    @DisplayName("역슬래시로 금칙어를 피해도 style 전체를 제거한다")
+    void 역슬래시로_우회해도_제거한다() {
+        TemplateSanitizeResult result = sanitizer.sanitize(
+                "<div style=\"color:\\75rl(javascript:alert(1))\">title</div>");
+
+        assertThat(result.html()).isEqualTo("<div>title</div>");
+        assertThat(result.removedElements()).containsExactly("div[style]");
+    }
+
+    @Test
     @DisplayName("한글 내용은 그대로 보존한다")
     void 한글_내용을_보존한다() {
         TemplateSanitizeResult result = sanitizer.sanitize("<h1 data-slot=\"eventName\">가을 신메뉴</h1>");
