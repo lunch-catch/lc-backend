@@ -8,6 +8,7 @@ import com.launchcatch.campaign.template.dto.TemplateCreateResponse;
 import com.launchcatch.campaign.template.dto.TemplateSanitizeResult;
 import com.launchcatch.campaign.template.entity.Template;
 import com.launchcatch.campaign.template.entity.TemplateVersion;
+import com.launchcatch.campaign.template.repository.TemplateQuotaRepository;
 import com.launchcatch.campaign.template.repository.TemplateRepository;
 import java.time.Clock;
 import java.time.LocalDateTime;
@@ -24,6 +25,7 @@ public class TemplateCreateService {
     static final int MAX_TEMPLATES = 10;
 
     private final TemplateRepository templateRepository;
+    private final TemplateQuotaRepository templateQuotaRepository;
     private final TemplateHtmlGenerator templateHtmlGenerator;
     private final TemplateHtmlSanitizer templateHtmlSanitizer;
     private final TemplateSlotValidator templateSlotValidator;
@@ -33,8 +35,8 @@ public class TemplateCreateService {
 
     /*
      * LLM 호출은 트랜잭션 밖에서 한다. 응답을 기다리는 동안 DB 연결을 잡지 않으려는 것이다.
-     * 저장만 트랜잭션으로 묶는다. 여기서의 개수 확인은 LLM 을 괜히 부르지 않으려는
-     * 빠른 실패용이고, 진짜 안전장치는 save() 안에서 같은 트랜잭션으로 다시 확인하는 것이다.
+     * 저장만 트랜잭션으로 묶는다. 여기서의 개수 확인은 LLM을 부르지 않으려는
+     * 빠른 실패용일 뿐이고, 진짜 안전장치는 save() 안의 조건부 UPDATE 다.
      */
     public TemplateCreateResponse create(String name, String requestPrompt, Long adminId) {
         if (templateRepository.count() >= MAX_TEMPLATES) {
@@ -56,12 +58,12 @@ public class TemplateCreateService {
     }
 
     /*
-     * LLM 호출(최대 30초)이 끝나고 여기 들어오기까지 다른 요청이 끼어들어 먼저 저장됐을
-     * 수 있어서, 저장 직전에 같은 트랜잭션 안에서 개수를 다시 확인한다. 위쪽 확인과의
-     * 간격이 수 밀리초로 줄어든다.
+     * template_quota 행 하나를 조건부 UPDATE 로 먼저 늘려서 자리를 확보한다.
+     * 영향받은 행이 0이면 이미 한도라 거부한다. 이 UPDATE 가 행에 쓰기 잠금을 걸기 때문에,
+     * 동시에 들어온 다른 요청은 이 트랜잭션이 끝날 때까지 기다렸다가 갱신된 값으로 조건을 다시 본다.
      */
     private TemplateCreateResponse save(String name, String requestPrompt, Long adminId, TemplateSanitizeResult sanitized) {
-        if (templateRepository.count() >= MAX_TEMPLATES) {
+        if (templateQuotaRepository.tryReserve(MAX_TEMPLATES) == 0) {
             throw new CampaignException(PosterErrorCode.TEMPLATE_LIMIT_EXCEEDED);
         }
         Template template = Template.createDraft(name);

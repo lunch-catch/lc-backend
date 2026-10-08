@@ -16,6 +16,7 @@ import com.launchcatch.campaign.template.client.TemplateHtmlGenerator;
 import com.launchcatch.campaign.template.dto.TemplateCreateResponse;
 import com.launchcatch.campaign.template.entity.Template;
 import com.launchcatch.campaign.template.entity.TemplateStatus;
+import com.launchcatch.campaign.template.repository.TemplateQuotaRepository;
 import com.launchcatch.campaign.template.repository.TemplateRepository;
 import com.launchcatch.global.entity.BaseTimeEntity;
 import java.lang.reflect.Field;
@@ -50,6 +51,8 @@ class TemplateCreateServiceTest {
     @Mock
     private TemplateRepository templateRepository;
     @Mock
+    private TemplateQuotaRepository templateQuotaRepository;
+    @Mock
     private TemplateHtmlGenerator templateHtmlGenerator;
     @Mock
     private TransactionTemplate transactionTemplate;
@@ -61,6 +64,7 @@ class TemplateCreateServiceTest {
     void setUp() {
         service = new TemplateCreateService(
                 templateRepository,
+                templateQuotaRepository,
                 templateHtmlGenerator,
                 new TemplateHtmlSanitizer(),
                 new TemplateSlotValidator(),
@@ -77,6 +81,7 @@ class TemplateCreateServiceTest {
     @DisplayName("검증을 통과하면 임시저장 템플릿과 1번 버전을 저장하고 제거 내용을 돌려준다")
     void 검증을_통과하면_저장한다() throws Exception {
         when(templateRepository.count()).thenReturn(9L);
+        when(templateQuotaRepository.tryReserve(TemplateCreateService.MAX_TEMPLATES)).thenReturn(1);
         when(templateHtmlGenerator.generate("가을 느낌")).thenReturn(VALID_HTML + "<script>alert(1)</script>");
         when(templateRepository.save(any(Template.class))).thenAnswer(invocation -> {
             Template saved = invocation.getArgument(0);
@@ -109,13 +114,15 @@ class TemplateCreateServiceTest {
                 .isInstanceOfSatisfying(CampaignException.class, e ->
                         assertThat(e.getErrorCode()).isEqualTo(PosterErrorCode.TEMPLATE_LIMIT_EXCEEDED));
         verifyNoInteractions(templateHtmlGenerator);
+        verifyNoInteractions(templateQuotaRepository);
         verify(templateRepository, never()).save(any());
     }
 
     @Test
-    @DisplayName("초기 확인 뒤 LLM 호출 중 다른 요청이 먼저 채워 10개가 되면 저장 직전에 거부한다")
-    void 저장_직전_재확인에서_10개가_되면_거부한다() {
-        when(templateRepository.count()).thenReturn(9L, 10L);
+    @DisplayName("초기 확인을 통과해도 저장 시점에 자리를 못 받으면 거부한다")
+    void 저장_시점에_자리를_못_받으면_거부한다() {
+        when(templateRepository.count()).thenReturn(9L);
+        when(templateQuotaRepository.tryReserve(TemplateCreateService.MAX_TEMPLATES)).thenReturn(0);
         when(templateHtmlGenerator.generate("가을 느낌")).thenReturn(VALID_HTML);
 
         assertThatThrownBy(() -> service.create("가을 신메뉴", "가을 느낌", ADMIN_ID))
