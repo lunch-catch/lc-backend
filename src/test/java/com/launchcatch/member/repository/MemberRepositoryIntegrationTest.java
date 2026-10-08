@@ -3,6 +3,7 @@ package com.launchcatch.member.repository;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.launchcatch.member.entity.Member;
+import com.launchcatch.member.contract.MemberStatus;
 import jakarta.persistence.EntityManager;
 import java.time.LocalDateTime;
 import org.junit.jupiter.api.DisplayName;
@@ -49,7 +50,8 @@ class MemberRepositoryIntegrationTest {
         LocalDateTime now = LocalDateTime.of(2026, 10, 6, 13, 0);
         LocalDateTime expiresAt = now.plusDays(14);
 
-        int saved = memberRepository.updateRefreshTokenBackup(member.getId(), "hash-1", expiresAt, now);
+        int saved = memberRepository.updateRefreshTokenBackup(
+                member.getId(), "hash-1", expiresAt, now, MemberStatus.ACTIVE);
         entityManager.clear();
 
         assertThat(saved).isOne();
@@ -66,5 +68,18 @@ class MemberRepositoryIntegrationTest {
         assertThat(mismatched).isZero();
         assertThat(cleared).isOne();
         assertThat(memberRepository.findByRefreshTokenHash("hash-1")).isEmpty();
+
+        entityManager.createNativeQuery("""
+                UPDATE member
+                   SET status = 'WITHDRAWN', withdrawn_at = :withdrawnAt
+                 WHERE member_id = :memberId
+                """)
+                .setParameter("withdrawnAt", now.plusMinutes(2))
+                .setParameter("memberId", member.getId())
+                .executeUpdate();
+        int withdrawnSave = memberRepository.updateRefreshTokenBackup(
+                member.getId(), "hash-3", expiresAt, now.plusMinutes(3), MemberStatus.ACTIVE);
+
+        assertThat(withdrawnSave).isZero();
     }
 }

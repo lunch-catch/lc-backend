@@ -7,4 +7,6 @@ import org.springframework.data.jpa.repository.JpaRepository;
 public interface KakaoUnlinkFailureRepository extends JpaRepository<KakaoUnlinkFailure, Long> {
 
     Optional<KakaoUnlinkFailure> findByMember_Id(Long memberId);
+
+    void deleteByMember_Id(Long memberId);
 }

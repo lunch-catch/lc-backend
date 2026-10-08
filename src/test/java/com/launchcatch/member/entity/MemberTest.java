@@ -4,6 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.launchcatch.member.contract.MemberStatus;
+import java.lang.reflect.Field;
+import java.time.LocalDateTime;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -34,5 +36,23 @@ class MemberTest {
         assertThatThrownBy(() -> Member.create("kakao-123", null, null))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("nickname must not be blank");
+    }
+
+    @Test
+    @DisplayName("정지 이력이 있으면 탈퇴 회원을 재활성화하지 않는다")
+    void 정지_이력이_있으면_재활성화하지_않는다() throws Exception {
+        Member member = Member.create("kakao-123", "점심헌터", null);
+        setField(member, "status", MemberStatus.WITHDRAWN);
+        setField(member, "suspendedAt", LocalDateTime.of(2026, 10, 1, 9, 0));
+
+        assertThatThrownBy(() -> member.reactivate("새닉네임", null, LocalDateTime.of(2026, 10, 6, 9, 0)))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("member with suspension history cannot reactivate");
+    }
+
+    private void setField(Member member, String fieldName, Object value) throws Exception {
+        Field field = Member.class.getDeclaredField(fieldName);
+        field.setAccessible(true);
+        field.set(member, value);
     }
 }
