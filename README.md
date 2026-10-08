@@ -32,19 +32,21 @@
 
 | 도메인 | 소유 | 담당 |
 |---|---|---|
-| `campaign`(캠페인) | 캠페인 등록 4단계와 상태 전이, 포스터와 템플릿 | @yongmaru789 |
-| `adserving`(광고 서빙) | 스와이프 광고 피드 배정과 노출 수집, 찜과 패스, 배정 진단 | @devjohnpark |
-| `coupon`(쿠폰) | 선착순 발급, 쿠폰함, 동적 QR, 사용 처리 | @MinhyeokChoi99 |
-| `billing`(정산) | 포인트 결제, 잔액과 내역, 환불 | @muzimzz |
-| `store`(가게) | 점주 입점 흐름, 가게 목록과 검색과 상세 | @gyudongjeong |
-| `member`(회원) | 온보딩, 위치 설정, 회원정보, 탈퇴, 동의 | @muzimzz |
-| `owner`(점주) | 점주 계정, 튜토리얼 | @gyudongjeong |
-| `admin`(관리자) | 관리자 계정, 점주와 회원 관리, 플랫폼 설정값, 감사 로그 | @gyudongjeong |
-| `notification`(알림) | 회원 알림, 점주 발송 현황 | @gyudongjeong |
-| `analytics`(분석) | 대시보드, 매출, 무효 노출, 리포트, 전환 퍼널 | @muzimzz |
-| `auth`(공용 인증) | 로그인과 토큰, 보안 체인 | @muzimzz @gyudongjeong |
-| `ops`(운영) | 플랫폼 설정값, 스케줄러, 감사 로그 | @yongmaru789 |
+| `campaign`(캠페인) | 캠페인, 상태 이력, 가게별 대상 인원, 포스터와 검수 결과, 템플릿과 버전 | @yongmaru789 |
+| `adserving`(광고 서빙) | 일일 광고 피드 후보, serve 기록, 노출 로그, 스와이프 이력, 찜 목록, 광고 피드 필터 | @devjohnpark |
+| `coupon`(쿠폰) | 발급 회차, 하루 발급 한도, 발급된 쿠폰(순번, QR, 사용 이력) | @MinhyeokChoi99 |
+| `billing`(정산) | 포인트 원장, 점주 잔액, 결제와 환불, 그날 예약액, 단가 스냅샷, 노출 차감 판정 | @muzimzz |
+| `store`(가게) | 가게, 입점 신청, 사업자 검증, 이미지와 메뉴, 그날의 캠페인 요약 | @gyudongjeong |
+| `member`(회원) | 회원 계정, 프로필, 저장 위치, 동의 설정 | @muzimzz |
+| `owner`(점주) | 점주 계정과 상태 | @gyudongjeong |
+| `admin`(관리자) | 관리자 계정 | @gyudongjeong |
+| `notification`(알림) | 알림 발송 이력, 푸시 등록 정보 | @gyudongjeong |
+| `analytics`(분석) | 전환 퍼널 이벤트 로그, 일별 집계, 캠페인 리포트 | @muzimzz |
+| `auth`(공용 인증) | 토큰 발급과 검증, 회전 정책, 역할 | @muzimzz @gyudongjeong |
+| `ops`(운영) | 플랫폼 설정값, 스케줄러와 실행 이력, 감사 로그 | @yongmaru789 |
 | `global`(기술 공통) | 예외, 응답 포맷, 거리 계산 | @devjohnpark |
+
+소유는 설계 문서 1.2절의 소유 데이터와 같다. 관리자 화면이 점주나 회원 데이터를 다루는 기능은 그 데이터의 도메인이 소유하므로 `admin` 에는 계정만 남는다.
 
 ## 문서
 
