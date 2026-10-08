@@ -125,6 +125,20 @@ class MemberProfileServiceTest {
                 .hasMessage("at least one field must be provided");
     }
 
+    /*
+     * 인증을 통과한 토큰의 회원이 DB 에 없는 상태다.
+     * 사용자 입력 오류가 아니라 서버 쪽 전제가 깨진 것이라 IllegalStateException 으로 둔다.
+     */
+    @Test
+    @DisplayName("인증된 회원이 없으면 내 정보를 조회할 수 없다")
+    void 인증된_회원이_없으면_내_정보를_조회할_수_없다() {
+        when(memberRepository.findById(1L)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> memberProfileService.getMyProfile(1L))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("authenticated member does not exist");
+    }
+
     private Member member() throws Exception {
         Member member = Member.create("kakao-123", "점심헌터", null);
         setField(member, "id", 1L);
