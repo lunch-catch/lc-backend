@@ -68,7 +68,6 @@ class TemplateCreateServiceTest {
                 templateHtmlGenerator,
                 new TemplateHtmlSanitizer(),
                 new TemplateSlotValidator(),
-                new TemplatePaletteValidator(),
                 transactionTemplate,
                 FIXED_CLOCK);
         lenient().when(transactionTemplate.execute(any())).thenAnswer(invocation -> {
@@ -106,7 +105,7 @@ class TemplateCreateServiceTest {
     }
 
     @Test
-    @DisplayName("템플릿이 이미 10개면 LLM 을 부르지 않고 POSTER-004 로 거부한다")
+    @DisplayName("템플릿이 이미 10개면 LLM 을 부르지 않고 POSTER-003 으로 거부한다")
     void 템플릿이_10개면_거부한다() {
         when(templateRepository.count()).thenReturn(10L);
 
@@ -132,7 +131,7 @@ class TemplateCreateServiceTest {
     }
 
     @Test
-    @DisplayName("LLM 응답이 시간 초과되면 POSTER-005 이고 저장하지 않는다")
+    @DisplayName("LLM 응답이 시간 초과되면 POSTER-004 이고 저장하지 않는다")
     void LLM_시간_초과는_503이다() {
         when(templateRepository.count()).thenReturn(0L);
         TemplateGenerationTimeoutException timeout = new TemplateGenerationTimeoutException("30초 초과");
@@ -155,19 +154,6 @@ class TemplateCreateServiceTest {
         assertThatThrownBy(() -> service.create("가을 신메뉴", "가을 느낌", ADMIN_ID))
                 .isInstanceOfSatisfying(CampaignException.class, e ->
                         assertThat(e.getErrorCode()).isEqualTo(PosterErrorCode.SLOT_CONTRACT_VIOLATION));
-        verifyNoInteractions(transactionTemplate);
-        verify(templateRepository, never()).save(any());
-    }
-
-    @Test
-    @DisplayName("팔레트 밖 색상이 있으면 POSTER-002 이고 저장하지 않는다")
-    void 팔레트_밖_색상이면_저장하지_않는다() {
-        when(templateRepository.count()).thenReturn(0L);
-        when(templateHtmlGenerator.generate("가을 느낌")).thenReturn(VALID_HTML.replace("#000000", "#123456"));
-
-        assertThatThrownBy(() -> service.create("가을 신메뉴", "가을 느낌", ADMIN_ID))
-                .isInstanceOfSatisfying(CampaignException.class, e ->
-                        assertThat(e.getErrorCode()).isEqualTo(PosterErrorCode.COLOR_NOT_ALLOWED));
         verifyNoInteractions(transactionTemplate);
         verify(templateRepository, never()).save(any());
     }

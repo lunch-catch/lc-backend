@@ -35,8 +35,8 @@ public class TemplateController {
     @ApiResponses({
             @ApiResponse(responseCode = "201", description = "템플릿 생성 성공. DRAFT 템플릿과 1번 버전이 저장됩니다."),
             @ApiResponse(responseCode = "400", description = "COMMON-002: 이름이 비었거나 100자를 넘었거나 요청 문장이 비어 있습니다."),
-            @ApiResponse(responseCode = "422", description = "POSTER-001: 슬롯이 빠졌거나 중복됨. POSTER-002: 팔레트에 없는 색상. POSTER-004: 템플릿이 이미 10개입니다."),
-            @ApiResponse(responseCode = "503", description = "POSTER-005: LLM 응답이 30초를 넘었습니다.")
+            @ApiResponse(responseCode = "422", description = "POSTER-001: 슬롯이 빠졌거나 중복됨. POSTER-003: 템플릿이 이미 10개입니다."),
+            @ApiResponse(responseCode = "503", description = "POSTER-004: LLM 응답이 30초를 넘었습니다.")
     })
     public ResponseEntity<ResponseEnvelope<TemplateCreateResponse>> create(
             @Valid @RequestBody TemplateCreateRequest request,

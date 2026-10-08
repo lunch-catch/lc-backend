@@ -13,13 +13,11 @@ class PosterErrorCodeTest {
     void 포스터_오류_코드는_명세를_따른다() {
         assertThat(PosterErrorCode.SLOT_CONTRACT_VIOLATION.getCode()).isEqualTo("POSTER-001");
         assertThat(PosterErrorCode.SLOT_CONTRACT_VIOLATION.getHttpStatus()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
-        assertThat(PosterErrorCode.COLOR_NOT_ALLOWED.getCode()).isEqualTo("POSTER-002");
-        assertThat(PosterErrorCode.COLOR_NOT_ALLOWED.getHttpStatus()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
-        assertThat(PosterErrorCode.STRUCTURE_CHANGED.getCode()).isEqualTo("POSTER-003");
+        assertThat(PosterErrorCode.STRUCTURE_CHANGED.getCode()).isEqualTo("POSTER-002");
         assertThat(PosterErrorCode.STRUCTURE_CHANGED.getHttpStatus()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
-        assertThat(PosterErrorCode.TEMPLATE_LIMIT_EXCEEDED.getCode()).isEqualTo("POSTER-004");
+        assertThat(PosterErrorCode.TEMPLATE_LIMIT_EXCEEDED.getCode()).isEqualTo("POSTER-003");
         assertThat(PosterErrorCode.TEMPLATE_LIMIT_EXCEEDED.getHttpStatus()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
-        assertThat(PosterErrorCode.GENERATION_TIMEOUT.getCode()).isEqualTo("POSTER-005");
+        assertThat(PosterErrorCode.GENERATION_TIMEOUT.getCode()).isEqualTo("POSTER-004");
         assertThat(PosterErrorCode.GENERATION_TIMEOUT.getHttpStatus()).isEqualTo(HttpStatus.SERVICE_UNAVAILABLE);
     }
 }

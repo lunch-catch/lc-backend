@@ -29,7 +29,6 @@ public class TemplateCreateService {
     private final TemplateHtmlGenerator templateHtmlGenerator;
     private final TemplateHtmlSanitizer templateHtmlSanitizer;
     private final TemplateSlotValidator templateSlotValidator;
-    private final TemplatePaletteValidator templatePaletteValidator;
     private final TransactionTemplate transactionTemplate;
     private final Clock clock;
 
@@ -45,7 +44,6 @@ public class TemplateCreateService {
         Document document = Jsoup.parseBodyFragment(generate(requestPrompt));
         TemplateSanitizeResult sanitized = templateHtmlSanitizer.sanitize(document);
         templateSlotValidator.validate(document);
-        templatePaletteValidator.validate(document);
         return transactionTemplate.execute(status -> save(name, requestPrompt, adminId, sanitized));
     }
 

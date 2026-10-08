@@ -39,7 +39,7 @@ public class TemplateHtmlSanitizer {
     }
 
     /*
-     * 같은 요청 안에서 슬롯·팔레트 검증도 이 결과를 이어서 쓸 수 있도록, 이미 파싱된
+     * 같은 요청 안에서 슬롯 검증도 이 결과를 이어서 쓸 수 있도록, 이미 파싱된
      * Document 를 받는 자리를 따로 둔다. 파싱을 여러 번 하지 않으려는 것이다.
      */
     public TemplateSanitizeResult sanitize(Document document) {
