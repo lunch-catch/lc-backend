@@ -35,6 +35,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.ComponentScan;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.FilterType;
 import org.springframework.context.annotation.Import;
 import org.springframework.core.annotation.Order;
 import org.springframework.dao.DataAccessResourceFailureException;
@@ -155,7 +156,9 @@ class AdminRegistrationSecurityIntegrationTest {
     @Configuration(proxyBeanMethods = false)
     @EnableWebMvc
     @EnableWebSecurity
-    @ComponentScan(basePackages = "com.launchcatch.admin.controller")
+    @ComponentScan(basePackages = "com.launchcatch.admin.controller", useDefaultFilters = false,
+            includeFilters = @ComponentScan.Filter(type = FilterType.REGEX,
+                    pattern = "com\\.launchcatch\\.admin\\.controller\\.AdminRegistrationController"))
     @Import({AdminRegistrationSecurityConfig.class, ApiSecurityDefaults.class,
             GlobalExceptionHandler.class, AuthExceptionHandler.class})
     static class TestConfig {

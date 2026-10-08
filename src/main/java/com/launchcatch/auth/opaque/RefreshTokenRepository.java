@@ -44,6 +44,7 @@ public class RefreshTokenRepository {
     private static final String REVOKED_SUFFIX = "|REVOKED";
 
     private static final RedisScript<Long> SAVE_SCRIPT = loadSaveScript();
+    private static final RedisScript<Long> ORDERED_SAVE_SCRIPT = loadOrderedSaveScript();
     private static final RedisScript<String> ROTATE_SCRIPT = loadRotateScript();
     private static final RedisScript<Long> ROLLBACK_ROTATION_SCRIPT = loadRollbackRotationScript();
     private static final RedisScript<Long> REVOKE_SCRIPT = loadRevokeScript();
@@ -61,6 +62,26 @@ public class RefreshTokenRepository {
                 hash,
                 String.valueOf(ttl.toMillis())
         );
+    }
+
+    /*
+     * DB에서 확정한 발급 순번보다 큰 게시가 이미 있으면 이전 토큰을 저장하지 않는다.
+     * 순번 키는 토큰 만료와 함께 지우지 않아 지연된 요청이 만료 후 최신 포인터를 되살리지 못한다.
+     * 캐시 유실 시 DB가 권위 저장소이며 후속 재발급은 DB 해시와 상태를 반드시 확인해야 한다.
+     */
+    public boolean saveIfNewer(String refreshToken, Long id, Role role, boolean remember, Duration ttl, long version) {
+        if (version <= 0 || ttl.isNegative() || ttl.isZero()) {
+            throw new IllegalArgumentException("발급 순번과 TTL은 양수여야 한다");
+        }
+        String hash = TokenHasher.sha256(refreshToken);
+        Long saved = redisTemplate.execute(ORDERED_SAVE_SCRIPT,
+                List.of(primaryKey(hash), activeKey(role, id), "refreshTokenIssuanceVersion:" + role.name() + ":" + id),
+                serialize(id, role, remember), hash, String.valueOf(ttl.toMillis()),
+                String.format(java.util.Locale.ROOT, "%019d", version));
+        if (saved == null) {
+            throw new org.springframework.dao.DataAccessResourceFailureException("발급 순번 저장 결과가 없다");
+        }
+        return saved == 1L;
     }
 
     /** @return 저장된 값이 있으면 그 소유자 정보. 없거나 만료됐으면 empty. */
@@ -175,6 +196,13 @@ public class RefreshTokenRepository {
     }
 
     public record RefreshTokenData(Long id, Role role, boolean remember) {
+    }
+
+    private static RedisScript<Long> loadOrderedSaveScript() {
+        DefaultRedisScript<Long> script = new DefaultRedisScript<>();
+        script.setLocation(new ClassPathResource("scripts/refresh_token_save_if_newer.lua"));
+        script.setResultType(Long.class);
+        return script;
     }
 
     private static RedisScript<Long> loadSaveScript() {
