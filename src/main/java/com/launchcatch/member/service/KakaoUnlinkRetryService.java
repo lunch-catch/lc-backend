@@ -20,7 +20,7 @@ import org.springframework.transaction.support.TransactionTemplate;
  *
  * 전체를 한 트랜잭션으로 묶지 않는다. 가운데에 카카오 호출이 있고, 트랜잭션 안에서 외부를
  * 부르면 그 대기 동안 커넥션과 락을 쥔다(DI-4-02, 예외 없음). 그래서 짧은 트랜잭션 셋으로
- * 나눈다 — 후보 읽기, 호출 직전 재확인, 결과 반영. 각 단계가 자기 클래스의 private 메서드라
+ * 나눈다. 후보 읽기, 호출 직전 재확인, 결과 반영이다. 각 단계가 자기 클래스의 private 메서드라
  * @Transactional 은 프록시를 거치지 못하고 조용히 무시된다. TransactionTemplate 을 쓰는 이유다.
  *
  * 두 배치 서버가 겹치는 것은 이 클래스가 막지 않는다. 스케줄러가 batch_execution_log 로
@@ -118,20 +118,20 @@ public class KakaoUnlinkRetryService {
      * 해제에 성공했으니 행을 지운다.
      *
      * 재확인과 호출 사이의 창은 외부 호출을 트랜잭션 밖에 두는 한 없앨 수 없다. 닫는 대신
-     * 지나간 뒤에 탐지한다 — 행이 사라졌거나 회원이 더 이상 WITHDRAWN 이 아니면 호출 중에
+     * 지나간 뒤에 탐지한다. 행이 사라졌거나 회원이 더 이상 WITHDRAWN 이 아니면 호출 중에
      * 재가입이 끼어든 것이고, 방금 맺은 카카오 연결을 우리가 끊었다는 뜻이다. 사용자에게
      * 재연동을 안내해야 하므로 경보로 남긴다.
      */
     private void markSucceeded(PendingUnlink pending) {
         Optional<KakaoUnlinkFailure> row = failureRepository.findById(pending.failureId());
         if (row.isEmpty()) {
-            log.error("event=KAKAO_UNLINK_RACED_REACTIVATION memberId={} — 호출 중 재가입이 대기 행을 지웠다. 카카오 재연동 안내가 필요하다",
+            log.error("event=KAKAO_UNLINK_RACED_REACTIVATION memberId={} cause=QUEUE_ROW_DELETED action=REQUIRES_RELINK",
                     pending.memberId());
             return;
         }
         KakaoUnlinkFailure failure = row.get();
         if (failure.getMember().getStatus() != MemberStatus.WITHDRAWN) {
-            log.error("event=KAKAO_UNLINK_RACED_REACTIVATION memberId={} — 호출 중 회원이 재활성화됐다. 카카오 재연동 안내가 필요하다",
+            log.error("event=KAKAO_UNLINK_RACED_REACTIVATION memberId={} cause=MEMBER_REACTIVATED action=REQUIRES_RELINK",
                     pending.memberId());
         }
         failureRepository.delete(failure);
