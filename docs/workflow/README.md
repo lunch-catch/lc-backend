@@ -56,11 +56,13 @@
 |---|---|---|
 | 커버리지 | `com.launchcatch.*.service.*` 의 **클래스별 메서드 100%** | Gradle `jacocoTestCoverageVerification` |
 | 커버리지 데이터 | 검증 대상이 있는데 실행 데이터가 없는 상태를 막는다 | Gradle `coverageDataCheck` |
-| 정적 분석 | 신규 `Blocker` 이슈 0건 | SonarCloud 이슈 검색 API |
+| 정적 분석 | 신규 `Blocker` 이슈 0건 | SonarCloud 이슈 검색 API. `pull_request` 이벤트이고 `SONAR_TOKEN` 이 있을 때만 돈다 |
 | 아키텍처 | 계층과 도메인 경계 | ArchUnit 검사 14개 |
 | `main` 출처 | `develop`, `release/*`, `hotfix/*` | `G-BUILD` 첫 스텝 |
 
 클래스별 판정이라 평균으로 가려지지 않는다. 한 클래스만 미달해도 막힌다.
+
+**정적 분석은 조건부다.** `merge_group` 실행과 `SONAR_TOKEN` 이 없는 PR 에서는 신규 Blocker 를 보지 않고 `G-BUILD` 가 통과한다. 큐 이벤트에는 PR 번호가 없어 이슈를 조회할 수 없고, 토큰이 없으면 경고만 남긴다. 토큰 없이 돌리는 상태가 길어지면 커버리지와 아키텍처만 남는 게이트가 된다.
 
 LLM 리뷰는 CodeRabbit 이 맡고 **차단하지 않는다.** 재현율이 측정되지 않은 판정으로 병합을 막으면 오탐이 쌓여 우회 문화가 생긴다. 설정은 루트의 `.coderabbit.yaml` 이고 판정 기준은 `../CODEREVIEW.md` 가 진입점이다.
 
