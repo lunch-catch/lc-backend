@@ -48,7 +48,8 @@ public class HttpBodyLoggingFilter extends OncePerRequestFilter {
     private static final int MAX_BODY_CACHE_BYTES = 8192;
 
     private static final List<String> EXCLUDED_PATH_PREFIXES = List.of(
-            "/notifications/stream" // SSE 등 스트리밍 응답은 캐싱하면 안 됨
+            "/notifications/stream", // SSE 등 스트리밍 응답은 캐싱하면 안 됨
+            "/v1/admin/auth/" // 관리자 로그인 본문은 비밀번호를 포함하므로 캐싱과 로깅에서 제외한다.
     );
 
     // (OBS-3-05) 이 목록에 없는 Content-Type은 캐싱/로깅 대상에서 뺀다. 텍스트 계열이 아닌
