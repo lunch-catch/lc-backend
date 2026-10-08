@@ -49,7 +49,7 @@ erDiagram
         bigint campaign_id UK "캠페인 테이블 참조. UNIQUE"
         bigint template_id "템플릿 테이블 참조"
         varchar(100) title "목록 검색과 정렬용"
-        json slot_values "슬롯별 값 저장, {슬롯키: {type, value}} 형태"
+        json slot_values "슬롯별 값 저장, (슬롯키: (type, value)) 형태"
         text html_content "slot_values를 렌더링한 최종 HTML"
         datetime(6) created_at
         datetime(6) updated_at

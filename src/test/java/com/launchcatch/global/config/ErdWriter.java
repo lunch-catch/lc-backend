@@ -190,9 +190,25 @@ final class ErdWriter {
     private static String noteOf(Map<String, Object> column) {
         String comment = (String) column.get("column_comment");
         if (comment != null && !comment.isBlank()) {
-            return comment.replace('"', '\'').replace('\n', ' ').strip();
+            return note(comment);
         }
         return "YES".equals(column.get("is_nullable")) ? "nullable" : "";
+    }
+
+    /*
+     * 주석을 Mermaid 의 따옴표 문자열에 안전한 형태로 줄인다.
+     *
+     * 큰따옴표는 문자열을 닫고, 줄바꿈은 문장을 끊는다. 중괄호는 엔터티 본문의 구분자와 같아서
+     * 따옴표 안이라도 파서가 어떻게 읽을지 보장할 수 없다. campaign.slot_values 의 주석이
+     * "{슬롯키: {type, value}} 형태" 로 그 경우다. 하나가 어긋나면 그 도메인 그림 전체가
+     * 코드 블록이 아니라 글자로 남으므로, 뜻이 보존되는 괄호로 바꾼다.
+     */
+    static String note(String comment) {
+        return comment.replace('"', '\'')
+                .replace('\n', ' ')
+                .replace('{', '(')
+                .replace('}', ')')
+                .strip();
     }
 
     private List<Map<String, Object>> columns(String table) {
