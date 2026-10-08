@@ -30,24 +30,30 @@ public class TemplateVersion extends BaseTimeEntity {
     @Column(name = "request_prompt", nullable = false, columnDefinition = "TEXT")
     private String requestPrompt;
 
+    @Column(name = "request_id", nullable = false, unique = true, length = 64)
+    private String requestId;
+
     @Column(name = "html_content", nullable = false, columnDefinition = "TEXT")
     private String htmlContent;
 
     @Column(name = "deleted_at")
     private LocalDateTime deletedAt;
 
-    private TemplateVersion(Template template, int versionNumber, String requestPrompt, String htmlContent) {
+    private TemplateVersion(
+            Template template, int versionNumber, String requestPrompt, String requestId, String htmlContent) {
         if (versionNumber < 1) {
             throw new IllegalArgumentException("versionNumber must be positive");
         }
         this.template = template;
         this.versionNumber = versionNumber;
         this.requestPrompt = requiredText(requestPrompt, "requestPrompt");
+        this.requestId = requiredText(requestId, "requestId");
         this.htmlContent = requiredText(htmlContent, "htmlContent");
     }
 
-    static TemplateVersion create(Template template, int versionNumber, String requestPrompt, String htmlContent) {
-        return new TemplateVersion(template, versionNumber, requestPrompt, htmlContent);
+    static TemplateVersion create(
+            Template template, int versionNumber, String requestPrompt, String requestId, String htmlContent) {
+        return new TemplateVersion(template, versionNumber, requestPrompt, requestId, htmlContent);
     }
 
     private static String requiredText(String value, String fieldName) {

@@ -41,8 +41,8 @@ public class TemplateController {
     public ResponseEntity<ResponseEnvelope<TemplateCreateResponse>> create(
             @Valid @RequestBody TemplateCreateRequest request,
             @AuthenticationPrincipal CustomUserDetails admin) {
-        TemplateCreateResponse response =
-                templateCreateService.create(request.name(), request.requestPrompt(), admin.getId());
+        TemplateCreateResponse response = templateCreateService.create(
+                request.name(), request.requestPrompt(), request.requestId(), admin.getId());
         return ResponseEntity.status(HttpStatus.CREATED).body(ResponseEnvelope.success(response));
     }
 }

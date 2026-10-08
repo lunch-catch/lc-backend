@@ -39,11 +39,12 @@ class TemplateTest {
     void 버전_번호는_이어서_붙는다() {
         Template template = Template.createDraft("가을 신메뉴");
 
-        TemplateVersion first = template.addDraftVersion(1L, NOW, "요청 하나", "<div></div>");
-        TemplateVersion second = template.addDraftVersion(2L, NOW.plusMinutes(1), "요청 둘", "<p></p>");
+        TemplateVersion first = template.addDraftVersion(1L, NOW, "요청 하나", "req-1", "<div></div>");
+        TemplateVersion second = template.addDraftVersion(2L, NOW.plusMinutes(1), "요청 둘", "req-2", "<p></p>");
 
         assertThat(first.getVersionNumber()).isEqualTo(1);
         assertThat(first.getRequestPrompt()).isEqualTo("요청 하나");
+        assertThat(first.getRequestId()).isEqualTo("req-1");
         assertThat(first.getHtmlContent()).isEqualTo("<div></div>");
         assertThat(first.getTemplate()).isSameAs(template);
         assertThat(second.getVersionNumber()).isEqualTo(2);
@@ -52,13 +53,15 @@ class TemplateTest {
     }
 
     @Test
-    @DisplayName("요청 문장이나 HTML이 비어 있으면 버전을 만들 수 없다")
+    @DisplayName("요청 문장, 요청 식별자, HTML 중 하나라도 비어 있으면 버전을 만들 수 없다")
     void 요청_문장이나_HTML이_비면_버전을_만들_수_없다() {
         Template template = Template.createDraft("가을 신메뉴");
 
-        assertThatThrownBy(() -> template.addDraftVersion(1L, NOW, " ", "<div></div>"))
+        assertThatThrownBy(() -> template.addDraftVersion(1L, NOW, " ", "req-1", "<div></div>"))
                 .isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> template.addDraftVersion(1L, NOW, "요청", null))
+        assertThatThrownBy(() -> template.addDraftVersion(1L, NOW, "요청", " ", "<div></div>"))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> template.addDraftVersion(1L, NOW, "요청", "req-1", null))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
@@ -67,7 +70,7 @@ class TemplateTest {
     void 버전_번호는_양수여야_한다() {
         Template template = Template.createDraft("가을 신메뉴");
 
-        assertThatThrownBy(() -> TemplateVersion.create(template, 0, "요청", "<div></div>"))
+        assertThatThrownBy(() -> TemplateVersion.create(template, 0, "요청", "req-1", "<div></div>"))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 }
