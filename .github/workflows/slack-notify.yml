@@ -3,7 +3,7 @@
 # 이 워크플로는 이것 하나만 한다. 새 이슈와 병합과 승인은 GitHub 공식 Slack 앱이 맡는다.
 # 앱에는 리뷰 요청을 채널로 보내는 구독 옵션이 없고, 개인 DM 은 각자 /github signin 을
 # 해야 와서 누가 안 했는지 확인할 방법이 없다. 그 칸만 여기서 메운다.
-# 전체 알림 구성과 설정 절차는 docs/architecture/런치캐치_알림_운영.md 에 있다.
+# 전체 알림 구성과 설정 절차는 docs/ops/런치캐치_알림_운영.md 에 있다.
 #
 # 필요한 설정
 #   시크릿 SLACK_WEBHOOK_ACTIVITY  알림 채널의 Incoming Webhook URL. 없으면 알림만 건너뛴다
