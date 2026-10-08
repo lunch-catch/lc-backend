@@ -148,6 +148,19 @@ class TemplateCreateServiceTest {
     }
 
     @Test
+    @DisplayName("저장 시점의 제약 위반이 requestId 충돌이 아니면 그 예외를 그대로 던진다")
+    void 저장_시점_제약_위반이_requestId_충돌이_아니면_그대로_던진다() {
+        when(templateRepository.count()).thenReturn(0L);
+        when(templateQuotaRepository.tryReserve(TemplateCreateService.MAX_TEMPLATES)).thenReturn(1);
+        when(templateHtmlGenerator.generate("가을 느낌")).thenReturn(VALID_HTML);
+        DataIntegrityViolationException violation = new DataIntegrityViolationException("다른 제약 위반");
+        when(templateRepository.saveAndFlush(any(Template.class))).thenThrow(violation);
+
+        assertThatThrownBy(() -> service.create("가을 신메뉴", "가을 느낌", REQUEST_ID, ADMIN_ID))
+                .isSameAs(violation);
+    }
+
+    @Test
     @DisplayName("템플릿이 이미 10개면 LLM 을 부르지 않고 POSTER-003 으로 거부한다")
     void 템플릿이_10개면_거부한다() {
         when(templateRepository.count()).thenReturn(10L);
