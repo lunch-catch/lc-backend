@@ -57,6 +57,19 @@ class TemplatePaletteValidatorTest {
     }
 
     @Test
+    @DisplayName("단축 속성 안의 이름 색상도 팔레트 밖이면 POSTER-002 이다")
+    void 단축_속성_안의_이름_색상도_실패한다() {
+        assertViolation("<div style=\"border:1px solid red\">title</div>");
+    }
+
+    @Test
+    @DisplayName("단축 속성 안의 이름 색상이 팔레트 안이면 통과한다")
+    void 단축_속성_안의_팔레트_이름_색상은_통과한다() {
+        assertThatCode(() -> validator.validate("<div style=\"border:1px solid white\">title</div>"))
+                .doesNotThrowAnyException();
+    }
+
+    @Test
     @DisplayName("값이 없는 선언은 무시한다")
     void 값이_없는_선언은_무시한다() {
         assertThatCode(() -> validator.validate("<div style=\"display\">title</div>")).doesNotThrowAnyException();
