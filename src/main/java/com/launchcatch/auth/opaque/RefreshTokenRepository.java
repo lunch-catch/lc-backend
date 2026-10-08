@@ -70,7 +70,7 @@ public class RefreshTokenRepository {
      * 캐시 유실 시 DB가 권위 저장소이며 후속 재발급은 DB 해시와 상태를 반드시 확인해야 한다.
      */
     public boolean saveIfNewer(String refreshToken, Long id, Role role, boolean remember, Duration ttl, long version) {
-        if (version <= 0 || ttl.isNegative() || ttl.isZero()) {
+        if (version <= 0 || ttl.isNegative() || ttl.isZero() || ttl.toMillis() <= 0) {
             throw new IllegalArgumentException("발급 순번과 TTL은 양수여야 한다");
         }
         String hash = TokenHasher.sha256(refreshToken);

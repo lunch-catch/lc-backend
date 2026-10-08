@@ -55,6 +55,10 @@ public class Owner extends BaseTimeEntity {
     @Column(name = "last_login_at")
     private LocalDateTime lastLoginAt;
 
+    // 점주 행 잠금 아래 증가시키며 Redis RT 게시 순서를 판단한다.
+    @Column(name = "refresh_token_issuance_version", nullable = false)
+    private long refreshTokenIssuanceVersion;
+
     private Owner(String email, String passwordHash) {
         if (email == null || email.isBlank() || email.length() > 255) {
             throw new IllegalArgumentException("점주 이메일은 필수이며, 255자 이하여야 합니다.");
@@ -83,6 +87,7 @@ public class Owner extends BaseTimeEntity {
                 || expiresAt == null || loginAt == null || !expiresAt.isAfter(loginAt)) {
             throw new IllegalArgumentException("Refresh Token 해시와 유효한 만료 시각이 필요합니다.");
         }
+        this.refreshTokenIssuanceVersion = Math.incrementExact(refreshTokenIssuanceVersion);
         this.refreshTokenHash = refreshTokenHash;
         this.refreshTokenExpiresAt = expiresAt;
         this.lastLoginAt = loginAt;

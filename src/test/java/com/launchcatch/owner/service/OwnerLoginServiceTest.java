@@ -51,6 +51,7 @@ class OwnerLoginServiceTest {
         when(manager.getTransaction(any(TransactionDefinition.class))).thenReturn(new SimpleTransactionStatus());
         when(jwt.refreshTokenValidityMs(Role.OWNER)).thenReturn(Duration.ofDays(14).toMillis());
         when(jwt.createAccessToken(7L, Role.OWNER)).thenReturn("test-access");
+        when(cache.saveIfNewer(anyString(), eq(7L), eq(Role.OWNER), eq(true), any(Duration.class), anyLong())).thenReturn(true);
         service = new OwnerLoginService(repository, encoder, jwt, cache, clock, manager);
         clearInvocations(encoder);
     }
@@ -75,8 +76,9 @@ class OwnerLoginServiceTest {
         assertThat(result.toString()).doesNotContain(result.accessToken(), result.refreshToken(), request.email());
         verify(jwt).createAccessToken(7L, Role.OWNER);
         var order = inOrder(manager, cache);
-        order.verify(manager).commit(any());
-        order.verify(cache).save(result.refreshToken(), 7L, Role.OWNER, true, Duration.ofDays(14));
+        order.verify(manager, times(2)).commit(any());
+        order.verify(cache).saveIfNewer(result.refreshToken(), 7L, Role.OWNER, true, Duration.ofDays(14), 1L);
+        assertThat(owner.getRefreshTokenIssuanceVersion()).isEqualTo(1L);
     }
 
     @Test
@@ -148,9 +150,95 @@ class OwnerLoginServiceTest {
     @Test
     void 캐시_장애는_DB_저장이_성공하면_허용한다() {
         doThrow(new DataAccessResourceFailureException("cache unavailable"))
-                .when(cache).save(anyString(), eq(7L), eq(Role.OWNER), eq(true), any(Duration.class));
+                .when(cache).saveIfNewer(anyString(), eq(7L), eq(Role.OWNER), eq(true), any(Duration.class), anyLong());
         assertThat(service.login(request).accessToken()).isEqualTo("test-access");
-        verify(manager).commit(any());
+        verify(manager, times(2)).commit(any());
+    }
+
+
+    @Test
+    void 두_번_로그인하면_DB_발급_순번도_증가한다() {
+        service.login(request);
+        var latest = service.login(request);
+        assertThat(owner.getRefreshTokenIssuanceVersion()).isEqualTo(2L);
+        assertThat(owner.getRefreshTokenHash()).isEqualTo(TokenHasher.sha256(latest.refreshToken()));
+        verify(cache).saveIfNewer(latest.refreshToken(), 7L, Role.OWNER, true, Duration.ofDays(14), 2L);
+    }
+
+    @Test
+    void 다른_로그인으로_교체된_해시는_Redis에_게시하지_않는다() {
+        Owner latest = Owner.create(request.email(), owner.getPasswordHash());
+        latest.recordLogin("b".repeat(64), LocalDateTime.now(clock).plusDays(14), LocalDateTime.now(clock));
+        when(repository.findByIdForLogin(7L)).thenReturn(Optional.of(owner), Optional.of(latest));
+        assertThat(service.login(request).accessToken()).isEqualTo("test-access");
+        verify(cache, never()).saveIfNewer(anyString(), anyLong(), any(), anyBoolean(), any(), anyLong());
+    }
+
+    @Test
+    void 다른_발급_순번이면_Redis에_게시하지_않는다() {
+        Owner latest = Owner.create(request.email(), owner.getPasswordHash());
+        ReflectionTestUtils.setField(latest, "refreshTokenIssuanceVersion", 2L);
+        when(repository.findByIdForLogin(7L)).thenReturn(Optional.of(owner), Optional.of(latest));
+        assertThat(service.login(request).accessToken()).isEqualTo("test-access");
+        verify(cache, never()).saveIfNewer(anyString(), anyLong(), any(), anyBoolean(), any(), anyLong());
+    }
+
+    @Test
+    void Redis에_더_최신_게시가_있어도_DB_로그인_결과를_유지한다() {
+        when(cache.saveIfNewer(anyString(), anyLong(), any(), anyBoolean(), any(), anyLong())).thenReturn(false);
+        assertThat(service.login(request).accessToken()).isEqualTo("test-access");
+    }
+
+    @Test
+    void 게시전_DB_조회_실패는_503이며_캐시에_저장하지_않는다() {
+        when(repository.findByIdForLogin(7L)).thenReturn(Optional.of(owner))
+                .thenThrow(new DataAccessResourceFailureException("DB unavailable"));
+        assertStoreFailed();
+    }
+
+    @Test
+    void 게시전_계정이_사라지면_로그인을_거절한다() {
+        when(repository.findByIdForLogin(7L)).thenReturn(Optional.of(owner), Optional.empty());
+        assertThatThrownBy(() -> service.login(request)).isInstanceOfSatisfying(AuthException.class,
+                e -> assertThat(e.getErrorCode().getCode()).isEqualTo("AUTH-001"));
+        verify(cache, never()).saveIfNewer(anyString(), anyLong(), any(), anyBoolean(), any(), anyLong());
+    }
+
+    @Test
+    void 게시전_정지된_계정은_로그인을_거절한다() {
+        Owner suspended = Owner.create(request.email(), owner.getPasswordHash());
+        ReflectionTestUtils.setField(suspended, "status", OwnerStatus.SUSPENDED);
+        when(repository.findByIdForLogin(7L)).thenReturn(Optional.of(owner), Optional.of(suspended));
+        assertThatThrownBy(() -> service.login(request)).isInstanceOfSatisfying(AuthException.class,
+                e -> assertThat(e.getErrorCode().getCode()).isEqualTo("AUTH-001"));
+        verify(cache, never()).saveIfNewer(anyString(), anyLong(), any(), anyBoolean(), any(), anyLong());
+    }
+
+    @Test
+    void 게시_지연으로_만료된_RT는_캐시에_저장하지_않는다() {
+        Clock delayedClock = mock(Clock.class);
+        when(delayedClock.instant()).thenReturn(clock.instant(), clock.instant().plus(Duration.ofDays(14)));
+        service = new OwnerLoginService(repository, encoder, jwt, cache, delayedClock, manager);
+        assertThatThrownBy(() -> service.login(request)).isInstanceOfSatisfying(AuthException.class,
+                e -> assertThat(e.getErrorCode().getCode()).isEqualTo("AUTH-001"));
+        verify(cache, never()).saveIfNewer(anyString(), anyLong(), any(), anyBoolean(), any(), anyLong());
+    }
+
+    @Test
+    void 게시_TTL은_DB_만료까지_남은_시간이다() {
+        Clock delayedClock = mock(Clock.class);
+        when(delayedClock.instant()).thenReturn(clock.instant(), clock.instant().plusSeconds(5));
+        service = new OwnerLoginService(repository, encoder, jwt, cache, delayedClock, manager);
+        var result = service.login(request);
+        verify(cache).saveIfNewer(result.refreshToken(), 7L, Role.OWNER, true, Duration.ofDays(14).minusSeconds(5), 1L);
+    }
+
+    @Test
+    void 순번_오버플로면_기존_해시를_변경하지_않는다() {
+        ReflectionTestUtils.setField(owner, "refreshTokenIssuanceVersion", Long.MAX_VALUE);
+        assertThatThrownBy(() -> service.login(request)).isInstanceOf(ArithmeticException.class);
+        assertThat(owner.getRefreshTokenHash()).isNull();
+        verify(cache, never()).saveIfNewer(anyString(), anyLong(), any(), anyBoolean(), any(), anyLong());
     }
 
     private void assertLoginFailed(OwnerLoginRequest input) {
