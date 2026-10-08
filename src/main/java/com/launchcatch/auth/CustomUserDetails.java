@@ -1,5 +1,6 @@
 package com.launchcatch.auth;
 
+import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.List;
 import org.springframework.security.core.GrantedAuthority;
@@ -17,16 +18,20 @@ public class CustomUserDetails implements UserDetails {
 
     private final Long id;
     private final Role role;
-    private final String ownerStatus;
+    private final LocalDateTime issuedAt;
 
     public CustomUserDetails(Long id, Role role) {
         this(id, role, null);
     }
 
-    public CustomUserDetails(Long id, Role role, String ownerStatus) {
-        this.ownerStatus = role == Role.OWNER ? ownerStatus : null;
+    public CustomUserDetails(Long id, Role role, LocalDateTime issuedAt) {
         this.id = id;
         this.role = role;
+        this.issuedAt = issuedAt;
+    }
+
+    public LocalDateTime getIssuedAt() {
+        return issuedAt;
     }
 
     public Long getId() {
@@ -36,11 +41,7 @@ public class CustomUserDetails implements UserDetails {
     public Role getRole() {
         return role;
     }
-
-    public String getOwnerStatus() {
-        return ownerStatus;
-    }
-
+  
     @Override
     public Collection<? extends GrantedAuthority> getAuthorities() {
         return List.of(new SimpleGrantedAuthority(role.toAuthority()));

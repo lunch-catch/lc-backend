@@ -1,5 +1,6 @@
 package com.launchcatch.member.repository;
 
+import com.launchcatch.member.contract.MemberStatus;
 import com.launchcatch.member.entity.Member;
 import java.time.LocalDateTime;
 import java.util.Optional;
@@ -23,12 +24,14 @@ public interface MemberRepository extends JpaRepository<Member, Long> {
                    member.refreshTokenExpiresAt = :refreshTokenExpiresAt,
                    member.updatedAt = :updatedAt
              WHERE member.id = :memberId
+               AND member.status = :activeStatus
             """)
     int updateRefreshTokenBackup(
             @Param("memberId") Long memberId,
             @Param("refreshTokenHash") String refreshTokenHash,
             @Param("refreshTokenExpiresAt") LocalDateTime refreshTokenExpiresAt,
-            @Param("updatedAt") LocalDateTime updatedAt
+            @Param("updatedAt") LocalDateTime updatedAt,
+            @Param("activeStatus") MemberStatus activeStatus
     );
 
     @Modifying(clearAutomatically = true, flushAutomatically = true)
@@ -45,5 +48,27 @@ public interface MemberRepository extends JpaRepository<Member, Long> {
             @Param("memberId") Long memberId,
             @Param("refreshTokenHash") String refreshTokenHash,
             @Param("updatedAt") LocalDateTime updatedAt
+    );
+
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Transactional
+    @Query("""
+            UPDATE Member member
+               SET member.refreshTokenHash = :newRefreshTokenHash,
+                   member.refreshTokenExpiresAt = :newRefreshTokenExpiresAt,
+                   member.updatedAt = :updatedAt
+             WHERE member.id = :memberId
+               AND member.refreshTokenHash = :oldRefreshTokenHash
+               AND member.refreshTokenExpiresAt > :now
+               AND member.status = :activeStatus
+            """)
+    int rotateRefreshTokenBackupIfMatches(
+            @Param("memberId") Long memberId,
+            @Param("oldRefreshTokenHash") String oldRefreshTokenHash,
+            @Param("newRefreshTokenHash") String newRefreshTokenHash,
+            @Param("newRefreshTokenExpiresAt") LocalDateTime newRefreshTokenExpiresAt,
+            @Param("now") LocalDateTime now,
+            @Param("updatedAt") LocalDateTime updatedAt,
+            @Param("activeStatus") MemberStatus activeStatus
     );
 }

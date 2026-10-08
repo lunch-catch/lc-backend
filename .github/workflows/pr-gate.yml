@@ -14,10 +14,17 @@ on:
     branches: [main, develop]
     # synchronize 는 PR 이 열린 뒤의 push, reopened 는 닫힌 동안 움직인 base 를 위한 것이다
     types: [opened, synchronize, reopened]
+  # merge queue 가 만든 임시 브랜치에서도 돌아야 한다. 이 트리거가 없으면 큐에 들어간 PR 이
+  # G-BUILD 를 영원히 기다린다. 큐를 켜기 전에 이 줄이 기본 브랜치에 들어가 있어야 한다.
+  merge_group:
 
-# 같은 PR 에 push 가 이어지면 앞선 실행을 취소한다
+# PR 이벤트는 같은 PR 에 push 가 이어지면 앞선 실행을 취소한다.
+#
+# merge_group 에는 pull_request 가 없어 번호가 빈다. 그대로 두면 큐 항목 전부가 한 그룹에
+# 묶여 서로를 취소하고, 큐가 영원히 통과하지 못한다. 그래서 큐에서는 head_sha 로 가른다.
+# 큐 항목은 각자 다른 조합을 검증하므로 취소 대상이 아니다.
 concurrency:
-  group: pr-gate-${{ github.event.pull_request.number }}
+  group: pr-gate-${{ github.event.pull_request.number || github.event.merge_group.head_sha }}
   cancel-in-progress: true
 
 permissions:
@@ -35,8 +42,11 @@ jobs:
       # main 으로 가는 PR 은 develop, release/*, hotfix/* 에서만 받는다 (BLD-2-05).
       # GitHub 의 브랜치 보호에는 base 를 제한하는 항목이 없고 조직 룰셋은 Team 플랜이
       # 필요하므로 여기서 막는다. 체크아웃보다 앞에 두어 바로 떨어지게 한다.
+      #
+      # merge_group 에는 head_ref 가 없어 출처를 볼 수 없다. 큐는 develop 에만 켜므로
+      # main 으로 가는 PR 은 이 조건이 항상 pull_request 이벤트에서 평가된다.
       - name: main 의 병합 출처 확인
-        if: github.base_ref == 'main'
+        if: github.event_name == 'pull_request' && github.base_ref == 'main'
         env:
           HEAD_REF: ${{ github.head_ref }}
         run: |
@@ -69,9 +79,16 @@ jobs:
       - name: 테스트와 커버리지
         run: ./gradlew check --no-daemon
 
-      # SONAR_TOKEN 이 없으면 건너뛴다. 토큰을 넣기 전에도 커버리지 게이트는 돌아야 한다
+      # SONAR_TOKEN 이 없으면 건너뛴다. 토큰을 넣기 전에도 커버리지 게이트는 돌아야 한다.
+      #
+      # merge_group 에서는 돌리지 않는다. 아래 Blocker 확인이 PR 번호로 조회하는데 큐
+      # 이벤트에는 그 번호가 없다. 큐 실행이 확인할 것은 "최신 base 와 합쳐도 테스트와
+      # 커버리지가 통과하는가" 다.
+      #
+      # 정적 분석은 PR 실행이 맡는다. 단 SONAR_TOKEN 이 없으면 PR 실행도 건너뛰므로,
+      # 그 상태에서는 신규 Blocker 를 아무도 보지 않는다. 토큰이 있어야 성립하는 분담이다.
       - name: 정적 분석
-        if: env.SONAR_TOKEN != ''
+        if: github.event_name == 'pull_request' && env.SONAR_TOKEN != ''
         run: ./gradlew sonar --no-daemon
 
       # sonar 태스크는 분석 결과를 올리기만 하고 성공으로 끝난다. 차단은 여기서 한다.
@@ -82,7 +99,7 @@ jobs:
       # 커스텀 게이트로 그 조건을 빼려면 Team 플랜이 필요하다.
       # 이슈 검색 API 는 무료 플랜에서도 되므로 신규 Blocker 만 직접 센다 (BLD-2-02).
       - name: 신규 Blocker 0건 확인
-        if: env.SONAR_TOKEN != ''
+        if: github.event_name == 'pull_request' && env.SONAR_TOKEN != ''
         env:
           PR: ${{ github.event.pull_request.number }}
         run: |
@@ -112,7 +129,7 @@ jobs:
           fi
 
       - name: 정적 분석을 건너뛴 이유
-        if: env.SONAR_TOKEN == ''
+        if: github.event_name == 'pull_request' && env.SONAR_TOKEN == ''
         run: |
           echo "::warning::SONAR_TOKEN 이 없어 정적 분석을 건너뛰었다. 저장소 Secrets 에 등록해야 한다."
 

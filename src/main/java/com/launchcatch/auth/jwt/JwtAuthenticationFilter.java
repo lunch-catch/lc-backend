@@ -1,7 +1,6 @@
 package com.launchcatch.auth.jwt;
 
 import com.launchcatch.auth.CustomUserDetails;
-import com.launchcatch.auth.RedisFailureClassifier;
 import com.launchcatch.auth.Role;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
@@ -10,9 +9,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import java.time.LocalDateTime;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.dao.DataAccessException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.web.authentication.WebAuthenticationDetailsSource;
@@ -32,13 +29,19 @@ import org.springframework.web.filter.OncePerRequestFilter;
  * EntryPoint 와 AccessDeniedHandler 클래스가 필요 없다.
  */
 @Slf4j
-@RequiredArgsConstructor
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     private static final String ACCESS_TOKEN_COOKIE_NAME = "accessToken";
 
     private final JwtTokenProvider jwtTokenProvider;
-    private final AccessTokenValidAfterRepository accessTokenValidAfterRepository;
+    private final AccessTokenCutoffVerifier cutoffVerifier;
+
+    public JwtAuthenticationFilter(
+            JwtTokenProvider jwtTokenProvider,
+            AccessTokenValidAfterRepository accessTokenValidAfterRepository) {
+        this.jwtTokenProvider = jwtTokenProvider;
+        this.cutoffVerifier = new AccessTokenCutoffVerifier(accessTokenValidAfterRepository);
+    }
 
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
@@ -59,36 +62,19 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             return;
         }
 
-        if (!isValidAfterCutoff(role, id, jwtTokenProvider.getIssuedAt(token))) {
+        LocalDateTime issuedAt = jwtTokenProvider.getIssuedAt(token);
+        if (!cutoffVerifier.isValidAfter(role, id, issuedAt, CutoffPolicy.LENIENT)) {
             filterChain.doFilter(request, response);
             return;
         }
 
-        CustomUserDetails userDetails = new CustomUserDetails(id, role, jwtTokenProvider.getOwnerStatus(token));
+        CustomUserDetails userDetails = new CustomUserDetails(id, role, issuedAt);
         UsernamePasswordAuthenticationToken authentication =
                 new UsernamePasswordAuthenticationToken(userDetails, null, userDetails.getAuthorities());
         authentication.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
         SecurityContextHolder.getContext().setAuthentication(authentication);
 
         filterChain.doFilter(request, response);
-    }
-
-    /*
-     * 캐시가 죽으면 통과시킨다.
-     * 커트라인 조회가 안 된다고 인증 전체를 막으면 캐시 블립 한 번에 서비스가 통째로 닫힌다.
-     * 잃는 것은 "로그아웃한 Access 가 남은 수명만큼 더 사는" 창이고, 그 창은 최대 30분이다.
-     */
-    private boolean isValidAfterCutoff(Role role, Long id, LocalDateTime issuedAt) {
-        if (issuedAt == null) {
-            return true;
-        }
-        try {
-            return accessTokenValidAfterRepository.isValidAfter(role, id, issuedAt);
-        } catch (DataAccessException e) {
-            log.warn("event=ACCESS_TOKEN_VALID_AFTER_CHECK_FAILED role={} id={} cause={} 통과시킨다",
-                    role, id, RedisFailureClassifier.causeLabel(e), e);
-            return true;
-        }
     }
 
     private String resolveToken(HttpServletRequest request) {

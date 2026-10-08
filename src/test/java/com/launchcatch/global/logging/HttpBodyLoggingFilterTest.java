@@ -34,6 +34,13 @@ class HttpBodyLoggingFilterTest {
         logs.close();
     }
 
+    @Test
+    void 계정_발급_본문은_로깅_대상에서_제외한다() {
+        MockHttpServletRequest request = new MockHttpServletRequest("POST", "/v1/admin/admins");
+        request.setContentType("application/json");
+        assertThat(filter.shouldNotFilter(request)).isTrue();
+    }
+
     /*
      * 가려야 하는 키 전체다. 운영 코드의 정규식은 이 목록을 문자열로 들고 있어서
      * 한 줄이 빠지거나 오타가 나도 컴파일은 통과한다.
@@ -45,7 +52,7 @@ class HttpBodyLoggingFilterTest {
                 "phone", "address", "roadAddress", "locationNickname", "name", "sub",
                 "businessRegistrationNumber", "businessNumber",
                 "lat", "lng", "latitude", "longitude",
-                "currentPassword", "newPassword", "representativeName", "fid",
+                "initialPassword", "currentPassword", "newPassword", "representativeName", "fid",
                 "providerUserId", "kakaoUserId", "user_id", "paymentKey",
                 "authorizationCode", "state", "nonce");
     }

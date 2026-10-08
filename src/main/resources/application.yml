@@ -103,7 +103,7 @@ spring:
             client-secret: "${KAKAO_CLIENT_SECRET}"
             authorization-grant-type: authorization_code
             redirect-uri: "${KAKAO_REDIRECT_URI:http://localhost:5173/oauth/callback}"
-            scope: openid
+            scope: openid,profile_nickname,profile_image
         provider:
           kakao:
             issuer-uri: https://kauth.kakao.com
@@ -186,7 +186,7 @@ jwt:
     admin-validity-ms: "${JWT_REFRESH_ADMIN_VALIDITY_MS:86400000}"
     # 점주 14일
     owner-validity-ms: "${JWT_REFRESH_OWNER_VALIDITY_MS:1209600000}"
-    # 사용자 14일. 자동 로그인을 체크하지 않으면 세션 쿠키로 내려 이 값을 쓰지 않는다
+    # 사용자 14일. 회원 Refresh Token은 항상 persistent cookie로 발급한다
     member-validity-ms: "${JWT_REFRESH_MEMBER_VALIDITY_MS:1209600000}"
   cookie:
     secure: "${JWT_COOKIE_SECURE:false}"

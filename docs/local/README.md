@@ -1,0 +1,172 @@
+# 로컬 실행
+
+| 항목 | 내용 |
+|---|---|
+| 목적 | 클론한 저장소를 로컬에서 띄우는 절차와 막혔을 때 보는 곳을 한곳에 둔다 |
+| 근거 | `application-local.yml` 이 `.gitignore` 로 막혀 있어 각자 만들어야 한다. 만들지 않으면 플레이스홀더 오류로 끝나고, 그 메시지만으로는 무엇을 해야 하는지 알 수 없다 |
+| 관련 문서 | `../../application-local.yml.example`(채울 값), `../../compose.yaml`(컨테이너), `../architecture/런치캐치_알림_운영.md`(배포 알림) |
+
+## 1. 필요한 것
+
+| | 버전 | 비고 |
+|---|---|---|
+| JDK | 21 | `build.gradle` 이 `JavaLanguageVersion.of(21)` 로 고정한다 |
+| Docker | 아무 최신판 | MySQL 과 Valkey 를 띄운다. Docker Desktop 이 떠 있어야 한다 |
+| Gradle | 설치하지 않는다 | `./gradlew` 가 8.14.3 을 알아서 내려받는다 |
+
+## 2. 설정 파일 만들기
+
+**이 단계를 건너뛰면 앱이 뜨지 않는다.** 가장 많이 막히는 곳이다.
+
+```bash
+cp application-local.yml.example application-local.yml
+```
+
+`application.yml` 이 **기본값 없이** 요구하는 값이 다섯이다. 다섯 다 채워야 한다.
+
+| 값 | 쓰이는 곳 | 어디서 얻나 |
+|---|---|---|
+| `jwt.secret` | JWT 서명 | 직접 생성 (아래) |
+| `spring.security.oauth2...kakao.client-id` | 사용자 카카오 로그인 | 카카오 개발자 콘솔 > 내 애플리케이션 > 앱 키 > REST API 키 |
+| `spring.security.oauth2...kakao.client-secret` | 사용자 카카오 로그인 | 카카오 로그인 > 보안 > Client Secret |
+| `kakao.app-id` | 연결 해제 웹훅 검증 | 콘솔의 앱 ID |
+| `kakao.admin-key` | 로그아웃 시 카카오 로그아웃 호출 | 앱 키 > Admin 키 |
+
+JWT 시크릿을 만든다. HS256 이라 32바이트 이상이어야 한다.
+
+```bash
+openssl rand -base64 64 | tr -d '\n'
+```
+
+복사한 파일에서 다섯 블록의 주석을 풀고 채운다.
+
+```yaml
+spring:
+  security:
+    oauth2:
+      client:
+        registration:
+          kakao:
+            client-id: "<REST API 키>"
+            client-secret: "<Client Secret>"
+            redirect-uri: "http://localhost:5173/oauth/callback"
+
+kakao:
+  app-id: "<앱 ID>"
+  admin-key: "<Admin 키>"
+
+jwt:
+  secret: "<위에서 만든 값>"
+  cookie:
+    # 로컬은 http 라 꺼둔다. 운영(https)에서는 반드시 true
+    secure: false
+```
+
+**주석을 풀고 빈 문자열로 두지 않는다.** 키가 존재하기만 하면 값이 무엇이든 셸 환경변수보다 우선하므로, 빈 문자열로 두면 환경변수로도 채울 수 없다. 환경변수로 쓸 값은 주석 상태로 남긴다.
+
+### 카카오 키가 없을 때
+
+로그인을 쓰지 않고 기동만 확인하려면 아무 문자열이나 넣어도 뜬다. 카카오를 부르는 시점에만 실패한다.
+
+```yaml
+kakao:
+  app-id: "local-dummy"
+  admin-key: "local-dummy"
+```
+
+`jwt.secret` 은 예외다. 짧으면 기동은 되고 토큰 발급 때 터지므로 위 명령으로 만든 값을 쓴다.
+
+## 3. 실행
+
+```bash
+./gradlew bootRun
+```
+
+컨테이너를 따로 띄우지 않아도 된다. `spring-boot-docker-compose` 가 `compose.yaml` 의 MySQL 과 Valkey 를 띄우고 접속 정보를 앱에 넣어 준다. 프로필을 주지 않으면 `local` 로 본다.
+
+마이그레이션도 기동할 때 돈다. `global.config.DomainFlywayMigrator` 가 `db/migration/{도메인}` 마다 Flyway 를 따로 돌리고 이력도 `flyway_history_{도메인}` 으로 따로 둔다.
+
+## 4. 떴는지 확인
+
+앱은 8080, 액추에이터는 **8081** 이다. 포트가 갈려 있어서 `8080/actuator` 는 없다.
+
+```bash
+curl http://localhost:8081/actuator/health
+```
+
+```
+http://localhost:8080/swagger-ui.html    API 문서
+http://localhost:8080/v3/api-docs        OpenAPI JSON
+```
+
+## 5. 막혔을 때
+
+### `Could not resolve placeholder 'JWT_SECRET'`
+
+```
+Caused by: org.springframework.util.PlaceholderResolutionException:
+  Could not resolve placeholder 'JWT_SECRET' in value "${JWT_SECRET}" <-- "${jwt.secret}"
+```
+
+2절을 하지 않았다. `application-local.yml` 이 없거나 `jwt.secret` 이 비어 있다. 변수 이름이 `KAKAO_CLIENT_ID` 나 `KAKAO_ADMIN_KEY` 로 바뀌어 나오는 것도 같은 원인이다. 다섯을 한 번에 채운다.
+
+### `Communications link failure` 또는 `Connection refused`
+
+도커가 떠 있지 않다. Docker Desktop 을 켜고 다시 돌린다. 확인은 이렇게 한다.
+
+```bash
+docker info
+docker compose ps
+```
+
+### `Bind for 0.0.0.0:3306 failed: port is already allocated`
+
+로컬에 MySQL 이 이미 3306 을 쓰고 있다. 컨테이너 포트를 옮기고 앱이 보는 주소도 함께 바꾼다. **한쪽만 바꾸면 앱과 컨테이너가 서로 다른 포트를 본다.**
+
+```bash
+cp .env.example .env
+# .env 에서 MYSQL_PORT=3307
+```
+
+```yaml
+# application-local.yml 에서 주석을 풀고 포트를 맞춘다
+spring:
+  datasource:
+    url: "jdbc:mysql://localhost:3307/launchcatch?connectionTimeZone=Asia/Seoul&forceConnectionTimeZoneToSession=true&characterEncoding=UTF-8"
+```
+
+Valkey 도 같은 방식이다. `.env` 의 `VALKEY_PORT` 를 바꾼다.
+
+### `Validation failed for query` 또는 테이블이 없다는 오류
+
+Hibernate 가 `ddl-auto: validate` 라 스키마가 어긋나면 기동을 막는다. 스키마의 소유자는 `db/migration` 의 SQL 이다. 규약은 `../../src/main/resources/db/migration/README.md` 에 있다.
+
+컨테이너를 비우고 처음부터 다시 적용하려면 이렇게 한다. **로컬 데이터가 지워진다.**
+
+```bash
+docker compose down -v
+./gradlew bootRun
+```
+
+## 6. 테스트
+
+```bash
+./gradlew check
+```
+
+`test`, 커버리지 검증, 커버리지 데이터 확인까지 돈다. 통합 테스트가 Testcontainers 로 MySQL 8.4 와 Valkey 를 따로 띄우므로 **도커가 필요하다.** 기준은 `../code-convention/build-gate-guideline.md` 에 있다.
+
+단위 테스트만 빨리 돌리려면 이름으로 좁힌다.
+
+```bash
+./gradlew test --tests '*ServiceTest'
+```
+
+## 7. 파일 둘의 역할이 다르다
+
+| 파일 | 누가 읽나 | 담는 것 |
+|---|---|---|
+| `.env` | Docker Compose 만 | 컨테이너 이름, 포트, DB 계정 |
+| `application-local.yml` | Spring 만 | JWT, 카카오, CORS 같은 앱 설정 |
+
+인프라 값을 `application-local.yml` 에 적어도 Compose 는 보지 못한다. 반대도 같다. 둘 다 `.gitignore` 로 막혀 있어 실제 값을 적어도 커밋되지 않는다.
