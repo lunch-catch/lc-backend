@@ -113,6 +113,18 @@ class TemplateCreateServiceTest {
     }
 
     @Test
+    @DisplayName("초기 확인 뒤 LLM 호출 중 다른 요청이 먼저 채워 10개가 되면 저장 직전에 거부한다")
+    void 저장_직전_재확인에서_10개가_되면_거부한다() {
+        when(templateRepository.count()).thenReturn(9L, 10L);
+        when(templateHtmlGenerator.generate("가을 느낌")).thenReturn(VALID_HTML);
+
+        assertThatThrownBy(() -> service.create("가을 신메뉴", "가을 느낌", ADMIN_ID))
+                .isInstanceOfSatisfying(CampaignException.class, e ->
+                        assertThat(e.getErrorCode()).isEqualTo(PosterErrorCode.TEMPLATE_LIMIT_EXCEEDED));
+        verify(templateRepository, never()).save(any());
+    }
+
+    @Test
     @DisplayName("LLM 응답이 시간 초과되면 POSTER-005 이고 저장하지 않는다")
     void LLM_시간_초과는_503이다() {
         when(templateRepository.count()).thenReturn(0L);

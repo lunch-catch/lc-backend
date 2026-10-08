@@ -7,6 +7,7 @@ import java.util.Locale;
 import java.util.Set;
 import java.util.regex.Pattern;
 import org.jsoup.Jsoup;
+import org.jsoup.nodes.Document;
 import org.jsoup.nodes.Element;
 import org.springframework.stereotype.Component;
 
@@ -29,7 +30,11 @@ public class TemplatePaletteValidator {
             "\\b(?:rgb|rgba|hsl|hsla)\\s*\\(", Pattern.CASE_INSENSITIVE);
 
     public void validate(String html) {
-        for (Element element : Jsoup.parseBodyFragment(html).select("[style]")) {
+        validate(Jsoup.parseBodyFragment(html));
+    }
+
+    public void validate(Document document) {
+        for (Element element : document.select("[style]")) {
             if (violatesPalette(element.attr("style"))) {
                 throw new CampaignException(PosterErrorCode.COLOR_NOT_ALLOWED);
             }

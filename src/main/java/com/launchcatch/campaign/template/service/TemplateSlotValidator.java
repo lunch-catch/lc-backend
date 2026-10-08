@@ -26,7 +26,10 @@ public class TemplateSlotValidator {
             "image", Set.of("img"));
 
     public void validate(String html) {
-        Document document = Jsoup.parseBodyFragment(html);
+        validate(Jsoup.parseBodyFragment(html));
+    }
+
+    public void validate(Document document) {
         SLOT_TAGS.forEach((slot, allowedTags) -> {
             Elements found = document.select("[data-slot=" + slot + "]");
             if (found.size() != 1 || !allowedTags.contains(found.first().normalName())) {
