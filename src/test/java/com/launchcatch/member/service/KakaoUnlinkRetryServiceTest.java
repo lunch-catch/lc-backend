@@ -196,6 +196,27 @@ class KakaoUnlinkRetryServiceTest {
         assertThat(failure.isResolved()).isFalse();
     }
 
+    @Test
+    @DisplayName("실패 기록이 실패해도 나머지 행은 계속 처리한다")
+    void 실패_기록이_실패해도_나머지_행은_계속_처리한다() throws Exception {
+        KakaoUnlinkFailure first = failure(MemberStatus.WITHDRAWN);
+        KakaoUnlinkFailure second = failure(MemberStatus.WITHDRAWN);
+        setId(second, 11L);
+        setField(second, "providerUserId", "kakao-2");
+        when(failureRepository.findPendingOldestFirst(any(Pageable.class))).thenReturn(List.of(first, second));
+        when(failureRepository.findById(10L))
+                .thenReturn(Optional.of(first))
+                .thenThrow(new RuntimeException("db down"));
+        when(failureRepository.findById(11L)).thenReturn(Optional.of(second));
+        doThrow(new RuntimeException("kakao 500")).when(kakaoUnlinkClient).unlink("kakao-1");
+
+        assertThatCode(() -> service.retryPending()).doesNotThrowAnyException();
+
+        verify(kakaoUnlinkClient).unlink("kakao-2");
+        verify(failureRepository).delete(second);
+        assertThat(first.getAttemptCount()).isZero();
+    }
+
     /*
      * 재확인과 호출 사이에 재가입이 끼어들면 방금 맺은 카카오 연결을 우리가 끊는다. 외부 호출을
      * 트랜잭션 밖에 두는 한 이 창은 없앨 수 없으므로, 지나간 뒤에 탐지만 한다. 대기 행이

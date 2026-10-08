@@ -82,7 +82,7 @@ public class KakaoUnlinkRetryService {
             log.info("event=KAKAO_UNLINK_RETRY_SKIPPED_CIRCUIT_OPEN failureId={}", pending.failureId());
             return;
         } catch (RuntimeException callFailure) {
-            transactionTemplate.executeWithoutResult(status -> markFailed(pending, callFailure));
+            recordFailure(pending, callFailure);
             return;
         }
         try {
@@ -135,6 +135,21 @@ public class KakaoUnlinkRetryService {
                     pending.memberId());
         }
         failureRepository.delete(failure);
+    }
+
+    /*
+     * 실패를 기록하는 트랜잭션이 DB 오류로 던져도 이 행에서 멈춘다. 밖으로 나가면 forEach 가 끊겨
+     * 남은 행이 그날 재시도되지 않고 스케줄러가 작업 전체를 FAILED 로 닫는다. 성공 경로의 정리 실패와 같은 처리다.
+     * 기록이 빠지면 attempt_count 가 오르지 않을 뿐이고, 행은 대기로 남아 다음 사이클이 다시 시도한다.
+     */
+    private void recordFailure(PendingUnlink pending, RuntimeException callFailure) {
+        try {
+            transactionTemplate.executeWithoutResult(status -> markFailed(pending, callFailure));
+        } catch (RuntimeException recordFailure) {
+            log.error("event=KAKAO_UNLINK_RETRY_MARK_FAILED_ERROR failureId={} memberId={} callCauseType={}",
+                    pending.failureId(), pending.memberId(),
+                    KakaoUnlinkFailureClassifier.causeType(callFailure), recordFailure);
+        }
     }
 
     private void markFailed(PendingUnlink pending, RuntimeException cause) {
