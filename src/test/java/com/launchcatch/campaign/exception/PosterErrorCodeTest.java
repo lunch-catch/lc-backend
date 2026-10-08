@@ -19,5 +19,9 @@ class PosterErrorCodeTest {
         assertThat(PosterErrorCode.TEMPLATE_LIMIT_EXCEEDED.getHttpStatus()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
         assertThat(PosterErrorCode.GENERATION_TIMEOUT.getCode()).isEqualTo("POSTER-004");
         assertThat(PosterErrorCode.GENERATION_TIMEOUT.getHttpStatus()).isEqualTo(HttpStatus.SERVICE_UNAVAILABLE);
+        assertThat(PosterErrorCode.TEMPLATE_NOT_FOUND.getCode()).isEqualTo("POSTER-005");
+        assertThat(PosterErrorCode.TEMPLATE_NOT_FOUND.getHttpStatus()).isEqualTo(HttpStatus.NOT_FOUND);
+        assertThat(PosterErrorCode.TEMPLATE_NOT_DRAFT.getCode()).isEqualTo("POSTER-006");
+        assertThat(PosterErrorCode.TEMPLATE_NOT_DRAFT.getHttpStatus()).isEqualTo(HttpStatus.CONFLICT);
     }
 }
