@@ -114,8 +114,8 @@ public class GlobalExceptionHandler {
             MissingServletRequestParameterException.class
     })
     public ResponseEntity<ResponseEnvelope<Void>> handleMalformedRequest(Exception e) {
-        // // 예외 메시지에 비밀번호 등 민감한 입력값이 포함될 수 있으므로 예외 타입만 기록한다.
-        log.warn("malformed request. type={}", e.getClass().getSimpleName());
+        // 파싱 예외 메시지에는 로그인 요청의 비밀번호가 포함될 수 있어 예외 종류만 기록한다.
+        log.warn("malformed request. exceptionType={}", e.getClass().getSimpleName());
         return toResponse(CommonErrorCode.MALFORMED_REQUEST);
     }
 
