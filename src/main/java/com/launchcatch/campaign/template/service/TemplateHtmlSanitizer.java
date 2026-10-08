@@ -23,7 +23,10 @@ public class TemplateHtmlSanitizer {
     private static final Set<String> ALLOWED_TAGS = Set.of(
             "div", "span", "p", "h1", "h2", "h3", "strong", "em", "br", "img");
 
-    // 태그 안의 내용까지 버리는 태그다. 나머지 허용되지 않은 태그는 태그만 벗기고 안의 내용은 남긴다
+    /*
+     * 태그 안의 내용까지 버리는 태그다.
+     * 나머지 허용되지 않은 태그는 태그만 벗기고 안의 내용은 남긴다.
+     */
     private static final Set<String> DROPPED_WITH_CONTENT = Set.of(
             "script", "style", "iframe", "object", "embed", "link", "meta", "base");
 

@@ -32,7 +32,10 @@ public class Template extends BaseTimeEntity {
     @Column(nullable = false, length = 20)
     private TemplateStatus status;
 
-    // 게시 전까지 비어 있다. 게시할 때 선택한 버전의 HTML 이 여기 복사된다
+    /*
+     * 게시 전까지 비어 있다.
+     * 게시할 때 선택한 버전의 HTML 이 여기 복사된다.
+     */
     @Column(name = "html_content", columnDefinition = "TEXT")
     private String htmlContent;
 

@@ -1,4 +1,7 @@
--- 템플릿 생성 가능 수를 세는 행 하나. 10개 제한을 조건부 UPDATE 로 원자적으로 지키는 데 쓴다.
+/*
+ * 템플릿 생성 가능 수를 세는 행 하나.
+ * 10개 제한을 조건부 UPDATE 로 원자적으로 지키는 데 쓴다.
+ */
 -- 행은 이 마이그레이션이 한 번만 넣고, 그 뒤로는 애플리케이션이 행을 더 넣지 않는다.
 CREATE TABLE template_quota (
                                 template_quota_id  BIGINT       NOT NULL AUTO_INCREMENT,
