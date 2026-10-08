@@ -17,7 +17,6 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.dao.DataAccessException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -38,7 +37,7 @@ public class OwnerLoginService {
     private final String dummyPasswordHash;
 
     public OwnerLoginService(OwnerRepository ownerRepository,
-                             @Qualifier("ownerPasswordEncoder") PasswordEncoder passwordEncoder,
+                             PasswordEncoder passwordEncoder,
                              JwtTokenProvider jwtTokenProvider, RefreshTokenRepository refreshTokenRepository,
                              Clock clock, PlatformTransactionManager transactionManager) {
         this.ownerRepository = ownerRepository;
