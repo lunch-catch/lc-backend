@@ -8,6 +8,9 @@ import com.launchcatch.admin.exception.AdminErrorCode;
 import com.launchcatch.admin.exception.AdminException;
 import com.launchcatch.admin.repository.AdminRepository;
 import com.launchcatch.auth.Role;
+import com.launchcatch.auth.jwt.AccessTokenCutoffVerifier;
+import com.launchcatch.auth.jwt.CutoffPolicy;
+import java.time.LocalDateTime;
 import com.launchcatch.auth.exception.AuthErrorCode;
 import com.launchcatch.auth.exception.AuthException;
 import com.launchcatch.global.exception.ConstraintViolations;
@@ -34,6 +37,7 @@ public class AdminRegistrationService {
     private final AuditLogWriter auditLogWriter;
     private final PasswordEncoder passwordEncoder;
     private final PlatformTransactionManager transactionManager;
+    private final AccessTokenCutoffVerifier cutoffVerifier;
 
     /*
      * BCrypt 해시는 DB 트랜잭션 밖에서 계산한다.
@@ -43,6 +47,7 @@ public class AdminRegistrationService {
     public AdminRegistrationResponse register(
             Long issuerAdminId,
             Role issuerRole,
+            LocalDateTime issuedAt,
             AdminRegistrationRequest request) {
         Objects.requireNonNull(issuerAdminId, "issuerAdminId");
         Objects.requireNonNull(issuerRole, "issuerRole");
@@ -50,6 +55,11 @@ public class AdminRegistrationService {
 
         if (issuerRole != Role.SUPER_ADMIN) {
             throw new AuthException(AuthErrorCode.ROLE_NOT_ALLOWED);
+        }
+
+        // 저장소 장애를 인증 실패와 구분하고, 해싱과 DB 작업 전에 발급을 중단한다.
+        if (!cutoffVerifier.isValidAfter(issuerRole, issuerAdminId, issuedAt, CutoffPolicy.REQUIRED)) {
+            throw new AuthException(AuthErrorCode.LOGIN_REQUIRED);
         }
 
         // 이미 존재하는 아이디에는 비용이 큰 BCrypt 계산을 하지 않는다.

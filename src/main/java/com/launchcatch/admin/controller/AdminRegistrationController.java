@@ -31,13 +31,14 @@ class AdminRegistrationController {
             description = "최고관리자만 사용할 수 있다. 초기 비밀번호는 BCrypt 해시로만 저장한다.")
     @ApiResponse(responseCode = "201", description = "계정 발급 성공")
     @ApiResponse(responseCode = "403", description = "최고관리자 권한 필요 (AUTH-006)")
+    @ApiResponse(responseCode = "503", description = "토큰 폐기 확인 저장소 장애 (AUTH-002)")
     @ApiResponse(responseCode = "409", description = "로그인 아이디 중복 (ADMIN-001)")
     @PostMapping
     ResponseEntity<ResponseEnvelope<AdminRegistrationResponse>> register(
             @AuthenticationPrincipal CustomUserDetails userDetails,
             @Valid @RequestBody AdminRegistrationRequest request) {
         AdminRegistrationResponse response = adminRegistrationService.register(
-                userDetails.getId(), userDetails.getRole(), request);
+                userDetails.getId(), userDetails.getRole(), userDetails.getIssuedAt(), request);
         return ResponseEntity.status(HttpStatus.CREATED).body(ResponseEnvelope.success(response));
     }
 }

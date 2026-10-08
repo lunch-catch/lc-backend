@@ -1,5 +1,6 @@
 package com.launchcatch.auth;
 
+import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.List;
 import org.springframework.security.core.GrantedAuthority;
@@ -17,10 +18,20 @@ public class CustomUserDetails implements UserDetails {
 
     private final Long id;
     private final Role role;
+    private final LocalDateTime issuedAt;
 
     public CustomUserDetails(Long id, Role role) {
+        this(id, role, null);
+    }
+
+    public CustomUserDetails(Long id, Role role, LocalDateTime issuedAt) {
         this.id = id;
         this.role = role;
+        this.issuedAt = issuedAt;
+    }
+
+    public LocalDateTime getIssuedAt() {
+        return issuedAt;
     }
 
     public Long getId() {
