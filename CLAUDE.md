@@ -50,3 +50,5 @@ PR 본문과 제목에 Claude, Claude Code 등 생성 도구 언급을 넣지 �
 ## 커밋 규칙
 
 - 커밋은 항상 로컬 git 설정(user.name/user.email)의 계정으로만 생성한다. 다른 author/committer 정보를 지정하지 않는다.
+- 공동 작성자 트레일러(`Co-Authored-By:`)를 붙이지 않는다. author 도 committer 도 아니어서 위 규칙에 걸리지 않지만,
+  GitHub 이 그 줄을 공동 작성자로 표시해 계정이 맞아도 기여자가 둘로 보인다.

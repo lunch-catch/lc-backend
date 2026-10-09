@@ -1,5 +1,6 @@
 package com.launchcatch.auth.opaque;
 
+import com.launchcatch.auth.RedisFailureClassifier;
 import com.launchcatch.auth.Role;
 import com.launchcatch.auth.exception.AuthErrorCode;
 import com.launchcatch.auth.exception.AuthException;
@@ -66,7 +67,8 @@ public class OpaqueRefreshTokenLifecycle {
         try {
             outcome = refreshTokenRepository.compareAndRotate(oldRefreshToken, newRefreshToken, refreshTokenTtl);
         } catch (DataAccessException redisFailure) {
-            throw new AuthException(AuthErrorCode.REFRESH_TOKEN_STORE_UNAVAILABLE, redisFailure);
+            return reissueFromDatabase(
+                    oldRefreshToken, newRefreshToken, role, refreshTokenTtl, now, redisFailure);
         }
         if (outcome.isReuseDetected()) {
             revoke(outcome.data().role(), outcome.data().id(), now, accessTokenTtl);
@@ -97,6 +99,77 @@ public class OpaqueRefreshTokenLifecycle {
             }
         }
         return new ReissueResult(outcome.data().id(), newRefreshToken);
+    }
+
+    /*
+     * Redis 로 회전하지 못할 때의 재발급이다. 관계형 DB 의 해시를 기준으로 판정한다.
+     *
+     * 캐시가 정상적으로 만료, 폐기, 재사용을 판정한 토큰은 여기로 오지 않는다. DB 에 같은 해시가
+     * 남아 있고 만료 전이며 로그인 가능한 상태일 때만 회전시킨다. 회전은 이전 해시가 일치할 때만
+     * 갱신하는 CAS 라서 같은 토큰으로 동시에 와도 하나만 성공한다.
+     *
+     * 이 경로는 재사용을 탐지하지 못한다. 폐기된 토큰의 흔적이 캐시에만 있기 때문이다.
+     * 회전한 뒤에는 캐시가 살아 있으면 새 토큰을 채워 넣고 이전 토큰을 지운다. 실패해도 DB 가
+     * 기준이므로 로그만 남긴다.
+     */
+    private ReissueResult reissueFromDatabase(
+            String oldRefreshToken,
+            String newRefreshToken,
+            Role role,
+            Duration refreshTokenTtl,
+            LocalDateTime now,
+            DataAccessException redisFailure) {
+        log.warn("event=REFRESH_REISSUE_DB_FALLBACK role={} cause={}",
+                role, RedisFailureClassifier.causeLabel(redisFailure), redisFailure);
+        RefreshTokenBackupStore store = store(role);
+        String oldHash = TokenHasher.sha256(oldRefreshToken);
+        String newHash = TokenHasher.sha256(newRefreshToken);
+        RefreshTokenBackup backup;
+        try {
+            backup = store.findValidByHash(oldHash, now)
+                    .orElseThrow(() -> new AuthException(AuthErrorCode.REFRESH_TOKEN_INVALID));
+        } catch (DataAccessException dbFailure) {
+            throw new AuthException(AuthErrorCode.REFRESH_TOKEN_STORE_UNAVAILABLE, dbFailure);
+        }
+        if (backup.role() != role) {
+            throw new AuthException(AuthErrorCode.REFRESH_TOKEN_INVALID);
+        }
+        boolean rotated;
+        try {
+            rotated = store.rotateIfMatches(
+                    backup.subjectId(), oldHash, newHash, now.plus(refreshTokenTtl), now);
+        } catch (DataAccessException dbFailure) {
+            confirmFallbackRotation(store, backup.subjectId(), newHash, dbFailure);
+            rotated = true;
+        }
+        if (!rotated) {
+            throw new AuthException(AuthErrorCode.REFRESH_TOKEN_INVALID);
+        }
+        syncCacheAfterFallback(backup.subjectId(), role, oldHash, newRefreshToken, refreshTokenTtl);
+        return new ReissueResult(backup.subjectId(), newRefreshToken);
+    }
+
+    /* DB 회전이 예외로 끝났어도 새 해시가 이미 반영됐으면 성공이다. 아니면 저장소 장애로 실패한다. */
+    private void confirmFallbackRotation(
+            RefreshTokenBackupStore store, Long subjectId, String newHash, DataAccessException dbFailure) {
+        try {
+            if (store.findCurrentHash(subjectId).filter(newHash::equals).isPresent()) {
+                return;
+            }
+        } catch (DataAccessException confirmationFailure) {
+            dbFailure.addSuppressed(confirmationFailure);
+        }
+        throw new AuthException(AuthErrorCode.REFRESH_TOKEN_STORE_UNAVAILABLE, dbFailure);
+    }
+
+    private void syncCacheAfterFallback(
+            Long subjectId, Role role, String oldHash, String newRefreshToken, Duration ttl) {
+        try {
+            refreshTokenRepository.save(newRefreshToken, subjectId, role, true, ttl);
+            refreshTokenRepository.revokeIfActiveHashMatches(oldHash, role, subjectId);
+        } catch (DataAccessException e) {
+            log.warn("event=REFRESH_CACHE_SYNC_AFTER_DB_FALLBACK_FAILED role={} subjectId={}", role, subjectId, e);
+        }
     }
 
     public void revoke(Role role, Long subjectId, LocalDateTime now, Duration accessTokenTtl) {
