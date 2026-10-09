@@ -14,6 +14,10 @@ import org.springframework.data.repository.query.Param;
 public interface AdminRepository extends JpaRepository<Admin, Long> {
     Optional<Admin> findByLoginId(String loginId);
 
+    // 캐시가 없거나 장애가 났을 때, Refresh Token 해시로 관리자 ID를 조회함.
+    @Query("select a.id from Admin a where a.refreshTokenHash = :hash")
+    Optional<Long> findIdByRefreshTokenHash(@Param("hash") String hash);
+
     // 계정 발급과 로그인 백업 갱신이 끝날 때까지 현재 권한과 상태를 잠근다.
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select a from Admin a where a.id = :id")
