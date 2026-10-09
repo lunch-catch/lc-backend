@@ -44,6 +44,8 @@ public class RefreshTokenRepository {
     private static final String FIELD_DELIMITER = "\\|";
     private static final String REVOKED_SUFFIX = "|REVOKED";
 
+    private static final RedisScript<Long> REVOKE_BEFORE_VERSION_SCRIPT = loadRevokeBeforeVersionScript();
+
     private static final RedisScript<Long> SAVE_SCRIPT = loadSaveScript();
     private static final RedisScript<Long> ORDERED_SAVE_SCRIPT = loadOrderedSaveScript();
     private static final RedisScript<String> ROTATE_SCRIPT = loadRotateScript();
@@ -52,6 +54,16 @@ public class RefreshTokenRepository {
     private static final RedisScript<Long> DELETE_ACTIVE_KEY_IF_MATCHES_SCRIPT = loadDeleteActiveKeyIfMatchesScript();
 
     private final StringRedisTemplate redisTemplate;
+
+    // DB 폐기 순번을 게시해 이전 로그인이나 회전의 지연된 캐시 저장을 차단한다.
+    public void revokeBeforeVersion(Long id, Role role, long version) {
+        Long result = redisTemplate.execute(REVOKE_BEFORE_VERSION_SCRIPT,
+                List.of(activeKey(role, id), "refreshTokenIssuanceVersion:" + role.name() + ":" + id),
+                String.format(java.util.Locale.ROOT, "%019d", version), KEY_PREFIX);
+        if (result == null) {
+            throw new org.springframework.dao.DataAccessResourceFailureException("폐기 순번 저장 결과가 없다");
+        }
+    }
 
     /** 로그인과 온보딩 발급 시 새 Refresh Token 을 저장한다. */
     public void save(String refreshToken, Long id, Role role, boolean remember, Duration ttl) {
@@ -197,6 +209,13 @@ public class RefreshTokenRepository {
     }
 
     public record RefreshTokenData(Long id, Role role, boolean remember) {
+    }
+
+    private static RedisScript<Long> loadRevokeBeforeVersionScript() {
+        DefaultRedisScript<Long> script = new DefaultRedisScript<>();
+        script.setLocation(new ClassPathResource("scripts/refresh_token_revoke_before_version.lua"));
+        script.setResultType(Long.class);
+        return script;
     }
 
     private static RedisScript<Long> loadOrderedSaveScript() {

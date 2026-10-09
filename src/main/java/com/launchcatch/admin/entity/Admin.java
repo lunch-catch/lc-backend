@@ -116,6 +116,13 @@ public class Admin extends BaseTimeEntity {
         this.refreshTokenExpiresAt = expiresAt;
     }
 
+    // 폐기도 발급 순번을 증가시켜 이전 로그인·재발급의 지연된 캐시 게시를 막는다.
+    public void revokeRefreshToken() {
+        this.refreshTokenIssuanceVersion = Math.incrementExact(refreshTokenIssuanceVersion);
+        this.refreshTokenHash = null;
+        this.refreshTokenExpiresAt = null;
+    }
+
     private static void validateLoginId(String loginId) {
         if (loginId == null || loginId.isBlank()) {
             throw new IllegalArgumentException("loginId 는 필수다");
