@@ -1,6 +1,7 @@
 package com.launchcatch.auth.opaque;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.Mockito.verify;
@@ -23,6 +24,51 @@ class RefreshTokenRepositoryTest {
 
     @Mock
     private StringRedisTemplate redisTemplate;
+
+
+    @Test
+    void 발급_순번은_64비트_정밀도를_유지해_세_키와_함께_전달한다() {
+        when(redisTemplate.execute(any(RedisScript.class), anyList(), any(Object[].class))).thenReturn(1L);
+        assertThat(new RefreshTokenRepository(redisTemplate)
+                .saveIfNewer("raw", 7L, Role.OWNER, true, Duration.ofDays(14), Long.MAX_VALUE)).isTrue();
+        ArgumentCaptor<List<String>> keys = listCaptor();
+        ArgumentCaptor<Object[]> args = ArgumentCaptor.forClass(Object[].class);
+        verify(redisTemplate).execute(any(RedisScript.class), keys.capture(), args.capture());
+        assertThat(keys.getValue()).containsExactly("refreshToken:" + TokenHasher.sha256("raw"),
+                "activeRefreshToken:OWNER:7", "refreshTokenIssuanceVersion:OWNER:7");
+        assertThat(args.getValue()).containsExactly("7|OWNER|true", TokenHasher.sha256("raw"), "1209600000",
+                "9223372036854775807");
+    }
+
+    @Test
+    void 이전_게시가_거절되면_false를_반환한다() {
+        when(redisTemplate.execute(any(RedisScript.class), anyList(), any(Object[].class))).thenReturn(0L);
+        assertThat(new RefreshTokenRepository(redisTemplate)
+                .saveIfNewer("raw", 7L, Role.OWNER, true, Duration.ofDays(14), 1L)).isFalse();
+    }
+
+    @Test
+    void 순번_게시_응답이_없으면_캐시_장애로_처리한다() {
+        assertThatThrownBy(() -> new RefreshTokenRepository(redisTemplate)
+                .saveIfNewer("raw", 7L, Role.OWNER, true, Duration.ofDays(14), 1L))
+                .isInstanceOf(org.springframework.dao.DataAccessException.class);
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(longs = {0L, -1L})
+    void 잘못된_발급_순번은_거절한다(long version) {
+        assertThatThrownBy(() -> new RefreshTokenRepository(redisTemplate)
+                .saveIfNewer("raw", 7L, Role.OWNER, true, Duration.ofDays(14), version))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(longs = {0L, -1L, 999999L})
+    void 밀리초보다_작거나_음수인_TTL은_거절한다(long nanos) {
+        assertThatThrownBy(() -> new RefreshTokenRepository(redisTemplate)
+                .saveIfNewer("raw", 7L, Role.OWNER, true, Duration.ofNanos(nanos), 1L))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
 
     @Test
     void 순번_저장은_세_키와_정밀도_손실없는_순번을_Lua에_전달한다() {
