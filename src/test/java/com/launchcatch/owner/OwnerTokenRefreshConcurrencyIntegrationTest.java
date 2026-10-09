@@ -12,6 +12,7 @@ import com.launchcatch.auth.opaque.TokenHasher;
 import com.launchcatch.owner.dto.OwnerLoginRequest;
 import com.launchcatch.owner.entity.Owner;
 import com.launchcatch.owner.repository.OwnerRepository;
+import com.launchcatch.owner.repository.OwnerRefreshTokenRepository;
 import com.launchcatch.owner.service.OwnerLoginService;
 import com.launchcatch.owner.service.OwnerTokenRefreshService;
 import java.util.concurrent.CountDownLatch;
@@ -51,6 +52,7 @@ class OwnerTokenRefreshConcurrencyIntegrationTest {
 
     @MockitoSpyBean private OwnerRepository owners;
     @MockitoSpyBean private RefreshTokenRepository tokens;
+    @MockitoSpyBean private OwnerRefreshTokenRepository ownerTokens;
     @Autowired private OwnerLoginService login;
     @Autowired private OwnerTokenRefreshService refresh;
     @Autowired private PasswordEncoder encoder;
@@ -86,9 +88,37 @@ class OwnerTokenRefreshConcurrencyIntegrationTest {
     }
 
     @Test
+    void Redis_소비후_DB잠금전_중복요청은_첫_재발급을_폐기하지_않는다() throws Exception {
+        CountDownLatch consumed = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        doAnswer(call -> {
+            var result = (OwnerRefreshTokenRepository.ConsumeOutcome) call.callRealMethod();
+            if (result.isSuccess()) {
+                consumed.countDown();
+                assertThat(release.await(15, TimeUnit.SECONDS)).isTrue();
+            }
+            return result;
+        }).when(ownerTokens).consumeForRotation(oldToken);
+        try (var executor = Executors.newSingleThreadExecutor()) {
+            var first = executor.submit(() -> refresh.refresh(oldToken));
+            try {
+                assertThat(consumed.await(15, TimeUnit.SECONDS)).isTrue();
+                assertThatThrownBy(() -> refresh.refresh(oldToken)).isInstanceOfSatisfying(AuthException.class,
+                        e -> assertThat(e.getErrorCode().getCode()).isEqualTo("AUTH-003"));
+                assertThat(owners.findById(ownerId).orElseThrow().getRefreshTokenHash()).isEqualTo(TokenHasher.sha256(oldToken));
+            } finally {
+                release.countDown();
+            }
+            var winner = first.get(15, TimeUnit.SECONDS);
+            assertThat(owners.findById(ownerId).orElseThrow().getRefreshTokenHash()).isEqualTo(TokenHasher.sha256(winner.refreshToken()));
+            assertThat(tokens.findActiveHash(Role.OWNER, ownerId)).contains(TokenHasher.sha256(winner.refreshToken()));
+        }
+    }
+
+    @Test
     void Redis_장애중_동일_RT의_DB_회전은_하나만_성공한다() throws Exception {
         doThrow(new DataAccessResourceFailureException("Redis unavailable"))
-                .when(tokens).consumeForRotation(anyString(), eq(Role.OWNER));
+                .when(ownerTokens).consumeForRotation(anyString());
         try (var executor = Executors.newFixedThreadPool(2)) {
             CountDownLatch start = new CountDownLatch(1);
             java.util.concurrent.Callable<String> task = () -> {
@@ -143,6 +173,6 @@ class OwnerTokenRefreshConcurrencyIntegrationTest {
         assertThatThrownBy(() -> refresh.refresh(oldToken)).isInstanceOfSatisfying(AuthException.class,
                 e -> assertThat(e.getErrorCode().getCode()).isEqualTo("AUTH-002"));
         assertThat(owners.findById(ownerId).orElseThrow().getRefreshTokenHash()).isEqualTo(TokenHasher.sha256(oldToken));
-        assertThat(tokens.consumeForRotation(oldToken, Role.OWNER).isSuccess()).isTrue();
+        assertThat(ownerTokens.consumeForRotation(oldToken).isSuccess()).isTrue();
     }
 }

@@ -14,6 +14,7 @@ import com.launchcatch.global.config.ClockConfig;
 import com.launchcatch.owner.entity.Owner;
 import com.launchcatch.owner.entity.OwnerStatus;
 import com.launchcatch.owner.repository.OwnerRepository;
+import com.launchcatch.owner.repository.OwnerRefreshTokenRepository;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -37,6 +38,7 @@ class OwnerTokenRefreshServiceTest {
     private static final String OLD_HASH = TokenHasher.sha256(OLD_TOKEN);
     private final OwnerRepository owners = mock(OwnerRepository.class);
     private final RefreshTokenRepository tokens = mock(RefreshTokenRepository.class);
+    private final OwnerRefreshTokenRepository ownerTokens = mock(OwnerRefreshTokenRepository.class);
     private final JwtTokenProvider jwt = mock(JwtTokenProvider.class);
     private final AccessTokenValidAfterRepository cutoff = mock(AccessTokenValidAfterRepository.class);
     private final PlatformTransactionManager manager = mock(PlatformTransactionManager.class);
@@ -50,13 +52,13 @@ class OwnerTokenRefreshServiceTest {
         owner = ownerWithToken();
         when(owners.findByIdForLogin(7L)).thenReturn(Optional.of(owner));
         when(owners.findByRefreshTokenHash(OLD_HASH)).thenReturn(Optional.of(owner));
-        when(tokens.consumeForRotation(OLD_TOKEN, Role.OWNER)).thenReturn(success());
+        when(ownerTokens.consumeForRotation(OLD_TOKEN)).thenReturn(success());
         when(jwt.refreshTokenValidityMs(Role.OWNER)).thenReturn(Duration.ofDays(14).toMillis());
         when(jwt.getAccessTokenValidityMs()).thenReturn(Duration.ofMinutes(30).toMillis());
         when(jwt.createAccessToken(7L, Role.OWNER)).thenReturn("new-access");
         when(manager.getTransaction(any(TransactionDefinition.class))).thenReturn(new SimpleTransactionStatus());
         when(tokens.saveIfNewer(anyString(), eq(7L), eq(Role.OWNER), eq(true), any(), anyLong())).thenReturn(true);
-        service = new OwnerTokenRefreshService(owners, tokens, jwt, cutoff, clock, manager);
+        service = new OwnerTokenRefreshService(owners, tokens, ownerTokens, jwt, cutoff, clock, manager);
     }
 
     private Owner ownerWithToken() {
@@ -66,8 +68,8 @@ class OwnerTokenRefreshServiceTest {
         return value;
     }
 
-    private RefreshTokenRepository.RotateOutcome success() {
-        return RefreshTokenRepository.RotateOutcome.success(new RefreshTokenRepository.RefreshTokenData(7L, Role.OWNER, true));
+    private OwnerRefreshTokenRepository.ConsumeOutcome success() {
+        return OwnerRefreshTokenRepository.ConsumeOutcome.success(new RefreshTokenRepository.RefreshTokenData(7L, Role.OWNER, true));
     }
 
     @ParameterizedTest
@@ -95,19 +97,19 @@ class OwnerTokenRefreshServiceTest {
     @ValueSource(strings = {" ", "\t"})
     void 쿠키가_없거나_비어있으면_거절한다(String token) {
         assertCode(() -> service.refresh(token), "AUTH-003");
-        verifyNoInteractions(tokens, owners);
+        verifyNoInteractions(tokens, ownerTokens, owners);
     }
 
     @Test
     void Redis_정상_미스에는_DB_폴백하지_않는다() {
-        when(tokens.consumeForRotation(OLD_TOKEN, Role.OWNER)).thenReturn(RefreshTokenRepository.RotateOutcome.notFound());
+        when(ownerTokens.consumeForRotation(OLD_TOKEN)).thenReturn(OwnerRefreshTokenRepository.ConsumeOutcome.notFound());
         assertCode(() -> service.refresh(OLD_TOKEN), "AUTH-003");
         verifyNoInteractions(owners);
     }
 
     @Test
     void 다른_역할의_RT는_폐기하거나_회전하지_않는다() {
-        when(tokens.consumeForRotation(OLD_TOKEN, Role.OWNER)).thenReturn(RefreshTokenRepository.RotateOutcome.reuseDetected(
+        when(ownerTokens.consumeForRotation(OLD_TOKEN)).thenReturn(OwnerRefreshTokenRepository.ConsumeOutcome.reuseDetected(
                 new RefreshTokenRepository.RefreshTokenData(7L, Role.ADMIN, true)));
         assertCode(() -> service.refresh(OLD_TOKEN), "AUTH-003");
         verifyNoInteractions(owners, cutoff);
@@ -148,7 +150,7 @@ class OwnerTokenRefreshServiceTest {
 
     @Test
     void Redis_장애는_DB_유효_해시로_폴백한다() {
-        when(tokens.consumeForRotation(OLD_TOKEN, Role.OWNER)).thenThrow(failure()).thenReturn(success());
+        when(ownerTokens.consumeForRotation(OLD_TOKEN)).thenThrow(failure()).thenReturn(success());
         var result = service.refresh(OLD_TOKEN);
         assertThat(owner.getRefreshTokenHash()).isEqualTo(TokenHasher.sha256(result.refreshToken()));
         verify(tokens).saveIfNewer(result.refreshToken(), 7L, Role.OWNER, true, Duration.ofDays(14), 2L);
@@ -156,27 +158,27 @@ class OwnerTokenRefreshServiceTest {
 
     @Test
     void Redis가_계속_장애여도_DB_회전이_성공하면_유지한다() {
-        when(tokens.consumeForRotation(OLD_TOKEN, Role.OWNER)).thenThrow(failure());
+        when(ownerTokens.consumeForRotation(OLD_TOKEN)).thenThrow(failure());
         assertThat(service.refresh(OLD_TOKEN).accessToken()).isEqualTo("new-access");
     }
 
     @Test
     void 폴백에서_DB_해시가_없으면_거절한다() {
-        when(tokens.consumeForRotation(OLD_TOKEN, Role.OWNER)).thenThrow(failure());
+        when(ownerTokens.consumeForRotation(OLD_TOKEN)).thenThrow(failure());
         when(owners.findByRefreshTokenHash(OLD_HASH)).thenReturn(Optional.empty());
         assertCode(() -> service.refresh(OLD_TOKEN), "AUTH-003");
     }
 
     @Test
     void 폴백_DB_조회_장애는_503이다() {
-        when(tokens.consumeForRotation(OLD_TOKEN, Role.OWNER)).thenThrow(failure());
+        when(ownerTokens.consumeForRotation(OLD_TOKEN)).thenThrow(failure());
         when(owners.findByRefreshTokenHash(OLD_HASH)).thenThrow(failure());
         assertCode(() -> service.refresh(OLD_TOKEN), "AUTH-002");
     }
 
     @Test
     void 폴백_조회_이후_다른_요청이_회전하면_두번째_회전은_거절한다() {
-        when(tokens.consumeForRotation(OLD_TOKEN, Role.OWNER)).thenThrow(failure());
+        when(ownerTokens.consumeForRotation(OLD_TOKEN)).thenThrow(failure());
         Owner changed = ownerWithToken();
         changed.rotateRefreshToken(TokenHasher.sha256("winner"), now.plusDays(14), now);
         when(owners.findByIdForLogin(7L)).thenReturn(Optional.of(changed));
@@ -190,7 +192,7 @@ class OwnerTokenRefreshServiceTest {
         when(owners.findByIdForLogin(7L)).thenReturn(Optional.of(owner), Optional.of(unchanged));
         when(owners.saveAndFlush(any())).thenThrow(failure());
         assertCode(() -> service.refresh(OLD_TOKEN), "AUTH-002");
-        verify(tokens).restoreConsumed(OLD_HASH);
+        verify(ownerTokens).restoreConsumed(OLD_HASH);
         verify(tokens, never()).saveIfNewer(anyString(), anyLong(), any(), anyBoolean(), any(), anyLong());
     }
 
@@ -198,7 +200,7 @@ class OwnerTokenRefreshServiceTest {
     void DB_실패_후_최신_RT가_변경되었으면_기존_RT를_복구하지_않는다() {
         when(owners.saveAndFlush(any())).thenThrow(failure());
         assertCode(() -> service.refresh(OLD_TOKEN), "AUTH-002");
-        verify(tokens, never()).restoreConsumed(anyString());
+        verify(ownerTokens, never()).restoreConsumed(anyString());
     }
 
     @Test
@@ -211,7 +213,7 @@ class OwnerTokenRefreshServiceTest {
     void 복구_확인이_실패하면_토큰을_되살리지_않는다() {
         when(owners.findByIdForLogin(7L)).thenThrow(failure());
         assertCode(() -> service.refresh(OLD_TOKEN), "AUTH-002");
-        verify(tokens, never()).restoreConsumed(anyString());
+        verify(ownerTokens, never()).restoreConsumed(anyString());
     }
 
     @Test
@@ -247,34 +249,34 @@ class OwnerTokenRefreshServiceTest {
     void 게시_직전_RT가_만료되면_거절한다() {
         Clock movingClock = mock(Clock.class);
         when(movingClock.instant()).thenReturn(clock.instant(), clock.instant().plus(Duration.ofDays(14)));
-        service = new OwnerTokenRefreshService(owners, tokens, jwt, cutoff, movingClock, manager);
+        service = new OwnerTokenRefreshService(owners, tokens, ownerTokens, jwt, cutoff, movingClock, manager);
         assertCode(() -> service.refresh(OLD_TOKEN), "AUTH-003");
     }
 
     @Test
     void RT_재사용은_계정_RT를_폐기하고_AT_컷오프를_설정한다() {
-        when(tokens.consumeForRotation(OLD_TOKEN, Role.OWNER)).thenReturn(RefreshTokenRepository.RotateOutcome.reuseDetected(
+        when(ownerTokens.consumeForRotation(OLD_TOKEN)).thenReturn(OwnerRefreshTokenRepository.ConsumeOutcome.reuseDetected(
                 new RefreshTokenRepository.RefreshTokenData(7L, Role.OWNER, true)));
         assertCode(() -> service.refresh(OLD_TOKEN), "AUTH-004");
         assertThat(owner.getRefreshTokenHash()).isNull();
         assertThat(owner.getRefreshTokenExpiresAt()).isNull();
         assertThat(owner.getRefreshTokenIssuanceVersion()).isEqualTo(2L);
-        verify(tokens).revokeThroughVersion(Role.OWNER, 7L, OLD_HASH, 2L);
+        verify(ownerTokens).revokeThroughVersion(7L, OLD_HASH, 2L);
         verify(cutoff).invalidateBefore(Role.OWNER, 7L, now, Duration.ofMinutes(30));
     }
 
     @Test
     void 재사용_폐기_장애는_503이다() {
-        when(tokens.consumeForRotation(OLD_TOKEN, Role.OWNER)).thenReturn(RefreshTokenRepository.RotateOutcome.reuseDetected(
+        when(ownerTokens.consumeForRotation(OLD_TOKEN)).thenReturn(OwnerRefreshTokenRepository.ConsumeOutcome.reuseDetected(
                 new RefreshTokenRepository.RefreshTokenData(7L, Role.OWNER, true)));
-        doThrow(failure()).when(tokens).revokeThroughVersion(any(), anyLong(), anyString(), anyLong());
+        doThrow(failure()).when(ownerTokens).revokeThroughVersion(anyLong(), anyString(), anyLong());
         assertCode(() -> service.refresh(OLD_TOKEN), "AUTH-002");
         assertThat(owner.getRefreshTokenHash()).isNull();
     }
 
     @Test
     void 재사용_토큰의_점주가_이미_삭제되어도_재사용으로_거절한다() {
-        when(tokens.consumeForRotation(OLD_TOKEN, Role.OWNER)).thenReturn(RefreshTokenRepository.RotateOutcome.reuseDetected(
+        when(ownerTokens.consumeForRotation(OLD_TOKEN)).thenReturn(OwnerRefreshTokenRepository.ConsumeOutcome.reuseDetected(
                 new RefreshTokenRepository.RefreshTokenData(7L, Role.OWNER, true)));
         when(owners.findByIdForLogin(7L)).thenReturn(Optional.empty());
         assertCode(() -> service.refresh(OLD_TOKEN), "AUTH-004");
@@ -286,7 +288,7 @@ class OwnerTokenRefreshServiceTest {
         var appender = new ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent>();
         appender.start();
         logger.addAppender(appender);
-        when(tokens.consumeForRotation(OLD_TOKEN, Role.OWNER))
+        when(ownerTokens.consumeForRotation(OLD_TOKEN))
                 .thenThrow(new DataAccessResourceFailureException("sensitive-refresh-token"));
         try {
             var result = service.refresh(OLD_TOKEN);
@@ -298,6 +300,21 @@ class OwnerTokenRefreshServiceTest {
             logger.detachAppender(appender);
             appender.stop();
         }
+    }
+
+    @Test
+    void 진행중인_중복요청은_계정_토큰을_폐기하지_않는다() {
+        when(ownerTokens.consumeForRotation(OLD_TOKEN)).thenReturn(OwnerRefreshTokenRepository.ConsumeOutcome.inProgress(
+                new RefreshTokenRepository.RefreshTokenData(7L, Role.OWNER, true)));
+        assertCode(() -> service.refresh(OLD_TOKEN), "AUTH-003");
+        assertThat(owner.getRefreshTokenHash()).isEqualTo(OLD_HASH);
+        verifyNoInteractions(cutoff);
+    }
+
+    @Test
+    void 확정표시_장애만으로_DB_성공을_취소하지_않는다() {
+        doThrow(failure()).when(ownerTokens).confirmConsumed(OLD_HASH);
+        assertThat(service.refresh(OLD_TOKEN).accessToken()).isEqualTo("new-access");
     }
 
     private DataAccessResourceFailureException failure() {

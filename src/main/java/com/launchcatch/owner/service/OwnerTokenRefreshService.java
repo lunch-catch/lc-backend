@@ -13,6 +13,7 @@ import com.launchcatch.owner.dto.OwnerLoginResponse;
 import com.launchcatch.owner.entity.Owner;
 import com.launchcatch.owner.entity.OwnerStatus;
 import com.launchcatch.owner.repository.OwnerRepository;
+import com.launchcatch.owner.repository.OwnerRefreshTokenRepository;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.LocalDateTime;
@@ -30,16 +31,18 @@ import org.springframework.transaction.support.TransactionTemplate;
 public class OwnerTokenRefreshService {
     private final OwnerRepository owners;
     private final RefreshTokenRepository tokens;
+    private final OwnerRefreshTokenRepository ownerTokens;
     private final JwtTokenProvider jwt;
     private final AccessTokenValidAfterRepository cutoff;
     private final Clock clock;
     private final TransactionTemplate transactions;
 
-    public OwnerTokenRefreshService(OwnerRepository owners, RefreshTokenRepository tokens,
+    public OwnerTokenRefreshService(OwnerRepository owners, RefreshTokenRepository tokens, OwnerRefreshTokenRepository ownerTokens,
                                    JwtTokenProvider jwt, AccessTokenValidAfterRepository cutoff,
                                    Clock clock, PlatformTransactionManager transactionManager) {
         this.owners = owners;
         this.tokens = tokens;
+        this.ownerTokens = ownerTokens;
         this.jwt = jwt;
         this.cutoff = cutoff;
         this.clock = clock;
@@ -81,6 +84,12 @@ public class OwnerTokenRefreshService {
             throw new AuthException(AuthErrorCode.REFRESH_TOKEN_STORE_UNAVAILABLE, e);
         }
         publish(ownerId, oldToken, publication, candidate.fallback());
+        try {
+            ownerTokens.confirmConsumed(oldHash);
+        } catch (DataAccessException e) {
+            // 확정 표시 실패 시에도 DB 해시 검증으로 이전 RT의 재발급을 거부한다.
+            logCacheFailure("OWNER_REFRESH_CONFIRM_FAILED", e);
+        }
         return publication.result();
     }
 
@@ -89,14 +98,15 @@ public class OwnerTokenRefreshService {
      * Redis 장애일 때만 DB로 전환하며, 토큰 없음이나 재사용 판정을 DB로 우회하지 않는다.
      */
     private Candidate resolveCandidate(String oldToken, String oldHash) {
-        RefreshTokenRepository.RotateOutcome outcome;
+        OwnerRefreshTokenRepository.ConsumeOutcome outcome;
         try {
-            outcome = tokens.consumeForRotation(oldToken, Role.OWNER);
+            outcome = ownerTokens.consumeForRotation(oldToken);
         } catch (DataAccessException e) {
             logCacheFailure("OWNER_REFRESH_DB_FALLBACK", e);
             return new Candidate(findFallbackOwner(oldHash), true);
         }
-        if (outcome.status() == RefreshTokenRepository.RotateOutcome.Status.NOT_FOUND
+        if (outcome.status() == OwnerRefreshTokenRepository.ConsumeOutcome.Status.IN_PROGRESS
+                || outcome.status() == OwnerRefreshTokenRepository.ConsumeOutcome.Status.NOT_FOUND
                 || outcome.data().role() != Role.OWNER) {
             throw invalid();
         }
@@ -130,7 +140,7 @@ public class OwnerTokenRefreshService {
         try {
             transactions.executeWithoutResult(transaction -> owners.findByIdForLogin(ownerId)
                     .filter(owner -> isValid(owner, oldHash, now()))
-                    .ifPresent(owner -> tokens.restoreConsumed(oldHash)));
+                    .ifPresent(owner -> ownerTokens.restoreConsumed(oldHash)));
         } catch (DataAccessException | TransactionException e) {
             logCacheFailure("OWNER_REFRESH_RESTORE_FAILED", e);
         }
@@ -161,7 +171,7 @@ public class OwnerTokenRefreshService {
         try {
             if (fallback) {
                 // DB에서 교체한 기존 RT를 Redis에서도 사용 불가로 표시하도록 재시도한다.
-                tokens.consumeForRotation(oldToken, Role.OWNER);
+                ownerTokens.consumeForRotation(oldToken);
             }
             // DB 잠금을 해제한 뒤 순번을 비교해, 늦게 도착한 이전 요청이 최신 RT를 덮어쓰지 못하게 한다.
             tokens.saveIfNewer(publication.result().refreshToken(), ownerId, Role.OWNER, true,
@@ -188,7 +198,7 @@ public class OwnerTokenRefreshService {
                         return new Revocation(hash, owner.getRefreshTokenIssuanceVersion());
                     }).orElse(null));
             if (revocation != null) {
-                tokens.revokeThroughVersion(Role.OWNER, ownerId, revocation.hash(), revocation.version());
+                ownerTokens.revokeThroughVersion(ownerId, revocation.hash(), revocation.version());
             }
             cutoff.invalidateBefore(Role.OWNER, ownerId, revokedAt, Duration.ofMillis(jwt.getAccessTokenValidityMs()));
         } catch (DataAccessException | TransactionException e) {

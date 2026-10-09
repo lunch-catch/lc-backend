@@ -51,62 +51,7 @@ public class RefreshTokenRepository {
     private static final RedisScript<Long> REVOKE_SCRIPT = loadRevokeScript();
     private static final RedisScript<Long> DELETE_ACTIVE_KEY_IF_MATCHES_SCRIPT = loadDeleteActiveKeyIfMatchesScript();
 
-    private static final RedisScript<String> CONSUME_SCRIPT = script("refresh_token_consume.lua", String.class);
-    private static final RedisScript<Long> RESTORE_CONSUMED_SCRIPT = script("refresh_token_restore_consumed.lua", Long.class);
-    private static final RedisScript<Long> REVOKE_THROUGH_VERSION_SCRIPT = script("refresh_token_revoke_through_version.lua", Long.class);
-
     private final StringRedisTemplate redisTemplate;
-
-    /*
-     * DB 커밋 전 기존 토큰을 원자적으로 소비한다.
-     * 활성 포인터를 먼저 새 토큰으로 바꾸지 않아 동시 로그인 게시 순서를 보존한다.
-     * 다른 역할의 토큰은 변경하지 않는다.
-     */
-    public RotateOutcome consumeForRotation(String refreshToken, Role expectedRole) {
-        String value = redisTemplate.execute(CONSUME_SCRIPT,
-                List.of(primaryKey(TokenHasher.sha256(refreshToken))), expectedRole.name());
-        if (value == null) {
-            return RotateOutcome.notFound();
-        }
-        if (value.endsWith(REVOKED_SUFFIX)) {
-            return RotateOutcome.reuseDetected(parse(value.substring(0, value.length() - REVOKED_SUFFIX.length())));
-        }
-        return RotateOutcome.success(parse(value));
-    }
-
-    // DB가 기존 해시를 유지할 때 호출자가 행 잠금 아래 소비 표시를 복구한다.
-    public void restoreConsumed(String tokenHash) {
-        Long restored = redisTemplate.execute(RESTORE_CONSUMED_SCRIPT, List.of(primaryKey(tokenHash)));
-        if (restored == null) {
-            throw new org.springframework.dao.DataAccessResourceFailureException("소비 표시 복구 결과가 없다");
-        }
-    }
-
-    /*
-     * DB에서 RT를 폐기하고 확정한 순번을 받아 Redis의 대상 RT를 삭제한다.
-     * 이 순번을 기록해 늦게 도착한 이전 발급 요청의 재저장을 막으며, 더 최신 로그인은 유지한다.
-     * DB 해시가 없으면 databaseHash는 null이며, DB 폐기는 호출자가 먼저 처리해야 한다.
-     */
-    public void revokeThroughVersion(Role role, Long id, String databaseHash, long version) {
-        if (version <= 0) {
-            throw new IllegalArgumentException("폐기 순번은 양수여야 한다");
-        }
-        Long revoked = redisTemplate.execute(REVOKE_THROUGH_VERSION_SCRIPT,
-                List.of(activeKey(role, id), "refreshTokenIssuanceVersion:" + role.name() + ":" + id),
-                String.format(java.util.Locale.ROOT, "%019d", version),
-                databaseHash == null ? "" : databaseHash, KEY_PREFIX);
-        if (revoked == null) {
-            throw new org.springframework.dao.DataAccessResourceFailureException("토큰 폐기 결과가 없다");
-        }
-    }
-
-    // resources/scripts의 Lua 파일을 읽고 Redis 실행 결과의 Java 타입을 지정한다.
-    private static <T> RedisScript<T> script(String fileName, Class<T> type) {
-        DefaultRedisScript<T> script = new DefaultRedisScript<>();
-        script.setLocation(new ClassPathResource("scripts/" + fileName));
-        script.setResultType(type);
-        return script;
-    }
 
     /** 로그인과 온보딩 발급 시 새 Refresh Token 을 저장한다. */
     public void save(String refreshToken, Long id, Role role, boolean remember, Duration ttl) {
