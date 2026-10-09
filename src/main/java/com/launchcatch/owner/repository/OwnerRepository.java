@@ -18,6 +18,13 @@ public interface OwnerRepository extends JpaRepository<Owner, Long> {
 
     Optional<Owner> findByEmail(String email);
 
+    /*
+     * Refresh Token의 해시로 해당 토큰을 가진 점주를 DB에서 찾는 메서드.
+     * Redis 장애 시 DB 기반 재발급을 위해 사용하며, 상태·만료 검증은 서비스에서 수행한다.
+     * 평소에는 Redis를 통해 해당 Refresh Token을 가진 점주를 찾는다.
+     */
+    Optional<Owner> findByRefreshTokenHash(String refreshTokenHash);
+
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select o from Owner o where o.id = :id")
     Optional<Owner> findByIdForLogin(@Param("id") Long id);

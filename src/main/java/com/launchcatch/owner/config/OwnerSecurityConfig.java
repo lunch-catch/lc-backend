@@ -15,9 +15,9 @@ public class OwnerSecurityConfig {
     public SecurityFilterChain ownerAuthFilterChain(HttpSecurity http, ApiSecurityDefaults defaults)
             throws Exception {
         return defaults.apply(http)
-                .securityMatcher("/v1/owner/auth/tokens", "/v1/owners")
+                .securityMatcher("/v1/owner/auth/tokens", "/v1/owner/auth/tokens:refresh", "/v1/owners")
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers(HttpMethod.POST, "/v1/owner/auth/tokens", "/v1/owners")
+                        .requestMatchers(HttpMethod.POST, "/v1/owner/auth/tokens", "/v1/owner/auth/tokens:refresh", "/v1/owners")
                         .permitAll()
                         .anyRequest().denyAll())
                 .build();
