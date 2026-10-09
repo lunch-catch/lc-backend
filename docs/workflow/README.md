@@ -57,7 +57,7 @@
 | 커버리지 | `com.launchcatch.*.service.*` 의 **클래스별 메서드 100%** | Gradle `jacocoTestCoverageVerification` |
 | 커버리지 데이터 | 검증 대상이 있는데 실행 데이터가 없는 상태를 막는다 | Gradle `coverageDataCheck` |
 | 정적 분석 | 신규 `Blocker` 이슈 0건 | SonarCloud 이슈 검색 API. `pull_request` 이벤트이고 `SONAR_TOKEN` 이 있을 때만 돈다 |
-| 아키텍처 | 계층과 도메인 경계 | ArchUnit 검사 14개 |
+| 아키텍처 | 계층과 도메인 경계 | ArchUnit |
 | `main` 출처 | `develop`, `release/*`, `hotfix/*` | `G-BUILD` 첫 스텝 |
 
 클래스별 판정이라 평균으로 가려지지 않는다. 한 클래스만 미달해도 막힌다.
