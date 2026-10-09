@@ -77,6 +77,8 @@ class TemplateReviseServiceTest {
         lenient().when(templateVersionRepository.findByRequestId(REQUEST_ID)).thenReturn(Optional.empty());
         lenient().when(templateVersionRepository.findMaxVersionNumber(TEMPLATE_ID)).thenReturn(1);
         lenient().when(templateRepository.findById(TEMPLATE_ID)).thenAnswer(invocation -> Optional.of(draftTemplate()));
+        lenient().when(templateRepository.findByIdForUpdate(TEMPLATE_ID))
+                .thenAnswer(invocation -> Optional.of(draftTemplate()));
         lenient().when(templateVersionRepository.findFirstByTemplateIdOrderByVersionNumberDesc(TEMPLATE_ID))
                 .thenAnswer(invocation -> Optional.of(draftTemplate().latestVersion()));
         lenient().when(transactionTemplate.execute(any())).thenAnswer(invocation -> {
@@ -87,9 +89,7 @@ class TemplateReviseServiceTest {
 
     @Test
     @DisplayName("검증을 통과하면 새 버전을 저장하고 제거 내용을 돌려준다")
-    void 검증을_통과하면_저장한다() throws Exception {
-        when(templateRepository.findByIdWithVersions(TEMPLATE_ID))
-                .thenReturn(Optional.of(draftTemplate()));
+    void 검증을_통과하면_저장한다() {
         when(templateHtmlGenerator.revise(PREVIOUS_HTML, "버튼 색 바꿔줘"))
                 .thenReturn(PREVIOUS_HTML.replace(
                         "<h1 data-slot=\"eventName\">title</h1>", "<h1 data-slot=\"eventName\">새 제목</h1>")
@@ -136,8 +136,6 @@ class TemplateReviseServiceTest {
         TemplateVersion existing = existingVersion();
         when(templateVersionRepository.findByRequestId(REQUEST_ID))
                 .thenReturn(Optional.empty(), Optional.of(existing));
-        when(templateRepository.findByIdWithVersions(TEMPLATE_ID))
-                .thenReturn(Optional.of(draftTemplate()));
         when(templateHtmlGenerator.revise(PREVIOUS_HTML, "버튼 색 바꿔줘")).thenReturn(PREVIOUS_HTML);
         when(templateRepository.saveAndFlush(any(Template.class)))
                 .thenThrow(new DataIntegrityViolationException("uk_template_version_request_id"));
@@ -150,9 +148,7 @@ class TemplateReviseServiceTest {
 
     @Test
     @DisplayName("저장 시점의 제약 위반이 requestId 충돌이 아니면 그 예외를 그대로 던진다")
-    void 저장_시점_제약_위반이_requestId_충돌이_아니면_그대로_던진다() throws Exception {
-        when(templateRepository.findByIdWithVersions(TEMPLATE_ID))
-                .thenReturn(Optional.of(draftTemplate()));
+    void 저장_시점_제약_위반이_requestId_충돌이_아니면_그대로_던진다() {
         when(templateHtmlGenerator.revise(PREVIOUS_HTML, "버튼 색 바꿔줘")).thenReturn(PREVIOUS_HTML);
         DataIntegrityViolationException violation = new DataIntegrityViolationException("다른 제약 위반");
         when(templateRepository.saveAndFlush(any(Template.class))).thenThrow(violation);
@@ -184,12 +180,26 @@ class TemplateReviseServiceTest {
     @Test
     @DisplayName("저장 시점에 템플릿이 이미 지워져 있으면 POSTER-005 로 거부한다")
     void 저장_시점에_템플릿이_없으면_거부한다() {
-        when(templateRepository.findByIdWithVersions(TEMPLATE_ID)).thenReturn(Optional.empty());
+        when(templateRepository.findByIdForUpdate(TEMPLATE_ID)).thenReturn(Optional.empty());
         when(templateHtmlGenerator.revise(PREVIOUS_HTML, "버튼 색 바꿔줘")).thenReturn(PREVIOUS_HTML);
 
         assertThatThrownBy(() -> service.revise(TEMPLATE_ID, "버튼 색 바꿔줘", REQUEST_ID, ADMIN_ID))
                 .isInstanceOfSatisfying(CampaignException.class, e ->
                         assertThat(e.getErrorCode()).isEqualTo(PosterErrorCode.TEMPLATE_NOT_FOUND));
+    }
+
+    @Test
+    @DisplayName("잠금을 잡고 다시 보니 그 사이 게시돼 있으면 POSTER-006 으로 거부한다")
+    void 저장_시점에_게시돼_있으면_거부한다() throws Exception {
+        Template published = draftTemplate();
+        setStatus(published, TemplateStatus.PUBLISHED);
+        when(templateRepository.findByIdForUpdate(TEMPLATE_ID)).thenReturn(Optional.of(published));
+        when(templateHtmlGenerator.revise(PREVIOUS_HTML, "버튼 색 바꿔줘")).thenReturn(PREVIOUS_HTML);
+
+        assertThatThrownBy(() -> service.revise(TEMPLATE_ID, "버튼 색 바꿔줘", REQUEST_ID, ADMIN_ID))
+                .isInstanceOfSatisfying(CampaignException.class, e ->
+                        assertThat(e.getErrorCode()).isEqualTo(PosterErrorCode.TEMPLATE_NOT_DRAFT));
+        verify(templateRepository, never()).saveAndFlush(any());
     }
 
     @Test

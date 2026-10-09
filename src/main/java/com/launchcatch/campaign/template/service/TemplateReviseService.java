@@ -96,11 +96,21 @@ public class TemplateReviseService {
     /*
      * 저장은 트랜잭션 안에서 템플릿을 다시 조회해 쓴다. 트랜잭션 밖에서 읽은
      * detached 엔티티를 그대로 merge 하지 않고, 매번 managed 상태로 새로 가져온다.
+     *
+     * findByIdForUpdate 로 행 잠금을 걸고 가져온다. 같은 템플릿을 동시에 수정하는
+     * 두 트랜잭션 중 하나가 여기서 기다리게 돼, 둘 다 같은 "다음 버전 번호"를
+     * 계산해 request_id 가 다른데도 (template_id, version_number) UNIQUE 제약에
+     * 부딪히는 경쟁이 없어진다. 잠금을 잡은 뒤 DRAFT 상태를 다시 확인하는 것도
+     * 같은 이유다: LLM 호출(최대 30초) 동안 다른 트랜잭션이 이 템플릿을 게시해
+     * 커밋했을 수 있는데, 잠금을 잡고 나서야 그 최신 상태를 안전하게 본다.
      */
     private TemplateCreateResponse save(
             Long templateId, String requestPrompt, String requestId, Long adminId, TemplateSanitizeResult sanitized) {
-        Template template = templateRepository.findByIdWithVersions(templateId)
+        Template template = templateRepository.findByIdForUpdate(templateId)
                 .orElseThrow(() -> new CampaignException(PosterErrorCode.TEMPLATE_NOT_FOUND));
+        if (template.getStatus() != TemplateStatus.DRAFT) {
+            throw new CampaignException(PosterErrorCode.TEMPLATE_NOT_DRAFT);
+        }
         int nextVersionNumber = templateVersionRepository.findMaxVersionNumber(templateId) + 1;
         TemplateVersion version = template.addDraftVersion(
                 adminId, LocalDateTime.now(clock), requestPrompt, requestId, sanitized.html(), nextVersionNumber);
