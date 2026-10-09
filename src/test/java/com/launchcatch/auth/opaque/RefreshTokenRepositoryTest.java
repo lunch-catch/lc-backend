@@ -25,6 +25,23 @@ class RefreshTokenRepositoryTest {
     private StringRedisTemplate redisTemplate;
 
     @Test
+    void 폐기_순번은_역할별_포인터와_순번키에_전달한다() {
+        when(redisTemplate.execute(any(RedisScript.class), anyList(), any(Object[].class))).thenReturn(1L);
+        new RefreshTokenRepository(redisTemplate).revokeBeforeVersion(1L, Role.ADMIN, 2L);
+        ArgumentCaptor<List<String>> keys = listCaptor();
+        ArgumentCaptor<Object[]> args = ArgumentCaptor.forClass(Object[].class);
+        verify(redisTemplate).execute(any(RedisScript.class), keys.capture(), args.capture());
+        assertThat(keys.getValue()).containsExactly("activeRefreshToken:ADMIN:1", "refreshTokenIssuanceVersion:ADMIN:1");
+        assertThat(args.getValue()).containsExactly("0000000000000000002", "refreshToken:");
+    }
+
+    @Test
+    void 폐기_결과가_없으면_장애로_처리한다() {
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> new RefreshTokenRepository(redisTemplate)
+                .revokeBeforeVersion(1L, Role.ADMIN, 2L)).isInstanceOf(org.springframework.dao.DataAccessException.class);
+    }
+
+    @Test
     void 순번_저장은_세_키와_정밀도_손실없는_순번을_Lua에_전달한다() {
         when(redisTemplate.execute(any(RedisScript.class), anyList(), any(Object[].class))).thenReturn(1L);
         var repository = new RefreshTokenRepository(redisTemplate);

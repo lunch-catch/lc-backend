@@ -116,6 +116,16 @@ public class Admin extends BaseTimeEntity {
         this.refreshTokenExpiresAt = expiresAt;
     }
 
+    /*
+     * 토큰 재사용 감지 시, 폐기함.
+     * Refresh Token 해시와 만료 시각을 지우고, 발급 순번을 증가시킴.
+     */
+    public void revokeRefreshToken() {
+        this.refreshTokenIssuanceVersion = Math.incrementExact(refreshTokenIssuanceVersion);
+        this.refreshTokenHash = null;
+        this.refreshTokenExpiresAt = null;
+    }
+
     private static void validateLoginId(String loginId) {
         if (loginId == null || loginId.isBlank()) {
             throw new IllegalArgumentException("loginId 는 필수다");

@@ -190,7 +190,7 @@ class AdminLoginSecurityIntegrationTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"/v1/admin/auth/tokens:refresh", "/v1/admin/auth/unknown"})
+    @ValueSource(strings = {"/v1/admin/auth/unknown"})
     void 아직_구현하지_않은_인증_경로는_유효한_토큰으로도_접근할_수_없다(String path) throws Exception {
         mvc.perform(post(path).cookie(new Cookie("accessToken", jwt.createAccessToken(1L, Role.SUPER_ADMIN))))
                 .andExpect(status().isForbidden());
@@ -310,16 +310,66 @@ class AdminLoginSecurityIntegrationTest {
         }
     }
 
+    @Test
+    void 재발급은_만료된_Access없이도_새_쿠키와_관리자정보를_반환한다() throws Exception {
+        String raw = "a".repeat(43);
+        Admin admin = admins.findByLoginId("admin01").orElseThrow();
+        admin.issueRefreshToken(com.launchcatch.auth.opaque.TokenHasher.sha256(raw), java.time.LocalDateTime.now().plusDays(1));
+        when(refreshTokens.find(raw)).thenReturn(Optional.of(
+                new RefreshTokenRepository.RefreshTokenData(1L, Role.SUPER_ADMIN, true)));
+        when(refreshTokens.compareAndRotate(eq(raw), any(), any())).thenReturn(
+                RefreshTokenRepository.RotateOutcome.success(
+                        new RefreshTokenRepository.RefreshTokenData(1L, Role.SUPER_ADMIN, true)));
+        var response = mvc.perform(post("/v1/admin/auth/tokens:refresh")
+                        .cookie(new Cookie("refreshToken", raw), new Cookie("accessToken", "expired")))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.adminId").value(1))
+                .andExpect(jsonPath("$.data.role").value("SUPER_ADMIN"))
+                .andExpect(jsonPath("$.data.refreshToken").doesNotExist()).andReturn().getResponse();
+        assertThat(response.getCookie("refreshToken").getPath()).isEqualTo("/v1/admin/auth/");
+        assertThat(response.getCookie("refreshToken").getMaxAge()).isEqualTo(86400);
+        assertThat(response.getCookie("accessToken").getMaxAge()).isEqualTo(1800);
+    }
+
+    @Test
+    void 재발급_쿠키_누락은_AUTH003이며_새_쿠키가_없다() throws Exception {
+        mvc.perform(post("/v1/admin/auth/tokens:refresh"))
+                .andExpect(status().isUnauthorized()).andExpect(jsonPath("$.code").value("AUTH-003"))
+                .andExpect(header().doesNotExist(HttpHeaders.SET_COOKIE));
+    }
+
+    @Test
+    void 재발급_DB장애는_AUTH002이며_새_쿠키를_발급하지_않는다() throws Exception {
+        String raw = "a".repeat(43);
+        when(refreshTokens.find(raw)).thenReturn(Optional.empty());
+        when(admins.findIdByRefreshTokenHash(any())).thenThrow(new DataAccessResourceFailureException("DB failed"));
+        mvc.perform(post("/v1/admin/auth/tokens:refresh").cookie(new Cookie("refreshToken", raw)))
+                .andExpect(status().isServiceUnavailable()).andExpect(jsonPath("$.code").value("AUTH-002"))
+                .andExpect(header().string(HttpHeaders.RETRY_AFTER, "1"))
+                .andExpect(header().doesNotExist(HttpHeaders.SET_COOKIE));
+    }
+
+    @Test
+    void 토큰_재사용은_AUTH004이며_새_쿠키를_발급하지_않는다() throws Exception {
+        String raw = "a".repeat(43);
+        var owner = new RefreshTokenRepository.RefreshTokenData(1L, Role.SUPER_ADMIN, true);
+        when(refreshTokens.find(raw)).thenReturn(Optional.of(owner));
+        when(refreshTokens.compareAndRotate(eq(raw), any(), any())).thenReturn(RefreshTokenRepository.RotateOutcome.reuseDetected(owner));
+        mvc.perform(post("/v1/admin/auth/tokens:refresh").cookie(new Cookie("refreshToken", raw)))
+                .andExpect(status().isUnauthorized()).andExpect(jsonPath("$.code").value("AUTH-004"))
+                .andExpect(header().doesNotExist(HttpHeaders.SET_COOKIE));
+    }
+
     @Configuration(proxyBeanMethods = false)
     @EnableWebMvc
     @EnableTransactionManagement
     @ComponentScan(basePackages = "com.launchcatch.admin", useDefaultFilters = false,
             includeFilters = @ComponentScan.Filter(type = FilterType.REGEX,
-                    pattern = "com\\.launchcatch\\.admin\\.(controller|service)\\.AdminLogin(Controller|Service|TransactionService)"))
+                    pattern = "com\\.launchcatch\\.admin\\.(controller|service)\\.Admin(Login|Token)(Controller|Service|TransactionService)"))
     @Import({AdminLoginSecurityConfig.class, SecurityConfig.class, ApiSecurityDefaults.class,
             PasswordEncoderConfig.class, AuthCookieFactory.class, AuthExceptionHandler.class,
             GlobalExceptionHandler.class, HttpBodyLoggingFilter.class, AdminLoginAuditFilter.class})
     static class TestConfig {
+        @Bean com.launchcatch.ops.contract.AuditLogWriter audit() { return mock(com.launchcatch.ops.contract.AuditLogWriter.class); }
         @Bean AdminRepository admins() { return mock(AdminRepository.class); }
         @Bean RefreshTokenRepository refreshTokens() { return mock(RefreshTokenRepository.class); }
         @Bean AccessTokenValidAfterRepository cutoff() {
