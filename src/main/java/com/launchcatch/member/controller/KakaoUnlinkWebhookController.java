@@ -49,14 +49,11 @@ public class KakaoUnlinkWebhookController {
             memberWithdrawalService.withdrawByKakaoWebhook(providerUserId);
         } catch (RuntimeException e) {
             /*
-             * 처리에 실패했으면 500 으로 답해 카카오의 재전송에 맡긴다. 200 을 주면 카카오는 전달된
-             * 것으로 알고 다시 보내지 않아, 연결을 끊은 회원이 우리 쪽에서 계속 활성으로 남는다.
-             * 재전송이 와도 탈퇴 처리는 멱등이다. 검증 실패(키 불일치, 사용자 번호 없음)는 재전송해도
-             * 달라지지 않으므로 위에서 200 으로 닫는다.
+             * 명세(member.md)에 따라 처리에 실패해도 200 으로 답하고 로그만 남긴다.
+             * 실패를 응답 코드로 드러내면 카카오의 재전송을 유발한다.
              */
             log.error("event=KAKAO_UNLINK_WEBHOOK_PROCESSING_FAILED providerUserId={}",
                     PiiMasker.maskProviderId(providerUserId), e);
-            return ResponseEntity.internalServerError().build();
         }
         return ResponseEntity.ok().build();
     }

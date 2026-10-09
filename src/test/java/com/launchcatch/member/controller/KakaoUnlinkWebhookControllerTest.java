@@ -52,12 +52,12 @@ class KakaoUnlinkWebhookControllerTest {
     }
 
     @Test
-    void 내부_처리가_실패하면_500을_반환해_재전송에_맡긴다() {
+    void 내부_처리가_실패해도_200을_반환한다() {
         org.mockito.Mockito.doThrow(new RuntimeException("db"))
                 .when(memberWithdrawalService).withdrawByKakaoWebhook("kakao-1");
 
         var response = controller.handleUnlink("KakaoAK secret", "12345", "kakao-1", null);
 
-        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.INTERNAL_SERVER_ERROR);
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
     }
 }
