@@ -110,8 +110,48 @@ public class Member extends BaseTimeEntity {
         this.lastLoginAt = loggedInAt;
     }
 
+    public void withdraw(LocalDateTime now) {
+        if (status == MemberStatus.WITHDRAWN) {
+            throw new IllegalStateException("member is already withdrawn");
+        }
+        this.nickname = "탈퇴한 회원";
+        this.profileImageUrl = null;
+        this.lastLoginAt = null;
+        this.notificationOptIn = false;
+        this.notificationOptInAt = null;
+        this.notificationWithdrawnAt = null;
+        this.locationOptIn = false;
+        this.locationOptInAt = null;
+        this.locationWithdrawnAt = null;
+        this.status = MemberStatus.WITHDRAWN;
+        this.withdrawnAt = now;
+    }
+
     void attachProfile(MemberProfile profile) {
         this.profile = profile;
+    }
+
+    public void completeOnboarding(boolean notificationOptIn, boolean locationOptIn, LocalDateTime now) {
+        this.notificationOptIn = notificationOptIn;
+        this.notificationOptInAt = notificationOptIn ? now : null;
+        this.locationOptIn = locationOptIn;
+        this.locationOptInAt = locationOptIn ? now : null;
+    }
+
+    public void updateProfile(String nickname, Boolean notificationOptIn, Boolean locationOptIn, LocalDateTime now) {
+        if (nickname != null) {
+            this.nickname = requiredText(nickname, "nickname");
+        }
+        if (notificationOptIn != null && this.notificationOptIn != notificationOptIn) {
+            this.notificationOptIn = notificationOptIn;
+            this.notificationOptInAt = notificationOptIn ? now : null;
+            this.notificationWithdrawnAt = notificationOptIn ? null : now;
+        }
+        if (locationOptIn != null && this.locationOptIn != locationOptIn) {
+            this.locationOptIn = locationOptIn;
+            this.locationOptInAt = locationOptIn ? now : null;
+            this.locationWithdrawnAt = locationOptIn ? null : now;
+        }
     }
 
     private static String requiredText(String value, String fieldName) {
