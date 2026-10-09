@@ -114,7 +114,8 @@ class TemplateReviseServiceTest {
 
         assertThat(response.templateId()).isEqualTo(TEMPLATE_ID);
         assertThat(response.removedElements()).isEmpty();
-        verify(templateRepository, never()).findByIdWithVersions(any());
+        verify(templateRepository, never()).findById(any());
+        verify(templateRepository, never()).findByIdForUpdate(any());
         verify(templateHtmlGenerator, never()).revise(any(), any());
     }
 
