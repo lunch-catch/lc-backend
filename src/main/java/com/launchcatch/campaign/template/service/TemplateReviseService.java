@@ -89,8 +89,9 @@ public class TemplateReviseService {
             Long templateId, String requestPrompt, String requestId, Long adminId, TemplateSanitizeResult sanitized) {
         Template template = templateRepository.findByIdWithVersions(templateId)
                 .orElseThrow(() -> new CampaignException(PosterErrorCode.TEMPLATE_NOT_FOUND));
+        int nextVersionNumber = templateVersionRepository.findMaxVersionNumber(templateId) + 1;
         TemplateVersion version = template.addDraftVersion(
-                adminId, LocalDateTime.now(clock), requestPrompt, requestId, sanitized.html());
+                adminId, LocalDateTime.now(clock), requestPrompt, requestId, sanitized.html(), nextVersionNumber);
         templateRepository.saveAndFlush(template);
         return toResponse(version, sanitized.removedElements());
     }

@@ -75,6 +75,7 @@ class TemplateReviseServiceTest {
                 transactionTemplate,
                 FIXED_CLOCK);
         lenient().when(templateVersionRepository.findByRequestId(REQUEST_ID)).thenReturn(Optional.empty());
+        lenient().when(templateVersionRepository.findMaxVersionNumber(TEMPLATE_ID)).thenReturn(1);
         lenient().when(transactionTemplate.execute(any())).thenAnswer(invocation -> {
             TransactionCallback<?> callback = invocation.getArgument(0);
             return callback.doInTransaction(null);
@@ -240,13 +241,14 @@ class TemplateReviseServiceTest {
     private Template draftTemplate() throws Exception {
         Template template = Template.createDraft("가을 신메뉴");
         setId(template, TEMPLATE_ID);
-        template.addDraftVersion(ADMIN_ID, LocalDateTime.now(FIXED_CLOCK), "처음 요청", "req-0", PREVIOUS_HTML);
+        template.addDraftVersion(ADMIN_ID, LocalDateTime.now(FIXED_CLOCK), "처음 요청", "req-0", PREVIOUS_HTML, 1);
         return template;
     }
 
     private TemplateVersion existingVersion() throws Exception {
         Template template = draftTemplate();
-        return template.addDraftVersion(ADMIN_ID, LocalDateTime.now(FIXED_CLOCK), "버튼 색 바꿔줘", REQUEST_ID, PREVIOUS_HTML);
+        return template.addDraftVersion(
+                ADMIN_ID, LocalDateTime.now(FIXED_CLOCK), "버튼 색 바꿔줘", REQUEST_ID, PREVIOUS_HTML, 2);
     }
 
     private void setId(Object entity, Long id) throws Exception {

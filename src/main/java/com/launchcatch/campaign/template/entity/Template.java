@@ -72,18 +72,20 @@ public class Template extends BaseTimeEntity {
         return new Template(name);
     }
 
+    /*
+     * versionNumber 는 호출하는 쪽이 넘긴다. 이 템플릿의 versions 가 항상 전부
+     * 로딩돼 있다고 가정할 수 없어서(가벼운 조회로는 일부만 가져올 수 있음),
+     * "다음 번호"를 이 안에서 versions 를 훑어 계산하지 않는다.
+     */
     public TemplateVersion addDraftVersion(
-            Long adminId, LocalDateTime now, String requestPrompt, String requestId, String htmlContent) {
+            Long adminId, LocalDateTime now, String requestPrompt, String requestId, String htmlContent,
+            int versionNumber) {
         TemplateVersion version =
-                TemplateVersion.create(this, nextVersionNumber(), requestPrompt, requestId, htmlContent);
+                TemplateVersion.create(this, versionNumber, requestPrompt, requestId, htmlContent);
         versions.add(version);
         this.lastModifiedBy = adminId;
         this.lastModifiedAt = now;
         return version;
-    }
-
-    private int nextVersionNumber() {
-        return versions.stream().mapToInt(TemplateVersion::getVersionNumber).max().orElse(0) + 1;
     }
 
     /*
