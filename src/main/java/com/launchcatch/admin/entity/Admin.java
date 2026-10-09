@@ -15,7 +15,7 @@ import lombok.NoArgsConstructor;
 
 /*
  * admin 테이블 (admin/V1__admin_init.sql). 삭제는 하드 삭제가 아니라 비활성화다.
- * 이번 PR은 계정 발급만 다루며 비활성화 기능은 포함하지 않는다.
+ * 비활성화 기능은 포함하지 않는다.
  * 그래서 DB 컬럼명은 'DELETED' 지만 이 클래스의 의미는 "비활성화" 다.
  *
  * BaseTimeEntity 의 PK 필드는 이름이 그냥 id 라 기본 매핑 컬럼도 'id' 다.
@@ -54,12 +54,19 @@ public class Admin extends BaseTimeEntity {
     @Column(nullable = false, length = 30)
     private AdminStatus status;
 
-    // 기기 한 대분만 저장한다. 로그인마다 덮어써 이전 리프레시 토큰은 자동으로 무효가 된다
+    /*
+     * 기기 한 대분만 저장한다.
+     * 로그인마다 현재 Refresh Token의 해시와 만료 시각을 함께 갱신한다.
+     */
     @Column(name = "refresh_token_hash", length = 64)
     private String refreshTokenHash;
 
     @Column(name = "refresh_token_expires_at")
     private LocalDateTime refreshTokenExpiresAt;
+
+    // 관리자 행 잠금 아래 증가시키며 Redis 게시 순서의 기준으로 사용한다.
+    @Column(name = "refresh_token_issuance_version", nullable = false)
+    private long refreshTokenIssuanceVersion;
 
     @Column(name = "deleted_at")
     private LocalDateTime deletedAt;
@@ -88,6 +95,25 @@ public class Admin extends BaseTimeEntity {
         this.name = name;
         this.role = role;
         this.status = AdminStatus.ACTIVE;   // 외부 입력을 받지 않는다 (EC R4)
+    }
+
+    public boolean isActive() {
+        return status == AdminStatus.ACTIVE;
+    }
+
+    public void issueRefreshToken(String tokenHash, LocalDateTime expiresAt) {
+        if (tokenHash == null || !tokenHash.matches("[0-9a-f]{64}")) {
+            throw new IllegalArgumentException("Refresh Token 해시는 SHA-256 형식이어야 한다");
+        }
+        if (expiresAt == null) {
+            throw new IllegalArgumentException("Refresh Token 만료 시각은 필수다");
+        }
+        if (!isActive()) {
+            throw new IllegalStateException("비활성 관리자는 토큰을 발급받을 수 없다");
+        }
+        this.refreshTokenIssuanceVersion = Math.incrementExact(refreshTokenIssuanceVersion);
+        this.refreshTokenHash = tokenHash;
+        this.refreshTokenExpiresAt = expiresAt;
     }
 
     private static void validateLoginId(String loginId) {

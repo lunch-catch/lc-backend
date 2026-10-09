@@ -49,6 +49,7 @@ public class HttpBodyLoggingFilter extends OncePerRequestFilter {
 
     private static final List<String> EXCLUDED_PATH_PREFIXES = List.of(
             "/notifications/stream", // SSE 등 스트리밍 응답은 캐싱하면 안 됨
+            "/v1/admin/auth/", // 관리자 로그인 본문은 비밀번호를 포함하므로 캐싱과 로깅에서 제외한다.
             "/v1/admin/admins" // 초기 비밀번호를 포함하므로 요청/응답 본문 로깅 제외
     );
 
