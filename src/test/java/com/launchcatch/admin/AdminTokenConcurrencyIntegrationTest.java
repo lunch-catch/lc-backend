@@ -32,6 +32,7 @@ import org.testcontainers.utility.DockerImageName;
 
 // 실제 DB 행 잠금, 커밋과 Valkey Lua를 함께 검증한다.
 @Testcontainers
+@org.junit.jupiter.api.extension.ExtendWith(org.springframework.boot.test.system.OutputCaptureExtension.class)
 @SpringBootTest(properties="jwt.secret=test-only-secret-not-used-anywhere-else-0123456789abcdef")
 class AdminTokenConcurrencyIntegrationTest {
     @Container static final MySQLContainer MYSQL = new MySQLContainer(DockerImageName.parse("mysql:8.4"));
@@ -47,7 +48,8 @@ class AdminTokenConcurrencyIntegrationTest {
     }
     @Autowired AdminRepository admins;
     @Autowired AdminTokenService service;
-    @Autowired RefreshTokenRepository cache;
+    @MockitoSpyBean RefreshTokenRepository cache;
+    @Autowired org.springframework.jdbc.core.JdbcTemplate jdbc;
     @MockitoBean JwtTokenProvider jwt;
     @MockitoSpyBean com.launchcatch.ops.service.AuditLogWriterImpl audit;
     private Long id;
@@ -80,12 +82,51 @@ class AdminTokenConcurrencyIntegrationTest {
         }
     }
 
-    @Test void 성공_감사_저장실패는_DB회전을_롤백하고_새_캐시를_보상한다() {
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+    void 성공_감사_저장실패후_기존_토큰은_캐시유무와_무관하게_다시_사용할_수_있다(boolean cacheLost) {
         doThrow(new org.springframework.dao.DataAccessResourceFailureException("audit unavailable"))
                 .when((com.launchcatch.ops.service.AuditLogWriterImpl) org.springframework.test.util.AopTestUtils.getUltimateTargetObject(audit)).write(eq(id),eq("ADMIN_TOKEN_REISSUE"),any(),eq("result=SUCCESS"));
         assertThatThrownBy(()->service.reissue(raw)).isInstanceOf(AuthException.class);
         assertThat(admins.findById(id).orElseThrow().getRefreshTokenHash()).isEqualTo(TokenHasher.sha256(raw));
-        assertThat(cache.findActiveHash(Role.ADMIN,id)).isEmpty();
+        assertThat(cache.findActiveHash(Role.ADMIN,id)).contains(TokenHasher.sha256(raw));
+        var replacement = org.mockito.ArgumentCaptor.forClass(String.class);
+        verify(cache).compareAndRotate(eq(raw), replacement.capture(), any());
+        assertThat(cache.find(replacement.getValue())).isEmpty();
+        if (cacheLost) {
+            cache.revokeIfActiveHashMatches(TokenHasher.sha256(raw), Role.ADMIN, id);
+        }
+        reset((com.launchcatch.ops.service.AuditLogWriterImpl) org.springframework.test.util.AopTestUtils.getUltimateTargetObject(audit));
+        var result = service.reissue(raw);
+        assertThat(result.refreshToken()).isNotEqualTo(raw);
+        assertThat(admins.findById(id).orElseThrow().getRefreshTokenHash())
+                .isEqualTo(TokenHasher.sha256(result.refreshToken()));
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+    void 재사용_감사장애에도_두_토큰은_폐기되고_실패는_운영로그에_남는다(boolean cacheLost, org.springframework.boot.test.system.CapturedOutput output) {
+        String replacement = service.reissue(raw).refreshToken();
+        doThrow(new org.springframework.dao.DataAccessResourceFailureException("audit unavailable"))
+                .when((com.launchcatch.ops.service.AuditLogWriterImpl)
+                        org.springframework.test.util.AopTestUtils.getUltimateTargetObject(audit))
+                .write(eq(id), eq("ADMIN_TOKEN_REISSUE"), any(), eq("result=FAILURE;reason=REUSE_DETECTED"));
+        assertThatThrownBy(() -> service.reissue(raw)).isInstanceOfSatisfying(AuthException.class,
+                failure -> assertThat(failure.getErrorCode())
+                        .isEqualTo(com.launchcatch.auth.exception.AuthErrorCode.REFRESH_TOKEN_REUSED));
+        Admin revoked = admins.findById(id).orElseThrow();
+        assertThat(revoked.getRefreshTokenHash()).isNull();
+        assertThat(output.getAll()).contains("event=ADMIN_TOKEN_REISSUE_AUDIT_FAILED adminId=" + id
+                + " reason=REUSE_DETECTED");
+        assertThat(cache.findActiveHash(Role.ADMIN, id)).isEmpty();
+        if (cacheLost) {
+            cache.revokeIfActiveHashMatches(TokenHasher.sha256(raw), Role.ADMIN, id);
+        }
+        assertThatThrownBy(() -> service.reissue(raw)).isInstanceOf(AuthException.class);
+        assertThatThrownBy(() -> service.reissue(replacement)).isInstanceOf(AuthException.class);
+        assertThat(admins.findById(id).orElseThrow().getRefreshTokenHash()).isNull();
+        assertThat(jdbc.queryForObject("select count(*) from audit_log where admin_id = ? and detail = ?",
+                Long.class, id, "result=FAILURE;reason=REUSE_DETECTED")).isZero();
     }
 
     @Test void 폐기_순번은_늦은_이전게시를_차단하고_새_로그인은_허용한다() {

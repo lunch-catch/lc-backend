@@ -57,6 +57,20 @@ class AdminTokenTransactionServiceTest {
         verifyNoInteractions(audit);
     }
 
+    @Test void 현재_DB해시로_롤백과_커밋과_다른_로그인을_구분한다() {
+        assertThat(service.confirmRotation(1L, old, next, now).rolledBack()).isTrue();
+        service.rotate(1L, old, next, now.plusDays(1), now);
+        var committed = service.confirmRotation(1L, old, next, now);
+        assertThat(committed.committed().version()).isEqualTo(2L);
+        assertThat(committed.rolledBack()).isFalse();
+        admin.issueRefreshToken("c".repeat(64), now.plusDays(1));
+        var superseded = service.confirmRotation(1L, old, next, now);
+        assertThat(superseded.committed()).isNull();
+        assertThat(superseded.rolledBack()).isFalse();
+        admin.revokeRefreshToken();
+        assertThat(service.confirmRotation(1L, old, next, now).rolledBack()).isFalse();
+    }
+
     @Test void 같은_해시를_다시_회전할_수_없다() {
         service.rotate(1L,old,next,now.plusDays(1),now);
         assertThatThrownBy(() -> service.rotate(1L,old,"c".repeat(64),now.plusDays(1),now)).isInstanceOf(AuthException.class);
@@ -69,6 +83,8 @@ class AdminTokenTransactionServiceTest {
         assertThat(state.hash()).isEqualTo(old);
         assertThat(state.version()).isEqualTo(2L);
         assertThat(state.toString()).doesNotContain(old);
+        verifyNoInteractions(audit);
+        service.recordFailure(1L,"REUSE_DETECTED");
         service.recordFailure(1L,"DB_FAILED");
         verify(audit).write(1L,"ADMIN_TOKEN_REISSUE","1","result=FAILURE;reason=REUSE_DETECTED");
         verify(audit).write(1L,"ADMIN_TOKEN_REISSUE","1","result=FAILURE;reason=DB_FAILED");

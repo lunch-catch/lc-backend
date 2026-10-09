@@ -44,7 +44,6 @@ class AdminTokenTransactionService {
         Admin admin = admins.findByIdForUpdate(id).orElseThrow(AdminTokenTransactionService::invalid);
         String hash = admin.getRefreshTokenHash();
         admin.revokeRefreshToken();
-        audit.write(id, "ADMIN_TOKEN_REISSUE", String.valueOf(id), "result=FAILURE;reason=REUSE_DETECTED");
         return new RevocationState(admin.getRole(), hash, admin.getRefreshTokenIssuanceVersion());
     }
 
@@ -53,10 +52,27 @@ class AdminTokenTransactionService {
         audit.write(id, "ADMIN_TOKEN_REISSUE", String.valueOf(id), "result=FAILURE;reason=" + reason);
     }
 
+    // 커밋 응답 장애와 실제 롤백을 구분하며 최신 로그인 또는 폐기된 상태는 복구하지 않는다.
+    @Transactional(propagation = Propagation.REQUIRES_NEW, timeout = 5)
+    RotationRecovery confirmRotation(Long id, String oldHash, String newHash, LocalDateTime now) {
+        Admin admin = admins.findByIdForUpdate(id).orElseThrow(AdminTokenTransactionService::invalid);
+        if (!admin.isActive() || !admin.getRole().isAdmin()
+                || admin.getRefreshTokenExpiresAt() == null || !admin.getRefreshTokenExpiresAt().isAfter(now)) {
+            return new RotationRecovery(null, false);
+        }
+        if (newHash.equals(admin.getRefreshTokenHash())) {
+            return new RotationRecovery(new RotationState(
+                    new AdminLoginResponse(id, admin.getName(), admin.getRole()),
+                    admin.getRefreshTokenIssuanceVersion()), false);
+        }
+        return new RotationRecovery(null, oldHash.equals(admin.getRefreshTokenHash()));
+    }
+
     private static AuthException invalid() {
         return new AuthException(AuthErrorCode.REFRESH_TOKEN_INVALID);
     }
 
+    record RotationRecovery(RotationState committed, boolean rolledBack) { }
     record RotationState(AdminLoginResponse response, long version) { }
     record RevocationState(Role role, String hash, long version) {
         @Override

@@ -37,6 +37,8 @@ class AdminTokenServiceTest {
 
     @BeforeEach
     void setUp() {
+        when(db.confirmRotation(any(), any(), any(), any()))
+                .thenReturn(new AdminTokenTransactionService.RotationRecovery(null, false));
         when(jwt.refreshTokenValidityMs(Role.ADMIN)).thenReturn(86400000L);
         when(jwt.createAccessToken(1L, Role.ADMIN)).thenReturn("access");
         when(cache.find(old)).thenReturn(Optional.of(owner));
@@ -173,6 +175,69 @@ class AdminTokenServiceTest {
         when(cache.compareAndRotate(eq(old), any(), any())).thenReturn(RotateOutcome.reuseDetected(owner));
         when(db.revokeReused(1L)).thenThrow(new DataAccessResourceFailureException("db"));
         rejected(old, AuthErrorCode.REFRESH_TOKEN_STORE_UNAVAILABLE);
+    }
+
+    @Test
+    void 롤백이_확인되면_이번_회전에_한해_이전_캐시를_복구한다() {
+        when(db.rotate(any(), any(), any(), any(), any())).thenThrow(new TransactionSystemException("rollback"));
+        when(db.confirmRotation(any(), any(), any(), any()))
+                .thenReturn(new AdminTokenTransactionService.RotationRecovery(null, true));
+        when(cache.rollbackRotation(any(), any(), any(), any())).thenReturn(true);
+        rejected(old, AuthErrorCode.REFRESH_TOKEN_STORE_UNAVAILABLE);
+        verify(cache).rollbackRotation(eq(TokenHasher.sha256(old)), anyString(), eq(Role.ADMIN), eq(1L));
+        verify(cache, never()).revokeIfActiveHashMatches(any(), any(), any());
+    }
+
+    @Test
+    void 다른_로그인으로_캐시가_바뀌면_이전_토큰을_복구하지_않는다() {
+        when(db.rotate(any(), any(), any(), any(), any())).thenThrow(new TransactionSystemException("rollback"));
+        when(db.confirmRotation(any(), any(), any(), any()))
+                .thenReturn(new AdminTokenTransactionService.RotationRecovery(null, true));
+        when(cache.rollbackRotation(any(), any(), any(), any())).thenReturn(false);
+        rejected(old, AuthErrorCode.REFRESH_TOKEN_STORE_UNAVAILABLE);
+        verify(cache).revokeIfActiveHashMatches(anyString(), eq(Role.ADMIN), eq(1L));
+    }
+
+    @Test
+    void 커밋_응답만_실패했으면_DB_확인후_성공_응답한다() {
+        when(db.rotate(any(), any(), any(), any(), any())).thenThrow(new TransactionSystemException("commit reply"));
+        when(db.confirmRotation(any(), any(), any(), any()))
+                .thenReturn(new AdminTokenTransactionService.RotationRecovery(state, false));
+        assertThat(service.reissue(old).response()).isEqualTo(state.response());
+        verify(cache, never()).rollbackRotation(any(), any(), any(), any());
+        verify(cache, never()).revokeIfActiveHashMatches(any(), any(), any());
+    }
+
+    @Test
+    void DB_확인도_실패하면_이전_토큰을_복구하지_않고_AUTH002다() {
+        when(db.rotate(any(), any(), any(), any(), any())).thenThrow(new TransactionSystemException("commit"));
+        when(db.confirmRotation(any(), any(), any(), any())).thenThrow(new DataAccessResourceFailureException("db"));
+        rejected(old, AuthErrorCode.REFRESH_TOKEN_STORE_UNAVAILABLE);
+        verify(cache, never()).rollbackRotation(any(), any(), any(), any());
+        verify(db).recordFailure(1L, "ROTATION_RESULT_UNKNOWN");
+    }
+
+    @Test
+    void 감사_장애는_재사용_폐기와_AUTH004를_취소하지_않는다() {
+        when(cache.compareAndRotate(eq(old), any(), any())).thenReturn(RotateOutcome.reuseDetected(owner));
+        when(db.revokeReused(1L)).thenReturn(new AdminTokenTransactionService.RevocationState(Role.ADMIN, "hash", 3L));
+        doThrow(new DataAccessResourceFailureException("audit")).when(db).recordFailure(1L, "REUSE_DETECTED");
+        rejected(old, AuthErrorCode.REFRESH_TOKEN_REUSED);
+        var order = inOrder(db, cache);
+        order.verify(db).revokeReused(1L);
+        order.verify(cache).revokeBeforeVersion(1L, Role.ADMIN, 3L);
+        order.verify(cache).revokeBeforeVersion(1L, Role.SUPER_ADMIN, 3L);
+        order.verify(cache).revokeIfActiveHashMatches("hash", Role.ADMIN, 1L);
+        order.verify(db).recordFailure(1L, "REUSE_DETECTED");
+    }
+
+    @Test
+    void 캐시_폐기_실패에도_이미_커밋된_폐기의_감사를_시도한다() {
+        when(cache.compareAndRotate(eq(old), any(), any())).thenReturn(RotateOutcome.reuseDetected(owner));
+        when(db.revokeReused(1L)).thenReturn(new AdminTokenTransactionService.RevocationState(Role.ADMIN, null, 3L));
+        doThrow(new DataAccessResourceFailureException("cache")).when(cache).revokeBeforeVersion(any(), any(), anyLong());
+        rejected(old, AuthErrorCode.REFRESH_TOKEN_STORE_UNAVAILABLE);
+        verify(db).recordFailure(1L, "REUSE_DETECTED");
     }
 
     private void rejected(String token, AuthErrorCode code) {

@@ -110,12 +110,33 @@ public class AdminTokenService {
         try {
             state = rotate(owner.id(), oldHash, newHash, ttl, now);
         } catch (RuntimeException failure) {
-            compensate(owner, newHash);
-            failureAudit(owner.id(), "DB_ROTATION_FAILED");
-            throw failure;
+            state = recoverRotation(owner, oldHash, newHash, failure);
         }
         publish(state, newToken, ttl);
         return result(state, newToken);
+    }
+
+    private AdminTokenTransactionService.RotationState recoverRotation(RefreshTokenData owner,
+            String oldHash, String newHash, RuntimeException originalFailure) {
+        boolean restored;
+        try {
+            var recovery = transactions.confirmRotation(owner.id(), oldHash, newHash, LocalDateTime.now(clock));
+            if (recovery.committed() != null) {
+                return recovery.committed();
+            }
+            restored = recovery.rolledBack()
+                    && tokens.rollbackRotation(oldHash, newHash, owner.role(), owner.id());
+        } catch (RuntimeException recoveryFailure) {
+            safeLog("ROTATION_RECOVERY_FAILED", recoveryFailure);
+            compensate(owner, newHash);
+            failureAudit(owner.id(), "ROTATION_RESULT_UNKNOWN");
+            throw unavailable();
+        }
+        if (!restored) {
+            compensate(owner, newHash);
+        }
+        failureAudit(owner.id(), "DB_ROTATION_FAILED");
+        throw originalFailure;
     }
 
     private AdminLoginResult fallback(Long id, String oldHash, String newHash,
@@ -153,10 +174,14 @@ public class AdminTokenService {
         try {
             AdminTokenTransactionService.RevocationState state = transactions.revokeReused(owner.id());
             // 역할이 변경됐어도 관리자 두 역할의 지연 게시를 모두 차단한다.
-            tokens.revokeBeforeVersion(owner.id(), Role.ADMIN, state.version());
-            tokens.revokeBeforeVersion(owner.id(), Role.SUPER_ADMIN, state.version());
-            if (state.hash() != null) {
-                tokens.revokeIfActiveHashMatches(state.hash(), state.role(), owner.id());
+            try {
+                tokens.revokeBeforeVersion(owner.id(), Role.ADMIN, state.version());
+                tokens.revokeBeforeVersion(owner.id(), Role.SUPER_ADMIN, state.version());
+                if (state.hash() != null) {
+                    tokens.revokeIfActiveHashMatches(state.hash(), state.role(), owner.id());
+                }
+            } finally {
+                failureAudit(owner.id(), "REUSE_DETECTED");
             }
         } catch (DataAccessException | TransactionException failure) {
             safeLog("REUSE_REVOCATION_FAILED", failure);
@@ -181,7 +206,9 @@ public class AdminTokenService {
         try {
             transactions.recordFailure(id, reason);
         } catch (RuntimeException failure) {
-            safeLog("FAILURE_AUDIT_FAILED", failure);
+            // 감사 DB 저장 실패는 관리자 ID와 사유를 운영 로그에 남기며 토큰 원문이나 외부 예외 메시지는 기록하지 않는다.
+            log.warn("event=ADMIN_TOKEN_REISSUE_AUDIT_FAILED adminId={} reason={} errorType={} stack={}",
+                    id, reason, failure.getClass().getSimpleName(), java.util.Arrays.toString(failure.getStackTrace()));
         }
     }
 
