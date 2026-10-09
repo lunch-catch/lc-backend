@@ -4,8 +4,8 @@ import com.launchcatch.member.contract.MemberStatus;
 import java.time.LocalDate;
 
 /*
- * 관리자 사용자 목록 요청이다. 값이 null 인 항목은 조건에서 빠지고 sortBy, sortDir 은 기본값을 쓴다.
- * 페이지 크기는 20건 고정이라 요청에 없다(V51 11행).
+ * 관리자 사용자 목록 요청이다. 값이 null 인 조건은 빠지고 sortBy, sortDir 이 null 이면 기본값(joinedAt, desc)을 쓴다.
+ * keyword 는 searchType 이 가리키는 대상으로만 해석한다. 값의 모양으로 추측하지 않는다.
  */
 public record AdminMemberListQuery(
         MemberStatus status,
@@ -14,6 +14,7 @@ public record AdminMemberListQuery(
         AdminMemberSearchType searchType,
         String keyword,
         int page,
+        int size,
         String sortBy,
         String sortDir
 ) {

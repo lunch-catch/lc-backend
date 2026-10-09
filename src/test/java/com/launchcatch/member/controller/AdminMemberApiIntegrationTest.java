@@ -59,6 +59,7 @@ class AdminMemberApiIntegrationTest {
 
     private Member older;
     private Member newer;
+    private Member lastSaved;
 
     @BeforeEach
     void setUp() {
@@ -66,7 +67,7 @@ class AdminMemberApiIntegrationTest {
         newer = save("kakao-2", "100%할인", LocalDateTime.of(2026, 10, 7, 23, 59, 59));
         save("kakao-3", "a_b", LocalDateTime.of(2026, 10, 3, 12, 0));
         save("kakao-4", "axb", LocalDateTime.of(2026, 10, 4, 12, 0));
-        save("kakao-5", "!느낌표", LocalDateTime.of(2026, 10, 5, 12, 0));
+        lastSaved = save("kakao-5", "!느낌표", LocalDateTime.of(2026, 10, 5, 12, 0));
         entityManager.flush();
         entityManager.clear();
     }
@@ -137,27 +138,92 @@ class AdminMemberApiIntegrationTest {
      * keyword 는 쿼리 문자열이 아니라 param 으로 넘긴다.
      * get(urlTemplate) 은 템플릿을 인코딩하므로 "%25" 를 적으면 "%2525" 가 되어 서버가 "%25" 라는 글자를 받는다.
      */
-    private ResultActions searchKeyword(String keyword) throws Exception {
+    private ResultActions searchKeyword(String searchType, String keyword) throws Exception {
         String token = jwtTokenProvider.createAccessToken(1L, Role.ADMIN);
-        return mockMvc.perform(get(URL).param("keyword", keyword).cookie(new Cookie("accessToken", token)));
+        return mockMvc.perform(get(URL)
+                .param("searchType", searchType)
+                .param("keyword", keyword)
+                .cookie(new Cookie("accessToken", token)));
     }
 
     @Test
     void 닉네임은_접두사로_찾고_퍼센트와_밑줄과_느낌표는_글자로_다룬다() throws Exception {
-        searchKeyword("점심").andExpect(jsonPath("$.data.totalElements").value(1));
-        searchKeyword("헌터").andExpect(jsonPath("$.data.totalElements").value(0));
-        searchKeyword("%").andExpect(jsonPath("$.data.totalElements").value(0));
-        searchKeyword("%할인").andExpect(jsonPath("$.data.totalElements").value(0));
-        searchKeyword("100%").andExpect(jsonPath("$.data.totalElements").value(1));
-        searchKeyword("a_").andExpect(jsonPath("$.data.totalElements").value(1));
-        searchKeyword("!").andExpect(jsonPath("$.data.totalElements").value(1));
+        searchKeyword("NICKNAME", "점심").andExpect(jsonPath("$.data.totalElements").value(1));
+        searchKeyword("NICKNAME", "헌터").andExpect(jsonPath("$.data.totalElements").value(0));
+        searchKeyword("NICKNAME", "%").andExpect(jsonPath("$.data.totalElements").value(0));
+        searchKeyword("NICKNAME", "%할인").andExpect(jsonPath("$.data.totalElements").value(0));
+        searchKeyword("NICKNAME", "100%").andExpect(jsonPath("$.data.totalElements").value(1));
+        searchKeyword("NICKNAME", "a_").andExpect(jsonPath("$.data.totalElements").value(1));
+        searchKeyword("NICKNAME", "!").andExpect(jsonPath("$.data.totalElements").value(1));
     }
 
     @Test
-    void 숫자만_있는_키워드는_회원_번호로_찾는다() throws Exception {
-        getAs(Role.ADMIN, "?keyword=" + older.getId())
+    void 회원_번호_검색은_번호가_일치하는_회원을_찾는다() throws Exception {
+        getAs(Role.ADMIN, "?searchType=MEMBER_ID&keyword=" + older.getId())
                 .andExpect(jsonPath("$.data.totalElements").value(1))
                 .andExpect(jsonPath("$.data.items[0].nickname").value("점심헌터"));
+    }
+
+    @Test
+    void 숫자_닉네임은_닉네임_검색으로_찾고_회원_번호_검색으로는_찾지_않는다() throws Exception {
+        save("kakao-6", "9999999", LocalDateTime.of(2026, 10, 6, 12, 0));
+        entityManager.flush();
+        entityManager.clear();
+
+        searchKeyword("NICKNAME", "9999999").andExpect(jsonPath("$.data.totalElements").value(1));
+        searchKeyword("MEMBER_ID", "9999999").andExpect(jsonPath("$.data.totalElements").value(0));
+    }
+
+    @Test
+    void 페이지_크기를_지정할_수_있다() throws Exception {
+        getAs(Role.ADMIN, "?size=2")
+                .andExpect(jsonPath("$.data.size").value(2))
+                .andExpect(jsonPath("$.data.items.length()").value(2))
+                .andExpect(jsonPath("$.data.totalElements").value(5));
+    }
+
+    @Test
+    void 회원_번호순으로_정렬한다() throws Exception {
+        getAs(Role.ADMIN, "?sortBy=memberId&sortDir=asc")
+                .andExpect(jsonPath("$.data.items[0].memberId").value(older.getId()))
+                .andExpect(jsonPath("$.data.items[4].memberId").value(lastSaved.getId()));
+        getAs(Role.ADMIN, "?sortBy=memberId")
+                .andExpect(jsonPath("$.data.items[0].memberId").value(lastSaved.getId()));
+    }
+
+    @Test
+    void 가입일_오름차순이면_가장_먼저_가입한_회원이_앞이다() throws Exception {
+        getAs(Role.ADMIN, "?sortBy=joinedAt&sortDir=asc")
+                .andExpect(jsonPath("$.data.items[0].memberId").value(older.getId()))
+                .andExpect(jsonPath("$.data.items[4].memberId").value(newer.getId()));
+    }
+
+    @Test
+    void 닉네임순_한글은_영문과_기호_뒤에_온다() throws Exception {
+        getAs(Role.ADMIN, "?sortBy=nickname&sortDir=desc")
+                .andExpect(jsonPath("$.data.items[0].nickname").value("점심헌터"));
+        getAs(Role.ADMIN, "?sortBy=nickname&sortDir=asc")
+                .andExpect(jsonPath("$.data.items[4].nickname").value("점심헌터"));
+    }
+
+    @Test
+    void 마지막_로그인순_정렬은_기록이_없는_회원을_방향과_관계없이_맨_뒤에_둔다() throws Exception {
+        entityManager.createNativeQuery("UPDATE member SET last_login_at = :at WHERE member_id = :id")
+                .setParameter("at", LocalDateTime.of(2026, 10, 2, 10, 0))
+                .setParameter("id", older.getId())
+                .executeUpdate();
+        entityManager.createNativeQuery("UPDATE member SET last_login_at = :at WHERE member_id = :id")
+                .setParameter("at", LocalDateTime.of(2026, 10, 7, 10, 0))
+                .setParameter("id", newer.getId())
+                .executeUpdate();
+        entityManager.clear();
+
+        getAs(Role.ADMIN, "?sortBy=lastLoginAt&sortDir=asc")
+                .andExpect(jsonPath("$.data.items[0].memberId").value(older.getId()))
+                .andExpect(jsonPath("$.data.items[1].memberId").value(newer.getId()));
+        getAs(Role.ADMIN, "?sortBy=lastLoginAt&sortDir=desc")
+                .andExpect(jsonPath("$.data.items[0].memberId").value(newer.getId()))
+                .andExpect(jsonPath("$.data.items[1].memberId").value(older.getId()));
     }
 
     @Test
@@ -179,5 +245,21 @@ class AdminMemberApiIntegrationTest {
         getAs(Role.ADMIN, "?joinedFrom=2026-10-08&joinedTo=2026-10-07").andExpect(status().isBadRequest());
         getAs(Role.ADMIN, "?joinedFrom=20261001").andExpect(status().isBadRequest());
         getAs(Role.ADMIN, "?status=UNKNOWN").andExpect(status().isBadRequest());
+        getAs(Role.ADMIN, "?size=0").andExpect(status().isBadRequest());
+        getAs(Role.ADMIN, "?size=101").andExpect(status().isBadRequest());
+        getAs(Role.ADMIN, "?sortBy=createdAt").andExpect(status().isBadRequest());
+        getAs(Role.ADMIN, "?sortDir=DESC").andExpect(status().isBadRequest());
+        getAs(Role.ADMIN, "?searchType=UNKNOWN&keyword=a").andExpect(status().isBadRequest());
+        getAs(Role.ADMIN, "?searchType=MEMBER_ID&keyword=abc").andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void 검색_종류_없이_키워드만_주면_400이다() throws Exception {
+        searchKeywordOnly("점심").andExpect(status().isBadRequest());
+    }
+
+    private ResultActions searchKeywordOnly(String keyword) throws Exception {
+        String token = jwtTokenProvider.createAccessToken(1L, Role.ADMIN);
+        return mockMvc.perform(get(URL).param("keyword", keyword).cookie(new Cookie("accessToken", token)));
     }
 }
