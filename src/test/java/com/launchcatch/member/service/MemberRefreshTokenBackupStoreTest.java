@@ -6,6 +6,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.launchcatch.auth.Role;
+import com.launchcatch.member.contract.MemberStatus;
 import com.launchcatch.member.entity.Member;
 import com.launchcatch.member.repository.MemberRepository;
 import java.time.LocalDateTime;
@@ -36,5 +37,38 @@ class MemberRefreshTokenBackupStoreTest {
         assertThat(store.rotateIfMatches(1L, "old", "new", now.plusDays(1), now)).isTrue();
         assertThat(store.clearIfMatches(1L, "new", now)).isTrue();
         verify(memberRepository).clearRefreshTokenBackupIfHashMatches(1L, "new", now);
+    }
+
+    @Test
+    void 해시로_조회하면_활성이고_만료_전인_회원만_돌려준다() {
+        LocalDateTime now = LocalDateTime.of(2026, 10, 8, 12, 0);
+        MemberRefreshTokenBackupStore store = new MemberRefreshTokenBackupStore(memberRepository);
+        when(memberRepository.findByRefreshTokenHash("old")).thenReturn(Optional.of(member));
+        when(member.getStatus()).thenReturn(MemberStatus.ACTIVE);
+        when(member.getId()).thenReturn(1L);
+        when(member.getRefreshTokenHash()).thenReturn("old");
+        when(member.getRefreshTokenExpiresAt()).thenReturn(now.plusMinutes(1));
+
+        assertThat(store.findValidByHash("old", now))
+                .hasValueSatisfying(backup -> {
+                    assertThat(backup.subjectId()).isEqualTo(1L);
+                    assertThat(backup.role()).isEqualTo(Role.MEMBER);
+                });
+    }
+
+    @Test
+    void 해시로_조회해도_만료됐거나_활성이_아니면_비어_있다() {
+        LocalDateTime now = LocalDateTime.of(2026, 10, 8, 12, 0);
+        MemberRefreshTokenBackupStore store = new MemberRefreshTokenBackupStore(memberRepository);
+        when(memberRepository.findByRefreshTokenHash("expired")).thenReturn(Optional.of(member));
+        when(member.getStatus()).thenReturn(MemberStatus.ACTIVE);
+        when(member.getRefreshTokenExpiresAt()).thenReturn(now);
+
+        assertThat(store.findValidByHash("expired", now)).isEmpty();
+
+        when(memberRepository.findByRefreshTokenHash("withdrawn")).thenReturn(Optional.of(member));
+        when(member.getStatus()).thenReturn(MemberStatus.WITHDRAWN);
+
+        assertThat(store.findValidByHash("withdrawn", now)).isEmpty();
     }
 }
