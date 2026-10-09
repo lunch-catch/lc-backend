@@ -36,14 +36,16 @@ public class TemplateReviseService {
 
     /*
      * requestId 로 먼저 조회해 재시도인지 본다. 재시도면 LLM 을 다시 부르지 않고
-     * 그때 만든 버전으로 바로 응답한다. LLM 호출은 트랜잭션 밖에서 한다(생성과 같은 이유).
-     * request_id 의 UNIQUE 충돌은 저장 트랜잭션 밖에서 잡아 다시 조회한다
-     * (TemplateCreateService 에서 코드래빗 리뷰로 고친 것과 같은 패턴).
+     * 그때 만든 버전으로 바로 응답한다. 찾은 버전이 이 요청의 templateId 와 다른
+     * 템플릿 것이면 재시도가 아니라 requestId 가 잘못 재사용된 것이므로 거부한다.
+     * LLM 호출은 트랜잭션 밖에서 한다(생성과 같은 이유). request_id 의 UNIQUE 충돌은
+     * 저장 트랜잭션 밖에서 잡아 다시 조회한다(TemplateCreateService 에서 코드래빗
+     * 리뷰로 고친 것과 같은 패턴).
      */
     public TemplateCreateResponse revise(Long templateId, String requestPrompt, String requestId, Long adminId) {
         var existing = templateVersionRepository.findByRequestId(requestId);
         if (existing.isPresent()) {
-            return toResponse(existing.get(), List.of());
+            return toResponseForMatchingTemplate(existing.get(), templateId);
         }
         Template template = findDraftTemplate(templateId);
         String previousHtml = template.latestVersion().getHtmlContent();
@@ -57,7 +59,7 @@ public class TemplateReviseService {
                     status -> save(templateId, requestPrompt, requestId, adminId, sanitized));
         } catch (DataIntegrityViolationException e) {
             return templateVersionRepository.findByRequestId(requestId)
-                    .map(found -> toResponse(found, List.<String>of()))
+                    .map(found -> toResponseForMatchingTemplate(found, templateId))
                     .orElseThrow(() -> e);
         }
     }
@@ -91,6 +93,19 @@ public class TemplateReviseService {
                 adminId, LocalDateTime.now(clock), requestPrompt, requestId, sanitized.html());
         templateRepository.saveAndFlush(template);
         return toResponse(version, sanitized.removedElements());
+    }
+
+    /*
+     * requestId 로 찾은 버전이 이 요청의 templateId 소속이 맞는지 확인한다. 같은
+     * requestId 가 다른 templateId 로 재사용되면(클라이언트 버그 또는 악의적 재사용)
+     * 엉뚱한 템플릿의 버전을 돌려주게 되므로, 다르면 이 templateId 로는 해당 버전이
+     * 없는 것으로 보고 거부한다.
+     */
+    private TemplateCreateResponse toResponseForMatchingTemplate(TemplateVersion version, Long templateId) {
+        if (!version.getTemplate().getId().equals(templateId)) {
+            throw new CampaignException(PosterErrorCode.TEMPLATE_NOT_FOUND);
+        }
+        return toResponse(version, List.of());
     }
 
     /*

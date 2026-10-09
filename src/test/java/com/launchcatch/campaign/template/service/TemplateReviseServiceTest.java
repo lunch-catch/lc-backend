@@ -115,6 +115,18 @@ class TemplateReviseServiceTest {
     }
 
     @Test
+    @DisplayName("같은 requestId 가 다른 templateId 의 버전이면 거부한다")
+    void requestId_로_찾은_버전이_다른_템플릿이면_거부한다() throws Exception {
+        TemplateVersion existing = existingVersion();
+        when(templateVersionRepository.findByRequestId(REQUEST_ID)).thenReturn(Optional.of(existing));
+        Long otherTemplateId = 2L;
+
+        assertThatThrownBy(() -> service.revise(otherTemplateId, "버튼 색 바꿔줘", REQUEST_ID, ADMIN_ID))
+                .isInstanceOfSatisfying(CampaignException.class, e ->
+                        assertThat(e.getErrorCode()).isEqualTo(PosterErrorCode.TEMPLATE_NOT_FOUND));
+    }
+
+    @Test
     @DisplayName("저장 시점에 같은 requestId 가 먼저 들어와 있으면 그 버전으로 응답한다")
     void 저장_시점_requestId_경쟁은_먼저_저장된_버전으로_응답한다() throws Exception {
         TemplateVersion existing = existingVersion();
