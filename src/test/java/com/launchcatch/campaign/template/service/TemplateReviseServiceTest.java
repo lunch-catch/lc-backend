@@ -76,6 +76,9 @@ class TemplateReviseServiceTest {
                 FIXED_CLOCK);
         lenient().when(templateVersionRepository.findByRequestId(REQUEST_ID)).thenReturn(Optional.empty());
         lenient().when(templateVersionRepository.findMaxVersionNumber(TEMPLATE_ID)).thenReturn(1);
+        lenient().when(templateRepository.findById(TEMPLATE_ID)).thenAnswer(invocation -> Optional.of(draftTemplate()));
+        lenient().when(templateVersionRepository.findFirstByTemplateIdOrderByVersionNumberDesc(TEMPLATE_ID))
+                .thenAnswer(invocation -> Optional.of(draftTemplate().latestVersion()));
         lenient().when(transactionTemplate.execute(any())).thenAnswer(invocation -> {
             TransactionCallback<?> callback = invocation.getArgument(0);
             return callback.doInTransaction(null);
@@ -161,7 +164,7 @@ class TemplateReviseServiceTest {
     @Test
     @DisplayName("템플릿이 없으면 POSTER-005 로 거부한다")
     void 템플릿이_없으면_거부한다() {
-        when(templateRepository.findByIdWithVersions(TEMPLATE_ID)).thenReturn(Optional.empty());
+        when(templateRepository.findById(TEMPLATE_ID)).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.revise(TEMPLATE_ID, "버튼 색 바꿔줘", REQUEST_ID, ADMIN_ID))
                 .isInstanceOfSatisfying(CampaignException.class, e ->
@@ -169,10 +172,19 @@ class TemplateReviseServiceTest {
     }
 
     @Test
+    @DisplayName("템플릿은 있는데 버전이 하나도 없으면(불변식 위반) 예외를 던진다")
+    void 버전이_없으면_예외를_던진다() {
+        when(templateVersionRepository.findFirstByTemplateIdOrderByVersionNumberDesc(TEMPLATE_ID))
+                .thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.revise(TEMPLATE_ID, "버튼 색 바꿔줘", REQUEST_ID, ADMIN_ID))
+                .isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
     @DisplayName("저장 시점에 템플릿이 이미 지워져 있으면 POSTER-005 로 거부한다")
-    void 저장_시점에_템플릿이_없으면_거부한다() throws Exception {
-        when(templateRepository.findByIdWithVersions(TEMPLATE_ID))
-                .thenReturn(Optional.of(draftTemplate()), Optional.empty());
+    void 저장_시점에_템플릿이_없으면_거부한다() {
+        when(templateRepository.findByIdWithVersions(TEMPLATE_ID)).thenReturn(Optional.empty());
         when(templateHtmlGenerator.revise(PREVIOUS_HTML, "버튼 색 바꿔줘")).thenReturn(PREVIOUS_HTML);
 
         assertThatThrownBy(() -> service.revise(TEMPLATE_ID, "버튼 색 바꿔줘", REQUEST_ID, ADMIN_ID))
@@ -185,7 +197,7 @@ class TemplateReviseServiceTest {
     void 게시된_템플릿은_거부한다() throws Exception {
         Template template = draftTemplate();
         setStatus(template, TemplateStatus.PUBLISHED);
-        when(templateRepository.findByIdWithVersions(TEMPLATE_ID)).thenReturn(Optional.of(template));
+        when(templateRepository.findById(TEMPLATE_ID)).thenReturn(Optional.of(template));
 
         assertThatThrownBy(() -> service.revise(TEMPLATE_ID, "버튼 색 바꿔줘", REQUEST_ID, ADMIN_ID))
                 .isInstanceOfSatisfying(CampaignException.class, e ->
@@ -195,9 +207,7 @@ class TemplateReviseServiceTest {
 
     @Test
     @DisplayName("LLM 응답이 시간 초과되면 POSTER-004 이고 저장하지 않는다")
-    void LLM_시간_초과는_503이다() throws Exception {
-        when(templateRepository.findByIdWithVersions(TEMPLATE_ID))
-                .thenReturn(Optional.of(draftTemplate()));
+    void LLM_시간_초과는_503이다() {
         TemplateGenerationTimeoutException timeout = new TemplateGenerationTimeoutException("30초 초과");
         when(templateHtmlGenerator.revise(PREVIOUS_HTML, "버튼 색 바꿔줘")).thenThrow(timeout);
 
@@ -211,9 +221,7 @@ class TemplateReviseServiceTest {
 
     @Test
     @DisplayName("슬롯이 빠진 HTML 은 POSTER-001 이고 저장하지 않는다")
-    void 슬롯이_빠지면_저장하지_않는다() throws Exception {
-        when(templateRepository.findByIdWithVersions(TEMPLATE_ID))
-                .thenReturn(Optional.of(draftTemplate()));
+    void 슬롯이_빠지면_저장하지_않는다() {
         when(templateHtmlGenerator.revise(PREVIOUS_HTML, "버튼 색 바꿔줘"))
                 .thenReturn("<div data-slot=\"eventName\">title</div>");
 
@@ -225,9 +233,7 @@ class TemplateReviseServiceTest {
 
     @Test
     @DisplayName("슬롯 구조가 바뀌면 POSTER-002 이고 저장하지 않는다")
-    void 슬롯_구조가_바뀌면_저장하지_않는다() throws Exception {
-        when(templateRepository.findByIdWithVersions(TEMPLATE_ID))
-                .thenReturn(Optional.of(draftTemplate()));
+    void 슬롯_구조가_바뀌면_저장하지_않는다() {
         when(templateHtmlGenerator.revise(PREVIOUS_HTML, "버튼 색 바꿔줘"))
                 .thenReturn(PREVIOUS_HTML.replace(
                         "<h1 data-slot=\"eventName\">title</h1>", "<span data-slot=\"eventName\">title</span>"));

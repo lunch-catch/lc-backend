@@ -47,8 +47,8 @@ public class TemplateReviseService {
         if (existing.isPresent()) {
             return toResponseForMatchingTemplate(existing.get(), templateId);
         }
-        Template template = findDraftTemplate(templateId);
-        String previousHtml = template.latestVersion().getHtmlContent();
+        findDraftTemplate(templateId);
+        String previousHtml = latestVersionHtml(templateId);
         Document previousDocument = Jsoup.parseBodyFragment(previousHtml);
         Document document = Jsoup.parseBodyFragment(generate(previousHtml, requestPrompt));
         TemplateSanitizeResult sanitized = templateHtmlSanitizer.sanitize(document);
@@ -64,13 +64,25 @@ public class TemplateReviseService {
         }
     }
 
+    /*
+     * 버전을 전혀 안 가져온다. 존재/상태 확인에는 필요 없다.
+     */
     private Template findDraftTemplate(Long templateId) {
-        Template template = templateRepository.findByIdWithVersions(templateId)
+        Template template = templateRepository.findById(templateId)
                 .orElseThrow(() -> new CampaignException(PosterErrorCode.TEMPLATE_NOT_FOUND));
         if (template.getStatus() != TemplateStatus.DRAFT) {
             throw new CampaignException(PosterErrorCode.TEMPLATE_NOT_DRAFT);
         }
         return template;
+    }
+
+    /*
+     * LLM 에 넘길 최신 버전 HTML 하나만 가져온다. 이 템플릿의 과거 버전들은 안 건든다.
+     */
+    private String latestVersionHtml(Long templateId) {
+        return templateVersionRepository.findFirstByTemplateIdOrderByVersionNumberDesc(templateId)
+                .map(TemplateVersion::getHtmlContent)
+                .orElseThrow(() -> new IllegalStateException("template has no version: id=" + templateId));
     }
 
     private String generate(String previousHtml, String requestPrompt) {
