@@ -169,6 +169,8 @@ V51 기능 10~12, 62~65, 77~78, 87~91, 94행을 기준으로 한다. 공통 인�
 GET /v1/admin/members?status=ACTIVE&joinedFrom=2026-09-01&joinedTo=2026-09-30&searchType=NICKNAME&keyword=홍&page=0&size=20&sortBy=joinedAt&sortDir=desc
 ```
 
+> **페이지 방식 (2026-10-09 결정):** 관리자 표 목록은 정렬·검색·전체 건수(`totalElements`)가 필요한 화면이라 레포 공통 규약(`api-spec/README.md`)의 커서(`pageToken`) 대신 `page`/`size`를 쓴다. 모바일 스크롤 목록(점주·사용자용)은 규약대로 커서를 쓴다. 이 예외는 README가 아니라 이 명세에 적는다.
+
 | 파라미터 | 필수 | 설명 |
 | --- | --- | --- |
 | `status` | 아니오 | `ACTIVE`, `SUSPENDED`, `WITHDRAWN` |
@@ -217,6 +219,8 @@ GET /v1/admin/members?status=ACTIVE&joinedFrom=2026-09-01&joinedTo=2026-09-30&se
 ```
 GET /v1/admin/owners?status=ACTIVE&joinedFrom=2026-09-01&joinedTo=2026-09-30&keyword=런치&page=0
 ```
+
+> **페이지 방식:** 사용자 목록과 같은 이유로 `page`를 쓴다(위 「관리자 사용자 목록」의 페이지 방식 주석 참고).
 
 사용자 목록과 같은 규약이며 응답 항목과 검색 대상만 다르다. 점주 1계정은 가게 1개이므로 한 줄이 점주와 가게를 함께 나타낸다.
 
