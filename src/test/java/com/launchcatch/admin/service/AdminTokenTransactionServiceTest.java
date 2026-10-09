@@ -57,18 +57,41 @@ class AdminTokenTransactionServiceTest {
         verifyNoInteractions(audit);
     }
 
-    @Test void 현재_DB해시로_롤백과_커밋과_다른_로그인을_구분한다() {
-        assertThat(service.confirmRotation(1L, old, next, now).rolledBack()).isTrue();
-        service.rotate(1L, old, next, now.plusDays(1), now);
-        var committed = service.confirmRotation(1L, old, next, now);
-        assertThat(committed.committed().version()).isEqualTo(2L);
-        assertThat(committed.rolledBack()).isFalse();
+    @Test void 기존_해시가_남아_있으면_롤백으로_판단한다() {
+        var recovery = service.confirmRotation(1L, old, next, now);
+
+        assertThat(recovery.rolledBack()).isTrue();
+        assertThat(recovery.committed()).isNull();
+    }
+
+    @Test void 새_해시가_저장되어_있으면_커밋_결과를_반환한다() {
+        admin.issueRefreshToken(next, now.plusDays(1));
+
+        var recovery = service.confirmRotation(1L, old, next, now);
+
+        assertThat(recovery.rolledBack()).isFalse();
+        assertThat(recovery.committed()).isNotNull();
+        assertThat(recovery.committed().version()).isEqualTo(2L);
+        assertThat(recovery.committed().response().adminId()).isEqualTo(1L);
+        assertThat(recovery.committed().response().role()).isEqualTo(Role.SUPER_ADMIN);
+    }
+
+    @Test void 다른_로그인의_해시이면_복구_대상에서_제외한다() {
         admin.issueRefreshToken("c".repeat(64), now.plusDays(1));
-        var superseded = service.confirmRotation(1L, old, next, now);
-        assertThat(superseded.committed()).isNull();
-        assertThat(superseded.rolledBack()).isFalse();
+
+        var recovery = service.confirmRotation(1L, old, next, now);
+
+        assertThat(recovery.rolledBack()).isFalse();
+        assertThat(recovery.committed()).isNull();
+    }
+
+    @Test void 이미_폐기된_토큰이면_복구_대상에서_제외한다() {
         admin.revokeRefreshToken();
-        assertThat(service.confirmRotation(1L, old, next, now).rolledBack()).isFalse();
+
+        var recovery = service.confirmRotation(1L, old, next, now);
+
+        assertThat(recovery.rolledBack()).isFalse();
+        assertThat(recovery.committed()).isNull();
     }
 
     @Test void 같은_해시를_다시_회전할_수_없다() {
