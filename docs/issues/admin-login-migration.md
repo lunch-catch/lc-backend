@@ -4,7 +4,7 @@
 
 - fresh-market develop의 `cdd12d105556d53ad415fb47e4689f06e03c1f7d`에 있는 `AdminAuthService.login`, `AdminLoginTransactionService`, 로그인 DTO와 컨트롤러를 참고한다.
 - 런치캐치 `feat/admin-registration`의 관리자 엔티티, 상태, 저장소와 BCrypt 인코더를 공통 기반으로 사용한다.
-- HTTP 계약은 [auth.md](../api-spec/auth.md)의 관리자 로그인 절을 따른다.
+- HTTP 계약은 [auth-api-spec.md](../api-spec/auth-api-spec.md)의 관리자 로그인 절을 따른다.
 
 ## 이번 변경
 

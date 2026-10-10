@@ -121,7 +121,7 @@ public class GlobalExceptionHandler {
 
     /*
      * 인증과 인가 실패는 여기서 다루지 않는다. auth.exception.AuthExceptionHandler 가
-     * AUTH-005 과 AUTH-006 로 답한다(docs/api-spec/auth.md 의 접근 제어).
+     * AUTH-005 과 AUTH-006 로 답한다(docs/api-spec/auth-api-spec.md 의 접근 제어).
      *
      * 그 둘은 두 곳에서 난다. @PreAuthorize 같은 메서드 보안과, 토큰을 검사하는 보안 필터다.
      * @RestControllerAdvice 는 디스패처 서블릿 안에서만 도는데 필터는 그 바깥이라 원래

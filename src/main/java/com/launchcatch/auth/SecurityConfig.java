@@ -92,13 +92,13 @@ public class SecurityConfig {
      * 도메인 체인을 새로 추가하는 것을 잊어도 열리지 않고 막히는 쪽으로 실패한다.
      *
      * 로그인 전에 열리는 경로는 여섯이다. 로그인 셋과 토큰 재발급 셋이다
-     * (docs/api-spec/auth.md 의 목록). 그 여섯은 해당 도메인 체인이 permitAll 로 선언한다.
+     * (docs/api-spec/auth-api-spec.md 의 목록). 그 여섯은 해당 도메인 체인이 permitAll 로 선언한다.
      *
      * 카카오 인가 코드 교환은 따로 세지 않는다. 사용자의 로그인 수단이 카카오뿐이라
      * 사용자 로그인과 같은 경로다.
      *
      * 점주 회원가입도 로그인 전에 열리지만 이 수에 넣지 않는다. 계정을 만드는 일이고 토큰
-     * 정책과 무관해서 auth.md 가 소유하지 않는다. 점주 도메인의 문서와 체인이 가진다.
+     * 정책과 무관해서 auth-api-design.md 가 소유하지 않는다. 점주 도메인의 문서와 체인이 가진다.
      */
     @Bean
     @Order(Ordered.LOWEST_PRECEDENCE)

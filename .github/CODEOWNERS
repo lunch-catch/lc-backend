@@ -20,7 +20,8 @@
 # --- 공용 모듈과 빌드. 바꾸면 전 도메인이 영향을 받는다 ----------------------
 /src/main/java/com/launchcatch/auth/            @muzimzz @gyudongjeong
 /src/main/java/com/launchcatch/global/          @devjohnpark
-/docs/api-spec/auth.md                          @muzimzz @gyudongjeong
+/docs/api-spec/auth-api-spec.md                 @muzimzz @gyudongjeong
+/docs/api-spec/auth-api-design.md               @muzimzz @gyudongjeong
 /docs/api-spec/README.md                        @devjohnpark
 /docs/architecture/                             @devjohnpark
 /docs/code-convention/                          @devjohnpark

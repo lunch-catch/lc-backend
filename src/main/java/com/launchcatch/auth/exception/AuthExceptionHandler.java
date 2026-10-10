@@ -13,7 +13,7 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
 /*
- * 인증과 인가 실패를 auth.md 가 정한 코드로 바꾼다.
+ * 인증과 인가 실패를 auth-api-spec.md 가 정한 코드로 바꾼다.
  *
  * ApiSecurityDefaults 가 필터에서 난 예외를 handlerExceptionResolver 로 MVC 예외 처리에
  * 되돌리므로, 필터에서 난 것과 메서드 보안에서 난 것이 모두 여기로 모인다.
