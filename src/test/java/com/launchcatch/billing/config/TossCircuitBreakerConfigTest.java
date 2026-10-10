@@ -10,14 +10,13 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
-import org.springframework.http.HttpStatusCode;
 import org.springframework.web.reactive.function.client.WebClientRequestException;
 import org.springframework.web.reactive.function.client.WebClientResponseException;
 
 class TossCircuitBreakerConfigTest {
 
     private static WebClientResponseException responseOf(int status) {
-        return WebClientResponseException.create(HttpStatusCode.valueOf(status), "x", HttpHeaders.EMPTY,
+        return WebClientResponseException.create(status, "x", HttpHeaders.EMPTY,
                 new byte[0], null);
     }
 
