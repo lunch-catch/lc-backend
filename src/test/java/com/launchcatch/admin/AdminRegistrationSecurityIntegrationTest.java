@@ -78,6 +78,7 @@ class AdminRegistrationSecurityIntegrationTest {
     void setUp() {
         reset(tokens, cutoff, admins, encoder, audit, transactions);
         when(tokens.validateToken("token")).thenReturn(true);
+        when(tokens.validateAdditionalClaims("token")).thenReturn(true);
         when(tokens.getId("token")).thenReturn(1L);
         when(tokens.getRole("token")).thenReturn(Role.SUPER_ADMIN);
         when(tokens.getIssuedAt("token")).thenReturn(ISSUED_AT);

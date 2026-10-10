@@ -93,5 +93,15 @@ public class Owner extends BaseTimeEntity {
         this.lastLoginAt = loginAt;
     }
 
+    /*
+     * 같은 점주의 로그인·재발급과 DB 변경이 겹치지 않도록 행 잠금을 잡은 상태에서 호출한다.
+     * 발급 순번도 증가시켜 로그아웃 전에 시작한 요청이 나중에 Redis에 토큰을 다시 저장하지 못하게 한다.
+     */
+    public void clearRefreshToken() {
+        this.refreshTokenIssuanceVersion = Math.incrementExact(refreshTokenIssuanceVersion);
+        this.refreshTokenHash = null;
+        this.refreshTokenExpiresAt = null;
+    }
+
     public static Owner create(String email, String passwordHash) { return new Owner(email, passwordHash); }
 }

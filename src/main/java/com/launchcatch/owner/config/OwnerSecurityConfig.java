@@ -19,6 +19,7 @@ public class OwnerSecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(HttpMethod.POST, "/v1/owner/auth/tokens", "/v1/owners")
                         .permitAll()
+                        .requestMatchers(HttpMethod.DELETE, "/v1/owner/auth/tokens").hasRole("OWNER")
                         .anyRequest().denyAll())
                 .build();
     }

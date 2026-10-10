@@ -68,6 +68,12 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             return;
         }
 
+        // 공통 검증을 통과해도 해당 도메인의 추가 검증에서 거부되면 인증하지 않는다.
+        if (!jwtTokenProvider.validateAdditionalClaims(token)) {
+            filterChain.doFilter(request, response);
+            return;
+        }
+
         CustomUserDetails userDetails = new CustomUserDetails(id, role, issuedAt);
         UsernamePasswordAuthenticationToken authentication =
                 new UsernamePasswordAuthenticationToken(userDetails, null, userDetails.getAuthorities());

@@ -48,6 +48,7 @@ class MemberApiSecurityIntegrationTest {
     @Autowired MockMvc mockMvc;
     @Autowired JwtTokenProvider jwtTokenProvider;
     @Autowired MemberRepository memberRepository;
+    @Autowired jakarta.persistence.EntityManager entityManager;
 
     @Test
     void 토큰이_없으면_401이다() throws Exception {
@@ -64,7 +65,10 @@ class MemberApiSecurityIntegrationTest {
 
     @Test
     void 점주_토큰으로는_회원_API를_부를_수_없다() throws Exception {
-        String token = jwtTokenProvider.createAccessToken(1L, Role.OWNER);
+        var owner = com.launchcatch.owner.entity.Owner.create("owner-role-test@example.com", "hash");
+        entityManager.persist(owner);
+        entityManager.flush();
+        String token = jwtTokenProvider.createAccessToken(owner.getId(), Role.OWNER);
 
         mockMvc.perform(get(ME).cookie(new Cookie("accessToken", token)))
                 .andExpect(status().isForbidden());

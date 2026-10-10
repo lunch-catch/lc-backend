@@ -83,7 +83,14 @@ class AdminMemberApiIntegrationTest {
     }
 
     private ResultActions getAs(Role role, String query) throws Exception {
-        String token = jwtTokenProvider.createAccessToken(1L, role);
+        Long subjectId = 1L;
+        if (role == Role.OWNER) {
+            var owner = com.launchcatch.owner.entity.Owner.create("owner-role-test@example.com", "hash");
+            entityManager.persist(owner);
+            entityManager.flush();
+            subjectId = owner.getId();
+        }
+        String token = jwtTokenProvider.createAccessToken(subjectId, role);
         return mockMvc.perform(get(URL + query).cookie(new Cookie("accessToken", token)));
     }
 
