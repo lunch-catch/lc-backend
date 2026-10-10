@@ -34,9 +34,17 @@ class JwtAuthenticationFilterTest {
         SecurityContextHolder.clearContext();
         request.setCookies(new Cookie("accessToken", TOKEN));
         when(tokenProvider.validateToken(TOKEN)).thenReturn(true);
+        when(tokenProvider.validateAdditionalClaims(TOKEN)).thenReturn(true);
         when(tokenProvider.getId(TOKEN)).thenReturn(1L);
         when(tokenProvider.getRole(TOKEN)).thenReturn(Role.SUPER_ADMIN);
         when(tokenProvider.getIssuedAt(TOKEN)).thenReturn(ISSUED_AT);
+    }
+
+    @Test
+    void 추가_정책이_거부하면_인증하지_않는다() throws Exception {
+        when(cutoffRepository.isValidAfter(Role.SUPER_ADMIN, 1L, ISSUED_AT)).thenReturn(true);
+        when(tokenProvider.validateAdditionalClaims(TOKEN)).thenReturn(false);
+        assertAuthentication(new JwtAuthenticationFilter(tokenProvider, cutoffRepository), false);
     }
 
     @AfterEach

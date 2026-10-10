@@ -12,6 +12,8 @@ import java.time.LocalDateTime;
 import java.util.Date;
 import java.util.EnumMap;
 import java.util.Map;
+import java.util.List;
+import org.springframework.beans.factory.annotation.Autowired;
 import javax.crypto.SecretKey;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
@@ -34,6 +36,8 @@ import org.springframework.stereotype.Component;
 public class JwtTokenProvider {
 
     private static final String ROLE_CLAIM = "role";
+    // 각 도메인이 제공한 추가 정책을 역할별로 보관한다.
+    private Map<Role, AccessTokenPolicy> policies = Map.of();
 
     private final SecretKey secretKey;
     private final Clock clock;
@@ -60,10 +64,41 @@ public class JwtTokenProvider {
         this.refreshTokenValidityMs = Map.copyOf(validity);
     }
 
+    // 도메인의 정책 구현체를 주입받아 등록하며, 같은 역할에 정책이 두 개면 시작을 중단한다.
+    @Autowired
+    public JwtTokenProvider(
+            @Value("${jwt.secret}") String secret,
+            @Value("${jwt.access-token-validity-ms}") long accessTokenValidityMs,
+            @Value("${jwt.refresh.admin-validity-ms}") long adminRefreshValidityMs,
+            @Value("${jwt.refresh.owner-validity-ms}") long ownerRefreshValidityMs,
+            @Value("${jwt.refresh.member-validity-ms}") long memberRefreshValidityMs,
+            Clock clock, List<AccessTokenPolicy> sources) {
+        this(secret, accessTokenValidityMs, adminRefreshValidityMs, ownerRefreshValidityMs, memberRefreshValidityMs, clock);
+        Map<Role, AccessTokenPolicy> registered = new EnumMap<>(Role.class);
+        for (AccessTokenPolicy source : sources) {
+            if (registered.put(source.role(), source) != null) {
+                throw new IllegalStateException("duplicate AccessTokenPolicy role: " + source.role());
+            }
+        }
+        policies = Map.copyOf(registered);
+    }
+
+    // 추가 정책이 없는 역할은 기존 공통 JWT 검증만 적용한다.
+    public boolean validateAdditionalClaims(String token) {
+        Claims claims = parseClaims(token);
+        AccessTokenPolicy policy = policies.get(Role.from(claims.get(ROLE_CLAIM, String.class)));
+        return policy == null || policy.isValid(Long.valueOf(claims.getSubject()), claims);
+    }
+
     public String createAccessToken(Long id, Role role) {
         Instant now = clock.instant();
-        return Jwts.builder()
-                .subject(String.valueOf(id))
+        var builder = Jwts.builder();
+        AccessTokenPolicy policy = policies.get(role);
+        if (policy != null) {
+            // 도메인이 제공한 추가 정보도 공통 정보와 함께 JWT에 서명한다.
+            builder.claims(policy.additionalClaims(id));
+        }
+        return builder.subject(String.valueOf(id))
                 .claim(ROLE_CLAIM, role.name())
                 .issuedAt(Date.from(now))
                 .expiration(Date.from(now.plusMillis(accessTokenValidityMs)))

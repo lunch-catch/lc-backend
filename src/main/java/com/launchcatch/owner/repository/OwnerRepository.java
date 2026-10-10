@@ -14,6 +14,9 @@ public interface OwnerRepository extends JpaRepository<Owner, Long> {
     @Query("select o.status from Owner o where o.id = :id")
     Optional<OwnerStatus> findStatusById(@Param("id") Long id);
 
+    @Query("select o.refreshTokenIssuanceVersion from Owner o where o.id = :id")
+    Optional<Long> findIssuanceVersionById(@Param("id") Long id);
+
     boolean existsByEmail(String email);
 
     Optional<Owner> findByEmail(String email);

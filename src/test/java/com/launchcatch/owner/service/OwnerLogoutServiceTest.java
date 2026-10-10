@@ -5,7 +5,7 @@ import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 import com.launchcatch.auth.Role;
 import com.launchcatch.auth.exception.AuthException;
-import com.launchcatch.auth.jwt.AccessTokenValidAfterRepository;
+import com.launchcatch.owner.repository.OwnerAccessTokenVersionRepository;
 import com.launchcatch.auth.jwt.JwtTokenProvider;
 import com.launchcatch.global.config.ClockConfig;
 import com.launchcatch.owner.entity.Owner;
@@ -27,7 +27,7 @@ import org.springframework.transaction.support.SimpleTransactionStatus;
 class OwnerLogoutServiceTest {
     private final OwnerRepository owners = mock(OwnerRepository.class);
     private final OwnerLogoutTokenRepository tokens = mock(OwnerLogoutTokenRepository.class);
-    private final AccessTokenValidAfterRepository cutoff = mock(AccessTokenValidAfterRepository.class);
+    private final OwnerAccessTokenVersionRepository cutoff = mock(OwnerAccessTokenVersionRepository.class);
     private final JwtTokenProvider jwt = mock(JwtTokenProvider.class);
     private final PlatformTransactionManager manager = mock(PlatformTransactionManager.class);
     private final Clock clock = Clock.fixed(Instant.parse("2026-10-10T03:00:00Z"), ClockConfig.ZONE);
@@ -41,7 +41,7 @@ class OwnerLogoutServiceTest {
         when(owners.findByIdForLogin(7L)).thenReturn(Optional.of(owner));
         when(manager.getTransaction(any())).thenReturn(new SimpleTransactionStatus());
         when(jwt.getAccessTokenValidityMs()).thenReturn(1800000L);
-        service = new OwnerLogoutService(owners, tokens, cutoff, jwt, clock, manager);
+        service = new OwnerLogoutService(owners, tokens, cutoff, manager);
     }
 
     @ParameterizedTest
@@ -53,7 +53,7 @@ class OwnerLogoutServiceTest {
         assertThat(owner.getRefreshTokenExpiresAt()).isNull();
         assertThat(owner.getRefreshTokenIssuanceVersion()).isEqualTo(2);
         verify(tokens).revokeThroughVersion(7L, "a".repeat(64), 2L);
-        verify(cutoff).invalidateBefore(Role.OWNER, 7L, LocalDateTime.now(clock), Duration.ofMinutes(30));
+        verify(cutoff).invalidateThroughVersion(7L, 2L);
     }
 
     @Test
@@ -89,12 +89,12 @@ class OwnerLogoutServiceTest {
     void RT_폐기_실패에도_AT_차단을_시도한다() {
         doThrow(new DataAccessResourceFailureException("Redis RT")).when(tokens).revokeThroughVersion(any(), any(), anyLong());
         assertUnavailable();
-        verify(cutoff).invalidateBefore(eq(Role.OWNER), eq(7L), any(), any());
+        verify(cutoff).invalidateThroughVersion(7L, 2L);
     }
 
     @Test
     void AT_차단_실패도_503이다() {
-        doThrow(new DataAccessResourceFailureException("Redis AT")).when(cutoff).invalidateBefore(any(), any(), any(), any());
+        doThrow(new DataAccessResourceFailureException("Redis AT")).when(cutoff).invalidateThroughVersion(any(), anyLong());
         assertUnavailable();
         assertThat(owner.getRefreshTokenHash()).isNull();
     }
@@ -102,7 +102,7 @@ class OwnerLogoutServiceTest {
     @Test
     void 두_Redis_작업이_모두_실패해도_503이다() {
         doThrow(new DataAccessResourceFailureException("Redis RT")).when(tokens).revokeThroughVersion(any(), any(), anyLong());
-        doThrow(new DataAccessResourceFailureException("Redis AT")).when(cutoff).invalidateBefore(any(), any(), any(), any());
+        doThrow(new DataAccessResourceFailureException("Redis AT")).when(cutoff).invalidateThroughVersion(any(), anyLong());
         assertUnavailable();
     }
 
