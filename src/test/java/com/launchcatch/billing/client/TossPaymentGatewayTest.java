@@ -46,6 +46,13 @@ class TossPaymentGatewayTest {
     private static final long AMOUNT = 50_000L;
     private static final ZoneId SEOUL = ZoneId.of("Asia/Seoul");
 
+    /*
+     * 평소 시험의 읽기 타임아웃은 넉넉히 둔다. JVM 에서 처음 도는 HTTP 호출은 클래스 로딩 때문에
+     * 느려서, 짧게 두면 정상 응답이 타임아웃으로 읽힌다. 타임아웃을 보는 시험만 짧은 값을 쓴다.
+     */
+    private static final Duration READ_TIMEOUT = Duration.ofSeconds(3);
+    private static final Duration SHORT_READ_TIMEOUT = Duration.ofMillis(300);
+
     private static final String DONE_BODY = """
             {"paymentKey":"pk_abc","orderId":"ORDER-20261010-0001","status":"DONE",
              "totalAmount":50000,"approvedAt":"2026-10-10T07:00:00+00:00","method":"카드"}""";
@@ -88,8 +95,18 @@ class TossPaymentGatewayTest {
     }
 
     private static WebClient webClientTo(String baseUrl) {
-        TossProperties properties = new TossProperties(baseUrl, SECRET, Duration.ofMillis(500), Duration.ofMillis(300));
+        return webClientTo(baseUrl, READ_TIMEOUT);
+    }
+
+    private static WebClient webClientTo(String baseUrl, Duration readTimeout) {
+        TossProperties properties = new TossProperties(baseUrl, SECRET, Duration.ofSeconds(2), readTimeout);
         return new TossClientConfig().tossPaymentWebClient(WebClient.builder(), properties);
+    }
+
+    // 같은 서버와 같은 서킷을 쓰되 읽기 타임아웃만 짧은 게이트웨이다.
+    private TossPaymentGateway gatewayWithShortReadTimeout() {
+        return new TossPaymentGateway(webClientTo(server.baseUrl(), SHORT_READ_TIMEOUT), circuitBreaker,
+                Clock.system(SEOUL), SECRET);
     }
 
     // --- 승인 ----------------------------------------------------------------------------
@@ -168,7 +185,7 @@ class TossPaymentGatewayTest {
     void 응답이_읽기_타임아웃을_넘기면_PgUnknownException_이다() {
         server.replyAfter(1_500, 200, DONE_BODY);
 
-        assertThatThrownBy(() -> gateway.confirm(PAYMENT_KEY, ORDER_ID, AMOUNT))
+        assertThatThrownBy(() -> gatewayWithShortReadTimeout().confirm(PAYMENT_KEY, ORDER_ID, AMOUNT))
                 .isInstanceOf(PgUnknownException.class);
     }
 
@@ -373,7 +390,8 @@ class TossPaymentGatewayTest {
         server.reply(500, "{\"code\":\"X\",\"message\":\"" + SECRET + "\"}");
         Throwable unknown = catchThrowable(() -> gateway.confirm(PAYMENT_KEY, ORDER_ID, AMOUNT));
         server.replyAfter(1_500, 200, DONE_BODY);
-        Throwable timedOut = catchThrowable(() -> gateway.confirm(PAYMENT_KEY, ORDER_ID, AMOUNT));
+        Throwable timedOut = catchThrowable(
+                () -> gatewayWithShortReadTimeout().confirm(PAYMENT_KEY, ORDER_ID, AMOUNT));
         server.reply(500, "{}");
         Throwable inquiry = catchThrowable(() -> gateway.inquireByOrderId(ORDER_ID));
 
