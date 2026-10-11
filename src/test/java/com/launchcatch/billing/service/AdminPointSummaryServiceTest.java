@@ -140,12 +140,15 @@ class AdminPointSummaryServiceTest {
     }
 
     @Test
-    void 단위나_정렬_방향이_올바르지_않으면_질의하지_않고_거절한다() {
+    void 점주_ID나_단위_정렬_방향이_올바르지_않으면_질의하지_않고_거절한다() {
         assertThatThrownBy(() -> service().summarize(OWNER, null, D29, D30, null))
                 .isInstanceOfSatisfying(BillingException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(CommonErrorCode.INVALID_INPUT));
         assertThatThrownBy(() -> service().summarize(OWNER, SummaryPeriod.DAILY, D29, D30, "up"))
                 .isInstanceOf(BillingException.class);
+        assertThatThrownBy(() -> service().summarize(null, SummaryPeriod.DAILY, D29, D30, null))
+                .isInstanceOfSatisfying(BillingException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(CommonErrorCode.INVALID_INPUT));
 
         verify(repository, never()).findFlowRows(any(), any(), any());
     }

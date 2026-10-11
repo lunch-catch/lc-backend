@@ -21,6 +21,10 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+/*
+ * 점주 ID 를 필수 파라미터로 선언하지 않고 서비스에서 거절한다.
+ * 스프링이 먼저 거절하면 COMMON-003 이 되어, 기간 누락과 같은 COMMON-002 로 답하지 못한다.
+ */
 @RestController
 @RequestMapping("/v1/admin/point-ledger")
 @RequiredArgsConstructor
@@ -38,10 +42,10 @@ public class AdminPointLedgerController {
     )
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "조회 성공"),
-            @ApiResponse(responseCode = "400", description = "COMMON-002: 기간이 없거나 뒤집혔거나 31일을 넘었습니다. 정렬 방향이나 페이지 번호가 올바르지 않습니다.")
+            @ApiResponse(responseCode = "400", description = "COMMON-002: 점주 ID나 기간이 없거나, 기간이 뒤집혔거나 31일을 넘었습니다. 정렬 방향이나 페이지 번호가 올바르지 않습니다.")
     })
     public ResponseEnvelope<PageResponse<AdminLedgerItem>> search(
-            @RequestParam Long ownerId,
+            @RequestParam(required = false) Long ownerId,
             @RequestParam(required = false) EntryType type,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
@@ -61,10 +65,10 @@ public class AdminPointLedgerController {
     )
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "조회 성공. 변동이 없는 구간은 금액이 모두 0입니다."),
-            @ApiResponse(responseCode = "400", description = "COMMON-002: 단위나 기간이 없거나 뒤집혔거나 단위별 상한을 넘었습니다.")
+            @ApiResponse(responseCode = "400", description = "COMMON-002: 점주 ID나 단위, 기간이 없거나 뒤집혔거나 단위별 상한을 넘었습니다.")
     })
     public ResponseEnvelope<AdminPointSummaryResponse> summary(
-            @RequestParam Long ownerId,
+            @RequestParam(required = false) Long ownerId,
             @RequestParam(required = false) SummaryPeriod period,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,

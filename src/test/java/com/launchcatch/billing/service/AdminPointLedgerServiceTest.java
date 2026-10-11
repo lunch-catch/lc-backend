@@ -139,6 +139,15 @@ class AdminPointLedgerServiceTest {
     }
 
     @Test
+    void 점주_ID가_없으면_질의하지_않고_거절한다() {
+        assertThatThrownBy(() -> service.search(null, null, DAY, DAY, null, 0, 50, null))
+                .isInstanceOfSatisfying(BillingException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(CommonErrorCode.INVALID_INPUT));
+
+        verify(repository, never()).countAdminLedger(any());
+    }
+
+    @Test
     void 음수_페이지는_거절한다() {
         assertThatThrownBy(() -> service.search(OWNER, null, DAY, DAY, null, -1, 50, null))
                 .isInstanceOf(BillingException.class);

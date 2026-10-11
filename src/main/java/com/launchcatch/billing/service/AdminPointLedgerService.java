@@ -40,7 +40,7 @@ public class AdminPointLedgerService {
     public PageResponse<AdminLedgerItem> search(Long ownerId, EntryType type, LocalDate from, LocalDate to,
                                                 Long campaignId, int page, int size, String sortDir) {
         DateRange range = DateRange.of(from, to, MAX_DAYS);
-        if (page < 0) {
+        if (ownerId == null || page < 0) {
             throw new BillingException(CommonErrorCode.INVALID_INPUT);
         }
         int pageSize = size < 1 ? DEFAULT_PAGE_SIZE : Math.min(size, MAX_PAGE_SIZE);

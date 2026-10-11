@@ -44,7 +44,7 @@ public class AdminPointSummaryService {
 
     public AdminPointSummaryResponse summarize(Long ownerId, SummaryPeriod period,
                                                LocalDate from, LocalDate to, String sortDir) {
-        if (period == null) {
+        if (ownerId == null || period == null) {
             throw new BillingException(CommonErrorCode.INVALID_INPUT);
         }
         boolean descending = isDescending(sortDir);
