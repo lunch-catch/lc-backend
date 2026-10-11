@@ -122,6 +122,35 @@ class PointLedgerRepositoryImpl implements PointLedgerRepositoryCustom {
                 .fetch();
     }
 
+    @Override
+    public List<FlowRow> findFlowRows(Long ownerId, LocalDateTime fromInclusive, LocalDateTime toExclusive) {
+        return queryFactory
+                .select(Projections.constructor(FlowRow.class,
+                        pointLedger.entryType, pointLedger.createdAt, pointLedger.amount))
+                .from(pointLedger)
+                .where(
+                        pointLedger.ownerId.eq(ownerId),
+                        pointLedger.entryType.in(EntryType.CHARGE, EntryType.REFUND, EntryType.ADJUST),
+                        pointLedger.createdAt.goe(fromInclusive),
+                        pointLedger.createdAt.lt(toExclusive))
+                .orderBy(pointLedger.createdAt.asc(), pointLedger.id.asc())
+                .fetch();
+    }
+
+    @Override
+    public List<BusinessDateSumRow> sumReserveAndReleaseByBusinessDate(Long ownerId, LocalDate from, LocalDate to) {
+        return queryFactory
+                .select(Projections.constructor(BusinessDateSumRow.class,
+                        pointLedger.businessDate, pointLedger.entryType, pointLedger.amount.sum()))
+                .from(pointLedger)
+                .where(
+                        pointLedger.ownerId.eq(ownerId),
+                        pointLedger.entryType.in(EntryType.RESERVE, EntryType.RELEASE),
+                        pointLedger.businessDate.between(from, to))
+                .groupBy(pointLedger.businessDate, pointLedger.entryType)
+                .fetch();
+    }
+
     private BooleanExpression[] adminFilters(AdminLedgerCondition condition) {
         return new BooleanExpression[]{
                 pointLedger.ownerId.eq(condition.ownerId()),

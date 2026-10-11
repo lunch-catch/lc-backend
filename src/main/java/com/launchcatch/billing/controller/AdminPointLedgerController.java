@@ -1,8 +1,11 @@
 package com.launchcatch.billing.controller;
 
 import com.launchcatch.billing.dto.AdminLedgerItem;
+import com.launchcatch.billing.dto.AdminPointSummaryResponse;
+import com.launchcatch.billing.dto.SummaryPeriod;
 import com.launchcatch.billing.entity.EntryType;
 import com.launchcatch.billing.service.AdminPointLedgerService;
+import com.launchcatch.billing.service.AdminPointSummaryService;
 import com.launchcatch.global.response.PageResponse;
 import com.launchcatch.global.response.ResponseEnvelope;
 import io.swagger.v3.oas.annotations.Operation;
@@ -25,6 +28,7 @@ import org.springframework.web.bind.annotation.RestController;
 public class AdminPointLedgerController {
 
     private final AdminPointLedgerService ledgerService;
+    private final AdminPointSummaryService summaryService;
 
     @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
     @GetMapping
@@ -47,5 +51,24 @@ public class AdminPointLedgerController {
             @RequestParam(required = false) String sortDir) {
         return ResponseEnvelope.success(
                 ledgerService.search(ownerId, type, from, to, campaignId, page, size, sortDir));
+    }
+
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
+    @GetMapping("/summary")
+    @Operation(
+            summary = "점주별 일·주·월 합계",
+            description = "점주 한 명의 충전, 소진, 예약, 해제, 환불, 조정 합계를 구간별로 돌려줍니다. 일별 92일, 주별 53주, 월별 13개월까지입니다."
+    )
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "조회 성공. 변동이 없는 구간은 금액이 모두 0입니다."),
+            @ApiResponse(responseCode = "400", description = "COMMON-002: 단위나 기간이 없거나 뒤집혔거나 단위별 상한을 넘었습니다.")
+    })
+    public ResponseEnvelope<AdminPointSummaryResponse> summary(
+            @RequestParam Long ownerId,
+            @RequestParam(required = false) SummaryPeriod period,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
+            @RequestParam(required = false) String sortDir) {
+        return ResponseEnvelope.success(summaryService.summarize(ownerId, period, from, to, sortDir));
     }
 }

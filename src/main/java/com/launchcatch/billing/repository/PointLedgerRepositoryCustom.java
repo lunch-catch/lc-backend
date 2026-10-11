@@ -25,4 +25,10 @@ public interface PointLedgerRepositoryCustom {
 
     // 기간 안에서 잔액을 바꾸는 줄(DEDUCT 제외)을 기록 시각, ID 오름차순으로 돌려준다
     List<BalanceStep> findBalanceSteps(Long ownerId, LocalDateTime fromInclusive, LocalDateTime toExclusive);
+
+    // 기간 안의 CHARGE, REFUND, ADJUST 를 기록 시각 순으로 돌려준다. 점주 한 명의 몇십 건 규모다
+    List<FlowRow> findFlowRows(Long ownerId, LocalDateTime fromInclusive, LocalDateTime toExclusive);
+
+    // 영업일 범위의 RESERVE 와 RELEASE 를 영업일과 종류별로 묶는다
+    List<BusinessDateSumRow> sumReserveAndReleaseByBusinessDate(Long ownerId, LocalDate from, LocalDate to);
 }
