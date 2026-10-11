@@ -3,9 +3,12 @@ package com.launchcatch.billing.controller;
 import com.launchcatch.auth.CustomUserDetails;
 import com.launchcatch.billing.dto.OwnerLedgerItem;
 import com.launchcatch.billing.dto.PointBalanceResponse;
+import com.launchcatch.billing.dto.SpendGroupBy;
+import com.launchcatch.billing.dto.SpendSummaryResponse;
 import com.launchcatch.billing.entity.EntryType;
 import com.launchcatch.billing.service.OwnerPointBalanceService;
 import com.launchcatch.billing.service.OwnerPointLedgerService;
+import com.launchcatch.billing.service.OwnerSpendSummaryService;
 import com.launchcatch.global.response.CursorPageResponse;
 import com.launchcatch.global.response.ResponseEnvelope;
 import io.swagger.v3.oas.annotations.Operation;
@@ -30,6 +33,7 @@ public class OwnerPointController {
 
     private final OwnerPointBalanceService balanceService;
     private final OwnerPointLedgerService ledgerService;
+    private final OwnerSpendSummaryService spendSummaryService;
 
     @GetMapping("/balance")
     @Operation(
@@ -63,5 +67,24 @@ public class OwnerPointController {
             @RequestParam(defaultValue = "20") int pageSize) {
         return ResponseEnvelope.success(
                 ledgerService.list(owner.getId(), type, from, to, campaignId, pageToken, pageSize));
+    }
+
+    @GetMapping("/spend-summary")
+    @Operation(
+            summary = "캠페인·일별 소진 집계",
+            description = "원장에서 직접 계산하므로 기간은 최대 31일입니다. groupBy 는 DAY, CAMPAIGN, DAY_CAMPAIGN 입니다."
+    )
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "조회 성공"),
+            @ApiResponse(responseCode = "400", description = "COMMON-002: 기간이 없거나 뒤집혔거나 31일을 넘었습니다.")
+    })
+    public ResponseEnvelope<SpendSummaryResponse> spendSummary(
+            @AuthenticationPrincipal CustomUserDetails owner,
+            @RequestParam(defaultValue = "DAY") SpendGroupBy groupBy,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
+            @RequestParam(required = false) Long campaignId) {
+        return ResponseEnvelope.success(
+                spendSummaryService.summarize(owner.getId(), groupBy, from, to, campaignId));
     }
 }

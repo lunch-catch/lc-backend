@@ -9,9 +9,12 @@ import com.launchcatch.auth.CustomUserDetails;
 import com.launchcatch.auth.Role;
 import com.launchcatch.billing.dto.OwnerLedgerItem;
 import com.launchcatch.billing.dto.PointBalanceResponse;
+import com.launchcatch.billing.dto.SpendGroupBy;
+import com.launchcatch.billing.dto.SpendSummaryResponse;
 import com.launchcatch.billing.entity.EntryType;
 import com.launchcatch.billing.service.OwnerPointBalanceService;
 import com.launchcatch.billing.service.OwnerPointLedgerService;
+import com.launchcatch.billing.service.OwnerSpendSummaryService;
 import com.launchcatch.global.response.CursorPageResponse;
 import com.launchcatch.global.response.ResponseEnvelope;
 import java.time.LocalDate;
@@ -22,7 +25,9 @@ class OwnerPointControllerTest {
 
     private final OwnerPointBalanceService balanceService = mock(OwnerPointBalanceService.class);
     private final OwnerPointLedgerService ledgerService = mock(OwnerPointLedgerService.class);
-    private final OwnerPointController controller = new OwnerPointController(balanceService, ledgerService);
+    private final OwnerSpendSummaryService spendSummaryService = mock(OwnerSpendSummaryService.class);
+    private final OwnerPointController controller =
+            new OwnerPointController(balanceService, ledgerService, spendSummaryService);
     private final CustomUserDetails owner = new CustomUserDetails(7L, Role.OWNER);
 
     @Test
@@ -48,5 +53,18 @@ class OwnerPointControllerTest {
                 controller.ledger(owner, List.of(EntryType.CHARGE), from, to, 12L, "token", 50);
 
         assertThat(response.data()).isSameAs(page);
+    }
+
+    @Test
+    void 소진_집계는_묶는_기준과_기간을_로그인한_점주의_ID와_함께_서비스에_넘긴다() {
+        LocalDate from = LocalDate.of(2026, 9, 24);
+        LocalDate to = LocalDate.of(2026, 9, 30);
+        SpendSummaryResponse summary = new SpendSummaryResponse(List.of());
+        when(spendSummaryService.summarize(7L, SpendGroupBy.DAY_CAMPAIGN, from, to, 12L)).thenReturn(summary);
+
+        ResponseEnvelope<SpendSummaryResponse> response =
+                controller.spendSummary(owner, SpendGroupBy.DAY_CAMPAIGN, from, to, 12L);
+
+        assertThat(response.data()).isSameAs(summary);
     }
 }

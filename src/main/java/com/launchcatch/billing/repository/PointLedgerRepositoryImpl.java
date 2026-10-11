@@ -2,9 +2,12 @@ package com.launchcatch.billing.repository;
 
 import static com.launchcatch.billing.entity.QPointLedger.pointLedger;
 
+import com.launchcatch.billing.entity.EntryType;
 import com.querydsl.core.types.Projections;
 import com.querydsl.core.types.dsl.BooleanExpression;
 import com.querydsl.jpa.impl.JPAQueryFactory;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 
@@ -34,6 +37,42 @@ class PointLedgerRepositoryImpl implements PointLedgerRepositoryCustom {
                 .orderBy(pointLedger.createdAt.desc(), pointLedger.id.desc())
                 .limit(condition.limit())
                 .fetch();
+    }
+
+    @Override
+    public List<ReserveSumRow> sumReservedByBusinessDate(Long ownerId, LocalDate from, LocalDate to, Long campaignId) {
+        return queryFactory
+                .select(Projections.constructor(ReserveSumRow.class,
+                        pointLedger.businessDate, pointLedger.campaignId, pointLedger.amount.sum()))
+                .from(pointLedger)
+                .where(
+                        pointLedger.ownerId.eq(ownerId),
+                        pointLedger.entryType.eq(EntryType.RESERVE),
+                        pointLedger.businessDate.between(from, to),
+                        campaignIdIs(campaignId))
+                .groupBy(pointLedger.businessDate, pointLedger.campaignId)
+                .fetch();
+    }
+
+    @Override
+    public List<DeductSumRow> sumDeductedByCampaign(Long ownerId, LocalDateTime from, LocalDateTime to,
+                                                    Long campaignId) {
+        return queryFactory
+                .select(Projections.constructor(DeductSumRow.class,
+                        pointLedger.campaignId, pointLedger.amount.sum(), pointLedger.count()))
+                .from(pointLedger)
+                .where(
+                        pointLedger.ownerId.eq(ownerId),
+                        pointLedger.entryType.eq(EntryType.DEDUCT),
+                        pointLedger.createdAt.goe(from),
+                        pointLedger.createdAt.lt(to),
+                        campaignIdIs(campaignId))
+                .groupBy(pointLedger.campaignId)
+                .fetch();
+    }
+
+    private BooleanExpression campaignIdIs(Long campaignId) {
+        return campaignId == null ? null : pointLedger.campaignId.eq(campaignId);
     }
 
     private BooleanExpression createdAtFrom(OwnerLedgerCondition condition) {
