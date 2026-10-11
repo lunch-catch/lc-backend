@@ -6,13 +6,13 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 
 /*
- * 인증과 인가의 실패 코드. 명세는 docs/api-spec/auth.md 의 "오류 코드" 절이다.
+ * 인증과 인가의 실패 코드. 명세는 docs/api-spec/auth-api-spec.md 의 "오류 코드" 절이다.
  *
  * 역할이 셋이지만 정책이 하나라 코드도 하나로 둔다. 로그인 실패를 사유로 나누지 않는 것이
  * 그 정책이고, 세 역할이 같은 코드를 쓴다.
  *
  * 점주 가입과 카카오 로그인의 실패는 여기 두지 않는다. 이메일 중복이나 정지 이력은 그 도메인이
- * 아는 것이고 인증 지식이 필요 없다. 경로가 auth.md 에 있다는 이유로 남의 코드를 여기 만들면
+ * 아는 것이고 인증 지식이 필요 없다. 경로가 auth-api-design.md 에 있다는 이유로 남의 코드를 여기 만들면
  * 소유자가 둘이 된다. 그 코드는 각 도메인이 자기 문서와 함께 만든다.
  *
  * 점주 상태가 ONBOARDING 이라 막는 것도 여기 두지 않는다. 이 모듈은 Role 만 알고
@@ -38,7 +38,7 @@ public enum AuthErrorCode implements ErrorCode {
      * Refresh Token 저장·폐기 또는 관리자 계정 발급의 Access Token 폐기 기준 조회가 실패한 경우다.
      *
      * 로그인은 관계형 DB 해시 백업에 실패했을 때만 여기로 온다. 인메모리 캐시 저장 실패는
-     * 오류가 아니고 DB 백업을 기준으로 로그인을 유지한다 (auth.md 의 오류 표). 로그아웃은
+     * 오류가 아니고 DB 백업을 기준으로 로그인을 유지한다 (auth-api-spec.md 의 오류 표). 로그아웃은
      * 폐기에 실패하면 여기로 온다.
      *
      * 5xx 라 handleBusiness 가 ERROR 로 남기고, toResponse 가 Retry-After 를 붙인다.
