@@ -36,6 +36,13 @@ spring:
 #   app-id: ""
 #   admin-key: ""
 
+# 토스페이먼츠 비밀키. 토스 개발자센터의 API 개별 연동 키(테스트는 test_sk_ 로 시작)를 쓴다.
+# 이 값이 비어 있으면 앱이 뜨지 않는다. 결제를 쓰지 않고 기동만 확인하려면 아무 문자열이나 넣어도 된다.
+# 환경변수로 채우려면 TOSS_SECRET_KEY 를 쓰고 이 줄은 주석으로 둔다.
+# billing:
+#   toss:
+#     secret-key: ""
+
 # JWT 서명 키. 최소 32바이트(HS256 기준) 이상의 랜덤 값이어야 한다.
 #   openssl rand -base64 64
 # jwt:
