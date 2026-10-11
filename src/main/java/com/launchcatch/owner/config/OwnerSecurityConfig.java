@@ -15,10 +15,11 @@ public class OwnerSecurityConfig {
     public SecurityFilterChain ownerAuthFilterChain(HttpSecurity http, ApiSecurityDefaults defaults)
             throws Exception {
         return defaults.apply(http)
-                .securityMatcher("/v1/owner/auth/tokens", "/v1/owners")
+                .securityMatcher("/v1/owner/auth/tokens", "/v1/owners", "/v1/owner/me/tutorial")
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(HttpMethod.POST, "/v1/owner/auth/tokens", "/v1/owners")
                         .permitAll()
+                        .requestMatchers(HttpMethod.PATCH, "/v1/owner/me/tutorial").hasRole("OWNER")
                         .anyRequest().denyAll())
                 .build();
     }
