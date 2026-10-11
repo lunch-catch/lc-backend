@@ -1,7 +1,9 @@
 package com.launchcatch.campaign.template.repository;
 
 import com.launchcatch.campaign.template.entity.TemplateVersion;
+import java.util.List;
 import java.util.Optional;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -23,4 +25,21 @@ public interface TemplateVersionRepository extends JpaRepository<TemplateVersion
      */
     @Query("select coalesce(max(v.versionNumber), 0) from TemplateVersion v where v.template.id = :templateId")
     int findMaxVersionNumber(@Param("templateId") Long templateId);
+
+    /*
+     * 버전 목록 조회용 커서 페이징이다. versionNumber 가 템플릿 안에서 유일하고
+     * 단조증가라 이 값 하나만으로 다음 페이지를 가른다. 소프트삭제된 버전은
+     * 제외한다(게시된 템플릿은 버전이 전부 삭제돼 있어 빈 목록이 된다).
+     */
+    @Query("""
+            select v from TemplateVersion v
+            where v.template.id = :templateId
+              and v.deletedAt is null
+              and (:cursorVersionNumber is null or v.versionNumber < :cursorVersionNumber)
+            order by v.versionNumber desc
+            """)
+    List<TemplateVersion> findPage(
+            @Param("templateId") Long templateId,
+            @Param("cursorVersionNumber") Integer cursorVersionNumber,
+            Pageable pageable);
 }
