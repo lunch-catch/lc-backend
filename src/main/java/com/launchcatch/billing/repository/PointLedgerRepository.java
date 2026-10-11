@@ -12,7 +12,7 @@ import org.springframework.data.repository.query.Param;
  * 원장 저장소다. 합계는 모두 부호가 있는 저장값을 그대로 더한 값이고, 행이 없으면 0 이다.
  * 잔액 계산에서 DEDUCT 를 빼는 규칙은 쿼리가 안고 있어서 호출하는 쪽이 같은 규칙을 다시 적지 않는다.
  */
-public interface PointLedgerRepository extends JpaRepository<PointLedger, Long> {
+public interface PointLedgerRepository extends JpaRepository<PointLedger, Long>, PointLedgerRepositoryCustom {
 
     // 잔액이다. 예약 단계에서 이미 빠진 금액이라 DEDUCT 는 더하지 않는다
     @Query("""
