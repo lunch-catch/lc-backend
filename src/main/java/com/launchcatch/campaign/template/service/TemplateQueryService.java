@@ -31,6 +31,11 @@ public class TemplateQueryService {
     private final TemplateRepository templateRepository;
     private final TemplateVersionRepository templateVersionRepository;
 
+    /*
+     * DRAFT 템플릿마다 htmlOf() 가 최신 버전을 따로 조회해 N+1 이다. 템플릿이 최대 10개로
+     * 제한돼 있어(TemplateQuota) 지금은 목록 조회 1번에 최대 11번 쿼리로 끝나지만, 그 제한이
+     * 풀리면 템플릿 수에 비례해 느려진다. 제한을 풀 때는 이 메서드도 같이 봐야 한다.
+     */
     public List<TemplateListItemResponse> list() {
         return templateRepository.findAllByOrderByCreatedAtDesc().stream()
                 .map(template -> TemplateListItemResponse.of(template, htmlOf(template)))
