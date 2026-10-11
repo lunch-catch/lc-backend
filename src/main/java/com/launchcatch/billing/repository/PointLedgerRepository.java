@@ -48,4 +48,14 @@ public interface PointLedgerRepository extends JpaRepository<PointLedger, Long>,
                         @Param("entryType") EntryType entryType,
                         @Param("from") LocalDateTime from,
                         @Param("to") LocalDateTime to);
+
+    // 기간 시작 전의 잔액이다. 변동 전후 잔액 누적의 출발점이 된다
+    @Query("""
+            select coalesce(sum(l.amount), 0L)
+              from PointLedger l
+             where l.ownerId = :ownerId
+               and l.entryType <> com.launchcatch.billing.entity.EntryType.DEDUCT
+               and l.createdAt < :before
+            """)
+    long sumBalanceBefore(@Param("ownerId") Long ownerId, @Param("before") LocalDateTime before);
 }

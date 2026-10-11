@@ -1,8 +1,11 @@
 package com.launchcatch.billing.repository;
 
+import static com.launchcatch.billing.entity.QPayment.payment;
 import static com.launchcatch.billing.entity.QPointLedger.pointLedger;
 
+import com.launchcatch.billing.dto.BalanceStep;
 import com.launchcatch.billing.entity.EntryType;
+import com.querydsl.core.types.OrderSpecifier;
 import com.querydsl.core.types.Projections;
 import com.querydsl.core.types.dsl.BooleanExpression;
 import com.querydsl.jpa.impl.JPAQueryFactory;
@@ -73,6 +76,60 @@ class PointLedgerRepositoryImpl implements PointLedgerRepositoryCustom {
 
     private BooleanExpression campaignIdIs(Long campaignId) {
         return campaignId == null ? null : pointLedger.campaignId.eq(campaignId);
+    }
+
+    @Override
+    public List<AdminLedgerRow> findAdminLedger(AdminLedgerCondition condition) {
+        OrderSpecifier<?>[] order = condition.ascending()
+                ? new OrderSpecifier<?>[]{pointLedger.createdAt.asc(), pointLedger.id.asc()}
+                : new OrderSpecifier<?>[]{pointLedger.createdAt.desc(), pointLedger.id.desc()};
+        return queryFactory
+                .select(Projections.constructor(AdminLedgerRow.class,
+                        pointLedger.id, pointLedger.ownerId, pointLedger.entryType, pointLedger.amount,
+                        pointLedger.campaignId, pointLedger.serveId, payment.pgTid, pointLedger.source,
+                        pointLedger.reason, pointLedger.createdAt))
+                .from(pointLedger)
+                .leftJoin(payment).on(payment.id.eq(pointLedger.paymentId))
+                .where(adminFilters(condition))
+                .orderBy(order)
+                .offset(condition.offset())
+                .limit(condition.limit())
+                .fetch();
+    }
+
+    @Override
+    public long countAdminLedger(AdminLedgerCondition condition) {
+        Long count = queryFactory
+                .select(pointLedger.count())
+                .from(pointLedger)
+                .where(adminFilters(condition))
+                .fetchOne();
+        return count == null ? 0L : count;
+    }
+
+    @Override
+    public List<BalanceStep> findBalanceSteps(Long ownerId, LocalDateTime fromInclusive, LocalDateTime toExclusive) {
+        return queryFactory
+                .select(Projections.constructor(BalanceStep.class,
+                        pointLedger.id, pointLedger.createdAt, pointLedger.amount))
+                .from(pointLedger)
+                .where(
+                        pointLedger.ownerId.eq(ownerId),
+                        pointLedger.entryType.ne(EntryType.DEDUCT),
+                        pointLedger.createdAt.goe(fromInclusive),
+                        pointLedger.createdAt.lt(toExclusive))
+                .orderBy(pointLedger.createdAt.asc(), pointLedger.id.asc())
+                .fetch();
+    }
+
+    private BooleanExpression[] adminFilters(AdminLedgerCondition condition) {
+        return new BooleanExpression[]{
+                pointLedger.ownerId.eq(condition.ownerId()),
+                condition.type() == null ? null : pointLedger.entryType.eq(condition.type()),
+                pointLedger.createdAt.goe(condition.fromInclusive()),
+                pointLedger.createdAt.lt(condition.toExclusive()),
+                campaignIdIs(condition.campaignId())
+        };
     }
 
     private BooleanExpression createdAtFrom(OwnerLedgerCondition condition) {
