@@ -198,17 +198,16 @@ class PaymentTest {
     }
 
     @Test
-    @DisplayName("결과를 알 수 없는 결제는 취소 식별자 없이 취소로 닫을 수 없다")
-    void 미확정_취소_식별자_필수() {
+    @DisplayName("결과를 알 수 없던 결제가 조회로 만료가 확인되면 취소 식별자 없이 취소로 닫는다")
+    void 미확정_후_만료() {
         Payment payment = withPgTid();
         payment.markUnknown();
 
-        assertThatThrownBy(() -> payment.cancel(NOW, null))
-                .isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> payment.cancel(NOW, " "))
-                .isInstanceOf(IllegalArgumentException.class);
-        assertThat(payment.getStatus()).isEqualTo(PaymentStatus.UNKNOWN);
-        assertThat(payment.getCanceledAt()).isNull();
+        payment.cancel(NOW, null);
+
+        assertThat(payment.getStatus()).isEqualTo(PaymentStatus.CANCELLED);
+        assertThat(payment.getPgCancelId()).isNull();
+        assertThat(payment.getCanceledAt()).isEqualTo(NOW);
     }
 
     @Test

@@ -158,8 +158,9 @@ public class Payment extends BaseTimeEntity {
     /*
      * 승인 전에 취소나 만료로 확인된 주문이다. 점주는 새 주문을 만들어야 한다.
      *
-     * 승인 결과를 모르는 결제는 결제대행사가 취소를 확인해 준 식별자가 있을 때만 취소로 닫는다.
-     * 재조회 없이 닫으면 승인된 결제를 취소로 분류하게 된다.
+     * 승인 결과를 모르는 결제는 결제대행사 조회로 만료나 취소가 확인된 뒤에만 이 메서드를 부른다.
+     * 재조회 없이 닫으면 승인된 결제를 취소로 분류하게 된다. 그 확인은 재조회 워커와 웹훅 서비스가 맡는다.
+     * 만료된 결제에는 결제대행사의 취소 식별자가 없으므로 식별자를 요구하지 않는다(pg_cancel_id 는 NULL).
      *
      * 승인된 결제가 결제대행사 쪽에서 취소된 경우는 여기서 전이하지 않는다. 그 건은 충전을
      * 자동으로 되돌리지 않고 대사가 불일치로 기록한 뒤 관리자가 수동 조정으로 처리한다.
@@ -172,9 +173,6 @@ public class Payment extends BaseTimeEntity {
             throw new IllegalArgumentException("취소 시각은 필수입니다.");
         }
         requireUndetermined();
-        if (status == PaymentStatus.UNKNOWN && (pgCancelId == null || pgCancelId.isBlank())) {
-            throw new IllegalArgumentException("승인 결과를 모르는 결제는 취소 식별자 없이 취소할 수 없습니다.");
-        }
         this.status = PaymentStatus.CANCELLED;
         this.canceledAt = canceledAt;
         this.pgCancelId = pgCancelId;
