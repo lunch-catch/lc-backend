@@ -9,12 +9,17 @@ import com.launchcatch.auth.Role;
 import com.launchcatch.billing.dto.DisplayStatus;
 import com.launchcatch.billing.dto.PaymentConfirmRequest;
 import com.launchcatch.billing.dto.PaymentConfirmResponse;
+import com.launchcatch.billing.dto.PaymentDetailResponse;
+import com.launchcatch.billing.dto.PaymentHistoryItem;
 import com.launchcatch.billing.dto.PaymentOrderRequest;
 import com.launchcatch.billing.dto.PaymentOrderResponse;
 import com.launchcatch.billing.entity.PaymentStatus;
 import com.launchcatch.billing.service.PaymentConfirmationService;
 import com.launchcatch.billing.service.PaymentOrderService;
+import com.launchcatch.billing.service.PaymentQueryService;
+import com.launchcatch.global.response.CursorPageResponse;
 import com.launchcatch.global.response.ResponseEnvelope;
+import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -23,8 +28,9 @@ class OwnerPaymentControllerTest {
 
     private final PaymentOrderService orderService = mock(PaymentOrderService.class);
     private final PaymentConfirmationService confirmationService = mock(PaymentConfirmationService.class);
+    private final PaymentQueryService queryService = mock(PaymentQueryService.class);
     private final OwnerPaymentController controller =
-            new OwnerPaymentController(orderService, confirmationService);
+            new OwnerPaymentController(orderService, confirmationService, queryService);
     private final CustomUserDetails owner = new CustomUserDetails(7L, Role.OWNER);
 
     @Test
@@ -63,5 +69,22 @@ class OwnerPaymentControllerTest {
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.ACCEPTED);
         assertThat(response.getBody().data()).isSameAs(unknown);
+    }
+
+    @Test
+    void 결제_상태는_로그인한_점주의_ID로_조회한다() {
+        PaymentDetailResponse detail = new PaymentDetailResponse(
+                101L, "ord_1", PaymentStatus.UNKNOWN, DisplayStatus.CONFIRMING, 30000, null, null);
+        when(queryService.get(7L, 101L)).thenReturn(detail);
+
+        assertThat(controller.get(owner, 101L).data()).isSameAs(detail);
+    }
+
+    @Test
+    void 결제_내역은_토큰과_크기를_로그인한_점주의_ID와_함께_넘긴다() {
+        CursorPageResponse<PaymentHistoryItem> page = CursorPageResponse.of(List.of(), null);
+        when(queryService.list(7L, "token", 50)).thenReturn(page);
+
+        assertThat(controller.list(owner, "token", 50).data()).isSameAs(page);
     }
 }

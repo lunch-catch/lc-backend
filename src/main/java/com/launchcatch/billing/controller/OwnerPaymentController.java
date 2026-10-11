@@ -3,11 +3,15 @@ package com.launchcatch.billing.controller;
 import com.launchcatch.auth.CustomUserDetails;
 import com.launchcatch.billing.dto.PaymentConfirmRequest;
 import com.launchcatch.billing.dto.PaymentConfirmResponse;
+import com.launchcatch.billing.dto.PaymentDetailResponse;
+import com.launchcatch.billing.dto.PaymentHistoryItem;
 import com.launchcatch.billing.dto.PaymentOrderRequest;
 import com.launchcatch.billing.dto.PaymentOrderResponse;
 import com.launchcatch.billing.entity.PaymentStatus;
 import com.launchcatch.billing.service.PaymentConfirmationService;
 import com.launchcatch.billing.service.PaymentOrderService;
+import com.launchcatch.billing.service.PaymentQueryService;
+import com.launchcatch.global.response.CursorPageResponse;
 import com.launchcatch.global.response.ResponseEnvelope;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
@@ -18,10 +22,12 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
@@ -32,6 +38,7 @@ public class OwnerPaymentController {
 
     private final PaymentOrderService orderService;
     private final PaymentConfirmationService confirmationService;
+    private final PaymentQueryService queryService;
 
     @PostMapping
     @Operation(
@@ -77,5 +84,35 @@ public class OwnerPaymentController {
                 confirmationService.confirm(owner.getId(), paymentId, request.orderId(), request.pgTid());
         HttpStatus status = response.status() == PaymentStatus.UNKNOWN ? HttpStatus.ACCEPTED : HttpStatus.OK;
         return ResponseEntity.status(status).body(ResponseEnvelope.success(response));
+    }
+
+    @GetMapping("/{paymentId}")
+    @Operation(
+            summary = "결제 상태 조회",
+            description = "내 결제 한 건의 상태를 돌려줍니다. 승인 확정이 202 를 돌려줬을 때 확정 여부를 폴링하는 데 씁니다. 화면에는 status 대신 displayStatus 를 씁니다."
+    )
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "조회 성공"),
+            @ApiResponse(responseCode = "404", description = "BILLING-004: 내 결제 중에 없는 결제입니다.")
+    })
+    public ResponseEnvelope<PaymentDetailResponse> get(
+            @AuthenticationPrincipal CustomUserDetails owner,
+            @PathVariable Long paymentId) {
+        return ResponseEnvelope.success(queryService.get(owner.getId(), paymentId));
+    }
+
+    @GetMapping
+    @Operation(
+            summary = "내 결제 내역",
+            description = "승인을 시도한 내 결제를 최근 순으로 돌려줍니다. 결제창에서 이탈해 승인 시도 전에 닫힌 주문은 빠집니다. 확인 중(UNKNOWN)인 결제가 있으면 새 충전이 잠시 막힙니다."
+    )
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "조회 성공. nextPageToken 이 비어 있으면 마지막 페이지입니다.")
+    })
+    public ResponseEnvelope<CursorPageResponse<PaymentHistoryItem>> list(
+            @AuthenticationPrincipal CustomUserDetails owner,
+            @RequestParam(required = false) String pageToken,
+            @RequestParam(defaultValue = "20") int pageSize) {
+        return ResponseEnvelope.success(queryService.list(owner.getId(), pageToken, pageSize));
     }
 }

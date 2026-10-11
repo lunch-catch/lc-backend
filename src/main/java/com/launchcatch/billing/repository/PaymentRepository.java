@@ -3,7 +3,10 @@ package com.launchcatch.billing.repository;
 import com.launchcatch.billing.entity.Payment;
 import com.launchcatch.billing.entity.PaymentStatus;
 import jakarta.persistence.LockModeType;
+import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Optional;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
@@ -22,4 +25,33 @@ public interface PaymentRepository extends JpaRepository<Payment, Long> {
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select p from Payment p where p.id = :paymentId")
     Optional<Payment> findByIdForUpdate(@Param("paymentId") Long paymentId);
+
+    // 그 점주의 결제 한 건이다. 남의 결제는 없는 것과 같다
+    Optional<Payment> findByIdAndOwnerId(Long id, Long ownerId);
+
+    /*
+     * 점주 결제 내역의 첫 페이지다. 요청 시각 내림차순이고 같은 시각은 ID 내림차순이다(idx_payment_owner_created).
+     * 승인 시도 전에 닫힌 주문(pg_tid 가 NULL)은 뺀다. 결제창을 열었다가 이탈한 주문이 이력에 쌓이지 않게 한다.
+     */
+    @Query("""
+            select p from Payment p
+             where p.ownerId = :ownerId
+               and p.pgTid is not null
+             order by p.createdAt desc, p.id desc
+            """)
+    List<Payment> findOwnerHistory(@Param("ownerId") Long ownerId, Pageable limit);
+
+    // 커서 다음 페이지이며 조건과 정렬은 첫 페이지와 같다
+    @Query("""
+            select p from Payment p
+             where p.ownerId = :ownerId
+               and p.pgTid is not null
+               and (p.createdAt < :cursorCreatedAt
+                    or (p.createdAt = :cursorCreatedAt and p.id < :cursorId))
+             order by p.createdAt desc, p.id desc
+            """)
+    List<Payment> findOwnerHistoryAfter(@Param("ownerId") Long ownerId,
+                                        @Param("cursorCreatedAt") LocalDateTime cursorCreatedAt,
+                                        @Param("cursorId") Long cursorId,
+                                        Pageable limit);
 }
