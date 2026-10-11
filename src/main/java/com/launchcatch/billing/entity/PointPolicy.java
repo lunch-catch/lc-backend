@@ -100,4 +100,18 @@ public class PointPolicy extends BaseTimeEntity {
                                             Long createdBy) {
         return new PointPolicy(effectiveDate, minChargeAmount, chargeProducts, changeReason, createdBy);
     }
+
+    /*
+     * 그 금액이 충전 상품 목록에 있는지 본다.
+     * 원소를 Number 로 비교하는 이유는 JSON 컬럼을 읽을 때 작은 수가 Integer 로 들어올 수 있어서다.
+     * Long 의 equals 는 같은 값의 Integer 를 같다고 보지 않으므로 contains 로 묻으면 모든 금액이 거절된다.
+     */
+    public boolean offers(long amount) {
+        for (Object product : chargeProducts) {
+            if (product instanceof Number number && number.longValue() == amount) {
+                return true;
+            }
+        }
+        return false;
+    }
 }

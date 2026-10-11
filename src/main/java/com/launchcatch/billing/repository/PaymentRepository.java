@@ -1,12 +1,12 @@
 package com.launchcatch.billing.repository;
 
 import com.launchcatch.billing.entity.Payment;
+import com.launchcatch.billing.entity.PaymentStatus;
 import org.springframework.data.jpa.repository.JpaRepository;
 
-/*
- * 결제 저장소다. 이 판은 매핑만 세우고 조회 메서드는 두지 않는다.
- * 주문번호 조회와 점주별 목록은 그것을 쓰는 작업과 함께 더한다. 쓰는 자리 없이 미리 적으면
- * 어느 인덱스를 타는지 확인할 방법이 없다.
- */
+// 결제 저장소이며 점주별 상태 확인은 idx_payment_owner_status 를 탄다
 public interface PaymentRepository extends JpaRepository<Payment, Long> {
+
+    // 그 점주에게 이 상태의 결제가 하나라도 있는지 본다
+    boolean existsByOwnerIdAndStatus(Long ownerId, PaymentStatus status);
 }
