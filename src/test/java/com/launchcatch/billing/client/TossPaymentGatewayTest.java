@@ -216,6 +216,67 @@ class TossPaymentGatewayTest {
     }
 
     @Test
+    void 커넥션_풀_대기가_초과되면_PgNotSentException_이다() {
+        WebClient poolExhausted = WebClient.builder()
+                .exchangeFunction(request -> Mono.<ClientResponse>error(new WebClientRequestException(
+                        new PoolAcquireTimeoutException(), HttpMethod.POST,
+                        URI.create("https://api.tosspayments.com/v1/payments/confirm"), HttpHeaders.EMPTY)))
+                .build();
+        TossPaymentGateway gatewayWithoutConnection =
+                new TossPaymentGateway(poolExhausted, newCircuitBreaker(), Clock.system(SEOUL), SECRET);
+
+        assertThatThrownBy(() -> gatewayWithoutConnection.confirm(PAYMENT_KEY, ORDER_ID, AMOUNT))
+                .isInstanceOf(PgNotSentException.class);
+    }
+
+    /*
+     * reactor-netty 의 셰이딩된 예외와 이름이 같은 대역이다.
+     * 게이트웨이는 타입이 아니라 이름으로 판정한다.
+     */
+    private static final class PoolAcquireTimeoutException extends RuntimeException {
+    }
+
+    @Test
+    void 승인이_인증_거부되면_PgNotSentException_이고_error_로그를_남긴다() {
+        server.reply(401, """
+                {"code":"UNAUTHORIZED_KEY","message":"인증되지 않은 시크릿 키 혹은 클라이언트 키 입니다."}""");
+
+        assertThatThrownBy(() -> gateway.confirm(PAYMENT_KEY, ORDER_ID, AMOUNT))
+                .isInstanceOf(PgNotSentException.class)
+                .hasMessageContaining("UNAUTHORIZED_KEY");
+        assertThat(logs.list).anySatisfy(event -> {
+            assertThat(event.getLevel()).isEqualTo(Level.ERROR);
+            assertThat(event.getFormattedMessage()).contains("TOSS_AUTH_FAILED");
+        });
+    }
+
+    @Test
+    void 조회가_인증_거부되면_PgNotSentException_이다() {
+        server.reply(403, """
+                {"code":"FORBIDDEN_REQUEST","message":"허용되지 않은 요청입니다."}""");
+
+        assertThatThrownBy(() -> gateway.inquireByOrderId(ORDER_ID))
+                .isInstanceOf(PgNotSentException.class);
+    }
+
+    @Test
+    void 인증_거부가_쌓이면_서킷이_열려_더_보내지_않는다() {
+        server.reply(401, """
+                {"code":"UNAUTHORIZED_KEY","message":"인증 실패"}""");
+        for (int i = 0; i < 4; i++) {
+            assertThatThrownBy(() -> gateway.confirm(PAYMENT_KEY, ORDER_ID, AMOUNT))
+                    .isInstanceOf(PgNotSentException.class);
+        }
+        int sentBeforeOpen = server.requests().size();
+
+        assertThatThrownBy(() -> gateway.confirm(PAYMENT_KEY, ORDER_ID, AMOUNT))
+                .isInstanceOf(PgNotSentException.class);
+
+        assertThat(circuitBreaker.getState()).isEqualTo(CircuitBreaker.State.OPEN);
+        assertThat(server.requests()).hasSize(sentBeforeOpen);
+    }
+
+    @Test
     void 서킷이_열리면_PgNotSentException_이고_요청이_토스로_나가지_않는다() {
         server.reply(503, "{}");
         for (int i = 0; i < 4; i++) {
@@ -301,7 +362,7 @@ class TossPaymentGatewayTest {
             "CANCELED, CANCELED",
             "PARTIAL_CANCELED, CANCELED",
             "ABORTED, FAILED",
-            "EXPIRED, FAILED",
+            "EXPIRED, EXPIRED",
             "READY, PENDING",
             "IN_PROGRESS, PENDING",
             "WAITING_FOR_DEPOSIT, PENDING",

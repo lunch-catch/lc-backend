@@ -44,6 +44,9 @@ public class TossPaymentGateway implements PaymentGateway {
     private static final String STATUS_DONE = "DONE";
     private static final String NOT_FOUND_CODE = "NOT_FOUND_PAYMENT";
 
+    // reactor-netty 가 셰이딩한 내부 클래스라 타입 대신 이름으로 본다.
+    private static final String POOL_ACQUIRE_TIMEOUT = "PoolAcquireTimeoutException";
+
     /*
      * 확실한 거절만 담은 허용 목록이다. docs.tosspayments.com/reference/error-codes 기준이다.
      * 여기 없는 코드는 모두 UNKNOWN 으로 떨어진다. 토스가 새 코드를 추가해도 안전한 쪽(조회로 재확인)으로 동작한다.
@@ -157,6 +160,9 @@ public class TossPaymentGateway implements PaymentGateway {
         if (http != null) {
             TossErrorResponse error = readErrorBody(http);
             String code = error == null ? null : error.code();
+            if (isAuthFailure(http)) {
+                return authFailure("승인", orderId, http, code);
+            }
             String message = masker.mask(error == null ? null : error.message());
             if (code != null && DEFINITE_REJECT_CODES.contains(code)) {
                 log.info("event=TOSS_CONFIRM_REJECTED orderId={} code={}", orderId, code);
@@ -179,6 +185,10 @@ public class TossPaymentGateway implements PaymentGateway {
     private RuntimeException classifyInquiryFailure(RuntimeException e) {
         WebClientResponseException http = causeOfType(e, WebClientResponseException.class);
         if (http != null) {
+            if (isAuthFailure(http)) {
+                TossErrorResponse error = readErrorBody(http);
+                return authFailure("조회", null, http, error == null ? null : error.code());
+            }
             log.warn("event=TOSS_INQUIRE_UNKNOWN httpStatus={}", http.getStatusCode().value());
             return new PgUnknownException("토스 조회 응답을 처리할 수 없다 (httpStatus="
                     + http.getStatusCode().value() + ")", e);
@@ -193,11 +203,32 @@ public class TossPaymentGateway implements PaymentGateway {
 
     /*
      * 요청이 나가지 않았음이 확실한 경우만 true 다.
-     * 연결 거부와 연결 타임아웃(ConnectException), DNS 실패(UnknownHostException)다.
+     * 연결 거부와 연결 타임아웃(ConnectException), DNS 실패(UnknownHostException), 커넥션 풀 대기 초과다.
+     * 풀 대기 초과는 연결을 얻기 전에 끝난 것이라 요청이 소켓에 쓰이지 않았다.
      * 연결 뒤에 끊기거나 TLS 중에 실패한 것은 요청이 나갔는지 알 수 없어 포함하지 않는다.
      */
     private boolean isNotSent(Throwable e) {
-        return causeOfType(e, ConnectException.class) != null || causeOfType(e, UnknownHostException.class) != null;
+        return causeOfType(e, ConnectException.class) != null
+                || causeOfType(e, UnknownHostException.class) != null
+                || hasCauseNamed(e, POOL_ACQUIRE_TIMEOUT);
+    }
+
+    /*
+     * 401, 403 은 토스가 인증 단계에서 요청을 거부한 것이다. 결제 처리까지 가지 않았으므로 승인됐을 가능성이 없다.
+     * UNKNOWN 으로 두면 재조회도 같은 이유로 실패해 결제가 영원히 확인 중에 남고, 점주가 새 충전을 못 한다.
+     * 원인은 거의 항상 우리 쪽 키 설정이라 error 로 남겨 바로 드러나게 한다.
+     */
+    private static boolean isAuthFailure(WebClientResponseException http) {
+        int status = http.getStatusCode().value();
+        return status == 401 || status == 403;
+    }
+
+    private PgNotSentException authFailure(String action, String orderId, WebClientResponseException http,
+            String code) {
+        int status = http.getStatusCode().value();
+        log.error("event=TOSS_AUTH_FAILED action={} orderId={} httpStatus={} code={}", action, orderId, status, code);
+        return new PgNotSentException("토스가 인증 단계에서 " + action + " 요청을 처리하지 않았다 (httpStatus="
+                + status + ", code=" + code + "). 비밀키 설정을 확인한다", http);
     }
 
     // 404 라도 토스가 "결제 없음" 코드를 준 경우만 인정한다. 주소가 틀려 생긴 404 를 결제 없음으로 읽으면 안 된다.
@@ -226,6 +257,15 @@ public class TossPaymentGateway implements PaymentGateway {
             }
         }
         return null;
+    }
+
+    private static boolean hasCauseNamed(Throwable throwable, String simpleName) {
+        for (Throwable cause = throwable; cause != null; cause = cause.getCause()) {
+            if (cause.getClass().getSimpleName().equals(simpleName)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static String rootCauseType(Throwable throwable) {
@@ -287,7 +327,8 @@ public class TossPaymentGateway implements PaymentGateway {
         return switch (tossStatus) {
             case STATUS_DONE -> PaymentGatewayInquiryResult.Status.APPROVED;
             case "CANCELED", "PARTIAL_CANCELED" -> PaymentGatewayInquiryResult.Status.CANCELED;
-            case "ABORTED", "EXPIRED" -> PaymentGatewayInquiryResult.Status.FAILED;
+            case "ABORTED" -> PaymentGatewayInquiryResult.Status.FAILED;
+            case "EXPIRED" -> PaymentGatewayInquiryResult.Status.EXPIRED;
             default -> PaymentGatewayInquiryResult.Status.PENDING;
         };
     }

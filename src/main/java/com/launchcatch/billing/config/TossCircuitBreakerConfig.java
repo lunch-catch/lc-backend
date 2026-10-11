@@ -29,7 +29,8 @@ public class TossCircuitBreakerConfig {
     }
 
     /*
-     * 5xx, 429, 응답을 아예 못 받은 경우(연결 실패, DNS, 타임아웃)만 실패로 센다.
+     * 5xx, 429, 401, 403, 응답을 아예 못 받은 경우(연결 실패, DNS, 타임아웃)만 실패로 센다.
+     * 401, 403 은 키 설정이 틀린 것이라 모든 호출이 같은 이유로 실패한다. 서킷을 열어 헛된 호출을 멈춘다.
      * 그 밖의 4xx는 토스가 정상적으로 거절한 응답이다. 카드 한도 초과 같은 거절이 쌓였다고
      * 서킷이 열리면 멀쩡한 다른 결제까지 막힌다.
      *
@@ -40,7 +41,8 @@ public class TossCircuitBreakerConfig {
         for (Throwable cause = throwable; cause != null; cause = cause.getCause()) {
             if (cause instanceof WebClientResponseException responseException) {
                 HttpStatusCode status = responseException.getStatusCode();
-                return status.value() == 429 || status.is5xxServerError();
+                int code = status.value();
+                return code == 429 || code == 401 || code == 403 || status.is5xxServerError();
             }
             if (cause instanceof WebClientRequestException || cause instanceof TimeoutException) {
                 return true;

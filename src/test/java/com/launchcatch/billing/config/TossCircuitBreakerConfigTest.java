@@ -27,7 +27,13 @@ class TossCircuitBreakerConfigTest {
     }
 
     @ParameterizedTest
-    @ValueSource(ints = {400, 401, 403, 404, 409, 422})
+    @ValueSource(ints = {401, 403})
+    void 인증_거부는_키_설정_오류라_실패로_센다(int status) {
+        assertThat(TossCircuitBreakerConfig.isCircuitFailure(responseOf(status))).isTrue();
+    }
+
+    @ParameterizedTest
+    @ValueSource(ints = {400, 404, 409, 422})
     void 그_밖의_4xx_는_토스가_정상으로_거절한_응답이라_세지_않는다(int status) {
         assertThat(TossCircuitBreakerConfig.isCircuitFailure(responseOf(status))).isFalse();
     }
