@@ -26,6 +26,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
@@ -144,7 +145,7 @@ class TossPaymentGatewayTest {
 
     @Test
     void 카드사가_거절하면_PgRejectedException_이고_토스_코드와_사유를_담는다() {
-        server.reply(400, """
+        server.reply(403, """
                 {"code":"REJECT_CARD_COMPANY","message":"카드사에서 거절했습니다."}""");
 
         assertThatThrownBy(() -> gateway.confirm(PAYMENT_KEY, ORDER_ID, AMOUNT))
@@ -156,7 +157,7 @@ class TossPaymentGatewayTest {
 
     @Test
     void 거절_목록에_없는_4xx_코드는_PgUnknownException_이다() {
-        server.reply(409, """
+        server.reply(400, """
                 {"code":"ALREADY_PROCESSED_PAYMENT","message":"이미 처리된 결제입니다."}""");
 
         assertThatThrownBy(() -> gateway.confirm(PAYMENT_KEY, ORDER_ID, AMOUNT))
@@ -293,8 +294,8 @@ class TossPaymentGatewayTest {
     }
 
     @Test
-    void 거절_응답_4xx_가_쌓여도_서킷은_열리지_않는다() {
-        server.reply(400, """
+    void 거절_응답_403_이_쌓여도_서킷은_열리지_않는다() {
+        server.reply(403, """
                 {"code":"REJECT_CARD_COMPANY","message":"거절"}""");
         for (int i = 0; i < 6; i++) {
             assertThatThrownBy(() -> gateway.confirm(PAYMENT_KEY, ORDER_ID, AMOUNT))
@@ -306,6 +307,55 @@ class TossPaymentGatewayTest {
 
         assertThat(approval.orderId()).isEqualTo(ORDER_ID);
         assertThat(circuitBreaker.getState()).isEqualTo(CircuitBreaker.State.CLOSED);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"REJECT_CARD_PAYMENT", "REJECT_ACCOUNT_PAYMENT", "EXCEED_MAX_ONE_DAY_AMOUNT", "FDS_ERROR"})
+    void 토스가_403_으로_주는_다른_거절_코드도_PgRejectedException_이다(String code) {
+        server.reply(403, "{\"code\":\"" + code + "\",\"message\":\"거절\"}");
+
+        assertThatThrownBy(() -> gateway.confirm(PAYMENT_KEY, ORDER_ID, AMOUNT))
+                .isInstanceOfSatisfying(PgRejectedException.class, e -> assertThat(e.getPgCode()).isEqualTo(code));
+    }
+
+    @ParameterizedTest
+    @CsvSource({
+            "403, FORBIDDEN_REQUEST",
+            "403, INCORRECT_BASIC_AUTH_FORMAT",
+            "400, INVALID_API_KEY",
+            "401, UNAUTHORIZED_KEY"
+    })
+    void 키_설정_오류_코드는_상태와_무관하게_PgNotSentException_이고_error_로그를_남긴다(int status, String code) {
+        server.reply(status, "{\"code\":\"" + code + "\",\"message\":\"키 오류\"}");
+
+        assertThatThrownBy(() -> gateway.confirm(PAYMENT_KEY, ORDER_ID, AMOUNT))
+                .isInstanceOf(PgNotSentException.class)
+                .hasMessageContaining(code);
+        assertThat(logs.list).anySatisfy(event -> {
+            assertThat(event.getLevel()).isEqualTo(Level.ERROR);
+            assertThat(event.getFormattedMessage()).contains("TOSS_AUTH_FAILED");
+        });
+    }
+
+    @Test
+    void 처음_보는_코드의_403_은_거절이나_인증_거부로_단정하지_않고_PgUnknownException_이다() {
+        server.reply(403, """
+                {"code":"SOME_NEW_TOSS_CODE","message":"새 코드"}""");
+
+        assertThatThrownBy(() -> gateway.confirm(PAYMENT_KEY, ORDER_ID, AMOUNT))
+                .isInstanceOf(PgUnknownException.class);
+    }
+
+    @Test
+    void 키_설정_오류가_쌓이면_서킷이_열린다() {
+        server.reply(403, """
+                {"code":"FORBIDDEN_REQUEST","message":"허용되지 않은 요청입니다."}""");
+        for (int i = 0; i < 4; i++) {
+            assertThatThrownBy(() -> gateway.confirm(PAYMENT_KEY, ORDER_ID, AMOUNT))
+                    .isInstanceOf(PgNotSentException.class);
+        }
+
+        assertThat(circuitBreaker.getState()).isEqualTo(CircuitBreaker.State.OPEN);
     }
 
     @Test

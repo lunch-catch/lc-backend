@@ -29,10 +29,10 @@ public class TossCircuitBreakerConfig {
     }
 
     /*
-     * 5xx, 429, 401, 403, 응답을 아예 못 받은 경우(연결 실패, DNS, 타임아웃)만 실패로 센다.
-     * 401, 403 은 키 설정이 틀린 것이라 모든 호출이 같은 이유로 실패한다. 서킷을 열어 헛된 호출을 멈춘다.
-     * 그 밖의 4xx는 토스가 정상적으로 거절한 응답이다. 카드 한도 초과 같은 거절이 쌓였다고
-     * 서킷이 열리면 멀쩡한 다른 결제까지 막힌다.
+     * 5xx, 429, 키 설정 오류, 응답을 아예 못 받은 경우(연결 실패, DNS, 타임아웃)만 실패로 센다.
+     * 키 설정 오류는 모든 호출이 같은 이유로 실패하므로 서킷을 열어 헛된 호출을 멈춘다.
+     * 토스는 카드사 거절과 한도 초과, FDS 차단도 403 으로 준다. 상태가 아니라 오류 코드로 가르며,
+     * 이런 정상 거절이 쌓였다고 서킷이 열리면 멀쩡한 다른 결제까지 막힌다.
      *
      * 상태 코드가 없는 예외를 전부 실패로 세지 않는다. 우리 코드의 NPE나 DTO 매핑 버그가 PG 장애로 집계된다.
      * 스프링이 전송 단계에서 던지는 WebClientRequestException 과 TimeoutException 만 인정한다.
@@ -42,7 +42,9 @@ public class TossCircuitBreakerConfig {
             if (cause instanceof WebClientResponseException responseException) {
                 HttpStatusCode status = responseException.getStatusCode();
                 int code = status.value();
-                return code == 429 || code == 401 || code == 403 || status.is5xxServerError();
+                return code == 429 || status.is5xxServerError()
+                        || TossErrorCodes.isConfigFailure(responseException)
+                        || TossErrorCodes.isUnexplainedForbidden(responseException);
             }
             if (cause instanceof WebClientRequestException || cause instanceof TimeoutException) {
                 return true;

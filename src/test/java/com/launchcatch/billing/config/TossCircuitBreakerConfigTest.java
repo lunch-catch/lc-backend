@@ -4,9 +4,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.net.ConnectException;
 import java.net.URI;
+import java.nio.charset.StandardCharsets;
 import java.util.concurrent.TimeoutException;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
@@ -26,10 +28,37 @@ class TossCircuitBreakerConfigTest {
         assertThat(TossCircuitBreakerConfig.isCircuitFailure(responseOf(status))).isTrue();
     }
 
+    private static WebClientResponseException responseOf(int status, String code) {
+        return WebClientResponseException.create(status, "x", HttpHeaders.EMPTY,
+                ("{\"code\":\"" + code + "\",\"message\":\"m\"}").getBytes(StandardCharsets.UTF_8), null);
+    }
+
+    @Test
+    void 일반_401_은_키_설정_오류라_실패로_센다() {
+        assertThat(TossCircuitBreakerConfig.isCircuitFailure(responseOf(401))).isTrue();
+        assertThat(TossCircuitBreakerConfig.isCircuitFailure(responseOf(401, "UNAUTHORIZED_KEY"))).isTrue();
+    }
+
     @ParameterizedTest
-    @ValueSource(ints = {401, 403})
-    void 인증_거부는_키_설정_오류라_실패로_센다(int status) {
-        assertThat(TossCircuitBreakerConfig.isCircuitFailure(responseOf(status))).isTrue();
+    @CsvSource({
+            "403, FORBIDDEN_REQUEST",
+            "403, INCORRECT_BASIC_AUTH_FORMAT",
+            "400, INVALID_API_KEY"
+    })
+    void 키_설정_오류_코드는_상태와_무관하게_실패로_센다(int status, String code) {
+        assertThat(TossCircuitBreakerConfig.isCircuitFailure(responseOf(status, code))).isTrue();
+    }
+
+    @Test
+    void 토스_오류_본문이_아닌_403_은_앞단이_막은_것이라_실패로_센다() {
+        assertThat(TossCircuitBreakerConfig.isCircuitFailure(responseOf(403))).isTrue();
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"REJECT_CARD_COMPANY", "REJECT_CARD_PAYMENT", "REJECT_ACCOUNT_PAYMENT",
+            "EXCEED_MAX_ONE_DAY_AMOUNT", "FDS_ERROR", "SOME_NEW_TOSS_CODE"})
+    void 토스가_403_으로_주는_정상_거절은_실패로_세지_않는다(String code) {
+        assertThat(TossCircuitBreakerConfig.isCircuitFailure(responseOf(403, code))).isFalse();
     }
 
     @ParameterizedTest

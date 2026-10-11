@@ -1,6 +1,7 @@
 package com.launchcatch.billing.client;
 
 import com.launchcatch.billing.config.TossCircuitBreakerConfig;
+import com.launchcatch.billing.config.TossErrorCodes;
 import com.launchcatch.billing.config.TossProperties;
 import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
@@ -160,13 +161,14 @@ public class TossPaymentGateway implements PaymentGateway {
         if (http != null) {
             TossErrorResponse error = readErrorBody(http);
             String code = error == null ? null : error.code();
-            if (isAuthFailure(http)) {
-                return authFailure("승인", orderId, http, code);
-            }
             String message = masker.mask(error == null ? null : error.message());
+            // 거절 코드를 먼저 본다. 토스는 카드사 거절과 FDS 차단도 403 으로 주므로 상태로 인증 거부를 먼저 가르면 안 된다.
             if (code != null && DEFINITE_REJECT_CODES.contains(code)) {
                 log.info("event=TOSS_CONFIRM_REJECTED orderId={} code={}", orderId, code);
                 return new PgRejectedException(code, message);
+            }
+            if (TossErrorCodes.isConfigFailure(http)) {
+                return authFailure("승인", orderId, http, code);
             }
             log.warn("event=TOSS_CONFIRM_UNKNOWN orderId={} httpStatus={} code={}",
                     orderId, http.getStatusCode().value(), code);
@@ -185,7 +187,7 @@ public class TossPaymentGateway implements PaymentGateway {
     private RuntimeException classifyInquiryFailure(RuntimeException e) {
         WebClientResponseException http = causeOfType(e, WebClientResponseException.class);
         if (http != null) {
-            if (isAuthFailure(http)) {
+            if (TossErrorCodes.isConfigFailure(http)) {
                 TossErrorResponse error = readErrorBody(http);
                 return authFailure("조회", null, http, error == null ? null : error.code());
             }
@@ -214,15 +216,11 @@ public class TossPaymentGateway implements PaymentGateway {
     }
 
     /*
-     * 401, 403 은 토스가 인증 단계에서 요청을 거부한 것이다. 결제 처리까지 가지 않았으므로 승인됐을 가능성이 없다.
+     * 키 설정 오류(401 이나 UNAUTHORIZED_KEY 같은 코드)는 토스가 인증 단계에서 요청을 거부한 것이다.
+     * 결제 처리까지 가지 않았으므로 승인됐을 가능성이 없다.
      * UNKNOWN 으로 두면 재조회도 같은 이유로 실패해 결제가 영원히 확인 중에 남고, 점주가 새 충전을 못 한다.
      * 원인은 거의 항상 우리 쪽 키 설정이라 error 로 남겨 바로 드러나게 한다.
      */
-    private static boolean isAuthFailure(WebClientResponseException http) {
-        int status = http.getStatusCode().value();
-        return status == 401 || status == 403;
-    }
-
     private PgNotSentException authFailure(String action, String orderId, WebClientResponseException http,
             String code) {
         int status = http.getStatusCode().value();
