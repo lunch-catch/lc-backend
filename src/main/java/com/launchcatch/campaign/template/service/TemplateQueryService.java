@@ -33,7 +33,7 @@ public class TemplateQueryService {
 
     public List<TemplateListItemResponse> list() {
         return templateRepository.findAllByOrderByCreatedAtDesc().stream()
-                .map(TemplateListItemResponse::from)
+                .map(template -> TemplateListItemResponse.of(template, htmlOf(template)))
                 .toList();
     }
 

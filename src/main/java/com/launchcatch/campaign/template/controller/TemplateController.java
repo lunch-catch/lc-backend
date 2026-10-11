@@ -85,7 +85,7 @@ public class TemplateController {
     @GetMapping
     @Operation(
             summary = "템플릿 목록 조회",
-            description = "전체 템플릿을 생성일 최신순으로 조회합니다. 템플릿은 최대 10개까지만 만들 수 있어 페이지네이션은 제공하지 않습니다."
+            description = "전체 템플릿을 생성일 최신순으로 조회합니다. html은 게시된 템플릿이면 게시된 HTML, DRAFT 템플릿이면 최신 버전의 HTML로, 미리보기에 씁니다. 템플릿은 최대 10개까지만 만들 수 있어 페이지네이션은 제공하지 않습니다."
     )
     @ApiResponse(responseCode = "200", description = "템플릿 목록 조회 성공.")
     public ResponseEntity<ResponseEnvelope<List<TemplateListItemResponse>>> list() {

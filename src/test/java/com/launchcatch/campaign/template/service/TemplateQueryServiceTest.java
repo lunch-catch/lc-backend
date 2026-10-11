@@ -55,16 +55,20 @@ class TemplateQueryServiceTest {
     }
 
     @Test
-    @DisplayName("목록은 저장소가 돌려준 순서 그대로 응답으로 바꾼다")
+    @DisplayName("목록은 저장소가 돌려준 순서 그대로 응답으로 바꾸고, 상태에 맞는 미리보기 html을 채운다")
     void 목록을_조회한다() throws Exception {
-        Template first = draftTemplate(1L, "가을 신메뉴");
-        Template second = draftTemplate(2L, "겨울 신메뉴");
-        when(templateRepository.findAllByOrderByCreatedAtDesc()).thenReturn(List.of(second, first));
+        Template draft = draftTemplate(1L, "가을 신메뉴");
+        Template published = publishedTemplate(2L);
+        when(templateRepository.findAllByOrderByCreatedAtDesc()).thenReturn(List.of(published, draft));
+        when(templateVersionRepository.findFirstByTemplateIdOrderByVersionNumberDesc(1L))
+                .thenReturn(Optional.of(draft.latestVersion()));
 
         List<TemplateListItemResponse> responses = service.list();
 
         assertThat(responses).extracting(TemplateListItemResponse::templateId)
                 .containsExactly(2L, 1L);
+        assertThat(responses.get(0).html()).isEqualTo(PUBLISHED_HTML);
+        assertThat(responses.get(1).html()).isEqualTo(draft.latestVersion().getHtmlContent());
     }
 
     @Test

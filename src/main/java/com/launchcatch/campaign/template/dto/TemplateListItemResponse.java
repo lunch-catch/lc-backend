@@ -31,10 +31,17 @@ public record TemplateListItemResponse(
         Long lastModifiedBy,
 
         @Schema(description = "마지막으로 임시저장한 시각입니다.")
-        LocalDateTime lastModifiedAt
+        LocalDateTime lastModifiedAt,
+
+        @Schema(description = "게시된 템플릿은 게시된 HTML, DRAFT 템플릿은 최신 버전의 HTML입니다. 목록에서 미리보기로 쓴다.")
+        String html
 ) {
 
-    public static TemplateListItemResponse from(Template template) {
+    /*
+     * html 은 상태에 따라 가져오는 곳이 다르므로(게시된 템플릿은 Template.htmlContent,
+     * DRAFT 는 최신 버전) 호출하는 쪽에서 미리 가려 넘긴다.
+     */
+    public static TemplateListItemResponse of(Template template, String html) {
         return new TemplateListItemResponse(
                 template.getId(),
                 template.getName(),
@@ -44,7 +51,8 @@ public record TemplateListItemResponse(
                 template.getActivatedBy(),
                 template.getActivatedAt(),
                 template.getLastModifiedBy(),
-                template.getLastModifiedAt()
+                template.getLastModifiedAt(),
+                html
         );
     }
 }
