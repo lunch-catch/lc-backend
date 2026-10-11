@@ -60,7 +60,7 @@ class TemplateQueryServiceTest {
         Template draft = draftTemplate(1L, "가을 신메뉴");
         Template published = publishedTemplate(2L);
         when(templateRepository.findAllByOrderByCreatedAtDesc()).thenReturn(List.of(published, draft));
-        when(templateVersionRepository.findFirstByTemplateIdOrderByVersionNumberDesc(1L))
+        when(templateVersionRepository.findFirstByTemplateIdAndDeletedAtIsNullOrderByVersionNumberDesc(1L))
                 .thenReturn(Optional.of(draft.latestVersion()));
 
         List<TemplateListItemResponse> responses = service.list();
@@ -76,7 +76,7 @@ class TemplateQueryServiceTest {
     void DRAFT_상세는_최신_버전_html_이다() throws Exception {
         Template template = draftTemplate(TEMPLATE_ID, "가을 신메뉴");
         when(templateRepository.findById(TEMPLATE_ID)).thenReturn(Optional.of(template));
-        when(templateVersionRepository.findFirstByTemplateIdOrderByVersionNumberDesc(TEMPLATE_ID))
+        when(templateVersionRepository.findFirstByTemplateIdAndDeletedAtIsNullOrderByVersionNumberDesc(TEMPLATE_ID))
                 .thenReturn(Optional.of(template.latestVersion()));
 
         TemplateDetailResponse response = service.detail(TEMPLATE_ID);
@@ -110,7 +110,7 @@ class TemplateQueryServiceTest {
     void DRAFT_인데_버전이_없으면_예외를_던진다() throws Exception {
         Template template = draftTemplate(TEMPLATE_ID, "가을 신메뉴");
         when(templateRepository.findById(TEMPLATE_ID)).thenReturn(Optional.of(template));
-        when(templateVersionRepository.findFirstByTemplateIdOrderByVersionNumberDesc(TEMPLATE_ID))
+        when(templateVersionRepository.findFirstByTemplateIdAndDeletedAtIsNullOrderByVersionNumberDesc(TEMPLATE_ID))
                 .thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.detail(TEMPLATE_ID))

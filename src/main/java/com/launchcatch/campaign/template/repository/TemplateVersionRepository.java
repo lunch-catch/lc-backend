@@ -20,6 +20,14 @@ public interface TemplateVersionRepository extends JpaRepository<TemplateVersion
     Optional<TemplateVersion> findFirstByTemplateIdOrderByVersionNumberDesc(Long templateId);
 
     /*
+     * 목록·상세 조회의 미리보기 html 용이다. 소프트삭제된 버전은 제외한다.
+     * 지금은 DRAFT 템플릿의 버전이 소프트삭제될 길이 없지만(게시할 때만 전부
+     * 함께 지워지고, 그 순간 상태도 PUBLISHED 로 바뀌어 이 메서드를 안 탄다),
+     * findPage() 와 같은 조건으로 맞춰 둔다.
+     */
+    Optional<TemplateVersion> findFirstByTemplateIdAndDeletedAtIsNullOrderByVersionNumberDesc(Long templateId);
+
+    /*
      * 다음 버전 번호를 매길 때 쓴다. HTML 을 전혀 안 가져오고 숫자 하나만 집계하므로
      * 버전이 많이 쌓인 템플릿이라도 가볍다. 버전이 하나도 없으면 0을 돌려준다.
      */

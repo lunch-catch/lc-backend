@@ -76,7 +76,7 @@ public class TemplateQueryService {
         if (template.getStatus() == TemplateStatus.PUBLISHED) {
             return template.getHtmlContent();
         }
-        return templateVersionRepository.findFirstByTemplateIdOrderByVersionNumberDesc(template.getId())
+        return templateVersionRepository.findFirstByTemplateIdAndDeletedAtIsNullOrderByVersionNumberDesc(template.getId())
                 .map(TemplateVersion::getHtmlContent)
                 .orElseThrow(() -> new IllegalStateException("template has no version: id=" + template.getId()));
     }
