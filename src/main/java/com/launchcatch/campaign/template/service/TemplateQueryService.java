@@ -83,9 +83,22 @@ public class TemplateQueryService {
         return Math.min(pageSize, MAX_PAGE_SIZE);
     }
 
+    /*
+     * PageTokens.decode() 는 형식이 어긋난 토큰을 null 로 돌려줘 첫 페이지로 본다.
+     * sortValue 는 PageTokens 가 뜻을 모르는 임의 문자열이라 그 경계를 넘지 못한다.
+     * 그래서 versionNumber 로 바꾸지 못하는 값(없거나 숫자가 아님)도 같은 규칙으로
+     * 첫 페이지로 본다. 그렇지 않으면 위조되거나 깨진 토큰이 500 으로 샌다.
+     */
     private Integer decodeCursorVersionNumber(String pageToken) {
         PageCursor cursor = PageTokens.decode(pageToken);
-        return cursor == null ? null : Integer.valueOf(cursor.sortValue());
+        if (cursor == null || cursor.sortValue() == null) {
+            return null;
+        }
+        try {
+            return Integer.valueOf(cursor.sortValue());
+        } catch (NumberFormatException e) {
+            return null;
+        }
     }
 
     private String encodeCursor(TemplateVersion lastItem) {

@@ -175,6 +175,32 @@ class TemplateQueryServiceTest {
     }
 
     @Test
+    @DisplayName("pageToken 의 sortValue 가 없으면(null) 예외 없이 첫 페이지로 본다")
+    void pageToken_sortValue_가_없으면_첫_페이지로_본다() {
+        when(templateRepository.existsById(TEMPLATE_ID)).thenReturn(true);
+        String token = PageTokens.encode(new PageCursor(5L, null));
+        when(templateVersionRepository.findPage(eq(TEMPLATE_ID), isNull(), any(Pageable.class)))
+                .thenReturn(List.of());
+
+        service.versions(TEMPLATE_ID, token, 20);
+
+        verify(templateVersionRepository).findPage(eq(TEMPLATE_ID), isNull(), any(Pageable.class));
+    }
+
+    @Test
+    @DisplayName("pageToken 의 sortValue 가 숫자가 아니면 예외 없이 첫 페이지로 본다")
+    void pageToken_sortValue_가_숫자가_아니면_첫_페이지로_본다() {
+        when(templateRepository.existsById(TEMPLATE_ID)).thenReturn(true);
+        String token = PageTokens.encode(new PageCursor(5L, "notanumber"));
+        when(templateVersionRepository.findPage(eq(TEMPLATE_ID), isNull(), any(Pageable.class)))
+                .thenReturn(List.of());
+
+        service.versions(TEMPLATE_ID, token, 20);
+
+        verify(templateVersionRepository).findPage(eq(TEMPLATE_ID), isNull(), any(Pageable.class));
+    }
+
+    @Test
     @DisplayName("pageSize 가 0 이하면 기본값을 쓰고, 최대치를 넘으면 최대치로 자른다")
     void pageSize_를_보정한다() throws Exception {
         when(templateRepository.existsById(TEMPLATE_ID)).thenReturn(true);
