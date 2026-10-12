@@ -210,7 +210,7 @@ class AdminLoginSecurityIntegrationTest {
         Admin admin = admins.findByIdForUpdate(1L).orElseThrow();
         ReflectionTestUtils.setField(admin, "role", role);
         var result = mvc.perform(delete("/v1/admin/auth/tokens")
-                        .cookie(new Cookie("accessToken", (role.isAdmin() ? jwt.createAccessToken(1L, role, AdminAccessTokenClaims.forVersion(1L)) : jwt.createAccessToken(1L, role)))))
+                        .cookie(new Cookie("accessToken", jwt.createAccessToken(1L, role, AdminAccessTokenClaims.forVersion(1L)))))
                 .andExpect(status().isNoContent()).andReturn();
         assertThat(result.getResponse().getContentAsString()).isEmpty();
         assertThat(result.getResponse().getCookie("accessToken").getMaxAge()).isZero();
@@ -237,7 +237,7 @@ class AdminLoginSecurityIntegrationTest {
     @org.junit.jupiter.params.provider.EnumSource(value = Role.class, names = {"MEMBER", "OWNER"})
     void 관리자_외_역할은_로그아웃할_수_없다(Role role) throws Exception {
         mvc.perform(delete("/v1/admin/auth/tokens")
-                        .cookie(new Cookie("accessToken", (role.isAdmin() ? jwt.createAccessToken(1L, role, AdminAccessTokenClaims.forVersion(1L)) : jwt.createAccessToken(1L, role)))))
+                        .cookie(new Cookie("accessToken", jwt.createAccessToken(1L, role))))
                 .andExpect(status().isForbidden()).andExpect(jsonPath("$.code").value("AUTH-006"));
     }
 
