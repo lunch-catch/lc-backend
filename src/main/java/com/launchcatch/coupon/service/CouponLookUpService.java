@@ -1,7 +1,9 @@
 package com.launchcatch.coupon.service;
 
 import com.launchcatch.coupon.dto.CouponIssuanceLimitResponse;
+import com.launchcatch.coupon.dto.CouponSummaryResponse;
 import com.launchcatch.coupon.repository.CouponDailyLimitRepository;
+import com.launchcatch.coupon.repository.MemberCouponRepository;
 import com.launchcatch.global.config.ClockConfig;
 import java.time.Clock;
 import java.time.LocalDate;
@@ -15,6 +17,7 @@ import org.springframework.transaction.annotation.Transactional;
 @Transactional(readOnly = true)
 public class CouponLookUpService {
 
+    private final MemberCouponRepository memberCouponRepository;
     private final CouponDailyLimitRepository couponDailyLimitRepository;
     private final Clock clock;
 
@@ -35,5 +38,16 @@ public class CouponLookUpService {
                 .orElse(0);
         return new CouponIssuanceLimitResponse(
                 businessDate, issuedCount, dailyLimit, issuedCount >= dailyLimit);
+    }
+
+    /**
+     * 회원의 누적 쿠폰 발급 수, 사용 수와 할인받은 금액의 합계를 조회한다.
+     * 삭제한 쿠폰도 발급 수에 포함하며, 할인액은 사용 이력에 확정해 저장한 금액을 기준으로 한다.
+     *
+     * @param memberId 인증된 회원의 ID
+     * @return 누적 발급 수, 사용 수와 할인액 합계이며, 이력이 없으면 각 값은 0
+     */
+    public CouponSummaryResponse getSummary(Long memberId) {
+        return memberCouponRepository.findSummaryByMemberId(memberId);
     }
 }

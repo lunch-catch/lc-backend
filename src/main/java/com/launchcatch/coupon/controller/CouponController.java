@@ -2,6 +2,7 @@ package com.launchcatch.coupon.controller;
 
 import com.launchcatch.auth.CustomUserDetails;
 import com.launchcatch.coupon.dto.CouponIssuanceLimitResponse;
+import com.launchcatch.coupon.dto.CouponSummaryResponse;
 import com.launchcatch.coupon.service.CouponLookUpService;
 import com.launchcatch.global.response.ResponseEnvelope;
 import lombok.RequiredArgsConstructor;
@@ -29,4 +30,14 @@ public class CouponController {
         return ResponseEnvelope.success(couponLookUpService.getIssuanceLimit(user.getId()));
     }
 
+    /**
+     * 인증된 회원의 누적 쿠폰 발급 수와 사용 수, 할인받은 금액의 합계를 조회한다.
+     *
+     * @param user 인증된 회원 정보
+     * @return 누적 발급 수와 사용 수, 할인액 합계를 담은 성공 응답
+     */
+    @GetMapping("/coupons/summary")
+    public ResponseEnvelope<CouponSummaryResponse> getSummary(@AuthenticationPrincipal CustomUserDetails user) {
+        return ResponseEnvelope.success(couponLookUpService.getSummary(user.getId()));
+    }
 }

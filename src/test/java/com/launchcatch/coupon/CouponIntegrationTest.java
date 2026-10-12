@@ -72,6 +72,134 @@ class CouponIntegrationTest {
     }
 
     @Nested
+    @DisplayName("쿠폰 통계 조회")
+    @Transactional
+    class SummaryQuery {
+
+        private static final String PATH = "/v1/coupons/summary";
+
+        @Test
+        void 본인의_발급_이력이_없으면_다른_회원의_이력과_관계없이_모두_0이다() throws Exception {
+            insertCoupon(1001L, 18L, "USED");
+            insertUsage(1001L, 1500);
+
+            mockMvc.perform(get(PATH).with(user(MEMBER)))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.code").value("SUCCESS"))
+                    .andExpect(jsonPath("$.data.receivedCouponCount").value(0))
+                    .andExpect(jsonPath("$.data.usedCouponCount").value(0))
+                    .andExpect(jsonPath("$.data.totalDiscountAmount").value(0));
+        }
+
+        @Test
+        void 사용_이력이_없어도_삭제한_쿠폰을_포함한_발급_수를_반환한다() throws Exception {
+            insertCoupon(1001L, 17L, "ISSUED");
+            insertCoupon(1002L, 17L, "REMOVED");
+
+            mockMvc.perform(get(PATH).with(user(MEMBER)))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.receivedCouponCount").value(2))
+                    .andExpect(jsonPath("$.data.usedCouponCount").value(0))
+                    .andExpect(jsonPath("$.data.totalDiscountAmount").value(0));
+        }
+
+        @Test
+        void 모든_쿠폰을_발급_수에_포함하고_확정_사용_결과를_변경없이_집계한다() throws Exception {
+            insertCoupon(1001L, 17L, "ISSUED");
+            insertCoupon(1002L, 17L, "EXPIRED");
+            insertCoupon(1003L, 17L, "REMOVED");
+            insertCoupon(1004L, 17L, "USED", 0);
+            insertUsage(1004L, 0);
+            insertCoupon(1005L, 17L, "USED");
+            insertUsage(1005L, 1500);
+            insertCoupon(1006L, 17L, "USED");
+            insertUsage(1006L, 1500);
+            insertCoupon(1007L, 18L, "USED");
+            insertUsage(1007L, 1500);
+            var couponsBefore = jdbcTemplate.queryForList("SELECT * FROM member_coupon ORDER BY member_coupon_id");
+            var usagesBefore = jdbcTemplate.queryForList("SELECT * FROM coupon_usage_history ORDER BY coupon_usage_history_id");
+
+            mockMvc.perform(get(PATH).with(user(MEMBER)))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.code").value("SUCCESS"))
+                    .andExpect(jsonPath("$.data.receivedCouponCount").value(6))
+                    .andExpect(jsonPath("$.data.usedCouponCount").value(3))
+                    .andExpect(jsonPath("$.data.totalDiscountAmount").value(3000));
+
+            entityManager.flush();
+            assertThat(jdbcTemplate.queryForList("SELECT * FROM member_coupon ORDER BY member_coupon_id"))
+                    .usingRecursiveComparison()
+                    .isEqualTo(couponsBefore);
+            assertThat(jdbcTemplate.queryForList("SELECT * FROM coupon_usage_history ORDER BY coupon_usage_history_id"))
+                    .isEqualTo(usagesBefore);
+        }
+
+        @Test
+        void 각_할인액이_int_범위여도_합계는_잘리지_않는다() throws Exception {
+            insertCoupon(1001L, 17L, "USED", 3_000_000_000L);
+            insertUsage(1001L, 1_500_000_000);
+            insertCoupon(1002L, 17L, "USED", 3_000_000_000L);
+            insertUsage(1002L, 1_500_000_000);
+
+            mockMvc.perform(get(PATH).with(user(MEMBER)))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.receivedCouponCount").value(2))
+                    .andExpect(jsonPath("$.data.usedCouponCount").value(2))
+                    .andExpect(jsonPath("$.data.totalDiscountAmount").value(3_000_000_000L));
+        }
+
+        @Test
+        void 인증되지_않은_요청은_로그인이_필요하다() throws Exception {
+            mockMvc.perform(get(PATH))
+                    .andExpect(status().isUnauthorized())
+                    .andExpect(jsonPath("$.code").value("AUTH-005"));
+        }
+
+        @ParameterizedTest
+        @EnumSource(value = Role.class, mode = EnumSource.Mode.EXCLUDE, names = "MEMBER")
+        void 회원이_아닌_역할은_조회할_수_없다(Role role) throws Exception {
+            mockMvc.perform(get(PATH).with(user(new CustomUserDetails(17L, role))))
+                    .andExpect(status().isForbidden())
+                    .andExpect(jsonPath("$.code").value("AUTH-006"));
+        }
+
+        private void insertCoupon(long id, long memberId, String status) {
+            insertCoupon(id, memberId, status, 3000);
+        }
+
+        // 정률 할인 메뉴의 스냅샷과 회원 쿠폰을 실제 저장 제약에 맞춰 준비한다.
+        private void insertCoupon(long id, long memberId, String status, long menuPrice) {
+            jdbcTemplate.update("""
+                    INSERT INTO coupon_event
+                        (coupon_event_id, campaign_id, business_date, issue_quantity,
+                         usable_start_at, usable_end_at, status, store_id, store_name,
+                         discount_target_type, discount_type, discount_value,
+                         target_menu_id, target_menu_name, target_menu_price, target_menu_discounted_price,
+                         created_at, updated_at)
+                    VALUES (?, ?, '2026-10-09', 100, '2026-10-09 11:00:00', '2026-10-09 13:00:00',
+                            'ACTIVE', 10, '테스트 매장', 'MENU', 'PERCENT', 50, 1, '테스트 메뉴', ?, ?,
+                            '2026-10-09 00:00:00', '2026-10-09 00:00:00')
+                    """, id, id, menuPrice, menuPrice / 2);
+            jdbcTemplate.update("""
+                    INSERT INTO member_coupon
+                        (member_coupon_id, coupon_event_id, member_id, coupon_code, qr_version, status,
+                         usable_start_at, usable_end_at, created_at, updated_at)
+                    VALUES (?, ?, ?, UNHEX(LPAD(HEX(?), 32, '0')), 0, ?,
+                            '2026-10-09 11:00:00', '2026-10-09 13:00:00',
+                            '2026-10-09 11:00:00', '2026-10-09 11:00:00')
+                    """, id, id, memberId, id, status);
+        }
+
+        private void insertUsage(long memberCouponId, int discountAmount) {
+            jdbcTemplate.update("""
+                    INSERT INTO coupon_usage_history
+                        (member_coupon_id, store_id, discount_amount, created_at, updated_at)
+                    VALUES (?, 10, ?, '2026-10-09 12:00:00', '2026-10-09 12:00:00')
+                    """, memberCouponId, discountAmount);
+        }
+    }
+
+    @Nested
     @DisplayName("일일 발급 한도 조회")
     @Transactional
     class IssuanceLimitQuery {

@@ -5,7 +5,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.when;
 
 import com.launchcatch.coupon.dto.CouponIssuanceLimitResponse;
+import com.launchcatch.coupon.dto.CouponSummaryResponse;
 import com.launchcatch.coupon.repository.CouponDailyLimitRepository;
+import com.launchcatch.coupon.repository.MemberCouponRepository;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -13,6 +15,7 @@ import java.time.ZoneOffset;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -23,12 +26,13 @@ import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.test.util.ReflectionTestUtils;
 
 @ExtendWith(MockitoExtension.class)
-@DisplayName("일일 발급 한도 조회")
+@DisplayName("쿠폰 조회 서비스")
 class CouponLookUpServiceTest {
 
     private static final LocalDate TODAY = LocalDate.of(2026, 10, 10);
 
     @Mock CouponDailyLimitRepository repository;
+    @Mock MemberCouponRepository memberCouponRepository;
 
     private CouponLookUpService service;
 
@@ -90,9 +94,33 @@ class CouponLookUpServiceTest {
                 .isInstanceOf(DataAccessResourceFailureException.class);
     }
 
+    @Nested
+    @DisplayName("쿠폰 통계 조회")
+    class SummaryQuery {
+
+        @Test
+        void 요청한_회원의_집계_결과를_반환한다() {
+            when(memberCouponRepository.findSummaryByMemberId(17L))
+                    .thenReturn(new CouponSummaryResponse(12, 8, 24000));
+
+            CouponSummaryResponse response = service.getSummary(17L);
+
+            assertThat(response).isEqualTo(new CouponSummaryResponse(12, 8, 24000));
+        }
+
+        @Test
+        void 조회_실패를_0건으로_처리하지_않는다() {
+            when(memberCouponRepository.findSummaryByMemberId(17L))
+                    .thenThrow(new DataAccessResourceFailureException("test database unavailable"));
+
+            assertThatThrownBy(() -> service.getSummary(17L))
+                    .isInstanceOf(DataAccessResourceFailureException.class);
+        }
+    }
+
     // 지정한 시계와 일일 발급 한도를 사용하는 조회 서비스를 구성한다.
     private CouponLookUpService configuredService(Clock clock, int dailyLimit) {
-        CouponLookUpService configured = new CouponLookUpService(repository, clock);
+        CouponLookUpService configured = new CouponLookUpService(memberCouponRepository, repository, clock);
         ReflectionTestUtils.setField(configured, "dailyLimit", dailyLimit);
         return configured;
     }
