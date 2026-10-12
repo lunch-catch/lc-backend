@@ -17,7 +17,8 @@ public class AdminLoginSecurityConfig {
         return defaults.apply(http)
                 .securityMatcher("/v1/admin/auth/**")
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers(HttpMethod.POST, "/v1/admin/auth/tokens").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/v1/admin/auth/tokens",
+                                "/v1/admin/auth/tokens:refresh").permitAll()
                         .anyRequest().denyAll())
                 .build();
     }
