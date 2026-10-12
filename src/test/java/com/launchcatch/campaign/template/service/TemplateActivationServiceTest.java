@@ -79,7 +79,7 @@ class TemplateActivationServiceTest {
     private Template publishedTemplate() throws Exception {
         Template template = Template.createDraft("가을 신메뉴");
         setId(template, TEMPLATE_ID);
-        template.publish("<div>1</div>", LocalDateTime.now(FIXED_CLOCK));
+        template.publish("<div>1</div>", LocalDateTime.now(FIXED_CLOCK), 1);
         return template;
     }
 
