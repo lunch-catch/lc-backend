@@ -72,7 +72,7 @@ public enum AuthErrorCode implements ErrorCode {
      *
      * Access 가 30분이라 사용자마다 30분에 한 번은 이 응답을 받는다. 그것이 설계대로 도는
      * 모습이므로 로그로 남기지 않는다. 클라이언트는 이 코드를 보고 재발급을 한 번 부른다
-     * (api-spec/README.md 의 인증 절).
+     * (api-spec/api-spec.md 의 인증 절).
      */
     LOGIN_REQUIRED(HttpStatus.UNAUTHORIZED, "AUTH-005",
             "로그인이 필요합니다.") {

@@ -38,7 +38,7 @@ public class AuthExceptionHandler {
 
     /*
      * Access Token 이 없거나 유효하지 않거나 로그아웃 전에 발급된 경우다 (AUTH-005).
-     * 클라이언트는 이 코드를 보고 재발급을 한 번 부른다 (api-spec/README.md 의 인증 절).
+     * 클라이언트는 이 코드를 보고 재발급을 한 번 부른다 (api-spec/api-spec.md 의 인증 절).
      */
     @ExceptionHandler(AuthenticationException.class)
     public ResponseEntity<ResponseEnvelope<Void>> handleAuthentication(

@@ -179,7 +179,7 @@ REQUIRED, OUTPUT_ONLY, IMMUTABLE 같은 동작을 명시하면 사용자가 무�
 
 ### metadata 는 두지 않는다
 
-AIP-193 의 `ErrorInfo` 는 `reason`, `domain`, `metadata` 셋인데 **우리는 앞의 둘만 내보낸다.**
+AIP-193 의 `ErrorInfo` 는 `reason`, `domain`, `metadata` 셋인데 **이 저장소는 앞의 둘만 내보낸다.**
 `API-7-03` 이 요구하는 표준 구조에서 의도적으로 한 칸 벗어난 것이라 여기 적어 둔다.
 
 ```json

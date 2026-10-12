@@ -77,11 +77,11 @@ LLM 리뷰는 CodeRabbit 이 맡고 **차단하지 않는다.** 재현율이 측
 
 `workflow_dispatch` 는 인프라를 다시 세운 뒤 쓰는 경로다. 운영은 `lc-infra` 의 `apply.sh` 가 다시 걸고, 개발 서버는 새로 올린 뒤 최신 `develop` 을 다시 띄울 때 쓴다. **해당 브랜치로 실행해야 한다.** 배포 역할의 신뢰 정책이 브랜치를 못 박아 두어 다른 브랜치로 돌리면 STS 가 자격증명을 주지 않는다.
 
-마이그레이션은 기동할 때 돈다. `db/migration/{도메인}` 마다 Flyway 를 따로 돌리고 이력도 도메인별로 둔다. 규약은 `../../src/main/resources/db/migration/README.md` 에 있다.
+마이그레이션은 기동할 때 돈다. `db/migration/{도메인}` 마다 Flyway 를 따로 돌리고 이력도 도메인별로 둔다. 규약은 `../../src/main/resources/db/migration/migration.md` 에 있다.
 
 운영 배포는 이미 올린 이미지가 있으면 push 를 건너뛴다. ECR 저장소가 IMMUTABLE 이라 같은 SHA 를 다시 밀 수 없어서, 사전 점검에서 멈춘 배포를 재실행하면 그 단계에서 막혔다.
 
-배치 서버는 같은 jar 를 `batch` 프로필로 띄운 서버다. 구성과 운영 규칙은 `../ops/런치캐치_배치_운영.md` 에 있다.
+배치 서버는 같은 jar 를 `batch` 프로필로 띄운 서버다. 구성과 운영 규칙은 `../design/ops/런치캐치_배치_운영.md` 에 있다.
 
 ## 5. 릴리스
 
