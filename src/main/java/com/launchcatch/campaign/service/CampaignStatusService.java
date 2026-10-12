@@ -82,7 +82,7 @@ public class CampaignStatusService {
     }
 
     private Campaign findOrThrow(Long campaignId) {
-        return campaignRepository.findById(campaignId)
+        return campaignRepository.findByIdForUpdate(campaignId)
                 .orElseThrow(() -> new IllegalArgumentException("campaign not found: " + campaignId));
     }
 
