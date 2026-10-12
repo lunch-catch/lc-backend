@@ -88,8 +88,13 @@ public class Campaign extends BaseTimeEntity {
     @Column(name = "target_age_groups", nullable = false, length = 50)
     private List<AgeGroup> targetAgeGroups;
 
-    @Column(name = "daily_budget", nullable = false)
-    private long dailyBudget;
+    /*
+     * V3__campaign_draft_nullable.sql 이 단계별 저장 중인 DRAFT가 예산을 아직
+     * 정하지 않을 수 있게 이 컬럼을 NULL 허용으로 바꿔 뒀다. primitive long이면
+     * NULL 행을 읽는 순간 Hibernate가 매핑에 실패한다.
+     */
+    @Column(name = "daily_budget")
+    private Long dailyBudget;
 
     @Column(name = "start_date", nullable = false)
     private LocalDate startDate;
@@ -103,13 +108,14 @@ public class Campaign extends BaseTimeEntity {
             int issueQuantity, LocalTime usableStartTime, LocalTime usableEndTime,
             Integer minOrderAmount, String notice,
             int targetRadius, TargetGender targetGender, List<AgeGroup> targetAgeGroups,
-            long dailyBudget, LocalDate startDate, LocalDate endDate,
+            Long dailyBudget, LocalDate startDate, LocalDate endDate,
             LocalDateTime now) {
         requireDiscountTarget(discountTargetType, targetMenuId);
         requireDiscountValue(discountType, discountValue);
         requirePeriod(startDate, endDate);
         requireUsableTime(usableStartTime, usableEndTime);
-        requireQuantityAndBudget(issueQuantity, dailyBudget);
+        requireQuantity(issueQuantity);
+        requireDailyBudget(dailyBudget);
         this.ownerId = Objects.requireNonNull(ownerId, "ownerId");
         this.storeId = Objects.requireNonNull(storeId, "storeId");
         this.status = CampaignStatus.DRAFT;
@@ -137,7 +143,7 @@ public class Campaign extends BaseTimeEntity {
             int issueQuantity, LocalTime usableStartTime, LocalTime usableEndTime,
             Integer minOrderAmount, String notice,
             int targetRadius, TargetGender targetGender, List<AgeGroup> targetAgeGroups,
-            long dailyBudget, LocalDate startDate, LocalDate endDate,
+            Long dailyBudget, LocalDate startDate, LocalDate endDate,
             LocalDateTime now) {
         return new Campaign(
                 ownerId, storeId,
@@ -208,8 +214,13 @@ public class Campaign extends BaseTimeEntity {
         }
     }
 
+    /*
+     * startDate, endDate는 V3__campaign_draft_nullable.sql 이후로 단계별 저장 중인
+     * DRAFT가 아직 집행 기간을 안 정했을 수 있어 둘 다 NULL일 수 있다. 둘 다 있을
+     * 때만 순서를 검사한다.
+     */
     private static void requirePeriod(LocalDate startDate, LocalDate endDate) {
-        if (endDate.isBefore(startDate)) {
+        if (startDate != null && endDate != null && endDate.isBefore(startDate)) {
             throw new IllegalArgumentException("endDate must not be before startDate");
         }
     }
@@ -220,9 +231,19 @@ public class Campaign extends BaseTimeEntity {
         }
     }
 
-    private static void requireQuantityAndBudget(int issueQuantity, long dailyBudget) {
-        if (issueQuantity <= 0 || dailyBudget <= 0) {
-            throw new IllegalArgumentException("issueQuantity and dailyBudget must be positive");
+    private static void requireQuantity(int issueQuantity) {
+        if (issueQuantity <= 0) {
+            throw new IllegalArgumentException("issueQuantity must be positive: " + issueQuantity);
+        }
+    }
+
+    /*
+     * dailyBudget도 V3__campaign_draft_nullable.sql 이후로 단계별 저장 중인 DRAFT가
+     * 아직 예산을 안 정했을 수 있어 NULL일 수 있다. 값이 있을 때만 양수인지 본다.
+     */
+    private static void requireDailyBudget(Long dailyBudget) {
+        if (dailyBudget != null && dailyBudget <= 0) {
+            throw new IllegalArgumentException("dailyBudget must be positive when present: " + dailyBudget);
         }
     }
 
