@@ -2,12 +2,12 @@
 
 관리자·점주·사용자의 **공통 토큰 정책, 토큰 재발급, 로그아웃**과 **사용자의 카카오 로그인/가입** API의 요청, 응답, 오류를 적는다.
 
-관리자 계정 발급과 로그인은 [관리자 명세](admin-api-spec.md), 점주 회원가입과 로그인 및 최초 튜토리얼 완료 처리는 `owner.md`에서 다룬다. 관리자·점주 로그인 API는 이 문서에 중복 정의하지 않는다. 사용자 온보딩과 탈퇴 `member.md`, 점주 가게 등록은 `store.md`에서 다룬다.
+관리자 계정 발급과 로그인은 [admin-api-spec.md](./admin-api-spec.md), 점주 회원가입과 로그인 및 최초 튜토리얼 완료 처리는 `owner-api-spec.md`에서 다룬다. 관리자·점주 로그인 API는 이 문서에 중복 정의하지 않는다. 사용자 온보딩과 탈퇴 `member.md`, 점주 가게 등록은 `store-api-spec.md`에서 다룬다.
 
 세 역할은 공통 토큰 정책을 따르므로, 토큰 정책과 재발급·로그아웃 명세를 이 문서에 모았다.
 
 공통 규약(경로, 응답 봉투, 상태 코드, 식별자, 시각)은 `api-spec.md`를 따르고 여기서는 반복하지 않는다.
-서버가 내부에서 어떻게 처리하는지와 그렇게 정한 이유는 설계서 `auth-api-design.md` 에 있다.
+서버가 내부에서 어떻게 처리하는지와 그렇게 정한 이유는 설계서 [auth-api-design.md](../design/auth/auth-api-design.md) 에 있다.
 
 ## 목록
 
@@ -26,7 +26,7 @@
 
 관리자·점주 로그인은 전체 인증 API를 안내하기 위해 목록에 포함한다.
 
-상세 명세는 각각 [관리자 명세](admin-api-spec.md), `owner.md`에서 정의하며, 이 문서에서는 중복 정의하지 않는다.
+상세 명세는 각각 [admin-api-spec.md](./admin-api-spec.md), `owner-api-spec.md`에서 정의하며, 이 문서에서는 중복 정의하지 않는다.
 
 "공개"는 기존 Access Token 없이 부를 수 있다는 뜻이다.
 
@@ -34,7 +34,7 @@
 
 README의 "로그인 없이 부를 수 있는 경로"는 이 표의 공개 API 7개와 점주 회원가입이다. 점주 회원가입은 아래 이유로 점주 도메인 문서에 있다.
 
-**점주 회원가입은 `owner.md`에서 다룬다.** 로그인 전에 열린 경로이지만 계정을 만드는 일이고
+**점주 회원가입은 `owner-api-spec.md`에서 다룬다.** 로그인 전에 열린 경로이지만 계정을 만드는 일이고
 토큰 정책과 무관하다. 쿠키도 내려주지 않는다. 점주 도메인의 문서가 소유한다.
 
 ## 공통 토큰 정책
@@ -44,7 +44,7 @@ README의 "로그인 없이 부를 수 있는 경로"는 이 표의 공개 API 7
 | Access Token | JWT | 30분 | `accessToken`, `HttpOnly`, `SameSite=Strict`, `Path=/`, `Max-Age=1800` |
 | Refresh Token | Opaque(무작위 문자열) | 관리자 1일, 점주 14일, 사용자 14일 | `refreshToken`, `HttpOnly`, `SameSite=Strict`, 역할별 `Path` 와 `Max-Age` |
 
-**Access Token 은 인증이 필요한 모든 요청에 실려야 하므로 `Path=/` 다.Refresh Token 은 재발급과 로그아웃에서만 쓰므로 역할별로 좁힌다.**
+**Access Token 은 인증이 필요한 모든 요청에 실려야 하므로 `Path=/` 다. Refresh Token 은 재발급과 로그아웃에서만 쓰므로 역할별로 좁힌다.**
 
 | 역할 | `Path` | `Max-Age` |
 | --- | --- | --- |
@@ -66,17 +66,23 @@ Set-Cookie: refreshToken=<opaque>; HttpOnly; SameSite=Strict; Path=/v1/auth/; Ma
 
 상태 변경을 반영하기 위한 토큰 재발급은 필수가 아니며, 토큰 만료에 따른 재발급 정책은 유지한다.
 
+## 로그인·재발급 요청 제한
+
+IP별 1분 고정 윈도우에서 인증 요청 10회를 허용한다. 대상 로그인·재발급 경로들이 같은 IP 카운터를 공유한다. 초과 시 `429`와 남은 대기 시간(초)의 `Retry-After`를 반환하며 JSON 본문이나 오류 코드는 없다. 캐시 장애로 횟수를 확인하지 못하면 요청을 통과시킨다.
+
+기본 토큰 수명은 환경 설정으로 바꿀 수 있다. `JWT_COOKIE_SECURE=true`이면 두 쿠키에 `Secure`가 추가된다. 관리자는 Refresh Token을 항상 persistent cookie로 받는다. `503 AUTH-002`에는 `Retry-After: 1`이 포함된다.
+
 ## 관리자
 
 ### `POST /v1/admin/auth/tokens`
 
-요청·응답·오류는 [관리자 로그인](admin-api-spec.md#관리자-로그인)을 따른다. 서버 처리 절차는 [관리자 로그인 설계](../design/admin/admin-api-design.md#로그인)를 따른다.
+`POST /v1/admin/auth/tokens`의 요청, 응답, 처리 절차 및 오류는 [admin-api-spec.md](./admin-api-spec.md)의 「관리자 로그인」 절을 따른다.
 
 ### `POST /v1/admin/auth/tokens:refresh`
 
-Refresh Token으로 Access Token과 Refresh Token을 새로 발급받는다. 요청 본문은 없고 `refreshToken` 쿠키만 보낸다.
+Refresh Token을 검증하고 Access Token과 Refresh Token을 모두 교체한다(Rotation).
 
-**요청**
+### 인증 및 요청
 
 기존 Access Token은 필요하지 않다. `refreshToken` 쿠키를 사용하며 요청 본문은 없다.
 
@@ -87,28 +93,32 @@ Cookie: refreshToken=<opaque>
 
 Refresh Token은 영문·숫자·`_`·`-`로 이루어진 43자 문자열이다. 쿠키 누락·형식 오류도 `400`이 아닌 `401 AUTH-003`으로 처리한다. 회원·점주 Refresh Token으로 관리자 토큰을 발급받을 수 없다.
 
-**응답 `200 OK`**
+재발급 요청은 동시에 여러 번 보내지 않도록 직렬화한다. 이미 교체된 토큰을 다시 보내면 해당 관리자의 Refresh Token이 모두 폐기될 수 있다. `401 AUTH-003`·`AUTH-004` 또는 회전 결과 미확정의 `503 AUTH-002`를 받으면 다시 로그인한다. 회전 결과를 모르는 상태에서 기존 토큰으로 자동 반복 재시도하지 않는다.
 
-로그인과 동일한 두 `Set-Cookie`를 새 토큰 값으로 반환하며, 기본 쿠키 수명은 Access 30분, Refresh 1일로 다시 설정된다. 응답 본문의 필드와 타입은 [관리자 로그인 응답](admin-api-spec.md#관리자-로그인)을 따른다.
+### 응답 `200 OK`
 
-**동작**
+로그인과 동일한 두 `Set-Cookie`를 새 토큰 값으로 반환하며, 기본 쿠키 수명은 Access 30분, Refresh 1일로 다시 설정된다. JSON 응답도 로그인과 같은 `AdminLoginResponse`다.
 
-1. 쿠키의 Refresh Token이 유효하고 만료되지 않았으며 관리자 계정이 사용 가능한지 확인한다.
-2. 새 Access Token과 Refresh Token을 발급하고 이전 Refresh Token을 교체한다. 같은 토큰으로 동시에 여러 요청이 오더라도 최대 하나만 성공한다.
-3. 이미 교체된 토큰의 재사용이 감지되면 해당 관리자의 Refresh Token을 폐기하고 `AUTH-004`를 반환한다. 폐기 실패 시 `AUTH-002`를 반환한다. 현재 토큰과의 불일치만 확인된 경우에는 `AUTH-003`을 반환할 수 있다.
+```json
+{
+  "code": "SUCCESS",
+  "message": "요청이 성공적으로 처리되었습니다.",
+  "data": {
+    "adminId": 1,
+    "name": "홍길동",
+    "role": "ADMIN"
+  }
+}
+```
 
-서버 처리 절차와 장애 복구는 [관리자 토큰 재발급 설계](../design/admin/admin-api-design.md#토큰-재발급)를 따른다.
-
-**오류**
+### 오류
 
 | 상태 | 코드 | 조건 |
 | --- | --- | --- |
 | `401` | `AUTH-003` | Refresh Token 누락·형식 오류·무효·만료·폐기, 다른 도메인 토큰, 계정 없음·비활성 또는 DB 현재 해시 불일치 |
 | `401` | `AUTH-004` | 이미 교체된 Refresh Token의 재사용이 감지되어 Refresh Token 폐기를 완료함 |
 | `429` | 없음 | IP별 인증 요청 제한 초과. 본문 없이 `Retry-After` 제공 |
-| `503` | `AUTH-002` | DB 저장·폴백 또는 재사용 토큰 폐기 실패, 토큰 회전 결과 미확정. DB 회전 성공 후 Redis 게시만 실패한 경우에는 성공을 유지한다 |
-
-로그인·재발급 요청 제한은 [관리자 명세](admin-api-spec.md#로그인재발급-요청-제한)를 따른다.
+| `503` | `AUTH-002` | 필수 저장소 처리 실패 또는 토큰 회전 결과 미확정 |
 
 ### `DELETE /v1/admin/auth/tokens`
 
@@ -177,14 +187,14 @@ Set-Cookie: refreshToken=; Path=/v1/admin/auth/; Max-Age=0; HttpOnly; SameSite=S
 }
 ```
 
-응답 본문의 계약은 `owner.md`가 소유한다. `ONBOARDING` 점주 응답에는 `tutorialViewed`가 없다.
+응답 본문의 계약은 `owner-api-spec.md`가 소유한다. `ONBOARDING` 점주 응답에는 `tutorialViewed`가 없다.
 
 | 필드 | 뜻 |
 | --- | --- |
 | `email` | 점주 이메일 |
 | `role` | `OWNER` |
 | `status` | `ONBOARDING` 이면 프론트는 입점 등록 화면으로 보낸다. 이 상태에서는 입점 등록 API만 열린다 |
-| `tutorialViewed` | `ACTIVE` 일 때만 싣는다. `false` 면 프론트가 최초 튜토리얼을 보인다. 완료 처리는 `owner.md` |
+| `tutorialViewed` | `ACTIVE` 일 때만 싣는다. `false` 면 프론트가 최초 튜토리얼을 보인다. 완료 처리는 `owner-api-spec.md` |
 
 **동작**
 
@@ -344,7 +354,7 @@ Set-Cookie: refreshToken=; Path=/v1/admin/auth/; Max-Age=0; HttpOnly; SameSite=S
 
 **점주는 상태로 한 번 더 막는다.** 점주 상태가 `ONBOARDING` 이면 입점 등록 API(약관 동의, 가게 기본 정보, 사업자 검증, 영업시간, 이미지, 메뉴, 최종 등록)만 열고 나머지 점주 API는 `403` 이다.
 
-입점 등록 API의 확정 경로는 `store.md`에 있다.
+입점 등록 API의 확정 경로는 `store-api-spec.md`에 있다.
 
 **접근 제어 오류**
 

@@ -1,20 +1,6 @@
 # 관리자 API 설계
 
-HTTP 요청·응답은 [관리자 명세](../../api-spec/admin-api-spec.md)와 [인증 명세](../../api-spec/auth-api-spec.md#관리자)를 따른다. 이 문서는 관리자 서비스의 트랜잭션, 저장 구조와 장애 처리를 정의한다.
-
-## 구현 근거
-
-2026-10-12 확인 기준이다. 별도 기능 브랜치의 설명은 병합 완료나 배포 완료를 의미하지 않는다.
-
-| 기능 | 확인 대상 | 커밋 |
-| --- | --- | --- |
-| 계정 발급·로그인 | [develop](https://github.com/lunch-catch/lc-backend/tree/a828caf82670e5942ede223a80b44d66778d9912) | `a828caf82670e5942ede223a80b44d66778d9912` |
-| 재발급 | [PR #117](https://github.com/lunch-catch/lc-backend/pull/117) | `d332bdad7281b8d4325f9970e2e1caed70771f49` |
-| 로그아웃 | 로컬 feat/admin-logout, [PR #119](https://github.com/lunch-catch/lc-backend/pull/119) | `da3cfbe3a6020e93d26caedeb6307870ed3e6338` |
-
-현재 로컬에는 계정 발급·로그인·로그아웃이 구현되어 있다. 재발급 설계는 feat/admin-token-refresh 브랜치의 별도 구현을 설명한다.
-
-관리자 계정·상태 확인과 서비스 흐름, Access Token 순번 검증과 Redis 폐기 순번 저장소는 `admin`이 담당한다. `auth`는 공통 JWT·쿠키 처리와 도메인 검증 정책을 연결하는 인터페이스를 제공한다. 추가 클레임은 일반 Map으로 서명하고 전달한다. `issuanceVersion` 이름·자료형·검증 규칙은 `AdminAccessTokenClaims`와 관리자 검증기가 소유한다. 감사 로그 저장은 `ops`가 담당한다.
+HTTP 요청·응답은 [관리자 명세](../../api-spec/admin-api-spec.md)와 [인증 명세](../../api-spec/auth-api-spec.md#관리자)를 따른다. 이 문서는 관리자 계정 발급·로그인·토큰 재발급·로그아웃의 트랜잭션, 저장 구조와 장애 처리를 정의한다.
 
 ## 계정 발급
 
@@ -50,23 +36,11 @@ HTTP 요청·응답은 [관리자 명세](../../api-spec/admin-api-spec.md)와 [
 
 DB는 관리자별 현재 Refresh Token 해시 하나를 보관한다. 새 로그인으로 이전 Refresh Token은 대체되지만, 로그인 자체가 이전 Access Token을 모두 폐기하는 것은 아니다. 계정별 로그인 실패 횟수 잠금은 이 구현에 포함하지 않는다.
 
+로그인 감사는 `AdminLoginAuditFilter`가 `ADMIN_LOGIN` 이벤트로 시각·IP·성공 여부·HTTP 상태·소요 시간을 운영 로그에 기록한다. `audit_log` 테이블에는 저장하지 않으며 비밀번호와 토큰 원문도 기록하지 않는다.
+
 ## 토큰 재발급
 
-계약은 [인증 명세의 관리자 절](../../api-spec/auth-api-spec.md#관리자)을 따른다.
-
-### 서버가 하는 일
-
-1. Refresh Token 형식을 검사하고 Redis에서 조회·원자적 비교 및 회전을 수행한다.
-2. Redis 조회 실패·캐시 부재 또는 회전 중 타임아웃 이외의 저장소 예외에서는 DB 백업을 통한 회전을 시도한다. 정상적인 Redis 회전 결과가 실패라면 DB로 우회하지 않는다.
-3. DB 행 잠금 아래 현재 해시·만료 시각·`ACTIVE` 상태·관리자 역할을 확인한다. DB의 현재 토큰과 일치해야 새 토큰으로 교체할 수 있다.
-4. 새 Refresh Token 해시·만료 시각·발급 순번과 `ADMIN_TOKEN_REISSUE` 성공 감사 로그를 같은 트랜잭션에서 저장한다.
-5. Redis에 새 토큰 상태를 게시하고 DB 회전의 `RotationState.version()`을 `issuanceVersion`으로 넣어 새 Access Token을 발급한다. DB 회전이 성공한 후 Redis 게시 실패만 발생한 경우에는 성공을 유지한다.
-
-### 장애 처리
-
-회전 타임아웃은 새 토큰의 Redis 상태를 확인한 경우에만 계속 처리한다. 결과를 확인할 수 없으면 `503 AUTH-002`를 반환한다. DB 회전 결과가 불확실할 때도 커밋 확인·롤백 복구·보상 폐기를 수행하며, 확정하지 못한 결과를 성공으로 반환하지 않는다.
-
-Redis에서 이미 교체된 토큰의 재사용을 감지하면 해당 관리자의 Refresh Token을 폐기하고 `401 AUTH-004`를 반환한다. 폐기 자체가 실패하면 `503 AUTH-002`다. 이 재사용 처리에는 Access Token 폐기 기준 갱신이 포함되지 않는다. Redis 재사용 기록 없이 DB 백업에서 현재 해시가 불일치한 경우에는 `AUTH-003`으로 처리하므로 모든 오래된 토큰 요청이 `AUTH-004`인 것은 아니다.
+회전·복구·재사용 처리 절차는 [인증 설계의 관리자 토큰 재발급 절](../auth/auth-api-design.md#토큰-재발급)을 따른다. Access Token 발급 순번 검증은 아래 [발급 순번 검증과 배포](#발급-순번-검증과-배포)를 따른다.
 
 ## 로그아웃
 
@@ -77,7 +51,7 @@ Redis에서 이미 교체된 토큰의 재사용을 감지하면 해당 관리�
 1. DB 행 잠금 아래 계정이 존재하고 `ACTIVE`이며 인증 역할과 현재 관리자 역할이 일치하는지 확인한다.
 2. DB Refresh Token 해시·만료 시각을 비우고 발급 순번을 증가시킨다.
 3. Redis에서 폐기 순번보다 오래된 토큰과 현재 폐기 대상 해시를 제거한다. 지연된 이전 로그인·재발급 게시도 차단하며 더 최신 발급 상태는 보존한다.
-4. 계정·역할별 Access Token 폐기 순번을 Redis에 단조 증가하도록 저장한다. JWT의 발급 순번이 폐기 순번 이하면 거부한다. JWT 생성 지연에는 상한이 없으므로 폐기 순번에는 TTL을 두지 않는다. 기존 시각 기준도 호환용으로 기록하지만 관리자 검증은 순번만 사용한다.
+4. 계정·역할별 Access Token 폐기 순번을 Redis에 단조 증가하도록 저장한다. JWT의 발급 순번이 폐기 순번 이하면 거부한다. JWT 생성 지연에는 상한이 없으므로 폐기 순번에는 TTL을 두지 않는다. 순번 없는 기존 JWT는 호환용 폐기 시각으로 검증한다.
 5. 필수 폐기 완료 후 별도 트랜잭션으로 `ADMIN_LOGOUT` 성공 감사 로그를 기록한다. 감사 저장만 실패하면 운영 로그를 남기고 로그아웃 성공을 유지한다.
 6. 두 인증 쿠키를 원래 경로와 동일한 경로에서 `Max-Age=0`으로 삭제한다.
 
@@ -87,11 +61,11 @@ DB 폐기와 Redis 정리는 하나의 트랜잭션으로 묶이지 않는다. �
 감사 로그는 필수 토큰 폐기 후 별도 트랜잭션으로 기록한다. 감사 저장 실패가 이미 완료된 폐기를 취소하지 않게 한다.
 폐기 기준 조회의 LENIENT·REQUIRED 정책과 클라이언트가 받는 오류는 인증 명세를 따른다.
 
-## 재발급 기능 통합과 배포
+## 발급 순번 검증과 배포
 
 로그인과 재발급은 DB에서 확정한 `refresh_token_issuance_version`을 JWT의 `issuanceVersion`에 넣는다. 로그아웃보다 앞서 승인된 요청이 뒤늦게 JWT를 생성해도 이전 순번이므로 거부한다. 같은 초의 재로그인은 더 큰 순번이므로 허용한다.
 
-현재 브랜치에는 재발급 서비스가 없다. PR #117을 합칠 때 [연동 패치](admin-token-refresh-access-version.patch)를 함께 적용해야 한다. `AdminTokenService.result`가 `RotationState.version()`을 `AdminAccessTokenClaims.forVersion`으로 변환해 JWT 생성에 전달한다. 순번 없는 기존 관리자 JWT는 공통 모듈의 기존 시각 기준으로 검증한다. 새 관리자 로그인과 재발급은 반드시 DB 순번을 JWT에 넣는다. 이전 서버와 새 서버를 섞어 운영하면 이전 서버가 순번을 검증하지 못하므로 함께 교체한다.
+`AdminTokenService.result`가 `RotationState.version()`을 `AdminAccessTokenClaims.forVersion`으로 변환해 JWT 생성에 전달한다. 순번 없는 기존 관리자 JWT는 공통 모듈의 기존 시각 기준으로 검증한다. 새 관리자 로그인과 재발급은 반드시 DB 순번을 JWT에 넣는다. 이전 서버와 새 서버를 섞어 운영하면 이전 서버가 순번을 검증하지 못하므로 함께 교체한다.
 
 Redis 폐기 순번은 보안 상태다. TTL이나 메모리 축출로 삭제하지 않으며 Redis 데이터 유실 시에는 기존 관리자 JWT를 계속 허용하지 않는 복구 절차가 필요하다. Redis 조회 장애의 LENIENT·REQUIRED 정책은 기존 정책을 유지한다.
 

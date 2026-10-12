@@ -1,10 +1,12 @@
 package com.launchcatch.campaign.template.repository;
 
 import com.launchcatch.campaign.template.entity.TemplateVersion;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -33,6 +35,22 @@ public interface TemplateVersionRepository extends JpaRepository<TemplateVersion
      */
     @Query("select coalesce(max(v.versionNumber), 0) from TemplateVersion v where v.template.id = :templateId")
     int findMaxVersionNumber(@Param("templateId") Long templateId);
+
+    /*
+     * 게시할 버전을 찾을 때 쓴다. 소프트삭제된 버전은 후보에서 제외한다.
+     */
+    Optional<TemplateVersion> findByTemplateIdAndVersionNumberAndDeletedAtIsNull(Long templateId, int versionNumber);
+
+    /*
+     * 버전이 몇 개든 UPDATE한 번으로 소프트삭제한다(엔티티로 하나씩
+     * 불러오면 버전마다 UPDATE가 나가고 안 쓸 HTML까지 읽는다).
+     * findByTemplateIdAndVersionNumberAndDeletedAtIsNull()로 게시할
+     * 버전을 먼저 찾은 뒤에 호출해야 한다. 순서를 바꾸면 그 조회가
+     * 이미 삭제 표시된 행을 걸러내 버전을 못 찾는다.
+     */
+    @Modifying
+    @Query("update TemplateVersion v set v.deletedAt = :now where v.template.id = :templateId and v.deletedAt is null")
+    int softDeleteAllByTemplateId(@Param("templateId") Long templateId, @Param("now") LocalDateTime now);
 
     /*
      * 버전 목록 조회용 커서 페이징이다. versionNumber 가 템플릿 안에서 유일하고

@@ -3,9 +3,26 @@ package com.launchcatch.admin;
 import static org.assertj.core.api.Assertions.*;
 import com.launchcatch.auth.exception.AuthException;
 import java.util.Map;
+import com.launchcatch.auth.Role;
+import com.launchcatch.auth.jwt.JwtTokenProvider;
+import java.time.Clock;
+import java.time.Duration;
 import org.junit.jupiter.api.Test;
 
 class AdminAccessTokenClaimsTest {
+    private final JwtTokenProvider jwt = new JwtTokenProvider(
+            "test-only-secret-for-admin-access-version-0123456789abcdef",
+            Duration.ofMinutes(30).toMillis(), Duration.ofDays(1).toMillis(),
+            Duration.ofDays(14).toMillis(), Duration.ofDays(14).toMillis(), Clock.systemUTC());
+
+    @Test
+    void 승인된_발급_순번을_관리자_Access_Token에_담는다() {
+        String token = jwt.createAccessToken(7L, Role.ADMIN, AdminAccessTokenClaims.forVersion(12L));
+
+        assertThat(jwt.parseClaims(token).get("issuanceVersion", Long.class)).isEqualTo(12L);
+    }
+
+
     @Test
     void 발급_순번을_왕복하고_BIGINT_정밀도를_유지한다() {
         assertThat(AdminAccessTokenClaims.issuanceVersion(AdminAccessTokenClaims.forVersion(Long.MAX_VALUE)))

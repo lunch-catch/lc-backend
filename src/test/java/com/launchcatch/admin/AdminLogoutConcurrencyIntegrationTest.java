@@ -63,6 +63,8 @@ class AdminLogoutConcurrencyIntegrationTest {
     @Autowired private com.launchcatch.admin.service.AdminLogoutService logout;
     @Autowired private com.launchcatch.auth.jwt.AccessTokenValidAfterRepository cutoff;
     @Autowired private com.launchcatch.admin.repository.AdminAccessTokenVersionRepository versions;
+    @Autowired private com.launchcatch.admin.service.AdminTokenService reissue;
+    @Autowired private com.launchcatch.admin.service.AdminAccessTokenVerifier verifier;
     private Long adminId;
 
     @BeforeEach
@@ -111,6 +113,50 @@ class AdminLogoutConcurrencyIntegrationTest {
             assertThat(AdminAccessTokenClaims.issuanceVersion(realJwt.getAdditionalClaims(fresh.accessToken()))).isEqualTo(3L);
             assertThat(versions.isVersionValid(Role.ADMIN, adminId, AdminAccessTokenClaims.issuanceVersion(realJwt.getAdditionalClaims(old.accessToken())))).isFalse();
             assertThat(versions.isVersionValid(Role.ADMIN, adminId, AdminAccessTokenClaims.issuanceVersion(realJwt.getAdditionalClaims(fresh.accessToken())))).isTrue();
+        }
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+    void 재발급_DB커밋_후_지연된_JWT는_로그아웃으로_차단한다(boolean cacheLost) throws Exception {
+        var initial = login.login(new AdminLoginRequest("concurrent.admin", "Freshman!2026"));
+        if (cacheLost) {
+            cache.revokeIfActiveHashMatches(TokenHasher.sha256(initial.refreshToken()), Role.ADMIN, adminId);
+        }
+        var now = java.time.Instant.now();
+        var realJwt = new JwtTokenProvider("test-only-secret-for-delayed-jwt-0123456789abcdef",
+                1800000L, 86400000L, 1209600000L, 1209600000L,
+                java.time.Clock.fixed(now, java.time.ZoneOffset.UTC));
+        var waiting = new CountDownLatch(1);
+        var release = new CountDownLatch(1);
+        var signatures = new AtomicInteger();
+        when(jwt.createAccessToken(eq(adminId), eq(Role.ADMIN), org.mockito.ArgumentMatchers.anyMap()))
+                .thenAnswer(call -> {
+                    if (signatures.incrementAndGet() == 1) {
+                        waiting.countDown();
+                        if (!release.await(30, TimeUnit.SECONDS)) { throw new IllegalStateException("JWT wait timed out"); }
+                    }
+                    return realJwt.createAccessToken(call.getArgument(0), call.getArgument(1), call.getArgument(2));
+                });
+        try (var workers = Executors.newSingleThreadExecutor()) {
+            var delayed = workers.submit(() -> reissue.reissue(initial.refreshToken()));
+            com.launchcatch.admin.dto.AdminLoginResult fresh;
+            try {
+                assertThat(waiting.await(30, TimeUnit.SECONDS)).isTrue();
+                logout.logout(adminId, Role.ADMIN);
+                fresh = login.login(new AdminLoginRequest("concurrent.admin", "Freshman!2026"));
+            } finally { release.countDown(); }
+            var old = delayed.get(30, TimeUnit.SECONDS);
+            assertThat(realJwt.getIssuedAt(old.accessToken())).isEqualTo(realJwt.getIssuedAt(fresh.accessToken()));
+            assertThat(AdminAccessTokenClaims.issuanceVersion(realJwt.getAdditionalClaims(old.accessToken()))).isEqualTo(2L);
+            assertThat(AdminAccessTokenClaims.issuanceVersion(realJwt.getAdditionalClaims(fresh.accessToken()))).isEqualTo(4L);
+            assertThat(verifier.isValid(Role.ADMIN, adminId, realJwt.getIssuedAt(old.accessToken()),
+                    realJwt.getAdditionalClaims(old.accessToken()), com.launchcatch.auth.jwt.CutoffPolicy.REQUIRED)).isFalse();
+            assertThat(verifier.isValid(Role.ADMIN, adminId, realJwt.getIssuedAt(fresh.accessToken()),
+                    realJwt.getAdditionalClaims(fresh.accessToken()), com.launchcatch.auth.jwt.CutoffPolicy.REQUIRED)).isTrue();
+            assertThat(cache.find(old.refreshToken())).isEmpty();
+            assertThat(admins.findById(adminId).orElseThrow().getRefreshTokenHash())
+                    .isEqualTo(TokenHasher.sha256(fresh.refreshToken()));
         }
     }
 

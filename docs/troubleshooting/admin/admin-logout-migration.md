@@ -1,5 +1,7 @@
 # 관리자 로그아웃 이관 (#118)
 
+이 문서는 해당 작업 당시의 변경과 검증 기록이다. 현재 관리자 계정 발급·로그인·토큰 재발급·로그아웃의 계약과 처리 절차는 [관리자 명세](../../api-spec/admin-api-spec.md)와 [관리자 설계](../../design/admin/admin-api-design.md)를 따른다.
+
 Fresh Market의 관리자 로그아웃을 런치캐치의 admin 서비스와 auth 공통 토큰 저장소에 맞게 이관한다.
 
 - API: DELETE /v1/admin/auth/tokens, ADMIN·SUPER_ADMIN, 요청 본문 없음, 성공 204 및 기존 Path의 인증 쿠키 삭제.
