@@ -41,6 +41,8 @@ class AdminLogoutTransactionServiceTest {
         assertThat(admin.getRefreshTokenExpiresAt()).isNull();
         assertThat(state.hash()).isEqualTo("a".repeat(64));
         assertThat(state.version()).isEqualTo(2);
+        assertThat(admin.getAccessTokenRevokedVersion()).isEqualTo(2);
+        assertThat(admin.getAccessTokenValidAfter()).isEqualTo(state.cutoff());
         assertThat(state.cutoff()).isEqualTo(LocalDateTime.now(clock));
         assertThat(state.toString()).doesNotContain("a".repeat(64));
         verifyNoInteractions(audit);

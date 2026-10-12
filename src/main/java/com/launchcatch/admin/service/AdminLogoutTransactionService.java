@@ -30,8 +30,8 @@ class AdminLogoutTransactionService {
         }
         String hash = admin.getRefreshTokenHash();
         LocalDateTime cutoff = LocalDateTime.now(clock);
-        admin.revokeRefreshToken();
-        return new LogoutDbState(hash, admin.getRefreshTokenIssuanceVersion(), cutoff);
+        admin.logoutAt(cutoff);
+        return new LogoutDbState(hash, admin.getAccessTokenRevokedVersion(), admin.getAccessTokenValidAfter());
     }
 
     // 필수 토큰 폐기 완료 후 별도 트랜잭션에서 기록해 감사 저장 실패가 폐기를 롤백하지 않게 한다.

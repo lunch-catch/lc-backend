@@ -35,6 +35,14 @@ import org.testcontainers.utility.DockerImageName;
 @AutoConfigureMockMvc
 @Transactional
 class AdminMemberApiIntegrationTest {
+    @org.springframework.test.context.bean.override.mockito.MockitoBean
+    private com.launchcatch.admin.repository.AdminAccessTokenRevocationRepository adminRevocations;
+
+    @org.junit.jupiter.api.BeforeEach
+    void allowUnrevokedAdminFixture() {
+        org.mockito.Mockito.when(adminRevocations.findRevocation(org.mockito.ArgumentMatchers.any()))
+                .thenReturn(java.util.Optional.of(new com.launchcatch.admin.AdminAccessTokenRevocation(0L, null)));
+    }
 
     private static final String URL = "/v1/admin/members";
 

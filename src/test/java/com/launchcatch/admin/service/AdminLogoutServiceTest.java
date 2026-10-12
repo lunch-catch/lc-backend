@@ -119,6 +119,35 @@ class AdminLogoutServiceTest {
         assertUnavailable();
     }
 
+
+    @ParameterizedTest
+    @EnumSource(value = Role.class, names = {"ADMIN", "SUPER_ADMIN"})
+    void 마지막_Redis_저장에_실패해도_두_JWT는_DB에서_폐기된다(Role role) {
+        var admin = com.launchcatch.admin.entity.Admin.register("logout-test", "password-hash", "관리자", role);
+        admin.issueRefreshToken(hash, now.plusDays(1));
+        long issuedVersion = admin.getRefreshTokenIssuanceVersion();
+        when(transactions.revokeRefreshToken(1L, role)).thenAnswer(invocation -> {
+            admin.logoutAt(now.plusSeconds(1));
+            return new AdminLogoutTransactionService.LogoutDbState(hash,
+                    admin.getAccessTokenRevokedVersion(), admin.getAccessTokenValidAfter());
+        });
+        doThrow(storageFailure()).when(access).invalidateBefore(any(), any(), any(), any());
+        assertThatThrownBy(() -> service.logout(1L, role)).isInstanceOf(AuthException.class);
+        verify(versions).invalidateThroughVersion(role, 1L, admin.getAccessTokenRevokedVersion());
+        var database = mock(com.launchcatch.admin.repository.AdminAccessTokenRevocationRepository.class);
+        when(database.findRevocation(1L)).thenReturn(java.util.Optional.of(
+                new com.launchcatch.admin.AdminAccessTokenRevocation(
+                        admin.getAccessTokenRevokedVersion(), admin.getAccessTokenValidAfter())));
+        var verifier = new AdminAccessTokenVerifier(versions,
+                new com.launchcatch.auth.jwt.AccessTokenCutoffVerifier(access), database);
+        assertThat(verifier.isValidAfter(role, 1L, now, issuedVersion,
+                com.launchcatch.auth.jwt.CutoffPolicy.LENIENT)).isFalse();
+        assertThat(verifier.isValidAfter(role, 1L, now, null,
+                com.launchcatch.auth.jwt.CutoffPolicy.LENIENT)).isFalse();
+        assertThat(admin.getRefreshTokenHash()).isNull();
+        verify(transactions, never()).recordSuccess(any());
+    }
+
     private DataAccessResourceFailureException storageFailure() {
         return new DataAccessResourceFailureException("sensitive-token-raw-or-hash");
     }

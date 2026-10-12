@@ -49,7 +49,7 @@ DB는 관리자별 현재 Refresh Token 해시 하나를 보관한다. 새 로�
 ### 서버가 하는 일
 
 1. DB 행 잠금 아래 계정이 존재하고 `ACTIVE`이며 인증 역할과 현재 관리자 역할이 일치하는지 확인한다.
-2. DB Refresh Token 해시·만료 시각을 비우고 발급 순번을 증가시킨다.
+2. DB Refresh Token 해시·만료 시각을 비우고 발급 순번을 증가시킨다. 같은 트랜잭션에서 Access Token 폐기 순번과 기존 JWT 폐기 시각을 저장한다.
 3. Redis에서 폐기 순번보다 오래된 토큰과 현재 폐기 대상 해시를 제거한다. 지연된 이전 로그인·재발급 게시도 차단하며 더 최신 발급 상태는 보존한다.
 4. 계정·역할별 Access Token 폐기 순번을 Redis에 단조 증가하도록 저장한다. JWT의 발급 순번이 폐기 순번 이하면 거부한다. JWT 생성 지연에는 상한이 없으므로 폐기 순번에는 TTL을 두지 않는다. 순번 없는 기존 JWT는 호환용 폐기 시각으로 검증한다.
 5. 필수 폐기 완료 후 별도 트랜잭션으로 `ADMIN_LOGOUT` 성공 감사 로그를 기록한다. 감사 저장만 실패하면 운영 로그를 남기고 로그아웃 성공을 유지한다.
@@ -57,7 +57,7 @@ DB는 관리자별 현재 Refresh Token 해시 하나를 보관한다. 새 로�
 
 ### 정한 이유와 장애 처리
 
-DB 폐기와 Redis 정리는 하나의 트랜잭션으로 묶이지 않는다. 필수 처리의 부분 실패가 남을 수 있으며 HTTP 응답 정책은 인증 명세를 따른다.
+DB 폐기와 Redis 정리는 하나의 트랜잭션으로 묶이지 않는다. DB 커밋만으로 Refresh Token과 두 형식의 Access Token 폐기가 확정된다. Redis 정리가 실패해도 인증은 DB 폐기 기준을 먼저 확인하므로 미완료된 Redis 저장을 HTTP 재시도로 복구해야 하는 보안 공백이 없다. Redis 정리 실패 시 응답은 기존대로 AUTH-002이며 성공 감사는 남기지 않는다. 남은 캐시 정리는 토큰 허용 여부를 결정하지 않는다.
 감사 로그는 필수 토큰 폐기 후 별도 트랜잭션으로 기록한다. 감사 저장 실패가 이미 완료된 폐기를 취소하지 않게 한다.
 폐기 기준 조회의 LENIENT·REQUIRED 정책과 클라이언트가 받는 오류는 인증 명세를 따른다.
 
@@ -65,9 +65,22 @@ DB 폐기와 Redis 정리는 하나의 트랜잭션으로 묶이지 않는다. �
 
 로그인과 재발급은 DB에서 확정한 `refresh_token_issuance_version`을 JWT의 `issuanceVersion`에 넣는다. 로그아웃보다 앞서 승인된 요청이 뒤늦게 JWT를 생성해도 이전 순번이므로 거부한다. 같은 초의 재로그인은 더 큰 순번이므로 허용한다.
 
-`AdminTokenService.result`가 `RotationState.version()`을 `AdminAccessTokenClaims.forVersion`으로 변환해 JWT 생성에 전달한다. 순번 없는 기존 관리자 JWT는 공통 모듈의 기존 시각 기준으로 검증한다. 새 관리자 로그인과 재발급은 반드시 DB 순번을 JWT에 넣는다. 이전 서버와 새 서버를 섞어 운영하면 이전 서버가 순번을 검증하지 못하므로 함께 교체한다.
+`AdminTokenService.result`가 `RotationState.version()`을 `AdminAccessTokenClaims.forVersion`으로 변환해 JWT 생성에 전달한다. 순번 없는 기존 관리자 JWT도 DB 폐기 시각을 먼저 확인한 뒤 공통 모듈의 기존 시각 기준으로 검증한다. 새 관리자 로그인과 재발급은 반드시 DB 순번을 JWT에 넣는다. 이전 서버와 새 서버를 섞어 운영하면 이전 서버가 순번을 검증하지 못하므로 함께 교체한다.
 
-Redis 폐기 순번은 보안 상태다. TTL이나 메모리 축출로 삭제하지 않으며 Redis 데이터 유실 시에는 기존 관리자 JWT를 계속 허용하지 않는 복구 절차가 필요하다. Redis 조회 장애의 LENIENT·REQUIRED 정책은 기존 정책을 유지한다.
+DB의 access_token_revoked_version과 access_token_valid_after가 폐기의 기준이다. 모든 관리자 Access Token 검증은 별도 읽기 트랜잭션으로 DB를 먼저 확인한다. Redis 키가 없거나 Redis가 장애여도 DB에서 폐기한 토큰은 허용하지 않는다. DB 조회 장애는 LENIENT에서도 인증을 거부하고 REQUIRED에서는 AUTH-002를 반환한다. Redis 조회 장애의 LENIENT·REQUIRED 정책은 DB 검증을 통과한 토큰에만 적용한다. 관리자 인증 요청마다 DB 조회가 추가된다.
+
+
+### 배포와 롤백 절차
+
+현재 backend의 deploy.yml은 infra/scripts/deploy.sh를 호출하는 롤링 배포다. 이 워크플로만으로 구버전과의 혼용 금지를 보장할 수 없다. 실제 운영 배포·롤백은 아직 검증하지 않았다.
+
+1. 관리자 인증 경로와 관리자 토큰을 허용하는 모든 보호 경로의 외부 트래픽을 차단한다. 실행 중인 관리자 로그인·재발급·로그아웃 요청을 종료하고 구버전 인스턴스를 모두 중지한다.
+2. admin V3 마이그레이션을 적용한다. 기존 발급 순번까지 폐기하고 기존 JWT 폐기 시각을 설정하므로 배포 전 Access Token은 무효화된다. 마이그레이션 DB 세션의 시간대는 애플리케이션과 같은 Asia/Seoul인지 확인한다.
+3. DB 폐기 검증이 포함된 버전으로 모든 인스턴스를 교체한다. 인스턴스별 이미지 SHA와 구버전 인스턴스가 0개인지 확인한다.
+4. 새 로그인 성공, 배포 전 JWT 거부, 로그아웃 JWT 거부를 확인한다. 폐기 Redis 키 삭제 후에도 거부되는지 확인한 뒤 트래픽을 재개한다.
+5. 롤백은 DB 폐기 검증을 유지하는 이미지로만 수행한다. V3 컬럼과 폐기 데이터를 보존한다. 해당 검증이 없는 구버전으로 돌아가야 한다면 트래픽 차단을 유지하고 관리자 JWT 서명 키를 교체하여 기존 JWT를 전부 무효화한다. 공용 키를 사용하면 다른 역할도 재로그인이 필요하다. 모든 구버전 인스턴스가 새 키만 사용하는지 검증한 뒤 트래픽을 재개한다.
+
+운영자는 차단·재개 시각, 인스턴스별 이미지 SHA, V3 적용 결과, 검증 응답을 배포 기록에 남긴다. 해당 기록이 없으면 혼용 없는 배포를 완료했다고 판단하지 않는다.
 
 ## 저장 구조와 감사 로그
 
@@ -86,6 +99,8 @@ Redis 폐기 순번은 보안 상태다. TTL이나 메모리 축출로 삭제하
 | Refresh Token SHA-256 해시 | `refresh_token_hash` |
 | Refresh Token 만료 시각 | `refresh_token_expires_at` |
 | 로그인·재발급·폐기 순번 | `refresh_token_issuance_version` |
+| Access Token 폐기 순번 상한 | `access_token_revoked_version` |
+| 기존 JWT 폐기 시각 | `access_token_valid_after` |
 | 비활성화 시각 | `deleted_at` |
 | 생성·수정 시각 | `created_at`, `updated_at` |
 

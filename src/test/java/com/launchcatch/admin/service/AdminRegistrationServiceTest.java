@@ -32,6 +32,7 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.SimpleTransactionStatus;
 
 class AdminRegistrationServiceTest {
+    private final com.launchcatch.admin.repository.AdminAccessTokenRevocationRepository revocations = mock(com.launchcatch.admin.repository.AdminAccessTokenRevocationRepository.class);
     private final AdminRepository repository = mock(AdminRepository.class);
     private final AuditLogWriter audit = mock(AuditLogWriter.class);
     private final PasswordEncoder encoder = spy(new BCryptPasswordEncoder());
@@ -40,10 +41,11 @@ class AdminRegistrationServiceTest {
     private static final LocalDateTime ISSUED_AT = LocalDateTime.of(2026, 10, 8, 10, 0);
     private final AdminAccessTokenVersionRepository cutoff = mock(AdminAccessTokenVersionRepository.class);
     private final AdminRegistrationService service =
-            new AdminRegistrationService(repository, audit, encoder, transactions, new AdminAccessTokenVerifier(cutoff, mock(AccessTokenCutoffVerifier.class)));
+            new AdminRegistrationService(repository, audit, encoder, transactions, new AdminAccessTokenVerifier(cutoff, mock(AccessTokenCutoffVerifier.class), revocations));
 
     @BeforeEach
     void setUp() {
+        when(revocations.findRevocation(any())).thenReturn(java.util.Optional.of(new com.launchcatch.admin.AdminAccessTokenRevocation(0L, null)));
         when(transactions.getTransaction(any())).thenReturn(transaction);
         when(cutoff.isVersionValid(Role.SUPER_ADMIN, 1L, 1L)).thenReturn(true);
     }

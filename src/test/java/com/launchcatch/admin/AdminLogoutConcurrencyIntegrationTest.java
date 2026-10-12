@@ -61,7 +61,8 @@ class AdminLogoutConcurrencyIntegrationTest {
     @MockitoBean private JwtTokenProvider jwt;
     @org.springframework.test.context.bean.override.mockito.MockitoSpyBean private RefreshTokenRepository cache;
     @Autowired private com.launchcatch.admin.service.AdminLogoutService logout;
-    @Autowired private com.launchcatch.auth.jwt.AccessTokenValidAfterRepository cutoff;
+    @org.springframework.test.context.bean.override.mockito.MockitoSpyBean private com.launchcatch.auth.jwt.AccessTokenValidAfterRepository cutoff;
+    @Autowired private org.springframework.data.redis.core.StringRedisTemplate redis;
     @Autowired private com.launchcatch.admin.repository.AdminAccessTokenVersionRepository versions;
     @Autowired private com.launchcatch.admin.service.AdminTokenService reissue;
     @Autowired private com.launchcatch.admin.service.AdminAccessTokenVerifier verifier;
@@ -254,5 +255,28 @@ class AdminLogoutConcurrencyIntegrationTest {
         cutoff.invalidateBefore(Role.ADMIN, adminId, early, Duration.ofMinutes(30));
         assertThat(cutoff.isValidAfter(Role.ADMIN, adminId, early.plusSeconds(1))).isFalse();
         assertThat(cutoff.isValidAfter(Role.ADMIN, adminId, latest)).isTrue();
+    }
+
+    @Test
+    void 마지막_Redis_저장실패_후_커밋된_DB가_두_JWT를_계속_차단한다() {
+        login.login(new AdminLoginRequest("concurrent.admin", "Freshman!2026"));
+        var before = admins.findById(adminId).orElseThrow();
+        long version = before.getRefreshTokenIssuanceVersion();
+        var issuedAt = java.time.LocalDateTime.now().minusSeconds(1);
+        org.mockito.Mockito.doThrow(new org.springframework.dao.DataAccessResourceFailureException("unavailable"))
+                .when(cutoff).invalidateBefore(eq(Role.ADMIN), eq(adminId), any(), any());
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> logout.logout(adminId, Role.ADMIN))
+                .isInstanceOf(com.launchcatch.auth.exception.AuthException.class);
+        var committed = admins.findById(adminId).orElseThrow();
+        assertThat(committed.getRefreshTokenHash()).isNull();
+        assertThat(committed.getAccessTokenRevokedVersion()).isGreaterThanOrEqualTo(version);
+        assertThat(committed.getAccessTokenValidAfter()).isAfter(issuedAt);
+        assertThat(versions.isVersionValid(Role.ADMIN, adminId, version)).isFalse();
+        redis.delete(java.util.List.of("accessTokenRevokedVersion:ADMIN:" + adminId,
+                "accessTokenValidAfter:ADMIN:" + adminId));
+        assertThat(verifier.isValidAfter(Role.ADMIN, adminId, issuedAt, version,
+                com.launchcatch.auth.jwt.CutoffPolicy.LENIENT)).isFalse();
+        assertThat(verifier.isValidAfter(Role.ADMIN, adminId, issuedAt, null,
+                com.launchcatch.auth.jwt.CutoffPolicy.LENIENT)).isFalse();
     }
 }

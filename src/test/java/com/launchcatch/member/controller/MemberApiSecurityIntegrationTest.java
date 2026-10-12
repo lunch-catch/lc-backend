@@ -28,6 +28,14 @@ import org.testcontainers.utility.DockerImageName;
 @AutoConfigureMockMvc
 @Transactional
 class MemberApiSecurityIntegrationTest {
+    @org.springframework.test.context.bean.override.mockito.MockitoBean
+    private com.launchcatch.admin.repository.AdminAccessTokenRevocationRepository adminRevocations;
+
+    @org.junit.jupiter.api.BeforeEach
+    void allowUnrevokedAdminFixture() {
+        org.mockito.Mockito.when(adminRevocations.findRevocation(org.mockito.ArgumentMatchers.any()))
+                .thenReturn(java.util.Optional.of(new com.launchcatch.admin.AdminAccessTokenRevocation(0L, null)));
+    }
 
     private static final String ME = "/v1/members/me";
 

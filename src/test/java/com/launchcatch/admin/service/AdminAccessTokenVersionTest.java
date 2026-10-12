@@ -25,6 +25,7 @@ import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.security.core.context.SecurityContextHolder;
 
 class AdminAccessTokenVersionTest {
+    private final com.launchcatch.admin.repository.AdminAccessTokenRevocationRepository revocations = mock(com.launchcatch.admin.repository.AdminAccessTokenRevocationRepository.class);
     private final Instant now = Instant.now();
     private final AdminAccessTokenVersionRepository repository = mock(AdminAccessTokenVersionRepository.class);
 
@@ -48,6 +49,11 @@ class AdminAccessTokenVersionTest {
         assertThat(AdminAccessTokenClaims.issuanceVersion(jwt.getAdditionalClaims(token))).isEqualTo(10L);
         assertAuthenticated(jwt, token, false);
         verify(repository).isVersionValid(role, 1L, 10L);
+    }
+
+    @org.junit.jupiter.api.BeforeEach
+    void databaseAllowsUnrevokedTokens() {
+        when(revocations.findRevocation(any())).thenReturn(java.util.Optional.of(new com.launchcatch.admin.AdminAccessTokenRevocation(0L, null)));
     }
 
     @Test
@@ -81,7 +87,7 @@ class AdminAccessTokenVersionTest {
         SecurityContextHolder.clearContext();
         var request = new MockHttpServletRequest("GET", "/v1/admin/test");
         request.setCookies(new Cookie("accessToken", token));
-        new JwtAuthenticationFilter(jwt, legacy, java.util.List.of(new AdminAccessTokenVerifier(repository, new AccessTokenCutoffVerifier(legacy)))).doFilter(request, new MockHttpServletResponse(), (req, res) -> {
+        new JwtAuthenticationFilter(jwt, legacy, java.util.List.of(new AdminAccessTokenVerifier(repository, new AccessTokenCutoffVerifier(legacy), revocations))).doFilter(request, new MockHttpServletResponse(), (req, res) -> {
             assertThat(SecurityContextHolder.getContext().getAuthentication() != null).isEqualTo(expected);
         });
     }

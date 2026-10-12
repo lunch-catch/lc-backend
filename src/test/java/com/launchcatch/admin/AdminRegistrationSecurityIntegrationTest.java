@@ -173,10 +173,15 @@ class AdminRegistrationSecurityIntegrationTest {
         @Bean PasswordEncoder encoder() { return mock(PasswordEncoder.class); }
         @Bean AuditLogWriter audit() { return mock(AuditLogWriter.class); }
         @Bean PlatformTransactionManager transactions() { return mock(PlatformTransactionManager.class); }
+        @Bean com.launchcatch.admin.repository.AdminAccessTokenRevocationRepository revocations() {
+            var repository = mock(com.launchcatch.admin.repository.AdminAccessTokenRevocationRepository.class);
+            when(repository.findRevocation(any())).thenReturn(java.util.Optional.of(new com.launchcatch.admin.AdminAccessTokenRevocation(0L, null)));
+            return repository;
+        }
         @Bean AdminAccessTokenVersionRepository versions() { return mock(AdminAccessTokenVersionRepository.class); }
         @Bean AdminAccessTokenVerifier cutoffVerifier(AdminAccessTokenVersionRepository versions,
-                AccessTokenValidAfterRepository cutoff) {
-            return new AdminAccessTokenVerifier(versions, new AccessTokenCutoffVerifier(cutoff));
+                AccessTokenValidAfterRepository cutoff, com.launchcatch.admin.repository.AdminAccessTokenRevocationRepository revocations) {
+            return new AdminAccessTokenVerifier(versions, new AccessTokenCutoffVerifier(cutoff), revocations);
         }
         @Bean AdminRegistrationService registration(AdminRepository admins, AuditLogWriter audit,
                 PasswordEncoder encoder, PlatformTransactionManager transactions, AdminAccessTokenVerifier verifier) {

@@ -43,4 +43,29 @@ class AdminAccessTokenVersionRedisIntegrationTest {
                     .isEqualTo(Long.toString(Long.MAX_VALUE));
         } finally { connection.destroy(); }
     }
+
+    @Test
+    void Redis_폐기키를_삭제해도_DB가_이전_토큰을_차단한다() {
+        var connection = new LettuceConnectionFactory(VALKEY.getHost(), VALKEY.getMappedPort(6379));
+        connection.afterPropertiesSet();
+        try {
+            var redis = new StringRedisTemplate(connection);
+            var versions = new AdminAccessTokenVersionRepository(redis);
+            var database = org.mockito.Mockito.mock(com.launchcatch.admin.repository.AdminAccessTokenRevocationRepository.class);
+            var cutoff = java.time.LocalDateTime.of(2026, 10, 12, 12, 0);
+            org.mockito.Mockito.when(database.findRevocation(2L)).thenReturn(java.util.Optional.of(
+                    new AdminAccessTokenRevocation(11L, cutoff)));
+            var verifier = new AdminAccessTokenVerifier(versions,
+                    new AccessTokenCutoffVerifier(new AccessTokenValidAfterRepository(redis)), database);
+            versions.invalidateThroughVersion(Role.ADMIN, 2L, 11L);
+            redis.delete(java.util.List.of("accessTokenRevokedVersion:ADMIN:2", "accessTokenValidAfter:ADMIN:2"));
+            assertThat(versions.isVersionValid(Role.ADMIN, 2L, 10L)).isTrue();
+            assertThat(verifier.isValidAfter(Role.ADMIN, 2L, cutoff.minusSeconds(1), 10L,
+                    com.launchcatch.auth.jwt.CutoffPolicy.LENIENT)).isFalse();
+            assertThat(verifier.isValidAfter(Role.ADMIN, 2L, cutoff.minusSeconds(1), null,
+                    com.launchcatch.auth.jwt.CutoffPolicy.LENIENT)).isFalse();
+            assertThat(verifier.isValidAfter(Role.ADMIN, 2L, cutoff, 12L,
+                    com.launchcatch.auth.jwt.CutoffPolicy.LENIENT)).isTrue();
+        } finally { connection.destroy(); }
+    }
 }

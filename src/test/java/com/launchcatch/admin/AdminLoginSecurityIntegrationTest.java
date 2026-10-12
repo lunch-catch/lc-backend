@@ -431,10 +431,15 @@ class AdminLoginSecurityIntegrationTest {
         @Bean AdminRepository admins() { return mock(AdminRepository.class); }
         @Bean RefreshTokenRepository refreshTokens() { return mock(RefreshTokenRepository.class); }
         @Bean AccessTokenValidAfterRepository legacyCutoff() { return mock(AccessTokenValidAfterRepository.class); }
+        @Bean com.launchcatch.admin.repository.AdminAccessTokenRevocationRepository revocations() {
+            var repository = mock(com.launchcatch.admin.repository.AdminAccessTokenRevocationRepository.class);
+            when(repository.findRevocation(any())).thenReturn(java.util.Optional.of(new com.launchcatch.admin.AdminAccessTokenRevocation(0L, null)));
+            return repository;
+        }
         @Bean AdminAccessTokenVersionRepository cutoff() { return mock(AdminAccessTokenVersionRepository.class); }
         @Bean AdminAccessTokenVerifier accessTokenVerifier(AdminAccessTokenVersionRepository versions,
-                AccessTokenValidAfterRepository legacy) {
-            return new AdminAccessTokenVerifier(versions, new AccessTokenCutoffVerifier(legacy));
+                AccessTokenValidAfterRepository legacy, com.launchcatch.admin.repository.AdminAccessTokenRevocationRepository revocations) {
+            return new AdminAccessTokenVerifier(versions, new AccessTokenCutoffVerifier(legacy), revocations);
         }
         @Bean StringRedisTemplate redisTemplate() { return mock(StringRedisTemplate.class); }
         @Bean PlatformTransactionManager transactions() { return mock(PlatformTransactionManager.class); }
