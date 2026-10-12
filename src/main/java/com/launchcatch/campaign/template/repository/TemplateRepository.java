@@ -1,6 +1,7 @@
 package com.launchcatch.campaign.template.repository;
 
 import com.launchcatch.campaign.template.entity.Template;
+import java.util.List;
 import java.util.Optional;
 import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -9,6 +10,12 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 public interface TemplateRepository extends JpaRepository<Template, Long> {
+
+    /*
+     * 목록 조회용이다. 템플릿은 최대 10개로 제한돼 있어 페이징 없이 전체를
+     * createdAt 최신순으로 가져온다.
+     */
+    List<Template> findAllByOrderByCreatedAtDesc();
 
     /*
      * 수정 저장 시 행 잠금을 걸고 조회한다(SELECT ... FOR UPDATE). 같은 템플릿을
