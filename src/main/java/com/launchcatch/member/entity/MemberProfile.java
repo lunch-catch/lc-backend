@@ -66,4 +66,24 @@ public class MemberProfile extends BaseTimeEntity {
     public boolean isOnboardingCompleted() {
         return onboardingCompletedAt != null;
     }
+
+    public void completeOnboarding(Gender gender, AgeGroup ageGroup, LocalDateTime now) {
+        if (gender == null || ageGroup == null) {
+            throw new IllegalArgumentException("gender and ageGroup must not be null");
+        }
+        this.gender = gender;
+        this.ageGroup = ageGroup;
+        this.onboardingCompletedAt = now;
+    }
+
+    public void updateLocation(String locationNickname, String roadAddress, BigDecimal latitude, BigDecimal longitude) {
+        this.locationNickname = locationNickname;
+        this.roadAddress = roadAddress;
+        this.latitude = latitude;
+        this.longitude = longitude;
+    }
+
+    public void clearLocation() {
+        updateLocation(null, null, null, null);
+    }
 }

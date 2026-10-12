@@ -100,11 +100,7 @@ public class JwtTokenProvider {
         return issuedAt == null ? null : LocalDateTime.ofInstant(issuedAt.toInstant(), ClockConfig.ZONE);
     }
 
-    public long getAccessTokenValidityMs() {
-        return accessTokenValidityMs;
-    }
+    public long getAccessTokenValidityMs() { return accessTokenValidityMs; }
 
-    public long refreshTokenValidityMs(Role role) {
-        return refreshTokenValidityMs.get(role);
-    }
+    public long refreshTokenValidityMs(Role role) { return refreshTokenValidityMs.get(role); }
 }

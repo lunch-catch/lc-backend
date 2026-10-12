@@ -21,4 +21,15 @@ class FakeTemplateHtmlGeneratorTest {
         assertThat(sanitized.removedElements()).isEmpty();
         assertThatCode(() -> new TemplateSlotValidator().validate(sanitized.html())).doesNotThrowAnyException();
     }
+
+    @Test
+    @DisplayName("가짜 구현이 다시 만든 HTML 도 정화와 슬롯 검증을 모두 통과한다")
+    void 가짜_수정_HTML도_검증을_통과한다() {
+        String html = new FakeTemplateHtmlGenerator().revise("<div></div>", "아무 문장");
+
+        TemplateSanitizeResult sanitized = new TemplateHtmlSanitizer().sanitize(html);
+
+        assertThat(sanitized.removedElements()).isEmpty();
+        assertThatCode(() -> new TemplateSlotValidator().validate(sanitized.html())).doesNotThrowAnyException();
+    }
 }

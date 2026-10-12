@@ -195,6 +195,17 @@ kakao:
   app-id: "${KAKAO_APP_ID}"
   admin-key: "${KAKAO_ADMIN_KEY}"
 
+# 토스페이먼츠 접속 설정(billing.config.TossProperties).
+# secret-key 는 기본값을 두지 않는다. 비어 있으면 기동을 멈춘다. 빈 문자열로 Basic 인증을 보내면
+# 운영에서 모든 승인이 401 로 끝나는데 첫 결제가 들어와야 드러난다.
+# 타임아웃은 시작값이다. 실제 지연 분포를 본 뒤 여기서 조정한다.
+billing:
+  toss:
+    base-url: "${TOSS_API_BASE_URL:https://api.tosspayments.com}"
+    secret-key: "${TOSS_SECRET_KEY}"
+    connect-timeout: 3s
+    read-timeout: 10s
+
 # 카카오 OIDC 외부 API(토큰교환, 로그아웃, 연결 해제) 서킷브레이커.
 # 인스턴스를 API 별로 나눈다. 하나가 막혀도 다른 API 까지 같이 막히지 않는다.
 # config 는 트래픽 양에 따라 두 종류로 나눈다. 값만 공유할 뿐 상태(open/closed)는
@@ -241,6 +252,21 @@ resilience4j:
         automaticTransitionFromOpenToHalfOpenEnabled: false
         registerHealthIndicator: false
         eventConsumerBufferSize: 100
+      # 토스 승인과 조회 서킷. 결제는 호출 수가 적어 시간 창으로 두면 최소 호출 수를 못 채워 서킷이 열리지 않는다.
+      # 그래서 건수 창을 쓴다. 최근 10건 중 절반이 실패하면 열리고, 30초 뒤 자동으로 반개방으로 간다.
+      # 값은 시작값이다. 운영 호출량을 본 뒤 조정한다.
+      toss-payment:
+        slidingWindowType: COUNT_BASED
+        slidingWindowSize: 10
+        minimumNumberOfCalls: 10
+        failureRateThreshold: 50
+        waitDurationInOpenState: 30s
+        permittedNumberOfCallsInHalfOpenState: 3
+        maxWaitDurationInHalfOpenState: 10s
+        automaticTransitionFromOpenToHalfOpenEnabled: true
+        # 토스 장애는 우리 배포나 DB 와 무관한 제3자 장애라 health 를 DOWN 시키지 않는다
+        registerHealthIndicator: false
+        eventConsumerBufferSize: 100
     instances:
       kakaoLogin:
         base-config: kakao-common
@@ -248,6 +274,8 @@ resilience4j:
         base-config: kakao-low-traffic
       kakaoUnlink:
         base-config: kakao-low-traffic
+      tossPayment:
+        base-config: toss-payment
 
       # 선착순 발급과 노출 차감의 회로는 여기 더한다.
       #
