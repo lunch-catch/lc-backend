@@ -8,7 +8,6 @@ import com.launchcatch.admin.exception.AdminErrorCode;
 import com.launchcatch.admin.exception.AdminException;
 import com.launchcatch.admin.repository.AdminRepository;
 import com.launchcatch.auth.Role;
-import com.launchcatch.auth.jwt.AccessTokenCutoffVerifier;
 import com.launchcatch.auth.jwt.CutoffPolicy;
 import java.time.LocalDateTime;
 import com.launchcatch.auth.exception.AuthErrorCode;
@@ -37,7 +36,7 @@ public class AdminRegistrationService {
     private final AuditLogWriter auditLogWriter;
     private final PasswordEncoder passwordEncoder;
     private final PlatformTransactionManager transactionManager;
-    private final AccessTokenCutoffVerifier cutoffVerifier;
+    private final AdminAccessTokenVerifier cutoffVerifier;
 
     /*
      * BCrypt 해시는 DB 트랜잭션 밖에서 계산한다.
@@ -48,6 +47,7 @@ public class AdminRegistrationService {
             Long issuerAdminId,
             Role issuerRole,
             LocalDateTime issuedAt,
+            Long issuanceVersion,
             AdminRegistrationRequest request) {
         Objects.requireNonNull(issuerAdminId, "issuerAdminId");
         Objects.requireNonNull(issuerRole, "issuerRole");
@@ -58,7 +58,7 @@ public class AdminRegistrationService {
         }
 
         // 저장소 장애를 인증 실패와 구분하고, 해싱과 DB 작업 전에 발급을 중단한다.
-        if (!cutoffVerifier.isValidAfter(issuerRole, issuerAdminId, issuedAt, CutoffPolicy.REQUIRED)) {
+        if (!cutoffVerifier.isValidAfter(issuerRole, issuerAdminId, issuedAt, issuanceVersion, CutoffPolicy.REQUIRED)) {
             throw new AuthException(AuthErrorCode.LOGIN_REQUIRED);
         }
 

@@ -14,7 +14,7 @@ HTTP 요청·응답은 [관리자 명세](../../api-spec/admin-api-spec.md)와 [
 
 현재 로컬에는 계정 발급·로그인·로그아웃이 구현되어 있다. 재발급 설계는 feat/admin-token-refresh 브랜치의 별도 구현을 설명한다.
 
-관리자 계정·상태 확인과 서비스 흐름은 `admin`, 공통 토큰·쿠키·인증 저장소는 `auth`, 감사 로그 저장은 `ops`가 담당한다.
+관리자 계정·상태 확인과 서비스 흐름, Access Token 순번 검증과 Redis 폐기 순번 저장소는 `admin`이 담당한다. `auth`는 공통 JWT·쿠키 처리와 도메인 검증 정책을 연결하는 인터페이스를 제공한다. 추가 클레임은 일반 Map으로 서명하고 전달한다. `issuanceVersion` 이름·자료형·검증 규칙은 `AdminAccessTokenClaims`와 관리자 검증기가 소유한다. 감사 로그 저장은 `ops`가 담당한다.
 
 ## 계정 발급
 
@@ -42,7 +42,7 @@ HTTP 요청·응답은 [관리자 명세](../../api-spec/admin-api-spec.md)와 [
 2. 계정 없음, 비밀번호 불일치, 비활성 또는 관리자 역할이 아닌 경우 모두 동일한 `AUTH-001`을 반환한다.
 3. 짧은 DB 트랜잭션에서 행 잠금 후 계정 상태·역할·검증한 비밀번호 해시를 다시 확인한다.
 4. 새 Refresh Token의 SHA-256 해시와 만료 시각을 DB에 저장하고 발급 순번을 증가시킨다.
-5. Access Token을 생성하고 현재 DB 상태를 확인한 뒤 Refresh Token을 Redis 캐시에 게시한다. 발급 순번 비교로 뒤늦은 이전 토큰 게시가 최신 상태를 덮어쓰지 않게 한다.
+5. DB에서 확정한 발급 순번을 Access Token의 `issuanceVersion`에 넣고 현재 DB 상태를 확인한 뒤 Refresh Token을 Redis 캐시에 게시한다. 발급 순번 비교로 뒤늦은 이전 토큰 게시가 최신 상태를 덮어쓰지 않게 한다.
 6. Redis 게시 실패만으로 로그인을 실패시키지는 않는다. 필수 DB 저장·확인 실패는 `503 AUTH-002`로 처리한다.
 7. 성공 시 토큰 쿠키와 관리자 정보를 반환한다.
 
@@ -60,7 +60,7 @@ DB는 관리자별 현재 Refresh Token 해시 하나를 보관한다. 새 로�
 2. Redis 조회 실패·캐시 부재 또는 회전 중 타임아웃 이외의 저장소 예외에서는 DB 백업을 통한 회전을 시도한다. 정상적인 Redis 회전 결과가 실패라면 DB로 우회하지 않는다.
 3. DB 행 잠금 아래 현재 해시·만료 시각·`ACTIVE` 상태·관리자 역할을 확인한다. DB의 현재 토큰과 일치해야 새 토큰으로 교체할 수 있다.
 4. 새 Refresh Token 해시·만료 시각·발급 순번과 `ADMIN_TOKEN_REISSUE` 성공 감사 로그를 같은 트랜잭션에서 저장한다.
-5. Redis에 새 토큰 상태를 게시하고 새 Access Token을 발급한다. DB 회전이 성공한 후 Redis 게시 실패만 발생한 경우에는 성공을 유지한다.
+5. Redis에 새 토큰 상태를 게시하고 DB 회전의 `RotationState.version()`을 `issuanceVersion`으로 넣어 새 Access Token을 발급한다. DB 회전이 성공한 후 Redis 게시 실패만 발생한 경우에는 성공을 유지한다.
 
 ### 장애 처리
 
@@ -77,7 +77,7 @@ Redis에서 이미 교체된 토큰의 재사용을 감지하면 해당 관리�
 1. DB 행 잠금 아래 계정이 존재하고 `ACTIVE`이며 인증 역할과 현재 관리자 역할이 일치하는지 확인한다.
 2. DB Refresh Token 해시·만료 시각을 비우고 발급 순번을 증가시킨다.
 3. Redis에서 폐기 순번보다 오래된 토큰과 현재 폐기 대상 해시를 제거한다. 지연된 이전 로그인·재발급 게시도 차단하며 더 최신 발급 상태는 보존한다.
-4. 계정·역할별 Access Token 폐기 기준 시각을 Redis에 저장한다. 이 시각 이전에 발급된 Access Token은 이후 인증 시 거부한다. 기준의 TTL은 Access Token 수명이다.
+4. 계정·역할별 Access Token 폐기 순번을 Redis에 단조 증가하도록 저장한다. JWT의 발급 순번이 폐기 순번 이하면 거부한다. JWT 생성 지연에는 상한이 없으므로 폐기 순번에는 TTL을 두지 않는다. 기존 시각 기준도 호환용으로 기록하지만 관리자 검증은 순번만 사용한다.
 5. 필수 폐기 완료 후 별도 트랜잭션으로 `ADMIN_LOGOUT` 성공 감사 로그를 기록한다. 감사 저장만 실패하면 운영 로그를 남기고 로그아웃 성공을 유지한다.
 6. 두 인증 쿠키를 원래 경로와 동일한 경로에서 `Max-Age=0`으로 삭제한다.
 
@@ -87,13 +87,13 @@ DB 폐기와 Redis 정리는 하나의 트랜잭션으로 묶이지 않는다. �
 감사 로그는 필수 토큰 폐기 후 별도 트랜잭션으로 기록한다. 감사 저장 실패가 이미 완료된 폐기를 취소하지 않게 한다.
 폐기 기준 조회의 LENIENT·REQUIRED 정책과 클라이언트가 받는 오류는 인증 명세를 따른다.
 
-## 아직 정해지지 않은 것과 통합 시 확인 사항
+## 재발급 기능 통합과 배포
 
-`refresh_token_issuance_version`은 Refresh Token 상태와 Redis 게시 순서를 보호한다. 현재 Access Token에는 DB 발급 순번을 연결한 검증이 없으며 폐기 기준 시각과 JWT `iat`로 판단한다.
+로그인과 재발급은 DB에서 확정한 `refresh_token_issuance_version`을 JWT의 `issuanceVersion`에 넣는다. 로그아웃보다 앞서 승인된 요청이 뒤늦게 JWT를 생성해도 이전 순번이므로 거부한다. 같은 초의 재로그인은 더 큰 순번이므로 허용한다.
 
-- JWT의 초 단위 `iat` 때문에 로그아웃과 같은 초에 다시 로그인한 Access Token도 거부될 수 있다. 다음 초 이후 재로그인이 필요하다.
-- 재발급 서비스는 DB 회전·Redis 게시 이후 현재 시각으로 Access Token을 생성한다. DB 재발급 커밋 후 로그아웃이 완료되고 지연된 요청이 JWT를 생성하면 폐기 기준보다 늦은 `iat`를 가질 수 있다. 로그인에도 DB 발급과 JWT 생성 사이에 같은 종류의 틈이 있다. Refresh Token 발급 순번과 `saveIfNewer`만으로 이 문제는 해결되지 않는다.
-- 따라서 관리자 토큰 재발급 기능과 통합할 때 DB에서 확정한 발급 상태와 Access Token 검증을 연결하는 보완이 필요하다. 이 문서 이식은 해당 보완을 구현하거나 완료로 선언하지 않는다.
+현재 브랜치에는 재발급 서비스가 없다. PR #117을 합칠 때 [연동 패치](admin-token-refresh-access-version.patch)를 함께 적용해야 한다. `AdminTokenService.result`가 `RotationState.version()`을 `AdminAccessTokenClaims.forVersion`으로 변환해 JWT 생성에 전달한다. 순번 없는 기존 관리자 JWT는 공통 모듈의 기존 시각 기준으로 검증한다. 새 관리자 로그인과 재발급은 반드시 DB 순번을 JWT에 넣는다. 이전 서버와 새 서버를 섞어 운영하면 이전 서버가 순번을 검증하지 못하므로 함께 교체한다.
+
+Redis 폐기 순번은 보안 상태다. TTL이나 메모리 축출로 삭제하지 않으며 Redis 데이터 유실 시에는 기존 관리자 JWT를 계속 허용하지 않는 복구 절차가 필요하다. Redis 조회 장애의 LENIENT·REQUIRED 정책은 기존 정책을 유지한다.
 
 ## 저장 구조와 감사 로그
 
@@ -120,7 +120,7 @@ DB 폐기와 Redis 정리는 하나의 트랜잭션으로 묶이지 않는다. �
 - Refresh Token 해시와 만료 시각은 둘 다 `NULL`이거나 둘 다 값이 있어야 한다.
 - `DELETED` 상태는 `deleted_at`이 있어야 하고 Refresh Token 해시가 없어야 한다. 그 외 상태는 `deleted_at`이 없어야 한다.
 - 발급 순번은 기본값 `0`의 음이 아닌 BIGINT다. 마이그레이션 `V2__admin_refresh_token_issuance_version.sql`에서 추가한다.
-- Refresh Token 원문은 DB에 저장하지 않는다. Redis의 토큰 캐시·회전 기록·발급 순번과 Access Token 폐기 기준은 공통 인증 모듈이 관리한다.
+- Refresh Token 원문은 DB에 저장하지 않는다. Redis의 Refresh Token 캐시·회전 기록은 공통 인증 모듈이 관리한다. 관리자 Access Token 폐기 순번은 관리자 모듈이 관리한다.
 
 ### `audit_log` (`ops` 소유)
 

@@ -26,6 +26,9 @@ import com.launchcatch.auth.ApiSecurityDefaults;
 import com.launchcatch.auth.AuthCookieFactory;
 import com.launchcatch.auth.PasswordEncoderConfig;
 import com.launchcatch.auth.Role;
+import com.launchcatch.admin.repository.AdminAccessTokenVersionRepository;
+import com.launchcatch.admin.service.AdminAccessTokenVerifier;
+import com.launchcatch.auth.jwt.AccessTokenCutoffVerifier;
 import com.launchcatch.auth.SecurityConfig;
 import com.launchcatch.auth.exception.AuthExceptionHandler;
 import com.launchcatch.auth.jwt.AccessTokenValidAfterRepository;
@@ -76,7 +79,8 @@ class AdminLoginSecurityIntegrationTest {
     @Autowired private AdminRepository admins;
     @Autowired private RefreshTokenRepository refreshTokens;
     @Autowired private PlatformTransactionManager transactions;
-    @Autowired private AccessTokenValidAfterRepository cutoff;
+    @Autowired private AdminAccessTokenVersionRepository cutoff;
+    @Autowired private AccessTokenValidAfterRepository legacyCutoff;
     @Autowired private com.launchcatch.ops.contract.AuditLogWriter audit;
     @Autowired private PasswordEncoder encoder;
     @Autowired private JwtTokenProvider jwt;
@@ -86,8 +90,9 @@ class AdminLoginSecurityIntegrationTest {
 
     @BeforeEach
     void setUp() {
-        reset(admins, refreshTokens, transactions, cutoff, audit);
-        when(cutoff.isValidAfter(any(), any(), any())).thenReturn(true);
+        reset(admins, refreshTokens, transactions, cutoff, legacyCutoff, audit);
+        when(legacyCutoff.isValidAfter(any(), any(), any())).thenReturn(true);
+        when(cutoff.isVersionValid(any(), any(), org.mockito.ArgumentMatchers.anyLong())).thenReturn(true);
         Admin admin = Admin.register("admin01", encoder.encode("Freshman!2026"), "관리자", Role.SUPER_ADMIN);
         ReflectionTestUtils.setField(admin, "id", 1L);
         when(admins.findByLoginId("admin01")).thenReturn(Optional.of(admin));
@@ -195,7 +200,7 @@ class AdminLoginSecurityIntegrationTest {
     @ParameterizedTest
     @ValueSource(strings = {"/v1/admin/auth/tokens:refresh", "/v1/admin/auth/unknown"})
     void 아직_구현하지_않은_인증_경로는_유효한_토큰으로도_접근할_수_없다(String path) throws Exception {
-        mvc.perform(post(path).cookie(new Cookie("accessToken", jwt.createAccessToken(1L, Role.SUPER_ADMIN))))
+        mvc.perform(post(path).cookie(new Cookie("accessToken", jwt.createAccessToken(1L, Role.SUPER_ADMIN, AdminAccessTokenClaims.forVersion(1L)))))
                 .andExpect(status().isForbidden());
     }
 
@@ -205,7 +210,7 @@ class AdminLoginSecurityIntegrationTest {
         Admin admin = admins.findByIdForUpdate(1L).orElseThrow();
         ReflectionTestUtils.setField(admin, "role", role);
         var result = mvc.perform(delete("/v1/admin/auth/tokens")
-                        .cookie(new Cookie("accessToken", jwt.createAccessToken(1L, role))))
+                        .cookie(new Cookie("accessToken", (role.isAdmin() ? jwt.createAccessToken(1L, role, AdminAccessTokenClaims.forVersion(1L)) : jwt.createAccessToken(1L, role)))))
                 .andExpect(status().isNoContent()).andReturn();
         assertThat(result.getResponse().getContentAsString()).isEmpty();
         assertThat(result.getResponse().getCookie("accessToken").getMaxAge()).isZero();
@@ -222,9 +227,9 @@ class AdminLoginSecurityIntegrationTest {
 
     @Test
     void 폐기된_Access_Token은_로그아웃에_재사용할_수_없다() throws Exception {
-        when(cutoff.isValidAfter(any(), any(), any())).thenReturn(false);
+        when(cutoff.isVersionValid(any(), any(), org.mockito.ArgumentMatchers.anyLong())).thenReturn(false);
         mvc.perform(delete("/v1/admin/auth/tokens")
-                        .cookie(new Cookie("accessToken", jwt.createAccessToken(1L, Role.SUPER_ADMIN))))
+                        .cookie(new Cookie("accessToken", jwt.createAccessToken(1L, Role.SUPER_ADMIN, AdminAccessTokenClaims.forVersion(1L)))))
                 .andExpect(status().isUnauthorized()).andExpect(jsonPath("$.code").value("AUTH-005"));
     }
 
@@ -232,7 +237,7 @@ class AdminLoginSecurityIntegrationTest {
     @org.junit.jupiter.params.provider.EnumSource(value = Role.class, names = {"MEMBER", "OWNER"})
     void 관리자_외_역할은_로그아웃할_수_없다(Role role) throws Exception {
         mvc.perform(delete("/v1/admin/auth/tokens")
-                        .cookie(new Cookie("accessToken", jwt.createAccessToken(1L, role))))
+                        .cookie(new Cookie("accessToken", (role.isAdmin() ? jwt.createAccessToken(1L, role, AdminAccessTokenClaims.forVersion(1L)) : jwt.createAccessToken(1L, role)))))
                 .andExpect(status().isForbidden()).andExpect(jsonPath("$.code").value("AUTH-006"));
     }
 
@@ -241,7 +246,7 @@ class AdminLoginSecurityIntegrationTest {
         doThrow(new DataAccessResourceFailureException("token-must-not-leak"))
                 .when(refreshTokens).revokeBeforeVersion(any(), any(), org.mockito.ArgumentMatchers.anyLong());
         mvc.perform(delete("/v1/admin/auth/tokens")
-                        .cookie(new Cookie("accessToken", jwt.createAccessToken(1L, Role.SUPER_ADMIN))))
+                        .cookie(new Cookie("accessToken", jwt.createAccessToken(1L, Role.SUPER_ADMIN, AdminAccessTokenClaims.forVersion(1L)))))
                 .andExpect(status().isServiceUnavailable()).andExpect(jsonPath("$.code").value("AUTH-002"))
                 .andExpect(header().exists("Retry-After"))
                 .andExpect(header().doesNotExist(HttpHeaders.SET_COOKIE));
@@ -252,7 +257,7 @@ class AdminLoginSecurityIntegrationTest {
         doThrow(new DataAccessResourceFailureException("audit down"))
                 .when(audit).write(any(), any(), any(), any());
         mvc.perform(delete("/v1/admin/auth/tokens")
-                        .cookie(new Cookie("accessToken", jwt.createAccessToken(1L, Role.SUPER_ADMIN))))
+                        .cookie(new Cookie("accessToken", jwt.createAccessToken(1L, Role.SUPER_ADMIN, AdminAccessTokenClaims.forVersion(1L)))))
                 .andExpect(status().isNoContent());
     }
 
@@ -376,10 +381,11 @@ class AdminLoginSecurityIntegrationTest {
         @Bean com.launchcatch.ops.contract.AuditLogWriter audit() { return mock(com.launchcatch.ops.contract.AuditLogWriter.class); }
         @Bean AdminRepository admins() { return mock(AdminRepository.class); }
         @Bean RefreshTokenRepository refreshTokens() { return mock(RefreshTokenRepository.class); }
-        @Bean AccessTokenValidAfterRepository cutoff() {
-            var repository = mock(AccessTokenValidAfterRepository.class);
-            when(repository.isValidAfter(any(), any(), any())).thenReturn(true);
-            return repository;
+        @Bean AccessTokenValidAfterRepository legacyCutoff() { return mock(AccessTokenValidAfterRepository.class); }
+        @Bean AdminAccessTokenVersionRepository cutoff() { return mock(AdminAccessTokenVersionRepository.class); }
+        @Bean AdminAccessTokenVerifier accessTokenVerifier(AdminAccessTokenVersionRepository versions,
+                AccessTokenValidAfterRepository legacy) {
+            return new AdminAccessTokenVerifier(versions, new AccessTokenCutoffVerifier(legacy));
         }
         @Bean StringRedisTemplate redisTemplate() { return mock(StringRedisTemplate.class); }
         @Bean PlatformTransactionManager transactions() { return mock(PlatformTransactionManager.class); }

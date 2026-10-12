@@ -1,6 +1,7 @@
 package com.launchcatch.admin.service;
 
 import com.launchcatch.auth.Role;
+import com.launchcatch.admin.repository.AdminAccessTokenVersionRepository;
 import com.launchcatch.auth.exception.AuthErrorCode;
 import com.launchcatch.auth.exception.AuthException;
 import com.launchcatch.auth.jwt.AccessTokenValidAfterRepository;
@@ -24,6 +25,7 @@ public class AdminLogoutService {
     private final RefreshTokenRepository refreshTokens;
     private final AccessTokenValidAfterRepository accessTokens;
     private final JwtTokenProvider jwt;
+    private final AdminAccessTokenVersionRepository accessTokenVersions;
 
     @Transactional(propagation = Propagation.NEVER)
     public void logout(Long adminId, Role role) {
@@ -42,6 +44,7 @@ public class AdminLogoutService {
             if (state.hash() != null) {
                 refreshTokens.revokeIfActiveHashMatches(state.hash(), role, adminId);
             }
+            accessTokenVersions.invalidateThroughVersion(role, adminId, state.version());
             accessTokens.invalidateBefore(role, adminId, state.cutoff(),
                     Duration.ofMillis(jwt.getAccessTokenValidityMs()));
         } catch (DataAccessException | TransactionException e) {

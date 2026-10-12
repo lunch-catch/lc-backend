@@ -145,7 +145,7 @@ Set-Cookie: refreshToken=; Path=/v1/admin/auth/; Max-Age=0; HttpOnly; SameSite=S
 | `403` | `AUTH-006` | 인증된 주체가 관리자 역할이 아님 |
 | `503` | `AUTH-002` | 필수 DB Refresh Token 폐기, Redis Refresh Token 폐기 또는 Access Token 폐기 기준 저장 실패 |
 
-로그아웃의 필수 DB·Redis 폐기 실패 시 삭제 쿠키 없이 `503 AUTH-002`를 반환하며, 일부 폐기는 이미 적용되었을 수 있다. 일반 인증의 폐기 기준 조회는 Redis 장애 시 통과하는 LENIENT 정책이다. 관리자 계정 발급은 REQUIRED 조회를 사용한다. 같은 초에 재로그인한 토큰도 차단될 수 있다. 상세 처리와 동시성 한계는 [관리자 설계서](../design/admin/admin-api-design.md)를 따른다.
+로그아웃의 필수 DB·Redis 폐기 실패 시 삭제 쿠키 없이 `503 AUTH-002`를 반환하며, 일부 폐기는 이미 적용되었을 수 있다. 일반 인증의 폐기 기준 조회는 Redis 장애 시 통과하는 LENIENT 정책이다. 관리자 계정 발급은 REQUIRED 조회를 사용한다. 관리자 JWT는 DB 발급 순번으로 폐기를 검증하므로 같은 초에 재로그인한 새 순번은 허용한다. 순번 없는 기존 관리자 JWT는 기존 시각 기준으로 검증한다. 재발급 통합과 배포 조건은 [관리자 설계서](../design/admin/admin-api-design.md)를 따른다.
 
 ## 점주
 

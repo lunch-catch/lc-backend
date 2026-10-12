@@ -5,6 +5,7 @@ import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 import com.launchcatch.auth.Role;
+import com.launchcatch.admin.repository.AdminAccessTokenVersionRepository;
 import com.launchcatch.auth.exception.AuthErrorCode;
 import com.launchcatch.auth.exception.AuthException;
 import com.launchcatch.auth.jwt.AccessTokenValidAfterRepository;
@@ -24,7 +25,8 @@ class AdminLogoutServiceTest {
     private final RefreshTokenRepository refresh = mock(RefreshTokenRepository.class);
     private final AccessTokenValidAfterRepository access = mock(AccessTokenValidAfterRepository.class);
     private final JwtTokenProvider jwt = mock(JwtTokenProvider.class);
-    private final AdminLogoutService service = new AdminLogoutService(transactions, refresh, access, jwt);
+    private final AdminAccessTokenVersionRepository versions = mock(AdminAccessTokenVersionRepository.class);
+    private final AdminLogoutService service = new AdminLogoutService(transactions, refresh, access, jwt, versions);
     private final LocalDateTime now = LocalDateTime.of(2026, 10, 9, 12, 0, 0, 123000000);
     private final String hash = "a".repeat(64);
 
@@ -41,6 +43,7 @@ class AdminLogoutServiceTest {
         when(transactions.revokeRefreshToken(1L, role))
                 .thenReturn(new AdminLogoutTransactionService.LogoutDbState(hash, 2, now));
         service.logout(1L, role);
+        verify(versions).invalidateThroughVersion(role, 1L, 2);
         verify(refresh).revokeBeforeVersion(1L, role, 2);
         verify(refresh).revokeIfActiveHashMatches(hash, role, 1L);
         verify(access).invalidateBefore(role, 1L, now, Duration.ofMinutes(30));
@@ -108,6 +111,12 @@ class AdminLogoutServiceTest {
         when(transactions.revokeRefreshToken(1L, Role.ADMIN)).thenThrow(new AuthException(AuthErrorCode.LOGIN_REQUIRED));
         assertThatThrownBy(() -> service.logout(1L, Role.ADMIN)).isInstanceOfSatisfying(AuthException.class,
                 e -> assertThat(e.getErrorCode()).isEqualTo(AuthErrorCode.LOGIN_REQUIRED));
+    }
+
+    @Test
+    void Access_Token_폐기순번_저장실패는_AUTH002다() {
+        doThrow(storageFailure()).when(versions).invalidateThroughVersion(Role.ADMIN, 1L, 2);
+        assertUnavailable();
     }
 
     private DataAccessResourceFailureException storageFailure() {

@@ -62,6 +62,7 @@ class AdminLogoutConcurrencyIntegrationTest {
     @org.springframework.test.context.bean.override.mockito.MockitoSpyBean private RefreshTokenRepository cache;
     @Autowired private com.launchcatch.admin.service.AdminLogoutService logout;
     @Autowired private com.launchcatch.auth.jwt.AccessTokenValidAfterRepository cutoff;
+    @Autowired private com.launchcatch.admin.repository.AdminAccessTokenVersionRepository versions;
     private Long adminId;
 
     @BeforeEach
@@ -78,6 +79,40 @@ class AdminLogoutConcurrencyIntegrationTest {
         admins.deleteById(adminId);
     }
 
+
+    @Test
+    void DB승인_후_JWT생성이_지연되어도_로그아웃이_차단하고_같은초_재로그인은_허용한다() throws Exception {
+        var now = java.time.Instant.now();
+        var realJwt = new JwtTokenProvider("test-only-secret-for-delayed-jwt-0123456789abcdef",
+                1800000L, 86400000L, 1209600000L, 1209600000L,
+                java.time.Clock.fixed(now, java.time.ZoneOffset.UTC));
+        var waiting = new CountDownLatch(1);
+        var release = new CountDownLatch(1);
+        var signatures = new AtomicInteger();
+        when(jwt.createAccessToken(eq(adminId), eq(Role.ADMIN), org.mockito.ArgumentMatchers.anyMap()))
+                .thenAnswer(call -> {
+                    if (signatures.incrementAndGet() == 1) {
+                        waiting.countDown();
+                        if (!release.await(30, TimeUnit.SECONDS)) { throw new IllegalStateException("JWT wait timed out"); }
+                    }
+                    return realJwt.createAccessToken(call.getArgument(0), call.getArgument(1), call.getArgument(2));
+                });
+        try (var workers = Executors.newSingleThreadExecutor()) {
+            var delayed = workers.submit(() -> login.login(new AdminLoginRequest("concurrent.admin", "Freshman!2026")));
+            com.launchcatch.admin.dto.AdminLoginResult fresh;
+            try {
+                assertThat(waiting.await(30, TimeUnit.SECONDS)).isTrue();
+                logout.logout(adminId, Role.ADMIN);
+                fresh = login.login(new AdminLoginRequest("concurrent.admin", "Freshman!2026"));
+            } finally { release.countDown(); }
+            var old = delayed.get(30, TimeUnit.SECONDS);
+            assertThat(realJwt.getIssuedAt(old.accessToken())).isEqualTo(realJwt.getIssuedAt(fresh.accessToken()));
+            assertThat(AdminAccessTokenClaims.issuanceVersion(realJwt.getAdditionalClaims(old.accessToken()))).isEqualTo(1L);
+            assertThat(AdminAccessTokenClaims.issuanceVersion(realJwt.getAdditionalClaims(fresh.accessToken()))).isEqualTo(3L);
+            assertThat(versions.isVersionValid(Role.ADMIN, adminId, AdminAccessTokenClaims.issuanceVersion(realJwt.getAdditionalClaims(old.accessToken())))).isFalse();
+            assertThat(versions.isVersionValid(Role.ADMIN, adminId, AdminAccessTokenClaims.issuanceVersion(realJwt.getAdditionalClaims(fresh.accessToken())))).isTrue();
+        }
+    }
 
     @Test
     void 로그아웃은_DB와_캐시를_폐기하고_이전_Access_Token을_차단한다() {
