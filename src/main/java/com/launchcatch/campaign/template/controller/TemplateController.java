@@ -94,13 +94,13 @@ public class TemplateController {
     @PostMapping("/{templateId}/publish")
     @Operation(
             summary = "템플릿 게시",
-            description = "DRAFT 템플릿의 임시저장 버전 중 하나를 선택해 최종 콘텐츠로 확정합니다. 게시하면 이 템플릿의 임시저장 버전은 모두 삭제됩니다."
+            description = "DRAFT 템플릿의 임시저장 버전 중 하나를 선택해 최종 콘텐츠로 확정합니다. 게시하면 이 템플릿의 임시저장 버전은 모두 삭제됩니다. 이미 같은 버전으로 게시돼 있으면 재시도로 보고 그 결과를 그대로 돌려줍니다."
     )
     @ApiResponses({
-            @ApiResponse(responseCode = "200", description = "템플릿 게시 성공. 선택한 버전의 HTML이 확정되고 모든 버전이 삭제됩니다."),
+            @ApiResponse(responseCode = "200", description = "템플릿 게시 성공. 선택한 버전의 HTML이 확정되고 모든 버전이 삭제됩니다. 같은 버전으로 다시 요청한 경우(재시도)도 이 응답입니다."),
             @ApiResponse(responseCode = "400", description = "COMMON-002: versionNumber가 비었거나 양수가 아닙니다."),
             @ApiResponse(responseCode = "404", description = "POSTER-005: 템플릿을 찾을 수 없습니다. POSTER-008: 존재하지 않는 버전 번호입니다."),
-            @ApiResponse(responseCode = "409", description = "POSTER-007: 이미 게시된 템플릿입니다.")
+            @ApiResponse(responseCode = "409", description = "POSTER-007: 다른 버전 번호로 이미 게시된 템플릿입니다.")
     })
     public ResponseEntity<ResponseEnvelope<TemplatePublishResponse>> publish(
             @Parameter(description = "게시할 템플릿 ID입니다.") @PathVariable Long templateId,
