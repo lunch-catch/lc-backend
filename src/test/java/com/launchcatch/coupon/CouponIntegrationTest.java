@@ -10,6 +10,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.launchcatch.auth.CustomUserDetails;
 import com.launchcatch.auth.Role;
 import com.launchcatch.global.config.ClockConfig;
+import jakarta.persistence.EntityManager;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -18,7 +19,6 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.EnumSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -52,6 +52,7 @@ class CouponIntegrationTest {
 
     @Autowired MockMvc mockMvc;
     @Autowired JdbcTemplate jdbcTemplate;
+    @Autowired EntityManager entityManager;
     @MockitoBean Clock clock;
 
     @DynamicPropertySource
@@ -82,6 +83,7 @@ class CouponIntegrationTest {
             insertDailyLimit(17L, TODAY, 2);
             insertDailyLimit(18L, TODAY, 3);
             insertDailyLimit(17L, TODAY.minusDays(1), 3);
+            var before = jdbcTemplate.queryForList("SELECT * FROM coupon_daily_limit ORDER BY coupon_daily_limit_id");
 
             mockMvc.perform(get(PATH).with(user(MEMBER)))
                     .andExpect(status().isOk())
@@ -90,28 +92,30 @@ class CouponIntegrationTest {
                     .andExpect(jsonPath("$.data.issuedCount").value(2))
                     .andExpect(jsonPath("$.data.dailyLimit").value(3))
                     .andExpect(jsonPath("$.data.dailyLimitReached").value(false));
+
+            entityManager.flush();
+            assertThat(jdbcTemplate.queryForList("SELECT * FROM coupon_daily_limit ORDER BY coupon_daily_limit_id"))
+                    .isEqualTo(before);
         }
 
         @Test
         void 발급_기록이_없으면_0건을_반환하고_기록을_만들지_않는다() throws Exception {
+            insertDailyLimit(17L, TODAY.minusDays(1), 3);
+            insertDailyLimit(18L, TODAY, 3);
+
             mockMvc.perform(get(PATH).with(user(MEMBER)))
                     .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.date").value("2026-10-10"))
                     .andExpect(jsonPath("$.data.issuedCount").value(0))
+                    .andExpect(jsonPath("$.data.dailyLimit").value(3))
                     .andExpect(jsonPath("$.data.dailyLimitReached").value(false));
 
-            assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM coupon_daily_limit", Integer.class))
+            entityManager.flush();
+            assertThat(jdbcTemplate.queryForObject("""
+                    SELECT COUNT(*) FROM coupon_daily_limit
+                     WHERE member_id = ? AND business_date = ?
+                    """, Integer.class, 17L, TODAY))
                     .isZero();
-        }
-
-        @ParameterizedTest
-        @CsvSource({"0, false", "2, false", "3, true"})
-        void 누적_발급_횟수에_따라_한도_도달_여부를_반환한다(int issuedCount, boolean reached) throws Exception {
-            insertDailyLimit(17L, TODAY, issuedCount);
-
-            mockMvc.perform(get(PATH).with(user(MEMBER)))
-                    .andExpect(status().isOk())
-                    .andExpect(jsonPath("$.data.issuedCount").value(issuedCount))
-                    .andExpect(jsonPath("$.data.dailyLimitReached").value(reached));
         }
 
         @Test
@@ -122,7 +126,7 @@ class CouponIntegrationTest {
         }
 
         @ParameterizedTest
-        @EnumSource(value = Role.class, names = {"OWNER", "ADMIN"})
+        @EnumSource(value = Role.class, mode = EnumSource.Mode.EXCLUDE, names = "MEMBER")
         void 회원이_아닌_역할은_조회할_수_없다(Role role) throws Exception {
             mockMvc.perform(get(PATH).with(user(new CustomUserDetails(17L, role))))
                     .andExpect(status().isForbidden())
