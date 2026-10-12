@@ -98,6 +98,23 @@ public class Template extends BaseTimeEntity {
                 .orElseThrow(() -> new IllegalStateException("template has no version: id=" + getId()));
     }
 
+    /*
+     * status 와 publishedAt 을 항상 같이 바꾼다. DB의 chk_template_status 제약이
+     * "DRAFT 면 publishedAt NULL, PUBLISHED 면 NOT NULL" 을 강제하고 있어서, 하나만
+     * 바꾸면 커밋 시점에 제약 위반으로 터진다.
+     */
+    public void publish(String htmlContent, LocalDateTime now) {
+        this.htmlContent = htmlContent;
+        this.status = TemplateStatus.PUBLISHED;
+        this.publishedAt = now;
+    }
+
+    public void changeActive(boolean active, Long adminId, LocalDateTime now) {
+        this.active = active;
+        this.activatedBy = adminId;
+        this.activatedAt = now;
+    }
+
     private static String requiredName(String value) {
         if (value == null || value.isBlank() || value.length() > NAME_MAX_LENGTH) {
             throw new IllegalArgumentException("name must be 1 to " + NAME_MAX_LENGTH + " characters");
