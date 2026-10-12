@@ -15,7 +15,7 @@
 | `billing.md` | 포인트 결제, 잔액과 내역, 환불, 관리자의 포인트 정책과 결제 내역 | 점주, 관리자 |
 | `member.md` | 온보딩, 위치 설정과 저장 위치, 회원정보, 탈퇴, 알림과 동의 설정 | 사용자 |
 | `feed-api-spec.md` | 스와이프 피드, 찜과 패스, 노출 수집, 필터, 찜 목록, 피드 배정 진단 | 사용자, 관리자 |
-| `coupon.md` | 선착순 발급, 쿠폰함, 동적 QR, 점주의 QR 사용 처리, 사용 내역, 점주의 발급/사용 이력 | 사용자, 점주 |
+| [coupon-api-spec.md](./coupon-api-spec.md) | 선착순 발급, 이벤트 상태, 쿠폰함과 요약, 동적 QR, 점주의 쿠폰 사용과 사용 이력 | 사용자, 점주 |
 | `notification.md` | 사용자 알림 목록, 점주 발송 현황 | 사용자, 점주 |
 | `analytics.md` | 대시보드, 매출, 무효 노출, 점주 리포트, 사용 통계, 전환 퍼널 수집 | 모두 |
 
@@ -44,7 +44,7 @@
 | `campaign` | `campaign.md`, `poster.md` | 캠페인, 포스터와 템플릿 | 13~19, 26, 29, 43~48, 53~56 |
 | `billing` | `billing.md` | 전체 | 21~24, 49~50, 52 |
 | `adserving` | `feed-api-spec.md` | 전체 | 30, 67~71, 75~76, 92, 100 |
-| `coupon` | `coupon.md` | 전체 | 58~59, 83~86 |
+| `coupon` | [coupon-api-spec.md](./coupon-api-spec.md), [coupon-api-design.md](./coupon-api-design.md) | 전체 | 58~59, 83~86, 91 |
 | `notification` | `notification.md` | 전체 | 61, 82 |
 | `analytics` | `analytics.md` | 전체 | 20, 25, 28, 60, 91, 101 |
 | `ops` | `admin.md` | 플랫폼 설정값, 감사 로그 | 27, 104 |
