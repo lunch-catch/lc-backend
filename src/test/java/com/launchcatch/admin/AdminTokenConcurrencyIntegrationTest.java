@@ -61,7 +61,7 @@ class AdminTokenConcurrencyIntegrationTest {
         id=admins.saveAndFlush(admin).getId();
         cache.saveIfNewer(raw,id,Role.ADMIN,true,Duration.ofDays(1),1L);
         when(jwt.refreshTokenValidityMs(Role.ADMIN)).thenReturn(86400000L);
-        when(jwt.createAccessToken(id,Role.ADMIN)).thenReturn("access");
+        when(jwt.createAccessToken(eq(id), eq(Role.ADMIN), anyMap())).thenReturn("access");
     }
 
     @Test void 동시_재발급은_최대_한번만_성공하고_재사용시_DB와_캐시를_폐기한다() throws Exception {
@@ -127,6 +127,12 @@ class AdminTokenConcurrencyIntegrationTest {
         assertThat(admins.findById(id).orElseThrow().getRefreshTokenHash()).isNull();
         assertThat(jdbc.queryForObject("select count(*) from audit_log where admin_id = ? and detail = ?",
                 Long.class, id, "result=FAILURE;reason=REUSE_DETECTED")).isZero();
+    }
+
+    @Test void 재발급_Access_Token에_DB에서_승인한_발급_순번을_전달한다() {
+        service.reissue(raw);
+        verify(jwt).createAccessToken(eq(id), eq(Role.ADMIN),
+                eq(com.launchcatch.admin.AdminAccessTokenClaims.forVersion(2L)));
     }
 
     @Test void 폐기_순번은_늦은_이전게시를_차단하고_새_로그인은_허용한다() {

@@ -1,5 +1,6 @@
 package com.launchcatch.admin.service;
 
+import com.launchcatch.admin.AdminAccessTokenClaims;
 import com.launchcatch.admin.dto.AdminLoginResult;
 import com.launchcatch.auth.RedisFailureClassifier;
 import com.launchcatch.auth.Role;
@@ -214,7 +215,8 @@ public class AdminTokenService {
 
     private AdminLoginResult result(AdminTokenTransactionService.RotationState state, String token) {
         return new AdminLoginResult(state.response(),
-                jwt.createAccessToken(state.response().adminId(), state.response().role()), token);
+                jwt.createAccessToken(state.response().adminId(), state.response().role(),
+                        AdminAccessTokenClaims.forVersion(state.version())), token);
     }
 
     // 외부 예외 메시지와 cause에 토큰이 포함될 수 있어 종류와 스택 프레임만 기록한다.

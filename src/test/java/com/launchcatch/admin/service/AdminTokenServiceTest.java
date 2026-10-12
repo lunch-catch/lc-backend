@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
+import com.launchcatch.admin.AdminAccessTokenClaims;
 import com.launchcatch.admin.dto.AdminLoginResponse;
 import com.launchcatch.auth.Role;
 import com.launchcatch.auth.exception.AuthErrorCode;
@@ -40,7 +41,7 @@ class AdminTokenServiceTest {
         when(db.confirmRotation(any(), any(), any(), any()))
                 .thenReturn(new AdminTokenTransactionService.RotationRecovery(null, false));
         when(jwt.refreshTokenValidityMs(Role.ADMIN)).thenReturn(86400000L);
-        when(jwt.createAccessToken(1L, Role.ADMIN)).thenReturn("access");
+        when(jwt.createAccessToken(1L, Role.ADMIN, AdminAccessTokenClaims.forVersion(2L))).thenReturn("access");
         when(cache.find(old)).thenReturn(Optional.of(owner));
         when(cache.compareAndRotate(eq(old), anyString(), any())).thenReturn(RotateOutcome.success(owner));
         when(db.rotate(eq(1L), eq(TokenHasher.sha256(old)), anyString(), any(), any())).thenReturn(state);
@@ -53,6 +54,7 @@ class AdminTokenServiceTest {
         assertThat(result.accessToken()).isEqualTo("access");
         assertThat(result.refreshToken()).matches("[A-Za-z0-9_-]{43}").isNotEqualTo(old);
         verify(cache).saveIfNewer(result.refreshToken(), 1L, Role.ADMIN, true, Duration.ofDays(1), 2L);
+        verify(jwt).createAccessToken(1L, Role.ADMIN, AdminAccessTokenClaims.forVersion(2L));
     }
 
     @ParameterizedTest @NullAndEmptySource @ValueSource(strings={"short", "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"})
