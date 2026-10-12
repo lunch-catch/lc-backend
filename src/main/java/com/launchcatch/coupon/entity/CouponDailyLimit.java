@@ -25,4 +25,11 @@ public class CouponDailyLimit extends BaseTimeEntity {
 
     @Column(name = "issued_count", nullable = false)
     private int issuedCount;
+
+    // 쿠폰 삭제로 일일 발급 횟수를 1 줄이며 이미 0이면 음수로 내리지 않는다.
+    public void decreaseIssuedCount() {
+        if (issuedCount > 0) {
+            issuedCount--;
+        }
+    }
 }
