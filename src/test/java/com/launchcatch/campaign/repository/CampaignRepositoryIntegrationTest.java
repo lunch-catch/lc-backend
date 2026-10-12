@@ -66,4 +66,25 @@ class CampaignRepositoryIntegrationTest {
         assertThat(reloaded.getStartDate()).isNull();
         assertThat(reloaded.getEndDate()).isNull();
     }
+
+    @Test
+    void findByStoreIdIn의_조회가_store_id_인덱스를_탄다() {
+        String plan = explainJson("SELECT * FROM campaign WHERE store_id IN (1)");
+
+        assertThat(plan).contains("idx_campaign_store_id");
+    }
+
+    @Test
+    void findServableOn의_조회가_status_기간_인덱스를_탄다() {
+        String plan = explainJson(
+                "SELECT * FROM campaign WHERE start_date <= '2026-10-13' AND end_date >= '2026-10-13' "
+                        + "AND (status = 'ACTIVE' "
+                        + "OR (status = 'PAUSED' AND paused_reason IN ('OWNER', 'NO_POINTS')))");
+
+        assertThat(plan).contains("idx_campaign_status_period");
+    }
+
+    private String explainJson(String sql) {
+        return (String) entityManager.createNativeQuery("EXPLAIN FORMAT=JSON " + sql).getSingleResult();
+    }
 }
