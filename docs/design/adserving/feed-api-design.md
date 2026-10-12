@@ -1,13 +1,13 @@
 # 광고 서빙 (adserving) API 설계
 
-광고 서빙 API를 서버가 어떻게 처리하는지와 그렇게 정한 이유를 적는다. 요청, 응답, 오류는 명세서 `feed-api-spec.md` 에 있고 여기서는 반복하지 않는다.
+광고 서빙 API를 서버가 어떻게 처리하는지와 그렇게 정한 이유를 적는다. 요청, 응답, 오류는 명세서 `../../api-spec/feed-api-spec.md` 에 있고 여기서는 반복하지 않는다.
 명세서는 프론트가 보는 계약이고, 이 문서는 백엔드가 구현할 때 보는 문서다. 계약이 바뀌면 명세서를, 내부만 바뀌면 이 문서를 고친다.
 
 | 근거 | 기준 |
 |---|---|
 | 요구사항 | 명세서 V51 기능 30, 67~71, 74~76, 92, 96~97, 99~100행. 비즈니스 규칙의 공정성 절 |
-| 저장 구조 | `db/migration/adserving/` 의 `V1`, `V2`: `ad_candidate`, `serve_log`, `impression_log`, `swipe_log`, `wishlist`, `feed_filter`, `feed_filter_category`, `feed_visit_daily`. 공통 DDL 규약은 같은 폴더의 `README.md` |
-| 설계 | `../architecture/런치캐치_도메인_구조와_의존성_설계.md` 1.3, 2.2, 2.4 |
+| 저장 구조 | `db/migration/adserving/` 의 `V1`, `V2`: `ad_candidate`, `serve_log`, `impression_log`, `swipe_log`, `wishlist`, `feed_filter`, `feed_filter_category`, `feed_visit_daily`. 공통 DDL 규약은 같은 폴더의 `migration.md` |
+| 설계 | `../../architecture/런치캐치_도메인_구조와_의존성_설계.md` 1.3, 2.2, 2.4 |
 
 ## 목록과 요구사항 행
 

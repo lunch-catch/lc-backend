@@ -120,7 +120,7 @@ public class SecurityConfig {
         configuration.setAllowedMethods(List.of("GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"));
         configuration.setAllowedHeaders(List.of("Content-Type"));
         /*
-         * Retry-After 를 자바스크립트가 읽을 수 있게 한다 (api-spec/README.md 의 429).
+         * Retry-After 를 자바스크립트가 읽을 수 있게 한다 (api-spec/api-spec.md 의 429).
          *
          * 브라우저는 다른 오리진의 응답에서 몇 개의 기본 헤더만 스크립트에 보여 준다. 여기에
          * 적지 않으면 서버가 보낸 Retry-After 가 프론트에 아예 보이지 않는다. 그러면 언제 다시
