@@ -27,6 +27,8 @@ public class CouponSecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(HttpMethod.GET, ISSUANCE_LIMIT_PATH, SUMMARY_PATH)
                         .hasRole("MEMBER")
+                        .requestMatchers(HttpMethod.DELETE, "/v1/coupons/{memberCouponId}")
+                        .hasRole("MEMBER")
                         .anyRequest().denyAll())
                 .build();
     }

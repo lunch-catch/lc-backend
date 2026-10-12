@@ -1,5 +1,7 @@
 package com.launchcatch.coupon.entity;
 
+import com.launchcatch.coupon.exception.CouponErrorCode;
+import com.launchcatch.coupon.exception.CouponException;
 import com.launchcatch.global.entity.BaseTimeEntity;
 import jakarta.persistence.AttributeOverride;
 import jakarta.persistence.Column;
@@ -51,4 +53,24 @@ public class MemberCoupon extends BaseTimeEntity {
 
     @Column(name = "usable_end_at", nullable = false, updatable = false)
     private LocalDateTime usableEndAt;
+
+    /**
+     * 미사용 쿠폰을 삭제 상태로 바꾸고 QR을 무효화한다.
+     * 사용 완료 쿠폰은 거절하며 이미 삭제된 쿠폰은 추가로 변경하지 않는다.
+     *
+     * @return 이번 호출에서 처음 삭제했으면 true이며 이미 삭제된 쿠폰이면 false
+     */
+    public boolean remove() {
+        if (status == MemberCouponStatus.USED) {
+            throw new CouponException(CouponErrorCode.USED_COUPON_NOT_REMOVABLE);
+        }
+        if (status == MemberCouponStatus.REMOVED) {
+            return false;
+        }
+        status = MemberCouponStatus.REMOVED;
+        qrVersion++;
+        qrToken = null;
+        qrExpiresAt = null;
+        return true;
+    }
 }
