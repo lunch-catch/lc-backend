@@ -32,9 +32,9 @@ public interface TemplateVersionRepository extends JpaRepository<TemplateVersion
     Optional<TemplateVersion> findByTemplateIdAndVersionNumberAndDeletedAtIsNull(Long templateId, int versionNumber);
 
     /*
-     * 버전이 몇 개든 UPDATE 한 번으로 소프트삭제한다(엔티티로 하나씩
-     * 불러오면 버전마다 UPDATE 가 나가고 안 쓸 HTML 까지 읽는다).
-     * findByTemplateIdAndVersionNumberAndDeletedAtIsNull() 로 게시할
+     * 버전이 몇 개든 UPDATE한 번으로 소프트삭제한다(엔티티로 하나씩
+     * 불러오면 버전마다 UPDATE가 나가고 안 쓸 HTML까지 읽는다).
+     * findByTemplateIdAndVersionNumberAndDeletedAtIsNull()로 게시할
      * 버전을 먼저 찾은 뒤에 호출해야 한다. 순서를 바꾸면 그 조회가
      * 이미 삭제 표시된 행을 걸러내 버전을 못 찾는다.
      */

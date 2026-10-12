@@ -99,8 +99,8 @@ public class Template extends BaseTimeEntity {
     }
 
     /*
-     * status 와 publishedAt 을 항상 같이 바꾼다. DB의 chk_template_status 제약이
-     * "DRAFT 면 publishedAt NULL, PUBLISHED 면 NOT NULL" 을 강제하고 있어서, 하나만
+     * status와 publishedAt을 항상 같이 바꾼다. DB의 chk_template_status 제약이
+     * "DRAFT면 publishedAt NULL, PUBLISHED면 NOT NULL"을 강제하고 있어서, 하나만
      * 바꾸면 커밋 시점에 제약 위반으로 터진다.
      */
     public void publish(String htmlContent, LocalDateTime now) {
