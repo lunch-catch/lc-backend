@@ -1,6 +1,6 @@
 # 관리자 (admin) API 설계
 
-관리자 계정 발급·로그인의 내부 처리와 저장 구조를 적는다. 요청·응답·오류는 [admin-api-spec.md](./admin-api-spec.md), 토큰 재발급 내부 처리는 [auth-api-design.md](./auth-api-design.md#관리자)에 있다.
+관리자 계정 발급·로그인의 내부 처리와 저장 구조를 적는다. 요청·응답·오류는 [admin-api-spec.md](../../api-spec/admin-api-spec.md), 토큰 재발급 내부 처리는 [auth-api-design.md](../auth/auth-api-design.md#관리자)에 있다.
 
 ## 구현 근거와 책임
 

@@ -129,7 +129,7 @@ reviews:
         외부 링크와 출처(AIP 번호, 책 항목 번호, URL)는 사람을 위한 참고다. 가져오지 말고
         가이드 본문에 적힌 내용만으로 판단한다. 확인이 필요하면 그 사실을 코멘트로 남겨 사람에게 넘긴다.
 
-        문서와 주석에 em dash 를 쓰지 않는다 (CLAUDE.md).
+        문서와 주석에 em dash 를 쓰지 않는다 (AGENTS.md).
 
     # --- 프로덕션 자바 전체 -----------------------------------------------------
     - path: "src/main/java/**/*.java"
@@ -332,7 +332,7 @@ reviews:
     # --- API 표면 -------------------------------------------------------------
     - path: "src/main/java/**/controller/**/*.java"
       instructions: |
-        api-design-guideline.md(API-)와 docs/api-spec/README.md 의 공통 규약을 적용한다.
+        api-design-guideline.md(API-)와 docs/api-spec/api-spec.md 의 공통 규약을 적용한다.
         경로가 소비자별로 갈리는지(/v1, /v1/owner, /v1/admin), 리소스가 명사 복수형인지,
         표준 메서드로 되는 것을 콜론 커스텀 메서드로 만들지 않았는지 본다.
         응답은 ResponseEnvelope 로 감싸고 상태 코드는 ErrorCode 가 들고 있는 값을 쓴다.
@@ -369,7 +369,7 @@ reviews:
     # --- 인증 ----------------------------------------------------------------
     - path: "src/main/java/**/auth/**/*.java"
       instructions: |
-        docs/api-spec/README.md 의 인증 절을 기준으로 본다.
+        docs/api-spec/api-spec.md 의 인증 절을 기준으로 본다.
         Access 는 JWT 30분, Refresh 는 Opaque 이고 역할마다 수명이 다르다(관리자 1일, 점주와
         사용자 14일). 두 토큰은 HttpOnly 와 SameSite=Strict 쿠키로만 오간다.
         회전과 재사용 탐지, 로그아웃 시 valid-after 커트라인이 빠지지 않았는지 본다.
@@ -634,7 +634,7 @@ reviews:
         - `BLD-3-02` `main` 으로 가는 PR 의 출처를 `develop`, `release/*`, `hotfix/*` 로 제한하는가
 
   tools:
-    # 한국어 산문에 영어 기준 지적이 쏟아진다. 문서 규칙은 CLAUDE.md 가 소유한다
+    # 한국어 산문에 영어 기준 지적이 쏟아진다. 문서 규칙은 AGENTS.md 가 소유한다
     markdownlint:
       enabled: false
     languagetool:
@@ -652,7 +652,8 @@ chat:
 knowledge_base:
   code_guidelines:
     enabled: true
-    # CLAUDE.md 는 기본으로 잡힌다. 나머지를 명시한다.
+    # 작업 규칙은 AGENTS.md 가 소유한다. CLAUDE.md 는 그것을 가져오는 한 줄뿐이라
+    # 기본으로 잡혀도 내용이 없다. 그래서 AGENTS.md 를 아래에 명시한다.
     #
     # 반드시 files 와 applyTo 를 쓰는 객체 형태로 적는다. 문자열 항목은 그 가이드를
     # "자기가 담긴 디렉터리와 하위 디렉터리" 에만 적용한다. docs/code-convention/*.md 를
@@ -663,6 +664,10 @@ knowledge_base:
     filePatterns:
       # 리뷰 규약 진입점. 봇 동작 규칙과 인용 형식을 담아 모든 변경에 적용한다
       - files: "docs/CODEREVIEW.md"
+        applyTo: "**"
+
+      # 저장소 작업 규칙. 문서와 주석 형식, 이슈와 PR, 커밋 규칙을 담아 모든 변경에 적용한다
+      - files: "AGENTS.md"
         applyTo: "**"
 
       # 코드 관용과 패턴. 자바와 자원, 빌드 설정에 적용한다

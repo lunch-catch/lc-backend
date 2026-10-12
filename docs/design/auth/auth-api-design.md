@@ -1,13 +1,13 @@
 # 인증 (auth) API 설계
 
-인증 API를 서버가 어떻게 처리하는지와 그렇게 정한 이유를 적는다. 요청, 응답, 오류는 명세서 `auth-api-spec.md` 에 있고 여기서는 반복하지 않는다.
+인증 API를 서버가 어떻게 처리하는지와 그렇게 정한 이유를 적는다. 요청, 응답, 오류는 명세서 [auth-api-spec.md](../../api-spec/auth-api-spec.md) 에 있고 여기서는 반복하지 않는다.
 명세서는 프론트가 보는 계약이고, 이 문서는 백엔드가 구현할 때 보는 문서다. 계약이 바뀌면 명세서를, 내부만 바뀌면 이 문서를 고친다.
 
 | 근거 | 기준 |
 | --- | --- |
 | 요구사항 | 명세서 V51 기능 5~7행(관리자), 31~34행(점주), 62, 64, 65행(사용자), 94행(공통 토큰 정책) |
 
-관리자 계정 발급(4행)은 [admin-api-design.md](./admin-api-design.md), 사용자 온보딩(63행)과 탈퇴(89행)는 `member.md`, 점주 튜토리얼 확인 처리는 `owner.md`에 있다.
+관리자 계정 발급(4행)은 [admin-api-design.md](../admin/admin-api-design.md), 사용자 온보딩(63행)과 탈퇴(89행)는 `member.md`, 점주 튜토리얼 확인 처리는 `owner.md`에 있다.
 
 ## 목록과 요구사항 행
 
@@ -41,7 +41,7 @@
 
 **경로는 동사가 아니라 리소스다.** 토큰이 리소스이고 로그인은 생성, 로그아웃은 삭제다.
 표준 메서드로 표현되지 않는 재발급만 콜론 커스텀 메서드로 쓴다
-(`API-3-01`, `API-3-08`, [api-design-guideline.md](../code-convention/api-design-guideline.md)).
+(`API-3-01`, `API-3-08`, [api-design-guideline.md](../../code-convention/api-design-guideline.md)).
 `/login`, `/logout` 같은 동사 경로는 그 항목에 걸린다.
 
 사용자 로그인 경로에 `kakao` 가 들어가지 않는다. **로그인 수단이 카카오 하나로 못 박혀 있어**
@@ -86,7 +86,7 @@
 
 ### 계정 발급과 로그인
 
-[관리자 설계](./admin-api-design.md)의 처리 절차와 저장 구조를 따른다.
+[관리자 설계](../admin/admin-api-design.md)의 처리 절차와 저장 구조를 따른다.
 
 ### 토큰 재발급
 

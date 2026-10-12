@@ -1,6 +1,6 @@
 # 관리자 (admin) API 명세
 
-현재 구현된 관리자 계정 발급과 로그인의 요청, 응답, 오류를 적는다. 공통 규약은 [README.md](./README.md), 토큰·쿠키 정책과 재발급은 [auth-api-spec.md](./auth-api-spec.md)를 따른다. 서버 처리와 저장 구조는 [admin-api-design.md](./admin-api-design.md)에 있다.
+현재 구현된 관리자 계정 발급과 로그인의 요청, 응답, 오류를 적는다. 공통 규약은 [api-spec.md](./api-spec.md), 토큰·쿠키 정책과 재발급은 [auth-api-spec.md](./auth-api-spec.md)를 따른다. 서버 처리와 저장 구조는 [admin-api-design.md](../design/admin/admin-api-design.md)에 있다.
 
 ## 목록과 구현 범위
 
@@ -153,4 +153,4 @@ Set-Cookie: refreshToken=<opaque>; Path=/v1/admin/auth/; Max-Age=86400; HttpOnly
 | --- | --- | --- |
 | `ADMIN-001` | `409` | 이미 사용 중인 관리자 ID입니다. |
 
-요청 검증과 JSON 형식 오류 등 `COMMON-*`는 [공통 규약](./README.md#공통-오류-코드), `AUTH-*`는 [인증 오류 코드](./auth-api-spec.md#오류-코드)를 따른다.
+요청 검증과 JSON 형식 오류 등 `COMMON-*`는 [공통 규약](./api-spec.md#공통-오류-코드), `AUTH-*`는 [인증 오류 코드](./auth-api-spec.md#오류-코드)를 따른다.
