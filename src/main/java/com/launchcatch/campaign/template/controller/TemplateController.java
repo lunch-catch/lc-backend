@@ -1,10 +1,16 @@
 package com.launchcatch.campaign.template.controller;
 
 import com.launchcatch.auth.CustomUserDetails;
+import com.launchcatch.campaign.template.dto.TemplateActiveUpdateRequest;
+import com.launchcatch.campaign.template.dto.TemplateActiveUpdateResponse;
 import com.launchcatch.campaign.template.dto.TemplateCreateRequest;
 import com.launchcatch.campaign.template.dto.TemplateCreateResponse;
+import com.launchcatch.campaign.template.dto.TemplatePublishRequest;
+import com.launchcatch.campaign.template.dto.TemplatePublishResponse;
 import com.launchcatch.campaign.template.dto.TemplateReviseRequest;
+import com.launchcatch.campaign.template.service.TemplateActivationService;
 import com.launchcatch.campaign.template.service.TemplateCreateService;
+import com.launchcatch.campaign.template.service.TemplatePublishService;
 import com.launchcatch.campaign.template.service.TemplateReviseService;
 import com.launchcatch.global.response.ResponseEnvelope;
 import io.swagger.v3.oas.annotations.Operation;
@@ -17,6 +23,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -31,6 +38,8 @@ public class TemplateController {
 
     private final TemplateCreateService templateCreateService;
     private final TemplateReviseService templateReviseService;
+    private final TemplatePublishService templatePublishService;
+    private final TemplateActivationService templateActivationService;
 
     @PostMapping
     @Operation(
@@ -71,5 +80,43 @@ public class TemplateController {
         TemplateCreateResponse response = templateReviseService.revise(
                 templateId, request.requestPrompt(), request.requestId(), admin.getId());
         return ResponseEntity.status(HttpStatus.CREATED).body(ResponseEnvelope.success(response));
+    }
+
+    @PostMapping("/{templateId}/publish")
+    @Operation(
+            summary = "템플릿 게시",
+            description = "DRAFT 템플릿의 임시저장 버전 중 하나를 선택해 최종 콘텐츠로 확정합니다. 게시하면 이 템플릿의 임시저장 버전은 모두 삭제됩니다."
+    )
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "템플릿 게시 성공. 선택한 버전의 HTML이 확정되고 모든 버전이 삭제됩니다."),
+            @ApiResponse(responseCode = "400", description = "COMMON-002: versionNumber가 비었거나 양수가 아닙니다."),
+            @ApiResponse(responseCode = "404", description = "POSTER-005: 템플릿을 찾을 수 없습니다. POSTER-008: 존재하지 않는 버전 번호입니다."),
+            @ApiResponse(responseCode = "409", description = "POSTER-007: 이미 게시된 템플릿입니다.")
+    })
+    public ResponseEntity<ResponseEnvelope<TemplatePublishResponse>> publish(
+            @Parameter(description = "게시할 템플릿 ID입니다.") @PathVariable Long templateId,
+            @Valid @RequestBody TemplatePublishRequest request) {
+        TemplatePublishResponse response = templatePublishService.publish(templateId, request.versionNumber());
+        return ResponseEntity.ok(ResponseEnvelope.success(response));
+    }
+
+    @PatchMapping("/{templateId}/active")
+    @Operation(
+            summary = "템플릿 활성화 관리",
+            description = "게시된 템플릿의 점주 노출 여부(활성 상태)를 변경합니다."
+    )
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "활성화 상태 변경 성공."),
+            @ApiResponse(responseCode = "400", description = "COMMON-002: active가 비었습니다."),
+            @ApiResponse(responseCode = "404", description = "POSTER-005: 템플릿을 찾을 수 없습니다."),
+            @ApiResponse(responseCode = "409", description = "POSTER-009: 게시되지 않은 템플릿입니다.")
+    })
+    public ResponseEntity<ResponseEnvelope<TemplateActiveUpdateResponse>> changeActive(
+            @Parameter(description = "활성화 상태를 바꿀 템플릿 ID입니다.") @PathVariable Long templateId,
+            @Valid @RequestBody TemplateActiveUpdateRequest request,
+            @AuthenticationPrincipal CustomUserDetails admin) {
+        TemplateActiveUpdateResponse response =
+                templateActivationService.changeActive(templateId, request.active(), admin.getId());
+        return ResponseEntity.ok(ResponseEnvelope.success(response));
     }
 }
