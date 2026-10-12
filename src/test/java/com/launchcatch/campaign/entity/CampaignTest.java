@@ -42,6 +42,15 @@ class CampaignTest {
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
+    @Test
+    @DisplayName("집행 기간을 안 정한 캠페인은 activate를 거부한다")
+    void 기간이_없으면_activate를_거부한다() {
+        Campaign campaign = campaign(null, null, null);
+        campaign.schedule(NOW);
+
+        assertThatThrownBy(() -> campaign.activate(NOW)).isInstanceOf(IllegalStateException.class);
+    }
+
     private Campaign campaign(Long dailyBudget, LocalDate startDate, LocalDate endDate) {
         return Campaign.create(
                 10L, 20L,

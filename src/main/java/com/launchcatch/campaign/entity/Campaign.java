@@ -168,6 +168,9 @@ public class Campaign extends BaseTimeEntity {
         if (this.status != CampaignStatus.SCHEDULED) {
             throw new IllegalStateException("only SCHEDULED campaign can be activated: " + this.status);
         }
+        if (this.startDate == null || this.endDate == null) {
+            throw new IllegalStateException("startDate and endDate are required to activate");
+        }
         this.status = CampaignStatus.ACTIVE;
         this.statusChangedAt = now;
     }
@@ -195,6 +198,7 @@ public class Campaign extends BaseTimeEntity {
             throw new IllegalStateException("only ACTIVE or PAUSED campaign can end: " + this.status);
         }
         this.status = CampaignStatus.ENDED;
+        this.pausedReason = null;
         this.statusChangedAt = now;
     }
 

@@ -91,7 +91,7 @@ stateDiagram-v2
 
 | 상황 | 확인할 것 | 이 이슈의 처리 |
 |---|---|---|
-| 같은 캠페인에 동시 전이 요청 | 비관 잠금 여부 | 안 걸었다. 설계 문서 2.4의 `CampaignStatusService` 예시가 `findById`만 쓰고 잠금이 없어 그대로 따랐다. 실제 동시 호출자가 생기는 이슈에서 다시 본다(12장 미정 사항) |
+| 같은 캠페인에 동시 전이 요청 | 비관 잠금 여부 | `CampaignRepository.findByIdForUpdate`(`PESSIMISTIC_WRITE`)로 행 잠금을 건다. `CampaignStatusService.findOrThrow`가 이걸 쓴다. `TemplateRepository.findByIdForUpdate`와 같은 이유다 |
 | 늦은 이벤트가 최신 상태를 덮는지 | `changedAt` 비교 | `CampaignStatusChangedEvent.changedAt`을 받는 쪽(광고 서빙 등)이 자기보다 늦은 것만 반영하기로 이미 계약에 적혀 있다(`CampaignStatusChangedEvent` Javadoc) |
 
 영업일은 이 서비스가 직접 판단하지 않는다. `pause`/`resume`/`end`를 부르는 쪽이 `businessDate`를 넘긴다.
@@ -117,6 +117,5 @@ stateDiagram-v2
 | 미정 항목 | 어디까지 정해졌나 | 막는 것 |
 |---|---|---|
 | `StoreCampaignSummaryUpdater` 호출 | 설계 문서 2.4에 간선은 있으나 store 쪽 인터페이스가 아직 없다 | store 도메인이 인터페이스를 만들어야 이어 붙일 수 있다 |
-| 동시 전이 경쟁의 잠금 여부 | 지금은 잠금 없이 구현(설계 문서 예시를 따름) | 실제 동시 호출자(점주 API, billing 연동)가 생기는 이슈에서 필요한지 다시 본다 |
 | "예약이 있는 PAUSED"의 정확한 의미 | 상태 전이 규칙으로 추론해 구현(3장) | billing의 `budget_daily_plan`을 직접 볼 수 없어 billing 쪽 확인이 없으면 확정할 수 없다 |
 | `newPriorityUntil` | `ad_candidate`에만 컬럼이 있고 `campaign`엔 없다(#156 결정). `CampaignInfo`엔 항상 `null`로 채워 보낸다 | "신규 우선 노출" 계산 규칙 자체가 문서에 없다. campaign에 컬럼을 추가할지부터 정해야 한다 |

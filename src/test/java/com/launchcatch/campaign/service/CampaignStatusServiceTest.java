@@ -272,6 +272,7 @@ class CampaignStatusServiceTest {
         service.end(CAMPAIGN_ID, BUSINESS_DATE);
 
         assertThat(campaign.getStatus()).isEqualTo(CampaignStatus.ENDED);
+        assertThat(campaign.getPausedReason()).isNull();
     }
 
     @Test
