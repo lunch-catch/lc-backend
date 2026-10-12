@@ -16,6 +16,8 @@
 | `GET` | `/v1/admin/templates` | 템플릿 목록 조회 | ADMIN, SUPER_ADMIN |
 | `GET` | `/v1/admin/templates/{templateId}` | 템플릿 상세 조회 | ADMIN, SUPER_ADMIN |
 | `GET` | `/v1/admin/templates/{templateId}/versions` | 템플릿 버전 목록 조회 | ADMIN, SUPER_ADMIN |
+| `POST` | `/v1/admin/templates/{templateId}/publish` | 템플릿 게시 | ADMIN, SUPER_ADMIN |
+| `PATCH` | `/v1/admin/templates/{templateId}/active` | 템플릿 활성화 관리 | ADMIN, SUPER_ADMIN |
 
 ## 템플릿 생성
 
@@ -215,6 +217,106 @@
 |---|---|---|
 | `404` | `POSTER-005` | 템플릿을 찾을 수 없다 |
 
+## 템플릿 게시
+
+### `POST /v1/admin/templates/{templateId}/publish`
+
+`DRAFT` 템플릿의 임시저장 버전 중 하나를 선택해 최종 콘텐츠로 확정한다.
+게시하면 이 템플릿의 임시저장 버전은(게시한 버전 포함) 모두 삭제되어 되돌릴 수 없다.
+
+**요청**
+
+```json
+{
+  "versionNumber": 3
+}
+```
+
+| 필드 | 타입 | 필수 | 설명 |
+|---|---|---|---|
+| `versionNumber` | integer | 예 | 게시할 임시저장 버전 번호 |
+
+**응답** `200`
+
+```json
+{
+  "code": "SUCCESS",
+  "message": "요청이 성공적으로 처리되었습니다.",
+  "data": {
+    "templateId": 1,
+    "name": "가을 신메뉴",
+    "status": "PUBLISHED",
+    "html": "<div>...</div>",
+    "publishedAt": "2026-10-12T10:00:00+09:00"
+  }
+}
+```
+
+| 필드 | 타입 | null | 설명 |
+|---|---|---|---|
+| `templateId` | integer | 아니오 | 템플릿 ID |
+| `name` | string | 아니오 | 템플릿 이름 |
+| `status` | string | 아니오 | 게시 성공 직후는 항상 `PUBLISHED` |
+| `html` | string | 아니오 | 게시 시점에 확정된 HTML |
+| `publishedAt` | string (시각) | 아니오 | 게시 시각 |
+
+**오류**
+
+| 상태 | 코드 | 언제 |
+|---|---|---|
+| `400` | `COMMON-002` | `versionNumber` 가 비었거나 양수가 아니다 |
+| `404` | `POSTER-005` | 템플릿을 찾을 수 없다 |
+| `404` | `POSTER-008` | 존재하지 않는 버전 번호다 |
+| `409` | `POSTER-007` | 이미 게시된 템플릿이다 |
+
+## 템플릿 활성화 관리
+
+### `PATCH /v1/admin/templates/{templateId}/active`
+
+게시된 템플릿의 점주 노출 여부(활성 상태)를 바꾼다. 게시되지 않은 템플릿은 활성화할 수 없다.
+
+**요청**
+
+```json
+{
+  "active": true
+}
+```
+
+| 필드 | 타입 | 필수 | 설명 |
+|---|---|---|---|
+| `active` | boolean | 예 | 점주에게 노출할지 여부 |
+
+**응답** `200`
+
+```json
+{
+  "code": "SUCCESS",
+  "message": "요청이 성공적으로 처리되었습니다.",
+  "data": {
+    "templateId": 1,
+    "active": true,
+    "activatedBy": 7,
+    "activatedAt": "2026-10-12T10:05:00+09:00"
+  }
+}
+```
+
+| 필드 | 타입 | null | 설명 |
+|---|---|---|---|
+| `templateId` | integer | 아니오 | 템플릿 ID |
+| `active` | boolean | 아니오 | 변경된 활성 여부 |
+| `activatedBy` | integer | 아니오 | 변경한 관리자 ID |
+| `activatedAt` | string (시각) | 아니오 | 변경 시각 |
+
+**오류**
+
+| 상태 | 코드 | 언제 |
+|---|---|---|
+| `400` | `COMMON-002` | `active` 가 비었다 |
+| `404` | `POSTER-005` | 템플릿을 찾을 수 없다 |
+| `409` | `POSTER-009` | 게시되지 않은 템플릿이다 |
+
 ## 오류 코드
 
 요청 형식이 틀린 실패는 공통 코드(`COMMON-002`)로 온다. 공통 코드 목록은 `README.md` 에 있다.
@@ -228,3 +330,6 @@
 | `POSTER-004` | `503` | 템플릿 생성이 지연되고 있습니다. 잠시 후 다시 시도해 주세요. |
 | `POSTER-005` | `404` | 템플릿을 찾을 수 없습니다. |
 | `POSTER-006` | `409` | 게시된 템플릿은 수정할 수 없습니다. |
+| `POSTER-007` | `409` | 이미 게시된 템플릿은 다시 게시할 수 없습니다. |
+| `POSTER-008` | `404` | 존재하지 않는 버전 번호로 게시할 수 없습니다. |
+| `POSTER-009` | `409` | 게시되지 않은 템플릿은 활성화할 수 없습니다. |
