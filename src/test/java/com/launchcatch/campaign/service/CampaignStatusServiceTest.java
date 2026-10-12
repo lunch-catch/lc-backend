@@ -17,7 +17,7 @@ import com.launchcatch.campaign.contract.TargetGender;
 import com.launchcatch.campaign.entity.ActorType;
 import com.launchcatch.campaign.entity.Campaign;
 import com.launchcatch.campaign.entity.CampaignStatusLog;
-import com.launchcatch.campaign.entity.PauseReason;
+import com.launchcatch.campaign.contract.PauseReason;
 import com.launchcatch.campaign.repository.CampaignRepository;
 import com.launchcatch.campaign.repository.CampaignStatusLogRepository;
 import com.launchcatch.global.entity.BaseTimeEntity;

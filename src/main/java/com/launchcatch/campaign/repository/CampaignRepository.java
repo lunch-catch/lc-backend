@@ -26,8 +26,8 @@ public interface CampaignRepository extends JpaRepository<Campaign, Long> {
                 or (
                     c.status = com.launchcatch.campaign.contract.CampaignStatus.PAUSED
                     and c.pausedReason in (
-                        com.launchcatch.campaign.entity.PauseReason.OWNER,
-                        com.launchcatch.campaign.entity.PauseReason.NO_POINTS
+                        com.launchcatch.campaign.contract.PauseReason.OWNER,
+                        com.launchcatch.campaign.contract.PauseReason.NO_POINTS
                     )
                 )
             )

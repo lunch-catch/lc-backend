@@ -8,7 +8,7 @@ import com.launchcatch.campaign.contract.DiscountTargetType;
 import com.launchcatch.campaign.contract.DiscountType;
 import com.launchcatch.campaign.contract.TargetGender;
 import com.launchcatch.campaign.entity.Campaign;
-import com.launchcatch.campaign.entity.PauseReason;
+import com.launchcatch.campaign.contract.PauseReason;
 import com.launchcatch.campaign.repository.CampaignRepository;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
