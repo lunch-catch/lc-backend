@@ -18,7 +18,11 @@ public class TemplateSlotValidator {
 
     private static final Set<String> TEXT_TAGS = Set.of("div", "span", "p", "h1", "h2", "h3", "strong", "em");
 
-    private static final Map<String, Set<String>> SLOT_TAGS = Map.of(
+    /*
+     * 패키지 밖에는 안 열지만, 같은 service 패키지의 TemplateStructureValidator 가
+     * 슬롯 이름 목록을 그대로 재사용하도록 package-private 으로 둔다.
+     */
+    static final Map<String, Set<String>> SLOT_TAGS = Map.of(
             "eventName", TEXT_TAGS,
             "discount", TEXT_TAGS,
             "period", TEXT_TAGS,

@@ -37,7 +37,7 @@ public class GlobalExceptionHandler {
      *
      * 503 에는 이 값이 맞다. 잠시 뒤면 되는 상태라 "곧 다시" 가 답이다.
      *
-     * 429 에는 모자란다. api-spec/README.md 가 "다시 요청할 수 있을 때까지 남은 초" 를
+     * 429 에는 모자란다. api-spec/api-spec.md 가 "다시 요청할 수 있을 때까지 남은 초" 를
      * 요구하는데, 그 값은 윈도우를 들고 있는 쪽만 안다. 속도 제한을 거는 쪽이 직접 헤더를
      * 넣어야 한다. AuthRateLimitFilter 가 카운터의 남은 수명으로 그렇게 한다. 여기 값은
      * 그것이 없을 때의 최소값일 뿐이다.
@@ -121,7 +121,7 @@ public class GlobalExceptionHandler {
 
     /*
      * 인증과 인가 실패는 여기서 다루지 않는다. auth.exception.AuthExceptionHandler 가
-     * AUTH-005 과 AUTH-006 로 답한다(docs/api-spec/auth.md 의 접근 제어).
+     * AUTH-005 과 AUTH-006 로 답한다(docs/api-spec/auth-api-spec.md 의 접근 제어).
      *
      * 그 둘은 두 곳에서 난다. @PreAuthorize 같은 메서드 보안과, 토큰을 검사하는 보안 필터다.
      * @RestControllerAdvice 는 디스패처 서블릿 안에서만 도는데 필터는 그 바깥이라 원래

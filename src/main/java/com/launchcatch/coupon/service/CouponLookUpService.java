@@ -1,0 +1,53 @@
+package com.launchcatch.coupon.service;
+
+import com.launchcatch.coupon.dto.CouponIssuanceLimitResponse;
+import com.launchcatch.coupon.dto.CouponSummaryResponse;
+import com.launchcatch.coupon.repository.CouponDailyLimitRepository;
+import com.launchcatch.coupon.repository.MemberCouponRepository;
+import com.launchcatch.global.config.ClockConfig;
+import java.time.Clock;
+import java.time.LocalDate;
+import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+@RequiredArgsConstructor
+@Transactional(readOnly = true)
+public class CouponLookUpService {
+
+    private final MemberCouponRepository memberCouponRepository;
+    private final CouponDailyLimitRepository couponDailyLimitRepository;
+    private final Clock clock;
+
+    @Value("${coupon.daily-limit}")
+    private int dailyLimit;
+
+    /**
+     * 오늘의 일일 한도에 반영된 쿠폰 수와 설정된 일일 한도를 조회한다.
+     * 발급 기록이 없으면 발급 횟수는 0이며, 발급 횟수가 한도 이상이면 한도에 도달한 것으로 반환한다.
+     *
+     * @param memberId 인증된 회원의 ID
+     * @return 조회 영업일, 일일 한도에 반영된 쿠폰 수, 일일 한도와 한도 도달 여부
+     */
+    public CouponIssuanceLimitResponse getIssuanceLimit(Long memberId) {
+        LocalDate businessDate = LocalDate.now(clock.withZone(ClockConfig.ZONE));
+        int issuedCount = couponDailyLimitRepository
+                .findIssuedCountByMemberIdAndBusinessDate(memberId, businessDate)
+                .orElse(0);
+        return new CouponIssuanceLimitResponse(
+                businessDate, issuedCount, dailyLimit, issuedCount >= dailyLimit);
+    }
+
+    /**
+     * 회원의 누적 쿠폰 발급 수, 사용 수와 할인받은 금액의 합계를 조회한다.
+     * 삭제한 쿠폰도 발급 수에 포함하며, 할인액은 사용 이력에 확정해 저장한 금액을 기준으로 한다.
+     *
+     * @param memberId 인증된 회원의 ID
+     * @return 누적 발급 수, 사용 수와 할인액 합계이며, 이력이 없으면 각 값은 0
+     */
+    public CouponSummaryResponse getSummary(Long memberId) {
+        return memberCouponRepository.findSummaryByMemberId(memberId);
+    }
+}

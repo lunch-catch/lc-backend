@@ -266,7 +266,7 @@ ORDER BY created_at;
 ```
 
 ```sql
--- 유형 2: 외부는 실행되었는데 우리 기록이 확정되지 않은 건 (최우선 확인)
+-- 유형 2: 외부는 실행되었는데 내부 기록이 확정되지 않은 건 (최우선 확인)
 SELECT e.request_id, e.amount, e.status AS external_status, r.status AS local_status
 FROM external_request e
 JOIN request r ON r.id = e.request_id

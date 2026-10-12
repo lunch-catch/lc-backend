@@ -9,6 +9,7 @@ import static org.mockito.Mockito.when;
 
 import com.launchcatch.member.contract.MemberStatus;
 import com.launchcatch.member.entity.Member;
+import com.launchcatch.member.exception.MemberErrorCode;
 import com.launchcatch.member.exception.MemberException;
 import com.launchcatch.member.oauth.KakaoIdTokenExchanger;
 import com.launchcatch.member.oauth.KakaoIdentity;
@@ -122,7 +123,8 @@ class MemberLoginServiceTest {
         when(memberRepository.findByProviderUserId("kakao-1")).thenReturn(Optional.of(member));
 
         assertThatThrownBy(() -> service.login("code", "state"))
-                .isInstanceOf(MemberException.class);
+                .isInstanceOfSatisfying(MemberException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(MemberErrorCode.SUSPENDED_REJOIN_NOT_ALLOWED));
     }
 
     @Test
@@ -141,6 +143,7 @@ class MemberLoginServiceTest {
         MemberLoginService.LoginResult result = service.login("code", "state");
 
         assertThat(result.newMember()).isTrue();
+        assertThat(result.onboardingCompleted()).isFalse();
         assertThat(member.getStatus()).isEqualTo(MemberStatus.ACTIVE);
         assertThat(member.getNickname()).isEqualTo("새닉네임");
         verify(kakaoUnlinkFailureRepository).deleteByMember_Id(1L);

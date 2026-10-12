@@ -12,12 +12,14 @@ import org.springframework.security.web.SecurityFilterChain;
 public class OwnerSecurityConfig {
     @Bean
     @Order(ApiSecurityDefaults.DOMAIN_CHAIN_ORDER)
-    public SecurityFilterChain ownerSignupFilterChain(HttpSecurity http, ApiSecurityDefaults defaults)
+    public SecurityFilterChain ownerAuthFilterChain(HttpSecurity http, ApiSecurityDefaults defaults)
             throws Exception {
         return defaults.apply(http)
-                .securityMatcher("/v1/owners")
+                .securityMatcher("/v1/owner/auth/tokens", "/v1/owners", "/v1/owner/me")
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers(HttpMethod.POST, "/v1/owners").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/v1/owner/auth/tokens", "/v1/owners")
+                        .permitAll()
+                        .requestMatchers(HttpMethod.GET, "/v1/owner/me").hasRole("OWNER")
                         .anyRequest().denyAll())
                 .build();
     }

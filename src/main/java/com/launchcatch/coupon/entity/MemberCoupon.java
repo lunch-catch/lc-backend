@@ -1,0 +1,76 @@
+package com.launchcatch.coupon.entity;
+
+import com.launchcatch.coupon.exception.CouponErrorCode;
+import com.launchcatch.coupon.exception.CouponException;
+import com.launchcatch.global.entity.BaseTimeEntity;
+import jakarta.persistence.AttributeOverride;
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
+import jakarta.persistence.Table;
+import java.time.LocalDateTime;
+import java.util.UUID;
+import lombok.AccessLevel;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
+
+@Entity
+@Table(name = "member_coupon")
+@AttributeOverride(name = "id", column = @Column(name = "member_coupon_id"))
+@Getter
+@NoArgsConstructor(access = AccessLevel.PROTECTED)
+public class MemberCoupon extends BaseTimeEntity {
+
+    @Column(name = "coupon_event_id", nullable = false, updatable = false)
+    private Long couponEventId;
+
+    @Column(name = "member_id", nullable = false, updatable = false)
+    private Long memberId;
+
+    @JdbcTypeCode(SqlTypes.BINARY)
+    @Column(name = "coupon_code", nullable = false, updatable = false, columnDefinition = "BINARY(16)")
+    private UUID couponCode;
+
+    @Column(name = "qr_version", nullable = false)
+    private int qrVersion;
+
+    @JdbcTypeCode(SqlTypes.BINARY)
+    @Column(name = "qr_token", columnDefinition = "BINARY(16)")
+    private UUID qrToken;
+
+    @Column(name = "qr_expires_at")
+    private LocalDateTime qrExpiresAt;
+
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 20)
+    private MemberCouponStatus status;
+
+    @Column(name = "usable_start_at", nullable = false, updatable = false)
+    private LocalDateTime usableStartAt;
+
+    @Column(name = "usable_end_at", nullable = false, updatable = false)
+    private LocalDateTime usableEndAt;
+
+    /**
+     * 미사용 쿠폰을 삭제 상태로 바꾸고 QR을 무효화한다.
+     * 사용 완료 쿠폰은 거절하며 이미 삭제된 쿠폰은 추가로 변경하지 않는다.
+     *
+     * @return 이번 호출에서 처음 삭제했으면 true이며 이미 삭제된 쿠폰이면 false
+     */
+    public boolean remove() {
+        if (status == MemberCouponStatus.USED) {
+            throw new CouponException(CouponErrorCode.USED_COUPON_NOT_REMOVABLE);
+        }
+        if (status == MemberCouponStatus.REMOVED) {
+            return false;
+        }
+        status = MemberCouponStatus.REMOVED;
+        qrVersion++;
+        qrToken = null;
+        qrExpiresAt = null;
+        return true;
+    }
+}
