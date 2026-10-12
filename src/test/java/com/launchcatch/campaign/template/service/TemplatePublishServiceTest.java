@@ -1,0 +1,125 @@
+package com.launchcatch.campaign.template.service;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+import com.launchcatch.campaign.exception.CampaignException;
+import com.launchcatch.campaign.exception.PosterErrorCode;
+import com.launchcatch.campaign.template.dto.TemplatePublishResponse;
+import com.launchcatch.campaign.template.entity.Template;
+import com.launchcatch.campaign.template.entity.TemplateStatus;
+import com.launchcatch.campaign.template.repository.TemplateRepository;
+import com.launchcatch.campaign.template.repository.TemplateVersionRepository;
+import com.launchcatch.global.entity.BaseTimeEntity;
+import java.lang.reflect.Field;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
+import java.util.Optional;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+
+@ExtendWith(MockitoExtension.class)
+class TemplatePublishServiceTest {
+
+    private static final Long TEMPLATE_ID = 1L;
+    private static final int VERSION_NUMBER = 1;
+    private static final Clock FIXED_CLOCK = Clock.fixed(Instant.parse("2026-10-12T01:00:00Z"), ZoneOffset.UTC);
+
+    @Mock
+    private TemplateRepository templateRepository;
+    @Mock
+    private TemplateVersionRepository templateVersionRepository;
+
+    private TemplatePublishService service;
+
+    @BeforeEach
+    void setUp() {
+        service = new TemplatePublishService(templateRepository, templateVersionRepository, FIXED_CLOCK);
+    }
+
+    @Test
+    @DisplayName("DRAFT 템플릿을 게시하면 선택한 버전의 HTML로 확정되고 모든 버전이 소프트삭제된다")
+    void 게시하면_확정되고_버전이_소프트삭제된다() throws Exception {
+        Template template = draftTemplate();
+        when(templateRepository.findByIdForUpdate(TEMPLATE_ID)).thenReturn(Optional.of(template));
+        when(templateVersionRepository
+                .findByTemplateIdAndVersionNumberAndDeletedAtIsNull(TEMPLATE_ID, VERSION_NUMBER))
+                .thenReturn(Optional.of(template.latestVersion()));
+
+        TemplatePublishResponse response = service.publish(TEMPLATE_ID, VERSION_NUMBER);
+
+        assertThat(response.templateId()).isEqualTo(TEMPLATE_ID);
+        assertThat(response.status()).isEqualTo(TemplateStatus.PUBLISHED);
+        assertThat(response.html()).isEqualTo("<div>1</div>");
+        assertThat(response.publishedAt()).isEqualTo(LocalDateTime.now(FIXED_CLOCK));
+        verify(templateRepository).findByIdForUpdate(TEMPLATE_ID);
+        verify(templateVersionRepository)
+                .softDeleteAllByTemplateId(TEMPLATE_ID, LocalDateTime.now(FIXED_CLOCK));
+    }
+
+    @Test
+    @DisplayName("템플릿이 없으면 POSTER-005 로 거부한다")
+    void 템플릿이_없으면_거부한다() {
+        when(templateRepository.findByIdForUpdate(TEMPLATE_ID)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.publish(TEMPLATE_ID, VERSION_NUMBER))
+                .isInstanceOfSatisfying(CampaignException.class, e ->
+                        assertThat(e.getErrorCode()).isEqualTo(PosterErrorCode.TEMPLATE_NOT_FOUND));
+    }
+
+    @Test
+    @DisplayName("이미 게시된 템플릿은 POSTER-007 로 거부한다")
+    void 이미_게시된_템플릿은_거부한다() throws Exception {
+        Template template = draftTemplate();
+        setStatus(template, TemplateStatus.PUBLISHED);
+        when(templateRepository.findByIdForUpdate(TEMPLATE_ID)).thenReturn(Optional.of(template));
+
+        assertThatThrownBy(() -> service.publish(TEMPLATE_ID, VERSION_NUMBER))
+                .isInstanceOfSatisfying(CampaignException.class, e ->
+                        assertThat(e.getErrorCode()).isEqualTo(PosterErrorCode.TEMPLATE_ALREADY_PUBLISHED));
+        verify(templateVersionRepository, never()).softDeleteAllByTemplateId(any(), any());
+    }
+
+    @Test
+    @DisplayName("존재하지 않는 버전 번호면 POSTER-008 로 거부한다")
+    void 존재하지_않는_버전이면_거부한다() throws Exception {
+        Template template = draftTemplate();
+        when(templateRepository.findByIdForUpdate(TEMPLATE_ID)).thenReturn(Optional.of(template));
+        when(templateVersionRepository.findByTemplateIdAndVersionNumberAndDeletedAtIsNull(TEMPLATE_ID, 99))
+                .thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.publish(TEMPLATE_ID, 99))
+                .isInstanceOfSatisfying(CampaignException.class, e ->
+                        assertThat(e.getErrorCode()).isEqualTo(PosterErrorCode.VERSION_NOT_FOUND));
+        verify(templateVersionRepository, never()).softDeleteAllByTemplateId(any(), any());
+    }
+
+    private Template draftTemplate() throws Exception {
+        Template template = Template.createDraft("가을 신메뉴");
+        setId(template, TEMPLATE_ID);
+        template.addDraftVersion(1L, LocalDateTime.now(FIXED_CLOCK), "요청", "req-1", "<div>1</div>", VERSION_NUMBER);
+        return template;
+    }
+
+    private void setId(Object entity, Long id) throws Exception {
+        Field field = BaseTimeEntity.class.getDeclaredField("id");
+        field.setAccessible(true);
+        field.set(entity, id);
+    }
+
+    private void setStatus(Template template, TemplateStatus status) throws Exception {
+        Field field = Template.class.getDeclaredField("status");
+        field.setAccessible(true);
+        field.set(template, status);
+    }
+}
