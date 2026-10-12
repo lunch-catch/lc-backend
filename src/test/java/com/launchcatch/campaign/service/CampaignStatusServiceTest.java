@@ -77,10 +77,22 @@ class CampaignStatusServiceTest {
     }
 
     @Test
-    @DisplayName("DRAFT가 아니면 schedule을 거부한다")
-    void DRAFT가_아니면_schedule을_거부한다() {
-        Campaign campaign = draftCampaign();
-        campaign.schedule(LocalDateTime.now(FIXED_CLOCK));
+    @DisplayName("이미 SCHEDULED면 다시 schedule해도 로그 없이 조용히 성공한다(멱등한 재시도)")
+    void 이미_SCHEDULED면_다시_schedule해도_조용히_성공한다() {
+        Campaign campaign = scheduledCampaign();
+        when(campaignRepository.findByIdForUpdate(CAMPAIGN_ID)).thenReturn(Optional.of(campaign));
+
+        service.schedule(CAMPAIGN_ID);
+
+        assertThat(campaign.getStatus()).isEqualTo(CampaignStatus.SCHEDULED);
+        verify(campaignStatusLogRepository, never()).save(any());
+        verify(events, never()).publishEvent(any());
+    }
+
+    @Test
+    @DisplayName("DRAFT도 SCHEDULED도 아니면 schedule을 거부한다")
+    void DRAFT도_SCHEDULED도_아니면_schedule을_거부한다() {
+        Campaign campaign = activeCampaign();
         when(campaignRepository.findByIdForUpdate(CAMPAIGN_ID)).thenReturn(Optional.of(campaign));
 
         assertThatThrownBy(() -> service.schedule(CAMPAIGN_ID)).isInstanceOf(IllegalStateException.class);
@@ -110,6 +122,18 @@ class CampaignStatusServiceTest {
         when(campaignRepository.findByIdForUpdate(CAMPAIGN_ID)).thenReturn(Optional.of(campaign));
 
         assertThatThrownBy(() -> service.activate(CAMPAIGN_ID)).isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    @DisplayName("이미 ACTIVE면 다시 activate해도 로그 없이 조용히 성공한다(멱등한 재시도)")
+    void 이미_ACTIVE면_다시_activate해도_조용히_성공한다() {
+        Campaign campaign = activeCampaign();
+        when(campaignRepository.findByIdForUpdate(CAMPAIGN_ID)).thenReturn(Optional.of(campaign));
+
+        service.activate(CAMPAIGN_ID);
+
+        assertThat(campaign.getStatus()).isEqualTo(CampaignStatus.ACTIVE);
+        verify(campaignStatusLogRepository, never()).save(any());
     }
 
     @Test
@@ -163,6 +187,31 @@ class CampaignStatusServiceTest {
     }
 
     @Test
+    @DisplayName("이미 같은 이유로 PAUSED면 다시 pause해도 로그 없이 조용히 성공한다(멱등한 재시도)")
+    void 같은_이유로_다시_pause하면_조용히_성공한다() {
+        Campaign campaign = pausedCampaign(PauseReason.OWNER);
+        when(campaignRepository.findByIdForUpdate(CAMPAIGN_ID)).thenReturn(Optional.of(campaign));
+
+        service.pause(CAMPAIGN_ID, PauseReason.OWNER, BUSINESS_DATE);
+
+        assertThat(campaign.getStatus()).isEqualTo(CampaignStatus.PAUSED);
+        verify(campaignStatusLogRepository, never()).save(any());
+        verify(events, never()).publishEvent(any());
+    }
+
+    @Test
+    @DisplayName("다른 이유로 이미 PAUSED면 pause를 다시 요청해도 거부한다(진짜 충돌)")
+    void 다른_이유로_PAUSED면_pause를_다시_요청해도_거부한다() {
+        Campaign campaign = pausedCampaign(PauseReason.ADMIN);
+        when(campaignRepository.findByIdForUpdate(CAMPAIGN_ID)).thenReturn(Optional.of(campaign));
+
+        assertThatThrownBy(() -> service.pause(CAMPAIGN_ID, PauseReason.OWNER, BUSINESS_DATE))
+                .isInstanceOf(IllegalStateException.class);
+        verify(campaignStatusLogRepository, never()).save(any());
+        verify(events, never()).publishEvent(any());
+    }
+
+    @Test
     @DisplayName("PAUSED 캠페인을 resume 하면 ACTIVE 로 바뀌고 넘긴 행위자로 기록되며 서빙 가능 이벤트를 발행한다")
     void PAUSED를_resume하면_ACTIVE로_바뀐다() {
         Campaign campaign = pausedCampaign(PauseReason.OWNER);
@@ -180,11 +229,24 @@ class CampaignStatusServiceTest {
     @Test
     @DisplayName("PAUSED가 아니면 resume을 거부한다")
     void PAUSED가_아니면_resume을_거부한다() {
-        Campaign campaign = activeCampaign();
+        Campaign campaign = draftCampaign();
         when(campaignRepository.findByIdForUpdate(CAMPAIGN_ID)).thenReturn(Optional.of(campaign));
 
         assertThatThrownBy(() -> service.resume(CAMPAIGN_ID, ActorType.OWNER, BUSINESS_DATE))
                 .isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    @DisplayName("이미 ACTIVE면 다시 resume해도 로그 없이 조용히 성공한다(멱등한 재시도)")
+    void 이미_ACTIVE면_다시_resume해도_조용히_성공한다() {
+        Campaign campaign = activeCampaign();
+        when(campaignRepository.findByIdForUpdate(CAMPAIGN_ID)).thenReturn(Optional.of(campaign));
+
+        service.resume(CAMPAIGN_ID, ActorType.OWNER, BUSINESS_DATE);
+
+        assertThat(campaign.getStatus()).isEqualTo(CampaignStatus.ACTIVE);
+        verify(campaignStatusLogRepository, never()).save(any());
+        verify(events, never()).publishEvent(any());
     }
 
     @Test
@@ -219,6 +281,19 @@ class CampaignStatusServiceTest {
         when(campaignRepository.findByIdForUpdate(CAMPAIGN_ID)).thenReturn(Optional.of(campaign));
 
         assertThatThrownBy(() -> service.end(CAMPAIGN_ID, BUSINESS_DATE)).isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    @DisplayName("이미 ENDED면 다시 end해도 로그나 이벤트 없이 조용히 성공한다(멱등한 재시도)")
+    void 이미_ENDED면_다시_end해도_조용히_성공한다() {
+        Campaign campaign = endedCampaign();
+        when(campaignRepository.findByIdForUpdate(CAMPAIGN_ID)).thenReturn(Optional.of(campaign));
+
+        service.end(CAMPAIGN_ID, BUSINESS_DATE);
+
+        assertThat(campaign.getStatus()).isEqualTo(CampaignStatus.ENDED);
+        verify(campaignStatusLogRepository, never()).save(any());
+        verify(events, never()).publishEvent(any());
     }
 
     @Test
@@ -270,6 +345,12 @@ class CampaignStatusServiceTest {
     private Campaign pausedCampaign(PauseReason reason) {
         Campaign campaign = activeCampaign();
         campaign.pause(reason, LocalDateTime.now(FIXED_CLOCK));
+        return campaign;
+    }
+
+    private Campaign endedCampaign() {
+        Campaign campaign = activeCampaign();
+        campaign.end(LocalDateTime.now(FIXED_CLOCK));
         return campaign;
     }
 

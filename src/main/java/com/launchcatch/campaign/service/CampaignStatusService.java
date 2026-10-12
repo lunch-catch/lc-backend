@@ -3,10 +3,10 @@ package com.launchcatch.campaign.service;
 import com.launchcatch.campaign.contract.CampaignEndedEvent;
 import com.launchcatch.campaign.contract.CampaignStatus;
 import com.launchcatch.campaign.contract.CampaignStatusChangedEvent;
+import com.launchcatch.campaign.contract.PauseReason;
 import com.launchcatch.campaign.entity.ActorType;
 import com.launchcatch.campaign.entity.Campaign;
 import com.launchcatch.campaign.entity.CampaignStatusLog;
-import com.launchcatch.campaign.contract.PauseReason;
 import com.launchcatch.campaign.repository.CampaignRepository;
 import com.launchcatch.campaign.repository.CampaignStatusLogRepository;
 import java.time.Clock;
@@ -21,6 +21,11 @@ import org.springframework.transaction.annotation.Transactional;
  * 95행 상태 전이를 담당한다. schedule, activate는 00:00 배치 등 SYSTEM 전용이라 상태
  * 변경 이벤트를 발행하지 않는다(00:00 배치가 같은 흐름에서 바로 다시 조회하기 때문). pause,
  * resume, end만 낮에 일어나는 전이라 CampaignStatusChangedEvent를 발행한다.
+ *
+ * 다섯 메서드 모두 이미 목표 상태면 예외 대신 조용히 성공한다(멱등한 재시도). 00:00 묶음의
+ * 이어받기와 자동 재실행, billing의 재시도가 모두 같은 단계를 두 번 실행할 수 있다고 전제하기
+ * 때문이다(런치캐치_배치_운영.md). 목표 상태가 아닌데 전이가 안 되는 경우는 엔티티 쪽
+ * IllegalStateException이 그대로 막는다.
  *
  * store.contract.StoreCampaignSummaryUpdater 호출(설계 문서 2.4, campaign -> store 간선)은
  * store 쪽에 그 인터페이스가 아직 없어 이번 이슈에서 뺐다. 생기면 이어 붙인다.
@@ -37,6 +42,9 @@ public class CampaignStatusService {
     @Transactional
     public void schedule(Long campaignId) {
         Campaign campaign = findOrThrow(campaignId);
+        if (campaign.getStatus() == CampaignStatus.SCHEDULED) {
+            return;
+        }
         CampaignStatus from = campaign.getStatus();
         campaign.schedule(LocalDateTime.now(clock));
         log(campaignId, from, campaign.getStatus(), ActorType.SYSTEM, null);
@@ -45,6 +53,9 @@ public class CampaignStatusService {
     @Transactional
     public void activate(Long campaignId) {
         Campaign campaign = findOrThrow(campaignId);
+        if (campaign.getStatus() == CampaignStatus.ACTIVE) {
+            return;
+        }
         CampaignStatus from = campaign.getStatus();
         campaign.activate(LocalDateTime.now(clock));
         log(campaignId, from, campaign.getStatus(), ActorType.SYSTEM, null);
@@ -53,6 +64,9 @@ public class CampaignStatusService {
     @Transactional
     public void pause(Long campaignId, PauseReason reason, LocalDate businessDate) {
         Campaign campaign = findOrThrow(campaignId);
+        if (campaign.getStatus() == CampaignStatus.PAUSED && campaign.getPausedReason() == reason) {
+            return;
+        }
         CampaignStatus from = campaign.getStatus();
         LocalDateTime now = LocalDateTime.now(clock);
         campaign.pause(reason, now);
@@ -63,6 +77,9 @@ public class CampaignStatusService {
     @Transactional
     public void resume(Long campaignId, ActorType actorType, LocalDate businessDate) {
         Campaign campaign = findOrThrow(campaignId);
+        if (campaign.getStatus() == CampaignStatus.ACTIVE) {
+            return;
+        }
         CampaignStatus from = campaign.getStatus();
         LocalDateTime now = LocalDateTime.now(clock);
         campaign.resume(now);
@@ -73,6 +90,9 @@ public class CampaignStatusService {
     @Transactional
     public void end(Long campaignId, LocalDate businessDate) {
         Campaign campaign = findOrThrow(campaignId);
+        if (campaign.getStatus() == CampaignStatus.ENDED) {
+            return;
+        }
         CampaignStatus from = campaign.getStatus();
         LocalDateTime now = LocalDateTime.now(clock);
         campaign.end(now);
