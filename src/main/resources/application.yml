@@ -162,6 +162,9 @@ app:
   cors:
     allowed-origins: "${CORS_ALLOWED_ORIGINS:http://localhost:5173}"
 
+coupon:
+  daily-limit: "${COUPON_DAILY_LIMIT:3}"
+
 # 이미지 URL 앞에 붙는 주소다. 운영은 CloudFront 도메인이 들어온다.
 #
 # 기본값을 비워 둔다. 로컬에는 오브젝트 스토리지가 없어 어차피 이미지가 열리지 않는데,
