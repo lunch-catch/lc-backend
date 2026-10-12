@@ -108,6 +108,9 @@ public class Template extends BaseTimeEntity {
      * 가려내는 값이라(TemplatePublishService) 게시할 때마다 반드시 같이 남긴다.
      */
     public void publish(String htmlContent, LocalDateTime now, int versionNumber) {
+        if (this.status != TemplateStatus.DRAFT) {
+            throw new IllegalStateException("only DRAFT template can be published: " + this.status);
+        }
         this.htmlContent = htmlContent;
         this.status = TemplateStatus.PUBLISHED;
         this.publishedAt = now;
@@ -115,6 +118,9 @@ public class Template extends BaseTimeEntity {
     }
 
     public void changeActive(boolean active, Long adminId, LocalDateTime now) {
+        if (this.status != TemplateStatus.PUBLISHED) {
+            throw new IllegalStateException("only PUBLISHED template can change active: " + this.status);
+        }
         this.active = active;
         this.activatedBy = adminId;
         this.activatedAt = now;
