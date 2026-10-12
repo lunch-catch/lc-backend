@@ -93,15 +93,16 @@ class TemplateTest {
     }
 
     @Test
-    @DisplayName("게시하면 HTML과 상태, 게시 시각이 함께 바뀐다")
+    @DisplayName("게시하면 HTML과 상태, 게시 시각, 게시 버전 번호가 함께 바뀐다")
     void 게시하면_상태와_시각이_함께_바뀐다() {
         Template template = Template.createDraft("가을 신메뉴");
 
-        template.publish("<div>확정</div>", NOW);
+        template.publish("<div>확정</div>", NOW, 3);
 
         assertThat(template.getHtmlContent()).isEqualTo("<div>확정</div>");
         assertThat(template.getStatus()).isEqualTo(TemplateStatus.PUBLISHED);
         assertThat(template.getPublishedAt()).isEqualTo(NOW);
+        assertThat(template.getPublishedVersionNumber()).isEqualTo(3);
     }
 
     @Test

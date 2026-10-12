@@ -46,6 +46,9 @@ public class Template extends BaseTimeEntity {
     @Column(name = "published_at")
     private LocalDateTime publishedAt;
 
+    @Column(name = "published_version_number")
+    private Integer publishedVersionNumber;
+
     @Column(name = "activated_by")
     private Long activatedBy;
 
@@ -99,14 +102,16 @@ public class Template extends BaseTimeEntity {
     }
 
     /*
-     * status와 publishedAt을 항상 같이 바꾼다. DB의 chk_template_status 제약이
-     * "DRAFT면 publishedAt NULL, PUBLISHED면 NOT NULL"을 강제하고 있어서, 하나만
-     * 바꾸면 커밋 시점에 제약 위반으로 터진다.
+     * status와 publishedAt, publishedVersionNumber를 항상 같이 바꾼다. DB의
+     * chk_template_status 제약이 세 값을 함께 요구하고 있어서, 하나만 바꾸면
+     * 커밋 시점에 제약 위반으로 터진다. publishedVersionNumber는 게시 재시도를
+     * 가려내는 값이라(TemplatePublishService) 게시할 때마다 반드시 같이 남긴다.
      */
-    public void publish(String htmlContent, LocalDateTime now) {
+    public void publish(String htmlContent, LocalDateTime now, int versionNumber) {
         this.htmlContent = htmlContent;
         this.status = TemplateStatus.PUBLISHED;
         this.publishedAt = now;
+        this.publishedVersionNumber = versionNumber;
     }
 
     public void changeActive(boolean active, Long adminId, LocalDateTime now) {

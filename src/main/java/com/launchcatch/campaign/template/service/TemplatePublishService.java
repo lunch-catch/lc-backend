@@ -31,17 +31,30 @@ public class TemplatePublishService {
     public TemplatePublishResponse publish(Long templateId, int versionNumber) {
         Template template = templateRepository.findByIdForUpdate(templateId)
                 .orElseThrow(() -> new CampaignException(PosterErrorCode.TEMPLATE_NOT_FOUND));
-        if (template.getStatus() != TemplateStatus.DRAFT) {
-            throw new CampaignException(PosterErrorCode.TEMPLATE_ALREADY_PUBLISHED);
+        if (template.getStatus() == TemplateStatus.PUBLISHED) {
+            return publishedRetryResponse(template, versionNumber);
         }
         TemplateVersion version = templateVersionRepository
                 .findByTemplateIdAndVersionNumberAndDeletedAtIsNull(templateId, versionNumber)
                 .orElseThrow(() -> new CampaignException(PosterErrorCode.VERSION_NOT_FOUND));
 
         LocalDateTime now = LocalDateTime.now(clock);
-        template.publish(version.getHtmlContent(), now);
+        template.publish(version.getHtmlContent(), now, versionNumber);
         templateVersionRepository.softDeleteAllByTemplateId(templateId, now);
 
+        return toResponse(template);
+    }
+
+    /*
+     * 게시는 LLM 을 안 불러 (templateId, versionNumber) 만으로 결과가 결정된다.
+     * 이미 그 버전으로 게시돼 있으면 응답을 못 받은 클라이언트의 재시도로 보고
+     * 지금 상태를 그대로 돌려준다. 다른 버전 번호로 다시 게시하려는 요청은
+     * 진짜 충돌이라 거부한다.
+     */
+    private TemplatePublishResponse publishedRetryResponse(Template template, int versionNumber) {
+        if (!Integer.valueOf(versionNumber).equals(template.getPublishedVersionNumber())) {
+            throw new CampaignException(PosterErrorCode.TEMPLATE_ALREADY_PUBLISHED);
+        }
         return toResponse(template);
     }
 

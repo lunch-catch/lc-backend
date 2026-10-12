@@ -3,6 +3,7 @@ package com.launchcatch.campaign.template.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -78,15 +79,32 @@ class TemplatePublishServiceTest {
     }
 
     @Test
-    @DisplayName("이미 게시된 템플릿은 POSTER-007 로 거부한다")
-    void 이미_게시된_템플릿은_거부한다() throws Exception {
+    @DisplayName("다른 버전으로 이미 게시돼 있으면 POSTER-007 로 거부한다")
+    void 다른_버전으로_게시돼_있으면_거부한다() throws Exception {
         Template template = draftTemplate();
-        setStatus(template, TemplateStatus.PUBLISHED);
+        template.publish("<div>other</div>", LocalDateTime.now(FIXED_CLOCK), 2);
         when(templateRepository.findByIdForUpdate(TEMPLATE_ID)).thenReturn(Optional.of(template));
 
         assertThatThrownBy(() -> service.publish(TEMPLATE_ID, VERSION_NUMBER))
                 .isInstanceOfSatisfying(CampaignException.class, e ->
                         assertThat(e.getErrorCode()).isEqualTo(PosterErrorCode.TEMPLATE_ALREADY_PUBLISHED));
+        verify(templateVersionRepository, never()).softDeleteAllByTemplateId(any(), any());
+    }
+
+    @Test
+    @DisplayName("같은 버전으로 이미 게시돼 있으면 재시도로 보고 같은 응답을 돌려준다")
+    void 같은_버전으로_다시_게시_요청하면_재시도로_처리한다() throws Exception {
+        Template template = draftTemplate();
+        template.publish("<div>1</div>", LocalDateTime.now(FIXED_CLOCK), VERSION_NUMBER);
+        when(templateRepository.findByIdForUpdate(TEMPLATE_ID)).thenReturn(Optional.of(template));
+
+        TemplatePublishResponse response = service.publish(TEMPLATE_ID, VERSION_NUMBER);
+
+        assertThat(response.templateId()).isEqualTo(TEMPLATE_ID);
+        assertThat(response.status()).isEqualTo(TemplateStatus.PUBLISHED);
+        assertThat(response.html()).isEqualTo("<div>1</div>");
+        verify(templateVersionRepository, never())
+                .findByTemplateIdAndVersionNumberAndDeletedAtIsNull(any(), anyInt());
         verify(templateVersionRepository, never()).softDeleteAllByTemplateId(any(), any());
     }
 
@@ -115,11 +133,5 @@ class TemplatePublishServiceTest {
         Field field = BaseTimeEntity.class.getDeclaredField("id");
         field.setAccessible(true);
         field.set(entity, id);
-    }
-
-    private void setStatus(Template template, TemplateStatus status) throws Exception {
-        Field field = Template.class.getDeclaredField("status");
-        field.setAccessible(true);
-        field.set(template, status);
     }
 }
