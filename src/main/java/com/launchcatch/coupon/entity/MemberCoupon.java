@@ -55,6 +55,17 @@ public class MemberCoupon extends BaseTimeEntity {
     private LocalDateTime usableEndAt;
 
     /**
+     * 미사용 쿠폰의 사용 종료 시각에 도달했으면 만료 상태로 변경한다.
+     *
+     * @param now 한국 시간 기준 현재 시각
+     */
+    public void changeToExpired(LocalDateTime now) {
+        if (status == MemberCouponStatus.ISSUED && !now.isBefore(usableEndAt)) {
+            status = MemberCouponStatus.EXPIRED;
+        }
+    }
+
+    /**
      * 미사용 쿠폰을 삭제 상태로 바꾸고 QR을 무효화한다.
      * 사용 완료 쿠폰은 거절하며 이미 삭제된 쿠폰은 추가로 변경하지 않는다.
      *
