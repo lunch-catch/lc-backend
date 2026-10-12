@@ -83,7 +83,7 @@
 /src/main/java/com/launchcatch/coupon/          @MinhyeokChoi99
 /src/main/resources/db/migration/coupon/        @MinhyeokChoi99
 /docs/api-spec/coupon-api-spec.md               @MinhyeokChoi99
-/docs/api-spec/coupon-api-design.md             @MinhyeokChoi99
+/docs/design/coupon/                            @MinhyeokChoi99
 
 # --- contract 는 부르는 쪽도 함께 본다 ---------------------------------------
 # contract 는 도메인 간 유일한 접점이다. 그 모양이 바뀌면 부르는 도메인이 깨진다.
