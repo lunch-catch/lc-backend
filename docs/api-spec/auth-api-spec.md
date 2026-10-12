@@ -2,7 +2,7 @@
 
 관리자·점주·사용자의 **공통 토큰 정책, 토큰 재발급, 로그아웃**과 **사용자의 카카오 로그인/가입** API의 요청, 응답, 오류를 적는다.
 
-관리자 계정 발급과 로그인은 `admin.md`, 점주 회원가입과 로그인 및 최초 튜토리얼 완료 처리는 `owner.md`에서 다룬다. 관리자·점주 로그인 API는 이 문서에 중복 정의하지 않는다. 사용자 온보딩과 탈퇴 `member.md`, 점주 가게 등록은 `store.md`에서 다룬다.
+관리자 계정 발급과 로그인은 [관리자 명세](admin-api-spec.md), 점주 회원가입과 로그인 및 최초 튜토리얼 완료 처리는 `owner.md`에서 다룬다. 관리자·점주 로그인 API는 이 문서에 중복 정의하지 않는다. 사용자 온보딩과 탈퇴 `member.md`, 점주 가게 등록은 `store.md`에서 다룬다.
 
 세 역할은 공통 토큰 정책을 따르므로, 토큰 정책과 재발급·로그아웃 명세를 이 문서에 모았다.
 
@@ -26,7 +26,7 @@
 
 관리자·점주 로그인은 전체 인증 API를 안내하기 위해 목록에 포함한다.
 
-상세 명세는 각각 `admin.md`, `owner.md`에서 정의하며, 이 문서에서는 중복 정의하지 않는다.
+상세 명세는 각각 [관리자 명세](admin-api-spec.md), `owner.md`에서 정의하며, 이 문서에서는 중복 정의하지 않는다.
 
 "공개"는 기존 Access Token 없이 부를 수 있다는 뜻이다.
 
@@ -70,49 +70,82 @@ Set-Cookie: refreshToken=<opaque>; HttpOnly; SameSite=Strict; Path=/v1/auth/; Ma
 
 ### `POST /v1/admin/auth/tokens`
 
-`POST /v1/admin/auth/tokens`의 요청, 응답, 처리 절차 및 오류는 `admin.md`의 「관리자 로그인」 절을 따른다.
+요청·응답·오류는 [관리자 로그인](admin-api-spec.md#관리자-로그인)을 따른다. 서버 처리 절차는 [관리자 로그인 설계](../design/admin/admin-api-design.md#로그인)를 따른다.
 
 ### `POST /v1/admin/auth/tokens:refresh`
 
-Refresh Token으로 두 토큰을 다시 받는다. 요청 본문은 없고 `refreshToken` 쿠키만 보낸다.
+Refresh Token으로 Access Token과 Refresh Token을 새로 발급받는다. 요청 본문은 없고 `refreshToken` 쿠키만 보낸다.
 
-**응답** `200` 과 새 두 쿠키, 본문 `data` 는 로그인 응답과 같다.
+**요청**
+
+기존 Access Token은 필요하지 않다. `refreshToken` 쿠키를 사용하며 요청 본문은 없다.
+
+```http
+POST /v1/admin/auth/tokens:refresh
+Cookie: refreshToken=<opaque>
+```
+
+Refresh Token은 영문·숫자·`_`·`-`로 이루어진 43자 문자열이다. 쿠키 누락·형식 오류도 `400`이 아닌 `401 AUTH-003`으로 처리한다. 회원·점주 Refresh Token으로 관리자 토큰을 발급받을 수 없다.
+
+**응답 `200 OK`**
+
+로그인과 동일한 두 `Set-Cookie`를 새 토큰 값으로 반환하며, 기본 쿠키 수명은 Access 30분, Refresh 1일로 다시 설정된다. 응답 본문의 필드와 타입은 [관리자 로그인 응답](admin-api-spec.md#관리자-로그인)을 따른다.
 
 **동작**
 
-1. 쿠키의 Refresh Token이 유효하고 만료되지 않았는지 확인한다
-2. 새 Refresh Token으로 교체한다. **같은 토큰으로 동시에 두 요청이 와도 하나만 성공한다**
-3. 이미 교체된 토큰이 다시 오면 그 계정의 Refresh Token을 모두 폐기하고 실패 감사 로그를 남긴다
+1. 쿠키의 Refresh Token이 유효하고 만료되지 않았으며 관리자 계정이 사용 가능한지 확인한다.
+2. 새 Access Token과 Refresh Token을 발급하고 이전 Refresh Token을 교체한다. 같은 토큰으로 동시에 여러 요청이 오더라도 최대 하나만 성공한다.
+3. 이미 교체된 토큰의 재사용이 감지되면 해당 관리자의 Refresh Token을 폐기하고 `AUTH-004`를 반환한다. 폐기 실패 시 `AUTH-002`를 반환한다. 현재 토큰과의 불일치만 확인된 경우에는 `AUTH-003`을 반환할 수 있다.
+
+서버 처리 절차와 장애 복구는 [관리자 토큰 재발급 설계](../design/admin/admin-api-design.md#토큰-재발급)를 따른다.
 
 **오류**
 
-| 상태 | 코드 | 언제 |
+| 상태 | 코드 | 조건 |
 | --- | --- | --- |
-| `401` | `AUTH-003` | Refresh Token이 없음, 유효하지 않음, 만료, 폐기됨 |
-| `401` | `AUTH-004` | 이미 교체된 Refresh Token의 재사용. 그 계정의 Refresh Token을 모두 폐기하고 실패 감사 로그를 남긴다 |
-| `503` | `AUTH-002` | DB 해시 저장 또는 장애 시 DB 폴백 처리 실패. 캐시 장애만으로 재발급을 실패시키지는 않는다 |
+| `401` | `AUTH-003` | Refresh Token 누락·형식 오류·무효·만료·폐기, 다른 도메인 토큰, 계정 없음·비활성 또는 DB 현재 해시 불일치 |
+| `401` | `AUTH-004` | 이미 교체된 Refresh Token의 재사용이 감지되어 Refresh Token 폐기를 완료함 |
+| `429` | 없음 | IP별 인증 요청 제한 초과. 본문 없이 `Retry-After` 제공 |
+| `503` | `AUTH-002` | DB 저장·폴백 또는 재사용 토큰 폐기 실패, 토큰 회전 결과 미확정. DB 회전 성공 후 Redis 게시만 실패한 경우에는 성공을 유지한다 |
+
+로그인·재발급 요청 제한은 [관리자 명세](admin-api-spec.md#로그인재발급-요청-제한)를 따른다.
 
 ### `DELETE /v1/admin/auth/tokens`
 
-현재 로그인한 관리자를 로그아웃시킨다. 요청 본문은 없다.
+현재 인증된 관리자의 토큰을 폐기하고 브라우저 인증 쿠키를 삭제한다.
 
-**응답** `204`. 두 쿠키를 `Max-Age=0` 으로 내려 브라우저에서도 지운다. 삭제 쿠키는 발급 때와 같은 `Path` 로 보낸다. `Path` 가 다르면 브라우저가 Refresh Token 쿠키를 지우지 않는다. 점주와 사용자 로그아웃도 같다.
+**요청**
 
-- Refresh Token을 폐기한다. 로그아웃 전에 받은 Access Token은 만료 전이라도 거부된다
-- Refresh Token 쿠키는 없어도 된다. 인증된 관리자 계정의 DB 해시·만료 시각을 행 잠금 아래 폐기하고, Redis 정리는 DB 트랜잭션 밖에서 수행한다
-- 폐기 순번으로 이전 로그인·재발급의 지연된 캐시 게시를 막고, 더 최신 발급 상태는 조건부 정리로 보호한다. 부분 실패 후 유효한 Access Token으로 재요청하면 남은 상태를 정리한다
-- 필수 DB·Redis 처리 실패는 `503 / AUTH-002`이며 삭제 쿠키를 보내지 않는다. 서버 내부 반복 재시도나 스케줄러 재처리는 하지 않는다
-- 필수 토큰 폐기 완료 후 `ADMIN_LOGOUT` 감사 로그를 별도 트랜잭션으로 기록한다. 감사 저장만 실패하면 성공을 유지한다
-- 폐기 기준은 DB 행 잠금 아래 정한 시각이며 병렬 요청으로 과거로 되돌리지 않는다. JWT의 초 단위 `iat` 때문에 같은 초에 새로 로그인한 Access Token도 차단될 수 있어 다음 초 이후 로그인한다
-- 폐기 기준 조회 장애는 기존 공통 필터의 LENIENT 정책을 유지한다. 관리자 계정 발급은 REQUIRED 재검증을 유지한다
+- 유효한 `accessToken` 쿠키와 `ADMIN` 또는 `SUPER_ADMIN` 권한이 필요하다.
+- 요청 본문은 없다. 관리자 ID는 인증 정보에서 확인하므로 경로 변수·쿼리로 전달하지 않는다.
+- Refresh Token 쿠키는 필수 입력이 아니다. Access Token만으로 계정의 토큰을 폐기한다.
+
+```http
+DELETE /v1/admin/auth/tokens
+Cookie: accessToken=<JWT>
+```
+
+**응답** `204 No Content`. 두 인증 쿠키를 `Max-Age=0`으로 삭제한다.
+
+삭제 쿠키는 발급 때와 같은 `Path` 로 보낸다. `Path` 가 다르면 브라우저가 Refresh Token 쿠키를 지우지 않는다. 점주와 사용자 로그아웃도 같다.
+
+```http
+HTTP/1.1 204 No Content
+Set-Cookie: accessToken=; Path=/; Max-Age=0; HttpOnly; SameSite=Strict
+Set-Cookie: refreshToken=; Path=/v1/admin/auth/; Max-Age=0; HttpOnly; SameSite=Strict
+```
+
+응답 본문과 성공 응답 봉투는 없다. 쿠키 삭제 시에도 `JWT_COOKIE_SECURE=true` 환경이면 `Secure` 속성이 포함된다.
 
 **오류**
 
-| 상태 | 코드 | 언제 |
+| 상태 | 코드 | 조건 |
 | --- | --- | --- |
-| `401` | `AUTH-005` | Access Token이 없거나 무효·만료·폐기됨, 인증 주체의 관리자 계정이 없거나 사용 불가 |
-| `403` | `AUTH-006` | 관리자 외 역할 |
-| `503` | `AUTH-002` | 로그아웃 처리 실패. 잠시 후 다시 시도한다 |
+| `401` | `AUTH-005` | Access Token 없음·무효·만료·폐기 또는 DB 계정 없음·비활성·현재 역할 불일치 |
+| `403` | `AUTH-006` | 인증된 주체가 관리자 역할이 아님 |
+| `503` | `AUTH-002` | 필수 DB Refresh Token 폐기, Redis Refresh Token 폐기 또는 Access Token 폐기 기준 저장 실패 |
+
+로그아웃의 필수 DB·Redis 폐기 실패 시 삭제 쿠키 없이 `503 AUTH-002`를 반환하며, 일부 폐기는 이미 적용되었을 수 있다. 일반 인증의 폐기 기준 조회는 Redis 장애 시 통과하는 LENIENT 정책이다. 관리자 계정 발급은 REQUIRED 조회를 사용한다. 같은 초에 재로그인한 토큰도 차단될 수 있다. 상세 처리와 동시성 한계는 [관리자 설계서](../design/admin/admin-api-design.md)를 따른다.
 
 ## 점주
 
