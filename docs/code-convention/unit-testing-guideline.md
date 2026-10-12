@@ -132,7 +132,7 @@ src/test/java/com/launchcatch/campaign/CampaignIntegrationTest.java           �
 외부 의존성은 종류에 따라 다르게 다뤄야 한다.
 
 점검 항목
-* `UT-5-01` 외부 결제 API처럼 우리가 통제할 수 없는 공유 의존성을 mock으로 대체하는가
+* `UT-5-01` 외부 결제 API처럼 통제할 수 없는 공유 의존성을 mock으로 대체하는가
   통제할 수 없는 것을 실제로 부르면 테스트가 남의 사정으로 깨진다.
 * `UT-5-02` 통합 테스트를 쓸 때 `@SpringBootTest` 로 실제 컨텍스트를 띄우는가
   슬라이스나 인메모리 DB 로 대신하면 "실제로 붙여 봤다" 가 성립하지 않는다.

@@ -30,7 +30,7 @@ import org.springframework.mock.web.MockHttpServletResponse;
  * 로그인 속도 제한이 막을 때 클라이언트에게 "언제 다시 와라" 를 주는지 본다.
  *
  * 그 값이 없으면 막힌 클라이언트가 곧바로 다시 누른다. 막으려던 요청이 그대로 다시 몰려서
- * 제한을 두는 이유가 사라진다. api-spec/README.md 의 429 가 Retry-After 를 요구한다.
+ * 제한을 두는 이유가 사라진다. api-spec/api-spec.md 의 429 가 Retry-After 를 요구한다.
  */
 @ExtendWith(MockitoExtension.class)
 class AuthRateLimitFilterTest {

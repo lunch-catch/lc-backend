@@ -91,7 +91,7 @@ public class TemplateCreateService {
         }
         Template template = Template.createDraft(name);
         TemplateVersion version = template.addDraftVersion(
-                adminId, LocalDateTime.now(clock), requestPrompt, requestId, sanitized.html());
+                adminId, LocalDateTime.now(clock), requestPrompt, requestId, sanitized.html(), 1);
         templateRepository.saveAndFlush(template);
         return toResponse(version, sanitized.removedElements());
     }

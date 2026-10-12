@@ -35,12 +35,12 @@ class TemplateTest {
     }
 
     @Test
-    @DisplayName("버전을 더하면 번호가 1부터 이어서 붙고 최종 수정자와 시각이 갱신된다")
-    void 버전_번호는_이어서_붙는다() {
+    @DisplayName("버전을 더하면 넘긴 번호로 저장되고 최종 수정자와 시각이 갱신된다")
+    void 버전을_더하면_넘긴_번호로_저장된다() {
         Template template = Template.createDraft("가을 신메뉴");
 
-        TemplateVersion first = template.addDraftVersion(1L, NOW, "요청 하나", "req-1", "<div></div>");
-        TemplateVersion second = template.addDraftVersion(2L, NOW.plusMinutes(1), "요청 둘", "req-2", "<p></p>");
+        TemplateVersion first = template.addDraftVersion(1L, NOW, "요청 하나", "req-1", "<div></div>", 1);
+        TemplateVersion second = template.addDraftVersion(2L, NOW.plusMinutes(1), "요청 둘", "req-2", "<p></p>", 2);
 
         assertThat(first.getVersionNumber()).isEqualTo(1);
         assertThat(first.getRequestPrompt()).isEqualTo("요청 하나");
@@ -57,12 +57,30 @@ class TemplateTest {
     void 요청_문장이나_HTML이_비면_버전을_만들_수_없다() {
         Template template = Template.createDraft("가을 신메뉴");
 
-        assertThatThrownBy(() -> template.addDraftVersion(1L, NOW, " ", "req-1", "<div></div>"))
+        assertThatThrownBy(() -> template.addDraftVersion(1L, NOW, " ", "req-1", "<div></div>", 1))
                 .isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> template.addDraftVersion(1L, NOW, "요청", " ", "<div></div>"))
+        assertThatThrownBy(() -> template.addDraftVersion(1L, NOW, "요청", " ", "<div></div>", 1))
                 .isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> template.addDraftVersion(1L, NOW, "요청", "req-1", null))
+        assertThatThrownBy(() -> template.addDraftVersion(1L, NOW, "요청", "req-1", null, 1))
                 .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    @DisplayName("최신 버전은 버전 번호가 가장 큰 것이다")
+    void 최신_버전은_번호가_가장_크다() {
+        Template template = Template.createDraft("가을 신메뉴");
+        template.addDraftVersion(1L, NOW, "요청 하나", "req-1", "<div></div>", 1);
+        TemplateVersion second = template.addDraftVersion(1L, NOW, "요청 둘", "req-2", "<p></p>", 2);
+
+        assertThat(template.latestVersion()).isSameAs(second);
+    }
+
+    @Test
+    @DisplayName("버전이 하나도 없으면 최신 버전을 가져올 수 없다")
+    void 버전이_없으면_최신_버전을_가져올_수_없다() {
+        Template template = Template.createDraft("가을 신메뉴");
+
+        assertThatThrownBy(template::latestVersion).isInstanceOf(IllegalStateException.class);
     }
 
     @Test
@@ -72,5 +90,50 @@ class TemplateTest {
 
         assertThatThrownBy(() -> TemplateVersion.create(template, 0, "요청", "req-1", "<div></div>"))
                 .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    @DisplayName("게시하면 HTML과 상태, 게시 시각, 게시 버전 번호가 함께 바뀐다")
+    void 게시하면_상태와_시각이_함께_바뀐다() {
+        Template template = Template.createDraft("가을 신메뉴");
+
+        template.publish("<div>확정</div>", NOW, 3);
+
+        assertThat(template.getHtmlContent()).isEqualTo("<div>확정</div>");
+        assertThat(template.getStatus()).isEqualTo(TemplateStatus.PUBLISHED);
+        assertThat(template.getPublishedAt()).isEqualTo(NOW);
+        assertThat(template.getPublishedVersionNumber()).isEqualTo(3);
+    }
+
+    @Test
+    @DisplayName("활성화 여부를 바꾸면 변경자와 변경 시각도 같이 바뀐다")
+    void 활성화하면_변경자와_시각이_함께_바뀐다() {
+        Template template = Template.createDraft("가을 신메뉴");
+        template.publish("<div>확정</div>", NOW, 1);
+
+        template.changeActive(true, 7L, NOW);
+
+        assertThat(template.isActive()).isTrue();
+        assertThat(template.getActivatedBy()).isEqualTo(7L);
+        assertThat(template.getActivatedAt()).isEqualTo(NOW);
+    }
+
+    @Test
+    @DisplayName("DRAFT가 아니면 다시 게시할 수 없다")
+    void draft가_아니면_게시할_수_없다() {
+        Template template = Template.createDraft("가을 신메뉴");
+        template.publish("<div>확정</div>", NOW, 1);
+
+        assertThatThrownBy(() -> template.publish("<div>또확정</div>", NOW, 2))
+                .isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    @DisplayName("PUBLISHED가 아니면 활성화 여부를 바꿀 수 없다")
+    void published가_아니면_활성화할_수_없다() {
+        Template template = Template.createDraft("가을 신메뉴");
+
+        assertThatThrownBy(() -> template.changeActive(true, 7L, NOW))
+                .isInstanceOf(IllegalStateException.class);
     }
 }

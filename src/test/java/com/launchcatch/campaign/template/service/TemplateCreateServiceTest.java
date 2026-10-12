@@ -217,7 +217,7 @@ class TemplateCreateServiceTest {
     private TemplateVersion existingVersion(Long templateId) throws Exception {
         Template template = Template.createDraft("가을 신메뉴");
         setId(template, templateId);
-        return template.addDraftVersion(ADMIN_ID, LocalDateTime.now(FIXED_CLOCK), "가을 느낌", REQUEST_ID, VALID_HTML);
+        return template.addDraftVersion(ADMIN_ID, LocalDateTime.now(FIXED_CLOCK), "가을 느낌", REQUEST_ID, VALID_HTML, 1);
     }
 
     private void setId(Object entity, Long id) throws Exception {

@@ -11,6 +11,7 @@ import jakarta.persistence.OneToMany;
 import jakarta.persistence.Table;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import lombok.AccessLevel;
 import lombok.Getter;
@@ -45,6 +46,9 @@ public class Template extends BaseTimeEntity {
     @Column(name = "published_at")
     private LocalDateTime publishedAt;
 
+    @Column(name = "published_version_number")
+    private Integer publishedVersionNumber;
+
     @Column(name = "activated_by")
     private Long activatedBy;
 
@@ -71,18 +75,55 @@ public class Template extends BaseTimeEntity {
         return new Template(name);
     }
 
+    /*
+     * versionNumber 는 호출하는 쪽이 넘긴다. 이 템플릿의 versions 가 항상 전부
+     * 로딩돼 있다고 가정할 수 없어서(가벼운 조회로는 일부만 가져올 수 있음),
+     * "다음 번호"를 이 안에서 versions 를 훑어 계산하지 않는다.
+     */
     public TemplateVersion addDraftVersion(
-            Long adminId, LocalDateTime now, String requestPrompt, String requestId, String htmlContent) {
+            Long adminId, LocalDateTime now, String requestPrompt, String requestId, String htmlContent,
+            int versionNumber) {
         TemplateVersion version =
-                TemplateVersion.create(this, nextVersionNumber(), requestPrompt, requestId, htmlContent);
+                TemplateVersion.create(this, versionNumber, requestPrompt, requestId, htmlContent);
         versions.add(version);
         this.lastModifiedBy = adminId;
         this.lastModifiedAt = now;
         return version;
     }
 
-    private int nextVersionNumber() {
-        return versions.stream().mapToInt(TemplateVersion::getVersionNumber).max().orElse(0) + 1;
+    /*
+     * createDraft() 직후 바로 addDraftVersion() 이 불려 버전이 최소 1개는 항상 있다.
+     * 그래서 없는 경우는 불변식이 깨진 것으로 보고 예외를 던진다.
+     */
+    public TemplateVersion latestVersion() {
+        return versions.stream()
+                .max(Comparator.comparingInt(TemplateVersion::getVersionNumber))
+                .orElseThrow(() -> new IllegalStateException("template has no version: id=" + getId()));
+    }
+
+    /*
+     * status와 publishedAt, publishedVersionNumber를 항상 같이 바꾼다. DB의
+     * chk_template_status 제약이 세 값을 함께 요구하고 있어서, 하나만 바꾸면
+     * 커밋 시점에 제약 위반으로 터진다. publishedVersionNumber는 게시 재시도를
+     * 가려내는 값이라(TemplatePublishService) 게시할 때마다 반드시 같이 남긴다.
+     */
+    public void publish(String htmlContent, LocalDateTime now, int versionNumber) {
+        if (this.status != TemplateStatus.DRAFT) {
+            throw new IllegalStateException("only DRAFT template can be published: " + this.status);
+        }
+        this.htmlContent = htmlContent;
+        this.status = TemplateStatus.PUBLISHED;
+        this.publishedAt = now;
+        this.publishedVersionNumber = versionNumber;
+    }
+
+    public void changeActive(boolean active, Long adminId, LocalDateTime now) {
+        if (this.status != TemplateStatus.PUBLISHED) {
+            throw new IllegalStateException("only PUBLISHED template can change active: " + this.status);
+        }
+        this.active = active;
+        this.activatedBy = adminId;
+        this.activatedAt = now;
     }
 
     private static String requiredName(String value) {
