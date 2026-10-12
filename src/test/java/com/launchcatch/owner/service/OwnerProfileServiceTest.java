@@ -30,6 +30,7 @@ class OwnerProfileServiceTest {
 
         var response = service.getMyProfile(7L);
 
+        assertThat(response.email()).isEqualTo("owner@example.com");
         assertThat(response.status()).isEqualTo(status);
         assertThat(response.tutorialViewed()).isFalse();
     }

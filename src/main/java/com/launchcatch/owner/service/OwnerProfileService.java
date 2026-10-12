@@ -18,6 +18,6 @@ public class OwnerProfileService {
         // 현재 점주 상태와 튜토리얼 확인 여부를 반환하기 위해 캐시 대신 DB를 직접 조회한다.
         var owner = ownerRepository.findById(ownerId)
                 .orElseThrow(() -> new AuthException(AuthErrorCode.LOGIN_REQUIRED));
-        return new OwnerProfileResponse(owner.getStatus(), owner.isTutorialViewed());
+        return new OwnerProfileResponse(owner.getEmail(), owner.getStatus(), owner.isTutorialViewed());
     }
 }

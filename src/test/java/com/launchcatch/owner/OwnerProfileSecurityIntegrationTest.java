@@ -72,6 +72,7 @@ class OwnerProfileSecurityIntegrationTest {
                         .cookie(new Cookie("accessToken", jwt.createAccessToken(7L, Role.OWNER))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value("SUCCESS"))
+                .andExpect(jsonPath("$.data.email").value("owner@example.com"))
                 .andExpect(jsonPath("$.data.status").value(ownerStatus.name()))
                 .andExpect(jsonPath("$.data.tutorialViewed").value(ownerStatus == OwnerStatus.ACTIVE))
                 .andExpect(jsonPath("$.data.passwordHash").doesNotExist())

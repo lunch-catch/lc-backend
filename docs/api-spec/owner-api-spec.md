@@ -6,7 +6,7 @@
 
 `GET /v1/owner/me`
 
-새로고침이나 재접속 시 로그인한 점주의 상태와 튜토리얼 확인 여부를 조회한다.
+새로고침이나 재접속 시 로그인한 점주의 이메일, 상태와 튜토리얼 확인 여부를 조회한다.
 요청 본문은 없으며 `accessToken` 쿠키로 인증한다. OWNER 역할만 접근할 수 있고 ONBOARDING 점주도 조회할 수 있다.
 
 성공 시 `200`과 공통 응답 봉투를 반환한다.
@@ -15,12 +15,13 @@
 {
   "code": "SUCCESS",
   "message": "요청이 성공적으로 처리되었습니다.",
-  "data": { "status": "ONBOARDING", "tutorialViewed": false }
+  "data": { "email": "owner@example.com", "status": "ONBOARDING", "tutorialViewed": false }
 }
 ```
 
 | 필드 | 타입 | 필수 | null 가능 | 설명 |
 |---|---|---|---|---|
+| email | string | 예 | 아니오 | 로그인한 점주의 이메일 |
 | status | string | 예 | 아니오 | DB의 현재 점주 상태: ONBOARDING, ACTIVE, SUSPENDED, WITHDRAWN |
 | tutorialViewed | boolean | 예 | 아니오 | DB에 저장된 튜토리얼 확인 여부 |
 
