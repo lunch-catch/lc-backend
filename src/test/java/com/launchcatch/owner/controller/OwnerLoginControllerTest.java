@@ -37,7 +37,7 @@ class OwnerLoginControllerTest {
     void setUp() {
         JwtTokenProvider jwt = mock(JwtTokenProvider.class);
         when(jwt.getAccessTokenValidityMs()).thenReturn(Duration.ofMinutes(30).toMillis());
-        when(jwt.refreshTokenValidityMs(Role.OWNER)).thenReturn(Duration.ofDays(14).toMillis());
+        when(jwt.refreshTokenValidityMs(Role.OWNER)).thenReturn(Duration.ofDays(1).toMillis());
         cookieFactory = new AuthCookieFactory(jwt);
         mvc = MockMvcBuilders.standaloneSetup(new OwnerLoginController(service, cookieFactory))
                 .setControllerAdvice(new GlobalExceptionHandler()).build();
@@ -63,7 +63,7 @@ class OwnerLoginControllerTest {
         assertThat(response.getHeaders("Set-Cookie")).hasSize(2).anySatisfy(cookie ->
                         assertThat(cookie).contains("accessToken=test-access", "Path=/;", "Max-Age=1800", "HttpOnly", "SameSite=Strict"))
                 .anySatisfy(cookie -> assertThat(cookie).contains("refreshToken=test-refresh",
-                        "Path=/v1/owner/auth/", "Max-Age=1209600", "HttpOnly", "SameSite=Strict"));
+                        "Path=/v1/owner/auth/", "Max-Age=86400", "HttpOnly", "SameSite=Strict"));
         assertThat(response.getContentAsString()).doesNotContain("test-access", "test-refresh", "password12");
     }
 

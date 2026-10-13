@@ -93,10 +93,21 @@ public class Owner extends BaseTimeEntity {
         this.lastLoginAt = loginAt;
     }
 
-    /*
-     * 같은 점주의 로그인·재발급과 DB 변경이 겹치지 않도록 행 잠금을 잡은 상태에서 호출한다.
-     * 발급 순번도 증가시켜 로그아웃 전에 시작한 요청이 나중에 Redis에 토큰을 다시 저장하지 못하게 한다.
-     */
+    // 로그인과 같은 행 잠금 아래 호출하며 최근 로그인 시각은 변경하지 않는다.
+    public void rotateRefreshToken(String tokenHash, LocalDateTime expiresAt, LocalDateTime now) {
+        if (!canLogin()) {
+            throw new IllegalStateException("현재 점주 상태에서는 재발급할 수 없습니다.");
+        }
+        if (tokenHash == null || !tokenHash.matches("[0-9a-f]{64}")
+                || expiresAt == null || now == null || !expiresAt.isAfter(now)) {
+            throw new IllegalArgumentException("Refresh Token 해시와 만료 시각이 올바르지 않습니다.");
+        }
+        this.refreshTokenIssuanceVersion = Math.incrementExact(refreshTokenIssuanceVersion);
+        this.refreshTokenHash = tokenHash;
+        this.refreshTokenExpiresAt = expiresAt;
+    }
+
+    // 폐기 순번도 증가시켜 이미 진행 중인 이전 토큰 게시를 차단한다.
     public void clearRefreshToken() {
         this.refreshTokenIssuanceVersion = Math.incrementExact(refreshTokenIssuanceVersion);
         this.refreshTokenHash = null;
