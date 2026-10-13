@@ -2,10 +2,14 @@ package com.launchcatch.campaign.service;
 
 import com.launchcatch.campaign.contract.CampaignInfo;
 import com.launchcatch.campaign.contract.CampaignQueryService;
+import com.launchcatch.campaign.contract.CampaignStatus;
 import com.launchcatch.campaign.entity.Campaign;
 import com.launchcatch.campaign.repository.CampaignRepository;
+import java.time.Clock;
 import java.time.LocalDate;
+import java.util.Collection;
 import java.util.List;
+import java.util.Set;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
@@ -13,7 +17,16 @@ import org.springframework.stereotype.Service;
 @RequiredArgsConstructor
 public class CampaignQueryServiceImpl implements CampaignQueryService {
 
+    /*
+     * "집행 중" = DRAFT, ENDED가 아닌 상태 전부. hasLiveCampaign과
+     * findOwnerIdsWithLiveCampaign이 이 상수 하나를 공유해서, 조건이 두 곳에 흩어져 한쪽만
+     * 바뀌면 어긋나는 것을 막는다(#198, 정산의 환불 거부 조건).
+     */
+    private static final List<CampaignStatus> NOT_LIVE_STATUSES =
+            List.of(CampaignStatus.DRAFT, CampaignStatus.ENDED);
+
     private final CampaignRepository campaignRepository;
+    private final Clock clock;
 
     @Override
     public List<CampaignInfo> findByStoreIdIn(List<Long> storeIds) {
@@ -30,6 +43,31 @@ public class CampaignQueryServiceImpl implements CampaignQueryService {
         return campaignRepository.findServableOn(businessDate).stream().map(this::toInfo).toList();
     }
 
+    @Override
+    public List<CampaignInfo> findEligibleCampaigns() {
+        LocalDate today = LocalDate.now(clock);
+        return campaignRepository.findEligibleCampaigns(today).stream().map(this::toInfo).toList();
+    }
+
+    @Override
+    public List<CampaignInfo> findByOwnerIdAndStatusIn(Long ownerId, List<CampaignStatus> statuses) {
+        return campaignRepository.findByOwnerIdAndStatusIn(ownerId, statuses).stream()
+                .map(this::toInfo).toList();
+    }
+
+    @Override
+    public boolean hasLiveCampaign(Long ownerId) {
+        return campaignRepository.existsByOwnerIdAndStatusNotIn(ownerId, NOT_LIVE_STATUSES);
+    }
+
+    @Override
+    public Set<Long> findOwnerIdsWithLiveCampaign(Collection<Long> ownerIds) {
+        if (ownerIds.isEmpty()) {
+            return Set.of();
+        }
+        return Set.copyOf(campaignRepository.findDistinctOwnerIdsWithLiveCampaign(ownerIds, NOT_LIVE_STATUSES));
+    }
+
     /*
      * newPriorityUntil은 ad_candidate 테이블에만 있고 campaign에는 아직 백업 컬럼이 없다
      * (#156 결정 사항). "신규 우선 노출" 계산 규칙도 문서화된 곳이 없어 지금은 null로 둔다.
@@ -42,6 +80,7 @@ public class CampaignQueryServiceImpl implements CampaignQueryService {
                 campaign.getDiscountTargetType(), campaign.getDiscountType(), campaign.getDiscountValue(),
                 campaign.getTargetMenuId(),
                 campaign.getTargetRadius(), campaign.getTargetGender(), campaign.getTargetAgeGroups(),
-                campaign.getCreatedAt(), null, campaign.getStatusChangedAt());
+                campaign.getCreatedAt(), null, campaign.getStatusChangedAt(),
+                campaign.getPausedReason(), campaign.getDailyBudget());
     }
 }

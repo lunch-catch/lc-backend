@@ -1,8 +1,10 @@
 package com.launchcatch.campaign.repository;
 
+import com.launchcatch.campaign.contract.CampaignStatus;
 import com.launchcatch.campaign.entity.Campaign;
 import jakarta.persistence.LockModeType;
 import java.time.LocalDate;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -13,6 +15,29 @@ import org.springframework.data.repository.query.Param;
 public interface CampaignRepository extends JpaRepository<Campaign, Long> {
 
     List<Campaign> findByStoreIdIn(List<Long> storeIds);
+
+    List<Campaign> findByOwnerIdAndStatusIn(Long ownerId, List<CampaignStatus> statuses);
+
+    boolean existsByOwnerIdAndStatusNotIn(Long ownerId, List<CampaignStatus> excludedStatuses);
+
+    /*
+     * DISTINCT owner_id 로 집계한다. hasLiveCampaign을 점주마다 부르면 관리자 목록 한 페이지
+     * (최대 100행)에 최대 100번 호출이 되어 jpa-association-guideline.md AGG-1-03 을 어긴다.
+     */
+    @Query("select distinct c.ownerId from Campaign c where c.ownerId in :ownerIds and c.status not in :excludedStatuses")
+    List<Long> findDistinctOwnerIdsWithLiveCampaign(
+            @Param("ownerIds") Collection<Long> ownerIds,
+            @Param("excludedStatuses") List<CampaignStatus> excludedStatuses);
+
+    @Query("""
+            select c from Campaign c
+            where c.status in (
+                com.launchcatch.campaign.contract.CampaignStatus.SCHEDULED,
+                com.launchcatch.campaign.contract.CampaignStatus.ACTIVE
+            )
+            and c.startDate <= :today and c.endDate >= :today
+            """)
+    List<Campaign> findEligibleCampaigns(@Param("today") LocalDate today);
 
     /*
      * 상태 전이 때 행 잠금을 걸고 조회한다(SELECT ... FOR UPDATE). 같은 캠페인에 동시에
