@@ -77,14 +77,14 @@ class StoreAudienceUpdaterImplTest {
     }
 
     @Test
-    @DisplayName("ALL은 거부하지 않고 DB에는 OTHER로 저장한다(#218, 마이그레이션은 안 바뀜)")
+    @DisplayName("ALL은 거부하지 않고 그대로 저장한다(#218)")
     void ALL도_저장한다() {
         StoreAudienceCell cell = new StoreAudienceCell(1L, 1000, TargetGender.ALL, AgeGroup.AGE_20S, 1, BUSINESS_DATE);
 
         updater.overwrite(List.of(cell));
 
         verify(jdbcTemplate).update(anyString(), paramsCaptor.capture());
-        assertThat(paramsCaptor.getValue()).contains("OTHER");
+        assertThat(paramsCaptor.getValue()).contains("ALL");
     }
 
     @Test

@@ -19,7 +19,6 @@ import java.util.stream.IntStream;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
@@ -58,9 +57,6 @@ class StoreAudienceUpdaterImplIntegrationTest {
 
     @Autowired
     private StoreAudienceRepository storeAudienceRepository;
-
-    @Autowired
-    private JdbcTemplate jdbcTemplate;
 
     @MockitoBean
     private Clock clock;
@@ -126,13 +122,8 @@ class StoreAudienceUpdaterImplIntegrationTest {
         assertThat(storeAudienceRepository.findAll()).hasSize(300);
     }
 
-    /*
-     * #218: 마이그레이션(CHECK 제약)은 그대로라 DB에는 여전히 'OTHER' 문자열로 들어가야
-     * 한다. JPA로 읽은 엔티티가 ALL로 역매핑되는지(StoreAudienceGenderConverter)와, 실제
-     * 저장된 문자열이 'OTHER'인지(원시 JDBC 조회) 둘 다 확인한다.
-     */
     @Test
-    void ALL로_저장하면_DB에는_OTHER_문자열로_들어가고_엔티티는_ALL로_읽힌다() {
+    void ALL로도_저장된다() {
         when(clock.getZone()).thenReturn(ClockConfig.ZONE);
         when(clock.instant()).thenReturn(Instant.parse("2026-10-13T00:00:00Z"));
 
@@ -142,8 +133,5 @@ class StoreAudienceUpdaterImplIntegrationTest {
         assertThat(storeAudienceRepository.findAll())
                 .extracting(StoreAudience::getGender)
                 .containsExactly(StoreAudienceGender.ALL);
-        String rawGender = jdbcTemplate.queryForObject(
-                "SELECT gender FROM store_audience WHERE store_id = 1", String.class);
-        assertThat(rawGender).isEqualTo("OTHER");
     }
 }

@@ -76,16 +76,16 @@ public class StoreAudienceUpdaterImpl implements StoreAudienceUpdater {
                 + UPSERT_SQL_SUFFIX;
         Object[] params = chunk.stream()
                 .flatMap(cell -> Stream.of(
-                        cell.storeId(), cell.targetRadius(), toGenderColumn(cell.gender()).getDbValue(),
+                        cell.storeId(), cell.targetRadius(), toGenderColumn(cell.gender()).name(),
                         cell.ageGroup().name(), cell.memberCount(), cell.businessDate(), now, now))
                 .toArray();
         jdbcTemplate.update(sql, params);
     }
 
     /*
-     * TargetGender.ALL은 StoreAudienceGender.ALL로 매핑하고, DB에는 그 dbValue("OTHER")로
-     * 저장된다(#218). OTHER는 #162(회원 쪽 성별 enum)가 먼저 정해져야 쓸 수 있는 자리라,
-     * 그동안은 "전체 성별"의 저장 칸으로 재사용한다.
+     * TargetGender와 StoreAudienceGender는 값 집합이 같지만(#218), 하나는 캠페인이 고르는
+     * 타겟이고 하나는 저장된 칸의 값이라 계층의 의미가 달라 별도 타입으로 둔다. 그래서
+     * 값이 같아도 변환이 필요하다.
      */
     private StoreAudienceGender toGenderColumn(TargetGender gender) {
         return switch (gender) {
