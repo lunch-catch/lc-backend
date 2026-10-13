@@ -37,7 +37,7 @@ public class StoreAudience extends BaseTimeEntity {
     private StoreAudienceGender gender;
 
     @Enumerated(EnumType.STRING)
-    @Column(name = "age_group", nullable = false, length = 10)
+    @Column(name = "age_group", nullable = false, length = 20)
     private AgeGroup ageGroup;
 
     @Column(name = "member_count", nullable = false)

@@ -2,6 +2,7 @@ package com.launchcatch.campaign.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.launchcatch.campaign.contract.AgeGroup;
 import com.launchcatch.campaign.entity.StoreAudience;
 import jakarta.persistence.EntityManager;
 import java.time.LocalDate;
@@ -71,5 +72,17 @@ class StoreAudienceRepositoryIntegrationTest {
         entityManager.clear();
 
         assertThat(storeAudienceRepository.findAll()).hasSize(3);
+    }
+
+    @Test
+    void AGE_50_PLUS도_저장된다() {
+        LocalDateTime now = LocalDateTime.of(2026, 10, 13, 0, 0);
+        storeAudienceRepository.upsert(1L, 1000, "MALE", "AGE_50_PLUS", 10, LocalDate.of(2026, 10, 13), now);
+        entityManager.flush();
+        entityManager.clear();
+
+        assertThat(storeAudienceRepository.findAll())
+                .extracting(StoreAudience::getAgeGroup)
+                .containsExactly(AgeGroup.AGE_50_PLUS);
     }
 }
