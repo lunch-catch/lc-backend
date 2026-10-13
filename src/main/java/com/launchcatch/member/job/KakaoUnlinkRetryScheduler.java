@@ -1,5 +1,6 @@
 package com.launchcatch.member.job;
 
+import com.launchcatch.global.logging.FailureLogDetails;
 import com.launchcatch.member.service.KakaoUnlinkRetryService;
 import com.launchcatch.ops.service.BatchExecutionService;
 import java.time.LocalDate;
@@ -50,8 +51,13 @@ public class KakaoUnlinkRetryScheduler {
         try {
             kakaoUnlinkRetryService.retryPending();
         } catch (RuntimeException e) {
-            executions.fail(JOB_NAME, businessDate, e.getClass().getSimpleName() + ": " + e.getMessage());
-            return;
+            try {
+                executions.fail(JOB_NAME, businessDate, FailureLogDetails.from(e).toString());
+            } catch (RuntimeException recordFailure) {
+                e.addSuppressed(recordFailure);
+            }
+            // 공통 스케줄러 관측이 실패를 인식하고 마지막 성공 시각을 갱신하지 않게 한다.
+            throw e;
         }
         executions.succeed(JOB_NAME, businessDate);
     }
