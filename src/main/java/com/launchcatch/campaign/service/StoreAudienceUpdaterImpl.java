@@ -8,6 +8,7 @@ import com.launchcatch.campaign.repository.StoreAudienceRepository;
 import java.time.Clock;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Objects;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -30,6 +31,7 @@ public class StoreAudienceUpdaterImpl implements StoreAudienceUpdater {
     @Override
     @Transactional
     public void overwrite(List<StoreAudienceCell> cells) {
+        Objects.requireNonNull(cells, "cells");
         if (cells.size() > MAX_CELLS_PER_CALL) {
             throw new IllegalArgumentException(
                     "cells must not exceed " + MAX_CELLS_PER_CALL + " per call: " + cells.size());

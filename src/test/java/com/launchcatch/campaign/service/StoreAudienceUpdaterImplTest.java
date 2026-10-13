@@ -1,8 +1,11 @@
 package com.launchcatch.campaign.service;
 
-import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 
 import com.launchcatch.campaign.contract.AgeGroup;
 import com.launchcatch.campaign.contract.StoreAudienceCell;
@@ -69,6 +72,12 @@ class StoreAudienceUpdaterImplTest {
     }
 
     @Test
+    @DisplayName("cells가 null이면 예외로 거부한다")
+    void cells가_null이면_거부한다() {
+        assertThatThrownBy(() -> updater.overwrite(null)).isInstanceOf(NullPointerException.class);
+    }
+
+    @Test
     @DisplayName("1000행을 넘기면 예외로 거부하고 upsert를 한 번도 안 부른다")
     void 천행을_넘기면_거부한다() {
         List<StoreAudienceCell> cells = new ArrayList<>();
@@ -77,10 +86,12 @@ class StoreAudienceUpdaterImplTest {
         }
 
         assertThatThrownBy(() -> updater.overwrite(cells)).isInstanceOf(IllegalArgumentException.class);
+
+        verifyNoInteractions(storeAudienceRepository);
     }
 
     @Test
-    @DisplayName("정확히 1000행이면 거부하지 않는다")
+    @DisplayName("정확히 1000행이면 거부하지 않고 1000번 upsert를 부른다")
     void 정확히_천행이면_통과한다() {
         List<StoreAudienceCell> cells = new ArrayList<>();
         for (int i = 0; i < 1000; i++) {
@@ -89,6 +100,8 @@ class StoreAudienceUpdaterImplTest {
 
         updater.overwrite(cells);
 
-        assertThat(cells).hasSize(1000);
+        verify(storeAudienceRepository, times(1000)).upsert(
+                anyLong(), eq(1000), eq("MALE"), eq("AGE_20S"), eq(1), eq(BUSINESS_DATE),
+                eq(LocalDateTime.now(FIXED_CLOCK)));
     }
 }
