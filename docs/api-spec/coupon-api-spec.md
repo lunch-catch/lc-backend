@@ -54,6 +54,8 @@ COMMON 전체 정의는 공통 규약, AUTH 전체 정의는 auth 명세를 따�
 | `COUPON-015` | 403 | 해당 쿠폰에 접근할 권한이 없습니다. |
 | `COUPON-016` | 409 | 이미 사용된 쿠폰입니다. |
 | `COUPON-017` | 403 | 쿠폰을 사용할 수 없는 계정입니다. |
+| `COUPON-018` | 500 | 쿠폰 정보를 조회할 수 없습니다. |
+| `COUPON-019` | 500 | 쿠폰 사용 정보를 조회할 수 없습니다. |
 
 역할 인가 뒤 본인 쿠폰 범위에서 조회한다. 해당 범위에 없으면 대상의 실제 존재 여부와 관계없이
 `COUPON-015`를 반환한다. 본인 소유로 확인된 쿠폰을 후속 처리에서 찾지 못한 경우만 `COUPON-001`을 사용한다.
@@ -362,8 +364,8 @@ QR 화면은 단건 조회의 표시 정보와 QR 생성 API의 이미지·만�
 QR 사용 시에도 같은 스냅샷을 적용하여 쿠폰에 표시한 혜택과 실제 할인 계산의 기준을 일치시킨다.
 
 - `storeId`, `storeName`, `discountTargetType`, `discountType`, `discountValue`는 필수이며 `null`을 허용하지 않는다.
-- `storeImageUrl`은 스냅샷이 참조하는 대표 이미지의 조회용 URL이다. 이미지가 없으면 `null`이다.
-- URL이 갱신되더라도 참조하는 이미지 내용은 유지한다.
+- `storeImageUrl`은 스냅샷에 저장한 대표 이미지 URL이다. 이미지가 없으면 `null`이다.
+- 이미지 URL은 이벤트 생성 시 확정하며 조회 시 주소를 변경하거나 다시 구성하지 않는다.
 - `discountTargetType=MENU`이면 `targetMenu`와 그 안의 `menuId`, `name`, `price`, `discountedPrice`가 모두 필수다.
 - `discountTargetType=ALL`이면 `targetMenu`를 생략하지 않고 `null`로 반환한다.
 - `targetMenu.price`와 `targetMenu.discountedPrice`는 이벤트 생성 시 확정한 할인 전·후 가격(원)이다.
@@ -492,7 +494,7 @@ EXPIRED는 조회 시점에 사용 기간이 지난 미사용 쿠폰이다.
 | `memberCouponId` | `integer` | 사용자 쿠폰 ID |
 | `storeId` | `integer` | 이벤트 스냅샷에 고정한 쿠폰 사용 매장 ID |
 | `storeName` | `string` | 이벤트 스냅샷에 고정한 가게명 |
-| `storeImageUrl` | `string(uri)` 또는 `null` | 스냅샷에 고정한 대표 이미지의 조회용 URL. 이미지가 없으면 `null` |
+| `storeImageUrl` | `string(uri)` 또는 `null` | 스냅샷에 저장한 대표 이미지 URL. 이미지가 없으면 `null` |
 | `discountTargetType` | `string(enum)` | 스냅샷의 할인 대상. `ALL` 또는 `MENU` |
 | `discountType` | `string(enum)` | 스냅샷의 할인 방식. `PERCENT` 또는 `AMOUNT` |
 | `discountValue` | `integer` | 스냅샷의 할인율(%) 또는 할인액(원) |
@@ -525,7 +527,9 @@ EXPIRED는 조회 시점에 사용 기간이 지난 미사용 쿠폰이다.
 미사용, 사용 완료, 기간 만료 쿠폰은 모두 조회할 수 있다.
 가게·혜택·메뉴 정보는 목록과 동일한 이벤트 스냅샷을 사용하며 [공통 표시 정보](#쿠폰-목록단건-공통-표시-정보)를 따른다.
 
-조회는 읽기 전용이다. QR 생성과 갱신은 `POST /v1/coupons/{memberCouponId}:generateQr`로 별도 요청한다.
+조회 시 미사용 쿠폰의 사용 종료 시각에 도달했으면 상태를 `EXPIRED`로 저장한다.
+사용 완료와 삭제 상태는 만료로 바꾸지 않으며 QR과 발급 횟수, 사용 이력은 변경하지 않는다.
+QR 생성과 갱신은 `POST /v1/coupons/{memberCouponId}:generateQr`로 별도 요청한다.
 state와 usable은 목록과 동일하게 조회 시점의 상태와 사용 가능 여부를 나타낸다.
 사용 가능 시간은 usableStartTime 이상, usableEndTime 미만이다.
 
@@ -579,7 +583,7 @@ state와 usable은 목록과 동일하게 조회 시점의 상태와 사용 가�
 | `memberCouponId` | integer | 사용자 쿠폰 ID |
 | `storeId` | `integer` | 이벤트 스냅샷에 고정한 쿠폰 사용 매장 ID |
 | `storeName` | `string` | 이벤트 스냅샷에 고정한 가게명 |
-| `storeImageUrl` | `string(uri)` 또는 `null` | 스냅샷에 고정한 대표 이미지의 조회용 URL. 이미지가 없으면 `null` |
+| `storeImageUrl` | `string(uri)` 또는 `null` | 스냅샷에 저장한 대표 이미지 URL. 이미지가 없으면 `null` |
 | `discountTargetType` | `string(enum)` | 스냅샷의 할인 대상. `ALL` 또는 `MENU` |
 | `discountType` | `string(enum)` | 스냅샷의 할인 방식. `PERCENT` 또는 `AMOUNT` |
 | `discountValue` | `integer` | 스냅샷의 할인율(%) 또는 할인액(원) |
@@ -604,6 +608,8 @@ state와 usable은 목록과 동일하게 조회 시점의 상태와 사용 가�
 - 403 `AUTH-006` - MEMBER 역할이 아님
 - 403 `COUPON-015` - 본인 쿠폰에 대한 소유권을 확인할 수 없음. 대상의 실제 존재 여부는 구분하지 않음
 - 404 `COUPON-001` - 본인 소유로 확인됐지만 삭제됐거나 후속 조회에서 쿠폰을 찾을 수 없음
+- 500 `COUPON-018` - 발급된 쿠폰에 연결된 이벤트 스냅샷이 누락됨
+- 500 `COUPON-019` - 사용 완료 쿠폰의 확정 사용 이력이 누락됨
 
 ### 마이페이지 쿠폰 요약 확인
 
