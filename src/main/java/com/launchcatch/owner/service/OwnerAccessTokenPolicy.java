@@ -3,35 +3,27 @@ package com.launchcatch.owner.service;
 import com.launchcatch.auth.Role;
 import com.launchcatch.auth.exception.AuthErrorCode;
 import com.launchcatch.auth.exception.AuthException;
-import com.launchcatch.auth.jwt.AccessTokenPolicy;
+import com.launchcatch.auth.contract.AccessTokenValidationPolicy;
+import com.launchcatch.auth.jwt.CutoffPolicy;
+import java.time.LocalDateTime;
 import com.launchcatch.owner.repository.OwnerAccessTokenVersionRepository;
-import com.launchcatch.owner.repository.OwnerRepository;
 import java.util.Map;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataAccessException;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 @Slf4j
 @Service
 @RequiredArgsConstructor
-public class OwnerAccessTokenPolicy implements AccessTokenPolicy {
+public class OwnerAccessTokenPolicy implements AccessTokenValidationPolicy {
     private static final String VERSION_CLAIM = "issuanceVersion";
-    private final OwnerRepository owners;
     private final OwnerAccessTokenVersionRepository versions;
 
     @Override
-    public Role role() { return Role.OWNER; }
+    public boolean supports(Role role) { return role == Role.OWNER; }
 
-    @Override
-    public Map<String, Object> additionalClaims(Long subjectId) {
-        // 로그인·재발급의 행 잠금과 같은 트랜잭션에서 현재 순번을 읽는다.
-        if (!TransactionSynchronizationManager.isActualTransactionActive()) {
-            throw new IllegalStateException("점주 AT는 토큰 변경 트랜잭션 안에서 발급해야 한다");
-        }
-        long version = owners.findIssuanceVersionById(subjectId)
-                .orElseThrow(() -> new AuthException(AuthErrorCode.LOGIN_REQUIRED));
+    public static Map<String, Object> additionalClaims(long version) {
         if (version < 0) {
             throw new IllegalStateException("점주 AT 발급 순번은 음수일 수 없다");
         }
@@ -40,7 +32,8 @@ public class OwnerAccessTokenPolicy implements AccessTokenPolicy {
     }
 
     @Override
-    public boolean isValid(Long subjectId, Map<String, Object> claims) {
+    public boolean isValid(Role role, Long subjectId, LocalDateTime issuedAt, Map<String, Object> claims, CutoffPolicy policy) {
+        if (!supports(role) || subjectId == null || issuedAt == null) { return false; }
         long version = issuanceVersion(claims.get(VERSION_CLAIM));
         if (version < 0) {
             return false;
@@ -48,7 +41,10 @@ public class OwnerAccessTokenPolicy implements AccessTokenPolicy {
         try {
             return versions.isValid(subjectId, version);
         } catch (DataAccessException e) {
-            // 공통 AT 검증의 기존 LENIENT 정책과 동일하게 Redis 조회 장애만 허용한다.
+            if (policy == CutoffPolicy.REQUIRED) {
+                throw new AuthException(AuthErrorCode.REFRESH_TOKEN_STORE_UNAVAILABLE, e);
+            }
+            // 일반 인증은 Redis 조회 장애를 허용한다.
             log.warn("event=OWNER_ACCESS_TOKEN_VERSION_CHECK_FAILED ownerId={} policy=LENIENT", subjectId);
             return true;
         }
