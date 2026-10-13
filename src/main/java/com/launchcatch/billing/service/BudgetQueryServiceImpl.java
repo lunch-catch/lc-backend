@@ -83,7 +83,7 @@ public class BudgetQueryServiceImpl implements BudgetQueryService {
         return result;
     }
 
-    // 해시가 없는 캠페인은 재구성한 뒤 그 캠페인만 다시 읽는다. 그래도 없으면 예외다
+    // 해시가 없는 캠페인은 한꺼번에 재구성한 뒤 그 캠페인만 다시 읽는다. 그래도 없으면 예외다. 캠페인마다 DB 를 읽지 않는다
     private Map<Long, DailySpend> readSpends(Collection<Long> campaignIds, LocalDate businessDate) {
         Map<Long, DailySpend> spends = new HashMap<>(spendCounter.readAll(businessDate, List.copyOf(campaignIds)));
         List<Long> missing = new ArrayList<>();
@@ -95,9 +95,7 @@ public class BudgetQueryServiceImpl implements BudgetQueryService {
         if (missing.isEmpty()) {
             return spends;
         }
-        for (Long campaignId : missing) {
-            rebuildService.rebuildIfAbsent(businessDate, campaignId);
-        }
+        rebuildService.rebuildAllIfAbsent(businessDate, missing);
         spends.putAll(spendCounter.readAll(businessDate, missing));
         for (Long campaignId : missing) {
             if (!spends.containsKey(campaignId)) {

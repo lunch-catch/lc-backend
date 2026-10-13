@@ -1,10 +1,13 @@
 package com.launchcatch.billing.repository;
 
+import com.launchcatch.billing.dto.CampaignSpend;
 import com.launchcatch.billing.dto.ServeIds;
 import com.launchcatch.billing.entity.EntryType;
 import com.launchcatch.billing.entity.PointLedger;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.Collection;
+import java.util.List;
 import java.util.UUID;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
@@ -108,4 +111,20 @@ public interface PointLedgerRepository extends JpaRepository<PointLedger, Long>,
                and d.businessDate = :businessDate
             """)
     long sumDeductForCampaignOn(@Param("campaignId") Long campaignId, @Param("businessDate") LocalDate businessDate);
+
+    /*
+     * 위와 같은 합을 캠페인 여러 개에 대해 한 번에 구한다. 그날 DEDUCT 가 없는 캠페인은 결과에 없다(소진 0).
+     * 해시가 한꺼번에 사라진 직후의 진행률 조회가 캠페인마다 쿼리를 내지 않게 한다.
+     */
+    @Query("""
+            select new com.launchcatch.billing.dto.CampaignSpend(l.campaignId, -sum(l.amount))
+              from PointLedger l, DeductionResult d
+             where d.serveId = l.serveId
+               and l.entryType = com.launchcatch.billing.entity.EntryType.DEDUCT
+               and l.campaignId in :campaignIds
+               and d.businessDate = :businessDate
+             group by l.campaignId
+            """)
+    List<CampaignSpend> sumDeductForCampaignsOn(@Param("campaignIds") Collection<Long> campaignIds,
+                                                @Param("businessDate") LocalDate businessDate);
 }

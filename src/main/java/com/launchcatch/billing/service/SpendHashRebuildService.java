@@ -5,7 +5,11 @@ import com.launchcatch.billing.repository.BudgetDailyPlanRepository;
 import com.launchcatch.billing.cache.DailySpendCounter;
 import com.launchcatch.billing.repository.PointLedgerRepository;
 import io.micrometer.core.instrument.MeterRegistry;
+import com.launchcatch.billing.dto.CampaignSpend;
 import java.time.LocalDate;
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.Map;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
@@ -40,5 +44,38 @@ public class SpendHashRebuildService {
             meterRegistry.counter(REBUILD_METRIC).increment();
         }
         return created;
+    }
+
+    /*
+     * 캠페인 여러 개를 한 번에 재구성한다. 계획 행은 한 번의 IN 조회로, 원장 합은 한 번의 그룹 조회로 읽는다.
+     * 해시를 쓰는 Valkey 호출만 캠페인마다 나간다. 만든 해시 수를 돌려준다.
+     * 계획 행이 없는 캠페인이 하나라도 있으면 예외다(E-4). 쓰기 전에 확인해서 일부만 만들어지지 않는다.
+     */
+    public int rebuildAllIfAbsent(LocalDate businessDate, Collection<Long> campaignIds) {
+        Map<Long, BudgetDailyPlan> plans = new HashMap<>();
+        for (BudgetDailyPlan plan : planRepository.findByBusinessDateAndCampaignIdIn(businessDate, campaignIds)) {
+            plans.put(plan.getCampaignId(), plan);
+        }
+        for (Long campaignId : campaignIds) {
+            if (!plans.containsKey(campaignId)) {
+                throw new IllegalStateException(
+                        "그날 예산 계획이 없습니다. campaignId=" + campaignId + ", businessDate=" + businessDate);
+            }
+        }
+        Map<Long, Long> spends = new HashMap<>();
+        for (CampaignSpend spend : ledgerRepository.sumDeductForCampaignsOn(campaignIds, businessDate)) {
+            spends.put(spend.campaignId(), spend.spend());
+        }
+        int createdCount = 0;
+        for (Long campaignId : campaignIds) {
+            BudgetDailyPlan plan = plans.get(campaignId);
+            boolean created = spendCounter.rebuildIfAbsent(businessDate, campaignId, plan.getDailyBudget(),
+                    spends.getOrDefault(campaignId, 0L), plan.isPaused(), plan.getStatusChangedAt());
+            if (created) {
+                meterRegistry.counter(REBUILD_METRIC).increment();
+                createdCount++;
+            }
+        }
+        return createdCount;
     }
 }

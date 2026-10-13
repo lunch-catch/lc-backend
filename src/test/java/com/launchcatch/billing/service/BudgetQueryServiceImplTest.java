@@ -137,8 +137,8 @@ class BudgetQueryServiceImplTest {
         List<BudgetProgress> result = service.getProgress(List.of(1L, 2L), DAY, AT);
 
         assertThat(result).extracting(BudgetProgress::reservedAmount).containsExactly(10_000L, 5_000L);
-        verify(rebuildService).rebuildIfAbsent(DAY, 2L);
-        verify(rebuildService, never()).rebuildIfAbsent(DAY, 1L);
+        verify(rebuildService).rebuildAllIfAbsent(DAY, List.of(2L));
+        verify(rebuildService, never()).rebuildIfAbsent(any(), any());
     }
 
     @Test
@@ -149,7 +149,7 @@ class BudgetQueryServiceImplTest {
         assertThatThrownBy(() -> service.getProgress(List.of(1L), DAY, AT))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("campaignId=1");
-        verify(rebuildService).rebuildIfAbsent(DAY, 1L);
+        verify(rebuildService).rebuildAllIfAbsent(DAY, List.of(1L));
     }
 
     @Test

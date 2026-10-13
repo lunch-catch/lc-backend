@@ -3,10 +3,13 @@ package com.launchcatch.billing;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.launchcatch.billing.contract.BudgetProgress;
+import com.launchcatch.billing.contract.BudgetQueryService;
 import com.launchcatch.billing.contract.DeductionStatus;
 import com.launchcatch.billing.contract.PointDeductor;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -73,6 +76,7 @@ class ImpressionDeductionIntegrationTest {
     }
 
     @Autowired PointDeductor deductor;
+    @Autowired BudgetQueryService budgetQuery;
     @Autowired TransactionTemplate tx;
     @Autowired JdbcTemplate jdbc;
     @Autowired StringRedisTemplate redis;
@@ -198,6 +202,30 @@ class ImpressionDeductionIntegrationTest {
         assertThat(rows("deduction_result", campaignId)).isEqualTo(2);
         assertThat(rows("point_ledger", campaignId)).isEqualTo(1);
         assertThat(ledgerDeductSum(campaignId)).isEqualTo(-UNIT);
+    }
+
+    @Test
+    void 해시가_모두_사라진_뒤_진행률_한_번의_조회가_원장_합으로_재구성한다() {
+        long first = plan(30, false);
+        long second = plan(30, false);
+        long third = plan(30, false);
+        for (int i = 0; i < 3; i++) {
+            deductInTx(UUID.randomUUID(), first);
+        }
+        for (int i = 0; i < 5; i++) {
+            deductInTx(UUID.randomUUID(), second);
+        }
+        redis.execute((RedisCallback<Object>) connection -> {
+            connection.serverCommands().flushAll();
+            return null;
+        });
+        double rebuildBefore = meterRegistry.counter("billing_spend_hash_rebuild_total").count();
+
+        List<BudgetProgress> progress = budgetQuery.getProgress(
+                List.of(first, second, third), DAY, LocalDateTime.of(2026, 10, 14, 11, 30));
+
+        assertThat(progress).extracting(BudgetProgress::todaySpend).containsExactly(3 * UNIT, 5 * UNIT, 0L);
+        assertThat(meterRegistry.counter("billing_spend_hash_rebuild_total").count() - rebuildBefore).isEqualTo(3.0);
     }
 
     @Test
