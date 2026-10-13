@@ -1,5 +1,10 @@
 package com.launchcatch;
 
+import static java.util.stream.Collectors.collectingAndThen;
+import static java.util.stream.Collectors.groupingBy;
+import static java.util.stream.Collectors.mapping;
+import static java.util.stream.Collectors.toList;
+import static java.util.stream.Collectors.toMap;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.launchcatch.global.exception.ErrorCode;
@@ -10,16 +15,19 @@ import com.tngtech.archunit.core.importer.ImportOption;
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
+import java.util.TreeMap;
 import java.util.regex.Pattern;
+import java.util.stream.IntStream;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /*
  * 오류 코드 목록을 지킨다. 도메인을 가로지르는 검사라 아키텍처 테스트와 같은 자리에 둔다.
  *
- * 코드의 형식과 중복, 메시지의 공백을 검사한다.
- * 오류를 통합하거나 삭제하면 번호가 비어도 허용한다.
+ * 코드는 클라이언트가 화면을 분기하는 값이다. 번호가 겹치거나 비면 클라이언트가 어느 응답을
+ * 기다릴지 알 수 없다. 사람이 대조하면 놓치므로 여기서 막는다.
  *
  * enum 은 전부 찾아낸다. 이 파일에 나열하지 않는다. 적어 두면 새 도메인의 enum 을 적지 않은
  * 사람이 그 코드를 검사에서 조용히 빼게 된다.
@@ -63,6 +71,32 @@ class ErrorCodeCatalogTest {
         return all().stream().map(ErrorCode::getMessage).toList();
     }
 
+    private static String prefixOf(String code) {
+        return code.split("-")[0];
+    }
+
+    private static int numberOf(String code) {
+        return Integer.parseInt(code.split("-")[1]);
+    }
+
+    /** 접두어마다 쓰인 번호를 오름차순으로 모은다. */
+    private static Map<String, List<Integer>> numbersByPrefix() {
+        return codes().stream().collect(groupingBy(
+                ErrorCodeCatalogTest::prefixOf,
+                TreeMap::new,
+                mapping(ErrorCodeCatalogTest::numberOf,
+                        collectingAndThen(toList(), found -> found.stream().sorted().toList()))));
+    }
+
+    /** 접두어마다 1부터 끊기지 않고 이어진 번호. 실제와 이것을 한 번에 견준다. */
+    private static Map<String, List<Integer>> expectedNumbersByPrefix() {
+        return numbersByPrefix().entrySet().stream().collect(toMap(
+                Map.Entry::getKey,
+                entry -> IntStream.rangeClosed(1, entry.getValue().size()).boxed().toList(),
+                (left, right) -> left,
+                TreeMap::new));
+    }
+
     /*
      * 탐색이 비어 있으면 아래 검사가 모두 공허하게 통과한다.
      * 패키지 이름이 바뀌거나 가져오기 설정이 틀리면 그 상태가 된다.
@@ -84,6 +118,18 @@ class ErrorCodeCatalogTest {
     @DisplayName("코드가 겹치지 않는다")
     void 코드_중복() {
         assertThat(codes()).doesNotHaveDuplicates();
+    }
+
+    /*
+     * 번호가 1부터 끊기지 않고 이어져야 한다.
+     * 중간이 비면 지운 것인지 아직 안 쓴 것인지 알 수 없고, 다음 사람이 빈 번호를 다시 쓴다.
+     */
+    @Test
+    @DisplayName("접두어마다 번호가 1부터 끊기지 않는다")
+    void 번호_연속() {
+        assertThat(numbersByPrefix())
+                .as("접두어별로 쓰인 번호")
+                .isEqualTo(expectedNumbersByPrefix());
     }
 
     @Test

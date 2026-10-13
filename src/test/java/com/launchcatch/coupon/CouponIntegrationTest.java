@@ -698,7 +698,7 @@ class CouponIntegrationTest {
             Map<String, Object> before = findCoupon();
 
             mockMvc.perform(get("/v1/coupons/" + id).with(user(new CustomUserDetails(18L, Role.MEMBER))))
-                    .andExpect(status().isForbidden()).andExpect(jsonPath("$.code").value("COUPON-015"));
+                    .andExpect(status().isForbidden()).andExpect(jsonPath("$.code").value("COUPON-011"));
 
             assertThat(findCoupon()).usingRecursiveComparison().isEqualTo(before);
         }
@@ -1044,7 +1044,7 @@ class CouponIntegrationTest {
             Map<String, Object> before = findCoupon();
 
             mockMvc.perform(delete("/v1/coupons/1001").with(user(MEMBER)))
-                    .andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("COUPON-016"));
+                    .andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("COUPON-012"));
 
             assertThat(findCoupon()).usingRecursiveComparison().isEqualTo(before);
             assertThat(jdbcTemplate.queryForObject("SELECT discount_amount FROM coupon_usage_history", Integer.class))
@@ -1059,7 +1059,7 @@ class CouponIntegrationTest {
             Map<String, Object> before = findCoupon();
 
             mockMvc.perform(delete("/v1/coupons/" + id).with(user(new CustomUserDetails(18L, Role.MEMBER))))
-                    .andExpect(status().isForbidden()).andExpect(jsonPath("$.code").value("COUPON-015"));
+                    .andExpect(status().isForbidden()).andExpect(jsonPath("$.code").value("COUPON-011"));
 
             assertThat(findCoupon()).usingRecursiveComparison().isEqualTo(before);
             assertThat(findIssuedCount()).isEqualTo(1);
@@ -1070,7 +1070,7 @@ class CouponIntegrationTest {
             jdbcTemplate.update("UPDATE member_coupon SET status = 'REMOVED' WHERE member_coupon_id = 1001");
 
             mockMvc.perform(delete("/v1/coupons/1001").with(user(new CustomUserDetails(18L, Role.MEMBER))))
-                    .andExpect(status().isForbidden()).andExpect(jsonPath("$.code").value("COUPON-015"));
+                    .andExpect(status().isForbidden()).andExpect(jsonPath("$.code").value("COUPON-011"));
         }
 
         @Test

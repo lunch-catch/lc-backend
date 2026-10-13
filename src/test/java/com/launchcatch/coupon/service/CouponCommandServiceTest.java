@@ -155,7 +155,7 @@ class CouponCommandServiceTest {
         assertThat(coupon.getQrVersion()).isEqualTo(3);
         assertThat(coupon.getQrToken()).isEqualTo(QR_TOKEN);
         assertThat(coupon.getQrExpiresAt()).isEqualTo(QR_EXPIRES_AT);
-        assertDeletionFailure("COUPON-016");
+        assertDeletionFailure("COUPON-012");
     }
 
     @Test
@@ -163,7 +163,7 @@ class CouponCommandServiceTest {
         when(memberCouponRepository.findByIdAndMemberId(COUPON_ID, MEMBER_ID)).thenReturn(Optional.empty());
 
         assertError(CouponErrorCode.COUPON_ACCESS_DENIED);
-        assertDeletionFailure("COUPON-015");
+        assertDeletionFailure("COUPON-011");
     }
 
     @Test

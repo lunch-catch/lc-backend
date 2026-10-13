@@ -563,13 +563,13 @@ class CouponLookUpServiceTest {
             assertThatThrownBy(() -> service.getDetail(MEMBER_ID, memberCouponId))
                     .isInstanceOfSatisfying(CouponException.class, exception -> {
                         assertThat(exception.getErrorCode()).isEqualTo(CouponErrorCode.COUPON_ACCESS_DENIED);
-                        assertThat(exception.getErrorCode().getCode()).isEqualTo("COUPON-015");
+                        assertThat(exception.getErrorCode().getCode()).isEqualTo("COUPON-011");
                         assertThat(exception.getErrorCode().getHttpStatus().value()).isEqualTo(403);
                     });
             assertThat(diagnosticLogs.list).singleElement().satisfies(event -> {
                 assertThat(event.getLevel()).isEqualTo(Level.WARN);
                 assertThat(event.getFormattedMessage()).isEqualTo(
-                        "event=COUPON_DETAIL_FAILED memberId=17 memberCouponId=" + memberCouponId + " reason=COUPON-015");
+                        "event=COUPON_DETAIL_FAILED memberId=17 memberCouponId=" + memberCouponId + " reason=COUPON-011");
             });
         }
 
