@@ -1,11 +1,14 @@
 package com.launchcatch.billing.repository;
 
+import com.launchcatch.billing.contract.DeductionStatus;
 import com.launchcatch.global.config.ClockConfig;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
+import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -28,7 +31,13 @@ import org.springframework.stereotype.Repository;
 public class DailySpendHashRepository {
 
     private static final String KEY_PREFIX = "billing:day:";
+    private static final String SERVED_PREFIX = "billing:served:";
+    private static final String HASH_MISSING = "HASH_MISSING";
+
+    // 처리 표시는 재호출이 올 수 있는 동안만 두면 된다. 영업일이 지난 뒤 이틀이면 넉넉하다
+    private static final long SERVED_TTL_SECONDS = Duration.ofDays(2).toSeconds();
     private static final RedisScript<Long> APPLY_STATUS_SCRIPT = loadApplyStatusScript();
+    private static final RedisScript<String> DEDUCT_SCRIPT = loadDeductScript();
 
     private final StringRedisTemplate redisTemplate;
 
@@ -46,6 +55,30 @@ public class DailySpendHashRepository {
         redisTemplate.delete(key(businessDate, campaignId));
     }
 
+    /*
+     * 노출 하나를 판정한다. 같은 serveId 를 다시 부르면 처음 판정을 돌려주고 소진을 늘리지 않는다.
+     * 해시가 없으면 아무것도 쓰지 않고 해시 없음을 돌려준다. 재구성은 부른 쪽이 정한다.
+     *
+     * 두 키를 한 스크립트에서 쓰므로 비클러스터 Valkey 를 전제한다. 클러스터 모드면 해시 태그가 필요하다.
+     */
+    public DeductOutcome deduct(LocalDate businessDate, Long campaignId, UUID serveId, long unitPrice) {
+        String reply = redisTemplate.execute(DEDUCT_SCRIPT,
+                List.of(key(businessDate, campaignId), servedKey(serveId)),
+                String.valueOf(unitPrice),
+                String.valueOf(SERVED_TTL_SECONDS));
+        if (reply == null) {
+            throw new IllegalStateException("판정 스크립트가 응답하지 않았습니다.");
+        }
+        if (HASH_MISSING.equals(reply)) {
+            return DeductOutcome.hashMissing();
+        }
+        return DeductOutcome.of(DeductionStatus.valueOf(reply));
+    }
+
+    static String servedKey(UUID serveId) {
+        return SERVED_PREFIX + serveId;
+    }
+
     static String key(LocalDate businessDate, Long campaignId) {
         return KEY_PREFIX + businessDate + ":" + campaignId;
     }
@@ -59,6 +92,13 @@ public class DailySpendHashRepository {
         DefaultRedisScript<Long> script = new DefaultRedisScript<>();
         script.setLocation(new ClassPathResource("scripts/billing_day_status.lua"));
         script.setResultType(Long.class);
+        return script;
+    }
+
+    private static RedisScript<String> loadDeductScript() {
+        DefaultRedisScript<String> script = new DefaultRedisScript<>();
+        script.setLocation(new ClassPathResource("scripts/billing_deduct.lua"));
+        script.setResultType(String.class);
         return script;
     }
 }
