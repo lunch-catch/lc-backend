@@ -4,7 +4,7 @@
 
 | 적을 것 | 내용 |
 |---|---|
-| 맡는 기능과 근거 | 캠페인의 상태 전이(95행)와 그 이력, 다른 도메인에 캠페인 정보를 공개하는 `CampaignQueryService` 구현 |
+| 맡는 기능과 근거 | 캠페인의 상태 전이(95행)와 그 이력, 다른 도메인에 캠페인 정보를 공개하는 `CampaignQueryService` 구현, 정산의 예산 판정을 상태 전이로 옮기는 `CampaignFundingUpdater` 구현(#198) |
 | 맡지 않는 것과 그 소유 도메인 | 등록 화면 API(점주, 아직 이슈 없음), 예산 집행과 소진(billing), 광고 배정(adserving), 템플릿과 포스터(같은 campaign 도메인의 다른 애그리거트, [`poster-api-design.md`](./poster-api-design.md)가 따로 가짐) |
 
 이 문서는 `campaign` 애그리거트(도메인 이름과 같은 루트 애그리거트)만 다룬다. `template`, `poster`, `store_audience`는 범위 밖이다.
@@ -18,7 +18,10 @@
 ```
 campaign/
 ├── contract/
-│   └── PauseReason.java           campaign.paused_reason 값. CampaignStatus/TargetGender와 같은 이유로 contract에 둔다
+│   ├── PauseReason.java           campaign.paused_reason 값. CampaignStatus/TargetGender와 같은 이유로 contract에 둔다
+│   ├── Judgement.java             billing의 FundingJudgement.judgement 값(NO_POINTS/RESUME/OK)
+│   ├── Cause.java                 billing의 FundingJudgement.cause 값(DAILY/RECHARGE)
+│   └── FundingJudgement.java      billing이 CampaignFundingUpdater에 보내는 판정 record
 ├── entity/
 │   ├── Campaign.java              캠페인 전체 필드와 전이 5개
 │   ├── CampaignStatusLog.java     전이 이력(쓰고 잊는 로그, ops.AuditLog와 같은 방식)
@@ -28,15 +31,18 @@ campaign/
 │   ├── CampaignRepository.java
 │   └── CampaignStatusLogRepository.java
 └── service/
-    ├── CampaignStatusService.java      전이 5개, 로그 기록, 낮 전이의 이벤트 발행
-    └── CampaignQueryServiceImpl.java   CampaignQueryService 구현
+    ├── CampaignStatusService.java        전이 5개 + pauseFromFunding/resumeFromFunding, 로그 기록, 이벤트 발행
+    ├── CampaignQueryServiceImpl.java     CampaignQueryService 구현
+    └── CampaignFundingUpdaterImpl.java   CampaignFundingUpdater 구현. FundingJudgement를 상태 전이 호출로 옮긴다
 ```
 
 `CampaignStatusLog`는 `Campaign`을 `@ManyToOne` 연관관계가 아니라 `campaignId`(원시 `Long`)로만 참조한다. `Campaign`이 자기 로그 목록을 조회할 기능이 이 이슈에 없어서, `ops.AuditLog`가 쓰는 방식을 그대로 따랐다(제가 정한 것).
 
 `PauseReason`은 처음엔 `campaign.entity`에 뒀다가 `campaign.contract`로 옮겼다(2026-10-12). `CampaignStatus`, `TargetGender`, `DiscountTargetType`, `DiscountType`, `AgeGroup`처럼 캠페인 테이블 CHECK 제약과 1:1로 대응하는 enum은 전부 contract에 두고 엔티티가 그대로 쓰는 게 이미 있는 패턴인데, `PauseReason`만 거기서 벗어나 있었다. 다른 도메인(billing)이 `CampaignInfo.pauseReason` 필드로 이 타입을 그대로 쓰려는 계획이 나오면서, `ArchitectureTest`의 `contract는_entity와_repository를_참조하지_않는다`가 그 자리를 막는다는 게 드러나 옮겼다.
 
-입구 넷 가운데 이 이슈에서 실제로 연결된 것은 "다른 도메인의 호출"(`CampaignQueryService`)뿐이다. `CampaignStatusService`의 다섯 메서드는 아직 아무도 부르지 않는다. `schedule`/`activate`/`end`는 "스케줄러 캠페인 담당 스텝" 이슈가, `pause`/`resume`은 "캠페인 수동 중단과 재개(점주)" 이슈와 billing의 `CampaignFundingUpdater` 구현이 각각 부를 자리다.
+입구 넷 가운데 이 이슈에서 실제로 연결된 것은 "다른 도메인의 호출"(`CampaignQueryService`, `CampaignFundingUpdater`)뿐이다. `CampaignStatusService`의 `schedule`/`activate`/`pause`/`resume`/`end`는 아직 아무도 부르지 않는다. `schedule`/`activate`/`end`는 "스케줄러 캠페인 담당 스텝" 이슈가, `pause`/`resume`은 "캠페인 수동 중단과 재개(점주)" 이슈가 부를 자리다.
+
+`#198`이 더한 `pauseFromFunding`/`resumeFromFunding`은 billing의 `CampaignFundingUpdaterImpl`이 바로 부른다(간접 전이). `pause`/`resume`과 다른 점 하나는, 지금 상태가 그 판정을 받을 자리가 아니면 `IllegalStateException`이 아니라 조용히 무시한다는 것이다(12장 "정산 확인 질문 5개" 중 질문 4 답변). 정산의 00:00 배치나 재시도가 "그 상태에서는 무시된다"는 것 때문에 멈출 이유가 없다.
 
 ## 3. 저장
 
@@ -46,6 +52,7 @@ campaign/
 | 다른 도메인 데이터의 사본 | 해당 없음 |
 | 이력 | 상태 변경마다 `CampaignStatusLog` 한 행. 현재 상태는 `campaign.status`가 그대로 가진다 |
 | 복잡한 조회 | `findServableOn`은 `campaign` 테이블 하나만 조회한다. billing의 "예약" 데이터(`budget_daily_plan`)는 `campaign -> billing` 간선이 없어 조인할 수 없다([설계 문서](../../architecture/런치캐치_도메인_구조와_의존성_설계.md) 2.2, 역방향은 순환). 95행의 전이 규칙상 `PAUSED(OWNER, NO_POINTS)`는 그날 `ACTIVE`였다가 멈춘 것만 존재하므로 campaign 자신의 컬럼(`status`, `paused_reason`, `start_date`, `end_date`)만으로 조건이 성립한다고 보았다(제가 추론한 것, 문서에 명시돼 있지 않음) |
+| `findServableOn`과 billing의 00:00 예약 조회 공유(#198) | billing이 요청한 `findForReservation(businessDate)`의 조건이 `findServableOn`과 같다(위 행). 메서드를 따로 두면 "예약이 있는 PAUSED"의 해석이 두 곳에 흩어져 한쪽만 바뀌면 어긋난다. 그래서 새 메서드를 만들지 않고 billing이 `findServableOn`을 그대로 부르기로 했다 |
 
 ## 4. 계산 로직
 
@@ -55,10 +62,11 @@ campaign/
 
 | 방향 | 대상 도메인 | 인터페이스 | 시점 |
 |---|---|---|---|
-| 공개 | 모든 도메인 | `CampaignQueryService`(`findByStoreIdIn`, `findAllById`, `findServableOn`) | 요청마다 |
+| 공개 | 모든 도메인 | `CampaignQueryService`(`findByStoreIdIn`, `findAllById`, `findServableOn`, `findEligibleCampaigns`, `findByOwnerIdAndStatusIn`, `hasLiveCampaign`, `findOwnerIdsWithLiveCampaign`) | 요청마다 |
+| 받음(직접 호출) | billing | `CampaignFundingUpdater.applyFundingJudgement` | 정산의 00:00 예산 판정, 충전 직후 재예약 판정 때마다. 이벤트가 아니라 정산의 트랜잭션 안에서 직접 부른다 |
 | 쓰기(미연결) | store | `StoreCampaignSummaryUpdater` | `pause`/`resume`/`end` 때 호출해야 하지만([설계 문서](../../architecture/런치캐치_도메인_구조와_의존성_설계.md) 2.4), store 쪽에 그 인터페이스가 아직 없어 이번 이슈는 호출을 빼고 넘어간다. 생기면 `CampaignStatusService`에 이어 붙인다 |
 
-받는 이벤트는 해당 없음(`CampaignFundingUpdater` 구현은 billing 쪽 확인 질문이 남아 이 이슈 범위 밖).
+받는 이벤트는 해당 없음.
 
 ## 6. 상태와 흐름
 
@@ -102,7 +110,13 @@ stateDiagram-v2
 
 ## 9. 실패 처리
 
-해당 없음. 이 이슈는 돈을 직접 다루지 않는다(예약, 차감, 환불은 billing 소유). 포인트 부족 판정에 따른 `PAUSED(NO_POINTS)` 전이 자체의 실패 처리는 billing의 `CampaignFundingUpdater` 구현 이슈가 다룬다.
+이 도메인은 돈을 직접 다루지 않는다(예약, 차감, 환불은 billing 소유). `applyFundingJudgement`가 처리할 돈이 걸린 경로는 하나다.
+
+| 경로 | 처리 |
+|---|---|
+| `FundingJudgement`가 지금 상태와 안 맞을 때(NO_POINTS가 이미 PAUSED(ADMIN/OWNER)에, RESUME이 PAUSED(ADMIN/OWNER)나 ENDED에 온 경우) | 예외 대신 조용히 무시한다. 캠페인 상태는 바뀌지 않고 로그도 남지 않는다. billing의 00:00 배치나 재시도가 이 경로 때문에 멈출 이유가 없다고 판단했다(billing 확인 질문 4 답변, 12장) |
+| 같은 `FundingJudgement`가 두 번 와도(재시도, 재실행) | `pauseFromFunding`/`resumeFromFunding`이 먼저 "이미 그 상태인가"를 보고 멱등하게 반환한다. `pause`/`resume`과 같은 패턴이다 |
+| 점주의 직접 재개와 billing의 RESUME 판정이 같은 캠페인에 동시에 옴 | `CampaignRepository.findByIdForUpdate`(비관 잠금)가 순서를 정한다. 늦게 온 쪽은 갱신된 상태를 보고 자기 멱등/무시 조건을 그대로 적용해 추가 코드 없이 풀린다(billing 확인 질문 4 답변) |
 
 ## 10. 배치
 
@@ -117,5 +131,20 @@ stateDiagram-v2
 | 미정 항목 | 어디까지 정해졌나 | 막는 것 |
 |---|---|---|
 | `StoreCampaignSummaryUpdater` 호출 | 설계 문서 2.4에 간선은 있으나 store 쪽 인터페이스가 아직 없다 | store 도메인이 인터페이스를 만들어야 이어 붙일 수 있다 |
-| "예약이 있는 PAUSED"의 정확한 의미 | 상태 전이 규칙으로 추론해 구현(3장) | billing의 `budget_daily_plan`을 직접 볼 수 없어 billing 쪽 확인이 없으면 확정할 수 없다 |
+| 사용자(MEMBER)용 저장 포스터 조회 API | 가게 상세 화면이 쓸 신규 공개 계약이라는 것만 확인했다 | 권한, 경로, 상태별 공개 여부, 포스터 미등록 시 응답을 가게 담당과 맞춰야 명세를 쓸 수 있다 |
+| 캠페인 참조 메뉴 수정 시 처리 기준 | 협의가 필요하다는 것만 확인했다(메뉴 변경 제한/현재 정보 사용/등록 당시 정보 유지 중 택일) | 메뉴 수정 담당자와 함께 결정해야 한다 |
+| 분석(analytics)의 캠페인/점주/가게 확인 방법 | `CampaignInfo`가 이미 그 셋을 들고 있다는 사실만 확인했다 | 분석이 `CampaignInfo`를 그대로 재사용할지, 자기 쪽에 소유 관계를 따로 보관할지는 분석 담당이 정할 일이다 |
+| 분석의 종료 캠페인 과거 데이터 유지 방식 | 해당 없음 | 분석의 집계 방식이 먼저 정해져야 campaign이 뭘 더 줄지 알 수 있다 |
 | `newPriorityUntil` | `ad_candidate`에만 컬럼이 있고 `campaign`엔 없다(#156 결정). `CampaignInfo`엔 항상 `null`로 채워 보낸다 | "신규 우선 노출" 계산 규칙 자체가 문서에 없다. campaign에 컬럼을 추가할지부터 정해야 한다 |
+
+**"예약이 있는 PAUSED"의 정확한 의미는 `#198`에서 풀렸다.** billing이 `findServableOn`을 그대로 재사용하기로 해서(3장), 그 의미를 두 곳에서 따로 정의할 일이 없어졌다.
+
+### 정산(billing) 확인 질문 5개 답변 (`#198`)
+
+| 질문 | 답변 |
+|---|---|
+| 1. `CampaignStatusChangedEvent` 페이로드가 바뀔 예정인가 | 안 바뀐다. `campaignId, businessDate, servable, changedAt` 그대로 쓴다 |
+| 2. 00:00 상태 전이와 정산 호출로 인한 전이도 이 이벤트를 발행하는가 | `schedule`/`activate`(00:00, SYSTEM 전용)는 발행하지 않는다(이미 결정, 6장). `pauseFromFunding`/`resumeFromFunding`(정산 호출로 인한 전이)은 각각 내부에서 `pause`/`resume`과 같은 이벤트를 발행한다. billing은 자기가 호출해서 받은 이벤트를 `changedAt`으로 걸러야 한다 |
+| 3. 하루 예산을 누가 적용하는가 | campaign이 이미 적용한 값을 `CampaignInfo.dailyBudget`으로 그대로 준다. billing의 00:00 (3)단계는 카운터 초기화만 한다 |
+| 4. 재개 경합과 RESUME 무시 시 예외 여부 | `findByIdForUpdate` 비관 잠금이 순서를 정해 경합을 푼다(9장). RESUME이 무시될 때 예외를 던지지 않고 조용히 넘긴다 |
+| 5. `CampaignEndedEvent`를 정산이 받을 일이 없다는 전제 | 맞다. campaign도 그렇게 본다 |
