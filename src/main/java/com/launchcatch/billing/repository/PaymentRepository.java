@@ -26,6 +26,9 @@ public interface PaymentRepository extends JpaRepository<Payment, Long> {
     @Query("select p from Payment p where p.id = :paymentId")
     Optional<Payment> findByIdForUpdate(@Param("paymentId") Long paymentId);
 
+    // 주문 번호는 결제당 하나다(uk_payment_order_id). 웹훅이 이 값으로 우리 결제를 찾는다
+    Optional<Payment> findByOrderId(String orderId);
+
     // 그 점주의 결제 한 건이다. 남의 결제는 없는 것과 같다
     Optional<Payment> findByIdAndOwnerId(Long id, Long ownerId);
 
