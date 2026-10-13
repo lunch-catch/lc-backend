@@ -118,7 +118,7 @@ POST /v1/admin/templates/{templateId}:publish
 | 주체 | 로그인 수단 | Access Token | Refresh Token | 역할 |
 |---|---|---|---|---|
 | 관리자 | 자체 아이디와 비밀번호 | 30분 | 1일 | `ADMIN`, `SUPER_ADMIN` |
-| 점주 | 이메일과 비밀번호 | 30분 | 14일 | `OWNER` |
+| 점주 | 이메일과 비밀번호 | 30분 | 1일 | `OWNER` |
 | 사용자 | 카카오 로그인 (인가 코드) | 30분 | 14일, 자동 로그인을 체크하지 않으면 브라우저를 닫을 때까지 | `MEMBER` |
 
 **토큰은 헤더가 아니라 쿠키로 오간다.** 두 토큰 모두 `HttpOnly`, `SameSite=Strict` 쿠키로 내려간다.

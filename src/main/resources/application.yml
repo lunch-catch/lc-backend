@@ -187,8 +187,8 @@ jwt:
   refresh:
     # 관리자 1일
     admin-validity-ms: "${JWT_REFRESH_ADMIN_VALIDITY_MS:86400000}"
-    # 점주 14일
-    owner-validity-ms: "${JWT_REFRESH_OWNER_VALIDITY_MS:1209600000}"
+    # 점주 1일
+    owner-validity-ms: "${JWT_REFRESH_OWNER_VALIDITY_MS:86400000}"
     # 사용자 14일. 회원 Refresh Token은 항상 persistent cookie로 발급한다
     member-validity-ms: "${JWT_REFRESH_MEMBER_VALIDITY_MS:1209600000}"
   cookie:
