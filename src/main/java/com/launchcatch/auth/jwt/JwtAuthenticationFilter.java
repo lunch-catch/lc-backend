@@ -2,6 +2,10 @@ package com.launchcatch.auth.jwt;
 
 import com.launchcatch.auth.CustomUserDetails;
 import com.launchcatch.auth.Role;
+import com.launchcatch.auth.contract.AccessTokenValidationPolicy;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.Cookie;
@@ -35,12 +39,21 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     private final JwtTokenProvider jwtTokenProvider;
     private final AccessTokenCutoffVerifier cutoffVerifier;
+    private final List<AccessTokenValidationPolicy> validationPolicies;
 
+    // 검증 정책을 전달하지 않는 기존 호출은 발급 시각 기준 검증을 유지한다.
     public JwtAuthenticationFilter(
             JwtTokenProvider jwtTokenProvider,
             AccessTokenValidAfterRepository accessTokenValidAfterRepository) {
+        this(jwtTokenProvider, accessTokenValidAfterRepository, List.of());
+    }
+
+    public JwtAuthenticationFilter(JwtTokenProvider jwtTokenProvider,
+            AccessTokenValidAfterRepository accessTokenValidAfterRepository,
+            List<AccessTokenValidationPolicy> validationPolicies) {
         this.jwtTokenProvider = jwtTokenProvider;
         this.cutoffVerifier = new AccessTokenCutoffVerifier(accessTokenValidAfterRepository);
+        this.validationPolicies = List.copyOf(validationPolicies);
     }
 
     @Override
@@ -63,12 +76,22 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         }
 
         LocalDateTime issuedAt = jwtTokenProvider.getIssuedAt(token);
-        if (!cutoffVerifier.isValidAfter(role, id, issuedAt, CutoffPolicy.LENIENT)) {
+        Map<String, Object> additionalClaims = Objects.requireNonNullElse(
+                jwtTokenProvider.getAdditionalClaims(token), Map.of());
+        /*
+         * 이 역할을 담당하는 도메인 정책으로 토큰을 검증한다.
+         * 등록된 정책이 없으면 기존 발급 시각 기준으로 검증한다.
+         */
+        boolean valid = validationPolicies.stream().filter(policy -> policy.supports(role)).findFirst()
+                .map(policy -> policy.isValid(role, id, issuedAt, additionalClaims, CutoffPolicy.LENIENT))
+                .orElseGet(() -> cutoffVerifier.isValidAfter(role, id, issuedAt, CutoffPolicy.LENIENT));
+        if (!valid) {
             filterChain.doFilter(request, response);
             return;
         }
 
-        CustomUserDetails userDetails = new CustomUserDetails(id, role, issuedAt);
+        // 검증한 추가 정보를 인증 사용자에 담아 컨트롤러에서도 사용할 수 있게 한다.
+        CustomUserDetails userDetails = new CustomUserDetails(id, role, issuedAt, additionalClaims);
         UsernamePasswordAuthenticationToken authentication =
                 new UsernamePasswordAuthenticationToken(userDetails, null, userDetails.getAuthorities());
         authentication.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));

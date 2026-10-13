@@ -1,16 +1,22 @@
 # 관리자 (admin) API 명세
 
-현재 구현된 관리자 계정 발급과 로그인의 요청, 응답, 오류를 적는다. 공통 규약은 [api-spec.md](./api-spec.md), 토큰·쿠키 정책과 재발급은 [auth-api-spec.md](./auth-api-spec.md)를 따른다. 서버 처리와 저장 구조는 [admin-api-design.md](../design/admin/admin-api-design.md)에 있다.
+관리자 계정 발급·로그인·토큰 재발급·로그아웃 API를 안내한다. 계정 발급과 로그인의 요청·응답·오류는 이 문서에서 정의한다. 토큰·쿠키 정책과 재발급·로그아웃의 상세 계약은 [auth-api-spec.md](./auth-api-spec.md)를 따른다. 공통 규약은 [api-spec.md](./api-spec.md)를 따른다. 서버 처리와 저장 구조는 [admin-api-design.md](../design/admin/admin-api-design.md)에 있다.
 
 ## 목록과 구현 범위
+
+관리자 API의 전체 문서 범위는 계정 발급·로그인·토큰 재발급·로그아웃, 점주와 사용자 관리, 입점 신청 조회, 플랫폼 설정값, 감사 로그를 포함한다. 아래 표는 현재 이 문서에서 안내하는 구현된 관리자 인증 API다. 나머지 관리 기능은 전체 문서 범위에 포함되지만, 이 목록만으로 구현 완료를 의미하지는 않는다.
 
 | 메서드 | 경로 | 기능 | 인증 및 권한 |
 | --- | --- | --- | --- |
 | `POST` | `/v1/admin/admins` | 관리자 계정 발급 | Access Token, `SUPER_ADMIN` |
 | `POST` | `/v1/admin/auth/tokens` | 관리자 로그인 | 기존 토큰 불필요 |
+| `DELETE` | `/v1/admin/auth/tokens` | 관리자 로그아웃 | Access Token, `ADMIN` 또는 `SUPER_ADMIN` |
 | `POST` | `/v1/admin/auth/tokens:refresh` | 관리자 토큰 재발급 | Refresh Token. 상세 계약은 [인증 명세](./auth-api-spec.md#관리자) |
 
-관리자 로그아웃은 후속 PR의 구현 대상이며 이 브랜치에서는 제공하지 않는다. 첨부 자료의 PR #119 로그아웃 계약은 현재 구현에 포함하지 않는다. 점주 관리·입점 신청·플랫폼 설정·감사 로그 조회 등 다른 관리자 API는 이 문서의 이번 이식 범위가 아니다. 관리자 회원 목록의 기존 계약은 [member.md](./member.md)를 따른다.
+
+## 로그인·재발급 요청 제한
+
+인증 요청 제한 필터는 IP별 1분 고정 윈도우에서 10회를 허용한다. 대상 로그인·재발급 경로들이 같은 IP 카운터를 공유하므로 관리자 API별로 각각 10회가 아니다. 초과 시 `429`와 남은 대기 시간(초)의 `Retry-After`를 반환하며, 현재 구현은 이 응답에 JSON 본문이나 오류 코드를 넣지 않는다. 캐시 장애로 횟수를 확인하지 못하면 요청을 통과시킨다. 계정별 로그인 실패 잠금과는 별개다.
 
 ## 관리자 계정 발급
 
@@ -142,6 +148,14 @@ Set-Cookie: refreshToken=<opaque>; Path=/v1/admin/auth/; Max-Age=86400; HttpOnly
 | `401` | `AUTH-001` | 계정 없음, 비밀번호 불일치·UTF-8 72바이트 초과, 계정 사용 불가 또는 관리자 역할 아님 |
 | `429` | 없음 | IP별 인증 요청 제한 초과. 본문 없이 `Retry-After` 제공 |
 | `503` | `AUTH-002` | 필수 Refresh Token DB 저장·확인 실패 |
+
+## 관리자 토큰 재발급
+
+[인증 명세의 관리자 절](./auth-api-spec.md#관리자)을 따른다.
+
+## 관리자 로그아웃
+
+[인증 명세의 관리자 절](./auth-api-spec.md#관리자)을 따른다.
 
 ## 관련 인증 계약
 
