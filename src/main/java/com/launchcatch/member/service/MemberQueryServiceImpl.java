@@ -2,7 +2,10 @@ package com.launchcatch.member.service;
 
 import com.launchcatch.member.contract.MemberInfo;
 import com.launchcatch.member.contract.MemberQueryService;
+import com.launchcatch.member.entity.Member;
+import com.launchcatch.member.entity.MemberProfile;
 import com.launchcatch.member.repository.MemberRepository;
+import java.util.List;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -17,16 +20,34 @@ public class MemberQueryServiceImpl implements MemberQueryService {
 
     @Override
     public Optional<MemberInfo> findById(Long memberId) {
-        return memberRepository.findById(memberId)
-                .map(member -> new MemberInfo(
-                        member.getId(),
-                        member.getNickname(),
-                        member.getStatus(),
-                        member.getProfile() != null && member.getProfile().isOnboardingCompleted(),
-                        member.isNotificationOptIn(),
-                        member.isLocationOptIn(),
-                        member.getProfile() == null ? null : member.getProfile().getLatitude(),
-                        member.getProfile() == null ? null : member.getProfile().getLongitude()
-                ));
+        return memberRepository.findById(memberId).map(this::toInfo);
+    }
+
+    @Override
+    public List<MemberInfo> findAllById(List<Long> memberIds) {
+        if (memberIds.size() > MAX_FIND_ALL_SIZE) {
+            throw new IllegalArgumentException(
+                    "memberIds must not exceed " + MAX_FIND_ALL_SIZE + ": " + memberIds.size());
+        }
+        if (memberIds.isEmpty()) {
+            return List.of();
+        }
+        return memberRepository.findAllWithProfileByIdIn(memberIds).stream().map(this::toInfo).toList();
+    }
+
+    private MemberInfo toInfo(Member member) {
+        MemberProfile profile = member.getProfile();
+        return new MemberInfo(
+                member.getId(),
+                member.getNickname(),
+                member.getStatus(),
+                profile != null && profile.isOnboardingCompleted(),
+                member.isNotificationOptIn(),
+                member.isLocationOptIn(),
+                profile == null ? null : profile.getLatitude(),
+                profile == null ? null : profile.getLongitude(),
+                profile == null ? null : profile.getGender(),
+                profile == null ? null : profile.getAgeGroup()
+        );
     }
 }
