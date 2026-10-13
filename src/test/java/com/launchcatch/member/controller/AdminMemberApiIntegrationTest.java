@@ -138,40 +138,35 @@ class AdminMemberApiIntegrationTest {
      * keyword 는 쿼리 문자열이 아니라 param 으로 넘긴다.
      * get(urlTemplate) 은 템플릿을 인코딩하므로 "%25" 를 적으면 "%2525" 가 되어 서버가 "%25" 라는 글자를 받는다.
      */
-    private ResultActions searchKeyword(String searchType, String keyword) throws Exception {
+    private ResultActions searchKeyword(String keyword) throws Exception {
         String token = jwtTokenProvider.createAccessToken(1L, Role.ADMIN);
         return mockMvc.perform(get(URL)
-                .param("searchType", searchType)
                 .param("keyword", keyword)
                 .cookie(new Cookie("accessToken", token)));
     }
 
     @Test
     void 닉네임은_접두사로_찾고_퍼센트와_밑줄과_느낌표는_글자로_다룬다() throws Exception {
-        searchKeyword("NICKNAME", "점심").andExpect(jsonPath("$.data.totalElements").value(1));
-        searchKeyword("NICKNAME", "헌터").andExpect(jsonPath("$.data.totalElements").value(0));
-        searchKeyword("NICKNAME", "%").andExpect(jsonPath("$.data.totalElements").value(0));
-        searchKeyword("NICKNAME", "%할인").andExpect(jsonPath("$.data.totalElements").value(0));
-        searchKeyword("NICKNAME", "100%").andExpect(jsonPath("$.data.totalElements").value(1));
-        searchKeyword("NICKNAME", "a_").andExpect(jsonPath("$.data.totalElements").value(1));
-        searchKeyword("NICKNAME", "!").andExpect(jsonPath("$.data.totalElements").value(1));
+        searchKeyword("점심").andExpect(jsonPath("$.data.totalElements").value(1));
+        searchKeyword("헌터").andExpect(jsonPath("$.data.totalElements").value(0));
+        searchKeyword("%").andExpect(jsonPath("$.data.totalElements").value(0));
+        searchKeyword("%할인").andExpect(jsonPath("$.data.totalElements").value(0));
+        searchKeyword("100%").andExpect(jsonPath("$.data.totalElements").value(1));
+        searchKeyword("a_").andExpect(jsonPath("$.data.totalElements").value(1));
+        searchKeyword("!").andExpect(jsonPath("$.data.totalElements").value(1));
     }
 
     @Test
-    void 회원_번호_검색은_번호가_일치하는_회원을_찾는다() throws Exception {
-        getAs(Role.ADMIN, "?searchType=MEMBER_ID&keyword=" + older.getId())
-                .andExpect(jsonPath("$.data.totalElements").value(1))
-                .andExpect(jsonPath("$.data.items[0].nickname").value("점심헌터"));
-    }
-
-    @Test
-    void 숫자_닉네임은_닉네임_검색으로_찾고_회원_번호_검색으로는_찾지_않는다() throws Exception {
-        save("kakao-6", "9999999", LocalDateTime.of(2026, 10, 6, 12, 0));
+    void 검색어가_회원_번호와_같아도_그_회원이_아니라_닉네임_접두사로_찾는다() throws Exception {
+        String keyword = older.getId().toString();
+        Member numericNickname = save("kakao-6", keyword + "닉네임", LocalDateTime.of(2026, 10, 6, 12, 0));
         entityManager.flush();
         entityManager.clear();
 
-        searchKeyword("NICKNAME", "9999999").andExpect(jsonPath("$.data.totalElements").value(1));
-        searchKeyword("MEMBER_ID", "9999999").andExpect(jsonPath("$.data.totalElements").value(0));
+        searchKeyword(keyword)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.totalElements").value(1))
+                .andExpect(jsonPath("$.data.items[0].memberId").value(numericNickname.getId()));
     }
 
     @Test
@@ -249,17 +244,23 @@ class AdminMemberApiIntegrationTest {
         getAs(Role.ADMIN, "?size=101").andExpect(status().isBadRequest());
         getAs(Role.ADMIN, "?sortBy=createdAt").andExpect(status().isBadRequest());
         getAs(Role.ADMIN, "?sortDir=DESC").andExpect(status().isBadRequest());
-        getAs(Role.ADMIN, "?searchType=UNKNOWN&keyword=a").andExpect(status().isBadRequest());
-        getAs(Role.ADMIN, "?searchType=MEMBER_ID&keyword=abc").andExpect(status().isBadRequest());
     }
 
     @Test
-    void 검색_종류_없이_키워드만_주면_400이다() throws Exception {
-        searchKeywordOnly("점심").andExpect(status().isBadRequest());
+    void 검색어만_주면_공백을_걷고_닉네임으로_검색한다() throws Exception {
+        searchKeyword(" 점심 ")
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.totalElements").value(1))
+                .andExpect(jsonPath("$.data.items[0].memberId").value(older.getId()));
     }
 
-    private ResultActions searchKeywordOnly(String keyword) throws Exception {
-        String token = jwtTokenProvider.createAccessToken(1L, Role.ADMIN);
-        return mockMvc.perform(get(URL).param("keyword", keyword).cookie(new Cookie("accessToken", token)));
+    @Test
+    void 검색어가_없거나_공백뿐이면_검색하지_않고_다른_필터는_적용한다() throws Exception {
+        searchKeyword("").andExpect(jsonPath("$.data.totalElements").value(5));
+        searchKeyword("   ").andExpect(jsonPath("$.data.totalElements").value(5));
+        getAs(Role.ADMIN, "?keyword=&joinedFrom=2026-10-07&joinedTo=2026-10-07&status=ACTIVE")
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.totalElements").value(1))
+                .andExpect(jsonPath("$.data.items[0].memberId").value(newer.getId()));
     }
 }
