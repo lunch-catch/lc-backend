@@ -26,7 +26,11 @@ public class TemplateStructureValidator {
         }
     }
 
-    private Map<String, String> slotTags(Document document) {
+    /*
+     * BedrockTemplateHtmlGenerator(수정 프롬프트)도 같은 계산을 써서, 검증과 프롬프트가
+     * 서로 다른 로직으로 슬롯 태그를 뽑다가 어긋나는 것을 막는다(#182).
+     */
+    public Map<String, String> slotTags(Document document) {
         return TemplateSlotValidator.SLOT_TAGS.keySet().stream()
                 .collect(Collectors.toMap(
                         slot -> slot,
