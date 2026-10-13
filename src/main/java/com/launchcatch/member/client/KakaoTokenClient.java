@@ -2,6 +2,7 @@ package com.launchcatch.member.client;
 
 import com.launchcatch.auth.exception.AuthErrorCode;
 import com.launchcatch.auth.exception.AuthException;
+import com.launchcatch.global.logging.FailureLogDetails;
 import com.launchcatch.member.oauth.KakaoTokenResponse;
 import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
 import lombok.RequiredArgsConstructor;
@@ -13,6 +14,8 @@ import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.reactive.function.client.WebClientException;
+import org.springframework.web.reactive.function.client.WebClientRequestException;
+import org.springframework.web.reactive.function.client.WebClientResponseException;
 
 @Slf4j
 @Component
@@ -43,9 +46,16 @@ public class KakaoTokenClient {
                 throw new AuthException(AuthErrorCode.KAKAO_AUTHENTICATION_FAILED);
             }
             return new KakaoTokenResponse(body.id_token(), body.access_token());
+        } catch (AuthException e) {
+            throw e;
         } catch (WebClientException e) {
-            log.warn("event=KAKAO_TOKEN_EXCHANGE_FAILED reason=EXTERNAL_REQUEST_FAILED causeType={}", e.getClass().getSimpleName());
+            String reason = e instanceof WebClientResponseException ? "EXTERNAL_RESPONSE_REJECTED"
+                    : e instanceof WebClientRequestException ? "EXTERNAL_REQUEST_FAILED" : "RESPONSE_PROCESSING_FAILED";
+            log.warn("event=KAKAO_TOKEN_EXCHANGE_FAILED reason={} details={}", reason, FailureLogDetails.from(e));
             throw new AuthException(AuthErrorCode.KAKAO_AUTHENTICATION_FAILED, e);
+        } catch (RuntimeException e) {
+            log.warn("event=KAKAO_TOKEN_EXCHANGE_FAILED reason=RESPONSE_PROCESSING_FAILED details={}", FailureLogDetails.from(e));
+            throw e;
         }
     }
 

@@ -1,6 +1,7 @@
 package com.launchcatch.member.service;
 
 import com.launchcatch.global.exception.BusinessException;
+import com.launchcatch.global.logging.FailureLogDetails;
 import com.launchcatch.global.logging.TransactionLogging;
 import com.launchcatch.member.contract.MemberStatus;
 import com.launchcatch.member.entity.Member;
@@ -46,7 +47,7 @@ public class MemberLoginService {
             return new LoginResult(resolvedMember.member(), resolvedMember.newMember(), onboardingCompleted, tokenPair);
         } catch (BusinessException e) {
             if (e.getErrorCode().getHttpStatus().is5xxServerError()) {
-                log.error("event=MEMBER_LOGIN_FAILED memberId={} reason={}", memberId, e.getErrorCode().getCode());
+                log.error("event=MEMBER_LOGIN_FAILED memberId={} reason={} details={}", memberId, e.getErrorCode().getCode(), FailureLogDetails.from(e));
             } else {
                 log.warn("event=MEMBER_LOGIN_FAILED memberId={} reason={}", memberId, e.getErrorCode().getCode());
             }

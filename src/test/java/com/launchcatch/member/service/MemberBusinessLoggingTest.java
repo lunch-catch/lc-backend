@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.when;
 
 import ch.qos.logback.classic.Level;
@@ -30,6 +31,7 @@ import com.launchcatch.member.repository.KakaoUnlinkFailureRepository;
 import com.launchcatch.member.repository.MemberProfileRepository;
 import com.launchcatch.member.repository.MemberRepository;
 import java.math.BigDecimal;
+import java.sql.SQLException;
 import java.time.Clock;
 import java.time.LocalDateTime;
 import java.util.Optional;
@@ -277,6 +279,87 @@ class MemberBusinessLoggingTest {
 
             assertThat(capture.appender.list).isEmpty();
         }
+    }
+
+    @Test
+    void 토큰_재발급_저장소_장애의_DB_원인을_기록한다() {
+        OpaqueRefreshTokenLifecycle lifecycle = mock(OpaqueRefreshTokenLifecycle.class);
+        AuthException failure = storeFailure();
+        when(lifecycle.reissue(any(), any(), any(), any(), any(), any())).thenThrow(failure);
+        MemberTokenService service = new MemberTokenService(mock(JwtTokenProvider.class), lifecycle,
+                members, mock(KakaoLogoutClient.class), clock);
+        try (Capture capture = new Capture(MemberTokenService.class)) {
+            assertThatThrownBy(() -> service.reissue("갱신토큰원문")).isSameAs(failure);
+
+            assertStoreFailure(capture, "MEMBER_TOKEN_REFRESH_FAILED");
+        }
+    }
+
+    @Test
+    void 로그아웃_저장소_장애의_DB_원인을_기록한다() {
+        OpaqueRefreshTokenLifecycle lifecycle = mock(OpaqueRefreshTokenLifecycle.class);
+        AuthException failure = storeFailure();
+        when(members.findById(42L)).thenReturn(Optional.empty());
+        doThrow(failure).when(lifecycle).revoke(any(), any(), any(), any());
+        MemberTokenService service = new MemberTokenService(mock(JwtTokenProvider.class), lifecycle,
+                members, mock(KakaoLogoutClient.class), clock);
+        try (Capture capture = new Capture(MemberTokenService.class)) {
+            assertThatThrownBy(() -> service.logout(42L)).isSameAs(failure);
+
+            assertStoreFailure(capture, "MEMBER_LOGOUT_FAILED");
+        }
+    }
+
+    @Test
+    void 로그인_토큰_발급_실패의_DB_원인을_기록한다() {
+        Member member = member();
+        KakaoIdTokenExchanger exchanger = mock(KakaoIdTokenExchanger.class);
+        when(exchanger.exchange("인가코드원문", "상태검증원문"))
+                .thenReturn(new KakaoIdentity(member.getProviderUserId(), "닉네임원문", null));
+        when(members.findByProviderUserId(member.getProviderUserId())).thenReturn(Optional.of(member));
+        MemberTokenService tokens = mock(MemberTokenService.class);
+        AuthException failure = storeFailure();
+        when(tokens.issue(member)).thenThrow(failure);
+        MemberLoginService service = new MemberLoginService(exchanger, members, profiles,
+                mock(KakaoUnlinkFailureRepository.class), tokens, new TransactionTemplate(new TestTransactionManager()), clock);
+        try (Capture capture = new Capture(MemberLoginService.class)) {
+            assertThatThrownBy(() -> service.login("인가코드원문", "상태검증원문")).isSameAs(failure);
+
+            assertStoreFailure(capture, "MEMBER_LOGIN_FAILED");
+        }
+    }
+
+    @Test
+    void 카카오_로그아웃_실패에는_상태와_원인을_남기고_회원_로그아웃은_유지한다() {
+        when(members.findById(42L)).thenReturn(Optional.of(member()));
+        KakaoLogoutClient client = mock(KakaoLogoutClient.class);
+        doThrow(org.springframework.web.reactive.function.client.WebClientResponseException.create(
+                503, "응답원문", org.springframework.http.HttpHeaders.EMPTY, new byte[0], null)).when(client).logout(any());
+        MemberTokenService service = new MemberTokenService(mock(JwtTokenProvider.class), mock(OpaqueRefreshTokenLifecycle.class),
+                members, client, clock);
+        try (Capture capture = new Capture(MemberTokenService.class)) {
+            new TransactionTemplate(new TestTransactionManager()).executeWithoutResult(status -> service.logout(42L));
+
+            assertThat(capture.appender.list).extracting(ILoggingEvent::getFormattedMessage)
+                    .anySatisfy(message -> assertThat(message).contains("MEMBER_LOGOUT_SUCCESS memberId=42"))
+                    .anySatisfy(message -> assertThat(message).contains("KAKAO_LOGOUT_AFTER_COMMIT_FAILED memberId=42", "httpStatus=503", "ServiceUnavailable")
+                            .doesNotContain("원문"));
+        }
+    }
+
+    private AuthException storeFailure() {
+        return new AuthException(AuthErrorCode.REFRESH_TOKEN_STORE_UNAVAILABLE,
+                new DataAccessResourceFailureException("개인정보원문", new SQLException("토큰원문", "08001", 1045)));
+    }
+
+    private void assertStoreFailure(Capture capture, String event) {
+        assertThat(capture.appender.list).singleElement().satisfies(log -> {
+            assertThat(log.getLevel()).isEqualTo(Level.ERROR);
+            assertThat(log.getFormattedMessage()).contains("event=" + event, "reason=AUTH-002",
+                    "DataAccessResourceFailureException", "SQLException", "sqlState=08001", "sqlErrorCode=1045")
+                    .doesNotContain("원문");
+            assertThat(log.getThrowableProxy()).isNull();
+        });
     }
 
     private MemberProfileService onboardingService() {

@@ -2,6 +2,7 @@ package com.launchcatch.member.oauth;
 
 import com.launchcatch.auth.exception.AuthErrorCode;
 import com.launchcatch.auth.exception.AuthException;
+import com.launchcatch.global.logging.FailureLogDetails;
 import com.launchcatch.member.client.KakaoTokenClient;
 import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
 import lombok.RequiredArgsConstructor;
@@ -43,8 +44,14 @@ public class KakaoIdTokenExchanger {
             return KakaoIdentity.from(idToken);
         } catch (AuthException e) {
             throw e;
-        } catch (JwtException | IllegalArgumentException | CallNotPermittedException e) {
-            log.warn("event=KAKAO_ID_TOKEN_VERIFICATION_FAILED reason=TOKEN_VALIDATION_FAILED causeType={}", e.getClass().getSimpleName());
+        } catch (CallNotPermittedException e) {
+            log.warn("event=KAKAO_ID_TOKEN_VERIFICATION_FAILED reason=CIRCUIT_OPEN details={}", FailureLogDetails.from(e));
+            throw new AuthException(AuthErrorCode.KAKAO_AUTHENTICATION_FAILED, e);
+        } catch (JwtException e) {
+            log.warn("event=KAKAO_ID_TOKEN_VERIFICATION_FAILED reason=TOKEN_VALIDATION_FAILED details={}", FailureLogDetails.from(e));
+            throw new AuthException(AuthErrorCode.KAKAO_AUTHENTICATION_FAILED, e);
+        } catch (IllegalArgumentException e) {
+            log.warn("event=KAKAO_ID_TOKEN_VERIFICATION_FAILED reason=TOKEN_CLAIMS_INVALID details={}", FailureLogDetails.from(e));
             throw new AuthException(AuthErrorCode.KAKAO_AUTHENTICATION_FAILED, e);
         }
     }

@@ -3,6 +3,7 @@ package com.launchcatch.member.service;
 import com.launchcatch.auth.exception.AuthErrorCode;
 import com.launchcatch.auth.exception.AuthException;
 import com.launchcatch.global.exception.BusinessException;
+import com.launchcatch.global.logging.FailureLogDetails;
 import com.launchcatch.global.logging.TransactionLogging;
 import com.launchcatch.member.client.KakaoUnlinkClient;
 import com.launchcatch.member.client.KakaoUnlinkFailureClassifier;
@@ -62,7 +63,7 @@ public class MemberWithdrawalService {
             }
         } catch (BusinessException e) {
             if (e.getErrorCode().getHttpStatus().is5xxServerError()) {
-                log.error("event=MEMBER_WITHDRAWAL_FAILED memberId={} reason={}", memberId, e.getErrorCode().getCode());
+                log.error("event=MEMBER_WITHDRAWAL_FAILED memberId={} reason={} details={}", memberId, e.getErrorCode().getCode(), FailureLogDetails.from(e));
             } else {
                 log.warn("event=MEMBER_WITHDRAWAL_FAILED memberId={} reason={}", memberId, e.getErrorCode().getCode());
             }
@@ -143,8 +144,8 @@ public class MemberWithdrawalService {
      */
     private void markInitialUnlinkFailure(UnlinkTarget target, RuntimeException failure) {
         if (!KakaoUnlinkFailureClassifier.isTerminal(failure)) {
-            log.warn("event=KAKAO_UNLINK_FAILED_QUEUED memberId={} causeType={}",
-                    target.memberId(), KakaoUnlinkFailureClassifier.causeType(failure));
+            log.warn("event=KAKAO_UNLINK_FAILED_QUEUED memberId={} causeType={} details={}",
+                    target.memberId(), KakaoUnlinkFailureClassifier.causeType(failure), FailureLogDetails.from(failure));
             return;
         }
         try {

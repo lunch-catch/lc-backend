@@ -5,10 +5,12 @@ import com.launchcatch.auth.exception.AuthException;
 import com.launchcatch.auth.jwt.JwtTokenProvider;
 import com.launchcatch.auth.opaque.OpaqueTokenGenerator;
 import com.launchcatch.auth.opaque.OpaqueRefreshTokenLifecycle;
+import com.launchcatch.global.logging.FailureLogDetails;
 import com.launchcatch.global.logging.TransactionLogging;
 import com.launchcatch.member.client.KakaoLogoutClient;
 import com.launchcatch.member.entity.Member;
 import com.launchcatch.member.repository.MemberRepository;
+import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.LocalDateTime;
@@ -64,7 +66,7 @@ public class MemberTokenService {
             if (e.getErrorCode().isExpectedTraffic()) {
                 log.debug("event=MEMBER_TOKEN_REFRESH_FAILED memberId={} reason={}", memberId, e.getErrorCode().getCode());
             } else if (e.getErrorCode().getHttpStatus().is5xxServerError()) {
-                log.error("event=MEMBER_TOKEN_REFRESH_FAILED memberId={} reason={}", memberId, e.getErrorCode().getCode());
+                log.error("event=MEMBER_TOKEN_REFRESH_FAILED memberId={} reason={} details={}", memberId, e.getErrorCode().getCode(), FailureLogDetails.from(e));
             }
             throw e;
         } catch (RuntimeException e) {
@@ -93,14 +95,16 @@ public class MemberTokenService {
                         try {
                             kakaoLogoutClient.logout(providerUserId);
                         } catch (RuntimeException e) {
-                            log.warn("event=KAKAO_LOGOUT_AFTER_COMMIT_FAILED memberId={} reason=EXTERNAL_REQUEST_FAILED causeType={}", memberId, e.getClass().getSimpleName());
+                            String reason = e instanceof CallNotPermittedException
+                                    ? "CIRCUIT_OPEN" : "EXTERNAL_REQUEST_FAILED";
+                            log.warn("event=KAKAO_LOGOUT_AFTER_COMMIT_FAILED memberId={} reason={} details={}", memberId, reason, FailureLogDetails.from(e));
                         }
                     }
                 });
             }
             TransactionLogging.afterFailure(() -> log.error("event=MEMBER_LOGOUT_FAILED memberId={} reason=TRANSACTION_COMPLETION_FAILED", memberId));
         } catch (AuthException e) {
-            log.error("event=MEMBER_LOGOUT_FAILED memberId={} reason={}", memberId, e.getErrorCode().getCode());
+            log.error("event=MEMBER_LOGOUT_FAILED memberId={} reason={} details={}", memberId, e.getErrorCode().getCode(), FailureLogDetails.from(e));
             throw e;
         } catch (RuntimeException e) {
             log.error("event=MEMBER_LOGOUT_FAILED memberId={} reason=SYSTEM_ERROR causeType={}", memberId, e.getClass().getSimpleName());
