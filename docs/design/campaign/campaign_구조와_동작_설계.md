@@ -64,7 +64,7 @@ campaign/
 |---|---|---|---|
 | 공개 | 모든 도메인 | `CampaignQueryService`(`findByStoreIdIn`, `findAllById`, `findServableOn`, `findEligibleCampaigns`, `findByOwnerIdAndStatusIn`, `hasLiveCampaign`, `findOwnerIdsWithLiveCampaign`) | 요청마다 |
 | 받음(직접 호출) | billing | `CampaignFundingUpdater.applyFundingJudgement` | 정산의 00:00 예산 판정, 충전 직후 재예약 판정 때마다. 이벤트가 아니라 정산의 트랜잭션 안에서 직접 부른다 |
-| 쓰기(미연결) | store | `StoreCampaignSummaryUpdater` | `pause`/`resume`/`end` 때 호출해야 하지만([설계 문서](../../architecture/런치캐치_도메인_구조와_의존성_설계.md) 2.4), store 쪽에 그 인터페이스가 아직 없어 이번 이슈는 호출을 빼고 넘어간다. 생기면 `CampaignStatusService`에 이어 붙인다 |
+| 쓰기(미연결) | store | `StoreCampaignSummaryUpdater` | `activate`/`pause`/`resume`/`end`뿐 아니라 `pauseFromFunding`/`resumeFromFunding` 때도 호출해야 한다(잔액 부족 중단과 충전 후 재개도 가게 요약에 반영돼야 함, 가게 담당 회신 2026-10-13). store 쪽에 그 인터페이스가 아직 없어([설계 문서](../../architecture/런치캐치_도메인_구조와_의존성_설계.md) 2.4에 간선만 있음) 이번 이슈는 호출을 빼고 넘어간다. 생기면 `CampaignStatusService`에 이어 붙인다 |
 
 받는 이벤트는 해당 없음.
 
@@ -130,14 +130,22 @@ stateDiagram-v2
 
 | 미정 항목 | 어디까지 정해졌나 | 막는 것 |
 |---|---|---|
-| `StoreCampaignSummaryUpdater` 호출 | 설계 문서 2.4에 간선은 있으나 store 쪽 인터페이스가 아직 없다 | store 도메인이 인터페이스를 만들어야 이어 붙일 수 있다 |
-| 사용자(MEMBER)용 저장 포스터 조회 API | 가게 상세 화면이 쓸 신규 공개 계약이라는 것만 확인했다 | 권한, 경로, 상태별 공개 여부, 포스터 미등록 시 응답을 가게 담당과 맞춰야 명세를 쓸 수 있다 |
-| 캠페인 참조 메뉴 수정 시 처리 기준 | 협의가 필요하다는 것만 확인했다(메뉴 변경 제한/현재 정보 사용/등록 당시 정보 유지 중 택일) | 메뉴 수정 담당자와 함께 결정해야 한다 |
-| 분석(analytics)의 캠페인/점주/가게 확인 방법 | `CampaignInfo`가 이미 그 셋을 들고 있다는 사실만 확인했다 | 분석이 `CampaignInfo`를 그대로 재사용할지, 자기 쪽에 소유 관계를 따로 보관할지는 분석 담당이 정할 일이다 |
-| 분석의 종료 캠페인 과거 데이터 유지 방식 | 해당 없음 | 분석의 집계 방식이 먼저 정해져야 campaign이 뭘 더 줄지 알 수 있다 |
+| `StoreCampaignSummaryUpdater` 호출 | 전달 필드, 트랜잭션 기준, 호출 지점까지 가게 담당과 전부 확정했다(아래 "가게·분석 확정 사항" 참고) | `store.contract`에 그 인터페이스가 아직 없다(`com.launchcatch.store` 패키지 자체가 없음). store가 만들어 develop에 올려야 `CampaignStatusService`에 이어 붙일 수 있다 |
+| 사용자(MEMBER)용 저장 포스터 조회 API 구현 | 계약(경로, 권한, 응답, 공개 상태, 오류 처리)을 가게 담당과 전부 확정하고 명세·설계까지 썼다(`poster-api-spec.md`, `poster-api-design.md`) | `Poster` 엔티티·레포지토리·컨트롤러 구현이 아직 없다. 명세가 merge된 뒤 별도 PR로 진행한다 |
 | `newPriorityUntil` | `ad_candidate`에만 컬럼이 있고 `campaign`엔 없다(#156 결정). `CampaignInfo`엔 항상 `null`로 채워 보낸다 | "신규 우선 노출" 계산 규칙 자체가 문서에 없다. campaign에 컬럼을 추가할지부터 정해야 한다 |
 
 **"예약이 있는 PAUSED"의 정확한 의미는 `#198`에서 풀렸다.** billing이 `findServableOn`을 그대로 재사용하기로 해서(3장), 그 의미를 두 곳에서 따로 정의할 일이 없어졌다.
+
+### 가게·분석 확정 사항 (`#198`, 가게·분석 담당 회신 2026-10-13)
+
+| 항목 | 확정 내용 |
+|---|---|
+| 가게 - 캠페인 참조 메뉴 수정 | 가게가 보유한 현재 메뉴 이름·가격을 그대로 쓴다. `campaign`은 `targetMenuId`만 유지하고 스냅샷을 두지 않는다. 메뉴 이름·가격 수정으로 캠페인 설정을 다시 저장하지 않는다. **campaign 쪽 코드 불필요** |
+| 가게 - `StoreCampaignSummaryUpdater` 전달 필드 | storeId, campaignId, 캠페인 상태, 할인 대상·유형·값, 대상 메뉴ID(MENU 할인일 때만 필수), 사용 가능 시작·종료시간, 상태 변경 시각, 점주 노출 반경. DTO는 `store.contract` 소유 타입으로 store가 직접 정의한다. `campaign` 내부 엔티티나 타입을 넘기지 않는다 |
+| 가게 - 트랜잭션 기준 | 캠페인 상태 변경, `CampaignStatusLog` 저장, 가게 요약 갱신을 같은 트랜잭션으로 묶는다. 하나라도 실패하면 모두 롤백한다. store 쪽 구현은 기존 트랜잭션에 참여한다 |
+| 가게 - 호출 지점 | `activate`, `pause`, `resume`, `end`에 더해 `pauseFromFunding`, `resumeFromFunding`도 포함한다(위 5장) |
+| 분석 - 캠페인/소유 점주/가게 확인 | 분석이 리포트 요청마다 기존 `CampaignQueryService.findAllById`로 `ownerId`를 비교한다. 상태 필터 없이 신규·중단·종료 캠페인도 확인한다. **campaign 쪽 신규 메서드 불필요** |
+| 분석 - 종료 캠페인의 과거 리포트 재집계 | `CampaignStatusLog`(과거 상태 이력) 조회를 추가하지 않는다. 노출·과금·쿠폰 발급·사용 기록을 영업일 기준 원천 기록으로 집계하고, 현재 캠페인 상태로 과거 기록을 제외하지 않는다. `campaign`이 캠페인 행을 하드 삭제하지 않는 지금 동작으로 "종료돼도 연결 정보 유지" 요구를 이미 만족한다. **campaign 쪽 코드 불필요**. 나중에 "특정 시각의 활성 상태" 분석이 필요해지면 그때 상태 이력 조회를 다시 요청하기로 했다 |
 
 ### 정산(billing) 확인 질문 5개 답변 (`#198`)
 
