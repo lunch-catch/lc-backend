@@ -24,7 +24,7 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
-import java.time.ZoneOffset;
+import java.time.ZoneId;
 import java.util.Collections;
 import java.util.List;
 import java.util.Set;
@@ -40,7 +40,13 @@ import org.springframework.data.domain.PageRequest;
 class CampaignQueryServiceImplTest {
 
     private static final Long CAMPAIGN_ID = 1L;
-    private static final Clock FIXED_CLOCK = Clock.fixed(Instant.parse("2026-10-13T00:00:00Z"), ZoneOffset.UTC);
+    /*
+     * UTC 날짜와 서울 날짜가 갈리는 시각을 쓴다(UTC 10/12 15:30 = 서울 10/13 00:30). 자정
+     * 직후라 UTC 기준으로 계산하면 하루 전 날짜가 나와서, findEligibleCampaigns가 시간대를
+     * 잘못 다루면 이 테스트가 실제로 잡아낸다(두 날짜가 같으면 시간대 처리가 틀려도 통과한다).
+     */
+    private static final Clock FIXED_CLOCK =
+            Clock.fixed(Instant.parse("2026-10-12T15:30:00Z"), ZoneId.of("Asia/Seoul"));
 
     @Mock
     private CampaignRepository campaignRepository;
