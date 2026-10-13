@@ -164,6 +164,10 @@ QR 토큰을 먼저 조회해 쿠폰 ID와 버전을 확보한 경우에는 잠�
 
 ## 구현된 API의 문서와 로그
 
+`CouponController`와 쿠폰 응답 DTO의 Swagger 애너테이션은 현재 구현된 목록·단건·발급 한도·요약·삭제 API의 계약을 설명한다.
+요청과 응답의 기준은 [쿠폰 API 명세](../../api-spec/coupon-api-spec.md)이며 인증 방식은 공용 `memberAccessToken` 쿠키 스키마를 재사용한다.
+`CouponOpenApiConfig`는 공통 응답 팩터리와 쿠폰 DTO로 성공 예시를 구성한다. Swagger는 성공 응답만 표시하며 오류 계약은 [쿠폰 API 명세](../../api-spec/coupon-api-spec.md#오류-코드)를 따른다.
+
 HTTP 접근 로그와 요청의 MDC는 공통 필터가 기록한다. 조회 성공과 입력 형식 오류는 공통 로그로 추적한다.
 서비스는 삭제와 단건 조회의 업무 거절을 WARN으로 기록하며 오류 코드를 `reason`에 넣는다.
 데이터 정합성 오류는 ERROR로 기록하고 원인을 나타내는 `reason`과 오류 코드, 회원 쿠폰 ID 및 이벤트 ID를 남긴다.
