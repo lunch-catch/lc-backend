@@ -7,8 +7,10 @@ import com.querydsl.core.types.Order;
 import com.querydsl.core.types.OrderSpecifier;
 import com.querydsl.core.types.Projections;
 import com.querydsl.core.types.dsl.BooleanExpression;
+import com.querydsl.jpa.impl.JPAQuery;
 import com.querydsl.jpa.impl.JPAQueryFactory;
 import java.util.List;
+import java.util.Optional;
 import lombok.RequiredArgsConstructor;
 
 /*
@@ -23,6 +25,20 @@ class PaymentRepositoryImpl implements PaymentRepositoryCustom {
 
     @Override
     public List<AdminPaymentRow> findAdminPayments(AdminPaymentCondition condition) {
+        return adminRows()
+                .where(filters(condition))
+                .orderBy(order(condition))
+                .offset(condition.offset())
+                .limit(condition.limit())
+                .fetch();
+    }
+
+    @Override
+    public Optional<AdminPaymentRow> findAdminPaymentById(Long paymentId) {
+        return Optional.ofNullable(adminRows().where(payment.id.eq(paymentId)).fetchOne());
+    }
+
+    private JPAQuery<AdminPaymentRow> adminRows() {
         return queryFactory
                 .select(Projections.constructor(AdminPaymentRow.class,
                         payment.id, payment.orderId, payment.pgTid, payment.ownerId, payment.amount,
@@ -31,12 +47,7 @@ class PaymentRepositoryImpl implements PaymentRepositoryCustom {
                         paymentReconciliationOutbox.attemptCount, paymentReconciliationOutbox.maxRetry,
                         paymentReconciliationOutbox.nextRetryAt, paymentReconciliationOutbox.lastError))
                 .from(payment)
-                .leftJoin(paymentReconciliationOutbox).on(paymentReconciliationOutbox.paymentId.eq(payment.id))
-                .where(filters(condition))
-                .orderBy(order(condition))
-                .offset(condition.offset())
-                .limit(condition.limit())
-                .fetch();
+                .leftJoin(paymentReconciliationOutbox).on(paymentReconciliationOutbox.paymentId.eq(payment.id));
     }
 
     @Override

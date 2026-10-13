@@ -11,6 +11,7 @@ import static org.mockito.Mockito.when;
 import com.launchcatch.billing.dto.AdminPaymentItem;
 import com.launchcatch.billing.entity.OutboxStatus;
 import com.launchcatch.billing.entity.PaymentStatus;
+import com.launchcatch.billing.exception.BillingErrorCode;
 import com.launchcatch.billing.exception.BillingException;
 import com.launchcatch.billing.repository.AdminPaymentCondition;
 import com.launchcatch.billing.repository.AdminPaymentCondition.Sort;
@@ -21,6 +22,7 @@ import com.launchcatch.global.response.PageResponse;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -220,5 +222,22 @@ class AdminPaymentQueryServiceTest {
                 null, null, null, null, null)));
 
         assertThat(searchDefaults().items().get(0).reconciliation()).isNull();
+    }
+
+    @Test
+    void 결제_한_건은_목록과_같은_모양으로_돌려준다() {
+        when(paymentRepository.findAdminPaymentById(101L)).thenReturn(Optional.of(new AdminPaymentRow(
+                101L, "ord_1", "tgen_1", 7L, 30000L, PaymentStatus.APPROVED, null, REQUESTED, REQUESTED, null,
+                null, null, null, null, null)));
+
+        assertThat(service().get(101L).paymentId()).isEqualTo(101L);
+    }
+
+    @Test
+    void 없는_결제_한_건은_BILLING_004다() {
+        when(paymentRepository.findAdminPaymentById(101L)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service().get(101L)).isInstanceOfSatisfying(BillingException.class,
+                e -> assertThat(e.getErrorCode()).isEqualTo(BillingErrorCode.PAYMENT_NOT_FOUND));
     }
 }

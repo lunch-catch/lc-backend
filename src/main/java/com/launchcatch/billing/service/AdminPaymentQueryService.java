@@ -2,6 +2,7 @@ package com.launchcatch.billing.service;
 
 import com.launchcatch.billing.dto.AdminPaymentItem;
 import com.launchcatch.billing.entity.PaymentStatus;
+import com.launchcatch.billing.exception.BillingErrorCode;
 import com.launchcatch.billing.exception.BillingException;
 import com.launchcatch.billing.repository.AdminPaymentCondition;
 import com.launchcatch.billing.repository.AdminPaymentRow;
@@ -66,6 +67,13 @@ public class AdminPaymentQueryService {
                 .map(AdminPaymentQueryService::toItem)
                 .toList();
         return PageResponse.of(items, page, pageSize, total);
+    }
+
+    // 결제 한 건을 목록과 같은 모양으로 읽는다
+    public AdminPaymentItem get(Long paymentId) {
+        return paymentRepository.findAdminPaymentById(paymentId)
+                .map(AdminPaymentQueryService::toItem)
+                .orElseThrow(() -> new BillingException(BillingErrorCode.PAYMENT_NOT_FOUND));
     }
 
     private SearchType searchType(String value) {

@@ -1,8 +1,10 @@
 package com.launchcatch.billing.controller;
 
+import com.launchcatch.auth.CustomUserDetails;
 import com.launchcatch.billing.dto.AdminPaymentItem;
 import com.launchcatch.billing.entity.PaymentStatus;
 import com.launchcatch.billing.service.AdminPaymentQueryService;
+import com.launchcatch.billing.service.AdminPaymentRecheckService;
 import com.launchcatch.global.response.PageResponse;
 import com.launchcatch.global.response.ResponseEnvelope;
 import io.swagger.v3.oas.annotations.Operation;
@@ -13,7 +15,10 @@ import java.time.LocalDate;
 import lombok.RequiredArgsConstructor;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -25,6 +30,7 @@ import org.springframework.web.bind.annotation.RestController;
 public class AdminPaymentController {
 
     private final AdminPaymentQueryService queryService;
+    private final AdminPaymentRecheckService recheckService;
 
     @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
     @GetMapping
@@ -49,5 +55,23 @@ public class AdminPaymentController {
             @RequestParam(required = false) String sortDir) {
         return ResponseEnvelope.success(
                 queryService.search(from, to, status, searchType, keyword, page, size, sortBy, sortDir));
+    }
+
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
+    @PostMapping("/{paymentId}:recheck")
+    @Operation(
+            summary = "확인 중인 결제 재조회",
+            description = "결제대행사를 한 번 조회해 결과로 결제를 확정합니다. 확인 중(UNKNOWN)인 결제만 됩니다. "
+                    + "조회가 분명한 답을 주지 않으면 결제는 그대로 두고 사유만 남깁니다. 처리한 관리자는 감사 로그에 남습니다."
+    )
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "재조회 성공. 갱신된 결제를 돌려줍니다."),
+            @ApiResponse(responseCode = "404", description = "BILLING-004: 결제를 찾을 수 없습니다."),
+            @ApiResponse(responseCode = "409", description = "BILLING-005: 확인 중인 결제가 아니어서 재조회할 수 없습니다.")
+    })
+    public ResponseEnvelope<AdminPaymentItem> recheck(
+            @AuthenticationPrincipal CustomUserDetails admin,
+            @PathVariable Long paymentId) {
+        return ResponseEnvelope.success(recheckService.recheck(admin.getId(), paymentId));
     }
 }
