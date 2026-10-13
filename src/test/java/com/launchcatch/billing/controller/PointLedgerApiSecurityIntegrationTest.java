@@ -4,9 +4,13 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.launchcatch.admin.AdminAccessTokenRevocation;
+import com.launchcatch.admin.repository.AdminAccessTokenRevocationRepository;
 import com.launchcatch.auth.Role;
 import com.launchcatch.auth.jwt.JwtTokenProvider;
 import jakarta.servlet.http.Cookie;
+import java.util.Optional;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -16,6 +20,7 @@ import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.annotation.Transactional;
 import org.testcontainers.junit.jupiter.Container;
@@ -33,6 +38,14 @@ import org.testcontainers.utility.DockerImageName;
 @AutoConfigureMockMvc
 @Transactional
 class PointLedgerApiSecurityIntegrationTest {
+    @MockitoBean
+    private AdminAccessTokenRevocationRepository adminRevocations;
+
+    @BeforeEach
+    void allowUnrevokedAdminFixture() {
+        org.mockito.Mockito.when(adminRevocations.findRevocation(org.mockito.ArgumentMatchers.any()))
+                .thenReturn(Optional.of(new AdminAccessTokenRevocation(0L, null)));
+    }
 
     private static final String BALANCE = "/v1/owner/points/balance";
     private static final String LEDGER = "/v1/owner/points/ledger";
