@@ -3,6 +3,7 @@ package com.launchcatch.billing.repository;
 import com.launchcatch.billing.entity.BudgetDailyPlan;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.Optional;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
@@ -36,4 +37,7 @@ public interface BudgetDailyPlanRepository extends JpaRepository<BudgetDailyPlan
                     @Param("paused") boolean paused,
                     @Param("changedAt") LocalDateTime changedAt,
                     @Param("now") LocalDateTime now);
+
+    // 그날 계획 한 행이다. uk_budget_daily_plan_campaign_date 를 탄다
+    Optional<BudgetDailyPlan> findByCampaignIdAndBusinessDate(Long campaignId, LocalDate businessDate);
 }
