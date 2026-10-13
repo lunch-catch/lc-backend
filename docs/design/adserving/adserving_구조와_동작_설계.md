@@ -111,9 +111,124 @@ repository, client 를 import 하지 않는다.
 **정산 호출의 캐시를 둘지 아직 정하지 않았다.** 목표 500 TPS 라 진행률 조회가 초당 500번이다.
 12장에 올린다.
 
-공개 인터페이스의 시그니처는 `feed-api-design.md` 의 `다른 도메인에 공개한 기능` 절이 갖는다.
+**공개 인터페이스의 시그니처는 아래가 갖는다.** 둘 다 HTTP API 가 아니라 자바 `contract`
+라서 `feed-api-design.md` 가 아니라 여기에 적는다. 그 문서의 `다른 도메인에 공개한 기능` 절은
+쓰는 도메인과 하는 일만 갖는다.
 
-## 6. 상태와 흐름
+```java
+// adserving.contract
+public interface WishlistQueryService {
+
+    /** 회원이 지금 유효하게 찜한 캠페인 ID 다. 없으면 빈 리스트다. */
+    List<Long> findWishedCampaignIds(long memberId);
+
+    /** 그날 서빙 가능한 캠페인을 찜한 회원 ID 다. 10:50 발송 대상이다. */
+    List<Long> findMembersWishingServableOn(LocalDate businessDate, long campaignId);
+}
+
+public interface CandidateStateUpdater {
+
+    /** 그날 후보에 선착순 소진을 표시한다. 되돌리지 않는다. */
+    void markSoldOut(LocalDate businessDate, long campaignId, LocalDateTime soldOutAt);
+}
+```
+
+두 메서드의 상한은 아직 정하지 않았다. 12장에 올린다.
+
+**부르는 계약 중 필수 열을 채우는 것은 시그니처를 적는다.** 00:00 (10)단계가 쓰는
+`StoreAudienceUpdater` 가 그렇다. `store_audience.business_date` 가 `NOT NULL` 이라 셀에
+영업일이 없으면 그 열을 채울 수 없다.
+
+```java
+// campaign.contract
+public record StoreAudienceCell(
+        long storeId, int targetRadius, TargetGender gender,
+        AgeGroup ageGroup, int memberCount, LocalDate businessDate) {}
+
+public interface StoreAudienceUpdater {
+
+    /** 한 호출이 한 트랜잭션이다. 1000행을 넘기거나 성별이 `ALL` 이면 거부한다. */
+    void overwrite(List<StoreAudienceCell> cells);
+}
+```
+
+`gender` 가 `TargetGender` 라 `OTHER` 를 넘길 수 없다. 사용자 쪽 성별 enum 이 정해져야
+바뀐다. 12장에 올린다.
+
+**분석에 보내는 이벤트 둘은 아직 정의하지 않았다.** `ImpressionServedEvent` 와 `SwipedEvent`
+가 전환 퍼널(노출, 찜, 패스)을 기록한다. 레코드 모양을 분석 쪽과 정하지 않았다. 12장에 올린다.
+
+## 6. 구조와 동작 그림
+
+### 모듈 구조
+
+```mermaid
+flowchart LR
+    REQ([요청]) --> FC
+    REQ --> IC
+    REQ --> WC
+    SCH([스케줄 00:00]) --> LJ
+    EVT([캠페인 이벤트]) --> EL
+    CALL([쿠폰, 알림의 호출]) --> CT
+
+    subgraph adserving["adserving 모듈"]
+        direction LR
+        CT["contract<br/>WishlistQueryService<br/>CandidateStateUpdater"]
+
+        subgraph engine["engine/ (후보 스냅샷)"]
+            LJ[job/LoadDailyCandidateJob] --> FA["FeedAssembler<br/>SlotAllocator<br/>순수 계산"]
+            EL[listener/CandidateStateListener] --> ACR[(repository/AdCandidateRepository)]
+            LJ --> ACR
+            FA --> ACR
+        end
+
+        subgraph feed["feed/ (서빙 기록, 스와이프)"]
+            FC[controller/FeedController] --> SRS["service/ServeRecordService"]
+            SRS --> SLR[(repository/ServeLogRepository)]
+            SRS --> SWR[(repository/SwipeLogRepository)]
+            SRS --> SK[("serve 기록<br/>Valkey")]
+            FC --> FA
+        end
+
+        subgraph impression["impression/ (노출 로그)"]
+            IC[controller/ImpressionController] --> IV[service/ImpressionValidator]
+            IV --> ILR[(repository/ImpressionLogRepository)]
+            IV --> SK
+        end
+
+        subgraph wishlist["wishlist/ (찜 목록)"]
+            WC[controller/WishlistController] --> WS[service/WishlistService]
+            WS --> WR[(repository/WishlistRepository)]
+            WS --> ACR
+        end
+
+        CT -.-> WS
+        CT -.-> ACR
+    end
+
+    LJ --> X1["campaign.contract<br/>CampaignQueryService"]
+    LJ --> X2["store.contract<br/>StoreQueryService"]
+    LJ --> X3["campaign.contract<br/>StoreAudienceUpdater"]
+    FC --> X4["member.contract<br/>MemberQueryService"]
+    FC --> X5["billing.contract<br/>BudgetQueryService"]
+    IV --> X6["billing.contract<br/>PointDeductor"]
+
+    classDef out fill:#f5f5f5,stroke:#999,stroke-dasharray:4 3
+    class X1,X2,X3,X4,X5,X6 out
+```
+
+**외부 API 상자가 없다.** 8장이 해당 없음으로 적는다. `client/` 패키지도 없다.
+
+**입구 넷이 다 있다.** 요청은 컨트롤러 셋, 스케줄은 `LoadDailyCandidateJob`, 이벤트는
+`CandidateStateListener`, 다른 도메인의 호출은 `contract` 둘이다.
+
+**하위 패키지 사이의 화살표가 한쪽이다.** `feed` 와 `wishlist` 와 `impression` 이 `engine` 을
+읽고 `engine` 은 그 셋을 읽지 않는다. `engine` 이 후보 스냅샷을 소유해서다.
+
+**서빙 경로가 `ad_candidate` 만 읽는다.** `FeedController` 에서 `FeedAssembler` 로 가고
+그쪽이 `AdCandidateRepository` 하나를 본다. 3장이 그렇게 정한다.
+
+### 상태 변경
 
 상태를 갖는 것은 `ad_candidate` 하나다.
 
@@ -130,9 +245,50 @@ stateDiagram-v2
 **전이는 캠페인 통보로만 일어난다.** 광고 서빙이 스스로 바꾸지 않는다. `state_changed_at` 이
 지금 값보다 늦은 통보만 반영한다. 적재와 적재 직후 재조회도 같은 비교를 쓴다.
 
+| 전이 | 일으키는 쪽 | 나가는 이벤트 | 금지일 때 |
+|---|---|---|---|
+| `[*] -> SERVABLE`, `PAUSED` | 00:00 (8)단계 | 없다 | 같은 PK 면 덮어쓴다 |
+| `SERVABLE <-> PAUSED` | 캠페인 통보 | 없다 | `state_changed_at` 이 더 이르면 버린다 |
+| `-> ENDED` | 캠페인 통보 | 없다 | 같다. 되돌아가지 않는다 |
+
+**나가는 이벤트가 없다.** 광고 서빙이 후보 상태를 다른 도메인에 알리지 않는다. 쿠폰과 알림은
+`WishlistQueryService` 로 묻고 분석은 노출과 스와이프 이벤트만 받는다.
+
 **소진은 상태가 아니다.** `sold_out_at` 이 따로 있다. 후보 조건이
 `campaign_state = SERVABLE AND sold_out_at IS NULL` 이라 둘을 함께 본다. 소진은 쿠폰이
 알려 주고 되돌아가지 않는다.
+
+### 주요 흐름
+
+돈이 걸린 흐름 하나다. 노출 수집이 정산의 차감을 한 트랜잭션에서 부른다.
+
+```mermaid
+sequenceDiagram
+    participant C as 클라이언트
+    participant IC as ImpressionController
+    participant IV as ImpressionValidator
+    participant K as Valkey
+    participant DB as impression_log
+    participant B as billing.PointDeductor
+
+    C->>IC: POST /v1/impressions
+    IC->>IV: 판정 요청
+    IV->>K: serve 기록 조회 [트랜잭션 밖]
+    K-->>IV: 있음 또는 없음
+    Note over IV: 없으면 EXPIRED_OR_UNKNOWN<br/>주인이 다르면 NOT_OWNER
+    IV->>DB: 노출 저장 [트랜잭션 시작]
+    IV->>B: deduct(serveId, campaignId, businessDate)
+    B-->>IV: BILLED 또는 NOT_BILLED_*
+    Note over IV,B: 판정 기록과 원장이 함께 커밋된다 [트랜잭션 끝]
+    IC-->>C: 202 validity
+    IV->>IV: 분석 이벤트 발행 [커밋 뒤]
+```
+
+**캐시 조회가 트랜잭션 밖이다.** 2장이 노출 로그와 서빙 기록을 한 트랜잭션에 넣지 않는다고
+적는다. 그 조회가 캐시라 그렇게 된다.
+
+**쿠폰 소진이면 차감을 부르지 않는다.** `impression_log.sold_out` 에 적고 끝낸다. 1장이 적는
+예외 하나다.
 
 ## 7. 트랜잭션과 동시성
 
@@ -299,6 +455,8 @@ stateDiagram-v2
 | 좌표 없는 가게                                                          | `store` 의 좌표가 NULL 허용인데 `ad_candidate` 는 `NOT NULL` 이다              | (8)단계에서 후보에서 뺄지 적재를 막을지 정해야 한다                                                   |
 | 가게 상세에서 찜한 캠페인의 당일 제외 | `POST /v1/wishlist` 에는 `serveId` 가 없어 `swipe_log` 에 남지 않는다. `feed-api-spec.md` 373행은 지운 캠페인이 그날 피드에 다시 나오지 않는다고 적는다 | `wishlist` 에 영업일 열을 더할지, 그 경로의 제외를 캐시에 둘지, api-spec 을 고칠지 정해야 한다 |
 | 스와이프 트랜잭션이 애그리거트 둘을 묶는 것 | 가이드 2장이 두 애그리거트를 한 트랜잭션에 묶지 말라고 정한다. 응답의 `applied` 가 저장 결과라서 나눌 수 없다 | 나누면 찜했다고 답한 캠페인이 찜 목록에 없을 수 있다. 묶은 채로 둘지 `swipe_log` 를 찜의 원본으로 삼을지 정해야 한다 |
+| 분석에 보내는 이벤트 둘의 레코드 모양 | `ImpressionServedEvent` 와 `SwipedEvent` 가 전환 퍼널을 기록한다. 쓰는 쪽이 분석이다 | 레코드 필드를 정하지 않아 발행할 수 없다. 분석 쪽과 정해야 한다 |
+| 공개 contract 두 메서드의 상한 | 찜 조회와 발송 대상 조회가 리스트를 돌려준다 | 한 번에 몇 건까지인지 없다. 쿠폰과 알림이 끊어 부를 기준이 없다 |
 
 돈이나 수량이 틀릴 수 있는 것, 다른 담당자가 기다리는 것, 구조를 바꾸는 것 순으로 닫는다.
 위 표에서는 정산 호출의 캐시가 첫째다. 세 테이블의 애그리거트 자리가 둘째다.
