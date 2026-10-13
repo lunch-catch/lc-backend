@@ -5,10 +5,10 @@ import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
-import org.springframework.data.redis.core.script.DefaultRedisScript;
-import org.springframework.dao.DataAccessResourceFailureException;
 import lombok.RequiredArgsConstructor;
+import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.stereotype.Repository;
 
 /*
@@ -41,6 +41,9 @@ public class AccessTokenValidAfterRepository {
     private final StringRedisTemplate redisTemplate;
 
     public void invalidateBefore(Role role, Long id, LocalDateTime cutoff, Duration ttl) {
+        if (ttl.toMillis() <= 0) {
+            throw new IllegalArgumentException("차단 기준의 TTL은 양수여야 한다");
+        }
         Long result = redisTemplate.execute(INVALIDATE_SCRIPT, List.of(key(role, id)),
                 cutoff.format(CUTOFF_FORMAT), String.valueOf(ttl.toMillis()));
         if (result == null) {
