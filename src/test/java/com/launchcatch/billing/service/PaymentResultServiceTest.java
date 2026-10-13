@@ -28,6 +28,7 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -59,7 +60,8 @@ class PaymentResultServiceTest {
 
     private PaymentResultService service() {
         return new PaymentResultService(paymentRepository, pointLedgerRepository, pointAccountRepository,
-                outboxRepository, new PaymentRecheckProperties(10, Duration.ofMinutes(1)), eventPublisher, CLOCK);
+                outboxRepository, new PaymentRecheckProperties(10, Duration.ofMinutes(1), List.of(Duration.ofMinutes(2)), 0.1, 20,
+                        Duration.ofMinutes(5)), eventPublisher, CLOCK);
     }
 
     private Payment requested() {
