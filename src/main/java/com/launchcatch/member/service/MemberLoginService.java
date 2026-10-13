@@ -34,11 +34,11 @@ public class MemberLoginService {
     private final Clock clock;
 
     public LoginResult login(String authorizationCode, String state) {
-        Long memberId = null;
+        LoginAttempt attempt = new LoginAttempt();
         try {
             KakaoIdentity identity = kakaoIdTokenExchanger.exchange(authorizationCode, state);
-            ResolvedMember resolvedMember = resolveMember(identity);
-            memberId = resolvedMember.member().getId();
+            ResolvedMember resolvedMember = resolveMember(identity, attempt);
+            Long memberId = resolvedMember.member().getId();
             MemberTokenService.TokenPair tokenPair = memberTokenService.issue(resolvedMember.member());
             boolean onboardingCompleted = memberProfileRepository
                     .existsByMember_IdAndOnboardingCompletedAtIsNotNull(memberId);
@@ -47,43 +47,45 @@ public class MemberLoginService {
             return new LoginResult(resolvedMember.member(), resolvedMember.newMember(), onboardingCompleted, tokenPair);
         } catch (BusinessException e) {
             if (e.getErrorCode().getHttpStatus().is5xxServerError()) {
-                log.error("event=MEMBER_LOGIN_FAILED memberId={} reason={} details={}", memberId, e.getErrorCode().getCode(), FailureLogDetails.from(e));
+                log.error("event=MEMBER_LOGIN_FAILED memberId={} reason={} details={}", attempt.memberId, e.getErrorCode().getCode(), FailureLogDetails.from(e));
             } else {
-                log.warn("event=MEMBER_LOGIN_FAILED memberId={} reason={}", memberId, e.getErrorCode().getCode());
+                log.warn("event=MEMBER_LOGIN_FAILED memberId={} reason={}", attempt.memberId, e.getErrorCode().getCode());
             }
             throw e;
         } catch (RuntimeException e) {
-            log.error("event=MEMBER_LOGIN_FAILED memberId={} reason=SYSTEM_ERROR causeType={}", memberId, e.getClass().getSimpleName());
+            log.error("event=MEMBER_LOGIN_FAILED memberId={} reason=SYSTEM_ERROR causeType={}", attempt.memberId, e.getClass().getSimpleName());
             throw e;
         }
     }
 
-    private ResolvedMember resolveMember(KakaoIdentity identity) {
+    private ResolvedMember resolveMember(KakaoIdentity identity, LoginAttempt attempt) {
         try {
-            return transactionTemplate.execute(status -> findOrCreate(identity));
+            return transactionTemplate.execute(status -> findOrCreate(identity, attempt));
         } catch (DataIntegrityViolationException e) {
             return transactionTemplate.execute(status -> memberRepository.findByProviderUserId(identity.providerUserId())
-                    .map(member -> enterExisting(member, identity))
+                    .map(member -> enterExisting(member, identity, attempt))
                     .orElseThrow(() -> e));
         }
     }
 
-    private ResolvedMember findOrCreate(KakaoIdentity identity) {
+    private ResolvedMember findOrCreate(KakaoIdentity identity, LoginAttempt attempt) {
         return memberRepository.findByProviderUserId(identity.providerUserId())
-                .map(member -> enterExisting(member, identity))
-                .orElseGet(() -> register(identity));
+                .map(member -> enterExisting(member, identity, attempt))
+                .orElseGet(() -> register(identity, attempt));
     }
 
-    private ResolvedMember register(KakaoIdentity identity) {
+    private ResolvedMember register(KakaoIdentity identity, LoginAttempt attempt) {
         Member member = Member.create(identity.providerUserId(), identity.nickname(), identity.profileImageUrl());
         member.recordLogin(LocalDateTime.now(clock));
         Member saved = memberRepository.saveAndFlush(member);
+        attempt.memberId = saved.getId();
         Long memberId = saved.getId();
         TransactionLogging.afterCommit(() -> log.info("event=MEMBER_REGISTRATION_SUCCESS memberId={}", memberId));
         return new ResolvedMember(saved, true);
     }
 
-    private ResolvedMember enterExisting(Member member, KakaoIdentity identity) {
+    private ResolvedMember enterExisting(Member member, KakaoIdentity identity, LoginAttempt attempt) {
+        attempt.memberId = member.getId();
         LocalDateTime now = LocalDateTime.now(clock);
         if (member.getStatus() == MemberStatus.WITHDRAWN) {
             if (member.hasSuspensionHistory()) {
@@ -100,6 +102,11 @@ public class MemberLoginService {
         }
         member.recordLogin(now);
         return new ResolvedMember(member, false);
+    }
+
+    // 로그인 시도마다 회원을 확인한 즉시 식별자를 보존해 이후 실패 로그에서도 사용한다.
+    private static final class LoginAttempt {
+        private Long memberId;
     }
 
     private record ResolvedMember(Member member, boolean newMember) {

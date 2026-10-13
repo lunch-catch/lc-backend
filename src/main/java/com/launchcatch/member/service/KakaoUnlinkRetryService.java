@@ -1,6 +1,7 @@
 package com.launchcatch.member.service;
 
 import com.launchcatch.global.logging.TransactionLogging;
+import com.launchcatch.global.logging.FailureLogDetails;
 import com.launchcatch.member.client.KakaoUnlinkClient;
 import com.launchcatch.member.client.KakaoUnlinkFailureClassifier;
 import com.launchcatch.member.contract.MemberStatus;
@@ -155,7 +156,7 @@ public class KakaoUnlinkRetryService {
     }
 
     private void markFailed(PendingUnlink pending, RuntimeException cause) {
-        failureRepository.findById(pending.failureId()).ifPresent(failure -> {
+        failureRepository.findById(pending.failureId()).ifPresentOrElse(failure -> {
             String causeType = KakaoUnlinkFailureClassifier.causeType(cause);
             Long failureId = failure.getId();
             if (KakaoUnlinkFailureClassifier.isTerminal(cause)) {
@@ -172,7 +173,8 @@ public class KakaoUnlinkRetryService {
                 TransactionLogging.afterCommit(() -> log.warn("event=KAKAO_UNLINK_RETRY_FAILED failureId={} memberId={} attempts={} causeType={}",
                         failureId, pending.memberId(), attempts, causeType, cause));
             }
-        });
+        }, () -> log.warn("event=KAKAO_UNLINK_RETRY_FAILED failureId={} memberId={} reason=QUEUE_ROW_MISSING causeType={} details={}",
+                pending.failureId(), pending.memberId(), KakaoUnlinkFailureClassifier.causeType(cause), FailureLogDetails.from(cause)));
     }
 
     private record PendingUnlink(Long failureId, Long memberId, String providerUserId) {

@@ -17,6 +17,7 @@ import com.launchcatch.auth.jwt.JwtTokenProvider;
 import com.launchcatch.auth.opaque.OpaqueRefreshTokenLifecycle;
 import com.launchcatch.member.client.KakaoLogoutClient;
 import com.launchcatch.member.client.KakaoUnlinkClient;
+import com.launchcatch.member.contract.MemberStatus;
 import com.launchcatch.member.dto.MemberLocationRequest;
 import com.launchcatch.member.dto.MemberOnboardingRequest;
 import com.launchcatch.member.dto.MemberUpdateRequest;
@@ -360,6 +361,34 @@ class MemberBusinessLoggingTest {
                     .doesNotContain("원문");
             assertThat(log.getThrowableProxy()).isNull();
         });
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = MemberStatus.class, names = {"SUSPENDED", "WITHDRAWN"})
+    void 정지_회원의_로그인과_재가입_거부에도_회원번호를_한_번_기록한다(MemberStatus status) {
+        Member member = deniedMember(status);
+        KakaoIdTokenExchanger exchanger = mock(KakaoIdTokenExchanger.class);
+        when(exchanger.exchange("인가코드원문", "상태검증원문"))
+                .thenReturn(new KakaoIdentity(member.getProviderUserId(), "닉네임원문", null));
+        when(members.findByProviderUserId(member.getProviderUserId())).thenReturn(Optional.of(member));
+        MemberLoginService service = new MemberLoginService(exchanger, members, profiles,
+                mock(KakaoUnlinkFailureRepository.class), mock(MemberTokenService.class),
+                new TransactionTemplate(new TestTransactionManager()), clock);
+        try (Capture capture = new Capture(MemberLoginService.class)) {
+            assertThatThrownBy(() -> service.login("인가코드원문", "상태검증원문")).isInstanceOf(MemberException.class);
+
+            assertThat(capture.appender.list).singleElement().satisfies(event -> {
+                assertThat(event.getLevel()).isEqualTo(Level.WARN);
+                assertThat(event.getFormattedMessage()).isEqualTo("event=MEMBER_LOGIN_FAILED memberId=42 reason=MEMBER-003");
+            });
+        }
+    }
+
+    private Member deniedMember(MemberStatus status) {
+        Member member = member();
+        ReflectionTestUtils.setField(member, "status", status);
+        ReflectionTestUtils.setField(member, "suspendedAt", LocalDateTime.now(clock));
+        return member;
     }
 
     private MemberProfileService onboardingService() {
