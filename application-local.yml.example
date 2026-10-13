@@ -37,7 +37,7 @@ spring:
 #   admin-key: ""
 #   local:
 #     rest-api-key: ""
-#     request-timeout: 4.5s
+#     request-timeout: 4500ms
 
 # 토스페이먼츠 비밀키. 토스 개발자센터의 API 개별 연동 키(테스트는 test_sk_ 로 시작)를 쓴다.
 # 이 값이 비어 있으면 앱이 뜨지 않는다. 결제를 쓰지 않고 기동만 확인하려면 아무 문자열이나 넣어도 된다.
