@@ -8,6 +8,7 @@ import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.springframework.test.util.ReflectionTestUtils;
 
 /*
  * 두 값이 서로를 부정하지 않게 막는다.
@@ -95,5 +96,25 @@ class PointPolicyTest {
         given.add(1L);
 
         assertThat(policy.getChargeProducts()).hasSize(4);
+    }
+
+    @Test
+    @DisplayName("충전 상품 목록에 있는 금액만 충전할 수 있다")
+    void 상품_금액_확인() {
+        PointPolicy policy = policy(MIN_CHARGE, products());
+
+        assertThat(policy.offers(30000L)).isTrue();
+        assertThat(policy.offers(20000L)).isFalse();
+    }
+
+    // JSON 컬럼에서 읽은 작은 수가 Integer 로 들어와도 같은 금액으로 본다
+    @Test
+    @DisplayName("상품 목록의 원소가 Integer 여도 금액이 같으면 충전할 수 있다")
+    void 정수_원소_비교() {
+        PointPolicy policy = policy(MIN_CHARGE, products());
+        ReflectionTestUtils.setField(policy, "chargeProducts", List.of(10000, 30000));
+
+        assertThat(policy.offers(30000L)).isTrue();
+        assertThat(policy.offers(50000L)).isFalse();
     }
 }
