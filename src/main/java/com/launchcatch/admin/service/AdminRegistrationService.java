@@ -73,7 +73,7 @@ public class AdminRegistrationService {
             TransactionTemplate writeTransaction = new TransactionTemplate(transactionManager);
             writeTransaction.setTimeout(TRANSACTION_TIMEOUT_SECONDS);
             return Objects.requireNonNull(
-                    writeTransaction.execute(status -> saveAdminAndAudit(issuerAdminId, request, passwordHash)),
+                    writeTransaction.execute(status -> saveAdminAndAudit(issuerAdminId, issuedAt, issuanceVersion, request, passwordHash)),
                     "registrationResult");
         } catch (DataIntegrityViolationException e) {
             // 사전 중복 검사 이후 동시에 같은 아이디가 생성되는 경쟁 상황은 DB UNIQUE 제약으로 최종 차단한다.
@@ -86,6 +86,8 @@ public class AdminRegistrationService {
 
     private AdminRegistrationResponse saveAdminAndAudit(
             Long issuerAdminId,
+            LocalDateTime issuedAt,
+            Long issuanceVersion,
             AdminRegistrationRequest request,
             String passwordHash) {
         // JWT 발급 이후 권한이나 상태가 바뀌었을 수 있어 현재 DB 값으로 다시 검사한다.
@@ -95,6 +97,14 @@ public class AdminRegistrationService {
             throw new AuthException(AuthErrorCode.ROLE_NOT_ALLOWED);
         }
 
+        // 로그아웃과 같은 행 잠금 아래 요청 토큰을 재검증해 해싱 중 완료된 폐기를 반영한다.
+        boolean revoked = issuanceVersion != null
+                ? issuanceVersion <= issuer.getAccessTokenRevokedVersion()
+                : issuedAt == null || (issuer.getAccessTokenValidAfter() != null
+                        && issuedAt.isBefore(issuer.getAccessTokenValidAfter()));
+        if (revoked) {
+            throw new AuthException(AuthErrorCode.LOGIN_REQUIRED);
+        }
         Role role = Role.valueOf(request.role());
         Admin admin = Admin.register(request.loginId(), passwordHash, request.name(), role);
         Admin saved = adminRepository.saveAndFlush(admin);

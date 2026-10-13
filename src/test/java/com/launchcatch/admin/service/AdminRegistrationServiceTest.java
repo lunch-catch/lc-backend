@@ -220,6 +220,45 @@ class AdminRegistrationServiceTest {
         verifyNoInteractions(repository, audit, encoder);
     }
 
+
+    @ParameterizedTest
+    @org.junit.jupiter.params.provider.NullSource
+    @org.junit.jupiter.params.provider.ValueSource(longs = 1L)
+    void 해싱_중_로그아웃이_완료되면_잠금_후_폐기된_토큰의_발급을_거부한다(Long version) {
+        Admin issuer = Admin.register("superadmin", "password-hash", "최고관리자", Role.SUPER_ADMIN);
+        issuer.issueRefreshToken("a".repeat(64), ISSUED_AT.plusDays(1));
+        when(repository.findByIdForUpdate(1L)).thenReturn(Optional.of(issuer));
+        var precheck = mock(AdminAccessTokenVerifier.class);
+        when(precheck.isValidAfter(Role.SUPER_ADMIN, 1L, ISSUED_AT, version,
+                com.launchcatch.auth.jwt.CutoffPolicy.REQUIRED)).thenReturn(true);
+        var registering = new AdminRegistrationService(repository, audit, encoder, transactions, precheck);
+        doAnswer(call -> {
+            issuer.logoutAt(ISSUED_AT.plusSeconds(1));
+            return call.callRealMethod();
+        }).when(encoder).encode("Initial123!");
+
+        assertThatThrownBy(() -> registering.register(1L, Role.SUPER_ADMIN, ISSUED_AT, version, request("ADMIN")))
+                .isInstanceOfSatisfying(AuthException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(AuthErrorCode.LOGIN_REQUIRED));
+        verify(repository, never()).saveAndFlush(any());
+        verifyNoInteractions(audit);
+        verify(transactions).rollback(transaction);
+    }
+
+    @Test
+    void 로그아웃_후_다시_발급한_순번의_토큰은_계정을_생성할_수_있다() {
+        Admin issuer = Admin.register("superadmin", "password-hash", "최고관리자", Role.SUPER_ADMIN);
+        issuer.issueRefreshToken("a".repeat(64), ISSUED_AT.plusDays(1));
+        issuer.logoutAt(ISSUED_AT.plusSeconds(1));
+        issuer.issueRefreshToken("b".repeat(64), ISSUED_AT.plusDays(1));
+        when(repository.findByIdForUpdate(1L)).thenReturn(Optional.of(issuer));
+        when(cutoff.isVersionValid(Role.SUPER_ADMIN, 1L, 3L)).thenReturn(true);
+        when(repository.saveAndFlush(any(Admin.class))).thenAnswer(call -> call.getArgument(0));
+
+        assertThat(service.register(1L, Role.SUPER_ADMIN, ISSUED_AT, 3L, request("ADMIN")).loginId())
+                .isEqualTo("admin01");
+    }
+
     private void givenActiveSuperAdminIssuer() {
         Admin issuer = Admin.register("superadmin", "password-hash", "최고관리자", Role.SUPER_ADMIN);
         when(repository.findByIdForUpdate(1L)).thenReturn(Optional.of(issuer));
