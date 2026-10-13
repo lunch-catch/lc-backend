@@ -9,6 +9,8 @@ import com.launchcatch.campaign.template.service.TemplateStructureValidator;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import org.jsoup.Jsoup;
@@ -53,6 +55,9 @@ public class BedrockTemplateHtmlGenerator implements TemplateHtmlGenerator {
     private static final int MAX_RETRIES = 1;
     private static final String AD_LABEL_SLOT = "adLabel";
     private static final String AD_LABEL_TEXT = "광고";
+
+    /** ```html ... ``` 또는 ``` ... ``` 코드펜스 안의 내용을 뽑아낸다. */
+    private static final Pattern CODE_FENCE = Pattern.compile("```(?:html)?\\s*(.*?)```", Pattern.DOTALL);
 
     private static final String TRUNCATED_CORRECTION =
             "방금 답변이 끝맺지 못하고 중간에 잘렸다. 생각 과정과 설명 없이, 더 짧고 간결하게 HTML만 바로 써라.";
@@ -232,10 +237,17 @@ public class BedrockTemplateHtmlGenerator implements TemplateHtmlGenerator {
 
     /*
      * 모델이 설명이나 코드펜스(```html)를 앞뒤에 붙일 수 있다는 건 인프라가 실측으로
-     * 확인한 사실이다(런치캐치_LLM_Bedrock.md). 프롬프트 지시만 믿지 않고 첫 '<'부터
-     * 마지막 '>'까지만 잘라서 쓴다.
+     * 확인한 사실이다(런치캐치_LLM_Bedrock.md). 프롬프트 지시만 믿지 않는다.
+     *
+     * 코드펜스가 있으면 그 안의 내용만 쓴다. 설명 문장에 꺾쇠(<, >)가 우연히 섞여도
+     * 코드펜스 경계가 우선이라 영향이 없다. 코드펜스가 없으면 첫 '<'부터 마지막 '>'까지만
+     * 잘라서 쓴다(#182 자체 리뷰로 찾은 보강, 전에는 이 폴백 하나뿐이었다).
      */
     private String extractHtml(String raw) {
+        Matcher fenced = CODE_FENCE.matcher(raw);
+        if (fenced.find()) {
+            return fenced.group(1).trim();
+        }
         int start = raw.indexOf('<');
         int end = raw.lastIndexOf('>');
         if (start < 0 || end < 0 || end < start) {

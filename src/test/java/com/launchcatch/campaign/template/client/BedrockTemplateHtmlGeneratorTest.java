@@ -112,6 +112,17 @@ class BedrockTemplateHtmlGeneratorTest {
     }
 
     @Test
+    void 설명_문장에_꺾쇠가_섞여도_코드펜스_안의_내용만_뽑아낸다() {
+        String wrapped = "10%<20% 할인 비교 참고하세요.\n```html\n" + LLM_HTML + "\n```\n<끝>";
+        when(bedrockRuntimeClient.converse(any(ConverseRequest.class)))
+                .thenReturn(textResponse(StopReason.END_TURN, wrapped));
+
+        String result = generator.generate("돈까스 세트 홍보");
+
+        assertThat(result).contains("data-slot=\"eventName\"");
+    }
+
+    @Test
     void 허용_안_된_태그면_1번_재시도하고_고치면_성공한다() {
         String withScript = LLM_HTML.replace("</div>", "<script>alert(1)</script></div>");
         when(bedrockRuntimeClient.converse(any(ConverseRequest.class)))
