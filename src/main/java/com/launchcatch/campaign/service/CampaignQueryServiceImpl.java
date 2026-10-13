@@ -13,6 +13,8 @@ import org.springframework.stereotype.Service;
 @RequiredArgsConstructor
 public class CampaignQueryServiceImpl implements CampaignQueryService {
 
+    static final int MAX_SERVABLE_CAMPAIGNS = 10000;
+
     private final CampaignRepository campaignRepository;
 
     @Override
@@ -27,7 +29,13 @@ public class CampaignQueryServiceImpl implements CampaignQueryService {
 
     @Override
     public List<CampaignInfo> findServableOn(LocalDate businessDate) {
-        return campaignRepository.findServableOn(businessDate).stream().map(this::toInfo).toList();
+        List<Campaign> campaigns = campaignRepository.findServableOn(businessDate);
+        if (campaigns.size() > MAX_SERVABLE_CAMPAIGNS) {
+            throw new IllegalStateException(
+                    "findServableOn result must not exceed " + MAX_SERVABLE_CAMPAIGNS + " rows: "
+                            + campaigns.size());
+        }
+        return campaigns.stream().map(this::toInfo).toList();
     }
 
     /*
