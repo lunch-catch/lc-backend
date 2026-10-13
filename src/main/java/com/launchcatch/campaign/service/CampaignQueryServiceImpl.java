@@ -7,6 +7,7 @@ import com.launchcatch.campaign.repository.CampaignRepository;
 import java.time.LocalDate;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 
 @Service
@@ -29,7 +30,8 @@ public class CampaignQueryServiceImpl implements CampaignQueryService {
 
     @Override
     public List<CampaignInfo> findServableOn(LocalDate businessDate) {
-        List<Campaign> campaigns = campaignRepository.findServableOn(businessDate);
+        List<Campaign> campaigns = campaignRepository.findServableOn(
+                businessDate, PageRequest.of(0, MAX_SERVABLE_CAMPAIGNS + 1));
         if (campaigns.size() > MAX_SERVABLE_CAMPAIGNS) {
             throw new IllegalStateException(
                     "findServableOn result must not exceed " + MAX_SERVABLE_CAMPAIGNS + " rows: "
