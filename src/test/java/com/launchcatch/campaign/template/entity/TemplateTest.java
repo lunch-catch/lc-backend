@@ -91,4 +91,49 @@ class TemplateTest {
         assertThatThrownBy(() -> TemplateVersion.create(template, 0, "요청", "req-1", "<div></div>"))
                 .isInstanceOf(IllegalArgumentException.class);
     }
+
+    @Test
+    @DisplayName("게시하면 HTML과 상태, 게시 시각, 게시 버전 번호가 함께 바뀐다")
+    void 게시하면_상태와_시각이_함께_바뀐다() {
+        Template template = Template.createDraft("가을 신메뉴");
+
+        template.publish("<div>확정</div>", NOW, 3);
+
+        assertThat(template.getHtmlContent()).isEqualTo("<div>확정</div>");
+        assertThat(template.getStatus()).isEqualTo(TemplateStatus.PUBLISHED);
+        assertThat(template.getPublishedAt()).isEqualTo(NOW);
+        assertThat(template.getPublishedVersionNumber()).isEqualTo(3);
+    }
+
+    @Test
+    @DisplayName("활성화 여부를 바꾸면 변경자와 변경 시각도 같이 바뀐다")
+    void 활성화하면_변경자와_시각이_함께_바뀐다() {
+        Template template = Template.createDraft("가을 신메뉴");
+        template.publish("<div>확정</div>", NOW, 1);
+
+        template.changeActive(true, 7L, NOW);
+
+        assertThat(template.isActive()).isTrue();
+        assertThat(template.getActivatedBy()).isEqualTo(7L);
+        assertThat(template.getActivatedAt()).isEqualTo(NOW);
+    }
+
+    @Test
+    @DisplayName("DRAFT가 아니면 다시 게시할 수 없다")
+    void draft가_아니면_게시할_수_없다() {
+        Template template = Template.createDraft("가을 신메뉴");
+        template.publish("<div>확정</div>", NOW, 1);
+
+        assertThatThrownBy(() -> template.publish("<div>또확정</div>", NOW, 2))
+                .isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    @DisplayName("PUBLISHED가 아니면 활성화 여부를 바꿀 수 없다")
+    void published가_아니면_활성화할_수_없다() {
+        Template template = Template.createDraft("가을 신메뉴");
+
+        assertThatThrownBy(() -> template.changeActive(true, 7L, NOW))
+                .isInstanceOf(IllegalStateException.class);
+    }
 }

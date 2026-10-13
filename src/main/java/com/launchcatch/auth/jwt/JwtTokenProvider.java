@@ -12,6 +12,7 @@ import java.time.LocalDateTime;
 import java.util.Date;
 import java.util.EnumMap;
 import java.util.Map;
+import java.util.Set;
 import javax.crypto.SecretKey;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
@@ -34,6 +35,7 @@ import org.springframework.stereotype.Component;
 public class JwtTokenProvider {
 
     private static final String ROLE_CLAIM = "role";
+    private static final Set<String> RESERVED_CLAIMS = Set.of("iss", "sub", "aud", "exp", "nbf", "iat", "jti", ROLE_CLAIM);
 
     private final SecretKey secretKey;
     private final Clock clock;
@@ -61,8 +63,17 @@ public class JwtTokenProvider {
     }
 
     public String createAccessToken(Long id, Role role) {
+        return createAccessToken(id, role, Map.of());
+    }
+
+    // 도메인이 제공한 추가 클레임을 서명하되 공통 인증 필드는 덮어쓰지 못하게 한다.
+    public String createAccessToken(Long id, Role role, Map<String, ?> additionalClaims) {
+        if (additionalClaims.keySet().stream().anyMatch(RESERVED_CLAIMS::contains)) {
+            throw new IllegalArgumentException("추가 클레임은 공통 인증 필드를 덮어쓸 수 없다");
+        }
         Instant now = clock.instant();
         return Jwts.builder()
+                .claims(additionalClaims)
                 .subject(String.valueOf(id))
                 .claim(ROLE_CLAIM, role.name())
                 .issuedAt(Date.from(now))

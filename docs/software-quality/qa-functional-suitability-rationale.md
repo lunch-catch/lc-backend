@@ -34,7 +34,7 @@
 * `[코드]` `FUN-2-04` 결과를 모르는 상태(타임아웃)를 실패와 구분하는가
 
 ```java
-// 점검 대상: 성공 경로만 처리. 실패하면 우리 기록만 남고 외부는 실행 안 된 불일치 상태
+// 점검 대상: 성공 경로만 처리. 실패하면 내부 기록만 남고 외부는 실행 안 된 불일치 상태
 public void submit(SubmitRequest req) {
     Request saved = requestRepository.save(new Request(req));
     externalClient.execute(saved);
