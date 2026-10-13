@@ -5,7 +5,7 @@
 | 근거 | 기준 |
 |---|---|
 | 요구사항(템플릿 관리) | 명세서 V51 기능 14~19행(생성, 수정, 목록, 버전별 임시저장, 게시, 활성화 관리) |
-| 요구사항(사용자용 포스터 조회) | `#198` 가게 도메인 요청 2번, 가게 담당 회신(2026-10-13). V51 행 없음 |
+| 요구사항(사용자용 포스터 조회) | `#198` 가게 도메인 요청 2번, 가게 담당 회신(2026-10-13). V51 기능 명세서 74행(가게 상세 조회) |
 | 저장 구조 | `db/migration/campaign/` 의 `V1`, `V4`~`V6`: `template`, `template_version`, `template_quota`, `poster` |
 | 설계 | `../../architecture/런치캐치_도메인_구조와_의존성_설계.md` 1.2절(포스터·템플릿은 캠페인 애그리거트가 흡수) |
 
@@ -20,7 +20,7 @@
 | `GET` | `/v1/admin/templates/{templateId}/versions` | 17 |
 | `POST` | `/v1/admin/templates/{templateId}/publish` | 18 |
 | `PATCH` | `/v1/admin/templates/{templateId}/active` | 19 |
-| `GET` | `/v1/campaigns/{campaignId}/poster` | 해당 없음(`#198` 가게 도메인 요청) |
+| `GET` | `/v1/campaigns/{campaignId}/poster` | 구체적인 API 계약은 #198 및 가게 담당 회신 기준 |
 
 ## 템플릿 생성 · 수정
 
