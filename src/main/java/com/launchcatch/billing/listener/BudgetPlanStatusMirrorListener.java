@@ -1,7 +1,7 @@
 package com.launchcatch.billing.listener;
 
 import com.launchcatch.billing.dto.BudgetPlanStatusChanged;
-import com.launchcatch.billing.service.CampaignStatusService;
+import com.launchcatch.billing.service.BudgetPlanStatusService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.event.TransactionPhase;
@@ -12,10 +12,10 @@ import org.springframework.transaction.event.TransactionalEventListener;
 @RequiredArgsConstructor
 public class BudgetPlanStatusMirrorListener {
 
-    private final CampaignStatusService campaignStatusService;
+    private final BudgetPlanStatusService budgetPlanStatusService;
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     public void on(BudgetPlanStatusChanged changed) {
-        campaignStatusService.mirror(changed);
+        budgetPlanStatusService.mirror(changed);
     }
 }

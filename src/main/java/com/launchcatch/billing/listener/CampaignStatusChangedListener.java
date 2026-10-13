@@ -1,6 +1,6 @@
 package com.launchcatch.billing.listener;
 
-import com.launchcatch.billing.service.CampaignStatusService;
+import com.launchcatch.billing.service.BudgetPlanStatusService;
 import com.launchcatch.campaign.contract.CampaignStatusChangedEvent;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.event.EventListener;
@@ -14,10 +14,10 @@ import org.springframework.stereotype.Component;
 @RequiredArgsConstructor
 public class CampaignStatusChangedListener {
 
-    private final CampaignStatusService campaignStatusService;
+    private final BudgetPlanStatusService budgetPlanStatusService;
 
     @EventListener
     public void on(CampaignStatusChangedEvent event) {
-        campaignStatusService.apply(event);
+        budgetPlanStatusService.apply(event);
     }
 }

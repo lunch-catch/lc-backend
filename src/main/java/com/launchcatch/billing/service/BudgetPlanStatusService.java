@@ -25,7 +25,7 @@ import org.springframework.transaction.annotation.Transactional;
 @Slf4j
 @Service
 @RequiredArgsConstructor
-public class CampaignStatusService {
+public class BudgetPlanStatusService {
 
     private final BudgetDailyPlanRepository budgetDailyPlanRepository;
     private final DailySpendHashRepository dailySpendHashRepository;

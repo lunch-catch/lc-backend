@@ -22,7 +22,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.redis.RedisConnectionFailureException;
 
-class CampaignStatusServiceTest {
+class BudgetPlanStatusServiceTest {
 
     private static final LocalDate DAY = LocalDate.of(2026, 10, 1);
     private static final LocalDateTime CHANGED_AT = LocalDateTime.of(2026, 10, 1, 11, 0);
@@ -33,8 +33,8 @@ class CampaignStatusServiceTest {
     private final DailySpendHashRepository hashRepository = mock(DailySpendHashRepository.class);
     private final ApplicationEventPublisher publisher = mock(ApplicationEventPublisher.class);
     private final Clock clock = Clock.fixed(Instant.parse("2026-10-01T02:00:01Z"), ClockConfig.ZONE);
-    private final CampaignStatusService service =
-            new CampaignStatusService(planRepository, hashRepository, publisher, clock);
+    private final BudgetPlanStatusService service =
+            new BudgetPlanStatusService(planRepository, hashRepository, publisher, clock);
 
     @Test
     void 서빙_불가로_바뀌면_중단으로_저장하고_커밋_뒤_해시_갱신을_통보한다() {
