@@ -1,6 +1,7 @@
 package com.launchcatch.coupon.controller;
 
 import com.launchcatch.auth.CustomUserDetails;
+import com.launchcatch.coupon.dto.CouponDetailResponse;
 import com.launchcatch.coupon.dto.CouponIssuanceLimitResponse;
 import com.launchcatch.coupon.dto.CouponSummaryResponse;
 import com.launchcatch.coupon.service.CouponCommandService;
@@ -45,6 +46,19 @@ public class CouponController {
     @GetMapping("/coupons/summary")
     public ResponseEnvelope<CouponSummaryResponse> getSummary(@AuthenticationPrincipal CustomUserDetails user) {
         return ResponseEnvelope.success(couponLookUpService.getSummary(user.getId()));
+    }
+
+    /**
+     * 본인 쿠폰의 스냅샷과 조회 시점 상태, 사용 가능 여부 및 사용 결과를 조회한다.
+     *
+     * @param user 인증된 회원 정보
+     * @param memberCouponId 조회할 회원 쿠폰의 ID
+     * @return 쿠폰의 상세 표시 정보와 사용 결과를 담은 성공 응답
+     */
+    @GetMapping("/coupons/{memberCouponId}")
+    public ResponseEnvelope<CouponDetailResponse> getDetail(
+            @AuthenticationPrincipal CustomUserDetails user, @PathVariable @Positive Long memberCouponId) {
+        return ResponseEnvelope.success(couponLookUpService.getDetail(user.getId(), memberCouponId));
     }
 
     /**
