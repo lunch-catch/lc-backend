@@ -6,7 +6,7 @@ import com.launchcatch.billing.dto.AdminLedgerItem;
 import com.launchcatch.billing.dto.BalanceStep;
 import com.launchcatch.billing.entity.EntryType;
 import com.launchcatch.billing.service.AdminPointLedgerService;
-import com.launchcatch.global.response.PageResponse;
+import com.launchcatch.global.response.CursorPageResponse;
 import java.nio.ByteBuffer;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -15,6 +15,8 @@ import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -195,11 +197,11 @@ class PointLedgerRepositoryIntegrationTest {
     @DisplayName("관리자 원장은 여섯 종류를 시간순으로 읽고 결제 조인으로 PG 거래 ID 를 가져온다")
     void 관리자_원장은_모든_종류를_시간순으로_읽고_PG_거래_ID를_가져온다() {
         AdminLedgerCondition all = new AdminLedgerCondition(
-                OWNER, null, LocalDateTime.of(2026, 9, 30, 0, 0), DAY_END, null, true, 0, 50);
+                OWNER, null, LocalDateTime.of(2026, 9, 30, 0, 0), DAY_END, null, true, null, null, 100);
 
         List<AdminLedgerRow> rows = repository.findAdminLedger(all);
 
-        assertThat(repository.countAdminLedger(all)).isEqualTo(6);
+        assertThat(rows).hasSize(6);
         assertThat(rows).extracting(AdminLedgerRow::entryType).containsExactly(
                 EntryType.CHARGE, EntryType.RESERVE, EntryType.DEDUCT, EntryType.DEDUCT,
                 EntryType.RELEASE, EntryType.ADJUST);
@@ -211,13 +213,20 @@ class PointLedgerRepositoryIntegrationTest {
     }
 
     @Test
-    @DisplayName("관리자 원장의 종류 필터와 오프셋 페이지가 건수와 함께 맞는다")
-    void 관리자_원장의_종류_필터와_오프셋_페이지가_건수와_함께_맞는다() {
+    @DisplayName("관리자 원장은 종류와 캠페인 필터를 유지하며 같은 시각의 행을 커서로 이어 읽는다")
+    void 관리자_원장은_필터를_유지하며_같은_시각의_행을_커서로_이어_읽는다() {
         AdminLedgerCondition deducts = new AdminLedgerCondition(
-                OWNER, EntryType.DEDUCT, DAY_START, DAY_END, null, false, 1, 1);
+                OWNER, EntryType.DEDUCT, DAY_START, DAY_END, 12L, false, null, null, 1);
 
-        assertThat(repository.countAdminLedger(deducts)).isEqualTo(2);
-        assertThat(repository.findAdminLedger(deducts)).hasSize(1);
+        AdminLedgerRow first = repository.findAdminLedger(deducts).get(0);
+        List<AdminLedgerRow> next = repository.findAdminLedger(new AdminLedgerCondition(
+                OWNER, EntryType.DEDUCT, DAY_START, DAY_END, 12L, false, first.createdAt(), first.id(), 1));
+
+        assertThat(next).hasSize(1);
+        assertThat(next.get(0).createdAt()).isEqualTo(first.createdAt());
+        assertThat(next.get(0).id()).isLessThan(first.id());
+        assertThat(repository.findAdminLedger(new AdminLedgerCondition(
+                OWNER, EntryType.DEDUCT, DAY_START, DAY_END, 13L, false, null, null, 10))).isEmpty();
     }
 
     @Test
@@ -244,8 +253,8 @@ class PointLedgerRepositoryIntegrationTest {
     @Test
     @DisplayName("관리자 서비스는 실제 DB 에서도 DEDUCT 행의 잔액을 직전 값으로 둔다")
     void 관리자_서비스는_실제_DB에서도_DEDUCT_행의_잔액을_직전_값으로_둔다() {
-        PageResponse<AdminLedgerItem> page = adminService.search(
-                OWNER, null, LocalDate.of(2026, 9, 30), DAY, null, 0, 50, "asc");
+        CursorPageResponse<AdminLedgerItem> page = adminService.search(
+                OWNER, null, LocalDate.of(2026, 9, 30), DAY, null, null, 20, "asc");
 
         assertThat(page.items()).extracting(AdminLedgerItem::entryType).containsExactly(
                 EntryType.CHARGE, EntryType.RESERVE, EntryType.DEDUCT, EntryType.DEDUCT,
@@ -254,5 +263,24 @@ class PointLedgerRepositoryIntegrationTest {
                 .containsExactly(0L, 30000L, 20000L, 20000L, 20000L, 29500L);
         assertThat(page.items()).extracting(AdminLedgerItem::balanceAfter)
                 .containsExactly(30000L, 20000L, 20000L, 20000L, 29500L, 29600L);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"asc", "desc"})
+    void 관리자_원장은_양방향으로_같은_시각의_페이지_경계를_중복과_누락_없이_넘긴다(String direction) {
+        LocalDate from = LocalDate.of(2026, 9, 30);
+        CursorPageResponse<AdminLedgerItem> all = adminService.search(OWNER, null, from, DAY, null, null, 100, direction);
+
+        CursorPageResponse<AdminLedgerItem> first = adminService.search(OWNER, null, from, DAY, null, null, 3, direction);
+        CursorPageResponse<AdminLedgerItem> second =
+                adminService.search(OWNER, null, from, DAY, null, first.nextPageToken(), 3, direction);
+
+        assertThat(first.items()).hasSize(3);
+        assertThat(second.items()).hasSize(3);
+        assertThat(first.nextPageToken()).isNotNull();
+        assertThat(second.nextPageToken()).isNull();
+        assertThat(first.items().get(2).createdAt()).isEqualTo(second.items().get(0).createdAt());
+        assertThat(java.util.stream.Stream.concat(first.items().stream(), second.items().stream()).toList())
+                .containsExactlyElementsOf(all.items());
     }
 }

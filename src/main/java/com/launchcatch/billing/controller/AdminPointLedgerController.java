@@ -6,7 +6,7 @@ import com.launchcatch.billing.dto.SummaryPeriod;
 import com.launchcatch.billing.entity.EntryType;
 import com.launchcatch.billing.service.AdminPointLedgerService;
 import com.launchcatch.billing.service.AdminPointSummaryService;
-import com.launchcatch.global.response.PageResponse;
+import com.launchcatch.global.response.CursorPageResponse;
 import com.launchcatch.global.response.ResponseEnvelope;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
@@ -41,20 +41,20 @@ public class AdminPointLedgerController {
             description = "점주 한 명의 원장을 여섯 종류 모두 보여 주고 변동 전후 잔액을 누적으로 계산해 붙입니다. 기간은 최대 31일입니다."
     )
     @ApiResponses({
-            @ApiResponse(responseCode = "200", description = "조회 성공"),
-            @ApiResponse(responseCode = "400", description = "COMMON-002: 점주 ID나 기간이 없거나, 기간이 뒤집혔거나 31일을 넘었습니다. 정렬 방향이나 페이지 번호가 올바르지 않습니다.")
+            @ApiResponse(responseCode = "200", description = "조회 성공. nextPageToken 이 비어 있으면 마지막 페이지입니다."),
+            @ApiResponse(responseCode = "400", description = "COMMON-002: 점주 ID나 기간이 없거나, 기간이 뒤집혔거나 31일을 넘었습니다. 정렬 방향이 올바르지 않습니다.")
     })
-    public ResponseEnvelope<PageResponse<AdminLedgerItem>> search(
+    public ResponseEnvelope<CursorPageResponse<AdminLedgerItem>> search(
             @RequestParam(required = false) Long ownerId,
             @RequestParam(required = false) EntryType type,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
             @RequestParam(required = false) Long campaignId,
-            @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "50") int size,
+            @RequestParam(required = false) String pageToken,
+            @RequestParam(defaultValue = "20") int pageSize,
             @RequestParam(required = false) String sortDir) {
         return ResponseEnvelope.success(
-                ledgerService.search(ownerId, type, from, to, campaignId, page, size, sortDir));
+                ledgerService.search(ownerId, type, from, to, campaignId, pageToken, pageSize, sortDir));
     }
 
     @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")

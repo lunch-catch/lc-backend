@@ -1,14 +1,19 @@
 package com.launchcatch.billing.controller;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.hamcrest.Matchers.hasSize;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.launchcatch.auth.Role;
 import com.launchcatch.auth.jwt.JwtTokenProvider;
+import com.jayway.jsonpath.JsonPath;
 import jakarta.servlet.http.Cookie;
+import java.util.stream.IntStream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -17,6 +22,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.transaction.annotation.Transactional;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -121,6 +127,53 @@ class PointLedgerApiSecurityIntegrationTest {
         mockMvc.perform(get(path).cookie(token(1L, Role.ADMIN)))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("COMMON-002"));
+    }
+
+    private void seedAdminLedger(int count) {
+        jdbc.batchUpdate("""
+                insert into point_ledger (owner_id, entry_type, source, amount, reason, created_at, updated_at)
+                values (1, 'ADJUST', 'MANUAL', ?, '페이지 조회 검증',
+                        '2026-10-01 10:00:00', '2026-10-01 10:00:00')
+                """, IntStream.range(0, count).mapToObj(index -> new Object[]{10}).toList());
+    }
+
+    @Test
+    void 관리자_원장은_기본_20건과_커서_응답을_반환한다() throws Exception {
+        seedAdminLedger(21);
+
+        MvcResult first = mockMvc.perform(get(ADMIN_LEDGER).cookie(token(1L, Role.ADMIN)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.items", hasSize(20)))
+                .andExpect(jsonPath("$.data.nextPageToken").isString())
+                .andExpect(jsonPath("$.data.page").doesNotExist())
+                .andExpect(jsonPath("$.data.size").doesNotExist())
+                .andExpect(jsonPath("$.data.totalElements").doesNotExist())
+                .andReturn();
+        String nextToken = JsonPath.read(first.getResponse().getContentAsString(), "$.data.nextPageToken");
+        Long lastId = ((Number) JsonPath.read(first.getResponse().getContentAsString(), "$.data.items[19].ledgerId"))
+                .longValue();
+
+        MvcResult second = mockMvc.perform(get(ADMIN_LEDGER).param("pageToken", nextToken).cookie(token(1L, Role.ADMIN)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.items", hasSize(1)))
+                .andExpect(jsonPath("$.data.items[0].balanceBefore").value(0))
+                .andExpect(jsonPath("$.data.items[0].balanceAfter").value(10))
+                .andExpect(jsonPath("$.data.nextPageToken").isEmpty())
+                .andReturn();
+
+        Number secondId = JsonPath.read(second.getResponse().getContentAsString(), "$.data.items[0].ledgerId");
+        assertThat(secondId.longValue()).isLessThan(lastId);
+    }
+
+    @ParameterizedTest
+    @CsvSource({"-1,20", "0,20", "1,1", "100,100", "1000,100"})
+    void 관리자_원장의_크기는_기본_20_최대_100으로_보정한다(int pageSize, int expectedSize) throws Exception {
+        seedAdminLedger(101);
+
+        mockMvc.perform(get(ADMIN_LEDGER).param("pageSize", Integer.toString(pageSize)).cookie(token(1L, Role.ADMIN)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.items", hasSize(expectedSize)))
+                .andExpect(jsonPath("$.data.nextPageToken").isString());
     }
 
     @Test
