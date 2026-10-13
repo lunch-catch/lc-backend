@@ -385,6 +385,8 @@ QR 사용 시에도 같은 스냅샷을 적용하여 쿠폰에 표시한 혜택�
 `GET /v1/coupons?pageSize=20`
 
 로그인한 사용자의 쿠폰 목록을 조회한다. 삭제된 쿠폰은 모든 필터에서 제외한다.
+반환할 미사용 쿠폰의 사용 종료 시각에 도달했으면 상태를 `EXPIRED`로 저장한다.
+QR과 발급 횟수, 재고와 사용 이력은 변경하지 않는다.
 각 항목의 가게·혜택·메뉴 필드는 [쿠폰 목록·단건 공통 표시 정보](#쿠폰-목록단건-공통-표시-정보)의 스냅샷 규칙을 따른다.
 
 **파라미터**
@@ -409,6 +411,7 @@ QR 사용 시에도 같은 스냅샷을 적용하여 쿠폰에 표시한 혜택�
 ISSUED는 아직 사용하지 않고 기간이 끝나지 않은 쿠폰이며 사용 시작 전 쿠폰도 포함한다.
 EXPIRED는 조회 시점에 사용 기간이 지난 미사용 쿠폰이다.
 정렬은 `issueTime DESC, memberCouponId DESC`로 고정한다. 커서에도 두 값을 사용한다.
+잘못된 커서와 현재 필터와 다른 필터로 발급된 커서는 `400 COMMON-002`로 거절한다.
 `filter`를 변경하면 `pageToken`을 비우고 첫 페이지부터 요청한다. 전체 조회로 전환하여 `filter`를 생략하는 경우에도 동일하다.
 
 아래 응답 예시는 2026-09-30 12:00+09:00에 전체 쿠폰을 조회한 결과다.
@@ -437,6 +440,7 @@ EXPIRED는 조회 시점에 사용 기간이 지난 미사용 쿠폰이다.
         },
         "state": "ISSUED",
         "usable": true,
+        "issueTime": "2026-09-30T11:00:00+09:00",
         "usableStartTime": "2026-09-30T11:00:00+09:00",
         "usableEndTime": "2026-09-30T14:00:00+09:00",
         "useTime": null,
@@ -458,6 +462,7 @@ EXPIRED는 조회 시점에 사용 기간이 지난 미사용 쿠폰이다.
         },
         "state": "USED",
         "usable": false,
+        "issueTime": "2026-09-30T10:30:00+09:00",
         "usableStartTime": "2026-09-30T10:00:00+09:00",
         "usableEndTime": "2026-09-30T14:00:00+09:00",
         "useTime": "2026-09-30T11:00:30+09:00",
@@ -474,6 +479,7 @@ EXPIRED는 조회 시점에 사용 기간이 지난 미사용 쿠폰이다.
         "targetMenu": null,
         "state": "EXPIRED",
         "usable": false,
+        "issueTime": "2026-09-29T11:00:00+09:00",
         "usableStartTime": "2026-09-29T11:00:00+09:00",
         "usableEndTime": "2026-09-29T14:00:00+09:00",
         "useTime": null,
@@ -505,6 +511,7 @@ EXPIRED는 조회 시점에 사용 기간이 지난 미사용 쿠폰이다.
 | `targetMenu.discountedPrice` | `integer` | 스냅샷에 고정한 할인 후 메뉴 가격(원) |
 | `state` | `string(enum)` | 조회 시점 상태: `ISSUED`, `USED`, `EXPIRED` |
 | `usable` | `boolean` | 쿠폰이 ISSUED이고 사용 가능 시간 안이면 true. 회원 계정 상태는 포함하지 않음 |
+| `issueTime` | `string(date-time)` | 쿠폰 발급 시각 |
 | `usableStartTime` | `string(date-time)` | 사용 가능 시작 시각 |
 | `usableEndTime` | `string(date-time)` | 사용 가능 종료 시각 |
 | `useTime` | `string(date-time)` 또는 `null` | `USED`이면 사용 확정 시각, 그 외에는 `null` |
@@ -512,10 +519,12 @@ EXPIRED는 조회 시점에 사용 기간이 지난 미사용 쿠폰이다.
 
 **오류**
 
-- 400 `COMMON-002` - 필터, pageSize 등 쿼리 파라미터가 올바르지 않음
+- 400 `COMMON-002` - 필터, pageSize 또는 커서가 올바르지 않음
 - 400 `COMMON-003` - JSON 해석, 타입 변환에 실패하거나 필수 쿼리 파라미터가 없음
 - 401 `AUTH-005` - accessToken 쿠키가 없거나 만료, 검증에 실패함
 - 403 `AUTH-006` - 인증된 계정의 역할에 이 API 호출 권한이 없음
+- 500 `COUPON-018` - 이벤트 스냅샷이 누락됨
+- 500 `COUPON-019` - 사용 완료 쿠폰의 확정 사용 이력이 누락됨
 
 ### 내 쿠폰 단건 조회
 
