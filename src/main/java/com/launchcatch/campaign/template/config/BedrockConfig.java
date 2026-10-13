@@ -19,14 +19,16 @@ import software.amazon.awssdk.services.bedrockruntime.BedrockRuntimeClient;
  * 둘 중 하나만 뜨게 한다.
  *
  * S3Config와 같은 이유로 apiCallAttemptTimeout/apiCallTimeout을 명시한다. SDK 기본은
- * 무제한이라 Bedrock이 응답을 안 주면 요청 스레드가 무기한 묶인다. 상한은 30초로
- * 둔다(#182, POSTER-004).
+ * 무제한이라 Bedrock이 응답을 안 주면 요청 스레드가 무기한 묶인다. 한 번의 시도는 30초로
+ * 막되(#182, POSTER-004), 전체 호출 상한(apiCallTimeout)은 그보다 길게 45초로 둔다.
+ * 둘을 같게 두면 SDK 자체의 일시적 오류 재시도가 들어갈 시간이 없어, 재시도 한 번 할
+ * 여유(약 15초)를 남겨 둔다.
  */
 @Configuration
 public class BedrockConfig {
 
     private static final Duration API_CALL_ATTEMPT_TIMEOUT = Duration.ofSeconds(30);
-    private static final Duration API_CALL_TIMEOUT = Duration.ofSeconds(30);
+    private static final Duration API_CALL_TIMEOUT = Duration.ofSeconds(45);
 
     /** 도쿄 리전을 서울 인프라에서 건너 불러서, S3Config의 1초보다 여유를 둔다. */
     private static final Duration CONNECTION_TIMEOUT = Duration.ofSeconds(3);
