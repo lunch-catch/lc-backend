@@ -13,6 +13,7 @@ import jakarta.persistence.LockModeType;
 import java.util.Optional;
 import java.time.Clock;
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import com.launchcatch.auth.opaque.RefreshTokenRepository;
 import com.launchcatch.auth.opaque.TokenHasher;
@@ -179,7 +180,7 @@ class OwnerTokenRefreshConcurrencyIntegrationTest {
 
     @Test
     void 이전_RT_재사용의_잠금_대기중_발급된_AT도_폐기한다() throws Exception {
-        Instant startedAt = Instant.parse("2026-10-13T01:00:00Z");
+        Instant startedAt = Instant.now().truncatedTo(ChronoUnit.SECONDS);
         doReturn(startedAt).when(clock).instant();
         // 설정에서 발급한 RT와 같은 시계를 사용하도록 다시 로그인한다.
         String reusedToken = login.login(request).refreshToken();
