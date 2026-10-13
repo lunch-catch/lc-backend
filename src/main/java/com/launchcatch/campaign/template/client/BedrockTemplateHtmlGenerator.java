@@ -3,9 +3,9 @@ package com.launchcatch.campaign.template.client;
 import com.launchcatch.campaign.exception.CampaignException;
 import com.launchcatch.campaign.exception.PosterErrorCode;
 import com.launchcatch.campaign.template.dto.TemplateSanitizeResult;
-import com.launchcatch.campaign.template.validation.TemplateHtmlSanitizer;
-import com.launchcatch.campaign.template.validation.TemplateSlotValidator;
-import com.launchcatch.campaign.template.validation.TemplateStructureValidator;
+import com.launchcatch.campaign.template.TemplateHtmlSanitizer;
+import com.launchcatch.campaign.template.TemplateSlotValidator;
+import com.launchcatch.campaign.template.TemplateStructureValidator;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -260,8 +260,14 @@ public class BedrockTemplateHtmlGenerator implements TemplateHtmlGenerator {
      * body 바로 아래 첫 자식으로 둔다. LLM이 만든 루트 래퍼 안에 넣으면 배경색을 그대로
      * 물려받지만, 루트가 항상 div 하나라고 가정할 수 없어 더 단순하고 항상 유효한
      * 위치(body 바로 아래)를 쓴다. 시각적으로는 꾸밈이 덜할 수 있어도 구조는 항상 맞다.
+     *
+     * 넣기 전에 혹시 모델이 지시를 어기고 넣은 adLabel을 먼저 지운다. revise에서는 이전
+     * 버전 HTML(서버가 이미 채운 adLabel 포함)을 모델에게 그대로 보여주기 때문에, 모델이
+     * 그걸 베껴 같이 돌려줄 수 있다. 안 지우면 adLabel이 2개가 돼 슬롯 검증이
+     * SLOT_CONTRACT_VIOLATION으로 잘못 떨어진다(#182 코드 리뷰로 찾음).
      */
     private void insertAdLabel(Document document) {
+        document.select("[data-slot=" + AD_LABEL_SLOT + "]").remove();
         Element adLabel = document.createElement("span").attr("data-slot", AD_LABEL_SLOT).text(AD_LABEL_TEXT);
         document.body().prependChild(adLabel);
     }

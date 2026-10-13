@@ -9,9 +9,10 @@ import static org.mockito.Mockito.when;
 
 import com.launchcatch.campaign.exception.CampaignException;
 import com.launchcatch.campaign.exception.PosterErrorCode;
-import com.launchcatch.campaign.template.validation.TemplateHtmlSanitizer;
-import com.launchcatch.campaign.template.validation.TemplateSlotValidator;
-import com.launchcatch.campaign.template.validation.TemplateStructureValidator;
+import com.launchcatch.campaign.template.TemplateHtmlSanitizer;
+import com.launchcatch.campaign.template.TemplateSlotValidator;
+import com.launchcatch.campaign.template.TemplateStructureValidator;
+import org.jsoup.Jsoup;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -98,6 +99,18 @@ class BedrockTemplateHtmlGeneratorTest {
         assertThat(result).contains("data-slot=\"adLabel\"").contains("광고");
         assertThat(result).contains("data-slot=\"eventName\"");
         verify(bedrockRuntimeClient, times(1)).converse(any(ConverseRequest.class));
+    }
+
+    @Test
+    void 모델이_지시를_어기고_adLabel을_같이_써도_하나만_남는다() {
+        String withModelAdLabel = LLM_HTML.replace(
+                "<h1 data-slot=\"eventName\">", "<span data-slot=\"adLabel\">광고</span><h1 data-slot=\"eventName\">");
+        when(bedrockRuntimeClient.converse(any(ConverseRequest.class)))
+                .thenReturn(textResponse(StopReason.END_TURN, withModelAdLabel));
+
+        String result = generator.generate("돈까스 세트 홍보");
+
+        assertThat(Jsoup.parseBodyFragment(result).select("[data-slot=adLabel]")).hasSize(1);
     }
 
     @Test

@@ -1,4 +1,4 @@
-package com.launchcatch.campaign.template.validation;
+package com.launchcatch.campaign.template;
 
 import com.launchcatch.campaign.exception.CampaignException;
 import com.launchcatch.campaign.exception.PosterErrorCode;

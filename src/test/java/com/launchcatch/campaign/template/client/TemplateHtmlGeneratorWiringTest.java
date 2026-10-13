@@ -3,9 +3,9 @@ package com.launchcatch.campaign.template.client;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.launchcatch.campaign.template.config.BedrockConfig;
-import com.launchcatch.campaign.template.validation.TemplateHtmlSanitizer;
-import com.launchcatch.campaign.template.validation.TemplateSlotValidator;
-import com.launchcatch.campaign.template.validation.TemplateStructureValidator;
+import com.launchcatch.campaign.template.TemplateHtmlSanitizer;
+import com.launchcatch.campaign.template.TemplateSlotValidator;
+import com.launchcatch.campaign.template.TemplateStructureValidator;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 

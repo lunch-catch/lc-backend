@@ -4,8 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 
 import com.launchcatch.campaign.template.dto.TemplateSanitizeResult;
-import com.launchcatch.campaign.template.validation.TemplateHtmlSanitizer;
-import com.launchcatch.campaign.template.validation.TemplateSlotValidator;
+import com.launchcatch.campaign.template.TemplateHtmlSanitizer;
+import com.launchcatch.campaign.template.TemplateSlotValidator;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
