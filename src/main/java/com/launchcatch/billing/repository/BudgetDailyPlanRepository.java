@@ -3,6 +3,8 @@ package com.launchcatch.billing.repository;
 import com.launchcatch.billing.entity.BudgetDailyPlan;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
@@ -40,4 +42,7 @@ public interface BudgetDailyPlanRepository extends JpaRepository<BudgetDailyPlan
 
     // 그날 계획 한 행이다. uk_budget_daily_plan_campaign_date 를 탄다
     Optional<BudgetDailyPlan> findByCampaignIdAndBusinessDate(Long campaignId, LocalDate businessDate);
+
+    // 그날 여러 캠페인의 계획을 한 번에 읽는다. 행이 없는 캠페인은 결과에 없다
+    List<BudgetDailyPlan> findByBusinessDateAndCampaignIdIn(LocalDate businessDate, Collection<Long> campaignIds);
 }
