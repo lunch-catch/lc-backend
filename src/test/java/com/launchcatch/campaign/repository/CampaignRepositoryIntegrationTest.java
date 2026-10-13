@@ -197,6 +197,27 @@ class CampaignRepositoryIntegrationTest {
         assertThat(plan).contains("idx_campaign_status_period");
     }
 
+    @Test
+    void findEligibleCampaigns의_조회가_status_기간_인덱스를_탄다() {
+        String plan = explainJson(
+                "SELECT * FROM campaign WHERE status IN ('SCHEDULED', 'ACTIVE') "
+                        + "AND start_date <= '2026-10-13' AND end_date >= '2026-10-13'");
+
+        assertThat(plan).contains("idx_campaign_status_period");
+    }
+
+    @Test
+    void hasLiveCampaign과_findByOwnerIdAndStatusIn의_조회가_owner_id_인덱스를_탄다() {
+        String existsPlan = explainJson("SELECT * FROM campaign WHERE owner_id = 1 AND status NOT IN ('DRAFT', 'ENDED')");
+        String statusInPlan = explainJson("SELECT * FROM campaign WHERE owner_id = 1 AND status IN ('PAUSED')");
+        String ownerIdsPlan = explainJson(
+                "SELECT DISTINCT owner_id FROM campaign WHERE owner_id IN (1, 2) AND status NOT IN ('DRAFT', 'ENDED')");
+
+        assertThat(existsPlan).contains("idx_campaign_owner_id");
+        assertThat(statusInPlan).contains("idx_campaign_owner_id");
+        assertThat(ownerIdsPlan).contains("idx_campaign_owner_id");
+    }
+
     private String explainJson(String sql) {
         return (String) entityManager.createNativeQuery("EXPLAIN FORMAT=JSON " + sql).getSingleResult();
     }
