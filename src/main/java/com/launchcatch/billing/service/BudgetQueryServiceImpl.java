@@ -30,6 +30,7 @@ import org.springframework.stereotype.Service;
  * ①과 ④는 하루 동안 바뀌지 않는 값이라 Caffeine 캐시에서 읽는다. 캐시가 데워진 뒤에는 호출당 DB 조회가 없다.
  * 캐시에 없는 캠페인과 계획만 한 번의 쿼리로 읽는다. 예약액과 소진은 Valkey 해시에서만 읽는다.
  *
+ * 후보가 MAX_CAMPAIGN_IDS(5000)를 넘으면 아무것도 읽지 않고 IllegalArgumentException으로 거부한다.
  * 읽기만 하므로 트랜잭션을 걸지 않는다. 카운터 장애는 대체값 없이 예외로 올린다.
  * 시간대별 목표 행이 없으면 가중치로 계산하고 경고 로그와 지표를 남긴다(E-7). 00:00 예약이 행을 만들지 못한 신호다.
  */
@@ -49,6 +50,10 @@ public class BudgetQueryServiceImpl implements BudgetQueryService {
 
     @Override
     public List<BudgetProgress> getProgress(Collection<Long> campaignIds, LocalDate businessDate, LocalDateTime at) {
+        if (campaignIds.size() > MAX_CAMPAIGN_IDS) {
+            throw new IllegalArgumentException(
+                    "campaignIds는 " + MAX_CAMPAIGN_IDS + "개 이하여야 합니다. size=" + campaignIds.size());
+        }
         Map<Long, PlanSnapshot> plans = snapshotService.findAll(businessDate, campaignIds);
         if (plans.isEmpty()) {
             return List.of();

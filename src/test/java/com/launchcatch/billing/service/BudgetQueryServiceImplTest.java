@@ -11,6 +11,7 @@ import static org.mockito.Mockito.when;
 
 import com.launchcatch.billing.config.BillingScheduleProperties;
 import com.launchcatch.billing.contract.BudgetProgress;
+import com.launchcatch.billing.contract.BudgetQueryService;
 import com.launchcatch.billing.dto.PlanSnapshot;
 import com.launchcatch.billing.cache.DailySpend;
 import com.launchcatch.billing.cache.DailySpendCounter;
@@ -108,6 +109,21 @@ class BudgetQueryServiceImplTest {
         when(snapshotService.findAll(DAY, List.of(9L))).thenReturn(Map.of());
 
         assertThat(service.getProgress(List.of(9L), DAY, AT)).isEmpty();
+        verifyNoInteractions(spendCounter, targetService, rebuildService);
+    }
+
+    @Test
+    void 후보가_상한이면_처리하고_넘으면_아무것도_읽지_않고_거부한다() {
+        List<Long> atLimit = java.util.stream.LongStream.rangeClosed(1, BudgetQueryService.MAX_CAMPAIGN_IDS)
+                .boxed().toList();
+        when(snapshotService.findAll(DAY, atLimit)).thenReturn(Map.of());
+        assertThat(service.getProgress(atLimit, DAY, AT)).isEmpty();
+
+        List<Long> overLimit = java.util.stream.LongStream.rangeClosed(1, BudgetQueryService.MAX_CAMPAIGN_IDS + 1L)
+                .boxed().toList();
+        assertThatThrownBy(() -> service.getProgress(overLimit, DAY, AT))
+                .isInstanceOf(IllegalArgumentException.class);
+        verify(snapshotService, times(1)).findAll(any(), any());
         verifyNoInteractions(spendCounter, targetService, rebuildService);
     }
 
