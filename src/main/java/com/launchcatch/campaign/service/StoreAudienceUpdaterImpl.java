@@ -76,23 +76,22 @@ public class StoreAudienceUpdaterImpl implements StoreAudienceUpdater {
                 + UPSERT_SQL_SUFFIX;
         Object[] params = chunk.stream()
                 .flatMap(cell -> Stream.of(
-                        cell.storeId(), cell.targetRadius(), toGenderColumn(cell.gender()).name(),
+                        cell.storeId(), cell.targetRadius(), toGenderColumn(cell.gender()).getDbValue(),
                         cell.ageGroup().name(), cell.memberCount(), cell.businessDate(), now, now))
                 .toArray();
         jdbcTemplate.update(sql, params);
     }
 
     /*
-     * TargetGender는 ALL을 허용하지만 store_audience.gender는 MALE/FEMALE/OTHER만 받는다.
-     * OTHER는 #162(회원 쪽 성별 enum)가 먼저 정해져야 StoreAudienceCell이 받을 수 있어
-     * 지금은 넘어올 수 없다. ALL이 들어오면 CHECK 제약 위반으로 터지기 전에 여기서 막는다.
+     * TargetGender.ALL은 StoreAudienceGender.ALL로 매핑하고, DB에는 그 dbValue("OTHER")로
+     * 저장된다(#218). OTHER는 #162(회원 쪽 성별 enum)가 먼저 정해져야 쓸 수 있는 자리라,
+     * 그동안은 "전체 성별"의 저장 칸으로 재사용한다.
      */
     private StoreAudienceGender toGenderColumn(TargetGender gender) {
         return switch (gender) {
             case MALE -> StoreAudienceGender.MALE;
             case FEMALE -> StoreAudienceGender.FEMALE;
-            case ALL -> throw new IllegalArgumentException(
-                    "ALL gender cannot be written to store_audience yet: #162 선행 필요");
+            case ALL -> StoreAudienceGender.ALL;
         };
     }
 }

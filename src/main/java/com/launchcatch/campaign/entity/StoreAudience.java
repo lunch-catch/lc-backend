@@ -4,6 +4,7 @@ import com.launchcatch.campaign.contract.AgeGroup;
 import com.launchcatch.global.entity.BaseTimeEntity;
 import jakarta.persistence.AttributeOverride;
 import jakarta.persistence.Column;
+import jakarta.persistence.Convert;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
@@ -32,7 +33,7 @@ public class StoreAudience extends BaseTimeEntity {
     @Column(name = "target_radius", nullable = false)
     private int targetRadius;
 
-    @Enumerated(EnumType.STRING)
+    @Convert(converter = StoreAudienceGenderConverter.class)
     @Column(nullable = false, length = 10)
     private StoreAudienceGender gender;
 
