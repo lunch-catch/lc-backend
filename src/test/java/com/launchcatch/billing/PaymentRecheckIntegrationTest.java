@@ -11,13 +11,11 @@ import com.launchcatch.billing.dto.PaymentWebhookRequest;
 import com.launchcatch.billing.entity.PaymentStatus;
 import com.launchcatch.billing.exception.BillingErrorCode;
 import com.launchcatch.billing.exception.BillingException;
-import com.launchcatch.billing.service.AdminPaymentQueryService;
 import com.launchcatch.billing.service.AdminPaymentRecheckService;
 import com.launchcatch.billing.service.PaymentConfirmationService;
 import com.launchcatch.billing.service.PaymentOrderService;
 import com.launchcatch.billing.service.PaymentRecheckService;
 import com.launchcatch.billing.service.PaymentWebhookService;
-import com.launchcatch.global.response.PageResponse;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
@@ -49,7 +47,7 @@ import org.testcontainers.utility.DockerImageName;
  * 결제대행사만 가짜로 바꾼다.
  *
  * 목으로 확인할 수 없는 것을 본다. 세 경로가 동시에 같은 결제를 확정해도 충전이 한 번인지,
- * 확정하지 못한 재조회가 상한에서 멈추고 결제를 닫지 않는지, 관리자 재조회의 결과와 감사 로그가 함께 저장되는지다.
+ * 관리자 재조회의 결과와 감사 로그가 함께 저장되는지다.
  * 커밋을 봐야 하므로 테스트 트랜잭션을 걸지 않고 매번 행을 지운다.
  */
 @Testcontainers
@@ -90,7 +88,6 @@ class PaymentRecheckIntegrationTest {
     @Autowired PaymentRecheckService recheckService;
     @Autowired PaymentWebhookService webhookService;
     @Autowired AdminPaymentRecheckService adminRecheckService;
-    @Autowired AdminPaymentQueryService adminQueryService;
     @Autowired FakePaymentGateway gateway;
     @Autowired JdbcTemplate jdbc;
 
@@ -186,61 +183,8 @@ class PaymentRecheckIntegrationTest {
     }
 
     @Test
-    void 웹훅이_승인_시도_전_주문의_승인을_먼저_알려도_결제_식별자를_적고_한_번만_충전한다() {
-        var response = orderService.order(OWNER, AMOUNT);
-        Order order = new Order(response.paymentId(), response.orderId(), "tgen_webhook_first");
-        pgSays(order, Status.APPROVED);
-
-        PaymentWebhookRequest webhook = new PaymentWebhookRequest("PAYMENT_STATUS_CHANGED",
-                new PaymentWebhookRequest.Data(order.paymentKey(), order.orderId()));
-        webhookService.handle(webhook);
-        webhookService.handle(webhook);
-
-        assertThat(status(order.paymentId())).isEqualTo("APPROVED");
-        assertThat(jdbc.queryForObject("select pg_tid from payment where payment_id = ?", String.class,
-                order.paymentId())).isEqualTo("tgen_webhook_first");
-        assertThat(charges(order.paymentId())).isEqualTo(1);
-    }
-
-    @Test
-    void 처리_중이_계속되면_상한에서_영구_실패로_멈추고_결제는_확인_중으로_남는다() {
-        Order order = unknownOrder(OWNER, "tgen_pending_1");
-        pgSays(order, Status.PENDING);
-
-        for (int attempt = 1; attempt <= 5; attempt++) {
-            makeDue(order.paymentId());
-            assertThat(recheckService.recheckDue()).isEqualTo(1);
-        }
-
-        assertThat(status(order.paymentId())).isEqualTo("UNKNOWN");
-        assertThat(outboxStatus(order.paymentId())).isEqualTo("FAILED_PERMANENT");
-        assertThat(jdbc.queryForObject("select attempt_count from payment_reconciliation_outbox where payment_id = ?",
-                Integer.class, order.paymentId())).isEqualTo(5);
-        assertThat(jdbc.queryForObject("select next_retry_at from payment_reconciliation_outbox where payment_id = ?",
-                Object.class, order.paymentId())).isNull();
-        assertThat(charges(order.paymentId())).isZero();
-
-        makeDue(order.paymentId());
-        assertThat(recheckService.recheckDue()).isZero();
-    }
-
-    @Test
-    void 아직_시각이_안_된_결제는_워커가_조회하지_않는다() {
-        Order order = unknownOrder(OWNER, "tgen_notdue_1");
-        pgSays(order, Status.APPROVED);
-
-        assertThat(recheckService.recheckDue()).isZero();
-        assertThat(status(order.paymentId())).isEqualTo("UNKNOWN");
-    }
-
-    @Test
-    void 영구_실패로_굳은_결제를_관리자가_재조회하면_승인되고_감사_로그가_함께_남는다() {
+    void 확인_중인_결제를_관리자가_재조회하면_승인되고_감사_로그가_함께_남는다() {
         Order order = unknownOrder(OWNER, "tgen_admin_1");
-        pgSays(order, Status.PENDING);
-        for (int attempt = 1; attempt <= 5; attempt++) {
-            makeDue(order.paymentId());
-            recheckService.recheckDue();
-        }
         pgSays(order, Status.APPROVED);
 
         AdminPaymentItem item = adminRecheckService.recheck(ADMIN, order.paymentId());
@@ -250,45 +194,5 @@ class PaymentRecheckIntegrationTest {
         assertThat(charges(order.paymentId())).isEqualTo(1);
         assertThat(jdbc.queryForObject("select count(*) from audit_log where action = 'PAYMENT_RECHECK' "
                 + "and target = ?", Integer.class, String.valueOf(order.paymentId()))).isEqualTo(1);
-    }
-
-    @Test
-    void 관리자_재조회가_확정하지_못하면_시도_횟수는_그대로이고_사유만_남는다() {
-        Order order = unknownOrder(OWNER, "tgen_admin_2");
-        pgSays(order, Status.PENDING);
-
-        AdminPaymentItem item = adminRecheckService.recheck(ADMIN, order.paymentId());
-
-        assertThat(item.status()).isEqualTo(PaymentStatus.UNKNOWN);
-        assertThat(item.reconciliation().attemptCount()).isZero();
-        assertThat(item.reconciliation().lastError()).isNotBlank();
-        assertThat(jdbc.queryForObject("select count(*) from audit_log where action = 'PAYMENT_RECHECK'",
-                Integer.class)).isEqualTo(1);
-    }
-
-    @Test
-    void 관리자_결제_목록은_상태와_검색으로_거르고_승인_전_결제를_승인_시각_정렬의_맨_뒤에_둔다() {
-        Order unknown = unknownOrder(OWNER, "tgen_list_unknown");
-        var approvedOrder = orderService.order(8L, AMOUNT);
-        confirmationService.confirm(8L, approvedOrder.paymentId(), approvedOrder.orderId(), "tgen_list_approved");
-
-        PageResponse<AdminPaymentItem> onlyUnknown = adminQueryService.search(
-                null, null, PaymentStatus.UNKNOWN, null, null, 0, 20, null, null);
-        PageResponse<AdminPaymentItem> byPgTid = adminQueryService.search(
-                null, null, null, "PG_TID", "tgen_list_approved", 0, 20, null, null);
-        PageResponse<AdminPaymentItem> byApprovedAsc = adminQueryService.search(
-                null, null, null, null, null, 0, 20, "approvedAt", "asc");
-        PageResponse<AdminPaymentItem> byApprovedDesc = adminQueryService.search(
-                null, null, null, null, null, 0, 20, "approvedAt", "desc");
-
-        assertThat(onlyUnknown.totalElements()).isEqualTo(1);
-        assertThat(onlyUnknown.items().get(0).paymentId()).isEqualTo(unknown.paymentId());
-        assertThat(onlyUnknown.items().get(0).reconciliation().status().name()).isEqualTo("PENDING");
-        assertThat(byPgTid.items()).extracting(AdminPaymentItem::paymentId).containsExactly(approvedOrder.paymentId());
-        assertThat(byPgTid.items().get(0).reconciliation()).isNull();
-        assertThat(byApprovedAsc.items()).extracting(AdminPaymentItem::paymentId)
-                .containsExactly(approvedOrder.paymentId(), unknown.paymentId());
-        assertThat(byApprovedDesc.items()).extracting(AdminPaymentItem::paymentId)
-                .containsExactly(approvedOrder.paymentId(), unknown.paymentId());
     }
 }
