@@ -238,4 +238,26 @@ class BedrockTemplateHtmlGeneratorTest {
                 .extracting(e -> ((CampaignException) e).getErrorCode())
                 .isEqualTo(PosterErrorCode.GENERATION_THROTTLED);
     }
+
+    @Test
+    void 가드레일에_막히면_재시도하고_통과하면_성공한다() {
+        when(bedrockRuntimeClient.converse(any(ConverseRequest.class)))
+                .thenReturn(textResponse(StopReason.GUARDRAIL_INTERVENED, "막힘"))
+                .thenReturn(textResponse(StopReason.END_TURN, LLM_HTML));
+
+        String result = generator.generate("돈까스 세트 홍보");
+
+        assertThat(result).contains("data-slot=\"eventName\"");
+    }
+
+    @Test
+    void 콘텐츠_필터가_재시도까지_반복되면_POSTER_013을_던진다() {
+        when(bedrockRuntimeClient.converse(any(ConverseRequest.class)))
+                .thenReturn(textResponse(StopReason.CONTENT_FILTERED, "막힘"));
+
+        assertThatThrownBy(() -> generator.generate("돈까스 세트 홍보"))
+                .isInstanceOf(CampaignException.class)
+                .extracting(e -> ((CampaignException) e).getErrorCode())
+                .isEqualTo(PosterErrorCode.GENERATION_BLOCKED);
+    }
 }

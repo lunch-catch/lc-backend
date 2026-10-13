@@ -40,8 +40,9 @@ import software.amazon.awssdk.services.bedrockruntime.model.ThrottlingException;
  * (feed-api-design.md "광고 라벨을 서버가 내려주지 않는다"와 같은 이유로, 여기서는 반대로
  * LLM이 아니라 서버가 그 자리를 직접 채운다).
  *
- * 검증 실패(허용 안 된 태그, 슬롯 누락, 구조 불일치, 토큰 잘림) 넷 다 같은 대화에 교정
- * 지시를 이어 붙여 1회만 재시도한다. 재시도까지 실패하면 그 시점 오류로 끝낸다.
+ * 검증 실패(허용 안 된 태그, 슬롯 누락, 구조 불일치, 토큰 잘림, 가드레일 차단) 다섯 가지
+ * 다 같은 대화에 교정 지시를 이어 붙여 1회만 재시도한다. 재시도까지 실패하면 그 시점
+ * 오류로 끝낸다.
  */
 @Component
 @ConditionalOnProperty(name = "bedrock.model-id")
@@ -55,6 +56,10 @@ public class BedrockTemplateHtmlGenerator implements TemplateHtmlGenerator {
 
     private static final String TRUNCATED_CORRECTION =
             "방금 답변이 끝맺지 못하고 중간에 잘렸다. 생각 과정과 설명 없이, 더 짧고 간결하게 HTML만 바로 써라.";
+
+    private static final String BLOCKED_CORRECTION =
+            "방금 답변이 가드레일에 막혀 생성되지 않았다. 민감하거나 부적절할 수 있는 표현 없이, "
+                    + "평범한 광고 문구로 다시 써라.";
 
     private static final String SLOT_CORRECTION =
             "방금 만든 HTML에 eventName, discount, period, image 슬롯 중 하나가 없거나 2개 이상 있었다. "
@@ -149,6 +154,15 @@ public class BedrockTemplateHtmlGenerator implements TemplateHtmlGenerator {
                     throw new CampaignException(PosterErrorCode.GENERATION_TRUNCATED);
                 }
                 messages.add(userMessage(TRUNCATED_CORRECTION));
+                continue;
+            }
+
+            if (response.stopReason() == StopReason.CONTENT_FILTERED
+                    || response.stopReason() == StopReason.GUARDRAIL_INTERVENED) {
+                if (lastAttempt) {
+                    throw new CampaignException(PosterErrorCode.GENERATION_BLOCKED);
+                }
+                messages.add(userMessage(BLOCKED_CORRECTION));
                 continue;
             }
 
