@@ -12,8 +12,8 @@ import static org.mockito.Mockito.when;
 import com.launchcatch.billing.config.BillingScheduleProperties;
 import com.launchcatch.billing.contract.BudgetProgress;
 import com.launchcatch.billing.dto.PlanSnapshot;
-import com.launchcatch.billing.repository.DailySpend;
-import com.launchcatch.billing.repository.DailySpendHashRepository;
+import com.launchcatch.billing.cache.DailySpend;
+import com.launchcatch.billing.cache.DailySpendCounter;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Duration;
 import java.time.LocalDate;
@@ -41,7 +41,7 @@ class BudgetQueryServiceImplTest {
     @Mock
     private HourlyTargetService targetService;
     @Mock
-    private DailySpendHashRepository hashRepository;
+    private DailySpendCounter spendCounter;
     @Mock
     private SpendHashRebuildService rebuildService;
 
@@ -50,7 +50,7 @@ class BudgetQueryServiceImplTest {
 
     @BeforeEach
     void setUp() {
-        service = new BudgetQueryServiceImpl(snapshotService, targetService, hashRepository, rebuildService,
+        service = new BudgetQueryServiceImpl(snapshotService, targetService, spendCounter, rebuildService,
                 SCHEDULE, meterRegistry);
     }
 
@@ -70,7 +70,7 @@ class BudgetQueryServiceImplTest {
     @Test
     void 여러_캠페인을_한_번의_조회로_계산하고_요청_순서를_지킨다() {
         when(snapshotService.findAll(DAY, List.of(2L, 1L))).thenReturn(plans(2L, 1L));
-        when(hashRepository.readAll(DAY, List.of(2L, 1L)))
+        when(spendCounter.readAll(DAY, List.of(2L, 1L)))
                 .thenReturn(Map.of(1L, new DailySpend(10_000L, 6_060L), 2L, new DailySpend(10_000L, 0L)));
         when(targetService.findAll(List.of(102L, 101L)))
                 .thenReturn(Map.of(101L, Map.of(10, 3400L, 11, 3300L, 12, 3300L)));
@@ -85,7 +85,7 @@ class BudgetQueryServiceImplTest {
         assertThat(first.plannedAmountUntil()).isEqualTo(5_050L);
         assertThat(first.progressRate()).isEqualTo(1.2);
         verify(snapshotService, times(1)).findAll(any(), any());
-        verify(hashRepository, times(1)).readAll(any(), any());
+        verify(spendCounter, times(1)).readAll(any(), any());
         verify(targetService, times(1)).findAll(any());
         verify(rebuildService, never()).rebuildIfAbsent(any(), any());
     }
@@ -93,7 +93,7 @@ class BudgetQueryServiceImplTest {
     @Test
     void 목표_행이_없으면_가중치로_같은_값을_계산하고_지표를_올린다() {
         when(snapshotService.findAll(DAY, List.of(2L))).thenReturn(plans(2L));
-        when(hashRepository.readAll(DAY, List.of(2L))).thenReturn(Map.of(2L, new DailySpend(10_000L, 0L)));
+        when(spendCounter.readAll(DAY, List.of(2L))).thenReturn(Map.of(2L, new DailySpend(10_000L, 0L)));
         when(targetService.findAll(List.of(102L))).thenReturn(Map.of());
 
         BudgetProgress progress = service.getProgress(List.of(2L), DAY, AT).get(0);
@@ -108,14 +108,14 @@ class BudgetQueryServiceImplTest {
         when(snapshotService.findAll(DAY, List.of(9L))).thenReturn(Map.of());
 
         assertThat(service.getProgress(List.of(9L), DAY, AT)).isEmpty();
-        verifyNoInteractions(hashRepository, targetService, rebuildService);
+        verifyNoInteractions(spendCounter, targetService, rebuildService);
     }
 
     @Test
     void 해시가_없는_캠페인만_재구성하고_그_캠페인만_다시_읽는다() {
         when(snapshotService.findAll(DAY, List.of(1L, 2L))).thenReturn(plans(1L, 2L));
-        when(hashRepository.readAll(DAY, List.of(1L, 2L))).thenReturn(Map.of(1L, new DailySpend(10_000L, 0L)));
-        when(hashRepository.readAll(DAY, List.of(2L))).thenReturn(Map.of(2L, new DailySpend(5_000L, 100L)));
+        when(spendCounter.readAll(DAY, List.of(1L, 2L))).thenReturn(Map.of(1L, new DailySpend(10_000L, 0L)));
+        when(spendCounter.readAll(DAY, List.of(2L))).thenReturn(Map.of(2L, new DailySpend(5_000L, 100L)));
         when(targetService.findAll(List.of(101L, 102L))).thenReturn(Map.of());
 
         List<BudgetProgress> result = service.getProgress(List.of(1L, 2L), DAY, AT);
@@ -128,7 +128,7 @@ class BudgetQueryServiceImplTest {
     @Test
     void 재구성한_뒤에도_해시가_없으면_예외다() {
         when(snapshotService.findAll(DAY, List.of(1L))).thenReturn(plans(1L));
-        when(hashRepository.readAll(DAY, List.of(1L))).thenReturn(Map.of());
+        when(spendCounter.readAll(DAY, List.of(1L))).thenReturn(Map.of());
 
         assertThatThrownBy(() -> service.getProgress(List.of(1L), DAY, AT))
                 .isInstanceOf(IllegalStateException.class)
@@ -139,7 +139,7 @@ class BudgetQueryServiceImplTest {
     @Test
     void Valkey_장애는_대체값_없이_그대로_올라온다() {
         when(snapshotService.findAll(DAY, List.of(1L))).thenReturn(plans(1L));
-        when(hashRepository.readAll(DAY, List.of(1L))).thenThrow(new QueryTimeoutException("timeout"));
+        when(spendCounter.readAll(DAY, List.of(1L))).thenThrow(new QueryTimeoutException("timeout"));
 
         assertThatThrownBy(() -> service.getProgress(List.of(1L), DAY, AT))
                 .isInstanceOf(QueryTimeoutException.class);

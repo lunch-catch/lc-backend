@@ -2,7 +2,7 @@ package com.launchcatch.billing.service;
 
 import com.launchcatch.billing.entity.BudgetDailyPlan;
 import com.launchcatch.billing.repository.BudgetDailyPlanRepository;
-import com.launchcatch.billing.repository.DailySpendHashRepository;
+import com.launchcatch.billing.cache.DailySpendCounter;
 import com.launchcatch.billing.repository.PointLedgerRepository;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.time.LocalDate;
@@ -25,7 +25,7 @@ public class SpendHashRebuildService {
 
     private final BudgetDailyPlanRepository planRepository;
     private final PointLedgerRepository ledgerRepository;
-    private final DailySpendHashRepository hashRepository;
+    private final DailySpendCounter spendCounter;
     private final MeterRegistry meterRegistry;
 
     // 해시를 만들었으면 true, 이미 있어서 그대로 두었으면 false 다. 계획 행이 없으면 예외다(E-4)
@@ -34,7 +34,7 @@ public class SpendHashRebuildService {
                 .orElseThrow(() -> new IllegalStateException(
                         "그날 예산 계획이 없습니다. campaignId=" + campaignId + ", businessDate=" + businessDate));
         long spend = ledgerRepository.sumDeductForCampaignOn(campaignId, businessDate);
-        boolean created = hashRepository.rebuildIfAbsent(
+        boolean created = spendCounter.rebuildIfAbsent(
                 businessDate, campaignId, plan.getDailyBudget(), spend, plan.isPaused(), plan.getStatusChangedAt());
         if (created) {
             meterRegistry.counter(REBUILD_METRIC).increment();

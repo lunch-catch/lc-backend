@@ -3,8 +3,8 @@ package com.launchcatch.billing.service;
 import com.launchcatch.billing.contract.DeductionStatus;
 import com.launchcatch.billing.contract.PointDeductor;
 import com.launchcatch.billing.dto.PlanSnapshot;
-import com.launchcatch.billing.repository.DailySpendHashRepository;
-import com.launchcatch.billing.repository.DeductOutcome;
+import com.launchcatch.billing.cache.DailySpendCounter;
+import com.launchcatch.billing.cache.DeductOutcome;
 import com.launchcatch.billing.repository.DeductionResultRepository;
 import com.launchcatch.billing.repository.PointLedgerRepository;
 import java.time.Clock;
@@ -39,7 +39,7 @@ public class PointDeductorImpl implements PointDeductor {
 
     private final DailyPlanSnapshotService snapshotService;
     private final SpendHashRebuildService rebuildService;
-    private final DailySpendHashRepository hashRepository;
+    private final DailySpendCounter spendCounter;
     private final DeductionResultRepository deductionResultRepository;
     private final PointLedgerRepository ledgerRepository;
     private final Clock clock;
@@ -53,10 +53,10 @@ public class PointDeductorImpl implements PointDeductor {
          * TODO(성능 측정): Valkey 왕복 1회(측정 0-a). 0-a 만으로 1만 건이 안 나오면 DB 개선은 소용없다.
          * Lua 내용과 커넥션 설정을 먼저 본다.
          */
-        DeductOutcome outcome = hashRepository.deduct(businessDate, campaignId, serveId, plan.unitPrice());
+        DeductOutcome outcome = spendCounter.deduct(businessDate, campaignId, serveId, plan.unitPrice());
         if (outcome.isHashMissing()) {
             rebuildService.rebuildIfAbsent(businessDate, campaignId);
-            outcome = hashRepository.deduct(businessDate, campaignId, serveId, plan.unitPrice());
+            outcome = spendCounter.deduct(businessDate, campaignId, serveId, plan.unitPrice());
             if (outcome.isHashMissing()) {
                 throw new IllegalStateException(
                         "재구성한 뒤에도 당일 소진 해시가 없습니다. campaignId=" + campaignId + ", businessDate=" + businessDate);

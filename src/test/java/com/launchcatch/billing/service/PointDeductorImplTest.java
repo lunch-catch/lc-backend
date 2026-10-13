@@ -12,8 +12,9 @@ import static org.mockito.Mockito.when;
 
 import com.launchcatch.billing.contract.DeductionStatus;
 import com.launchcatch.billing.dto.PlanSnapshot;
-import com.launchcatch.billing.repository.DailySpendHashRepository;
-import com.launchcatch.billing.repository.DeductOutcome;
+import com.launchcatch.billing.cache.DailySpendCounter;
+import com.launchcatch.billing.cache.InMemoryDailySpendCounter;
+import com.launchcatch.billing.cache.DeductOutcome;
 import com.launchcatch.billing.repository.DeductionResultRepository;
 import com.launchcatch.billing.repository.PointLedgerRepository;
 import com.launchcatch.global.config.ClockConfig;
@@ -45,7 +46,7 @@ class PointDeductorImplTest {
     @Mock
     private SpendHashRebuildService rebuildService;
     @Mock
-    private DailySpendHashRepository hashRepository;
+    private DailySpendCounter spendCounter;
     @Mock
     private DeductionResultRepository deductionResultRepository;
     @Mock
@@ -55,14 +56,14 @@ class PointDeductorImplTest {
 
     @BeforeEach
     void setUp() {
-        deductor = new PointDeductorImpl(snapshotService, rebuildService, hashRepository,
+        deductor = new PointDeductorImpl(snapshotService, rebuildService, spendCounter,
                 deductionResultRepository, ledgerRepository, CLOCK);
         lenient().when(snapshotService.get(DAY, CAMPAIGN_ID)).thenReturn(PLAN);
     }
 
     @Test
     void 과금하면_판정을_기록하고_단가의_음수로_원장에_남긴다() {
-        when(hashRepository.deduct(DAY, CAMPAIGN_ID, SERVE_ID, 10L)).thenReturn(DeductOutcome.of(DeductionStatus.BILLED));
+        when(spendCounter.deduct(DAY, CAMPAIGN_ID, SERVE_ID, 10L)).thenReturn(DeductOutcome.of(DeductionStatus.BILLED));
 
         DeductionStatus status = deductor.deduct(SERVE_ID, CAMPAIGN_ID, DAY);
 
@@ -74,7 +75,7 @@ class PointDeductorImplTest {
 
     @Test
     void 예약액에_닿으면_판정만_기록하고_원장은_쓰지_않는다() {
-        when(hashRepository.deduct(DAY, CAMPAIGN_ID, SERVE_ID, 10L)).thenReturn(DeductOutcome.of(DeductionStatus.NOT_BILLED_BUDGET));
+        when(spendCounter.deduct(DAY, CAMPAIGN_ID, SERVE_ID, 10L)).thenReturn(DeductOutcome.of(DeductionStatus.NOT_BILLED_BUDGET));
 
         DeductionStatus status = deductor.deduct(SERVE_ID, CAMPAIGN_ID, DAY);
 
@@ -85,7 +86,7 @@ class PointDeductorImplTest {
 
     @Test
     void 중단된_캠페인은_판정만_기록하고_원장은_쓰지_않는다() {
-        when(hashRepository.deduct(DAY, CAMPAIGN_ID, SERVE_ID, 10L)).thenReturn(DeductOutcome.of(DeductionStatus.NOT_BILLED_PAUSED));
+        when(spendCounter.deduct(DAY, CAMPAIGN_ID, SERVE_ID, 10L)).thenReturn(DeductOutcome.of(DeductionStatus.NOT_BILLED_PAUSED));
 
         DeductionStatus status = deductor.deduct(SERVE_ID, CAMPAIGN_ID, DAY);
 
@@ -96,7 +97,7 @@ class PointDeductorImplTest {
 
     @Test
     void 같은_serveId를_다시_부르면_첫_판정을_돌려주고_INSERT는_무변경이다() {
-        when(hashRepository.deduct(DAY, CAMPAIGN_ID, SERVE_ID, 10L)).thenReturn(DeductOutcome.of(DeductionStatus.BILLED));
+        when(spendCounter.deduct(DAY, CAMPAIGN_ID, SERVE_ID, 10L)).thenReturn(DeductOutcome.of(DeductionStatus.BILLED));
         when(deductionResultRepository.insertIfAbsent(SERVE_ID, CAMPAIGN_ID, 3L, DAY, DeductionStatus.BILLED, 10L, NOW))
                 .thenReturn(1, 0);
         when(ledgerRepository.insertDeductIfAbsent(3L, CAMPAIGN_ID, SERVE_ID, -10L, NOW)).thenReturn(1, 0);
@@ -110,24 +111,24 @@ class PointDeductorImplTest {
 
     @Test
     void 해시가_없으면_재구성_뒤_한_번만_다시_판정한다() {
-        when(hashRepository.deduct(DAY, CAMPAIGN_ID, SERVE_ID, 10L))
+        when(spendCounter.deduct(DAY, CAMPAIGN_ID, SERVE_ID, 10L))
                 .thenReturn(DeductOutcome.hashMissing(), DeductOutcome.of(DeductionStatus.BILLED));
 
         DeductionStatus status = deductor.deduct(SERVE_ID, CAMPAIGN_ID, DAY);
 
         assertThat(status).isEqualTo(DeductionStatus.BILLED);
         verify(rebuildService).rebuildIfAbsent(DAY, CAMPAIGN_ID);
-        verify(hashRepository, times(2)).deduct(DAY, CAMPAIGN_ID, SERVE_ID, 10L);
+        verify(spendCounter, times(2)).deduct(DAY, CAMPAIGN_ID, SERVE_ID, 10L);
     }
 
     @Test
     void 재구성한_뒤에도_해시가_없으면_예외이고_아무것도_기록하지_않는다() {
-        when(hashRepository.deduct(DAY, CAMPAIGN_ID, SERVE_ID, 10L)).thenReturn(DeductOutcome.hashMissing());
+        when(spendCounter.deduct(DAY, CAMPAIGN_ID, SERVE_ID, 10L)).thenReturn(DeductOutcome.hashMissing());
 
         assertThatThrownBy(() -> deductor.deduct(SERVE_ID, CAMPAIGN_ID, DAY))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("campaignId=7");
-        verify(hashRepository, times(2)).deduct(DAY, CAMPAIGN_ID, SERVE_ID, 10L);
+        verify(spendCounter, times(2)).deduct(DAY, CAMPAIGN_ID, SERVE_ID, 10L);
         verify(deductionResultRepository, never()).insertIfAbsent(any(UUID.class), any(), any(), any(), any(DeductionStatus.class), anyLong(), any());
     }
 
@@ -138,5 +139,52 @@ class PointDeductorImplTest {
                 .getAnnotation(Transactional.class);
 
         assertThat(transactional.propagation()).isEqualTo(Propagation.MANDATORY);
+    }
+
+    // 아래 시험은 Mockito 대신 Lua 와 같은 규칙의 Fake 를 연결해 판정이 쌓이는 모습을 그대로 본다
+    private PointDeductorImpl deductorWith(InMemoryDailySpendCounter fake) {
+        return new PointDeductorImpl(snapshotService, rebuildService, fake, deductionResultRepository, ledgerRepository, CLOCK);
+    }
+
+    @Test
+    void 단가_10_예약_100이면_열_건은_과금하고_열한_번째는_예약액에_닿는다() {
+        InMemoryDailySpendCounter fake = new InMemoryDailySpendCounter();
+        fake.seed(DAY, CAMPAIGN_ID, 100L, 0L, false);
+        PointDeductorImpl real = deductorWith(fake);
+
+        for (int i = 0; i < 10; i++) {
+            assertThat(real.deduct(UUID.randomUUID(), CAMPAIGN_ID, DAY)).isEqualTo(DeductionStatus.BILLED);
+        }
+        DeductionStatus eleventh = real.deduct(UUID.randomUUID(), CAMPAIGN_ID, DAY);
+
+        assertThat(eleventh).isEqualTo(DeductionStatus.NOT_BILLED_BUDGET);
+        verify(ledgerRepository, times(10)).insertDeductIfAbsent(any(), any(), any(UUID.class), anyLong(), any());
+        verify(deductionResultRepository, times(11))
+                .insertIfAbsent(any(UUID.class), any(), any(), any(), any(DeductionStatus.class), anyLong(), any());
+    }
+
+    @Test
+    void 같은_serveId를_두_번_불러도_소진은_한_번만_늘어난다() {
+        InMemoryDailySpendCounter fake = new InMemoryDailySpendCounter();
+        fake.seed(DAY, CAMPAIGN_ID, 100L, 0L, false);
+        PointDeductorImpl real = deductorWith(fake);
+        UUID serveId = UUID.randomUUID();
+
+        DeductionStatus first = real.deduct(serveId, CAMPAIGN_ID, DAY);
+        DeductionStatus second = real.deduct(serveId, CAMPAIGN_ID, DAY);
+
+        assertThat(second).isEqualTo(first);
+        assertThat(fake.spendOf(DAY, CAMPAIGN_ID)).isEqualTo(10L);
+    }
+
+    @Test
+    void 중단된_캠페인은_Fake에서도_원장을_남기지_않는다() {
+        InMemoryDailySpendCounter fake = new InMemoryDailySpendCounter();
+        fake.seed(DAY, CAMPAIGN_ID, 100L, 0L, true);
+
+        DeductionStatus status = deductorWith(fake).deduct(UUID.randomUUID(), CAMPAIGN_ID, DAY);
+
+        assertThat(status).isEqualTo(DeductionStatus.NOT_BILLED_PAUSED);
+        verify(ledgerRepository, never()).insertDeductIfAbsent(any(), any(), any(UUID.class), anyLong(), any());
     }
 }

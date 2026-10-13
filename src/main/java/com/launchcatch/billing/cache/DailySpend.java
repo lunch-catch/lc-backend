@@ -1,4 +1,4 @@
-package com.launchcatch.billing.repository;
+package com.launchcatch.billing.cache;
 
 /**
  * 당일 소진 해시에서 읽은 한 캠페인의 예약액과 소진액이다.

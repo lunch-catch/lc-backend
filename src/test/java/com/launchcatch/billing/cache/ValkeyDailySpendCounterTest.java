@@ -1,4 +1,4 @@
-package com.launchcatch.billing.repository;
+package com.launchcatch.billing.cache;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -28,7 +28,7 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.RedisScript;
 
 @ExtendWith(MockitoExtension.class)
-class DailySpendHashRepositoryTest {
+class ValkeyDailySpendCounterTest {
 
     private static final LocalDate DAY = LocalDate.of(2026, 10, 1);
     private static final UUID SERVE_ID = UUID.fromString("0192f3a4-7b5c-7d1e-9a2b-3c4d5e6f7a8b");
@@ -43,7 +43,7 @@ class DailySpendHashRepositoryTest {
         // 2026-10-01 00:00:00.000001 KST 는 2026-09-30 15:00:00.000001 UTC 다
         LocalDateTime changedAt = LocalDateTime.of(2026, 10, 1, 0, 0, 0, 1_000);
 
-        boolean applied = new DailySpendHashRepository(redisTemplate).applyStatus(DAY, 12L, true, changedAt);
+        boolean applied = new ValkeyDailySpendCounter(redisTemplate).applyStatus(DAY, 12L, true, changedAt);
 
         ArgumentCaptor<List<String>> keys = ArgumentCaptor.forClass(List.class);
         ArgumentCaptor<Object[]> args = ArgumentCaptor.forClass(Object[].class);
@@ -56,7 +56,7 @@ class DailySpendHashRepositoryTest {
     @Test
     void 스크립트가_반영하지_않았거나_응답이_없으면_false다() {
         when(redisTemplate.execute(any(RedisScript.class), anyList(), any(Object[].class))).thenReturn(0L, (Long) null);
-        DailySpendHashRepository repository = new DailySpendHashRepository(redisTemplate);
+        ValkeyDailySpendCounter repository = new ValkeyDailySpendCounter(redisTemplate);
         LocalDateTime changedAt = LocalDateTime.of(2026, 10, 1, 10, 0);
 
         assertThat(repository.applyStatus(DAY, 12L, false, changedAt)).isFalse();
@@ -65,7 +65,7 @@ class DailySpendHashRepositoryTest {
 
     @Test
     void 해시를_지울_때도_같은_키를_쓴다() {
-        new DailySpendHashRepository(redisTemplate).evict(DAY, 12L);
+        new ValkeyDailySpendCounter(redisTemplate).evict(DAY, 12L);
 
         verify(redisTemplate).delete("billing:day:2026-10-01:12");
     }
@@ -75,7 +75,7 @@ class DailySpendHashRepositoryTest {
     void 판정은_해시와_처리_표시_두_키에_단가와_표시_수명을_넘긴다() {
         when(redisTemplate.execute(any(RedisScript.class), anyList(), any(Object[].class))).thenReturn("BILLED");
 
-        DeductOutcome outcome = new DailySpendHashRepository(redisTemplate).deduct(DAY, 12L, SERVE_ID, 10L);
+        DeductOutcome outcome = new ValkeyDailySpendCounter(redisTemplate).deduct(DAY, 12L, SERVE_ID, 10L);
 
         ArgumentCaptor<List<String>> keys = ArgumentCaptor.forClass(List.class);
         ArgumentCaptor<Object[]> args = ArgumentCaptor.forClass(Object[].class);
@@ -91,7 +91,7 @@ class DailySpendHashRepositoryTest {
     void 세_가지_판정을_그대로_돌려준다() {
         when(redisTemplate.execute(any(RedisScript.class), anyList(), any(Object[].class)))
                 .thenReturn("NOT_BILLED_BUDGET", "NOT_BILLED_PAUSED");
-        DailySpendHashRepository repository = new DailySpendHashRepository(redisTemplate);
+        ValkeyDailySpendCounter repository = new ValkeyDailySpendCounter(redisTemplate);
 
         assertThat(repository.deduct(DAY, 12L, SERVE_ID, 10L).status()).isEqualTo(DeductionStatus.NOT_BILLED_BUDGET);
         assertThat(repository.deduct(DAY, 12L, SERVE_ID, 10L).status()).isEqualTo(DeductionStatus.NOT_BILLED_PAUSED);
@@ -101,7 +101,7 @@ class DailySpendHashRepositoryTest {
     void 해시가_없다는_응답은_판정이_아니라_해시_없음이다() {
         when(redisTemplate.execute(any(RedisScript.class), anyList(), any(Object[].class))).thenReturn("HASH_MISSING");
 
-        DeductOutcome outcome = new DailySpendHashRepository(redisTemplate).deduct(DAY, 12L, SERVE_ID, 10L);
+        DeductOutcome outcome = new ValkeyDailySpendCounter(redisTemplate).deduct(DAY, 12L, SERVE_ID, 10L);
 
         assertThat(outcome.isHashMissing()).isTrue();
         assertThat(outcome.status()).isNull();
@@ -111,7 +111,7 @@ class DailySpendHashRepositoryTest {
     void 응답이_없으면_대체_판정을_만들지_않고_예외다() {
         when(redisTemplate.execute(any(RedisScript.class), anyList(), any(Object[].class))).thenReturn(null);
 
-        assertThatThrownBy(() -> new DailySpendHashRepository(redisTemplate).deduct(DAY, 12L, SERVE_ID, 10L))
+        assertThatThrownBy(() -> new ValkeyDailySpendCounter(redisTemplate).deduct(DAY, 12L, SERVE_ID, 10L))
                 .isInstanceOf(IllegalStateException.class);
     }
 
@@ -119,7 +119,7 @@ class DailySpendHashRepositoryTest {
     void 모르는_응답은_예외다() {
         when(redisTemplate.execute(any(RedisScript.class), anyList(), any(Object[].class))).thenReturn("???");
 
-        assertThatThrownBy(() -> new DailySpendHashRepository(redisTemplate).deduct(DAY, 12L, SERVE_ID, 10L))
+        assertThatThrownBy(() -> new ValkeyDailySpendCounter(redisTemplate).deduct(DAY, 12L, SERVE_ID, 10L))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
@@ -129,7 +129,7 @@ class DailySpendHashRepositoryTest {
         when(redisTemplate.execute(any(RedisScript.class), anyList(), any(Object[].class))).thenReturn(1L);
         LocalDateTime changedAt = LocalDateTime.of(2026, 10, 1, 0, 0, 0, 1_000);
 
-        boolean created = new DailySpendHashRepository(redisTemplate).rebuildIfAbsent(DAY, 12L, 1000L, 250L, true, changedAt);
+        boolean created = new ValkeyDailySpendCounter(redisTemplate).rebuildIfAbsent(DAY, 12L, 1000L, 250L, true, changedAt);
 
         ArgumentCaptor<List<String>> keys = ArgumentCaptor.forClass(List.class);
         ArgumentCaptor<Object[]> args = ArgumentCaptor.forClass(Object[].class);
@@ -144,7 +144,7 @@ class DailySpendHashRepositoryTest {
     void 변경_시각이_없으면_0으로_적는다() {
         when(redisTemplate.execute(any(RedisScript.class), anyList(), any(Object[].class))).thenReturn(1L);
 
-        new DailySpendHashRepository(redisTemplate).rebuildIfAbsent(DAY, 12L, 1000L, 0L, false, null);
+        new ValkeyDailySpendCounter(redisTemplate).rebuildIfAbsent(DAY, 12L, 1000L, 0L, false, null);
 
         ArgumentCaptor<Object[]> args = ArgumentCaptor.forClass(Object[].class);
         verify(redisTemplate).execute(any(RedisScript.class), anyList(), args.capture());
@@ -154,7 +154,7 @@ class DailySpendHashRepositoryTest {
     @Test
     void 이미_있거나_응답이_없으면_false다() {
         when(redisTemplate.execute(any(RedisScript.class), anyList(), any(Object[].class))).thenReturn(0L, (Long) null);
-        DailySpendHashRepository repository = new DailySpendHashRepository(redisTemplate);
+        ValkeyDailySpendCounter repository = new ValkeyDailySpendCounter(redisTemplate);
 
         assertThat(repository.rebuildIfAbsent(DAY, 12L, 1000L, 0L, false, null)).isFalse();
         assertThat(repository.rebuildIfAbsent(DAY, 12L, 1000L, 0L, false, null)).isFalse();
@@ -180,7 +180,7 @@ class DailySpendHashRepositoryTest {
                 Arrays.asList(null, null),
                 Arrays.asList("500", null)));
 
-        Map<Long, DailySpend> result = new DailySpendHashRepository(redisTemplate).readAll(DAY, List.of(1L, 2L, 3L));
+        Map<Long, DailySpend> result = new ValkeyDailySpendCounter(redisTemplate).readAll(DAY, List.of(1L, 2L, 3L));
 
         assertThat(result).containsOnlyKeys(1L, 3L);
         assertThat(result.get(1L)).isEqualTo(new DailySpend(1000L, 250L));
@@ -192,7 +192,7 @@ class DailySpendHashRepositoryTest {
 
     @Test
     void 캠페인이_없으면_Valkey를_부르지_않는다() {
-        Map<Long, DailySpend> result = new DailySpendHashRepository(redisTemplate).readAll(DAY, List.of());
+        Map<Long, DailySpend> result = new ValkeyDailySpendCounter(redisTemplate).readAll(DAY, List.of());
 
         assertThat(result).isEmpty();
         verify(redisTemplate, never()).executePipelined(any(SessionCallback.class));

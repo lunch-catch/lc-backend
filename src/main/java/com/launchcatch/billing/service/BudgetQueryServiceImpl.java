@@ -5,8 +5,8 @@ import com.launchcatch.billing.config.BillingScheduleProperties;
 import com.launchcatch.billing.contract.BudgetProgress;
 import com.launchcatch.billing.contract.BudgetQueryService;
 import com.launchcatch.billing.dto.PlanSnapshot;
-import com.launchcatch.billing.repository.DailySpend;
-import com.launchcatch.billing.repository.DailySpendHashRepository;
+import com.launchcatch.billing.cache.DailySpend;
+import com.launchcatch.billing.cache.DailySpendCounter;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -42,7 +42,7 @@ public class BudgetQueryServiceImpl implements BudgetQueryService {
 
     private final DailyPlanSnapshotService snapshotService;
     private final HourlyTargetService targetService;
-    private final DailySpendHashRepository hashRepository;
+    private final DailySpendCounter spendCounter;
     private final SpendHashRebuildService rebuildService;
     private final BillingScheduleProperties schedule;
     private final MeterRegistry meterRegistry;
@@ -80,7 +80,7 @@ public class BudgetQueryServiceImpl implements BudgetQueryService {
 
     // 해시가 없는 캠페인은 재구성한 뒤 그 캠페인만 다시 읽는다. 그래도 없으면 예외다
     private Map<Long, DailySpend> readSpends(Collection<Long> campaignIds, LocalDate businessDate) {
-        Map<Long, DailySpend> spends = new HashMap<>(hashRepository.readAll(businessDate, List.copyOf(campaignIds)));
+        Map<Long, DailySpend> spends = new HashMap<>(spendCounter.readAll(businessDate, List.copyOf(campaignIds)));
         List<Long> missing = new ArrayList<>();
         for (Long campaignId : campaignIds) {
             if (!spends.containsKey(campaignId)) {
@@ -93,7 +93,7 @@ public class BudgetQueryServiceImpl implements BudgetQueryService {
         for (Long campaignId : missing) {
             rebuildService.rebuildIfAbsent(businessDate, campaignId);
         }
-        spends.putAll(hashRepository.readAll(businessDate, missing));
+        spends.putAll(spendCounter.readAll(businessDate, missing));
         for (Long campaignId : missing) {
             if (!spends.containsKey(campaignId)) {
                 throw new IllegalStateException(

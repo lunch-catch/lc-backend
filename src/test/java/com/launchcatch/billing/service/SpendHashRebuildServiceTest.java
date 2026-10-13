@@ -7,7 +7,7 @@ import static org.mockito.Mockito.when;
 
 import com.launchcatch.billing.entity.BudgetDailyPlan;
 import com.launchcatch.billing.repository.BudgetDailyPlanRepository;
-import com.launchcatch.billing.repository.DailySpendHashRepository;
+import com.launchcatch.billing.cache.DailySpendCounter;
 import com.launchcatch.billing.repository.PointLedgerRepository;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.LocalDate;
@@ -32,14 +32,14 @@ class SpendHashRebuildServiceTest {
     @Mock
     private PointLedgerRepository ledgerRepository;
     @Mock
-    private DailySpendHashRepository hashRepository;
+    private DailySpendCounter spendCounter;
 
     private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
     private SpendHashRebuildService service;
 
     @BeforeEach
     void setUp() {
-        service = new SpendHashRebuildService(planRepository, ledgerRepository, hashRepository, meterRegistry);
+        service = new SpendHashRebuildService(planRepository, ledgerRepository, spendCounter, meterRegistry);
     }
 
     private static BudgetDailyPlan plan() {
@@ -58,7 +58,7 @@ class SpendHashRebuildServiceTest {
     void 계획과_원장_합으로_해시를_만들고_지표를_올린다() {
         when(planRepository.findByCampaignIdAndBusinessDate(7L, DAY)).thenReturn(Optional.of(plan()));
         when(ledgerRepository.sumDeductForCampaignOn(7L, DAY)).thenReturn(250L);
-        when(hashRepository.rebuildIfAbsent(DAY, 7L, 1000L, 250L, true, CHANGED_AT)).thenReturn(true);
+        when(spendCounter.rebuildIfAbsent(DAY, 7L, 1000L, 250L, true, CHANGED_AT)).thenReturn(true);
 
         assertThat(service.rebuildIfAbsent(DAY, 7L)).isTrue();
         assertThat(rebuildCount()).isEqualTo(1.0);
@@ -68,7 +68,7 @@ class SpendHashRebuildServiceTest {
     void 이미_있어_만들지_않았으면_지표를_올리지_않는다() {
         when(planRepository.findByCampaignIdAndBusinessDate(7L, DAY)).thenReturn(Optional.of(plan()));
         when(ledgerRepository.sumDeductForCampaignOn(7L, DAY)).thenReturn(0L);
-        when(hashRepository.rebuildIfAbsent(DAY, 7L, 1000L, 0L, true, CHANGED_AT)).thenReturn(false);
+        when(spendCounter.rebuildIfAbsent(DAY, 7L, 1000L, 0L, true, CHANGED_AT)).thenReturn(false);
 
         assertThat(service.rebuildIfAbsent(DAY, 7L)).isFalse();
         assertThat(rebuildCount()).isZero();
@@ -81,6 +81,6 @@ class SpendHashRebuildServiceTest {
         assertThatThrownBy(() -> service.rebuildIfAbsent(DAY, 7L))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("campaignId=7");
-        verifyNoInteractions(hashRepository, ledgerRepository);
+        verifyNoInteractions(spendCounter, ledgerRepository);
     }
 }

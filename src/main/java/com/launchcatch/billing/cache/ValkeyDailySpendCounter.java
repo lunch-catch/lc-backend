@@ -1,4 +1,4 @@
-package com.launchcatch.billing.repository;
+package com.launchcatch.billing.cache;
 
 import com.launchcatch.billing.contract.DeductionStatus;
 import com.launchcatch.global.config.ClockConfig;
@@ -20,7 +20,7 @@ import org.springframework.data.redis.core.SessionCallback;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.data.redis.core.script.RedisScript;
-import org.springframework.stereotype.Repository;
+import org.springframework.stereotype.Component;
 
 /*
  * 캠페인 하루치 차감 판정 입력을 모은 Valkey 해시다. 정본은 budget_daily_plan 이고 이것은 미러다.
@@ -32,9 +32,9 @@ import org.springframework.stereotype.Repository;
  * changedAt 은 KST 기준 epoch 마이크로초로 적는다. 문자열 시각은 LocalDateTime.toString 이 초나
  * 소수부를 생략할 때 길이가 달라져 사전순 비교가 틀린다.
  */
-@Repository
+@Component
 @RequiredArgsConstructor
-public class DailySpendHashRepository {
+public class ValkeyDailySpendCounter implements DailySpendCounter {
 
     private static final String KEY_PREFIX = "billing:day:";
     private static final String SERVED_PREFIX = "billing:served:";
@@ -54,6 +54,7 @@ public class DailySpendHashRepository {
     private final StringRedisTemplate redisTemplate;
 
     // 해시가 있고 저장된 시각보다 늦은 변경이면 중단 표시를 바꾸고 true 를 돌려준다
+    @Override
     public boolean applyStatus(LocalDate businessDate, Long campaignId, boolean paused, LocalDateTime changedAt) {
         Long applied = redisTemplate.execute(APPLY_STATUS_SCRIPT,
                 List.of(key(businessDate, campaignId)),
@@ -63,6 +64,7 @@ public class DailySpendHashRepository {
     }
 
     // 해시를 지운다. 다음 차감이 DB 정본으로 다시 만든다
+    @Override
     public void evict(LocalDate businessDate, Long campaignId) {
         redisTemplate.delete(key(businessDate, campaignId));
     }
@@ -73,6 +75,7 @@ public class DailySpendHashRepository {
      *
      * 두 키를 한 스크립트에서 쓰므로 비클러스터 Valkey 를 전제한다. 클러스터 모드면 해시 태그가 필요하다.
      */
+    @Override
     public DeductOutcome deduct(LocalDate businessDate, Long campaignId, UUID serveId, long unitPrice) {
         String reply = redisTemplate.execute(DEDUCT_SCRIPT,
                 List.of(key(businessDate, campaignId), servedKey(serveId)),
@@ -91,6 +94,7 @@ public class DailySpendHashRepository {
      * 해시가 없을 때만 DB 정본으로 만든다. 만들었으면 true, 이미 있어 그대로 두었으면 false 다.
      * changedAt 이 아직 없는 계획(상태가 바뀐 적 없음)은 0 으로 적어 어떤 변경이든 반영되게 한다.
      */
+    @Override
     public boolean rebuildIfAbsent(LocalDate businessDate, Long campaignId, long reserved, long spend,
                                    boolean paused, LocalDateTime changedAt) {
         Long created = redisTemplate.execute(REBUILD_SCRIPT,
@@ -108,6 +112,7 @@ public class DailySpendHashRepository {
      * 해시가 없는 캠페인은 결과에 없다. 재구성 여부는 부른 쪽이 정한다.
      * Valkey 예외는 그대로 던진다. 대체값을 돌려주지 않는다.
      */
+    @Override
     public Map<Long, DailySpend> readAll(LocalDate businessDate, Collection<Long> campaignIds) {
         if (campaignIds.isEmpty()) {
             return Map.of();
