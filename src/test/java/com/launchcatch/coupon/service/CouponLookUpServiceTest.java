@@ -566,6 +566,11 @@ class CouponLookUpServiceTest {
                         assertThat(exception.getErrorCode().getCode()).isEqualTo("COUPON-015");
                         assertThat(exception.getErrorCode().getHttpStatus().value()).isEqualTo(403);
                     });
+            assertThat(diagnosticLogs.list).singleElement().satisfies(event -> {
+                assertThat(event.getLevel()).isEqualTo(Level.WARN);
+                assertThat(event.getFormattedMessage()).isEqualTo(
+                        "event=COUPON_DETAIL_FAILED memberId=17 memberCouponId=" + memberCouponId + " reason=COUPON-015");
+            });
         }
 
         @Test
@@ -579,6 +584,11 @@ class CouponLookUpServiceTest {
                         assertThat(exception.getErrorCode().getCode()).isEqualTo("COUPON-001");
                         assertThat(exception.getErrorCode().getHttpStatus().value()).isEqualTo(404);
                     });
+            assertThat(diagnosticLogs.list).singleElement().satisfies(event -> {
+                assertThat(event.getLevel()).isEqualTo(Level.WARN);
+                assertThat(event.getFormattedMessage()).isEqualTo(
+                        "event=COUPON_DETAIL_FAILED memberId=17 memberCouponId=1001 reason=COUPON-001");
+            });
         }
 
         @Test

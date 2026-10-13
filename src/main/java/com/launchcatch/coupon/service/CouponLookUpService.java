@@ -135,8 +135,14 @@ public class CouponLookUpService {
     // 본인 소유 쿠폰을 조회하고 소유권 확인 실패와 삭제된 쿠폰을 구분해 거절한다.
     private MemberCoupon findOwnedCoupon(Long memberId, Long memberCouponId) {
         MemberCoupon coupon = memberCouponRepository.findByIdAndMemberId(memberCouponId, memberId)
-                .orElseThrow(() -> new CouponException(CouponErrorCode.COUPON_ACCESS_DENIED));
+                .orElseThrow(() -> {
+                    log.warn("event=COUPON_DETAIL_FAILED memberId={} memberCouponId={} reason={}",
+                            memberId, memberCouponId, CouponErrorCode.COUPON_ACCESS_DENIED.getCode());
+                    return new CouponException(CouponErrorCode.COUPON_ACCESS_DENIED);
+                });
         if (coupon.getStatus() == MemberCouponStatus.REMOVED) {
+            log.warn("event=COUPON_DETAIL_FAILED memberId={} memberCouponId={} reason={}",
+                    memberId, memberCouponId, CouponErrorCode.COUPON_NOT_FOUND.getCode());
             throw new CouponException(CouponErrorCode.COUPON_NOT_FOUND);
         }
         return coupon;
