@@ -35,6 +35,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.transaction.support.TransactionCallback;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -63,6 +64,8 @@ class TemplateCreateServiceTest {
     private TemplateHtmlGenerator templateHtmlGenerator;
     @Mock
     private TransactionTemplate transactionTemplate;
+    @Mock
+    private StringRedisTemplate redisTemplate;
 
     private TemplateCreateService service;
 
@@ -76,6 +79,7 @@ class TemplateCreateServiceTest {
                 templateHtmlGenerator,
                 new TemplateHtmlSanitizer(),
                 new TemplateSlotValidator(),
+                new TemplateGenerationRateLimiter(redisTemplate),
                 transactionTemplate,
                 FIXED_CLOCK);
         lenient().when(templateVersionRepository.findByRequestId(REQUEST_ID)).thenReturn(Optional.empty());
@@ -125,7 +129,21 @@ class TemplateCreateServiceTest {
         assertThat(response.versionNumber()).isEqualTo(1);
         assertThat(response.html()).isEqualTo(VALID_HTML);
         assertThat(response.removedElements()).isEmpty();
-        verifyNoInteractions(templateRepository, templateHtmlGenerator, templateQuotaRepository, transactionTemplate);
+        verifyNoInteractions(
+                templateRepository, templateHtmlGenerator, templateQuotaRepository, transactionTemplate,
+                redisTemplate);
+    }
+
+    @Test
+    @DisplayName("분당 3회를 넘으면 LLM 을 부르지 않고 POSTER-010 으로 거부한다")
+    void 속도_제한을_넘으면_거부한다() {
+        when(redisTemplate.execute(any(), any(), any())).thenReturn(4L);
+
+        assertThatThrownBy(() -> service.create("가을 신메뉴", "가을 느낌", REQUEST_ID, ADMIN_ID))
+                .isInstanceOf(CampaignException.class)
+                .extracting(e -> ((CampaignException) e).getErrorCode())
+                .isEqualTo(PosterErrorCode.GENERATION_RATE_LIMITED);
+        verifyNoInteractions(templateHtmlGenerator);
     }
 
     @Test

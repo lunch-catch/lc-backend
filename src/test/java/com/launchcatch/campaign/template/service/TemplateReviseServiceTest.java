@@ -32,6 +32,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.transaction.support.TransactionCallback;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -59,6 +60,8 @@ class TemplateReviseServiceTest {
     private TemplateHtmlGenerator templateHtmlGenerator;
     @Mock
     private TransactionTemplate transactionTemplate;
+    @Mock
+    private StringRedisTemplate redisTemplate;
 
     private TemplateReviseService service;
 
@@ -72,6 +75,7 @@ class TemplateReviseServiceTest {
                 new TemplateHtmlSanitizer(),
                 new TemplateSlotValidator(),
                 new TemplateStructureValidator(),
+                new TemplateGenerationRateLimiter(redisTemplate),
                 transactionTemplate,
                 FIXED_CLOCK);
         lenient().when(templateVersionRepository.findByRequestId(REQUEST_ID)).thenReturn(Optional.empty());
@@ -116,6 +120,19 @@ class TemplateReviseServiceTest {
         assertThat(response.removedElements()).isEmpty();
         verify(templateRepository, never()).findById(any());
         verify(templateRepository, never()).findByIdForUpdate(any());
+        verify(templateHtmlGenerator, never()).revise(any(), any());
+        verify(redisTemplate, never()).execute(any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("분당 3회를 넘으면 LLM 을 부르지 않고 POSTER-010 으로 거부한다")
+    void 속도_제한을_넘으면_거부한다() {
+        when(redisTemplate.execute(any(), any(), any())).thenReturn(4L);
+
+        assertThatThrownBy(() -> service.revise(TEMPLATE_ID, "버튼 색 바꿔줘", REQUEST_ID, ADMIN_ID))
+                .isInstanceOf(CampaignException.class)
+                .extracting(e -> ((CampaignException) e).getErrorCode())
+                .isEqualTo(PosterErrorCode.GENERATION_RATE_LIMITED);
         verify(templateHtmlGenerator, never()).revise(any(), any());
     }
 

@@ -33,6 +33,7 @@ public class TemplateCreateService {
     private final TemplateHtmlGenerator templateHtmlGenerator;
     private final TemplateHtmlSanitizer templateHtmlSanitizer;
     private final TemplateSlotValidator templateSlotValidator;
+    private final TemplateGenerationRateLimiter templateGenerationRateLimiter;
     private final TransactionTemplate transactionTemplate;
     private final Clock clock;
 
@@ -42,12 +43,16 @@ public class TemplateCreateService {
      * 연결을 잡지 않으려는 것이다. 저장만 트랜잭션으로 묶는다. 여기서의 개수 확인은
      * LLM을 부르지 않으려는 빠른 실패용일 뿐이고, 진짜 안전장치는 save() 안의 조건부
      * UPDATE 와 request_id 의 UNIQUE 제약이다.
+     *
+     * requestId 재시도가 아니라고 확인한 뒤에만 속도 제한을 센다(#227). 멱등성으로
+     * 걸러지는 같은 요청의 재시도까지 관리자의 호출 횟수로 세면 안 된다.
      */
     public TemplateCreateResponse create(String name, String requestPrompt, String requestId, Long adminId) {
         var existing = templateVersionRepository.findByRequestId(requestId);
         if (existing.isPresent()) {
             return toResponse(existing.get(), List.of());
         }
+        templateGenerationRateLimiter.checkLimit(adminId);
         if (templateRepository.count() >= MAX_TEMPLATES) {
             throw new CampaignException(PosterErrorCode.TEMPLATE_LIMIT_EXCEEDED);
         }
