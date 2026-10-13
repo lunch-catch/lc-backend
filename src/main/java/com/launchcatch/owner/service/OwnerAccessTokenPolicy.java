@@ -7,11 +7,13 @@ import com.launchcatch.auth.contract.AccessTokenValidationPolicy;
 import com.launchcatch.auth.jwt.CutoffPolicy;
 import java.time.LocalDateTime;
 import com.launchcatch.owner.repository.OwnerAccessTokenVersionRepository;
+import com.launchcatch.owner.repository.OwnerAccessTokenRevocationRepository;
 import java.util.Map;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataAccessException;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.TransactionException;
 
 @Slf4j
 @Service
@@ -19,6 +21,7 @@ import org.springframework.stereotype.Service;
 public class OwnerAccessTokenPolicy implements AccessTokenValidationPolicy {
     private static final String VERSION_CLAIM = "issuanceVersion";
     private final OwnerAccessTokenVersionRepository versions;
+    private final OwnerAccessTokenRevocationRepository revocations;
 
     @Override
     public boolean supports(Role role) { return role == Role.OWNER; }
@@ -39,12 +42,24 @@ public class OwnerAccessTokenPolicy implements AccessTokenValidationPolicy {
             return false;
         }
         try {
+            var revokedVersion = revocations.findRevokedVersion(subjectId);
+            if (revokedVersion.isEmpty() || version <= revokedVersion.get()) {
+                return false;
+            }
+        } catch (DataAccessException | TransactionException e) {
+            log.warn("event=OWNER_ACCESS_TOKEN_DB_CHECK_FAILED ownerId={} errorType={}", subjectId, e.getClass().getSimpleName());
+            if (policy == CutoffPolicy.REQUIRED) {
+                throw new AuthException(AuthErrorCode.REFRESH_TOKEN_STORE_UNAVAILABLE);
+            }
+            return false;
+        }
+        try {
             return versions.isValid(subjectId, version);
         } catch (DataAccessException e) {
             if (policy == CutoffPolicy.REQUIRED) {
                 throw new AuthException(AuthErrorCode.REFRESH_TOKEN_STORE_UNAVAILABLE, e);
             }
-            // 일반 인증은 Redis 조회 장애를 허용한다.
+            // DB에서 폐기되지 않은 AT만 일반 인증의 Redis 조회 장애를 허용한다.
             log.warn("event=OWNER_ACCESS_TOKEN_VERSION_CHECK_FAILED ownerId={} policy=LENIENT", subjectId);
             return true;
         }

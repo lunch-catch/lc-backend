@@ -7,6 +7,10 @@ import com.launchcatch.auth.Role;
 import com.launchcatch.auth.exception.AuthException;
 import com.launchcatch.auth.jwt.CutoffPolicy;
 import com.launchcatch.owner.repository.OwnerAccessTokenVersionRepository;
+import com.launchcatch.owner.repository.OwnerAccessTokenRevocationRepository;
+import java.util.Optional;
+import org.junit.jupiter.api.BeforeEach;
+import org.springframework.transaction.CannotCreateTransactionException;
 import java.time.LocalDateTime;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
@@ -17,7 +21,13 @@ import org.springframework.dao.DataAccessResourceFailureException;
 class OwnerAccessTokenPolicyTest {
     private static final LocalDateTime ISSUED_AT = LocalDateTime.of(2026, 10, 13, 12, 0);
     private final OwnerAccessTokenVersionRepository versions = mock(OwnerAccessTokenVersionRepository.class);
-    private final OwnerAccessTokenPolicy policy = new OwnerAccessTokenPolicy(versions);
+    private final OwnerAccessTokenRevocationRepository revocations = mock(OwnerAccessTokenRevocationRepository.class);
+    private final OwnerAccessTokenPolicy policy = new OwnerAccessTokenPolicy(versions, revocations);
+
+    @BeforeEach
+    void setUp() {
+        when(revocations.findRevokedVersion(7L)).thenReturn(Optional.of(-1L));
+    }
 
     @Test
     void 큰_순번도_문자열로_서명하고_검증한다() {
@@ -73,6 +83,50 @@ class OwnerAccessTokenPolicyTest {
         assertThatThrownBy(() -> policy.isValid(Role.OWNER, 7L, ISSUED_AT, claims, CutoffPolicy.REQUIRED))
                 .isInstanceOfSatisfying(AuthException.class,
                         e -> assertThat(e.getErrorCode().getCode()).isEqualTo("AUTH-002"));
+    }
+
+    @Test
+    void DB에서_폐기한_AT는_Redis_상태와_무관하게_거부한다() {
+        when(revocations.findRevokedVersion(7L)).thenReturn(Optional.of(2L));
+        assertThat(valid(OwnerAccessTokenPolicy.additionalClaims(1L))).isFalse();
+        assertThat(valid(OwnerAccessTokenPolicy.additionalClaims(2L))).isFalse();
+        assertThat(valid(Map.of())).isFalse();
+        verifyNoInteractions(versions);
+    }
+
+    @Test
+    void 폐기_이후_새_순번의_AT는_허용한다() {
+        when(revocations.findRevokedVersion(7L)).thenReturn(Optional.of(2L));
+        when(versions.isValid(7L, 3L)).thenReturn(true);
+        assertThat(valid(OwnerAccessTokenPolicy.additionalClaims(3L))).isTrue();
+    }
+
+    @Test
+    void 없는_계정은_인증을_거부한다() {
+        when(revocations.findRevokedVersion(7L)).thenReturn(Optional.empty());
+        assertThat(valid(OwnerAccessTokenPolicy.additionalClaims(1L))).isFalse();
+        verifyNoInteractions(versions);
+    }
+
+    @Test
+    void DB_조회_장애는_LENIENT도_거부한다() {
+        when(revocations.findRevokedVersion(7L)).thenThrow(new DataAccessResourceFailureException("DB"));
+        assertDatabaseFailure();
+    }
+
+    @Test
+    void DB_트랜잭션_장애도_인증을_거부한다() {
+        when(revocations.findRevokedVersion(7L)).thenThrow(new CannotCreateTransactionException("DB"));
+        assertDatabaseFailure();
+    }
+
+    private void assertDatabaseFailure() {
+        var claims = OwnerAccessTokenPolicy.additionalClaims(1L);
+        assertThat(valid(claims)).isFalse();
+        assertThatThrownBy(() -> policy.isValid(Role.OWNER, 7L, ISSUED_AT, claims, CutoffPolicy.REQUIRED))
+                .isInstanceOfSatisfying(AuthException.class,
+                        e -> assertThat(e.getErrorCode().getCode()).isEqualTo("AUTH-002"));
+        verifyNoInteractions(versions);
     }
 
     private boolean valid(Map<String, Object> claims) {

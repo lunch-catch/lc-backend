@@ -36,11 +36,15 @@ class OwnerLogoutSecurityIntegrationTest {
     @Autowired OwnerLogoutService service;
     @Autowired JwtTokenProvider jwt;
     @Autowired AccessTokenValidAfterRepository cutoff;
+    @Autowired com.launchcatch.owner.repository.OwnerAccessTokenRevocationRepository revocations;
+    @Autowired com.launchcatch.owner.repository.OwnerAccessTokenVersionRepository versions;
     private MockMvc mvc;
 
     @BeforeEach
     void setUp() {
-        reset(service, cutoff);
+        reset(service, cutoff, revocations, versions);
+        when(revocations.findRevokedVersion(7L)).thenReturn(java.util.Optional.of(-1L));
+        when(versions.isValid(any(), anyLong())).thenReturn(true);
         when(cutoff.isValidAfter(any(), any(), any())).thenReturn(true);
         mvc = MockMvcBuilders.webAppContextSetup(context).apply(springSecurity()).build();
     }
@@ -75,10 +79,27 @@ class OwnerLogoutSecurityIntegrationTest {
 
     @Test
     void 차단된_AT는_401이다() throws Exception {
-        when(cutoff.isValidAfter(any(), any(), any())).thenReturn(false);
+        when(revocations.findRevokedVersion(7L)).thenReturn(java.util.Optional.of(0L));
         mvc.perform(delete("/v1/owner/auth/tokens").cookie(new Cookie("accessToken", jwt.createAccessToken(7L, Role.OWNER))))
                 .andExpect(status().isUnauthorized());
         verifyNoInteractions(service);
+    }
+
+    @Test
+    void Redis_장애여도_DB에서_폐기한_AT는_401이다() throws Exception {
+        when(revocations.findRevokedVersion(7L)).thenReturn(java.util.Optional.of(1L));
+        when(versions.isValid(any(), anyLong())).thenThrow(new org.springframework.dao.DataAccessResourceFailureException("Redis"));
+        mvc.perform(delete("/v1/owner/auth/tokens").cookie(new Cookie("accessToken", jwt.createAccessToken(7L, Role.OWNER))))
+                .andExpect(status().isUnauthorized());
+        verifyNoInteractions(service, versions);
+    }
+
+    @Test
+    void DB_조회_장애시_인증을_거부한다() throws Exception {
+        when(revocations.findRevokedVersion(7L)).thenThrow(new org.springframework.dao.DataAccessResourceFailureException("DB"));
+        mvc.perform(delete("/v1/owner/auth/tokens").cookie(new Cookie("accessToken", jwt.createAccessToken(7L, Role.OWNER))))
+                .andExpect(status().isUnauthorized());
+        verifyNoInteractions(service, versions);
     }
 
     @Test
@@ -92,9 +113,11 @@ class OwnerLogoutSecurityIntegrationTest {
     @Configuration(proxyBeanMethods=false)
     @EnableWebMvc
     @Import({SecurityConfig.class, ApiSecurityDefaults.class, OwnerSecurityConfig.class,
-            OwnerLogoutController.class, AuthCookieFactory.class, GlobalExceptionHandler.class, AuthExceptionHandler.class})
+            OwnerLogoutController.class, com.launchcatch.owner.service.OwnerAccessTokenPolicy.class, AuthCookieFactory.class, GlobalExceptionHandler.class, AuthExceptionHandler.class})
     static class Config {
         @Bean org.springframework.data.redis.core.StringRedisTemplate redis() { return mock(org.springframework.data.redis.core.StringRedisTemplate.class); }
+        @Bean com.launchcatch.owner.repository.OwnerAccessTokenRevocationRepository revocations() { return mock(com.launchcatch.owner.repository.OwnerAccessTokenRevocationRepository.class); }
+        @Bean com.launchcatch.owner.repository.OwnerAccessTokenVersionRepository versions() { return mock(com.launchcatch.owner.repository.OwnerAccessTokenVersionRepository.class); }
         @Bean OwnerLogoutService service() { return mock(OwnerLogoutService.class); }
         @Bean AccessTokenValidAfterRepository cutoff() { return mock(AccessTokenValidAfterRepository.class); }
         @Bean Clock clock() { return Clock.system(ZoneId.of("Asia/Seoul")); }

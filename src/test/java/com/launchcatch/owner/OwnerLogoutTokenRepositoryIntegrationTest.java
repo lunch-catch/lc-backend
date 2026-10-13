@@ -141,11 +141,14 @@ class OwnerLogoutTokenRepositoryIntegrationTest {
     }
 
     private boolean authenticated(com.launchcatch.auth.jwt.JwtTokenProvider jwt, String token) throws Exception {
+        var revocations = org.mockito.Mockito.mock(com.launchcatch.owner.repository.OwnerAccessTokenRevocationRepository.class);
+        org.mockito.Mockito.when(revocations.findRevokedVersion(org.mockito.ArgumentMatchers.anyLong()))
+                .thenReturn(java.util.Optional.of(-1L));
         var request = new org.springframework.mock.web.MockHttpServletRequest();
         request.setCookies(new jakarta.servlet.http.Cookie("accessToken", token));
         var response = new org.springframework.mock.web.MockHttpServletResponse();
         try {
-            new com.launchcatch.auth.jwt.JwtAuthenticationFilter(jwt, cutoff, java.util.List.of(new com.launchcatch.owner.service.OwnerAccessTokenPolicy(versions)))
+            new com.launchcatch.auth.jwt.JwtAuthenticationFilter(jwt, cutoff, java.util.List.of(new com.launchcatch.owner.service.OwnerAccessTokenPolicy(versions, revocations)))
                     .doFilter(request, response, new org.springframework.mock.web.MockFilterChain());
             return org.springframework.security.core.context.SecurityContextHolder.getContext().getAuthentication() != null;
         } finally {

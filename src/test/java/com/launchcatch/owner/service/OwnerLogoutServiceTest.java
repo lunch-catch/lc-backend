@@ -37,7 +37,7 @@ class OwnerLogoutServiceTest {
     @BeforeEach
     void setUp() {
         owner = Owner.create("owner@example.com", "hash");
-        owner.recordLogin("a".repeat(64), LocalDateTime.now(clock).plusDays(14), LocalDateTime.now(clock));
+        owner.recordLogin("a".repeat(64), LocalDateTime.now(clock).plusDays(1), LocalDateTime.now(clock));
         when(owners.findByIdForLogin(7L)).thenReturn(Optional.of(owner));
         when(manager.getTransaction(any())).thenReturn(new SimpleTransactionStatus());
         when(jwt.getAccessTokenValidityMs()).thenReturn(1800000L);
@@ -52,6 +52,7 @@ class OwnerLogoutServiceTest {
         assertThat(owner.getRefreshTokenHash()).isNull();
         assertThat(owner.getRefreshTokenExpiresAt()).isNull();
         assertThat(owner.getRefreshTokenIssuanceVersion()).isEqualTo(2);
+        assertThat(owner.getAccessTokenRevokedVersion()).isEqualTo(2);
         verify(tokens).revokeThroughVersion(7L, "a".repeat(64), 2L);
         verify(cutoff).invalidateThroughVersion(7L, 2L);
     }
