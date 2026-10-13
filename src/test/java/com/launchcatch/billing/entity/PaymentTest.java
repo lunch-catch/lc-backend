@@ -93,6 +93,17 @@ class PaymentTest {
     }
 
     @Test
+    @DisplayName("승인 결과를 기다리는 동안에도 결제 식별자를 다른 값으로 바꿀 수 없다")
+    void 결제식별자_승인대기중_변경_거부() {
+        Payment payment = withPgTid();
+
+        assertThatThrownBy(() -> payment.assignPgTid("other-pg-tid"))
+                .isInstanceOf(IllegalStateException.class);
+        assertThat(payment.getPgTid()).isEqualTo(PG_TID);
+        assertThat(payment.getStatus()).isEqualTo(PaymentStatus.REQUESTED);
+    }
+
+    @Test
     @DisplayName("확정된 결제에는 다른 결제 식별자를 적을 수 없다")
     void 결제식별자_확정후_거부() {
         Payment payment = withPgTid();

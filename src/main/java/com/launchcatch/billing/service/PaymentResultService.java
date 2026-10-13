@@ -50,6 +50,9 @@ public class PaymentResultService {
      * 잠근 뒤 이미 승인 시도 전 상태가 아니면 아무것도 하지 않는다. 같은 주문의 승인 확정이 동시에 와서
      * 다른 요청이 먼저 결과를 냈다는 뜻이다.
      *
+     * 먼저 커밋된 식별자가 있으면 같은 값만 허용한다. 승인 결과를 기다리는 동안 상태가 REQUESTED 여도
+     * 다른 식별자로 바꾸면 먼저 보낸 승인 요청을 찾을 수 없다.
+     *
      * 다른 결제가 이미 같은 식별자를 갖고 있으면 uk_payment_pg_tid 위반이 이 메서드 안에서 난다.
      * 커밋까지 미루지 않고 flush 로 바로 드러내 부른 쪽이 오류 코드로 바꿀 수 있게 한다.
      */
@@ -58,6 +61,9 @@ public class PaymentResultService {
         Payment payment = lock(paymentId);
         if (payment.getStatus() != PaymentStatus.REQUESTED) {
             return payment;
+        }
+        if (payment.getPgTid() != null && !payment.getPgTid().equals(pgTid)) {
+            throw new BillingException(BillingErrorCode.ORDER_ID_MISMATCH);
         }
         payment.assignPgTid(pgTid);
         paymentRepository.flush();

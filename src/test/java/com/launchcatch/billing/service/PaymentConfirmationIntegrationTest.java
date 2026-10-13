@@ -19,6 +19,8 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -73,16 +75,26 @@ class PaymentConfirmationIntegrationTest {
 
         private final JdbcTemplate jdbc;
         private final List<String> pgTidsSeenAtCall = new ArrayList<>();
+        private volatile Consumer<String> beforeApproval = paymentKey -> { };
 
         CommitCheckingGateway(JdbcTemplate jdbc) {
             this.jdbc = jdbc;
         }
 
         @Override
-        public synchronized PaymentGatewayApproval confirm(String paymentKey, String orderId, long amount) {
-            pgTidsSeenAtCall.add(jdbc.queryForObject(
-                    "select pg_tid from payment where order_id = ?", String.class, orderId));
-            return super.confirm(paymentKey, orderId, amount);
+        public PaymentGatewayApproval confirm(String paymentKey, String orderId, long amount) {
+            synchronized (this) {
+                pgTidsSeenAtCall.add(jdbc.queryForObject(
+                        "select pg_tid from payment where order_id = ?", String.class, orderId));
+            }
+            beforeApproval.accept(paymentKey);
+            synchronized (this) {
+                return super.confirm(paymentKey, orderId, amount);
+            }
+        }
+
+        void beforeApproval(Consumer<String> action) {
+            beforeApproval = action;
         }
 
         synchronized List<String> pgTidsSeenAtCall() {
@@ -92,6 +104,7 @@ class PaymentConfirmationIntegrationTest {
         // 빈이 테스트 사이에 공유되므로 앞 테스트에서 본 값을 지운다
         synchronized void clearSeen() {
             pgTidsSeenAtCall.clear();
+            beforeApproval = paymentKey -> { };
         }
     }
 
@@ -197,6 +210,51 @@ class PaymentConfirmationIntegrationTest {
 
         assertThat(status(order.paymentId())).isEqualTo("APPROVED");
         assertThat(charges(order.paymentId())).isEqualTo(1);
+    }
+
+    @Test
+    void 승인_응답을_기다리는_동안_다른_식별자로_확정하면_거절하고_최초_식별자로_한_번만_충전한다()
+            throws Exception {
+        Order order = order(OWNER);
+        String firstPgTid = "tgen_first_attempt";
+        CountDownLatch approvalStarted = new CountDownLatch(1);
+        CountDownLatch finishApproval = new CountDownLatch(1);
+        gateway.beforeApproval(paymentKey -> {
+            if (!paymentKey.equals(firstPgTid)) {
+                return;
+            }
+            approvalStarted.countDown();
+            try {
+                assertThat(finishApproval.await(10, TimeUnit.SECONDS)).isTrue();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException("승인 응답 대기가 중단됐습니다.", e);
+            }
+        });
+
+        try (ExecutorService pool = Executors.newSingleThreadExecutor()) {
+            Future<PaymentConfirmResponse> first = pool.submit(() -> confirm(order, firstPgTid));
+            try {
+                assertThat(approvalStarted.await(10, TimeUnit.SECONDS)).isTrue();
+                assertThat(status(order.paymentId())).isEqualTo("REQUESTED");
+
+                assertThatThrownBy(() -> confirm(order, "tgen_second_attempt"))
+                        .isInstanceOfSatisfying(BillingException.class,
+                                e -> assertThat(e.getErrorCode()).isEqualTo(BillingErrorCode.ORDER_ID_MISMATCH));
+                assertThat(jdbc.queryForObject("select pg_tid from payment where payment_id = ?",
+                        String.class, order.paymentId())).isEqualTo(firstPgTid);
+                assertThat(gateway.pgTidsSeenAtCall()).containsExactly(firstPgTid);
+            } finally {
+                finishApproval.countDown();
+            }
+            assertThat(first.get(10, TimeUnit.SECONDS).status()).isEqualTo(PaymentStatus.APPROVED);
+        }
+
+        assertThat(status(order.paymentId())).isEqualTo("APPROVED");
+        assertThat(jdbc.queryForObject("select pg_tid from payment where payment_id = ?",
+                String.class, order.paymentId())).isEqualTo(firstPgTid);
+        assertThat(charges(order.paymentId())).isEqualTo(1);
+        assertThat(gateway.pgTidsSeenAtCall()).containsExactly(firstPgTid);
     }
 
     @Test

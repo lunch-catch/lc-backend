@@ -102,6 +102,27 @@ class PaymentResultServiceTest {
     }
 
     @Test
+    void 승인_결과를_기다리는_결제의_식별자가_다르면_BILLING_017이고_기존_값을_유지한다() {
+        Payment payment = locked(attempted());
+
+        assertThatThrownBy(() -> service().assignPgTid(PAYMENT_ID, "tgen_other"))
+                .isInstanceOfSatisfying(BillingException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(BillingErrorCode.ORDER_ID_MISMATCH));
+        assertThat(payment.getPgTid()).isEqualTo(PG_TID);
+        assertThat(payment.getStatus()).isEqualTo(PaymentStatus.REQUESTED);
+    }
+
+    @Test
+    void 승인_결과를_기다리는_결제에_같은_식별자를_다시_적을_수_있다() {
+        locked(attempted());
+
+        Payment result = service().assignPgTid(PAYMENT_ID, PG_TID);
+
+        assertThat(result.getPgTid()).isEqualTo(PG_TID);
+        assertThat(result.getStatus()).isEqualTo(PaymentStatus.REQUESTED);
+    }
+
+    @Test
     void 없는_결제면_BILLING_004다() {
         when(paymentRepository.findByIdForUpdate(PAYMENT_ID)).thenReturn(Optional.empty());
 
