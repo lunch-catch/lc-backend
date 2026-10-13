@@ -34,10 +34,15 @@ public class DailySpendHashRepository {
     private static final String SERVED_PREFIX = "billing:served:";
     private static final String HASH_MISSING = "HASH_MISSING";
 
-    // 처리 표시는 재호출이 올 수 있는 동안만 두면 된다. 영업일이 지난 뒤 이틀이면 넉넉하다
+    /*
+     * 처리 표시는 재호출이 올 수 있는 동안만 두면 된다. 이틀이면 넉넉하다.
+     * 당일 해시는 영업일이 끝난 뒤 정산이 읽을 수 있게 사흘 둔다.
+     */
     private static final long SERVED_TTL_SECONDS = Duration.ofDays(2).toSeconds();
     private static final RedisScript<Long> APPLY_STATUS_SCRIPT = loadApplyStatusScript();
+    private static final long DAY_HASH_TTL_SECONDS = Duration.ofDays(3).toSeconds();
     private static final RedisScript<String> DEDUCT_SCRIPT = loadDeductScript();
+    private static final RedisScript<Long> REBUILD_SCRIPT = loadRebuildScript();
 
     private final StringRedisTemplate redisTemplate;
 
@@ -75,6 +80,22 @@ public class DailySpendHashRepository {
         return DeductOutcome.of(DeductionStatus.valueOf(reply));
     }
 
+    /*
+     * 해시가 없을 때만 DB 정본으로 만든다. 만들었으면 true, 이미 있어 그대로 두었으면 false 다.
+     * changedAt 이 아직 없는 계획(상태가 바뀐 적 없음)은 0 으로 적어 어떤 변경이든 반영되게 한다.
+     */
+    public boolean rebuildIfAbsent(LocalDate businessDate, Long campaignId, long reserved, long spend,
+                                   boolean paused, LocalDateTime changedAt) {
+        Long created = redisTemplate.execute(REBUILD_SCRIPT,
+                List.of(key(businessDate, campaignId)),
+                String.valueOf(reserved),
+                String.valueOf(spend),
+                paused ? "1" : "0",
+                String.valueOf(changedAt == null ? 0L : epochMicros(changedAt)),
+                String.valueOf(DAY_HASH_TTL_SECONDS));
+        return created != null && created == 1L;
+    }
+
     static String servedKey(UUID serveId) {
         return SERVED_PREFIX + serveId;
     }
@@ -99,6 +120,13 @@ public class DailySpendHashRepository {
         DefaultRedisScript<String> script = new DefaultRedisScript<>();
         script.setLocation(new ClassPathResource("scripts/billing_deduct.lua"));
         script.setResultType(String.class);
+        return script;
+    }
+
+    private static RedisScript<Long> loadRebuildScript() {
+        DefaultRedisScript<Long> script = new DefaultRedisScript<>();
+        script.setLocation(new ClassPathResource("scripts/billing_day_rebuild.lua"));
+        script.setResultType(Long.class);
         return script;
     }
 }

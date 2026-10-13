@@ -115,4 +115,41 @@ class DailySpendHashRepositoryTest {
         assertThatThrownBy(() -> new DailySpendHashRepository(redisTemplate).deduct(DAY, 12L, SERVE_ID, 10L))
                 .isInstanceOf(IllegalArgumentException.class);
     }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void 재구성은_네_필드와_사흘_수명을_넘기고_만들었으면_true다() {
+        when(redisTemplate.execute(any(RedisScript.class), anyList(), any(Object[].class))).thenReturn(1L);
+        LocalDateTime changedAt = LocalDateTime.of(2026, 10, 1, 0, 0, 0, 1_000);
+
+        boolean created = new DailySpendHashRepository(redisTemplate).rebuildIfAbsent(DAY, 12L, 1000L, 250L, true, changedAt);
+
+        ArgumentCaptor<List<String>> keys = ArgumentCaptor.forClass(List.class);
+        ArgumentCaptor<Object[]> args = ArgumentCaptor.forClass(Object[].class);
+        verify(redisTemplate).execute(any(RedisScript.class), keys.capture(), args.capture());
+        assertThat(created).isTrue();
+        assertThat(keys.getValue()).containsExactly("billing:day:2026-10-01:12");
+        assertThat(args.getValue()).containsExactly("1000", "250", "1", "1790780400000001", "259200");
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void 변경_시각이_없으면_0으로_적는다() {
+        when(redisTemplate.execute(any(RedisScript.class), anyList(), any(Object[].class))).thenReturn(1L);
+
+        new DailySpendHashRepository(redisTemplate).rebuildIfAbsent(DAY, 12L, 1000L, 0L, false, null);
+
+        ArgumentCaptor<Object[]> args = ArgumentCaptor.forClass(Object[].class);
+        verify(redisTemplate).execute(any(RedisScript.class), anyList(), args.capture());
+        assertThat(args.getValue()).containsExactly("1000", "0", "0", "0", "259200");
+    }
+
+    @Test
+    void 이미_있거나_응답이_없으면_false다() {
+        when(redisTemplate.execute(any(RedisScript.class), anyList(), any(Object[].class))).thenReturn(0L, (Long) null);
+        DailySpendHashRepository repository = new DailySpendHashRepository(redisTemplate);
+
+        assertThat(repository.rebuildIfAbsent(DAY, 12L, 1000L, 0L, false, null)).isFalse();
+        assertThat(repository.rebuildIfAbsent(DAY, 12L, 1000L, 0L, false, null)).isFalse();
+    }
 }
