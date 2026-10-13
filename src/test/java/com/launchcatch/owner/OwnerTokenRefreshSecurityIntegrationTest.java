@@ -73,7 +73,7 @@ class OwnerTokenRefreshSecurityIntegrationTest {
 
     @Test
     void 만료된_AT가_동봉되어도_재발급할_수_있다() throws Exception {
-        var expiredJwt = new JwtTokenProvider(SECRET, 1800000, 86400000, 1209600000, 1209600000,
+        var expiredJwt = new JwtTokenProvider(SECRET, 1800000, 86400000, 86400000, 1209600000,
                 Clock.fixed(Instant.now().minus(Duration.ofHours(1)), ZoneId.of("Asia/Seoul")));
         mvc.perform(post("/v1/owner/auth/tokens:refresh").cookie(
                         new Cookie("refreshToken", "valid-refresh"),
@@ -117,7 +117,7 @@ class OwnerTokenRefreshSecurityIntegrationTest {
             return repository;
         }
         @Bean JwtTokenProvider jwt() {
-            return new JwtTokenProvider(SECRET, 1800000, 86400000, 1209600000, 1209600000,
+            return new JwtTokenProvider(SECRET, 1800000, 86400000, 86400000, 1209600000,
                     Clock.system(ZoneId.of("Asia/Seoul")));
         }
     }

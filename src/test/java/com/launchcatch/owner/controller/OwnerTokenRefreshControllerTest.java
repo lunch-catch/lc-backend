@@ -33,7 +33,7 @@ class OwnerTokenRefreshControllerTest {
     void setUp() {
         JwtTokenProvider jwt = mock(JwtTokenProvider.class);
         when(jwt.getAccessTokenValidityMs()).thenReturn(Duration.ofMinutes(30).toMillis());
-        when(jwt.refreshTokenValidityMs(Role.OWNER)).thenReturn(Duration.ofDays(14).toMillis());
+        when(jwt.refreshTokenValidityMs(Role.OWNER)).thenReturn(Duration.ofDays(1).toMillis());
         mvc = MockMvcBuilders.standaloneSetup(new OwnerTokenRefreshController(service, new AuthCookieFactory(jwt)))
                 .setControllerAdvice(new GlobalExceptionHandler()).build();
     }
@@ -60,7 +60,7 @@ class OwnerTokenRefreshControllerTest {
                 .anySatisfy(cookie -> assertThat(cookie).contains("accessToken=new-access", "Path=/;",
                         "Max-Age=1800", "HttpOnly", "SameSite=Strict"))
                 .anySatisfy(cookie -> assertThat(cookie).contains("refreshToken=new-refresh", "Path=/v1/owner/auth/",
-                        "Max-Age=1209600", "HttpOnly", "SameSite=Strict"));
+                        "Max-Age=86400", "HttpOnly", "SameSite=Strict"));
     }
 
     @Test
