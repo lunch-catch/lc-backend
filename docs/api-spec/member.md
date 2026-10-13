@@ -166,7 +166,7 @@ V51 기능 10~12, 62~65, 77~78, 87~91, 94행을 기준으로 한다. 공통 인�
 ## 관리자 사용자 목록
 
 ```
-GET /v1/admin/members?status=ACTIVE&joinedFrom=2026-09-01&joinedTo=2026-09-30&searchType=NICKNAME&keyword=홍&page=0&size=20&sortBy=joinedAt&sortDir=desc
+GET /v1/admin/members?status=ACTIVE&joinedFrom=2026-09-01&joinedTo=2026-09-30&keyword=홍&page=0&size=20&sortBy=joinedAt&sortDir=desc
 ```
 
 > **페이지 방식 (2026-10-09 결정):** 관리자 표 목록은 정렬·검색·전체 건수(`totalElements`)가 필요한 화면이라 레포 공통 규약(`api-spec.md`)의 커서(`pageToken`) 대신 `page`/`size`를 쓴다. 모바일 스크롤 목록(점주·사용자용)은 규약대로 커서를 쓴다. 이 예외는 공통 규약 문서가 아니라 이 명세에 적는다.
@@ -175,14 +175,15 @@ GET /v1/admin/members?status=ACTIVE&joinedFrom=2026-09-01&joinedTo=2026-09-30&se
 | --- | --- | --- |
 | `status` | 아니오 | `ACTIVE`, `SUSPENDED`, `WITHDRAWN` |
 | `joinedFrom`, `joinedTo` | 아니오 | 가입일(`member.created_at`) 범위. 양끝 포함, `yyyy-MM-dd`, KST 날짜 기준 |
-| `searchType` | 아니오 | `MEMBER_ID`(일치) / `NICKNAME`(접두사 일치). `keyword`를 주면 필수이고 없으면 `400` |
-| `keyword` | 아니오 | `searchType`에 맞는 검색어. `NICKNAME`은 `%`·`_`를 이스케이프하는 공통 LIKE 모듈을 쓴다. `MEMBER_ID`에 숫자가 아닌 값이면 `400` |
+| `keyword` | 아니오 | 닉네임 접두사를 검색한다. 앞뒤 공백을 제거하며 값이 없거나 공백뿐이면 검색 조건에서 빠진다. 숫자도 닉네임으로 처리한다. `%`·`_`·`!`는 공통 LIKE 모듈로 이스케이프해 문자 그대로 검색한다 |
 | `page`, `size` | 아니오 | `page`는 0부터(기본 0). `size`는 기본 20, 최대 100 |
 | `sortBy`, `sortDir` | 아니오 | `joinedAt`(기본)·`lastLoginAt`·`nickname`·`memberId` / `desc`(기본)·`asc`. 값이 같으면 `memberId`가 `sortDir`과 같은 방향. `lastLoginAt`이 `null`인 행은 방향과 관계없이 맨 뒤 |
 
 **2026-10-07 변경:** 닉네임 검색을 인덱스를 사용할 수 없는 완전 부분 일치에서 접두사 일치로 변경했다.
 
-**2026-10-08 변경:** 검색 대상을 `keyword` 모양으로 추측하지 않고 `searchType`으로 명시한다(숫자 닉네임이 `memberId`로 잘못 검색되는 문제 제거). 페이지 크기 20 고정을 풀고 `size`·정렬 옵션을 추가했다. 이전 `keyword` 단독 호출은 `400`이다. 사용자 계정 정지 API가 구현 제외라 `SUSPENDED`는 현재 해당 행이 없다. 필터는 정지 기능 도입을 대비해 남긴다.
+**2026-10-08 변경:** 페이지 크기 20 고정을 풀고 `size`·정렬 옵션을 추가했다. 사용자 계정 정지 API가 구현 제외라 `SUSPENDED`는 현재 해당 행이 없다. 필터는 정지 기능 도입을 대비해 남긴다.
+
+**2026-10-13 변경:** `searchType`과 회원 ID 검색을 제거했다. `keyword`만 보내면 닉네임 접두사로 검색한다. 회원 ID 응답과 `sortBy=memberId` 정렬은 유지한다. 프론트는 검색 종류 선택을 제거하고 닉네임 검색어만 보낸다.
 
 ```json
 {
@@ -206,7 +207,7 @@ GET /v1/admin/members?status=ACTIVE&joinedFrom=2026-09-01&joinedTo=2026-09-30&se
 | 응답 | 코드 | 언제 |
 | --- | --- | --- |
 | `200` | | 조회 성공 |
-| `400` | 공통 검증 오류 **[2026-10-08 조건 추가]** | 날짜 형식 오류, `joinedFrom`이 `joinedTo`보다 늦음, `page`가 음수, `size`가 1~100 밖, 허용되지 않는 `status`·`searchType`·`sortBy`·`sortDir`, `searchType` 없는 `keyword` |
+| `400` | 공통 검증 오류 | 날짜 형식 오류, `joinedFrom`이 `joinedTo`보다 늦음, `page`가 음수, `size`가 1~100 밖, 허용되지 않는 `status`·`sortBy`·`sortDir` |
 | `401` | | 인증되지 않음 |
 | `403` | | 관리자 역할이 아님 |
 
@@ -339,7 +340,7 @@ V51 > 레포 마이그레이션 > 문서 순서(`api-spec.md`)를 따르되, 아
 | 89 | 법정 기간 데이터 보존 | 보존 기간과 대상은 미정이며 파기 배치를 구현하지 않는다 | V51에 수치가 없다. 위 "아직 정해지지 않은 것" 참고 |
 | 12 | 회원과 점주 상태 변경(권장) | 구현 제외. 정지 만료는 로그인 시점에 처리하고 영구 정지는 `2099-12-31` | 위 "구현 제외" 참고 |
 | 77, 78 | 관심 가게(권장) | 구현 제외 | `member_favorite_store` 스키마가 없다 |
-| 11 | 사용자 목록: 20건 단위 페이지, 키워드 검색 | `size`·정렬 옵션 지원, `searchType`으로 검색 대상 명시, 닉네임은 접두사 일치 (2026-10-08) | 프론트가 크기를 정하고, 인덱스를 쓸 수 있어야 한다 |
+| 11 | 사용자 목록: 20건 단위 페이지, 키워드 검색 | `size`·정렬 옵션을 지원하며 `keyword`로 닉네임 접두사만 검색한다 (2026-10-13) | 관리자 검색 입력을 닉네임 하나로 단순화한다 |
 | 93 | 저장 위치 조회, 수정 | 대표 위치 1개의 설정, 조회, 삭제로 제공한다. 위치 목록은 없다 | `member(위치 설정 및 관리).md` 참고. V51 66행의 "사용자가 삭제할 때까지 보관"에 맞춰 삭제를 더했다 |
 
 ---
