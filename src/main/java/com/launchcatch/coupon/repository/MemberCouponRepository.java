@@ -9,7 +9,7 @@ import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
-public interface MemberCouponRepository extends JpaRepository<MemberCoupon, Long> {
+public interface MemberCouponRepository extends JpaRepository<MemberCoupon, Long>, MemberCouponRepositoryCustom {
 
     // 본인 쿠폰을 잠가 같은 쿠폰의 삭제 요청을 직렬화한다.
     @Lock(LockModeType.PESSIMISTIC_WRITE)

@@ -2,12 +2,16 @@ package com.launchcatch.coupon.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
 
 import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
+import com.launchcatch.coupon.CouponListFilter;
 import com.launchcatch.coupon.dto.CouponDetailResponse;
 import com.launchcatch.coupon.dto.CouponIssuanceLimitResponse;
 import com.launchcatch.coupon.dto.CouponSummaryResponse;
@@ -24,16 +28,21 @@ import com.launchcatch.coupon.repository.CouponDailyLimitRepository;
 import com.launchcatch.coupon.repository.CouponEventRepository;
 import com.launchcatch.coupon.repository.CouponUsageHistoryRepository;
 import com.launchcatch.coupon.repository.MemberCouponRepository;
+import com.launchcatch.global.exception.CommonErrorCode;
+import com.launchcatch.global.response.CursorPageResponse;
+import com.launchcatch.global.response.PageCursor;
+import com.launchcatch.global.response.PageTokens;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -118,6 +127,233 @@ class CouponLookUpServiceTest {
 
         assertThatThrownBy(() -> service.getIssuanceLimit(1L))
                 .isInstanceOf(DataAccessResourceFailureException.class);
+    }
+
+    @Nested
+    @DisplayName("쿠폰 목록 조회")
+    class ListQuery {
+
+        private static final Long MEMBER_ID = 17L;
+        private static final LocalDateTime NOW = LocalDateTime.of(2026, 10, 10, 12, 0);
+        private static final LocalDateTime ISSUE_TIME = NOW.minusHours(2);
+
+        @Mock MemberCouponRepository memberCouponRepository;
+        @Mock CouponEventRepository couponEventRepository;
+        @Mock CouponUsageHistoryRepository couponUsageHistoryRepository;
+        @Mock CouponDailyLimitRepository couponDailyLimitRepository;
+
+        private CouponLookUpService service;
+
+        @BeforeEach
+        void setUp() {
+            service = new CouponLookUpService(
+                    memberCouponRepository, couponEventRepository, couponUsageHistoryRepository, couponDailyLimitRepository,
+                    Clock.fixed(Instant.parse("2026-10-10T03:00:00Z"), ZoneOffset.UTC));
+        }
+
+        @ParameterizedTest
+        @EnumSource(CouponListFilter.class)
+        void 쿠폰이_없으면_모든_필터에서_빈_목록과_null_커서를_반환한다(CouponListFilter listFilter) {
+            String filter = switch (listFilter) {
+                case ALL -> null;
+                case USABLE -> "usable = true";
+                case ISSUED, USED, EXPIRED -> "state = \"" + listFilter.name() + "\"";
+            };
+            when(memberCouponRepository.findPage(MEMBER_ID, listFilter, NOW, null, null, 21))
+                    .thenReturn(List.of());
+
+            assertThat(service.getCoupons(MEMBER_ID, filter, 20, null))
+                    .isEqualTo(CursorPageResponse.of(List.of(), null));
+        }
+
+        @Test
+        void 마지막_페이지는_단건과_같은_메뉴_스냅샷과_사용_결과를_반환한다() {
+            MemberCoupon coupon = coupon(1001L, MemberCouponStatus.USED, NOW.minusHours(1), NOW.plusHours(2));
+            CouponUsageHistory history = BeanUtils.instantiateClass(CouponUsageHistory.class);
+            ReflectionTestUtils.setField(history, "memberCouponId", 1001L);
+            ReflectionTestUtils.setField(history, "createdAt", NOW.minusMinutes(10));
+            ReflectionTestUtils.setField(history, "discountAmount", 3000);
+            when(memberCouponRepository.findPage(MEMBER_ID, CouponListFilter.USED, NOW, null, null, 21))
+                    .thenReturn(List.of(coupon));
+            when(couponEventRepository.findAllById(List.of(81L))).thenReturn(List.of(event()));
+            when(couponUsageHistoryRepository.findAllByMemberCouponIdIn(List.of(1001L))).thenReturn(List.of(history));
+
+            CursorPageResponse<CouponDetailResponse> response = service.getCoupons(MEMBER_ID, "state = \"USED\"", 20, null);
+
+            assertThat(response.nextPageToken()).isNull();
+            assertThat(response.items()).containsExactly(new CouponDetailResponse(
+                    1001L, 10L, "런치식당", "https://cdn.example.com/stores/10/logo-v1.jpg",
+                    DiscountTargetType.MENU, DiscountType.AMOUNT, 3000,
+                    new CouponDetailResponse.TargetMenu(701L, "갈비 정식", 12000, 9000),
+                    MemberCouponStatus.USED, false, ISSUE_TIME.atOffset(ZoneOffset.ofHours(9)),
+                    NOW.minusHours(1).atOffset(ZoneOffset.ofHours(9)), NOW.plusHours(2).atOffset(ZoneOffset.ofHours(9)),
+                    NOW.minusMinutes(10).atOffset(ZoneOffset.ofHours(9)), 3000));
+        }
+
+        @Test
+        void 한_건_더_있으면_반환한_마지막_쿠폰으로_다음_커서를_만든다() {
+            when(memberCouponRepository.findPage(MEMBER_ID, CouponListFilter.ALL, NOW, null, null, 3))
+                    .thenReturn(List.of(coupon(1003L, MemberCouponStatus.ISSUED, NOW, NOW.plusHours(1)),
+                            coupon(1002L, MemberCouponStatus.ISSUED, NOW, NOW.plusHours(1)),
+                            coupon(1001L, MemberCouponStatus.ISSUED, NOW, NOW.plusHours(1))));
+            when(couponEventRepository.findAllById(List.of(81L))).thenReturn(List.of(event()));
+
+            CursorPageResponse<CouponDetailResponse> response = service.getCoupons(MEMBER_ID, null, 2, null);
+
+            assertThat(response.items()).extracting(CouponDetailResponse::memberCouponId).containsExactly(1003L, 1002L);
+            assertThat(PageTokens.decode(response.nextPageToken())).isEqualTo(new PageCursor(1002L, ISSUE_TIME + "|ALL"));
+        }
+
+        @ParameterizedTest
+        @CsvSource({"-1, 1, ISSUED, true", "0, 1, ISSUED, true", "1, 2, ISSUED, false",
+                "-2, 0, EXPIRED, false", "-2, -1, EXPIRED, false"})
+        void 조회_시각으로_상태와_사용_가능_여부를_계산하고_만료된_쿠폰의_상태를_변경한다(
+                int startHours, int endHours, MemberCouponStatus expectedState, boolean expectedUsable) {
+            MemberCoupon coupon = coupon(1001L, MemberCouponStatus.ISSUED, NOW.plusHours(startHours), NOW.plusHours(endHours));
+            when(memberCouponRepository.findPage(MEMBER_ID, CouponListFilter.ALL, NOW, null, null, 21))
+                    .thenReturn(List.of(coupon));
+            when(couponEventRepository.findAllById(List.of(81L))).thenReturn(List.of(event()));
+
+            CouponDetailResponse response = service.getCoupons(MEMBER_ID, null, 20, null).items().getFirst();
+
+            assertThat(response.state()).isEqualTo(expectedState);
+            assertThat(response.usable()).isEqualTo(expectedUsable);
+            assertThat(coupon.getStatus()).isEqualTo(expectedState);
+        }
+
+        @Test
+        void 전체_주문_할인은_메뉴와_이미지가_없을_수_있다() {
+            CouponEvent event = event();
+            ReflectionTestUtils.setField(event, "discountTargetType", DiscountTargetType.ALL);
+            ReflectionTestUtils.setField(event, "storeImageUrl", null);
+            when(memberCouponRepository.findPage(MEMBER_ID, CouponListFilter.ALL, NOW, null, null, 21))
+                    .thenReturn(List.of(coupon(1001L, MemberCouponStatus.EXPIRED, NOW.minusHours(2), NOW.minusHours(1))));
+            when(couponEventRepository.findAllById(List.of(81L))).thenReturn(List.of(event));
+
+            CouponDetailResponse response = service.getCoupons(MEMBER_ID, null, 20, null).items().getFirst();
+
+            assertThat(response.targetMenu()).isNull();
+            assertThat(response.storeImageUrl()).isNull();
+            assertThat(response.useTime()).isNull();
+            assertThat(response.discountAmount()).isNull();
+        }
+
+        @ParameterizedTest
+        @ValueSource(strings = {"", "ISSUED", "state = \"REMOVED\"", "usable = false", "state = \"USED\" AND usable = true"})
+        void 지원하지_않는_필터는_거절한다(String filter) {
+            assertThatThrownBy(() -> service.getCoupons(MEMBER_ID, filter, 20, null))
+                    .isInstanceOfSatisfying(CouponException.class,
+                            exception -> assertThat(exception.getErrorCode()).isEqualTo(CommonErrorCode.INVALID_INPUT));
+        }
+
+        @ParameterizedTest
+        @ValueSource(strings = {"", "not-a-token", "cDox", "cDoxfA"})
+        void 해석할_수_없는_커서는_첫_페이지로_대체하지_않고_거절한다(String pageToken) {
+            assertThatThrownBy(() -> service.getCoupons(MEMBER_ID, null, 20, pageToken))
+                    .isInstanceOfSatisfying(CouponException.class,
+                            exception -> assertThat(exception.getErrorCode()).isEqualTo(CommonErrorCode.INVALID_INPUT));
+        }
+
+        @ParameterizedTest
+        @ValueSource(strings = {"not-a-time|ALL", "2026-10-10T10:00|USED", "2026-10-10T10:00", "2026-10-10T10:00|ALL|extra"})
+        void 커서_시각과_필터를_검증한다(String sortValue) {
+            String token = PageTokens.encode(new PageCursor(1001L, sortValue));
+
+            assertThatThrownBy(() -> service.getCoupons(MEMBER_ID, null, 20, token))
+                    .isInstanceOfSatisfying(CouponException.class,
+                            exception -> assertThat(exception.getErrorCode()).isEqualTo(CommonErrorCode.INVALID_INPUT));
+        }
+
+        @ParameterizedTest
+        @ValueSource(longs = {0L, -1L})
+        void 커서_ID는_양수여야_한다(long id) {
+            String token = PageTokens.encode(new PageCursor(id, ISSUE_TIME + "|ALL"));
+
+            assertThatThrownBy(() -> service.getCoupons(MEMBER_ID, null, 20, token))
+                    .isInstanceOfSatisfying(CouponException.class,
+                            exception -> assertThat(exception.getErrorCode()).isEqualTo(CommonErrorCode.INVALID_INPUT));
+        }
+
+        @Test
+        void 다음_페이지에서는_커서가_가리킨_발급_시각과_ID로_조회한다() {
+            String token = PageTokens.encode(new PageCursor(1002L, ISSUE_TIME + "|ALL"));
+            when(memberCouponRepository.findPage(MEMBER_ID, CouponListFilter.ALL, NOW, ISSUE_TIME, 1002L, 21))
+                    .thenReturn(List.of(coupon(1001L, MemberCouponStatus.ISSUED, NOW, NOW.plusHours(1))));
+            when(couponEventRepository.findAllById(List.of(81L))).thenReturn(List.of(event()));
+
+            CursorPageResponse<CouponDetailResponse> response = service.getCoupons(MEMBER_ID, null, 20, token);
+
+            assertThat(response.items()).extracting(CouponDetailResponse::memberCouponId).containsExactly(1001L);
+            assertThat(response.nextPageToken()).isNull();
+        }
+
+        @Test
+        void 이벤트_스냅샷이_없으면_내부_데이터_불일치로_처리한다() {
+            when(memberCouponRepository.findPage(eq(MEMBER_ID), any(), eq(NOW), any(), any(), anyInt()))
+                    .thenReturn(List.of(coupon(1001L, MemberCouponStatus.ISSUED, NOW, NOW.plusHours(1))));
+
+            assertThatThrownBy(() -> service.getCoupons(MEMBER_ID, null, 20, null))
+                    .isInstanceOfSatisfying(CouponException.class,
+                            exception -> assertThat(exception.getErrorCode()).isEqualTo(CouponErrorCode.EVENT_SNAPSHOT_MISSING));
+        }
+
+        @Test
+        void 사용_완료_쿠폰의_사용_이력이_없으면_오류로_처리한다() {
+            when(memberCouponRepository.findPage(MEMBER_ID, CouponListFilter.ALL, NOW, null, null, 21))
+                    .thenReturn(List.of(coupon(1001L, MemberCouponStatus.USED, NOW, NOW.plusHours(1))));
+            when(couponEventRepository.findAllById(List.of(81L))).thenReturn(List.of(event()));
+
+            assertThatThrownBy(() -> service.getCoupons(MEMBER_ID, null, 20, null))
+                    .isInstanceOfSatisfying(CouponException.class,
+                            exception -> assertThat(exception.getErrorCode()).isEqualTo(CouponErrorCode.USAGE_HISTORY_MISSING));
+        }
+
+        @Test
+        void 다음_페이지_확인용_쿠폰은_만료로_변경하지_않는다() {
+            MemberCoupon returned = coupon(1002L, MemberCouponStatus.ISSUED, NOW.minusHours(2), NOW);
+            MemberCoupon lookahead = coupon(1001L, MemberCouponStatus.ISSUED, NOW.minusHours(2), NOW);
+            ReflectionTestUtils.setField(lookahead, "couponEventId", 99L);
+            when(memberCouponRepository.findPage(MEMBER_ID, CouponListFilter.ALL, NOW, null, null, 2))
+                    .thenReturn(List.of(returned, lookahead));
+            when(couponEventRepository.findAllById(List.of(81L))).thenReturn(List.of(event()));
+
+            var result = service.getCoupons(MEMBER_ID, null, 1, null);
+
+            assertThat(result.items()).extracting(CouponDetailResponse::state).containsExactly(MemberCouponStatus.EXPIRED);
+            assertThat(returned.getStatus()).isEqualTo(MemberCouponStatus.EXPIRED);
+            assertThat(lookahead.getStatus()).isEqualTo(MemberCouponStatus.ISSUED);
+            assertThat(result.nextPageToken()).isNotNull();
+        }
+
+        // 목록 조회에 사용할 회원 쿠폰의 식별자와 상태, 사용 기간을 구성한다.
+        private MemberCoupon coupon(Long id, MemberCouponStatus status, LocalDateTime start, LocalDateTime end) {
+            MemberCoupon coupon = BeanUtils.instantiateClass(MemberCoupon.class);
+            ReflectionTestUtils.setField(coupon, "id", id);
+            ReflectionTestUtils.setField(coupon, "memberId", MEMBER_ID);
+            ReflectionTestUtils.setField(coupon, "couponEventId", 81L);
+            ReflectionTestUtils.setField(coupon, "status", status);
+            ReflectionTestUtils.setField(coupon, "createdAt", ISSUE_TIME);
+            ReflectionTestUtils.setField(coupon, "usableStartAt", start);
+            ReflectionTestUtils.setField(coupon, "usableEndAt", end);
+            return coupon;
+        }
+
+        // 목록 응답에 사용할 매장과 메뉴 할인 스냅샷을 구성한다.
+        private CouponEvent event() {
+            CouponEvent event = BeanUtils.instantiateClass(CouponEvent.class);
+            ReflectionTestUtils.setField(event, "id", 81L);
+            ReflectionTestUtils.setField(event, "storeId", 10L);
+            ReflectionTestUtils.setField(event, "storeName", "런치식당");
+            ReflectionTestUtils.setField(event, "storeImageUrl", "https://cdn.example.com/stores/10/logo-v1.jpg");
+            ReflectionTestUtils.setField(event, "discountTargetType", DiscountTargetType.MENU);
+            ReflectionTestUtils.setField(event, "discountType", DiscountType.AMOUNT);
+            ReflectionTestUtils.setField(event, "discountValue", 3000);
+            ReflectionTestUtils.setField(event, "targetMenuId", 701L);
+            ReflectionTestUtils.setField(event, "targetMenuName", "갈비 정식");
+            ReflectionTestUtils.setField(event, "targetMenuPrice", 12000L);
+            ReflectionTestUtils.setField(event, "targetMenuDiscountedPrice", 9000L);
+            return event;
+        }
     }
 
     @Nested

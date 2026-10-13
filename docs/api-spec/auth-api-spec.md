@@ -122,20 +122,40 @@ Refresh Token은 영문·숫자·`_`·`-`로 이루어진 43자 문자열이다.
 
 ### `DELETE /v1/admin/auth/tokens`
 
-**구현 예정:** 관리자 로그아웃은 후속 PR에서 구현한다. 아래는 목표 계약이며 현재 브랜치에서 제공하는 API가 아니다.
+현재 인증된 관리자의 토큰을 폐기하고 브라우저 인증 쿠키를 삭제한다.
 
-현재 로그인한 관리자를 로그아웃시킨다. 요청 본문은 없다.
+**요청**
 
-**응답** `204`. 두 쿠키를 `Max-Age=0` 으로 내려 브라우저에서도 지운다. 삭제 쿠키는 발급 때와 같은 `Path` 로 보낸다. `Path` 가 다르면 브라우저가 Refresh Token 쿠키를 지우지 않는다. 점주와 사용자 로그아웃도 같다.
+- 유효한 `accessToken` 쿠키와 `ADMIN` 또는 `SUPER_ADMIN` 권한이 필요하다.
+- 요청 본문은 없다. 관리자 ID는 인증 정보에서 확인하므로 경로 변수·쿼리로 전달하지 않는다.
+- Refresh Token 쿠키는 필수 입력이 아니다. Access Token만으로 계정의 토큰을 폐기한다.
 
-- Refresh Token을 폐기한다. 로그아웃 전에 받은 Access Token은 만료 전이라도 거부된다
+```http
+DELETE /v1/admin/auth/tokens
+Cookie: accessToken=<JWT>
+```
+
+**응답** `204 No Content`. 두 인증 쿠키를 `Max-Age=0`으로 삭제한다.
+
+삭제 쿠키는 발급 때와 같은 `Path` 로 보낸다. `Path` 가 다르면 브라우저가 Refresh Token 쿠키를 지우지 않는다. 점주와 사용자 로그아웃도 같다.
+
+```http
+HTTP/1.1 204 No Content
+Set-Cookie: accessToken=; Path=/; Max-Age=0; HttpOnly; SameSite=Strict
+Set-Cookie: refreshToken=; Path=/v1/admin/auth/; Max-Age=0; HttpOnly; SameSite=Strict
+```
+
+응답 본문과 성공 응답 봉투는 없다. 쿠키 삭제 시에도 `JWT_COOKIE_SECURE=true` 환경이면 `Secure` 속성이 포함된다.
 
 **오류**
 
-| 상태 | 코드 | 언제 |
+| 상태 | 코드 | 조건 |
 | --- | --- | --- |
-| `401` | `AUTH-005` | Access Token이 없거나 유효하지 않음 |
-| `503` | `AUTH-002` | 로그아웃 처리 실패. 잠시 후 다시 시도한다 |
+| `401` | `AUTH-005` | Access Token 없음·무효·만료·폐기 또는 DB 계정 없음·비활성·현재 역할 불일치 |
+| `403` | `AUTH-006` | 인증된 주체가 관리자 역할이 아님 |
+| `503` | `AUTH-002` | 필수 DB Refresh Token 폐기, Redis Refresh Token 폐기 또는 Access Token 폐기 기준 저장 실패 |
+
+로그아웃의 필수 DB·Redis 폐기 실패 시 삭제 쿠키 없이 `503 AUTH-002`를 반환하며, 일부 폐기는 이미 적용되었을 수 있다. 일반 인증의 Redis 폐기 기준 조회는 LENIENT 정책이다. 관리자 인증은 DB의 폐기 순번·시각을 먼저 확인하며 DB 조회 실패는 LENIENT에서도 거부한다. Redis 저장이 일부 실패하거나 폐기 키가 유실되어도 DB에 저장한 폐기는 유지된다. 관리자 계정 발급은 REQUIRED 조회를 사용한다. 관리자 JWT는 DB 발급 순번으로 폐기를 검증하므로 같은 초에 재로그인한 새 순번은 허용한다. 순번 없는 기존 관리자 JWT도 DB 폐기 시각과 기존 Redis 시각 기준으로 검증한다. 재발급 통합과 배포 조건은 [관리자 설계서](../design/admin/admin-api-design.md)를 따른다.
 
 ## 점주
 

@@ -19,6 +19,8 @@ public interface CampaignQueryService {
      * PAUSED(OWNER, NO_POINTS) 캠페인을 돌려준다(ad_candidate.campaign_state 열 주석의 조건).
      * 정산의 00:00 예약 대상 조회도 조건이 같아 이 메서드를 그대로 쓴다(#198, 따로 두면 조건이
      * 두 곳에 흩어져 한쪽만 바뀌면 어긋난다).
+     * 결과가 10000행을 넘으면 예외로 거부한다(qa-performance-efficiency-guideline.md, 한 번에
+     * 메모리에 올리는 행 수 상한, #178).
      */
     List<CampaignInfo> findServableOn(LocalDate businessDate);
 

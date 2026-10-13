@@ -1,5 +1,6 @@
 package com.launchcatch.admin.service;
 
+import com.launchcatch.admin.AdminAccessTokenClaims;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
@@ -167,15 +168,15 @@ class AdminLoginServiceTest {
         prepare(Role.SUPER_ADMIN);
         when(transactions.issueRefreshToken(eq(1L), any(), any(), any()))
                 .thenReturn(new AdminLoginTransactionService.LoginDbState(1L, "관리자", Role.ADMIN, 1L));
-        when(jwt.createAccessToken(1L, Role.ADMIN)).thenReturn("admin-token");
+        when(jwt.createAccessToken(1L, Role.ADMIN, AdminAccessTokenClaims.forVersion(1L))).thenReturn("admin-token");
         assertThat(service.login(request).response().role()).isEqualTo(Role.ADMIN);
-        verify(jwt).createAccessToken(1L, Role.ADMIN);
+        verify(jwt).createAccessToken(1L, Role.ADMIN, AdminAccessTokenClaims.forVersion(1L));
     }
 
     @Test
     void JWT_생성_실패는_이번_DB_백업만_조건부_제거한다() {
         prepare(Role.ADMIN);
-        when(jwt.createAccessToken(1L, Role.ADMIN)).thenThrow(new IllegalStateException("signing failed"));
+        when(jwt.createAccessToken(1L, Role.ADMIN, AdminAccessTokenClaims.forVersion(1L))).thenThrow(new IllegalStateException("signing failed"));
         assertThatThrownBy(() -> service.login(request)).isInstanceOf(IllegalStateException.class);
         verify(transactions).clearRefreshTokenIfMatches(eq(1L), any(), eq(LocalDateTime.now(clock)));
         verify(transactions, never()).isRefreshTokenCurrent(any(), any(), any());
@@ -186,7 +187,7 @@ class AdminLoginServiceTest {
         prepare(Role.ADMIN);
         var failure = new IllegalStateException("signing failed");
         var cleanup = new DataAccessResourceFailureException("cleanup failed");
-        when(jwt.createAccessToken(1L, Role.ADMIN)).thenThrow(failure);
+        when(jwt.createAccessToken(1L, Role.ADMIN, AdminAccessTokenClaims.forVersion(1L))).thenThrow(failure);
         doThrow(cleanup).when(transactions).clearRefreshTokenIfMatches(eq(1L), any(), any());
         assertThatThrownBy(() -> service.login(request)).isSameAs(failure).hasSuppressedException(cleanup);
     }
@@ -233,7 +234,7 @@ class AdminLoginServiceTest {
         when(jwt.refreshTokenValidityMs(role)).thenReturn(Duration.ofDays(1).toMillis());
         when(transactions.issueRefreshToken(eq(1L), any(), any(), any()))
                 .thenReturn(new AdminLoginTransactionService.LoginDbState(1L, "관리자", role, 1L));
-        when(jwt.createAccessToken(1L, role)).thenReturn("signed-access-token");
+        when(jwt.createAccessToken(1L, role, AdminAccessTokenClaims.forVersion(1L))).thenReturn("signed-access-token");
         when(cache.saveIfNewer(any(), eq(1L), any(), eq(true), any(), eq(1L))).thenReturn(true);
         when(transactions.isRefreshTokenCurrent(eq(1L), any(), any())).thenReturn(true);
     }

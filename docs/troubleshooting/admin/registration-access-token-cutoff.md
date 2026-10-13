@@ -1,5 +1,7 @@
 # 관리자 계정 발급의 Access Token 폐기 확인
 
+이 문서는 해당 작업 당시의 변경과 검증 기록이다. 현재 관리자 계정 발급·로그인·토큰 재발급·로그아웃의 계약과 처리 절차는 [관리자 명세](../../api-spec/admin-api-spec.md)와 [관리자 설계](../../design/admin/admin-api-design.md)를 따른다.
+
 ## 처리 정책
 
 - 공통 JWT 필터는 `CutoffPolicy.LENIENT`를 사용한다. Redis 조회 장애 시 기존 동작을 유지하되, 발급 시각(`iat`) 누락은 역할과 무관하게 WARN 로그 후 인증하지 않는다.

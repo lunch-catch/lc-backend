@@ -81,7 +81,7 @@ class AdminLoginConcurrencyIntegrationTest {
         CountDownLatch releaseFirst = new CountDownLatch(1);
         AtomicInteger signatures = new AtomicInteger();
         var publishedHashes = new CopyOnWriteArrayList<String>();
-        when(jwt.createAccessToken(adminId, Role.ADMIN)).thenAnswer(call -> {
+        when(jwt.createAccessToken(eq(adminId), eq(Role.ADMIN), org.mockito.ArgumentMatchers.anyMap())).thenAnswer(call -> {
             int sequence = signatures.incrementAndGet();
             if (sequence == 1) {
                 firstBackupCommitted.countDown();
@@ -119,7 +119,7 @@ class AdminLoginConcurrencyIntegrationTest {
     }
     @Test
     void Redis_게시가_지연되어도_다른_로그인은_DB_잠금없이_완료하고_이전_게시를_거부한다() throws Exception {
-        when(jwt.createAccessToken(adminId, Role.ADMIN)).thenReturn("test-access-token");
+        when(jwt.createAccessToken(eq(adminId), eq(Role.ADMIN), org.mockito.ArgumentMatchers.anyMap())).thenReturn("test-access-token");
         var publicationEntered = new CountDownLatch(1);
         var releasePublication = new CountDownLatch(1);
         var calls = new AtomicInteger();
