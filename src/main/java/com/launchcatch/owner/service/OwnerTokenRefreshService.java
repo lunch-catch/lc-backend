@@ -187,7 +187,6 @@ public class OwnerTokenRefreshService {
      * 이전 순번의 지연 게시를 차단하고, 폐기 기준 시각보다 먼저 발급된 AT도 거부하도록 설정한다.
      */
     private void revokeReused(Long ownerId) {
-        LocalDateTime revokedAt = now();
         log.warn("event=OWNER_REFRESH_REUSE_DETECTED ownerId={}", ownerId);
         try {
             Revocation revocation = transactions.execute(transaction -> owners.findByIdForLogin(ownerId)
@@ -195,11 +194,13 @@ public class OwnerTokenRefreshService {
                         String hash = owner.getRefreshTokenHash();
                         owner.clearRefreshToken();
                         owners.saveAndFlush(owner);
-                        return new Revocation(hash, owner.getRefreshTokenIssuanceVersion());
+                        // 같은 시각에 발급된 AT도 차단하도록 배타적 비교 기준보다 1ns 뒤를 사용한다.
+                        return new Revocation(hash, owner.getRefreshTokenIssuanceVersion(), now().plusNanos(1));
                     }).orElse(null));
             if (revocation != null) {
                 ownerTokens.revokeThroughVersion(ownerId, revocation.hash(), revocation.version());
             }
+            LocalDateTime revokedAt = revocation == null ? now().plusNanos(1) : revocation.revokedAt();
             cutoff.invalidateBefore(Role.OWNER, ownerId, revokedAt, Duration.ofMillis(jwt.getAccessTokenValidityMs()));
         } catch (DataAccessException | TransactionException e) {
             throw new AuthException(AuthErrorCode.REFRESH_TOKEN_STORE_UNAVAILABLE, e);
@@ -221,5 +222,5 @@ public class OwnerTokenRefreshService {
 
     private record Candidate(Long ownerId, boolean fallback) { }
     private record Publication(OwnerTokenRefreshResult result, long version, LocalDateTime expiresAt) { }
-    private record Revocation(String hash, long version) { }
+    private record Revocation(String hash, long version, LocalDateTime revokedAt) { }
 }

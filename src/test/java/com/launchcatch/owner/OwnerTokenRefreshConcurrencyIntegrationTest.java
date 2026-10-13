@@ -7,6 +7,13 @@ import static org.mockito.Mockito.*;
 import com.launchcatch.auth.Role;
 import com.launchcatch.auth.exception.AuthException;
 import com.launchcatch.auth.jwt.AccessTokenValidAfterRepository;
+import com.launchcatch.auth.jwt.JwtTokenProvider;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.LockModeType;
+import java.util.Optional;
+import java.time.Clock;
+import java.time.Instant;
+import java.util.concurrent.atomic.AtomicReference;
 import com.launchcatch.auth.opaque.RefreshTokenRepository;
 import com.launchcatch.auth.opaque.TokenHasher;
 import com.launchcatch.owner.dto.OwnerLoginRequest;
@@ -57,6 +64,9 @@ class OwnerTokenRefreshConcurrencyIntegrationTest {
     @Autowired private OwnerTokenRefreshService refresh;
     @Autowired private PasswordEncoder encoder;
     @Autowired private AccessTokenValidAfterRepository cutoff;
+    @Autowired private JwtTokenProvider jwt;
+    @Autowired private EntityManager entityManager;
+    @MockitoSpyBean private Clock clock;
     private Long ownerId;
     private String oldToken;
     private final OwnerLoginRequest request = new OwnerLoginRequest("refresh@example.com", "password12");
@@ -163,6 +173,46 @@ class OwnerTokenRefreshConcurrencyIntegrationTest {
                 assertThat(tokens.find(earlier.refreshToken())).isEmpty();
             } finally {
                 release.countDown();
+            }
+        }
+    }
+
+    @Test
+    void 이전_RT_재사용의_잠금_대기중_발급된_AT도_폐기한다() throws Exception {
+        Instant startedAt = Instant.parse("2026-10-13T01:00:00Z");
+        doReturn(startedAt).when(clock).instant();
+        // 설정에서 발급한 RT와 같은 시계를 사용하도록 다시 로그인한다.
+        String reusedToken = login.login(request).refreshToken();
+        String currentToken = refresh.refresh(reusedToken).refreshToken();
+        CountDownLatch revocationWaiting = new CountDownLatch(1);
+        CountDownLatch releaseRevocation = new CountDownLatch(1);
+        AtomicReference<Thread> revokingThread = new AtomicReference<>();
+        doAnswer(call -> {
+            if (Thread.currentThread() == revokingThread.get()) {
+                revocationWaiting.countDown();
+                assertThat(releaseRevocation.await(15, TimeUnit.SECONDS)).isTrue();
+            }
+            return Optional.ofNullable(entityManager.find(Owner.class, ownerId, LockModeType.PESSIMISTIC_WRITE));
+        }).when(owners).findByIdForLogin(ownerId);
+        try (var executor = Executors.newSingleThreadExecutor()) {
+            var revocation = executor.submit(() -> {
+                revokingThread.set(Thread.currentThread());
+                assertThatThrownBy(() -> refresh.refresh(reusedToken)).isInstanceOfSatisfying(AuthException.class,
+                        e -> assertThat(e.getErrorCode().getCode()).isEqualTo("AUTH-004"));
+            });
+            try {
+                assertThat(revocationWaiting.await(15, TimeUnit.SECONDS)).isTrue();
+                // 초 경계에 고정해 AT 발급과 폐기 시각이 같아도 차단되는지 확인한다.
+                doReturn(startedAt.plusSeconds(2)).when(clock).instant();
+                var issuedWhileWaiting = refresh.refresh(currentToken);
+                releaseRevocation.countDown();
+                revocation.get(15, TimeUnit.SECONDS);
+                assertThat(owners.findById(ownerId).orElseThrow().getRefreshTokenHash()).isNull();
+                assertThat(tokens.findActiveHash(Role.OWNER, ownerId)).isEmpty();
+                assertThat(cutoff.isValidAfter(Role.OWNER, ownerId,
+                        jwt.getIssuedAt(issuedWhileWaiting.accessToken()))).isFalse();
+            } finally {
+                releaseRevocation.countDown();
             }
         }
     }

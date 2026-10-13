@@ -262,7 +262,7 @@ class OwnerTokenRefreshServiceTest {
         assertThat(owner.getRefreshTokenExpiresAt()).isNull();
         assertThat(owner.getRefreshTokenIssuanceVersion()).isEqualTo(2L);
         verify(ownerTokens).revokeThroughVersion(7L, OLD_HASH, 2L);
-        verify(cutoff).invalidateBefore(Role.OWNER, 7L, now, Duration.ofMinutes(30));
+        verify(cutoff).invalidateBefore(Role.OWNER, 7L, now.plusNanos(1), Duration.ofMinutes(30));
     }
 
     @Test
