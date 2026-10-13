@@ -15,6 +15,8 @@ public interface CampaignQueryService {
     /**
      * 00:00 적재 대상을 조회한다. 그 영업일이 집행 기간에 들어가는 ACTIVE, 예약이 있는
      * PAUSED(OWNER, NO_POINTS) 캠페인을 돌려준다(ad_candidate.campaign_state 열 주석의 조건).
+     * 결과가 10000행을 넘으면 예외로 거부한다(qa-performance-efficiency-guideline.md, 한 번에
+     * 메모리에 올리는 행 수 상한, #178).
      */
     List<CampaignInfo> findServableOn(LocalDate businessDate);
 }

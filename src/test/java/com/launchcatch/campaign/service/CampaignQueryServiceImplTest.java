@@ -1,6 +1,7 @@
 package com.launchcatch.campaign.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -16,6 +17,7 @@ import java.lang.reflect.Field;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.util.Collections;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -23,6 +25,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.domain.PageRequest;
 
 @ExtendWith(MockitoExtension.class)
 class CampaignQueryServiceImplTest {
@@ -83,12 +86,41 @@ class CampaignQueryServiceImplTest {
     void findServableOn은_저장소를_불러_매핑한다() {
         Campaign campaign = campaign();
         LocalDate businessDate = LocalDate.of(2026, 10, 13);
-        when(campaignRepository.findServableOn(businessDate)).thenReturn(List.of(campaign));
+        PageRequest pageable = PageRequest.of(0, CampaignQueryServiceImpl.MAX_SERVABLE_CAMPAIGNS + 1);
+        when(campaignRepository.findServableOn(businessDate, pageable)).thenReturn(List.of(campaign));
 
         List<CampaignInfo> result = service.findServableOn(businessDate);
 
         assertThat(result).extracting(CampaignInfo::campaignId).containsExactly(CAMPAIGN_ID);
-        verify(campaignRepository).findServableOn(businessDate);
+        verify(campaignRepository).findServableOn(businessDate, pageable);
+    }
+
+    @Test
+    @DisplayName("findServableOn 결과가 10000행이면 거부하지 않는다")
+    void findServableOn_결과가_10000행이면_거부하지_않는다() {
+        LocalDate businessDate = LocalDate.of(2026, 10, 13);
+        PageRequest pageable = PageRequest.of(0, CampaignQueryServiceImpl.MAX_SERVABLE_CAMPAIGNS + 1);
+        List<Campaign> campaigns =
+                Collections.nCopies(CampaignQueryServiceImpl.MAX_SERVABLE_CAMPAIGNS, campaign());
+        when(campaignRepository.findServableOn(businessDate, pageable)).thenReturn(campaigns);
+
+        List<CampaignInfo> result = service.findServableOn(businessDate);
+
+        assertThat(result).hasSize(CampaignQueryServiceImpl.MAX_SERVABLE_CAMPAIGNS);
+    }
+
+    @Test
+    @DisplayName("findServableOn 결과가 10000행을 넘으면 예외로 거부한다")
+    void findServableOn_결과가_10000행을_넘으면_거부한다() {
+        LocalDate businessDate = LocalDate.of(2026, 10, 13);
+        PageRequest pageable = PageRequest.of(0, CampaignQueryServiceImpl.MAX_SERVABLE_CAMPAIGNS + 1);
+        List<Campaign> tooMany =
+                Collections.nCopies(CampaignQueryServiceImpl.MAX_SERVABLE_CAMPAIGNS + 1, campaign());
+        when(campaignRepository.findServableOn(businessDate, pageable)).thenReturn(tooMany);
+
+        assertThatThrownBy(() -> service.findServableOn(businessDate))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining(String.valueOf(tooMany.size()));
     }
 
     private Campaign campaign() {

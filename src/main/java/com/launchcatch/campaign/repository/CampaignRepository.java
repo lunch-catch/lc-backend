@@ -5,6 +5,7 @@ import jakarta.persistence.LockModeType;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Optional;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
@@ -30,6 +31,10 @@ public interface CampaignRepository extends JpaRepository<Campaign, Long> {
      * ACTIVE -> PAUSED 전이만 있고(95행) PAUSED(OWNER, NO_POINTS)는 그날 ACTIVE였다가 멈춘
      * 것만 존재하므로, 오늘 집행 기간에 든 PAUSED(OWNER, NO_POINTS)는 이미 오늘 예약이 있다고
      * 봐도 된다. 그래서 campaign 자신의 컬럼만으로 조건을 표현한다.
+     *
+     * pageable이 상한을 건다. 전체를 불러온 뒤 크기를 재면 상한을 넘기는 순간 그 많은 행을
+     * 먼저 메모리에 다 올리게 되어 상한을 둔 목적이 없어진다. 호출하는 쪽이
+     * PageRequest.of(0, MAX + 1)을 넘겨 초과 여부 판정에 필요한 한 행만 더 받는다.
      */
     @Query("""
             select c from Campaign c
@@ -45,5 +50,5 @@ public interface CampaignRepository extends JpaRepository<Campaign, Long> {
                 )
             )
             """)
-    List<Campaign> findServableOn(@Param("businessDate") LocalDate businessDate);
+    List<Campaign> findServableOn(@Param("businessDate") LocalDate businessDate, Pageable pageable);
 }
