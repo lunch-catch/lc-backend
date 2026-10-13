@@ -55,6 +55,24 @@ class PlatformSettingQueryServiceImplTest {
         assertThatThrownBy(service::getImpressionUnitPrice).isInstanceOf(IllegalStateException.class);
     }
 
+    @Test
+    @DisplayName("값이 0이면 예외로 거부한다")
+    void 값이_0이면_거부한다() {
+        when(platformSettingRepository.findBySettingKey("IMPRESSION_UNIT_PRICE"))
+                .thenReturn(Optional.of(settingOf("0")));
+
+        assertThatThrownBy(service::getImpressionUnitPrice).isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    @DisplayName("값이 음수면 예외로 거부한다")
+    void 값이_음수면_거부한다() {
+        when(platformSettingRepository.findBySettingKey("IMPRESSION_UNIT_PRICE"))
+                .thenReturn(Optional.of(settingOf("-5")));
+
+        assertThatThrownBy(service::getImpressionUnitPrice).isInstanceOf(IllegalStateException.class);
+    }
+
     private PlatformSetting settingOf(String value) {
         try {
             Constructor<PlatformSetting> constructor = PlatformSetting.class.getDeclaredConstructor();
