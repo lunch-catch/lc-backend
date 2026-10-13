@@ -45,8 +45,8 @@ public class CouponEvent extends BaseTimeEntity {
     @Column(name = "store_name", nullable = false, updatable = false, length = 100)
     private String storeName;
 
-    @Column(name = "store_image_object_key", updatable = false, length = 255)
-    private String storeImageObjectKey;
+    @Column(name = "store_image_url", updatable = false, length = 512)
+    private String storeImageUrl;
 
     @Enumerated(EnumType.STRING)
     @Column(name = "discount_target_type", nullable = false, updatable = false, length = 20)

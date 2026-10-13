@@ -68,6 +68,14 @@ public class Admin extends BaseTimeEntity {
     @Column(name = "refresh_token_issuance_version", nullable = false)
     private long refreshTokenIssuanceVersion;
 
+    // 로그인·재발급 순번과 구분하여 로그아웃으로 폐기한 Access Token의 상한만 저장한다.
+    @Column(name = "access_token_revoked_version", nullable = false)
+    private long accessTokenRevokedVersion;
+
+    // 순번 없는 기존 JWT도 Redis 유실과 무관하게 폐기할 수 있도록 DB에 남긴다.
+    @Column(name = "access_token_valid_after")
+    private LocalDateTime accessTokenValidAfter;
+
     @Column(name = "deleted_at")
     private LocalDateTime deletedAt;
 
@@ -114,6 +122,24 @@ public class Admin extends BaseTimeEntity {
         this.refreshTokenIssuanceVersion = Math.incrementExact(refreshTokenIssuanceVersion);
         this.refreshTokenHash = tokenHash;
         this.refreshTokenExpiresAt = expiresAt;
+    }
+
+    // 폐기도 발급 순번을 증가시켜 이전 로그인·재발급의 지연된 캐시 게시를 막는다.
+    public void revokeRefreshToken() {
+        this.refreshTokenIssuanceVersion = Math.incrementExact(refreshTokenIssuanceVersion);
+        this.refreshTokenHash = null;
+        this.refreshTokenExpiresAt = null;
+    }
+
+    // Refresh Token 폐기와 Access Token의 두 폐기 기준을 같은 행 잠금·트랜잭션에서 확정한다.
+    public void logoutAt(LocalDateTime cutoff) {
+        java.util.Objects.requireNonNull(cutoff, "cutoff");
+        revokeRefreshToken();
+        this.accessTokenRevokedVersion = refreshTokenIssuanceVersion;
+        LocalDateTime precise = cutoff.truncatedTo(java.time.temporal.ChronoUnit.MICROS);
+        if (accessTokenValidAfter == null || precise.isAfter(accessTokenValidAfter)) {
+            this.accessTokenValidAfter = precise;
+        }
     }
 
     private static void validateLoginId(String loginId) {

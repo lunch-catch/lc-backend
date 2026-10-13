@@ -33,7 +33,6 @@ class MemberRepositoryImpl implements MemberRepositoryCustom {
                 statusIs(condition),
                 createdAtFrom(condition),
                 createdAtBefore(condition),
-                memberIdIs(condition),
                 nicknameStartsWith(condition)
         };
 
@@ -88,10 +87,6 @@ class MemberRepositoryImpl implements MemberRepositoryCustom {
 
     private BooleanExpression createdAtBefore(MemberSearchCondition condition) {
         return condition.createdBefore() == null ? null : member.createdAt.lt(condition.createdBefore());
-    }
-
-    private BooleanExpression memberIdIs(MemberSearchCondition condition) {
-        return condition.memberId() == null ? null : member.id.eq(condition.memberId());
     }
 
     // TODO: 완전 부분 검색 구현을 위해 Full-Text, ngram, 검색 엔진 등 대체 방법을 검토한다.

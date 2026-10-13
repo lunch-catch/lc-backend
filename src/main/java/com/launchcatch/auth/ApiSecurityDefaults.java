@@ -1,6 +1,8 @@
 package com.launchcatch.auth;
 
 import com.launchcatch.auth.jwt.AccessTokenValidAfterRepository;
+import com.launchcatch.auth.contract.AccessTokenValidationPolicy;
+import java.util.List;
 import com.launchcatch.auth.jwt.JwtAuthenticationFilter;
 import com.launchcatch.auth.jwt.JwtTokenProvider;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -35,13 +37,17 @@ public class ApiSecurityDefaults {
     private final AccessTokenValidAfterRepository accessTokenValidAfterRepository;
     private final StringRedisTemplate redisTemplate;
     private final CorsConfigurationSource corsConfigurationSource;
+    // 각 도메인이 빈으로 등록한 검증 정책을 모아 공통 JWT 필터에 전달한다.
+    private final List<AccessTokenValidationPolicy> validationPolicies;
 
     public ApiSecurityDefaults(
             @Qualifier("handlerExceptionResolver") HandlerExceptionResolver handlerExceptionResolver,
             JwtTokenProvider jwtTokenProvider,
             AccessTokenValidAfterRepository accessTokenValidAfterRepository,
             StringRedisTemplate redisTemplate,
-            CorsConfigurationSource corsConfigurationSource) {
+            CorsConfigurationSource corsConfigurationSource,
+            List<AccessTokenValidationPolicy> validationPolicies) {
+        this.validationPolicies = List.copyOf(validationPolicies);
         this.handlerExceptionResolver = handlerExceptionResolver;
         this.jwtTokenProvider = jwtTokenProvider;
         this.accessTokenValidAfterRepository = accessTokenValidAfterRepository;
@@ -69,7 +75,7 @@ public class ApiSecurityDefaults {
                 .httpBasic(AbstractHttpConfigurer::disable)
 
                 .addFilterBefore(
-                        new JwtAuthenticationFilter(jwtTokenProvider, accessTokenValidAfterRepository),
+                        new JwtAuthenticationFilter(jwtTokenProvider, accessTokenValidAfterRepository, validationPolicies),
                         UsernamePasswordAuthenticationFilter.class)
                 .addFilterBefore(
                         new AuthRateLimitFilter(redisTemplate),

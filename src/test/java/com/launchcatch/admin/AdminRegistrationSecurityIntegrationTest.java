@@ -21,6 +21,8 @@ import com.launchcatch.auth.Role;
 import com.launchcatch.auth.exception.AuthExceptionHandler;
 import com.launchcatch.auth.jwt.AccessTokenCutoffVerifier;
 import com.launchcatch.auth.jwt.AccessTokenValidAfterRepository;
+import com.launchcatch.admin.repository.AdminAccessTokenVersionRepository;
+import com.launchcatch.admin.service.AdminAccessTokenVerifier;
 import com.launchcatch.auth.jwt.JwtTokenProvider;
 import com.launchcatch.global.exception.GlobalExceptionHandler;
 import com.launchcatch.ops.contract.AuditLogWriter;
@@ -65,7 +67,7 @@ class AdminRegistrationSecurityIntegrationTest {
             """;
     @Autowired private WebApplicationContext context;
     @Autowired private JwtTokenProvider tokens;
-    @Autowired private AccessTokenValidAfterRepository cutoff;
+    @Autowired private AdminAccessTokenVersionRepository cutoff;
     @Autowired private AdminRepository admins;
     @Autowired private PasswordEncoder encoder;
     @Autowired private AuditLogWriter audit;
@@ -81,7 +83,8 @@ class AdminRegistrationSecurityIntegrationTest {
         when(tokens.getId("token")).thenReturn(1L);
         when(tokens.getRole("token")).thenReturn(Role.SUPER_ADMIN);
         when(tokens.getIssuedAt("token")).thenReturn(ISSUED_AT);
-        when(cutoff.isValidAfter(Role.SUPER_ADMIN, 1L, ISSUED_AT)).thenReturn(true);
+        when(tokens.getAdditionalClaims("token")).thenReturn(AdminAccessTokenClaims.forVersion(1L));
+        when(cutoff.isVersionValid(Role.SUPER_ADMIN, 1L, 1L)).thenReturn(true);
         mvc = MockMvcBuilders.webAppContextSetup(context).apply(springSecurity()).build();
     }
 
@@ -98,7 +101,7 @@ class AdminRegistrationSecurityIntegrationTest {
 
     @Test
     void Redis_장애는_503_AUTH002와_RetryAfter로_응답하고_저장하지_않는다() throws Exception {
-        when(cutoff.isValidAfter(Role.SUPER_ADMIN, 1L, ISSUED_AT))
+        when(cutoff.isVersionValid(Role.SUPER_ADMIN, 1L, 1L))
                 .thenThrow(new DataAccessResourceFailureException("Redis unavailable"));
         Logger logger = (Logger) LoggerFactory.getLogger(GlobalExceptionHandler.class);
         var appender = new ListAppender<ILoggingEvent>();
@@ -124,7 +127,7 @@ class AdminRegistrationSecurityIntegrationTest {
     @Test
     void 일반_관리자는_넓은_체인이_허용하더라도_발급에서_403이다() throws Exception {
         when(tokens.getRole("token")).thenReturn(Role.ADMIN);
-        when(cutoff.isValidAfter(Role.ADMIN, 1L, ISSUED_AT)).thenReturn(true);
+        when(cutoff.isVersionValid(Role.ADMIN, 1L, 1L)).thenReturn(true);
         mvc.perform(post("/v1/admin/admins").cookie(new Cookie("accessToken", "token"))
                         .contentType(MediaType.APPLICATION_JSON).content(BODY))
                 .andExpect(status().isForbidden()).andExpect(jsonPath("$.code").value("AUTH-006"));
@@ -170,11 +173,18 @@ class AdminRegistrationSecurityIntegrationTest {
         @Bean PasswordEncoder encoder() { return mock(PasswordEncoder.class); }
         @Bean AuditLogWriter audit() { return mock(AuditLogWriter.class); }
         @Bean PlatformTransactionManager transactions() { return mock(PlatformTransactionManager.class); }
-        @Bean AccessTokenCutoffVerifier cutoffVerifier(AccessTokenValidAfterRepository cutoff) {
-            return new AccessTokenCutoffVerifier(cutoff);
+        @Bean com.launchcatch.admin.repository.AdminAccessTokenRevocationRepository revocations() {
+            var repository = mock(com.launchcatch.admin.repository.AdminAccessTokenRevocationRepository.class);
+            when(repository.findRevocation(any())).thenReturn(java.util.Optional.of(new com.launchcatch.admin.AdminAccessTokenRevocation(0L, null)));
+            return repository;
+        }
+        @Bean AdminAccessTokenVersionRepository versions() { return mock(AdminAccessTokenVersionRepository.class); }
+        @Bean AdminAccessTokenVerifier cutoffVerifier(AdminAccessTokenVersionRepository versions,
+                AccessTokenValidAfterRepository cutoff, com.launchcatch.admin.repository.AdminAccessTokenRevocationRepository revocations) {
+            return new AdminAccessTokenVerifier(versions, new AccessTokenCutoffVerifier(cutoff), revocations);
         }
         @Bean AdminRegistrationService registration(AdminRepository admins, AuditLogWriter audit,
-                PasswordEncoder encoder, PlatformTransactionManager transactions, AccessTokenCutoffVerifier verifier) {
+                PasswordEncoder encoder, PlatformTransactionManager transactions, AdminAccessTokenVerifier verifier) {
             return new AdminRegistrationService(admins, audit, encoder, transactions, verifier);
         }
         @Bean

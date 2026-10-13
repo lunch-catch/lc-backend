@@ -97,6 +97,7 @@ public class Payment extends BaseTimeEntity {
      * chk_payment_pg_tid 가 저장을 거부하고, 재조회로 결과를 확정할 단서도 사라진다.
      *
      * 같은 값을 다시 적는 것은 허용한다. 같은 주문으로 승인을 다시 시도하는 경로가 있다.
+     * 한 번 적은 식별자를 다른 값으로 바꾸는 것은 상태와 관계없이 거부한다.
      */
     public void assignPgTid(String pgTid) {
         if (pgTid == null || pgTid.isBlank() || pgTid.length() > PG_TID_MAX) {
@@ -104,6 +105,9 @@ public class Payment extends BaseTimeEntity {
         }
         if (pgTid.equals(this.pgTid)) {
             return;
+        }
+        if (this.pgTid != null) {
+            throw new IllegalStateException("이미 지정한 결제 식별자는 변경할 수 없습니다.");
         }
         if (status != PaymentStatus.REQUESTED) {
             throw new IllegalStateException("승인을 기다리는 주문에만 결제 식별자를 적을 수 있습니다: " + status);

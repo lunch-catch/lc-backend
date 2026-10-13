@@ -15,8 +15,10 @@ public class CouponSecurityConfig {
             "/v1/coupons/**"
     };
 
+    private static final String LIST_PATH = "/v1/coupons";
     private static final String ISSUANCE_LIMIT_PATH = "/v1/coupons/issuance-limit";
     private static final String SUMMARY_PATH = "/v1/coupons/summary";
+    private static final String DETAIL_PATH = "/v1/coupons/{memberCouponId}";
 
     @Bean
     @Order(ApiSecurityDefaults.DOMAIN_CHAIN_ORDER)
@@ -25,9 +27,9 @@ public class CouponSecurityConfig {
         return defaults.apply(http)
                 .securityMatcher(COUPON_PATHS)
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers(HttpMethod.GET, ISSUANCE_LIMIT_PATH, SUMMARY_PATH)
+                        .requestMatchers(HttpMethod.GET, LIST_PATH, ISSUANCE_LIMIT_PATH, SUMMARY_PATH, DETAIL_PATH)
                         .hasRole("MEMBER")
-                        .requestMatchers(HttpMethod.DELETE, "/v1/coupons/{memberCouponId}")
+                        .requestMatchers(HttpMethod.DELETE, DETAIL_PATH)
                         .hasRole("MEMBER")
                         .anyRequest().denyAll())
                 .build();
