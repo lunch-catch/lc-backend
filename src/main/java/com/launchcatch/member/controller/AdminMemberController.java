@@ -5,7 +5,6 @@ import com.launchcatch.global.response.ResponseEnvelope;
 import com.launchcatch.member.contract.MemberStatus;
 import com.launchcatch.member.dto.AdminMemberListQuery;
 import com.launchcatch.member.dto.AdminMemberResponse;
-import com.launchcatch.member.dto.AdminMemberSearchType;
 import com.launchcatch.member.service.AdminMemberService;
 import java.time.LocalDate;
 import lombok.RequiredArgsConstructor;
@@ -30,13 +29,12 @@ public class AdminMemberController {
             @RequestParam(required = false) MemberStatus status,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate joinedFrom,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate joinedTo,
-            @RequestParam(required = false) AdminMemberSearchType searchType,
             @RequestParam(required = false) String keyword,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size,
             @RequestParam(required = false) String sortBy,
             @RequestParam(required = false) String sortDir) {
         return ResponseEnvelope.success(adminMemberService.search(new AdminMemberListQuery(
-                status, joinedFrom, joinedTo, searchType, keyword, page, size, sortBy, sortDir)));
+                status, joinedFrom, joinedTo, keyword, page, size, sortBy, sortDir)));
     }
 }

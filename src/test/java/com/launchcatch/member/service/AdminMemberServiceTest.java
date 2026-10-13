@@ -12,7 +12,6 @@ import com.launchcatch.global.response.PageResponse;
 import com.launchcatch.member.contract.MemberStatus;
 import com.launchcatch.member.dto.AdminMemberListQuery;
 import com.launchcatch.member.dto.AdminMemberResponse;
-import com.launchcatch.member.dto.AdminMemberSearchType;
 import com.launchcatch.member.repository.MemberAdminRow;
 import com.launchcatch.member.repository.MemberRepository;
 import com.launchcatch.member.repository.MemberSearchCondition;
@@ -40,12 +39,12 @@ class AdminMemberServiceTest {
     @InjectMocks AdminMemberService service;
 
     private static AdminMemberListQuery query(
-            MemberStatus status, LocalDate from, LocalDate to, AdminMemberSearchType type, String keyword) {
-        return new AdminMemberListQuery(status, from, to, type, keyword, 0, 20, null, null);
+            MemberStatus status, LocalDate from, LocalDate to, String keyword) {
+        return new AdminMemberListQuery(status, from, to, keyword, 0, 20, null, null);
     }
 
     private static AdminMemberListQuery paged(int page, int size, String sortBy, String sortDir) {
-        return new AdminMemberListQuery(null, null, null, null, null, page, size, sortBy, sortDir);
+        return new AdminMemberListQuery(null, null, null, null, page, size, sortBy, sortDir);
     }
 
     private MemberSearchCondition searchAndCapture(AdminMemberListQuery query) {
@@ -72,7 +71,7 @@ class AdminMemberServiceTest {
     @Test
     void 가입일_범위는_KST_날짜_양끝_포함으로_반열린_구간이_된다() {
         MemberSearchCondition condition = searchAndCapture(query(
-                null, LocalDate.of(2026, 10, 1), LocalDate.of(2026, 10, 7), null, null));
+                null, LocalDate.of(2026, 10, 1), LocalDate.of(2026, 10, 7), null));
 
         assertThat(condition.createdFrom()).isEqualTo(LocalDateTime.of(2026, 10, 1, 0, 0));
         assertThat(condition.createdBefore()).isEqualTo(LocalDateTime.of(2026, 10, 8, 0, 0));
@@ -81,7 +80,7 @@ class AdminMemberServiceTest {
     @Test
     void 같은_날을_시작과_끝으로_주면_그날_하루가_된다() {
         MemberSearchCondition condition = searchAndCapture(query(
-                null, LocalDate.of(2026, 10, 1), LocalDate.of(2026, 10, 1), null, null));
+                null, LocalDate.of(2026, 10, 1), LocalDate.of(2026, 10, 1), null));
 
         assertThat(condition.createdFrom()).isEqualTo(LocalDateTime.of(2026, 10, 1, 0, 0));
         assertThat(condition.createdBefore()).isEqualTo(LocalDateTime.of(2026, 10, 2, 0, 0));
@@ -89,90 +88,60 @@ class AdminMemberServiceTest {
 
     @Test
     void 조건을_주지_않으면_범위와_키워드_조건이_비어_있다() {
-        MemberSearchCondition condition = searchAndCapture(query(null, null, null, null, null));
+        MemberSearchCondition condition = searchAndCapture(query(null, null, null, null));
 
-        assertThat(condition).isEqualTo(new MemberSearchCondition(null, null, null, null, null));
+        assertThat(condition).isEqualTo(new MemberSearchCondition(null, null, null, null));
     }
 
     @Test
     void 상태_조건은_그대로_넘긴다() {
-        MemberSearchCondition condition = searchAndCapture(query(MemberStatus.SUSPENDED, null, null, null, null));
+        MemberSearchCondition condition = searchAndCapture(query(MemberStatus.SUSPENDED, null, null, null));
 
         assertThat(condition.status()).isEqualTo(MemberStatus.SUSPENDED);
     }
 
     @Test
-    void 회원_번호_검색은_앞뒤_공백을_걷고_번호_일치로_본다() {
-        MemberSearchCondition condition = searchAndCapture(
-                query(null, null, null, AdminMemberSearchType.MEMBER_ID, " 123 "));
+    void 검색어만_주면_앞뒤_공백을_걷고_닉네임_접두사로_조회한다() {
+        MemberSearchCondition condition = searchAndCapture(query(null, null, null, " 점심 "));
 
-        assertThat(condition.memberId()).isEqualTo(123L);
-        assertThat(condition.nicknamePrefix()).isNull();
+        assertThat(condition.nicknamePrefix()).isEqualTo("점심");
     }
 
     @Test
-    void 숫자만_있는_키워드도_닉네임_검색이면_닉네임_접두사로_본다() {
+    void 숫자검색어도_회원_번호의_범위와_관계없이_닉네임_접두사로_조회한다() {
+        MemberSearchCondition condition = searchAndCapture(query(null, null, null, "99999999999999999999"));
+
+        assertThat(condition.nicknamePrefix()).isEqualTo("99999999999999999999");
+    }
+
+    @Test
+    void 숫자만_있는_키워드도_닉네임_접두사로_본다() {
         MemberSearchCondition condition = searchAndCapture(
-                query(null, null, null, AdminMemberSearchType.NICKNAME, "123"));
+                query(null, null, null, "123"));
 
         assertThat(condition.nicknamePrefix()).isEqualTo("123");
-        assertThat(condition.memberId()).isNull();
     }
 
     @Test
     void 닉네임_검색어는_글자_그대로_접두사가_된다() {
         MemberSearchCondition condition = searchAndCapture(
-                query(null, null, null, AdminMemberSearchType.NICKNAME, "점심100%"));
+                query(null, null, null, "점심100%"));
 
         assertThat(condition.nicknamePrefix()).isEqualTo("점심100%");
-        assertThat(condition.memberId()).isNull();
     }
 
     @Test
     void 키워드가_공백뿐이면_검색_조건이_아니다() {
-        MemberSearchCondition withType = searchAndCapture(
-                query(null, null, null, AdminMemberSearchType.NICKNAME, "   "));
+        MemberSearchCondition condition = searchAndCapture(query(null, null, null, "   "));
 
-        assertThat(withType.memberId()).isNull();
-        assertThat(withType.nicknamePrefix()).isNull();
+        assertThat(condition.nicknamePrefix()).isNull();
     }
 
     @Test
-    void 키워드가_없으면_검색_종류만_있어도_조건이_아니다() {
-        MemberSearchCondition condition = searchAndCapture(
-                query(null, null, null, AdminMemberSearchType.MEMBER_ID, null));
+    void 키워드가_빈_문자열이면_검색_조건이_아니다() {
+        MemberSearchCondition condition = searchAndCapture(query(null, null, null, ""));
 
-        assertThat(condition).isEqualTo(new MemberSearchCondition(null, null, null, null, null));
-    }
-
-    @Test
-    void 키워드를_주고_검색_종류가_없으면_거절한다() {
-        assertThatThrownBy(() -> service.search(query(null, null, null, null, "abc")))
-                .isInstanceOf(IllegalArgumentException.class);
-        verify(memberRepository, never()).searchForAdmin(any(), any(), any(), any());
-    }
-
-    @Test
-    void 회원_번호_검색에_숫자가_아닌_키워드를_주면_거절한다() {
-        assertThatThrownBy(() -> service.search(
-                query(null, null, null, AdminMemberSearchType.MEMBER_ID, "12a")))
-                .isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> service.search(
-                query(null, null, null, AdminMemberSearchType.MEMBER_ID, "-1")))
-                .isInstanceOf(IllegalArgumentException.class);
-        verify(memberRepository, never()).searchForAdmin(any(), any(), any(), any());
-    }
-
-    @Test
-    void 회원_번호_범위를_넘는_숫자는_조회하지_않고_빈_결과다() {
-        PageResponse<AdminMemberResponse> response = service.search(new AdminMemberListQuery(
-                null, null, null, AdminMemberSearchType.MEMBER_ID, "99999999999999999999", 3, 50, null, null));
-
-        assertThat(response.items()).isEmpty();
-        assertThat(response.page()).isEqualTo(3);
-        assertThat(response.size()).isEqualTo(50);
-        assertThat(response.totalElements()).isZero();
-        verify(memberRepository, never()).searchForAdmin(any(), any(), any(), any());
+        assertThat(condition.nicknamePrefix()).isNull();
     }
 
     @Test
@@ -242,7 +211,7 @@ class AdminMemberServiceTest {
     @Test
     void 시작일이_끝일보다_늦으면_거절한다() {
         assertThatThrownBy(() -> service.search(query(
-                null, LocalDate.of(2026, 10, 8), LocalDate.of(2026, 10, 7), null, null)))
+                null, LocalDate.of(2026, 10, 8), LocalDate.of(2026, 10, 7), null)))
                 .isInstanceOf(IllegalArgumentException.class);
         verify(memberRepository, never()).searchForAdmin(any(), any(), any(), any());
     }
@@ -256,7 +225,7 @@ class AdminMemberServiceTest {
         when(memberRepository.searchForAdmin(any(), any(), any(), any()))
                 .thenReturn(new PageImpl<>(List.of(active, withdrawn), PageRequest.of(0, 20), 2));
 
-        PageResponse<AdminMemberResponse> response = service.search(query(null, null, null, null, null));
+        PageResponse<AdminMemberResponse> response = service.search(query(null, null, null, null));
 
         assertThat(response.totalElements()).isEqualTo(2);
         AdminMemberResponse first = response.items().get(0);

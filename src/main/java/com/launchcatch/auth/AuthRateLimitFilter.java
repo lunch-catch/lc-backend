@@ -46,7 +46,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
     private static final String KEY_PREFIX = "authRateLimit:";
 
     /*
-     * 소비자별로 로그인과 재발급 둘씩이라 여섯이다(docs/api-spec/auth.md 의 목록).
+     * 소비자별로 로그인과 재발급 둘씩이라 여섯이다(docs/api-spec/auth-api-spec.md 의 목록).
      * 점주 회원가입도 열린 경로이지만 지금은 넣지 않는다. 가입은 사업자 검증이 뒤따라
      * 반복 호출의 이득이 적고, 넣으려면 그 경로의 상한을 따로 정해야 한다.
      * 로그아웃은 Access Token 이 있어야 부를 수 있고 DELETE 라 이 필터의 대상이 아니다.
@@ -90,7 +90,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
     }
 
     /*
-     * 다시 요청해도 되는 때까지 남은 초다 (api-spec/README.md 의 429).
+     * 다시 요청해도 되는 때까지 남은 초다 (api-spec/api-spec.md 의 429).
      *
      * 고정 윈도우라 카운터 키의 남은 수명이 그 값이다. 윈도우 길이를 그대로 주면 끝까지 5초
      * 남았는데도 60초를 기다리라고 말하게 된다.

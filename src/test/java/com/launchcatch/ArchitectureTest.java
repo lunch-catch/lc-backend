@@ -6,6 +6,7 @@ import static com.tngtech.archunit.library.Architectures.layeredArchitecture;
 import static com.tngtech.archunit.library.dependencies.SlicesRuleDefinition.slices;
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.querydsl.core.types.dsl.EntityPathBase;
 import com.tngtech.archunit.core.domain.Dependency;
 import com.tngtech.archunit.core.domain.JavaClass;
 import com.tngtech.archunit.core.domain.JavaMethod;
@@ -313,10 +314,13 @@ class ArchitectureTest {
             Map.entry("CouponExpiredEvent", "coupon"),
             Map.entry("NotificationSentEvent", "notification"));
 
+    // Event로 끝나는 엔티티와 그 Querydsl 타입은 도메인 메시지 이벤트가 아니다.
     @ArchTest
     static final ArchRule 이벤트_타입은_정해진_도메인_contract에_둔다 = classes()
             .that().haveSimpleNameEndingWith("Event")
             .and().resideOutsideOfPackage("..analytics..")
+            .and().areNotAnnotatedWith(Entity.class)
+            .and().areNotAssignableTo(EntityPathBase.class)
             .should(new ArchCondition<>("목록에 적힌 도메인의 contract 에 있다") {
                 @Override
                 public void check(JavaClass c, ConditionEvents events) {
