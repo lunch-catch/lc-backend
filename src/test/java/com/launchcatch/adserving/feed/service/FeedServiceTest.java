@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -75,6 +76,7 @@ import org.springframework.dao.QueryTimeoutException;
 class FeedServiceTest {
 
     private static final Long MEMBER_ID = 3001L;
+    private static final String REQUEST_ID = "request-1";
     private static final LocalDate TODAY = LocalDate.of(2026, 10, 1);
     private static final OffsetDateTime NOW = OffsetDateTime.of(2026, 10, 1, 10, 15, 30, 123_000_000, ZoneOffset.ofHours(9));
     private static final double SAVED_LATITUDE = 37.5;
@@ -103,7 +105,7 @@ class FeedServiceTest {
         service = serviceAt(NOW);
         when(memberQueryService.findById(MEMBER_ID)).thenReturn(Optional.of(member(true, SAVED_LATITUDE, SAVED_LONGITUDE)));
         when(feedRequestLimitRepository.tryAcquire(eq(MEMBER_ID), any()))
-                .thenAnswer(invocation -> new FeedRequestPermit(true, invocation.getArgument(1)));
+                .thenAnswer(invocation -> new FeedRequestPermit(true, invocation.getArgument(1), REQUEST_ID));
         when(feedFilterRepository.findSort(MEMBER_ID)).thenReturn(Optional.empty());
         when(feedFilterRepository.findCategories(MEMBER_ID)).thenReturn(List.of());
         when(swipeLogRepository.findByMemberSince(eq(MEMBER_ID), any())).thenReturn(List.of());
@@ -175,7 +177,7 @@ class FeedServiceTest {
         @Test
         void 최근_60초_6회를_넘으면_다시_요청할_수_있을_때까지_남은_초를_올림해_싣는다() {
             when(feedRequestLimitRepository.tryAcquire(eq(MEMBER_ID), any()))
-                    .thenReturn(new FeedRequestPermit(false, NOW.toInstant().plusMillis(36_200)));
+                    .thenReturn(new FeedRequestPermit(false, NOW.toInstant().plusMillis(36_200), REQUEST_ID));
 
             assertThatThrownBy(() -> service.getFeed(MEMBER_ID, null, null))
                     .isInstanceOf(FeedRateLimitedException.class)
@@ -187,11 +189,41 @@ class FeedServiceTest {
         @Test
         void 다음_피드_가능_시각은_요청_제한의_판정을_그대로_준다() {
             when(feedRequestLimitRepository.tryAcquire(eq(MEMBER_ID), any()))
-                    .thenReturn(new FeedRequestPermit(true, NOW.toInstant().plusSeconds(37)));
+                    .thenReturn(new FeedRequestPermit(true, NOW.toInstant().plusSeconds(37), REQUEST_ID));
 
             FeedResponse response = service.getFeed(MEMBER_ID, null, null);
 
             assertThat(response.nextFeedAvailableAt()).isEqualTo(NOW.plusSeconds(37));
+        }
+
+        @Test
+        void 응답이_200_으로_끝나지_않으면_이번_요청을_횟수에서_뺀다() {
+            when(budgetQueryServiceProvider.getIfAvailable()).thenReturn(budgetQueryService);
+            givenCandidates(candidate(101, 100));
+            when(budgetQueryService.getProgress(anyCollection(), any(), any()))
+                    .thenThrow(new IllegalStateException("counter down"));
+
+            assertThatThrownBy(() -> service.getFeed(MEMBER_ID, null, null)).isInstanceOf(IllegalStateException.class);
+            verify(feedRequestLimitRepository).release(MEMBER_ID, REQUEST_ID);
+        }
+
+        @Test
+        void 응답이_200_으로_끝나면_횟수에서_빼지_않는다() {
+            givenCandidates(candidate(101, 100));
+
+            service.getFeed(MEMBER_ID, null, null);
+
+            verify(feedRequestLimitRepository, never()).release(any(), any());
+        }
+
+        @Test
+        void 횟수에서_빼다가_캐시가_멈추면_원래_예외를_올리고_센다() {
+            when(adCandidateRepository.findServable(any(), any())).thenThrow(new IllegalStateException("db down"));
+            doThrow(new QueryTimeoutException("down")).when(feedRequestLimitRepository).release(any(), any());
+
+            assertThatThrownBy(() -> service.getFeed(MEMBER_ID, null, null))
+                    .isInstanceOf(IllegalStateException.class).hasMessage("db down");
+            assertThat(bypassCount("rate_limit_release")).isEqualTo(1.0);
         }
 
         @Test

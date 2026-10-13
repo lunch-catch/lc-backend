@@ -167,6 +167,18 @@ class FeedIntegrationTest {
     }
 
     @Test
+    void 예산_조회가_실패해_500_으로_끝난_요청은_횟수에_넣지_않는다() throws Exception {
+        insertCandidate(101, 420);
+        when(budgetQueryService.getProgress(anyCollection(), eq(TODAY), eq(LocalDateTime.of(2026, 10, 1, 10, 15, 30))))
+                .thenThrow(new IllegalStateException("counter down"));
+
+        mockMvc.perform(get("/v1/feed").with(user(MEMBER)))
+                .andExpect(status().isInternalServerError());
+
+        assertThat(redisTemplate.opsForZSet().size("adserving:feed:requests:" + MEMBER_ID)).isZero();
+    }
+
+    @Test
     void 위도와_경도_중_하나만_보내면_400_COMMON_002_다() throws Exception {
         mockMvc.perform(get("/v1/feed").param("latitude", "37.4979").with(user(MEMBER)))
                 .andExpect(status().isBadRequest())

@@ -114,7 +114,17 @@ public class FeedService {
         Instant now = clock.instant();
         LocalDateTime localNow = LocalDateTime.ofInstant(now, ClockConfig.ZONE);
         LocalDate businessDate = localNow.toLocalDate();
-        OffsetDateTime nextFeedAvailableAt = toOffset(acquire(memberId, now));
+        FeedRequestPermit permit = acquire(memberId, now);
+        try {
+            return respond(memberId, viewer, businessDate, localNow, toOffset(permit.nextAvailableAt()));
+        } catch (RuntimeException e) {
+            release(memberId, permit.requestId());
+            throw e;
+        }
+    }
+
+    private FeedResponse respond(Long memberId, Viewer viewer, LocalDate businessDate, LocalDateTime localNow,
+                                 OffsetDateTime nextFeedAvailableAt) {
         serveRecordService.recordVisit(memberId, businessDate, viewer.latitude(), viewer.longitude());
 
         if (!inServingHours(localNow.toLocalTime())) {
@@ -141,21 +151,36 @@ public class FeedService {
     }
 
     /*
-     * 요청 횟수를 세고 다음 피드 가능 시각을 돌려준다. 앞의 검증을 통과한 요청만 센다.
+     * 요청 횟수를 세고 판정을 돌려준다. 앞의 검증을 통과한 요청만 센다.
      * 캐시가 멈추면 세지 못할 뿐이라 통과시키고 센다(장애 처리 가이드의 캐시 기본 처리).
      */
-    private Instant acquire(Long memberId, Instant now) {
+    private FeedRequestPermit acquire(Long memberId, Instant now) {
         FeedRequestPermit permit;
         try {
             permit = feedRequestLimitRepository.tryAcquire(memberId, now);
         } catch (DataAccessException e) {
             bypassed("rate_limit", memberId, e);
-            return now;
+            return new FeedRequestPermit(true, now, null);
         }
         if (!permit.allowed()) {
             throw new FeedRateLimitedException(retryAfterSeconds(now, permit.nextAvailableAt()));
         }
-        return permit.nextAvailableAt();
+        return permit;
+    }
+
+    /*
+     * 200 으로 끝나지 않은 요청을 횟수에서 뺀다(feed-api-spec.md 의 요청 제한).
+     * 빼지 못해도 원래 실패를 가리지 않는다. 그 사용자의 창에 한 번이 더 남을 뿐이라 통과시키고 센다.
+     */
+    private void release(Long memberId, String requestId) {
+        if (requestId == null) {
+            return;
+        }
+        try {
+            feedRequestLimitRepository.release(memberId, requestId);
+        } catch (DataAccessException e) {
+            bypassed("rate_limit_release", memberId, e);
+        }
     }
 
     /*

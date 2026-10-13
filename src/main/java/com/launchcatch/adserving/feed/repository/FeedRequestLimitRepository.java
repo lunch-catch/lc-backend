@@ -32,13 +32,19 @@ public class FeedRequestLimitRepository {
 
     @SuppressWarnings("unchecked")
     public FeedRequestPermit tryAcquire(Long memberId, Instant now) {
+        String requestId = UUID.randomUUID().toString();
         List<Long> result = redisTemplate.execute(RATE_LIMIT_SCRIPT, List.of(KEY_PREFIX + memberId),
                 String.valueOf(now.toEpochMilli()), String.valueOf(WINDOW.toMillis()), String.valueOf(LIMIT),
-                UUID.randomUUID().toString());
+                requestId);
         boolean allowed = result.get(0) == 1L;
         long oldest = result.get(1);
         Instant nextAvailableAt = oldest < 0 ? now : Instant.ofEpochMilli(oldest).plus(WINDOW);
-        return new FeedRequestPermit(allowed, nextAvailableAt);
+        return new FeedRequestPermit(allowed, nextAvailableAt, requestId);
+    }
+
+    // 200 으로 끝나지 않은 요청을 창에서 뺀다(feed-api-spec.md "200 으로 끝난 요청은 횟수에 들어간다")
+    public void release(Long memberId, String requestId) {
+        redisTemplate.opsForZSet().remove(KEY_PREFIX + memberId, requestId);
     }
 
     private static RedisScript<List> loadScript() {
