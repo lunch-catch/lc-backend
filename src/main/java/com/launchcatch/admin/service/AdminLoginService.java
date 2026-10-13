@@ -1,6 +1,7 @@
 package com.launchcatch.admin.service;
 
 import com.launchcatch.admin.dto.AdminLoginRequest;
+import com.launchcatch.admin.AdminAccessTokenClaims;
 import com.launchcatch.admin.dto.AdminLoginResponse;
 import com.launchcatch.admin.dto.AdminLoginResult;
 import com.launchcatch.admin.entity.Admin;
@@ -79,7 +80,7 @@ public class AdminLoginService {
 
         String accessToken;
         try {
-            accessToken = jwtTokenProvider.createAccessToken(state.adminId(), state.role());
+            accessToken = jwtTokenProvider.createAccessToken(state.adminId(), state.role(), AdminAccessTokenClaims.forVersion(state.issuanceVersion()));
         } catch (RuntimeException e) {
             cleanupFailedLogin(state.adminId(), tokenHash, now, e);
             throw e;
