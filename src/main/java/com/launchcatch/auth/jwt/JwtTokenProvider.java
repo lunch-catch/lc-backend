@@ -25,7 +25,7 @@ import org.springframework.stereotype.Component;
  * 그런데 수명 정책은 여기 남긴다. Access 와 Refresh 의 수명을 한 곳에서 들고 있는 것이 이
  * 클래스의 역할이기 때문이다.
  *
- * Refresh 수명이 역할마다 다르다. 관리자 1일, 점주와 사용자 14일이다. 회원은 자동 로그인
+ * Refresh 수명이 역할마다 다르다. 관리자와 점주는 1일, 사용자는 14일이다. 회원은 자동 로그인
  * 선택지를 두지 않고 항상 14일 persistent cookie를 발급한다. 옮겨온 쪽은 수명이 하나뿐이어서
  * 값을 단일 필드로 들고 있었다.
  *

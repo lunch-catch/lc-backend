@@ -3,6 +3,8 @@ package com.launchcatch.member.repository;
 import com.launchcatch.member.contract.MemberStatus;
 import com.launchcatch.member.entity.Member;
 import java.time.LocalDateTime;
+import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -15,6 +17,13 @@ import jakarta.persistence.LockModeType;
 public interface MemberRepository extends JpaRepository<Member, Long>, MemberRepositoryCustom {
 
     Optional<Member> findByProviderUserId(String providerUserId);
+
+    @Query("""
+            SELECT member FROM Member member
+              LEFT JOIN FETCH member.profile
+             WHERE member.id IN :memberIds
+            """)
+    List<Member> findAllWithProfileByIdIn(@Param("memberIds") Collection<Long> memberIds);
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT member FROM Member member WHERE member.id = :memberId")

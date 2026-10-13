@@ -306,6 +306,119 @@ class CampaignStatusServiceTest {
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
+    @Test
+    @DisplayName("ACTIVE 캠페인에 pauseFromFunding을 보내면 PAUSED(NO_POINTS)로 바뀌고 SYSTEM으로 기록된다")
+    void ACTIVE에_pauseFromFunding을_보내면_PAUSED_NO_POINTS로_바뀐다() {
+        Campaign campaign = activeCampaign();
+        when(campaignRepository.findByIdForUpdate(CAMPAIGN_ID)).thenReturn(Optional.of(campaign));
+
+        service.pauseFromFunding(CAMPAIGN_ID, BUSINESS_DATE, "cause=DAILY");
+
+        assertThat(campaign.getStatus()).isEqualTo(CampaignStatus.PAUSED);
+        assertThat(campaign.getPausedReason()).isEqualTo(PauseReason.NO_POINTS);
+        CampaignStatusLog log = captureLog();
+        assertThat(log.getActorType()).isEqualTo(ActorType.SYSTEM);
+        assertThat(log.getReason()).isEqualTo("cause=DAILY");
+        CampaignStatusChangedEvent event = captureStatusChangedEvent();
+        assertThat(event.servable()).isFalse();
+    }
+
+    @Test
+    @DisplayName("이미 PAUSED(NO_POINTS)면 다시 pauseFromFunding해도 로그 없이 조용히 성공한다(멱등)")
+    void 이미_PAUSED_NO_POINTS면_pauseFromFunding해도_조용히_성공한다() {
+        Campaign campaign = pausedCampaign(PauseReason.NO_POINTS);
+        when(campaignRepository.findByIdForUpdate(CAMPAIGN_ID)).thenReturn(Optional.of(campaign));
+
+        service.pauseFromFunding(CAMPAIGN_ID, BUSINESS_DATE, "cause=DAILY");
+
+        assertThat(campaign.getStatus()).isEqualTo(CampaignStatus.PAUSED);
+        verify(campaignStatusLogRepository, never()).save(any());
+        verify(events, never()).publishEvent(any());
+    }
+
+    @Test
+    @DisplayName("PAUSED(ADMIN)이면 pauseFromFunding을 무시한다(예외 대신 조용히 넘긴다)")
+    void PAUSED_ADMIN이면_pauseFromFunding을_무시한다() {
+        Campaign campaign = pausedCampaign(PauseReason.ADMIN);
+        when(campaignRepository.findByIdForUpdate(CAMPAIGN_ID)).thenReturn(Optional.of(campaign));
+
+        service.pauseFromFunding(CAMPAIGN_ID, BUSINESS_DATE, "cause=DAILY");
+
+        assertThat(campaign.getStatus()).isEqualTo(CampaignStatus.PAUSED);
+        assertThat(campaign.getPausedReason()).isEqualTo(PauseReason.ADMIN);
+        verify(campaignStatusLogRepository, never()).save(any());
+        verify(events, never()).publishEvent(any());
+    }
+
+    @Test
+    @DisplayName("ENDED면 pauseFromFunding을 무시한다")
+    void ENDED면_pauseFromFunding을_무시한다() {
+        Campaign campaign = endedCampaign();
+        when(campaignRepository.findByIdForUpdate(CAMPAIGN_ID)).thenReturn(Optional.of(campaign));
+
+        service.pauseFromFunding(CAMPAIGN_ID, BUSINESS_DATE, "cause=DAILY");
+
+        assertThat(campaign.getStatus()).isEqualTo(CampaignStatus.ENDED);
+        verify(campaignStatusLogRepository, never()).save(any());
+        verify(events, never()).publishEvent(any());
+    }
+
+    @Test
+    @DisplayName("PAUSED(NO_POINTS) 캠페인에 resumeFromFunding을 보내면 ACTIVE로 바뀐다")
+    void PAUSED_NO_POINTS에_resumeFromFunding을_보내면_ACTIVE로_바뀐다() {
+        Campaign campaign = pausedCampaign(PauseReason.NO_POINTS);
+        when(campaignRepository.findByIdForUpdate(CAMPAIGN_ID)).thenReturn(Optional.of(campaign));
+
+        service.resumeFromFunding(CAMPAIGN_ID, BUSINESS_DATE, "cause=RECHARGE");
+
+        assertThat(campaign.getStatus()).isEqualTo(CampaignStatus.ACTIVE);
+        CampaignStatusLog log = captureLog();
+        assertThat(log.getActorType()).isEqualTo(ActorType.SYSTEM);
+        assertThat(log.getReason()).isEqualTo("cause=RECHARGE");
+        CampaignStatusChangedEvent event = captureStatusChangedEvent();
+        assertThat(event.servable()).isTrue();
+    }
+
+    @Test
+    @DisplayName("이미 ACTIVE면 resumeFromFunding해도 로그 없이 조용히 성공한다(멱등)")
+    void 이미_ACTIVE면_resumeFromFunding해도_조용히_성공한다() {
+        Campaign campaign = activeCampaign();
+        when(campaignRepository.findByIdForUpdate(CAMPAIGN_ID)).thenReturn(Optional.of(campaign));
+
+        service.resumeFromFunding(CAMPAIGN_ID, BUSINESS_DATE, "cause=RECHARGE");
+
+        assertThat(campaign.getStatus()).isEqualTo(CampaignStatus.ACTIVE);
+        verify(campaignStatusLogRepository, never()).save(any());
+        verify(events, never()).publishEvent(any());
+    }
+
+    @Test
+    @DisplayName("PAUSED(OWNER)면 resumeFromFunding을 무시한다")
+    void PAUSED_OWNER면_resumeFromFunding을_무시한다() {
+        Campaign campaign = pausedCampaign(PauseReason.OWNER);
+        when(campaignRepository.findByIdForUpdate(CAMPAIGN_ID)).thenReturn(Optional.of(campaign));
+
+        service.resumeFromFunding(CAMPAIGN_ID, BUSINESS_DATE, "cause=RECHARGE");
+
+        assertThat(campaign.getStatus()).isEqualTo(CampaignStatus.PAUSED);
+        assertThat(campaign.getPausedReason()).isEqualTo(PauseReason.OWNER);
+        verify(campaignStatusLogRepository, never()).save(any());
+        verify(events, never()).publishEvent(any());
+    }
+
+    @Test
+    @DisplayName("ENDED면 resumeFromFunding을 무시한다")
+    void ENDED면_resumeFromFunding을_무시한다() {
+        Campaign campaign = endedCampaign();
+        when(campaignRepository.findByIdForUpdate(CAMPAIGN_ID)).thenReturn(Optional.of(campaign));
+
+        service.resumeFromFunding(CAMPAIGN_ID, BUSINESS_DATE, "cause=RECHARGE");
+
+        assertThat(campaign.getStatus()).isEqualTo(CampaignStatus.ENDED);
+        verify(campaignStatusLogRepository, never()).save(any());
+        verify(events, never()).publishEvent(any());
+    }
+
     private CampaignStatusLog captureLog() {
         ArgumentCaptor<CampaignStatusLog> captor = ArgumentCaptor.forClass(CampaignStatusLog.class);
         verify(campaignStatusLogRepository).save(captor.capture());
