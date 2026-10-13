@@ -15,7 +15,7 @@ import lombok.NoArgsConstructor;
 
 /*
  * store_audience 한 행이다. 유일 키(storeId, targetRadius, gender, ageGroup) 한 칸의
- * 최신 집계값만 들고 있다. 쓰기는 StoreAudienceRepository.upsert의 INSERT ... ON DUPLICATE
+ * 최신 집계값만 들고 있다. 쓰기는 StoreAudienceUpdaterImpl의 다중 행 INSERT ... ON DUPLICATE
  * KEY UPDATE로만 일어나 이 엔티티를 거치지 않는다(가게 500곳이면 24,000행을 매번 SELECT로
  * 먼저 확인하는 비용을 피한다). 이 클래스는 테스트에서 결과를 읽어 확인하는 용도다.
  */

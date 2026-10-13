@@ -1,8 +1,9 @@
 package com.launchcatch.campaign.service;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.ArgumentMatchers.anyLong;
-import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -10,7 +11,6 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import com.launchcatch.campaign.contract.AgeGroup;
 import com.launchcatch.campaign.contract.StoreAudienceCell;
 import com.launchcatch.campaign.contract.TargetGender;
-import com.launchcatch.campaign.repository.StoreAudienceRepository;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -22,9 +22,17 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
+import org.mockito.Captor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.jdbc.core.JdbcTemplate;
 
+/*
+ * 유일 키/성별 거부 같은 판정 로직은 여기서 jdbcTemplate을 모킹해 검증한다. 다중 행
+ * upsert SQL이 실제로 덮어쓰는지는 StoreAudienceUpdaterImplIntegrationTest가 실제
+ * MySQL로 확인한다.
+ */
 @ExtendWith(MockitoExtension.class)
 class StoreAudienceUpdaterImplTest {
 
@@ -32,24 +40,29 @@ class StoreAudienceUpdaterImplTest {
     private static final Clock FIXED_CLOCK = Clock.fixed(Instant.parse("2026-10-13T00:00:00Z"), ZoneOffset.UTC);
 
     @Mock
-    private StoreAudienceRepository storeAudienceRepository;
+    private JdbcTemplate jdbcTemplate;
+
+    @Captor
+    private ArgumentCaptor<Object[]> paramsCaptor;
 
     private StoreAudienceUpdaterImpl updater;
 
     @BeforeEach
     void setUp() {
-        updater = new StoreAudienceUpdaterImpl(storeAudienceRepository, FIXED_CLOCK);
+        updater = new StoreAudienceUpdaterImpl(jdbcTemplate, FIXED_CLOCK);
     }
 
     @Test
-    @DisplayName("셀마다 유일 키로 upsert를 부른다")
-    void 셀마다_upsert를_부른다() {
+    @DisplayName("셀 하나면 upsert SQL을 한 번만 부른다")
+    void 셀_하나면_한_번만_부른다() {
         StoreAudienceCell cell = new StoreAudienceCell(1L, 1000, TargetGender.MALE, AgeGroup.AGE_20S, 42, BUSINESS_DATE);
 
         updater.overwrite(List.of(cell));
 
-        verify(storeAudienceRepository).upsert(
-                1L, 1000, "MALE", "AGE_20S", 42, BUSINESS_DATE, LocalDateTime.now(FIXED_CLOCK));
+        verify(jdbcTemplate, times(1)).update(anyString(), paramsCaptor.capture());
+        LocalDateTime now = LocalDateTime.now(FIXED_CLOCK);
+        assertThat(paramsCaptor.getValue())
+                .containsExactly(1L, 1000, "MALE", "AGE_20S", 42, BUSINESS_DATE, now, now);
     }
 
     @Test
@@ -59,16 +72,18 @@ class StoreAudienceUpdaterImplTest {
 
         updater.overwrite(List.of(cell));
 
-        verify(storeAudienceRepository).upsert(
-                1L, 1000, "FEMALE", "AGE_30S", 10, BUSINESS_DATE, LocalDateTime.now(FIXED_CLOCK));
+        verify(jdbcTemplate).update(anyString(), paramsCaptor.capture());
+        assertThat(paramsCaptor.getValue()).contains("FEMALE", "AGE_30S");
     }
 
     @Test
-    @DisplayName("ALL은 store_audience.gender가 받지 않는 값이라 거부한다(#162 선행 필요)")
+    @DisplayName("ALL은 store_audience.gender가 받지 않는 값이라 거부하고 SQL을 보내지 않는다")
     void ALL은_거부한다() {
         StoreAudienceCell cell = new StoreAudienceCell(1L, 1000, TargetGender.ALL, AgeGroup.AGE_20S, 1, BUSINESS_DATE);
 
         assertThatThrownBy(() -> updater.overwrite(List.of(cell))).isInstanceOf(IllegalArgumentException.class);
+
+        verifyNoInteractions(jdbcTemplate);
     }
 
     @Test
@@ -78,7 +93,7 @@ class StoreAudienceUpdaterImplTest {
     }
 
     @Test
-    @DisplayName("1000행을 넘기면 예외로 거부하고 upsert를 한 번도 안 부른다")
+    @DisplayName("1000행을 넘기면 예외로 거부하고 SQL을 한 번도 안 보낸다")
     void 천행을_넘기면_거부한다() {
         List<StoreAudienceCell> cells = new ArrayList<>();
         for (int i = 0; i < 1001; i++) {
@@ -87,12 +102,12 @@ class StoreAudienceUpdaterImplTest {
 
         assertThatThrownBy(() -> updater.overwrite(cells)).isInstanceOf(IllegalArgumentException.class);
 
-        verifyNoInteractions(storeAudienceRepository);
+        verifyNoInteractions(jdbcTemplate);
     }
 
     @Test
-    @DisplayName("정확히 1000행이면 거부하지 않고 1000번 upsert를 부른다")
-    void 정확히_천행이면_통과한다() {
+    @DisplayName("정확히 1000행이면 거부하지 않고 250행씩 묶어 4번만 SQL을 보낸다")
+    void 정확히_천행이면_이백오십행씩_네_번_보낸다() {
         List<StoreAudienceCell> cells = new ArrayList<>();
         for (int i = 0; i < 1000; i++) {
             cells.add(new StoreAudienceCell(i, 1000, TargetGender.MALE, AgeGroup.AGE_20S, 1, BUSINESS_DATE));
@@ -100,8 +115,20 @@ class StoreAudienceUpdaterImplTest {
 
         updater.overwrite(cells);
 
-        verify(storeAudienceRepository, times(1000)).upsert(
-                anyLong(), eq(1000), eq("MALE"), eq("AGE_20S"), eq(1), eq(BUSINESS_DATE),
-                eq(LocalDateTime.now(FIXED_CLOCK)));
+        verify(jdbcTemplate, times(4)).update(anyString(), paramsCaptor.capture());
+        assertThat(paramsCaptor.getAllValues()).allSatisfy(params -> assertThat(params).hasSize(250 * 8));
+    }
+
+    @Test
+    @DisplayName("251행이면 250행 묶음 하나와 1행 묶음 하나, 두 번만 SQL을 보낸다")
+    void 이백오십일행이면_두_번_보낸다() {
+        List<StoreAudienceCell> cells = new ArrayList<>();
+        for (int i = 0; i < 251; i++) {
+            cells.add(new StoreAudienceCell(i, 1000, TargetGender.MALE, AgeGroup.AGE_20S, 1, BUSINESS_DATE));
+        }
+
+        updater.overwrite(cells);
+
+        verify(jdbcTemplate, times(2)).update(anyString(), any(Object[].class));
     }
 }
