@@ -195,6 +195,9 @@ jwt:
     secure: "${JWT_COOKIE_SECURE:false}"
 
 kakao:
+  local:
+    rest-api-key: ${KAKAO_LOCAL_REST_API_KEY:}
+    request-timeout: 8s
   app-id: "${KAKAO_APP_ID}"
   admin-key: "${KAKAO_ADMIN_KEY}"
 
@@ -282,6 +285,8 @@ resilience4j:
       kakaoLogout:
         base-config: kakao-low-traffic
       kakaoUnlink:
+        base-config: kakao-low-traffic
+      kakaoPlaceSearch:
         base-config: kakao-low-traffic
       tossPayment:
         base-config: toss-payment
