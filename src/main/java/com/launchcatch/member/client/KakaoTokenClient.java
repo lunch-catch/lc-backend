@@ -39,11 +39,12 @@ public class KakaoTokenClient {
                     .bodyToMono(KakaoTokenResponseBody.class)
                     .block();
             if (body == null || body.id_token() == null || body.id_token().isBlank()) {
+                log.warn("event=KAKAO_TOKEN_EXCHANGE_FAILED reason=ID_TOKEN_MISSING");
                 throw new AuthException(AuthErrorCode.KAKAO_AUTHENTICATION_FAILED);
             }
             return new KakaoTokenResponse(body.id_token(), body.access_token());
         } catch (WebClientException e) {
-            log.warn("event=KAKAO_TOKEN_EXCHANGE_FAILED", e);
+            log.warn("event=KAKAO_TOKEN_EXCHANGE_FAILED reason=EXTERNAL_REQUEST_FAILED causeType={}", e.getClass().getSimpleName());
             throw new AuthException(AuthErrorCode.KAKAO_AUTHENTICATION_FAILED, e);
         }
     }

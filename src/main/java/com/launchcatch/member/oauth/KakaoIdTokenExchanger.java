@@ -28,6 +28,7 @@ public class KakaoIdTokenExchanger {
     public KakaoIdentity exchange(String authorizationCode, String state) {
         String expectedNonce = kakaoLoginStateRepository.consume(state);
         if (expectedNonce == null) {
+            log.warn("event=KAKAO_ID_TOKEN_VERIFICATION_FAILED reason=STATE_INVALID");
             throw new AuthException(AuthErrorCode.KAKAO_AUTHENTICATION_FAILED);
         }
 
@@ -36,13 +37,14 @@ public class KakaoIdTokenExchanger {
             KakaoTokenResponse tokenResponse = kakaoTokenClient.exchange(kakao, authorizationCode);
             Jwt idToken = kakaoJwtDecoder.decode(tokenResponse.idToken());
             if (!expectedNonce.equals(idToken.getClaimAsString("nonce"))) {
+                log.warn("event=KAKAO_ID_TOKEN_VERIFICATION_FAILED reason=NONCE_MISMATCH");
                 throw new AuthException(AuthErrorCode.KAKAO_AUTHENTICATION_FAILED);
             }
             return KakaoIdentity.from(idToken);
         } catch (AuthException e) {
             throw e;
         } catch (JwtException | IllegalArgumentException | CallNotPermittedException e) {
-            log.warn("event=KAKAO_ID_TOKEN_VERIFICATION_FAILED", e);
+            log.warn("event=KAKAO_ID_TOKEN_VERIFICATION_FAILED reason=TOKEN_VALIDATION_FAILED causeType={}", e.getClass().getSimpleName());
             throw new AuthException(AuthErrorCode.KAKAO_AUTHENTICATION_FAILED, e);
         }
     }

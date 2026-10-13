@@ -56,7 +56,7 @@ public class MemberProfile extends BaseTimeEntity {
 
     public static MemberProfile create(Member member) {
         if (member == null) {
-            throw new IllegalArgumentException("member must not be null");
+            throw new IllegalArgumentException("회원 정보는 필수입니다.");
         }
         MemberProfile profile = new MemberProfile(member);
         member.attachProfile(profile);
@@ -69,7 +69,7 @@ public class MemberProfile extends BaseTimeEntity {
 
     public void completeOnboarding(Gender gender, AgeGroup ageGroup, LocalDateTime now) {
         if (gender == null || ageGroup == null) {
-            throw new IllegalArgumentException("gender and ageGroup must not be null");
+            throw new IllegalArgumentException("성별과 연령대는 필수입니다.");
         }
         this.gender = gender;
         this.ageGroup = ageGroup;

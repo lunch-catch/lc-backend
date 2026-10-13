@@ -2,6 +2,11 @@ package com.launchcatch.member.controller;
 
 import com.launchcatch.global.logging.PiiMasker;
 import com.launchcatch.member.service.MemberWithdrawalService;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import lombok.RequiredArgsConstructor;
@@ -18,6 +23,7 @@ import org.springframework.web.bind.annotation.RestController;
 @Slf4j
 @RestController
 @RequiredArgsConstructor
+@Tag(name = "카카오 연결 해제", description = "카카오 서버가 호출하는 연결 해제 웹훅입니다.")
 public class KakaoUnlinkWebhookController {
 
     private final MemberWithdrawalService memberWithdrawalService;
@@ -29,20 +35,26 @@ public class KakaoUnlinkWebhookController {
     private String adminKey;
 
     @RequestMapping(value = "/webhook/kakao/unlink", method = {RequestMethod.GET, RequestMethod.POST})
+    @Operation(summary = "카카오 연결 해제 통보", description = "카카오 관리자 키와 앱 식별자를 검증한 뒤 회원 탈퇴와 대기 중인 연결 해제 요청 정리를 수행합니다. 회원 토큰은 사용하지 않으며 카카오 연결 해제를 다시 요청하지 않습니다. 검증 실패와 내부 처리 실패에도 200을 반환하고 원인은 로그에 기록합니다.")
+    @ApiResponse(responseCode = "200", description = "통보 수신. 실패 여부와 관계없이 본문 없이 응답합니다.", content = @Content)
     public ResponseEntity<Void> handleUnlink(
+            @Parameter(description = "카카오 관리자 키 인증 헤더. 형식은 KakaoAK {관리자 키}입니다.")
             @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization,
+            @Parameter(description = "카카오 앱 식별자입니다.", example = "123456")
             @RequestParam(value = "app_id", required = false) String receivedAppId,
+            @Parameter(description = "연결 해제한 카카오 회원번호입니다.", example = "1234567890")
             @RequestParam(value = "user_id", required = false) String providerUserId,
+            @Parameter(description = "카카오가 전달하는 연결 해제 요청 출처입니다.")
             @RequestParam(value = "referrer_type", required = false) String referrerType
     ) {
         if (appId.isBlank() || adminKey.isBlank()
                 || !appId.equals(receivedAppId) || !matchesAdminKey(authorization)) {
-            log.warn("event=KAKAO_UNLINK_WEBHOOK_REJECTED providerUserId={} referrerType={}",
-                    PiiMasker.maskProviderId(providerUserId), referrerType);
+            log.warn("event=KAKAO_UNLINK_WEBHOOK_REJECTED providerUserId={} reason=AUTH_MISMATCH",
+                    PiiMasker.maskProviderId(providerUserId));
             return ResponseEntity.ok().build();
         }
         if (providerUserId == null || providerUserId.isBlank()) {
-            log.warn("event=KAKAO_UNLINK_WEBHOOK_MISSING_USER_ID referrerType={}", referrerType);
+            log.warn("event=KAKAO_UNLINK_WEBHOOK_FAILED reason=USER_ID_MISSING");
             return ResponseEntity.ok().build();
         }
         try {

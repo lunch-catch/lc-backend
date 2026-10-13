@@ -74,6 +74,19 @@ class MemberWithdrawalServiceTest {
     }
 
     @Test
+    void 인증된_회원이_없으면_한국어_예외로_탈퇴를_중단한다() {
+        when(kakaoIdTokenExchanger.exchange("code", "state"))
+                .thenReturn(new KakaoIdentity("kakao-1", "점심헌터", null));
+        when(memberRepository.findByIdForUpdate(1L)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> memberWithdrawalService.withdraw(1L, "code", "state"))
+                .isInstanceOf(java.util.NoSuchElementException.class)
+                .hasMessage("인증된 회원 정보를 찾을 수 없습니다.");
+
+        verify(kakaoUnlinkClient, never()).unlink(any());
+    }
+
+    @Test
     @DisplayName("재인증한 회원은 탈퇴한 뒤 카카오 연결을 해제한다")
     void 재인증한_회원은_탈퇴한_뒤_카카오_연결을_해제한다() throws Exception {
         Member member = member();

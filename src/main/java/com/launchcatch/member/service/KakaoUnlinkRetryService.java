@@ -1,6 +1,6 @@
 package com.launchcatch.member.service;
 
-import com.launchcatch.global.logging.PiiMasker;
+import com.launchcatch.global.logging.TransactionLogging;
 import com.launchcatch.member.client.KakaoUnlinkClient;
 import com.launchcatch.member.client.KakaoUnlinkFailureClassifier;
 import com.launchcatch.member.contract.MemberStatus;
@@ -79,7 +79,7 @@ public class KakaoUnlinkRetryService {
              * 라는 한도의 뜻이 깨진다. 카카오 장애가 길어지면 한 번도 제대로 묻지 못한 채
              * 포기 처리될 수 있다. 그대로 두고 다음 사이클에 다시 시도한다.
              */
-            log.info("event=KAKAO_UNLINK_RETRY_SKIPPED_CIRCUIT_OPEN failureId={}", pending.failureId());
+            log.warn("event=KAKAO_UNLINK_RETRY_SKIPPED failureId={} memberId={} reason=CIRCUIT_OPEN", pending.failureId(), pending.memberId());
             return;
         } catch (RuntimeException callFailure) {
             recordFailure(pending, callFailure);
@@ -107,8 +107,8 @@ public class KakaoUnlinkRetryService {
                         return true;
                     }
                     failureRepository.delete(failure);
-                    log.info("event=KAKAO_UNLINK_RETRY_DISCARDED_REACTIVATED failureId={} memberId={}",
-                            failure.getId(), failure.getMember().getId());
+                    TransactionLogging.afterCommit(() -> log.info("event=KAKAO_UNLINK_RETRY_DISCARDED_REACTIVATED failureId={} memberId={}",
+                            pending.failureId(), pending.memberId()));
                     return false;
                 })
                 .orElse(false);
@@ -135,6 +135,8 @@ public class KakaoUnlinkRetryService {
                     pending.memberId());
         }
         failureRepository.delete(failure);
+        TransactionLogging.afterCommit(() -> log.info("event=KAKAO_UNLINK_RETRY_SUCCESS failureId={} memberId={}",
+                pending.failureId(), pending.memberId()));
     }
 
     /*
@@ -155,20 +157,20 @@ public class KakaoUnlinkRetryService {
     private void markFailed(PendingUnlink pending, RuntimeException cause) {
         failureRepository.findById(pending.failureId()).ifPresent(failure -> {
             String causeType = KakaoUnlinkFailureClassifier.causeType(cause);
-            String maskedProviderId = PiiMasker.maskProviderId(failure.getProviderUserId());
+            Long failureId = failure.getId();
             if (KakaoUnlinkFailureClassifier.isTerminal(cause)) {
                 failure.rejectPermanently();
-                log.error("event=KAKAO_UNLINK_RETRY_REJECTED failureId={} memberId={} providerUserId={} causeType={}",
-                        failure.getId(), pending.memberId(), maskedProviderId, causeType, cause);
+                TransactionLogging.afterCommit(() -> log.error("event=KAKAO_UNLINK_RETRY_REJECTED failureId={} memberId={} causeType={}",
+                        failureId, pending.memberId(), causeType, cause));
                 return;
             }
             int attempts = failure.recordRetryFailure(MAX_RETRY_ATTEMPTS);
             if (failure.isResolved()) {
-                log.error("event=KAKAO_UNLINK_RETRY_EXHAUSTED failureId={} memberId={} providerUserId={} attempts={} causeType={}",
-                        failure.getId(), pending.memberId(), maskedProviderId, attempts, causeType, cause);
+                TransactionLogging.afterCommit(() -> log.error("event=KAKAO_UNLINK_RETRY_EXHAUSTED failureId={} memberId={} attempts={} causeType={}",
+                        failureId, pending.memberId(), attempts, causeType, cause));
             } else {
-                log.warn("event=KAKAO_UNLINK_RETRY_FAILED failureId={} memberId={} providerUserId={} attempts={} causeType={}",
-                        failure.getId(), pending.memberId(), maskedProviderId, attempts, causeType, cause);
+                TransactionLogging.afterCommit(() -> log.warn("event=KAKAO_UNLINK_RETRY_FAILED failureId={} memberId={} attempts={} causeType={}",
+                        failureId, pending.memberId(), attempts, causeType, cause));
             }
         });
     }

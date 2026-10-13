@@ -44,7 +44,7 @@ public class KakaoUnlinkRetryScheduler {
     public void retryPendingUnlinks() {
         LocalDate businessDate = executions.businessDate();
         if (!executions.claim(JOB_NAME, businessDate)) {
-            log.info("카카오 unlink 재시도는 다른 배치 서버가 점유했다. businessDate={}", businessDate);
+            log.info("event=KAKAO_UNLINK_RETRY_SKIPPED reason=ALREADY_CLAIMED businessDate={}", businessDate);
             return;
         }
         try {
