@@ -1,4 +1,4 @@
-package com.launchcatch.campaign.template.service;
+package com.launchcatch.campaign.template.validation;
 
 import com.launchcatch.campaign.template.dto.TemplateSanitizeResult;
 import java.util.ArrayDeque;

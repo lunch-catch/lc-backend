@@ -9,9 +9,9 @@ import static org.mockito.Mockito.when;
 
 import com.launchcatch.campaign.exception.CampaignException;
 import com.launchcatch.campaign.exception.PosterErrorCode;
-import com.launchcatch.campaign.template.service.TemplateHtmlSanitizer;
-import com.launchcatch.campaign.template.service.TemplateSlotValidator;
-import com.launchcatch.campaign.template.service.TemplateStructureValidator;
+import com.launchcatch.campaign.template.validation.TemplateHtmlSanitizer;
+import com.launchcatch.campaign.template.validation.TemplateSlotValidator;
+import com.launchcatch.campaign.template.validation.TemplateStructureValidator;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
