@@ -79,7 +79,7 @@ public class PointDeductorImpl implements PointDeductor {
          */
         int inserted = deductionResultRepository.insertIfAbsent(
                 serveId, campaignId, plan.ownerId(), businessDate, status, plan.unitPrice(), now);
-        if (inserted == 0) {
+        if (inserted != 1) {
             return firstStatus(serveId, status);
         }
 

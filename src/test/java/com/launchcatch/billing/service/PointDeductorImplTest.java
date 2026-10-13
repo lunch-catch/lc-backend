@@ -103,7 +103,7 @@ class PointDeductorImplTest {
     void 같은_serveId를_다시_부르면_첫_판정을_돌려주고_INSERT는_무변경이다() {
         when(spendCounter.deduct(DAY, CAMPAIGN_ID, SERVE_ID, 10L)).thenReturn(DeductOutcome.of(DeductionStatus.BILLED));
         when(deductionResultRepository.insertIfAbsent(SERVE_ID, CAMPAIGN_ID, 3L, DAY, DeductionStatus.BILLED, 10L, NOW))
-                .thenReturn(1, 0);
+                .thenReturn(1, 2);
         when(deductionResultRepository.findFirstStatus(SERVE_ID)).thenReturn(Optional.of(DeductionStatus.BILLED));
 
         DeductionStatus first = deductor.deduct(SERVE_ID, CAMPAIGN_ID, DAY);
@@ -118,7 +118,7 @@ class PointDeductorImplTest {
     void 처리_표시가_사라져_다시_판정해도_저장된_처음_판정을_돌려주고_원장은_쓰지_않는다() {
         when(spendCounter.deduct(DAY, CAMPAIGN_ID, SERVE_ID, 10L)).thenReturn(DeductOutcome.of(DeductionStatus.BILLED));
         when(deductionResultRepository.insertIfAbsent(SERVE_ID, CAMPAIGN_ID, 3L, DAY, DeductionStatus.BILLED, 10L, NOW))
-                .thenReturn(0);
+                .thenReturn(2);
         when(deductionResultRepository.findFirstStatus(SERVE_ID))
                 .thenReturn(Optional.of(DeductionStatus.NOT_BILLED_BUDGET));
 
@@ -132,7 +132,7 @@ class PointDeductorImplTest {
     void 중복인데_저장된_판정을_읽을_수_없으면_예외다() {
         when(spendCounter.deduct(DAY, CAMPAIGN_ID, SERVE_ID, 10L)).thenReturn(DeductOutcome.of(DeductionStatus.BILLED));
         when(deductionResultRepository.insertIfAbsent(SERVE_ID, CAMPAIGN_ID, 3L, DAY, DeductionStatus.BILLED, 10L, NOW))
-                .thenReturn(0);
+                .thenReturn(2);
         when(deductionResultRepository.findFirstStatus(SERVE_ID)).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> deductor.deduct(SERVE_ID, CAMPAIGN_ID, DAY))
