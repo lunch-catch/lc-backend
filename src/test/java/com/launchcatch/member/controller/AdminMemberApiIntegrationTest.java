@@ -38,12 +38,6 @@ class AdminMemberApiIntegrationTest {
     @org.springframework.test.context.bean.override.mockito.MockitoBean
     private com.launchcatch.admin.repository.AdminAccessTokenRevocationRepository adminRevocations;
 
-    @org.junit.jupiter.api.BeforeEach
-    void allowUnrevokedAdminFixture() {
-        org.mockito.Mockito.when(adminRevocations.findRevocation(org.mockito.ArgumentMatchers.any()))
-                .thenReturn(java.util.Optional.of(new com.launchcatch.admin.AdminAccessTokenRevocation(0L, null)));
-    }
-
     private static final String URL = "/v1/admin/members";
 
     private static final String DUMMY_JWT_SECRET =
@@ -71,6 +65,8 @@ class AdminMemberApiIntegrationTest {
 
     @BeforeEach
     void setUp() {
+        org.mockito.Mockito.when(adminRevocations.findRevocation(org.mockito.ArgumentMatchers.any()))
+                .thenReturn(java.util.Optional.of(new com.launchcatch.admin.AdminAccessTokenRevocation(0L, null)));
         older = save("kakao-1", "점심헌터", LocalDateTime.of(2026, 10, 1, 0, 0));
         newer = save("kakao-2", "100%할인", LocalDateTime.of(2026, 10, 7, 23, 59, 59));
         save("kakao-3", "a_b", LocalDateTime.of(2026, 10, 3, 12, 0));
