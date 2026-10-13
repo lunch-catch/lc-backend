@@ -5,11 +5,10 @@ import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
-import org.springframework.core.io.ClassPathResource;
-import org.springframework.data.redis.core.script.DefaultRedisScript;
-import org.springframework.data.redis.core.script.RedisScript;
 import lombok.RequiredArgsConstructor;
+import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.stereotype.Repository;
 
 /*
@@ -28,8 +27,16 @@ public class AccessTokenValidAfterRepository {
 
     private static final String KEY_PREFIX = "accessTokenValidAfter:";
 
-    private static final DateTimeFormatter FORMAT = DateTimeFormatter.ofPattern("uuuu-MM-dd'T'HH:mm:ss.SSSSSSSSS");
-    private static final RedisScript<Long> ADVANCE_SCRIPT = loadAdvanceScript();
+    private static final DateTimeFormatter CUTOFF_FORMAT = DateTimeFormatter.ofPattern("uuuu-MM-dd'T'HH:mm:ss.SSSSSSSSS");
+    private static final DefaultRedisScript<Long> INVALIDATE_SCRIPT = new DefaultRedisScript<>("""
+            local current = redis.call('GET', KEYS[1])
+            if current and current >= ARGV[1] then
+                return 0
+            end
+            local ttl = math.max(tonumber(ARGV[2]), redis.call('PTTL', KEYS[1]))
+            redis.call('SET', KEYS[1], ARGV[1], 'PX', ttl)
+            return 1
+            """, Long.class);
 
     private final StringRedisTemplate redisTemplate;
 
@@ -37,10 +44,10 @@ public class AccessTokenValidAfterRepository {
         if (ttl.toMillis() <= 0) {
             throw new IllegalArgumentException("차단 기준의 TTL은 양수여야 한다");
         }
-        Long advanced = redisTemplate.execute(ADVANCE_SCRIPT, List.of(key(role, id)),
-                cutoff.format(FORMAT), String.valueOf(ttl.toMillis()));
-        if (advanced == null) {
-            throw new org.springframework.dao.DataAccessResourceFailureException("차단 기준 저장 결과가 없다");
+        Long result = redisTemplate.execute(INVALIDATE_SCRIPT, List.of(key(role, id)),
+                cutoff.format(CUTOFF_FORMAT), String.valueOf(ttl.toMillis()));
+        if (result == null) {
+            throw new DataAccessResourceFailureException("Access Token 폐기 기준 저장 결과가 없다");
         }
     }
 
@@ -51,13 +58,6 @@ public class AccessTokenValidAfterRepository {
         }
         LocalDateTime cutoff = LocalDateTime.parse(stored);
         return !tokenIssuedAt.isBefore(cutoff);
-    }
-
-    private static RedisScript<Long> loadAdvanceScript() {
-        DefaultRedisScript<Long> script = new DefaultRedisScript<>();
-        script.setLocation(new ClassPathResource("scripts/access_token_advance_cutoff.lua"));
-        script.setResultType(Long.class);
-        return script;
     }
 
     private String key(Role role, Long id) {

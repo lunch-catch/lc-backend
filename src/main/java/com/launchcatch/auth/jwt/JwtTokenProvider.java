@@ -12,6 +12,7 @@ import java.time.LocalDateTime;
 import java.util.Date;
 import java.util.EnumMap;
 import java.util.Map;
+import java.util.HashMap;
 import java.util.Set;
 import javax.crypto.SecretKey;
 import org.springframework.beans.factory.annotation.Value;
@@ -35,6 +36,7 @@ import org.springframework.stereotype.Component;
 public class JwtTokenProvider {
 
     private static final String ROLE_CLAIM = "role";
+    // 사용자 ID, 역할, 만료 시각 등 공통 인증 정보는 추가 클레임으로 덮어쓸 수 없다.
     private static final Set<String> RESERVED_CLAIMS = Set.of("iss", "sub", "aud", "exp", "nbf", "iat", "jti", ROLE_CLAIM);
 
     private final SecretKey secretKey;
@@ -62,6 +64,7 @@ public class JwtTokenProvider {
         this.refreshTokenValidityMs = Map.copyOf(validity);
     }
 
+    // 추가 정보가 필요 없는 도메인은 기존 발급 메서드를 그대로 사용한다.
     public String createAccessToken(Long id, Role role) {
         return createAccessToken(id, role, Map.of());
     }
@@ -78,8 +81,14 @@ public class JwtTokenProvider {
                 .claim(ROLE_CLAIM, role.name())
                 .issuedAt(Date.from(now))
                 .expiration(Date.from(now.plusMillis(accessTokenValidityMs)))
-                .signWith(secretKey)
-                .compact();
+                .signWith(secretKey).compact();
+    }
+
+    // 서명을 확인한 JWT에서 공통 인증 정보를 제외한 추가 클레임만 꺼낸다.
+    public Map<String, Object> getAdditionalClaims(String token) {
+        Map<String, Object> claims = new HashMap<>(parseClaims(token));
+        RESERVED_CLAIMS.forEach(claims::remove);
+        return Map.copyOf(claims);
     }
 
     public Claims parseClaims(String token) {

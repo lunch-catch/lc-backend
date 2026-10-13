@@ -25,7 +25,9 @@ public enum CouponErrorCode implements ErrorCode {
     QR_NOT_VALID(HttpStatus.CONFLICT, "COUPON-014", "QR이 만료되었거나 유효하지 않습니다."),
     COUPON_ACCESS_DENIED(HttpStatus.FORBIDDEN, "COUPON-015", "해당 쿠폰에 접근할 권한이 없습니다."),
     COUPON_ALREADY_USED(HttpStatus.CONFLICT, "COUPON-016", "이미 사용된 쿠폰입니다."),
-    MEMBER_ACCOUNT_NOT_ALLOWED(HttpStatus.FORBIDDEN, "COUPON-017", "쿠폰을 사용할 수 없는 계정입니다.");
+    MEMBER_ACCOUNT_NOT_ALLOWED(HttpStatus.FORBIDDEN, "COUPON-017", "쿠폰을 사용할 수 없는 계정입니다."),
+    EVENT_SNAPSHOT_MISSING(HttpStatus.INTERNAL_SERVER_ERROR, "COUPON-018", "쿠폰 정보를 조회할 수 없습니다."),
+    USAGE_HISTORY_MISSING(HttpStatus.INTERNAL_SERVER_ERROR, "COUPON-019", "쿠폰 사용 정보를 조회할 수 없습니다.");
 
     private final HttpStatus httpStatus;
     private final String code;
