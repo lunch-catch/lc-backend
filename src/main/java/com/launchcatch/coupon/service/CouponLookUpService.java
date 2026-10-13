@@ -112,7 +112,7 @@ public class CouponLookUpService {
     public CouponDetailResponse getDetail(Long memberId, Long memberCouponId) {
         MemberCoupon coupon = findOwnedCoupon(memberId, memberCouponId);
         CouponEvent event = couponEventRepository.findById(coupon.getCouponEventId())
-                .orElseThrow(() -> missingCouponData(CouponErrorCode.EVENT_SNAPSHOT_MISSING, coupon));
+                .orElseThrow(() -> missingCouponData("EVENT_SNAPSHOT_MISSING", coupon));
         LocalDateTime now = LocalDateTime.now(clock.withZone(ClockConfig.ZONE));
         MemberCouponStatus state = resolveState(coupon, now);
         boolean usable = isUsable(coupon, state, now);
@@ -161,14 +161,14 @@ public class CouponLookUpService {
             return null;
         }
         return couponUsageHistoryRepository.findByMemberCouponId(coupon.getId())
-                .orElseThrow(() -> missingCouponData(CouponErrorCode.USAGE_HISTORY_MISSING, coupon));
+                .orElseThrow(() -> missingCouponData("USAGE_HISTORY_MISSING", coupon));
     }
 
     // 정합성 오류의 원인을 추적할 식별자는 서버 로그에만 남긴다.
-    private CouponException missingCouponData(CouponErrorCode errorCode, MemberCoupon coupon) {
-        log.error("coupon data integrity error. code={}, memberCouponId={}, eventId={}",
-                errorCode.getCode(), coupon.getId(), coupon.getCouponEventId());
-        return new CouponException(errorCode);
+    private CouponException missingCouponData(String reason, MemberCoupon coupon) {
+        log.error("event=COUPON_DATA_INTEGRITY_FAILED reason={} code={} memberCouponId={} eventId={}",
+                reason, CommonErrorCode.INTERNAL_ERROR.getCode(), coupon.getId(), coupon.getCouponEventId());
+        return new CouponException(CommonErrorCode.INTERNAL_ERROR);
     }
 
     // 허용한 필터 표현식을 조회 조건으로 변환한다.
@@ -241,13 +241,13 @@ public class CouponLookUpService {
         for (MemberCoupon coupon : page) {
             CouponEvent event = events.get(coupon.getCouponEventId());
             if (event == null) {
-                throw missingCouponData(CouponErrorCode.EVENT_SNAPSHOT_MISSING, coupon);
+                throw missingCouponData("EVENT_SNAPSHOT_MISSING", coupon);
             }
             MemberCouponStatus state = coupon.getStatus();
             boolean usable = isUsable(coupon, state, now);
             CouponUsageHistory history = histories.get(coupon.getId());
             if (state == MemberCouponStatus.USED && history == null) {
-                throw missingCouponData(CouponErrorCode.USAGE_HISTORY_MISSING, coupon);
+                throw missingCouponData("USAGE_HISTORY_MISSING", coupon);
             }
             items.add(CouponDetailResponse.from(coupon, event, state, usable, history));
         }

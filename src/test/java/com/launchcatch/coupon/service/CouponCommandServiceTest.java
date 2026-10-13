@@ -119,7 +119,7 @@ class CouponCommandServiceTest {
         MemberCoupon coupon = coupon(MemberCouponStatus.USED);
         when(memberCouponRepository.findByIdAndMemberId(COUPON_ID, MEMBER_ID)).thenReturn(Optional.of(coupon));
 
-        assertError(CouponErrorCode.USED_COUPON_NOT_REMOVABLE);
+        assertError(CouponErrorCode.COUPON_ALREADY_USED);
 
         assertThat(coupon.getStatus()).isEqualTo(MemberCouponStatus.USED);
         assertThat(coupon.getQrVersion()).isEqualTo(3);
