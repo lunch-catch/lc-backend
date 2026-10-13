@@ -213,7 +213,7 @@ public class BedrockTemplateHtmlGenerator implements TemplateHtmlGenerator {
             return bedrockRuntimeClient.converse(request);
         } catch (ApiCallTimeoutException | ApiCallAttemptTimeoutException e) {
             throw new TemplateGenerationTimeoutException(
-                    "Bedrock Converse 호출이 제한 시간(시도당 30초, 전체 45초)을 넘었다", e);
+                    "Bedrock Converse 호출이 30초를 넘었다", e);
         } catch (ThrottlingException | ServiceUnavailableException | ModelTimeoutException
                 | InternalServerException | ModelNotReadyException e) {
             /*

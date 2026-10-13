@@ -104,7 +104,7 @@ public class TemplateReviseService {
      * 두 트랜잭션 중 하나가 여기서 기다리게 돼, 둘 다 같은 "다음 버전 번호"를
      * 계산해 request_id 가 다른데도 (template_id, version_number) UNIQUE 제약에
      * 부딪히는 경쟁이 없어진다. 잠금을 잡은 뒤 DRAFT 상태를 다시 확인하는 것도
-     * 같은 이유다: LLM 호출(재시도 1회까지 포함해 최대 90초) 동안 다른 트랜잭션이
+     * 같은 이유다: LLM 호출(재시도 1회까지 포함해 최대 60초) 동안 다른 트랜잭션이
      * 이 템플릿을 게시해 커밋했을 수 있는데, 잠금을 잡고 나서야 그 최신 상태를 안전하게 본다.
      */
     private TemplateCreateResponse save(
