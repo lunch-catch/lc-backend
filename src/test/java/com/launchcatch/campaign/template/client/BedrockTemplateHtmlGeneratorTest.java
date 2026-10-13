@@ -26,9 +26,11 @@ import software.amazon.awssdk.services.bedrockruntime.model.ConverseOutput;
 import software.amazon.awssdk.services.bedrockruntime.model.ConverseRequest;
 import software.amazon.awssdk.services.bedrockruntime.model.ConverseResponse;
 import software.amazon.awssdk.services.bedrockruntime.model.Message;
+import software.amazon.awssdk.services.bedrockruntime.model.ModelNotReadyException;
 import software.amazon.awssdk.services.bedrockruntime.model.ReasoningContentBlock;
 import software.amazon.awssdk.services.bedrockruntime.model.ReasoningTextBlock;
 import software.amazon.awssdk.services.bedrockruntime.model.StopReason;
+import software.amazon.awssdk.services.bedrockruntime.model.ThrottlingException;
 
 /*
  * BedrockRuntimeClient 는 인터페이스라 래퍼 없이 Mockito로 바로 모킹한다(#182).
@@ -212,5 +214,28 @@ class BedrockTemplateHtmlGeneratorTest {
 
         assertThatThrownBy(() -> generator.generate("돈까스 세트 홍보"))
                 .isInstanceOf(TemplateGenerationTimeoutException.class);
+    }
+
+    @Test
+    void Throttling이면_재시도_없이_바로_POSTER_012를_던진다() {
+        when(bedrockRuntimeClient.converse(any(ConverseRequest.class)))
+                .thenThrow(ThrottlingException.builder().message("Too many requests").build());
+
+        assertThatThrownBy(() -> generator.generate("돈까스 세트 홍보"))
+                .isInstanceOf(CampaignException.class)
+                .extracting(e -> ((CampaignException) e).getErrorCode())
+                .isEqualTo(PosterErrorCode.GENERATION_THROTTLED);
+        verify(bedrockRuntimeClient, times(1)).converse(any(ConverseRequest.class));
+    }
+
+    @Test
+    void 모델이_아직_준비_안_됐어도_같은_오류로_묶는다() {
+        when(bedrockRuntimeClient.converse(any(ConverseRequest.class)))
+                .thenThrow(ModelNotReadyException.builder().message("Model not ready").build());
+
+        assertThatThrownBy(() -> generator.generate("돈까스 세트 홍보"))
+                .isInstanceOf(CampaignException.class)
+                .extracting(e -> ((CampaignException) e).getErrorCode())
+                .isEqualTo(PosterErrorCode.GENERATION_THROTTLED);
     }
 }

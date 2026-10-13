@@ -25,9 +25,14 @@ import software.amazon.awssdk.services.bedrockruntime.model.ConversationRole;
 import software.amazon.awssdk.services.bedrockruntime.model.ConverseRequest;
 import software.amazon.awssdk.services.bedrockruntime.model.ConverseResponse;
 import software.amazon.awssdk.services.bedrockruntime.model.InferenceConfiguration;
+import software.amazon.awssdk.services.bedrockruntime.model.InternalServerException;
 import software.amazon.awssdk.services.bedrockruntime.model.Message;
+import software.amazon.awssdk.services.bedrockruntime.model.ModelNotReadyException;
+import software.amazon.awssdk.services.bedrockruntime.model.ModelTimeoutException;
+import software.amazon.awssdk.services.bedrockruntime.model.ServiceUnavailableException;
 import software.amazon.awssdk.services.bedrockruntime.model.StopReason;
 import software.amazon.awssdk.services.bedrockruntime.model.SystemContentBlock;
+import software.amazon.awssdk.services.bedrockruntime.model.ThrottlingException;
 
 /*
  * Bedrock Converse로 LLM이 템플릿 HTML을 직접 쓰게 한다(#182). 슬롯 5개 중 adLabel은
@@ -189,6 +194,16 @@ public class BedrockTemplateHtmlGenerator implements TemplateHtmlGenerator {
             return bedrockRuntimeClient.converse(request);
         } catch (ApiCallTimeoutException | ApiCallAttemptTimeoutException e) {
             throw new TemplateGenerationTimeoutException("Bedrock Converse 호출이 30초를 넘었다", e);
+        } catch (ThrottlingException | ServiceUnavailableException | ModelTimeoutException
+                | InternalServerException | ModelNotReadyException e) {
+            /*
+             * 전부 일시적이라 잠시 후 재시도하면 될 수 있는 실패다. 재시도(교정 지시를 덧붙여
+             * 다시 부르는 것)는 "내용을 고치면 해결되는 문제"에만 의미가 있어, 여기서는 1회
+             * 재시도 없이 바로 끝낸다. AccessDeniedException, ValidationException 같은 설정
+             * 실수나 코드 버그 쪽은 여기서 잡지 않고 GlobalExceptionHandler의 예상 못한 실패
+             * 경로로 넘겨 스택을 남긴다.
+             */
+            throw new CampaignException(PosterErrorCode.GENERATION_THROTTLED, e);
         }
     }
 

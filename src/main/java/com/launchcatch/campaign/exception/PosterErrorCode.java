@@ -23,7 +23,8 @@ public enum PosterErrorCode implements ErrorCode {
     VERSION_NOT_FOUND(HttpStatus.NOT_FOUND, "POSTER-008", "존재하지 않는 버전 번호로 게시할 수 없습니다."),
     TEMPLATE_NOT_PUBLISHED(HttpStatus.CONFLICT, "POSTER-009", "게시되지 않은 템플릿은 활성화할 수 없습니다."),
     GENERATION_TRUNCATED(HttpStatus.UNPROCESSABLE_ENTITY, "POSTER-010", "템플릿 생성 결과가 잘렸습니다. 다시 시도해 주세요."),
-    DISALLOWED_ELEMENT(HttpStatus.UNPROCESSABLE_ENTITY, "POSTER-011", "템플릿에 허용되지 않은 태그나 속성이 있습니다.");
+    DISALLOWED_ELEMENT(HttpStatus.UNPROCESSABLE_ENTITY, "POSTER-011", "템플릿에 허용되지 않은 태그나 속성이 있습니다."),
+    GENERATION_THROTTLED(HttpStatus.SERVICE_UNAVAILABLE, "POSTER-012", "템플릿 생성 요청이 몰리고 있습니다. 잠시 후 다시 시도해 주세요.");
 
     private final HttpStatus httpStatus;
     private final String code;
