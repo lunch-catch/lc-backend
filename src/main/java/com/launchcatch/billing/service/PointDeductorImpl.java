@@ -12,6 +12,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -37,6 +38,7 @@ import org.springframework.transaction.annotation.Transactional;
  *   ./gradlew perfTest 로 전후를 비교한다. 하네스는 PointDeductor 만 부르므로 바꾸지 않는다.
  *   하네스를 같이 고쳐야 하는 경우(0단계 구간 분해, 명세를 바꾸는 4단계)는 "노출 차감 부하 테스트.md" 2.4절.
  */
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class PointDeductorImpl implements PointDeductor {
@@ -75,7 +77,11 @@ public class PointDeductorImpl implements PointDeductor {
          * C-1 기본 키를 serve_id 로(마이그레이션), B-1 두 INSERT 를 한 요청으로(차감 전용 데이터소스),
          * B-2 BILLED 면 이 INSERT 생략(명세 변경, 4단계)
          */
-        deductionResultRepository.insertIfAbsent(serveId, campaignId, plan.ownerId(), businessDate, status, plan.unitPrice(), now);
+        int inserted = deductionResultRepository.insertIfAbsent(
+                serveId, campaignId, plan.ownerId(), businessDate, status, plan.unitPrice(), now);
+        if (inserted == 0) {
+            return firstStatus(serveId, status);
+        }
 
         if (status == DeductionStatus.BILLED) {
             /*
@@ -86,5 +92,21 @@ public class PointDeductorImpl implements PointDeductor {
             ledgerRepository.insertDeductIfAbsent(plan.ownerId(), campaignId, serveId, -plan.unitPrice(), now);
         }
         return status;
+    }
+
+    /*
+     * 같은 serveId 의 판정 행이 이미 있으면 그 행의 판정이 정본이다. 처리 표시(2일)가 사라진 뒤 도착한 재호출은 Lua 가
+     * 현재 예산으로 다시 판정하므로 처음 판정과 다를 수 있다. 계약은 처음 판정을 약속하고 원장은 처음 판정이
+     * BILLED 일 때 같은 트랜잭션에서 이미 남았으므로, 저장된 판정을 돌려주고 원장은 쓰지 않는다.
+     * 다시 판정하면서 올라간 카운터는 되돌리지 않는다. 13:30 대사가 원장 기준으로 맞춘다.
+     */
+    private DeductionStatus firstStatus(UUID serveId, DeductionStatus judged) {
+        DeductionStatus first = deductionResultRepository.findFirstStatus(serveId)
+                .orElseThrow(() -> new IllegalStateException("판정 행이 있다고 했는데 읽을 수 없습니다. serveId=" + serveId));
+        if (first != judged) {
+            log.warn("처음 판정과 다시 판정한 값이 달라 처음 판정을 돌려줍니다. serveId={}, first={}, rejudged={}",
+                    serveId, first, judged);
+        }
+        return first;
     }
 }

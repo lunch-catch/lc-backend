@@ -182,6 +182,25 @@ class ImpressionDeductionIntegrationTest {
     }
 
     @Test
+    void 처리_표시가_사라진_뒤_같은_serveId를_부르면_저장된_처음_판정을_돌려주고_원장은_늘지_않는다() {
+        long campaignId = plan(1, false);
+        UUID billed = UUID.randomUUID();
+        UUID rejected = UUID.randomUUID();
+        assertThat(deductInTx(billed, campaignId)).isEqualTo(DeductionStatus.BILLED);
+        assertThat(deductInTx(rejected, campaignId)).isEqualTo(DeductionStatus.NOT_BILLED_BUDGET);
+        // 처리 표시가 사라지고 예산이 넉넉해져 Lua 가 다시 판정하면 다른 값이 나오는 상황을 만든다
+        redis.delete(List.of("billing:served:" + rejected, "billing:served:" + billed));
+        redis.opsForHash().put("billing:day:" + DAY + ":" + campaignId, "reserved", String.valueOf(100 * UNIT));
+
+        assertThat(deductInTx(rejected, campaignId)).isEqualTo(DeductionStatus.NOT_BILLED_BUDGET);
+        assertThat(deductInTx(billed, campaignId)).isEqualTo(DeductionStatus.BILLED);
+
+        assertThat(rows("deduction_result", campaignId)).isEqualTo(2);
+        assertThat(rows("point_ledger", campaignId)).isEqualTo(1);
+        assertThat(ledgerDeductSum(campaignId)).isEqualTo(-UNIT);
+    }
+
+    @Test
     void 같은_serveId를_동시에_불러도_행과_소진은_한_번이다() throws Exception {
         long campaignId = plan(30, false);
         UUID serveId = UUID.randomUUID();

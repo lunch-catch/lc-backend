@@ -22,6 +22,7 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -59,6 +60,9 @@ class PointDeductorImplTest {
         deductor = new PointDeductorImpl(snapshotService, rebuildService, spendCounter,
                 deductionResultRepository, ledgerRepository, CLOCK);
         lenient().when(snapshotService.get(DAY, CAMPAIGN_ID)).thenReturn(PLAN);
+        // 기본은 새로 기록된 경우다. 중복은 해당 시험에서 0 을 돌려주게 한다
+        lenient().when(deductionResultRepository.insertIfAbsent(any(UUID.class), any(), any(), any(),
+                any(DeductionStatus.class), anyLong(), any())).thenReturn(1);
     }
 
     @Test
@@ -100,13 +104,40 @@ class PointDeductorImplTest {
         when(spendCounter.deduct(DAY, CAMPAIGN_ID, SERVE_ID, 10L)).thenReturn(DeductOutcome.of(DeductionStatus.BILLED));
         when(deductionResultRepository.insertIfAbsent(SERVE_ID, CAMPAIGN_ID, 3L, DAY, DeductionStatus.BILLED, 10L, NOW))
                 .thenReturn(1, 0);
-        when(ledgerRepository.insertDeductIfAbsent(3L, CAMPAIGN_ID, SERVE_ID, -10L, NOW)).thenReturn(1, 0);
+        when(deductionResultRepository.findFirstStatus(SERVE_ID)).thenReturn(Optional.of(DeductionStatus.BILLED));
 
         DeductionStatus first = deductor.deduct(SERVE_ID, CAMPAIGN_ID, DAY);
         DeductionStatus second = deductor.deduct(SERVE_ID, CAMPAIGN_ID, DAY);
 
         assertThat(first).isEqualTo(DeductionStatus.BILLED);
         assertThat(second).isEqualTo(first);
+        verify(ledgerRepository, times(1)).insertDeductIfAbsent(3L, CAMPAIGN_ID, SERVE_ID, -10L, NOW);
+    }
+
+    @Test
+    void 처리_표시가_사라져_다시_판정해도_저장된_처음_판정을_돌려주고_원장은_쓰지_않는다() {
+        when(spendCounter.deduct(DAY, CAMPAIGN_ID, SERVE_ID, 10L)).thenReturn(DeductOutcome.of(DeductionStatus.BILLED));
+        when(deductionResultRepository.insertIfAbsent(SERVE_ID, CAMPAIGN_ID, 3L, DAY, DeductionStatus.BILLED, 10L, NOW))
+                .thenReturn(0);
+        when(deductionResultRepository.findFirstStatus(SERVE_ID))
+                .thenReturn(Optional.of(DeductionStatus.NOT_BILLED_BUDGET));
+
+        DeductionStatus status = deductor.deduct(SERVE_ID, CAMPAIGN_ID, DAY);
+
+        assertThat(status).isEqualTo(DeductionStatus.NOT_BILLED_BUDGET);
+        verify(ledgerRepository, never()).insertDeductIfAbsent(any(), any(), any(UUID.class), anyLong(), any());
+    }
+
+    @Test
+    void 중복인데_저장된_판정을_읽을_수_없으면_예외다() {
+        when(spendCounter.deduct(DAY, CAMPAIGN_ID, SERVE_ID, 10L)).thenReturn(DeductOutcome.of(DeductionStatus.BILLED));
+        when(deductionResultRepository.insertIfAbsent(SERVE_ID, CAMPAIGN_ID, 3L, DAY, DeductionStatus.BILLED, 10L, NOW))
+                .thenReturn(0);
+        when(deductionResultRepository.findFirstStatus(SERVE_ID)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> deductor.deduct(SERVE_ID, CAMPAIGN_ID, DAY))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("serveId=");
     }
 
     @Test
