@@ -7,10 +7,16 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
+import java.util.Collection;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.core.io.ClassPathResource;
+import org.springframework.data.redis.core.HashOperations;
+import org.springframework.data.redis.core.RedisOperations;
+import org.springframework.data.redis.core.SessionCallback;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.data.redis.core.script.RedisScript;
@@ -32,6 +38,7 @@ public class DailySpendHashRepository {
 
     private static final String KEY_PREFIX = "billing:day:";
     private static final String SERVED_PREFIX = "billing:served:";
+    private static final List<String> READ_FIELDS = List.of("reserved", "spend");
     private static final String HASH_MISSING = "HASH_MISSING";
 
     /*
@@ -94,6 +101,39 @@ public class DailySpendHashRepository {
                 String.valueOf(changedAt == null ? 0L : epochMicros(changedAt)),
                 String.valueOf(DAY_HASH_TTL_SECONDS));
         return created != null && created == 1L;
+    }
+
+    /*
+     * 여러 캠페인의 예약액과 소진을 파이프라인 한 번으로 읽는다. 캠페인마다 나눠 부르지 않는다.
+     * 해시가 없는 캠페인은 결과에 없다. 재구성 여부는 부른 쪽이 정한다.
+     * Valkey 예외는 그대로 던진다. 대체값을 돌려주지 않는다.
+     */
+    public Map<Long, DailySpend> readAll(LocalDate businessDate, Collection<Long> campaignIds) {
+        if (campaignIds.isEmpty()) {
+            return Map.of();
+        }
+        List<Long> ids = List.copyOf(campaignIds);
+        List<Object> replies = redisTemplate.executePipelined(new SessionCallback<Object>() {
+            @Override
+            @SuppressWarnings("unchecked")
+            public <K, V> Object execute(RedisOperations<K, V> operations) {
+                HashOperations<String, String, String> hash = ((RedisOperations<String, String>) operations).opsForHash();
+                for (Long campaignId : ids) {
+                    hash.multiGet(key(businessDate, campaignId), READ_FIELDS);
+                }
+                return null;
+            }
+        });
+        Map<Long, DailySpend> result = new HashMap<>();
+        for (int i = 0; i < ids.size(); i++) {
+            List<?> fields = (List<?>) replies.get(i);
+            if (fields.get(0) != null) {
+                result.put(ids.get(i), new DailySpend(
+                        Long.parseLong((String) fields.get(0)),
+                        fields.get(1) == null ? 0L : Long.parseLong((String) fields.get(1))));
+            }
+        }
+        return result;
     }
 
     static String servedKey(UUID serveId) {

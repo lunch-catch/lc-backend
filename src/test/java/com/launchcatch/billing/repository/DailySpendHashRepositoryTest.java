@@ -4,19 +4,26 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.launchcatch.billing.contract.DeductionStatus;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.redis.core.HashOperations;
+import org.springframework.data.redis.core.RedisOperations;
+import org.springframework.data.redis.core.SessionCallback;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.RedisScript;
 
@@ -151,5 +158,43 @@ class DailySpendHashRepositoryTest {
 
         assertThat(repository.rebuildIfAbsent(DAY, 12L, 1000L, 0L, false, null)).isFalse();
         assertThat(repository.rebuildIfAbsent(DAY, 12L, 1000L, 0L, false, null)).isFalse();
+    }
+
+    @SuppressWarnings("unchecked")
+    private HashOperations<String, String, String> stubPipeline(List<Object> replies) {
+        RedisOperations<String, String> operations = mock(RedisOperations.class);
+        HashOperations<String, String, String> hash = mock(HashOperations.class);
+        when(operations.<String, String>opsForHash()).thenReturn(hash);
+        when(redisTemplate.executePipelined(any(SessionCallback.class))).thenAnswer(invocation -> {
+            SessionCallback<?> callback = invocation.getArgument(0);
+            callback.execute(operations);
+            return replies;
+        });
+        return hash;
+    }
+
+    @Test
+    void 다건_조회는_캠페인마다_한_키씩_파이프라인으로_읽고_없는_해시는_뺀다() {
+        HashOperations<String, String, String> hash = stubPipeline(List.of(
+                List.of("1000", "250"),
+                Arrays.asList(null, null),
+                Arrays.asList("500", null)));
+
+        Map<Long, DailySpend> result = new DailySpendHashRepository(redisTemplate).readAll(DAY, List.of(1L, 2L, 3L));
+
+        assertThat(result).containsOnlyKeys(1L, 3L);
+        assertThat(result.get(1L)).isEqualTo(new DailySpend(1000L, 250L));
+        assertThat(result.get(3L)).isEqualTo(new DailySpend(500L, 0L));
+        verify(hash).multiGet("billing:day:2026-10-01:1", List.of("reserved", "spend"));
+        verify(hash).multiGet("billing:day:2026-10-01:2", List.of("reserved", "spend"));
+        verify(hash).multiGet("billing:day:2026-10-01:3", List.of("reserved", "spend"));
+    }
+
+    @Test
+    void 캠페인이_없으면_Valkey를_부르지_않는다() {
+        Map<Long, DailySpend> result = new DailySpendHashRepository(redisTemplate).readAll(DAY, List.of());
+
+        assertThat(result).isEmpty();
+        verify(redisTemplate, never()).executePipelined(any(SessionCallback.class));
     }
 }
