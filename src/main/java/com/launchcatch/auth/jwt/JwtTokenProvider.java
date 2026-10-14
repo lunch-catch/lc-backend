@@ -12,6 +12,8 @@ import java.time.LocalDateTime;
 import java.util.Date;
 import java.util.EnumMap;
 import java.util.Map;
+import java.util.HashMap;
+import java.util.Set;
 import javax.crypto.SecretKey;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
@@ -23,7 +25,7 @@ import org.springframework.stereotype.Component;
  * 그런데 수명 정책은 여기 남긴다. Access 와 Refresh 의 수명을 한 곳에서 들고 있는 것이 이
  * 클래스의 역할이기 때문이다.
  *
- * Refresh 수명이 역할마다 다르다. 관리자 1일, 점주와 사용자 14일이다. 회원은 자동 로그인
+ * Refresh 수명이 역할마다 다르다. 관리자와 점주는 1일, 사용자는 14일이다. 회원은 자동 로그인
  * 선택지를 두지 않고 항상 14일 persistent cookie를 발급한다. 옮겨온 쪽은 수명이 하나뿐이어서
  * 값을 단일 필드로 들고 있었다.
  *
@@ -34,6 +36,8 @@ import org.springframework.stereotype.Component;
 public class JwtTokenProvider {
 
     private static final String ROLE_CLAIM = "role";
+    // 사용자 ID, 역할, 만료 시각 등 공통 인증 정보는 추가 클레임으로 덮어쓸 수 없다.
+    private static final Set<String> RESERVED_CLAIMS = Set.of("iss", "sub", "aud", "exp", "nbf", "iat", "jti", ROLE_CLAIM);
 
     private final SecretKey secretKey;
     private final Clock clock;
@@ -60,15 +64,31 @@ public class JwtTokenProvider {
         this.refreshTokenValidityMs = Map.copyOf(validity);
     }
 
+    // 추가 정보가 필요 없는 도메인은 기존 발급 메서드를 그대로 사용한다.
     public String createAccessToken(Long id, Role role) {
+        return createAccessToken(id, role, Map.of());
+    }
+
+    // 도메인이 제공한 추가 클레임을 서명하되 공통 인증 필드는 덮어쓰지 못하게 한다.
+    public String createAccessToken(Long id, Role role, Map<String, ?> additionalClaims) {
+        if (additionalClaims.keySet().stream().anyMatch(RESERVED_CLAIMS::contains)) {
+            throw new IllegalArgumentException("추가 클레임은 공통 인증 필드를 덮어쓸 수 없다");
+        }
         Instant now = clock.instant();
         return Jwts.builder()
+                .claims(additionalClaims)
                 .subject(String.valueOf(id))
                 .claim(ROLE_CLAIM, role.name())
                 .issuedAt(Date.from(now))
                 .expiration(Date.from(now.plusMillis(accessTokenValidityMs)))
-                .signWith(secretKey)
-                .compact();
+                .signWith(secretKey).compact();
+    }
+
+    // 서명을 확인한 JWT에서 공통 인증 정보를 제외한 추가 클레임만 꺼낸다.
+    public Map<String, Object> getAdditionalClaims(String token) {
+        Map<String, Object> claims = new HashMap<>(parseClaims(token));
+        RESERVED_CLAIMS.forEach(claims::remove);
+        return Map.copyOf(claims);
     }
 
     public Claims parseClaims(String token) {

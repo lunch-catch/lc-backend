@@ -7,9 +7,13 @@ import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
 import jakarta.persistence.Table;
+import java.time.LocalDate;
+import java.util.UUID;
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 /*
  * 포인트 원장 한 줄이다. 추가만 하고 고치거나 지우지 않는다.
@@ -24,8 +28,8 @@ import lombok.NoArgsConstructor;
  *
  * 1원이 1포인트다. 금액 컬럼을 따로 두지 않는다.
  *
- * 이 판은 CHARGE 에 필요한 컬럼만 매핑한다. campaign_id, serve_id, business_date,
- * refund_request_id, reason, idempotency_key 는 그것을 쓰는 작업과 함께 더한다.
+ * 이 판은 CHARGE 기록과 조회에 필요한 컬럼만 매핑한다. refund_request_id 와 idempotency_key 는
+ * 그것을 쓰는 작업과 함께 더한다.
  * ddl-auto 가 validate 라서 매핑하지 않은 컬럼은 기동을 막지 않는다. 그 컬럼은 전부
  * NULL 을 허용하므로 CHARGE 기록에도 영향이 없다.
  */
@@ -43,6 +47,19 @@ public class PointLedger extends BaseTimeEntity {
     @Column(name = "payment_id", updatable = false)
     private Long paymentId;
 
+    /** RESERVE, RELEASE, DEDUCT, REFUND 의 캠페인별 내역이다. CHARGE 와 ADJUST 는 NULL 이다. */
+    @Column(name = "campaign_id", updatable = false)
+    private Long campaignId;
+
+    /** RESERVE 와 RELEASE 만 값이 있다. 그 예약이 속한 영업일이다. */
+    @Column(name = "business_date", updatable = false)
+    private LocalDate businessDate;
+
+    /** DEDUCT 만 값이 있다. 광고 서빙이 발급한 UUID 이며 BINARY(16) 로 저장한다. */
+    @JdbcTypeCode(SqlTypes.BINARY)
+    @Column(name = "serve_id", updatable = false)
+    private UUID serveId;
+
     @Enumerated(EnumType.STRING)
     @Column(name = "entry_type", nullable = false, length = 20, updatable = false)
     private EntryType entryType;
@@ -50,6 +67,10 @@ public class PointLedger extends BaseTimeEntity {
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 20, updatable = false)
     private LedgerSource source;
+
+    /** ADJUST 의 사유다. 다른 종류는 NULL 이다. */
+    @Column(length = 255, updatable = false)
+    private String reason;
 
     /** 부호가 있는 변동량이다. chk_point_ledger_amount_sign 이 종류별 부호를 강제한다. */
     @Column(nullable = false, updatable = false)

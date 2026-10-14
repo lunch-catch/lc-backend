@@ -59,6 +59,10 @@ public class Owner extends BaseTimeEntity {
     @Column(name = "refresh_token_issuance_version", nullable = false)
     private long refreshTokenIssuanceVersion;
 
+    // -1은 아직 AT를 폐기하지 않은 계정을 뜻하며 순번 없는 기존 AT도 허용한다.
+    @Column(name = "access_token_revoked_version", nullable = false)
+    private long accessTokenRevokedVersion = -1L;
+
     private Owner(String email, String passwordHash) {
         if (email == null || email.isBlank() || email.length() > 255) {
             throw new IllegalArgumentException("점주 이메일은 필수이며, 255자 이하여야 합니다.");
@@ -91,6 +95,28 @@ public class Owner extends BaseTimeEntity {
         this.refreshTokenHash = refreshTokenHash;
         this.refreshTokenExpiresAt = expiresAt;
         this.lastLoginAt = loginAt;
+    }
+
+    // 로그인과 같은 행 잠금 아래 호출하며 최근 로그인 시각은 변경하지 않는다.
+    public void rotateRefreshToken(String tokenHash, LocalDateTime expiresAt, LocalDateTime now) {
+        if (!canLogin()) {
+            throw new IllegalStateException("현재 점주 상태에서는 재발급할 수 없습니다.");
+        }
+        if (tokenHash == null || !tokenHash.matches("[0-9a-f]{64}")
+                || expiresAt == null || now == null || !expiresAt.isAfter(now)) {
+            throw new IllegalArgumentException("Refresh Token 해시와 만료 시각이 올바르지 않습니다.");
+        }
+        this.refreshTokenIssuanceVersion = Math.incrementExact(refreshTokenIssuanceVersion);
+        this.refreshTokenHash = tokenHash;
+        this.refreshTokenExpiresAt = expiresAt;
+    }
+
+    // 폐기 순번도 증가시켜 이미 진행 중인 이전 토큰 게시를 차단한다.
+    public void clearRefreshToken() {
+        this.refreshTokenIssuanceVersion = Math.incrementExact(refreshTokenIssuanceVersion);
+        this.refreshTokenHash = null;
+        this.refreshTokenExpiresAt = null;
+        this.accessTokenRevokedVersion = refreshTokenIssuanceVersion;
     }
 
     public static Owner create(String email, String passwordHash) { return new Owner(email, passwordHash); }

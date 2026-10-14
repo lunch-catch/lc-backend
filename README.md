@@ -53,14 +53,16 @@
 | 문서 | 내용 |
 |---|---|
 | [도메인 구조와 의존성 설계](./docs/architecture/런치캐치_도메인_구조와_의존성_설계.md) | 계층, 도메인 경계, 의존 방향 |
-| [API 명세](./docs/api-spec/README.md) | 공통 규약과 도메인별 명세 |
-| [마이그레이션 규약](./src/main/resources/db/migration/README.md) | 스키마를 소유하는 SQL 의 배치와 규칙 |
+| [API 명세](./docs/api-spec/api-spec.md) | 공통 규약과 도메인별 명세 |
+| [마이그레이션 규약](./src/main/resources/db/migration/migration.md) | 스키마를 소유하는 SQL 의 배치와 규칙 |
 | [코드 리뷰 기준](./docs/CODEREVIEW.md) | 변경 경로별로 적용되는 가이드 |
 | [작업 규칙](./AGENTS.md) | 이슈와 PR, 커밋, 문서와 주석 |
-| [개발 흐름](./docs/workflow/README.md) | 브랜치 전략, 보호 설정, 게이트, 배포 경로 |
+| [개발 배포 플로우](./docs/workflow/개발_배포_플로우.md) | 브랜치 전략, 보호 설정, 게이트, 배포 경로 |
+| [명세 작업 플로우](./docs/workflow/명세_작업_플로우.md) | 명세서와 설계서를 쓰는 순서, 빈칸을 남기는 규칙 |
+| [LLM 구현 플로우](./docs/workflow/LLM_구현_플로우.md) | 코드와 테스트를 만드는 순서, 테스트의 깊이, 막히면 어디에 적는지 |
 | [로컬 실행](./docs/workflow/로컬_실행.md) | 설정 파일 만들기, 실행, 막혔을 때 보는 곳 |
-| [배치 운영](./docs/ops/런치캐치_배치_운영.md) | 배치 서버 구성과 운영 규칙 |
-| [알림 운영](./docs/ops/런치캐치_알림_운영.md) | Slack 알림 구성과 설정 절차 |
+| [배치 설계](./docs/design/ops/런치캐치_배치_운영.md) | 배치 서버 구성과 점유, 이어받기, 재실행 규칙 |
+| [팀 알림 운영](./docs/workflow/런치캐치_팀_알림_운영.md) | 깃허브 활동과 배포 결과를 팀에게 Slack 으로 알리는 구성과 설정 절차 |
 
 ## 시작
 

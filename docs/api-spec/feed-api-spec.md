@@ -1,8 +1,8 @@
 # 광고 서빙 (adserving) API 명세
 
 스와이프 피드, 찜과 패스, 노출 수집, 피드 필터, 찜 목록, 피드 배정 진단 API의 요청, 응답, 오류를 적는다.
-공통 규약(경로, 인증, 응답 봉투, 상태 코드, 식별자, 시각)은 `README.md` 를 따르고 여기서는 반복하지 않는다.
-서버가 내부에서 어떻게 처리하는지와 그렇게 정한 이유는 설계서 `feed-api-design.md` 에 있다.
+공통 규약(경로, 인증, 응답 봉투, 상태 코드, 식별자, 시각)은 `./api-spec.md` 를 따르고 여기서는 반복하지 않는다.
+서버가 내부에서 어떻게 처리하는지와 그렇게 정한 이유는 설계서 `../design/adserving/feed-api-design.md` 에 있다.
 
 **표 읽는 법.** 응답 필드 표의 "null" 칸이 "가능"이면 그 필드에 `null` 이 올 수 있고, 언제 오는지는 설명 칸에 적는다.
 "아니오"면 항상 값이 있다. 배열은 비어 있을 수는 있어도 `null` 은 아니다.
@@ -94,7 +94,7 @@ GET /v1/feed?latitude=37.4979&longitude=127.0276
 | `cards[].usableStartTime` | string (HH:mm) | 아니오 | 쿠폰 사용 시작 시각 |
 | `cards[].usableEndTime` | string (HH:mm) | 아니오 | 쿠폰 사용 종료 시각 |
 | `cards[].issueQuantity` | integer | 아니오 | 선착순 발급 수량(표시용). 잔여 수량은 싣지 않는다 |
-| `cards[].posterUrl` | string | 아니오 | 포스터 주소. 사용자 포스터 조회 API(`poster.md`)의 경로다 |
+| `cards[].posterUrl` | string | 아니오 | 포스터 주소. 사용자 포스터 조회 API(`poster-api-spec.md`)의 경로다 |
 
 **클라이언트 규칙**
 
@@ -290,7 +290,7 @@ Retry-After: 37
 ### `GET /v1/wishlist`
 
 찜한 캠페인 목록이다. 잔여 수량, 발급 가능 여부, 하루 발급 잔여 횟수는 여기에 없다.
-받은 `campaignId` 들로 쿠폰 API(`coupon.md`)를 따로 불러 화면에서 합친다.
+받은 `campaignId` 들로 쿠폰 API(`coupon-api-spec.md`)를 따로 불러 화면에서 합친다.
 
 **요청**
 
@@ -335,7 +335,7 @@ Retry-After: 37
 
 - 페이지네이션이 없다. 캠페인이 끝나면 찜 목록에서 자동으로 빠진다
 - 0건이면 빈 상태 화면과 피드 이동 버튼을 보인다
-- 이 화면 조회는 노출이 아니다. 분석 수집 API로 `wishlist_view` 를 따로 보낸다(`analytics.md`)
+- 이 화면 조회는 노출이 아니다. 분석 수집 API로 `wishlist_view` 를 따로 보낸다(`analytics-api-spec.md`)
 
 ### `POST /v1/wishlist`
 
@@ -438,7 +438,7 @@ Retry-After: 37
 
 ## 오류 코드
 
-요청 형식이 틀린 실패는 공통 코드(`COMMON-002`)로 온다. 공통 코드 목록은 `README.md` 에 있다.
+요청 형식이 틀린 실패는 공통 코드(`COMMON-002`)로 온다. 공통 코드 목록은 `./api-spec.md` 에 있다.
 여기에는 광고 서빙만 아는 실패를 둔다.
 
 | 코드 | 상태 | 메시지 |
