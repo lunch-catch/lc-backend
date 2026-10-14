@@ -59,6 +59,10 @@ public class Owner extends BaseTimeEntity {
     @Column(name = "refresh_token_issuance_version", nullable = false)
     private long refreshTokenIssuanceVersion;
 
+    // -1은 아직 AT를 폐기하지 않은 계정을 뜻하며 순번 없는 기존 AT도 허용한다.
+    @Column(name = "access_token_revoked_version", nullable = false)
+    private long accessTokenRevokedVersion = -1L;
+
     private Owner(String email, String passwordHash) {
         if (email == null || email.isBlank() || email.length() > 255) {
             throw new IllegalArgumentException("점주 이메일은 필수이며, 255자 이하여야 합니다.");
@@ -112,6 +116,7 @@ public class Owner extends BaseTimeEntity {
         this.refreshTokenIssuanceVersion = Math.incrementExact(refreshTokenIssuanceVersion);
         this.refreshTokenHash = null;
         this.refreshTokenExpiresAt = null;
+        this.accessTokenRevokedVersion = refreshTokenIssuanceVersion;
     }
 
     // 완료 상태만 저장하며 점주 상태나 토큰 정보는 변경하지 않는다.

@@ -6,7 +6,7 @@ import static org.mockito.Mockito.*;
 
 import com.launchcatch.auth.Role;
 import com.launchcatch.auth.exception.AuthException;
-import com.launchcatch.auth.jwt.AccessTokenValidAfterRepository;
+import com.launchcatch.owner.repository.OwnerAccessTokenVersionRepository;
 import com.launchcatch.auth.jwt.JwtTokenProvider;
 import com.launchcatch.auth.opaque.RefreshTokenRepository;
 import com.launchcatch.auth.opaque.TokenHasher;
@@ -40,7 +40,7 @@ class OwnerTokenRefreshServiceTest {
     private final RefreshTokenRepository tokens = mock(RefreshTokenRepository.class);
     private final OwnerRefreshTokenRepository ownerTokens = mock(OwnerRefreshTokenRepository.class);
     private final JwtTokenProvider jwt = mock(JwtTokenProvider.class);
-    private final AccessTokenValidAfterRepository cutoff = mock(AccessTokenValidAfterRepository.class);
+    private final OwnerAccessTokenVersionRepository cutoff = mock(OwnerAccessTokenVersionRepository.class);
     private final PlatformTransactionManager manager = mock(PlatformTransactionManager.class);
     private final Clock clock = Clock.fixed(Instant.parse("2026-10-09T02:00:00Z"), ClockConfig.ZONE);
     private final LocalDateTime now = LocalDateTime.ofInstant(clock.instant(), ClockConfig.ZONE);
@@ -53,9 +53,9 @@ class OwnerTokenRefreshServiceTest {
         when(owners.findByIdForLogin(7L)).thenReturn(Optional.of(owner));
         when(owners.findByRefreshTokenHash(OLD_HASH)).thenReturn(Optional.of(owner));
         when(ownerTokens.consumeForRotation(OLD_TOKEN)).thenReturn(success());
-        when(jwt.refreshTokenValidityMs(Role.OWNER)).thenReturn(Duration.ofDays(14).toMillis());
+        when(jwt.refreshTokenValidityMs(Role.OWNER)).thenReturn(Duration.ofDays(1).toMillis());
         when(jwt.getAccessTokenValidityMs()).thenReturn(Duration.ofMinutes(30).toMillis());
-        when(jwt.createAccessToken(7L, Role.OWNER)).thenReturn("new-access");
+        when(jwt.createAccessToken(eq(7L), eq(Role.OWNER), anyMap())).thenReturn("new-access");
         when(manager.getTransaction(any(TransactionDefinition.class))).thenReturn(new SimpleTransactionStatus());
         when(tokens.saveIfNewer(anyString(), eq(7L), eq(Role.OWNER), eq(true), any(), anyLong())).thenReturn(true);
         service = new OwnerTokenRefreshService(owners, tokens, ownerTokens, jwt, cutoff, clock, manager);
@@ -83,13 +83,15 @@ class OwnerTokenRefreshServiceTest {
         assertThat(result.accessToken()).isEqualTo("new-access");
         assertThat(result.refreshToken()).isNotBlank().isNotEqualTo(OLD_TOKEN);
         assertThat(owner.getRefreshTokenHash()).isEqualTo(TokenHasher.sha256(result.refreshToken()));
-        assertThat(owner.getRefreshTokenExpiresAt()).isEqualTo(now.plusDays(14));
+        assertThat(owner.getRefreshTokenExpiresAt()).isEqualTo(now.plusDays(1));
         assertThat(owner.getLastLoginAt()).isEqualTo(now.minusDays(1));
         assertThat(owner.getRefreshTokenIssuanceVersion()).isEqualTo(2L);
+        assertThat(owner.getAccessTokenRevokedVersion()).isEqualTo(-1L);
         assertThat(result.response().status()).isEqualTo(status);
         assertThat(result.response().tutorialViewed()).isEqualTo(status == OwnerStatus.ACTIVE ? true : null);
         assertThat(result.toString()).doesNotContain(result.accessToken(), result.refreshToken(), "owner@example.com");
-        verify(tokens).saveIfNewer(result.refreshToken(), 7L, Role.OWNER, true, Duration.ofDays(14), 2L);
+        verify(jwt).createAccessToken(7L, Role.OWNER, java.util.Map.of("issuanceVersion", "2"));
+        verify(tokens).saveIfNewer(result.refreshToken(), 7L, Role.OWNER, true, Duration.ofDays(1), 2L);
     }
 
     @ParameterizedTest
@@ -153,7 +155,8 @@ class OwnerTokenRefreshServiceTest {
         when(ownerTokens.consumeForRotation(OLD_TOKEN)).thenThrow(failure()).thenReturn(success());
         var result = service.refresh(OLD_TOKEN);
         assertThat(owner.getRefreshTokenHash()).isEqualTo(TokenHasher.sha256(result.refreshToken()));
-        verify(tokens).saveIfNewer(result.refreshToken(), 7L, Role.OWNER, true, Duration.ofDays(14), 2L);
+        verify(jwt).createAccessToken(7L, Role.OWNER, java.util.Map.of("issuanceVersion", "2"));
+        verify(tokens).saveIfNewer(result.refreshToken(), 7L, Role.OWNER, true, Duration.ofDays(1), 2L);
     }
 
     @Test
@@ -180,7 +183,7 @@ class OwnerTokenRefreshServiceTest {
     void 폴백_조회_이후_다른_요청이_회전하면_두번째_회전은_거절한다() {
         when(ownerTokens.consumeForRotation(OLD_TOKEN)).thenThrow(failure());
         Owner changed = ownerWithToken();
-        changed.rotateRefreshToken(TokenHasher.sha256("winner"), now.plusDays(14), now);
+        changed.rotateRefreshToken(TokenHasher.sha256("winner"), now.plusDays(1), now);
         when(owners.findByIdForLogin(7L)).thenReturn(Optional.of(changed));
         assertCode(() -> service.refresh(OLD_TOKEN), "AUTH-003");
         verify(owners, never()).saveAndFlush(any());
@@ -225,7 +228,7 @@ class OwnerTokenRefreshServiceTest {
     @Test
     void 게시_직전_새_로그인이_있으면_이전_재발급을_게시하지_않는다() {
         Owner newer = ownerWithToken();
-        newer.recordLogin(TokenHasher.sha256("new-login"), now.plusDays(14), now);
+        newer.recordLogin(TokenHasher.sha256("new-login"), now.plusDays(1), now);
         when(owners.findByIdForLogin(7L)).thenReturn(Optional.of(owner), Optional.of(newer));
         assertThat(service.refresh(OLD_TOKEN).accessToken()).isEqualTo("new-access");
         verify(tokens, never()).saveIfNewer(anyString(), anyLong(), any(), anyBoolean(), any(), anyLong());
@@ -248,7 +251,7 @@ class OwnerTokenRefreshServiceTest {
     @Test
     void 게시_직전_RT가_만료되면_거절한다() {
         Clock movingClock = mock(Clock.class);
-        when(movingClock.instant()).thenReturn(clock.instant(), clock.instant().plus(Duration.ofDays(14)));
+        when(movingClock.instant()).thenReturn(clock.instant(), clock.instant().plus(Duration.ofDays(1)));
         service = new OwnerTokenRefreshService(owners, tokens, ownerTokens, jwt, cutoff, movingClock, manager);
         assertCode(() -> service.refresh(OLD_TOKEN), "AUTH-003");
     }
@@ -261,8 +264,9 @@ class OwnerTokenRefreshServiceTest {
         assertThat(owner.getRefreshTokenHash()).isNull();
         assertThat(owner.getRefreshTokenExpiresAt()).isNull();
         assertThat(owner.getRefreshTokenIssuanceVersion()).isEqualTo(2L);
+        assertThat(owner.getAccessTokenRevokedVersion()).isEqualTo(2L);
         verify(ownerTokens).revokeThroughVersion(7L, OLD_HASH, 2L);
-        verify(cutoff).invalidateBefore(Role.OWNER, 7L, now.plusNanos(1), Duration.ofMinutes(30));
+        verify(cutoff).invalidateThroughVersion(7L, 2L);
     }
 
     @Test

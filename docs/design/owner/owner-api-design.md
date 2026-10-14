@@ -1,6 +1,6 @@
 # 점주 API 설계
 
-회원가입·로그인·내 정보 조회·최초 튜토리얼 완료의 서버 내부 처리를 설명한다. 프론트 계약은 [owner-api-spec.md](../../api-spec/owner-api-spec.md), 공통 토큰 처리는 [auth-api-design.md](../auth/auth-api-design.md)를 따른다. 현재 브랜치 구현을 기준으로 하며, 가게 등록과 상태 변경은 별도 기능이다.
+회원가입·로그인·내 정보 조회·최초 튜토리얼 완료의 서버 내부 처리를 설명한다. 프론트 계약은 [owner-api-spec.md](../../api-spec/owner-api-spec.md), 공통 토큰 정책과 점주 재발급·로그아웃 설계는 [auth-api-design.md](../auth/auth-api-design.md#점주)를 따른다. 현재 브랜치 구현을 기준으로 하며, 가게 등록과 상태 변경은 별도 기능이다.
 
 ## 회원가입
 
@@ -20,7 +20,7 @@ V51 「기능 명세서」 32행과 기존 `OwnerLoginController`·`OwnerLoginSe
 1. 요청을 검증하고 이메일로 계정을 조회한다. 계정이 없어도 Dummy BCrypt Hash와 비교하며, BCrypt 연산은 저장 트랜잭션 밖에서 수행한다.
 2. 계정 없음·비밀번호 불일치·SUSPENDED·WITHDRAWN은 모두 AUTH-001로 처리한다.
 3. 새 Opaque RT를 생성하고, 독립된 트랜잭션에서 `findByIdForLogin`으로 점주 행을 잠근다. 상태와 비밀번호 해시를 다시 확인한다.
-4. RT의 SHA-256 해시·만료 시각·최근 로그인 시각을 저장하고 점주별 발급 순번을 증가시킨다. 같은 트랜잭션에서 공통 `JwtTokenProvider`로 AT를 생성한다.
+4. RT의 SHA-256 해시·만료 시각·최근 로그인 시각을 저장하고 점주별 발급 순번을 증가시킨다. 같은 트랜잭션에서 확보한 발급 순번을 `issuanceVersion` 클레임에 넣어 공통 `JwtTokenProvider`로 AT를 생성한다.
 5. DB 커밋 후 별도의 짧은 트랜잭션에서 현재 상태·RT 해시·발급 순번을 재확인한다. 다른 요청이 교체한 RT라면 Redis 게시를 생략한다.
 6. DB 연결·잠금을 반환한 뒤 `RefreshTokenRepository.saveIfNewer`로 RT를 게시한다. TTL은 DB 만료 시각까지 남은 시간으로 계산한다.
 7. 공통 `AuthCookieFactory`로 토큰 쿠키를 만들고 응답을 반환한다. ACTIVE인 경우에만 DB의 `tutorialViewed`를 포함한다.
@@ -42,9 +42,9 @@ V51 「기능 명세서」 32행과 기존 `OwnerLoginController`·`OwnerLoginSe
 
 상태 확인과 저장 사이에 정지·탈퇴 변경이 끼어들지 못하도록 같은 행 잠금을 유지한다. 먼저 확정된 상태 변경을 읽으며, 나중의 상태 변경을 영구적으로 막는 의미는 아니다. 반복·동시 완료는 모두 같은 완료 상태로 수렴한다.
 
-로그인·재발급도 같은 점주 행 잠금을 사용하므로 해당 작업과 DB 변경을 직렬화한다. 점주 로그아웃은 아직 구현하지 않았다. 토큰 정보·발급 순번·계정 상태·Redis 상태 캐시는 수정하지 않는다. 기존 `tutorial_viewed` 컬럼을 사용하므로 마이그레이션은 추가하지 않는다.
+로그인·재발급·로그아웃도 같은 점주 행 잠금을 사용하므로 해당 작업과 DB 변경을 직렬화한다. 튜토리얼 완료는 토큰 정보·발급 순번·계정 상태·Redis 상태 캐시를 수정하지 않는다. 기존 `tutorial_viewed` 컬럼을 사용하므로 마이그레이션은 추가하지 않는다.
 
-`OwnerSecurityConfig`에서 회원가입·로그인·재발급의 공개 경로, 내 정보 조회와 튜토리얼 완료의 OWNER 규칙을 함께 유지한다. 공용 auth 수정은 필요하지 않다.
+`OwnerSecurityConfig`에서 회원가입·로그인·재발급의 공개 경로, 내 정보 조회·로그아웃·튜토리얼 완료의 OWNER 규칙을 함께 유지한다. 공용 auth 수정은 필요하지 않다.
 
 가게 최종 등록·ACTIVE 전환·상태 변경 서비스·일반 업무 API의 상태 제한은 별도 구현이다. 현재 가게 등록 기능이 없어도 이 API는 DB에 저장된 현재 상태를 기준으로 동작한다.
 
@@ -58,4 +58,4 @@ V51 「기능 명세서」 32행과 기존 `OwnerLoginController`·`OwnerLoginSe
 
 현재 상태를 확인하는 API이므로 ONBOARDING을 차단하지 않고 별도의 상태별 업무 인가를 추가하지 않는다.
 토큰 무효화는 공용 인증 필터의 검증을 따르며 인증 로직을 복제하지 않는다.
-OwnerSecurityConfig의 회원가입·로그인·재발급·튜토리얼 완료 규칙과 조회 규칙을 함께 유지한다.
+OwnerSecurityConfig의 회원가입·로그인·재발급·로그아웃·튜토리얼 완료 규칙과 조회 규칙을 함께 유지한다.
