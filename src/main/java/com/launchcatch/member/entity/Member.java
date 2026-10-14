@@ -78,8 +78,8 @@ public class Member extends BaseTimeEntity {
     private MemberProfile profile;
 
     private Member(String providerUserId, String nickname, String profileImageUrl) {
-        this.providerUserId = requiredText(providerUserId, "providerUserId");
-        this.nickname = requiredText(nickname, "nickname");
+        this.providerUserId = requiredText(providerUserId, "카카오 회원번호는 비어 있을 수 없습니다.");
+        this.nickname = requiredText(nickname, "닉네임은 비어 있을 수 없습니다.");
         this.profileImageUrl = profileImageUrl;
         this.status = MemberStatus.ACTIVE;
     }
@@ -98,12 +98,12 @@ public class Member extends BaseTimeEntity {
 
     public void reactivate(String nickname, String profileImageUrl, LocalDateTime loggedInAt) {
         if (status != MemberStatus.WITHDRAWN) {
-            throw new IllegalStateException("only withdrawn member can reactivate");
+            throw new IllegalStateException("탈퇴한 회원만 재가입할 수 있습니다.");
         }
         if (hasSuspensionHistory()) {
-            throw new IllegalStateException("member with suspension history cannot reactivate");
+            throw new IllegalStateException("정지 이력이 있는 회원은 재가입할 수 없습니다.");
         }
-        this.nickname = requiredText(nickname, "nickname");
+        this.nickname = requiredText(nickname, "닉네임은 비어 있을 수 없습니다.");
         this.profileImageUrl = profileImageUrl;
         this.status = MemberStatus.ACTIVE;
         this.withdrawnAt = null;
@@ -112,7 +112,7 @@ public class Member extends BaseTimeEntity {
 
     public void withdraw(LocalDateTime now) {
         if (status == MemberStatus.WITHDRAWN) {
-            throw new IllegalStateException("member is already withdrawn");
+            throw new IllegalStateException("이미 탈퇴한 회원입니다.");
         }
         this.nickname = "탈퇴한 회원";
         this.profileImageUrl = null;
@@ -140,7 +140,7 @@ public class Member extends BaseTimeEntity {
 
     public void updateProfile(String nickname, Boolean notificationOptIn, Boolean locationOptIn, LocalDateTime now) {
         if (nickname != null) {
-            this.nickname = requiredText(nickname, "nickname");
+            this.nickname = requiredText(nickname, "닉네임은 비어 있을 수 없습니다.");
         }
         if (notificationOptIn != null && this.notificationOptIn != notificationOptIn) {
             this.notificationOptIn = notificationOptIn;
@@ -154,9 +154,9 @@ public class Member extends BaseTimeEntity {
         }
     }
 
-    private static String requiredText(String value, String fieldName) {
+    private static String requiredText(String value, String message) {
         if (value == null || value.isBlank()) {
-            throw new IllegalArgumentException(fieldName + " must not be blank");
+            throw new IllegalArgumentException(message);
         }
         return value;
     }

@@ -27,7 +27,7 @@ class MemberTest {
     void 제공자_회원번호가_없으면_회원을_만들지_않는다() {
         assertThatThrownBy(() -> Member.create(" ", "점심헌터", null))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("providerUserId must not be blank");
+                .hasMessage("카카오 회원번호는 비어 있을 수 없습니다.");
     }
 
     @Test
@@ -35,7 +35,7 @@ class MemberTest {
     void 닉네임이_없으면_회원을_만들지_않는다() {
         assertThatThrownBy(() -> Member.create("kakao-123", null, null))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("nickname must not be blank");
+                .hasMessage("닉네임은 비어 있을 수 없습니다.");
     }
 
     @Test
@@ -47,7 +47,7 @@ class MemberTest {
 
         assertThatThrownBy(() -> member.reactivate("새닉네임", null, LocalDateTime.of(2026, 10, 6, 9, 0)))
                 .isInstanceOf(IllegalStateException.class)
-                .hasMessage("member with suspension history cannot reactivate");
+                .hasMessage("정지 이력이 있는 회원은 재가입할 수 없습니다.");
     }
 
     @Test

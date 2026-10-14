@@ -148,7 +148,7 @@ class MemberLocationServiceTest {
 
         assertThatThrownBy(() -> service.save(1L, request()))
                 .isInstanceOf(IllegalStateException.class)
-                .hasMessage("authenticated member does not exist");
+                .hasMessage("인증된 회원 정보를 찾을 수 없습니다.");
 
         verify(memberProfileRepository, never()).save(any(MemberProfile.class));
     }
