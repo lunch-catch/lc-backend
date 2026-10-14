@@ -44,6 +44,9 @@
   nullable이고(`V3__campaign_draft_nullable.sql`), `Campaign.activate()`가 이 둘의
   null을 따로 확인한다(캠페인 엔티티와 상태 전이, `#176`). 활성화 이전에 반드시 채워야
   한다는 제약은 그 전이 쪽이 갖고, 이 API는 신경 쓰지 않는다
+- **새로 만들면 `201`, 덮어쓰면 `200`을 응답한다(코드래빗 리뷰로 찾음).** 공통 규약(`api-spec.md`)이
+  `200`은 수정 성공, `201`은 생성 성공으로 구분해 둔 것을 그대로 따른다. `CampaignRepository.findDraftByStoreId(storeId)`의
+  존재 여부로 컨트롤러가 상태 코드를 가른다
 - **usableTime 검증(11:30~15:00, 30분 단위, 최소 1시간)은 서비스 레이어에 둔다.**
   `Campaign.create()`/`updateCouponCondition()`은 지금 `usableEndTime.isAfter(usableStartTime)`만
   본다(엔티티 불변식). 플랫폼 허용 범위와 30분 단위는 운영이 가진 값이 아니라 V51 43행에
@@ -61,4 +64,4 @@
 |---|---|---|
 | 가게당 DRAFT 1개를 막는 UNIQUE 제약의 정확한 마이그레이션 문구 | `#244` 결정 | `#244`가 `active_store_marker`와 같은 방식으로 추가한다(이 문서 "캠페인 등록" 절 참고) |
 | `Campaign.updateCouponCondition(...)` 메서드 시그니처 | `#244` 결정 | 아직 엔티티에 없다. `#244`가 추가한다 |
-| 노출 대상(44행)·예산과 집행 기간(45행) 단계의 API 계약 | V51 44, 45행 | 이 문서와 `campaign-api-spec.md`에 아직 없다. 그 단계를 구현하는 이슈가 절을 더한다 |
+| 노출 대상(44행)·예산과 집행 기간(45행) 단계의 API 계약 | V51 44, 45행 | 이 문서와 `campaign-api-spec.md`에 아직 없다. 로드맵 순서상 이 체크리스트([Feat] 캠페인 생성(점주)) 다음 항목인 [Feat] 노출 대상 설정(점주), [Feat] 하루 예산과 집행 기간 설정(점주)이 절을 더한다(아직 이슈 번호 없음) |
