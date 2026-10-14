@@ -29,8 +29,7 @@ import org.hibernate.type.SqlTypes;
  *
  * 1원이 1포인트다. 금액 컬럼을 따로 두지 않는다.
  *
- * 이 판은 CHARGE, ADJUST 기록과 조회에 필요한 컬럼만 매핑한다. refund_request_id 는
- * 그것을 쓰는 작업과 함께 더한다.
+ * 이 판은 CHARGE, ADJUST, REFUND 기록과 조회에 필요한 컬럼만 매핑한다.
  * ddl-auto 가 validate 라서 매핑하지 않은 컬럼은 기동을 막지 않는다. 그 컬럼은 전부
  * NULL 을 허용하므로 CHARGE 기록에도 영향이 없다.
  */
@@ -57,6 +56,10 @@ public class PointLedger extends BaseTimeEntity {
      */
     @Column(name = "campaign_id", updatable = false)
     private Long campaignId;
+
+    /** REFUND 만 값이 있다. 같은 환불 요청의 환불은 한 줄뿐이다(uk_point_ledger_refund_request_entry). */
+    @Column(name = "refund_request_id", updatable = false)
+    private Long refundRequestId;
 
     /** RESERVE 와 RELEASE 만 값이 있다. 그 예약이 속한 영업일이다. */
     @Column(name = "business_date", updatable = false)
@@ -144,6 +147,22 @@ public class PointLedger extends BaseTimeEntity {
         ledger.reason = reason;
         ledger.campaignId = campaignId;
         ledger.idempotencyKey = idempotencyKey;
+        return ledger;
+    }
+
+    /*
+     * 승인된 환불을 기록한다. 금액은 양수로 받고 음수로 저장한다.
+     * 관리자가 승인해 기록하므로 source 는 MANUAL 이다. 캠페인과 결제에는 묶이지 않는다.
+     */
+    public static PointLedger refund(Long ownerId, Long refundRequestId, long amount) {
+        if (refundRequestId == null) {
+            throw new IllegalArgumentException("환불은 환불 요청 ID가 필수입니다.");
+        }
+        if (amount <= 0) {
+            throw new IllegalArgumentException("환불 금액은 0보다 커야 합니다: " + amount);
+        }
+        PointLedger ledger = new PointLedger(ownerId, null, EntryType.REFUND, LedgerSource.MANUAL, -amount);
+        ledger.refundRequestId = refundRequestId;
         return ledger;
     }
 }
