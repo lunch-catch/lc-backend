@@ -2,6 +2,7 @@ package com.launchcatch.billing;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.launchcatch.IntegrationTestSupport;
 import com.launchcatch.billing.client.FakePaymentGateway;
 import com.launchcatch.billing.client.PaymentGatewayInquiryResult;
 import com.launchcatch.billing.client.PaymentGatewayInquiryResult.Status;
@@ -35,12 +36,6 @@ import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Primary;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.test.context.DynamicPropertyRegistry;
-import org.springframework.test.context.DynamicPropertySource;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
-import org.testcontainers.mysql.MySQLContainer;
-import org.testcontainers.utility.DockerImageName;
 
 /*
  * 웹훅, 재조회 워커, 관리자 재조회가 확인 중인 결제를 확정하는 경로를 실제 MySQL 8.4 로 검증한다.
@@ -50,28 +45,13 @@ import org.testcontainers.utility.DockerImageName;
  * 관리자 재조회의 결과와 감사 로그가 함께 저장되는지다.
  * 커밋을 봐야 하므로 테스트 트랜잭션을 걸지 않고 매번 행을 지운다.
  */
-@Testcontainers
 @SpringBootTest
-class PaymentRecheckIntegrationTest {
-
-    @Container
-    static final MySQLContainer MYSQL = new MySQLContainer(DockerImageName.parse("mysql:8.4"));
-
-    private static final String DUMMY_JWT_SECRET =
-            "test-only-secret-not-used-anywhere-else-0123456789abcdef";
+class PaymentRecheckIntegrationTest extends IntegrationTestSupport {
 
     private static final Long OWNER = 7L;
     private static final Long ADMIN = 3L;
     private static final long AMOUNT = 30000L;
     private static final LocalDateTime APPROVED_AT = LocalDateTime.of(2026, 10, 11, 10, 0, 3);
-
-    @DynamicPropertySource
-    static void datasource(DynamicPropertyRegistry registry) {
-        registry.add("spring.datasource.url", MYSQL::getJdbcUrl);
-        registry.add("spring.datasource.username", MYSQL::getUsername);
-        registry.add("spring.datasource.password", MYSQL::getPassword);
-        registry.add("jwt.secret", () -> DUMMY_JWT_SECRET);
-    }
 
     @TestConfiguration
     static class GatewayConfig {
