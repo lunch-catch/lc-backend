@@ -1,4 +1,4 @@
-package com.launchcatch.campaign.template.service;
+package com.launchcatch.campaign.template;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
