@@ -1,17 +1,20 @@
 package com.launchcatch.store;
 
 import static org.assertj.core.api.Assertions.*;
+import com.launchcatch.IntegrationTestSupport;
 import com.launchcatch.store.entity.StoreRegistrationStep;
 import com.launchcatch.store.exception.StoreErrorCode;
 import com.launchcatch.store.exception.StoreException;
 import com.launchcatch.store.repository.StoreRegistrationProgressRepository;
 import com.launchcatch.store.service.StoreRegistrationProgressService;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -20,30 +23,10 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.IllegalTransactionStateException;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
-import org.testcontainers.containers.GenericContainer;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
-import org.testcontainers.mysql.MySQLContainer;
-import org.testcontainers.utility.DockerImageName;
-import org.springframework.test.context.DynamicPropertyRegistry;
-import org.springframework.test.context.DynamicPropertySource;
 
-@Testcontainers
-@SpringBootTest(properties = "jwt.secret=test-only-store-progress-signing-secret-at-least-32-bytes")
-class StoreRegistrationProgressIntegrationTest {
-    @Container static final MySQLContainer MYSQL = new MySQLContainer(DockerImageName.parse("mysql:8.4"));
-    @Container static final GenericContainer<?> VALKEY =
-            new GenericContainer<>(DockerImageName.parse("valkey/valkey:9")).withExposedPorts(6379);
+@SpringBootTest
+class StoreRegistrationProgressIntegrationTest extends IntegrationTestSupport {
     private static final AtomicLong OWNER_IDS = new AtomicLong(800000000);
-
-    @DynamicPropertySource
-    static void properties(DynamicPropertyRegistry registry) {
-        registry.add("spring.datasource.url", MYSQL::getJdbcUrl);
-        registry.add("spring.datasource.username", MYSQL::getUsername);
-        registry.add("spring.datasource.password", MYSQL::getPassword);
-        registry.add("spring.data.redis.host", VALKEY::getHost);
-        registry.add("spring.data.redis.port", () -> VALKEY.getMappedPort(6379));
-    }
 
     @Autowired StoreRegistrationProgressService service;
     @Autowired StoreRegistrationProgressRepository progresses;
@@ -51,6 +34,7 @@ class StoreRegistrationProgressIntegrationTest {
     @Autowired PlatformTransactionManager manager;
     private TransactionTemplate tx;
     private long ownerId;
+    private final List<Long> createdStoreOwnerIds = new ArrayList<>();
 
     @BeforeEach
     void setUp() {
@@ -58,7 +42,18 @@ class StoreRegistrationProgressIntegrationTest {
         ownerId = OWNER_IDS.incrementAndGet();
     }
 
+    @AfterEach
+    void cleanUp() {
+        tx.executeWithoutResult(status -> {
+            jdbc.update("delete from store_registration_progress where owner_id = ?", ownerId);
+            for (Long storeOwnerId : createdStoreOwnerIds) {
+                jdbc.update("delete from store where owner_id = ?", storeOwnerId);
+            }
+        });
+    }
+
     private Long createStore(long storeOwnerId) {
+        createdStoreOwnerIds.add(storeOwnerId);
         var now = LocalDateTime.now();
         jdbc.update("insert into store (owner_id, name, category_code, representative_name, created_at, updated_at) "
                 + "values (?, '초기 가게', 'KOREAN', '대표자', ?, ?)", storeOwnerId, now, now);
