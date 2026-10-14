@@ -6,6 +6,12 @@ spring:
     # 아무도 프로필을 지정하지 않으면 local 로 본다. 배포와 테스트는 프로필을 직접 주므로 이 값이 덮인다
     default: local
 
+  jackson:
+    deserialization:
+      accept-float-as-int: false
+    mapper:
+      allow-coercion-of-scalars: false
+
   # 아래 셋은 환경마다 갈린다. 값을 주지 않으면 compose.yaml 의 기본 구성에 맞는다.
   # bootRun 은 spring-boot-docker-compose 가 띄운 컨테이너에서 읽어낸 값이 이 셋을 덮는다
   datasource:

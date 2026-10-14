@@ -1858,7 +1858,8 @@ class CouponIntegrationTest extends IntegrationTestSupport {
         }
 
         @ParameterizedTest
-        @ValueSource(strings = {"{", "null", "{\"storeIds\":{}}", "{\"storeIds\":[\"invalid\"]}"})
+        @ValueSource(strings = {"{", "null", "{\"storeIds\":{}}", "{\"storeIds\":[\"invalid\"]}",
+                "{\"storeIds\":[10.9]}", "{\"storeIds\":[\"10\"]}"})
         void 읽을_수_없는_본문은_공통_해석_오류로_거절한다(String body) throws Exception {
             mockMvc.perform(post(PATH).with(user(MEMBER)).contentType(MediaType.APPLICATION_JSON).content(body))
                     .andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("COMMON-003"));
