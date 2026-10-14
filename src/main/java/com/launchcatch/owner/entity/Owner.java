@@ -120,7 +120,12 @@ public class Owner extends BaseTimeEntity {
     }
 
     // 완료 상태만 저장하며 점주 상태나 토큰 정보는 변경하지 않는다.
-    public void completeTutorial() { this.tutorialViewed = true; }
+    public void completeTutorial() {
+        if (status != OwnerStatus.ACTIVE) {
+            throw new IllegalStateException("현재 점주 상태에서는 튜토리얼을 완료할 수 없습니다.");
+        }
+        this.tutorialViewed = true;
+    }
 
     public static Owner create(String email, String passwordHash) { return new Owner(email, passwordHash); }
 }

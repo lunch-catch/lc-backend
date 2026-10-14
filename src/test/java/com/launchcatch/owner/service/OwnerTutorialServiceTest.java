@@ -54,8 +54,9 @@ class OwnerTutorialServiceTest {
 
     @Test
     void 완료한_점주도_현재_ACTIVE가_아니면_거부한다() {
-        var owner = owner(OwnerStatus.SUSPENDED);
+        var owner = owner(OwnerStatus.ACTIVE);
         owner.completeTutorial();
+        ReflectionTestUtils.setField(owner, "status", OwnerStatus.SUSPENDED);
         assertThatThrownBy(() -> service.complete(7L)).isInstanceOf(OwnerException.class);
     }
 
