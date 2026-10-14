@@ -19,6 +19,8 @@ public interface CampaignRepository extends JpaRepository<Campaign, Long> {
 
     List<Campaign> findByOwnerIdAndStatusIn(Long ownerId, List<CampaignStatus> statuses);
 
+    Optional<Campaign> findByStoreIdAndStatus(Long storeId, CampaignStatus status);
+
     boolean existsByOwnerIdAndStatusNotIn(Long ownerId, List<CampaignStatus> excludedStatuses);
 
     /*

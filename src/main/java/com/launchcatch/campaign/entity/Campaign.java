@@ -97,10 +97,14 @@ public class Campaign extends BaseTimeEntity {
     @Column(name = "daily_budget")
     private Long dailyBudget;
 
-    @Column(name = "start_date", nullable = false)
+    /*
+     * startDate, endDate도 V3__campaign_draft_nullable.sql 이 단계별 저장 중인 DRAFT가 아직
+     * 집행 기간을 정하지 않을 수 있게 NULL 허용으로 바꿔 뒀다. dailyBudget과 같은 이유다.
+     */
+    @Column(name = "start_date")
     private LocalDate startDate;
 
-    @Column(name = "end_date", nullable = false)
+    @Column(name = "end_date")
     private LocalDate endDate;
 
     private Campaign(
@@ -154,6 +158,33 @@ public class Campaign extends BaseTimeEntity {
                 targetRadius, targetGender, targetAgeGroups,
                 dailyBudget, startDate, endDate,
                 now);
+    }
+
+    /*
+     * 캠페인 등록 1단계(쿠폰 조건)만 다시 받는다. 노출 대상(3단계)·예산과 기간(4단계)
+     * 필드는 손대지 않는다(#244). DRAFT가 아닌 캠페인은 이 메서드를 부를 자리가 없어야
+     * 하지만, 호출하는 쪽의 조회 조건이 바뀌어도 엔티티가 스스로 전제를 지키게 한다.
+     */
+    public void updateCouponCondition(
+            DiscountTargetType discountTargetType, DiscountType discountType, int discountValue, Long targetMenuId,
+            int issueQuantity, LocalTime usableStartTime, LocalTime usableEndTime,
+            Integer minOrderAmount, String notice) {
+        if (this.status != CampaignStatus.DRAFT) {
+            throw new IllegalStateException("only DRAFT campaign can update coupon condition: " + this.status);
+        }
+        requireDiscountTarget(discountTargetType, targetMenuId);
+        requireDiscountValue(discountType, discountValue);
+        requireUsableTime(usableStartTime, usableEndTime);
+        requireQuantity(issueQuantity);
+        this.discountTargetType = discountTargetType;
+        this.discountType = discountType;
+        this.discountValue = discountValue;
+        this.targetMenuId = targetMenuId;
+        this.issueQuantity = issueQuantity;
+        this.usableStartTime = usableStartTime;
+        this.usableEndTime = usableEndTime;
+        this.minOrderAmount = minOrderAmount;
+        this.notice = notice;
     }
 
     public void schedule(LocalDateTime now) {
