@@ -16,6 +16,9 @@ import org.testcontainers.utility.DockerImageName;
  *
  * 정리는 Ryuk 에 맡긴다. stop 을 부르지 않아도 JVM 이 끝나면 Testcontainers 가 치운다.
  *
+ * 이미지는 compose.yaml 과 인프라에 맞춘다. 운영 ElastiCache 가 Valkey 9.0 이라 9.0-alpine 으로
+ * 고정한다. 떠다니는 valkey:9 로 두면 지금 9.1 을 받아서 테스트가 운영보다 앞선 서버로 돈다.
+ *
  * Valkey 가 필요 없는 테스트도 함께 띄운다. 분기를 두면 어느 테스트가 무엇을 쓰는지를
  * 상속 계층으로 관리해야 한다. JVM 당 한 번이라 그 비용은 한 번뿐이다.
  *
@@ -27,7 +30,7 @@ public abstract class IntegrationTestSupport {
             new MySQLContainer(DockerImageName.parse("mysql:8.4"));
 
     protected static final GenericContainer<?> VALKEY =
-            new GenericContainer<>(DockerImageName.parse("valkey/valkey:9")).withExposedPorts(6379);
+            new GenericContainer<>(DockerImageName.parse("valkey/valkey:9.0-alpine")).withExposedPorts(6379);
 
     static {
         MYSQL.start();
