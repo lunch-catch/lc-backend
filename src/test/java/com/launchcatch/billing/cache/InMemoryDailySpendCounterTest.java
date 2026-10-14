@@ -47,6 +47,49 @@ class InMemoryDailySpendCounterTest {
     }
 
     @Test
+    void 같은_serveId_재호출은_재호출_결과로_표시된다() {
+        counter.seed(DAY, 1L, 100L, 0L, false);
+        UUID serveId = UUID.randomUUID();
+
+        assertThat(counter.deduct(DAY, 1L, serveId, 10L).replayed()).isFalse();
+        assertThat(counter.deduct(DAY, 1L, serveId, 10L).replayed()).isTrue();
+    }
+
+    @Test
+    void 되돌리면_처리_표시가_지워지고_BILLED였던_소진이_내려가며_두_번째는_아무것도_하지_않는다() {
+        counter.seed(DAY, 1L, 100L, 0L, false);
+        UUID serveId = UUID.randomUUID();
+        deduct(serveId);
+
+        assertThat(counter.undo(DAY, 1L, serveId, 10L)).isTrue();
+        assertThat(counter.spendOf(DAY, 1L)).isZero();
+        assertThat(counter.undo(DAY, 1L, serveId, 10L)).isFalse();
+        assertThat(counter.spendOf(DAY, 1L)).isZero();
+        assertThat(deduct(serveId)).isEqualTo(DeductionStatus.BILLED);
+    }
+
+    @Test
+    void BILLED가_아닌_판정을_되돌려도_소진은_그대로이고_표시만_지워진다() {
+        counter.seed(DAY, 1L, 100L, 0L, true);
+        UUID serveId = UUID.randomUUID();
+        deduct(serveId);
+
+        assertThat(counter.undo(DAY, 1L, serveId, 10L)).isTrue();
+        assertThat(counter.spendOf(DAY, 1L)).isZero();
+    }
+
+    @Test
+    void 해시가_사라진_뒤_되돌려도_예외_없이_표시만_지운다() {
+        counter.seed(DAY, 1L, 100L, 0L, false);
+        UUID serveId = UUID.randomUUID();
+        deduct(serveId);
+        counter.evict(DAY, 1L);
+
+        assertThat(counter.undo(DAY, 1L, serveId, 10L)).isTrue();
+        assertThat(counter.exists(DAY, 1L)).isFalse();
+    }
+
+    @Test
     void 중단된_캠페인은_예산이_남아도_과금하지_않는다() {
         counter.seed(DAY, 1L, 100L, 0L, true);
 

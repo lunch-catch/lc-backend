@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -18,12 +19,14 @@ import com.launchcatch.billing.cache.DeductOutcome;
 import com.launchcatch.billing.repository.DeductionResultRepository;
 import com.launchcatch.billing.repository.PointLedgerRepository;
 import com.launchcatch.global.config.ClockConfig;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.Optional;
 import java.util.UUID;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -31,6 +34,8 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 @ExtendWith(MockitoExtension.class)
 class PointDeductorImplTest {
@@ -53,16 +58,35 @@ class PointDeductorImplTest {
     @Mock
     private PointLedgerRepository ledgerRepository;
 
+    private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
     private PointDeductorImpl deductor;
 
     @BeforeEach
     void setUp() {
+        // 운영에서는 MANDATORY 트랜잭션이 동기화를 켜 둔다. 시험도 같은 상태로 만든다
+        TransactionSynchronizationManager.initSynchronization();
         deductor = new PointDeductorImpl(snapshotService, rebuildService, spendCounter,
-                deductionResultRepository, ledgerRepository, CLOCK);
+                deductionResultRepository, ledgerRepository, CLOCK, meterRegistry);
         lenient().when(snapshotService.get(DAY, CAMPAIGN_ID)).thenReturn(PLAN);
         // 기본은 새로 기록된 경우다. 중복은 해당 시험에서 0 을 돌려주게 한다
         lenient().when(deductionResultRepository.insertIfAbsent(any(UUID.class), any(), any(), any(),
                 any(DeductionStatus.class), anyLong(), any())).thenReturn(1);
+    }
+
+    @AfterEach
+    void tearDown() {
+        TransactionSynchronizationManager.clearSynchronization();
+    }
+
+    // 등록된 동기화에 트랜잭션이 이 결과로 끝났다고 알린다
+    private static void complete(int completionStatus) {
+        for (TransactionSynchronization synchronization : TransactionSynchronizationManager.getSynchronizations()) {
+            synchronization.afterCompletion(completionStatus);
+        }
+    }
+
+    private double undoCount(String result) {
+        return meterRegistry.counter(PointDeductorImpl.UNDO_METRIC, "result", result).count();
     }
 
     @Test
@@ -172,9 +196,86 @@ class PointDeductorImplTest {
         assertThat(transactional.propagation()).isEqualTo(Propagation.MANDATORY);
     }
 
+    @Test
+    void 새로_판정한_노출은_트랜잭션이_롤백되면_되돌린다() {
+        when(spendCounter.deduct(DAY, CAMPAIGN_ID, SERVE_ID, 10L)).thenReturn(DeductOutcome.of(DeductionStatus.BILLED));
+        deductor.deduct(SERVE_ID, CAMPAIGN_ID, DAY);
+
+        complete(TransactionSynchronization.STATUS_ROLLED_BACK);
+
+        verify(spendCounter).undo(DAY, CAMPAIGN_ID, SERVE_ID, 10L);
+        assertThat(undoCount("ok")).isEqualTo(1.0);
+    }
+
+    @Test
+    void 커밋되었거나_결과를_알_수_없으면_되돌리지_않는다() {
+        when(spendCounter.deduct(DAY, CAMPAIGN_ID, SERVE_ID, 10L)).thenReturn(DeductOutcome.of(DeductionStatus.BILLED));
+        deductor.deduct(SERVE_ID, CAMPAIGN_ID, DAY);
+
+        complete(TransactionSynchronization.STATUS_COMMITTED);
+        complete(TransactionSynchronization.STATUS_UNKNOWN);
+
+        verify(spendCounter, never()).undo(any(), any(), any(UUID.class), anyLong());
+        assertThat(undoCount("ok")).isZero();
+    }
+
+    @Test
+    void 이미_처리된_노출을_다시_받은_호출은_롤백돼도_되돌리지_않는다() {
+        when(spendCounter.deduct(DAY, CAMPAIGN_ID, SERVE_ID, 10L)).thenReturn(DeductOutcome.replay(DeductionStatus.BILLED));
+        when(deductionResultRepository.insertIfAbsent(SERVE_ID, CAMPAIGN_ID, 3L, DAY, DeductionStatus.BILLED, 10L, NOW))
+                .thenReturn(2);
+        when(deductionResultRepository.findFirstStatus(SERVE_ID)).thenReturn(Optional.of(DeductionStatus.BILLED));
+        deductor.deduct(SERVE_ID, CAMPAIGN_ID, DAY);
+
+        complete(TransactionSynchronization.STATUS_ROLLED_BACK);
+
+        verify(spendCounter, never()).undo(any(), any(), any(UUID.class), anyLong());
+    }
+
+    @Test
+    void 해시가_없어_재구성한_뒤_판정한_노출도_롤백되면_한_번만_되돌린다() {
+        when(spendCounter.deduct(DAY, CAMPAIGN_ID, SERVE_ID, 10L))
+                .thenReturn(DeductOutcome.hashMissing(), DeductOutcome.of(DeductionStatus.BILLED));
+        deductor.deduct(SERVE_ID, CAMPAIGN_ID, DAY);
+
+        complete(TransactionSynchronization.STATUS_ROLLED_BACK);
+
+        verify(spendCounter, times(1)).undo(DAY, CAMPAIGN_ID, SERVE_ID, 10L);
+    }
+
+    @Test
+    void 되돌리기가_실패해도_예외를_올리지_않고_실패_지표만_올린다() {
+        when(spendCounter.deduct(DAY, CAMPAIGN_ID, SERVE_ID, 10L)).thenReturn(DeductOutcome.of(DeductionStatus.BILLED));
+        doThrow(new IllegalStateException("valkey down")).when(spendCounter).undo(DAY, CAMPAIGN_ID, SERVE_ID, 10L);
+        deductor.deduct(SERVE_ID, CAMPAIGN_ID, DAY);
+
+        complete(TransactionSynchronization.STATUS_ROLLED_BACK);
+
+        assertThat(undoCount("failed")).isEqualTo(1.0);
+        assertThat(undoCount("ok")).isZero();
+    }
+
+    @Test
+    void 롤백된_노출은_Fake에서도_소진과_처리_표시가_함께_돌아가고_재호출이_다시_과금한다() {
+        InMemoryDailySpendCounter fake = new InMemoryDailySpendCounter();
+        fake.seed(DAY, CAMPAIGN_ID, 100L, 0L, false);
+        PointDeductorImpl real = deductorWith(fake);
+
+        assertThat(real.deduct(SERVE_ID, CAMPAIGN_ID, DAY)).isEqualTo(DeductionStatus.BILLED);
+        assertThat(fake.spendOf(DAY, CAMPAIGN_ID)).isEqualTo(10L);
+        complete(TransactionSynchronization.STATUS_ROLLED_BACK);
+        assertThat(fake.spendOf(DAY, CAMPAIGN_ID)).isZero();
+
+        TransactionSynchronizationManager.clearSynchronization();
+        TransactionSynchronizationManager.initSynchronization();
+        assertThat(real.deduct(SERVE_ID, CAMPAIGN_ID, DAY)).isEqualTo(DeductionStatus.BILLED);
+        assertThat(fake.spendOf(DAY, CAMPAIGN_ID)).isEqualTo(10L);
+    }
+
     // 아래 시험은 Mockito 대신 Lua 와 같은 규칙의 Fake 를 연결해 판정이 쌓이는 모습을 그대로 본다
     private PointDeductorImpl deductorWith(InMemoryDailySpendCounter fake) {
-        return new PointDeductorImpl(snapshotService, rebuildService, fake, deductionResultRepository, ledgerRepository, CLOCK);
+        return new PointDeductorImpl(snapshotService, rebuildService, fake, deductionResultRepository, ledgerRepository, CLOCK,
+                meterRegistry);
     }
 
     @Test

@@ -7,6 +7,7 @@ import com.launchcatch.billing.cache.DailySpendCounter;
 import com.launchcatch.billing.cache.DeductOutcome;
 import com.launchcatch.billing.repository.DeductionResultRepository;
 import com.launchcatch.billing.repository.PointLedgerRepository;
+import io.micrometer.core.instrument.MeterRegistry;
 import java.time.Clock;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -16,6 +17,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /*
  * 유효 노출 1건의 과금을 판정하고 기록한다(I-01).
@@ -24,6 +27,10 @@ import org.springframework.transaction.annotation.Transactional;
  * 해시가 없으면 DB 정본으로 한 번 만들고 다시 판정한다. 그래도 없으면 예외다.
  * 판정 기록과 원장은 무변경 갱신 INSERT 라서 같은 serveId 의 재호출이 예외 없이 지나가고, 판정은 Valkey 가
  * 첫 결과를 돌려준다. 잔액은 읽지 않는다.
+ *
+ * Valkey 는 DB 트랜잭션에 묶이지 않아서 판정이 소진을 올린 뒤 트랜잭션이 롤백되면 소진만 앞서간다(L-1).
+ * 그래서 이번 호출이 새로 판정했으면 롤백 직후 그 판정을 되돌린다(처리 표시 삭제, BILLED 였으면 소진 감소).
+ * 되돌리기가 실패하거나 프로세스가 죽으면 소진이 원장보다 큰 채로 남고, 13:30 대사가 맞춘다.
  *
  * 노출을 저장하는 트랜잭션 안에서만 부른다. 밖에서 부르면 Spring 이 바로 예외를 낸다(E-5).
  * 금전 값이라 대체값을 돌려주지 않는다. 실패는 예외이고 노출 저장까지 롤백된다.
@@ -49,6 +56,9 @@ public class PointDeductorImpl implements PointDeductor {
     private final DeductionResultRepository deductionResultRepository;
     private final PointLedgerRepository ledgerRepository;
     private final Clock clock;
+    private final MeterRegistry meterRegistry;
+
+    static final String UNDO_METRIC = "billing_deduct_undo_total";
 
     @Override
     @Transactional(propagation = Propagation.MANDATORY)
@@ -69,6 +79,9 @@ public class PointDeductorImpl implements PointDeductor {
             }
         }
         DeductionStatus status = outcome.status();
+        if (!outcome.replayed()) {
+            undoOnRollback(businessDate, campaignId, serveId, plan.unitPrice());
+        }
         LocalDateTime now = LocalDateTime.now(clock);
 
         // TODO: 노출당 INSERT 2건(deduction_result, point_ledger)이 초당 1만 건을 못 버티면 "노출 차감 성능 개선 선택지.md"를 보고 개선한다
@@ -92,6 +105,30 @@ public class PointDeductorImpl implements PointDeductor {
             ledgerRepository.insertDeductIfAbsent(plan.ownerId(), campaignId, serveId, -plan.unitPrice(), now);
         }
         return status;
+    }
+
+    /*
+     * 이 트랜잭션이 롤백으로 끝나면 이번 호출이 새로 남긴 판정을 되돌린다. 커밋이면 두고, 결과를 알 수 없으면(UNKNOWN)
+     * 커밋됐을 수 있으니 되돌리지 않는다. 되돌리기 실패는 노출 저장의 결과를 바꾸지 못하므로 예외를 올리지 않고
+     * 기록한다. 소진이 원장보다 큰 채로 남으면 안전한 쪽의 오차이고 13:30 대사가 맞춘다.
+     */
+    private void undoOnRollback(LocalDate businessDate, Long campaignId, UUID serveId, long unitPrice) {
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCompletion(int completionStatus) {
+                if (completionStatus != STATUS_ROLLED_BACK) {
+                    return;
+                }
+                try {
+                    spendCounter.undo(businessDate, campaignId, serveId, unitPrice);
+                    meterRegistry.counter(UNDO_METRIC, "result", "ok").increment();
+                } catch (RuntimeException e) {
+                    meterRegistry.counter(UNDO_METRIC, "result", "failed").increment();
+                    log.error("롤백된 노출의 판정을 되돌리지 못했습니다. 소진이 원장보다 앞선 채 남고 대사가 맞춥니다. serveId={}, campaignId={}",
+                            serveId, campaignId, e);
+                }
+            }
+        });
     }
 
     /*

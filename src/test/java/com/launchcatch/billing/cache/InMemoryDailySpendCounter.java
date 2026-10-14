@@ -66,7 +66,7 @@ public class InMemoryDailySpendCounter implements DailySpendCounter {
     public synchronized DeductOutcome deduct(LocalDate businessDate, Long campaignId, UUID serveId, long unitPrice) {
         DeductionStatus first = served.get(serveId);
         if (first != null) {
-            return DeductOutcome.of(first);
+            return DeductOutcome.replay(first);
         }
         Day day = days.get(ValkeyDailySpendCounter.key(businessDate, campaignId));
         if (day == null) {
@@ -83,6 +83,19 @@ public class InMemoryDailySpendCounter implements DailySpendCounter {
         }
         served.put(serveId, status);
         return DeductOutcome.of(status);
+    }
+
+    @Override
+    public synchronized boolean undo(LocalDate businessDate, Long campaignId, UUID serveId, long unitPrice) {
+        DeductionStatus first = served.remove(serveId);
+        if (first == null) {
+            return false;
+        }
+        Day day = days.get(ValkeyDailySpendCounter.key(businessDate, campaignId));
+        if (first == DeductionStatus.BILLED && day != null) {
+            day.spend -= unitPrice;
+        }
+        return true;
     }
 
     @Override

@@ -40,6 +40,7 @@ public class ValkeyDailySpendCounter implements DailySpendCounter {
     private static final String SERVED_PREFIX = "billing:served:";
     private static final List<String> READ_FIELDS = List.of("reserved", "spend");
     private static final String HASH_MISSING = "HASH_MISSING";
+    private static final String REPLAY_PREFIX = "REPLAY:";
 
     /*
      * 처리 표시는 재호출이 올 수 있는 동안만 두면 된다. 이틀이면 넉넉하다.
@@ -50,6 +51,7 @@ public class ValkeyDailySpendCounter implements DailySpendCounter {
     private static final long DAY_HASH_TTL_SECONDS = Duration.ofDays(3).toSeconds();
     private static final RedisScript<String> DEDUCT_SCRIPT = loadDeductScript();
     private static final RedisScript<Long> REBUILD_SCRIPT = loadRebuildScript();
+    private static final RedisScript<Long> UNDO_SCRIPT = loadUndoScript();
 
     private final StringRedisTemplate redisTemplate;
 
@@ -87,7 +89,22 @@ public class ValkeyDailySpendCounter implements DailySpendCounter {
         if (HASH_MISSING.equals(reply)) {
             return DeductOutcome.hashMissing();
         }
+        if (reply.startsWith(REPLAY_PREFIX)) {
+            return DeductOutcome.replay(DeductionStatus.valueOf(reply.substring(REPLAY_PREFIX.length())));
+        }
         return DeductOutcome.of(DeductionStatus.valueOf(reply));
+    }
+
+    /*
+     * 이번 호출이 새로 남긴 판정을 되돌린다. 처리 표시를 지우고 BILLED 였으면 소진을 단가만큼 내린다.
+     * 표시가 없으면 아무것도 하지 않고 false 다. Valkey 예외는 그대로 던진다. 부른 쪽이 기록하고 대사에 맡긴다.
+     */
+    @Override
+    public boolean undo(LocalDate businessDate, Long campaignId, UUID serveId, long unitPrice) {
+        Long undone = redisTemplate.execute(UNDO_SCRIPT,
+                List.of(key(businessDate, campaignId), servedKey(serveId)),
+                String.valueOf(unitPrice));
+        return undone != null && undone == 1L;
     }
 
     /*
@@ -165,6 +182,13 @@ public class ValkeyDailySpendCounter implements DailySpendCounter {
         DefaultRedisScript<String> script = new DefaultRedisScript<>();
         script.setLocation(new ClassPathResource("scripts/billing_deduct.lua"));
         script.setResultType(String.class);
+        return script;
+    }
+
+    private static RedisScript<Long> loadUndoScript() {
+        DefaultRedisScript<Long> script = new DefaultRedisScript<>();
+        script.setLocation(new ClassPathResource("scripts/billing_deduct_undo.lua"));
+        script.setResultType(Long.class);
         return script;
     }
 

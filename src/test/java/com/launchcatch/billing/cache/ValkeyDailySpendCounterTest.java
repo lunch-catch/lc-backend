@@ -98,6 +98,38 @@ class ValkeyDailySpendCounterTest {
     }
 
     @Test
+    void 이미_처리된_노출이라는_응답은_처음_판정을_담은_재호출_결과다() {
+        when(redisTemplate.execute(any(RedisScript.class), anyList(), any(Object[].class)))
+                .thenReturn("REPLAY:BILLED", "BILLED");
+        ValkeyDailySpendCounter repository = new ValkeyDailySpendCounter(redisTemplate);
+
+        DeductOutcome replayed = repository.deduct(DAY, 12L, SERVE_ID, 10L);
+        DeductOutcome fresh = repository.deduct(DAY, 12L, SERVE_ID, 10L);
+
+        assertThat(replayed.status()).isEqualTo(DeductionStatus.BILLED);
+        assertThat(replayed.replayed()).isTrue();
+        assertThat(fresh.replayed()).isFalse();
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void 되돌리기는_해시와_처리_표시_두_키에_단가를_넘기고_되돌렸는지를_돌려준다() {
+        when(redisTemplate.execute(any(RedisScript.class), anyList(), any(Object[].class))).thenReturn(1L, 0L, (Long) null);
+        ValkeyDailySpendCounter repository = new ValkeyDailySpendCounter(redisTemplate);
+
+        assertThat(repository.undo(DAY, 12L, SERVE_ID, 10L)).isTrue();
+        assertThat(repository.undo(DAY, 12L, SERVE_ID, 10L)).isFalse();
+        assertThat(repository.undo(DAY, 12L, SERVE_ID, 10L)).isFalse();
+
+        ArgumentCaptor<List<String>> keys = ArgumentCaptor.forClass(List.class);
+        ArgumentCaptor<Object[]> args = ArgumentCaptor.forClass(Object[].class);
+        verify(redisTemplate, org.mockito.Mockito.times(3)).execute(any(RedisScript.class), keys.capture(), args.capture());
+        assertThat(keys.getAllValues().get(0)).containsExactly(
+                "billing:day:2026-10-01:12", "billing:served:0192f3a4-7b5c-7d1e-9a2b-3c4d5e6f7a8b");
+        assertThat(args.getAllValues().get(0)).containsExactly("10");
+    }
+
+    @Test
     void 해시가_없다는_응답은_판정이_아니라_해시_없음이다() {
         when(redisTemplate.execute(any(RedisScript.class), anyList(), any(Object[].class))).thenReturn("HASH_MISSING");
 

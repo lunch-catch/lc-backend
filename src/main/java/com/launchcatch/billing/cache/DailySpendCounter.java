@@ -28,6 +28,13 @@ public interface DailySpendCounter {
     DeductOutcome deduct(LocalDate businessDate, Long campaignId, UUID serveId, long unitPrice);
 
     /*
+     * 이번 호출이 새로 남긴 판정을 되돌린다. 노출 저장 트랜잭션이 롤백됐을 때 부른다.
+     * 처리 표시를 지우고, 그 판정이 BILLED 였으면 올린 소진을 단가만큼 내린다. 처리 표시가 없으면 아무것도 하지 않는다.
+     * 처리 표시가 있었으면 true 다. 이미 처리된 노출을 다시 받은 호출(replayed)에는 부르지 않는다.
+     */
+    boolean undo(LocalDate businessDate, Long campaignId, UUID serveId, long unitPrice);
+
+    /*
      * 해시가 없을 때만 DB 정본으로 만든다. 만들었으면 true, 이미 있어 그대로 두었으면 false 다.
      * changedAt 이 아직 없는 계획(상태가 바뀐 적 없음)은 null 로 넘긴다.
      */

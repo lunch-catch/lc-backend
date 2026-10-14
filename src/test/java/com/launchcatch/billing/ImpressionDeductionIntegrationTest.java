@@ -7,6 +7,7 @@ import com.launchcatch.billing.contract.BudgetProgress;
 import com.launchcatch.billing.contract.BudgetQueryService;
 import com.launchcatch.billing.contract.DeductionStatus;
 import com.launchcatch.billing.contract.PointDeductor;
+import com.launchcatch.billing.repository.BudgetDailyPlanRepository;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -18,6 +19,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicLong;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -77,6 +79,7 @@ class ImpressionDeductionIntegrationTest {
 
     @Autowired PointDeductor deductor;
     @Autowired BudgetQueryService budgetQuery;
+    @Autowired BudgetDailyPlanRepository planRepository;
     @Autowired TransactionTemplate tx;
     @Autowired JdbcTemplate jdbc;
     @Autowired StringRedisTemplate redis;
@@ -253,9 +256,43 @@ class ImpressionDeductionIntegrationTest {
 
         assertThat(rows("deduction_result", campaignId)).isZero();
         assertThat(rows("point_ledger", campaignId)).isZero();
+        // Valkey 도 함께 돌아간다. 소진은 원래대로이고 처리 표시는 지워져 재호출이 새로 판정한다
+        assertThat(spendInValkey(campaignId)).isZero();
+        assertThat(redis.hasKey("billing:served:" + serveId)).isFalse();
 
         assertThat(deductInTx(serveId, campaignId)).isEqualTo(DeductionStatus.BILLED);
         assertThat(rows("deduction_result", campaignId)).isEqualTo(1);
+        assertThat(rows("point_ledger", campaignId)).isEqualTo(1);
+        assertThat(spendInValkey(campaignId)).isEqualTo(UNIT);
+    }
+
+    @Test
+    void 롤백된_노출이_예산을_차지하지_않아_다음_노출이_과금된다() {
+        long campaignId = plan(1, false);
+
+        assertThatThrownBy(() -> tx.executeWithoutResult(status -> {
+            assertThat(deductor.deduct(UUID.randomUUID(), campaignId, DAY)).isEqualTo(DeductionStatus.BILLED);
+            throw new IllegalStateException("노출 저장 실패");
+        })).isInstanceOf(IllegalStateException.class);
+
+        assertThat(deductInTx(UUID.randomUUID(), campaignId)).isEqualTo(DeductionStatus.BILLED);
+        assertThat(spendInValkey(campaignId)).isEqualTo(UNIT);
+        assertThat(ledgerDeductSum(campaignId)).isEqualTo(-UNIT);
+    }
+
+    @Test
+    void 이미_커밋된_노출의_재호출이_롤백돼도_처음_노출의_소진과_표시는_그대로다() {
+        long campaignId = plan(30, false);
+        UUID serveId = UUID.randomUUID();
+        assertThat(deductInTx(serveId, campaignId)).isEqualTo(DeductionStatus.BILLED);
+
+        assertThatThrownBy(() -> tx.executeWithoutResult(status -> {
+            assertThat(deductor.deduct(serveId, campaignId, DAY)).isEqualTo(DeductionStatus.BILLED);
+            throw new IllegalStateException("재호출 저장 실패");
+        })).isInstanceOf(IllegalStateException.class);
+
+        assertThat(spendInValkey(campaignId)).isEqualTo(UNIT);
+        assertThat(redis.hasKey("billing:served:" + serveId)).isTrue();
         assertThat(rows("point_ledger", campaignId)).isEqualTo(1);
     }
 
@@ -294,5 +331,39 @@ class ImpressionDeductionIntegrationTest {
         assertThat(status).isEqualTo(DeductionStatus.NOT_BILLED_PAUSED);
         assertThat(rows("deduction_result", campaignId)).isEqualTo(1);
         assertThat(rows("point_ledger", campaignId)).isZero();
+    }
+
+    @Test
+    void 재구성이_계획_행을_잠그고_있는_동안_일시중지_갱신은_기다렸다가_반영된다() throws Exception {
+        long campaignId = plan(30, false);
+        CountDownLatch locked = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        ExecutorService pool = Executors.newFixedThreadPool(2);
+        try {
+            Future<?> rebuild = pool.submit(() -> tx.executeWithoutResult(status -> {
+                planRepository.findForShare(campaignId, DAY).orElseThrow();
+                locked.countDown();
+                try {
+                    release.await(30, TimeUnit.SECONDS);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            }));
+            assertThat(locked.await(30, TimeUnit.SECONDS)).isTrue();
+
+            LocalDateTime changedAt = LocalDateTime.now();
+            Future<Integer> pause = pool.submit(
+                    () -> tx.execute(status -> planRepository.applyStatus(campaignId, DAY, true, changedAt, changedAt)));
+            assertThatThrownBy(() -> pause.get(700, TimeUnit.MILLISECONDS)).isInstanceOf(TimeoutException.class);
+
+            release.countDown();
+            rebuild.get(30, TimeUnit.SECONDS);
+            assertThat(pause.get(30, TimeUnit.SECONDS)).isEqualTo(1);
+            assertThat(jdbc.queryForObject(
+                    "select paused from budget_daily_plan where campaign_id = ?", Boolean.class, campaignId)).isTrue();
+        } finally {
+            release.countDown();
+            pool.shutdownNow();
+        }
     }
 }
