@@ -7,7 +7,16 @@ import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 import java.time.LocalTime;
 
+/*
+ * storeId는 명세서(campaign-api-spec.md)에 없는 필드다. store 도메인의 공개 contract가
+ * 아직 없어 로그인한 점주(ownerId)로 storeId를 서버가 직접 찾을 방법이 없다(#244). 쿠폰
+ * 도메인의 /v1/owner/stores/{storeId}/coupon-usages와 같은 이유로 클라이언트가 보낸 값을
+ * 그대로 믿는다. 이 storeId가 실제로 그 점주의 가게인지는 검증하지 않는다.
+ */
 public record CampaignCouponConditionRequest(
+        @Schema(description = "점주의 가게 ID입니다.", example = "17", requiredMode = Schema.RequiredMode.REQUIRED)
+        @NotNull Long storeId,
+
         @Schema(description = "할인 대상입니다.", example = "MENU", requiredMode = Schema.RequiredMode.REQUIRED)
         @NotNull DiscountTargetType discountTargetType,
 
