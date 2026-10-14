@@ -3,6 +3,7 @@ package com.launchcatch.billing;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.launchcatch.IntegrationTestSupport;
 import com.launchcatch.billing.contract.BudgetProgress;
 import com.launchcatch.billing.contract.BudgetQueryService;
 import com.launchcatch.billing.contract.DeductionStatus;
@@ -28,15 +29,8 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.data.redis.core.RedisCallback;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.test.context.DynamicPropertyRegistry;
-import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.transaction.IllegalTransactionStateException;
 import org.springframework.transaction.support.TransactionTemplate;
-import org.testcontainers.containers.GenericContainer;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
-import org.testcontainers.mysql.MySQLContainer;
-import org.testcontainers.utility.DockerImageName;
 
 /*
  * 노출 차감을 실제 MySQL 8.4 와 Valkey 9 로 검증한다. 돈이 걸린 경로라 이 테스트 하나만 둔다.
@@ -48,34 +42,13 @@ import org.testcontainers.utility.DockerImageName;
  * 커밋을 봐야 하므로 테스트 트랜잭션을 걸지 않고 TransactionTemplate 으로 부른다. 매번 행과 키를 지운다.
  * 그날 계획의 캐시가 테스트 사이에 남으므로 테스트마다 다른 캠페인 ID 를 쓴다.
  */
-@Testcontainers
 @SpringBootTest
-class ImpressionDeductionIntegrationTest {
-
-    @Container
-    static final MySQLContainer MYSQL = new MySQLContainer(DockerImageName.parse("mysql:8.4"));
-
-    @Container
-    static final GenericContainer<?> VALKEY =
-            new GenericContainer<>(DockerImageName.parse("valkey/valkey:9.0-alpine")).withExposedPorts(6379);
-
-    private static final String DUMMY_JWT_SECRET =
-            "test-only-secret-not-used-anywhere-else-0123456789abcdef";
+class ImpressionDeductionIntegrationTest extends IntegrationTestSupport {
 
     private static final LocalDate DAY = LocalDate.of(2026, 10, 14);
     private static final Long OWNER = 7L;
     private static final long UNIT = 10L;
     private static final AtomicLong CAMPAIGN_SEQ = new AtomicLong(1000);
-
-    @DynamicPropertySource
-    static void containers(DynamicPropertyRegistry registry) {
-        registry.add("spring.datasource.url", MYSQL::getJdbcUrl);
-        registry.add("spring.datasource.username", MYSQL::getUsername);
-        registry.add("spring.datasource.password", MYSQL::getPassword);
-        registry.add("spring.data.redis.host", VALKEY::getHost);
-        registry.add("spring.data.redis.port", () -> VALKEY.getMappedPort(6379));
-        registry.add("jwt.secret", () -> DUMMY_JWT_SECRET);
-    }
 
     @Autowired PointDeductor deductor;
     @Autowired BudgetQueryService budgetQuery;
