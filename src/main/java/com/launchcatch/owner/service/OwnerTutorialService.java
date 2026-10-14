@@ -18,7 +18,7 @@ public class OwnerTutorialService {
 
     @Transactional(timeout = 5)
     public OwnerTutorialResponse complete(Long ownerId) {
-        // 로그인·재발급·로그아웃과 같은 점주 행을 잠가 현재 상태 확인과 저장을 보호한다.
+        // 로그인·재발급과 같은 점주 행을 잠가 현재 상태 확인과 저장을 보호한다.
         var owner = owners.findByIdForLogin(ownerId)
                 .orElseThrow(() -> new AuthException(AuthErrorCode.LOGIN_REQUIRED));
         if (owner.getStatus() != OwnerStatus.ACTIVE) {

@@ -75,6 +75,20 @@ class OwnerTutorialIntegrationTest {
         return new Cookie("accessToken", new TransactionTemplate(manager).execute(tx -> jwt.createAccessToken(id, role)));
     }
 
+    private Cookie nonOwnerToken(Role role) {
+        if (role == Role.MEMBER) {
+            return token(1L, role);
+        }
+        // 관리자 JWT 검증이 계정 존재와 현재 역할을 확인하므로 유효한 계정을 준비한다.
+        String loginId = UUID.randomUUID().toString();
+        var now = java.time.LocalDateTime.now();
+        jdbc.update("insert into admin (login_id, password_hash, name, role, status, created_at, updated_at) "
+                + "values (?, ?, ?, ?, 'ACTIVE', ?, ?)",
+                loginId, passwords.encode("password12"), "tutorial-test-admin", role.name(), now, now);
+        Long adminId = jdbc.queryForObject("select admin_id from admin where login_id=?", Long.class, loginId);
+        return token(adminId, role);
+    }
+
     @Test
     void 완료와_반복_요청은_200이며_다음_로그인에_반영된다() throws Exception {
         var owner = owner(OwnerStatus.ACTIVE);
@@ -106,7 +120,7 @@ class OwnerTutorialIntegrationTest {
     @ParameterizedTest
     @EnumSource(value = Role.class, names = "OWNER", mode = EnumSource.Mode.EXCLUDE)
     void 다른_역할은_403이다(Role role) throws Exception {
-        mvc.perform(patch(PATH).cookie(token(1L, role))).andExpect(status().isForbidden())
+        mvc.perform(patch(PATH).cookie(nonOwnerToken(role))).andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.code").value("AUTH-006"));
     }
 
