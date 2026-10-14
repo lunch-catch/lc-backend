@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.when;
 
+import com.launchcatch.IntegrationTestSupport;
 import com.launchcatch.admin.dto.AdminLoginRequest;
 import com.launchcatch.admin.entity.Admin;
 import com.launchcatch.admin.repository.AdminRepository;
@@ -27,35 +28,12 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.annotation.DirtiesContext;
-import org.springframework.test.context.DynamicPropertyRegistry;
-import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
-import org.testcontainers.mysql.MySQLContainer;
-import org.testcontainers.utility.DockerImageName;
 
 // 실제 MySQL과 Valkey로 게시 순서와 Redis 호출 중 DB 행 잠금 해제를 검증한다.
-@Testcontainers
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
 @SpringBootTest(properties = "jwt.secret=test-only-secret-not-used-anywhere-else-0123456789abcdef")
-class AdminLogoutConcurrencyIntegrationTest {
-    @Container
-    static final MySQLContainer MYSQL = new MySQLContainer(DockerImageName.parse("mysql:8.4"));
-
-    @Container
-    static final org.testcontainers.containers.GenericContainer<?> VALKEY =
-            new org.testcontainers.containers.GenericContainer<>(DockerImageName.parse("valkey/valkey:9"))
-                    .withExposedPorts(6379);
-
-    @DynamicPropertySource
-    static void datasource(DynamicPropertyRegistry registry) {
-        registry.add("spring.datasource.url", MYSQL::getJdbcUrl);
-        registry.add("spring.datasource.username", MYSQL::getUsername);
-        registry.add("spring.datasource.password", MYSQL::getPassword);
-        registry.add("spring.data.redis.host", VALKEY::getHost);
-        registry.add("spring.data.redis.port", () -> VALKEY.getMappedPort(6379));
-    }
+class AdminLogoutConcurrencyIntegrationTest extends IntegrationTestSupport {
 
     @Autowired private AdminRepository admins;
     @Autowired private AdminLoginService login;
@@ -83,7 +61,6 @@ class AdminLogoutConcurrencyIntegrationTest {
     void tearDown() {
         admins.deleteById(adminId);
     }
-
 
     @Test
     void DB승인_후_JWT생성이_지연되어도_로그아웃이_차단하고_같은초_재로그인은_허용한다() throws Exception {
