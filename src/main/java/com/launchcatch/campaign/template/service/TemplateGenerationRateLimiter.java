@@ -33,6 +33,13 @@ import org.springframework.stereotype.Component;
  * 처음 보는지를 먼저 SETNX로 표시해, 같은 요청이 진행 중일 때 들어온 재시도는 횟수를 세지
  * 않는다. TTL은 이 LLM 호출의 실제 worst-case(BedrockConfig.API_CALL_TIMEOUT 30초 x
  * BedrockTemplateHtmlGenerator.MAX_RETRIES+1회 = 60초)에 맞춘다.
+ *
+ * 표식은 제한을 통과한 요청에만 남긴다. isOverLimit 이 거부로 판정되면 방금 세운 표식을
+ * 바로 지운다(코드래빗 리뷰로 찾음). 안 지우면 거부된 요청의 재시도가 "이미 표식 있음"으로
+ * isOverLimit 자체를 건너뛰어 제한을 우회한다. 지우는 순간과 진짜 동시에 들어온 재시도까지
+ * 막는 건 아니지만(SETNX와 거부 판정, 지움이 하나의 원자 연산은 아니다), 그 틈은 저장
+ * 시점 DB UNIQUE 로 거르는 기존 경쟁(TemplateCreateService 의 request_id 충돌)과 같은
+ * 급의 드문 경우라 별도 락을 걸지 않는다.
  */
 @Slf4j
 @Component
@@ -56,7 +63,11 @@ public class TemplateGenerationRateLimiter {
     }
 
     public void checkLimit(Long adminId, String requestId) {
-        if (isFirstAttempt(requestId) && isOverLimit(adminId)) {
+        if (!isFirstAttempt(requestId)) {
+            return;
+        }
+        if (isOverLimit(adminId)) {
+            clearInFlight(requestId);
             throw new CampaignException(PosterErrorCode.GENERATION_RATE_LIMITED);
         }
     }
@@ -70,6 +81,15 @@ public class TemplateGenerationRateLimiter {
             log.warn("event=TEMPLATE_GENERATION_IN_FLIGHT_CHECK_FAILED requestId={} cause={} 처음_시도로_간주해_센다",
                     requestId, RedisFailureClassifier.causeLabel(e), e);
             return true;
+        }
+    }
+
+    private void clearInFlight(String requestId) {
+        try {
+            redisTemplate.delete(IN_FLIGHT_KEY_PREFIX + requestId);
+        } catch (DataAccessException e) {
+            log.warn("event=TEMPLATE_GENERATION_IN_FLIGHT_CLEAR_FAILED requestId={} cause={} TTL_만료까지_남는다",
+                    requestId, RedisFailureClassifier.causeLabel(e), e);
         }
     }
 

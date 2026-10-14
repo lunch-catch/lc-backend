@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -27,6 +28,7 @@ import org.springframework.data.redis.core.script.RedisScript;
 class TemplateGenerationRateLimiterTest {
 
     private static final String REQUEST_ID = "req-1";
+    private static final String IN_FLIGHT_KEY = "templateGenerationInFlight:" + REQUEST_ID;
 
     @Mock
     private StringRedisTemplate redisTemplate;
@@ -54,10 +56,12 @@ class TemplateGenerationRateLimiterTest {
         when(redisTemplate.execute(any(RedisScript.class), anyList(), anyString())).thenReturn(3L);
 
         assertThatCode(() -> rateLimiter.checkLimit(1L, REQUEST_ID)).doesNotThrowAnyException();
+
+        verify(redisTemplate, never()).delete(anyString());
     }
 
     @Test
-    @DisplayName("분당 3회를 넘으면 POSTER-014을 던진다")
+    @DisplayName("분당 3회를 넘으면 POSTER-014을 던지고, 남긴 진행 중 표시를 지운다")
     void 분당_삼회를_넘으면_거부한다() {
         처음_보는_requestId로_설정한다();
         when(redisTemplate.execute(any(RedisScript.class), anyList(), anyString())).thenReturn(4L);
@@ -66,6 +70,25 @@ class TemplateGenerationRateLimiterTest {
                 .isInstanceOf(CampaignException.class)
                 .extracting(e -> ((CampaignException) e).getErrorCode())
                 .isEqualTo(PosterErrorCode.GENERATION_RATE_LIMITED);
+
+        verify(redisTemplate).delete(IN_FLIGHT_KEY);
+    }
+
+    @Test
+    @DisplayName("거부된 요청의 재시도는 지워진 표시 덕에 다시 거부 판정을 받는다")
+    void 거부된_요청의_재시도는_다시_거부_판정을_받는다() {
+        처음_보는_requestId로_설정한다();
+        when(redisTemplate.execute(any(RedisScript.class), anyList(), anyString())).thenReturn(4L);
+        assertThatThrownBy(() -> rateLimiter.checkLimit(1L, REQUEST_ID)).isInstanceOf(CampaignException.class);
+        verify(redisTemplate).delete(IN_FLIGHT_KEY);
+
+        /*
+         * 표시가 지워졌으니 재시도는 다시 "처음 보는 요청"으로 SETNX를 통과하고,
+         * isOverLimit을 건너뛰지 않는다. 실제 Redis라면 지워진 키라 SETNX가 다시
+         * 성공하는 것과 같은 상황을 그대로 스텁으로 표현한다.
+         */
+        assertThatThrownBy(() -> rateLimiter.checkLimit(1L, REQUEST_ID)).isInstanceOf(CampaignException.class);
+        verify(redisTemplate, times(2)).execute(any(RedisScript.class), anyList(), anyString());
     }
 
     @Test
