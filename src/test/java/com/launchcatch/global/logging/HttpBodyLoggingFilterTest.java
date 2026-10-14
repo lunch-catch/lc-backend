@@ -158,6 +158,20 @@ class HttpBodyLoggingFilterTest {
     }
 
     @Test
+    void 로그_길이를_초과하는_QR_이미지도_원문을_남기지_않는다() throws Exception {
+        logs.level(Level.DEBUG);
+        String image = "qr-image-secret".repeat(1000);
+        String body = "{\"data\":{\"qrImageBytes\":\"" + image + "\",\"expireTime\":\"2026-10-10T12:01:00+09:00\"}}";
+
+        MockHttpServletResponse response = run(jsonPost("{}"), respond(200, body));
+
+        assertThat(response.getContentAsString()).isEqualTo(body);
+        assertThat(logs.only().getFormattedMessage())
+                .contains("\"qrImageBytes\":\"" + MASKED + "\"")
+                .doesNotContain("qr-image-secret");
+    }
+
+    @Test
     void 값이_빈_문자열이면_가리지_않고_그대로_둔다() throws Exception {
         // given
         MockHttpServletRequest request = jsonPost("{\"password\":\"\"}");

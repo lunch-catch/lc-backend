@@ -89,7 +89,7 @@ public class HttpBodyLoggingFilter extends OncePerRequestFilter {
      * 직접 적으면 표기를 바꿀 때 고칠 곳이 여러 군데로 흩어진다.
      */
     private static final Pattern SENSITIVE_JSON_FIELD = Pattern.compile(
-            "(?i)(\"(password|accessToken|refreshToken|token|qrToken|secret|authorization|idToken|clientSecret"
+            "(?i)(\"(password|accessToken|refreshToken|token|qrToken|qrImageBytes|secret|authorization|idToken|clientSecret"
                     + "|phone|address|roadAddress|locationNickname|name|sub|businessRegistrationNumber|businessNumber"
                     + "|lat|lng|latitude|longitude"
                     + "|initialPassword|currentPassword|newPassword|representativeName|fid"
@@ -101,7 +101,7 @@ public class HttpBodyLoggingFilter extends OncePerRequestFilter {
     // 오는 요청의 민감 키도 동일한 키 목록으로 잡아서 "key=" 뒤 값(다음 "&" 전까지) 전체를 REDACTED 처리한다.
     // SENSITIVE_JSON_FIELD와 같은 키 목록을 쓴다 — 인코딩만 다를 뿐 같은 값이 새면 위험도가 같다.
     private static final Pattern SENSITIVE_FORM_FIELD = Pattern.compile(
-            "(?i)((?:^|&)(?:password|accessToken|refreshToken|token|qrToken|secret|authorization|idToken|clientSecret"
+            "(?i)((?:^|&)(?:password|accessToken|refreshToken|token|qrToken|qrImageBytes|secret|authorization|idToken|clientSecret"
                     + "|phone|address|roadAddress|locationNickname|name|sub|businessRegistrationNumber|businessNumber"
                     + "|lat|lng|latitude|longitude"
                     + "|initialPassword|currentPassword|newPassword|representativeName|fid"
@@ -172,8 +172,8 @@ public class HttpBodyLoggingFilter extends OncePerRequestFilter {
         boolean expected = AccessLogSignal.isExpected(request);
         boolean needsBody = (status >= 400 && !expected) || log.isDebugEnabled();
 
-        String reqBody = needsBody ? mask(extractBody(request.getContentAsByteArray())) : null;
-        String resBody = needsBody ? mask(extractBody(response.getContentAsByteArray())) : null;
+        String reqBody = needsBody ? extractBody(request.getContentAsByteArray()) : null;
+        String resBody = needsBody ? extractBody(response.getContentAsByteArray()) : null;
 
         if (expected) {
             log.debug("event=HTTP_ACCESS status={} durationMs={} reqBody=\"{}\" resBody=\"{}\"",
@@ -196,7 +196,8 @@ public class HttpBodyLoggingFilter extends OncePerRequestFilter {
         if (content == null || content.length == 0) {
             return "";
         }
-        String body = new String(content, StandardCharsets.UTF_8);
+        // 긴 QR 이미지의 닫는 따옴표가 잘려 마스킹을 놓치지 않도록 값을 먼저 가린다.
+        String body = mask(new String(content, StandardCharsets.UTF_8));
         return body.length() > MAX_BODY_LOG_LENGTH
                 ? body.substring(0, MAX_BODY_LOG_LENGTH) + "...(truncated)"
                 : body;
