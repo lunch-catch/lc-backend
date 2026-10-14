@@ -4,9 +4,10 @@ import static org.assertj.core.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
+import com.launchcatch.IntegrationTestSupport;
 import com.launchcatch.auth.Role;
 import com.launchcatch.auth.exception.AuthException;
-import com.launchcatch.auth.jwt.AccessTokenValidAfterRepository;
+import com.launchcatch.owner.repository.OwnerAccessTokenVersionRepository;
 import com.launchcatch.auth.jwt.JwtTokenProvider;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.LockModeType;
@@ -33,38 +34,24 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.security.crypto.password.PasswordEncoder;
-import org.springframework.test.context.DynamicPropertyRegistry;
-import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
-import org.testcontainers.containers.GenericContainer;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
-import org.testcontainers.mysql.MySQLContainer;
 
 // DB 행 잠금, 롤백 복구 및 로그인과 재발급의 게시 순서를 실제 저장소로 확인한다.
-@Testcontainers
 @SpringBootTest(properties = "jwt.secret=test-only-owner-concurrency-secret-at-least-32-bytes")
-class OwnerTokenRefreshConcurrencyIntegrationTest {
-    @Container static final MySQLContainer MYSQL = new MySQLContainer("mysql:8.4");
-    @Container static final GenericContainer<?> VALKEY = new GenericContainer<>("valkey/valkey:9").withExposedPorts(6379);
-
-    @DynamicPropertySource
-    static void infrastructure(DynamicPropertyRegistry registry) {
-        registry.add("spring.datasource.url", MYSQL::getJdbcUrl);
-        registry.add("spring.datasource.username", MYSQL::getUsername);
-        registry.add("spring.datasource.password", MYSQL::getPassword);
-        registry.add("spring.data.redis.host", VALKEY::getHost);
-        registry.add("spring.data.redis.port", () -> VALKEY.getMappedPort(6379));
-    }
+class OwnerTokenRefreshConcurrencyIntegrationTest extends IntegrationTestSupport {
 
     @MockitoSpyBean private OwnerRepository owners;
     @MockitoSpyBean private RefreshTokenRepository tokens;
     @MockitoSpyBean private OwnerRefreshTokenRepository ownerTokens;
     @Autowired private OwnerLoginService login;
     @Autowired private OwnerTokenRefreshService refresh;
+    @Autowired private com.launchcatch.owner.service.OwnerLogoutService logout;
+    @Autowired private com.launchcatch.owner.service.OwnerAccessTokenPolicy accessTokenPolicy;
     @Autowired private PasswordEncoder encoder;
-    @Autowired private AccessTokenValidAfterRepository cutoff;
+    @MockitoSpyBean private OwnerAccessTokenVersionRepository cutoff;
+    @MockitoSpyBean private com.launchcatch.owner.repository.OwnerLogoutTokenRepository logoutTokens;
+    @Autowired private org.springframework.data.redis.core.StringRedisTemplate redis;
     @Autowired private JwtTokenProvider jwt;
     @Autowired private EntityManager entityManager;
     @MockitoSpyBean private Clock clock;
@@ -94,8 +81,7 @@ class OwnerTokenRefreshConcurrencyIntegrationTest {
         assertThat(owners.findById(ownerId).orElseThrow().getRefreshTokenHash()).isNull();
         assertThat(tokens.findActiveHash(Role.OWNER, ownerId)).isEmpty();
         assertThat(tokens.find(result.refreshToken())).isEmpty();
-        assertThat(cutoff.isValidAfter(Role.OWNER, ownerId,
-                owners.findById(ownerId).orElseThrow().getLastLoginAt().minusMinutes(1))).isFalse();
+        assertThat(cutoff.isValid(ownerId, Long.parseLong((String) jwt.getAdditionalClaims(result.accessToken()).get("issuanceVersion")))).isFalse();
     }
 
     @Test
@@ -210,14 +196,109 @@ class OwnerTokenRefreshConcurrencyIntegrationTest {
                 revocation.get(15, TimeUnit.SECONDS);
                 assertThat(owners.findById(ownerId).orElseThrow().getRefreshTokenHash()).isNull();
                 assertThat(tokens.findActiveHash(Role.OWNER, ownerId)).isEmpty();
-                assertThat(cutoff.isValidAfter(Role.OWNER, ownerId,
-                        jwt.getIssuedAt(issuedWhileWaiting.accessToken()))).isFalse();
+                assertThat(cutoff.isValid(ownerId, Long.parseLong((String) jwt.getAdditionalClaims(issuedWhileWaiting.accessToken()).get("issuanceVersion")))).isFalse();
             } finally {
                 releaseRevocation.countDown();
             }
         }
     }
 
+    @Test
+    void 로그아웃은_재발급한_AT와_RT를_폐기하고_새_로그인의_재발급은_허용한다() {
+        var issued = refresh.refresh(oldToken);
+        assertThat(authenticated(issued.accessToken())).isTrue();
+        logout.logout(ownerId);
+        assertThat(authenticated(issued.accessToken())).isFalse();
+        assertThat(tokens.find(issued.refreshToken())).isEmpty();
+        assertThatThrownBy(() -> refresh.refresh(issued.refreshToken())).isInstanceOf(AuthException.class);
+        var loggedInAgain = login.login(request);
+        assertThat(authenticated(loggedInAgain.accessToken())).isTrue();
+        var refreshedAgain = refresh.refresh(loggedInAgain.refreshToken());
+        assertThat(authenticated(refreshedAgain.accessToken())).isTrue();
+        assertThat(authenticated(issued.accessToken())).isFalse();
+    }
+
+    @Test
+    void Redis_폐기가_실패해도_DB에_확정된_로그아웃은_AT와_RT를_차단한다() {
+        var issued = refresh.refresh(oldToken);
+        doThrow(new DataAccessResourceFailureException("RT Redis")).when(logoutTokens)
+                .revokeThroughVersion(anyLong(), anyString(), anyLong());
+        doThrow(new DataAccessResourceFailureException("AT Redis")).when(cutoff)
+                .invalidateThroughVersion(anyLong(), anyLong());
+        assertThatThrownBy(() -> logout.logout(ownerId)).isInstanceOf(AuthException.class);
+        var owner = owners.findById(ownerId).orElseThrow();
+        assertThat(owner.getRefreshTokenHash()).isNull();
+        assertThat(owner.getAccessTokenRevokedVersion()).isEqualTo(owner.getRefreshTokenIssuanceVersion());
+        doThrow(new DataAccessResourceFailureException("Redis lookup")).when(cutoff).isValid(anyLong(), anyLong());
+        assertThat(authenticated(issued.accessToken())).isFalse();
+        doThrow(new DataAccessResourceFailureException("Redis consume")).when(ownerTokens).consumeForRotation(anyString());
+        assertThatThrownBy(() -> refresh.refresh(issued.refreshToken())).isInstanceOf(AuthException.class);
+    }
+
+    @Test
+    void Redis_차단_키가_유실되어도_DB가_재사용으로_폐기한_AT를_거부한다() {
+        var issued = refresh.refresh(oldToken);
+        assertThatThrownBy(() -> refresh.refresh(oldToken)).isInstanceOf(AuthException.class);
+        redis.delete("accessTokenRevokedThroughVersion:OWNER:" + ownerId);
+        assertThat(authenticated(issued.accessToken())).isFalse();
+        var loggedInAgain = login.login(request);
+        assertThat(authenticated(loggedInAgain.accessToken())).isTrue();
+    }
+
+    @Test
+    void 로그아웃_DB_롤백시_현재_AT와_RT는_유효하다() {
+        var issued = refresh.refresh(oldToken);
+        doThrow(new DataAccessResourceFailureException("DB save")).when(owners).saveAndFlush(any(Owner.class));
+        assertThatThrownBy(() -> logout.logout(ownerId)).isInstanceOf(AuthException.class);
+        var owner = owners.findById(ownerId).orElseThrow();
+        assertThat(owner.getAccessTokenRevokedVersion()).isEqualTo(-1L);
+        assertThat(owner.getRefreshTokenHash()).isEqualTo(TokenHasher.sha256(issued.refreshToken()));
+        assertThat(authenticated(issued.accessToken())).isTrue();
+        assertThat(tokens.find(issued.refreshToken())).isPresent();
+    }
+
+    @Test
+    void 재발급_RT는_재발급_시점부터_1일_유효하다() {
+        assertThat(jwt.refreshTokenValidityMs(Role.OWNER)).isEqualTo(java.time.Duration.ofDays(1).toMillis());
+        var before = java.time.LocalDateTime.ofInstant(clock.instant(), com.launchcatch.global.config.ClockConfig.ZONE);
+        var issued = refresh.refresh(oldToken);
+        var after = java.time.LocalDateTime.ofInstant(clock.instant(), com.launchcatch.global.config.ClockConfig.ZONE);
+        var owner = owners.findById(ownerId).orElseThrow();
+        assertThat(owner.getRefreshTokenExpiresAt()).isBetween(before.plusDays(1), after.plusDays(1));
+        assertThat(tokens.find(issued.refreshToken())).isPresent();
+    }
+
+    @Test
+    void 기존_계정_마이그레이션은_현재_RT를_보존하고_이전_AT를_차단한다() throws Exception {
+        try (var connection = java.sql.DriverManager.getConnection(MYSQL.getJdbcUrl(), MYSQL.getUsername(), MYSQL.getPassword());
+                var statement = connection.createStatement()) {
+            statement.execute("CREATE TEMPORARY TABLE owner (owner_id BIGINT PRIMARY KEY, refresh_token_hash VARCHAR(64), refresh_token_issuance_version BIGINT NOT NULL DEFAULT 0)");
+            statement.execute("INSERT INTO owner VALUES (1, NULL, 0), (2, 'active', 5), (3, NULL, 6)");
+            var resource = new org.springframework.core.io.ClassPathResource("db/migration/owner/V4__owner_access_token_revoked_version.sql");
+            String migration;
+            try (var input = resource.getInputStream()) {
+                // MySQL은 임시 테이블의 CHECK 이름도 스키마 안에서 고유해야 한다.
+                migration = new String(input.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8)
+                        .replace("chk_owner_access_token_revoked_version", "chk_owner_migration_test_revoked_version");
+            }
+            org.springframework.jdbc.datasource.init.ScriptUtils.executeSqlScript(connection,
+                    new org.springframework.core.io.ByteArrayResource(migration.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+            try (var rows = statement.executeQuery("SELECT access_token_revoked_version FROM owner ORDER BY owner_id")) {
+                assertThat(rows.next()).isTrue();
+                assertThat(rows.getLong(1)).isEqualTo(-1L);
+                assertThat(rows.next()).isTrue();
+                assertThat(rows.getLong(1)).isEqualTo(4L);
+                assertThat(rows.next()).isTrue();
+                assertThat(rows.getLong(1)).isEqualTo(6L);
+                assertThat(rows.next()).isFalse();
+            }
+        }
+    }
+
+    private boolean authenticated(String token) {
+        return accessTokenPolicy.isValid(Role.OWNER, ownerId, jwt.getIssuedAt(token), jwt.getAdditionalClaims(token),
+                com.launchcatch.auth.jwt.CutoffPolicy.REQUIRED);
+    }
     @Test
     void 실제_DB_롤백시_기존_토큰의_소비표시를_복구한다() {
         doThrow(new DataAccessResourceFailureException("DB save unavailable")).when(owners).saveAndFlush(any(Owner.class));

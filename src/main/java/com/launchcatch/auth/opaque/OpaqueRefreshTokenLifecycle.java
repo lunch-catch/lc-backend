@@ -33,7 +33,7 @@ public class OpaqueRefreshTokenLifecycle {
         backupStores.forEach(store -> {
             RefreshTokenBackupStore previous = stores.put(store.role(), store);
             if (previous != null) {
-                throw new IllegalStateException("duplicate RefreshTokenBackupStore role: " + store.role());
+                throw new IllegalStateException("같은 역할의 갱신 토큰 백업 저장소가 중복 등록되었습니다.");
             }
         });
         this.backupStores = Map.copyOf(stores);
@@ -71,6 +71,7 @@ public class OpaqueRefreshTokenLifecycle {
                     oldRefreshToken, newRefreshToken, role, refreshTokenTtl, now, redisFailure);
         }
         if (outcome.isReuseDetected()) {
+            log.warn("event=REFRESH_TOKEN_REUSE_SUSPECTED role={} subjectId={}", outcome.data().role(), outcome.data().id());
             revoke(outcome.data().role(), outcome.data().id(), now, accessTokenTtl);
             throw new AuthException(AuthErrorCode.REFRESH_TOKEN_REUSED);
         }

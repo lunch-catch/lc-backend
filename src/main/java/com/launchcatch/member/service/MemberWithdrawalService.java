@@ -2,7 +2,9 @@ package com.launchcatch.member.service;
 
 import com.launchcatch.auth.exception.AuthErrorCode;
 import com.launchcatch.auth.exception.AuthException;
-import com.launchcatch.global.logging.PiiMasker;
+import com.launchcatch.global.exception.BusinessException;
+import com.launchcatch.global.logging.FailureLogDetails;
+import com.launchcatch.global.logging.TransactionLogging;
 import com.launchcatch.member.client.KakaoUnlinkClient;
 import com.launchcatch.member.client.KakaoUnlinkFailureClassifier;
 import com.launchcatch.member.contract.MemberStatus;
@@ -17,6 +19,7 @@ import com.launchcatch.member.repository.MemberProfileRepository;
 import com.launchcatch.member.repository.MemberRepository;
 import java.time.Clock;
 import java.time.LocalDateTime;
+import java.util.NoSuchElementException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -51,10 +54,23 @@ public class MemberWithdrawalService {
      * 다시 호출할 뿐이고 카카오 unlink 는 멱등이다.
      */
     public void withdraw(Long memberId, String authorizationCode, String state) {
-        KakaoIdentity identity = kakaoIdTokenExchanger.exchange(authorizationCode, state);
-        UnlinkTarget target = transactionTemplate.execute(status -> withdrawLocally(memberId, identity.providerUserId()));
-        if (target == null) {
-            throw new IllegalStateException("withdrawal transaction returned no target");
+        UnlinkTarget target;
+        try {
+            KakaoIdentity identity = kakaoIdTokenExchanger.exchange(authorizationCode, state);
+            target = transactionTemplate.execute(status -> withdrawLocally(memberId, identity.providerUserId()));
+            if (target == null) {
+                throw new IllegalStateException("탈퇴 처리 결과가 없습니다.");
+            }
+        } catch (BusinessException e) {
+            if (e.getErrorCode().getHttpStatus().is5xxServerError()) {
+                log.error("event=MEMBER_WITHDRAWAL_FAILED memberId={} reason={} details={}", memberId, e.getErrorCode().getCode(), FailureLogDetails.from(e));
+            } else {
+                log.warn("event=MEMBER_WITHDRAWAL_FAILED memberId={} reason={}", memberId, e.getErrorCode().getCode());
+            }
+            throw e;
+        } catch (RuntimeException e) {
+            log.error("event=MEMBER_WITHDRAWAL_FAILED memberId={} reason=SYSTEM_ERROR causeType={}", memberId, e.getClass().getSimpleName());
+            throw e;
         }
         try {
             kakaoUnlinkClient.unlink(target.providerUserId());
@@ -79,29 +95,34 @@ public class MemberWithdrawalService {
         transactionTemplate.executeWithoutResult(status ->
                 memberRepository.findByProviderUserIdForUpdate(providerUserId).ifPresent(member -> {
                     if (member.getStatus() != MemberStatus.WITHDRAWN) {
-                        withdrawMember(member);
+                        withdrawMember(member, "KAKAO_WEBHOOK");
                     }
                     kakaoUnlinkFailureRepository.deleteByMember_Id(member.getId());
+                    Long memberId = member.getId();
+                    TransactionLogging.afterCommit(() -> log.info("event=KAKAO_UNLINK_WEBHOOK_SUCCESS memberId={}", memberId));
                 }));
     }
 
     private UnlinkTarget withdrawLocally(Long memberId, String authenticatedProviderUserId) {
-        Member member = memberRepository.findByIdForUpdate(memberId).orElseThrow();
+        Member member = memberRepository.findByIdForUpdate(memberId)
+                .orElseThrow(() -> new NoSuchElementException("인증된 회원 정보를 찾을 수 없습니다."));
         if (member.getStatus() == MemberStatus.WITHDRAWN) {
             throw new MemberException(MemberErrorCode.ALREADY_WITHDRAWN);
         }
         if (!member.getProviderUserId().equals(authenticatedProviderUserId)) {
             throw new AuthException(AuthErrorCode.KAKAO_AUTHENTICATION_FAILED);
         }
-        withdrawMember(member);
+        withdrawMember(member, "MEMBER_REQUEST");
         enqueueUnlink(member);
         return new UnlinkTarget(member.getId(), member.getProviderUserId());
     }
 
-    private void withdrawMember(Member member) {
+    private void withdrawMember(Member member, String source) {
         memberProfileRepository.findByMember_Id(member.getId()).ifPresent(memberProfileRepository::delete);
         member.withdraw(LocalDateTime.now(clock));
         memberTokenService.revoke(member.getId());
+        Long memberId = member.getId();
+        TransactionLogging.afterCommit(() -> log.info("event=MEMBER_WITHDRAWAL_SUCCESS memberId={} source={}", memberId, source));
     }
 
     /*
@@ -123,8 +144,8 @@ public class MemberWithdrawalService {
      */
     private void markInitialUnlinkFailure(UnlinkTarget target, RuntimeException failure) {
         if (!KakaoUnlinkFailureClassifier.isTerminal(failure)) {
-            log.warn("event=KAKAO_UNLINK_FAILED_QUEUED memberId={} causeType={}",
-                    target.memberId(), KakaoUnlinkFailureClassifier.causeType(failure));
+            log.warn("event=KAKAO_UNLINK_FAILED_QUEUED memberId={} causeType={} details={}",
+                    target.memberId(), KakaoUnlinkFailureClassifier.causeType(failure), FailureLogDetails.from(failure));
             return;
         }
         try {
@@ -135,8 +156,8 @@ public class MemberWithdrawalService {
             log.error("event=KAKAO_UNLINK_REJECTION_NOT_RECORDED memberId={}",
                     target.memberId(), persistenceFailure);
         }
-        log.error("event=KAKAO_UNLINK_REJECTED memberId={} providerUserId={} causeType={}",
-                target.memberId(), PiiMasker.maskProviderId(target.providerUserId()),
+        log.error("event=KAKAO_UNLINK_REJECTED memberId={} causeType={}",
+                target.memberId(),
                 KakaoUnlinkFailureClassifier.causeType(failure), failure);
     }
 
