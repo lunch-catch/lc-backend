@@ -90,7 +90,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
     }
 
     /*
-     * 다시 요청해도 되는 때까지 남은 초다 (api-spec/README.md 의 429).
+     * 다시 요청해도 되는 때까지 남은 초다 (api-spec/api-spec.md 의 429).
      *
      * 고정 윈도우라 카운터 키의 남은 수명이 그 값이다. 윈도우 길이를 그대로 주면 끝까지 5초
      * 남았는데도 60초를 기다리라고 말하게 된다.

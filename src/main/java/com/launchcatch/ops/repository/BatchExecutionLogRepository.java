@@ -28,6 +28,8 @@ public interface BatchExecutionLogRepository extends JpaRepository<BatchExecutio
 
     Optional<BatchExecutionLog> findByJobNameAndBusinessDate(String jobName, LocalDate businessDate);
 
+    List<BatchExecutionLog> findByBusinessDate(LocalDate businessDate);
+
     List<BatchExecutionLog> findByStatusAndOwnerIdNotAndUpdatedAtBefore(
             BatchStatus status, String ownerId, LocalDateTime staleBefore);
 
