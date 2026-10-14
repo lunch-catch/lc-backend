@@ -20,14 +20,18 @@ import com.launchcatch.owner.config.OwnerSecurityConfig;
 import com.launchcatch.owner.entity.OwnerStatus;
 import com.launchcatch.owner.repository.OwnerRepository;
 import com.launchcatch.owner.service.OwnerPlaceSearchService;
+import com.launchcatch.owner.service.OwnerPlaceSearchRateLimiter;
 import com.launchcatch.store.client.KakaoLocalClient;
 import com.launchcatch.store.config.KakaoLocalConfig;
 import com.launchcatch.owner.controller.OwnerPlaceSearchController;
 import com.launchcatch.store.service.KakaoPlaceSearchService;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
 import io.github.resilience4j.springboot.circuitbreaker.autoconfigure.CircuitBreakerAutoConfiguration;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import jakarta.servlet.http.Cookie;
 import java.time.Clock;
+import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -67,11 +71,12 @@ class KakaoPlaceSearchIntegrationTest {
     @Autowired private JwtTokenProvider jwt;
     @Autowired private ExchangeFunction exchange;
     @Autowired private CircuitBreakerRegistry circuits;
+    @Autowired private StringRedisTemplate redisTemplate;
     private MockMvc mvc;
 
     @BeforeEach
     void setUp() {
-        reset(owners, cutoff, exchange);
+        reset(owners, cutoff, exchange, redisTemplate);
         circuits.circuitBreaker("kakaoPlaceSearch").reset();
         when(cutoff.isValidAfter(any(), any(), any())).thenReturn(true);
         when(owners.findStatusById(7L)).thenReturn(Optional.of(OwnerStatus.ONBOARDING));
@@ -106,10 +111,23 @@ class KakaoPlaceSearchIntegrationTest {
     }
 
     @Test
+    void 점주별_분당_10회를_초과하면_카카오를_호출하지_않고_임시_공통_오류를_반환한다() throws Exception {
+        when(redisTemplate.execute(any(), eq(List.of("kakaoPlaceSearchRateLimit:7")), eq("60000")))
+                .thenReturn(11L);
+        when(exchange.exchange(any())).thenReturn(json("{\"documents\":[]}"));
+
+        mvc.perform(get(PATH).param("query", "런치캐치").cookie(token(Role.OWNER)))
+                .andExpect(status().isInternalServerError()).andExpect(jsonPath("$.code").value("COMMON-001"))
+                .andExpect(header().doesNotExist(HttpHeaders.RETRY_AFTER));
+        verifyNoInteractions(exchange);
+        assertThat(circuits.circuitBreaker("kakaoPlaceSearch").getMetrics().getNumberOfFailedCalls()).isZero();
+    }
+
+    @Test
     void 검색어가_없으면_400이고_외부_호출을_하지_않는다() throws Exception {
         mvc.perform(get(PATH).cookie(token(Role.OWNER)))
                 .andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("COMMON-002"));
-        verifyNoInteractions(owners, exchange);
+        verifyNoInteractions(owners, exchange, redisTemplate);
     }
 
     @ParameterizedTest
@@ -117,28 +135,28 @@ class KakaoPlaceSearchIntegrationTest {
     void 빈_검색어와_공백은_400이다(String query) throws Exception {
         mvc.perform(get(PATH).param("query", query).cookie(token(Role.OWNER)))
                 .andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("COMMON-002"));
-        verifyNoInteractions(owners, exchange);
+        verifyNoInteractions(owners, exchange, redisTemplate);
     }
 
     @Test
     void 검색어가_100자를_초과하면_400이다() throws Exception {
         mvc.perform(get(PATH).param("query", "가".repeat(101)).cookie(token(Role.OWNER)))
                 .andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("COMMON-002"));
-        verifyNoInteractions(owners, exchange);
+        verifyNoInteractions(owners, exchange, redisTemplate);
     }
 
     @Test
     void 토큰이_없으면_401이다() throws Exception {
         mvc.perform(get(PATH).param("query", "런치캐치"))
                 .andExpect(status().isUnauthorized()).andExpect(jsonPath("$.code").value("AUTH-005"));
-        verifyNoInteractions(owners, exchange);
+        verifyNoInteractions(owners, exchange, redisTemplate);
     }
 
     @Test
     void 잘못된_토큰은_401이다() throws Exception {
         mvc.perform(get(PATH).param("query", "런치캐치").cookie(new Cookie("accessToken", "invalid")))
                 .andExpect(status().isUnauthorized()).andExpect(jsonPath("$.code").value("AUTH-005"));
-        verifyNoInteractions(owners, exchange);
+        verifyNoInteractions(owners, exchange, redisTemplate);
     }
 
     @Test
@@ -146,7 +164,7 @@ class KakaoPlaceSearchIntegrationTest {
         when(cutoff.isValidAfter(any(), any(), any())).thenReturn(false);
         mvc.perform(get(PATH).param("query", "런치캐치").cookie(token(Role.OWNER)))
                 .andExpect(status().isUnauthorized()).andExpect(jsonPath("$.code").value("AUTH-005"));
-        verifyNoInteractions(owners, exchange);
+        verifyNoInteractions(owners, exchange, redisTemplate);
     }
 
     @ParameterizedTest
@@ -154,17 +172,18 @@ class KakaoPlaceSearchIntegrationTest {
     void 점주가_아닌_역할은_403이다(Role role) throws Exception {
         mvc.perform(get(PATH).param("query", "런치캐치").cookie(token(role)))
                 .andExpect(status().isForbidden()).andExpect(jsonPath("$.code").value("AUTH-006"));
-        verifyNoInteractions(owners, exchange);
+        verifyNoInteractions(owners, exchange, redisTemplate);
     }
 
     @ParameterizedTest
     @EnumSource(value = OwnerStatus.class, names = {"ACTIVE", "SUSPENDED", "WITHDRAWN"})
-    void 현재_상태가_온보딩이_아니면_403이다(OwnerStatus ownerStatus) throws Exception {
+    void 현재_상태가_온보딩이_아니면_임시_공통_오류를_반환한다(OwnerStatus ownerStatus) throws Exception {
         when(owners.findStatusById(7L)).thenReturn(Optional.of(ownerStatus));
 
         mvc.perform(get(PATH).param("query", "런치캐치").cookie(token(Role.OWNER)))
-                .andExpect(status().isForbidden()).andExpect(jsonPath("$.code").value("OWNER-002"));
-        verifyNoInteractions(exchange);
+                .andExpect(status().isInternalServerError()).andExpect(jsonPath("$.code").value("COMMON-001"))
+                .andExpect(header().doesNotExist(HttpHeaders.RETRY_AFTER));
+        verifyNoInteractions(exchange, redisTemplate);
     }
 
     @Test
@@ -173,7 +192,7 @@ class KakaoPlaceSearchIntegrationTest {
 
         mvc.perform(get(PATH).param("query", "런치캐치").cookie(token(Role.OWNER)))
                 .andExpect(status().isUnauthorized()).andExpect(jsonPath("$.code").value("AUTH-005"));
-        verifyNoInteractions(exchange);
+        verifyNoInteractions(exchange, redisTemplate);
     }
 
     @Test
@@ -182,7 +201,7 @@ class KakaoPlaceSearchIntegrationTest {
 
         mvc.perform(get(PATH).param("query", "런치캐치").cookie(token(Role.OWNER)))
                 .andExpect(status().isInternalServerError()).andExpect(jsonPath("$.code").value("COMMON-001"));
-        verifyNoInteractions(exchange);
+        verifyNoInteractions(exchange, redisTemplate);
     }
 
     @Test
@@ -242,12 +261,14 @@ class KakaoPlaceSearchIntegrationTest {
     @EnableAspectJAutoProxy
     @ImportAutoConfiguration({WebClientAutoConfiguration.class, CircuitBreakerAutoConfiguration.class})
     @Import({OwnerSecurityConfig.class, SecurityConfig.class, ApiSecurityDefaults.class,
-            OwnerPlaceSearchController.class, OwnerPlaceSearchService.class, KakaoPlaceSearchService.class, KakaoLocalClient.class,
+            OwnerPlaceSearchController.class, OwnerPlaceSearchService.class, OwnerPlaceSearchRateLimiter.class,
+            KakaoPlaceSearchService.class, KakaoLocalClient.class,
             KakaoLocalConfig.class, WebClientConfig.class, AuthExceptionHandler.class, GlobalExceptionHandler.class})
     static class TestConfig {
         @Bean OwnerRepository owners() { return mock(OwnerRepository.class); }
         @Bean AccessTokenValidAfterRepository cutoff() { return mock(AccessTokenValidAfterRepository.class); }
         @Bean StringRedisTemplate redisTemplate() { return mock(StringRedisTemplate.class); }
+        @Bean MeterRegistry meterRegistry() { return new SimpleMeterRegistry(); }
         @Bean ExchangeFunction exchange() { return mock(ExchangeFunction.class); }
         @Bean WebClientCustomizer stubTransport(ExchangeFunction exchange) {
             return builder -> builder.exchangeFunction(exchange);
