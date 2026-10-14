@@ -1,5 +1,6 @@
 package com.launchcatch.member.job;
 
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
@@ -67,11 +68,25 @@ class KakaoUnlinkRetrySchedulerTest {
     @DisplayName("재시도가 터지면 실패로 닫는다")
     void 재시도가_터지면_실패로_닫는다() {
         when(executions.claim(KakaoUnlinkRetryScheduler.JOB_NAME, BUSINESS_DATE)).thenReturn(true);
-        doThrow(new IllegalStateException("boom")).when(kakaoUnlinkRetryService).retryPending();
+        IllegalStateException failure = new IllegalStateException("boom");
+        doThrow(failure).when(kakaoUnlinkRetryService).retryPending();
 
-        scheduler.retryPendingUnlinks();
+        assertThatThrownBy(() -> scheduler.retryPendingUnlinks()).isSameAs(failure);
 
         verify(executions).fail(eq(KakaoUnlinkRetryScheduler.JOB_NAME), eq(BUSINESS_DATE), anyString());
+        verify(executions, never()).succeed(anyString(), eq(BUSINESS_DATE));
+    }
+
+    @Test
+    void 실패_기록까지_실패해도_원래_예외를_유지한다() {
+        when(executions.claim(KakaoUnlinkRetryScheduler.JOB_NAME, BUSINESS_DATE)).thenReturn(true);
+        IllegalStateException failure = new IllegalStateException("원래 실패");
+        IllegalStateException recordFailure = new IllegalStateException("실패 기록 오류");
+        doThrow(failure).when(kakaoUnlinkRetryService).retryPending();
+        doThrow(recordFailure).when(executions).fail(eq(KakaoUnlinkRetryScheduler.JOB_NAME), eq(BUSINESS_DATE), anyString());
+
+        assertThatThrownBy(() -> scheduler.retryPendingUnlinks()).isSameAs(failure).hasSuppressedException(recordFailure);
+
         verify(executions, never()).succeed(anyString(), eq(BUSINESS_DATE));
     }
 }

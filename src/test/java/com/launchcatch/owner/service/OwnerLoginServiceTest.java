@@ -50,7 +50,7 @@ class OwnerLoginServiceTest {
         when(repository.findByIdForLogin(7L)).thenReturn(Optional.of(owner));
         when(manager.getTransaction(any(TransactionDefinition.class))).thenReturn(new SimpleTransactionStatus());
         when(jwt.refreshTokenValidityMs(Role.OWNER)).thenReturn(Duration.ofDays(14).toMillis());
-        when(jwt.createAccessToken(7L, Role.OWNER)).thenReturn("test-access");
+        when(jwt.createAccessToken(eq(7L), eq(Role.OWNER), anyMap())).thenReturn("test-access");
         when(cache.saveIfNewer(anyString(), eq(7L), eq(Role.OWNER), eq(true), any(Duration.class), anyLong())).thenReturn(true);
         service = new OwnerLoginService(repository, encoder, jwt, cache, clock, manager);
         clearInvocations(encoder);
@@ -74,7 +74,7 @@ class OwnerLoginServiceTest {
             assertThat(result.response().tutorialViewed()).isNull();
         }
         assertThat(result.toString()).doesNotContain(result.accessToken(), result.refreshToken(), request.email());
-        verify(jwt).createAccessToken(7L, Role.OWNER);
+        verify(jwt).createAccessToken(7L, Role.OWNER, java.util.Map.of("issuanceVersion", "1"));
         var order = inOrder(manager, cache);
         order.verify(manager, times(2)).commit(any());
         order.verify(cache).saveIfNewer(result.refreshToken(), 7L, Role.OWNER, true, Duration.ofDays(14), 1L);

@@ -23,7 +23,7 @@ public class AccessTokenCutoffVerifier {
      * REQUIRED는 지속되는 권한을 만드는 작업 등에 사용하고, 조회 장애 시 AUTH-002로 중단한다.
      */
     public boolean isValidAfter(Role role, Long id, LocalDateTime issuedAt, CutoffPolicy policy) {
-        Objects.requireNonNull(policy, "policy");
+        Objects.requireNonNull(policy, "토큰 폐기 기준 검증 정책은 필수입니다.");
         if (issuedAt == null) {
             log.warn("event=ACCESS_TOKEN_ISSUED_AT_MISSING role={} id={}", role, id);
             return false;

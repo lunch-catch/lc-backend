@@ -1,5 +1,6 @@
 package com.launchcatch.member.service;
 
+import com.launchcatch.global.logging.TransactionLogging;
 import com.launchcatch.member.contract.MemberStatus;
 import com.launchcatch.member.dto.MemberOnboardingRequest;
 import com.launchcatch.member.dto.MemberResponse;
@@ -15,9 +16,11 @@ import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
@@ -37,50 +40,86 @@ public class MemberProfileService {
      */
     @Transactional
     public MemberResponse completeOnboarding(Long memberId, MemberOnboardingRequest request) {
-        Member member = findMemberForUpdate(memberId);
-        ensureNotWithdrawn(member);
-        if (member.getProfile() != null && member.getProfile().isOnboardingCompleted()) {
-            throw new MemberException(MemberErrorCode.ONBOARDING_ALREADY_COMPLETED);
+        try {
+            Member member = findMemberForUpdate(memberId);
+            ensureNotWithdrawn(member, "MEMBER_ONBOARDING_FAILED");
+            if (member.getProfile() != null && member.getProfile().isOnboardingCompleted()) {
+                log.warn("event=MEMBER_ONBOARDING_FAILED memberId={} reason=ONBOARDING_ALREADY_COMPLETED", memberId);
+                throw new MemberException(MemberErrorCode.ONBOARDING_ALREADY_COMPLETED);
+            }
+            LocalDateTime now = LocalDateTime.now(clock);
+            MemberProfile profile = member.getProfile();
+            if (profile == null) {
+                profile = memberProfileRepository.save(MemberProfile.create(member));
+            }
+            profile.completeOnboarding(request.gender(), request.ageGroup(), now);
+            member.completeOnboarding(request.notificationOptIn(), request.locationOptIn(), now);
+            MemberResponse result = response(member);
+            TransactionLogging.afterCommit(() -> log.info("event=MEMBER_ONBOARDING_SUCCESS memberId={}", memberId));
+            TransactionLogging.afterFailure(() -> log.error("event=MEMBER_ONBOARDING_FAILED memberId={} reason=TRANSACTION_COMPLETION_FAILED", memberId));
+            return result;
+        } catch (MemberException e) {
+            throw e;
+        } catch (IllegalArgumentException e) {
+            log.warn("event=MEMBER_ONBOARDING_FAILED memberId={} reason=INVALID_INPUT causeType={}", memberId, e.getClass().getSimpleName());
+            throw e;
+        } catch (RuntimeException e) {
+            log.error("event=MEMBER_ONBOARDING_FAILED memberId={} reason=SYSTEM_ERROR causeType={}", memberId, e.getClass().getSimpleName());
+            throw e;
         }
-        LocalDateTime now = LocalDateTime.now(clock);
-        MemberProfile profile = member.getProfile();
-        if (profile == null) {
-            profile = memberProfileRepository.save(MemberProfile.create(member));
-        }
-        profile.completeOnboarding(request.gender(), request.ageGroup(), now);
-        member.completeOnboarding(request.notificationOptIn(), request.locationOptIn(), now);
-        return response(member);
     }
 
     public MemberResponse getMyProfile(Long memberId) {
-        Member member = findMember(memberId);
-        ensureNotWithdrawn(member);
-        return response(member);
+        try {
+            Member member = findMember(memberId);
+            ensureNotWithdrawn(member, "MEMBER_PROFILE_READ_FAILED");
+            return response(member);
+        } catch (MemberException e) {
+            throw e;
+        } catch (RuntimeException e) {
+            log.error("event=MEMBER_PROFILE_READ_FAILED memberId={} reason=SYSTEM_ERROR causeType={}", memberId, e.getClass().getSimpleName());
+            throw e;
+        }
     }
 
     @Transactional
     public MemberResponse updateMyProfile(Long memberId, MemberUpdateRequest request) {
         if (!request.hasUpdate()) {
-            throw new IllegalArgumentException("at least one field must be provided");
+            log.warn("event=MEMBER_PROFILE_UPDATE_FAILED memberId={} reason=EMPTY_UPDATE", memberId);
+            throw new IllegalArgumentException("수정할 항목을 하나 이상 입력해 주세요.");
         }
-        Member member = findMemberForUpdate(memberId);
-        ensureNotWithdrawn(member);
-        member.updateProfile(request.nickname(), request.notificationOptIn(), request.locationOptIn(), LocalDateTime.now(clock));
-        return response(member);
+        try {
+            Member member = findMemberForUpdate(memberId);
+            ensureNotWithdrawn(member, "MEMBER_PROFILE_UPDATE_FAILED");
+            member.updateProfile(request.nickname(), request.notificationOptIn(), request.locationOptIn(), LocalDateTime.now(clock));
+            MemberResponse result = response(member);
+            TransactionLogging.afterCommit(() -> log.info("event=MEMBER_PROFILE_UPDATE_SUCCESS memberId={}", memberId));
+            TransactionLogging.afterFailure(() -> log.error("event=MEMBER_PROFILE_UPDATE_FAILED memberId={} reason=TRANSACTION_COMPLETION_FAILED", memberId));
+            return result;
+        } catch (MemberException e) {
+            throw e;
+        } catch (IllegalArgumentException e) {
+            log.warn("event=MEMBER_PROFILE_UPDATE_FAILED memberId={} reason=INVALID_INPUT causeType={}", memberId, e.getClass().getSimpleName());
+            throw e;
+        } catch (RuntimeException e) {
+            log.error("event=MEMBER_PROFILE_UPDATE_FAILED memberId={} reason=SYSTEM_ERROR causeType={}", memberId, e.getClass().getSimpleName());
+            throw e;
+        }
     }
 
     private Member findMember(Long memberId) {
         return memberRepository.findById(memberId)
-                .orElseThrow(() -> new IllegalStateException("authenticated member does not exist"));
+                .orElseThrow(() -> new IllegalStateException("인증된 회원 정보를 찾을 수 없습니다."));
     }
 
     private Member findMemberForUpdate(Long memberId) {
         return memberRepository.findByIdForUpdate(memberId)
-                .orElseThrow(() -> new IllegalStateException("authenticated member does not exist"));
+                .orElseThrow(() -> new IllegalStateException("인증된 회원 정보를 찾을 수 없습니다."));
     }
 
-    private void ensureNotWithdrawn(Member member) {
+    private void ensureNotWithdrawn(Member member, String event) {
         if (member.getStatus() == MemberStatus.WITHDRAWN) {
+            log.warn("event={} memberId={} reason=ALREADY_WITHDRAWN", event, member.getId());
             throw new MemberException(MemberErrorCode.ALREADY_WITHDRAWN);
         }
     }

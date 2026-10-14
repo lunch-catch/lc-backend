@@ -2,6 +2,7 @@ package com.launchcatch.owner;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.launchcatch.IntegrationTestSupport;
 import com.launchcatch.auth.Role;
 import com.launchcatch.auth.opaque.RefreshTokenRepository;
 import com.launchcatch.auth.opaque.TokenHasher;
@@ -14,15 +15,9 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
 import org.springframework.data.redis.core.StringRedisTemplate;
-import org.testcontainers.containers.GenericContainer;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
 
-@Testcontainers
 @SpringBootTest(classes = OwnerRefreshTokenRepositoryIntegrationTest.RedisConfig.class)
-class OwnerRefreshTokenRepositoryIntegrationTest {
-    @Container
-    static final GenericContainer<?> VALKEY = new GenericContainer<>("valkey/valkey:9").withExposedPorts(6379);
+class OwnerRefreshTokenRepositoryIntegrationTest extends IntegrationTestSupport {
     @Autowired private RefreshTokenRepository repository;
     @Autowired private OwnerRefreshTokenRepository ownerTokens;
     @Autowired private StringRedisTemplate redis;
