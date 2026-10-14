@@ -2,6 +2,7 @@ package com.launchcatch.global.config;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.launchcatch.IntegrationTestSupport;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.file.Files;
@@ -14,12 +15,6 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.test.context.DynamicPropertyRegistry;
-import org.springframework.test.context.DynamicPropertySource;
-import org.testcontainers.mysql.MySQLContainer;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
-import org.testcontainers.utility.DockerImageName;
 
 /*
  * 도메인별 마이그레이션이 실제 MySQL 에 모두 적용되는지 본다.
@@ -31,30 +26,14 @@ import org.testcontainers.utility.DockerImageName;
  * 기대값을 숫자로 적지 않는다. 마이그레이션 파일의 CREATE TABLE 을 세어 견준다. 숫자로 적으면
  * 테이블을 더한 사람이 이 파일도 함께 고쳐야 하고, 잊으면 멀쩡한 변경이 빨갛게 뜬다.
  */
-@Testcontainers
 @SpringBootTest
-class FlywayMigrationIntegrationTest {
+class FlywayMigrationIntegrationTest extends IntegrationTestSupport {
 
     private static final Path MIGRATION_DIR =
             Path.of("src/main/resources", DomainFlywayMigrator.ROOT);
 
     private static final Pattern CREATE_TABLE =
             Pattern.compile("CREATE TABLE(?: IF NOT EXISTS)?\\s+`?(\\w+)`?", Pattern.CASE_INSENSITIVE);
-
-    @Container
-    static final MySQLContainer MYSQL = new MySQLContainer(DockerImageName.parse("mysql:8.4"));
-
-    /** 운영 비밀이 아니라 컨텍스트를 띄우기 위한 자리 채움이다. */
-    private static final String DUMMY_JWT_SECRET =
-            "test-only-secret-not-used-anywhere-else-0123456789abcdef";
-
-    @DynamicPropertySource
-    static void datasource(DynamicPropertyRegistry registry) {
-        registry.add("spring.datasource.url", MYSQL::getJdbcUrl);
-        registry.add("spring.datasource.username", MYSQL::getUsername);
-        registry.add("spring.datasource.password", MYSQL::getPassword);
-        registry.add("jwt.secret", () -> DUMMY_JWT_SECRET);
-    }
 
     @Autowired
     private DataSource dataSource;
