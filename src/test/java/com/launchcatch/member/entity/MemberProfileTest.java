@@ -26,6 +26,6 @@ class MemberProfileTest {
     void 회원_없이_프로필을_만들지_않는다() {
         assertThatThrownBy(() -> MemberProfile.create(null))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("member must not be null");
+                .hasMessage("회원 정보는 필수입니다.");
     }
 }

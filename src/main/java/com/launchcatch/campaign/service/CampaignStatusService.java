@@ -29,6 +29,12 @@ import org.springframework.transaction.annotation.Transactional;
  *
  * store.contract.StoreCampaignSummaryUpdater 호출(설계 문서 2.4, campaign -> store 간선)은
  * store 쪽에 그 인터페이스가 아직 없어 이번 이슈에서 뺐다. 생기면 이어 붙인다.
+ *
+ * pauseFromFunding, resumeFromFunding은 정산의 FundingJudgement 전용 전이다(#198). pause,
+ * resume과 다른 점은 "지금 상태가 그 판정을 받을 자리가 아니면 예외 대신 무시한다" 는 것이다.
+ * NO_POINTS 판정이 이미 PAUSED(ADMIN/OWNER)인 캠페인에 오면 그 중단을 덮어쓰면 안 되고,
+ * RESUME 판정이 PAUSED(ADMIN/OWNER)나 ENDED에 오면 정산이 모르는 이유로 멈춘 캠페인을
+ * 되돌리면 안 된다.
  */
 @Service
 @RequiredArgsConstructor
@@ -99,6 +105,38 @@ public class CampaignStatusService {
         log(campaignId, from, campaign.getStatus(), ActorType.SYSTEM, null);
         events.publishEvent(new CampaignStatusChangedEvent(campaignId, businessDate, false, now));
         events.publishEvent(new CampaignEndedEvent(campaignId, now));
+    }
+
+    @Transactional
+    public void pauseFromFunding(Long campaignId, LocalDate businessDate, String judgementNote) {
+        Campaign campaign = findOrThrow(campaignId);
+        if (campaign.getStatus() == CampaignStatus.PAUSED && campaign.getPausedReason() == PauseReason.NO_POINTS) {
+            return;
+        }
+        if (campaign.getStatus() != CampaignStatus.ACTIVE) {
+            return;
+        }
+        CampaignStatus from = campaign.getStatus();
+        LocalDateTime now = LocalDateTime.now(clock);
+        campaign.pause(PauseReason.NO_POINTS, now);
+        log(campaignId, from, campaign.getStatus(), ActorType.SYSTEM, judgementNote);
+        events.publishEvent(new CampaignStatusChangedEvent(campaignId, businessDate, false, now));
+    }
+
+    @Transactional
+    public void resumeFromFunding(Long campaignId, LocalDate businessDate, String judgementNote) {
+        Campaign campaign = findOrThrow(campaignId);
+        if (campaign.getStatus() == CampaignStatus.ACTIVE) {
+            return;
+        }
+        if (campaign.getStatus() != CampaignStatus.PAUSED || campaign.getPausedReason() != PauseReason.NO_POINTS) {
+            return;
+        }
+        CampaignStatus from = campaign.getStatus();
+        LocalDateTime now = LocalDateTime.now(clock);
+        campaign.resume(now);
+        log(campaignId, from, campaign.getStatus(), ActorType.SYSTEM, judgementNote);
+        events.publishEvent(new CampaignStatusChangedEvent(campaignId, businessDate, true, now));
     }
 
     private Campaign findOrThrow(Long campaignId) {

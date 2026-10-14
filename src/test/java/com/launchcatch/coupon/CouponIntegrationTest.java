@@ -10,6 +10,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.launchcatch.IntegrationTestSupport;
 import com.launchcatch.auth.CustomUserDetails;
 import com.launchcatch.auth.Role;
 import com.launchcatch.coupon.dto.CouponDetailResponse;
@@ -47,33 +48,18 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.test.context.DynamicPropertyRegistry;
-import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
-import org.testcontainers.containers.GenericContainer;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
-import org.testcontainers.mysql.MySQLContainer;
-import org.testcontainers.utility.DockerImageName;
 
-@Testcontainers
 @SpringBootTest(properties = "coupon.daily-limit=3")
 @AutoConfigureMockMvc
-class CouponIntegrationTest {
+class CouponIntegrationTest extends IntegrationTestSupport {
 
     private static final LocalDate TODAY = LocalDate.of(2026, 10, 10);
     private static final CustomUserDetails MEMBER = new CustomUserDetails(17L, Role.MEMBER);
-
-    @Container
-    static final MySQLContainer MYSQL = new MySQLContainer(DockerImageName.parse("mysql:8.4"));
-
-    @Container
-    static final GenericContainer<?> VALKEY = new GenericContainer<>(DockerImageName.parse("valkey/valkey:9.0-alpine"))
-            .withExposedPorts(6379);
 
     @Autowired MockMvc mockMvc;
     @Autowired JdbcTemplate jdbcTemplate;
@@ -82,16 +68,6 @@ class CouponIntegrationTest {
     @Autowired CouponLookUpService couponLookUpService;
     @Autowired CouponCommandService couponCommandService;
     @MockitoBean Clock clock;
-
-    @DynamicPropertySource
-    static void properties(DynamicPropertyRegistry registry) {
-        registry.add("spring.datasource.url", MYSQL::getJdbcUrl);
-        registry.add("spring.datasource.username", MYSQL::getUsername);
-        registry.add("spring.datasource.password", MYSQL::getPassword);
-        registry.add("spring.data.redis.host", VALKEY::getHost);
-        registry.add("spring.data.redis.port", () -> VALKEY.getMappedPort(6379));
-        registry.add("jwt.secret", () -> "test-only-secret-not-used-anywhere-else-0123456789abcdef");
-    }
 
     @BeforeEach
     void setUpClock() {
@@ -263,8 +239,8 @@ class CouponIntegrationTest {
 
             mockMvc.perform(get(path).with(user(new CustomUserDetails(17L, Role.MEMBER))))
                     .andExpect(status().isInternalServerError())
-                    .andExpect(jsonPath("$.code").value("COUPON-019"))
-                    .andExpect(jsonPath("$.message").value("쿠폰 사용 정보를 조회할 수 없습니다."))
+                    .andExpect(jsonPath("$.code").value("COMMON-001"))
+                    .andExpect(jsonPath("$.message").value("서버 오류가 발생했습니다."))
                     .andExpect(jsonPath("$.data").isEmpty());
         }
 
@@ -685,8 +661,8 @@ class CouponIntegrationTest {
 
             mockMvc.perform(get(PATH).with(user(MEMBER)))
                     .andExpect(status().isInternalServerError())
-                    .andExpect(jsonPath("$.code").value("COUPON-019"))
-                    .andExpect(jsonPath("$.message").value("쿠폰 사용 정보를 조회할 수 없습니다."));
+                    .andExpect(jsonPath("$.code").value("COMMON-001"))
+                    .andExpect(jsonPath("$.message").value("서버 오류가 발생했습니다."));
 
             assertThat(findCoupon()).usingRecursiveComparison().isEqualTo(before);
         }
@@ -698,7 +674,7 @@ class CouponIntegrationTest {
             Map<String, Object> before = findCoupon();
 
             mockMvc.perform(get("/v1/coupons/" + id).with(user(new CustomUserDetails(18L, Role.MEMBER))))
-                    .andExpect(status().isForbidden()).andExpect(jsonPath("$.code").value("COUPON-015"));
+                    .andExpect(status().isForbidden()).andExpect(jsonPath("$.code").value("COUPON-011"));
 
             assertThat(findCoupon()).usingRecursiveComparison().isEqualTo(before);
         }
@@ -1044,7 +1020,7 @@ class CouponIntegrationTest {
             Map<String, Object> before = findCoupon();
 
             mockMvc.perform(delete("/v1/coupons/1001").with(user(MEMBER)))
-                    .andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("COUPON-011"));
+                    .andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("COUPON-012"));
 
             assertThat(findCoupon()).usingRecursiveComparison().isEqualTo(before);
             assertThat(jdbcTemplate.queryForObject("SELECT discount_amount FROM coupon_usage_history", Integer.class))
@@ -1059,7 +1035,7 @@ class CouponIntegrationTest {
             Map<String, Object> before = findCoupon();
 
             mockMvc.perform(delete("/v1/coupons/" + id).with(user(new CustomUserDetails(18L, Role.MEMBER))))
-                    .andExpect(status().isForbidden()).andExpect(jsonPath("$.code").value("COUPON-015"));
+                    .andExpect(status().isForbidden()).andExpect(jsonPath("$.code").value("COUPON-011"));
 
             assertThat(findCoupon()).usingRecursiveComparison().isEqualTo(before);
             assertThat(findIssuedCount()).isEqualTo(1);
@@ -1070,7 +1046,7 @@ class CouponIntegrationTest {
             jdbcTemplate.update("UPDATE member_coupon SET status = 'REMOVED' WHERE member_coupon_id = 1001");
 
             mockMvc.perform(delete("/v1/coupons/1001").with(user(new CustomUserDetails(18L, Role.MEMBER))))
-                    .andExpect(status().isForbidden()).andExpect(jsonPath("$.code").value("COUPON-015"));
+                    .andExpect(status().isForbidden()).andExpect(jsonPath("$.code").value("COUPON-011"));
         }
 
         @Test

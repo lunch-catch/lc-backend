@@ -2,6 +2,7 @@ package com.launchcatch.campaign.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.launchcatch.IntegrationTestSupport;
 import com.launchcatch.campaign.contract.AgeGroup;
 import com.launchcatch.campaign.contract.CampaignInfo;
 import com.launchcatch.campaign.contract.DiscountTargetType;
@@ -17,32 +18,13 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.test.context.DynamicPropertyRegistry;
-import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.transaction.annotation.Transactional;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
-import org.testcontainers.mysql.MySQLContainer;
-import org.testcontainers.utility.DockerImageName;
 
-@Testcontainers
 @SpringBootTest
 @Transactional
-class CampaignQueryServiceImplIntegrationTest {
+class CampaignQueryServiceImplIntegrationTest extends IntegrationTestSupport {
 
-    @Container
-    static final MySQLContainer MYSQL = new MySQLContainer(DockerImageName.parse("mysql:8.4"));
-
-    private static final String DUMMY_JWT_SECRET = "test-only-secret-not-used-anywhere-else-0123456789abcdef";
     private static final LocalDate BUSINESS_DATE = LocalDate.of(2026, 10, 13);
-
-    @DynamicPropertySource
-    static void datasource(DynamicPropertyRegistry registry) {
-        registry.add("spring.datasource.url", MYSQL::getJdbcUrl);
-        registry.add("spring.datasource.username", MYSQL::getUsername);
-        registry.add("spring.datasource.password", MYSQL::getPassword);
-        registry.add("jwt.secret", () -> DUMMY_JWT_SECRET);
-    }
 
     @Autowired
     private CampaignRepository campaignRepository;

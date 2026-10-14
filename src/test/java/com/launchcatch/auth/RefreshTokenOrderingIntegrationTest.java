@@ -2,32 +2,33 @@ package com.launchcatch.auth;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.launchcatch.IntegrationTestSupport;
+import com.launchcatch.auth.jwt.AccessTokenValidAfterRepository;
 import com.launchcatch.auth.opaque.RefreshTokenRepository;
 import com.launchcatch.auth.opaque.TokenHasher;
 import java.time.Duration;
+import java.time.LocalDateTime;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
 import org.springframework.data.redis.core.StringRedisTemplate;
-import org.testcontainers.containers.GenericContainer;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
 
-@Testcontainers
 @SpringBootTest(classes = RefreshTokenOrderingIntegrationTest.RedisConfig.class)
-class RefreshTokenOrderingIntegrationTest {
-    @Container
-    static final GenericContainer<?> VALKEY = new GenericContainer<>("valkey/valkey:9")
-            .withExposedPorts(6379);
+class RefreshTokenOrderingIntegrationTest extends IntegrationTestSupport {
 
     @Autowired
     private RefreshTokenRepository repository;
 
     @Autowired
     private StringRedisTemplate redis;
+
+    @Autowired
+    private AccessTokenValidAfterRepository cutoff;
 
     @Test
     void 역순_게시에도_최신_RT와_활성_포인터를_유지한다() {
@@ -65,6 +66,26 @@ class RefreshTokenOrderingIntegrationTest {
         assertThat(repository.findActiveHash(Role.OWNER, 704L)).contains(TokenHasher.sha256("first-login"));
     }
 
+    @ParameterizedTest
+    @EnumSource(Role.class)
+    void 늦게_도착한_이전_AT차단은_최신_차단을_되돌리지_않는다(Role role) {
+        LocalDateTime later = LocalDateTime.of(2026, 10, 10, 12, 0);
+        cutoff.invalidateBefore(role, 718L, later, Duration.ofMinutes(30));
+        cutoff.invalidateBefore(role, 718L, later.minusMinutes(1), Duration.ofMinutes(1));
+        assertThat(cutoff.isValidAfter(role, 718L, later.minusSeconds(1))).isFalse();
+        assertThat(cutoff.isValidAfter(role, 718L, later)).isTrue();
+        assertThat(redis.getExpire("accessTokenValidAfter:" + role.name() + ":718")).isGreaterThan(1700);
+    }
+
+    @ParameterizedTest
+    @EnumSource(Role.class)
+    void 같은_차단시각의_재시도도_기존_TTL을_줄이지_않는다(Role role) {
+        LocalDateTime now = LocalDateTime.of(2026, 10, 10, 12, 0);
+        cutoff.invalidateBefore(role, 719L, now, Duration.ofMinutes(30));
+        cutoff.invalidateBefore(role, 719L, now, Duration.ofMinutes(1));
+        assertThat(redis.getExpire("accessTokenValidAfter:" + role.name() + ":719")).isGreaterThan(1700);
+    }
+
     @Configuration(proxyBeanMethods = false)
     static class RedisConfig {
         @Bean
@@ -75,6 +96,11 @@ class RefreshTokenOrderingIntegrationTest {
         @Bean
         StringRedisTemplate redisTemplate(LettuceConnectionFactory connectionFactory) {
             return new StringRedisTemplate(connectionFactory);
+        }
+
+        @Bean
+        AccessTokenValidAfterRepository cutoff(StringRedisTemplate redisTemplate) {
+            return new AccessTokenValidAfterRepository(redisTemplate);
         }
 
         @Bean

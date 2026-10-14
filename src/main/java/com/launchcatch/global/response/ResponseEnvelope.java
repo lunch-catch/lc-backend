@@ -1,6 +1,7 @@
 package com.launchcatch.global.response;
 
 import com.launchcatch.global.exception.ErrorCode;
+import io.swagger.v3.oas.annotations.media.Schema;
 
 /*
  * 모든 응답이 통과하는 공통 봉투.
@@ -9,8 +10,11 @@ import com.launchcatch.global.exception.ErrorCode;
  * 성공 여부는 code 가 SUCCESS 인지로 판별한다. boolean 을 따로 두면 code 와 어긋난 응답이 나올 수 있다.
  */
 public record ResponseEnvelope<T>(
+        @Schema(description = "성공은 SUCCESS, 실패는 공통 또는 도메인 오류 코드입니다.")
         String code,
+        @Schema(description = "한국어 응답 메시지입니다.")
         String message,
+        @Schema(description = "응답 데이터. 오류 응답에서는 일반적으로 null입니다.")
         T data
 ) {
 

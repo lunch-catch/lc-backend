@@ -294,7 +294,7 @@ class CouponLookUpServiceTest {
 
             assertThatThrownBy(() -> service.getCoupons(MEMBER_ID, null, 20, null))
                     .isInstanceOfSatisfying(CouponException.class,
-                            exception -> assertThat(exception.getErrorCode()).isEqualTo(CouponErrorCode.EVENT_SNAPSHOT_MISSING));
+                            exception -> assertThat(exception.getErrorCode()).isEqualTo(CommonErrorCode.INTERNAL_ERROR));
         }
 
         @Test
@@ -305,7 +305,7 @@ class CouponLookUpServiceTest {
 
             assertThatThrownBy(() -> service.getCoupons(MEMBER_ID, null, 20, null))
                     .isInstanceOfSatisfying(CouponException.class,
-                            exception -> assertThat(exception.getErrorCode()).isEqualTo(CouponErrorCode.USAGE_HISTORY_MISSING));
+                            exception -> assertThat(exception.getErrorCode()).isEqualTo(CommonErrorCode.INTERNAL_ERROR));
         }
 
         @Test
@@ -563,9 +563,14 @@ class CouponLookUpServiceTest {
             assertThatThrownBy(() -> service.getDetail(MEMBER_ID, memberCouponId))
                     .isInstanceOfSatisfying(CouponException.class, exception -> {
                         assertThat(exception.getErrorCode()).isEqualTo(CouponErrorCode.COUPON_ACCESS_DENIED);
-                        assertThat(exception.getErrorCode().getCode()).isEqualTo("COUPON-015");
+                        assertThat(exception.getErrorCode().getCode()).isEqualTo("COUPON-011");
                         assertThat(exception.getErrorCode().getHttpStatus().value()).isEqualTo(403);
                     });
+            assertThat(diagnosticLogs.list).singleElement().satisfies(event -> {
+                assertThat(event.getLevel()).isEqualTo(Level.WARN);
+                assertThat(event.getFormattedMessage()).isEqualTo(
+                        "event=COUPON_DETAIL_FAILED memberId=17 memberCouponId=" + memberCouponId + " reason=COUPON-011");
+            });
         }
 
         @Test
@@ -579,6 +584,11 @@ class CouponLookUpServiceTest {
                         assertThat(exception.getErrorCode().getCode()).isEqualTo("COUPON-001");
                         assertThat(exception.getErrorCode().getHttpStatus().value()).isEqualTo(404);
                     });
+            assertThat(diagnosticLogs.list).singleElement().satisfies(event -> {
+                assertThat(event.getLevel()).isEqualTo(Level.WARN);
+                assertThat(event.getFormattedMessage()).isEqualTo(
+                        "event=COUPON_DETAIL_FAILED memberId=17 memberCouponId=1001 reason=COUPON-001");
+            });
         }
 
         @Test
@@ -589,15 +599,17 @@ class CouponLookUpServiceTest {
 
             assertThatThrownBy(() -> service.getDetail(MEMBER_ID, COUPON_ID))
                     .isInstanceOfSatisfying(CouponException.class, exception -> {
-                        assertThat(exception.getErrorCode()).isEqualTo(CouponErrorCode.EVENT_SNAPSHOT_MISSING);
-                        assertThat(exception.getErrorCode().getCode()).isEqualTo("COUPON-018");
+                        assertThat(exception.getErrorCode()).isEqualTo(CommonErrorCode.INTERNAL_ERROR);
+                        assertThat(exception.getErrorCode().getCode()).isEqualTo("COMMON-001");
                         assertThat(exception.getErrorCode().getHttpStatus().value()).isEqualTo(500);
                         assertThat(exception.getMessage()).isEqualTo(exception.getErrorCode().getMessage());
                     });
 
             assertThat(diagnosticLogs.list).singleElement().satisfies(event -> {
                 assertThat(event.getLevel()).isEqualTo(Level.ERROR);
-                assertThat(event.getFormattedMessage()).contains("COUPON-018", "memberCouponId=1001", "eventId=81");
+                assertThat(event.getFormattedMessage()).isEqualTo(
+                        "event=COUPON_DATA_INTEGRITY_FAILED reason=EVENT_SNAPSHOT_MISSING code=COMMON-001 memberCouponId=1001 eventId=81");
+                assertThat(event.getThrowableProxy()).isNull();
             });
         }
 
@@ -608,15 +620,17 @@ class CouponLookUpServiceTest {
 
             assertThatThrownBy(() -> service.getDetail(MEMBER_ID, COUPON_ID))
                     .isInstanceOfSatisfying(CouponException.class, exception -> {
-                        assertThat(exception.getErrorCode()).isEqualTo(CouponErrorCode.USAGE_HISTORY_MISSING);
-                        assertThat(exception.getErrorCode().getCode()).isEqualTo("COUPON-019");
+                        assertThat(exception.getErrorCode()).isEqualTo(CommonErrorCode.INTERNAL_ERROR);
+                        assertThat(exception.getErrorCode().getCode()).isEqualTo("COMMON-001");
                         assertThat(exception.getErrorCode().getHttpStatus().value()).isEqualTo(500);
                         assertThat(exception.getMessage()).isEqualTo(exception.getErrorCode().getMessage());
                     });
 
             assertThat(diagnosticLogs.list).singleElement().satisfies(event -> {
                 assertThat(event.getLevel()).isEqualTo(Level.ERROR);
-                assertThat(event.getFormattedMessage()).contains("COUPON-019", "memberCouponId=1001", "eventId=81");
+                assertThat(event.getFormattedMessage()).isEqualTo(
+                        "event=COUPON_DATA_INTEGRITY_FAILED reason=USAGE_HISTORY_MISSING code=COMMON-001 memberCouponId=1001 eventId=81");
+                assertThat(event.getThrowableProxy()).isNull();
             });
         }
 
