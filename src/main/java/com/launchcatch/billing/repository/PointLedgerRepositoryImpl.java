@@ -92,19 +92,8 @@ class PointLedgerRepositoryImpl implements PointLedgerRepositoryCustom {
                 .leftJoin(payment).on(payment.id.eq(pointLedger.paymentId))
                 .where(adminFilters(condition))
                 .orderBy(order)
-                .offset(condition.offset())
                 .limit(condition.limit())
                 .fetch();
-    }
-
-    @Override
-    public long countAdminLedger(AdminLedgerCondition condition) {
-        Long count = queryFactory
-                .select(pointLedger.count())
-                .from(pointLedger)
-                .where(adminFilters(condition))
-                .fetchOne();
-        return count == null ? 0L : count;
     }
 
     @Override
@@ -157,8 +146,22 @@ class PointLedgerRepositoryImpl implements PointLedgerRepositoryCustom {
                 condition.type() == null ? null : pointLedger.entryType.eq(condition.type()),
                 pointLedger.createdAt.goe(condition.fromInclusive()),
                 pointLedger.createdAt.lt(condition.toExclusive()),
-                campaignIdIs(condition.campaignId())
+                campaignIdIs(condition.campaignId()),
+                afterCursor(condition)
         };
+    }
+
+    private BooleanExpression afterCursor(AdminLedgerCondition condition) {
+        if (condition.cursorCreatedAt() == null || condition.cursorId() == null) {
+            return null;
+        }
+        BooleanExpression byTime = condition.ascending()
+                ? pointLedger.createdAt.gt(condition.cursorCreatedAt())
+                : pointLedger.createdAt.lt(condition.cursorCreatedAt());
+        BooleanExpression byId = condition.ascending()
+                ? pointLedger.id.gt(condition.cursorId())
+                : pointLedger.id.lt(condition.cursorId());
+        return byTime.or(pointLedger.createdAt.eq(condition.cursorCreatedAt()).and(byId));
     }
 
     private BooleanExpression createdAtFrom(OwnerLedgerCondition condition) {

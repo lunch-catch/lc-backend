@@ -22,7 +22,7 @@ public final class TokenHasher {
             byte[] hash = digest.digest(value.getBytes(StandardCharsets.UTF_8));
             return HexFormat.of().formatHex(hash);
         } catch (NoSuchAlgorithmException e) {
-            throw new IllegalStateException("SHA-256 알고리즘을 찾을 수 없음", e);
+            throw new IllegalStateException("토큰 해시 알고리즘을 찾을 수 없습니다.", e);
         }
     }
 }
