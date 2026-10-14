@@ -7,6 +7,7 @@ import com.launchcatch.campaign.contract.AgeGroup;
 import com.launchcatch.campaign.contract.StoreAudienceCell;
 import com.launchcatch.campaign.contract.TargetGender;
 import com.launchcatch.campaign.entity.StoreAudience;
+import com.launchcatch.campaign.entity.StoreAudienceGender;
 import com.launchcatch.campaign.repository.StoreAudienceRepository;
 import com.launchcatch.global.config.ClockConfig;
 import java.time.Clock;
@@ -119,5 +120,18 @@ class StoreAudienceUpdaterImplIntegrationTest {
         updater.overwrite(cells);
 
         assertThat(storeAudienceRepository.findAll()).hasSize(300);
+    }
+
+    @Test
+    void ALL로도_저장된다() {
+        when(clock.getZone()).thenReturn(ClockConfig.ZONE);
+        when(clock.instant()).thenReturn(Instant.parse("2026-10-13T00:00:00Z"));
+
+        updater.overwrite(List.of(
+                new StoreAudienceCell(1L, 1000, TargetGender.ALL, AgeGroup.AGE_20S, 10, LocalDate.of(2026, 10, 13))));
+
+        assertThat(storeAudienceRepository.findAll())
+                .extracting(StoreAudience::getGender)
+                .containsExactly(StoreAudienceGender.ALL);
     }
 }
