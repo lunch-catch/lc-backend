@@ -3,7 +3,7 @@ package com.launchcatch.owner.service;
 import com.launchcatch.auth.Role;
 import com.launchcatch.auth.exception.AuthErrorCode;
 import com.launchcatch.auth.exception.AuthException;
-import com.launchcatch.auth.jwt.AccessTokenValidAfterRepository;
+import com.launchcatch.owner.repository.OwnerAccessTokenVersionRepository;
 import com.launchcatch.auth.jwt.JwtTokenProvider;
 import com.launchcatch.auth.opaque.OpaqueTokenGenerator;
 import com.launchcatch.auth.opaque.RefreshTokenRepository;
@@ -33,18 +33,18 @@ public class OwnerTokenRefreshService {
     private final RefreshTokenRepository tokens;
     private final OwnerRefreshTokenRepository ownerTokens;
     private final JwtTokenProvider jwt;
-    private final AccessTokenValidAfterRepository cutoff;
+    private final OwnerAccessTokenVersionRepository accessTokenVersions;
     private final Clock clock;
     private final TransactionTemplate transactions;
 
     public OwnerTokenRefreshService(OwnerRepository owners, RefreshTokenRepository tokens, OwnerRefreshTokenRepository ownerTokens,
-                                   JwtTokenProvider jwt, AccessTokenValidAfterRepository cutoff,
+                                   JwtTokenProvider jwt, OwnerAccessTokenVersionRepository accessTokenVersions,
                                    Clock clock, PlatformTransactionManager transactionManager) {
         this.owners = owners;
         this.tokens = tokens;
         this.ownerTokens = ownerTokens;
         this.jwt = jwt;
-        this.cutoff = cutoff;
+        this.accessTokenVersions = accessTokenVersions;
         this.clock = clock;
         this.transactions = new TransactionTemplate(transactionManager);
         // DB 커밋 성공을 확인한 뒤 Redis에 게시하도록 DB 작업을 독립된 트랜잭션으로 처리한다.
@@ -76,7 +76,7 @@ public class OwnerTokenRefreshService {
                 Boolean tutorial = owner.getStatus() == OwnerStatus.ACTIVE ? owner.isTutorialViewed() : null;
                 OwnerTokenRefreshResult result = new OwnerTokenRefreshResult(
                         new OwnerLoginResponse(owner.getEmail(), Role.OWNER, owner.getStatus(), tutorial),
-                        jwt.createAccessToken(ownerId, Role.OWNER), newToken);
+                        jwt.createAccessToken(ownerId, Role.OWNER, OwnerAccessTokenPolicy.additionalClaims(owner.getRefreshTokenIssuanceVersion())), newToken);
                 return new Publication(result, owner.getRefreshTokenIssuanceVersion(), owner.getRefreshTokenExpiresAt());
             });
         } catch (DataAccessException | TransactionException e) {
@@ -184,7 +184,7 @@ public class OwnerTokenRefreshService {
 
     /*
      * RT 재사용을 감지하면 DB의 현재 RT를 폐기하고 순번을 증가시킨 뒤 Redis에도 반영한다.
-     * 이전 순번의 지연 게시를 차단하고, 폐기 기준 시각보다 먼저 발급된 AT도 거부하도록 설정한다.
+     * 이전 순번의 지연 게시를 차단하고, 폐기 순번 이하의 AT도 거부하도록 설정한다.
      */
     private void revokeReused(Long ownerId) {
         log.warn("event=OWNER_REFRESH_REUSE_DETECTED ownerId={}", ownerId);
@@ -194,14 +194,12 @@ public class OwnerTokenRefreshService {
                         String hash = owner.getRefreshTokenHash();
                         owner.clearRefreshToken();
                         owners.saveAndFlush(owner);
-                        // 같은 시각에 발급된 AT도 차단하도록 배타적 비교 기준보다 1ns 뒤를 사용한다.
-                        return new Revocation(hash, owner.getRefreshTokenIssuanceVersion(), now().plusNanos(1));
+                        return new Revocation(hash, owner.getRefreshTokenIssuanceVersion());
                     }).orElse(null));
             if (revocation != null) {
                 ownerTokens.revokeThroughVersion(ownerId, revocation.hash(), revocation.version());
             }
-            LocalDateTime revokedAt = revocation == null ? now().plusNanos(1) : revocation.revokedAt();
-            cutoff.invalidateBefore(Role.OWNER, ownerId, revokedAt, Duration.ofMillis(jwt.getAccessTokenValidityMs()));
+            accessTokenVersions.invalidateThroughVersion(ownerId, revocation == null ? 0L : revocation.version());
         } catch (DataAccessException | TransactionException e) {
             throw new AuthException(AuthErrorCode.REFRESH_TOKEN_STORE_UNAVAILABLE, e);
         }
@@ -222,5 +220,5 @@ public class OwnerTokenRefreshService {
 
     private record Candidate(Long ownerId, boolean fallback) { }
     private record Publication(OwnerTokenRefreshResult result, long version, LocalDateTime expiresAt) { }
-    private record Revocation(String hash, long version, LocalDateTime revokedAt) { }
+    private record Revocation(String hash, long version) { }
 }

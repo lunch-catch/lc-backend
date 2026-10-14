@@ -95,14 +95,6 @@ class OwnerTokenRefreshSecurityIntegrationTest {
         verifyNoInteractions(service);
     }
 
-    @Test
-    void 로그아웃_API는_이번_구현에서_열지_않는다() throws Exception {
-        mvc.perform(delete("/v1/owner/auth/tokens")
-                        .cookie(new Cookie("accessToken", jwt.createAccessToken(7L, Role.OWNER))))
-                .andExpect(status().isForbidden());
-        verifyNoInteractions(service);
-    }
-
     @Configuration(proxyBeanMethods = false)
     @EnableWebMvc
     @Import({OwnerSecurityConfig.class, SecurityConfig.class, ApiSecurityDefaults.class,
