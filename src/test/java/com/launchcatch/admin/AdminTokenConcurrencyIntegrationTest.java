@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
+import com.launchcatch.IntegrationTestSupport;
 import com.launchcatch.admin.entity.Admin;
 import com.launchcatch.admin.repository.AdminRepository;
 import com.launchcatch.admin.service.AdminTokenService;
@@ -25,20 +26,11 @@ import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
-import org.testcontainers.mysql.MySQLContainer;
-import org.testcontainers.utility.DockerImageName;
 
 // 실제 DB 행 잠금, 커밋과 Valkey Lua를 함께 검증한다.
-@Testcontainers
 @org.junit.jupiter.api.extension.ExtendWith(org.springframework.boot.test.system.OutputCaptureExtension.class)
 @SpringBootTest(properties="jwt.secret=test-only-secret-not-used-anywhere-else-0123456789abcdef")
-class AdminTokenConcurrencyIntegrationTest {
-    @Container static final MySQLContainer MYSQL = new MySQLContainer(DockerImageName.parse("mysql:8.4"));
-    @Container static final org.testcontainers.containers.GenericContainer<?> VALKEY =
-            new org.testcontainers.containers.GenericContainer<>(DockerImageName.parse("valkey/valkey:9"))
-                    .withExposedPorts(6379);
+class AdminTokenConcurrencyIntegrationTest extends IntegrationTestSupport {
     @DynamicPropertySource static void properties(DynamicPropertyRegistry registry) {
         registry.add("spring.datasource.url",MYSQL::getJdbcUrl);
         registry.add("spring.datasource.username",MYSQL::getUsername);
