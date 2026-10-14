@@ -30,8 +30,11 @@ class StoreRegistrationProgressTest {
         var progress = StoreRegistrationProgress.start(7L);
         progress.completeStep(0, StoreRegistrationStep.TERMS, null);
         progress.completeStep(1, StoreRegistrationStep.STORE, 9L);
-        progress.completeStep(2, StoreRegistrationStep.LOCATION, null);
-        progress.completeStep(3, StoreRegistrationStep.BUSINESS_VERIFICATION, null);
+        assertThat(progress.getResumeStep()).isEqualTo(StoreRegistrationStep.BUSINESS_VERIFICATION);
+        progress.completeStep(2, StoreRegistrationStep.BUSINESS_VERIFICATION, null);
+        assertThat(progress.getResumeStep()).isEqualTo(StoreRegistrationStep.LOCATION);
+        progress.completeStep(3, StoreRegistrationStep.LOCATION, null);
+        assertThat(progress.getResumeStep()).isEqualTo(StoreRegistrationStep.HOURS);
         progress.completeStep(4, StoreRegistrationStep.HOURS, null);
         progress.completeStep(5, StoreRegistrationStep.IMAGES, null);
         progress.completeStep(6, StoreRegistrationStep.MENU, null);
@@ -40,6 +43,19 @@ class StoreRegistrationProgressTest {
         assertThat(progress.getVersion()).isEqualTo(7);
         progress.completeStep(7, StoreRegistrationStep.MENU, null);
         assertThat(progress.getVersion()).isEqualTo(8);
+    }
+
+    @Test
+    void 사업자_검증을_건너뛰고_위치를_저장하지_못한다() {
+        var progress = StoreRegistrationProgress.start(7L);
+        progress.completeStep(0, StoreRegistrationStep.TERMS, null);
+        progress.completeStep(1, StoreRegistrationStep.STORE, 9L);
+        assertThatThrownBy(() -> progress.completeStep(2, StoreRegistrationStep.LOCATION, null))
+                .isInstanceOfSatisfying(StoreException.class, e ->
+                        assertThat(e.getErrorCode()).isEqualTo(StoreErrorCode.REGISTRATION_STEP_CONFLICT));
+        assertThat(progress.getResumeStep()).isEqualTo(StoreRegistrationStep.BUSINESS_VERIFICATION);
+        assertThat(progress.getVersion()).isEqualTo(2);
+        assertThat(progress.getStoreId()).isEqualTo(9L);
     }
 
     @Test

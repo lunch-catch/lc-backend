@@ -4,7 +4,7 @@ CREATE TABLE store_registration_progress (
     owner_id BIGINT NOT NULL COMMENT '가게 등록 중인 점주 ID',
     store_id BIGINT NULL COMMENT '등록 중인 가게 ID. 기본 정보 저장 전에는 NULL',
     resume_step VARCHAR(32) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_as_cs NOT NULL DEFAULT 'TERMS'
-        COMMENT '저장된 내용을 기준으로 이어서 진행할 단계(약관 저장 후 STORE, 가게 기본 정보 저장 후 LOCATION)',
+        COMMENT '저장된 내용을 기준으로 이어서 진행할 단계(약관 저장 후 STORE, 가게 기본 정보 저장 후 BUSINESS_VERIFICATION)',
     version BIGINT NOT NULL DEFAULT 0 COMMENT '동시 수정 확인 버전',
     created_at DATETIME(6) NOT NULL COMMENT '생성일시',
     updated_at DATETIME(6) NOT NULL COMMENT '수정일시',
@@ -13,7 +13,7 @@ CREATE TABLE store_registration_progress (
     UNIQUE KEY uk_store_registration_progress_store (store_id),
     CONSTRAINT fk_store_registration_progress_store FOREIGN KEY (store_id) REFERENCES store (store_id),
     CONSTRAINT chk_store_registration_progress_step CHECK (
-        resume_step IN ('TERMS', 'STORE', 'LOCATION', 'BUSINESS_VERIFICATION', 'HOURS', 'IMAGES', 'MENU')),
+        resume_step IN ('TERMS', 'STORE', 'BUSINESS_VERIFICATION', 'LOCATION', 'HOURS', 'IMAGES', 'MENU')),
     CONSTRAINT chk_store_registration_progress_store CHECK (
         (resume_step IN ('TERMS', 'STORE') AND store_id IS NULL)
         OR (resume_step NOT IN ('TERMS', 'STORE') AND store_id IS NOT NULL)),

@@ -63,7 +63,7 @@ class StoreRegistrationProgressServiceTest {
         when(repository.countDraftStoreOwnedBy(7L, 9L)).thenReturn(1L);
         var result = service.completeStep(7L, 1, StoreRegistrationStep.STORE, 9L);
         assertThat(result.storeId()).isEqualTo(9L);
-        assertThat(result.resumeStep()).isEqualTo(StoreRegistrationStep.LOCATION);
+        assertThat(result.resumeStep()).isEqualTo(StoreRegistrationStep.BUSINESS_VERIFICATION);
         assertThat(result.version()).isEqualTo(2);
     }
 

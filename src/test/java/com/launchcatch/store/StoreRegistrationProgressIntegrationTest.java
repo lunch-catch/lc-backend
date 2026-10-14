@@ -84,9 +84,17 @@ class StoreRegistrationProgressIntegrationTest extends IntegrationTestSupport {
             Long storeId = createStore(ownerId);
             var result = service.completeStep(ownerId, 1, StoreRegistrationStep.STORE, storeId);
             assertThat(result.storeId()).isEqualTo(storeId);
-            assertThat(result.resumeStep()).isEqualTo(StoreRegistrationStep.LOCATION);
+            assertThat(result.resumeStep()).isEqualTo(StoreRegistrationStep.BUSINESS_VERIFICATION);
         });
         assertThat(progresses.findByOwnerId(ownerId).orElseThrow().getVersion()).isEqualTo(2);
+        tx.executeWithoutResult(status -> {
+            var verified = service.completeStep(ownerId, 2, StoreRegistrationStep.BUSINESS_VERIFICATION, null);
+            assertThat(verified.resumeStep()).isEqualTo(StoreRegistrationStep.LOCATION);
+            assertThat(verified.version()).isEqualTo(3);
+        });
+        var restored = progresses.findByOwnerId(ownerId).orElseThrow();
+        assertThat(restored.getResumeStep()).isEqualTo(StoreRegistrationStep.LOCATION);
+        assertThat(restored.getVersion()).isEqualTo(3);
     }
 
     @Test

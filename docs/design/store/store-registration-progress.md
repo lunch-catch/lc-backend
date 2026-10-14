@@ -8,8 +8,11 @@ store 도메인이 진행 상태를 소유한다.
 
 ## 단계
 
-TERMS → STORE → LOCATION → BUSINESS_VERIFICATION → HOURS → IMAGES → MENU 순서다.
+TERMS → STORE → BUSINESS_VERIFICATION → LOCATION → HOURS → IMAGES → MENU 순서다.
 REVIEW와 COMPLETE는 저장하지 않는다.
+프론트는 STORE와 BUSINESS_VERIFICATION을 같은 기본 정보 화면에 연결한다.
+기본 정보 저장 후 사업자 검증에 성공하면 LOCATION으로 진행하며 검증 실패 시 BUSINESS_VERIFICATION을 유지한다.
+재접속 시 BUSINESS_VERIFICATION이면 기존 가게와 기본 정보를 복원하여 재검증하며 가게를 새로 생성하지 않는다.
 메뉴 저장 이후에도 재개 단계는 MENU이며 최종 등록 여부는 store.finalized를 사용한다.
 따라서 MENU라는 단계 값만으로 메뉴 입력 완료나 최종 등록 가능 여부를 판단하지 않는다.
 최종 등록 서비스는 약관과 모든 필수 업무 데이터를 다시 검증해야 한다.
@@ -39,7 +42,7 @@ REVIEW와 COMPLETE는 저장하지 않는다.
 - version은 JPA 자동 버전이 아니라 진행 상태 행의 비관적 쓰기 잠금 아래 명시적으로 증가시키는 요청 버전이다.
 - 입력값이 같거나 MENU에 머무는 저장도 버전을 증가시킨다.
 - 현재 단계의 완료만 지원하며 단계 건너뛰기와 이전 단계 수정은 거부한다.
-- 기본 정보 저장 성공 시 본인 소유의 finalized=false 가게를 연결하고 LOCATION으로 진행한다.
+- 기본 정보 저장 성공 시 본인 소유의 finalized=false 가게를 연결하고 BUSINESS_VERIFICATION으로 진행한다.
 - 약관 단계에서는 가게가 없어야 하며 가게는 기본 정보 완료 시에만 연결한다.
 - 실패 예외를 잡아 성공으로 바꾸지 않으며 입력값과 진행 상태를 함께 롤백한다.
 - 객체 스토리지 업로드와 외부 사업자 검증 호출은 DB 트랜잭션 밖에서 처리한다.
