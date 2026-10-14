@@ -4,6 +4,7 @@ import com.launchcatch.billing.entity.EntryType;
 import com.launchcatch.billing.entity.PointLedger;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.Optional;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -22,6 +23,9 @@ public interface PointLedgerRepository extends JpaRepository<PointLedger, Long>,
                and l.entryType <> com.launchcatch.billing.entity.EntryType.DEDUCT
             """)
     long sumBalance(@Param("ownerId") Long ownerId);
+
+    // 같은 점주가 같은 멱등 키로 남긴 조정이다(uk_point_ledger_adjust_idem)
+    Optional<PointLedger> findByOwnerIdAndIdempotencyKey(Long ownerId, String idempotencyKey);
 
     // 영업일로 귀속되는 RESERVE 와 RELEASE 의 합이다
     @Query("""
