@@ -83,16 +83,15 @@ public class StoreAudienceUpdaterImpl implements StoreAudienceUpdater {
     }
 
     /*
-     * TargetGender는 ALL을 허용하지만 store_audience.gender는 MALE/FEMALE/OTHER만 받는다.
-     * OTHER는 #162(회원 쪽 성별 enum)가 먼저 정해져야 StoreAudienceCell이 받을 수 있어
-     * 지금은 넘어올 수 없다. ALL이 들어오면 CHECK 제약 위반으로 터지기 전에 여기서 막는다.
+     * TargetGender와 StoreAudienceGender는 값 집합이 같지만(#218), 하나는 캠페인이 고르는
+     * 타겟이고 하나는 저장된 칸의 값이라 계층의 의미가 달라 별도 타입으로 둔다. 그래서
+     * 값이 같아도 변환이 필요하다.
      */
     private StoreAudienceGender toGenderColumn(TargetGender gender) {
         return switch (gender) {
             case MALE -> StoreAudienceGender.MALE;
             case FEMALE -> StoreAudienceGender.FEMALE;
-            case ALL -> throw new IllegalArgumentException(
-                    "ALL gender cannot be written to store_audience yet: #162 선행 필요");
+            case ALL -> StoreAudienceGender.ALL;
         };
     }
 }

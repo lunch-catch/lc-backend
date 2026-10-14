@@ -3,7 +3,7 @@ description: 이슈 하나를 받아 도메인 코드와 테스트를 구현한�
 argument-hint: [이슈번호] [async]
 ---
 
-`docs/workflow/LLM_기능_작업_플로우.md` 의 "구현" 절을 읽고 그 순서대로 진행한다.
+`docs/workflow/LLM_구현_플로우.md` 를 읽고 그 순서대로 진행한다.
 
 인자: $ARGUMENTS
 
