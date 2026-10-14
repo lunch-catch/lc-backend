@@ -27,7 +27,8 @@
 - LLM 호출은 트랜잭션 밖에서 한다(재시도 1회까지 포함해 최대 60초 걸릴 수 있어 트랜잭션을 길게 잡지 않는다)
 - `requestId` 로 재시도를 식별한다. 같은 `requestId` 가 이미 저장된 버전에 있으면 LLM 을 다시 부르지 않고 그 결과를 그대로 돌려준다
 - 관리자 1명당 생성·수정을 합쳐 분당 3회로 제한한다(`TemplateGenerationRateLimiter`). `requestId` 멱등성은 같은 요청의 네트워크 재시도만 막고, 관리자가 매번 새 `requestId`로 "다시 생성"을 반복 누르는 건 못 막는다. `AuthRateLimitFilter` 와 같은 고정 창 Redis 카운터(`auth_rate_limit.lua` 재사용)를 쓰되, 그쪽은 인증 전 IP 기준 필터인 반면 여기는 인증된 관리자 ID 기준으로 서비스 계층에서 센다. Redis 장애 시에는 세지 못할 뿐 막을 이유가 없어 통과시킨다(`장애_처리_설계_가이드.md`, 캐시 기본 처리)
-- 같은 `requestId`가 저장되기 전에(= LLM 호출이 끝나기 전에) 다시 들어오면 `TemplateVersionRepository.findByRequestId` 조회가 둘 다 비어 있어 속도 제한을 두 번 세게 된다(코드래빗 리뷰로 찾음). `requestId`별로 Redis `SETNX`(TTL 60초)로 "처음 보는 요청인지"를 먼저 표시해, 진행 중인 재시도는 횟수를 세지 않는다. TTL 60초는 이 LLM 호출의 실제 worst-case다(`BedrockConfig.API_CALL_TIMEOUT` 30초 x `BedrockTemplateHtmlGenerator`의 재시도 포함 최대 2회 호출)
+- 같은 `requestId`가 저장되기 전에(= LLM 호출이 끝나기 전에) 다시 들어오면 `TemplateVersionRepository.findByRequestId` 조회가 둘 다 비어 있어 속도 제한을 두 번 세게 된다(코드래빗 리뷰로 찾음). `requestId`별로 Redis `SETNX`(TTL 60초)로 "이미 처리 중인 requestId인지"를 먼저 표시한다. TTL 60초는 이 LLM 호출의 실제 worst-case다(`BedrockConfig.API_CALL_TIMEOUT` 30초 x `BedrockTemplateHtmlGenerator`의 재시도 포함 최대 2회 호출)
+- 이미 처리 중인 `requestId`면 속도 제한 횟수를 세지 않고 `POSTER-004`로 바로 거부한다. 조용히 통과시키면 호출한 쪽이 LLM을 또 불러 과금과 외부 호출이 중복된다(코드래빗 리뷰로 찾음). 저장 시점 `request_id` UNIQUE 제약은 중복 저장만 막을 뿐 중복 호출 자체는 못 막아서, 여기서 미리 막는 게 더 싸다
 - 표시는 제한을 통과한 요청에만 남긴다. `isOverLimit`이 거부로 판정되면 방금 세운 표시를 바로 지운다(코드래빗 리뷰로 찾음). 안 지우면 거부된 요청의 재시도가 "이미 표시 있음"으로 `isOverLimit` 자체를 건너뛰어 제한을 우회한다. 지우는 순간과 완전히 동시에 들어온 재시도까지 막는 건 아니지만, 그 틈은 저장 시점 DB UNIQUE로 거르는 기존 경쟁과 같은 급이라 별도 락을 걸지 않는다
 - 수정은 `findByIdForUpdate` 로 행 잠금을 잡고 버전 번호를 매긴다. 동시에 같은 템플릿을 수정하는 두 요청이 같은 번호를 매기는 경쟁을 막는다
 - 정화(허용 태그/속성만 남김) → 슬롯 검증(필수 슬롯 존재) → 구조 검증(수정 시, 이전 버전과 슬롯 태그가 같은지) 순으로 검사한다

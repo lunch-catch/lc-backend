@@ -102,14 +102,18 @@ class TemplateGenerationRateLimiterTest {
     }
 
     @Test
-    @DisplayName("같은 requestId가 이미 진행 중이면 호출 횟수를 세지 않는다")
-    void 같은_requestId가_진행_중이면_세지_않는다() {
+    @DisplayName("같은 requestId가 이미 진행 중이면 POSTER-004로 거부하고 호출 횟수를 세지 않는다")
+    void 같은_requestId가_진행_중이면_POSTER_004로_거부한다() {
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
         when(valueOperations.setIfAbsent(anyString(), anyString(), any(Duration.class))).thenReturn(false);
 
-        assertThatCode(() -> rateLimiter.checkLimit(1L, REQUEST_ID)).doesNotThrowAnyException();
+        assertThatThrownBy(() -> rateLimiter.checkLimit(1L, REQUEST_ID))
+                .isInstanceOf(CampaignException.class)
+                .extracting(e -> ((CampaignException) e).getErrorCode())
+                .isEqualTo(PosterErrorCode.GENERATION_TIMEOUT);
 
         verify(redisTemplate, never()).execute(any(RedisScript.class), anyList(), anyString());
+        verify(redisTemplate, never()).delete(anyString());
     }
 
     @Test

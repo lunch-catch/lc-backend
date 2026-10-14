@@ -29,14 +29,21 @@ import org.springframework.stereotype.Component;
  *
  * TemplateCreateService/TemplateReviseService는 저장된 버전이 있을 때만 requestId 재시도로
  * 본다. 같은 requestId가 저장되기 전에(= LLM 호출이 끝나기 전에) 다시 들어오면 그 조회가
- * 둘 다 비어 있어 checkLimit을 두 번 호출하게 된다(코드래빗 리뷰로 찾음). 그래서 이 requestId를
- * 처음 보는지를 먼저 SETNX로 표시해, 같은 요청이 진행 중일 때 들어온 재시도는 횟수를 세지
- * 않는다. TTL은 이 LLM 호출의 실제 worst-case(BedrockConfig.API_CALL_TIMEOUT 30초 x
+ * 둘 다 비어 있다. 이 경우를 SETNX로 "이미 처리 중인 requestId"로 표시해 가린다. TTL은
+ * 이 LLM 호출의 실제 worst-case(BedrockConfig.API_CALL_TIMEOUT 30초 x
  * BedrockTemplateHtmlGenerator.MAX_RETRIES+1회 = 60초)에 맞춘다.
+ *
+ * 이미 처리 중인 requestId면 속도 제한 횟수를 세지 않고(코드래빗 리뷰로 찾음) POSTER-004로
+ * 바로 거부한다. 조용히 통과시키면 호출한 쪽(TemplateCreateService/TemplateReviseService)이
+ * 그대로 LLM을 또 불러 과금과 외부 호출이 중복된다(코드래빗 리뷰로 다시 찾음). 저장 시점
+ * request_id UNIQUE 제약은 중복 저장만 막을 뿐 중복 호출 자체는 못 막아서, 여기서 미리 막는
+ * 것이 더 싸다. 클라이언트는 POSTER-004 응답을 받고 잠시 후 다시 요청하면 되고, 그때는
+ * 첫 요청이 저장을 끝냈을 가능성이 높아 requestId 재시도 조회로 바로 응답받는다.
  *
  * 표식은 제한을 통과한 요청에만 남긴다. isOverLimit 이 거부로 판정되면 방금 세운 표식을
  * 바로 지운다(코드래빗 리뷰로 찾음). 안 지우면 거부된 요청의 재시도가 "이미 표식 있음"으로
- * isOverLimit 자체를 건너뛰어 제한을 우회한다. 지우는 순간과 진짜 동시에 들어온 재시도까지
+ * isOverLimit 자체를 건너뛰고 POSTER-004 로만 응답받아, 그 재시도가 분당 3회 제한에
+ * 걸렸다는 걸 클라이언트가 알 수 없게 된다. 지우는 순간과 진짜 동시에 들어온 재시도까지
  * 막는 건 아니지만(SETNX와 거부 판정, 지움이 하나의 원자 연산은 아니다), 그 틈은 저장
  * 시점 DB UNIQUE 로 거르는 기존 경쟁(TemplateCreateService 의 request_id 충돌)과 같은
  * 급의 드문 경우라 별도 락을 걸지 않는다.
@@ -64,7 +71,7 @@ public class TemplateGenerationRateLimiter {
 
     public void checkLimit(Long adminId, String requestId) {
         if (!isFirstAttempt(requestId)) {
-            return;
+            throw new CampaignException(PosterErrorCode.GENERATION_TIMEOUT);
         }
         if (isOverLimit(adminId)) {
             clearInFlight(requestId);

@@ -1,7 +1,6 @@
 package com.launchcatch.campaign.template.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -168,19 +167,18 @@ class TemplateCreateServiceTest {
     }
 
     @Test
-    @DisplayName("저장되기 전에 같은 requestId 가 다시 들어오면 속도 제한 횟수를 세지 않는다")
-    void 저장되기_전_같은_requestId_재진입은_속도_제한을_세지_않는다() {
+    @DisplayName("저장되기 전에 같은 requestId 가 다시 들어오면 POSTER-004 로 거부하고 LLM 을 또 부르지 않는다")
+    void 저장되기_전_같은_requestId_재진입은_POSTER_004로_거부한다() {
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
         when(valueOperations.setIfAbsent(anyString(), anyString(), any(Duration.class))).thenReturn(false);
-        when(templateRepository.count()).thenReturn(0L);
-        when(templateQuotaRepository.tryReserve(TemplateCreateService.MAX_TEMPLATES)).thenReturn(1);
-        when(templateHtmlGenerator.generate("가을 느낌")).thenReturn(VALID_HTML);
-        when(templateRepository.saveAndFlush(any(Template.class)))
-                .thenAnswer(invocation -> invocation.getArgument(0));
 
-        assertThatCode(() -> service.create("가을 신메뉴", "가을 느낌", REQUEST_ID, ADMIN_ID))
-                .doesNotThrowAnyException();
+        assertThatThrownBy(() -> service.create("가을 신메뉴", "가을 느낌", REQUEST_ID, ADMIN_ID))
+                .isInstanceOf(CampaignException.class)
+                .extracting(e -> ((CampaignException) e).getErrorCode())
+                .isEqualTo(PosterErrorCode.GENERATION_TIMEOUT);
 
+        verifyNoInteractions(templateHtmlGenerator);
+        verify(templateRepository, never()).saveAndFlush(any());
         verify(redisTemplate, never()).execute(any(), any(), any());
     }
 

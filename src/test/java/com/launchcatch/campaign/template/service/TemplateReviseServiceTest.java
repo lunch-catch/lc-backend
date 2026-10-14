@@ -147,15 +147,17 @@ class TemplateReviseServiceTest {
     }
 
     @Test
-    @DisplayName("저장되기 전에 같은 requestId 가 다시 들어오면 속도 제한 횟수를 세지 않는다")
-    void 저장되기_전_같은_requestId_재진입은_속도_제한을_세지_않는다() {
+    @DisplayName("저장되기 전에 같은 requestId 가 다시 들어오면 POSTER-004 로 거부하고 LLM 을 또 부르지 않는다")
+    void 저장되기_전_같은_requestId_재진입은_POSTER_004로_거부한다() {
         when(valueOperations.setIfAbsent(anyString(), anyString(), any(Duration.class))).thenReturn(false);
-        when(templateHtmlGenerator.revise(PREVIOUS_HTML, "버튼 색 바꿔줘")).thenReturn(PREVIOUS_HTML);
-        when(templateRepository.saveAndFlush(any(Template.class)))
-                .thenAnswer(invocation -> invocation.getArgument(0));
 
-        service.revise(TEMPLATE_ID, "버튼 색 바꿔줘", REQUEST_ID, ADMIN_ID);
+        assertThatThrownBy(() -> service.revise(TEMPLATE_ID, "버튼 색 바꿔줘", REQUEST_ID, ADMIN_ID))
+                .isInstanceOf(CampaignException.class)
+                .extracting(e -> ((CampaignException) e).getErrorCode())
+                .isEqualTo(PosterErrorCode.GENERATION_TIMEOUT);
 
+        verify(templateHtmlGenerator, never()).revise(any(), any());
+        verify(templateRepository, never()).saveAndFlush(any());
         verify(redisTemplate, never()).execute(any(), any(), any());
     }
 
