@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -61,8 +62,12 @@ class SettlementMismatchQueryServiceTest {
         SettlementMismatchRow closed = new SettlementMismatchRow(56L, MismatchCheckType.PG_VS_CHARGE, 101L,
                 LocalDate.of(2026, 10, 2), 30000L, 0L, MismatchResolutionType.OVERCHARGE_REVERSAL, 302L,
                 LocalDateTime.of(2026, 10, 3, 0, 5), LocalDateTime.of(2026, 10, 3, 9, 0), 2L);
-        when(repository.search(any(), anyBoolean(), anyBoolean(), any(), any(), any()))
-                .thenAnswer(invocation -> new PageImpl<>(List.of(open, closed), invocation.getArgument(5), 42));
+        /*
+         * BeforeEach 의 스텁을 덮어쓴다.
+         * when(...) 으로 다시 걸면 그 안의 호출이 앞의 스텁을 null 페이지 요청으로 실행해 실패하므로 doAnswer 로 건다.
+         */
+        doAnswer(invocation -> new PageImpl<>(List.of(open, closed), invocation.getArgument(5), 42))
+                .when(repository).search(any(), anyBoolean(), anyBoolean(), any(), any(), any());
 
         PageResponse<SettlementMismatchItem> response = service.search(null, null, null, null, 0, 20, null, null);
 
