@@ -55,8 +55,8 @@ spring:
 #   refresh:
 #     # 관리자 1일
 #     admin-validity-ms: 86400000
-#     # 점주 14일
-#     owner-validity-ms: 1209600000
+#     # 점주 1일
+#     owner-validity-ms: 86400000
 #     # 사용자 14일. 자동 로그인을 체크하지 않으면 세션 쿠키로 내려 이 값을 쓰지 않는다(64행)
 #     member-validity-ms: 1209600000
 #   cookie:

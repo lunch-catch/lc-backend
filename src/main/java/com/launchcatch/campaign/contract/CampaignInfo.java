@@ -24,7 +24,9 @@ public record CampaignInfo(
         List<AgeGroup> targetAgeGroups,
         LocalDateTime createdAt,
         LocalDate newPriorityUntil,
-        LocalDateTime statusChangedAt
+        LocalDateTime statusChangedAt,
+        PauseReason pauseReason,
+        Long dailyBudget
 ) {
     public CampaignInfo {
         targetAgeGroups = List.copyOf(targetAgeGroups);
