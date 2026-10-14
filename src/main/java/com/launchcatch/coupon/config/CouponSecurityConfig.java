@@ -1,4 +1,4 @@
-package com.launchcatch.coupon;
+package com.launchcatch.coupon.config;
 
 import com.launchcatch.auth.ApiSecurityDefaults;
 import org.springframework.context.annotation.Bean;
@@ -12,9 +12,11 @@ import org.springframework.security.web.SecurityFilterChain;
 public class CouponSecurityConfig {
 
     private static final String OWNER_USAGE_PATH = "/v1/owner/stores/{storeId}/coupon-usages";
+    private static final String EVENT_STATUS_PATH = "/v1/coupon-events:getStatus";
 
     private static final String[] COUPON_PATHS = {
             "/v1/coupons/**",
+            EVENT_STATUS_PATH,
             OWNER_USAGE_PATH
     };
 
@@ -36,7 +38,7 @@ public class CouponSecurityConfig {
                         .requestMatchers(HttpMethod.DELETE, DETAIL_PATH)
                         .hasRole("MEMBER")
                         .requestMatchers(HttpMethod.GET, OWNER_USAGE_PATH).hasRole("OWNER")
-                        .requestMatchers(HttpMethod.POST, QR_PATH)
+                        .requestMatchers(HttpMethod.POST, QR_PATH, EVENT_STATUS_PATH)
                         .hasRole("MEMBER")
                         .anyRequest().denyAll())
                 .build();
