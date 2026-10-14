@@ -152,8 +152,8 @@ public class CouponLookUpService {
     public CursorPageResponse<CouponUsageHistoryResponse> getUsages(
             Long ownerId, Long storeId, LocalDate from, LocalDate to, int pageSize, String pageToken) {
         validateActiveOwner(ownerId);
-        // TODO: store 공개 contract가 제공되면 validateRequest에 매장 존재 검증을 포함시킨다.
-        validateRequest(storeId, from, to, pageSize);
+        // TODO: store 공개 contract가 제공되면 validate에 매장 존재 검증을 추가시킨다.
+        validateDateRange(from, to);
         DateRange dateRange = parseDateRange(from, to);
         UsageCursor cursor = parsePageToken(pageToken, storeId, from, to);
 
@@ -316,11 +316,9 @@ public class CouponLookUpService {
                 lastCoupon.getId(), lastCoupon.getCreatedAt() + "|" + listFilter.name()));
     }
 
-    // 조회 범위와 페이지 크기를 검증하며 조회 기간의 길이는 제한하지 않는다.
-    private void validateRequest(Long storeId, LocalDate from, LocalDate to, int pageSize) {
-        if (storeId == null || storeId <= 0 || from == null || to == null || from.isAfter(to)
-                || to.equals(LocalDate.MAX)
-                || pageSize < 1 || pageSize > 100) {
+    // 조회 범위 검증하며 조회 기간의 길이는 제한하지 않는다.
+    private void validateDateRange(LocalDate from, LocalDate to) {
+        if (from.isAfter(to) || to.equals(LocalDate.MAX)) {
             throw new CouponException(CommonErrorCode.INVALID_INPUT);
         }
     }
