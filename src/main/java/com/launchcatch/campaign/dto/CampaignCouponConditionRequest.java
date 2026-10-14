@@ -4,6 +4,7 @@ import com.launchcatch.campaign.contract.DiscountTargetType;
 import com.launchcatch.campaign.contract.DiscountType;
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Positive;
 import jakarta.validation.constraints.Size;
 import java.time.LocalTime;
 
@@ -15,7 +16,7 @@ import java.time.LocalTime;
  */
 public record CampaignCouponConditionRequest(
         @Schema(description = "점주의 가게 ID입니다.", example = "17", requiredMode = Schema.RequiredMode.REQUIRED)
-        @NotNull Long storeId,
+        @NotNull @Positive Long storeId,
 
         @Schema(description = "할인 대상입니다.", example = "MENU", requiredMode = Schema.RequiredMode.REQUIRED)
         @NotNull DiscountTargetType discountTargetType,
@@ -28,7 +29,7 @@ public record CampaignCouponConditionRequest(
         @NotNull Integer discountValue,
 
         @Schema(description = "discountTargetType이 MENU일 때만 필요한 대상 메뉴 ID입니다.", example = "42")
-        Long targetMenuId,
+        @Positive Long targetMenuId,
 
         @Schema(description = "발급 수량입니다. 1 이상이어야 합니다.", example = "100",
                 requiredMode = Schema.RequiredMode.REQUIRED)
