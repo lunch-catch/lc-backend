@@ -845,23 +845,16 @@ class CouponLookUpServiceTest {
                             e -> assertThat(e.getErrorCode()).isEqualTo(CommonErrorCode.INVALID_INPUT));
         }
 
-        static Stream<Arguments> invalidRequests() {
+        static Stream<Arguments> invalidDateRanges() {
             return Stream.of(
-                    Arguments.of(null, FROM, TO, 20),
-                    Arguments.of(0L, FROM, TO, 20),
-                    Arguments.of(-1L, FROM, TO, 20),
-                    Arguments.of(10L, null, TO, 20),
-                    Arguments.of(10L, FROM, null, 20),
-                    Arguments.of(10L, TO, FROM, 20),
-                    Arguments.of(10L, FROM, TO, 0),
-                    Arguments.of(10L, FROM, TO, 101),
-                    Arguments.of(10L, FROM, LocalDate.MAX, 20));
+                    Arguments.of(TO, FROM),
+                    Arguments.of(FROM, LocalDate.MAX));
         }
 
         @ParameterizedTest
-        @MethodSource("invalidRequests")
-        void 잘못된_조회_범위와_페이지_크기를_거절한다(Long storeId, LocalDate from, LocalDate to, int pageSize) {
-            assertThatThrownBy(() -> service.getUsages(17L, storeId, from, to, pageSize, null))
+        @MethodSource("invalidDateRanges")
+        void 잘못된_조회_기간을_거절한다(LocalDate from, LocalDate to) {
+            assertThatThrownBy(() -> service.getUsages(17L, 10L, from, to, 20, null))
                     .isInstanceOfSatisfying(CouponException.class,
                             e -> assertThat(e.getErrorCode()).isEqualTo(CommonErrorCode.INVALID_INPUT));
         }

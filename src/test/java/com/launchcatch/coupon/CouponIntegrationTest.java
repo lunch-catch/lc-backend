@@ -232,6 +232,32 @@ class CouponIntegrationTest extends IntegrationTestSupport {
                     .andExpect(jsonPath("$.data").isEmpty());
         }
 
+        @ParameterizedTest
+        @CsvSource({
+                "0, 2026-09-01, 2026-09-30, 20, COMMON-002",
+                "-1, 2026-09-01, 2026-09-30, 20, COMMON-002",
+                "invalid, 2026-09-01, 2026-09-30, 20, COMMON-003",
+                "10, , 2026-09-30, 20, COMMON-003",
+                "10, 2026-09-01, , 20, COMMON-003",
+                "10, 2026-09-01, 2026-09-30, 0, COMMON-002",
+                "10, 2026-09-01, 2026-09-30, 101, COMMON-002"
+        })
+        void 잘못된_매장_ID와_필수_날짜_및_페이지_크기는_HTTP에서_거절한다(
+                String storeId, String from, String to, String pageSize, String code) throws Exception {
+            var request = get("/v1/owner/stores/{storeId}/coupon-usages", storeId)
+                    .param("pageSize", pageSize).with(user(new CustomUserDetails(17L, Role.OWNER)));
+            if (from != null) {
+                request.param("from", from);
+            }
+            if (to != null) {
+                request.param("to", to);
+            }
+
+            mockMvc.perform(request)
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.code").value(code));
+        }
+
         @Test
         void 조회는_쿠폰과_사용_이력_및_재고와_발급_횟수를_변경하지_않는다() {
             var coupons = jdbcTemplate.queryForList("SELECT * FROM member_coupon ORDER BY member_coupon_id");
