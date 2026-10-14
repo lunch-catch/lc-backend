@@ -73,7 +73,7 @@ public class MemberCoupon extends BaseTimeEntity {
      */
     public boolean remove() {
         if (status == MemberCouponStatus.USED) {
-            throw new CouponException(CouponErrorCode.USED_COUPON_NOT_REMOVABLE);
+            throw new CouponException(CouponErrorCode.COUPON_ALREADY_USED);
         }
         if (status == MemberCouponStatus.REMOVED) {
             return false;
