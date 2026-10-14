@@ -11,7 +11,7 @@ import org.springframework.data.repository.query.Param;
 
 public interface MemberCouponRepository extends JpaRepository<MemberCoupon, Long>, MemberCouponRepositoryCustom {
 
-    // 본인 쿠폰을 잠가 같은 쿠폰의 삭제 요청을 직렬화한다.
+    // 본인 쿠폰을 잠가 같은 쿠폰의 삭제와 QR 갱신, 만료 저장을 직렬화한다.
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     Optional<MemberCoupon> findByIdAndMemberId(Long id, Long memberId);
 
