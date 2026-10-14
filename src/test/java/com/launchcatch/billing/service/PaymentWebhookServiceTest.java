@@ -7,11 +7,13 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import com.launchcatch.billing.cache.WebhookInquiryGuard;
 import com.launchcatch.billing.client.PaymentGateway;
 import com.launchcatch.billing.client.PaymentGatewayInquiryResult;
 import com.launchcatch.billing.client.PaymentGatewayInquiryResult.Status;
@@ -26,6 +28,7 @@ import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.sql.SQLException;
 import java.time.LocalDateTime;
 import java.util.Optional;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InOrder;
@@ -50,11 +53,18 @@ class PaymentWebhookServiceTest {
     @Mock PaymentRepository paymentRepository;
     @Mock PaymentResultService resultService;
     @Mock PaymentGateway paymentGateway;
+    @Mock WebhookInquiryGuard inquiryGuard;
 
     private final MeterRegistry meterRegistry = new SimpleMeterRegistry();
 
+    @BeforeEach
+    void openGuard() {
+        lenient().when(inquiryGuard.tryAcquire(anyString())).thenReturn(true);
+    }
+
     private PaymentWebhookService service() {
-        return new PaymentWebhookService(paymentRepository, resultService, paymentGateway, meterRegistry);
+        return new PaymentWebhookService(paymentRepository, resultService, paymentGateway, inquiryGuard,
+                meterRegistry);
     }
 
     private PaymentWebhookRequest request() {
@@ -124,21 +134,6 @@ class PaymentWebhookServiceTest {
     }
 
     @Test
-    void 이미_실패하거나_취소된_결제는_결제대행사를_부르지_않는다() {
-        Payment failed = attempted();
-        failed.fail("거절");
-        stored(failed);
-        service().handle(request());
-
-        Payment cancelled = attempted();
-        cancelled.cancel(APPROVED_AT, null);
-        stored(cancelled);
-        service().handle(request());
-
-        verifyNoInteractions(paymentGateway, resultService);
-    }
-
-    @Test
     void 조회_결과의_금액이나_주문_번호가_다르면_무시한다() {
         stored(unknown());
         when(paymentGateway.inquireByPaymentKey(PAYMENT_KEY)).thenReturn(new PaymentGatewayInquiryResult(
@@ -184,17 +179,6 @@ class PaymentWebhookServiceTest {
         InOrder order = inOrder(resultService);
         order.verify(resultService).assignPgTid(PAYMENT_ID, PAYMENT_KEY);
         order.verify(resultService).approve(PAYMENT_ID, APPROVED_AT);
-    }
-
-    @Test
-    void 이미_승인된_결제는_다시_충전하지_않는다() {
-        stored(approved());
-        inquiry(Status.APPROVED);
-
-        service().handle(request());
-
-        verifyNoInteractions(resultService);
-        assertThat(counted("ignored")).isEqualTo(1.0);
     }
 
     @Test
@@ -276,16 +260,6 @@ class PaymentWebhookServiceTest {
     }
 
     @Test
-    void 승인된_결제의_실패_조회는_무시한다() {
-        stored(approved());
-        inquiry(Status.FAILED);
-
-        service().handle(request());
-
-        verifyNoInteractions(resultService);
-    }
-
-    @Test
     void 만료로_조회되면_충전_없이_취소로_닫는다() {
         stored(requested());
         inquiry(Status.EXPIRED);
@@ -294,27 +268,6 @@ class PaymentWebhookServiceTest {
 
         verify(resultService).cancel(PAYMENT_ID);
         assertThat(counted("cancelled")).isEqualTo(1.0);
-    }
-
-    @Test
-    void 승인된_결제의_만료_조회는_무시한다() {
-        stored(approved());
-        inquiry(Status.EXPIRED);
-
-        service().handle(request());
-
-        verifyNoInteractions(resultService);
-    }
-
-    @Test
-    void 승인_뒤_취소됐으면_충전을_되돌리지_않고_기록만_남긴다() {
-        stored(approved());
-        inquiry(Status.CANCELED);
-
-        service().handle(request());
-
-        verifyNoInteractions(resultService);
-        assertThat(counted("ignored")).isEqualTo(1.0);
     }
 
     @Test
@@ -347,5 +300,44 @@ class PaymentWebhookServiceTest {
         assertThatThrownBy(() -> service().handle(request())).isInstanceOf(PgUnknownException.class);
 
         verifyNoInteractions(resultService);
+    }
+
+    @Test
+    void 이미_확정된_결제는_승인이든_아니든_결제대행사를_부르지_않는다() {
+        stored(approved());
+        service().handle(request());
+
+        Payment failed = attempted();
+        failed.fail("거절");
+        stored(failed);
+        service().handle(request());
+
+        Payment cancelled = attempted();
+        cancelled.cancel(APPROVED_AT, null);
+        stored(cancelled);
+        service().handle(request());
+
+        verifyNoInteractions(paymentGateway, resultService);
+        assertThat(counted("ignored")).isEqualTo(3.0);
+    }
+
+    @Test
+    void 같은_주문의_조회가_잠깐_사이에_있었으면_결제대행사를_부르지_않고_재전송을_받는다() {
+        stored(unknown());
+        when(inquiryGuard.tryAcquire(ORDER_ID)).thenReturn(false);
+
+        PaymentWebhookService.Result result = service().handle(request());
+
+        assertThat(result).isEqualTo(PaymentWebhookService.Result.THROTTLED);
+        verifyNoInteractions(paymentGateway, resultService);
+        assertThat(counted("throttled")).isEqualTo(1.0);
+    }
+
+    @Test
+    void 처리한_웹훅은_HANDLED다() {
+        stored(unknown());
+        inquiry(Status.PENDING);
+
+        assertThat(service().handle(request())).isEqualTo(PaymentWebhookService.Result.HANDLED);
     }
 }

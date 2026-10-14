@@ -3,6 +3,7 @@ package com.launchcatch.billing.controller;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 import com.launchcatch.billing.dto.PaymentWebhookRequest;
 import com.launchcatch.billing.service.PaymentWebhookService;
@@ -21,10 +22,21 @@ class PaymentWebhookControllerTest {
         PaymentWebhookRequest request = new PaymentWebhookRequest("PAYMENT_STATUS_CHANGED",
                 new PaymentWebhookRequest.Data("tgen_1", "ord_1"));
 
+        when(webhookService.handle(request)).thenReturn(PaymentWebhookService.Result.HANDLED);
+
         ResponseEntity<Void> response = controller.receive(request);
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
         verify(webhookService).handle(request);
+    }
+
+    @Test
+    void 조회가_막힌_웹훅은_429로_답해_결제대행사가_다시_보내게_한다() {
+        PaymentWebhookRequest request = new PaymentWebhookRequest("PAYMENT_STATUS_CHANGED",
+                new PaymentWebhookRequest.Data("tgen_1", "ord_1"));
+        when(webhookService.handle(request)).thenReturn(PaymentWebhookService.Result.THROTTLED);
+
+        assertThat(controller.receive(request).getStatusCode()).isEqualTo(HttpStatus.TOO_MANY_REQUESTS);
     }
 
     @Test
