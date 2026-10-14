@@ -14,7 +14,8 @@ public record AdminLedgerCondition(
         LocalDateTime toExclusive,
         Long campaignId,
         boolean ascending,
-        long offset,
+        LocalDateTime cursorCreatedAt,
+        Long cursorId,
         int limit
 ) {
 }

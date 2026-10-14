@@ -116,7 +116,7 @@ class MemberProfileServiceTest {
         assertThatThrownBy(() -> memberProfileService.updateMyProfile(1L,
                 new MemberUpdateRequest("새닉네임", null, null)))
                 .isInstanceOf(IllegalStateException.class)
-                .hasMessage("authenticated member does not exist");
+                .hasMessage("인증된 회원 정보를 찾을 수 없습니다.");
     }
 
     @Test
@@ -208,7 +208,7 @@ class MemberProfileServiceTest {
         assertThatThrownBy(() -> memberProfileService.updateMyProfile(1L,
                 new MemberUpdateRequest(null, null, null)))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("at least one field must be provided");
+                .hasMessage("수정할 항목을 하나 이상 입력해 주세요.");
     }
 
     /*
@@ -222,7 +222,7 @@ class MemberProfileServiceTest {
 
         assertThatThrownBy(() -> memberProfileService.getMyProfile(1L))
                 .isInstanceOf(IllegalStateException.class)
-                .hasMessage("authenticated member does not exist");
+                .hasMessage("인증된 회원 정보를 찾을 수 없습니다.");
     }
 
     private void suspend(Member member) throws Exception {

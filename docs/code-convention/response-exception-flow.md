@@ -105,11 +105,19 @@ ResponseEntity<ResponseEnvelope<ProductResponse>> findProduct(@PathVariable Long
 }
 ```
 
-목록이면 `data` 자리에 `PageResponse` 가 들어간다.
+목록이면 `data` 자리에 조회 방식에 맞는 응답을 넣는다. 페이지 번호 방식은 `PageResponse`, 커서 방식은 `CursorPageResponse`를 사용한다.
 
 ```java
 ResponseEnvelope.success(PageResponse.from(productService.findAll(pageable)))
 ```
+
+커서 방식은 다음처럼 응답을 만든다. 마지막 페이지는 `nextPageToken`을 `null`로 반환한다.
+
+```java
+ResponseEnvelope.success(CursorPageResponse.of(items, nextPageToken))
+```
+
+요청 파라미터와 크기는 [API 공통 규약](../api-spec/api-spec.md#목록과-페이지네이션)과 각 API의 명세를 따른다.
 
 돌려줄 값이 없으면 인자 없는 `success()` 를 쓴다.
 
@@ -330,7 +338,6 @@ try {
 
 ## 8. 아직 없는 것
 
-- **`PageResponse` 는 오프셋 방식 하나뿐이다.** 무한 스크롤이 필요해지면 커서 방식 응답을 따로 만든다. 두 방식은 응답 모양이 달라 한 레코드로 합칠 수 없다.
 - **검증 실패의 필드별 상세를 돌려주는 경로가 없다.** 필요해지면 전용 응답 타입을 설계해서 `fail(ErrorCode, T)` 로 내보낸다.
 - **`common` 과 `config` 를 겨냥한 앵커 규칙이 없다.** `anchors.yml` 의 트리거가 전부 `**/domain/...` 이라, 이 문서가 설명하는 코드는 로컬 검증에서 `EJ` 항목만 판정된다.
 
