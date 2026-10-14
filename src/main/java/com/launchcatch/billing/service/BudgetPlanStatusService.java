@@ -2,7 +2,7 @@ package com.launchcatch.billing.service;
 
 import com.launchcatch.billing.dto.BudgetPlanStatusChanged;
 import com.launchcatch.billing.repository.BudgetDailyPlanRepository;
-import com.launchcatch.billing.repository.DailySpendHashRepository;
+import com.launchcatch.billing.cache.DailySpendCounter;
 import com.launchcatch.campaign.contract.CampaignStatusChangedEvent;
 import java.time.Clock;
 import java.time.LocalDateTime;
@@ -28,7 +28,7 @@ import org.springframework.transaction.annotation.Transactional;
 public class BudgetPlanStatusService {
 
     private final BudgetDailyPlanRepository budgetDailyPlanRepository;
-    private final DailySpendHashRepository dailySpendHashRepository;
+    private final DailySpendCounter spendCounter;
     private final ApplicationEventPublisher eventPublisher;
     private final Clock clock;
 
@@ -56,7 +56,7 @@ public class BudgetPlanStatusService {
      */
     public void mirror(BudgetPlanStatusChanged changed) {
         try {
-            dailySpendHashRepository.applyStatus(changed.businessDate(), changed.campaignId(),
+            spendCounter.applyStatus(changed.businessDate(), changed.campaignId(),
                     changed.paused(), changed.changedAt());
         } catch (DataAccessException e) {
             log.warn("event=BUDGET_STATUS_MIRROR_FAILED campaignId={} businessDate={} paused={}",
@@ -67,7 +67,7 @@ public class BudgetPlanStatusService {
 
     private void evict(BudgetPlanStatusChanged changed) {
         try {
-            dailySpendHashRepository.evict(changed.businessDate(), changed.campaignId());
+            spendCounter.evict(changed.businessDate(), changed.campaignId());
         } catch (DataAccessException e) {
             log.error("event=BUDGET_STATUS_HASH_EVICT_FAILED campaignId={} businessDate={} paused={}",
                     changed.campaignId(), changed.businessDate(), changed.paused(), e);

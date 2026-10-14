@@ -10,8 +10,12 @@ import com.launchcatch.billing.repository.AdminLedgerRow;
 import com.launchcatch.billing.repository.PointLedgerRepository;
 import com.launchcatch.global.config.ClockConfig;
 import com.launchcatch.global.exception.CommonErrorCode;
-import com.launchcatch.global.response.PageResponse;
+import com.launchcatch.global.response.CursorPageResponse;
+import com.launchcatch.global.response.PageCursor;
+import com.launchcatch.global.response.PageTokens;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeParseException;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -32,32 +36,54 @@ import org.springframework.transaction.annotation.Transactional;
 public class AdminPointLedgerService {
 
     private static final int MAX_DAYS = 31;
-    private static final int DEFAULT_PAGE_SIZE = 50;
-    private static final int MAX_PAGE_SIZE = 200;
+    private static final int DEFAULT_PAGE_SIZE = 20;
+    private static final int MAX_PAGE_SIZE = 100;
 
     private final PointLedgerRepository pointLedgerRepository;
 
-    public PageResponse<AdminLedgerItem> search(Long ownerId, EntryType type, LocalDate from, LocalDate to,
-                                                Long campaignId, int page, int size, String sortDir) {
+    public CursorPageResponse<AdminLedgerItem> search(Long ownerId, EntryType type, LocalDate from, LocalDate to,
+                                                      Long campaignId, String pageToken, int pageSize, String sortDir) {
         DateRange range = DateRange.of(from, to, MAX_DAYS);
-        if (ownerId == null || page < 0) {
+        if (ownerId == null) {
             throw new BillingException(CommonErrorCode.INVALID_INPUT);
         }
-        int pageSize = size < 1 ? DEFAULT_PAGE_SIZE : Math.min(size, MAX_PAGE_SIZE);
+        int size = pageSize < 1 ? DEFAULT_PAGE_SIZE : Math.min(pageSize, MAX_PAGE_SIZE);
+        PageCursor cursor = PageTokens.decode(pageToken);
+        LocalDateTime cursorCreatedAt = cursorCreatedAt(cursor);
+        Long cursorId = cursorCreatedAt == null ? null : cursor.id();
         AdminLedgerCondition condition = new AdminLedgerCondition(ownerId, type, range.startInclusive(),
-                range.endExclusive(), campaignId, isAscending(sortDir), (long) page * pageSize, pageSize);
+                range.endExclusive(), campaignId, isAscending(sortDir), cursorCreatedAt, cursorId, size + 1);
 
-        long total = pointLedgerRepository.countAdminLedger(condition);
-        if (total == 0) {
-            return PageResponse.of(List.of(), page, pageSize, 0);
+        List<AdminLedgerRow> rows = pointLedgerRepository.findAdminLedger(condition);
+        if (rows.isEmpty()) {
+            return CursorPageResponse.of(List.of(), null);
         }
+        boolean hasNext = rows.size() > size;
+        List<AdminLedgerRow> page = hasNext ? rows.subList(0, size) : rows;
+        String nextPageToken = hasNext ? nextToken(page.get(page.size() - 1)) : null;
         BalanceTimeline timeline = new BalanceTimeline(
                 pointLedgerRepository.sumBalanceBefore(ownerId, range.startInclusive()),
                 pointLedgerRepository.findBalanceSteps(ownerId, range.startInclusive(), range.endExclusive()));
-        List<AdminLedgerItem> items = pointLedgerRepository.findAdminLedger(condition).stream()
+        List<AdminLedgerItem> items = page.stream()
                 .map(row -> toItem(row, timeline))
                 .toList();
-        return PageResponse.of(items, page, pageSize, total);
+        return CursorPageResponse.of(items, nextPageToken);
+    }
+
+    // 토큰의 기록 시각을 읽지 못하면 첫 페이지로 조회한다
+    private LocalDateTime cursorCreatedAt(PageCursor cursor) {
+        if (cursor == null || cursor.sortValue() == null) {
+            return null;
+        }
+        try {
+            return LocalDateTime.parse(cursor.sortValue());
+        } catch (DateTimeParseException e) {
+            return null;
+        }
+    }
+
+    private String nextToken(AdminLedgerRow last) {
+        return PageTokens.encode(new PageCursor(last.id(), last.createdAt().toString()));
     }
 
     // 정렬 기준은 기록 시각과 ID 로 고정이라 방향만 받는다. 모르는 값은 거절한다

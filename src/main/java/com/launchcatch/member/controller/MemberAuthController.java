@@ -61,7 +61,8 @@ public class MemberAuthController {
             description = "카카오 로그인 화면으로 이동할 URL을 발급합니다. 서버는 일회용 state와 OIDC nonce를 Redis에 5분간 저장하고 URL에 포함합니다. 프론트는 authorizationUrl에서 state를 추출해 현재 탭의 sessionStorage에 저장한 뒤 URL 전체로 이동합니다. reauth=true는 탈퇴 재인증용이며 카카오에 prompt=login을 요청합니다."
     )
     @ApiResponses({
-            @ApiResponse(responseCode = "200", description = "카카오 인가 URL 발급 성공")
+            @ApiResponse(responseCode = "200", description = "카카오 인가 URL 발급 성공", useReturnTypeSchema = true, content = @Content(mediaType = "application/json")),
+            @ApiResponse(responseCode = "400", description = "COMMON-003: 재인증 여부의 형식이 올바르지 않습니다.", content = @Content(mediaType = "application/json", schema = @Schema(implementation = ResponseEnvelope.class)))
     })
     public ResponseEnvelope<KakaoAuthorizeResponse> authorize(
             @Parameter(
@@ -93,11 +94,11 @@ public class MemberAuthController {
             )
     )
     @ApiResponses({
-            @ApiResponse(responseCode = "200", description = "로그인 또는 가입 성공. accessToken과 refreshToken 쿠키가 설정됩니다."),
-            @ApiResponse(responseCode = "400", description = "COMMON-002: authorizationCode 또는 state가 비어 있습니다."),
-            @ApiResponse(responseCode = "401", description = "AUTH-007: state가 만료 또는 재사용되었거나 카카오 인가 코드 또는 ID Token 검증에 실패했습니다."),
-            @ApiResponse(responseCode = "403", description = "MEMBER-003: 정지 이력이 있는 회원번호는 재가입할 수 없습니다."),
-            @ApiResponse(responseCode = "503", description = "AUTH-002: DB Refresh Token 해시 백업 저장에 실패했습니다.")
+            @ApiResponse(responseCode = "200", description = "로그인 또는 가입 성공. accessToken과 refreshToken 쿠키가 설정됩니다.", useReturnTypeSchema = true, content = @Content(mediaType = "application/json")),
+            @ApiResponse(responseCode = "400", description = "COMMON-002: 인가 코드 또는 상태 검증값이 비어 있습니다. COMMON-003: 요청 형식 오류", content = @Content(mediaType = "application/json", schema = @Schema(implementation = ResponseEnvelope.class))),
+            @ApiResponse(responseCode = "401", description = "AUTH-007: 상태 검증값이 만료·재사용되었거나 카카오 인증에 실패했습니다.", content = @Content(mediaType = "application/json", schema = @Schema(implementation = ResponseEnvelope.class))),
+            @ApiResponse(responseCode = "403", description = "MEMBER-003: 정지 이력이 있거나 로그인할 수 없는 회원입니다.", content = @Content(mediaType = "application/json", schema = @Schema(implementation = ResponseEnvelope.class))),
+            @ApiResponse(responseCode = "503", description = "AUTH-002: 갱신 토큰의 DB 해시 백업 저장에 실패했습니다.", content = @Content(mediaType = "application/json", schema = @Schema(implementation = ResponseEnvelope.class)))
     })
     public ResponseEntity<ResponseEnvelope<MemberLoginResponse>> login(
             @Valid @RequestBody KakaoLoginRequest request) {
@@ -114,12 +115,12 @@ public class MemberAuthController {
     @PostMapping("/tokens:refresh")
     @Operation(
             summary = "회원 토큰 재발급",
-            description = "refreshToken HttpOnly 쿠키로 Access Token과 Refresh Token을 함께 교체합니다. 새 Refresh Token도 14일 persistent cookie로 설정됩니다. 이미 회전된 Refresh Token을 다시 사용하면 해당 회원의 Refresh Token을 모두 폐기합니다."
+            description = "refreshToken HttpOnly 쿠키로 Access Token과 Refresh Token을 함께 교체합니다. 새 갱신 토큰 쿠키도 14일간 유지됩니다. 이미 교체된 갱신 토큰을 다시 사용하면 해당 회원의 갱신 토큰을 모두 폐기합니다."
     )
     @ApiResponses({
-            @ApiResponse(responseCode = "200", description = "토큰 재발급 성공. 새 accessToken과 refreshToken 쿠키가 설정됩니다."),
-            @ApiResponse(responseCode = "401", description = "AUTH-003: Refresh Token이 없거나 유효하지 않습니다. AUTH-004: 이미 사용한 Refresh Token이 재사용되어 모든 Refresh Token을 폐기했습니다."),
-            @ApiResponse(responseCode = "503", description = "AUTH-002: Refresh Token 저장소 처리에 실패했습니다.")
+            @ApiResponse(responseCode = "200", description = "토큰 재발급 성공. 새 accessToken과 refreshToken 쿠키가 설정됩니다.", useReturnTypeSchema = true, content = @Content(mediaType = "application/json")),
+            @ApiResponse(responseCode = "401", description = "AUTH-003: 갱신 토큰이 없거나 유효하지 않습니다. AUTH-004: 토큰 재사용으로 모든 갱신 토큰을 폐기했습니다.", content = @Content(mediaType = "application/json", schema = @Schema(implementation = ResponseEnvelope.class))),
+            @ApiResponse(responseCode = "503", description = "AUTH-002: 갱신 토큰 저장소 처리에 실패했습니다.", content = @Content(mediaType = "application/json", schema = @Schema(implementation = ResponseEnvelope.class)))
     })
     public ResponseEntity<ResponseEnvelope<MemberLoginResponse>> refresh(
             @Parameter(
@@ -143,15 +144,16 @@ public class MemberAuthController {
     @DeleteMapping("/tokens")
     @Operation(
             summary = "회원 로그아웃",
-            description = "현재 회원의 Refresh Token을 폐기하고 기존 Access Token을 무효화합니다. 응답은 accessToken과 refreshToken 쿠키를 만료시킵니다. DB 커밋 후 카카오 로그아웃도 best-effort로 요청합니다."
+            description = "현재 회원의 갱신 토큰을 폐기하고 기존 접근 토큰을 무효화합니다. 응답은 accessToken과 refreshToken 쿠키를 만료시킵니다. DB 커밋 후 카카오 로그아웃도 요청하며 외부 요청의 실패는 회원 로그아웃을 되돌리지 않습니다."
     )
     @SecurityRequirement(name = "memberAccessToken")
     @ApiResponses({
-            @ApiResponse(responseCode = "204", description = "로그아웃 성공. accessToken과 refreshToken 쿠키가 만료됩니다."),
-            @ApiResponse(responseCode = "401", description = "AUTH-005: 회원 Access Token이 없거나 유효하지 않습니다."),
-            @ApiResponse(responseCode = "503", description = "AUTH-002: Refresh Token 폐기에 실패했습니다.")
+            @ApiResponse(responseCode = "204", description = "로그아웃 성공. accessToken과 refreshToken 쿠키가 만료됩니다.", content = @Content),
+            @ApiResponse(responseCode = "401", description = "AUTH-005: 회원 인증이 없거나 유효하지 않습니다.", content = @Content(mediaType = "application/json", schema = @Schema(implementation = ResponseEnvelope.class))),
+            @ApiResponse(responseCode = "403", description = "AUTH-006: 회원 권한이 아님", content = @Content(mediaType = "application/json", schema = @Schema(implementation = ResponseEnvelope.class))),
+            @ApiResponse(responseCode = "503", description = "AUTH-002: 갱신 토큰 폐기에 실패했습니다.", content = @Content(mediaType = "application/json", schema = @Schema(implementation = ResponseEnvelope.class)))
     })
-    public ResponseEntity<Void> logout(@AuthenticationPrincipal CustomUserDetails user) {
+    public ResponseEntity<Void> logout(@Parameter(hidden = true) @AuthenticationPrincipal CustomUserDetails user) {
         memberTokenService.logout(user.getId());
         return ResponseEntity.noContent()
                 .header(HttpHeaders.SET_COOKIE, authCookieFactory.expiredAccessTokenCookie().toString())

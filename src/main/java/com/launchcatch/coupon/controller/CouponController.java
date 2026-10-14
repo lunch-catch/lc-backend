@@ -3,6 +3,7 @@ package com.launchcatch.coupon.controller;
 import com.launchcatch.auth.CustomUserDetails;
 import com.launchcatch.coupon.dto.CouponDetailResponse;
 import com.launchcatch.coupon.dto.CouponIssuanceLimitResponse;
+import com.launchcatch.coupon.dto.CouponQrResponse;
 import com.launchcatch.coupon.dto.CouponSummaryResponse;
 import com.launchcatch.coupon.dto.CouponUsageHistoryResponse;
 import com.launchcatch.coupon.service.CouponCommandService;
@@ -21,11 +22,13 @@ import jakarta.validation.constraints.Positive;
 import java.time.LocalDate;
 import lombok.RequiredArgsConstructor;
 import org.springframework.format.annotation.DateTimeFormat;
+import org.springframework.http.CacheControl;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -38,6 +41,20 @@ public class CouponController {
 
     private final CouponLookUpService couponLookUpService;
     private final CouponCommandService couponCommandService;
+
+    // 본인 쿠폰의 QR을 생성하거나 갱신하고 응답 캐시를 금지한다.
+    @PostMapping("/coupons/{memberCouponId}:generateQr")
+    @Operation(summary = "쿠폰 QR 생성·갱신", description = "사용 가능한 본인 쿠폰의 QR을 교체한다. 이전 QR은 즉시 무효화된다.")
+    @ApiResponse(responseCode = "200", description = "QR 이미지와 토큰 만료 시각을 반환한다.",
+            useReturnTypeSchema = true)
+    public ResponseEntity<ResponseEnvelope<CouponQrResponse>> generateQr(
+            @Parameter(hidden = true) @AuthenticationPrincipal CustomUserDetails user,
+            @Parameter(description = "QR을 생성할 본인 쿠폰 ID다.", example = "1001",
+                    schema = @Schema(type = "integer", format = "int64", minimum = "1"))
+            @PathVariable @Positive Long memberCouponId) {
+        return ResponseEntity.ok().cacheControl(CacheControl.noStore())
+                .body(ResponseEnvelope.success(couponCommandService.generateQr(user.getId(), memberCouponId)));
+    }
 
     // 인증된 회원의 쿠폰을 필터와 커서로 조회한다.
     @GetMapping("/coupons")

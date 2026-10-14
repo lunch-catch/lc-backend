@@ -2,24 +2,31 @@ package com.launchcatch.coupon;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.launchcatch.IntegrationTestSupport;
 import com.launchcatch.auth.CustomUserDetails;
 import com.launchcatch.auth.Role;
 import com.launchcatch.coupon.dto.CouponDetailResponse;
 import com.launchcatch.coupon.dto.CouponUsageHistoryResponse;
 import com.launchcatch.coupon.entity.MemberCouponStatus;
+import com.launchcatch.coupon.repository.MemberCouponRepository;
 import com.launchcatch.coupon.service.CouponCommandService;
 import com.launchcatch.coupon.service.CouponLookUpService;
 import com.launchcatch.global.config.ClockConfig;
 import com.launchcatch.global.response.CursorPageResponse;
 import jakarta.persistence.EntityManager;
+import java.nio.ByteBuffer;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -29,10 +36,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -49,33 +58,20 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.test.context.DynamicPropertyRegistry;
-import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
-import org.testcontainers.containers.GenericContainer;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
-import org.testcontainers.mysql.MySQLContainer;
-import org.testcontainers.utility.DockerImageName;
 
-@Testcontainers
 @SpringBootTest(properties = "coupon.daily-limit=3")
 @AutoConfigureMockMvc
-class CouponIntegrationTest {
+class CouponIntegrationTest extends IntegrationTestSupport {
 
     private static final LocalDate TODAY = LocalDate.of(2026, 10, 10);
     private static final CustomUserDetails MEMBER = new CustomUserDetails(17L, Role.MEMBER);
-
-    @Container
-    static final MySQLContainer MYSQL = new MySQLContainer(DockerImageName.parse("mysql:8.4"));
-
-    @Container
-    static final GenericContainer<?> VALKEY = new GenericContainer<>(DockerImageName.parse("valkey/valkey:9.0-alpine"))
-            .withExposedPorts(6379);
 
     @Autowired MockMvc mockMvc;
     @Autowired JdbcTemplate jdbcTemplate;
@@ -84,16 +80,8 @@ class CouponIntegrationTest {
     @Autowired CouponLookUpService couponLookUpService;
     @Autowired CouponCommandService couponCommandService;
     @MockitoBean Clock clock;
-
-    @DynamicPropertySource
-    static void properties(DynamicPropertyRegistry registry) {
-        registry.add("spring.datasource.url", MYSQL::getJdbcUrl);
-        registry.add("spring.datasource.username", MYSQL::getUsername);
-        registry.add("spring.datasource.password", MYSQL::getPassword);
-        registry.add("spring.data.redis.host", VALKEY::getHost);
-        registry.add("spring.data.redis.port", () -> VALKEY.getMappedPort(6379));
-        registry.add("jwt.secret", () -> "test-only-secret-not-used-anywhere-else-0123456789abcdef");
-    }
+    @MockitoSpyBean CouponQrImageEncoder imageEncoder;
+    @Autowired MemberCouponRepository memberCouponRepository;
 
     @BeforeEach
     void setUpClock() {
@@ -1416,6 +1404,231 @@ class CouponIntegrationTest {
             return jdbcTemplate.queryForObject(
                     "SELECT issued_count FROM coupon_daily_limit WHERE member_id = 17 AND business_date = ?",
                     Integer.class, NOW.toLocalDate());
+        }
+    }
+
+    @Nested
+    @DisplayName("QR 생성과 갱신")
+    class GenerateQr {
+
+        private static final LocalDateTime NOW = LocalDateTime.of(2026, 10, 10, 12, 0);
+        private final AtomicReference<Instant> currentTime = new AtomicReference<>();
+
+        private static final String QR_PATH = "/v1/coupons/1001:generateQr";
+
+        @BeforeEach
+        void setUp() {
+            currentTime.set(NOW.atZone(ClockConfig.ZONE).toInstant());
+            when(clock.withZone(ClockConfig.ZONE))
+                    .thenAnswer(invocation -> Clock.fixed(currentTime.get(), ClockConfig.ZONE));
+            jdbcTemplate.update("""
+                    INSERT INTO member (member_id, provider_user_id, nickname, status, created_at, updated_at)
+                    VALUES (17, 'coupon-qr-test', '점심헌터', 'ACTIVE', ?, ?)
+                    """, NOW, NOW);
+            jdbcTemplate.update("""
+                    INSERT INTO coupon_event (coupon_event_id, campaign_id, business_date, issue_quantity,
+                            usable_start_at, usable_end_at, status, store_id, store_name, discount_target_type,
+                            discount_type, discount_value, created_at, updated_at)
+                    VALUES (81, 81, ?, 100, ?, ?, 'ACTIVE', 10, '런치식당', 'ALL', 'AMOUNT', 3000, ?, ?)
+                    """, NOW.toLocalDate(), NOW.minusHours(1), NOW.plusHours(1), NOW, NOW);
+            jdbcTemplate.update("""
+                    INSERT INTO member_coupon (member_coupon_id, coupon_event_id, member_id, coupon_code,
+                            qr_version, qr_token, qr_expires_at, status, usable_start_at, usable_end_at, created_at, updated_at)
+                    VALUES (1001, 81, 17, UNHEX('00112233445566778899AABBCCDDEEFF'), 3,
+                            UNHEX('FFEEDDCCBBAA99887766554433221100'), ?, 'ISSUED', ?, ?, ?, ?)
+                    """, NOW.plusSeconds(30), NOW.minusHours(1), NOW.plusHours(1), NOW, NOW);
+            jdbcTemplate.update("""
+                    INSERT INTO coupon_inventory (coupon_event_id, sequence_no, coupon_code, status,
+                            usable_start_at, usable_end_at, created_at, updated_at)
+                    VALUES (81, 1, UNHEX('00112233445566778899AABBCCDDEEFF'), 'ISSUED', ?, ?, ?, ?)
+                    """, NOW.minusHours(1), NOW.plusHours(1), NOW, NOW);
+            jdbcTemplate.update("""
+                    INSERT INTO coupon_daily_limit (member_id, business_date, issued_count, created_at, updated_at)
+                    VALUES (17, ?, 1, ?, ?)
+                    """, NOW.toLocalDate(), NOW, NOW);
+        }
+
+        @AfterEach
+        void cleanUp() {
+            jdbcTemplate.update("DELETE FROM member_coupon");
+            jdbcTemplate.update("DELETE FROM coupon_inventory");
+            jdbcTemplate.update("DELETE FROM coupon_daily_limit");
+            jdbcTemplate.update("DELETE FROM coupon_event");
+            jdbcTemplate.update("DELETE FROM member WHERE member_id = 17");
+        }
+
+        @Test
+        void QR_API는_PNG와_60초_만료와_no_store를_반환하고_갱신을_저장한다() throws Exception {
+            jdbcTemplate.update("UPDATE coupon_event SET status = 'PAUSED' WHERE coupon_event_id = 81");
+            var inventoryBefore = jdbcTemplate.queryForList("SELECT * FROM coupon_inventory");
+            var limitBefore = jdbcTemplate.queryForList("SELECT * FROM coupon_daily_limit");
+            var usageBefore = jdbcTemplate.queryForList("SELECT * FROM coupon_usage_history");
+            mockMvc.perform(post(QR_PATH).with(user(MEMBER)))
+                    .andExpect(status().isOk()).andExpect(header().string("Cache-Control", "no-store"))
+                    .andExpect(jsonPath("$.code").value("SUCCESS"))
+                    .andExpect(jsonPath("$.data.qrImageBytes").isNotEmpty())
+                    .andExpect(jsonPath("$.data.expireTime").value("2026-10-10T12:01:00+09:00"));
+            Map<String, Object> first = coupon();
+
+            mockMvc.perform(post(QR_PATH).with(user(MEMBER))).andExpect(status().isOk());
+
+            assertThat(first.get("qr_version")).isEqualTo(4);
+            assertThat(coupon().get("qr_version")).isEqualTo(5);
+            assertThat(coupon().get("qr_token")).isNotEqualTo(first.get("qr_token"));
+            assertThat(jdbcTemplate.queryForList("SELECT * FROM coupon_inventory"))
+                    .usingRecursiveComparison().isEqualTo(inventoryBefore);
+            assertThat(jdbcTemplate.queryForList("SELECT * FROM coupon_daily_limit"))
+                    .usingRecursiveComparison().isEqualTo(limitBefore);
+            assertThat(jdbcTemplate.queryForList("SELECT * FROM coupon_usage_history")).isEqualTo(usageBefore);
+        }
+
+        @Test
+        void 양수가_아닌_QR_생성_쿠폰_ID는_공통_입력_오류로_반환한다() throws Exception {
+            Map<String, Object> before = coupon();
+            mockMvc.perform(post("/v1/coupons/0:generateQr").with(user(MEMBER)))
+                    .andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("COMMON-002"));
+            assertThat(coupon()).usingRecursiveComparison().isEqualTo(before);
+        }
+
+        @Test
+        void 인증_없이는_QR을_생성할_수_없다() throws Exception {
+            mockMvc.perform(post(QR_PATH)).andExpect(status().isUnauthorized())
+                    .andExpect(jsonPath("$.code").value("AUTH-005"));
+            assertThat(coupon().get("qr_version")).isEqualTo(3);
+        }
+
+        @Test
+        void 회원_외_역할은_QR을_생성할_수_없다() throws Exception {
+            mockMvc.perform(post(QR_PATH).with(user(new CustomUserDetails(17L, Role.OWNER))))
+                    .andExpect(status().isForbidden()).andExpect(jsonPath("$.code").value("AUTH-006"));
+        }
+
+        @Test
+        void 다른_회원의_쿠폰은_접근을_거절한다() throws Exception {
+            mockMvc.perform(post(QR_PATH)
+                            .with(user(new CustomUserDetails(18L, Role.MEMBER))))
+                    .andExpect(status().isForbidden()).andExpect(jsonPath("$.code").value("COUPON-011"));
+        }
+
+        @Test
+        void 회원의_현재_DB_상태가_정지면_QR을_변경하지_않는다() throws Exception {
+            jdbcTemplate.update("UPDATE member SET status = 'SUSPENDED', suspended_at = ? WHERE member_id = 17", NOW);
+            Map<String, Object> before = coupon();
+            mockMvc.perform(post(QR_PATH).with(user(MEMBER))).andExpect(status().isForbidden())
+                    .andExpect(jsonPath("$.code").value("COUPON-003"));
+            assertThat(coupon()).usingRecursiveComparison().isEqualTo(before);
+        }
+
+        @Test
+        void 이미지_생성이_실패하면_토큰과_버전_교체도_롤백한다() throws Exception {
+            Map<String, Object> before = coupon();
+            doThrow(new IllegalStateException("test image failure")).when(imageEncoder).encode(any(UUID.class));
+            mockMvc.perform(post(QR_PATH).with(user(MEMBER))).andExpect(status().isInternalServerError())
+                    .andExpect(jsonPath("$.code").value("COMMON-001"));
+            assertThat(coupon()).usingRecursiveComparison().isEqualTo(before);
+        }
+
+        @Test
+        void 쿠폰_저장이_실패하면_QR_변경을_롤백한다() throws Exception {
+            Map<String, Object> before = coupon();
+            jdbcTemplate.execute("ALTER TABLE member_coupon ADD CONSTRAINT chk_test_qr_failure CHECK (qr_version <= 3)");
+            try {
+                mockMvc.perform(post(QR_PATH).with(user(MEMBER)))
+                        .andExpect(status().isInternalServerError())
+                        .andExpect(jsonPath("$.code").value("COMMON-001"));
+
+                assertThat(coupon()).usingRecursiveComparison().isEqualTo(before);
+            } finally {
+                jdbcTemplate.execute("ALTER TABLE member_coupon DROP CHECK chk_test_qr_failure");
+            }
+        }
+
+        @Test
+        void 동시_QR_갱신은_직렬화하여_마지막_토큰만_저장한다() throws Exception {
+            CountDownLatch started = new CountDownLatch(1);
+            AtomicReference<Future<MvcResult>> second = new AtomicReference<>();
+            MvcResult last;
+            try (ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
+                new TransactionTemplate(transactionManager).executeWithoutResult(transaction -> {
+                    couponCommandService.generateQr(17L, 1001L);
+                    second.set(executor.submit(() -> {
+                        started.countDown();
+                        return mockMvc.perform(post(QR_PATH).with(user(MEMBER))).andReturn();
+                    }));
+                    assertBlocked(started, second.get());
+                });
+                last = second.get().get(5, TimeUnit.SECONDS);
+            }
+            Map<String, Object> saved = coupon();
+            ByteBuffer bytes = ByteBuffer.wrap((byte[]) saved.get("qr_token"));
+            UUID token = new UUID(bytes.getLong(), bytes.getLong());
+            assertThat(saved.get("qr_version")).isEqualTo(5);
+            status().isOk().match(last);
+            jsonPath("$.data.qrImageBytes").value(imageEncoder.encode(token)).match(last);
+        }
+
+        @Test
+        void 삭제가_먼저_잠그면_대기하던_QR_갱신은_삭제_후_거절된다() throws Exception {
+            CountDownLatch started = new CountDownLatch(1);
+            AtomicReference<Future<MvcResult>> renewal = new AtomicReference<>();
+            try (ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
+                new TransactionTemplate(transactionManager).executeWithoutResult(transaction -> {
+                    couponCommandService.deleteCoupon(17L, 1001L);
+                    renewal.set(executor.submit(() -> {
+                        started.countDown();
+                        return mockMvc.perform(post(QR_PATH).with(user(MEMBER))).andReturn();
+                    }));
+                    assertBlocked(started, renewal.get());
+                });
+                assertRenewalRejected(renewal.get());
+            }
+            assertThat(coupon().get("status")).isEqualTo("REMOVED");
+            assertThat(coupon().get("qr_token")).isNull();
+            assertThat(coupon().get("qr_expires_at")).isNull();
+            assertThat(coupon().get("qr_version")).isEqualTo(4);
+        }
+
+        @Test
+        void 잠금을_기다리는_중_사용_시간이_끝나면_잠금_획득_후_거절된다() throws Exception {
+            jdbcTemplate.update("UPDATE member_coupon SET usable_end_at = ?", NOW.plusSeconds(30));
+            CountDownLatch started = new CountDownLatch(1);
+            AtomicReference<Future<MvcResult>> renewal = new AtomicReference<>();
+            try (ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
+                new TransactionTemplate(transactionManager).executeWithoutResult(transaction -> {
+                    memberCouponRepository.findByIdAndMemberId(1001L, 17L).orElseThrow();
+                    renewal.set(executor.submit(() -> {
+                        started.countDown();
+                        return mockMvc.perform(post(QR_PATH).with(user(MEMBER))).andReturn();
+                    }));
+                    assertBlocked(started, renewal.get());
+                    currentTime.set(NOW.plusSeconds(30).atZone(ClockConfig.ZONE).toInstant());
+                });
+                assertRenewalRejected(renewal.get());
+            }
+            assertThat(coupon().get("qr_version")).isEqualTo(3);
+        }
+
+        // 별도 스레드의 요청이 시작되었으며 행 잠금 해제까지 대기하는지 검증한다.
+        private void assertBlocked(CountDownLatch started, Future<?> pending) {
+            try {
+                assertThat(started.await(5, TimeUnit.SECONDS)).isTrue();
+            } catch (InterruptedException exception) {
+                Thread.currentThread().interrupt();
+                throw new AssertionError(exception);
+            }
+            assertThatThrownBy(() -> pending.get(200, TimeUnit.MILLISECONDS)).isInstanceOf(TimeoutException.class);
+        }
+
+        // 잠금 획득 후 사용할 수 없게 된 쿠폰의 QR 갱신이 거절되는지 검증한다.
+        private void assertRenewalRejected(Future<MvcResult> renewal) throws Exception {
+            MvcResult response = renewal.get(5, TimeUnit.SECONDS);
+            status().isConflict().match(response);
+            jsonPath("$.code").value("COUPON-002").match(response);
+        }
+
+        // QR 갱신 전후의 토큰과 버전, 상태를 비교할 회원 쿠폰을 DB에서 조회한다.
+        private Map<String, Object> coupon() {
+            return jdbcTemplate.queryForMap("SELECT * FROM member_coupon WHERE member_coupon_id = 1001");
         }
     }
 }

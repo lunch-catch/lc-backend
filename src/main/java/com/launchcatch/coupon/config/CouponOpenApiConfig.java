@@ -2,8 +2,10 @@ package com.launchcatch.coupon.config;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.launchcatch.coupon.CouponQrImageEncoder;
 import com.launchcatch.coupon.dto.CouponDetailResponse;
 import com.launchcatch.coupon.dto.CouponIssuanceLimitResponse;
+import com.launchcatch.coupon.dto.CouponQrResponse;
 import com.launchcatch.coupon.dto.CouponSummaryResponse;
 import com.launchcatch.coupon.dto.CouponUsageHistoryResponse;
 import com.launchcatch.coupon.entity.DiscountTargetType;
@@ -18,6 +20,7 @@ import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 import org.springdoc.core.customizers.OpenApiCustomizer;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -30,10 +33,13 @@ public class CouponOpenApiConfig {
     private static final String OWNER_COUPON_USAGE = "/v1/owner/stores/{storeId}/coupon-usages";
 
     @Bean
-    OpenApiCustomizer couponResponseDocumentation() {
+    OpenApiCustomizer couponResponseDocumentation(CouponQrImageEncoder imageEncoder) {
         // Swagger가 null 필드를 생략하지 않도록 응답 예시를 JSON 트리로 보존한다.
         ObjectMapper exampleMapper = Json31.mapper().copy().setSerializationInclusion(JsonInclude.Include.ALWAYS);
         CouponDetailResponse coupon = couponExample();
+        ResponseEnvelope<CouponQrResponse> qrExample = ResponseEnvelope.success(new CouponQrResponse(
+                imageEncoder.encode(UUID.fromString("00000000-0000-0000-0000-000000000001")),
+                OffsetDateTime.parse("2026-10-13T12:01:00+09:00")));
         Map<String, ResponseEnvelope<?>> successExamples = Map.of(
                 COUPON_LIST, ResponseEnvelope.success(CursorPageResponse.of(List.of(coupon), null)),
                 COUPON_DETAIL, ResponseEnvelope.success(coupon),
@@ -52,6 +58,9 @@ public class CouponOpenApiConfig {
             successExamples.forEach((path, successExample) -> openApi.getPaths().get(path).getGet()
                     .getResponses().get("200").getContent().values()
                     .forEach(media -> media.setExample(exampleMapper.valueToTree(successExample))));
+            openApi.getPaths().get("/v1/coupons/{memberCouponId}:generateQr").getPost()
+                    .getResponses().get("200").getContent().values()
+                    .forEach(media -> media.setExample(exampleMapper.valueToTree(qrExample)));
         };
     }
 
