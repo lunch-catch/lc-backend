@@ -27,6 +27,8 @@ import com.launchcatch.global.config.ClockConfig;
 import com.launchcatch.global.response.CursorPageResponse;
 import jakarta.persistence.EntityManager;
 import java.nio.ByteBuffer;
+import com.launchcatch.owner.contract.OwnerAccountStatus;
+import com.launchcatch.owner.contract.OwnerStatusQuery;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -34,6 +36,7 @@ import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -80,6 +83,7 @@ class CouponIntegrationTest extends IntegrationTestSupport {
     @Autowired CouponLookUpService couponLookUpService;
     @Autowired CouponCommandService couponCommandService;
     @MockitoBean Clock clock;
+    @MockitoBean OwnerStatusQuery ownerStatusQuery;
     @MockitoSpyBean CouponQrImageEncoder imageEncoder;
     @Autowired MemberCouponRepository memberCouponRepository;
 
@@ -103,6 +107,7 @@ class CouponIntegrationTest extends IntegrationTestSupport {
 
         @BeforeEach
         void setUp() {
+            when(ownerStatusQuery.findCurrentStatus(17L)).thenReturn(Optional.of(OwnerAccountStatus.ACTIVE));
             insertHistory(5001L, 10L, FROM.atStartOfDay().minusNanos(1000), 1000);
             insertHistory(5002L, 10L, FROM.atStartOfDay(), 2000);
             insertHistory(5003L, 10L, USE_TIME, 2700);
@@ -115,7 +120,7 @@ class CouponIntegrationTest extends IntegrationTestSupport {
 
         @Test
         void 요청한_매장만_조회하며_시작일_시작은_포함하고_종료일_다음날_시작은_제외한다() {
-            var response = couponLookUpService.getUsages(10L, FROM, TO, 20, null);
+            var response = couponLookUpService.getUsages(17L, 10L, FROM, TO, 20, null);
 
             assertThat(response.items()).extracting(CouponUsageHistoryResponse::usageHistoryId)
                     .containsExactly(5004L, 5003L, 5002L);
@@ -126,11 +131,11 @@ class CouponIntegrationTest extends IntegrationTestSupport {
 
         @Test
         void 같은_사용_시각의_이력도_페이지에서_누락하지_않으며_새_이력은_기존_커서에_영향을_주지_않는다() {
-            var first = couponLookUpService.getUsages(10L, FROM, TO, 1, null);
+            var first = couponLookUpService.getUsages(17L, 10L, FROM, TO, 1, null);
             insertHistory(5008L, 10L, USE_TIME.plusMinutes(1), 2500);
 
-            var second = couponLookUpService.getUsages(10L, FROM, TO, 1, first.nextPageToken());
-            var third = couponLookUpService.getUsages(10L, FROM, TO, 1, second.nextPageToken());
+            var second = couponLookUpService.getUsages(17L, 10L, FROM, TO, 1, first.nextPageToken());
+            var third = couponLookUpService.getUsages(17L, 10L, FROM, TO, 1, second.nextPageToken());
 
             assertThat(first.items()).extracting(CouponUsageHistoryResponse::usageHistoryId).containsExactly(5004L);
             assertThat(second.items()).extracting(CouponUsageHistoryResponse::usageHistoryId).containsExactly(5003L);
@@ -140,7 +145,7 @@ class CouponIntegrationTest extends IntegrationTestSupport {
 
         @Test
         void 같은_날_조회에서는_그날의_사용_이력만_반환한다() {
-            var singleDay = couponLookUpService.getUsages(10L, TO, TO, 100, null);
+            var singleDay = couponLookUpService.getUsages(17L, 10L, TO, TO, 100, null);
 
             assertThat(singleDay.items()).extracting(CouponUsageHistoryResponse::usageHistoryId)
                     .containsExactly(5004L, 5003L);
@@ -148,7 +153,7 @@ class CouponIntegrationTest extends IntegrationTestSupport {
 
         @Test
         void 조회_기간_길이에_상한_없이_여러_해의_사용_이력을_반환한다() {
-            var multipleYears = couponLookUpService.getUsages(10L, FROM.minusYears(3), TO, 100, null);
+            var multipleYears = couponLookUpService.getUsages(17L, 10L, FROM.minusYears(3), TO, 100, null);
 
             assertThat(multipleYears.items()).extracting(CouponUsageHistoryResponse::usageHistoryId)
                     .containsExactly(5004L, 5003L, 5002L, 5001L, 5007L);
@@ -156,7 +161,7 @@ class CouponIntegrationTest extends IntegrationTestSupport {
 
         @Test
         void 이력이_없는_매장은_빈_목록을_반환한다() {
-            var response = couponLookUpService.getUsages(30L, FROM, TO, 20, null);
+            var response = couponLookUpService.getUsages(17L, 30L, FROM, TO, 20, null);
 
             assertThat(response.items()).isEmpty();
             assertThat(response.nextPageToken()).isNull();
@@ -172,6 +177,49 @@ class CouponIntegrationTest extends IntegrationTestSupport {
                     .andExpect(jsonPath("$.data.items[0].usageHistoryId").value(5004))
                     .andExpect(jsonPath("$.data.items[1].discountAmount").value(2700))
                     .andExpect(jsonPath("$.data.nextPageToken").isEmpty());
+        }
+
+        @ParameterizedTest
+        @EnumSource(value = OwnerAccountStatus.class, names = "ACTIVE", mode = EnumSource.Mode.EXCLUDE)
+        void ACTIVE가_아닌_점주는_HTTP_조회를_거절한다(OwnerAccountStatus state) throws Exception {
+            when(ownerStatusQuery.findCurrentStatus(17L)).thenReturn(Optional.of(state));
+
+            mockMvc.perform(get(PATH).param("from", FROM.toString()).param("to", TO.toString())
+                            .with(user(new CustomUserDetails(17L, Role.OWNER))))
+                    .andExpect(status().isForbidden())
+                    .andExpect(jsonPath("$.code").value("AUTH-006"));
+        }
+
+        @Test
+        void 인증된_점주_ID로_현재_상태를_검증한다() throws Exception {
+            when(ownerStatusQuery.findCurrentStatus(17L)).thenReturn(Optional.empty());
+            when(ownerStatusQuery.findCurrentStatus(71L)).thenReturn(Optional.of(OwnerAccountStatus.ACTIVE));
+
+            mockMvc.perform(get(PATH).param("from", FROM.toString()).param("to", TO.toString())
+                            .with(user(new CustomUserDetails(71L, Role.OWNER))))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.items.length()").value(3));
+        }
+
+        @Test
+        void 점주가_없으면_HTTP_조회를_거절한다() throws Exception {
+            when(ownerStatusQuery.findCurrentStatus(17L)).thenReturn(Optional.empty());
+
+            mockMvc.perform(get(PATH).param("from", FROM.toString()).param("to", TO.toString())
+                            .with(user(new CustomUserDetails(17L, Role.OWNER))))
+                    .andExpect(status().isForbidden())
+                    .andExpect(jsonPath("$.code").value("AUTH-006"));
+        }
+
+        @Test
+        void 점주_상태_조회_장애는_서버_오류로_반환한다() throws Exception {
+            when(ownerStatusQuery.findCurrentStatus(17L))
+                    .thenThrow(new org.springframework.dao.DataAccessResourceFailureException("owner status query failed"));
+
+            mockMvc.perform(get(PATH).param("from", FROM.toString()).param("to", TO.toString())
+                            .with(user(new CustomUserDetails(17L, Role.OWNER))))
+                    .andExpect(status().isInternalServerError())
+                    .andExpect(jsonPath("$.code").value("COMMON-001"));
         }
 
         @ParameterizedTest
@@ -191,7 +239,7 @@ class CouponIntegrationTest extends IntegrationTestSupport {
             var inventories = jdbcTemplate.queryForList("SELECT * FROM coupon_inventory ORDER BY coupon_inventory_id");
             var limits = jdbcTemplate.queryForList("SELECT * FROM coupon_daily_limit ORDER BY coupon_daily_limit_id");
 
-            couponLookUpService.getUsages(10L, FROM, TO, 1, null);
+            couponLookUpService.getUsages(17L, 10L, FROM, TO, 1, null);
 
             assertThat(jdbcTemplate.queryForList("SELECT * FROM member_coupon ORDER BY member_coupon_id"))
                     .usingRecursiveComparison().isEqualTo(coupons);

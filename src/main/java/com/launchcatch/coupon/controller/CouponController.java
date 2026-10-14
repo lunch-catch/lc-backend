@@ -144,10 +144,11 @@ public class CouponController {
 
     // 매장의 사용 이력을 한국 날짜 범위와 커서로 조회한다.
     @GetMapping("/owner/stores/{storeId}/coupon-usages")
-    @Operation(summary = "매장 쿠폰 사용 이력 조회", description = "점주가 한국 날짜 범위의 확정 사용 이력을 최신순으로 조회한다.")
+    @Operation(summary = "매장 쿠폰 사용 이력 조회", description = "ACTIVE 점주가 한국 날짜 범위의 확정 사용 이력을 최신순으로 조회한다.")
     @ApiResponse(responseCode = "200", description = "쿠폰 사용 이력과 다음 페이지 토큰을 반환한다.",
             useReturnTypeSchema = true)
     public ResponseEnvelope<CursorPageResponse<CouponUsageHistoryResponse>> getUsages(
+            @Parameter(hidden = true) @AuthenticationPrincipal CustomUserDetails user,
             @Parameter(description = "사용 이력을 조회할 매장 ID다.", example = "10")
             @PathVariable @Positive Long storeId,
             @Parameter(description = "조회 시작일이며 당일 00:00을 포함한다.", example = "2026-09-01")
@@ -159,6 +160,6 @@ public class CouponController {
             @RequestParam(defaultValue = "20") @Min(1) @Max(100) int pageSize,
             @Parameter(description = "같은 매장과 조회 기간의 nextPageToken이다. 첫 조회나 조건 변경 시 생략한다.")
             @RequestParam(required = false) String pageToken) {
-        return ResponseEnvelope.success(couponLookUpService.getUsages(storeId, from, to, pageSize, pageToken));
+        return ResponseEnvelope.success(couponLookUpService.getUsages(user.getId(), storeId, from, to, pageSize, pageToken));
     }
 }

@@ -1,5 +1,6 @@
 package com.launchcatch.coupon.service;
 
+import com.launchcatch.auth.exception.AuthErrorCode;
 import com.launchcatch.coupon.CouponListFilter;
 import com.launchcatch.coupon.dto.CouponDetailResponse;
 import com.launchcatch.coupon.dto.CouponIssuanceLimitResponse;
@@ -20,6 +21,8 @@ import com.launchcatch.global.exception.CommonErrorCode;
 import com.launchcatch.global.response.CursorPageResponse;
 import com.launchcatch.global.response.PageCursor;
 import com.launchcatch.global.response.PageTokens;
+import com.launchcatch.owner.contract.OwnerAccountStatus;
+import com.launchcatch.owner.contract.OwnerStatusQuery;
 import java.time.Clock;
 import java.time.DateTimeException;
 import java.time.LocalDate;
@@ -46,6 +49,7 @@ public class CouponLookUpService {
     private final CouponEventRepository couponEventRepository;
     private final CouponUsageHistoryRepository couponUsageHistoryRepository;
     private final CouponDailyLimitRepository couponDailyLimitRepository;
+    private final OwnerStatusQuery ownerStatusQuery;
     private final Clock clock;
 
     @Value("${coupon.daily-limit}")
@@ -135,8 +139,9 @@ public class CouponLookUpService {
     }
 
     /**
-     * 매장 사용 이력을 한국 날짜 범위와 커서로 조회한다.
+     * ACTIVE 점주의 매장 사용 이력을 한국 날짜 범위와 커서로 조회한다.
      *
+     * @param ownerId 인증된 점주의 ID
      * @param storeId 조회할 매장 ID
      * @param from 조회 시작일이며, 해당 날짜 00:00을 포함한다
      * @param to 조회 종료일이며, 다음 날짜 00:00은 제외한다
@@ -145,7 +150,8 @@ public class CouponLookUpService {
      * @return 확정 사용 결과 목록과 다음 페이지 토큰
      */
     public CursorPageResponse<CouponUsageHistoryResponse> getUsages(
-            Long storeId, LocalDate from, LocalDate to, int pageSize, String pageToken) {
+            Long ownerId, Long storeId, LocalDate from, LocalDate to, int pageSize, String pageToken) {
+        validateActiveOwner(ownerId);
         // TODO: store 공개 contract가 제공되면 validateRequest에 매장 존재 검증을 포함시킨다.
         validateRequest(storeId, from, to, pageSize);
         DateRange dateRange = parseDateRange(from, to);
@@ -162,6 +168,14 @@ public class CouponLookUpService {
         String nextPageToken = createNextPageToken(page, storeId, from, to, hasNext);
 
         return CursorPageResponse.of(items, nextPageToken);
+    }
+
+    private void validateActiveOwner(Long ownerId) {
+        if (ownerStatusQuery.findCurrentStatus(ownerId).orElse(null) != OwnerAccountStatus.ACTIVE) {
+            log.warn("event=COUPON_USAGE_HISTORY_FAILED reason=OWNER_NOT_ACTIVE code={} ownerId={}",
+                    AuthErrorCode.ROLE_NOT_ALLOWED.getCode(), ownerId);
+            throw new CouponException(AuthErrorCode.ROLE_NOT_ALLOWED);
+        }
     }
 
     // 본인 소유 쿠폰을 조회하고 소유권 확인 실패와 삭제된 쿠폰을 구분해 거절한다.

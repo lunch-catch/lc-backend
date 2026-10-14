@@ -6,11 +6,13 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.verifyNoInteractions;
 
 import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
+import com.launchcatch.auth.exception.AuthErrorCode;
 import com.launchcatch.coupon.CouponListFilter;
 import com.launchcatch.coupon.dto.CouponDetailResponse;
 import com.launchcatch.coupon.dto.CouponIssuanceLimitResponse;
@@ -32,6 +34,8 @@ import com.launchcatch.global.exception.CommonErrorCode;
 import com.launchcatch.global.response.CursorPageResponse;
 import com.launchcatch.global.response.PageCursor;
 import com.launchcatch.global.response.PageTokens;
+import com.launchcatch.owner.contract.OwnerAccountStatus;
+import com.launchcatch.owner.contract.OwnerStatusQuery;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -71,6 +75,7 @@ class CouponLookUpServiceTest {
     @Mock MemberCouponRepository memberCouponRepository;
     @Mock CouponEventRepository couponEventRepository;
     @Mock CouponUsageHistoryRepository couponUsageHistoryRepository;
+    @Mock OwnerStatusQuery ownerStatusQuery;
 
     private CouponLookUpService service;
 
@@ -150,7 +155,7 @@ class CouponLookUpServiceTest {
         @BeforeEach
         void setUp() {
             service = new CouponLookUpService(
-                    memberCouponRepository, couponEventRepository, couponUsageHistoryRepository, couponDailyLimitRepository,
+                    memberCouponRepository, couponEventRepository, couponUsageHistoryRepository, couponDailyLimitRepository, ownerStatusQuery,
                     Clock.fixed(Instant.parse("2026-10-10T03:00:00Z"), ZoneOffset.UTC));
         }
 
@@ -640,7 +645,7 @@ class CouponLookUpServiceTest {
         // 지정한 시각을 사용하는 상세 조회 서비스를 구성한다.
         private CouponLookUpService serviceAt(Instant instant) {
             CouponLookUpService configured = new CouponLookUpService(
-                    memberCouponRepository, couponEventRepository, couponUsageHistoryRepository, couponDailyLimitRepository,
+                    memberCouponRepository, couponEventRepository, couponUsageHistoryRepository, couponDailyLimitRepository, ownerStatusQuery,
                     Clock.fixed(instant, ZoneOffset.UTC));
             return configured;
         }
@@ -702,7 +707,7 @@ class CouponLookUpServiceTest {
 
     // 지정한 시계와 일일 발급 한도를 사용하는 조회 서비스를 구성한다.
     private CouponLookUpService configuredService(Clock clock, int dailyLimit) {
-        CouponLookUpService configured = new CouponLookUpService(memberCouponRepository, couponEventRepository, couponUsageHistoryRepository, repository, clock);
+        CouponLookUpService configured = new CouponLookUpService(memberCouponRepository, couponEventRepository, couponUsageHistoryRepository, repository, ownerStatusQuery, clock);
         ReflectionTestUtils.setField(configured, "dailyLimit", dailyLimit);
         return configured;
     }
@@ -720,20 +725,52 @@ class CouponLookUpServiceTest {
         @Mock CouponUsageHistoryRepository repository;
         @Mock CouponDailyLimitRepository couponDailyLimitRepository;
         @Mock Clock clock;
+        @Mock OwnerStatusQuery ownerStatusQuery;
 
         private CouponLookUpService service;
 
         @BeforeEach
         void setUp() {
             service = new CouponLookUpService(
-                    memberCouponRepository, couponEventRepository, repository, couponDailyLimitRepository, clock);
+                    memberCouponRepository, couponEventRepository, repository, couponDailyLimitRepository, ownerStatusQuery, clock);
+            when(ownerStatusQuery.findCurrentStatus(17L)).thenReturn(Optional.of(OwnerAccountStatus.ACTIVE));
+        }
+
+        @ParameterizedTest
+        @EnumSource(value = OwnerAccountStatus.class, names = "ACTIVE", mode = EnumSource.Mode.EXCLUDE)
+        void ACTIVE가_아닌_점주는_이력을_조회하지_않고_거절한다(OwnerAccountStatus status) {
+            when(ownerStatusQuery.findCurrentStatus(17L)).thenReturn(Optional.of(status));
+
+            assertThatThrownBy(() -> service.getUsages(17L, 10L, FROM, TO, 20, null))
+                    .isInstanceOfSatisfying(CouponException.class,
+                            e -> assertThat(e.getErrorCode()).isEqualTo(AuthErrorCode.ROLE_NOT_ALLOWED));
+            verifyNoInteractions(repository);
+        }
+
+        @Test
+        void 점주가_없으면_이력을_조회하지_않고_거절한다() {
+            when(ownerStatusQuery.findCurrentStatus(17L)).thenReturn(Optional.empty());
+
+            assertThatThrownBy(() -> service.getUsages(17L, 10L, FROM, TO, 20, null))
+                    .isInstanceOfSatisfying(CouponException.class,
+                            e -> assertThat(e.getErrorCode()).isEqualTo(AuthErrorCode.ROLE_NOT_ALLOWED));
+            verifyNoInteractions(repository);
+        }
+
+        @Test
+        void 점주_상태_조회_실패를_ACTIVE로_바꾸지_않는다() {
+            var failure = new DataAccessResourceFailureException("owner status query failed");
+            when(ownerStatusQuery.findCurrentStatus(17L)).thenThrow(failure);
+
+            assertThatThrownBy(() -> service.getUsages(17L, 10L, FROM, TO, 20, null)).isSameAs(failure);
+            verifyNoInteractions(repository);
         }
 
         @Test
         void 사용_이력이_없으면_빈_목록과_null_커서를_반환한다() {
             when(repository.findPage(eq(10L), any(), any(), any(), any(), anyInt())).thenReturn(List.of());
 
-            assertThat(service.getUsages(10L, FROM, TO, 20, null)).isEqualTo(CursorPageResponse.of(List.of(), null));
+            assertThat(service.getUsages(17L, 10L, FROM, TO, 20, null)).isEqualTo(CursorPageResponse.of(List.of(), null));
         }
 
         @ParameterizedTest
@@ -742,7 +779,7 @@ class CouponLookUpServiceTest {
             when(repository.findPage(eq(10L), any(), any(), any(), any(), anyInt()))
                     .thenReturn(List.of(history(5001L, 1001L, discountAmount, USE_TIME)));
 
-            var response = service.getUsages(10L, FROM, TO, 20, null);
+            var response = service.getUsages(17L, 10L, FROM, TO, 20, null);
 
             var item = response.items().getFirst();
             assertThat(item.usageHistoryId()).isEqualTo(5001L);
@@ -757,7 +794,7 @@ class CouponLookUpServiceTest {
             var failure = new DataAccessResourceFailureException("usage query failed");
             when(repository.findPage(eq(10L), any(), any(), any(), any(), anyInt())).thenThrow(failure);
 
-            assertThatThrownBy(() -> service.getUsages(10L, FROM, TO, 20, null)).isSameAs(failure);
+            assertThatThrownBy(() -> service.getUsages(17L, 10L, FROM, TO, 20, null)).isSameAs(failure);
         }
 
         @Test
@@ -765,11 +802,11 @@ class CouponLookUpServiceTest {
             when(repository.findPage(10L, FROM.atStartOfDay(), TO.plusDays(1).atStartOfDay(), null, null, 3))
                     .thenReturn(List.of(history(5003L, 1003L, 3000, USE_TIME),
                             history(5002L, 1002L, 2000, USE_TIME), history(5001L, 1001L, 1000, USE_TIME)));
-            var first = service.getUsages(10L, FROM, TO, 2, null);
+            var first = service.getUsages(17L, 10L, FROM, TO, 2, null);
             when(repository.findPage(10L, FROM.atStartOfDay(), TO.plusDays(1).atStartOfDay(), USE_TIME, 5002L, 3))
                     .thenReturn(List.of(history(5001L, 1001L, 1000, USE_TIME)));
 
-            var second = service.getUsages(10L, FROM, TO, 2, first.nextPageToken());
+            var second = service.getUsages(17L, 10L, FROM, TO, 2, first.nextPageToken());
 
             assertThat(first.items()).extracting(item -> item.usageHistoryId()).containsExactly(5003L, 5002L);
             assertThat(second.items()).extracting(item -> item.usageHistoryId()).containsExactly(5001L);
@@ -779,7 +816,7 @@ class CouponLookUpServiceTest {
         @ParameterizedTest
         @ValueSource(strings = {"", "not-a-token", "cDox", "cDoxfA"})
         void 해석할_수_없는_커서를_거절한다(String token) {
-            assertThatThrownBy(() -> service.getUsages(10L, FROM, TO, 20, token))
+            assertThatThrownBy(() -> service.getUsages(17L, 10L, FROM, TO, 20, token))
                     .isInstanceOfSatisfying(CouponException.class,
                             e -> assertThat(e.getErrorCode()).isEqualTo(CommonErrorCode.INVALID_INPUT));
         }
@@ -803,7 +840,7 @@ class CouponLookUpServiceTest {
         void 커서_ID와_시각_및_조회_조건을_검증한다(Long id, String sortValue) {
             String token = PageTokens.encode(new PageCursor(id, sortValue));
 
-            assertThatThrownBy(() -> service.getUsages(10L, FROM, TO, 20, token))
+            assertThatThrownBy(() -> service.getUsages(17L, 10L, FROM, TO, 20, token))
                     .isInstanceOfSatisfying(CouponException.class,
                             e -> assertThat(e.getErrorCode()).isEqualTo(CommonErrorCode.INVALID_INPUT));
         }
@@ -824,7 +861,7 @@ class CouponLookUpServiceTest {
         @ParameterizedTest
         @MethodSource("invalidRequests")
         void 잘못된_조회_범위와_페이지_크기를_거절한다(Long storeId, LocalDate from, LocalDate to, int pageSize) {
-            assertThatThrownBy(() -> service.getUsages(storeId, from, to, pageSize, null))
+            assertThatThrownBy(() -> service.getUsages(17L, storeId, from, to, pageSize, null))
                     .isInstanceOfSatisfying(CouponException.class,
                             e -> assertThat(e.getErrorCode()).isEqualTo(CommonErrorCode.INVALID_INPUT));
         }
