@@ -8,6 +8,7 @@ import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.launchcatch.IntegrationTestSupport;
 import com.launchcatch.auth.Role;
 import com.launchcatch.auth.jwt.AccessTokenValidAfterRepository;
 import com.launchcatch.auth.jwt.JwtTokenProvider;
@@ -38,36 +39,14 @@ import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.ActiveProfiles;
-import org.springframework.test.context.DynamicPropertyRegistry;
-import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.support.TransactionTemplate;
-import org.testcontainers.containers.GenericContainer;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
-import org.testcontainers.mysql.MySQLContainer;
-import org.testcontainers.utility.DockerImageName;
 
-@Testcontainers
 @ActiveProfiles("test")
 @SpringBootTest
 @AutoConfigureMockMvc
-class MemberWithdrawalIntegrationTest {
-    @Container
-    static final MySQLContainer MYSQL = new MySQLContainer(DockerImageName.parse("mysql:8.4"));
-    @Container
-    static final GenericContainer<?> VALKEY = new GenericContainer<>("valkey/valkey:9").withExposedPorts(6379);
-
-    @DynamicPropertySource
-    static void infrastructure(DynamicPropertyRegistry registry) {
-        registry.add("spring.datasource.url", MYSQL::getJdbcUrl);
-        registry.add("spring.datasource.username", MYSQL::getUsername);
-        registry.add("spring.datasource.password", MYSQL::getPassword);
-        registry.add("spring.data.redis.host", VALKEY::getHost);
-        registry.add("spring.data.redis.port", () -> VALKEY.getMappedPort(6379));
-        registry.add("jwt.secret", () -> "test-only-secret-not-used-anywhere-else-0123456789abcdef");
-    }
+class MemberWithdrawalIntegrationTest extends IntegrationTestSupport {
 
     @Autowired MockMvc mvc;
     @Autowired MemberRepository members;
