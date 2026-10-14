@@ -1,10 +1,12 @@
 package com.launchcatch.billing.controller;
 
 import com.launchcatch.auth.CustomUserDetails;
+import com.launchcatch.billing.dto.OwnerRefundRequestItem;
 import com.launchcatch.billing.dto.RefundPreviewResponse;
 import com.launchcatch.billing.dto.RefundRequestCreateRequest;
 import com.launchcatch.billing.dto.RefundRequestCreateResponse;
 import com.launchcatch.billing.service.OwnerRefundService;
+import com.launchcatch.global.response.CursorPageResponse;
 import com.launchcatch.global.response.ResponseEnvelope;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
@@ -19,6 +21,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
@@ -55,5 +58,18 @@ public class OwnerRefundController {
         String reason = request == null ? null : request.reason();
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body(ResponseEnvelope.success(refundService.request(owner.getId(), reason)));
+    }
+
+    @GetMapping
+    @Operation(summary = "내 환불 요청 목록",
+            description = "요청 시각 내림차순 커서 목록입니다. 다음 페이지는 응답의 nextPageToken 을 그대로 보냅니다.")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "조회 성공. nextPageToken 이 null 이면 마지막 페이지입니다.")
+    })
+    public ResponseEnvelope<CursorPageResponse<OwnerRefundRequestItem>> list(
+            @AuthenticationPrincipal CustomUserDetails owner,
+            @RequestParam(required = false) String pageToken,
+            @RequestParam(defaultValue = "20") int pageSize) {
+        return ResponseEnvelope.success(refundService.list(owner.getId(), pageToken, pageSize));
     }
 }

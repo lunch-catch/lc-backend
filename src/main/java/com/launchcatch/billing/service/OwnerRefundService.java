@@ -1,5 +1,6 @@
 package com.launchcatch.billing.service;
 
+import com.launchcatch.billing.dto.OwnerRefundRequestItem;
 import com.launchcatch.billing.dto.RefundBlockedReason;
 import com.launchcatch.billing.dto.RefundPreviewResponse;
 import com.launchcatch.billing.dto.RefundRequestCreateResponse;
@@ -12,14 +13,21 @@ import com.launchcatch.billing.repository.PointLedgerRepository;
 import com.launchcatch.billing.repository.RefundRequestRepository;
 import com.launchcatch.campaign.contract.CampaignQueryService;
 import com.launchcatch.global.exception.ConstraintViolations;
+import com.launchcatch.global.response.CursorPageResponse;
+import com.launchcatch.global.response.PageCursor;
+import com.launchcatch.global.response.PageTokens;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeParseException;
+import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.PessimisticLockingFailureException;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /*
- * 점주의 환불 미리보기와 환불 요청이다. 환불은 잔액 전액만 되고 요청만으로는 원장이 바뀌지 않는다.
+ * 점주의 환불 미리보기, 환불 요청, 내 환불 요청 목록이다. 환불은 잔액 전액만 되고 요청만으로는 원장이 바뀌지 않는다.
  *
  * 요청은 점주 계정 행을 잠근 뒤 잔액 없음, 집행 중 캠페인, 대기 요청 순서로 검사한다(BILLING-012, 010, 011).
  * 잠금이 이 트랜잭션의 첫 조회여야 뒤의 잔액 합이 그사이 커밋된 예약과 조정을 본다.
@@ -30,6 +38,8 @@ import org.springframework.transaction.annotation.Transactional;
 public class OwnerRefundService {
 
     static final String PENDING_UNIQUE = "uk_refund_request_pending";
+    private static final int DEFAULT_PAGE_SIZE = 20;
+    private static final int MAX_PAGE_SIZE = 100;
 
     private final PointAccountRepository pointAccountRepository;
     private final PointLedgerRepository pointLedgerRepository;
@@ -42,6 +52,27 @@ public class OwnerRefundService {
         RefundBlockedReason blocked = blockedReason(ownerId, balance);
         long refundable = Math.max(0, balance);
         return new RefundPreviewResponse(refundable, 0L, refundable, blocked == null, blocked);
+    }
+
+    /*
+     * 내 환불 요청 목록이며 요청 시각 내림차순 커서 방식이다. 한 건 더 읽어 다음 페이지가 있는지 판정한다.
+     * 토큰을 읽지 못하면 첫 페이지로 본다(PageTokens 규약, 점주 결제 내역과 같다).
+     */
+    @Transactional(readOnly = true)
+    public CursorPageResponse<OwnerRefundRequestItem> list(Long ownerId, String pageToken, int pageSize) {
+        int size = pageSize < 1 ? DEFAULT_PAGE_SIZE : Math.min(pageSize, MAX_PAGE_SIZE);
+        PageRequest limit = PageRequest.of(0, size + 1);
+        PageCursor cursor = PageTokens.decode(pageToken);
+        LocalDateTime cursorCreatedAt = cursor == null ? null : parseOrNull(cursor.sortValue());
+
+        List<RefundRequest> rows = cursorCreatedAt == null
+                ? refundRequestRepository.findOwnerHistory(ownerId, limit)
+                : refundRequestRepository.findOwnerHistoryAfter(ownerId, cursorCreatedAt, cursor.id(), limit);
+
+        boolean hasNext = rows.size() > size;
+        List<RefundRequest> page = hasNext ? rows.subList(0, size) : rows;
+        String nextPageToken = hasNext ? nextToken(page.get(page.size() - 1)) : null;
+        return CursorPageResponse.of(page.stream().map(OwnerRefundRequestItem::from).toList(), nextPageToken);
     }
 
     @Transactional
@@ -90,6 +121,21 @@ public class OwnerRefundService {
             return RefundBlockedReason.PENDING_REQUEST;
         }
         return null;
+    }
+
+    private static LocalDateTime parseOrNull(String value) {
+        if (value == null) {
+            return null;
+        }
+        try {
+            return LocalDateTime.parse(value);
+        } catch (DateTimeParseException e) {
+            return null;
+        }
+    }
+
+    private static String nextToken(RefundRequest last) {
+        return PageTokens.encode(new PageCursor(last.getId(), last.getCreatedAt().toString()));
     }
 
     private static BillingErrorCode errorCode(RefundBlockedReason reason) {

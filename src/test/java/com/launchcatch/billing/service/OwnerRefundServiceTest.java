@@ -6,9 +6,11 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.launchcatch.billing.dto.OwnerRefundRequestItem;
 import com.launchcatch.billing.dto.RefundBlockedReason;
 import com.launchcatch.billing.dto.RefundPreviewResponse;
 import com.launchcatch.billing.dto.RefundRequestCreateResponse;
@@ -21,13 +23,19 @@ import com.launchcatch.billing.repository.PointLedgerRepository;
 import com.launchcatch.billing.repository.RefundRequestRepository;
 import com.launchcatch.campaign.contract.CampaignQueryService;
 import com.launchcatch.global.exception.ErrorCode;
+import com.launchcatch.global.response.CursorPageResponse;
+import com.launchcatch.global.response.PageCursor;
+import com.launchcatch.global.response.PageTokens;
 import java.sql.SQLIntegrityConstraintViolationException;
+import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.dao.CannotAcquireLockException;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.test.util.ReflectionTestUtils;
 
 class OwnerRefundServiceTest {
@@ -170,5 +178,63 @@ class OwnerRefundServiceTest {
         doThrow(other).when(refundRepository).save(any());
 
         assertThatThrownBy(() -> service.request(OWNER, null)).isSameAs(other);
+    }
+
+    private static RefundRequest stored(long id, LocalDateTime createdAt) {
+        RefundRequest request = RefundRequest.requestAll(OWNER, 1000L * id, null);
+        ReflectionTestUtils.setField(request, "id", id);
+        ReflectionTestUtils.setField(request, "createdAt", createdAt);
+        return request;
+    }
+
+    @Test
+    void 목록은_한_건_더_읽어_다음_페이지_토큰을_만든다() {
+        LocalDateTime t3 = LocalDateTime.of(2026, 10, 14, 11, 0);
+        when(refundRepository.findOwnerHistory(OWNER, PageRequest.of(0, 3))).thenReturn(List.of(
+                stored(3L, t3), stored(2L, t3.minusHours(1)), stored(1L, t3.minusHours(2))));
+
+        CursorPageResponse<OwnerRefundRequestItem> page = service.list(OWNER, null, 2);
+
+        assertThat(page.items()).extracting(OwnerRefundRequestItem::refundRequestId).containsExactly(3L, 2L);
+        assertThat(page.items().get(0).requestedAt().toString()).isEqualTo("2026-10-14T11:00+09:00");
+        assertThat(page.items().get(0).processedAt()).isNull();
+        assertThat(PageTokens.decode(page.nextPageToken()))
+                .isEqualTo(new PageCursor(2L, t3.minusHours(1).toString()));
+    }
+
+    @Test
+    void 토큰이_있으면_그_다음부터_읽고_마지막_페이지는_토큰이_없다() {
+        LocalDateTime cursorAt = LocalDateTime.of(2026, 10, 14, 10, 0);
+        String token = PageTokens.encode(new PageCursor(2L, cursorAt.toString()));
+        when(refundRepository.findOwnerHistoryAfter(OWNER, cursorAt, 2L, PageRequest.of(0, 3)))
+                .thenReturn(List.of(stored(1L, cursorAt.minusHours(1))));
+
+        CursorPageResponse<OwnerRefundRequestItem> page = service.list(OWNER, token, 2);
+
+        assertThat(page.items()).extracting(OwnerRefundRequestItem::refundRequestId).containsExactly(1L);
+        assertThat(page.nextPageToken()).isNull();
+    }
+
+    @Test
+    void 읽을_수_없는_토큰이나_시각은_첫_페이지로_본다() {
+        when(refundRepository.findOwnerHistory(any(), any())).thenReturn(List.of());
+
+        service.list(OWNER, "not-a-token", 20);
+        service.list(OWNER, PageTokens.encode(new PageCursor(2L, "어제")), 20);
+        service.list(OWNER, PageTokens.encode(new PageCursor(2L, null)), 20);
+
+        verify(refundRepository, times(3)).findOwnerHistory(OWNER, PageRequest.of(0, 21));
+        verify(refundRepository, never()).findOwnerHistoryAfter(any(), any(), any(), any());
+    }
+
+    @Test
+    void 크기는_1_미만이면_20으로_100을_넘으면_100으로_보정한다() {
+        when(refundRepository.findOwnerHistory(any(), any())).thenReturn(List.of());
+
+        service.list(OWNER, null, 0);
+        service.list(OWNER, null, 500);
+
+        verify(refundRepository).findOwnerHistory(OWNER, PageRequest.of(0, 21));
+        verify(refundRepository).findOwnerHistory(OWNER, PageRequest.of(0, 101));
     }
 }

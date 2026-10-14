@@ -6,12 +6,15 @@ import static org.mockito.Mockito.when;
 
 import com.launchcatch.auth.CustomUserDetails;
 import com.launchcatch.auth.Role;
+import com.launchcatch.billing.dto.OwnerRefundRequestItem;
 import com.launchcatch.billing.dto.RefundPreviewResponse;
 import com.launchcatch.billing.dto.RefundRequestCreateRequest;
 import com.launchcatch.billing.dto.RefundRequestCreateResponse;
 import com.launchcatch.billing.entity.RefundStatus;
 import com.launchcatch.billing.service.OwnerRefundService;
+import com.launchcatch.global.response.CursorPageResponse;
 import com.launchcatch.global.response.ResponseEnvelope;
+import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -49,5 +52,13 @@ class OwnerRefundControllerTest {
         when(service.request(7L, null)).thenReturn(CREATED);
 
         assertThat(controller.request(OWNER, null).getBody().data()).isSameAs(CREATED);
+    }
+
+    @Test
+    void 목록_파라미터를_서비스에_그대로_넘긴다() {
+        CursorPageResponse<OwnerRefundRequestItem> page = CursorPageResponse.of(List.of(), null);
+        when(service.list(7L, "token", 20)).thenReturn(page);
+
+        assertThat(controller.list(OWNER, "token", 20).data()).isSameAs(page);
     }
 }
