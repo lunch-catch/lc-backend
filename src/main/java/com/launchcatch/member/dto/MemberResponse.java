@@ -3,8 +3,6 @@ package com.launchcatch.member.dto;
 import com.launchcatch.member.contract.AgeGroup;
 import com.launchcatch.member.contract.Gender;
 import com.launchcatch.member.contract.MemberStatus;
-import com.launchcatch.member.entity.AgeGroup;
-import com.launchcatch.member.entity.Gender;
 import io.swagger.v3.oas.annotations.media.Schema;
 import java.time.OffsetDateTime;
 

@@ -1,7 +1,7 @@
 package com.launchcatch.member.dto;
 
-import com.launchcatch.member.entity.AgeGroup;
-import com.launchcatch.member.entity.Gender;
+import com.launchcatch.member.contract.AgeGroup;
+import com.launchcatch.member.contract.Gender;
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.NotNull;
 
