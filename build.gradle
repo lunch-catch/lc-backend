@@ -133,6 +133,8 @@ dependencies {
     implementation platform('software.amazon.awssdk:bom:2.46.7')
     implementation 'software.amazon.awssdk:s3'
     implementation 'software.amazon.awssdk:apache5-client'
+    // 템플릿 생성 LLM 호출(Bedrock Converse). 연결 타임아웃은 위 apache5-client를 그대로 재사용한다.
+    implementation 'software.amazon.awssdk:bedrockruntime'
 
     /*
      * @Scheduled 메서드 공통 로깅(SchedulerLoggingAspect)과 관리 행위 감사 로그가

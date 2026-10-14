@@ -11,6 +11,8 @@ import com.launchcatch.campaign.template.entity.TemplateVersion;
 import com.launchcatch.campaign.template.repository.TemplateQuotaRepository;
 import com.launchcatch.campaign.template.repository.TemplateRepository;
 import com.launchcatch.campaign.template.repository.TemplateVersionRepository;
+import com.launchcatch.campaign.template.TemplateHtmlSanitizer;
+import com.launchcatch.campaign.template.TemplateSlotValidator;
 import java.time.Clock;
 import java.time.LocalDateTime;
 import java.util.List;

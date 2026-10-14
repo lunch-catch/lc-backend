@@ -84,7 +84,7 @@ public class RefreshTokenRepository {
      */
     public boolean saveIfNewer(String refreshToken, Long id, Role role, boolean remember, Duration ttl, long version) {
         if (version <= 0 || ttl.isNegative() || ttl.isZero() || ttl.toMillis() <= 0) {
-            throw new IllegalArgumentException("발급 순번과 TTL은 양수여야 한다");
+            throw new IllegalArgumentException("발급 순번과 유효기간은 양수여야 합니다.");
         }
         String hash = TokenHasher.sha256(refreshToken);
         Long saved = redisTemplate.execute(ORDERED_SAVE_SCRIPT,
