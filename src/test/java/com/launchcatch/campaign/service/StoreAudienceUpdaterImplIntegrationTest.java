@@ -3,6 +3,7 @@ package com.launchcatch.campaign.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.when;
 
+import com.launchcatch.IntegrationTestSupport;
 import com.launchcatch.campaign.contract.AgeGroup;
 import com.launchcatch.campaign.contract.StoreAudienceCell;
 import com.launchcatch.campaign.contract.TargetGender;
@@ -19,14 +20,8 @@ import java.util.stream.IntStream;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.test.context.DynamicPropertyRegistry;
-import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.transaction.annotation.Transactional;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
-import org.testcontainers.mysql.MySQLContainer;
-import org.testcontainers.utility.DockerImageName;
 
 /*
  * StoreAudienceUpdaterImpl이 실제 MySQL에 보내는 다중 행 INSERT ... ON DUPLICATE KEY UPDATE가
@@ -34,23 +29,9 @@ import org.testcontainers.utility.DockerImageName;
  * StoreAudienceRepository의 @Query였지만, 왕복을 줄이려고 다중 행 SQL로 바뀌면서
  * StoreAudienceUpdaterImpl로 옮겨졌다(#186 리뷰 반영).
  */
-@Testcontainers
 @SpringBootTest
 @Transactional
-class StoreAudienceUpdaterImplIntegrationTest {
-
-    @Container
-    static final MySQLContainer MYSQL = new MySQLContainer(DockerImageName.parse("mysql:8.4"));
-
-    private static final String DUMMY_JWT_SECRET = "test-only-secret-not-used-anywhere-else-0123456789abcdef";
-
-    @DynamicPropertySource
-    static void datasource(DynamicPropertyRegistry registry) {
-        registry.add("spring.datasource.url", MYSQL::getJdbcUrl);
-        registry.add("spring.datasource.username", MYSQL::getUsername);
-        registry.add("spring.datasource.password", MYSQL::getPassword);
-        registry.add("jwt.secret", () -> DUMMY_JWT_SECRET);
-    }
+class StoreAudienceUpdaterImplIntegrationTest extends IntegrationTestSupport {
 
     @Autowired
     private StoreAudienceUpdaterImpl updater;

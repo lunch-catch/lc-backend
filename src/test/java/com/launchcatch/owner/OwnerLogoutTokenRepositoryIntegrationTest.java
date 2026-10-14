@@ -1,5 +1,6 @@
 package com.launchcatch.owner;
 
+import com.launchcatch.IntegrationTestSupport;
 import com.launchcatch.auth.Role;
 import com.launchcatch.auth.jwt.AccessTokenValidAfterRepository;
 import com.launchcatch.owner.repository.OwnerLogoutTokenRepository;
@@ -17,16 +18,9 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
 import org.springframework.data.redis.core.StringRedisTemplate;
-import org.testcontainers.containers.GenericContainer;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
 
-@Testcontainers
 @SpringBootTest(classes = OwnerLogoutTokenRepositoryIntegrationTest.RedisConfig.class)
-class OwnerLogoutTokenRepositoryIntegrationTest {
-    @Container
-    static final GenericContainer<?> VALKEY = new GenericContainer<>("valkey/valkey:9")
-            .withExposedPorts(6379);
+class OwnerLogoutTokenRepositoryIntegrationTest extends IntegrationTestSupport {
 
     @Autowired
     private RefreshTokenRepository repository;
