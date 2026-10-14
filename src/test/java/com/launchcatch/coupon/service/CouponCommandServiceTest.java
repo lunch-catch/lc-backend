@@ -7,6 +7,10 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import com.launchcatch.coupon.entity.CouponDailyLimit;
 import com.launchcatch.coupon.entity.MemberCoupon;
 import com.launchcatch.coupon.entity.MemberCouponStatus;
@@ -18,6 +22,8 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.Optional;
 import java.util.UUID;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -27,6 +33,7 @@ import org.junit.jupiter.params.provider.CsvSource;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.slf4j.LoggerFactory;
 import org.springframework.aop.framework.ProxyFactory;
 import org.springframework.beans.BeanUtils;
 import org.springframework.dao.DataAccessResourceFailureException;
@@ -50,6 +57,27 @@ class CouponCommandServiceTest {
     @Mock CouponDailyLimitRepository couponDailyLimitRepository;
     @InjectMocks CouponCommandService service;
 
+    private Logger logger;
+    private Level originalLevel;
+    private ListAppender<ILoggingEvent> logs;
+
+    @BeforeEach
+    void captureLogs() {
+        logger = (Logger) LoggerFactory.getLogger(CouponCommandService.class);
+        originalLevel = logger.getLevel();
+        logger.setLevel(Level.INFO);
+        logs = new ListAppender<>();
+        logs.start();
+        logger.addAppender(logs);
+    }
+
+    @AfterEach
+    void cleanUpLogs() {
+        logger.detachAppender(logs);
+        logger.setLevel(originalLevel);
+        logs.stop();
+    }
+
     @ParameterizedTest
     @EnumSource(value = MemberCouponStatus.class, names = {"ISSUED", "EXPIRED"})
     void 미사용과_만료_쿠폰을_삭제하고_QR_무효화와_발급_횟수_차감을_반영한다(MemberCouponStatus status) {
@@ -66,6 +94,7 @@ class CouponCommandServiceTest {
         assertThat(coupon.getQrToken()).isNull();
         assertThat(coupon.getQrExpiresAt()).isNull();
         assertThat(dailyLimit.getIssuedCount()).isEqualTo(2);
+        assertThat(logs.list).isEmpty();
     }
 
     @Test
@@ -84,6 +113,7 @@ class CouponCommandServiceTest {
         assertThat(coupon.getQrToken()).isNull();
         assertThat(coupon.getQrExpiresAt()).isNull();
         assertThat(dailyLimit.getIssuedCount()).isEqualTo(1);
+        assertThat(logs.list).isEmpty();
     }
 
     @ParameterizedTest
@@ -119,12 +149,13 @@ class CouponCommandServiceTest {
         MemberCoupon coupon = coupon(MemberCouponStatus.USED);
         when(memberCouponRepository.findByIdAndMemberId(COUPON_ID, MEMBER_ID)).thenReturn(Optional.of(coupon));
 
-        assertError(CouponErrorCode.USED_COUPON_NOT_REMOVABLE);
+        assertError(CouponErrorCode.COUPON_ALREADY_USED);
 
         assertThat(coupon.getStatus()).isEqualTo(MemberCouponStatus.USED);
         assertThat(coupon.getQrVersion()).isEqualTo(3);
         assertThat(coupon.getQrToken()).isEqualTo(QR_TOKEN);
         assertThat(coupon.getQrExpiresAt()).isEqualTo(QR_EXPIRES_AT);
+        assertDeletionFailure("COUPON-012");
     }
 
     @Test
@@ -132,6 +163,7 @@ class CouponCommandServiceTest {
         when(memberCouponRepository.findByIdAndMemberId(COUPON_ID, MEMBER_ID)).thenReturn(Optional.empty());
 
         assertError(CouponErrorCode.COUPON_ACCESS_DENIED);
+        assertDeletionFailure("COUPON-011");
     }
 
     @Test
@@ -140,6 +172,7 @@ class CouponCommandServiceTest {
         when(memberCouponRepository.findByIdAndMemberId(COUPON_ID, MEMBER_ID)).thenThrow(failure);
 
         assertThatThrownBy(() -> service.deleteCoupon(MEMBER_ID, COUPON_ID)).isSameAs(failure);
+        assertThat(logs.list).isEmpty();
     }
 
     @Test
@@ -161,6 +194,16 @@ class CouponCommandServiceTest {
         assertThatThrownBy(() -> transactionalService.deleteCoupon(MEMBER_ID, COUPON_ID)).isSameAs(failure);
 
         verify(transactionManager).rollback(transaction);
+        assertThat(logs.list).isEmpty();
+    }
+
+    private void assertDeletionFailure(String reason) {
+        assertThat(logs.list).singleElement().satisfies(event -> {
+            assertThat(event.getLevel()).isEqualTo(Level.WARN);
+            assertThat(event.getFormattedMessage()).isEqualTo(
+                    "event=COUPON_DELETE_FAILED memberId=17 memberCouponId=1001 reason=" + reason);
+            assertThat(event.getThrowableProxy()).isNull();
+        });
     }
 
     private void assertError(CouponErrorCode errorCode) {

@@ -1,8 +1,8 @@
 package com.launchcatch.member.dto;
 
+import com.launchcatch.member.contract.AgeGroup;
+import com.launchcatch.member.contract.Gender;
 import com.launchcatch.member.contract.MemberStatus;
-import com.launchcatch.member.entity.AgeGroup;
-import com.launchcatch.member.entity.Gender;
 import java.time.OffsetDateTime;
 
 public record MemberResponse(

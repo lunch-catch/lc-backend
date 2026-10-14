@@ -1,6 +1,7 @@
 package com.launchcatch.admin.controller;
 
 import com.launchcatch.admin.dto.AdminRegistrationRequest;
+import com.launchcatch.admin.AdminAccessTokenClaims;
 import com.launchcatch.admin.dto.AdminRegistrationResponse;
 import com.launchcatch.admin.service.AdminRegistrationService;
 import com.launchcatch.auth.CustomUserDetails;
@@ -38,7 +39,7 @@ class AdminRegistrationController {
             @AuthenticationPrincipal CustomUserDetails userDetails,
             @Valid @RequestBody AdminRegistrationRequest request) {
         AdminRegistrationResponse response = adminRegistrationService.register(
-                userDetails.getId(), userDetails.getRole(), userDetails.getIssuedAt(), request);
+                userDetails.getId(), userDetails.getRole(), userDetails.getIssuedAt(), AdminAccessTokenClaims.issuanceVersion(userDetails.getAdditionalClaims()), request);
         return ResponseEntity.status(HttpStatus.CREATED).body(ResponseEnvelope.success(response));
     }
 }

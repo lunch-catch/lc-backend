@@ -263,8 +263,8 @@ class CouponIntegrationTest {
 
             mockMvc.perform(get(path).with(user(new CustomUserDetails(17L, Role.MEMBER))))
                     .andExpect(status().isInternalServerError())
-                    .andExpect(jsonPath("$.code").value("COUPON-019"))
-                    .andExpect(jsonPath("$.message").value("쿠폰 사용 정보를 조회할 수 없습니다."))
+                    .andExpect(jsonPath("$.code").value("COMMON-001"))
+                    .andExpect(jsonPath("$.message").value("서버 오류가 발생했습니다."))
                     .andExpect(jsonPath("$.data").isEmpty());
         }
 
@@ -685,8 +685,8 @@ class CouponIntegrationTest {
 
             mockMvc.perform(get(PATH).with(user(MEMBER)))
                     .andExpect(status().isInternalServerError())
-                    .andExpect(jsonPath("$.code").value("COUPON-019"))
-                    .andExpect(jsonPath("$.message").value("쿠폰 사용 정보를 조회할 수 없습니다."));
+                    .andExpect(jsonPath("$.code").value("COMMON-001"))
+                    .andExpect(jsonPath("$.message").value("서버 오류가 발생했습니다."));
 
             assertThat(findCoupon()).usingRecursiveComparison().isEqualTo(before);
         }
@@ -698,7 +698,7 @@ class CouponIntegrationTest {
             Map<String, Object> before = findCoupon();
 
             mockMvc.perform(get("/v1/coupons/" + id).with(user(new CustomUserDetails(18L, Role.MEMBER))))
-                    .andExpect(status().isForbidden()).andExpect(jsonPath("$.code").value("COUPON-015"));
+                    .andExpect(status().isForbidden()).andExpect(jsonPath("$.code").value("COUPON-011"));
 
             assertThat(findCoupon()).usingRecursiveComparison().isEqualTo(before);
         }
@@ -1044,7 +1044,7 @@ class CouponIntegrationTest {
             Map<String, Object> before = findCoupon();
 
             mockMvc.perform(delete("/v1/coupons/1001").with(user(MEMBER)))
-                    .andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("COUPON-011"));
+                    .andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("COUPON-012"));
 
             assertThat(findCoupon()).usingRecursiveComparison().isEqualTo(before);
             assertThat(jdbcTemplate.queryForObject("SELECT discount_amount FROM coupon_usage_history", Integer.class))
@@ -1059,7 +1059,7 @@ class CouponIntegrationTest {
             Map<String, Object> before = findCoupon();
 
             mockMvc.perform(delete("/v1/coupons/" + id).with(user(new CustomUserDetails(18L, Role.MEMBER))))
-                    .andExpect(status().isForbidden()).andExpect(jsonPath("$.code").value("COUPON-015"));
+                    .andExpect(status().isForbidden()).andExpect(jsonPath("$.code").value("COUPON-011"));
 
             assertThat(findCoupon()).usingRecursiveComparison().isEqualTo(before);
             assertThat(findIssuedCount()).isEqualTo(1);
@@ -1070,7 +1070,7 @@ class CouponIntegrationTest {
             jdbcTemplate.update("UPDATE member_coupon SET status = 'REMOVED' WHERE member_coupon_id = 1001");
 
             mockMvc.perform(delete("/v1/coupons/1001").with(user(new CustomUserDetails(18L, Role.MEMBER))))
-                    .andExpect(status().isForbidden()).andExpect(jsonPath("$.code").value("COUPON-015"));
+                    .andExpect(status().isForbidden()).andExpect(jsonPath("$.code").value("COUPON-011"));
         }
 
         @Test

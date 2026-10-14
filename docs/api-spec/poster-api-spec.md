@@ -1,6 +1,6 @@
 # 포스터 (poster) API 명세
 
-관리자의 템플릿 관리 API의 요청, 응답, 오류를 적는다.
+관리자의 템플릿 관리 API와 사용자의 포스터 조회 API의 요청, 응답, 오류를 적는다.
 공통 규약(경로, 인증, 응답 봉투, 상태 코드, 식별자, 시각)은 `README.md` 를 따르고 여기서는 반복하지 않는다.
 서버가 내부에서 어떻게 처리하는지와 그렇게 정한 이유는 설계서 `../design/campaign/poster-api-design.md` 에 있다.
 
@@ -18,6 +18,7 @@
 | `GET` | `/v1/admin/templates/{templateId}/versions` | 템플릿 버전 목록 조회 | ADMIN, SUPER_ADMIN |
 | `POST` | `/v1/admin/templates/{templateId}/publish` | 템플릿 게시 | ADMIN, SUPER_ADMIN |
 | `PATCH` | `/v1/admin/templates/{templateId}/active` | 템플릿 활성화 관리 | ADMIN, SUPER_ADMIN |
+| `GET` | `/v1/campaigns/{campaignId}/poster` | 사용자용 포스터 조회 | MEMBER |
 
 ## 템플릿 생성
 
@@ -319,6 +320,46 @@
 | `404` | `POSTER-005` | 템플릿을 찾을 수 없다 |
 | `409` | `POSTER-009` | 게시되지 않은 템플릿이다 |
 
+## 사용자용 포스터 조회
+
+### `GET /v1/campaigns/{campaignId}/poster`
+
+가게 상세 화면에 표시할 저장된 포스터 HTML을 돌려준다. 조회 시점에 새로 만들지 않고 저장된 그대로 돌려준다.
+캠페인이 `ACTIVE`, `PAUSED`, `ENDED`일 때만 조회할 수 있다. `DRAFT`, `SCHEDULED`는 비공개다.
+포스터를 조회할 수 있다는 것과 쿠폰을 발급받을 수 있다는 것은 다른 판단이다. 쿠폰 발급 가능 여부는 쿠폰 도메인이 따로 정한다.
+
+**요청**
+
+| 이름 | 위치 | 타입 | 필수 | 설명 |
+|---|---|---|---|---|
+| `campaignId` | 경로 | integer | 예 | 포스터를 조회할 캠페인 ID |
+
+**응답** `200`
+
+```json
+{
+  "code": "SUCCESS",
+  "message": "요청이 성공적으로 처리되었습니다.",
+  "data": {
+    "campaignId": 1,
+    "status": "ACTIVE",
+    "html": "<div>...</div>"
+  }
+}
+```
+
+| 필드 | 타입 | null | 설명 |
+|---|---|---|---|
+| `campaignId` | integer | 아니오 | 캠페인 ID |
+| `status` | string | 아니오 | `ACTIVE`, `PAUSED`, `ENDED` 중 하나 |
+| `html` | string | 아니오 | 저장된 포스터 HTML |
+
+**오류**
+
+| 상태 | 코드 | 언제 |
+|---|---|---|
+| `404` | `POSTER-014` | 캠페인이 없거나, `DRAFT`나 `SCHEDULED`라 비공개거나, 포스터가 저장돼 있지 않다. 세 경우를 구분해 알려주지 않는다 |
+
 ## 오류 코드
 
 요청 형식이 틀린 실패는 공통 코드(`COMMON-002`)로 온다. 공통 코드 목록은 `README.md` 에 있다.
@@ -335,3 +376,8 @@
 | `POSTER-007` | `409` | 이미 게시된 템플릿은 다시 게시할 수 없습니다. |
 | `POSTER-008` | `404` | 존재하지 않는 버전 번호로 게시할 수 없습니다. |
 | `POSTER-009` | `409` | 게시되지 않은 템플릿은 활성화할 수 없습니다. |
+| `POSTER-010` | `422` | 템플릿 생성 결과가 잘렸습니다. 다시 시도해 주세요. |
+| `POSTER-011` | `422` | 템플릿에 허용되지 않은 태그나 속성이 있습니다. |
+| `POSTER-012` | `503` | 템플릿 생성 요청이 몰리고 있습니다. 잠시 후 다시 시도해 주세요. |
+| `POSTER-013` | `422` | 요청한 문구로는 템플릿을 생성할 수 없습니다. 다른 표현으로 다시 시도해 주세요. |
+| `POSTER-014` | `404` | 포스터를 찾을 수 없습니다. |

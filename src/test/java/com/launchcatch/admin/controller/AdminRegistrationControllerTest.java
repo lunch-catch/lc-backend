@@ -1,5 +1,6 @@
 package com.launchcatch.admin.controller;
 
+import com.launchcatch.admin.AdminAccessTokenClaims;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.*;
 
@@ -20,12 +21,12 @@ class AdminRegistrationControllerTest {
         var issuedAt = LocalDateTime.of(2026, 10, 8, 10, 0);
         var request = new AdminRegistrationRequest("admin01", "Initial123!", "홍길동", "ADMIN");
         var expected = new AdminRegistrationResponse("admin01", "홍길동", "ADMIN");
-        when(service.register(1L, Role.SUPER_ADMIN, issuedAt, request)).thenReturn(expected);
-        var response = controller.register(new CustomUserDetails(1L, Role.SUPER_ADMIN, issuedAt), request);
+        when(service.register(1L, Role.SUPER_ADMIN, issuedAt, 1L, request)).thenReturn(expected);
+        var response = controller.register(new CustomUserDetails(1L, Role.SUPER_ADMIN, issuedAt, AdminAccessTokenClaims.forVersion(1L)), request);
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CREATED);
         assertThat(response.getBody()).isNotNull();
         assertThat(response.getBody().code()).isEqualTo("SUCCESS");
         assertThat(response.getBody().data()).isEqualTo(expected);
-        verify(service).register(1L, Role.SUPER_ADMIN, issuedAt, request);
+        verify(service).register(1L, Role.SUPER_ADMIN, issuedAt, 1L, request);
     }
 }
