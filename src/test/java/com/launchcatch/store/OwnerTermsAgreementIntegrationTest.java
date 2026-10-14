@@ -104,6 +104,7 @@ class OwnerTermsAgreementIntegrationTest {
         reset(agreements);
         jdbc.update("delete from owner_terms_agreement where owner_id = ?", ownerId);
         owners.deleteById(ownerId);
+        jdbc.update("delete from admin where login_id = ?", "owner-terms-admin");
     }
 
     private Cookie access(Role role) {
@@ -160,6 +161,13 @@ class OwnerTermsAgreementIntegrationTest {
     @ParameterizedTest
     @EnumSource(value = Role.class, names = {"MEMBER", "ADMIN", "SUPER_ADMIN"})
     void 다른_역할은_AUTH006이다(Role role) throws Exception {
+        if (role == Role.ADMIN || role == Role.SUPER_ADMIN) {
+            jdbc.update("""
+                    insert into admin (admin_id, login_id, password_hash, name, role, status, created_at, updated_at)
+                    values (?, ?, ?, ?, ?, 'ACTIVE', ?, ?)
+                    """, ownerId, "owner-terms-admin", "hash", "약관 테스트 관리자", role.name(),
+                    LocalDateTime.now(), LocalDateTime.now());
+        }
         mvc.perform(post("/v1/owner/terms-agreements").cookie(access(role)).contentType(MediaType.APPLICATION_JSON).content(BODY))
                 .andExpect(status().isForbidden()).andExpect(jsonPath("$.code").value("AUTH-006"));
         assertThat(agreements.findAllByOwnerId(ownerId)).isEmpty();
