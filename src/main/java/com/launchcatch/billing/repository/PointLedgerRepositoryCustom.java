@@ -20,9 +20,6 @@ public interface PointLedgerRepositoryCustom {
     // 관리자 원장 목록의 한 페이지다
     List<AdminLedgerRow> findAdminLedger(AdminLedgerCondition condition);
 
-    // 같은 조건의 전체 건수다. 정렬과 페이지 조건은 쓰지 않는다
-    long countAdminLedger(AdminLedgerCondition condition);
-
     // 기간 안에서 잔액을 바꾸는 줄(DEDUCT 제외)을 기록 시각, ID 오름차순으로 돌려준다
     List<BalanceStep> findBalanceSteps(Long ownerId, LocalDateTime fromInclusive, LocalDateTime toExclusive);
 

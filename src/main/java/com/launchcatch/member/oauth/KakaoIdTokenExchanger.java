@@ -2,6 +2,7 @@ package com.launchcatch.member.oauth;
 
 import com.launchcatch.auth.exception.AuthErrorCode;
 import com.launchcatch.auth.exception.AuthException;
+import com.launchcatch.global.logging.FailureLogDetails;
 import com.launchcatch.member.client.KakaoTokenClient;
 import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
 import lombok.RequiredArgsConstructor;
@@ -28,6 +29,7 @@ public class KakaoIdTokenExchanger {
     public KakaoIdentity exchange(String authorizationCode, String state) {
         String expectedNonce = kakaoLoginStateRepository.consume(state);
         if (expectedNonce == null) {
+            log.warn("event=KAKAO_ID_TOKEN_VERIFICATION_FAILED reason=STATE_INVALID");
             throw new AuthException(AuthErrorCode.KAKAO_AUTHENTICATION_FAILED);
         }
 
@@ -36,13 +38,20 @@ public class KakaoIdTokenExchanger {
             KakaoTokenResponse tokenResponse = kakaoTokenClient.exchange(kakao, authorizationCode);
             Jwt idToken = kakaoJwtDecoder.decode(tokenResponse.idToken());
             if (!expectedNonce.equals(idToken.getClaimAsString("nonce"))) {
+                log.warn("event=KAKAO_ID_TOKEN_VERIFICATION_FAILED reason=NONCE_MISMATCH");
                 throw new AuthException(AuthErrorCode.KAKAO_AUTHENTICATION_FAILED);
             }
             return KakaoIdentity.from(idToken);
         } catch (AuthException e) {
             throw e;
-        } catch (JwtException | IllegalArgumentException | CallNotPermittedException e) {
-            log.warn("event=KAKAO_ID_TOKEN_VERIFICATION_FAILED", e);
+        } catch (CallNotPermittedException e) {
+            log.warn("event=KAKAO_ID_TOKEN_VERIFICATION_FAILED reason=CIRCUIT_OPEN details={}", FailureLogDetails.from(e));
+            throw new AuthException(AuthErrorCode.KAKAO_AUTHENTICATION_FAILED, e);
+        } catch (JwtException e) {
+            log.warn("event=KAKAO_ID_TOKEN_VERIFICATION_FAILED reason=TOKEN_VALIDATION_FAILED details={}", FailureLogDetails.from(e));
+            throw new AuthException(AuthErrorCode.KAKAO_AUTHENTICATION_FAILED, e);
+        } catch (IllegalArgumentException e) {
+            log.warn("event=KAKAO_ID_TOKEN_VERIFICATION_FAILED reason=TOKEN_CLAIMS_INVALID details={}", FailureLogDetails.from(e));
             throw new AuthException(AuthErrorCode.KAKAO_AUTHENTICATION_FAILED, e);
         }
     }

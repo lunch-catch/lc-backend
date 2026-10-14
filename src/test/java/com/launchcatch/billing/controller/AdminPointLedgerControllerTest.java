@@ -10,7 +10,7 @@ import com.launchcatch.billing.dto.SummaryPeriod;
 import com.launchcatch.billing.entity.EntryType;
 import com.launchcatch.billing.service.AdminPointLedgerService;
 import com.launchcatch.billing.service.AdminPointSummaryService;
-import com.launchcatch.global.response.PageResponse;
+import com.launchcatch.global.response.CursorPageResponse;
 import com.launchcatch.global.response.ResponseEnvelope;
 import java.lang.reflect.Method;
 import java.time.LocalDate;
@@ -29,11 +29,11 @@ class AdminPointLedgerControllerTest {
     void 요청_파라미터를_서비스에_그대로_넘긴다() {
         LocalDate from = LocalDate.of(2026, 9, 1);
         LocalDate to = LocalDate.of(2026, 9, 30);
-        PageResponse<AdminLedgerItem> page = PageResponse.of(List.of(), 1, 50, 0);
-        when(service.search(7L, EntryType.CHARGE, from, to, 12L, 1, 50, "asc")).thenReturn(page);
+        CursorPageResponse<AdminLedgerItem> page = CursorPageResponse.of(List.of(), "next");
+        when(service.search(7L, EntryType.CHARGE, from, to, 12L, "token", 20, "asc")).thenReturn(page);
 
-        ResponseEnvelope<PageResponse<AdminLedgerItem>> response =
-                controller.search(7L, EntryType.CHARGE, from, to, 12L, 1, 50, "asc");
+        ResponseEnvelope<CursorPageResponse<AdminLedgerItem>> response =
+                controller.search(7L, EntryType.CHARGE, from, to, 12L, "token", 20, "asc");
 
         assertThat(response.data()).isSameAs(page);
     }
@@ -42,7 +42,7 @@ class AdminPointLedgerControllerTest {
     void 조회_메서드에는_관리자_역할_검사가_붙어_있다() throws NoSuchMethodException {
         Method search = AdminPointLedgerController.class.getMethod("search",
                 Long.class, EntryType.class, LocalDate.class, LocalDate.class, Long.class,
-                int.class, int.class, String.class);
+                String.class, int.class, String.class);
 
         PreAuthorize preAuthorize = search.getAnnotation(PreAuthorize.class);
 

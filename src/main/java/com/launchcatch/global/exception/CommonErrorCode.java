@@ -50,7 +50,7 @@ public enum CommonErrorCode implements ErrorCode {
     CONTENT_TOO_LARGE(HttpStatus.CONTENT_TOO_LARGE, "COMMON-006", "요청 크기가 허용 범위를 넘었습니다."),
 
     // Content-Type 을 처리할 수 없다 (HttpMediaTypeNotSupportedException)
-    UNSUPPORTED_MEDIA_TYPE(HttpStatus.UNSUPPORTED_MEDIA_TYPE, "COMMON-007", "지원하지 않는 형식입니다. Content-Type 을 확인해 주세요.");
+    UNSUPPORTED_MEDIA_TYPE(HttpStatus.UNSUPPORTED_MEDIA_TYPE, "COMMON-007", "지원하지 않는 형식입니다. 요청 본문의 콘텐츠 유형을 확인해 주세요.");
 
     private final HttpStatus httpStatus;
     private final String code;

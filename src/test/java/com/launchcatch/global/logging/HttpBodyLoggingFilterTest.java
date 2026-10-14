@@ -13,6 +13,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.junit.jupiter.params.provider.Arguments;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
 
@@ -214,12 +215,8 @@ class HttpBodyLoggingFilterTest {
                 .doesNotContain("1234");
     }
 
-    /*
-     * 알려진 한계를 고정한다. 정규식이 따옴표로 감싼 문자열 값만 찾아서 숫자 값은 가려지지 않는다.
-     * 숫자 값도 가리도록 고치면 이 테스트의 기대값을 함께 바꾼다.
-     */
     @Test
-    void 숫자_값인_좌표는_지금은_가려지지_않는다() throws Exception {
+    void 숫자_값인_좌표도_가린다() throws Exception {
         // given
         MockHttpServletRequest request = jsonPost("{\"latitude\":37.5665,\"longitude\":126.978}");
 
@@ -228,8 +225,69 @@ class HttpBodyLoggingFilterTest {
 
         // then
         assertThat(logs.only().getFormattedMessage())
-                .contains("\"latitude\":37.5665")
-                .contains("\"longitude\":126.978");
+                .contains("\"latitude\":\"" + MASKED + "\"")
+                .contains("\"longitude\":\"" + MASKED + "\"")
+                .doesNotContain("37.5665", "126.978");
+    }
+
+    static Stream<Arguments> numericCoordinates() {
+        return Stream.of("lat", "lng", "latitude", "longitude", "LATITUDE")
+                .flatMap(key -> Stream.of("0", "-0", "37", "-37.5665", "126.978", "3.75665e1", "1.26978E+2", "-1.2e-3")
+                        .map(value -> Arguments.of(key, value)));
+    }
+
+    @ParameterizedTest
+    @MethodSource("numericCoordinates")
+    void 정수_음수_소수_지수_좌표는_요청과_응답_로그에서_가린다(String key, String value) throws Exception {
+        String body = "{\"nested\":[{\"" + key + "\" : " + value + ",\"count\":7}]}";
+        MockHttpServletRequest request = jsonPost(body);
+
+        MockHttpServletResponse response = run(request, respond(400, body));
+
+        assertThat(logs.only().getFormattedMessage()).contains("\"" + key + "\" : \"" + MASKED + "\"", "\"count\":7")
+                .doesNotContain("\"" + key + "\" : " + value);
+        assertThat(response.getContentAsString()).isEqualTo(body);
+        assertThat(request.getContentAsByteArray()).isEqualTo(body.getBytes(StandardCharsets.UTF_8));
+    }
+
+    @Test
+    void DEBUG_성공_로그에서도_좌표를_가리고_실제_응답은_유지한다() throws Exception {
+        logs.level(Level.DEBUG);
+        String body = "{\"latitude\":37.5665,\"longitude\":126.978}";
+
+        MockHttpServletResponse response = run(jsonPost(body), respond(200, body));
+
+        assertThat(logs.only().getFormattedMessage()).contains(MASKED).doesNotContain("37.5665", "126.978");
+        assertThat(response.getContentAsString()).isEqualTo(body);
+    }
+
+    @Test
+    void 없는_좌표는_null로_유지한다() throws Exception {
+        String body = "{\"latitude\":null,\"longitude\":null}";
+
+        run(jsonPost(body), respond(500, body));
+
+        assertThat(logs.only().getFormattedMessage()).contains(body).doesNotContain(MASKED);
+    }
+
+    @Test
+    void 긴_숫자_좌표도_길이를_자르기_전에_가린다() throws Exception {
+        String body = "{\"latitude\":" + "123456789".repeat(350) + "}";
+
+        run(jsonPost(body), respond(400, body));
+
+        assertThat(logs.only().getFormattedMessage()).contains("\"latitude\":\"" + MASKED + "\"")
+                .doesNotContain("123456789");
+    }
+
+    @Test
+    void 캐시_끝에서_지수_숫자가_잘려도_좌표의_앞부분을_남기지_않는다() throws Exception {
+        String body = "{\"latitude\":" + "1".repeat(8179) + "e+123}";
+
+        run(jsonPost(body), respond(400, "{}"));
+
+        assertThat(logs.only().getFormattedMessage()).contains("\"latitude\":\"" + MASKED + "\"")
+                .doesNotContain("111111111");
     }
 
     // --- 로그 수준과 바디 포함 ------------------------------------------------------

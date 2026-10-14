@@ -32,6 +32,10 @@ class TestPlacementTest {
     private static final String INTEGRATION_SUFFIX = "IntegrationTest";
     private static final String SPRING_BOOT_TEST =
             "org.springframework.boot.test.context.SpringBootTest";
+    private static final String SUPPORT = BASE + ".IntegrationTestSupport";
+    private static final Set<String> CONTAINERS = Set.of(
+            "org.testcontainers.containers.GenericContainer",
+            "org.testcontainers.mysql.MySQLContainer");
 
     static class MainAndUnitTests implements ImportOption {
         @Override
@@ -105,6 +109,29 @@ class TestPlacementTest {
                 .map(c -> c.getName() + "  (패키지 " + c.getPackageName() + " 에 프로덕션 클래스가 없다)")
                 .collect(Collectors.toList());
         fail("단위 테스트 패키지", bad, "대상 클래스와 같은 패키지에 둔다");
+    }
+
+    /*
+     * 컨테이너는 IntegrationTestSupport 하나가 띄운다.
+     *
+     * @Container 로 클래스마다 선언하면 수명이 그 클래스에 묶여서 기동과 종료가 테스트 수만큼
+     * 반복된다. 러너가 2 vCPU 7GB 인데 앞 컨테이너가 다 내려가기 전에 다음이 올라오는 구간이
+     * 생기면 MySQL 이 Connection refused 로 떨어진다. 같은 커밋이 한 번은 통과하고 한 번은
+     * 실패하므로 원인을 찾기 어렵다. 어겨도 당장은 깨지지 않고 CI 가 흔들리기 시작할 뿐이라
+     * 규칙으로 막는다.
+     */
+    @ArchTest
+    static void 컨테이너는_지원_클래스만_띄운다(JavaClasses classes) {
+        List<String> bad = classes.stream()
+                .filter(c -> from(c, OWN))
+                .filter(c -> !c.getName().equals(SUPPORT))
+                .flatMap(c -> c.getFields().stream())
+                .filter(f -> CONTAINERS.contains(f.getRawType().getName()))
+                .map(f -> f.getOwner().getName() + "." + f.getName())
+                .distinct()
+                .collect(Collectors.toList());
+        fail("컨테이너 선언", bad,
+                "IntegrationTestSupport 를 상속한다. 컨테이너는 JVM 당 한 번만 띄운다");
     }
 
     /*

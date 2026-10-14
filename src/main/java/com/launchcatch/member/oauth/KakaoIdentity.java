@@ -10,7 +10,7 @@ public record KakaoIdentity(String providerUserId, String nickname, String profi
         String subject = idToken.getSubject();
         String nickname = claimText(claims, "nickname");
         if (subject == null || subject.isBlank() || nickname == null || nickname.isBlank()) {
-            throw new IllegalArgumentException("Kakao ID token has required claim missing");
+            throw new IllegalArgumentException("카카오 식별 토큰에 필수 정보가 없습니다.");
         }
         return new KakaoIdentity(subject, nickname, claimText(claims, "picture"));
     }
