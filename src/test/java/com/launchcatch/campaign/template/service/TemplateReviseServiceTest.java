@@ -3,6 +3,7 @@ package com.launchcatch.campaign.template.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -24,6 +25,7 @@ import com.launchcatch.campaign.template.TemplateStructureValidator;
 import com.launchcatch.global.entity.BaseTimeEntity;
 import java.lang.reflect.Field;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
@@ -35,6 +37,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.ValueOperations;
 import org.springframework.transaction.support.TransactionCallback;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -62,6 +66,10 @@ class TemplateReviseServiceTest {
     private TemplateHtmlGenerator templateHtmlGenerator;
     @Mock
     private TransactionTemplate transactionTemplate;
+    @Mock
+    private StringRedisTemplate redisTemplate;
+    @Mock
+    private ValueOperations<String, String> valueOperations;
 
     private TemplateReviseService service;
 
@@ -75,9 +83,12 @@ class TemplateReviseServiceTest {
                 new TemplateHtmlSanitizer(),
                 new TemplateSlotValidator(),
                 new TemplateStructureValidator(),
+                new TemplateGenerationRateLimiter(redisTemplate),
                 transactionTemplate,
                 FIXED_CLOCK);
         lenient().when(templateVersionRepository.findByRequestId(REQUEST_ID)).thenReturn(Optional.empty());
+        lenient().when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        lenient().when(valueOperations.setIfAbsent(anyString(), anyString(), any(Duration.class))).thenReturn(true);
         lenient().when(templateVersionRepository.findMaxVersionNumber(TEMPLATE_ID)).thenReturn(1);
         lenient().when(templateRepository.findById(TEMPLATE_ID)).thenAnswer(invocation -> Optional.of(draftTemplate()));
         lenient().when(templateRepository.findByIdForUpdate(TEMPLATE_ID))
@@ -120,6 +131,34 @@ class TemplateReviseServiceTest {
         verify(templateRepository, never()).findById(any());
         verify(templateRepository, never()).findByIdForUpdate(any());
         verify(templateHtmlGenerator, never()).revise(any(), any());
+        verify(redisTemplate, never()).execute(any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("분당 3회를 넘으면 LLM 을 부르지 않고 POSTER-014 으로 거부한다")
+    void 속도_제한을_넘으면_거부한다() {
+        when(redisTemplate.execute(any(), any(), any())).thenReturn(4L);
+
+        assertThatThrownBy(() -> service.revise(TEMPLATE_ID, "버튼 색 바꿔줘", REQUEST_ID, ADMIN_ID))
+                .isInstanceOf(CampaignException.class)
+                .extracting(e -> ((CampaignException) e).getErrorCode())
+                .isEqualTo(PosterErrorCode.GENERATION_RATE_LIMITED);
+        verify(templateHtmlGenerator, never()).revise(any(), any());
+    }
+
+    @Test
+    @DisplayName("저장되기 전에 같은 requestId 가 다시 들어오면 POSTER-004 로 거부하고 LLM 을 또 부르지 않는다")
+    void 저장되기_전_같은_requestId_재진입은_POSTER_004로_거부한다() {
+        when(valueOperations.setIfAbsent(anyString(), anyString(), any(Duration.class))).thenReturn(false);
+
+        assertThatThrownBy(() -> service.revise(TEMPLATE_ID, "버튼 색 바꿔줘", REQUEST_ID, ADMIN_ID))
+                .isInstanceOf(CampaignException.class)
+                .extracting(e -> ((CampaignException) e).getErrorCode())
+                .isEqualTo(PosterErrorCode.GENERATION_TIMEOUT);
+
+        verify(templateHtmlGenerator, never()).revise(any(), any());
+        verify(templateRepository, never()).saveAndFlush(any());
+        verify(redisTemplate, never()).execute(any(), any(), any());
     }
 
     @Test
