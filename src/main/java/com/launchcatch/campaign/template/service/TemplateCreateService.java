@@ -47,14 +47,16 @@ public class TemplateCreateService {
      * UPDATE 와 request_id 의 UNIQUE 제약이다.
      *
      * requestId 재시도가 아니라고 확인한 뒤에만 속도 제한을 센다(#227). 멱등성으로
-     * 걸러지는 같은 요청의 재시도까지 관리자의 호출 횟수로 세면 안 된다.
+     * 걸러지는 같은 요청의 재시도까지 관리자의 호출 횟수로 세면 안 된다. 저장되기 전에(=
+     * LLM 호출이 끝나기 전에) 같은 requestId가 다시 들어오는 경우는 이 조회로 못 걸러서
+     * checkLimit 안에서 requestId 기준으로 한 번만 세게 한다.
      */
     public TemplateCreateResponse create(String name, String requestPrompt, String requestId, Long adminId) {
         var existing = templateVersionRepository.findByRequestId(requestId);
         if (existing.isPresent()) {
             return toResponse(existing.get(), List.of());
         }
-        templateGenerationRateLimiter.checkLimit(adminId);
+        templateGenerationRateLimiter.checkLimit(adminId, requestId);
         if (templateRepository.count() >= MAX_TEMPLATES) {
             throw new CampaignException(PosterErrorCode.TEMPLATE_LIMIT_EXCEEDED);
         }

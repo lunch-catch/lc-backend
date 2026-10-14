@@ -26,6 +26,13 @@ import org.springframework.stereotype.Component;
  *
  * Redis 장애 시에는 세지 못하는 것뿐이지 막을 이유가 없어 통과시킨다
  * (장애_처리_설계_가이드.md, 캐시 기본 처리).
+ *
+ * TemplateCreateService/TemplateReviseService는 저장된 버전이 있을 때만 requestId 재시도로
+ * 본다. 같은 requestId가 저장되기 전에(= LLM 호출이 끝나기 전에) 다시 들어오면 그 조회가
+ * 둘 다 비어 있어 checkLimit을 두 번 호출하게 된다(코드래빗 리뷰로 찾음). 그래서 이 requestId를
+ * 처음 보는지를 먼저 SETNX로 표시해, 같은 요청이 진행 중일 때 들어온 재시도는 횟수를 세지
+ * 않는다. TTL은 이 LLM 호출의 실제 worst-case(BedrockConfig.API_CALL_TIMEOUT 30초 x
+ * BedrockTemplateHtmlGenerator.MAX_RETRIES+1회 = 60초)에 맞춘다.
  */
 @Slf4j
 @Component
@@ -33,8 +40,10 @@ import org.springframework.stereotype.Component;
 public class TemplateGenerationRateLimiter {
 
     private static final String KEY_PREFIX = "templateGenerationRateLimit:";
+    private static final String IN_FLIGHT_KEY_PREFIX = "templateGenerationInFlight:";
     private static final int LIMIT = 3;
     private static final Duration WINDOW = Duration.ofMinutes(1);
+    private static final Duration IN_FLIGHT_TTL = Duration.ofSeconds(60);
     private static final RedisScript<Long> RATE_LIMIT_SCRIPT = loadRateLimitScript();
 
     private final StringRedisTemplate redisTemplate;
@@ -46,9 +55,21 @@ public class TemplateGenerationRateLimiter {
         return script;
     }
 
-    public void checkLimit(Long adminId) {
-        if (isOverLimit(adminId)) {
+    public void checkLimit(Long adminId, String requestId) {
+        if (isFirstAttempt(requestId) && isOverLimit(adminId)) {
             throw new CampaignException(PosterErrorCode.GENERATION_RATE_LIMITED);
+        }
+    }
+
+    private boolean isFirstAttempt(String requestId) {
+        String key = IN_FLIGHT_KEY_PREFIX + requestId;
+        try {
+            Boolean firstAttempt = redisTemplate.opsForValue().setIfAbsent(key, "1", IN_FLIGHT_TTL);
+            return !Boolean.FALSE.equals(firstAttempt);
+        } catch (DataAccessException e) {
+            log.warn("event=TEMPLATE_GENERATION_IN_FLIGHT_CHECK_FAILED requestId={} cause={} 처음_시도로_간주해_센다",
+                    requestId, RedisFailureClassifier.causeLabel(e), e);
+            return true;
         }
     }
 

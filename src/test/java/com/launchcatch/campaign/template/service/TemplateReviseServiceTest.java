@@ -3,6 +3,7 @@ package com.launchcatch.campaign.template.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -24,6 +25,7 @@ import com.launchcatch.campaign.template.TemplateStructureValidator;
 import com.launchcatch.global.entity.BaseTimeEntity;
 import java.lang.reflect.Field;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
@@ -36,6 +38,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.ValueOperations;
 import org.springframework.transaction.support.TransactionCallback;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -65,6 +68,8 @@ class TemplateReviseServiceTest {
     private TransactionTemplate transactionTemplate;
     @Mock
     private StringRedisTemplate redisTemplate;
+    @Mock
+    private ValueOperations<String, String> valueOperations;
 
     private TemplateReviseService service;
 
@@ -82,6 +87,8 @@ class TemplateReviseServiceTest {
                 transactionTemplate,
                 FIXED_CLOCK);
         lenient().when(templateVersionRepository.findByRequestId(REQUEST_ID)).thenReturn(Optional.empty());
+        lenient().when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        lenient().when(valueOperations.setIfAbsent(anyString(), anyString(), any(Duration.class))).thenReturn(true);
         lenient().when(templateVersionRepository.findMaxVersionNumber(TEMPLATE_ID)).thenReturn(1);
         lenient().when(templateRepository.findById(TEMPLATE_ID)).thenAnswer(invocation -> Optional.of(draftTemplate()));
         lenient().when(templateRepository.findByIdForUpdate(TEMPLATE_ID))
@@ -137,6 +144,19 @@ class TemplateReviseServiceTest {
                 .extracting(e -> ((CampaignException) e).getErrorCode())
                 .isEqualTo(PosterErrorCode.GENERATION_RATE_LIMITED);
         verify(templateHtmlGenerator, never()).revise(any(), any());
+    }
+
+    @Test
+    @DisplayName("저장되기 전에 같은 requestId 가 다시 들어오면 속도 제한 횟수를 세지 않는다")
+    void 저장되기_전_같은_requestId_재진입은_속도_제한을_세지_않는다() {
+        when(valueOperations.setIfAbsent(anyString(), anyString(), any(Duration.class))).thenReturn(false);
+        when(templateHtmlGenerator.revise(PREVIOUS_HTML, "버튼 색 바꿔줘")).thenReturn(PREVIOUS_HTML);
+        when(templateRepository.saveAndFlush(any(Template.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        service.revise(TEMPLATE_ID, "버튼 색 바꿔줘", REQUEST_ID, ADMIN_ID);
+
+        verify(redisTemplate, never()).execute(any(), any(), any());
     }
 
     @Test
