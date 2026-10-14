@@ -41,7 +41,7 @@ class TemplateGenerationRateLimiterTest {
     }
 
     @Test
-    @DisplayName("분당 3회를 넘으면 POSTER-010을 던진다")
+    @DisplayName("분당 3회를 넘으면 POSTER-014을 던진다")
     void 분당_삼회를_넘으면_거부한다() {
         when(redisTemplate.execute(any(RedisScript.class), anyList(), anyString())).thenReturn(4L);
 

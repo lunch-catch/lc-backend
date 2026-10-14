@@ -128,7 +128,7 @@ class TemplateReviseServiceTest {
     }
 
     @Test
-    @DisplayName("분당 3회를 넘으면 LLM 을 부르지 않고 POSTER-010 으로 거부한다")
+    @DisplayName("분당 3회를 넘으면 LLM 을 부르지 않고 POSTER-014 으로 거부한다")
     void 속도_제한을_넘으면_거부한다() {
         when(redisTemplate.execute(any(), any(), any())).thenReturn(4L);
 
