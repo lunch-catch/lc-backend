@@ -1,6 +1,8 @@
 package com.launchcatch.member.entity;
 
 import com.launchcatch.global.entity.BaseTimeEntity;
+import com.launchcatch.member.contract.AgeGroup;
+import com.launchcatch.member.contract.Gender;
 import jakarta.persistence.AttributeOverride;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;

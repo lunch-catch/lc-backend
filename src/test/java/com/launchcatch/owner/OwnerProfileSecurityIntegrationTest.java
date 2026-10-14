@@ -98,7 +98,7 @@ class OwnerProfileSecurityIntegrationTest {
 
     @Test
     void 만료된_실제_JWT는_401이다() throws Exception {
-        var expired = new JwtTokenProvider(SECRET, 1800000, 86400000, 1209600000, 1209600000,
+        var expired = new JwtTokenProvider(SECRET, 1800000, 86400000, 86400000, 1209600000,
                 Clock.offset(Clock.systemUTC(), Duration.ofHours(-2)));
         mvc.perform(get(PATH).cookie(new Cookie("accessToken", expired.createAccessToken(7L, Role.OWNER))))
                 .andExpect(status().isUnauthorized()).andExpect(jsonPath("$.code").value("AUTH-005"));
@@ -145,7 +145,7 @@ class OwnerProfileSecurityIntegrationTest {
         @Bean AccessTokenValidAfterRepository cutoff() { return mock(AccessTokenValidAfterRepository.class); }
         @Bean StringRedisTemplate redisTemplate() { return mock(StringRedisTemplate.class); }
         @Bean JwtTokenProvider jwt() {
-            return new JwtTokenProvider(SECRET, 1800000, 86400000, 1209600000, 1209600000,
+            return new JwtTokenProvider(SECRET, 1800000, 86400000, 86400000, 1209600000,
                     Clock.system(ZoneId.of("Asia/Seoul")));
         }
     }

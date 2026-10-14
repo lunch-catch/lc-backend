@@ -2,8 +2,8 @@ package com.launchcatch.member.dto;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.launchcatch.member.entity.AgeGroup;
-import com.launchcatch.member.entity.Gender;
+import com.launchcatch.member.contract.AgeGroup;
+import com.launchcatch.member.contract.Gender;
 import jakarta.validation.Validation;
 import jakarta.validation.Validator;
 import jakarta.validation.ValidatorFactory;

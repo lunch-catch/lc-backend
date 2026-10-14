@@ -1,5 +1,7 @@
 # 관리자 로그인 이관 (#84)
 
+이 문서는 해당 작업 당시의 변경과 검증 기록이다. 현재 관리자 계정 발급·로그인·토큰 재발급·로그아웃의 계약과 처리 절차는 [관리자 명세](../../api-spec/admin-api-spec.md)와 [관리자 설계](../../design/admin/admin-api-design.md)를 따른다.
+
 ## 기준
 
 - fresh-market develop의 `cdd12d105556d53ad415fb47e4689f06e03c1f7d`에 있는 `AdminAuthService.login`, `AdminLoginTransactionService`, 로그인 DTO와 컨트롤러를 참고한다.

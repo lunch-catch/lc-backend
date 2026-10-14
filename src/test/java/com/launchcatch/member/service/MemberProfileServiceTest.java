@@ -7,12 +7,12 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
 
+import com.launchcatch.member.contract.AgeGroup;
+import com.launchcatch.member.contract.Gender;
 import com.launchcatch.member.contract.MemberStatus;
 import com.launchcatch.member.dto.MemberOnboardingRequest;
 import com.launchcatch.member.dto.MemberResponse;
 import com.launchcatch.member.dto.MemberUpdateRequest;
-import com.launchcatch.member.entity.AgeGroup;
-import com.launchcatch.member.entity.Gender;
 import com.launchcatch.member.entity.Member;
 import com.launchcatch.member.entity.MemberProfile;
 import com.launchcatch.member.exception.MemberErrorCode;
