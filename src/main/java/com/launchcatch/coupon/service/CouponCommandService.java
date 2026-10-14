@@ -7,10 +7,12 @@ import com.launchcatch.coupon.repository.CouponDailyLimitRepository;
 import com.launchcatch.coupon.repository.MemberCouponRepository;
 import java.time.LocalDate;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
+@Slf4j
 @RequiredArgsConstructor
 @Transactional
 public class CouponCommandService {
@@ -27,9 +29,21 @@ public class CouponCommandService {
      * @throws CouponException 본인 소유권을 확인할 수 없거나 사용 완료된 쿠폰인 경우
      */
     public void deleteCoupon(Long memberId, Long memberCouponId) {
-        MemberCoupon coupon = findOwnedCoupon(memberId, memberCouponId);
-        if (!coupon.remove()) {
-            return;
+        removeOwnedCoupon(memberId, memberCouponId);
+    }
+
+    // 본인 쿠폰을 처음 삭제했으면 발급받은 날짜의 발급 횟수를 차감한다.
+    private void removeOwnedCoupon(Long memberId, Long memberCouponId) {
+        MemberCoupon coupon;
+        try {
+            coupon = findOwnedCoupon(memberId, memberCouponId);
+            if (!coupon.remove()) {
+                return;
+            }
+        } catch (CouponException e) {
+            log.warn("event=COUPON_DELETE_FAILED memberId={} memberCouponId={} reason={}",
+                    memberId, memberCouponId, e.getErrorCode().getCode());
+            throw e;
         }
         LocalDate businessDate = coupon.getCreatedAt().toLocalDate();
         couponDailyLimitRepository.findByMemberIdAndBusinessDate(memberId, businessDate)
