@@ -1,6 +1,7 @@
 package com.launchcatch.campaign.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.launchcatch.IntegrationTestSupport;
 import com.launchcatch.campaign.contract.AgeGroup;
@@ -15,9 +16,11 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.List;
+import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.transaction.annotation.Transactional;
 
 @SpringBootTest
@@ -139,6 +142,33 @@ class CampaignRepositoryIntegrationTest extends IntegrationTestSupport {
                 List.of(liveOwnerId, draftOnlyOwnerId), List.of(CampaignStatus.DRAFT, CampaignStatus.ENDED));
 
         assertThat(result).containsExactly(liveOwnerId);
+    }
+
+    @Test
+    void findByStoreIdAndStatus는_그_가게의_그_상태만_돌려준다() {
+        Long storeId = 400L;
+        Campaign draft = save(draftWithOwner(10L, storeId));
+
+        entityManager.flush();
+
+        Optional<Campaign> found = campaignRepository.findByStoreIdAndStatus(storeId, CampaignStatus.DRAFT);
+
+        assertThat(found).map(Campaign::getId).contains(draft.getId());
+        assertThat(campaignRepository.findByStoreIdAndStatus(storeId, CampaignStatus.ACTIVE)).isEmpty();
+    }
+
+    @Test
+    void 가게당_DRAFT_캠페인은_하나만_저장할_수_있다() {
+        Long storeId = 401L;
+        save(draftWithOwner(10L, storeId));
+        entityManager.flush();
+
+        Campaign secondDraft = draftWithOwner(11L, storeId);
+
+        assertThatThrownBy(() -> {
+            campaignRepository.save(secondDraft);
+            entityManager.flush();
+        }).isInstanceOf(DataIntegrityViolationException.class);
     }
 
     @Test

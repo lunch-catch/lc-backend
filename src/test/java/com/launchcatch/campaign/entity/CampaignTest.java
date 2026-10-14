@@ -51,6 +51,65 @@ class CampaignTest {
         assertThatThrownBy(() -> campaign.activate(NOW)).isInstanceOf(IllegalStateException.class);
     }
 
+    @Test
+    @DisplayName("updateCouponCondition은 1단계 필드만 바꾸고 노출 대상과 예산·기간은 그대로 둔다")
+    void updateCouponCondition은_1단계_필드만_바꾼다() {
+        Campaign campaign = Campaign.create(
+                10L, 20L,
+                DiscountTargetType.ALL, DiscountType.PERCENT, 10, null,
+                100, LocalTime.of(11, 0), LocalTime.of(14, 0),
+                null, null,
+                1000, TargetGender.ALL, List.of(AgeGroup.AGE_20S),
+                10_000L, LocalDate.of(2026, 10, 1), LocalDate.of(2026, 10, 31),
+                NOW);
+
+        campaign.updateCouponCondition(
+                DiscountTargetType.MENU, DiscountType.AMOUNT, 3000, 99L,
+                50, LocalTime.of(12, 0), LocalTime.of(13, 30),
+                8000, "포장만 가능");
+
+        assertThat(campaign.getDiscountTargetType()).isEqualTo(DiscountTargetType.MENU);
+        assertThat(campaign.getDiscountType()).isEqualTo(DiscountType.AMOUNT);
+        assertThat(campaign.getDiscountValue()).isEqualTo(3000);
+        assertThat(campaign.getTargetMenuId()).isEqualTo(99L);
+        assertThat(campaign.getIssueQuantity()).isEqualTo(50);
+        assertThat(campaign.getUsableStartTime()).isEqualTo(LocalTime.of(12, 0));
+        assertThat(campaign.getUsableEndTime()).isEqualTo(LocalTime.of(13, 30));
+        assertThat(campaign.getMinOrderAmount()).isEqualTo(8000);
+        assertThat(campaign.getNotice()).isEqualTo("포장만 가능");
+        assertThat(campaign.getTargetRadius()).isEqualTo(1000);
+        assertThat(campaign.getTargetGender()).isEqualTo(TargetGender.ALL);
+        assertThat(campaign.getTargetAgeGroups()).containsExactly(AgeGroup.AGE_20S);
+        assertThat(campaign.getDailyBudget()).isEqualTo(10_000L);
+        assertThat(campaign.getStartDate()).isEqualTo(LocalDate.of(2026, 10, 1));
+        assertThat(campaign.getEndDate()).isEqualTo(LocalDate.of(2026, 10, 31));
+    }
+
+    @Test
+    @DisplayName("DRAFT가 아니면 updateCouponCondition을 거부한다")
+    void DRAFT가_아니면_updateCouponCondition을_거부한다() {
+        Campaign campaign = campaign(10_000L, LocalDate.of(2026, 10, 1), LocalDate.of(2026, 10, 31));
+        campaign.schedule(NOW);
+
+        assertThatThrownBy(() -> campaign.updateCouponCondition(
+                DiscountTargetType.ALL, DiscountType.PERCENT, 10, null,
+                100, LocalTime.of(11, 0), LocalTime.of(14, 0),
+                null, null))
+                .isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    @DisplayName("updateCouponCondition도 할인율 불변식을 다시 검증한다")
+    void updateCouponCondition도_할인율_불변식을_다시_검증한다() {
+        Campaign campaign = campaign(10_000L, LocalDate.of(2026, 10, 1), LocalDate.of(2026, 10, 31));
+
+        assertThatThrownBy(() -> campaign.updateCouponCondition(
+                DiscountTargetType.ALL, DiscountType.PERCENT, 101, null,
+                100, LocalTime.of(11, 0), LocalTime.of(14, 0),
+                null, null))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
     private Campaign campaign(Long dailyBudget, LocalDate startDate, LocalDate endDate) {
         return Campaign.create(
                 10L, 20L,
