@@ -11,8 +11,11 @@ import org.springframework.security.web.SecurityFilterChain;
 @Configuration
 public class CouponSecurityConfig {
 
+    private static final String OWNER_USAGE_PATH = "/v1/owner/stores/{storeId}/coupon-usages";
+
     private static final String[] COUPON_PATHS = {
-            "/v1/coupons/**"
+            "/v1/coupons/**",
+            OWNER_USAGE_PATH
     };
 
     private static final String LIST_PATH = "/v1/coupons";
@@ -31,6 +34,7 @@ public class CouponSecurityConfig {
                         .hasRole("MEMBER")
                         .requestMatchers(HttpMethod.DELETE, DETAIL_PATH)
                         .hasRole("MEMBER")
+                        .requestMatchers(HttpMethod.GET, OWNER_USAGE_PATH).hasRole("OWNER")
                         .anyRequest().denyAll())
                 .build();
     }
