@@ -50,6 +50,22 @@ public class StoreRegistrationProgressService {
         return snapshot(progress);
     }
 
+    /*
+     * 완료한 영업시간과 이미지 수정은 재개 단계를 유지하고 버전만 증가시킨다.
+     * 호출자는 수정 데이터의 필수 조건을 검증하고 같은 트랜잭션에서 저장해야 한다.
+     */
+    public StoreRegistrationProgressSnapshot reviseCompletedStep(Long ownerId, long expectedVersion,
+            StoreRegistrationStep revisedStep) {
+        if (ownerId == null || ownerId <= 0 || expectedVersion < 0 || revisedStep == null) {
+            throw new IllegalArgumentException("유효한 점주 ID, 버전과 수정 단계가 필요합니다.");
+        }
+        var progress = progresses.findByOwnerIdForUpdate(ownerId)
+                .orElseThrow(() -> new StoreException(StoreErrorCode.REGISTRATION_PROGRESS_NOT_FOUND));
+        progress.reviseCompletedStep(expectedVersion, revisedStep);
+        progresses.saveAndFlush(progress);
+        return snapshot(progress);
+    }
+
     private StoreRegistrationProgressSnapshot snapshot(StoreRegistrationProgress progress) {
         return new StoreRegistrationProgressSnapshot(progress.getStoreId(), progress.getResumeStep(), progress.getVersion());
     }

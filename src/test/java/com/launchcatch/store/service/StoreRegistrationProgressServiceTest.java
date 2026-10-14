@@ -16,6 +16,33 @@ class StoreRegistrationProgressServiceTest {
     private final StoreRegistrationProgressService service = new StoreRegistrationProgressService(repository);
 
     @Test
+    void 완료한_단계_수정은_진행을_유지한_새_버전을_반환한다() {
+        var progress = StoreRegistrationProgress.start(7L);
+        progress.completeStep(0, StoreRegistrationStep.TERMS, null);
+        progress.completeStep(1, StoreRegistrationStep.STORE, 9L);
+        progress.completeStep(2, StoreRegistrationStep.BUSINESS_VERIFICATION, null);
+        progress.completeStep(3, StoreRegistrationStep.LOCATION, null);
+        progress.completeStep(4, StoreRegistrationStep.HOURS, null);
+        when(repository.findByOwnerIdForUpdate(7L)).thenReturn(Optional.of(progress));
+        var result = service.reviseCompletedStep(7L, 5, StoreRegistrationStep.HOURS);
+        assertThat(result.resumeStep()).isEqualTo(StoreRegistrationStep.IMAGES);
+        assertThat(result.storeId()).isEqualTo(9L);
+        assertThat(result.version()).isEqualTo(6);
+    }
+
+    @Test
+    void 수정_요청의_잘못된_인자와_초기화_누락을_거부한다() {
+        assertThatIllegalArgumentException().isThrownBy(() -> service.reviseCompletedStep(null, 0, StoreRegistrationStep.HOURS));
+        assertThatIllegalArgumentException().isThrownBy(() -> service.reviseCompletedStep(0L, 0, StoreRegistrationStep.HOURS));
+        assertThatIllegalArgumentException().isThrownBy(() -> service.reviseCompletedStep(7L, -1, StoreRegistrationStep.HOURS));
+        assertThatIllegalArgumentException().isThrownBy(() -> service.reviseCompletedStep(7L, 0, null));
+        when(repository.findByOwnerIdForUpdate(7L)).thenReturn(Optional.empty());
+        assertThatThrownBy(() -> service.reviseCompletedStep(7L, 0, StoreRegistrationStep.HOURS))
+                .isInstanceOfSatisfying(StoreException.class, e ->
+                        assertThat(e.getErrorCode()).isEqualTo(StoreErrorCode.REGISTRATION_PROGRESS_NOT_FOUND));
+    }
+
+    @Test
     void 최초_초기화는_0번_버전이며_반복_초기화는_기존_진행을_유지한다() {
         when(repository.findByOwnerIdForUpdate(7L)).thenReturn(Optional.empty());
         when(repository.saveAndFlush(any())).thenAnswer(call -> call.getArgument(0));

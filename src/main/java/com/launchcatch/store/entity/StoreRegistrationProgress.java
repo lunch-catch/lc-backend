@@ -45,6 +45,25 @@ public class StoreRegistrationProgress extends BaseTimeEntity {
         return new StoreRegistrationProgress(ownerId);
     }
 
+    // 호출자는 진행 상태 행을 잠그고 수정 후에도 해당 단계의 필수 조건이 충족되는지 검증해야 한다.
+    public void reviseCompletedStep(long expectedVersion, StoreRegistrationStep revisedStep) {
+        if (expectedVersion < 0 || revisedStep == null) {
+            throw new IllegalArgumentException("유효한 버전과 수정 단계가 필요합니다.");
+        }
+        if (version != expectedVersion) {
+            throw new StoreException(StoreErrorCode.REGISTRATION_VERSION_CONFLICT);
+        }
+        boolean allowed = switch (revisedStep) {
+            case HOURS -> resumeStep == StoreRegistrationStep.IMAGES || resumeStep == StoreRegistrationStep.MENU;
+            case IMAGES -> resumeStep == StoreRegistrationStep.MENU;
+            default -> false;
+        };
+        if (!allowed) {
+            throw new StoreException(StoreErrorCode.REGISTRATION_STEP_CONFLICT);
+        }
+        version = Math.incrementExact(version);
+    }
+
     // 호출자는 진행 상태 행을 잠그고 단계 입력값 검증을 완료해야 한다.
     public void completeStep(long expectedVersion, StoreRegistrationStep completedStep, Long registeredStoreId) {
         if (expectedVersion < 0 || completedStep == null) {

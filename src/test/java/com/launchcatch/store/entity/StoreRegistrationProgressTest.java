@@ -9,6 +9,57 @@ import org.junit.jupiter.params.provider.NullSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 class StoreRegistrationProgressTest {
+    @ParameterizedTest
+    @org.junit.jupiter.params.provider.CsvSource({"HOURS, IMAGES", "HOURS, MENU", "IMAGES, MENU"})
+    void 완료한_단계_수정은_재개_단계와_가게를_유지하고_버전을_올린다(
+            StoreRegistrationStep revisedStep, StoreRegistrationStep resumeStep) {
+        var progress = atStep(resumeStep);
+        long version = progress.getVersion();
+        progress.reviseCompletedStep(version, revisedStep);
+        assertThat(progress.getResumeStep()).isEqualTo(resumeStep);
+        assertThat(progress.getStoreId()).isEqualTo(9L);
+        assertThat(progress.getVersion()).isEqualTo(version + 1);
+    }
+
+    @ParameterizedTest
+    @org.junit.jupiter.params.provider.EnumSource(StoreRegistrationStep.class)
+    void 현재_단계와_미래_단계는_완료_단계_수정으로_저장하지_못한다(StoreRegistrationStep revisedStep) {
+        var progress = StoreRegistrationProgress.start(7L);
+        assertThatThrownBy(() -> progress.reviseCompletedStep(0, revisedStep))
+                .isInstanceOfSatisfying(StoreException.class, e ->
+                        assertThat(e.getErrorCode()).isEqualTo(StoreErrorCode.REGISTRATION_STEP_CONFLICT));
+        assertThat(progress.getVersion()).isZero();
+    }
+
+    @ParameterizedTest
+    @org.junit.jupiter.params.provider.EnumSource(value = StoreRegistrationStep.class,
+            names = {"TERMS", "STORE", "BUSINESS_VERIFICATION", "LOCATION", "MENU"})
+    void 수정_정책이_없는_단계와_현재_메뉴는_완료_단계_수정에서_거부한다(StoreRegistrationStep revisedStep) {
+        var progress = atStep(StoreRegistrationStep.MENU);
+        assertThatThrownBy(() -> progress.reviseCompletedStep(6, revisedStep)).isInstanceOf(StoreException.class);
+        assertThat(progress.getVersion()).isEqualTo(6);
+    }
+
+    @Test
+    void 수정_요청의_오래된_버전과_잘못된_인자는_거부한다() {
+        var progress = atStep(StoreRegistrationStep.MENU);
+        assertThatThrownBy(() -> progress.reviseCompletedStep(5, StoreRegistrationStep.HOURS))
+                .isInstanceOfSatisfying(StoreException.class, e ->
+                        assertThat(e.getErrorCode()).isEqualTo(StoreErrorCode.REGISTRATION_VERSION_CONFLICT));
+        assertThatIllegalArgumentException().isThrownBy(() -> progress.reviseCompletedStep(-1, StoreRegistrationStep.HOURS));
+        assertThatIllegalArgumentException().isThrownBy(() -> progress.reviseCompletedStep(6, null));
+        assertThat(progress.getVersion()).isEqualTo(6);
+    }
+
+    private StoreRegistrationProgress atStep(StoreRegistrationStep target) {
+        var progress = StoreRegistrationProgress.start(7L);
+        while (progress.getResumeStep() != target) {
+            var step = progress.getResumeStep();
+            progress.completeStep(progress.getVersion(), step, step == StoreRegistrationStep.STORE ? 9L : null);
+        }
+        return progress;
+    }
+
     @Test
     void 초기_단계는_약관이며_가게는_없고_버전은_0이다() {
         var progress = StoreRegistrationProgress.start(7L);

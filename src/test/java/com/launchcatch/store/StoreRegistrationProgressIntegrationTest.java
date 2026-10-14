@@ -60,6 +60,96 @@ class StoreRegistrationProgressIntegrationTest extends IntegrationTestSupport {
         return jdbc.queryForObject("select store_id from store where owner_id = ?", Long.class, storeOwnerId);
     }
 
+    private Long prepareMenuStep() {
+        return tx.execute(status -> {
+            service.initialize(ownerId);
+            service.completeStep(ownerId, 0, StoreRegistrationStep.TERMS, null);
+            Long storeId = createStore(ownerId);
+            service.completeStep(ownerId, 1, StoreRegistrationStep.STORE, storeId);
+            service.completeStep(ownerId, 2, StoreRegistrationStep.BUSINESS_VERIFICATION, null);
+            service.completeStep(ownerId, 3, StoreRegistrationStep.LOCATION, null);
+            service.completeStep(ownerId, 4, StoreRegistrationStep.HOURS, null);
+            service.completeStep(ownerId, 5, StoreRegistrationStep.IMAGES, null);
+            return storeId;
+        });
+    }
+
+    @Test
+    void 완료_단계_수정은_다음_트랜잭션에서도_재개_단계를_유지한다() {
+        Long storeId = prepareMenuStep();
+        var result = tx.execute(status -> service.reviseCompletedStep(ownerId, 6, StoreRegistrationStep.HOURS));
+        assertThat(result.resumeStep()).isEqualTo(StoreRegistrationStep.MENU);
+        assertThat(result.storeId()).isEqualTo(storeId);
+        assertThat(result.version()).isEqualTo(7);
+        var restored = progresses.findByOwnerId(ownerId).orElseThrow();
+        assertThat(restored.getResumeStep()).isEqualTo(StoreRegistrationStep.MENU);
+        assertThat(restored.getVersion()).isEqualTo(7);
+    }
+
+    @Test
+    void 수정_버전_충돌은_업무_데이터도_롤백한다() {
+        Long storeId = prepareMenuStep();
+        tx.executeWithoutResult(status -> service.reviseCompletedStep(ownerId, 6, StoreRegistrationStep.HOURS));
+        assertThatThrownBy(() -> tx.executeWithoutResult(status -> {
+            jdbc.update("update store set name = '충돌 수정' where store_id = ?", storeId);
+            service.reviseCompletedStep(ownerId, 6, StoreRegistrationStep.IMAGES);
+        })).isInstanceOfSatisfying(StoreException.class, e ->
+                assertThat(e.getErrorCode()).isEqualTo(StoreErrorCode.REGISTRATION_VERSION_CONFLICT));
+        assertThat(jdbc.queryForObject("select name from store where store_id = ?", String.class, storeId)).isEqualTo("초기 가게");
+        assertThat(progresses.findByOwnerId(ownerId).orElseThrow().getVersion()).isEqualTo(7);
+    }
+
+    @Test
+    void 수정_진행_상태를_flush한_후_실패하면_모두_롤백한다() {
+        Long storeId = prepareMenuStep();
+        assertThatThrownBy(() -> tx.executeWithoutResult(status -> {
+            jdbc.update("update store set name = '롤백 수정' where store_id = ?", storeId);
+            service.reviseCompletedStep(ownerId, 6, StoreRegistrationStep.IMAGES);
+            throw new IllegalStateException("injected after revision flush");
+        })).isInstanceOf(IllegalStateException.class);
+        assertThat(jdbc.queryForObject("select name from store where store_id = ?", String.class, storeId)).isEqualTo("초기 가게");
+        var restored = progresses.findByOwnerId(ownerId).orElseThrow();
+        assertThat(restored.getResumeStep()).isEqualTo(StoreRegistrationStep.MENU);
+        assertThat(restored.getVersion()).isEqualTo(6);
+    }
+
+    @Test
+    void 같은_버전의_수정과_현재_단계_저장은_하나만_성공한다() throws Exception {
+        prepareMenuStep();
+        var start = new CountDownLatch(1);
+        var workers = Executors.newFixedThreadPool(2);
+        try {
+            var revision = workers.submit(() -> concurrentSave(start, true));
+            var completion = workers.submit(() -> concurrentSave(start, false));
+            start.countDown();
+            assertThat(List.of(revision.get(15, TimeUnit.SECONDS), completion.get(15, TimeUnit.SECONDS)))
+                    .containsExactlyInAnyOrder("saved", "STORE-001");
+            var restored = progresses.findByOwnerId(ownerId).orElseThrow();
+            assertThat(restored.getResumeStep()).isEqualTo(StoreRegistrationStep.MENU);
+            assertThat(restored.getVersion()).isEqualTo(7);
+        } finally {
+            start.countDown();
+            workers.shutdownNow();
+            assertThat(workers.awaitTermination(5, TimeUnit.SECONDS)).isTrue();
+        }
+    }
+
+    private String concurrentSave(CountDownLatch start, boolean revision) throws InterruptedException {
+        assertThat(start.await(5, TimeUnit.SECONDS)).isTrue();
+        try {
+            tx.executeWithoutResult(status -> {
+                if (revision) {
+                    service.reviseCompletedStep(ownerId, 6, StoreRegistrationStep.HOURS);
+                } else {
+                    service.completeStep(ownerId, 6, StoreRegistrationStep.MENU, null);
+                }
+            });
+            return "saved";
+        } catch (StoreException e) {
+            return e.getErrorCode().getCode();
+        }
+    }
+
     @Test
     void 초기화와_약관_완료를_저장하고_새_트랜잭션에서_복원한다() {
         tx.executeWithoutResult(status -> {
@@ -174,6 +264,8 @@ class StoreRegistrationProgressIntegrationTest extends IntegrationTestSupport {
     @Test
     void 호출자_트랜잭션_없이_별도로_커밋하지_않는다() {
         assertThatThrownBy(() -> service.initialize(ownerId)).isInstanceOf(IllegalTransactionStateException.class);
+        assertThatThrownBy(() -> service.reviseCompletedStep(ownerId, 0, StoreRegistrationStep.HOURS))
+                .isInstanceOf(IllegalTransactionStateException.class);
         assertThatThrownBy(() -> service.completeStep(ownerId, 0, StoreRegistrationStep.TERMS, null))
                 .isInstanceOf(IllegalTransactionStateException.class);
     }
