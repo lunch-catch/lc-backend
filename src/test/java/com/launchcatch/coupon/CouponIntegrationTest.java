@@ -18,6 +18,7 @@ import com.launchcatch.IntegrationTestSupport;
 import com.launchcatch.auth.CustomUserDetails;
 import com.launchcatch.auth.Role;
 import com.launchcatch.coupon.dto.CouponDetailResponse;
+import com.launchcatch.coupon.dto.CouponUsageHistoryResponse;
 import com.launchcatch.coupon.entity.MemberCouponStatus;
 import com.launchcatch.coupon.repository.MemberCouponRepository;
 import com.launchcatch.coupon.service.CouponCommandService;
@@ -26,12 +27,16 @@ import com.launchcatch.global.config.ClockConfig;
 import com.launchcatch.global.response.CursorPageResponse;
 import jakarta.persistence.EntityManager;
 import java.nio.ByteBuffer;
+import com.launchcatch.owner.contract.OwnerAccountStatus;
+import com.launchcatch.owner.contract.OwnerStatusQuery;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -78,6 +83,7 @@ class CouponIntegrationTest extends IntegrationTestSupport {
     @Autowired CouponLookUpService couponLookUpService;
     @Autowired CouponCommandService couponCommandService;
     @MockitoBean Clock clock;
+    @MockitoBean OwnerStatusQuery ownerStatusQuery;
     @MockitoSpyBean CouponQrImageEncoder imageEncoder;
     @Autowired MemberCouponRepository memberCouponRepository;
 
@@ -87,6 +93,232 @@ class CouponIntegrationTest extends IntegrationTestSupport {
                 .thenReturn(Clock.fixed(Instant.parse("2026-10-10T03:00:00Z"), ClockConfig.ZONE));
         when(clock.getZone()).thenReturn(ClockConfig.ZONE);
         when(clock.instant()).thenReturn(Instant.parse("2026-10-10T03:00:00Z"));
+    }
+
+    @Nested
+    @DisplayName("매장 사용 이력 조회")
+    @Transactional
+    class UsageHistoryQuery {
+
+        private static final LocalDate FROM = LocalDate.of(2026, 9, 1);
+        private static final LocalDate TO = LocalDate.of(2026, 9, 30);
+        private static final LocalDateTime USE_TIME = TO.atTime(12, 30, 0, 123456000);
+        private static final String PATH = "/v1/owner/stores/10/coupon-usages";
+
+        @BeforeEach
+        void setUp() {
+            when(ownerStatusQuery.findCurrentStatus(17L)).thenReturn(Optional.of(OwnerAccountStatus.ACTIVE));
+            insertHistory(5001L, 10L, FROM.atStartOfDay().minusNanos(1000), 1000);
+            insertHistory(5002L, 10L, FROM.atStartOfDay(), 2000);
+            insertHistory(5003L, 10L, USE_TIME, 2700);
+            insertHistory(5004L, 10L, USE_TIME, 3000);
+            insertHistory(5005L, 10L, TO.plusDays(1).atStartOfDay(), 4000);
+            insertHistory(5006L, 20L, USE_TIME.plusMinutes(1), 5000);
+            insertHistory(5007L, 10L, FROM.minusYears(2).atStartOfDay(), 1500);
+            entityManager.clear();
+        }
+
+        @Test
+        void 요청한_매장만_조회하며_시작일_시작은_포함하고_종료일_다음날_시작은_제외한다() {
+            var response = couponLookUpService.getUsages(17L, 10L, FROM, TO, 20, null);
+
+            assertThat(response.items()).extracting(CouponUsageHistoryResponse::usageHistoryId)
+                    .containsExactly(5004L, 5003L, 5002L);
+            assertThat(response.nextPageToken()).isNull();
+            assertThat(response.items().get(1).discountAmount()).isEqualTo(2700);
+            assertThat(response.items().get(1).useTime()).isEqualTo(USE_TIME.atOffset(ZoneOffset.ofHours(9)));
+        }
+
+        @Test
+        void 같은_사용_시각의_이력도_페이지에서_누락하지_않으며_새_이력은_기존_커서에_영향을_주지_않는다() {
+            var first = couponLookUpService.getUsages(17L, 10L, FROM, TO, 1, null);
+            insertHistory(5008L, 10L, USE_TIME.plusMinutes(1), 2500);
+
+            var second = couponLookUpService.getUsages(17L, 10L, FROM, TO, 1, first.nextPageToken());
+            var third = couponLookUpService.getUsages(17L, 10L, FROM, TO, 1, second.nextPageToken());
+
+            assertThat(first.items()).extracting(CouponUsageHistoryResponse::usageHistoryId).containsExactly(5004L);
+            assertThat(second.items()).extracting(CouponUsageHistoryResponse::usageHistoryId).containsExactly(5003L);
+            assertThat(third.items()).extracting(CouponUsageHistoryResponse::usageHistoryId).containsExactly(5002L);
+            assertThat(third.nextPageToken()).isNull();
+        }
+
+        @Test
+        void 같은_날_조회에서는_그날의_사용_이력만_반환한다() {
+            var singleDay = couponLookUpService.getUsages(17L, 10L, TO, TO, 100, null);
+
+            assertThat(singleDay.items()).extracting(CouponUsageHistoryResponse::usageHistoryId)
+                    .containsExactly(5004L, 5003L);
+        }
+
+        @Test
+        void 조회_기간_길이에_상한_없이_여러_해의_사용_이력을_반환한다() {
+            var multipleYears = couponLookUpService.getUsages(17L, 10L, FROM.minusYears(3), TO, 100, null);
+
+            assertThat(multipleYears.items()).extracting(CouponUsageHistoryResponse::usageHistoryId)
+                    .containsExactly(5004L, 5003L, 5002L, 5001L, 5007L);
+        }
+
+        @Test
+        void 이력이_없는_매장은_빈_목록을_반환한다() {
+            var response = couponLookUpService.getUsages(17L, 30L, FROM, TO, 20, null);
+
+            assertThat(response.items()).isEmpty();
+            assertThat(response.nextPageToken()).isNull();
+        }
+
+        @Test
+        void 점주는_HTTP로_매장_사용_이력을_조회한다() throws Exception {
+            mockMvc.perform(get(PATH).param("from", FROM.toString()).param("to", TO.toString())
+                            .with(user(new CustomUserDetails(17L, Role.OWNER))))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.code").value("SUCCESS"))
+                    .andExpect(jsonPath("$.data.items.length()").value(3))
+                    .andExpect(jsonPath("$.data.items[0].usageHistoryId").value(5004))
+                    .andExpect(jsonPath("$.data.items[1].discountAmount").value(2700))
+                    .andExpect(jsonPath("$.data.nextPageToken").isEmpty());
+        }
+
+        @ParameterizedTest
+        @EnumSource(value = OwnerAccountStatus.class, names = "ACTIVE", mode = EnumSource.Mode.EXCLUDE)
+        void ACTIVE가_아닌_점주는_HTTP_조회를_거절한다(OwnerAccountStatus state) throws Exception {
+            when(ownerStatusQuery.findCurrentStatus(17L)).thenReturn(Optional.of(state));
+
+            mockMvc.perform(get(PATH).param("from", FROM.toString()).param("to", TO.toString())
+                            .with(user(new CustomUserDetails(17L, Role.OWNER))))
+                    .andExpect(status().isForbidden())
+                    .andExpect(jsonPath("$.code").value("AUTH-006"));
+        }
+
+        @Test
+        void 인증된_점주_ID로_현재_상태를_검증한다() throws Exception {
+            when(ownerStatusQuery.findCurrentStatus(17L)).thenReturn(Optional.empty());
+            when(ownerStatusQuery.findCurrentStatus(71L)).thenReturn(Optional.of(OwnerAccountStatus.ACTIVE));
+
+            mockMvc.perform(get(PATH).param("from", FROM.toString()).param("to", TO.toString())
+                            .with(user(new CustomUserDetails(71L, Role.OWNER))))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.items.length()").value(3));
+        }
+
+        @Test
+        void 점주가_없으면_HTTP_조회를_거절한다() throws Exception {
+            when(ownerStatusQuery.findCurrentStatus(17L)).thenReturn(Optional.empty());
+
+            mockMvc.perform(get(PATH).param("from", FROM.toString()).param("to", TO.toString())
+                            .with(user(new CustomUserDetails(17L, Role.OWNER))))
+                    .andExpect(status().isForbidden())
+                    .andExpect(jsonPath("$.code").value("AUTH-006"));
+        }
+
+        @Test
+        void 점주_상태_조회_장애는_서버_오류로_반환한다() throws Exception {
+            when(ownerStatusQuery.findCurrentStatus(17L))
+                    .thenThrow(new org.springframework.dao.DataAccessResourceFailureException("owner status query failed"));
+
+            mockMvc.perform(get(PATH).param("from", FROM.toString()).param("to", TO.toString())
+                            .with(user(new CustomUserDetails(17L, Role.OWNER))))
+                    .andExpect(status().isInternalServerError())
+                    .andExpect(jsonPath("$.code").value("COMMON-001"));
+        }
+
+        @ParameterizedTest
+        @EnumSource(value = Role.class, names = "OWNER", mode = EnumSource.Mode.EXCLUDE)
+        void 점주_외_역할의_HTTP_조회를_차단한다(Role role) throws Exception {
+            mockMvc.perform(get(PATH).param("from", FROM.toString()).param("to", TO.toString())
+                            .with(user(new CustomUserDetails(17L, role))))
+                    .andExpect(status().isForbidden())
+                    .andExpect(jsonPath("$.code").value("AUTH-006"))
+                    .andExpect(jsonPath("$.data").isEmpty());
+        }
+
+        @ParameterizedTest
+        @CsvSource({
+                "0, 2026-09-01, 2026-09-30, 20, COMMON-002",
+                "-1, 2026-09-01, 2026-09-30, 20, COMMON-002",
+                "invalid, 2026-09-01, 2026-09-30, 20, COMMON-003",
+                "10, , 2026-09-30, 20, COMMON-003",
+                "10, 2026-09-01, , 20, COMMON-003",
+                "10, 2026-09-01, 2026-09-30, 0, COMMON-002",
+                "10, 2026-09-01, 2026-09-30, 101, COMMON-002"
+        })
+        void 잘못된_매장_ID와_필수_날짜_및_페이지_크기는_HTTP에서_거절한다(
+                String storeId, String from, String to, String pageSize, String code) throws Exception {
+            var request = get("/v1/owner/stores/{storeId}/coupon-usages", storeId)
+                    .param("pageSize", pageSize).with(user(new CustomUserDetails(17L, Role.OWNER)));
+            if (from != null) {
+                request.param("from", from);
+            }
+            if (to != null) {
+                request.param("to", to);
+            }
+
+            mockMvc.perform(request)
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.code").value(code));
+        }
+
+        @Test
+        void 조회는_쿠폰과_사용_이력_및_재고와_발급_횟수를_변경하지_않는다() {
+            var coupons = jdbcTemplate.queryForList("SELECT * FROM member_coupon ORDER BY member_coupon_id");
+            var histories = jdbcTemplate.queryForList("SELECT * FROM coupon_usage_history ORDER BY coupon_usage_history_id");
+            var inventories = jdbcTemplate.queryForList("SELECT * FROM coupon_inventory ORDER BY coupon_inventory_id");
+            var limits = jdbcTemplate.queryForList("SELECT * FROM coupon_daily_limit ORDER BY coupon_daily_limit_id");
+
+            couponLookUpService.getUsages(17L, 10L, FROM, TO, 1, null);
+
+            assertThat(jdbcTemplate.queryForList("SELECT * FROM member_coupon ORDER BY member_coupon_id"))
+                    .usingRecursiveComparison().isEqualTo(coupons);
+            assertThat(jdbcTemplate.queryForList("SELECT * FROM coupon_usage_history ORDER BY coupon_usage_history_id"))
+                    .isEqualTo(histories);
+            assertThat(jdbcTemplate.queryForList("SELECT * FROM coupon_inventory ORDER BY coupon_inventory_id"))
+                    .usingRecursiveComparison().isEqualTo(inventories);
+            assertThat(jdbcTemplate.queryForList("SELECT * FROM coupon_daily_limit ORDER BY coupon_daily_limit_id"))
+                    .isEqualTo(limits);
+        }
+
+        @Test
+        void Swagger는_사용_이력의_성공_응답_계약을_설명한다() throws Exception {
+            mockMvc.perform(get("/v3/api-docs"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.paths['/v1/owner/stores/{storeId}/coupon-usages'].get.responses['200'].content['*/*'].example.data.items[0].discountAmount")
+                            .value(3000))
+                    .andExpect(jsonPath("$.paths['/v1/owner/stores/{storeId}/coupon-usages'].get.responses['200'].content['*/*'].example.data.nextPageToken")
+                            .isEmpty());
+        }
+
+        @Test
+        void 미인증_HTTP_조회는_인증_오류를_반환한다() throws Exception {
+            mockMvc.perform(get(PATH).param("from", FROM.toString()).param("to", TO.toString()))
+                    .andExpect(status().isUnauthorized())
+                    .andExpect(jsonPath("$.code").value("AUTH-005"));
+        }
+
+        // 사용 이력 조회에 사용할 이벤트와 사용 완료 쿠폰, 확정 사용 결과를 DB에 저장한다.
+        private void insertHistory(Long id, Long storeId, LocalDateTime useTime, int discountAmount) {
+            entityManager.createNativeQuery("""
+                    INSERT INTO coupon_event (coupon_event_id, campaign_id, business_date, issue_quantity,
+                            usable_start_at, usable_end_at, status, store_id, store_name, discount_target_type,
+                            discount_type, discount_value, created_at, updated_at)
+                    VALUES (:id, :id, :businessDate, 100, :startAt, :endAt, 'ACTIVE', :storeId, '런치식당',
+                            'ALL', 'AMOUNT', 3000, :useTime, :useTime)
+                    """).setParameter("id", id).setParameter("businessDate", useTime.toLocalDate())
+                    .setParameter("startAt", useTime.minusHours(1)).setParameter("endAt", useTime.plusHours(1))
+                    .setParameter("storeId", storeId).setParameter("useTime", useTime).executeUpdate();
+            entityManager.createNativeQuery("""
+                    INSERT INTO member_coupon (member_coupon_id, coupon_event_id, member_id, coupon_code, qr_version,
+                            status, usable_start_at, usable_end_at, created_at, updated_at)
+                    VALUES (:id, :id, 17, :code, 0, 'USED', :startAt, :endAt, :useTime, :useTime)
+                    """).setParameter("id", id).setParameter("code", UUID.randomUUID())
+                    .setParameter("startAt", useTime.minusHours(1)).setParameter("endAt", useTime.plusHours(1))
+                    .setParameter("useTime", useTime).executeUpdate();
+            entityManager.createNativeQuery("""
+                    INSERT INTO coupon_usage_history (coupon_usage_history_id, member_coupon_id, store_id,
+                            discount_amount, created_at, updated_at)
+                    VALUES (:id, :id, :storeId, :discountAmount, :useTime, :useTime)
+                    """).setParameter("id", id).setParameter("storeId", storeId)
+                    .setParameter("discountAmount", discountAmount).setParameter("useTime", useTime).executeUpdate();
+        }
     }
 
     @Nested

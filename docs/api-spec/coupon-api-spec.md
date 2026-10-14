@@ -699,11 +699,13 @@ state와 usable은 목록과 동일하게 조회 시점의 상태와 사용 가�
 
 ## 점주 API
 
-점주 API는 `OWNER` 역할과 현재 `ACTIVE` 상태를 모두 요구한다.
-`ONBOARDING`, `SUSPENDED`, `WITHDRAWN` 상태는 `403`으로 거절한다.
-점주 상태 제한 오류의 코드는 OWNER 도메인이 정의하며, 구체 코드는 [미확정 업무 정책](../design/coupon/coupon-api-design.md#미확정-업무-정책)에서 관리한다.
+점주 API는 `OWNER` 역할을 요구한다.
 
 ### QR 사용
+
+QR 사용은 점주의 현재 `ACTIVE` 상태를 요구한다.
+`ONBOARDING`, `SUSPENDED`, `WITHDRAWN` 상태는 `403`으로 거절한다.
+점주 상태 제한 오류의 코드는 OWNER 도메인이 정의하며, 구체 코드는 [미확정 업무 정책](../design/coupon/coupon-api-design.md#미확정-업무-정책)에서 관리한다.
 
 `POST /v1/owner/coupon-usages`
 
@@ -789,8 +791,9 @@ QR 사용, 삭제, 갱신의 동시 실행은 쿠폰 상태와 QR 버전을 검�
 
 `GET /v1/owner/stores/{storeId}/coupon-usages?from=2026-09-01&to=2026-09-30`
 
-점주가 본인 매장에서 사용된 쿠폰 목록을 확인한다.
-OWNER 역할 및 관리 권한을 먼저 확인하고 권한이 없으면 매장의 존재 여부와 무관하게 `403 STORE-002`다.
+점주가 매장에서 사용된 쿠폰 목록을 확인한다.
+OWNER 역할과 DB의 현재 ACTIVE 상태를 요구한다. 인증된 점주 ID로 상태를 조회하며 점주가 없거나 ACTIVE가 아니면 `403 AUTH-006`으로 거절한다.
+매장 관리 권한과 매장 존재 검증은 후속으로 연결하며 현재 적용 범위는 [쿠폰 설계](../design/coupon/coupon-api-design.md#http-연결과-인가)를 따른다.
 조회 기간은 한국 시간으로 from 당일 00:00 이상, to 다음 날 00:00 미만이다.
 조회 기간의 길이에 상한을 두지 않으며, 결과는 `pageSize`와 `pageToken`으로 나누어 반환한다.
 정렬은 `useTime DESC, usageHistoryId DESC`로 고정한다. 커서에도 두 값을 사용한다.
@@ -800,7 +803,7 @@ OWNER 역할 및 관리 권한을 먼저 확인하고 권한이 없으면 매장
 
 | 위치 | 이름 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- | --- |
-| 경로 | `storeId` | integer | O | 조회할 매장 ID (인증된 점주의 매장 관리 권한 검증) |
+| 경로 | `storeId` | integer | O | 조회할 매장의 ID이며 매장 관리 권한 검증은 후속으로 연결한다 |
 | 쿼리 | `from` | string(date) | O | 조회 시작 영업일 (`YYYY-MM-DD`, 포함) |
 | 쿼리 | `to` | string(date) | O | 조회 종료 영업일 (`YYYY-MM-DD`, 포함, `from`과 같거나 이후) |
 | 쿼리 | `pageSize` | integer | X | 한 번에 받을 개수. 기본값 20, 1 이상 100 이하 |
@@ -842,6 +845,5 @@ OWNER 역할 및 관리 권한을 먼저 확인하고 권한이 없으면 매장
 - 400 `COMMON-002` - 경로, 쿼리, 요청 본문의 필수값이나 형식이 올바르지 않음
 - 400 `COMMON-003` - JSON 해석, 타입 변환에 실패하거나 필수 쿼리 파라미터가 없음
 - 401 `AUTH-005` - accessToken 쿠키가 없거나 만료, 검증에 실패함
-- 403 `AUTH-006` - 인증된 계정의 역할에 이 API 호출 권한이 없음
-- 403 `STORE-002` - 해당 매장을 관리할 권한이 없음. 이 API는 OWNER 역할만 허용함
-- 404 `STORE-001` - 요청한 매장이 없음
+- 403 `AUTH-006` - OWNER 역할이 아니거나 점주가 없거나 현재 상태가 ACTIVE가 아님
+- 500 `COMMON-001` - 점주 상태 또는 쿠폰 사용 이력 조회가 실패함
