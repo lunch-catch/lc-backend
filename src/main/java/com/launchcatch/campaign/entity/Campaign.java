@@ -256,6 +256,11 @@ public class Campaign extends BaseTimeEntity {
         this.statusChangedAt = now;
     }
 
+    /*
+     * pendingDailyBudget은 그대로 둔다(#330 자체 리뷰로 찾음). NO_POINTS로 중단된 뒤 같은 날
+     * 충전으로 다시 재개되는 경우(V51 51·49행)가 있어, 중단을 "끝"이 아니라 "잠깐 멈춤"으로
+     * 본다. 재개 뒤에도 그 예약값이 남아 있어야 점주가 걸어 둔 변경 의도가 사라지지 않는다.
+     */
     public void pause(PauseReason reason, LocalDateTime now) {
         if (this.status != CampaignStatus.ACTIVE) {
             throw new IllegalStateException("only ACTIVE campaign can be paused: " + this.status);
@@ -274,12 +279,18 @@ public class Campaign extends BaseTimeEntity {
         this.statusChangedAt = now;
     }
 
+    /*
+     * pendingDailyBudget을 지운다(#330 자체 리뷰로 찾음). ENDED는 되돌릴 수 없는 종료
+     * 상태라(resume은 PAUSED에서만 가능) 이 값을 다시 쓸 일이 없다. 지우지 않으면
+     * 죽은 예약값이 테이블에 그대로 남는다.
+     */
     public void end(LocalDateTime now) {
         if (this.status != CampaignStatus.ACTIVE && this.status != CampaignStatus.PAUSED) {
             throw new IllegalStateException("only ACTIVE or PAUSED campaign can end: " + this.status);
         }
         this.status = CampaignStatus.ENDED;
         this.pausedReason = null;
+        this.pendingDailyBudget = null;
         this.statusChangedAt = now;
     }
 
