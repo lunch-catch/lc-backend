@@ -49,5 +49,10 @@ public abstract class IntegrationTestSupport {
         registry.add("spring.data.redis.host", VALKEY::getHost);
         registry.add("spring.data.redis.port", () -> VALKEY.getMappedPort(6379));
         registry.add("jwt.secret", () -> "test-only-secret-not-used-anywhere-else-0123456789abcdef");
+        /*
+         * 테스트도 기본 프로필이 local 이라 시드가 켜진다.
+         * 시드 행이 테스트 데이터와 섞이지 않게 끈다.
+         */
+        registry.add("seed.enabled", () -> "false");
     }
 }
