@@ -115,7 +115,7 @@ class CampaignTargetAudienceServiceTest {
     @DisplayName("캠페인이 없으면 CAMPAIGN-005로 거부한다")
     void 캠페인이_없으면_거부한다() {
         active();
-        when(campaignRepository.findById(CAMPAIGN_ID)).thenReturn(Optional.empty());
+        when(campaignRepository.findByIdForUpdate(CAMPAIGN_ID)).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.handle(OWNER_ID, CAMPAIGN_ID, request()))
                 .isInstanceOfSatisfying(CampaignException.class,
@@ -127,7 +127,7 @@ class CampaignTargetAudienceServiceTest {
     void 본인_가게의_캠페인이_아니면_거부한다() throws Exception {
         active();
         Campaign otherOwnersCampaign = draft(999L);
-        when(campaignRepository.findById(CAMPAIGN_ID)).thenReturn(Optional.of(otherOwnersCampaign));
+        when(campaignRepository.findByIdForUpdate(CAMPAIGN_ID)).thenReturn(Optional.of(otherOwnersCampaign));
 
         assertThatThrownBy(() -> service.handle(OWNER_ID, CAMPAIGN_ID, request()))
                 .isInstanceOfSatisfying(CampaignException.class,
@@ -140,7 +140,7 @@ class CampaignTargetAudienceServiceTest {
         active();
         Campaign campaign = draft(OWNER_ID);
         campaign.schedule(LocalDateTime.now());
-        when(campaignRepository.findById(CAMPAIGN_ID)).thenReturn(Optional.of(campaign));
+        when(campaignRepository.findByIdForUpdate(CAMPAIGN_ID)).thenReturn(Optional.of(campaign));
 
         assertThatThrownBy(() -> service.handle(OWNER_ID, CAMPAIGN_ID, request()))
                 .isInstanceOfSatisfying(CampaignException.class,
@@ -153,7 +153,7 @@ class CampaignTargetAudienceServiceTest {
         active();
         Campaign campaign = draft(OWNER_ID);
         setId(campaign, CAMPAIGN_ID);
-        when(campaignRepository.findById(CAMPAIGN_ID)).thenReturn(Optional.of(campaign));
+        when(campaignRepository.findByIdForUpdate(CAMPAIGN_ID)).thenReturn(Optional.of(campaign));
 
         CampaignUpdateResponse response = service.handle(OWNER_ID, CAMPAIGN_ID,
                 request(2000, TargetGender.MALE, List.of(AgeGroup.AGE_30S, AgeGroup.AGE_40S), null, null, null));

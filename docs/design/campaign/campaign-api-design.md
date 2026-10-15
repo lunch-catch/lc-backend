@@ -80,10 +80,12 @@
   이슈가 없어서, 요청에 `dailyBudget`/`startDate`/`endDate` 중 하나라도 오면
   `IllegalArgumentException`(`COMMON-002`)으로 거부한다(`CampaignTargetAudienceService.validateNoBudgetPeriodFields`,
   임시 결정). 4단계 구현 이슈가 생기면 이 검증을 그 기능으로 바꾼다
-- **본인 소유 확인은 `campaignRepository.findById(campaignId)`로 조회한 뒤
-  `Campaign.ownerId`를 비교한다.** 상태 전이(`CampaignStatusService`)가 쓰는
-  `findByIdForUpdate`(비관 잠금)는 쓰지 않는다. 이 PATCH는 점주 한 명만 다루는 단순
-  필드 갱신이라 동시 전이 경쟁이 없다(`#253` 결정)
+- **본인 소유 확인은 `campaignRepository.findByIdForUpdate(campaignId)`(비관 잠금)로
+  조회한 뒤 `Campaign.ownerId`를 비교한다.** 처음에는 단순 필드 갱신이라 잠금 없는
+  `findById`로 충분하다고 봤는데, 같은 캠페인에 거의 동시에 들어온 두 PATCH가 서로의
+  변경을 조용히 지우는 lost update와, 00:00 스케줄러의 상태 전이와 경쟁하며 낡은
+  스냅샷으로 "DRAFT가 아닌데 DRAFT로 착각"하는 경우가 둘 다 가능해 `CampaignStatusService.findOrThrow`와
+  같은 이유로 비관 잠금으로 바꿨다(`#253` 자체 리뷰로 찾음)
 
 ## 오류 코드를 나눈 기준
 

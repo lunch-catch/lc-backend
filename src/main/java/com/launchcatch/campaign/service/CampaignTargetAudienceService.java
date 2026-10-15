@@ -40,7 +40,15 @@ public class CampaignTargetAudienceService {
         validateTargetRadius(request.targetRadius());
         validateNoDuplicateAgeGroups(request.targetAgeGroups());
 
-        Campaign campaign = campaignRepository.findById(campaignId)
+        /*
+         * 잠금 없이 조회하면 같은 캠페인에 거의 동시에 들어온 두 PATCH가 각자 메모리에서
+         * 고친 뒤 커밋해, 나중에 커밋한 쪽이 먼저 커밋한 쪽의 변경을 조용히 지운다("lost
+         * update"). 00:00 스케줄러의 상태 전이(CampaignStatusService)와 경쟁할 때도 이
+         * 트랜잭션이 든 스냅샷이 낡아 DRAFT가 아닌 캠페인을 DRAFT로 착각해 덮어쓸 수 있다.
+         * CampaignStatusService.findOrThrow와 같은 이유로 findByIdForUpdate(비관 잠금)를
+         * 쓴다(#253 자체 리뷰로 찾음).
+         */
+        Campaign campaign = campaignRepository.findByIdForUpdate(campaignId)
                 .filter(found -> found.getOwnerId().equals(ownerId))
                 .orElseThrow(() -> new CampaignException(CampaignErrorCode.CAMPAIGN_NOT_OWNED));
         if (campaign.getStatus() != CampaignStatus.DRAFT) {
