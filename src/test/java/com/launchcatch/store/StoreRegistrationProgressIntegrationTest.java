@@ -1,7 +1,6 @@
 package com.launchcatch.store;
 
 import static org.assertj.core.api.Assertions.*;
-import com.launchcatch.IntegrationTestSupport;
 import com.launchcatch.store.entity.StoreRegistrationStep;
 import com.launchcatch.store.exception.StoreErrorCode;
 import com.launchcatch.store.exception.StoreException;
@@ -18,14 +17,12 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.IllegalTransactionStateException;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
-@SpringBootTest
-class StoreRegistrationProgressIntegrationTest extends IntegrationTestSupport {
+class StoreRegistrationProgressIntegrationTest extends AbstractStoreIntegrationTest {
     private static final AtomicLong OWNER_IDS = new AtomicLong(800000000);
 
     @Autowired StoreRegistrationProgressService service;
