@@ -27,13 +27,20 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 
 /*
  * findByStoreIdAndStatus의 PESSIMISTIC_WRITE 잠금이 실제 DB 행 잠금으로 동작하는지 확인한다.
  * campaignRepository 스파이는 AbstractCampaignIntegrationTest가 도메인 컨텍스트를 하나로
  * 묶으려고 모아 둔 것을 그대로 쓴다(#278).
+ *
+ * AbstractCampaignIntegrationTest의 클래스 단위 @Transactional을 NOT_SUPPORTED로 덮어쓴다.
+ * 테스트 메서드를 그 트랜잭션 안에 두면 setUp에서 만든 점주 행과 DRAFT가 커밋 전이라, 다른
+ * 연결을 쓰는 워커 스레드의 서비스 호출이 그 행을 보지 못해 OWNER_NOT_ACTIVE로 바로 끝난다.
  */
+@Transactional(propagation = Propagation.NOT_SUPPORTED)
 class CampaignCouponConditionConcurrencyIntegrationTest extends AbstractCampaignIntegrationTest {
 
     @Autowired

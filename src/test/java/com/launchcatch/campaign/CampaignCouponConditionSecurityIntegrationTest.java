@@ -25,6 +25,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 
 /*
  * POST /v1/owner/campaigns 의 보안 체인을 실제 입구부터 확인한다.
@@ -37,7 +39,13 @@ import org.springframework.test.web.servlet.MockMvc;
  * 점주 역할의 토큰은 실제 행을 준비해야 유효하다. 새로 만든 점주는 발급 순번이 항상 0이라
  * 그 값을 그대로 클레임에 싣는다. 관리자 역할도 같은 이유로 실제 행이 필요하다(owner 도메인의
  * OwnerProfileSecurityIntegrationTest와 같은 이유).
+ *
+ * AbstractCampaignIntegrationTest의 클래스 단위 @Transactional을 NOT_SUPPORTED로 덮어쓴다.
+ * 그 안에 두면 여기서 만든 점주·관리자 행이 커밋 전이라, 점주 AT 검증의 조회(REQUIRES_NEW로
+ * 새 연결을 쓴다)가 그 행을 보지 못해 유효한 토큰도 401로 떨어진다. owner/admin 도메인의
+ * Abstract*IntegrationTest에는 애초에 @Transactional이 없어 같은 문제가 없다.
  */
+@Transactional(propagation = Propagation.NOT_SUPPORTED)
 class CampaignCouponConditionSecurityIntegrationTest extends AbstractCampaignIntegrationTest {
 
     private static final String PATH = "/v1/owner/campaigns";
