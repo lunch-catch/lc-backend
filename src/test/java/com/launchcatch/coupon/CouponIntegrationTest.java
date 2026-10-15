@@ -82,7 +82,7 @@ class CouponIntegrationTest extends IntegrationTestSupport {
     @Autowired PlatformTransactionManager transactionManager;
     @Autowired CouponLookUpService couponLookUpService;
     @Autowired CouponCommandService couponCommandService;
-    @MockitoBean Clock clock;
+    @MockitoSpyBean Clock clock;
     @MockitoBean OwnerStatusQuery ownerStatusQuery;
     @MockitoSpyBean CouponQrImageEncoder imageEncoder;
     @Autowired MemberCouponRepository memberCouponRepository;
