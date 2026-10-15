@@ -356,8 +356,8 @@ class AdminLoginSecurityIntegrationTest extends AbstractAdminIntegrationTest {
      * 꾸미던 전과 달리 실제 행을 바꾼다.
      */
     @ParameterizedTest
-    @ValueSource(strings = {"MISSING", "INACTIVE", "ROLE_CHANGED"})
-    void DB_백업후_계정이_사용불가이면_AUTH001이며_쿠키를_발급하지_않는다(String change) throws Exception {
+    @EnumSource(AccountChange.class)
+    void DB_백업후_계정이_사용불가이면_AUTH001이며_쿠키를_발급하지_않는다(AccountChange change) throws Exception {
         doAnswer(call -> {
             changeAccount(change);
             return call.callRealMethod();
@@ -369,24 +369,25 @@ class AdminLoginSecurityIntegrationTest extends AbstractAdminIntegrationTest {
         verify(admins).clearRefreshTokenIfMatches(eq(adminId), any(), any());
     }
 
+    enum AccountChange { MISSING, INACTIVE, ROLE_CHANGED }
+
     /*
      * DELETED 는 deleted_at 과 토큰 해시까지 함께 맞춰야 한다. admin 의 CHECK 제약이 그 셋을
      * 한 묶음으로 본다.
      */
-    private void changeAccount(String change) {
-        if ("MISSING".equals(change)) {
-            jdbc.update("delete from admin where admin_id = ?", adminId);
-        } else if ("INACTIVE".equals(change)) {
-            jdbc.update("update admin set status = 'DELETED', deleted_at = ?, refresh_token_hash = null, "
-                    + "refresh_token_expires_at = null where admin_id = ?", LocalDateTime.now(), adminId);
-        } else {
-            jdbc.update("update admin set role = 'ADMIN' where admin_id = ?", adminId);
+    private void changeAccount(AccountChange change) {
+        switch (change) {
+            case MISSING -> jdbc.update("delete from admin where admin_id = ?", adminId);
+            case INACTIVE -> jdbc.update(
+                    "update admin set status = 'DELETED', deleted_at = ?, refresh_token_hash = null, "
+                            + "refresh_token_expires_at = null where admin_id = ?", LocalDateTime.now(), adminId);
+            case ROLE_CHANGED -> jdbc.update("update admin set role = 'ADMIN' where admin_id = ?", adminId);
         }
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"DB_READ", "TRANSACTION_BEGIN", "TRANSACTION_COMMIT"})
-    void 최종_DB_검사_장애는_AUTH002이며_쿠키를_발급하지_않는다(String failure) throws Exception {
+    @EnumSource(FinalCheckFailure.class)
+    void 최종_DB_검사_장애는_AUTH002이며_쿠키를_발급하지_않는다(FinalCheckFailure failure) throws Exception {
         doAnswer(call -> {
             breakFinalCheck(failure);
             return call.callRealMethod();
@@ -402,7 +403,7 @@ class AdminLoginSecurityIntegrationTest extends AbstractAdminIntegrationTest {
                 assertThat(event.getLevel()).isEqualTo(Level.ERROR);
                 assertThat(event.getFormattedMessage()).contains("AUTH-002");
             });
-            if (!"TRANSACTION_COMMIT".equals(failure)) {
+            if (failure.tokensUntouched) {
                 verifyNoInteractions(tokens);
             }
         } finally {
@@ -418,15 +419,27 @@ class AdminLoginSecurityIntegrationTest extends AbstractAdminIntegrationTest {
      * 남아서, 같은 스레드로 이어 도는 테스트가 전부 트랜잭션 시간 초과로 떨어진다. 앱이 보는
      * 것도 "커밋은 됐는데 응답이 실패로 왔다" 쪽이라 이 모양이 실제에 가깝다.
      */
-    private void breakFinalCheck(String failure) {
-        if ("DB_READ".equals(failure)) {
-            doThrow(new DataAccessResourceFailureException("final DB read failed"))
+    /*
+     * 커밋이 실패하는 경우만 캐시 게시가 이미 지나 있다. 그 기대를 enum 값이 들고 있어서
+     * 검증 단계에 장애 종류를 다시 묻는 분기를 두지 않는다(UT-3-04).
+     */
+    enum FinalCheckFailure {
+        DB_READ(true), TRANSACTION_BEGIN(true), TRANSACTION_COMMIT(false);
+
+        private final boolean tokensUntouched;
+
+        FinalCheckFailure(boolean tokensUntouched) {
+            this.tokensUntouched = tokensUntouched;
+        }
+    }
+
+    private void breakFinalCheck(FinalCheckFailure failure) {
+        switch (failure) {
+            case DB_READ -> doThrow(new DataAccessResourceFailureException("final DB read failed"))
                     .when(admins).findByIdForUpdate(adminId);
-        } else if ("TRANSACTION_BEGIN".equals(failure)) {
-            doThrow(new CannotCreateTransactionException("final transaction failed"))
+            case TRANSACTION_BEGIN -> doThrow(new CannotCreateTransactionException("final transaction failed"))
                     .doCallRealMethod().when(transactions).getTransaction(any());
-        } else {
-            doAnswer(call -> {
+            case TRANSACTION_COMMIT -> doAnswer(call -> {
                 call.callRealMethod();
                 throw new TransactionSystemException("final commit failed");
             }).doCallRealMethod().when(transactions).commit(any());
