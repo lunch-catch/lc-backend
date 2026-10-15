@@ -40,6 +40,10 @@ public abstract class IntegrationTestSupport {
     /*
      * jwt.secret 은 테스트 전용 값이다. 아홉 테스트가 같은 값을 각자 적고 있었다.
      * 이 값으로 토큰을 만들 수 있는 것은 이 소스셋뿐이다.
+     *
+     * jwt.cookie.secure 는 운영 기본값이 false 이고 HTTPS 를 쓰는 운영에서 true 로 올린다.
+     * 테스트는 운영에 가까운 쪽을 기본으로 삼는다. 쿠키의 Secure 를 보는 테스트가 같은 값을
+     * 각자 properties 로 적으면 그 속성이 컨텍스트 캐시 키를 갈라 컨텍스트가 그만큼 늘어난다.
      */
     @DynamicPropertySource
     static void 컨테이너_주소를_등록한다(DynamicPropertyRegistry registry) {
@@ -49,6 +53,7 @@ public abstract class IntegrationTestSupport {
         registry.add("spring.data.redis.host", VALKEY::getHost);
         registry.add("spring.data.redis.port", () -> VALKEY.getMappedPort(6379));
         registry.add("jwt.secret", () -> "test-only-secret-not-used-anywhere-else-0123456789abcdef");
+        registry.add("jwt.cookie.secure", () -> "true");
         /*
          * 테스트도 기본 프로필이 local 이라 시드가 켜진다.
          * 시드 행이 테스트 데이터와 섞이지 않게 끈다.

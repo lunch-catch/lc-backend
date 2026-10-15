@@ -13,12 +13,9 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
-import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
 import org.springframework.data.redis.core.StringRedisTemplate;
 
-@SpringBootTest(classes = RefreshTokenOrderingIntegrationTest.RedisConfig.class)
+@SpringBootTest
 class RefreshTokenOrderingIntegrationTest extends IntegrationTestSupport {
 
     @Autowired
@@ -84,28 +81,5 @@ class RefreshTokenOrderingIntegrationTest extends IntegrationTestSupport {
         cutoff.invalidateBefore(role, 719L, now, Duration.ofMinutes(30));
         cutoff.invalidateBefore(role, 719L, now, Duration.ofMinutes(1));
         assertThat(redis.getExpire("accessTokenValidAfter:" + role.name() + ":719")).isGreaterThan(1700);
-    }
-
-    @Configuration(proxyBeanMethods = false)
-    static class RedisConfig {
-        @Bean
-        LettuceConnectionFactory connectionFactory() {
-            return new LettuceConnectionFactory(VALKEY.getHost(), VALKEY.getMappedPort(6379));
-        }
-
-        @Bean
-        StringRedisTemplate redisTemplate(LettuceConnectionFactory connectionFactory) {
-            return new StringRedisTemplate(connectionFactory);
-        }
-
-        @Bean
-        AccessTokenValidAfterRepository cutoff(StringRedisTemplate redisTemplate) {
-            return new AccessTokenValidAfterRepository(redisTemplate);
-        }
-
-        @Bean
-        RefreshTokenRepository refreshTokenRepository(StringRedisTemplate redisTemplate) {
-            return new RefreshTokenRepository(redisTemplate);
-        }
     }
 }
