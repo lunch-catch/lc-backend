@@ -5,7 +5,12 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.anyCollection;
+import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -22,7 +27,16 @@ import com.launchcatch.adserving.feed.exception.FeedErrorCode;
 import com.launchcatch.adserving.feed.exception.FeedException;
 import com.launchcatch.adserving.feed.exception.FeedRateLimitedException;
 import com.launchcatch.adserving.feed.repository.DailyExclusionRepository;
+import com.launchcatch.adserving.feed.repository.CategoryWishCount;
 import com.launchcatch.adserving.feed.repository.FeedFilterCategoryRepository;
+import com.launchcatch.adserving.feed.repository.FeedFilterRepository;
+import com.launchcatch.adserving.feed.repository.ImpressionCountRepository;
+import com.launchcatch.adserving.feed.repository.ServeFrequencyRepository;
+import com.launchcatch.adserving.feed.repository.ServeFrequencyRepository.ServedHistory;
+import com.launchcatch.adserving.feed.repository.SwipeLogRepository;
+import com.launchcatch.billing.contract.BudgetProgress;
+import com.launchcatch.billing.contract.BudgetQueryService;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import com.launchcatch.adserving.feed.repository.FeedRateLimitRepository;
 import com.launchcatch.adserving.feed.repository.FeedRateLimitRepository.Admission;
 import com.launchcatch.global.config.ClockConfig;
@@ -39,7 +53,9 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.OffsetDateTime;
+import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import org.junit.jupiter.api.DisplayName;
@@ -63,11 +79,27 @@ class FeedServiceTest {
     private final DailyExclusionRepository dailyExclusionRepository = mock(DailyExclusionRepository.class);
     private final FeedFilterCategoryRepository filterCategoryRepository =
             mock(FeedFilterCategoryRepository.class);
+    private final FeedFilterRepository feedFilterRepository = mock(FeedFilterRepository.class);
+    private final SwipeLogRepository swipeLogRepository = mock(SwipeLogRepository.class);
+    private final ServeFrequencyRepository serveFrequencyRepository = mock(ServeFrequencyRepository.class);
+    private final ImpressionCountRepository impressionCountRepository = mock(ImpressionCountRepository.class);
+    private final BudgetQueryService budgetQueryService = mock(BudgetQueryService.class);
+    private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
 
     private FeedService serviceAt(LocalDateTime now) {
         Clock clock = Clock.fixed(now.atZone(ClockConfig.ZONE).toInstant(), ClockConfig.ZONE);
         return new FeedService(memberQueryService, rateLimitRepository, adCandidateRepository,
-                dailyExclusionRepository, filterCategoryRepository, clock);
+                dailyExclusionRepository, filterCategoryRepository, feedFilterRepository, swipeLogRepository,
+                serveFrequencyRepository, impressionCountRepository, budgetQueryService, meterRegistry, clock);
+    }
+
+    // 넘겨받은 캠페인마다 진행률 0.5, 예약액 10만 원, 단가 10원으로 답한다. 상한은 10,500 회다.
+    @SuppressWarnings("unchecked")
+    private void givenBudgetForAll() {
+        when(budgetQueryService.getProgress(any(), any(), any())).thenAnswer(invocation ->
+                ((Collection<Long>) invocation.getArgument(0)).stream()
+                        .map(id -> new BudgetProgress(id, 100_000, 10, 50_000, 100_000, 0.5))
+                        .toList());
     }
 
     private static Instant instant(LocalDateTime time) {
@@ -96,6 +128,8 @@ class FeedServiceTest {
         when(adCandidateRepository.findServableWithin(eq(TODAY), any(BoundingBox.class))).thenReturn(candidates);
         when(dailyExclusionRepository.findCampaignIds(TODAY, MEMBER_ID)).thenReturn(Set.of());
         when(filterCategoryRepository.findCategoryCodes(MEMBER_ID)).thenReturn(List.of());
+        when(serveFrequencyRepository.findHistory(TODAY, MEMBER_ID)).thenReturn(new ServedHistory(Map.of(), Set.of()));
+        givenBudgetForAll();
     }
 
     private static final FeedRequest NO_LOCATION = new FeedRequest(null, null);
@@ -269,6 +303,8 @@ class FeedServiceTest {
                     candidate(3, SAVED_LAT, SAVED_LNG).set("categoryCode", "JAPANESE").build()));
             when(dailyExclusionRepository.findCampaignIds(TODAY, MEMBER_ID)).thenReturn(Set.of(1L));
             when(filterCategoryRepository.findCategoryCodes(MEMBER_ID)).thenReturn(List.of("KOREAN"));
+            when(serveFrequencyRepository.findHistory(TODAY, MEMBER_ID)).thenReturn(new ServedHistory(Map.of(), Set.of()));
+            givenBudgetForAll();
 
             FeedResponse response = serviceAt(SERVING_NOW).getFeed(MEMBER_ID, NO_LOCATION);
 
@@ -284,6 +320,147 @@ class FeedServiceTest {
             serviceAt(SERVING_NOW).getFeed(MEMBER_ID, NO_LOCATION);
 
             verify(adCandidateRepository).findServableWithin(TODAY, BoundingBox.around(SAVED_LAT, SAVED_LNG, 5000));
+        }
+    }
+
+    @Nested
+    @DisplayName("배정 규칙의 입력을 모을 때")
+    class Inputs {
+
+        @Test
+        void 정산에_그날_영업일과_지금_시각을_넘겨_진행률을_읽는다() {
+            givenOnboardedMemberWithSavedLocation();
+            givenAdmitted(SERVING_NOW);
+            givenCandidates(List.of(candidate(1, SAVED_LAT, SAVED_LNG).build()));
+
+            serviceAt(SERVING_NOW).getFeed(MEMBER_ID, NO_LOCATION);
+
+            verify(budgetQueryService).getProgress(List.of(1L), TODAY, SERVING_NOW);
+        }
+
+        @Test
+        void 후보가_정산이_한_번에_받는_수보다_많으면_나눠_부른다() {
+            givenOnboardedMemberWithSavedLocation();
+            givenAdmitted(SERVING_NOW);
+            List<AdCandidate> many = java.util.stream.LongStream.rangeClosed(1, BudgetQueryService.MAX_CAMPAIGN_IDS + 1L)
+                    .mapToObj(id -> candidate(id, SAVED_LAT, SAVED_LNG).build()).toList();
+            givenCandidates(many);
+
+            serviceAt(SERVING_NOW).getFeed(MEMBER_ID, NO_LOCATION);
+
+            verify(budgetQueryService, times(2)).getProgress(anyCollection(), eq(TODAY), eq(SERVING_NOW));
+        }
+
+        @Test
+        void 정산에_그날_예산_계획이_없는_캠페인은_내려주지_않는다() {
+            givenOnboardedMemberWithSavedLocation();
+            givenAdmitted(SERVING_NOW);
+            givenCandidates(List.of(candidate(1, SAVED_LAT, SAVED_LNG).build(), candidate(2, SAVED_LAT, SAVED_LNG).build()));
+            doReturn(List.of(new BudgetProgress(2L, 100_000, 10, 0, 100_000, 0.0)))
+                    .when(budgetQueryService).getProgress(any(), any(), any());
+
+            FeedResponse response = serviceAt(SERVING_NOW).getFeed(MEMBER_ID, NO_LOCATION);
+
+            assertThat(response.cards()).extracting(FeedCardResponse::campaignId).containsExactly(2L);
+        }
+
+        @Test
+        void 정산이_예외를_던지면_예산_규칙을_건너뛰고_서빙을_이어가며_센다() {
+            givenOnboardedMemberWithSavedLocation();
+            givenAdmitted(SERVING_NOW);
+            givenCandidates(List.of(candidate(1, SAVED_LAT, SAVED_LNG).build()));
+            doThrow(new IllegalStateException("카운터 장애")).when(budgetQueryService).getProgress(any(), any(), any());
+
+            FeedResponse response = serviceAt(SERVING_NOW).getFeed(MEMBER_ID, NO_LOCATION);
+
+            assertThat(response.status()).isEqualTo(FeedStatus.SERVING);
+            assertThat(response.cards()).extracting(FeedCardResponse::campaignId).containsExactly(1L);
+            assertThat(meterRegistry.counter(FeedService.BUDGET_UNAVAILABLE_METRIC).count()).isEqualTo(1);
+        }
+
+        @Test
+        void 노출_상한에_닿은_캠페인은_내려주지_않는다() {
+            givenOnboardedMemberWithSavedLocation();
+            givenAdmitted(SERVING_NOW);
+            givenCandidates(List.of(candidate(1, SAVED_LAT, SAVED_LNG).build(), candidate(2, SAVED_LAT, SAVED_LNG).build()));
+            // 예약액 10만 원 / 단가 10원 x 1.05 = 10,500 회
+            when(impressionCountRepository.findValidCounts(eq(TODAY), any())).thenReturn(Map.of(1L, 10_500L, 2L, 10_499L));
+
+            FeedResponse response = serviceAt(SERVING_NOW).getFeed(MEMBER_ID, NO_LOCATION);
+
+            assertThat(response.cards()).extracting(FeedCardResponse::campaignId).containsExactly(2L);
+        }
+
+        @Test
+        void 하루_횟수와_세션_이력을_후보에서_거른다() {
+            givenOnboardedMemberWithSavedLocation();
+            givenAdmitted(SERVING_NOW);
+            givenCandidates(List.of(candidate(1, SAVED_LAT, SAVED_LNG).build(),
+                    candidate(2, SAVED_LAT, SAVED_LNG).build(), candidate(3, SAVED_LAT, SAVED_LNG).build()));
+            when(serveFrequencyRepository.findHistory(TODAY, MEMBER_ID))
+                    .thenReturn(new ServedHistory(Map.of(1L, 2, 2L, 1), Set.of(3L)));
+
+            FeedResponse response = serviceAt(SERVING_NOW).getFeed(MEMBER_ID, NO_LOCATION);
+
+            assertThat(response.cards()).extracting(FeedCardResponse::campaignId).containsExactly(2L);
+        }
+
+        @Test
+        void 업종_선호도는_오늘을_넣은_최근_30일의_찜으로_센다() {
+            givenOnboardedMemberWithSavedLocation();
+            givenAdmitted(SERVING_NOW);
+            givenCandidates(List.of());
+
+            serviceAt(SERVING_NOW).getFeed(MEMBER_ID, NO_LOCATION);
+
+            verify(swipeLogRepository).countWishesByCategory(MEMBER_ID, TODAY.minusDays(29), TODAY);
+        }
+
+        @Test
+        void 업종_선호도는_그_업종의_찜이_전체_찜에서_차지하는_비율이다() {
+            assertThat(FeedService.categoryPreference(List.of(
+                    new CategoryWishCount("KOREAN", 3), new CategoryWishCount("JAPANESE", 1))))
+                    .isEqualTo(Map.of("KOREAN", 0.75, "JAPANESE", 0.25));
+            assertThat(FeedService.categoryPreference(List.of())).isEmpty();
+        }
+    }
+
+    @Nested
+    @DisplayName("내려준 카드를 셀 때")
+    class Recording {
+
+        @Test
+        void 응답한_카드의_캠페인을_하루와_세션_횟수에_올린다() {
+            givenOnboardedMemberWithSavedLocation();
+            givenAdmitted(SERVING_NOW);
+            givenCandidates(List.of(candidate(1, SAVED_LAT, SAVED_LNG).build(), candidate(2, SAVED_LAT, SAVED_LNG).build()));
+
+            serviceAt(SERVING_NOW).getFeed(MEMBER_ID, NO_LOCATION);
+
+            verify(serveFrequencyRepository).recordServed(eq(TODAY), eq(MEMBER_ID),
+                    org.mockito.ArgumentMatchers.argThat(ids -> Set.copyOf(ids).equals(Set.of(1L, 2L))), eq(instant(SERVING_NOW)));
+        }
+
+        @Test
+        void 카드가_없는_요청도_세션을_늘린다() {
+            givenOnboardedMemberWithSavedLocation();
+            givenAdmitted(SERVING_NOW);
+            givenCandidates(List.of());
+
+            serviceAt(SERVING_NOW).getFeed(MEMBER_ID, NO_LOCATION);
+
+            verify(serveFrequencyRepository).recordServed(TODAY, MEMBER_ID, List.of(), instant(SERVING_NOW));
+        }
+
+        @Test
+        void 서빙_시간대_밖에서는_세지_않는다() {
+            LocalDateTime now = LocalDateTime.of(TODAY, LocalTime.of(9, 0));
+            givenOnboardedMemberWithSavedLocation();
+            givenAdmitted(now);
+
+            serviceAt(now).getFeed(MEMBER_ID, NO_LOCATION);
+
+            verify(serveFrequencyRepository, never()).recordServed(any(), any(), any(), any());
         }
     }
 }

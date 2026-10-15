@@ -41,6 +41,7 @@ public final class AdCandidateFixture {
         set("usableStartTime", LocalTime.of(12, 0));
         set("usableEndTime", LocalTime.of(14, 0));
         set("issueQuantity", 30);
+        set("campaignCreatedAt", java.time.LocalDateTime.of(2026, 9, 1, 0, 0));
         set("campaignState", CandidateCampaignState.SERVABLE);
     }
 

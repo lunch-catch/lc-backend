@@ -1,22 +1,47 @@
 # adserving 장애 처리 설계
 
 광고 서빙이 기대는 대상과 [장애 처리 설계 가이드](../장애_처리_설계_가이드.md)의 기본 처리를 벗어난 것을 적는다.
-지금은 `GET /v1/feed` 의 후보 선별(#236)까지 훑었다.
+지금은 `GET /v1/feed` 의 후보 선별(#236)과 배정 규칙(#307)까지 훑었다.
 
 | 대상 | 쓰는 곳 | 처리 |
 |---|---|---|
-| Valkey | 피드 요청 제한, 당일 이력 | 기본(통과) |
-| MySQL 읽기 | 그날 후보, 필터 업종 | 기본(오류로 올린다) |
+| Valkey | 요청 제한, 당일 이력, 하루와 세션 횟수, 유효 노출 수 | 기본(통과) |
+| MySQL 읽기 | 그날 후보, 필터, 30일 찜 | 기본(오류로 올린다) |
 | member 의 `MemberQueryService` | 온보딩, 위치, 노출 대상 판정 | 기본(오류로 올린다). 같은 프로세스 안의 호출이다 |
+| billing 의 `BudgetQueryService` | 진행률, 노출 상한 | **벗어났다.** 아래 |
 
-벗어난 것은 아직 없다.
+## 정산이 예외를 던지면 예산 규칙 없이 서빙한다
 
-**통과시킨 횟수는 `adserving_cache_bypass_total` 이 센다.** 태그 `use` 가 `feed_rate_limit` 이면 요청 제한, `daily_exclusion` 이면 당일 이력이다. 로그는 요청 제한이 `event=FEED_RATE_LIMIT_FAILED`, 당일 이력이
-`event=FEED_DAILY_EXCLUSION_FAILED` 다. 경보는 아직 걸지 않았다.
+**원칙: 서빙할 피드가 아예 없을 때만 오류로 답하고 그 밖에는 서빙을 이어 간다**(#307 에서 정했다).
+그날 후보를 MySQL 에서 읽지 못하면 내보낼 것이 없어 기본대로 오류다. 정산의 진행률은 카드를 고르는 규칙의 일부라
+그것이 없어도 내보낼 카드는 있다.
+
+| 선택지 | 장점 | 단점 |
+|---|---|---|
+| A. 기본대로 오류로 올린다 | 예산을 넘긴 캠페인이 나가지 않는다 | 정산 카운터(Valkey)가 멈추면 피드 전체가 멈춘다 |
+| B. 진행률과 노출 상한 제외를 건너뛰고 배분 슬롯도 관련성으로 채운다 | 피드가 계속 나간다 | 그동안 예산을 넘긴 캠페인도 나가 공정성 규칙이 깨진다 |
+
+B 를 고른다. 차감은 정산이 따로 막아(`NOT_BILLED_BUDGET`) 점주가 더 내지 않는다. 건너뛴 횟수는
+`adserving_budget_unavailable_total` 이 센다. 경보는 아직 걸지 않았다.
+
+조건에 맞는 후보가 0장인 것은 장애가 아니다. 예산 소진으로 0장이어도 명세대로 `200 NO_CANDIDATE` 다(#307).
+
+## 통과시킨 횟수
+
+Valkey 가 멈춰 통과시킨 횟수는 `adserving_cache_bypass_total` 이 센다. 태그 `use` 로 쓰는 곳을 가른다.
+
+| `use` | 로그 `event` | 통과시키면 |
+|---|---|---|
+| `feed_rate_limit` | `FEED_RATE_LIMIT_FAILED` | 요청 제한이 풀리고 `nextFeedAvailableAt` 이 응답 시각이 된다 |
+| `daily_exclusion` | `FEED_DAILY_EXCLUSION_FAILED` | 넘긴 카드가 다시 보인다 |
+| `serve_frequency` | `FEED_SERVE_FREQUENCY_READ_FAILED`, `FEED_SERVE_FREQUENCY_WRITE_FAILED` | 같은 카드가 하루 2회, 세션 1회를 넘겨 나온다 |
+| `impression_count` | `FEED_IMPRESSION_COUNT_FAILED` | 유효 노출 수를 0 으로 보고 상한을 넘겨 내보낸다. 넘긴 노출은 과금되지 않아 손해는 플랫폼에 남는다 |
+
+경보는 아직 걸지 않았다.
 
 | 유형 | 점검 결과 |
 |---|---|
-| 캐시 다운 | 요청 제한이 풀리고 `nextFeedAvailableAt` 이 응답 시각이 된다. 당일 이력이 비어 넘긴 카드가 다시 보인다. 피드는 계속 나간다 |
+| 캐시 다운 | 위 표대로 규칙 하나씩 빠지고 피드는 계속 나간다 |
 | 캐시 스탬피드 | 해당 없음. 원본에서 다시 채우는 캐시가 아니다 |
 | 분산 락 | 해당 없음 |
 | 낡은 값 | 해당 없음. 정지나 탈퇴의 판정은 인증이 한다 |
