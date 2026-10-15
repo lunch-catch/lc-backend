@@ -13,14 +13,14 @@ import org.springframework.stereotype.Repository;
 public class StoreQueryRepository {
     private final NamedParameterJdbcTemplate jdbc;
 
-    // 이미지는 검증된 대표 이미지(LOGO)만 연결하며 이미지가 없어도 LEFT JOIN으로 가게를 반환한다.
+    // 최종 등록된 가게만 조회하며 LEFT JOIN으로 이미지 누락도 서비스에서 오류로 확인할 수 있게 한다.
     public List<StoreQueryRow> findAllById(List<Long> storeIds) {
         return jdbc.query("""
                 select s.store_id, s.name, i.object_key, s.latitude, s.longitude
                 from store s
                 left join store_image i on i.store_id = s.store_id
                     and i.image_type = 'LOGO' and i.upload_status = 'VERIFIED'
-                where s.store_id in (:ids)
+                where s.store_id in (:ids) and s.finalized = true
                 """, Map.of("ids", storeIds), (rs, rowNum) -> new StoreQueryRow(
                         rs.getLong("store_id"), rs.getString("name"), rs.getString("object_key"),
                         rs.getBigDecimal("latitude"), rs.getBigDecimal("longitude")));
@@ -33,14 +33,15 @@ public class StoreQueryRepository {
                 """, Map.of("ownerId", ownerId, "storeId", storeId), Boolean.class));
     }
 
-    // IN 조건으로 메뉴를 한 번에 조회하며 검증된 이미지가 없는 메뉴도 결과에 남긴다.
+    // 최종 등록된 가게의 메뉴만 일괄 조회하며 검증된 이미지가 없는 경우도 서비스가 오류로 확인한다.
     public List<StoreMenuQueryRow> findMenusByIdIn(List<Long> menuIds) {
         return jdbc.query("""
                 select m.store_menu_id, m.store_id, i.object_key, m.name, m.price
                 from store_menu m
+                join store s on s.store_id = m.store_id
                 left join store_menu_image i on i.store_menu_id = m.store_menu_id
                     and i.upload_status = 'VERIFIED'
-                where m.store_menu_id in (:ids)
+                where m.store_menu_id in (:ids) and s.finalized = true
                 """, Map.of("ids", menuIds), (rs, rowNum) -> new StoreMenuQueryRow(
                         rs.getLong("store_menu_id"), rs.getLong("store_id"), rs.getString("object_key"),
                         rs.getString("name"), rs.getLong("price")));

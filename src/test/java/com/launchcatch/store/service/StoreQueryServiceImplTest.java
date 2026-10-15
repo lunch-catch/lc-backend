@@ -23,23 +23,23 @@ class StoreQueryServiceImplTest {
         when(repository.findAllById(List.of(1L, 2L))).thenReturn(List.of(
                 new StoreQueryRow(1L, "가게", "stores/로고 #1.png", new BigDecimal("37.1234567"),
                         new BigDecimal("127.1234567")),
-                new StoreQueryRow(2L, "입점중", null, null, null)));
+                new StoreQueryRow(2L, "좌표 누락 가게", "stores/2.png", null, null)));
 
         assertThat(service.findAllById(List.of(1L, 2L))).containsExactly(
                 new StoreInfo(1L, "가게", "https://cdn.example.com/stores/%EB%A1%9C%EA%B3%A0%20%231.png",
-                        new BigDecimal("37.1234567"), new BigDecimal("127.1234567")),
-                new StoreInfo(2L, "입점중", null, null, null));
+                        37.1234567, 127.1234567),
+                new StoreInfo(2L, "좌표 누락 가게", "https://cdn.example.com/stores/2.png", null, null));
     }
 
     @Test
     void 메뉴의_소속_가게와_할인_전_가격과_이미지를_반환한다() {
         when(repository.findMenusByIdIn(List.of(10L, 11L))).thenReturn(List.of(
                 new StoreMenuQueryRow(10L, 1L, "menus/10.png", "국밥", 9000L),
-                new StoreMenuQueryRow(11L, 1L, null, "서비스", 0L)));
+                new StoreMenuQueryRow(11L, 1L, "menus/11.png", "서비스", 0L)));
 
         assertThat(service.findMenusByIdIn(List.of(10L, 11L))).containsExactly(
                 new StoreMenuInfo(10L, 1L, "https://cdn.example.com/menus/10.png", "국밥", 9000L),
-                new StoreMenuInfo(11L, 1L, null, "서비스", 0L));
+                new StoreMenuInfo(11L, 1L, "https://cdn.example.com/menus/11.png", "서비스", 0L));
     }
 
     @Test
@@ -94,6 +94,33 @@ class StoreQueryServiceImplTest {
 
         assertThatThrownBy(() -> unconfigured.findAllById(List.of(1L)))
                 .isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    void 최종_등록된_가게의_대표_이미지가_없으면_실패한다() {
+        when(repository.findAllById(List.of(1L))).thenReturn(List.of(
+                new StoreQueryRow(1L, "가게", null, null, null)));
+
+        assertThatThrownBy(() -> service.findAllById(List.of(1L)))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("이미지가 누락");
+    }
+
+    @Test
+    void 최종_등록된_가게의_메뉴_이미지가_없으면_실패한다() {
+        when(repository.findMenusByIdIn(List.of(10L))).thenReturn(List.of(
+                new StoreMenuQueryRow(10L, 1L, null, "국밥", 9000L)));
+
+        assertThatThrownBy(() -> service.findMenusByIdIn(List.of(10L)))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("이미지가 누락");
+    }
+
+    @Test
+    void 이미지_저장_키가_공백이어도_실패한다() {
+        when(repository.findMenusByIdIn(List.of(10L))).thenReturn(List.of(
+                new StoreMenuQueryRow(10L, 1L, " ", "국밥", 9000L)));
+
+        assertThatThrownBy(() -> service.findMenusByIdIn(List.of(10L)))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("이미지가 누락");
     }
 
     @Test

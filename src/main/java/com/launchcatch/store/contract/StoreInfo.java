@@ -1,7 +1,5 @@
 package com.launchcatch.store.contract;
 
-import java.math.BigDecimal;
-
-/** 이미지가 없으면 URL은 null이며, 위치 저장 전에는 좌표(위도, 경도) 각각이 null일 수 있다. */
+/** 최종 등록된 가게의 대표 이미지 URL과 좌표(위도, 경도)를 반환하며 필수 이미지 누락은 오류로 처리한다. */
 public record StoreInfo(Long storeId, String storeName, String storeImageUrl,
-        BigDecimal latitude, BigDecimal longitude) { }
+        Double latitude, Double longitude) { }

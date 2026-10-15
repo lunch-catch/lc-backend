@@ -5,6 +5,7 @@ import com.launchcatch.store.contract.StoreInfo;
 import com.launchcatch.store.contract.StoreMenuInfo;
 import com.launchcatch.store.contract.StoreQueryService;
 import com.launchcatch.store.repository.StoreQueryRepository;
+import java.math.BigDecimal;
 import java.util.List;
 import java.util.Objects;
 import org.springframework.beans.factory.annotation.Value;
@@ -29,10 +30,10 @@ class StoreQueryServiceImpl implements StoreQueryService {
         if (storeIds.isEmpty()) {
             return List.of();
         }
-        // 위치를 아직 저장하지 않은 가게도 반환하며 null 좌표를 그대로 전달해 쿠폰이 누락을 구분하게 한다.
+        // 조회 대상은 최종 등록된 가게이며 필수 이미지 누락을 정상 응답으로 숨기지 않는다.
         return stores.findAllById(storeIds).stream()
-                .map(row -> new StoreInfo(row.storeId(), row.name(), images.resolve(row.imageObjectKey()),
-                        row.latitude(), row.longitude()))
+                .map(row -> new StoreInfo(row.storeId(), row.name(), images.resolve(requireImageKey(row.imageObjectKey())),
+                        toCoordinate(row.latitude()), toCoordinate(row.longitude())))
                 .toList();
     }
 
@@ -52,9 +53,22 @@ class StoreQueryServiceImpl implements StoreQueryService {
             return List.of();
         }
         return stores.findMenusByIdIn(menuIds).stream()
-                .map(row -> new StoreMenuInfo(row.menuId(), row.storeId(), images.resolve(row.imageObjectKey()),
+                .map(row -> new StoreMenuInfo(row.menuId(), row.storeId(), images.resolve(requireImageKey(row.imageObjectKey())),
                         row.name(), row.price()))
                 .toList();
+    }
+
+    // DB의 DECIMAL 좌표를 공개 계약의 Double로 바꾸되 누락된 좌표는 null로 유지한다.
+    private static Double toCoordinate(BigDecimal coordinate) {
+        return coordinate == null ? null : coordinate.doubleValue();
+    }
+
+    // 최종 등록 시 필수인 이미지가 없으면 데이터 오류이므로 null이나 기본 이미지로 대신하지 않는다.
+    private static String requireImageKey(String objectKey) {
+        if (objectKey == null || objectKey.isBlank()) {
+            throw new IllegalStateException("최종 등록된 가게 또는 메뉴의 검증된 이미지가 누락되었습니다.");
+        }
+        return objectKey;
     }
 
     private static void validateIds(List<Long> ids) {

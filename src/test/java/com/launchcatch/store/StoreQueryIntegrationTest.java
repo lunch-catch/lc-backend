@@ -9,6 +9,8 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicLong;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.annotation.Transactional;
@@ -23,43 +25,53 @@ class StoreQueryIntegrationTest extends AbstractStoreIntegrationTest {
     private long ownerId;
     private Long storeId;
     private Long otherStoreId;
+    private Long draftStoreId;
     private Long menuId;
     private Long otherMenuId;
+    private Long draftMenuId;
 
     @BeforeEach
     void setUp() {
-        ownerId = OWNER_IDS.addAndGet(2);
+        ownerId = OWNER_IDS.addAndGet(3);
         storeId = createStore(ownerId, "첫 가게");
         otherStoreId = createStore(ownerId + 1, "다른 가게");
+        draftStoreId = createStore(ownerId + 2, "온보딩 중인 가게");
         menuId = createMenu(storeId, "국밥", 9000L);
         otherMenuId = createMenu(otherStoreId, "덮밥", 10000L);
+        draftMenuId = createMenu(draftStoreId, "등록 중인 메뉴", 8000L);
+        finalizeStore(storeId);
+        finalizeStore(otherStoreId);
+        insertStoreImage(storeId, "LOGO", "stores/" + storeId + ".png", null);
+        insertStoreImage(otherStoreId, "LOGO", "stores/" + otherStoreId + ".png", null);
+        insertMenuImage(menuId);
+        insertMenuImage(otherMenuId);
     }
 
     @Test
-    void 가게는_누락_ID를_제외하고_중복없이_좌표가_없어도_반환한다() {
-        var result = service.findAllById(List.of(storeId, otherStoreId, storeId, Long.MAX_VALUE));
+    void 최종_등록된_가게만_일괄_조회하고_누락_ID와_중복을_제외한다() {
+        var result = service.findAllById(List.of(storeId, otherStoreId, draftStoreId, storeId, Long.MAX_VALUE));
 
         assertThat(result).extracting("storeId").containsExactlyInAnyOrder(storeId, otherStoreId);
         assertThat(result).allSatisfy(store -> {
-            assertThat(store.storeImageUrl()).isNull();
-            assertThat(store.latitude()).isNull();
-            assertThat(store.longitude()).isNull();
+            assertThat(store.storeImageUrl()).isNotBlank();
+            assertThat(store.latitude()).isEqualTo(37.1234567);
+            assertThat(store.longitude()).isEqualTo(127.1234567);
         });
-        assertThat(service.findAllById(List.of(Long.MAX_VALUE))).isEmpty();
+        assertThat(service.findAllById(List.of(draftStoreId, Long.MAX_VALUE))).isEmpty();
     }
 
     @Test
-    void 메뉴는_소속_가게와_원_단위_가격을_반환하고_누락_ID를_제외한다() {
-        var result = service.findMenusByIdIn(List.of(menuId, otherMenuId, menuId, Long.MAX_VALUE));
+    void 최종_등록된_가게의_메뉴만_조회하고_누락_ID와_중복을_제외한다() {
+        var result = service.findMenusByIdIn(List.of(menuId, otherMenuId, draftMenuId, menuId, Long.MAX_VALUE));
 
         assertThat(result).extracting("menuId").containsExactlyInAnyOrder(menuId, otherMenuId);
         assertThat(result).filteredOn(menu -> menu.menuId().equals(menuId)).singleElement().satisfies(menu -> {
             assertThat(menu.storeId()).isEqualTo(storeId);
             assertThat(menu.menuName()).isEqualTo("국밥");
             assertThat(menu.price()).isEqualTo(9000L);
-            assertThat(menu.menuImageUrl()).isNull();
+            assertThat(menu.menuImageUrl()).isNotBlank();
         });
-        assertThat(service.findMenusByIdIn(List.of(Long.MAX_VALUE))).isEmpty();
+        assertThat(service.findMenusByIdIn(List.of(draftMenuId, Long.MAX_VALUE))).isEmpty();
     }
 
     @Test
@@ -68,51 +80,74 @@ class StoreQueryIntegrationTest extends AbstractStoreIntegrationTest {
         assertThat(service.canManageStore(ownerId, otherStoreId)).isFalse();
         assertThat(service.canManageStore(ownerId, Long.MAX_VALUE)).isFalse();
 
-        jdbc.update("update store set owner_id = ? where store_id = ?", ownerId + 2, storeId);
+        jdbc.update("update store set owner_id = ? where store_id = ?", ownerId + 3, storeId);
 
         assertThat(service.canManageStore(ownerId, storeId)).isFalse();
-        assertThat(service.canManageStore(ownerId + 2, storeId)).isTrue();
+        assertThat(service.canManageStore(ownerId + 3, storeId)).isTrue();
     }
 
     @Test
-    void 현재_좌표를_정밀도_손실없이_반환한다() {
+    void 소유_관계_확인은_최종_등록_여부를_대신하지_않는다() {
+        assertThat(service.canManageStore(ownerId + 2, draftStoreId)).isTrue();
+        assertThat(service.findAllById(List.of(draftStoreId))).isEmpty();
+    }
+
+    @Test
+    void 현재_좌표를_Double로_반환한다() {
         jdbc.update("update store set latitude = ?, longitude = ? where store_id = ?",
-                new BigDecimal("37.1234567"), new BigDecimal("127.1234567"), storeId);
+                new BigDecimal("37.7654321"), new BigDecimal("127.7654321"), storeId);
 
         assertThat(service.findAllById(List.of(storeId))).singleElement().satisfies(store -> {
-            assertThat(store.latitude()).isEqualByComparingTo("37.1234567");
-            assertThat(store.longitude()).isEqualByComparingTo("127.1234567");
+            assertThat(store.latitude()).isCloseTo(37.7654321, within(0.0000001));
+            assertThat(store.longitude()).isCloseTo(127.7654321, within(0.0000001));
         });
     }
 
     @Test
-    void 검증된_LOGO만_가게에_결합하고_내부_이미지로_결과를_늘리지_않는다() {
-        insertStoreImage("LOGO", "PENDING", "logo.png", null);
-        insertStoreImage("INTERIOR", "VERIFIED", "interior.png", 1);
-        assertThat(repository.findAllById(List.of(storeId))).singleElement()
-                .satisfies(row -> assertThat(row.imageObjectKey()).isNull());
+    void 대표_이미지가_없으면_내부_이미지가_있어도_가게_조회는_실패한다() {
+        jdbc.update("delete from store_image where store_id = ?", storeId);
+        insertStoreImage(storeId, "INTERIOR", "interior/" + storeId + ".png", 1);
 
-        jdbc.update("update store_image set upload_status = 'VERIFIED', verified_at = '2026-10-15 12:00:00' "
-                + "where store_id = ? and image_type = 'LOGO'", storeId);
-
-        assertThat(repository.findAllById(List.of(storeId))).singleElement()
-                .satisfies(row -> assertThat(row.imageObjectKey()).isEqualTo("logo.png"));
+        assertThatThrownBy(() -> service.findAllById(List.of(storeId, otherStoreId)))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("이미지가 누락");
     }
 
     @Test
-    void 검증된_메뉴_이미지만_반환한다() {
-        jdbc.update("""
-                insert into store_menu_image (store_menu_id, object_key, upload_status, created_at, updated_at)
-                values (?, 'menu.png', 'UPLOADED', '2026-10-15 12:00:00', '2026-10-15 12:00:00')
-                """, menuId);
-        assertThat(repository.findMenusByIdIn(List.of(menuId))).singleElement()
-                .satisfies(row -> assertThat(row.imageObjectKey()).isNull());
+    void 메뉴_이미지가_없으면_메뉴_조회는_실패한다() {
+        jdbc.update("delete from store_menu_image where store_menu_id = ?", menuId);
 
-        jdbc.update("update store_menu_image set upload_status = 'VERIFIED', verified_at = '2026-10-15 12:00:00' "
-                + "where store_menu_id = ?", menuId);
+        assertThatThrownBy(() -> service.findMenusByIdIn(List.of(menuId, otherMenuId)))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("이미지가 누락");
+    }
 
+    @ParameterizedTest
+    @ValueSource(strings = {"PENDING", "UPLOADED"})
+    void 대표_이미지_검증이_완료되지_않았으면_가게_조회는_실패한다(String uploadStatus) {
+        jdbc.update("update store_image set upload_status = ?, verified_at = null where store_id = ?",
+                uploadStatus, storeId);
+
+        assertThatThrownBy(() -> service.findAllById(List.of(storeId)))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("이미지가 누락");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"PENDING", "UPLOADED"})
+    void 메뉴_이미지_검증이_완료되지_않았으면_메뉴_조회는_실패한다(String uploadStatus) {
+        jdbc.update("update store_menu_image set upload_status = ?, verified_at = null where store_menu_id = ?",
+                uploadStatus, menuId);
+
+        assertThatThrownBy(() -> service.findMenusByIdIn(List.of(menuId)))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("이미지가 누락");
+    }
+
+    @Test
+    void 검증된_이미지_저장_키를_조회하고_내부_이미지는_결과를_늘리지_않는다() {
+        insertStoreImage(storeId, "INTERIOR", "interior/" + storeId + ".png", 1);
+
+        assertThat(repository.findAllById(List.of(storeId))).singleElement()
+                .satisfies(row -> assertThat(row.imageObjectKey()).isEqualTo("stores/" + storeId + ".png"));
         assertThat(repository.findMenusByIdIn(List.of(menuId))).singleElement()
-                .satisfies(row -> assertThat(row.imageObjectKey()).isEqualTo("menu.png"));
+                .satisfies(row -> assertThat(row.imageObjectKey()).isEqualTo("menus/" + menuId + ".png"));
     }
 
     private Long createStore(long id, String name) {
@@ -123,6 +158,15 @@ class StoreQueryIntegrationTest extends AbstractStoreIntegrationTest {
         return jdbc.queryForObject("select store_id from store where owner_id = ?", Long.class, id);
     }
 
+    private void finalizeStore(Long id) {
+        jdbc.update("""
+                update store set finalized = true, finalized_at = '2026-10-15 12:00:00',
+                    business_verification_status = 'VERIFIED', business_verified_at = '2026-10-15 12:00:00',
+                    latitude = 37.1234567, longitude = 127.1234567
+                where store_id = ?
+                """, id);
+    }
+
     private Long createMenu(Long id, String name, long price) {
         jdbc.update("""
                 insert into store_menu (store_id, name, price, sort_order, created_at, updated_at)
@@ -131,11 +175,19 @@ class StoreQueryIntegrationTest extends AbstractStoreIntegrationTest {
         return jdbc.queryForObject("select store_menu_id from store_menu where store_id = ?", Long.class, id);
     }
 
-    private void insertStoreImage(String type, String status, String key, Integer order) {
+    private void insertStoreImage(Long id, String type, String key, Integer order) {
         jdbc.update("""
                 insert into store_image (store_id, image_type, object_key, sort_order, upload_status,
                     verified_at, created_at, updated_at)
-                values (?, ?, ?, ?, ?, '2026-10-15 12:00:00', '2026-10-15 12:00:00', '2026-10-15 12:00:00')
-                """, storeId, type, key, order, status);
+                values (?, ?, ?, ?, 'VERIFIED', '2026-10-15 12:00:00', '2026-10-15 12:00:00', '2026-10-15 12:00:00')
+                """, id, type, key, order);
+    }
+
+    private void insertMenuImage(Long id) {
+        jdbc.update("""
+                insert into store_menu_image (store_menu_id, object_key, upload_status,
+                    verified_at, created_at, updated_at)
+                values (?, ?, 'VERIFIED', '2026-10-15 12:00:00', '2026-10-15 12:00:00', '2026-10-15 12:00:00')
+                """, id, "menus/" + id + ".png");
     }
 }
