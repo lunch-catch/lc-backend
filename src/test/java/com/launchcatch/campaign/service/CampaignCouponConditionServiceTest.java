@@ -39,6 +39,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.dao.DeadlockLoserDataAccessException;
 import org.springframework.transaction.support.TransactionCallback;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -198,6 +199,23 @@ class CampaignCouponConditionServiceTest {
         when(campaignRepository.saveAndFlush(any(Campaign.class))).thenThrow(violation);
 
         assertThatThrownBy(() -> service.handle(OWNER_ID, request())).isSameAs(violation);
+    }
+
+    @Test
+    @DisplayName("동시에 들어온 생성 요청이 갭 락 교착 상태로 롤백되면 재조회해 덮어쓰기로 전환한다")
+    void 교착_상태면_재조회해_덮어쓴다() throws Exception {
+        Campaign existing = existingDraft();
+        setId(existing, 501L);
+        when(campaignRepository.findByStoreIdAndStatus(STORE_ID, CampaignStatus.DRAFT))
+                .thenReturn(Optional.empty(), Optional.of(existing));
+        when(campaignRepository.saveAndFlush(any(Campaign.class)))
+                .thenThrow(new DeadlockLoserDataAccessException("1213", null));
+
+        CampaignCouponConditionResult result = service.handle(OWNER_ID, request());
+
+        assertThat(result.created()).isFalse();
+        assertThat(result.response().campaignId()).isEqualTo(501L);
+        assertThat(existing.getDiscountValue()).isEqualTo(15);
     }
 
     private Campaign existingDraft() {

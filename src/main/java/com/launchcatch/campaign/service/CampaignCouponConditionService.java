@@ -19,6 +19,7 @@ import java.time.LocalTime;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.ConcurrencyFailureException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -68,6 +69,18 @@ public class CampaignCouponConditionService {
              * 덮어쓰는 것)는 먼저 조회했을 때 DRAFT가 있었다면 탔을 경로와 같다. 그래서
              * 재조회 후 덮어쓰기는 재시도가 아니라 원래 의도한 "이어 쓰기" 경로로 들어가는
              * 것일 뿐이다(#244, 2026-10-14 확정. campaign_장애_처리_설계.md에도 기록한다).
+             */
+            return transactionTemplate.execute(status -> overwriteAfterConflict(request));
+        } catch (ConcurrencyFailureException e) {
+            /*
+             * findByStoreIdAndStatus의 PESSIMISTIC_WRITE는 그 가게에 DRAFT가 하나도 없으면
+             * 갭 락이 된다. 같은 가게로 동시에 들어온 두 생성 요청이 이 갭을 같이 잠근 뒤
+             * 각자 INSERT하면 상대의 갭 락에 막혀 MySQL이 교착 상태로 판정해 한쪽을
+             * 롤백시킨다(DeadlockLoserDataAccessException, 에러 1213). 잠금 대기가 길어져
+             * 포기하는 경우(CannotAcquireLockException, 에러 1205)도 같은 자리에서 난다. 위
+             * DataIntegrityViolationException 분기와 이유가 같다. 이 트랜잭션이 건드리는 게
+             * 이 가게의 DRAFT 한 행뿐이라 조건 확인 없이 바로 재조회해 덮어쓰는 경로로
+             * 들어간다(코드래빗 리뷰로 찾음, #244).
              */
             return transactionTemplate.execute(status -> overwriteAfterConflict(request));
         }
