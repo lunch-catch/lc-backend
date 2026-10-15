@@ -29,7 +29,8 @@ import org.hibernate.type.SqlTypes;
  *
  * 1원이 1포인트다. 금액 컬럼을 따로 두지 않는다.
  *
- * 이 판은 CHARGE, ADJUST, REFUND 기록과 조회에 필요한 컬럼만 매핑한다.
+ * 이 판은 CHARGE, ADJUST 기록과 조회에 필요한 컬럼만 매핑한다. refund_request_id 는
+ * 그것을 쓰는 작업과 함께 더한다.
  * ddl-auto 가 validate 라서 매핑하지 않은 컬럼은 기동을 막지 않는다. 그 컬럼은 전부
  * NULL 을 허용하므로 CHARGE 기록에도 영향이 없다.
  */

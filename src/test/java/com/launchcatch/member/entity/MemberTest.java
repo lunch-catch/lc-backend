@@ -65,6 +65,17 @@ class MemberTest {
     }
 
     @Test
+    @DisplayName("탈퇴하면 프로필 참조를 해제한다")
+    void 탈퇴하면_프로필_참조를_해제한다() {
+        Member member = Member.create("kakao-123", "점심헌터", "https://image");
+        MemberProfile.create(member);
+
+        member.withdraw(LocalDateTime.of(2026, 10, 8, 9, 0));
+
+        assertThat(member.getProfile()).isNull();
+    }
+
+    @Test
     @DisplayName("같은 동의 값을 다시 보내면 동의 시각이 바뀌지 않는다")
     void 같은_동의_값을_다시_보내면_동의_시각이_바뀌지_않는다() {
         Member member = Member.create("kakao-123", "점심헌터", null);
