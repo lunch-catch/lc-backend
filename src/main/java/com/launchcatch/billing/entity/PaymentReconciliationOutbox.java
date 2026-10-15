@@ -19,7 +19,7 @@ import lombok.NoArgsConstructor;
  * UNKNOWN 결제가 재조회 대상에서 빠져 점주가 새 충전을 영영 못 한다(BILLING-008).
  *
  * 결제를 객체로 참조하지 않고 ID 로 갖는다. 결제와 생명주기가 다르고, 워커는 이 테이블만 훑는다.
- * 재조회 시도와 백오프 계산은 재조회 워커 작업이 더한다.
+ * 재조회 워커는 대상 행을 선점하고(claim) 확정하지 못하면 시도를 기록한다(recordMiss).
  */
 @Entity
 @Table(name = "payment_reconciliation_outbox")
@@ -88,5 +88,71 @@ public class PaymentReconciliationOutbox extends BaseTimeEntity {
         }
         this.status = OutboxStatus.RESOLVED;
         this.lastCheckedAt = checkedAt;
+    }
+
+    /*
+     * 워커가 이 행을 선점한다. 다음 재조회 시각을 임시로 미뤄 다른 서버가 같은 행을 집지 않게 한다.
+     * 결제대행사 조회는 트랜잭션 밖에서 하므로 행 잠금만으로는 그 구간을 지킬 수 없다.
+     * 선점한 서버가 죽어도 이 시각이 지나면 다시 대상이 된다.
+     */
+    public void claim(LocalDateTime leaseUntil) {
+        requirePending();
+        if (leaseUntil == null) {
+            throw new IllegalArgumentException("선점 만료 시각은 필수입니다.");
+        }
+        this.nextRetryAt = leaseUntil;
+    }
+
+    /*
+     * 재조회를 했지만 결과를 확정하지 못했다. 시도 횟수를 늘리고 다음 재조회 시각을 정한다.
+     * 시도 횟수가 상한에 닿으면 FAILED_PERMANENT 로 두고 다음 시각을 비운다. 결제는 UNKNOWN 으로 남고 관리자가 확정한다.
+     * 상한에 닿았으면 true 를 돌려준다.
+     */
+    public boolean recordMiss(LocalDateTime checkedAt, String error, LocalDateTime nextRetryAt) {
+        requirePending();
+        if (checkedAt == null) {
+            throw new IllegalArgumentException("확인 시각은 필수입니다.");
+        }
+        this.attemptCount++;
+        this.lastCheckedAt = checkedAt;
+        this.lastError = shorten(error);
+        if (attemptCount >= maxRetry) {
+            this.status = OutboxStatus.FAILED_PERMANENT;
+            this.nextRetryAt = null;
+            return true;
+        }
+        if (nextRetryAt == null) {
+            throw new IllegalArgumentException("다음 재조회 시각은 필수입니다.");
+        }
+        this.nextRetryAt = nextRetryAt;
+        return false;
+    }
+
+    /*
+     * 관리자가 재조회했지만 확정하지 못했다. 시도 횟수와 상태는 그대로 두고 확인 시각과 사유만 남긴다.
+     * 이미 닫힌 행은 건드리지 않는다.
+     */
+    public void touch(LocalDateTime checkedAt, String error) {
+        if (status == OutboxStatus.RESOLVED) {
+            return;
+        }
+        if (checkedAt == null) {
+            throw new IllegalArgumentException("확인 시각은 필수입니다.");
+        }
+        this.lastCheckedAt = checkedAt;
+        this.lastError = shorten(error);
+    }
+
+    private void requirePending() {
+        if (status != OutboxStatus.PENDING) {
+            throw new IllegalStateException("재조회를 기다리는 행이 아닙니다: " + status);
+        }
+    }
+
+    private static String shorten(String error) {
+        if (error == null || error.length() <= LAST_ERROR_MAX) {
+            return error;
+        }
+        return error.substring(0, LAST_ERROR_MAX);
     }
 }

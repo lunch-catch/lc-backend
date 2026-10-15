@@ -3,6 +3,7 @@ package com.launchcatch.billing.service;
 import com.launchcatch.billing.config.PaymentRecheckProperties;
 import com.launchcatch.billing.dto.PointCharged;
 import com.launchcatch.billing.entity.LedgerSource;
+import com.launchcatch.billing.entity.OutboxStatus;
 import com.launchcatch.billing.entity.Payment;
 import com.launchcatch.billing.entity.PaymentReconciliationOutbox;
 import com.launchcatch.billing.entity.PaymentStatus;
@@ -13,9 +14,12 @@ import com.launchcatch.billing.repository.PaymentReconciliationOutboxRepository;
 import com.launchcatch.billing.repository.PaymentRepository;
 import com.launchcatch.billing.repository.PointAccountRepository;
 import com.launchcatch.billing.repository.PointLedgerRepository;
+import io.micrometer.core.instrument.MeterRegistry;
 import java.time.Clock;
 import java.time.LocalDateTime;
+import java.util.concurrent.ThreadLocalRandom;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -31,9 +35,12 @@ import org.springframework.transaction.annotation.Transactional;
  * 동시에 확정하려 할 때 뒤에 온 쪽이 앞의 결과를 덮지 않게 하려는 것이다. 예를 들어 승인 확정이 두 번
  * 동시에 오면 한쪽은 승인되고 다른 쪽은 결제대행사의 거절을 받을 수 있는데, 거절이 승인을 실패로 덮으면 안 된다.
  */
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class PaymentResultService {
+
+    private static final String EXHAUSTED_METRIC = "billing.payment.recheck.exhausted";
 
     private final PaymentRepository paymentRepository;
     private final PointLedgerRepository pointLedgerRepository;
@@ -41,6 +48,7 @@ public class PaymentResultService {
     private final PaymentReconciliationOutboxRepository outboxRepository;
     private final PaymentRecheckProperties recheckProperties;
     private final ApplicationEventPublisher eventPublisher;
+    private final MeterRegistry meterRegistry;
     private final Clock clock;
 
     /*
@@ -138,6 +146,52 @@ public class PaymentResultService {
         outboxRepository.save(
                 PaymentReconciliationOutbox.pending(paymentId, recheckProperties.maxRetry(), nextRetryAt));
         return payment;
+    }
+
+    /*
+     * 재조회 워커가 결제대행사에 물었지만 결과를 확정하지 못했다(처리 중, 조회 불가, 조회 실패).
+     * 시도 횟수를 늘리고 다음 시각을 간격 목록과 지터로 정한다. 결제는 UNKNOWN 으로 그대로 둔다.
+     *
+     * 그 사이에 웹훅이나 관리자가 결제를 확정했으면 아웃박스도 이미 닫혔으므로 아무것도 하지 않는다.
+     * 시도 횟수가 상한에 닿으면 아웃박스를 FAILED_PERMANENT 로 두고 ERROR 로그와 지표를 남긴다.
+     * 돈이 걸린 결제를 서버가 임의로 닫지 않고 관리자 재조회로 사람이 확정하게 하려는 것이다.
+     */
+    @Transactional
+    public Payment recordRecheckMiss(Long paymentId, String reason) {
+        Payment payment = lock(paymentId);
+        if (isDetermined(payment)) {
+            return payment;
+        }
+        outboxRepository.findByPaymentId(paymentId)
+                .filter(outbox -> outbox.getStatus() == OutboxStatus.PENDING)
+                .ifPresent(outbox -> recordMiss(payment, outbox, reason));
+        return payment;
+    }
+
+    /*
+     * 관리자가 재조회했지만 확정하지 못했다. 시도 횟수와 상태는 그대로 두고 확인 시각과 사유만 남긴다.
+     * 상한을 넘긴 건을 다시 조회했다고 자동 재시도가 되살아나면 안 된다.
+     */
+    @Transactional
+    public Payment recordAdminRecheckMiss(Long paymentId, String reason) {
+        Payment payment = lock(paymentId);
+        if (isDetermined(payment)) {
+            return payment;
+        }
+        outboxRepository.findByPaymentId(paymentId)
+                .ifPresent(outbox -> outbox.touch(LocalDateTime.now(clock), reason));
+        return payment;
+    }
+
+    private void recordMiss(Payment payment, PaymentReconciliationOutbox outbox, String reason) {
+        LocalDateTime now = LocalDateTime.now(clock);
+        LocalDateTime nextRetryAt = now.plus(
+                recheckProperties.delayAfter(outbox.getAttemptCount() + 1, ThreadLocalRandom.current().nextDouble()));
+        if (outbox.recordMiss(now, reason, nextRetryAt)) {
+            log.error("event=PAYMENT_RECHECK_EXHAUSTED paymentId={} attempts={} lastError={}",
+                    payment.getId(), outbox.getAttemptCount(), outbox.getLastError());
+            meterRegistry.counter(EXHAUSTED_METRIC).increment();
+        }
     }
 
     private Payment lock(Long paymentId) {
