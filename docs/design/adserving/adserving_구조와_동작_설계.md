@@ -57,7 +57,20 @@ adserving/
 ```
 
 - `feed` 는 `engine` 의 후보를 엔티티가 아니라 `FeedCandidate` 로, 나머지 입력을 `FeedContext` 로 넘겨 계산한다.
+- 애그리거트끼리는 객체로 쥐지 않고 ID 로만 잇는다. `serve_log`, `swipe_log` 는 `campaign_id` 로 후보를 가리키고 연관 매핑이 없다.
 - 입구는 HTTP 요청 하나다. 스케줄, 이벤트, 다른 도메인의 호출은 아직 없다.
+
+### 규칙을 두는 곳
+
+| 규칙 | 두는 곳 |
+|---|---|
+| 엔티티 하나의 상태로 판정되는 규칙 | 해당 없음. 엔티티가 모두 읽기 전용이거나 JDBC 로 쓴다 |
+| 후보 조건, 하루 2회와 세션 1회, 탐색 반경, 배분과 관련성 슬롯, 관련성 점수 | `FeedAssembler`(순수 계산) |
+| 진행률 1.2 초과와 노출 상한 판정 | `CampaignPacing.blocked()`(순수 계산) |
+| 온보딩, 위치, 요청 제한, 서빙 시간대의 순서, 입력을 모으는 순서, 기록을 남기는 시점 | `FeedService` |
+| 서빙 로그를 묶어 쓰고 차면 버리는 규칙 | `ServeLogBuffer` |
+
+`ServeLogBuffer` 를 `FeedService` 와 나눈 것은 입구가 달라서다. 앞은 요청 스레드가, 뒤는 작업자 스레드가 부른다.
 
 ## 3. 저장
 
@@ -67,6 +80,8 @@ adserving/
 | 업종 선호도 | `idx_swipe_member_date` 로 최근 30일의 찜을 업종별로 센다. 요청마다 읽는다 |
 | 다른 도메인 데이터의 사본 | `ad_candidate` 는 00:00 의 캠페인과 가게 사본이다. 그날 안에서는 캠페인과 쿠폰의 통보로만 바뀐다 |
 | 집계를 세는 방식 | 그날 유효 노출 수는 `impression_log` 를 세지 않고 카운터를 읽는다. 틀리면 `impression_log` 에서 다시 센다 |
+| DB 제약으로 막을 것과 코드로 막을 것 | 같은 카드가 `serve_log` 에 두 번 들어가는 것은 PK(`serve_id`)와 `INSERT IGNORE` 로, 같은 날 두 번째 접속 위치는 PK(`business_date`, `member_id`)와 `INSERT IGNORE` 로 막는다. 코드는 중복을 보지 않는다 |
+| 이력 | 해당 없음. 상태가 바뀌는 엔티티가 없다. `serve_log` 와 `feed_visit_daily` 는 쌓기만 하고 고치지 않는다 |
 
 | 데이터 | 키 | 만료 | 원본 | 읽는 곳 |
 |---|---|---|---|---|
@@ -146,8 +161,60 @@ B 를 고른다. 응답 전에 피드 1회의 카드를 파이프라인 한 번�
 | 읽기 | billing | `BudgetQueryService.getProgress` | 서빙 시간대의 피드 요청마다 1번. 후보가 5000개를 넘으면 나눠 부른다 |
 
 - `getProgress` 에는 그날 사각 범위의 후보 전부를 넘긴다. 그 계약은 당일 카운터만 읽어 서빙 경로에서 불러도 된다고 적었다.
+- 두 호출 모두 캐시를 두지 않는다. 회원 조회는 정지와 온보딩처럼 바로 반영돼야 하는 값이다. 진행률은 노출마다 바뀌어 캐시하면 1.2 초과 판정이 늦는다.
 
 ## 6. 구조와 동작 그림
+
+### 모듈 구조
+
+```mermaid
+flowchart LR
+    REQ([요청 GET /v1/feed]) --> FC
+
+    subgraph adserving["adserving 모듈"]
+        direction LR
+
+        subgraph feed["feed/ (피드)"]
+            FC[FeedController] --> FS[FeedService]
+            FS --> RL[("FeedRateLimitRepository<br/>Valkey")]
+            FS --> DE[("DailyExclusionRepository<br/>Valkey")]
+            FS --> SF[("ServeFrequencyRepository<br/>Valkey")]
+            FS --> IC[("ImpressionCountRepository<br/>Valkey")]
+            FS --> SR[("ServeRecordRepository<br/>Valkey")]
+            FS --> SW[(SwipeLogRepository)]
+            FS --> FF[(FeedFilterRepository)]
+            FS --> FFC[(FeedFilterCategoryRepository)]
+            FS --> SB[ServeLogBuffer]
+            SB --> SL[(ServeLogRepository)]
+            SB --> FV[(FeedVisitRepository)]
+        end
+
+        subgraph engine["engine/ (후보 스냅샷)"]
+            AR[(AdCandidateRepository)]
+            FA["FeedAssembler<br/>CampaignPacing<br/>순수 계산"]
+        end
+
+        FS --> AR
+        FS --> FA
+    end
+
+    FS --> MQ["member.contract<br/>MemberQueryService"]
+    FS --> BQ["billing.contract<br/>BudgetQueryService"]
+
+    classDef out fill:#f5f5f5,stroke:#999,stroke-dasharray:4 3
+    class MQ,BQ out
+```
+
+- `feed` 에서 `engine` 으로만 화살표가 간다. `engine` 은 `feed` 를 모른다
+- 스케줄, 이벤트, 다른 도메인의 호출로 들어오는 입구와 공개면(`contract`)은 아직 없다
+
+### 상태 변경
+
+해당 없음. 이 도메인이 쓰는 엔티티에 상태 전이가 없다. 후보의 `campaign_state` 는 캠페인의 통보로 바뀌고 그 처리는 아직 없다.
+
+### 주요 흐름
+
+피드 조회 하나다. 트랜잭션은 없고 DB 읽기가 각자 끝난다. 다른 도메인 호출은 같은 프로세스 안의 호출이다.
 
 ```mermaid
 sequenceDiagram
@@ -157,22 +224,35 @@ sequenceDiagram
     participant B as BudgetQueryService
     participant V as Valkey
     participant DB as MySQL
+    participant W as ServeLogBuffer
     C->>S: getFeed(memberId, 위치)
-    S->>M: findById
+    S->>M: 1. findById [트랜잭션 밖]
     Note over S: 온보딩 전 403, 위치 없음 422
-    S->>V: 요청 시각 넣기(Lua)
+    S->>V: 2. 요청 시각 넣기(Lua)
     Note over S: 6회 넘음 429 + Retry-After
-    Note over S: 10:00~12:59 밖이면 OUT_OF_SERVING_HOURS
-    S->>DB: 그날 SERVABLE 후보(사각 범위)
-    S->>V: 하루 횟수, 세션, 당일 이력
-    S->>DB: 필터, 30일 찜
-    S->>B: 진행률(실패하면 예산 규칙 없이)
-    S->>V: 유효 노출 수
+    Note over S: 10:00~12:59 밖이면 접속 위치만 넣고 OUT_OF_SERVING_HOURS
+    S->>DB: 3. 그날 SERVABLE 후보(사각 범위) [읽기]
+    S->>V: 4. 하루 횟수, 세션, 당일 이력
+    S->>DB: 5. 필터, 30일 찜 [읽기]
+    S->>B: 6. 진행률 [트랜잭션 밖]
+    S->>V: 7. 유효 노출 수
     Note over S: FeedAssembler 로 10장
-    S->>V: 내려준 캠페인 올리기(Lua)
+    S->>V: 8. 내려준 캠페인 올리기(Lua)
+    S->>V: 9. serve 기록 쓰기(파이프라인)
+    S->>W: 10. 서빙 로그와 접속 위치 넣기
+    S-->>C: 응답
+    W->>DB: 11. 묶어서 INSERT IGNORE [응답 뒤, 묶음마다 하나]
 ```
 
-상태 전이가 없어 상태 그림은 해당 없음이다.
+| 실패 지점 | 남는 상태 | 다시 요청하면 |
+|---|---|---|
+| 1, 3, 5 | 아무것도 남지 않는다. `500` 이다. 2 를 지났으면 요청 횟수에는 들어갔다 | 새로 처리한다 |
+| 2, 4, 7 | Valkey 가 멈추면 그 규칙만 빼고 계속한다. 남는 것이 없다 | 새로 처리한다 |
+| 6 | 예산 규칙 없이 계속한다(9장) | 새로 처리한다 |
+| 8 | 내려준 횟수가 오르지 않아 다음 요청에서 같은 카드가 더 나올 수 있다 | 새 카드가 나간다 |
+| 9 | 응답은 나가지만 그 카드의 노출이 무효다 | 새 serveId 로 새 기록이 남는다 |
+| 10 | 대기열이 차면 그 피드의 서빙 로그와 접속 위치가 빠진다 | 새 피드는 새로 넣는다 |
+| 11 | 그 묶음의 서빙 로그와 접속 위치가 빠진다 | 해당 없음. 응답 뒤라 클라이언트는 모른다 |
 
 ## 7. 트랜잭션과 동시성
 
@@ -230,6 +310,20 @@ B 를 고른다. 서빙 로그는 판정과 과금에 쓰이지 않고 유실을
 | 확인 방법 | 아직 없다. k6 시나리오(10:00~12:59, 특히 10:50~11:05)로 대기열 크기와 묶음 수도 함께 잰다 |
 
 ## 12. 테스트와 미정 사항
+
+6장에 상태 전이가 없어 7장 동시성 표의 행과 6장 주요 흐름의 실패 지점에서 시나리오를 뽑았다.
+
+| 시나리오 | Given | When | Then | 테스트 |
+|---|---|---|---|---|
+| 같은 회원의 요청이 몰림 | 최근 60초에 6번 받았다 | 일곱째 요청이 온다 | `429` 와 남은 초를 올림한 `Retry-After` 를 받고, 거부된 요청은 세지 않는다 | `FeedIntegrationTest.최근_60초_안의_일곱째_요청은_429_와_남은_초를_받는다` |
+| 같은 카드가 다시 나옴 | 같은 캠페인을 이번 세션에 한 번, 오늘 두 번 내려줬다 | 같은 세션과 새 세션에서 피드를 요청한다 | 두 경우 모두 그 캠페인이 나오지 않는다 | `FeedIntegrationTest.같은_캠페인은_한_세션에_한_번_하루에_두_번까지만_내려준다` |
+| 같은 날 다시 접속함 | 오늘 한 번 피드를 받았다 | 다른 위치에서 다시 받는다 | `feed_visit_daily` 에는 첫 위치만 남는다 | `FeedIntegrationTest.그날_두_번째_요청의_위치는_남기지_않는다` |
+| 여러 피드가 한 캠페인을 내려줌 | 그날 유효 노출 수가 노출 상한에 닿았다 | 피드를 요청한다 | 그 캠페인이 나오지 않는다 | `FeedIntegrationTest.그날_유효_노출_수가_노출_상한에_닿은_캠페인은_내려주지_않는다` |
+| 정산이 멈춤(6) | `BudgetQueryService` 가 예외를 던진다 | 피드를 요청한다 | 예산 규칙 없이 `200 SERVING` 이다 | `FeedIntegrationTest.정산이_멈춰도_예산_규칙_없이_서빙을_이어간다` |
+| serve 기록을 못 씀(9) | Valkey 쓰기가 실패한다 | 피드를 요청한다 | 응답은 나가고 `use=serve_record` 로 센다 | `FeedValkeyFallbackTest.serve_기록을_쓰지_못해도_예외를_올리지_않고_센다` |
+| 대기열이 참(10) | 대기열에 5,000건이 있다 | 피드를 하나 더 넣는다 | 버리고 그 카드 수만큼 센다 | `ServeLogBufferTest.대기열이_차면_버리고_그_피드의_카드_수만큼_센다` |
+| 묶음 쓰기가 실패함(11) | DB 쓰기가 한 번 실패한다 | 묶음 둘을 쓴다 | 첫 묶음을 버리고 세며 둘째는 쓴다 | `ServeLogBufferTest.쓰기가_실패하면_그_묶음을_버리고_세며_다음_묶음은_쓴다` |
+| 서버가 내려감 | 대기열에 2건이 남았다 | 대기열을 멈춘다 | 남은 것을 모두 쓴다 | `ServeLogBufferTest.멈출_때_남은_것을_모두_쓴다` |
 
 | 미정 항목 | 어디까지 정해졌나 | 막는 것 |
 |---|---|---|
