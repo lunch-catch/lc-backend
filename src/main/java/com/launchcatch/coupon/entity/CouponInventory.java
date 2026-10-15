@@ -1,5 +1,7 @@
 package com.launchcatch.coupon.entity;
 
+import com.launchcatch.coupon.exception.CouponErrorCode;
+import com.launchcatch.coupon.exception.CouponException;
 import com.launchcatch.global.entity.BaseTimeEntity;
 import jakarta.persistence.AttributeOverride;
 import jakarta.persistence.Column;
@@ -41,4 +43,12 @@ public class CouponInventory extends BaseTimeEntity {
 
     @Column(name = "usable_end_at", nullable = false, updatable = false)
     private LocalDateTime usableEndAt;
+
+    // 호출자는 재고 행 잠금을 확보한 뒤 미발급 재고 한 장을 사용한다.
+    public void issue() {
+        if (status != CouponInventoryStatus.AVAILABLE) {
+            throw new CouponException(CouponErrorCode.INVENTORY_EXHAUSTED);
+        }
+        status = CouponInventoryStatus.ISSUED;
+    }
 }
