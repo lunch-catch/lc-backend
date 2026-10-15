@@ -11,6 +11,7 @@ import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.launchcatch.billing.entity.BudgetDailyPlan;
@@ -213,25 +214,32 @@ class DailyReservationRecorderTest {
     }
 
     @Test
-    void 보정_해제는_이미_있으면_그대로_두는_INSERT로_넣는다() {
+    void 보정_해제는_점주_계정_행을_잠근_뒤_이미_있으면_그대로_두는_INSERT로_넣는다() {
         List<PointLedger> releases = List.of(
                 PointLedger.release(OWNER, 1L, DAY.minusDays(1), 2000L),
-                PointLedger.release(8L, 2L, DAY.minusDays(1), 500L));
+                PointLedger.release(OWNER, 2L, DAY.minusDays(1), 500L));
 
-        recorder.release(releases);
+        recorder.releaseForOwner(OWNER, releases);
 
+        // RELEASE 도 잔액을 바꾸므로 환불 승인과 같은 계정 행 잠금에서 줄을 선다
         LocalDateTime now = LocalDateTime.now(CLOCK);
-        verify(ledgerRepository).insertReleaseIfAbsent(OWNER, 1L, DAY.minusDays(1), 2000L, now);
-        verify(ledgerRepository).insertReleaseIfAbsent(8L, 2L, DAY.minusDays(1), 500L, now);
+        InOrder order = inOrder(accountRepository, ledgerRepository);
+        order.verify(accountRepository).createIfAbsent(OWNER, now);
+        order.verify(accountRepository).lockByOwnerId(OWNER);
+        order.verify(ledgerRepository).insertReleaseIfAbsent(OWNER, 1L, DAY.minusDays(1), 2000L, now);
+        order.verify(ledgerRepository).insertReleaseIfAbsent(OWNER, 2L, DAY.minusDays(1), 500L, now);
         // 조회 뒤 saveAll 은 겹친 실행에서 UNIQUE 위반으로 단계를 실패시킨다
         verify(ledgerRepository, never()).saveAll(any());
     }
 
     @Test
-    void 보정_해제에_RELEASE가_아닌_원장을_넘기면_거부한다() {
+    void 보정_해제에_RELEASE가_아니거나_다른_점주의_원장을_넘기면_잠그기_전에_거부한다() {
         List<PointLedger> reserves = List.of(PointLedger.reserve(OWNER, 1L, DAY, 2000L));
+        List<PointLedger> others = List.of(PointLedger.release(8L, 2L, DAY.minusDays(1), 500L));
 
-        assertThatThrownBy(() -> recorder.release(reserves)).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> recorder.releaseForOwner(OWNER, reserves)).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> recorder.releaseForOwner(OWNER, others)).isInstanceOf(IllegalArgumentException.class);
+        verifyNoInteractions(accountRepository);
         verify(ledgerRepository, never()).insertReleaseIfAbsent(any(), any(), any(), anyLong(), any());
     }
 
@@ -256,7 +264,7 @@ class DailyReservationRecorderTest {
     void 쓰기는_각각_트랜잭션_하나다() throws Exception {
         assertThat(DailyReservationRecorder.class.getMethod("reserveForOwner", Long.class, List.class,
                 LocalDate.class, long.class).isAnnotationPresent(Transactional.class)).isTrue();
-        assertThat(DailyReservationRecorder.class.getMethod("release", List.class)
+        assertThat(DailyReservationRecorder.class.getMethod("releaseForOwner", Long.class, List.class)
                 .isAnnotationPresent(Transactional.class)).isTrue();
         assertThat(DailyReservationRecorder.class.getMethod("confirmStatus", List.class, LocalDate.class)
                 .isAnnotationPresent(Transactional.class)).isTrue();

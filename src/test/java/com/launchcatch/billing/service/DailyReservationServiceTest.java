@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
@@ -145,7 +146,8 @@ class DailyReservationServiceTest {
         // 1 은 5000 - 3000 = 2000 을 돌려받는다. 2 는 이미 해제됐고 3 은 남은 몫이 없고 4 는 예약을 넘겨 썼다
         @SuppressWarnings("unchecked")
         ArgumentCaptor<List<PointLedger>> captor = ArgumentCaptor.forClass(List.class);
-        verify(recorder).release(captor.capture());
+        verify(recorder).releaseForOwner(eq(7L), captor.capture());
+        verify(recorder, never()).releaseForOwner(eq(8L), anyList());
         assertThat(captor.getValue()).singleElement().satisfies(release -> {
             assertThat(release.getEntryType()).isEqualTo(EntryType.RELEASE);
             assertThat(release.getCampaignId()).isEqualTo(1L);
@@ -164,7 +166,24 @@ class DailyReservationServiceTest {
         when(campaignQuery.findServableOn(DAY)).thenReturn(List.of());
 
         assertThat(service.reserve(DAY)).isZero();
-        verify(recorder, never()).release(anyList());
+        verify(recorder, never()).releaseForOwner(any(), anyList());
+    }
+
+    @Test
+    void 보정_해제는_점주_ID_순으로_점주마다_따로_기록한다() {
+        when(platformSetting.getImpressionUnitPrice()).thenReturn(10);
+        when(planRepository.findByBusinessDate(PREV)).thenReturn(List.of(
+                prevPlan(3L, 9L, 1000L), prevPlan(1L, 7L, 1000L), prevPlan(2L, 7L, 500L)));
+        when(ledgerRepository.findReleasedCampaignIds(Set.of(7L, 9L), PREV)).thenReturn(List.of());
+        when(ledgerRepository.sumDeductForCampaignsOn(List.of(3L, 1L, 2L), PREV)).thenReturn(List.of());
+        when(campaignQuery.findServableOn(DAY)).thenReturn(List.of());
+
+        service.reserve(DAY);
+
+        // 점주마다 계정 행을 잠근 짧은 트랜잭션이라 한 점주의 해제가 다른 점주의 충전과 환불을 붙잡지 않는다
+        InOrder order = inOrder(recorder);
+        order.verify(recorder).releaseForOwner(eq(7L), argThat(releases -> releases.size() == 2));
+        order.verify(recorder).releaseForOwner(eq(9L), argThat(releases -> releases.size() == 1));
     }
 
     @Test
@@ -176,7 +195,7 @@ class DailyReservationServiceTest {
         service.reserve(DAY);
 
         verifyNoInteractions(ledgerRepository);
-        verify(recorder, never()).release(anyList());
+        verify(recorder, never()).releaseForOwner(any(), anyList());
     }
 
     @Test
@@ -185,7 +204,7 @@ class DailyReservationServiceTest {
         when(planRepository.findByBusinessDate(PREV)).thenReturn(List.of(prevPlan(1L, 7L, 5000L)));
         when(ledgerRepository.findReleasedCampaignIds(Set.of(7L), PREV)).thenReturn(List.of());
         when(ledgerRepository.sumDeductForCampaignsOn(List.of(1L), PREV)).thenReturn(List.of());
-        doThrow(new QueryTimeoutException("lock wait")).when(recorder).release(anyList());
+        doThrow(new QueryTimeoutException("lock wait")).when(recorder).releaseForOwner(eq(7L), anyList());
 
         assertThatThrownBy(() -> service.reserve(DAY)).isInstanceOf(QueryTimeoutException.class);
         verifyNoInteractions(campaignQuery);

@@ -118,19 +118,34 @@ public class DailyReservationRecorder {
     }
 
     /*
-     * 전날 남은 예약의 보정 RELEASE 를 한 트랜잭션에 기록한다. 하나라도 실패하면 아무것도 남지 않고 예약도 진행되지 않는다.
+     * 한 점주의 전날 남은 예약을 보정 RELEASE 한다. 점주 하나가 트랜잭션 하나다.
      *
-     * 이미 RELEASE 가 있는 캠페인은 그대로 둔다. 부른 쪽이 RELEASE 가 없는 캠페인만 골라 넘기지만, 그 조회와 이 쓰기
-     * 사이에 이어받은 다른 실행이 먼저 쓸 수 있다. saveAll 이면 그때 UNIQUE 위반으로 단계가 실패하고, 그 예외는
-     * 일시 오류 자동 재실행 대상도 아니라 그날 예약까지 멈춘다.
+     * RELEASE 도 잔액을 바꾸므로 점주 계정 행을 잠근 뒤 쓴다(D-8). 충전 승인, 조정, 환불 승인, 예약이 모두 이 행을 잠그고
+     * 잔액을 읽는다. 잠그지 않으면 환불 승인이 잠금 뒤 잡은 스냅샷(REPEATABLE READ, 첫 일반 SELECT 에서 잡힌다)에 그 사이
+     * 커밋된 RELEASE 가 빠져 잔액을 작게 읽고, 환불할 수 있는 요청을 BILLING-013 으로 거절한다. 계정 행이 없으면 예약과
+     * 같이 먼저 만든다.
+     *
+     * 모든 점주를 한 트랜잭션에 묶지 않는다. 그러면 RELEASE 가 있는 점주 전원의 계정 행을 커밋까지 쥐어 그동안 충전과
+     * 환불이 모두 멈춘다. 한 점주가 실패하면 예외가 올라가 그날 예약은 시작하지 않고, 재실행은 끝난 점주를 건너뛴다.
+     *
+     * 이미 RELEASE 가 있는 캠페인은 그대로 둔다(무변경 upsert). 부른 쪽이 RELEASE 가 없는 캠페인만 골라 넘기지만, 그 조회와
+     * 이 쓰기 사이에 이어받은 다른 실행이 먼저 쓸 수 있다.
      */
     @Transactional
-    public void release(List<PointLedger> releases) {
-        LocalDateTime now = LocalDateTime.now(clock);
+    public void releaseForOwner(Long ownerId, List<PointLedger> releases) {
         for (PointLedger release : releases) {
             if (release.getEntryType() != EntryType.RELEASE) {
                 throw new IllegalArgumentException("보정 해제에는 RELEASE 만 넘긴다: " + release.getEntryType());
             }
+            if (!ownerId.equals(release.getOwnerId())) {
+                throw new IllegalArgumentException("다른 점주의 RELEASE 다. ownerId=" + ownerId
+                        + " release.ownerId=" + release.getOwnerId());
+            }
+        }
+        LocalDateTime now = LocalDateTime.now(clock);
+        accountRepository.createIfAbsent(ownerId, now);
+        accountRepository.lockByOwnerId(ownerId);
+        for (PointLedger release : releases) {
             ledgerRepository.insertReleaseIfAbsent(release.getOwnerId(), release.getCampaignId(),
                     release.getBusinessDate(), release.getAmount(), now);
         }

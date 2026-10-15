@@ -123,19 +123,26 @@ public class DailyReservationService {
         for (CampaignSpend spend : ledgerRepository.sumDeductForCampaignsOn(campaignIds, previousDay)) {
             spends.put(spend.campaignId(), spend.spend());
         }
-        List<PointLedger> releases = new ArrayList<>();
+        // 점주 ID 순으로 점주마다 따로 기록한다. 점주 계정 행을 잠근 짧은 트랜잭션이다
+        Map<Long, List<PointLedger>> releasesByOwner = new TreeMap<>();
         for (BudgetDailyPlan plan : plans) {
             if (released.contains(plan.getCampaignId())) {
                 continue;
             }
             long left = plan.getDailyBudget() - spends.getOrDefault(plan.getCampaignId(), 0L);
             if (left > 0) {
-                releases.add(PointLedger.release(plan.getOwnerId(), plan.getCampaignId(), previousDay, left));
+                releasesByOwner.computeIfAbsent(plan.getOwnerId(), ownerId -> new ArrayList<>())
+                        .add(PointLedger.release(plan.getOwnerId(), plan.getCampaignId(), previousDay, left));
             }
         }
-        if (!releases.isEmpty()) {
-            recorder.release(releases);
-            log.info("event=RESERVE_LEFTOVER_RELEASED businessDate={} campaigns={}", previousDay, releases.size());
+        int campaigns = 0;
+        for (Map.Entry<Long, List<PointLedger>> entry : releasesByOwner.entrySet()) {
+            recorder.releaseForOwner(entry.getKey(), entry.getValue());
+            campaigns += entry.getValue().size();
+        }
+        if (campaigns > 0) {
+            log.info("event=RESERVE_LEFTOVER_RELEASED businessDate={} owners={} campaigns={}",
+                    previousDay, releasesByOwner.size(), campaigns);
         }
     }
 
