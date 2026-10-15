@@ -11,12 +11,9 @@ import java.time.Duration;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
-import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
 import org.springframework.data.redis.core.StringRedisTemplate;
 
-@SpringBootTest(classes = OwnerRefreshTokenRepositoryIntegrationTest.RedisConfig.class)
+@SpringBootTest
 class OwnerRefreshTokenRepositoryIntegrationTest extends IntegrationTestSupport {
     @Autowired private RefreshTokenRepository repository;
     @Autowired private OwnerRefreshTokenRepository ownerTokens;
@@ -100,21 +97,5 @@ class OwnerRefreshTokenRepositoryIntegrationTest extends IntegrationTestSupport 
         ownerTokens.restoreConsumed(TokenHasher.sha256("confirmed"));
         assertThat(ownerTokens.consumeForRotation("confirmed").isReuseDetected()).isTrue();
         assertThat(redis.getExpire("refreshToken:" + TokenHasher.sha256("confirmed"))).isBetween(1L, 60L);
-    }
-
-    @Configuration(proxyBeanMethods = false)
-    static class RedisConfig {
-        @Bean LettuceConnectionFactory connectionFactory() {
-            return new LettuceConnectionFactory(VALKEY.getHost(), VALKEY.getMappedPort(6379));
-        }
-        @Bean StringRedisTemplate redisTemplate(LettuceConnectionFactory connectionFactory) {
-            return new StringRedisTemplate(connectionFactory);
-        }
-        @Bean RefreshTokenRepository refreshTokenRepository(StringRedisTemplate redis) {
-            return new RefreshTokenRepository(redis);
-        }
-        @Bean OwnerRefreshTokenRepository ownerRefreshTokenRepository(StringRedisTemplate redis) {
-            return new OwnerRefreshTokenRepository(redis);
-        }
     }
 }
