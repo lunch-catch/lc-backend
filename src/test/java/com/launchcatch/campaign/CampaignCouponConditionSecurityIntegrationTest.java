@@ -15,9 +15,11 @@ import com.launchcatch.campaign.entity.Campaign;
 import jakarta.servlet.http.Cookie;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
@@ -76,9 +78,25 @@ class CampaignCouponConditionSecurityIntegrationTest extends AbstractCampaignInt
     @Autowired private JwtTokenProvider jwt;
     @Autowired private JdbcTemplate jdbc;
 
+    private final List<Long> createdStoreIds = new ArrayList<>();
+    private final List<Long> createdOwnerIds = new ArrayList<>();
+    private final List<Long> createdAdminIds = new ArrayList<>();
+
+    /*
+     * 클래스 단위 @Transactional을 NOT_SUPPORTED로 덮었으니 여기서 만든 행은 바로 커밋된다.
+     * 공용 컨테이너 DB에 남으면 같은 JVM에서 도는 다른 캠페인 통합 테스트의 조회에 섞여
+     * 들어갈 수 있어 직접 지운다(코드래빗 리뷰로 찾음, unit-testing-guideline.md UT-6-02).
+     */
+    @AfterEach
+    void tearDown() {
+        createdStoreIds.forEach(storeId -> jdbc.update("delete from campaign where store_id = ?", storeId));
+        createdOwnerIds.forEach(ownerId -> jdbc.update("delete from owner where owner_id = ?", ownerId));
+        createdAdminIds.forEach(adminId -> jdbc.update("delete from admin where admin_id = ?", adminId));
+    }
+
     @Test
     void 가게에_DRAFT가_없으면_201을_반환한다() throws Exception {
-        long storeId = System.nanoTime();
+        long storeId = registerStoreId(System.nanoTime());
         Long ownerId = createActiveOwner();
 
         mvc.perform(post(PATH)
@@ -93,7 +111,7 @@ class CampaignCouponConditionSecurityIntegrationTest extends AbstractCampaignInt
 
     @Test
     void 가게에_DRAFT가_있으면_200을_반환한다() throws Exception {
-        long storeId = System.nanoTime();
+        long storeId = registerStoreId(System.nanoTime());
         Long ownerId = createActiveOwner();
         Long existingId = campaignRepository.saveAndFlush(draft(ownerId, storeId)).getId();
 
@@ -154,6 +172,7 @@ class CampaignCouponConditionSecurityIntegrationTest extends AbstractCampaignInt
                         + "values (?, ?, ?, ?, 'ACTIVE', ?, ?)",
                 loginId, "test-hash", "campaign-security-test-admin", role.name(), now, now);
         Long adminId = jdbc.queryForObject("select admin_id from admin where login_id = ?", Long.class, loginId);
+        createdAdminIds.add(adminId);
         return new Cookie("accessToken", jwt.createAccessToken(adminId, role));
     }
 
@@ -162,7 +181,14 @@ class CampaignCouponConditionSecurityIntegrationTest extends AbstractCampaignInt
         LocalDateTime now = LocalDateTime.now();
         jdbc.update("insert into owner (email, password_hash, status, created_at, updated_at) "
                 + "values (?, 'test-hash', 'ACTIVE', ?, ?)", email, now, now);
-        return jdbc.queryForObject("select owner_id from owner where email = ?", Long.class, email);
+        Long ownerId = jdbc.queryForObject("select owner_id from owner where email = ?", Long.class, email);
+        createdOwnerIds.add(ownerId);
+        return ownerId;
+    }
+
+    private long registerStoreId(long storeId) {
+        createdStoreIds.add(storeId);
+        return storeId;
     }
 
     private Campaign draft(Long ownerId, long storeId) {
