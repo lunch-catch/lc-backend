@@ -166,4 +166,36 @@ public class PointLedger extends BaseTimeEntity {
         ledger.refundRequestId = refundRequestId;
         return ledger;
     }
+
+    /*
+     * 00:00 정기 예약을 기록한다. 금액은 양수로 받고 음수로 저장한다.
+     * 결제에 묶이지 않는 예약이라 payment_id 는 NULL 이다. 같은 캠페인과 영업일의 정기 예약은 한 줄뿐이다(uk_point_ledger_day_reserve_dedup).
+     */
+    public static PointLedger reserve(Long ownerId, Long campaignId, LocalDate businessDate, long amount) {
+        return daily(ownerId, campaignId, businessDate, EntryType.RESERVE, amount);
+    }
+
+    /*
+     * 그날 쓰고 남은 예약을 돌려준다. 금액은 양수로 받고 양수로 저장한다.
+     * 같은 캠페인과 영업일의 해제는 한 줄뿐이다(uk_point_ledger_day_reserve_dedup).
+     */
+    public static PointLedger release(Long ownerId, Long campaignId, LocalDate businessDate, long amount) {
+        return daily(ownerId, campaignId, businessDate, EntryType.RELEASE, amount);
+    }
+
+    // 배치가 기록하는 영업일 단위 줄이라 source 는 RECONCILIATION 이다. RESERVE 만 음수로 저장한다
+    private static PointLedger daily(Long ownerId, Long campaignId, LocalDate businessDate,
+                                     EntryType entryType, long amount) {
+        if (campaignId == null || businessDate == null) {
+            throw new IllegalArgumentException(entryType + " 는 캠페인 ID와 영업일이 필수입니다.");
+        }
+        if (amount <= 0) {
+            throw new IllegalArgumentException(entryType + " 금액은 0보다 커야 합니다: " + amount);
+        }
+        long signed = entryType == EntryType.RESERVE ? -amount : amount;
+        PointLedger ledger = new PointLedger(ownerId, null, entryType, LedgerSource.RECONCILIATION, signed);
+        ledger.campaignId = campaignId;
+        ledger.businessDate = businessDate;
+        return ledger;
+    }
 }

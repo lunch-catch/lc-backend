@@ -141,4 +141,15 @@ public interface PointLedgerRepository extends JpaRepository<PointLedger, Long>,
             """)
     List<CampaignSpend> sumDeductForCampaignsOn(@Param("campaignIds") Collection<Long> campaignIds,
                                                 @Param("businessDate") LocalDate businessDate);
+
+    // 그 영업일에 RELEASE 가 이미 있는 캠페인이다. 점주 ID 로 걸러 idx_point_ledger_owner_business_date 를 탄다
+    @Query("""
+            select distinct l.campaignId
+              from PointLedger l
+             where l.ownerId in :ownerIds
+               and l.businessDate = :businessDate
+               and l.entryType = com.launchcatch.billing.entity.EntryType.RELEASE
+            """)
+    List<Long> findReleasedCampaignIds(@Param("ownerIds") Collection<Long> ownerIds,
+                                       @Param("businessDate") LocalDate businessDate);
 }

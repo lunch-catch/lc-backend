@@ -48,6 +48,12 @@ public interface BudgetDailyPlanRepository extends JpaRepository<BudgetDailyPlan
     // 그날 여러 캠페인의 계획을 한 번에 읽는다. 행이 없는 캠페인은 결과에 없다
     List<BudgetDailyPlan> findByBusinessDateAndCampaignIdIn(LocalDate businessDate, Collection<Long> campaignIds);
 
+    // 그 영업일의 계획 전부다. idx_budget_daily_plan_business_date 를 탄다
+    List<BudgetDailyPlan> findByBusinessDate(LocalDate businessDate);
+
+    // 그 영업일에 중단되지 않은 계획이다. 시간대별 목표를 만들 대상이다
+    List<BudgetDailyPlan> findByBusinessDateAndPausedFalse(LocalDate businessDate);
+
     /*
      * 해시 재구성이 읽는다. SELECT ... FOR SHARE 로 읽어 트랜잭션이 끝날 때까지 행에 공유 잠금을 건다.
      *

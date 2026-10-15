@@ -76,4 +76,26 @@ public interface SettlementMismatchRepository extends JpaRepository<SettlementMi
             """)
     int resolveAsOverchargeReversal(@Param("id") Long id, @Param("adminId") Long adminId,
                                     @Param("now") LocalDateTime now);
+
+    /*
+     * 캠페인 소진 대사의 불일치 한 건을 기록한다. 같은 (check_type, target_id, business_date) 가 이미 있으면 그대로 둔다.
+     * 같은 날을 다시 대조해도 행은 하나로 남는다(uk_settlement_mismatch_check_target_date).
+     * INSERT IGNORE 는 쓰지 않는다. CHECK 위반까지 경고로 낮추고 행을 조용히 버린다(구현 계획 D-5).
+     */
+    @Modifying
+    @Query(value = """
+            INSERT INTO settlement_mismatch
+                (check_type, business_date, target_id, expected_value, actual_value, job_execution_id,
+                 created_at, updated_at)
+            VALUES
+                ('CAMPAIGN_SPEND_VS_LEDGER', :businessDate, :campaignId, :ledgerSpend, :counterSpend,
+                 :jobExecutionId, :now, :now)
+            ON DUPLICATE KEY UPDATE settlement_mismatch_id = settlement_mismatch_id
+            """, nativeQuery = true)
+    int insertCampaignSpendMismatchIfAbsent(@Param("businessDate") LocalDate businessDate,
+                                            @Param("campaignId") Long campaignId,
+                                            @Param("ledgerSpend") long ledgerSpend,
+                                            @Param("counterSpend") long counterSpend,
+                                            @Param("jobExecutionId") Long jobExecutionId,
+                                            @Param("now") LocalDateTime now);
 }
