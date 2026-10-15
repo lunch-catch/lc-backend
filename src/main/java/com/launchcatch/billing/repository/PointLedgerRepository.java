@@ -30,6 +30,16 @@ public interface PointLedgerRepository extends JpaRepository<PointLedger, Long>,
             """)
     long sumBalance(@Param("ownerId") Long ownerId);
 
+    // 여러 점주의 잔액을 한 번에 구하며 원장이 없는 점주는 결과에 없다
+    @Query("""
+            select new com.launchcatch.billing.repository.OwnerBalanceRow(l.ownerId, sum(l.amount))
+              from PointLedger l
+             where l.ownerId in :ownerIds
+               and l.entryType <> com.launchcatch.billing.entity.EntryType.DEDUCT
+             group by l.ownerId
+            """)
+    List<OwnerBalanceRow> sumBalanceByOwnerIds(@Param("ownerIds") Collection<Long> ownerIds);
+
     // 같은 점주가 같은 멱등 키로 남긴 조정이다(uk_point_ledger_adjust_idem)
     Optional<PointLedger> findByOwnerIdAndIdempotencyKey(Long ownerId, String idempotencyKey);
 
