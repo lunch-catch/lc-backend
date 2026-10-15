@@ -118,8 +118,9 @@ public class MemberWithdrawalService {
     }
 
     private void withdrawMember(Member member, String source) {
-        memberProfileRepository.findByMember_Id(member.getId()).ifPresent(memberProfileRepository::delete);
+        var profile = memberProfileRepository.findByMember_Id(member.getId());
         member.withdraw(LocalDateTime.now(clock));
+        profile.ifPresent(memberProfileRepository::delete);
         memberTokenService.revoke(member.getId());
         Long memberId = member.getId();
         TransactionLogging.afterCommit(() -> log.info("event=MEMBER_WITHDRAWAL_SUCCESS memberId={} source={}", memberId, source));
