@@ -148,9 +148,9 @@
 | targetRadius | integer | 예 | 아니요 | 수정 뒤의 현재 값 |
 | targetGender | string | 예 | 아니요 | 수정 뒤의 현재 값 |
 | targetAgeGroups | array\<string\> | 예 | 아니요 | 수정 뒤의 현재 값 |
-| dailyBudget | integer | 예 | 아니요 | 지금 적용 중인 값. `ACTIVE`에서 바꿨다면 다음 영업일부터 이 값이 적용되고, 그 전까지 서빙은 바뀌기 전 값을 쓴다 |
-| startDate | string(날짜) | 예 | 아니요 | 집행 시작일 |
-| endDate | string(날짜) | 예 | 아니요 | 집행 종료일 |
+| dailyBudget | integer | 예 | 예 | 지금 적용 중인 값. `ACTIVE`에서 바꿨다면 다음 영업일부터 이 값이 적용되고, 그 전까지 서빙은 바뀌기 전 값을 쓴다. `DRAFT`에서 아직 한 번도 설정 안 했으면 `null` |
+| startDate | string(날짜) | 예 | 예 | 집행 시작일. `DRAFT`에서 아직 한 번도 설정 안 했으면 `null` |
+| endDate | string(날짜) | 예 | 예 | 집행 종료일. `DRAFT`에서 아직 한 번도 설정 안 했으면 `null` |
 
 ### 오류
 
