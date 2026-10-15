@@ -212,8 +212,17 @@ billing:
   # 값은 구현 계획 D-10 의 시작값이다. 운영하며 여기서 조정한다.
   payment:
     recheck:
-      max-retry: 10
+      # 시도 횟수가 이 값에 닿으면 FAILED_PERMANENT 로 두고 관리자가 확정한다. 기본 간격이면 총 약 48분이다.
+      max-retry: 5
       first-delay: 1m
+      # n번째 시도 뒤 다음 재조회까지의 간격이다. 목록이 끝나면 마지막 값을 유지한다.
+      backoff: 2m,5m,10m,30m
+      jitter-ratio: 0.1
+      # 워커가 한 번에 선점하는 행의 상한과 선점 유지 시간이다.
+      batch-size: 20
+      claim-lease: 5m
+      # 워커 실행 주기다. @Scheduled 가 읽으므로 ISO-8601 로 적는다.
+      interval: PT1M
   # 광고 서빙 시각과 시간대별 가중치(billing.config.BillingScheduleProperties).
   # 시각은 따옴표로 감싼다. 따옴표가 없으면 YAML 이 숫자로 읽는다.
   # hourly-weights 개수는 서빙 시간대 수(10, 11, 12시)와 같아야 하고 어기면 기동이 실패한다.

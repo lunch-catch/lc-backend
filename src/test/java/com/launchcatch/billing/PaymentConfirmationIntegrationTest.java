@@ -254,7 +254,7 @@ class PaymentConfirmationIntegrationTest extends IntegrationTestSupport {
                         + "where payment_id = ?", order.paymentId());
         assertThat(outbox.get("status")).isEqualTo("PENDING");
         assertThat(((Number) outbox.get("attempt_count")).intValue()).isZero();
-        assertThat(((Number) outbox.get("max_retry")).intValue()).isEqualTo(10);
+        assertThat(((Number) outbox.get("max_retry")).intValue()).isEqualTo(5);
         assertThat(outbox.get("next_retry_at")).isNotNull();
     }
 
