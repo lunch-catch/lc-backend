@@ -4,7 +4,7 @@
 
 ## 회원가입
 
-V51 「기능 명세서」 31행과 기존 `OwnerSignupController`·`OwnerSignupService`를 기준으로 한다.
+「기능 명세서」 FR-028과 기존 `OwnerSignupController`·`OwnerSignupService`를 기준으로 한다.
 
 1. 요청 DTO에서 이메일·비밀번호의 필수값·형식·길이를 검증한다.
 2. 이메일 중복을 먼저 확인하고, BCrypt 해싱은 DB 저장 트랜잭션 밖에서 수행한다.
@@ -15,7 +15,7 @@ V51 「기능 명세서」 31행과 기존 `OwnerSignupController`·`OwnerSignup
 
 ## 로그인
 
-V51 「기능 명세서」 32행과 기존 `OwnerLoginController`·`OwnerLoginService`를 기준으로 한다.
+「기능 명세서」 FR-029와 기존 `OwnerLoginController`·`OwnerLoginService`를 기준으로 한다.
 
 1. 요청을 검증하고 이메일로 계정을 조회한다. 계정이 없어도 Dummy BCrypt Hash와 비교하며, BCrypt 연산은 저장 트랜잭션 밖에서 수행한다.
 2. 계정 없음·비밀번호 불일치·SUSPENDED·WITHDRAWN은 모두 AUTH-001로 처리한다.
@@ -33,7 +33,7 @@ V51 「기능 명세서」 32행과 기존 `OwnerLoginController`·`OwnerLoginSe
 
 ## 최초 튜토리얼 완료
 
-계약은 [owner-api-spec.md](../../api-spec/owner-api-spec.md)를 따른다. 근거는 V51 「기능 명세서」 32행의 튜토리얼 확인 상태와 첨부 owner.md의 완료 API다. 최신 브랜치의 아키텍처·공통 응답 규칙을 우선한다.
+계약은 [owner-api-spec.md](../../api-spec/owner-api-spec.md)를 따른다. 근거는 「기능 명세서」 FR-029의 튜토리얼 확인 상태와 첨부 owner.md의 완료 API다. 최신 브랜치의 아키텍처·공통 응답 규칙을 우선한다.
 
 1. 공통 인증을 통해 OWNER 주체를 확인한다.
 2. `OwnerTutorialService`의 트랜잭션에서 기존 `OwnerRepository.findByIdForLogin`으로 점주 행을 잠근다.

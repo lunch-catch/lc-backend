@@ -24,10 +24,13 @@ import com.launchcatch.billing.repository.PaymentRepository;
 import com.launchcatch.billing.repository.PointAccountRepository;
 import com.launchcatch.billing.repository.PointLedgerRepository;
 import com.launchcatch.global.config.ClockConfig;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -57,9 +60,17 @@ class PaymentResultServiceTest {
     @Mock PaymentReconciliationOutboxRepository outboxRepository;
     @Mock ApplicationEventPublisher eventPublisher;
 
+    private final MeterRegistry meterRegistry = new SimpleMeterRegistry();
+
     private PaymentResultService service() {
+        return service(0.1);
+    }
+
+    private PaymentResultService service(double jitterRatio) {
         return new PaymentResultService(paymentRepository, pointLedgerRepository, pointAccountRepository,
-                outboxRepository, new PaymentRecheckProperties(10, Duration.ofMinutes(1)), eventPublisher, CLOCK);
+                outboxRepository, new PaymentRecheckProperties(10, Duration.ofMinutes(1),
+                        List.of(Duration.ofMinutes(2), Duration.ofMinutes(5)), jitterRatio, 20, Duration.ofMinutes(5)),
+                eventPublisher, meterRegistry, CLOCK);
     }
 
     private Payment requested() {
@@ -278,5 +289,121 @@ class PaymentResultServiceTest {
 
         assertThat(service().markUnknown(PAYMENT_ID).getStatus()).isEqualTo(PaymentStatus.APPROVED);
         verify(outboxRepository, never()).save(any());
+    }
+
+    private PaymentReconciliationOutbox pendingOutbox(int maxRetry) {
+        PaymentReconciliationOutbox outbox = PaymentReconciliationOutbox.pending(PAYMENT_ID, maxRetry, NOW);
+        when(outboxRepository.findByPaymentId(PAYMENT_ID)).thenReturn(Optional.of(outbox));
+        return outbox;
+    }
+
+    private Payment unknown() {
+        Payment payment = attempted();
+        payment.markUnknown();
+        return locked(payment);
+    }
+
+    @Test
+    void 재조회를_못_끝내면_시도를_세고_간격_목록의_다음_시각으로_미룬다() {
+        unknown();
+        PaymentReconciliationOutbox outbox = pendingOutbox(5);
+
+        Payment result = service(0.0).recordRecheckMiss(PAYMENT_ID, "처리 중");
+
+        assertThat(result.getStatus()).isEqualTo(PaymentStatus.UNKNOWN);
+        assertThat(outbox.getStatus()).isEqualTo(OutboxStatus.PENDING);
+        assertThat(outbox.getAttemptCount()).isEqualTo(1);
+        assertThat(outbox.getLastCheckedAt()).isEqualTo(NOW);
+        assertThat(outbox.getLastError()).isEqualTo("처리 중");
+        assertThat(outbox.getNextRetryAt()).isEqualTo(NOW.plusMinutes(2));
+        assertThat(meterRegistry.find("billing.payment.recheck.exhausted").counter()).isNull();
+    }
+
+    @Test
+    void 다음_시각은_지터_범위_안에서_흔들린다() {
+        unknown();
+        PaymentReconciliationOutbox outbox = pendingOutbox(5);
+
+        service(0.1).recordRecheckMiss(PAYMENT_ID, "처리 중");
+
+        assertThat(outbox.getNextRetryAt()).isBetween(NOW.plusSeconds(108), NOW.plusSeconds(132));
+    }
+
+    @Test
+    void 상한에_닿으면_영구_실패로_두고_결제는_확인_중으로_남기며_지표를_올린다() {
+        unknown();
+        PaymentReconciliationOutbox outbox = pendingOutbox(1);
+
+        Payment result = service(0.0).recordRecheckMiss(PAYMENT_ID, "조회 불가");
+
+        assertThat(result.getStatus()).isEqualTo(PaymentStatus.UNKNOWN);
+        assertThat(outbox.getStatus()).isEqualTo(OutboxStatus.FAILED_PERMANENT);
+        assertThat(outbox.getNextRetryAt()).isNull();
+        assertThat(meterRegistry.get("billing.payment.recheck.exhausted").counter().count()).isEqualTo(1.0);
+    }
+
+    @Test
+    void 그_사이_확정된_결제는_재조회_실패를_기록하지_않는다() {
+        Payment payment = attempted();
+        payment.approve(PG_APPROVED_AT);
+        locked(payment);
+
+        assertThat(service().recordRecheckMiss(PAYMENT_ID, "처리 중").getStatus()).isEqualTo(PaymentStatus.APPROVED);
+        verifyNoInteractions(outboxRepository);
+    }
+
+    @Test
+    void 이미_닫힌_아웃박스는_재조회_실패로_건드리지_않는다() {
+        unknown();
+        PaymentReconciliationOutbox outbox = pendingOutbox(5);
+        outbox.resolve(NOW);
+
+        service().recordRecheckMiss(PAYMENT_ID, "처리 중");
+
+        assertThat(outbox.getAttemptCount()).isZero();
+        assertThat(outbox.getStatus()).isEqualTo(OutboxStatus.RESOLVED);
+    }
+
+    @Test
+    void 아웃박스가_없어도_재조회_실패_기록은_오류_없이_끝난다() {
+        unknown();
+        when(outboxRepository.findByPaymentId(PAYMENT_ID)).thenReturn(Optional.empty());
+
+        assertThat(service().recordRecheckMiss(PAYMENT_ID, "처리 중").getStatus()).isEqualTo(PaymentStatus.UNKNOWN);
+    }
+
+    @Test
+    void 관리자_재조회가_실패해도_시도_횟수와_상태는_그대로이고_확인_시각과_사유만_남긴다() {
+        unknown();
+        PaymentReconciliationOutbox outbox = pendingOutbox(5);
+        LocalDateTime nextRetryAt = outbox.getNextRetryAt();
+
+        service().recordAdminRecheckMiss(PAYMENT_ID, "조회 불가");
+
+        assertThat(outbox.getAttemptCount()).isZero();
+        assertThat(outbox.getStatus()).isEqualTo(OutboxStatus.PENDING);
+        assertThat(outbox.getNextRetryAt()).isEqualTo(nextRetryAt);
+        assertThat(outbox.getLastCheckedAt()).isEqualTo(NOW);
+        assertThat(outbox.getLastError()).isEqualTo("조회 불가");
+    }
+
+    @Test
+    void 관리자_재조회_실패_기록은_확정된_결제를_건드리지_않는다() {
+        Payment payment = attempted();
+        payment.fail("거절");
+        locked(payment);
+
+        assertThat(service().recordAdminRecheckMiss(PAYMENT_ID, "조회 불가").getStatus())
+                .isEqualTo(PaymentStatus.FAILED);
+        verifyNoInteractions(outboxRepository);
+    }
+
+    @Test
+    void 관리자_재조회_실패_기록은_아웃박스가_없어도_오류_없이_끝난다() {
+        unknown();
+        when(outboxRepository.findByPaymentId(PAYMENT_ID)).thenReturn(Optional.empty());
+
+        assertThat(service().recordAdminRecheckMiss(PAYMENT_ID, "조회 불가").getStatus())
+                .isEqualTo(PaymentStatus.UNKNOWN);
     }
 }

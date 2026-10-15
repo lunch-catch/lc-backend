@@ -84,4 +84,103 @@ class PaymentReconciliationOutboxTest {
 
         assertThatThrownBy(() -> outbox.resolve(null)).isInstanceOf(IllegalArgumentException.class);
     }
+
+    @Test
+    @DisplayName("선점하면 다음 재조회 시각이 선점 만료 시각으로 밀리고 PENDING 은 유지된다")
+    void 선점() {
+        PaymentReconciliationOutbox outbox = PaymentReconciliationOutbox.pending(PAYMENT_ID, 5, NEXT);
+
+        outbox.claim(NOW.plusMinutes(5));
+
+        assertThat(outbox.getNextRetryAt()).isEqualTo(NOW.plusMinutes(5));
+        assertThat(outbox.getStatus()).isEqualTo(OutboxStatus.PENDING);
+    }
+
+    @Test
+    @DisplayName("선점 만료 시각이 없거나 PENDING 이 아닌 행은 선점할 수 없다")
+    void 선점_검증() {
+        PaymentReconciliationOutbox pending = PaymentReconciliationOutbox.pending(PAYMENT_ID, 5, NEXT);
+        PaymentReconciliationOutbox resolved = PaymentReconciliationOutbox.pending(PAYMENT_ID, 5, NEXT);
+        resolved.resolve(NOW);
+
+        assertThatThrownBy(() -> pending.claim(null)).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> resolved.claim(NOW.plusMinutes(5))).isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    @DisplayName("확정하지 못하면 시도 횟수가 늘고 확인 시각, 사유, 다음 재조회 시각이 기록된다")
+    void 미확정_기록() {
+        PaymentReconciliationOutbox outbox = PaymentReconciliationOutbox.pending(PAYMENT_ID, 5, NEXT);
+
+        boolean exhausted = outbox.recordMiss(NOW, "PG timeout", NOW.plusMinutes(2));
+
+        assertThat(exhausted).isFalse();
+        assertThat(outbox.getAttemptCount()).isEqualTo(1);
+        assertThat(outbox.getStatus()).isEqualTo(OutboxStatus.PENDING);
+        assertThat(outbox.getLastCheckedAt()).isEqualTo(NOW);
+        assertThat(outbox.getLastError()).isEqualTo("PG timeout");
+        assertThat(outbox.getNextRetryAt()).isEqualTo(NOW.plusMinutes(2));
+    }
+
+    @Test
+    @DisplayName("시도 횟수가 상한에 닿으면 FAILED_PERMANENT 가 되고 다음 재조회 시각이 비워진다")
+    void 상한_도달() {
+        PaymentReconciliationOutbox outbox = PaymentReconciliationOutbox.pending(PAYMENT_ID, 1, NEXT);
+
+        boolean exhausted = outbox.recordMiss(NOW, "PG timeout", NOW.plusMinutes(2));
+
+        assertThat(exhausted).isTrue();
+        assertThat(outbox.getStatus()).isEqualTo(OutboxStatus.FAILED_PERMANENT);
+        assertThat(outbox.getAttemptCount()).isEqualTo(1);
+        assertThat(outbox.getNextRetryAt()).isNull();
+    }
+
+    @Test
+    @DisplayName("사유는 500자까지만 남긴다")
+    void 사유_절단() {
+        PaymentReconciliationOutbox outbox = PaymentReconciliationOutbox.pending(PAYMENT_ID, 5, NEXT);
+
+        outbox.recordMiss(NOW, "x".repeat(600), NOW.plusMinutes(2));
+
+        assertThat(outbox.getLastError()).hasSize(500);
+    }
+
+    @Test
+    @DisplayName("확인 시각이 없거나 PENDING 이 아니거나 상한 전인데 다음 시각이 없으면 기록할 수 없다")
+    void 미확정_기록_검증() {
+        PaymentReconciliationOutbox pending = PaymentReconciliationOutbox.pending(PAYMENT_ID, 5, NEXT);
+        PaymentReconciliationOutbox permanent = PaymentReconciliationOutbox.pending(PAYMENT_ID, 0, NEXT);
+        permanent.recordMiss(NOW, "e", null);
+
+        assertThatThrownBy(() -> pending.recordMiss(null, "e", NOW)).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> pending.recordMiss(NOW, "e", null)).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> permanent.recordMiss(NOW, "e", NOW)).isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    @DisplayName("관리자 재조회가 확정하지 못하면 시도 횟수와 상태는 두고 확인 시각과 사유만 남긴다")
+    void 확인_시각만_기록() {
+        PaymentReconciliationOutbox outbox = PaymentReconciliationOutbox.pending(PAYMENT_ID, 0, NEXT);
+        outbox.recordMiss(NOW, "first", null);
+
+        outbox.touch(NOW.plusHours(1), "again");
+
+        assertThat(outbox.getStatus()).isEqualTo(OutboxStatus.FAILED_PERMANENT);
+        assertThat(outbox.getAttemptCount()).isEqualTo(1);
+        assertThat(outbox.getLastCheckedAt()).isEqualTo(NOW.plusHours(1));
+        assertThat(outbox.getLastError()).isEqualTo("again");
+    }
+
+    @Test
+    @DisplayName("이미 닫힌 행은 확인 시각을 갱신하지 않고 확인 시각 없이는 기록할 수 없다")
+    void 확인_시각_기록_검증() {
+        PaymentReconciliationOutbox resolved = PaymentReconciliationOutbox.pending(PAYMENT_ID, 5, NEXT);
+        resolved.resolve(NOW);
+        PaymentReconciliationOutbox pending = PaymentReconciliationOutbox.pending(PAYMENT_ID, 5, NEXT);
+
+        resolved.touch(NOW.plusHours(1), "ignored");
+
+        assertThat(resolved.getLastCheckedAt()).isEqualTo(NOW);
+        assertThatThrownBy(() -> pending.touch(null, "e")).isInstanceOf(IllegalArgumentException.class);
+    }
 }

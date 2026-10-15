@@ -23,7 +23,7 @@ spring:
     oauth2:
       client:
         registration:
-          # 사용자 로그인(카카오 OIDC, 62행). 카카오 개발자 콘솔의 내 애플리케이션 > 앱 키 /
+          # 사용자 로그인(카카오 OIDC, FR-059). 카카오 개발자 콘솔의 내 애플리케이션 > 앱 키 /
           # 카카오 로그인에서 확인한다. redirect-uri 는 콘솔에 등록한 값과 정확히 같아야 한다.
           # 카카오가 이 주소로 code 를 붙여 302 리다이렉트하면 프론트가 받아서 백엔드로 넘긴다.
           # kakao:
@@ -47,14 +47,14 @@ spring:
 #   openssl rand -base64 64
 # jwt:
 #   secret: ""
-#   # Access 는 세 역할이 모두 30분이고 Refresh 만 역할마다 다르다(94행).
+#   # Access 는 세 역할이 모두 30분이고 Refresh 만 역할마다 다르다(FR-091).
 #   access-token-validity-ms: 1800000
 #   refresh:
 #     # 관리자 1일
 #     admin-validity-ms: 86400000
 #     # 점주 1일
 #     owner-validity-ms: 86400000
-#     # 사용자 14일. 자동 로그인을 체크하지 않으면 세션 쿠키로 내려 이 값을 쓰지 않는다(64행)
+#     # 사용자 14일. 자동 로그인을 체크하지 않으면 세션 쿠키로 내려 이 값을 쓰지 않는다(FR-061)
 #     member-validity-ms: 1209600000
 #   cookie:
 #     # 로컬은 http 라 꺼둔다. 운영(https)에서는 반드시 true 로

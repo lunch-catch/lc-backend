@@ -22,7 +22,7 @@ import org.hibernate.type.SqlTypes;
  * SUM(amount) 에서 DEDUCT 를 뺀 것이다. DEDUCT 를 빼는 이유는 그 금액이 예약 단계에서
  * 이미 잔액에서 빠졌기 때문이다.
  *
- * 부호는 저장값이 갖는다. V51 비즈니스 규칙 16행의 "CHARGE - RESERVE + RELEASE - REFUND
+ * 부호는 저장값이 갖는다. BR-013의 "CHARGE - RESERVE + RELEASE - REFUND
  * + ADJUST" 는 크기로 적은 표기다. 그 식을 부호가 있는 저장값에 그대로 옮겨 빼면 부호가
  * 뒤집힌다. 그래서 아래 팩터리는 모두 양수를 받고 종류에 맞는 부호를 안에서 정한다.
  * 조정(ADJUST)만 예외다. 사람이 늘리거나 줄이는 방향을 정하므로 부호가 있는 값을 그대로 받는다.

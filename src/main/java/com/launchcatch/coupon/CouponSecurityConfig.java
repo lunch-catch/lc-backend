@@ -11,14 +11,18 @@ import org.springframework.security.web.SecurityFilterChain;
 @Configuration
 public class CouponSecurityConfig {
 
+    private static final String OWNER_USAGE_PATH = "/v1/owner/stores/{storeId}/coupon-usages";
+
     private static final String[] COUPON_PATHS = {
-            "/v1/coupons/**"
+            "/v1/coupons/**",
+            OWNER_USAGE_PATH
     };
 
     private static final String LIST_PATH = "/v1/coupons";
     private static final String ISSUANCE_LIMIT_PATH = "/v1/coupons/issuance-limit";
     private static final String SUMMARY_PATH = "/v1/coupons/summary";
     private static final String DETAIL_PATH = "/v1/coupons/{memberCouponId}";
+    private static final String QR_PATH = "/v1/coupons/{memberCouponId}:generateQr";
 
     @Bean
     @Order(ApiSecurityDefaults.DOMAIN_CHAIN_ORDER)
@@ -30,6 +34,9 @@ public class CouponSecurityConfig {
                         .requestMatchers(HttpMethod.GET, LIST_PATH, ISSUANCE_LIMIT_PATH, SUMMARY_PATH, DETAIL_PATH)
                         .hasRole("MEMBER")
                         .requestMatchers(HttpMethod.DELETE, DETAIL_PATH)
+                        .hasRole("MEMBER")
+                        .requestMatchers(HttpMethod.GET, OWNER_USAGE_PATH).hasRole("OWNER")
+                        .requestMatchers(HttpMethod.POST, QR_PATH)
                         .hasRole("MEMBER")
                         .anyRequest().denyAll())
                 .build();

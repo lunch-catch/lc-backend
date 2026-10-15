@@ -3,7 +3,6 @@ package com.launchcatch.billing;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import com.launchcatch.IntegrationTestSupport;
 import com.launchcatch.billing.contract.BudgetProgress;
 import com.launchcatch.billing.contract.BudgetQueryService;
 import com.launchcatch.billing.contract.DeductionStatus;
@@ -25,7 +24,6 @@ import java.util.concurrent.atomic.AtomicLong;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.data.redis.core.RedisCallback;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -42,8 +40,7 @@ import org.springframework.transaction.support.TransactionTemplate;
  * 커밋을 봐야 하므로 테스트 트랜잭션을 걸지 않고 TransactionTemplate 으로 부른다. 매번 행과 키를 지운다.
  * 그날 계획의 캐시가 테스트 사이에 남으므로 테스트마다 다른 캠페인 ID 를 쓴다.
  */
-@SpringBootTest
-class ImpressionDeductionIntegrationTest extends IntegrationTestSupport {
+class ImpressionDeductionIntegrationTest extends AbstractBillingIntegrationTest {
 
     private static final LocalDate DAY = LocalDate.of(2026, 10, 14);
     private static final Long OWNER = 7L;
