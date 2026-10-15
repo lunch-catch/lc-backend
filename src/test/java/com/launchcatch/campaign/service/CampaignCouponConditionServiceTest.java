@@ -218,6 +218,19 @@ class CampaignCouponConditionServiceTest {
         assertThat(existing.getDiscountValue()).isEqualTo(15);
     }
 
+    @Test
+    @DisplayName("제약 위반 뒤 재조회해도 DRAFT가 없으면 상태 불일치로 끝낸다")
+    void 제약_위반_뒤_재조회해도_없으면_예외를_던진다() {
+        when(campaignRepository.findByStoreIdAndStatus(STORE_ID, CampaignStatus.DRAFT))
+                .thenReturn(Optional.empty(), Optional.empty());
+        when(campaignRepository.saveAndFlush(any(Campaign.class)))
+                .thenThrow(new DataIntegrityViolationException("uk_campaign_draft_store"));
+
+        assertThatThrownBy(() -> service.handle(OWNER_ID, request()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("storeId=" + STORE_ID);
+    }
+
     private Campaign existingDraft() {
         return Campaign.create(
                 OWNER_ID, STORE_ID,
