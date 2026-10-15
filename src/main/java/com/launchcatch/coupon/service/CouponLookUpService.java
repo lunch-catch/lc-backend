@@ -1,12 +1,21 @@
 package com.launchcatch.coupon.service;
 
 import com.launchcatch.auth.exception.AuthErrorCode;
+import com.launchcatch.campaign.contract.CampaignInfo;
+import com.launchcatch.campaign.contract.CampaignQueryService;
+import com.launchcatch.campaign.contract.CampaignStatus;
 import com.launchcatch.coupon.CouponListFilter;
 import com.launchcatch.coupon.dto.CouponDetailResponse;
+import com.launchcatch.coupon.dto.CouponEventStatusResponse.CannotIssueReason;
+import com.launchcatch.coupon.dto.CouponEventStatusResponse.EventState;
+import com.launchcatch.coupon.dto.CouponEventStatusResponse.Item;
+import com.launchcatch.coupon.dto.CouponEventStatusResponse;
 import com.launchcatch.coupon.dto.CouponIssuanceLimitResponse;
 import com.launchcatch.coupon.dto.CouponSummaryResponse;
 import com.launchcatch.coupon.dto.CouponUsageHistoryResponse;
 import com.launchcatch.coupon.entity.CouponEvent;
+import com.launchcatch.coupon.entity.CouponEventStatus;
+import com.launchcatch.coupon.entity.CouponInventoryStatus;
 import com.launchcatch.coupon.entity.CouponUsageHistory;
 import com.launchcatch.coupon.entity.MemberCoupon;
 import com.launchcatch.coupon.entity.MemberCouponStatus;
@@ -21,16 +30,23 @@ import com.launchcatch.global.exception.CommonErrorCode;
 import com.launchcatch.global.response.CursorPageResponse;
 import com.launchcatch.global.response.PageCursor;
 import com.launchcatch.global.response.PageTokens;
+import com.launchcatch.member.contract.MemberInfo;
+import com.launchcatch.member.contract.MemberQueryService;
+import com.launchcatch.member.contract.MemberStatus;
 import com.launchcatch.owner.contract.OwnerAccountStatus;
 import com.launchcatch.owner.contract.OwnerStatusQuery;
 import java.time.Clock;
 import java.time.DateTimeException;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.LocalTime;
+import java.time.OffsetDateTime;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
@@ -50,10 +66,72 @@ public class CouponLookUpService {
     private final CouponUsageHistoryRepository couponUsageHistoryRepository;
     private final CouponDailyLimitRepository couponDailyLimitRepository;
     private final OwnerStatusQuery ownerStatusQuery;
+    private final CampaignQueryService campaignQueryService;
+    private final MemberQueryService memberQueryService;
     private final Clock clock;
 
     @Value("${coupon.daily-limit}")
     private int dailyLimit;
+
+    @Value("${coupon.issue-start-time}")
+    private LocalTime issueStartTime;
+
+    @Value("${coupon.issue-end-time}")
+    private LocalTime issueEndTime;
+
+    /**
+     * 매장별 오늘 이벤트와 조회 시점의 발급 가능 상태를 입력 순서로 반환한다.
+     * 재고와 회원 발급 이력은 일괄 조회하며 쿠폰과 재고, 발급 횟수는 변경하지 않는다.
+     * 매장 존재 조회 -> 매장 이벤트 조회 -> 쿠폰 수량 조회 ->
+     * @param memberId 인증된 회원 ID
+     * @param storeIds 컨트롤러에서 검증한 1개 이상 100개 이하의 서로 다른 양수 매장 ID
+     * @return 한국 서버 시각과 매장별 이벤트 상태
+     */
+    public CouponEventStatusResponse getEventStatus(Long memberId, List<Long> storeIds) {
+        OffsetDateTime serverTime = OffsetDateTime.now(clock.withZone(ClockConfig.ZONE));
+        LocalDate businessDate = serverTime.toLocalDate();
+
+        // TODO: store의 매장 존재 조회 contract가 제공되면 없는 매장 ID를 여기서 제외한다.
+        List<CouponEvent> events = couponEventRepository.findByStoreIdInAndBusinessDateAndStatusIn(
+                storeIds, businessDate, List.of(CouponEventStatus.ACTIVE, CouponEventStatus.SCHEDULED));
+        Map<Long, CouponEvent> eventsByStore = findDuplicatedEvent(events, businessDate);
+        List<Long> eventIds = events.stream().map(CouponEvent::getId).toList();
+
+        Map<Long, Integer> quantities = findAvailableQuantities(eventIds);
+
+        Set<Long> issuedEventIds = eventIds.isEmpty() ? Set.of()
+                : Set.copyOf(memberCouponRepository.findIssuedEventIds(memberId, eventIds));
+
+        Set<Long> campaignStoreIds = campaignQueryService.findByStoreIdIn(storeIds).stream()
+                .filter(campaign -> campaign.status() == CampaignStatus.ACTIVE
+                        || campaign.status() == CampaignStatus.SCHEDULED)
+                .map(CampaignInfo::storeId).collect(Collectors.toSet());
+
+        boolean accountEligible = memberQueryService.findById(memberId).map(MemberInfo::status)
+                .filter(status -> status == MemberStatus.ACTIVE).isPresent();
+
+        boolean dailyLimitReached = findIssuedCount(memberId, businessDate) >= dailyLimit;
+
+        // TODO: #163의 WishlistQueryService가 제공되면 유효한 찜 캠페인 ID를 조회해 빈 Set을 대체한다.
+        Set<Long> wishedCampaignIds = Set.of();
+
+        List<Item> items = new ArrayList<>(storeIds.size());
+        LocalTime now = serverTime.toLocalTime();
+        for (Long storeId : storeIds) {
+            items.add(createEventStatusItem(
+                    storeId,
+                    eventsByStore.get(storeId),
+                    campaignStoreIds.contains(storeId),
+                    quantities,
+                    issuedEventIds,
+                    wishedCampaignIds,
+                    accountEligible,
+                    dailyLimitReached,
+                    now
+            ));
+        }
+        return new CouponEventStatusResponse(serverTime, items);
+    }
 
     /**
      * 본인의 삭제되지 않은 쿠폰을 조회 시점 상태로 필터링하고 발급 시각과 ID의 내림차순으로 반환한다.
@@ -97,9 +175,7 @@ public class CouponLookUpService {
      */
     public CouponIssuanceLimitResponse getIssuanceLimit(Long memberId) {
         LocalDate businessDate = LocalDate.now(clock.withZone(ClockConfig.ZONE));
-        int issuedCount = couponDailyLimitRepository
-                .findIssuedCountByMemberIdAndBusinessDate(memberId, businessDate)
-                .orElse(0);
+        int issuedCount = findIssuedCount(memberId, businessDate);
         return new CouponIssuanceLimitResponse(
                 businessDate, issuedCount, dailyLimit, issuedCount >= dailyLimit);
     }
@@ -168,6 +244,92 @@ public class CouponLookUpService {
         String nextPageToken = createNextPageToken(page, storeId, from, to, hasNext);
 
         return CursorPageResponse.of(items, nextPageToken);
+    }
+
+    // 이벤트가 없는 매장은 별도로 처리해 상태 계산과 스냅샷 변환에서 null을 반복 확인하지 않는다.
+    private Item createEventStatusItem(
+            Long storeId, CouponEvent event, boolean hasCampaign, Map<Long, Integer> quantities,
+            Set<Long> issuedEventIds, Set<Long> wishedCampaignIds,
+            boolean accountEligible, boolean dailyLimitReached, LocalTime now) {
+        if (event == null) {
+            return createNoEventItem(storeId, hasCampaign);
+        }
+
+        int quantity = quantities.getOrDefault(event.getId(), 0);
+        EventState state = resolveEventState(event.getStatus(), quantity, now);
+        boolean issued = issuedEventIds.contains(event.getId());
+        boolean wished = wishedCampaignIds.contains(event.getCampaignId());
+        CannotIssueReason reason = resolveCannotIssueReason(state, accountEligible, issued, dailyLimitReached, wished);
+        return new Item(storeId, hasCampaign, event.getId(), state, quantity,
+                event.getUsableStartAt().atZone(ClockConfig.ZONE).toOffsetDateTime(),
+                event.getUsableEndAt().atZone(ClockConfig.ZONE).toOffsetDateTime(),
+                issued, wished, reason == null, reason);
+    }
+
+    private Item createNoEventItem(Long storeId, boolean hasCampaign) {
+        return new Item(storeId, hasCampaign, null, EventState.NO_EVENT, 0,
+                null, null, false, false, false, CannotIssueReason.NO_EVENT);
+    }
+
+    // 매장당 조회 대상 이벤트가 한 건이라는 조건이 깨지면 대표 이벤트를 임의로 고르지 않는다.
+    private Map<Long, CouponEvent> findDuplicatedEvent(List<CouponEvent> events, LocalDate businessDate) {
+        Map<Long, CouponEvent> eventsByStore = new HashMap<>();
+        for (CouponEvent event : events) {
+            if (eventsByStore.putIfAbsent(event.getStoreId(), event) != null) {
+                log.error("event=COUPON_EVENT_STATUS_DATA_INVALID reason=DUPLICATE_STORE_EVENT storeId={} businessDate={}",
+                        event.getStoreId(), businessDate);
+                throw new CouponException(CommonErrorCode.INTERNAL_ERROR);
+            }
+        }
+        return eventsByStore;
+    }
+
+    // 이벤트가 없으면 집계를 생략하고 있으면 AVAILABLE 재고만 이벤트별로 한 번에 센다.
+    private Map<Long, Integer> findAvailableQuantities(List<Long> eventIds) {
+        if (eventIds.isEmpty()) {
+            return Map.of();
+        }
+        return couponEventRepository.findQuantitiesByEventIdsAndStatus(eventIds, CouponInventoryStatus.AVAILABLE)
+                .stream().collect(Collectors.toMap(CouponEventRepository.InventoryQuantity::getEventId,
+                        quantity -> Math.toIntExact(quantity.getQuantity())));
+    }
+
+    // 발급 시간 경계를 재고보다 먼저 판단하며 쿠폰의 사용 가능 시간은 발급 판정에 쓰지 않는다.
+    private EventState resolveEventState(CouponEventStatus status, int remainingQuantity, LocalTime now) {
+        if (!now.isBefore(issueEndTime)) {
+            return EventState.CLOSED;
+        }
+        if (now.isBefore(issueStartTime) || status == CouponEventStatus.SCHEDULED) {
+            return EventState.SCHEDULED;
+        }
+        return remainingQuantity == 0 ? EventState.SOLD_OUT : EventState.OPEN;
+    }
+
+    private CannotIssueReason resolveCannotIssueReason(
+            EventState state, boolean accountEligible, boolean hasIssuedToday, boolean dailyLimitReached, boolean wished) {
+        if (!accountEligible) {
+            return CannotIssueReason.ACCOUNT_NOT_ELIGIBLE;
+        }
+        if (hasIssuedToday) {
+            return CannotIssueReason.ALREADY_ISSUED;
+        }
+        if (dailyLimitReached) {
+            return CannotIssueReason.DAILY_LIMIT_REACHED;
+        }
+        if (!wished) {
+            return CannotIssueReason.NOT_WISHED;
+        }
+        if (state == EventState.SCHEDULED || state == EventState.CLOSED) {
+            return CannotIssueReason.NOT_OPEN;
+        }
+        if (state == EventState.SOLD_OUT) {
+            return CannotIssueReason.SOLD_OUT;
+        }
+        return null;
+    }
+
+    private int findIssuedCount(Long memberId, LocalDate businessDate) {
+        return couponDailyLimitRepository.findIssuedCountByMemberIdAndBusinessDate(memberId, businessDate).orElse(0);
     }
 
     private void validateActiveOwner(Long ownerId) {
