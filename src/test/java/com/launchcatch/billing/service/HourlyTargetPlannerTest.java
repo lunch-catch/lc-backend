@@ -2,6 +2,10 @@ package com.launchcatch.billing.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.tuple;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -11,9 +15,15 @@ import com.launchcatch.billing.entity.BudgetDailyPlan;
 import com.launchcatch.billing.entity.BudgetHourlyTarget;
 import com.launchcatch.billing.repository.BudgetDailyPlanRepository;
 import com.launchcatch.billing.repository.BudgetHourlyTargetRepository;
+import java.time.Clock;
 import java.time.Duration;
+import java.time.Instant;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.util.ArrayList;
 import java.util.List;
+import org.assertj.core.groups.Tuple;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -29,6 +39,8 @@ class HourlyTargetPlannerTest {
     private static final LocalDate DAY = LocalDate.of(2026, 10, 16);
     private static final BillingScheduleProperties SCHEDULE =
             new BillingScheduleProperties("10:00", "12:59", Duration.ofMinutes(30), List.of(34, 33, 33));
+    private static final Clock CLOCK = Clock.fixed(Instant.parse("2026-10-15T15:00:00Z"), ZoneId.of("Asia/Seoul"));
+    private static final LocalDateTime NOW = LocalDateTime.now(CLOCK);
 
     @Mock
     private BudgetDailyPlanRepository planRepository;
@@ -39,7 +51,7 @@ class HourlyTargetPlannerTest {
 
     @BeforeEach
     void setUp() {
-        planner = new HourlyTargetPlanner(planRepository, targetRepository, SCHEDULE);
+        planner = new HourlyTargetPlanner(planRepository, targetRepository, SCHEDULE, CLOCK);
     }
 
     private static BudgetDailyPlan plan(long planId, long reserved) {
@@ -48,11 +60,19 @@ class HourlyTargetPlannerTest {
         return plan;
     }
 
-    private List<BudgetHourlyTarget> saved() {
-        @SuppressWarnings("unchecked")
-        ArgumentCaptor<List<BudgetHourlyTarget>> captor = ArgumentCaptor.forClass(List.class);
-        verify(targetRepository).saveAll(captor.capture());
-        return captor.getValue();
+    // 넣은 목표를 (계획 ID, 시, 금액) 순서대로 돌려준다
+    private List<Tuple> inserted(int times) {
+        ArgumentCaptor<Long> planIds = ArgumentCaptor.forClass(Long.class);
+        ArgumentCaptor<Integer> hours = ArgumentCaptor.forClass(Integer.class);
+        ArgumentCaptor<Long> amounts = ArgumentCaptor.forClass(Long.class);
+        verify(targetRepository, times(times))
+                .insertIfAbsent(planIds.capture(), hours.capture(), amounts.capture(), eq(NOW));
+        verify(targetRepository, never()).saveAll(any());
+        List<Tuple> result = new ArrayList<>();
+        for (int i = 0; i < times; i++) {
+            result.add(tuple(planIds.getAllValues().get(i), hours.getAllValues().get(i), amounts.getAllValues().get(i)));
+        }
+        return result;
     }
 
     @Test
@@ -70,12 +90,10 @@ class HourlyTargetPlannerTest {
 
         assertThat(planner.plan(DAY)).isEqualTo(2);
 
-        assertThat(saved())
-                .extracting(BudgetHourlyTarget::getBudgetDailyPlanId, BudgetHourlyTarget::getHour,
-                        BudgetHourlyTarget::getTargetAmount)
-                .containsExactly(
-                        tuple(3L, (byte) 10, 3400L), tuple(3L, (byte) 11, 3300L), tuple(3L, (byte) 12, 3300L),
-                        tuple(4L, (byte) 10, 3L), tuple(4L, (byte) 11, 3L), tuple(4L, (byte) 12, 4L));
+        // 조회 뒤 saveAll 이 아니라 이미 있으면 그대로 두는 INSERT 로 넣어 겹친 실행이 UNIQUE 위반으로 실패하지 않는다
+        assertThat(inserted(6)).containsExactly(
+                tuple(3L, 10, 3400L), tuple(3L, 11, 3300L), tuple(3L, 12, 3300L),
+                tuple(4L, 10, 3L), tuple(4L, 11, 3L), tuple(4L, 12, 4L));
     }
 
     @Test
@@ -85,7 +103,7 @@ class HourlyTargetPlannerTest {
                 .thenReturn(List.of(BudgetHourlyTarget.create(3L, 10, 3400L)));
 
         assertThat(planner.plan(DAY)).isEqualTo(1);
-        assertThat(saved()).extracting(BudgetHourlyTarget::getBudgetDailyPlanId).containsOnly(4L);
+        assertThat(inserted(3)).extracting(t -> t.toList().get(0)).containsOnly(4L);
     }
 
     @Test

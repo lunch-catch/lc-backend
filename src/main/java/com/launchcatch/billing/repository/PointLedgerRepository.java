@@ -152,4 +152,24 @@ public interface PointLedgerRepository extends JpaRepository<PointLedger, Long>,
             """)
     List<Long> findReleasedCampaignIds(@Param("ownerIds") Collection<Long> ownerIds,
                                        @Param("businessDate") LocalDate businessDate);
+
+    /*
+     * 캠페인 하나의 그 영업일 RELEASE 를 없을 때만 넣는다. 같은 캠페인과 영업일의 RELEASE 가 이미 있으면 그대로 둔다
+     * (day_reserve_dedup_key UNIQUE). 이어받기로 두 실행이 겹쳐도 한쪽이 UNIQUE 위반으로 실패하지 않는다.
+     * 중복은 값을 바꾸지 않는 갱신으로 흡수하고 INSERT IGNORE 는 쓰지 않는다(구현 계획 D-5).
+     * 금액은 양수다(chk_point_ledger_amount_sign). 배치가 쓰므로 source 는 RECONCILIATION 이다.
+     */
+    @Modifying
+    @Query(value = """
+            INSERT INTO point_ledger
+                (owner_id, campaign_id, business_date, entry_type, source, amount, created_at, updated_at)
+            VALUES
+                (:ownerId, :campaignId, :businessDate, 'RELEASE', 'RECONCILIATION', :amount, :now, :now)
+            ON DUPLICATE KEY UPDATE point_ledger_id = point_ledger_id
+            """, nativeQuery = true)
+    int insertReleaseIfAbsent(@Param("ownerId") Long ownerId,
+                              @Param("campaignId") Long campaignId,
+                              @Param("businessDate") LocalDate businessDate,
+                              @Param("amount") long amount,
+                              @Param("now") LocalDateTime now);
 }

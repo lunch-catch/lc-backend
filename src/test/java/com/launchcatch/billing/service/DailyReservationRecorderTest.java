@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.tuple;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -170,12 +171,26 @@ class DailyReservationRecorderTest {
     }
 
     @Test
-    void 보정_해제를_한_번에_저장한다() {
-        List<PointLedger> releases = List.of(PointLedger.release(OWNER, 1L, DAY.minusDays(1), 2000L));
+    void 보정_해제는_이미_있으면_그대로_두는_INSERT로_넣는다() {
+        List<PointLedger> releases = List.of(
+                PointLedger.release(OWNER, 1L, DAY.minusDays(1), 2000L),
+                PointLedger.release(8L, 2L, DAY.minusDays(1), 500L));
 
         recorder.release(releases);
 
-        verify(ledgerRepository).saveAll(releases);
+        LocalDateTime now = LocalDateTime.now(CLOCK);
+        verify(ledgerRepository).insertReleaseIfAbsent(OWNER, 1L, DAY.minusDays(1), 2000L, now);
+        verify(ledgerRepository).insertReleaseIfAbsent(8L, 2L, DAY.minusDays(1), 500L, now);
+        // 조회 뒤 saveAll 은 겹친 실행에서 UNIQUE 위반으로 단계를 실패시킨다
+        verify(ledgerRepository, never()).saveAll(any());
+    }
+
+    @Test
+    void 보정_해제에_RELEASE가_아닌_원장을_넘기면_거부한다() {
+        List<PointLedger> reserves = List.of(PointLedger.reserve(OWNER, 1L, DAY, 2000L));
+
+        assertThatThrownBy(() -> recorder.release(reserves)).isInstanceOf(IllegalArgumentException.class);
+        verify(ledgerRepository, never()).insertReleaseIfAbsent(any(), any(), any(), anyLong(), any());
     }
 
     @Test

@@ -1,6 +1,7 @@
 package com.launchcatch.billing.service;
 
 import com.launchcatch.billing.entity.BudgetDailyPlan;
+import com.launchcatch.billing.entity.EntryType;
 import com.launchcatch.billing.entity.PointLedger;
 import com.launchcatch.billing.repository.BudgetDailyPlanRepository;
 import com.launchcatch.billing.repository.PointAccountRepository;
@@ -74,10 +75,23 @@ public class DailyReservationRecorder {
         }
     }
 
-    // 전날 남은 예약의 보정 RELEASE 를 한 트랜잭션에 기록한다. 하나라도 실패하면 아무것도 남지 않고 예약도 진행되지 않는다
+    /*
+     * 전날 남은 예약의 보정 RELEASE 를 한 트랜잭션에 기록한다. 하나라도 실패하면 아무것도 남지 않고 예약도 진행되지 않는다.
+     *
+     * 이미 RELEASE 가 있는 캠페인은 그대로 둔다. 부른 쪽이 RELEASE 가 없는 캠페인만 골라 넘기지만, 그 조회와 이 쓰기
+     * 사이에 이어받은 다른 실행이 먼저 쓸 수 있다. saveAll 이면 그때 UNIQUE 위반으로 단계가 실패하고, 그 예외는
+     * 일시 오류 자동 재실행 대상도 아니라 그날 예약까지 멈춘다.
+     */
     @Transactional
     public void release(List<PointLedger> releases) {
-        ledgerRepository.saveAll(releases);
+        LocalDateTime now = LocalDateTime.now(clock);
+        for (PointLedger release : releases) {
+            if (release.getEntryType() != EntryType.RELEASE) {
+                throw new IllegalArgumentException("보정 해제에는 RELEASE 만 넘긴다: " + release.getEntryType());
+            }
+            ledgerRepository.insertReleaseIfAbsent(release.getOwnerId(), release.getCampaignId(),
+                    release.getBusinessDate(), release.getAmount(), now);
+        }
     }
 
     /*
