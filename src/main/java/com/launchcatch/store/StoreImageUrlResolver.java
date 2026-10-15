@@ -9,7 +9,13 @@ public final class StoreImageUrlResolver {
     private final String baseUrl;
 
     public StoreImageUrlResolver(String baseUrl) {
-        this.baseUrl = baseUrl.strip().replaceAll("/+$", "");
+        String stripped = baseUrl.strip();
+        int end = stripped.length();
+        // 주소 끝의 /만 뒤에서 한 번씩 확인해 제거한다.
+        while (end > 0 && stripped.charAt(end - 1) == '/') {
+            end--;
+        }
+        this.baseUrl = stripped.substring(0, end);
         if (!this.baseUrl.isEmpty()) {
             URI uri = URI.create(this.baseUrl);
             if (!("https".equals(uri.getScheme()) || "http".equals(uri.getScheme()))
