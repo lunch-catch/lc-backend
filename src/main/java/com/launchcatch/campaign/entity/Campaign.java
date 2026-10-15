@@ -107,6 +107,14 @@ public class Campaign extends BaseTimeEntity {
     @Column(name = "end_date")
     private LocalDate endDate;
 
+    /*
+     * ACTIVE에서 바꾼 하루 예산은 그날 서빙에 바로 반영하지 않고 다음 영업일 적용
+     * 예약 값으로만 들고 있는다(V51 45행). 00:00 배치가 이 값을 dailyBudget에
+     * 반영하는 쪽은 그 배치 이슈 몫이라(#330), 이 엔티티는 쓰기만 한다.
+     */
+    @Column(name = "pending_daily_budget")
+    private Long pendingDailyBudget;
+
     private Campaign(
             Long ownerId, Long storeId,
             DiscountTargetType discountTargetType, DiscountType discountType, int discountValue, Long targetMenuId,
@@ -199,6 +207,34 @@ public class Campaign extends BaseTimeEntity {
         this.targetRadius = targetRadius;
         this.targetGender = Objects.requireNonNull(targetGender, "targetGender");
         this.targetAgeGroups = requireNonEmpty(targetAgeGroups);
+    }
+
+    /*
+     * 캠페인 등록 4단계(하루 예산과 집행 기간)를 DRAFT에서 바로 반영한다. 쿠폰 조건·노출
+     * 대상 필드는 손대지 않는다(#330). updateCouponCondition/updateTargetAudience와 같은
+     * 이유로 DRAFT 전제를 엔티티가 스스로 지킨다.
+     */
+    public void updateBudgetAndPeriod(Long dailyBudget, LocalDate startDate, LocalDate endDate) {
+        if (this.status != CampaignStatus.DRAFT) {
+            throw new IllegalStateException("only DRAFT campaign can update budget and period: " + this.status);
+        }
+        requireDailyBudget(dailyBudget);
+        requirePeriod(startDate, endDate);
+        this.dailyBudget = dailyBudget;
+        this.startDate = startDate;
+        this.endDate = endDate;
+    }
+
+    /*
+     * ACTIVE에서 하루 예산을 바꾸면 다음 영업일 적용 예약 값으로만 저장한다. dailyBudget
+     * 자체는 그대로 둬 그날 서빙에 영향을 주지 않는다(V51 45행, #330).
+     */
+    public void reserveDailyBudget(Long dailyBudget) {
+        if (this.status != CampaignStatus.ACTIVE) {
+            throw new IllegalStateException("only ACTIVE campaign can reserve daily budget: " + this.status);
+        }
+        requireDailyBudget(dailyBudget);
+        this.pendingDailyBudget = dailyBudget;
     }
 
     public void schedule(LocalDateTime now) {
