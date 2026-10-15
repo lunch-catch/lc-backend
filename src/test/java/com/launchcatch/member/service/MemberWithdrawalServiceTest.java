@@ -93,6 +93,10 @@ class MemberWithdrawalServiceTest {
         MemberProfile profile = MemberProfile.create(member);
         givenReauthenticated(member);
         when(memberProfileRepository.findByMember_Id(1L)).thenReturn(Optional.of(profile));
+        doAnswer(invocation -> {
+            assertThat(member.getProfile()).isNull();
+            return null;
+        }).when(memberProfileRepository).delete(profile);
         givenEmptyQueue();
 
         memberWithdrawalService.withdraw(1L, "code", "state");
@@ -100,6 +104,7 @@ class MemberWithdrawalServiceTest {
         assertThat(member.getStatus()).isEqualTo(MemberStatus.WITHDRAWN);
         assertThat(member.getNickname()).isEqualTo("탈퇴한 회원");
         assertThat(member.getProfileImageUrl()).isNull();
+        assertThat(member.getProfile()).isNull();
         assertThat(member.getLastLoginAt()).isNull();
         assertThat(member.isNotificationOptIn()).isFalse();
         assertThat(member.isLocationOptIn()).isFalse();
@@ -227,11 +232,15 @@ class MemberWithdrawalServiceTest {
     @DisplayName("웹훅은 로컬 탈퇴만 처리하고 unlink를 다시 호출하지 않는다")
     void 웹훅은_로컬_탈퇴만_처리하고_unlink를_다시_호출하지_않는다() throws Exception {
         Member member = member();
+        MemberProfile profile = MemberProfile.create(member);
         when(memberRepository.findByProviderUserIdForUpdate("kakao-1")).thenReturn(Optional.of(member));
+        when(memberProfileRepository.findByMember_Id(1L)).thenReturn(Optional.of(profile));
 
         memberWithdrawalService.withdrawByKakaoWebhook("kakao-1");
 
         assertThat(member.getStatus()).isEqualTo(MemberStatus.WITHDRAWN);
+        assertThat(member.getProfile()).isNull();
+        verify(memberProfileRepository).delete(profile);
         verify(memberTokenService).revoke(1L);
         verify(kakaoUnlinkFailureRepository).deleteByMember_Id(1L);
         verify(kakaoUnlinkClient, never()).unlink(any());

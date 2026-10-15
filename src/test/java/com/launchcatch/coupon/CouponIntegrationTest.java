@@ -26,6 +26,12 @@ import com.launchcatch.coupon.service.CouponLookUpService;
 import com.launchcatch.global.config.ClockConfig;
 import com.launchcatch.global.response.CursorPageResponse;
 import jakarta.persistence.EntityManager;
+import com.launchcatch.campaign.contract.CampaignInfo;
+import com.launchcatch.campaign.contract.CampaignQueryService;
+import com.launchcatch.campaign.contract.CampaignStatus;
+import org.springframework.http.MediaType;
+import java.util.stream.LongStream;
+import java.util.stream.Collectors;
 import java.nio.ByteBuffer;
 import com.launchcatch.owner.contract.OwnerAccountStatus;
 import com.launchcatch.owner.contract.OwnerStatusQuery;
@@ -82,8 +88,9 @@ class CouponIntegrationTest extends IntegrationTestSupport {
     @Autowired PlatformTransactionManager transactionManager;
     @Autowired CouponLookUpService couponLookUpService;
     @Autowired CouponCommandService couponCommandService;
-    @MockitoBean Clock clock;
+    @MockitoSpyBean Clock clock;
     @MockitoBean OwnerStatusQuery ownerStatusQuery;
+    @MockitoBean CampaignQueryService campaignQueryService;
     @MockitoSpyBean CouponQrImageEncoder imageEncoder;
     @Autowired MemberCouponRepository memberCouponRepository;
 
@@ -1703,6 +1710,211 @@ class CouponIntegrationTest extends IntegrationTestSupport {
         // QR 갱신 전후의 토큰과 버전, 상태를 비교할 회원 쿠폰을 DB에서 조회한다.
         private Map<String, Object> coupon() {
             return jdbcTemplate.queryForMap("SELECT * FROM member_coupon WHERE member_coupon_id = 1001");
+        }
+    }
+
+    @Nested
+    @DisplayName("매장별 쿠폰 이벤트 상태 조회")
+    @Transactional
+    class EventStatusQuery {
+
+        private static final String PATH = "/v1/coupon-events:getStatus";
+        private static final LocalDate TODAY = LocalDate.of(2026, 10, 14);
+        private static final LocalDateTime NOW = TODAY.atTime(12, 0);
+
+        @BeforeEach
+        void setUp() {
+            when(clock.withZone(ClockConfig.ZONE)).thenReturn(
+                    Clock.fixed(Instant.parse("2026-10-14T03:00:00.123456Z"), ClockConfig.ZONE));
+            jdbcTemplate.update("""
+                    INSERT INTO member (member_id, provider_user_id, nickname, status, created_at, updated_at)
+                    VALUES (17, 'coupon-event-17', '점심헌터', 'ACTIVE', ?, ?),
+                           (18, 'coupon-event-18', '점심헌터', 'ACTIVE', ?, ?)
+                    """, NOW, NOW, NOW, NOW);
+            insertEvent(501, 10, TODAY, "ACTIVE");
+            insertEvent(502, 20, TODAY, "SCHEDULED");
+            insertEvent(503, 30, TODAY, "PAUSED");
+            insertEvent(504, 40, TODAY, "ENDED");
+            insertEvent(505, 50, TODAY.minusDays(1), "ACTIVE");
+            insertEvent(506, 60, TODAY.plusDays(1), "ACTIVE");
+            insertInventory(1, "AVAILABLE");
+            insertInventory(2, "AVAILABLE");
+            insertInventory(3, "ISSUED");
+            jdbcTemplate.update("""
+                    INSERT INTO member_coupon (member_coupon_id, coupon_event_id, member_id, coupon_code,
+                            qr_version, status, usable_start_at, usable_end_at, created_at, updated_at)
+                    VALUES (1001, 501, 17, UNHEX(LPAD('1001', 32, '0')), 0, 'REMOVED', ?, ?, ?, ?),
+                           (1002, 502, 18, UNHEX(LPAD('1002', 32, '0')), 0, 'ISSUED', ?, ?, ?, ?)
+                    """, NOW, NOW.plusHours(3), NOW, NOW, NOW, NOW.plusHours(3), NOW, NOW);
+            jdbcTemplate.update("""
+                    INSERT INTO coupon_daily_limit (member_id, business_date, issued_count, created_at, updated_at)
+                    VALUES (17, ?, 1, ?, ?)
+                    """, TODAY, NOW, NOW);
+        }
+
+        @Test
+        void 오늘의_조회_대상과_AVAILABLE_재고만_반환하고_삭제한_발급_이력을_유지한다() throws Exception {
+            List<Long> storeIds = List.of(20L, 10L, 30L, 40L, 50L, 60L, 70L);
+            when(campaignQueryService.findByStoreIdIn(storeIds)).thenReturn(List.of(
+                    campaign(10L, CampaignStatus.ACTIVE), campaign(20L, CampaignStatus.SCHEDULED),
+                    campaign(30L, CampaignStatus.PAUSED)));
+            var eventsBefore = jdbcTemplate.queryForList("SELECT * FROM coupon_event ORDER BY coupon_event_id");
+            var inventoryBefore = jdbcTemplate.queryForList("SELECT * FROM coupon_inventory ORDER BY coupon_inventory_id");
+            var couponsBefore = jdbcTemplate.queryForList("SELECT * FROM member_coupon ORDER BY member_coupon_id");
+            var limitsBefore = jdbcTemplate.queryForList("SELECT * FROM coupon_daily_limit ORDER BY coupon_daily_limit_id");
+
+            mockMvc.perform(post(PATH).with(user(MEMBER)).contentType(MediaType.APPLICATION_JSON)
+                            .content("{\"storeIds\":[20,10,30,40,50,60,70]}"))
+                    .andExpect(status().isOk()).andExpect(jsonPath("$.code").value("SUCCESS"))
+                    .andExpect(jsonPath("$.data.serverTime").value("2026-10-14T12:00:00.123+09:00"))
+                    .andExpect(jsonPath("$.data.items.length()").value(7))
+                    .andExpect(jsonPath("$.data.items[0].storeId").value(20))
+                    .andExpect(jsonPath("$.data.items[1].storeId").value(10))
+                    .andExpect(jsonPath("$.data.items[2].storeId").value(30))
+                    .andExpect(jsonPath("$.data.items[3].storeId").value(40))
+                    .andExpect(jsonPath("$.data.items[4].storeId").value(50))
+                    .andExpect(jsonPath("$.data.items[5].storeId").value(60))
+                    .andExpect(jsonPath("$.data.items[6].storeId").value(70))
+                    .andExpect(jsonPath("$.data.items[0].eventState").value("SCHEDULED"))
+                    .andExpect(jsonPath("$.data.items[0].remainingQuantity").value(0))
+                    .andExpect(jsonPath("$.data.items[0].hasIssuedToday").value(false))
+                    .andExpect(jsonPath("$.data.items[1].hasCampaign").value(true))
+                    .andExpect(jsonPath("$.data.items[1].eventId").value(501))
+                    .andExpect(jsonPath("$.data.items[1].eventState").value("OPEN"))
+                    .andExpect(jsonPath("$.data.items[1].remainingQuantity").value(2))
+                    .andExpect(jsonPath("$.data.items[1].usableStartTime").value("2026-10-14T12:30:00+09:00"))
+                    .andExpect(jsonPath("$.data.items[1].hasIssuedToday").value(true))
+                    .andExpect(jsonPath("$.data.items[1].cannotIssueReason").value("ALREADY_ISSUED"))
+                    .andExpect(jsonPath("$.data.items[2].eventState").value("NO_EVENT"))
+                    .andExpect(jsonPath("$.data.items[3].eventState").value("NO_EVENT"))
+                    .andExpect(jsonPath("$.data.items[4].eventState").value("NO_EVENT"))
+                    .andExpect(jsonPath("$.data.items[5].eventState").value("NO_EVENT"))
+                    .andExpect(jsonPath("$.data.items[6].eventState").value("NO_EVENT"))
+                    .andExpect(jsonPath("$.data.items[6].eventId").value(org.hamcrest.Matchers.nullValue()))
+                    .andExpect(jsonPath("$.data.items[6].usableStartTime").value(org.hamcrest.Matchers.nullValue()))
+                    .andExpect(jsonPath("$.data.items[6].usableEndTime").value(org.hamcrest.Matchers.nullValue()));
+
+            assertThat(jdbcTemplate.queryForList("SELECT * FROM coupon_event ORDER BY coupon_event_id")).isEqualTo(eventsBefore);
+            assertThat(jdbcTemplate.queryForList("SELECT * FROM coupon_inventory ORDER BY coupon_inventory_id"))
+                    .usingRecursiveComparison().isEqualTo(inventoryBefore);
+            assertThat(jdbcTemplate.queryForList("SELECT * FROM member_coupon ORDER BY member_coupon_id"))
+                    .usingRecursiveComparison().isEqualTo(couponsBefore);
+            assertThat(jdbcTemplate.queryForList("SELECT * FROM coupon_daily_limit ORDER BY coupon_daily_limit_id")).isEqualTo(limitsBefore);
+        }
+
+        @Test
+        void 찜_contract를_연결하기_전에는_발급_가능으로_안내하지_않는다() throws Exception {
+            mockMvc.perform(post(PATH).with(user(new CustomUserDetails(18L, Role.MEMBER)))
+                            .contentType(MediaType.APPLICATION_JSON).content("{\"storeIds\":[10]}"))
+                    .andExpect(status().isOk()).andExpect(jsonPath("$.data.items[0].wished").value(false))
+                    .andExpect(jsonPath("$.data.items[0].canIssue").value(false))
+                    .andExpect(jsonPath("$.data.items[0].cannotIssueReason").value("NOT_WISHED"));
+        }
+
+        @Test
+        void 발급_시간_안에_AVAILABLE_재고가_없으면_품절로_표시한다() throws Exception {
+            jdbcTemplate.update("UPDATE coupon_inventory SET status = 'ISSUED' WHERE coupon_event_id = 501");
+
+            mockMvc.perform(post(PATH).with(user(MEMBER)).contentType(MediaType.APPLICATION_JSON)
+                            .content("{\"storeIds\":[10]}"))
+                    .andExpect(status().isOk()).andExpect(jsonPath("$.data.items[0].eventState").value("SOLD_OUT"))
+                    .andExpect(jsonPath("$.data.items[0].remainingQuantity").value(0));
+        }
+
+        @Test
+        void 같은_매장의_조회_대상_이벤트가_두_개면_서버_오류로_거절한다() throws Exception {
+            jdbcTemplate.update("UPDATE coupon_event SET store_id = 10 WHERE coupon_event_id = 502");
+
+            mockMvc.perform(post(PATH).with(user(MEMBER)).contentType(MediaType.APPLICATION_JSON)
+                            .content("{\"storeIds\":[10]}"))
+                    .andExpect(status().isInternalServerError()).andExpect(jsonPath("$.code").value("COMMON-001"));
+        }
+
+        @ParameterizedTest
+        @ValueSource(strings = {"{}", "{\"storeIds\":null}", "{\"storeIds\":[]}", "{\"storeIds\":[null]}",
+                "{\"storeIds\":[0]}", "{\"storeIds\":[-1]}", "{\"storeIds\":[10,10]}"})
+        void 잘못된_목록은_공통_입력_오류로_거절한다(String body) throws Exception {
+            mockMvc.perform(post(PATH).with(user(MEMBER)).contentType(MediaType.APPLICATION_JSON).content(body))
+                    .andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("COMMON-002"));
+        }
+
+        @Test
+        void 매장_100개를_초과하면_거절한다() throws Exception {
+            String ids = LongStream.rangeClosed(1, 101).mapToObj(Long::toString).collect(Collectors.joining(","));
+
+            mockMvc.perform(post(PATH).with(user(MEMBER)).contentType(MediaType.APPLICATION_JSON)
+                            .content("{\"storeIds\":[" + ids + "]}"))
+                    .andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("COMMON-002"));
+        }
+
+        @Test
+        void 매장_100개는_입력_순서대로_반환한다() throws Exception {
+            String ids = LongStream.rangeClosed(1, 100).mapToObj(Long::toString).collect(Collectors.joining(","));
+
+            mockMvc.perform(post(PATH).with(user(MEMBER)).contentType(MediaType.APPLICATION_JSON)
+                            .content("{\"storeIds\":[" + ids + "]}"))
+                    .andExpect(status().isOk()).andExpect(jsonPath("$.data.items.length()").value(100))
+                    .andExpect(jsonPath("$.data.items[99].storeId").value(100));
+        }
+
+        @ParameterizedTest
+        @ValueSource(strings = {"{", "null", "{\"storeIds\":{}}", "{\"storeIds\":[\"invalid\"]}",
+                "{\"storeIds\":[10.9]}", "{\"storeIds\":[\"10\"]}"})
+        void 읽을_수_없는_본문은_공통_해석_오류로_거절한다(String body) throws Exception {
+            mockMvc.perform(post(PATH).with(user(MEMBER)).contentType(MediaType.APPLICATION_JSON).content(body))
+                    .andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("COMMON-003"));
+        }
+
+        @Test
+        void 인증이_없으면_거절한다() throws Exception {
+            mockMvc.perform(post(PATH).contentType(MediaType.APPLICATION_JSON).content("{\"storeIds\":[10]}"))
+                    .andExpect(status().isUnauthorized()).andExpect(jsonPath("$.code").value("AUTH-005"));
+        }
+
+        @ParameterizedTest
+        @EnumSource(value = Role.class, names = "MEMBER", mode = EnumSource.Mode.EXCLUDE)
+        void MEMBER_외_역할은_거절한다(Role role) throws Exception {
+            mockMvc.perform(post(PATH).with(user(new CustomUserDetails(17L, role)))
+                            .contentType(MediaType.APPLICATION_JSON).content("{\"storeIds\":[10]}"))
+                    .andExpect(status().isForbidden()).andExpect(jsonPath("$.code").value("AUTH-006"));
+        }
+
+        @Test
+        void Swagger가_POST_요청_제약과_서버_시각과_null_필드를_설명한다() throws Exception {
+            mockMvc.perform(get("/v3/api-docs"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.paths['/v1/coupon-events:getStatus'].post.requestBody.content['application/json'].example.storeIds")
+                            .value(org.hamcrest.Matchers.contains(10, 20, 30)))
+                    .andExpect(jsonPath("$.paths['/v1/coupon-events:getStatus'].post.responses['200'].content['*/*'].example.data.serverTime")
+                            .value("2026-10-14T12:00:00.123+09:00"))
+                    .andExpect(jsonPath("$.paths['/v1/coupon-events:getStatus'].post.responses['200'].content['*/*'].example.data.items[2].eventId")
+                            .value(org.hamcrest.Matchers.nullValue()))
+                    .andExpect(jsonPath("$.components.schemas.CouponEventStatusRequest.properties.storeIds.minItems").value(1))
+                    .andExpect(jsonPath("$.components.schemas.CouponEventStatusRequest.properties.storeIds.maxItems").value(100))
+                    .andExpect(jsonPath("$.components.schemas.CouponEventStatusRequest.properties.storeIds.uniqueItems").value(true));
+        }
+
+        private void insertEvent(long eventId, long storeId, LocalDate businessDate, String state) {
+            jdbcTemplate.update("""
+                    INSERT INTO coupon_event (coupon_event_id, campaign_id, business_date, issue_quantity,
+                            usable_start_at, usable_end_at, status, store_id, store_name, discount_target_type,
+                            discount_type, discount_value, created_at, updated_at)
+                    VALUES (?, ?, ?, 100, ?, ?, ?, ?, '런치식당', 'ALL', 'AMOUNT', 3000, ?, ?)
+                    """, eventId, eventId, businessDate, businessDate.atTime(12, 30), businessDate.atTime(15, 0),
+                    state, storeId, NOW, NOW);
+        }
+
+        private void insertInventory(int sequence, String state) {
+            jdbcTemplate.update("""
+                    INSERT INTO coupon_inventory (coupon_event_id, sequence_no, coupon_code, status,
+                            usable_start_at, usable_end_at, created_at, updated_at)
+                    VALUES (501, ?, UNHEX(LPAD(?, 32, '0')), ?, ?, ?, ?, ?)
+                    """, sequence, String.valueOf(sequence), state, NOW, NOW.plusHours(3), NOW, NOW);
+        }
+
+        private CampaignInfo campaign(Long storeId, CampaignStatus status) {
+            return new CampaignInfo(storeId, 1L, storeId, status, 100, null, null, null, null,
+                    null, null, 0, null, 0, null, List.of(), null, null, null, null, null);
         }
     }
 }

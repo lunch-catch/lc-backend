@@ -34,6 +34,8 @@ class TestPlacementTest {
     private static final String INTEGRATION_SUFFIX = "IntegrationTest";
     private static final String SPRING_BOOT_TEST =
             "org.springframework.boot.test.context.SpringBootTest";
+    private static final String DYNAMIC_PROPERTY_SOURCE =
+            "org.springframework.test.context.DynamicPropertySource";
     private static final String SUPPORT = BASE + ".IntegrationTestSupport";
     private static final Set<String> CONTAINERS = Set.of(
             "org.testcontainers.containers.GenericContainer",
@@ -177,6 +179,30 @@ class TestPlacementTest {
                 .collect(Collectors.toList());
         fail("도메인당 컨텍스트 선언", bad,
                 "그 도메인의 Abstract{도메인}IntegrationTest 에 @SpringBootTest 와 빈 오버라이드를 모으고 상속한다");
+    }
+
+    /*
+     * 동적 속성은 컨텍스트 선언이 있는 자리에만 둔다.
+     *
+     * 캐시 키에는 @DynamicPropertySource 메서드의 집합이 들어간다. 상속한 메서드가 같아도
+     * 하위 클래스가 하나를 더하면 집합이 달라져서 그 클래스만 자기 컨텍스트를 받는다. 선언을
+     * 도메인마다 하나로 모아 둬도 이 축으로 다시 갈리고, 위의 선언 수를 세는 규칙은 그것을
+     * 통과시킨다. 전체를 돌리면 갈라진 쪽이 하나뿐이라 수로도 잘 드러나지 않는다(#299).
+     *
+     * 도메인이 함께 쓸 속성은 그 도메인의 기반 클래스에, 통합 테스트 전체가 쓸 속성은
+     * IntegrationTestSupport 의 메서드 안에 둔다. 이미 있는 메서드에 넣으면 집합이 그대로라
+     * 키가 늘지 않는다.
+     */
+    @ArchTest
+    static void 동적_속성은_컨텍스트_선언과_같은_자리에_둔다(JavaClasses classes) {
+        List<String> bad = own(classes).stream()
+                .filter(c -> !bootsContext(c))
+                .flatMap(c -> c.getMethods().stream())
+                .filter(m -> m.isAnnotatedWith(DYNAMIC_PROPERTY_SOURCE))
+                .map(m -> m.getOwner().getName() + "." + m.getName() + "()")
+                .collect(Collectors.toList());
+        fail("동적 속성 선언", bad,
+                "그 도메인의 Abstract{도메인}IntegrationTest 나 IntegrationTestSupport 의 메서드로 옮긴다");
     }
 
     private static String domainOf(JavaClass c) {

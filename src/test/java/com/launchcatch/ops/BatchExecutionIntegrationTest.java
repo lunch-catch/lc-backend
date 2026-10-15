@@ -2,6 +2,7 @@ package com.launchcatch.ops;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.launchcatch.IntegrationTestSupport;
 import com.launchcatch.ops.entity.BatchExecutionLog;
 import com.launchcatch.ops.entity.BatchStatus;
 import com.launchcatch.ops.repository.BatchExecutionLogRepository;
@@ -21,8 +22,6 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.test.context.DynamicPropertyRegistry;
-import org.springframework.test.context.DynamicPropertySource;
 
 /*
  * 점유와 이어받기를 실제 MySQL 에서 확인한다.
@@ -34,15 +33,10 @@ import org.springframework.test.context.DynamicPropertySource;
  */
 class BatchExecutionIntegrationTest extends AbstractOpsIntegrationTest {
 
-    private static final String ME = "batch-1";
+    private static final String ME = IntegrationTestSupport.BATCH_OWNER;
     private static final String OTHER = "batch-2";
     private static final String JOB = "LOAD_DAILY_CANDIDATE";
     private static final LocalDate DATE = LocalDate.of(2026, 10, 6);
-
-    @DynamicPropertySource
-    static void 이_배치의_점유자를_등록한다(DynamicPropertyRegistry registry) {
-        registry.add("launchcatch.batch.owner-id", () -> ME);
-    }
 
     @Autowired
     private BatchExecutionService service;
