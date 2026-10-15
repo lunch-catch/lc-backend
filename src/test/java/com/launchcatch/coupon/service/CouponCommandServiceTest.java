@@ -12,6 +12,7 @@ import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
 import com.google.zxing.BinaryBitmap;
+import com.google.zxing.DecodeHintType;
 import com.google.zxing.client.j2se.BufferedImageLuminanceSource;
 import com.google.zxing.common.HybridBinarizer;
 import com.google.zxing.qrcode.QRCodeReader;
@@ -35,6 +36,7 @@ import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.Base64;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import javax.imageio.ImageIO;
@@ -47,6 +49,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.EnumSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -265,6 +268,22 @@ class CouponCommandServiceTest {
                     Clock.fixed(Instant.parse("2026-10-10T03:00:00Z"), ZoneOffset.UTC));
         }
 
+        @ParameterizedTest
+        @ValueSource(strings = {
+                "f0a609fe-b881-4607-8179-cefca7c6d219",
+                "07295f2a-465c-4c0c-80c5-d3b3e9b9eb5c",
+                "c7ad4239-64e5-4536-9849-062b75f6527f",
+                "b79a7c10-cb20-4260-a4d4-8524ab4c9984",
+                "65ef8250-14e3-4518-9fc0-0aefad0c00c4"
+        })
+        void 위치_표시와_비슷한_무늬의_QR도_원래_토큰으로_읽는다(String tokenValue) throws Exception {
+            UUID token = UUID.fromString(tokenValue);
+            CouponQrResponse response = new CouponQrResponse(new CouponQrImageEncoder().encode(token),
+                    OffsetDateTime.parse("2026-10-10T12:01:00+09:00"));
+
+            assertThat(decode(response)).isEqualTo(tokenValue);
+        }
+
         @Test
         void 첫_QR은_저장된_토큰의_PNG이며_한국_시간으로_60초_후_만료한다() throws Exception {
             MemberCoupon coupon = coupon(MemberCouponStatus.ISSUED);
@@ -405,8 +424,10 @@ class CouponCommandServiceTest {
             byte[] png = Base64.getDecoder().decode(response.qrImageBytes());
             assertThat(png).startsWith((byte) 0x89, (byte) 0x50, (byte) 0x4e, (byte) 0x47);
             var image = ImageIO.read(new ByteArrayInputStream(png));
+            // 직접 만든 PNG는 QR 위치를 추측하지 않고 원본 격자를 읽는다.
             return new QRCodeReader().decode(new BinaryBitmap(
-                    new HybridBinarizer(new BufferedImageLuminanceSource(image)))).getText();
+                    new HybridBinarizer(new BufferedImageLuminanceSource(image))),
+                    Map.of(DecodeHintType.PURE_BARCODE, true)).getText();
         }
     }
 
