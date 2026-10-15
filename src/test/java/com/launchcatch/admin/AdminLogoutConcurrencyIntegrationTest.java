@@ -5,18 +5,17 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.doThrow;
 
-import com.launchcatch.IntegrationTestSupport;
 import com.launchcatch.admin.dto.AdminLoginRequest;
 import com.launchcatch.admin.entity.Admin;
-import com.launchcatch.admin.repository.AdminRepository;
 import com.launchcatch.admin.service.AdminLoginService;
 import com.launchcatch.auth.Role;
 import com.launchcatch.auth.jwt.JwtTokenProvider;
 import com.launchcatch.auth.opaque.RefreshTokenRepository;
 import com.launchcatch.auth.opaque.TokenHasher;
 import java.time.Duration;
-import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -25,23 +24,14 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.annotation.DirtiesContext;
-import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 // 실제 MySQL과 Valkey로 게시 순서와 Redis 호출 중 DB 행 잠금 해제를 검증한다.
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
-@SpringBootTest(properties = "jwt.secret=test-only-secret-not-used-anywhere-else-0123456789abcdef")
-class AdminLogoutConcurrencyIntegrationTest extends IntegrationTestSupport {
+class AdminLogoutConcurrencyIntegrationTest extends AbstractAdminIntegrationTest {
 
-    @Autowired private AdminRepository admins;
     @Autowired private AdminLoginService login;
-    @Autowired private PasswordEncoder encoder;
-    @MockitoBean private JwtTokenProvider jwt;
-    @org.springframework.test.context.bean.override.mockito.MockitoSpyBean private RefreshTokenRepository cache;
     @Autowired private com.launchcatch.admin.service.AdminLogoutService logout;
-    @org.springframework.test.context.bean.override.mockito.MockitoSpyBean private com.launchcatch.auth.jwt.AccessTokenValidAfterRepository cutoff;
     @Autowired private org.springframework.data.redis.core.StringRedisTemplate redis;
     @Autowired private com.launchcatch.admin.repository.AdminAccessTokenVersionRepository versions;
     @Autowired private com.launchcatch.admin.service.AdminTokenService reissue;
@@ -53,8 +43,8 @@ class AdminLogoutConcurrencyIntegrationTest extends IntegrationTestSupport {
         Admin admin = admins.saveAndFlush(Admin.register("concurrent.admin", encoder.encode("Freshman!2026"),
                 "관리자", Role.ADMIN));
         adminId = admin.getId();
-        when(jwt.getAccessTokenValidityMs()).thenReturn(1800000L);
-        when(jwt.refreshTokenValidityMs(Role.ADMIN)).thenReturn(Duration.ofDays(1).toMillis());
+        doReturn(1800000L).when(jwt).getAccessTokenValidityMs();
+        doReturn(Duration.ofDays(1).toMillis()).when(jwt).refreshTokenValidityMs(Role.ADMIN);
     }
 
     @AfterEach
@@ -71,14 +61,13 @@ class AdminLogoutConcurrencyIntegrationTest extends IntegrationTestSupport {
         var waiting = new CountDownLatch(1);
         var release = new CountDownLatch(1);
         var signatures = new AtomicInteger();
-        when(jwt.createAccessToken(eq(adminId), eq(Role.ADMIN), org.mockito.ArgumentMatchers.anyMap()))
-                .thenAnswer(call -> {
-                    if (signatures.incrementAndGet() == 1) {
-                        waiting.countDown();
-                        if (!release.await(30, TimeUnit.SECONDS)) { throw new IllegalStateException("JWT wait timed out"); }
-                    }
-                    return realJwt.createAccessToken(call.getArgument(0), call.getArgument(1), call.getArgument(2));
-                });
+        doAnswer(call -> {
+            if (signatures.incrementAndGet() == 1) {
+                waiting.countDown();
+                if (!release.await(30, TimeUnit.SECONDS)) { throw new IllegalStateException("JWT wait timed out"); }
+            }
+            return realJwt.createAccessToken(call.getArgument(0), call.getArgument(1), call.getArgument(2));
+        }).when(jwt).createAccessToken(eq(adminId), eq(Role.ADMIN), org.mockito.ArgumentMatchers.anyMap());
         try (var workers = Executors.newSingleThreadExecutor()) {
             var delayed = workers.submit(() -> login.login(new AdminLoginRequest("concurrent.admin", "Freshman!2026")));
             com.launchcatch.admin.dto.AdminLoginResult fresh;
@@ -101,7 +90,7 @@ class AdminLogoutConcurrencyIntegrationTest extends IntegrationTestSupport {
     void 재발급_DB커밋_후_지연된_JWT는_로그아웃으로_차단한다(boolean cacheLost) throws Exception {
         var initial = login.login(new AdminLoginRequest("concurrent.admin", "Freshman!2026"));
         if (cacheLost) {
-            cache.revokeIfActiveHashMatches(TokenHasher.sha256(initial.refreshToken()), Role.ADMIN, adminId);
+            tokens.revokeIfActiveHashMatches(TokenHasher.sha256(initial.refreshToken()), Role.ADMIN, adminId);
         }
         var now = java.time.Instant.now();
         var realJwt = new JwtTokenProvider("test-only-secret-for-delayed-jwt-0123456789abcdef",
@@ -110,14 +99,13 @@ class AdminLogoutConcurrencyIntegrationTest extends IntegrationTestSupport {
         var waiting = new CountDownLatch(1);
         var release = new CountDownLatch(1);
         var signatures = new AtomicInteger();
-        when(jwt.createAccessToken(eq(adminId), eq(Role.ADMIN), org.mockito.ArgumentMatchers.anyMap()))
-                .thenAnswer(call -> {
-                    if (signatures.incrementAndGet() == 1) {
-                        waiting.countDown();
-                        if (!release.await(30, TimeUnit.SECONDS)) { throw new IllegalStateException("JWT wait timed out"); }
-                    }
-                    return realJwt.createAccessToken(call.getArgument(0), call.getArgument(1), call.getArgument(2));
-                });
+        doAnswer(call -> {
+            if (signatures.incrementAndGet() == 1) {
+                waiting.countDown();
+                if (!release.await(30, TimeUnit.SECONDS)) { throw new IllegalStateException("JWT wait timed out"); }
+            }
+            return realJwt.createAccessToken(call.getArgument(0), call.getArgument(1), call.getArgument(2));
+        }).when(jwt).createAccessToken(eq(adminId), eq(Role.ADMIN), org.mockito.ArgumentMatchers.anyMap());
         try (var workers = Executors.newSingleThreadExecutor()) {
             var delayed = workers.submit(() -> reissue.reissue(initial.refreshToken()));
             com.launchcatch.admin.dto.AdminLoginResult fresh;
@@ -134,7 +122,7 @@ class AdminLogoutConcurrencyIntegrationTest extends IntegrationTestSupport {
                     realJwt.getAdditionalClaims(old.accessToken()), com.launchcatch.auth.jwt.CutoffPolicy.REQUIRED)).isFalse();
             assertThat(verifier.isValid(Role.ADMIN, adminId, realJwt.getIssuedAt(fresh.accessToken()),
                     realJwt.getAdditionalClaims(fresh.accessToken()), com.launchcatch.auth.jwt.CutoffPolicy.REQUIRED)).isTrue();
-            assertThat(cache.find(old.refreshToken())).isEmpty();
+            assertThat(tokens.find(old.refreshToken())).isEmpty();
             assertThat(admins.findById(adminId).orElseThrow().getRefreshTokenHash())
                     .isEqualTo(TokenHasher.sha256(fresh.refreshToken()));
         }
@@ -144,15 +132,15 @@ class AdminLogoutConcurrencyIntegrationTest extends IntegrationTestSupport {
     void 로그아웃은_DB와_캐시를_폐기하고_이전_Access_Token을_차단한다() {
         var result = login.login(new AdminLoginRequest("concurrent.admin", "Freshman!2026"));
         var issued = java.time.LocalDateTime.now().minusSeconds(1);
-        assertThat(cache.find(result.refreshToken())).isPresent();
+        assertThat(tokens.find(result.refreshToken())).isPresent();
         logout.logout(adminId, Role.ADMIN);
         Admin admin = admins.findById(adminId).orElseThrow();
         assertThat(admin.getRefreshTokenHash()).isNull();
         assertThat(admin.getRefreshTokenExpiresAt()).isNull();
-        assertThat(cache.find(result.refreshToken())).isEmpty();
-        assertThat(cache.findActiveHash(Role.ADMIN, adminId)).isEmpty();
-        assertThat(cutoff.isValidAfter(Role.ADMIN, adminId, issued)).isFalse();
-        assertThat(cutoff.isValidAfter(Role.ADMIN, adminId, java.time.LocalDateTime.now().plusSeconds(1))).isTrue();
+        assertThat(tokens.find(result.refreshToken())).isEmpty();
+        assertThat(tokens.findActiveHash(Role.ADMIN, adminId)).isEmpty();
+        assertThat(legacyCutoff.isValidAfter(Role.ADMIN, adminId, issued)).isFalse();
+        assertThat(legacyCutoff.isValidAfter(Role.ADMIN, adminId, java.time.LocalDateTime.now().plusSeconds(1))).isTrue();
     }
 
     @Test
@@ -164,7 +152,7 @@ class AdminLogoutConcurrencyIntegrationTest extends IntegrationTestSupport {
             waiting.countDown();
             if (!release.await(30, TimeUnit.SECONDS)) { throw new IllegalStateException("publication wait timed out"); }
             return call.callRealMethod();
-        }).when(cache).saveIfNewer(any(), eq(adminId), eq(Role.ADMIN), eq(true), any(), org.mockito.ArgumentMatchers.anyLong());
+        }).when(tokens).saveIfNewer(any(), eq(adminId), eq(Role.ADMIN), eq(true), any(), org.mockito.ArgumentMatchers.anyLong());
         try (var workers = Executors.newSingleThreadExecutor()) {
             var delayed = workers.submit(() -> login.login(new AdminLoginRequest("concurrent.admin", "Freshman!2026")));
             try {
@@ -173,8 +161,8 @@ class AdminLogoutConcurrencyIntegrationTest extends IntegrationTestSupport {
             } finally { release.countDown(); }
             var earlier = delayed.get(30, TimeUnit.SECONDS);
             assertThat(admins.findById(adminId).orElseThrow().getRefreshTokenHash()).isNull();
-            assertThat(cache.find(earlier.refreshToken())).isEmpty();
-            assertThat(cache.findActiveHash(Role.ADMIN, adminId)).isEmpty();
+            assertThat(tokens.find(earlier.refreshToken())).isEmpty();
+            assertThat(tokens.findActiveHash(Role.ADMIN, adminId)).isEmpty();
         }
     }
 
@@ -188,7 +176,7 @@ class AdminLogoutConcurrencyIntegrationTest extends IntegrationTestSupport {
             waiting.countDown();
             if (!release.await(30, TimeUnit.SECONDS)) { throw new IllegalStateException("revocation wait timed out"); }
             return call.callRealMethod();
-        }).when(cache).revokeBeforeVersion(eq(adminId), eq(Role.ADMIN), org.mockito.ArgumentMatchers.anyLong());
+        }).when(tokens).revokeBeforeVersion(eq(adminId), eq(Role.ADMIN), org.mockito.ArgumentMatchers.anyLong());
         try (var workers = Executors.newSingleThreadExecutor()) {
             var delayed = workers.submit(() -> logout.logout(adminId, Role.ADMIN));
             com.launchcatch.admin.dto.AdminLoginResult latest;
@@ -198,9 +186,9 @@ class AdminLogoutConcurrencyIntegrationTest extends IntegrationTestSupport {
             } finally { release.countDown(); }
             delayed.get(30, TimeUnit.SECONDS);
             assertThat(admins.findById(adminId).orElseThrow().getRefreshTokenHash()).isEqualTo(TokenHasher.sha256(latest.refreshToken()));
-            assertThat(cache.findActiveHash(Role.ADMIN, adminId)).contains(TokenHasher.sha256(latest.refreshToken()));
-            assertThat(cache.find(latest.refreshToken())).isPresent();
-            assertThat(cache.find(first.refreshToken())).isEmpty();
+            assertThat(tokens.findActiveHash(Role.ADMIN, adminId)).contains(TokenHasher.sha256(latest.refreshToken()));
+            assertThat(tokens.find(latest.refreshToken())).isPresent();
+            assertThat(tokens.find(first.refreshToken())).isEmpty();
         }
     }
 
@@ -213,16 +201,16 @@ class AdminLogoutConcurrencyIntegrationTest extends IntegrationTestSupport {
                 throw new org.springframework.dao.QueryTimeoutException("redis temporary outage");
             }
             return call.callRealMethod();
-        }).when(cache).revokeBeforeVersion(eq(adminId), eq(Role.ADMIN), org.mockito.ArgumentMatchers.anyLong());
+        }).when(tokens).revokeBeforeVersion(eq(adminId), eq(Role.ADMIN), org.mockito.ArgumentMatchers.anyLong());
         org.assertj.core.api.Assertions.assertThatThrownBy(() -> logout.logout(adminId, Role.ADMIN))
                 .isInstanceOfSatisfying(com.launchcatch.auth.exception.AuthException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(com.launchcatch.auth.exception.AuthErrorCode.REFRESH_TOKEN_STORE_UNAVAILABLE));
         assertThat(admins.findById(adminId).orElseThrow().getRefreshTokenHash()).isNull();
         logout.logout(adminId, Role.ADMIN);
-        assertThat(cache.findActiveHash(Role.ADMIN, adminId)).isEmpty();
-        assertThat(cache.find(result.refreshToken())).get().extracting(RefreshTokenRepository.RefreshTokenData::id).isEqualTo(adminId);
+        assertThat(tokens.findActiveHash(Role.ADMIN, adminId)).isEmpty();
+        assertThat(tokens.find(result.refreshToken())).get().extracting(RefreshTokenRepository.RefreshTokenData::id).isEqualTo(adminId);
         // 순번 폐기는 소유자를 보존한 tombstone을 남기므로 회전으로 유효화할 수 없다.
-        assertThat(cache.compareAndRotate(result.refreshToken(), "new-token", Duration.ofDays(1)).status())
+        assertThat(tokens.compareAndRotate(result.refreshToken(), "new-token", Duration.ofDays(1)).status())
                 .isEqualTo(RefreshTokenRepository.RotateOutcome.Status.REUSE_DETECTED);
     }
 
@@ -230,10 +218,10 @@ class AdminLogoutConcurrencyIntegrationTest extends IntegrationTestSupport {
     void 병렬_로그아웃의_늦은_폐기기준이_최신_차단을_되돌리지_않는다() {
         var early = java.time.LocalDateTime.of(2026, 10, 9, 12, 0, 0, 100000000);
         var latest = early.plusSeconds(2);
-        cutoff.invalidateBefore(Role.ADMIN, adminId, latest, Duration.ofMinutes(30));
-        cutoff.invalidateBefore(Role.ADMIN, adminId, early, Duration.ofMinutes(30));
-        assertThat(cutoff.isValidAfter(Role.ADMIN, adminId, early.plusSeconds(1))).isFalse();
-        assertThat(cutoff.isValidAfter(Role.ADMIN, adminId, latest)).isTrue();
+        legacyCutoff.invalidateBefore(Role.ADMIN, adminId, latest, Duration.ofMinutes(30));
+        legacyCutoff.invalidateBefore(Role.ADMIN, adminId, early, Duration.ofMinutes(30));
+        assertThat(legacyCutoff.isValidAfter(Role.ADMIN, adminId, early.plusSeconds(1))).isFalse();
+        assertThat(legacyCutoff.isValidAfter(Role.ADMIN, adminId, latest)).isTrue();
     }
 
     @Test
@@ -243,7 +231,7 @@ class AdminLogoutConcurrencyIntegrationTest extends IntegrationTestSupport {
         long version = before.getRefreshTokenIssuanceVersion();
         var issuedAt = java.time.LocalDateTime.now().minusSeconds(1);
         org.mockito.Mockito.doThrow(new org.springframework.dao.DataAccessResourceFailureException("unavailable"))
-                .when(cutoff).invalidateBefore(eq(Role.ADMIN), eq(adminId), any(), any());
+                .when(legacyCutoff).invalidateBefore(eq(Role.ADMIN), eq(adminId), any(), any());
         org.assertj.core.api.Assertions.assertThatThrownBy(() -> logout.logout(adminId, Role.ADMIN))
                 .isInstanceOf(com.launchcatch.auth.exception.AuthException.class);
         var committed = admins.findById(adminId).orElseThrow();

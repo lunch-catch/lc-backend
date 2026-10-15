@@ -2,7 +2,6 @@ package com.launchcatch.ops;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.launchcatch.IntegrationTestSupport;
 import com.launchcatch.ops.entity.BatchExecutionLog;
 import com.launchcatch.ops.entity.BatchStatus;
 import com.launchcatch.ops.repository.BatchExecutionLogRepository;
@@ -21,7 +20,6 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -34,8 +32,7 @@ import org.springframework.test.context.DynamicPropertySource;
  * 종료 시각, 실패 사유는 짝을 요구하는 제약이 걸려 있어 한쪽만 바꾸면 저장이 거부된다.
  * 그 거부는 배치가 실패를 기록하려는 순간에 터지므로, 실패 기록 자체가 사라진다.
  */
-@SpringBootTest
-class BatchExecutionIntegrationTest extends IntegrationTestSupport {
+class BatchExecutionIntegrationTest extends AbstractOpsIntegrationTest {
 
     private static final String ME = "batch-1";
     private static final String OTHER = "batch-2";

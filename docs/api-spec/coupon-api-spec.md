@@ -7,18 +7,18 @@
 
 ## 목록
 
-| 메서드 | 경로 | 하는 일 | 권한 | 행 |
+| 메서드 | 경로 | 하는 일 | 권한 | ID |
 | --- | --- | --- | --- | --- |
-| POST | `/v1/coupons/{memberCouponId}:generateQr` | 내 쿠폰의 QR 생성, 갱신 | MEMBER | 85 |
-| POST | `/v1/coupons` | 선착순 쿠폰 발급 | MEMBER | 83 |
-| GET | `/v1/coupons/issuance-limit` | 당일 발급 한도 조회 | MEMBER | 83 |
-| POST | `/v1/coupon-events:getStatus` | 매장별 오늘 쿠폰 이벤트, 발급 가능 상태 일괄 조회 | MEMBER | 74, 75, 83 |
-| GET | `/v1/coupons` | 내 쿠폰 목록 조회 | MEMBER | 84 |
-| GET | `/v1/coupons/{memberCouponId}` | 내 쿠폰 단건 조회 | MEMBER | 84 |
-| GET | `/v1/coupons/summary` | 마이페이지 쿠폰 요약 조회 | MEMBER | 91 |
+| POST | `/v1/coupons/{memberCouponId}:generateQr` | 내 쿠폰의 QR 생성, 갱신 | MEMBER | FR-082 |
+| POST | `/v1/coupons` | 선착순 쿠폰 발급 | MEMBER | FR-080 |
+| GET | `/v1/coupons/issuance-limit` | 당일 발급 한도 조회 | MEMBER | FR-080 |
+| POST | `/v1/coupon-events:getStatus` | 매장별 오늘 쿠폰 이벤트, 발급 가능 상태 일괄 조회 | MEMBER | FR-071, FR-072, FR-080 |
+| GET | `/v1/coupons` | 내 쿠폰 목록 조회 | MEMBER | FR-081 |
+| GET | `/v1/coupons/{memberCouponId}` | 내 쿠폰 단건 조회 | MEMBER | FR-081 |
+| GET | `/v1/coupons/summary` | 마이페이지 쿠폰 요약 조회 | MEMBER | FR-088 |
 | DELETE | `/v1/coupons/{memberCouponId}` | 미사용 쿠폰 삭제 | MEMBER | - |
-| POST | `/v1/owner/coupon-usages` | 점주가 QR을 스캔해 쿠폰 사용 확정, 할인액 확인 | OWNER | 58, 85 |
-| GET | `/v1/owner/stores/{storeId}/coupon-usages` | 매장 쿠폰 사용 이력 조회 | OWNER | 59 |
+| POST | `/v1/owner/coupon-usages` | 점주가 QR을 스캔해 쿠폰 사용 확정, 할인액 확인 | OWNER | FR-055, FR-082 |
+| GET | `/v1/owner/stores/{storeId}/coupon-usages` | 매장 쿠폰 사용 이력 조회 | OWNER | FR-056 |
 
 ## 오류 코드
 

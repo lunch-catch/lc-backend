@@ -4,16 +4,12 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
-import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.doReturn;
 
-import com.launchcatch.IntegrationTestSupport;
 import com.launchcatch.admin.dto.AdminLoginRequest;
 import com.launchcatch.admin.entity.Admin;
-import com.launchcatch.admin.repository.AdminRepository;
 import com.launchcatch.admin.service.AdminLoginService;
 import com.launchcatch.auth.Role;
-import com.launchcatch.auth.jwt.JwtTokenProvider;
-import com.launchcatch.auth.opaque.RefreshTokenRepository;
 import com.launchcatch.auth.opaque.TokenHasher;
 import java.time.Duration;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -25,19 +21,11 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.security.crypto.password.PasswordEncoder;
-import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 // 실제 MySQL과 Valkey로 게시 순서와 Redis 호출 중 DB 행 잠금 해제를 검증한다.
-@SpringBootTest(properties = "jwt.secret=test-only-secret-not-used-anywhere-else-0123456789abcdef")
-class AdminLoginConcurrencyIntegrationTest extends IntegrationTestSupport {
+class AdminLoginConcurrencyIntegrationTest extends AbstractAdminIntegrationTest {
 
-    @Autowired private AdminRepository admins;
     @Autowired private AdminLoginService login;
-    @Autowired private PasswordEncoder encoder;
-    @MockitoBean private JwtTokenProvider jwt;
-    @org.springframework.test.context.bean.override.mockito.MockitoSpyBean private RefreshTokenRepository cache;
     private Long adminId;
 
     @BeforeEach
@@ -45,7 +33,7 @@ class AdminLoginConcurrencyIntegrationTest extends IntegrationTestSupport {
         Admin admin = admins.saveAndFlush(Admin.register("concurrent.admin", encoder.encode("Freshman!2026"),
                 "관리자", Role.ADMIN));
         adminId = admin.getId();
-        when(jwt.refreshTokenValidityMs(Role.ADMIN)).thenReturn(Duration.ofDays(1).toMillis());
+        doReturn(Duration.ofDays(1).toMillis()).when(jwt).refreshTokenValidityMs(Role.ADMIN);
     }
 
     @AfterEach
@@ -59,7 +47,7 @@ class AdminLoginConcurrencyIntegrationTest extends IntegrationTestSupport {
         CountDownLatch releaseFirst = new CountDownLatch(1);
         AtomicInteger signatures = new AtomicInteger();
         var publishedHashes = new CopyOnWriteArrayList<String>();
-        when(jwt.createAccessToken(eq(adminId), eq(Role.ADMIN), org.mockito.ArgumentMatchers.anyMap())).thenAnswer(call -> {
+        doAnswer(call -> {
             int sequence = signatures.incrementAndGet();
             if (sequence == 1) {
                 firstBackupCommitted.countDown();
@@ -68,13 +56,13 @@ class AdminLoginConcurrencyIntegrationTest extends IntegrationTestSupport {
                 }
             }
             return "test-access-token-" + sequence;
-        });
+        }).when(jwt).createAccessToken(eq(adminId), eq(Role.ADMIN), org.mockito.ArgumentMatchers.anyMap());
         doAnswer(call -> {
             publishedHashes.add(TokenHasher.sha256(call.getArgument(0)));
             assertThat(org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive())
                     .isFalse();
             return call.callRealMethod();
-        }).when(cache).saveIfNewer(any(), eq(adminId), eq(Role.ADMIN), eq(true), any(), org.mockito.ArgumentMatchers.anyLong());
+        }).when(tokens).saveIfNewer(any(), eq(adminId), eq(Role.ADMIN), eq(true), any(), org.mockito.ArgumentMatchers.anyLong());
 
         var workers = Executors.newFixedThreadPool(2);
         try {
@@ -97,7 +85,7 @@ class AdminLoginConcurrencyIntegrationTest extends IntegrationTestSupport {
     }
     @Test
     void Redis_게시가_지연되어도_다른_로그인은_DB_잠금없이_완료하고_이전_게시를_거부한다() throws Exception {
-        when(jwt.createAccessToken(eq(adminId), eq(Role.ADMIN), org.mockito.ArgumentMatchers.anyMap())).thenReturn("test-access-token");
+        doReturn("test-access-token").when(jwt).createAccessToken(eq(adminId), eq(Role.ADMIN), org.mockito.ArgumentMatchers.anyMap());
         var publicationEntered = new CountDownLatch(1);
         var releasePublication = new CountDownLatch(1);
         var calls = new AtomicInteger();
@@ -111,7 +99,7 @@ class AdminLoginConcurrencyIntegrationTest extends IntegrationTestSupport {
                 }
             }
             return call.callRealMethod();
-        }).when(cache).saveIfNewer(any(), eq(adminId), eq(Role.ADMIN), eq(true), any(),
+        }).when(tokens).saveIfNewer(any(), eq(adminId), eq(Role.ADMIN), eq(true), any(),
                 org.mockito.ArgumentMatchers.anyLong());
         var workers = Executors.newFixedThreadPool(2);
         try {
@@ -120,11 +108,11 @@ class AdminLoginConcurrencyIntegrationTest extends IntegrationTestSupport {
             assertThat(publicationEntered.await(30, TimeUnit.SECONDS)).isTrue();
             var second = workers.submit(() -> login.login(request)).get(10, TimeUnit.SECONDS);
             var latestHash = TokenHasher.sha256(second.refreshToken());
-            assertThat(cache.findActiveHash(Role.ADMIN, adminId)).contains(latestHash);
+            assertThat(tokens.findActiveHash(Role.ADMIN, adminId)).contains(latestHash);
             releasePublication.countDown();
             var earlier = first.get(30, TimeUnit.SECONDS);
-            assertThat(cache.find(earlier.refreshToken())).isEmpty();
-            assertThat(cache.findActiveHash(Role.ADMIN, adminId)).contains(latestHash);
+            assertThat(tokens.find(earlier.refreshToken())).isEmpty();
+            assertThat(tokens.findActiveHash(Role.ADMIN, adminId)).contains(latestHash);
             assertThat(admins.findById(adminId).orElseThrow().getRefreshTokenHash()).isEqualTo(latestHash);
             assertThat(admins.findById(adminId).orElseThrow().getRefreshTokenIssuanceVersion()).isEqualTo(2L);
         } finally {
@@ -136,12 +124,12 @@ class AdminLoginConcurrencyIntegrationTest extends IntegrationTestSupport {
 
     @Test
     void Lua는_큰_순번과_중복_게시도_정확히_비교한다() {
-        assertThat(cache.saveIfNewer("latest", adminId, Role.ADMIN, true, Duration.ofDays(1), Long.MAX_VALUE)).isTrue();
-        assertThat(cache.saveIfNewer("earlier", adminId, Role.ADMIN, true, Duration.ofDays(1), Long.MAX_VALUE - 1)).isFalse();
-        assertThat(cache.saveIfNewer("duplicate", adminId, Role.ADMIN, true, Duration.ofDays(1), Long.MAX_VALUE)).isFalse();
-        assertThat(cache.findActiveHash(Role.ADMIN, adminId)).contains(TokenHasher.sha256("latest"));
-        assertThat(cache.find("earlier")).isEmpty();
-        assertThat(cache.find("duplicate")).isEmpty();
+        assertThat(tokens.saveIfNewer("latest", adminId, Role.ADMIN, true, Duration.ofDays(1), Long.MAX_VALUE)).isTrue();
+        assertThat(tokens.saveIfNewer("earlier", adminId, Role.ADMIN, true, Duration.ofDays(1), Long.MAX_VALUE - 1)).isFalse();
+        assertThat(tokens.saveIfNewer("duplicate", adminId, Role.ADMIN, true, Duration.ofDays(1), Long.MAX_VALUE)).isFalse();
+        assertThat(tokens.findActiveHash(Role.ADMIN, adminId)).contains(TokenHasher.sha256("latest"));
+        assertThat(tokens.find("earlier")).isEmpty();
+        assertThat(tokens.find("duplicate")).isEmpty();
     }
 
 }
