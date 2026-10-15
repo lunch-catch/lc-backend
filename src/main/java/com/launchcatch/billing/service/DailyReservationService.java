@@ -54,12 +54,12 @@ public class DailyReservationService {
     /*
      * 그날 예약을 마치고 대상 캠페인 수를 돌려준다.
      *
-     * 단가를 먼저 읽는다. 키가 없거나 0 이하이면 아무것도 쓰지 않고 예외로 단계를 실패시킨다. 0 으로 진행하면 계획 행을
-     * 만들 수 없고, 잘못된 값으로 진행하면 모든 캠페인이 NO_POINTS 로 판정될 수 있다.
+     * 단가를 먼저 정한다(unitPriceOf). 키가 없거나 0 이하이면 아무것도 쓰지 않고 예외로 단계를 실패시킨다. 0 으로 진행하면
+     * 계획 행을 만들 수 없고, 잘못된 값으로 진행하면 모든 캠페인이 NO_POINTS 로 판정될 수 있다.
      * 보정 RELEASE 가 실패하면 예약을 진행하지 않는다. RESERVE 가 쓰는 잔액은 보정 뒤의 잔액이어야 한다.
      */
     public int reserve(LocalDate businessDate) {
-        long unitPrice = unitPrice();
+        long unitPrice = unitPriceOf(businessDate);
         releaseLeftovers(businessDate.minusDays(1));
 
         List<CampaignInfo> campaigns = campaignQuery.findServableOn(businessDate);
@@ -80,7 +80,23 @@ public class DailyReservationService {
         return campaigns.size();
     }
 
-    private long unitPrice() {
+    /*
+     * 그 영업일의 노출 단가다. 그날 계획이 이미 있으면 거기에 저장된 단가를 쓰고, 없을 때만 운영 설정(platform_setting)을
+     * 읽는다.
+     *
+     * 단가는 00:00 에 읽은 값을 계획에 박아 그날 하루 고정하고, 바꾼 값은 다음 영업일부터 적용한다(배치 설계 「단가와 하루
+     * 예산 하한의 출처」). 일부 점주만 예약하고 실패한 뒤 설정을 바꿔 재실행하면, 설정을 다시 읽을 경우 같은 날에 두 단가가
+     * 섞인다. 저장된 단가가 둘 이상이면 이미 어긋난 것이라 예외로 멈춘다.
+     */
+    private long unitPriceOf(LocalDate businessDate) {
+        List<Long> stored = planRepository.findDistinctUnitPricesOn(businessDate);
+        if (stored.size() > 1) {
+            throw new IllegalStateException("한 영업일에 노출 단가가 여럿 저장돼 있습니다. businessDate="
+                    + businessDate + " unitPrices=" + stored);
+        }
+        if (stored.size() == 1) {
+            return stored.get(0);
+        }
         int unitPrice = platformSetting.getImpressionUnitPrice();
         if (unitPrice <= 0) {
             throw new IllegalStateException("노출 단가는 0보다 커야 합니다: " + unitPrice);

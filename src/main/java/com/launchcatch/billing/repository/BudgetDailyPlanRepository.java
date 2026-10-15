@@ -72,6 +72,14 @@ public interface BudgetDailyPlanRepository extends JpaRepository<BudgetDailyPlan
     // 그날 여러 캠페인의 계획을 한 번에 읽는다. 행이 없는 캠페인은 결과에 없다
     List<BudgetDailyPlan> findByBusinessDateAndCampaignIdIn(LocalDate businessDate, Collection<Long> campaignIds);
 
+    // 그 영업일 계획에 저장된 단가들이다. 그날 단가는 하나여야 한다. idx_budget_daily_plan_business_date 를 탄다
+    @Query("""
+            select distinct p.unitPrice
+              from BudgetDailyPlan p
+             where p.businessDate = :businessDate
+            """)
+    List<Long> findDistinctUnitPricesOn(@Param("businessDate") LocalDate businessDate);
+
     // 그 영업일의 계획 전부다. idx_budget_daily_plan_business_date 를 탄다
     List<BudgetDailyPlan> findByBusinessDate(LocalDate businessDate);
 

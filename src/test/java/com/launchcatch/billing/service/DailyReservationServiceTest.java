@@ -13,6 +13,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
 import com.launchcatch.billing.dto.CampaignSpend;
@@ -88,7 +89,9 @@ class DailyReservationServiceTest {
         when(platformSetting.getImpressionUnitPrice()).thenReturn(0);
 
         assertThatThrownBy(() -> service.reserve(DAY)).isInstanceOf(IllegalStateException.class);
-        verifyNoInteractions(planRepository, ledgerRepository, campaignQuery, recorder, hashRebuild);
+        verify(planRepository).findDistinctUnitPricesOn(DAY);
+        verifyNoMoreInteractions(planRepository);
+        verifyNoInteractions(ledgerRepository, campaignQuery, recorder, hashRebuild);
     }
 
     @Test
@@ -96,7 +99,30 @@ class DailyReservationServiceTest {
         when(platformSetting.getImpressionUnitPrice()).thenThrow(new IllegalStateException("IMPRESSION_UNIT_PRICE 없음"));
 
         assertThatThrownBy(() -> service.reserve(DAY)).isInstanceOf(IllegalStateException.class);
-        verifyNoInteractions(planRepository, recorder);
+        verify(planRepository, never()).findByBusinessDate(any());
+        verifyNoInteractions(recorder);
+    }
+
+    @Test
+    void 그날_계획이_이미_있으면_운영_설정이_아니라_계획에_저장된_단가로_이어서_예약한다() {
+        // 앞선 실행이 단가 10 으로 일부 점주를 예약하고 실패한 뒤 운영 설정이 20 으로 바뀐 경우다
+        when(planRepository.findDistinctUnitPricesOn(DAY)).thenReturn(List.of(10L));
+        when(planRepository.findByBusinessDate(PREV)).thenReturn(List.of());
+        CampaignInfo c1 = campaign(1L, 7L);
+        when(campaignQuery.findServableOn(DAY)).thenReturn(List.of(c1));
+
+        service.reserve(DAY);
+
+        verify(recorder).reserveForOwner(7L, List.of(c1), DAY, 10L);
+        verifyNoInteractions(platformSetting);
+    }
+
+    @Test
+    void 그날_계획에_단가가_여럿이면_이미_어긋난_것이라_아무것도_쓰지_않고_실패한다() {
+        when(planRepository.findDistinctUnitPricesOn(DAY)).thenReturn(List.of(10L, 20L));
+
+        assertThatThrownBy(() -> service.reserve(DAY)).isInstanceOf(IllegalStateException.class);
+        verifyNoInteractions(platformSetting, ledgerRepository, campaignQuery, recorder, hashRebuild);
     }
 
     @Test
