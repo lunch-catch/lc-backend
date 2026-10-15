@@ -52,6 +52,10 @@ public class DailyReservationRecorder {
      * 그날 계획이 이미 있는 캠페인은 건너뛴다. 계획과 RESERVE 가 이 트랜잭션에서 함께 커밋되므로 계획이 있으면 예약도
      * 끝난 것이다. 남은 캠페인은 그 예약이 빠진 잔액에서 이어서 배분한다.
      *
+     * RESERVE 와 계획은 이미 있으면 그대로 두는 INSERT 로 쓴다(D-5). 계정 행 잠금 아래에서 계획이 없는 캠페인만 쓰므로 평소에는
+     * 중복이 없지만, 잠금을 거치지 않고 같은 행을 쓰는 경로가 생겨도 UNIQUE 위반으로 단계가 멈추지 않게 한다. 값은 팩터리로
+     * 만들어 검증한 뒤 넘긴다.
+     *
      * 계획은 캠페인 상태와 관계없이 중단으로 만든다. 상태 변경 시각은 예약이 읽은 캠페인의 것을 옮긴다. 중단은 커밋 뒤의 상태
      * 확인(confirmStatus)이 캠페인을 다시 읽어 ACTIVE 일 때만 푼다. 예약이 읽은 상태를 그대로 쓰면 읽은 뒤 계획을 만들기 전에
      * 커밋된 중단이 사라지고(그때는 계획 행이 없어 상태 변경 수신이 아무것도 못 한다), 확인이 실패하거나 늦어지는 동안
@@ -66,6 +70,7 @@ public class DailyReservationRecorder {
                 .map(BudgetDailyPlan::getCampaignId)
                 .collect(Collectors.toSet());
         long remaining = balanceOf(ownerId);
+        LocalDateTime now = LocalDateTime.now(clock);
         for (CampaignInfo campaign : campaigns) {
             if (planned.contains(campaign.campaignId())) {
                 continue;
@@ -73,10 +78,14 @@ public class DailyReservationRecorder {
             long reserved = Math.min(dailyBudgetOf(campaign), remaining);
             remaining -= reserved;
             if (reserved > 0) {
-                ledgerRepository.save(PointLedger.reserve(ownerId, campaign.campaignId(), businessDate, reserved));
+                PointLedger reserve = PointLedger.reserve(ownerId, campaign.campaignId(), businessDate, reserved);
+                ledgerRepository.insertReserveIfAbsent(reserve.getOwnerId(), reserve.getCampaignId(),
+                        reserve.getBusinessDate(), reserve.getAmount(), now);
             }
-            planRepository.save(BudgetDailyPlan.create(campaign.campaignId(), ownerId, businessDate, reserved,
-                    unitPrice, true, campaign.statusChangedAt()));
+            BudgetDailyPlan plan = BudgetDailyPlan.create(campaign.campaignId(), ownerId, businessDate, reserved,
+                    unitPrice, true, campaign.statusChangedAt());
+            planRepository.insertIfAbsent(plan.getCampaignId(), plan.getOwnerId(), plan.getBusinessDate(),
+                    plan.getDailyBudget(), plan.getUnitPrice(), plan.isPaused(), plan.getStatusChangedAt(), now);
         }
     }
 

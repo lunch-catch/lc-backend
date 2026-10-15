@@ -66,6 +66,29 @@ public interface BudgetDailyPlanRepository extends JpaRepository<BudgetDailyPlan
                       @Param("changedAt") LocalDateTime changedAt,
                       @Param("now") LocalDateTime now);
 
+    /*
+     * 그날 계획 한 행을 없을 때만 넣는다. 같은 캠페인과 영업일의 계획이 이미 있으면 그대로 둔다
+     * (uk_budget_daily_plan_campaign_date). 중복은 값을 바꾸지 않는 갱신으로 흡수하고 INSERT IGNORE 는 쓰지 않는다(D-5).
+     */
+    @Modifying
+    @Query(value = """
+            INSERT INTO budget_daily_plan
+                (campaign_id, owner_id, business_date, daily_budget, unit_price, paused, status_changed_at,
+                 created_at, updated_at)
+            VALUES
+                (:campaignId, :ownerId, :businessDate, :dailyBudget, :unitPrice, :paused, :statusChangedAt,
+                 :now, :now)
+            ON DUPLICATE KEY UPDATE budget_daily_plan_id = budget_daily_plan_id
+            """, nativeQuery = true)
+    int insertIfAbsent(@Param("campaignId") Long campaignId,
+                       @Param("ownerId") Long ownerId,
+                       @Param("businessDate") LocalDate businessDate,
+                       @Param("dailyBudget") long dailyBudget,
+                       @Param("unitPrice") long unitPrice,
+                       @Param("paused") boolean paused,
+                       @Param("statusChangedAt") LocalDateTime statusChangedAt,
+                       @Param("now") LocalDateTime now);
+
     // 그날 계획 한 행이다. uk_budget_daily_plan_campaign_date 를 탄다
     Optional<BudgetDailyPlan> findByCampaignIdAndBusinessDate(Long campaignId, LocalDate businessDate);
 

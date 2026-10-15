@@ -28,6 +28,7 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
@@ -78,16 +79,43 @@ class DailyReservationRecorderTest {
                 null, List.of(), null, null, statusChangedAt, reason, dailyBudget);
     }
 
+    // 무변경 upsert 로 넣은 RESERVE 를 넣은 순서대로 원장 값으로 되돌린다. JPA save 는 쓰지 않아야 한다
     private List<PointLedger> savedLedgers(int times) {
-        ArgumentCaptor<PointLedger> captor = ArgumentCaptor.forClass(PointLedger.class);
-        verify(ledgerRepository, times(times)).save(captor.capture());
-        return captor.getAllValues();
+        ArgumentCaptor<Long> owners = ArgumentCaptor.forClass(Long.class);
+        ArgumentCaptor<Long> campaignIds = ArgumentCaptor.forClass(Long.class);
+        ArgumentCaptor<LocalDate> dates = ArgumentCaptor.forClass(LocalDate.class);
+        ArgumentCaptor<Long> amounts = ArgumentCaptor.forClass(Long.class);
+        verify(ledgerRepository, times(times)).insertReserveIfAbsent(owners.capture(), campaignIds.capture(),
+                dates.capture(), amounts.capture(), eq(LocalDateTime.now(CLOCK)));
+        verify(ledgerRepository, never()).save(any());
+        List<PointLedger> ledgers = new ArrayList<>();
+        for (int i = 0; i < times; i++) {
+            ledgers.add(PointLedger.reserve(owners.getAllValues().get(i), campaignIds.getAllValues().get(i),
+                    dates.getAllValues().get(i), -amounts.getAllValues().get(i)));
+        }
+        return ledgers;
     }
 
+    // 무변경 upsert 로 넣은 계획을 넣은 순서대로 엔티티 값으로 되돌린다. JPA save 는 쓰지 않아야 한다
     private List<BudgetDailyPlan> savedPlans(int times) {
-        ArgumentCaptor<BudgetDailyPlan> captor = ArgumentCaptor.forClass(BudgetDailyPlan.class);
-        verify(planRepository, times(times)).save(captor.capture());
-        return captor.getAllValues();
+        ArgumentCaptor<Long> campaignIds = ArgumentCaptor.forClass(Long.class);
+        ArgumentCaptor<Long> owners = ArgumentCaptor.forClass(Long.class);
+        ArgumentCaptor<LocalDate> dates = ArgumentCaptor.forClass(LocalDate.class);
+        ArgumentCaptor<Long> budgets = ArgumentCaptor.forClass(Long.class);
+        ArgumentCaptor<Long> prices = ArgumentCaptor.forClass(Long.class);
+        ArgumentCaptor<Boolean> paused = ArgumentCaptor.forClass(Boolean.class);
+        ArgumentCaptor<LocalDateTime> changedAts = ArgumentCaptor.forClass(LocalDateTime.class);
+        verify(planRepository, times(times)).insertIfAbsent(campaignIds.capture(), owners.capture(), dates.capture(),
+                budgets.capture(), prices.capture(), paused.capture(), changedAts.capture(),
+                eq(LocalDateTime.now(CLOCK)));
+        verify(planRepository, never()).save(any());
+        List<BudgetDailyPlan> plans = new ArrayList<>();
+        for (int i = 0; i < times; i++) {
+            plans.add(BudgetDailyPlan.create(campaignIds.getAllValues().get(i), owners.getAllValues().get(i),
+                    dates.getAllValues().get(i), budgets.getAllValues().get(i), prices.getAllValues().get(i),
+                    paused.getAllValues().get(i), changedAts.getAllValues().get(i)));
+        }
+        return plans;
     }
 
     @Test
@@ -168,7 +196,7 @@ class DailyReservationRecorderTest {
 
         recorder.reserveForOwner(OWNER, List.of(campaign(1L, CampaignStatus.ACTIVE, null, 1000L)), DAY, UNIT);
 
-        verify(ledgerRepository, never()).save(any());
+        verify(ledgerRepository, never()).insertReserveIfAbsent(any(), any(), any(), anyLong(), any());
         assertThat(savedPlans(1)).extracting(BudgetDailyPlan::getDailyBudget).containsExactly(0L);
     }
 
@@ -180,7 +208,8 @@ class DailyReservationRecorderTest {
         assertThatThrownBy(() -> recorder.reserveForOwner(
                 OWNER, List.of(campaign(1L, CampaignStatus.ACTIVE, null, null)), DAY, UNIT))
                 .isInstanceOf(IllegalStateException.class);
-        verify(planRepository, never()).save(any());
+        verify(planRepository, never()).insertIfAbsent(any(), any(), any(), anyLong(), anyLong(), anyBoolean(), any(),
+                any());
     }
 
     @Test
