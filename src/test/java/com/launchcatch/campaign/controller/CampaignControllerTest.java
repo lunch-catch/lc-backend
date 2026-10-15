@@ -7,15 +7,21 @@ import static org.mockito.Mockito.when;
 
 import com.launchcatch.auth.CustomUserDetails;
 import com.launchcatch.auth.Role;
+import com.launchcatch.campaign.contract.AgeGroup;
 import com.launchcatch.campaign.contract.CampaignStatus;
 import com.launchcatch.campaign.contract.DiscountTargetType;
 import com.launchcatch.campaign.contract.DiscountType;
+import com.launchcatch.campaign.contract.TargetGender;
 import com.launchcatch.campaign.dto.CampaignCouponConditionRequest;
 import com.launchcatch.campaign.dto.CampaignCouponConditionResponse;
+import com.launchcatch.campaign.dto.CampaignUpdateRequest;
+import com.launchcatch.campaign.dto.CampaignUpdateResponse;
 import com.launchcatch.campaign.service.CampaignCouponConditionResult;
 import com.launchcatch.campaign.service.CampaignCouponConditionService;
+import com.launchcatch.campaign.service.CampaignTargetAudienceService;
 import com.launchcatch.global.response.ResponseEnvelope;
 import java.time.LocalTime;
+import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -23,7 +29,8 @@ import org.springframework.http.ResponseEntity;
 class CampaignControllerTest {
 
     private final CampaignCouponConditionService service = mock(CampaignCouponConditionService.class);
-    private final CampaignController controller = new CampaignController(service);
+    private final CampaignTargetAudienceService targetAudienceService = mock(CampaignTargetAudienceService.class);
+    private final CampaignController controller = new CampaignController(service, targetAudienceService);
     private final CustomUserDetails owner = new CustomUserDetails(7L, Role.OWNER);
 
     private final CampaignCouponConditionRequest request = new CampaignCouponConditionRequest(
@@ -53,5 +60,20 @@ class CampaignControllerTest {
 
         assertThat(result.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(result.getBody().data()).isSameAs(response);
+    }
+
+    @Test
+    void 노출_대상_수정에_성공하면_200을_반환한다() {
+        CampaignUpdateRequest targetAudienceRequest = new CampaignUpdateRequest(
+                1000, TargetGender.ALL, List.of(AgeGroup.AGE_20S), null, null, null);
+        CampaignUpdateResponse response = new CampaignUpdateResponse(
+                501L, 1000, TargetGender.ALL, List.of(AgeGroup.AGE_20S), null, null, null);
+        when(targetAudienceService.handle(7L, 501L, targetAudienceRequest)).thenReturn(response);
+
+        ResponseEnvelope<CampaignUpdateResponse> result =
+                controller.updateTargetAudience(501L, targetAudienceRequest, owner);
+
+        verify(targetAudienceService).handle(7L, 501L, targetAudienceRequest);
+        assertThat(result.data()).isSameAs(response);
     }
 }
