@@ -14,7 +14,7 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 
 /*
- * 95행 "모든 전이는 감사 로그로 기록"의 저장소다. 캠페인 애그리거트 안에 있지만
+ * FR-092 "모든 전이는 감사 로그로 기록"의 저장소다. 캠페인 애그리거트 안에 있지만
  * Campaign 이 이 로그 목록을 들고 있을 필요는 없어(조회 기능이 이 이슈 범위 밖) ops.AuditLog
  * 처럼 campaignId 를 원시값으로만 들고 쓰고 잊는 로그로 둔다.
  */

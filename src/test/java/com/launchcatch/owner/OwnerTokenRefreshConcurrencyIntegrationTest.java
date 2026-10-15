@@ -4,23 +4,18 @@ import static org.assertj.core.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
-import com.launchcatch.IntegrationTestSupport;
 import com.launchcatch.auth.Role;
 import com.launchcatch.auth.exception.AuthException;
-import com.launchcatch.owner.repository.OwnerAccessTokenVersionRepository;
 import com.launchcatch.auth.jwt.JwtTokenProvider;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.LockModeType;
 import java.util.Optional;
-import java.time.Clock;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.concurrent.atomic.AtomicReference;
-import com.launchcatch.auth.opaque.RefreshTokenRepository;
 import com.launchcatch.auth.opaque.TokenHasher;
 import com.launchcatch.owner.dto.OwnerLoginRequest;
 import com.launchcatch.owner.entity.Owner;
-import com.launchcatch.owner.repository.OwnerRepository;
 import com.launchcatch.owner.repository.OwnerRefreshTokenRepository;
 import com.launchcatch.owner.service.OwnerLoginService;
 import com.launchcatch.owner.service.OwnerTokenRefreshService;
@@ -31,30 +26,21 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.security.crypto.password.PasswordEncoder;
-import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 // DB 행 잠금, 롤백 복구 및 로그인과 재발급의 게시 순서를 실제 저장소로 확인한다.
-@SpringBootTest(properties = "jwt.secret=test-only-owner-concurrency-secret-at-least-32-bytes")
-class OwnerTokenRefreshConcurrencyIntegrationTest extends IntegrationTestSupport {
+class OwnerTokenRefreshConcurrencyIntegrationTest extends AbstractOwnerIntegrationTest {
 
-    @MockitoSpyBean private OwnerRepository owners;
-    @MockitoSpyBean private RefreshTokenRepository tokens;
-    @MockitoSpyBean private OwnerRefreshTokenRepository ownerTokens;
     @Autowired private OwnerLoginService login;
     @Autowired private OwnerTokenRefreshService refresh;
     @Autowired private com.launchcatch.owner.service.OwnerLogoutService logout;
     @Autowired private com.launchcatch.owner.service.OwnerAccessTokenPolicy accessTokenPolicy;
     @Autowired private PasswordEncoder encoder;
-    @MockitoSpyBean private OwnerAccessTokenVersionRepository cutoff;
-    @MockitoSpyBean private com.launchcatch.owner.repository.OwnerLogoutTokenRepository logoutTokens;
     @Autowired private org.springframework.data.redis.core.StringRedisTemplate redis;
     @Autowired private JwtTokenProvider jwt;
     @Autowired private EntityManager entityManager;
-    @MockitoSpyBean private Clock clock;
     private Long ownerId;
     private String oldToken;
     private final OwnerLoginRequest request = new OwnerLoginRequest("refresh@example.com", "password12");
@@ -81,7 +67,7 @@ class OwnerTokenRefreshConcurrencyIntegrationTest extends IntegrationTestSupport
         assertThat(owners.findById(ownerId).orElseThrow().getRefreshTokenHash()).isNull();
         assertThat(tokens.findActiveHash(Role.OWNER, ownerId)).isEmpty();
         assertThat(tokens.find(result.refreshToken())).isEmpty();
-        assertThat(cutoff.isValid(ownerId, Long.parseLong((String) jwt.getAdditionalClaims(result.accessToken()).get("issuanceVersion")))).isFalse();
+        assertThat(versions.isValid(ownerId, Long.parseLong((String) jwt.getAdditionalClaims(result.accessToken()).get("issuanceVersion")))).isFalse();
     }
 
     @Test
@@ -196,7 +182,7 @@ class OwnerTokenRefreshConcurrencyIntegrationTest extends IntegrationTestSupport
                 revocation.get(15, TimeUnit.SECONDS);
                 assertThat(owners.findById(ownerId).orElseThrow().getRefreshTokenHash()).isNull();
                 assertThat(tokens.findActiveHash(Role.OWNER, ownerId)).isEmpty();
-                assertThat(cutoff.isValid(ownerId, Long.parseLong((String) jwt.getAdditionalClaims(issuedWhileWaiting.accessToken()).get("issuanceVersion")))).isFalse();
+                assertThat(versions.isValid(ownerId, Long.parseLong((String) jwt.getAdditionalClaims(issuedWhileWaiting.accessToken()).get("issuanceVersion")))).isFalse();
             } finally {
                 releaseRevocation.countDown();
             }
@@ -223,13 +209,13 @@ class OwnerTokenRefreshConcurrencyIntegrationTest extends IntegrationTestSupport
         var issued = refresh.refresh(oldToken);
         doThrow(new DataAccessResourceFailureException("RT Redis")).when(logoutTokens)
                 .revokeThroughVersion(anyLong(), anyString(), anyLong());
-        doThrow(new DataAccessResourceFailureException("AT Redis")).when(cutoff)
+        doThrow(new DataAccessResourceFailureException("AT Redis")).when(versions)
                 .invalidateThroughVersion(anyLong(), anyLong());
         assertThatThrownBy(() -> logout.logout(ownerId)).isInstanceOf(AuthException.class);
         var owner = owners.findById(ownerId).orElseThrow();
         assertThat(owner.getRefreshTokenHash()).isNull();
         assertThat(owner.getAccessTokenRevokedVersion()).isEqualTo(owner.getRefreshTokenIssuanceVersion());
-        doThrow(new DataAccessResourceFailureException("Redis lookup")).when(cutoff).isValid(anyLong(), anyLong());
+        doThrow(new DataAccessResourceFailureException("Redis lookup")).when(versions).isValid(anyLong(), anyLong());
         assertThat(authenticated(issued.accessToken())).isFalse();
         doThrow(new DataAccessResourceFailureException("Redis consume")).when(ownerTokens).consumeForRotation(anyString());
         assertThatThrownBy(() -> refresh.refresh(issued.refreshToken())).isInstanceOf(AuthException.class);

@@ -7,18 +7,18 @@
 
 ## 목록
 
-| 메서드 | 경로 | 하는 일 | 권한 | 행 |
+| 메서드 | 경로 | 하는 일 | 권한 | ID |
 | --- | --- | --- | --- | --- |
-| POST | `/v1/coupons/{memberCouponId}:generateQr` | 내 쿠폰의 QR 생성, 갱신 | MEMBER | 85 |
-| POST | `/v1/coupons` | 선착순 쿠폰 발급 | MEMBER | 83 |
-| GET | `/v1/coupons/issuance-limit` | 당일 발급 한도 조회 | MEMBER | 83 |
-| POST | `/v1/coupon-events:getStatus` | 매장별 오늘 쿠폰 이벤트, 발급 가능 상태 일괄 조회 | MEMBER | 74, 75, 83 |
-| GET | `/v1/coupons` | 내 쿠폰 목록 조회 | MEMBER | 84 |
-| GET | `/v1/coupons/{memberCouponId}` | 내 쿠폰 단건 조회 | MEMBER | 84 |
-| GET | `/v1/coupons/summary` | 마이페이지 쿠폰 요약 조회 | MEMBER | 91 |
+| POST | `/v1/coupons/{memberCouponId}:generateQr` | 내 쿠폰의 QR 생성, 갱신 | MEMBER | FR-082 |
+| POST | `/v1/coupons` | 선착순 쿠폰 발급 | MEMBER | FR-080 |
+| GET | `/v1/coupons/issuance-limit` | 당일 발급 한도 조회 | MEMBER | FR-080 |
+| POST | `/v1/coupon-events:getStatus` | 매장별 오늘 쿠폰 이벤트, 발급 가능 상태 일괄 조회 | MEMBER | FR-071, FR-072, FR-080 |
+| GET | `/v1/coupons` | 내 쿠폰 목록 조회 | MEMBER | FR-081 |
+| GET | `/v1/coupons/{memberCouponId}` | 내 쿠폰 단건 조회 | MEMBER | FR-081 |
+| GET | `/v1/coupons/summary` | 마이페이지 쿠폰 요약 조회 | MEMBER | FR-088 |
 | DELETE | `/v1/coupons/{memberCouponId}` | 미사용 쿠폰 삭제 | MEMBER | - |
-| POST | `/v1/owner/coupon-usages` | 점주가 QR을 스캔해 쿠폰 사용 확정, 할인액 확인 | OWNER | 58, 85 |
-| GET | `/v1/owner/stores/{storeId}/coupon-usages` | 매장 쿠폰 사용 이력 조회 | OWNER | 59 |
+| POST | `/v1/owner/coupon-usages` | 점주가 QR을 스캔해 쿠폰 사용 확정, 할인액 확인 | OWNER | FR-055, FR-082 |
+| GET | `/v1/owner/stores/{storeId}/coupon-usages` | 매장 쿠폰 사용 이력 조회 | OWNER | FR-056 |
 
 ## 오류 코드
 
@@ -72,9 +72,10 @@ COMMON 전체 정의는 공통 규약, AUTH 전체 정의는 auth 명세를 따�
 
 QR 토큰의 유효기간은 생성 시점부터 60초다.
 생성 또는 갱신이 성공하면 이전 QR은 즉시 무효화된다. QR 이미지에 담기는 값이 `qrToken`이다.
-QR 응답은 `Cache-Control: no-store`로 보낸다. 로그인 토큰과 QR 토큰은 로그에 남기지 않는다.
+QR 응답은 `Cache-Control: no-store`로 보낸다. 로그인 토큰과 QR 토큰, 토큰을 담은 QR 이미지는 로그에 남기지 않는다.
 동시 갱신에서는 마지막으로 반영된 토큰 하나만 유효하다.
 사용 가능 시간과 QR 유효기간 중 먼저 끝나는 조건을 적용한다.
+본인 소유권을 먼저 확인하며 본인 쿠폰 범위에 없는 ID는 존재 여부와 관계없이 `403 COUPON-011`로 거절한다.
 QR 생성·갱신 시 쿠폰 소유 회원의 현재 상태가 `ACTIVE`인지 별도로 확인한다. `SUSPENDED`, `WITHDRAWN`이면 `403 COUPON-003`로 거절한다.
 
 **파라미터**
@@ -113,8 +114,7 @@ QR 생성·갱신 시 쿠폰 소유 회원의 현재 상태가 `ACTIVE`인지 �
 - 403 `AUTH-006` - 인증된 계정의 역할에 이 API 호출 권한이 없음
 - 403 `COUPON-011` - 본인 쿠폰에 대한 요청이 아님
 - 403 `COUPON-003` - 쿠폰 소유 회원의 현재 상태가 ACTIVE가 아님
-- 404 `COUPON-001` - 본인 쿠폰을 찾을 수 없음
-- 409 `COUPON-002` - 쿠폰이 삭제됐거나 사용 가능 시간이 아님
+- 409 `COUPON-002` - 쿠폰이 만료, 삭제됐거나 사용 가능 시간이 아님
 - 409 `COUPON-012` - 이미 사용한 쿠폰임
 
 ### 쿠폰 발급
@@ -699,11 +699,13 @@ state와 usable은 목록과 동일하게 조회 시점의 상태와 사용 가�
 
 ## 점주 API
 
-점주 API는 `OWNER` 역할과 현재 `ACTIVE` 상태를 모두 요구한다.
-`ONBOARDING`, `SUSPENDED`, `WITHDRAWN` 상태는 `403`으로 거절한다.
-점주 상태 제한 오류의 코드는 OWNER 도메인이 정의하며, 구체 코드는 [미확정 업무 정책](../design/coupon/coupon-api-design.md#미확정-업무-정책)에서 관리한다.
+점주 API는 `OWNER` 역할을 요구한다.
 
 ### QR 사용
+
+QR 사용은 점주의 현재 `ACTIVE` 상태를 요구한다.
+`ONBOARDING`, `SUSPENDED`, `WITHDRAWN` 상태는 `403`으로 거절한다.
+점주 상태 제한 오류의 코드는 OWNER 도메인이 정의하며, 구체 코드는 [미확정 업무 정책](../design/coupon/coupon-api-design.md#미확정-업무-정책)에서 관리한다.
 
 `POST /v1/owner/coupon-usages`
 
@@ -789,8 +791,9 @@ QR 사용, 삭제, 갱신의 동시 실행은 쿠폰 상태와 QR 버전을 검�
 
 `GET /v1/owner/stores/{storeId}/coupon-usages?from=2026-09-01&to=2026-09-30`
 
-점주가 본인 매장에서 사용된 쿠폰 목록을 확인한다.
-OWNER 역할 및 관리 권한을 먼저 확인하고 권한이 없으면 매장의 존재 여부와 무관하게 `403 STORE-002`다.
+점주가 매장에서 사용된 쿠폰 목록을 확인한다.
+OWNER 역할과 DB의 현재 ACTIVE 상태를 요구한다. 인증된 점주 ID로 상태를 조회하며 점주가 없거나 ACTIVE가 아니면 `403 AUTH-006`으로 거절한다.
+매장 관리 권한과 매장 존재 검증은 후속으로 연결하며 현재 적용 범위는 [쿠폰 설계](../design/coupon/coupon-api-design.md#http-연결과-인가)를 따른다.
 조회 기간은 한국 시간으로 from 당일 00:00 이상, to 다음 날 00:00 미만이다.
 조회 기간의 길이에 상한을 두지 않으며, 결과는 `pageSize`와 `pageToken`으로 나누어 반환한다.
 정렬은 `useTime DESC, usageHistoryId DESC`로 고정한다. 커서에도 두 값을 사용한다.
@@ -800,7 +803,7 @@ OWNER 역할 및 관리 권한을 먼저 확인하고 권한이 없으면 매장
 
 | 위치 | 이름 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- | --- |
-| 경로 | `storeId` | integer | O | 조회할 매장 ID (인증된 점주의 매장 관리 권한 검증) |
+| 경로 | `storeId` | integer | O | 조회할 매장의 ID이며 매장 관리 권한 검증은 후속으로 연결한다 |
 | 쿼리 | `from` | string(date) | O | 조회 시작 영업일 (`YYYY-MM-DD`, 포함) |
 | 쿼리 | `to` | string(date) | O | 조회 종료 영업일 (`YYYY-MM-DD`, 포함, `from`과 같거나 이후) |
 | 쿼리 | `pageSize` | integer | X | 한 번에 받을 개수. 기본값 20, 1 이상 100 이하 |
@@ -842,6 +845,5 @@ OWNER 역할 및 관리 권한을 먼저 확인하고 권한이 없으면 매장
 - 400 `COMMON-002` - 경로, 쿼리, 요청 본문의 필수값이나 형식이 올바르지 않음
 - 400 `COMMON-003` - JSON 해석, 타입 변환에 실패하거나 필수 쿼리 파라미터가 없음
 - 401 `AUTH-005` - accessToken 쿠키가 없거나 만료, 검증에 실패함
-- 403 `AUTH-006` - 인증된 계정의 역할에 이 API 호출 권한이 없음
-- 403 `STORE-002` - 해당 매장을 관리할 권한이 없음. 이 API는 OWNER 역할만 허용함
-- 404 `STORE-001` - 요청한 매장이 없음
+- 403 `AUTH-006` - OWNER 역할이 아니거나 점주가 없거나 현재 상태가 ACTIVE가 아님
+- 500 `COMMON-001` - 점주 상태 또는 쿠폰 사용 이력 조회가 실패함
