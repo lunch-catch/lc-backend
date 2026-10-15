@@ -1,6 +1,5 @@
 package com.launchcatch.owner;
 
-import com.launchcatch.IntegrationTestSupport;
 import com.launchcatch.auth.Role;
 import com.launchcatch.auth.jwt.AccessTokenValidAfterRepository;
 import com.launchcatch.owner.repository.OwnerLogoutTokenRepository;
@@ -13,11 +12,9 @@ import com.launchcatch.auth.opaque.TokenHasher;
 import java.time.Duration;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.data.redis.core.StringRedisTemplate;
 
-@SpringBootTest
-class OwnerLogoutTokenRepositoryIntegrationTest extends IntegrationTestSupport {
+class OwnerLogoutTokenRepositoryIntegrationTest extends AbstractOwnerIntegrationTest {
 
     @Autowired
     private RefreshTokenRepository repository;

@@ -4,7 +4,6 @@ import static org.assertj.core.api.Assertions.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
-import com.launchcatch.IntegrationTestSupport;
 import com.launchcatch.auth.Role;
 import com.launchcatch.auth.jwt.JwtTokenProvider;
 import com.launchcatch.owner.entity.Owner;
@@ -22,17 +21,13 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
-@SpringBootTest
-@AutoConfigureMockMvc
-class OwnerTutorialIntegrationTest extends IntegrationTestSupport {
+class OwnerTutorialIntegrationTest extends AbstractOwnerIntegrationTest {
     private static final String PATH = "/v1/owner/me/tutorial";
 
     @Autowired MockMvc mvc;

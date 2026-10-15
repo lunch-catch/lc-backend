@@ -2,7 +2,6 @@ package com.launchcatch.owner;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.launchcatch.IntegrationTestSupport;
 import com.launchcatch.auth.Role;
 import com.launchcatch.auth.opaque.RefreshTokenRepository;
 import com.launchcatch.auth.opaque.TokenHasher;
@@ -10,11 +9,9 @@ import com.launchcatch.owner.repository.OwnerRefreshTokenRepository;
 import java.time.Duration;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.data.redis.core.StringRedisTemplate;
 
-@SpringBootTest
-class OwnerRefreshTokenRepositoryIntegrationTest extends IntegrationTestSupport {
+class OwnerRefreshTokenRepositoryIntegrationTest extends AbstractOwnerIntegrationTest {
     @Autowired private RefreshTokenRepository repository;
     @Autowired private OwnerRefreshTokenRepository ownerTokens;
     @Autowired private StringRedisTemplate redis;

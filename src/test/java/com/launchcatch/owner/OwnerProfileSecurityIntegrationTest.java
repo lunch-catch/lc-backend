@@ -6,7 +6,6 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-import com.launchcatch.IntegrationTestSupport;
 import com.launchcatch.auth.Role;
 import com.launchcatch.auth.jwt.JwtTokenProvider;
 import com.launchcatch.owner.entity.Owner;
@@ -24,8 +23,6 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.web.servlet.MockMvc;
@@ -42,9 +39,7 @@ import org.springframework.transaction.support.TransactionTemplate;
  * 전체를 띄우면 JWT 검증이 계정 존재와 현재 역할까지 확인한다. 목을 쓰던 때는 그 경로를 타지
  * 않아 관리자 토큰의 403 을 느슨하게 보고 있었다. 그래서 역할 테스트가 실제 계정을 준비한다.
  */
-@SpringBootTest
-@AutoConfigureMockMvc
-class OwnerProfileSecurityIntegrationTest extends IntegrationTestSupport {
+class OwnerProfileSecurityIntegrationTest extends AbstractOwnerIntegrationTest {
 
     private static final String PATH = "/v1/owner/me";
     private static final long NO_SUCH_OWNER_ID = 9_000_001L;
