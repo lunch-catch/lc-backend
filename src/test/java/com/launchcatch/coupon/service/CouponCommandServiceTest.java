@@ -23,6 +23,8 @@ import com.launchcatch.coupon.entity.MemberCouponStatus;
 import com.launchcatch.coupon.exception.CouponErrorCode;
 import com.launchcatch.coupon.exception.CouponException;
 import com.launchcatch.coupon.repository.CouponDailyLimitRepository;
+import com.launchcatch.coupon.repository.CouponEventRepository;
+import com.launchcatch.coupon.repository.CouponInventoryRepository;
 import com.launchcatch.coupon.repository.MemberCouponRepository;
 import com.launchcatch.member.contract.MemberInfo;
 import com.launchcatch.member.contract.MemberQueryService;
@@ -261,8 +263,9 @@ class CouponCommandServiceTest {
 
         @BeforeEach
         void setUp() {
-            service = new CouponCommandService(repository, couponDailyLimitRepository, memberQuery, new CouponQrImageEncoder(),
-                    Clock.fixed(Instant.parse("2026-10-10T03:00:00Z"), ZoneOffset.UTC));
+            service = new CouponCommandService(repository, couponDailyLimitRepository, memberQuery,
+                    mock(CouponEventRepository.class), mock(CouponInventoryRepository.class),
+                    new CouponQrImageEncoder(), Clock.fixed(Instant.parse("2026-10-10T03:00:00Z"), ZoneOffset.UTC));
         }
 
         @Test

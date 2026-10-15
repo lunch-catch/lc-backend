@@ -1,11 +1,19 @@
 package com.launchcatch.coupon.service;
 
 import com.launchcatch.coupon.CouponQrImageEncoder;
+import com.launchcatch.coupon.dto.CouponIssueResponse;
 import com.launchcatch.coupon.dto.CouponQrResponse;
+import com.launchcatch.coupon.entity.CouponDailyLimit;
+import com.launchcatch.coupon.entity.CouponEvent;
+import com.launchcatch.coupon.entity.CouponEventStatus;
+import com.launchcatch.coupon.entity.CouponInventory;
+import com.launchcatch.coupon.entity.CouponInventoryStatus;
 import com.launchcatch.coupon.entity.MemberCoupon;
 import com.launchcatch.coupon.exception.CouponErrorCode;
 import com.launchcatch.coupon.exception.CouponException;
 import com.launchcatch.coupon.repository.CouponDailyLimitRepository;
+import com.launchcatch.coupon.repository.CouponEventRepository;
+import com.launchcatch.coupon.repository.CouponInventoryRepository;
 import com.launchcatch.coupon.repository.MemberCouponRepository;
 import com.launchcatch.global.config.ClockConfig;
 import com.launchcatch.member.contract.MemberInfo;
@@ -14,10 +22,13 @@ import com.launchcatch.member.contract.MemberStatus;
 import java.time.Clock;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
@@ -29,8 +40,48 @@ public class CouponCommandService {
     private final MemberCouponRepository memberCouponRepository;
     private final CouponDailyLimitRepository couponDailyLimitRepository;
     private final MemberQueryService memberQueryService;
+    private final CouponEventRepository couponEventRepository;
+    private final CouponInventoryRepository couponInventoryRepository;
     private final CouponQrImageEncoder imageEncoder;
     private final Clock clock;
+
+    @Value("${coupon.daily-limit:3}")
+    private int dailyLimit;
+
+    @Value("${coupon.issue-start-time:11:00}")
+    private LocalTime issueStartTime;
+
+    @Value("${coupon.issue-end-time:14:00}")
+    private LocalTime issueEndTime;
+
+    @Transactional(isolation = Isolation.READ_COMMITTED)
+    public CouponIssueResponse issue(Long memberId, Long eventId) {
+        LocalDateTime requestTime = LocalDateTime.now(clock.withZone(ClockConfig.ZONE));
+        couponDailyLimitRepository.ensureCounter(memberId, requestTime.toLocalDate(), requestTime);
+        CouponDailyLimit counter = couponDailyLimitRepository
+                .findByMemberIdAndBusinessDate(memberId, requestTime.toLocalDate()).orElseThrow();
+        CouponEvent event = couponEventRepository.findByIdForUpdate(eventId)
+                .orElseThrow(() -> new CouponException(CouponErrorCode.COUPON_NOT_FOUND));
+        LocalDateTime now = LocalDateTime.now(clock.withZone(ClockConfig.ZONE));
+        checkEvent(event, requestTime, now);
+        if (memberQueryService.findById(memberId).map(member -> member.status() != MemberStatus.ACTIVE).orElse(true)) {
+            throw new CouponException(CouponErrorCode.MEMBER_ACCOUNT_NOT_ALLOWED);
+        }
+        // TODO(#163): 공개 contract가 제공되면 현재 유효한 찜을 조회하고 없으면 COUPON-004로 거절한다.
+        if (memberCouponRepository.existsByCouponEventIdAndMemberId(eventId, memberId)) {
+            throw new CouponException(CouponErrorCode.EVENT_ALREADY_ISSUED);
+        }
+        counter.increaseIssuedCount(dailyLimit);
+        CouponInventory inventory = couponInventoryRepository
+                .findFirstByCouponEventIdAndStatusOrderBySequenceNoAsc(eventId, CouponInventoryStatus.AVAILABLE)
+                .orElseThrow(() -> new CouponException(CouponErrorCode.INVENTORY_EXHAUSTED));
+        checkEvent(event, requestTime, LocalDateTime.now(clock.withZone(ClockConfig.ZONE)));
+        inventory.issue();
+        MemberCoupon coupon = memberCouponRepository.saveAndFlush(MemberCoupon.issue(memberId, eventId, inventory.getCouponCode(),
+                event.getUsableStartAt(), event.getUsableEndAt()));
+        // TODO(#163): 마지막 재고 발급 시 해당 캠페인과 영업일의 광고 후보에 소진을 반영하고 실패 시 함께 롤백한다.
+        return new CouponIssueResponse(coupon.getId(), coupon.getCreatedAt().atZone(ClockConfig.ZONE).toOffsetDateTime());
+    }
 
     // 본인 쿠폰을 잠가 현재 회원 상태와 사용 조건을 확인하고 QR을 교체한다.
     public CouponQrResponse generateQr(Long memberId, Long memberCouponId) {
@@ -92,5 +143,14 @@ public class CouponCommandService {
     private MemberCoupon findOwnedCoupon(Long memberId, Long memberCouponId) {
         return memberCouponRepository.findByIdAndMemberId(memberCouponId, memberId)
                 .orElseThrow(() -> new CouponException(CouponErrorCode.COUPON_ACCESS_DENIED));
+    }
+
+    private void checkEvent(CouponEvent event, LocalDateTime requestTime, LocalDateTime now) {
+        if (event.getStatus() != CouponEventStatus.ACTIVE
+                || !event.getBusinessDate().equals(now.toLocalDate())
+                || !requestTime.toLocalDate().equals(now.toLocalDate())
+                || now.toLocalTime().isBefore(issueStartTime) || !now.toLocalTime().isBefore(issueEndTime)) {
+            throw new CouponException(CouponErrorCode.COUPON_NOT_AVAILABLE);
+        }
     }
 }

@@ -170,8 +170,8 @@ app:
 
 coupon:
   daily-limit: "${COUPON_DAILY_LIMIT:3}"
-  issue-start-time: "11:00:00"
-  issue-end-time: "14:00:00"
+  issue-start-time: "${COUPON_ISSUE_START_TIME:11:00}"
+  issue-end-time: "${COUPON_ISSUE_END_TIME:14:00}"
 
 # 이미지 URL 앞에 붙는 주소다. 운영은 CloudFront 도메인이 들어온다.
 #

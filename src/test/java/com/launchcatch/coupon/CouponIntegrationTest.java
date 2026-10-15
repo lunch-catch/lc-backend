@@ -14,27 +14,23 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-import com.launchcatch.IntegrationTestSupport;
 import com.launchcatch.auth.CustomUserDetails;
 import com.launchcatch.auth.Role;
 import com.launchcatch.coupon.dto.CouponDetailResponse;
 import com.launchcatch.coupon.dto.CouponUsageHistoryResponse;
 import com.launchcatch.coupon.entity.MemberCouponStatus;
-import com.launchcatch.coupon.repository.MemberCouponRepository;
 import com.launchcatch.coupon.service.CouponCommandService;
 import com.launchcatch.coupon.service.CouponLookUpService;
 import com.launchcatch.global.config.ClockConfig;
 import com.launchcatch.global.response.CursorPageResponse;
 import jakarta.persistence.EntityManager;
 import com.launchcatch.campaign.contract.CampaignInfo;
-import com.launchcatch.campaign.contract.CampaignQueryService;
 import com.launchcatch.campaign.contract.CampaignStatus;
 import org.springframework.http.MediaType;
 import java.util.stream.LongStream;
 import java.util.stream.Collectors;
 import java.nio.ByteBuffer;
 import com.launchcatch.owner.contract.OwnerAccountStatus;
-import com.launchcatch.owner.contract.OwnerStatusQuery;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -64,20 +60,14 @@ import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.test.context.bean.override.mockito.MockitoBean;
-import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 
-@SpringBootTest(properties = "coupon.daily-limit=3")
-@AutoConfigureMockMvc
-class CouponIntegrationTest extends IntegrationTestSupport {
+class CouponIntegrationTest extends AbstractCouponIntegrationTest {
 
     private static final LocalDate TODAY = LocalDate.of(2026, 10, 10);
     private static final CustomUserDetails MEMBER = new CustomUserDetails(17L, Role.MEMBER);
@@ -88,11 +78,6 @@ class CouponIntegrationTest extends IntegrationTestSupport {
     @Autowired PlatformTransactionManager transactionManager;
     @Autowired CouponLookUpService couponLookUpService;
     @Autowired CouponCommandService couponCommandService;
-    @MockitoSpyBean Clock clock;
-    @MockitoBean OwnerStatusQuery ownerStatusQuery;
-    @MockitoBean CampaignQueryService campaignQueryService;
-    @MockitoSpyBean CouponQrImageEncoder imageEncoder;
-    @Autowired MemberCouponRepository memberCouponRepository;
 
     @BeforeEach
     void setUpClock() {
