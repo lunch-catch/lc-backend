@@ -64,7 +64,11 @@ class SpendReconciliationServiceTest {
     }
 
     private static BudgetDailyPlan plan(long campaignId) {
-        return BudgetDailyPlan.create(campaignId, 7L, PREV, 1000L, 10L, false, null);
+        return plan(campaignId, 1000L);
+    }
+
+    private static BudgetDailyPlan plan(long campaignId, long reserved) {
+        return BudgetDailyPlan.create(campaignId, 7L, PREV, reserved, 10L, false, null);
     }
 
     private static BatchExecutionRecord run(long runId, String jobName) {
@@ -106,6 +110,38 @@ class SpendReconciliationServiceTest {
 
         assertThat(service.reconcilePreviousDay(RUN_DATE, JOB)).isEqualTo(1);
         verify(mismatchRepository).insertCampaignSpendMismatchIfAbsent(PREV, 7L, 0L, 100L, null, NOW);
+    }
+
+    @Test
+    void 원장이_예약액을_넘으면_카운터가_원장과_같아도_초과_소진으로_기록한다() {
+        when(planRepository.findByBusinessDate(PREV))
+                .thenReturn(List.of(plan(7L, 1000L), plan(8L, 1000L), plan(9L, 1000L)));
+        when(batchExecutions.findByBusinessDate(RUN_DATE)).thenReturn(List.of(run(42L, JOB)));
+        // 7 은 해시가 원장으로 재구성돼 카운터도 1200 이다. 8 은 해시가 없다. 9 는 예약액만큼 썼다
+        when(spendCounter.readAll(PREV, List.of(7L, 8L, 9L)))
+                .thenReturn(Map.of(7L, new DailySpend(1000L, 1200L), 9L, new DailySpend(1000L, 1000L)));
+        when(ledgerRepository.sumDeductForCampaignsOn(List.of(7L, 8L, 9L), PREV)).thenReturn(List.of(
+                new CampaignSpend(7L, 1200L), new CampaignSpend(8L, 1100L), new CampaignSpend(9L, 1000L)));
+
+        assertThat(service.reconcilePreviousDay(RUN_DATE, JOB)).isEqualTo(2);
+
+        // 기대값은 예약액이고 실제값은 원장 DEDUCT 합이다. 카운터 대조로는 7 이 보이지 않고 8 은 견줄 카운터가 없다
+        verify(mismatchRepository).insertCampaignOverspendIfAbsent(PREV, 7L, 1000L, 1200L, 42L, NOW);
+        verify(mismatchRepository).insertCampaignOverspendIfAbsent(PREV, 8L, 1000L, 1100L, 42L, NOW);
+        verify(mismatchRepository, never()).insertCampaignOverspendIfAbsent(any(), eq(9L), anyLong(), anyLong(), any(), any());
+        verify(mismatchRepository, never()).insertCampaignSpendMismatchIfAbsent(any(), any(), anyLong(), anyLong(), any(), any());
+    }
+
+    @Test
+    void 초과_소진과_카운터_불일치가_함께면_둘_다_기록한다() {
+        when(planRepository.findByBusinessDate(PREV)).thenReturn(List.of(plan(7L, 1000L)));
+        when(batchExecutions.findByBusinessDate(RUN_DATE)).thenReturn(List.of(run(42L, JOB)));
+        when(spendCounter.readAll(PREV, List.of(7L))).thenReturn(Map.of(7L, new DailySpend(1000L, 990L)));
+        when(ledgerRepository.sumDeductForCampaignsOn(List.of(7L), PREV)).thenReturn(List.of(new CampaignSpend(7L, 1010L)));
+
+        assertThat(service.reconcilePreviousDay(RUN_DATE, JOB)).isEqualTo(2);
+        verify(mismatchRepository).insertCampaignOverspendIfAbsent(PREV, 7L, 1000L, 1010L, 42L, NOW);
+        verify(mismatchRepository).insertCampaignSpendMismatchIfAbsent(PREV, 7L, 1010L, 990L, 42L, NOW);
     }
 
     @Test

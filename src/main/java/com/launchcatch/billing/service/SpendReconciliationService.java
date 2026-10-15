@@ -28,6 +28,10 @@ import org.springframework.transaction.annotation.Transactional;
  * 카운터를 다시 만들지 않고 resolution_type 도 비워 둔다. 당일 카운터의 재구성은 13:30 대사(구현 순서 11번)가 맡는다.
  *
  * 해시가 없는 캠페인은 견줄 값이 없어 건너뛰고 WARN 으로 남긴다. Valkey 재시작이나 만료로 사라진 경우다.
+ *
+ * 원장 DEDUCT 합이 그날 예약액(계획의 daily_budget)을 넘었는지도 본다(CAMPAIGN_OVERSPEND). 해시가 원장으로 재구성되면
+ * 카운터와 원장이 같아져 위 대조로는 초과 소진(알려진 한계 L-2, L-4)이 보이지 않는다. 원장에 기록된 과금이라 되돌리지 않고
+ * 기록만 한다. 이 확인은 카운터가 필요 없어 해시가 없는 캠페인도 한다.
  */
 @Slf4j
 @Service
@@ -52,13 +56,14 @@ public class SpendReconciliationService {
     @Transactional
     public int reconcilePreviousDay(LocalDate runDate, String jobName) {
         LocalDate target = runDate.minusDays(1);
-        List<Long> campaignIds = planRepository.findByBusinessDate(target).stream()
-                .map(BudgetDailyPlan::getCampaignId)
-                .sorted()
-                .toList();
-        if (campaignIds.isEmpty()) {
+        Map<Long, Long> reservedByCampaign = new HashMap<>();
+        for (BudgetDailyPlan plan : planRepository.findByBusinessDate(target)) {
+            reservedByCampaign.put(plan.getCampaignId(), plan.getDailyBudget());
+        }
+        if (reservedByCampaign.isEmpty()) {
             return 0;
         }
+        List<Long> campaignIds = reservedByCampaign.keySet().stream().sorted().toList();
         Long jobExecutionId = findRunId(runDate, jobName);
         LocalDateTime now = LocalDateTime.now(clock);
         int mismatches = 0;
@@ -68,12 +73,20 @@ public class SpendReconciliationService {
             Map<Long, DailySpend> counters = spendCounter.readAll(target, chunk);
             Map<Long, Long> ledgerSpends = ledgerSpends(chunk, target);
             for (Long campaignId : chunk) {
+                long ledgerSpend = ledgerSpends.getOrDefault(campaignId, 0L);
+                long reserved = reservedByCampaign.get(campaignId);
+                if (ledgerSpend > reserved) {
+                    mismatchRepository.insertCampaignOverspendIfAbsent(
+                            target, campaignId, reserved, ledgerSpend, jobExecutionId, now);
+                    log.warn("event=SPEND_RECON_OVERSPEND businessDate={} campaignId={} reserved={} ledger={}",
+                            target, campaignId, reserved, ledgerSpend);
+                    mismatches++;
+                }
                 DailySpend counter = counters.get(campaignId);
                 if (counter == null) {
                     missing++;
                     continue;
                 }
-                long ledgerSpend = ledgerSpends.getOrDefault(campaignId, 0L);
                 if (counter.spend() != ledgerSpend) {
                     mismatchRepository.insertCampaignSpendMismatchIfAbsent(
                             target, campaignId, ledgerSpend, counter.spend(), jobExecutionId, now);

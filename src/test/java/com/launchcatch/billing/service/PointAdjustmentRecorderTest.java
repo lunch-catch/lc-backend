@@ -241,6 +241,17 @@ class PointAdjustmentRecorderTest {
     }
 
     @Test
+    void 초과_소진_대사_건도_캠페인의_점주로_확인한다() {
+        when(mismatchRepository.findRowById(MISMATCH)).thenReturn(Optional.of(
+                mismatch(MismatchCheckType.CAMPAIGN_OVERSPEND, CAMPAIGN, null)));
+        when(campaignQueryService.findAllById(List.of(CAMPAIGN))).thenReturn(List.of(campaign(OTHER_OWNER)));
+
+        // 결제로 보고 찾으면 대상 ID 가 캠페인 ID 라 엉뚱한 결제의 점주와 견주게 된다
+        assertRejected(request(1000L, CAMPAIGN, MISMATCH), BillingErrorCode.SETTLEMENT_MISMATCH_OWNER_MISMATCH);
+        verify(paymentRepository, never()).findById(any());
+    }
+
+    @Test
     void 캠페인_대상_대사_건의_캠페인이_없으면_거절한다() {
         when(mismatchRepository.findRowById(MISMATCH)).thenReturn(Optional.of(
                 mismatch(MismatchCheckType.CAMPAIGN_SPEND_VS_LEDGER, CAMPAIGN, null)));

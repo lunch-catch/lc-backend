@@ -98,4 +98,25 @@ public interface SettlementMismatchRepository extends JpaRepository<SettlementMi
                                             @Param("counterSpend") long counterSpend,
                                             @Param("jobExecutionId") Long jobExecutionId,
                                             @Param("now") LocalDateTime now);
+
+    /*
+     * 예약액 초과 소진 한 건을 기록한다. 기대값은 그날 예약액, 실제값은 원장 DEDUCT 합이다.
+     * 같은 (check_type, target_id, business_date) 가 이미 있으면 그대로 둔다. 위와 같은 이유로 INSERT IGNORE 는 쓰지 않는다.
+     */
+    @Modifying
+    @Query(value = """
+            INSERT INTO settlement_mismatch
+                (check_type, business_date, target_id, expected_value, actual_value, job_execution_id,
+                 created_at, updated_at)
+            VALUES
+                ('CAMPAIGN_OVERSPEND', :businessDate, :campaignId, :reserved, :ledgerSpend,
+                 :jobExecutionId, :now, :now)
+            ON DUPLICATE KEY UPDATE settlement_mismatch_id = settlement_mismatch_id
+            """, nativeQuery = true)
+    int insertCampaignOverspendIfAbsent(@Param("businessDate") LocalDate businessDate,
+                                        @Param("campaignId") Long campaignId,
+                                        @Param("reserved") long reserved,
+                                        @Param("ledgerSpend") long ledgerSpend,
+                                        @Param("jobExecutionId") Long jobExecutionId,
+                                        @Param("now") LocalDateTime now);
 }
