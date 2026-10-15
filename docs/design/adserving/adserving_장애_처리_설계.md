@@ -1,11 +1,12 @@
 # adserving 장애 처리 설계
 
 광고 서빙이 기대는 대상과 [장애 처리 설계 가이드](../장애_처리_설계_가이드.md)의 기본 처리를 벗어난 것을 적는다.
-지금은 `GET /v1/feed` 의 후보 선별(#236)과 배정 규칙(#307)까지 훑었다.
+지금은 `GET /v1/feed` 의 후보 선별(#236), 배정 규칙(#307), serve 기록과 서빙 로그(#315)까지 훑었다.
 
 | 대상 | 쓰는 곳 | 처리 |
 |---|---|---|
-| Valkey | 요청 제한, 당일 이력, 하루와 세션 횟수, 유효 노출 수 | 기본(통과) |
+| Valkey | 요청 제한, 당일 이력, 하루와 세션 횟수, 유효 노출 수, serve 기록 | 기본(통과) |
+| MySQL 쓰기 | 응답 뒤의 `serve_log`, `feed_visit_daily` | **벗어났다.** 아래 |
 | MySQL 읽기 | 그날 후보, 필터, 30일 찜 | 기본(오류로 올린다) |
 | member 의 `MemberQueryService` | 온보딩, 위치, 노출 대상 판정 | 기본(오류로 올린다). 같은 프로세스 안의 호출이다 |
 | billing 의 `BudgetQueryService` | 진행률, 노출 상한 | **벗어났다.** 아래 |
@@ -26,6 +27,18 @@ B 를 고른다. 차감은 정산이 따로 막아(`NOT_BILLED_BUDGET`) 점주�
 
 조건에 맞는 후보가 0장인 것은 장애가 아니다. 예산 소진으로 0장이어도 명세대로 `200 NO_CANDIDATE` 다(#307).
 
+## 서빙 로그 쓰기가 실패하면 그 묶음을 버린다
+
+기본 처리(트랜잭션을 되돌린다)는 응답과 한 몸인 쓰기를 전제로 한다. 서빙 로그는 응답 뒤 대기열이 묶어서 쓰고 판정과 과금에 쓰이지 않는다.
+쓰기가 실패하면 다시 넣지 않고 버린다. 다시 넣으면 DB 가 멈춘 동안 같은 묶음이 계속 실패해 뒤의 것까지 막는다.
+대기열이 차도 기다리지 않고 버린다. 기다리면 DB 가 느려질 때 피드 응답까지 느려진다(#315).
+
+| 지표 | 세는 것 |
+|---|---|
+| `adserving_serve_log_dropped_total` | 대기열이 차서 버린 카드 수. 카드가 없는 피드는 접속 위치 1건으로 센다 |
+| `adserving_serve_log_failed_total` | 쓰기가 실패해 버린 카드 수 |
+| `adserving_served_cards_total` | 응답으로 내려준 카드 수. `serve_log` 건수와 대조해 유실률을 잰다 |
+
 ## 통과시킨 횟수
 
 Valkey 가 멈춰 통과시킨 횟수는 `adserving_cache_bypass_total` 이 센다. 태그 `use` 로 쓰는 곳을 가른다.
@@ -36,6 +49,7 @@ Valkey 가 멈춰 통과시킨 횟수는 `adserving_cache_bypass_total` 이 센�
 | `daily_exclusion` | `FEED_DAILY_EXCLUSION_FAILED` | 넘긴 카드가 다시 보인다 |
 | `serve_frequency` | `FEED_SERVE_FREQUENCY_READ_FAILED`, `FEED_SERVE_FREQUENCY_WRITE_FAILED` | 같은 카드가 하루 2회, 세션 1회를 넘겨 나온다 |
 | `impression_count` | `FEED_IMPRESSION_COUNT_FAILED` | 유효 노출 수를 0 으로 보고 상한을 넘겨 내보낸다. 넘긴 노출은 과금되지 않아 손해는 플랫폼에 남는다 |
+| `serve_record` | `FEED_SERVE_RECORD_WRITE_FAILED` | 그 카드의 노출이 무효(`EXPIRED_OR_UNKNOWN`)가 되어 과금되지 않는다 |
 
 경보는 아직 걸지 않았다.
 
@@ -45,6 +59,8 @@ Valkey 가 멈춰 통과시킨 횟수는 `adserving_cache_bypass_total` 이 센�
 | 캐시 스탬피드 | 해당 없음. 원본에서 다시 채우는 캐시가 아니다 |
 | 분산 락 | 해당 없음 |
 | 낡은 값 | 해당 없음. 정지나 탈퇴의 판정은 인증이 한다 |
-| DB, 외부 API, 롤백 안 되는 효과 | 해당 없음. 읽기뿐이고 외부 호출이 없다 |
+| DB 다운 | 그날 후보를 읽지 못해 피드가 오류다. 응답 뒤 쓰기는 위 절대로 버린다 |
+| 외부 API, 롤백 안 되는 효과 | 해당 없음. 외부 호출이 없다 |
+| 배포로 서버가 내려간다 | 대기열은 웹 서버가 요청을 다 받은 뒤 멈추고 남은 것을 비운다. 비우는 사이에 DB 가 멈춰 있으면 그 묶음은 빠진다 |
 | 요청이 몰린다 | 사용자마다 60초 6회로 막는다. 목표 TPS 는 [`feed-api-design.md`](./feed-api-design.md) 에 있다 |
 | 대용량 조회 | 그날 후보를 5000m 사각 범위로 한 번에 읽는다. 상한이 없다. 한 지역의 후보 수가 커지면 다시 본다 |

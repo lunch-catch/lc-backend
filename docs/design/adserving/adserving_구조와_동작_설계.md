@@ -1,8 +1,8 @@
 # adserving 구조와 동작 설계
 
 광고 서빙 도메인의 구조와 동작을 적는다. 엔드포인트마다의 처리와 성능 목표는
-[`feed-api-design.md`](./feed-api-design.md) 가 갖는다. 지금은 `GET /v1/feed` 의 후보 선별(#236)과 배정 규칙(#307)까지 훑었다.
-serve 기록과 서빙 로그(#315), 나머지 엔드포인트는 그 이슈가 이 문서를 채운다.
+[`feed-api-design.md`](./feed-api-design.md) 가 갖는다. 지금은 `GET /v1/feed` 의 후보 선별(#236), 배정 규칙(#307), serve 기록과 서빙 로그(#315)까지 훑었다.
+나머지 엔드포인트는 그 이슈가 이 문서를 채운다.
 
 ## 1. 범위
 
@@ -13,6 +13,8 @@ serve 기록과 서빙 로그(#315), 나머지 엔드포인트는 그 이슈가 
 | 같은 캠페인을 하루 2회, 한 세션 1회까지만 내려준다 | 비즈니스 규칙(`feed-api-design.md` 4단계) |
 | 사용자마다 최근 60초 6회로 피드 요청을 막는다 | FR-064, 명세의 요청 제한 |
 | 찜과 패스로 그날 피드에서 뺄 캠페인을 기억한다 | FR-099 (9), BR-040 |
+| 카드마다 serve 기록을 남겨 노출 검증에 쓰게 한다 | FR-097 |
+| 서빙 로그와 그날 첫 접속 위치를 응답 뒤에 쓴다 | FR-027, FR-042, FR-064 |
 
 | 맡지 않는 것 | 소유 |
 |---|---|
@@ -26,7 +28,7 @@ serve 기록과 서빙 로그(#315), 나머지 엔드포인트는 그 이슈가 
 | 애그리거트 | 테이블 | 지키는 규칙 | 나눈 근거 |
 |---|---|---|---|
 | 후보 스냅샷(`engine`) | `ad_candidate` | 서빙은 그날 행만 읽는다 | 00:00 에 통째로 다시 만들어 변경 주기가 다르다 |
-| 피드(`feed`) | `feed_filter`, `feed_filter_category`, `swipe_log`(모두 읽기만) | 필터가 없으면 전 업종, 거리순이다 | 아키텍처 1.3 의 `feed` 서브 도메인 |
+| 피드(`feed`) | `feed_filter`, `feed_filter_category`, `swipe_log`(읽기만), `serve_log`, `feed_visit_daily`(쓰기만) | 필터가 없으면 전 업종, 거리순이다. 그날 첫 접속 위치만 남는다 | 아키텍처 1.3 의 `feed` 서브 도메인 |
 
 ```
 adserving/
@@ -41,10 +43,14 @@ adserving/
 └── feed/
     ├── controller/FeedController.java
     ├── service/FeedService.java
+    ├── service/ServeLogBuffer.java                  서빙 로그 대기열과 작업자
     ├── repository/FeedRateLimitRepository.java      Valkey
     ├── repository/DailyExclusionRepository.java     Valkey
     ├── repository/ServeFrequencyRepository.java     Valkey
     ├── repository/ImpressionCountRepository.java    Valkey
+    ├── repository/ServeRecordRepository.java        Valkey
+    ├── repository/ServeLogRepository.java           JDBC 배치
+    ├── repository/FeedVisitRepository.java          JDBC 배치
     ├── repository/SwipeLogRepository.java
     ├── repository/FeedFilterRepository.java
     └── repository/FeedFilterCategoryRepository.java
@@ -69,6 +75,7 @@ adserving/
 | 하루 내려준 횟수 | `adserving:servedDaily:{영업일}:{memberId}` 해시. 필드 `campaignId`, 값 횟수 | 다음 영업일 00:00 까지 남은 시간 | 없다. 잃으면 그날 같은 카드가 더 나온다 | `ServeFrequencyRepository` |
 | 세션에 내려준 캠페인 | `adserving:servedSession:{memberId}` 집합 | 피드 요청마다 30분을 다시 건다 | 없다. 키가 사라지면 새 세션이다 | `ServeFrequencyRepository` |
 | 그날 유효 노출 수 | `adserving:validImpressions:{영업일}` 해시. 필드 `campaignId`, 값 건수 | 쓰는 쪽이 건다 | `impression_log` 의 유효 노출 | `ImpressionCountRepository` |
+| serve 기록 | `adserving:serve:{serveId}` 문자열. 회원:캠페인:가게:슬롯:자리:내려준 시각(ms) | 30분 | 없다. `serve_log` 는 판정에 쓰지 않는다. 잃으면 그동안의 노출이 무효다 | `ServeRecordRepository`, 노출 API(#323) |
 
 **결정: 당일 이력을 어디에 두나** (#236 에서 정했다)
 
@@ -98,6 +105,15 @@ B 를 고른다. 이것도 "원본은 MySQL" 규칙에서 벗어난다. 잃을 �
 | B. Valkey 카운터를 읽는다 | 요청마다 `HMGET` 한 번이다 | 원본과 어긋날 수 있다. 올리는 쪽(노출 API)이 아직 없다 |
 
 B 를 고른다. 노출 API 가 유효 노출을 처음 저장할 때 올린다.
+
+**결정: serve 기록을 어디에 두나** (#315 에서 정했다)
+
+| 선택지 | 장점 | 단점 |
+|---|---|---|
+| A. 서버마다 로컬 캐시(Caffeine) | 빠르고 외부에 기대지 않는다 | 노출 요청이 다른 서버로 가거나 배포로 서버가 내려가면 기록을 못 찾아 유효 노출이 무효가 된다 |
+| B. Valkey | 서버 여러 대가 함께 본다 | Valkey 가 멈추면 그동안의 노출이 모두 무효다. 피드마다 쓰기가 한 번 는다 |
+
+B 를 고른다. 응답 전에 피드 1회의 카드를 파이프라인 한 번으로 쓴다. 응답 뒤에 쓰면 곧바로 온 노출이 기록보다 먼저 닿는다.
 
 ## 4. 계산 로직
 
@@ -162,12 +178,25 @@ sequenceDiagram
 
 | 흐름 | 한 트랜잭션에 묶는 것 | 트랜잭션 밖 |
 |---|---|---|
-| 피드 조회 | 없다. DB 읽기가 각자 끝난다 | Valkey 호출, 정산 조회 |
+| 피드 조회 | 없다. DB 읽기가 각자 끝난다 | Valkey 호출, 정산 조회, 서빙 로그와 접속 위치 쓰기 |
+
+**결정: 서빙 로그와 접속 위치를 무엇으로 미루나** (#315 에서 정했다)
+
+| 선택지 | 장점 | 단점 |
+|---|---|---|
+| A. 요청 안에서 바로 쓴다 | 더 둘 것이 없다 | 피드 1회에 10행이라 초당 5,000행의 쓰기가 응답 지연에 들어가고, DB 쓰기가 실패하면 피드까지 실패한다 |
+| B. 서버마다 크기가 정해진 대기열과 작업자 하나 | 응답이 쓰기를 기다리지 않고 묶어서 쓴다 | 프로세스가 죽거나 대기열이 차거나 쓰기가 실패하면 빠진다 |
+| C. 같은 트랜잭션에 적고 폴러가 집어 올린다 | 빠지지 않는다 | 피드 조회에 쓰기 트랜잭션이 생겨 A 의 지연이 그대로 남는다 |
+
+B 를 고른다. 서빙 로그는 판정과 과금에 쓰이지 않고 유실을 0.1% 미만까지 허용한다(`feed-api-design.md` 유실 목표).
+대기열은 피드 5,000건(약 50,000행, 목표 처리량으로 10초 분량)이고 한 번에 50건(약 500행)씩 JDBC 배치 INSERT 로 쓴다.
+차면 기다리지 않고 버린다. 두 값은 근거 없는 값(C)이라 부하 시험에서 바꾼다.
+종료할 때는 웹 서버가 요청을 다 받은 뒤(`SmartLifecycle` 단계 0) 멈추고 남은 것을 비운다.
 
 | 상황 | 확인한 것 |
 |---|---|
 | 같은 회원의 요청이 동시에 옴 | 요청 제한은 한 Lua 스크립트로 세고 넣어 함께 들어오지 않는다. 하루 횟수는 읽고 고른 뒤 올려서, 동시에 온 두 요청이 같은 캠페인을 함께 내려줄 수 있다. 같은 사용자의 동시 요청은 60초 6회 제한 안에서만 생겨 받아들였다 |
-| 같은 요청이 다시 옴 | 읽기라 멱등 키가 없다. 다시 오면 요청 횟수와 내려준 횟수에 한 번 더 들어간다 |
+| 같은 요청이 다시 옴 | 멱등 키가 없다. 다시 오면 요청 횟수와 내려준 횟수에 한 번 더 들어가고 새 serveId 로 새 카드가 나간다. `serve_log` 와 `feed_visit_daily` 는 `INSERT IGNORE` 라 같은 키가 두 번 써져도 한 행이다 |
 | 여러 회원이 같은 자원에 씀 | 노출 상한은 읽기만 하고 판정 시점의 수로 거른다. 여러 피드가 동시에 같은 캠페인을 내려 상한을 조금 넘길 수 있다. 넘긴 노출은 정산이 과금하지 않는다 |
 | 이벤트가 늦거나 순서가 바뀜 | 해당 없음 |
 
@@ -184,6 +213,7 @@ sequenceDiagram
 |---|---|---|---|
 | 정산이 멈춘 동안의 피드 | 진행률 1.2 초과와 노출 상한 제외가 빠져 예산을 넘긴 캠페인도 나간다 | 공정성(다른 점주) | 차감은 정산이 따로 막아 점주가 더 내지 않는다. `adserving_budget_unavailable_total` 로 센다 |
 | 노출 수 카운터가 멈춘 동안의 피드 | 0 으로 보고 상한을 넘겨 내보낸다 | 플랫폼 | 넘긴 노출은 과금되지 않는다. `adserving_cache_bypass_total` 로 센다 |
+| serve 기록을 쓰지 못한 피드 | 그 카드의 노출이 무효라 과금되지 않는다 | 플랫폼 | `adserving_cache_bypass_total`(`use=serve_record`) 로 센다 |
 
 대상이 멈췄을 때의 처리는 [`adserving_장애_처리_설계.md`](./adserving_장애_처리_설계.md) 에 있다.
 
@@ -195,9 +225,9 @@ sequenceDiagram
 
 | 적을 것 | 피드 조회 |
 |---|---|
-| 요청 하나의 비용 | DB 읽기 4(후보, 필터, 필터 업종, 30일 찜), 다른 도메인 호출 2(회원, 정산), Valkey 호출 6 |
-| 처리량 계산 | 목표 500 TPS x DB 읽기 4 = 초당 2,000 읽기, 회원 조회를 더하면 2,500. 쓰기는 없다 |
-| 확인 방법 | 아직 없다. k6 시나리오는 #315 뒤에 돌린다 |
+| 요청 하나의 비용 | DB 읽기 4(후보, 필터, 필터 업종, 30일 찜), 다른 도메인 호출 2(회원, 정산), Valkey 호출 7(serve 기록 10건은 파이프라인 한 번). 응답 뒤 DB 쓰기는 요청이 아니라 묶음 단위다 |
+| 처리량 계산 | 목표 500 TPS x DB 읽기 4 = 초당 2,000 읽기, 회원 조회를 더하면 2,500. 응답 뒤 쓰기는 초당 `serve_log` 5,000행과 `feed_visit_daily` 500행을 50건 묶음으로 서버마다 나눠 쓴다 |
+| 확인 방법 | 아직 없다. k6 시나리오(10:00~12:59, 특히 10:50~11:05)로 대기열 크기와 묶음 수도 함께 잰다 |
 
 ## 12. 테스트와 미정 사항
 
@@ -205,6 +235,7 @@ sequenceDiagram
 |---|---|---|
 | 탐색 반경을 넓히는 기준 | 10장 미만으로 임시로 정했다 | 없다. 기준이 정해지면 `FeedAssembler` 한 곳을 바꾼다 |
 | 당일 이력에 쓰는 쪽 | 키 모양과 만료만 정했다 | 스와이프와 찜 삭제 API 가 쓰기 전까지 당일 이력은 늘 비어 있다 |
-| 유효 노출 수를 올리는 쪽 | 키 모양만 정했다 | 노출 API 가 올리기 전까지 노출 상한으로 빠지는 캠페인이 없다 |
+| 유효 노출 수를 올리는 쪽 | 키 모양만 정했다 | 노출 API(#323)가 올리기 전까지 노출 상한으로 빠지는 캠페인이 없다 |
+| 서빙 로그 대기열의 크기와 묶음 수 | 5,000건과 50건으로 임시로 정했다 | 없다. 부하 시험 뒤 `ServeLogBuffer` 의 두 값을 바꾼다 |
 | 세션을 늘리는 활동 | 피드 요청으로만 임시로 정했다 | 스와이프와 노출 요청도 세션을 늘릴지 정해야 한다 |
 | 신규 우선 노출(`new_priority_until`) | 계산 규칙이 문서에 없다 | 배분 슬롯에 넣을 자리가 정해지지 않았다 |

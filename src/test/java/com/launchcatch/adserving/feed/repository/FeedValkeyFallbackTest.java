@@ -98,4 +98,15 @@ class FeedValkeyFallbackTest {
         assertThat(counts).isEmpty();
         assertThat(bypassCount("impression_count")).isEqualTo(1);
     }
+
+    @Test
+    void serve_기록을_쓰지_못해도_예외를_올리지_않고_센다() {
+        when(redisTemplate.executePipelined(any(org.springframework.data.redis.core.SessionCallback.class)))
+                .thenThrow(new QueryTimeoutException("timeout"));
+
+        new ServeRecordRepository(redisTemplate, meterRegistry).saveAll(java.util.List.of(new ServeRecord(
+                java.util.UUID.randomUUID(), 3001L, 101L, 55L, com.launchcatch.adserving.engine.SlotType.RELEVANCE, 1, NOW)));
+
+        assertThat(bypassCount("serve_record")).isEqualTo(1);
+    }
 }

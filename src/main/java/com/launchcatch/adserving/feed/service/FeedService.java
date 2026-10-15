@@ -2,6 +2,7 @@ package com.launchcatch.adserving.feed.service;
 
 import com.launchcatch.adserving.engine.CampaignPacing;
 import com.launchcatch.adserving.engine.FeedAssembler;
+import com.launchcatch.adserving.engine.FeedAssembler.Placed;
 import com.launchcatch.adserving.engine.FeedAssembler.Selection;
 import com.launchcatch.adserving.engine.FeedAssembler.Viewer;
 import com.launchcatch.adserving.engine.FeedCandidate;
@@ -25,6 +26,8 @@ import com.launchcatch.adserving.feed.repository.FeedRateLimitRepository;
 import com.launchcatch.adserving.feed.repository.FeedRateLimitRepository.Admission;
 import com.launchcatch.adserving.feed.repository.ImpressionCountRepository;
 import com.launchcatch.adserving.feed.repository.ServeFrequencyRepository;
+import com.launchcatch.adserving.feed.repository.ServeRecord;
+import com.launchcatch.adserving.feed.repository.ServeRecordRepository;
 import com.launchcatch.adserving.feed.repository.ServeFrequencyRepository.ServedHistory;
 import com.launchcatch.adserving.feed.repository.SwipeLogRepository;
 import com.launchcatch.billing.contract.BudgetProgress;
@@ -47,6 +50,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
+import java.util.stream.IntStream;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -67,6 +72,9 @@ public class FeedService {
     // 정산에서 예산을 읽지 못해 예산 규칙 없이 내보낸 횟수다. 경보는 이 지표에 건다.
     static final String BUDGET_UNAVAILABLE_METRIC = "adserving_budget_unavailable_total";
 
+    // 응답으로 내려준 카드 수다. serve_log 건수와 대조해 서빙 로그 유실률을 잰다(feed-api-design.md 유실 목표).
+    static final String SERVED_CARDS_METRIC = "adserving_served_cards_total";
+
     private final MemberQueryService memberQueryService;
     private final FeedRateLimitRepository feedRateLimitRepository;
     private final AdCandidateRepository adCandidateRepository;
@@ -77,6 +85,8 @@ public class FeedService {
     private final ServeFrequencyRepository serveFrequencyRepository;
     private final ImpressionCountRepository impressionCountRepository;
     private final BudgetQueryService budgetQueryService;
+    private final ServeRecordRepository serveRecordRepository;
+    private final ServeLogBuffer serveLogBuffer;
     private final MeterRegistry meterRegistry;
     private final Clock clock;
 
@@ -98,12 +108,13 @@ public class FeedService {
         OffsetDateTime nextFeedAvailableAt = admission.nextAvailableAt().atZone(ClockConfig.ZONE).toOffsetDateTime();
 
         ZonedDateTime servedAt = now.atZone(ClockConfig.ZONE);
+        LocalDate businessDate = servedAt.toLocalDate();
         LocalTime time = servedAt.toLocalTime();
         if (time.isBefore(SERVING_START) || !time.isBefore(SERVING_END)) {
+            recordVisit(businessDate, memberId, viewer);
             return FeedResponse.outOfServingHours(nextFeedAvailableAt);
         }
 
-        LocalDate businessDate = servedAt.toLocalDate();
         List<FeedCandidate> candidates = adCandidateRepository.findServableWithin(businessDate,
                         BoundingBox.around(viewer.latitude(), viewer.longitude(), FeedAssembler.MAX_RADIUS_M))
                 .stream().map(AdCandidate::toFeedCandidate).toList();
@@ -113,14 +124,33 @@ public class FeedService {
         serveFrequencyRepository.recordServed(businessDate, memberId,
                 selection.cards().stream().map(p -> p.candidate().campaignId()).toList(), now);
         if (selection.cards().isEmpty()) {
+            recordVisit(businessDate, memberId, viewer);
             return FeedResponse.noCandidate(selection.radiusM(), nextFeedAvailableAt);
         }
 
-        OffsetDateTime servedAtOffset = servedAt.truncatedTo(ChronoUnit.MILLIS).toOffsetDateTime();
-        List<FeedCardResponse> cards = selection.cards().stream()
-                .map(p -> FeedCardResponse.of(UuidV7.at(now), servedAtOffset, p.candidate(), p.distanceM()))
+        Instant servedInstant = now.truncatedTo(ChronoUnit.MILLIS);
+        List<Placed> placed = selection.cards();
+        List<ServeRecord> records = IntStream.range(0, placed.size())
+                .mapToObj(i -> new ServeRecord(UuidV7.at(now), memberId, placed.get(i).candidate().campaignId(),
+                        placed.get(i).candidate().storeId(), placed.get(i).slotType(), i + 1, servedInstant))
                 .toList();
-        return FeedResponse.serving(UuidV7.at(now), selection.radiusM(), nextFeedAvailableAt, cards);
+        // 노출이 곧바로 올 수 있어 응답 전에 쓴다. 서빙 로그는 판정에 쓰이지 않아 응답 뒤에 대기열이 쓴다
+        serveRecordRepository.saveAll(records);
+        meterRegistry.counter(SERVED_CARDS_METRIC).increment(records.size());
+        UUID feedId = UuidV7.at(now);
+        serveLogBuffer.offer(new ServedFeed(businessDate, memberId, feedId, viewer.latitude(), viewer.longitude(), records));
+
+        OffsetDateTime servedAtOffset = servedInstant.atZone(ClockConfig.ZONE).toOffsetDateTime();
+        List<FeedCardResponse> cards = IntStream.range(0, placed.size())
+                .mapToObj(i -> FeedCardResponse.of(records.get(i).serveId(), servedAtOffset,
+                        placed.get(i).candidate(), placed.get(i).distanceM()))
+                .toList();
+        return FeedResponse.serving(feedId, selection.radiusM(), nextFeedAvailableAt, cards);
+    }
+
+    // 카드가 없는 요청도 그날 첫 접속 위치는 남긴다(feed_visit_daily).
+    private void recordVisit(LocalDate businessDate, Long memberId, Viewer viewer) {
+        serveLogBuffer.offer(new ServedFeed(businessDate, memberId, null, viewer.latitude(), viewer.longitude(), List.of()));
     }
 
     private FeedContext contextFor(Long memberId, Viewer viewer, LocalDate businessDate, ZonedDateTime servedAt,
