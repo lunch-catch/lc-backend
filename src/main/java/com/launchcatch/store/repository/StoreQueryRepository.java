@@ -26,10 +26,10 @@ public class StoreQueryRepository {
                         rs.getBigDecimal("latitude"), rs.getBigDecimal("longitude")));
     }
 
-    // 쿠폰의 과거 점주 정보 대신 현재 store.owner_id로 확인하며 가게 미존재와 타인 소유는 모두 false가 된다.
-    public boolean canManageStore(Long ownerId, Long storeId) {
+    // 현재 store.owner_id가 일치하고 최종 등록된 가게만 허용하며 미존재, 타인 소유와 등록 중인 가게는 false가 된다.
+    public boolean canManageFinalizedStore(Long ownerId, Long storeId) {
         return Boolean.TRUE.equals(jdbc.queryForObject("""
-                select exists(select 1 from store where store_id = :storeId and owner_id = :ownerId)
+                select exists(select 1 from store where store_id = :storeId and owner_id = :ownerId and finalized = true)
                 """, Map.of("ownerId", ownerId, "storeId", storeId), Boolean.class));
     }
 

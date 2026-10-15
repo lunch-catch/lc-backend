@@ -75,20 +75,20 @@ class StoreQueryIntegrationTest extends AbstractStoreIntegrationTest {
     }
 
     @Test
-    void 현재_소유_관계만_확인하고_미존재와_타인_소유는_false다() {
-        assertThat(service.canManageStore(ownerId, storeId)).isTrue();
-        assertThat(service.canManageStore(ownerId, otherStoreId)).isFalse();
-        assertThat(service.canManageStore(ownerId, Long.MAX_VALUE)).isFalse();
+    void 최종_등록된_현재_본인_가게만_true이며_미존재와_타인_소유는_false다() {
+        assertThat(service.canManageFinalizedStore(ownerId, storeId)).isTrue();
+        assertThat(service.canManageFinalizedStore(ownerId, otherStoreId)).isFalse();
+        assertThat(service.canManageFinalizedStore(ownerId, Long.MAX_VALUE)).isFalse();
 
         jdbc.update("update store set owner_id = ? where store_id = ?", ownerId + 3, storeId);
 
-        assertThat(service.canManageStore(ownerId, storeId)).isFalse();
-        assertThat(service.canManageStore(ownerId + 3, storeId)).isTrue();
+        assertThat(service.canManageFinalizedStore(ownerId, storeId)).isFalse();
+        assertThat(service.canManageFinalizedStore(ownerId + 3, storeId)).isTrue();
     }
 
     @Test
-    void 소유_관계_확인은_최종_등록_여부를_대신하지_않는다() {
-        assertThat(service.canManageStore(ownerId + 2, draftStoreId)).isTrue();
+    void 본인_소유여도_등록_중인_가게는_false다() {
+        assertThat(service.canManageFinalizedStore(ownerId + 2, draftStoreId)).isFalse();
         assertThat(service.findAllById(List.of(draftStoreId))).isEmpty();
     }
 
