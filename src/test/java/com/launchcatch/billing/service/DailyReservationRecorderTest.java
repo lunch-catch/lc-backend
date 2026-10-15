@@ -19,8 +19,11 @@ import com.launchcatch.billing.repository.PointLedgerRepository;
 import com.launchcatch.campaign.contract.CampaignInfo;
 import com.launchcatch.campaign.contract.CampaignStatus;
 import com.launchcatch.campaign.contract.PauseReason;
+import java.time.Clock;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
@@ -39,6 +42,8 @@ class DailyReservationRecorderTest {
     private static final LocalDate DAY = LocalDate.of(2026, 10, 16);
     private static final long UNIT = 10L;
     private static final LocalDateTime CHANGED_AT = LocalDateTime.of(2026, 10, 1, 9, 0);
+    private static final ZoneId SEOUL = ZoneId.of("Asia/Seoul");
+    private static final Clock CLOCK = Clock.fixed(Instant.parse("2026-10-15T15:00:00Z"), SEOUL);
 
     @Mock
     private PointAccountRepository accountRepository;
@@ -51,7 +56,7 @@ class DailyReservationRecorderTest {
 
     @BeforeEach
     void setUp() {
-        recorder = new DailyReservationRecorder(accountRepository, ledgerRepository, planRepository);
+        recorder = new DailyReservationRecorder(accountRepository, ledgerRepository, planRepository, CLOCK);
     }
 
     private static CampaignInfo campaign(long id, CampaignStatus status, PauseReason reason, Long dailyBudget) {
@@ -127,15 +132,18 @@ class DailyReservationRecorderTest {
     }
 
     @Test
-    void 잔액을_읽기_전에_점주_계정을_잠근다() {
+    void 계정_행을_없을_때만_만들고_잠근_뒤에_잔액을_읽는다() {
         when(accountRepository.lockByOwnerId(OWNER)).thenReturn(Optional.of(3L));
         when(planRepository.findByBusinessDateAndCampaignIdIn(DAY, List.of(1L))).thenReturn(List.of());
         when(ledgerRepository.sumBalance(OWNER)).thenReturn(0L);
 
         recorder.reserveForOwner(OWNER, List.of(campaign(1L, CampaignStatus.ACTIVE, null, 1000L)), DAY, UNIT);
 
-        InOrder order = inOrder(accountRepository, ledgerRepository);
+        // 충전 이력이 없는 점주도 잠글 행이 생겨야 겹친 실행이 같은 잠금에서 줄을 선다
+        InOrder order = inOrder(accountRepository, planRepository, ledgerRepository);
+        order.verify(accountRepository).createIfAbsent(OWNER, LocalDateTime.now(CLOCK));
         order.verify(accountRepository).lockByOwnerId(OWNER);
+        order.verify(planRepository).findByBusinessDateAndCampaignIdIn(DAY, List.of(1L));
         order.verify(ledgerRepository).sumBalance(OWNER);
     }
 

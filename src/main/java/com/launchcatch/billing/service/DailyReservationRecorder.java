@@ -7,7 +7,9 @@ import com.launchcatch.billing.repository.PointAccountRepository;
 import com.launchcatch.billing.repository.PointLedgerRepository;
 import com.launchcatch.campaign.contract.CampaignInfo;
 import com.launchcatch.campaign.contract.CampaignStatus;
+import java.time.Clock;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -30,13 +32,18 @@ public class DailyReservationRecorder {
     private final PointAccountRepository accountRepository;
     private final PointLedgerRepository ledgerRepository;
     private final BudgetDailyPlanRepository planRepository;
+    private final Clock clock;
 
     /*
      * 한 점주의 캠페인에 잔액을 배분한다. campaigns 는 캠페인 ID 오름차순이고, 잔액이 모자라면 앞에서부터 채운다(D-4).
      * 예약액은 min(적용 하루 예산, 남은 잔액)이다. 0 이면 RESERVE 없이 예약액 0 인 계획만 만든다(V52 102행 (5)).
      *
      * 점주 계정 행을 먼저 잠근다(D-8). 충전 승인, 조정, 환불 승인이 같은 행을 잠가서 잔액을 읽고 RESERVE 를 쓰는
-     * 사이에 잔액이 바뀌지 않는다. 계정 행이 없는 점주는 충전한 적이 없어 잔액이 0 이고 잠글 행도 없다.
+     * 사이에 잔액이 바뀌지 않는다.
+     *
+     * 계정 행이 없는 점주(충전한 적이 없다)도 잠그기 전에 행을 만든다(C-3 의 무변경 upsert). 잠글 행이 없으면
+     * 이어받기로 두 실행이 겹칠 때 둘 다 "계획 없음"을 보고 같은 계획을 INSERT 해서 한쪽이 UNIQUE 위반으로 실패한다.
+     * 잔액은 그대로 0 이다.
      *
      * 그날 계획이 이미 있는 캠페인은 건너뛴다. 계획과 RESERVE 가 이 트랜잭션에서 함께 커밋되므로 계획이 있으면 예약도
      * 끝난 것이다. 남은 캠페인은 그 예약이 빠진 잔액에서 이어서 배분한다.
@@ -46,6 +53,7 @@ public class DailyReservationRecorder {
      */
     @Transactional
     public void reserveForOwner(Long ownerId, List<CampaignInfo> campaigns, LocalDate businessDate, long unitPrice) {
+        accountRepository.createIfAbsent(ownerId, LocalDateTime.now(clock));
         accountRepository.lockByOwnerId(ownerId);
         List<Long> campaignIds = campaigns.stream().map(CampaignInfo::campaignId).toList();
         Set<Long> planned = planRepository.findByBusinessDateAndCampaignIdIn(businessDate, campaignIds).stream()
