@@ -11,6 +11,8 @@ import com.launchcatch.campaign.template.entity.TemplateVersion;
 import com.launchcatch.campaign.template.repository.TemplateQuotaRepository;
 import com.launchcatch.campaign.template.repository.TemplateRepository;
 import com.launchcatch.campaign.template.repository.TemplateVersionRepository;
+import com.launchcatch.campaign.template.TemplateHtmlSanitizer;
+import com.launchcatch.campaign.template.TemplateSlotValidator;
 import java.time.Clock;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -33,6 +35,7 @@ public class TemplateCreateService {
     private final TemplateHtmlGenerator templateHtmlGenerator;
     private final TemplateHtmlSanitizer templateHtmlSanitizer;
     private final TemplateSlotValidator templateSlotValidator;
+    private final TemplateGenerationRateLimiter templateGenerationRateLimiter;
     private final TransactionTemplate transactionTemplate;
     private final Clock clock;
 
@@ -42,12 +45,18 @@ public class TemplateCreateService {
      * 연결을 잡지 않으려는 것이다. 저장만 트랜잭션으로 묶는다. 여기서의 개수 확인은
      * LLM을 부르지 않으려는 빠른 실패용일 뿐이고, 진짜 안전장치는 save() 안의 조건부
      * UPDATE 와 request_id 의 UNIQUE 제약이다.
+     *
+     * requestId 재시도가 아니라고 확인한 뒤에만 속도 제한을 센다(#227). 멱등성으로
+     * 걸러지는 같은 요청의 재시도까지 관리자의 호출 횟수로 세면 안 된다. 저장되기 전에(=
+     * LLM 호출이 끝나기 전에) 같은 requestId가 다시 들어오는 경우는 이 조회로 못 걸러서
+     * checkLimit 안에서 requestId 기준으로 한 번만 세게 한다.
      */
     public TemplateCreateResponse create(String name, String requestPrompt, String requestId, Long adminId) {
         var existing = templateVersionRepository.findByRequestId(requestId);
         if (existing.isPresent()) {
             return toResponse(existing.get(), List.of());
         }
+        templateGenerationRateLimiter.checkLimit(adminId, requestId);
         if (templateRepository.count() >= MAX_TEMPLATES) {
             throw new CampaignException(PosterErrorCode.TEMPLATE_LIMIT_EXCEEDED);
         }

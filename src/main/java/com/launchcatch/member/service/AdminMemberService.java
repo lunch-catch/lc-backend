@@ -30,13 +30,13 @@ public class AdminMemberService {
 
     public PageResponse<AdminMemberResponse> search(AdminMemberListQuery query) {
         if (query.page() < 0) {
-            throw new IllegalArgumentException("page must not be negative");
+            throw new IllegalArgumentException("페이지 번호는 0 이상이어야 합니다.");
         }
         if (query.size() < 1 || query.size() > MAX_PAGE_SIZE) {
-            throw new IllegalArgumentException("size must be between 1 and " + MAX_PAGE_SIZE);
+            throw new IllegalArgumentException("페이지 크기는 1 이상 " + MAX_PAGE_SIZE + " 이하여야 합니다.");
         }
         if (query.joinedFrom() != null && query.joinedTo() != null && query.joinedFrom().isAfter(query.joinedTo())) {
-            throw new IllegalArgumentException("joinedFrom must not be after joinedTo");
+            throw new IllegalArgumentException("가입일 시작 날짜는 종료 날짜보다 늦을 수 없습니다.");
         }
         MemberSortKey sortKey = toSortKey(query.sortBy());
         Sort.Direction direction = toDirection(query.sortDir());
@@ -75,7 +75,7 @@ public class AdminMemberService {
         if ("asc".equals(sortDir)) {
             return Sort.Direction.ASC;
         }
-        throw new IllegalArgumentException("unsupported sortDir: " + sortDir);
+        throw new IllegalArgumentException("지원하지 않는 정렬 방향입니다. 오름차순 또는 내림차순을 선택해 주세요.");
     }
 
     private AdminMemberResponse toResponse(MemberAdminRow row) {

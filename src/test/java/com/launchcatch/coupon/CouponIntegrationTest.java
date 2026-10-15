@@ -2,35 +2,49 @@ package com.launchcatch.coupon;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.launchcatch.IntegrationTestSupport;
 import com.launchcatch.auth.CustomUserDetails;
 import com.launchcatch.auth.Role;
 import com.launchcatch.coupon.dto.CouponDetailResponse;
+import com.launchcatch.coupon.dto.CouponUsageHistoryResponse;
 import com.launchcatch.coupon.entity.MemberCouponStatus;
+import com.launchcatch.coupon.repository.MemberCouponRepository;
 import com.launchcatch.coupon.service.CouponCommandService;
 import com.launchcatch.coupon.service.CouponLookUpService;
 import com.launchcatch.global.config.ClockConfig;
 import com.launchcatch.global.response.CursorPageResponse;
 import jakarta.persistence.EntityManager;
+import java.nio.ByteBuffer;
+import com.launchcatch.owner.contract.OwnerAccountStatus;
+import com.launchcatch.owner.contract.OwnerStatusQuery;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -47,33 +61,20 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.test.context.DynamicPropertyRegistry;
-import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
-import org.testcontainers.containers.GenericContainer;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
-import org.testcontainers.mysql.MySQLContainer;
-import org.testcontainers.utility.DockerImageName;
 
-@Testcontainers
 @SpringBootTest(properties = "coupon.daily-limit=3")
 @AutoConfigureMockMvc
-class CouponIntegrationTest {
+class CouponIntegrationTest extends IntegrationTestSupport {
 
     private static final LocalDate TODAY = LocalDate.of(2026, 10, 10);
     private static final CustomUserDetails MEMBER = new CustomUserDetails(17L, Role.MEMBER);
-
-    @Container
-    static final MySQLContainer MYSQL = new MySQLContainer(DockerImageName.parse("mysql:8.4"));
-
-    @Container
-    static final GenericContainer<?> VALKEY = new GenericContainer<>(DockerImageName.parse("valkey/valkey:9.0-alpine"))
-            .withExposedPorts(6379);
 
     @Autowired MockMvc mockMvc;
     @Autowired JdbcTemplate jdbcTemplate;
@@ -82,16 +83,9 @@ class CouponIntegrationTest {
     @Autowired CouponLookUpService couponLookUpService;
     @Autowired CouponCommandService couponCommandService;
     @MockitoBean Clock clock;
-
-    @DynamicPropertySource
-    static void properties(DynamicPropertyRegistry registry) {
-        registry.add("spring.datasource.url", MYSQL::getJdbcUrl);
-        registry.add("spring.datasource.username", MYSQL::getUsername);
-        registry.add("spring.datasource.password", MYSQL::getPassword);
-        registry.add("spring.data.redis.host", VALKEY::getHost);
-        registry.add("spring.data.redis.port", () -> VALKEY.getMappedPort(6379));
-        registry.add("jwt.secret", () -> "test-only-secret-not-used-anywhere-else-0123456789abcdef");
-    }
+    @MockitoBean OwnerStatusQuery ownerStatusQuery;
+    @MockitoSpyBean CouponQrImageEncoder imageEncoder;
+    @Autowired MemberCouponRepository memberCouponRepository;
 
     @BeforeEach
     void setUpClock() {
@@ -99,6 +93,232 @@ class CouponIntegrationTest {
                 .thenReturn(Clock.fixed(Instant.parse("2026-10-10T03:00:00Z"), ClockConfig.ZONE));
         when(clock.getZone()).thenReturn(ClockConfig.ZONE);
         when(clock.instant()).thenReturn(Instant.parse("2026-10-10T03:00:00Z"));
+    }
+
+    @Nested
+    @DisplayName("매장 사용 이력 조회")
+    @Transactional
+    class UsageHistoryQuery {
+
+        private static final LocalDate FROM = LocalDate.of(2026, 9, 1);
+        private static final LocalDate TO = LocalDate.of(2026, 9, 30);
+        private static final LocalDateTime USE_TIME = TO.atTime(12, 30, 0, 123456000);
+        private static final String PATH = "/v1/owner/stores/10/coupon-usages";
+
+        @BeforeEach
+        void setUp() {
+            when(ownerStatusQuery.findCurrentStatus(17L)).thenReturn(Optional.of(OwnerAccountStatus.ACTIVE));
+            insertHistory(5001L, 10L, FROM.atStartOfDay().minusNanos(1000), 1000);
+            insertHistory(5002L, 10L, FROM.atStartOfDay(), 2000);
+            insertHistory(5003L, 10L, USE_TIME, 2700);
+            insertHistory(5004L, 10L, USE_TIME, 3000);
+            insertHistory(5005L, 10L, TO.plusDays(1).atStartOfDay(), 4000);
+            insertHistory(5006L, 20L, USE_TIME.plusMinutes(1), 5000);
+            insertHistory(5007L, 10L, FROM.minusYears(2).atStartOfDay(), 1500);
+            entityManager.clear();
+        }
+
+        @Test
+        void 요청한_매장만_조회하며_시작일_시작은_포함하고_종료일_다음날_시작은_제외한다() {
+            var response = couponLookUpService.getUsages(17L, 10L, FROM, TO, 20, null);
+
+            assertThat(response.items()).extracting(CouponUsageHistoryResponse::usageHistoryId)
+                    .containsExactly(5004L, 5003L, 5002L);
+            assertThat(response.nextPageToken()).isNull();
+            assertThat(response.items().get(1).discountAmount()).isEqualTo(2700);
+            assertThat(response.items().get(1).useTime()).isEqualTo(USE_TIME.atOffset(ZoneOffset.ofHours(9)));
+        }
+
+        @Test
+        void 같은_사용_시각의_이력도_페이지에서_누락하지_않으며_새_이력은_기존_커서에_영향을_주지_않는다() {
+            var first = couponLookUpService.getUsages(17L, 10L, FROM, TO, 1, null);
+            insertHistory(5008L, 10L, USE_TIME.plusMinutes(1), 2500);
+
+            var second = couponLookUpService.getUsages(17L, 10L, FROM, TO, 1, first.nextPageToken());
+            var third = couponLookUpService.getUsages(17L, 10L, FROM, TO, 1, second.nextPageToken());
+
+            assertThat(first.items()).extracting(CouponUsageHistoryResponse::usageHistoryId).containsExactly(5004L);
+            assertThat(second.items()).extracting(CouponUsageHistoryResponse::usageHistoryId).containsExactly(5003L);
+            assertThat(third.items()).extracting(CouponUsageHistoryResponse::usageHistoryId).containsExactly(5002L);
+            assertThat(third.nextPageToken()).isNull();
+        }
+
+        @Test
+        void 같은_날_조회에서는_그날의_사용_이력만_반환한다() {
+            var singleDay = couponLookUpService.getUsages(17L, 10L, TO, TO, 100, null);
+
+            assertThat(singleDay.items()).extracting(CouponUsageHistoryResponse::usageHistoryId)
+                    .containsExactly(5004L, 5003L);
+        }
+
+        @Test
+        void 조회_기간_길이에_상한_없이_여러_해의_사용_이력을_반환한다() {
+            var multipleYears = couponLookUpService.getUsages(17L, 10L, FROM.minusYears(3), TO, 100, null);
+
+            assertThat(multipleYears.items()).extracting(CouponUsageHistoryResponse::usageHistoryId)
+                    .containsExactly(5004L, 5003L, 5002L, 5001L, 5007L);
+        }
+
+        @Test
+        void 이력이_없는_매장은_빈_목록을_반환한다() {
+            var response = couponLookUpService.getUsages(17L, 30L, FROM, TO, 20, null);
+
+            assertThat(response.items()).isEmpty();
+            assertThat(response.nextPageToken()).isNull();
+        }
+
+        @Test
+        void 점주는_HTTP로_매장_사용_이력을_조회한다() throws Exception {
+            mockMvc.perform(get(PATH).param("from", FROM.toString()).param("to", TO.toString())
+                            .with(user(new CustomUserDetails(17L, Role.OWNER))))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.code").value("SUCCESS"))
+                    .andExpect(jsonPath("$.data.items.length()").value(3))
+                    .andExpect(jsonPath("$.data.items[0].usageHistoryId").value(5004))
+                    .andExpect(jsonPath("$.data.items[1].discountAmount").value(2700))
+                    .andExpect(jsonPath("$.data.nextPageToken").isEmpty());
+        }
+
+        @ParameterizedTest
+        @EnumSource(value = OwnerAccountStatus.class, names = "ACTIVE", mode = EnumSource.Mode.EXCLUDE)
+        void ACTIVE가_아닌_점주는_HTTP_조회를_거절한다(OwnerAccountStatus state) throws Exception {
+            when(ownerStatusQuery.findCurrentStatus(17L)).thenReturn(Optional.of(state));
+
+            mockMvc.perform(get(PATH).param("from", FROM.toString()).param("to", TO.toString())
+                            .with(user(new CustomUserDetails(17L, Role.OWNER))))
+                    .andExpect(status().isForbidden())
+                    .andExpect(jsonPath("$.code").value("AUTH-006"));
+        }
+
+        @Test
+        void 인증된_점주_ID로_현재_상태를_검증한다() throws Exception {
+            when(ownerStatusQuery.findCurrentStatus(17L)).thenReturn(Optional.empty());
+            when(ownerStatusQuery.findCurrentStatus(71L)).thenReturn(Optional.of(OwnerAccountStatus.ACTIVE));
+
+            mockMvc.perform(get(PATH).param("from", FROM.toString()).param("to", TO.toString())
+                            .with(user(new CustomUserDetails(71L, Role.OWNER))))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.items.length()").value(3));
+        }
+
+        @Test
+        void 점주가_없으면_HTTP_조회를_거절한다() throws Exception {
+            when(ownerStatusQuery.findCurrentStatus(17L)).thenReturn(Optional.empty());
+
+            mockMvc.perform(get(PATH).param("from", FROM.toString()).param("to", TO.toString())
+                            .with(user(new CustomUserDetails(17L, Role.OWNER))))
+                    .andExpect(status().isForbidden())
+                    .andExpect(jsonPath("$.code").value("AUTH-006"));
+        }
+
+        @Test
+        void 점주_상태_조회_장애는_서버_오류로_반환한다() throws Exception {
+            when(ownerStatusQuery.findCurrentStatus(17L))
+                    .thenThrow(new org.springframework.dao.DataAccessResourceFailureException("owner status query failed"));
+
+            mockMvc.perform(get(PATH).param("from", FROM.toString()).param("to", TO.toString())
+                            .with(user(new CustomUserDetails(17L, Role.OWNER))))
+                    .andExpect(status().isInternalServerError())
+                    .andExpect(jsonPath("$.code").value("COMMON-001"));
+        }
+
+        @ParameterizedTest
+        @EnumSource(value = Role.class, names = "OWNER", mode = EnumSource.Mode.EXCLUDE)
+        void 점주_외_역할의_HTTP_조회를_차단한다(Role role) throws Exception {
+            mockMvc.perform(get(PATH).param("from", FROM.toString()).param("to", TO.toString())
+                            .with(user(new CustomUserDetails(17L, role))))
+                    .andExpect(status().isForbidden())
+                    .andExpect(jsonPath("$.code").value("AUTH-006"))
+                    .andExpect(jsonPath("$.data").isEmpty());
+        }
+
+        @ParameterizedTest
+        @CsvSource({
+                "0, 2026-09-01, 2026-09-30, 20, COMMON-002",
+                "-1, 2026-09-01, 2026-09-30, 20, COMMON-002",
+                "invalid, 2026-09-01, 2026-09-30, 20, COMMON-003",
+                "10, , 2026-09-30, 20, COMMON-003",
+                "10, 2026-09-01, , 20, COMMON-003",
+                "10, 2026-09-01, 2026-09-30, 0, COMMON-002",
+                "10, 2026-09-01, 2026-09-30, 101, COMMON-002"
+        })
+        void 잘못된_매장_ID와_필수_날짜_및_페이지_크기는_HTTP에서_거절한다(
+                String storeId, String from, String to, String pageSize, String code) throws Exception {
+            var request = get("/v1/owner/stores/{storeId}/coupon-usages", storeId)
+                    .param("pageSize", pageSize).with(user(new CustomUserDetails(17L, Role.OWNER)));
+            if (from != null) {
+                request.param("from", from);
+            }
+            if (to != null) {
+                request.param("to", to);
+            }
+
+            mockMvc.perform(request)
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.code").value(code));
+        }
+
+        @Test
+        void 조회는_쿠폰과_사용_이력_및_재고와_발급_횟수를_변경하지_않는다() {
+            var coupons = jdbcTemplate.queryForList("SELECT * FROM member_coupon ORDER BY member_coupon_id");
+            var histories = jdbcTemplate.queryForList("SELECT * FROM coupon_usage_history ORDER BY coupon_usage_history_id");
+            var inventories = jdbcTemplate.queryForList("SELECT * FROM coupon_inventory ORDER BY coupon_inventory_id");
+            var limits = jdbcTemplate.queryForList("SELECT * FROM coupon_daily_limit ORDER BY coupon_daily_limit_id");
+
+            couponLookUpService.getUsages(17L, 10L, FROM, TO, 1, null);
+
+            assertThat(jdbcTemplate.queryForList("SELECT * FROM member_coupon ORDER BY member_coupon_id"))
+                    .usingRecursiveComparison().isEqualTo(coupons);
+            assertThat(jdbcTemplate.queryForList("SELECT * FROM coupon_usage_history ORDER BY coupon_usage_history_id"))
+                    .isEqualTo(histories);
+            assertThat(jdbcTemplate.queryForList("SELECT * FROM coupon_inventory ORDER BY coupon_inventory_id"))
+                    .usingRecursiveComparison().isEqualTo(inventories);
+            assertThat(jdbcTemplate.queryForList("SELECT * FROM coupon_daily_limit ORDER BY coupon_daily_limit_id"))
+                    .isEqualTo(limits);
+        }
+
+        @Test
+        void Swagger는_사용_이력의_성공_응답_계약을_설명한다() throws Exception {
+            mockMvc.perform(get("/v3/api-docs"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.paths['/v1/owner/stores/{storeId}/coupon-usages'].get.responses['200'].content['*/*'].example.data.items[0].discountAmount")
+                            .value(3000))
+                    .andExpect(jsonPath("$.paths['/v1/owner/stores/{storeId}/coupon-usages'].get.responses['200'].content['*/*'].example.data.nextPageToken")
+                            .isEmpty());
+        }
+
+        @Test
+        void 미인증_HTTP_조회는_인증_오류를_반환한다() throws Exception {
+            mockMvc.perform(get(PATH).param("from", FROM.toString()).param("to", TO.toString()))
+                    .andExpect(status().isUnauthorized())
+                    .andExpect(jsonPath("$.code").value("AUTH-005"));
+        }
+
+        // 사용 이력 조회에 사용할 이벤트와 사용 완료 쿠폰, 확정 사용 결과를 DB에 저장한다.
+        private void insertHistory(Long id, Long storeId, LocalDateTime useTime, int discountAmount) {
+            entityManager.createNativeQuery("""
+                    INSERT INTO coupon_event (coupon_event_id, campaign_id, business_date, issue_quantity,
+                            usable_start_at, usable_end_at, status, store_id, store_name, discount_target_type,
+                            discount_type, discount_value, created_at, updated_at)
+                    VALUES (:id, :id, :businessDate, 100, :startAt, :endAt, 'ACTIVE', :storeId, '런치식당',
+                            'ALL', 'AMOUNT', 3000, :useTime, :useTime)
+                    """).setParameter("id", id).setParameter("businessDate", useTime.toLocalDate())
+                    .setParameter("startAt", useTime.minusHours(1)).setParameter("endAt", useTime.plusHours(1))
+                    .setParameter("storeId", storeId).setParameter("useTime", useTime).executeUpdate();
+            entityManager.createNativeQuery("""
+                    INSERT INTO member_coupon (member_coupon_id, coupon_event_id, member_id, coupon_code, qr_version,
+                            status, usable_start_at, usable_end_at, created_at, updated_at)
+                    VALUES (:id, :id, 17, :code, 0, 'USED', :startAt, :endAt, :useTime, :useTime)
+                    """).setParameter("id", id).setParameter("code", UUID.randomUUID())
+                    .setParameter("startAt", useTime.minusHours(1)).setParameter("endAt", useTime.plusHours(1))
+                    .setParameter("useTime", useTime).executeUpdate();
+            entityManager.createNativeQuery("""
+                    INSERT INTO coupon_usage_history (coupon_usage_history_id, member_coupon_id, store_id,
+                            discount_amount, created_at, updated_at)
+                    VALUES (:id, :id, :storeId, :discountAmount, :useTime, :useTime)
+                    """).setParameter("id", id).setParameter("storeId", storeId)
+                    .setParameter("discountAmount", discountAmount).setParameter("useTime", useTime).executeUpdate();
+        }
     }
 
     @Nested
@@ -1258,6 +1478,231 @@ class CouponIntegrationTest {
             return jdbcTemplate.queryForObject(
                     "SELECT issued_count FROM coupon_daily_limit WHERE member_id = 17 AND business_date = ?",
                     Integer.class, NOW.toLocalDate());
+        }
+    }
+
+    @Nested
+    @DisplayName("QR 생성과 갱신")
+    class GenerateQr {
+
+        private static final LocalDateTime NOW = LocalDateTime.of(2026, 10, 10, 12, 0);
+        private final AtomicReference<Instant> currentTime = new AtomicReference<>();
+
+        private static final String QR_PATH = "/v1/coupons/1001:generateQr";
+
+        @BeforeEach
+        void setUp() {
+            currentTime.set(NOW.atZone(ClockConfig.ZONE).toInstant());
+            when(clock.withZone(ClockConfig.ZONE))
+                    .thenAnswer(invocation -> Clock.fixed(currentTime.get(), ClockConfig.ZONE));
+            jdbcTemplate.update("""
+                    INSERT INTO member (member_id, provider_user_id, nickname, status, created_at, updated_at)
+                    VALUES (17, 'coupon-qr-test', '점심헌터', 'ACTIVE', ?, ?)
+                    """, NOW, NOW);
+            jdbcTemplate.update("""
+                    INSERT INTO coupon_event (coupon_event_id, campaign_id, business_date, issue_quantity,
+                            usable_start_at, usable_end_at, status, store_id, store_name, discount_target_type,
+                            discount_type, discount_value, created_at, updated_at)
+                    VALUES (81, 81, ?, 100, ?, ?, 'ACTIVE', 10, '런치식당', 'ALL', 'AMOUNT', 3000, ?, ?)
+                    """, NOW.toLocalDate(), NOW.minusHours(1), NOW.plusHours(1), NOW, NOW);
+            jdbcTemplate.update("""
+                    INSERT INTO member_coupon (member_coupon_id, coupon_event_id, member_id, coupon_code,
+                            qr_version, qr_token, qr_expires_at, status, usable_start_at, usable_end_at, created_at, updated_at)
+                    VALUES (1001, 81, 17, UNHEX('00112233445566778899AABBCCDDEEFF'), 3,
+                            UNHEX('FFEEDDCCBBAA99887766554433221100'), ?, 'ISSUED', ?, ?, ?, ?)
+                    """, NOW.plusSeconds(30), NOW.minusHours(1), NOW.plusHours(1), NOW, NOW);
+            jdbcTemplate.update("""
+                    INSERT INTO coupon_inventory (coupon_event_id, sequence_no, coupon_code, status,
+                            usable_start_at, usable_end_at, created_at, updated_at)
+                    VALUES (81, 1, UNHEX('00112233445566778899AABBCCDDEEFF'), 'ISSUED', ?, ?, ?, ?)
+                    """, NOW.minusHours(1), NOW.plusHours(1), NOW, NOW);
+            jdbcTemplate.update("""
+                    INSERT INTO coupon_daily_limit (member_id, business_date, issued_count, created_at, updated_at)
+                    VALUES (17, ?, 1, ?, ?)
+                    """, NOW.toLocalDate(), NOW, NOW);
+        }
+
+        @AfterEach
+        void cleanUp() {
+            jdbcTemplate.update("DELETE FROM member_coupon");
+            jdbcTemplate.update("DELETE FROM coupon_inventory");
+            jdbcTemplate.update("DELETE FROM coupon_daily_limit");
+            jdbcTemplate.update("DELETE FROM coupon_event");
+            jdbcTemplate.update("DELETE FROM member WHERE member_id = 17");
+        }
+
+        @Test
+        void QR_API는_PNG와_60초_만료와_no_store를_반환하고_갱신을_저장한다() throws Exception {
+            jdbcTemplate.update("UPDATE coupon_event SET status = 'PAUSED' WHERE coupon_event_id = 81");
+            var inventoryBefore = jdbcTemplate.queryForList("SELECT * FROM coupon_inventory");
+            var limitBefore = jdbcTemplate.queryForList("SELECT * FROM coupon_daily_limit");
+            var usageBefore = jdbcTemplate.queryForList("SELECT * FROM coupon_usage_history");
+            mockMvc.perform(post(QR_PATH).with(user(MEMBER)))
+                    .andExpect(status().isOk()).andExpect(header().string("Cache-Control", "no-store"))
+                    .andExpect(jsonPath("$.code").value("SUCCESS"))
+                    .andExpect(jsonPath("$.data.qrImageBytes").isNotEmpty())
+                    .andExpect(jsonPath("$.data.expireTime").value("2026-10-10T12:01:00+09:00"));
+            Map<String, Object> first = coupon();
+
+            mockMvc.perform(post(QR_PATH).with(user(MEMBER))).andExpect(status().isOk());
+
+            assertThat(first.get("qr_version")).isEqualTo(4);
+            assertThat(coupon().get("qr_version")).isEqualTo(5);
+            assertThat(coupon().get("qr_token")).isNotEqualTo(first.get("qr_token"));
+            assertThat(jdbcTemplate.queryForList("SELECT * FROM coupon_inventory"))
+                    .usingRecursiveComparison().isEqualTo(inventoryBefore);
+            assertThat(jdbcTemplate.queryForList("SELECT * FROM coupon_daily_limit"))
+                    .usingRecursiveComparison().isEqualTo(limitBefore);
+            assertThat(jdbcTemplate.queryForList("SELECT * FROM coupon_usage_history")).isEqualTo(usageBefore);
+        }
+
+        @Test
+        void 양수가_아닌_QR_생성_쿠폰_ID는_공통_입력_오류로_반환한다() throws Exception {
+            Map<String, Object> before = coupon();
+            mockMvc.perform(post("/v1/coupons/0:generateQr").with(user(MEMBER)))
+                    .andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("COMMON-002"));
+            assertThat(coupon()).usingRecursiveComparison().isEqualTo(before);
+        }
+
+        @Test
+        void 인증_없이는_QR을_생성할_수_없다() throws Exception {
+            mockMvc.perform(post(QR_PATH)).andExpect(status().isUnauthorized())
+                    .andExpect(jsonPath("$.code").value("AUTH-005"));
+            assertThat(coupon().get("qr_version")).isEqualTo(3);
+        }
+
+        @Test
+        void 회원_외_역할은_QR을_생성할_수_없다() throws Exception {
+            mockMvc.perform(post(QR_PATH).with(user(new CustomUserDetails(17L, Role.OWNER))))
+                    .andExpect(status().isForbidden()).andExpect(jsonPath("$.code").value("AUTH-006"));
+        }
+
+        @Test
+        void 다른_회원의_쿠폰은_접근을_거절한다() throws Exception {
+            mockMvc.perform(post(QR_PATH)
+                            .with(user(new CustomUserDetails(18L, Role.MEMBER))))
+                    .andExpect(status().isForbidden()).andExpect(jsonPath("$.code").value("COUPON-011"));
+        }
+
+        @Test
+        void 회원의_현재_DB_상태가_정지면_QR을_변경하지_않는다() throws Exception {
+            jdbcTemplate.update("UPDATE member SET status = 'SUSPENDED', suspended_at = ? WHERE member_id = 17", NOW);
+            Map<String, Object> before = coupon();
+            mockMvc.perform(post(QR_PATH).with(user(MEMBER))).andExpect(status().isForbidden())
+                    .andExpect(jsonPath("$.code").value("COUPON-003"));
+            assertThat(coupon()).usingRecursiveComparison().isEqualTo(before);
+        }
+
+        @Test
+        void 이미지_생성이_실패하면_토큰과_버전_교체도_롤백한다() throws Exception {
+            Map<String, Object> before = coupon();
+            doThrow(new IllegalStateException("test image failure")).when(imageEncoder).encode(any(UUID.class));
+            mockMvc.perform(post(QR_PATH).with(user(MEMBER))).andExpect(status().isInternalServerError())
+                    .andExpect(jsonPath("$.code").value("COMMON-001"));
+            assertThat(coupon()).usingRecursiveComparison().isEqualTo(before);
+        }
+
+        @Test
+        void 쿠폰_저장이_실패하면_QR_변경을_롤백한다() throws Exception {
+            Map<String, Object> before = coupon();
+            jdbcTemplate.execute("ALTER TABLE member_coupon ADD CONSTRAINT chk_test_qr_failure CHECK (qr_version <= 3)");
+            try {
+                mockMvc.perform(post(QR_PATH).with(user(MEMBER)))
+                        .andExpect(status().isInternalServerError())
+                        .andExpect(jsonPath("$.code").value("COMMON-001"));
+
+                assertThat(coupon()).usingRecursiveComparison().isEqualTo(before);
+            } finally {
+                jdbcTemplate.execute("ALTER TABLE member_coupon DROP CHECK chk_test_qr_failure");
+            }
+        }
+
+        @Test
+        void 동시_QR_갱신은_직렬화하여_마지막_토큰만_저장한다() throws Exception {
+            CountDownLatch started = new CountDownLatch(1);
+            AtomicReference<Future<MvcResult>> second = new AtomicReference<>();
+            MvcResult last;
+            try (ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
+                new TransactionTemplate(transactionManager).executeWithoutResult(transaction -> {
+                    couponCommandService.generateQr(17L, 1001L);
+                    second.set(executor.submit(() -> {
+                        started.countDown();
+                        return mockMvc.perform(post(QR_PATH).with(user(MEMBER))).andReturn();
+                    }));
+                    assertBlocked(started, second.get());
+                });
+                last = second.get().get(5, TimeUnit.SECONDS);
+            }
+            Map<String, Object> saved = coupon();
+            ByteBuffer bytes = ByteBuffer.wrap((byte[]) saved.get("qr_token"));
+            UUID token = new UUID(bytes.getLong(), bytes.getLong());
+            assertThat(saved.get("qr_version")).isEqualTo(5);
+            status().isOk().match(last);
+            jsonPath("$.data.qrImageBytes").value(imageEncoder.encode(token)).match(last);
+        }
+
+        @Test
+        void 삭제가_먼저_잠그면_대기하던_QR_갱신은_삭제_후_거절된다() throws Exception {
+            CountDownLatch started = new CountDownLatch(1);
+            AtomicReference<Future<MvcResult>> renewal = new AtomicReference<>();
+            try (ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
+                new TransactionTemplate(transactionManager).executeWithoutResult(transaction -> {
+                    couponCommandService.deleteCoupon(17L, 1001L);
+                    renewal.set(executor.submit(() -> {
+                        started.countDown();
+                        return mockMvc.perform(post(QR_PATH).with(user(MEMBER))).andReturn();
+                    }));
+                    assertBlocked(started, renewal.get());
+                });
+                assertRenewalRejected(renewal.get());
+            }
+            assertThat(coupon().get("status")).isEqualTo("REMOVED");
+            assertThat(coupon().get("qr_token")).isNull();
+            assertThat(coupon().get("qr_expires_at")).isNull();
+            assertThat(coupon().get("qr_version")).isEqualTo(4);
+        }
+
+        @Test
+        void 잠금을_기다리는_중_사용_시간이_끝나면_잠금_획득_후_거절된다() throws Exception {
+            jdbcTemplate.update("UPDATE member_coupon SET usable_end_at = ?", NOW.plusSeconds(30));
+            CountDownLatch started = new CountDownLatch(1);
+            AtomicReference<Future<MvcResult>> renewal = new AtomicReference<>();
+            try (ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
+                new TransactionTemplate(transactionManager).executeWithoutResult(transaction -> {
+                    memberCouponRepository.findByIdAndMemberId(1001L, 17L).orElseThrow();
+                    renewal.set(executor.submit(() -> {
+                        started.countDown();
+                        return mockMvc.perform(post(QR_PATH).with(user(MEMBER))).andReturn();
+                    }));
+                    assertBlocked(started, renewal.get());
+                    currentTime.set(NOW.plusSeconds(30).atZone(ClockConfig.ZONE).toInstant());
+                });
+                assertRenewalRejected(renewal.get());
+            }
+            assertThat(coupon().get("qr_version")).isEqualTo(3);
+        }
+
+        // 별도 스레드의 요청이 시작되었으며 행 잠금 해제까지 대기하는지 검증한다.
+        private void assertBlocked(CountDownLatch started, Future<?> pending) {
+            try {
+                assertThat(started.await(5, TimeUnit.SECONDS)).isTrue();
+            } catch (InterruptedException exception) {
+                Thread.currentThread().interrupt();
+                throw new AssertionError(exception);
+            }
+            assertThatThrownBy(() -> pending.get(200, TimeUnit.MILLISECONDS)).isInstanceOf(TimeoutException.class);
+        }
+
+        // 잠금 획득 후 사용할 수 없게 된 쿠폰의 QR 갱신이 거절되는지 검증한다.
+        private void assertRenewalRejected(Future<MvcResult> renewal) throws Exception {
+            MvcResult response = renewal.get(5, TimeUnit.SECONDS);
+            status().isConflict().match(response);
+            jsonPath("$.code").value("COUPON-002").match(response);
+        }
+
+        // QR 갱신 전후의 토큰과 버전, 상태를 비교할 회원 쿠폰을 DB에서 조회한다.
+        private Map<String, Object> coupon() {
+            return jdbcTemplate.queryForMap("SELECT * FROM member_coupon WHERE member_coupon_id = 1001");
         }
     }
 }

@@ -2,6 +2,7 @@ package com.launchcatch.ops;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.launchcatch.IntegrationTestSupport;
 import com.launchcatch.ops.entity.BatchExecutionLog;
 import com.launchcatch.ops.entity.BatchStatus;
 import com.launchcatch.ops.repository.BatchExecutionLogRepository;
@@ -24,10 +25,6 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
-import org.testcontainers.mysql.MySQLContainer;
-import org.testcontainers.utility.DockerImageName;
 
 /*
  * 점유와 이어받기를 실제 MySQL 에서 확인한다.
@@ -37,28 +34,16 @@ import org.testcontainers.utility.DockerImageName;
  * 종료 시각, 실패 사유는 짝을 요구하는 제약이 걸려 있어 한쪽만 바꾸면 저장이 거부된다.
  * 그 거부는 배치가 실패를 기록하려는 순간에 터지므로, 실패 기록 자체가 사라진다.
  */
-@Testcontainers
 @SpringBootTest
-class BatchExecutionIntegrationTest {
+class BatchExecutionIntegrationTest extends IntegrationTestSupport {
 
     private static final String ME = "batch-1";
     private static final String OTHER = "batch-2";
     private static final String JOB = "LOAD_DAILY_CANDIDATE";
     private static final LocalDate DATE = LocalDate.of(2026, 10, 6);
 
-    @Container
-    static final MySQLContainer MYSQL = new MySQLContainer(DockerImageName.parse("mysql:8.4"));
-
-    /** 운영 비밀이 아니라 컨텍스트를 띄우기 위한 자리 채움이다. */
-    private static final String DUMMY_JWT_SECRET =
-            "test-only-secret-not-used-anywhere-else-0123456789abcdef";
-
     @DynamicPropertySource
-    static void properties(DynamicPropertyRegistry registry) {
-        registry.add("spring.datasource.url", MYSQL::getJdbcUrl);
-        registry.add("spring.datasource.username", MYSQL::getUsername);
-        registry.add("spring.datasource.password", MYSQL::getPassword);
-        registry.add("jwt.secret", () -> DUMMY_JWT_SECRET);
+    static void 이_배치의_점유자를_등록한다(DynamicPropertyRegistry registry) {
         registry.add("launchcatch.batch.owner-id", () -> ME);
     }
 

@@ -20,6 +20,6 @@ public enum AdminMemberSortBy {
                 return candidate;
             }
         }
-        throw new IllegalArgumentException("unsupported sortBy: " + requestValue);
+        throw new IllegalArgumentException("지원하지 않는 정렬 기준입니다. 가입일, 마지막 로그인 시각, 닉네임 또는 회원번호를 선택해 주세요.");
     }
 }

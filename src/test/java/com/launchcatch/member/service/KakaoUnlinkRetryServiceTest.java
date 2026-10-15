@@ -15,6 +15,10 @@ import com.launchcatch.member.entity.KakaoUnlinkFailure;
 import com.launchcatch.member.entity.KakaoUnlinkStopReason;
 import com.launchcatch.member.entity.Member;
 import com.launchcatch.member.repository.KakaoUnlinkFailureRepository;
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import java.lang.reflect.Field;
@@ -23,6 +27,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -36,6 +41,7 @@ import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.TransactionStatus;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.reactive.function.client.WebClientResponseException;
+import org.slf4j.LoggerFactory;
 
 @ExtendWith(MockitoExtension.class)
 class KakaoUnlinkRetryServiceTest {
@@ -46,14 +52,58 @@ class KakaoUnlinkRetryServiceTest {
     @Mock TransactionStatus transactionStatus;
 
     private KakaoUnlinkRetryService service;
+    private final Logger logger = (Logger) LoggerFactory.getLogger(KakaoUnlinkRetryService.class);
+    private final ListAppender<ILoggingEvent> logs = new ListAppender<>();
+    private Level originalLevel;
 
     @BeforeEach
     void setUp() {
+        originalLevel = logger.getLevel();
+        logger.setLevel(Level.INFO);
+        logs.start();
+        logger.addAppender(logs);
         when(transactionManager.getTransaction(any(TransactionDefinition.class))).thenReturn(transactionStatus);
         service = new KakaoUnlinkRetryService(
                 failureRepository,
                 kakaoUnlinkClient,
                 new TransactionTemplate(transactionManager));
+    }
+
+    @AfterEach
+    void detachLogs() {
+        logger.detachAppender(logs);
+        logger.setLevel(originalLevel);
+        logs.stop();
+    }
+
+    @Test
+    void 호출_실패_직전에_대기_행이_사라져도_실패_로그를_한_번_남긴다() throws Exception {
+        KakaoUnlinkFailure failure = pendingFor(MemberStatus.WITHDRAWN);
+        when(failureRepository.findById(10L)).thenReturn(Optional.of(failure), Optional.empty());
+        doThrow(new RuntimeException("카카오회원번호와응답원문")).when(kakaoUnlinkClient).unlink("kakao-1");
+
+        assertThatCode(() -> service.retryPending()).doesNotThrowAnyException();
+
+        assertThat(logs.list).singleElement().satisfies(event -> {
+            assertThat(event.getLevel()).isEqualTo(Level.WARN);
+            assertThat(event.getFormattedMessage()).contains("event=KAKAO_UNLINK_RETRY_FAILED", "failureId=10", "memberId=1", "reason=QUEUE_ROW_MISSING")
+                    .doesNotContain("원문", "kakao-1");
+            assertThat(event.getThrowableProxy()).isNull();
+        });
+        assertThat(failure.getAttemptCount()).isZero();
+    }
+
+    @Test
+    void 대기_행이_있는_호출_실패에도_업무_로그는_한_번만_남긴다() throws Exception {
+        KakaoUnlinkFailure failure = pendingFor(MemberStatus.WITHDRAWN);
+        doThrow(new RuntimeException("network")).when(kakaoUnlinkClient).unlink("kakao-1");
+
+        service.retryPending();
+
+        assertThat(logs.list).singleElement().satisfies(event ->
+                assertThat(event.getFormattedMessage()).contains("event=KAKAO_UNLINK_RETRY_FAILED", "failureId=10", "memberId=1")
+                        .doesNotContain("QUEUE_ROW_MISSING"));
+        assertThat(failure.getAttemptCount()).isOne();
     }
 
     @Test

@@ -1,5 +1,6 @@
 package com.launchcatch.admin;
 
+import com.launchcatch.IntegrationTestSupport;
 import com.launchcatch.admin.repository.AdminAccessTokenVersionRepository;
 import com.launchcatch.admin.service.AdminAccessTokenVerifier;
 import com.launchcatch.auth.jwt.AccessTokenCutoffVerifier;
@@ -12,16 +13,8 @@ import com.launchcatch.auth.Role;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
 import org.springframework.data.redis.core.StringRedisTemplate;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
-import org.testcontainers.utility.DockerImageName;
 
-@Testcontainers
-class AdminAccessTokenVersionRedisIntegrationTest {
-    @Container
-    static final org.testcontainers.containers.GenericContainer<?> VALKEY =
-            new org.testcontainers.containers.GenericContainer<>(DockerImageName.parse("valkey/valkey:9"))
-                    .withExposedPorts(6379);
+class AdminAccessTokenVersionRedisIntegrationTest extends IntegrationTestSupport {
 
     @Test
     void 폐기순번은_만료되지_않고_역순_게시와_BIGINT_정밀도_손실을_막는다() {

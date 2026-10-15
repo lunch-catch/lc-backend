@@ -187,7 +187,7 @@ class OwnerTermsAgreementIntegrationTest {
     void 필수_미동의는_422이며_선택_내역도_저장하지_않는다() throws Exception {
         mvc.perform(post("/v1/owner/terms-agreements").cookie(access(Role.OWNER))
                         .contentType(MediaType.APPLICATION_JSON).content(BODY.replace("true", "false")))
-                .andExpect(status().isUnprocessableEntity()).andExpect(jsonPath("$.code").value("STORE-002"));
+                .andExpect(status().isUnprocessableEntity()).andExpect(jsonPath("$.code").value("STORE-006"));
         assertThat(agreements.findAllByOwnerId(ownerId)).isEmpty();
     }
 
@@ -195,7 +195,7 @@ class OwnerTermsAgreementIntegrationTest {
     void 같은_요청을_반복하면_409이다() throws Exception {
         service.submit(ownerId, request());
         mvc.perform(post("/v1/owner/terms-agreements").cookie(access(Role.OWNER)).contentType(MediaType.APPLICATION_JSON).content(BODY))
-                .andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("STORE-001"));
+                .andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("STORE-005"));
         assertThat(agreements.findAllByOwnerId(ownerId)).hasSize(2);
     }
 
@@ -224,7 +224,7 @@ class OwnerTermsAgreementIntegrationTest {
             var second = workers.submit(submit);
             start.countDown();
             assertThat(List.of(first.get(15, TimeUnit.SECONDS), second.get(15, TimeUnit.SECONDS)))
-                    .containsExactlyInAnyOrder("created", "STORE-001");
+                    .containsExactlyInAnyOrder("created", "STORE-005");
             assertThat(agreements.findAllByOwnerId(ownerId)).hasSize(2);
         } finally {
             start.countDown(); workers.shutdownNow();
@@ -267,7 +267,7 @@ class OwnerTermsAgreementIntegrationTest {
         when(agreements.findAllByOwnerId(ownerId)).thenReturn(List.of());
         mvc.perform(post("/v1/owner/terms-agreements").cookie(access(Role.OWNER))
                         .contentType(MediaType.APPLICATION_JSON).content(BODY))
-                .andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("STORE-001"));
+                .andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("STORE-005"));
         assertThat(jdbc.queryForObject("select count(*) from owner_terms_agreement where owner_id = ?",
                 Integer.class, ownerId)).isEqualTo(2);
     }

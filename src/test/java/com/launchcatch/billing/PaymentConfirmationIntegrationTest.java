@@ -3,6 +3,7 @@ package com.launchcatch.billing;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.launchcatch.IntegrationTestSupport;
 import com.launchcatch.billing.client.FakePaymentGateway;
 import com.launchcatch.billing.client.PaymentGatewayApproval;
 import com.launchcatch.billing.client.PgNotSentException;
@@ -32,12 +33,6 @@ import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Primary;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.test.context.DynamicPropertyRegistry;
-import org.springframework.test.context.DynamicPropertySource;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
-import org.testcontainers.mysql.MySQLContainer;
-import org.testcontainers.utility.DockerImageName;
 
 /*
  * 승인 확정을 실제 MySQL 8.4 와 실제 트랜잭션으로 검증한다. 결제대행사만 가짜로 바꾼다.
@@ -48,26 +43,11 @@ import org.testcontainers.utility.DockerImageName;
  *
  * 커밋을 봐야 하므로 테스트 트랜잭션을 걸지 않고 매번 행을 지운다.
  */
-@Testcontainers
 @SpringBootTest
-class PaymentConfirmationIntegrationTest {
-
-    @Container
-    static final MySQLContainer MYSQL = new MySQLContainer(DockerImageName.parse("mysql:8.4"));
-
-    private static final String DUMMY_JWT_SECRET =
-            "test-only-secret-not-used-anywhere-else-0123456789abcdef";
+class PaymentConfirmationIntegrationTest extends IntegrationTestSupport {
 
     private static final Long OWNER = 7L;
     private static final long AMOUNT = 30000L;
-
-    @DynamicPropertySource
-    static void datasource(DynamicPropertyRegistry registry) {
-        registry.add("spring.datasource.url", MYSQL::getJdbcUrl);
-        registry.add("spring.datasource.username", MYSQL::getUsername);
-        registry.add("spring.datasource.password", MYSQL::getPassword);
-        registry.add("jwt.secret", () -> DUMMY_JWT_SECRET);
-    }
 
     /*
      * 승인을 요청받은 순간에 그 주문의 결제 식별자를 다른 커넥션으로 읽어 둔다.
@@ -274,7 +254,7 @@ class PaymentConfirmationIntegrationTest {
                         + "where payment_id = ?", order.paymentId());
         assertThat(outbox.get("status")).isEqualTo("PENDING");
         assertThat(((Number) outbox.get("attempt_count")).intValue()).isZero();
-        assertThat(((Number) outbox.get("max_retry")).intValue()).isEqualTo(10);
+        assertThat(((Number) outbox.get("max_retry")).intValue()).isEqualTo(5);
         assertThat(outbox.get("next_retry_at")).isNotNull();
     }
 

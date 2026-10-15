@@ -11,6 +11,9 @@ import com.launchcatch.campaign.template.entity.TemplateStatus;
 import com.launchcatch.campaign.template.entity.TemplateVersion;
 import com.launchcatch.campaign.template.repository.TemplateRepository;
 import com.launchcatch.campaign.template.repository.TemplateVersionRepository;
+import com.launchcatch.campaign.template.TemplateHtmlSanitizer;
+import com.launchcatch.campaign.template.TemplateSlotValidator;
+import com.launchcatch.campaign.template.TemplateStructureValidator;
 import java.time.Clock;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -31,6 +34,7 @@ public class TemplateReviseService {
     private final TemplateHtmlSanitizer templateHtmlSanitizer;
     private final TemplateSlotValidator templateSlotValidator;
     private final TemplateStructureValidator templateStructureValidator;
+    private final TemplateGenerationRateLimiter templateGenerationRateLimiter;
     private final TransactionTemplate transactionTemplate;
     private final Clock clock;
 
@@ -41,12 +45,18 @@ public class TemplateReviseService {
      * LLM 호출은 트랜잭션 밖에서 한다(생성과 같은 이유). request_id 의 UNIQUE 충돌은
      * 저장 트랜잭션 밖에서 잡아 다시 조회한다(TemplateCreateService 에서 코드래빗
      * 리뷰로 고친 것과 같은 패턴).
+     *
+     * requestId 재시도가 아니라고 확인한 뒤에만 속도 제한을 센다(#227). 멱등성으로
+     * 걸러지는 같은 요청의 재시도까지 관리자의 호출 횟수로 세면 안 된다. 저장되기 전에(=
+     * LLM 호출이 끝나기 전에) 같은 requestId가 다시 들어오는 경우는 이 조회로 못 걸러서
+     * checkLimit 안에서 requestId 기준으로 한 번만 세게 한다.
      */
     public TemplateCreateResponse revise(Long templateId, String requestPrompt, String requestId, Long adminId) {
         var existing = templateVersionRepository.findByRequestId(requestId);
         if (existing.isPresent()) {
             return toResponseForMatchingTemplate(existing.get(), templateId);
         }
+        templateGenerationRateLimiter.checkLimit(adminId, requestId);
         findDraftTemplate(templateId);
         String previousHtml = latestVersionHtml(templateId);
         Document previousDocument = Jsoup.parseBodyFragment(previousHtml);
@@ -101,8 +111,8 @@ public class TemplateReviseService {
      * 두 트랜잭션 중 하나가 여기서 기다리게 돼, 둘 다 같은 "다음 버전 번호"를
      * 계산해 request_id 가 다른데도 (template_id, version_number) UNIQUE 제약에
      * 부딪히는 경쟁이 없어진다. 잠금을 잡은 뒤 DRAFT 상태를 다시 확인하는 것도
-     * 같은 이유다: LLM 호출(최대 30초) 동안 다른 트랜잭션이 이 템플릿을 게시해
-     * 커밋했을 수 있는데, 잠금을 잡고 나서야 그 최신 상태를 안전하게 본다.
+     * 같은 이유다: LLM 호출(재시도 1회까지 포함해 최대 60초) 동안 다른 트랜잭션이
+     * 이 템플릿을 게시해 커밋했을 수 있는데, 잠금을 잡고 나서야 그 최신 상태를 안전하게 본다.
      */
     private TemplateCreateResponse save(
             Long templateId, String requestPrompt, String requestId, Long adminId, TemplateSanitizeResult sanitized) {

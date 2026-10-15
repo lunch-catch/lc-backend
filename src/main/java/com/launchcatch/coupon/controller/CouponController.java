@@ -3,7 +3,9 @@ package com.launchcatch.coupon.controller;
 import com.launchcatch.auth.CustomUserDetails;
 import com.launchcatch.coupon.dto.CouponDetailResponse;
 import com.launchcatch.coupon.dto.CouponIssuanceLimitResponse;
+import com.launchcatch.coupon.dto.CouponQrResponse;
 import com.launchcatch.coupon.dto.CouponSummaryResponse;
+import com.launchcatch.coupon.dto.CouponUsageHistoryResponse;
 import com.launchcatch.coupon.service.CouponCommandService;
 import com.launchcatch.coupon.service.CouponLookUpService;
 import com.launchcatch.global.response.CursorPageResponse;
@@ -13,17 +15,20 @@ import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.media.Content;
 import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
-import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.Positive;
+import java.time.LocalDate;
 import lombok.RequiredArgsConstructor;
+import org.springframework.format.annotation.DateTimeFormat;
+import org.springframework.http.CacheControl;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -32,11 +37,24 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/v1")
 @RequiredArgsConstructor
 @Tag(name = "쿠폰", description = "쿠폰 관련 API")
-@SecurityRequirement(name = "memberAccessToken")
 public class CouponController {
 
     private final CouponLookUpService couponLookUpService;
     private final CouponCommandService couponCommandService;
+
+    // 본인 쿠폰의 QR을 생성하거나 갱신하고 응답 캐시를 금지한다.
+    @PostMapping("/coupons/{memberCouponId}:generateQr")
+    @Operation(summary = "쿠폰 QR 생성·갱신", description = "사용 가능한 본인 쿠폰의 QR을 교체한다. 이전 QR은 즉시 무효화된다.")
+    @ApiResponse(responseCode = "200", description = "QR 이미지와 토큰 만료 시각을 반환한다.",
+            useReturnTypeSchema = true)
+    public ResponseEntity<ResponseEnvelope<CouponQrResponse>> generateQr(
+            @Parameter(hidden = true) @AuthenticationPrincipal CustomUserDetails user,
+            @Parameter(description = "QR을 생성할 본인 쿠폰 ID다.", example = "1001",
+                    schema = @Schema(type = "integer", format = "int64", minimum = "1"))
+            @PathVariable @Positive Long memberCouponId) {
+        return ResponseEntity.ok().cacheControl(CacheControl.noStore())
+                .body(ResponseEnvelope.success(couponCommandService.generateQr(user.getId(), memberCouponId)));
+    }
 
     // 인증된 회원의 쿠폰을 필터와 커서로 조회한다.
     @GetMapping("/coupons")
@@ -122,5 +140,26 @@ public class CouponController {
             @PathVariable @Positive Long memberCouponId) {
         couponCommandService.deleteCoupon(user.getId(), memberCouponId);
         return ResponseEntity.noContent().build();
+    }
+
+    // 매장의 사용 이력을 한국 날짜 범위와 커서로 조회한다.
+    @GetMapping("/owner/stores/{storeId}/coupon-usages")
+    @Operation(summary = "매장 쿠폰 사용 이력 조회", description = "ACTIVE 점주가 한국 날짜 범위의 확정 사용 이력을 최신순으로 조회한다.")
+    @ApiResponse(responseCode = "200", description = "쿠폰 사용 이력과 다음 페이지 토큰을 반환한다.",
+            useReturnTypeSchema = true)
+    public ResponseEnvelope<CursorPageResponse<CouponUsageHistoryResponse>> getUsages(
+            @Parameter(hidden = true) @AuthenticationPrincipal CustomUserDetails user,
+            @Parameter(description = "사용 이력을 조회할 매장 ID다.", example = "10")
+            @PathVariable @Positive Long storeId,
+            @Parameter(description = "조회 시작일이며 당일 00:00을 포함한다.", example = "2026-09-01")
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+            @Parameter(description = "조회 종료일이며 다음 날 00:00은 제외한다.", example = "2026-09-30")
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
+            @Parameter(description = "한 페이지의 이력 수다.",
+                    schema = @Schema(type = "integer", format = "int32", defaultValue = "20", minimum = "1", maximum = "100"))
+            @RequestParam(defaultValue = "20") @Min(1) @Max(100) int pageSize,
+            @Parameter(description = "같은 매장과 조회 기간의 nextPageToken이다. 첫 조회나 조건 변경 시 생략한다.")
+            @RequestParam(required = false) String pageToken) {
+        return ResponseEnvelope.success(couponLookUpService.getUsages(user.getId(), storeId, from, to, pageSize, pageToken));
     }
 }

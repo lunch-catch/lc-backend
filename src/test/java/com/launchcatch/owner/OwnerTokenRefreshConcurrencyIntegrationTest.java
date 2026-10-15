@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
+import com.launchcatch.IntegrationTestSupport;
 import com.launchcatch.auth.Role;
 import com.launchcatch.auth.exception.AuthException;
 import com.launchcatch.owner.repository.OwnerAccessTokenVersionRepository;
@@ -33,30 +34,12 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.security.crypto.password.PasswordEncoder;
-import org.springframework.test.context.DynamicPropertyRegistry;
-import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
-import org.testcontainers.containers.GenericContainer;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
-import org.testcontainers.mysql.MySQLContainer;
 
 // DB 행 잠금, 롤백 복구 및 로그인과 재발급의 게시 순서를 실제 저장소로 확인한다.
-@Testcontainers
 @SpringBootTest(properties = "jwt.secret=test-only-owner-concurrency-secret-at-least-32-bytes")
-class OwnerTokenRefreshConcurrencyIntegrationTest {
-    @Container static final MySQLContainer MYSQL = new MySQLContainer("mysql:8.4");
-    @Container static final GenericContainer<?> VALKEY = new GenericContainer<>("valkey/valkey:9").withExposedPorts(6379);
-
-    @DynamicPropertySource
-    static void infrastructure(DynamicPropertyRegistry registry) {
-        registry.add("spring.datasource.url", MYSQL::getJdbcUrl);
-        registry.add("spring.datasource.username", MYSQL::getUsername);
-        registry.add("spring.datasource.password", MYSQL::getPassword);
-        registry.add("spring.data.redis.host", VALKEY::getHost);
-        registry.add("spring.data.redis.port", () -> VALKEY.getMappedPort(6379));
-    }
+class OwnerTokenRefreshConcurrencyIntegrationTest extends IntegrationTestSupport {
 
     @MockitoSpyBean private OwnerRepository owners;
     @MockitoSpyBean private RefreshTokenRepository tokens;

@@ -96,6 +96,10 @@ public class HttpBodyLoggingFilter extends OncePerRequestFilter {
                     + "|providerUserId|kakaoUserId|user_id|paymentKey"
                     + "|authorizationCode|state|nonce)\"\\s*:\\s*\")([^\"]*)(\")");
 
+    // 숫자 좌표와 캐시 끝에서 잘린 숫자 표현도 가려 요청 검증 실패 로그로 실제 위치가 새지 않게 한다.
+    private static final Pattern SENSITIVE_NUMERIC_COORDINATE = Pattern.compile(
+            "(?i)(\"(?:lat|lng|latitude|longitude)\"\\s*:\\s*)([-+]?(?:\\d+(?:\\.\\d*)?|\\.\\d+)(?:e[-+]?\\d*)?)(?=\\s*(?:[,}\\]]|$))");
+
     // (OBS-3-04/SEC-4-02) application/x-www-form-urlencoded 바디("password=1234&token=eyJ...")는
     // 위 JSON 전용 패턴("key":"value")에 안 걸려서 그대로 새어나갔다 — 로그인 폼 등 form-urlencoded로
     // 오는 요청의 민감 키도 동일한 키 목록으로 잡아서 "key=" 뒤 값(다음 "&" 전까지) 전체를 REDACTED 처리한다.
@@ -172,8 +176,8 @@ public class HttpBodyLoggingFilter extends OncePerRequestFilter {
         boolean expected = AccessLogSignal.isExpected(request);
         boolean needsBody = (status >= 400 && !expected) || log.isDebugEnabled();
 
-        String reqBody = needsBody ? mask(extractBody(request.getContentAsByteArray())) : null;
-        String resBody = needsBody ? mask(extractBody(response.getContentAsByteArray())) : null;
+        String reqBody = needsBody ? maskedBody(request.getContentAsByteArray()) : null;
+        String resBody = needsBody ? maskedBody(response.getContentAsByteArray()) : null;
 
         if (expected) {
             log.debug("event=HTTP_ACCESS status={} durationMs={} reqBody=\"{}\" resBody=\"{}\"",
@@ -192,11 +196,12 @@ public class HttpBodyLoggingFilter extends OncePerRequestFilter {
         }
     }
 
-    private String extractBody(byte[] content) {
+    private String maskedBody(byte[] content) {
         if (content == null || content.length == 0) {
             return "";
         }
-        String body = new String(content, StandardCharsets.UTF_8);
+        // 먼저 가린 뒤 길이를 제한해야 긴 민감 값의 일부가 로그 앞부분에 남지 않는다.
+        String body = mask(new String(content, StandardCharsets.UTF_8));
         return body.length() > MAX_BODY_LOG_LENGTH
                 ? body.substring(0, MAX_BODY_LOG_LENGTH) + "...(truncated)"
                 : body;
@@ -210,6 +215,8 @@ public class HttpBodyLoggingFilter extends OncePerRequestFilter {
         // 오해를 방지), group(4)=닫는 따옴표.
         String masked = SENSITIVE_JSON_FIELD.matcher(body).replaceAll(
                 mr -> mr.group(1) + PiiMasker.redact(mr.group(3)) + mr.group(4));
+        masked = SENSITIVE_NUMERIC_COORDINATE.matcher(masked).replaceAll(
+                mr -> mr.group(1) + "\"" + PiiMasker.redact(mr.group(2)) + "\"");
         // group(1)="&key=" 또는 "key="(구분자+키+등호), group(2)=값. JSON 패턴과 별개로 폼 인코딩
         // 바디에도 동일하게 적용 — 두 패턴은 문법이 달라 서로 겹쳐 매치되지 않는다.
         masked = SENSITIVE_FORM_FIELD.matcher(masked).replaceAll(

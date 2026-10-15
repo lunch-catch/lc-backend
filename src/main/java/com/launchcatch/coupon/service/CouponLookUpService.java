@@ -1,9 +1,11 @@
 package com.launchcatch.coupon.service;
 
+import com.launchcatch.auth.exception.AuthErrorCode;
 import com.launchcatch.coupon.CouponListFilter;
 import com.launchcatch.coupon.dto.CouponDetailResponse;
 import com.launchcatch.coupon.dto.CouponIssuanceLimitResponse;
 import com.launchcatch.coupon.dto.CouponSummaryResponse;
+import com.launchcatch.coupon.dto.CouponUsageHistoryResponse;
 import com.launchcatch.coupon.entity.CouponEvent;
 import com.launchcatch.coupon.entity.CouponUsageHistory;
 import com.launchcatch.coupon.entity.MemberCoupon;
@@ -19,7 +21,10 @@ import com.launchcatch.global.exception.CommonErrorCode;
 import com.launchcatch.global.response.CursorPageResponse;
 import com.launchcatch.global.response.PageCursor;
 import com.launchcatch.global.response.PageTokens;
+import com.launchcatch.owner.contract.OwnerAccountStatus;
+import com.launchcatch.owner.contract.OwnerStatusQuery;
 import java.time.Clock;
+import java.time.DateTimeException;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeParseException;
@@ -44,6 +49,7 @@ public class CouponLookUpService {
     private final CouponEventRepository couponEventRepository;
     private final CouponUsageHistoryRepository couponUsageHistoryRepository;
     private final CouponDailyLimitRepository couponDailyLimitRepository;
+    private final OwnerStatusQuery ownerStatusQuery;
     private final Clock clock;
 
     @Value("${coupon.daily-limit}")
@@ -130,6 +136,46 @@ public class CouponLookUpService {
      */
     public CouponSummaryResponse getSummary(Long memberId) {
         return memberCouponRepository.findSummaryByMemberId(memberId);
+    }
+
+    /**
+     * ACTIVE 점주의 매장 사용 이력을 한국 날짜 범위와 커서로 조회한다.
+     *
+     * @param ownerId 인증된 점주의 ID
+     * @param storeId 조회할 매장 ID
+     * @param from 조회 시작일이며, 해당 날짜 00:00을 포함한다
+     * @param to 조회 종료일이며, 다음 날짜 00:00은 제외한다
+     * @param pageSize 조회 항목 수이며, 1 이상 100 이하이다
+     * @param pageToken 같은 매장과 날짜 범위에서 받은 다음 페이지 토큰이며, null이면 첫 페이지이다
+     * @return 확정 사용 결과 목록과 다음 페이지 토큰
+     */
+    public CursorPageResponse<CouponUsageHistoryResponse> getUsages(
+            Long ownerId, Long storeId, LocalDate from, LocalDate to, int pageSize, String pageToken) {
+        validateActiveOwner(ownerId);
+        // TODO: store 공개 contract가 제공되면 validate에 매장 존재 검증을 추가시킨다.
+        validateDateRange(from, to);
+        DateRange dateRange = parseDateRange(from, to);
+        UsageCursor cursor = parsePageToken(pageToken, storeId, from, to);
+
+        List<CouponUsageHistory> histories = findUsageHistories(storeId, dateRange, cursor, pageSize);
+        boolean hasNext = histories.size() > pageSize;
+        List<CouponUsageHistory> page = hasNext ? histories.subList(0, pageSize) : histories;
+        if (page.isEmpty()) {
+            return CursorPageResponse.of(List.of(), null);
+        }
+
+        List<CouponUsageHistoryResponse> items = createUsageHistoryResponses(page);
+        String nextPageToken = createNextPageToken(page, storeId, from, to, hasNext);
+
+        return CursorPageResponse.of(items, nextPageToken);
+    }
+
+    private void validateActiveOwner(Long ownerId) {
+        if (ownerStatusQuery.findCurrentStatus(ownerId).orElse(null) != OwnerAccountStatus.ACTIVE) {
+            log.warn("event=COUPON_USAGE_HISTORY_FAILED reason=OWNER_NOT_ACTIVE code={} ownerId={}",
+                    AuthErrorCode.ROLE_NOT_ALLOWED.getCode(), ownerId);
+            throw new CouponException(AuthErrorCode.ROLE_NOT_ALLOWED);
+        }
     }
 
     // 본인 소유 쿠폰을 조회하고 소유권 확인 실패와 삭제된 쿠폰을 구분해 거절한다.
@@ -268,6 +314,75 @@ public class CouponLookUpService {
         MemberCoupon lastCoupon = page.getLast();
         return PageTokens.encode(new PageCursor(
                 lastCoupon.getId(), lastCoupon.getCreatedAt() + "|" + listFilter.name()));
+    }
+
+    // 조회 범위 검증하며 조회 기간의 길이는 제한하지 않는다.
+    private void validateDateRange(LocalDate from, LocalDate to) {
+        if (from.isAfter(to) || to.equals(LocalDate.MAX)) {
+            throw new CouponException(CommonErrorCode.INVALID_INPUT);
+        }
+    }
+
+    // 시작일 00:00 이상부터 종료일 다음 날 00:00 미만까지의 조회 범위로 변환한다.
+    private DateRange parseDateRange(LocalDate from, LocalDate to) {
+        return new DateRange(from.atStartOfDay(), to.plusDays(1).atStartOfDay());
+    }
+
+    // 커서의 형식과 매장 및 조회 기간이 이번 요청과 일치하는지 검증한다.
+    private UsageCursor parsePageToken(String pageToken, Long storeId, LocalDate from, LocalDate to) {
+        if (pageToken == null) {
+            return new UsageCursor(null, null);
+        }
+        PageCursor cursor = PageTokens.decode(pageToken);
+        if (cursor == null || cursor.id() <= 0 || cursor.sortValue() == null) {
+            throw new CouponException(CommonErrorCode.INVALID_INPUT);
+        }
+        String[] values = cursor.sortValue().split("\\|", -1);
+        if (values.length != 4 || !values[1].equals(storeId.toString())
+                || !values[2].equals(from.toString()) || !values[3].equals(to.toString())) {
+            throw new CouponException(CommonErrorCode.INVALID_INPUT);
+        }
+        try {
+            LocalDateTime useTime = LocalDateTime.parse(values[0]);
+            if (useTime.toLocalDate().isBefore(from) || useTime.toLocalDate().isAfter(to)) {
+                throw new CouponException(CommonErrorCode.INVALID_INPUT);
+            }
+            return new UsageCursor(useTime, cursor.id());
+        } catch (DateTimeException e) {
+            throw new CouponException(CommonErrorCode.INVALID_INPUT, e);
+        }
+    }
+
+    // 다음 페이지의 존재를 확인할 수 있도록 요청한 크기보다 한 건 더 조회한다.
+    private List<CouponUsageHistory> findUsageHistories(
+            Long storeId, DateRange dateRange, UsageCursor cursor, int pageSize) {
+        return couponUsageHistoryRepository.findPage(storeId, dateRange.fromInclusive(), dateRange.toExclusive(),
+                cursor.useTime(), cursor.id(), pageSize + 1);
+    }
+
+    // 저장된 확정 할인액과 사용 시각으로 응답 목록을 구성한다.
+    private List<CouponUsageHistoryResponse> createUsageHistoryResponses(List<CouponUsageHistory> page) {
+        return page.stream()
+                .map(history -> new CouponUsageHistoryResponse(history.getId(), history.getMemberCouponId(),
+                        history.getDiscountAmount(), history.getCreatedAt().atZone(ClockConfig.ZONE).toOffsetDateTime()))
+                .toList();
+    }
+
+    // 다음 페이지가 있을 때만 마지막 사용 이력과 조회 조건으로 토큰을 만든다.
+    private String createNextPageToken(
+            List<CouponUsageHistory> page, Long storeId, LocalDate from, LocalDate to, boolean hasNext) {
+        if (!hasNext) {
+            return null;
+        }
+        CouponUsageHistory last = page.getLast();
+        return PageTokens.encode(new PageCursor(last.getId(),
+                last.getCreatedAt() + "|" + storeId + "|" + from + "|" + to));
+    }
+
+    private record DateRange(LocalDateTime fromInclusive, LocalDateTime toExclusive) {
+    }
+
+    private record UsageCursor(LocalDateTime useTime, Long id) {
     }
 
     private record CouponCursor(LocalDateTime issueTime, Long id) {

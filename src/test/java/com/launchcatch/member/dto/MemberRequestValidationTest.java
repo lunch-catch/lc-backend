@@ -8,13 +8,17 @@ import jakarta.validation.Validation;
 import jakarta.validation.Validator;
 import jakarta.validation.ValidatorFactory;
 import java.math.BigDecimal;
+import java.util.Locale;
 import java.util.Set;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.junit.jupiter.params.provider.MethodSource;
+import org.hibernate.validator.HibernateValidator;
 
 /*
  * 요청 DTO 의 Bean Validation 을 고정한다. 컨트롤러까지 올리지 않고 검증기만 돌린다.
@@ -28,6 +32,29 @@ class MemberRequestValidationTest {
     @AfterAll
     static void closeFactory() {
         FACTORY.close();
+    }
+
+    private static Stream<Object> invalidRequests() {
+        return Stream.of(
+                new KakaoLoginRequest("", ""),
+                new MemberOnboardingRequest(null, null, null, null),
+                new MemberUpdateRequest(" ", null, null),
+                new MemberUpdateRequest("가".repeat(21), null, null),
+                new MemberWithdrawalRequest("", "", "가".repeat(256)),
+                new MemberLocationRequest("가".repeat(51), "가".repeat(256), null, null),
+                new MemberLocationRequest(null, null, new BigDecimal("91"), new BigDecimal("181")),
+                new MemberLocationRequest(null, null, new BigDecimal("-91"), new BigDecimal("-181")));
+    }
+
+    @ParameterizedTest
+    @MethodSource("invalidRequests")
+    void 영어_환경에서도_검증_메시지는_한국어로_나온다(Object request) {
+        try (ValidatorFactory factory = Validation.byProvider(HibernateValidator.class)
+                .configure().defaultLocale(Locale.ENGLISH).buildValidatorFactory()) {
+            Validator validator = factory.getValidator();
+            assertThat(validator.validate(request)).isNotEmpty().allSatisfy(violation ->
+                    assertThat(violation.getMessage()).containsPattern("[가-힣]").doesNotContainPattern("[A-Za-z]"));
+        }
     }
 
     private Set<String> violatedFields(Object target) {
