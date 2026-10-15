@@ -58,5 +58,10 @@ public abstract class IntegrationTestSupport {
         registry.add("jwt.secret", () -> "test-only-secret-not-used-anywhere-else-0123456789abcdef");
         registry.add("jwt.cookie.secure", () -> "true");
         registry.add("launchcatch.batch.owner-id", () -> BATCH_OWNER);
+        /*
+         * 테스트도 기본 프로필이 local 이라 시드가 켜진다.
+         * 시드 행이 테스트 데이터와 섞이지 않게 끈다.
+         */
+        registry.add("seed.enabled", () -> "false");
     }
 }

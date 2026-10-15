@@ -323,3 +323,19 @@ resilience4j:
       # 그 문턱은 자기 앱의 지연 분포를 알아야 정할 수 있다.
       # 목표 처리량으로 부하 시험을 돌린 뒤 실측으로 채운다
 
+# 시험 데이터(db/seed). 스키마 마이그레이션 뒤에 넣는다 (db/seed/README.md).
+# 기본은 꺼짐이라 운영에서는 돌지 않는다. 로컬은 아래 local 문서가 켜고, 개발 서버는 인프라가 SEED_ENABLED 로 켠다.
+seed:
+  enabled: "${SEED_ENABLED:false}"
+  # 시드 계정(관리자, 점주)의 BCrypt 해시. 기본값은 lunchcatch1234! 이고 저장소에 공개돼 있다. 점주 비밀번호 규칙(10~20자)에 맞춘 길이다.
+  # 개발 서버는 인프라가 SEED_PASSWORD_HASH 로 다른 값을 넣는다
+  password-hash: "${SEED_PASSWORD_HASH:$2a$10$MRk.eo1/rGQNUGClHmwVB.Z5zREkJzDzDfu9M4oJsZ.vd0s3n6tAu}"
+
+---
+spring:
+  config:
+    activate:
+      on-profile: local
+
+seed:
+  enabled: true
