@@ -36,7 +36,8 @@ B 를 고른다. 차감은 정산이 따로 막아(`NOT_BILLED_BUDGET`) 점주�
 | 지표 | 세는 것 |
 |---|---|
 | `adserving_serve_log_dropped_total` | 대기열이 차서 버린 카드 수. 카드가 없는 피드는 접속 위치 1건으로 센다 |
-| `adserving_serve_log_failed_total` | 쓰기가 실패해 버린 카드 수 |
+| `adserving_serve_log_failed_total` | `serve_log` 쓰기가 실패해 버린 카드 수 |
+| `adserving_feed_visit_failed_total` | `feed_visit_daily` 쓰기가 실패해 버린 접속 위치 수. 서빙 로그와 따로 쓰고 따로 센다 |
 | `adserving_served_cards_total` | 응답으로 내려준 카드 수. `serve_log` 건수와 대조해 유실률을 잰다 |
 
 ## 통과시킨 횟수
@@ -49,7 +50,7 @@ Valkey 가 멈춰 통과시킨 횟수는 `adserving_cache_bypass_total` 이 센�
 | `daily_exclusion` | `FEED_DAILY_EXCLUSION_FAILED` | 넘긴 카드가 다시 보인다 |
 | `serve_frequency` | `FEED_SERVE_FREQUENCY_READ_FAILED`, `FEED_SERVE_FREQUENCY_WRITE_FAILED` | 같은 카드가 하루 2회, 세션 1회를 넘겨 나온다 |
 | `impression_count` | `FEED_IMPRESSION_COUNT_FAILED` | 유효 노출 수를 0 으로 보고 상한을 넘겨 내보낸다. 넘긴 노출은 과금되지 않아 손해는 플랫폼에 남는다 |
-| `serve_record` | `FEED_SERVE_RECORD_WRITE_FAILED` | 그 카드의 노출이 무효(`EXPIRED_OR_UNKNOWN`)가 되어 과금되지 않는다 |
+| `serve_record` | `FEED_SERVE_RECORD_WRITE_FAILED`, `FEED_SERVE_RECORD_READ_FAILED` | 쓰지 못하거나 읽지 못하면 그 카드의 노출이 무효(`EXPIRED_OR_UNKNOWN`)가 되어 과금되지 않는다 |
 
 경보는 아직 걸지 않았다.
 

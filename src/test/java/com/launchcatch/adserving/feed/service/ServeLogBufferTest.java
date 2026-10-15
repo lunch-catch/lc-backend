@@ -133,4 +133,27 @@ class ServeLogBufferTest {
         assertThat(writtenRows()).hasSize(2);
         assertThat(buffer.isRunning()).isFalse();
     }
+
+    @Test
+    void 접속_위치_쓰기만_실패하면_서빙_로그는_실패로_세지_않고_접속_위치만_센다() {
+        doThrow(new DataAccessResourceFailureException("DB 멈춤")).when(feedVisitRepository).insertAll(anyList(), any());
+        buffer.offer(feedWithCards(1L, 3));
+        buffer.offer(feedWithCards(2L, 0));
+
+        buffer.flushOnce();
+
+        assertThat(meterRegistry.counter(ServeLogBuffer.FAILED_METRIC).count()).isZero();
+        assertThat(meterRegistry.counter(ServeLogBuffer.VISIT_FAILED_METRIC).count()).isEqualTo(2);
+    }
+
+    @Test
+    void 서빙_로그_쓰기가_실패해도_접속_위치는_쓴다() {
+        doThrow(new DataAccessResourceFailureException("DB 멈춤")).when(serveLogRepository).insertAll(anyList());
+        buffer.offer(feedWithCards(1L, 3));
+
+        buffer.flushOnce();
+
+        verify(feedVisitRepository).insertAll(anyList(), any());
+        assertThat(meterRegistry.counter(ServeLogBuffer.FAILED_METRIC).count()).isEqualTo(3);
+    }
 }

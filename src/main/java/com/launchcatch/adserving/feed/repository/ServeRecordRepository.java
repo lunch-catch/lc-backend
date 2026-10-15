@@ -64,10 +64,20 @@ public class ServeRecordRepository {
         }
     }
 
-    // 노출 검증이 부른다. 없거나 30분이 지났으면 비어 있다.
+    /*
+     * 노출 검증이 부른다. 없거나 30분이 지났으면 비어 있다.
+     * Valkey 가 멈추면 기록 없음으로 보고 센다. 그 노출은 EXPIRED_OR_UNKNOWN 으로 저장되고 과금되지 않는다.
+     */
     public Optional<ServeRecord> findById(UUID serveId) {
-        String value = redisTemplate.opsForValue().get(key(serveId));
-        return Optional.ofNullable(value).map(v -> decode(serveId, v));
+        try {
+            String value = redisTemplate.opsForValue().get(key(serveId));
+            return Optional.ofNullable(value).map(v -> decode(serveId, v));
+        } catch (DataAccessException e) {
+            log.warn("event=FEED_SERVE_RECORD_READ_FAILED serveId={} cause={} 기록 없음으로 본다",
+                    serveId, RedisFailureClassifier.causeLabel(e), e);
+            meterRegistry.counter(BYPASS_METRIC, "use", "serve_record").increment();
+            return Optional.empty();
+        }
     }
 
     static String encode(ServeRecord r) {

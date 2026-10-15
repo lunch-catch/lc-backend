@@ -34,6 +34,7 @@ public class ServeLogBuffer implements SmartLifecycle {
 
     static final String DROPPED_METRIC = "adserving_serve_log_dropped_total";
     static final String FAILED_METRIC = "adserving_serve_log_failed_total";
+    static final String VISIT_FAILED_METRIC = "adserving_feed_visit_failed_total";
 
     private final BlockingQueue<ServedFeed> queue = new ArrayBlockingQueue<>(CAPACITY);
     private final ServeLogRepository serveLogRepository;
@@ -71,24 +72,29 @@ public class ServeLogBuffer implements SmartLifecycle {
     }
 
     /*
-     * 쓰기가 실패하면 그 묶음을 버리고 센다.
-     * 다시 넣으면 DB 가 멈춘 동안 같은 묶음이 계속 실패해 뒤의 것까지 막는다.
+     * 서빙 로그와 접속 위치는 서로 기대지 않아 따로 쓰고 따로 센다. 한쪽이 실패해도 다른 쪽은 쓴다.
+     * 실패한 묶음은 다시 넣지 않고 버린다. 다시 넣으면 DB 가 멈춘 동안 같은 묶음이 계속 실패해 뒤의 것까지 막는다.
      */
     private void write(List<ServedFeed> batch) {
         List<Row> rows = batch.stream()
                 .flatMap(f -> f.cards().stream().map(c -> new Row(f.businessDate(), f.feedId(), c)))
                 .toList();
+        if (!rows.isEmpty()) {
+            try {
+                serveLogRepository.insertAll(rows);
+            } catch (RuntimeException e) {
+                log.error("event=FEED_SERVE_LOG_WRITE_FAILED feeds={} rows={} 버린다", batch.size(), rows.size(), e);
+                meterRegistry.counter(FAILED_METRIC).increment(rows.size());
+            }
+        }
         List<Visit> visits = batch.stream()
                 .map(f -> new Visit(f.businessDate(), f.memberId(), f.latitude(), f.longitude()))
                 .toList();
         try {
-            if (!rows.isEmpty()) {
-                serveLogRepository.insertAll(rows);
-            }
             feedVisitRepository.insertAll(visits, LocalDateTime.now(clock));
         } catch (RuntimeException e) {
-            log.error("event=FEED_SERVE_LOG_WRITE_FAILED feeds={} rows={} 버린다", batch.size(), rows.size(), e);
-            meterRegistry.counter(FAILED_METRIC).increment(Math.max(1, rows.size()));
+            log.error("event=FEED_VISIT_WRITE_FAILED visits={} 버린다", visits.size(), e);
+            meterRegistry.counter(VISIT_FAILED_METRIC).increment(visits.size());
         }
     }
 
