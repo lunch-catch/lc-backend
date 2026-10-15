@@ -3,7 +3,10 @@ package com.launchcatch.coupon.config;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.launchcatch.coupon.CouponQrImageEncoder;
+import com.launchcatch.coupon.dto.CouponEventStatusResponse.CannotIssueReason;
+import com.launchcatch.coupon.dto.CouponEventStatusResponse.EventState;
 import com.launchcatch.coupon.dto.CouponDetailResponse;
+import com.launchcatch.coupon.dto.CouponEventStatusResponse;
 import com.launchcatch.coupon.dto.CouponIssuanceLimitResponse;
 import com.launchcatch.coupon.dto.CouponQrResponse;
 import com.launchcatch.coupon.dto.CouponSummaryResponse;
@@ -61,6 +64,13 @@ public class CouponOpenApiConfig {
             openApi.getPaths().get("/v1/coupons/{memberCouponId}:generateQr").getPost()
                     .getResponses().get("200").getContent().values()
                     .forEach(media -> media.setExample(exampleMapper.valueToTree(qrExample)));
+            openApi.getPaths().get("/v1/coupon-events:getStatus").getPost()
+                    .getRequestBody().getContent().values()
+                    .forEach(media -> media.setExample(Map.of("storeIds", List.of(10L, 20L, 30L))));
+            openApi.getPaths().get("/v1/coupon-events:getStatus").getPost()
+                    .getResponses().get("200").getContent().values()
+                    .forEach(media -> media.setExample(exampleMapper.valueToTree(
+                            ResponseEnvelope.success(eventStatusExample()))));
         };
     }
 
@@ -72,5 +82,18 @@ public class CouponOpenApiConfig {
                 OffsetDateTime.parse("2026-10-13T11:00:00+09:00"),
                 OffsetDateTime.parse("2026-10-13T11:00:00+09:00"),
                 OffsetDateTime.parse("2026-10-13T14:00:00+09:00"), null, null);
+    }
+
+    private CouponEventStatusResponse eventStatusExample() {
+        OffsetDateTime now = OffsetDateTime.parse("2026-10-14T12:00:00.123+09:00");
+        return new CouponEventStatusResponse(now, List.of(
+                new CouponEventStatusResponse.Item(10L, true, 501L, EventState.OPEN, 25,
+                        now.withHour(12).withMinute(30).withNano(0), now.withHour(15).withNano(0),
+                        false, false, false, CannotIssueReason.NOT_WISHED),
+                new CouponEventStatusResponse.Item(20L, true, 502L, EventState.SOLD_OUT, 0,
+                        now.withHour(11).withNano(0), now.withHour(14).withNano(0),
+                        true, false, false, CannotIssueReason.ALREADY_ISSUED),
+                new CouponEventStatusResponse.Item(30L, false, null, EventState.NO_EVENT, 0,
+                        null, null, false, false, false, CannotIssueReason.NO_EVENT)));
     }
 }

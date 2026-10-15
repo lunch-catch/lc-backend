@@ -2,6 +2,8 @@ package com.launchcatch.coupon.controller;
 
 import com.launchcatch.auth.CustomUserDetails;
 import com.launchcatch.coupon.dto.CouponDetailResponse;
+import com.launchcatch.coupon.dto.CouponEventStatusRequest;
+import com.launchcatch.coupon.dto.CouponEventStatusResponse;
 import com.launchcatch.coupon.dto.CouponIssuanceLimitResponse;
 import com.launchcatch.coupon.dto.CouponQrResponse;
 import com.launchcatch.coupon.dto.CouponSummaryResponse;
@@ -16,6 +18,7 @@ import io.swagger.v3.oas.annotations.media.Content;
 import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.Positive;
@@ -29,6 +32,7 @@ import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -41,6 +45,16 @@ public class CouponController {
 
     private final CouponLookUpService couponLookUpService;
     private final CouponCommandService couponCommandService;
+
+    // 인증된 회원에게 요청한 매장의 오늘 이벤트와 발급 가능 상태를 입력 순서대로 반환한다.
+    @PostMapping("/coupon-events:getStatus")
+    @Operation(summary = "매장별 쿠폰 이벤트 상태 조회", description = "오늘의 이벤트와 발급 가능 상태를 일괄 조회한다. 찜 조회 연결 전에는 wished와 canIssue가 false이며 매장 존재 검증은 후속으로 연결한다.")
+    @ApiResponse(responseCode = "200", description = "서버 시각과 매장별 상태를 반환한다.", useReturnTypeSchema = true)
+    public ResponseEnvelope<CouponEventStatusResponse> getEventStatus(
+            @Parameter(hidden = true) @AuthenticationPrincipal CustomUserDetails user,
+            @Valid @RequestBody CouponEventStatusRequest request) {
+        return ResponseEnvelope.success(couponLookUpService.getEventStatus(user.getId(), request.storeIds()));
+    }
 
     // 본인 쿠폰의 QR을 생성하거나 갱신하고 응답 캐시를 금지한다.
     @PostMapping("/coupons/{memberCouponId}:generateQr")
