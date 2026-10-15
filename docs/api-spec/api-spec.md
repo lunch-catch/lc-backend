@@ -213,7 +213,7 @@ JSON 으로 읽히지도 않은 것이고, `COMMON-002` 는 읽혔지만 값이 
 ### 목록과 페이지네이션
 
 ```
-GET /v1/stores?pageSize=20&pageToken=eyJ...&sort=DISTANCE
+GET /v1/stores?longitude=127.1&latitude=37.4&filter=ALL&pageSize=20&pageToken=eyJ...
 ```
 
 | 파라미터 | 뜻 |
@@ -224,7 +224,7 @@ GET /v1/stores?pageSize=20&pageToken=eyJ...&sort=DISTANCE
 
 ```json
 {
-  "stores": [ ],
+  "items": [ ],
   "nextPageToken": "eyJ..."
 }
 ```
