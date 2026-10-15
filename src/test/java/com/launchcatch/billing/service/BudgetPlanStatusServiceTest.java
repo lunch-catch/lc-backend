@@ -1,5 +1,6 @@
 package com.launchcatch.billing.service;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
@@ -52,6 +53,26 @@ class BudgetPlanStatusServiceTest {
         service.apply(new CampaignStatusChangedEvent(12L, DAY, true, CHANGED_AT));
 
         verify(publisher).publishEvent(new BudgetPlanStatusChanged(12L, DAY, false, CHANGED_AT));
+    }
+
+    @Test
+    void 예약의_상태_재확인도_같은_조건부_갱신을_쓰고_바꿨는지_돌려준다() {
+        when(planRepository.applyStatus(12L, DAY, true, CHANGED_AT, NOW)).thenReturn(1);
+        when(planRepository.applyStatus(13L, DAY, true, CHANGED_AT, NOW)).thenReturn(0);
+
+        assertThat(service.applyStatus(12L, DAY, true, CHANGED_AT)).isTrue();
+        assertThat(service.applyStatus(13L, DAY, true, CHANGED_AT)).isFalse();
+
+        verify(publisher).publishEvent(new BudgetPlanStatusChanged(12L, DAY, true, CHANGED_AT));
+        verify(publisher, never()).publishEvent(new BudgetPlanStatusChanged(13L, DAY, true, CHANGED_AT));
+    }
+
+    @Test
+    void 상태_변경_시각이_없으면_견줄_수_없어_바꾸지_않는다() {
+        assertThat(service.applyStatus(12L, DAY, true, null)).isFalse();
+
+        verify(planRepository, never()).applyStatus(any(), any(), anyBoolean(), any(), any());
+        verify(publisher, never()).publishEvent(any(Object.class));
     }
 
     @Test

@@ -159,7 +159,7 @@ class DailyReservationServiceTest {
     }
 
     @Test
-    void 점주별로_묶어_점주_ID와_캠페인_ID_순으로_예약하고_해시를_만든다() {
+    void 점주별로_묶어_점주_ID와_캠페인_ID_순으로_예약하고_커밋_뒤_상태를_재확인한_다음_해시를_만든다() {
         when(platformSetting.getImpressionUnitPrice()).thenReturn(10);
         when(planRepository.findByBusinessDate(PREV)).thenReturn(List.of());
         CampaignInfo c5 = campaign(5L, 8L);
@@ -169,9 +169,12 @@ class DailyReservationServiceTest {
 
         assertThat(service.reserve(DAY)).isEqualTo(3);
 
+        // 상태 재확인은 그 점주의 예약 트랜잭션이 끝난 뒤, 해시는 재확인까지 반영된 계획으로 만든다
         InOrder order = inOrder(recorder, hashRebuild);
         order.verify(recorder).reserveForOwner(7L, List.of(c1, c3), DAY, 10L);
+        order.verify(recorder).resyncStatus(List.of(1L, 3L), DAY);
         order.verify(recorder).reserveForOwner(8L, List.of(c5), DAY, 10L);
+        order.verify(recorder).resyncStatus(List.of(5L), DAY);
         order.verify(hashRebuild).rebuildAllIfAbsent(DAY, List.of(5L, 3L, 1L));
     }
 

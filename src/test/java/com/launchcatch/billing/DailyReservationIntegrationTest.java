@@ -6,6 +6,9 @@ import com.launchcatch.billing.dto.ServeIds;
 import com.launchcatch.billing.job.DailyReservationJob;
 import com.launchcatch.billing.job.FundingJudgementJob;
 import com.launchcatch.billing.job.HourlyTargetJob;
+import com.launchcatch.billing.service.DailyReservationRecorder;
+import com.launchcatch.campaign.contract.CampaignInfo;
+import com.launchcatch.campaign.contract.CampaignQueryService;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
@@ -39,6 +42,8 @@ class DailyReservationIntegrationTest extends AbstractBillingIntegrationTest {
     @Autowired HourlyTargetJob hourlyTargetJob;
     @Autowired JdbcTemplate jdbc;
     @Autowired StringRedisTemplate redis;
+    @Autowired DailyReservationRecorder recorder;
+    @Autowired CampaignQueryService campaignQuery;
 
     private final List<Long> campaignIds = new ArrayList<>();
 
@@ -196,5 +201,30 @@ class DailyReservationIntegrationTest extends AbstractBillingIntegrationTest {
         // 충전 10000 - 전날 예약 5000 + 보정 해제 2000 = 7000 이 오늘 예약에 쓰인다
         assertThat(reserves(today)).containsExactly(-7000L);
         assertThat(balance(owner)).isZero();
+    }
+
+    /*
+     * 예약이 캠페인을 읽은 뒤 계획을 만들기 전에 중단이 커밋된 경우다. 그때 계획 행이 없어 상태 변경 수신은 아무것도 못
+     * 하므로 여기서는 이벤트 없이 캠페인 행만 바꿔 같은 상황을 만든다. 예약이 낡은 상태로 계획을 만들어도, 커밋 뒤의
+     * 상태 재확인이 중단으로 맞춰야 중단된 캠페인에 과금되지 않는다.
+     */
+    @Test
+    void 예약이_읽은_뒤에_중단된_캠페인은_커밋_뒤_재확인이_계획을_중단으로_맞춘다() {
+        long owner = BASE_ID + 4;
+        charge(owner, 10000L);
+        long campaignId = campaign(owner, BASE_ID + 401, "ACTIVE", null, 3000L);
+        List<CampaignInfo> readBeforePause = campaignQuery.findAllById(List.of(campaignId));
+        jdbc.update("""
+                update campaign set status = 'PAUSED', paused_reason = 'OWNER', status_changed_at = '2026-01-01 01:00:00'
+                 where campaign_id = ?
+                """, campaignId);
+
+        recorder.reserveForOwner(owner, readBeforePause, DAY, 10L);
+        assertThat(plan(campaignId)).containsEntry("paused", false);
+
+        assertThat(recorder.resyncStatus(List.of(campaignId), DAY)).isEqualTo(1);
+        assertThat(plan(campaignId)).containsEntry("paused", true);
+        // 다시 맞춰도 바뀌는 것이 없다
+        assertThat(recorder.resyncStatus(List.of(campaignId), DAY)).isZero();
     }
 }

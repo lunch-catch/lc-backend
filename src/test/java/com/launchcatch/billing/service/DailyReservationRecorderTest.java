@@ -18,6 +18,7 @@ import com.launchcatch.billing.repository.BudgetDailyPlanRepository;
 import com.launchcatch.billing.repository.PointAccountRepository;
 import com.launchcatch.billing.repository.PointLedgerRepository;
 import com.launchcatch.campaign.contract.CampaignInfo;
+import com.launchcatch.campaign.contract.CampaignQueryService;
 import com.launchcatch.campaign.contract.CampaignStatus;
 import com.launchcatch.campaign.contract.PauseReason;
 import java.time.Clock;
@@ -52,17 +53,27 @@ class DailyReservationRecorderTest {
     private PointLedgerRepository ledgerRepository;
     @Mock
     private BudgetDailyPlanRepository planRepository;
+    @Mock
+    private CampaignQueryService campaignQuery;
+    @Mock
+    private BudgetPlanStatusService planStatus;
 
     private DailyReservationRecorder recorder;
 
     @BeforeEach
     void setUp() {
-        recorder = new DailyReservationRecorder(accountRepository, ledgerRepository, planRepository, CLOCK);
+        recorder = new DailyReservationRecorder(accountRepository, ledgerRepository, planRepository, campaignQuery,
+                planStatus, CLOCK);
     }
 
     private static CampaignInfo campaign(long id, CampaignStatus status, PauseReason reason, Long dailyBudget) {
+        return campaign(id, status, reason, dailyBudget, CHANGED_AT);
+    }
+
+    private static CampaignInfo campaign(long id, CampaignStatus status, PauseReason reason, Long dailyBudget,
+                                         LocalDateTime statusChangedAt) {
         return new CampaignInfo(id, OWNER, 100L + id, status, 100, null, null, null, null, null, null, 0, null, 0,
-                null, List.of(), null, null, CHANGED_AT, reason, dailyBudget);
+                null, List.of(), null, null, statusChangedAt, reason, dailyBudget);
     }
 
     private List<PointLedger> savedLedgers(int times) {
@@ -194,10 +205,27 @@ class DailyReservationRecorderTest {
     }
 
     @Test
+    void 상태_재확인은_캠페인을_다시_읽어_ACTIVE가_아니면_중단으로_반영한다() {
+        LocalDateTime pausedAt = CHANGED_AT.plusHours(1);
+        when(campaignQuery.findAllById(List.of(1L, 2L, 3L))).thenReturn(List.of(
+                // 예약이 읽은 뒤 계획을 만들기 전에 중단됐다
+                campaign(1L, CampaignStatus.PAUSED, PauseReason.OWNER, 1000L, pausedAt),
+                campaign(2L, CampaignStatus.ACTIVE, null, 1000L),
+                campaign(3L, CampaignStatus.ENDED, null, 1000L, pausedAt)));
+        when(planStatus.applyStatus(1L, DAY, true, pausedAt)).thenReturn(true);
+        when(planStatus.applyStatus(2L, DAY, false, CHANGED_AT)).thenReturn(false);
+        when(planStatus.applyStatus(3L, DAY, true, pausedAt)).thenReturn(true);
+
+        assertThat(recorder.resyncStatus(List.of(1L, 2L, 3L), DAY)).isEqualTo(2);
+    }
+
+    @Test
     void 쓰기는_각각_트랜잭션_하나다() throws Exception {
         assertThat(DailyReservationRecorder.class.getMethod("reserveForOwner", Long.class, List.class,
                 LocalDate.class, long.class).isAnnotationPresent(Transactional.class)).isTrue();
         assertThat(DailyReservationRecorder.class.getMethod("release", List.class)
+                .isAnnotationPresent(Transactional.class)).isTrue();
+        assertThat(DailyReservationRecorder.class.getMethod("resyncStatus", List.class, LocalDate.class)
                 .isAnnotationPresent(Transactional.class)).isTrue();
     }
 }

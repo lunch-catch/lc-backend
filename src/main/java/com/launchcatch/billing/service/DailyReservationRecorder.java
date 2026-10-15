@@ -7,6 +7,7 @@ import com.launchcatch.billing.repository.BudgetDailyPlanRepository;
 import com.launchcatch.billing.repository.PointAccountRepository;
 import com.launchcatch.billing.repository.PointLedgerRepository;
 import com.launchcatch.campaign.contract.CampaignInfo;
+import com.launchcatch.campaign.contract.CampaignQueryService;
 import com.launchcatch.campaign.contract.CampaignStatus;
 import java.time.Clock;
 import java.time.LocalDate;
@@ -33,6 +34,8 @@ public class DailyReservationRecorder {
     private final PointAccountRepository accountRepository;
     private final PointLedgerRepository ledgerRepository;
     private final BudgetDailyPlanRepository planRepository;
+    private final CampaignQueryService campaignQuery;
+    private final BudgetPlanStatusService planStatus;
     private final Clock clock;
 
     /*
@@ -73,6 +76,33 @@ public class DailyReservationRecorder {
             planRepository.save(BudgetDailyPlan.create(campaign.campaignId(), ownerId, businessDate, reserved,
                     unitPrice, campaign.status() != CampaignStatus.ACTIVE, campaign.statusChangedAt()));
         }
+    }
+
+    /*
+     * reserveForOwner 가 커밋된 뒤에 부른다. 캠페인 상태를 다시 읽어 그 사이에 바뀐 상태를 계획에 반영하고, 바꾼 계획 수를
+     * 돌려준다.
+     *
+     * 예약은 캠페인을 먼저 읽고 한참 뒤에 계획을 만든다. 그 사이에 중단이 커밋되면 상태 변경 수신은 계획 행이 없어 아무것도
+     * 하지 않고, 계획은 낡은 상태(중단 아님)로 만들어져 중단된 캠페인에 과금된다. 계획이 커밋된 뒤에 다시 읽으면 빠진
+     * 변경이 보인다. 변경이 계획 INSERT 와 겹쳐도 놓치지 않는다. 수신의 조건부 UPDATE 가 아직 없는 행에 대해 UNIQUE
+     * 인덱스의 갭 잠금을 잡아 INSERT 가 그 커밋을 기다리거나, INSERT 가 먼저면 수신이 그 행의 커밋을 기다려 갱신한다
+     * (REPEATABLE READ 기준). 그래서 이 재확인이 읽는 시점에는 변경이 커밋돼 보이거나 수신이 직접 반영한다.
+     *
+     * 계획이 이미 있어 건너뛴 캠페인도 맞춘다. 재실행에서도 같은 틈이 생긴다. 반영은 상태 변경 시각이 계획에 남은 것보다
+     * 늦을 때만 일어나므로 수신과 순서가 엇갈려도 낡은 상태로 덮지 않는다. campaign 행은 잠그지 않는다(F-7).
+     */
+    @Transactional
+    public int resyncStatus(List<Long> campaignIds, LocalDate businessDate) {
+        int changed = 0;
+        for (CampaignInfo campaign : campaignQuery.findAllById(campaignIds)) {
+            boolean paused = campaign.status() != CampaignStatus.ACTIVE;
+            if (planStatus.applyStatus(campaign.campaignId(), businessDate, paused, campaign.statusChangedAt())) {
+                changed++;
+                log.info("event=RESERVE_STATUS_RESYNCED businessDate={} campaignId={} paused={}",
+                        businessDate, campaign.campaignId(), paused);
+            }
+        }
+        return changed;
     }
 
     /*

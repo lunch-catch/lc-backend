@@ -66,6 +66,8 @@ public class DailyReservationService {
         byOwner.forEach((ownerId, owned) -> {
             owned.sort(Comparator.comparing(CampaignInfo::campaignId));
             recorder.reserveForOwner(ownerId, owned, businessDate, unitPrice);
+            // 예약이 커밋된 뒤에 다시 읽어야 캠페인을 읽은 뒤 계획을 만들기 전에 커밋된 중단을 놓치지 않는다
+            recorder.resyncStatus(owned.stream().map(CampaignInfo::campaignId).toList(), businessDate);
         });
 
         mirror(businessDate, campaigns.stream().map(CampaignInfo::campaignId).toList());

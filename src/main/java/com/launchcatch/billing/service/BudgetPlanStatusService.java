@@ -5,6 +5,7 @@ import com.launchcatch.billing.repository.BudgetDailyPlanRepository;
 import com.launchcatch.billing.cache.DailySpendCounter;
 import com.launchcatch.campaign.contract.CampaignStatusChangedEvent;
 import java.time.Clock;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -38,14 +39,29 @@ public class BudgetPlanStatusService {
      */
     @Transactional
     public void apply(CampaignStatusChangedEvent event) {
-        boolean paused = !event.servable();
-        int updated = budgetDailyPlanRepository.applyStatus(event.campaignId(), event.businessDate(),
-                paused, event.changedAt(), LocalDateTime.now(clock));
-        if (updated == 0) {
-            return;
+        applyStatus(event.campaignId(), event.businessDate(), !event.servable(), event.changedAt());
+    }
+
+    /*
+     * 계획 행의 중단 표시를 changedAt 시점의 상태로 맞추고 바꿨는지 돌려준다. 행이 없거나 이미 그보다 늦은 상태를
+     * 반영했으면 바꾸지 않는다. 바꿨으면 커밋 뒤에 해시도 맞춘다.
+     *
+     * 상태 변경 수신과 00:00 예약의 상태 재확인(DailyReservationRecorder.resyncStatus)이 함께 쓴다. 예약이 캠페인을
+     * 읽은 뒤 계획을 만들기 전에 커밋된 중단은 행이 없어 수신에서 사라지므로, 예약이 계획을 커밋한 뒤 캠페인을 다시
+     * 읽어 이 메서드로 반영한다. changedAt 이 없으면 견줄 시각이 없어 바꾸지 않는다.
+     */
+    @Transactional
+    public boolean applyStatus(Long campaignId, LocalDate businessDate, boolean paused, LocalDateTime changedAt) {
+        if (changedAt == null) {
+            return false;
         }
-        eventPublisher.publishEvent(
-                new BudgetPlanStatusChanged(event.campaignId(), event.businessDate(), paused, event.changedAt()));
+        int updated = budgetDailyPlanRepository.applyStatus(campaignId, businessDate,
+                paused, changedAt, LocalDateTime.now(clock));
+        if (updated == 0) {
+            return false;
+        }
+        eventPublisher.publishEvent(new BudgetPlanStatusChanged(campaignId, businessDate, paused, changedAt));
+        return true;
     }
 
     /*
