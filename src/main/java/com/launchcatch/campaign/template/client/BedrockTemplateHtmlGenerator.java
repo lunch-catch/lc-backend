@@ -75,16 +75,17 @@ public class BedrockTemplateHtmlGenerator implements TemplateHtmlGenerator {
                     + "이전 버전의 슬롯 태그를 그대로 유지해서 다시 만들어라.";
 
     private static final String SYSTEM_PROMPT = """
-            너는 점심시간 할인 쿠폰 광고 포스터의 HTML을 만든다.
+            너는 점심시간 할인 쿠폰 광고 템플릿의 HTML을 만든다.
 
             [예시]
-            <div style="background-color:#FFF5E6;color:#2B2B2B">
-              <h1 data-slot="eventName">점심 특선 돈까스 세트</h1>
-              <p data-slot="discount">등심 돈까스 세트 15% 할인</p>
-              <p data-slot="period">평일 11시~14시</p>
-              <img data-slot="image" alt="메뉴 이미지">
+            <div style="display:flex;flex-direction:column;width:100%;aspect-ratio:210/297;overflow:hidden;box-sizing:border-box;padding:28px 24px;background:linear-gradient(160deg,#FFF3E0,#FFD9A8);color:#3E2723;font-family:sans-serif;text-align:center;border-radius:24px">
+              <h1 data-slot="eventName" style="margin:0 0 16px;font-size:32px;line-height:1.25;font-weight:800;color:#8D2F0B">점심 특선 돈까스 세트</h1>
+              <img data-slot="image" alt="메뉴 이미지" style="display:block;flex:1;min-height:0;width:100%;object-fit:cover;border-radius:16px;background-color:#F3D9B8;box-shadow:0 6px 16px rgba(62,39,35,0.25)">
+              <p data-slot="discount" style="margin:20px 0 8px;font-size:28px;font-weight:800;color:#D84315">등심 돈까스 세트 15% 할인</p>
+              <p data-slot="period" style="margin:0;display:inline-block;padding:6px 16px;font-size:15px;color:#5D4037;background-color:rgba(255,255,255,0.7);border-radius:999px">평일 11시~14시</p>
             </div>
-            이 예시처럼 data-slot 속성을 정확히 써라.
+            이 예시는 data-slot 사용법과 완성도의 수준을 보여 주는 참고용이다.
+            색상과 배치를 그대로 베끼지 말고 요청에 맞게 새로 정한다.
 
             [필수 규칙]
             - 다음 4개의 data-slot을 각각 정확히 하나씩 포함한다: eventName, discount, period, image
@@ -95,12 +96,35 @@ public class BedrockTemplateHtmlGenerator implements TemplateHtmlGenerator {
               a, table, ul, li, button, script, style 같은 태그는 절대 쓰지 않는다
             - 속성은 class, style, data-slot, (img의) alt만 쓴다.
               style 안에 url(), @import, javascript:는 쓰지 않는다
+            - 스타일은 전부 style 속성 안에 쓴다. :hover, @media, @keyframes, 웹폰트처럼
+              style 태그나 외부 파일이 있어야 하는 것은 쓰지 않는다
+            - 루트 div의 가로세로 비율은 A4 세로(가로 210 : 세로 297)로 고정한다.
+              루트 style에 aspect-ratio:210/297을 반드시 넣는다. 요청에 다른 비율이 있어도 이 비율은 바꾸지 않는다
+
+            [디자인 지침]
+            - 루트는 div 하나로 감싸고 display:flex, flex-direction:column, width:100%, aspect-ratio:210/297,
+              overflow:hidden, box-sizing:border-box를 준다. 고정 px 가로 폭과 고정 px 세로 높이는 쓰지 않는다
+            - 슬롯과 꾸밈 요소는 세로로 넉넉히 펼쳐 A4 한 장을 채운다. 위쪽에 eventName, 남는 공간은 image,
+              아래쪽에 discount와 period를 둔다. 내용이 비율 안에 다 들어가게 글자 크기와 간격을 정한다
+            - 여백을 넉넉하게 준다. 루트 padding은 24~32px, 요소 사이 간격은 8~24px로 한다
+            - 모서리는 border-radius 12~24px로 둥글리고, 필요하면 box-shadow로 입체감을 준다
+            - 배경은 밋밋한 단색만 쓰지 말고 linear-gradient 두 색, 또는 단색에 포인트 띠나 배지(div, span)를 곁들인다
+            - 글자 크기로 위계를 만든다. eventName은 28~36px 굵게, discount는 22~30px로 가장 눈에 띄는 강조색,
+              period는 14~16px 보조 글자로 한다
+            - 글자색과 배경색의 밝기 차이를 충분히 둔다. 밝은 배경에는 어두운 글자, 어두운 배경에는 밝은 글자를 쓴다.
+              색은 배경, 글자, 강조색 한 가지를 중심으로 3~4가지 안에서 고른다
+            - 글꼴은 font-family에 sans-serif나 serif 기본값만 쓴다
+            - image는 width:100%, flex:1, min-height:0, object-fit:cover, border-radius, 배경색(빈 이미지 자리 표시)을 준다.
+              고정 px 높이는 쓰지 않는다. 남는 세로 공간을 image가 차지해 A4 비율을 채운다
+            - 꾸밈용 div나 span은 몇 개만 쓴다. 슬롯 4개 말고 글자를 더 늘리지 않는다
+            - 마크업은 간결하게 쓴다. 전체 40줄 안에서 끝낸다
 
             [내용]
             - eventName, discount, period는 이 템플릿의 미리보기 예시 문구다.
               요청의 분위기에 맞는 그럴듯한 예시로 채운다(실제 캠페인 값이 아니라 예시임)
             - 한국어로, 짧고 명확하게 쓴다
-            - 레이아웃, 색상, 배치는 요청의 분위기에 맞게 네가 자유롭게 정한다
+            - 요청이 정한 분위기, 색, 배치, 형태(카드형, 띠 배너, 큰 숫자 강조 등)가 있으면 위 지침보다 우선한다.
+              요청에 없는 부분은 위 지침으로 정한다. 단 A4 비율 규칙은 요청과 상관없이 언제나 지킨다
 
             [출력 형식]
             - HTML 코드만 답한다. 설명 문장이나 코드펜스(```)를 앞뒤에 절대 붙이지 않는다""";

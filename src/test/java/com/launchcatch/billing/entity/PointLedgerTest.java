@@ -123,4 +123,26 @@ class PointLedgerTest {
         assertThatThrownBy(() -> PointLedger.adjust(OWNER_ID, 100L, "사유", null, "k".repeat(65)))
                 .isInstanceOf(IllegalArgumentException.class);
     }
+
+    @Test
+    @DisplayName("환불은 양수를 받아 음수로 저장하고 환불 요청에 묶는다")
+    void 환불_부호() {
+        PointLedger refund = PointLedger.refund(OWNER_ID, 31L, 12000L);
+
+        assertThat(refund.getAmount()).isEqualTo(-12000L);
+        assertThat(refund.getEntryType()).isEqualTo(EntryType.REFUND);
+        assertThat(refund.getRefundRequestId()).isEqualTo(31L);
+        assertThat(refund.getSource()).isEqualTo(LedgerSource.MANUAL);
+        assertThat(refund.getPaymentId()).isNull();
+        assertThat(refund.getCampaignId()).isNull();
+    }
+
+    @Test
+    @DisplayName("환불은 환불 요청 ID 와 양수 금액이 필수다")
+    void 환불_입력_거부() {
+        assertThatThrownBy(() -> PointLedger.refund(OWNER_ID, null, 100L))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> PointLedger.refund(OWNER_ID, 31L, 0L))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
 }
