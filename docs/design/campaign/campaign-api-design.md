@@ -76,6 +76,14 @@
 - **"추천 하루 예산"과 "예상 노출 범위"(V51 45행 H45)는 이 API의 범위 밖이다.** 광고
   서빙이 매일 00:00 배치로 집계해 넘기는 값이 있어야 계산할 수 있어, 저장·검증만 하는 이
   API와는 다른 기능이다
+- **`#253`은 노출 대상(3단계)만 구현한다.** 하루 예산과 집행 기간(4단계)은 아직 구현
+  이슈가 없어서, 요청에 `dailyBudget`/`startDate`/`endDate` 중 하나라도 오면
+  `IllegalArgumentException`(`COMMON-002`)으로 거부한다(`CampaignTargetAudienceService.validateNoBudgetPeriodFields`,
+  임시 결정). 4단계 구현 이슈가 생기면 이 검증을 그 기능으로 바꾼다
+- **본인 소유 확인은 `campaignRepository.findById(campaignId)`로 조회한 뒤
+  `Campaign.ownerId`를 비교한다.** 상태 전이(`CampaignStatusService`)가 쓰는
+  `findByIdForUpdate`(비관 잠금)는 쓰지 않는다. 이 PATCH는 점주 한 명만 다루는 단순
+  필드 갱신이라 동시 전이 경쟁이 없다(`#253` 결정)
 
 ## 오류 코드를 나눈 기준
 
