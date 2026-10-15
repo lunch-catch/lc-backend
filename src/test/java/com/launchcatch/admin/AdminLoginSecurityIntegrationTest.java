@@ -2,12 +2,15 @@ package com.launchcatch.admin;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.doThrow;
-import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.reset;
-import static org.mockito.Mockito.when;
-import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
@@ -18,96 +21,146 @@ import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
-import com.launchcatch.admin.config.AdminLoginSecurityConfig;
 import com.launchcatch.admin.config.AdminLoginAuditFilter;
 import com.launchcatch.admin.entity.Admin;
-import com.launchcatch.admin.repository.AdminRepository;
-import com.launchcatch.auth.ApiSecurityDefaults;
-import com.launchcatch.auth.AuthCookieFactory;
-import com.launchcatch.auth.PasswordEncoderConfig;
 import com.launchcatch.auth.Role;
-import com.launchcatch.admin.repository.AdminAccessTokenVersionRepository;
-import com.launchcatch.admin.service.AdminAccessTokenVerifier;
-import com.launchcatch.auth.jwt.AccessTokenCutoffVerifier;
-import com.launchcatch.auth.SecurityConfig;
-import com.launchcatch.auth.exception.AuthExceptionHandler;
-import com.launchcatch.auth.jwt.AccessTokenValidAfterRepository;
-import com.launchcatch.auth.jwt.JwtTokenProvider;
 import com.launchcatch.auth.opaque.RefreshTokenRepository;
+import com.launchcatch.auth.opaque.TokenHasher;
 import com.launchcatch.global.exception.GlobalExceptionHandler;
-import com.launchcatch.global.logging.HttpBodyLoggingFilter;
+import com.launchcatch.ops.contract.AuditLogWriter;
 import jakarta.servlet.http.Cookie;
-import java.time.Clock;
-import java.time.ZoneId;
+import java.time.Duration;
+import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
+import java.util.concurrent.atomic.AtomicInteger;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.ValueSource;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.EnumSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.ComponentScan;
-import org.springframework.context.annotation.Configuration;
-import org.springframework.context.annotation.Import;
-import org.springframework.context.annotation.FilterType;
 import org.springframework.dao.DataAccessResourceFailureException;
-import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
-import org.springframework.security.crypto.password.PasswordEncoder;
-import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.test.util.AopTestUtils;
 import org.springframework.test.web.servlet.MockMvc;
-import org.springframework.test.web.servlet.setup.MockMvcBuilders;
-import org.springframework.transaction.PlatformTransactionManager;
-import org.springframework.transaction.annotation.EnableTransactionManagement;
-import org.springframework.transaction.support.SimpleTransactionStatus;
-import org.springframework.web.context.WebApplicationContext;
-import org.springframework.web.servlet.config.annotation.EnableWebMvc;
+import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
+import org.springframework.transaction.CannotCreateTransactionException;
+import org.springframework.transaction.TransactionSystemException;
 
-// 실제 보안 설정, MVC와 로그인 서비스를 연결하고 DB 및 Redis 접근만 테스트 더블로 대체한다.
-@SpringBootTest(classes = AdminLoginSecurityIntegrationTest.TestConfig.class,
-        webEnvironment = SpringBootTest.WebEnvironment.MOCK,
-        properties = {"jwt.cookie.secure=true", "app.cors.allowed-origins=https://admin.example.com"})
-class AdminLoginSecurityIntegrationTest {
-    private static final String BODY = """
-            {"loginId":"admin01","password":"Freshman!2026"}
-            """;
-    @Autowired private WebApplicationContext context;
-    @Autowired private AdminRepository admins;
-    @Autowired private RefreshTokenRepository refreshTokens;
-    @Autowired private PlatformTransactionManager transactions;
-    @Autowired private AdminAccessTokenVersionRepository cutoff;
-    @Autowired private AccessTokenValidAfterRepository legacyCutoff;
-    @Autowired private com.launchcatch.ops.contract.AuditLogWriter audit;
-    @Autowired private PasswordEncoder encoder;
-    @Autowired private JwtTokenProvider jwt;
-    @Autowired private HttpBodyLoggingFilter loggingFilter;
-    @Autowired private AdminLoginAuditFilter auditFilter;
-    private MockMvc mvc;
+/*
+ * 관리자 로그인과 로그아웃과 재발급의 보안 체인을 실제 입구부터 확인한다.
+ *
+ * 전에는 @SpringBootTest(classes = ...) 에 @ComponentScan 정규식 필터까지 써서 컨트롤러와 서비스만
+ * 골라 담고 저장소와 트랜잭션 매니저를 전부 목으로 바꾼 슬라이스였다. 그 모양은 통합 테스트가
+ * 아니고(구현 플로우 5단계) 컨텍스트를 하나 더 띄웠다(#278).
+ *
+ * 계정은 실제 행으로 둔다. 목을 쓰던 때는 그 계정으로 로그인이 끝까지 가는지를 목의 응답으로
+ * 꾸며 보고 있었다. 장애를 만들어야 하는 자리만 기반 클래스의 스파이로 스텁한다. 스파이에는
+ * when(...) 이 실제 메서드를 먼저 부르므로 doReturn 과 doThrow 와 doAnswer 로 스텁한다.
+ */
+class AdminLoginSecurityIntegrationTest extends AbstractAdminIntegrationTest {
+
+    private static final String LOGIN_PATH = "/v1/admin/auth/tokens";
+    private static final String REFRESH_PATH = "/v1/admin/auth/tokens:refresh";
+    private static final String PASSWORD = "Freshman!2026";
+    private static final String REFRESH_TOKEN = "a".repeat(43);
+
+    /*
+     * 로그인과 재발급 경로는 IP 당 분당 10회로 막혀 있다(AuthRateLimitFilter). 보안 설정만 담던
+     * 슬라이스에는 그 필터가 없었는데 전체를 띄우면 체인에 들어온다. 한 클래스의 요청이 같은 IP
+     * 로 쌓이면 뒤에 도는 테스트가 429 를 받으므로 테스트마다 다른 IP 로 보낸다.
+     */
+    private static final AtomicInteger CLIENTS = new AtomicInteger();
+
+    @Autowired private MockMvc mvc;
+    @Autowired private JdbcTemplate jdbc;
+
+    private final List<Long> created = new ArrayList<>();
+    private String clientIp;
+    private String loginId;
+    private Long adminId;
+    private String body;
 
     @BeforeEach
     void setUp() {
-        reset(admins, refreshTokens, transactions, cutoff, legacyCutoff, audit);
-        when(legacyCutoff.isValidAfter(any(), any(), any())).thenReturn(true);
-        when(cutoff.isVersionValid(any(), any(), org.mockito.ArgumentMatchers.anyLong())).thenReturn(true);
-        Admin admin = Admin.register("admin01", encoder.encode("Freshman!2026"), "관리자", Role.SUPER_ADMIN);
-        ReflectionTestUtils.setField(admin, "id", 1L);
-        when(admins.findByLoginId("admin01")).thenReturn(Optional.of(admin));
-        when(admins.findByIdForUpdate(1L)).thenReturn(Optional.of(admin));
-        when(transactions.getTransaction(any())).thenReturn(new SimpleTransactionStatus(), new SimpleTransactionStatus());
-        mvc = MockMvcBuilders.webAppContextSetup(context).addFilters(loggingFilter, auditFilter)
-                .apply(springSecurity()).build();
+        reset(admins, tokens, transactions, versions, legacyCutoff, revocations, audit, encoder, jwt);
+        clientIp = "192.0.2." + (CLIENTS.incrementAndGet() % 200 + 1);
+        loginId = "login." + UUID.randomUUID().toString().substring(0, 8);
+        adminId = insertAdmin(loginId, PASSWORD, Role.SUPER_ADMIN);
+        body = requestBody(loginId, PASSWORD);
+    }
+
+    @AfterEach
+    void tearDown() {
+        created.forEach(id -> jdbc.update("delete from admin where admin_id = ?", id));
+    }
+
+    private Long insertAdmin(String id, String password, Role role) {
+        Admin admin = admins.saveAndFlush(Admin.register(id, encoder.encode(password), "관리자", role));
+        created.add(admin.getId());
+        return admin.getId();
+    }
+
+    private String requestBody(String id, String password) {
+        return "{\"loginId\":\"" + id + "\",\"password\":\"" + password + "\"}";
+    }
+
+    private MockHttpServletRequestBuilder login(String json) {
+        return post(LOGIN_PATH).contentType(MediaType.APPLICATION_JSON).content(json).with(fromClient());
+    }
+
+    private MockHttpServletRequestBuilder refresh() {
+        return post(REFRESH_PATH).with(fromClient());
+    }
+
+    private org.springframework.test.web.servlet.request.RequestPostProcessor fromClient() {
+        return request -> {
+            request.setRemoteAddr(clientIp);
+            return request;
+        };
+    }
+
+    // 발급 순번을 넣은 관리자 AT 다. 로그인과 재발급 서비스만 이 클레임을 넣는다.
+    private Cookie accessToken(Long id, Role role) {
+        return new Cookie("accessToken", jwt.createAccessToken(id, role, AdminAccessTokenClaims.forVersion(1L)));
+    }
+
+    /*
+     * DB 백업만 있는 상태를 만든다. 발급 순번을 1 로 올려 두어야 로그아웃 폐기 상한이 0 인
+     * 계정과 구별되고, admin 의 CHECK 제약도 지켜진다.
+     */
+    private void backUpRefreshToken(Long id) {
+        jdbc.update("update admin set refresh_token_hash = ?, refresh_token_expires_at = ?, "
+                        + "refresh_token_issuance_version = 1 where admin_id = ?",
+                TokenHasher.sha256(REFRESH_TOKEN), LocalDateTime.now().plusDays(1), id);
+    }
+
+    private ListAppender<ILoggingEvent> attach(Class<?> target) {
+        var appender = new ListAppender<ILoggingEvent>();
+        appender.start();
+        ((Logger) LoggerFactory.getLogger(target)).addAppender(appender);
+        return appender;
+    }
+
+    private void detach(Class<?> target, ListAppender<ILoggingEvent> appender) {
+        ((Logger) LoggerFactory.getLogger(target)).detachAppender(appender);
+        appender.stop();
     }
 
     @Test
     void 인증없이_로그인하고_실제_JWT와_명세의_응답을_받는다() throws Exception {
-        var result = mvc.perform(post("/v1/admin/auth/tokens").contentType(MediaType.APPLICATION_JSON).content(BODY))
+        var result = mvc.perform(login(body))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value("SUCCESS"))
-                .andExpect(jsonPath("$.data.adminId").value(1))
+                .andExpect(jsonPath("$.data.adminId").value(adminId.intValue()))
                 .andExpect(jsonPath("$.data.role").value("SUPER_ADMIN"))
                 .andExpect(jsonPath("$.data.accessToken").doesNotExist())
                 .andExpect(jsonPath("$.data.refreshToken").doesNotExist())
@@ -126,8 +179,7 @@ class AdminLoginSecurityIntegrationTest {
 
     @Test
     void 없는_계정은_AUTH001이며_쿠키를_발급하지_않는다() throws Exception {
-        when(admins.findByLoginId("admin01")).thenReturn(Optional.empty());
-        mvc.perform(post("/v1/admin/auth/tokens").contentType(MediaType.APPLICATION_JSON).content(BODY))
+        mvc.perform(login(requestBody("login.absent", PASSWORD)))
                 .andExpect(status().isUnauthorized()).andExpect(jsonPath("$.code").value("AUTH-001"))
                 .andExpect(header().doesNotExist(HttpHeaders.SET_COOKIE));
     }
@@ -137,12 +189,11 @@ class AdminLoginSecurityIntegrationTest {
     void UTF8_72바이트_초과_비밀번호는_401_AUTH001이며_쿠키를_발급하지_않는다(
             int asciiLength, int koreanLength) throws Exception {
         String password = "a".repeat(asciiLength) + "가".repeat(koreanLength);
-        String body = "{\"loginId\":\"admin01\",\"password\":\"" + password + "\"}";
-        mvc.perform(post("/v1/admin/auth/tokens").contentType(MediaType.APPLICATION_JSON).content(body))
+        mvc.perform(login(requestBody(loginId, password)))
                 .andExpect(status().isUnauthorized()).andExpect(jsonPath("$.code").value("AUTH-001"))
                 .andExpect(header().doesNotExist(HttpHeaders.SET_COOKIE));
-        org.mockito.Mockito.verifyNoInteractions(refreshTokens);
-        assertThat(admins.findByLoginId("admin01").orElseThrow().getRefreshTokenHash()).isNull();
+        verifyNoInteractions(tokens);
+        assertThat(admins.findByLoginId(loginId).orElseThrow().getRefreshTokenHash()).isNull();
     }
 
     @ParameterizedTest
@@ -150,32 +201,27 @@ class AdminLoginSecurityIntegrationTest {
     void UTF8_72바이트_비밀번호는_일치하면_로그인할_수_있다(
             int asciiLength, int koreanLength) throws Exception {
         String password = "a".repeat(asciiLength) + "가".repeat(koreanLength);
-        Admin admin = Admin.register("admin01", encoder.encode(password), "관리자", Role.SUPER_ADMIN);
-        ReflectionTestUtils.setField(admin, "id", 1L);
-        when(admins.findByLoginId("admin01")).thenReturn(Optional.of(admin));
-        when(admins.findByIdForUpdate(1L)).thenReturn(Optional.of(admin));
-        String body = "{\"loginId\":\"admin01\",\"password\":\"" + password + "\"}";
-        mvc.perform(post("/v1/admin/auth/tokens").contentType(MediaType.APPLICATION_JSON).content(body))
+        String id = "login." + UUID.randomUUID().toString().substring(0, 8);
+        insertAdmin(id, password, Role.SUPER_ADMIN);
+        mvc.perform(login(requestBody(id, password)))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.code").value("SUCCESS"))
                 .andExpect(header().exists(HttpHeaders.SET_COOKIE));
     }
 
     @Test
     void 필수_값이_없으면_400이며_쿠키를_발급하지_않는다() throws Exception {
-        mvc.perform(post("/v1/admin/auth/tokens").contentType(MediaType.APPLICATION_JSON).content("{}"))
+        mvc.perform(login("{}"))
                 .andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("COMMON-002"))
                 .andExpect(header().doesNotExist(HttpHeaders.SET_COOKIE));
     }
 
     @Test
     void DB_백업_장애는_503_AUTH002_RetryAfter_ERROR이며_쿠키를_발급하지_않는다() throws Exception {
-        when(admins.findByIdForUpdate(1L)).thenThrow(new DataAccessResourceFailureException("DB unavailable"));
-        Logger logger = (Logger) LoggerFactory.getLogger(GlobalExceptionHandler.class);
-        var appender = new ListAppender<ILoggingEvent>();
-        appender.start();
-        logger.addAppender(appender);
+        doThrow(new DataAccessResourceFailureException("DB unavailable"))
+                .when(admins).findByIdForUpdate(adminId);
+        var appender = attach(GlobalExceptionHandler.class);
         try {
-            mvc.perform(post("/v1/admin/auth/tokens").contentType(MediaType.APPLICATION_JSON).content(BODY))
+            mvc.perform(login(body))
                     .andExpect(status().isServiceUnavailable()).andExpect(jsonPath("$.code").value("AUTH-002"))
                     .andExpect(header().string(HttpHeaders.RETRY_AFTER, "1"))
                     .andExpect(header().doesNotExist(HttpHeaders.SET_COOKIE));
@@ -184,203 +230,216 @@ class AdminLoginSecurityIntegrationTest {
                 assertThat(event.getFormattedMessage()).contains("AUTH-002");
             });
         } finally {
-            logger.detachAppender(appender);
-            appender.stop();
+            detach(GlobalExceptionHandler.class, appender);
         }
     }
 
     @Test
     void Redis_저장_장애시_DB_백업후_로그인_성공을_유지한다() throws Exception {
         doThrow(new DataAccessResourceFailureException("Redis unavailable"))
-                .when(refreshTokens).saveIfNewer(any(), eq(1L), eq(Role.SUPER_ADMIN), eq(true), any(), org.mockito.ArgumentMatchers.anyLong());
-        mvc.perform(post("/v1/admin/auth/tokens").contentType(MediaType.APPLICATION_JSON).content(BODY))
+                .when(tokens).saveIfNewer(any(), eq(adminId), eq(Role.SUPER_ADMIN), eq(true), any(), anyLong());
+        mvc.perform(login(body))
                 .andExpect(status().isOk()).andExpect(header().exists(HttpHeaders.SET_COOKIE));
     }
 
     @ParameterizedTest
     @ValueSource(strings = {"/v1/admin/auth/unknown"})
     void 아직_구현하지_않은_인증_경로는_유효한_토큰으로도_접근할_수_없다(String path) throws Exception {
-        mvc.perform(post(path).cookie(new Cookie("accessToken", jwt.createAccessToken(1L, Role.SUPER_ADMIN, AdminAccessTokenClaims.forVersion(1L)))))
+        mvc.perform(post(path).cookie(accessToken(adminId, Role.SUPER_ADMIN)))
                 .andExpect(status().isForbidden());
     }
 
     @ParameterizedTest
-    @org.junit.jupiter.params.provider.EnumSource(value = Role.class, names = {"ADMIN", "SUPER_ADMIN"})
+    @EnumSource(value = Role.class, names = {"ADMIN", "SUPER_ADMIN"})
     void 유효한_관리자는_Refresh쿠키_없이_로그아웃한다(Role role) throws Exception {
-        Admin admin = admins.findByIdForUpdate(1L).orElseThrow();
-        ReflectionTestUtils.setField(admin, "role", role);
-        var result = mvc.perform(delete("/v1/admin/auth/tokens")
-                        .cookie(new Cookie("accessToken", jwt.createAccessToken(1L, role, AdminAccessTokenClaims.forVersion(1L)))))
+        String id = "login." + UUID.randomUUID().toString().substring(0, 8);
+        Long logoutId = insertAdmin(id, PASSWORD, role);
+        var result = mvc.perform(delete(LOGIN_PATH).cookie(accessToken(logoutId, role)))
                 .andExpect(status().isNoContent()).andReturn();
         assertThat(result.getResponse().getContentAsString()).isEmpty();
         assertThat(result.getResponse().getCookie("accessToken").getMaxAge()).isZero();
         assertThat(result.getResponse().getCookie("refreshToken").getPath()).isEqualTo("/v1/admin/auth/");
-        org.mockito.Mockito.verify(audit).write(1L, "ADMIN_LOGOUT", "1", "result=SUCCESS");
+        verify(audit).write(logoutId, "ADMIN_LOGOUT", String.valueOf(logoutId), "result=SUCCESS");
     }
 
     @Test
     void 로그아웃_인증누락은_AUTH005다() throws Exception {
-        mvc.perform(delete("/v1/admin/auth/tokens"))
+        mvc.perform(delete(LOGIN_PATH))
                 .andExpect(status().isUnauthorized()).andExpect(jsonPath("$.code").value("AUTH-005"))
                 .andExpect(header().doesNotExist(HttpHeaders.SET_COOKIE));
     }
 
     @Test
     void 폐기된_Access_Token은_로그아웃에_재사용할_수_없다() throws Exception {
-        when(cutoff.isVersionValid(any(), any(), org.mockito.ArgumentMatchers.anyLong())).thenReturn(false);
-        mvc.perform(delete("/v1/admin/auth/tokens")
-                        .cookie(new Cookie("accessToken", jwt.createAccessToken(1L, Role.SUPER_ADMIN, AdminAccessTokenClaims.forVersion(1L)))))
+        doReturn(false).when(versions).isVersionValid(Role.SUPER_ADMIN, adminId, 1L);
+        mvc.perform(delete(LOGIN_PATH).cookie(accessToken(adminId, Role.SUPER_ADMIN)))
                 .andExpect(status().isUnauthorized()).andExpect(jsonPath("$.code").value("AUTH-005"));
     }
 
+    /*
+     * 사용자 토큰은 역할을 담당하는 정책이 없어 발급 시각 기준으로만 검증한다. 점주 토큰은
+     * 점주 정책이 계정 행의 폐기 순번을 읽으므로 그 계정을 실제로 만들어 둔다. 둘 다 인증은
+     * 통과하고 관리자 체인의 권한에서 막히는 것을 본다.
+     */
     @ParameterizedTest
-    @org.junit.jupiter.params.provider.EnumSource(value = Role.class, names = {"MEMBER", "OWNER"})
+    @EnumSource(value = Role.class, names = {"MEMBER", "OWNER"})
     void 관리자_외_역할은_로그아웃할_수_없다(Role role) throws Exception {
-        mvc.perform(delete("/v1/admin/auth/tokens")
-                        .cookie(new Cookie("accessToken", jwt.createAccessToken(1L, role))))
+        Long id = role == Role.OWNER ? insertOwner() : 1L;
+        mvc.perform(delete(LOGIN_PATH).cookie(new Cookie("accessToken", jwt.createAccessToken(id, role))))
                 .andExpect(status().isForbidden()).andExpect(jsonPath("$.code").value("AUTH-006"));
+    }
+
+    private Long insertOwner() {
+        String email = UUID.randomUUID() + "@example.com";
+        LocalDateTime now = LocalDateTime.now();
+        jdbc.update("insert into owner (email, password_hash, created_at, updated_at) values (?, ?, ?, ?)",
+                email, encoder.encode(PASSWORD), now, now);
+        return jdbc.queryForObject("select owner_id from owner where email = ?", Long.class, email);
     }
 
     @Test
     void 로그아웃_저장소_장애는_503이며_쿠키를_삭제하지_않는다() throws Exception {
         doThrow(new DataAccessResourceFailureException("token-must-not-leak"))
-                .when(refreshTokens).revokeBeforeVersion(any(), any(), org.mockito.ArgumentMatchers.anyLong());
-        mvc.perform(delete("/v1/admin/auth/tokens")
-                        .cookie(new Cookie("accessToken", jwt.createAccessToken(1L, Role.SUPER_ADMIN, AdminAccessTokenClaims.forVersion(1L)))))
+                .when(tokens).revokeBeforeVersion(eq(adminId), any(), anyLong());
+        mvc.perform(delete(LOGIN_PATH).cookie(accessToken(adminId, Role.SUPER_ADMIN)))
                 .andExpect(status().isServiceUnavailable()).andExpect(jsonPath("$.code").value("AUTH-002"))
                 .andExpect(header().exists("Retry-After"))
                 .andExpect(header().doesNotExist(HttpHeaders.SET_COOKIE));
     }
 
+    /*
+     * 감사 기록은 트랜잭션 프록시 뒤에 있다. 프록시를 거쳐 스텁하면 적어 둔 매처가 그 프록시가
+     * 먼저 부르는 트랜잭션 매니저 스파이의 호출에 먹혀서 인수 수가 어긋난다. 프록시 안의
+     * 스파이에 직접 건다.
+     */
     @Test
     void 로그아웃_감사저장_실패는_204를_유지한다() throws Exception {
+        AuditLogWriter writer = AopTestUtils.getUltimateTargetObject(audit);
         doThrow(new DataAccessResourceFailureException("audit down"))
-                .when(audit).write(any(), any(), any(), any());
-        mvc.perform(delete("/v1/admin/auth/tokens")
-                        .cookie(new Cookie("accessToken", jwt.createAccessToken(1L, Role.SUPER_ADMIN, AdminAccessTokenClaims.forVersion(1L)))))
+                .when(writer).write(eq(adminId), any(), any(), any());
+        mvc.perform(delete(LOGIN_PATH).cookie(accessToken(adminId, Role.SUPER_ADMIN)))
                 .andExpect(status().isNoContent());
     }
 
     @Test
     void 깨진_JSON의_비밀번호가_예외_로그에_남지_않는다() throws Exception {
-        Logger logger = (Logger) LoggerFactory.getLogger(GlobalExceptionHandler.class);
-        var appender = new ListAppender<ILoggingEvent>();
-        appender.start();
-        logger.addAppender(appender);
+        var appender = attach(GlobalExceptionHandler.class);
         try {
-            mvc.perform(post("/v1/admin/auth/tokens").contentType(MediaType.APPLICATION_JSON)
-                            .content("{\"loginId\":\"admin01\",\"password\":\"SensitivePassword!\" BROKEN}"))
+            mvc.perform(login("{\"loginId\":\"" + loginId + "\",\"password\":\"SensitivePassword!\" BROKEN}"))
                     .andExpect(status().isBadRequest());
             assertThat(appender.list).isNotEmpty().allSatisfy(event ->
                     assertThat(event.getFormattedMessage()).doesNotContain("SensitivePassword!"));
         } finally {
-            logger.detachAppender(appender);
-            appender.stop();
+            detach(GlobalExceptionHandler.class, appender);
         }
     }
 
     @Test
     void 로그인_성공과_실패를_본문이나_토큰없이_감사_로그로_남긴다() throws Exception {
-        Logger logger = (Logger) LoggerFactory.getLogger(AdminLoginAuditFilter.class);
-        var appender = new ListAppender<ILoggingEvent>();
-        appender.start();
-        logger.addAppender(appender);
+        var appender = attach(AdminLoginAuditFilter.class);
         try {
-            mvc.perform(post("/v1/admin/auth/tokens").contentType(MediaType.APPLICATION_JSON).content(BODY)
-                            .with(request -> { request.setRemoteAddr("192.0.2.10"); return request; }))
-                    .andExpect(status().isOk());
-            when(admins.findByLoginId("admin01")).thenReturn(Optional.empty());
-            mvc.perform(post("/v1/admin/auth/tokens").contentType(MediaType.APPLICATION_JSON).content(BODY)
-                            .with(request -> { request.setRemoteAddr("192.0.2.10"); return request; }))
-                    .andExpect(status().isUnauthorized());
+            mvc.perform(login(body)).andExpect(status().isOk());
+            mvc.perform(login(requestBody("login.absent", PASSWORD))).andExpect(status().isUnauthorized());
             assertThat(appender.list).hasSize(2).allSatisfy(event ->
                     assertThat(event.getFormattedMessage()).contains("event=ADMIN_LOGIN", "occurredAt=",
-                            "clientIp=192.0.2.10").doesNotContain("Freshman!2026", "password", "refreshToken"));
+                            "clientIp=" + clientIp).doesNotContain(PASSWORD, "password", "refreshToken"));
             assertThat(appender.list.get(0).getFormattedMessage()).contains("success=true", "status=200");
             assertThat(appender.list.get(1).getFormattedMessage()).contains("success=false", "status=401");
         } finally {
-            logger.detachAppender(appender);
-            appender.stop();
+            detach(AdminLoginAuditFilter.class, appender);
+        }
+    }
+
+    /*
+     * DB 백업을 커밋한 뒤 최종 검사 전에 계정이 바뀌는 창을 만든다. 그 두 조회 사이에서 앱이
+     * 부르는 것이 JWT 생성이라 그 자리에 계정 변경을 끼운다. 목으로 두 번째 조회의 응답을
+     * 꾸미던 전과 달리 실제 행을 바꾼다.
+     */
+    @ParameterizedTest
+    @ValueSource(strings = {"MISSING", "INACTIVE", "ROLE_CHANGED"})
+    void DB_백업후_계정이_사용불가이면_AUTH001이며_쿠키를_발급하지_않는다(String change) throws Exception {
+        doAnswer(call -> {
+            changeAccount(change);
+            return call.callRealMethod();
+        }).when(jwt).createAccessToken(eq(adminId), any(Role.class), anyMap());
+        mvc.perform(login(body))
+                .andExpect(status().isUnauthorized()).andExpect(jsonPath("$.code").value("AUTH-001"))
+                .andExpect(header().doesNotExist(HttpHeaders.SET_COOKIE));
+        verifyNoInteractions(tokens);
+        verify(admins).clearRefreshTokenIfMatches(eq(adminId), any(), any());
+    }
+
+    /*
+     * DELETED 는 deleted_at 과 토큰 해시까지 함께 맞춰야 한다. admin 의 CHECK 제약이 그 셋을
+     * 한 묶음으로 본다.
+     */
+    private void changeAccount(String change) {
+        if ("MISSING".equals(change)) {
+            jdbc.update("delete from admin where admin_id = ?", adminId);
+        } else if ("INACTIVE".equals(change)) {
+            jdbc.update("update admin set status = 'DELETED', deleted_at = ?, refresh_token_hash = null, "
+                    + "refresh_token_expires_at = null where admin_id = ?", LocalDateTime.now(), adminId);
+        } else {
+            jdbc.update("update admin set role = 'ADMIN' where admin_id = ?", adminId);
         }
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"MISSING", "INACTIVE", "ROLE_CHANGED"})
-    void DB_백업후_계정이_사용불가이면_AUTH001이며_쿠키를_발급하지_않는다(String change) throws Exception {
-        Admin admin = admins.findByLoginId("admin01").orElseThrow();
-        var calls = new java.util.concurrent.atomic.AtomicInteger();
-        when(admins.findByIdForUpdate(1L)).thenAnswer(invocation -> {
-            if (calls.incrementAndGet() == 1) {
-                return Optional.of(admin);
-            }
-            if ("MISSING".equals(change)) {
-                return Optional.empty();
-            }
-            if ("INACTIVE".equals(change)) {
-                ReflectionTestUtils.setField(admin, "status", com.launchcatch.admin.entity.AdminStatus.DELETED);
-            } else {
-                ReflectionTestUtils.setField(admin, "role", Role.ADMIN);
-            }
-            return Optional.of(admin);
-        });
-        mvc.perform(post("/v1/admin/auth/tokens").contentType(MediaType.APPLICATION_JSON).content(BODY))
-                .andExpect(status().isUnauthorized()).andExpect(jsonPath("$.code").value("AUTH-001"))
-                .andExpect(header().doesNotExist(HttpHeaders.SET_COOKIE));
-        org.mockito.Mockito.verifyNoInteractions(refreshTokens);
-        org.mockito.Mockito.verify(admins).clearRefreshTokenIfMatches(eq(1L), any(), any());
-    }
-    @ParameterizedTest
     @ValueSource(strings = {"DB_READ", "TRANSACTION_BEGIN", "TRANSACTION_COMMIT"})
     void 최종_DB_검사_장애는_AUTH002이며_쿠키를_발급하지_않는다(String failure) throws Exception {
-        Admin admin = admins.findByLoginId("admin01").orElseThrow();
-        if ("DB_READ".equals(failure)) {
-            when(admins.findByIdForUpdate(1L)).thenReturn(Optional.of(admin))
-                    .thenThrow(new DataAccessResourceFailureException("final DB read failed"));
-        } else if ("TRANSACTION_BEGIN".equals(failure)) {
-            when(transactions.getTransaction(any())).thenReturn(new SimpleTransactionStatus(), new SimpleTransactionStatus())
-                    .thenThrow(new org.springframework.transaction.CannotCreateTransactionException("final transaction failed"))
-                    .thenReturn(new SimpleTransactionStatus());
-        } else {
-            org.mockito.Mockito.doNothing()
-                    .doThrow(new org.springframework.transaction.TransactionSystemException("final commit failed"))
-                    .doNothing().when(transactions).commit(any());
-        }
-        Logger logger = (Logger) LoggerFactory.getLogger(GlobalExceptionHandler.class);
-        var appender = new ListAppender<ILoggingEvent>();
-        appender.start();
-        logger.addAppender(appender);
+        doAnswer(call -> {
+            breakFinalCheck(failure);
+            return call.callRealMethod();
+        }).when(jwt).createAccessToken(eq(adminId), any(Role.class), anyMap());
+        var appender = attach(GlobalExceptionHandler.class);
         try {
-            mvc.perform(post("/v1/admin/auth/tokens").contentType(MediaType.APPLICATION_JSON).content(BODY))
+            mvc.perform(login(body))
                     .andExpect(status().isServiceUnavailable()).andExpect(jsonPath("$.code").value("AUTH-002"))
                     .andExpect(header().string(HttpHeaders.RETRY_AFTER, "1"))
                     .andExpect(header().doesNotExist(HttpHeaders.SET_COOKIE));
-            org.mockito.Mockito.verify(admins).clearRefreshTokenIfMatches(eq(1L), any(), any());
+            verify(admins).clearRefreshTokenIfMatches(eq(adminId), any(), any());
             assertThat(appender.list).anySatisfy(event -> {
                 assertThat(event.getLevel()).isEqualTo(Level.ERROR);
                 assertThat(event.getFormattedMessage()).contains("AUTH-002");
             });
             if (!"TRANSACTION_COMMIT".equals(failure)) {
-                org.mockito.Mockito.verifyNoInteractions(refreshTokens);
+                verifyNoInteractions(tokens);
             }
         } finally {
-            logger.detachAppender(appender);
-            appender.stop();
+            detach(GlobalExceptionHandler.class, appender);
+        }
+    }
+
+    /*
+     * 보상 트랜잭션은 성공해야 한다. 한 번만 던지고 다음 호출부터 실제 매니저에 위임한다.
+     * 전에는 목에 성공 응답을 여럿 줄 세워 같은 일을 했다.
+     *
+     * 커밋은 실제로 끝낸 다음 던진다. 커밋 자체를 가로채 버리면 트랜잭션이 스레드에 묶인 채
+     * 남아서, 같은 스레드로 이어 도는 테스트가 전부 트랜잭션 시간 초과로 떨어진다. 앱이 보는
+     * 것도 "커밋은 됐는데 응답이 실패로 왔다" 쪽이라 이 모양이 실제에 가깝다.
+     */
+    private void breakFinalCheck(String failure) {
+        if ("DB_READ".equals(failure)) {
+            doThrow(new DataAccessResourceFailureException("final DB read failed"))
+                    .when(admins).findByIdForUpdate(adminId);
+        } else if ("TRANSACTION_BEGIN".equals(failure)) {
+            doThrow(new CannotCreateTransactionException("final transaction failed"))
+                    .doCallRealMethod().when(transactions).getTransaction(any());
+        } else {
+            doAnswer(call -> {
+                call.callRealMethod();
+                throw new TransactionSystemException("final commit failed");
+            }).doCallRealMethod().when(transactions).commit(any());
         }
     }
 
     @Test
     void 재발급은_만료된_Access없이도_새_쿠키와_관리자정보를_반환한다() throws Exception {
-        String raw = "a".repeat(43);
-        Admin admin = admins.findByLoginId("admin01").orElseThrow();
-        admin.issueRefreshToken(com.launchcatch.auth.opaque.TokenHasher.sha256(raw), java.time.LocalDateTime.now().plusDays(1));
-        when(refreshTokens.find(raw)).thenReturn(Optional.of(
-                new RefreshTokenRepository.RefreshTokenData(1L, Role.SUPER_ADMIN, true)));
-        when(refreshTokens.compareAndRotate(eq(raw), any(), any())).thenReturn(
-                RefreshTokenRepository.RotateOutcome.success(
-                        new RefreshTokenRepository.RefreshTokenData(1L, Role.SUPER_ADMIN, true)));
-        var response = mvc.perform(post("/v1/admin/auth/tokens:refresh")
-                        .cookie(new Cookie("refreshToken", raw), new Cookie("accessToken", "expired")))
-                .andExpect(status().isOk()).andExpect(jsonPath("$.data.adminId").value(1))
+        backUpRefreshToken(adminId);
+        tokens.saveIfNewer(REFRESH_TOKEN, adminId, Role.SUPER_ADMIN, true, Duration.ofDays(1), 1L);
+        var response = mvc.perform(refresh().cookie(
+                        new Cookie("refreshToken", REFRESH_TOKEN), new Cookie("accessToken", "expired")))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.adminId").value(adminId.intValue()))
                 .andExpect(jsonPath("$.data.role").value("SUPER_ADMIN"))
                 .andExpect(jsonPath("$.data.refreshToken").doesNotExist()).andReturn().getResponse();
         assertThat(response.getCookie("refreshToken").getPath()).isEqualTo("/v1/admin/auth/");
@@ -390,17 +449,16 @@ class AdminLoginSecurityIntegrationTest {
 
     @Test
     void 재발급_쿠키_누락은_AUTH003이며_새_쿠키가_없다() throws Exception {
-        mvc.perform(post("/v1/admin/auth/tokens:refresh"))
+        mvc.perform(refresh())
                 .andExpect(status().isUnauthorized()).andExpect(jsonPath("$.code").value("AUTH-003"))
                 .andExpect(header().doesNotExist(HttpHeaders.SET_COOKIE));
     }
 
     @Test
     void 재발급_DB장애는_AUTH002이며_새_쿠키를_발급하지_않는다() throws Exception {
-        String raw = "a".repeat(43);
-        when(refreshTokens.find(raw)).thenReturn(Optional.empty());
-        when(admins.findIdByRefreshTokenHash(any())).thenThrow(new DataAccessResourceFailureException("DB failed"));
-        mvc.perform(post("/v1/admin/auth/tokens:refresh").cookie(new Cookie("refreshToken", raw)))
+        doThrow(new DataAccessResourceFailureException("DB failed"))
+                .when(admins).findIdByRefreshTokenHash(any());
+        mvc.perform(refresh().cookie(new Cookie("refreshToken", REFRESH_TOKEN)))
                 .andExpect(status().isServiceUnavailable()).andExpect(jsonPath("$.code").value("AUTH-002"))
                 .andExpect(header().string(HttpHeaders.RETRY_AFTER, "1"))
                 .andExpect(header().doesNotExist(HttpHeaders.SET_COOKIE));
@@ -408,48 +466,12 @@ class AdminLoginSecurityIntegrationTest {
 
     @Test
     void 토큰_재사용은_AUTH004이며_새_쿠키를_발급하지_않는다() throws Exception {
-        String raw = "a".repeat(43);
-        var owner = new RefreshTokenRepository.RefreshTokenData(1L, Role.SUPER_ADMIN, true);
-        when(refreshTokens.find(raw)).thenReturn(Optional.of(owner));
-        when(refreshTokens.compareAndRotate(eq(raw), any(), any())).thenReturn(RefreshTokenRepository.RotateOutcome.reuseDetected(owner));
-        mvc.perform(post("/v1/admin/auth/tokens:refresh").cookie(new Cookie("refreshToken", raw)))
+        var owner = new RefreshTokenRepository.RefreshTokenData(adminId, Role.SUPER_ADMIN, true);
+        doReturn(Optional.of(owner)).when(tokens).find(REFRESH_TOKEN);
+        doReturn(RefreshTokenRepository.RotateOutcome.reuseDetected(owner))
+                .when(tokens).compareAndRotate(eq(REFRESH_TOKEN), any(), any());
+        mvc.perform(refresh().cookie(new Cookie("refreshToken", REFRESH_TOKEN)))
                 .andExpect(status().isUnauthorized()).andExpect(jsonPath("$.code").value("AUTH-004"))
                 .andExpect(header().doesNotExist(HttpHeaders.SET_COOKIE));
-    }
-
-    @Configuration(proxyBeanMethods = false)
-    @EnableWebMvc
-    @EnableTransactionManagement
-    @ComponentScan(basePackages = "com.launchcatch.admin", useDefaultFilters = false,
-            includeFilters = @ComponentScan.Filter(type = FilterType.REGEX,
-                    pattern = "com\\.launchcatch\\.admin\\.(controller|service)\\.Admin(Login|Logout|Token)(Controller|Service|TransactionService)"))
-    @Import({AdminLoginSecurityConfig.class, SecurityConfig.class, ApiSecurityDefaults.class,
-            PasswordEncoderConfig.class, AuthCookieFactory.class, AuthExceptionHandler.class,
-            GlobalExceptionHandler.class, HttpBodyLoggingFilter.class, AdminLoginAuditFilter.class})
-    static class TestConfig {
-        @Bean com.launchcatch.ops.contract.AuditLogWriter audit() { return mock(com.launchcatch.ops.contract.AuditLogWriter.class); }
-        @Bean AdminRepository admins() { return mock(AdminRepository.class); }
-        @Bean RefreshTokenRepository refreshTokens() { return mock(RefreshTokenRepository.class); }
-        @Bean AccessTokenValidAfterRepository legacyCutoff() { return mock(AccessTokenValidAfterRepository.class); }
-        @Bean com.launchcatch.admin.repository.AdminAccessTokenRevocationRepository revocations() {
-            var repository = mock(com.launchcatch.admin.repository.AdminAccessTokenRevocationRepository.class);
-            when(repository.findRevocation(any())).thenReturn(java.util.Optional.of(new com.launchcatch.admin.AdminAccessTokenRevocation(0L, null)));
-            return repository;
-        }
-        @Bean AdminAccessTokenVersionRepository cutoff() { return mock(AdminAccessTokenVersionRepository.class); }
-        @Bean AdminAccessTokenVerifier accessTokenVerifier(AdminAccessTokenVersionRepository versions,
-                AccessTokenValidAfterRepository legacy, com.launchcatch.admin.repository.AdminAccessTokenRevocationRepository revocations) {
-            return new AdminAccessTokenVerifier(versions, new AccessTokenCutoffVerifier(legacy), revocations);
-        }
-        @Bean StringRedisTemplate redisTemplate() { return mock(StringRedisTemplate.class); }
-        @Bean PlatformTransactionManager transactions() { return mock(PlatformTransactionManager.class); }
-        @Bean Clock clock() {
-            // 실제 JWT 파서는 시스템 시각으로 만료를 검사하므로 이 연결 테스트도 현재 시각을 사용한다.
-            return Clock.system(ZoneId.of("Asia/Seoul"));
-        }
-        @Bean JwtTokenProvider jwt(Clock clock) {
-            return new JwtTokenProvider("test-only-signing-secret-with-at-least-32-bytes", 1800000,
-                    86400000, 1209600000, 1209600000, clock);
-        }
     }
 }
