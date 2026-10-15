@@ -26,6 +26,9 @@ import org.testcontainers.utility.DockerImageName;
  */
 public abstract class IntegrationTestSupport {
 
+    // 배치 점유자 이름이다. 점유와 이어받기를 보는 테스트가 이 값을 자기 이름으로 쓴다.
+    public static final String BATCH_OWNER = "batch-1";
+
     protected static final MySQLContainer MYSQL =
             new MySQLContainer(DockerImageName.parse("mysql:8.4"));
 
@@ -54,5 +57,6 @@ public abstract class IntegrationTestSupport {
         registry.add("spring.data.redis.port", () -> VALKEY.getMappedPort(6379));
         registry.add("jwt.secret", () -> "test-only-secret-not-used-anywhere-else-0123456789abcdef");
         registry.add("jwt.cookie.secure", () -> "true");
+        registry.add("launchcatch.batch.owner-id", () -> BATCH_OWNER);
     }
 }
