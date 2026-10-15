@@ -37,37 +37,37 @@
 ## 도메인과 문서
 
 문서는 **도메인 하나에 문서 하나**를 기본으로 묶었다. 예외는 인증이다. 로그인과 토큰은 관리자, 점주,
-사용자 세 도메인에 흩어져 있지만 공통 정책(94행) 하나를 따르므로 `auth-api-spec.md` 한곳에 모았다.
+사용자 세 도메인에 흩어져 있지만 공통 정책(FR-091) 하나를 따르므로 `auth-api-spec.md` 한곳에 모았다.
 도메인마다 어느 문서의 어느 절을 보면 되는지 적어 둔다.
 
-| 도메인 | 문서 | 절 | 기능 행 |
+| 도메인 | 문서 | 절 | 기능 ID |
 |---|---|---|---|
-| `admin` | `admin-api-spec.md`, `auth-api-spec.md` | 관리자 계정, 관리자 인증 | 4~7 |
-| `owner` | `owner-api-spec.md`, `admin-api-spec.md`, `auth-api-spec.md` | 점주 계정, 점주 관리, 점주 인증 | 10, 12, 31~34 |
-| `member` | `member.md`, `admin-api-spec.md`, `auth-api-spec.md` | 회원 정보, 사용자 관리, 카카오 로그인 | 11, 12, 62~66, 77~78, 87~90, 93 |
-| `store` | `store-api-spec.md`, `admin-api-spec.md` | 입점, 가게 조회, 입점 신청 조회 | 8~9, 35~42, 72~74 |
-| `campaign` | `campaign-api-spec.md`, `poster-api-spec.md` | 캠페인, 포스터와 템플릿 | 13~19, 26, 29, 43~48, 53~56 |
-| `billing` | `billing-api-spec.md` | 전체 | 21~24, 49~50, 52 |
-| `adserving` | `feed-api-spec.md` | 전체 | 30, 67~71, 75~76, 92, 100 |
-| `coupon` | `coupon-api-spec.md` | 전체 | 58~59, 83~86, 91 |
-| `notification` | `notification-api-spec.md` | 전체 | 61, 82 |
-| `analytics` | `analytics-api-spec.md` | 전체 | 20, 25, 28, 60, 91, 101 |
-| `ops` | `admin-api-spec.md` | 플랫폼 설정값, 감사 로그 | 27, 104 |
-| `auth` | `auth-api-spec.md` | 공통 정책 | 94 |
+| `admin` | `admin-api-spec.md`, `auth-api-spec.md` | 관리자 계정, 관리자 인증 | FR-001~FR-004 |
+| `owner` | `owner-api-spec.md`, `admin-api-spec.md`, `auth-api-spec.md` | 점주 계정, 점주 관리, 점주 인증 | FR-007, FR-009, FR-028~FR-031 |
+| `member` | `member.md`, `admin-api-spec.md`, `auth-api-spec.md` | 회원 정보, 사용자 관리, 카카오 로그인 | FR-008, FR-009, FR-059~FR-063, FR-074~FR-075, FR-084~FR-087, FR-090 |
+| `store` | `store-api-spec.md`, `admin-api-spec.md` | 입점, 가게 조회, 입점 신청 조회 | FR-005~FR-006, FR-032~FR-039, FR-069~FR-071 |
+| `campaign` | `campaign-api-spec.md`, `poster-api-spec.md` | 캠페인, 포스터와 템플릿 | FR-010~FR-016, FR-023, FR-026, FR-040~FR-045, FR-050~FR-053 |
+| `billing` | `billing-api-spec.md` | 전체 | FR-018~FR-021, FR-046~FR-047, FR-049 |
+| `adserving` | `feed-api-spec.md` | 전체 | FR-027, FR-064~FR-068, FR-072~FR-073, FR-089, FR-097 |
+| `coupon` | `coupon-api-spec.md` | 전체 | FR-055~FR-056, FR-080~FR-083, FR-088 |
+| `notification` | `notification-api-spec.md` | 전체 | FR-058, FR-079 |
+| `analytics` | `analytics-api-spec.md` | 전체 | FR-017, FR-022, FR-025, FR-057, FR-088, FR-098 |
+| `ops` | `admin-api-spec.md` | 플랫폼 설정값, 감사 로그 | FR-024, FR-101 |
+| `auth` | `auth-api-spec.md` | 공통 정책 | FR-091 |
 
-**API가 없는 행이 있다.** 서버 안에서만 도는 기능이라 경로를 만들지 않는다.
+**API가 없는 요구사항이 있다.** 서버 안에서만 도는 기능이라 경로를 만들지 않는다.
 
-| 행 | 기능 | 실행 주체 |
+| ID | 기능 | 실행 주체 |
 |---|---|---|
-| 51 | 잔액 부족 시 캠페인 게재 중단 | 00:00 배치와 충전 재예약 |
-| 57 | 포스터 자동 검수 | 캠페인 활성화(47행) 안에서 호출 |
-| 79~81 | 선착순 오픈 알림, 관심 가게 알림 | 스케줄러와 서버 푸시 |
-| 95 | 캠페인 상태 전이 | 캠페인 도메인 내부 |
-| 96~97 | 피드 구성 | 피드 조회(67행) 안에서 동작 |
-| 98 | 하루 예산 배분, 예산 소진 진행률 계산 | 정산의 00:00 배치와 노출 차감(103행) |
-| 99 | 노출 속도 조절 | 피드 조회(67행) 안에서 동작. 정산이 계산한 진행률을 읽는다 |
-| 102 | 하루 시간표 스케줄러 | 배치 서버 |
-| 103 | 노출 차감 및 원장 기록 | 노출 수집(100행)의 저장 트랜잭션 안에서 호출 |
+| FR-048 | 잔액 부족 시 캠페인 게재 중단 | 00:00 배치와 충전 재예약 |
+| FR-054 | 포스터 자동 검수 | 캠페인 활성화(FR-044) 안에서 호출 |
+| FR-076~FR-078 | 선착순 오픈 알림, 관심 가게 알림 | 스케줄러와 서버 푸시 |
+| FR-092 | 캠페인 상태 전이 | 캠페인 도메인 내부 |
+| FR-093~FR-094 | 피드 구성 | 피드 조회(FR-064) 안에서 동작 |
+| FR-095 | 하루 예산 배분, 예산 소진 진행률 계산 | 정산의 00:00 배치와 노출 차감(FR-100) |
+| FR-096 | 노출 속도 조절 | 피드 조회(FR-064) 안에서 동작. 정산이 계산한 진행률을 읽는다 |
+| FR-099 | 하루 시간표 스케줄러 | 배치 서버 |
+| FR-100 | 노출 차감 및 원장 기록 | 노출 수집(FR-097)의 저장 트랜잭션 안에서 호출 |
 
 ## 공통 규약
 

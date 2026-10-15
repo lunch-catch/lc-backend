@@ -10,6 +10,7 @@ import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
 import jakarta.persistence.Table;
 import java.time.LocalDateTime;
+import java.util.Objects;
 import java.util.UUID;
 import lombok.AccessLevel;
 import lombok.Getter;
@@ -53,6 +54,25 @@ public class MemberCoupon extends BaseTimeEntity {
 
     @Column(name = "usable_end_at", nullable = false, updatable = false)
     private LocalDateTime usableEndAt;
+
+    /*
+     * 사용 가능한 미사용 쿠폰의 QR을 교체하고 버전과 60초 만료 시각을 함께 변경한다.
+     * 호출자는 쿠폰 행 잠금을 확보하여 갱신과 삭제, 사용 확정을 직렬화한다.
+     */
+    public void renewQr(UUID token, LocalDateTime now) {
+        Objects.requireNonNull(token);
+        Objects.requireNonNull(now);
+        if (status == MemberCouponStatus.USED) {
+            throw new CouponException(CouponErrorCode.COUPON_ALREADY_USED);
+        }
+        if (status != MemberCouponStatus.ISSUED
+                || now.isBefore(usableStartAt) || !now.isBefore(usableEndAt)) {
+            throw new CouponException(CouponErrorCode.COUPON_NOT_AVAILABLE);
+        }
+        qrToken = token;
+        qrVersion++;
+        qrExpiresAt = now.plusSeconds(60);
+    }
 
     /**
      * 미사용 쿠폰의 사용 종료 시각에 도달했으면 만료 상태로 변경한다.

@@ -1,6 +1,5 @@
 package com.launchcatch.owner;
 
-import com.launchcatch.IntegrationTestSupport;
 import com.launchcatch.auth.Role;
 import com.launchcatch.auth.jwt.AccessTokenValidAfterRepository;
 import com.launchcatch.owner.repository.OwnerLogoutTokenRepository;
@@ -13,14 +12,9 @@ import com.launchcatch.auth.opaque.TokenHasher;
 import java.time.Duration;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
-import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
 import org.springframework.data.redis.core.StringRedisTemplate;
 
-@SpringBootTest(classes = OwnerLogoutTokenRepositoryIntegrationTest.RedisConfig.class)
-class OwnerLogoutTokenRepositoryIntegrationTest extends IntegrationTestSupport {
+class OwnerLogoutTokenRepositoryIntegrationTest extends AbstractOwnerIntegrationTest {
 
     @Autowired
     private RefreshTokenRepository repository;
@@ -147,31 +141,6 @@ class OwnerLogoutTokenRepositoryIntegrationTest extends IntegrationTestSupport {
             return org.springframework.security.core.context.SecurityContextHolder.getContext().getAuthentication() != null;
         } finally {
             org.springframework.security.core.context.SecurityContextHolder.clearContext();
-        }
-    }
-
-    @Configuration(proxyBeanMethods = false)
-    static class RedisConfig {
-        @Bean com.launchcatch.owner.repository.OwnerAccessTokenVersionRepository versions(StringRedisTemplate redis) {
-            return new com.launchcatch.owner.repository.OwnerAccessTokenVersionRepository(redis);
-        }
-
-        @Bean OwnerLogoutTokenRepository logout(StringRedisTemplate redis) { return new OwnerLogoutTokenRepository(redis); }
-        @Bean AccessTokenValidAfterRepository cutoff(StringRedisTemplate redis) { return new AccessTokenValidAfterRepository(redis); }
-
-        @Bean
-        LettuceConnectionFactory connectionFactory() {
-            return new LettuceConnectionFactory(VALKEY.getHost(), VALKEY.getMappedPort(6379));
-        }
-
-        @Bean
-        StringRedisTemplate redisTemplate(LettuceConnectionFactory connectionFactory) {
-            return new StringRedisTemplate(connectionFactory);
-        }
-
-        @Bean
-        RefreshTokenRepository refreshTokenRepository(StringRedisTemplate redisTemplate) {
-            return new RefreshTokenRepository(redisTemplate);
         }
     }
 }
