@@ -7,6 +7,7 @@ import com.launchcatch.coupon.dto.CouponEventStatusResponse.CannotIssueReason;
 import com.launchcatch.coupon.dto.CouponEventStatusResponse.EventState;
 import com.launchcatch.coupon.dto.CouponDetailResponse;
 import com.launchcatch.coupon.dto.CouponEventStatusResponse;
+import com.launchcatch.coupon.dto.CouponIssueResponse;
 import com.launchcatch.coupon.dto.CouponIssuanceLimitResponse;
 import com.launchcatch.coupon.dto.CouponQrResponse;
 import com.launchcatch.coupon.dto.CouponSummaryResponse;
@@ -71,6 +72,9 @@ public class CouponOpenApiConfig {
                     .getResponses().get("200").getContent().values()
                     .forEach(media -> media.setExample(exampleMapper.valueToTree(
                             ResponseEnvelope.success(eventStatusExample()))));
+            openApi.getPaths().get(COUPON_LIST).getPost().getResponses().get("201").getContent().values()
+                    .forEach(media -> media.setExample(exampleMapper.valueToTree(ResponseEnvelope.success(
+                            new CouponIssueResponse(1001L, OffsetDateTime.parse("2026-10-15T11:00:00+09:00"))))));
         };
     }
 

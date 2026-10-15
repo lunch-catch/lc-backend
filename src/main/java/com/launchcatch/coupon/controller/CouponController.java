@@ -5,6 +5,8 @@ import com.launchcatch.coupon.dto.CouponDetailResponse;
 import com.launchcatch.coupon.dto.CouponEventStatusRequest;
 import com.launchcatch.coupon.dto.CouponEventStatusResponse;
 import com.launchcatch.coupon.dto.CouponIssuanceLimitResponse;
+import com.launchcatch.coupon.dto.CouponIssueRequest;
+import com.launchcatch.coupon.dto.CouponIssueResponse;
 import com.launchcatch.coupon.dto.CouponQrResponse;
 import com.launchcatch.coupon.dto.CouponSummaryResponse;
 import com.launchcatch.coupon.dto.CouponUsageHistoryResponse;
@@ -26,6 +28,7 @@ import java.time.LocalDate;
 import lombok.RequiredArgsConstructor;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.CacheControl;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -54,6 +57,16 @@ public class CouponController {
             @Parameter(hidden = true) @AuthenticationPrincipal CustomUserDetails user,
             @Valid @RequestBody CouponEventStatusRequest request) {
         return ResponseEnvelope.success(couponLookUpService.getEventStatus(user.getId(), request.storeIds()));
+    }
+
+    @PostMapping("/coupons")
+    @Operation(summary = "선착순 쿠폰 발급", description = "발급 가능한 재고와 일일 한도를 확인하고 회원 쿠폰을 발급한다.")
+    @ApiResponse(responseCode = "201", description = "발급과 재고 변경, 일일 횟수 반영을 완료한 결과다.", useReturnTypeSchema = true)
+    public ResponseEntity<ResponseEnvelope<CouponIssueResponse>> issueCoupon(
+            @Parameter(hidden = true) @AuthenticationPrincipal CustomUserDetails user,
+            @Valid @RequestBody CouponIssueRequest request) {
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(ResponseEnvelope.success(couponCommandService.issue(user.getId(), request.eventId())));
     }
 
     // 본인 쿠폰의 QR을 생성하거나 갱신하고 응답 캐시를 금지한다.
