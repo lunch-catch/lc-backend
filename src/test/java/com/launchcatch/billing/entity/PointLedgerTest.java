@@ -77,4 +77,50 @@ class PointLedgerTest {
         assertThatThrownBy(() -> PointLedger.charge(OWNER_ID, PAYMENT_ID, AMOUNT, LedgerSource.MANUAL))
                 .isInstanceOf(IllegalArgumentException.class);
     }
+
+    @Test
+    @DisplayName("조정은 부호를 가진 금액을 그대로 저장하고 사람이 기록한 것으로 남긴다")
+    void 조정_부호와_주체() {
+        PointLedger plus = PointLedger.adjust(OWNER_ID, 1000L, "중복 과금 정정", 12L, "req-1");
+        PointLedger minus = PointLedger.adjust(OWNER_ID, -500L, "오입력 정정", null, "req-2");
+
+        assertThat(plus.getAmount()).isEqualTo(1000L);
+        assertThat(minus.getAmount()).isEqualTo(-500L);
+        assertThat(plus.getEntryType()).isEqualTo(EntryType.ADJUST);
+        assertThat(plus.getSource()).isEqualTo(LedgerSource.MANUAL);
+        assertThat(plus.getReason()).isEqualTo("중복 과금 정정");
+        assertThat(plus.getCampaignId()).isEqualTo(12L);
+        assertThat(plus.getIdempotencyKey()).isEqualTo("req-1");
+        assertThat(plus.getPaymentId()).isNull();
+        assertThat(minus.getCampaignId()).isNull();
+    }
+
+    @Test
+    @DisplayName("조정 금액은 0일 수 없다")
+    void 조정_0_거부() {
+        assertThatThrownBy(() -> PointLedger.adjust(OWNER_ID, 0L, "사유", null, "req"))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    @DisplayName("조정 사유는 비어 있거나 255자를 넘을 수 없다")
+    void 조정_사유_거부() {
+        assertThatThrownBy(() -> PointLedger.adjust(OWNER_ID, 100L, null, null, "req"))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> PointLedger.adjust(OWNER_ID, 100L, " ", null, "req"))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> PointLedger.adjust(OWNER_ID, 100L, "가".repeat(256), null, "req"))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    @DisplayName("조정 멱등 키는 비어 있거나 64자를 넘을 수 없다")
+    void 조정_멱등키_거부() {
+        assertThatThrownBy(() -> PointLedger.adjust(OWNER_ID, 100L, "사유", null, null))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> PointLedger.adjust(OWNER_ID, 100L, "사유", null, ""))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> PointLedger.adjust(OWNER_ID, 100L, "사유", null, "k".repeat(65)))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
 }
