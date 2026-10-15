@@ -1,11 +1,8 @@
 package com.launchcatch.campaign;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doAnswer;
-import static org.mockito.Mockito.when;
 
-import com.launchcatch.IntegrationTestSupport;
 import com.launchcatch.campaign.contract.AgeGroup;
 import com.launchcatch.campaign.contract.CampaignStatus;
 import com.launchcatch.campaign.contract.DiscountTargetType;
@@ -13,10 +10,7 @@ import com.launchcatch.campaign.contract.DiscountType;
 import com.launchcatch.campaign.contract.TargetGender;
 import com.launchcatch.campaign.dto.CampaignCouponConditionRequest;
 import com.launchcatch.campaign.entity.Campaign;
-import com.launchcatch.campaign.repository.CampaignRepository;
 import com.launchcatch.campaign.service.CampaignCouponConditionService;
-import com.launchcatch.owner.contract.OwnerAccountStatus;
-import com.launchcatch.owner.contract.OwnerStatusQuery;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.LockModeType;
 import java.time.LocalDateTime;
@@ -32,40 +26,34 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.test.context.bean.override.mockito.MockitoBean;
-import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.support.TransactionTemplate;
 
 /*
  * findByStoreIdAndStatus의 PESSIMISTIC_WRITE 잠금이 실제 DB 행 잠금으로 동작하는지 확인한다.
- * 메서드를 직접 부르는 입구라 테스트 메서드에 @Transactional을 붙이지 않는다(붙이면 테스트
- * 트랜잭션에 참여해 커밋 뒤에 도는 것을 못 본다, LLM_구현_플로우.md "테스트 깊이" 절).
+ * campaignRepository 스파이는 AbstractCampaignIntegrationTest가 도메인 컨텍스트를 하나로
+ * 묶으려고 모아 둔 것을 그대로 쓴다(#278).
  */
-@SpringBootTest
-class CampaignCouponConditionConcurrencyIntegrationTest extends IntegrationTestSupport {
-
-    private static final Long OWNER_ID = 1L;
+class CampaignCouponConditionConcurrencyIntegrationTest extends AbstractCampaignIntegrationTest {
 
     @Autowired
     private CampaignCouponConditionService service;
-    @MockitoSpyBean
-    private CampaignRepository campaignRepository;
-    @MockitoBean
-    private OwnerStatusQuery ownerStatusQuery;
     @Autowired
     private EntityManager entityManager;
     @Autowired
     private TransactionTemplate transactionTemplate;
+    @Autowired
+    private JdbcTemplate jdbc;
 
+    private Long ownerId;
     private Long storeId;
 
     @BeforeEach
     void setUp() {
-        when(ownerStatusQuery.findCurrentStatus(any())).thenReturn(Optional.of(OwnerAccountStatus.ACTIVE));
+        ownerId = createActiveOwner();
         storeId = System.nanoTime();
         Campaign existing = Campaign.create(
-                OWNER_ID, storeId,
+                ownerId, storeId,
                 DiscountTargetType.ALL, DiscountType.PERCENT, 10, null,
                 50, LocalTime.of(12, 0), LocalTime.of(13, 30),
                 null, null,
@@ -82,6 +70,16 @@ class CampaignCouponConditionConcurrencyIntegrationTest extends IntegrationTestS
                     .ifPresent(campaign -> campaignRepository.deleteById(campaign.getId()));
             return null;
         });
+        jdbc.update("delete from owner where owner_id = ?", ownerId);
+    }
+
+    /** owner 도메인 내부를 직접 참조하지 않고, 점주 AT 검증이 보는 행만 그대로 준비한다. */
+    private Long createActiveOwner() {
+        String email = "campaign-concurrency-test-" + System.nanoTime() + "@example.com";
+        LocalDateTime now = LocalDateTime.now();
+        jdbc.update("insert into owner (email, password_hash, status, created_at, updated_at) "
+                + "values (?, 'test-hash', 'ACTIVE', ?, ?)", email, now, now);
+        return jdbc.queryForObject("select owner_id from owner where email = ?", Long.class, email);
     }
 
     @Test
@@ -111,10 +109,10 @@ class CampaignCouponConditionConcurrencyIntegrationTest extends IntegrationTestS
         }).when(campaignRepository).findByStoreIdAndStatus(storeId, CampaignStatus.DRAFT);
 
         try (var executor = Executors.newFixedThreadPool(2)) {
-            Future<?> first = executor.submit(() -> service.handle(OWNER_ID, request(20)));
+            Future<?> first = executor.submit(() -> service.handle(ownerId, request(20)));
             assertThat(locked.await(15, TimeUnit.SECONDS)).isTrue();
 
-            Future<?> second = executor.submit(() -> service.handle(OWNER_ID, request(30)));
+            Future<?> second = executor.submit(() -> service.handle(ownerId, request(30)));
             /*
              * 첫 트랜잭션이 행 잠금을 쥔 채 아직 커밋 전이라, 둘째 호출의
              * findByStoreIdAndStatus(SELECT ... FOR UPDATE)는 실제 DB에서 블록되어야

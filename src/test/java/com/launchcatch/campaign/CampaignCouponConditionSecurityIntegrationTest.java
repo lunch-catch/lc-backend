@@ -1,57 +1,50 @@
 package com.launchcatch.campaign;
 
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.verifyNoInteractions;
-import static org.mockito.Mockito.when;
-import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-import com.launchcatch.auth.ApiSecurityDefaults;
 import com.launchcatch.auth.Role;
-import com.launchcatch.auth.SecurityConfig;
-import com.launchcatch.auth.exception.AuthExceptionHandler;
-import com.launchcatch.auth.jwt.AccessTokenValidAfterRepository;
 import com.launchcatch.auth.jwt.JwtTokenProvider;
-import com.launchcatch.campaign.contract.CampaignStatus;
-import com.launchcatch.campaign.controller.CampaignController;
-import com.launchcatch.campaign.dto.CampaignCouponConditionResponse;
-import com.launchcatch.campaign.service.CampaignCouponConditionResult;
-import com.launchcatch.campaign.service.CampaignCouponConditionService;
-import com.launchcatch.global.exception.GlobalExceptionHandler;
-import java.time.Clock;
-import java.time.ZoneId;
+import com.launchcatch.campaign.contract.AgeGroup;
+import com.launchcatch.campaign.contract.DiscountTargetType;
+import com.launchcatch.campaign.contract.DiscountType;
+import com.launchcatch.campaign.contract.TargetGender;
+import com.launchcatch.campaign.entity.Campaign;
 import jakarta.servlet.http.Cookie;
-import org.junit.jupiter.api.BeforeEach;
+import java.time.LocalDateTime;
+import java.time.LocalTime;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
-import org.springframework.context.annotation.Import;
-import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.http.MediaType;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.web.servlet.MockMvc;
-import org.springframework.test.web.servlet.setup.MockMvcBuilders;
-import org.springframework.web.context.WebApplicationContext;
-import org.springframework.web.servlet.config.annotation.EnableWebMvc;
 
-@SpringBootTest(classes = CampaignCouponConditionSecurityIntegrationTest.TestConfig.class,
-        webEnvironment = SpringBootTest.WebEnvironment.MOCK,
-        properties = "app.cors.allowed-origins=https://owner.example.com")
-class CampaignCouponConditionSecurityIntegrationTest {
+/*
+ * POST /v1/owner/campaigns 의 보안 체인을 실제 입구부터 확인한다.
+ *
+ * 전에는 @SpringBootTest(classes = ...) 로 보안 설정과 컨트롤러만 담고 서비스를 목으로 바꾼
+ * 슬라이스였다. 그 모양은 통합 테스트가 아니고(LLM 구현 플로우 5단계) 컨텍스트를 하나 더
+ * 띄웠다(#278).
+ *
+ * 전체를 띄우면 점주 AT 검증(OwnerAccessTokenPolicy)이 계정 존재와 발급 순번까지 확인해서,
+ * 점주 역할의 토큰은 실제 행을 준비해야 유효하다. 새로 만든 점주는 발급 순번이 항상 0이라
+ * 그 값을 그대로 클레임에 싣는다. 관리자 역할도 같은 이유로 실제 행이 필요하다(owner 도메인의
+ * OwnerProfileSecurityIntegrationTest와 같은 이유).
+ */
+class CampaignCouponConditionSecurityIntegrationTest extends AbstractCampaignIntegrationTest {
 
-    private static final String SECRET = "test-only-signing-secret-with-at-least-32-bytes";
     private static final String PATH = "/v1/owner/campaigns";
+    private static final String VERSION_CLAIM = "issuanceVersion";
     private static final String VALID_BODY = """
             {
-              "storeId": 17,
+              "storeId": %d,
               "discountTargetType": "ALL",
               "discountType": "PERCENT",
               "discountValue": 15,
@@ -71,93 +64,107 @@ class CampaignCouponConditionSecurityIntegrationTest {
             }
             """;
 
-    @Autowired private WebApplicationContext context;
-    @Autowired private CampaignCouponConditionService service;
-    @Autowired private AccessTokenValidAfterRepository cutoff;
+    @Autowired private MockMvc mvc;
     @Autowired private JwtTokenProvider jwt;
-    private MockMvc mvc;
-
-    @BeforeEach
-    void setUp() {
-        reset(service, cutoff);
-        when(cutoff.isValidAfter(any(), any(), any())).thenReturn(true);
-        mvc = MockMvcBuilders.webAppContextSetup(context).apply(springSecurity()).build();
-    }
+    @Autowired private JdbcTemplate jdbc;
 
     @Test
     void 가게에_DRAFT가_없으면_201을_반환한다() throws Exception {
-        CampaignCouponConditionResponse response = new CampaignCouponConditionResponse(501L, CampaignStatus.DRAFT);
-        when(service.handle(eq(7L), any())).thenReturn(new CampaignCouponConditionResult(response, true));
+        long storeId = System.nanoTime();
+        Long ownerId = createActiveOwner();
 
         mvc.perform(post(PATH)
-                        .cookie(new Cookie("accessToken", jwt.createAccessToken(7L, Role.OWNER)))
+                        .cookie(ownerToken(ownerId))
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(VALID_BODY))
+                        .content(VALID_BODY.formatted(storeId)))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.code").value("SUCCESS"))
-                .andExpect(jsonPath("$.data.campaignId").value(501))
+                .andExpect(jsonPath("$.data.campaignId").exists())
                 .andExpect(jsonPath("$.data.status").value("DRAFT"));
     }
 
     @Test
     void 가게에_DRAFT가_있으면_200을_반환한다() throws Exception {
-        CampaignCouponConditionResponse response = new CampaignCouponConditionResponse(501L, CampaignStatus.DRAFT);
-        when(service.handle(eq(7L), any())).thenReturn(new CampaignCouponConditionResult(response, false));
+        long storeId = System.nanoTime();
+        Long ownerId = createActiveOwner();
+        Long existingId = campaignRepository.saveAndFlush(draft(ownerId, storeId)).getId();
 
         mvc.perform(post(PATH)
-                        .cookie(new Cookie("accessToken", jwt.createAccessToken(7L, Role.OWNER)))
+                        .cookie(ownerToken(ownerId))
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(VALID_BODY))
+                        .content(VALID_BODY.formatted(storeId)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value("SUCCESS"))
-                .andExpect(jsonPath("$.data.campaignId").value(501));
+                .andExpect(jsonPath("$.data.campaignId").value(existingId.intValue()));
     }
 
     @Test
     void 필수값이_빠지면_400이고_서비스를_부르지_않는다() throws Exception {
+        Long ownerId = createActiveOwner();
+
         mvc.perform(post(PATH)
-                        .cookie(new Cookie("accessToken", jwt.createAccessToken(7L, Role.OWNER)))
+                        .cookie(ownerToken(ownerId))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(MISSING_DISCOUNT_VALUE_BODY))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("COMMON-002"));
-        verifyNoInteractions(service);
+        verifyNoInteractions(campaignCouponConditionService);
     }
 
     @Test
     void 토큰이_없으면_401이다() throws Exception {
-        mvc.perform(post(PATH).contentType(MediaType.APPLICATION_JSON).content(VALID_BODY))
+        mvc.perform(post(PATH).contentType(MediaType.APPLICATION_JSON).content(VALID_BODY.formatted(17)))
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.code").value("AUTH-005"));
-        verifyNoInteractions(service);
+        verifyNoInteractions(campaignCouponConditionService);
     }
 
     @ParameterizedTest
     @EnumSource(value = Role.class, names = {"MEMBER", "ADMIN", "SUPER_ADMIN"})
     void 점주가_아닌_토큰은_403이다(Role role) throws Exception {
         mvc.perform(post(PATH)
-                        .cookie(new Cookie("accessToken", jwt.createAccessToken(7L, role)))
+                        .cookie(nonOwnerToken(role))
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(VALID_BODY))
+                        .content(VALID_BODY.formatted(17)))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.code").value("AUTH-006"));
-        verifyNoInteractions(service);
+        verifyNoInteractions(campaignCouponConditionService);
     }
 
-    @Configuration(proxyBeanMethods = false)
-    @EnableWebMvc
-    @Import({CampaignSecurityConfig.class, SecurityConfig.class, ApiSecurityDefaults.class,
-            CampaignController.class,
-            AuthExceptionHandler.class, GlobalExceptionHandler.class})
-    static class TestConfig {
-        @Bean CampaignCouponConditionService campaignCouponConditionService() {
-            return mock(CampaignCouponConditionService.class);
+    private Cookie ownerToken(Long ownerId) {
+        return new Cookie("accessToken", jwt.createAccessToken(ownerId, Role.OWNER, Map.of(VERSION_CLAIM, "0")));
+    }
+
+    // 사용자 역할은 계정 존재를 확인하지 않아 임의의 식별자로 충분하다(owner 도메인과 같은 이유).
+    private Cookie nonOwnerToken(Role role) {
+        if (role == Role.MEMBER) {
+            return new Cookie("accessToken", jwt.createAccessToken(1L, role));
         }
-        @Bean AccessTokenValidAfterRepository cutoff() { return mock(AccessTokenValidAfterRepository.class); }
-        @Bean StringRedisTemplate redisTemplate() { return mock(StringRedisTemplate.class); }
-        @Bean JwtTokenProvider jwt() {
-            return new JwtTokenProvider(SECRET, 1800000, 86400000, 86400000, 1209600000,
-                    Clock.system(ZoneId.of("Asia/Seoul")));
-        }
+        String loginId = UUID.randomUUID().toString();
+        LocalDateTime now = LocalDateTime.now();
+        jdbc.update("insert into admin (login_id, password_hash, name, role, status, created_at, updated_at) "
+                        + "values (?, ?, ?, ?, 'ACTIVE', ?, ?)",
+                loginId, "test-hash", "campaign-security-test-admin", role.name(), now, now);
+        Long adminId = jdbc.queryForObject("select admin_id from admin where login_id = ?", Long.class, loginId);
+        return new Cookie("accessToken", jwt.createAccessToken(adminId, role));
+    }
+
+    private Long createActiveOwner() {
+        String email = "campaign-security-test-" + System.nanoTime() + "@example.com";
+        LocalDateTime now = LocalDateTime.now();
+        jdbc.update("insert into owner (email, password_hash, status, created_at, updated_at) "
+                + "values (?, 'test-hash', 'ACTIVE', ?, ?)", email, now, now);
+        return jdbc.queryForObject("select owner_id from owner where email = ?", Long.class, email);
+    }
+
+    private Campaign draft(Long ownerId, long storeId) {
+        return Campaign.create(
+                ownerId, storeId,
+                DiscountTargetType.ALL, DiscountType.PERCENT, 10, null,
+                50, LocalTime.of(12, 0), LocalTime.of(13, 30),
+                null, null,
+                1000, TargetGender.ALL, List.of(AgeGroup.AGE_20S),
+                null, null, null,
+                LocalDateTime.now());
     }
 }
