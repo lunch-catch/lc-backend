@@ -11,6 +11,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.launchcatch.billing.dto.BudgetPlanStatusChanged;
+import com.launchcatch.billing.dto.BudgetPlanStatusConfirmed;
 import com.launchcatch.billing.repository.BudgetDailyPlanRepository;
 import com.launchcatch.billing.cache.DailySpendCounter;
 import com.launchcatch.campaign.contract.CampaignStatusChangedEvent;
@@ -56,23 +57,34 @@ class BudgetPlanStatusServiceTest {
     }
 
     @Test
-    void 예약의_상태_재확인도_같은_조건부_갱신을_쓰고_바꿨는지_돌려준다() {
-        when(planRepository.applyStatus(12L, DAY, true, CHANGED_AT, NOW)).thenReturn(1);
-        when(planRepository.applyStatus(13L, DAY, true, CHANGED_AT, NOW)).thenReturn(0);
+    void 예약의_상태_확인은_같은_시각도_반영하는_갱신을_쓰고_바꿨으면_커밋_뒤_해시를_지우게_통보한다() {
+        when(planRepository.confirmStatus(12L, DAY, false, CHANGED_AT, NOW)).thenReturn(1);
+        when(planRepository.confirmStatus(13L, DAY, false, CHANGED_AT, NOW)).thenReturn(0);
 
-        assertThat(service.applyStatus(12L, DAY, true, CHANGED_AT)).isTrue();
-        assertThat(service.applyStatus(13L, DAY, true, CHANGED_AT)).isFalse();
+        assertThat(service.confirmStatus(12L, DAY, false, CHANGED_AT)).isTrue();
+        assertThat(service.confirmStatus(13L, DAY, false, CHANGED_AT)).isFalse();
 
-        verify(publisher).publishEvent(new BudgetPlanStatusChanged(12L, DAY, true, CHANGED_AT));
-        verify(publisher, never()).publishEvent(new BudgetPlanStatusChanged(13L, DAY, true, CHANGED_AT));
+        // 해시는 더 늦은 시각만 받아 같은 시각의 확인을 맞출 수 없으니 지우고 DB 정본으로 다시 만들게 한다
+        verify(publisher).publishEvent(new BudgetPlanStatusConfirmed(12L, DAY));
+        verify(publisher, never()).publishEvent(new BudgetPlanStatusConfirmed(13L, DAY));
+        verify(planRepository, never()).applyStatus(any(), any(), anyBoolean(), any(), any());
     }
 
     @Test
-    void 상태_변경_시각이_없으면_견줄_수_없어_바꾸지_않는다() {
-        assertThat(service.applyStatus(12L, DAY, true, null)).isFalse();
+    void 상태_변경_시각이_없으면_견줄_수_없어_중단으로_남긴다() {
+        assertThat(service.confirmStatus(12L, DAY, false, null)).isFalse();
 
-        verify(planRepository, never()).applyStatus(any(), any(), anyBoolean(), any(), any());
+        verify(planRepository, never()).confirmStatus(any(), any(), anyBoolean(), any(), any());
         verify(publisher, never()).publishEvent(any(Object.class));
+    }
+
+    @Test
+    void 확인_뒤_해시를_지우고_실패해도_던지지_않는다() {
+        service.dropMirror(new BudgetPlanStatusConfirmed(12L, DAY));
+        verify(spendCounter).evict(DAY, 12L);
+
+        doThrow(new RedisConnectionFailureException("down")).when(spendCounter).evict(DAY, 13L);
+        assertThatCode(() -> service.dropMirror(new BudgetPlanStatusConfirmed(13L, DAY))).doesNotThrowAnyException();
     }
 
     @Test

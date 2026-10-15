@@ -52,8 +52,10 @@ public class DailyReservationRecorder {
      * 그날 계획이 이미 있는 캠페인은 건너뛴다. 계획과 RESERVE 가 이 트랜잭션에서 함께 커밋되므로 계획이 있으면 예약도
      * 끝난 것이다. 남은 캠페인은 그 예약이 빠진 잔액에서 이어서 배분한다.
      *
-     * 계획의 처음 중단 여부와 상태 변경 시각은 캠페인 상태를 옮긴다. ACTIVE 가 아니면(PAUSED(OWNER), PAUSED(NO_POINTS))
-     * 중단으로 두어야 판정 전에 들어온 노출이 과금되지 않는다.
+     * 계획은 캠페인 상태와 관계없이 중단으로 만든다. 상태 변경 시각은 예약이 읽은 캠페인의 것을 옮긴다. 중단은 커밋 뒤의 상태
+     * 확인(confirmStatus)이 캠페인을 다시 읽어 ACTIVE 일 때만 푼다. 예약이 읽은 상태를 그대로 쓰면 읽은 뒤 계획을 만들기 전에
+     * 커밋된 중단이 사라지고(그때는 계획 행이 없어 상태 변경 수신이 아무것도 못 한다), 확인이 실패하거나 늦어지는 동안
+     * 중단된 캠페인에 과금된다. 중단으로 만들면 무엇이 실패해도 결과는 "과금하지 않음" 쪽에 남는다.
      */
     @Transactional
     public void reserveForOwner(Long ownerId, List<CampaignInfo> campaigns, LocalDate businessDate, long unitPrice) {
@@ -74,32 +76,33 @@ public class DailyReservationRecorder {
                 ledgerRepository.save(PointLedger.reserve(ownerId, campaign.campaignId(), businessDate, reserved));
             }
             planRepository.save(BudgetDailyPlan.create(campaign.campaignId(), ownerId, businessDate, reserved,
-                    unitPrice, campaign.status() != CampaignStatus.ACTIVE, campaign.statusChangedAt()));
+                    unitPrice, true, campaign.statusChangedAt()));
         }
     }
 
     /*
-     * reserveForOwner 가 커밋된 뒤에 부른다. 캠페인 상태를 다시 읽어 그 사이에 바뀐 상태를 계획에 반영하고, 바꾼 계획 수를
-     * 돌려준다.
+     * 계획이 커밋된 뒤에 부른다. 캠페인을 다시 읽어 계획의 중단 표시를 캠페인의 현재 상태로 맞추고(ACTIVE 일 때만 중단 아님),
+     * 바꾼 계획 수를 돌려준다.
      *
-     * 예약은 캠페인을 먼저 읽고 한참 뒤에 계획을 만든다. 그 사이에 중단이 커밋되면 상태 변경 수신은 계획 행이 없어 아무것도
-     * 하지 않고, 계획은 낡은 상태(중단 아님)로 만들어져 중단된 캠페인에 과금된다. 계획이 커밋된 뒤에 다시 읽으면 빠진
-     * 변경이 보인다. 변경이 계획 INSERT 와 겹쳐도 놓치지 않는다. 수신의 조건부 UPDATE 가 아직 없는 행에 대해 UNIQUE
-     * 인덱스의 갭 잠금을 잡아 INSERT 가 그 커밋을 기다리거나, INSERT 가 먼저면 수신이 그 행의 커밋을 기다려 갱신한다
-     * (REPEATABLE READ 기준). 그래서 이 재확인이 읽는 시점에는 변경이 커밋돼 보이거나 수신이 직접 반영한다.
+     * 계획이 커밋된 뒤에 읽으므로 계획을 만들기 전에 커밋된 중단도 보인다. 계획 INSERT 와 겹친 중단은 수신의 조건부 UPDATE 가
+     * 아직 없는 행에 대해 UNIQUE 인덱스의 갭 잠금을 잡아 INSERT 가 그 커밋을 기다리거나, INSERT 가 먼저면 수신이 그 행의
+     * 커밋을 기다려 직접 반영한다(REPEATABLE READ 기준). 계획에 저장된 것보다 이른 상태는 반영하지 않아서 수신과 순서가
+     * 엇갈려도 낡은 상태로 덮지 않는다. campaign 행은 잠그지 않는다(F-7).
      *
-     * 계획이 이미 있어 건너뛴 캠페인도 맞춘다. 재실행에서도 같은 틈이 생긴다. 반영은 상태 변경 시각이 계획에 남은 것보다
-     * 늦을 때만 일어나므로 수신과 순서가 엇갈려도 낡은 상태로 덮지 않는다. campaign 행은 잠그지 않는다(F-7).
+     * 캠페인 조회에서 빠진 계획은 그대로 중단으로 남긴다.
      */
     @Transactional
-    public int resyncStatus(List<Long> campaignIds, LocalDate businessDate) {
+    public int confirmStatus(List<Long> campaignIds, LocalDate businessDate) {
         int changed = 0;
-        for (CampaignInfo campaign : campaignQuery.findAllById(campaignIds)) {
+        List<CampaignInfo> campaigns = campaignQuery.findAllById(campaignIds);
+        if (campaigns.size() != campaignIds.size()) {
+            log.warn("event=RESERVE_STATUS_CAMPAIGN_MISSING businessDate={} requested={} found={}",
+                    businessDate, campaignIds.size(), campaigns.size());
+        }
+        for (CampaignInfo campaign : campaigns) {
             boolean paused = campaign.status() != CampaignStatus.ACTIVE;
-            if (planStatus.applyStatus(campaign.campaignId(), businessDate, paused, campaign.statusChangedAt())) {
+            if (planStatus.confirmStatus(campaign.campaignId(), businessDate, paused, campaign.statusChangedAt())) {
                 changed++;
-                log.info("event=RESERVE_STATUS_RESYNCED businessDate={} campaignId={} paused={}",
-                        businessDate, campaign.campaignId(), paused);
             }
         }
         return changed;

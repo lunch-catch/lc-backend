@@ -31,6 +31,10 @@ import org.springframework.stereotype.Service;
  *
  * 같은 영업일로 다시 불려도 결과가 같다. 이미 해제된 캠페인은 다시 해제하지 않고, 이미 계획이 있는 캠페인은 다시
  * 배분하지 않는다. 중간에 실패하면 끝난 점주의 결과는 남고 다음 실행이 나머지를 채운다.
+ *
+ * 계획은 중단으로 만들어지고, 모든 점주의 예약이 끝난 뒤 그날 계획 전부의 상태를 캠페인에 맞춰 확인한다. 대상은 이번 실행이
+ * 예약한 캠페인이 아니라 그날 계획이 있는 캠페인 전부다. 앞선 실행이 확인 전에 실패했고 그 사이 캠페인이 관리자 중단이나
+ * 종료로 예약 대상에서 빠졌어도, 다음 실행이 그 계획을 확인해 중단으로 남긴다.
  */
 @Slf4j
 @Service
@@ -66,10 +70,10 @@ public class DailyReservationService {
         byOwner.forEach((ownerId, owned) -> {
             owned.sort(Comparator.comparing(CampaignInfo::campaignId));
             recorder.reserveForOwner(ownerId, owned, businessDate, unitPrice);
-            // 예약이 커밋된 뒤에 다시 읽어야 캠페인을 읽은 뒤 계획을 만들기 전에 커밋된 중단을 놓치지 않는다
-            recorder.resyncStatus(owned.stream().map(CampaignInfo::campaignId).toList(), businessDate);
         });
 
+        // 예약이 모두 커밋된 뒤에 확인해야 캠페인을 읽은 뒤 계획을 만들기 전에 커밋된 중단을 놓치지 않는다
+        confirmPlans(businessDate);
         mirror(businessDate, campaigns.stream().map(CampaignInfo::campaignId).toList());
         log.info("event=DAILY_RESERVE_DONE businessDate={} campaigns={} owners={} unitPrice={}",
                 businessDate, campaigns.size(), byOwner.size(), unitPrice);
@@ -117,6 +121,24 @@ public class DailyReservationService {
             recorder.release(releases);
             log.info("event=RESERVE_LEFTOVER_RELEASED businessDate={} campaigns={}", previousDay, releases.size());
         }
+    }
+
+    /*
+     * 그날 계획 전부의 중단 표시를 캠페인의 현재 상태로 맞춘다. 캠페인 조회 한 번과 트랜잭션 하나가 MIRROR_CHUNK 개씩이다.
+     * 실패하면 예외를 그대로 올린다. 확인되지 않은 계획은 중단으로 남아 과금되지 않고, 재실행이 다시 확인한다.
+     */
+    private void confirmPlans(LocalDate businessDate) {
+        List<Long> campaignIds = planRepository.findByBusinessDate(businessDate).stream()
+                .map(BudgetDailyPlan::getCampaignId)
+                .sorted()
+                .toList();
+        int changed = 0;
+        for (int from = 0; from < campaignIds.size(); from += MIRROR_CHUNK) {
+            List<Long> chunk = campaignIds.subList(from, Math.min(from + MIRROR_CHUNK, campaignIds.size()));
+            changed += recorder.confirmStatus(chunk, businessDate);
+        }
+        log.info("event=RESERVE_STATUS_CONFIRMED businessDate={} plans={} changed={}",
+                businessDate, campaignIds.size(), changed);
     }
 
     /*

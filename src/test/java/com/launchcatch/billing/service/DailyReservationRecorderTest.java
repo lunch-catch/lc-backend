@@ -4,7 +4,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.tuple;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -110,8 +112,8 @@ class DailyReservationRecorderTest {
         assertThat(plans).extracting(BudgetDailyPlan::getDailyBudget).containsExactly(10000L, 5000L, 0L);
         assertThat(plans).extracting(BudgetDailyPlan::getUnitPrice).containsOnly(UNIT);
         assertThat(plans).extracting(BudgetDailyPlan::getOwnerId).containsOnly(OWNER);
-        // PAUSED(OWNER) 는 중단으로 시작해야 판정 전 노출이 과금되지 않는다
-        assertThat(plans).extracting(BudgetDailyPlan::isPaused).containsExactly(false, false, true);
+        // 계획은 캠페인 상태와 관계없이 중단으로 만들고, 커밋 뒤의 상태 확인이 ACTIVE 만 푼다
+        assertThat(plans).extracting(BudgetDailyPlan::isPaused).containsOnly(true);
         assertThat(plans).extracting(BudgetDailyPlan::getStatusChangedAt).containsOnly(CHANGED_AT);
     }
 
@@ -205,18 +207,20 @@ class DailyReservationRecorderTest {
     }
 
     @Test
-    void 상태_재확인은_캠페인을_다시_읽어_ACTIVE가_아니면_중단으로_반영한다() {
+    void 상태_확인은_캠페인을_다시_읽어_ACTIVE만_중단을_풀고_나머지는_중단으로_맞춘다() {
         LocalDateTime pausedAt = CHANGED_AT.plusHours(1);
-        when(campaignQuery.findAllById(List.of(1L, 2L, 3L))).thenReturn(List.of(
+        when(campaignQuery.findAllById(List.of(1L, 2L, 3L, 4L))).thenReturn(List.of(
                 // 예약이 읽은 뒤 계획을 만들기 전에 중단됐다
                 campaign(1L, CampaignStatus.PAUSED, PauseReason.OWNER, 1000L, pausedAt),
                 campaign(2L, CampaignStatus.ACTIVE, null, 1000L),
                 campaign(3L, CampaignStatus.ENDED, null, 1000L, pausedAt)));
-        when(planStatus.applyStatus(1L, DAY, true, pausedAt)).thenReturn(true);
-        when(planStatus.applyStatus(2L, DAY, false, CHANGED_AT)).thenReturn(false);
-        when(planStatus.applyStatus(3L, DAY, true, pausedAt)).thenReturn(true);
+        when(planStatus.confirmStatus(1L, DAY, true, pausedAt)).thenReturn(true);
+        when(planStatus.confirmStatus(2L, DAY, false, CHANGED_AT)).thenReturn(true);
+        when(planStatus.confirmStatus(3L, DAY, true, pausedAt)).thenReturn(false);
 
-        assertThat(recorder.resyncStatus(List.of(1L, 2L, 3L), DAY)).isEqualTo(2);
+        // 조회에서 빠진 4 는 건드리지 않아 중단으로 남는다
+        assertThat(recorder.confirmStatus(List.of(1L, 2L, 3L, 4L), DAY)).isEqualTo(2);
+        verify(planStatus, never()).confirmStatus(eq(4L), any(), anyBoolean(), any());
     }
 
     @Test
@@ -225,7 +229,7 @@ class DailyReservationRecorderTest {
                 LocalDate.class, long.class).isAnnotationPresent(Transactional.class)).isTrue();
         assertThat(DailyReservationRecorder.class.getMethod("release", List.class)
                 .isAnnotationPresent(Transactional.class)).isTrue();
-        assertThat(DailyReservationRecorder.class.getMethod("resyncStatus", List.class, LocalDate.class)
+        assertThat(DailyReservationRecorder.class.getMethod("confirmStatus", List.class, LocalDate.class)
                 .isAnnotationPresent(Transactional.class)).isTrue();
     }
 }

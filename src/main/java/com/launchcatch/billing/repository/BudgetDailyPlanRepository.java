@@ -42,6 +42,30 @@ public interface BudgetDailyPlanRepository extends JpaRepository<BudgetDailyPlan
                     @Param("changedAt") LocalDateTime changedAt,
                     @Param("now") LocalDateTime now);
 
+    /*
+     * 00:00 예약의 상태 확인이 계획의 중단 표시를 캠페인의 현재 상태로 맞춘다. 반영한 행 수를 돌려준다.
+     *
+     * applyStatus 와 달리 상태 변경 시각이 같아도 반영한다. 예약은 계획을 일단 중단으로 만들고(실패해도 과금하지 않는 쪽)
+     * 같은 시각의 캠페인 상태로 확인해 풀기 때문이다. 저장된 시각보다 이른 상태는 반영하지 않아서, 그 사이 수신이 반영한 더
+     * 늦은 변경을 낡은 상태로 덮지 않는다. 중단 여부도 시각도 그대로면 바꾸지 않고 0 이다.
+     */
+    @Modifying
+    @Query("""
+            update BudgetDailyPlan p
+               set p.paused = :paused,
+                   p.statusChangedAt = :changedAt,
+                   p.updatedAt = :now
+             where p.campaignId = :campaignId
+               and p.businessDate = :businessDate
+               and (p.statusChangedAt is null or p.statusChangedAt <= :changedAt)
+               and (p.paused <> :paused or p.statusChangedAt is null or p.statusChangedAt < :changedAt)
+            """)
+    int confirmStatus(@Param("campaignId") Long campaignId,
+                      @Param("businessDate") LocalDate businessDate,
+                      @Param("paused") boolean paused,
+                      @Param("changedAt") LocalDateTime changedAt,
+                      @Param("now") LocalDateTime now);
+
     // 그날 계획 한 행이다. uk_budget_daily_plan_campaign_date 를 탄다
     Optional<BudgetDailyPlan> findByCampaignIdAndBusinessDate(Long campaignId, LocalDate businessDate);
 

@@ -8,6 +8,7 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -64,6 +65,9 @@ class DailyReservationServiceTest {
     void setUp() {
         service = new DailyReservationService(campaignQuery, platformSetting, planRepository, ledgerRepository,
                 recorder, hashRebuild);
+        // 예약이 끝나면 그날 계획 전부를 읽어 상태를 확인한다. 전일 계획 조회만 스텁한 테스트에서 엄격 스텁이
+        // 인자가 다른 호출로 실패하지 않게 기본은 빈 목록으로 둔다
+        lenient().when(planRepository.findByBusinessDate(DAY)).thenReturn(List.of());
     }
 
     private static CampaignInfo campaign(long id, long ownerId) {
@@ -73,6 +77,10 @@ class DailyReservationServiceTest {
 
     private static BudgetDailyPlan prevPlan(long campaignId, long ownerId, long reserved) {
         return BudgetDailyPlan.create(campaignId, ownerId, PREV, reserved, 10L, false, CHANGED_AT);
+    }
+
+    private static BudgetDailyPlan todayPlan(long campaignId, long ownerId) {
+        return BudgetDailyPlan.create(campaignId, ownerId, DAY, 1000L, 10L, true, CHANGED_AT);
     }
 
     @Test
@@ -159,23 +167,38 @@ class DailyReservationServiceTest {
     }
 
     @Test
-    void 점주별로_묶어_점주_ID와_캠페인_ID_순으로_예약하고_커밋_뒤_상태를_재확인한_다음_해시를_만든다() {
+    void 점주별로_묶어_점주_ID와_캠페인_ID_순으로_예약하고_그날_계획_전부의_상태를_확인한_다음_해시를_만든다() {
         when(platformSetting.getImpressionUnitPrice()).thenReturn(10);
         when(planRepository.findByBusinessDate(PREV)).thenReturn(List.of());
         CampaignInfo c5 = campaign(5L, 8L);
         CampaignInfo c3 = campaign(3L, 7L);
         CampaignInfo c1 = campaign(1L, 7L);
         when(campaignQuery.findServableOn(DAY)).thenReturn(List.of(c5, c3, c1));
+        // 9 는 앞선 실행이 계획을 만든 뒤 예약 대상에서 빠진 캠페인이다(관리자 중단, 종료)
+        when(planRepository.findByBusinessDate(DAY)).thenReturn(List.of(
+                todayPlan(5L, 8L), todayPlan(9L, 7L), todayPlan(1L, 7L), todayPlan(3L, 7L)));
 
         assertThat(service.reserve(DAY)).isEqualTo(3);
 
-        // 상태 재확인은 그 점주의 예약 트랜잭션이 끝난 뒤, 해시는 재확인까지 반영된 계획으로 만든다
+        // 확인은 모든 예약이 커밋된 뒤 이번 실행의 대상이 아니라 그날 계획 전부로 하고, 해시는 확인된 계획으로 만든다
         InOrder order = inOrder(recorder, hashRebuild);
         order.verify(recorder).reserveForOwner(7L, List.of(c1, c3), DAY, 10L);
-        order.verify(recorder).resyncStatus(List.of(1L, 3L), DAY);
         order.verify(recorder).reserveForOwner(8L, List.of(c5), DAY, 10L);
-        order.verify(recorder).resyncStatus(List.of(5L), DAY);
+        order.verify(recorder).confirmStatus(List.of(1L, 3L, 5L, 9L), DAY);
         order.verify(hashRebuild).rebuildAllIfAbsent(DAY, List.of(5L, 3L, 1L));
+    }
+
+    @Test
+    void 상태_확인이_실패하면_해시를_만들지_않고_단계를_실패시킨다() {
+        when(platformSetting.getImpressionUnitPrice()).thenReturn(10);
+        when(planRepository.findByBusinessDate(PREV)).thenReturn(List.of());
+        when(campaignQuery.findServableOn(DAY)).thenReturn(List.of(campaign(1L, 7L)));
+        when(planRepository.findByBusinessDate(DAY)).thenReturn(List.of(todayPlan(1L, 7L)));
+        doThrow(new QueryTimeoutException("lock wait")).when(recorder).confirmStatus(List.of(1L), DAY);
+
+        // 확인되지 않은 계획은 중단으로 남아 과금되지 않고, 재실행이 다시 확인한다
+        assertThatThrownBy(() -> service.reserve(DAY)).isInstanceOf(QueryTimeoutException.class);
+        verifyNoInteractions(hashRebuild);
     }
 
     @Test

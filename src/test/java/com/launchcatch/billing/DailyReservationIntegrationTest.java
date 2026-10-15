@@ -204,27 +204,32 @@ class DailyReservationIntegrationTest extends AbstractBillingIntegrationTest {
     }
 
     /*
-     * 예약이 캠페인을 읽은 뒤 계획을 만들기 전에 중단이 커밋된 경우다. 그때 계획 행이 없어 상태 변경 수신은 아무것도 못
-     * 하므로 여기서는 이벤트 없이 캠페인 행만 바꿔 같은 상황을 만든다. 예약이 낡은 상태로 계획을 만들어도, 커밋 뒤의
-     * 상태 재확인이 중단으로 맞춰야 중단된 캠페인에 과금되지 않는다.
+     * 앞선 실행이 계획을 만든 뒤 상태 확인 전에 실패했고, 그 사이 한 캠페인이 관리자 중단으로 예약 대상에서 빠진 경우다.
+     * 중단은 계획을 만들기 전에 커밋된 것으로 보고 이벤트 없이 캠페인 행만 바꾼다(그때는 계획 행이 없어 수신이 아무것도
+     * 못 한다). 계획은 중단으로 만들어지므로 확인 전에는 과금되지 않고, 재실행이 그날 계획 전부를 확인해 ACTIVE 만 푼다.
      */
     @Test
-    void 예약이_읽은_뒤에_중단된_캠페인은_커밋_뒤_재확인이_계획을_중단으로_맞춘다() {
+    void 확인_전에_실패한_계획은_중단으로_남고_재실행이_그날_계획_전부를_확인한다() {
         long owner = BASE_ID + 4;
         charge(owner, 10000L);
-        long campaignId = campaign(owner, BASE_ID + 401, "ACTIVE", null, 3000L);
-        List<CampaignInfo> readBeforePause = campaignQuery.findAllById(List.of(campaignId));
-        jdbc.update("""
-                update campaign set status = 'PAUSED', paused_reason = 'OWNER', status_changed_at = '2026-01-01 01:00:00'
-                 where campaign_id = ?
-                """, campaignId);
+        long active = campaign(owner, BASE_ID + 401, "ACTIVE", null, 3000L);
+        long paused = campaign(owner, BASE_ID + 402, "ACTIVE", null, 3000L);
+        List<CampaignInfo> readBeforePause = campaignQuery.findAllById(List.of(active, paused));
 
         recorder.reserveForOwner(owner, readBeforePause, DAY, 10L);
-        assertThat(plan(campaignId)).containsEntry("paused", false);
+        jdbc.update("""
+                update campaign set status = 'PAUSED', paused_reason = 'ADMIN', status_changed_at = '2026-01-01 01:00:00'
+                 where campaign_id = ?
+                """, paused);
+        assertThat(plan(active)).containsEntry("paused", true);
+        assertThat(plan(paused)).containsEntry("paused", true);
 
-        assertThat(recorder.resyncStatus(List.of(campaignId), DAY)).isEqualTo(1);
-        assertThat(plan(campaignId)).containsEntry("paused", true);
-        // 다시 맞춰도 바뀌는 것이 없다
-        assertThat(recorder.resyncStatus(List.of(campaignId), DAY)).isZero();
+        reservationJob.run(DAY);
+
+        assertThat(plan(active)).containsEntry("paused", false);
+        assertThat(plan(paused)).containsEntry("paused", true);
+        // 예약은 앞선 실행의 것 하나뿐이다
+        assertThat(reserves(active)).containsExactly(-3000L);
+        assertThat(reserves(paused)).containsExactly(-3000L);
     }
 }

@@ -1,6 +1,7 @@
 package com.launchcatch.billing.service;
 
 import com.launchcatch.billing.dto.BudgetPlanStatusChanged;
+import com.launchcatch.billing.dto.BudgetPlanStatusConfirmed;
 import com.launchcatch.billing.repository.BudgetDailyPlanRepository;
 import com.launchcatch.billing.cache.DailySpendCounter;
 import com.launchcatch.campaign.contract.CampaignStatusChangedEvent;
@@ -42,26 +43,48 @@ public class BudgetPlanStatusService {
         applyStatus(event.campaignId(), event.businessDate(), !event.servable(), event.changedAt());
     }
 
+    // 계획 행의 중단 표시를 changedAt 시점의 상태로 맞춘다. 행이 없거나 이미 그보다 늦은 상태를 반영했으면 바꾸지 않는다
+    private void applyStatus(Long campaignId, LocalDate businessDate, boolean paused, LocalDateTime changedAt) {
+        int updated = budgetDailyPlanRepository.applyStatus(campaignId, businessDate,
+                paused, changedAt, LocalDateTime.now(clock));
+        if (updated == 0) {
+            return;
+        }
+        eventPublisher.publishEvent(new BudgetPlanStatusChanged(campaignId, businessDate, paused, changedAt));
+    }
+
     /*
-     * 계획 행의 중단 표시를 changedAt 시점의 상태로 맞추고 바꿨는지 돌려준다. 행이 없거나 이미 그보다 늦은 상태를
-     * 반영했으면 바꾸지 않는다. 바꿨으면 커밋 뒤에 해시도 맞춘다.
+     * 00:00 예약의 상태 확인(DailyReservationRecorder.confirmStatus)이 부른다. 계획의 중단 표시를 캠페인의 현재 상태로 맞추고
+     * 바꿨는지 돌려준다. 바꿨으면 커밋 뒤에 해시를 지운다(BudgetPlanStatusConfirmed 참고).
      *
-     * 상태 변경 수신과 00:00 예약의 상태 재확인(DailyReservationRecorder.resyncStatus)이 함께 쓴다. 예약이 캠페인을
-     * 읽은 뒤 계획을 만들기 전에 커밋된 중단은 행이 없어 수신에서 사라지므로, 예약이 계획을 커밋한 뒤 캠페인을 다시
-     * 읽어 이 메서드로 반영한다. changedAt 이 없으면 견줄 시각이 없어 바꾸지 않는다.
+     * 예약은 계획을 중단으로 만든 뒤 커밋하고 캠페인을 다시 읽어 여기서 푼다. 그래서 상태 변경 시각이 계획에 저장된 것과
+     * 같아도 반영한다(BudgetDailyPlanRepository.confirmStatus). 시각이 없으면 견줄 수 없어 바꾸지 않고 중단으로 남긴다.
      */
     @Transactional
-    public boolean applyStatus(Long campaignId, LocalDate businessDate, boolean paused, LocalDateTime changedAt) {
+    public boolean confirmStatus(Long campaignId, LocalDate businessDate, boolean paused, LocalDateTime changedAt) {
         if (changedAt == null) {
             return false;
         }
-        int updated = budgetDailyPlanRepository.applyStatus(campaignId, businessDate,
+        int updated = budgetDailyPlanRepository.confirmStatus(campaignId, businessDate,
                 paused, changedAt, LocalDateTime.now(clock));
         if (updated == 0) {
             return false;
         }
-        eventPublisher.publishEvent(new BudgetPlanStatusChanged(campaignId, businessDate, paused, changedAt));
+        eventPublisher.publishEvent(new BudgetPlanStatusConfirmed(campaignId, businessDate));
         return true;
+    }
+
+    /*
+     * 상태 확인이 커밋된 뒤에 해시를 지운다. 실패해도 확인은 이미 커밋됐으므로 던지지 않고 ERROR 로 남긴다.
+     * 00:00 의 첫 실행에서는 해시가 아직 없어 지울 것이 없다. 해시는 확인이 끝난 뒤에 계획으로 만든다.
+     */
+    public void dropMirror(BudgetPlanStatusConfirmed confirmed) {
+        try {
+            spendCounter.evict(confirmed.businessDate(), confirmed.campaignId());
+        } catch (DataAccessException e) {
+            log.error("event=BUDGET_STATUS_CONFIRM_EVICT_FAILED campaignId={} businessDate={}",
+                    confirmed.campaignId(), confirmed.businessDate(), e);
+        }
     }
 
     /*
