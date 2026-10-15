@@ -5,7 +5,7 @@
 | 적을 것 | 내용 |
 |---|---|
 | 맡는 기능과 근거 | 캠페인의 상태 전이(FR-092)와 그 이력, 다른 도메인에 캠페인 정보를 공개하는 `CampaignQueryService` 구현, 정산의 예산 판정을 상태 전이로 옮기는 `CampaignFundingUpdater` 구현(#198) |
-| 맡지 않는 것과 그 소유 도메인 | 등록 화면 API 1단계(쿠폰 조건)는 [`campaign-api-design.md`](./campaign-api-design.md)가 가짐(`#244`), 나머지 단계(노출 대상, 하루 예산과 집행 기간)는 [Feat] 노출 대상 설정(점주)과 [Feat] 하루 예산과 집행 기간 설정(점주)이 가짐(아직 이슈 번호 없음), 예산 집행과 소진(billing), 광고 배정(adserving), 템플릿과 포스터(같은 campaign 도메인의 다른 애그리거트, [`poster-api-design.md`](./poster-api-design.md)가 따로 가짐) |
+| 맡지 않는 것과 그 소유 도메인 | 등록 화면 API 1·3단계(쿠폰 조건, 노출 대상)는 [`campaign-api-design.md`](./campaign-api-design.md)가 가짐(`#244`, `#253`), 4단계(하루 예산과 집행 기간)는 [Feat] 하루 예산과 집행 기간 설정(점주)이 가짐(아직 이슈 번호 없음), 예산 집행과 소진(billing), 광고 배정(adserving), 템플릿과 포스터(같은 campaign 도메인의 다른 애그리거트, [`poster-api-design.md`](./poster-api-design.md)가 따로 가짐) |
 
 이 문서는 `campaign` 애그리거트(도메인 이름과 같은 루트 애그리거트)만 다룬다. `template`, `poster`, `store_audience`는 범위 밖이다.
 
