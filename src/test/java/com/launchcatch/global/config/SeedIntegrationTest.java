@@ -62,8 +62,11 @@ class SeedIntegrationTest extends IntegrationTestSupport {
         assertThat(count("SELECT COUNT(*) FROM store WHERE store_id IN (9001, 9002) AND finalized = 1")).isEqualTo(2);
         assertThat(count("SELECT COUNT(*) FROM campaign WHERE campaign_id IN (9001, 9002) AND status = 'ACTIVE'")).isEqualTo(2);
         assertThat(count("SELECT COUNT(*) FROM member_profile WHERE onboarding_completed_at IS NOT NULL")).isEqualTo(2);
-        assertThat(count("SELECT COUNT(*) FROM ad_candidate WHERE business_date = '2026-10-15' AND campaign_state = 'SERVABLE'")).isEqualTo(2);
-        assertThat(count("SELECT COUNT(*) FROM budget_daily_plan WHERE business_date = '2026-10-15'")).isEqualTo(2);
+        // 피드 시험용 9003~9016 이 더 있다. 9016 은 예산 계획이 없는 후보라 예산은 하나 적다
+        assertThat(count("SELECT COUNT(*) FROM campaign WHERE campaign_id BETWEEN 9001 AND 9016 AND status = 'ACTIVE'")).isEqualTo(16);
+        assertThat(count("SELECT COUNT(*) FROM poster WHERE campaign_id BETWEEN 9001 AND 9016")).isEqualTo(16);
+        assertThat(count("SELECT COUNT(*) FROM ad_candidate WHERE business_date = '2026-10-15' AND campaign_state = 'SERVABLE'")).isEqualTo(16);
+        assertThat(count("SELECT COUNT(*) FROM budget_daily_plan WHERE business_date = '2026-10-15'")).isEqualTo(15);
         assertThat(count("SELECT COUNT(*) FROM coupon_inventory")).isEqualTo(100);
         assertThat(count("SELECT current_count FROM template_quota")).isEqualTo(1);
     }
@@ -85,9 +88,9 @@ class SeedIntegrationTest extends IntegrationTestSupport {
 
         migrate(true, "2026-10-16");
 
-        assertThat(count("SELECT COUNT(*) FROM ad_candidate WHERE business_date = '2026-10-16'")).isEqualTo(2);
+        assertThat(count("SELECT COUNT(*) FROM ad_candidate WHERE business_date = '2026-10-16'")).isEqualTo(16);
         assertThat(count("SELECT COUNT(*) FROM coupon_event")).isEqualTo(4);
-        assertThat(count("SELECT COUNT(*) FROM owner")).isEqualTo(2);
+        assertThat(count("SELECT COUNT(*) FROM owner")).isEqualTo(16);
     }
 
     @Test

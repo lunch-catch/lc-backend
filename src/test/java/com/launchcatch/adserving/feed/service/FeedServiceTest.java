@@ -33,7 +33,11 @@ import com.launchcatch.adserving.feed.repository.FeedFilterRepository;
 import com.launchcatch.adserving.feed.repository.ImpressionCountRepository;
 import com.launchcatch.adserving.feed.repository.ServeFrequencyRepository;
 import com.launchcatch.adserving.feed.repository.ServeFrequencyRepository.ServedHistory;
+import com.launchcatch.adserving.feed.repository.ServeRecord;
+import com.launchcatch.adserving.feed.repository.ServeRecordRepository;
 import com.launchcatch.adserving.feed.repository.SwipeLogRepository;
+import com.launchcatch.adserving.engine.SlotType;
+import org.mockito.ArgumentCaptor;
 import com.launchcatch.billing.contract.BudgetProgress;
 import com.launchcatch.billing.contract.BudgetQueryService;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
@@ -84,13 +88,16 @@ class FeedServiceTest {
     private final ServeFrequencyRepository serveFrequencyRepository = mock(ServeFrequencyRepository.class);
     private final ImpressionCountRepository impressionCountRepository = mock(ImpressionCountRepository.class);
     private final BudgetQueryService budgetQueryService = mock(BudgetQueryService.class);
+    private final ServeRecordRepository serveRecordRepository = mock(ServeRecordRepository.class);
+    private final ServeLogBuffer serveLogBuffer = mock(ServeLogBuffer.class);
     private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
 
     private FeedService serviceAt(LocalDateTime now) {
         Clock clock = Clock.fixed(now.atZone(ClockConfig.ZONE).toInstant(), ClockConfig.ZONE);
         return new FeedService(memberQueryService, rateLimitRepository, adCandidateRepository,
                 dailyExclusionRepository, filterCategoryRepository, feedFilterRepository, swipeLogRepository,
-                serveFrequencyRepository, impressionCountRepository, budgetQueryService, meterRegistry, clock);
+                serveFrequencyRepository, impressionCountRepository, budgetQueryService, serveRecordRepository,
+                serveLogBuffer, meterRegistry, clock);
     }
 
     // 넘겨받은 캠페인마다 진행률 0.5, 예약액 10만 원, 단가 10원으로 답한다. 상한은 10,500 회다.
@@ -461,6 +468,100 @@ class FeedServiceTest {
             serviceAt(now).getFeed(MEMBER_ID, NO_LOCATION);
 
             verify(serveFrequencyRepository, never()).recordServed(any(), any(), any(), any());
+        }
+    }
+
+    @Nested
+    @DisplayName("serve 기록과 서빙 로그를 남길 때")
+    class ServeRecords {
+
+        @SuppressWarnings("unchecked")
+        private List<ServeRecord> savedRecords() {
+            ArgumentCaptor<List<ServeRecord>> captor = ArgumentCaptor.forClass(List.class);
+            verify(serveRecordRepository).saveAll(captor.capture());
+            return captor.getValue();
+        }
+
+        private ServedFeed offeredFeed() {
+            ArgumentCaptor<ServedFeed> captor = ArgumentCaptor.forClass(ServedFeed.class);
+            verify(serveLogBuffer).offer(captor.capture());
+            return captor.getValue();
+        }
+
+        @Test
+        void 카드마다_응답의_serveId_로_누구에게_어느_자리로_내려줬는지_기록한다() {
+            givenOnboardedMemberWithSavedLocation();
+            givenAdmitted(SERVING_NOW);
+            givenCandidates(List.of(candidate(101, SAVED_LAT, SAVED_LNG).build(), candidate(102, SAVED_LAT, SAVED_LNG).build()));
+
+            FeedResponse response = serviceAt(SERVING_NOW).getFeed(MEMBER_ID, NO_LOCATION);
+
+            List<ServeRecord> records = savedRecords();
+            assertThat(records).extracting(ServeRecord::serveId)
+                    .containsExactlyElementsOf(response.cards().stream().map(FeedCardResponse::serveId).toList());
+            assertThat(records).extracting(ServeRecord::slotPosition).containsExactly(1, 2);
+            assertThat(records).allSatisfy(r -> {
+                assertThat(r.memberId()).isEqualTo(MEMBER_ID);
+                assertThat(r.servedAt()).isEqualTo(instant(SERVING_NOW));
+            });
+            assertThat(records.getFirst().campaignId()).isEqualTo(response.cards().getFirst().campaignId());
+            assertThat(records.getFirst().storeId()).isEqualTo(response.cards().getFirst().storeId());
+            assertThat(records.getFirst().slotType()).isEqualTo(SlotType.ALLOCATION);
+        }
+
+        @Test
+        void 응답한_피드를_같은_feedId_와_카드로_서빙_로그_대기열에_넣고_카드_수를_센다() {
+            givenOnboardedMemberWithSavedLocation();
+            givenAdmitted(SERVING_NOW);
+            givenCandidates(List.of(candidate(101, SAVED_LAT, SAVED_LNG).build(), candidate(102, SAVED_LAT, SAVED_LNG).build()));
+
+            FeedResponse response = serviceAt(SERVING_NOW).getFeed(MEMBER_ID, NO_LOCATION);
+
+            ServedFeed feed = offeredFeed();
+            assertThat(feed.feedId()).isEqualTo(response.feedId());
+            assertThat(feed.businessDate()).isEqualTo(TODAY);
+            assertThat(feed.memberId()).isEqualTo(MEMBER_ID);
+            assertThat(feed.latitude()).isEqualTo(SAVED_LAT);
+            assertThat(feed.longitude()).isEqualTo(SAVED_LNG);
+            assertThat(feed.cards()).isEqualTo(savedRecords());
+            assertThat(meterRegistry.counter(FeedService.SERVED_CARDS_METRIC).count()).isEqualTo(2);
+        }
+
+        @Test
+        void 카드가_없어도_접속_위치는_대기열에_넣는다() {
+            givenOnboardedMemberWithSavedLocation();
+            givenAdmitted(SERVING_NOW);
+            givenCandidates(List.of());
+
+            serviceAt(SERVING_NOW).getFeed(MEMBER_ID, new FeedRequest(37.4979, 127.0276));
+
+            ServedFeed feed = offeredFeed();
+            assertThat(feed.feedId()).isNull();
+            assertThat(feed.cards()).isEmpty();
+            assertThat(feed.latitude()).isEqualTo(37.4979);
+            assertThat(feed.longitude()).isEqualTo(127.0276);
+        }
+
+        @Test
+        void 서빙_시간대_밖의_요청도_접속_위치는_대기열에_넣는다() {
+            LocalDateTime now = LocalDateTime.of(TODAY, LocalTime.of(9, 0));
+            givenOnboardedMemberWithSavedLocation();
+            givenAdmitted(now);
+
+            serviceAt(now).getFeed(MEMBER_ID, NO_LOCATION);
+
+            assertThat(offeredFeed().cards()).isEmpty();
+        }
+
+        @Test
+        void 요청_제한으로_거부된_요청은_남기지_않는다() {
+            givenOnboardedMemberWithSavedLocation();
+            when(rateLimitRepository.tryAdmit(MEMBER_ID, instant(SERVING_NOW)))
+                    .thenReturn(new Admission(false, instant(SERVING_NOW.plusSeconds(10))));
+
+            assertThatThrownBy(() -> serviceAt(SERVING_NOW).getFeed(MEMBER_ID, NO_LOCATION))
+                    .isInstanceOf(FeedRateLimitedException.class);
+            verifyNoInteractions(serveLogBuffer, serveRecordRepository);
         }
     }
 }

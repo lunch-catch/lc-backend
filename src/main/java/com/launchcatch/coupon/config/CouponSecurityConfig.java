@@ -38,7 +38,7 @@ public class CouponSecurityConfig {
                         .requestMatchers(HttpMethod.DELETE, DETAIL_PATH)
                         .hasRole("MEMBER")
                         .requestMatchers(HttpMethod.GET, OWNER_USAGE_PATH).hasRole("OWNER")
-                        .requestMatchers(HttpMethod.POST, QR_PATH, EVENT_STATUS_PATH)
+                        .requestMatchers(HttpMethod.POST, QR_PATH, EVENT_STATUS_PATH, LIST_PATH)
                         .hasRole("MEMBER")
                         .anyRequest().denyAll())
                 .build();

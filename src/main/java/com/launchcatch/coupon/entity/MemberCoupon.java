@@ -55,6 +55,30 @@ public class MemberCoupon extends BaseTimeEntity {
     @Column(name = "usable_end_at", nullable = false, updatable = false)
     private LocalDateTime usableEndAt;
 
+    private MemberCoupon(Long memberId, Long eventId, UUID couponCode,
+            LocalDateTime usableStartAt, LocalDateTime usableEndAt) {
+        if (memberId == null || memberId <= 0 || eventId == null || eventId <= 0) {
+            throw new IllegalArgumentException("회원과 이벤트 ID는 양수여야 한다.");
+        }
+        Objects.requireNonNull(couponCode);
+        Objects.requireNonNull(usableStartAt);
+        Objects.requireNonNull(usableEndAt);
+        if (!usableEndAt.isAfter(usableStartAt)) {
+            throw new IllegalArgumentException("쿠폰 사용 종료 시각은 시작 시각보다 늦어야 한다.");
+        }
+        this.memberId = memberId;
+        this.couponEventId = eventId;
+        this.couponCode = couponCode;
+        this.usableStartAt = usableStartAt;
+        this.usableEndAt = usableEndAt;
+        this.status = MemberCouponStatus.ISSUED;
+    }
+
+    public static MemberCoupon issue(Long memberId, Long eventId, UUID couponCode,
+            LocalDateTime usableStartAt, LocalDateTime usableEndAt) {
+        return new MemberCoupon(memberId, eventId, couponCode, usableStartAt, usableEndAt);
+    }
+
     /*
      * 사용 가능한 미사용 쿠폰의 QR을 교체하고 버전과 60초 만료 시각을 함께 변경한다.
      * 호출자는 쿠폰 행 잠금을 확보하여 갱신과 삭제, 사용 확정을 직렬화한다.

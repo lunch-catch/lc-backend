@@ -23,6 +23,9 @@ public interface MemberCouponRepository extends JpaRepository<MemberCoupon, Long
             """)
     List<Long> findIssuedEventIds(@Param("memberId") Long memberId, @Param("eventIds") List<Long> eventIds);
 
+    // 삭제된 쿠폰도 발급 기록으로 남아 같은 이벤트에서 다시 발급받을 수 없다.
+    boolean existsByCouponEventIdAndMemberId(Long couponEventId, Long memberId);
+
     // 상태로 제외하지 않아 삭제된 쿠폰도 포함하며, 사용 이력 조인으로 쿠폰 수가 중복되지 않도록 집계한다.
     @Query("""
             SELECT NEW com.launchcatch.coupon.dto.CouponSummaryResponse(

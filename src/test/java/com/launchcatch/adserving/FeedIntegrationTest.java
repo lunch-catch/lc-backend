@@ -12,6 +12,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.launchcatch.IntegrationTestSupport;
 import com.launchcatch.auth.CustomUserDetails;
 import com.launchcatch.auth.Role;
+import com.launchcatch.adserving.engine.SlotType;
+import com.launchcatch.adserving.feed.repository.ServeRecord;
+import com.launchcatch.adserving.feed.repository.ServeRecordRepository;
 import com.launchcatch.billing.contract.BudgetProgress;
 import com.launchcatch.billing.contract.BudgetQueryService;
 import com.launchcatch.global.config.ClockConfig;
@@ -65,6 +68,7 @@ class FeedIntegrationTest extends IntegrationTestSupport {
     @MockitoSpyBean Clock clock;
     @MockitoBean MemberQueryService memberQueryService;
     @MockitoBean BudgetQueryService budgetQueryService;
+    @Autowired ServeRecordRepository serveRecordRepository;
 
     @BeforeEach
     void setUp() {
@@ -86,6 +90,12 @@ class FeedIntegrationTest extends IntegrationTestSupport {
     @AfterEach
     void tearDown() {
         jdbcTemplate.update("DELETE FROM ad_candidate");
+        jdbcTemplate.update("DELETE FROM serve_log");
+        jdbcTemplate.update("DELETE FROM feed_visit_daily");
+        java.util.Set<String> serveKeys = redisTemplate.keys("adserving:serve:*");
+        if (serveKeys != null && !serveKeys.isEmpty()) {
+            redisTemplate.delete(serveKeys);
+        }
         redisTemplate.delete(List.of("adserving:feedRequests:" + MEMBER_ID,
                 "adserving:servedDaily:" + TODAY + ":" + MEMBER_ID, "adserving:servedSession:" + MEMBER_ID,
                 "adserving:validImpressions:" + TODAY));
@@ -237,5 +247,65 @@ class FeedIntegrationTest extends IntegrationTestSupport {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.status").value("SERVING"))
                 .andExpect(jsonPath("$.data.cards[0].campaignId").value(101));
+    }
+
+    // 서빙 로그는 응답 뒤 대기열이 쓴다. 쓰일 때까지 잠깐 기다린다
+    private long countEventually(String sql, long expected) throws InterruptedException {
+        long count = 0;
+        for (int i = 0; i < 50; i++) {
+            count = jdbcTemplate.queryForObject(sql, Long.class);
+            if (count >= expected) {
+                return count;
+            }
+            Thread.sleep(100);
+        }
+        return count;
+    }
+
+    @Test
+    void 응답한_카드의_serve_기록을_serveId_로_찾아_노출을_검증할_수_있다() throws Exception {
+        String body = mockMvc.perform(get("/v1/feed").with(user(as(Role.MEMBER))))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        java.util.UUID serveId = java.util.UUID.fromString(
+                com.jayway.jsonpath.JsonPath.read(body, "$.data.cards[0].serveId"));
+
+        assertThat(serveRecordRepository.findById(serveId)).contains(new ServeRecord(
+                serveId, MEMBER_ID, 101L, 55L, SlotType.ALLOCATION, 1, SERVING_NOW));
+        assertThat(redisTemplate.getExpire("adserving:serve:" + serveId)).isBetween(1L, 1800L);
+    }
+
+    @Test
+    void 응답_뒤_serve_log_와_그날_첫_접속_위치를_쓴다() throws Exception {
+        String body = mockMvc.perform(get("/v1/feed").param("latitude", "37.49794").param("longitude", "127.02765")
+                        .with(user(as(Role.MEMBER))))
+                .andReturn().getResponse().getContentAsString();
+        String serveId = com.jayway.jsonpath.JsonPath.read(body, "$.data.cards[0].serveId");
+        String feedId = com.jayway.jsonpath.JsonPath.read(body, "$.data.feedId");
+
+        assertThat(countEventually("SELECT COUNT(*) FROM serve_log", 1)).isEqualTo(1);
+        assertThat(jdbcTemplate.queryForMap("""
+                SELECT BIN_TO_UUID(serve_id) AS serve_id, BIN_TO_UUID(feed_id) AS feed_id, business_date, member_id,
+                       campaign_id, store_id, slot_type, slot_position
+                FROM serve_log
+                """)).containsEntry("serve_id", serveId).containsEntry("feed_id", feedId)
+                .containsEntry("member_id", MEMBER_ID).containsEntry("campaign_id", 101L)
+                .containsEntry("store_id", 55L).containsEntry("slot_type", "ALLOCATION");
+        assertThat(countEventually("SELECT COUNT(*) FROM feed_visit_daily", 1)).isEqualTo(1);
+        assertThat(jdbcTemplate.queryForMap("SELECT member_id, lat_rounded, lng_rounded FROM feed_visit_daily"))
+                .containsEntry("lat_rounded", new BigDecimal("37.498"))
+                .containsEntry("lng_rounded", new BigDecimal("127.028"));
+    }
+
+    @Test
+    void 그날_두_번째_요청의_위치는_남기지_않는다() throws Exception {
+        mockMvc.perform(get("/v1/feed").param("latitude", "37.5").param("longitude", "127.0").with(user(as(Role.MEMBER))));
+        countEventually("SELECT COUNT(*) FROM feed_visit_daily", 1);
+        at(LocalDateTime.of(2026, 10, 1, 10, 20));
+        mockMvc.perform(get("/v1/feed").param("latitude", "37.6").param("longitude", "127.1").with(user(as(Role.MEMBER))));
+        Thread.sleep(500);
+
+        assertThat(jdbcTemplate.queryForMap("SELECT lat_rounded FROM feed_visit_daily"))
+                .containsEntry("lat_rounded", new BigDecimal("37.500"));
     }
 }
