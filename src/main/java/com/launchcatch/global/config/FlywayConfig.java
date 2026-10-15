@@ -38,10 +38,17 @@ public class FlywayConfig {
             @Value("${seed.enabled:false}") boolean seedEnabled,
             @Value("${seed.password-hash:}") String seedPasswordHash,
             Clock clock) {
+        if (!seedEnabled) {
+            return new DomainFlywayMigrator(dataSource, SeedSettings.DISABLED);
+        }
+        /*
+         * 시드가 꺼지면 Clock 을 읽지 않는다.
+         * Clock 을 목으로 바꾼 통합 테스트는 컨텍스트를 만들 때 아직 값을 정하지 않아 날짜가 null 이다.
+         */
         Map<String, String> placeholders = Map.of(
                 "seedPasswordHash", seedPasswordHash,
                 "seedBusinessDate", LocalDate.now(clock).toString());
-        return new DomainFlywayMigrator(dataSource, new SeedSettings(seedEnabled, placeholders));
+        return new DomainFlywayMigrator(dataSource, new SeedSettings(true, placeholders));
     }
 
     /** 엔티티 매니저가 위 빈을 기다리게 한다. */
