@@ -30,14 +30,11 @@ import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
-@SpringBootTest(properties = "jwt.secret=test-only-secret-not-used-anywhere-else-0123456789abcdef")
-class AdminRegistrationLogoutConcurrencyIntegrationTest extends IntegrationTestSupport {
+class AdminRegistrationLogoutConcurrencyIntegrationTest extends AbstractAdminIntegrationTest {
 
     @Autowired private AdminRepository admins;
     @Autowired private AdminRegistrationService registration;
     @Autowired private AdminLogoutService logout;
-    @MockitoSpyBean private PasswordEncoder encoder;
-    @MockitoSpyBean private com.launchcatch.ops.contract.AuditLogWriter audit;
     private Long issuerId;
     private LocalDateTime issuedAt;
 

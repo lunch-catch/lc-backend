@@ -2,7 +2,6 @@ package com.launchcatch.campaign.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.launchcatch.IntegrationTestSupport;
 import com.launchcatch.campaign.contract.AgeGroup;
 import com.launchcatch.campaign.contract.CampaignInfo;
 import com.launchcatch.campaign.contract.DiscountTargetType;
@@ -17,12 +16,8 @@ import java.time.LocalTime;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.transaction.annotation.Transactional;
 
-@SpringBootTest
-@Transactional
-class CampaignQueryServiceImplIntegrationTest extends IntegrationTestSupport {
+class CampaignQueryServiceImplIntegrationTest extends com.launchcatch.campaign.AbstractCampaignIntegrationTest {
 
     private static final LocalDate BUSINESS_DATE = LocalDate.of(2026, 10, 13);
 
