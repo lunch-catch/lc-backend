@@ -55,4 +55,47 @@ class FeedValkeyFallbackTest {
         assertThat(ids).isEmpty();
         assertThat(bypassCount("daily_exclusion")).isEqualTo(1);
     }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void 내려준_횟수를_읽지_못하면_빈_이력으로_통과시키고_센다() {
+        org.springframework.data.redis.core.HashOperations<String, Object, Object> hashOps =
+                mock(org.springframework.data.redis.core.HashOperations.class);
+        when(redisTemplate.opsForHash()).thenReturn(hashOps);
+        when(hashOps.entries(anyString())).thenThrow(new QueryTimeoutException("timeout"));
+
+        var history = new ServeFrequencyRepository(redisTemplate, meterRegistry)
+                .findHistory(LocalDate.of(2026, 10, 1), 3001L);
+
+        assertThat(history.dailyCounts()).isEmpty();
+        assertThat(history.sessionCampaignIds()).isEmpty();
+        assertThat(bypassCount("serve_frequency")).isEqualTo(1);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void 내려준_횟수를_올리지_못해도_예외를_올리지_않고_센다() {
+        when(redisTemplate.execute(any(RedisScript.class), anyList(), any(Object[].class)))
+                .thenThrow(new QueryTimeoutException("timeout"));
+
+        new ServeFrequencyRepository(redisTemplate, meterRegistry)
+                .recordServed(LocalDate.of(2026, 10, 1), 3001L, java.util.List.of(101L), NOW);
+
+        assertThat(bypassCount("serve_frequency")).isEqualTo(1);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void 유효_노출_수를_읽지_못하면_0_으로_보고_센다() {
+        org.springframework.data.redis.core.HashOperations<String, Object, Object> hashOps =
+                mock(org.springframework.data.redis.core.HashOperations.class);
+        when(redisTemplate.opsForHash()).thenReturn(hashOps);
+        when(hashOps.multiGet(anyString(), any())).thenThrow(new QueryTimeoutException("timeout"));
+
+        var counts = new ImpressionCountRepository(redisTemplate, meterRegistry)
+                .findValidCounts(LocalDate.of(2026, 10, 1), java.util.List.of(101L));
+
+        assertThat(counts).isEmpty();
+        assertThat(bypassCount("impression_count")).isEqualTo(1);
+    }
 }
