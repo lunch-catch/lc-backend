@@ -38,7 +38,7 @@ QR 업무 거절은 `COUPON_QR_GENERATION_FAILED` 이벤트로 WARN 로그를 �
 
 `GET /v1/coupons/issuance-limit`은 `CouponLookUpService.getIssuanceLimit(memberId)`로 처리한다.
 클라이언트가 받는 필드와 오류는 [명세](../../api-spec/coupon-api-spec.md#당일-쿠폰-발급-한도-조회)를 따른다.
-요구사항은 기능 83행이며 저장 구조는 [쿠폰 V1 마이그레이션](../../../src/main/resources/db/migration/coupon/V1__coupon_init.sql)의 `coupon_daily_limit`이다.
+요구사항은 FR-080이며 저장 구조는 [쿠폰 V1 마이그레이션](../../../src/main/resources/db/migration/coupon/V1__coupon_init.sql)의 `coupon_daily_limit`이다.
 
 ### 서버가 하는 일
 
@@ -68,7 +68,7 @@ V1 마이그레이션은 `issued_count`를 0부터 3까지로 제한한다. 한�
 
 `GET /v1/coupons/summary`는 `CouponLookUpService.getSummary(memberId)`로 처리한다.
 클라이언트가 받는 필드와 오류는 [명세](../../api-spec/coupon-api-spec.md#마이페이지-쿠폰-요약-확인)를 따른다.
-요구사항은 기능 91행이며 저장 구조는 [쿠폰 V1 마이그레이션](../../../src/main/resources/db/migration/coupon/V1__coupon_init.sql)의 `member_coupon`과 `coupon_usage_history`다.
+요구사항은 FR-088이며 저장 구조는 [쿠폰 V1 마이그레이션](../../../src/main/resources/db/migration/coupon/V1__coupon_init.sql)의 `member_coupon`과 `coupon_usage_history`다.
 
 ### 서버가 하는 일
 
@@ -123,7 +123,7 @@ QR과 발급 횟수, 재고와 사용 이력은 변경하지 않는다.
 
 `GET /v1/coupons/{memberCouponId}`는 `CouponLookUpService.getDetail(memberId, memberCouponId)`로 처리한다.
 클라이언트가 받는 필드와 오류는 [명세](../../api-spec/coupon-api-spec.md#내-쿠폰-단건-조회)를 따른다.
-요구사항은 기능 84행이며 저장 구조는 [쿠폰 V1 마이그레이션](../../../src/main/resources/db/migration/coupon/V1__coupon_init.sql)의 `member_coupon`, `coupon_event`, `coupon_usage_history`다.
+요구사항은 FR-081이며 저장 구조는 [쿠폰 V1 마이그레이션](../../../src/main/resources/db/migration/coupon/V1__coupon_init.sql)의 `member_coupon`, `coupon_event`, `coupon_usage_history`다.
 
 ### 서버가 하는 일
 
