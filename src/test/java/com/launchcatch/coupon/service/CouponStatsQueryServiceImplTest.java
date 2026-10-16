@@ -7,8 +7,9 @@ import static org.mockito.Mockito.when;
 
 import com.launchcatch.coupon.contract.DailyCampaignCouponStats;
 import com.launchcatch.coupon.contract.MemberCouponStats;
+import com.launchcatch.coupon.dto.CouponSummaryResponse;
 import com.launchcatch.coupon.repository.CouponEventRepository;
-import com.launchcatch.coupon.repository.CouponUsageHistoryRepository;
+import com.launchcatch.coupon.repository.MemberCouponRepository;
 import java.time.LocalDate;
 import java.util.List;
 import org.junit.jupiter.api.Test;
@@ -26,7 +27,7 @@ class CouponStatsQueryServiceImplTest {
     private static final LocalDate DAY = LocalDate.of(2026, 10, 16);
 
     @Mock CouponEventRepository events;
-    @Mock CouponUsageHistoryRepository histories;
+    @Mock MemberCouponRepository coupons;
     @InjectMocks CouponStatsQueryServiceImpl service;
 
     @Test
@@ -58,30 +59,23 @@ class CouponStatsQueryServiceImplTest {
     }
 
     @Test
-    void 회원과_영업일로_그날의_사용_수와_확정_할인액을_조회한다() {
-        when(histories.findMemberStats(17L, DAY.atStartOfDay(), DAY.plusDays(1).atStartOfDay()))
-                .thenReturn(new MemberCouponStats(5, 3_000_000_000L));
+    void 회원의_기존_누적_집계에서_사용_수와_확정_할인액만_공개한다() {
+        when(coupons.findSummaryByMemberId(17L)).thenReturn(new CouponSummaryResponse(8, 5, 3_000_000_000L));
 
-        assertThat(service.memberStats(17L, DAY)).isEqualTo(new MemberCouponStats(5, 3_000_000_000L));
+        assertThat(service.memberStats(17L)).isEqualTo(new MemberCouponStats(5, 3_000_000_000L));
     }
 
     @Test
-    void 회원의_그날_사용_기록이_없으면_집계는_0이다() {
-        when(histories.findMemberStats(17L, DAY.atStartOfDay(), DAY.plusDays(1).atStartOfDay()))
-                .thenReturn(new MemberCouponStats(0, 0));
+    void 회원에게_발급된_쿠폰이_없으면_누적_집계는_0이다() {
+        when(coupons.findSummaryByMemberId(17L)).thenReturn(new CouponSummaryResponse(0, 0, 0));
 
-        assertThat(service.memberStats(17L, DAY)).isEqualTo(new MemberCouponStats(0, 0));
-    }
-
-    @Test
-    void 회원_집계의_영업일이_null이면_거절한다() {
-        assertThatThrownBy(() -> service.memberStats(17L, null)).isInstanceOf(NullPointerException.class);
+        assertThat(service.memberStats(17L)).isEqualTo(new MemberCouponStats(0, 0));
     }
 
     @ParameterizedTest
     @ValueSource(longs = {0, -1})
     void 회원_ID가_양수가_아니면_거절한다(long memberId) {
-        assertThatThrownBy(() -> service.memberStats(memberId, DAY)).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> service.memberStats(memberId)).isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test
@@ -96,9 +90,8 @@ class CouponStatsQueryServiceImplTest {
     @Test
     void 회원_집계의_DB_장애를_0으로_바꾸지_않는다() {
         var failure = new DataAccessResourceFailureException("summary query failed");
-        when(histories.findMemberStats(17L, DAY.atStartOfDay(), DAY.plusDays(1).atStartOfDay()))
-                .thenThrow(failure);
+        when(coupons.findSummaryByMemberId(17L)).thenThrow(failure);
 
-        assertThatThrownBy(() -> service.memberStats(17L, DAY)).isSameAs(failure);
+        assertThatThrownBy(() -> service.memberStats(17L)).isSameAs(failure);
     }
 }

@@ -4,7 +4,7 @@ import com.launchcatch.coupon.contract.CouponStatsQueryService;
 import com.launchcatch.coupon.contract.DailyCampaignCouponStats;
 import com.launchcatch.coupon.contract.MemberCouponStats;
 import com.launchcatch.coupon.repository.CouponEventRepository;
-import com.launchcatch.coupon.repository.CouponUsageHistoryRepository;
+import com.launchcatch.coupon.repository.MemberCouponRepository;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Objects;
@@ -18,7 +18,7 @@ import org.springframework.transaction.annotation.Transactional;
 class CouponStatsQueryServiceImpl implements CouponStatsQueryService {
 
     private final CouponEventRepository events;
-    private final CouponUsageHistoryRepository histories;
+    private final MemberCouponRepository coupons;
 
     @Override
     public List<DailyCampaignCouponStats> dailyCampaignStats(LocalDate businessDate) {
@@ -31,12 +31,11 @@ class CouponStatsQueryServiceImpl implements CouponStatsQueryService {
     }
 
     @Override
-    public MemberCouponStats memberStats(long memberId, LocalDate businessDate) {
+    public MemberCouponStats memberStats(long memberId) {
         if (memberId <= 0) {
             throw new IllegalArgumentException("회원 ID는 양수여야 한다.");
         }
-        Objects.requireNonNull(businessDate, "영업일은 필수다.");
-        return histories.findMemberStats(memberId, businessDate.atStartOfDay(),
-                businessDate.plusDays(1).atStartOfDay());
+        var summary = coupons.findSummaryByMemberId(memberId);
+        return new MemberCouponStats(summary.usedCouponCount(), summary.totalDiscountAmount());
     }
 }

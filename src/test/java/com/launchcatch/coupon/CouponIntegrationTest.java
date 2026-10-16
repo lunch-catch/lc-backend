@@ -246,58 +246,34 @@ class CouponIntegrationTest extends IntegrationTestSupport {
         }
 
         @Test
-        void 회원_단건_집계는_그날의_확정_할인액만_더하며_다른_날짜와_회원은_제외한다() {
+        void 회원_단건_집계는_모든_날짜의_확정_할인액을_더하며_다른_회원은_제외한다() {
             event(81, 91, TODAY.minusDays(2), "ENDED");
             event(82, 91, TODAY.minusDays(1), "ENDED");
             event(83, 91, TODAY, "ACTIVE");
-            event(84, 92, TODAY, "ACTIVE");
-            event(85, 93, TODAY, "ACTIVE");
             coupon(101, 81, 17, "USED");
             coupon(102, 82, 17, "USED");
             coupon(103, 83, 17, "USED");
             coupon(104, 83, 18, "USED");
-            coupon(105, 84, 17, "USED");
-            coupon(106, 85, 17, "USED");
             usage(101, TODAY.minusDays(2).atTime(12, 0), 1_500_000_000);
             usage(102, TODAY.minusDays(1).atTime(12, 0), 1_500_000_000);
             usage(103, TODAY.atTime(12, 0), 0);
             usage(104, TODAY.atTime(12, 0), 5000);
-            usage(105, TODAY.atTime(12, 0), 1_500_000_000);
-            usage(106, TODAY.atTime(12, 0), 1_500_000_000);
 
-            assertThat(couponStats.memberStats(17, TODAY))
+            assertThat(couponStats.memberStats(17))
                     .isEqualTo(new MemberCouponStats(3, 3_000_000_000L));
         }
 
         @Test
-        void 회원_집계는_발급일과_별개로_KST_사용일의_양끝_경계를_적용한다() {
-            event(81, 91, TODAY.minusDays(1), "ENDED");
-            event(82, 92, TODAY.minusDays(1), "ENDED");
-            event(83, 93, TODAY.minusDays(1), "ENDED");
-            event(84, 94, TODAY.minusDays(1), "ENDED");
-            coupon(101, 81, 17, "USED");
-            coupon(102, 82, 17, "USED");
-            coupon(103, 83, 17, "USED");
-            coupon(104, 84, 17, "USED");
-            usage(101, TODAY.atStartOfDay().minusNanos(1000), 100);
-            usage(102, TODAY.atStartOfDay(), 200);
-            usage(103, TODAY.plusDays(1).atStartOfDay().minusNanos(1000), 300);
-            usage(104, TODAY.plusDays(1).atStartOfDay(), 400);
-
-            assertThat(couponStats.memberStats(17, TODAY)).isEqualTo(new MemberCouponStats(2, 500));
-        }
-
-        @Test
-        void 회원의_그날_사용_기록이_없으면_집계는_0이다() {
+        void 회원의_사용_기록이_없으면_누적_집계는_0이다() {
             event(81, 91, TODAY, "ACTIVE");
             coupon(101, 81, 17, "ISSUED");
 
-            assertThat(couponStats.memberStats(17, TODAY)).isEqualTo(new MemberCouponStats(0, 0));
+            assertThat(couponStats.memberStats(17)).isEqualTo(new MemberCouponStats(0, 0));
         }
 
         @Test
         void 회원의_발급_기록이_없어도_0인_단건을_반환한다() {
-            assertThat(couponStats.memberStats(17, TODAY)).isEqualTo(new MemberCouponStats(0, 0));
+            assertThat(couponStats.memberStats(17)).isEqualTo(new MemberCouponStats(0, 0));
         }
 
         private void event(long id, long campaignId, LocalDate day, String status) {
