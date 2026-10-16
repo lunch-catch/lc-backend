@@ -148,7 +148,7 @@ class BillingStatsQueryIntegrationTest extends AbstractBillingIntegrationTest {
         ledger(OWNER, null, "CHARGE", 10000L, null, DAY_NOON);
         ledger(OWNER, CAMPAIGN, "RESERVE", -4000L, "2031-05-20", DAY_NOON);
         deduct(OWNER, CAMPAIGN, DAY, "BILLED", 100L, DAY_NOON);
-        // 다음 날 기록은 그날 말 잔액에 들어가지 않는다
+        // RESERVE 는 미소진에 들어가지 않고 다음 날 기록도 그날 말 잔액에 들어가지 않는다
         ledger(OWNER, null, "CHARGE", 555L, null, NEXT_DAY_NOON);
         jdbc.update("""
                 insert into settlement_mismatch
@@ -158,8 +158,8 @@ class BillingStatsQueryIntegrationTest extends AbstractBillingIntegrationTest {
 
         DailyLedgerTotals after = stats.dailyTotals(DAY);
 
-        assertThat(after.unspentBalance() - before.unspentBalance()).isEqualTo(6000);
-        assertThat(after.ledgerSum() - before.ledgerSum()).isEqualTo(6000);
+        assertThat(after.unspentBalance() - before.unspentBalance()).isEqualTo(9900);
+        assertThat(after.ledgerSum() - before.ledgerSum()).isEqualTo(9900);
         assertThat(after.mismatchCount() - before.mismatchCount()).isEqualTo(1);
     }
 

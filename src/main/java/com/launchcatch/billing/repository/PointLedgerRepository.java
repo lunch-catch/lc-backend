@@ -186,24 +186,33 @@ public interface PointLedgerRepository extends JpaRepository<PointLedger, Long>,
             """)
     List<LedgerSumRow> sumChargeRefundAdjustBetween(@Param("from") LocalDateTime from, @Param("to") LocalDateTime to);
 
-    // 전 점주의 잔액이다. before 이전에 기록된 행만 센다
+    /*
+     * 전 점주의 미소진 포인트다. before 이전에 기록된 CHARGE, REFUND, ADJUST, DEDUCT 의 합이다.
+     * 점주 잔액에 예약 중 포인트(예약액 - 소진 - 해제)를 더한 값과 같다. RESERVE 와 RELEASE 는 그 둘 사이에서 상쇄되어 세지 않는다.
+     */
     @Query("""
             select coalesce(sum(l.amount), 0L)
               from PointLedger l
-             where l.entryType <> com.launchcatch.billing.entity.EntryType.DEDUCT
+             where l.entryType in (com.launchcatch.billing.entity.EntryType.CHARGE,
+                                   com.launchcatch.billing.entity.EntryType.REFUND,
+                                   com.launchcatch.billing.entity.EntryType.ADJUST,
+                                   com.launchcatch.billing.entity.EntryType.DEDUCT)
                and l.createdAt < :before
             """)
-    long sumBalanceAllBefore(@Param("before") LocalDateTime before);
+    long sumUnspentBefore(@Param("before") LocalDateTime before);
 
-    // 기록 시각이 [from, to) 인 DEDUCT 제외 전 유형의 합이다
+    // 기록 시각이 [from, to) 인 미소진 포인트 변동의 합이다. 위와 같은 네 유형을 센다
     @Query("""
             select coalesce(sum(l.amount), 0L)
               from PointLedger l
-             where l.entryType <> com.launchcatch.billing.entity.EntryType.DEDUCT
+             where l.entryType in (com.launchcatch.billing.entity.EntryType.CHARGE,
+                                   com.launchcatch.billing.entity.EntryType.REFUND,
+                                   com.launchcatch.billing.entity.EntryType.ADJUST,
+                                   com.launchcatch.billing.entity.EntryType.DEDUCT)
                and l.createdAt >= :from
                and l.createdAt < :to
             """)
-    long sumLedgerBetween(@Param("from") LocalDateTime from, @Param("to") LocalDateTime to);
+    long sumUnspentBetween(@Param("from") LocalDateTime from, @Param("to") LocalDateTime to);
 
     // 그 영업일에 RELEASE 가 이미 있는 캠페인이다. 점주 ID 로 걸러 idx_point_ledger_owner_business_date 를 탄다
     @Query("""

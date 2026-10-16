@@ -85,8 +85,8 @@ class BillingStatsQueryServiceImplTest {
 
     @Test
     void 날짜_말_잔액과_그날_합계와_불일치_건수를_묶는다() {
-        when(ledgerRepository.sumBalanceAllBefore(TO)).thenReturn(42000L);
-        when(ledgerRepository.sumLedgerBetween(FROM, TO)).thenReturn(8000L);
+        when(ledgerRepository.sumUnspentBefore(TO)).thenReturn(42000L);
+        when(ledgerRepository.sumUnspentBetween(FROM, TO)).thenReturn(8000L);
         when(mismatchRepository.countByBusinessDate(DAY)).thenReturn(3L);
 
         assertThat(service.dailyTotals(DAY)).isEqualTo(new DailyLedgerTotals(42000, 8000, 3));

@@ -85,8 +85,8 @@ public class BillingStatsQueryServiceImpl implements BillingStatsQueryService {
         LocalDateTime from = businessDate.atStartOfDay();
         LocalDateTime to = businessDate.plusDays(1).atStartOfDay();
         return new DailyLedgerTotals(
-                pointLedgerRepository.sumBalanceAllBefore(to),
-                pointLedgerRepository.sumLedgerBetween(from, to),
+                pointLedgerRepository.sumUnspentBefore(to),
+                pointLedgerRepository.sumUnspentBetween(from, to),
                 settlementMismatchRepository.countByBusinessDate(businessDate));
     }
 
