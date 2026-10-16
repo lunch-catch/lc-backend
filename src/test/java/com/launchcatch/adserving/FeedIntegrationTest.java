@@ -6,6 +6,7 @@ import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -34,6 +35,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.MediaType;
 
 /*
  * GET /v1/feed 를 HTTP 입구부터 MySQL 의 ad_candidate 와 Valkey 의 카운터까지 한 번에 본다.
@@ -73,6 +75,8 @@ class FeedIntegrationTest extends AbstractAdservingIntegrationTest {
         jdbcTemplate.update("DELETE FROM ad_candidate");
         jdbcTemplate.update("DELETE FROM serve_log");
         jdbcTemplate.update("DELETE FROM feed_visit_daily");
+        jdbcTemplate.update("DELETE FROM feed_filter_category");
+        jdbcTemplate.update("DELETE FROM feed_filter");
         java.util.Set<String> serveKeys = redisTemplate.keys("adserving:serve:*");
         if (serveKeys != null && !serveKeys.isEmpty()) {
             redisTemplate.delete(serveKeys);
@@ -126,6 +130,18 @@ class FeedIntegrationTest extends AbstractAdservingIntegrationTest {
                 .andExpect(jsonPath("$.data.cards[0].usableEndTime").value("14:00"))
                 .andExpect(jsonPath("$.data.cards[0].issueQuantity").value(30))
                 .andExpect(jsonPath("$.data.cards[0].posterUrl").value("/v1/campaigns/101/poster"));
+    }
+
+    @Test
+    void 저장한_업종_필터가_다음_피드_요청에_반영된다() throws Exception {
+        mockMvc.perform(put("/v1/feed-filter").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"categories\":[\"JAPANESE\"],\"sort\":\"DISTANCE\"}")
+                        .with(user(as(Role.MEMBER))))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(get("/v1/feed").with(user(as(Role.MEMBER))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.cards").isEmpty());
     }
 
     @ParameterizedTest
