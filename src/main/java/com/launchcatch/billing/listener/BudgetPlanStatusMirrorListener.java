@@ -1,6 +1,7 @@
 package com.launchcatch.billing.listener;
 
 import com.launchcatch.billing.dto.BudgetPlanStatusChanged;
+import com.launchcatch.billing.dto.BudgetPlanStatusConfirmed;
 import com.launchcatch.billing.service.BudgetPlanStatusService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
@@ -17,5 +18,11 @@ public class BudgetPlanStatusMirrorListener {
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     public void on(BudgetPlanStatusChanged changed) {
         budgetPlanStatusService.mirror(changed);
+    }
+
+    // 00:00 예약의 상태 확인이 바꾼 계획은 해시를 지워 DB 정본으로 다시 만들게 한다
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    public void on(BudgetPlanStatusConfirmed confirmed) {
+        budgetPlanStatusService.dropMirror(confirmed);
     }
 }

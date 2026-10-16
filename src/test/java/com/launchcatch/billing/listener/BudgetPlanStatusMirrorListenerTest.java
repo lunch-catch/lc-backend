@@ -4,6 +4,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 
 import com.launchcatch.billing.dto.BudgetPlanStatusChanged;
+import com.launchcatch.billing.dto.BudgetPlanStatusConfirmed;
 import com.launchcatch.billing.service.BudgetPlanStatusService;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -20,5 +21,15 @@ class BudgetPlanStatusMirrorListenerTest {
         new BudgetPlanStatusMirrorListener(service).on(changed);
 
         verify(service).mirror(changed);
+    }
+
+    @Test
+    void 예약의_상태_확인_통보는_해시_지우기로_넘긴다() {
+        BudgetPlanStatusService service = mock(BudgetPlanStatusService.class);
+        BudgetPlanStatusConfirmed confirmed = new BudgetPlanStatusConfirmed(12L, LocalDate.of(2026, 10, 1));
+
+        new BudgetPlanStatusMirrorListener(service).on(confirmed);
+
+        verify(service).dropMirror(confirmed);
     }
 }

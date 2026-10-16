@@ -3,7 +3,6 @@ package com.launchcatch.billing.service;
 import com.launchcatch.billing.dto.PointAdjustmentRequest;
 import com.launchcatch.billing.dto.PointAdjustmentResponse;
 import com.launchcatch.billing.dto.PointAdjustmentResult;
-import com.launchcatch.billing.entity.MismatchCheckType;
 import com.launchcatch.billing.entity.Payment;
 import com.launchcatch.billing.entity.PointLedger;
 import com.launchcatch.billing.exception.BillingErrorCode;
@@ -120,7 +119,7 @@ public class PointAdjustmentRecorder {
         if (mismatch.resolutionType() != null) {
             throw new BillingException(BillingErrorCode.SETTLEMENT_MISMATCH_ALREADY_RESOLVED);
         }
-        boolean campaignTarget = mismatch.checkType() == MismatchCheckType.CAMPAIGN_SPEND_VS_LEDGER;
+        boolean campaignTarget = mismatch.checkType().targetsCampaign();
         Long targetOwnerId = campaignTarget ? campaignOwnerId(mismatch.targetId()) : paymentOwnerId(mismatch.targetId());
         if (!request.ownerId().equals(targetOwnerId)) {
             throw new BillingException(BillingErrorCode.SETTLEMENT_MISMATCH_OWNER_MISMATCH);

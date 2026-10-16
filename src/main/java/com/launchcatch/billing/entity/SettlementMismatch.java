@@ -17,8 +17,8 @@ import lombok.NoArgsConstructor;
  * 대사 배치가 찾은 불일치 한 건이다.
  *
  * 같은 (check_type, target_id, business_date) 는 한 행이다(uk_settlement_mismatch_check_target_date).
- * 행을 만드는 쪽은 대사 배치(구현 순서 11번, 13번)이고 그 작업과 함께 생성 팩터리를 더한다.
- * 지금은 관리자 조회와, 포인트 조정이 OVERCHARGE_REVERSAL 로 닫는 조건부 갱신만 이 테이블을 쓴다.
+ * 행은 대사 배치가 저장소의 네이티브 upsert 로 만든다. 같은 날의 재실행이 예외 없이 흡수되어야 해서 엔티티 생성 경로를 두지 않는다.
+ * 관리자 조회와, 포인트 조정이 OVERCHARGE_REVERSAL 로 닫는 조건부 갱신도 이 테이블을 쓴다.
  */
 @Entity
 @Table(name = "settlement_mismatch")
