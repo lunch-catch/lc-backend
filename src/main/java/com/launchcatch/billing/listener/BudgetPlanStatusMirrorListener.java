@@ -2,6 +2,7 @@ package com.launchcatch.billing.listener;
 
 import com.launchcatch.billing.dto.BudgetPlanStatusChanged;
 import com.launchcatch.billing.dto.BudgetPlanStatusConfirmed;
+import com.launchcatch.billing.dto.RechargeReserveIncreased;
 import com.launchcatch.billing.service.BudgetPlanStatusService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
@@ -24,5 +25,11 @@ public class BudgetPlanStatusMirrorListener {
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     public void on(BudgetPlanStatusConfirmed confirmed) {
         budgetPlanStatusService.dropMirror(confirmed);
+    }
+
+    // 충전 직후 재예약이 늘린 예약액을 커밋된 뒤에 해시에 반영한다
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    public void on(RechargeReserveIncreased increased) {
+        budgetPlanStatusService.mirrorReserve(increased);
     }
 }
