@@ -297,6 +297,50 @@ class TemplateReviseServiceTest {
         verify(templateRepository, never()).saveAndFlush(any());
     }
 
+    /*
+     * #410. 버전 상한은 "가장 오래된 번호 ~ 가장 새로운 번호"의 폭으로 판정한다.
+     * 20을 넘기지 않으면(딱 20이어도) 지우지 않는다.
+     */
+    @Test
+    @DisplayName("버전이 상한(20개)에 딱 닿으면 가장 오래된 버전을 지우지 않는다")
+    void 버전이_상한에_닿아도_넘지_않으면_지우지_않는다() throws Exception {
+        when(templateVersionRepository.findMaxVersionNumber(TEMPLATE_ID)).thenReturn(19);
+        when(templateVersionRepository.findFirstByTemplateIdAndDeletedAtIsNullOrderByVersionNumberAsc(TEMPLATE_ID))
+                .thenReturn(Optional.of(oldestVersionWithId(1, 100L)));
+        when(templateHtmlGenerator.revise(PREVIOUS_HTML, "버튼 색 바꿔줘")).thenReturn(PREVIOUS_HTML);
+        when(templateRepository.saveAndFlush(any(Template.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        TemplateCreateResponse response = service.revise(TEMPLATE_ID, "버튼 색 바꿔줘", REQUEST_ID, ADMIN_ID);
+
+        assertThat(response.versionNumber()).isEqualTo(20);
+        verify(templateVersionRepository, never()).softDelete(any(), any());
+    }
+
+    @Test
+    @DisplayName("버전이 상한(20개)을 넘기면 새 버전을 추가하면서 가장 오래된 버전을 지운다")
+    void 버전이_상한을_넘기면_가장_오래된_버전을_지운다() throws Exception {
+        when(templateVersionRepository.findMaxVersionNumber(TEMPLATE_ID)).thenReturn(20);
+        when(templateVersionRepository.findFirstByTemplateIdAndDeletedAtIsNullOrderByVersionNumberAsc(TEMPLATE_ID))
+                .thenReturn(Optional.of(oldestVersionWithId(1, 100L)));
+        when(templateHtmlGenerator.revise(PREVIOUS_HTML, "버튼 색 바꿔줘")).thenReturn(PREVIOUS_HTML);
+        when(templateRepository.saveAndFlush(any(Template.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        TemplateCreateResponse response = service.revise(TEMPLATE_ID, "버튼 색 바꿔줘", REQUEST_ID, ADMIN_ID);
+
+        assertThat(response.versionNumber()).isEqualTo(21);
+        verify(templateVersionRepository).softDelete(100L, LocalDateTime.now(FIXED_CLOCK));
+    }
+
+    private TemplateVersion oldestVersionWithId(int versionNumber, Long id) throws Exception {
+        TemplateVersion version = draftTemplate().addDraftVersion(
+                ADMIN_ID, LocalDateTime.now(FIXED_CLOCK), "처음 요청", "req-old-" + versionNumber, PREVIOUS_HTML,
+                versionNumber);
+        setId(version, id);
+        return version;
+    }
+
     private Template draftTemplate() throws Exception {
         Template template = Template.createDraft("가을 신메뉴");
         setId(template, TEMPLATE_ID);
