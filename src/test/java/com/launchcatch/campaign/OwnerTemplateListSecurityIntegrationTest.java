@@ -59,17 +59,23 @@ class OwnerTemplateListSecurityIntegrationTest extends AbstractCampaignIntegrati
     @Test
     void 게시되고_활성인_템플릿만_돌려준다() throws Exception {
         Long ownerId = createOwner("ACTIVE");
-        Template active = publishedActiveTemplate("활성 템플릿");
+        Template older = publishedActiveTemplate("오래된 활성 템플릿");
+        Template newer = publishedActiveTemplate("최신 활성 템플릿");
+        jdbc.update("update template set created_at = ? where template_id = ?",
+                LocalDateTime.of(2024, 1, 1, 0, 0), older.getId());
+        jdbc.update("update template set created_at = ? where template_id = ?",
+                LocalDateTime.of(2024, 1, 2, 0, 0), newer.getId());
         draftTemplate("임시저장 템플릿");
         publishedInactiveTemplate("비활성 템플릿");
 
         mvc.perform(get(PATH).cookie(ownerToken(ownerId)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value("SUCCESS"))
-                .andExpect(jsonPath("$.data.length()").value(1))
-                .andExpect(jsonPath("$.data[0].templateId").value(active.getId().intValue()))
-                .andExpect(jsonPath("$.data[0].name").value("활성 템플릿"))
-                .andExpect(jsonPath("$.data[0].html").value(active.getHtmlContent()));
+                .andExpect(jsonPath("$.data.length()").value(2))
+                .andExpect(jsonPath("$.data[0].templateId").value(newer.getId().intValue()))
+                .andExpect(jsonPath("$.data[1].templateId").value(older.getId().intValue()))
+                .andExpect(jsonPath("$.data[0].name").value("최신 활성 템플릿"))
+                .andExpect(jsonPath("$.data[0].html").value(newer.getHtmlContent()));
     }
 
     @Test
