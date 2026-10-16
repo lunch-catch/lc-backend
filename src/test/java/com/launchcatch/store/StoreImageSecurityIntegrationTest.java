@@ -186,10 +186,9 @@ class StoreImageSecurityIntegrationTest extends AbstractStoreIntegrationTest {
         new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
             progressService.initialize(ownerId);
             progressService.completeStep(ownerId, 0, StoreRegistrationStep.TERMS, null);
-            progressService.completeStep(ownerId, 1, StoreRegistrationStep.STORE, storeId);
-            progressService.completeStep(ownerId, 2, StoreRegistrationStep.BUSINESS_VERIFICATION, null);
-            progressService.completeStep(ownerId, 3, StoreRegistrationStep.LOCATION, null);
-            progressService.completeStep(ownerId, 4, StoreRegistrationStep.HOURS, null);
+            progressService.completeStep(ownerId, 1, StoreRegistrationStep.STORE_INFO, storeId);
+            progressService.completeStep(ownerId, 2, StoreRegistrationStep.LOCATION, null);
+            progressService.completeStep(ownerId, 3, StoreRegistrationStep.HOURS, null);
         });
     }
 }
