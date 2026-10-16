@@ -198,6 +198,15 @@ public class BatchExecutionService {
     }
 
     /*
+     * 분석이 쓰는 재실행이다. 실패한 행과 이미 끝난(성공) 행을 모두 실행 중으로 되돌린다.
+     * RUNNING인 행은 조건에 걸리지 않아 아무것도 바뀌지 않는다.
+     */
+    @Transactional
+    public boolean rerun(String jobName, LocalDate businessDate) {
+        return logs.restartFinished(jobName, businessDate, ownerId, now()) == 1;
+    }
+
+    /*
      * 실행 중 행을 닫는다. 내 소유일 때만 닫히고, 아니면 0건이다.
      *
      * 소유자 조건이 없으면 생존 신호가 끊겼다가 늦게 깨어난 서버가 남의 실행을 닫는다.

@@ -171,4 +171,28 @@ public interface BatchExecutionLogRepository extends JpaRepository<BatchExecutio
                       @Param("businessDate") LocalDate businessDate,
                       @Param("ownerId") String ownerId,
                       @Param("now") LocalDateTime now);
+
+    /*
+     * 끝난 행(FAILED, SUCCESS)을 실행 중으로 되돌린다. 분석이 쓰는 재실행이다.
+     *
+     * restartFailed와 리셋하는 필드는 같다. RUNNING이면 조건에 걸리지 않아 0건이고, 두 번
+     * 눌러도 한 번만 걸린다. restartFailed는 "실패 재시도" 의미를 그대로 두려고 건드리지 않는다.
+     */
+    @Transactional
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("""
+            UPDATE BatchExecutionLog l
+               SET l.status = com.launchcatch.ops.entity.BatchStatus.RUNNING,
+                   l.finishedAt = null, l.failureReason = null,
+                   l.retryCount = 0, l.retryReason = null,
+                   l.ownerId = :ownerId, l.updatedAt = :now
+             WHERE l.jobName = :jobName
+               AND l.businessDate = :businessDate
+               AND l.status IN (com.launchcatch.ops.entity.BatchStatus.FAILED,
+                                 com.launchcatch.ops.entity.BatchStatus.SUCCESS)
+            """)
+    int restartFinished(@Param("jobName") String jobName,
+                        @Param("businessDate") LocalDate businessDate,
+                        @Param("ownerId") String ownerId,
+                        @Param("now") LocalDateTime now);
 }
