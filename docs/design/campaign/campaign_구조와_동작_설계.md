@@ -55,7 +55,7 @@ campaign/
 | 이력 | 상태 변경마다 `CampaignStatusLog` 한 행. 현재 상태는 `campaign.status`가 그대로 가진다 |
 | 복잡한 조회 | `findServableOn`은 `campaign` 테이블 하나만 조회한다. billing의 "예약" 데이터(`budget_daily_plan`)는 `campaign -> billing` 간선이 없어 조인할 수 없다([설계 문서](../../architecture/런치캐치_도메인_구조와_의존성_설계.md) 2.2, 역방향은 순환). FR-092의 전이 규칙상 `PAUSED(OWNER, NO_POINTS)`는 그날 `ACTIVE`였다가 멈춘 것만 존재하므로 campaign 자신의 컬럼(`status`, `paused_reason`, `start_date`, `end_date`)만으로 조건이 성립한다고 보았다(제가 추론한 것, 문서에 명시돼 있지 않음) |
 | `findServableOn`과 billing의 00:00 예약 조회 공유(#198) | billing이 요청한 `findForReservation(businessDate)`의 조건이 `findServableOn`과 같다(위 행). 메서드를 따로 두면 "예약이 있는 PAUSED"의 해석이 두 곳에 흩어져 한쪽만 바뀌면 어긋난다. 그래서 새 메서드를 만들지 않고 billing이 `findServableOn`을 그대로 부르기로 했다 |
-| 특정 시각의 상태 재구성(#354) | `CampaignStatusLog.countActiveAsOf`는 `campaign` 테이블의 현재 `status`를 보지 않는다. `campaign_status_log`에서 캠페인마다 그 시각 이전 마지막 전이 행의 `to_status`를 윈도 함수(`row_number() over (partition by campaign_id order by created_at desc)`)로 구해 `ACTIVE`인 것만 센다. 그래서 지금 상태가 `ENDED`인 캠페인도 과거 영업일에는 그때의 상태로 집계된다. `idx_campaign_status_log_campaign_created(campaign_id, created_at)`(`V14`)가 없으면 이 윈도 함수가 테이블 전체를 풀스캔한다 |
+| 특정 시각의 상태 재구성(#354) | `CampaignStatusLog.countActiveAsOf`는 `campaign` 테이블의 현재 `status`를 보지 않는다. `campaign_status_log`에서 캠페인마다 그 시각 이전 마지막 전이 행의 `to_status`를 윈도 함수(`row_number() over (partition by campaign_id order by created_at desc)`)로 구해 `ACTIVE`인 것만 센다. 그래서 지금 상태가 `ENDED`인 캠페인도 과거 영업일에는 그때의 상태로 집계된다. `idx_campaign_status_log_campaign_created(campaign_id, created_at)`(`V15`)가 없으면 이 윈도 함수가 테이블 전체를 풀스캔한다 |
 | 이 집계가 기대는 전제(#354 리뷰) | `campaign_status_log`에만 기대므로, `CampaignStatusService`를 거치지 않고 `campaign` 테이블에 직접 쓰는 경로(`R__30_template_campaign.sql`, `R__50_daily.sql` 시드 등)는 이 집계에 전혀 보이지 않는다. 운영 코드의 모든 전이가 그 서비스를 거친다는 전제가 깨지면 이 집계는 조용히 실제와 어긋난다. 아직 그걸 맞대보는 자동 검증은 없다 |
 
 ## 4. 계산 로직
@@ -66,7 +66,7 @@ campaign/
 
 | 방향 | 대상 도메인 | 인터페이스 | 시점 |
 |---|---|---|---|
-| 공개 | 모든 도메인 | `CampaignQueryService`(`findByStoreIdIn`, `findAllById`, `findServableOn`, `findEligibleCampaigns`, `findByOwnerIdAndStatusIn`, `hasLiveCampaign`, `findOwnerIdsWithLiveCampaign`) | 요청마다 |
+| 공개 | 모든 도메인 | `CampaignQueryService`(`findByStoreIdIn`, `findAllById`, `findServableOn`, `findEligibleCampaigns`, `findByOwnerIdAndStatusIn`, `hasLiveCampaign`, `findOwnerIdsWithLiveCampaign`, `findByIdForUpdate`) | 요청마다. `findByIdForUpdate`는 호출자의 쓰기 트랜잭션 안에서 불러야 잠금이 유지된다(`#378`, billing의 재예약 경합 방지용, 실제 호출은 `#319`가 이어 붙인다) |
 | 공개 | analytics | `CampaignStatsQueryService.activeCampaignCount(businessDate)`. `businessDate`가 오늘이거나 미래면 `IllegalArgumentException`(#354 리뷰) | 분석의 일별 집계 배치마다(#354) |
 | 받음(직접 호출) | billing | `CampaignFundingUpdater.applyFundingJudgement` | 정산의 00:00 예산 판정, 충전 직후 재예약 판정 때마다. 이벤트가 아니라 정산의 트랜잭션 안에서 직접 부른다 |
 | 쓰기(미연결) | store | `StoreCampaignSummaryUpdater` | `activate`/`pause`/`resume`/`end`뿐 아니라 `pauseFromFunding`/`resumeFromFunding` 때도 호출해야 한다(잔액 부족 중단과 충전 후 재개도 가게 요약에 반영돼야 함, 가게 담당 회신 2026-10-13). store 쪽에 그 인터페이스가 아직 없어([설계 문서](../../architecture/런치캐치_도메인_구조와_의존성_설계.md) 2.4에 간선만 있음) 이번 이슈는 호출을 빼고 넘어간다. 생기면 `CampaignStatusService`에 이어 붙인다 |

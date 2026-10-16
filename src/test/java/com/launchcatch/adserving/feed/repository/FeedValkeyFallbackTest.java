@@ -1,5 +1,6 @@
 package com.launchcatch.adserving.feed.repository;
 
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
@@ -122,5 +123,19 @@ class FeedValkeyFallbackTest {
 
         assertThat(record).isEmpty();
         assertThat(bypassCount("serve_record")).isEqualTo(1);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void 유효_노출_수를_올리지_못해도_예외를_올리지_않고_센다() {
+        org.springframework.data.redis.core.HashOperations<String, Object, Object> hashOps =
+                mock(org.springframework.data.redis.core.HashOperations.class);
+        when(redisTemplate.opsForHash()).thenReturn(hashOps);
+        when(hashOps.increment(anyString(), any(), org.mockito.ArgumentMatchers.anyLong()))
+                .thenThrow(new QueryTimeoutException("timeout"));
+
+        new ImpressionCountRepository(redisTemplate, meterRegistry).increment(LocalDate.of(2026, 10, 1), 101L);
+
+        assertThat(bypassCount("impression_count")).isEqualTo(1);
     }
 }

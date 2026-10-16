@@ -16,6 +16,8 @@
 |---|---|---|
 | `POST` | `/v1/owner/campaigns` | FR-040 |
 | `PATCH` | `/v1/owner/campaigns/{campaignId}` | FR-041, FR-042 |
+| `GET` | `/v1/owner/campaigns` | 없음(요구사항명세서에 조회 전용 행이 없다. 점주가 등록한 값을 다시 확인하는 화면 전제, `#341`) |
+| `GET` | `/v1/owner/campaigns/{campaignId}` | 없음(위와 같음) |
 
 ## 캠페인 등록(쿠폰 조건)
 
@@ -106,6 +108,29 @@
 - **집행 기간은 최소 1일 차이를 요구한다.** `endDate`가 `startDate`보다 이르거나 같으면
   `CAMPAIGN-008`이다. 시작일은 "오늘 다음 날 이후"만 허용해 `LocalDate.now(clock).plusDays(1)`보다
   이르면 `CAMPAIGN-009`다(요구사항명세서 [I45] 등록 마감 D-1 23:59와 같은 경계)
+
+## 캠페인 조회(점주)
+
+- **두 엔드포인트 모두 점주 상태(`OwnerStatusQuery`) 확인을 하지 않는다.** 등록·수정과
+  달리 상태를 바꾸지 않는 단순 조회라, `owner-api-spec.md`의 `GET /v1/owner/me`(상태를
+  확인하지 않고 `ONBOARDING` 점주도 조회할 수 있다)와 같은 선례를 따른다(`#341` 결정)
+- **목록은 커서 페이지네이션을 쓴다.** `api-spec.md`의 공통 규약과
+  [장애_처리_설계_가이드.md](../장애_처리_설계_가이드.md) "애플리케이션: 대용량 조회"(페이징
+  없이 전체를 읽으면 OOM)를 따른다. 정렬·커서 키는 `campaignId desc` 하나로 충분하다.
+  `campaignId`는 auto-increment라 생성 순서와 일치해서,
+  `TemplateVersionRepository.findPage`(버전 번호 하나로 커서를 가르는 패턴)와 같은 단일
+  커서를 쓴다. 목록 조회라도 실행 중 집행 데이터(예약액, 소진 카운터)는 담지 않는다. 그
+  값은 billing이 소유하고, `campaign -> billing` 의존은 순환이 생겨 막혀 있다(설계 문서
+  2.2, 281행)
+- **본인 소유 확인 실패(없음과 타인 소유)는 기존 `CAMPAIGN-005`(`CAMPAIGN_NOT_OWNED`,
+  403)를 그대로 재사용한다.** `#312`가 PATCH에서 이미 쓰고 있는 코드이고, 뜻도
+  "그 캠페인에 접근할 권한이 없습니다"로 조회에도 맞아 새 코드를 추가하지 않는다
+- **상세 조회는 등록 세 단계(쿠폰 조건, 노출 대상, 하루 예산과 집행 기간)의 전체 필드와
+  상태·`pausedReason`·`statusChangedAt`·`createdAt`을 모두 담는다.** 목록은 캠페인을
+  식별하고 구분하는 데 필요한 요약 필드만 담아 가볍게 둔다(캠페인 ID, 가게 ID, 상태, 할인
+  조건 요약, 예산·기간, 생성 시각)
+- **상세 조회는 잠금 없이 `findById`로 조회한다.** 등록 수정과 달리 값을 바꾸지 않아
+  `CampaignTargetAudienceService`처럼 `findByIdForUpdate`(비관 잠금)를 쓸 이유가 없다
 
 ## 오류 코드를 나눈 기준
 
