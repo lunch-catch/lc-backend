@@ -68,7 +68,56 @@ campaign/
 
 받는 이벤트는 해당 없음.
 
-## 6. 상태와 흐름
+## 6. 구조와 동작 그림
+
+### 모듈 구조
+
+```mermaid
+flowchart LR
+    REQ([요청]) --> CC
+    CALL([다른 도메인의 호출]) --> CQC
+    CALL --> CFC
+
+    subgraph campaign["campaign 모듈"]
+        direction LR
+        CQC["contract<br/>CampaignQueryService"]
+        CFC["contract<br/>CampaignFundingUpdater"]
+
+        subgraph root["도메인 루트 (campaign 애그리거트)"]
+            CC[CampaignController] --> CCS[CampaignCouponConditionService]
+            CC --> CTS[CampaignTargetAudienceService]
+            CCS --> CR[(CampaignRepository)]
+            CTS --> CR
+            CSS[CampaignStatusService] --> CR
+            CSS --> CSLR[(CampaignStatusLogRepository)]
+            CQS["CampaignQueryServiceImpl<br/>구현: CampaignQueryService"] --> CR
+            CFI["CampaignFundingUpdaterImpl<br/>구현: CampaignFundingUpdater"] --> CSS
+        end
+
+        CQC -.-> CQS
+        CFC -.-> CFI
+    end
+
+    CCS --> OWN["owner.contract<br/>OwnerStatusQuery"]
+    CTS --> OWN
+    CTS --> OPS["ops.contract<br/>PlatformSettingQueryService"]
+
+    classDef out fill:#f5f5f5,stroke:#999,stroke-dasharray:4 3
+    class OWN,OPS out
+```
+
+입구는 둘만 실제로 연결돼 있다. HTTP 요청(`CampaignController`, `#244`/`#253`/`#330`)과 다른
+도메인의 호출(`CampaignQueryService`, `CampaignFundingUpdater`)이다. 스케줄과 이벤트 수신은
+아직 없다(`CampaignStatusService`의 `schedule`/`activate`/`end`를 부를 배치가 아직 없다,
+2장). `CampaignController`와 `CampaignCouponConditionService`/`CampaignTargetAudienceService`의
+업무 규칙은 이 문서가 아니라 [`campaign-api-design.md`](./campaign-api-design.md)가 가진다
+(1장). 여기서는 구조만 보인다.
+
+`owner.contract.OwnerStatusQuery`(점주 상태 확인)와 `ops.contract.PlatformSettingQueryService`(최소
+하루 예산, `#330`)는 등록 화면 API 두 서비스가 부르는 바깥 도메인이다. `CampaignStatusService`와
+`CampaignQueryServiceImpl`, `CampaignFundingUpdaterImpl`은 다른 도메인을 부르지 않는다.
+
+### 상태 변경
 
 ```mermaid
 stateDiagram-v2
@@ -90,6 +139,61 @@ stateDiagram-v2
 | ACTIVE/PAUSED -> ENDED | SYSTEM | `CampaignStatusChangedEvent`(servable=false), `CampaignEndedEvent` | `IllegalStateException` |
 
 이 이슈엔 HTTP 엔드포인트가 없어 "금지일 때 응답"은 전부 엔티티의 `IllegalStateException`이다. 409로 바꿔 응답하는 일은 이 전이를 실제로 호출하는 컨트롤러가 생기는 이슈(점주 API 등)가 맡는다.
+
+### 주요 흐름
+
+돈과 상태가 함께 걸린 흐름 둘만 그린다. 나머지(쿠폰 조건 등록 등)는 상태를 바꾸지 않아 뺀다.
+
+**흐름 1. 정산의 예산 판정에 따른 간접 전이(`#198`)**
+
+```mermaid
+sequenceDiagram
+    participant Billing as billing (FundingJudgement)
+    participant CFI as CampaignFundingUpdaterImpl
+    participant CSS as CampaignStatusService
+    participant CR as CampaignRepository
+
+    Billing->>CFI: applyFundingJudgement(judgement) [billing 트랜잭션 안]
+    CFI->>CSS: pauseFromFunding / resumeFromFunding
+    CSS->>CR: findByIdForUpdate [비관 잠금]
+    CSS->>CSS: 지금 상태가 이 판정을 받는 자리인지 확인
+    alt 받는 자리가 아니다
+        CSS-->>CFI: 조용히 무시(예외 없음)
+    else 받는 자리다
+        CSS->>CR: 상태 변경 저장, CampaignStatusLog 기록
+        CSS->>CSS: CampaignStatusChangedEvent 발행
+    end
+```
+
+| 실패 지점 | 남는 상태 | 다시 요청하면 |
+|---|---|---|
+| 잠금 대기 중 billing 쪽 트랜잭션 타임아웃 | campaign 상태는 그대로, billing만 실패 | billing이 재시도. 같은 판정이라 멱등하게 같은 결과 |
+| 저장 뒤 이벤트 발행 전 프로세스 종료 | 상태는 바뀌었는데 이벤트가 유실될 수 있다 | 이 문서 범위 밖(커밋 뒤 이벤트 처리는 [장애 처리 설계](./campaign_장애_처리_설계.md)) |
+
+**흐름 2. ACTIVE 캠페인의 하루 예산 변경(`#330`)**
+
+```mermaid
+sequenceDiagram
+    participant Owner as 점주 (HTTP)
+    participant C as CampaignController
+    participant T as CampaignTargetAudienceService
+    participant OW as owner.OwnerStatusQuery
+    participant CR as CampaignRepository
+    participant OPS as ops.PlatformSettingQueryService
+
+    Owner->>C: PATCH /v1/owner/campaigns/{campaignId}
+    C->>T: handle(ownerId, campaignId, request)
+    T->>OW: 점주 상태 ACTIVE 확인
+    T->>CR: findByIdForUpdate [비관 잠금]
+    T->>OPS: getMinDailyBudget()
+    T->>T: 최소 하루 예산, 상태별 허용 필드 검사
+    T->>CR: reserveDailyBudget [pendingDailyBudget만 갱신, dailyBudget은 그대로]
+```
+
+| 실패 지점 | 남는 상태 | 다시 요청하면 |
+|---|---|---|
+| 잠금 획득 뒤 `pause`가 먼저 커밋됨 | 이 요청은 갱신된 상태(PAUSED)를 보고 `CAMPAIGN-006`으로 거부 | 점주가 재개한 뒤 다시 요청 |
+| `getMinDailyBudget()` 실패 | 트랜잭션 전체 롤백, `pendingDailyBudget` 미반영 | 재요청 시 처음부터 다시 검증 |
 
 ## 7. 트랜잭션과 동시성
 

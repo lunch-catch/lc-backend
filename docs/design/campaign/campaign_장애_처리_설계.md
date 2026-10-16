@@ -7,7 +7,7 @@
 
 | 유형 | 대상 |
 |---|---|
-| DB | MySQL(JPA), `campaign`/`template`/`store_audience` 등 |
+| DB | MySQL(JPA), `campaign`/`template`/`store_audience` 등. `ops.contract.PlatformSettingQueryService.getMinDailyBudget()`(같은 트랜잭션 안의 도메인 간 직접 호출, 외부 API 아님)도 DB 읽기와 같은 처리를 받는다(`#330`) |
 | 외부 API | Bedrock LLM(템플릿 생성·수정, `template/client/BedrockTemplateHtmlGenerator`) |
 | 캐시 | 해당 없음(이 도메인은 캐시에 기대지 않는다. `owner.contract.OwnerStatusQuery`가 캐시를 쓰지만 그건 owner 도메인이 소유한다) |
 | 애플리케이션 | 해당 없음(아직 훑지 않음) |
@@ -49,8 +49,3 @@
 | 항목 | 비고 |
 |---|---|
 | 캐시, 애플리케이션, 롤백 안 되는 효과 유형의 점검 | 이번 PR(`#244`)이 건드린 범위 밖이라 훑지 않았다 |
-
-예산과 집행 기간(45행, `#330`)도 노출 대상(44행, `#253`)과 같다. `findByIdForUpdate` 비관
-잠금을 그대로 쓰고 새 DB 제약을 추가하지 않는다. `ops.contract.PlatformSettingQueryService.getMinDailyBudget()`
-호출은 같은 트랜잭션 안의 도메인 간 직접 호출(외부 API 아님)이라 실패하면 재시도 없이
-그대로 올린다. 기본 처리에서 벗어난 것이 없다.
