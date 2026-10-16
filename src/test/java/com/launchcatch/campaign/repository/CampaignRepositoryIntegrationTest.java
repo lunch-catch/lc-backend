@@ -19,6 +19,7 @@ import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.data.domain.PageRequest;
 
 class CampaignRepositoryIntegrationTest extends com.launchcatch.campaign.AbstractCampaignIntegrationTest {
 
@@ -164,6 +165,39 @@ class CampaignRepositoryIntegrationTest extends com.launchcatch.campaign.Abstrac
             campaignRepository.save(secondDraft);
             entityManager.flush();
         }).isInstanceOf(DataIntegrityViolationException.class);
+    }
+
+    @Test
+    void findPageByOwnerId는_그_점주의_캠페인만_최근_생성_순으로_돌려준다() {
+        Long ownerId = 500L;
+        Campaign older = save(draftWithOwner(ownerId, 1L));
+        Campaign newer = save(draftWithOwner(ownerId, 2L));
+        save(draftWithOwner(501L, 3L));
+        entityManager.flush();
+
+        List<Campaign> result = campaignRepository.findPageByOwnerId(ownerId, null, PageRequest.of(0, 10));
+
+        assertThat(result).extracting(Campaign::getId).containsExactly(newer.getId(), older.getId());
+    }
+
+    @Test
+    void findPageByOwnerId는_커서보다_작은_id만_돌려준다() {
+        Long ownerId = 502L;
+        Campaign first = save(draftWithOwner(ownerId, 1L));
+        Campaign second = save(draftWithOwner(ownerId, 2L));
+        entityManager.flush();
+
+        List<Campaign> result = campaignRepository.findPageByOwnerId(
+                ownerId, second.getId(), PageRequest.of(0, 10));
+
+        assertThat(result).extracting(Campaign::getId).containsExactly(first.getId());
+    }
+
+    @Test
+    void findPageByOwnerId의_조회가_owner_id_인덱스를_탄다() {
+        String plan = explainJson("SELECT * FROM campaign WHERE owner_id = 1 AND campaign_id < 100 ORDER BY campaign_id DESC");
+
+        assertThat(plan).contains("idx_campaign_owner_id");
     }
 
     @Test
