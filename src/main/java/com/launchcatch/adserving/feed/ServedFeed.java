@@ -1,6 +1,5 @@
-package com.launchcatch.adserving.feed.service;
+package com.launchcatch.adserving.feed;
 
-import com.launchcatch.adserving.feed.repository.ServeRecord;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.UUID;

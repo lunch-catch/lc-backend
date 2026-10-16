@@ -1,5 +1,6 @@
 package com.launchcatch.adserving.feed.service;
 
+import com.launchcatch.adserving.feed.ServedFeed;
 import static com.launchcatch.adserving.engine.AdCandidateFixture.candidate;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -33,7 +34,7 @@ import com.launchcatch.adserving.feed.repository.FeedFilterRepository;
 import com.launchcatch.adserving.feed.repository.ImpressionCountRepository;
 import com.launchcatch.adserving.feed.repository.ServeFrequencyRepository;
 import com.launchcatch.adserving.feed.repository.ServeFrequencyRepository.ServedHistory;
-import com.launchcatch.adserving.feed.repository.ServeRecord;
+import com.launchcatch.adserving.feed.ServeRecord;
 import com.launchcatch.adserving.feed.repository.ServeRecordRepository;
 import com.launchcatch.adserving.feed.repository.SwipeLogRepository;
 import com.launchcatch.adserving.engine.SlotType;

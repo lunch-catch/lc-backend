@@ -1,5 +1,6 @@
 package com.launchcatch.adserving.feed.service;
 
+import com.launchcatch.adserving.feed.ServedFeed;
 import com.launchcatch.adserving.engine.CampaignPacing;
 import com.launchcatch.adserving.engine.FeedAssembler;
 import com.launchcatch.adserving.engine.FeedAssembler.Placed;
@@ -25,7 +26,7 @@ import com.launchcatch.adserving.feed.repository.FeedRateLimitRepository;
 import com.launchcatch.adserving.feed.repository.FeedRateLimitRepository.Admission;
 import com.launchcatch.adserving.feed.repository.ImpressionCountRepository;
 import com.launchcatch.adserving.feed.repository.ServeFrequencyRepository;
-import com.launchcatch.adserving.feed.repository.ServeRecord;
+import com.launchcatch.adserving.feed.ServeRecord;
 import com.launchcatch.adserving.feed.repository.ServeRecordRepository;
 import com.launchcatch.adserving.feed.repository.ServeFrequencyRepository.ServedHistory;
 import com.launchcatch.adserving.feed.repository.SwipeLogRepository;

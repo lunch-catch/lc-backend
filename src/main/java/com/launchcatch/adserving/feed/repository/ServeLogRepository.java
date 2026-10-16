@@ -1,5 +1,7 @@
 package com.launchcatch.adserving.feed.repository;
 
+import com.launchcatch.adserving.feed.ServeRecord;
+
 import com.launchcatch.global.config.ClockConfig;
 import java.nio.ByteBuffer;
 import java.sql.Timestamp;

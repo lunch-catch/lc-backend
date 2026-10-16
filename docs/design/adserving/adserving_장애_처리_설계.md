@@ -1,17 +1,20 @@
 # adserving 장애 처리 설계
 
 광고 서빙이 기대는 대상과 [장애 처리 설계 가이드](../장애_처리_설계_가이드.md)의 기본 처리를 벗어난 것을 적는다.
-지금은 `GET /v1/feed` 의 후보 선별(#236), 배정 규칙(#307), serve 기록과 서빙 로그(#315)까지 훑었다.
+지금은 `GET /v1/feed` 의 후보 선별(#236), 배정 규칙(#307), serve 기록과 서빙 로그(#315), `POST /v1/impressions`(#323)까지 훑었다.
 
 ## 이 도메인이 기대는 대상
 
 | 대상 | 쓰는 곳 | 처리 |
 |---|---|---|
-| Valkey | 요청 제한, 당일 이력, 하루와 세션 횟수, 유효 노출 수, serve 기록 | 기본(통과) |
-| MySQL 읽기 | 그날 후보, 필터, 30일 찜 | 기본(오류로 올린다) |
+| Valkey | 요청 제한, 당일 이력, 하루와 세션 횟수, 유효 노출 수 읽기, serve 기록 | 기본(통과) |
+| Valkey(커밋 뒤) | 유효 노출 수 카운터 올리기 | 벗어났다. 아래 |
+| MySQL 읽기 | 그날 후보, 필터, 30일 찜, 노출 중복 확인, 후보 소진 | 기본(오류로 올린다) |
+| MySQL 쓰기(요청 안) | `impression_log` | 기본(트랜잭션을 되돌린다) |
 | MySQL 쓰기 | 응답 뒤의 `serve_log`, `feed_visit_daily` | 벗어났다. 아래 |
 | member 의 `MemberQueryService` | 온보딩, 위치, 노출 대상 판정 | 기본(오류로 올린다). 같은 프로세스 안의 호출이다 |
 | billing 의 `BudgetQueryService` | 진행률, 노출 상한 | 벗어났다. 아래 |
+| billing 의 `PointDeductor` | 유효 노출의 차감 | 기본(트랜잭션을 되돌린다). 노출 저장과 같은 트랜잭션이라 실패하면 노출도 남지 않는다 |
 
 ## 벗어난 것
 
@@ -51,6 +54,18 @@ B 를 고른다(#315). 서빙 로그는 유실을 0.1% 미만까지 허용한다
 | `adserving_feed_visit_failed_total` | `feed_visit_daily` 쓰기가 실패해 버린 접속 위치 수 |
 | `adserving_served_cards_total` | 응답으로 내려준 카드 수. `serve_log` 건수와 대조해 유실률을 잰다 |
 
+### 롤백 안 되는 효과: 커밋 뒤의 유효 노출 수 카운터
+
+기본 처리는 "커밋 전에 기록하고 커밋 뒤에 실행한다" 이다. 카운터는 커밋 뒤에 올리되 올릴 일을 커밋 전에 기록해 두지 않는다.
+
+| 선택지 | 장점 | 단점 |
+|---|---|---|
+| A. 기본대로 같은 트랜잭션에 올릴 일을 적고 폴러가 올린다 | 커밋된 노출은 반드시 센다 | 테이블과 폴러가 늘고 상한이 늦게 걸린다 |
+| B. 커밋 뒤에 바로 올리고 실패하면 센다 | 더 둘 것이 없고 상한이 바로 걸린다 | 커밋과 올리기 사이에 프로세스가 죽거나 Valkey 가 멈추면 빠진다 |
+
+B 를 고른다(#323). 원본(`impression_log`)이 이미 커밋돼 있어서 빠진 것은 그 테이블로 다시 셀 수 있다. 빠지면 상한이 그만큼 늦게 걸려 미과금 노출이 더 나갈 뿐이고, 과금은 정산이 예약액에서 막는다.
+올리지 못한 횟수는 `adserving_cache_bypass_total`(`use=impression_count`) 이 센다.
+
 ## 유형별 점검
 
 ### 캐시
@@ -69,8 +84,8 @@ Valkey 가 멈춰 통과시킨 횟수는 `adserving_cache_bypass_total` 이 센�
 | `feed_rate_limit` | `FEED_RATE_LIMIT_FAILED` | 요청 제한이 풀리고 `nextFeedAvailableAt` 이 응답 시각이 된다 |
 | `daily_exclusion` | `FEED_DAILY_EXCLUSION_FAILED` | 넘긴 카드가 다시 보인다 |
 | `serve_frequency` | `FEED_SERVE_FREQUENCY_READ_FAILED`, `FEED_SERVE_FREQUENCY_WRITE_FAILED` | 같은 카드가 하루 2회, 세션 1회를 넘겨 나온다 |
-| `impression_count` | `FEED_IMPRESSION_COUNT_FAILED` | 유효 노출 수를 0 으로 보고 상한을 넘겨 내보낸다. 넘긴 노출은 과금되지 않아 손해는 플랫폼에 남는다 |
-| `serve_record` | `FEED_SERVE_RECORD_WRITE_FAILED`, `FEED_SERVE_RECORD_READ_FAILED` | 쓰지 못하거나 읽지 못하면 그 카드의 노출이 무효(`EXPIRED_OR_UNKNOWN`)가 되어 과금되지 않는다 |
+| `impression_count` | `FEED_IMPRESSION_COUNT_FAILED`, `FEED_IMPRESSION_COUNT_INCREMENT_FAILED` | 읽기는 유효 노출 수를 0 으로 보고 상한을 넘겨 내보낸다. 올리기는 그 노출을 세지 못해 상한이 늦게 걸린다. 넘긴 노출은 과금되지 않아 손해는 플랫폼에 남는다 |
+| `serve_record` | `FEED_SERVE_RECORD_WRITE_FAILED`, `FEED_SERVE_RECORD_READ_FAILED` | 쓰지 못하거나 읽지 못하면 그 카드의 노출이 무효(`EXPIRED_OR_UNKNOWN`)로 저장되어 과금되지 않는다. 다시 보내도 처음 판정이 남는다 |
 
 ### DB
 
@@ -78,11 +93,12 @@ Valkey 가 멈춰 통과시킨 횟수는 `adserving_cache_bypass_total` 이 센�
 |---|---|
 | 다운, 연결 거부(읽기) | 해당 없음. 기본 처리(오류로 올린다)를 따른다 |
 | 다운, 연결 거부(응답 뒤 쓰기) | `벗어난 것` 의 "DB 쓰기" 절 |
+| 다운, 연결 거부(노출 저장) | 해당 없음. 기본 처리(트랜잭션을 되돌린다)를 따른다 |
 | 슬로우 쿼리, 응답 지연 | 아직 훑지 않았다 |
 | 커넥션 풀 고갈 | 아직 훑지 않았다 |
 | 데드락 | 해당 없음. 잠그는 쿼리가 없고 쓰기는 `INSERT IGNORE` 뿐이다 |
 | 락 대기 초과 | 해당 없음. 잠그는 쿼리가 없다 |
-| 제약 위반, 데이터 불일치 | 해당 없음. 같은 키는 `INSERT IGNORE` 가 넘긴다 |
+| 제약 위반, 데이터 불일치 | 해당 없음. 같은 키는 `INSERT IGNORE` 가 넘긴다. 정산이 예산 계획 없는 캠페인으로 던지는 예외는 재시도하지 않고 올린다 |
 | Primary 페일오버 | 아직 훑지 않았다 |
 | 복제 지연 | 아직 훑지 않았다 |
 
@@ -101,7 +117,11 @@ Valkey 가 멈춰 통과시킨 횟수는 `adserving_cache_bypass_total` 이 센�
 
 ### 롤백 안 되는 효과
 
-해당 없음. 트랜잭션이 없다. Valkey 에 쓴 뒤 응답이 실패해도 되돌리지 않고, 내려준 횟수가 한 번 더 오를 뿐이다.
+| 시나리오 | 점검 결과 |
+|---|---|
+| 커밋 뒤 실패 | `벗어난 것` 의 "롤백 안 되는 효과" 절 |
+| 커밋 전 성공 | 해당 없음. 노출 수집은 커밋 전에 바깥으로 나가는 효과가 없다. 피드 조회는 트랜잭션이 없어 Valkey 에 쓴 뒤 응답이 실패해도 내려준 횟수가 한 번 더 오를 뿐이다 |
+| 보상 실패 | 해당 없음. 되돌리는 처리가 없다 |
 
 ## 아직 정하지 못한 것
 
