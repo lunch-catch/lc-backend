@@ -12,9 +12,11 @@ import org.springframework.security.web.SecurityFilterChain;
 public class AdservingSecurityConfig {
 
     private static final String FEED_PATH = "/v1/feed";
+    private static final String IMPRESSION_PATH = "/v1/impressions";
 
     private static final String[] ADSERVING_PATHS = {
-            FEED_PATH
+            FEED_PATH,
+            IMPRESSION_PATH
     };
 
     @Bean
@@ -25,6 +27,7 @@ public class AdservingSecurityConfig {
                 .securityMatcher(ADSERVING_PATHS)
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(HttpMethod.GET, FEED_PATH).hasRole("MEMBER")
+                        .requestMatchers(HttpMethod.POST, IMPRESSION_PATH).hasRole("MEMBER")
                         .anyRequest().denyAll())
                 .build();
     }

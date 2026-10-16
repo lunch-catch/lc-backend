@@ -14,12 +14,17 @@ import com.launchcatch.campaign.contract.DiscountType;
 import com.launchcatch.campaign.contract.TargetGender;
 import com.launchcatch.campaign.dto.CampaignCouponConditionRequest;
 import com.launchcatch.campaign.dto.CampaignCouponConditionResponse;
+import com.launchcatch.campaign.dto.CampaignDetailResponse;
+import com.launchcatch.campaign.dto.CampaignListItemResponse;
 import com.launchcatch.campaign.dto.CampaignUpdateRequest;
 import com.launchcatch.campaign.dto.CampaignUpdateResponse;
 import com.launchcatch.campaign.service.CampaignCouponConditionResult;
 import com.launchcatch.campaign.service.CampaignCouponConditionService;
+import com.launchcatch.campaign.service.CampaignOwnerQueryService;
 import com.launchcatch.campaign.service.CampaignTargetAudienceService;
+import com.launchcatch.global.response.CursorPageResponse;
 import com.launchcatch.global.response.ResponseEnvelope;
+import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.List;
 import org.junit.jupiter.api.Test;
@@ -30,7 +35,9 @@ class CampaignControllerTest {
 
     private final CampaignCouponConditionService service = mock(CampaignCouponConditionService.class);
     private final CampaignTargetAudienceService targetAudienceService = mock(CampaignTargetAudienceService.class);
-    private final CampaignController controller = new CampaignController(service, targetAudienceService);
+    private final CampaignOwnerQueryService ownerQueryService = mock(CampaignOwnerQueryService.class);
+    private final CampaignController controller =
+            new CampaignController(service, targetAudienceService, ownerQueryService);
     private final CustomUserDetails owner = new CustomUserDetails(7L, Role.OWNER);
 
     private final CampaignCouponConditionRequest request = new CampaignCouponConditionRequest(
@@ -74,6 +81,34 @@ class CampaignControllerTest {
                 controller.updateTargetAudience(501L, targetAudienceRequest, owner);
 
         verify(targetAudienceService).handle(7L, 501L, targetAudienceRequest);
+        assertThat(result.data()).isSameAs(response);
+    }
+
+    @Test
+    void 목록_조회는_조회_서비스_결과를_그대로_반환한다() {
+        CursorPageResponse<CampaignListItemResponse> page = CursorPageResponse.of(List.of(), null);
+        when(ownerQueryService.list(7L, "token", 10)).thenReturn(page);
+
+        ResponseEnvelope<CursorPageResponse<CampaignListItemResponse>> result =
+                controller.list("token", 10, owner);
+
+        verify(ownerQueryService).list(7L, "token", 10);
+        assertThat(result.data()).isSameAs(page);
+    }
+
+    @Test
+    void 상세_조회는_조회_서비스_결과를_그대로_반환한다() {
+        CampaignDetailResponse response = new CampaignDetailResponse(
+                501L, 20L, CampaignStatus.ACTIVE, null,
+                DiscountTargetType.ALL, DiscountType.PERCENT, 10, null, 100,
+                LocalTime.of(11, 30), LocalTime.of(13, 0), null, null,
+                1000, TargetGender.ALL, List.of(AgeGroup.AGE_20S),
+                null, null, null, LocalDateTime.now(), LocalDateTime.now());
+        when(ownerQueryService.detail(7L, 501L)).thenReturn(response);
+
+        ResponseEnvelope<CampaignDetailResponse> result = controller.detail(501L, owner);
+
+        verify(ownerQueryService).detail(7L, 501L);
         assertThat(result.data()).isSameAs(response);
     }
 }

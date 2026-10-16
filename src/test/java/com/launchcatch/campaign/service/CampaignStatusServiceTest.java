@@ -187,6 +187,18 @@ class CampaignStatusServiceTest {
     }
 
     @Test
+    @DisplayName("pause는 pendingDailyBudget을 지우지 않는다(#330)")
+    void pause는_pendingDailyBudget을_지우지_않는다() {
+        Campaign campaign = activeCampaign();
+        campaign.reserveDailyBudget(7000L);
+        when(campaignRepository.findByIdForUpdate(CAMPAIGN_ID)).thenReturn(Optional.of(campaign));
+
+        service.pause(CAMPAIGN_ID, PauseReason.OWNER, BUSINESS_DATE);
+
+        assertThat(campaign.getPendingDailyBudget()).isEqualTo(7000L);
+    }
+
+    @Test
     @DisplayName("이미 같은 이유로 PAUSED면 다시 pause해도 로그 없이 조용히 성공한다(멱등한 재시도)")
     void 같은_이유로_다시_pause하면_조용히_성공한다() {
         Campaign campaign = pausedCampaign(PauseReason.OWNER);
@@ -273,6 +285,18 @@ class CampaignStatusServiceTest {
 
         assertThat(campaign.getStatus()).isEqualTo(CampaignStatus.ENDED);
         assertThat(campaign.getPausedReason()).isNull();
+    }
+
+    @Test
+    @DisplayName("end는 pendingDailyBudget을 지운다(#330)")
+    void end는_pendingDailyBudget을_지운다() {
+        Campaign campaign = activeCampaign();
+        campaign.reserveDailyBudget(7000L);
+        when(campaignRepository.findByIdForUpdate(CAMPAIGN_ID)).thenReturn(Optional.of(campaign));
+
+        service.end(CAMPAIGN_ID, BUSINESS_DATE);
+
+        assertThat(campaign.getPendingDailyBudget()).isNull();
     }
 
     @Test

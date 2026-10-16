@@ -65,6 +65,11 @@ public record BillingScheduleProperties(
         return endTime().plusMinutes(1);
     }
 
+    // 13:30 해제·대사를 시작하는 시각이다. 고정 시각에서 노출 인정 시간이 더 지나야 그 뒤의 노출이 끝났다고 본다
+    public LocalTime releaseTime() {
+        return fixedFrom().plus(impressionValidFor);
+    }
+
     private static LocalTime parse(String value, String key) {
         if (value == null) {
             throw new IllegalArgumentException(key + " 가 필요하다");

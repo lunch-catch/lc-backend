@@ -60,6 +60,7 @@
 /src/main/java/com/launchcatch/billing/         @muzimzz
 /src/main/resources/db/migration/billing/       @muzimzz
 /docs/api-spec/billing-api-spec.md              @muzimzz
+/docs/design/billing/                           @muzimzz
 /src/main/java/com/launchcatch/analytics/       @muzimzz
 /src/main/resources/db/migration/analytics/     @muzimzz
 /docs/api-spec/analytics-api-spec.md            @muzimzz

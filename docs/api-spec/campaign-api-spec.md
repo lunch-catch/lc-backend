@@ -5,8 +5,8 @@
 [campaign-api-design.md](../design/campaign/campaign-api-design.md)를 참고한다.
 
 캠페인 등록은 네 단계(쿠폰 조건, 포스터, 노출 대상, 하루 예산과 집행 기간)로 나뉜다. 이
-문서는 1, 3, 4단계를 담는다. 2단계(포스터)는 그 단계를 구현하는 이슈가 이 문서에 절을
-더한다.
+문서는 1, 3, 4단계와 점주의 조회를 담는다. 2단계(포스터)는 그 단계를 구현하는 이슈가 이
+문서에 절을 더한다.
 
 ## API 목록
 
@@ -14,6 +14,8 @@
 |---|---|---|---|
 | POST | `/v1/owner/campaigns` | 캠페인 등록 1단계(쿠폰 조건) | OWNER 인증, ACTIVE 상태 |
 | PATCH | `/v1/owner/campaigns/{campaignId}` | 캠페인 등록 3·4단계(노출 대상, 하루 예산과 집행 기간) | OWNER 인증, ACTIVE 상태, 본인 소유 캠페인 |
+| GET | `/v1/owner/campaigns` | 캠페인 목록 조회 | OWNER 인증 |
+| GET | `/v1/owner/campaigns/{campaignId}` | 캠페인 상세 조회 | OWNER 인증, 본인 소유 캠페인 |
 
 ## 캠페인 등록(쿠폰 조건)
 
@@ -163,4 +165,138 @@
 | 422 | CAMPAIGN-007 | `dailyBudget`이 최소 하루 예산 미만 |
 | 422 | CAMPAIGN-008 | 집행 기간이 1일 미만이거나 `endDate`가 `startDate`보다 이전 |
 | 422 | CAMPAIGN-009 | `startDate`가 오늘 다음 날 이전 |
+| 500 | COMMON-001 | 처리하지 못한 서버 오류 |
+
+## 캠페인 목록 조회
+
+`GET /v1/owner/campaigns`
+
+점주가 본인 소유 캠페인을 최근 생성 순으로 조회한다. 커서 페이지네이션은 공통 규약
+(`api-spec.md`)을 따른다.
+
+### 요청
+
+| 파라미터 | 위치 | 타입 | 필수 | 조건 |
+|---|---|---|---|---|
+| pageSize | 쿼리 | integer | 아니요 | 한 번에 받을 개수. 기본 20, 최대 100 |
+| pageToken | 쿼리 | string | 아니요 | 다음 페이지 커서. 비우면 처음부터 |
+
+### 성공 응답
+
+`200`.
+
+```json
+{
+  "code": "SUCCESS",
+  "message": "요청이 성공적으로 처리되었습니다.",
+  "data": {
+    "items": [
+      {
+        "campaignId": 501,
+        "storeId": 20,
+        "status": "ACTIVE",
+        "discountTargetType": "MENU",
+        "discountType": "PERCENT",
+        "discountValue": 15,
+        "dailyBudget": 10000,
+        "startDate": "2026-11-01",
+        "endDate": "2026-11-30",
+        "createdAt": "2026-10-20T11:00:00+09:00"
+      }
+    ],
+    "nextPageToken": null
+  }
+}
+```
+
+| 필드 | 타입 | 필수 | null 허용 | 설명 |
+|---|---|---|---|---|
+| items[].campaignId | integer | 예 | 아니요 | 캠페인 ID |
+| items[].storeId | integer | 예 | 아니요 | 그 캠페인이 속한 가게 ID |
+| items[].status | string | 예 | 아니요 | 캠페인 상태 |
+| items[].discountTargetType | string | 예 | 아니요 | 할인 대상 |
+| items[].discountType | string | 예 | 아니요 | 할인 방식 |
+| items[].discountValue | integer | 예 | 아니요 | 할인값 |
+| items[].dailyBudget | integer | 예 | 예 | 하루 예산. 아직 한 번도 설정 안 했으면 `null` |
+| items[].startDate | string(날짜) | 예 | 예 | 집행 시작일. 아직 한 번도 설정 안 했으면 `null` |
+| items[].endDate | string(날짜) | 예 | 예 | 집행 종료일. 아직 한 번도 설정 안 했으면 `null` |
+| items[].createdAt | string(시각) | 예 | 아니요 | 캠페인을 만든 시각 |
+| nextPageToken | string | 예 | 예 | 다음 페이지 커서. 마지막 페이지면 `null` |
+
+### 오류
+
+| HTTP | 코드 | 조건 |
+|---|---|---|
+| 500 | COMMON-001 | 처리하지 못한 서버 오류 |
+
+## 캠페인 상세 조회
+
+`GET /v1/owner/campaigns/{campaignId}`
+
+점주가 본인 소유 캠페인 1건의 쿠폰 조건, 노출 대상, 하루 예산과 집행 기간, 상태를
+조회한다.
+
+### 성공 응답
+
+`200`.
+
+```json
+{
+  "code": "SUCCESS",
+  "message": "요청이 성공적으로 처리되었습니다.",
+  "data": {
+    "campaignId": 501,
+    "storeId": 20,
+    "status": "ACTIVE",
+    "pausedReason": null,
+    "discountTargetType": "MENU",
+    "discountType": "PERCENT",
+    "discountValue": 15,
+    "targetMenuId": 42,
+    "issueQuantity": 100,
+    "usableStartTime": "11:30",
+    "usableEndTime": "13:00",
+    "minOrderAmount": 8000,
+    "notice": "1인 1매, 포장만 가능",
+    "targetRadius": 1000,
+    "targetGender": "ALL",
+    "targetAgeGroups": ["AGE_20S", "AGE_30S"],
+    "dailyBudget": 10000,
+    "startDate": "2026-11-01",
+    "endDate": "2026-11-30",
+    "statusChangedAt": "2026-11-01T00:00:00+09:00",
+    "createdAt": "2026-10-20T11:00:00+09:00"
+  }
+}
+```
+
+| 필드 | 타입 | 필수 | null 허용 | 설명 |
+|---|---|---|---|---|
+| campaignId | integer | 예 | 아니요 | 캠페인 ID |
+| storeId | integer | 예 | 아니요 | 그 캠페인이 속한 가게 ID |
+| status | string | 예 | 아니요 | 캠페인 상태 |
+| pausedReason | string | 예 | 예 | `PAUSED`일 때 중단 사유. 그 외 상태면 `null` |
+| discountTargetType | string | 예 | 아니요 | 할인 대상 |
+| discountType | string | 예 | 아니요 | 할인 방식 |
+| discountValue | integer | 예 | 아니요 | 할인값 |
+| targetMenuId | integer | 예 | 예 | 할인 대상 메뉴 ID. `discountTargetType`이 `ALL`이면 `null` |
+| issueQuantity | integer | 예 | 아니요 | 발급 수량 |
+| usableStartTime | string | 예 | 아니요 | 쿠폰 이용 가능 시작 시각 |
+| usableEndTime | string | 예 | 아니요 | 쿠폰 이용 가능 종료 시각 |
+| minOrderAmount | integer | 예 | 예 | 최소 주문 금액. 입력 안 했으면 `null` |
+| notice | string | 예 | 예 | 안내 문구. 입력 안 했으면 `null` |
+| targetRadius | integer | 예 | 아니요 | 노출 반경(m) |
+| targetGender | string | 예 | 아니요 | 노출 대상 성별 |
+| targetAgeGroups | array\<string\> | 예 | 아니요 | 노출 대상 연령대 |
+| dailyBudget | integer | 예 | 예 | 지금 적용 중인 하루 예산. 아직 한 번도 설정 안 했으면 `null` |
+| startDate | string(날짜) | 예 | 예 | 집행 시작일. 아직 한 번도 설정 안 했으면 `null` |
+| endDate | string(날짜) | 예 | 예 | 집행 종료일. 아직 한 번도 설정 안 했으면 `null` |
+| statusChangedAt | string(시각) | 예 | 아니요 | 상태가 마지막으로 바뀐 시각 |
+| createdAt | string(시각) | 예 | 아니요 | 캠페인을 만든 시각 |
+
+### 오류
+
+| HTTP | 코드 | 조건 |
+|---|---|---|
+| 403 | CAMPAIGN-005 | 그 campaignId가 없거나 본인 소유가 아님(존재 여부를 알려주지 않으려고 같은 코드로 묶는다, `api-spec.md`) |
 | 500 | COMMON-001 | 처리하지 못한 서버 오류 |

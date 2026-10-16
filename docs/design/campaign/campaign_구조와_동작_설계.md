@@ -5,7 +5,7 @@
 | 적을 것 | 내용 |
 |---|---|
 | 맡는 기능과 근거 | 캠페인의 상태 전이(FR-092)와 그 이력, 다른 도메인에 캠페인 정보를 공개하는 `CampaignQueryService` 구현, 정산의 예산 판정을 상태 전이로 옮기는 `CampaignFundingUpdater` 구현(#198) |
-| 맡지 않는 것과 그 소유 도메인 | 등록 화면 API 1·3단계(쿠폰 조건, 노출 대상)는 [`campaign-api-design.md`](./campaign-api-design.md)가 가짐(`#244`, `#253`), 4단계(하루 예산과 집행 기간)는 [Feat] 하루 예산과 집행 기간 설정(점주)이 가짐(아직 이슈 번호 없음), 예산 집행과 소진(billing), 광고 배정(adserving), 템플릿과 포스터(같은 campaign 도메인의 다른 애그리거트, [`poster-api-design.md`](./poster-api-design.md)가 따로 가짐) |
+| 맡지 않는 것과 그 소유 도메인 | 등록 화면 API 1·3·4단계(쿠폰 조건, 노출 대상, 하루 예산과 집행 기간)는 [`campaign-api-design.md`](./campaign-api-design.md)가 가짐(`#244`, `#253`, `#330`), 예산 집행과 소진(billing), 광고 배정(adserving), 템플릿과 포스터(같은 campaign 도메인의 다른 애그리거트, [`poster-api-design.md`](./poster-api-design.md)가 따로 가짐) |
 
 이 문서는 `campaign` 애그리거트(도메인 이름과 같은 루트 애그리거트)만 다룬다. `template`, `poster`, `store_audience`는 범위 밖이다.
 
@@ -48,7 +48,7 @@ campaign/
 
 | 적을 것 | 내용 |
 |---|---|
-| DB 제약으로 막을 것과 코드로 막을 것 | 마이그레이션의 CHECK 6개(`chk_campaign_discount_target`, `_discount_value`, `_paused_reason`, `_period`, `_quantity_budget`, `_usable_time`, `_target_age_groups`)를 `Campaign.create()`와 전이 메서드가 Java 레벨에서 그대로 한 번 더 검사한다([`entity-creation-guideline.md`](../../code-convention/entity-creation-guideline.md) R4-1) |
+| DB 제약으로 막을 것과 코드로 막을 것 | 마이그레이션의 CHECK 8개(`chk_campaign_discount_target`, `_discount_value`, `_paused_reason`, `_period`, `_quantity_budget`, `_usable_time`, `_target_age_groups`, `_pending_daily_budget`)를 `Campaign.create()`와 전이 메서드가 Java 레벨에서 그대로 한 번 더 검사한다([`entity-creation-guideline.md`](../../code-convention/entity-creation-guideline.md) R4-1) |
 | 다른 도메인 데이터의 사본 | 해당 없음 |
 | 이력 | 상태 변경마다 `CampaignStatusLog` 한 행. 현재 상태는 `campaign.status`가 그대로 가진다 |
 | 복잡한 조회 | `findServableOn`은 `campaign` 테이블 하나만 조회한다. billing의 "예약" 데이터(`budget_daily_plan`)는 `campaign -> billing` 간선이 없어 조인할 수 없다([설계 문서](../../architecture/런치캐치_도메인_구조와_의존성_설계.md) 2.2, 역방향은 순환). FR-092의 전이 규칙상 `PAUSED(OWNER, NO_POINTS)`는 그날 `ACTIVE`였다가 멈춘 것만 존재하므로 campaign 자신의 컬럼(`status`, `paused_reason`, `start_date`, `end_date`)만으로 조건이 성립한다고 보았다(제가 추론한 것, 문서에 명시돼 있지 않음) |
@@ -62,13 +62,62 @@ campaign/
 
 | 방향 | 대상 도메인 | 인터페이스 | 시점 |
 |---|---|---|---|
-| 공개 | 모든 도메인 | `CampaignQueryService`(`findByStoreIdIn`, `findAllById`, `findServableOn`, `findEligibleCampaigns`, `findByOwnerIdAndStatusIn`, `hasLiveCampaign`, `findOwnerIdsWithLiveCampaign`) | 요청마다 |
+| 공개 | 모든 도메인 | `CampaignQueryService`(`findByStoreIdIn`, `findAllById`, `findServableOn`, `findEligibleCampaigns`, `findByOwnerIdAndStatusIn`, `hasLiveCampaign`, `findOwnerIdsWithLiveCampaign`, `findByIdForUpdate`) | 요청마다. `findByIdForUpdate`는 호출자의 쓰기 트랜잭션 안에서 불러야 잠금이 유지된다(`#378`, billing의 재예약 경합 방지용, 실제 호출은 `#319`가 이어 붙인다) |
 | 받음(직접 호출) | billing | `CampaignFundingUpdater.applyFundingJudgement` | 정산의 00:00 예산 판정, 충전 직후 재예약 판정 때마다. 이벤트가 아니라 정산의 트랜잭션 안에서 직접 부른다 |
 | 쓰기(미연결) | store | `StoreCampaignSummaryUpdater` | `activate`/`pause`/`resume`/`end`뿐 아니라 `pauseFromFunding`/`resumeFromFunding` 때도 호출해야 한다(잔액 부족 중단과 충전 후 재개도 가게 요약에 반영돼야 함, 가게 담당 회신 2026-10-13). store 쪽에 그 인터페이스가 아직 없어([설계 문서](../../architecture/런치캐치_도메인_구조와_의존성_설계.md) 2.4에 간선만 있음) 이번 이슈는 호출을 빼고 넘어간다. 생기면 `CampaignStatusService`에 이어 붙인다 |
 
 받는 이벤트는 해당 없음.
 
-## 6. 상태와 흐름
+## 6. 구조와 동작 그림
+
+### 모듈 구조
+
+```mermaid
+flowchart LR
+    REQ([요청]) --> CC
+    CALL([다른 도메인의 호출]) --> CQC
+    CALL --> CFC
+
+    subgraph campaign["campaign 모듈"]
+        direction LR
+        CQC["contract<br/>CampaignQueryService"]
+        CFC["contract<br/>CampaignFundingUpdater"]
+
+        subgraph root["도메인 루트 (campaign 애그리거트)"]
+            CC[CampaignController] --> CCS[CampaignCouponConditionService]
+            CC --> CTS[CampaignTargetAudienceService]
+            CCS --> CR[(CampaignRepository)]
+            CTS --> CR
+            CSS[CampaignStatusService] --> CR
+            CSS --> CSLR[(CampaignStatusLogRepository)]
+            CQS["CampaignQueryServiceImpl<br/>구현: CampaignQueryService"] --> CR
+            CFI["CampaignFundingUpdaterImpl<br/>구현: CampaignFundingUpdater"] --> CSS
+        end
+
+        CQC -.-> CQS
+        CFC -.-> CFI
+    end
+
+    CCS --> OWN["owner.contract<br/>OwnerStatusQuery"]
+    CTS --> OWN
+    CTS --> OPS["ops.contract<br/>PlatformSettingQueryService"]
+
+    classDef out fill:#f5f5f5,stroke:#999,stroke-dasharray:4 3
+    class OWN,OPS out
+```
+
+입구는 둘만 실제로 연결돼 있다. HTTP 요청(`CampaignController`, `#244`/`#253`/`#330`)과 다른
+도메인의 호출(`CampaignQueryService`, `CampaignFundingUpdater`)이다. 스케줄과 이벤트 수신은
+아직 없다(`CampaignStatusService`의 `schedule`/`activate`/`end`를 부를 배치가 아직 없다,
+2장). `CampaignController`와 `CampaignCouponConditionService`/`CampaignTargetAudienceService`의
+업무 규칙은 이 문서가 아니라 [`campaign-api-design.md`](./campaign-api-design.md)가 가진다
+(1장). 여기서는 구조만 보인다.
+
+`owner.contract.OwnerStatusQuery`(점주 상태 확인)와 `ops.contract.PlatformSettingQueryService`(최소
+하루 예산, `#330`)는 등록 화면 API 두 서비스가 부르는 바깥 도메인이다. `CampaignStatusService`와
+`CampaignQueryServiceImpl`, `CampaignFundingUpdaterImpl`은 다른 도메인을 부르지 않는다.
+
+### 상태 변경
 
 ```mermaid
 stateDiagram-v2
@@ -90,6 +139,61 @@ stateDiagram-v2
 | ACTIVE/PAUSED -> ENDED | SYSTEM | `CampaignStatusChangedEvent`(servable=false), `CampaignEndedEvent` | `IllegalStateException` |
 
 이 이슈엔 HTTP 엔드포인트가 없어 "금지일 때 응답"은 전부 엔티티의 `IllegalStateException`이다. 409로 바꿔 응답하는 일은 이 전이를 실제로 호출하는 컨트롤러가 생기는 이슈(점주 API 등)가 맡는다.
+
+### 주요 흐름
+
+돈과 상태가 함께 걸린 흐름 둘만 그린다. 나머지(쿠폰 조건 등록 등)는 상태를 바꾸지 않아 뺀다.
+
+**흐름 1. 정산의 예산 판정에 따른 간접 전이(`#198`)**
+
+```mermaid
+sequenceDiagram
+    participant Billing as billing (FundingJudgement)
+    participant CFI as CampaignFundingUpdaterImpl
+    participant CSS as CampaignStatusService
+    participant CR as CampaignRepository
+
+    Billing->>CFI: applyFundingJudgement(judgement) [billing 트랜잭션 안]
+    CFI->>CSS: pauseFromFunding / resumeFromFunding
+    CSS->>CR: findByIdForUpdate [비관 잠금]
+    CSS->>CSS: 지금 상태가 이 판정을 받는 자리인지 확인
+    alt 받는 자리가 아니다
+        CSS-->>CFI: 조용히 무시(예외 없음)
+    else 받는 자리다
+        CSS->>CR: 상태 변경 저장, CampaignStatusLog 기록
+        CSS->>CSS: CampaignStatusChangedEvent 발행
+    end
+```
+
+| 실패 지점 | 남는 상태 | 다시 요청하면 |
+|---|---|---|
+| 잠금 대기 중 billing 쪽 트랜잭션 타임아웃 | campaign 상태는 그대로, billing만 실패 | billing이 재시도. 같은 판정이라 멱등하게 같은 결과 |
+| 저장 뒤 이벤트 발행 전 프로세스 종료 | 상태는 바뀌었는데 이벤트가 유실될 수 있다 | 이 문서 범위 밖(커밋 뒤 이벤트 처리는 [장애 처리 설계](./campaign_장애_처리_설계.md)) |
+
+**흐름 2. ACTIVE 캠페인의 하루 예산 변경(`#330`)**
+
+```mermaid
+sequenceDiagram
+    participant Owner as 점주 (HTTP)
+    participant C as CampaignController
+    participant T as CampaignTargetAudienceService
+    participant OW as owner.OwnerStatusQuery
+    participant CR as CampaignRepository
+    participant OPS as ops.PlatformSettingQueryService
+
+    Owner->>C: PATCH /v1/owner/campaigns/{campaignId}
+    C->>T: handle(ownerId, campaignId, request)
+    T->>OW: 점주 상태 ACTIVE 확인
+    T->>CR: findByIdForUpdate [비관 잠금]
+    T->>OPS: getMinDailyBudget()
+    T->>T: 최소 하루 예산, 상태별 허용 필드 검사
+    T->>CR: reserveDailyBudget [pendingDailyBudget만 갱신, dailyBudget은 그대로]
+```
+
+| 실패 지점 | 남는 상태 | 다시 요청하면 |
+|---|---|---|
+| 잠금 획득 뒤 `pause`가 먼저 커밋됨 | 이 요청은 갱신된 상태(PAUSED)를 보고 `CAMPAIGN-006`으로 거부 | 점주가 재개한 뒤 다시 요청 |
+| `getMinDailyBudget()` 실패 | 트랜잭션 전체 롤백, `pendingDailyBudget` 미반영 | 재요청 시 처음부터 다시 검증 |
 
 ## 7. 트랜잭션과 동시성
 
