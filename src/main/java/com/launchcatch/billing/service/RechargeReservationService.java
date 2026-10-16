@@ -38,6 +38,10 @@ import org.springframework.transaction.annotation.Transactional;
  * 것뿐이다. 00:00 예약이 아직 돌지 않아 계획이 없는 캠페인은 건너뛴다.
  *
  * 한 트랜잭션이고 점주 계정 행을 먼저 잠근다(D-8). 캠페인 ID 오름차순으로(D-4) 잔액이 남는 대로 채운다.
+ *
+ * 후보 목록은 계정 행을 잠그기 전에 읽으므로 잠금을 기다리는 동안 낡을 수 있다. 그래서 캠페인마다
+ * 원장을 쓰기 직전에 `CampaignQueryService.findByIdForUpdate`로 그 캠페인 하나만 다시 잠그고 최신
+ * 상태를 확인한다(#378). 이미 재개됐거나 관리자·점주가 중단했거나 종료됐으면 건너뛴다.
  */
 @Slf4j
 @Service
@@ -76,7 +80,12 @@ public class RechargeReservationService {
         }
     }
 
-    // 계획이 없으면 건너뛰고, 늘어난 몫이 없으면 그대로 두고 남은 잔액을 돌려준다
+    /*
+     * 계획이 없으면 건너뛴다. 있으면 캠페인을 잠그고(findByIdForUpdate, #378) 최신 상태를 다시 읽는다 —
+     * 후보를 읽은 뒤 계정 행 잠금을 기다리는 동안 다른 트랜잭션이 같은 캠페인을 이미 재개했거나
+     * 관리자·점주가 중단했거나 종료시켰을 수 있다. 그 경우 더 이상 대상이 아니므로 건너뛴다.
+     * 늘어난 몫이 없으면 그대로 두고, 어느 경우든 남은 잔액을 돌려준다.
+     */
     private long reserveFor(PointCharged charged, LocalDate businessDate, CampaignInfo campaign,
                             long remaining, LocalDateTime now) {
         Optional<BudgetDailyPlan> maybePlan = planRepository.findByCampaignIdAndBusinessDate(
@@ -85,13 +94,17 @@ public class RechargeReservationService {
             return remaining;
         }
         BudgetDailyPlan plan = maybePlan.get();
-        long newReserved = Math.min(dailyBudgetOf(campaign), plan.getDailyBudget() + remaining);
+        CampaignInfo latest = campaignQuery.findByIdForUpdate(campaign.campaignId()).orElse(null);
+        if (latest == null || latest.status() != CampaignStatus.PAUSED || latest.pauseReason() != PauseReason.NO_POINTS) {
+            return remaining;
+        }
+        long newReserved = Math.min(dailyBudgetOf(latest), plan.getDailyBudget() + remaining);
         long delta = newReserved - plan.getDailyBudget();
         if (delta <= 0) {
             return remaining;
         }
         PointLedger reserve = PointLedger.rechargeReserve(
-                charged.ownerId(), charged.paymentId(), campaign.campaignId(), businessDate, delta);
+                charged.ownerId(), charged.paymentId(), latest.campaignId(), businessDate, delta);
         int inserted = ledgerRepository.insertRechargeReserveIfAbsent(reserve.getOwnerId(), reserve.getPaymentId(),
                 reserve.getCampaignId(), reserve.getBusinessDate(), reserve.getAmount(), now);
         if (inserted == 0) {
@@ -99,12 +112,12 @@ public class RechargeReservationService {
             return remaining;
         }
         plan.increaseDailyBudget(newReserved);
-        eventPublisher.publishEvent(new RechargeReserveIncreased(campaign.campaignId(), businessDate, newReserved));
+        eventPublisher.publishEvent(new RechargeReserveIncreased(latest.campaignId(), businessDate, newReserved));
         if (newReserved >= plan.getUnitPrice()) {
-            notifyResume(charged, businessDate, campaign, plan, newReserved);
+            notifyResume(charged, businessDate, latest, plan, newReserved);
         }
         log.info("event=RECHARGE_RESERVE_DONE businessDate={} campaignId={} paymentId={} delta={} newReserved={}",
-                businessDate, campaign.campaignId(), charged.paymentId(), delta, newReserved);
+                businessDate, latest.campaignId(), charged.paymentId(), delta, newReserved);
         return remaining - delta;
     }
 

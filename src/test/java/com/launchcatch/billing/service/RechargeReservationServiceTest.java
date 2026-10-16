@@ -83,8 +83,10 @@ class RechargeReservationServiceTest {
 
     @Test
     void 설정_하루예산_10000_기존예약_3000_잔액_20000이면_새_예약액_10000이고_RESERVE는_7000만_기록한다() {
+        CampaignInfo campaign = campaign(1L, 10000L);
         when(campaignQuery.findByOwnerIdAndStatusIn(OWNER_ID, List.of(CampaignStatus.PAUSED)))
-                .thenReturn(List.of(campaign(1L, 10000L)));
+                .thenReturn(List.of(campaign));
+        when(campaignQuery.findByIdForUpdate(1L)).thenReturn(Optional.of(campaign));
         stubExistingPlan(1L, 3000L, 10L);
         when(ledgerRepository.sumBalance(OWNER_ID)).thenReturn(20000L);
         when(ledgerRepository.insertRechargeReserveIfAbsent(eq(OWNER_ID), eq(PAYMENT_ID), eq(1L), eq(DAY), eq(-7000L), any()))
@@ -102,8 +104,10 @@ class RechargeReservationServiceTest {
 
     @Test
     void 새_예약액이_단가보다_작으면_예약만_늘리고_재개를_통보하지_않는다() {
+        CampaignInfo campaign = campaign(1L, 10000L);
         when(campaignQuery.findByOwnerIdAndStatusIn(OWNER_ID, List.of(CampaignStatus.PAUSED)))
-                .thenReturn(List.of(campaign(1L, 10000L)));
+                .thenReturn(List.of(campaign));
+        when(campaignQuery.findByIdForUpdate(1L)).thenReturn(Optional.of(campaign));
         stubExistingPlan(1L, 100L, 10000L);
         when(ledgerRepository.sumBalance(OWNER_ID)).thenReturn(200L);
         when(ledgerRepository.insertRechargeReserveIfAbsent(eq(OWNER_ID), eq(PAYMENT_ID), eq(1L), eq(DAY), eq(-200L), any()))
@@ -157,11 +161,61 @@ class RechargeReservationServiceTest {
         verify(ledgerRepository, never()).insertRechargeReserveIfAbsent(any(), any(), any(), any(), any(Long.class), any());
     }
 
+    /*
+     * 후보를 읽은 뒤 점주 계정 잠금을 기다리는 동안 다른 트랜잭션이 같은 캠페인을 이미 재개시킨 경우다(#378).
+     * findByIdForUpdate 로 다시 읽은 최신 상태가 더 이상 PAUSED(NO_POINTS)가 아니므로 그 캠페인은 건너뛰고,
+     * 아직 멈춰 있는 다음 캠페인이 남은 잔액을 전부 받는다.
+     */
+    @Test
+    void 잠근_뒤_이미_재개된_캠페인은_건너뛰고_남은_잔액을_다음_캠페인에_넘긴다() {
+        CampaignInfo stale1 = campaign(1L, 10000L);
+        CampaignInfo stale3 = campaign(3L, 10000L);
+        when(campaignQuery.findByOwnerIdAndStatusIn(OWNER_ID, List.of(CampaignStatus.PAUSED)))
+                .thenReturn(List.of(stale1, stale3));
+        CampaignInfo resumed1 = new CampaignInfo(1L, OWNER_ID, 101L, CampaignStatus.ACTIVE, 100, null, null,
+                DAY.minusDays(1), DAY.plusDays(1), null, null, 0, null, 0, null, List.of(), null, null, null,
+                null, 10000L);
+        when(campaignQuery.findByIdForUpdate(1L)).thenReturn(Optional.of(resumed1));
+        when(campaignQuery.findByIdForUpdate(3L)).thenReturn(Optional.of(stale3));
+        stubExistingPlan(1L, 3000L, 10L);
+        stubExistingPlan(3L, 0L, 10L);
+        when(ledgerRepository.sumBalance(OWNER_ID)).thenReturn(15000L);
+        when(ledgerRepository.insertRechargeReserveIfAbsent(any(), any(), any(), any(), any(Long.class), any()))
+                .thenReturn(1);
+        when(ledgerRepository.sumDeductForCampaignOn(any(), any())).thenReturn(0L);
+
+        service(LocalTime.of(12, 0)).reserve(new PointCharged(OWNER_ID, PAYMENT_ID, 15000L));
+
+        verify(ledgerRepository, never())
+                .insertRechargeReserveIfAbsent(any(), any(), eq(1L), any(), any(Long.class), any());
+        verify(ledgerRepository).insertRechargeReserveIfAbsent(
+                OWNER_ID, PAYMENT_ID, 3L, DAY, -10000L, LocalDateTime.of(DAY, LocalTime.of(12, 0)));
+    }
+
+    // 후보를 읽은 뒤 관리자가 그 캠페인을 중단시킨 경우도 같은 방식으로 건너뛴다
+    @Test
+    void 잠근_뒤_관리자가_중단시킨_캠페인은_건너뛴다() {
+        CampaignInfo stale = campaign(1L, 10000L);
+        when(campaignQuery.findByOwnerIdAndStatusIn(OWNER_ID, List.of(CampaignStatus.PAUSED)))
+                .thenReturn(List.of(stale));
+        CampaignInfo pausedByAdmin = campaign(1L, PauseReason.ADMIN, DAY.minusDays(1), DAY.plusDays(1), 10000L);
+        when(campaignQuery.findByIdForUpdate(1L)).thenReturn(Optional.of(pausedByAdmin));
+        stubExistingPlan(1L, 3000L, 10L);
+        when(ledgerRepository.sumBalance(OWNER_ID)).thenReturn(20000L);
+
+        service(LocalTime.of(12, 0)).reserve(new PointCharged(OWNER_ID, PAYMENT_ID, 20000L));
+
+        verifyNoInteractions(fundingUpdater, eventPublisher);
+        verify(ledgerRepository, never()).insertRechargeReserveIfAbsent(any(), any(), any(), any(), any(Long.class), any());
+    }
+
     // 같은 결제의 이벤트가 두 번 와도 RESERVE 와 통보가 한 번뿐이다
     @Test
     void 이미_반영된_재예약이면_다시_기록하거나_통보하지_않는다() {
+        CampaignInfo campaign = campaign(1L, 10000L);
         when(campaignQuery.findByOwnerIdAndStatusIn(OWNER_ID, List.of(CampaignStatus.PAUSED)))
-                .thenReturn(List.of(campaign(1L, 10000L)));
+                .thenReturn(List.of(campaign));
+        when(campaignQuery.findByIdForUpdate(1L)).thenReturn(Optional.of(campaign));
         stubExistingPlan(1L, 3000L, 10L);
         when(ledgerRepository.sumBalance(OWNER_ID)).thenReturn(20000L);
         when(ledgerRepository.insertRechargeReserveIfAbsent(eq(OWNER_ID), eq(PAYMENT_ID), eq(1L), eq(DAY), eq(-7000L), any()))
@@ -178,6 +232,8 @@ class RechargeReservationServiceTest {
         CampaignInfo c1 = campaign(1L, 10000L);
         when(campaignQuery.findByOwnerIdAndStatusIn(OWNER_ID, List.of(CampaignStatus.PAUSED)))
                 .thenReturn(List.of(c3, c1));
+        when(campaignQuery.findByIdForUpdate(1L)).thenReturn(Optional.of(c1));
+        when(campaignQuery.findByIdForUpdate(3L)).thenReturn(Optional.of(c3));
         stubExistingPlan(1L, 0L, 10L);
         stubExistingPlan(3L, 0L, 10L);
         when(ledgerRepository.sumBalance(OWNER_ID)).thenReturn(15000L);
