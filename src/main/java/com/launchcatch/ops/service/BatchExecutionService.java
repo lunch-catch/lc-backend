@@ -175,7 +175,11 @@ public class BatchExecutionService {
                 BatchStatus.RUNNING, ownerId, staleBefore)) {
             if (logs.takeOver(stale.getJobName(), stale.getBusinessDate(), ownerId, now(), staleBefore) == 1) {
                 alert.takenOver(stale.getJobName(), stale.getBusinessDate(), stale.getOwnerId(), ownerId);
-                taken.add(stale);
+                /*
+                 * takeOver 는 벌크 UPDATE라 stale 의 attemptNo 는 그대로다. 묶음 밖 작업을
+                 * 다시 돌리려면 오른 세대가 필요해 다시 읽는다(#360).
+                 */
+                taken.add(reload(stale.getJobName(), stale.getBusinessDate()));
             }
         }
         return taken;
@@ -218,6 +222,26 @@ public class BatchExecutionService {
     }
 
     /*
+     * 실행 행의 소유자와 세대가 지금도 맞는지 본다(#360).
+     *
+     * 호출자 트랜잭션에 참여해 행을 잠근다. succeed/fail의 소유자 조건만으로는 임대를 잃은
+     * 서버를 막지 못한다. 그 조건은 결과가 이미 커밋된 뒤에야 걸린다. 여기서는 결과를 공개하기
+     * 전에, 같은 트랜잭션 안에서 확인하고 맞지 않으면 그 트랜잭션 전체를 롤백시킨다.
+     */
+    @Transactional
+    public void assertCurrentAttempt(String jobName, LocalDate businessDate, int attemptNo) {
+        BatchExecutionLog row = logs.findByJobNameAndBusinessDateForUpdate(jobName, businessDate)
+                .orElseThrow(() -> new IllegalStateException(
+                        "batch_execution_log missing row: " + jobName + " " + businessDate));
+        if (!isMine(row) || row.getAttemptNo() != attemptNo) {
+            throw new IllegalStateException(
+                    "attempt no longer current: " + jobName + " " + businessDate
+                            + " expected=" + attemptNo + " actual=" + row.getAttemptNo()
+                            + " owner=" + row.getOwnerId());
+        }
+    }
+
+    /*
      * 실행 중 행을 닫는다. 내 소유일 때만 닫히고, 아니면 0건이다.
      *
      * 소유자 조건이 없으면 생존 신호가 끊겼다가 늦게 깨어난 서버가 남의 실행을 닫는다.
@@ -257,6 +281,10 @@ public class BatchExecutionService {
 
     private boolean isMine(BatchExecutionLog row) {
         return ownerId.equals(row.getOwnerId());
+    }
+
+    private BatchExecutionLog reload(String jobName, LocalDate businessDate) {
+        return logs.findByJobNameAndBusinessDate(jobName, businessDate).orElseThrow();
     }
 
     /** 멈춘 실행 중 행 하나를 이어받는다. 조건에 걸린 서버만 1건을 받는다. */

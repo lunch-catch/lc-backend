@@ -3,11 +3,13 @@ package com.launchcatch.ops.job;
 import com.launchcatch.ops.entity.BatchExecutionLog;
 import com.launchcatch.ops.scheduler.DailyJob;
 import com.launchcatch.ops.scheduler.RetryBackoff;
+import com.launchcatch.ops.scheduler.StandaloneJob;
 import com.launchcatch.ops.scheduler.StepOutcome;
 import com.launchcatch.ops.scheduler.TransientFailures;
 import com.launchcatch.ops.service.BatchExecutionService;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 import lombok.extern.slf4j.Slf4j;
@@ -31,12 +33,14 @@ public class DailyJobScheduler {
     public static final String BUNDLE = "DAILY_0000";
 
     private final List<DailyJob> jobs;
+    private final List<StandaloneJob> standaloneJobs;
     private final BatchExecutionService executions;
     private final RetryBackoff backoff;
 
-    public DailyJobScheduler(List<DailyJob> jobs, BatchExecutionService executions,
-                             RetryBackoff backoff) {
+    public DailyJobScheduler(List<DailyJob> jobs, List<StandaloneJob> standaloneJobs,
+                             BatchExecutionService executions, RetryBackoff backoff) {
         this.jobs = jobs;
+        this.standaloneJobs = standaloneJobs;
         this.executions = executions;
         this.backoff = backoff;
     }
@@ -71,21 +75,34 @@ public class DailyJobScheduler {
      * 묶음을 이어받으면 SUCCESS 가 아닌 첫 단계부터 다시 돈다. 묶음의 단계는 따로 손대지
      * 않는다. 묶음을 다시 도는 길에서 begin 이 그 행을 다시 가져간다.
      *
-     * 그 둘이 아닌 작업은 이어받아도 다시 돌릴 방법이 없다. 소유자만 바꿔 두면 내 생존 신호가
+     * 등록된 묶음 밖 작업(StandaloneJob)이면 이 서버가 run 을 다시 부른다(#360). 그 둘도
+     * 아니고 등록된 작업도 아니면 다시 돌릴 방법이 없다. 소유자만 바꿔 두면 내 생존 신호가
      * 그 행을 영원히 살아 있게 만들어 아무도 멈춘 것을 모른다. 그래서 실패로 닫고 알린다.
      */
     @Scheduled(fixedDelayString = "${launchcatch.batch.takeover-scan:1m}")
     public void takeOverStale() {
         List<BatchExecutionLog> taken = executions.takeOverStale();
         Set<String> steps = stepNames();
-        taken.stream()
-                .filter(row -> !BUNDLE.equals(row.getJobName()))
-                .filter(row -> !steps.contains(row.getJobName()))
-                .forEach(row -> executions.fail(row.getJobName(), row.getBusinessDate(),
-                        "멈춘 실행을 이어받았으나 다시 돌릴 경로가 없다"));
-        taken.stream()
-                .filter(row -> BUNDLE.equals(row.getJobName()))
-                .forEach(row -> runBundle(row.getBusinessDate()));
+        Map<String, StandaloneJob> standalone = standaloneJobsByName();
+        for (BatchExecutionLog row : taken) {
+            if (BUNDLE.equals(row.getJobName())) {
+                runBundle(row.getBusinessDate());
+            } else if (steps.contains(row.getJobName())) {
+                continue;
+            } else if (standalone.containsKey(row.getJobName())) {
+                resumeStandalone(standalone.get(row.getJobName()), row);
+            } else {
+                executions.fail(row.getJobName(), row.getBusinessDate(),
+                        "멈춘 실행을 이어받았으나 다시 돌릴 경로가 없다");
+            }
+        }
+    }
+
+    /** 이어받은 묶음 밖 작업을 다시 돈다. 번들과 달리 실패해도 다른 작업에 영향이 없다. */
+    private void resumeStandalone(StandaloneJob job, BatchExecutionLog row) {
+        LocalDate businessDate = row.getBusinessDate();
+        int attemptNo = row.getAttemptNo();
+        attempt(job.jobName(), businessDate, () -> job.run(businessDate, attemptNo), 1, () -> { });
     }
 
     /*
@@ -119,22 +136,25 @@ public class DailyJobScheduler {
             executions.fail(BUNDLE, businessDate, job.jobName() + " 단계를 시작할 수 없다");
             return false;
         }
-        return attempt(job, businessDate, 1);
+        return attempt(job.jobName(), businessDate, () -> job.run(businessDate), 1,
+                () -> executions.fail(BUNDLE, businessDate, job.jobName() + " 단계가 실패했다"));
     }
 
     /*
      * 한 번 돌려 보고, 일시적 오류면 기다렸다가 다시 돌린다.
      *
-     * 다시 도는 것은 그 단계뿐이다. 묶음을 처음부터 돌리면 이미 성공한 단계가 다시 돌아,
-     * 멱등이라도 집계가 두 번 더해질 여지가 생긴다.
+     * 묶음 단계와 묶음 밖 작업이 같은 재실행 규칙을 쓴다(#360). 다른 것은 실패했을 때 묶음까지
+     * 실패시킬지뿐이라 onFailure 로 받는다. 다시 도는 것은 이 작업뿐이다. 묶음을 처음부터
+     * 돌리면 이미 성공한 단계가 다시 돌아, 멱등이라도 집계가 두 번 더해질 여지가 생긴다.
      */
-    private boolean attempt(DailyJob job, LocalDate businessDate, int attempt) {
+    private boolean attempt(String jobName, LocalDate businessDate, Runnable action, int attempt,
+                             Runnable onFailure) {
         try {
-            job.run(businessDate);
-            executions.succeed(job.jobName(), businessDate);
+            action.run();
+            executions.succeed(jobName, businessDate);
             return true;
         } catch (RuntimeException e) {
-            return retryOrFail(job, businessDate, attempt, e);
+            return retryOrFail(jobName, businessDate, action, attempt, e, onFailure);
         }
     }
 
@@ -145,30 +165,35 @@ public class DailyJobScheduler {
      *
      * 내 것이 아니어서 실패로 가는 경우에도 close 가 소유자를 보므로 남의 행을 닫지 않는다.
      */
-    private boolean retryOrFail(DailyJob job, LocalDate businessDate, int attempt, RuntimeException e) {
+    private boolean retryOrFail(String jobName, LocalDate businessDate, Runnable action, int attempt,
+                                 RuntimeException e, Runnable onFailure) {
         String reason = describe(e);
         if (!TransientFailures.isTransient(e)
-                || !executions.recordRetry(job.jobName(), businessDate, reason)
+                || !executions.recordRetry(jobName, businessDate, reason)
                 || !backoff.pause(attempt)) {
-            executions.fail(job.jobName(), businessDate, reason);
-            executions.fail(BUNDLE, businessDate, job.jobName() + " 단계가 실패했다");
+            executions.fail(jobName, businessDate, reason);
+            onFailure.run();
             return false;
         }
         /*
          * 기다린 사이에 임대를 잃었을 수 있다. 다시 돌리기 전에 확인한다.
-         * 확인하지 않으면 이어받은 서버와 같은 단계를 겹쳐 돌린다. 작업이 멱등이라도 겹쳐 돌면
+         * 확인하지 않으면 이어받은 서버와 같은 작업을 겹쳐 돌린다. 작업이 멱등이라도 겹쳐 돌면
          * 집계가 두 번 더해질 여지가 생긴다.
          */
-        if (!executions.renew(job.jobName(), businessDate)) {
-            log.warn("대기 중에 단계를 다른 서버가 이어받아 중단한다. job={} businessDate={}",
-                    job.jobName(), businessDate);
+        if (!executions.renew(jobName, businessDate)) {
+            log.warn("대기 중에 작업을 다른 서버가 이어받아 중단한다. job={} businessDate={}",
+                    jobName, businessDate);
             return false;
         }
-        return attempt(job, businessDate, attempt + 1);
+        return attempt(jobName, businessDate, action, attempt + 1, onFailure);
     }
 
     private Set<String> stepNames() {
         return jobs.stream().map(DailyJob::jobName).collect(Collectors.toSet());
+    }
+
+    private Map<String, StandaloneJob> standaloneJobsByName() {
+        return standaloneJobs.stream().collect(Collectors.toMap(StandaloneJob::jobName, job -> job));
     }
 
     private String describe(RuntimeException e) {
