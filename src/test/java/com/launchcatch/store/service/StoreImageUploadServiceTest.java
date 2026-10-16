@@ -4,6 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -26,6 +28,7 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.util.Optional;
+import java.util.function.Consumer;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -33,6 +36,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.transaction.support.TransactionCallback;
+import org.springframework.transaction.support.TransactionTemplate;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.HeadObjectRequest;
 import software.amazon.awssdk.services.s3.model.HeadObjectResponse;
@@ -55,17 +60,29 @@ class StoreImageUploadServiceTest {
     @Mock private S3Presigner s3Presigner;
     @Mock private S3Client s3Client;
     @Mock private PresignedPutObjectRequest presignedPutObjectRequest;
+    @Mock private TransactionTemplate transactionTemplate;
 
     private StoreImageUploadService service;
 
+    @SuppressWarnings("unchecked")
     @BeforeEach
     void setUp() throws Exception {
         service = new StoreImageUploadService(
                 storeImageRepository, progressRepository, progressService, ownerStatusQuery,
-                s3Presigner, s3Client, FIXED_CLOCK);
+                s3Presigner, s3Client, FIXED_CLOCK, transactionTemplate);
         Field bucketField = StoreImageUploadService.class.getDeclaredField("mediaBucket");
         bucketField.setAccessible(true);
         bucketField.set(service, "test-media-bucket");
+
+        lenient().when(transactionTemplate.execute(any())).thenAnswer(invocation -> {
+            TransactionCallback<?> callback = invocation.getArgument(0);
+            return callback.doInTransaction(null);
+        });
+        lenient().doAnswer(invocation -> {
+            Consumer<Object> callback = invocation.getArgument(0);
+            callback.accept(null);
+            return null;
+        }).when(transactionTemplate).executeWithoutResult(any());
     }
 
     @Test
@@ -90,6 +107,21 @@ class StoreImageUploadServiceTest {
         ArgumentCaptor<PutObjectPresignRequest> presignCaptor = ArgumentCaptor.forClass(PutObjectPresignRequest.class);
         verify(s3Presigner).presignPutObject(presignCaptor.capture());
         assertThat(presignCaptor.getValue().putObjectRequest().contentLength()).isEqualTo(1000L);
+    }
+
+    @Test
+    @DisplayName("presign이 실패하면 예약해 둔 PENDING 행을 지우고 그대로 던진다")
+    void presign이_실패하면_예약을_지운다() {
+        givenOnboardingOwnerWithStoreForUpdate();
+        when(storeImageRepository.countByStoreIdAndImageType(STORE_ID, StoreImageType.INTERIOR)).thenReturn(0L);
+        RuntimeException presignFailure = new RuntimeException("자격 증명을 가져오지 못했다");
+        when(s3Presigner.presignPutObject(any(PutObjectPresignRequest.class))).thenThrow(presignFailure);
+
+        assertThatThrownBy(() -> service.prepareInteriorUpload(OWNER_ID, "photo.jpg", "image/jpeg", 1000L))
+                .isSameAs(presignFailure);
+
+        verify(storeImageRepository).save(any(StoreImage.class));
+        verify(storeImageRepository).delete(any(StoreImage.class));
     }
 
     @Test

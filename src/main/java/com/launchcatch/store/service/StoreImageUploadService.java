@@ -22,6 +22,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.HeadObjectRequest;
 import software.amazon.awssdk.services.s3.model.HeadObjectResponse;
@@ -51,16 +52,35 @@ public class StoreImageUploadService {
     private final S3Presigner s3Presigner;
     private final S3Client s3Client;
     private final Clock clock;
+    private final TransactionTemplate transactionTemplate;
 
     @Value("${s3.media-bucket}")
     private String mediaBucket;
 
-    @Transactional
     public StoreImagePrepareResult prepareInteriorUpload(Long ownerId, String originalFilename,
             String contentType, Long fileSize) {
         validateOnboardingOwner(ownerId);
         validateContentType(contentType);
         validateFileSize(fileSize);
+
+        StoreImage image = transactionTemplate.execute(
+                status -> reserveInteriorImage(ownerId, originalFilename, contentType, fileSize));
+
+        String uploadUrl;
+        try {
+            uploadUrl = presign(image.getObjectKey(), contentType, fileSize);
+        } catch (RuntimeException e) {
+            // presign은 자격 증명을 원격으로 조회할 수 있어 잠금을 쥔 트랜잭션 밖에서 부른다(코드래빗 리뷰로 찾음).
+            // 서명이 실패하면 예약해 둔 PENDING 행을 지워 순번과 3개 제한 자리를 돌려준다.
+            transactionTemplate.executeWithoutResult(status -> storeImageRepository.delete(image));
+            throw e;
+        }
+
+        return new StoreImagePrepareResult(image.getUploadId(), uploadUrl, image.getSortOrder());
+    }
+
+    private StoreImage reserveInteriorImage(Long ownerId, String originalFilename,
+            String contentType, Long fileSize) {
         Long storeId = findStoreIdForUpdate(ownerId);
 
         long existing = storeImageRepository.countByStoreIdAndImageType(storeId, StoreImageType.INTERIOR);
@@ -71,14 +91,11 @@ public class StoreImageUploadService {
 
         String uploadId = UUID.randomUUID().toString();
         String objectKey = buildObjectKey(storeId, uploadId, contentType);
-        String uploadUrl = presign(objectKey, contentType, fileSize);
-
         StoreImage image = StoreImage.preparePending(
                 storeId, uploadId, StoreImageType.INTERIOR, objectKey, originalFilename, contentType, fileSize,
                 sortOrder);
         storeImageRepository.save(image);
-
-        return new StoreImagePrepareResult(uploadId, uploadUrl, sortOrder);
+        return image;
     }
 
     @Transactional
