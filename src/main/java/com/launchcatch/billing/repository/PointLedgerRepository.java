@@ -43,6 +43,9 @@ public interface PointLedgerRepository extends JpaRepository<PointLedger, Long>,
     // 같은 점주가 같은 멱등 키로 남긴 조정이다(uk_point_ledger_adjust_idem)
     Optional<PointLedger> findByOwnerIdAndIdempotencyKey(Long ownerId, String idempotencyKey);
 
+    // PG_VS_CHARGE 대사(13번)가 묻는다. 결제당 CHARGE 는 많아야 한 줄이다(uk_point_ledger_payment_entry)
+    boolean existsByPaymentIdAndEntryType(Long paymentId, EntryType entryType);
+
     // 영업일로 귀속되는 RESERVE 와 RELEASE 의 합이다
     @Query("""
             select coalesce(sum(l.amount), 0L)
@@ -141,6 +144,78 @@ public interface PointLedgerRepository extends JpaRepository<PointLedger, Long>,
             """)
     List<CampaignSpend> sumDeductForCampaignsOn(@Param("campaignIds") Collection<Long> campaignIds,
                                                 @Param("businessDate") LocalDate businessDate);
+
+    /*
+     * 집계 조회가 쓰는 점주와 캠페인과 유형별 합이다. 양수 행과 음수 행을 나눠 더해 ADJUST 의 방향을 살린다.
+     * RESERVE 와 RELEASE 는 원장의 영업일로 묻는다.
+     */
+    @Query("""
+            select new com.launchcatch.billing.repository.LedgerSumRow(l.ownerId, l.campaignId, l.entryType,
+                       sum(case when l.amount > 0 then l.amount else 0L end),
+                       sum(case when l.amount < 0 then l.amount else 0L end))
+              from PointLedger l
+             where l.businessDate = :businessDate
+               and l.entryType in (com.launchcatch.billing.entity.EntryType.RESERVE,
+                                   com.launchcatch.billing.entity.EntryType.RELEASE)
+             group by l.ownerId, l.campaignId, l.entryType
+            """)
+    List<LedgerSumRow> sumReserveReleaseOn(@Param("businessDate") LocalDate businessDate);
+
+    // DEDUCT 는 영업일이 차감 판정에 있어 serve_id 로 맞춰 묻는다
+    @Query("""
+            select new com.launchcatch.billing.repository.LedgerSumRow(l.ownerId, l.campaignId, l.entryType,
+                       sum(case when l.amount > 0 then l.amount else 0L end),
+                       sum(case when l.amount < 0 then l.amount else 0L end))
+              from PointLedger l, DeductionResult d
+             where d.serveId = l.serveId
+               and l.entryType = com.launchcatch.billing.entity.EntryType.DEDUCT
+               and d.businessDate = :businessDate
+             group by l.ownerId, l.campaignId, l.entryType
+            """)
+    List<LedgerSumRow> sumDeductOn(@Param("businessDate") LocalDate businessDate);
+
+    // CHARGE, REFUND, ADJUST 는 영업일 컬럼이 없어 기록 시각 [from, to) 로 묻는다
+    @Query("""
+            select new com.launchcatch.billing.repository.LedgerSumRow(l.ownerId, l.campaignId, l.entryType,
+                       sum(case when l.amount > 0 then l.amount else 0L end),
+                       sum(case when l.amount < 0 then l.amount else 0L end))
+              from PointLedger l
+             where l.createdAt >= :from
+               and l.createdAt < :to
+               and l.entryType in (com.launchcatch.billing.entity.EntryType.CHARGE,
+                                   com.launchcatch.billing.entity.EntryType.REFUND,
+                                   com.launchcatch.billing.entity.EntryType.ADJUST)
+             group by l.ownerId, l.campaignId, l.entryType
+            """)
+    List<LedgerSumRow> sumChargeRefundAdjustBetween(@Param("from") LocalDateTime from, @Param("to") LocalDateTime to);
+
+    /*
+     * 전 점주의 미소진 포인트다. before 이전에 기록된 CHARGE, REFUND, ADJUST, DEDUCT 의 합이다.
+     * 점주 잔액에 예약 중 포인트(예약액 - 소진 - 해제)를 더한 값과 같다. RESERVE 와 RELEASE 는 그 둘 사이에서 상쇄되어 세지 않는다.
+     */
+    @Query("""
+            select coalesce(sum(l.amount), 0L)
+              from PointLedger l
+             where l.entryType in (com.launchcatch.billing.entity.EntryType.CHARGE,
+                                   com.launchcatch.billing.entity.EntryType.REFUND,
+                                   com.launchcatch.billing.entity.EntryType.ADJUST,
+                                   com.launchcatch.billing.entity.EntryType.DEDUCT)
+               and l.createdAt < :before
+            """)
+    long sumUnspentBefore(@Param("before") LocalDateTime before);
+
+    // 기록 시각이 [from, to) 인 미소진 포인트 변동의 합이다. 위와 같은 네 유형을 센다
+    @Query("""
+            select coalesce(sum(l.amount), 0L)
+              from PointLedger l
+             where l.entryType in (com.launchcatch.billing.entity.EntryType.CHARGE,
+                                   com.launchcatch.billing.entity.EntryType.REFUND,
+                                   com.launchcatch.billing.entity.EntryType.ADJUST,
+                                   com.launchcatch.billing.entity.EntryType.DEDUCT)
+               and l.createdAt >= :from
+               and l.createdAt < :to
+            """)
+    long sumUnspentBetween(@Param("from") LocalDateTime from, @Param("to") LocalDateTime to);
 
     // 그 영업일에 RELEASE 가 이미 있는 캠페인이다. 점주 ID 로 걸러 idx_point_ledger_owner_business_date 를 탄다
     @Query("""
