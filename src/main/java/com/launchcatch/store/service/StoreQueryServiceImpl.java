@@ -19,6 +19,7 @@ import org.springframework.transaction.annotation.Transactional;
 @Transactional(readOnly = true)
 class StoreQueryServiceImpl implements StoreQueryService {
     private static final int MAX_SUMMARY_OWNER_IDS = 100;
+    private static final int MAX_OWNER_SEARCH_LIMIT = 10_000;
 
     private final StoreQueryRepository stores;
     private final StoreImageUrlResolver images;
@@ -65,8 +66,8 @@ class StoreQueryServiceImpl implements StoreQueryService {
     @Override
     public List<Long> findOwnerIdsByNameContaining(String keyword, int limit) {
         Objects.requireNonNull(keyword, "검색어가 필요합니다.");
-        if (keyword.isBlank() || limit <= 0) {
-            throw new IllegalArgumentException("비어 있지 않은 검색어와 양수인 limit가 필요합니다.");
+        if (keyword.isBlank() || limit <= 0 || limit > MAX_OWNER_SEARCH_LIMIT) {
+            throw new IllegalArgumentException("비어 있지 않은 검색어와 1~10000 범위의 limit가 필요합니다.");
         }
         var ownerIds = stores.findOwnerIdsByNameContaining(keyword, (long) limit + 1);
         if (ownerIds.size() > limit) {

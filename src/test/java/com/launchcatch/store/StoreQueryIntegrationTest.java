@@ -65,6 +65,8 @@ class StoreQueryIntegrationTest extends AbstractStoreIntegrationTest {
         assertThat(service.findOwnerIdsByNameContaining(keyword, 2)).containsExactlyInAnyOrder(ownerId, ownerId + 2);
         assertThatIllegalArgumentException().isThrownBy(() -> service.findOwnerIdsByNameContaining(keyword, 1));
         assertThat(service.findOwnerIdsByNameContaining(keyword + "없음", 1)).isEmpty();
+        assertThatIllegalArgumentException().isThrownBy(() -> service.findOwnerIdsByNameContaining(keyword, 10001))
+                .withMessage("비어 있지 않은 검색어와 1~10000 범위의 limit가 필요합니다.");
     }
 
     @Test

@@ -8,7 +8,7 @@ public interface StoreQueryService {
     /** 최종 등록 전 가게도 포함해 점주 ID로 일괄 조회하며 ID가 100개를 초과하면 IllegalArgumentException을 던진다. */
     List<StoreSummary> findSummariesByOwnerIds(Collection<Long> ownerIds);
 
-    /** 상호에 keyword 가 들어간 가게의 점주 ID를 반환하며 limit 초과 시 IllegalArgumentException을 던진다. */
+    /** 상호에 keyword 가 들어간 가게의 점주 ID를 반환하며 limit는 1~10000이고 검색 결과가 limit를 초과하면 IllegalArgumentException을 던진다. */
     List<Long> findOwnerIdsByNameContaining(String keyword, int limit);
 
     /** 최종 등록된 가게를 일괄 조회한다. 존재하지 않거나 최종 등록 전인 가게 ID는 제외한다. */

@@ -77,7 +77,7 @@ cdn.base-url에는 HTTP(S) 주소를 사용하며 쿼리, 프래그먼트, 사�
 
 `findOwnerIdsByNameContaining(String, int)`는 상호 부분 일치로 점주 ID를 반환한다.
 최종 등록 여부로 제한하지 않으며 `%`, `_`, `!`는 와일드카드가 아닌 문자 그대로 검색한다.
-검색어는 그대로 사용하며 null은 NullPointerException, 빈 문자열과 공백만 있는 검색어 및 양수가 아닌 limit는 IllegalArgumentException으로 거절한다.
+검색어는 그대로 사용하며 null은 NullPointerException, 빈 문자열과 공백만 있는 검색어 및 1~10000 범위를 벗어난 limit는 DB 조회 전에 IllegalArgumentException으로 거절한다.
 검색 결과가 없으면 빈 목록을 반환하고 순서는 보장하지 않는다.
 SQL은 limit보다 한 건 더 읽고 초과하면 IllegalArgumentException을 던진다.
 부분 결과를 반환하지 않으며 호출자는 검색어를 좁히도록 처리해야 한다.
