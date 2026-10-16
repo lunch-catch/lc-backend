@@ -3,6 +3,7 @@ package com.launchcatch.coupon.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -105,6 +106,7 @@ class CouponCommandServiceTest {
 
     @Mock MemberCouponRepository memberCouponRepository;
     @Mock CouponDailyLimitRepository couponDailyLimitRepository;
+    @Mock CouponFunnelEventPublisher funnelEvents;
     @InjectMocks CouponCommandService service;
 
     private Logger logger;
@@ -323,6 +325,7 @@ class CouponCommandServiceTest {
         void 발급한_재고의_코드와_이벤트_사용_시간을_저장하고_저장된_발급_시각을_반환한다() {
             var result = service.issue(17L, 81L);
             assertThat(result.memberCouponId()).isEqualTo(1001L);
+            verify(funnelEvents).issued(eq(event), any(), eq(TODAY.atTime(12, 0)));
             assertThat(result.issueTime().toString()).isEqualTo("2026-10-10T12:00+09:00");
             assertThat(counter.getIssuedCount()).isEqualTo(1);
             assertThat(inventory.getStatus()).isEqualTo(CouponInventoryStatus.ISSUED);
@@ -432,7 +435,7 @@ class CouponCommandServiceTest {
         private CouponCommandService serviceWith(Clock clock) {
             var service = new CouponCommandService(coupons, counters, members, events, inventories,
                     new CouponQrImageEncoder(), clock, mock(CouponUsageHistoryRepository.class),
-                    mock(OwnerStatusQuery.class), mock(StoreQueryService.class));
+                    mock(OwnerStatusQuery.class), mock(StoreQueryService.class), funnelEvents);
             ReflectionTestUtils.setField(service, "dailyLimit", 3);
             ReflectionTestUtils.setField(service, "issueStartTime", LocalTime.of(11, 0));
             ReflectionTestUtils.setField(service, "issueEndTime", LocalTime.of(14, 0));
@@ -462,7 +465,7 @@ class CouponCommandServiceTest {
             service = new CouponCommandService(repository, couponDailyLimitRepository, memberQuery,
                     mock(CouponEventRepository.class), mock(CouponInventoryRepository.class),
                     new CouponQrImageEncoder(), Clock.fixed(Instant.parse("2026-10-10T03:00:00Z"), ZoneOffset.UTC),
-                    mock(CouponUsageHistoryRepository.class), mock(OwnerStatusQuery.class), mock(StoreQueryService.class));
+                    mock(CouponUsageHistoryRepository.class), mock(OwnerStatusQuery.class), mock(StoreQueryService.class), funnelEvents);
         }
 
         @ParameterizedTest
@@ -652,7 +655,7 @@ class CouponCommandServiceTest {
         void setUp() {
             service = new CouponCommandService(coupons, mock(CouponDailyLimitRepository.class), members, events,
                     mock(CouponInventoryRepository.class), new CouponQrImageEncoder(),
-                    Clock.fixed(NOW.atZone(ClockConfig.ZONE).toInstant(), ClockConfig.ZONE), histories, owners, stores);
+                    Clock.fixed(NOW.atZone(ClockConfig.ZONE).toInstant(), ClockConfig.ZONE), histories, owners, stores, funnelEvents);
             coupon = MemberCoupon.issue(17L, 21L, UUID.randomUUID(), NOW.minusHours(1), NOW.plusHours(1));
             ReflectionTestUtils.setField(coupon, "id", 1001L);
             coupon.renewQr(TOKEN, NOW.minusSeconds(10));
@@ -666,6 +669,7 @@ class CouponCommandServiceTest {
             assertThat(response.usageHistoryId()).isEqualTo(55L);
             assertThat(response.discountAmount()).isEqualTo(680);
             assertThat(response.useTime().toLocalDateTime()).isEqualTo(AUDITED_AT.withNano(123457000));
+            verify(funnelEvents).redeemed(event, coupon, AUDITED_AT.withNano(123457000));
             assertThat(coupon.getStatus()).isEqualTo(MemberCouponStatus.USED);
             assertThat(coupon.getQrToken()).isEqualTo(TOKEN);
             ArgumentCaptor<CouponUsageHistory> saved = ArgumentCaptor.forClass(CouponUsageHistory.class);

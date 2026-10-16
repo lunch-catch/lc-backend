@@ -8,8 +8,8 @@ QR 사용 정책은 API 설계의 [QR 사용 구현 전 확정 사항](./coupon-
 
 | 구분 | 내용 |
 |---|---|
-| 현재 구현 | 선착순 발급, 당일 발급 한도와 누적 통계 조회, 목록·단건 조회와 조회 시 만료 저장, 미사용 쿠폰 삭제, QR 생성·갱신·사용 확정, 매장 사용 이력과 오늘 이벤트 상태 조회를 처리한다 |
-| 후속 구현 | 이벤트·재고 생성, 캠페인 이벤트 수신과 분석 이벤트 발행을 연결한다 |
+| 현재 구현 | 선착순 발급, 조회·삭제·QR 사용과 오픈·만료 배치, 분석 퍼널 이벤트 발행을 처리한다 |
+| 후속 구현 | 이벤트·재고 생성과 캠페인 이벤트 수신을 연결한다 |
 | 다른 도메인의 소유 | 캠페인 할인 조건은 campaign, 현재 매장 관리 권한은 store, 계정 상태는 member·owner, 찜과 광고 후보는 adserving, 통계 집계는 analytics가 소유한다 |
 
 데이터 소유와 의존 방향의 근거는 [도메인 설계 1.2와 2장](../../architecture/런치캐치_도메인_구조와_의존성_설계.md)이다.
@@ -38,6 +38,8 @@ coupon은 다른 도메인의 내부 엔티티와 저장소를 읽지 않는다.
 
 ```text
 coupon/
+├── contract/      오픈·발급·사용·만료 이벤트 record
+├── job/           CouponFunnelJob
 ├── CouponListFilter.java
 ├── CouponQrImageEncoder.java
 ├── config/        CouponSecurityConfig, CouponOpenApiConfig
@@ -46,12 +48,13 @@ coupon/
 ├── entity/        CouponEvent, CouponInventory, CouponDailyLimit,
 │                  MemberCoupon, CouponUsageHistory
 ├── repository/    각 엔티티 저장소와 목록용 Querydsl 구현
-├── service/       CouponCommandService, CouponLookUpService
+├── service/       CouponCommandService, CouponLookUpService,
+│                  CouponFunnelBatchService, CouponFunnelEventPublisher
 └── exception/     CouponException, CouponErrorCode
 ```
 
 엔티티는 다른 엔티티를 객체 연관으로 쥐지 않고 ID로 참조한다.
-입구 넷 중 HTTP 요청만 연결되어 있다. `job/`, `listener/`, 외부에 공개하는 `contract/`는 아직 없다.
+HTTP 요청과 시각 배치가 연결되어 있다. 캠페인 이벤트를 받는 `listener/`는 아직 없다.
 
 ### 규칙을 두는 곳
 
@@ -141,12 +144,13 @@ CouponEvent.calculateDiscount는 자기 스냅샷의 할인 대상·방식·값�
 | QR 사용 연결됨 | 읽기, store | `StoreQueryService.canManageStore(Long, Long)`, `findAllById(List<Long>)` | QR 사용은 관리 권한과 좌표를 각각 한 번 조회한다. 기존 이력·이벤트 조회의 매장 검증은 미연결이다 |
 | 미연결 | 읽기·쓰기, adserving | 아키텍처의 `WishlistQueryService`, `CandidateStateUpdater` | #163에서 공개 계약을 준비한 뒤 발급과 이벤트 조회에 연결한다 |
 | 미연결 | 받음, campaign | `CampaignStatusChangedEvent`, `CampaignEndedEvent` | 이벤트의 정의는 있지만 coupon 수신 경로는 없다 |
-| 미연결 | 공개, analytics | 아키텍처의 쿠폰 발급·사용·만료 이벤트 | coupon의 실제 공개 타입과 발행 경로가 아직 없다 |
+| 연결됨 | 공개, analytics | `coupon.contract`의 `CouponIssueOpenedEvent`, `CouponIssuedEvent`, `CouponRedeemedEvent`, `CouponExpiredEvent` | 오픈·발급·사용·만료 트랜잭션의 커밋 후 발행한다 |
 
 계약과 의존 방향은 [아키텍처 2장](../../architecture/런치캐치_도메인_구조와_의존성_설계.md)을 따른다.
 store 메서드의 반환 정책은 [공개 계약 문서](../store/store-query-contract.md)가 갖는다.
 현재 coupon은 공개 조회 계약 위에 자체 캐시를 추가하지 않는다.
-미연결 contract와 이벤트의 시그니처를 이번 문서에서 새로 정의하지 않는다.
+공개 이벤트의 필드는 [contract 디렉터리](../../../src/main/java/com/launchcatch/coupon/contract/)가 갖는다.
+분석 구현은 여기서 호출하지 않는다. 수신자가 비동기 리스너와 기록을 소유한다.
 
 ## 6. 구조와 동작 그림
 
@@ -155,9 +159,15 @@ store 메서드의 반환 정책은 [공개 계약 문서](../store/store-query-
 ```mermaid
 flowchart LR
     HTTP([HTTP 요청]) --> Controller[CouponController]
+    Time([11:00·매분]) --> Job[CouponFunnelJob]
     subgraph Coupon["coupon 도메인 루트"]
         Controller --> Command[CouponCommandService]
         Controller --> Lookup[CouponLookUpService]
+        Job --> Batch[CouponFunnelBatchService]
+        Batch --> Events
+        Batch --> Members
+        Batch --> Publisher[CouponFunnelEventPublisher]
+        Command --> Publisher
         Command --> Daily[(CouponDailyLimitRepository)]
         Command --> Events[(CouponEventRepository)]
         Command --> Inventory[(CouponInventoryRepository)]
@@ -180,7 +190,7 @@ flowchart LR
     class MemberQuery,OwnerQuery,CampaignQuery,StoreQuery outside
 ```
 
-스케줄·이벤트 수신·다른 도메인의 직접 호출 입구는 아직 없으므로 연결선도 그리지 않았다.
+Publisher는 커밋 후 공개 이벤트를 전달한다. 캠페인 이벤트 수신 입구는 아직 없다.
 
 ### 상태 변경
 
@@ -188,7 +198,7 @@ flowchart LR
 stateDiagram-v2
     [*] --> ISSUED: 발급
     ISSUED --> ISSUED: QR 생성·갱신
-    ISSUED --> EXPIRED: 목록·단건 조회 시 기간 만료
+    ISSUED --> EXPIRED: 조회 또는 만료 배치
     ISSUED --> REMOVED: 삭제
     EXPIRED --> REMOVED: 삭제
     REMOVED --> REMOVED: 삭제 재요청
@@ -197,11 +207,11 @@ stateDiagram-v2
 
 | 전이 | 일으키는 쪽 | 현재 검증과 이벤트 |
 |---|---|---|
-| 생성 → ISSUED | 회원의 발급 요청 | 발급 조건을 서비스가 검사한다. 쿠폰 발급 이벤트는 아직 발행하지 않는다 |
-| ISSUED → EXPIRED | 목록·단건 조회 | `changeToExpired`가 기간 종료를 검사하며 QR·재고·카운터는 유지한다 |
+| 생성 → ISSUED | 회원의 발급 요청 | 발급 조건을 검사하고 커밋 후 발급 이벤트를 전달한다 |
+| ISSUED → EXPIRED | 목록·단건 조회 또는 만료 배치 | `changeToExpired`가 기간 종료를 검사하며 QR·재고·카운터는 유지한다. 만료 이벤트는 배치가 발행한다 |
 | ISSUED·EXPIRED → REMOVED | 본인 삭제 요청 | USED 삭제는 거절하며 최초 삭제만 발급 날짜의 카운터를 줄인다 |
 | REMOVED → REMOVED | 본인 삭제 재요청 | 추가 쓰기와 카운터 차감을 하지 않는다 |
-| ISSUED → USED | 점주의 QR 사용 요청 | CouponCommandService가 상태와 이력을 함께 저장한다. QR 식별 기준은 [QR 사용 설계](./coupon-api-design.md#qr-사용-구현-전-확정-사항)를 따른다 |
+| ISSUED → USED | 점주의 QR 사용 요청 | 상태와 이력을 함께 저장하고 커밋 후 사용 이벤트를 전달한다. QR 식별 기준은 [QR 사용 설계](./coupon-api-design.md#qr-사용-구현-전-확정-사항)를 따른다 |
 
 ```mermaid
 stateDiagram-v2
@@ -308,7 +318,21 @@ QR 생성·삭제·만료 저장은 같은 회원 쿠폰 행을 잠근다. 잠�
 
 영업일은 `Clock`을 Asia/Seoul로 읽어 정한다. 삭제 카운터는 삭제 날짜가 아닌 원래 발급 날짜를 쓴다.
 이벤트 상태 조회는 매장 최대 100개, 목록·이력은 페이지 최대 100개를 다룬다.
-커밋 후 비동기 작업과 되돌릴 수 없는 외부 효과는 현재 구현에 없다.
+### 퍼널 이벤트를 커밋 뒤로 미루는 수단
+
+| 선택지 | 장점 | 단점 |
+|---|---|---|
+| 트랜잭션 콜백으로 커밋 후 공개한다 | 롤백된 업무를 외부에 알리지 않으며 저장 구조를 추가하지 않는다 | 프로세스 중단 때 유실될 수 있고 동기 리스너가 커밋한 스레드를 붙잡는다 |
+| 같은 트랜잭션의 outbox를 폴링한다 | 커밋한 이벤트를 재전달할 수 있다 | 저장·폴링·보존과 중복 처리가 필요하다 |
+
+아키텍처와 #355가 퍼널 유실을 허용하므로 첫 번째 방식을 쓴다.
+`CouponFunnelEventPublisher`는 업무 트랜잭션에서 값을 캡처하고 `TransactionSynchronization.afterCommit`에서 발행한다.
+실제 발급 시각은 저장한 회원 쿠폰의 `createdAt`, 사용 시각은 저장한 사용 이력의 `createdAt`을 MySQL과 같은 마이크로초로 맞춘다.
+오픈 시각은 영업일의 11:00, 만료 시각은 회원 쿠폰의 `usableEndAt`이다.
+`eventId`는 유형과 회차 ID 또는 회원 쿠폰 ID로 만든다. 부분 성공한 배치를 재처리해도 같은 동작의 ID를 유지한다.
+수신자가 `@Async`와 `@TransactionalEventListener(AFTER_COMMIT)`를 사용해 분석 쓰기를 분리한다.
+동기 발행 예외는 쿠폰 성공을 뒤집지 않고 `coupon.funnel.events.dropped{type}`와 WARN 로그에 남긴다.
+비동기 실행 거부·실행 중 오류의 관측은 수신자가 맡는다. 프로세스 중단으로 유실된 이벤트를 이 지표로 셀 수는 없다.
 
 ## 8. 외부 API
 
@@ -330,9 +354,24 @@ QR 생성·삭제·만료 저장은 같은 회원 쿠폰 행을 잠근다. 잠�
 
 ## 10. 배치
 
-현재 등록한 coupon 배치 작업은 없다. 조회 시 만료 저장은 배치가 아니다.
-회차·재고 생성과 캠페인 종료 반영은 아키텍처상 후속 연결 대상이다.
-각 작업의 실행 순서·재실행 키·실패 시 당일 서비스 범위는 아직 정하지 않았으며 구현 전에 이 장에 기록해야 한다.
+`CouponFunnelJob`은 배치 프로필의 스케줄러에서 실행하며 00:00 묶음에 등록하지 않는다.
+실행 점유와 생존 신호·재시도 예산은 공통 `BatchExecutionService`와 `RetryBackoff`를 사용한다.
+
+| 작업 | 읽는 상태와 하는 일 | 재실행 키 | 실패하면 당일 서비스 |
+|---|---|---|---|
+| 11:00 오픈 | 오늘 ACTIVE 회차를 ID순으로 읽고 잠금 뒤 상태를 다시 확인해 오픈을 알린다. 회차 운영 상태를 바꾸지 않는다 | `COUPON_OPEN_{campaignId}`와 영업일이다 | 발급 API는 계속 처리하며 퍼널 기록은 빠질 수 있다 |
+| 매분 만료 | 종료 시각에 도달한 회차의 ISSUED·EXPIRED 쿠폰을 ID순으로 잠가 만료를 저장하고 알린다. USED·REMOVED는 제외한다 | `COUPON_EXPIRE_{campaignId}`와 회차의 영업일이다 | 조회가 만료 상태를 저장하고 사용 API가 사용 시간을 검사한다 |
+
+만료는 조회가 먼저 EXPIRED로 바꾼 쿠폰도 포함한다. 이미 성공한 작업은 다시 발행하지 않는다.
+실패 후 재실행은 앞서 커밋한 페이지를 다시 전달할 수 있으며 분석이 같은 `eventId`를 버린다.
+일시적 오류만 공통 예산 안에서 재시도하며 대기와 다음 페이지 전에 점유를 확인한다.
+실행 중 프로세스가 멈춘 개별 작업은 공통 스케줄러가 FAILED로 닫는다. 자동으로 해당 coupon 작업을 다시 호출하는 공통 등록 경로는 아직 없다.
+만료 작업은 공통 수동 재실행 계약으로 재개한 뒤 다음 스캔에서 처리할 수 있다. 오픈은 11:00 입구를 다시 실행해야 한다.
+회차·재고 생성과 캠페인 종료 이벤트 수신은 후속 작업이다.
+
+**임시 운영 결정:** 회차 탐색과 만료 페이지는 500개로 제한한다. 만료는 페이지마다 독립된 READ_COMMITTED 트랜잭션을 커밋한다.
+500개는 운영 측정 전 상한이며 최대 처리량을 보장하는 수치가 아니다. 스캔은 최대 1분 지연될 수 있다.
+쿠폰의 종료 시각이 회차와 일치하는 현재 발급 스냅샷을 전제로 회차의 종료 시각으로 대상을 찾는다.
 
 ## 11. 성능
 
@@ -343,6 +382,7 @@ QR 생성·삭제·만료 저장은 같은 회원 쿠폰 행을 잠근다. 잠�
 | 정상 발급 | coupon DB 읽기 네 번과 쓰기 네 번, member 공개 조회 한 번을 수행한다. 카운터 UPSERT도 쓰기 한 번으로 센다 |
 | QR 생성 | 회원 쿠폰 잠금 조회·갱신과 member 조회, 이미지 인코딩을 수행한다 |
 | QR 사용 | coupon DB 읽기 세 번·쓰기 두 번과 owner·member 조회 각 한 번, store 공개 조회 두 번을 수행한다 |
+| 만료 배치 | 종료한 회차를 500개씩 탐색하며 성공 여부는 공통 실행 기록에서 확인한다. 만료 페이지마다 쿠폰 최대 500개를 잠그고 상태 변경과 커밋 후 콜백을 처리한다 |
 | 쿠폰 목록 | 회원 쿠폰 페이지와 이벤트 일괄 조회, 필요할 때 이력 일괄 조회를 수행한다. 만료된 반환 항목은 UPDATE한다 |
 | 이벤트 상태 | 이벤트 조회와 재고 집계, 회원 발급 이력과 카운터 조회를 수행한다. campaign·member 조회는 매장마다 반복하지 않는다 |
 
@@ -368,6 +408,12 @@ QR 사용의 응답 시간·동시 요청 목표와 부하 검증은 아직 없�
 | 사용 완료 쿠폰 | 삭제한다 | 상태·QR·이력을 유지하며 거절한다 | `사용_완료_쿠폰은_409를_반환하고_사용_이력과_QR을_변경하지_않는다` |
 | 미사용 쿠폰 | QR을 동시에 갱신한다 | 마지막 토큰만 저장한다 | `동시_QR_갱신은_직렬화하여_마지막_토큰만_저장한다` |
 | 쿠폰 행 잠금 대기 중 기간 종료 | QR 잠금을 얻는다 | 갱신을 거절한다 | `잠금을_기다리는_중_사용_시간이_끝나면_잠금_획득_후_거절된다` |
+| HTTP로 발급한 쿠폰 | 같은 쿠폰을 QR로 사용한다 | 발급·사용 이벤트의 회원 쿠폰 ID가 같다 | `HTTP로_발급한_쿠폰의_사용_이벤트는_같은_회원_쿠폰_ID를_싣는다` |
+| 발급 트랜잭션 | 성공 응답 뒤 바깥 트랜잭션을 롤백한다 | 쿠폰과 이벤트가 남지 않는다 | `HTTP_발급을_감싼_트랜잭션이_롤백하면_이벤트를_발행하지_않는다` |
+| 사용 트랜잭션 | 성공 응답 뒤 바깥 트랜잭션을 롤백한다 | 상태·사용 이력과 이벤트가 남지 않는다 | `HTTP_사용을_감싼_트랜잭션이_롤백하면_이벤트와_사용_결과를_남기지_않는다` |
+| ACTIVE·PAUSED 회차 | 오픈 입구를 두 번 실행한다 | ACTIVE 회차를 한 번만 알린다 | `오픈_배치는_ACTIVE_캠페인마다_한_번만_발행한다` |
+| 만료 대상 501개와 사용·삭제된 쿠폰 | 종료 시각 직전과 정각에 만료 입구를 실행한다 | 500개 단위로 커밋하고 기존 만료를 포함해 501개를 알린다 | `임시_상한_500개로_나눠_만료하고_조회로_만료된_쿠폰도_알린다` |
+| 만료 둘째 페이지의 DB 제약 위반 | 첫 페이지 커밋 뒤 실패하고 수동 재실행한다 | 실패한 페이지는 알리지 않으며 재실행의 기존 쿠폰은 같은 이벤트 ID를 유지한다 | `만료_페이지가_롤백하면_알리지_않고_재실행은_같은_eventId를_유지한다` |
 
 모든 행의 테스트는 [CouponIntegrationTest](../../../src/test/java/com/launchcatch/coupon/CouponIntegrationTest.java)에 있다.
 엔티티의 입력·상태 규칙과 서비스 분기는 [쿠폰 테스트 디렉터리](../../../src/test/java/com/launchcatch/coupon/)의 단위 테스트가 보완한다.
@@ -379,7 +425,7 @@ USED 전이와 사용 시각·할인 계산, 실제 사용 요청의 동시 재�
 |---|---|---|
 | store 연결 | QR 사용은 공개 메서드를 연결했다. 기존 이력·이벤트 조회의 호출은 TODO다 | 이력 조회의 매장 관리 권한과 이벤트 조회의 매장 존재 검증을 완료하지 못했다 |
 | adserving 연결 | #163의 찜·소진 반영을 기다린다 | 발급 자격과 이벤트 조회의 발급 가능 안내가 완성되지 않았다 |
-| 회차·재고와 이벤트 연결 | 생성·수신·발행 경로가 없다. V2는 status_changed_at을 제거했다 | 이벤트 순서 판정과 재실행 저장 구조를 별도 작업에서 정해야 한다 |
+| 회차·재고와 캠페인 연결 | 생성·수신 경로가 없다. V2는 status_changed_at을 제거했다 | 캠페인 이벤트 순서 판정과 재실행 저장 구조를 별도 작업에서 정해야 한다 |
 | 과거 스냅샷·이미지 유지 | 복원 출처와 이미지 보존 계약을 확정하지 않았다 | 과거 데이터를 임의의 현재 값으로 대체할 수 없다 |
 | 부하와 운영 장애 | 기능 테스트만 있으며 부하·장애 복구 시험은 미완료다 | 응답 시간과 처리량·복구 동작을 보장했다고 보고할 수 없다 |
 

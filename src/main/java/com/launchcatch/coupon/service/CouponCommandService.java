@@ -61,6 +61,7 @@ public class CouponCommandService {
     private final CouponUsageHistoryRepository couponUsageHistoryRepository;
     private final OwnerStatusQuery ownerStatusQuery;
     private final StoreQueryService storeQueryService;
+    private final CouponFunnelEventPublisher funnelEvents;
 
     private static final double MAX_DISTANCE_METERS = 100;
 
@@ -126,6 +127,8 @@ public class CouponCommandService {
         MemberCoupon coupon = memberCouponRepository.saveAndFlush(MemberCoupon.issue(memberId, eventId, inventory.getCouponCode(),
                 event.getUsableStartAt(), event.getUsableEndAt()));
         // TODO(#163): 마지막 재고 발급 시 해당 캠페인과 영업일의 광고 후보에 소진을 반영하고 실패 시 함께 롤백한다.
+
+        funnelEvents.issued(event, coupon, coupon.getCreatedAt().plusNanos(500).truncatedTo(ChronoUnit.MICROS));
 
         // 9. 저장된 쿠폰 ID와 createdAt으로 발급 결과를 구성한다.
         return new CouponIssueResponse(coupon.getId(), coupon.getCreatedAt().atZone(ClockConfig.ZONE).toOffsetDateTime());
@@ -240,6 +243,8 @@ public class CouponCommandService {
             // 6. 사용 이력을 JPA로 저장하고 쿠폰 상태도 함께 반영하며 실패하면 둘 다 롤백한다.
             CouponUsageHistory history = couponUsageHistoryRepository.saveAndFlush(
                     CouponUsageHistory.record(coupon.getId(), event.getStoreId(), discount));
+            funnelEvents.redeemed(event, coupon,
+                    history.getCreatedAt().plusNanos(500).truncatedTo(ChronoUnit.MICROS));
             // MySQL DATETIME(6)과 같은 정밀도로 auditing 시각을 반올림한다.
             return new CouponUseResponse(coupon.getId(), history.getId(), discount,
                     history.getCreatedAt().plusNanos(500).truncatedTo(ChronoUnit.MICROS)

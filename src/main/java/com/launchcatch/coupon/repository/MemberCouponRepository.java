@@ -3,15 +3,30 @@ package com.launchcatch.coupon.repository;
 import com.launchcatch.coupon.dto.CouponSummaryResponse;
 import com.launchcatch.coupon.entity.MemberCoupon;
 import jakarta.persistence.LockModeType;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 public interface MemberCouponRepository extends JpaRepository<MemberCoupon, Long>, MemberCouponRepositoryCustom {
+
+    // 조회가 먼저 EXPIRED로 바꾼 쿠폰도 포함하고 사용·삭제와 같은 행 잠금으로 직렬화한다.
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("""
+            SELECT coupon FROM MemberCoupon coupon
+             WHERE coupon.couponEventId = :eventId AND coupon.id > :afterId
+               AND coupon.usableEndAt <= :now
+               AND coupon.status IN (com.launchcatch.coupon.entity.MemberCouponStatus.ISSUED,
+                                     com.launchcatch.coupon.entity.MemberCouponStatus.EXPIRED)
+             ORDER BY coupon.id
+            """)
+    List<MemberCoupon> findExpirationPage(@Param("eventId") long eventId, @Param("now") LocalDateTime now,
+            @Param("afterId") long afterId, Pageable pageable);
 
     // 본인 쿠폰을 잠가 같은 쿠폰의 삭제와 QR 갱신, 만료 저장을 직렬화한다.
     @Lock(LockModeType.PESSIMISTIC_WRITE)
