@@ -2,6 +2,7 @@ package com.launchcatch.adserving;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -48,8 +49,8 @@ class SwipeIntegrationTest extends AbstractAdservingIntegrationTest {
 
     @BeforeEach
     void setUp() {
-        when(clock.instant()).thenReturn(NOW);
-        when(clock.getZone()).thenReturn(ClockConfig.ZONE);
+        doReturn(NOW).when(clock).instant();
+        doReturn(ClockConfig.ZONE).when(clock).getZone();
         jdbcTemplate.update("""
                 INSERT INTO ad_candidate (business_date, campaign_id, store_id, store_name, category_code,
                     latitude, longitude, target_radius, target_gender, target_age_groups,
