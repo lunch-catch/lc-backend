@@ -192,4 +192,24 @@ public interface PointLedgerRepository extends JpaRepository<PointLedger, Long>,
                               @Param("businessDate") LocalDate businessDate,
                               @Param("amount") long amount,
                               @Param("now") LocalDateTime now);
+
+    /*
+     * 충전 직후 재예약 한 건을 없을 때만 넣는다(I-03). 같은 결제와 캠페인의 재예약이 이미 있으면 그대로 둔다
+     * (uk_point_ledger_recharge_reserve_dedup). 중복은 값을 바꾸지 않는 갱신으로 흡수하고 INSERT IGNORE 는
+     * 쓰지 않는다(구현 계획 D-5). 금액은 음수로 받는다(chk_point_ledger_amount_sign).
+     */
+    @Modifying
+    @Query(value = """
+            INSERT INTO point_ledger
+                (owner_id, payment_id, campaign_id, business_date, entry_type, source, amount, created_at, updated_at)
+            VALUES
+                (:ownerId, :paymentId, :campaignId, :businessDate, 'RESERVE', 'RECONCILIATION', :amount, :now, :now)
+            ON DUPLICATE KEY UPDATE point_ledger_id = point_ledger_id
+            """, nativeQuery = true)
+    int insertRechargeReserveIfAbsent(@Param("ownerId") Long ownerId,
+                                      @Param("paymentId") Long paymentId,
+                                      @Param("campaignId") Long campaignId,
+                                      @Param("businessDate") LocalDate businessDate,
+                                      @Param("amount") long amount,
+                                      @Param("now") LocalDateTime now);
 }

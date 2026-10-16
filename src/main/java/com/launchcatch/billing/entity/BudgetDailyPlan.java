@@ -79,4 +79,16 @@ public class BudgetDailyPlan extends BaseTimeEntity {
                                          long unitPrice, boolean paused, LocalDateTime statusChangedAt) {
         return new BudgetDailyPlan(campaignId, ownerId, businessDate, dailyBudget, unitPrice, paused, statusChangedAt);
     }
+
+    /*
+     * 충전 직후 재예약이 그날 예약액을 늘린다(I-03). 줄이는 경로는 두지 않는다. 호출하는 쪽이 늘어난
+     * 몫만큼만 넘기므로 새 값이 지금 값보다 크지 않으면 호출 쪽 계산이 어긋난 것이라 예외로 멈춘다.
+     */
+    public void increaseDailyBudget(long newDailyBudget) {
+        if (newDailyBudget <= dailyBudget) {
+            throw new IllegalArgumentException(
+                    "그날 예약액은 늘어날 때만 반영합니다: 기존=" + dailyBudget + " 새 값=" + newDailyBudget);
+        }
+        this.dailyBudget = newDailyBudget;
+    }
 }
