@@ -366,4 +366,21 @@ class BatchExecutionServiceTest {
 
         assertThat(service.retry(JOB, DATE)).isFalse();
     }
+
+    @Test
+    @DisplayName("재실행은 끝난 행을 되돌린다")
+    void 재실행() {
+        when(logs.restartFinished(JOB, DATE, ME, NOW)).thenReturn(1);
+
+        assertThat(service.rerun(JOB, DATE)).isTrue();
+    }
+
+    /** 끝난(FAILED, SUCCESS) 상태가 아니면, 즉 RUNNING이면 조건에 걸리지 않는다. */
+    @Test
+    @DisplayName("실행 중이면 재실행이 걸리지 않는다")
+    void 재실행_무효() {
+        when(logs.restartFinished(JOB, DATE, ME, NOW)).thenReturn(0);
+
+        assertThat(service.rerun(JOB, DATE)).isFalse();
+    }
 }
