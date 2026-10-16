@@ -11,8 +11,12 @@ import com.launchcatch.store.exception.StoreException;
 import com.launchcatch.store.repository.OwnerTermsAgreementRepository;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.stream.Stream;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 
 class OwnerTermsAgreementServiceTest {
     private final OwnerTermsAgreementRepository repository = mock(OwnerTermsAgreementRepository.class);
@@ -154,14 +158,20 @@ class OwnerTermsAgreementServiceTest {
         assertThat(stored).hasSize(2);
     }
 
-    @Test
-    void 요청_중복과_알_수_없는_종류_버전을_거부한다() {
-        for (var commands : List.of(List.of(required().getFirst(), required().getFirst()),
-                List.of(new TermsAgreementCommand("UNKNOWN", "1.0", true)),
-                List.of(new TermsAgreementCommand("SERVICE", "old", true)))) {
-            assertThatThrownBy(() -> service.recordAgreements(7L, 0L, commands)).isInstanceOf(IllegalArgumentException.class);
-        }
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("invalidAgreements")
+    void 요청_중복과_알_수_없는_종류_버전을_거부한다(String scenario, List<TermsAgreementCommand> commands) {
+        assertThatThrownBy(() -> service.recordAgreements(7L, 0L, commands))
+                .isInstanceOf(IllegalArgumentException.class);
         verify(repository, never()).saveAllAndFlush(anyList());
+    }
+
+    private static Stream<Arguments> invalidAgreements() {
+        var service = new TermsAgreementCommand("SERVICE", "1.0", true);
+        return Stream.of(
+                Arguments.of("요청 안의 약관 중복", List.of(service, service)),
+                Arguments.of("알 수 없는 약관 종류", List.of(new TermsAgreementCommand("UNKNOWN", "1.0", true))),
+                Arguments.of("현재 정책과 다른 약관 버전", List.of(new TermsAgreementCommand("SERVICE", "old", true))));
     }
 
     @Test
