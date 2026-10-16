@@ -9,6 +9,7 @@ import com.launchcatch.ops.repository.BatchExecutionLogRepository;
 import com.launchcatch.ops.scheduler.StepOutcome;
 import com.launchcatch.ops.service.BatchExecutionService;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
@@ -115,7 +116,7 @@ class BatchExecutionIntegrationTest extends AbstractOpsIntegrationTest {
      * 상태만 바꾸는 UPDATE 를 쓰면 여기서 저장이 거부된다.
      */
     @Test
-    @DisplayName("성공으로 닫으면 종료 시각이 남고 사유는 비어 있다")
+    @DisplayName("성공으로 닫으면 종료 시각이 남고 사유와 처리 건수는 비어 있다")
     void 성공으로_닫는다() {
         service.claim(JOB, DATE);
 
@@ -125,6 +126,18 @@ class BatchExecutionIntegrationTest extends AbstractOpsIntegrationTest {
         assertThat(row.getStatus()).isEqualTo(BatchStatus.SUCCESS);
         assertThat(row.getFinishedAt()).isNotNull();
         assertThat(row.getFailureReason()).isNull();
+        assertThat(row.getProcessedCount()).isNull();
+    }
+
+    /** #359. 원천 행을 보지 못하는 호출자(분석)가 집계 결과로 쓴 행 수를 처리 건수로 남긴다. */
+    @Test
+    @DisplayName("건수를 주고 성공으로 닫으면 처리 건수가 그 값으로 남는다")
+    void 성공으로_닫으면_처리_건수가_남는다() {
+        service.claim(JOB, DATE);
+
+        service.succeed(JOB, DATE, 120);
+
+        assertThat(reload(JOB).getProcessedCount()).isEqualTo(120);
     }
 
     /** chk_batch_failure_reason 이 FAILED 와 사유를 짝으로 요구한다. */
@@ -159,6 +172,19 @@ class BatchExecutionIntegrationTest extends AbstractOpsIntegrationTest {
         assertThat(row.getFailureReason()).isNull();
         assertThat(row.getOwnerId()).isEqualTo(ME);
         assertThat(service.retry(JOB, DATE)).isFalse();
+    }
+
+    /** #359. 지난 시도의 시작 시각이 남으면 운영 대시보드가 지난 시도의 소요 시간을 보여 준다. */
+    @Test
+    @DisplayName("수동 재실행은 시작 시각을 새 시도의 시각으로 되돌린다")
+    void 수동_재실행이_시작_시각을_새로_한다() {
+        service.claim(JOB, DATE);
+        LocalDateTime startedAt = reload(JOB).getCreatedAt();
+        service.fail(JOB, DATE, "원본을 읽지 못했다");
+
+        assertThat(service.retry(JOB, DATE)).isTrue();
+
+        assertThat(reload(JOB).getCreatedAt()).isAfter(startedAt);
     }
 
     @Test
@@ -284,6 +310,24 @@ class BatchExecutionIntegrationTest extends AbstractOpsIntegrationTest {
         assertThat(row.getFinishedAt()).isNull();
         assertThat(row.getFailureReason()).isNull();
         assertThat(row.getOwnerId()).isEqualTo(ME);
+    }
+
+    /*
+     * #359. 분석이 매일 밤 전날 FAILED나 SUCCESS로 끝난 영업일을 사람 없이 재실행해도, 그
+     * 시도의 시작 시각과 처리 건수가 지난 시도의 것으로 뒤섞이지 않아야 한다.
+     */
+    @Test
+    @DisplayName("재실행은 시작 시각을 새로 하고 처리 건수를 비운다")
+    void 재실행이_시작_시각과_처리_건수를_새로_한다() {
+        service.claim(JOB, DATE);
+        LocalDateTime startedAt = reload(JOB).getCreatedAt();
+        service.succeed(JOB, DATE, 77);
+
+        assertThat(service.rerun(JOB, DATE)).isTrue();
+
+        BatchExecutionLog row = reload(JOB);
+        assertThat(row.getCreatedAt()).isAfter(startedAt);
+        assertThat(row.getProcessedCount()).isNull();
     }
 
     @Test
