@@ -57,4 +57,17 @@ public interface PaymentRepository extends JpaRepository<Payment, Long>, Payment
                                         @Param("cursorCreatedAt") LocalDateTime cursorCreatedAt,
                                         @Param("cursorId") Long cursorId,
                                         Pageable limit);
+
+    /*
+     * PG_VS_CHARGE 대사(13번) 대상이다. 범위는 [fromInclusive, toExclusive) 다. 승인을 시도한 적
+     * 없는 주문(pg_tid 없음)은 PG 에 물을 것이 없어 뺀다.
+     */
+    @Query("""
+            select p from Payment p
+             where p.createdAt >= :fromInclusive
+               and p.createdAt < :toExclusive
+               and p.pgTid is not null
+            """)
+    List<Payment> findForPgReconciliation(@Param("fromInclusive") LocalDateTime fromInclusive,
+                                          @Param("toExclusive") LocalDateTime toExclusive);
 }

@@ -141,4 +141,48 @@ public interface SettlementMismatchRepository extends JpaRepository<SettlementMi
                                                      @Param("counterSpend") long counterSpend,
                                                      @Param("jobExecutionId") Long jobExecutionId,
                                                      @Param("now") LocalDateTime now);
+
+    /*
+     * PG_VS_CHARGE 대사(13번)의 미해결 불일치 한 건을 기록한다. 대상 ID 는 결제 ID 다.
+     * 같은 (check_type, target_id, business_date) 가 이미 있으면 그대로 둔다. INSERT IGNORE 는
+     * 쓰지 않는다. CHECK 위반까지 경고로 낮추고 행을 조용히 버린다(구현 계획 D-5).
+     */
+    @Modifying
+    @Query(value = """
+            INSERT INTO settlement_mismatch
+                (check_type, business_date, target_id, expected_value, actual_value, job_execution_id,
+                 created_at, updated_at)
+            VALUES
+                ('PG_VS_CHARGE', :businessDate, :paymentId, :expectedAmount, :actualAmount,
+                 :jobExecutionId, :now, :now)
+            ON DUPLICATE KEY UPDATE settlement_mismatch_id = settlement_mismatch_id
+            """, nativeQuery = true)
+    int insertPgChargeMismatchIfAbsent(@Param("businessDate") LocalDate businessDate,
+                                       @Param("paymentId") Long paymentId,
+                                       @Param("expectedAmount") long expectedAmount,
+                                       @Param("actualAmount") long actualAmount,
+                                       @Param("jobExecutionId") Long jobExecutionId,
+                                       @Param("now") LocalDateTime now);
+
+    /*
+     * PG_VS_CHARGE 대사가 빠진 CHARGE 를 보정한 뒤, 그 불일치를 LEDGER_CORRECTION 으로 닫힌 채
+     * 기록한다. 해결자는 NULL 이다(배치가 자동으로 닫은 건, D-3). 같은 (check_type, target_id,
+     * business_date) 가 이미 있으면 그대로 둔다.
+     */
+    @Modifying
+    @Query(value = """
+            INSERT INTO settlement_mismatch
+                (check_type, business_date, target_id, expected_value, actual_value, job_execution_id,
+                 resolution_type, resolved_at, created_at, updated_at)
+            VALUES
+                ('PG_VS_CHARGE', :businessDate, :paymentId, :expectedAmount, :actualAmount,
+                 :jobExecutionId, 'LEDGER_CORRECTION', :now, :now, :now)
+            ON DUPLICATE KEY UPDATE settlement_mismatch_id = settlement_mismatch_id
+            """, nativeQuery = true)
+    int insertPgChargeMismatchResolvedIfAbsent(@Param("businessDate") LocalDate businessDate,
+                                               @Param("paymentId") Long paymentId,
+                                               @Param("expectedAmount") long expectedAmount,
+                                               @Param("actualAmount") long actualAmount,
+                                               @Param("jobExecutionId") Long jobExecutionId,
+                                               @Param("now") LocalDateTime now);
 }
