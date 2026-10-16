@@ -1,6 +1,5 @@
 package com.launchcatch.adserving.feed.service;
 
-import com.launchcatch.adserving.feed.ServedFeed;
 import com.launchcatch.adserving.engine.CampaignPacing;
 import com.launchcatch.adserving.engine.FeedAssembler;
 import com.launchcatch.adserving.engine.FeedAssembler.Placed;

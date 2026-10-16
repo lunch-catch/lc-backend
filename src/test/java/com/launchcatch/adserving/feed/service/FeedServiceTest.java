@@ -1,6 +1,5 @@
 package com.launchcatch.adserving.feed.service;
 
-import com.launchcatch.adserving.feed.ServedFeed;
 import static com.launchcatch.adserving.engine.AdCandidateFixture.candidate;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;

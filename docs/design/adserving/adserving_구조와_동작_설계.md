@@ -56,8 +56,7 @@ adserving/
     ├── repository/SwipeLogRepository.java
     ├── repository/FeedFilterRepository.java
     ├── repository/FeedFilterCategoryRepository.java
-    ├── ServeRecord.java                             serve 기록 record. 노출이 읽는다
-    └── ServedFeed.java                              서빙 로그 대기열에 넣는 피드 1회 묶음
+    └── ServeRecord.java                             serve 기록 record. 노출이 읽는다
 impression/
     ├── controller/ImpressionController.java
     ├── service/ImpressionService.java

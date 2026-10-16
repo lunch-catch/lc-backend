@@ -1,6 +1,5 @@
 package com.launchcatch.adserving.feed.service;
 
-import com.launchcatch.adserving.feed.ServedFeed;
 import com.launchcatch.adserving.feed.repository.FeedVisitRepository;
 import com.launchcatch.adserving.feed.repository.FeedVisitRepository.Visit;
 import com.launchcatch.adserving.feed.repository.ServeLogRepository;
