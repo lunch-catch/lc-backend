@@ -1,7 +1,5 @@
 package com.launchcatch.store.service;
 
-import com.launchcatch.owner.contract.OwnerAccountStatus;
-import com.launchcatch.owner.contract.OwnerStatusQuery;
 import com.launchcatch.store.dto.StoreImagePrepareResult;
 import com.launchcatch.store.dto.StoreRegistrationProgressResponse;
 import com.launchcatch.store.entity.StoreImage;
@@ -35,6 +33,10 @@ import software.amazon.awssdk.services.s3.presigner.model.PutObjectPresignReques
 /*
  * 가게 인테리어 이미지 업로드(#375). 로고는 가게 입점 과정에서 이미 등록돼 있다는 전제로,
  * 이 서비스는 로고를 새로 만들지 않고 존재 여부만 확인한다.
+ *
+ * ONBOARDING이 아닌 점주를 거부하는 검사는 두지 않는다. 그 전환(ACTIVE/SUSPENDED/WITHDRAWN)이
+ * 아직 이 저장소에 구현돼 있지 않고, 나중에 필요해지면 owner가 이벤트로 알리는 쪽으로 풀어야
+ * owner<->store 순환 의존이 생기지 않는다(런치캐치_도메인_구조와_의존성_설계.md 2.3).
  */
 @Service
 @RequiredArgsConstructor
@@ -48,7 +50,6 @@ public class StoreImageUploadService {
     private final StoreImageRepository storeImageRepository;
     private final StoreRegistrationProgressRepository progressRepository;
     private final StoreRegistrationProgressService progressService;
-    private final OwnerStatusQuery ownerStatusQuery;
     private final S3Presigner s3Presigner;
     private final S3Client s3Client;
     private final Clock clock;
@@ -59,7 +60,6 @@ public class StoreImageUploadService {
 
     public StoreImagePrepareResult prepareInteriorUpload(Long ownerId, String originalFilename,
             String contentType, Long fileSize) {
-        validateOnboardingOwner(ownerId);
         validateContentType(contentType);
         validateFileSize(fileSize);
 
@@ -100,7 +100,6 @@ public class StoreImageUploadService {
 
     @Transactional
     public void confirmUpload(Long ownerId, String uploadId) {
-        validateOnboardingOwner(ownerId);
         Long storeId = findStoreId(ownerId);
 
         StoreImage image = storeImageRepository.findByUploadId(uploadId)
@@ -136,7 +135,6 @@ public class StoreImageUploadService {
 
     @Transactional
     public StoreRegistrationProgressResponse completeImagesStep(Long ownerId, long expectedVersion) {
-        validateOnboardingOwner(ownerId);
         Long storeId = findStoreId(ownerId);
 
         if (!storeImageRepository.existsByStoreIdAndImageType(storeId, StoreImageType.LOGO)) {
@@ -144,12 +142,6 @@ public class StoreImageUploadService {
         }
         var snapshot = progressService.completeStep(ownerId, expectedVersion, StoreRegistrationStep.IMAGES, null);
         return new StoreRegistrationProgressResponse(snapshot.storeId(), snapshot.resumeStep(), snapshot.version());
-    }
-
-    private void validateOnboardingOwner(Long ownerId) {
-        if (ownerStatusQuery.findCurrentStatus(ownerId).orElse(null) != OwnerAccountStatus.ONBOARDING) {
-            throw new StoreException(StoreErrorCode.REGISTRATION_STEP_CONFLICT);
-        }
     }
 
     private Long findStoreId(Long ownerId) {
