@@ -250,6 +250,52 @@ class BatchExecutionIntegrationTest extends AbstractOpsIntegrationTest {
     }
 
     /*
+     * 재실행(rerun)은 retry와 달리 실패한 행도 되돌린다. restartFailed와 같은 리셋 필드를 쓰므로
+     * chk_batch_failure_reason, chk_batch_finished 가 짝을 요구하는 것도 같이 확인된다.
+     */
+    @Test
+    @DisplayName("재실행은 실패한 행을 되돌리고 두 번은 걸리지 않는다")
+    void 재실행_FAILED() {
+        service.claim(JOB, DATE);
+        service.fail(JOB, DATE, "원본을 읽지 못했다");
+
+        assertThat(service.rerun(JOB, DATE)).isTrue();
+
+        BatchExecutionLog row = reload(JOB);
+        assertThat(row.getStatus()).isEqualTo(BatchStatus.RUNNING);
+        assertThat(row.getFinishedAt()).isNull();
+        assertThat(row.getFailureReason()).isNull();
+        assertThat(row.getOwnerId()).isEqualTo(ME);
+        assertThat(service.rerun(JOB, DATE)).isFalse();
+    }
+
+    /** retry는 FAILED만 다뤄서 이 행을 못 되돌린다. rerun만 되는 새 경로다(#339). */
+    @Test
+    @DisplayName("재실행은 이미 성공한 행도 되돌린다")
+    void 재실행_SUCCESS() {
+        service.claim(JOB, DATE);
+        service.succeed(JOB, DATE);
+
+        assertThat(service.retry(JOB, DATE)).isFalse();
+        assertThat(service.rerun(JOB, DATE)).isTrue();
+
+        BatchExecutionLog row = reload(JOB);
+        assertThat(row.getStatus()).isEqualTo(BatchStatus.RUNNING);
+        assertThat(row.getFinishedAt()).isNull();
+        assertThat(row.getFailureReason()).isNull();
+        assertThat(row.getOwnerId()).isEqualTo(ME);
+    }
+
+    @Test
+    @DisplayName("실행 중인 행은 재실행으로 되돌리지 않는다")
+    void 재실행_RUNNING은_무효() {
+        service.claim(JOB, DATE);
+
+        assertThat(service.rerun(JOB, DATE)).isFalse();
+        assertThat(reload(JOB).getStatus()).isEqualTo(BatchStatus.RUNNING);
+    }
+
+    /*
      * 서버가 죽으면 묶음 행과 단계 행이 함께 오래된다. 이어받기는 둘을 함께 가져오고
      * updated_at 을 지금으로 바꾼다. 그 뒤 묶음을 다시 도는 길에서 그 단계를 시작할 수 있어야
      * "SUCCESS 가 아닌 첫 단계부터 다시 실행한다" 가 성립한다.
