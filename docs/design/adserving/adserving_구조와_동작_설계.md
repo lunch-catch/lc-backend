@@ -1,7 +1,7 @@
 # adserving 구조와 동작 설계
 
 광고 서빙 도메인의 구조와 동작을 적는다. 엔드포인트마다의 처리와 성능 목표는
-[`feed-api-design.md`](./feed-api-design.md) 가 갖는다. 지금은 `GET /v1/feed` 의 후보 선별(#236), 배정 규칙(#307), serve 기록과 서빙 로그(#315), `POST /v1/impressions`(#323), `POST /v1/swipes`(#379), `GET /v1/feed-filter`(#405)까지 훑었다.
+[`feed-api-design.md`](./feed-api-design.md) 가 갖는다. 지금은 `GET /v1/feed` 의 후보 선별(#236), 배정 규칙(#307), serve 기록과 서빙 로그(#315), `POST /v1/impressions`(#323), `POST /v1/swipes`(#379), `GET /v1/feed-filter`(#405), `PUT /v1/feed-filter`(#411)까지 훑었다.
 나머지 엔드포인트는 그 이슈가 이 문서를 채운다.
 
 ## 1. 범위
@@ -13,7 +13,7 @@
 | 같은 캠페인을 하루 2회, 한 세션 1회까지만 내려준다 | 비즈니스 규칙(`feed-api-design.md` 4단계) |
 | 사용자마다 최근 60초 6회로 피드 요청을 막는다 | FR-064, 명세의 요청 제한 |
 | 카드를 찜하거나 패스하고, 찜은 찜 목록에 넣는다 | FR-065, FR-071 |
-| 내 피드 필터(업종, 정렬)를 돌려준다 | FR-067 |
+| 내 피드 필터(업종, 정렬)를 돌려주고 통째로 바꾼다 | FR-067 |
 | 내 찜 목록을 그날 후보 스냅샷의 표시 값과 함께 돌려준다 | FR-071 |
 | 찜과 패스로 그날 피드에서 뺄 캠페인을 기억한다 | FR-099 (9), BR-040 |
 | 카드마다 serve 기록을 남겨 노출 검증에 쓰게 한다 | FR-097 |
@@ -32,7 +32,7 @@
 | 애그리거트 | 테이블 | 지키는 규칙 | 나눈 근거 |
 |---|---|---|---|
 | 후보 스냅샷(`engine`) | `ad_candidate` | 서빙은 그날 행만 읽는다 | 00:00 에 통째로 다시 만들어 변경 주기가 다르다 |
-| 피드(`feed`) | `feed_filter`, `feed_filter_category`(읽기만), `swipe_log`, `serve_log`, `feed_visit_daily` | 필터가 없으면 전 업종, 거리순이다. 그날 첫 접속 위치만 남는다 | 아키텍처 1.3 의 `feed` 서브 도메인 |
+| 피드(`feed`) | `feed_filter`, `feed_filter_category`, `swipe_log`, `serve_log`, `feed_visit_daily` | 필터가 없으면 전 업종, 거리순이다. 그날 첫 접속 위치만 남는다 | 아키텍처 1.3 의 `feed` 서브 도메인 |
 | 찜 목록(`wishlist`) | `wishlist` | (사용자, 캠페인)마다 1건이다 | 캠페인이 끝날 때까지 남아 그날 단위의 피드 기록과 수명이 다르다(아키텍처 1.3) |
 | 노출 로그(`impression`) | `impression_log` | (serveId, 사용자)마다 1건이다. 무효면 사유가 있고 유효면 없다 | 노출 저장이 정산의 판정, 원장과 한 트랜잭션이라 서빙과 따로 바뀐다 |
 
@@ -81,7 +81,7 @@ impression/
 - `impression` 은 `feed` 의 serve 기록과 유효 노출 수 카운터, `engine` 의 후보 소진 여부를 읽는다. 반대 방향은 없다.
 - `feed` 의 스와이프는 `wishlist` 에 찜을 넣는다. 두 애그리거트를 한 트랜잭션에 묶지 않고 쓰는 순서로 맞춘다(7장).
 - `wishlist` 의 찜 목록 조회는 `engine` 의 그날 후보에서 표시 값을 읽는다. 반대 방향은 없다.
-- 입구는 HTTP 요청 다섯(`GET /v1/feed`, `POST /v1/impressions`, `POST /v1/swipes`, `GET /v1/feed-filter`, `GET /v1/wishlist`)이다. 스케줄, 이벤트, 다른 도메인의 호출은 아직 없다.
+- 입구는 HTTP 요청 여섯(`GET /v1/feed`, `POST /v1/impressions`, `POST /v1/swipes`, `GET`, `PUT /v1/feed-filter`, `GET /v1/wishlist`)이다. 스케줄, 이벤트, 다른 도메인의 호출은 아직 없다.
 
 ### 규칙을 두는 곳
 
@@ -94,7 +94,9 @@ impression/
 | 서빙 로그를 묶어 쓰고 차면 버리는 규칙 | `ServeLogBuffer` |
 | 노출의 유효 판정, 같은 노출이 다시 올 때의 처리, 차감과 카운터의 시점 | `ImpressionService` |
 | 같은 카드를 다시 넘길 때의 처리, 찜과 스와이프 기록과 당일 이력을 쓰는 순서 | `SwipeService` |
-| 필터를 저장하지 않은 회원의 기본값(전체 업종, 거리순) | `FeedFilterService`. 피드는 같은 기본값을 `FeedService` 에서 따로 정한다 |
+| 필터를 저장하지 않은 회원의 기본값(전체 업종, 거리순) | `FeedFilterService`. 피드는 같은 기본값을 `FeedService` 에서 따로 정한다. 한 곳으로 모으지 않은 것은 #411 에서 임시로 정했다 |
+| 필터를 통째로 바꾸는 순서, 같은 업종이 두 번 올 때의 처리 | `FeedFilterService` |
+| 고를 수 있는 업종 코드와 정렬 값 | `FeedFilterSaveRequest` 의 애노테이션. 업종 코드는 store 가 소유하고 `contract` 로 공개하지 않아 `store.category_code` 의 CHECK 와 같은 목록을 따로 둔다(#411 에서 임시로 정했다) |
 | 찜 목록의 표시 값을 그날 후보 행 유무로 채우고 없으면 `null` 로 두는 규칙 | `WishlistService`, `WishlistItemResponse` |
 
 `ServeLogBuffer` 를 `FeedService` 와 나눈 것은 입구가 달라서다. 앞은 요청 스레드가, 뒤는 작업자 스레드가 부른다.
@@ -107,6 +109,7 @@ impression/
 | 업종 선호도 | `idx_swipe_member_date` 로 최근 30일의 찜을 업종별로 센다. 요청마다 읽는다 |
 | 찜 목록 | `uk_wishlist_member_campaign`(`member_id`, `campaign_id`)의 앞 열로 회원의 찜을 읽고 `created_at`, `wishlist_id` 내림차순으로 정렬한다. 표시 값은 그날 후보를 PK(`business_date`, `campaign_id`)의 IN 으로 한 번 더 읽어 붙인다. 후보 행이 있으면 상태와 소진은 보지 않는다(#416) |
 | 필터 업종 | `feed_filter_category` 를 PK(`member_id`, `category_code`)로 읽고 업종 코드 오름차순으로 돌려준다(#405). 순서 컬럼이 없어 고른 순서는 남지 않는다 |
+| 필터 저장 | `feed_filter` 는 `INSERT ... ON DUPLICATE KEY UPDATE` 로 정렬을 넣거나 바꾸고, `feed_filter_category` 는 그 회원의 행을 지우고 다시 넣는다. 같은 업종이 두 번 오면 하나만 넣는다(#411 에서 임시로 정했다) |
 | 다른 도메인 데이터의 사본 | `ad_candidate` 는 00:00 의 캠페인과 가게 사본이다. 그날 안에서는 캠페인과 쿠폰의 통보로만 바뀐다 |
 | 집계를 세는 방식 | 그날 유효 노출 수는 `impression_log` 를 세지 않고 카운터를 읽는다. 틀리면 `impression_log` 에서 다시 센다 |
 | DB 제약으로 막을 것과 코드로 막을 것 | 같은 카드가 `serve_log` 에 두 번 들어가는 것은 PK(`serve_id`)와 `INSERT IGNORE` 로, 같은 날 두 번째 접속 위치는 PK(`business_date`, `member_id`)와 `INSERT IGNORE` 로 막는다. 같은 노출의 두 번째 저장은 `impression_log` 의 PK(`serve_id`, `member_id`)와 `INSERT IGNORE` 로, 같은 카드의 두 번째 스와이프는 `swipe_log` 의 같은 PK 로, 같은 캠페인의 두 번째 찜은 `uk_wishlist_member_campaign` 으로 막는다. 노출은 넣은 행 수로 처음 저장인지 가른다. 먼저 읽어 보는 것은 다시 온 요청을 빨리 돌려보내려는 것이고 동시 요청은 PK 가 막는다 |
@@ -203,7 +206,7 @@ flowchart LR
     REQ([요청 GET /v1/feed]) --> FC
     REQ2([요청 POST /v1/impressions]) --> IMC
     REQ3([요청 POST /v1/swipes]) --> SWC
-    REQ4([요청 GET /v1/feed-filter]) --> FFCT
+    REQ4([요청 GET, PUT /v1/feed-filter]) --> FFCT
 
     subgraph adserving["adserving 모듈"]
         direction LR
@@ -271,7 +274,7 @@ flowchart LR
 
 ### 주요 흐름
 
-피드 조회, 노출 수집, 스와이프 셋이다. 필터 조회는 PK 로 두 번 읽고 끝나 흐름 그림을 두지 않는다. 다른 도메인 호출은 같은 프로세스 안의 호출이다.
+피드 조회, 노출 수집, 스와이프 셋이다. 필터 조회는 PK 로 두 번 읽고 끝나고, 필터 저장은 한 트랜잭션에서 넣거나 바꾸고 지우고 다시 넣어 끝나 흐름 그림을 두지 않는다. 다른 도메인 호출은 같은 프로세스 안의 호출이다.
 
 **피드 조회.** 트랜잭션은 없고 DB 읽기가 각자 끝난다.
 
@@ -378,6 +381,7 @@ sequenceDiagram
 | 노출 수집 | `impression_log` 저장, 정산의 판정 기록과 원장(`PointDeductor`, `MANDATORY`) | serve 기록 읽기, 커밋 뒤의 유효 노출 수 카운터 |
 | 스와이프 | 없다. 찜과 스와이프 기록이 각자 커밋된다 | 당일 이력(Valkey) |
 | 필터 조회 | 없다. 읽기 둘이 각자 끝난다 | 없음 |
+| 필터 저장 | `feed_filter` 의 넣기 또는 바꾸기, `feed_filter_category` 의 지우기와 다시 넣기, 저장한 필터 다시 읽기 | 없음 |
 
 **결정: 서빙 로그와 접속 위치를 무엇으로 미루나** (#315 에서 정했다)
 
@@ -418,6 +422,8 @@ C 를 고른다. 이미 넘긴 카드는 찜을 쓰기 전에 먼저 걸러, 먼
 | 같은 회원의 요청이 동시에 옴 | 요청 제한은 한 Lua 스크립트로 세고 넣어 함께 들어오지 않는다. 하루 횟수는 읽고 고른 뒤 올려서, 동시에 온 두 요청이 같은 캠페인을 함께 내려줄 수 있다. 같은 사용자의 동시 요청은 60초 6회 제한 안에서만 생겨 받아들였다 |
 | 같은 노출이 다시 옴 | (serveId, 사용자) 가 멱등 키다. 먼저 읽어 있으면 처음 판정을 돌려준다. 동시에 두 건이 오면 `INSERT IGNORE` 가 한 건만 넣고 늦은 쪽은 0행이라 먼저 넣은 쪽의 판정을 읽어 돌려준다. 차감과 카운터는 넣은 쪽에서만 한 번 돈다. 정산도 같은 serveId 의 두 번째 차감을 첫 판정으로 돌려준다 |
 | 같은 카드를 다시 넘김 | (serveId, 사용자) 가 멱등 키다. 먼저 읽어 있으면 `applied: false` 다. 동시에 두 건이 오면 `INSERT IGNORE` 가 한 건만 넣고 늦은 쪽은 `applied: false` 로 당일 이력에 다시 넣지 않는다. 찜은 같은 캠페인에 한 건뿐이라 둘이 함께 넣어도 하나만 남는다 |
+| 같은 회원의 필터 저장이 동시에 옴 | 먼저 도는 `INSERT ... ON DUPLICATE KEY UPDATE` 가 그 회원의 `feed_filter` 행을 잠가, 뒤의 요청은 앞의 커밋까지 기다린 뒤 업종을 지우고 넣는다. 처음 저장이 둘 와도 PK 충돌 없이 한쪽이 넣고 다른 쪽이 바꾼다. 늦게 커밋한 쪽의 필터가 남는다 |
+| 같은 필터 저장이 다시 옴 | 통째로 바꾸므로 멱등 키 없이 결과가 같다 |
 | 같은 피드 요청이 다시 옴 | 멱등 키가 없다. 다시 오면 요청 횟수와 내려준 횟수에 한 번 더 들어가고 새 serveId 로 새 카드가 나간다. `serve_log` 와 `feed_visit_daily` 는 `INSERT IGNORE` 라 같은 키가 두 번 써져도 한 행이다 |
 | 여러 회원이 같은 자원에 씀 | 노출 상한은 읽기만 하고 판정 시점의 수로 거른다. 여러 피드가 동시에 같은 캠페인을 내려 상한을 조금 넘길 수 있다. 넘긴 노출은 정산이 과금하지 않는다 |
 | 이벤트가 늦거나 순서가 바뀜 | 해당 없음 |
@@ -467,7 +473,7 @@ C 를 고른다. 이미 넘긴 카드는 찜을 쓰기 전에 먼저 걸러, 먼
 | 처리량 계산 | 목표 5,000 TPS(피드 1회에 카드 10장) x DB 쓰기 최대 2 = 초당 최대 10,000 쓰기. 노출 수집과 같은 시간대에 몰린다. 지금 구성으로 되는지는 재지 않았다 |
 | 확인 방법 | 아직 없다. 피드와 노출의 k6 시나리오에 스와이프를 섞는다 |
 
-필터 조회는 설정 화면이 부르는 API 라 목표 TPS 와 응답 시간을 두지 않았다(`feed-api-design.md` 성능 목표). DB 읽기 2(PK) 뿐이다.
+필터 조회와 저장은 설정 화면이 부르는 API 라 목표 TPS 와 응답 시간을 두지 않았다(`feed-api-design.md` 성능 목표). 조회는 DB 읽기 2(PK) 뿐이다. 저장은 DB 쓰기 2 + 고른 업종 수(최대 9)와 읽기 2 다.
 
 | 적을 것 | 찜 목록 조회 |
 |---|---|
@@ -498,6 +504,9 @@ C 를 고른다. 이미 넘긴 카드는 찜을 쓰기 전에 먼저 걸러, 먼
 | 같은 카드를 다시 넘김 | 그 카드를 패스했다 | 같은 카드를 찜으로 보낸다 | `applied: false` 이고 스와이프도 찜도 늘지 않는다 | `SwipeIntegrationTest.같은_카드를_다시_넘기면_applied_false_이고_기록이_늘지_않는다` |
 | 같은 카드를 동시에 넘김 | 다른 요청이 먼저 스와이프를 넣었다 | `INSERT IGNORE` 가 0행이다 | `applied: false` 이고 당일 이력에 다시 넣지 않는다 | `SwipeServiceTest.동시에_와서_먼저_넣은_쪽이_있으면_applied_false_이고_당일_이력은_다시_넣지_않는다` |
 | 넘긴 캠페인 | 그 캠페인을 패스했다 | 그날 피드를 요청한다 | 그 캠페인이 나오지 않는다 | `SwipeIntegrationTest.찜이나_패스한_캠페인은_그날_피드에_다시_나오지_않는다` |
+| 같은 필터를 다시 저장함 | 필터를 저장했다 | 같은 요청을 다시 보낸다 | 정렬과 업종이 처음 저장과 같다 | `FeedFilterIntegrationTest.같은_요청을_두_번_보내도_결과가_같다` |
+| 필터를 바꿈 | 업종 둘과 할인율순을 저장했다 | 업종 하나와 거리순으로 저장한다 | 앞의 업종이 남지 않는다 | `FeedFilterIntegrationTest.이미_저장한_필터를_통째로_바꾼다` |
+| 저장한 필터로 피드를 받음 | 그날 후보가 한식뿐이다 | 일식만 저장하고 피드를 요청한다 | 카드가 없다 | `FeedIntegrationTest.저장한_업종_필터가_다음_피드_요청에_반영된다` |
 | 찜을 먼저 쓰는 순서 | 찜하는 스와이프다 | 스와이프를 보낸다 | 찜, 스와이프, 당일 이력 순으로 쓴다 | `SwipeServiceTest.찜하면_찜을_먼저_넣고_스와이프를_남기고_그날_당일_이력에_넣는다` |
 | 남의 찜 | 다른 회원이 같은 캠페인을 찜했다 | 찜 목록을 조회한다 | 내 찜만 찜한 시각 내림차순으로 나온다 | `WishlistIntegrationTest.내_찜만_찜한_시각_내림차순으로_그날_후보의_표시_값과_함께_돌려준다` |
 | 오늘 후보가 아닌 찜 | 어제만 후보였던 캠페인을 찜했다 | 찜 목록을 조회한다 | `storeName`, `storeImageUrl`, `discount` 가 `null` 이고 식별자와 찜한 시각은 있다 | `WishlistIntegrationTest.오늘_노출_후보가_아닌_캠페인은_표시_값이_null_이다` |
@@ -512,4 +521,6 @@ C 를 고른다. 이미 넘긴 카드는 찜을 쓰기 전에 먼저 걸러, 먼
 | 세션을 늘리는 활동 | 피드 요청으로만 임시로 정했다 | 스와이프와 노출 요청도 세션을 늘릴지 정해야 한다. 두 API 모두 아직 늘리지 않는다 |
 | 끝난 캠페인의 찜 | 그날 후보에 행이 있으면 받아 끝난 캠페인도 찜에 들어간다(#379) | `CampaignEndedEvent` 를 받아 찜을 지우는 쪽이 아직 없다 |
 | 노출이 분석으로 가는 이벤트(`ImpressionServedEvent`) | 이벤트 타입이 없다 | 분석의 전환 퍼널에 노출이 빠진다 |
+| 고를 수 있는 업종 코드 | store 의 CHECK 와 같은 목록을 광고 서빙 요청 타입에 따로 둔다(#411 에서 임시로 정했다) | 업종이 늘면 두 곳을 고쳐야 한다. store 가 업종 목록을 `contract` 로 공개하면 그것으로 검사한다 |
+| 필터가 없는 회원의 기본값 | `FeedFilterService` 와 `FeedService` 가 따로 정한다(#411 에서 임시로 정했다) | 없다. 기본값이 바뀌면 두 곳을 고친다 |
 | 신규 우선 노출(`new_priority_until`) | 계산 규칙이 문서에 없다 | 배분 슬롯에 넣을 자리가 정해지지 않았다 |
