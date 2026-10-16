@@ -86,4 +86,20 @@ public interface CampaignRepository extends JpaRepository<Campaign, Long> {
             )
             """)
     List<Campaign> findServableOn(@Param("businessDate") LocalDate businessDate, Pageable pageable);
+
+    /*
+     * 점주의 캠페인 목록 조회(#341) 커서 페이징이다. campaignId는 auto-increment라 생성
+     * 순서와 일치해서 TemplateVersionRepository.findPage와 같이 단일 커서 값으로 충분하다.
+     * owner_id 필터는 idx_campaign_owner_id를 그대로 탄다(#198에서 추가).
+     */
+    @Query("""
+            select c from Campaign c
+            where c.ownerId = :ownerId
+              and (:cursorId is null or c.id < :cursorId)
+            order by c.id desc
+            """)
+    List<Campaign> findPageByOwnerId(
+            @Param("ownerId") Long ownerId,
+            @Param("cursorId") Long cursorId,
+            Pageable pageable);
 }
