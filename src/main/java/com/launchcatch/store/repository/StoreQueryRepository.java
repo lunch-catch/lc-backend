@@ -2,6 +2,8 @@ package com.launchcatch.store.repository;
 
 import com.launchcatch.store.dto.StoreMenuQueryRow;
 import com.launchcatch.store.dto.StoreQueryRow;
+import com.launchcatch.store.dto.StoreSummaryQueryRow;
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import lombok.RequiredArgsConstructor;
@@ -12,6 +14,26 @@ import org.springframework.stereotype.Repository;
 @RequiredArgsConstructor
 public class StoreQueryRepository {
     private final NamedParameterJdbcTemplate jdbc;
+
+    public List<Long> findOwnerIdsByNameContaining(String keyword, long fetchLimit) {
+        String pattern = "%" + keyword.replace("!", "!!").replace("%", "!%")
+                .replace("_", "!_") + "%";
+        return jdbc.query("""
+                select owner_id from store
+                where name like :pattern escape '!'
+                limit :fetchLimit
+                """, Map.of("pattern", pattern, "fetchLimit", fetchLimit),
+                (rs, rowNum) -> rs.getLong("owner_id"));
+    }
+
+    public List<StoreSummaryQueryRow> findSummariesByOwnerIds(Collection<Long> ownerIds) {
+        return jdbc.query("""
+                select owner_id, store_id, name, finalized, business_registration_number
+                from store where owner_id in (:ownerIds)
+                """, Map.of("ownerIds", ownerIds), (rs, rowNum) -> new StoreSummaryQueryRow(
+                        rs.getLong("owner_id"), rs.getLong("store_id"), rs.getString("name"),
+                        rs.getBoolean("finalized"), rs.getString("business_registration_number")));
+    }
 
     // 최종 등록된 가게만 조회하며 LEFT JOIN으로 이미지 누락도 서비스에서 오류로 확인할 수 있게 한다.
     public List<StoreQueryRow> findAllById(List<Long> storeIds) {

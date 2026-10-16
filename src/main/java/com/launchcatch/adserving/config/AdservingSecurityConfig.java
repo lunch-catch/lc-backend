@@ -15,12 +15,14 @@ public class AdservingSecurityConfig {
     private static final String IMPRESSION_PATH = "/v1/impressions";
     private static final String SWIPE_PATH = "/v1/swipes";
     private static final String FEED_FILTER_PATH = "/v1/feed-filter";
+    private static final String WISHLIST_PATH = "/v1/wishlist";
 
     private static final String[] ADSERVING_PATHS = {
             FEED_PATH,
             IMPRESSION_PATH,
             SWIPE_PATH,
-            FEED_FILTER_PATH
+            FEED_FILTER_PATH,
+            WISHLIST_PATH
     };
 
     @Bean
@@ -34,6 +36,8 @@ public class AdservingSecurityConfig {
                         .requestMatchers(HttpMethod.POST, IMPRESSION_PATH).hasRole("MEMBER")
                         .requestMatchers(HttpMethod.POST, SWIPE_PATH).hasRole("MEMBER")
                         .requestMatchers(HttpMethod.GET, FEED_FILTER_PATH).hasRole("MEMBER")
+                        .requestMatchers(HttpMethod.PUT, FEED_FILTER_PATH).hasRole("MEMBER")
+                        .requestMatchers(HttpMethod.GET, WISHLIST_PATH).hasRole("MEMBER")
                         .anyRequest().denyAll())
                 .build();
     }
