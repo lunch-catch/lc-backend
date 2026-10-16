@@ -90,7 +90,7 @@ class SeedIntegrationTest extends IntegrationTestSupport {
 
         assertThat(count("SELECT COUNT(*) FROM ad_candidate WHERE business_date = '2026-10-16'")).isEqualTo(16);
         assertThat(count("SELECT COUNT(*) FROM coupon_event")).isEqualTo(4);
-        assertThat(count("SELECT COUNT(*) FROM owner")).isEqualTo(16);
+        assertThat(count("SELECT COUNT(*) FROM owner")).isEqualTo(18);
     }
 
     @Test
