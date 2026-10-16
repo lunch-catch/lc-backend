@@ -1,4 +1,4 @@
-package com.launchcatch.global.id;
+package com.launchcatch.adserving.id;
 
 import java.security.SecureRandom;
 import java.time.Instant;
