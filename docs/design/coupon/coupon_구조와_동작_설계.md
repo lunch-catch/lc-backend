@@ -144,7 +144,7 @@ CouponEvent.calculateDiscount는 자기 스냅샷의 할인 대상·방식·값�
 | 미연결 | 받음, campaign | `CampaignStatusChangedEvent`, `CampaignEndedEvent` | 이벤트의 정의는 있지만 coupon 수신 경로는 없다 |
 | 연결됨 | 공개, analytics | `CouponIssuedEvent`, `CouponRedeemedEvent` | 발급·사용 트랜잭션 안에서 발행하며 분석은 커밋 후 비동기로 수신한다 |
 | 호출 대기 | 공개, analytics | `CouponIssueOpenedEvent`, `CouponExpiredEvent` | 이벤트 타입만 준비했다. 오픈·만료 배치를 구현할 때 발행한다 |
-| 공개됨 | 공개, analytics | `CouponStatsQueryService` | 캠페인별 일일 집계와 회원별 누적 단건 집계를 제공한다. 분석의 호출 연결은 후속 작업이다 |
+| 공개됨 | 공개, analytics | `CouponStatsQueryService` | 캠페인별 일일 집계와 회원별 일일 단건 집계를 제공한다. 분석의 호출 연결은 후속 작업이다 |
 
 계약과 의존 방향은 [아키텍처 2장](../../architecture/런치캐치_도메인_구조와_의존성_설계.md)을 따른다.
 store 메서드의 반환 정책은 [공개 계약 문서](../store/store-query-contract.md)가 갖는다.

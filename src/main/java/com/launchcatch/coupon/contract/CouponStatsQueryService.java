@@ -8,5 +8,5 @@ public interface CouponStatsQueryService {
 
     List<DailyCampaignCouponStats> dailyCampaignStats(LocalDate businessDate);
 
-    MemberCouponStats memberStats(long memberId);
+    MemberCouponStats memberStats(long memberId, LocalDate businessDate);
 }
