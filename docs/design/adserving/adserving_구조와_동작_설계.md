@@ -1,7 +1,7 @@
 # adserving 구조와 동작 설계
 
 광고 서빙 도메인의 구조와 동작을 적는다. 엔드포인트마다의 처리와 성능 목표는
-[`feed-api-design.md`](./feed-api-design.md) 가 갖는다. 지금은 `GET /v1/feed` 의 후보 선별(#236), 배정 규칙(#307), serve 기록과 서빙 로그(#315), `POST /v1/impressions`(#323), `POST /v1/swipes`(#379)까지 훑었다.
+[`feed-api-design.md`](./feed-api-design.md) 가 갖는다. 지금은 `GET /v1/feed` 의 후보 선별(#236), 배정 규칙(#307), serve 기록과 서빙 로그(#315), `POST /v1/impressions`(#323), `POST /v1/swipes`(#379), `GET /v1/feed-filter`(#405)까지 훑었다.
 나머지 엔드포인트는 그 이슈가 이 문서를 채운다.
 
 ## 1. 범위
@@ -13,6 +13,7 @@
 | 같은 캠페인을 하루 2회, 한 세션 1회까지만 내려준다 | 비즈니스 규칙(`feed-api-design.md` 4단계) |
 | 사용자마다 최근 60초 6회로 피드 요청을 막는다 | FR-064, 명세의 요청 제한 |
 | 카드를 찜하거나 패스하고, 찜은 찜 목록에 넣는다 | FR-065, FR-071 |
+| 내 피드 필터(업종, 정렬)를 돌려준다 | FR-067 |
 | 찜과 패스로 그날 피드에서 뺄 캠페인을 기억한다 | FR-099 (9), BR-040 |
 | 카드마다 serve 기록을 남겨 노출 검증에 쓰게 한다 | FR-097 |
 | 서빙 로그와 그날 첫 접속 위치를 응답 뒤에 쓴다 | FR-027, FR-042, FR-064 |
@@ -47,8 +48,10 @@ adserving/
 └── feed/
     ├── controller/FeedController.java
     ├── controller/SwipeController.java
+    ├── controller/FeedFilterController.java
     ├── service/FeedService.java
     ├── service/SwipeService.java
+    ├── service/FeedFilterService.java
     ├── service/ServeLogBuffer.java                  서빙 로그 대기열과 작업자
     ├── repository/FeedRateLimitRepository.java      Valkey
     ├── repository/DailyExclusionRepository.java     Valkey
@@ -74,7 +77,7 @@ impression/
 - 애그리거트끼리는 객체로 쥐지 않고 ID 로만 잇는다. `serve_log`, `swipe_log` 는 `campaign_id` 로 후보를 가리키고 연관 매핑이 없다.
 - `impression` 은 `feed` 의 serve 기록과 유효 노출 수 카운터, `engine` 의 후보 소진 여부를 읽는다. 반대 방향은 없다.
 - `feed` 의 스와이프는 `wishlist` 에 찜을 넣는다. 두 애그리거트를 한 트랜잭션에 묶지 않고 쓰는 순서로 맞춘다(7장).
-- 입구는 HTTP 요청 셋(`GET /v1/feed`, `POST /v1/impressions`, `POST /v1/swipes`)이다. 스케줄, 이벤트, 다른 도메인의 호출은 아직 없다.
+- 입구는 HTTP 요청 넷(`GET /v1/feed`, `POST /v1/impressions`, `POST /v1/swipes`, `GET /v1/feed-filter`)이다. 스케줄, 이벤트, 다른 도메인의 호출은 아직 없다.
 
 ### 규칙을 두는 곳
 
@@ -87,6 +90,7 @@ impression/
 | 서빙 로그를 묶어 쓰고 차면 버리는 규칙 | `ServeLogBuffer` |
 | 노출의 유효 판정, 같은 노출이 다시 올 때의 처리, 차감과 카운터의 시점 | `ImpressionService` |
 | 같은 카드를 다시 넘길 때의 처리, 찜과 스와이프 기록과 당일 이력을 쓰는 순서 | `SwipeService` |
+| 필터를 저장하지 않은 회원의 기본값(전체 업종, 거리순) | `FeedFilterService`. 피드는 같은 기본값을 `FeedService` 에서 따로 정한다 |
 
 `ServeLogBuffer` 를 `FeedService` 와 나눈 것은 입구가 달라서다. 앞은 요청 스레드가, 뒤는 작업자 스레드가 부른다.
 
@@ -96,6 +100,7 @@ impression/
 |---|---|
 | 후보 조회 | 최대 탐색 반경(5000m)을 덮는 사각 범위로 `idx_candidate_geo` 를 타고 한 번 읽는다. 상태(`SERVABLE`)와 소진(`sold_out_at IS NULL`)은 쿼리가, 나머지는 `FeedAssembler` 가 거른다 |
 | 업종 선호도 | `idx_swipe_member_date` 로 최근 30일의 찜을 업종별로 센다. 요청마다 읽는다 |
+| 필터 업종 | `feed_filter_category` 를 PK(`member_id`, `category_code`)로 읽고 업종 코드 오름차순으로 돌려준다(#405). 순서 컬럼이 없어 고른 순서는 남지 않는다 |
 | 다른 도메인 데이터의 사본 | `ad_candidate` 는 00:00 의 캠페인과 가게 사본이다. 그날 안에서는 캠페인과 쿠폰의 통보로만 바뀐다 |
 | 집계를 세는 방식 | 그날 유효 노출 수는 `impression_log` 를 세지 않고 카운터를 읽는다. 틀리면 `impression_log` 에서 다시 센다 |
 | DB 제약으로 막을 것과 코드로 막을 것 | 같은 카드가 `serve_log` 에 두 번 들어가는 것은 PK(`serve_id`)와 `INSERT IGNORE` 로, 같은 날 두 번째 접속 위치는 PK(`business_date`, `member_id`)와 `INSERT IGNORE` 로 막는다. 같은 노출의 두 번째 저장은 `impression_log` 의 PK(`serve_id`, `member_id`)와 `INSERT IGNORE` 로, 같은 카드의 두 번째 스와이프는 `swipe_log` 의 같은 PK 로, 같은 캠페인의 두 번째 찜은 `uk_wishlist_member_campaign` 으로 막는다. 노출은 넣은 행 수로 처음 저장인지 가른다. 먼저 읽어 보는 것은 다시 온 요청을 빨리 돌려보내려는 것이고 동시 요청은 PK 가 막는다 |
@@ -192,6 +197,7 @@ flowchart LR
     REQ([요청 GET /v1/feed]) --> FC
     REQ2([요청 POST /v1/impressions]) --> IMC
     REQ3([요청 POST /v1/swipes]) --> SWC
+    REQ4([요청 GET /v1/feed-filter]) --> FFCT
 
     subgraph adserving["adserving 모듈"]
         direction LR
@@ -206,6 +212,9 @@ flowchart LR
             FS --> SW[(SwipeLogRepository)]
             FS --> FF[(FeedFilterRepository)]
             FS --> FFC[(FeedFilterCategoryRepository)]
+            FFCT[FeedFilterController] --> FFS[FeedFilterService]
+            FFS --> FF
+            FFS --> FFC
             SWC[SwipeController] --> SWS[SwipeService]
             SWS --> SW
             SWS --> DE
@@ -254,7 +263,7 @@ flowchart LR
 
 ### 주요 흐름
 
-피드 조회, 노출 수집, 스와이프 셋이다. 다른 도메인 호출은 같은 프로세스 안의 호출이다.
+피드 조회, 노출 수집, 스와이프 셋이다. 필터 조회는 PK 로 두 번 읽고 끝나 흐름 그림을 두지 않는다. 다른 도메인 호출은 같은 프로세스 안의 호출이다.
 
 **피드 조회.** 트랜잭션은 없고 DB 읽기가 각자 끝난다.
 
@@ -360,6 +369,7 @@ sequenceDiagram
 | 피드 조회 | 없다. DB 읽기가 각자 끝난다 | Valkey 호출, 정산 조회, 서빙 로그와 접속 위치 쓰기 |
 | 노출 수집 | `impression_log` 저장, 정산의 판정 기록과 원장(`PointDeductor`, `MANDATORY`) | serve 기록 읽기, 커밋 뒤의 유효 노출 수 카운터 |
 | 스와이프 | 없다. 찜과 스와이프 기록이 각자 커밋된다 | 당일 이력(Valkey) |
+| 필터 조회 | 없다. 읽기 둘이 각자 끝난다 | 없음 |
 
 **결정: 서빙 로그와 접속 위치를 무엇으로 미루나** (#315 에서 정했다)
 
@@ -448,6 +458,8 @@ C 를 고른다. 이미 넘긴 카드는 찜을 쓰기 전에 먼저 걸러, 먼
 | 요청 하나의 비용 | DB 읽기 2(중복 확인, 그날 후보), DB 쓰기 1~2(찜은 WISH 일 때만, 스와이프), 쓰기마다 커밋 1, Valkey 호출 1(당일 이력) |
 | 처리량 계산 | 목표 5,000 TPS(피드 1회에 카드 10장) x DB 쓰기 최대 2 = 초당 최대 10,000 쓰기. 노출 수집과 같은 시간대에 몰린다. 지금 구성으로 되는지는 재지 않았다 |
 | 확인 방법 | 아직 없다. 피드와 노출의 k6 시나리오에 스와이프를 섞는다 |
+
+필터 조회는 설정 화면이 부르는 API 라 목표 TPS 와 응답 시간을 두지 않았다(`feed-api-design.md` 성능 목표). DB 읽기 2(PK) 뿐이다.
 
 ## 12. 테스트와 미정 사항
 
