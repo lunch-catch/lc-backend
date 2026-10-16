@@ -1,7 +1,7 @@
 # adserving 장애 처리 설계
 
 광고 서빙이 기대는 대상과 [장애 처리 설계 가이드](../장애_처리_설계_가이드.md)의 기본 처리를 벗어난 것을 적는다.
-지금은 `GET /v1/feed` 의 후보 선별(#236), 배정 규칙(#307), serve 기록과 서빙 로그(#315), `POST /v1/impressions`(#323), `POST /v1/swipes`(#379), `GET /v1/feed-filter`(#405), `PUT /v1/feed-filter`(#411)까지 훑었다.
+지금은 `GET /v1/feed` 의 후보 선별(#236), 배정 규칙(#307), serve 기록과 서빙 로그(#315), `POST /v1/impressions`(#323), `POST /v1/swipes`(#379), `GET /v1/feed-filter`(#405), `PUT /v1/feed-filter`(#411), `GET /v1/wishlist`(#416)까지 훑었다.
 
 ## 이 도메인이 기대는 대상
 
@@ -9,7 +9,7 @@
 |---|---|---|
 | Valkey | 요청 제한, 당일 이력, 하루와 세션 횟수, 유효 노출 수 읽기, serve 기록 | 기본(통과) |
 | Valkey(커밋 뒤) | 유효 노출 수 카운터 올리기, 당일 이력 넣기 | 벗어났다. 아래 |
-| MySQL 읽기 | 그날 후보, 필터(피드와 필터 조회), 30일 찜, 노출 중복 확인, 후보 소진 | 기본(오류로 올린다) |
+| MySQL 읽기 | 그날 후보(피드, 스와이프, 찜 목록), 필터(피드와 필터 조회), 30일 찜, 찜 목록, 노출 중복 확인, 후보 소진 | 기본(오류로 올린다) |
 | MySQL 쓰기(요청 안) | `impression_log`, `wishlist`, `swipe_log`, `feed_filter`, `feed_filter_category` | 기본(트랜잭션을 되돌린다). 스와이프는 찜과 기록을 따로 커밋하고 순서로 맞춘다(구조와 동작 설계 7장) |
 | MySQL 쓰기 | 응답 뒤의 `serve_log`, `feed_visit_daily` | 벗어났다. 아래 |
 | member 의 `MemberQueryService` | 온보딩, 위치, 노출 대상 판정 | 기본(오류로 올린다). 같은 프로세스 안의 호출이다 |
