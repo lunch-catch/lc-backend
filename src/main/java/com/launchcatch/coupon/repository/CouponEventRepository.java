@@ -5,22 +5,14 @@ import com.launchcatch.coupon.entity.CouponEventStatus;
 import com.launchcatch.coupon.entity.CouponInventoryStatus;
 import jakarta.persistence.LockModeType;
 import java.time.LocalDate;
-import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
-import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 public interface CouponEventRepository extends JpaRepository<CouponEvent, Long> {
-
-    List<CouponEvent> findByBusinessDateAndStatusAndIdGreaterThanOrderByIdAsc(
-            LocalDate businessDate, CouponEventStatus status, long afterId, Pageable pageable);
-
-    List<CouponEvent> findByUsableEndAtLessThanEqualAndIdGreaterThanOrderByIdAsc(
-            LocalDateTime now, long afterId, Pageable pageable);
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT event FROM CouponEvent event WHERE event.id = :eventId")
