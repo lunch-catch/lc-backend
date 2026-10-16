@@ -2,6 +2,7 @@ package com.launchcatch.adserving.feed.repository;
 
 import com.launchcatch.auth.RedisFailureClassifier;
 import io.micrometer.core.instrument.MeterRegistry;
+import java.time.Duration;
 import java.time.LocalDate;
 import java.util.HashMap;
 import java.util.List;
@@ -23,6 +24,9 @@ import org.springframework.stereotype.Repository;
 public class ImpressionCountRepository {
 
     static final String KEY_PREFIX = "adserving:validImpressions:";
+
+    // 피드는 그날 키만 읽는다. 다음 날까지 남겨 두면 대조할 때 볼 수 있어 이틀 뒤에 지운다.
+    static final Duration TTL = Duration.ofDays(2);
 
     // Valkey 가 멈춰 막지 않고 통과시킨 횟수다. 경보는 이 지표에 건다(장애 처리 가이드).
     static final String BYPASS_METRIC = "adserving_cache_bypass_total";
@@ -57,6 +61,21 @@ public class ImpressionCountRepository {
                     RedisFailureClassifier.causeLabel(e), e);
             meterRegistry.counter(BYPASS_METRIC, "use", "impression_count").increment();
             return Map.of();
+        }
+    }
+
+    /*
+     * 그 캠페인의 그날 유효 노출 수를 1 올린다. 처음 저장된 유효 노출이 커밋된 뒤에만 부른다.
+     * Valkey 가 멈추면 올리지 않고 센다. 노출 상한이 그만큼 늦게 걸릴 뿐 과금은 정산이 막는다.
+     */
+    public void increment(LocalDate businessDate, Long campaignId) {
+        try {
+            redisTemplate.opsForHash().increment(key(businessDate), String.valueOf(campaignId), 1);
+            redisTemplate.expire(key(businessDate), TTL);
+        } catch (DataAccessException e) {
+            log.warn("event=FEED_IMPRESSION_COUNT_INCREMENT_FAILED campaignId={} cause={} 올리지 않고 통과시킨다",
+                    campaignId, RedisFailureClassifier.causeLabel(e), e);
+            meterRegistry.counter(BYPASS_METRIC, "use", "impression_count").increment();
         }
     }
 }

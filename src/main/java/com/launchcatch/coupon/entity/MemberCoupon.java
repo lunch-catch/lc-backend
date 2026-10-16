@@ -98,6 +98,32 @@ public class MemberCoupon extends BaseTimeEntity {
         qrExpiresAt = now.plusSeconds(60);
     }
 
+    // 호출자는 행 잠금 아래 최신 QR과 사용 시간을 확인하고 마지막 토큰을 보존한다.
+    public void redeem(UUID token, int version, LocalDateTime now) {
+        Objects.requireNonNull(token);
+        Objects.requireNonNull(now);
+        if (status == MemberCouponStatus.USED) {
+            validateQrToken(token, version);
+            throw new CouponException(CouponErrorCode.COUPON_ALREADY_USED);
+        }
+        if (status != MemberCouponStatus.ISSUED
+                || now.isBefore(usableStartAt) || !now.isBefore(usableEndAt)) {
+            throw new CouponException(CouponErrorCode.COUPON_NOT_AVAILABLE);
+        }
+        validateQrToken(token, version);
+        if (qrExpiresAt == null
+                || now.isBefore(qrExpiresAt.minusSeconds(60)) || !now.isBefore(qrExpiresAt)) {
+            throw new CouponException(CouponErrorCode.QR_NOT_VALID);
+        }
+        status = MemberCouponStatus.USED;
+    }
+
+    public void validateQrToken(UUID token, int version) {
+        if (!Objects.equals(token, qrToken) || version != qrVersion) {
+            throw new CouponException(CouponErrorCode.QR_NOT_VALID);
+        }
+    }
+
     /**
      * 미사용 쿠폰의 사용 종료 시각에 도달했으면 만료 상태로 변경한다.
      *

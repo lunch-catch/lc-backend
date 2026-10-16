@@ -10,7 +10,7 @@
 | DB | MySQL(JPA), `campaign`/`template`/`store_audience` 등. `ops.contract.PlatformSettingQueryService.getMinDailyBudget()`(같은 트랜잭션 안의 도메인 간 직접 호출, 외부 API 아님)도 DB 읽기와 같은 처리를 받는다(`#330`) |
 | 외부 API | Bedrock LLM(템플릿 생성·수정, `template/client/BedrockTemplateHtmlGenerator`) |
 | 캐시 | 해당 없음(이 도메인은 캐시에 기대지 않는다. `owner.contract.OwnerStatusQuery`가 캐시를 쓰지만 그건 owner 도메인이 소유한다) |
-| 애플리케이션 | 해당 없음(아직 훑지 않음) |
+| 애플리케이션 | 대용량 조회만 훑음(`#341`). 나머지(요청 폭주, graceful shutdown, 다중 서버)는 아직 훑지 않음 |
 | 롤백 안 되는 효과 | 해당 없음(아직 훑지 않음) |
 
 ## 벗어난 것
@@ -48,4 +48,5 @@
 
 | 항목 | 비고 |
 |---|---|
-| 캐시, 애플리케이션, 롤백 안 되는 효과 유형의 점검 | 이번 PR(`#244`)이 건드린 범위 밖이라 훑지 않았다 |
+| 캐시, 롤백 안 되는 효과 유형의 점검 | 이번 PR(`#244`)이 건드린 범위 밖이라 훑지 않았다 |
+| 애플리케이션: 요청 폭주, graceful shutdown, 다중 서버 | 이번 PR(`#341`)이 건드린 범위 밖이라 훑지 않았다. 대용량 조회는 훑었다(위 표) |

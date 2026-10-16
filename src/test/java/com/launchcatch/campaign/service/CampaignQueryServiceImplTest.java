@@ -18,6 +18,8 @@ import com.launchcatch.campaign.contract.TargetGender;
 import com.launchcatch.campaign.entity.Campaign;
 import com.launchcatch.campaign.repository.CampaignRepository;
 import com.launchcatch.global.entity.BaseTimeEntity;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.LockModeType;
 import java.lang.reflect.Field;
 import java.time.Clock;
 import java.time.Instant;
@@ -27,6 +29,7 @@ import java.time.LocalTime;
 import java.time.ZoneId;
 import java.util.Collections;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -50,12 +53,14 @@ class CampaignQueryServiceImplTest {
 
     @Mock
     private CampaignRepository campaignRepository;
+    @Mock
+    private EntityManager entityManager;
 
     private CampaignQueryServiceImpl service;
 
     @BeforeEach
     void setUp() {
-        service = new CampaignQueryServiceImpl(campaignRepository, FIXED_CLOCK);
+        service = new CampaignQueryServiceImpl(campaignRepository, entityManager, FIXED_CLOCK);
     }
 
     @Test
@@ -199,6 +204,30 @@ class CampaignQueryServiceImplTest {
 
         assertThat(result).isEmpty();
         verify(campaignRepository, never()).findDistinctOwnerIdsWithLiveCampaign(anyCollection(), anyList());
+    }
+
+    @Test
+    @DisplayName("findByIdForUpdate는 저장소를 잠가 불러 매핑하고, 영속성 컨텍스트의 값을 최신으로 갱신한다")
+    void findByIdForUpdate는_저장소를_잠가_불러_매핑한다() {
+        Campaign campaign = campaign();
+        when(campaignRepository.findByIdForUpdate(CAMPAIGN_ID)).thenReturn(Optional.of(campaign));
+
+        Optional<CampaignInfo> result = service.findByIdForUpdate(CAMPAIGN_ID);
+
+        assertThat(result).isPresent();
+        assertThat(result.get().campaignId()).isEqualTo(CAMPAIGN_ID);
+        verify(campaignRepository).findByIdForUpdate(CAMPAIGN_ID);
+        verify(entityManager).refresh(campaign, LockModeType.PESSIMISTIC_WRITE);
+    }
+
+    @Test
+    @DisplayName("findByIdForUpdate는 없는 캠페인이면 빈 값을 돌려준다")
+    void findByIdForUpdate는_없으면_빈_값이다() {
+        when(campaignRepository.findByIdForUpdate(CAMPAIGN_ID)).thenReturn(Optional.empty());
+
+        Optional<CampaignInfo> result = service.findByIdForUpdate(CAMPAIGN_ID);
+
+        assertThat(result).isEmpty();
     }
 
     @Test

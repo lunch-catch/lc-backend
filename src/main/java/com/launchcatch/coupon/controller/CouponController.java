@@ -10,6 +10,8 @@ import com.launchcatch.coupon.dto.CouponIssueResponse;
 import com.launchcatch.coupon.dto.CouponQrResponse;
 import com.launchcatch.coupon.dto.CouponSummaryResponse;
 import com.launchcatch.coupon.dto.CouponUsageHistoryResponse;
+import com.launchcatch.coupon.dto.CouponUseRequest;
+import com.launchcatch.coupon.dto.CouponUseResponse;
 import com.launchcatch.coupon.service.CouponCommandService;
 import com.launchcatch.coupon.service.CouponLookUpService;
 import com.launchcatch.global.response.CursorPageResponse;
@@ -48,6 +50,17 @@ public class CouponController {
 
     private final CouponLookUpService couponLookUpService;
     private final CouponCommandService couponCommandService;
+
+    @PostMapping("/owner/coupon-usages")
+    @Operation(summary = "쿠폰 QR 사용", description = "현재 매장 관리 권한과 100m 거리, 계정·QR·사용 시간을 확인하고 할인액과 사용 이력을 확정한다.")
+    @ApiResponse(responseCode = "201", description = "쿠폰과 사용 이력을 같은 트랜잭션으로 확정한 결과다.",
+            useReturnTypeSchema = true)
+    public ResponseEntity<ResponseEnvelope<CouponUseResponse>> redeem(
+            @Parameter(hidden = true) @AuthenticationPrincipal CustomUserDetails user,
+            @Valid @RequestBody CouponUseRequest request) {
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(ResponseEnvelope.success(couponCommandService.redeem(user.getId(), request)));
+    }
 
     // 인증된 회원에게 요청한 매장의 오늘 이벤트와 발급 가능 상태를 입력 순서대로 반환한다.
     @PostMapping("/coupon-events:getStatus")
