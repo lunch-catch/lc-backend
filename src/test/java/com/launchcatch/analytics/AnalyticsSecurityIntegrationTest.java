@@ -70,7 +70,7 @@ class AnalyticsSecurityIntegrationTest extends AbstractAnalyticsIntegrationTest 
         mvc.perform(post("/v1/events").with(user("admin").roles("ADMIN")))
                 .andExpect(status().isForbidden());
         mvc.perform(post("/v1/events").with(user("member").roles("MEMBER")))
-                .andExpect(status().isNotFound());
+                .andExpect(status().isBadRequest());
     }
 
     @Test
