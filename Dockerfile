@@ -17,5 +17,8 @@ COPY --chown=app:app build/libs/*.jar app.jar
 # 8080 은 트래픽, 8081 은 액추에이터다.
 EXPOSE 8080 8081
 
+# 시드는 기본으로 끄고 개발 서버에서 SEED_ENABLED=true로 켠다.
+ENV SEED_ENABLED=false
+
 # JAVA_TOOL_OPTIONS 로 힙 비율과 DNS TTL 을 준다. compose 가 넣는다.
 ENTRYPOINT ["java", "-jar", "/home/app/app.jar"]
