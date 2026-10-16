@@ -141,4 +141,7 @@ public interface SettlementMismatchRepository extends JpaRepository<SettlementMi
                                                      @Param("counterSpend") long counterSpend,
                                                      @Param("jobExecutionId") Long jobExecutionId,
                                                      @Param("now") LocalDateTime now);
+
+    // 영업일이 그날인 불일치 건수다. 해결 여부는 가리지 않는다
+    long countByBusinessDate(LocalDate businessDate);
 }
