@@ -11,7 +11,7 @@ HTTP가 아니라 **모듈 간 호출·이벤트·배치**다. 점주·관리자
 | 저장 구조 | `billing/V1__billing_init.sql`의 `budget_daily_plan`, `budget_hourly_target`, `deduction_result`, `point_ledger` |
 | 도메인 규칙 | 저장소 `docs/architecture/런치캐치_도메인_구조와_의존성_설계.md` 2.2(조회 인터페이스), 2.4(명령 인터페이스와 이벤트) |
 
-**2026-10-16 확인:** 이 문서가 가리키는 `billing-api-spec.md`와 `billing-api-design.md`는 이 저장소에 없다(`docs/api-spec/`, `docs/design/billing/` 어디에도 없다). 결제·환불·관리자 조정 API의 계약은 지금 코드의 Swagger 설명과 [구조와 동작 설계](./billing_구조와_동작_설계.md)가 갖는다. 아래 본문의 두 파일 참조는 작성 당시의 기록으로 남겼다.
+**2026-10-16 확인:** 이 문서가 가리키는 `billing-api-design.md`는 이 저장소에 없다. `billing-api-spec.md`는 2026-10-16에 만들어 관리자 포인트 수동 조정 하나만 쓰여 있고 나머지 결제·환불·정책 API는 아직 쓰지 않았다. 그 밖의 계약은 코드의 Swagger 설명과 [구조와 동작 설계](./billing_구조와_동작_설계.md)가 갖는다. 아래 본문의 두 파일 참조는 작성 당시의 기록으로 남겼다.
 
 **저장 구조가 요구사항과 다르면 마이그레이션을 따른다.** 문서 폴더의 `lunchcatch-erd-v4_1.sql`은 부분본·구버전이라 기준이 아니고, 마이그레이션 `README.md`가 원본이라고 적은 드라이브의 `전체_flyway.sql`도 사람이 손으로 맞추는 사본이라 무조건 믿지 않는다.
 
