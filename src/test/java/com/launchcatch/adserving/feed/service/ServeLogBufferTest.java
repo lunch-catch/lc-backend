@@ -17,9 +17,9 @@ import com.launchcatch.adserving.feed.repository.ServeLogRepository.Row;
 import com.launchcatch.adserving.feed.repository.ServeRecord;
 import com.launchcatch.global.config.ClockConfig;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
-import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
 import java.util.stream.IntStream;
@@ -37,14 +37,14 @@ class ServeLogBufferTest {
     private final ServeLogRepository serveLogRepository = mock(ServeLogRepository.class);
     private final FeedVisitRepository feedVisitRepository = mock(FeedVisitRepository.class);
     private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
-    private final ServeLogBuffer buffer = new ServeLogBuffer(serveLogRepository, feedVisitRepository, meterRegistry,
-            Clock.fixed(NOW, ClockConfig.ZONE));
+    private final ServeLogBuffer buffer = new ServeLogBuffer(serveLogRepository, feedVisitRepository, meterRegistry);
+    private static final LocalDateTime REQUESTED_AT = NOW.atZone(ClockConfig.ZONE).toLocalDateTime();
 
     private static ServedFeed feedWithCards(long memberId, int cards) {
         List<ServeRecord> records = IntStream.rangeClosed(1, cards)
                 .mapToObj(i -> new ServeRecord(UUID.randomUUID(), memberId, 100L + i, 55L, SlotType.RELEVANCE, i, NOW))
                 .toList();
-        return new ServedFeed(TODAY, memberId, cards == 0 ? null : UUID.randomUUID(), 37.5, 127.0, records);
+        return new ServedFeed(TODAY, memberId, cards == 0 ? null : UUID.randomUUID(), 37.5, 127.0, records, REQUESTED_AT);
     }
 
     @SuppressWarnings("unchecked")
@@ -66,8 +66,7 @@ class ServeLogBufferTest {
             assertThat(r.feedId()).isEqualTo(feed.feedId());
             assertThat(r.businessDate()).isEqualTo(TODAY);
         });
-        verify(feedVisitRepository).insertAll(List.of(new Visit(TODAY, 3001L, 37.5, 127.0)),
-                NOW.atZone(ClockConfig.ZONE).toLocalDateTime());
+        verify(feedVisitRepository).insertAll(List.of(new Visit(TODAY, 3001L, 37.5, 127.0, REQUESTED_AT)));
     }
 
     @Test
@@ -77,14 +76,14 @@ class ServeLogBufferTest {
         buffer.flushOnce();
 
         verify(serveLogRepository, never()).insertAll(anyList());
-        verify(feedVisitRepository).insertAll(anyList(), any());
+        verify(feedVisitRepository).insertAll(anyList());
     }
 
     @Test
     void 비어_있으면_쓰지_않는다() {
         assertThat(buffer.flushOnce()).isFalse();
 
-        verify(feedVisitRepository, never()).insertAll(anyList(), any());
+        verify(feedVisitRepository, never()).insertAll(anyList());
     }
 
     @Test
@@ -136,7 +135,7 @@ class ServeLogBufferTest {
 
     @Test
     void 접속_위치_쓰기만_실패하면_서빙_로그는_실패로_세지_않고_접속_위치만_센다() {
-        doThrow(new DataAccessResourceFailureException("DB 멈춤")).when(feedVisitRepository).insertAll(anyList(), any());
+        doThrow(new DataAccessResourceFailureException("DB 멈춤")).when(feedVisitRepository).insertAll(anyList());
         buffer.offer(feedWithCards(1L, 3));
         buffer.offer(feedWithCards(2L, 0));
 
@@ -153,7 +152,7 @@ class ServeLogBufferTest {
 
         buffer.flushOnce();
 
-        verify(feedVisitRepository).insertAll(anyList(), any());
+        verify(feedVisitRepository).insertAll(anyList());
         assertThat(meterRegistry.counter(ServeLogBuffer.FAILED_METRIC).count()).isEqualTo(3);
     }
 }

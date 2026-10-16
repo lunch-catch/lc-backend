@@ -25,9 +25,9 @@ public class FeedVisitRepository {
 
     private final JdbcTemplate jdbcTemplate;
 
-    public void insertAll(List<Visit> visits, LocalDateTime now) {
-        Timestamp at = Timestamp.valueOf(now);
+    public void insertAll(List<Visit> visits) {
         jdbcTemplate.batchUpdate(INSERT, visits, visits.size(), (ps, v) -> {
+            Timestamp at = Timestamp.valueOf(v.requestedAt());
             ps.setObject(1, v.businessDate());
             ps.setLong(2, v.memberId());
             ps.setBigDecimal(3, round(v.latitude()));
@@ -41,6 +41,7 @@ public class FeedVisitRepository {
         return BigDecimal.valueOf(coordinate).setScale(3, RoundingMode.HALF_UP);
     }
 
-    public record Visit(LocalDate businessDate, Long memberId, double latitude, double longitude) {
+    // requestedAt 은 그 피드 요청을 받은 한국 시각이다. created_at 에 남는다.
+    public record Visit(LocalDate businessDate, Long memberId, double latitude, double longitude, LocalDateTime requestedAt) {
     }
 }
