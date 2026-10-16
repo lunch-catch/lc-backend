@@ -68,4 +68,12 @@ public interface TemplateVersionRepository extends JpaRepository<TemplateVersion
             @Param("templateId") Long templateId,
             @Param("cursorVersionNumber") Integer cursorVersionNumber,
             Pageable pageable);
+
+    /*
+     * 게시로 소프트삭제된 버전을 완전히 지운다(#412). 아직 게시 전이라 deletedAt 이 null 인
+     * 버전은 건드리지 않는다. 지워진 행 수를 그대로 배치의 처리 건수로 쓴다.
+     */
+    @Modifying
+    @Query("delete from TemplateVersion v where v.deletedAt is not null")
+    int deleteAllByDeletedAtIsNotNull();
 }
