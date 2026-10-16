@@ -35,7 +35,8 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.HeadObjectRequest;
-import software.amazon.awssdk.services.s3.model.NoSuchKeyException;
+import software.amazon.awssdk.services.s3.model.HeadObjectResponse;
+import software.amazon.awssdk.services.s3.model.S3Exception;
 import software.amazon.awssdk.services.s3.presigner.S3Presigner;
 import software.amazon.awssdk.services.s3.presigner.model.PresignedPutObjectRequest;
 import software.amazon.awssdk.services.s3.presigner.model.PutObjectPresignRequest;
@@ -85,6 +86,10 @@ class StoreImageUploadServiceTest {
         verify(storeImageRepository).save(captor.capture());
         assertThat(captor.getValue().getSortOrder()).isEqualTo(1);
         assertThat(captor.getValue().getImageType()).isEqualTo(StoreImageType.INTERIOR);
+
+        ArgumentCaptor<PutObjectPresignRequest> presignCaptor = ArgumentCaptor.forClass(PutObjectPresignRequest.class);
+        verify(s3Presigner).presignPutObject(presignCaptor.capture());
+        assertThat(presignCaptor.getValue().putObjectRequest().contentLength()).isEqualTo(1000L);
     }
 
     @Test
@@ -137,6 +142,8 @@ class StoreImageUploadServiceTest {
                 STORE_ID, "upload-1", StoreImageType.INTERIOR, "stores/20/interior/upload-1.jpg",
                 "photo.jpg", "image/jpeg", 1000L, 1);
         when(storeImageRepository.findByUploadId("upload-1")).thenReturn(Optional.of(image));
+        when(s3Client.headObject(any(HeadObjectRequest.class)))
+                .thenReturn(HeadObjectResponse.builder().contentLength(1000L).build());
 
         service.confirmUpload(OWNER_ID, "upload-1");
 
@@ -168,11 +175,42 @@ class StoreImageUploadServiceTest {
                 "photo.jpg", "image/jpeg", 1000L, 1);
         when(storeImageRepository.findByUploadId("upload-1")).thenReturn(Optional.of(image));
         when(s3Client.headObject(any(HeadObjectRequest.class)))
-                .thenThrow(NoSuchKeyException.builder().message("not found").build());
+                .thenThrow((S3Exception) S3Exception.builder().message("not found").statusCode(404).build());
 
         assertThatThrownBy(() -> service.confirmUpload(OWNER_ID, "upload-1"))
                 .isInstanceOfSatisfying(StoreException.class, e ->
                         assertThat(e.getErrorCode()).isEqualTo(StoreErrorCode.IMAGE_NOT_UPLOADED));
+    }
+
+    @Test
+    @DisplayName("headObject가 404 아닌 오류를 돌려주면 그대로 전파한다")
+    void headObject가_404가_아니면_전파한다() {
+        givenOnboardingOwnerWithStore();
+        StoreImage image = StoreImage.preparePending(
+                STORE_ID, "upload-1", StoreImageType.INTERIOR, "stores/20/interior/upload-1.jpg",
+                "photo.jpg", "image/jpeg", 1000L, 1);
+        when(storeImageRepository.findByUploadId("upload-1")).thenReturn(Optional.of(image));
+        S3Exception serverError = (S3Exception) S3Exception.builder().message("internal error").statusCode(500).build();
+        when(s3Client.headObject(any(HeadObjectRequest.class))).thenThrow(serverError);
+
+        assertThatThrownBy(() -> service.confirmUpload(OWNER_ID, "upload-1"))
+                .isSameAs(serverError);
+    }
+
+    @Test
+    @DisplayName("실제 업로드 크기가 선언한 크기를 넘으면 거부한다")
+    void 실제_크기가_선언한_크기를_넘으면_거부한다() {
+        givenOnboardingOwnerWithStore();
+        StoreImage image = StoreImage.preparePending(
+                STORE_ID, "upload-1", StoreImageType.INTERIOR, "stores/20/interior/upload-1.jpg",
+                "photo.jpg", "image/jpeg", 1000L, 1);
+        when(storeImageRepository.findByUploadId("upload-1")).thenReturn(Optional.of(image));
+        when(s3Client.headObject(any(HeadObjectRequest.class)))
+                .thenReturn(HeadObjectResponse.builder().contentLength(1001L).build());
+
+        assertThatThrownBy(() -> service.confirmUpload(OWNER_ID, "upload-1"))
+                .isInstanceOfSatisfying(StoreException.class, e ->
+                        assertThat(e.getErrorCode()).isEqualTo(StoreErrorCode.IMAGE_FILE_TOO_LARGE));
     }
 
     @Test

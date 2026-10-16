@@ -105,7 +105,7 @@ class StoreImageSecurityIntegrationTest extends AbstractStoreIntegrationTest {
         String uploadId = JsonPath.read(prepareBody, "$.data.uploadId");
 
         when(s3Client.headObject(any(software.amazon.awssdk.services.s3.model.HeadObjectRequest.class)))
-                .thenReturn(HeadObjectResponse.builder().build());
+                .thenReturn(HeadObjectResponse.builder().contentLength(1000L).build());
 
         mvc.perform(post("/v1/owner/store-images:confirmUpload")
                         .cookie(ownerToken(ownerId))

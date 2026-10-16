@@ -23,8 +23,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.HeadObjectRequest;
-import software.amazon.awssdk.services.s3.model.NoSuchKeyException;
+import software.amazon.awssdk.services.s3.model.HeadObjectResponse;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
+import software.amazon.awssdk.services.s3.model.S3Exception;
 import software.amazon.awssdk.services.s3.presigner.S3Presigner;
 import software.amazon.awssdk.services.s3.presigner.model.PresignedPutObjectRequest;
 import software.amazon.awssdk.services.s3.presigner.model.PutObjectPresignRequest;
@@ -69,7 +70,7 @@ public class StoreImageUploadService {
 
         String uploadId = UUID.randomUUID().toString();
         String objectKey = buildObjectKey(storeId, uploadId, contentType);
-        String uploadUrl = presign(objectKey, contentType);
+        String uploadUrl = presign(objectKey, contentType, fileSize);
 
         StoreImage image = StoreImage.preparePending(
                 storeId, uploadId, StoreImageType.INTERIOR, objectKey, originalFilename, contentType, fileSize,
@@ -93,13 +94,23 @@ public class StoreImageUploadService {
             return;
         }
 
+        HeadObjectResponse headObject;
         try {
-            s3Client.headObject(HeadObjectRequest.builder()
+            headObject = s3Client.headObject(HeadObjectRequest.builder()
                     .bucket(mediaBucket)
                     .key(image.getObjectKey())
                     .build());
-        } catch (NoSuchKeyException e) {
+        } catch (S3Exception e) {
+            if (e.statusCode() != 404) {
+                throw e;
+            }
             throw new StoreException(StoreErrorCode.IMAGE_NOT_UPLOADED);
+        }
+        if (headObject.contentLength() == null
+                || headObject.contentLength() > MAX_FILE_SIZE
+                || image.getFileSize() == null
+                || headObject.contentLength() > image.getFileSize()) {
+            throw new StoreException(StoreErrorCode.IMAGE_FILE_TOO_LARGE);
         }
 
         image.verify(LocalDateTime.now(clock));
@@ -161,11 +172,12 @@ public class StoreImageUploadService {
         return "stores/" + storeId + "/interior/" + uploadId + "." + extension;
     }
 
-    private String presign(String objectKey, String contentType) {
+    private String presign(String objectKey, String contentType, Long fileSize) {
         PutObjectRequest objectRequest = PutObjectRequest.builder()
                 .bucket(mediaBucket)
                 .key(objectKey)
                 .contentType(contentType)
+                .contentLength(fileSize)
                 .build();
         PutObjectPresignRequest presignRequest = PutObjectPresignRequest.builder()
                 .signatureDuration(PRESIGN_DURATION)
