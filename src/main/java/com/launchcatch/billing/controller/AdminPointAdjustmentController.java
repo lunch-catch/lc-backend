@@ -33,11 +33,14 @@ public class AdminPointAdjustmentController {
     @PostMapping
     @Operation(summary = "포인트 수동 조정",
             description = "점주 원장에 조정(ADJUST)을 기록합니다. requestId 가 같고 내용이 같은 요청은 처음 결과를 200 으로 돌려줍니다. "
-                    + "mismatchId 를 주면 그 대사 불일치 건을 과과금 정정으로 닫습니다. 처리한 관리자는 감사 로그에 남습니다.")
+                    + "campaignId 를 주면 정정이 가리키는 원래 영업일 targetBusinessDate 도 줘야 하고, 캠페인 없는 조정은 줄 수 없습니다. "
+                    + "mismatchId 를 주면 그 대사 불일치 건을 과과금 정정으로 닫으며 캠페인 대사 건은 targetBusinessDate 가 그 건의 영업일과 같아야 합니다. "
+                    + "처리한 관리자는 감사 로그에 남습니다.")
     @ApiResponses({
             @ApiResponse(responseCode = "201", description = "조정을 새로 기록했습니다."),
             @ApiResponse(responseCode = "200", description = "같은 요청을 이미 처리해 처음 결과를 돌려줍니다."),
-            @ApiResponse(responseCode = "400", description = "COMMON-002: 필수값이 없거나, 금액이 0이거나, 대사 건을 닫는데 금액이 음수이거나, 캠페인 대사 건인데 campaignId 가 대상과 다릅니다."),
+            @ApiResponse(responseCode = "400", description = "COMMON-002: 필수값이 없거나, 금액이 0이거나, 대사 건을 닫는데 금액이 음수이거나, 캠페인 대사 건인데 campaignId 가 대상과 다르거나, "
+                    + "campaignId 와 targetBusinessDate 의 짝이 맞지 않거나, targetBusinessDate 가 오늘 이후이거나, 캠페인 대사 건의 영업일과 다릅니다."),
             @ApiResponse(responseCode = "404", description = "BILLING-019: 점주를 찾을 수 없습니다. BILLING-020: 대사 불일치 건을 찾을 수 없습니다."),
             @ApiResponse(responseCode = "409", description = "BILLING-016: 조정 후 잔액이 음수가 됩니다. BILLING-018: 같은 키로 내용이 다른 요청입니다. "
                     + "BILLING-021: 이미 해결된 대사 건입니다. BILLING-022: 대사 건이 이 점주의 것이 아닙니다."),

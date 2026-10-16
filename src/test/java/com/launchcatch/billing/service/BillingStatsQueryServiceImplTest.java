@@ -45,10 +45,11 @@ class BillingStatsQueryServiceImplTest {
                 new LedgerSumRow(1L, 10L, EntryType.RELEASE, 2000L, 0L)));
         when(ledgerRepository.sumDeductOn(DAY)).thenReturn(List.of(
                 new LedgerSumRow(1L, 10L, EntryType.DEDUCT, 0L, -3000L)));
-        when(ledgerRepository.sumChargeRefundAdjustBetween(FROM, TO)).thenReturn(List.of(
+        when(ledgerRepository.sumChargeRefundBetween(FROM, TO)).thenReturn(List.of(
                 new LedgerSumRow(1L, null, EntryType.CHARGE, 10000L, 0L),
-                new LedgerSumRow(1L, 10L, EntryType.ADJUST, 300L, -50L),
                 new LedgerSumRow(2L, null, EntryType.REFUND, 0L, -700L)));
+        when(ledgerRepository.sumAdjustOn(DAY, FROM, TO)).thenReturn(List.of(
+                new LedgerSumRow(1L, 10L, EntryType.ADJUST, 300L, -50L)));
 
         List<OwnerCampaignLedgerSum> sums = service.ledgerSums(DAY);
 
@@ -56,6 +57,15 @@ class BillingStatsQueryServiceImplTest {
                 new OwnerCampaignLedgerSum(1L, 10L, 0, -5000, -3000, 2000, 0, 300, -50),
                 new OwnerCampaignLedgerSum(1L, null, 10000, 0, 0, 0, 0, 0, 0),
                 new OwnerCampaignLedgerSum(2L, null, 0, 0, 0, 0, -700, 0, 0));
+    }
+
+    @Test
+    void 정정_대상_영업일은_그날_기록된_양수_정정이_가리키는_날짜를_그대로_돌려준다() {
+        when(ledgerRepository.findCorrectionTargetDates(FROM, TO))
+                .thenReturn(List.of(LocalDate.of(2026, 10, 10), LocalDate.of(2026, 10, 13)));
+
+        assertThat(service.correctionTargetDates(DAY))
+                .containsExactly(LocalDate.of(2026, 10, 10), LocalDate.of(2026, 10, 13));
     }
 
     @Test
