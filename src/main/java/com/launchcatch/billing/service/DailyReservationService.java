@@ -60,7 +60,7 @@ public class DailyReservationService {
      */
     public int reserve(LocalDate businessDate) {
         long unitPrice = unitPriceOf(businessDate);
-        releaseLeftovers(businessDate.minusDays(1));
+        release(businessDate.minusDays(1));
 
         List<CampaignInfo> campaigns = campaignQuery.findServableOn(businessDate);
         Map<Long, List<CampaignInfo>> byOwner = new TreeMap<>();
@@ -105,22 +105,25 @@ public class DailyReservationService {
     }
 
     /*
-     * 전날 13:30 해제가 남긴 몫을 보정 RELEASE 한다. 그날 예약액에서 그날 DEDUCT 합을 뺀 값이 양수이고 RELEASE 가 아직
+     * 그 영업일 계획의 남은 몫을 RELEASE 한다. 그날 예약액에서 그날 DEDUCT 합을 뺀 값이 양수이고 RELEASE 가 아직
      * 없는 캠페인만 대상이다. 음수(예약액을 넘은 과금, 알려진 한계 L-2와 L-4)는 기록하지 않고 대사가 불일치로 남긴다.
+     *
+     * 00:00 예약(reserve)이 전날을 보정할 때와 13:30 해제(구현 순서 11번)가 그날을 해제할 때가 함께 쓴다.
+     * 두 호출이 계산을 공유하므로 여기 한 곳만 고치면 된다.
      *
      * 예약액은 원장 RESERVE 합이 아니라 계획 행의 daily_budget 에서 읽는다. 예약과 충전 직후 재예약이 둘을 같은
      * 트랜잭션에서 함께 쓰므로 값이 같고, 원장에는 영업일만으로 찾는 인덱스가 없다.
      */
-    private void releaseLeftovers(LocalDate previousDay) {
-        List<BudgetDailyPlan> plans = planRepository.findByBusinessDate(previousDay);
+    public void release(LocalDate businessDate) {
+        List<BudgetDailyPlan> plans = planRepository.findByBusinessDate(businessDate);
         if (plans.isEmpty()) {
             return;
         }
         List<Long> campaignIds = plans.stream().map(BudgetDailyPlan::getCampaignId).toList();
         Set<Long> ownerIds = plans.stream().map(BudgetDailyPlan::getOwnerId).collect(Collectors.toSet());
-        Set<Long> released = new HashSet<>(ledgerRepository.findReleasedCampaignIds(ownerIds, previousDay));
+        Set<Long> released = new HashSet<>(ledgerRepository.findReleasedCampaignIds(ownerIds, businessDate));
         Map<Long, Long> spends = new HashMap<>();
-        for (CampaignSpend spend : ledgerRepository.sumDeductForCampaignsOn(campaignIds, previousDay)) {
+        for (CampaignSpend spend : ledgerRepository.sumDeductForCampaignsOn(campaignIds, businessDate)) {
             spends.put(spend.campaignId(), spend.spend());
         }
         // 점주 ID 순으로 점주마다 따로 기록한다. 점주 계정 행을 잠근 짧은 트랜잭션이다
@@ -132,7 +135,7 @@ public class DailyReservationService {
             long left = plan.getDailyBudget() - spends.getOrDefault(plan.getCampaignId(), 0L);
             if (left > 0) {
                 releasesByOwner.computeIfAbsent(plan.getOwnerId(), ownerId -> new ArrayList<>())
-                        .add(PointLedger.release(plan.getOwnerId(), plan.getCampaignId(), previousDay, left));
+                        .add(PointLedger.release(plan.getOwnerId(), plan.getCampaignId(), businessDate, left));
             }
         }
         int campaigns = 0;
@@ -142,7 +145,7 @@ public class DailyReservationService {
         }
         if (campaigns > 0) {
             log.info("event=RESERVE_LEFTOVER_RELEASED businessDate={} owners={} campaigns={}",
-                    previousDay, releasesByOwner.size(), campaigns);
+                    businessDate, releasesByOwner.size(), campaigns);
         }
     }
 

@@ -28,13 +28,32 @@ public class SpendMismatchRecorder {
     @Transactional
     public void record(LocalDate businessDate, Long jobExecutionId, LocalDateTime now,
                        List<CampaignOverspend> overspends, List<CampaignCounterMismatch> counterMismatches) {
-        for (CampaignOverspend overspend : overspends) {
-            mismatchRepository.insertCampaignOverspendIfAbsent(businessDate, overspend.campaignId(),
-                    overspend.reserved(), overspend.ledgerSpend(), jobExecutionId, now);
-        }
+        recordOverspends(businessDate, jobExecutionId, now, overspends);
         for (CampaignCounterMismatch mismatch : counterMismatches) {
             mismatchRepository.insertCampaignSpendMismatchIfAbsent(businessDate, mismatch.campaignId(),
                     mismatch.ledgerSpend(), mismatch.counterSpend(), jobExecutionId, now);
+        }
+    }
+
+    /*
+     * 당일 대조(구현 순서 11번)가 찾은 불일치를 기록한다. 초과 소진은 전일 대조와 같이 미해결로 남기지만, 카운터
+     * 불일치는 배치가 이미 원장 기준으로 다시 만들었으므로 CACHE_REBUILD 로 닫힌 채 기록한다(D-3).
+     */
+    @Transactional
+    public void recordToday(LocalDate businessDate, Long jobExecutionId, LocalDateTime now,
+                            List<CampaignOverspend> overspends, List<CampaignCounterMismatch> rebuiltMismatches) {
+        recordOverspends(businessDate, jobExecutionId, now, overspends);
+        for (CampaignCounterMismatch mismatch : rebuiltMismatches) {
+            mismatchRepository.insertCampaignSpendMismatchResolvedIfAbsent(businessDate, mismatch.campaignId(),
+                    mismatch.ledgerSpend(), mismatch.counterSpend(), jobExecutionId, now);
+        }
+    }
+
+    private void recordOverspends(LocalDate businessDate, Long jobExecutionId, LocalDateTime now,
+                                  List<CampaignOverspend> overspends) {
+        for (CampaignOverspend overspend : overspends) {
+            mismatchRepository.insertCampaignOverspendIfAbsent(businessDate, overspend.campaignId(),
+                    overspend.reserved(), overspend.ledgerSpend(), jobExecutionId, now);
         }
     }
 }
