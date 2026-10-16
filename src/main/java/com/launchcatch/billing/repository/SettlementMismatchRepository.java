@@ -119,4 +119,26 @@ public interface SettlementMismatchRepository extends JpaRepository<SettlementMi
                                         @Param("ledgerSpend") long ledgerSpend,
                                         @Param("jobExecutionId") Long jobExecutionId,
                                         @Param("now") LocalDateTime now);
+
+    /*
+     * 당일 대조(구현 순서 11번)의 카운터 불일치 한 건을 CACHE_REBUILD 로 닫힌 채 기록한다. 배치가 카운터를
+     * 원장 기준으로 이미 다시 만들었을 때 쓴다(D-3). 전일 대조의 insertCampaignSpendMismatchIfAbsent 는 미해결로
+     * 남기므로 이 메서드와 다르다. 같은 (check_type, target_id, business_date) 가 이미 있으면 그대로 둔다.
+     */
+    @Modifying
+    @Query(value = """
+            INSERT INTO settlement_mismatch
+                (check_type, business_date, target_id, expected_value, actual_value, job_execution_id,
+                 resolution_type, resolved_at, created_at, updated_at)
+            VALUES
+                ('CAMPAIGN_SPEND_VS_LEDGER', :businessDate, :campaignId, :ledgerSpend, :counterSpend,
+                 :jobExecutionId, 'CACHE_REBUILD', :now, :now, :now)
+            ON DUPLICATE KEY UPDATE settlement_mismatch_id = settlement_mismatch_id
+            """, nativeQuery = true)
+    int insertCampaignSpendMismatchResolvedIfAbsent(@Param("businessDate") LocalDate businessDate,
+                                                     @Param("campaignId") Long campaignId,
+                                                     @Param("ledgerSpend") long ledgerSpend,
+                                                     @Param("counterSpend") long counterSpend,
+                                                     @Param("jobExecutionId") Long jobExecutionId,
+                                                     @Param("now") LocalDateTime now);
 }

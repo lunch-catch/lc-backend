@@ -67,16 +67,20 @@ public class CampaignController {
     @PatchMapping("/{campaignId}")
     @Operation(
             summary = "캠페인 등록 3·4단계(노출 대상, 하루 예산과 집행 기간)",
-            description = "DRAFT 상태에서 노출 대상(targetRadius, targetGender, targetAgeGroups)을 바꿉니다. "
-                    + "dailyBudget, startDate, endDate는 아직 지원하지 않아 보내면 거부됩니다."
+            description = "DRAFT 상태에서 노출 대상(targetRadius, targetGender, targetAgeGroups)과 "
+                    + "하루 예산·집행 기간(dailyBudget, startDate, endDate)을 바꿉니다. ACTIVE 상태에서는 "
+                    + "dailyBudget만 바꿀 수 있고, 다음 영업일 00:00부터 적용되는 예약 값으로만 저장됩니다."
     )
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "수정 성공."),
-            @ApiResponse(responseCode = "400", description = "COMMON-002: 필수값 누락, 허용값 밖, 형식 불일치. "
-                    + "dailyBudget/startDate/endDate를 보낸 경우도 포함."),
+            @ApiResponse(responseCode = "400", description = "COMMON-002: 필수값 누락(묶음 중 일부만 보낸 경우 포함), "
+                    + "허용값 밖, 형식 불일치."),
             @ApiResponse(responseCode = "403", description = "CAMPAIGN-001: 점주 상태가 ACTIVE가 아닙니다. "
                     + "CAMPAIGN-005: 그 campaignId가 없거나 본인 소유가 아닙니다."),
-            @ApiResponse(responseCode = "409", description = "CAMPAIGN-006: DRAFT가 아닌 캠페인입니다.")
+            @ApiResponse(responseCode = "409", description = "CAMPAIGN-006: 지금 캠페인 상태에서는 그 필드를 바꿀 수 없습니다."),
+            @ApiResponse(responseCode = "422", description = "CAMPAIGN-007: 하루 예산이 최소 하루 예산 미만입니다. "
+                    + "CAMPAIGN-008: 집행 기간이 1일 미만이거나 종료일이 시작일보다 이전입니다. "
+                    + "CAMPAIGN-009: 집행 시작일이 오늘 다음 날 이전입니다.")
     })
     public ResponseEnvelope<CampaignUpdateResponse> updateTargetAudience(
             @Parameter(description = "수정할 캠페인 ID입니다.") @PathVariable Long campaignId,

@@ -88,6 +88,26 @@
   변경을 조용히 지우는 lost update와, 00:00 스케줄러의 상태 전이와 경쟁하며 낡은
   스냅샷으로 "DRAFT가 아닌데 DRAFT로 착각"하는 경우가 둘 다 가능해 `CampaignStatusService.findOrThrow`와
   같은 이유로 비관 잠금으로 바꿨다(`#253` 자체 리뷰로 찾음)
+- **`#330`이 하루 예산과 집행 기간(4단계)을 구현한다.** 노출 대상(3단계)과 같은 트랜잭션,
+  같은 비관 잠금을 그대로 쓴다. 노출 대상과 예산·기간 두 묶음을 한 요청에 같이 보내도
+  각자의 상태 조건을 독립적으로 검사한 뒤 둘 다 적용한다
+- **노출 대상은 `DRAFT`에서만, 하루 예산은 `DRAFT`·`ACTIVE` 둘 다, 집행 기간은 `DRAFT`에서만
+  바꿀 수 있다는 규칙을 "두 필드 묶음이 왔는지"와 "지금 상태가 그 묶음을 허용하는지"로
+  나눠 검사한다.** 묶음 안의 필드가 일부만 오면 `COMMON-002`(형식 문제), 묶음은 다 왔지만
+  지금 상태가 그 묶음을 허용하지 않으면 `CAMPAIGN-006`(업무 규칙)이다. `ACTIVE`에서
+  `startDate`/`endDate` 중 하나라도 오면 값이 같아도 `CAMPAIGN-006`이고, `DRAFT`도
+  `ACTIVE`도 아닌 상태(`SCHEDULED`/`PAUSED`/`ENDED`)에서 예산·기간 필드가 오면 역시
+  `CAMPAIGN-006`이다
+- **`ACTIVE`에서 바꾼 하루 예산은 `Campaign.pendingDailyBudget`(V13 마이그레이션)에만 쓰고
+  `dailyBudget`은 그대로 둔다.** 응답은 항상 `dailyBudget`(바뀌기 전 값)을 돌려주고
+  `pendingDailyBudget`은 노출하지 않는다("아직 정해지지 않은 것"에서 정함). 00:00 배치가
+  이 값을 `dailyBudget`에 반영하는 쪽은 "스케줄러 캠페인 담당 스텝" 이슈 몫이다
+- **최소 하루 예산은 요구사항명세서 [H27]의 1,000포인트를 그대로 쓴다.**
+  `ops.contract.PlatformSettingQueryService.getMinDailyBudget()`을 새로 추가해
+  `getImpressionUnitPrice()`와 같은 패턴(파싱 실패·0 이하 거부)으로 구현한다
+- **집행 기간은 최소 1일 차이를 요구한다.** `endDate`가 `startDate`보다 이르거나 같으면
+  `CAMPAIGN-008`이다. 시작일은 "오늘 다음 날 이후"만 허용해 `LocalDate.now(clock).plusDays(1)`보다
+  이르면 `CAMPAIGN-009`다(요구사항명세서 [I45] 등록 마감 D-1 23:59와 같은 경계)
 
 ## 캠페인 조회(점주)
 
@@ -124,5 +144,13 @@
 |---|---|---|
 | 가게당 DRAFT 1개를 막는 UNIQUE 제약의 정확한 마이그레이션 문구 | `#244` 결정 | `#244`가 `active_store_marker`와 같은 방식으로 추가한다(이 문서 "캠페인 등록" 절 참고) |
 | `Campaign.updateCouponCondition(...)` 메서드 시그니처 | `#244` 결정 | 아직 엔티티에 없다. `#244`가 추가한다 |
-| 하루 예산의 "다음 영업일 적용 예약 값"을 어느 컬럼/필드로 들고 있을지 | V51 45행 | 스키마 변경이라 이 명세 단계는 정하지 않는다. 구현 이슈([Feat] 하루 예산과 집행 기간 설정(점주), 아직 이슈 번호 없음)가 마이그레이션과 함께 정한다 |
-| `PlatformSettingQueryService`에 최소 하루 예산을 돌려주는 메서드 | V51 27행, 45행 | 지금 `getImpressionUnitPrice()`만 있다. 운영 도메인에 메서드 추가를 요청해야 한다. 담당과 시점은 구현 이슈가 정한다 |
+| 00:00 배치가 `pendingDailyBudget`을 `dailyBudget`에 반영하는 호출 지점 | V51 45행, 102행 스케줄러 | `#330`은 컬럼에 쓰기만 한다. "스케줄러 캠페인 담당 스텝" 이슈가 그 반영 호출을 정한다. **그 배치는 반영 직전에 `status == ACTIVE`인지 다시 확인해야 한다.** `pause()`는 `pendingDailyBudget`을 지우지 않으므로(아래 "해소된 항목" 참고), `PAUSED`로 멈춰 있는 캠페인에 그 예약값을 그대로 적용하면 안 된다 |
+| 예약 값(`pendingDailyBudget`) 자체를 PATCH 응답에 노출할지 | V51 45행 | `#330`은 노출하지 않는다(응답은 늘 `dailyBudget`). 노출이 필요해지면 그때 명세를 바꾼다 |
+
+해소된 항목(`#330`): 하루 예산의 "다음 영업일 적용 예약 값" 컬럼은 `Campaign.pendingDailyBudget`(`V13__campaign_pending_daily_budget.sql`, 양수만 허용하는
+`chk_campaign_pending_daily_budget` CHECK 포함)이고, 최소 하루 예산은 `ops.contract.PlatformSettingQueryService.getMinDailyBudget()`(요구사항명세서
+[H27] 1,000포인트, `V4__ops_min_daily_budget.sql` 시드)이다.
+
+**`pendingDailyBudget`을 상태 전이에서 지우는 기준도 이 PR의 자체 리뷰로 정했다.** `pause()`는 지우지 않고 `end()`만 지운다. 중단은
+"끝"이 아니라 "잠깐 멈춤"이라 그 사이 재개되면(NO_POINTS 충전 재개 등, V51 51·49행) 점주가 걸어 둔 예약값이 남아 있어야 하고, `end()`는
+되돌릴 수 없는 종료라 더 쓸 일이 없는 값을 지운다(`Campaign.java`의 `pause`/`end` 블록 주석 참고).

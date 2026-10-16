@@ -62,6 +62,18 @@ class BillingSchedulePropertiesTest {
     }
 
     @Test
+    void 해제_시각은_고정_시각에서_노출_인정_시간이_지난_뒤다() {
+        assertThat(bind(valid()).releaseTime()).isEqualTo(LocalTime.of(13, 30));
+    }
+
+    @Test
+    void 종료_시각이_바뀌면_해제_시각도_따라간다() {
+        BillingScheduleProperties properties = new BillingScheduleProperties("10:00", "11:30", Duration.ofMinutes(30), List.of(50, 50));
+
+        assertThat(properties.releaseTime()).isEqualTo(LocalTime.of(12, 1));
+    }
+
+    @Test
     void 시작이_종료보다_앞서지_않으면_거부한다() {
         assertThatThrownBy(() -> new BillingScheduleProperties("12:59", "10:00", Duration.ofMinutes(30), List.of(34, 33, 33)))
                 .isInstanceOf(IllegalArgumentException.class)

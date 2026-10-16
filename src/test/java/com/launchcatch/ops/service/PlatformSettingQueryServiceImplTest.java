@@ -73,6 +73,32 @@ class PlatformSettingQueryServiceImplTest {
         assertThatThrownBy(service::getImpressionUnitPrice).isInstanceOf(IllegalStateException.class);
     }
 
+    @Test
+    @DisplayName("최소 하루 예산을 정수로 파싱해 돌려준다")
+    void 최소_하루예산을_정수로_돌려준다() {
+        when(platformSettingRepository.findBySettingKey("MIN_DAILY_BUDGET"))
+                .thenReturn(Optional.of(settingOf("1000")));
+
+        assertThat(service.getMinDailyBudget()).isEqualTo(1000L);
+    }
+
+    @Test
+    @DisplayName("최소 하루 예산 키가 없으면 예외로 거부한다")
+    void 최소_하루예산_키가_없으면_거부한다() {
+        when(platformSettingRepository.findBySettingKey("MIN_DAILY_BUDGET")).thenReturn(Optional.empty());
+
+        assertThatThrownBy(service::getMinDailyBudget).isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    @DisplayName("최소 하루 예산이 0 이하면 예외로 거부한다")
+    void 최소_하루예산이_0이하면_거부한다() {
+        when(platformSettingRepository.findBySettingKey("MIN_DAILY_BUDGET"))
+                .thenReturn(Optional.of(settingOf("0")));
+
+        assertThatThrownBy(service::getMinDailyBudget).isInstanceOf(IllegalStateException.class);
+    }
+
     private PlatformSetting settingOf(String value) {
         try {
             Constructor<PlatformSetting> constructor = PlatformSetting.class.getDeclaredConstructor();

@@ -187,6 +187,25 @@ class DailyReservationServiceTest {
     }
 
     @Test
+    void release는_그날_계획의_남은_몫을_해제한다() {
+        // 13:30 해제(구현 순서 11번)가 00:00 보정과 같은 계산을 그날 영업일로 직접 부르는 자리다
+        when(planRepository.findByBusinessDate(DAY))
+                .thenReturn(List.of(BudgetDailyPlan.create(1L, 7L, DAY, 5000L, 10L, false, CHANGED_AT)));
+        when(ledgerRepository.findReleasedCampaignIds(Set.of(7L), DAY)).thenReturn(List.of());
+        when(ledgerRepository.sumDeductForCampaignsOn(List.of(1L), DAY)).thenReturn(List.of(new CampaignSpend(1L, 3000L)));
+
+        service.release(DAY);
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<PointLedger>> captor = ArgumentCaptor.forClass(List.class);
+        verify(recorder).releaseForOwner(eq(7L), captor.capture());
+        assertThat(captor.getValue()).singleElement().satisfies(release -> {
+            assertThat(release.getBusinessDate()).isEqualTo(DAY);
+            assertThat(release.getAmount()).isEqualTo(2000L);
+        });
+    }
+
+    @Test
     void 전일_계획이_없으면_원장을_읽지_않는다() {
         when(platformSetting.getImpressionUnitPrice()).thenReturn(10);
         when(planRepository.findByBusinessDate(PREV)).thenReturn(List.of());
