@@ -34,4 +34,7 @@ public interface AdCandidateRepository extends JpaRepository<AdCandidate, AdCand
                                  @Param("maxLatitude") BigDecimal maxLatitude,
                                  @Param("minLongitude") BigDecimal minLongitude,
                                  @Param("maxLongitude") BigDecimal maxLongitude);
+
+    // 그날 후보가 쿠폰 소진으로 표시됐는지 본다. 소진 뒤 도착한 유효 노출은 차감하지 않는다(NOT_BILLED_SOLD_OUT).
+    boolean existsByIdBusinessDateAndIdCampaignIdAndSoldOutAtIsNotNull(LocalDate businessDate, Long campaignId);
 }

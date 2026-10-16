@@ -9,22 +9,18 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-import com.launchcatch.IntegrationTestSupport;
 import com.launchcatch.auth.CustomUserDetails;
 import com.launchcatch.auth.Role;
 import com.launchcatch.adserving.engine.SlotType;
 import com.launchcatch.adserving.feed.repository.ServeRecord;
 import com.launchcatch.adserving.feed.repository.ServeRecordRepository;
 import com.launchcatch.billing.contract.BudgetProgress;
-import com.launchcatch.billing.contract.BudgetQueryService;
 import com.launchcatch.global.config.ClockConfig;
 import com.launchcatch.member.contract.AgeGroup;
 import com.launchcatch.member.contract.Gender;
 import com.launchcatch.member.contract.MemberInfo;
-import com.launchcatch.member.contract.MemberQueryService;
 import com.launchcatch.member.contract.MemberStatus;
 import java.math.BigDecimal;
-import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -37,23 +33,13 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
-import org.springframework.data.redis.core.StringRedisTemplate;
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.test.context.bean.override.mockito.MockitoBean;
-import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
-import org.springframework.test.web.servlet.MockMvc;
 
 /*
  * GET /v1/feed 를 HTTP 입구부터 MySQL 의 ad_candidate 와 Valkey 의 카운터까지 한 번에 본다.
  * 권한과 노출 상한(돈)이 이 테스트의 축이다. 요청 제한과 하루 횟수는 그 축이 아니지만 Lua 스크립트가 단위 테스트에서 돌지 않아 여기서 함께 돌린다.
- * 정산은 다른 도메인이라 contract 를 목으로 둔다.
  */
-@SpringBootTest
-@AutoConfigureMockMvc
 @DisplayName("피드 조회 통합")
-class FeedIntegrationTest extends IntegrationTestSupport {
+class FeedIntegrationTest extends AbstractAdservingIntegrationTest {
 
     private static final long MEMBER_ID = 3001L;
     private static final LocalDate TODAY = LocalDate.of(2026, 10, 1);
@@ -62,12 +48,6 @@ class FeedIntegrationTest extends IntegrationTestSupport {
     private static final double LAT = 37.4979;
     private static final double LNG = 127.0276;
 
-    @Autowired MockMvc mockMvc;
-    @Autowired JdbcTemplate jdbcTemplate;
-    @Autowired StringRedisTemplate redisTemplate;
-    @MockitoSpyBean Clock clock;
-    @MockitoBean MemberQueryService memberQueryService;
-    @MockitoBean BudgetQueryService budgetQueryService;
     @Autowired ServeRecordRepository serveRecordRepository;
 
     @BeforeEach
