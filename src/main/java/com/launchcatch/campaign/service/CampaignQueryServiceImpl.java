@@ -9,6 +9,7 @@ import java.time.Clock;
 import java.time.LocalDate;
 import java.util.Collection;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.PageRequest;
@@ -76,6 +77,11 @@ public class CampaignQueryServiceImpl implements CampaignQueryService {
             return Set.of();
         }
         return Set.copyOf(campaignRepository.findDistinctOwnerIdsWithLiveCampaign(ownerIds, NOT_LIVE_STATUSES));
+    }
+
+    @Override
+    public Optional<CampaignInfo> findByIdForUpdate(Long campaignId) {
+        return campaignRepository.findByIdForUpdate(campaignId).map(this::toInfo);
     }
 
     /*
