@@ -222,18 +222,17 @@ Lua의 예산 비교는 원자적 갱신이 필요한 저장소 연산이다. �
 
 ### 정정 대상 영업일
 
-관리자 포인트 조정(`POST /v1/admin/point-adjustments`)은 정정이 가리키는 원래 영업일을 `targetBusinessDate`로 받아 `point_ledger.adjust_target_date`에 저장한다. 조정 API의 명세서는 `docs/api-spec/`에 아직 없어서 계약은 이 절과 Swagger가 갖는다.
+관리자 포인트 조정(`POST /v1/admin/point-adjustments`)은 정정이 가리키는 원래 영업일을 `targetBusinessDate`로 받아 `point_ledger.adjust_target_date`에 저장한다. 요청 필드와 검증 규칙, 오류 코드는 [billing 명세서](../../api-spec/billing-api-spec.md#포인트-수동-조정)가 소유하고 여기서 다시 적지 않는다.
 
-| 규칙 | 내용 |
+이 절은 서버가 정한 이유만 갖는다.
+
+| 결정 | 이유 |
 |---|---|
-| 짝 | `campaignId`가 있으면 `targetBusinessDate`가 필수이고 없으면 보낼 수 없다. 어긋나면 `400 COMMON-002`다 |
-| 범위 | 오늘(KST) 이후면 `400 COMMON-002`다. 그 영업일에 예산 계획이 있는지는 보지 않는다 |
-| 대사 건 | 캠페인 대사 건을 닫는 조정은 `targetBusinessDate`가 그 건의 `business_date`와 같아야 한다. 다르면 `400 COMMON-002`다 |
-| 멱등 | 같은 키의 재요청은 `targetBusinessDate`까지 같아야 처음 결과를 돌려준다. 다르면 `409 BILLING-018`이다 |
-| 응답 | 기록된 조정에 `targetBusinessDate`를 담는다 |
-| 기존 행 | 마이그레이션이 채우지 않는다. 값이 없는 행은 집계가 기록 시각의 KST 날짜에 붙여 #352의 결과와 같다 |
-
-DB는 `adjust_target_date`가 `ADJUST` 행에만 값을 갖도록 `chk_point_ledger_adjust_target_date`가 막는다. 기존 `business_date`는 `RESERVE`와 `RELEASE`의 예약 영업일로 남기고 의미를 섞지 않는다.
+| 새 컬럼 `adjust_target_date`를 둔다 | `business_date`는 `RESERVE`와 `RELEASE`의 예약 영업일이고 `chk_point_ledger_business_date`가 그 둘로 묶는다. 의미가 다른 값을 같은 컬럼에 섞지 않는다 |
+| `ADJUST` 행에만 값을 갖게 `chk_point_ledger_adjust_target_date`로 막는다 | 다른 유형의 행이 정정 대상을 갖는 일을 DB가 막는다 |
+| 기존 행을 마이그레이션으로 채우지 않는다 | 원장은 추가만 하는 설계이고 `created_at`의 시간대 해석에 따라 날짜가 달라질 수 있다. 값이 없는 행은 집계가 기록 시각의 KST 날짜에 붙여 #352의 결과와 같다 |
+| 같은 키 재요청의 비교에 `targetBusinessDate`를 넣는다 | 날짜만 다른 요청이 처음 기록을 그대로 돌려받으면 관리자가 다른 날을 고쳤다고 착각한다 |
+| 클라이언트가 아직 없는 때 필수로 확정했다 | 날짜 없는 캠페인 정정이 조용히 기록일에 붙는 오류를 처음부터 막는다. 이슈 #402에서 정했다 |
 
 기록 시각의 하루는 날짜를 DB 함수로 자르지 않고 `[당일 00:00, 다음 날 00:00)` 범위로 묻는다. `created_at`은 Asia/Seoul 기준이라 영업일 경계와 같다.
 
