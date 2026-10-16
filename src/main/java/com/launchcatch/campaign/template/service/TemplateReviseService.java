@@ -28,6 +28,9 @@ import org.springframework.transaction.support.TransactionTemplate;
 @RequiredArgsConstructor
 public class TemplateReviseService {
 
+    /** 템플릿 한 개가 보존하는 버전 수의 상한이다(#410). 넘기면 가장 오래된 것을 지운다. */
+    private static final int MAX_VERSIONS_PER_TEMPLATE = 20;
+
     private final TemplateRepository templateRepository;
     private final TemplateVersionRepository templateVersionRepository;
     private final TemplateHtmlGenerator templateHtmlGenerator;
@@ -125,7 +128,25 @@ public class TemplateReviseService {
         TemplateVersion version = template.addDraftVersion(
                 adminId, LocalDateTime.now(clock), requestPrompt, requestId, sanitized.html(), nextVersionNumber);
         templateRepository.saveAndFlush(template);
+        evictOldestVersionIfOverCap(templateId, nextVersionNumber);
         return toResponse(version, sanitized.removedElements());
+    }
+
+    /*
+     * 버전은 템플릿당 MAX_VERSIONS_PER_TEMPLATE 개까지만 보존한다(#410). 넘기면 가장
+     * 오래된 살아있는 버전 하나를 소프트삭제한다. 번호는 건드리지 않는다.
+     *
+     * 번호를 앞으로 당기는 방식(재배치)은 쓰지 않는다. TemplatePublishRequest.
+     * versionNumber(관리자가 직접 지정)와 버전 목록의 커서 페이지네이션이 번호를 고정
+     * 식별자로 쓰고 있어서, 번호가 밀리면 그 사이 다른 내용을 가리키게 된다.
+     *
+     * save()와 같은 잠금(findByIdForUpdate) 안에서 돌아, 버전 추가와 오래된 버전 삭제가
+     * 같은 템플릿을 동시에 수정하는 다른 요청과 경쟁하지 않는다.
+     */
+    private void evictOldestVersionIfOverCap(Long templateId, int newestVersionNumber) {
+        templateVersionRepository.findFirstByTemplateIdAndDeletedAtIsNullOrderByVersionNumberAsc(templateId)
+                .filter(oldest -> newestVersionNumber - oldest.getVersionNumber() + 1 > MAX_VERSIONS_PER_TEMPLATE)
+                .ifPresent(oldest -> templateVersionRepository.softDelete(oldest.getId(), LocalDateTime.now(clock)));
     }
 
     /*

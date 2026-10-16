@@ -30,6 +30,15 @@ public interface TemplateVersionRepository extends JpaRepository<TemplateVersion
     Optional<TemplateVersion> findFirstByTemplateIdAndDeletedAtIsNullOrderByVersionNumberDesc(Long templateId);
 
     /*
+     * 버전 상한(20개, #410)을 넘겼는지 볼 때 쓴다. 가장 오래된 살아있는 버전을 찾아
+     * (최신 번호 - 이 번호 + 1)로 지금 몇 개가 살아있는지 센다. DRAFT 동안은 이 조회로
+     * 찾은 가장 오래된 버전 하나만 지워서(softDelete), 살아있는 버전 사이에 빈틈이
+     * 생기지 않아 그 계산이 실제 개수와 같다. 게시할 때는 전부를 한 번에 지우고
+     * (softDeleteAllByTemplateId) 그 뒤로는 DRAFT 가 아니라 더 수정되지 않는다.
+     */
+    Optional<TemplateVersion> findFirstByTemplateIdAndDeletedAtIsNullOrderByVersionNumberAsc(Long templateId);
+
+    /*
      * 다음 버전 번호를 매길 때 쓴다. HTML 을 전혀 안 가져오고 숫자 하나만 집계하므로
      * 버전이 많이 쌓인 템플릿이라도 가볍다. 버전이 하나도 없으면 0을 돌려준다.
      */
@@ -51,6 +60,15 @@ public interface TemplateVersionRepository extends JpaRepository<TemplateVersion
     @Modifying
     @Query("update TemplateVersion v set v.deletedAt = :now where v.template.id = :templateId and v.deletedAt is null")
     int softDeleteAllByTemplateId(@Param("templateId") Long templateId, @Param("now") LocalDateTime now);
+
+    /*
+     * 버전 상한을 넘겼을 때 가장 오래된 버전 하나만 소프트삭제한다(#410). id 로
+     * 지정해, findFirstByTemplateIdAndDeletedAtIsNullOrderByVersionNumberAsc 로
+     * 찾은 바로 그 행만 지운다. 번호는 건드리지 않는다.
+     */
+    @Modifying
+    @Query("update TemplateVersion v set v.deletedAt = :now where v.id = :id and v.deletedAt is null")
+    int softDelete(@Param("id") Long id, @Param("now") LocalDateTime now);
 
     /*
      * 버전 목록 조회용 커서 페이징이다. versionNumber 가 템플릿 안에서 유일하고
