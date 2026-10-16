@@ -19,7 +19,6 @@ import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DataIntegrityViolationException;
-import org.springframework.data.domain.PageRequest;
 
 class CampaignRepositoryIntegrationTest extends com.launchcatch.campaign.AbstractCampaignIntegrationTest {
 
@@ -175,9 +174,11 @@ class CampaignRepositoryIntegrationTest extends com.launchcatch.campaign.Abstrac
         save(draftWithOwner(501L, 3L));
         entityManager.flush();
 
-        List<Campaign> result = campaignRepository.findPageByOwnerId(ownerId, null, PageRequest.of(0, 10));
+        List<Campaign> result = campaignRepository.findPageByOwnerId(ownerId, null, 10);
 
         assertThat(result).extracting(Campaign::getId).containsExactly(newer.getId(), older.getId());
+        // 네이티브 쿼리라 AgeGroupListConverter(@Convert)가 엔티티 하이드레이션에서 그대로 적용되는지 확인한다.
+        assertThat(result.get(0).getTargetAgeGroups()).containsExactly(AgeGroup.AGE_20S);
     }
 
     @Test
@@ -187,17 +188,26 @@ class CampaignRepositoryIntegrationTest extends com.launchcatch.campaign.Abstrac
         Campaign second = save(draftWithOwner(ownerId, 2L));
         entityManager.flush();
 
-        List<Campaign> result = campaignRepository.findPageByOwnerId(
-                ownerId, second.getId(), PageRequest.of(0, 10));
+        List<Campaign> result = campaignRepository.findPageByOwnerId(ownerId, second.getId(), 10);
 
         assertThat(result).extracting(Campaign::getId).containsExactly(first.getId());
     }
 
+    /*
+     * owner_id 단일 인덱스만으로는 campaign_id < ? 커서 조건과 만나 index_merge(owner_id,
+     * PRIMARY) + filesort로 빠진다(실측 확인, V13 마이그레이션 주석). 그 substring-포함 검사는
+     * "idx_campaign_owner_id"가 index_merge 표기("intersect(idx_campaign_owner_id,PRIMARY)")
+     * 안에도 나타나서 index_merge로 빠져도 통과하는 약점이 있었다(#341 자체 리뷰로 찾음).
+     * 그래서 실제 선택된 "key"와 filesort 여부를 정확히 짚어 확인한다.
+     */
     @Test
-    void findPageByOwnerId의_조회가_owner_id_인덱스를_탄다() {
-        String plan = explainJson("SELECT * FROM campaign WHERE owner_id = 1 AND campaign_id < 100 ORDER BY campaign_id DESC");
+    void findPageByOwnerId의_조회가_복합_인덱스를_filesort_없이_탄다() {
+        String plan = explainJson(
+                "SELECT * FROM campaign FORCE INDEX (idx_campaign_owner_cursor) "
+                        + "WHERE owner_id = 1 AND campaign_id < 100 ORDER BY campaign_id DESC LIMIT 21");
 
-        assertThat(plan).contains("idx_campaign_owner_id");
+        assertThat(plan).contains("\"key\": \"idx_campaign_owner_cursor\"");
+        assertThat(plan).doesNotContain("\"using_filesort\": true");
     }
 
     @Test

@@ -11,8 +11,6 @@ import com.launchcatch.global.response.PageCursor;
 import com.launchcatch.global.response.PageTokens;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
-import org.springframework.data.domain.PageRequest;
-import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -34,9 +32,8 @@ public class CampaignOwnerQueryService {
     public CursorPageResponse<CampaignListItemResponse> list(Long ownerId, String pageToken, int pageSize) {
         int limit = clampPageSize(pageSize);
         Long cursorId = decodeCursorId(pageToken);
-        Pageable pageable = PageRequest.of(0, limit + 1);
 
-        List<Campaign> fetched = campaignRepository.findPageByOwnerId(ownerId, cursorId, pageable);
+        List<Campaign> fetched = campaignRepository.findPageByOwnerId(ownerId, cursorId, limit + 1);
         boolean hasNext = fetched.size() > limit;
         List<Campaign> page = hasNext ? fetched.subList(0, limit) : fetched;
 

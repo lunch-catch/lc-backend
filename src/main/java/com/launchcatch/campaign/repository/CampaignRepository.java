@@ -90,16 +90,23 @@ public interface CampaignRepository extends JpaRepository<Campaign, Long> {
     /*
      * 점주의 캠페인 목록 조회(#341) 커서 페이징이다. campaignId는 auto-increment라 생성
      * 순서와 일치해서 TemplateVersionRepository.findPage와 같이 단일 커서 값으로 충분하다.
-     * owner_id 필터는 idx_campaign_owner_id를 그대로 탄다(#198에서 추가).
+     *
+     * owner_id 단일 인덱스(idx_campaign_owner_id)만으로는 커서 조건(campaign_id < ?)이
+     * 더해지면 MySQL이 index_merge(idx_campaign_owner_id, PRIMARY) + filesort로 빠진다(실측
+     * 확인, V13 마이그레이션 주석). JPQL은 테이블 힌트를 낼 수 없어 네이티브 쿼리로 바꾸고
+     * FORCE INDEX로 복합 인덱스(idx_campaign_owner_cursor, V13)를 명시한다. LIMIT도 Pageable이
+     * 아니라 파라미터로 직접 받는다. Spring Data의 네이티브 쿼리 페이지네이션 자동 삽입은
+     * FORCE INDEX가 낀 SQL에서 안전하게 동작하는지 보장되지 않아 직접 적는다.
      */
-    @Query("""
-            select c from Campaign c
-            where c.ownerId = :ownerId
-              and (:cursorId is null or c.id < :cursorId)
-            order by c.id desc
-            """)
+    @Query(value = """
+            SELECT * FROM campaign FORCE INDEX (idx_campaign_owner_cursor)
+            WHERE owner_id = :ownerId
+              AND (:cursorId IS NULL OR campaign_id < :cursorId)
+            ORDER BY campaign_id DESC
+            LIMIT :limit
+            """, nativeQuery = true)
     List<Campaign> findPageByOwnerId(
             @Param("ownerId") Long ownerId,
             @Param("cursorId") Long cursorId,
-            Pageable pageable);
+            @Param("limit") int limit);
 }

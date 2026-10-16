@@ -2,9 +2,10 @@ package com.launchcatch.campaign.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -34,7 +35,6 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.data.domain.Pageable;
 
 @ExtendWith(MockitoExtension.class)
 class CampaignOwnerQueryServiceTest {
@@ -90,7 +90,7 @@ class CampaignOwnerQueryServiceTest {
     @DisplayName("다음 페이지가 없으면 요청한 개수 이하로 돌려주고 nextPageToken은 null이다")
     void 마지막_페이지는_다음_토큰이_없다() throws Exception {
         Campaign campaign = campaign(OWNER_ID, CAMPAIGN_ID);
-        when(campaignRepository.findPageByOwnerId(eq(OWNER_ID), isNull(), any(Pageable.class)))
+        when(campaignRepository.findPageByOwnerId(eq(OWNER_ID), isNull(), eq(21)))
                 .thenReturn(List.of(campaign));
 
         CursorPageResponse<CampaignListItemResponse> response = service.list(OWNER_ID, null, 20);
@@ -104,7 +104,7 @@ class CampaignOwnerQueryServiceTest {
     void 다음_페이지가_있으면_잘라서_토큰을_채운다() throws Exception {
         Campaign first = campaign(OWNER_ID, 502L);
         Campaign second = campaign(OWNER_ID, 501L);
-        when(campaignRepository.findPageByOwnerId(eq(OWNER_ID), isNull(), any(Pageable.class)))
+        when(campaignRepository.findPageByOwnerId(eq(OWNER_ID), isNull(), eq(2)))
                 .thenReturn(List.of(first, second));
 
         CursorPageResponse<CampaignListItemResponse> response = service.list(OWNER_ID, null, 1);
@@ -120,40 +120,40 @@ class CampaignOwnerQueryServiceTest {
     @DisplayName("pageToken이 있으면 디코딩한 캠페인 ID를 커서로 넘긴다")
     void pageToken_을_디코딩해서_커서로_넘긴다() {
         String token = PageTokens.encode(new PageCursor(600L, null));
-        when(campaignRepository.findPageByOwnerId(eq(OWNER_ID), eq(600L), any(Pageable.class)))
+        when(campaignRepository.findPageByOwnerId(eq(OWNER_ID), eq(600L), eq(21)))
                 .thenReturn(List.of());
 
         service.list(OWNER_ID, token, 20);
 
-        verify(campaignRepository).findPageByOwnerId(eq(OWNER_ID), eq(600L), any(Pageable.class));
+        verify(campaignRepository).findPageByOwnerId(eq(OWNER_ID), eq(600L), eq(21));
     }
 
     @Test
     @DisplayName("깨진 pageToken은 예외 없이 첫 페이지로 본다")
     void 깨진_pageToken_은_첫_페이지로_본다() {
-        when(campaignRepository.findPageByOwnerId(eq(OWNER_ID), isNull(), any(Pageable.class)))
+        when(campaignRepository.findPageByOwnerId(eq(OWNER_ID), isNull(), eq(21)))
                 .thenReturn(List.of());
 
         service.list(OWNER_ID, "not-a-valid-token", 20);
 
-        verify(campaignRepository).findPageByOwnerId(eq(OWNER_ID), isNull(), any(Pageable.class));
+        verify(campaignRepository).findPageByOwnerId(eq(OWNER_ID), isNull(), eq(21));
     }
 
     @Test
     @DisplayName("pageSize가 0 이하면 기본값을 쓰고, 최대치를 넘으면 최대치로 자른다")
     void pageSize_를_보정한다() {
-        when(campaignRepository.findPageByOwnerId(eq(OWNER_ID), isNull(), any(Pageable.class)))
+        when(campaignRepository.findPageByOwnerId(eq(OWNER_ID), isNull(), anyInt()))
                 .thenReturn(List.of());
-        ArgumentCaptor<Pageable> pageableCaptor = ArgumentCaptor.forClass(Pageable.class);
+        ArgumentCaptor<Integer> limitCaptor = ArgumentCaptor.forClass(Integer.class);
 
         service.list(OWNER_ID, null, 0);
         service.list(OWNER_ID, null, 1000);
 
-        verify(campaignRepository, org.mockito.Mockito.times(2))
-                .findPageByOwnerId(eq(OWNER_ID), isNull(), pageableCaptor.capture());
-        List<Pageable> pageables = pageableCaptor.getAllValues();
-        assertThat(pageables.get(0).getPageSize()).isEqualTo(21);
-        assertThat(pageables.get(1).getPageSize()).isEqualTo(101);
+        verify(campaignRepository, times(2))
+                .findPageByOwnerId(eq(OWNER_ID), isNull(), limitCaptor.capture());
+        List<Integer> limits = limitCaptor.getAllValues();
+        assertThat(limits.get(0)).isEqualTo(21);
+        assertThat(limits.get(1)).isEqualTo(101);
     }
 
     private Campaign campaign(Long ownerId, Long campaignId) throws Exception {
