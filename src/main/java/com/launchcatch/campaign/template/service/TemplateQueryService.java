@@ -2,6 +2,7 @@ package com.launchcatch.campaign.template.service;
 
 import com.launchcatch.campaign.exception.CampaignException;
 import com.launchcatch.campaign.exception.PosterErrorCode;
+import com.launchcatch.campaign.template.dto.OwnerTemplateListItemResponse;
 import com.launchcatch.campaign.template.dto.TemplateDetailResponse;
 import com.launchcatch.campaign.template.dto.TemplateListItemResponse;
 import com.launchcatch.campaign.template.dto.TemplateVersionItemResponse;
@@ -39,6 +40,16 @@ public class TemplateQueryService {
     public List<TemplateListItemResponse> list() {
         return templateRepository.findAllByOrderByCreatedAtDesc().stream()
                 .map(template -> TemplateListItemResponse.of(template, htmlOf(template)))
+                .toList();
+    }
+
+    /*
+     * 게시되고 활성인 템플릿만 대상이라 htmlOf() 의 DRAFT 분기가 필요 없다.
+     * Template.htmlContent 를 바로 쓴다.
+     */
+    public List<OwnerTemplateListItemResponse> listForOwner() {
+        return templateRepository.findAllByStatusAndActiveTrueOrderByCreatedAtDesc(TemplateStatus.PUBLISHED).stream()
+                .map(OwnerTemplateListItemResponse::of)
                 .toList();
     }
 

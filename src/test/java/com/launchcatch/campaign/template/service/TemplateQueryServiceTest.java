@@ -10,6 +10,7 @@ import static org.mockito.Mockito.when;
 
 import com.launchcatch.campaign.exception.CampaignException;
 import com.launchcatch.campaign.exception.PosterErrorCode;
+import com.launchcatch.campaign.template.dto.OwnerTemplateListItemResponse;
 import com.launchcatch.campaign.template.dto.TemplateDetailResponse;
 import com.launchcatch.campaign.template.dto.TemplateListItemResponse;
 import com.launchcatch.campaign.template.dto.TemplateVersionItemResponse;
@@ -69,6 +70,33 @@ class TemplateQueryServiceTest {
                 .containsExactly(2L, 1L);
         assertThat(responses.get(0).html()).isEqualTo(PUBLISHED_HTML);
         assertThat(responses.get(1).html()).isEqualTo(draft.latestVersion().getHtmlContent());
+    }
+
+    @Test
+    @DisplayName("점주 목록은 게시되고 활성인 템플릿만 templateId/name/html로 돌려준다")
+    void 점주_목록을_조회한다() throws Exception {
+        Template active = publishedTemplate(2L);
+        active.changeActive(true, ADMIN_ID, LocalDateTime.now());
+        when(templateRepository.findAllByStatusAndActiveTrueOrderByCreatedAtDesc(TemplateStatus.PUBLISHED))
+                .thenReturn(List.of(active));
+
+        List<OwnerTemplateListItemResponse> responses = service.listForOwner();
+
+        assertThat(responses).hasSize(1);
+        assertThat(responses.get(0).templateId()).isEqualTo(2L);
+        assertThat(responses.get(0).name()).isEqualTo(active.getName());
+        assertThat(responses.get(0).html()).isEqualTo(PUBLISHED_HTML);
+    }
+
+    @Test
+    @DisplayName("점주 목록에서 활성 템플릿이 없으면 빈 배열이다")
+    void 점주_목록이_비면_빈_배열이다() {
+        when(templateRepository.findAllByStatusAndActiveTrueOrderByCreatedAtDesc(TemplateStatus.PUBLISHED))
+                .thenReturn(List.of());
+
+        List<OwnerTemplateListItemResponse> responses = service.listForOwner();
+
+        assertThat(responses).isEmpty();
     }
 
     @Test
