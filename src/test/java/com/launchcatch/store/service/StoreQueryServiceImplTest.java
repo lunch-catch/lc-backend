@@ -28,6 +28,14 @@ class StoreQueryServiceImplTest {
                 .extracting("ownerId", "storeId", "name", "finalized", "businessRegistrationNumber")
                 .containsExactly(tuple(1L, 10L, "가게", true, "123**67890"),
                         tuple(2L, 20L, "등록 중", false, null));
+        var ownerIds = java.util.stream.LongStream.rangeClosed(1, 100).boxed().toList();
+        when(repository.findSummariesByOwnerIds(ownerIds)).thenReturn(List.of(
+                new StoreSummaryQueryRow(100, 1000, "백 번째 가게", false, null)));
+        assertThat(service.findSummariesByOwnerIds(ownerIds)).singleElement()
+                .satisfies(summary -> assertThat(summary.ownerId()).isEqualTo(100));
+        assertThatIllegalArgumentException().isThrownBy(() -> service.findSummariesByOwnerIds(
+                java.util.stream.LongStream.rangeClosed(1, 101).boxed().toList()))
+                .withMessage("점주 ID는 최대 100개까지 조회할 수 있습니다.");
     }
 
     @Test

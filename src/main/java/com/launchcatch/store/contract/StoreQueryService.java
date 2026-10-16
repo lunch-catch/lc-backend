@@ -5,7 +5,7 @@ import java.util.List;
 
 /** 가게 조회 계약의 누락 데이터와 좌표 정책은 docs/design/store/store-query-contract.md를 따른다. */
 public interface StoreQueryService {
-    /** 최종 등록 전 가게도 포함해 점주 ID로 일괄 조회한다. */
+    /** 최종 등록 전 가게도 포함해 점주 ID로 일괄 조회하며 ID가 100개를 초과하면 IllegalArgumentException을 던진다. */
     List<StoreSummary> findSummariesByOwnerIds(Collection<Long> ownerIds);
 
     /** 상호에 keyword 가 들어간 가게의 점주 ID를 반환하며 limit 초과 시 IllegalArgumentException을 던진다. */

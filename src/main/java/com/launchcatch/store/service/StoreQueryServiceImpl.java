@@ -18,6 +18,8 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 @Transactional(readOnly = true)
 class StoreQueryServiceImpl implements StoreQueryService {
+    private static final int MAX_SUMMARY_OWNER_IDS = 100;
+
     private final StoreQueryRepository stores;
     private final StoreImageUrlResolver images;
 
@@ -76,6 +78,9 @@ class StoreQueryServiceImpl implements StoreQueryService {
     @Override
     public List<StoreSummary> findSummariesByOwnerIds(Collection<Long> ownerIds) {
         validateIds(ownerIds);
+        if (ownerIds.size() > MAX_SUMMARY_OWNER_IDS) {
+            throw new IllegalArgumentException("점주 ID는 최대 100개까지 조회할 수 있습니다.");
+        }
         if (ownerIds.isEmpty()) {
             return List.of();
         }
