@@ -2,6 +2,7 @@ package com.launchcatch.store.service;
 
 import com.launchcatch.owner.contract.OwnerAccountStatus;
 import com.launchcatch.owner.contract.OwnerStatusQuery;
+import com.launchcatch.store.dto.StoreImagePrepareResult;
 import com.launchcatch.store.dto.StoreRegistrationProgressResponse;
 import com.launchcatch.store.entity.StoreImage;
 import com.launchcatch.store.entity.StoreImageType;
@@ -185,8 +186,5 @@ public class StoreImageUploadService {
                 .build();
         PresignedPutObjectRequest presigned = s3Presigner.presignPutObject(presignRequest);
         return presigned.url().toString();
-    }
-
-    public record StoreImagePrepareResult(String uploadId, String uploadUrl, int sortOrder) {
     }
 }

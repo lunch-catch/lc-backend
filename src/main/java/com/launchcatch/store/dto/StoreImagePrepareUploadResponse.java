@@ -1,6 +1,5 @@
 package com.launchcatch.store.dto;
 
-import com.launchcatch.store.service.StoreImageUploadService.StoreImagePrepareResult;
 import io.swagger.v3.oas.annotations.media.Schema;
 
 public record StoreImagePrepareUploadResponse(
