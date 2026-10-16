@@ -218,7 +218,7 @@ public class CouponCommandService {
                     .orElseThrow(() -> new CouponException(CouponErrorCode.QR_NOT_VALID));
             CouponEvent event = couponEventRepository.findById(coupon.getCouponEventId())
                     .orElseThrow(() -> new CouponException(CommonErrorCode.INTERNAL_ERROR));
-            if (!storeQueryService.canManageFinalizedStore(ownerId, event.getStoreId())) {
+            if (!storeQueryService.canManageStore(ownerId, event.getStoreId())) {
                 throw new CouponException(CouponErrorCode.COUPON_ACCESS_DENIED);
             }
             // 3. 현재 매장 권한을 확인한 점주에게만 실제 사용한 QR의 재요청을 구분한다.

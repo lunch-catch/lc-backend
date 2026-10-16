@@ -705,7 +705,7 @@ class CouponCommandServiceTest {
         void 매장_권한_검사는_사용_완료_판정보다_먼저_한다() {
             ready();
             ReflectionTestUtils.setField(coupon, "status", MemberCouponStatus.USED);
-            when(stores.canManageFinalizedStore(9L, 10L)).thenReturn(false);
+            when(stores.canManageStore(9L, 10L)).thenReturn(false);
             assertError(CouponErrorCode.COUPON_ACCESS_DENIED);
         }
 
@@ -775,7 +775,7 @@ class CouponCommandServiceTest {
             ReflectionTestUtils.setField(event, "discountValue", 15);
             ReflectionTestUtils.setField(event, "targetMenuPrice", 4500L);
             ReflectionTestUtils.setField(event, "targetMenuDiscountedPrice", 3820L);
-            when(stores.canManageFinalizedStore(9L, 10L)).thenReturn(true);
+            when(stores.canManageStore(9L, 10L)).thenReturn(true);
             when(stores.findAllById(List.of(10L))).thenReturn(List.of(store(37.5, 127.0)));
             when(members.findById(17L)).thenReturn(Optional.of(member(MemberStatus.ACTIVE)));
             when(histories.saveAndFlush(any())).thenAnswer(invocation -> {

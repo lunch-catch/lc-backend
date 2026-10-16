@@ -38,12 +38,12 @@ class StoreQueryServiceImpl implements StoreQueryService {
     }
 
     @Override
-    public boolean canManageFinalizedStore(Long ownerId, Long storeId) {
+    public boolean canManageStore(Long ownerId, Long storeId) {
         if (ownerId == null || ownerId <= 0 || storeId == null || storeId <= 0) {
             throw new IllegalArgumentException("양수인 점주 ID와 가게 ID가 필요합니다.");
         }
         // 조회 장애는 false로 바꾸지 않고 전파해 권한 없음과 시스템 장애를 구분한다.
-        return stores.canManageFinalizedStore(ownerId, storeId);
+        return stores.canManageStore(ownerId, storeId);
     }
 
     @Override

@@ -138,7 +138,7 @@ CouponEvent.calculateDiscount는 자기 스냅샷의 할인 대상·방식·값�
 | 연결됨 | 읽기, member | `MemberQueryService.findById(Long)` | 발급·QR 생성·이벤트 상태·새 사용 확정마다 한 번 호출한다 |
 | 연결됨 | 읽기, owner | `OwnerStatusQuery.findCurrentStatus(Long)` | 매장 사용 이력·사용 확정 요청마다 한 번 호출하며 캐시를 우회한다 |
 | 연결됨 | 읽기, campaign | `CampaignQueryService.findByStoreIdIn(List<Long>)` | 이벤트 상태 요청마다 한 번 일괄 호출한다 |
-| QR 사용 연결됨 | 읽기, store | `StoreQueryService.canManageFinalizedStore(Long, Long)`, `findAllById(List<Long>)` | QR 사용은 관리 권한과 좌표를 각각 한 번 조회한다. 기존 이력·이벤트 조회의 매장 검증은 미연결이다 |
+| QR 사용 연결됨 | 읽기, store | `StoreQueryService.canManageStore(Long, Long)`, `findAllById(List<Long>)` | QR 사용은 관리 권한과 좌표를 각각 한 번 조회한다. 기존 이력·이벤트 조회의 매장 검증은 미연결이다 |
 | 미연결 | 읽기·쓰기, adserving | 아키텍처의 `WishlistQueryService`, `CandidateStateUpdater` | #163에서 공개 계약을 준비한 뒤 발급과 이벤트 조회에 연결한다 |
 | 미연결 | 받음, campaign | `CampaignStatusChangedEvent`, `CampaignEndedEvent` | 이벤트의 정의는 있지만 coupon 수신 경로는 없다 |
 | 미연결 | 공개, analytics | 아키텍처의 쿠폰 발급·사용·만료 이벤트 | coupon의 실제 공개 타입과 발행 경로가 아직 없다 |

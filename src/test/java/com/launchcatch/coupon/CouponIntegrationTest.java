@@ -2252,7 +2252,7 @@ class CouponIntegrationTest extends IntegrationTestSupport {
             when(clock.withZone(ClockConfig.ZONE)).thenAnswer(invocation -> Clock.fixed(currentTime.get(), ClockConfig.ZONE));
             when(clock.instant()).thenAnswer(invocation -> currentTime.get());
             when(ownerStatusQuery.findCurrentStatus(9L)).thenReturn(Optional.of(OwnerAccountStatus.ACTIVE));
-            when(stores.canManageFinalizedStore(9L, 10L)).thenReturn(true);
+            when(stores.canManageStore(9L, 10L)).thenReturn(true);
             when(stores.findAllById(List.of(10L))).thenReturn(List.of(store(37.5)));
             when(ownerTokenPolicy.supports(Role.OWNER)).thenReturn(true);
             when(ownerTokenPolicy.isValid(any(), anyLong(), any(), any(), any())).thenReturn(true);
@@ -2338,7 +2338,7 @@ class CouponIntegrationTest extends IntegrationTestSupport {
         void 점주_상태와_매장_권한과_위치를_검사한다(String condition, String code) throws Exception {
             switch (condition) {
                 case "inactive" -> when(ownerStatusQuery.findCurrentStatus(9L)).thenReturn(Optional.of(OwnerAccountStatus.SUSPENDED));
-                case "permission" -> when(stores.canManageFinalizedStore(9L, 10L)).thenReturn(false);
+                case "permission" -> when(stores.canManageStore(9L, 10L)).thenReturn(false);
                 case "location" -> when(stores.findAllById(List.of(10L))).thenReturn(List.of(store(38.0)));
             }
             assertResponse(use(), 403, code);

@@ -27,7 +27,7 @@ public class StoreQueryRepository {
     }
 
     // 현재 store.owner_id가 일치하고 최종 등록된 가게만 허용하며 미존재, 타인 소유와 등록 중인 가게는 false가 된다.
-    public boolean canManageFinalizedStore(Long ownerId, Long storeId) {
+    public boolean canManageStore(Long ownerId, Long storeId) {
         return Boolean.TRUE.equals(jdbc.queryForObject("""
                 select exists(select 1 from store where store_id = :storeId and owner_id = :ownerId and finalized = true)
                 """, Map.of("ownerId", ownerId, "storeId", storeId), Boolean.class));

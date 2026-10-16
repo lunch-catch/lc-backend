@@ -55,11 +55,11 @@ class StoreQueryServiceImplTest {
 
     @Test
     void 관리_관계_판정을_그대로_반환한다() {
-        when(repository.canManageFinalizedStore(1L, 10L)).thenReturn(true);
-        when(repository.canManageFinalizedStore(2L, 10L)).thenReturn(false);
+        when(repository.canManageStore(1L, 10L)).thenReturn(true);
+        when(repository.canManageStore(2L, 10L)).thenReturn(false);
 
-        assertThat(service.canManageFinalizedStore(1L, 10L)).isTrue();
-        assertThat(service.canManageFinalizedStore(2L, 10L)).isFalse();
+        assertThat(service.canManageStore(1L, 10L)).isTrue();
+        assertThat(service.canManageStore(2L, 10L)).isFalse();
     }
 
     @Test
@@ -81,9 +81,9 @@ class StoreQueryServiceImplTest {
     @Test
     void 관리_관계_조회_장애는_false로_숨기지_않는다() {
         var failure = new DataAccessResourceFailureException("DB unavailable");
-        when(repository.canManageFinalizedStore(1L, 10L)).thenThrow(failure);
+        when(repository.canManageStore(1L, 10L)).thenThrow(failure);
 
-        assertThatThrownBy(() -> service.canManageFinalizedStore(1L, 10L)).isSameAs(failure);
+        assertThatThrownBy(() -> service.canManageStore(1L, 10L)).isSameAs(failure);
     }
 
     @Test
@@ -133,9 +133,9 @@ class StoreQueryServiceImplTest {
 
     @Test
     void 잘못된_관리_관계_ID를_거절한다() {
-        assertThatIllegalArgumentException().isThrownBy(() -> service.canManageFinalizedStore(null, 1L));
-        assertThatIllegalArgumentException().isThrownBy(() -> service.canManageFinalizedStore(0L, 1L));
-        assertThatIllegalArgumentException().isThrownBy(() -> service.canManageFinalizedStore(1L, null));
-        assertThatIllegalArgumentException().isThrownBy(() -> service.canManageFinalizedStore(1L, -1L));
+        assertThatIllegalArgumentException().isThrownBy(() -> service.canManageStore(null, 1L));
+        assertThatIllegalArgumentException().isThrownBy(() -> service.canManageStore(0L, 1L));
+        assertThatIllegalArgumentException().isThrownBy(() -> service.canManageStore(1L, null));
+        assertThatIllegalArgumentException().isThrownBy(() -> service.canManageStore(1L, -1L));
     }
 }
