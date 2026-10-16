@@ -14,6 +14,7 @@
 | 사용자마다 최근 60초 6회로 피드 요청을 막는다 | FR-064, 명세의 요청 제한 |
 | 카드를 찜하거나 패스하고, 찜은 찜 목록에 넣는다 | FR-065, FR-071 |
 | 내 피드 필터(업종, 정렬)를 돌려준다 | FR-067 |
+| 내 찜 목록을 그날 후보 스냅샷의 표시 값과 함께 돌려준다 | FR-071 |
 | 찜과 패스로 그날 피드에서 뺄 캠페인을 기억한다 | FR-099 (9), BR-040 |
 | 카드마다 serve 기록을 남겨 노출 검증에 쓰게 한다 | FR-097 |
 | 서빙 로그와 그날 첫 접속 위치를 응답 뒤에 쓴다 | FR-027, FR-042, FR-064 |
@@ -24,7 +25,7 @@
 | 온보딩 완료 여부, 저장 위치, 성별, 연령대 | member. `MemberQueryService` 로 읽는다 |
 | 예산 소진 진행률, 그날 예약액과 단가 | billing. `BudgetQueryService` 로 읽는다 |
 | 노출 과금 판정(`BILLED`, `NOT_BILLED_BUDGET`) | billing. 상한을 넘겨 나간 노출도 과금은 정산이 막는다 |
-| 잔여 수량 | coupon. 피드에 싣지 않는다(`feed-api-design.md`) |
+| 잔여 수량 | coupon. 피드와 찜 목록에 싣지 않는다(`feed-api-design.md`) |
 
 ## 2. 애그리거트와 패키지
 
@@ -64,6 +65,8 @@ adserving/
     ├── repository/FeedFilterRepository.java
     └── repository/FeedFilterCategoryRepository.java
 wishlist/
+    ├── controller/WishlistController.java
+    ├── service/WishlistService.java
     ├── repository/WishlistRepository.java           쓰기는 INSERT IGNORE
     └── entity/Wishlist.java
 impression/
@@ -77,7 +80,8 @@ impression/
 - 애그리거트끼리는 객체로 쥐지 않고 ID 로만 잇는다. `serve_log`, `swipe_log` 는 `campaign_id` 로 후보를 가리키고 연관 매핑이 없다.
 - `impression` 은 `feed` 의 serve 기록과 유효 노출 수 카운터, `engine` 의 후보 소진 여부를 읽는다. 반대 방향은 없다.
 - `feed` 의 스와이프는 `wishlist` 에 찜을 넣는다. 두 애그리거트를 한 트랜잭션에 묶지 않고 쓰는 순서로 맞춘다(7장).
-- 입구는 HTTP 요청 넷(`GET /v1/feed`, `POST /v1/impressions`, `POST /v1/swipes`, `GET /v1/feed-filter`)이다. 스케줄, 이벤트, 다른 도메인의 호출은 아직 없다.
+- `wishlist` 의 찜 목록 조회는 `engine` 의 그날 후보에서 표시 값을 읽는다. 반대 방향은 없다.
+- 입구는 HTTP 요청 다섯(`GET /v1/feed`, `POST /v1/impressions`, `POST /v1/swipes`, `GET /v1/feed-filter`, `GET /v1/wishlist`)이다. 스케줄, 이벤트, 다른 도메인의 호출은 아직 없다.
 
 ### 규칙을 두는 곳
 
@@ -91,6 +95,7 @@ impression/
 | 노출의 유효 판정, 같은 노출이 다시 올 때의 처리, 차감과 카운터의 시점 | `ImpressionService` |
 | 같은 카드를 다시 넘길 때의 처리, 찜과 스와이프 기록과 당일 이력을 쓰는 순서 | `SwipeService` |
 | 필터를 저장하지 않은 회원의 기본값(전체 업종, 거리순) | `FeedFilterService`. 피드는 같은 기본값을 `FeedService` 에서 따로 정한다 |
+| 찜 목록의 표시 값을 그날 후보 행 유무로 채우고 없으면 `null` 로 두는 규칙 | `WishlistService`, `WishlistItemResponse` |
 
 `ServeLogBuffer` 를 `FeedService` 와 나눈 것은 입구가 달라서다. 앞은 요청 스레드가, 뒤는 작업자 스레드가 부른다.
 
@@ -100,6 +105,7 @@ impression/
 |---|---|
 | 후보 조회 | 최대 탐색 반경(5000m)을 덮는 사각 범위로 `idx_candidate_geo` 를 타고 한 번 읽는다. 상태(`SERVABLE`)와 소진(`sold_out_at IS NULL`)은 쿼리가, 나머지는 `FeedAssembler` 가 거른다 |
 | 업종 선호도 | `idx_swipe_member_date` 로 최근 30일의 찜을 업종별로 센다. 요청마다 읽는다 |
+| 찜 목록 | `uk_wishlist_member_campaign`(`member_id`, `campaign_id`)의 앞 열로 회원의 찜을 읽고 `created_at`, `wishlist_id` 내림차순으로 정렬한다. 표시 값은 그날 후보를 PK(`business_date`, `campaign_id`)의 IN 으로 한 번 더 읽어 붙인다. 후보 행이 있으면 상태와 소진은 보지 않는다(#416) |
 | 필터 업종 | `feed_filter_category` 를 PK(`member_id`, `category_code`)로 읽고 업종 코드 오름차순으로 돌려준다(#405). 순서 컬럼이 없어 고른 순서는 남지 않는다 |
 | 다른 도메인 데이터의 사본 | `ad_candidate` 는 00:00 의 캠페인과 가게 사본이다. 그날 안에서는 캠페인과 쿠폰의 통보로만 바뀐다 |
 | 집계를 세는 방식 | 그날 유효 노출 수는 `impression_log` 를 세지 않고 카운터를 읽는다. 틀리면 `impression_log` 에서 다시 센다 |
@@ -229,7 +235,8 @@ flowchart LR
         end
 
         subgraph wishlist["wishlist/ (찜 목록)"]
-            WR[(WishlistRepository)]
+            WC[WishlistController] --> WS[WishlistService]
+            WS --> WR[(WishlistRepository)]
         end
 
         subgraph impression["impression/ (노출 로그)"]
@@ -244,6 +251,7 @@ flowchart LR
         IMS --> AR
         SWS --> WR
         SWS --> AR
+        WS --> AR
     end
 
     FS --> MQ["member.contract<br/>MemberQueryService"]
@@ -254,7 +262,7 @@ flowchart LR
     class MQ,BQ,PD out
 ```
 
-- `feed` 와 `impression` 에서 `engine` 으로, `impression` 에서 `feed` 로, `feed` 에서 `wishlist` 로만 화살표가 간다. 반대 방향은 없다
+- `feed` 와 `impression` 에서 `engine` 으로, `impression` 에서 `feed` 로, `feed` 에서 `wishlist` 로, `wishlist` 에서 `engine` 으로만 화살표가 간다. 반대 방향은 없다
 - 스케줄, 이벤트, 다른 도메인의 호출로 들어오는 입구와 공개면(`contract`)은 아직 없다
 
 ### 상태 변경
@@ -461,6 +469,12 @@ C 를 고른다. 이미 넘긴 카드는 찜을 쓰기 전에 먼저 걸러, 먼
 
 필터 조회는 설정 화면이 부르는 API 라 목표 TPS 와 응답 시간을 두지 않았다(`feed-api-design.md` 성능 목표). DB 읽기 2(PK) 뿐이다.
 
+| 적을 것 | 찜 목록 조회 |
+|---|---|
+| 요청 하나의 비용 | DB 읽기 2(회원의 찜, 그날 후보). 찜이 없으면 1 이다. 다른 도메인 호출과 Valkey 호출은 없다 |
+| 처리량 계산 | 목표 500 RPS x DB 읽기 2 = 초당 1,000 읽기. 둘 다 인덱스를 탄다. 행 수는 그 회원이 찜한 진행 중 캠페인 수다 |
+| 확인 방법 | 아직 없다. 10:50~11:00 에 5,000명이 10초 안에 몰리는 k6 시나리오로 p99 300ms 를 잰다 |
+
 ## 12. 테스트와 미정 사항
 
 6장에 상태 전이가 없어 7장 동시성 표의 행과 6장 주요 흐름의 실패 지점에서 시나리오를 뽑았다.
@@ -485,6 +499,10 @@ C 를 고른다. 이미 넘긴 카드는 찜을 쓰기 전에 먼저 걸러, 먼
 | 같은 카드를 동시에 넘김 | 다른 요청이 먼저 스와이프를 넣었다 | `INSERT IGNORE` 가 0행이다 | `applied: false` 이고 당일 이력에 다시 넣지 않는다 | `SwipeServiceTest.동시에_와서_먼저_넣은_쪽이_있으면_applied_false_이고_당일_이력은_다시_넣지_않는다` |
 | 넘긴 캠페인 | 그 캠페인을 패스했다 | 그날 피드를 요청한다 | 그 캠페인이 나오지 않는다 | `SwipeIntegrationTest.찜이나_패스한_캠페인은_그날_피드에_다시_나오지_않는다` |
 | 찜을 먼저 쓰는 순서 | 찜하는 스와이프다 | 스와이프를 보낸다 | 찜, 스와이프, 당일 이력 순으로 쓴다 | `SwipeServiceTest.찜하면_찜을_먼저_넣고_스와이프를_남기고_그날_당일_이력에_넣는다` |
+| 남의 찜 | 다른 회원이 같은 캠페인을 찜했다 | 찜 목록을 조회한다 | 내 찜만 찜한 시각 내림차순으로 나온다 | `WishlistIntegrationTest.내_찜만_찜한_시각_내림차순으로_그날_후보의_표시_값과_함께_돌려준다` |
+| 오늘 후보가 아닌 찜 | 어제만 후보였던 캠페인을 찜했다 | 찜 목록을 조회한다 | `storeName`, `storeImageUrl`, `discount` 가 `null` 이고 식별자와 찜한 시각은 있다 | `WishlistIntegrationTest.오늘_노출_후보가_아닌_캠페인은_표시_값이_null_이다` |
+| 찜하지 않은 캠페인을 물음 | 그 캠페인을 찜하지 않았다 | `campaignId` 로 조회한다 | `200` 과 빈 배열이다(#416) | `WishlistServiceTest.campaignId_를_줬는데_그_찜이_없으면_빈_배열이다` |
+| 자정 직후의 그날 | 한국 시각 00:30 이다 | 찜 목록을 조회한다 | 그날 후보를 한국 날짜로 읽는다 | `WishlistServiceTest.그날은_한국_시각의_날짜다` |
 
 | 미정 항목 | 어디까지 정해졌나 | 막는 것 |
 |---|---|---|
