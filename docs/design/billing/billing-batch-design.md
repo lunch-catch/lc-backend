@@ -217,6 +217,12 @@ PointCharged { ownerId, paymentId, amount }
 
 재개된 캠페인의 시간대별 목표 재계산은 I-07이 맡는다(48행).
 
+**2026-10-16 구현(#319):**
+
+- **한 결제로 캠페인 여럿을 재예약한다.** `uk_point_ledger_payment_entry (payment_id, entry_type)`가 결제당 RESERVE 한 줄만 허용해 캠페인이 둘 이상이면 막혔다. `point_ledger`에 결제×캠페인 생성 컬럼 멱등 키(`uk_point_ledger_recharge_reserve_dedup`, `payment_id|campaign_id`)를 더 두고, 결제당 한 줄 제약은 `entry_type <> 'RESERVE'`로 좁혀 CHARGE 전용으로 남긴다(`V6__billing_recharge_reserve_dedup.sql`). 캠페인은 ID 오름차순으로 잔액이 남는 대로 채운다.
+- 자리는 `billing.listener.PointChargedListener`(`@TransactionalEventListener(AFTER_COMMIT)`)이고 `RechargeReservationService` 하나만 부른다. 실패를 삼켜 ERROR로만 남긴다. 충전은 이미 커밋돼 있어 올리면 승인 확정 API·웹훅·재조회 워커가 성공한 충전에 실패를 돌려준다.
+- 당일 소진 해시의 `reserved` 반영은 `billing_day_status.lua`와 같은 모양의 Lua(`billing_day_reserve_increase.lua`)로 하고, 해시가 있고 지금 값보다 큰 값일 때만 올린다. **실패해도 지우지 않고 ERROR로만 남긴다** — 다른 해시 미러(상태 변경)는 실패하면 지워 DB 정본으로 다시 만들게 하지만, 여기서는 지우면 차감이 재구성하며 상한을 다시 키우는 것과 효과가 같아서가 아니라 예약액이 실제보다 작게 보여 과금이 일찍 멈추는 쪽으로 남기는 선택이다.
+
 ---
 
 # I-04. 결제 재조회 워커 — 아웃박스
