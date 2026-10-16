@@ -4,7 +4,7 @@
 
 커밋 뒤 작업의 설명은 `origin/develop`의 `e25cb2a`에 반영된 가이드 7장을 적용해 보완했다. 실행을 미루는 시점과 실제 실행 수단을 구분하며, 비동기 방식의 선택도 트레이드오프에 포함한다.
 
-장애 정책과 복구의 한계는 [장애 처리 설계](./billing_장애_처리_설계.md)가 소유한다. 공개 계약은 `billing.contract` 패키지(`PointDeductor`, `BudgetQueryService`), 예약·해제·대사 정책은 [정산 배치 설계](./billing-batch-design.md)가 소유한다. 이 문서의 그림에서 광고 서빙의 노출 수집은 아직 연동하지 않은 계약상 흐름이다.
+장애 정책과 복구의 한계는 [장애 처리 설계](./billing_장애_처리_설계.md)가 소유한다. 공개 계약은 `billing.contract` 패키지(`PointDeductor`, `BudgetQueryService`, `BillingStatsQueryService`), 예약·해제·대사 정책은 [정산 배치 설계](./billing-batch-design.md)가 소유한다. 이 문서의 그림에서 광고 서빙의 노출 수집은 아직 연동하지 않은 계약상 흐름이다.
 
 ### 확인 기준과 범위
 
@@ -25,6 +25,7 @@
 |---|---|
 | 유효 노출의 과금 여부를 판정하고 원장에 기록한다 | [PointDeductor 계약](../../../src/main/java/com/launchcatch/billing/contract/PointDeductor.java), `deduction_result`, `point_ledger` |
 | 예약액·당일 소진액·시간대별 목표로 진행률을 돌려준다 | [BudgetQueryService 계약](../../../src/main/java/com/launchcatch/billing/contract/BudgetQueryService.java) |
+| 영업일별 원장 합계와 과금 상태 수, 그날 예산과 단가, 미소진 잔액을 분석에 집계해 준다 | [BillingStatsQueryService 계약](../../../src/main/java/com/launchcatch/billing/contract/BillingStatsQueryService.java) |
 | 캠페인의 중단 여부를 그날 계획과 Valkey에 반영한다 | 아키텍처 2.4와 `CampaignStatusChangedEvent`, `BudgetPlanStatusService` |
 | 해시가 사라지면 DB 정본으로 재구성한다 | #193의 `SpendHashRebuildService` |
 
@@ -48,11 +49,14 @@
 
 ```text
 billing/
-├── contract/  PointDeductor, DeductionStatus, BudgetQueryService, BudgetProgress
+├── contract/  PointDeductor, DeductionStatus, BudgetQueryService, BudgetProgress,
+│              BillingStatsQueryService, OwnerCampaignLedgerSum, CampaignBillingCount,
+│              CampaignDailyBudget, DailyLedgerTotals
 ├── BudgetPacing
 ├── cache/     DailySpendCounter, ValkeyDailySpendCounter, DeductOutcome, DailySpend
 ├── service/   PointDeductorImpl, DailyPlanSnapshotService, SpendHashRebuildService,
-│              BudgetQueryServiceImpl, HourlyTargetService, BudgetPlanStatusService
+│              BudgetQueryServiceImpl, HourlyTargetService, BudgetPlanStatusService,
+│              BillingStatsQueryServiceImpl
 ├── listener/  CampaignStatusChangedListener, BudgetPlanStatusMirrorListener
 ├── repository/ BudgetDailyPlanRepository, BudgetHourlyTargetRepository,
 │               DeductionResultRepository, PointLedgerRepository
@@ -173,8 +177,27 @@ Lua의 예산 비교는 원자적 갱신이 필요한 저장소 연산이다. �
 |---|---|---|
 | adserving이 호출한다 | `PointDeductor` | 처음 저장한 유효 노출마다 부른다. 반환과 입력은 [계약](../../../src/main/java/com/launchcatch/billing/contract/PointDeductor.java)이 소유한다 |
 | adserving이 조회한다 | `BudgetQueryService` | 캠페인 목록으로 한 번에 조회한다. 캐시가 데워진 뒤 원장 합계를 읽지 않는다 |
+| analytics가 조회한다 | `BillingStatsQueryService` | 분석의 일별 집계 배치가 영업일마다 부른다. 읽기 전용 트랜잭션에서 원장과 판정을 날짜로 묶어 읽는다. 아래 "집계 조회의 영업일 귀속"을 따른다 |
 | campaign의 이벤트를 받는다 | `CampaignStatusChangedEvent` | 발행자의 같은 트랜잭션에서 계획을 변경한다. 커밋 뒤 해시에 반영한다 |
 | 정산 내부에서 전달한다 | `BudgetPlanStatusChanged` | DB 변경이 커밋된 경우에만 Redis 상태 미러를 실행한다 |
+
+### 집계 조회의 영업일 귀속
+
+`BillingStatsQueryService`는 합계만 내주고 소진액(`DEDUCT` 합에서 양수 `ADJUST` 합을 뺀 값)은 분석이 계산한다. 영업일에 귀속하는 기준은 유형마다 다르다.
+
+| 값 | 영업일 기준 | 상태 |
+|---|---|---|
+| `RESERVE`, `RELEASE` | 원장의 `business_date` | 확정 |
+| `DEDUCT` | `deduction_result`의 `business_date`(`serve_id`로 맞춘다) | 확정 |
+| `CHARGE`, `REFUND` | 기록 시각의 KST 날짜 | 확정 |
+| `ADJUST` | 기록 시각의 KST 날짜 | **임시.** 정정이 가리키는 원래 영업일을 담는 컬럼이 없다. 이슈 #352 |
+| 미소진 잔액 | 영업일 다음 날 00:00 이전에 기록된 `CHARGE`, `REFUND`, `ADJUST`, `DEDUCT` 의 누적 합. 점주 잔액에 예약 중 포인트를 더한 값과 같다 | 확정. analytics 의 `unspent_balance` 정의를 따른다 |
+| 원장 대조용 합계 | 그 영업일의 기록 시각에 기록된 같은 네 유형의 합. 전날 말 미소진 잔액에 더하면 그날 말 값이 된다 | **임시.** 이슈 #352 |
+| 원장 불일치 건수 | `settlement_mismatch.business_date`가 그날인 행 수. 해결 여부는 가리지 않는다 | **임시.** 이슈 #352 |
+
+정정 대상 영업일 목록은 이 조회에 없다. `point_ledger`에 정정 대상 영업일 컬럼이 들어가고 조정 요청이 그 값을 받은 뒤에 더한다.
+
+기록 시각의 하루는 날짜를 DB 함수로 자르지 않고 `[당일 00:00, 다음 날 00:00)` 범위로 묻는다. `created_at`은 Asia/Seoul 기준이라 영업일 경계와 같다.
 
 전환 퍼널 분석의 비동기 처리와 도메인 의존 방향은 [아키텍처 2.4](../../architecture/런치캐치_도메인_구조와_의존성_설계.md#24-도메인-간-상태-변경과-이벤트)를 따른다. 정산의 원장 쓰기는 분석 이벤트의 소비자가 실행하는 작업이 아니다.
 
@@ -465,5 +488,7 @@ Lua는 당일 해시와 처리 표시 두 키를 사용한다. 현재 구현은 
 | 장애 후 복구 | 장애 설계의 미정 사항을 닫아야 한다. 이미 표시된 광고와 확정 과금의 차이를 줄이는 정책이 필요하다 |
 | 예약·대사 | 후속 작업을 구현하고 전체 정상 흐름을 연결해 검증해야 한다 |
 | 성능 | 목표 부하와 해시 복구 구간을 실제 환경에서 측정해야 한다 |
+| 집계 조회의 정정 귀속 | 정정 대상 영업일 컬럼과 조정 요청 필드가 먼저 정해져야 `ADJUST`를 원래 영업일에 붙이고 정정 대상일 목록을 더할 수 있다. 이슈 #352 |
+| 집계 조회의 쿼리 비용 | 기록 시각 범위와 영업일만의 집계는 날짜가 선두인 인덱스가 없다. 지금은 두지 않았고 선택지와 순서는 [성능 개선](./billing_성능_개선.md) 3장이 소유한다 |
 
 이미 구현된 동작을 변경하는 정책은 이 문서 작성만으로 승인하거나 확정하지 않는다.

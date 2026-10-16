@@ -142,6 +142,8 @@ public interface SettlementMismatchRepository extends JpaRepository<SettlementMi
                                                      @Param("jobExecutionId") Long jobExecutionId,
                                                      @Param("now") LocalDateTime now);
 
+    // 영업일이 그날인 불일치 건수다. 해결 여부는 가리지 않는다
+    long countByBusinessDate(LocalDate businessDate);
     /*
      * PG_VS_CHARGE 대사(13번)의 미해결 불일치 한 건을 기록한다. 대상 ID 는 결제 ID 다.
      * 같은 (check_type, target_id, business_date) 가 이미 있으면 그대로 둔다. INSERT IGNORE 는
