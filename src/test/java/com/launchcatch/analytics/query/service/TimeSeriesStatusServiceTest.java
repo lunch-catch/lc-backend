@@ -1,8 +1,11 @@
 package com.launchcatch.analytics.query.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import com.launchcatch.analytics.exception.AnalyticsException;
 import com.launchcatch.analytics.query.AggregationStatus;
 import com.launchcatch.analytics.query.AnalyticsPeriod;
 import com.launchcatch.analytics.query.TimeSeriesState;
@@ -72,6 +75,15 @@ class TimeSeriesStatusServiceTest {
         assertThat(state.aggregatedAt()).isNull();
         assertThat(state.items()).singleElement()
                 .satisfies(item -> assertThat(item.status()).isEqualTo(AggregationStatus.IN_PROGRESS));
+    }
+
+    @Test
+    void 상한을_초과한_기간은_실행_이력을_조회하기_전에_거절한다() {
+        assertThatThrownBy(() -> service.resolve(
+                AnalyticsPeriod.DAILY, MONDAY, MONDAY.plusDays(92)))
+                .isInstanceOf(AnalyticsException.class);
+
+        verifyNoInteractions(batchExecutions);
     }
 
     private BatchExecutionRecord success(LocalDate date, LocalDateTime finishedAt) {

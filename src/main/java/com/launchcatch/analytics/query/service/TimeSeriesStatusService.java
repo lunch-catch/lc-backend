@@ -29,10 +29,11 @@ public class TimeSeriesStatusService {
 
     public TimeSeriesState resolve(AnalyticsPeriod period, LocalDate from, LocalDate to) {
         AnalyticsDateRange range = new AnalyticsDateRange(from, to);
+        List<TimeSeriesBucket> buckets = period.buckets(range);
         Map<LocalDate, List<BatchExecutionRecord>> recordsByDate = range.dates().stream()
                 .collect(Collectors.toMap(Function.identity(), batchExecutions::findByBusinessDate));
 
-        List<TimeSeriesBucketState> items = period.buckets(range).stream()
+        List<TimeSeriesBucketState> items = buckets.stream()
                 .map(bucket -> toState(bucket, recordsByDate))
                 .toList();
         LocalDateTime aggregatedAt = recordsByDate.values().stream()

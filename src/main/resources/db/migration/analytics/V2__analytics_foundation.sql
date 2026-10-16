@@ -5,11 +5,10 @@ ALTER TABLE event_log
     MODIFY member_id BIGINT NULL COMMENT '소프트 참조. issue_open은 회원이 없다',
     MODIFY campaign_id BIGINT NULL COMMENT '소프트 참조. 화면 조회 이벤트는 대상 캠페인이 없다',
     MODIFY store_id BIGINT NULL COMMENT '소프트 참조. 화면 조회 이벤트는 대상 가게가 없다',
-    DROP COLUMN issue_id,
     ADD COLUMN coupon_event_id BIGINT NULL AFTER wish_id,
     ADD COLUMN member_coupon_id BIGINT NULL AFTER coupon_event_id,
     ADD CONSTRAINT chk_event_log_member_id CHECK (
-        (event_type = 'issue_open' AND member_id IS NULL)
+        (event_type = 'issue_open' AND (member_id IS NULL OR issue_id IS NOT NULL))
         OR (event_type <> 'issue_open' AND member_id IS NOT NULL)
     ),
     ADD CONSTRAINT chk_event_log_target_ids CHECK (
@@ -19,11 +18,20 @@ ALTER TABLE event_log
             AND event_type NOT IN ('map_view', 'wishlist_view'))
     ),
     ADD CONSTRAINT chk_event_log_coupon_ids CHECK (
-        (event_type = 'issue_open' AND coupon_event_id IS NOT NULL AND member_coupon_id IS NULL)
-        OR (event_type = 'issue' AND coupon_event_id IS NOT NULL AND member_coupon_id IS NOT NULL)
+        (event_type = 'issue_open' AND (
+            (coupon_event_id IS NOT NULL AND member_coupon_id IS NULL)
+            OR (issue_id IS NOT NULL AND coupon_event_id IS NULL AND member_coupon_id IS NULL)
+        ))
+        OR (event_type = 'issue' AND (
+            (coupon_event_id IS NOT NULL AND member_coupon_id IS NOT NULL)
+            OR (issue_id IS NOT NULL AND coupon_event_id IS NULL AND member_coupon_id IS NULL)
+        ))
         OR (event_type IN ('redeem', 'expire') AND member_coupon_id IS NOT NULL)
         OR (event_type NOT IN ('issue_open', 'issue', 'redeem', 'expire')
             AND coupon_event_id IS NULL AND member_coupon_id IS NULL)
+    ),
+    ADD CONSTRAINT chk_event_log_legacy_issue_id CHECK (
+        issue_id IS NULL OR event_type IN ('issue_open', 'issue')
     );
 
 ALTER TABLE daily_settlement_analytics
@@ -47,8 +55,8 @@ ALTER TABLE daily_segment_analytics
     );
 
 ALTER TABLE campaign_daily_report
-    ADD COLUMN owner_id BIGINT NOT NULL COMMENT '점주 ID. 소프트 참조' AFTER campaign_id,
-    ADD COLUMN store_id BIGINT NOT NULL COMMENT '가게 ID. 소프트 참조' AFTER owner_id,
+    ADD COLUMN owner_id BIGINT NULL COMMENT '점주 ID. 소프트 참조. 기존 행 백필 전에는 NULL' AFTER campaign_id,
+    ADD COLUMN store_id BIGINT NULL COMMENT '가게 ID. 소프트 참조. 기존 행 백필 전에는 NULL' AFTER owner_id,
     MODIFY refunded_amount BIGINT NOT NULL DEFAULT 0
         COMMENT '캠페인에 연결된 과오 차감 정정용 양수 ADJUST 합',
     ADD KEY idx_campaign_daily_report_owner_business_date (owner_id, business_date);

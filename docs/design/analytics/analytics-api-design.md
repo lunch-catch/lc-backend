@@ -152,6 +152,10 @@ A-12는 현재 회원의 모든 일별 행을 합산한다. 원본 로그의 13�
 
 `aggregation_pending_date.reason`은 `FAILED`, `SOURCE_NOT_READY`, `RERUN_UNAVAILABLE`, `ADJUSTED`만 허용한다.
 
+`issue_id`는 새 쿠폰 식별자의 양쪽 쓰기와 읽기 전환이 끝날 때까지 유지한다. 기존 V1 행과 새 식별자를 사용하는 행을 함께 허용하고 후속 마이그레이션에서 제거한다.
+
+기존 `campaign_daily_report` 행에는 점주와 가게 정보가 없다. V2는 `owner_id`와 `store_id`를 nullable로 추가한다. 캠페인 조회 계약으로 기존 행을 백필한 뒤 후속 마이그레이션에서 `NOT NULL`로 바꾼다.
+
 ## 11. 성능
 
 - 조회 API는 다른 도메인을 호출하지 않고 미리 계산한 집계 테이블을 읽는다.
