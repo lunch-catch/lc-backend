@@ -34,6 +34,7 @@ HTTP가 아니라 **모듈 간 호출·이벤트·배치**다. 점주·관리자
 | billing → campaign | `campaign.contract.CampaignQueryService` | 00:00 예약 대상과 다음 영업일 적용 하루 예산, 충전 재예약 대상(`PAUSED(NO_POINTS)` 캠페인), 환불 거부 조건의 집행 중 캠페인 |
 | billing → campaign | `campaign.contract.CampaignFundingUpdater` | 예약 결과와 판정 반영. 잔액 부족이면 `PAUSED(NO_POINTS)`, 재개 판정이면 `ACTIVE`로 **상태만** 바꾼다 |
 | billing → campaign | `campaign.contract.CampaignQueryService.findAllById` | **2026-10-14:** 포인트 조정이 닫으려는 `CAMPAIGN_SPEND_VS_LEDGER` 대사 건의 캠페인 점주 확인(`billing-api-design.md` 「포인트 조정」) |
+| billing → campaign | `campaign.contract.CampaignQueryService.findByIdForUpdate` | **2026-10-16(#378):** 충전 직후 재예약(I-03)이 캠페인마다 원장을 쓰기 전에 그 캠페인을 다시 잠그고 최신 상태를 확인한다. 기존 간선이라 CODEOWNERS는 바뀌지 않는다 |
 | billing → owner | `owner.contract.OwnerStatusQuery.findStatus` | **2026-10-14:** 포인트 조정 대상 점주가 있는지 확인(구현 계획 N-2, G-4). 새 간선이라 레포 설계 문서 2.2절과 CODEOWNERS를 같은 PR에서 고친다 |
 | billing → ops | 운영의 설정값 조회 기능 | 노출 단가(아래 I-02 참고) |
 | adserving → billing | `billing.contract.PointDeductor` | I-01 |
@@ -209,20 +210,19 @@ CampaignFundingUpdater: { campaignId, ownerId, businessDate,
 PointCharged { ownerId, paymentId, amount }
 ```
 
-1. `CampaignQueryService`로 이 점주의 집행 기간 안 `PAUSED(NO_POINTS)` 캠페인이 있는지 묻는다. 없으면 끝.
+**2026-10-16 수정(#319):** 아래 1~7을 실제 구현에 맞춰 다시 적었다. 캠페인 하나가 아니라 여럿을 캠페인 ID 오름차순으로 채우고, 각 캠페인은 원장을 쓰기 전에 다시 잠근다.
+
+1. `CampaignQueryService.findByOwnerIdAndStatusIn`로 이 점주의 `PAUSED(NO_POINTS)` 캠페인 중 집행 기간 안인 것을 캠페인 ID 오름차순으로 읽는다. 없으면 끝.
 2. **서빙 시간대(10:00~12:59)가 지났으면(13:00 이후) 다시 잡지 않는다.** 다음 00:00 예약이 반영한다(51행).
-3. `새 예약액 = min(설정 하루 예산, 기존 예약액 + 잔액)`. 기존 예약액은 원장의 오늘 `RESERVE` 합(= `budget_daily_plan.daily_budget`)에서 구한다.
-4. 늘어난 만큼만 `RESERVE(-delta, payment_id)`를 기록하고 `budget_daily_plan.daily_budget`과 예약액 카운터를 새 예약액으로 갱신한다. 멱등은 `UNIQUE(payment_id, entry_type)`로, 같은 결제로 재예약은 1회뿐이다.
-5. **재개 판정은 정산이 한다**(새 예약액 ≥ 단가). `CampaignFundingUpdater`에 `cause=RECHARGE`로 통보하면 캠페인이 상태만 `ACTIVE`로 바꾼다. 관리자가 중단한 캠페인(`PAUSED(ADMIN)`)과 집행 기간이 끝난 캠페인은 재개하지 않는다(51행 예외).
+3. 점주 계정 행을 잠그고(D-8) 잔액을 읽는다.
+4. **캠페인마다, 원장을 쓰기 전에 그 캠페인을 `CampaignQueryService.findByIdForUpdate`(#378)로 다시 잠그고 최신 상태를 확인한다.** `PAUSED(NO_POINTS)`가 아니면(1에서 읽은 뒤 다른 트랜잭션이 이미 재개했거나 관리자·점주가 중단했거나 종료됐으면) 건너뛰고 남은 잔액을 다음 캠페인에 넘긴다. `CampaignStatusService.resumeFromFunding`도 같은 방식으로 잠그고 재확인하지만 그건 캠페인 자신의 상태 전이만 지켜줄 뿐, billing이 그보다 먼저 쓰는 아래 6의 원장과 `daily_budget` 증가는 지켜주지 못해 이 확인이 따로 필요했다(리뷰로 발견).
+5. `새 예약액 = min(설정 하루 예산, 기존 예약액 + 남은 잔액)`. 기존 예약액은 그 계획 행의 `daily_budget`에서 읽는다.
+6. 늘어난 만큼만 `RESERVE(-delta, payment_id, campaign_id)`를 기록하고 `budget_daily_plan.daily_budget`과 당일 소진 해시의 예약액(`billing_day_reserve_increase.lua`, 해시가 있고 지금 값보다 큰 값일 때만 올린다)을 새 값으로 갱신한다. **멱등은 결제×캠페인 생성 컬럼 UNIQUE(`uk_point_ledger_recharge_reserve_dedup`, `payment_id|campaign_id`)로, 한 결제로 캠페인 여럿을 재예약할 수 있다.** 결제당 한 줄만 허용하는 `uk_point_ledger_payment_entry`는 `entry_type <> 'RESERVE'`로 좁혀 CHARGE 전용으로 남겼다(`V6__billing_recharge_reserve_dedup.sql`).
+7. **재개 판정은 정산이 한다**(새 예약액 ≥ 단가). `CampaignFundingUpdater`에 `cause=RECHARGE`로 통보하면 캠페인이 상태만 `ACTIVE`로 바꾼다. 관리자가 중단한 캠페인(`PAUSED(ADMIN)`)과 집행 기간이 끝난 캠페인은 재개하지 않는다(51행 예외).
 
 재개된 캠페인의 시간대별 목표 재계산은 I-07이 맡는다(48행).
 
-**2026-10-16 구현(#319):**
-
-- **한 결제로 캠페인 여럿을 재예약한다.** `uk_point_ledger_payment_entry (payment_id, entry_type)`가 결제당 RESERVE 한 줄만 허용해 캠페인이 둘 이상이면 막혔다. `point_ledger`에 결제×캠페인 생성 컬럼 멱등 키(`uk_point_ledger_recharge_reserve_dedup`, `payment_id|campaign_id`)를 더 두고, 결제당 한 줄 제약은 `entry_type <> 'RESERVE'`로 좁혀 CHARGE 전용으로 남긴다(`V6__billing_recharge_reserve_dedup.sql`). 캠페인은 ID 오름차순으로 잔액이 남는 대로 채운다.
-- 자리는 `billing.listener.PointChargedListener`(`@TransactionalEventListener(AFTER_COMMIT)`)이고 `RechargeReservationService` 하나만 부른다. 실패를 삼켜 ERROR로만 남긴다. 충전은 이미 커밋돼 있어 올리면 승인 확정 API·웹훅·재조회 워커가 성공한 충전에 실패를 돌려준다.
-- 당일 소진 해시의 `reserved` 반영은 `billing_day_status.lua`와 같은 모양의 Lua(`billing_day_reserve_increase.lua`)로 하고, 해시가 있고 지금 값보다 큰 값일 때만 올린다. **실패해도 지우지 않고 ERROR로만 남긴다** — 다른 해시 미러(상태 변경)는 실패하면 지워 DB 정본으로 다시 만들게 하지만, 여기서는 지우면 차감이 재구성하며 상한을 다시 키우는 것과 효과가 같아서가 아니라 예약액이 실제보다 작게 보여 과금이 일찍 멈추는 쪽으로 남기는 선택이다.
-- **캠페인 후보 목록은 점주 계정 잠금 전에 읽어 낡을 수 있다(#378, 리뷰로 발견).** 후보를 읽은 뒤 계정 행 잠금을 기다리는 동안 다른 트랜잭션이 같은 캠페인을 이미 재개했거나 관리자·점주가 중단했거나 종료시킬 수 있다. 그래서 캠페인마다 원장을 쓰기 직전에 `campaign.contract.CampaignQueryService.findByIdForUpdate`로 그 캠페인 하나만 다시 잠그고 최신 상태를 확인하며, `PAUSED(NO_POINTS)`가 아니면 건너뛰고 남은 잔액을 다음 캠페인에 넘긴다. `CampaignStatusService.resumeFromFunding`도 같은 방식으로 잠그고 재확인하지만 그건 캠페인 자신의 상태 전이만 지켜줄 뿐, billing이 그보다 먼저 쓰는 `RESERVE` 원장과 `daily_budget` 증가는 지켜주지 못해 별도로 필요했다.
+자리는 `billing.listener.PointChargedListener`(`@TransactionalEventListener(AFTER_COMMIT)`)이고 `RechargeReservationService` 하나만 부른다. 실패를 삼켜 ERROR로만 남긴다. 충전은 이미 커밋돼 있어 올리면 승인 확정 API·웹훅·재조회 워커가 성공한 충전에 실패를 돌려준다. 해시 반영(6)이 실패해도 지우지 않고 ERROR로만 남긴다 — 다른 해시 미러(상태 변경)는 실패하면 지워 DB 정본으로 다시 만들게 하지만, 여기서는 예약액이 실제보다 작게 보여 과금이 일찍 멈추는 쪽으로 남기는 선택이다.
 
 ---
 
