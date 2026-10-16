@@ -3,6 +3,7 @@ package com.launchcatch.billing.entity;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.time.LocalDate;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -143,6 +144,49 @@ class PointLedgerTest {
         assertThatThrownBy(() -> PointLedger.refund(OWNER_ID, null, 100L))
                 .isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> PointLedger.refund(OWNER_ID, 31L, 0L))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    @DisplayName("정기 예약은 양수를 받아 음수로 저장하고 캠페인과 영업일에 묶는다")
+    void 예약_부호() {
+        PointLedger reserve = PointLedger.reserve(OWNER_ID, 5L, LocalDate.of(2026, 10, 16), 3000L);
+
+        assertThat(reserve.getAmount()).isEqualTo(-3000L);
+        assertThat(reserve.getEntryType()).isEqualTo(EntryType.RESERVE);
+        assertThat(reserve.getCampaignId()).isEqualTo(5L);
+        assertThat(reserve.getBusinessDate()).isEqualTo(LocalDate.of(2026, 10, 16));
+        assertThat(reserve.getSource()).isEqualTo(LedgerSource.RECONCILIATION);
+        assertThat(reserve.getPaymentId()).isNull();
+    }
+
+    @Test
+    @DisplayName("해제는 양수로 저장하고 캠페인과 영업일에 묶는다")
+    void 해제_부호() {
+        PointLedger release = PointLedger.release(OWNER_ID, 5L, LocalDate.of(2026, 10, 15), 2000L);
+
+        assertThat(release.getAmount()).isEqualTo(2000L);
+        assertThat(release.getEntryType()).isEqualTo(EntryType.RELEASE);
+        assertThat(release.getCampaignId()).isEqualTo(5L);
+        assertThat(release.getBusinessDate()).isEqualTo(LocalDate.of(2026, 10, 15));
+        assertThat(release.getSource()).isEqualTo(LedgerSource.RECONCILIATION);
+    }
+
+    /*
+     * 정기 예약과 해제의 멱등 키는 캠페인과 영업일로 만든 생성 컬럼이다(uk_point_ledger_day_reserve_dedup).
+     * 둘 중 하나가 비면 그 키가 NULL 이 되어 같은 날 예약이 두 번 들어갈 수 있다.
+     */
+    @Test
+    @DisplayName("예약과 해제는 캠페인 ID, 영업일, 양수 금액이 필수다")
+    void 예약_해제_입력_거부() {
+        LocalDate day = LocalDate.of(2026, 10, 16);
+        assertThatThrownBy(() -> PointLedger.reserve(OWNER_ID, null, day, 100L))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> PointLedger.reserve(OWNER_ID, 5L, null, 100L))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> PointLedger.reserve(OWNER_ID, 5L, day, 0L))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> PointLedger.release(OWNER_ID, 5L, day, -1L))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 }

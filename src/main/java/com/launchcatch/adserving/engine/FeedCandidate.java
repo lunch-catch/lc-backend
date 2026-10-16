@@ -3,6 +3,7 @@ package com.launchcatch.adserving.engine;
 import com.launchcatch.adserving.engine.entity.DiscountTarget;
 import com.launchcatch.adserving.engine.entity.DiscountType;
 import com.launchcatch.adserving.engine.entity.TargetGender;
+import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.Set;
 
@@ -22,6 +23,7 @@ public record FeedCandidate(
         int discountValue,
         LocalTime usableStartTime,
         LocalTime usableEndTime,
-        int issueQuantity
+        int issueQuantity,
+        LocalDateTime campaignCreatedAt
 ) {
 }

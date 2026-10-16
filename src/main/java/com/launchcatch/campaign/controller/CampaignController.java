@@ -3,8 +3,11 @@ package com.launchcatch.campaign.controller;
 import com.launchcatch.auth.CustomUserDetails;
 import com.launchcatch.campaign.dto.CampaignCouponConditionRequest;
 import com.launchcatch.campaign.dto.CampaignCouponConditionResponse;
+import com.launchcatch.campaign.dto.CampaignUpdateRequest;
+import com.launchcatch.campaign.dto.CampaignUpdateResponse;
 import com.launchcatch.campaign.service.CampaignCouponConditionResult;
 import com.launchcatch.campaign.service.CampaignCouponConditionService;
+import com.launchcatch.campaign.service.CampaignTargetAudienceService;
 import com.launchcatch.global.response.ResponseEnvelope;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -16,6 +19,8 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.web.bind.annotation.PatchMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -28,6 +33,7 @@ import org.springframework.web.bind.annotation.RestController;
 public class CampaignController {
 
     private final CampaignCouponConditionService campaignCouponConditionService;
+    private final CampaignTargetAudienceService campaignTargetAudienceService;
 
     @PostMapping
     @Operation(
@@ -49,5 +55,26 @@ public class CampaignController {
         CampaignCouponConditionResult result = campaignCouponConditionService.handle(owner.getId(), request);
         HttpStatus status = result.created() ? HttpStatus.CREATED : HttpStatus.OK;
         return ResponseEntity.status(status).body(ResponseEnvelope.success(result.response()));
+    }
+
+    @PatchMapping("/{campaignId}")
+    @Operation(
+            summary = "캠페인 등록 3·4단계(노출 대상, 하루 예산과 집행 기간)",
+            description = "DRAFT 상태에서 노출 대상(targetRadius, targetGender, targetAgeGroups)을 바꿉니다. "
+                    + "dailyBudget, startDate, endDate는 아직 지원하지 않아 보내면 거부됩니다."
+    )
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "수정 성공."),
+            @ApiResponse(responseCode = "400", description = "COMMON-002: 필수값 누락, 허용값 밖, 형식 불일치. "
+                    + "dailyBudget/startDate/endDate를 보낸 경우도 포함."),
+            @ApiResponse(responseCode = "403", description = "CAMPAIGN-001: 점주 상태가 ACTIVE가 아닙니다. "
+                    + "CAMPAIGN-005: 그 campaignId가 없거나 본인 소유가 아닙니다."),
+            @ApiResponse(responseCode = "409", description = "CAMPAIGN-006: DRAFT가 아닌 캠페인입니다.")
+    })
+    public ResponseEnvelope<CampaignUpdateResponse> updateTargetAudience(
+            @Parameter(description = "수정할 캠페인 ID입니다.") @PathVariable Long campaignId,
+            @Valid @RequestBody CampaignUpdateRequest request,
+            @Parameter(hidden = true) @AuthenticationPrincipal CustomUserDetails owner) {
+        return ResponseEnvelope.success(campaignTargetAudienceService.handle(owner.getId(), campaignId, request));
     }
 }

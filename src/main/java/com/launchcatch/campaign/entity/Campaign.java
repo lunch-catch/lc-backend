@@ -187,6 +187,20 @@ public class Campaign extends BaseTimeEntity {
         this.notice = notice;
     }
 
+    /*
+     * 캠페인 등록 3단계(노출 대상)만 다시 받는다. 쿠폰 조건·예산·기간 필드는 손대지
+     * 않는다(#253). updateCouponCondition과 같은 이유로 DRAFT 전제를 엔티티가 스스로
+     * 지킨다.
+     */
+    public void updateTargetAudience(int targetRadius, TargetGender targetGender, List<AgeGroup> targetAgeGroups) {
+        if (this.status != CampaignStatus.DRAFT) {
+            throw new IllegalStateException("only DRAFT campaign can update target audience: " + this.status);
+        }
+        this.targetRadius = targetRadius;
+        this.targetGender = Objects.requireNonNull(targetGender, "targetGender");
+        this.targetAgeGroups = requireNonEmpty(targetAgeGroups);
+    }
+
     public void schedule(LocalDateTime now) {
         if (this.status != CampaignStatus.DRAFT) {
             throw new IllegalStateException("only DRAFT campaign can be scheduled: " + this.status);

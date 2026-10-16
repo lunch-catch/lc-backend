@@ -75,6 +75,10 @@ public class AdCandidate {
     @Column(name = "issue_quantity", nullable = false)
     private int issueQuantity;
 
+    // 배분 슬롯에서 진행률이 같을 때 먼저 만든 캠페인을 앞에 둔다.
+    @Column(name = "campaign_created_at", nullable = false)
+    private LocalDateTime campaignCreatedAt;
+
     @Enumerated(EnumType.STRING)
     @Column(name = "campaign_state", nullable = false)
     private CandidateCampaignState campaignState;
@@ -90,6 +94,6 @@ public class AdCandidate {
         return new FeedCandidate(getCampaignId(), storeId, storeName, categoryCode,
                 latitude.doubleValue(), longitude.doubleValue(), targetRadius, targetGender,
                 Set.of(targetAgeGroups.split(",")), discountTarget, discountType, discountValue,
-                usableStartTime, usableEndTime, issueQuantity);
+                usableStartTime, usableEndTime, issueQuantity, campaignCreatedAt);
     }
 }

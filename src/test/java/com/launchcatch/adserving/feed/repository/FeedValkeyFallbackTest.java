@@ -55,4 +55,72 @@ class FeedValkeyFallbackTest {
         assertThat(ids).isEmpty();
         assertThat(bypassCount("daily_exclusion")).isEqualTo(1);
     }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void 내려준_횟수를_읽지_못하면_빈_이력으로_통과시키고_센다() {
+        org.springframework.data.redis.core.HashOperations<String, Object, Object> hashOps =
+                mock(org.springframework.data.redis.core.HashOperations.class);
+        when(redisTemplate.opsForHash()).thenReturn(hashOps);
+        when(hashOps.entries(anyString())).thenThrow(new QueryTimeoutException("timeout"));
+
+        var history = new ServeFrequencyRepository(redisTemplate, meterRegistry)
+                .findHistory(LocalDate.of(2026, 10, 1), 3001L);
+
+        assertThat(history.dailyCounts()).isEmpty();
+        assertThat(history.sessionCampaignIds()).isEmpty();
+        assertThat(bypassCount("serve_frequency")).isEqualTo(1);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void 내려준_횟수를_올리지_못해도_예외를_올리지_않고_센다() {
+        when(redisTemplate.execute(any(RedisScript.class), anyList(), any(Object[].class)))
+                .thenThrow(new QueryTimeoutException("timeout"));
+
+        new ServeFrequencyRepository(redisTemplate, meterRegistry)
+                .recordServed(LocalDate.of(2026, 10, 1), 3001L, java.util.List.of(101L), NOW);
+
+        assertThat(bypassCount("serve_frequency")).isEqualTo(1);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void 유효_노출_수를_읽지_못하면_0_으로_보고_센다() {
+        org.springframework.data.redis.core.HashOperations<String, Object, Object> hashOps =
+                mock(org.springframework.data.redis.core.HashOperations.class);
+        when(redisTemplate.opsForHash()).thenReturn(hashOps);
+        when(hashOps.multiGet(anyString(), any())).thenThrow(new QueryTimeoutException("timeout"));
+
+        var counts = new ImpressionCountRepository(redisTemplate, meterRegistry)
+                .findValidCounts(LocalDate.of(2026, 10, 1), java.util.List.of(101L));
+
+        assertThat(counts).isEmpty();
+        assertThat(bypassCount("impression_count")).isEqualTo(1);
+    }
+
+    @Test
+    void serve_기록을_쓰지_못해도_예외를_올리지_않고_센다() {
+        when(redisTemplate.executePipelined(any(org.springframework.data.redis.core.SessionCallback.class)))
+                .thenThrow(new QueryTimeoutException("timeout"));
+
+        new ServeRecordRepository(redisTemplate, meterRegistry).saveAll(java.util.List.of(new ServeRecord(
+                java.util.UUID.randomUUID(), 3001L, 101L, 55L, com.launchcatch.adserving.engine.SlotType.RELEVANCE, 1, NOW)));
+
+        assertThat(bypassCount("serve_record")).isEqualTo(1);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void serve_기록을_읽지_못하면_기록_없음으로_보고_센다() {
+        org.springframework.data.redis.core.ValueOperations<String, String> valueOps =
+                mock(org.springframework.data.redis.core.ValueOperations.class);
+        when(redisTemplate.opsForValue()).thenReturn(valueOps);
+        when(valueOps.get(anyString())).thenThrow(new QueryTimeoutException("timeout"));
+
+        var record = new ServeRecordRepository(redisTemplate, meterRegistry).findById(java.util.UUID.randomUUID());
+
+        assertThat(record).isEmpty();
+        assertThat(bypassCount("serve_record")).isEqualTo(1);
+    }
 }

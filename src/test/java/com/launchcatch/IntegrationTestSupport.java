@@ -55,6 +55,12 @@ public abstract class IntegrationTestSupport {
         registry.add("spring.datasource.password", MYSQL::getPassword);
         registry.add("spring.data.redis.host", VALKEY::getHost);
         registry.add("spring.data.redis.port", () -> VALKEY.getMappedPort(6379));
+        /*
+         * 운영의 커맨드 타임아웃 1초는 톰캣 스레드 점유를 끊으려는 값이고 테스트가 검증하는 대상이 아니다.
+         * 자원이 빠듯한 환경에서는 동시성 테스트의 명령 하나가 순간적으로 1초를 넘겨 같은 커밋이
+         * 통과와 실패를 오간다. 1초 동작은 목으로 예외를 던지는 테스트가 따로 본다.
+         */
+        registry.add("spring.data.redis.timeout", () -> "3s");
         registry.add("jwt.secret", () -> "test-only-secret-not-used-anywhere-else-0123456789abcdef");
         registry.add("jwt.cookie.secure", () -> "true");
         registry.add("launchcatch.batch.owner-id", () -> BATCH_OWNER);

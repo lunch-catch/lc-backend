@@ -184,12 +184,10 @@ class ArchitectureTest {
      * store.repository.StoreRepository 를 주입받아도 "Service 가 Repository 를 쓴다" 로 보여
      * 통과한다. 규칙 1 을 실제로 지키는 것은 이 규칙 하나뿐이다.
      *
-     * analytics.batch 는 규칙 4 가 인정한 예외라 대상에서 뺀다. 도메인마다 집계용 조회 기능을
-     * 따로 만들면 contract 가 도메인 수만큼 늘고 얻는 것이 거의 없다.
+     * 예외는 없다. 분석의 집계 배치도 원천 도메인이 contract 에 공개한 집계 조회로 읽는다(규칙 4).
      */
     @ArchTest
     static final ArchRule 다른_도메인은_contract만_참조한다 = classes()
-            .that().resideOutsideOfPackage("..analytics.batch..")
             .should(new ArchCondition<>("다른 업무 도메인의 contract 만 참조한다") {
                 @Override
                 public void check(JavaClass item, ConditionEvents events) {
@@ -236,6 +234,37 @@ class ArchitectureTest {
                         }
                         events.add(SimpleConditionEvent.violated(item,
                                 "%s 의 엔티티가 %s 의 엔티티를 참조한다. 연관은 ID 로만 갖는다: %s"
+                                        .formatted(mine, theirs, d.getDescription())));
+                    }
+                }
+            })
+            .allowEmptyShould(true);
+
+    /*
+     * 규칙 4. 집계 조회는 분석의 일별 집계 배치만 부른다.
+     *
+     * 원천 도메인이 자기 contract 에 {도메인}StatsQueryService 를 두고 집계 SQL 을 소유한다.
+     * 분석 밖에서 부르면 묶은 개수를 업무 로직이 쓰기 시작하고, 그 숫자의 소유가 흐려진다.
+     * 구현하는 원천 도메인 자신은 대상이 아니다. 자기 것을 부르는 것은 도메인 안의 일이다.
+     */
+    @ArchTest
+    static final ArchRule 집계_조회는_분석만_부른다 = classes()
+            .that().resideOutsideOfPackage("..analytics..")
+            .should(new ArchCondition<>("다른 도메인의 집계 조회를 참조하지 않는다") {
+                @Override
+                public void check(JavaClass item, ConditionEvents events) {
+                    String mine = domainOf(item);
+                    for (Dependency d : item.getDirectDependenciesFromSelf()) {
+                        JavaClass target = d.getTargetClass();
+                        if (!target.getSimpleName().endsWith("StatsQueryService")) {
+                            continue;
+                        }
+                        String theirs = domainOf(target);
+                        if (theirs.isEmpty() || theirs.equals(mine)) {
+                            continue;
+                        }
+                        events.add(SimpleConditionEvent.violated(item,
+                                "%s 가 %s 의 집계 조회를 참조한다. 집계 조회는 분석만 부른다: %s"
                                         .formatted(mine, theirs, d.getDescription())));
                     }
                 }
