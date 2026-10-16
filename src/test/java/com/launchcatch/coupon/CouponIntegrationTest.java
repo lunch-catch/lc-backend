@@ -36,6 +36,10 @@ import com.launchcatch.coupon.repository.CouponInventoryRepository;
 import com.launchcatch.coupon.repository.CouponUsageHistoryRepository;
 import com.launchcatch.coupon.repository.MemberCouponRepository;
 import com.launchcatch.coupon.service.CouponCommandService;
+import com.launchcatch.coupon.contract.CouponIssueOpenedEvent;
+import com.launchcatch.coupon.contract.CouponIssuedEvent;
+import com.launchcatch.coupon.contract.CouponRedeemedEvent;
+import com.launchcatch.coupon.contract.CouponExpiredEvent;
 import com.launchcatch.coupon.service.CouponLookUpService;
 import com.launchcatch.global.config.ClockConfig;
 import com.launchcatch.global.response.CursorPageResponse;
@@ -97,6 +101,7 @@ import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.dao.QueryTimeoutException;
+import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
@@ -106,10 +111,12 @@ import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.transaction.event.TransactionalEventListener;
 import tools.jackson.databind.ObjectMapper;
 
 @SpringBootTest(properties = "coupon.daily-limit=3", webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @AutoConfigureMockMvc
+@Import(CouponIntegrationTest.FunnelRecorder.class)
 class CouponIntegrationTest extends IntegrationTestSupport {
 
     private static final LocalDate TODAY = LocalDate.of(2026, 10, 10);
@@ -121,6 +128,7 @@ class CouponIntegrationTest extends IntegrationTestSupport {
     @Autowired PlatformTransactionManager transactionManager;
     @Autowired CouponLookUpService couponLookUpService;
     @Autowired CouponCommandService couponCommandService;
+    @Autowired FunnelRecorder funnel;
 
     @MockitoSpyBean Clock clock;
     @MockitoBean OwnerStatusQuery ownerStatusQuery;
@@ -136,6 +144,7 @@ class CouponIntegrationTest extends IntegrationTestSupport {
 
     @BeforeEach
     void setUpClock() {
+        funnel.received.clear();
         when(clock.withZone(ClockConfig.ZONE))
                 .thenReturn(Clock.fixed(Instant.parse("2026-10-10T03:00:00Z"), ClockConfig.ZONE));
         when(clock.getZone()).thenReturn(ClockConfig.ZONE);
@@ -177,8 +186,52 @@ class CouponIntegrationTest extends IntegrationTestSupport {
                     .andExpect(jsonPath("$.data.memberCouponId").isNumber())
                     .andExpect(jsonPath("$.data.issueTime").value("2026-10-10T12:00:00+09:00"));
             assertConsistent(1);
+            assertThat(funnel.received).hasSize(1);
+            CouponIssuedEvent issued = (CouponIssuedEvent) funnel.received.getFirst();
+            assertThat(issued.couponEventId()).isEqualTo(81);
+            assertThat(issued.memberCouponId()).isEqualTo(jdbcTemplate.queryForObject(
+                    "SELECT member_coupon_id FROM member_coupon", Long.class));
             assertThat(jdbcTemplate.queryForObject("SELECT sequence_no FROM coupon_inventory WHERE status='ISSUED'", Integer.class))
                     .isEqualTo(1);
+        }
+
+        @Test
+        void HTTP_발급을_감싼_트랜잭션이_롤백하면_분석_리스너가_수신하지_않는다() {
+            new TransactionTemplate(transactionManager).executeWithoutResult(transaction -> {
+                assertDoesNotThrow(() -> mockMvc.perform(post("/v1/coupons").with(user(MEMBER))
+                        .contentType("application/json").content("{\"eventId\":81}"))
+                        .andExpect(status().isCreated()));
+                assertThat(funnel.received).isEmpty();
+                transaction.setRollbackOnly();
+            });
+            assertThat(funnel.received).isEmpty();
+            assertConsistent(0);
+        }
+
+        @Test
+        void HTTP로_발급한_쿠폰의_사용_이벤트는_같은_회원_쿠폰_ID를_싣는다() throws Exception {
+            mockMvc.perform(post("/v1/coupons").with(user(MEMBER)).contentType("application/json")
+                    .content("{\"eventId\":81}")).andExpect(status().isCreated());
+            CouponIssuedEvent issued = (CouponIssuedEvent) funnel.received.getFirst();
+            long couponId = issued.memberCouponId();
+            mockMvc.perform(post("/v1/coupons/" + couponId + ":generateQr").with(user(MEMBER)))
+                    .andExpect(status().isOk());
+            UUID token = memberCouponRepository.findById(couponId).orElseThrow().getQrToken();
+            when(ownerStatusQuery.findCurrentStatus(9L)).thenReturn(Optional.of(OwnerAccountStatus.ACTIVE));
+            when(stores.canManageStore(9L, 10L)).thenReturn(true);
+            when(stores.findAllById(List.of(10L))).thenReturn(List.of(
+                    new StoreInfo(10L, "매장", "https://example.test/store.png", 37.5, 127.0)));
+
+            mockMvc.perform(post("/v1/owner/coupon-usages").with(user(new CustomUserDetails(9L, Role.OWNER)))
+                    .contentType("application/json").content("""
+                            {"qrToken":"%s","latitude":37.5,"longitude":127.0,"orderAmount":10000}
+                            """.formatted(token))).andExpect(status().isCreated());
+
+            assertThat(funnel.received).hasSize(2);
+            CouponRedeemedEvent redeemed = (CouponRedeemedEvent) funnel.received.getLast();
+            assertThat(redeemed.memberCouponId()).isEqualTo(issued.memberCouponId());
+            assertThat(redeemed.couponEventId()).isEqualTo(issued.couponEventId());
+            assertThat(jdbcTemplate.queryForObject("SELECT status FROM member_coupon", String.class)).isEqualTo("USED");
         }
 
         @ParameterizedTest
@@ -298,6 +351,7 @@ class CouponIntegrationTest extends IntegrationTestSupport {
             assertThatThrownBy(() -> couponCommandService.issue(17L, 81L)).isSameAs(failure);
             assertConsistent(0);
             assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM coupon_daily_limit", Integer.class)).isZero();
+            assertThat(funnel.received).isEmpty();
         }
 
         @Test
@@ -2378,6 +2432,7 @@ class CouponIntegrationTest extends IntegrationTestSupport {
                 assertThat(statuses).containsExactlyInAnyOrder(201, 409, 409);
             }
             assertThat(historyCount()).isEqualTo(1);
+            assertThat(funnel.received).hasSize(1).allMatch(event -> event instanceof CouponRedeemedEvent);
         }
 
         @ParameterizedTest
@@ -2389,9 +2444,21 @@ class CouponIntegrationTest extends IntegrationTestSupport {
             try {
                 assertResponse(use(), 500, "COMMON-001");
                 assertUnchanged();
+                assertThat(funnel.received).isEmpty();
             } finally {
                 jdbcTemplate.execute("ALTER TABLE " + table + " DROP CHECK chk_usage_failure");
             }
+        }
+
+        @Test
+        void HTTP_사용을_감싼_트랜잭션이_롤백하면_분석_리스너와_사용_결과에_남지_않는다() {
+            new TransactionTemplate(transactionManager).executeWithoutResult(transaction -> {
+                assertDoesNotThrow(() -> assertThat(use().getResponse().getStatus()).isEqualTo(201));
+                assertThat(funnel.received).isEmpty();
+                transaction.setRollbackOnly();
+            });
+            assertThat(funnel.received).isEmpty();
+            assertUnchanged();
         }
 
         @Test
@@ -2468,6 +2535,15 @@ class CouponIntegrationTest extends IntegrationTestSupport {
         private void assertUnchanged() {
             assertThat(state()).isEqualTo("ISSUED");
             assertThat(historyCount()).isZero();
+        }
+    }
+    static class FunnelRecorder {
+        final List<Object> received = new java.util.concurrent.CopyOnWriteArrayList<>();
+
+        @TransactionalEventListener(classes = {CouponIssueOpenedEvent.class,
+                CouponIssuedEvent.class, CouponRedeemedEvent.class, CouponExpiredEvent.class})
+        public void receiveAfterCommit(Object event) {
+            received.add(event);
         }
     }
 }
