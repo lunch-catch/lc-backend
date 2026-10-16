@@ -138,4 +138,16 @@ class FeedValkeyFallbackTest {
 
         assertThat(bypassCount("impression_count")).isEqualTo(1);
     }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void 당일_이력에_넣지_못해도_예외를_올리지_않고_센다() {
+        SetOperations<String, String> setOps = mock(SetOperations.class);
+        when(redisTemplate.opsForSet()).thenReturn(setOps);
+        when(setOps.add(anyString(), any(String[].class))).thenThrow(new QueryTimeoutException("timeout"));
+
+        new DailyExclusionRepository(redisTemplate, meterRegistry).add(LocalDate.of(2026, 10, 1), 3001L, 101L, NOW);
+
+        assertThat(bypassCount("daily_exclusion")).isEqualTo(1);
+    }
 }

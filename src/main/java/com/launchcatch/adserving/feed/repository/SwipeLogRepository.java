@@ -9,7 +9,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
-public interface SwipeLogRepository extends JpaRepository<SwipeLog, SwipeLogId> {
+public interface SwipeLogRepository extends JpaRepository<SwipeLog, SwipeLogId>, SwipeLogInsert {
 
     // idx_swipe_member_date 로 그 사용자의 기간 안 찜만 업종별로 센다.
     default List<CategoryWishCount> countWishesByCategory(Long memberId, LocalDate from, LocalDate to) {

@@ -1,7 +1,7 @@
 # adserving 구조와 동작 설계
 
 광고 서빙 도메인의 구조와 동작을 적는다. 엔드포인트마다의 처리와 성능 목표는
-[`feed-api-design.md`](./feed-api-design.md) 가 갖는다. 지금은 `GET /v1/feed` 의 후보 선별(#236), 배정 규칙(#307), serve 기록과 서빙 로그(#315), `POST /v1/impressions`(#323)까지 훑었다.
+[`feed-api-design.md`](./feed-api-design.md) 가 갖는다. 지금은 `GET /v1/feed` 의 후보 선별(#236), 배정 규칙(#307), serve 기록과 서빙 로그(#315), `POST /v1/impressions`(#323), `POST /v1/swipes`(#379)까지 훑었다.
 나머지 엔드포인트는 그 이슈가 이 문서를 채운다.
 
 ## 1. 범위
@@ -12,6 +12,7 @@
 | 배분 3장과 관련성 7장으로 배치하고 예산을 넘긴 캠페인을 뺀다 | FR-093, FR-094, FR-096 |
 | 같은 캠페인을 하루 2회, 한 세션 1회까지만 내려준다 | 비즈니스 규칙(`feed-api-design.md` 4단계) |
 | 사용자마다 최근 60초 6회로 피드 요청을 막는다 | FR-064, 명세의 요청 제한 |
+| 카드를 찜하거나 패스하고, 찜은 찜 목록에 넣는다 | FR-065, FR-071 |
 | 찜과 패스로 그날 피드에서 뺄 캠페인을 기억한다 | FR-099 (9), BR-040 |
 | 카드마다 serve 기록을 남겨 노출 검증에 쓰게 한다 | FR-097 |
 | 서빙 로그와 그날 첫 접속 위치를 응답 뒤에 쓴다 | FR-027, FR-042, FR-064 |
@@ -29,7 +30,8 @@
 | 애그리거트 | 테이블 | 지키는 규칙 | 나눈 근거 |
 |---|---|---|---|
 | 후보 스냅샷(`engine`) | `ad_candidate` | 서빙은 그날 행만 읽는다 | 00:00 에 통째로 다시 만들어 변경 주기가 다르다 |
-| 피드(`feed`) | `feed_filter`, `feed_filter_category`, `swipe_log`(읽기만), `serve_log`, `feed_visit_daily`(쓰기만) | 필터가 없으면 전 업종, 거리순이다. 그날 첫 접속 위치만 남는다 | 아키텍처 1.3 의 `feed` 서브 도메인 |
+| 피드(`feed`) | `feed_filter`, `feed_filter_category`(읽기만), `swipe_log`, `serve_log`, `feed_visit_daily` | 필터가 없으면 전 업종, 거리순이다. 그날 첫 접속 위치만 남는다 | 아키텍처 1.3 의 `feed` 서브 도메인 |
+| 찜 목록(`wishlist`) | `wishlist` | (사용자, 캠페인)마다 1건이다 | 캠페인이 끝날 때까지 남아 그날 단위의 피드 기록과 수명이 다르다(아키텍처 1.3) |
 | 노출 로그(`impression`) | `impression_log` | (serveId, 사용자)마다 1건이다. 무효면 사유가 있고 유효면 없다 | 노출 저장이 정산의 판정, 원장과 한 트랜잭션이라 서빙과 따로 바뀐다 |
 
 ```
@@ -44,7 +46,9 @@ adserving/
 │   └── repository/AdCandidateRepository.java
 └── feed/
     ├── controller/FeedController.java
+    ├── controller/SwipeController.java
     ├── service/FeedService.java
+    ├── service/SwipeService.java
     ├── service/ServeLogBuffer.java                  서빙 로그 대기열과 작업자
     ├── repository/FeedRateLimitRepository.java      Valkey
     ├── repository/DailyExclusionRepository.java     Valkey
@@ -56,6 +60,9 @@ adserving/
     ├── repository/SwipeLogRepository.java
     ├── repository/FeedFilterRepository.java
     └── repository/FeedFilterCategoryRepository.java
+wishlist/
+    ├── repository/WishlistRepository.java           쓰기는 INSERT IGNORE
+    └── entity/Wishlist.java
 impression/
     ├── controller/ImpressionController.java
     ├── service/ImpressionService.java
@@ -66,7 +73,8 @@ impression/
 - `feed` 는 `engine` 의 후보를 엔티티가 아니라 `FeedCandidate` 로, 나머지 입력을 `FeedContext` 로 넘겨 계산한다.
 - 애그리거트끼리는 객체로 쥐지 않고 ID 로만 잇는다. `serve_log`, `swipe_log` 는 `campaign_id` 로 후보를 가리키고 연관 매핑이 없다.
 - `impression` 은 `feed` 의 serve 기록과 유효 노출 수 카운터, `engine` 의 후보 소진 여부를 읽는다. 반대 방향은 없다.
-- 입구는 HTTP 요청 둘(`GET /v1/feed`, `POST /v1/impressions`)이다. 스케줄, 이벤트, 다른 도메인의 호출은 아직 없다.
+- `feed` 의 스와이프는 `wishlist` 에 찜을 넣는다. 두 애그리거트를 한 트랜잭션에 묶지 않고 쓰는 순서로 맞춘다(7장).
+- 입구는 HTTP 요청 셋(`GET /v1/feed`, `POST /v1/impressions`, `POST /v1/swipes`)이다. 스케줄, 이벤트, 다른 도메인의 호출은 아직 없다.
 
 ### 규칙을 두는 곳
 
@@ -78,6 +86,7 @@ impression/
 | 온보딩, 위치, 요청 제한, 서빙 시간대의 순서, 입력을 모으는 순서, 기록을 남기는 시점 | `FeedService` |
 | 서빙 로그를 묶어 쓰고 차면 버리는 규칙 | `ServeLogBuffer` |
 | 노출의 유효 판정, 같은 노출이 다시 올 때의 처리, 차감과 카운터의 시점 | `ImpressionService` |
+| 같은 카드를 다시 넘길 때의 처리, 찜과 스와이프 기록과 당일 이력을 쓰는 순서 | `SwipeService` |
 
 `ServeLogBuffer` 를 `FeedService` 와 나눈 것은 입구가 달라서다. 앞은 요청 스레드가, 뒤는 작업자 스레드가 부른다.
 
@@ -89,13 +98,13 @@ impression/
 | 업종 선호도 | `idx_swipe_member_date` 로 최근 30일의 찜을 업종별로 센다. 요청마다 읽는다 |
 | 다른 도메인 데이터의 사본 | `ad_candidate` 는 00:00 의 캠페인과 가게 사본이다. 그날 안에서는 캠페인과 쿠폰의 통보로만 바뀐다 |
 | 집계를 세는 방식 | 그날 유효 노출 수는 `impression_log` 를 세지 않고 카운터를 읽는다. 틀리면 `impression_log` 에서 다시 센다 |
-| DB 제약으로 막을 것과 코드로 막을 것 | 같은 카드가 `serve_log` 에 두 번 들어가는 것은 PK(`serve_id`)와 `INSERT IGNORE` 로, 같은 날 두 번째 접속 위치는 PK(`business_date`, `member_id`)와 `INSERT IGNORE` 로 막는다. 같은 노출의 두 번째 저장은 `impression_log` 의 PK(`serve_id`, `member_id`)와 `INSERT IGNORE` 로 막고, 넣은 행 수로 처음 저장인지 가른다. 먼저 읽어 보는 것은 다시 온 요청을 빨리 돌려보내려는 것이고 동시 요청은 PK 가 막는다 |
-| 이력 | 해당 없음. 상태가 바뀌는 엔티티가 없다. `serve_log`, `feed_visit_daily`, `impression_log` 는 쌓기만 하고 고치지 않는다 |
+| DB 제약으로 막을 것과 코드로 막을 것 | 같은 카드가 `serve_log` 에 두 번 들어가는 것은 PK(`serve_id`)와 `INSERT IGNORE` 로, 같은 날 두 번째 접속 위치는 PK(`business_date`, `member_id`)와 `INSERT IGNORE` 로 막는다. 같은 노출의 두 번째 저장은 `impression_log` 의 PK(`serve_id`, `member_id`)와 `INSERT IGNORE` 로, 같은 카드의 두 번째 스와이프는 `swipe_log` 의 같은 PK 로, 같은 캠페인의 두 번째 찜은 `uk_wishlist_member_campaign` 으로 막는다. 노출은 넣은 행 수로 처음 저장인지 가른다. 먼저 읽어 보는 것은 다시 온 요청을 빨리 돌려보내려는 것이고 동시 요청은 PK 가 막는다 |
+| 이력 | 해당 없음. 상태가 바뀌는 엔티티가 없다. `serve_log`, `feed_visit_daily`, `impression_log`, `swipe_log` 는 쌓기만 하고 고치지 않는다. `wishlist` 는 지울 때 행을 지운다 |
 
 | 데이터 | 키 | 만료 | 원본 | 읽는 곳 |
 |---|---|---|---|---|
 | 피드 요청 시각 | `adserving:feedRequests:{memberId}` 정렬 집합. 점수가 요청 시각(ms) | 마지막 요청 뒤 60초 | 없다. 잃으면 그 60초의 횟수가 비워진다 | `FeedRateLimitRepository` |
-| 당일 이력 | `adserving:dailyExclusion:{영업일}:{memberId}` 집합. 원소가 `campaignId` | 쓰는 쪽이 다음 영업일 00:00 이후로 건다 | 없다. 잃으면 그날 넘긴 카드가 다시 보인다 | `DailyExclusionRepository` |
+| 당일 이력 | `adserving:dailyExclusion:{영업일}:{memberId}` 집합. 원소가 `campaignId` | 다음 영업일 00:00 까지 남은 시간 | 없다. 잃으면 그날 넘긴 카드가 다시 보인다 | `DailyExclusionRepository`. 쓰는 쪽은 `SwipeService` 다 |
 | 하루 내려준 횟수 | `adserving:servedDaily:{영업일}:{memberId}` 해시. 필드 `campaignId`, 값 횟수 | 다음 영업일 00:00 까지 남은 시간 | 없다. 잃으면 그날 같은 카드가 더 나온다 | `ServeFrequencyRepository` |
 | 세션에 내려준 캠페인 | `adserving:servedSession:{memberId}` 집합 | 피드 요청마다 30분을 다시 건다 | 없다. 키가 사라지면 새 세션이다 | `ServeFrequencyRepository` |
 | 그날 유효 노출 수 | `adserving:validImpressions:{영업일}` 해시. 필드 `campaignId`, 값 건수. 영업일은 카드를 내려준 날이다 | 올릴 때마다 이틀 | `impression_log` 의 유효 노출 | `ImpressionCountRepository`. 올리는 쪽은 `ImpressionService` 다 |
@@ -109,7 +118,7 @@ impression/
 | B. Valkey 에 사용자별 당일 집합을 둔다 | 명세를 다 지킨다 | 원본이 없어 캐시를 잃으면 그날 이력이 빠진다 |
 
 B 를 고른다. 빠질 때 잃는 것이 이미 넘긴 카드가 다시 보이는 것뿐이고 과금과 권한은 바뀌지 않는다.
-이 문서의 "원본은 MySQL" 규칙에서 벗어난다. 쓰는 쪽(스와이프와 찜 API)은 아직 없다.
+이 문서의 "원본은 MySQL" 규칙에서 벗어난다. 스와이프 API 가 반영된 스와이프마다 넣는다(#379). 찜 삭제 API 가 넣는 쪽은 아직 없다.
 
 **결정: 하루 2회와 세션 1회를 어디서 세나** (#307 에서 정했다)
 
@@ -182,6 +191,7 @@ B 를 고른다. 응답 전에 피드 1회의 카드를 파이프라인 한 번�
 flowchart LR
     REQ([요청 GET /v1/feed]) --> FC
     REQ2([요청 POST /v1/impressions]) --> IMC
+    REQ3([요청 POST /v1/swipes]) --> SWC
 
     subgraph adserving["adserving 모듈"]
         direction LR
@@ -196,6 +206,9 @@ flowchart LR
             FS --> SW[(SwipeLogRepository)]
             FS --> FF[(FeedFilterRepository)]
             FS --> FFC[(FeedFilterCategoryRepository)]
+            SWC[SwipeController] --> SWS[SwipeService]
+            SWS --> SW
+            SWS --> DE
             FS --> SB[ServeLogBuffer]
             SB --> SL[(ServeLogRepository)]
             SB --> FV[(FeedVisitRepository)]
@@ -204,6 +217,10 @@ flowchart LR
         subgraph engine["engine/ (후보 스냅샷)"]
             AR[(AdCandidateRepository)]
             FA["FeedAssembler<br/>CampaignPacing<br/>순수 계산"]
+        end
+
+        subgraph wishlist["wishlist/ (찜 목록)"]
+            WR[(WishlistRepository)]
         end
 
         subgraph impression["impression/ (노출 로그)"]
@@ -216,6 +233,8 @@ flowchart LR
         IMS --> SR
         IMS --> IC
         IMS --> AR
+        SWS --> WR
+        SWS --> AR
     end
 
     FS --> MQ["member.contract<br/>MemberQueryService"]
@@ -226,7 +245,7 @@ flowchart LR
     class MQ,BQ,PD out
 ```
 
-- `feed` 와 `impression` 에서 `engine` 으로, `impression` 에서 `feed` 로만 화살표가 간다. 반대 방향은 없다
+- `feed` 와 `impression` 에서 `engine` 으로, `impression` 에서 `feed` 로, `feed` 에서 `wishlist` 로만 화살표가 간다. 반대 방향은 없다
 - 스케줄, 이벤트, 다른 도메인의 호출로 들어오는 입구와 공개면(`contract`)은 아직 없다
 
 ### 상태 변경
@@ -235,7 +254,7 @@ flowchart LR
 
 ### 주요 흐름
 
-피드 조회와 노출 수집 둘이다. 다른 도메인 호출은 같은 프로세스 안의 호출이다.
+피드 조회, 노출 수집, 스와이프 셋이다. 다른 도메인 호출은 같은 프로세스 안의 호출이다.
 
 **피드 조회.** 트랜잭션은 없고 DB 읽기가 각자 끝난다.
 
@@ -308,12 +327,39 @@ sequenceDiagram
 | 5 | 노출 저장까지 롤백된다. `500` 이다. 그날 예산 계획이 없으면 정산이 `IllegalStateException` 을 던진다 | 새로 처리한다. 같은 원인이면 같은 자리에서 실패한다 |
 | 6 | 노출과 차감은 커밋됐고 카운터만 오르지 않는다. 상한이 그만큼 늦게 걸린다 | 이미 저장돼 처음 판정을 돌려주고 카운터는 다시 올리지 않는다 |
 
+**스와이프.** 두 애그리거트(찜 목록과 피드의 스와이프 기록)를 쓴다. 한 트랜잭션에 묶지 않고 쓰는 순서로 맞춘다. 쓰기마다 따로 커밋된다.
+
+```mermaid
+sequenceDiagram
+    participant C as SwipeController
+    participant S as SwipeService
+    participant DB as MySQL
+    participant V as Valkey
+    C->>S: swipe(memberId, 요청)
+    S->>DB: 1. 같은 (serveId, 사용자) 의 스와이프가 있나
+    Note over S: 있으면 applied false
+    S->>DB: 2. 그날 후보의 그 캠페인 행 [없으면 404]
+    S->>DB: 3. WISH 면 찜 INSERT IGNORE [커밋]
+    S->>DB: 4. 스와이프 INSERT IGNORE [커밋]
+    Note over S: 0행이면 applied false
+    S->>V: 5. 당일 이력에 넣기 [4 의 커밋 뒤]
+    S-->>C: 200 applied
+```
+
+| 실패 지점 | 남는 상태 | 다시 요청하면 |
+|---|---|---|
+| 1, 2 | 아무것도 남지 않는다. `500` 이다 | 새로 처리한다 |
+| 3 | 아무것도 남지 않는다. `500` 이다 | 새로 처리한다 |
+| 4 | 찜만 남고 스와이프 기록이 없다. `500` 이다 | 찜은 이미 있어 넘어가고 스와이프만 들어가 `applied: true` 다. 맞춰진다 |
+| 5 | 찜과 스와이프는 남았고 당일 이력만 빠진다. 그날 그 카드가 다시 보일 수 있다 | 이미 스와이프가 있어 `applied: false` 이고 당일 이력은 다시 넣지 않는다 |
+
 ## 7. 트랜잭션과 동시성
 
 | 흐름 | 한 트랜잭션에 묶는 것 | 트랜잭션 밖 |
 |---|---|---|
 | 피드 조회 | 없다. DB 읽기가 각자 끝난다 | Valkey 호출, 정산 조회, 서빙 로그와 접속 위치 쓰기 |
 | 노출 수집 | `impression_log` 저장, 정산의 판정 기록과 원장(`PointDeductor`, `MANDATORY`) | serve 기록 읽기, 커밋 뒤의 유효 노출 수 카운터 |
+| 스와이프 | 없다. 찜과 스와이프 기록이 각자 커밋된다 | 당일 이력(Valkey) |
 
 **결정: 서빙 로그와 접속 위치를 무엇으로 미루나** (#315 에서 정했다)
 
@@ -339,10 +385,21 @@ B 를 고른다. 서빙 로그는 판정과 과금에 쓰이지 않고 유실을
 B 를 고른다(트랜잭션 동기화의 `afterCommit`). 빠지면 상한이 그만큼 늦게 걸릴 뿐이고 상한을 넘긴 노출은 정산이 과금하지 않는다.
 카운터가 원본과 어긋나면 `impression_log` 의 유효 노출로 다시 센다.
 
+**결정: 찜과 스와이프 기록을 어떻게 함께 맞추나** (#379)
+
+| 선택지 | 장점 | 단점 |
+|---|---|---|
+| A. 한 트랜잭션에 묶는다 | 둘이 늘 함께 남는다 | 구조와 동작 설계 가이드 2장이 막는다. 찜 목록은 캠페인이 끝날 때까지, 스와이프는 그날 단위라 수명이 다른 애그리거트다 |
+| B. 스와이프를 먼저, 찜을 나중에 쓴다 | 스와이프가 먼저 확정된다 | 찜이 실패하면 재시도가 `applied: false` 로 끝나 찜이 빠진 채 남는다 |
+| C. 찜을 먼저, 스와이프를 나중에 쓴다 | 스와이프가 실패해도 재시도에서 찜은 넘어가고 스와이프만 들어가 맞춰진다 | 스와이프가 끝내 실패하면 찜만 남는다 |
+
+C 를 고른다. 이미 넘긴 카드는 찜을 쓰기 전에 먼저 걸러, 먼저 패스한 카드를 찜으로 다시 보내도 찜에 들어가지 않게 한다.
+
 | 상황 | 확인한 것 |
 |---|---|
 | 같은 회원의 요청이 동시에 옴 | 요청 제한은 한 Lua 스크립트로 세고 넣어 함께 들어오지 않는다. 하루 횟수는 읽고 고른 뒤 올려서, 동시에 온 두 요청이 같은 캠페인을 함께 내려줄 수 있다. 같은 사용자의 동시 요청은 60초 6회 제한 안에서만 생겨 받아들였다 |
 | 같은 노출이 다시 옴 | (serveId, 사용자) 가 멱등 키다. 먼저 읽어 있으면 처음 판정을 돌려준다. 동시에 두 건이 오면 `INSERT IGNORE` 가 한 건만 넣고 늦은 쪽은 0행이라 먼저 넣은 쪽의 판정을 읽어 돌려준다. 차감과 카운터는 넣은 쪽에서만 한 번 돈다. 정산도 같은 serveId 의 두 번째 차감을 첫 판정으로 돌려준다 |
+| 같은 카드를 다시 넘김 | (serveId, 사용자) 가 멱등 키다. 먼저 읽어 있으면 `applied: false` 다. 동시에 두 건이 오면 `INSERT IGNORE` 가 한 건만 넣고 늦은 쪽은 `applied: false` 로 당일 이력에 다시 넣지 않는다. 찜은 같은 캠페인에 한 건뿐이라 둘이 함께 넣어도 하나만 남는다 |
 | 같은 피드 요청이 다시 옴 | 멱등 키가 없다. 다시 오면 요청 횟수와 내려준 횟수에 한 번 더 들어가고 새 serveId 로 새 카드가 나간다. `serve_log` 와 `feed_visit_daily` 는 `INSERT IGNORE` 라 같은 키가 두 번 써져도 한 행이다 |
 | 여러 회원이 같은 자원에 씀 | 노출 상한은 읽기만 하고 판정 시점의 수로 거른다. 여러 피드가 동시에 같은 캠페인을 내려 상한을 조금 넘길 수 있다. 넘긴 노출은 정산이 과금하지 않는다 |
 | 이벤트가 늦거나 순서가 바뀜 | 해당 없음 |
@@ -364,6 +421,7 @@ B 를 고른다(트랜잭션 동기화의 `afterCommit`). 빠지면 상한이 �
 | serve 기록을 읽지 못한 노출 | 유효 노출이 `EXPIRED_OR_UNKNOWN` 으로 저장돼 과금되지 않는다. 다시 보내도 처음 판정이 남는다 | 플랫폼 | `adserving_cache_bypass_total`(`use=serve_record`) 로 센다 |
 | 차감이 실패한 노출 | 노출까지 롤백돼 남지 않는다. 클라이언트는 1회 재시도하고 포기한다 | 플랫폼 | 노출 저장과 판정, 원장이 함께 롤백되어 점주에게 불리하게 남는 것은 없다 |
 | 카운터를 올리지 못한 노출 | 상한이 늦게 걸려 미과금 노출이 더 나간다 | 플랫폼 | `adserving_cache_bypass_total`(`use=impression_count`) 로 센다 |
+| 스와이프 기록이 끝내 실패한 찜 | 찜은 남고 스와이프 기록이 없다. 30일 업종 선호도에 그 찜이 빠진다 | 사용자 | 돈이 걸리지 않는다. 클라이언트가 다시 보내면 맞춰진다 |
 
 대상이 멈췄을 때의 처리는 [`adserving_장애_처리_설계.md`](./adserving_장애_처리_설계.md) 에 있다.
 
@@ -385,6 +443,12 @@ B 를 고른다(트랜잭션 동기화의 `afterCommit`). 빠지면 상한이 �
 | 처리량 계산 | 목표 10,000 TPS(NFR-010) x 쓰기 트랜잭션 1 = 초당 10,000 트랜잭션. 정산의 쓰기까지 한 트랜잭션에 들어가 이 경로가 DB 쓰기의 대부분이다. 지금 구성으로 되는지는 재지 않았다 |
 | 확인 방법 | 아직 없다. 피드와 같은 k6 시나리오에 노출 요청을 섞는다 |
 
+| 적을 것 | 스와이프 |
+|---|---|
+| 요청 하나의 비용 | DB 읽기 2(중복 확인, 그날 후보), DB 쓰기 1~2(찜은 WISH 일 때만, 스와이프), 쓰기마다 커밋 1, Valkey 호출 1(당일 이력) |
+| 처리량 계산 | 목표 5,000 TPS(피드 1회에 카드 10장) x DB 쓰기 최대 2 = 초당 최대 10,000 쓰기. 노출 수집과 같은 시간대에 몰린다. 지금 구성으로 되는지는 재지 않았다 |
+| 확인 방법 | 아직 없다. 피드와 노출의 k6 시나리오에 스와이프를 섞는다 |
+
 ## 12. 테스트와 미정 사항
 
 6장에 상태 전이가 없어 7장 동시성 표의 행과 6장 주요 흐름의 실패 지점에서 시나리오를 뽑았다.
@@ -405,12 +469,17 @@ B 를 고른다(트랜잭션 동기화의 `afterCommit`). 빠지면 상한이 �
 | 차감이 실패함(5) | 정산이 예외를 던진다 | 유효 노출을 보낸다 | `500` 이고 노출도 카운터도 남지 않는다 | `ImpressionIntegrationTest.차감이_실패하면_노출도_저장되지_않고_카운터도_오르지_않는다` |
 | 롤백됨(6) | 트랜잭션이 롤백된다 | 유효 노출을 보낸다 | 카운터를 올리지 않는다 | `ImpressionServiceTest.롤백되면_올리지_않는다` |
 | 상한에 닿음 | 카운터가 상한보다 1 작다 | 유효 노출 1건 뒤 피드를 요청한다 | 그 캠페인이 피드에서 빠진다 | `ImpressionIntegrationTest.노출이_쌓여_노출_상한에_닿은_캠페인은_피드에서_빠진다` |
+| 같은 카드를 다시 넘김 | 그 카드를 패스했다 | 같은 카드를 찜으로 보낸다 | `applied: false` 이고 스와이프도 찜도 늘지 않는다 | `SwipeIntegrationTest.같은_카드를_다시_넘기면_applied_false_이고_기록이_늘지_않는다` |
+| 같은 카드를 동시에 넘김 | 다른 요청이 먼저 스와이프를 넣었다 | `INSERT IGNORE` 가 0행이다 | `applied: false` 이고 당일 이력에 다시 넣지 않는다 | `SwipeServiceTest.동시에_와서_먼저_넣은_쪽이_있으면_applied_false_이고_당일_이력은_다시_넣지_않는다` |
+| 넘긴 캠페인 | 그 캠페인을 패스했다 | 그날 피드를 요청한다 | 그 캠페인이 나오지 않는다 | `SwipeIntegrationTest.찜이나_패스한_캠페인은_그날_피드에_다시_나오지_않는다` |
+| 찜을 먼저 쓰는 순서 | 찜하는 스와이프다 | 스와이프를 보낸다 | 찜, 스와이프, 당일 이력 순으로 쓴다 | `SwipeServiceTest.찜하면_찜을_먼저_넣고_스와이프를_남기고_그날_당일_이력에_넣는다` |
 
 | 미정 항목 | 어디까지 정해졌나 | 막는 것 |
 |---|---|---|
 | 탐색 반경을 넓히는 기준 | 10장 미만으로 임시로 정했다 | 없다. 기준이 정해지면 `FeedAssembler` 한 곳을 바꾼다 |
-| 당일 이력에 쓰는 쪽 | 키 모양과 만료만 정했다 | 스와이프와 찜 삭제 API 가 쓰기 전까지 당일 이력은 늘 비어 있다 |
+| 찜 삭제가 당일 이력에 쓰는 쪽 | 스와이프가 쓴다(#379). 찜 삭제는 아직 없다 | 명세의 "지운 캠페인은 그날 피드에 다시 나오지 않는다" 는 찜 삭제 API 가 생겨야 선다 |
 | 서빙 로그 대기열의 크기와 묶음 수 | 5,000건과 50건으로 임시로 정했다 | 없다. 부하 시험 뒤 `ServeLogBuffer` 의 두 값을 바꾼다 |
-| 세션을 늘리는 활동 | 피드 요청으로만 임시로 정했다 | 스와이프와 노출 요청도 세션을 늘릴지 정해야 한다. 노출 API 는 아직 늘리지 않는다 |
+| 세션을 늘리는 활동 | 피드 요청으로만 임시로 정했다 | 스와이프와 노출 요청도 세션을 늘릴지 정해야 한다. 두 API 모두 아직 늘리지 않는다 |
+| 끝난 캠페인의 찜 | 그날 후보에 행이 있으면 받아 끝난 캠페인도 찜에 들어간다(#379) | `CampaignEndedEvent` 를 받아 찜을 지우는 쪽이 아직 없다 |
 | 노출이 분석으로 가는 이벤트(`ImpressionServedEvent`) | 이벤트 타입이 없다 | 분석의 전환 퍼널에 노출이 빠진다 |
 | 신규 우선 노출(`new_priority_until`) | 계산 규칙이 문서에 없다 | 배분 슬롯에 넣을 자리가 정해지지 않았다 |

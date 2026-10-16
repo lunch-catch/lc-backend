@@ -111,7 +111,7 @@ public class FeedService {
         LocalDate businessDate = servedAt.toLocalDate();
         LocalTime time = servedAt.toLocalTime();
         if (time.isBefore(SERVING_START) || !time.isBefore(SERVING_END)) {
-            recordVisit(businessDate, memberId, viewer);
+            recordVisit(businessDate, memberId, viewer, servedAt);
             return FeedResponse.outOfServingHours(nextFeedAvailableAt);
         }
 
@@ -124,7 +124,7 @@ public class FeedService {
         serveFrequencyRepository.recordServed(businessDate, memberId,
                 selection.cards().stream().map(p -> p.candidate().campaignId()).toList(), now);
         if (selection.cards().isEmpty()) {
-            recordVisit(businessDate, memberId, viewer);
+            recordVisit(businessDate, memberId, viewer, servedAt);
             return FeedResponse.noCandidate(selection.radiusM(), nextFeedAvailableAt);
         }
 
@@ -138,7 +138,8 @@ public class FeedService {
         serveRecordRepository.saveAll(records);
         meterRegistry.counter(SERVED_CARDS_METRIC).increment(records.size());
         UUID feedId = UuidV7.at(now);
-        serveLogBuffer.offer(new ServedFeed(businessDate, memberId, feedId, viewer.latitude(), viewer.longitude(), records));
+        serveLogBuffer.offer(new ServedFeed(businessDate, memberId, feedId, viewer.latitude(), viewer.longitude(), records,
+                servedAt.toLocalDateTime()));
 
         OffsetDateTime servedAtOffset = servedInstant.atZone(ClockConfig.ZONE).toOffsetDateTime();
         List<FeedCardResponse> cards = IntStream.range(0, placed.size())
@@ -149,8 +150,9 @@ public class FeedService {
     }
 
     // 카드가 없는 요청도 그날 첫 접속 위치는 남긴다(feed_visit_daily).
-    private void recordVisit(LocalDate businessDate, Long memberId, Viewer viewer) {
-        serveLogBuffer.offer(new ServedFeed(businessDate, memberId, null, viewer.latitude(), viewer.longitude(), List.of()));
+    private void recordVisit(LocalDate businessDate, Long memberId, Viewer viewer, ZonedDateTime requestedAt) {
+        serveLogBuffer.offer(new ServedFeed(businessDate, memberId, null, viewer.latitude(), viewer.longitude(), List.of(),
+                requestedAt.toLocalDateTime()));
     }
 
     private FeedContext contextFor(Long memberId, Viewer viewer, LocalDate businessDate, ZonedDateTime servedAt,
