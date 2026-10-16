@@ -18,6 +18,8 @@ import com.launchcatch.campaign.contract.TargetGender;
 import com.launchcatch.campaign.entity.Campaign;
 import com.launchcatch.campaign.repository.CampaignRepository;
 import com.launchcatch.global.entity.BaseTimeEntity;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.LockModeType;
 import java.lang.reflect.Field;
 import java.time.Clock;
 import java.time.Instant;
@@ -51,12 +53,14 @@ class CampaignQueryServiceImplTest {
 
     @Mock
     private CampaignRepository campaignRepository;
+    @Mock
+    private EntityManager entityManager;
 
     private CampaignQueryServiceImpl service;
 
     @BeforeEach
     void setUp() {
-        service = new CampaignQueryServiceImpl(campaignRepository, FIXED_CLOCK);
+        service = new CampaignQueryServiceImpl(campaignRepository, entityManager, FIXED_CLOCK);
     }
 
     @Test
@@ -203,7 +207,7 @@ class CampaignQueryServiceImplTest {
     }
 
     @Test
-    @DisplayName("findByIdForUpdate는 저장소를 잠가 불러 매핑한다")
+    @DisplayName("findByIdForUpdate는 저장소를 잠가 불러 매핑하고, 영속성 컨텍스트의 값을 최신으로 갱신한다")
     void findByIdForUpdate는_저장소를_잠가_불러_매핑한다() {
         Campaign campaign = campaign();
         when(campaignRepository.findByIdForUpdate(CAMPAIGN_ID)).thenReturn(Optional.of(campaign));
@@ -213,6 +217,7 @@ class CampaignQueryServiceImplTest {
         assertThat(result).isPresent();
         assertThat(result.get().campaignId()).isEqualTo(CAMPAIGN_ID);
         verify(campaignRepository).findByIdForUpdate(CAMPAIGN_ID);
+        verify(entityManager).refresh(campaign, LockModeType.PESSIMISTIC_WRITE);
     }
 
     @Test

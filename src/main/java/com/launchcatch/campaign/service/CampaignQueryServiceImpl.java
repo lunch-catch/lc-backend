@@ -5,6 +5,8 @@ import com.launchcatch.campaign.contract.CampaignQueryService;
 import com.launchcatch.campaign.contract.CampaignStatus;
 import com.launchcatch.campaign.entity.Campaign;
 import com.launchcatch.campaign.repository.CampaignRepository;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.LockModeType;
 import java.time.Clock;
 import java.time.LocalDate;
 import java.util.Collection;
@@ -30,6 +32,7 @@ public class CampaignQueryServiceImpl implements CampaignQueryService {
             List.of(CampaignStatus.DRAFT, CampaignStatus.ENDED);
 
     private final CampaignRepository campaignRepository;
+    private final EntityManager entityManager;
     private final Clock clock;
 
     @Override
@@ -79,9 +82,20 @@ public class CampaignQueryServiceImpl implements CampaignQueryService {
         return Set.copyOf(campaignRepository.findDistinctOwnerIdsWithLiveCampaign(ownerIds, NOT_LIVE_STATUSES));
     }
 
+    /*
+     * 호출자가 같은 트랜잭션에서 이 캠페인을 findByIdForUpdate보다 먼저 읽었다면(예:
+     * findByOwnerIdAndStatusIn으로 후보를 먼저 조회), 그 Campaign은 이미 영속성 컨텍스트에
+     * 있다. 그 상태에서 이 메서드를 호출하면 FOR UPDATE SQL은 실행되고 행 잠금은 걸리지만,
+     * Hibernate가 이미 관리 중인 엔티티를 그대로 돌려줘 최신 컬럼 값으로 덮어쓰지 않는다.
+     * refresh(PESSIMISTIC_WRITE)로 강제로 다시 읽어야 "잠그고 최신 상태를 읽는다"는 이
+     * 메서드의 계약이 실제로 지켜진다(코드래빗 리뷰로 찾음, #378).
+     */
     @Override
     public Optional<CampaignInfo> findByIdForUpdate(Long campaignId) {
-        return campaignRepository.findByIdForUpdate(campaignId).map(this::toInfo);
+        return campaignRepository.findByIdForUpdate(campaignId).map(campaign -> {
+            entityManager.refresh(campaign, LockModeType.PESSIMISTIC_WRITE);
+            return toInfo(campaign);
+        });
     }
 
     /*
