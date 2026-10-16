@@ -7,6 +7,7 @@ import com.launchcatch.store.contract.StoreInfo;
 import com.launchcatch.store.contract.StoreMenuInfo;
 import com.launchcatch.store.dto.StoreMenuQueryRow;
 import com.launchcatch.store.dto.StoreQueryRow;
+import com.launchcatch.store.dto.StoreSummaryQueryRow;
 import com.launchcatch.store.repository.StoreQueryRepository;
 import java.math.BigDecimal;
 import java.util.Arrays;
@@ -17,6 +18,17 @@ import org.springframework.dao.DataAccessResourceFailureException;
 class StoreQueryServiceImplTest {
     private final StoreQueryRepository repository = mock(StoreQueryRepository.class);
     private final StoreQueryServiceImpl service = new StoreQueryServiceImpl(repository, "https://cdn.example.com/");
+
+    @Test
+    void 점주_요약은_등록_여부와_마스킹한_번호를_반환한다() {
+        when(repository.findSummariesByOwnerIds(List.of(1L, 2L))).thenReturn(List.of(
+                new StoreSummaryQueryRow(1, 10, "가게", true, "1234567890"),
+                new StoreSummaryQueryRow(2, 20, "등록 중", false, null)));
+        assertThat(service.findSummariesByOwnerIds(List.of(1L, 2L)))
+                .extracting("ownerId", "storeId", "name", "finalized", "businessRegistrationNumber")
+                .containsExactly(tuple(1L, 10L, "가게", true, "123**67890"),
+                        tuple(2L, 20L, "등록 중", false, null));
+    }
 
     @Test
     void 가게의_이미지와_현재_좌표를_반환한다() {

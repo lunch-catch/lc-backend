@@ -2,10 +2,12 @@ package com.launchcatch.store.service;
 
 import com.launchcatch.store.StoreImageUrlResolver;
 import com.launchcatch.store.contract.StoreInfo;
+import com.launchcatch.store.contract.StoreSummary;
 import com.launchcatch.store.contract.StoreMenuInfo;
 import com.launchcatch.store.contract.StoreQueryService;
 import com.launchcatch.store.repository.StoreQueryRepository;
 import java.math.BigDecimal;
+import java.util.Collection;
 import java.util.List;
 import java.util.Objects;
 import org.springframework.beans.factory.annotation.Value;
@@ -58,6 +60,33 @@ class StoreQueryServiceImpl implements StoreQueryService {
                 .toList();
     }
 
+    @Override
+    public List<Long> findOwnerIdsByNameContaining(String keyword, int limit) {
+        Objects.requireNonNull(keyword, "검색어가 필요합니다.");
+        if (keyword.isBlank() || limit <= 0) {
+            throw new IllegalArgumentException("비어 있지 않은 검색어와 양수인 limit가 필요합니다.");
+        }
+        var ownerIds = stores.findOwnerIdsByNameContaining(keyword, (long) limit + 1);
+        if (ownerIds.size() > limit) {
+            throw new IllegalArgumentException("상호 검색 결과가 limit를 초과했습니다. 검색어를 좁혀 주세요.");
+        }
+        return ownerIds;
+    }
+
+    @Override
+    public List<StoreSummary> findSummariesByOwnerIds(Collection<Long> ownerIds) {
+        validateIds(ownerIds);
+        if (ownerIds.isEmpty()) {
+            return List.of();
+        }
+        return stores.findSummariesByOwnerIds(ownerIds).stream()
+                .map(row -> new StoreSummary(row.ownerId(), row.storeId(), row.name(), row.finalized(),
+                        row.businessRegistrationNumber() == null ? null
+                                : row.businessRegistrationNumber().substring(0, 3) + "**"
+                                        + row.businessRegistrationNumber().substring(5)))
+                .toList();
+    }
+
     // DB의 DECIMAL 좌표를 공개 계약의 Double로 바꾸되 누락된 좌표는 null로 유지한다.
     private static Double toCoordinate(BigDecimal coordinate) {
         return coordinate == null ? null : coordinate.doubleValue();
@@ -71,7 +100,7 @@ class StoreQueryServiceImpl implements StoreQueryService {
         return objectKey;
     }
 
-    private static void validateIds(List<Long> ids) {
+    private static void validateIds(Collection<Long> ids) {
         Objects.requireNonNull(ids, "ID 목록이 필요합니다.");
         if (ids.stream().anyMatch(id -> id == null || id <= 0)) {
             throw new IllegalArgumentException("ID 목록에는 양수인 ID만 사용할 수 있습니다.");

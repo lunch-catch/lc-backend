@@ -60,3 +60,29 @@ cdn.base-url에는 HTTP(S) 주소를 사용하며 쿼리, 프래그먼트, 사�
 
 #161의 광고 서빙용 업종 코드 확장은 이 계약에 포함하지 않는다.
 같은 인터페이스를 확장할 때 기존 소비자와 record 필드 변경을 함께 검토해야 한다.
+## 관리자 점주 목록용 조회 (#365)
+
+`findSummariesByOwnerIds(Collection<Long>)`는 점주 ID로 가게를 일괄 조회한다.
+최종 등록 전 가게도 포함하며 가게가 없는 점주는 제외한다.
+빈 입력은 DB 조회 없이 빈 목록을 반환하고 중복 ID는 결과를 늘리지 않는다.
+반환 순서는 보장하지 않으며 ID 검증과 DB 장애 전파는 기존 계약과 같다.
+한 페이지 최대 100명의 가게는 기존 owner_id 유니크 인덱스를 사용하는 SQL 한 번으로 읽는다.
+이미지와 좌표는 조회하지 않으며 대표 이미지가 없는 등록 중 가게도 반환한다.
+
+`StoreSummary`는 ownerId, storeId, name, finalized, businessRegistrationNumber를 갖는다.
+사업자등록번호는 가운데 두 자리를 가려 `123**67890` 형식으로 반환한다.
+아직 등록하지 않은 번호는 null로 유지한다.
+원문은 store 내부 조회 결과에만 두고 공개 계약에는 전달하지 않는다.
+
+`findOwnerIdsByNameContaining(String, int)`는 상호 부분 일치로 점주 ID를 반환한다.
+최종 등록 여부로 제한하지 않으며 `%`, `_`, `!`는 와일드카드가 아닌 문자 그대로 검색한다.
+검색어는 그대로 사용하며 null은 NullPointerException, 빈 문자열과 공백만 있는 검색어 및 양수가 아닌 limit는 IllegalArgumentException으로 거절한다.
+검색 결과가 없으면 빈 목록을 반환하고 순서는 보장하지 않는다.
+SQL은 limit보다 한 건 더 읽고 초과하면 IllegalArgumentException을 던진다.
+부분 결과를 반환하지 않으며 호출자는 검색어를 좁히도록 처리해야 한다.
+사업자등록번호 마스킹과 검색 결과 초과 정책은 이슈 착수 시 결정한 사항이다.
+기존 세 메서드와 소비자의 계약은 유지한다.
+
+StoreQueryIntegrationTest에서 실제 MySQL의 등록 전 가게, 제한 초과와 누락 ID를 확인한다.
+1만 건을 준비한 뒤 100명 요약 조회의 SELECT 한 번과 요약 및 상호 검색 각각 1초 이내를 검증한다.
+시간 측정은 워밍업 이후 해당 테스트 환경에서의 결과다.
