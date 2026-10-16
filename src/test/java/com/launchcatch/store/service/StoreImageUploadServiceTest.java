@@ -133,6 +133,16 @@ class StoreImageUploadServiceTest {
     }
 
     @Test
+    @DisplayName("등록 진행 상태가 없으면 업로드 준비를 거부한다")
+    void 등록_진행_상태가_없으면_준비를_거부한다() {
+        when(progressRepository.findByOwnerIdForUpdate(OWNER_ID)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.prepareInteriorUpload(OWNER_ID, "photo.jpg", "image/jpeg", 1000L))
+                .isInstanceOfSatisfying(StoreException.class, e ->
+                        assertThat(e.getErrorCode()).isEqualTo(StoreErrorCode.REGISTRATION_PROGRESS_NOT_FOUND));
+    }
+
+    @Test
     @DisplayName("허용하지 않는 파일 형식이면 거부한다")
     void 허용하지_않는_형식이면_거부한다() {
         assertThatThrownBy(() -> service.prepareInteriorUpload(OWNER_ID, "photo.gif", "image/gif", 1000L))
@@ -147,6 +157,16 @@ class StoreImageUploadServiceTest {
         assertThatThrownBy(() -> service.prepareInteriorUpload(OWNER_ID, "photo.jpg", "image/jpeg", 10_485_761L))
                 .isInstanceOfSatisfying(StoreException.class, e ->
                         assertThat(e.getErrorCode()).isEqualTo(StoreErrorCode.IMAGE_FILE_TOO_LARGE));
+    }
+
+    @Test
+    @DisplayName("등록 진행 상태가 없으면 업로드 확인을 거부한다")
+    void 등록_진행_상태가_없으면_확인을_거부한다() {
+        when(progressRepository.findByOwnerId(OWNER_ID)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.confirmUpload(OWNER_ID, "upload-1"))
+                .isInstanceOfSatisfying(StoreException.class, e ->
+                        assertThat(e.getErrorCode()).isEqualTo(StoreErrorCode.REGISTRATION_PROGRESS_NOT_FOUND));
     }
 
     @Test
