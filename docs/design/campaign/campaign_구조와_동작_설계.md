@@ -4,7 +4,7 @@
 
 | 적을 것 | 내용 |
 |---|---|
-| 맡는 기능과 근거 | 캠페인의 상태 전이(FR-092)와 그 이력, 다른 도메인에 캠페인 정보를 공개하는 `CampaignQueryService` 구현, 정산의 예산 판정을 상태 전이로 옮기는 `CampaignFundingUpdater` 구현(#198) |
+| 맡는 기능과 근거 | 캠페인의 상태 전이(FR-092)와 그 이력, 다른 도메인에 캠페인 정보를 공개하는 `CampaignQueryService` 구현, 정산의 예산 판정을 상태 전이로 옮기는 `CampaignFundingUpdater` 구현(#198), 분석의 일별 집계 배치에 영업일 말 ACTIVE 캠페인 수를 공개하는 `CampaignStatsQueryService` 구현(#354) |
 | 맡지 않는 것과 그 소유 도메인 | 등록 화면 API 1·3·4단계(쿠폰 조건, 노출 대상, 하루 예산과 집행 기간)는 [`campaign-api-design.md`](./campaign-api-design.md)가 가짐(`#244`, `#253`, `#330`), 예산 집행과 소진(billing), 광고 배정(adserving), 템플릿과 포스터(같은 campaign 도메인의 다른 애그리거트, [`poster-api-design.md`](./poster-api-design.md)가 따로 가짐) |
 
 이 문서는 `campaign` 애그리거트(도메인 이름과 같은 루트 애그리거트)만 다룬다. `template`, `poster`, `store_audience`는 범위 밖이다.
@@ -21,7 +21,8 @@ campaign/
 │   ├── PauseReason.java           campaign.paused_reason 값. CampaignStatus/TargetGender와 같은 이유로 contract에 둔다
 │   ├── Judgement.java             billing의 FundingJudgement.judgement 값(NO_POINTS/RESUME/OK)
 │   ├── Cause.java                 billing의 FundingJudgement.cause 값(DAILY/RECHARGE)
-│   └── FundingJudgement.java      billing이 CampaignFundingUpdater에 보내는 판정 record
+│   ├── FundingJudgement.java      billing이 CampaignFundingUpdater에 보내는 판정 record
+│   └── CampaignStatsQueryService.java  분석의 일별 집계 배치가 부르는 집계 조회(#354)
 ├── entity/
 │   ├── Campaign.java              캠페인 전체 필드와 전이 5개
 │   ├── CampaignStatusLog.java     전이 이력(쓰고 잊는 로그, ops.AuditLog와 같은 방식)
@@ -33,7 +34,8 @@ campaign/
 └── service/
     ├── CampaignStatusService.java        전이 5개 + pauseFromFunding/resumeFromFunding, 로그 기록, 이벤트 발행
     ├── CampaignQueryServiceImpl.java     CampaignQueryService 구현
-    └── CampaignFundingUpdaterImpl.java   CampaignFundingUpdater 구현. FundingJudgement를 상태 전이 호출로 옮긴다
+    ├── CampaignFundingUpdaterImpl.java   CampaignFundingUpdater 구현. FundingJudgement를 상태 전이 호출로 옮긴다
+    └── CampaignStatsQueryServiceImpl.java  CampaignStatsQueryService 구현
 ```
 
 `CampaignStatusLog`는 `Campaign`을 `@ManyToOne` 연관관계가 아니라 `campaignId`(원시 `Long`)로만 참조한다. `Campaign`이 자기 로그 목록을 조회할 기능이 이 이슈에 없어서, `ops.AuditLog`가 쓰는 방식을 그대로 따랐다(제가 정한 것).
@@ -53,6 +55,7 @@ campaign/
 | 이력 | 상태 변경마다 `CampaignStatusLog` 한 행. 현재 상태는 `campaign.status`가 그대로 가진다 |
 | 복잡한 조회 | `findServableOn`은 `campaign` 테이블 하나만 조회한다. billing의 "예약" 데이터(`budget_daily_plan`)는 `campaign -> billing` 간선이 없어 조인할 수 없다([설계 문서](../../architecture/런치캐치_도메인_구조와_의존성_설계.md) 2.2, 역방향은 순환). FR-092의 전이 규칙상 `PAUSED(OWNER, NO_POINTS)`는 그날 `ACTIVE`였다가 멈춘 것만 존재하므로 campaign 자신의 컬럼(`status`, `paused_reason`, `start_date`, `end_date`)만으로 조건이 성립한다고 보았다(제가 추론한 것, 문서에 명시돼 있지 않음) |
 | `findServableOn`과 billing의 00:00 예약 조회 공유(#198) | billing이 요청한 `findForReservation(businessDate)`의 조건이 `findServableOn`과 같다(위 행). 메서드를 따로 두면 "예약이 있는 PAUSED"의 해석이 두 곳에 흩어져 한쪽만 바뀌면 어긋난다. 그래서 새 메서드를 만들지 않고 billing이 `findServableOn`을 그대로 부르기로 했다 |
+| 특정 시각의 상태 재구성(#354) | `CampaignStatusLog.countActiveAsOf`는 `campaign` 테이블의 현재 `status`를 보지 않는다. `campaign_status_log`에서 캠페인마다 그 시각 이전 마지막 전이 행의 `to_status`를 윈도 함수(`row_number() over (partition by campaign_id order by created_at desc)`)로 구해 `ACTIVE`인 것만 센다. 그래서 지금 상태가 `ENDED`인 캠페인도 과거 영업일에는 그때의 상태로 집계된다 |
 
 ## 4. 계산 로직
 
@@ -63,6 +66,7 @@ campaign/
 | 방향 | 대상 도메인 | 인터페이스 | 시점 |
 |---|---|---|---|
 | 공개 | 모든 도메인 | `CampaignQueryService`(`findByStoreIdIn`, `findAllById`, `findServableOn`, `findEligibleCampaigns`, `findByOwnerIdAndStatusIn`, `hasLiveCampaign`, `findOwnerIdsWithLiveCampaign`) | 요청마다 |
+| 공개 | analytics | `CampaignStatsQueryService.activeCampaignCount(businessDate)` | 분석의 일별 집계 배치마다(#354) |
 | 받음(직접 호출) | billing | `CampaignFundingUpdater.applyFundingJudgement` | 정산의 00:00 예산 판정, 충전 직후 재예약 판정 때마다. 이벤트가 아니라 정산의 트랜잭션 안에서 직접 부른다 |
 | 쓰기(미연결) | store | `StoreCampaignSummaryUpdater` | `activate`/`pause`/`resume`/`end`뿐 아니라 `pauseFromFunding`/`resumeFromFunding` 때도 호출해야 한다(잔액 부족 중단과 충전 후 재개도 가게 요약에 반영돼야 함, 가게 담당 회신 2026-10-13). store 쪽에 그 인터페이스가 아직 없어([설계 문서](../../architecture/런치캐치_도메인_구조와_의존성_설계.md) 2.4에 간선만 있음) 이번 이슈는 호출을 빼고 넘어간다. 생기면 `CampaignStatusService`에 이어 붙인다 |
 
@@ -77,11 +81,13 @@ flowchart LR
     REQ([요청]) --> CC
     CALL([다른 도메인의 호출]) --> CQC
     CALL --> CFC
+    CALL --> CSQC
 
     subgraph campaign["campaign 모듈"]
         direction LR
         CQC["contract<br/>CampaignQueryService"]
         CFC["contract<br/>CampaignFundingUpdater"]
+        CSQC["contract<br/>CampaignStatsQueryService"]
 
         subgraph root["도메인 루트 (campaign 애그리거트)"]
             CC[CampaignController] --> CCS[CampaignCouponConditionService]
@@ -92,10 +98,12 @@ flowchart LR
             CSS --> CSLR[(CampaignStatusLogRepository)]
             CQS["CampaignQueryServiceImpl<br/>구현: CampaignQueryService"] --> CR
             CFI["CampaignFundingUpdaterImpl<br/>구현: CampaignFundingUpdater"] --> CSS
+            CSQS["CampaignStatsQueryServiceImpl<br/>구현: CampaignStatsQueryService"] --> CSLR
         end
 
         CQC -.-> CQS
         CFC -.-> CFI
+        CSQC -.-> CSQS
     end
 
     CCS --> OWN["owner.contract<br/>OwnerStatusQuery"]
@@ -107,7 +115,8 @@ flowchart LR
 ```
 
 입구는 둘만 실제로 연결돼 있다. HTTP 요청(`CampaignController`, `#244`/`#253`/`#330`)과 다른
-도메인의 호출(`CampaignQueryService`, `CampaignFundingUpdater`)이다. 스케줄과 이벤트 수신은
+도메인의 호출(`CampaignQueryService`, `CampaignFundingUpdater`, `CampaignStatsQueryService`,
+`#354`)이다. 스케줄과 이벤트 수신은
 아직 없다(`CampaignStatusService`의 `schedule`/`activate`/`end`를 부를 배치가 아직 없다,
 2장). `CampaignController`와 `CampaignCouponConditionService`/`CampaignTargetAudienceService`의
 업무 규칙은 이 문서가 아니라 [`campaign-api-design.md`](./campaign-api-design.md)가 가진다
@@ -115,7 +124,8 @@ flowchart LR
 
 `owner.contract.OwnerStatusQuery`(점주 상태 확인)와 `ops.contract.PlatformSettingQueryService`(최소
 하루 예산, `#330`)는 등록 화면 API 두 서비스가 부르는 바깥 도메인이다. `CampaignStatusService`와
-`CampaignQueryServiceImpl`, `CampaignFundingUpdaterImpl`은 다른 도메인을 부르지 않는다.
+`CampaignQueryServiceImpl`, `CampaignFundingUpdaterImpl`, `CampaignStatsQueryServiceImpl`은 다른
+도메인을 부르지 않는다.
 
 ### 상태 변경
 
