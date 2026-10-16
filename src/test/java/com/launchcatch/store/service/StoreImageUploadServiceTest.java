@@ -145,6 +145,21 @@ class StoreImageUploadServiceTest {
     }
 
     @Test
+    @DisplayName("이미 VERIFIED인 업로드를 다시 확인해도 headObject를 부르지 않고 그대로 성공한다(응답을 못 받은 재시도)")
+    void 이미_확인된_업로드는_재시도해도_성공한다() {
+        givenOnboardingOwnerWithStore();
+        StoreImage image = StoreImage.preparePending(
+                STORE_ID, "upload-1", StoreImageType.INTERIOR, "stores/20/interior/upload-1.jpg",
+                "photo.jpg", "image/jpeg", 1000L, 1);
+        image.verify(java.time.LocalDateTime.now(FIXED_CLOCK));
+        when(storeImageRepository.findByUploadId("upload-1")).thenReturn(Optional.of(image));
+
+        service.confirmUpload(OWNER_ID, "upload-1");
+
+        verify(s3Client, never()).headObject(any(HeadObjectRequest.class));
+    }
+
+    @Test
     @DisplayName("실제로 업로드되지 않았으면 거부한다")
     void 업로드되지_않았으면_거부한다() {
         givenOnboardingOwnerWithStore();

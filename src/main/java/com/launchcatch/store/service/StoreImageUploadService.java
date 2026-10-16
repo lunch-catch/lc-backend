@@ -5,6 +5,7 @@ import com.launchcatch.owner.contract.OwnerStatusQuery;
 import com.launchcatch.store.dto.StoreRegistrationProgressResponse;
 import com.launchcatch.store.entity.StoreImage;
 import com.launchcatch.store.entity.StoreImageType;
+import com.launchcatch.store.entity.StoreImageUploadStatus;
 import com.launchcatch.store.entity.StoreRegistrationProgress;
 import com.launchcatch.store.entity.StoreRegistrationStep;
 import com.launchcatch.store.exception.StoreErrorCode;
@@ -86,6 +87,11 @@ public class StoreImageUploadService {
         StoreImage image = storeImageRepository.findByUploadId(uploadId)
                 .filter(found -> found.getStoreId().equals(storeId))
                 .orElseThrow(() -> new StoreException(StoreErrorCode.IMAGE_UPLOAD_NOT_FOUND));
+
+        // 응답을 못 받은 클라이언트의 재시도는 같은 결과를 성공으로 돌려준다(api-spec.md 멱등성, 코드래빗 리뷰 전 자체 검토로 찾음).
+        if (image.getUploadStatus() == StoreImageUploadStatus.VERIFIED) {
+            return;
+        }
 
         try {
             s3Client.headObject(HeadObjectRequest.builder()
