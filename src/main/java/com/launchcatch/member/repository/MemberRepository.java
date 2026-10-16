@@ -25,8 +25,6 @@ public interface MemberRepository extends JpaRepository<Member, Long>, MemberRep
 
     long countByStatusAndWithdrawnAtLessThan(MemberStatus status, LocalDateTime withdrawnAtBefore);
 
-    long countByStatusAndSuspendedAtLessThan(MemberStatus status, LocalDateTime suspendedAtBefore);
-
     @Query("""
             SELECT member FROM Member member
               LEFT JOIN FETCH member.profile

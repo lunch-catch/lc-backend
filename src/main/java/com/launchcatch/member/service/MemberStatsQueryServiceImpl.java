@@ -28,9 +28,7 @@ public class MemberStatsQueryServiceImpl implements MemberStatsQueryService {
         long cumulativeMemberCount = memberRepository.countByCreatedAtLessThan(nextDayStart);
         long withdrawnCount = memberRepository
                 .countByStatusAndWithdrawnAtLessThan(MemberStatus.WITHDRAWN, nextDayStart);
-        long suspendedCount = memberRepository
-                .countByStatusAndSuspendedAtLessThan(MemberStatus.SUSPENDED, nextDayStart);
 
-        return new MemberDailyStats(newMemberCount, cumulativeMemberCount, withdrawnCount, suspendedCount);
+        return new MemberDailyStats(newMemberCount, cumulativeMemberCount, withdrawnCount);
     }
 }

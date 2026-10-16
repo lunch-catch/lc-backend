@@ -34,15 +34,12 @@ class MemberStatsQueryServiceImplTest {
         when(memberRepository.countByCreatedAtLessThan(nextDayStart)).thenReturn(10L);
         when(memberRepository.countByStatusAndWithdrawnAtLessThan(MemberStatus.WITHDRAWN, nextDayStart))
                 .thenReturn(3L);
-        when(memberRepository.countByStatusAndSuspendedAtLessThan(MemberStatus.SUSPENDED, nextDayStart))
-                .thenReturn(1L);
 
         MemberDailyStats result = memberStatsQueryService.dailyStats(businessDate);
 
-        assertThat(result).isEqualTo(new MemberDailyStats(2L, 10L, 3L, 1L));
+        assertThat(result).isEqualTo(new MemberDailyStats(2L, 10L, 3L));
         verify(memberRepository).countByCreatedAtGreaterThanEqualAndCreatedAtLessThan(dayStart, nextDayStart);
         verify(memberRepository).countByCreatedAtLessThan(nextDayStart);
         verify(memberRepository).countByStatusAndWithdrawnAtLessThan(MemberStatus.WITHDRAWN, nextDayStart);
-        verify(memberRepository).countByStatusAndSuspendedAtLessThan(MemberStatus.SUSPENDED, nextDayStart);
     }
 }
