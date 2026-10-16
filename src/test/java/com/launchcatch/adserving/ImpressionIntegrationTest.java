@@ -180,6 +180,18 @@ class ImpressionIntegrationTest extends AbstractAdservingIntegrationTest {
     }
 
     @Test
+    void 범위_밖의_좌표는_COMMON_002_이고_저장하지_않는다() throws Exception {
+        send(body(serveId, 101L).replace("37.4979", "90.1"), Role.MEMBER)
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("COMMON-002"));
+        send(body(serveId, 101L).replace("127.0276", "180.1"), Role.MEMBER)
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("COMMON-002"));
+
+        assertThat(rows()).isZero();
+    }
+
+    @Test
     void 노출이_쌓여_노출_상한에_닿은_캠페인은_피드에서_빠진다() throws Exception {
         jdbcTemplate.update("""
                 INSERT INTO ad_candidate (business_date, campaign_id, store_id, store_name, category_code,

@@ -1,6 +1,8 @@
 package com.launchcatch.adserving.impression.dto;
 
 import io.swagger.v3.oas.annotations.media.Schema;
+import jakarta.validation.constraints.DecimalMax;
+import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.PositiveOrZero;
@@ -23,9 +25,11 @@ public record ImpressionRequest(
         OffsetDateTime displayedAt,
         @Schema(description = "카드가 보인 시점의 위도. 서버는 소수점 3자리로 반올림해 저장한다", example = "37.4979")
         @NotNull
+        @DecimalMin("-90") @DecimalMax("90")
         Double latitude,
         @Schema(description = "카드가 보인 시점의 경도. 서버는 소수점 3자리로 반올림해 저장한다", example = "127.0276")
         @NotNull
+        @DecimalMin("-180") @DecimalMax("180")
         Double longitude,
         @Schema(description = "카드를 본 시간(밀리초). 참고 지표", example = "2140", nullable = true)
         @PositiveOrZero

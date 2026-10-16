@@ -77,7 +77,7 @@ public class ImpressionLog {
 
     private ImpressionLog(ImpressionLogId id, LocalDate businessDate, Long campaignId, Placement placement,
                           Sighting sighting, ImpressionValidity validity, InvalidReason invalidReason, boolean soldOut) {
-        this.id = id;
+        this.id = Objects.requireNonNull(id);
         this.businessDate = Objects.requireNonNull(businessDate);
         this.campaignId = Objects.requireNonNull(campaignId);
         if (placement != null) {
@@ -85,11 +85,12 @@ public class ImpressionLog {
             this.slotType = placement.slotType();
             this.slotPosition = placement.slotPosition();
         }
+        Objects.requireNonNull(sighting);
         this.displayedAt = Objects.requireNonNull(sighting.displayedAt());
         this.latRounded = round(sighting.latitude());
         this.lngRounded = round(sighting.longitude());
         this.viewedMs = sighting.viewedMs();
-        this.validity = validity;
+        this.validity = Objects.requireNonNull(validity);
         this.invalidReason = invalidReason;
         this.soldOut = soldOut;
     }
