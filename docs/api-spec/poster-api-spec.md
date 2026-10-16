@@ -18,6 +18,7 @@
 | `GET` | `/v1/admin/templates/{templateId}/versions` | 템플릿 버전 목록 조회 | ADMIN, SUPER_ADMIN |
 | `POST` | `/v1/admin/templates/{templateId}/publish` | 템플릿 게시 | ADMIN, SUPER_ADMIN |
 | `PATCH` | `/v1/admin/templates/{templateId}/active` | 템플릿 활성화 관리 | ADMIN, SUPER_ADMIN |
+| `GET` | `/v1/owner/templates` | 점주 템플릿 목록 조회 | OWNER |
 | `GET` | `/v1/campaigns/{campaignId}/poster` | 사용자용 포스터 조회 | MEMBER |
 
 ## 템플릿 생성
@@ -321,6 +322,37 @@
 | `400` | `COMMON-002` | `active` 가 비었다 |
 | `404` | `POSTER-005` | 템플릿을 찾을 수 없다 |
 | `409` | `POSTER-009` | 게시되지 않은 템플릿이다 |
+
+## 점주 템플릿 목록 조회
+
+### `GET /v1/owner/templates`
+
+점주가 포스터 생성 시 고를 수 있는 템플릿을 생성일 최신순으로 조회한다. 게시(`PUBLISHED`)되고
+활성(`active`)인 템플릿만 대상이다. 서버 검색과 정렬 조건은 받지 않는다.
+
+**응답** `200`
+
+```json
+{
+  "code": "SUCCESS",
+  "message": "요청이 성공적으로 처리되었습니다.",
+  "data": [
+    {
+      "templateId": 1,
+      "name": "가을 신메뉴",
+      "html": "<div>...</div>"
+    }
+  ]
+}
+```
+
+| 필드 | 타입 | null | 설명 |
+|---|---|---|---|
+| `templateId` | integer | 아니오 | 템플릿 ID |
+| `name` | string | 아니오 | 템플릿 이름 |
+| `html` | string | 아니오 | 게시된 템플릿의 확정 HTML |
+
+0개면 빈 배열을 돌려준다.
 
 ## 사용자용 포스터 조회
 

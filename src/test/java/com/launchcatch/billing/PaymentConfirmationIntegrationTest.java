@@ -3,9 +3,7 @@ package com.launchcatch.billing;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import com.launchcatch.IntegrationTestSupport;
-import com.launchcatch.billing.client.FakePaymentGateway;
-import com.launchcatch.billing.client.PaymentGatewayApproval;
+import com.launchcatch.billing.client.CommitCheckingGateway;
 import com.launchcatch.billing.client.PgNotSentException;
 import com.launchcatch.billing.client.PgUnknownException;
 import com.launchcatch.billing.dto.PaymentConfirmResponse;
@@ -23,15 +21,10 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
-import java.util.function.Consumer;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.context.TestConfiguration;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Primary;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 /*
@@ -43,72 +36,22 @@ import org.springframework.jdbc.core.JdbcTemplate;
  *
  * 커밋을 봐야 하므로 테스트 트랜잭션을 걸지 않고 매번 행을 지운다.
  */
-@SpringBootTest
-class PaymentConfirmationIntegrationTest extends IntegrationTestSupport {
+class PaymentConfirmationIntegrationTest extends AbstractBillingIntegrationTest {
 
     private static final Long OWNER = 7L;
     private static final long AMOUNT = 30000L;
 
-    /*
-     * 승인을 요청받은 순간에 그 주문의 결제 식별자를 다른 커넥션으로 읽어 둔다.
-     * 결제 식별자 기록이 호출 전에 커밋되지 않았다면 여기서 NULL 이 보인다.
-     */
-    static class CommitCheckingGateway extends FakePaymentGateway {
 
-        private final JdbcTemplate jdbc;
-        private final List<String> pgTidsSeenAtCall = new ArrayList<>();
-        private volatile Consumer<String> beforeApproval = paymentKey -> { };
-
-        CommitCheckingGateway(JdbcTemplate jdbc) {
-            this.jdbc = jdbc;
-        }
-
-        @Override
-        public PaymentGatewayApproval confirm(String paymentKey, String orderId, long amount) {
-            synchronized (this) {
-                pgTidsSeenAtCall.add(jdbc.queryForObject(
-                        "select pg_tid from payment where order_id = ?", String.class, orderId));
-            }
-            beforeApproval.accept(paymentKey);
-            synchronized (this) {
-                return super.confirm(paymentKey, orderId, amount);
-            }
-        }
-
-        void beforeApproval(Consumer<String> action) {
-            beforeApproval = action;
-        }
-
-        synchronized List<String> pgTidsSeenAtCall() {
-            return List.copyOf(pgTidsSeenAtCall);
-        }
-
-        // 빈이 테스트 사이에 공유되므로 앞 테스트에서 본 값을 지운다
-        synchronized void clearSeen() {
-            pgTidsSeenAtCall.clear();
-            beforeApproval = paymentKey -> { };
-        }
-    }
-
-    @TestConfiguration
-    static class GatewayConfig {
-
-        @Bean
-        @Primary
-        CommitCheckingGateway commitCheckingGateway(JdbcTemplate jdbc) {
-            return new CommitCheckingGateway(jdbc);
-        }
-    }
 
     @Autowired PaymentOrderService orderService;
     @Autowired PaymentConfirmationService confirmationService;
     @Autowired CommitCheckingGateway gateway;
     @Autowired JdbcTemplate jdbc;
 
+    // 이 클래스만 승인 호출 시점의 커밋을 확인한다. 되돌리는 일은 기반 클래스가 한다.
     @BeforeEach
-    void resetGateway() {
-        gateway.failConfirmWith(null).failInquiryWith(null);
-        gateway.clearSeen();
+    void 커밋_확인을_켠다() {
+        gateway.checkCommit();
     }
 
     @AfterEach

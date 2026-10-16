@@ -1,6 +1,7 @@
 package com.launchcatch.campaign.template.client;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.times;
@@ -16,6 +17,7 @@ import org.jsoup.Jsoup;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -283,5 +285,26 @@ class BedrockTemplateHtmlGeneratorTest {
                 .isInstanceOf(CampaignException.class)
                 .extracting(e -> ((CampaignException) e).getErrorCode())
                 .isEqualTo(PosterErrorCode.GENERATION_BLOCKED);
+    }
+
+    @Test
+    void 시스템_프롬프트의_예시는_정화와_슬롯_검증을_통과하고_A4_비율을_담는다() {
+        when(bedrockRuntimeClient.converse(any(ConverseRequest.class)))
+                .thenReturn(textResponse(StopReason.END_TURN, LLM_HTML));
+
+        generator.generate("테스트");
+
+        ArgumentCaptor<ConverseRequest> captor = ArgumentCaptor.forClass(ConverseRequest.class);
+        verify(bedrockRuntimeClient).converse(captor.capture());
+        String systemPrompt = captor.getValue().system().get(0).text();
+        String example = systemPrompt.substring(
+                        systemPrompt.indexOf("[예시]") + "[예시]".length(), systemPrompt.indexOf("이 예시는"))
+                .strip();
+
+        assertThat(systemPrompt).contains("aspect-ratio:210/297");
+        assertThat(new TemplateHtmlSanitizer().sanitize(example).removedElements()).isEmpty();
+        // 서버가 따로 채우는 adLabel을 붙여야 검증기가 5개 슬롯을 모두 본다
+        String withAdLabel = "<span data-slot=\"adLabel\">광고</span>" + example;
+        assertThatCode(() -> new TemplateSlotValidator().validate(withAdLabel)).doesNotThrowAnyException();
     }
 }

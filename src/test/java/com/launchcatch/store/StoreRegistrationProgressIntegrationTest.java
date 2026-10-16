@@ -1,7 +1,6 @@
 package com.launchcatch.store;
 
 import static org.assertj.core.api.Assertions.*;
-import com.launchcatch.IntegrationTestSupport;
 import com.launchcatch.store.entity.StoreRegistrationStep;
 import com.launchcatch.store.exception.StoreErrorCode;
 import com.launchcatch.store.exception.StoreException;
@@ -18,14 +17,12 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.IllegalTransactionStateException;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
-@SpringBootTest
-class StoreRegistrationProgressIntegrationTest extends IntegrationTestSupport {
+class StoreRegistrationProgressIntegrationTest extends AbstractStoreIntegrationTest {
     private static final AtomicLong OWNER_IDS = new AtomicLong(800000000);
 
     @Autowired StoreRegistrationProgressService service;
@@ -60,16 +57,33 @@ class StoreRegistrationProgressIntegrationTest extends IntegrationTestSupport {
         return jdbc.queryForObject("select store_id from store where owner_id = ?", Long.class, storeOwnerId);
     }
 
+    @Test
+    void DB는_가게_정보_완료_전_가게_연결과_이전_단계_값을_거부한다() {
+        tx.executeWithoutResult(status -> {
+            service.initialize(ownerId);
+            service.completeStep(ownerId, 0, StoreRegistrationStep.TERMS, null);
+        });
+        Long storeId = tx.execute(status -> createStore(ownerId));
+        assertThatThrownBy(() -> jdbc.update(
+                "update store_registration_progress set store_id=? where owner_id=?", storeId, ownerId))
+                .hasRootCauseInstanceOf(java.sql.SQLException.class).rootCause().hasMessageContaining("Check constraint");
+        assertThatThrownBy(() -> jdbc.update(
+                "update store_registration_progress set resume_step='STORE' where owner_id=?", ownerId))
+                .hasRootCauseInstanceOf(java.sql.SQLException.class).rootCause().hasMessageContaining("Check constraint");
+        assertThatThrownBy(() -> jdbc.update(
+                "update store_registration_progress set resume_step='BUSINESS_VERIFICATION' where owner_id=?", ownerId))
+                .hasRootCauseInstanceOf(java.sql.SQLException.class).rootCause().hasMessageContaining("Check constraint");
+    }
+
     private Long prepareMenuStep() {
         return tx.execute(status -> {
             service.initialize(ownerId);
             service.completeStep(ownerId, 0, StoreRegistrationStep.TERMS, null);
             Long storeId = createStore(ownerId);
-            service.completeStep(ownerId, 1, StoreRegistrationStep.STORE, storeId);
-            service.completeStep(ownerId, 2, StoreRegistrationStep.BUSINESS_VERIFICATION, null);
-            service.completeStep(ownerId, 3, StoreRegistrationStep.LOCATION, null);
-            service.completeStep(ownerId, 4, StoreRegistrationStep.HOURS, null);
-            service.completeStep(ownerId, 5, StoreRegistrationStep.IMAGES, null);
+            service.completeStep(ownerId, 1, StoreRegistrationStep.STORE_INFO, storeId);
+            service.completeStep(ownerId, 2, StoreRegistrationStep.LOCATION, null);
+            service.completeStep(ownerId, 3, StoreRegistrationStep.HOURS, null);
+            service.completeStep(ownerId, 4, StoreRegistrationStep.IMAGES, null);
             return storeId;
         });
     }
@@ -77,26 +91,26 @@ class StoreRegistrationProgressIntegrationTest extends IntegrationTestSupport {
     @Test
     void 완료_단계_수정은_다음_트랜잭션에서도_재개_단계를_유지한다() {
         Long storeId = prepareMenuStep();
-        var result = tx.execute(status -> service.reviseCompletedStep(ownerId, 6, StoreRegistrationStep.HOURS));
+        var result = tx.execute(status -> service.reviseStep(ownerId, 5, StoreRegistrationStep.HOURS));
         assertThat(result.resumeStep()).isEqualTo(StoreRegistrationStep.MENU);
         assertThat(result.storeId()).isEqualTo(storeId);
-        assertThat(result.version()).isEqualTo(7);
+        assertThat(result.version()).isEqualTo(6);
         var restored = progresses.findByOwnerId(ownerId).orElseThrow();
         assertThat(restored.getResumeStep()).isEqualTo(StoreRegistrationStep.MENU);
-        assertThat(restored.getVersion()).isEqualTo(7);
+        assertThat(restored.getVersion()).isEqualTo(6);
     }
 
     @Test
     void 수정_버전_충돌은_업무_데이터도_롤백한다() {
         Long storeId = prepareMenuStep();
-        tx.executeWithoutResult(status -> service.reviseCompletedStep(ownerId, 6, StoreRegistrationStep.HOURS));
+        tx.executeWithoutResult(status -> service.reviseStep(ownerId, 5, StoreRegistrationStep.HOURS));
         assertThatThrownBy(() -> tx.executeWithoutResult(status -> {
             jdbc.update("update store set name = '충돌 수정' where store_id = ?", storeId);
-            service.reviseCompletedStep(ownerId, 6, StoreRegistrationStep.IMAGES);
+            service.reviseStep(ownerId, 5, StoreRegistrationStep.IMAGES);
         })).isInstanceOfSatisfying(StoreException.class, e ->
                 assertThat(e.getErrorCode()).isEqualTo(StoreErrorCode.REGISTRATION_VERSION_CONFLICT));
         assertThat(jdbc.queryForObject("select name from store where store_id = ?", String.class, storeId)).isEqualTo("초기 가게");
-        assertThat(progresses.findByOwnerId(ownerId).orElseThrow().getVersion()).isEqualTo(7);
+        assertThat(progresses.findByOwnerId(ownerId).orElseThrow().getVersion()).isEqualTo(6);
     }
 
     @Test
@@ -104,13 +118,13 @@ class StoreRegistrationProgressIntegrationTest extends IntegrationTestSupport {
         Long storeId = prepareMenuStep();
         assertThatThrownBy(() -> tx.executeWithoutResult(status -> {
             jdbc.update("update store set name = '롤백 수정' where store_id = ?", storeId);
-            service.reviseCompletedStep(ownerId, 6, StoreRegistrationStep.IMAGES);
+            service.reviseStep(ownerId, 5, StoreRegistrationStep.IMAGES);
             throw new IllegalStateException("injected after revision flush");
         })).isInstanceOf(IllegalStateException.class);
         assertThat(jdbc.queryForObject("select name from store where store_id = ?", String.class, storeId)).isEqualTo("초기 가게");
         var restored = progresses.findByOwnerId(ownerId).orElseThrow();
         assertThat(restored.getResumeStep()).isEqualTo(StoreRegistrationStep.MENU);
-        assertThat(restored.getVersion()).isEqualTo(6);
+        assertThat(restored.getVersion()).isEqualTo(5);
     }
 
     @Test
@@ -126,7 +140,7 @@ class StoreRegistrationProgressIntegrationTest extends IntegrationTestSupport {
                     .containsExactlyInAnyOrder("saved", "STORE-001");
             var restored = progresses.findByOwnerId(ownerId).orElseThrow();
             assertThat(restored.getResumeStep()).isEqualTo(StoreRegistrationStep.MENU);
-            assertThat(restored.getVersion()).isEqualTo(7);
+            assertThat(restored.getVersion()).isEqualTo(6);
         } finally {
             start.countDown();
             workers.shutdownNow();
@@ -139,9 +153,9 @@ class StoreRegistrationProgressIntegrationTest extends IntegrationTestSupport {
         try {
             tx.executeWithoutResult(status -> {
                 if (revision) {
-                    service.reviseCompletedStep(ownerId, 6, StoreRegistrationStep.HOURS);
+                    service.reviseStep(ownerId, 5, StoreRegistrationStep.HOURS);
                 } else {
-                    service.completeStep(ownerId, 6, StoreRegistrationStep.MENU, null);
+                    service.completeStep(ownerId, 5, StoreRegistrationStep.MENU, null);
                 }
             });
             return "saved";
@@ -159,7 +173,7 @@ class StoreRegistrationProgressIntegrationTest extends IntegrationTestSupport {
             service.completeStep(ownerId, 0, StoreRegistrationStep.TERMS, null);
         });
         var restored = progresses.findByOwnerId(ownerId).orElseThrow();
-        assertThat(restored.getResumeStep()).isEqualTo(StoreRegistrationStep.STORE);
+        assertThat(restored.getResumeStep()).isEqualTo(StoreRegistrationStep.STORE_INFO);
         assertThat(restored.getVersion()).isEqualTo(1);
         assertThat(restored.getCreatedAt()).isNotNull();
         assertThat(restored.getUpdatedAt()).isNotNull();
@@ -172,19 +186,14 @@ class StoreRegistrationProgressIntegrationTest extends IntegrationTestSupport {
             service.initialize(ownerId);
             service.completeStep(ownerId, 0, StoreRegistrationStep.TERMS, null);
             Long storeId = createStore(ownerId);
-            var result = service.completeStep(ownerId, 1, StoreRegistrationStep.STORE, storeId);
+            var result = service.completeStep(ownerId, 1, StoreRegistrationStep.STORE_INFO, storeId);
             assertThat(result.storeId()).isEqualTo(storeId);
-            assertThat(result.resumeStep()).isEqualTo(StoreRegistrationStep.BUSINESS_VERIFICATION);
+            assertThat(result.resumeStep()).isEqualTo(StoreRegistrationStep.LOCATION);
         });
         assertThat(progresses.findByOwnerId(ownerId).orElseThrow().getVersion()).isEqualTo(2);
-        tx.executeWithoutResult(status -> {
-            var verified = service.completeStep(ownerId, 2, StoreRegistrationStep.BUSINESS_VERIFICATION, null);
-            assertThat(verified.resumeStep()).isEqualTo(StoreRegistrationStep.LOCATION);
-            assertThat(verified.version()).isEqualTo(3);
-        });
         var restored = progresses.findByOwnerId(ownerId).orElseThrow();
         assertThat(restored.getResumeStep()).isEqualTo(StoreRegistrationStep.LOCATION);
-        assertThat(restored.getVersion()).isEqualTo(3);
+        assertThat(restored.getVersion()).isEqualTo(2);
     }
 
     @Test
@@ -195,7 +204,7 @@ class StoreRegistrationProgressIntegrationTest extends IntegrationTestSupport {
         });
         assertThatThrownBy(() -> tx.executeWithoutResult(status -> {
             Long storeId = createStore(ownerId);
-            service.completeStep(ownerId, 0, StoreRegistrationStep.STORE, storeId);
+            service.completeStep(ownerId, 0, StoreRegistrationStep.STORE_INFO, storeId);
         })).isInstanceOfSatisfying(StoreException.class, e ->
                 assertThat(e.getErrorCode()).isEqualTo(StoreErrorCode.REGISTRATION_VERSION_CONFLICT));
         assertThat(jdbc.queryForObject("select count(*) from store where owner_id = ?", Long.class, ownerId)).isZero();
@@ -212,7 +221,7 @@ class StoreRegistrationProgressIntegrationTest extends IntegrationTestSupport {
         });
         assertThatThrownBy(() -> tx.executeWithoutResult(status -> {
             Long storeId = createStore(ownerId);
-            service.completeStep(ownerId, 1, StoreRegistrationStep.STORE, storeId);
+            service.completeStep(ownerId, 1, StoreRegistrationStep.STORE_INFO, storeId);
             throw new IllegalStateException("injected after flush");
         })).isInstanceOf(IllegalStateException.class);
         assertThat(jdbc.queryForObject("select count(*) from store where owner_id = ?", Long.class, ownerId)).isZero();
@@ -255,7 +264,7 @@ class StoreRegistrationProgressIntegrationTest extends IntegrationTestSupport {
         });
         Long otherStoreId = tx.execute(status -> createStore(OWNER_IDS.incrementAndGet()));
         assertThatThrownBy(() -> tx.executeWithoutResult(status ->
-                service.completeStep(ownerId, 1, StoreRegistrationStep.STORE, otherStoreId)))
+                service.completeStep(ownerId, 1, StoreRegistrationStep.STORE_INFO, otherStoreId)))
                 .isInstanceOfSatisfying(StoreException.class, e ->
                         assertThat(e.getErrorCode()).isEqualTo(StoreErrorCode.REGISTRATION_STORE_NOT_ALLOWED));
         assertThat(progresses.findByOwnerId(ownerId).orElseThrow().getStoreId()).isNull();
@@ -264,7 +273,7 @@ class StoreRegistrationProgressIntegrationTest extends IntegrationTestSupport {
     @Test
     void 호출자_트랜잭션_없이_별도로_커밋하지_않는다() {
         assertThatThrownBy(() -> service.initialize(ownerId)).isInstanceOf(IllegalTransactionStateException.class);
-        assertThatThrownBy(() -> service.reviseCompletedStep(ownerId, 0, StoreRegistrationStep.HOURS))
+        assertThatThrownBy(() -> service.reviseStep(ownerId, 0, StoreRegistrationStep.HOURS))
                 .isInstanceOf(IllegalTransactionStateException.class);
         assertThatThrownBy(() -> service.completeStep(ownerId, 0, StoreRegistrationStep.TERMS, null))
                 .isInstanceOf(IllegalTransactionStateException.class);

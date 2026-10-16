@@ -70,4 +70,22 @@ public class CouponEvent extends BaseTimeEntity {
 
     @Column(name = "target_menu_discounted_price", updatable = false)
     private Long targetMenuDiscountedPrice;
+
+    // 메뉴는 저장된 가격 차액을 사용하고 전체 주문은 정률·정액을 계산하여 주문 금액으로 제한한다.
+    public int calculateDiscount(int orderAmount) {
+        long amount;
+        if (discountTargetType == DiscountTargetType.MENU) {
+            amount = targetMenuPrice - targetMenuDiscountedPrice;
+        } else if (discountType == DiscountType.PERCENT) {
+            // 전체 주문 정률은 소수 원을 유지하여 10원 단위로 반올림하며 100%는 전액 할인한다.
+            amount = discountValue == 100 ? orderAmount : ((long) orderAmount * discountValue + 500) / 1000 * 10;
+        } else if (discountValue >= orderAmount) {
+            // 주문 금액 이상이면 반올림 전에 전액 할인한다.
+            amount = orderAmount;
+        } else {
+            // 전체 주문 정액 할인액을 10원 단위로 반올림한다.
+            amount = ((long) discountValue + 5) / 10 * 10;
+        }
+        return Math.toIntExact(Math.min(amount, orderAmount));
+    }
 }

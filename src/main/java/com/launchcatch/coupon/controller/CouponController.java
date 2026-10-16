@@ -2,10 +2,16 @@ package com.launchcatch.coupon.controller;
 
 import com.launchcatch.auth.CustomUserDetails;
 import com.launchcatch.coupon.dto.CouponDetailResponse;
+import com.launchcatch.coupon.dto.CouponEventStatusRequest;
+import com.launchcatch.coupon.dto.CouponEventStatusResponse;
 import com.launchcatch.coupon.dto.CouponIssuanceLimitResponse;
+import com.launchcatch.coupon.dto.CouponIssueRequest;
+import com.launchcatch.coupon.dto.CouponIssueResponse;
 import com.launchcatch.coupon.dto.CouponQrResponse;
 import com.launchcatch.coupon.dto.CouponSummaryResponse;
 import com.launchcatch.coupon.dto.CouponUsageHistoryResponse;
+import com.launchcatch.coupon.dto.CouponUseRequest;
+import com.launchcatch.coupon.dto.CouponUseResponse;
 import com.launchcatch.coupon.service.CouponCommandService;
 import com.launchcatch.coupon.service.CouponLookUpService;
 import com.launchcatch.global.response.CursorPageResponse;
@@ -16,6 +22,7 @@ import io.swagger.v3.oas.annotations.media.Content;
 import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.Positive;
@@ -23,12 +30,14 @@ import java.time.LocalDate;
 import lombok.RequiredArgsConstructor;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.CacheControl;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -41,6 +50,37 @@ public class CouponController {
 
     private final CouponLookUpService couponLookUpService;
     private final CouponCommandService couponCommandService;
+
+    @PostMapping("/owner/coupon-usages")
+    @Operation(summary = "쿠폰 QR 사용", description = "현재 매장 관리 권한과 100m 거리, 계정·QR·사용 시간을 확인하고 할인액과 사용 이력을 확정한다.")
+    @ApiResponse(responseCode = "201", description = "쿠폰과 사용 이력을 같은 트랜잭션으로 확정한 결과다.",
+            useReturnTypeSchema = true)
+    public ResponseEntity<ResponseEnvelope<CouponUseResponse>> redeem(
+            @Parameter(hidden = true) @AuthenticationPrincipal CustomUserDetails user,
+            @Valid @RequestBody CouponUseRequest request) {
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(ResponseEnvelope.success(couponCommandService.redeem(user.getId(), request)));
+    }
+
+    // 인증된 회원에게 요청한 매장의 오늘 이벤트와 발급 가능 상태를 입력 순서대로 반환한다.
+    @PostMapping("/coupon-events:getStatus")
+    @Operation(summary = "매장별 쿠폰 이벤트 상태 조회", description = "오늘의 이벤트와 발급 가능 상태를 일괄 조회한다. 찜 조회 연결 전에는 wished와 canIssue가 false이며 매장 존재 검증은 후속으로 연결한다.")
+    @ApiResponse(responseCode = "200", description = "서버 시각과 매장별 상태를 반환한다.", useReturnTypeSchema = true)
+    public ResponseEnvelope<CouponEventStatusResponse> getEventStatus(
+            @Parameter(hidden = true) @AuthenticationPrincipal CustomUserDetails user,
+            @Valid @RequestBody CouponEventStatusRequest request) {
+        return ResponseEnvelope.success(couponLookUpService.getEventStatus(user.getId(), request.storeIds()));
+    }
+
+    @PostMapping("/coupons")
+    @Operation(summary = "선착순 쿠폰 발급", description = "발급 가능한 재고와 일일 한도를 확인하고 회원 쿠폰을 발급한다.")
+    @ApiResponse(responseCode = "201", description = "발급과 재고 변경, 일일 횟수 반영을 완료한 결과다.", useReturnTypeSchema = true)
+    public ResponseEntity<ResponseEnvelope<CouponIssueResponse>> issueCoupon(
+            @Parameter(hidden = true) @AuthenticationPrincipal CustomUserDetails user,
+            @Valid @RequestBody CouponIssueRequest request) {
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(ResponseEnvelope.success(couponCommandService.issue(user.getId(), request.eventId())));
+    }
 
     // 본인 쿠폰의 QR을 생성하거나 갱신하고 응답 캐시를 금지한다.
     @PostMapping("/coupons/{memberCouponId}:generateQr")

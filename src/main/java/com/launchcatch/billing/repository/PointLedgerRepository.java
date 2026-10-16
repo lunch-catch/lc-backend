@@ -8,6 +8,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
@@ -28,6 +29,19 @@ public interface PointLedgerRepository extends JpaRepository<PointLedger, Long>,
                and l.entryType <> com.launchcatch.billing.entity.EntryType.DEDUCT
             """)
     long sumBalance(@Param("ownerId") Long ownerId);
+
+    // 여러 점주의 잔액을 한 번에 구하며 원장이 없는 점주는 결과에 없다
+    @Query("""
+            select new com.launchcatch.billing.repository.OwnerBalanceRow(l.ownerId, sum(l.amount))
+              from PointLedger l
+             where l.ownerId in :ownerIds
+               and l.entryType <> com.launchcatch.billing.entity.EntryType.DEDUCT
+             group by l.ownerId
+            """)
+    List<OwnerBalanceRow> sumBalanceByOwnerIds(@Param("ownerIds") Collection<Long> ownerIds);
+
+    // 같은 점주가 같은 멱등 키로 남긴 조정이다(uk_point_ledger_adjust_idem)
+    Optional<PointLedger> findByOwnerIdAndIdempotencyKey(Long ownerId, String idempotencyKey);
 
     // 영업일로 귀속되는 RESERVE 와 RELEASE 의 합이다
     @Query("""
@@ -127,4 +141,75 @@ public interface PointLedgerRepository extends JpaRepository<PointLedger, Long>,
             """)
     List<CampaignSpend> sumDeductForCampaignsOn(@Param("campaignIds") Collection<Long> campaignIds,
                                                 @Param("businessDate") LocalDate businessDate);
+
+    // 그 영업일에 RELEASE 가 이미 있는 캠페인이다. 점주 ID 로 걸러 idx_point_ledger_owner_business_date 를 탄다
+    @Query("""
+            select distinct l.campaignId
+              from PointLedger l
+             where l.ownerId in :ownerIds
+               and l.businessDate = :businessDate
+               and l.entryType = com.launchcatch.billing.entity.EntryType.RELEASE
+            """)
+    List<Long> findReleasedCampaignIds(@Param("ownerIds") Collection<Long> ownerIds,
+                                       @Param("businessDate") LocalDate businessDate);
+
+    /*
+     * 캠페인 하나의 그 영업일 RESERVE 를 없을 때만 넣는다. 같은 캠페인과 영업일의 RESERVE 가 이미 있으면 그대로 둔다
+     * (day_reserve_dedup_key UNIQUE). 00:00 예약은 점주 계정 행을 잠근 뒤 계획이 없는 캠페인만 쓰지만, 잠금 밖에서 같은 행을
+     * 쓰는 경로가 생겨도 UNIQUE 위반으로 단계가 멈추지 않게 중복을 값을 바꾸지 않는 갱신으로 흡수한다(구현 계획 D-5).
+     * 금액은 음수로 받는다(chk_point_ledger_amount_sign). 배치가 쓰므로 source 는 RECONCILIATION 이다.
+     */
+    @Modifying
+    @Query(value = """
+            INSERT INTO point_ledger
+                (owner_id, campaign_id, business_date, entry_type, source, amount, created_at, updated_at)
+            VALUES
+                (:ownerId, :campaignId, :businessDate, 'RESERVE', 'RECONCILIATION', :amount, :now, :now)
+            ON DUPLICATE KEY UPDATE point_ledger_id = point_ledger_id
+            """, nativeQuery = true)
+    int insertReserveIfAbsent(@Param("ownerId") Long ownerId,
+                              @Param("campaignId") Long campaignId,
+                              @Param("businessDate") LocalDate businessDate,
+                              @Param("amount") long amount,
+                              @Param("now") LocalDateTime now);
+
+    /*
+     * 캠페인 하나의 그 영업일 RELEASE 를 없을 때만 넣는다. 같은 캠페인과 영업일의 RELEASE 가 이미 있으면 그대로 둔다
+     * (day_reserve_dedup_key UNIQUE). 이어받기로 두 실행이 겹쳐도 한쪽이 UNIQUE 위반으로 실패하지 않는다.
+     * 중복은 값을 바꾸지 않는 갱신으로 흡수하고 INSERT IGNORE 는 쓰지 않는다(구현 계획 D-5).
+     * 금액은 양수다(chk_point_ledger_amount_sign). 배치가 쓰므로 source 는 RECONCILIATION 이다.
+     */
+    @Modifying
+    @Query(value = """
+            INSERT INTO point_ledger
+                (owner_id, campaign_id, business_date, entry_type, source, amount, created_at, updated_at)
+            VALUES
+                (:ownerId, :campaignId, :businessDate, 'RELEASE', 'RECONCILIATION', :amount, :now, :now)
+            ON DUPLICATE KEY UPDATE point_ledger_id = point_ledger_id
+            """, nativeQuery = true)
+    int insertReleaseIfAbsent(@Param("ownerId") Long ownerId,
+                              @Param("campaignId") Long campaignId,
+                              @Param("businessDate") LocalDate businessDate,
+                              @Param("amount") long amount,
+                              @Param("now") LocalDateTime now);
+
+    /*
+     * 충전 직후 재예약 한 건을 없을 때만 넣는다(I-03). 같은 결제와 캠페인의 재예약이 이미 있으면 그대로 둔다
+     * (uk_point_ledger_recharge_reserve_dedup). 중복은 값을 바꾸지 않는 갱신으로 흡수하고 INSERT IGNORE 는
+     * 쓰지 않는다(구현 계획 D-5). 금액은 음수로 받는다(chk_point_ledger_amount_sign).
+     */
+    @Modifying
+    @Query(value = """
+            INSERT INTO point_ledger
+                (owner_id, payment_id, campaign_id, business_date, entry_type, source, amount, created_at, updated_at)
+            VALUES
+                (:ownerId, :paymentId, :campaignId, :businessDate, 'RESERVE', 'RECONCILIATION', :amount, :now, :now)
+            ON DUPLICATE KEY UPDATE point_ledger_id = point_ledger_id
+            """, nativeQuery = true)
+    int insertRechargeReserveIfAbsent(@Param("ownerId") Long ownerId,
+                                      @Param("paymentId") Long paymentId,
+                                      @Param("campaignId") Long campaignId,
+                                      @Param("businessDate") LocalDate businessDate,
+                                      @Param("amount") long amount,
+                                      @Param("now") LocalDateTime now);
 }

@@ -1,13 +1,12 @@
 package com.launchcatch.store.entity;
 
 public enum StoreRegistrationStep {
-    TERMS, STORE, BUSINESS_VERIFICATION, LOCATION, HOURS, IMAGES, MENU;
+    TERMS, STORE_INFO, LOCATION, HOURS, IMAGES, MENU;
 
     public StoreRegistrationStep afterSave() {
         return switch (this) {
-            case TERMS -> STORE;
-            case STORE -> BUSINESS_VERIFICATION;
-            case BUSINESS_VERIFICATION -> LOCATION;
+            case TERMS -> STORE_INFO;
+            case STORE_INFO -> LOCATION;
             case LOCATION -> HOURS;
             case HOURS -> IMAGES;
             case IMAGES -> MENU;

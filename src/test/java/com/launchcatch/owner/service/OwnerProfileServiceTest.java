@@ -8,6 +8,7 @@ import static org.mockito.Mockito.when;
 import com.launchcatch.auth.exception.AuthErrorCode;
 import com.launchcatch.auth.exception.AuthException;
 import com.launchcatch.owner.entity.Owner;
+import com.launchcatch.store.contract.StoreRegistrationQuery;
 import com.launchcatch.owner.entity.OwnerStatus;
 import com.launchcatch.owner.repository.OwnerRepository;
 import java.util.Optional;
@@ -19,7 +20,8 @@ import org.springframework.test.util.ReflectionTestUtils;
 
 class OwnerProfileServiceTest {
     private final OwnerRepository owners = mock(OwnerRepository.class);
-    private final OwnerProfileService service = new OwnerProfileService(owners);
+    private final StoreRegistrationQuery registrationQuery = mock(StoreRegistrationQuery.class);
+    private final OwnerProfileService service = new OwnerProfileService(owners, registrationQuery);
 
     @ParameterizedTest
     @EnumSource(OwnerStatus.class)
@@ -33,6 +35,23 @@ class OwnerProfileServiceTest {
         assertThat(response.email()).isEqualTo("owner@example.com");
         assertThat(response.status()).isEqualTo(status);
         assertThat(response.tutorialViewed()).isFalse();
+    }
+
+    @Test
+    void 온보딩_점주는_저장된_재개_단계를_함께_반환한다() {
+        Owner owner = Owner.create("owner@example.com", "password-hash");
+        when(owners.findById(7L)).thenReturn(Optional.of(owner));
+        when(registrationQuery.findResumeStep(7L)).thenReturn("HOURS");
+        assertThat(service.getMyProfile(7L).registrationStep()).isEqualTo("HOURS");
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = OwnerStatus.class, names = "ONBOARDING", mode = EnumSource.Mode.EXCLUDE)
+    void 온보딩_상태가_아니면_재개_단계는_없다(OwnerStatus status) {
+        Owner owner = Owner.create("owner@example.com", "password-hash");
+        ReflectionTestUtils.setField(owner, "status", status);
+        when(owners.findById(7L)).thenReturn(Optional.of(owner));
+        assertThat(service.getMyProfile(7L).registrationStep()).isNull();
     }
 
     @Test

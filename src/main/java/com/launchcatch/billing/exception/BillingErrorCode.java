@@ -73,7 +73,17 @@ public enum BillingErrorCode implements ErrorCode {
     ORDER_ID_MISMATCH(HttpStatus.CONFLICT, "BILLING-017",
             "주문 정보가 일치하지 않습니다."),
     IDEMPOTENCY_KEY_CONFLICT(HttpStatus.CONFLICT, "BILLING-018",
-            "같은 키로 내용이 다른 요청이 이미 처리되었습니다.");
+            "같은 키로 내용이 다른 요청이 이미 처리되었습니다."),
+
+    // 포인트 조정이 대상 점주와 대사 불일치 건을 확인하며 쓰는 코드다
+    OWNER_NOT_FOUND(HttpStatus.NOT_FOUND, "BILLING-019",
+            "점주를 찾을 수 없습니다."),
+    SETTLEMENT_MISMATCH_NOT_FOUND(HttpStatus.NOT_FOUND, "BILLING-020",
+            "대사 불일치 건을 찾을 수 없습니다."),
+    SETTLEMENT_MISMATCH_ALREADY_RESOLVED(HttpStatus.CONFLICT, "BILLING-021",
+            "이미 해결된 대사 불일치 건입니다."),
+    SETTLEMENT_MISMATCH_OWNER_MISMATCH(HttpStatus.CONFLICT, "BILLING-022",
+            "대사 불일치 건이 조정 대상 점주의 것이 아닙니다.");
 
     private final HttpStatus httpStatus;
     private final String code;

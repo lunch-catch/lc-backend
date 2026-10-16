@@ -138,7 +138,16 @@ public class BatchExecutionService {
 
     @Transactional
     public void succeed(String jobName, LocalDate businessDate) {
-        close(jobName, businessDate, BatchStatus.SUCCESS, null);
+        close(jobName, businessDate, BatchStatus.SUCCESS, null, null);
+    }
+
+    /*
+     * 원천 행을 보지 못해 집계 결과로 쓴 행 수를 처리 건수로 넘기는 호출자를 위한
+     * 오버로드다(#359, 분석). 건수의 뜻은 작업마다 그 호출자가 정한다.
+     */
+    @Transactional
+    public void succeed(String jobName, LocalDate businessDate, int processedCount) {
+        close(jobName, businessDate, BatchStatus.SUCCESS, null, processedCount);
     }
 
     /*
@@ -147,7 +156,7 @@ public class BatchExecutionService {
      */
     @Transactional
     public void fail(String jobName, LocalDate businessDate, String reason) {
-        if (close(jobName, businessDate, BatchStatus.FAILED, shorten(reason))) {
+        if (close(jobName, businessDate, BatchStatus.FAILED, shorten(reason), null)) {
             alert.failed(jobName, businessDate, reason);
         }
     }
@@ -190,11 +199,22 @@ public class BatchExecutionService {
 
     /*
      * 관리자의 수동 재실행이다. 실패한 행만 실행 중으로 되돌린다.
-     * 상태를 조건에 넣었으므로 두 번 눌러도 한 번만 걸린다.
+     * 상태를 조건에 넣었으므로 두 번 눌러도 한 번만 걸린다. 시작 시각과 처리 건수도 이
+     * 시도의 것으로 새로 한다(#359).
      */
     @Transactional
     public boolean retry(String jobName, LocalDate businessDate) {
         return logs.restartFailed(jobName, businessDate, ownerId, now()) == 1;
+    }
+
+    /*
+     * 분석이 쓰는 재실행이다. 실패한 행과 이미 끝난(성공) 행을 모두 실행 중으로 되돌린다.
+     * RUNNING인 행은 조건에 걸리지 않아 아무것도 바뀌지 않는다. retry와 같이 시작 시각과
+     * 처리 건수를 새로 한다(#359).
+     */
+    @Transactional
+    public boolean rerun(String jobName, LocalDate businessDate) {
+        return logs.restartFinished(jobName, businessDate, ownerId, now()) == 1;
     }
 
     /*
@@ -206,8 +226,9 @@ public class BatchExecutionService {
      * 닫지 못한 것은 알리지 않는다. 그 행은 이미 다른 서버가 들고 있어서 그쪽이 판정한다.
      * 양쪽이 알리면 한 번의 장애가 두 번 울린다.
      */
-    private boolean close(String jobName, LocalDate businessDate, BatchStatus status, String reason) {
-        if (logs.close(jobName, businessDate, status, reason, ownerId, now()) == 1) {
+    private boolean close(String jobName, LocalDate businessDate, BatchStatus status, String reason,
+                          Integer processedCount) {
+        if (logs.close(jobName, businessDate, status, reason, processedCount, ownerId, now()) == 1) {
             return true;
         }
         log.warn("내 소유가 아닌 행은 닫지 않는다. job={} businessDate={} 상태={}",

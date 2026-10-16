@@ -3,7 +3,6 @@ package com.launchcatch.campaign.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.when;
 
-import com.launchcatch.IntegrationTestSupport;
 import com.launchcatch.campaign.contract.AgeGroup;
 import com.launchcatch.campaign.contract.StoreAudienceCell;
 import com.launchcatch.campaign.contract.TargetGender;
@@ -11,7 +10,6 @@ import com.launchcatch.campaign.entity.StoreAudience;
 import com.launchcatch.campaign.entity.StoreAudienceGender;
 import com.launchcatch.campaign.repository.StoreAudienceRepository;
 import com.launchcatch.global.config.ClockConfig;
-import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -19,9 +17,6 @@ import java.util.List;
 import java.util.stream.IntStream;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.test.context.bean.override.mockito.MockitoBean;
-import org.springframework.transaction.annotation.Transactional;
 
 /*
  * StoreAudienceUpdaterImpl이 실제 MySQL에 보내는 다중 행 INSERT ... ON DUPLICATE KEY UPDATE가
@@ -29,9 +24,7 @@ import org.springframework.transaction.annotation.Transactional;
  * StoreAudienceRepository의 @Query였지만, 왕복을 줄이려고 다중 행 SQL로 바뀌면서
  * StoreAudienceUpdaterImpl로 옮겨졌다(#186 리뷰 반영).
  */
-@SpringBootTest
-@Transactional
-class StoreAudienceUpdaterImplIntegrationTest extends IntegrationTestSupport {
+class StoreAudienceUpdaterImplIntegrationTest extends com.launchcatch.campaign.AbstractCampaignIntegrationTest {
 
     @Autowired
     private StoreAudienceUpdaterImpl updater;
@@ -39,8 +32,6 @@ class StoreAudienceUpdaterImplIntegrationTest extends IntegrationTestSupport {
     @Autowired
     private StoreAudienceRepository storeAudienceRepository;
 
-    @MockitoBean
-    private Clock clock;
 
     @Test
     void 같은_유일_키로_두_번_부르면_새_행이_아니라_덮어쓴다() {

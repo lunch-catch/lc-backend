@@ -55,6 +55,30 @@ public class MemberCoupon extends BaseTimeEntity {
     @Column(name = "usable_end_at", nullable = false, updatable = false)
     private LocalDateTime usableEndAt;
 
+    private MemberCoupon(Long memberId, Long eventId, UUID couponCode,
+            LocalDateTime usableStartAt, LocalDateTime usableEndAt) {
+        if (memberId == null || memberId <= 0 || eventId == null || eventId <= 0) {
+            throw new IllegalArgumentException("회원과 이벤트 ID는 양수여야 한다.");
+        }
+        Objects.requireNonNull(couponCode);
+        Objects.requireNonNull(usableStartAt);
+        Objects.requireNonNull(usableEndAt);
+        if (!usableEndAt.isAfter(usableStartAt)) {
+            throw new IllegalArgumentException("쿠폰 사용 종료 시각은 시작 시각보다 늦어야 한다.");
+        }
+        this.memberId = memberId;
+        this.couponEventId = eventId;
+        this.couponCode = couponCode;
+        this.usableStartAt = usableStartAt;
+        this.usableEndAt = usableEndAt;
+        this.status = MemberCouponStatus.ISSUED;
+    }
+
+    public static MemberCoupon issue(Long memberId, Long eventId, UUID couponCode,
+            LocalDateTime usableStartAt, LocalDateTime usableEndAt) {
+        return new MemberCoupon(memberId, eventId, couponCode, usableStartAt, usableEndAt);
+    }
+
     /*
      * 사용 가능한 미사용 쿠폰의 QR을 교체하고 버전과 60초 만료 시각을 함께 변경한다.
      * 호출자는 쿠폰 행 잠금을 확보하여 갱신과 삭제, 사용 확정을 직렬화한다.
@@ -72,6 +96,32 @@ public class MemberCoupon extends BaseTimeEntity {
         qrToken = token;
         qrVersion++;
         qrExpiresAt = now.plusSeconds(60);
+    }
+
+    // 호출자는 행 잠금 아래 최신 QR과 사용 시간을 확인하고 마지막 토큰을 보존한다.
+    public void redeem(UUID token, int version, LocalDateTime now) {
+        Objects.requireNonNull(token);
+        Objects.requireNonNull(now);
+        if (status == MemberCouponStatus.USED) {
+            validateQrToken(token, version);
+            throw new CouponException(CouponErrorCode.COUPON_ALREADY_USED);
+        }
+        if (status != MemberCouponStatus.ISSUED
+                || now.isBefore(usableStartAt) || !now.isBefore(usableEndAt)) {
+            throw new CouponException(CouponErrorCode.COUPON_NOT_AVAILABLE);
+        }
+        validateQrToken(token, version);
+        if (qrExpiresAt == null
+                || now.isBefore(qrExpiresAt.minusSeconds(60)) || !now.isBefore(qrExpiresAt)) {
+            throw new CouponException(CouponErrorCode.QR_NOT_VALID);
+        }
+        status = MemberCouponStatus.USED;
+    }
+
+    public void validateQrToken(UUID token, int version) {
+        if (!Objects.equals(token, qrToken) || version != qrVersion) {
+            throw new CouponException(CouponErrorCode.QR_NOT_VALID);
+        }
     }
 
     /**

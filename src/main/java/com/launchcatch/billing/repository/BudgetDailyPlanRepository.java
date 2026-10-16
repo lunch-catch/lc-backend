@@ -42,11 +42,72 @@ public interface BudgetDailyPlanRepository extends JpaRepository<BudgetDailyPlan
                     @Param("changedAt") LocalDateTime changedAt,
                     @Param("now") LocalDateTime now);
 
+    /*
+     * 00:00 예약의 상태 확인이 계획의 중단 표시를 캠페인의 현재 상태로 맞춘다. 반영한 행 수를 돌려준다.
+     *
+     * applyStatus 와 달리 상태 변경 시각이 같아도 반영한다. 예약은 계획을 일단 중단으로 만들고(실패해도 과금하지 않는 쪽)
+     * 같은 시각의 캠페인 상태로 확인해 풀기 때문이다. 저장된 시각보다 이른 상태는 반영하지 않아서, 그 사이 수신이 반영한 더
+     * 늦은 변경을 낡은 상태로 덮지 않는다. 중단 여부도 시각도 그대로면 바꾸지 않고 0 이다.
+     */
+    @Modifying
+    @Query("""
+            update BudgetDailyPlan p
+               set p.paused = :paused,
+                   p.statusChangedAt = :changedAt,
+                   p.updatedAt = :now
+             where p.campaignId = :campaignId
+               and p.businessDate = :businessDate
+               and (p.statusChangedAt is null or p.statusChangedAt <= :changedAt)
+               and (p.paused <> :paused or p.statusChangedAt is null or p.statusChangedAt < :changedAt)
+            """)
+    int confirmStatus(@Param("campaignId") Long campaignId,
+                      @Param("businessDate") LocalDate businessDate,
+                      @Param("paused") boolean paused,
+                      @Param("changedAt") LocalDateTime changedAt,
+                      @Param("now") LocalDateTime now);
+
+    /*
+     * 그날 계획 한 행을 없을 때만 넣는다. 같은 캠페인과 영업일의 계획이 이미 있으면 그대로 둔다
+     * (uk_budget_daily_plan_campaign_date). 중복은 값을 바꾸지 않는 갱신으로 흡수하고 INSERT IGNORE 는 쓰지 않는다(D-5).
+     */
+    @Modifying
+    @Query(value = """
+            INSERT INTO budget_daily_plan
+                (campaign_id, owner_id, business_date, daily_budget, unit_price, paused, status_changed_at,
+                 created_at, updated_at)
+            VALUES
+                (:campaignId, :ownerId, :businessDate, :dailyBudget, :unitPrice, :paused, :statusChangedAt,
+                 :now, :now)
+            ON DUPLICATE KEY UPDATE budget_daily_plan_id = budget_daily_plan_id
+            """, nativeQuery = true)
+    int insertIfAbsent(@Param("campaignId") Long campaignId,
+                       @Param("ownerId") Long ownerId,
+                       @Param("businessDate") LocalDate businessDate,
+                       @Param("dailyBudget") long dailyBudget,
+                       @Param("unitPrice") long unitPrice,
+                       @Param("paused") boolean paused,
+                       @Param("statusChangedAt") LocalDateTime statusChangedAt,
+                       @Param("now") LocalDateTime now);
+
     // 그날 계획 한 행이다. uk_budget_daily_plan_campaign_date 를 탄다
     Optional<BudgetDailyPlan> findByCampaignIdAndBusinessDate(Long campaignId, LocalDate businessDate);
 
     // 그날 여러 캠페인의 계획을 한 번에 읽는다. 행이 없는 캠페인은 결과에 없다
     List<BudgetDailyPlan> findByBusinessDateAndCampaignIdIn(LocalDate businessDate, Collection<Long> campaignIds);
+
+    // 그 영업일 계획에 저장된 단가들이다. 그날 단가는 하나여야 한다. idx_budget_daily_plan_business_date 를 탄다
+    @Query("""
+            select distinct p.unitPrice
+              from BudgetDailyPlan p
+             where p.businessDate = :businessDate
+            """)
+    List<Long> findDistinctUnitPricesOn(@Param("businessDate") LocalDate businessDate);
+
+    // 그 영업일의 계획 전부다. idx_budget_daily_plan_business_date 를 탄다
+    List<BudgetDailyPlan> findByBusinessDate(LocalDate businessDate);
+
+    // 그 영업일에 중단되지 않은 계획이다. 시간대별 목표를 만들 대상이다
+    List<BudgetDailyPlan> findByBusinessDateAndPausedFalse(LocalDate businessDate);
 
     /*
      * 해시 재구성이 읽는다. SELECT ... FOR SHARE 로 읽어 트랜잭션이 끝날 때까지 행에 공유 잠금을 건다.

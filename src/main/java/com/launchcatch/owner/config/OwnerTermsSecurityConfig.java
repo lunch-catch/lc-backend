@@ -17,7 +17,7 @@ public class OwnerTermsSecurityConfig {
         return defaults.apply(http)
                 .securityMatcher("/v1/owner/terms-agreements", "/v1/owner/terms-agreements/**")
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers(HttpMethod.POST, "/v1/owner/terms-agreements").hasRole("OWNER")
+                        .requestMatchers(HttpMethod.PUT, "/v1/owner/terms-agreements").hasRole("OWNER")
                         .anyRequest().denyAll())
                 .build();
     }

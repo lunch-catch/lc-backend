@@ -19,6 +19,16 @@ public interface CampaignRepository extends JpaRepository<Campaign, Long> {
 
     List<Campaign> findByOwnerIdAndStatusIn(Long ownerId, List<CampaignStatus> statuses);
 
+    /*
+     * 캠페인 등록 1단계(쿠폰 조건, #244)가 가게당 DRAFT 1개를 찾아 덮어쓸 때 쓴다. 잠금 없이
+     * 조회하면 같은 가게로 거의 동시에 들어온 두 덮어쓰기 요청이 같은 행을 각자 메모리에서
+     * 고친 뒤 커밋해, 나중에 커밋한 쪽이 먼저 커밋한 쪽의 변경을 조용히 지운다("lost
+     * update"). uk_campaign_draft_store UNIQUE 제약은 "새로 만드는 두 요청"의 경쟁만 막고
+     * 이 경쟁은 못 막는다. findByIdForUpdate와 같은 이유로 잠근다.
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    Optional<Campaign> findByStoreIdAndStatus(Long storeId, CampaignStatus status);
+
     boolean existsByOwnerIdAndStatusNotIn(Long ownerId, List<CampaignStatus> excludedStatuses);
 
     /*
@@ -53,7 +63,7 @@ public interface CampaignRepository extends JpaRepository<Campaign, Long> {
     /*
      * CampaignQueryService.findServableOn 의 조건 그대로다. billing 의 "예약이 있는지"는
      * campaign -> billing 간선이 없어 여기서 읽을 수 없다(설계 문서 2.2, 역방향은 순환이 된다).
-     * ACTIVE -> PAUSED 전이만 있고(95행) PAUSED(OWNER, NO_POINTS)는 그날 ACTIVE였다가 멈춘
+     * ACTIVE -> PAUSED 전이만 있고(FR-092) PAUSED(OWNER, NO_POINTS)는 그날 ACTIVE였다가 멈춘
      * 것만 존재하므로, 오늘 집행 기간에 든 PAUSED(OWNER, NO_POINTS)는 이미 오늘 예약이 있다고
      * 봐도 된다. 그래서 campaign 자신의 컬럼만으로 조건을 표현한다.
      *
@@ -76,4 +86,27 @@ public interface CampaignRepository extends JpaRepository<Campaign, Long> {
             )
             """)
     List<Campaign> findServableOn(@Param("businessDate") LocalDate businessDate, Pageable pageable);
+
+    /*
+     * 점주의 캠페인 목록 조회(#341) 커서 페이징이다. campaignId는 auto-increment라 생성
+     * 순서와 일치해서 TemplateVersionRepository.findPage와 같이 단일 커서 값으로 충분하다.
+     *
+     * owner_id 단일 인덱스(idx_campaign_owner_id)만으로는 커서 조건(campaign_id < ?)이
+     * 더해지면 MySQL이 index_merge(idx_campaign_owner_id, PRIMARY) + filesort로 빠진다(실측
+     * 확인, V13 마이그레이션 주석). JPQL은 테이블 힌트를 낼 수 없어 네이티브 쿼리로 바꾸고
+     * FORCE INDEX로 복합 인덱스(idx_campaign_owner_cursor, V13)를 명시한다. LIMIT도 Pageable이
+     * 아니라 파라미터로 직접 받는다. Spring Data의 네이티브 쿼리 페이지네이션 자동 삽입은
+     * FORCE INDEX가 낀 SQL에서 안전하게 동작하는지 보장되지 않아 직접 적는다.
+     */
+    @Query(value = """
+            SELECT * FROM campaign FORCE INDEX (idx_campaign_owner_cursor)
+            WHERE owner_id = :ownerId
+              AND (:cursorId IS NULL OR campaign_id < :cursorId)
+            ORDER BY campaign_id DESC
+            LIMIT :limit
+            """, nativeQuery = true)
+    List<Campaign> findPageByOwnerId(
+            @Param("ownerId") Long ownerId,
+            @Param("cursorId") Long cursorId,
+            @Param("limit") int limit);
 }

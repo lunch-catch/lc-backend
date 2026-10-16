@@ -96,6 +96,10 @@ public interface BatchExecutionLogRepository extends JpaRepository<BatchExecutio
      * chk_batch_finished 가 "RUNNING 이 아니면 finished_at 이 있어야 한다" 를 요구하므로
      * 상태와 종료 시각을 같은 문장에서 함께 넣는다.
      *
+     * 처리 건수도 이 문장에서 함께 정한다(#359). null 을 받으면 null 로 덮어써서, 이전 시도가
+     * 남긴 건수가 이번 시도에 그대로 남는 것을 막는다. succeed(건수 없음)와 fail 은 null 을
+     * 넘긴다.
+     *
      * 소유자도 조건이다. 생존 신호가 끊겼다가 늦게 깨어난 서버가 남이 들고 있는 실행을 닫는
      * 것을 막는다.
      */
@@ -104,7 +108,7 @@ public interface BatchExecutionLogRepository extends JpaRepository<BatchExecutio
     @Query("""
             UPDATE BatchExecutionLog l
                SET l.status = :status, l.finishedAt = :now, l.failureReason = :reason,
-                   l.updatedAt = :now
+                   l.processedCount = :processedCount, l.updatedAt = :now
              WHERE l.jobName = :jobName
                AND l.businessDate = :businessDate
                AND l.status = com.launchcatch.ops.entity.BatchStatus.RUNNING
@@ -114,6 +118,7 @@ public interface BatchExecutionLogRepository extends JpaRepository<BatchExecutio
               @Param("businessDate") LocalDate businessDate,
               @Param("status") BatchStatus status,
               @Param("reason") String reason,
+              @Param("processedCount") Integer processedCount,
               @Param("ownerId") String ownerId,
               @Param("now") LocalDateTime now);
 
@@ -154,6 +159,10 @@ public interface BatchExecutionLogRepository extends JpaRepository<BatchExecutio
      * 자동 재실행 횟수도 0 으로 되돌린다. 남겨 두면 다음 자동 재실행이 시작부터 상한이라
      * 한 번도 돌지 않고 바로 FAILED 가 된다. chk_batch_retry 가 횟수와 사유를 짝으로
      * 요구하므로 둘을 함께 비운다.
+     *
+     * 시작 시각(createdAt)과 처리 건수도 새로 한다(#359). 남겨 두면 운영 대시보드(A-06)가
+     * 지난 시도의 시작 시각으로 소요 시간을 계산하고, 지난 시도의 건수를 이번 시도의 것으로
+     * 보여 준다.
      */
     @Transactional
     @Modifying(clearAutomatically = true, flushAutomatically = true)
@@ -161,7 +170,8 @@ public interface BatchExecutionLogRepository extends JpaRepository<BatchExecutio
             UPDATE BatchExecutionLog l
                SET l.status = com.launchcatch.ops.entity.BatchStatus.RUNNING,
                    l.finishedAt = null, l.failureReason = null,
-                   l.retryCount = 0, l.retryReason = null,
+                   l.retryCount = 0, l.retryReason = null, l.processedCount = null,
+                   l.createdAt = :now,
                    l.ownerId = :ownerId, l.updatedAt = :now
              WHERE l.jobName = :jobName
                AND l.businessDate = :businessDate
@@ -171,4 +181,30 @@ public interface BatchExecutionLogRepository extends JpaRepository<BatchExecutio
                       @Param("businessDate") LocalDate businessDate,
                       @Param("ownerId") String ownerId,
                       @Param("now") LocalDateTime now);
+
+    /*
+     * 끝난 행(FAILED, SUCCESS)을 실행 중으로 되돌린다. 분석이 쓰는 재실행이다.
+     *
+     * restartFailed와 리셋하는 필드는 같다(시작 시각과 처리 건수 포함, #359). RUNNING이면
+     * 조건에 걸리지 않아 0건이고, 두 번 눌러도 한 번만 걸린다. restartFailed는 "실패 재시도"
+     * 의미를 그대로 두려고 건드리지 않는다.
+     */
+    @Transactional
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("""
+            UPDATE BatchExecutionLog l
+               SET l.status = com.launchcatch.ops.entity.BatchStatus.RUNNING,
+                   l.finishedAt = null, l.failureReason = null,
+                   l.retryCount = 0, l.retryReason = null, l.processedCount = null,
+                   l.createdAt = :now,
+                   l.ownerId = :ownerId, l.updatedAt = :now
+             WHERE l.jobName = :jobName
+               AND l.businessDate = :businessDate
+               AND l.status IN (com.launchcatch.ops.entity.BatchStatus.FAILED,
+                                 com.launchcatch.ops.entity.BatchStatus.SUCCESS)
+            """)
+    int restartFinished(@Param("jobName") String jobName,
+                        @Param("businessDate") LocalDate businessDate,
+                        @Param("ownerId") String ownerId,
+                        @Param("now") LocalDateTime now);
 }

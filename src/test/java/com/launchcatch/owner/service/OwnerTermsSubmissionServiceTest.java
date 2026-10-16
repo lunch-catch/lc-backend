@@ -24,16 +24,16 @@ class OwnerTermsSubmissionServiceTest {
     private final OwnerRepository owners = mock(OwnerRepository.class);
     private final OwnerTermsAgreementRecorder terms = mock(OwnerTermsAgreementRecorder.class);
     private final OwnerTermsSubmissionService service = new OwnerTermsSubmissionService(owners, terms);
-    private final OwnerTermsAgreementRequest request = new OwnerTermsAgreementRequest(List.of(
+    private final OwnerTermsAgreementRequest request = new OwnerTermsAgreementRequest(0L, List.of(
             new OwnerTermsAgreementRequest.Agreement("SERVICE", "1.0", true)));
 
     @Test
     void 현재_온보딩_점주의_동의를_가게_계약으로_전달한다() {
         Owner owner = Owner.create("owner@example.com", "hash");
         when(owners.findByIdForLogin(7L)).thenReturn(Optional.of(owner));
-        when(terms.recordAgreements(eq(7L), anyList())).thenReturn(true);
+        when(terms.recordAgreements(eq(7L), eq(0L), anyList())).thenReturn(new com.launchcatch.store.contract.TermsAgreementResult(true, 1L, "STORE_INFO"));
         assertThat(service.submit(7L, request).requiredTermsCompleted()).isTrue();
-        verify(terms).recordAgreements(7L, List.of(new TermsAgreementCommand("SERVICE", "1.0", true)));
+        verify(terms).recordAgreements(7L, 0L, List.of(new TermsAgreementCommand("SERVICE", "1.0", true)));
         assertThat(owner.getStatus()).isEqualTo(OwnerStatus.ONBOARDING);
         assertThat(owner.isTutorialViewed()).isFalse();
         assertThat(owner.getRefreshTokenHash()).isNull();

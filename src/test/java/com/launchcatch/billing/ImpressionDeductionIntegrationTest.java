@@ -3,7 +3,6 @@ package com.launchcatch.billing;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import com.launchcatch.IntegrationTestSupport;
 import com.launchcatch.billing.contract.BudgetProgress;
 import com.launchcatch.billing.contract.BudgetQueryService;
 import com.launchcatch.billing.contract.DeductionStatus;
@@ -25,7 +24,6 @@ import java.util.concurrent.atomic.AtomicLong;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.data.redis.core.RedisCallback;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -42,8 +40,7 @@ import org.springframework.transaction.support.TransactionTemplate;
  * 커밋을 봐야 하므로 테스트 트랜잭션을 걸지 않고 TransactionTemplate 으로 부른다. 매번 행과 키를 지운다.
  * 그날 계획의 캐시가 테스트 사이에 남으므로 테스트마다 다른 캠페인 ID 를 쓴다.
  */
-@SpringBootTest
-class ImpressionDeductionIntegrationTest extends IntegrationTestSupport {
+class ImpressionDeductionIntegrationTest extends AbstractBillingIntegrationTest {
 
     private static final LocalDate DAY = LocalDate.of(2026, 10, 14);
     private static final Long OWNER = 7L;
@@ -84,7 +81,8 @@ class ImpressionDeductionIntegrationTest extends IntegrationTestSupport {
     }
 
     private List<DeductionStatus> deductConcurrently(List<UUID> serveIds, long campaignId) throws Exception {
-        ExecutorService pool = Executors.newFixedThreadPool(Math.min(serveIds.size(), 16));
+        // Hikari 풀(maximum-pool-size 8)을 넘지 않게 둔다. 넘으면 남는 스레드가 커넥션을 기다리다 connection-timeout 에 깨진다
+        ExecutorService pool = Executors.newFixedThreadPool(Math.min(serveIds.size(), 8));
         try {
             CountDownLatch start = new CountDownLatch(1);
             List<Future<DeductionStatus>> futures = new ArrayList<>();
@@ -133,17 +131,17 @@ class ImpressionDeductionIntegrationTest extends IntegrationTestSupport {
     }
 
     @Test
-    void 같은_캠페인에_동시_50건이_와도_예약액을_넘기지_않고_소진이_원장과_맞는다() throws Exception {
-        long campaignId = plan(30, false);
+    void 같은_캠페인에_동시_20건이_와도_예약액을_넘기지_않고_소진이_원장과_맞는다() throws Exception {
+        long campaignId = plan(10, false);
 
-        List<DeductionStatus> results = deductConcurrently(serveIds(50), campaignId);
+        List<DeductionStatus> results = deductConcurrently(serveIds(20), campaignId);
 
-        assertThat(count(DeductionStatus.BILLED, results)).isEqualTo(30);
-        assertThat(count(DeductionStatus.NOT_BILLED_BUDGET, results)).isEqualTo(20);
-        assertThat(rows("deduction_result", campaignId)).isEqualTo(50);
-        assertThat(rows("point_ledger", campaignId)).isEqualTo(30);
-        assertThat(ledgerDeductSum(campaignId)).isEqualTo(-30 * UNIT);
-        assertThat(spendInValkey(campaignId)).isEqualTo(30 * UNIT);
+        assertThat(count(DeductionStatus.BILLED, results)).isEqualTo(10);
+        assertThat(count(DeductionStatus.NOT_BILLED_BUDGET, results)).isEqualTo(10);
+        assertThat(rows("deduction_result", campaignId)).isEqualTo(20);
+        assertThat(rows("point_ledger", campaignId)).isEqualTo(10);
+        assertThat(ledgerDeductSum(campaignId)).isEqualTo(-10 * UNIT);
+        assertThat(spendInValkey(campaignId)).isEqualTo(10 * UNIT);
     }
 
     @Test
@@ -279,20 +277,21 @@ class ImpressionDeductionIntegrationTest extends IntegrationTestSupport {
 
     @Test
     void 해시가_사라진_뒤_동시에_불러도_재구성은_한_번이고_소진이_이어진다() throws Exception {
-        long campaignId = plan(30, false);
+        long campaignId = plan(10, false);
         for (int i = 0; i < 5; i++) {
             deductInTx(UUID.randomUUID(), campaignId);
         }
         redis.delete("billing:day:" + DAY + ":" + campaignId);
         double rebuildBefore = meterRegistry.counter("billing_spend_hash_rebuild_total").count();
 
-        List<DeductionStatus> results = deductConcurrently(serveIds(40), campaignId);
+        List<DeductionStatus> results = deductConcurrently(serveIds(20), campaignId);
 
         double rebuilds = meterRegistry.counter("billing_spend_hash_rebuild_total").count() - rebuildBefore;
         assertThat(rebuilds).isEqualTo(1.0);
-        assertThat(count(DeductionStatus.BILLED, results)).isEqualTo(25);
-        assertThat(ledgerDeductSum(campaignId)).isEqualTo(-30 * UNIT);
-        assertThat(spendInValkey(campaignId)).isEqualTo(30 * UNIT);
+        assertThat(count(DeductionStatus.BILLED, results)).isEqualTo(5);
+        assertThat(count(DeductionStatus.NOT_BILLED_BUDGET, results)).isEqualTo(15);
+        assertThat(ledgerDeductSum(campaignId)).isEqualTo(-10 * UNIT);
+        assertThat(spendInValkey(campaignId)).isEqualTo(10 * UNIT);
     }
 
     @Test

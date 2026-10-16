@@ -12,7 +12,16 @@ import org.springframework.http.HttpStatus;
 @Getter
 @RequiredArgsConstructor
 public enum CampaignErrorCode implements ErrorCode {
-    ;
+
+    OWNER_NOT_ACTIVE(HttpStatus.FORBIDDEN, "CAMPAIGN-001", "점주 상태가 ACTIVE가 아닙니다."),
+    DISCOUNT_VALUE_INVALID(HttpStatus.UNPROCESSABLE_ENTITY, "CAMPAIGN-002", "할인율은 100 이하여야 합니다."),
+    ISSUE_QUANTITY_INVALID(HttpStatus.UNPROCESSABLE_ENTITY, "CAMPAIGN-003", "발급 수량은 1 이상이어야 합니다."),
+    USABLE_TIME_INVALID(HttpStatus.UNPROCESSABLE_ENTITY, "CAMPAIGN-004", "이용 가능 시간이 올바르지 않습니다."),
+    CAMPAIGN_NOT_OWNED(HttpStatus.FORBIDDEN, "CAMPAIGN-005", "그 캠페인에 접근할 권한이 없습니다."),
+    CAMPAIGN_STATE_NOT_ALLOWED(HttpStatus.CONFLICT, "CAMPAIGN-006", "지금 캠페인 상태에서는 할 수 없는 요청입니다."),
+    DAILY_BUDGET_TOO_LOW(HttpStatus.UNPROCESSABLE_ENTITY, "CAMPAIGN-007", "하루 예산은 최소 하루 예산 이상이어야 합니다."),
+    PERIOD_TOO_SHORT(HttpStatus.UNPROCESSABLE_ENTITY, "CAMPAIGN-008", "집행 기간은 1일 이상이어야 합니다."),
+    START_DATE_TOO_EARLY(HttpStatus.UNPROCESSABLE_ENTITY, "CAMPAIGN-009", "집행 시작일은 오늘 다음 날 이후여야 합니다.");
 
     private final HttpStatus httpStatus;
     private final String code;

@@ -3,7 +3,9 @@ package com.launchcatch.coupon.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -12,29 +14,53 @@ import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
 import com.google.zxing.BinaryBitmap;
+import com.google.zxing.DecodeHintType;
 import com.google.zxing.client.j2se.BufferedImageLuminanceSource;
 import com.google.zxing.common.HybridBinarizer;
 import com.google.zxing.qrcode.QRCodeReader;
 import com.launchcatch.coupon.CouponQrImageEncoder;
 import com.launchcatch.coupon.dto.CouponQrResponse;
+import com.launchcatch.coupon.dto.CouponUseRequest;
+import com.launchcatch.coupon.dto.CouponUseResponse;
 import com.launchcatch.coupon.entity.CouponDailyLimit;
+import com.launchcatch.coupon.entity.CouponEvent;
+import com.launchcatch.coupon.entity.CouponEventStatus;
+import com.launchcatch.coupon.entity.CouponInventory;
+import com.launchcatch.coupon.entity.CouponInventoryStatus;
+import com.launchcatch.coupon.entity.CouponUsageHistory;
+import com.launchcatch.coupon.entity.DiscountTargetType;
+import com.launchcatch.coupon.entity.DiscountType;
 import com.launchcatch.coupon.entity.MemberCoupon;
 import com.launchcatch.coupon.entity.MemberCouponStatus;
 import com.launchcatch.coupon.exception.CouponErrorCode;
 import com.launchcatch.coupon.exception.CouponException;
 import com.launchcatch.coupon.repository.CouponDailyLimitRepository;
+import com.launchcatch.coupon.repository.CouponEventRepository;
+import com.launchcatch.coupon.repository.CouponInventoryRepository;
+import com.launchcatch.coupon.repository.CouponUsageHistoryRepository;
+import com.launchcatch.coupon.repository.MemberCouponRepository.QrReference;
 import com.launchcatch.coupon.repository.MemberCouponRepository;
+import com.launchcatch.global.config.ClockConfig;
+import com.launchcatch.global.exception.CommonErrorCode;
+import com.launchcatch.global.exception.ErrorCode;
 import com.launchcatch.member.contract.MemberInfo;
 import com.launchcatch.member.contract.MemberQueryService;
 import com.launchcatch.member.contract.MemberStatus;
+import com.launchcatch.owner.contract.OwnerAccountStatus;
+import com.launchcatch.owner.contract.OwnerStatusQuery;
+import com.launchcatch.store.contract.StoreInfo;
+import com.launchcatch.store.contract.StoreQueryService;
 import java.io.ByteArrayInputStream;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.Base64;
+import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import javax.imageio.ImageIO;
@@ -47,21 +73,28 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.EnumSource;
+import org.junit.jupiter.params.provider.ValueSource;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
 import org.slf4j.LoggerFactory;
 import org.springframework.aop.framework.ProxyFactory;
 import org.springframework.beans.BeanUtils;
 import org.springframework.dao.DataAccessResourceFailureException;
+import org.springframework.dao.PessimisticLockingFailureException;
+import org.springframework.dao.QueryTimeoutException;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.AnnotationTransactionAttributeSource;
 import org.springframework.transaction.interceptor.TransactionInterceptor;
 import org.springframework.transaction.support.SimpleTransactionStatus;
 
 @ExtendWith(MockitoExtension.class)
-@DisplayName("쿠폰 변경 서비스")
+@DisplayName("쿠폰 QR 생성")
 class CouponCommandServiceTest {
 
     private static final Long MEMBER_ID = 17L;
@@ -247,6 +280,171 @@ class CouponCommandServiceTest {
     }
 
     @Nested
+    @DisplayName("쿠폰 발급")
+    class Issue {
+
+        private static final LocalDate TODAY = LocalDate.of(2026, 10, 10);
+        private final CouponDailyLimitRepository counters = mock(CouponDailyLimitRepository.class);
+        private final CouponEventRepository events = mock(CouponEventRepository.class);
+        private final CouponInventoryRepository inventories = mock(CouponInventoryRepository.class);
+        private final MemberCouponRepository coupons = mock(MemberCouponRepository.class);
+        private final MemberQueryService members = mock(MemberQueryService.class);
+        private CouponDailyLimit counter;
+        private CouponEvent event;
+        private CouponInventory inventory;
+        private CouponCommandService service;
+
+        @BeforeEach
+        void setUp() {
+            counter = BeanUtils.instantiateClass(CouponDailyLimit.class);
+            event = BeanUtils.instantiateClass(CouponEvent.class);
+            ReflectionTestUtils.setField(event, "businessDate", TODAY);
+            ReflectionTestUtils.setField(event, "status", CouponEventStatus.ACTIVE);
+            ReflectionTestUtils.setField(event, "usableStartAt", TODAY.atTime(11, 0));
+            ReflectionTestUtils.setField(event, "usableEndAt", TODAY.atTime(14, 0));
+            inventory = BeanUtils.instantiateClass(CouponInventory.class);
+            ReflectionTestUtils.setField(inventory, "status", CouponInventoryStatus.AVAILABLE);
+            ReflectionTestUtils.setField(inventory, "couponCode", UUID.randomUUID());
+            when(counters.findByMemberIdAndBusinessDate(17L, TODAY)).thenReturn(Optional.of(counter));
+            when(events.findByIdForUpdate(81L)).thenReturn(Optional.of(event));
+            when(members.findById(17L)).thenReturn(Optional.of(member(MemberStatus.ACTIVE)));
+            when(inventories.findFirstByCouponEventIdAndStatusOrderBySequenceNoAsc(81L, CouponInventoryStatus.AVAILABLE))
+                    .thenReturn(Optional.of(inventory));
+            when(coupons.saveAndFlush(any())).thenAnswer(invocation -> {
+                MemberCoupon coupon = invocation.getArgument(0);
+                ReflectionTestUtils.setField(coupon, "id", 1001L);
+                ReflectionTestUtils.setField(coupon, "createdAt", TODAY.atTime(12, 0));
+                return coupon;
+            });
+            service = serviceAt(TODAY.atTime(12, 0));
+        }
+
+        @Test
+        void 발급한_재고의_코드와_이벤트_사용_시간을_저장하고_저장된_발급_시각을_반환한다() {
+            var result = service.issue(17L, 81L);
+            assertThat(result.memberCouponId()).isEqualTo(1001L);
+            assertThat(result.issueTime().toString()).isEqualTo("2026-10-10T12:00+09:00");
+            assertThat(counter.getIssuedCount()).isEqualTo(1);
+            assertThat(inventory.getStatus()).isEqualTo(CouponInventoryStatus.ISSUED);
+            var saved = org.mockito.ArgumentCaptor.forClass(MemberCoupon.class);
+            verify(coupons).saveAndFlush(saved.capture());
+            assertThat(saved.getValue().getCouponCode()).isEqualTo(inventory.getCouponCode());
+            assertThat(saved.getValue().getUsableEndAt()).isEqualTo(event.getUsableEndAt());
+            assertThat(saved.getValue().getStatus()).isEqualTo(MemberCouponStatus.ISSUED);
+        }
+
+        @Test
+        void 이벤트가_없으면_찾을_수_없다는_오류로_거절한다() {
+            when(events.findByIdForUpdate(81L)).thenReturn(Optional.empty());
+            expect(CouponErrorCode.COUPON_NOT_FOUND);
+        }
+
+        @ParameterizedTest
+        @ValueSource(strings = {"10:59:59", "14:00:00", "23:59:59"})
+        void 발급_시간_밖이면_거절한다(String time) {
+            service = serviceAt(TODAY.atTime(LocalTime.parse(time)));
+            expect(CouponErrorCode.COUPON_NOT_AVAILABLE);
+        }
+
+        @Test
+        void 시작_시각은_포함한다() {
+            serviceAt(TODAY.atTime(11, 0)).issue(17L, 81L);
+        }
+
+        @Test
+        void 중지된_이벤트와_다른_영업일의_이벤트는_거절한다() {
+            ReflectionTestUtils.setField(event, "status", CouponEventStatus.PAUSED);
+            expect(CouponErrorCode.COUPON_NOT_AVAILABLE);
+            ReflectionTestUtils.setField(event, "status", CouponEventStatus.ACTIVE);
+            ReflectionTestUtils.setField(event, "businessDate", TODAY.minusDays(1));
+            expect(CouponErrorCode.COUPON_NOT_AVAILABLE);
+        }
+
+        @Test
+        void 없거나_정지된_회원은_거절한다() {
+            when(members.findById(17L)).thenReturn(Optional.empty());
+            expect(CouponErrorCode.MEMBER_ACCOUNT_NOT_ALLOWED);
+            when(members.findById(17L)).thenReturn(Optional.of(member(MemberStatus.SUSPENDED)));
+            expect(CouponErrorCode.MEMBER_ACCOUNT_NOT_ALLOWED);
+        }
+
+        @Test
+        void 기존_발급과_일일_한도와_재고_소진을_구분한다() {
+            when(coupons.existsByCouponEventIdAndMemberId(81L, 17L)).thenReturn(true);
+            expect(CouponErrorCode.EVENT_ALREADY_ISSUED);
+            when(coupons.existsByCouponEventIdAndMemberId(81L, 17L)).thenReturn(false);
+            ReflectionTestUtils.setField(counter, "issuedCount", 3);
+            expect(CouponErrorCode.DAILY_LIMIT_REACHED);
+            ReflectionTestUtils.setField(counter, "issuedCount", 0);
+            when(inventories.findFirstByCouponEventIdAndStatusOrderBySequenceNoAsc(81L, CouponInventoryStatus.AVAILABLE))
+                    .thenReturn(Optional.empty());
+            expect(CouponErrorCode.INVENTORY_EXHAUSTED);
+        }
+
+        @Test
+        void DB_잠금_실패를_그대로_전달한다() {
+            var failure = new QueryTimeoutException("lock timeout");
+            when(events.findByIdForUpdate(81L)).thenThrow(failure);
+            assertThatThrownBy(() -> service.issue(17L, 81L)).isSameAs(failure);
+        }
+
+        @Test
+        void 커밋_실패는_발급_성공으로_반환하지_않는다() {
+            PlatformTransactionManager manager = mock(PlatformTransactionManager.class);
+            when(manager.getTransaction(any())).thenAnswer(invocation -> {
+                TransactionDefinition definition = invocation.getArgument(0);
+                assertThat(definition.getIsolationLevel()).isEqualTo(TransactionDefinition.ISOLATION_READ_COMMITTED);
+                assertThat(definition.getTimeout()).isEqualTo(TransactionDefinition.TIMEOUT_DEFAULT);
+                return new SimpleTransactionStatus();
+            });
+            var failure = new PessimisticLockingFailureException("commit failed");
+            doThrow(failure).when(manager).commit(any());
+            var interceptor = new TransactionInterceptor();
+            interceptor.setTransactionManager(manager);
+            interceptor.setTransactionAttributeSource(new AnnotationTransactionAttributeSource());
+            var proxy = new ProxyFactory(service);
+            proxy.addAdvice(interceptor);
+            CouponCommandService transactionalService = (CouponCommandService) proxy.getProxy();
+
+            assertThatThrownBy(() -> transactionalService.issue(17L, 81L)).isSameAs(failure);
+        }
+
+        @Test
+        void 재고_잠금_뒤_시각을_다시_검사한다() {
+            Clock changing = mock(Clock.class);
+            Clock noon = Clock.fixed(TODAY.atTime(12, 0).atZone(ClockConfig.ZONE).toInstant(), ClockConfig.ZONE);
+            Clock end = Clock.fixed(TODAY.atTime(14, 0).atZone(ClockConfig.ZONE).toInstant(), ClockConfig.ZONE);
+            when(changing.withZone(ClockConfig.ZONE)).thenReturn(noon, noon, end);
+            service = serviceWith(changing);
+            expect(CouponErrorCode.COUPON_NOT_AVAILABLE);
+            assertThat(inventory.getStatus()).isEqualTo(CouponInventoryStatus.AVAILABLE);
+        }
+
+        private void expect(CouponErrorCode code) {
+            assertThatThrownBy(() -> service.issue(17L, 81L)).isInstanceOfSatisfying(CouponException.class,
+                    exception -> assertThat(exception.getErrorCode()).isEqualTo(code));
+        }
+
+        private CouponCommandService serviceAt(LocalDateTime now) {
+            return serviceWith(Clock.fixed(now.atZone(ClockConfig.ZONE).toInstant(), ClockConfig.ZONE));
+        }
+
+        private CouponCommandService serviceWith(Clock clock) {
+            var service = new CouponCommandService(coupons, counters, members, events, inventories,
+                    new CouponQrImageEncoder(), clock, mock(CouponUsageHistoryRepository.class),
+                    mock(OwnerStatusQuery.class), mock(StoreQueryService.class));
+            ReflectionTestUtils.setField(service, "dailyLimit", 3);
+            ReflectionTestUtils.setField(service, "issueStartTime", LocalTime.of(11, 0));
+            ReflectionTestUtils.setField(service, "issueEndTime", LocalTime.of(14, 0));
+            return service;
+        }
+
+        private MemberInfo member(MemberStatus status) {
+            return new MemberInfo(17L, "회원", status, false, false, false, null, null, null, null);
+        }
+    }
+
+    @Nested
     @DisplayName("QR 생성과 갱신")
     class GenerateQr {
 
@@ -261,8 +459,26 @@ class CouponCommandServiceTest {
 
         @BeforeEach
         void setUp() {
-            service = new CouponCommandService(repository, couponDailyLimitRepository, memberQuery, new CouponQrImageEncoder(),
-                    Clock.fixed(Instant.parse("2026-10-10T03:00:00Z"), ZoneOffset.UTC));
+            service = new CouponCommandService(repository, couponDailyLimitRepository, memberQuery,
+                    mock(CouponEventRepository.class), mock(CouponInventoryRepository.class),
+                    new CouponQrImageEncoder(), Clock.fixed(Instant.parse("2026-10-10T03:00:00Z"), ZoneOffset.UTC),
+                    mock(CouponUsageHistoryRepository.class), mock(OwnerStatusQuery.class), mock(StoreQueryService.class));
+        }
+
+        @ParameterizedTest
+        @ValueSource(strings = {
+                "f0a609fe-b881-4607-8179-cefca7c6d219",
+                "07295f2a-465c-4c0c-80c5-d3b3e9b9eb5c",
+                "c7ad4239-64e5-4536-9849-062b75f6527f",
+                "b79a7c10-cb20-4260-a4d4-8524ab4c9984",
+                "65ef8250-14e3-4518-9fc0-0aefad0c00c4"
+        })
+        void 위치_표시와_비슷한_무늬의_QR도_원래_토큰으로_읽는다(String tokenValue) throws Exception {
+            UUID token = UUID.fromString(tokenValue);
+            CouponQrResponse response = new CouponQrResponse(new CouponQrImageEncoder().encode(token),
+                    OffsetDateTime.parse("2026-10-10T12:01:00+09:00"));
+
+            assertThat(decode(response)).isEqualTo(tokenValue);
         }
 
         @Test
@@ -405,9 +621,188 @@ class CouponCommandServiceTest {
             byte[] png = Base64.getDecoder().decode(response.qrImageBytes());
             assertThat(png).startsWith((byte) 0x89, (byte) 0x50, (byte) 0x4e, (byte) 0x47);
             var image = ImageIO.read(new ByteArrayInputStream(png));
+            // 직접 만든 PNG는 QR 위치를 추측하지 않고 원본 격자를 읽는다.
             return new QRCodeReader().decode(new BinaryBitmap(
-                    new HybridBinarizer(new BufferedImageLuminanceSource(image)))).getText();
+                    new HybridBinarizer(new BufferedImageLuminanceSource(image))),
+                    Map.of(DecodeHintType.PURE_BARCODE, true)).getText();
         }
     }
 
+
+    @Nested
+    @DisplayName("QR 사용")
+    @MockitoSettings(strictness = Strictness.LENIENT)
+    class Redeem {
+
+        private static final LocalDateTime NOW = LocalDateTime.of(2026, 10, 16, 12, 0, 0, 123456789);
+        private static final LocalDateTime AUDITED_AT = NOW.plusSeconds(1);
+        private static final UUID TOKEN = UUID.fromString("6c75d5bc-cae3-4eeb-a573-fc3bcb1673a5");
+        private final MemberCouponRepository coupons = mock(MemberCouponRepository.class);
+        private final CouponEventRepository events = mock(CouponEventRepository.class);
+        private final CouponUsageHistoryRepository histories = mock(CouponUsageHistoryRepository.class);
+        private final OwnerStatusQuery owners = mock(OwnerStatusQuery.class);
+        private final StoreQueryService stores = mock(StoreQueryService.class);
+        private final MemberQueryService members = mock(MemberQueryService.class);
+        private final CouponEvent event = BeanUtils.instantiateClass(CouponEvent.class);
+        private final QrReference reference = mock(QrReference.class);
+        private CouponCommandService service;
+        private MemberCoupon coupon;
+
+        @BeforeEach
+        void setUp() {
+            service = new CouponCommandService(coupons, mock(CouponDailyLimitRepository.class), members, events,
+                    mock(CouponInventoryRepository.class), new CouponQrImageEncoder(),
+                    Clock.fixed(NOW.atZone(ClockConfig.ZONE).toInstant(), ClockConfig.ZONE), histories, owners, stores);
+            coupon = MemberCoupon.issue(17L, 21L, UUID.randomUUID(), NOW.minusHours(1), NOW.plusHours(1));
+            ReflectionTestUtils.setField(coupon, "id", 1001L);
+            coupon.renewQr(TOKEN, NOW.minusSeconds(10));
+        }
+
+        @Test
+        void 현재_권한과_스냅샷으로_사용하고_저장된_이력의_생성_시각을_반환한다() {
+            ready();
+            CouponUseResponse response = service.redeem(9L, request());
+            assertThat(response.memberCouponId()).isEqualTo(1001L);
+            assertThat(response.usageHistoryId()).isEqualTo(55L);
+            assertThat(response.discountAmount()).isEqualTo(680);
+            assertThat(response.useTime().toLocalDateTime()).isEqualTo(AUDITED_AT.withNano(123457000));
+            assertThat(coupon.getStatus()).isEqualTo(MemberCouponStatus.USED);
+            assertThat(coupon.getQrToken()).isEqualTo(TOKEN);
+            ArgumentCaptor<CouponUsageHistory> saved = ArgumentCaptor.forClass(CouponUsageHistory.class);
+            verify(histories).saveAndFlush(saved.capture());
+            assertThat(saved.getValue().getCreatedAt()).isEqualTo(AUDITED_AT);
+            assertThat(saved.getValue().getUpdatedAt()).isEqualTo(AUDITED_AT);
+            assertThat(saved.getValue().getDiscountAmount()).isEqualTo(680);
+        }
+
+        @ParameterizedTest
+        @EnumSource(value = OwnerAccountStatus.class, names = {"ONBOARDING", "SUSPENDED", "WITHDRAWN"})
+        void 비활성_점주는_쿠폰을_조회하기_전에_거절한다(OwnerAccountStatus state) {
+            when(owners.findCurrentStatus(9L)).thenReturn(Optional.of(state));
+            assertError(CouponErrorCode.OWNER_ACCOUNT_NOT_ALLOWED);
+            verify(coupons, never()).findQrReference(any());
+        }
+
+        @Test
+        void 점주가_없어도_상태_오류로_거절한다() {
+            assertError(CouponErrorCode.OWNER_ACCOUNT_NOT_ALLOWED);
+        }
+
+        @Test
+        void QR이_없으면_유효하지_않은_QR로_거절한다() {
+            when(owners.findCurrentStatus(9L)).thenReturn(Optional.of(OwnerAccountStatus.ACTIVE));
+            assertError(CouponErrorCode.QR_NOT_VALID);
+        }
+
+        @Test
+        void 잠금_조회에서_쿠폰이_사라지면_QR_오류로_거절한다() {
+            ready();
+            when(coupons.findByIdForUpdate(1001L)).thenReturn(Optional.empty());
+            assertError(CouponErrorCode.QR_NOT_VALID);
+        }
+
+        @Test
+        void 매장_권한_검사는_사용_완료_판정보다_먼저_한다() {
+            ready();
+            ReflectionTestUtils.setField(coupon, "status", MemberCouponStatus.USED);
+            when(stores.canManageStore(9L, 10L)).thenReturn(false);
+            assertError(CouponErrorCode.COUPON_ACCESS_DENIED);
+        }
+
+        @Test
+        void 사용_완료_QR은_만료와_회원_상태를_검사하기_전에_거절한다() {
+            ready();
+            ReflectionTestUtils.setField(coupon, "status", MemberCouponStatus.USED);
+            ReflectionTestUtils.setField(coupon, "qrExpiresAt", NOW.minusDays(1));
+            assertError(CouponErrorCode.COUPON_ALREADY_USED);
+            verify(members, never()).findById(any());
+        }
+
+        @ParameterizedTest
+        @EnumSource(value = MemberStatus.class, names = {"SUSPENDED", "WITHDRAWN"})
+        void 쿠폰_소유_회원의_현재_상태가_비활성이면_거절한다(MemberStatus state) {
+            ready();
+            when(members.findById(17L)).thenReturn(Optional.of(member(state)));
+            assertError(CouponErrorCode.MEMBER_ACCOUNT_NOT_ALLOWED);
+        }
+
+        @Test
+        void 쿠폰_소유_회원이_없으면_거절한다() {
+            ready();
+            when(members.findById(17L)).thenReturn(Optional.empty());
+            assertError(CouponErrorCode.MEMBER_ACCOUNT_NOT_ALLOWED);
+        }
+
+        @Test
+        void 매장과_100m를_초과하면_상태와_이력을_바꾸지_않는다() {
+            ready();
+            when(stores.findAllById(List.of(10L))).thenReturn(List.of(store(38.0, 127.0)));
+            assertError(CouponErrorCode.LOCATION_NOT_ALLOWED);
+            assertThat(coupon.getStatus()).isEqualTo(MemberCouponStatus.ISSUED);
+        }
+
+        @Test
+        void 스냅샷과_매장과_좌표_누락은_서버_정합성_오류다() {
+            ready();
+            when(events.findById(21L)).thenReturn(Optional.empty());
+            assertError(CommonErrorCode.INTERNAL_ERROR);
+            when(events.findById(21L)).thenReturn(Optional.of(event));
+            when(stores.findAllById(List.of(10L))).thenReturn(List.of());
+            assertError(CommonErrorCode.INTERNAL_ERROR);
+            when(stores.findAllById(List.of(10L))).thenReturn(List.of(store(null, 127.0)));
+            assertError(CommonErrorCode.INTERNAL_ERROR);
+            when(stores.findAllById(List.of(10L))).thenReturn(List.of(store(37.5, null)));
+            assertError(CommonErrorCode.INTERNAL_ERROR);
+        }
+
+        @Test
+        void 공개_조회_장애를_계정_부재나_성공으로_바꾸지_않는다() {
+            DataAccessResourceFailureException failure = new DataAccessResourceFailureException("test failure");
+            when(owners.findCurrentStatus(9L)).thenThrow(failure);
+            assertThatThrownBy(() -> service.redeem(9L, request())).isSameAs(failure);
+        }
+
+        private void ready() {
+            when(owners.findCurrentStatus(9L)).thenReturn(Optional.of(OwnerAccountStatus.ACTIVE));
+            when(coupons.findQrReference(TOKEN)).thenReturn(Optional.of(reference));
+            when(reference.getId()).thenReturn(1001L);
+            when(reference.getQrVersion()).thenReturn(coupon.getQrVersion());
+            when(coupons.findByIdForUpdate(1001L)).thenReturn(Optional.of(coupon));
+            when(events.findById(21L)).thenReturn(Optional.of(event));
+            ReflectionTestUtils.setField(event, "storeId", 10L);
+            ReflectionTestUtils.setField(event, "discountTargetType", DiscountTargetType.MENU);
+            ReflectionTestUtils.setField(event, "discountType", DiscountType.PERCENT);
+            ReflectionTestUtils.setField(event, "discountValue", 15);
+            ReflectionTestUtils.setField(event, "targetMenuPrice", 4500L);
+            ReflectionTestUtils.setField(event, "targetMenuDiscountedPrice", 3820L);
+            when(stores.canManageStore(9L, 10L)).thenReturn(true);
+            when(stores.findAllById(List.of(10L))).thenReturn(List.of(store(37.5, 127.0)));
+            when(members.findById(17L)).thenReturn(Optional.of(member(MemberStatus.ACTIVE)));
+            when(histories.saveAndFlush(any())).thenAnswer(invocation -> {
+                CouponUsageHistory history = invocation.getArgument(0);
+                ReflectionTestUtils.setField(history, "id", 55L);
+                ReflectionTestUtils.setField(history, "createdAt", AUDITED_AT);
+                ReflectionTestUtils.setField(history, "updatedAt", AUDITED_AT);
+                return history;
+            });
+        }
+
+        private MemberInfo member(MemberStatus state) {
+            return new MemberInfo(17L, "테스트 회원", state, true, false, false, null, null, null, null);
+        }
+
+        private StoreInfo store(Double latitude, Double longitude) {
+            return new StoreInfo(10L, "테스트 매장", "https://example.test/store.png", latitude, longitude);
+        }
+
+        private CouponUseRequest request() {
+            return new CouponUseRequest(127.0, 37.5, TOKEN, 10000L);
+        }
+
+        private void assertError(ErrorCode expected) {
+            assertThatThrownBy(() -> service.redeem(9L, request())).isInstanceOfSatisfying(CouponException.class,
+                    error -> assertThat(error.getErrorCode()).isEqualTo(expected));
+            verify(histories, never()).saveAndFlush(any());
+        }
+    }
 }

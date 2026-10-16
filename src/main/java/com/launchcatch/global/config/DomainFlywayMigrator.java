@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import javax.sql.DataSource;
@@ -25,13 +26,38 @@ public class DomainFlywayMigrator implements InitializingBean {
 
     static final String ROOT = "db/migration";
 
+    /*
+     * 시험 데이터다. 스키마와 섞지 않고 따로 둔다. 이력도 flyway_history_seed 로 따로 둔다.
+     * 섞으면 운영 이력에 시드 흔적이 남고, 스키마 버전과 시드가 서로의 순서를 막는다.
+     */
+    static final String SEED_ROOT = "db/seed";
+
     /** 도메인 폴더 안의 SQL 경로에서 폴더 이름을 뽑는다. jar 안의 경로에도 걸린다. */
     private static final Pattern DOMAIN_OF = Pattern.compile(ROOT + "/([^/]+)/[^/]+\\.sql$");
 
     private final DataSource dataSource;
+    private final SeedSettings seed;
 
     public DomainFlywayMigrator(DataSource dataSource) {
+        this(dataSource, SeedSettings.DISABLED);
+    }
+
+    public DomainFlywayMigrator(DataSource dataSource, SeedSettings seed) {
         this.dataSource = dataSource;
+        this.seed = seed;
+    }
+
+    /*
+     * 시드를 돌릴지와 SQL 의 자리표시자 값이다.
+     * 기본은 꺼짐이다. 켜는 것은 로컬과 개발 서버뿐이고 운영과 테스트는 켜지 않는다.
+     */
+    public record SeedSettings(boolean enabled, Map<String, String> placeholders) {
+
+        public static final SeedSettings DISABLED = new SeedSettings(false, Map.of());
+
+        public SeedSettings {
+            placeholders = Map.copyOf(placeholders);
+        }
     }
 
     /*
@@ -47,6 +73,25 @@ public class DomainFlywayMigrator implements InitializingBean {
                             + stray + ". 도메인 폴더로 옮긴다");
         }
         domains().forEach(this::migrate);
+        if (seed.enabled()) {
+            migrateSeed();
+        }
+    }
+
+    /*
+     * 모든 도메인이 끝난 뒤 한 번 돈다. 시드는 점주, 가게, 캠페인처럼 여러 도메인 테이블에 걸친다.
+     * 파일은 R__ (repeatable) 이라 내용이 바뀌면 다시 돈다. 그래서 SQL 은 여러 번 돌아도 같은 결과가 되게 쓴다.
+     */
+    private void migrateSeed() {
+        Flyway.configure()
+                .dataSource(dataSource)
+                .locations("classpath:" + SEED_ROOT)
+                .table("flyway_history_seed")
+                .baselineOnMigrate(true)
+                .baselineVersion("0")
+                .placeholders(seed.placeholders())
+                .load()
+                .migrate();
     }
 
     private void migrate(String domain) {

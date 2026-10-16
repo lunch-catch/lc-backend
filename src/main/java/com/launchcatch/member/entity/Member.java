@@ -116,6 +116,7 @@ public class Member extends BaseTimeEntity {
         }
         this.nickname = "탈퇴한 회원";
         this.profileImageUrl = null;
+        this.profile = null;
         this.lastLoginAt = null;
         this.notificationOptIn = false;
         this.notificationOptInAt = null;

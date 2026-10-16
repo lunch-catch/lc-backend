@@ -97,11 +97,23 @@ public class Campaign extends BaseTimeEntity {
     @Column(name = "daily_budget")
     private Long dailyBudget;
 
-    @Column(name = "start_date", nullable = false)
+    /*
+     * startDate, endDate도 V3__campaign_draft_nullable.sql 이 단계별 저장 중인 DRAFT가 아직
+     * 집행 기간을 정하지 않을 수 있게 NULL 허용으로 바꿔 뒀다. dailyBudget과 같은 이유다.
+     */
+    @Column(name = "start_date")
     private LocalDate startDate;
 
-    @Column(name = "end_date", nullable = false)
+    @Column(name = "end_date")
     private LocalDate endDate;
+
+    /*
+     * ACTIVE에서 바꾼 하루 예산은 그날 서빙에 바로 반영하지 않고 다음 영업일 적용
+     * 예약 값으로만 들고 있는다(V51 45행). 00:00 배치가 이 값을 dailyBudget에
+     * 반영하는 쪽은 그 배치 이슈 몫이라(#330), 이 엔티티는 쓰기만 한다.
+     */
+    @Column(name = "pending_daily_budget")
+    private Long pendingDailyBudget;
 
     private Campaign(
             Long ownerId, Long storeId,
@@ -156,6 +168,75 @@ public class Campaign extends BaseTimeEntity {
                 now);
     }
 
+    /*
+     * 캠페인 등록 1단계(쿠폰 조건)만 다시 받는다. 노출 대상(3단계)·예산과 기간(4단계)
+     * 필드는 손대지 않는다(#244). DRAFT가 아닌 캠페인은 이 메서드를 부를 자리가 없어야
+     * 하지만, 호출하는 쪽의 조회 조건이 바뀌어도 엔티티가 스스로 전제를 지키게 한다.
+     */
+    public void updateCouponCondition(
+            DiscountTargetType discountTargetType, DiscountType discountType, int discountValue, Long targetMenuId,
+            int issueQuantity, LocalTime usableStartTime, LocalTime usableEndTime,
+            Integer minOrderAmount, String notice) {
+        if (this.status != CampaignStatus.DRAFT) {
+            throw new IllegalStateException("only DRAFT campaign can update coupon condition: " + this.status);
+        }
+        requireDiscountTarget(discountTargetType, targetMenuId);
+        requireDiscountValue(discountType, discountValue);
+        requireUsableTime(usableStartTime, usableEndTime);
+        requireQuantity(issueQuantity);
+        this.discountTargetType = discountTargetType;
+        this.discountType = discountType;
+        this.discountValue = discountValue;
+        this.targetMenuId = targetMenuId;
+        this.issueQuantity = issueQuantity;
+        this.usableStartTime = usableStartTime;
+        this.usableEndTime = usableEndTime;
+        this.minOrderAmount = minOrderAmount;
+        this.notice = notice;
+    }
+
+    /*
+     * 캠페인 등록 3단계(노출 대상)만 다시 받는다. 쿠폰 조건·예산·기간 필드는 손대지
+     * 않는다(#253). updateCouponCondition과 같은 이유로 DRAFT 전제를 엔티티가 스스로
+     * 지킨다.
+     */
+    public void updateTargetAudience(int targetRadius, TargetGender targetGender, List<AgeGroup> targetAgeGroups) {
+        if (this.status != CampaignStatus.DRAFT) {
+            throw new IllegalStateException("only DRAFT campaign can update target audience: " + this.status);
+        }
+        this.targetRadius = targetRadius;
+        this.targetGender = Objects.requireNonNull(targetGender, "targetGender");
+        this.targetAgeGroups = requireNonEmpty(targetAgeGroups);
+    }
+
+    /*
+     * 캠페인 등록 4단계(하루 예산과 집행 기간)를 DRAFT에서 바로 반영한다. 쿠폰 조건·노출
+     * 대상 필드는 손대지 않는다(#330). updateCouponCondition/updateTargetAudience와 같은
+     * 이유로 DRAFT 전제를 엔티티가 스스로 지킨다.
+     */
+    public void updateBudgetAndPeriod(Long dailyBudget, LocalDate startDate, LocalDate endDate) {
+        if (this.status != CampaignStatus.DRAFT) {
+            throw new IllegalStateException("only DRAFT campaign can update budget and period: " + this.status);
+        }
+        requireDailyBudget(dailyBudget);
+        requirePeriod(startDate, endDate);
+        this.dailyBudget = dailyBudget;
+        this.startDate = startDate;
+        this.endDate = endDate;
+    }
+
+    /*
+     * ACTIVE에서 하루 예산을 바꾸면 다음 영업일 적용 예약 값으로만 저장한다. dailyBudget
+     * 자체는 그대로 둬 그날 서빙에 영향을 주지 않는다(V51 45행, #330).
+     */
+    public void reserveDailyBudget(Long dailyBudget) {
+        if (this.status != CampaignStatus.ACTIVE) {
+            throw new IllegalStateException("only ACTIVE campaign can reserve daily budget: " + this.status);
+        }
+        requireDailyBudget(dailyBudget);
+        this.pendingDailyBudget = dailyBudget;
+    }
+
     public void schedule(LocalDateTime now) {
         if (this.status != CampaignStatus.DRAFT) {
             throw new IllegalStateException("only DRAFT campaign can be scheduled: " + this.status);
@@ -175,6 +256,11 @@ public class Campaign extends BaseTimeEntity {
         this.statusChangedAt = now;
     }
 
+    /*
+     * pendingDailyBudget은 그대로 둔다(#330 자체 리뷰로 찾음). NO_POINTS로 중단된 뒤 같은 날
+     * 충전으로 다시 재개되는 경우(V51 51·49행)가 있어, 중단을 "끝"이 아니라 "잠깐 멈춤"으로
+     * 본다. 재개 뒤에도 그 예약값이 남아 있어야 점주가 걸어 둔 변경 의도가 사라지지 않는다.
+     */
     public void pause(PauseReason reason, LocalDateTime now) {
         if (this.status != CampaignStatus.ACTIVE) {
             throw new IllegalStateException("only ACTIVE campaign can be paused: " + this.status);
@@ -193,12 +279,18 @@ public class Campaign extends BaseTimeEntity {
         this.statusChangedAt = now;
     }
 
+    /*
+     * pendingDailyBudget을 지운다(#330 자체 리뷰로 찾음). ENDED는 되돌릴 수 없는 종료
+     * 상태라(resume은 PAUSED에서만 가능) 이 값을 다시 쓸 일이 없다. 지우지 않으면
+     * 죽은 예약값이 테이블에 그대로 남는다.
+     */
     public void end(LocalDateTime now) {
         if (this.status != CampaignStatus.ACTIVE && this.status != CampaignStatus.PAUSED) {
             throw new IllegalStateException("only ACTIVE or PAUSED campaign can end: " + this.status);
         }
         this.status = CampaignStatus.ENDED;
         this.pausedReason = null;
+        this.pendingDailyBudget = null;
         this.statusChangedAt = now;
     }
 

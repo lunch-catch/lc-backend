@@ -132,6 +132,23 @@ class InMemoryDailySpendCounterTest {
     }
 
     @Test
+    void 재예약_반영은_지금_값보다_큰_값일_때만_올린다() {
+        counter.seed(DAY, 1L, 3000L, 0L, false);
+
+        assertThat(counter.increaseReserved(DAY, 1L, 10000L)).isTrue();
+        assertThat(counter.reservedOf(DAY, 1L)).isEqualTo(10000L);
+        assertThat(counter.increaseReserved(DAY, 1L, 10000L)).isFalse();
+        assertThat(counter.increaseReserved(DAY, 1L, 9999L)).isFalse();
+        assertThat(counter.reservedOf(DAY, 1L)).isEqualTo(10000L);
+    }
+
+    @Test
+    void 해시가_없으면_재예약_반영도_아무것도_하지_않는다() {
+        assertThat(counter.increaseReserved(DAY, 1L, 10000L)).isFalse();
+        assertThat(counter.exists(DAY, 1L)).isFalse();
+    }
+
+    @Test
     void 지우면_다음_판정이_해시_없음이고_다건_조회는_있는_캠페인만_돌려준다() {
         counter.seed(DAY, 1L, 100L, 0L, false);
         counter.seed(DAY, 2L, 50L, 10L, false);

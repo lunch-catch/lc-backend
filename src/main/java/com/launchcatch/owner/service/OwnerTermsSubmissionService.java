@@ -30,6 +30,7 @@ public class OwnerTermsSubmissionService {
         }
         var commands = request.agreements().stream().map(agreement -> new TermsAgreementCommand(
                 agreement.termsType(), agreement.termsVersion(), agreement.agreed())).toList();
-        return new OwnerTermsAgreementResponse(terms.recordAgreements(ownerId, commands));
+        var result = terms.recordAgreements(ownerId, request.version(), commands);
+        return new OwnerTermsAgreementResponse(result.requiredTermsCompleted(), result.version(), result.resumeStep());
     }
 }

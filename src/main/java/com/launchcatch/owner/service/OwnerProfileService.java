@@ -3,6 +3,8 @@ package com.launchcatch.owner.service;
 import com.launchcatch.auth.exception.AuthErrorCode;
 import com.launchcatch.auth.exception.AuthException;
 import com.launchcatch.owner.dto.OwnerProfileResponse;
+import com.launchcatch.owner.entity.OwnerStatus;
+import com.launchcatch.store.contract.StoreRegistrationQuery;
 import com.launchcatch.owner.repository.OwnerRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -13,11 +15,14 @@ import org.springframework.transaction.annotation.Transactional;
 @Transactional(readOnly = true)
 public class OwnerProfileService {
     private final OwnerRepository ownerRepository;
+    private final StoreRegistrationQuery registrationQuery;
 
     public OwnerProfileResponse getMyProfile(Long ownerId) {
         // 현재 점주 상태와 튜토리얼 확인 여부를 반환하기 위해 캐시 대신 DB를 직접 조회한다.
         var owner = ownerRepository.findById(ownerId)
                 .orElseThrow(() -> new AuthException(AuthErrorCode.LOGIN_REQUIRED));
-        return new OwnerProfileResponse(owner.getEmail(), owner.getStatus(), owner.isTutorialViewed());
+        String registrationStep = owner.getStatus() == OwnerStatus.ONBOARDING
+                ? registrationQuery.findResumeStep(ownerId) : null;
+        return new OwnerProfileResponse(owner.getEmail(), owner.getStatus(), owner.isTutorialViewed(), registrationStep);
     }
 }

@@ -26,6 +26,9 @@ import org.testcontainers.utility.DockerImageName;
  */
 public abstract class IntegrationTestSupport {
 
+    // 배치 점유자 이름이다. 점유와 이어받기를 보는 테스트가 이 값을 자기 이름으로 쓴다.
+    public static final String BATCH_OWNER = "batch-1";
+
     protected static final MySQLContainer MYSQL =
             new MySQLContainer(DockerImageName.parse("mysql:8.4"));
 
@@ -40,6 +43,10 @@ public abstract class IntegrationTestSupport {
     /*
      * jwt.secret 은 테스트 전용 값이다. 아홉 테스트가 같은 값을 각자 적고 있었다.
      * 이 값으로 토큰을 만들 수 있는 것은 이 소스셋뿐이다.
+     *
+     * jwt.cookie.secure 는 운영 기본값이 false 이고 HTTPS 를 쓰는 운영에서 true 로 올린다.
+     * 테스트는 운영에 가까운 쪽을 기본으로 삼는다. 쿠키의 Secure 를 보는 테스트가 같은 값을
+     * 각자 properties 로 적으면 그 속성이 컨텍스트 캐시 키를 갈라 컨텍스트가 그만큼 늘어난다.
      */
     @DynamicPropertySource
     static void 컨테이너_주소를_등록한다(DynamicPropertyRegistry registry) {
@@ -48,6 +55,19 @@ public abstract class IntegrationTestSupport {
         registry.add("spring.datasource.password", MYSQL::getPassword);
         registry.add("spring.data.redis.host", VALKEY::getHost);
         registry.add("spring.data.redis.port", () -> VALKEY.getMappedPort(6379));
+        /*
+         * 운영의 커맨드 타임아웃 1초는 톰캣 스레드 점유를 끊으려는 값이고 테스트가 검증하는 대상이 아니다.
+         * 자원이 빠듯한 환경에서는 동시성 테스트의 명령 하나가 순간적으로 1초를 넘겨 같은 커밋이
+         * 통과와 실패를 오간다. 1초 동작은 목으로 예외를 던지는 테스트가 따로 본다.
+         */
+        registry.add("spring.data.redis.timeout", () -> "3s");
         registry.add("jwt.secret", () -> "test-only-secret-not-used-anywhere-else-0123456789abcdef");
+        registry.add("jwt.cookie.secure", () -> "true");
+        registry.add("launchcatch.batch.owner-id", () -> BATCH_OWNER);
+        /*
+         * 테스트도 기본 프로필이 local 이라 시드가 켜진다.
+         * 시드 행이 테스트 데이터와 섞이지 않게 끈다.
+         */
+        registry.add("seed.enabled", () -> "false");
     }
 }

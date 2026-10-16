@@ -45,6 +45,15 @@ public class OwnerTermsAgreement extends BaseTimeEntity {
         this.agreed = agreed;
     }
 
+    public void revise(boolean required, boolean agreed) {
+        if (required && !agreed) {
+            throw new IllegalArgumentException("필수 약관에 동의해야 합니다.");
+        }
+        this.required = required;
+        this.agreed = agreed;
+        this.withdrawnAt = null;
+    }
+
     public static OwnerTermsAgreement record(Long ownerId, String termsType, String termsVersion,
             boolean required, boolean agreed) {
         return new OwnerTermsAgreement(ownerId, termsType, termsVersion, required, agreed);

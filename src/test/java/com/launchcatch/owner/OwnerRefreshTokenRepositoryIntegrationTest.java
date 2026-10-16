@@ -2,7 +2,6 @@ package com.launchcatch.owner;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.launchcatch.IntegrationTestSupport;
 import com.launchcatch.auth.Role;
 import com.launchcatch.auth.opaque.RefreshTokenRepository;
 import com.launchcatch.auth.opaque.TokenHasher;
@@ -10,14 +9,9 @@ import com.launchcatch.owner.repository.OwnerRefreshTokenRepository;
 import java.time.Duration;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
-import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
 import org.springframework.data.redis.core.StringRedisTemplate;
 
-@SpringBootTest(classes = OwnerRefreshTokenRepositoryIntegrationTest.RedisConfig.class)
-class OwnerRefreshTokenRepositoryIntegrationTest extends IntegrationTestSupport {
+class OwnerRefreshTokenRepositoryIntegrationTest extends AbstractOwnerIntegrationTest {
     @Autowired private RefreshTokenRepository repository;
     @Autowired private OwnerRefreshTokenRepository ownerTokens;
     @Autowired private StringRedisTemplate redis;
@@ -100,21 +94,5 @@ class OwnerRefreshTokenRepositoryIntegrationTest extends IntegrationTestSupport 
         ownerTokens.restoreConsumed(TokenHasher.sha256("confirmed"));
         assertThat(ownerTokens.consumeForRotation("confirmed").isReuseDetected()).isTrue();
         assertThat(redis.getExpire("refreshToken:" + TokenHasher.sha256("confirmed"))).isBetween(1L, 60L);
-    }
-
-    @Configuration(proxyBeanMethods = false)
-    static class RedisConfig {
-        @Bean LettuceConnectionFactory connectionFactory() {
-            return new LettuceConnectionFactory(VALKEY.getHost(), VALKEY.getMappedPort(6379));
-        }
-        @Bean StringRedisTemplate redisTemplate(LettuceConnectionFactory connectionFactory) {
-            return new StringRedisTemplate(connectionFactory);
-        }
-        @Bean RefreshTokenRepository refreshTokenRepository(StringRedisTemplate redis) {
-            return new RefreshTokenRepository(redis);
-        }
-        @Bean OwnerRefreshTokenRepository ownerRefreshTokenRepository(StringRedisTemplate redis) {
-            return new OwnerRefreshTokenRepository(redis);
-        }
     }
 }

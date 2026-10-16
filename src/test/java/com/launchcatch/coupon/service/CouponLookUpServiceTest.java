@@ -7,6 +7,7 @@ import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
 import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.mock;
 
 import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
@@ -36,6 +37,17 @@ import com.launchcatch.global.response.PageCursor;
 import com.launchcatch.global.response.PageTokens;
 import com.launchcatch.owner.contract.OwnerAccountStatus;
 import com.launchcatch.owner.contract.OwnerStatusQuery;
+import com.launchcatch.campaign.contract.CampaignInfo;
+import com.launchcatch.campaign.contract.CampaignQueryService;
+import com.launchcatch.campaign.contract.CampaignStatus;
+import com.launchcatch.coupon.dto.CouponEventStatusResponse.Item;
+import com.launchcatch.coupon.dto.CouponEventStatusResponse.CannotIssueReason;
+import com.launchcatch.coupon.dto.CouponEventStatusResponse.EventState;
+import com.launchcatch.coupon.entity.CouponInventoryStatus;
+import com.launchcatch.member.contract.MemberInfo;
+import com.launchcatch.member.contract.MemberQueryService;
+import com.launchcatch.member.contract.MemberStatus;
+import java.time.LocalTime;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -76,6 +88,8 @@ class CouponLookUpServiceTest {
     @Mock CouponEventRepository couponEventRepository;
     @Mock CouponUsageHistoryRepository couponUsageHistoryRepository;
     @Mock OwnerStatusQuery ownerStatusQuery;
+    @Mock CampaignQueryService campaignQueryService;
+    @Mock MemberQueryService memberQueryService;
 
     private CouponLookUpService service;
 
@@ -155,7 +169,7 @@ class CouponLookUpServiceTest {
         @BeforeEach
         void setUp() {
             service = new CouponLookUpService(
-                    memberCouponRepository, couponEventRepository, couponUsageHistoryRepository, couponDailyLimitRepository, ownerStatusQuery,
+                    memberCouponRepository, couponEventRepository, couponUsageHistoryRepository, couponDailyLimitRepository, ownerStatusQuery, campaignQueryService, memberQueryService,
                     Clock.fixed(Instant.parse("2026-10-10T03:00:00Z"), ZoneOffset.UTC));
         }
 
@@ -645,7 +659,7 @@ class CouponLookUpServiceTest {
         // 지정한 시각을 사용하는 상세 조회 서비스를 구성한다.
         private CouponLookUpService serviceAt(Instant instant) {
             CouponLookUpService configured = new CouponLookUpService(
-                    memberCouponRepository, couponEventRepository, couponUsageHistoryRepository, couponDailyLimitRepository, ownerStatusQuery,
+                    memberCouponRepository, couponEventRepository, couponUsageHistoryRepository, couponDailyLimitRepository, ownerStatusQuery, campaignQueryService, memberQueryService,
                     Clock.fixed(instant, ZoneOffset.UTC));
             return configured;
         }
@@ -707,8 +721,10 @@ class CouponLookUpServiceTest {
 
     // 지정한 시계와 일일 발급 한도를 사용하는 조회 서비스를 구성한다.
     private CouponLookUpService configuredService(Clock clock, int dailyLimit) {
-        CouponLookUpService configured = new CouponLookUpService(memberCouponRepository, couponEventRepository, couponUsageHistoryRepository, repository, ownerStatusQuery, clock);
+        CouponLookUpService configured = new CouponLookUpService(memberCouponRepository, couponEventRepository, couponUsageHistoryRepository, repository, ownerStatusQuery, campaignQueryService, memberQueryService, clock);
         ReflectionTestUtils.setField(configured, "dailyLimit", dailyLimit);
+        ReflectionTestUtils.setField(configured, "issueStartTime", LocalTime.of(11, 0));
+        ReflectionTestUtils.setField(configured, "issueEndTime", LocalTime.of(14, 0));
         return configured;
     }
 
@@ -732,7 +748,7 @@ class CouponLookUpServiceTest {
         @BeforeEach
         void setUp() {
             service = new CouponLookUpService(
-                    memberCouponRepository, couponEventRepository, repository, couponDailyLimitRepository, ownerStatusQuery, clock);
+                    memberCouponRepository, couponEventRepository, repository, couponDailyLimitRepository, ownerStatusQuery, campaignQueryService, memberQueryService, clock);
             when(ownerStatusQuery.findCurrentStatus(17L)).thenReturn(Optional.of(OwnerAccountStatus.ACTIVE));
         }
 
@@ -868,5 +884,195 @@ class CouponLookUpServiceTest {
             ReflectionTestUtils.setField(history, "createdAt", useTime);
             return history;
         }
+    }
+
+    @Nested
+    @DisplayName("매장별 쿠폰 이벤트 상태 조회")
+    class EventStatusQuery {
+
+        private static final LocalDate TODAY = LocalDate.of(2026, 10, 14);
+        private static final List<CouponEventStatus> STATES = List.of(CouponEventStatus.ACTIVE, CouponEventStatus.SCHEDULED);
+
+        @BeforeEach
+        void setUp() {
+            service = eventServiceAt("2026-10-14T03:00:00.123456Z");
+        }
+
+        @Test
+        void 조회_결과를_입력_순서대로_반환하며_스냅샷과_발급_이력을_반영한다() {
+            List<Long> storeIds = List.of(20L, 10L, 30L, 40L);
+            var stock = quantity(501L, 42);
+            when(couponEventRepository.findByStoreIdInAndBusinessDateAndStatusIn(storeIds, TODAY, STATES))
+                    .thenReturn(List.of(event(501L, 10L, CouponEventStatus.ACTIVE), event(502L, 20L, CouponEventStatus.SCHEDULED)));
+            when(couponEventRepository.findQuantitiesByEventIdsAndStatus(List.of(501L, 502L), CouponInventoryStatus.AVAILABLE))
+                    .thenReturn(List.of(stock));
+            when(memberCouponRepository.findIssuedEventIds(17L, List.of(501L, 502L))).thenReturn(List.of(501L));
+            when(campaignQueryService.findByStoreIdIn(storeIds)).thenReturn(List.of(
+                    campaign(10L, CampaignStatus.ACTIVE), campaign(20L, CampaignStatus.SCHEDULED),
+                    campaign(30L, CampaignStatus.ACTIVE), campaign(40L, CampaignStatus.PAUSED)));
+            when(memberQueryService.findById(17L)).thenReturn(Optional.of(member(MemberStatus.ACTIVE)));
+            when(repository.findIssuedCountByMemberIdAndBusinessDate(17L, TODAY)).thenReturn(Optional.of(2));
+
+            var response = service.getEventStatus(17L, storeIds);
+
+            assertThat(response.serverTime()).isEqualTo(OffsetDateTime.parse("2026-10-14T12:00:00.123456+09:00"));
+            assertThat(response.items()).extracting(Item::storeId).containsExactly(20L, 10L, 30L, 40L);
+            assertThat(response.items().get(0).eventState()).isEqualTo(EventState.SCHEDULED);
+            Item issued = response.items().get(1);
+            assertThat(issued.eventId()).isEqualTo(501L);
+            assertThat(issued.remainingQuantity()).isEqualTo(42);
+            assertThat(issued.eventState()).isEqualTo(EventState.OPEN);
+            assertThat(issued.hasIssuedToday()).isTrue();
+            assertThat(issued.cannotIssueReason()).isEqualTo(CannotIssueReason.ALREADY_ISSUED);
+            assertThat(issued.usableStartTime()).isEqualTo(OffsetDateTime.parse("2026-10-14T12:30:00+09:00"));
+            assertThat(issued.usableEndTime()).isEqualTo(OffsetDateTime.parse("2026-10-14T15:00:00+09:00"));
+            assertThat(response.items().get(2)).isEqualTo(new Item(30L, true, null, EventState.NO_EVENT, 0,
+                    null, null, false, false, false, CannotIssueReason.NO_EVENT));
+            assertThat(response.items().get(3).hasCampaign()).isFalse();
+            assertThat(response.items()).allMatch(item -> !item.wished() && !item.canIssue());
+        }
+
+        @ParameterizedTest
+        @CsvSource({"ACTIVE, NOT_WISHED", "SUSPENDED, ACCOUNT_NOT_ELIGIBLE", "WITHDRAWN, ACCOUNT_NOT_ELIGIBLE"})
+        void 현재_회원_상태를_발급_가능_사유에_반영한다(MemberStatus status, CannotIssueReason expected) {
+            stubSingleEvent();
+            when(memberQueryService.findById(17L)).thenReturn(Optional.of(member(status)));
+
+            Item item = service.getEventStatus(17L, List.of(10L)).items().getFirst();
+
+            assertThat(item.cannotIssueReason()).isEqualTo(expected);
+            assertThat(item.eventState()).isEqualTo(EventState.SOLD_OUT);
+        }
+
+        @Test
+        void 회원이_없으면_계정_자격이_없는_것으로_안내한다() {
+            stubSingleEvent();
+
+            assertThat(service.getEventStatus(17L, List.of(10L)).items().getFirst().cannotIssueReason())
+                    .isEqualTo(CannotIssueReason.ACCOUNT_NOT_ELIGIBLE);
+        }
+
+        @Test
+        void 일일_한도에_도달하면_찜_미연결보다_한도_사유를_우선한다() {
+            stubSingleEvent();
+            when(memberQueryService.findById(17L)).thenReturn(Optional.of(member(MemberStatus.ACTIVE)));
+            when(repository.findIssuedCountByMemberIdAndBusinessDate(17L, TODAY)).thenReturn(Optional.of(3));
+
+            assertThat(service.getEventStatus(17L, List.of(10L)).items().getFirst().cannotIssueReason())
+                    .isEqualTo(CannotIssueReason.DAILY_LIMIT_REACHED);
+        }
+
+        @ParameterizedTest
+        @CsvSource({"2026-10-13T14:59:59.999999Z, 2026-10-13", "2026-10-13T15:00:00Z, 2026-10-14"})
+        void 한국_자정을_기준으로_이벤트의_영업일을_조회한다(Instant instant, LocalDate expectedDate) {
+            service = eventServiceAt(instant.toString());
+            when(couponEventRepository.findByStoreIdInAndBusinessDateAndStatusIn(List.of(10L), expectedDate, STATES))
+                    .thenReturn(List.of(event(501L, 10L, CouponEventStatus.ACTIVE)));
+
+            var response = service.getEventStatus(17L, List.of(10L));
+
+            assertThat(response.serverTime().toLocalDate()).isEqualTo(expectedDate);
+            assertThat(response.items().getFirst().eventId()).isEqualTo(501L);
+        }
+
+        @Test
+        void 이벤트가_없으면_입력한_매장을_NO_EVENT로_반환한다() {
+            var response = service.getEventStatus(17L, List.of(10L));
+
+            assertThat(response.items()).containsExactly(new Item(10L, false, null, EventState.NO_EVENT, 0,
+                    null, null, false, false, false, CannotIssueReason.NO_EVENT));
+        }
+
+        @Test
+        void 같은_매장의_오늘_이벤트가_중복되면_임의로_고르지_않는다() {
+            when(couponEventRepository.findByStoreIdInAndBusinessDateAndStatusIn(List.of(10L), TODAY, STATES))
+                    .thenReturn(List.of(event(501L, 10L, CouponEventStatus.ACTIVE), event(502L, 10L, CouponEventStatus.SCHEDULED)));
+
+            assertThatThrownBy(() -> service.getEventStatus(17L, List.of(10L)))
+                    .isInstanceOfSatisfying(CouponException.class,
+                            error -> assertThat(error.getErrorCode()).isEqualTo(CommonErrorCode.INTERNAL_ERROR));
+        }
+
+        @Test
+        void 재고_조회_실패를_품절로_바꾸지_않는다() {
+            stubSingleEvent();
+            var failure = new DataAccessResourceFailureException("inventory unavailable");
+            when(couponEventRepository.findQuantitiesByEventIdsAndStatus(List.of(501L), CouponInventoryStatus.AVAILABLE))
+                    .thenThrow(failure);
+
+            assertThatThrownBy(() -> service.getEventStatus(17L, List.of(10L))).isSameAs(failure);
+        }
+
+        @Test
+        void 회원_조회_실패를_자격_없음으로_바꾸지_않는다() {
+            stubSingleEvent();
+            var failure = new DataAccessResourceFailureException("member unavailable");
+            when(memberQueryService.findById(17L)).thenThrow(failure);
+
+            assertThatThrownBy(() -> service.getEventStatus(17L, List.of(10L))).isSameAs(failure);
+        }
+
+        @ParameterizedTest
+        @CsvSource({
+                "ACTIVE, 2, 10:59:59.999999999, SCHEDULED",
+                "ACTIVE, 2, 11:00:00, OPEN",
+                "ACTIVE, 2, 13:59:59.999999999, OPEN",
+                "ACTIVE, 2, 14:00:00, CLOSED",
+                "ACTIVE, 0, 10:59:59.999999999, SCHEDULED",
+                "ACTIVE, 0, 11:00:00, SOLD_OUT",
+                "ACTIVE, 0, 13:59:59.999999999, SOLD_OUT",
+                "ACTIVE, 0, 14:00:00, CLOSED",
+                "SCHEDULED, 2, 12:00:00, SCHEDULED",
+                "SCHEDULED, 0, 12:00:00, SCHEDULED",
+                "SCHEDULED, 2, 14:00:00, CLOSED"
+        })
+        void 발급_시간과_운영_상태를_재고보다_먼저_판정한다(
+                CouponEventStatus status, int quantity, LocalTime now, EventState expected) {
+            service = eventServiceAt(TODAY.atTime(now).toInstant(ZoneOffset.ofHours(9)).toString());
+            var stock = quantity(501L, quantity);
+            when(couponEventRepository.findByStoreIdInAndBusinessDateAndStatusIn(List.of(10L), TODAY, STATES))
+                    .thenReturn(List.of(event(501L, 10L, status)));
+            when(couponEventRepository.findQuantitiesByEventIdsAndStatus(List.of(501L), CouponInventoryStatus.AVAILABLE))
+                    .thenReturn(List.of(stock));
+
+            assertThat(service.getEventStatus(17L, List.of(10L)).items().getFirst().eventState()).isEqualTo(expected);
+        }
+
+        private void stubSingleEvent() {
+            when(couponEventRepository.findByStoreIdInAndBusinessDateAndStatusIn(List.of(10L), TODAY, STATES))
+                    .thenReturn(List.of(event(501L, 10L, CouponEventStatus.ACTIVE)));
+        }
+
+        private CouponLookUpService eventServiceAt(String instant) {
+            return configuredService(Clock.fixed(Instant.parse(instant), ZoneOffset.UTC), 3);
+        }
+
+        private CouponEvent event(Long id, Long storeId, CouponEventStatus status) {
+            CouponEvent event = BeanUtils.instantiateClass(CouponEvent.class);
+            ReflectionTestUtils.setField(event, "id", id);
+            ReflectionTestUtils.setField(event, "storeId", storeId);
+            ReflectionTestUtils.setField(event, "campaignId", id);
+            ReflectionTestUtils.setField(event, "status", status);
+            ReflectionTestUtils.setField(event, "usableStartAt", TODAY.atTime(12, 30));
+            ReflectionTestUtils.setField(event, "usableEndAt", TODAY.atTime(15, 0));
+            return event;
+        }
+
+        private MemberInfo member(MemberStatus status) {
+            return new MemberInfo(17L, "점심헌터", status, false, false, false, null, null, null, null);
+        }
+
+        private CampaignInfo campaign(Long storeId, CampaignStatus status) {
+            return new CampaignInfo(storeId, 1L, storeId, status, 100, null, null, null, null,
+                    null, null, 0, null, 0, null, List.of(), null, null, null, null, null);
+        }
+
+        private CouponEventRepository.InventoryQuantity quantity(Long eventId, long count) {
+            var quantity = mock(CouponEventRepository.InventoryQuantity.class);
+            when(quantity.getEventId()).thenReturn(eventId);
+            when(quantity.getQuantity()).thenReturn(count);
+            return quantity;
+        }
+
     }
 }

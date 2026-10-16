@@ -1,25 +1,203 @@
-# 가게 API 명세서
+# 가게 목록 조회 및 검색
 
-프론트엔드가 사용하는 가게 API의 계약이다. 현재 구현 범위는 점주 약관 동의이며, 이후 가게 등록·조회 API가 구현되면 이 문서에 추가한다.
-공통 인증·응답 규약은 `README.md`, 서버 내부 구조와 정책 설정은 `store-api-design.md`를 참고한다.
+공통 인증·응답·오류 규약은 [api-spec.md](api-spec.md)를 따른다.
 
-## 목록
+## `GET /v1/stores`
 
-| 메서드 | 경로 | 기능 | 권한·허용 상태 |
-|---|---|---|---|
-| POST | `/v1/owner/terms-agreements` | 점주 약관 동의 | OWNER, ONBOARDING |
-
-## 점주 약관 동의
+사용자가 현재 위치를 기준으로 입점 가게를 가까운 순서로 조회한다.
+`query`를 전달하면 가게명 또는 대표 메뉴명에 검색어가 포함된 가게를 조회한다.
+리스트 뷰와 지도 뷰는 같은 API를 사용한다.
 
 ### 인증
 
-유효한 OWNER Access Token을 `accessToken` 쿠키로 보낸다. 현재 상태가 `ONBOARDING`인 점주만 호출할 수 있다.
-브라우저 요청에는 `credentials: 'include'` 또는 `withCredentials: true`를 지정한다.
+`MEMBER`가 사용하는 사용자용 API다.
+
+### 요청
+
+검색어 없이 전체 카테고리에서 조회하는 예시:
+
+```http
+GET /v1/stores?longitude=127.1111967&latitude=37.3947766&filter=ALL&pageSize=20
+```
+
+검색어 없이 한식과 일식을 함께 선택하여 조회하는 예시:
+
+```http
+GET /v1/stores?longitude=127.1111967&latitude=37.3947766&filter=KOREAN&filter=JAPANESE&pageSize=20
+```
+
+검색어로 전체 카테고리에서 검색하는 예시:
+
+```http
+GET /v1/stores?query=국수&longitude=127.1111967&latitude=37.3947766&filter=ALL&pageSize=20
+```
+
+검색어와 함께 한식과 일식을 선택하여 검색하는 예시:
+
+```http
+GET /v1/stores?query=국수&longitude=127.1111967&latitude=37.3947766&filter=KOREAN&filter=JAPANESE&pageSize=20
+```
+
+카테고리를 여러 개 선택하면 `filter`를 같은 이름으로 반복하여 전달한다.
+마지막 예시는 한식 또는 일식 가게 중 가게명이나 대표 메뉴명에 `국수`가 포함된 가게를 검색한다.
+
+| 파라미터 | 필수 | 뜻 |
+| --- | --- | --- |
+| `query` | 아니오 | 생략하면 검색어 조건 없이 조회한다. 전달하면 가게명 또는 대표 메뉴명에 검색어가 포함된 가게를 조회한다. 빈 문자열과 공백만 있는 값은 허용하지 않는다 |
+| `longitude` | 예 | 현재 위치의 경도. `-180~180` |
+| `latitude` | 예 | 현재 위치의 위도. `-90~90` |
+| `filter` | 예 | 카테고리 코드를 하나 이상 전달한다. 여러 개면 같은 파라미터를 반복하고 선택한 카테고리가 없으면 `ALL`을 전달한다. [카테고리 필터](#카테고리-필터)를 따른다 |
+| `pageSize` | 아니오 | 한 번에 받을 개수. 기본 `20`, `1~100` |
+| `pageToken` | 아니오 | 서버가 반환한 다음 페이지 커서. 없으면 첫 페이지부터 조회 |
+
+### 조회 기준
+
+- 최종 등록을 완료한 가게를 대상으로 조회한다.
+- `query`를 전달하면 가게명 또는 대표 메뉴명에 검색어가 포함된 가게를 조회한다.
+- `filter=ALL`이면 모든 카테고리에서 조회한다. 카테고리 코드를 선택하면 그중 하나에 속하는 가게를 조회한다.
+- 조회 반경을 제한하지 않는다. 검색어 유무와 관계없이 조건에 맞는 전체 가게를 거리순으로 조회한다.
+- [정렬과 커서 페이지네이션](#정렬과-커서-페이지네이션)을 적용한다.
+- 캠페인 표시에는 [캠페인 표시 규칙](#캠페인-표시-규칙)을 적용한다.
+- 다음 페이지 요청에서도 검색어, 필터, 좌표를 동일하게 유지한다.
+
+### 오류
+
+| 상태 | 언제 |
+| --- | --- |
+| `400` | 필수 좌표 또는 필터 누락, 빈 검색어, 빈 필터, 허용하지 않는 카테고리, `ALL`과 개별 카테고리 혼용 또는 좌표, `pageSize`, `pageToken`이 올바르지 않음 |
+| `401` | 유효한 사용자 인증이 없음 |
+| `403` | 인증된 사용자가 `MEMBER` 권한이 아님 |
+
+## 카테고리 필터
+
+`filter`는 필수 쿼리 파라미터이며 카테고리 코드의 배열로 받는다.
+여러 카테고리는 같은 파라미터 이름을 반복하여 전달한다.
+
+```text
+filter=KOREAN&filter=CHINESE
+```
+
+여러 카테고리를 선택하면 그중 하나에 속하는 가게를 포함한다(OR 조건).
+선택한 카테고리가 없으면 클라이언트는 `filter=ALL`을 전달한다.
+`filter` 누락이나 빈 값은 `ALL`로 대체하지 않고 `400`으로 거부한다.
+`ALL`은 다른 카테고리와 함께 전달하지 않는다.
+`ALL`은 전체 카테고리를 뜻한다.
+
+요청에서 사용할 수 있는 값은 다음과 같다.
+
+```text
+ALL
+KOREAN
+CHINESE
+JAPANESE
+WESTERN
+BUNSIK
+ASIAN
+FAST_FOOD
+CAFE_DESSERT
+OTHER
+```
+
+## 정렬과 커서 페이지네이션
+
+요청 좌표에서 가게까지의 반올림 전 직선거리 오름차순으로 정렬한다.
+같은 거리에서는 `storeId` 오름차순으로 정렬한다.
+페이지를 넘기면 같은 조건을 만족하는 더 먼 가게가 이어서 반환된다.
+활성 캠페인 여부는 정렬 순서에 영향을 주지 않는다.
+정렬은 고정이므로 `sort` 요청 파라미터를 제공하지 않는다.
+
+목록은 커서 방식으로 페이지를 나눈다.
+`pageToken`이 없으면 첫 페이지를 반환한다.
+다음 페이지는 서버가 반환한 `nextPageToken`을 `pageToken`으로 전달한다.
+마지막 페이지의 `nextPageToken`은 `null`이다.
+
+클라이언트는 서버가 반환한 커서를 해석하거나 수정하지 않고 그대로 전달한다.
+검색어나 필터 또는 현재 위치가 바뀌면 `pageToken`을 비우고 첫 페이지부터 요청한다.
+필터 값의 전달 순서는 선택한 카테고리 집합의 의미를 바꾸지 않는다.
+
+## 캠페인 표시 규칙
+
+- 활성 캠페인 여부와 할인 정보는 당일 활성 캠페인을 기준으로 반환한다.
+- 활성 캠페인 표시는 요청 위치와 관계없이 당일 캠페인 상태를 기준으로 판단한다.
+- 활성 캠페인이 없는 가게는 `hasActiveCampaign=false`, `activeCampaign=null`로 반환한다.
+- `discountTargetType=MENU`이면 `targetMenu`에 할인 대상 메뉴 정보를 반환한다.
+- `discountTargetType=ALL`이면 `targetMenu`는 `null`이다.
+
+## 응답 `200`
+
+```json
+{
+  "code": "SUCCESS",
+  "message": "요청이 성공적으로 처리되었습니다.",
+  "data": {
+    "items": [
+      {
+        "storeId": 10,
+        "name": "런치식당",
+        "businessCategory": "KOREAN",
+        "longitude": 127.1135000,
+        "latitude": 37.3960000,
+        "distanceMeters": 245,
+        "hasActiveCampaign": true,
+        "activeCampaign": {
+          "discountTargetType": "MENU",
+          "discountType": "PERCENT",
+          "discountValue": 20,
+          "targetMenu": {
+            "menuId": 701,
+            "name": "숯불갈비 정식",
+            "price": 12000
+          }
+        }
+      }
+    ],
+    "nextPageToken": null
+  }
+}
+```
+
+아래 필드는 성공 응답의 `data` 안에 있다.
+상위 객체가 존재하면 표의 모든 필드를 반환하며 `null`인 필드도 생략하지 않는다.
+표의 null 허용 여부는 상위 객체가 존재할 때를 기준으로 한다.
+
+| 필드 | 타입 | null 허용 | 뜻 |
+| --- | --- | --- | --- |
+| `items` | array<object> | 아니오 | 조회된 가게 목록을 반환한다. 결과가 없으면 빈 배열이다 |
+| `nextPageToken` | string | 예 | 다음 페이지 커서를 반환한다. 마지막 페이지면 `null`이다 |
+| `storeId` | integer | 아니오 | 가게 ID를 반환한다 |
+| `name` | string | 아니오 | 가게명을 반환한다 |
+| `businessCategory` | string(enum) | 아니오 | 가게의 업종 코드를 반환한다. [카테고리 필터](#카테고리-필터)에 나열한 코드 중 `ALL`을 제외한 값을 사용한다 |
+| `longitude` | number | 아니오 | 가게 경도를 반환한다 |
+| `latitude` | number | 아니오 | 가게 위도를 반환한다 |
+| `distanceMeters` | integer | 아니오 | 요청 좌표에서 가게까지의 직선거리를 미터 단위로 반올림한 정수로 반환한다. 소수 부분이 0.5 이상이면 올림한다 |
+| `hasActiveCampaign` | boolean | 아니오 | 당일 활성 캠페인이 있는지 반환한다 |
+| `activeCampaign` | object | 예 | 당일 활성 캠페인의 요약을 반환한다. 없으면 `null`이다 |
+| `discountTargetType` | string(enum) | 아니오 | 할인 대상 유형으로 `ALL` 또는 `MENU`를 반환한다 |
+| `discountType` | string(enum) | 아니오 | 할인 유형으로 `PERCENT` 또는 `AMOUNT`를 반환한다 |
+| `discountValue` | integer | 아니오 | `PERCENT`이면 할인율(%), `AMOUNT`이면 할인액(원)을 반환한다 |
+| `targetMenu` | object | 예 | `MENU`이면 할인 대상 메뉴를 반환한다. `ALL`이면 `null`이다 |
+| `menuId` | integer | 아니오 | 할인 대상 메뉴 ID를 반환한다 |
+| `name` | string | 아니오 | 할인 대상 메뉴명을 반환한다 |
+| `price` | integer | 아니오 | 할인 전 메뉴 가격을 원 단위로 반환한다 |
+
+전체 건수는 반환하지 않는다.
+
+`distanceMeters`는 `310.4m`이면 `310`, `310.5m`이면 `311`로 반환한다.
+정렬에는 반올림 전 거리를 사용한다.
+
+
+## 점주 약관 동의
+
+`PUT /v1/owner/terms-agreements`
+
+인증된 OWNER의 DB 현재 상태가 ONBOARDING일 때 약관 단계의 전체 입력을 저장한다.
+가게 ID는 필요하지 않으며 인증 주체의 점주 ID를 사용한다.
 
 ### 요청
 
 ```json
 {
+  "version": 0,
   "agreements": [
     {"termsType": "SERVICE", "termsVersion": "1.0", "agreed": true},
     {"termsType": "MARKETING", "termsVersion": "1.0", "agreed": false}
@@ -27,40 +205,34 @@
 }
 ```
 
-위 종류와 버전은 요청 형식의 예시이며 운영 정책이 아니다. 실제 약관 종류·현재 버전·필수 여부는 서버와 합의한 정책을 사용한다. 약관 본문·정책 조회 API는 현재 제공하지 않는다.
+약관 식별자는 형식 예시이며 실제 종류·버전·필수 여부는 서버 정책으로 확정한다.
+version은 필수인 0 이상의 정수다. 진행 상태가 없으면 최초 버전은 0이다.
+agreements는 1~100개이며 각 항목의 종류(최대 50자), 버전(최대 30자), 동의 여부는 필수다.
+종류·버전의 빈 값, null 항목, 지원하지 않는 종류·버전과 요청 안의 같은 종류 중복은 거부한다.
+현재 정책의 필수 동의 완료 여부는 기존 저장 내역과 이번 입력을 합쳐 판단한다. 요청에 생략한 필수 약관은 현재 버전의 철회되지 않은 기존 동의가 있으면 인정한다. 과거 버전이나 철회한 동의는 인정하지 않으며 필수 약관에 명시적으로 미동의하면 거부한다.
+생략한 현재 버전의 선택 약관은 미동의로 저장한다. 과거 버전의 기록은 보존한다.
 
-| 필드 | 타입 | 필수 | null 가능 | 제한·설명 |
-|---|---|---|---|---|
-| `agreements` | array | 예 | 아니요 | 1~100개. null 항목 불가 |
-| `agreements[].termsType` | string | 예 | 아니요 | 공백이 아닌 최대 50자. 서버 정책의 종류와 정확히 일치 |
-| `agreements[].termsVersion` | string | 예 | 아니요 | 공백이 아닌 최대 30자. 서버 정책의 현재 버전과 정확히 일치 |
-| `agreements[].agreed` | boolean | 예 | 아니요 | 동의 여부. 선택 약관은 false 허용 |
-
-필수 여부는 요청으로 전달하지 않는다. 같은 요청에 동일한 종류를 두 번 넣으면 `400`이다.
-
-### 성공 응답
-
-`201 Created`
+### 응답 `200`
 
 ```json
 {
   "code": "SUCCESS",
   "message": "요청이 성공적으로 처리되었습니다.",
-  "data": {"requiredTermsCompleted": true}
+  "data": {"requiredTermsCompleted": true, "version": 1, "resumeStep": "STORE_INFO"}
 }
 ```
 
-| 필드 | 타입 | null 가능 | 설명 |
+| 응답 필드 | 타입 | null 허용 | 의미 |
 |---|---|---|---|
-| `data.requiredTermsCompleted` | boolean | 아니요 | 현재 정책의 필수 약관 동의 완료 여부. 성공 시 true |
+| requiredTermsCompleted | boolean | 아니오 | 현재 필수 약관 완료 여부로 성공 시 true |
+| version | integer | 아니오 | 저장 후 진행 상태 버전 |
+| resumeStep | string(enum) | 아니오 | STORE_INFO, LOCATION, HOURS, IMAGES, MENU 중 현재 재개 단계 |
 
-### 클라이언트에서 알아야 할 동작
-
-- 기존에 제출한 내역과 이번 요청을 합쳐 현재 버전의 필수 약관에 모두 동의해야 성공한다. 과거 버전의 동의는 현재 버전의 동의를 대신하지 않는다.
-- 필수 약관 미동의·누락으로 실패하면 이번 요청의 선택 약관 내역도 저장되지 않는다.
-- 동일 점주의 동일 종류·버전은 동의 여부와 관계없이 다시 제출할 수 없다. 반복 요청은 `409`이며 기존 내역을 덮어쓰지 않는다.
-- 필수 동의가 이미 완료됐다면 아직 제출하지 않은 선택 약관을 추가할 수 있다. 선택 동의 변경·철회 API는 현재 제공하지 않는다.
-- 성공해도 점주 상태는 `ONBOARDING`을 유지한다. 튜토리얼 상태·토큰을 변경하거나 인증 쿠키를 갱신하지 않는다.
+최초 성공은 TERMS에서 STORE_INFO로 진행한다. 이미 완료한 약관을 수정하면 현재 재개 위치를 유지한다.
+같은 입력을 다시 저장해도 요청 버전은 1 증가한다. 응답 version을 다음 저장에 사용한다.
+오래된 version은 409로 거부한다. 약관 내역과 진행 상태는 함께 커밋하거나 롤백한다.
+점주 상태는 ONBOARDING을 유지하며 튜토리얼과 토큰·인증 쿠키를 변경하지 않는다.
+진행 상태가 없더라도 유효한 기존 약관 동의는 인정하며, 약관 전체의 재동의를 요구하지 않는다. 기존 동의자의 진행 상태 자동 생성·이관 정책은 별도로 확정한다.
 
 ### 오류
 
@@ -71,9 +243,10 @@
 | 401 | AUTH-005 | 인증 누락·만료·무효 또는 점주 계정이 존재하지 않음 |
 | 403 | AUTH-006 | OWNER가 아닌 역할 |
 | 403 | OWNER-002 | 현재 상태가 ACTIVE·SUSPENDED·WITHDRAWN |
-| 409 | STORE-001 | 동일 종류·버전의 내역이 이미 존재 |
-| 422 | STORE-002 | 필수 약관 미동의 또는 현재 버전의 필수 동의 누락 |
-| 503 | STORE-003 | 서버 약관 정책 미설정. Retry-After 헤더 포함 |
+| 409 | STORE-001 | 요청 버전 충돌 |
+| 409 | STORE-005 | DB UNIQUE 제약 충돌 |
+| 422 | STORE-006 | 필수 약관 미동의 또는 저장 후 현재 정책의 필수 동의 미충족 |
+| 503 | STORE-007 | 서버 약관 정책 미설정. Retry-After 헤더 포함 |
 | 500 | COMMON-001 | 서버 처리 실패 |
 
-오류 응답은 공통 응답 봉투를 따른다. 인증 실패 시 재발급 흐름은 `auth-api-spec.md`를 참고한다.
+오류 응답은 공통 응답 봉투를 따른다.

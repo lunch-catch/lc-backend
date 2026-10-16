@@ -9,6 +9,7 @@ import com.launchcatch.ops.repository.BatchExecutionLogRepository;
 import com.launchcatch.ops.scheduler.StepOutcome;
 import com.launchcatch.ops.service.BatchExecutionService;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
@@ -21,10 +22,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.test.context.DynamicPropertyRegistry;
-import org.springframework.test.context.DynamicPropertySource;
 
 /*
  * 점유와 이어받기를 실제 MySQL 에서 확인한다.
@@ -34,18 +32,12 @@ import org.springframework.test.context.DynamicPropertySource;
  * 종료 시각, 실패 사유는 짝을 요구하는 제약이 걸려 있어 한쪽만 바꾸면 저장이 거부된다.
  * 그 거부는 배치가 실패를 기록하려는 순간에 터지므로, 실패 기록 자체가 사라진다.
  */
-@SpringBootTest
-class BatchExecutionIntegrationTest extends IntegrationTestSupport {
+class BatchExecutionIntegrationTest extends AbstractOpsIntegrationTest {
 
-    private static final String ME = "batch-1";
+    private static final String ME = IntegrationTestSupport.BATCH_OWNER;
     private static final String OTHER = "batch-2";
     private static final String JOB = "LOAD_DAILY_CANDIDATE";
     private static final LocalDate DATE = LocalDate.of(2026, 10, 6);
-
-    @DynamicPropertySource
-    static void 이_배치의_점유자를_등록한다(DynamicPropertyRegistry registry) {
-        registry.add("launchcatch.batch.owner-id", () -> ME);
-    }
 
     @Autowired
     private BatchExecutionService service;
@@ -124,7 +116,7 @@ class BatchExecutionIntegrationTest extends IntegrationTestSupport {
      * 상태만 바꾸는 UPDATE 를 쓰면 여기서 저장이 거부된다.
      */
     @Test
-    @DisplayName("성공으로 닫으면 종료 시각이 남고 사유는 비어 있다")
+    @DisplayName("성공으로 닫으면 종료 시각이 남고 사유와 처리 건수는 비어 있다")
     void 성공으로_닫는다() {
         service.claim(JOB, DATE);
 
@@ -134,6 +126,18 @@ class BatchExecutionIntegrationTest extends IntegrationTestSupport {
         assertThat(row.getStatus()).isEqualTo(BatchStatus.SUCCESS);
         assertThat(row.getFinishedAt()).isNotNull();
         assertThat(row.getFailureReason()).isNull();
+        assertThat(row.getProcessedCount()).isNull();
+    }
+
+    /** #359. 원천 행을 보지 못하는 호출자(분석)가 집계 결과로 쓴 행 수를 처리 건수로 남긴다. */
+    @Test
+    @DisplayName("건수를 주고 성공으로 닫으면 처리 건수가 그 값으로 남는다")
+    void 성공으로_닫으면_처리_건수가_남는다() {
+        service.claim(JOB, DATE);
+
+        service.succeed(JOB, DATE, 120);
+
+        assertThat(reload(JOB).getProcessedCount()).isEqualTo(120);
     }
 
     /** chk_batch_failure_reason 이 FAILED 와 사유를 짝으로 요구한다. */
@@ -168,6 +172,19 @@ class BatchExecutionIntegrationTest extends IntegrationTestSupport {
         assertThat(row.getFailureReason()).isNull();
         assertThat(row.getOwnerId()).isEqualTo(ME);
         assertThat(service.retry(JOB, DATE)).isFalse();
+    }
+
+    /** #359. 지난 시도의 시작 시각이 남으면 운영 대시보드가 지난 시도의 소요 시간을 보여 준다. */
+    @Test
+    @DisplayName("수동 재실행은 시작 시각을 새 시도의 시각으로 되돌린다")
+    void 수동_재실행이_시작_시각을_새로_한다() {
+        service.claim(JOB, DATE);
+        LocalDateTime startedAt = reload(JOB).getCreatedAt();
+        service.fail(JOB, DATE, "원본을 읽지 못했다");
+
+        assertThat(service.retry(JOB, DATE)).isTrue();
+
+        assertThat(reload(JOB).getCreatedAt()).isAfter(startedAt);
     }
 
     @Test
@@ -256,6 +273,70 @@ class BatchExecutionIntegrationTest extends IntegrationTestSupport {
         BatchExecutionLog row = reload(JOB);
         assertThat(row.getRetryCount()).isZero();
         assertThat(row.getRetryReason()).isNull();
+    }
+
+    /*
+     * 재실행(rerun)은 retry와 달리 실패한 행도 되돌린다. restartFailed와 같은 리셋 필드를 쓰므로
+     * chk_batch_failure_reason, chk_batch_finished 가 짝을 요구하는 것도 같이 확인된다.
+     */
+    @Test
+    @DisplayName("재실행은 실패한 행을 되돌리고 두 번은 걸리지 않는다")
+    void 재실행_FAILED() {
+        service.claim(JOB, DATE);
+        service.fail(JOB, DATE, "원본을 읽지 못했다");
+
+        assertThat(service.rerun(JOB, DATE)).isTrue();
+
+        BatchExecutionLog row = reload(JOB);
+        assertThat(row.getStatus()).isEqualTo(BatchStatus.RUNNING);
+        assertThat(row.getFinishedAt()).isNull();
+        assertThat(row.getFailureReason()).isNull();
+        assertThat(row.getOwnerId()).isEqualTo(ME);
+        assertThat(service.rerun(JOB, DATE)).isFalse();
+    }
+
+    /** retry는 FAILED만 다뤄서 이 행을 못 되돌린다. rerun만 되는 새 경로다(#339). */
+    @Test
+    @DisplayName("재실행은 이미 성공한 행도 되돌린다")
+    void 재실행_SUCCESS() {
+        service.claim(JOB, DATE);
+        service.succeed(JOB, DATE);
+
+        assertThat(service.retry(JOB, DATE)).isFalse();
+        assertThat(service.rerun(JOB, DATE)).isTrue();
+
+        BatchExecutionLog row = reload(JOB);
+        assertThat(row.getStatus()).isEqualTo(BatchStatus.RUNNING);
+        assertThat(row.getFinishedAt()).isNull();
+        assertThat(row.getFailureReason()).isNull();
+        assertThat(row.getOwnerId()).isEqualTo(ME);
+    }
+
+    /*
+     * #359. 분석이 매일 밤 전날 FAILED나 SUCCESS로 끝난 영업일을 사람 없이 재실행해도, 그
+     * 시도의 시작 시각과 처리 건수가 지난 시도의 것으로 뒤섞이지 않아야 한다.
+     */
+    @Test
+    @DisplayName("재실행은 시작 시각을 새로 하고 처리 건수를 비운다")
+    void 재실행이_시작_시각과_처리_건수를_새로_한다() {
+        service.claim(JOB, DATE);
+        LocalDateTime startedAt = reload(JOB).getCreatedAt();
+        service.succeed(JOB, DATE, 77);
+
+        assertThat(service.rerun(JOB, DATE)).isTrue();
+
+        BatchExecutionLog row = reload(JOB);
+        assertThat(row.getCreatedAt()).isAfter(startedAt);
+        assertThat(row.getProcessedCount()).isNull();
+    }
+
+    @Test
+    @DisplayName("실행 중인 행은 재실행으로 되돌리지 않는다")
+    void 재실행_RUNNING은_무효() {
+        service.claim(JOB, DATE);
+
+        assertThat(service.rerun(JOB, DATE)).isFalse();
+        assertThat(reload(JOB).getStatus()).isEqualTo(BatchStatus.RUNNING);
     }
 
     /*
