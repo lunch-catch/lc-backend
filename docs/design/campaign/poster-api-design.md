@@ -20,6 +20,7 @@
 | `GET` | `/v1/admin/templates/{templateId}/versions` | FR-014 |
 | `POST` | `/v1/admin/templates/{templateId}/publish` | FR-015 |
 | `PATCH` | `/v1/admin/templates/{templateId}/active` | FR-016 |
+| `GET` | `/v1/owner/templates` | FR-050 |
 | `GET` | `/v1/campaigns/{campaignId}/poster` | 구체적인 API 계약은 #198 및 가게 담당 회신 기준 |
 
 ## 템플릿 생성 · 수정
@@ -66,6 +67,20 @@
 - **게시/활성화 둘 다 `@Transactional` 을 메서드에 직접 붙인다.** 생성·수정은 LLM 호출(재시도 포함 최대 60초)을 트랜잭션 밖에 두려고 `TransactionTemplate` 으로 트랜잭션 구간을 손으로 나눴지만, 게시·활성화는 외부 호출이 없어 메서드 전체가 짧게 끝난다. 나눌 구간이 없으니 `@Transactional` 로 충분하다
 - **버전 소프트삭제는 엔티티를 불러오지 않고 JPQL 벌크 `UPDATE` 로 처리한다.** FR-014에 버전 개수 제한이 없어, 엔티티로 하나씩 불러와 바꾸면 버전마다 `UPDATE` 가 나가고 쓰지 않을 `html_content`(TEXT)까지 메모리로 읽는다. 벌크 `UPDATE` 는 버전이 몇 개든 쿼리 한 번이다
 - **동시성 테스트는 실제 스레드 경쟁을 만들지 않고, `findByIdForUpdate` 호출 여부(`verify`)까지만 확인한다.** 레포지토리 레벨의 실제 락 대기를 검증하는 통합테스트가 지금 레포에 없어, 기존 테스트 관례와 맞춘다
+
+## 점주 템플릿 목록 조회
+
+**서버가 하는 일**
+
+1. `status = PUBLISHED`이고 `active = true`인 템플릿만 `createdAt` 내림차순으로 조회한다
+2. 점주 전용 응답(`templateId`, `name`, `html`)으로 매핑한다. `html`은 게시 시 확정된 `template.html_content`를 그대로 쓴다(게시된 템플릿만 대상이라 관리자 목록의 DRAFT 분기가 필요 없다)
+
+**정한 이유**
+
+- **관리자 목록(`TemplateListItemResponse`)을 재사용하지 않고 점주 전용 응답을 새로 둔다.** 관리자 전용 필드(`status`, `active`, `activatedBy`, `activatedAt`, `lastModifiedBy`, `lastModifiedAt`)를 점주에게 노출할 이유가 없다. `status`/`active`는 이미 필터링된 뒤라 값이 항상 같아 의미가 없고, 나머지는 관리자 내부 감사 정보다
+- **서버 정렬/필터를 두지 않는다.** 관리자 목록과 같은 이유(템플릿 최대 10개 제약)가 그대로 적용되고, 점주 목록은 거기서 PUBLISHED+active만 추려서 개수가 더 적다
+- **권한은 OWNER 역할만 확인한다. 점주 상태(ACTIVE) 게이트는 걸지 않는다.** 캠페인 등록 1단계(FR-040)는 점주 상태가 ACTIVE가 아니면 `CAMPAIGN-001`로 막지만, 이 조회는 부작용이 없는 단순 조회라 같은 게이트를 걸 이유가 약하고 걸면 `POSTER-` 전용 403 오류 코드를 새로 추가해야 한다. 단순함을 택해 `ONBOARDING` 상태 점주도 조회를 허용한다
+- **새 오류 코드를 추가하지 않는다.** 경로 파라미터가 없어 404 대상이 없고, 활성 템플릿이 없는 경우는 오류가 아니라 빈 배열(성공)이다. 역할 실패는 기존 공통 403 처리로 충분하다
 
 ## 사용자용 포스터 조회
 
