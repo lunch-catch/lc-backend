@@ -2,9 +2,7 @@ package com.launchcatch.billing.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -12,11 +10,12 @@ import static org.mockito.Mockito.when;
 
 import com.launchcatch.billing.cache.DailySpend;
 import com.launchcatch.billing.cache.DailySpendCounter;
+import com.launchcatch.billing.dto.CampaignCounterMismatch;
+import com.launchcatch.billing.dto.CampaignOverspend;
 import com.launchcatch.billing.dto.CampaignSpend;
 import com.launchcatch.billing.entity.BudgetDailyPlan;
 import com.launchcatch.billing.repository.BudgetDailyPlanRepository;
 import com.launchcatch.billing.repository.PointLedgerRepository;
-import com.launchcatch.billing.repository.SettlementMismatchRepository;
 import com.launchcatch.ops.contract.BatchExecutionQueryService;
 import com.launchcatch.ops.contract.BatchExecutionRecord;
 import java.time.Clock;
@@ -49,7 +48,7 @@ class SpendReconciliationServiceTest {
     @Mock
     private PointLedgerRepository ledgerRepository;
     @Mock
-    private SettlementMismatchRepository mismatchRepository;
+    private SpendMismatchRecorder mismatchRecorder;
     @Mock
     private DailySpendCounter spendCounter;
     @Mock
@@ -59,7 +58,7 @@ class SpendReconciliationServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new SpendReconciliationService(planRepository, ledgerRepository, mismatchRepository,
+        service = new SpendReconciliationService(planRepository, ledgerRepository, mismatchRecorder,
                 spendCounter, batchExecutions, CLOCK);
     }
 
@@ -80,7 +79,7 @@ class SpendReconciliationServiceTest {
         when(planRepository.findByBusinessDate(PREV)).thenReturn(List.of());
 
         assertThat(service.reconcilePreviousDay(RUN_DATE, JOB)).isZero();
-        verifyNoInteractions(spendCounter, ledgerRepository, mismatchRepository, batchExecutions);
+        verifyNoInteractions(spendCounter, ledgerRepository, mismatchRecorder, batchExecutions);
     }
 
     @Test
@@ -96,9 +95,7 @@ class SpendReconciliationServiceTest {
         assertThat(service.reconcilePreviousDay(RUN_DATE, JOB)).isEqualTo(1);
 
         // 기대값은 더 믿는 원장이고 실제값은 카운터다. 해시가 없는 9 는 견줄 값이 없어 기록하지 않는다
-        verify(mismatchRepository).insertCampaignSpendMismatchIfAbsent(PREV, 8L, 400L, 500L, 42L, NOW);
-        verify(mismatchRepository, never()).insertCampaignSpendMismatchIfAbsent(any(), eq(7L), anyLong(), anyLong(), any(), any());
-        verify(mismatchRepository, never()).insertCampaignSpendMismatchIfAbsent(any(), eq(9L), anyLong(), anyLong(), any(), any());
+        verify(mismatchRecorder).record(PREV, 42L, NOW, List.of(), List.of(new CampaignCounterMismatch(8L, 400L, 500L)));
     }
 
     @Test
@@ -109,7 +106,7 @@ class SpendReconciliationServiceTest {
         when(ledgerRepository.sumDeductForCampaignsOn(List.of(7L), PREV)).thenReturn(List.of());
 
         assertThat(service.reconcilePreviousDay(RUN_DATE, JOB)).isEqualTo(1);
-        verify(mismatchRepository).insertCampaignSpendMismatchIfAbsent(PREV, 7L, 0L, 100L, null, NOW);
+        verify(mismatchRecorder).record(PREV, null, NOW, List.of(), List.of(new CampaignCounterMismatch(7L, 0L, 100L)));
     }
 
     @Test
@@ -126,10 +123,9 @@ class SpendReconciliationServiceTest {
         assertThat(service.reconcilePreviousDay(RUN_DATE, JOB)).isEqualTo(2);
 
         // 기대값은 예약액이고 실제값은 원장 DEDUCT 합이다. 카운터 대조로는 7 이 보이지 않고 8 은 견줄 카운터가 없다
-        verify(mismatchRepository).insertCampaignOverspendIfAbsent(PREV, 7L, 1000L, 1200L, 42L, NOW);
-        verify(mismatchRepository).insertCampaignOverspendIfAbsent(PREV, 8L, 1000L, 1100L, 42L, NOW);
-        verify(mismatchRepository, never()).insertCampaignOverspendIfAbsent(any(), eq(9L), anyLong(), anyLong(), any(), any());
-        verify(mismatchRepository, never()).insertCampaignSpendMismatchIfAbsent(any(), any(), anyLong(), anyLong(), any(), any());
+        verify(mismatchRecorder).record(PREV, 42L, NOW,
+                List.of(new CampaignOverspend(7L, 1000L, 1200L), new CampaignOverspend(8L, 1000L, 1100L)),
+                List.of());
     }
 
     @Test
@@ -140,12 +136,13 @@ class SpendReconciliationServiceTest {
         when(ledgerRepository.sumDeductForCampaignsOn(List.of(7L), PREV)).thenReturn(List.of(new CampaignSpend(7L, 1010L)));
 
         assertThat(service.reconcilePreviousDay(RUN_DATE, JOB)).isEqualTo(2);
-        verify(mismatchRepository).insertCampaignOverspendIfAbsent(PREV, 7L, 1000L, 1010L, 42L, NOW);
-        verify(mismatchRepository).insertCampaignSpendMismatchIfAbsent(PREV, 7L, 1010L, 990L, 42L, NOW);
+        verify(mismatchRecorder).record(PREV, 42L, NOW,
+                List.of(new CampaignOverspend(7L, 1000L, 1010L)),
+                List.of(new CampaignCounterMismatch(7L, 1010L, 990L)));
     }
 
     @Test
-    void 캠페인을_500개씩_끊어_읽는다() {
+    void 캠페인을_500개씩_끊어_읽고_불일치가_없으면_기록을_부르지_않는다() {
         List<BudgetDailyPlan> plans = new ArrayList<>();
         for (long id = 1; id <= 501; id++) {
             plans.add(plan(id));
@@ -158,12 +155,14 @@ class SpendReconciliationServiceTest {
         assertThat(service.reconcilePreviousDay(RUN_DATE, JOB)).isZero();
         verify(spendCounter, times(2)).readAll(eq(PREV), any());
         verify(ledgerRepository, times(2)).sumDeductForCampaignsOn(any(), eq(PREV));
-        verifyNoInteractions(mismatchRepository);
+        verifyNoInteractions(mismatchRecorder);
     }
 
     @Test
-    void 불일치_기록은_트랜잭션_안에서_돈다() throws Exception {
+    void 카운터를_읽는_대조에는_트랜잭션을_걸지_않는다() throws Exception {
+        // Valkey 응답이 늦어지는 동안 DB 연결과 트랜잭션을 쥐지 않는다. 쓰기는 SpendMismatchRecorder 가 묶음마다 묶는다
         assertThat(SpendReconciliationService.class.getMethod("reconcilePreviousDay", LocalDate.class, String.class)
-                .isAnnotationPresent(Transactional.class)).isTrue();
+                .isAnnotationPresent(Transactional.class)).isFalse();
+        assertThat(SpendReconciliationService.class.isAnnotationPresent(Transactional.class)).isFalse();
     }
 }
