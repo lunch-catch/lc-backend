@@ -14,6 +14,7 @@ import com.launchcatch.campaign.entity.Campaign;
 import com.launchcatch.campaign.entity.CampaignStatusLog;
 import com.launchcatch.campaign.repository.CampaignStatusLogRepository;
 import com.launchcatch.global.config.ClockConfig;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
@@ -42,6 +43,7 @@ class CampaignStatsQueryIntegrationTest extends AbstractCampaignIntegrationTest 
         log(campaignId, null, "SCHEDULED", businessDate.atTime(8, 0));
         log(campaignId, "SCHEDULED", "ACTIVE", businessDate.atTime(9, 0));
 
+        asOfRealNow();
         assertThat(campaignStatsQueryService.activeCampaignCount(businessDate)).isEqualTo(1);
     }
 
@@ -56,6 +58,7 @@ class CampaignStatsQueryIntegrationTest extends AbstractCampaignIntegrationTest 
         log(ended, null, "ACTIVE", businessDate.minusDays(1).atTime(9, 0));
         log(ended, "ACTIVE", "ENDED", businessDate.atTime(16, 0));
 
+        asOfRealNow();
         assertThat(campaignStatsQueryService.activeCampaignCount(businessDate)).isZero();
     }
 
@@ -67,6 +70,7 @@ class CampaignStatsQueryIntegrationTest extends AbstractCampaignIntegrationTest 
         log(campaignId, null, "ACTIVE", activeDay.atTime(9, 0));
         log(campaignId, "ACTIVE", "ENDED", endedDay.atTime(18, 0));
 
+        asOfRealNow();
         assertThat(campaignStatsQueryService.activeCampaignCount(activeDay)).isEqualTo(1);
         assertThat(campaignStatsQueryService.activeCampaignCount(endedDay)).isZero();
     }
@@ -91,5 +95,14 @@ class CampaignStatsQueryIntegrationTest extends AbstractCampaignIntegrationTest 
         campaignStatusLogRepository.saveAndFlush(CampaignStatusLog.of(
                 campaignId, CampaignStatus.valueOf(from), CampaignStatus.valueOf(toStatus),
                 ActorType.SYSTEM, null));
+    }
+
+    /*
+     * log()가 clock.instant()를 과거로 고정해 둔 채로 끝난다. activeCampaignCount가
+     * "오늘이거나 미래면 거부"하는 가드에서 그 고정된 과거를 "오늘"로 잘못 보지 않게,
+     * 조회 직전에 실제 현재 시각으로 되돌린다.
+     */
+    private void asOfRealNow() {
+        when(clock.instant()).thenReturn(Instant.now());
     }
 }
