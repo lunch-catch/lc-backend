@@ -350,7 +350,7 @@ CouponUsageHistory도 BaseTimeEntity를 상속하며 ID·생성·수정 시각�
 1. CouponSecurityConfig는 POST /v1/owner/coupon-usages에 OWNER 역할을 요구한다. CouponController는 필수값·좌표 범위·정수 금액을 검증한다.
 2. CouponCommandService는 READ_COMMITTED 트랜잭션에서 OwnerStatusQuery.findCurrentStatus로 점주 상태를 확인한다. 점주가 없거나 비활성이면 COUPON-013으로 거절한다.
 3. MemberCouponRepository.findQrReference는 토큰의 쿠폰 ID와 QR 버전만 읽는다. 엔티티를 미리 적재하지 않아 잠금 뒤 최신 상태 조회를 가리지 않는다.
-4. findByIdForUpdate로 회원 쿠폰을 잠그고 이벤트 스냅샷을 읽는다. StoreQueryService.canManageStore로 현재 관리 권한을 확인한다. USED 상태라면 마지막 토큰·버전을 확인하여 교체된 QR과 실제 사용한 QR의 재요청을 구분한다.
+4. findByIdForUpdate로 회원 쿠폰을 잠그고 이벤트 스냅샷을 읽는다. StoreQueryService.canManageFinalizedStore로 현재 관리 권한을 확인한다. USED 상태라면 마지막 토큰·버전을 확인하여 교체된 QR과 실제 사용한 QR의 재요청을 구분한다.
 5. MemberQueryService로 쿠폰 소유 회원의 현재 상태를 확인하고 StoreQueryService.findAllById로 현재 매장 좌표를 읽는다. 정상적인 부재와 조회 장애를 구분한다.
 6. 잠금을 얻은 뒤 Clock으로 판정 시각을 한 번 읽고 거리와 스냅샷 할인액을 계산한다. MemberCoupon.redeem은 최신 상태·토큰·버전·유효 시간을 검증한 뒤 USED로 바꾸며 마지막 QR 토큰을 유지한다.
 7. CouponUsageHistoryRepository.saveAndFlush는 확정 할인액을 가진 이력을 JPA로 저장하고 생성된 ID와 auditing 시각을 반환한다. 쿠폰 상태는 JPA 변경 감지로 저장한다.
