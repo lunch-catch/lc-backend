@@ -59,7 +59,7 @@ public class StoreImageUploadService {
         validateOnboardingOwner(ownerId);
         validateContentType(contentType);
         validateFileSize(fileSize);
-        Long storeId = findStoreId(ownerId);
+        Long storeId = findStoreIdForUpdate(ownerId);
 
         long existing = storeImageRepository.countByStoreIdAndImageType(storeId, StoreImageType.INTERIOR);
         if (existing >= MAX_INTERIOR_IMAGES) {
@@ -126,6 +126,17 @@ public class StoreImageUploadService {
     private Long findStoreId(Long ownerId) {
         StoreRegistrationProgress progress = progressRepository.findByOwnerId(ownerId)
                 .orElseThrow(() -> new StoreException(StoreErrorCode.REGISTRATION_PROGRESS_NOT_FOUND));
+        return requireStoreId(progress);
+    }
+
+    // 개수 확인부터 저장까지 같은 점주의 동시 요청을 직렬화해 sortOrder 중복 저장을 막는다(코드래빗 리뷰로 찾음).
+    private Long findStoreIdForUpdate(Long ownerId) {
+        StoreRegistrationProgress progress = progressRepository.findByOwnerIdForUpdate(ownerId)
+                .orElseThrow(() -> new StoreException(StoreErrorCode.REGISTRATION_PROGRESS_NOT_FOUND));
+        return requireStoreId(progress);
+    }
+
+    private Long requireStoreId(StoreRegistrationProgress progress) {
         Long storeId = progress.getStoreId();
         if (storeId == null) {
             throw new StoreException(StoreErrorCode.REGISTRATION_STEP_CONFLICT);

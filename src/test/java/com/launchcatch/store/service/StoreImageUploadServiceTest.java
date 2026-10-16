@@ -70,7 +70,7 @@ class StoreImageUploadServiceTest {
     @Test
     @DisplayName("인테리어 업로드를 준비하면 PENDING 행을 만들고 presigned URL을 돌려준다")
     void 인테리어_업로드를_준비한다() throws Exception {
-        givenOnboardingOwnerWithStore();
+        givenOnboardingOwnerWithStoreForUpdate();
         when(storeImageRepository.countByStoreIdAndImageType(STORE_ID, StoreImageType.INTERIOR)).thenReturn(0L);
         when(s3Presigner.presignPutObject(any(PutObjectPresignRequest.class))).thenReturn(presignedPutObjectRequest);
         when(presignedPutObjectRequest.url()).thenReturn(new URL("https://example.com/presigned"));
@@ -90,7 +90,7 @@ class StoreImageUploadServiceTest {
     @Test
     @DisplayName("인테리어 이미지가 이미 3개면 거부한다")
     void 인테리어_이미지_3개_제한을_넘으면_거부한다() {
-        givenOnboardingOwnerWithStore();
+        givenOnboardingOwnerWithStoreForUpdate();
         when(storeImageRepository.countByStoreIdAndImageType(STORE_ID, StoreImageType.INTERIOR)).thenReturn(3L);
 
         assertThatThrownBy(() -> service.prepareInteriorUpload(OWNER_ID, "photo.jpg", "image/jpeg", 1000L))
@@ -106,7 +106,7 @@ class StoreImageUploadServiceTest {
         assertThatThrownBy(() -> service.prepareInteriorUpload(OWNER_ID, "photo.gif", "image/gif", 1000L))
                 .isInstanceOfSatisfying(StoreException.class, e ->
                         assertThat(e.getErrorCode()).isEqualTo(StoreErrorCode.IMAGE_CONTENT_TYPE_NOT_ALLOWED));
-        verify(progressRepository, never()).findByOwnerId(anyLong());
+        verify(progressRepository, never()).findByOwnerIdForUpdate(anyLong());
     }
 
     @Test
@@ -218,6 +218,11 @@ class StoreImageUploadServiceTest {
     private void givenOnboardingOwnerWithStore() {
         when(ownerStatusQuery.findCurrentStatus(OWNER_ID)).thenReturn(Optional.of(OwnerAccountStatus.ONBOARDING));
         when(progressRepository.findByOwnerId(OWNER_ID)).thenReturn(Optional.of(progress()));
+    }
+
+    private void givenOnboardingOwnerWithStoreForUpdate() {
+        when(ownerStatusQuery.findCurrentStatus(OWNER_ID)).thenReturn(Optional.of(OwnerAccountStatus.ONBOARDING));
+        when(progressRepository.findByOwnerIdForUpdate(OWNER_ID)).thenReturn(Optional.of(progress()));
     }
 
     private StoreRegistrationProgress progress() {
