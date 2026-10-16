@@ -17,7 +17,8 @@ public class CampaignSecurityConfig {
     /** 점주의 캠페인 등록 경로다. 기본 경로와 하위 경로를 둘 다 적는다(billing과 같은 이유). */
     private static final String[] OWNER_PATHS = {
             "/v1/owner/campaigns",
-            "/v1/owner/campaigns/**"
+            "/v1/owner/campaigns/**",
+            "/v1/owner/templates"
     };
 
     @Bean

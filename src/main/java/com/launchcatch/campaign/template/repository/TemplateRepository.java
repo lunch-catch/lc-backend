@@ -1,6 +1,7 @@
 package com.launchcatch.campaign.template.repository;
 
 import com.launchcatch.campaign.template.entity.Template;
+import com.launchcatch.campaign.template.entity.TemplateStatus;
 import java.util.List;
 import java.util.Optional;
 import jakarta.persistence.LockModeType;
@@ -16,6 +17,12 @@ public interface TemplateRepository extends JpaRepository<Template, Long> {
      * createdAt 최신순으로 가져온다.
      */
     List<Template> findAllByOrderByCreatedAtDesc();
+
+    /*
+     * 점주용 목록 조회다. 게시되고 활성인 템플릿만 대상이라 관리자 목록보다
+     * 범위가 더 좁다.
+     */
+    List<Template> findAllByStatusAndActiveTrueOrderByCreatedAtDesc(TemplateStatus status);
 
     /*
      * 수정 저장 시 행 잠금을 걸고 조회한다(SELECT ... FOR UPDATE). 같은 템플릿을
