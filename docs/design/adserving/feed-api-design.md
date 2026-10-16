@@ -114,6 +114,8 @@
 ## `GET`, `PUT /v1/feed-filter`
 
 - `categories` 의 빈 배열을 전체 업종으로 읽는다(FR-067 예외). "아무것도 고르지 않음"을 따로 둘 이유가 없다
+- **`GET` 은 `categories` 를 업종 코드 오름차순으로 돌려준다.** 같은 필터는 늘 같은 순서다. `feed_filter_category` 에 순서 컬럼이 없어 고른 순서는 남기지 않는다(#405 에서 정했다)
+- 저장한 적이 없으면 `categories: []`, `sort: "DISTANCE"` 다. 피드가 필터 없는 회원을 다루는 기본값과 같다
 - 필터는 `feed_filter`(정렬)와 `feed_filter_category`(업종)에 나눠 저장하고, `PUT` 은 둘을 한 트랜잭션에서 통째로 바꾼다
 
 ## `GET`, `POST`, `DELETE /v1/wishlist`

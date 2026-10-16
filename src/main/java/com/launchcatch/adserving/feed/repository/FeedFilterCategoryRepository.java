@@ -9,6 +9,7 @@ import org.springframework.data.repository.query.Param;
 
 public interface FeedFilterCategoryRepository extends JpaRepository<FeedFilterCategory, FeedFilterCategoryId> {
 
-    @Query("select c.id.categoryCode from FeedFilterCategory c where c.id.memberId = :memberId")
+    // 업종 코드 오름차순이다. 필터 조회가 늘 같은 순서로 돌려주려는 것이다(#405)
+    @Query("select c.id.categoryCode from FeedFilterCategory c where c.id.memberId = :memberId order by c.id.categoryCode")
     List<String> findCategoryCodes(@Param("memberId") Long memberId);
 }
