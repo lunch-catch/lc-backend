@@ -45,6 +45,10 @@ public class InMemoryDailySpendCounter implements DailySpendCounter {
         return days.get(ValkeyDailySpendCounter.key(businessDate, campaignId)).spend;
     }
 
+    public synchronized long reservedOf(LocalDate businessDate, Long campaignId) {
+        return days.get(ValkeyDailySpendCounter.key(businessDate, campaignId)).reserved;
+    }
+
     @Override
     public synchronized boolean applyStatus(LocalDate businessDate, Long campaignId, boolean paused, LocalDateTime changedAt) {
         Day day = days.get(ValkeyDailySpendCounter.key(businessDate, campaignId));
@@ -54,6 +58,16 @@ public class InMemoryDailySpendCounter implements DailySpendCounter {
         }
         day.paused = paused;
         day.changedAtMicros = micros;
+        return true;
+    }
+
+    @Override
+    public synchronized boolean increaseReserved(LocalDate businessDate, Long campaignId, long reserved) {
+        Day day = days.get(ValkeyDailySpendCounter.key(businessDate, campaignId));
+        if (day == null || day.reserved >= reserved) {
+            return false;
+        }
+        day.reserved = reserved;
         return true;
     }
 

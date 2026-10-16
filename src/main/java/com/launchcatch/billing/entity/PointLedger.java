@@ -183,6 +183,28 @@ public class PointLedger extends BaseTimeEntity {
         return daily(ownerId, campaignId, businessDate, EntryType.RELEASE, amount);
     }
 
+    /*
+     * 충전 직후 재예약을 기록한다(I-03). 금액은 늘어난 몫(delta)만 양수로 받고 음수로 저장한다.
+     * 결제에 묶이므로 payment_id 가 필수다. 같은 결제로 캠페인마다 한 번만 재예약한다
+     * (uk_point_ledger_recharge_reserve_dedup, 결제×캠페인). source 는 배치와 같은 RECONCILIATION 이다.
+     */
+    public static PointLedger rechargeReserve(Long ownerId, Long paymentId, Long campaignId,
+                                               LocalDate businessDate, long amount) {
+        if (paymentId == null) {
+            throw new IllegalArgumentException("재예약은 결제 ID가 필수입니다.");
+        }
+        if (campaignId == null || businessDate == null) {
+            throw new IllegalArgumentException("재예약은 캠페인 ID와 영업일이 필수입니다.");
+        }
+        if (amount <= 0) {
+            throw new IllegalArgumentException("재예약 금액은 0보다 커야 합니다: " + amount);
+        }
+        PointLedger ledger = new PointLedger(ownerId, paymentId, EntryType.RESERVE, LedgerSource.RECONCILIATION, -amount);
+        ledger.campaignId = campaignId;
+        ledger.businessDate = businessDate;
+        return ledger;
+    }
+
     // 배치가 기록하는 영업일 단위 줄이라 source 는 RECONCILIATION 이다. RESERVE 만 음수로 저장한다
     private static PointLedger daily(Long ownerId, Long campaignId, LocalDate businessDate,
                                      EntryType entryType, long amount) {

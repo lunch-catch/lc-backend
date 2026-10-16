@@ -52,6 +52,7 @@ public class ValkeyDailySpendCounter implements DailySpendCounter {
     private static final RedisScript<String> DEDUCT_SCRIPT = loadDeductScript();
     private static final RedisScript<Long> REBUILD_SCRIPT = loadRebuildScript();
     private static final RedisScript<Long> UNDO_SCRIPT = loadUndoScript();
+    private static final RedisScript<Long> RESERVE_INCREASE_SCRIPT = loadReserveIncreaseScript();
 
     private final StringRedisTemplate redisTemplate;
 
@@ -63,6 +64,17 @@ public class ValkeyDailySpendCounter implements DailySpendCounter {
                 paused ? "1" : "0",
                 String.valueOf(epochMicros(changedAt)));
         return applied != null && applied == 1L;
+    }
+
+    /*
+     * 충전 직후 재예약이 늘린 예약액을 반영한다(I-03). 해시가 있고 지금 값보다 큰 값일 때만 올린다.
+     */
+    @Override
+    public boolean increaseReserved(LocalDate businessDate, Long campaignId, long reserved) {
+        Long increased = redisTemplate.execute(RESERVE_INCREASE_SCRIPT,
+                List.of(key(businessDate, campaignId)),
+                String.valueOf(reserved));
+        return increased != null && increased == 1L;
     }
 
     // 해시를 지운다. 다음 차감이 DB 정본으로 다시 만든다
@@ -195,6 +207,13 @@ public class ValkeyDailySpendCounter implements DailySpendCounter {
     private static RedisScript<Long> loadRebuildScript() {
         DefaultRedisScript<Long> script = new DefaultRedisScript<>();
         script.setLocation(new ClassPathResource("scripts/billing_day_rebuild.lua"));
+        script.setResultType(Long.class);
+        return script;
+    }
+
+    private static RedisScript<Long> loadReserveIncreaseScript() {
+        DefaultRedisScript<Long> script = new DefaultRedisScript<>();
+        script.setLocation(new ClassPathResource("scripts/billing_day_reserve_increase.lua"));
         script.setResultType(Long.class);
         return script;
     }

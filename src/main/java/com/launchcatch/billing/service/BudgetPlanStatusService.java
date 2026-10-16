@@ -2,6 +2,7 @@ package com.launchcatch.billing.service;
 
 import com.launchcatch.billing.dto.BudgetPlanStatusChanged;
 import com.launchcatch.billing.dto.BudgetPlanStatusConfirmed;
+import com.launchcatch.billing.dto.RechargeReserveIncreased;
 import com.launchcatch.billing.repository.BudgetDailyPlanRepository;
 import com.launchcatch.billing.cache.DailySpendCounter;
 import com.launchcatch.campaign.contract.CampaignStatusChangedEvent;
@@ -101,6 +102,20 @@ public class BudgetPlanStatusService {
             log.warn("event=BUDGET_STATUS_MIRROR_FAILED campaignId={} businessDate={} paused={}",
                     changed.campaignId(), changed.businessDate(), changed.paused(), e);
             evict(changed);
+        }
+    }
+
+    /*
+     * 충전 직후 재예약(I-03)이 늘린 예약액을 커밋 뒤에 해시에 반영한다. 해시가 있고 지금 값보다 큰 값일 때만
+     * 올리므로 실패해도 다시 시도하지 않고 ERROR 로만 남긴다. 예약액이 실제보다 작게 보여 과금이 일찍 멈추는
+     * 쪽이라, 중단 표시 갱신과 달리 지우지 않는다(지우면 차감이 재구성하면서 상한을 다시 키운다).
+     */
+    public void mirrorReserve(RechargeReserveIncreased increased) {
+        try {
+            spendCounter.increaseReserved(increased.businessDate(), increased.campaignId(), increased.reservedAmount());
+        } catch (DataAccessException e) {
+            log.error("event=RECHARGE_RESERVE_MIRROR_FAILED campaignId={} businessDate={} reserved={}",
+                    increased.campaignId(), increased.businessDate(), increased.reservedAmount(), e);
         }
     }
 

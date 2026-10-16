@@ -18,6 +18,12 @@ public interface DailySpendCounter {
     // 해시가 있고 저장된 시각보다 늦은 변경이면 중단 표시를 바꾸고 true 를 돌려준다
     boolean applyStatus(LocalDate businessDate, Long campaignId, boolean paused, LocalDateTime changedAt);
 
+    /*
+     * 충전 직후 재예약이 늘린 예약액을 반영한다(I-03). 해시가 있고 지금 값보다 큰 값일 때만 올리고 true 를
+     * 돌려준다. 해시가 없거나 새 값이 크지 않으면 false 다. 실패해도 다음 차감이 DB 정본으로 다시 만든다.
+     */
+    boolean increaseReserved(LocalDate businessDate, Long campaignId, long reserved);
+
     // 해시를 지운다. 다음 차감이 DB 정본으로 다시 만든다
     void evict(LocalDate businessDate, Long campaignId);
 

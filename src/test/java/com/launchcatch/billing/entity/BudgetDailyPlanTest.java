@@ -38,4 +38,21 @@ class BudgetDailyPlanTest {
         assertThatThrownBy(() -> BudgetDailyPlan.create(5L, 7L, DAY, 0L, 0L, false, CHANGED_AT))
                 .isInstanceOf(IllegalArgumentException.class);
     }
+
+    @Test
+    void 충전_직후_재예약이_예약액을_늘린다() {
+        BudgetDailyPlan plan = BudgetDailyPlan.create(5L, 7L, DAY, 3000L, 10L, false, CHANGED_AT);
+
+        plan.increaseDailyBudget(10000L);
+
+        assertThat(plan.getDailyBudget()).isEqualTo(10000L);
+    }
+
+    @Test
+    void 새_예약액이_지금_값보다_크지_않으면_거부한다() {
+        BudgetDailyPlan plan = BudgetDailyPlan.create(5L, 7L, DAY, 3000L, 10L, false, CHANGED_AT);
+
+        assertThatThrownBy(() -> plan.increaseDailyBudget(3000L)).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> plan.increaseDailyBudget(2999L)).isInstanceOf(IllegalArgumentException.class);
+    }
 }

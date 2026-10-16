@@ -189,4 +189,36 @@ class PointLedgerTest {
         assertThatThrownBy(() -> PointLedger.release(OWNER_ID, 5L, day, -1L))
                 .isInstanceOf(IllegalArgumentException.class);
     }
+
+    /*
+     * 충전 직후 재예약(I-03)의 RESERVE 다. 00:00 정기 예약과 달리 결제 ID 를 가진다.
+     * 멱등 키가 결제×캠페인(uk_point_ledger_recharge_reserve_dedup)이라 결제 ID 가 비면 그 보호가 사라진다.
+     */
+    @Test
+    @DisplayName("충전 직후 재예약은 양수를 받아 음수로 저장하고 결제와 캠페인, 영업일에 묶는다")
+    void 재예약_부호() {
+        LocalDate day = LocalDate.of(2026, 10, 16);
+        PointLedger reserve = PointLedger.rechargeReserve(OWNER_ID, PAYMENT_ID, 5L, day, 3000L);
+
+        assertThat(reserve.getAmount()).isEqualTo(-3000L);
+        assertThat(reserve.getEntryType()).isEqualTo(EntryType.RESERVE);
+        assertThat(reserve.getPaymentId()).isEqualTo(PAYMENT_ID);
+        assertThat(reserve.getCampaignId()).isEqualTo(5L);
+        assertThat(reserve.getBusinessDate()).isEqualTo(day);
+        assertThat(reserve.getSource()).isEqualTo(LedgerSource.RECONCILIATION);
+    }
+
+    @Test
+    @DisplayName("충전 직후 재예약은 결제 ID, 캠페인 ID, 영업일, 양수 금액이 필수다")
+    void 재예약_입력_거부() {
+        LocalDate day = LocalDate.of(2026, 10, 16);
+        assertThatThrownBy(() -> PointLedger.rechargeReserve(OWNER_ID, null, 5L, day, 100L))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> PointLedger.rechargeReserve(OWNER_ID, PAYMENT_ID, null, day, 100L))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> PointLedger.rechargeReserve(OWNER_ID, PAYMENT_ID, 5L, null, 100L))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> PointLedger.rechargeReserve(OWNER_ID, PAYMENT_ID, 5L, day, 0L))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
 }
