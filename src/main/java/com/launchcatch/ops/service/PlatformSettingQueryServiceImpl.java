@@ -11,6 +11,7 @@ import org.springframework.stereotype.Service;
 public class PlatformSettingQueryServiceImpl implements PlatformSettingQueryService {
 
     private static final String IMPRESSION_UNIT_PRICE_KEY = "IMPRESSION_UNIT_PRICE";
+    private static final String MIN_DAILY_BUDGET_KEY = "MIN_DAILY_BUDGET";
 
     private final PlatformSettingRepository platformSettingRepository;
 
@@ -38,5 +39,26 @@ public class PlatformSettingQueryServiceImpl implements PlatformSettingQueryServ
                             + ": " + unitPrice);
         }
         return unitPrice;
+    }
+
+    @Override
+    public long getMinDailyBudget() {
+        PlatformSetting setting = platformSettingRepository.findBySettingKey(MIN_DAILY_BUDGET_KEY)
+                .orElseThrow(() -> new IllegalStateException(
+                        "platform_setting missing key: " + MIN_DAILY_BUDGET_KEY));
+        long minDailyBudget;
+        try {
+            minDailyBudget = Long.parseLong(setting.getSettingValue());
+        } catch (NumberFormatException e) {
+            throw new IllegalStateException(
+                    "platform_setting value is not an integer for key " + MIN_DAILY_BUDGET_KEY
+                            + ": " + setting.getSettingValue(), e);
+        }
+        if (minDailyBudget <= 0) {
+            throw new IllegalStateException(
+                    "platform_setting value must be positive for key " + MIN_DAILY_BUDGET_KEY
+                            + ": " + minDailyBudget);
+        }
+        return minDailyBudget;
     }
 }

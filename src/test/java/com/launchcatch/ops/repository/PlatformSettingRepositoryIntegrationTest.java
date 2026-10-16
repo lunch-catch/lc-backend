@@ -23,4 +23,13 @@ class PlatformSettingRepositoryIntegrationTest extends com.launchcatch.ops.Abstr
         assertThat(setting).isPresent();
         assertThat(setting.get().getSettingValue()).isEqualTo("10");
     }
+
+    // V4__ops_min_daily_budget.sql이 실제로 시드한 값을 읽는다(#330).
+    @Test
+    void MIN_DAILY_BUDGET이_1000으로_시드돼_있다() {
+        Optional<PlatformSetting> setting = platformSettingRepository.findBySettingKey("MIN_DAILY_BUDGET");
+
+        assertThat(setting).isPresent();
+        assertThat(setting.get().getSettingValue()).isEqualTo("1000");
+    }
 }

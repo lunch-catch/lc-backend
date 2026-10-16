@@ -7,7 +7,7 @@
 
 | 유형 | 대상 |
 |---|---|
-| DB | MySQL(JPA), `campaign`/`template`/`store_audience` 등 |
+| DB | MySQL(JPA), `campaign`/`template`/`store_audience` 등. `ops.contract.PlatformSettingQueryService.getMinDailyBudget()`(같은 트랜잭션 안의 도메인 간 직접 호출, 외부 API 아님)도 DB 읽기와 같은 처리를 받는다(`#330`) |
 | 외부 API | Bedrock LLM(템플릿 생성·수정, `template/client/BedrockTemplateHtmlGenerator`) |
 | 캐시 | 해당 없음(이 도메인은 캐시에 기대지 않는다. `owner.contract.OwnerStatusQuery`가 캐시를 쓰지만 그건 owner 도메인이 소유한다) |
 | 애플리케이션 | 해당 없음(아직 훑지 않음) |
@@ -49,4 +49,3 @@
 | 항목 | 비고 |
 |---|---|
 | 캐시, 애플리케이션, 롤백 안 되는 효과 유형의 점검 | 이번 PR(`#244`)이 건드린 범위 밖이라 훑지 않았다 |
-| 예산과 집행 기간(45행) 단계의 장애 처리 | 아직 이슈가 없다. 노출 대상(44행, `#253`)은 단순 조회·수정이라 DB 제약 경쟁이나 외부 호출이 없어 기본 처리를 그대로 따른다(벗어난 것 없음) |
