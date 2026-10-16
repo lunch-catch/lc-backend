@@ -1,6 +1,8 @@
 package com.launchcatch.coupon.service;
 
 import com.launchcatch.coupon.CouponQrImageEncoder;
+import com.launchcatch.coupon.contract.CouponIssuedEvent;
+import com.launchcatch.coupon.contract.CouponRedeemedEvent;
 import com.launchcatch.coupon.dto.CouponIssueResponse;
 import com.launchcatch.coupon.dto.CouponQrResponse;
 import com.launchcatch.coupon.dto.CouponUseRequest;
@@ -41,6 +43,7 @@ import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
@@ -61,8 +64,11 @@ public class CouponCommandService {
     private final CouponUsageHistoryRepository couponUsageHistoryRepository;
     private final OwnerStatusQuery ownerStatusQuery;
     private final StoreQueryService storeQueryService;
+    private final ApplicationEventPublisher eventPublisher;
 
     private static final double MAX_DISTANCE_METERS = 100;
+    private static final String ISSUED_EVENT_ID_PREFIX = "coupon-issued:";
+    private static final String REDEEMED_EVENT_ID_PREFIX = "coupon-redeemed:";
 
     @Value("${coupon.daily-limit:3}")
     private int dailyLimit;
@@ -126,6 +132,15 @@ public class CouponCommandService {
         MemberCoupon coupon = memberCouponRepository.saveAndFlush(MemberCoupon.issue(memberId, eventId, inventory.getCouponCode(),
                 event.getUsableStartAt(), event.getUsableEndAt()));
         // TODO(#163): 마지막 재고 발급 시 해당 캠페인과 영업일의 광고 후보에 소진을 반영하고 실패 시 함께 롤백한다.
+
+        eventPublisher.publishEvent(new CouponIssuedEvent(
+                ISSUED_EVENT_ID_PREFIX + coupon.getId(),
+                coupon.getCreatedAt(),
+                coupon.getMemberId(),
+                event.getCampaignId(),
+                event.getStoreId(),
+                event.getId(),
+                coupon.getId()));
 
         // 9. 저장된 쿠폰 ID와 createdAt으로 발급 결과를 구성한다.
         return new CouponIssueResponse(coupon.getId(), coupon.getCreatedAt().atZone(ClockConfig.ZONE).toOffsetDateTime());
@@ -240,6 +255,14 @@ public class CouponCommandService {
             // 6. 사용 이력을 JPA로 저장하고 쿠폰 상태도 함께 반영하며 실패하면 둘 다 롤백한다.
             CouponUsageHistory history = couponUsageHistoryRepository.saveAndFlush(
                     CouponUsageHistory.record(coupon.getId(), event.getStoreId(), discount));
+            eventPublisher.publishEvent(new CouponRedeemedEvent(
+                    REDEEMED_EVENT_ID_PREFIX + coupon.getId(),
+                    history.getCreatedAt(),
+                    coupon.getMemberId(),
+                    event.getCampaignId(),
+                    event.getStoreId(),
+                    event.getId(),
+                    coupon.getId()));
             // MySQL DATETIME(6)과 같은 정밀도로 auditing 시각을 반올림한다.
             return new CouponUseResponse(coupon.getId(), history.getId(), discount,
                     history.getCreatedAt().plusNanos(500).truncatedTo(ChronoUnit.MICROS)
