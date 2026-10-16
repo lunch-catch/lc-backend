@@ -2,11 +2,12 @@ package com.launchcatch.adserving.impression.service;
 
 import com.launchcatch.adserving.engine.repository.AdCandidateRepository;
 import com.launchcatch.adserving.feed.repository.ImpressionCountRepository;
-import com.launchcatch.adserving.feed.ServeRecord;
+import com.launchcatch.adserving.feed.repository.ServeRecord;
 import com.launchcatch.adserving.feed.repository.ServeRecordRepository;
 import com.launchcatch.adserving.impression.dto.ImpressionRequest;
 import com.launchcatch.adserving.impression.dto.ImpressionResponse;
 import com.launchcatch.adserving.impression.entity.ImpressionLog;
+import com.launchcatch.adserving.impression.entity.ImpressionLog.Placement;
 import com.launchcatch.adserving.impression.entity.ImpressionLog.Sighting;
 import com.launchcatch.adserving.impression.entity.ImpressionLogId;
 import com.launchcatch.adserving.impression.repository.ImpressionLogRepository;
@@ -80,15 +81,16 @@ public class ImpressionService {
             return ImpressionLog.unknown(serveId, memberId, receivedDate, request.campaignId(), sighting);
         }
         ServeRecord record = found.get();
+        Placement placement = new Placement(record.campaignId(), record.storeId(), record.slotType(), record.slotPosition());
         if (!record.memberId().equals(memberId)) {
-            return ImpressionLog.notOwner(memberId, receivedDate, record, sighting);
+            return ImpressionLog.notOwner(serveId, memberId, receivedDate, placement, sighting);
         }
         if (!record.campaignId().equals(request.campaignId())) {
             meterRegistry.counter(CAMPAIGN_MISMATCH_METRIC).increment();
         }
         boolean soldOut = adCandidateRepository.existsByIdBusinessDateAndIdCampaignIdAndSoldOutAtIsNotNull(
                 servedDate(record), record.campaignId());
-        return ImpressionLog.valid(memberId, receivedDate, record, sighting, soldOut);
+        return ImpressionLog.valid(serveId, memberId, receivedDate, placement, sighting, soldOut);
     }
 
     // 차감과 카운터는 노출을 받은 날이 아니라 카드를 내려준 영업일로 센다(PointDeductor 계약).

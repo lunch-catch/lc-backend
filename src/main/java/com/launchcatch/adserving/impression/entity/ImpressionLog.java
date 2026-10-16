@@ -1,7 +1,6 @@
 package com.launchcatch.adserving.impression.entity;
 
 import com.launchcatch.adserving.engine.SlotType;
-import com.launchcatch.adserving.feed.ServeRecord;
 import jakarta.persistence.Column;
 import jakarta.persistence.EmbeddedId;
 import jakarta.persistence.Entity;
@@ -76,15 +75,15 @@ public class ImpressionLog {
     @Column(name = "viewed_ms")
     private Integer viewedMs;
 
-    private ImpressionLog(ImpressionLogId id, LocalDate businessDate, Long campaignId, ServeRecord record,
+    private ImpressionLog(ImpressionLogId id, LocalDate businessDate, Long campaignId, Placement placement,
                           Sighting sighting, ImpressionValidity validity, InvalidReason invalidReason, boolean soldOut) {
         this.id = id;
         this.businessDate = Objects.requireNonNull(businessDate);
         this.campaignId = Objects.requireNonNull(campaignId);
-        if (record != null) {
-            this.storeId = record.storeId();
-            this.slotType = record.slotType();
-            this.slotPosition = record.slotPosition();
+        if (placement != null) {
+            this.storeId = placement.storeId();
+            this.slotType = placement.slotType();
+            this.slotPosition = placement.slotPosition();
         }
         this.displayedAt = Objects.requireNonNull(sighting.displayedAt());
         this.latRounded = round(sighting.latitude());
@@ -96,16 +95,17 @@ public class ImpressionLog {
     }
 
     // 캠페인은 요청이 아니라 serve 기록의 것이다. 서버가 실제로 내려준 캠페인에만 과금한다(#323).
-    public static ImpressionLog valid(Long memberId, LocalDate businessDate, ServeRecord record, Sighting sighting,
-                                      boolean soldOut) {
-        return new ImpressionLog(ImpressionLogId.of(record.serveId(), memberId), businessDate, record.campaignId(),
-                record, sighting, ImpressionValidity.VALID, null, soldOut);
+    public static ImpressionLog valid(UUID serveId, Long memberId, LocalDate businessDate, Placement placement,
+                                      Sighting sighting, boolean soldOut) {
+        return new ImpressionLog(ImpressionLogId.of(serveId, memberId), businessDate, placement.campaignId(),
+                placement, sighting, ImpressionValidity.VALID, null, soldOut);
     }
 
     // 다른 사용자가 받은 카드다. 기록은 있어 가게와 자리를 남긴다.
-    public static ImpressionLog notOwner(Long memberId, LocalDate businessDate, ServeRecord record, Sighting sighting) {
-        return new ImpressionLog(ImpressionLogId.of(record.serveId(), memberId), businessDate, record.campaignId(),
-                record, sighting, ImpressionValidity.INVALID, InvalidReason.NOT_OWNER, false);
+    public static ImpressionLog notOwner(UUID serveId, Long memberId, LocalDate businessDate, Placement placement,
+                                         Sighting sighting) {
+        return new ImpressionLog(ImpressionLogId.of(serveId, memberId), businessDate, placement.campaignId(),
+                placement, sighting, ImpressionValidity.INVALID, InvalidReason.NOT_OWNER, false);
     }
 
     // serve 기록이 없다. 캠페인은 요청이 보낸 값을 남긴다.
@@ -122,6 +122,13 @@ public class ImpressionLog {
     // 좌표는 소수점 3자리(약 100m)로 반올림해 남긴다(api-spec.md 개인정보).
     static BigDecimal round(double coordinate) {
         return BigDecimal.valueOf(coordinate).setScale(3, RoundingMode.HALF_UP);
+    }
+
+    /*
+     * 서버가 그 카드를 어느 캠페인, 어느 가게, 어느 자리로 내려줬는지다. serve 기록에서 꺼낸다.
+     * 같은 타입 인자가 이어지면 순서를 바꿔 넘기기 쉬워 하나로 묶는다.
+     */
+    public record Placement(Long campaignId, Long storeId, SlotType slotType, int slotPosition) {
     }
 
     // 카드가 보인 순간의 정보다. 클라이언트가 보낸 값이다.

@@ -55,8 +55,7 @@ adserving/
     ├── repository/FeedVisitRepository.java          JDBC 배치
     ├── repository/SwipeLogRepository.java
     ├── repository/FeedFilterRepository.java
-    ├── repository/FeedFilterCategoryRepository.java
-    └── ServeRecord.java                             serve 기록 record. 노출이 읽는다
+    └── repository/FeedFilterCategoryRepository.java
 impression/
     ├── controller/ImpressionController.java
     ├── service/ImpressionService.java

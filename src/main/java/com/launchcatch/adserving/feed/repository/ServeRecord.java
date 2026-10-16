@@ -1,4 +1,4 @@
-package com.launchcatch.adserving.feed;
+package com.launchcatch.adserving.feed.repository;
 
 import com.launchcatch.adserving.engine.SlotType;
 import java.time.Instant;

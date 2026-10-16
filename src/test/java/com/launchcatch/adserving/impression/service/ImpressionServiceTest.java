@@ -11,7 +11,7 @@ import static org.mockito.Mockito.when;
 import com.launchcatch.adserving.engine.SlotType;
 import com.launchcatch.adserving.engine.repository.AdCandidateRepository;
 import com.launchcatch.adserving.feed.repository.ImpressionCountRepository;
-import com.launchcatch.adserving.feed.ServeRecord;
+import com.launchcatch.adserving.feed.repository.ServeRecord;
 import com.launchcatch.adserving.feed.repository.ServeRecordRepository;
 import com.launchcatch.adserving.impression.dto.ImpressionRequest;
 import com.launchcatch.adserving.impression.dto.ImpressionResponse;
@@ -199,7 +199,8 @@ class ImpressionServiceTest {
         void 동시에_와서_먼저_넣은_쪽이_있으면_그_판정을_돌려주고_차감하지_않는다() {
             when(serveRecordRepository.findById(SERVE_ID)).thenReturn(Optional.of(RECORD));
             when(impressionLogRepository.insertIgnore(any())).thenReturn(false);
-            ImpressionLog winner = ImpressionLog.valid(MEMBER_ID, SERVED_DATE, RECORD,
+            ImpressionLog winner = ImpressionLog.valid(SERVE_ID, MEMBER_ID, SERVED_DATE,
+                    new ImpressionLog.Placement(101L, 55L, SlotType.ALLOCATION, 1),
                     new ImpressionLog.Sighting(LocalDateTime.of(2026, 10, 1, 10, 15), 37.5, 127.0, null), false);
             when(impressionLogRepository.findById(ImpressionLogId.of(SERVE_ID, MEMBER_ID)))
                     .thenReturn(Optional.empty(), Optional.of(winner));

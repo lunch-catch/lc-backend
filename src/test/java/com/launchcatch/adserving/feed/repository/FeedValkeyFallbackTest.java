@@ -1,6 +1,5 @@
 package com.launchcatch.adserving.feed.repository;
 
-import com.launchcatch.adserving.feed.ServeRecord;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;

@@ -15,7 +15,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.launchcatch.adserving.engine.SlotType;
-import com.launchcatch.adserving.feed.ServeRecord;
+import com.launchcatch.adserving.feed.repository.ServeRecord;
 import com.launchcatch.adserving.feed.repository.ServeRecordRepository;
 import com.launchcatch.auth.CustomUserDetails;
 import com.launchcatch.auth.Role;

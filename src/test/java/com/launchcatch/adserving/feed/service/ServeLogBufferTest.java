@@ -14,7 +14,7 @@ import com.launchcatch.adserving.feed.repository.FeedVisitRepository;
 import com.launchcatch.adserving.feed.repository.FeedVisitRepository.Visit;
 import com.launchcatch.adserving.feed.repository.ServeLogRepository;
 import com.launchcatch.adserving.feed.repository.ServeLogRepository.Row;
-import com.launchcatch.adserving.feed.ServeRecord;
+import com.launchcatch.adserving.feed.repository.ServeRecord;
 import com.launchcatch.global.config.ClockConfig;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Clock;

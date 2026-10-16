@@ -1,6 +1,5 @@
 package com.launchcatch.adserving.feed.repository;
 
-import com.launchcatch.adserving.feed.ServeRecord;
 
 import com.launchcatch.adserving.engine.SlotType;
 import com.launchcatch.auth.RedisFailureClassifier;
