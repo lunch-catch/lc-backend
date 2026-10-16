@@ -11,6 +11,8 @@ HTTP가 아니라 **모듈 간 호출·이벤트·배치**다. 점주·관리자
 | 저장 구조 | `billing/V1__billing_init.sql`의 `budget_daily_plan`, `budget_hourly_target`, `deduction_result`, `point_ledger` |
 | 도메인 규칙 | 저장소 `docs/architecture/런치캐치_도메인_구조와_의존성_설계.md` 2.2(조회 인터페이스), 2.4(명령 인터페이스와 이벤트) |
 
+**2026-10-16 확인:** 이 문서가 가리키는 `billing-api-spec.md`와 `billing-api-design.md`는 이 저장소에 없다(`docs/api-spec/`, `docs/design/billing/` 어디에도 없다). 결제·환불·관리자 조정 API의 계약은 지금 코드의 Swagger 설명과 [구조와 동작 설계](./billing_구조와_동작_설계.md)가 갖는다. 아래 본문의 두 파일 참조는 작성 당시의 기록으로 남겼다.
+
 **저장 구조가 요구사항과 다르면 마이그레이션을 따른다.** 문서 폴더의 `lunchcatch-erd-v4_1.sql`은 부분본·구버전이라 기준이 아니고, 마이그레이션 `README.md`가 원본이라고 적은 드라이브의 `전체_flyway.sql`도 사람이 손으로 맞추는 사본이라 무조건 믿지 않는다.
 
 ---
@@ -26,6 +28,7 @@ HTTP가 아니라 **모듈 간 호출·이벤트·배치**다. 점주·관리자
 | I-05 | 정산 대사 배치 2종 | 102, 103 | 배치 |
 | I-06 | 예산 소진 진행률 조회 | 98 | 광고서빙이 `billing.contract.BudgetQueryService` 호출 |
 | I-07 | 캠페인 상태 변경 수신 | 51, 103 | `campaign.contract.CampaignStatusChangedEvent` 리스너 |
+| I-08 | 분석 집계 조회 | analytics 설계 | 분석의 일별 집계 배치가 `billing.contract.BillingStatsQueryService` 호출 *(2026-10-16 추가, #352, #402)* |
 
 ### 정산이 쓰는 다른 도메인의 공개 기능
 
@@ -39,6 +42,7 @@ HTTP가 아니라 **모듈 간 호출·이벤트·배치**다. 점주·관리자
 | billing → ops | 운영의 설정값 조회 기능 | 노출 단가(아래 I-02 참고) |
 | adserving → billing | `billing.contract.PointDeductor` | I-01 |
 | adserving → billing | `billing.contract.BudgetQueryService` | I-06 |
+| analytics → billing | `billing.contract.BillingStatsQueryService` | I-08 |
 | campaign → billing | `CampaignStatusChangedEvent` | I-07 |
 
 **정산은 도메인 간 이벤트를 발행하지 않는다.** `PointCharged`(I-03)는 billing 내부 통보다. **2026-10-12 수정:** 저장소 아키텍처 테스트가 `Event`로 끝나는 타입을 발행 도메인의 `contract`에 두라고 요구하므로 공개하지 않는 이 통보는 이름에서 `Event`를 뺐다(구현 계획 D-2).
@@ -155,7 +159,18 @@ PointDeductor.deduct(serveId, campaignId, businessDate)
 | (6) | 잔액 부족 판정 | 예약액 < 단가이면 `NO_POINTS`. **대상은 `ACTIVE`와 `PAUSED(NO_POINTS)`만이다** — `PAUSED(OWNER)`는 점주의 재개 요청 때 48행 규칙으로 판단한다 |
 | (7) | 시간대별 목표 계산 | `budget_hourly_target`에 10·11·12시 `target_amount`(기본 가중 34/33/33). **대상은 (6)까지 확정된 `ACTIVE`만이다.** `UNIQUE(budget_daily_plan_id, hour)`로 재실행 멱등. 일별 노출 목표 = 그날 적용 하루 예산 ÷ 단가 |
 
+**2026-10-16 구현 상태:** 00:00 묶음의 네 단계는 운영의 `DailyJob`으로 구현돼 있다. (3) 예산 초기화는 전용 작업이 없고 (5) 예약이 해시를 준비한다.
+
+| 단계 | 작업명 | `@Order` | 구현 |
+| --- | --- | --- | --- |
+| (4) 전일 카운터↔원장 대조 | `BILLING_SPEND_RECON_PREV` | 40 | `PreviousDaySpendReconciliationJob` |
+| (5) 예약 | `BILLING_RESERVE` | 50 | `DailyReservationJob` |
+| (6) 잔액 부족 판정 | `BILLING_FUNDING_JUDGE` | 60 | `FundingJudgementJob` |
+| (7) 시간대별 목표 | `BILLING_HOURLY_TARGET` | 70 | `HourlyTargetJob` |
+
 ## 13:30 작업
+
+**2026-10-16 구현 상태:** `DailyReleaseScheduler`(작업명 `BILLING_DAILY_RELEASE`)가 `SchedulingConfigurer`로 크론을 등록한다. 시각은 `BillingScheduleProperties.releaseTime()`이 서빙 종료의 다음 분에 노출 인정 시간을 더해 계산하므로 기본 13:30이고, 서빙 종료나 노출 인정 시간 설정을 바꾸면 함께 바뀐다. 배치 서버 두 대가 같은 시각에 시도하므로 `batch_execution_log`의 `claim`이 겹침을 막는다. 대사가 실패하면 해제하지 않고 해제하지 못한 몫은 다음 00:00 보정 `RELEASE`가 정리한다.
 
 | 단계 | 작업 |
 | --- | --- |
@@ -256,6 +271,15 @@ PG 호출에는 타임아웃과 서킷브레이커를 적용한다. **2026-10-10
 | --- | --- | --- |
 | `PG_VS_CHARGE` | PG 조회 결과(건별) ↔ `payment`(`APPROVED`) + 원장 `CHARGE` (`pg_tid` 기준 1:1). 대상은 전일 생성분 **(2026-10-09 수정)** | 승인인데 `CHARGE`가 없으면 `CHARGE` 보정 기록(`LEDGER_CORRECTION`, `source=RECONCILIATION`) |
 | `CAMPAIGN_SPEND_VS_LEDGER` | 당일 소진 카운터 ↔ 원장의 그 캠페인·영업일 `DEDUCT` 합 (원장과 카운터만 비교) | 정산이 카운터를 원장 기준으로 재구성(`CACHE_REBUILD`) |
+| `CAMPAIGN_OVERSPEND` | 그날 예약액(`budget_daily_plan.daily_budget`) ↔ 원장의 그 캠페인·영업일 `DEDUCT` 합. 합이 예약액을 넘으면 기록한다 *(2026-10-15 추가, #306, V5)* | 없음. 카운터 재구성으로는 보이지 않는 초과 소진(장애 설계 L-2, L-4)이라 사람이 본다 |
+
+**2026-10-16 구현 상태:** `CAMPAIGN_OVERSPEND`는 위 "2종"에 없던 세 번째 `check_type`이다. `CAMPAIGN_SPEND_VS_LEDGER`는 해시를 원장으로 다시 만들면 두 값이 같아져 초과 소진이 보이지 않아서, 한 종류에 두 의미를 담지 않으려고 따로 뒀다. `PG_VS_CHARGE`는 `PgChargeReconciliationScheduler`(작업명 `BILLING_PG_VS_CHARGE_RECON`)가 00:00(Asia/Seoul)에 독립 `@Scheduled`로 돌리며 00:00 묶음에 들어 있지 않다. 비교 규칙은 아래와 같다(#391).
+
+- 우리 쪽 주장은 `payment.status`가 `APPROVED`일 때만 그 금액이고 PG 쪽 주장은 PG 상태가 `APPROVED`일 때만 PG 응답 금액이다. 둘이 같고 0보다 크고 원장에 `CHARGE`가 없으면 `LEDGER_CORRECTION`으로 빠진 `CHARGE`를 기록하고 닫힌 채 남긴다.
+- 둘이 다르면(금액이 다르거나 한쪽만 승인으로 보면) 자동 복구 없이 미해결 불일치만 남긴다.
+- PG가 `PENDING`이면 아직 결론이 나지 않아 건너뛴다.
+- 조회가 실패하면 그 결제만 짧게 1회 재시도하고 그래도 실패하면 불일치로 기록하지 않는다. "불일치"가 아니라 "확인 못 함"이라서 ERROR 로그와 지표만 남긴다.
+- 대사 시각 5분 안에 커밋된 결제는 비교에서 뺀다(워터마크).
 
 - 신뢰 순서는 **PG > 과금 판정 > 원장 > 캐시**다. 어긋나면 위쪽 기준으로 아래쪽을 맞춘다.
 - **2026-10-09 확정:** `PG_VS_CHARGE`는 PG의 거래 목록 API를 쓰지 않고, **전일(KST) 생성된 `payment` 중 `pg_tid`가 있는 건을 PG 결제 조회 API로 하나씩 조회**해 PG 상태 ↔ `payment.status` ↔ 원장 `CHARGE`를 비교한다. 그래서 **PG에는 있는데 우리 `payment`에 행이 없는 승인은 탐지하지 못한다.** 승인 시도 전에 `pg_tid`를 먼저 커밋하므로(`billing-api-spec.md` 승인 확정 3단계) 정상 흐름에서는 행이 남는다. 그런 승인까지 잡아야 하면 그때 PG 거래 목록 조회를 추가한다.
@@ -331,6 +355,33 @@ DDL은 `billing-api-design.md`의 「추가해야 할 스키마」에 있다(202
 
 ---
 
+# I-08. 분석 집계 조회
+
+*(2026-10-16 추가, #352, #402)* 분석의 일별 집계 배치가 영업일마다 부르는 읽기 전용 조회다. HTTP가 아니라 모듈 조회이고 집계 SQL은 정산이 소유한다. 분석은 합계와 건수만 받고 소진액(`DEDUCT` 합 − 양수 `ADJUST` 합)은 분석이 계산한다. 영업일에 귀속하는 기준과 정정 대상 영업일의 규칙은 [구조와 동작 설계 5장](./billing_구조와_동작_설계.md#집계-조회의-영업일-귀속)이 갖는다.
+
+```
+billing.contract.BillingStatsQueryService
+  ledgerSums(businessDate)             -> [ { ownerId, campaignId, 유형별 합계 } ]
+  billingCounts(businessDate)          -> [ { campaignId, BILLED, NOT_BILLED_BUDGET, NOT_BILLED_PAUSED 건수 } ]
+  dailyBudgets(businessDate)           -> [ { campaignId, dailyBudget, unitPrice } ]
+  dailyTotals(businessDate)            -> { unspentBalance, ledgerSum, mismatchCount }
+  correctionTargetDates(recordedDate)  -> [ 정정 대상 영업일 ]
+```
+
+| 메서드 | 분석이 쓰는 곳 |
+|---|---|
+| `ledgerSums` | 매출, 점주별 소진, 캠페인 리포트 |
+| `billingCounts` | 캠페인 리포트, 미과금 지표 |
+| `dailyBudgets` | 캠페인 리포트 |
+| `dailyTotals` | 플랫폼 현황(그날 말 미소진 잔액, 원장 대조, 불일치 건수) |
+| `correctionTargetDates` | 재집계 대상 찾기. 그날 기록된 양수 정정이 가리키는 과거 영업일을 `aggregation_pending_date`(`ADJUSTED`)에 남긴다 |
+
+- 미소진 잔액은 `CHARGE + REFUND + ADJUST + DEDUCT`의 누적 합이다. 점주 잔액에 예약 중 포인트를 더한 값과 같다. 원장 대조용 합계는 그날 기록된 같은 네 유형의 합이라 전날 말 값에 더하면 그날 말 값이 된다.
+- 과금 정합성 검증식(`검증 기준`의 첫 행)은 이 조회의 `ledgerSums`와 `billingCounts`, `dailyBudgets`로 확인한다. 캠페인별 `DEDUCT` 합 = `BILLED` 수 × 그날 단가다.
+- 쿼리 비용과 인덱스 후보는 [성능 개선 3장](./billing_성능_개선.md)이 갖는다.
+
+---
+
 # 검증 기준
 
 | 항목 | 기준 |
@@ -352,8 +403,8 @@ DDL은 `billing-api-design.md`의 「추가해야 할 스키마」에 있다(202
 | **`budget_daily_plan`의 `paused`·`status_changed_at`** | 스키마에 없다. `NOT_BILLED_PAUSED` 판정과 재개 시 목표 재계산이 둘 다 이 값에 걸려 **차감 구현의 선행 조건**이다. **2026-10-09:** `V2__billing_add_constraints_and_indexes.sql`에 넣는다(`billing-api-design.md` 「추가해야 할 스키마」) **2026-10-12 수정: 해결.** `V2__billing_pause_mismatch_date_and_indexes.sql`로 들어갔다. |
 | **`daily_budget` CHECK** | 아직 `> 0`이다. 102행 (5)의 "예약액이 0이어도 넘긴다"를 지키려면 `>= 0`으로 완화해야 한다. **2026-10-09:** 같은 V2 파일에서 처리한다 **2026-10-12 수정: 해결.** 같은 V2에서 `>= 0`으로 완화했다. |
 | **`point_ledger`의 `campaign_id` NOT NULL CHECK** | `RESERVE`·`RELEASE`·`DEDUCT`에 대해 DB가 강제하지 않는다. **2026-10-09:** 같은 V2 파일에서 처리한다 **2026-10-12 수정: 해결.** 같은 V2의 `chk_point_ledger_campaign_id`. |
-| **서빙 시간대 종료 시각** | `미결정 사항` #23이 12:59와 13:59 사이에서 아직 열려 있다(기본값 12:59). **13:30 해제·대조 시각은 "서빙 종료 + 노출 인정 시간 30분"에서 나온 값이라** 종료가 13:59로 바뀌면 14:30으로 함께 밀린다. 또 `미결정 사항` #22가 노출 인정 시간(30분)도 열어 두었다. **두 시각을 코드에 상수로 박지 말고 설정값으로 읽는다** |
-| **단가 설정 키의 조회 메서드** | 운영이 공개할 메서드 이름·시그니처가 정해지지 않았다. 운영은 하위 계층이라 `ops.contract`에 둘 의무는 없고 위치는 운영이 정한다(선례: `ops.scheduler.DailyJob`). **2026-10-09:** 요청은 `campaign·운영 계약 요청.md`로 전달한다 |
+| **서빙 시간대 종료 시각** | `미결정 사항` #23이 12:59와 13:59 사이에서 아직 열려 있다(기본값 12:59). **13:30 해제·대조 시각은 "서빙 종료 + 노출 인정 시간 30분"에서 나온 값이라** 종료가 13:59로 바뀌면 14:30으로 함께 밀린다. 또 `미결정 사항` #22가 노출 인정 시간(30분)도 열어 두었다. **두 시각을 코드에 상수로 박지 말고 설정값으로 읽는다** *(2026-10-16 수정: 코드는 `billing.schedule.*`(`BillingScheduleProperties`)에서 읽고 13:30 시각은 `releaseTime()`이 계산한다. 미결정 사항 #22, #23의 결정은 아직 열려 있다)* |
+| **단가 설정 키의 조회 메서드** | 운영이 공개할 메서드 이름·시그니처가 정해지지 않았다. 운영은 하위 계층이라 `ops.contract`에 둘 의무는 없고 위치는 운영이 정한다(선례: `ops.scheduler.DailyJob`). **2026-10-09:** 요청은 `campaign·운영 계약 요청.md`로 전달한다 *(2026-10-16 수정: 해결. 운영의 `PlatformSettingQueryService.getImpressionUnitPrice()`가 들어왔고 `DailyReservationService`가 부른다)* |
 | **카운터 수동 재구성 경로** | 98행 예외가 "장애 직후에는 수동으로 실행한다"고 요구하는데 경로가 없다. 운영의 실패 작업 수동 재실행(102행)으로 처리할지, 정산이 관리자 API를 둘지 |
 | 재충전 재예약 시 목표 재계산 | 48행(재개)은 재계산이 명시돼 있으나 49행(재충전) 자체의 목표 재계산 여부는 명세에 없다 |
 | 00:00 보정 `RELEASE`의 재시도 정책 | 전날 13:30 `RELEASE` 실패분을 00:00이 한 번 더 시도하는데, 이마저 실패할 경우의 재시도 횟수·알림 정책이 없다 **2026-10-12 수정: 정했다(구현 계획 D-10).** 운영 스케줄러의 일시 오류 자동 재실행(최대 2회)에 맡기고, 그래도 실패하면 `FAILED`, 알림, 대사 불일치 기록으로 끝낸다. |

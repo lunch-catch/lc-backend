@@ -65,12 +65,29 @@ Spring Batch는 사용하지 않는다. 각 단계는 평범한 서비스이고 
 | RESERVE, RELEASE | 원장의 `business_date` |
 | DEDUCT | 차감 판정의 `business_date` |
 | CHARGE, REFUND | 기록 시각의 KST 날짜 |
-| ADJUST | 정정 대상 영업일. 캠페인이 없는 조정은 기록 시각의 KST 날짜 |
-| 미소진 잔액 | 영업일 마지막 시각까지 실제 기록된 원장 |
+| ADJUST | 정정 대상 영업일(`point_ledger.adjust_target_date`). 캠페인이 없는 조정과 그 컬럼을 두기 전에 기록된 행은 기록 시각의 KST 날짜 |
+| 미소진 잔액 | 영업일 다음 날 00:00 이전에 실제 기록된 `CHARGE`, `REFUND`, `ADJUST`, `DEDUCT`의 누적 합. 점주 잔액에 예약 중 포인트를 더한 값과 같다 |
 | 노출 | 서빙한 영업일 |
 | 퍼널 이벤트 | `event_log.occurred_at`의 KST 날짜 |
 | 쿠폰 발급, 사용, 만료, 확정 할인액 | 쿠폰 도메인이 정한 영업일 |
 | 그날 말 상태 | 영업일 23:59:59.999999 기준 |
+
+### billing 집계 조회의 메서드
+
+billing은 2026-10-16에 `BillingStatsQueryService`를 공개했다(#352, #402). analytics 쪽 단계는 아직 구현 전이고 아래는 단계가 부를 메서드의 대응이다. 귀속 기준과 합계의 정의는 [billing 구조와 동작 설계](../billing/billing_구조와_동작_설계.md#집계-조회의-영업일-귀속)가 소유한다.
+
+| 메서드 | 돌려주는 것 | 쓰는 단계 |
+|---|---|---|
+| `ledgerSums(영업일)` | 점주와 캠페인별 `CHARGE`, `RESERVE`, `DEDUCT`, `RELEASE`, `REFUND`와 양수·음수 `ADJUST` 합 | `SettlementMetricsStep`, `OwnerSpendStep`, `CampaignReportStep` |
+| `billingCounts(영업일)` | 캠페인별 `BILLED`, `NOT_BILLED_BUDGET`, `NOT_BILLED_PAUSED` 건수 | `NotBilledMetricsStep`, `CampaignReportStep` |
+| `dailyBudgets(영업일)` | 캠페인별 그날 적용 하루 예산과 단가 | `CampaignReportStep` |
+| `dailyTotals(영업일)` | 그날 말 미소진 잔액, 원장 대조용 합계, 원장 불일치 건수 | 미소진 잔액은 `SettlementMetricsStep`(`unspent_balance`), 나머지 둘은 `ConsistencyCheckStep`의 검증. 불일치 건수는 A-07 응답에 없다 |
+| `correctionTargetDates(기록 영업일)` | 그날 기록된 양수 `ADJUST`가 가리키는 정정 대상 영업일 | 재집계 대상 찾기 |
+
+- 합계의 부호는 저장 부호 그대로다. `RESERVE`, `DEDUCT`, `REFUND`와 음수 `ADJUST`는 0 이하다. 소진액 계산은 `SpendFormula`가 한 곳에서 한다.
+- `correctionTargetDates`는 그날 집계 뒤에 과거 영업일을 다시 집계할 날짜를 찾는 입력이다. 반환된 날짜를 `aggregation_pending_date`에 `ADJUSTED`로 남겨 다음 실행이 다시 집계하게 한다. 기록 영업일과 같은 날짜가 섞여 올 수 있어 같은 날은 거른다.
+- 정정은 영업일 합계에서는 정정 대상 영업일에, 미소진 잔액과 `dailyTotals.ledgerSum`에서는 기록한 날에 들어간다. 그래서 기록한 날의 `ledgerSum`과 대상 영업일의 `ledgerSums`는 서로 다른 몫이다.
+- 끝나지 않은 영업일을 넘겨도 billing은 막지 않고 그 시점까지 기록된 값을 돌려준다.
 
 ### 공개 규칙
 
