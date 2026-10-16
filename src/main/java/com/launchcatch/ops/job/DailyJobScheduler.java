@@ -33,14 +33,20 @@ public class DailyJobScheduler {
     public static final String BUNDLE = "DAILY_0000";
 
     private final List<DailyJob> jobs;
-    private final List<StandaloneJob> standaloneJobs;
+    /*
+     * 생성 시점에 한 번만 만든다(코드래빗 #403). 매 스캔마다 만들면 jobName() 이 겹치는
+     * 등록이 있을 때 Collectors.toMap 이 매번 던져 묶음 행을 포함한 모든 이어받기가
+     * 막힌다. 여기서 만들면 겹치는 등록은 기동 시점에 바로 드러난다.
+     */
+    private final Map<String, StandaloneJob> standaloneJobsByName;
     private final BatchExecutionService executions;
     private final RetryBackoff backoff;
 
     public DailyJobScheduler(List<DailyJob> jobs, List<StandaloneJob> standaloneJobs,
                              BatchExecutionService executions, RetryBackoff backoff) {
         this.jobs = jobs;
-        this.standaloneJobs = standaloneJobs;
+        this.standaloneJobsByName = standaloneJobs.stream()
+                .collect(Collectors.toMap(StandaloneJob::jobName, job -> job));
         this.executions = executions;
         this.backoff = backoff;
     }
@@ -83,14 +89,13 @@ public class DailyJobScheduler {
     public void takeOverStale() {
         List<BatchExecutionLog> taken = executions.takeOverStale();
         Set<String> steps = stepNames();
-        Map<String, StandaloneJob> standalone = standaloneJobsByName();
         for (BatchExecutionLog row : taken) {
             if (BUNDLE.equals(row.getJobName())) {
                 runBundle(row.getBusinessDate());
             } else if (steps.contains(row.getJobName())) {
                 continue;
-            } else if (standalone.containsKey(row.getJobName())) {
-                resumeStandalone(standalone.get(row.getJobName()), row);
+            } else if (standaloneJobsByName.containsKey(row.getJobName())) {
+                resumeStandalone(standaloneJobsByName.get(row.getJobName()), row);
             } else {
                 executions.fail(row.getJobName(), row.getBusinessDate(),
                         "멈춘 실행을 이어받았으나 다시 돌릴 경로가 없다");
@@ -190,10 +195,6 @@ public class DailyJobScheduler {
 
     private Set<String> stepNames() {
         return jobs.stream().map(DailyJob::jobName).collect(Collectors.toSet());
-    }
-
-    private Map<String, StandaloneJob> standaloneJobsByName() {
-        return standaloneJobs.stream().collect(Collectors.toMap(StandaloneJob::jobName, job -> job));
     }
 
     private String describe(RuntimeException e) {
