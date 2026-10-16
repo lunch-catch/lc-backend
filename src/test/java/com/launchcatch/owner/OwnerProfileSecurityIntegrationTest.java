@@ -114,6 +114,9 @@ class OwnerProfileSecurityIntegrationTest extends AbstractOwnerIntegrationTest {
                 .andExpect(jsonPath("$.data.email").value(owner.getEmail()))
                 .andExpect(jsonPath("$.data.status").value(ownerStatus.name()))
                 .andExpect(jsonPath("$.data.tutorialViewed").value(ownerStatus == OwnerStatus.ACTIVE))
+                .andExpect(ownerStatus == OwnerStatus.ONBOARDING
+                        ? jsonPath("$.data.registrationStep").value("TERMS")
+                        : jsonPath("$.data.registrationStep").doesNotExist())
                 .andExpect(jsonPath("$.data.passwordHash").doesNotExist())
                 .andExpect(jsonPath("$.data.refreshTokenHash").doesNotExist())
                 .andExpect(header().doesNotExist("Set-Cookie"));

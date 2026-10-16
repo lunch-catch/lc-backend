@@ -15,17 +15,18 @@ class StoreRegistrationProgressTest {
             StoreRegistrationStep revisedStep, StoreRegistrationStep resumeStep) {
         var progress = atStep(resumeStep);
         long version = progress.getVersion();
-        progress.reviseCompletedStep(version, revisedStep);
+        progress.reviseStep(version, revisedStep);
         assertThat(progress.getResumeStep()).isEqualTo(resumeStep);
         assertThat(progress.getStoreId()).isEqualTo(9L);
         assertThat(progress.getVersion()).isEqualTo(version + 1);
     }
 
     @ParameterizedTest
-    @org.junit.jupiter.params.provider.EnumSource(StoreRegistrationStep.class)
-    void 현재_단계와_미래_단계는_완료_단계_수정으로_저장하지_못한다(StoreRegistrationStep revisedStep) {
+    @org.junit.jupiter.params.provider.EnumSource(value = StoreRegistrationStep.class,
+            names = "TERMS", mode = org.junit.jupiter.params.provider.EnumSource.Mode.EXCLUDE)
+    void 미래_단계는_수정하지_못한다(StoreRegistrationStep revisedStep) {
         var progress = StoreRegistrationProgress.start(7L);
-        assertThatThrownBy(() -> progress.reviseCompletedStep(0, revisedStep))
+        assertThatThrownBy(() -> progress.reviseStep(0, revisedStep))
                 .isInstanceOfSatisfying(StoreException.class, e ->
                         assertThat(e.getErrorCode()).isEqualTo(StoreErrorCode.REGISTRATION_STEP_CONFLICT));
         assertThat(progress.getVersion()).isZero();
@@ -33,29 +34,41 @@ class StoreRegistrationProgressTest {
 
     @ParameterizedTest
     @org.junit.jupiter.params.provider.EnumSource(value = StoreRegistrationStep.class,
-            names = {"TERMS", "STORE", "BUSINESS_VERIFICATION", "LOCATION", "MENU"})
-    void 수정_정책이_없는_단계와_현재_메뉴는_완료_단계_수정에서_거부한다(StoreRegistrationStep revisedStep) {
+            names = {"TERMS", "STORE_INFO", "LOCATION", "MENU"})
+    void 이전_단계와_현재_단계를_수정해도_메뉴에서_재개한다(StoreRegistrationStep revisedStep) {
         var progress = atStep(StoreRegistrationStep.MENU);
-        assertThatThrownBy(() -> progress.reviseCompletedStep(6, revisedStep)).isInstanceOf(StoreException.class);
+        progress.reviseStep(5, revisedStep);
+        assertThat(progress.getResumeStep()).isEqualTo(StoreRegistrationStep.MENU);
         assertThat(progress.getVersion()).isEqualTo(6);
     }
 
     @Test
     void 수정_요청의_오래된_버전과_잘못된_인자는_거부한다() {
         var progress = atStep(StoreRegistrationStep.MENU);
-        assertThatThrownBy(() -> progress.reviseCompletedStep(5, StoreRegistrationStep.HOURS))
+        assertThatThrownBy(() -> progress.reviseStep(4, StoreRegistrationStep.HOURS))
                 .isInstanceOfSatisfying(StoreException.class, e ->
                         assertThat(e.getErrorCode()).isEqualTo(StoreErrorCode.REGISTRATION_VERSION_CONFLICT));
-        assertThatIllegalArgumentException().isThrownBy(() -> progress.reviseCompletedStep(-1, StoreRegistrationStep.HOURS));
-        assertThatIllegalArgumentException().isThrownBy(() -> progress.reviseCompletedStep(6, null));
-        assertThat(progress.getVersion()).isEqualTo(6);
+        assertThatIllegalArgumentException().isThrownBy(() -> progress.reviseStep(-1, StoreRegistrationStep.HOURS));
+        assertThatIllegalArgumentException().isThrownBy(() -> progress.reviseStep(5, null));
+        assertThat(progress.getVersion()).isEqualTo(5);
+    }
+
+    @ParameterizedTest
+    @org.junit.jupiter.params.provider.EnumSource(value = StoreRegistrationStep.class, names = {"TERMS", "STORE_INFO"})
+    void 가게_생성_전_현재_단계_수정은_가게_없이_단계를_유지하고_버전을_올린다(StoreRegistrationStep step) {
+        var progress = atStep(step);
+        long version = progress.getVersion();
+        progress.reviseStep(version, step);
+        assertThat(progress.getResumeStep()).isEqualTo(step);
+        assertThat(progress.getStoreId()).isNull();
+        assertThat(progress.getVersion()).isEqualTo(version + 1);
     }
 
     private StoreRegistrationProgress atStep(StoreRegistrationStep target) {
         var progress = StoreRegistrationProgress.start(7L);
         while (progress.getResumeStep() != target) {
             var step = progress.getResumeStep();
-            progress.completeStep(progress.getVersion(), step, step == StoreRegistrationStep.STORE ? 9L : null);
+            progress.completeStep(progress.getVersion(), step, step == StoreRegistrationStep.STORE_INFO ? 9L : null);
         }
         return progress;
     }
@@ -80,44 +93,41 @@ class StoreRegistrationProgressTest {
     void 단계별_저장_후_다음_단계로_진행하며_메뉴_저장도_버전을_올린다() {
         var progress = StoreRegistrationProgress.start(7L);
         progress.completeStep(0, StoreRegistrationStep.TERMS, null);
-        progress.completeStep(1, StoreRegistrationStep.STORE, 9L);
-        assertThat(progress.getResumeStep()).isEqualTo(StoreRegistrationStep.BUSINESS_VERIFICATION);
-        progress.completeStep(2, StoreRegistrationStep.BUSINESS_VERIFICATION, null);
+        progress.completeStep(1, StoreRegistrationStep.STORE_INFO, 9L);
         assertThat(progress.getResumeStep()).isEqualTo(StoreRegistrationStep.LOCATION);
-        progress.completeStep(3, StoreRegistrationStep.LOCATION, null);
+        progress.completeStep(2, StoreRegistrationStep.LOCATION, null);
         assertThat(progress.getResumeStep()).isEqualTo(StoreRegistrationStep.HOURS);
-        progress.completeStep(4, StoreRegistrationStep.HOURS, null);
-        progress.completeStep(5, StoreRegistrationStep.IMAGES, null);
-        progress.completeStep(6, StoreRegistrationStep.MENU, null);
+        progress.completeStep(3, StoreRegistrationStep.HOURS, null);
+        progress.completeStep(4, StoreRegistrationStep.IMAGES, null);
+        progress.completeStep(5, StoreRegistrationStep.MENU, null);
         assertThat(progress.getResumeStep()).isEqualTo(StoreRegistrationStep.MENU);
         assertThat(progress.getStoreId()).isEqualTo(9L);
+        assertThat(progress.getVersion()).isEqualTo(6);
+        progress.completeStep(6, StoreRegistrationStep.MENU, null);
         assertThat(progress.getVersion()).isEqualTo(7);
-        progress.completeStep(7, StoreRegistrationStep.MENU, null);
-        assertThat(progress.getVersion()).isEqualTo(8);
     }
 
     @Test
-    void 사업자_검증을_건너뛰고_위치를_저장하지_못한다() {
+    void 가게_정보_단계를_건너뛰고_위치를_저장하지_못한다() {
         var progress = StoreRegistrationProgress.start(7L);
         progress.completeStep(0, StoreRegistrationStep.TERMS, null);
-        progress.completeStep(1, StoreRegistrationStep.STORE, 9L);
-        assertThatThrownBy(() -> progress.completeStep(2, StoreRegistrationStep.LOCATION, null))
+        assertThatThrownBy(() -> progress.completeStep(1, StoreRegistrationStep.LOCATION, null))
                 .isInstanceOfSatisfying(StoreException.class, e ->
                         assertThat(e.getErrorCode()).isEqualTo(StoreErrorCode.REGISTRATION_STEP_CONFLICT));
-        assertThat(progress.getResumeStep()).isEqualTo(StoreRegistrationStep.BUSINESS_VERIFICATION);
-        assertThat(progress.getVersion()).isEqualTo(2);
-        assertThat(progress.getStoreId()).isEqualTo(9L);
+        assertThat(progress.getResumeStep()).isEqualTo(StoreRegistrationStep.STORE_INFO);
+        assertThat(progress.getVersion()).isEqualTo(1);
+        assertThat(progress.getStoreId()).isNull();
     }
 
     @Test
     void 오래된_버전은_진행_상태를_변경하지_않는다() {
         var progress = StoreRegistrationProgress.start(7L);
         progress.completeStep(0, StoreRegistrationStep.TERMS, null);
-        assertThatThrownBy(() -> progress.completeStep(0, StoreRegistrationStep.STORE, 9L))
+        assertThatThrownBy(() -> progress.completeStep(0, StoreRegistrationStep.STORE_INFO, 9L))
                 .isInstanceOfSatisfying(StoreException.class, e ->
                         assertThat(e.getErrorCode()).isEqualTo(StoreErrorCode.REGISTRATION_VERSION_CONFLICT));
         assertThat(progress.getVersion()).isEqualTo(1);
-        assertThat(progress.getResumeStep()).isEqualTo(StoreRegistrationStep.STORE);
+        assertThat(progress.getResumeStep()).isEqualTo(StoreRegistrationStep.STORE_INFO);
         assertThat(progress.getStoreId()).isNull();
     }
 
@@ -140,8 +150,8 @@ class StoreRegistrationProgressTest {
         var progress = StoreRegistrationProgress.start(7L);
         progress.completeStep(0, StoreRegistrationStep.TERMS, null);
         assertThatIllegalArgumentException().isThrownBy(() ->
-                progress.completeStep(1, StoreRegistrationStep.STORE, storeId));
-        assertThat(progress.getResumeStep()).isEqualTo(StoreRegistrationStep.STORE);
+                progress.completeStep(1, StoreRegistrationStep.STORE_INFO, storeId));
+        assertThat(progress.getResumeStep()).isEqualTo(StoreRegistrationStep.STORE_INFO);
         assertThat(progress.getVersion()).isEqualTo(1);
     }
 

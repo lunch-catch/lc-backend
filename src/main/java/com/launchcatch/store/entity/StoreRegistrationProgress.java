@@ -45,20 +45,15 @@ public class StoreRegistrationProgress extends BaseTimeEntity {
         return new StoreRegistrationProgress(ownerId);
     }
 
-    // 호출자는 진행 상태 행을 잠그고 수정 후에도 해당 단계의 필수 조건이 충족되는지 검증해야 한다.
-    public void reviseCompletedStep(long expectedVersion, StoreRegistrationStep revisedStep) {
+    // 호출자는 진행 상태 행을 잠그고 완료한 이전 단계의 수정 후에도 필수 조건이 충족되는지 검증해야 한다.
+    public void reviseStep(long expectedVersion, StoreRegistrationStep revisedStep) {
         if (expectedVersion < 0 || revisedStep == null) {
             throw new IllegalArgumentException("유효한 버전과 수정 단계가 필요합니다.");
         }
         if (version != expectedVersion) {
             throw new StoreException(StoreErrorCode.REGISTRATION_VERSION_CONFLICT);
         }
-        boolean allowed = switch (revisedStep) {
-            case HOURS -> resumeStep == StoreRegistrationStep.IMAGES || resumeStep == StoreRegistrationStep.MENU;
-            case IMAGES -> resumeStep == StoreRegistrationStep.MENU;
-            default -> false;
-        };
-        if (!allowed) {
+        if (revisedStep.ordinal() > resumeStep.ordinal()) {
             throw new StoreException(StoreErrorCode.REGISTRATION_STEP_CONFLICT);
         }
         version = Math.incrementExact(version);
@@ -75,15 +70,15 @@ public class StoreRegistrationProgress extends BaseTimeEntity {
         if (resumeStep != completedStep) {
             throw new StoreException(StoreErrorCode.REGISTRATION_STEP_CONFLICT);
         }
-        if (completedStep == StoreRegistrationStep.STORE) {
+        if (completedStep == StoreRegistrationStep.STORE_INFO) {
             if (registeredStoreId == null || registeredStoreId <= 0) {
-                throw new IllegalArgumentException("기본 정보 저장 후 생성된 가게 ID가 필요합니다.");
+                throw new IllegalArgumentException("가게 정보 등록과 사업자 검증을 완료한 가게 ID가 필요합니다.");
             }
         } else if (registeredStoreId != null) {
-            throw new IllegalArgumentException("가게 연결은 기본 정보 저장 시에만 가능합니다.");
+            throw new IllegalArgumentException("가게 연결은 가게 정보 단계 완료 시에만 가능합니다.");
         }
         long nextVersion = Math.incrementExact(version);
-        if (completedStep == StoreRegistrationStep.STORE) {
+        if (completedStep == StoreRegistrationStep.STORE_INFO) {
             storeId = registeredStoreId;
         }
         resumeStep = completedStep.afterSave();
