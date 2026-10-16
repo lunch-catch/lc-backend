@@ -10,9 +10,9 @@ import com.launchcatch.store.repository.OwnerTermsAgreementRepository;
         "store.owner-terms.policies[0].terms-type=SERVICE",
         "store.owner-terms.policies[0].terms-version=1.0",
         "store.owner-terms.policies[0].required=true",
-        "store.owner-terms.policies[1].terms-type=MARKETING",
+        "store.owner-terms.policies[1].terms-type=PRIVACY",
         "store.owner-terms.policies[1].terms-version=1.0",
-        "store.owner-terms.policies[1].required=false"})
+        "store.owner-terms.policies[1].required=true"})
 abstract class AbstractStoreIntegrationTest extends IntegrationTestSupport {
     @MockitoSpyBean protected OwnerTermsAgreementRepository agreements;
 }

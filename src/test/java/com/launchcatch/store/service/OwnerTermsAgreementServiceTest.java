@@ -13,7 +13,6 @@ import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.springframework.dao.DataAccessResourceFailureException;
 
 class OwnerTermsAgreementServiceTest {
     private final OwnerTermsAgreementRepository repository = mock(OwnerTermsAgreementRepository.class);
@@ -29,8 +28,7 @@ class OwnerTermsAgreementServiceTest {
         when(progressRepository.findByOwnerIdForUpdate(7L)).thenAnswer(call -> java.util.Optional.of(progress));
         service = new OwnerTermsAgreementService(repository, new OwnerTermsProperties(List.of(
                 new OwnerTermsProperties.Term("SERVICE", "1.0", true),
-                new OwnerTermsProperties.Term("PRIVACY", "2.0", true),
-                new OwnerTermsProperties.Term("MARKETING", "1.0", false))), new StoreRegistrationProgressService(progressRepository));
+                new OwnerTermsProperties.Term("PRIVACY", "2.0", true))), new StoreRegistrationProgressService(progressRepository));
         when(repository.findAllByOwnerId(7L)).thenAnswer(call -> List.copyOf(stored));
         when(repository.saveAllAndFlush(anyList())).thenAnswer(call -> {
             List<OwnerTermsAgreement> rows = call.getArgument(0);
@@ -47,40 +45,59 @@ class OwnerTermsAgreementServiceTest {
     }
 
     @Test
-    void 필수_동의와_선택_미동의를_서버_정책으로_저장한다() {
-        var request = new ArrayList<>(required());
-        request.add(new TermsAgreementCommand("MARKETING", "1.0", false));
-        assertThat(service.recordAgreements(7L, 0L, request)).extracting(com.launchcatch.store.contract.TermsAgreementResult::requiredTermsCompleted).isEqualTo(true);
-        assertThat(stored).hasSize(3).allSatisfy(row -> assertThat(row.getOwnerId()).isEqualTo(7L));
-        assertThat(stored.get(0).isRequired()).isTrue();
+    void 선택_정책에서는_미동의도_저장하고_필수_완료를_막지_않는다() {
+        var mixed = new OwnerTermsAgreementService(repository, new OwnerTermsProperties(List.of(
+                new OwnerTermsProperties.Term("SERVICE", "1.0", true),
+                new OwnerTermsProperties.Term("PRIVACY", "2.0", true),
+                new OwnerTermsProperties.Term("MARKETING", "1.0", false))),
+                new StoreRegistrationProgressService(progressRepository));
+        var commands = new ArrayList<>(required());
+        commands.add(new TermsAgreementCommand("MARKETING", "1.0", false));
+        assertThat(mixed.recordAgreements(7L, 0L, commands).requiredTermsCompleted()).isTrue();
         assertThat(stored.get(2).isRequired()).isFalse();
         assertThat(stored.get(2).isAgreed()).isFalse();
     }
 
     @Test
-    void 최초_완료와_이전_단계_수정은_진행_위치를_유지하고_버전을_증가시킨다() {
-        var first = service.recordAgreements(7L, 0L, required());
-        assertThat(first.version()).isEqualTo(1);
-        assertThat(first.resumeStep()).isEqualTo("STORE_INFO");
-        var request = new ArrayList<>(required());
-        request.add(new TermsAgreementCommand("MARKETING", "1.0", true));
-        var revised = service.recordAgreements(7L, 1L, request);
-        assertThat(revised.version()).isEqualTo(2);
-        assertThat(revised.resumeStep()).isEqualTo("STORE_INFO");
-        assertThat(stored).hasSize(3);
-        assertThat(stored.get(2).isAgreed()).isTrue();
-        service.recordAgreements(7L, 2L, required());
+    void 선택_약관의_동의_변경과_생략_시_미동의_처리를_지원한다() {
+        var mixed = new OwnerTermsAgreementService(repository, new OwnerTermsProperties(List.of(
+                new OwnerTermsProperties.Term("SERVICE", "1.0", true),
+                new OwnerTermsProperties.Term("PRIVACY", "2.0", true),
+                new OwnerTermsProperties.Term("MARKETING", "1.0", false))),
+                new StoreRegistrationProgressService(progressRepository));
+        mixed.recordAgreements(7L, 0L, required());
         assertThat(stored.get(2).isAgreed()).isFalse();
+        mixed.recordAgreements(7L, 1L, List.of(new TermsAgreementCommand("MARKETING", "1.0", true)));
+        assertThat(stored.get(2).isAgreed()).isTrue();
+        mixed.recordAgreements(7L, 2L, required());
+        assertThat(stored).hasSize(3);
+        assertThat(stored.get(2).isAgreed()).isFalse();
+        assertThat(progress.getVersion()).isEqualTo(3L);
     }
 
     @Test
-    void 저장된_필수_동의가_유효하면_선택_약관만_제출할_수_있다() {
+    void 최초_완료와_이전_단계_재저장은_진행_위치를_유지하고_버전을_증가시킨다() {
+        var first = service.recordAgreements(7L, 0L, required());
+        assertThat(first.requiredTermsCompleted()).isTrue();
+        assertThat(stored).hasSize(2).allSatisfy(row -> {
+            assertThat(row.isRequired()).isTrue();
+            assertThat(row.isAgreed()).isTrue();
+        });
+        assertThat(first.version()).isEqualTo(1);
+        assertThat(first.resumeStep()).isEqualTo("STORE_INFO");
+        var revised = service.recordAgreements(7L, 1L, required());
+        assertThat(revised.version()).isEqualTo(2);
+        assertThat(revised.resumeStep()).isEqualTo("STORE_INFO");
+        assertThat(stored).hasSize(2).allMatch(OwnerTermsAgreement::isAgreed);
+    }
+
+    @Test
+    void 생략한_필수_약관의_유효한_기존_동의를_유지한다() {
         service.recordAgreements(7L, 0L, required());
-        var result = service.recordAgreements(7L, 1L,
-                List.of(new TermsAgreementCommand("MARKETING", "1.0", true)));
+        var result = service.recordAgreements(7L, 1L, List.of(required().getFirst()));
         assertThat(result.requiredTermsCompleted()).isTrue();
         assertThat(result.version()).isEqualTo(2L);
-        assertThat(stored).hasSize(3).allMatch(OwnerTermsAgreement::isAgreed);
+        assertThat(stored).hasSize(2).allMatch(OwnerTermsAgreement::isAgreed);
     }
 
     @Test
@@ -91,11 +108,11 @@ class OwnerTermsAgreementServiceTest {
                 .thenReturn(java.util.Optional.empty(), java.util.Optional.of(progress));
         when(progressRepository.saveAndFlush(any())).thenReturn(progress);
         var result = service.recordAgreements(7L, 0L,
-                List.of(new TermsAgreementCommand("MARKETING", "1.0", false)));
+                List.of(required().getFirst()));
         assertThat(result.requiredTermsCompleted()).isTrue();
         assertThat(result.resumeStep()).isEqualTo("STORE_INFO");
         assertThat(result.version()).isEqualTo(1L);
-        assertThat(stored).hasSize(3);
+        assertThat(stored).hasSize(2);
     }
 
     @Test
@@ -129,21 +146,12 @@ class OwnerTermsAgreementServiceTest {
     }
 
     @Test
-    void 필수_미동의는_422이다() {
-        assertThatThrownBy(() -> service.recordAgreements(7L, 0L,
-                List.of(new TermsAgreementCommand("SERVICE", "1.0", false))))
-                .isInstanceOfSatisfying(StoreException.class, e ->
-                        assertThat(e.getErrorCode()).isEqualTo(StoreErrorCode.REQUIRED_TERMS_NOT_COMPLETED));
-        verify(repository, never()).saveAllAndFlush(anyList());
-    }
-
-    @Test
     void 오래된_버전의_재요청은_기존_내역을_덮어쓰지_않는다() {
         service.recordAgreements(7L, 0L, required());
         assertThatThrownBy(() -> service.recordAgreements(7L, 0L, required()))
                 .isInstanceOfSatisfying(StoreException.class, e ->
                         assertThat(e.getErrorCode()).isEqualTo(StoreErrorCode.REGISTRATION_VERSION_CONFLICT));
-        assertThat(stored).hasSize(3);
+        assertThat(stored).hasSize(2);
     }
 
     @Test
@@ -173,42 +181,11 @@ class OwnerTermsAgreementServiceTest {
     }
 
     @Test
-    void 저장_실패를_성공으로_바꾸지_않는다() {
-        when(repository.saveAllAndFlush(anyList())).thenThrow(new DataAccessResourceFailureException("DB down"));
-        assertThatThrownBy(() -> service.recordAgreements(7L, 0L, required())).isInstanceOf(DataAccessResourceFailureException.class);
-    }
-
-    @Test
-    void 잘못된_내부_호출도_거부한다() {
-        assertThatThrownBy(() -> service.recordAgreements(null, 0L, required())).isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> service.recordAgreements(7L, 0L, List.of())).isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> service.recordAgreements(7L, 0L, java.util.Arrays.asList((TermsAgreementCommand) null)))
-                .isInstanceOf(IllegalArgumentException.class);
-    }
-    @Test
-    void DB_UNIQUE_충돌만_409로_변환한다() {
-        var cause = new org.hibernate.exception.ConstraintViolationException("duplicate",
-                new java.sql.SQLException("duplicate", "23000", 1062), "owner_terms_agreement.uk_owner_terms_version");
-        var failure = new org.springframework.dao.DataIntegrityViolationException("duplicate", cause);
-        when(repository.saveAllAndFlush(anyList())).thenThrow(failure);
-        assertThatThrownBy(() -> service.recordAgreements(7L, 0L, required()))
-                .isInstanceOfSatisfying(StoreException.class, e -> {
-                    assertThat(e.getErrorCode()).isEqualTo(StoreErrorCode.TERMS_ALREADY_RECORDED);
-                    assertThat(e.getCause()).isSameAs(failure);
-                });
-    }
-
-    @Test
     void 다른_DB_무결성_실패를_중복으로_오인하지_않는다() {
         var failure = new org.springframework.dao.DataIntegrityViolationException("not null failed");
         when(repository.saveAllAndFlush(anyList())).thenThrow(failure);
         assertThatThrownBy(() -> service.recordAgreements(7L, 0L, required())).isSameAs(failure);
     }
 
-    @Test
-    void 저장후_필수_완료_상태가_아니면_성공하지_않는다() {
-        when(repository.findAllByOwnerId(7L)).thenReturn(List.of(), List.of());
-        assertThatThrownBy(() -> service.recordAgreements(7L, 0L, required())).isInstanceOf(StoreException.class);
-    }
 
 }

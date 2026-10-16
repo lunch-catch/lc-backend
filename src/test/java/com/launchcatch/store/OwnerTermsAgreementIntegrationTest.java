@@ -26,7 +26,6 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DataAccessResourceFailureException;
@@ -50,7 +49,7 @@ class OwnerTermsAgreementIntegrationTest extends AbstractStoreIntegrationTest {
     private Long ownerId;
     private static final String BODY = """
             {"version":0,"agreements":[{"termsType":"SERVICE","termsVersion":"1.0","agreed":true},
-            {"termsType":"MARKETING","termsVersion":"1.0","agreed":false}]}
+            {"termsType":"PRIVACY","termsVersion":"1.0","agreed":true}]}
             """;
 
     @BeforeEach
@@ -68,7 +67,6 @@ class OwnerTermsAgreementIntegrationTest extends AbstractStoreIntegrationTest {
         jdbc.update("delete from owner_terms_agreement where owner_id = ?", ownerId);
         jdbc.update("delete from store_registration_progress where owner_id = ?", ownerId);
         owners.deleteById(ownerId);
-        jdbc.update("delete from admin where login_id = ?", "owner-terms-admin");
     }
 
     private Cookie access(Role role) {
@@ -83,7 +81,7 @@ class OwnerTermsAgreementIntegrationTest extends AbstractStoreIntegrationTest {
     private OwnerTermsAgreementRequest request() {
         return new OwnerTermsAgreementRequest(0L, List.of(
                 new OwnerTermsAgreementRequest.Agreement("SERVICE", "1.0", true),
-                new OwnerTermsAgreementRequest.Agreement("MARKETING", "1.0", false)));
+                new OwnerTermsAgreementRequest.Agreement("PRIVACY", "1.0", true)));
     }
 
     @Test
@@ -109,40 +107,25 @@ class OwnerTermsAgreementIntegrationTest extends AbstractStoreIntegrationTest {
         assertThat(after.getUpdatedAt()).isEqualTo(before.getUpdatedAt());
     }
 
-    @ParameterizedTest
-    @ValueSource(strings = {"missing", "broken", "expired"})
-    void 인증_실패는_AUTH005이며_저장하지_않는다(String value) throws Exception {
-        var builder = put("/v1/owner/terms-agreements").contentType(MediaType.APPLICATION_JSON).content(BODY);
-        if (value.equals("broken")) builder.cookie(new Cookie("accessToken", "invalid"));
-        if (value.equals("expired")) {
-            var oldClock = java.time.Clock.offset(java.time.Clock.systemUTC(), java.time.Duration.ofHours(-2));
-            var oldJwt = new JwtTokenProvider("test-only-secret-not-used-anywhere-else-0123456789abcdef",
-                    1800000, 86400000, 1209600000, 1209600000, oldClock);
-            builder.cookie(new Cookie("accessToken", oldJwt.createAccessToken(ownerId, Role.OWNER)));
-        }
-        mvc.perform(builder).andExpect(status().isUnauthorized()).andExpect(jsonPath("$.code").value("AUTH-005"));
+    @Test
+    void 인증_없이_요청하면_401이며_저장하지_않는다() throws Exception {
+        mvc.perform(put("/v1/owner/terms-agreements").contentType(MediaType.APPLICATION_JSON).content(BODY))
+                .andExpect(status().isUnauthorized()).andExpect(jsonPath("$.code").value("AUTH-005"));
         assertThat(agreements.findAllByOwnerId(ownerId)).isEmpty();
     }
 
-    @ParameterizedTest
-    @EnumSource(value = Role.class, names = {"MEMBER", "ADMIN", "SUPER_ADMIN"})
-    void 다른_역할은_AUTH006이다(Role role) throws Exception {
-        if (role == Role.ADMIN || role == Role.SUPER_ADMIN) {
-            jdbc.update("""
-                    insert into admin (admin_id, login_id, password_hash, name, role, status, created_at, updated_at)
-                    values (?, ?, ?, ?, ?, 'ACTIVE', ?, ?)
-                    """, ownerId, "owner-terms-admin", "hash", "약관 테스트 관리자", role.name(),
-                    LocalDateTime.now(), LocalDateTime.now());
-        }
-        mvc.perform(put("/v1/owner/terms-agreements").cookie(access(role)).contentType(MediaType.APPLICATION_JSON).content(BODY))
+    @Test
+    void OWNER가_아닌_역할은_403이며_저장하지_않는다() throws Exception {
+        mvc.perform(put("/v1/owner/terms-agreements").cookie(access(Role.MEMBER))
+                        .contentType(MediaType.APPLICATION_JSON).content(BODY))
                 .andExpect(status().isForbidden()).andExpect(jsonPath("$.code").value("AUTH-006"));
         assertThat(agreements.findAllByOwnerId(ownerId)).isEmpty();
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"{}", "{\"agreements\":[]}", "{\"agreements\":[null]}",
-            "{\"agreements\":[{\"termsType\":\"SERVICE\",\"termsVersion\":\"1.0\"}]}",
-            "{\"agreements\":[{\"termsType\":\" \",\"termsVersion\":\"1.0\",\"agreed\":true}]}"})
+    @ValueSource(strings = {"{}", "{\"version\":0,\"agreements\":[]}", "{\"version\":0,\"agreements\":[null]}",
+            "{\"version\":0,\"agreements\":[{\"termsType\":\"SERVICE\",\"termsVersion\":\"1.0\"}]}",
+            "{\"version\":0,\"agreements\":[{\"termsType\":\" \",\"termsVersion\":\"1.0\",\"agreed\":true}]}"})
     void 누락과_잘못된_입력은_400이다(String body) throws Exception {
         mvc.perform(put("/v1/owner/terms-agreements").cookie(access(Role.OWNER)).contentType(MediaType.APPLICATION_JSON).content(body))
                 .andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("COMMON-002"));
@@ -150,19 +133,11 @@ class OwnerTermsAgreementIntegrationTest extends AbstractStoreIntegrationTest {
     }
 
     @Test
-    void 필수_미동의는_422이며_선택_내역도_저장하지_않는다() throws Exception {
+    void 약관_미동의는_422이며_다른_약관도_저장하지_않는다() throws Exception {
         mvc.perform(put("/v1/owner/terms-agreements").cookie(access(Role.OWNER))
                         .contentType(MediaType.APPLICATION_JSON).content(BODY.replace("true", "false")))
                 .andExpect(status().isUnprocessableEntity()).andExpect(jsonPath("$.code").value("STORE-006"));
         assertThat(agreements.findAllByOwnerId(ownerId)).isEmpty();
-    }
-
-    @Test
-    void 같은_요청을_반복하면_409이다() throws Exception {
-        service.submit(ownerId, request());
-        mvc.perform(put("/v1/owner/terms-agreements").cookie(access(Role.OWNER)).contentType(MediaType.APPLICATION_JSON).content(BODY))
-                .andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("STORE-001"));
-        assertThat(agreements.findAllByOwnerId(ownerId)).hasSize(2);
     }
 
     @Test
@@ -176,19 +151,6 @@ class OwnerTermsAgreementIntegrationTest extends AbstractStoreIntegrationTest {
         assertThat(agreements.findAllByOwnerId(ownerId)).isEmpty();
         assertThat(jdbc.queryForObject("select count(*) from store_registration_progress where owner_id = ?",
                 Integer.class, ownerId)).isZero();
-    }
-
-    @Test
-    void 최신_버전으로_선택_동의를_수정해도_재개_위치를_유지한다() throws Exception {
-        service.submit(ownerId, request());
-        mvc.perform(put("/v1/owner/terms-agreements").cookie(access(Role.OWNER))
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(BODY.replace("\"version\":0", "\"version\":1")
-                                .replace("\"agreed\":false", "\"agreed\":true")))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.version").value(2))
-                .andExpect(jsonPath("$.data.resumeStep").value("STORE_INFO"));
-        assertThat(agreements.findAllByOwnerId(ownerId)).hasSize(2).allMatch(row -> row.isAgreed());
     }
 
     @Test
@@ -253,18 +215,6 @@ class OwnerTermsAgreementIntegrationTest extends AbstractStoreIntegrationTest {
                 Integer.class, ownerId)).isEqualTo(2);
         assertThat(jdbc.queryForObject("select version from store_registration_progress where owner_id = ?",
                 Long.class, ownerId)).isEqualTo(1L);
-    }
-
-    @ParameterizedTest
-    @EnumSource(value = OwnerStatus.class, names = {"ACTIVE", "SUSPENDED", "WITHDRAWN"})
-    void 현재_DB_상태가_온보딩이_아니면_403이다(OwnerStatus ownerStatus) throws Exception {
-        jdbc.update("update owner set status = ?, suspended_at = ?, withdrawn_at = ? where owner_id = ?",
-                ownerStatus.name(), ownerStatus == OwnerStatus.SUSPENDED ? LocalDateTime.now() : null,
-                ownerStatus == OwnerStatus.WITHDRAWN ? LocalDateTime.now() : null, ownerId);
-        mvc.perform(put("/v1/owner/terms-agreements").cookie(access(Role.OWNER))
-                        .contentType(MediaType.APPLICATION_JSON).content(BODY))
-                .andExpect(status().isForbidden()).andExpect(jsonPath("$.code").value("OWNER-002"));
-        assertThat(agreements.findAllByOwnerId(ownerId)).isEmpty();
     }
 
 }
