@@ -7,6 +7,7 @@ import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -65,8 +66,8 @@ class ImpressionIntegrationTest extends AbstractAdservingIntegrationTest {
 
     @BeforeEach
     void setUp() {
-        when(clock.instant()).thenReturn(NOW);
-        when(clock.getZone()).thenReturn(ClockConfig.ZONE);
+        doReturn(NOW).when(clock).instant();
+        doReturn(ClockConfig.ZONE).when(clock).getZone();
         doAnswer(invocation -> {
             deductedInTransaction.set(TransactionSynchronizationManager.isActualTransactionActive());
             return DeductionStatus.BILLED;

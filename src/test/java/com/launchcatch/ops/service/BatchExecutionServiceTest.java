@@ -247,18 +247,26 @@ class BatchExecutionServiceTest {
     }
 
     @Test
-    @DisplayName("성공은 사유 없이 닫는다")
+    @DisplayName("성공은 사유와 건수 없이 닫는다")
     void 성공으로_닫는다() {
         service.succeed(JOB, DATE);
 
-        verify(logs).close(JOB, DATE, BatchStatus.SUCCESS, null, ME, NOW);
+        verify(logs).close(JOB, DATE, BatchStatus.SUCCESS, null, null, ME, NOW);
         verifyNoInteractions(alert);
+    }
+
+    @Test
+    @DisplayName("건수를 주면 성공을 그 건수로 닫는다")
+    void 성공으로_닫는다_건수포함() {
+        service.succeed(JOB, DATE, 120);
+
+        verify(logs).close(JOB, DATE, BatchStatus.SUCCESS, null, 120, ME, NOW);
     }
 
     @Test
     @DisplayName("실패는 사유와 함께 닫고 관리자에게 알린다")
     void 실패로_닫는다() {
-        when(logs.close(JOB, DATE, BatchStatus.FAILED, "원본을 읽지 못했다", ME, NOW)).thenReturn(1);
+        when(logs.close(JOB, DATE, BatchStatus.FAILED, "원본을 읽지 못했다", null, ME, NOW)).thenReturn(1);
 
         service.fail(JOB, DATE, "원본을 읽지 못했다");
 
@@ -273,7 +281,7 @@ class BatchExecutionServiceTest {
     @Test
     @DisplayName("내 소유가 아닌 행은 닫지 않고 알리지도 않는다")
     void 남의_행은_닫지_않는다() {
-        when(logs.close(JOB, DATE, BatchStatus.FAILED, "원본을 읽지 못했다", ME, NOW)).thenReturn(0);
+        when(logs.close(JOB, DATE, BatchStatus.FAILED, "원본을 읽지 못했다", null, ME, NOW)).thenReturn(0);
 
         service.fail(JOB, DATE, "원본을 읽지 못했다");
 
@@ -291,7 +299,7 @@ class BatchExecutionServiceTest {
 
         service.fail(JOB, DATE, reason);
 
-        verify(logs).close(JOB, DATE, BatchStatus.FAILED, reason.substring(0, 500), ME, NOW);
+        verify(logs).close(JOB, DATE, BatchStatus.FAILED, reason.substring(0, 500), null, ME, NOW);
     }
 
     @Test

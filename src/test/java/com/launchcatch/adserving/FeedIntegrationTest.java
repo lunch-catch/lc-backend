@@ -2,6 +2,7 @@ package com.launchcatch.adserving;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -52,8 +53,8 @@ class FeedIntegrationTest extends AbstractAdservingIntegrationTest {
 
     @BeforeEach
     void setUp() {
-        when(clock.instant()).thenReturn(SERVING_NOW);
-        when(clock.getZone()).thenReturn(ClockConfig.ZONE);
+        doReturn(SERVING_NOW).when(clock).instant();
+        doReturn(ClockConfig.ZONE).when(clock).getZone();
         when(memberQueryService.findById(MEMBER_ID)).thenReturn(Optional.of(new MemberInfo(
                 MEMBER_ID, "점심러", MemberStatus.ACTIVE, true, true, true,
                 BigDecimal.valueOf(LAT), BigDecimal.valueOf(LNG), Gender.FEMALE, AgeGroup.AGE_30S)));
@@ -82,7 +83,7 @@ class FeedIntegrationTest extends AbstractAdservingIntegrationTest {
     }
 
     private void at(LocalDateTime time) {
-        when(clock.instant()).thenReturn(time.atZone(ClockConfig.ZONE).toInstant());
+        doReturn(time.atZone(ClockConfig.ZONE).toInstant()).when(clock).instant();
     }
 
     private void insertCandidate(long campaignId, String state, LocalDateTime soldOutAt) {
@@ -160,19 +161,19 @@ class FeedIntegrationTest extends AbstractAdservingIntegrationTest {
     @Test
     void 최근_60초_안의_일곱째_요청은_429_와_남은_초를_받는다() throws Exception {
         for (int i = 0; i < 6; i++) {
-            when(clock.instant()).thenReturn(SERVING_NOW.plusSeconds(i));
+            doReturn(SERVING_NOW.plusSeconds(i)).when(clock).instant();
             mockMvc.perform(get("/v1/feed").with(user(as(Role.MEMBER)))).andExpect(status().isOk());
         }
 
         // 첫 요청이 10:15:30 이라 10:16:30 에 창을 벗어난다. 10:15:53.5 에서 남은 36.5초는 37로 올린다
-        when(clock.instant()).thenReturn(SERVING_NOW.plusMillis(23_500));
+        doReturn(SERVING_NOW.plusMillis(23_500)).when(clock).instant();
         mockMvc.perform(get("/v1/feed").with(user(as(Role.MEMBER))))
                 .andExpect(status().isTooManyRequests())
                 .andExpect(header().string("Retry-After", "37"))
                 .andExpect(jsonPath("$.code").value("ADSERVING-003"));
 
         // 거부된 요청은 세지 않아서 알려 준 시각에 다시 오면 받는다
-        when(clock.instant()).thenReturn(SERVING_NOW.plusSeconds(60));
+        doReturn(SERVING_NOW.plusSeconds(60)).when(clock).instant();
         mockMvc.perform(get("/v1/feed").with(user(as(Role.MEMBER))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.nextFeedAvailableAt").value("2026-10-01T10:16:31+09:00"));

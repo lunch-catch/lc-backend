@@ -5,8 +5,6 @@ import com.launchcatch.adserving.feed.repository.FeedVisitRepository.Visit;
 import com.launchcatch.adserving.feed.repository.ServeLogRepository;
 import com.launchcatch.adserving.feed.repository.ServeLogRepository.Row;
 import io.micrometer.core.instrument.MeterRegistry;
-import java.time.Clock;
-import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ArrayBlockingQueue;
@@ -23,6 +21,7 @@ import org.springframework.stereotype.Service;
  *
  * 작업자 스레드 하나가 묶어서 쓴다. 종료할 때는 웹 서버가 요청을 다 받은 뒤 멈추고 남은 것을 비운다.
  * 크기와 묶음 수는 근거 없는 값(C)이라 부하 시험에서 바꾼다.
+ * 작업자는 시계를 읽지 않는다. 기록 시각은 요청이 넣어 보낸다. 시계를 스파이로 바꾸는 테스트와 경합해 스텁이 엉뚱한 메서드에 걸린 적이 있다(#379).
  */
 @Slf4j
 @Service
@@ -40,17 +39,15 @@ public class ServeLogBuffer implements SmartLifecycle {
     private final ServeLogRepository serveLogRepository;
     private final FeedVisitRepository feedVisitRepository;
     private final MeterRegistry meterRegistry;
-    private final Clock clock;
 
     private volatile boolean running;
     private Thread worker;
 
     public ServeLogBuffer(ServeLogRepository serveLogRepository, FeedVisitRepository feedVisitRepository,
-                          MeterRegistry meterRegistry, Clock clock) {
+                          MeterRegistry meterRegistry) {
         this.serveLogRepository = serveLogRepository;
         this.feedVisitRepository = feedVisitRepository;
         this.meterRegistry = meterRegistry;
-        this.clock = clock;
     }
 
     // 넣지 못하면 그 피드의 카드 수만큼 버린 것으로 센다.
@@ -88,10 +85,10 @@ public class ServeLogBuffer implements SmartLifecycle {
             }
         }
         List<Visit> visits = batch.stream()
-                .map(f -> new Visit(f.businessDate(), f.memberId(), f.latitude(), f.longitude()))
+                .map(f -> new Visit(f.businessDate(), f.memberId(), f.latitude(), f.longitude(), f.requestedAt()))
                 .toList();
         try {
-            feedVisitRepository.insertAll(visits, LocalDateTime.now(clock));
+            feedVisitRepository.insertAll(visits);
         } catch (RuntimeException e) {
             log.error("event=FEED_VISIT_WRITE_FAILED visits={} 버린다", visits.size(), e);
             meterRegistry.counter(VISIT_FAILED_METRIC).increment(visits.size());

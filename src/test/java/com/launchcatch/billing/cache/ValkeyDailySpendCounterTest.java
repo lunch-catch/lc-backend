@@ -64,6 +64,24 @@ class ValkeyDailySpendCounterTest {
     }
 
     @Test
+    @SuppressWarnings("unchecked")
+    void 재예약_반영은_새_예약액을_넘기고_올렸는지를_돌려준다() {
+        when(redisTemplate.execute(any(RedisScript.class), anyList(), any(Object[].class))).thenReturn(1L, 0L, (Long) null);
+        ValkeyDailySpendCounter repository = new ValkeyDailySpendCounter(redisTemplate);
+
+        boolean increased = repository.increaseReserved(DAY, 12L, 10000L);
+
+        ArgumentCaptor<List<String>> keys = ArgumentCaptor.forClass(List.class);
+        ArgumentCaptor<Object[]> args = ArgumentCaptor.forClass(Object[].class);
+        verify(redisTemplate).execute(any(RedisScript.class), keys.capture(), args.capture());
+        assertThat(increased).isTrue();
+        assertThat(keys.getValue()).containsExactly("billing:day:2026-10-01:12");
+        assertThat(args.getValue()).containsExactly("10000");
+        assertThat(repository.increaseReserved(DAY, 12L, 10000L)).isFalse();
+        assertThat(repository.increaseReserved(DAY, 12L, 10000L)).isFalse();
+    }
+
+    @Test
     void 해시를_지울_때도_같은_키를_쓴다() {
         new ValkeyDailySpendCounter(redisTemplate).evict(DAY, 12L);
 

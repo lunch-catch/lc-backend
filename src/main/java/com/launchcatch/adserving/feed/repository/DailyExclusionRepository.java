@@ -2,6 +2,9 @@ package com.launchcatch.adserving.feed.repository;
 
 import com.launchcatch.auth.RedisFailureClassifier;
 import io.micrometer.core.instrument.MeterRegistry;
+import com.launchcatch.global.config.ClockConfig;
+import java.time.Duration;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -14,7 +17,7 @@ import org.springframework.stereotype.Repository;
 /*
  * 사용자가 그날 찜하거나 패스해서 피드에서 뺄 캠페인의 집합이다(FR-099 (9), BR-040).
  * 찜 목록에서 지운 캠페인도 남아 그날 다시 나오지 않는다. 그래서 swipe_log 와 wishlist 로 대신하지 않는다.
- * 쓰는 쪽은 스와이프와 찜 API 다. 키에 영업일이 있어 00:00 에 저절로 비고, 만료는 쓰는 쪽이 건다.
+ * 쓰는 쪽은 스와이프와 찜 API 다. 키에 영업일이 있어 00:00 에 저절로 비고, 만료는 다음 영업일 00:00 까지 남은 시간으로 건다.
  */
 @Slf4j
 @Repository
@@ -46,6 +49,22 @@ public class DailyExclusionRepository {
                     memberId, RedisFailureClassifier.causeLabel(e), e);
             meterRegistry.counter(BYPASS_METRIC, "use", "daily_exclusion").increment();
             return Set.of();
+        }
+    }
+
+    /*
+     * 그날 피드에서 뺄 캠페인을 더한다. 만료를 시각이 아니라 남은 시간으로 건다. 앱의 영업일과 Valkey 의 시계가 어긋나도 키가 곧바로 사라지지 않는다.
+     * Valkey 가 멈추면 넣지 않고 센다. 그날 그 카드가 다시 보일 뿐이다.
+     */
+    public void add(LocalDate businessDate, Long memberId, Long campaignId, Instant now) {
+        String key = key(businessDate, memberId);
+        try {
+            redisTemplate.opsForSet().add(key, String.valueOf(campaignId));
+            redisTemplate.expire(key, Duration.between(now, businessDate.plusDays(1).atStartOfDay(ClockConfig.ZONE)));
+        } catch (DataAccessException e) {
+            log.warn("event=FEED_DAILY_EXCLUSION_WRITE_FAILED memberId={} campaignId={} cause={} 넣지 않고 통과시킨다",
+                    memberId, campaignId, RedisFailureClassifier.causeLabel(e), e);
+            meterRegistry.counter(BYPASS_METRIC, "use", "daily_exclusion").increment();
         }
     }
 }

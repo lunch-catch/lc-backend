@@ -3,6 +3,7 @@ package com.launchcatch.campaign.contract;
 import java.time.LocalDate;
 import java.util.Collection;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 
 /** 캠페인 정보를 공개한다. 조회 결과의 날짜와 필요한 컬럼은 호출하는 도메인에서 판단한다. */
@@ -44,4 +45,12 @@ public interface CampaignQueryService {
      * 같은 조건을 쓴다. 입력이 비면 빈 Set이다.
      */
     Set<Long> findOwnerIdsWithLiveCampaign(Collection<Long> ownerIds);
+
+    /**
+     * 그 캠페인 행을 잠그고(SELECT ... FOR UPDATE) 최신 상태로 조회한다(#378). 호출자가 이
+     * 결과를 읽은 뒤 그 캠페인에 쓰기를 하는 동안 다른 트랜잭션이 같은 캠페인을 바꾸지 못하게
+     * 막는다. 호출자의 쓰기 트랜잭션 안에서 불러야 잠금이 그 트랜잭션이 끝날 때까지 유지된다.
+     * 없는 캠페인 ID면 빈 값이다.
+     */
+    Optional<CampaignInfo> findByIdForUpdate(Long campaignId);
 }

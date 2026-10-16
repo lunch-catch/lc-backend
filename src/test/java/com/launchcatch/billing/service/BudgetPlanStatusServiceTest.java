@@ -12,6 +12,7 @@ import static org.mockito.Mockito.when;
 
 import com.launchcatch.billing.dto.BudgetPlanStatusChanged;
 import com.launchcatch.billing.dto.BudgetPlanStatusConfirmed;
+import com.launchcatch.billing.dto.RechargeReserveIncreased;
 import com.launchcatch.billing.repository.BudgetDailyPlanRepository;
 import com.launchcatch.billing.cache.DailySpendCounter;
 import com.launchcatch.campaign.contract.CampaignStatusChangedEvent;
@@ -123,5 +124,24 @@ class BudgetPlanStatusServiceTest {
 
         assertThatCode(() -> service.mirror(new BudgetPlanStatusChanged(12L, DAY, true, CHANGED_AT)))
                 .doesNotThrowAnyException();
+    }
+
+    @Test
+    void 재예약이_늘린_예약액을_커밋_뒤_해시에_올린다() {
+        service.mirrorReserve(new RechargeReserveIncreased(12L, DAY, 10000L));
+
+        verify(spendCounter).increaseReserved(DAY, 12L, 10000L);
+    }
+
+    // 실패해도 지우지 않는다. 예약액이 실제보다 작게 보여 과금이 일찍 멈추는 쪽이 낫다
+    @Test
+    void 재예약_반영이_실패해도_던지지_않고_해시를_지우지_않는다() {
+        doThrow(new RedisConnectionFailureException("valkey down"))
+                .when(spendCounter).increaseReserved(DAY, 12L, 10000L);
+
+        assertThatCode(() -> service.mirrorReserve(new RechargeReserveIncreased(12L, DAY, 10000L)))
+                .doesNotThrowAnyException();
+
+        verify(spendCounter, never()).evict(any(), any());
     }
 }

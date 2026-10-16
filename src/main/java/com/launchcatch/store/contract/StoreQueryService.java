@@ -7,7 +7,7 @@ public interface StoreQueryService {
     /** 최종 등록된 가게를 일괄 조회한다. 존재하지 않거나 최종 등록 전인 가게 ID는 제외한다. */
     List<StoreInfo> findAllById(List<Long> storeIds);
 
-    /** 현재 소유 관계만 확인한다. 가게 미존재와 다른 점주 소유는 모두 false다. */
+    /** 본인 소유이면서 최종 등록된 가게인지 확인한다. 가게 미존재, 다른 점주 소유와 등록 중인 가게는 false다. */
     boolean canManageStore(Long ownerId, Long storeId);
 
     /** 최종 등록된 가게의 메뉴를 일괄 조회한다. 존재하지 않거나 최종 등록 전 가게에 속한 메뉴 ID는 제외하며 가격은 원 단위 할인 전 가격이다. */
