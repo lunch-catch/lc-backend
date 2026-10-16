@@ -8,7 +8,7 @@ QR 사용 정책은 API 설계의 [QR 사용 구현 전 확정 사항](./coupon-
 
 | 구분 | 내용 |
 |---|---|
-| 현재 구현 | 선착순 발급, 당일 발급 한도와 누적 통계 조회, 목록·단건 조회와 조회 시 만료 저장, 미사용 쿠폰 삭제, QR 생성·갱신·사용 확정, 매장 사용 이력과 오늘 이벤트 상태 조회, 발급·사용 퍼널 이벤트 발행을 처리한다 |
+| 현재 구현 | 선착순 발급, 당일 발급 한도와 누적 통계 조회, 목록·단건 조회와 조회 시 만료 저장, 미사용 쿠폰 삭제, QR 생성·갱신·사용 확정, 매장 사용 이력과 오늘 이벤트 상태 조회, 발급·사용 퍼널 이벤트 발행과 분석용 쿠폰 집계 조회를 처리한다 |
 | 후속 구현 | 이벤트·재고 생성과 캠페인 이벤트 수신, 오픈·만료 배치의 이벤트 발행을 연결한다 |
 | 다른 도메인의 소유 | 캠페인 할인 조건은 campaign, 현재 매장 관리 권한은 store, 계정 상태는 member·owner, 찜과 광고 후보는 adserving, 통계 집계는 analytics가 소유한다 |
 
@@ -38,7 +38,7 @@ coupon은 다른 도메인의 내부 엔티티와 저장소를 읽지 않는다.
 
 ```text
 coupon/
-├── contract/      오픈·발급·사용·만료 이벤트 record
+├── contract/      CouponStatsQueryService, 집계 결과와 오픈·발급·사용·만료 이벤트 record
 ├── CouponListFilter.java
 ├── CouponQrImageEncoder.java
 ├── config/        CouponSecurityConfig, CouponOpenApiConfig
@@ -47,12 +47,12 @@ coupon/
 ├── entity/        CouponEvent, CouponInventory, CouponDailyLimit,
 │                  MemberCoupon, CouponUsageHistory
 ├── repository/    각 엔티티 저장소와 목록용 Querydsl 구현
-├── service/       CouponCommandService, CouponLookUpService
+├── service/       CouponCommandService, CouponLookUpService, CouponStatsQueryServiceImpl
 └── exception/     CouponException, CouponErrorCode
 ```
 
 엔티티는 다른 엔티티를 객체 연관으로 쥐지 않고 ID로 참조한다.
-HTTP 요청과 공개 이벤트가 연결되어 있다. `job/`과 캠페인 이벤트를 받는 `listener/`는 아직 없다.
+HTTP 요청과 집계 조회 contract, 공개 이벤트가 연결되어 있다. `job/`과 캠페인 이벤트를 받는 `listener/`는 아직 없다.
 
 ### 규칙을 두는 곳
 
@@ -144,9 +144,11 @@ CouponEvent.calculateDiscount는 자기 스냅샷의 할인 대상·방식·값�
 | 미연결 | 받음, campaign | `CampaignStatusChangedEvent`, `CampaignEndedEvent` | 이벤트의 정의는 있지만 coupon 수신 경로는 없다 |
 | 연결됨 | 공개, analytics | `CouponIssuedEvent`, `CouponRedeemedEvent` | 발급·사용 트랜잭션 안에서 발행하며 분석은 커밋 후 비동기로 수신한다 |
 | 호출 대기 | 공개, analytics | `CouponIssueOpenedEvent`, `CouponExpiredEvent` | 이벤트 타입만 준비했다. 오픈·만료 배치를 구현할 때 발행한다 |
+| 공개됨 | 공개, analytics | `CouponStatsQueryService` | 캠페인별 일일 집계와 회원별 누적 단건 집계를 제공한다. 분석의 호출 연결은 후속 작업이다 |
 
 계약과 의존 방향은 [아키텍처 2장](../../architecture/런치캐치_도메인_구조와_의존성_설계.md)을 따른다.
 store 메서드의 반환 정책은 [공개 계약 문서](../store/store-query-contract.md)가 갖는다.
+쿠폰 집계 조회의 날짜·상태·반환·실패 정책은 [집계 조회 계약](./coupon-stats-query-contract.md)이 갖는다.
 현재 coupon은 공개 조회 계약 위에 자체 캐시를 추가하지 않는다.
 공개 이벤트의 필드는 [contract 디렉터리](../../../src/main/java/com/launchcatch/coupon/contract/)가 갖는다.
 분석 수신자가 비동기 리스너와 저장을 소유하며 coupon은 분석 내부를 호출하지 않는다.

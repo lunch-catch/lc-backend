@@ -25,6 +25,9 @@ import com.launchcatch.auth.contract.AccessTokenValidationPolicy;
 import com.launchcatch.campaign.contract.CampaignInfo;
 import com.launchcatch.campaign.contract.CampaignQueryService;
 import com.launchcatch.campaign.contract.CampaignStatus;
+import com.launchcatch.coupon.contract.CouponStatsQueryService;
+import com.launchcatch.coupon.contract.DailyCampaignCouponStats;
+import com.launchcatch.coupon.contract.MemberCouponStats;
 import com.launchcatch.coupon.dto.CouponDetailResponse;
 import com.launchcatch.coupon.dto.CouponUsageHistoryResponse;
 import com.launchcatch.coupon.entity.CouponInventoryStatus;
@@ -128,6 +131,7 @@ class CouponIntegrationTest extends IntegrationTestSupport {
     @Autowired PlatformTransactionManager transactionManager;
     @Autowired CouponLookUpService couponLookUpService;
     @Autowired CouponCommandService couponCommandService;
+    @Autowired CouponStatsQueryService couponStats;
     @Autowired FunnelRecorder funnel;
 
     @MockitoSpyBean Clock clock;
@@ -149,6 +153,155 @@ class CouponIntegrationTest extends IntegrationTestSupport {
                 .thenReturn(Clock.fixed(Instant.parse("2026-10-10T03:00:00Z"), ClockConfig.ZONE));
         when(clock.getZone()).thenReturn(ClockConfig.ZONE);
         when(clock.instant()).thenReturn(Instant.parse("2026-10-10T03:00:00Z"));
+    }
+
+    @Nested
+    @DisplayName("분석용 쿠폰 집계 조회")
+    class Stats {
+
+        @AfterEach
+        void cleanUp() {
+            jdbcTemplate.update("DELETE FROM coupon_usage_history");
+            jdbcTemplate.update("DELETE FROM member_coupon");
+            jdbcTemplate.update("DELETE FROM coupon_inventory");
+            jdbcTemplate.update("DELETE FROM coupon_event");
+        }
+
+        @Test
+        void 회차_수를_오픈_수로_세고_발급은_모든_상태를_만료는_EXPIRED만_센다() {
+            event(81, 91, TODAY, "ACTIVE");
+            event(82, 92, TODAY, "PAUSED");
+            event(83, 93, TODAY, "ENDED");
+            event(84, 94, TODAY, "SCHEDULED");
+            event(85, 91, TODAY.minusDays(1), "ACTIVE");
+            coupon(101, 81, 17, "USED");
+            coupon(102, 81, 18, "EXPIRED");
+            coupon(103, 81, 19, "ISSUED");
+            coupon(104, 81, 20, "REMOVED");
+            coupon(105, 85, 17, "USED");
+            usage(101, TODAY.atTime(12, 0), 1500);
+            usage(105, TODAY.atTime(12, 1), 1500);
+
+            assertThat(couponStats.dailyCampaignStats(TODAY)).containsExactly(
+                    new DailyCampaignCouponStats(91, 1, 4, 2, 1),
+                    new DailyCampaignCouponStats(92, 1, 0, 0, 0),
+                    new DailyCampaignCouponStats(93, 1, 0, 0, 0),
+                    new DailyCampaignCouponStats(94, 1, 0, 0, 0));
+            assertThat(jdbcTemplate.queryForObject(
+                    "SELECT status FROM member_coupon WHERE member_coupon_id=103", String.class)).isEqualTo("ISSUED");
+        }
+
+        @Test
+        void 사용_수는_회차의_영업일과_별개로_KST_사용일의_양끝_경계를_적용한다() {
+            event(81, 91, TODAY.minusDays(1), "ENDED");
+            coupon(101, 81, 17, "USED");
+            coupon(102, 81, 18, "USED");
+            coupon(103, 81, 19, "USED");
+            coupon(104, 81, 20, "USED");
+            usage(101, TODAY.atStartOfDay().minusNanos(1000), 100);
+            usage(102, TODAY.atStartOfDay(), 200);
+            usage(103, TODAY.plusDays(1).atStartOfDay().minusNanos(1000), 300);
+            usage(104, TODAY.plusDays(1).atStartOfDay(), 400);
+
+            assertThat(couponStats.dailyCampaignStats(TODAY))
+                    .containsExactly(new DailyCampaignCouponStats(91, 0, 0, 2, 0));
+        }
+
+        @Test
+        void 캠페인이_다르면_발급과_사용과_만료_수가_섞이지_않는다() {
+            event(81, 91, TODAY, "ACTIVE");
+            event(82, 92, TODAY, "ACTIVE");
+            coupon(101, 81, 17, "USED");
+            coupon(102, 82, 17, "USED");
+            coupon(103, 82, 18, "EXPIRED");
+            usage(101, TODAY.atTime(12, 0), 100);
+            usage(102, TODAY.atTime(12, 0), 200);
+
+            assertThat(couponStats.dailyCampaignStats(TODAY)).containsExactly(
+                    new DailyCampaignCouponStats(91, 1, 1, 1, 0),
+                    new DailyCampaignCouponStats(92, 1, 2, 1, 1));
+        }
+
+        @Test
+        void 그날_회차와_사용_기록이_없으면_빈_목록이다() {
+            event(81, 91, TODAY.minusDays(1), "ACTIVE");
+            coupon(101, 81, 17, "EXPIRED");
+
+            assertThat(couponStats.dailyCampaignStats(TODAY)).isEmpty();
+        }
+
+        @Test
+        void 종료_시각이_지나도_저장_상태가_EXPIRED인_쿠폰만_만료로_집계한다() {
+            LocalDate day = TODAY.minusDays(3);
+            event(81, 91, day, "ENDED");
+            coupon(101, 81, 17, "EXPIRED");
+            coupon(102, 81, 18, "ISSUED");
+            coupon(103, 81, 19, "REMOVED");
+
+            assertThat(couponStats.dailyCampaignStats(day))
+                    .containsExactly(new DailyCampaignCouponStats(91, 1, 3, 0, 1));
+            assertThat(jdbcTemplate.queryForList(
+                    "SELECT status FROM member_coupon ORDER BY member_coupon_id", String.class))
+                    .containsExactly("EXPIRED", "ISSUED", "REMOVED");
+        }
+
+        @Test
+        void 회원_단건_집계는_모든_날짜의_확정_할인액을_더하며_다른_회원은_제외한다() {
+            event(81, 91, TODAY.minusDays(2), "ENDED");
+            event(82, 91, TODAY.minusDays(1), "ENDED");
+            event(83, 91, TODAY, "ACTIVE");
+            coupon(101, 81, 17, "USED");
+            coupon(102, 82, 17, "USED");
+            coupon(103, 83, 17, "USED");
+            coupon(104, 83, 18, "USED");
+            usage(101, TODAY.minusDays(2).atTime(12, 0), 1_500_000_000);
+            usage(102, TODAY.minusDays(1).atTime(12, 0), 1_500_000_000);
+            usage(103, TODAY.atTime(12, 0), 0);
+            usage(104, TODAY.atTime(12, 0), 5000);
+
+            assertThat(couponStats.memberStats(17))
+                    .isEqualTo(new MemberCouponStats(3, 3_000_000_000L));
+        }
+
+        @Test
+        void 회원의_사용_기록이_없으면_누적_집계는_0이다() {
+            event(81, 91, TODAY, "ACTIVE");
+            coupon(101, 81, 17, "ISSUED");
+
+            assertThat(couponStats.memberStats(17)).isEqualTo(new MemberCouponStats(0, 0));
+        }
+
+        @Test
+        void 회원의_발급_기록이_없어도_0인_단건을_반환한다() {
+            assertThat(couponStats.memberStats(17)).isEqualTo(new MemberCouponStats(0, 0));
+        }
+
+        private void event(long id, long campaignId, LocalDate day, String status) {
+            jdbcTemplate.update("""
+                    INSERT INTO coupon_event (coupon_event_id, campaign_id, business_date, issue_quantity,
+                        usable_start_at, usable_end_at, status, store_id, store_name,
+                        discount_target_type, discount_type, discount_value, created_at, updated_at)
+                    VALUES (?, ?, ?, 100, ?, ?, ?, 10, '테스트 매장', 'ALL', 'AMOUNT', 1000, ?, ?)
+                    """, id, campaignId, day, day.atStartOfDay(), day.plusDays(3).atStartOfDay(), status,
+                    day.atStartOfDay(), day.atStartOfDay());
+        }
+
+        private void coupon(long id, long eventId, long memberId, String status) {
+            jdbcTemplate.update("""
+                    INSERT INTO member_coupon (member_coupon_id, coupon_event_id, member_id, coupon_code,
+                        status, usable_start_at, usable_end_at, created_at, updated_at)
+                    SELECT ?, coupon_event_id, ?, UNHEX(LPAD(HEX(?), 32, '0')), ?,
+                           usable_start_at, usable_end_at, usable_start_at, usable_start_at
+                      FROM coupon_event WHERE coupon_event_id = ?
+                    """, id, memberId, id, status, eventId);
+        }
+
+        private void usage(long couponId, LocalDateTime createdAt, int discount) {
+            jdbcTemplate.update("""
+                    INSERT INTO coupon_usage_history (member_coupon_id, store_id, discount_amount, created_at, updated_at)
+                    VALUES (?, 10, ?, ?, ?)
+                    """, couponId, discount, createdAt, createdAt);
+        }
     }
 
     @Nested
