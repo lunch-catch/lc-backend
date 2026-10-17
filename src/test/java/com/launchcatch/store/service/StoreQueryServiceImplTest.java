@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
 import com.launchcatch.store.contract.StoreAdCandidateInfo;
+import com.launchcatch.store.contract.StoreQueryService;
 import com.launchcatch.store.dto.StoreAdCandidateQueryRow;
 import com.launchcatch.store.contract.StoreInfo;
 import com.launchcatch.store.contract.StoreMenuInfo;
@@ -51,13 +52,27 @@ class StoreQueryServiceImplTest {
     }
 
     @Test
-    void 광고_후보의_검증된_LOGO가_없으면_실패한다() {
+    void 광고_후보의_검증된_LOGO가_없으면_URL은_null이다() {
         when(repository.findAdCandidatesByStoreIds(List.of(1L))).thenReturn(List.of(
                 new StoreAdCandidateQueryRow(1L, "가게", "KOREAN", null,
                         new BigDecimal("37.1234567"), new BigDecimal("127.1234567"))));
 
-        assertThatThrownBy(() -> service.findAdCandidatesByStoreIds(List.of(1L)))
-                .isInstanceOf(IllegalStateException.class).hasMessageContaining("이미지가 누락");
+        assertThat(service.findAdCandidatesByStoreIds(List.of(1L))).singleElement()
+                .satisfies(store -> assertThat(store.storeImageUrl()).isNull());
+    }
+
+    @Test
+    void 광고_후보는_상한까지_허용하고_초과하면_DB_조회_전에_거절한다() {
+        var ids = java.util.Collections.nCopies(StoreQueryService.MAX_AD_CANDIDATE_STORE_IDS, 1L);
+        when(repository.findAdCandidatesByStoreIds(ids)).thenReturn(List.of(
+                new StoreAdCandidateQueryRow(1L, "가게", "KOREAN", null,
+                        BigDecimal.ONE, BigDecimal.ONE)));
+
+        assertThat(service.findAdCandidatesByStoreIds(ids)).hasSize(1);
+        clearInvocations(repository);
+        assertThatIllegalArgumentException().isThrownBy(() -> service.findAdCandidatesByStoreIds(
+                java.util.Collections.nCopies(StoreQueryService.MAX_AD_CANDIDATE_STORE_IDS + 1, 1L)));
+        verifyNoInteractions(repository);
     }
 
     @Test

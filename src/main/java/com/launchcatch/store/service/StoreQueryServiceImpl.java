@@ -34,12 +34,15 @@ class StoreQueryServiceImpl implements StoreQueryService {
     @Override
     public List<StoreAdCandidateInfo> findAdCandidatesByStoreIds(List<Long> storeIds) {
         validateIds(storeIds);
+        if (storeIds.size() > MAX_AD_CANDIDATE_STORE_IDS) {
+            throw new IllegalArgumentException("광고 후보용 가게 ID는 최대 5000개까지 조회할 수 있습니다.");
+        }
         if (storeIds.isEmpty()) {
             return List.of();
         }
         return stores.findAdCandidatesByStoreIds(storeIds).stream()
                 .map(row -> new StoreAdCandidateInfo(row.storeId(), row.name(), row.categoryCode(),
-                        images.resolve(requireImageKey(row.imageObjectKey())), row.latitude(), row.longitude()))
+                        images.resolve(row.imageObjectKey()), row.latitude(), row.longitude()))
                 .toList();
     }
 

@@ -70,8 +70,10 @@ class StoreQueryIntegrationTest extends AbstractStoreIntegrationTest {
     void 검증되지_않은_LOGO는_광고_후보의_이미지로_사용하지_않는다() {
         jdbc.update("update store_image set upload_status = 'PENDING' where store_id = ?", storeId);
 
-        assertThatThrownBy(() -> service.findAdCandidatesByStoreIds(List.of(storeId)))
-                .isInstanceOf(IllegalStateException.class).hasMessageContaining("이미지가 누락");
+        assertThat(service.findAdCandidatesByStoreIds(List.of(storeId, otherStoreId)))
+                .extracting("storeId").containsExactlyInAnyOrder(storeId, otherStoreId);
+        assertThat(service.findAdCandidatesByStoreIds(List.of(storeId))).singleElement()
+                .satisfies(store -> assertThat(store.storeImageUrl()).isNull());
     }
 
     @Test

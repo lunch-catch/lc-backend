@@ -36,7 +36,7 @@ public class StoreQueryRepository {
                         rs.getBoolean("finalized"), rs.getString("business_registration_number")));
     }
 
-    // 좌표가 누락된 가게는 광고 후보에서 제외하며 필수 LOGO 누락은 서비스가 오류로 처리한다.
+    // 좌표가 누락된 가게는 제외하며 검증된 LOGO가 없어도 가게를 반환한다.
     public List<StoreAdCandidateQueryRow> findAdCandidatesByStoreIds(List<Long> storeIds) {
         return jdbc.query("""
                 select s.store_id, s.name, s.category_code, i.object_key, s.latitude, s.longitude
