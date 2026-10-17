@@ -377,7 +377,7 @@ class CouponIntegrationTest extends IntegrationTestSupport {
 
             mockMvc.perform(post("/v1/owner/coupon-usages").with(user(new CustomUserDetails(9L, Role.OWNER)))
                     .contentType("application/json").content("""
-                            {"qrToken":"%s","latitude":37.5,"longitude":127.0,"orderAmount":10000}
+                            {"qrToken":"%s","latitude":37.5,"longitude":127.0}
                             """.formatted(token))).andExpect(status().isCreated());
 
             assertThat(funnel.received).hasSize(2);
@@ -2489,20 +2489,21 @@ class CouponIntegrationTest extends IntegrationTestSupport {
         }
 
         @ParameterizedTest
-        @CsvSource({"ALL,AMOUNT,3000,2000,2000", "ALL,PERCENT,15,4500,680",
-                "MENU,AMOUNT,9000,10000,4500", "MENU,PERCENT,15,10000,680"})
-        void 실제_HTTP로_네_할인_조합과_JPA_저장_결과를_확인한다(
-                String target, String type, int value, int order, int expected) throws Exception {
-            jdbcTemplate.update("UPDATE coupon_event SET discount_type=?, discount_value=? WHERE coupon_event_id=81", type, value);
+        @CsvSource({"ALL,AMOUNT,3000,3000", "ALL,AMOUNT,3005,3010",
+                "MENU,AMOUNT,9000,4500", "MENU,PERCENT,15,680"})
+        void 실제_HTTP로_가격_없이_세_할인_조합과_JPA_저장_결과를_확인한다(
+                String target, String type, int value, int expected) throws Exception {
             if (target.equals("MENU")) {
                 jdbcTemplate.update("""
-                        UPDATE coupon_event SET discount_target_type='MENU', target_menu_id=701,
+                        UPDATE coupon_event SET discount_type=?, discount_value=?, discount_target_type='MENU', target_menu_id=701,
                             target_menu_name='테스트 메뉴', target_menu_price=4500, target_menu_discounted_price=?
                         WHERE coupon_event_id=81
-                        """, type.equals("PERCENT") ? 3820 : 0);
+                        """, type, value, type.equals("PERCENT") ? 3820 : 0);
+            } else {
+                jdbcTemplate.update("UPDATE coupon_event SET discount_value=? WHERE coupon_event_id=81", value);
             }
             try (HttpClient client = HttpClient.newHttpClient()) {
-                var response = client.send(httpRequest(body(order), accessToken(Role.OWNER)), HttpResponse.BodyHandlers.ofString());
+                var response = client.send(httpRequest(body(), accessToken(Role.OWNER)), HttpResponse.BodyHandlers.ofString());
                 assertThat(response.statusCode()).isEqualTo(201);
                 var data = objectMapper.readTree(response.body()).path("data");
                 assertThat(data.path("memberCouponId").asLong()).isEqualTo(1001);
@@ -2522,21 +2523,29 @@ class CouponIntegrationTest extends IntegrationTestSupport {
         @Test
         void 실제_HTTP는_쿠키가_없거나_점주가_아니면_거절한다() throws Exception {
             try (HttpClient client = HttpClient.newHttpClient()) {
-                assertThat(client.send(httpRequest(body(10000), null), HttpResponse.BodyHandlers.ofString()).statusCode()).isEqualTo(401);
-                assertThat(client.send(httpRequest(body(10000), accessToken(Role.MEMBER)), HttpResponse.BodyHandlers.ofString()).statusCode())
+                assertThat(client.send(httpRequest(body(), null), HttpResponse.BodyHandlers.ofString()).statusCode()).isEqualTo(401);
+                assertThat(client.send(httpRequest(body(), accessToken(Role.MEMBER)), HttpResponse.BodyHandlers.ofString()).statusCode())
                         .isEqualTo(403);
             }
             assertUnchanged();
         }
 
         @ParameterizedTest
-        @CsvSource(value = {"0|COMMON-002", "2147483648|COMMON-002", "10.5|COMMON-003",
-                "\"10000\"|COMMON-003", "\"\"|COMMON-003", "\" \"|COMMON-002", "null|COMMON-002",
-                "true|COMMON-003"}, delimiter = '|')
-        void 주문_금액의_범위와_정수_형식을_검사한다(String amount, String code) throws Exception {
+        @ValueSource(strings = {"longitude", "latitude", "qrToken"})
+        void 위치와_QR_토큰의_필수값을_검사한다(String field) throws Exception {
+            var request = objectMapper.readTree(body()).deepCopy();
+            ((tools.jackson.databind.node.ObjectNode) request).remove(field);
             mockMvc.perform(post(PATH).with(user(OWNER)).contentType(MediaType.APPLICATION_JSON)
-                            .content(body(10000).replace(":10000", ":" + amount)))
-                    .andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value(code));
+                            .content(request.toString()))
+                    .andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("COMMON-002"));
+            assertUnchanged();
+        }
+
+        @Test
+        void 전체_메뉴_정률_스냅샷은_DB가_거절한다() {
+            assertThatThrownBy(() -> jdbcTemplate.update(
+                    "UPDATE coupon_event SET discount_type='PERCENT', discount_value=15 WHERE coupon_event_id=81"))
+                    .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
             assertUnchanged();
         }
 
@@ -2567,7 +2576,7 @@ class CouponIntegrationTest extends IntegrationTestSupport {
         @Test
         void 같은_QR의_실제_HTTP_동시_요청은_한_건만_성공한다() throws Exception {
             CountDownLatch start = new CountDownLatch(1);
-            HttpRequest request = httpRequest(body(10000), accessToken(Role.OWNER));
+            HttpRequest request = httpRequest(body(), accessToken(Role.OWNER));
             try (HttpClient client = HttpClient.newHttpClient(); var executor = Executors.newVirtualThreadPerTaskExecutor()) {
                 List<Future<HttpResponse<String>>> futures = IntStream.range(0, 3).mapToObj(index -> executor.submit(() -> {
                     assertThat(start.await(5, TimeUnit.SECONDS)).isTrue();
@@ -2635,7 +2644,7 @@ class CouponIntegrationTest extends IntegrationTestSupport {
                         UUID renewed = memberCouponRepository.findById(1001L).orElseThrow().getQrToken();
                         currentTime.set(NOW.plusSeconds(1).atZone(ClockConfig.ZONE).toInstant());
                         mockMvc.perform(post(PATH).with(user(OWNER)).contentType(MediaType.APPLICATION_JSON)
-                                .content(body(10000).replace(TOKEN.toString(), renewed.toString()))).andExpect(status().isCreated());
+                                .content(body().replace(TOKEN.toString(), renewed.toString()))).andExpect(status().isCreated());
                     });
                 });
                 assertResponse(pending.get().get(10, TimeUnit.SECONDS), 409, "COUPON-010");
@@ -2664,12 +2673,12 @@ class CouponIntegrationTest extends IntegrationTestSupport {
             return new StoreInfo(10L, "런치식당", "https://example.test/store.png", latitude, 127.0);
         }
 
-        private String body(long amount) {
-            return "{\"longitude\":127.0,\"latitude\":37.5,\"qrToken\":\"" + TOKEN + "\",\"orderAmount\":" + amount + "}";
+        private String body() {
+            return "{\"longitude\":127.0,\"latitude\":37.5,\"qrToken\":\"" + TOKEN + "\"}";
         }
 
         private MvcResult use() throws Exception {
-            return mockMvc.perform(post(PATH).with(user(OWNER)).contentType(MediaType.APPLICATION_JSON).content(body(10000))).andReturn();
+            return mockMvc.perform(post(PATH).with(user(OWNER)).contentType(MediaType.APPLICATION_JSON).content(body())).andReturn();
         }
 
         private void assertResponse(MvcResult result, int status, String code) throws Exception {
