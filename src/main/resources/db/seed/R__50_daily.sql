@@ -119,3 +119,104 @@ FROM coupon_event ce
 CROSS JOIN seq
 WHERE ce.campaign_id IN (9001, 9002) AND ce.business_date = '${seedBusinessDate}'
 ON DUPLICATE KEY UPDATE coupon_inventory_id = coupon_inventory_id;
+
+/*
+ * 지난 6일의 후보다(#436).
+ * 오늘 후보를 날짜만 바꿔 복사한다. 아래 로그가 그날 후보를 가리킨다.
+ */
+INSERT INTO ad_candidate (business_date, campaign_id, store_id, store_name, store_image_url, category_code,
+                          latitude, longitude, target_radius, target_gender, target_age_groups,
+                          discount_target_type, discount_type, discount_value, discount_menu_name,
+                          usable_start_time, usable_end_time, issue_quantity, campaign_created_at,
+                          new_priority_until, campaign_state, state_changed_at, sold_out_at, created_at, updated_at)
+WITH RECURSIVE ago (d) AS (SELECT 1 UNION ALL SELECT d + 1 FROM ago WHERE d < 6)
+SELECT DATE_SUB(c.business_date, INTERVAL ago.d DAY), c.campaign_id, c.store_id, c.store_name, c.store_image_url,
+       c.category_code, c.latitude, c.longitude, c.target_radius, c.target_gender, c.target_age_groups,
+       c.discount_target_type, c.discount_type, c.discount_value, c.discount_menu_name,
+       c.usable_start_time, c.usable_end_time, c.issue_quantity, c.campaign_created_at,
+       c.new_priority_until, c.campaign_state, c.state_changed_at, c.sold_out_at, NOW(6), NOW(6)
+FROM ad_candidate c
+CROSS JOIN ago
+WHERE c.business_date = '${seedBusinessDate}'
+ON DUPLICATE KEY UPDATE ad_candidate.campaign_id = ad_candidate.campaign_id;
+
+/*
+ * 회원 9001~9010 이 지난 영업일에 피드를 한 번씩 받은 카드 10장이다.
+ * 회원 m 의 영업일은 MOD(m, 6) + 1 일 전이다. 자리 1, 4, 7 이 배분 슬롯이고 캠페인은 9001~9012 를 돌아가며 고른다.
+ * 정산 시드(#442)가 같은 노출의 판정 기록을 만들 수 있게 serve_id 를 규칙으로 정한다. 규칙을 바꾸면 #442 에 알린다.
+ */
+INSERT INTO serve_log (serve_id, business_date, feed_id, member_id, campaign_id, store_id, slot_type, slot_position,
+                       served_at, created_at, updated_at)
+WITH RECURSIVE seq (n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM seq WHERE n < 10),
+               feed (m, d) AS (SELECT 9000 + n, DATE_SUB('${seedBusinessDate}', INTERVAL MOD(9000 + n, 6) + 1 DAY) FROM seq)
+SELECT UNHEX(MD5(CONCAT('seed-serve-', feed.m, '-', feed.d, '-', seq.n))), feed.d,
+       UNHEX(MD5(CONCAT('seed-feed-', feed.m, '-', feed.d))), feed.m,
+       9001 + MOD(feed.m + seq.n, 12), 9001 + MOD(feed.m + seq.n, 12),
+       IF(seq.n IN (1, 4, 7), 'ALLOCATION', 'RELEVANCE'), seq.n,
+       TIMESTAMP(feed.d, '10:30:00') + INTERVAL seq.n SECOND, NOW(6), NOW(6)
+FROM feed
+JOIN seq ON seq.n BETWEEN 1 AND 10
+ON DUPLICATE KEY UPDATE serve_log.serve_id = serve_log.serve_id;
+
+/*
+ * 위 카드마다 노출 한 건이다.
+ * 자리 1~9 는 유효, 자리 10 은 serve 기록이 만료된 무효다. 모두 소진 전이라 정산이 판정할 노출이다.
+ */
+INSERT INTO impression_log (serve_id, member_id, business_date, campaign_id, displayed_at, lat_rounded, lng_rounded,
+                            validity, invalid_reason, sold_out, created_at, updated_at)
+SELECT s.serve_id, s.member_id, s.business_date, s.campaign_id, s.served_at + INTERVAL 1 SECOND, 37.498, 127.028,
+       IF(s.slot_position <= 9, 'VALID', 'INVALID'), IF(s.slot_position <= 9, NULL, 'EXPIRED_OR_UNKNOWN'), FALSE,
+       NOW(6), NOW(6)
+FROM serve_log s
+WHERE s.member_id BETWEEN 9001 AND 9999
+ON DUPLICATE KEY UPDATE impression_log.serve_id = impression_log.serve_id;
+
+/*
+ * 위 카드마다 스와이프 한 건이다.
+ * 자리 1, 4, 7, 10 은 찜이고 나머지는 패스다. 3의 배수 회원은 빈 찜 목록을 보려고 모두 패스한다.
+ */
+INSERT INTO swipe_log (serve_id, member_id, business_date, campaign_id, category_code, action, occurred_at,
+                       created_at, updated_at)
+SELECT s.serve_id, s.member_id, s.business_date, s.campaign_id, c.category_code,
+       IF(MOD(s.slot_position, 3) = 1 AND MOD(s.member_id, 3) <> 0, 'WISH', 'PASS'),
+       s.served_at + INTERVAL 2 SECOND, NOW(6), NOW(6)
+FROM serve_log s
+JOIN ad_candidate c ON c.business_date = s.business_date AND c.campaign_id = s.campaign_id
+WHERE s.member_id BETWEEN 9001 AND 9999
+ON DUPLICATE KEY UPDATE swipe_log.serve_id = swipe_log.serve_id;
+
+-- 피드에서 찜한 스와이프마다 찜 목록에 하나다. 같은 캠페인을 다시 찜하면 처음 찜이 남는다
+INSERT INTO wishlist (member_id, campaign_id, store_id, serve_id, created_at, updated_at)
+SELECT w.member_id, w.campaign_id, w.campaign_id, w.serve_id, w.occurred_at, w.occurred_at
+FROM swipe_log w
+WHERE w.member_id BETWEEN 9001 AND 9999 AND w.action = 'WISH'
+ON DUPLICATE KEY UPDATE wishlist.wishlist_id = wishlist.wishlist_id;
+
+/*
+ * 카카오로 가입해 온보딩한 회원의 찜이다. 시험 회원은 로그인할 수 없어 HTTP 로 찜 목록을 받으려면 이 행이 있어야 한다.
+ * 홀수 회원만 오늘 후보 셋(전체 할인 9001, 메뉴 할인 9002, 9010)을 받고 짝수 회원은 빈 찜 목록을 본다.
+ * 날마다 다시 돌아 그사이 가입한 회원도 다음 날부터 받는다. 지운 찜도 다음 날 다시 들어간다.
+ */
+INSERT INTO wishlist (member_id, campaign_id, store_id, serve_id, created_at, updated_at)
+SELECT mp.member_id, pick.campaign_id, pick.campaign_id, NULL,
+       NOW(6) - INTERVAL pick.minutes MINUTE, NOW(6) - INTERVAL pick.minutes MINUTE
+FROM member_profile mp
+JOIN member m ON m.member_id = mp.member_id
+CROSS JOIN (SELECT 9001 AS campaign_id, 30 AS minutes
+            UNION ALL SELECT 9002, 20
+            UNION ALL SELECT 9010, 10) pick
+WHERE mp.onboarding_completed_at IS NOT NULL
+  AND m.status = 'ACTIVE'
+  AND m.member_id NOT BETWEEN 9000 AND 9999
+  AND MOD(m.member_id, 2) = 1
+ON DUPLICATE KEY UPDATE wishlist.wishlist_id = wishlist.wishlist_id;
+
+-- 시험 회원 50명의 어제와 그제 첫 접속 위치다
+INSERT INTO feed_visit_daily (business_date, member_id, lat_rounded, lng_rounded, created_at, updated_at)
+WITH RECURSIVE ago (d) AS (SELECT 1 UNION ALL SELECT d + 1 FROM ago WHERE d < 2)
+SELECT DATE_SUB('${seedBusinessDate}', INTERVAL ago.d DAY), mp.member_id, ROUND(mp.latitude, 3),
+       ROUND(mp.longitude, 3), TIMESTAMP(DATE_SUB('${seedBusinessDate}', INTERVAL ago.d DAY), '10:30:00'), NOW(6)
+FROM member_profile mp
+CROSS JOIN ago
+WHERE mp.member_id BETWEEN 9001 AND 9050
+ON DUPLICATE KEY UPDATE feed_visit_daily.member_id = feed_visit_daily.member_id;
