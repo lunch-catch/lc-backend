@@ -1,7 +1,7 @@
 # 가게 (store) API 명세
 
-공통 인증·응답·오류 규약은 [api-spec.md](api-spec.md)를 따른다. 서버 내부 처리와 근거는
-[store-api-design.md](../design/store/store-api-design.md)를 참고한다.
+공통 인증·응답·오류 규약은 [api-spec.md](api-spec.md)를 따른다.
+서버 내부 처리와 근거는 [store-api-design.md](../design/store/store-api-design.md)를 참고한다.
 
 ## `GET /v1/stores`
 
@@ -212,8 +212,8 @@ OTHER
 
 | 필드 | 타입 | null 허용 | 설명 |
 |---|---|---|---|
-| storeId | integer | 예 | 기본 정보 단계(`STORE`)를 아직 안 마쳤으면 `null` |
-| resumeStep | string(enum) | 아니오 | 이어서 진행할 단계. `TERMS`, `STORE`, `BUSINESS_VERIFICATION`, `LOCATION`, `HOURS`, `IMAGES`, `MENU` 중 하나 |
+| storeId | integer | 예 | 기본 정보 단계(`STORE_INFO`)를 아직 안 마쳤으면 `null` |
+| resumeStep | string(enum) | 아니오 | 이어서 진행할 단계. `TERMS`, `STORE_INFO`, `LOCATION`, `HOURS`, `IMAGES`, `MENU` 중 하나 |
 | version | integer | 아니오 | 다음 완료·수정 요청에 그대로 실어 보내는 값 |
 
 ### 오류
@@ -267,6 +267,100 @@ OTHER
 | 500 | COMMON-001 | 서버 처리 실패 |
 
 오류 응답은 공통 응답 봉투를 따른다.
+
+## 가게 등록 온보딩 2단계: 기본 정보와 사업자 Mock 검증
+
+### `PUT /v1/owner/store/basic`
+
+인증된 OWNER 중 DB의 현재 상태가 ONBOARDING인 점주가 사용한다.
+약관 동의 단계인 TERMS가 완료되어 STORE_INFO에 진입한 뒤 호출한다.
+이 API는 가게 초안 생성과 사업자등록번호 Mock 검증을 한 요청으로 처리한다.
+완료한 STORE_INFO를 다시 저장할 때도 같은 API에 해당 단계의 전체 입력값을 보낸다.
+
+```json
+{
+  "version": 1,
+  "name": "런치캐치 식당",
+  "categoryCode": "KOREAN",
+  "representativeName": "홍길동",
+  "businessRegistrationNumber": "1234567890",
+  "phone": "02-123-4567"
+}
+```
+
+| 필드 | 타입 | 필수 | 검증 |
+|---|---|---|---|
+| version | integer(int64) | 예 | 현재 진행 상태의 버전이며 0 이상이다 |
+| name | string | 예 | 상호명이며 공백만 있는 값을 제외한 1~100자다 |
+| categoryCode | string | 예 | 위 카테고리 코드 중 하나이며 ALL은 허용하지 않는다 |
+| representativeName | string | 예 | 대표자 성명이며 공백만 있는 값을 제외한 1~100자다 |
+| businessRegistrationNumber | string | 예 | 하이픈 없는 ASCII 숫자 10자리다 |
+| phone | string | 예 | 숫자 9~12자리 또는 `02-123-4567`, `010-1234-5678`처럼 `2~4자리-3~4자리-4자리` 형식이다 |
+
+모든 필드는 누락·null을 허용하지 않으며 문자열의 빈 값·공백만 있는 값도 거부한다.
+전화번호·사업자등록번호의 공백이나 구분 기호를 서버가 자동으로 제거하지 않는다.
+위치·영업시간·이미지·메뉴 정보는 이 요청에 포함하지 않는다.
+
+### 응답 `200`
+
+최초 저장 성공 예시다. 식별자는 공통 규약의 int64 숫자를 따른다.
+
+```json
+{
+  "code": "SUCCESS",
+  "message": "요청이 성공적으로 처리되었습니다.",
+  "data": {
+    "storeId": 501,
+    "resumeStep": "LOCATION",
+    "version": 2,
+    "verificationStatus": "VERIFIED"
+  }
+}
+```
+
+| 필드 | 타입 | null 허용 | 의미 |
+|---|---|---|---|
+| storeId | integer(int64) | 예 | 최초 성공 때 생성한 본인 소유 초안의 ID다. 최초 검증 실패 때만 null이다 |
+| resumeStep | string | 아니오 | 저장 후 재개할 단계다. 최초 성공이면 LOCATION이고 완료 단계 수정이면 기존 단계다 |
+| version | integer(int64) | 아니오 | 다음 요청에 사용할 버전이다. 저장 성공마다 1 증가하고 Mock 실패 때는 유지한다 |
+| verificationStatus | string | 아니오 | 이번 요청의 Mock 결과인 VERIFIED 또는 FAILED다 |
+
+Mock은 외부 기관을 호출하지 않는다. 형식이 유효한 번호 중 `0000000000`은 FAILED이며 나머지는 VERIFIED다.
+실제 사업자의 존재·영업 상태나 사업자번호 체크섬을 검증하는 기능이 아니다.
+검증 실패도 정상 처리된 업무 결과이므로 `200`, `code: SUCCESS`, `verificationStatus: FAILED`를 반환한다.
+프론트는 HTTP 성공만으로 다음 단계로 이동하지 않고 verificationStatus도 확인해야 한다.
+
+최초 실패 응답의 data는 다음과 같다.
+
+```json
+{
+  "storeId": null,
+  "resumeStep": "STORE_INFO",
+  "version": 1,
+  "verificationStatus": "FAILED"
+}
+```
+
+실패한 입력값과 초안은 저장하지 않는다. 완료 단계 수정 중 재검증이 실패하면 기존 가게 ID·저장값·검증 성공 시각·재개 단계·버전이 유지된다.
+응답의 FAILED는 이번 요청 결과이며 기존 가게의 검증 상태를 FAILED로 덮어쓰지 않는다.
+최신 버전으로 재저장하면 같은 가게를 수정하며 이후 단계의 입력값은 보존한다.
+가게 최종 등록과 ACTIVE 전환은 수행하지 않는다.
+
+### 오류
+
+| HTTP | 코드 | 조건 |
+|---|---|---|
+| 400 | 공통 입력·파싱 오류 코드 | 필수값 누락, 형식·길이 오류, 잘못된 JSON |
+| 401 | AUTH-005 | 인증이 없거나 점주 계정이 존재하지 않음 |
+| 403 | AUTH-006 | OWNER 역할이 아님 |
+| 403 | OWNER-002 | DB의 현재 점주 상태가 ONBOARDING이 아님 |
+| 409 | STORE-001 | 요청 버전이 현재 진행 상태와 다름 |
+| 409 | STORE-002 | 아직 TERMS 단계임 |
+| 409 | STORE-003 | 진행 상태가 초기화되지 않음 |
+| 403 | STORE-004 | 진행 상태와 본인 가게의 연결이 일치하지 않거나 최종 등록된 가게임 |
+
+버전 충돌 시 입력값을 자동 재전송하지 않고 최신 진행 상태를 확인해야 한다.
+약관 API와 진행 상태 최초 생성은 선행 작업이며 이 API가 약관 단계를 자동 완료하거나 진행 상태를 생성하지 않는다.
 
 ## `POST /v1/owner/store-images:prepareUpload`
 

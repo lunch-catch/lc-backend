@@ -22,6 +22,7 @@ public class StoreSecurityConfig {
             "/v1/owner/store-menu-images:confirmUpload"
     };
 
+    // 사용자용 가게 조회 API는 MEMBER 권한이 있는 사용자만 접근할 수 있다.
     @Bean
     @Order(ApiSecurityDefaults.DOMAIN_CHAIN_ORDER)
     public SecurityFilterChain storeFilterChain(HttpSecurity http, ApiSecurityDefaults defaults) throws Exception {
