@@ -114,6 +114,11 @@ public class PosterUploadService {
         Campaign campaign = findDraftCampaign(ownerId, campaignId);
         Template template = findUsableTemplate(templateId);
 
+        // 캠페인 잠금과 상관없는 다른 도메인 조회라 잠금을 잡기 전에 끝낸다(셀프 리뷰로 찾음).
+        String eventName = findStore(campaign.getStoreId()).storeName();
+        String discount = formatDiscount(campaign);
+        String period = formatPeriod(campaign);
+
         HeadObjectResponse headObject;
         try {
             // headObject는 응답이 지연될 수 있어 DB 트랜잭션 밖에서 부른다(#389와 같은 근거).
@@ -136,20 +141,19 @@ public class PosterUploadService {
         }
 
         return transactionTemplate.execute(
-                status -> save(ownerId, campaignId, templateId, template, objectKey));
+                status -> save(ownerId, campaignId, templateId, template, eventName, discount, period, objectKey));
     }
 
     /*
      * 외부 호출(headObject) 뒤에 다시 잠금을 잡고 캠페인 상태를 재확인한다. 그 사이 다른
      * 요청이 캠페인 상태를 바꿨을 수 있어서다(#389 confirmMenuImageUpload와 같은 근거).
+     * eventName/discount/period는 잠금을 잡기 전에 구한 값을 그대로 쓴다. 재확인 대상은
+     * 캠페인이 여전히 이 점주의 DRAFT인지뿐이다.
      */
-    private PosterCreateResponse save(Long ownerId, Long campaignId, Long templateId, Template template, String objectKey) {
-        Campaign campaign = findDraftCampaignForUpdate(ownerId, campaignId);
-        StoreInfo store = findStore(campaign.getStoreId());
+    private PosterCreateResponse save(Long ownerId, Long campaignId, Long templateId, Template template,
+            String eventName, String discount, String period, String objectKey) {
+        findDraftCampaignForUpdate(ownerId, campaignId);
 
-        String eventName = store.storeName();
-        String discount = formatDiscount(campaign);
-        String period = formatPeriod(campaign);
         String imageUrl = imageUrlResolver.resolve(objectKey);
         String title = truncateTitle(eventName + " - " + template.getName());
 

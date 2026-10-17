@@ -214,6 +214,8 @@ class PosterUploadServiceTest {
     void 업로드되지_않았으면_거부한다() {
         when(campaignRepository.findById(CAMPAIGN_ID)).thenReturn(Optional.of(draftCampaign(CampaignStatus.DRAFT)));
         when(templateRepository.findById(TEMPLATE_ID)).thenReturn(Optional.of(publishedActiveTemplate()));
+        when(storeQueryService.findAllById(List.of(STORE_ID)))
+                .thenReturn(List.of(new StoreInfo(STORE_ID, "분식집", "store.jpg", 37.5, 127.0)));
         when(s3Client.headObject(any(HeadObjectRequest.class)))
                 .thenThrow((S3Exception) S3Exception.builder().message("not found").statusCode(404).build());
 
@@ -227,6 +229,8 @@ class PosterUploadServiceTest {
     void 업로드된_파일_형식이_허용되지_않으면_거부한다() {
         when(campaignRepository.findById(CAMPAIGN_ID)).thenReturn(Optional.of(draftCampaign(CampaignStatus.DRAFT)));
         when(templateRepository.findById(TEMPLATE_ID)).thenReturn(Optional.of(publishedActiveTemplate()));
+        when(storeQueryService.findAllById(List.of(STORE_ID)))
+                .thenReturn(List.of(new StoreInfo(STORE_ID, "분식집", "store.jpg", 37.5, 127.0)));
         when(s3Client.headObject(any(HeadObjectRequest.class)))
                 .thenReturn(HeadObjectResponse.builder().contentType("application/pdf").contentLength(1000L).build());
 
@@ -240,6 +244,8 @@ class PosterUploadServiceTest {
     void 업로드된_파일이_너무_크면_거부한다() {
         when(campaignRepository.findById(CAMPAIGN_ID)).thenReturn(Optional.of(draftCampaign(CampaignStatus.DRAFT)));
         when(templateRepository.findById(TEMPLATE_ID)).thenReturn(Optional.of(publishedActiveTemplate()));
+        when(storeQueryService.findAllById(List.of(STORE_ID)))
+                .thenReturn(List.of(new StoreInfo(STORE_ID, "분식집", "store.jpg", 37.5, 127.0)));
         when(s3Client.headObject(any(HeadObjectRequest.class)))
                 .thenReturn(HeadObjectResponse.builder().contentType("image/jpeg").contentLength(10_485_761L).build());
 
