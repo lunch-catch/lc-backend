@@ -1,5 +1,6 @@
 package com.launchcatch.adserving.impression.service;
 
+import com.launchcatch.adserving.contract.ImpressionServedEvent;
 import com.launchcatch.adserving.engine.repository.AdCandidateRepository;
 import com.launchcatch.adserving.feed.repository.ImpressionCountRepository;
 import com.launchcatch.adserving.feed.repository.ServeRecord;
@@ -19,6 +20,7 @@ import java.time.LocalDate;
 import java.util.Optional;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
@@ -35,12 +37,19 @@ public class ImpressionService {
     // 요청의 캠페인이 serve 기록과 달랐던 횟수다. 판정은 serve 기록으로 한다(#323).
     static final String CAMPAIGN_MISMATCH_METRIC = "adserving_impression_campaign_mismatch_total";
 
+    /*
+     * 같은 노출이 다시 처리돼도 분석이 하나로 거르게 serveId 로 만든다.
+     * 유효 노출은 serve 의 주인 것뿐이라 사용자를 넣지 않는다.
+     */
+    private static final String EVENT_ID_PREFIX = "impression:";
+
     private final ServeRecordRepository serveRecordRepository;
     private final ImpressionLogRepository impressionLogRepository;
     private final AdCandidateRepository adCandidateRepository;
     private final ImpressionCountRepository impressionCountRepository;
     private final PointDeductor pointDeductor;
     private final MeterRegistry meterRegistry;
+    private final ApplicationEventPublisher eventPublisher;
     private final Clock clock;
 
     /*
@@ -68,6 +77,13 @@ public class ImpressionService {
                 pointDeductor.deduct(serveId, record.campaignId(), servedDate);
             }
             countAfterCommit(servedDate, record.campaignId());
+            /*
+             * 분석에 넘길 일을 커밋 전에 기록해 두지 않는다(장애 처리 가이드 "롤백 안 되는 효과"의 기본을 벗어난다).
+             * 퍼널은 유실을 허용하고 노출 수는 impression_log 로 다시 센다(아키텍처 설계 2.4).
+             * 수신자가 AFTER_COMMIT 으로 받아 롤백된 노출은 넘어가지 않는다.
+             */
+            eventPublisher.publishEvent(new ImpressionServedEvent(EVENT_ID_PREFIX + serveId, log.getDisplayedAt(),
+                    memberId, record.campaignId(), record.storeId(), serveId));
         }
         return ImpressionResponse.of(log);
     }

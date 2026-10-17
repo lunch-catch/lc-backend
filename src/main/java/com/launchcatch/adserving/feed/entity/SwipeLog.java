@@ -1,5 +1,6 @@
 package com.launchcatch.adserving.feed.entity;
 
+import com.launchcatch.adserving.contract.SwipeAction;
 import jakarta.persistence.Column;
 import jakarta.persistence.EmbeddedId;
 import jakarta.persistence.Entity;
