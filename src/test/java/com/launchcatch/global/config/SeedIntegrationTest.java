@@ -75,29 +75,71 @@ class SeedIntegrationTest extends IntegrationTestSupport {
     void 시드를_켜면_결제와_원장과_환불과_대사_불일치가_들어가고_잔액이_맞는다() {
         migrate(true, "2026-10-15");
 
-        assertThat(count("SELECT COUNT(*) FROM payment")).isEqualTo(12);
+        assertThat(count("SELECT COUNT(*) FROM payment WHERE payment_id < 9100")).isEqualTo(12);
         assertThat(count("SELECT COUNT(*) FROM payment_reconciliation_outbox")).isEqualTo(2);
         assertThat(count("SELECT COUNT(*) FROM refund_request")).isEqualTo(3);
         assertThat(count("SELECT COUNT(*) FROM settlement_mismatch")).isEqualTo(6);
         assertThat(count("SELECT COUNT(DISTINCT check_type) FROM settlement_mismatch")).isEqualTo(3);
-        assertThat(count("SELECT COALESCE(SUM(amount), 0) FROM point_ledger WHERE owner_id = 9001 AND entry_type <> 'DEDUCT'"))
+        assertThat(count("SELECT COALESCE(SUM(amount), 0) FROM point_ledger WHERE owner_id = 9013 AND entry_type <> 'DEDUCT'"))
                 .isEqualTo(88200);
-        assertThat(count("SELECT COALESCE(SUM(amount), 0) FROM point_ledger WHERE owner_id = 9002 AND entry_type <> 'DEDUCT'"))
+        assertThat(count("SELECT COALESCE(SUM(amount), 0) FROM point_ledger WHERE owner_id = 9014 AND entry_type <> 'DEDUCT'"))
                 .isEqualTo(57000);
-        assertThat(count("SELECT COALESCE(SUM(amount), 0) FROM point_ledger WHERE owner_id = 9003 AND entry_type <> 'DEDUCT'"))
+        assertThat(count("SELECT COALESCE(SUM(amount), 0) FROM point_ledger WHERE owner_id = 9015 AND entry_type <> 'DEDUCT'"))
                 .isEqualTo(10000);
         // 대기 중인 환불 요청 금액은 그 점주의 잔액 전액이다
         assertThat(count("SELECT amount FROM refund_request WHERE status = 'REQUESTED'")).isEqualTo(57000);
     }
 
     @Test
+    void 광고_서빙_시드의_유효_노출마다_차감_판정과_원장_차감이_하나씩_있다() {
+        migrate(true, "2026-10-15");
+
+        assertThat(count("SELECT COUNT(*) FROM deduction_result WHERE billing_status = 'BILLED' AND unit_price = 10"))
+                .isEqualTo(90);
+        assertThat(count("SELECT COUNT(*) FROM point_ledger l JOIN deduction_result r ON r.serve_id = l.serve_id "
+                + "WHERE l.entry_type = 'DEDUCT' AND l.amount = -r.unit_price AND l.owner_id = r.owner_id "
+                + "AND l.campaign_id = r.campaign_id")).isEqualTo(90);
+        assertThat(count("SELECT COUNT(*) FROM point_ledger WHERE entry_type = 'DEDUCT' AND owner_id BETWEEN 9001 AND 9012"))
+                .isEqualTo(90);
+        // 자리 10 은 무효 노출이라 정산 기록이 없다
+        assertThat(count("WITH RECURSIVE seq (n) AS (SELECT 9001 UNION ALL SELECT n + 1 FROM seq WHERE n < 9010) "
+                + "SELECT COUNT(*) FROM deduction_result WHERE serve_id IN (SELECT UNHEX(MD5(CONCAT('seed-serve-', n, '-', "
+                + "DATE_SUB('2026-10-15', INTERVAL MOD(n, 6) + 1 DAY), '-10'))) FROM seq)")).isZero();
+    }
+
+    @Test
+    void 노출이_닿은_캠페인과_영업일마다_계획과_예약과_해제가_있고_하루의_합이_영이다() {
+        migrate(true, "2026-10-15");
+
+        assertThat(count("SELECT COUNT(*) FROM budget_daily_plan WHERE campaign_id BETWEEN 9001 AND 9012 "
+                + "AND business_date < '2026-10-15'")).isEqualTo(66);
+        assertThat(count("SELECT COUNT(*) FROM point_ledger WHERE owner_id BETWEEN 9001 AND 9012 AND entry_type = 'RESERVE'"))
+                .isEqualTo(66);
+        assertThat(count("SELECT COUNT(*) FROM point_ledger WHERE owner_id BETWEEN 9001 AND 9012 AND entry_type = 'RELEASE'"))
+                .isEqualTo(66);
+        // DEDUCT 는 예약에서 이미 빠진 금액을 기록한 행이라 부호를 뒤집어 더한다(RESERVE - DEDUCT + RELEASE = 0)
+        assertThat(count("SELECT COUNT(*) FROM (SELECT campaign_id, COALESCE(business_date, DATE(created_at)) AS day, "
+                + "SUM(IF(entry_type = 'DEDUCT', -amount, amount)) AS total FROM point_ledger "
+                + "WHERE owner_id BETWEEN 9001 AND 9012 "
+                + "AND entry_type IN ('RESERVE', 'DEDUCT', 'RELEASE') "
+                + "GROUP BY campaign_id, COALESCE(business_date, DATE(created_at))) t WHERE total <> 0")).isZero();
+        assertThat(count("SELECT COUNT(*) FROM point_account WHERE owner_id BETWEEN 9001 AND 9012")).isEqualTo(12);
+        // 점주마다 충전이 있어 잔액이 0 이하로 내려가지 않는다
+        assertThat(count("SELECT COUNT(*) FROM (SELECT owner_id, SUM(amount) AS balance FROM point_ledger "
+                + "WHERE owner_id BETWEEN 9001 AND 9012 AND entry_type <> 'DEDUCT' GROUP BY owner_id) t "
+                + "WHERE balance <= 0")).isZero();
+    }
+
+    @Test
     void 같은_날_다시_돌면_행이_늘지_않는다() {
         migrate(true, "2026-10-15");
-        long before = count("SELECT (SELECT COUNT(*) FROM coupon_inventory) + (SELECT COUNT(*) FROM ad_candidate)");
+        long before = count("SELECT (SELECT COUNT(*) FROM coupon_inventory) + (SELECT COUNT(*) FROM ad_candidate) "
+                + "+ (SELECT COUNT(*) FROM deduction_result) + (SELECT COUNT(*) FROM point_ledger)");
 
         migrate(true, "2026-10-15");
 
-        assertThat(count("SELECT (SELECT COUNT(*) FROM coupon_inventory) + (SELECT COUNT(*) FROM ad_candidate)"))
+        assertThat(count("SELECT (SELECT COUNT(*) FROM coupon_inventory) + (SELECT COUNT(*) FROM ad_candidate) "
+                + "+ (SELECT COUNT(*) FROM deduction_result) + (SELECT COUNT(*) FROM point_ledger)"))
                 .isEqualTo(before);
     }
 
