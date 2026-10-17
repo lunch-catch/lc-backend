@@ -68,7 +68,7 @@ public class PointAdjustmentRecorder {
         }
 
         PointLedger ledger = pointLedgerRepository.save(PointLedger.adjust(request.ownerId(), request.amount(),
-                request.reason(), request.campaignId(), request.requestId()));
+                request.reason(), request.campaignId(), request.targetBusinessDate(), request.requestId()));
         // 영향 행이 0 이면 대사 건을 읽은 뒤 다른 경로가 먼저 닫은 것이므로 원장 줄까지 함께 롤백한다
         if (request.mismatchId() != null
                 && settlementMismatchRepository.resolveAsOverchargeReversal(request.mismatchId(), adminId, now) == 0) {
@@ -101,6 +101,7 @@ public class PointAdjustmentRecorder {
     private PointAdjustmentResult replay(PointLedger existing, PointAdjustmentRequest request) {
         boolean same = existing.getAmount() == request.amount()
                 && Objects.equals(existing.getCampaignId(), request.campaignId())
+                && Objects.equals(existing.getAdjustTargetDate(), request.targetBusinessDate())
                 && Objects.equals(existing.getReason(), request.reason());
         if (!same) {
             throw new BillingException(BillingErrorCode.IDEMPOTENCY_KEY_CONFLICT);
@@ -125,6 +126,10 @@ public class PointAdjustmentRecorder {
             throw new BillingException(BillingErrorCode.SETTLEMENT_MISMATCH_OWNER_MISMATCH);
         }
         if (campaignTarget && !mismatch.targetId().equals(request.campaignId())) {
+            throw new BillingException(CommonErrorCode.INVALID_INPUT);
+        }
+        // 캠페인 대사 건의 영업일이 정정이 가리키는 영업일이다. 다르면 엉뚱한 날의 합계가 고쳐진다
+        if (campaignTarget && !mismatch.businessDate().equals(request.targetBusinessDate())) {
             throw new BillingException(CommonErrorCode.INVALID_INPUT);
         }
     }

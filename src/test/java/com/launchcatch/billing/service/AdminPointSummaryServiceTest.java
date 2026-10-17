@@ -47,10 +47,10 @@ class AdminPointSummaryServiceTest {
     private void threeDaysOfLedger() {
         when(repository.findFlowRows(OWNER, LocalDateTime.of(2026, 9, 29, 0, 0), LocalDateTime.of(2026, 10, 2, 0, 0)))
                 .thenReturn(List.of(
-                        new FlowRow(EntryType.CHARGE, LocalDateTime.of(2026, 9, 29, 10, 0), 30000L),
-                        new FlowRow(EntryType.REFUND, LocalDateTime.of(2026, 9, 30, 11, 0), -5000L),
-                        new FlowRow(EntryType.ADJUST, LocalDateTime.of(2026, 9, 30, 15, 0), 1000L),
-                        new FlowRow(EntryType.ADJUST, LocalDateTime.of(2026, 10, 1, 9, 0), -300L)));
+                        new FlowRow(EntryType.CHARGE, LocalDateTime.of(2026, 9, 29, 10, 0), 30000L, null),
+                        new FlowRow(EntryType.REFUND, LocalDateTime.of(2026, 9, 30, 11, 0), -5000L, null),
+                        new FlowRow(EntryType.ADJUST, LocalDateTime.of(2026, 9, 30, 15, 0), 1000L, null),
+                        new FlowRow(EntryType.ADJUST, LocalDateTime.of(2026, 10, 1, 9, 0), -300L, null)));
         when(repository.sumReserveAndReleaseByBusinessDate(OWNER, D29, D01)).thenReturn(List.of(
                 new BusinessDateSumRow(D29, EntryType.RESERVE, -10000L),
                 new BusinessDateSumRow(D29, EntryType.RELEASE, 200L),
@@ -124,13 +124,32 @@ class AdminPointSummaryServiceTest {
     }
 
     @Test
+    void 정정은_기록한_날이_아니라_정정_대상_영업일의_구간에_들어간다() {
+        when(repository.findFlowRows(OWNER, LocalDateTime.of(2026, 9, 29, 0, 0), LocalDateTime.of(2026, 10, 2, 0, 0)))
+                .thenReturn(List.of(
+                        // 10-03 에 기록했지만 09-30 의 과금을 고친 정정이다
+                        new FlowRow(EntryType.ADJUST, LocalDateTime.of(2026, 10, 3, 9, 0), 1000L, D30),
+                        // 정정 대상이 없는 조정은 기록한 날의 구간에 들어간다
+                        new FlowRow(EntryType.ADJUST, LocalDateTime.of(2026, 10, 1, 9, 0), -300L, null)));
+        when(repository.sumReserveAndReleaseByBusinessDate(OWNER, D29, D01)).thenReturn(List.of());
+
+        List<AdminPointSummaryItem> items =
+                service().summarize(OWNER, SummaryPeriod.DAILY, D29, D01, null).items();
+
+        assertThat(items).containsExactly(
+                new AdminPointSummaryItem("2026-09-29", 0, 0, 0, 0, 0, 0),
+                new AdminPointSummaryItem("2026-09-30", 0, -1000, 0, 0, 0, 1000),
+                new AdminPointSummaryItem("2026-10-01", 0, 0, 0, 0, 0, -300));
+    }
+
+    @Test
     void 주별은_걸친_주의_날짜만_합산하고_월요일을_라벨로_쓴다() {
         // 09-30 은 수요일이라 첫 주는 09-30 부터 10-04 까지로 잘린다
         LocalDate to = LocalDate.of(2026, 10, 6);
         when(repository.findFlowRows(OWNER, LocalDateTime.of(2026, 9, 30, 0, 0), LocalDateTime.of(2026, 10, 7, 0, 0)))
                 .thenReturn(List.of(
-                        new FlowRow(EntryType.CHARGE, LocalDateTime.of(2026, 10, 4, 23, 59), 10000L),
-                        new FlowRow(EntryType.CHARGE, LocalDateTime.of(2026, 10, 5, 0, 0), 20000L)));
+                        new FlowRow(EntryType.CHARGE, LocalDateTime.of(2026, 10, 4, 23, 59), 10000L, null),
+                        new FlowRow(EntryType.CHARGE, LocalDateTime.of(2026, 10, 5, 0, 0), 20000L, null)));
 
         List<AdminPointSummaryItem> items =
                 service().summarize(OWNER, SummaryPeriod.WEEKLY, D30, to, null).items();

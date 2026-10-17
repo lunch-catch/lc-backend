@@ -46,9 +46,10 @@
 
 | 쿼리 | 읽는 방식 | 늘어나는 비용 |
 |---|---|---|
-| CHARGE, REFUND, ADJUST 합 | 기록 시각 범위. `idx_point_ledger_owner_created` 는 `owner_id` 가 앞이라 점주 없이 시각만으로는 쓰지 못한다 | 날짜 범위 풀 스캔 |
+| CHARGE, REFUND 합 | 기록 시각 범위. `idx_point_ledger_owner_created` 는 `owner_id` 가 앞이라 점주 없이 시각만으로는 쓰지 못한다 | 날짜 범위 풀 스캔 |
 | 그날 합계(`ledgerSum`) | 위와 같다 | 위와 같다 |
 | 미소진 잔액 | 그날 말 이전의 모든 행 합. 누적이다 | 원장 전체를 읽고 날마다 커진다 |
+| ADJUST 합과 정정 대상일 목록(#402) | `adjust_target_date` 일치 또는 값 없는 행의 기록 시각 범위. `OR` 조건이라 인덱스를 타지 못하고 ADJUST 행을 훑는다. 양수 ADJUST 의 기록 시각 범위도 같다 | ADJUST 행 수. 관리자 수동 조정이라 노출 단위 테이블보다 훨씬 작아 지금은 문제 되지 않는다 |
 | 과금 상태 수 | `deduction_result` 를 영업일만으로 묻는다. 인덱스가 `campaign_id` 앞이다 | 영업일 전체 스캔 |
 
 ### 3.1. 누적 쿼리와 전날 스냅샷

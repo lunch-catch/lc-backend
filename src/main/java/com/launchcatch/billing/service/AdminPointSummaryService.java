@@ -27,7 +27,8 @@ import org.springframework.transaction.annotation.Transactional;
  * 관리자의 점주별 일, 주, 월 합계다.
  *
  * 날짜는 DB 함수로 자르지 않고 서버가 정한다. RESERVE 와 RELEASE 는 영업일 컬럼으로 묶고,
- * CHARGE, REFUND, ADJUST 는 몇십 건뿐이라 기록 시각을 읽어 서버에서 KST 날짜로 구간에 넣는다.
+ * CHARGE, REFUND, ADJUST 는 몇십 건뿐이라 읽어서 서버가 구간에 넣는다. CHARGE 와 REFUND 는 기록 시각의 KST 날짜,
+ * ADJUST 는 정정 대상 영업일(없으면 기록 시각의 KST 날짜)로 넣는다. 분석의 소진액과 같은 귀속이다.
  *
  * DEDUCT 는 노출당 한 줄이라 기간 합계를 위해 훑지 않는다. 영업일마다 RELEASE = RESERVE - DEDUCT 이므로
  * 지난 영업일의 소진은 -(RESERVE 합 + RELEASE 합) 으로 구한다. 오늘 영업일만 13:30 해제 전일 수 있어서
@@ -88,7 +89,7 @@ public class AdminPointSummaryService {
     private void addFlows(Long ownerId, DateRange range, Map<LocalDate, Totals> byDate) {
         for (FlowRow row : pointLedgerRepository.findFlowRows(
                 ownerId, range.startInclusive(), range.endExclusive())) {
-            byDate.get(row.createdAt().toLocalDate()).addFlow(row.entryType(), row.amount());
+            byDate.get(row.attributedDate()).addFlow(row.entryType(), row.amount());
         }
     }
 
