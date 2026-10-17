@@ -6,6 +6,7 @@ import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.sql.Types;
+import java.time.LocalDate;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
@@ -21,10 +22,24 @@ public class EventLogRepository {
             ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?)
             """;
 
+    private static final String COUNT_DISTINCT_MEMBERS = """
+            SELECT COUNT(DISTINCT member_id)
+            FROM event_log
+            WHERE occurred_at >= ? AND occurred_at < ? AND member_id IS NOT NULL
+            """;
+
     private final JdbcTemplate jdbc;
 
     public EventLogRepository(JdbcTemplate jdbc) {
         this.jdbc = jdbc;
+    }
+
+    // 영업일 하루(KST 자정부터 다음 자정 전까지)에 이벤트가 기록된 회원을 중복 없이 센다
+    public long countDistinctMembers(LocalDate businessDate) {
+        Long count = jdbc.queryForObject(COUNT_DISTINCT_MEMBERS, Long.class,
+                Timestamp.valueOf(businessDate.atStartOfDay()),
+                Timestamp.valueOf(businessDate.plusDays(1).atStartOfDay()));
+        return count == null ? 0 : count;
     }
 
     public boolean insert(EventLogEntry entry) {
