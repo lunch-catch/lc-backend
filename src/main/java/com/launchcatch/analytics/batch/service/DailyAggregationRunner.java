@@ -174,6 +174,16 @@ public class DailyAggregationRunner {
         }
     }
 
+    /*
+     * 날짜는 잡았는데 집계를 시작하지 못했을 때 그 실행을 실패로 닫고 미처리로 남긴다. 닫지 않으면
+     * RUNNING 으로 남아 다른 서버가 이어받아 의미 없이 실패 처리한다.
+     */
+    public void abandon(LocalDate date, String reason) {
+        executions.fail(JOB_NAME, date, reason);
+        pending.record(date, PendingReason.FAILED, now());
+        metrics.countResult("failed");
+    }
+
     private AggregationOutcome runGuarded(LocalDate date) {
         try {
             return runDate(date);

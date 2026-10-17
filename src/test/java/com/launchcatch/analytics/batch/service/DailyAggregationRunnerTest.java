@@ -351,6 +351,14 @@ class DailyAggregationRunnerTest {
         verify(pending).record(eq(YESTERDAY), eq(PendingReason.FAILED), any(LocalDateTime.class));
     }
 
+    @Test
+    void 날짜를_잡고_시작하지_못한_실행은_실패로_닫고_미처리로_남긴다() {
+        runner().abandon(YESTERDAY, "시작하지 못했다");
+
+        verify(executions).fail(JOB, YESTERDAY, "시작하지 못했다");
+        verify(pending).record(eq(YESTERDAY), eq(PendingReason.FAILED), any(LocalDateTime.class));
+    }
+
     // --- 전체 실행 ---
 
     @Test
