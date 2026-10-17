@@ -143,9 +143,16 @@ public class StoreMenuUploadService {
         image.verify(LocalDateTime.now(clock));
     }
 
+    /*
+     * 미완성 메뉴 확인과 단계 완료를 같은 잠금 안에서 한다(#389 셀프 리뷰로 찾음). 잠금 없이
+     * 확인만 하면 그 사이에 registerMenu가 끼어들어 이미지 없는 메뉴를 추가해도 못 보고
+     * 그대로 완료시킬 수 있다. registerMenu도 같은 진행 상태 행을 잠그므로 서로 끼어들 틈이
+     * 없어진다. progressService.completeStep도 같은 행을 다시 잠그지만 같은 트랜잭션 안의
+     * 재진입이라 추가 쿼리 한 번만 더 돈다.
+     */
     @Transactional
     public StoreRegistrationProgressResponse completeMenuStep(Long ownerId, long expectedVersion) {
-        Long storeId = findStoreId(ownerId);
+        Long storeId = findStoreIdForUpdate(ownerId);
 
         if (storeMenuRepository.countWithoutVerifiedImage(storeId) > 0) {
             throw new StoreException(StoreErrorCode.MENU_IMAGE_REQUIRED);

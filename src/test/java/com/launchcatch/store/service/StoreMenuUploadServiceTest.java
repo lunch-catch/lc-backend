@@ -249,7 +249,7 @@ class StoreMenuUploadServiceTest {
     @Test
     @DisplayName("VERIFIED가 아닌 이미지를 가진 메뉴가 있으면 메뉴 단계를 완료할 수 없다")
     void 미완성_메뉴가_있으면_완료할_수_없다() {
-        givenOwnerWithStore();
+        givenOwnerWithStoreForUpdate();
         when(storeMenuRepository.countWithoutVerifiedImage(STORE_ID)).thenReturn(1L);
 
         assertThatThrownBy(() -> service.completeMenuStep(OWNER_ID, 5L))
@@ -261,7 +261,7 @@ class StoreMenuUploadServiceTest {
     @Test
     @DisplayName("모든 메뉴에 VERIFIED 이미지가 있으면(0개 포함) MENU 단계를 완료한다")
     void 메뉴_단계를_완료한다() {
-        givenOwnerWithStore();
+        givenOwnerWithStoreForUpdate();
         when(storeMenuRepository.countWithoutVerifiedImage(STORE_ID)).thenReturn(0L);
         var snapshot = new StoreRegistrationProgressSnapshot(STORE_ID, StoreRegistrationStep.MENU, 6L);
         when(progressService.completeStep(OWNER_ID, 5L, StoreRegistrationStep.MENU, null)).thenReturn(snapshot);
