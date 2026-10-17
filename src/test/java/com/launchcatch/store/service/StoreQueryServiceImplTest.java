@@ -12,6 +12,7 @@ import com.launchcatch.store.dto.StoreMenuQueryRow;
 import com.launchcatch.store.dto.StoreQueryRow;
 import com.launchcatch.store.dto.StoreSummaryQueryRow;
 import com.launchcatch.store.repository.StoreQueryRepository;
+import com.launchcatch.store.repository.OwnerStoreQueryRepository;
 import java.math.BigDecimal;
 import java.util.Arrays;
 import java.util.List;
@@ -20,7 +21,7 @@ import org.springframework.dao.DataAccessResourceFailureException;
 
 class StoreQueryServiceImplTest {
     private final StoreQueryRepository repository = mock(StoreQueryRepository.class);
-    private final StoreQueryServiceImpl service = new StoreQueryServiceImpl(repository, "https://cdn.example.com/");
+    private final StoreQueryServiceImpl service = new StoreQueryServiceImpl(repository, mock(OwnerStoreQueryRepository.class), "https://cdn.example.com/");
 
     @Test
     void 광고_후보는_업종과_LOGO_URL과_DECIMAL_좌표를_반환한다() {
@@ -164,7 +165,7 @@ class StoreQueryServiceImplTest {
 
     @Test
     void 이미지가_있는데_CDN_설정이_없으면_실패한다() {
-        var unconfigured = new StoreQueryServiceImpl(repository, "");
+        var unconfigured = new StoreQueryServiceImpl(repository, mock(OwnerStoreQueryRepository.class), "");
         when(repository.findAllById(List.of(1L))).thenReturn(List.of(
                 new StoreQueryRow(1L, "가게", "stores/logo.png", null, null)));
 

@@ -200,6 +200,7 @@ StoreInfoService가 자기 도메인의 공개 계약을 구현하며 owner는 �
   `AdminRefundController`(`/{id}:approve`)가 이미 같은 표기를 쓴다. 다만 이번엔 경로 변수 없이
   컬렉션 경로에 바로 붙는 형태라 실제로 라우팅되는지 통합 테스트로 확인했다(`StoreImageSecurityIntegrationTest`).
 
+
 ## 점주 대표 메뉴와 메뉴 이미지 업로드(`#389`)
 
 **서버가 하는 일**
@@ -237,3 +238,22 @@ StoreInfoService가 자기 도메인의 공개 계약을 구현하며 owner는 �
   `StoreMenuInfo`(쿠폰 contract)와 `StoreRepositoryImpl`의 메뉴 조회에는 영향이 없다.
 - **`menuId` 소유권 확인 실패는 "없음"과 "다른 가게 소유"를 구분하지 않고 같은 `403`
   (`STORE-012`)으로 묶는다.** 업로드 확인 실패(`STORE-008`)와 같은 근거다(`api-spec.md`).
+
+## 내 가게 조회 (#427)
+
+HTTP 계약은 [store-api-spec.md](../../api-spec/store-api-spec.md)의 `GET /v1/owner/store` 절이 소유한다.
+OwnerStoreController → OwnerStoreService → store.contract.StoreQueryService.getOwnerStoreOverview 순서로 호출한다.
+owner는 DB에서 현재 계정과 상태를 확인하고 store는 본인 가게의 업무 데이터를 조회한다.
+store가 owner를 역방향 참조하지 않으며 StoreQueryService의 기존 최종 등록 전용 메서드의 조회 조건은 유지한다.
+OwnerStoreSnapshot은 도메인 간 계약이며 OwnerStoreResponse가 HTTP 응답으로 변환한다.
+
+하나의 읽기 전용 트랜잭션에서 가게, 사진, 메뉴, 영업시간을 각각 조회한다.
+MySQL 기본 REPEATABLE READ의 스냅샷으로 읽으며 쓰기 잠금과 진행 상태 초기화는 수행하지 않는다.
+가게가 없으면 후속 목록을 조회하지 않는다. 사진과 메뉴 이미지는 VERIFIED만 연결한다.
+이미지 URL은 기존 StoreImageUrlResolver로 생성하며 S3에 요청하지 않는다.
+TERMS는 develop에 병합된 PR #148의 필수 약관 단일 동의 계약을 따른다.
+OwnerStoreOverview를 HTTP DTO로 변환해 가게 생성 전에도 약관·진행 정보를 반환한다.
+완료 단계는 현재 업무 데이터를 확인한다. 약관은 유효한 단일 동의, STORE_INFO는 필수 5항목과 검증 성공,
+LOCATION은 장소·주소·좌표, HOURS는 저장 행 존재, IMAGES는 검증된 대표 이미지로 판단한다.
+메뉴는 선택이며 입력한 메뉴가 있으면 3개 이하·메뉴명·가격·검증된 이미지를 확인한다.
+최종 등록 API가 추가 검증을 확정하면 조회의 canComplete와 같은 규칙을 사용해야 한다.
