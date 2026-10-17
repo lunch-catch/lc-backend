@@ -150,6 +150,16 @@ class PosterUploadServiceTest {
     }
 
     @Test
+    @DisplayName("집행 기간이 비어 있으면 업로드 준비를 거부한다")
+    void 집행_기간이_없으면_준비를_거부한다() {
+        when(campaignRepository.findById(CAMPAIGN_ID)).thenReturn(Optional.of(draftCampaignWithoutPeriod()));
+
+        assertThatThrownBy(() -> service.prepareImageUpload(OWNER_ID, CAMPAIGN_ID, "image/jpeg", 1000L))
+                .isInstanceOfSatisfying(CampaignException.class, e ->
+                        assertThat(e.getErrorCode()).isEqualTo(PosterErrorCode.CAMPAIGN_PERIOD_NOT_SET));
+    }
+
+    @Test
     @DisplayName("정상이면 objectKey와 presigned URL을 돌려준다")
     void 정상이면_업로드_URL을_돌려준다() throws Exception {
         when(campaignRepository.findById(CAMPAIGN_ID)).thenReturn(Optional.of(draftCampaign(CampaignStatus.DRAFT)));
@@ -161,6 +171,16 @@ class PosterUploadServiceTest {
 
         assertThat(response.uploadUrl()).isEqualTo("https://example.com/presigned");
         assertThat(response.objectKey()).startsWith("campaigns/" + CAMPAIGN_ID + "/poster/").endsWith(".jpg");
+    }
+
+    @Test
+    @DisplayName("집행 기간이 비어 있으면 생성을 거부한다")
+    void 집행_기간이_없으면_거부한다() {
+        when(campaignRepository.findById(CAMPAIGN_ID)).thenReturn(Optional.of(draftCampaignWithoutPeriod()));
+
+        assertThatThrownBy(() -> service.createOrOverwritePoster(OWNER_ID, CAMPAIGN_ID, TEMPLATE_ID, OBJECT_KEY))
+                .isInstanceOfSatisfying(CampaignException.class, e ->
+                        assertThat(e.getErrorCode()).isEqualTo(PosterErrorCode.CAMPAIGN_PERIOD_NOT_SET));
     }
 
     @Test
@@ -334,6 +354,18 @@ class PosterUploadServiceTest {
                 LocalDateTime.now());
         setStatus(campaign, status);
         return campaign;
+    }
+
+    // 캠페인 등록 1단계만 끝낸 DRAFT는 집행 기간이 비어 있을 수 있다.
+    private Campaign draftCampaignWithoutPeriod() {
+        return Campaign.create(
+                OWNER_ID, STORE_ID,
+                DiscountTargetType.ALL, DiscountType.PERCENT, 10, null,
+                50, LocalTime.of(12, 0), LocalTime.of(13, 30),
+                null, null,
+                1000, TargetGender.ALL, List.of(AgeGroup.AGE_20S),
+                null, null, null,
+                LocalDateTime.now());
     }
 
     private Campaign menuDiscountCampaign() {

@@ -100,7 +100,8 @@ public class PosterUploadService {
         validateContentType(contentType);
         validateFileSize(fileSize);
 
-        findDraftCampaign(ownerId, campaignId);
+        Campaign campaign = findDraftCampaign(ownerId, campaignId);
+        requirePeriod(campaign);
 
         String objectKey = buildObjectKey(campaignId, contentType);
         String uploadUrl = presign(objectKey, contentType, fileSize);
@@ -112,6 +113,7 @@ public class PosterUploadService {
         validateObjectKey(campaignId, objectKey);
 
         Campaign campaign = findDraftCampaign(ownerId, campaignId);
+        requirePeriod(campaign);
         Template template = findUsableTemplate(templateId);
 
         // 캠페인 잠금과 상관없는 다른 도메인 조회라 잠금을 잡기 전에 끝낸다(셀프 리뷰로 찾음).
@@ -190,6 +192,14 @@ public class PosterUploadService {
     private void requireDraft(Campaign campaign) {
         if (campaign.getStatus() != CampaignStatus.DRAFT) {
             throw new CampaignException(CampaignErrorCode.CAMPAIGN_STATE_NOT_ALLOWED);
+        }
+    }
+
+    // 캠페인 등록 1단계만 끝낸 DRAFT는 집행 기간이 비어 있을 수 있다(V3__campaign_draft_nullable.sql).
+    // discount/period 문구를 만들기 전에 막아야 널 포인터가 아니라 업무 오류로 알려준다(코드래빗 리뷰로 찾음).
+    private void requirePeriod(Campaign campaign) {
+        if (campaign.getStartDate() == null || campaign.getEndDate() == null) {
+            throw new CampaignException(PosterErrorCode.CAMPAIGN_PERIOD_NOT_SET);
         }
     }
 

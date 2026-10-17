@@ -31,7 +31,8 @@ public enum PosterErrorCode implements ErrorCode {
     POSTER_IMAGE_NOT_UPLOADED(HttpStatus.UNPROCESSABLE_ENTITY, "POSTER-016", "이미지가 실제로 업로드되지 않았습니다."),
     POSTER_IMAGE_CONTENT_TYPE_NOT_ALLOWED(HttpStatus.UNPROCESSABLE_ENTITY, "POSTER-017", "jpg, png 파일만 업로드할 수 있습니다."),
     POSTER_IMAGE_FILE_TOO_LARGE(HttpStatus.UNPROCESSABLE_ENTITY, "POSTER-018", "파일 크기는 10MB를 넘을 수 없습니다."),
-    POSTER_IMAGE_OBJECT_KEY_INVALID(HttpStatus.UNPROCESSABLE_ENTITY, "POSTER-019", "이 캠페인의 업로드 요청으로 받은 객체 키가 아닙니다.");
+    POSTER_IMAGE_OBJECT_KEY_INVALID(HttpStatus.UNPROCESSABLE_ENTITY, "POSTER-019", "이 캠페인의 업로드 요청으로 받은 객체 키가 아닙니다."),
+    CAMPAIGN_PERIOD_NOT_SET(HttpStatus.CONFLICT, "POSTER-020", "집행 기간을 먼저 설정한 뒤 포스터를 만들어 주세요.");
 
     private final HttpStatus httpStatus;
     private final String code;
