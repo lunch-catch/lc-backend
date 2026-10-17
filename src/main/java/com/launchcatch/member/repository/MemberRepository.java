@@ -18,6 +18,13 @@ public interface MemberRepository extends JpaRepository<Member, Long>, MemberRep
 
     Optional<Member> findByProviderUserId(String providerUserId);
 
+    long countByCreatedAtGreaterThanEqualAndCreatedAtLessThan(
+            LocalDateTime createdAtFrom, LocalDateTime createdAtBefore);
+
+    long countByCreatedAtLessThan(LocalDateTime createdAtBefore);
+
+    long countByStatusAndWithdrawnAtLessThan(MemberStatus status, LocalDateTime withdrawnAtBefore);
+
     @Query("""
             SELECT member FROM Member member
               LEFT JOIN FETCH member.profile

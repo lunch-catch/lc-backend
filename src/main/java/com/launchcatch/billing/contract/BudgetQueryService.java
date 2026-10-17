@@ -26,8 +26,8 @@ public interface BudgetQueryService {
      * at은 ClockConfig.ZONE(Asia/Seoul) 기준 시각이다. businessDate도 같은 기준의 영업일이다.
      *
      * 그날 예산 계획이 없는 캠페인은 결과에서 빠진다. 예약이 없어 후보가 아니다.
-     * 카운터 장애면 대체값 없이 예외를 던진다. 금전 값이라 틀린 값보다 실패가 낫고,
-     * 그 회차의 후보 처리는 광고 서빙이 정한다.
+     * 카운터 장애면 대체값 없이 billing.exception.BudgetCounterUnavailableException을 던진다.
+     * 금전 값이라 틀린 값보다 실패가 낫고, 그 회차의 후보 처리는 광고 서빙이 정한다.
      */
     List<BudgetProgress> getProgress(Collection<Long> campaignIds, LocalDate businessDate, LocalDateTime at);
 }
