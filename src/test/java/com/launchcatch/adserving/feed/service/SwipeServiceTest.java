@@ -11,13 +11,14 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import com.launchcatch.adserving.contract.SwipeAction;
+import com.launchcatch.adserving.contract.SwipedEvent;
 import com.launchcatch.adserving.engine.exception.CandidateErrorCode;
 import com.launchcatch.adserving.engine.exception.CandidateException;
 import com.launchcatch.adserving.engine.repository.AdCandidateRepository;
 import com.launchcatch.adserving.exclusion.repository.ExclusionRepository;
 import com.launchcatch.adserving.feed.dto.SwipeRequest;
 import com.launchcatch.adserving.feed.dto.SwipeResponse;
-import com.launchcatch.adserving.feed.entity.SwipeAction;
 import com.launchcatch.adserving.feed.entity.SwipeLog;
 import com.launchcatch.adserving.feed.entity.SwipeLogId;
 import com.launchcatch.adserving.feed.repository.SwipeLogRepository;
@@ -36,6 +37,8 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
+import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.test.util.ReflectionTestUtils;
 
 @DisplayName("스와이프 서비스")
 class SwipeServiceTest {
@@ -49,8 +52,9 @@ class SwipeServiceTest {
     private final WishlistRepository wishlistRepository = mock(WishlistRepository.class);
     private final AdCandidateRepository adCandidateRepository = mock(AdCandidateRepository.class);
     private final ExclusionRepository exclusionRepository = mock(ExclusionRepository.class);
+    private final ApplicationEventPublisher eventPublisher = mock(ApplicationEventPublisher.class);
     private final SwipeService service = new SwipeService(swipeLogRepository, wishlistRepository,
-            adCandidateRepository, exclusionRepository, Clock.fixed(NOW, ClockConfig.ZONE));
+            adCandidateRepository, exclusionRepository, eventPublisher, Clock.fixed(NOW, ClockConfig.ZONE));
 
     private static SwipeRequest request(SwipeAction action) {
         return new SwipeRequest(SERVE_ID.toString(), 101L, action.name(), OffsetDateTime.parse("2026-10-01T10:15:34.020+09:00"));
@@ -63,6 +67,9 @@ class SwipeServiceTest {
                 .thenReturn(Optional.of(candidate(101, 37.5, 127.0).build()));
         when(swipeLogRepository.existsById(any())).thenReturn(false);
         when(swipeLogRepository.insertIgnore(any())).thenReturn(true);
+        Wishlist wish = Wishlist.fromFeed(MEMBER_ID, 101L, 1101L, SERVE_ID);
+        ReflectionTestUtils.setField(wish, "id", 7001L);
+        when(wishlistRepository.findByMemberIdAndCampaignId(MEMBER_ID, 101L)).thenReturn(Optional.of(wish));
     }
 
     private SwipeLog savedSwipe() {
@@ -140,5 +147,41 @@ class SwipeServiceTest {
                 .extracting("errorCode").isEqualTo(CandidateErrorCode.CAMPAIGN_NOT_SERVING);
         verifyNoInteractions(wishlistRepository, exclusionRepository);
         verify(swipeLogRepository, never()).insertIgnore(any());
+    }
+
+    @Test
+    void 찜하면_그_찜의_id_와_한국_시각의_넘긴_시각으로_찜_이벤트를_발행한다() {
+        service.swipe(MEMBER_ID, request(SwipeAction.WISH));
+
+        verify(eventPublisher).publishEvent(new SwipedEvent("swipe:" + SERVE_ID + ":" + MEMBER_ID,
+                LocalDateTime.of(2026, 10, 1, 10, 15, 34, 20_000_000), MEMBER_ID, 101L, 1101L, SERVE_ID,
+                SwipeAction.WISH, 7001L));
+    }
+
+    @Test
+    void 패스하면_찜_id_없이_발행한다() {
+        service.swipe(MEMBER_ID, request(SwipeAction.PASS));
+
+        verify(eventPublisher).publishEvent(new SwipedEvent("swipe:" + SERVE_ID + ":" + MEMBER_ID,
+                LocalDateTime.of(2026, 10, 1, 10, 15, 34, 20_000_000), MEMBER_ID, 101L, 1101L, SERVE_ID,
+                SwipeAction.PASS, null));
+    }
+
+    @Test
+    void 이미_넘긴_카드면_발행하지_않는다() {
+        when(swipeLogRepository.existsById(SwipeLogId.of(SERVE_ID, MEMBER_ID))).thenReturn(true);
+
+        service.swipe(MEMBER_ID, request(SwipeAction.WISH));
+
+        verifyNoInteractions(eventPublisher);
+    }
+
+    @Test
+    void 동시에_와서_먼저_넣은_쪽이_있으면_발행하지_않는다() {
+        when(swipeLogRepository.insertIgnore(any())).thenReturn(false);
+
+        service.swipe(MEMBER_ID, request(SwipeAction.WISH));
+
+        verifyNoInteractions(eventPublisher);
     }
 }
