@@ -127,6 +127,10 @@ public class PosterUploadService {
             }
             throw new CampaignException(PosterErrorCode.POSTER_IMAGE_NOT_UPLOADED);
         }
+        // 접두어 검사로 이 캠페인 몫의 키임은 보장되지만, 실제로 올라간 파일 종류는 다시 확인한다(셀프 리뷰로 찾음).
+        if (!ALLOWED_CONTENT_TYPES.contains(headObject.contentType())) {
+            throw new CampaignException(PosterErrorCode.POSTER_IMAGE_CONTENT_TYPE_NOT_ALLOWED);
+        }
         if (headObject.contentLength() == null || headObject.contentLength() > MAX_FILE_SIZE) {
             throw new CampaignException(PosterErrorCode.POSTER_IMAGE_FILE_TOO_LARGE);
         }

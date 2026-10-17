@@ -223,12 +223,25 @@ class PosterUploadServiceTest {
     }
 
     @Test
+    @DisplayName("업로드된 파일이 허용되지 않는 형식이면 생성을 거부한다")
+    void 업로드된_파일_형식이_허용되지_않으면_거부한다() {
+        when(campaignRepository.findById(CAMPAIGN_ID)).thenReturn(Optional.of(draftCampaign(CampaignStatus.DRAFT)));
+        when(templateRepository.findById(TEMPLATE_ID)).thenReturn(Optional.of(publishedActiveTemplate()));
+        when(s3Client.headObject(any(HeadObjectRequest.class)))
+                .thenReturn(HeadObjectResponse.builder().contentType("application/pdf").contentLength(1000L).build());
+
+        assertThatThrownBy(() -> service.createOrOverwritePoster(OWNER_ID, CAMPAIGN_ID, TEMPLATE_ID, OBJECT_KEY))
+                .isInstanceOfSatisfying(CampaignException.class, e ->
+                        assertThat(e.getErrorCode()).isEqualTo(PosterErrorCode.POSTER_IMAGE_CONTENT_TYPE_NOT_ALLOWED));
+    }
+
+    @Test
     @DisplayName("업로드된 파일이 10MB를 넘으면 생성을 거부한다")
     void 업로드된_파일이_너무_크면_거부한다() {
         when(campaignRepository.findById(CAMPAIGN_ID)).thenReturn(Optional.of(draftCampaign(CampaignStatus.DRAFT)));
         when(templateRepository.findById(TEMPLATE_ID)).thenReturn(Optional.of(publishedActiveTemplate()));
         when(s3Client.headObject(any(HeadObjectRequest.class)))
-                .thenReturn(HeadObjectResponse.builder().contentLength(10_485_761L).build());
+                .thenReturn(HeadObjectResponse.builder().contentType("image/jpeg").contentLength(10_485_761L).build());
 
         assertThatThrownBy(() -> service.createOrOverwritePoster(OWNER_ID, CAMPAIGN_ID, TEMPLATE_ID, OBJECT_KEY))
                 .isInstanceOfSatisfying(CampaignException.class, e ->
@@ -289,7 +302,7 @@ class PosterUploadServiceTest {
         when(campaignRepository.findByIdForUpdate(CAMPAIGN_ID)).thenReturn(Optional.of(campaign));
         when(templateRepository.findById(TEMPLATE_ID)).thenReturn(Optional.of(template));
         when(s3Client.headObject(any(HeadObjectRequest.class)))
-                .thenReturn(HeadObjectResponse.builder().contentLength(1000L).build());
+                .thenReturn(HeadObjectResponse.builder().contentType("image/jpeg").contentLength(1000L).build());
         when(storeQueryService.findAllById(List.of(STORE_ID)))
                 .thenReturn(List.of(new StoreInfo(STORE_ID, "분식집", "store.jpg", 37.5, 127.0)));
         when(posterRepository.findByCampaignId(CAMPAIGN_ID)).thenReturn(Optional.empty());
