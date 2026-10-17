@@ -1,7 +1,7 @@
 # adserving 구조와 동작 설계
 
 광고 서빙 도메인의 구조와 동작을 적는다. 엔드포인트마다의 처리와 성능 목표는
-[`feed-api-design.md`](./feed-api-design.md) 가 갖는다. 지금은 `GET /v1/feed` 의 후보 선별(#236), 배정 규칙(#307), serve 기록과 서빙 로그(#315), `POST /v1/impressions`(#323), `POST /v1/swipes`(#379), `GET /v1/feed-filter`(#405), `PUT /v1/feed-filter`(#411)까지 훑었다.
+[`feed-api-design.md`](./feed-api-design.md) 가 갖는다. 지금은 `GET /v1/feed` 의 후보 선별(#236), 배정 규칙(#307), serve 기록과 서빙 로그(#315), `POST /v1/impressions`(#323), `POST /v1/swipes`(#379), `GET /v1/feed-filter`(#405), `PUT /v1/feed-filter`(#411), 분석이 부르는 집계 조회(#350)까지 훑었다.
 나머지 엔드포인트는 그 이슈가 이 문서를 채운다.
 
 ## 1. 범위
@@ -20,6 +20,7 @@
 | 카드마다 serve 기록을 남겨 노출 검증에 쓰게 한다 | FR-097 |
 | 서빙 로그와 그날 첫 접속 위치를 응답 뒤에 쓴다 | FR-027, FR-042, FR-064 |
 | 카드가 보인 순간을 받아 유효와 무효를 가르고, 유효 노출을 정산에 넘겨 차감한다 | FR-066, FR-097, FR-100 |
+| 영업일마다 노출과 찜을 캠페인, 회원 단위로 묶어 분석에 내준다 | 설계 문서 2.2 집계 조회, 규칙 4 |
 
 | 맡지 않는 것 | 소유 |
 |---|---|
@@ -40,6 +41,11 @@
 ```
 adserving/
 ├── config/AdservingSecurityConfig.java
+├── contract/
+│   ├── AdservingStatsQueryService.java   분석의 집계 조회(#350)
+│   ├── CampaignImpressionStats.java
+│   ├── MemberInvalidImpressionCount.java
+│   └── CampaignMemberConcentration.java
 ├── engine/
 │   ├── FeedAssembler.java        카드 고르기와 슬롯 배치. 계층 밖의 순수 계산
 │   ├── FeedCandidate.java        계산이 받는 후보 record
@@ -75,7 +81,8 @@ wishlist/
 impression/
     ├── controller/ImpressionController.java
     ├── service/ImpressionService.java
-    ├── repository/ImpressionLogRepository.java      읽기는 JPA, 쓰기는 INSERT IGNORE
+    ├── service/AdservingStatsQueryServiceImpl.java  집계 조회 구현. 찜은 feed 의 SwipeLogRepository 로 센다
+    ├── repository/ImpressionLogRepository.java      읽기는 JPA, 쓰기는 INSERT IGNORE, 집계는 네이티브 쿼리
     └── entity/ImpressionLog.java
 ```
 
@@ -86,7 +93,8 @@ impression/
 - `wishlist` 의 찜 목록 조회는 `engine` 의 그날 후보에서 표시 값을 읽는다. 반대 방향은 없다.
 - 당일 이력은 스와이프와 가게 상세 찜이 함께 쓰고 피드가 읽어 `feed` 와 `wishlist` 밖의 `exclusion` 에 둔다. `wishlist` 가 `feed` 를 부르지 않게 하려는 것이다(#420). 오래 사는 찜 목록이 그날 단위의 피드에 기대지 않는다.
 - 그날 후보가 아니라는 판정(`ADSERVING-004`)은 스와이프와 가게 상세 찜이 함께 써서 `engine` 의 `CandidateErrorCode` 가 갖는다(#420).
-- 입구는 HTTP 요청 일곱(`GET /v1/feed`, `POST /v1/impressions`, `POST /v1/swipes`, `GET`, `PUT /v1/feed-filter`, `GET`, `POST /v1/wishlist`)이다. 스케줄, 이벤트, 다른 도메인의 호출은 아직 없다.
+- 입구는 HTTP 요청 일곱(`GET /v1/feed`, `POST /v1/impressions`, `POST /v1/swipes`, `GET`, `PUT /v1/feed-filter`, `GET`, `POST /v1/wishlist`)과 analytics 가 부르는 `AdservingStatsQueryService` 다. 스케줄과 이벤트는 아직 없다.
+- 집계 조회의 구현은 노출을 주로 세서 `impression` 에 둔다. 찜은 `feed` 의 `swipe_log` 에서 센다.
 
 ### 규칙을 두는 곳
 
@@ -98,6 +106,8 @@ impression/
 | 온보딩, 위치, 요청 제한, 서빙 시간대의 순서, 입력을 모으는 순서, 기록을 남기는 시점 | `FeedService` |
 | 서빙 로그를 묶어 쓰고 차면 버리는 규칙 | `ServeLogBuffer` |
 | 노출의 유효 판정, 같은 노출이 다시 올 때의 처리, 차감과 카운터의 시점 | `ImpressionService` |
+| 집계 조회의 시간대 구간, 판정과 사유를 세는 기준, 상위 회원을 고르는 순서 | `ImpressionLogRepository` 의 집계 쿼리 |
+| 노출과 찜을 캠페인 ID 로 합치는 규칙 | `AdservingStatsQueryServiceImpl` |
 | 같은 카드를 다시 넘길 때의 처리, 찜과 스와이프 기록과 당일 이력을 쓰는 순서 | `SwipeService` |
 | 필터를 저장하지 않은 회원의 기본값(전체 업종, 거리순) | `FeedFilterService`. 피드는 같은 기본값을 `FeedService` 에서 따로 정한다. 한 곳으로 모으지 않은 것은 #411 에서 임시로 정했다 |
 | 필터를 통째로 바꾸는 순서, 같은 업종이 두 번 올 때의 처리 | `FeedFilterService` |
@@ -117,7 +127,8 @@ impression/
 | 필터 업종 | `feed_filter_category` 를 PK(`member_id`, `category_code`)로 읽고 업종 코드 오름차순으로 돌려준다(#405). 순서 컬럼이 없어 고른 순서는 남지 않는다 |
 | 필터 저장 | `feed_filter` 는 `INSERT ... ON DUPLICATE KEY UPDATE` 로 정렬을 넣거나 바꾸고, `feed_filter_category` 는 그 회원의 행을 지우고 다시 넣는다. 같은 업종이 두 번 오면 하나만 넣는다(#411 에서 임시로 정했다) |
 | 다른 도메인 데이터의 사본 | `ad_candidate` 는 00:00 의 캠페인과 가게 사본이다. 그날 안에서는 캠페인과 쿠폰의 통보로만 바뀐다 |
-| 집계를 세는 방식 | 그날 유효 노출 수는 `impression_log` 를 세지 않고 카운터를 읽는다. 틀리면 `impression_log` 에서 다시 센다 |
+| 집계를 세는 방식 | 그날 유효 노출 수는 `impression_log` 를 세지 않고 카운터를 읽는다. 틀리면 `impression_log` 에서 다시 센다. 분석의 집계 조회는 카운터를 읽지 않고 아래 "집계 조회의 귀속" 대로 원본을 센다 |
+| 집계 조회 | 노출은 `idx_imp_date_reason` 의 앞 열로 그날 행만 읽어 캠페인별로 한 번 훑는다. 판정, 사유, 시간대, 슬롯을 같은 행들에서 세어 축끼리의 합이 맞는다. 회원별 무효 노출은 그 인덱스의 두 열을 탄다. 찜은 `idx_swipe_date` 로 그날 `WISH` 만 센다. 두 테이블을 조인하지 않고 서비스가 캠페인 ID 로 합친다 |
 | DB 제약으로 막을 것과 코드로 막을 것 | 같은 카드가 `serve_log` 에 두 번 들어가는 것은 PK(`serve_id`)와 `INSERT IGNORE` 로, 같은 날 두 번째 접속 위치는 PK(`business_date`, `member_id`)와 `INSERT IGNORE` 로 막는다. 같은 노출의 두 번째 저장은 `impression_log` 의 PK(`serve_id`, `member_id`)와 `INSERT IGNORE` 로, 같은 카드의 두 번째 스와이프는 `swipe_log` 의 같은 PK 로, 같은 캠페인의 두 번째 찜은 `uk_wishlist_member_campaign` 으로 막는다. 노출은 넣은 행 수로 처음 저장인지 가른다. 먼저 읽어 보는 것은 다시 온 요청을 빨리 돌려보내려는 것이고 동시 요청은 PK 가 막는다 |
 | 이력 | 해당 없음. 상태가 바뀌는 엔티티가 없다. `serve_log`, `feed_visit_daily`, `impression_log`, `swipe_log` 는 쌓기만 하고 고치지 않는다. `wishlist` 는 지울 때 행을 지운다 |
 
@@ -168,6 +179,37 @@ B 를 고른다. 노출 API 가 유효 노출을 처음 저장하고 커밋한 �
 
 B 를 고른다. 응답 전에 피드 1회의 카드를 파이프라인 한 번으로 쓴다. 응답 뒤에 쓰면 곧바로 온 노출이 기록보다 먼저 닿는다.
 
+### 집계 조회의 귀속
+
+| 값 | 기준 |
+|---|---|
+| 영업일 | `impression_log.business_date`(노출을 받은 날). 서빙이 10:00~12:59 이고 노출 인정 시간이 30분이라 카드를 내려준 영업일과 갈리지 않는다(5장) |
+| 유효 노출 | `validity = 'VALID'`. 쿠폰 소진 뒤 노출(`sold_out`)을 포함한다. 그래서 정산의 `BILLED + NOT_BILLED_BUDGET + NOT_BILLED_PAUSED` 에 소진 뒤 노출을 더한 값과 같다 |
+| 무효 노출 | `invalid_reason` 의 두 값. `EXPIRED_OR_UNKNOWN` 의 캠페인은 요청이 보낸 값이라 없는 캠페인 ID 일 수 있다 |
+| 시간대 | 받은 시각(`created_at`)의 시. 10시 이전은 10시, 13시 이후는 12시에 붙인다. 내려준 시각이 저장되지 않아서다(#350 에서 정했다) |
+| 슬롯 유형 | 유효 노출의 `slot_type`. 유효 노출은 serve 기록이 있어 비지 않는다 |
+| 찜 | `swipe_log` 의 `WISH`. 가게 상세 찜은 들어가지 않는다. 31일이 지난 날은 보관 기간이 지나 0 이다(#350 에서 정했다) |
+| 회원 축 | 무효 노출은 (캠페인, 회원)마다 상한 없이 전부 내준다. A-09 가 기간 합계와 전체 건수를 내야 해서다. 유효 노출은 회원 수와 상위 N명의 합만 내준다 |
+
+**결정: 시간대를 어느 시각으로 자르나** (#350 에서 정했다)
+
+| 선택지 | 장점 | 단점 |
+|---|---|---|
+| A. 받은 시각 `created_at`, 13시는 12시로 붙인다 | 스키마를 바꾸지 않는다. 서버 시각이라 조작할 수 없다 | 10:59 에 내려준 카드를 11:00 에 받으면 11시로 센다 |
+| B. `impression_log` 에 내려준 시각을 더한다 | 가장 정확하다 | 쓰기가 가장 많은 테이블의 스키마와 노출 저장 경로를 함께 바꾼다 |
+| C. 클라이언트의 표시 시각 `displayed_at` | 사용자가 본 순간에 가깝다 | 조작하거나 기기 시계가 틀리면 분포가 틀어진다 |
+
+A 를 고른다. 시간대 분포가 서빙 시각과 달라 리포트에 쓰기 어렵다는 요구가 오면 B 로 옮긴다.
+
+**결정: 찜을 어디서 세나** (#350 에서 정했다)
+
+| 선택지 | 장점 | 단점 |
+|---|---|---|
+| A. `swipe_log` 의 `WISH` | 노출에서 찜으로 가는 퍼널과 분모가 맞는다. 찜을 풀어도 줄지 않는다 | 가게 상세 찜이 빠진다. 31일이 지난 날을 다시 집계하면 0 이다 |
+| B. `wishlist` 의 그날 행 | 가게 상세 찜까지 센다 | 찜을 풀거나 캠페인이 끝나면 행을 지워 다시 집계하면 줄어든다 |
+
+A 를 고른다. 가게 상세 찜을 리포트에 넣어야 하면 그 찜을 영업일과 함께 남기는 기록을 먼저 만든다.
+
 ## 4. 계산 로직
 
 `FeedAssembler.assemble` 이 카드를 고른다. 현재 시각, 위치, 예산은 `FeedService` 가 구해 `FeedContext` 로 넘긴다.
@@ -198,6 +240,7 @@ B 를 고른다. 응답 전에 피드 1회의 카드를 파이프라인 한 번�
 | 읽기 | member | `MemberQueryService.findById` | 피드 요청마다 1번 |
 | 읽기 | billing | `BudgetQueryService.getProgress` | 서빙 시간대의 피드 요청마다 1번. 후보가 5000개를 넘으면 나눠 부른다 |
 | 쓰기 | billing | `PointDeductor.deduct` | 처음 저장된 유효 노출마다 1번. 노출 저장과 같은 트랜잭션이다. 쿠폰 소진 뒤의 노출은 부르지 않는다 |
+| 공개 | analytics 가 부른다 | `AdservingStatsQueryService` | 분석의 일별 집계 배치가 영업일마다 부른다. 읽기 전용 트랜잭션에서 묶은 건수만 돌려준다. 귀속은 3장 "집계 조회의 귀속" 을 따른다 |
 
 - `getProgress` 에는 그날 사각 범위의 후보 전부를 넘긴다. 그 계약은 당일 카운터만 읽어 서빙 경로에서 불러도 된다고 적었다.
 - `deduct` 에 넘기는 영업일은 노출을 받은 날이 아니라 카드를 내려준 날이다(그 계약). 서빙 시간대가 10:00~12:59 라 둘이 갈리지는 않는다.
@@ -521,6 +564,12 @@ C 를 고른다. 이미 넘긴 카드는 찜을 쓰기 전에 먼저 걸러, 먼
 
 가게 상세 찜은 `feed-api-design.md` 성능 목표에 TPS 와 응답 시간을 두지 않았고 유실 0.1% 미만만 둔다. 요청 하나에 DB 읽기 2(그날 후보, 찜 다시 읽기), DB 쓰기 1(찜), Valkey 호출 1(당일 이력)이다.
 
+| 적을 것 | 집계 조회 |
+|---|---|
+| 요청 하나의 비용 | 하루 한 번 분석 배치가 부른다. `campaignStats` 는 DB 읽기 2(그날 노출 전부를 캠페인별로, 그날 찜을 캠페인별로), `memberInvalidCounts` 는 1(그날 무효 노출), `memberConcentrations` 는 1(그날 유효 노출을 회원별로 묶고 순위를 매긴다) |
+| 처리량 계산 | 목표 TPS 는 없다. 그날 노출 행 수에 비례한다. `idx_imp_date_reason` 은 날짜로 범위를 줄이지만 시간대, 슬롯, 회원을 읽으려 행마다 클러스터 인덱스를 다시 읽는다. 하루 노출이 커지면 그 읽기가 비용의 대부분이다 |
+| 확인 방법 | 아직 없다. 실제 하루치 규모의 `impression_log` 로 세 메서드의 실행 시간을 잰다. 느리면 날짜가 선두인 커버링 인덱스를 검토한다 |
+
 ## 12. 테스트와 미정 사항
 
 6장에 상태 전이가 없어 7장 동시성 표의 행과 6장 주요 흐름의 실패 지점에서 시나리오를 뽑았다.
@@ -556,6 +605,11 @@ C 를 고른다. 이미 넘긴 카드는 찜을 쓰기 전에 먼저 걸러, 먼
 | 가게 상세에서 다시 찜함 | 어제 찜했다 | 같은 캠페인을 찜한다 | `200` 이고 행이 늘지 않으며 처음 찜한 시각을 돌려준다 | `WishlistIntegrationTest.이미_찜한_캠페인이면_200_이고_행이_늘지_않으며_처음_찜한_시각을_돌려준다` |
 | 오늘 후보가 아닌 캠페인을 찜함 | 어제 찜했고 오늘은 후보가 아니다 | 찜한다 | `404 ADSERVING-004` 이고 당일 이력에 넣지 않는다(#420) | `WishlistIntegrationTest.오늘_노출_후보가_아니면_404_ADSERVING_004_이고_찜이_늘지_않는다` |
 | 가게 상세 찜이 실패함(2) | 찜 넣기가 실패한다 | 찜한다 | 당일 이력에 넣지 않는다 | `WishlistServiceTest.찜을_넣지_못하면_당일_이력에_넣지_않는다` |
+| 분석이 하루 노출을 셈 | 유효, 소진 뒤, 무효 두 사유의 노출이 여러 시간대와 슬롯에 있다 | `campaignStats` 를 부른다 | 시간대 합과 슬롯 합이 유효 노출과 같고 다른 날은 세지 않는다 | `AdservingStatsQueryIntegrationTest.판정_사유_시간대_슬롯을_캠페인별로_세고_시간대_합과_슬롯_합이_유효_노출과_같다` |
+| 서빙이 끝난 뒤 늦게 온 노출 | 13:20 에 받은 유효 노출이 있다 | `campaignStats` 를 부른다 | 그 영업일의 12시로 센다 | `AdservingStatsQueryIntegrationTest.서빙_종료_뒤_노출_인정_시간_안에_받은_노출은_그_영업일의_12시로_센다` |
+| 찜만 있는 캠페인 | 그날 노출 없이 찜만 있다 | `campaignStats` 를 부른다 | 노출 0 과 찜 수로 나온다 | `AdservingStatsQueryIntegrationTest.그날_피드_카드의_찜만_세고_패스와_다른_날은_세지_않는다` |
+| 부정 이용 회원 | 한 회원이 무효 노출을 여러 사유로 보냈다 | `memberInvalidCounts` 를 부른다 | (캠페인, 회원)마다 사유별 건수다 | `AdservingStatsQueryIntegrationTest.무효_노출을_캠페인과_회원별로_사유마다_세고_유효_노출과_다른_날은_넣지_않는다` |
+| 노출이 소수 회원에 몰림 | 회원 넷의 유효 노출이 4, 3, 3, 1 건이다 | 상위 2명으로 `memberConcentrations` 를 부른다 | 회원 수 4, 상위 합 7 이다 | `AdservingStatsQueryIntegrationTest.유효_노출이_많은_상위_회원의_합과_회원_수를_세고_무효_노출은_넣지_않는다` |
 
 | 미정 항목 | 어디까지 정해졌나 | 막는 것 |
 |---|---|---|
@@ -568,3 +622,4 @@ C 를 고른다. 이미 넘긴 카드는 찜을 쓰기 전에 먼저 걸러, 먼
 | 고를 수 있는 업종 코드 | store 의 CHECK 와 같은 목록을 광고 서빙 요청 타입에 따로 둔다(#411 에서 임시로 정했다) | 업종이 늘면 두 곳을 고쳐야 한다. store 가 업종 목록을 `contract` 로 공개하면 그것으로 검사한다 |
 | 필터가 없는 회원의 기본값 | `FeedFilterService` 와 `FeedService` 가 따로 정한다(#411 에서 임시로 정했다) | 없다. 기본값이 바뀌면 두 곳을 고친다 |
 | 신규 우선 노출(`new_priority_until`) | 계산 규칙이 문서에 없다 | 배분 슬롯에 넣을 자리가 정해지지 않았다 |
+| 31일이 지난 날의 찜 수 | 집계 조회는 0 을 돌려준다(#350) | 분석이 그런 날을 다시 집계할 때 찜 수를 덮어쓸지는 analytics 가 정한다 |
