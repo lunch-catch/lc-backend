@@ -70,10 +70,15 @@ public interface TemplateVersionRepository extends JpaRepository<TemplateVersion
             Pageable pageable);
 
     /*
-     * 게시로 소프트삭제된 버전을 완전히 지운다(#412). 아직 게시 전이라 deletedAt 이 null 인
-     * 버전은 건드리지 않는다. 지워진 행 수를 그대로 배치의 처리 건수로 쓴다.
+     * 게시로 소프트삭제된 버전을 batchSize 건씩 나눠 지운다(#412). 아직 게시 전이라
+     * deletedAt 이 null 인 버전은 건드리지 않는다.
+     *
+     * 한 트랜잭션으로 전부 지우면, 처음 도는 날처럼 쌓인 양이 많을 때 잠금을 오래 들고
+     * 있어 TemplatePublishService.publish()의 소프트삭제 UPDATE나 새 버전 INSERT와
+     * 부딪힌다. JPQL 의 delete 는 LIMIT 을 못 써서 네이티브 쿼리로 쓴다.
      */
     @Modifying
-    @Query("delete from TemplateVersion v where v.deletedAt is not null")
-    int deleteAllByDeletedAtIsNotNull();
+    @Query(value = "delete from template_version where deleted_at is not null limit :batchSize",
+            nativeQuery = true)
+    int deleteBatchByDeletedAtIsNotNull(@Param("batchSize") int batchSize);
 }
