@@ -1,0 +1,58 @@
+package com.launchcatch.campaign.poster.controller;
+
+import com.launchcatch.auth.CustomUserDetails;
+import com.launchcatch.campaign.poster.dto.PosterCreateRequest;
+import com.launchcatch.campaign.poster.dto.PosterCreateResponse;
+import com.launchcatch.campaign.poster.dto.PosterImagePrepareUploadRequest;
+import com.launchcatch.campaign.poster.dto.PosterImagePrepareUploadResponse;
+import com.launchcatch.campaign.poster.service.PosterUploadService;
+import com.launchcatch.global.response.ResponseEnvelope;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.validation.Valid;
+import lombok.RequiredArgsConstructor;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+@RestController
+@RequestMapping("/v1/owner/campaigns/{campaignId}")
+@RequiredArgsConstructor
+@Tag(name = "점주 포스터", description = "점주가 DRAFT 캠페인의 포스터를 생성하는 API입니다.")
+public class OwnerPosterController {
+
+    private final PosterUploadService posterUploadService;
+
+    @PostMapping("/poster:prepareUpload")
+    @Operation(
+            summary = "포스터 이미지 업로드 URL 발급",
+            description = "presigned PUT URL을 발급합니다. 캠페인이 DRAFT일 때만 가능합니다."
+    )
+    public ResponseEnvelope<PosterImagePrepareUploadResponse> prepareUpload(
+            @PathVariable Long campaignId,
+            @Valid @RequestBody PosterImagePrepareUploadRequest request,
+            @Parameter(hidden = true) @AuthenticationPrincipal CustomUserDetails owner) {
+        var response = posterUploadService.prepareImageUpload(
+                owner.getId(), campaignId, request.contentType(), request.fileSize());
+        return ResponseEnvelope.success(response);
+    }
+
+    @PostMapping("/poster")
+    @Operation(
+            summary = "포스터 생성",
+            description = "templateId와 업로드한 이미지의 objectKey로 포스터를 생성합니다. "
+                    + "캠페인에 이미 포스터가 있으면 덮어씁니다."
+    )
+    public ResponseEnvelope<PosterCreateResponse> create(
+            @PathVariable Long campaignId,
+            @Valid @RequestBody PosterCreateRequest request,
+            @Parameter(hidden = true) @AuthenticationPrincipal CustomUserDetails owner) {
+        var response = posterUploadService.createOrOverwritePoster(
+                owner.getId(), campaignId, request.templateId(), request.objectKey());
+        return ResponseEnvelope.success(response);
+    }
+}
