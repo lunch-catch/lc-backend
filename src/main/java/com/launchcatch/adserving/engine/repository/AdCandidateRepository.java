@@ -6,10 +6,12 @@ import com.launchcatch.adserving.engine.entity.CandidateCampaignState;
 import com.launchcatch.global.geo.BoundingBox;
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -40,9 +42,23 @@ public interface AdCandidateRepository extends JpaRepository<AdCandidate, AdCand
     // 그날 후보가 쿠폰 소진으로 표시됐는지 본다. 소진 뒤 도착한 유효 노출은 차감하지 않는다(NOT_BILLED_SOLD_OUT).
     boolean existsByIdBusinessDateAndIdCampaignIdAndSoldOutAtIsNotNull(LocalDate businessDate, Long campaignId);
 
+    boolean existsByIdBusinessDateAndIdCampaignId(LocalDate businessDate, Long campaignId);
+
     // 그날 후보의 그 캠페인 행이다. 상태와 소진은 보지 않는다.
     Optional<AdCandidate> findByIdBusinessDateAndIdCampaignId(LocalDate businessDate, Long campaignId);
 
     // 그날 후보 가운데 그 캠페인들의 행이다. 상태와 소진은 보지 않는다.
     List<AdCandidate> findByIdBusinessDateAndIdCampaignIdIn(LocalDate businessDate, Collection<Long> campaignIds);
+
+    // 아직 소진되지 않은 그날 후보에만 쓴다. 다시 와도 처음 소진 시각이 남는다(#163)
+    @Modifying
+    @Query(value = """
+            UPDATE ad_candidate
+               SET sold_out_at = :soldOutAt, updated_at = :now
+             WHERE business_date = :businessDate
+               AND campaign_id = :campaignId
+               AND sold_out_at IS NULL
+            """, nativeQuery = true)
+    int markSoldOut(@Param("businessDate") LocalDate businessDate, @Param("campaignId") Long campaignId,
+            @Param("soldOutAt") LocalDateTime soldOutAt, @Param("now") LocalDateTime now);
 }
