@@ -2,11 +2,13 @@ package com.launchcatch.ops.repository;
 
 import com.launchcatch.ops.entity.BatchExecutionLog;
 import com.launchcatch.ops.entity.BatchStatus;
+import jakarta.persistence.LockModeType;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -27,6 +29,21 @@ import org.springframework.transaction.annotation.Transactional;
 public interface BatchExecutionLogRepository extends JpaRepository<BatchExecutionLog, Long> {
 
     Optional<BatchExecutionLog> findByJobNameAndBusinessDate(String jobName, LocalDate businessDate);
+
+    /*
+     * assertCurrentAttempt 가 쓴다(#360). 호출자 트랜잭션에 참여해 이 행을 잠근다.
+     *
+     * 잠그지 않으면 "소유자와 세대를 읽는 것"과 "그 값을 믿고 결과를 공개하는 것" 사이에 다른
+     * 서버가 이어받을 틈이 생긴다. 잠근 채로 비교하면 그 틈이 없다.
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("""
+            SELECT l FROM BatchExecutionLog l
+             WHERE l.jobName = :jobName
+               AND l.businessDate = :businessDate
+            """)
+    Optional<BatchExecutionLog> findByJobNameAndBusinessDateForUpdate(
+            @Param("jobName") String jobName, @Param("businessDate") LocalDate businessDate);
 
     List<BatchExecutionLog> findByBusinessDate(LocalDate businessDate);
 
@@ -74,12 +91,14 @@ public interface BatchExecutionLogRepository extends JpaRepository<BatchExecutio
     /*
      * 멈춘 행의 소유자를 나로 바꾼다.
      * updatedAt 조건을 함께 넣어, 그 사이 원래 서버가 살아나 갱신했으면 걸리지 않게 한다.
+     *
+     * attemptNo 를 하나 올린다(#360). 이어받기도 소유자가 바뀌는 자리라 세대가 오른다.
      */
     @Transactional
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("""
             UPDATE BatchExecutionLog l
-               SET l.ownerId = :ownerId, l.updatedAt = :now
+               SET l.ownerId = :ownerId, l.updatedAt = :now, l.attemptNo = l.attemptNo + 1
              WHERE l.jobName = :jobName
                AND l.businessDate = :businessDate
                AND l.status = com.launchcatch.ops.entity.BatchStatus.RUNNING
@@ -163,6 +182,9 @@ public interface BatchExecutionLogRepository extends JpaRepository<BatchExecutio
      * 시작 시각(createdAt)과 처리 건수도 새로 한다(#359). 남겨 두면 운영 대시보드(A-06)가
      * 지난 시도의 시작 시각으로 소요 시간을 계산하고, 지난 시도의 건수를 이번 시도의 것으로
      * 보여 준다.
+     *
+     * attemptNo 를 하나 올린다(#360). 수동 재실행도 새 시도이고, 이전 시도가 늦게 깨어나
+     * 결과를 공개하려 하면 세대가 달라 assertCurrentAttempt 에서 막힌다.
      */
     @Transactional
     @Modifying(clearAutomatically = true, flushAutomatically = true)
@@ -172,7 +194,7 @@ public interface BatchExecutionLogRepository extends JpaRepository<BatchExecutio
                    l.finishedAt = null, l.failureReason = null,
                    l.retryCount = 0, l.retryReason = null, l.processedCount = null,
                    l.createdAt = :now,
-                   l.ownerId = :ownerId, l.updatedAt = :now
+                   l.ownerId = :ownerId, l.updatedAt = :now, l.attemptNo = l.attemptNo + 1
              WHERE l.jobName = :jobName
                AND l.businessDate = :businessDate
                AND l.status = com.launchcatch.ops.entity.BatchStatus.FAILED
@@ -187,7 +209,8 @@ public interface BatchExecutionLogRepository extends JpaRepository<BatchExecutio
      *
      * restartFailed와 리셋하는 필드는 같다(시작 시각과 처리 건수 포함, #359). RUNNING이면
      * 조건에 걸리지 않아 0건이고, 두 번 눌러도 한 번만 걸린다. restartFailed는 "실패 재시도"
-     * 의미를 그대로 두려고 건드리지 않는다.
+     * 의미를 그대로 두려고 건드리지 않는다. attemptNo 도 restartFailed와 같은 이유로
+     * 하나 올린다(#360).
      */
     @Transactional
     @Modifying(clearAutomatically = true, flushAutomatically = true)
@@ -197,7 +220,7 @@ public interface BatchExecutionLogRepository extends JpaRepository<BatchExecutio
                    l.finishedAt = null, l.failureReason = null,
                    l.retryCount = 0, l.retryReason = null, l.processedCount = null,
                    l.createdAt = :now,
-                   l.ownerId = :ownerId, l.updatedAt = :now
+                   l.ownerId = :ownerId, l.updatedAt = :now, l.attemptNo = l.attemptNo + 1
              WHERE l.jobName = :jobName
                AND l.businessDate = :businessDate
                AND l.status IN (com.launchcatch.ops.entity.BatchStatus.FAILED,
