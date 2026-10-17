@@ -28,4 +28,19 @@ public interface SwipeLogRepository extends JpaRepository<SwipeLog, SwipeLogId>,
                                             @Param("from") LocalDate from,
                                             @Param("to") LocalDate to,
                                             @Param("action") SwipeAction action);
+
+    // idx_swipe_date 로 그날 찜만 캠페인별로 센다.
+    default List<CampaignWishCount> countWishesByCampaign(LocalDate businessDate) {
+        return countByCampaign(businessDate, SwipeAction.WISH);
+    }
+
+    @Query("""
+            select new com.launchcatch.adserving.feed.repository.CampaignWishCount(s.campaignId, count(s))
+            from SwipeLog s
+            where s.businessDate = :businessDate
+              and s.action = :action
+            group by s.campaignId
+            """)
+    List<CampaignWishCount> countByCampaign(@Param("businessDate") LocalDate businessDate,
+                                            @Param("action") SwipeAction action);
 }
