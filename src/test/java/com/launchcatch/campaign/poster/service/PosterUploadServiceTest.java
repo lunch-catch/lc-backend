@@ -275,6 +275,32 @@ class PosterUploadServiceTest {
     }
 
     @Test
+    @DisplayName("가게를 찾지 못하면 내부 오류로 거부한다")
+    void 가게를_찾지_못하면_내부_오류로_거부한다() {
+        when(campaignRepository.findById(CAMPAIGN_ID)).thenReturn(Optional.of(draftCampaign(CampaignStatus.DRAFT)));
+        when(templateRepository.findById(TEMPLATE_ID)).thenReturn(Optional.of(publishedActiveTemplate()));
+        when(storeQueryService.findAllById(List.of(STORE_ID))).thenReturn(List.of());
+
+        assertThatThrownBy(() -> service.createOrOverwritePoster(OWNER_ID, CAMPAIGN_ID, TEMPLATE_ID, OBJECT_KEY))
+                .isInstanceOfSatisfying(CampaignException.class, e ->
+                        assertThat(e.getErrorCode()).isEqualTo(CommonErrorCode.INTERNAL_ERROR));
+    }
+
+    @Test
+    @DisplayName("메뉴를 찾지 못하면 내부 오류로 거부한다")
+    void 메뉴를_찾지_못하면_내부_오류로_거부한다() {
+        when(campaignRepository.findById(CAMPAIGN_ID)).thenReturn(Optional.of(menuDiscountCampaign()));
+        when(templateRepository.findById(TEMPLATE_ID)).thenReturn(Optional.of(publishedActiveTemplate()));
+        when(storeQueryService.findAllById(List.of(STORE_ID)))
+                .thenReturn(List.of(new StoreInfo(STORE_ID, "분식집", "store.jpg", 37.5, 127.0)));
+        when(storeQueryService.findMenusByIdIn(List.of(42L))).thenReturn(List.of());
+
+        assertThatThrownBy(() -> service.createOrOverwritePoster(OWNER_ID, CAMPAIGN_ID, TEMPLATE_ID, OBJECT_KEY))
+                .isInstanceOfSatisfying(CampaignException.class, e ->
+                        assertThat(e.getErrorCode()).isEqualTo(CommonErrorCode.INTERNAL_ERROR));
+    }
+
+    @Test
     @DisplayName("전체 할인이면 가게명, 할인 문구, 기간, 이미지를 슬롯에 채워 포스터를 만든다")
     void 전체_할인이면_포스터를_만든다() {
         Campaign campaign = draftCampaign(CampaignStatus.DRAFT);
