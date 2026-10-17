@@ -9,6 +9,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
+import org.springframework.transaction.annotation.Transactional;
 
 public interface TemplateVersionRepository extends JpaRepository<TemplateVersion, Long> {
 
@@ -76,7 +77,14 @@ public interface TemplateVersionRepository extends JpaRepository<TemplateVersion
      * 한 트랜잭션으로 전부 지우면, 처음 도는 날처럼 쌓인 양이 많을 때 잠금을 오래 들고
      * 있어 TemplatePublishService.publish()의 소프트삭제 UPDATE나 새 버전 INSERT와
      * 부딪힌다. JPQL 의 delete 는 LIMIT 을 못 써서 네이티브 쿼리로 쓴다.
+     *
+     * 커스텀 @Query 메서드는 SimpleJpaRepository의 클래스 레벨 @Transactional을 물려받지
+     * 않아서, 트랜잭션 없이 부르면 TransactionRequiredException으로 터진다(코드래빗
+     * 리뷰로 찾음). 여기 직접 걸어야 호출하는 쪽(TemplateVersionPurgeService)이 트랜잭션
+     * 없이 반복해도 호출마다 새 트랜잭션이 열려 청크별로 따로 커밋된다. 서비스나
+     * 스케줄러에 걸면 전체가 한 트랜잭션으로 묶여 청크로 나눈 의미가 없어진다.
      */
+    @Transactional
     @Modifying
     @Query(value = "delete from template_version where deleted_at is not null limit :batchSize",
             nativeQuery = true)
