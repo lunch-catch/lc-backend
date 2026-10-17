@@ -219,6 +219,16 @@ class StoreMenuUploadServiceTest {
     }
 
     @Test
+    @DisplayName("등록 진행 상태가 없으면 업로드 확인을 거부한다")
+    void 등록_진행_상태가_없으면_확인을_거부한다() {
+        when(progressRepository.findByOwnerId(OWNER_ID)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.confirmMenuImageUpload(OWNER_ID, "upload-1"))
+                .isInstanceOfSatisfying(StoreException.class, e ->
+                        assertThat(e.getErrorCode()).isEqualTo(StoreErrorCode.REGISTRATION_PROGRESS_NOT_FOUND));
+    }
+
+    @Test
     @DisplayName("업로드를 확인하면 headObject로 실제 업로드를 확인하고 VERIFIED로 바꾼다")
     void 업로드를_확인한다() {
         givenOwnerWithStore();
