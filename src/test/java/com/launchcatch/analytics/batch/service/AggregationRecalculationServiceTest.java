@@ -25,6 +25,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.transaction.PlatformTransactionManager;
 
 @ExtendWith(MockitoExtension.class)
 class AggregationRecalculationServiceTest {
@@ -42,11 +43,14 @@ class AggregationRecalculationServiceTest {
     private BatchExecutionQueryService executionQuery;
     @Mock
     private AuditLogWriter auditLogWriter;
+    @Mock
+    private PlatformTransactionManager transactionManager;
 
     private final Executor direct = Runnable::run;
 
     private AggregationRecalculationService service(Executor executor) {
-        return new AggregationRecalculationService(runner, executionQuery, auditLogWriter, CLOCK, executor);
+        return new AggregationRecalculationService(
+                runner, executionQuery, auditLogWriter, transactionManager, CLOCK, executor);
     }
 
     private static BatchExecutionRecord run(long runId, LocalDate date, String status) {
@@ -142,9 +146,24 @@ class AggregationRecalculationServiceTest {
     }
 
     @Test
+    void 감사_로그를_남기지_못하면_집계를_시작하지_않고_잡은_실행을_실패로_닫고_예외를_올린다() {
+        stubOldestRetained();
+        when(executionQuery.findByBusinessDate(YESTERDAY)).thenReturn(List.of(run(301L, YESTERDAY, "RUNNING")));
+        when(runner.acquire(any(), any())).thenReturn(true);
+        doThrow(new IllegalStateException("감사 로그 실패")).when(auditLogWriter)
+                .write(any(), any(), any(), any());
+
+        assertThatThrownBy(() -> service(direct).request(ADMIN_ID, YESTERDAY))
+                .isInstanceOf(IllegalStateException.class);
+        verify(runner).abandon(any(LocalDate.class), any(String.class));
+        verify(runner, never()).aggregate(any());
+    }
+
+    @Test
     void 실제_실행기를_쓰는_생성자로도_만들고_내릴_수_있다() {
         AggregationRecalculationService owned =
-                new AggregationRecalculationService(runner, executionQuery, auditLogWriter, CLOCK);
+                new AggregationRecalculationService(
+                        runner, executionQuery, auditLogWriter, transactionManager, CLOCK);
 
         owned.shutdown();
         service(direct).shutdown();

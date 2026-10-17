@@ -16,6 +16,8 @@ import java.util.concurrent.TimeUnit;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.scheduling.concurrent.CustomizableThreadFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 /*
  * A-05 수동 재계산이다. 날짜를 잡는 데까지만 요청 안에서 하고 집계는 전용 실행기에서 돌려 202 를 준다.
@@ -39,6 +41,7 @@ public class AggregationRecalculationService {
     private final DailyAggregationRunner runner;
     private final BatchExecutionQueryService executionQuery;
     private final AuditLogWriter auditLogWriter;
+    private final TransactionTemplate transactions;
     private final Clock clock;
     private final Executor executor;
     private final ThreadPoolExecutor ownedExecutor;
@@ -48,10 +51,12 @@ public class AggregationRecalculationService {
             DailyAggregationRunner runner,
             BatchExecutionQueryService executionQuery,
             AuditLogWriter auditLogWriter,
+            PlatformTransactionManager transactionManager,
             Clock clock) {
         this.runner = runner;
         this.executionQuery = executionQuery;
         this.auditLogWriter = auditLogWriter;
+        this.transactions = new TransactionTemplate(transactionManager);
         this.clock = clock;
         this.ownedExecutor = new ThreadPoolExecutor(1, 1, 0L, TimeUnit.MILLISECONDS,
                 new ArrayBlockingQueue<>(QUEUE_CAPACITY),
@@ -65,11 +70,13 @@ public class AggregationRecalculationService {
             DailyAggregationRunner runner,
             BatchExecutionQueryService executionQuery,
             AuditLogWriter auditLogWriter,
+            PlatformTransactionManager transactionManager,
             Clock clock,
             Executor executor) {
         this.runner = runner;
         this.executionQuery = executionQuery;
         this.auditLogWriter = auditLogWriter;
+        this.transactions = new TransactionTemplate(transactionManager);
         this.clock = clock;
         this.ownedExecutor = null;
         this.executor = executor;
@@ -92,8 +99,7 @@ public class AggregationRecalculationService {
             throw new AnalyticsException(AnalyticsErrorCode.AGGREGATION_ALREADY_RUNNING);
         }
         long runId = runIdOf(businessDate);
-        auditLogWriter.write(adminId, AUDIT_ACTION, businessDate.toString(), DailyAggregationRunner.JOB_NAME);
-        start(businessDate);
+        start(adminId, businessDate);
         return runId;
     }
 
@@ -111,12 +117,21 @@ public class AggregationRecalculationService {
         return factory;
     }
 
-    private void start(LocalDate businessDate) {
+    /*
+     * 감사 로그를 남기고 집계를 시작시킨다. 둘 중 하나라도 실패하면 이미 잡은 실행 행을 실패로 닫는다.
+     *
+     * 감사 로그 기록(AuditLogWriter)은 호출자의 트랜잭션에 반드시 참여해야 한다(MANDATORY). 이 서비스는
+     * 날짜 점유(claim)가 트랜잭션 밖에서 돌아야 해서 요청 전체를 트랜잭션으로 묶지 않고, 기록 한 번만
+     * 따로 트랜잭션에 넣는다.
+     */
+    private void start(Long adminId, LocalDate businessDate) {
         try {
+            transactions.executeWithoutResult(status -> auditLogWriter.write(
+                    adminId, AUDIT_ACTION, businessDate.toString(), DailyAggregationRunner.JOB_NAME));
             executor.execute(() -> runner.aggregate(businessDate));
-        } catch (RuntimeException rejected) {
-            runner.abandon(businessDate, "수동 재계산을 시작하지 못했다: 집계 실행기가 가득 찼다");
-            throw rejected;
+        } catch (RuntimeException failed) {
+            runner.abandon(businessDate, "수동 재계산을 시작하지 못했다");
+            throw failed;
         }
     }
 
