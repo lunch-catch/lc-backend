@@ -452,7 +452,7 @@
 | `posterId` | integer | 아니오 | 포스터 ID입니다 |
 | `campaignId` | integer | 아니오 | 이 포스터가 속한 캠페인 ID입니다 |
 | `templateId` | integer | 아니오 | 포스터에 쓴 템플릿 ID입니다 |
-| `title` | string | 아니오 | 목록 검색과 정렬용 제목입니다. "{가게명} - {템플릿 이름}" 형태입니다 |
+| `title` | string | 아니오 | 목록 검색과 정렬용 제목입니다. "{가게명} - {템플릿 이름}"으로 만든 뒤 100자로 잘라 저장한 값입니다 |
 | `html` | string | 아니오 | 5개 슬롯이 전부 채워진 완성 HTML입니다 |
 
 **오류**
