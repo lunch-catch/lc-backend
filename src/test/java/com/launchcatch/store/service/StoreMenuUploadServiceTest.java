@@ -126,7 +126,7 @@ class StoreMenuUploadServiceTest {
     @Test
     @DisplayName("메뉴 이미지 업로드를 준비하면 PENDING 행을 만들고 presigned URL을 돌려준다")
     void 메뉴_이미지_업로드를_준비한다() throws Exception {
-        givenOwnerWithStore();
+        givenOwnerWithStoreForUpdate();
         when(storeMenuRepository.existsByIdAndStoreId(MENU_ID, STORE_ID)).thenReturn(true);
         when(s3Presigner.presignPutObject(any(PutObjectPresignRequest.class))).thenReturn(presignedPutObjectRequest);
         when(presignedPutObjectRequest.url()).thenReturn(new URL("https://example.com/presigned"));
@@ -144,7 +144,7 @@ class StoreMenuUploadServiceTest {
     @Test
     @DisplayName("presign이 실패하면 예약해 둔 PENDING 행을 지우고 그대로 던진다")
     void presign이_실패하면_예약을_지운다() {
-        givenOwnerWithStore();
+        givenOwnerWithStoreForUpdate();
         when(storeMenuRepository.existsByIdAndStoreId(MENU_ID, STORE_ID)).thenReturn(true);
         RuntimeException presignFailure = new RuntimeException("자격 증명을 가져오지 못했다");
         when(s3Presigner.presignPutObject(any(PutObjectPresignRequest.class))).thenThrow(presignFailure);
@@ -159,7 +159,7 @@ class StoreMenuUploadServiceTest {
     @Test
     @DisplayName("그 메뉴가 없거나 본인 가게 소유가 아니면 거부한다")
     void 다른_가게의_메뉴면_거부한다() {
-        givenOwnerWithStore();
+        givenOwnerWithStoreForUpdate();
         when(storeMenuRepository.existsByIdAndStoreId(MENU_ID, STORE_ID)).thenReturn(false);
 
         assertThatThrownBy(() -> service.prepareMenuImageUpload(OWNER_ID, MENU_ID, "menu.jpg", "image/jpeg", 1000L))
@@ -168,12 +168,46 @@ class StoreMenuUploadServiceTest {
     }
 
     @Test
+    @DisplayName("이미 이미지가 등록된 메뉴면 거부한다")
+    void 이미_이미지가_있는_메뉴면_거부한다() {
+        givenOwnerWithStoreForUpdate();
+        when(storeMenuRepository.existsByIdAndStoreId(MENU_ID, STORE_ID)).thenReturn(true);
+        StoreMenuImage existing = StoreMenuImage.preparePending(
+                MENU_ID, "upload-0", "stores/20/menu/100/upload-0.jpg", "menu.jpg", "image/jpeg", 1000L);
+        existing.verify(java.time.LocalDateTime.now(FIXED_CLOCK));
+        when(storeMenuImageRepository.findByStoreMenuId(MENU_ID)).thenReturn(Optional.of(existing));
+
+        assertThatThrownBy(() -> service.prepareMenuImageUpload(OWNER_ID, MENU_ID, "menu.jpg", "image/jpeg", 1000L))
+                .isInstanceOfSatisfying(StoreException.class, e ->
+                        assertThat(e.getErrorCode()).isEqualTo(StoreErrorCode.MENU_IMAGE_ALREADY_EXISTS));
+        verify(storeMenuImageRepository, never()).delete(any(StoreMenuImage.class));
+    }
+
+    @Test
+    @DisplayName("포기한 PENDING 이미지가 남아 있으면 지우고 새로 받는다")
+    void 포기한_PENDING_이미지는_지우고_새로_받는다() throws Exception {
+        givenOwnerWithStoreForUpdate();
+        when(storeMenuRepository.existsByIdAndStoreId(MENU_ID, STORE_ID)).thenReturn(true);
+        StoreMenuImage abandoned = StoreMenuImage.preparePending(
+                MENU_ID, "upload-0", "stores/20/menu/100/upload-0.jpg", "menu.jpg", "image/jpeg", 1000L);
+        when(storeMenuImageRepository.findByStoreMenuId(MENU_ID)).thenReturn(Optional.of(abandoned));
+        when(s3Presigner.presignPutObject(any(PutObjectPresignRequest.class))).thenReturn(presignedPutObjectRequest);
+        when(presignedPutObjectRequest.url()).thenReturn(new URL("https://example.com/presigned"));
+
+        var result = service.prepareMenuImageUpload(OWNER_ID, MENU_ID, "menu.jpg", "image/jpeg", 1000L);
+
+        assertThat(result.uploadId()).isNotEqualTo("upload-0");
+        verify(storeMenuImageRepository).delete(abandoned);
+        verify(storeMenuImageRepository).save(any(StoreMenuImage.class));
+    }
+
+    @Test
     @DisplayName("허용하지 않는 파일 형식이면 거부한다")
     void 허용하지_않는_형식이면_거부한다() {
         assertThatThrownBy(() -> service.prepareMenuImageUpload(OWNER_ID, MENU_ID, "menu.gif", "image/gif", 1000L))
                 .isInstanceOfSatisfying(StoreException.class, e ->
                         assertThat(e.getErrorCode()).isEqualTo(StoreErrorCode.IMAGE_CONTENT_TYPE_NOT_ALLOWED));
-        verify(progressRepository, never()).findByOwnerId(anyLong());
+        verify(progressRepository, never()).findByOwnerIdForUpdate(anyLong());
     }
 
     @Test

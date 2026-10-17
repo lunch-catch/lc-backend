@@ -78,13 +78,8 @@ public class StoreMenuUploadService {
         validateContentType(contentType);
         validateFileSize(fileSize);
 
-        Long storeId = findStoreId(ownerId);
-        if (!storeMenuRepository.existsByIdAndStoreId(menuId, storeId)) {
-            throw new StoreException(StoreErrorCode.MENU_NOT_FOUND);
-        }
-
         StoreMenuImage image = transactionTemplate.execute(
-                status -> reserveMenuImage(storeId, menuId, originalFilename, contentType, fileSize));
+                status -> reserveMenuImage(ownerId, menuId, originalFilename, contentType, fileSize));
 
         String uploadUrl;
         try {
@@ -98,8 +93,28 @@ public class StoreMenuUploadService {
         return new StoreMenuImagePrepareResult(image.getUploadId(), uploadUrl);
     }
 
-    private StoreMenuImage reserveMenuImage(Long storeId, Long menuId, String originalFilename, String contentType,
+    /*
+     * 소유권 확인부터 기존 이미지 처리, 저장까지 같은 점주의 동시 요청을 직렬화한다(#389 셀프 리뷰로
+     * 찾음). store_menu_image.store_menu_id는 메뉴당 1개만 허용하는 유니크 제약이라, 업로드를
+     * 끝내지 못하고 포기한 PENDING 행이 남아 있으면 그 메뉴는 영원히 재시도할 수 없게 막힌다.
+     * 그래서 PENDING 행은 지우고 다시 받고, VERIFIED는 거부한다.
+     */
+    private StoreMenuImage reserveMenuImage(Long ownerId, Long menuId, String originalFilename, String contentType,
             Long fileSize) {
+        Long storeId = findStoreIdForUpdate(ownerId);
+        if (!storeMenuRepository.existsByIdAndStoreId(menuId, storeId)) {
+            throw new StoreException(StoreErrorCode.MENU_NOT_FOUND);
+        }
+
+        storeMenuImageRepository.findByStoreMenuId(menuId).ifPresent(existing -> {
+            if (existing.getUploadStatus() == StoreImageUploadStatus.VERIFIED) {
+                throw new StoreException(StoreErrorCode.MENU_IMAGE_ALREADY_EXISTS);
+            }
+            // 뒤이은 저장과 유니크 제약이 부딪히지 않도록 삭제를 바로 실행한다.
+            storeMenuImageRepository.delete(existing);
+            storeMenuImageRepository.flush();
+        });
+
         String uploadId = UUID.randomUUID().toString();
         String objectKey = buildObjectKey(storeId, menuId, uploadId, contentType);
         StoreMenuImage image = StoreMenuImage.preparePending(
