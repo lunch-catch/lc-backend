@@ -9,6 +9,7 @@ import org.springframework.security.web.SecurityFilterChain;
 
 @Configuration
 public class StoreSecurityConfig {
+    // 사용자용 가게 조회 API는 MEMBER 권한이 있는 사용자만 접근할 수 있다.
     @Bean
     @Order(ApiSecurityDefaults.DOMAIN_CHAIN_ORDER)
     public SecurityFilterChain storeFilterChain(HttpSecurity http, ApiSecurityDefaults defaults) throws Exception {
