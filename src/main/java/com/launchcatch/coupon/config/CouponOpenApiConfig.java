@@ -78,7 +78,7 @@ public class CouponOpenApiConfig {
                             new CouponIssueResponse(1001L, OffsetDateTime.parse("2026-10-15T11:00:00+09:00"))))));
             openApi.getPaths().get("/v1/owner/coupon-usages").getPost().getRequestBody().getContent().values()
                     .forEach(media -> media.setExample(Map.of("longitude", 127.0, "latitude", 37.5,
-                            "qrToken", "6c75d5bc-cae3-4eeb-a573-fc3bcb1673a5", "orderAmount", 10000)));
+                            "qrToken", "6c75d5bc-cae3-4eeb-a573-fc3bcb1673a5")));
             openApi.getPaths().get("/v1/owner/coupon-usages").getPost().getResponses().get("201").getContent().values()
                     .forEach(media -> media.setExample(exampleMapper.valueToTree(ResponseEnvelope.success(
                             new CouponUseResponse(1001L, 5001L, 3000,

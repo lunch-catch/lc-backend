@@ -72,7 +72,7 @@ class SeedIntegrationTest extends IntegrationTestSupport {
         assertThat(count("SELECT COUNT(*) FROM poster WHERE campaign_id BETWEEN 9001 AND 9016")).isEqualTo(16);
         assertThat(count("SELECT COUNT(*) FROM ad_candidate WHERE business_date = '2026-10-15' AND campaign_state = 'SERVABLE'")).isEqualTo(16);
         assertThat(count("SELECT COUNT(*) FROM budget_daily_plan WHERE business_date = '2026-10-15'")).isEqualTo(15);
-        assertThat(count("SELECT COUNT(*) FROM coupon_inventory")).isEqualTo(100);
+        assertThat(count("SELECT COUNT(*) FROM coupon_inventory")).isEqualTo(104);
         assertThat(count("SELECT current_count FROM template_quota")).isEqualTo(1);
     }
 
@@ -138,7 +138,7 @@ class SeedIntegrationTest extends IntegrationTestSupport {
         migrate(true, "2026-10-16");
 
         assertThat(count("SELECT COUNT(*) FROM ad_candidate WHERE business_date = '2026-10-16'")).isEqualTo(16);
-        assertThat(count("SELECT COUNT(*) FROM coupon_event")).isEqualTo(4);
+        assertThat(count("SELECT COUNT(*) FROM coupon_event")).isEqualTo(8);
         assertThat(count("SELECT COUNT(*) FROM owner")).isEqualTo(18);
     }
 

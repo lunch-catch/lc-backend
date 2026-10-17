@@ -317,22 +317,19 @@ DB 조회·저장 예외는 기존 공통 예외 처리와 HTTP 로그로 전달
 
 ## QR 사용 구현 전 확정 사항
 
-2026-10-16에 작성자가 정한 정책을 CouponCommandService.redeem(ownerId, request)로 구현했다.
-[HTTP 명세의 QR 사용](../../api-spec/coupon-api-spec.md#qr-사용)에 기존 위경도·QR 토큰을 유지하고 필수 orderAmount와 할인 계산·거리 기준을 반영했다.
-201 응답의 봉투와 필드 구성은 유지한다. 비활성 점주 오류와 주문 금액 범위도 명세에 반영했다.
+CouponCommandService.redeem(ownerId, request)는 [HTTP 명세의 QR 사용](../../api-spec/coupon-api-spec.md#qr-사용)을 구현한다.
+요청은 위경도와 QR 토큰만 받으며 할인액은 이벤트 스냅샷으로 계산한다.
 
 | 항목 | 정책 |
 |---|---|
 | 요청과 결과 | 입력 필드·필수값과 201 응답은 [QR 사용 명세](../../api-spec/coupon-api-spec.md#qr-사용)를 따른다 |
 | 위치 검사 | 허용 거리와 오류는 같은 명세를 따른다. 거리 계산 방법과 좌표 조회는 아래에서 정한다 |
-| 할인 계산 | 메뉴 단건, 10원 단위 반올림, 무료 처리와 최종 주문 금액 상한은 같은 명세의 할인 계산 규칙을 따른다 |
+| 할인 계산 | 지원하는 세 할인 조합과 메뉴 단건 적용, 반올림은 같은 명세의 할인 계산 규칙을 따른다 |
 | 점주 상태 | owner의 공개 상태 조회를 사용하며 상태 거절은 명세의 COUPON-013을 반환한다. owner 내부 exception을 참조하지 않는다 |
 | 사용한 QR | 사용 완료에도 member_coupon.qr_token의 마지막 토큰을 지우거나 교체하지 않는다. 현재 점주 인증·매장 관리 권한과 마지막 토큰의 일치를 확인한 뒤 USED를 QR 만료보다 먼저 검사한다 |
 
 메뉴의 할인 후 가격은 이벤트 생성 때 확정해 저장한다. QR 사용 때는 스냅샷의 할인 전·후 가격 차액을 사용하며 다시 반올림하지 않는다.
-메뉴 할인은 저장된 가격 차액과 orderAmount 중 작은 값을 실제 할인액으로 사용한다. 전체 주문 할인은 요청 금액과 스냅샷의 할인 방식·값을 명세의 계산 순서로 처리한다.
-모든 조합에서 최종 주문 금액 상한을 적용한 값을 사용 이력에 기록한다.
-주문 금액을 받는 것은 POS의 실제 결제액과 대조한다는 뜻은 아니다.
+전체 메뉴 정액 할인은 스냅샷 할인값으로 계산한다. 확정한 할인액을 사용 이력에 기록한다.
 
 거리 계산은 기존 `global.geo.GeoDistance.meters`의 하버사인 계산을 사용한다.
 매장 좌표는 이벤트 스냅샷의 storeId로 store의 공개 조회 계약에서 읽으며 스캔 위치는 요청 값을 사용한다.
@@ -347,7 +344,7 @@ CouponUsageHistory도 BaseTimeEntity를 상속하며 ID·생성·수정 시각�
 
 ### 서버가 하는 일
 
-1. CouponSecurityConfig는 POST /v1/owner/coupon-usages에 OWNER 역할을 요구한다. CouponController는 필수값·좌표 범위·정수 금액을 검증한다.
+1. CouponSecurityConfig는 POST /v1/owner/coupon-usages에 OWNER 역할을 요구한다. CouponController는 QR 토큰과 위치의 필수값·좌표 범위를 검증한다.
 2. CouponCommandService는 READ_COMMITTED 트랜잭션에서 OwnerStatusQuery.findCurrentStatus로 점주 상태를 확인한다. 점주가 없거나 비활성이면 COUPON-013으로 거절한다.
 3. MemberCouponRepository.findQrReference는 토큰의 쿠폰 ID와 QR 버전만 읽는다. 엔티티를 미리 적재하지 않아 잠금 뒤 최신 상태 조회를 가리지 않는다.
 4. findByIdForUpdate로 회원 쿠폰을 잠그고 이벤트 스냅샷을 읽는다. StoreQueryService.canManageStore로 현재 관리 권한을 확인한다. USED 상태라면 마지막 토큰·버전을 확인하여 교체된 QR과 실제 사용한 QR의 재요청을 구분한다.
@@ -356,18 +353,19 @@ CouponUsageHistory도 BaseTimeEntity를 상속하며 ID·생성·수정 시각�
 7. CouponUsageHistoryRepository.saveAndFlush는 확정 할인액을 가진 이력을 JPA로 저장하고 생성된 ID와 auditing 시각을 반환한다. 쿠폰 상태는 JPA 변경 감지로 저장한다.
 8. 두 저장이 커밋된 뒤 기존 201 응답을 반환한다. 하나라도 실패하면 상태·사용 이력을 함께 되돌린다.
 
-CouponEvent.calculateDiscount는 저장된 메뉴 가격 차액 또는 할인 방식·값에 주문 금액을 적용한다.
-전체 주문 정률은 long 정수 곱셈으로 소수 원을 유지하여 10원 단위 반올림을 한 번만 적용한다.
-수량·반올림·상한의 공개 규칙은 HTTP 명세가 소유하며 사용 시 메뉴 가격을 재조회하지 않는다.
-공통 Jackson 설정으로 소수와 숫자 문자열의 정수 변환을 거절하고 주문 금액의 필수값·범위는 Bean Validation으로 검사한다.
-공백 문자열 `" "`은 공통 변환에서 null이 되어 필수값 위반인 COMMON-002로 거절한다. 소수·숫자 문자열·빈 문자열은 타입 해석 오류인 COMMON-003으로 거절한다.
+CouponEvent.calculateDiscount는 인자 없이 자기 스냅샷의 메뉴 가격 차액 또는 정액 할인값으로 할인액을 계산한다.
+수량·반올림의 공개 규칙은 HTTP 명세가 소유하며 사용 시 메뉴 가격을 재조회하지 않는다.
+지원하지 않는 전체 메뉴 정률 스냅샷은 내부 데이터 오류인 COMMON-001로 거절하며 쿠폰 상태와 사용 이력을 변경하지 않는다.
 
-V6__coupon_qr_redemption.sql 하나에서 QR 토큰 조회 인덱스를 추가하고 할인 조합 CHECK에 ALL + PERCENT를 허용한다. 기존 스냅샷과 할인율 범위, 메뉴 스냅샷 CHECK는 유지한다.
+V6__coupon_qr_redemption.sql은 QR 토큰 조회 인덱스를 추가했다.
+V7__coupon_supported_discount_combinations.sql은 할인 조합 CHECK에서 ALL + PERCENT를 제외한다.
+기존에 ALL + PERCENT 이벤트가 있으면 V7 적용이 실패한다. 마이그레이션은 과거 스냅샷을 임의로 변환하거나 삭제하지 않는다.
+
 인덱스와 구현은 사용자 요청으로 #368에서 함께 진행하며 #367은 이 이슈에 합쳤다.
 
 ### 검증과 남은 연동
 
-CouponCommandServiceTest의 Redeem과 CouponEventDiscountTest, MemberCouponRedemptionTest가 서비스와 계산·상태 전이를 검증한다.
+CouponCommandServiceTest의 Redeem이 서비스와 할인 계산·상태 전이를 검증한다.
 CouponIntegrationTest의 Redeem 중첩 테스트는 실제 MySQL과 보안 체인을 사용해 HTTP 요청부터 커밋 결과까지 확인한다.
 MockMvc 검증과 함께 임의 포트로 실행한 서버에 JWT 쿠키를 담은 실제 HTTP 요청을 보낸다.
 CouponIntegrationTest 하나가 서버 설정과 빈 대역을 소유하고 QR 사용도 중첩 테스트로 묶는다.
