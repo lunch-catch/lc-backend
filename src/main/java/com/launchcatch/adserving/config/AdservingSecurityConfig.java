@@ -38,6 +38,7 @@ public class AdservingSecurityConfig {
                         .requestMatchers(HttpMethod.GET, FEED_FILTER_PATH).hasRole("MEMBER")
                         .requestMatchers(HttpMethod.PUT, FEED_FILTER_PATH).hasRole("MEMBER")
                         .requestMatchers(HttpMethod.GET, WISHLIST_PATH).hasRole("MEMBER")
+                        .requestMatchers(HttpMethod.POST, WISHLIST_PATH).hasRole("MEMBER")
                         .anyRequest().denyAll())
                 .build();
     }

@@ -10,6 +10,7 @@ import com.launchcatch.adserving.engine.FeedContext;
 import com.launchcatch.adserving.engine.FeedSort;
 import com.launchcatch.adserving.engine.entity.AdCandidate;
 import com.launchcatch.adserving.engine.repository.AdCandidateRepository;
+import com.launchcatch.adserving.exclusion.repository.ExclusionRepository;
 import com.launchcatch.adserving.feed.dto.FeedCardResponse;
 import com.launchcatch.adserving.feed.dto.FeedRequest;
 import com.launchcatch.adserving.feed.dto.FeedResponse;
@@ -18,7 +19,6 @@ import com.launchcatch.adserving.feed.exception.FeedErrorCode;
 import com.launchcatch.adserving.feed.exception.FeedException;
 import com.launchcatch.adserving.feed.exception.FeedRateLimitedException;
 import com.launchcatch.adserving.feed.repository.CategoryWishCount;
-import com.launchcatch.adserving.feed.repository.DailyExclusionRepository;
 import com.launchcatch.adserving.feed.repository.FeedFilterCategoryRepository;
 import com.launchcatch.adserving.feed.repository.FeedFilterRepository;
 import com.launchcatch.adserving.feed.repository.FeedRateLimitRepository;
@@ -78,7 +78,7 @@ public class FeedService {
     private final MemberQueryService memberQueryService;
     private final FeedRateLimitRepository feedRateLimitRepository;
     private final AdCandidateRepository adCandidateRepository;
-    private final DailyExclusionRepository dailyExclusionRepository;
+    private final ExclusionRepository exclusionRepository;
     private final FeedFilterCategoryRepository feedFilterCategoryRepository;
     private final FeedFilterRepository feedFilterRepository;
     private final SwipeLogRepository swipeLogRepository;
@@ -163,7 +163,7 @@ public class FeedService {
                 memberId, businessDate.minusDays(PREFERENCE_DAYS - 1), businessDate);
         return new FeedContext(
                 viewer,
-                dailyExclusionRepository.findCampaignIds(businessDate, memberId),
+                exclusionRepository.findCampaignIds(businessDate, memberId),
                 Set.copyOf(feedFilterCategoryRepository.findCategoryCodes(memberId)),
                 sort,
                 categoryPreference(wishes),

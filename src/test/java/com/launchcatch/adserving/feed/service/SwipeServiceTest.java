@@ -11,15 +11,15 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import com.launchcatch.adserving.engine.exception.CandidateErrorCode;
+import com.launchcatch.adserving.engine.exception.CandidateException;
 import com.launchcatch.adserving.engine.repository.AdCandidateRepository;
+import com.launchcatch.adserving.exclusion.repository.ExclusionRepository;
 import com.launchcatch.adserving.feed.dto.SwipeRequest;
 import com.launchcatch.adserving.feed.dto.SwipeResponse;
 import com.launchcatch.adserving.feed.entity.SwipeAction;
 import com.launchcatch.adserving.feed.entity.SwipeLog;
 import com.launchcatch.adserving.feed.entity.SwipeLogId;
-import com.launchcatch.adserving.feed.exception.FeedErrorCode;
-import com.launchcatch.adserving.feed.exception.FeedException;
-import com.launchcatch.adserving.feed.repository.DailyExclusionRepository;
 import com.launchcatch.adserving.feed.repository.SwipeLogRepository;
 import com.launchcatch.adserving.wishlist.entity.Wishlist;
 import com.launchcatch.adserving.wishlist.repository.WishlistRepository;
@@ -48,9 +48,9 @@ class SwipeServiceTest {
     private final SwipeLogRepository swipeLogRepository = mock(SwipeLogRepository.class);
     private final WishlistRepository wishlistRepository = mock(WishlistRepository.class);
     private final AdCandidateRepository adCandidateRepository = mock(AdCandidateRepository.class);
-    private final DailyExclusionRepository dailyExclusionRepository = mock(DailyExclusionRepository.class);
+    private final ExclusionRepository exclusionRepository = mock(ExclusionRepository.class);
     private final SwipeService service = new SwipeService(swipeLogRepository, wishlistRepository,
-            adCandidateRepository, dailyExclusionRepository, Clock.fixed(NOW, ClockConfig.ZONE));
+            adCandidateRepository, exclusionRepository, Clock.fixed(NOW, ClockConfig.ZONE));
 
     private static SwipeRequest request(SwipeAction action) {
         return new SwipeRequest(SERVE_ID.toString(), 101L, action.name(), OffsetDateTime.parse("2026-10-01T10:15:34.020+09:00"));
@@ -76,11 +76,11 @@ class SwipeServiceTest {
         SwipeResponse response = service.swipe(MEMBER_ID, request(SwipeAction.WISH));
 
         assertThat(response.applied()).isTrue();
-        InOrder order = inOrder(wishlistRepository, swipeLogRepository, dailyExclusionRepository);
+        InOrder order = inOrder(wishlistRepository, swipeLogRepository, exclusionRepository);
         ArgumentCaptor<Wishlist> wish = ArgumentCaptor.forClass(Wishlist.class);
         order.verify(wishlistRepository).insertIgnore(wish.capture());
         order.verify(swipeLogRepository).insertIgnore(any());
-        order.verify(dailyExclusionRepository).add(TODAY, MEMBER_ID, 101L, NOW);
+        order.verify(exclusionRepository).add(TODAY, MEMBER_ID, 101L, NOW);
         assertThat(wish.getValue().getMemberId()).isEqualTo(MEMBER_ID);
         assertThat(wish.getValue().getCampaignId()).isEqualTo(101L);
         assertThat(wish.getValue().getStoreId()).isEqualTo(1101L);
@@ -107,7 +107,7 @@ class SwipeServiceTest {
         assertThat(response.applied()).isTrue();
         verify(wishlistRepository, never()).insertIgnore(any());
         assertThat(savedSwipe().getAction()).isEqualTo(SwipeAction.PASS);
-        verify(dailyExclusionRepository).add(TODAY, MEMBER_ID, 101L, NOW);
+        verify(exclusionRepository).add(TODAY, MEMBER_ID, 101L, NOW);
     }
 
     @Test
@@ -117,7 +117,7 @@ class SwipeServiceTest {
         SwipeResponse response = service.swipe(MEMBER_ID, request(SwipeAction.WISH));
 
         assertThat(response.applied()).isFalse();
-        verifyNoInteractions(wishlistRepository, dailyExclusionRepository);
+        verifyNoInteractions(wishlistRepository, exclusionRepository);
         verify(swipeLogRepository, never()).insertIgnore(any());
     }
 
@@ -128,7 +128,7 @@ class SwipeServiceTest {
         SwipeResponse response = service.swipe(MEMBER_ID, request(SwipeAction.PASS));
 
         assertThat(response.applied()).isFalse();
-        verifyNoInteractions(dailyExclusionRepository);
+        verifyNoInteractions(exclusionRepository);
     }
 
     @Test
@@ -136,9 +136,9 @@ class SwipeServiceTest {
         when(adCandidateRepository.findByIdBusinessDateAndIdCampaignId(TODAY, 101L)).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.swipe(MEMBER_ID, request(SwipeAction.WISH)))
-                .isInstanceOf(FeedException.class)
-                .extracting("errorCode").isEqualTo(FeedErrorCode.CAMPAIGN_NOT_SERVING);
-        verifyNoInteractions(wishlistRepository, dailyExclusionRepository);
+                .isInstanceOf(CandidateException.class)
+                .extracting("errorCode").isEqualTo(CandidateErrorCode.CAMPAIGN_NOT_SERVING);
+        verifyNoInteractions(wishlistRepository, exclusionRepository);
         verify(swipeLogRepository, never()).insertIgnore(any());
     }
 }

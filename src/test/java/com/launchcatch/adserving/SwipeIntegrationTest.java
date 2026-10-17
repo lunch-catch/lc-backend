@@ -68,7 +68,7 @@ class SwipeIntegrationTest extends AbstractAdservingIntegrationTest {
         jdbcTemplate.update("DELETE FROM ad_candidate");
         jdbcTemplate.update("DELETE FROM serve_log");
         jdbcTemplate.update("DELETE FROM feed_visit_daily");
-        redisTemplate.delete(List.of("adserving:dailyExclusion:" + TODAY + ":" + MEMBER_ID,
+        redisTemplate.delete(List.of("adserving:exclusion:" + TODAY + ":" + MEMBER_ID,
                 "adserving:feedRequests:" + MEMBER_ID, "adserving:servedDaily:" + TODAY + ":" + MEMBER_ID,
                 "adserving:servedSession:" + MEMBER_ID));
     }
@@ -104,9 +104,9 @@ class SwipeIntegrationTest extends AbstractAdservingIntegrationTest {
         assertThat(jdbcTemplate.queryForMap("SELECT member_id, campaign_id, store_id, BIN_TO_UUID(serve_id) AS serve_id FROM wishlist"))
                 .containsEntry("member_id", MEMBER_ID).containsEntry("campaign_id", 101L)
                 .containsEntry("store_id", 55L).containsEntry("serve_id", serveId.toString());
-        assertThat(redisTemplate.opsForSet().members("adserving:dailyExclusion:" + TODAY + ":" + MEMBER_ID))
+        assertThat(redisTemplate.opsForSet().members("adserving:exclusion:" + TODAY + ":" + MEMBER_ID))
                 .containsExactly("101");
-        assertThat(redisTemplate.getExpire("adserving:dailyExclusion:" + TODAY + ":" + MEMBER_ID)).isPositive();
+        assertThat(redisTemplate.getExpire("adserving:exclusion:" + TODAY + ":" + MEMBER_ID)).isPositive();
     }
 
     @Test
