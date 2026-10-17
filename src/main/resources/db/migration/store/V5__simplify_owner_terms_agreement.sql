@@ -29,7 +29,7 @@ DROP TEMPORARY TABLE owner_terms_agreement_snapshot;
 
 ALTER TABLE owner_terms_agreement
     DROP INDEX uk_owner_terms_version,
-    DROP COLUMN terms_type,
-    DROP COLUMN terms_version,
+    MODIFY COLUMN terms_type VARCHAR(50) NULL COMMENT '약관 종류',
+    MODIFY COLUMN terms_version VARCHAR(30) NULL COMMENT '약관 버전',
     MODIFY COLUMN withdrawn_at DATETIME(6) NULL COMMENT '동의 철회 시각',
     ADD CONSTRAINT uk_owner_terms_agreement_owner UNIQUE (owner_id);

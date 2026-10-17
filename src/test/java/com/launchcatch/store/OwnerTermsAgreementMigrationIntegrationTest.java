@@ -60,10 +60,19 @@ class OwnerTermsAgreementMigrationIntegrationTest extends AbstractStoreIntegrati
                     assertThat(rows.getTimestamp("withdrawn_at")).isNotNull();
                     assertThat(rows.next()).isFalse();
                 }
+                statement.executeUpdate("""
+                        INSERT INTO owner_terms_agreement (owner_id, required, agreed, agreed_at, created_at, updated_at)
+                        VALUES (10, true, true, '2026-10-17', '2026-10-17', '2026-10-17')
+                        """);
+                try (var row = statement.executeQuery("SELECT terms_type, terms_version FROM owner_terms_agreement WHERE owner_id = 10")) {
+                    assertThat(row.next()).isTrue();
+                    assertThat(row.getString("terms_type")).isNull();
+                    assertThat(row.getString("terms_version")).isNull();
+                }
                 assertThatThrownBy(() -> statement.executeUpdate("""
                         INSERT INTO owner_terms_agreement (owner_id, required, agreed, agreed_at, created_at, updated_at)
                         VALUES (7, true, true, '2026-10-17', '2026-10-17', '2026-10-17')
-                        """)).isInstanceOf(SQLException.class);
+                        """)).isInstanceOf(SQLException.class).extracting("SQLState").isEqualTo("23000");
             } finally {
                 statement.execute("DROP TEMPORARY TABLE IF EXISTS owner_terms_agreement_snapshot");
                 statement.execute("DROP TEMPORARY TABLE IF EXISTS owner_terms_agreement");
