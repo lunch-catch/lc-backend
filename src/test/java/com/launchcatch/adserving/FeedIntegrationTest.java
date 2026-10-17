@@ -16,6 +16,7 @@ import com.launchcatch.auth.Role;
 import com.launchcatch.adserving.engine.SlotType;
 import com.launchcatch.adserving.feed.repository.ServeRecord;
 import com.launchcatch.adserving.feed.repository.ServeRecordRepository;
+import com.launchcatch.adserving.feed.service.ServeLogBuffer;
 import com.launchcatch.billing.contract.BudgetProgress;
 import com.launchcatch.global.config.ClockConfig;
 import com.launchcatch.member.contract.AgeGroup;
@@ -52,6 +53,7 @@ class FeedIntegrationTest extends AbstractAdservingIntegrationTest {
     private static final double LNG = 127.0276;
 
     @Autowired ServeRecordRepository serveRecordRepository;
+    @Autowired ServeLogBuffer serveLogBuffer;
 
     @BeforeEach
     void setUp() {
@@ -72,18 +74,24 @@ class FeedIntegrationTest extends AbstractAdservingIntegrationTest {
 
     @AfterEach
     void tearDown() {
-        jdbcTemplate.update("DELETE FROM ad_candidate");
-        jdbcTemplate.update("DELETE FROM serve_log");
-        jdbcTemplate.update("DELETE FROM feed_visit_daily");
-        jdbcTemplate.update("DELETE FROM feed_filter_category");
-        jdbcTemplate.update("DELETE FROM feed_filter");
-        java.util.Set<String> serveKeys = redisTemplate.keys("adserving:serve:*");
-        if (serveKeys != null && !serveKeys.isEmpty()) {
-            redisTemplate.delete(serveKeys);
+        // 비동기 쓰기를 마친 뒤 행을 지워 다음 테스트에 이전 피드의 로그가 남지 않게 한다.
+        serveLogBuffer.stop();
+        try {
+            jdbcTemplate.update("DELETE FROM ad_candidate");
+            jdbcTemplate.update("DELETE FROM serve_log");
+            jdbcTemplate.update("DELETE FROM feed_visit_daily");
+            jdbcTemplate.update("DELETE FROM feed_filter_category");
+            jdbcTemplate.update("DELETE FROM feed_filter");
+            java.util.Set<String> serveKeys = redisTemplate.keys("adserving:serve:*");
+            if (serveKeys != null && !serveKeys.isEmpty()) {
+                redisTemplate.delete(serveKeys);
+            }
+            redisTemplate.delete(List.of("adserving:feedRequests:" + MEMBER_ID,
+                    "adserving:servedDaily:" + TODAY + ":" + MEMBER_ID, "adserving:servedSession:" + MEMBER_ID,
+                    "adserving:validImpressions:" + TODAY));
+        } finally {
+            serveLogBuffer.start();
         }
-        redisTemplate.delete(List.of("adserving:feedRequests:" + MEMBER_ID,
-                "adserving:servedDaily:" + TODAY + ":" + MEMBER_ID, "adserving:servedSession:" + MEMBER_ID,
-                "adserving:validImpressions:" + TODAY));
     }
 
     private void at(LocalDateTime time) {
