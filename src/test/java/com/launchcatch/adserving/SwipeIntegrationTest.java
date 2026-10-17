@@ -10,6 +10,8 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.launchcatch.adserving.contract.SwipeAction;
+import com.launchcatch.adserving.contract.SwipedEvent;
 import com.launchcatch.auth.CustomUserDetails;
 import com.launchcatch.auth.Role;
 import com.launchcatch.billing.contract.BudgetProgress;
@@ -68,7 +70,7 @@ class SwipeIntegrationTest extends AbstractAdservingIntegrationTest {
         jdbcTemplate.update("DELETE FROM ad_candidate");
         jdbcTemplate.update("DELETE FROM serve_log");
         jdbcTemplate.update("DELETE FROM feed_visit_daily");
-        redisTemplate.delete(List.of("adserving:dailyExclusion:" + TODAY + ":" + MEMBER_ID,
+        redisTemplate.delete(List.of("adserving:exclusion:" + TODAY + ":" + MEMBER_ID,
                 "adserving:feedRequests:" + MEMBER_ID, "adserving:servedDaily:" + TODAY + ":" + MEMBER_ID,
                 "adserving:servedSession:" + MEMBER_ID));
     }
@@ -104,9 +106,9 @@ class SwipeIntegrationTest extends AbstractAdservingIntegrationTest {
         assertThat(jdbcTemplate.queryForMap("SELECT member_id, campaign_id, store_id, BIN_TO_UUID(serve_id) AS serve_id FROM wishlist"))
                 .containsEntry("member_id", MEMBER_ID).containsEntry("campaign_id", 101L)
                 .containsEntry("store_id", 55L).containsEntry("serve_id", serveId.toString());
-        assertThat(redisTemplate.opsForSet().members("adserving:dailyExclusion:" + TODAY + ":" + MEMBER_ID))
+        assertThat(redisTemplate.opsForSet().members("adserving:exclusion:" + TODAY + ":" + MEMBER_ID))
                 .containsExactly("101");
-        assertThat(redisTemplate.getExpire("adserving:dailyExclusion:" + TODAY + ":" + MEMBER_ID)).isPositive();
+        assertThat(redisTemplate.getExpire("adserving:exclusion:" + TODAY + ":" + MEMBER_ID)).isPositive();
     }
 
     @Test
@@ -127,6 +129,48 @@ class SwipeIntegrationTest extends AbstractAdservingIntegrationTest {
 
         assertThat(count("swipe_log")).isEqualTo(1);
         assertThat(count("wishlist")).isZero();
+    }
+
+    @Test
+    void 찜하면_그_찜의_id_가_실린_찜_이벤트가_넘어간다() throws Exception {
+        send(body(101, "WISH"), Role.MEMBER).andExpect(jsonPath("$.data.applied").value(true));
+
+        Long wishId = jdbcTemplate.queryForObject("SELECT wishlist_id FROM wishlist", Long.class);
+        assertThat(funnelEvents.received(SwipedEvent.class)).containsExactly(new SwipedEvent(
+                "swipe:" + serveId + ":" + MEMBER_ID, LocalDateTime.of(2026, 10, 1, 10, 15, 34, 20_000_000), MEMBER_ID,
+                101L, 55L, serveId, SwipeAction.WISH, wishId));
+    }
+
+    @Test
+    void 가게_상세에서_먼저_찜한_캠페인을_찜하면_그_찜의_id_가_실린다() throws Exception {
+        jdbcTemplate.update("""
+                INSERT INTO wishlist (member_id, campaign_id, store_id, serve_id, created_at, updated_at)
+                VALUES (?, 101, 55, NULL, NOW(6), NOW(6))
+                """, MEMBER_ID);
+        Long wishId = jdbcTemplate.queryForObject("SELECT wishlist_id FROM wishlist", Long.class);
+
+        send(body(101, "WISH"), Role.MEMBER).andExpect(jsonPath("$.data.applied").value(true));
+
+        assertThat(funnelEvents.received(SwipedEvent.class)).singleElement()
+                .extracting(SwipedEvent::wishId).isEqualTo(wishId);
+    }
+
+    @Test
+    void 패스하면_찜_id_없이_패스_이벤트가_넘어간다() throws Exception {
+        send(body(101, "PASS"), Role.MEMBER).andExpect(jsonPath("$.data.applied").value(true));
+
+        assertThat(funnelEvents.received(SwipedEvent.class)).singleElement().satisfies(event -> {
+            assertThat(event.action()).isEqualTo(SwipeAction.PASS);
+            assertThat(event.wishId()).isNull();
+        });
+    }
+
+    @Test
+    void 같은_카드를_다시_넘기면_이벤트가_다시_넘어가지_않는다() throws Exception {
+        send(body(101, "PASS"), Role.MEMBER).andExpect(jsonPath("$.data.applied").value(true));
+        send(body(101, "PASS"), Role.MEMBER).andExpect(jsonPath("$.data.applied").value(false));
+
+        assertThat(funnelEvents.received(SwipedEvent.class)).hasSize(1);
     }
 
     @Test

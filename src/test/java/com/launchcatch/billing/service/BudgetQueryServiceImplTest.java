@@ -3,6 +3,7 @@ package com.launchcatch.billing.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -15,6 +16,7 @@ import com.launchcatch.billing.contract.BudgetQueryService;
 import com.launchcatch.billing.dto.PlanSnapshot;
 import com.launchcatch.billing.cache.DailySpend;
 import com.launchcatch.billing.cache.DailySpendCounter;
+import com.launchcatch.billing.exception.BudgetCounterUnavailableException;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Duration;
 import java.time.LocalDate;
@@ -153,11 +155,25 @@ class BudgetQueryServiceImplTest {
     }
 
     @Test
-    void Valkey_장애는_대체값_없이_그대로_올라온다() {
+    void Valkey_읽기_장애는_대체값_없이_전용_예외로_바뀐다() {
         when(snapshotService.findAll(DAY, List.of(1L))).thenReturn(plans(1L));
-        when(spendCounter.readAll(DAY, List.of(1L))).thenThrow(new QueryTimeoutException("timeout"));
+        QueryTimeoutException cause = new QueryTimeoutException("timeout");
+        when(spendCounter.readAll(DAY, List.of(1L))).thenThrow(cause);
 
         assertThatThrownBy(() -> service.getProgress(List.of(1L), DAY, AT))
-                .isInstanceOf(QueryTimeoutException.class);
+                .isInstanceOf(BudgetCounterUnavailableException.class)
+                .hasCause(cause);
+    }
+
+    @Test
+    void 재구성_중_Valkey_장애도_대체값_없이_전용_예외로_바뀐다() {
+        when(snapshotService.findAll(DAY, List.of(1L))).thenReturn(plans(1L));
+        when(spendCounter.readAll(DAY, List.of(1L))).thenReturn(Map.of());
+        QueryTimeoutException cause = new QueryTimeoutException("timeout");
+        doThrow(cause).when(rebuildService).rebuildAllIfAbsent(DAY, List.of(1L));
+
+        assertThatThrownBy(() -> service.getProgress(List.of(1L), DAY, AT))
+                .isInstanceOf(BudgetCounterUnavailableException.class)
+                .hasCause(cause);
     }
 }

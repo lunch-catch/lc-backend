@@ -174,7 +174,7 @@ public interface PointLedgerRepository extends JpaRepository<PointLedger, Long>,
             """)
     List<LedgerSumRow> sumDeductOn(@Param("businessDate") LocalDate businessDate);
 
-    // CHARGE, REFUND, ADJUST 는 영업일 컬럼이 없어 기록 시각 [from, to) 로 묻는다
+    // CHARGE, REFUND 는 영업일 컬럼이 없어 기록 시각 [from, to) 로 묻는다
     @Query("""
             select new com.launchcatch.billing.repository.LedgerSumRow(l.ownerId, l.campaignId, l.entryType,
                        sum(case when l.amount > 0 then l.amount else 0L end),
@@ -183,11 +183,40 @@ public interface PointLedgerRepository extends JpaRepository<PointLedger, Long>,
              where l.createdAt >= :from
                and l.createdAt < :to
                and l.entryType in (com.launchcatch.billing.entity.EntryType.CHARGE,
-                                   com.launchcatch.billing.entity.EntryType.REFUND,
-                                   com.launchcatch.billing.entity.EntryType.ADJUST)
+                                   com.launchcatch.billing.entity.EntryType.REFUND)
              group by l.ownerId, l.campaignId, l.entryType
             """)
-    List<LedgerSumRow> sumChargeRefundAdjustBetween(@Param("from") LocalDateTime from, @Param("to") LocalDateTime to);
+    List<LedgerSumRow> sumChargeRefundBetween(@Param("from") LocalDateTime from, @Param("to") LocalDateTime to);
+
+    /*
+     * ADJUST 는 정정 대상 영업일에 붙인다. 대상 영업일이 없는 ADJUST(캠페인 없는 조정과 컬럼을 두기 전 행)는
+     * 기록 시각이 [from, to) 인 날에 붙인다.
+     */
+    @Query("""
+            select new com.launchcatch.billing.repository.LedgerSumRow(l.ownerId, l.campaignId, l.entryType,
+                       sum(case when l.amount > 0 then l.amount else 0L end),
+                       sum(case when l.amount < 0 then l.amount else 0L end))
+              from PointLedger l
+             where l.entryType = com.launchcatch.billing.entity.EntryType.ADJUST
+               and (l.adjustTargetDate = :businessDate
+                    or (l.adjustTargetDate is null and l.createdAt >= :from and l.createdAt < :to))
+             group by l.ownerId, l.campaignId, l.entryType
+            """)
+    List<LedgerSumRow> sumAdjustOn(@Param("businessDate") LocalDate businessDate,
+                                   @Param("from") LocalDateTime from, @Param("to") LocalDateTime to);
+
+    // 기록 시각이 [from, to) 인 양수 ADJUST 가 가리키는 정정 대상 영업일이다. 날짜 오름차순이고 중복이 없다
+    @Query("""
+            select distinct l.adjustTargetDate
+              from PointLedger l
+             where l.entryType = com.launchcatch.billing.entity.EntryType.ADJUST
+               and l.amount > 0
+               and l.adjustTargetDate is not null
+               and l.createdAt >= :from
+               and l.createdAt < :to
+             order by l.adjustTargetDate
+            """)
+    List<LocalDate> findCorrectionTargetDates(@Param("from") LocalDateTime from, @Param("to") LocalDateTime to);
 
     /*
      * 전 점주의 미소진 포인트다. before 이전에 기록된 CHARGE, REFUND, ADJUST, DEDUCT 의 합이다.

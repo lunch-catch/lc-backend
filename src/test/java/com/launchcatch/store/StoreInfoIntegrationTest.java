@@ -45,6 +45,7 @@ class StoreInfoIntegrationTest extends AbstractStoreIntegrationTest {
 
     @AfterEach
     void cleanUp() {
+        jdbc.update("delete from owner_terms_agreement where owner_id=?", ownerId);
         jdbc.update("delete from store_registration_progress where owner_id=?", ownerId);
         jdbc.update("delete from store where owner_id=?", ownerId);
         jdbc.update("delete from owner where owner_id=?", ownerId);
@@ -63,7 +64,12 @@ class StoreInfoIntegrationTest extends AbstractStoreIntegrationTest {
     }
 
     @Test
-    void 최초_등록과_재저장은_같은_초안을_수정하고_다른_단계_정보를_보존한다() throws Exception {
+    void 약관_동의_후_최초_등록과_재저장은_같은_초안을_수정하고_다른_단계_정보를_보존한다() throws Exception {
+        jdbc.update("delete from store_registration_progress where owner_id=?", ownerId);
+        mvc.perform(put("/v1/owner/terms-agreements")
+                        .with(user(new CustomUserDetails(ownerId, Role.OWNER))))
+                .andExpect(status().isOk()).andExpect(jsonPath("data.resumeStep").value("STORE_INFO"))
+                .andExpect(jsonPath("data.version").value(1));
         mvc.perform(request(body(1, "1234567890", "처음")))
                 .andExpect(status().isOk()).andExpect(jsonPath("data.resumeStep").value("LOCATION"))
                 .andExpect(jsonPath("data.version").value(2)).andExpect(jsonPath("data.verificationStatus").value("VERIFIED"));

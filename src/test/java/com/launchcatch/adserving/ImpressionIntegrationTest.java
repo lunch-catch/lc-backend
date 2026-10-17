@@ -15,6 +15,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.launchcatch.adserving.contract.ImpressionServedEvent;
 import com.launchcatch.adserving.engine.SlotType;
 import com.launchcatch.adserving.feed.repository.ServeRecord;
 import com.launchcatch.adserving.feed.repository.ServeRecordRepository;
@@ -160,6 +161,32 @@ class ImpressionIntegrationTest extends AbstractAdservingIntegrationTest {
 
         assertThat(rows()).isZero();
         assertThat(counter()).isNull();
+    }
+
+    @Test
+    void 유효_노출을_처음_저장하면_커밋_뒤_노출_이벤트가_한_번_넘어가고_다시_보내면_넘어가지_않는다() throws Exception {
+        send(body(serveId, 101L), Role.MEMBER).andExpect(status().isAccepted());
+        send(body(serveId, 101L), Role.MEMBER).andExpect(status().isAccepted());
+
+        assertThat(funnelEvents.received(ImpressionServedEvent.class)).containsExactly(new ImpressionServedEvent(
+                "impression:" + serveId, LocalDateTime.of(2026, 10, 1, 10, 15, 31, 880_000_000), MEMBER_ID, 101L, 55L,
+                serveId));
+    }
+
+    @Test
+    void 무효_노출은_이벤트가_넘어가지_않는다() throws Exception {
+        send(body(UUID.randomUUID(), 101L), Role.MEMBER).andExpect(status().isAccepted());
+
+        assertThat(funnelEvents.received(ImpressionServedEvent.class)).isEmpty();
+    }
+
+    @Test
+    void 노출_저장이_롤백되면_이벤트가_넘어가지_않는다() throws Exception {
+        doThrow(new IllegalStateException("그날 예산 계획이 없다")).when(pointDeductor).deduct(any(), any(), any());
+
+        send(body(serveId, 101L), Role.MEMBER).andExpect(status().isInternalServerError());
+
+        assertThat(funnelEvents.received(ImpressionServedEvent.class)).isEmpty();
     }
 
     @ParameterizedTest

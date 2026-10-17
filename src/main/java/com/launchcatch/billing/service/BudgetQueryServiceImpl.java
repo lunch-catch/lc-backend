@@ -7,6 +7,7 @@ import com.launchcatch.billing.contract.BudgetQueryService;
 import com.launchcatch.billing.dto.PlanSnapshot;
 import com.launchcatch.billing.cache.DailySpend;
 import com.launchcatch.billing.cache.DailySpendCounter;
+import com.launchcatch.billing.exception.BudgetCounterUnavailableException;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -35,7 +36,7 @@ import org.springframework.stereotype.Service;
  * 캐시에 없는 캠페인과 계획만 한 번의 쿼리로 읽는다. 예약액과 소진은 Valkey 해시에서만 읽는다.
  *
  * 후보가 MAX_CAMPAIGN_IDS(5000)를 넘으면 아무것도 읽지 않고 IllegalArgumentException으로 거부한다.
- * 읽기만 하므로 트랜잭션을 걸지 않는다. 카운터 장애는 대체값 없이 예외로 올린다.
+ * 읽기만 하므로 트랜잭션을 걸지 않는다. 카운터 장애는 대체값 없이 BudgetCounterUnavailableException으로 올린다.
  * 시간대별 목표 행이 없으면 가중치로 계산하고 경고 로그와 지표를 남긴다(E-7). 00:00 예약이 행을 만들지 못한 신호다.
  */
 @Slf4j
@@ -89,7 +90,7 @@ public class BudgetQueryServiceImpl implements BudgetQueryService {
 
     // 해시가 없는 캠페인은 한꺼번에 재구성한 뒤 그 캠페인만 다시 읽는다. 그래도 없으면 예외다. 캠페인마다 DB 를 읽지 않는다
     private Map<Long, DailySpend> readSpends(Collection<Long> campaignIds, LocalDate businessDate) {
-        Map<Long, DailySpend> spends = new HashMap<>(spendCounter.readAll(businessDate, List.copyOf(campaignIds)));
+        Map<Long, DailySpend> spends = new HashMap<>(readCounters(businessDate, List.copyOf(campaignIds)));
         List<Long> missing = new ArrayList<>();
         for (Long campaignId : campaignIds) {
             if (!spends.containsKey(campaignId)) {
@@ -99,8 +100,8 @@ public class BudgetQueryServiceImpl implements BudgetQueryService {
         if (missing.isEmpty()) {
             return spends;
         }
-        rebuildService.rebuildAllIfAbsent(businessDate, missing);
-        spends.putAll(spendCounter.readAll(businessDate, missing));
+        rebuildCounters(businessDate, missing);
+        spends.putAll(readCounters(businessDate, missing));
         for (Long campaignId : missing) {
             if (!spends.containsKey(campaignId)) {
                 throw new IllegalStateException(
@@ -108,5 +109,22 @@ public class BudgetQueryServiceImpl implements BudgetQueryService {
             }
         }
         return spends;
+    }
+
+    // 카운터 장애는 BudgetCounterUnavailableException으로 바꿔 던진다. 재구성 뒤 해시 없음은 이 메서드를 거치지 않는다
+    private Map<Long, DailySpend> readCounters(LocalDate businessDate, List<Long> campaignIds) {
+        try {
+            return spendCounter.readAll(businessDate, campaignIds);
+        } catch (RuntimeException e) {
+            throw new BudgetCounterUnavailableException("당일 소진 카운터를 읽지 못했습니다.", e);
+        }
+    }
+
+    private void rebuildCounters(LocalDate businessDate, List<Long> campaignIds) {
+        try {
+            rebuildService.rebuildAllIfAbsent(businessDate, campaignIds);
+        } catch (RuntimeException e) {
+            throw new BudgetCounterUnavailableException("당일 소진 카운터 재구성에 실패했습니다.", e);
+        }
     }
 }

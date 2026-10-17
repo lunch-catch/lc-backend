@@ -66,6 +66,13 @@ public class PointLedger extends BaseTimeEntity {
     @Column(name = "business_date", updatable = false)
     private LocalDate businessDate;
 
+    /*
+     * ADJUST 만 값이 있다. 정정이 가리키는 원래 영업일이다. 캠페인에 연결된 ADJUST 만 값을 가지고 캠페인 없는 ADJUST 는 NULL 이다.
+     * 이 컬럼을 두기 전에 기록된 ADJUST 도 NULL 이라 집계는 그 행을 기록 시각의 KST 날짜에 붙인다.
+     */
+    @Column(name = "adjust_target_date", updatable = false)
+    private LocalDate adjustTargetDate;
+
     /** DEDUCT 만 값이 있다. 광고 서빙이 발급한 UUID 이며 BINARY(16) 로 저장한다. */
     @JdbcTypeCode(SqlTypes.BINARY)
     @Column(name = "serve_id", updatable = false)
@@ -130,11 +137,12 @@ public class PointLedger extends BaseTimeEntity {
      * 관리자 수동 조정을 기록한다. 금액은 부호를 가진 값이고 0 이 아니어야 한다.
      *
      * 양수는 사후에 확인된 과오 차감을 돌려주는 정정이고 소진액 집계에서 빠진다. 음수는 잔액을 줄인다.
+     * 캠페인에 연결된 조정은 정정 대상 영업일이 필수이고 캠페인 없는 조정은 정정 대상 영업일을 가질 수 없다.
      * 기록 주체는 사람뿐이라 source 는 MANUAL 로 고정한다(chk_point_ledger_adjust_source).
      * 같은 점주의 같은 멱등 키는 한 줄뿐이다(uk_point_ledger_adjust_idem).
      */
     public static PointLedger adjust(Long ownerId, long amount, String reason, Long campaignId,
-                                     String idempotencyKey) {
+                                     LocalDate adjustTargetDate, String idempotencyKey) {
         if (amount == 0) {
             throw new IllegalArgumentException("조정 금액은 0일 수 없습니다.");
         }
@@ -144,9 +152,13 @@ public class PointLedger extends BaseTimeEntity {
         if (idempotencyKey == null || idempotencyKey.isBlank() || idempotencyKey.length() > IDEMPOTENCY_KEY_MAX) {
             throw new IllegalArgumentException("멱등 키는 1자 이상 " + IDEMPOTENCY_KEY_MAX + "자 이하여야 합니다.");
         }
+        if ((campaignId == null) != (adjustTargetDate == null)) {
+            throw new IllegalArgumentException("조정의 캠페인 ID와 정정 대상 영업일은 함께 있거나 함께 없어야 합니다.");
+        }
         PointLedger ledger = new PointLedger(ownerId, null, EntryType.ADJUST, LedgerSource.MANUAL, amount);
         ledger.reason = reason;
         ledger.campaignId = campaignId;
+        ledger.adjustTargetDate = adjustTargetDate;
         ledger.idempotencyKey = idempotencyKey;
         return ledger;
     }

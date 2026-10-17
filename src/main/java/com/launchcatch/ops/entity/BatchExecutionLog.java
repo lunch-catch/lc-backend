@@ -63,6 +63,14 @@ public class BatchExecutionLog extends BaseTimeEntity {
     @Column(name = "retry_reason", length = 500)
     private String retryReason;
 
+    /*
+     * 실행 세대다. claim 으로 1부터 시작해 이어받기, 수동 재실행(retry, rerun)마다 하나씩
+     * 오른다(#360). 자동 재실행(recordRetry)은 올리지 않는다. 그것은 같은 서버가 같은
+     * 시도를 이어가는 것이고 세대가 바뀌는 것은 소유자나 결과 공개의 전제가 바뀔 때뿐이다.
+     */
+    @Column(name = "attempt_no", nullable = false)
+    private int attemptNo = 1;
+
     private BatchExecutionLog(String jobName, LocalDate businessDate, String ownerId) {
         this.jobName = jobName;
         this.businessDate = businessDate;

@@ -1,6 +1,7 @@
-# 가게 API
+# 가게 (store) API 명세
 
 공통 인증·응답·오류 규약은 [api-spec.md](api-spec.md)를 따른다.
+서버 내부 처리와 근거는 [store-api-design.md](../design/store/store-api-design.md)를 참고한다.
 
 ## `GET /v1/stores`
 
@@ -185,6 +186,88 @@ OTHER
 `distanceMeters`는 `310.4m`이면 `310`, `310.5m`이면 `311`로 반환한다.
 정렬에는 반올림 전 거리를 사용한다.
 
+## `GET /v1/owner/store-registration-progress`
+
+점주가 지금 자신의 가게 등록에서 이어서 진행할 단계와, 다음 완료 요청에 실어 보낼
+버전을 조회한다. 진행 상태가 없으면 DB에 생성하지 않고 `storeId=null`, `resumeStep=TERMS`, `version=0`을 반환한다.
+최초 진행 상태 생성은 점주 행을 잠근 약관 저장 트랜잭션에서 처리한다.
+
+### 인증
+
+`OWNER`가 사용하며 `ONBOARDING` 상태에서만 호출할 수 있다.
+
+### 응답 `200`
+
+```json
+{
+  "code": "SUCCESS",
+  "message": "요청이 성공적으로 처리되었습니다.",
+  "data": {
+    "storeId": 10,
+    "resumeStep": "IMAGES",
+    "version": 5
+  }
+}
+```
+
+| 필드 | 타입 | null 허용 | 설명 |
+|---|---|---|---|
+| storeId | integer | 예 | 기본 정보 단계(`STORE_INFO`)를 아직 안 마쳤으면 `null` |
+| resumeStep | string(enum) | 아니오 | 이어서 진행할 단계. `TERMS`, `STORE_INFO`, `LOCATION`, `HOURS`, `IMAGES`, `MENU` 중 하나 |
+| version | integer | 아니오 | 다음 완료·수정 요청에 그대로 실어 보내는 값 |
+
+### 오류
+
+| 상태 | 코드 | 언제 |
+|---|---|---|
+| `401` | `AUTH-005` | 유효한 점주 인증이 없음 |
+| `403` | `AUTH-006` | 인증된 역할이 `OWNER`가 아님 |
+| `409` | `STORE-002` | 점주 상태가 `ONBOARDING`이 아님 |
+
+## 점주 약관 동의
+
+`PUT /v1/owner/terms-agreements`
+
+인증된 OWNER의 DB 현재 상태가 ONBOARDING이고 진행 단계가 TERMS일 때 전체 필수 약관에 대한 최초 동의만 저장한다.
+이 API 호출 자체가 전체 필수 약관 동의를 의미한다. 미동의 상태에서는 호출하지 않는다.
+가게 생성 전에도 점주 ID만으로 저장할 수 있으며 점주 ID는 인증 주체에서 가져온다.
+
+### 요청
+
+요청 본문 없이 호출한다. 빈 JSON 객체 `{}`도 허용하지만 version을 포함한 입력 필드는 받지 않는다.
+약관별 종류·버전·필수 여부·동의 여부와 클라이언트 동의 시각은 받지 않는다.
+서버가 required=true와 agreed=true를 설정하고 저장 처리 시각을 agreed_at에 기록한다. 점주당 한 행을 유지한다.
+기존 동의 기록이 있으면 409 TERMS-001로 거부하며 agreed_at·withdrawn_at·진행 상태를 변경하지 않는다. ACTIVE 상태에서도 저장할 수 없다. 수정·재동의·철회 API는 제공하지 않는다.
+
+### 응답 `200`
+
+```json
+{
+  "code": "SUCCESS",
+  "message": "요청이 성공적으로 처리되었습니다.",
+  "data": {"requiredTermsCompleted": true, "version": 1, "resumeStep": "STORE_INFO"}
+}
+```
+
+최초 성공은 TERMS에서 STORE_INFO로 진행한다. 완료한 약관 단계로 돌아가 수정할 수 없다.
+최초 저장 성공 시 서버가 잠근 진행 상태의 현재 버전을 사용해 단계를 완료하고 버전을 1 증가시킨다. 응답 version은 다음 STORE_INFO 저장 요청에서 사용할 값이다.
+약관 내역과 진행 상태는 함께 커밋하거나 롤백한다. 점주 상태·튜토리얼·토큰·인증 쿠키는 변경하지 않는다.
+약관 정책 설정은 필요하지 않으며 정책 미설정 503과 필수 약관별 검증 422는 사용하지 않는다.
+
+### 오류
+
+| HTTP 상태 | 코드 | 조건 |
+|---|---|---|
+| 400 | COMMON-003 | 잘못된 JSON 또는 제거된 약관별 입력 등 지원하지 않는 필드 |
+| 401 | AUTH-005 | 인증 실패 |
+| 403 | AUTH-006 | OWNER 역할이 아님 |
+| 403 | OWNER-002 | 점주의 DB 현재 상태가 ONBOARDING이 아님 |
+| 409 | STORE-002 | 약관 기록이 없더라도 현재 진행 단계가 TERMS가 아님 |
+| 409 | TERMS-001 | 기존 약관 동의가 있거나 약관 동의 행의 DB UNIQUE 제약 충돌 |
+| 500 | COMMON-001 | 서버 처리 실패 |
+
+오류 응답은 공통 응답 봉투를 따른다.
+
 ## 가게 등록 온보딩 2단계: 기본 정보와 사업자 Mock 검증
 
 ### `PUT /v1/owner/store/basic`
@@ -278,3 +361,307 @@ Mock은 외부 기관을 호출하지 않는다. 형식이 유효한 번호 중 
 
 버전 충돌 시 입력값을 자동 재전송하지 않고 최신 진행 상태를 확인해야 한다.
 약관 API와 진행 상태 최초 생성은 선행 작업이며 이 API가 약관 단계를 자동 완료하거나 진행 상태를 생성하지 않는다.
+
+## `POST /v1/owner/store-images:prepareUpload`
+
+점주가 가게 인테리어 이미지를 올릴 presigned PUT URL을 발급받는다. 이미지 한 장당
+호출한다. 로고는 가게 입점 과정에서 이미 등록돼 있다고 보고 이 API로 새로 올리지
+않는다.
+
+### 인증
+
+`GET /v1/owner/store-registration-progress`와 같다.
+
+### 요청
+
+```json
+{
+  "originalFilename": "interior.jpg",
+  "contentType": "image/jpeg",
+  "fileSize": 204800
+}
+```
+
+| 필드 | 타입 | 필수 | 조건 |
+|---|---|---|---|
+| originalFilename | string | 예 | |
+| contentType | string | 예 | `image/jpeg`, `image/png` 중 하나 |
+| fileSize | integer | 예 | 1 이상, 10485760(10MB) 이하 |
+
+### 성공 응답
+
+`200`.
+
+```json
+{
+  "code": "SUCCESS",
+  "message": "요청이 성공적으로 처리되었습니다.",
+  "data": {
+    "uploadId": "a1b2c3d4-...",
+    "uploadUrl": "https://...",
+    "sortOrder": 1
+  }
+}
+```
+
+| 필드 | 타입 | 설명 |
+|---|---|---|
+| uploadId | string | 확인 요청에 그대로 보내는 식별자 |
+| uploadUrl | string | 이 주소로 파일을 직접 PUT 업로드한다. 10분 안에 사용해야 한다 |
+| sortOrder | integer | 이 이미지가 인테리어 이미지 중 몇 번째로 표시되는지(1~3). 서버가 업로드 순서대로 자동으로 매긴다 |
+
+### 오류
+
+| 상태 | 코드 | 언제 |
+|---|---|---|
+| `401` | `AUTH-005` | 유효한 점주 인증이 없음 |
+| `403` | `AUTH-006` | 인증된 역할이 `OWNER`가 아님 |
+| `409` | `STORE-002` | 점주 상태가 `ONBOARDING`이 아님, 또는 기본 정보 단계를 아직 안 마침 |
+| `422` | `STORE-005` | `contentType`이 `image/jpeg`, `image/png`가 아님 |
+| `422` | `STORE-006` | `fileSize`가 10MB를 넘음 |
+| `422` | `STORE-007` | 이미 인테리어 이미지가 3개 등록돼 있음 |
+
+## `POST /v1/owner/store-images:confirmUpload`
+
+발급받은 URL로 실제 업로드했는지 확인한다. 이미지 한 장당 호출한다.
+
+### 인증
+
+`GET /v1/owner/store-registration-progress`와 같다.
+
+### 요청
+
+```json
+{
+  "uploadId": "a1b2c3d4-..."
+}
+```
+
+### 성공 응답
+
+`200`. 본문 `data`는 `null`이다.
+
+### 오류
+
+| 상태 | 코드 | 언제 |
+|---|---|---|
+| `401` | `AUTH-005` | 유효한 점주 인증이 없음 |
+| `403` | `AUTH-006` | 인증된 역할이 `OWNER`가 아님 |
+| `403` | `STORE-008` | 그 `uploadId`가 없거나 본인 가게의 업로드가 아님(존재 여부를 알려주지 않으려고 같은 코드로 묶는다, `api-spec.md`) |
+| `409` | `STORE-002` | 점주 상태가 `ONBOARDING`이 아님 |
+| `422` | `STORE-009` | 실제로 업로드되지 않음(S3에 객체가 없음) |
+
+## `POST /v1/owner/store-images:complete`
+
+인테리어 이미지(0~3개) 등록을 마치고 `IMAGES` 단계를 완료해 `MENU`로 진행한다.
+
+### 인증
+
+`GET /v1/owner/store-registration-progress`와 같다.
+
+### 요청
+
+```json
+{
+  "version": 5
+}
+```
+
+| 필드 | 타입 | 필수 | 설명 |
+|---|---|---|---|
+| version | integer | 예 | 진행 상태 조회로 받은 현재 버전 |
+
+### 성공 응답
+
+`200`. `GET /v1/owner/store-registration-progress`와 같은 모양이며 `resumeStep`이
+`MENU`, `version`이 1 증가한 값이다.
+
+### 오류
+
+| 상태 | 코드 | 언제 |
+|---|---|---|
+| `401` | `AUTH-005` | 유효한 점주 인증이 없음 |
+| `403` | `AUTH-006` | 인증된 역할이 `OWNER`가 아님 |
+| `409` | `STORE-001` | `version`이 현재 버전과 다름 |
+| `409` | `STORE-002` | 점주 상태가 `ONBOARDING`이 아님, 또는 현재 재개 단계가 `IMAGES`가 아님 |
+| `409` | `STORE-010` | 로고 이미지가 없음 |
+
+## `POST /v1/owner/store-menus`
+
+점주가 대표 메뉴 하나를 등록한다. 메뉴명·가격·상세설명을 저장하며, 이미지는 이 API로
+올리지 않는다. 이미지는 등록된 `menuId`로 `POST /v1/owner/store-menu-images:prepareUpload`를
+따로 호출해 올린다. 메뉴 한 건당 호출한다.
+
+### 인증
+
+`GET /v1/owner/store-registration-progress`와 같다.
+
+### 요청
+
+```json
+{
+  "name": "제육볶음",
+  "price": 9000,
+  "description": "매콤한 제육볶음입니다."
+}
+```
+
+| 필드 | 타입 | 필수 | 조건 |
+|---|---|---|---|
+| name | string | 예 | 100자 이내 |
+| price | integer | 예 | 0 이상. 원 단위 |
+| description | string | 아니오 | 500자 이내 |
+
+### 성공 응답
+
+`200`.
+
+```json
+{
+  "code": "SUCCESS",
+  "message": "요청이 성공적으로 처리되었습니다.",
+  "data": {
+    "menuId": 10,
+    "sortOrder": 1
+  }
+}
+```
+
+| 필드 | 타입 | 설명 |
+|---|---|---|
+| menuId | integer | 등록된 메뉴의 식별자. 이미지 업로드 요청에 그대로 보낸다 |
+| sortOrder | integer | 이 메뉴가 몇 번째로 표시되는지(1~3). 서버가 등록 순서대로 자동으로 매긴다 |
+
+### 오류
+
+| 상태 | 코드 | 언제 |
+|---|---|---|
+| `401` | `AUTH-005` | 유효한 점주 인증이 없음 |
+| `403` | `AUTH-006` | 인증된 역할이 `OWNER`가 아님 |
+| `409` | `STORE-002` | 점주 상태가 `ONBOARDING`이 아님, 또는 기본 정보 단계를 아직 안 마침 |
+| `422` | `STORE-011` | 이미 메뉴가 3개 등록돼 있음 |
+
+## `POST /v1/owner/store-menu-images:prepareUpload`
+
+점주가 등록한 메뉴의 이미지를 올릴 presigned PUT URL을 발급받는다. 메뉴 이미지 한 장당
+호출한다.
+
+### 인증
+
+`GET /v1/owner/store-registration-progress`와 같다.
+
+### 요청
+
+```json
+{
+  "menuId": 10,
+  "originalFilename": "menu.jpg",
+  "contentType": "image/jpeg",
+  "fileSize": 204800
+}
+```
+
+| 필드 | 타입 | 필수 | 조건 |
+|---|---|---|---|
+| menuId | integer | 예 | `POST /v1/owner/store-menus`로 받은 식별자 |
+| originalFilename | string | 예 | |
+| contentType | string | 예 | `image/jpeg`, `image/png` 중 하나 |
+| fileSize | integer | 예 | 1 이상, 10485760(10MB) 이하 |
+
+### 성공 응답
+
+`200`.
+
+```json
+{
+  "code": "SUCCESS",
+  "message": "요청이 성공적으로 처리되었습니다.",
+  "data": {
+    "uploadId": "a1b2c3d4-...",
+    "uploadUrl": "https://..."
+  }
+}
+```
+
+| 필드 | 타입 | 설명 |
+|---|---|---|
+| uploadId | string | 확인 요청에 그대로 보내는 식별자 |
+| uploadUrl | string | 이 주소로 파일을 직접 PUT 업로드한다. 10분 안에 사용해야 한다 |
+
+### 오류
+
+| 상태 | 코드 | 언제 |
+|---|---|---|
+| `401` | `AUTH-005` | 유효한 점주 인증이 없음 |
+| `403` | `AUTH-006` | 인증된 역할이 `OWNER`가 아님 |
+| `403` | `STORE-012` | 그 `menuId`가 없거나 본인 가게의 메뉴가 아님(존재 여부를 알려주지 않으려고 같은 코드로 묶는다, `api-spec.md`) |
+| `409` | `STORE-002` | 점주 상태가 `ONBOARDING`이 아님 |
+| `422` | `STORE-005` | `contentType`이 `image/jpeg`, `image/png`가 아님 |
+| `422` | `STORE-006` | `fileSize`가 10MB를 넘음 |
+
+## `POST /v1/owner/store-menu-images:confirmUpload`
+
+발급받은 URL로 실제 업로드했는지 확인한다. 메뉴 이미지 한 장당 호출한다.
+
+### 인증
+
+`GET /v1/owner/store-registration-progress`와 같다.
+
+### 요청
+
+```json
+{
+  "uploadId": "a1b2c3d4-..."
+}
+```
+
+### 성공 응답
+
+`200`. 본문 `data`는 `null`이다.
+
+### 오류
+
+| 상태 | 코드 | 언제 |
+|---|---|---|
+| `401` | `AUTH-005` | 유효한 점주 인증이 없음 |
+| `403` | `AUTH-006` | 인증된 역할이 `OWNER`가 아님 |
+| `403` | `STORE-012` | 그 `uploadId`가 없거나 본인 가게의 메뉴 이미지가 아님 |
+| `409` | `STORE-002` | 점주 상태가 `ONBOARDING`이 아님 |
+| `422` | `STORE-006` | 실제 업로드된 크기가 선언한 크기나 10MB를 넘음 |
+| `422` | `STORE-009` | 실제로 업로드되지 않음(S3에 객체가 없음) |
+
+## `POST /v1/owner/store-menus:complete`
+
+대표 메뉴(0~3개) 등록을 마치고 `MENU` 단계를 완료한다. 다음 단계는 없으며 재개 단계는
+`MENU`를 유지한다.
+
+### 인증
+
+`GET /v1/owner/store-registration-progress`와 같다.
+
+### 요청
+
+```json
+{
+  "version": 6
+}
+```
+
+| 필드 | 타입 | 필수 | 설명 |
+|---|---|---|---|
+| version | integer | 예 | 진행 상태 조회로 받은 현재 버전 |
+
+### 성공 응답
+
+`200`. `GET /v1/owner/store-registration-progress`와 같은 모양이며 `resumeStep`이
+`MENU`, `version`이 1 증가한 값이다.
+
+### 오류
+
+| 상태 | 코드 | 언제 |
+|---|---|---|
+| `401` | `AUTH-005` | 유효한 점주 인증이 없음 |
+| `403` | `AUTH-006` | 인증된 역할이 `OWNER`가 아님 |
+| `409` | `STORE-001` | `version`이 현재 버전과 다름 |
+| `409` | `STORE-002` | 점주 상태가 `ONBOARDING`이 아님, 또는 현재 재개 단계가 `MENU`가 아님 |
+| `409` | `STORE-013` | 등록한 메뉴 중 이미지가 `VERIFIED`가 아닌 메뉴가 있음 |

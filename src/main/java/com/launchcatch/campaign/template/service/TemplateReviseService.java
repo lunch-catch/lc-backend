@@ -28,6 +28,9 @@ import org.springframework.transaction.support.TransactionTemplate;
 @RequiredArgsConstructor
 public class TemplateReviseService {
 
+    /** 템플릿 한 개가 보존하는 버전 수의 상한이다(#410). 넘기면 가장 오래된 것을 지운다. */
+    private static final int MAX_VERSIONS_PER_TEMPLATE = 20;
+
     private final TemplateRepository templateRepository;
     private final TemplateVersionRepository templateVersionRepository;
     private final TemplateHtmlGenerator templateHtmlGenerator;
@@ -124,8 +127,39 @@ public class TemplateReviseService {
         int nextVersionNumber = templateVersionRepository.findMaxVersionNumber(templateId) + 1;
         TemplateVersion version = template.addDraftVersion(
                 adminId, LocalDateTime.now(clock), requestPrompt, requestId, sanitized.html(), nextVersionNumber);
-        templateRepository.saveAndFlush(template);
+        /*
+         * template(이미 id가 있는, "새 것"이 아닌 엔티티)을 저장소로 saveAndFlush 하면
+         * JpaRepository가 merge()로 보낸다. merge가 versions 컬렉션의 cascade=PERSIST를
+         * 타면서 IDENTITY 생성 전략과 얽혀, version을 "먼저 빈 값으로 INSERT 하고 나중에
+         * UPDATE" 하는 순서로 처리된다(#433 재현으로 확인). html_content가 NOT NULL이라
+         * 그 첫 INSERT에서 바로 제약 위반이 난다. version은 새 엔티티(id 없음)라 그
+         * 저장소로 직접 저장하면 persist() 경로를 타 이 문제가 없다. template의
+         * lastModifiedBy/At 변경은 managed 상태라 이 flush에 같이 반영된다.
+         */
+        templateVersionRepository.saveAndFlush(version);
+        evictVersionsOverCap(templateId, nextVersionNumber);
         return toResponse(version, sanitized.removedElements());
+    }
+
+    /*
+     * 버전은 템플릿당 MAX_VERSIONS_PER_TEMPLATE 개까지만 보존한다(#410). 넘긴 만큼을
+     * 한 번에 소프트삭제한다. 번호는 건드리지 않는다.
+     *
+     * 가장 오래된 것 하나만 지우지 않는다(코드래빗 리뷰로 찾음). 이 기능이 배포되기
+     * 전부터 상한보다 훨씬 많이 쌓여 있던 템플릿은, 하나만 지우면 수정할 때마다 하나
+     * 늘고 하나만 줄어 영원히 상한을 넘긴 채로 남는다. thresholdVersionNumber 이하인
+     * 살아있는 버전을 전부 지우면 몇 개가 넘쳤든 그 즉시 20개로 돌아온다.
+     *
+     * 번호를 앞으로 당기는 방식(재배치)도 쓰지 않는다. TemplatePublishRequest.
+     * versionNumber(관리자가 직접 지정)와 버전 목록의 커서 페이지네이션이 번호를 고정
+     * 식별자로 쓰고 있어서, 번호가 밀리면 그 사이 다른 내용을 가리키게 된다.
+     *
+     * save()와 같은 잠금(findByIdForUpdate) 안에서 돌아, 버전 추가와 오래된 버전 삭제가
+     * 같은 템플릿을 동시에 수정하는 다른 요청과 경쟁하지 않는다.
+     */
+    private void evictVersionsOverCap(Long templateId, int newestVersionNumber) {
+        int thresholdVersionNumber = newestVersionNumber - MAX_VERSIONS_PER_TEMPLATE;
+        templateVersionRepository.softDeleteUpToVersionNumber(templateId, thresholdVersionNumber, LocalDateTime.now(clock));
     }
 
     /*

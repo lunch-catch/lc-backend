@@ -3,6 +3,9 @@ package com.launchcatch.store.service;
 import static org.assertj.core.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
+import com.launchcatch.store.contract.StoreAdCandidateInfo;
+import com.launchcatch.store.contract.StoreQueryService;
+import com.launchcatch.store.dto.StoreAdCandidateQueryRow;
 import com.launchcatch.store.contract.StoreInfo;
 import com.launchcatch.store.contract.StoreMenuInfo;
 import com.launchcatch.store.dto.StoreMenuQueryRow;
@@ -18,6 +21,59 @@ import org.springframework.dao.DataAccessResourceFailureException;
 class StoreQueryServiceImplTest {
     private final StoreQueryRepository repository = mock(StoreQueryRepository.class);
     private final StoreQueryServiceImpl service = new StoreQueryServiceImpl(repository, "https://cdn.example.com/");
+
+    @Test
+    void 광고_후보는_업종과_LOGO_URL과_DECIMAL_좌표를_반환한다() {
+        var latitude = new BigDecimal("37.1234567");
+        var longitude = new BigDecimal("127.1234567");
+        when(repository.findAdCandidatesByStoreIds(List.of(1L, 2L))).thenReturn(List.of(
+                new StoreAdCandidateQueryRow(1L, "국밥집", "KOREAN", "stores/로고 #1.png", latitude, longitude),
+                new StoreAdCandidateQueryRow(2L, "카페", "CAFE_DESSERT", "stores/2.png", BigDecimal.ZERO, BigDecimal.ZERO)));
+
+        assertThat(service.findAdCandidatesByStoreIds(List.of(1L, 2L))).containsExactly(
+                new StoreAdCandidateInfo(1L, "국밥집", "KOREAN",
+                        "https://cdn.example.com/stores/%EB%A1%9C%EA%B3%A0%20%231.png", latitude, longitude),
+                new StoreAdCandidateInfo(2L, "카페", "CAFE_DESSERT", "https://cdn.example.com/stores/2.png",
+                        BigDecimal.ZERO, BigDecimal.ZERO));
+    }
+
+    @Test
+    void 광고_후보의_빈_입력은_DB_조회_없이_빈_목록을_반환한다() {
+        assertThat(service.findAdCandidatesByStoreIds(List.of())).isEmpty();
+        verifyNoInteractions(repository);
+    }
+
+    @Test
+    void 광고_후보_조회_장애는_빈_목록으로_숨기지_않는다() {
+        var failure = new DataAccessResourceFailureException("DB unavailable");
+        when(repository.findAdCandidatesByStoreIds(List.of(1L))).thenThrow(failure);
+
+        assertThatThrownBy(() -> service.findAdCandidatesByStoreIds(List.of(1L))).isSameAs(failure);
+    }
+
+    @Test
+    void 광고_후보의_검증된_LOGO가_없으면_URL은_null이다() {
+        when(repository.findAdCandidatesByStoreIds(List.of(1L))).thenReturn(List.of(
+                new StoreAdCandidateQueryRow(1L, "가게", "KOREAN", null,
+                        new BigDecimal("37.1234567"), new BigDecimal("127.1234567"))));
+
+        assertThat(service.findAdCandidatesByStoreIds(List.of(1L))).singleElement()
+                .satisfies(store -> assertThat(store.storeImageUrl()).isNull());
+    }
+
+    @Test
+    void 광고_후보는_상한까지_허용하고_초과하면_DB_조회_전에_거절한다() {
+        var ids = java.util.Collections.nCopies(StoreQueryService.MAX_AD_CANDIDATE_STORE_IDS, 1L);
+        when(repository.findAdCandidatesByStoreIds(ids)).thenReturn(List.of(
+                new StoreAdCandidateQueryRow(1L, "가게", "KOREAN", null,
+                        BigDecimal.ONE, BigDecimal.ONE)));
+
+        assertThat(service.findAdCandidatesByStoreIds(ids)).hasSize(1);
+        clearInvocations(repository);
+        assertThatIllegalArgumentException().isThrownBy(() -> service.findAdCandidatesByStoreIds(
+                java.util.Collections.nCopies(StoreQueryService.MAX_AD_CANDIDATE_STORE_IDS + 1, 1L)));
+        verifyNoInteractions(repository);
+    }
 
     @Test
     void 점주_요약은_등록_여부와_마스킹한_번호를_반환한다() {

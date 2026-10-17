@@ -1,5 +1,6 @@
 package com.launchcatch.store.repository;
 
+import com.launchcatch.store.dto.StoreAdCandidateQueryRow;
 import com.launchcatch.store.dto.StoreMenuQueryRow;
 import com.launchcatch.store.dto.StoreQueryRow;
 import com.launchcatch.store.dto.StoreSummaryQueryRow;
@@ -33,6 +34,20 @@ public class StoreQueryRepository {
                 """, Map.of("ownerIds", ownerIds), (rs, rowNum) -> new StoreSummaryQueryRow(
                         rs.getLong("owner_id"), rs.getLong("store_id"), rs.getString("name"),
                         rs.getBoolean("finalized"), rs.getString("business_registration_number")));
+    }
+
+    // 좌표가 누락된 가게는 제외하며 검증된 LOGO가 없어도 가게를 반환한다.
+    public List<StoreAdCandidateQueryRow> findAdCandidatesByStoreIds(List<Long> storeIds) {
+        return jdbc.query("""
+                select s.store_id, s.name, s.category_code, i.object_key, s.latitude, s.longitude
+                from store s
+                left join store_image i on i.store_id = s.store_id
+                    and i.image_type = 'LOGO' and i.upload_status = 'VERIFIED'
+                where s.store_id in (:ids) and s.finalized = true
+                    and s.latitude is not null and s.longitude is not null
+                """, Map.of("ids", storeIds), (rs, rowNum) -> new StoreAdCandidateQueryRow(
+                        rs.getLong("store_id"), rs.getString("name"), rs.getString("category_code"),
+                        rs.getString("object_key"), rs.getBigDecimal("latitude"), rs.getBigDecimal("longitude")));
     }
 
     // 최종 등록된 가게만 조회하며 LEFT JOIN으로 이미지 누락도 서비스에서 오류로 확인할 수 있게 한다.

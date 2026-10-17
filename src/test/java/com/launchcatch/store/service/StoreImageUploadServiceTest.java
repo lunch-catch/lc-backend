@@ -1,0 +1,315 @@
+package com.launchcatch.store.service;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+import com.launchcatch.store.dto.StoreRegistrationProgressResponse;
+import com.launchcatch.store.dto.StoreRegistrationProgressSnapshot;
+import com.launchcatch.store.entity.StoreImage;
+import com.launchcatch.store.entity.StoreImageType;
+import com.launchcatch.store.entity.StoreRegistrationProgress;
+import com.launchcatch.store.entity.StoreRegistrationStep;
+import com.launchcatch.store.exception.StoreErrorCode;
+import com.launchcatch.store.exception.StoreException;
+import com.launchcatch.store.repository.StoreImageRepository;
+import com.launchcatch.store.repository.StoreRegistrationProgressRepository;
+import java.lang.reflect.Field;
+import java.net.URL;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.ZoneId;
+import java.util.Optional;
+import java.util.function.Consumer;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.transaction.support.TransactionCallback;
+import org.springframework.transaction.support.TransactionTemplate;
+import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.s3.model.HeadObjectRequest;
+import software.amazon.awssdk.services.s3.model.HeadObjectResponse;
+import software.amazon.awssdk.services.s3.model.S3Exception;
+import software.amazon.awssdk.services.s3.presigner.S3Presigner;
+import software.amazon.awssdk.services.s3.presigner.model.PresignedPutObjectRequest;
+import software.amazon.awssdk.services.s3.presigner.model.PutObjectPresignRequest;
+
+@ExtendWith(MockitoExtension.class)
+class StoreImageUploadServiceTest {
+
+    private static final Long OWNER_ID = 7L;
+    private static final Long STORE_ID = 20L;
+    private static final Clock FIXED_CLOCK = Clock.fixed(Instant.parse("2026-10-16T05:00:00Z"), ZoneId.of("Asia/Seoul"));
+
+    @Mock private StoreImageRepository storeImageRepository;
+    @Mock private StoreRegistrationProgressRepository progressRepository;
+    @Mock private StoreRegistrationProgressService progressService;
+    @Mock private S3Presigner s3Presigner;
+    @Mock private S3Client s3Client;
+    @Mock private PresignedPutObjectRequest presignedPutObjectRequest;
+    @Mock private TransactionTemplate transactionTemplate;
+
+    private StoreImageUploadService service;
+
+    @SuppressWarnings("unchecked")
+    @BeforeEach
+    void setUp() throws Exception {
+        StoreUploadSupport storeUploadSupport = new StoreUploadSupport(progressRepository, s3Presigner);
+        Field supportBucketField = StoreUploadSupport.class.getDeclaredField("mediaBucket");
+        supportBucketField.setAccessible(true);
+        supportBucketField.set(storeUploadSupport, "test-media-bucket");
+
+        service = new StoreImageUploadService(
+                storeImageRepository, progressRepository, progressService,
+                storeUploadSupport, s3Client, FIXED_CLOCK, transactionTemplate);
+        Field bucketField = StoreImageUploadService.class.getDeclaredField("mediaBucket");
+        bucketField.setAccessible(true);
+        bucketField.set(service, "test-media-bucket");
+
+        lenient().when(transactionTemplate.execute(any())).thenAnswer(invocation -> {
+            TransactionCallback<?> callback = invocation.getArgument(0);
+            return callback.doInTransaction(null);
+        });
+        lenient().doAnswer(invocation -> {
+            Consumer<Object> callback = invocation.getArgument(0);
+            callback.accept(null);
+            return null;
+        }).when(transactionTemplate).executeWithoutResult(any());
+    }
+
+    @Test
+    @DisplayName("인테리어 업로드를 준비하면 PENDING 행을 만들고 presigned URL을 돌려준다")
+    void 인테리어_업로드를_준비한다() throws Exception {
+        givenOwnerWithStoreForUpdate();
+        when(storeImageRepository.countByStoreIdAndImageType(STORE_ID, StoreImageType.INTERIOR)).thenReturn(0L);
+        when(s3Presigner.presignPutObject(any(PutObjectPresignRequest.class))).thenReturn(presignedPutObjectRequest);
+        when(presignedPutObjectRequest.url()).thenReturn(new URL("https://example.com/presigned"));
+
+        var result = service.prepareInteriorUpload(OWNER_ID, "photo.jpg", "image/jpeg", 1000L);
+
+        assertThat(result.sortOrder()).isEqualTo(1);
+        assertThat(result.uploadUrl()).isEqualTo("https://example.com/presigned");
+        assertThat(result.uploadId()).isNotBlank();
+
+        ArgumentCaptor<StoreImage> captor = ArgumentCaptor.forClass(StoreImage.class);
+        verify(storeImageRepository).save(captor.capture());
+        assertThat(captor.getValue().getSortOrder()).isEqualTo(1);
+        assertThat(captor.getValue().getImageType()).isEqualTo(StoreImageType.INTERIOR);
+
+        ArgumentCaptor<PutObjectPresignRequest> presignCaptor = ArgumentCaptor.forClass(PutObjectPresignRequest.class);
+        verify(s3Presigner).presignPutObject(presignCaptor.capture());
+        assertThat(presignCaptor.getValue().putObjectRequest().contentLength()).isEqualTo(1000L);
+    }
+
+    @Test
+    @DisplayName("presign이 실패하면 예약해 둔 PENDING 행을 지우고 그대로 던진다")
+    void presign이_실패하면_예약을_지운다() {
+        givenOwnerWithStoreForUpdate();
+        when(storeImageRepository.countByStoreIdAndImageType(STORE_ID, StoreImageType.INTERIOR)).thenReturn(0L);
+        RuntimeException presignFailure = new RuntimeException("자격 증명을 가져오지 못했다");
+        when(s3Presigner.presignPutObject(any(PutObjectPresignRequest.class))).thenThrow(presignFailure);
+
+        assertThatThrownBy(() -> service.prepareInteriorUpload(OWNER_ID, "photo.jpg", "image/jpeg", 1000L))
+                .isSameAs(presignFailure);
+
+        verify(storeImageRepository).save(any(StoreImage.class));
+        verify(storeImageRepository).delete(any(StoreImage.class));
+    }
+
+    @Test
+    @DisplayName("인테리어 이미지가 이미 3개면 거부한다")
+    void 인테리어_이미지_3개_제한을_넘으면_거부한다() {
+        givenOwnerWithStoreForUpdate();
+        when(storeImageRepository.countByStoreIdAndImageType(STORE_ID, StoreImageType.INTERIOR)).thenReturn(3L);
+
+        assertThatThrownBy(() -> service.prepareInteriorUpload(OWNER_ID, "photo.jpg", "image/jpeg", 1000L))
+                .isInstanceOfSatisfying(StoreException.class, e ->
+                        assertThat(e.getErrorCode()).isEqualTo(StoreErrorCode.INTERIOR_IMAGE_LIMIT_EXCEEDED));
+    }
+
+    @Test
+    @DisplayName("등록 진행 상태가 없으면 업로드 준비를 거부한다")
+    void 등록_진행_상태가_없으면_준비를_거부한다() {
+        when(progressRepository.findByOwnerIdForUpdate(OWNER_ID)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.prepareInteriorUpload(OWNER_ID, "photo.jpg", "image/jpeg", 1000L))
+                .isInstanceOfSatisfying(StoreException.class, e ->
+                        assertThat(e.getErrorCode()).isEqualTo(StoreErrorCode.REGISTRATION_PROGRESS_NOT_FOUND));
+    }
+
+    @Test
+    @DisplayName("허용하지 않는 파일 형식이면 거부한다")
+    void 허용하지_않는_형식이면_거부한다() {
+        assertThatThrownBy(() -> service.prepareInteriorUpload(OWNER_ID, "photo.gif", "image/gif", 1000L))
+                .isInstanceOfSatisfying(StoreException.class, e ->
+                        assertThat(e.getErrorCode()).isEqualTo(StoreErrorCode.IMAGE_CONTENT_TYPE_NOT_ALLOWED));
+        verify(progressRepository, never()).findByOwnerIdForUpdate(anyLong());
+    }
+
+    @Test
+    @DisplayName("10MB를 넘는 파일 크기면 거부한다")
+    void 파일_크기_상한을_넘으면_거부한다() {
+        assertThatThrownBy(() -> service.prepareInteriorUpload(OWNER_ID, "photo.jpg", "image/jpeg", 10_485_761L))
+                .isInstanceOfSatisfying(StoreException.class, e ->
+                        assertThat(e.getErrorCode()).isEqualTo(StoreErrorCode.IMAGE_FILE_TOO_LARGE));
+    }
+
+    @Test
+    @DisplayName("등록 진행 상태가 없으면 업로드 확인을 거부한다")
+    void 등록_진행_상태가_없으면_확인을_거부한다() {
+        when(progressRepository.findByOwnerId(OWNER_ID)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.confirmUpload(OWNER_ID, "upload-1"))
+                .isInstanceOfSatisfying(StoreException.class, e ->
+                        assertThat(e.getErrorCode()).isEqualTo(StoreErrorCode.REGISTRATION_PROGRESS_NOT_FOUND));
+    }
+
+    @Test
+    @DisplayName("업로드를 확인하면 headObject로 실제 업로드를 확인하고 VERIFIED로 바꾼다")
+    void 업로드를_확인한다() {
+        givenOwnerWithStore();
+        StoreImage image = StoreImage.preparePending(
+                STORE_ID, "upload-1", StoreImageType.INTERIOR, "stores/20/interior/upload-1.jpg",
+                "photo.jpg", "image/jpeg", 1000L, 1);
+        when(storeImageRepository.findByUploadId("upload-1")).thenReturn(Optional.of(image));
+        when(s3Client.headObject(any(HeadObjectRequest.class)))
+                .thenReturn(HeadObjectResponse.builder().contentLength(1000L).build());
+
+        service.confirmUpload(OWNER_ID, "upload-1");
+
+        assertThat(image.getUploadStatus().name()).isEqualTo("VERIFIED");
+        verify(s3Client).headObject(any(HeadObjectRequest.class));
+    }
+
+    @Test
+    @DisplayName("이미 VERIFIED인 업로드를 다시 확인해도 headObject를 부르지 않고 그대로 성공한다(응답을 못 받은 재시도)")
+    void 이미_확인된_업로드는_재시도해도_성공한다() {
+        givenOwnerWithStore();
+        StoreImage image = StoreImage.preparePending(
+                STORE_ID, "upload-1", StoreImageType.INTERIOR, "stores/20/interior/upload-1.jpg",
+                "photo.jpg", "image/jpeg", 1000L, 1);
+        image.verify(java.time.LocalDateTime.now(FIXED_CLOCK));
+        when(storeImageRepository.findByUploadId("upload-1")).thenReturn(Optional.of(image));
+
+        service.confirmUpload(OWNER_ID, "upload-1");
+
+        verify(s3Client, never()).headObject(any(HeadObjectRequest.class));
+    }
+
+    @Test
+    @DisplayName("실제로 업로드되지 않았으면 거부한다")
+    void 업로드되지_않았으면_거부한다() {
+        givenOwnerWithStore();
+        StoreImage image = StoreImage.preparePending(
+                STORE_ID, "upload-1", StoreImageType.INTERIOR, "stores/20/interior/upload-1.jpg",
+                "photo.jpg", "image/jpeg", 1000L, 1);
+        when(storeImageRepository.findByUploadId("upload-1")).thenReturn(Optional.of(image));
+        when(s3Client.headObject(any(HeadObjectRequest.class)))
+                .thenThrow((S3Exception) S3Exception.builder().message("not found").statusCode(404).build());
+
+        assertThatThrownBy(() -> service.confirmUpload(OWNER_ID, "upload-1"))
+                .isInstanceOfSatisfying(StoreException.class, e ->
+                        assertThat(e.getErrorCode()).isEqualTo(StoreErrorCode.IMAGE_NOT_UPLOADED));
+    }
+
+    @Test
+    @DisplayName("headObject가 404 아닌 오류를 돌려주면 그대로 전파한다")
+    void headObject가_404가_아니면_전파한다() {
+        givenOwnerWithStore();
+        StoreImage image = StoreImage.preparePending(
+                STORE_ID, "upload-1", StoreImageType.INTERIOR, "stores/20/interior/upload-1.jpg",
+                "photo.jpg", "image/jpeg", 1000L, 1);
+        when(storeImageRepository.findByUploadId("upload-1")).thenReturn(Optional.of(image));
+        S3Exception serverError = (S3Exception) S3Exception.builder().message("internal error").statusCode(500).build();
+        when(s3Client.headObject(any(HeadObjectRequest.class))).thenThrow(serverError);
+
+        assertThatThrownBy(() -> service.confirmUpload(OWNER_ID, "upload-1"))
+                .isSameAs(serverError);
+    }
+
+    @Test
+    @DisplayName("실제 업로드 크기가 선언한 크기를 넘으면 거부한다")
+    void 실제_크기가_선언한_크기를_넘으면_거부한다() {
+        givenOwnerWithStore();
+        StoreImage image = StoreImage.preparePending(
+                STORE_ID, "upload-1", StoreImageType.INTERIOR, "stores/20/interior/upload-1.jpg",
+                "photo.jpg", "image/jpeg", 1000L, 1);
+        when(storeImageRepository.findByUploadId("upload-1")).thenReturn(Optional.of(image));
+        when(s3Client.headObject(any(HeadObjectRequest.class)))
+                .thenReturn(HeadObjectResponse.builder().contentLength(1001L).build());
+
+        assertThatThrownBy(() -> service.confirmUpload(OWNER_ID, "upload-1"))
+                .isInstanceOfSatisfying(StoreException.class, e ->
+                        assertThat(e.getErrorCode()).isEqualTo(StoreErrorCode.IMAGE_FILE_TOO_LARGE));
+    }
+
+    @Test
+    @DisplayName("다른 가게의 업로드 요청이면 거부한다")
+    void 다른_가게의_업로드면_거부한다() {
+        givenOwnerWithStore();
+        StoreImage otherStoreImage = StoreImage.preparePending(
+                999L, "upload-1", StoreImageType.INTERIOR, "stores/999/interior/upload-1.jpg",
+                "photo.jpg", "image/jpeg", 1000L, 1);
+        when(storeImageRepository.findByUploadId("upload-1")).thenReturn(Optional.of(otherStoreImage));
+
+        assertThatThrownBy(() -> service.confirmUpload(OWNER_ID, "upload-1"))
+                .isInstanceOfSatisfying(StoreException.class, e ->
+                        assertThat(e.getErrorCode()).isEqualTo(StoreErrorCode.IMAGE_UPLOAD_NOT_FOUND));
+    }
+
+    @Test
+    @DisplayName("로고가 없으면 이미지 단계를 완료할 수 없다")
+    void 로고가_없으면_완료할_수_없다() {
+        givenOwnerWithStore();
+        when(storeImageRepository.existsByStoreIdAndImageType(STORE_ID, StoreImageType.LOGO)).thenReturn(false);
+
+        assertThatThrownBy(() -> service.completeImagesStep(OWNER_ID, 3L))
+                .isInstanceOfSatisfying(StoreException.class, e ->
+                        assertThat(e.getErrorCode()).isEqualTo(StoreErrorCode.LOGO_IMAGE_REQUIRED));
+        verify(progressService, never()).completeStep(anyLong(), anyLong(), any(), any());
+    }
+
+    @Test
+    @DisplayName("로고가 있으면 IMAGES 단계를 완료하고 다음 상태를 돌려준다")
+    void 로고가_있으면_완료한다() {
+        givenOwnerWithStore();
+        when(storeImageRepository.existsByStoreIdAndImageType(STORE_ID, StoreImageType.LOGO)).thenReturn(true);
+        var snapshot = new StoreRegistrationProgressSnapshot(STORE_ID, StoreRegistrationStep.MENU, 4L);
+        when(progressService.completeStep(OWNER_ID, 3L, StoreRegistrationStep.IMAGES, null)).thenReturn(snapshot);
+
+        StoreRegistrationProgressResponse response = service.completeImagesStep(OWNER_ID, 3L);
+
+        assertThat(response.resumeStep()).isEqualTo(StoreRegistrationStep.MENU);
+        assertThat(response.version()).isEqualTo(4L);
+    }
+
+    private void givenOwnerWithStore() {
+        when(progressRepository.findByOwnerId(OWNER_ID)).thenReturn(Optional.of(progress()));
+    }
+
+    private void givenOwnerWithStoreForUpdate() {
+        when(progressRepository.findByOwnerIdForUpdate(OWNER_ID)).thenReturn(Optional.of(progress()));
+    }
+
+    private StoreRegistrationProgress progress() {
+        try {
+            StoreRegistrationProgress progress = StoreRegistrationProgress.start(OWNER_ID);
+            Field storeIdField = StoreRegistrationProgress.class.getDeclaredField("storeId");
+            storeIdField.setAccessible(true);
+            storeIdField.set(progress, STORE_ID);
+            return progress;
+        } catch (ReflectiveOperationException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+}
