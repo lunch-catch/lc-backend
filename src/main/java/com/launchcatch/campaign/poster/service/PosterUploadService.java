@@ -31,6 +31,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import lombok.extern.slf4j.Slf4j;
 import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
 import org.jsoup.nodes.Element;
@@ -54,6 +55,7 @@ import software.amazon.awssdk.services.s3.presigner.model.PutObjectPresignReques
  * headObject 확인을 생성 시점에 한 번만 한다. 그래서 PENDING 상태를 들고 있는 엔티티도 없다.
  */
 @Service
+@Slf4j
 public class PosterUploadService {
 
     private static final long MAX_FILE_SIZE = 10 * 1024 * 1024;
@@ -117,7 +119,7 @@ public class PosterUploadService {
         Template template = findUsableTemplate(templateId);
 
         // 캠페인 잠금과 상관없는 다른 도메인 조회라 잠금을 잡기 전에 끝낸다(셀프 리뷰로 찾음).
-        String eventName = findStore(campaign.getStoreId()).storeName();
+        String eventName = findStore(campaign.getId(), campaign.getStoreId()).storeName();
         String discount = formatDiscount(campaign);
         String period = formatPeriod(campaign);
 
@@ -212,10 +214,13 @@ public class PosterUploadService {
         return template;
     }
 
-    private StoreInfo findStore(Long storeId) {
+    private StoreInfo findStore(Long campaignId, Long storeId) {
         return storeQueryService.findAllById(List.of(storeId)).stream()
                 .findFirst()
-                .orElseThrow(() -> new CampaignException(CommonErrorCode.INTERNAL_ERROR));
+                .orElseThrow(() -> {
+                    log.error("event=POSTER_STORE_NOT_FOUND campaignId={} storeId={}", campaignId, storeId);
+                    return new CampaignException(CommonErrorCode.INTERNAL_ERROR);
+                });
     }
 
     private String formatDiscount(Campaign campaign) {
@@ -224,15 +229,18 @@ public class PosterUploadService {
                 : campaign.getDiscountValue() + "원";
         String targetText = campaign.getDiscountTargetType() == DiscountTargetType.ALL
                 ? "전체 메뉴"
-                : findMenuName(campaign.getTargetMenuId());
+                : findMenuName(campaign.getId(), campaign.getTargetMenuId());
         return targetText + " " + valueText + " 할인";
     }
 
-    private String findMenuName(Long menuId) {
+    private String findMenuName(Long campaignId, Long menuId) {
         return storeQueryService.findMenusByIdIn(List.of(menuId)).stream()
                 .findFirst()
                 .map(StoreMenuInfo::menuName)
-                .orElseThrow(() -> new CampaignException(CommonErrorCode.INTERNAL_ERROR));
+                .orElseThrow(() -> {
+                    log.error("event=POSTER_MENU_NOT_FOUND campaignId={} menuId={}", campaignId, menuId);
+                    return new CampaignException(CommonErrorCode.INTERNAL_ERROR);
+                });
     }
 
     private String formatPeriod(Campaign campaign) {
