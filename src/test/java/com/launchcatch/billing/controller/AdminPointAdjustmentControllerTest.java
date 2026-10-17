@@ -24,9 +24,9 @@ class AdminPointAdjustmentControllerTest {
 
     private static final CustomUserDetails ADMIN = new CustomUserDetails(2L, Role.ADMIN);
     private static final PointAdjustmentRequest REQUEST =
-            new PointAdjustmentRequest("req-1", 7L, 1000L, "중복 과금 정정", null, null);
+            new PointAdjustmentRequest("req-1", 7L, 1000L, "중복 과금 정정", null, null, null);
     private static final PointAdjustmentResponse ADJUSTMENT =
-            new PointAdjustmentResponse(9101L, 7L, 1000L, null, "중복 과금 정정", OffsetDateTime.now());
+            new PointAdjustmentResponse(9101L, 7L, 1000L, null, null, "중복 과금 정정", OffsetDateTime.now());
 
     @Test
     void 새로_기록하면_201로_답한다() {

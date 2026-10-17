@@ -5,6 +5,7 @@ import com.launchcatch.billing.dto.ServeIds;
 import com.launchcatch.billing.entity.DeductionResult;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -56,6 +57,15 @@ public interface DeductionResultRepository extends JpaRepository<DeductionResult
     default Optional<DeductionStatus> findFirstStatus(UUID serveId) {
         return Optional.ofNullable(findStatusNameForShare(ServeIds.toBytes(serveId))).map(DeductionStatus::valueOf);
     }
+
+    // 영업일의 캠페인과 과금 상태별 판정 건수다
+    @Query("""
+            select new com.launchcatch.billing.repository.DeductionCountRow(d.campaignId, d.billingStatus, count(d))
+              from DeductionResult d
+             where d.businessDate = :businessDate
+             group by d.campaignId, d.billingStatus
+            """)
+    List<DeductionCountRow> countByStatusOn(@Param("businessDate") LocalDate businessDate);
 
     // serve_id 를 BINARY(16) 바이트로 바꿔 넘기는 호출 편의 메서드다
     default int insertIfAbsent(UUID serveId, Long campaignId, Long ownerId, LocalDate businessDate,

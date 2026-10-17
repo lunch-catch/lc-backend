@@ -17,6 +17,7 @@ import org.junit.jupiter.api.Test;
 class PointLedgerTest {
 
     private static final Long OWNER_ID = 7L;
+    private static final LocalDate TARGET = LocalDate.of(2026, 10, 13);
     private static final Long PAYMENT_ID = 42L;
     private static final long AMOUNT = 10000L;
 
@@ -82,8 +83,8 @@ class PointLedgerTest {
     @Test
     @DisplayName("조정은 부호를 가진 금액을 그대로 저장하고 사람이 기록한 것으로 남긴다")
     void 조정_부호와_주체() {
-        PointLedger plus = PointLedger.adjust(OWNER_ID, 1000L, "중복 과금 정정", 12L, "req-1");
-        PointLedger minus = PointLedger.adjust(OWNER_ID, -500L, "오입력 정정", null, "req-2");
+        PointLedger plus = PointLedger.adjust(OWNER_ID, 1000L, "중복 과금 정정", 12L, TARGET, "req-1");
+        PointLedger minus = PointLedger.adjust(OWNER_ID, -500L, "오입력 정정", null, null, "req-2");
 
         assertThat(plus.getAmount()).isEqualTo(1000L);
         assertThat(minus.getAmount()).isEqualTo(-500L);
@@ -97,31 +98,50 @@ class PointLedgerTest {
     }
 
     @Test
+    @DisplayName("캠페인에 연결된 조정은 정정 대상 영업일을 저장하고 캠페인 없는 조정은 비워 둔다")
+    void 조정_정정_대상_영업일() {
+        PointLedger withCampaign = PointLedger.adjust(OWNER_ID, 1000L, "중복 과금 정정", 12L, TARGET, "req-1");
+        PointLedger withoutCampaign = PointLedger.adjust(OWNER_ID, 1000L, "오입력 정정", null, null, "req-2");
+
+        assertThat(withCampaign.getAdjustTargetDate()).isEqualTo(TARGET);
+        assertThat(withoutCampaign.getAdjustTargetDate()).isNull();
+    }
+
+    @Test
+    @DisplayName("캠페인과 정정 대상 영업일은 둘 다 있거나 둘 다 없어야 한다")
+    void 조정_캠페인과_대상일_짝() {
+        assertThatThrownBy(() -> PointLedger.adjust(OWNER_ID, 1000L, "사유", 12L, null, "req"))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> PointLedger.adjust(OWNER_ID, 1000L, "사유", null, TARGET, "req"))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
     @DisplayName("조정 금액은 0일 수 없다")
     void 조정_0_거부() {
-        assertThatThrownBy(() -> PointLedger.adjust(OWNER_ID, 0L, "사유", null, "req"))
+        assertThatThrownBy(() -> PointLedger.adjust(OWNER_ID, 0L, "사유", null, null, "req"))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test
     @DisplayName("조정 사유는 비어 있거나 255자를 넘을 수 없다")
     void 조정_사유_거부() {
-        assertThatThrownBy(() -> PointLedger.adjust(OWNER_ID, 100L, null, null, "req"))
+        assertThatThrownBy(() -> PointLedger.adjust(OWNER_ID, 100L, null, null, null, "req"))
                 .isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> PointLedger.adjust(OWNER_ID, 100L, " ", null, "req"))
+        assertThatThrownBy(() -> PointLedger.adjust(OWNER_ID, 100L, " ", null, null, "req"))
                 .isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> PointLedger.adjust(OWNER_ID, 100L, "가".repeat(256), null, "req"))
+        assertThatThrownBy(() -> PointLedger.adjust(OWNER_ID, 100L, "가".repeat(256), null, null, "req"))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test
     @DisplayName("조정 멱등 키는 비어 있거나 64자를 넘을 수 없다")
     void 조정_멱등키_거부() {
-        assertThatThrownBy(() -> PointLedger.adjust(OWNER_ID, 100L, "사유", null, null))
+        assertThatThrownBy(() -> PointLedger.adjust(OWNER_ID, 100L, "사유", null, null, null))
                 .isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> PointLedger.adjust(OWNER_ID, 100L, "사유", null, ""))
+        assertThatThrownBy(() -> PointLedger.adjust(OWNER_ID, 100L, "사유", null, null, ""))
                 .isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> PointLedger.adjust(OWNER_ID, 100L, "사유", null, "k".repeat(65)))
+        assertThatThrownBy(() -> PointLedger.adjust(OWNER_ID, 100L, "사유", null, null, "k".repeat(65)))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 

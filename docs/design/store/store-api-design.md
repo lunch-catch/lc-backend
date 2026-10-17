@@ -1,7 +1,8 @@
-# 가게 목록 조회와 캠페인 요약 저장
+# 가게 (store) API 설계
 
 요청과 응답은 [store-api-spec.md](../../api-spec/store-api-spec.md)가 소유한다.
-이 문서는 이슈 #331의 조회 구현과 다른 도메인에 공개하는 요약 저장 계약을 정의한다.
+이 문서는 이슈 #331의 조회 구현, 다른 도메인에 공개하는 요약 저장 계약, 이슈 #375의
+점주 인테리어 이미지 업로드, 이슈 #389의 점주 대표 메뉴와 메뉴 이미지 업로드를 정의한다.
 
 ## 조회 구조
 
@@ -79,7 +80,6 @@ StoreListIntegrationTest 하나에서 실제 MySQL의 거리 정렬과 반올림
 같은 테스트에서 캠페인·메뉴 응답, 공통 보안 체인, MEMBER 권한과 updater의 저장·롤백도 검증한다.
 일괄 저장은 500개 메뉴 요약의 실제 SELECT·INSERT 실행 횟수와 기존 행 갱신, 메뉴 검증 실패와 롤백을 확인한다.
 
-
 ## 점주 약관 동의
 
 계약은 [store-api-spec.md](../../api-spec/store-api-spec.md#점주-약관-동의)를 따른다.
@@ -110,3 +110,79 @@ withdrawn_at은 향후 확장을 위해 NULL을 허용한다. 최초 동의 시 
 기존 점주별 여러 행은 한 행으로 합친다. 모든 기존 기록이 동의 상태이고 철회되지 않은 경우에만 마지막 갱신 시각을 agreed_at으로 이관한다.
 이관 시 required=true로 설정한다. 미동의나 철회가 섞인 기록은 agreed=false, agreed_at=null로 남겨 전체 필수 약관 동의로 승격하지 않는다.
 기존 철회 시각은 보존한다. 실제 최초 동의 시각은 과거 스키마에 없으므로 이관 시각과 새 요청의 서버 동의 시각을 구분한다.
+
+## 점주 인테리어 이미지 업로드(`#375`)
+
+**서버가 하는 일**
+
+1. presigned URL 발급(`prepareUpload`): 점주 상태(`ONBOARDING`)와 파일 형식·크기를 검증하고,
+   그 가게의 인테리어 이미지 개수를 세어 `sortOrder`를 매긴 뒤 `store_image` 행을
+   `upload_status=PENDING`으로 먼저 만든다. 그다음 `S3Presigner`로 그 `objectKey`에 대한
+   presigned PUT URL을 발급한다.
+2. 업로드 확인(`confirmUpload`): `uploadId`로 `PENDING` 행을 찾아 본인 가게 소유인지 확인하고,
+   `S3Client.headObject`로 실제 업로드됐는지 확인한 뒤 `VERIFIED`로 바꾼다.
+3. 단계 완료(`complete`): 그 가게에 로고(`LOGO`) 이미지가 있는지 확인한 뒤
+   `StoreRegistrationProgressService.completeStep(ownerId, version, IMAGES, null)`을 불러
+   `MENU`로 진행한다.
+
+**정한 이유**
+
+- **`upload_status`는 `PENDING` → `VERIFIED`만 쓴다.** DB CHECK 제약은 `UPLOADED`도 허용하지만,
+  점주가 "업로드 끝냈다"고 자체 보고하는 중간 상태를 둘 이유가 없어 단순하게 뺐다(#375 결정).
+  `headObject` 확인 자체가 "실제로 업로드됨"의 증거라 중간 상태가 없어도 정합성이 깨지지 않는다.
+- **인테리어 `sortOrder`는 점주가 지정하지 않고 서버가 업로드 순서대로 자동으로 매긴다(#375 결정).**
+  재배치(순서 바꾸기) 기능이 없는 지금 범위에서는 점주 입력을 받을 이유가 없어 더 단순한
+  쪽을 택했다. 재배치가 생기면 이 결정을 다시 봐야 한다.
+- **로고는 이 기능으로 새로 올리지 않고 존재만 확인한다(#375 결정).** 로고는 가게 입점
+  과정에서 이미 필수로 등록돼 있다는 전제다. 가게 담당이 "대표 메뉴가 선택으로 바뀌어
+  온보딩이 끝나도 메뉴가 없을 수 있다"고 확인해 줬지만, 그건 메뉴 얘기고 로고(`image_type=LOGO`)는
+  `store_image`의 `uk_store_image_single_logo` 제약과 별개로 여전히 필수 전제다.
+- **`completeStep`에 필요한 `version`을 돌려주는 조회 API(`GET /v1/owner/store-registration-progress`)를
+  이 이슈에서 같이 만든다.** 등록 단계 API 전체가 아직 하나도 없어 클라이언트가 현재 버전을
+  얻을 곳이 없었다. 이 조회는 저장된 진행 상태를 읽으며 없으면 TERMS와 버전 0을 반환한다.
+  GET은 진행 상태를 생성하지 않는다. 최초 생성은 점주 행 잠금 아래 약관 저장에서 처리한다.
+- **presigned 업로드 흐름을 이 이슈에서 처음 구현한다.** `S3Config`는 "가게 이미지, 포스터
+  이미지, 증빙 서류가 같은 경로를 쓴다"고 전제해 뒀지만 실제로 쓰는 코드는 없었다. 이 구현은
+  `store_image` 테이블(업로드 상태 추적 컬럼 포함)에 맞춘 것이라, 포스터 이미지처럼 추적
+  컬럼이 없는 테이블은 그대로 재사용할 수 없고 패턴만 따라야 한다.
+- **콜론 커스텀 메서드 경로(`:prepareUpload` 등)를 쓴다.** `api-spec.md` 공통 규약의 예시이고
+  `AdminRefundController`(`/{id}:approve`)가 이미 같은 표기를 쓴다. 다만 이번엔 경로 변수 없이
+  컬렉션 경로에 바로 붙는 형태라 실제로 라우팅되는지 통합 테스트로 확인했다(`StoreImageSecurityIntegrationTest`).
+
+## 점주 대표 메뉴와 메뉴 이미지 업로드(`#389`)
+
+**서버가 하는 일**
+
+1. 메뉴 등록(`POST /v1/owner/store-menus`): 그 가게의 메뉴 개수를 세어 `sortOrder`를 매긴 뒤
+   `store_menu` 행을 만든다. 이름·가격·설명(선택)만 저장하며 이미지는 아직 없다.
+2. presigned URL 발급(`prepareUpload`): 요청한 `menuId`가 본인 가게의 메뉴인지 확인하고
+   파일 형식·크기를 검증한 뒤 `store_menu_image` 행을 `upload_status=PENDING`으로 먼저
+   만든다. 그다음 `S3Presigner`로 그 `objectKey`에 대한 presigned PUT URL을 발급한다.
+3. 업로드 확인(`confirmUpload`): `uploadId`로 `PENDING` 행을 찾아 그 메뉴가 본인 가게 소유인지
+   확인하고, `S3Client.headObject`로 실제 업로드됐는지 확인한 뒤 `VERIFIED`로 바꾼다.
+4. 단계 완료(`complete`): 그 가게의 메뉴 중 이미지가 `VERIFIED`가 아닌 메뉴이 하나라도 있으면
+   거부하고, 없으면(메뉴가 0개여도 통과한다) `StoreRegistrationProgressService.completeStep
+   (ownerId, version, MENU, null)`을 불러 버전을 올린다. `MENU`는 마지막 입력 단계라
+   다음 단계로 넘어가지 않는다.
+
+**정한 이유**
+
+- **메뉴 저장과 이미지 업로드를 분리한다.** `store_menu_image.store_menu_id`가 `NOT NULL` FK로
+  `store_menu`를 가리켜서, 가게 인테리어 이미지(`#375`, `store_id`로 바로 참조하며 가게는
+  이미 존재)와 달리 메뉴는 이 이슈에서 처음 만들어지는 대상이라 이미지보다 먼저 존재해야
+  한다. 그래서 이름·가격·설명 저장(1번)과 이미지 업로드(2~3번)를 별개 API로 나눴다(이슈
+  본문에서 사용자가 직접 정리, `#389` 결정).
+- **`upload_status`는 `PENDING` → `VERIFIED`만 쓴다.** `store_image`와 같은 이유로 중간
+  상태(`UPLOADED`)를 두지 않는다(`#375` 결정을 그대로 따름). 같은 이유라 `StoreImageUploadStatus`
+  enum을 새로 만들지 않고 재사용한다.
+- **메뉴 `sortOrder`는 점주가 지정하지 않고 서버가 등록 순서대로 자동으로 매긴다.** 인테리어
+  이미지(`#375`)와 같은 이유로, 재배치 기능이 없는 지금 범위에서는 점주 입력을 받을 이유가
+  없다. 재배치가 생기면 이 결정을 다시 봐야 한다.
+- **메뉴 수정·삭제는 이 이슈 범위 밖이다.** 등록만 다루며, `store_menu`에 수정이나 삭제 API를
+  두지 않는다. 삭제 기능이 생기면 메뉴 할당량이나 카운터를 따로 감소시킬 경로가 필요하다.
+- **기존 조회 전용 `StoreMenu` 엔티티를 확장해 쓴다.** 새 쓰기 전용 엔티티를 같은 테이블에
+  중복 매핑하지 않기 위해 `@Immutable`을 떼고 `description`, `sortOrder` 컬럼 매핑과
+  `register(...)` 팩터리를 추가했다. 기존에 읽던 `id`, `name`, `price`는 그대로라
+  `StoreMenuInfo`(쿠폰 contract)와 `StoreRepositoryImpl`의 메뉴 조회에는 영향이 없다.
+- **`menuId` 소유권 확인 실패는 "없음"과 "다른 가게 소유"를 구분하지 않고 같은 `403`
+  (`STORE-012`)으로 묶는다.** 업로드 확인 실패(`STORE-008`)와 같은 근거다(`api-spec.md`).

@@ -19,6 +19,8 @@ import com.google.zxing.client.j2se.BufferedImageLuminanceSource;
 import com.google.zxing.common.HybridBinarizer;
 import com.google.zxing.qrcode.QRCodeReader;
 import com.launchcatch.coupon.CouponQrImageEncoder;
+import com.launchcatch.coupon.contract.CouponIssuedEvent;
+import com.launchcatch.coupon.contract.CouponRedeemedEvent;
 import com.launchcatch.coupon.dto.CouponQrResponse;
 import com.launchcatch.coupon.dto.CouponUseRequest;
 import com.launchcatch.coupon.dto.CouponUseResponse;
@@ -83,6 +85,7 @@ import org.mockito.quality.Strictness;
 import org.slf4j.LoggerFactory;
 import org.springframework.aop.framework.ProxyFactory;
 import org.springframework.beans.BeanUtils;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.dao.PessimisticLockingFailureException;
 import org.springframework.dao.QueryTimeoutException;
@@ -105,6 +108,7 @@ class CouponCommandServiceTest {
 
     @Mock MemberCouponRepository memberCouponRepository;
     @Mock CouponDailyLimitRepository couponDailyLimitRepository;
+    @Mock ApplicationEventPublisher eventPublisher;
     @InjectMocks CouponCommandService service;
 
     private Logger logger;
@@ -298,6 +302,9 @@ class CouponCommandServiceTest {
         void setUp() {
             counter = BeanUtils.instantiateClass(CouponDailyLimit.class);
             event = BeanUtils.instantiateClass(CouponEvent.class);
+            ReflectionTestUtils.setField(event, "id", 81L);
+            ReflectionTestUtils.setField(event, "campaignId", 91L);
+            ReflectionTestUtils.setField(event, "storeId", 10L);
             ReflectionTestUtils.setField(event, "businessDate", TODAY);
             ReflectionTestUtils.setField(event, "status", CouponEventStatus.ACTIVE);
             ReflectionTestUtils.setField(event, "usableStartAt", TODAY.atTime(11, 0));
@@ -323,6 +330,8 @@ class CouponCommandServiceTest {
         void 발급한_재고의_코드와_이벤트_사용_시간을_저장하고_저장된_발급_시각을_반환한다() {
             var result = service.issue(17L, 81L);
             assertThat(result.memberCouponId()).isEqualTo(1001L);
+            verify(eventPublisher).publishEvent(new CouponIssuedEvent(
+                    "coupon-issued:1001", TODAY.atTime(12, 0), 17, 91, 10, 81, 1001));
             assertThat(result.issueTime().toString()).isEqualTo("2026-10-10T12:00+09:00");
             assertThat(counter.getIssuedCount()).isEqualTo(1);
             assertThat(inventory.getStatus()).isEqualTo(CouponInventoryStatus.ISSUED);
@@ -432,7 +441,7 @@ class CouponCommandServiceTest {
         private CouponCommandService serviceWith(Clock clock) {
             var service = new CouponCommandService(coupons, counters, members, events, inventories,
                     new CouponQrImageEncoder(), clock, mock(CouponUsageHistoryRepository.class),
-                    mock(OwnerStatusQuery.class), mock(StoreQueryService.class));
+                    mock(OwnerStatusQuery.class), mock(StoreQueryService.class), eventPublisher);
             ReflectionTestUtils.setField(service, "dailyLimit", 3);
             ReflectionTestUtils.setField(service, "issueStartTime", LocalTime.of(11, 0));
             ReflectionTestUtils.setField(service, "issueEndTime", LocalTime.of(14, 0));
@@ -462,7 +471,7 @@ class CouponCommandServiceTest {
             service = new CouponCommandService(repository, couponDailyLimitRepository, memberQuery,
                     mock(CouponEventRepository.class), mock(CouponInventoryRepository.class),
                     new CouponQrImageEncoder(), Clock.fixed(Instant.parse("2026-10-10T03:00:00Z"), ZoneOffset.UTC),
-                    mock(CouponUsageHistoryRepository.class), mock(OwnerStatusQuery.class), mock(StoreQueryService.class));
+                    mock(CouponUsageHistoryRepository.class), mock(OwnerStatusQuery.class), mock(StoreQueryService.class), eventPublisher);
         }
 
         @ParameterizedTest
@@ -652,7 +661,7 @@ class CouponCommandServiceTest {
         void setUp() {
             service = new CouponCommandService(coupons, mock(CouponDailyLimitRepository.class), members, events,
                     mock(CouponInventoryRepository.class), new CouponQrImageEncoder(),
-                    Clock.fixed(NOW.atZone(ClockConfig.ZONE).toInstant(), ClockConfig.ZONE), histories, owners, stores);
+                    Clock.fixed(NOW.atZone(ClockConfig.ZONE).toInstant(), ClockConfig.ZONE), histories, owners, stores, eventPublisher);
             coupon = MemberCoupon.issue(17L, 21L, UUID.randomUUID(), NOW.minusHours(1), NOW.plusHours(1));
             ReflectionTestUtils.setField(coupon, "id", 1001L);
             coupon.renewQr(TOKEN, NOW.minusSeconds(10));
@@ -666,6 +675,8 @@ class CouponCommandServiceTest {
             assertThat(response.usageHistoryId()).isEqualTo(55L);
             assertThat(response.discountAmount()).isEqualTo(680);
             assertThat(response.useTime().toLocalDateTime()).isEqualTo(AUDITED_AT.withNano(123457000));
+            verify(eventPublisher).publishEvent(new CouponRedeemedEvent(
+                    "coupon-redeemed:1001", AUDITED_AT, 17, 91, 10, 21, 1001));
             assertThat(coupon.getStatus()).isEqualTo(MemberCouponStatus.USED);
             assertThat(coupon.getQrToken()).isEqualTo(TOKEN);
             ArgumentCaptor<CouponUsageHistory> saved = ArgumentCaptor.forClass(CouponUsageHistory.class);
@@ -673,6 +684,40 @@ class CouponCommandServiceTest {
             assertThat(saved.getValue().getCreatedAt()).isEqualTo(AUDITED_AT);
             assertThat(saved.getValue().getUpdatedAt()).isEqualTo(AUDITED_AT);
             assertThat(saved.getValue().getDiscountAmount()).isEqualTo(680);
+        }
+
+        @ParameterizedTest
+        @CsvSource({"AMOUNT,3000,1500,3000", "PERCENT,15,3820,680"})
+        void 메뉴_한_개의_스냅샷_차액을_할인한다(DiscountType type, int value, long discountedPrice, int expected) {
+            ready();
+            ReflectionTestUtils.setField(event, "discountType", type);
+            ReflectionTestUtils.setField(event, "discountValue", value);
+            ReflectionTestUtils.setField(event, "targetMenuDiscountedPrice", discountedPrice);
+
+            CouponUseResponse response = service.redeem(9L, request());
+
+            assertThat(response.discountAmount()).isEqualTo(expected);
+        }
+
+        @ParameterizedTest
+        @CsvSource({"3000,3000", "3005,3010"})
+        void 전체_메뉴_정액은_주문_금액_없이_스냅샷_할인액을_반올림한다(int value, int expected) {
+            ready();
+            ReflectionTestUtils.setField(event, "discountTargetType", DiscountTargetType.ALL);
+            ReflectionTestUtils.setField(event, "discountType", DiscountType.AMOUNT);
+            ReflectionTestUtils.setField(event, "discountValue", value);
+
+            assertThat(service.redeem(9L, request()).discountAmount()).isEqualTo(expected);
+        }
+
+        @Test
+        void 전체_메뉴_정률은_사용하지_않고_상태와_이력을_유지한다() {
+            ready();
+            ReflectionTestUtils.setField(event, "discountTargetType", DiscountTargetType.ALL);
+
+            assertError(CommonErrorCode.INTERNAL_ERROR);
+            assertThat(coupon.getStatus()).isEqualTo(MemberCouponStatus.ISSUED);
+            verify(eventPublisher, never()).publishEvent(any(CouponRedeemedEvent.class));
         }
 
         @ParameterizedTest
@@ -769,6 +814,8 @@ class CouponCommandServiceTest {
             when(reference.getQrVersion()).thenReturn(coupon.getQrVersion());
             when(coupons.findByIdForUpdate(1001L)).thenReturn(Optional.of(coupon));
             when(events.findById(21L)).thenReturn(Optional.of(event));
+            ReflectionTestUtils.setField(event, "id", 21L);
+            ReflectionTestUtils.setField(event, "campaignId", 91L);
             ReflectionTestUtils.setField(event, "storeId", 10L);
             ReflectionTestUtils.setField(event, "discountTargetType", DiscountTargetType.MENU);
             ReflectionTestUtils.setField(event, "discountType", DiscountType.PERCENT);
@@ -796,7 +843,7 @@ class CouponCommandServiceTest {
         }
 
         private CouponUseRequest request() {
-            return new CouponUseRequest(127.0, 37.5, TOKEN, 10000L);
+            return new CouponUseRequest(127.0, 37.5, TOKEN);
         }
 
         private void assertError(ErrorCode expected) {

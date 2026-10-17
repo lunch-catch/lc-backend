@@ -30,9 +30,6 @@ class AnalyticsSecurityIntegrationTest extends AbstractAnalyticsIntegrationTest 
 
     @ParameterizedTest
     @ValueSource(strings = {
-            "/v1/admin/dashboard/members",
-            "/v1/admin/aggregation-runs",
-            "/v1/admin/sales",
             "/v1/admin/sales/top-owners",
             "/v1/admin/fraud/invalid-impressions",
             "/v1/admin/campaign-reports"
@@ -48,9 +45,42 @@ class AnalyticsSecurityIntegrationTest extends AbstractAnalyticsIntegrationTest 
         mvc.perform(post("/v1/admin/aggregations:recalculate").with(user("member").roles("MEMBER")))
                 .andExpect(status().isForbidden());
         mvc.perform(post("/v1/admin/aggregations:recalculate").with(user("admin").roles("ADMIN")))
-                .andExpect(status().isNotFound());
+                .andExpect(status().isBadRequest());
         mvc.perform(post("/v1/admin/aggregations:recalculate").with(user("super").roles("SUPER_ADMIN")))
-                .andExpect(status().isNotFound());
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void 회원_지표_경로는_인증과_관리자_역할을_요구한다() throws Exception {
+        mvc.perform(get("/v1/admin/dashboard/members")).andExpect(status().isUnauthorized());
+        mvc.perform(get("/v1/admin/dashboard/members").with(user("member").roles("MEMBER")))
+                .andExpect(status().isForbidden());
+        mvc.perform(get("/v1/admin/dashboard/members").with(user("admin").roles("ADMIN")))
+                .andExpect(status().isBadRequest());
+        mvc.perform(get("/v1/admin/dashboard/members").with(user("super").roles("SUPER_ADMIN")))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void 매출_현황_경로는_인증과_관리자_역할을_요구한다() throws Exception {
+        mvc.perform(get("/v1/admin/sales")).andExpect(status().isUnauthorized());
+        mvc.perform(get("/v1/admin/sales").with(user("member").roles("MEMBER")))
+                .andExpect(status().isForbidden());
+        mvc.perform(get("/v1/admin/sales").with(user("admin").roles("ADMIN")))
+                .andExpect(status().isBadRequest());
+        mvc.perform(get("/v1/admin/sales").with(user("super").roles("SUPER_ADMIN")))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void 집계_실행_조회_경로는_인증과_관리자_역할을_요구한다() throws Exception {
+        mvc.perform(get("/v1/admin/aggregation-runs")).andExpect(status().isUnauthorized());
+        mvc.perform(get("/v1/admin/aggregation-runs").with(user("member").roles("MEMBER")))
+                .andExpect(status().isForbidden());
+        mvc.perform(get("/v1/admin/aggregation-runs").with(user("admin").roles("ADMIN")))
+                .andExpect(status().isBadRequest());
+        mvc.perform(get("/v1/admin/aggregation-runs").with(user("super").roles("SUPER_ADMIN")))
+                .andExpect(status().isBadRequest());
     }
 
     @Test
@@ -70,7 +100,7 @@ class AnalyticsSecurityIntegrationTest extends AbstractAnalyticsIntegrationTest 
         mvc.perform(post("/v1/events").with(user("admin").roles("ADMIN")))
                 .andExpect(status().isForbidden());
         mvc.perform(post("/v1/events").with(user("member").roles("MEMBER")))
-                .andExpect(status().isNotFound());
+                .andExpect(status().isBadRequest());
     }
 
     @Test

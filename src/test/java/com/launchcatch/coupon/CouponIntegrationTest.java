@@ -25,6 +25,9 @@ import com.launchcatch.auth.contract.AccessTokenValidationPolicy;
 import com.launchcatch.campaign.contract.CampaignInfo;
 import com.launchcatch.campaign.contract.CampaignQueryService;
 import com.launchcatch.campaign.contract.CampaignStatus;
+import com.launchcatch.coupon.contract.CouponStatsQueryService;
+import com.launchcatch.coupon.contract.DailyCampaignCouponStats;
+import com.launchcatch.coupon.contract.MemberCouponStats;
 import com.launchcatch.coupon.dto.CouponDetailResponse;
 import com.launchcatch.coupon.dto.CouponUsageHistoryResponse;
 import com.launchcatch.coupon.entity.CouponInventoryStatus;
@@ -36,6 +39,10 @@ import com.launchcatch.coupon.repository.CouponInventoryRepository;
 import com.launchcatch.coupon.repository.CouponUsageHistoryRepository;
 import com.launchcatch.coupon.repository.MemberCouponRepository;
 import com.launchcatch.coupon.service.CouponCommandService;
+import com.launchcatch.coupon.contract.CouponIssueOpenedEvent;
+import com.launchcatch.coupon.contract.CouponIssuedEvent;
+import com.launchcatch.coupon.contract.CouponRedeemedEvent;
+import com.launchcatch.coupon.contract.CouponExpiredEvent;
 import com.launchcatch.coupon.service.CouponLookUpService;
 import com.launchcatch.global.config.ClockConfig;
 import com.launchcatch.global.response.CursorPageResponse;
@@ -55,6 +62,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
+import java.sql.SQLException;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -95,8 +103,10 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.dao.DataAccessException;
 import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.dao.QueryTimeoutException;
+import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
@@ -106,10 +116,12 @@ import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.transaction.event.TransactionalEventListener;
 import tools.jackson.databind.ObjectMapper;
 
 @SpringBootTest(properties = "coupon.daily-limit=3", webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @AutoConfigureMockMvc
+@Import(CouponIntegrationTest.FunnelRecorder.class)
 class CouponIntegrationTest extends IntegrationTestSupport {
 
     private static final LocalDate TODAY = LocalDate.of(2026, 10, 10);
@@ -121,6 +133,8 @@ class CouponIntegrationTest extends IntegrationTestSupport {
     @Autowired PlatformTransactionManager transactionManager;
     @Autowired CouponLookUpService couponLookUpService;
     @Autowired CouponCommandService couponCommandService;
+    @Autowired CouponStatsQueryService couponStats;
+    @Autowired FunnelRecorder funnel;
 
     @MockitoSpyBean Clock clock;
     @MockitoBean OwnerStatusQuery ownerStatusQuery;
@@ -136,10 +150,160 @@ class CouponIntegrationTest extends IntegrationTestSupport {
 
     @BeforeEach
     void setUpClock() {
+        funnel.received.clear();
         when(clock.withZone(ClockConfig.ZONE))
                 .thenReturn(Clock.fixed(Instant.parse("2026-10-10T03:00:00Z"), ClockConfig.ZONE));
         when(clock.getZone()).thenReturn(ClockConfig.ZONE);
         when(clock.instant()).thenReturn(Instant.parse("2026-10-10T03:00:00Z"));
+    }
+
+    @Nested
+    @DisplayName("분석용 쿠폰 집계 조회")
+    class Stats {
+
+        @AfterEach
+        void cleanUp() {
+            jdbcTemplate.update("DELETE FROM coupon_usage_history");
+            jdbcTemplate.update("DELETE FROM member_coupon");
+            jdbcTemplate.update("DELETE FROM coupon_inventory");
+            jdbcTemplate.update("DELETE FROM coupon_event");
+        }
+
+        @Test
+        void 회차_수를_오픈_수로_세고_발급은_모든_상태를_만료는_EXPIRED만_센다() {
+            event(81, 91, TODAY, "ACTIVE");
+            event(82, 92, TODAY, "PAUSED");
+            event(83, 93, TODAY, "ENDED");
+            event(84, 94, TODAY, "SCHEDULED");
+            event(85, 91, TODAY.minusDays(1), "ACTIVE");
+            coupon(101, 81, 17, "USED");
+            coupon(102, 81, 18, "EXPIRED");
+            coupon(103, 81, 19, "ISSUED");
+            coupon(104, 81, 20, "REMOVED");
+            coupon(105, 85, 17, "USED");
+            usage(101, TODAY.atTime(12, 0), 1500);
+            usage(105, TODAY.atTime(12, 1), 1500);
+
+            assertThat(couponStats.dailyCampaignStats(TODAY)).containsExactly(
+                    new DailyCampaignCouponStats(91, 1, 4, 2, 1),
+                    new DailyCampaignCouponStats(92, 1, 0, 0, 0),
+                    new DailyCampaignCouponStats(93, 1, 0, 0, 0),
+                    new DailyCampaignCouponStats(94, 1, 0, 0, 0));
+            assertThat(jdbcTemplate.queryForObject(
+                    "SELECT status FROM member_coupon WHERE member_coupon_id=103", String.class)).isEqualTo("ISSUED");
+        }
+
+        @Test
+        void 사용_수는_회차의_영업일과_별개로_KST_사용일의_양끝_경계를_적용한다() {
+            event(81, 91, TODAY.minusDays(1), "ENDED");
+            coupon(101, 81, 17, "USED");
+            coupon(102, 81, 18, "USED");
+            coupon(103, 81, 19, "USED");
+            coupon(104, 81, 20, "USED");
+            usage(101, TODAY.atStartOfDay().minusNanos(1000), 100);
+            usage(102, TODAY.atStartOfDay(), 200);
+            usage(103, TODAY.plusDays(1).atStartOfDay().minusNanos(1000), 300);
+            usage(104, TODAY.plusDays(1).atStartOfDay(), 400);
+
+            assertThat(couponStats.dailyCampaignStats(TODAY))
+                    .containsExactly(new DailyCampaignCouponStats(91, 0, 0, 2, 0));
+        }
+
+        @Test
+        void 캠페인이_다르면_발급과_사용과_만료_수가_섞이지_않는다() {
+            event(81, 91, TODAY, "ACTIVE");
+            event(82, 92, TODAY, "ACTIVE");
+            coupon(101, 81, 17, "USED");
+            coupon(102, 82, 17, "USED");
+            coupon(103, 82, 18, "EXPIRED");
+            usage(101, TODAY.atTime(12, 0), 100);
+            usage(102, TODAY.atTime(12, 0), 200);
+
+            assertThat(couponStats.dailyCampaignStats(TODAY)).containsExactly(
+                    new DailyCampaignCouponStats(91, 1, 1, 1, 0),
+                    new DailyCampaignCouponStats(92, 1, 2, 1, 1));
+        }
+
+        @Test
+        void 그날_회차와_사용_기록이_없으면_빈_목록이다() {
+            event(81, 91, TODAY.minusDays(1), "ACTIVE");
+            coupon(101, 81, 17, "EXPIRED");
+
+            assertThat(couponStats.dailyCampaignStats(TODAY)).isEmpty();
+        }
+
+        @Test
+        void 종료_시각이_지나도_저장_상태가_EXPIRED인_쿠폰만_만료로_집계한다() {
+            LocalDate day = TODAY.minusDays(3);
+            event(81, 91, day, "ENDED");
+            coupon(101, 81, 17, "EXPIRED");
+            coupon(102, 81, 18, "ISSUED");
+            coupon(103, 81, 19, "REMOVED");
+
+            assertThat(couponStats.dailyCampaignStats(day))
+                    .containsExactly(new DailyCampaignCouponStats(91, 1, 3, 0, 1));
+            assertThat(jdbcTemplate.queryForList(
+                    "SELECT status FROM member_coupon ORDER BY member_coupon_id", String.class))
+                    .containsExactly("EXPIRED", "ISSUED", "REMOVED");
+        }
+
+        @Test
+        void 회원_단건_집계는_모든_날짜의_확정_할인액을_더하며_다른_회원은_제외한다() {
+            event(81, 91, TODAY.minusDays(2), "ENDED");
+            event(82, 91, TODAY.minusDays(1), "ENDED");
+            event(83, 91, TODAY, "ACTIVE");
+            coupon(101, 81, 17, "USED");
+            coupon(102, 82, 17, "USED");
+            coupon(103, 83, 17, "USED");
+            coupon(104, 83, 18, "USED");
+            usage(101, TODAY.minusDays(2).atTime(12, 0), 1_500_000_000);
+            usage(102, TODAY.minusDays(1).atTime(12, 0), 1_500_000_000);
+            usage(103, TODAY.atTime(12, 0), 0);
+            usage(104, TODAY.atTime(12, 0), 5000);
+
+            assertThat(couponStats.memberStats(17))
+                    .isEqualTo(new MemberCouponStats(3, 3_000_000_000L));
+        }
+
+        @Test
+        void 회원의_사용_기록이_없으면_누적_집계는_0이다() {
+            event(81, 91, TODAY, "ACTIVE");
+            coupon(101, 81, 17, "ISSUED");
+
+            assertThat(couponStats.memberStats(17)).isEqualTo(new MemberCouponStats(0, 0));
+        }
+
+        @Test
+        void 회원의_발급_기록이_없어도_0인_단건을_반환한다() {
+            assertThat(couponStats.memberStats(17)).isEqualTo(new MemberCouponStats(0, 0));
+        }
+
+        private void event(long id, long campaignId, LocalDate day, String status) {
+            jdbcTemplate.update("""
+                    INSERT INTO coupon_event (coupon_event_id, campaign_id, business_date, issue_quantity,
+                        usable_start_at, usable_end_at, status, store_id, store_name,
+                        discount_target_type, discount_type, discount_value, created_at, updated_at)
+                    VALUES (?, ?, ?, 100, ?, ?, ?, 10, '테스트 매장', 'ALL', 'AMOUNT', 1000, ?, ?)
+                    """, id, campaignId, day, day.atStartOfDay(), day.plusDays(3).atStartOfDay(), status,
+                    day.atStartOfDay(), day.atStartOfDay());
+        }
+
+        private void coupon(long id, long eventId, long memberId, String status) {
+            jdbcTemplate.update("""
+                    INSERT INTO member_coupon (member_coupon_id, coupon_event_id, member_id, coupon_code,
+                        status, usable_start_at, usable_end_at, created_at, updated_at)
+                    SELECT ?, coupon_event_id, ?, UNHEX(LPAD(HEX(?), 32, '0')), ?,
+                           usable_start_at, usable_end_at, usable_start_at, usable_start_at
+                      FROM coupon_event WHERE coupon_event_id = ?
+                    """, id, memberId, id, status, eventId);
+        }
+
+        private void usage(long couponId, LocalDateTime createdAt, int discount) {
+            jdbcTemplate.update("""
+                    INSERT INTO coupon_usage_history (member_coupon_id, store_id, discount_amount, created_at, updated_at)
+                    VALUES (?, 10, ?, ?, ?)
+                    """, couponId, discount, createdAt, createdAt);
+        }
     }
 
     @Nested
@@ -177,8 +341,52 @@ class CouponIntegrationTest extends IntegrationTestSupport {
                     .andExpect(jsonPath("$.data.memberCouponId").isNumber())
                     .andExpect(jsonPath("$.data.issueTime").value("2026-10-10T12:00:00+09:00"));
             assertConsistent(1);
+            assertThat(funnel.received).hasSize(1);
+            CouponIssuedEvent issued = (CouponIssuedEvent) funnel.received.getFirst();
+            assertThat(issued.couponEventId()).isEqualTo(81);
+            assertThat(issued.memberCouponId()).isEqualTo(jdbcTemplate.queryForObject(
+                    "SELECT member_coupon_id FROM member_coupon", Long.class));
             assertThat(jdbcTemplate.queryForObject("SELECT sequence_no FROM coupon_inventory WHERE status='ISSUED'", Integer.class))
                     .isEqualTo(1);
+        }
+
+        @Test
+        void HTTP_발급을_감싼_트랜잭션이_롤백하면_분석_리스너가_수신하지_않는다() {
+            new TransactionTemplate(transactionManager).executeWithoutResult(transaction -> {
+                assertDoesNotThrow(() -> mockMvc.perform(post("/v1/coupons").with(user(MEMBER))
+                        .contentType("application/json").content("{\"eventId\":81}"))
+                        .andExpect(status().isCreated()));
+                assertThat(funnel.received).isEmpty();
+                transaction.setRollbackOnly();
+            });
+            assertThat(funnel.received).isEmpty();
+            assertConsistent(0);
+        }
+
+        @Test
+        void HTTP로_발급한_쿠폰의_사용_이벤트는_같은_회원_쿠폰_ID를_싣는다() throws Exception {
+            mockMvc.perform(post("/v1/coupons").with(user(MEMBER)).contentType("application/json")
+                    .content("{\"eventId\":81}")).andExpect(status().isCreated());
+            CouponIssuedEvent issued = (CouponIssuedEvent) funnel.received.getFirst();
+            long couponId = issued.memberCouponId();
+            mockMvc.perform(post("/v1/coupons/" + couponId + ":generateQr").with(user(MEMBER)))
+                    .andExpect(status().isOk());
+            UUID token = memberCouponRepository.findById(couponId).orElseThrow().getQrToken();
+            when(ownerStatusQuery.findCurrentStatus(9L)).thenReturn(Optional.of(OwnerAccountStatus.ACTIVE));
+            when(stores.canManageStore(9L, 10L)).thenReturn(true);
+            when(stores.findAllById(List.of(10L))).thenReturn(List.of(
+                    new StoreInfo(10L, "매장", "https://example.test/store.png", 37.5, 127.0)));
+
+            mockMvc.perform(post("/v1/owner/coupon-usages").with(user(new CustomUserDetails(9L, Role.OWNER)))
+                    .contentType("application/json").content("""
+                            {"qrToken":"%s","latitude":37.5,"longitude":127.0}
+                            """.formatted(token))).andExpect(status().isCreated());
+
+            assertThat(funnel.received).hasSize(2);
+            CouponRedeemedEvent redeemed = (CouponRedeemedEvent) funnel.received.getLast();
+            assertThat(redeemed.memberCouponId()).isEqualTo(issued.memberCouponId());
+            assertThat(redeemed.couponEventId()).isEqualTo(issued.couponEventId());
+            assertThat(jdbcTemplate.queryForObject("SELECT status FROM member_coupon", String.class)).isEqualTo("USED");
         }
 
         @ParameterizedTest
@@ -298,6 +506,7 @@ class CouponIntegrationTest extends IntegrationTestSupport {
             assertThatThrownBy(() -> couponCommandService.issue(17L, 81L)).isSameAs(failure);
             assertConsistent(0);
             assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM coupon_daily_limit", Integer.class)).isZero();
+            assertThat(funnel.received).isEmpty();
         }
 
         @Test
@@ -2282,20 +2491,21 @@ class CouponIntegrationTest extends IntegrationTestSupport {
         }
 
         @ParameterizedTest
-        @CsvSource({"ALL,AMOUNT,3000,2000,2000", "ALL,PERCENT,15,4500,680",
-                "MENU,AMOUNT,9000,10000,4500", "MENU,PERCENT,15,10000,680"})
-        void 실제_HTTP로_네_할인_조합과_JPA_저장_결과를_확인한다(
-                String target, String type, int value, int order, int expected) throws Exception {
-            jdbcTemplate.update("UPDATE coupon_event SET discount_type=?, discount_value=? WHERE coupon_event_id=81", type, value);
+        @CsvSource({"ALL,AMOUNT,3000,3000", "ALL,AMOUNT,3005,3010",
+                "MENU,AMOUNT,9000,4500", "MENU,PERCENT,15,680"})
+        void 실제_HTTP로_가격_없이_세_할인_조합과_JPA_저장_결과를_확인한다(
+                String target, String type, int value, int expected) throws Exception {
             if (target.equals("MENU")) {
                 jdbcTemplate.update("""
-                        UPDATE coupon_event SET discount_target_type='MENU', target_menu_id=701,
+                        UPDATE coupon_event SET discount_type=?, discount_value=?, discount_target_type='MENU', target_menu_id=701,
                             target_menu_name='테스트 메뉴', target_menu_price=4500, target_menu_discounted_price=?
                         WHERE coupon_event_id=81
-                        """, type.equals("PERCENT") ? 3820 : 0);
+                        """, type, value, type.equals("PERCENT") ? 3820 : 0);
+            } else {
+                jdbcTemplate.update("UPDATE coupon_event SET discount_value=? WHERE coupon_event_id=81", value);
             }
             try (HttpClient client = HttpClient.newHttpClient()) {
-                var response = client.send(httpRequest(body(order), accessToken(Role.OWNER)), HttpResponse.BodyHandlers.ofString());
+                var response = client.send(httpRequest(body(), accessToken(Role.OWNER)), HttpResponse.BodyHandlers.ofString());
                 assertThat(response.statusCode()).isEqualTo(201);
                 var data = objectMapper.readTree(response.body()).path("data");
                 assertThat(data.path("memberCouponId").asLong()).isEqualTo(1001);
@@ -2315,21 +2525,32 @@ class CouponIntegrationTest extends IntegrationTestSupport {
         @Test
         void 실제_HTTP는_쿠키가_없거나_점주가_아니면_거절한다() throws Exception {
             try (HttpClient client = HttpClient.newHttpClient()) {
-                assertThat(client.send(httpRequest(body(10000), null), HttpResponse.BodyHandlers.ofString()).statusCode()).isEqualTo(401);
-                assertThat(client.send(httpRequest(body(10000), accessToken(Role.MEMBER)), HttpResponse.BodyHandlers.ofString()).statusCode())
+                assertThat(client.send(httpRequest(body(), null), HttpResponse.BodyHandlers.ofString()).statusCode()).isEqualTo(401);
+                assertThat(client.send(httpRequest(body(), accessToken(Role.MEMBER)), HttpResponse.BodyHandlers.ofString()).statusCode())
                         .isEqualTo(403);
             }
             assertUnchanged();
         }
 
         @ParameterizedTest
-        @CsvSource(value = {"0|COMMON-002", "2147483648|COMMON-002", "10.5|COMMON-003",
-                "\"10000\"|COMMON-003", "\"\"|COMMON-003", "\" \"|COMMON-002", "null|COMMON-002",
-                "true|COMMON-003"}, delimiter = '|')
-        void 주문_금액의_범위와_정수_형식을_검사한다(String amount, String code) throws Exception {
+        @ValueSource(strings = {"longitude", "latitude", "qrToken"})
+        void 위치와_QR_토큰의_필수값을_검사한다(String field) throws Exception {
+            var request = objectMapper.readTree(body()).deepCopy();
+            ((tools.jackson.databind.node.ObjectNode) request).remove(field);
             mockMvc.perform(post(PATH).with(user(OWNER)).contentType(MediaType.APPLICATION_JSON)
-                            .content(body(10000).replace(":10000", ":" + amount)))
-                    .andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value(code));
+                            .content(request.toString()))
+                    .andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("COMMON-002"));
+            assertUnchanged();
+        }
+
+        @Test
+        void 전체_메뉴_정률_스냅샷은_DB가_거절한다() {
+            assertThatThrownBy(() -> jdbcTemplate.update(
+                    "UPDATE coupon_event SET discount_type='PERCENT', discount_value=15 WHERE coupon_event_id=81"))
+                    .isInstanceOf(DataAccessException.class)
+                    .rootCause()
+                    .isInstanceOf(SQLException.class)
+                    .hasMessageContaining("chk_coupon_event_discount_combination");
             assertUnchanged();
         }
 
@@ -2360,7 +2581,7 @@ class CouponIntegrationTest extends IntegrationTestSupport {
         @Test
         void 같은_QR의_실제_HTTP_동시_요청은_한_건만_성공한다() throws Exception {
             CountDownLatch start = new CountDownLatch(1);
-            HttpRequest request = httpRequest(body(10000), accessToken(Role.OWNER));
+            HttpRequest request = httpRequest(body(), accessToken(Role.OWNER));
             try (HttpClient client = HttpClient.newHttpClient(); var executor = Executors.newVirtualThreadPerTaskExecutor()) {
                 List<Future<HttpResponse<String>>> futures = IntStream.range(0, 3).mapToObj(index -> executor.submit(() -> {
                     assertThat(start.await(5, TimeUnit.SECONDS)).isTrue();
@@ -2378,6 +2599,7 @@ class CouponIntegrationTest extends IntegrationTestSupport {
                 assertThat(statuses).containsExactlyInAnyOrder(201, 409, 409);
             }
             assertThat(historyCount()).isEqualTo(1);
+            assertThat(funnel.received).hasSize(1).allMatch(event -> event instanceof CouponRedeemedEvent);
         }
 
         @ParameterizedTest
@@ -2389,9 +2611,21 @@ class CouponIntegrationTest extends IntegrationTestSupport {
             try {
                 assertResponse(use(), 500, "COMMON-001");
                 assertUnchanged();
+                assertThat(funnel.received).isEmpty();
             } finally {
                 jdbcTemplate.execute("ALTER TABLE " + table + " DROP CHECK chk_usage_failure");
             }
+        }
+
+        @Test
+        void HTTP_사용을_감싼_트랜잭션이_롤백하면_분석_리스너와_사용_결과에_남지_않는다() {
+            new TransactionTemplate(transactionManager).executeWithoutResult(transaction -> {
+                assertDoesNotThrow(() -> assertThat(use().getResponse().getStatus()).isEqualTo(201));
+                assertThat(funnel.received).isEmpty();
+                transaction.setRollbackOnly();
+            });
+            assertThat(funnel.received).isEmpty();
+            assertUnchanged();
         }
 
         @Test
@@ -2415,7 +2649,7 @@ class CouponIntegrationTest extends IntegrationTestSupport {
                         UUID renewed = memberCouponRepository.findById(1001L).orElseThrow().getQrToken();
                         currentTime.set(NOW.plusSeconds(1).atZone(ClockConfig.ZONE).toInstant());
                         mockMvc.perform(post(PATH).with(user(OWNER)).contentType(MediaType.APPLICATION_JSON)
-                                .content(body(10000).replace(TOKEN.toString(), renewed.toString()))).andExpect(status().isCreated());
+                                .content(body().replace(TOKEN.toString(), renewed.toString()))).andExpect(status().isCreated());
                     });
                 });
                 assertResponse(pending.get().get(10, TimeUnit.SECONDS), 409, "COUPON-010");
@@ -2444,12 +2678,12 @@ class CouponIntegrationTest extends IntegrationTestSupport {
             return new StoreInfo(10L, "런치식당", "https://example.test/store.png", latitude, 127.0);
         }
 
-        private String body(long amount) {
-            return "{\"longitude\":127.0,\"latitude\":37.5,\"qrToken\":\"" + TOKEN + "\",\"orderAmount\":" + amount + "}";
+        private String body() {
+            return "{\"longitude\":127.0,\"latitude\":37.5,\"qrToken\":\"" + TOKEN + "\"}";
         }
 
         private MvcResult use() throws Exception {
-            return mockMvc.perform(post(PATH).with(user(OWNER)).contentType(MediaType.APPLICATION_JSON).content(body(10000))).andReturn();
+            return mockMvc.perform(post(PATH).with(user(OWNER)).contentType(MediaType.APPLICATION_JSON).content(body())).andReturn();
         }
 
         private void assertResponse(MvcResult result, int status, String code) throws Exception {
@@ -2468,6 +2702,15 @@ class CouponIntegrationTest extends IntegrationTestSupport {
         private void assertUnchanged() {
             assertThat(state()).isEqualTo("ISSUED");
             assertThat(historyCount()).isZero();
+        }
+    }
+    static class FunnelRecorder {
+        final List<Object> received = new java.util.concurrent.CopyOnWriteArrayList<>();
+
+        @TransactionalEventListener(classes = {CouponIssueOpenedEvent.class,
+                CouponIssuedEvent.class, CouponRedeemedEvent.class, CouponExpiredEvent.class})
+        public void receiveAfterCommit(Object event) {
+            received.add(event);
         }
     }
 }

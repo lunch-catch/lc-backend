@@ -114,7 +114,12 @@
 ## `GET`, `PUT /v1/feed-filter`
 
 - `categories` 의 빈 배열을 전체 업종으로 읽는다(FR-067 예외). "아무것도 고르지 않음"을 따로 둘 이유가 없다
+- **`GET` 은 `categories` 를 업종 코드 오름차순으로 돌려준다.** 같은 필터는 늘 같은 순서다. `feed_filter_category` 에 순서 컬럼이 없어 고른 순서는 남기지 않는다(#405 에서 정했다)
+- 저장한 적이 없으면 `categories: []`, `sort: "DISTANCE"` 다. 피드가 필터 없는 회원을 다루는 기본값과 같다
 - 필터는 `feed_filter`(정렬)와 `feed_filter_category`(업종)에 나눠 저장하고, `PUT` 은 둘을 한 트랜잭션에서 통째로 바꾼다
+- **`PUT` 은 저장한 뒤 `GET` 과 같은 방법으로 다시 읽어 돌려준다.** 응답의 업종 순서가 조회와 같다
+- **`PUT` 에 같은 업종이 두 번 오면 하나로 합친다.** 거부하면 명세의 오류 표에 없는 경우가 생긴다. 저장 구조도 PK 가 `(member_id, category_code)` 인 집합이다(#411 에서 임시로 정했다)
+- **없는 업종 코드는 요청 타입의 애노테이션이 store 의 CHECK 와 같은 목록으로 가른다.** 업종 코드는 store 가 소유하는데 `contract` 로 공개하지 않았다. 공개되면 그것으로 바꾼다(#411 에서 임시로 정했다)
 
 ## `GET`, `POST`, `DELETE /v1/wishlist`
 
@@ -123,6 +128,8 @@
 - `wishedAt` 은 `wishlist.created_at` 이다. 찜할 때 행을 만들고 취소하면 행을 지우므로 둘이 같다
 - 페이지네이션을 두지 않는다. 찜은 캠페인이 끝나면 `CampaignEndedEvent` 로 자동으로 빠지므로 진행 중인 캠페인 수만큼만 쌓인다
 - `POST` 의 중복 키는 `(사용자, 캠페인)` 이다(`wishlist` UNIQUE)
+- `POST` 는 그날 후보 행이 있는 캠페인만 받고 상태와 소진은 보지 않는다. 스와이프와 같다. 그날 후보가 아니면 이미 찜한 캠페인이어도 `404 ADSERVING-004` 다(#420)
+- `POST` 로 찜한 캠페인도 당일 이력에 넣어 그날 피드에서 뺀다. 피드 5단계의 "찜한 캠페인은 당일 이력으로 뺀다" 를 가게 상세 찜에도 적용했다(#420)
 - `DELETE` 뒤 10:50 알림 대상에서 빠지는 것은 따로 처리할 것이 없다. 알림이 10:50에 찜 목록을 읽어 보낸다(FR-073)
 
 ## `GET /v1/admin/feed-diagnosis/feeds`
@@ -139,6 +146,25 @@ HTTP가 아니라 도메인 contract의 Java 클래스로 노출한다. 클라�
 | `WishlistQueryService` | coupon, notification | 찜 여부(FR-080 발급 자격), 그날 서빙 가능한 캠페인을 찜한 사용자(FR-076 10:50 발송 대상) |
 | `CandidateStateUpdater` | coupon | 선착순 소진 시 그날 후보에 소진 표시(FR-093) |
 | `ImpressionServedEvent`, `SwipedEvent` | analytics | 전환 퍼널 기록(impression, wish, pass). 비동기 |
+
+**퍼널 이벤트 두 종은 아래처럼 나간다**(#349).
+
+| 항목 | `ImpressionServedEvent` | `SwipedEvent` |
+|---|---|---|
+| 발행하는 때 | 유효 노출을 처음 저장할 때. 무효 노출과 이미 저장된 노출은 발행하지 않는다 | 스와이프 기록이 반영될 때(`applied: true`). 이미 넘긴 카드는 발행하지 않는다 |
+| 발행하는 자리 | 노출 저장 트랜잭션 안 | 트랜잭션 밖. 기록은 이미 커밋돼 있다 |
+| `eventId` | `impression:{serveId}`. 유효 노출은 serve 의 주인 것뿐이라 사용자를 넣지 않는다 | `swipe:{serveId}:{memberId}`. 스와이프의 중복 키가 (serveId, 사용자) 다 |
+| `occurredAt` | 요청의 `displayedAt` 을 한국 시각으로 바꾼 값이다. `impression_log.displayed_at` 과 같다 | 요청의 `occurredAt` 을 한국 시각으로 바꾼 값이다. `swipe_log.occurred_at` 과 같다 |
+| 캠페인과 가게 | serve 기록의 것 | 그날 후보의 것 |
+| `wishId` | 없다 | `WISH` 면 그 사용자의 그 캠페인 찜의 id 다. 가게 상세에서 먼저 찜했으면 그 찜의 id 다. `PASS` 면 `null` 이다 |
+
+`occurredAt` 은 클라이언트 시각이다. 퍼널은 사용자 행동의 순서를 보고, 이벤트와 원본 행의 시각이 같아야 추적할 수 있다. 미래 시각은 분석이 받을 때 보정하고, 늦은 시계로 과거에 찍힌 값은 보정되지 않는다.
+
+**수신자는 아래 조건을 지킨다.** 왜 발행자가 아니라 수신자가 커밋 뒤를 맡는지는 [구조와 동작 설계](./adserving_구조와_동작_설계.md) 7장에 있다.
+
+- `@TransactionalEventListener(phase = AFTER_COMMIT, fallbackExecution = true)` 와 `@Async` 로 받는다. 노출은 커밋된 뒤에만 넘어가고 롤백되면 넘어가지 않는다
+- `fallbackExecution = true` 를 빠뜨리지 않는다. 스와이프는 트랜잭션 밖에서 발행돼, 빠뜨리면 스와이프 이벤트가 오류 없이 모두 사라진다
+- 예외를 발행자에게 올리지 않는다. 실행기가 거절하면 버린다. 올리면 이미 커밋된 노출과 스와이프의 요청이 `500` 이 된다
 
 ## 오류 코드를 나눈 기준
 

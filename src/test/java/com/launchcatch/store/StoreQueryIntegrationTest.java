@@ -48,6 +48,62 @@ class StoreQueryIntegrationTest extends AbstractStoreIntegrationTest {
     }
 
     @Test
+    void 점주_요약은_등록_전_가게와_마스킹한_번호를_포함하고_없는_점주는_제외한다() {
+        jdbc.update("update store set business_registration_number = '1234567890' where store_id = ?", storeId);
+        assertThat(service.findSummariesByOwnerIds(List.of(ownerId, ownerId + 2, ownerId, Long.MAX_VALUE)))
+                .extracting("ownerId", "storeId", "finalized", "businessRegistrationNumber")
+                .containsExactlyInAnyOrder(tuple(ownerId, storeId, true, "123**67890"),
+                        tuple(ownerId + 2, draftStoreId, false, null));
+        assertThat(service.findSummariesByOwnerIds(List.of())).isEmpty();
+        assertThat(service.findSummariesByOwnerIds(List.of(Long.MAX_VALUE))).isEmpty();
+    }
+
+    @Test
+    void 상호_부분_검색은_등록_전_가게도_포함하고_제한_초과를_거절한다() {
+        String keyword = "상호검색" + ownerId;
+        jdbc.update("update store set name = ? where store_id in (?, ?)", "앞" + keyword + "뒤", storeId, draftStoreId);
+        assertThat(service.findOwnerIdsByNameContaining(keyword, 2)).containsExactlyInAnyOrder(ownerId, ownerId + 2);
+        assertThatIllegalArgumentException().isThrownBy(() -> service.findOwnerIdsByNameContaining(keyword, 1));
+        assertThat(service.findOwnerIdsByNameContaining(keyword + "없음", 1)).isEmpty();
+        assertThatIllegalArgumentException().isThrownBy(() -> service.findOwnerIdsByNameContaining(keyword, 10001))
+                .withMessage("비어 있지 않은 검색어와 1~10000 범위의 limit가 필요합니다.");
+    }
+
+    @Test
+    void 일만_건에서_백명_요약은_SQL_한번이며_조회는_일초_이내다() {
+        long firstOwner = OWNER_IDS.addAndGet(10000);
+        var owners = java.util.stream.LongStream.range(firstOwner, firstOwner + 10000).boxed().toList();
+        String keyword = "성능검증" + firstOwner;
+        jdbc.batchUpdate("""
+                insert into store (owner_id, name, category_code, representative_name, created_at, updated_at)
+                values (?, ?, 'KOREAN', '대표자', '2026-10-15 12:00:00', '2026-10-15 12:00:00')
+                """, owners, 500, (ps, id) -> {
+                    ps.setLong(1, id);
+                    ps.setString(2, keyword);
+                });
+        var page = owners.subList(0, 100);
+        service.findSummariesByOwnerIds(page);
+        service.findOwnerIdsByNameContaining(keyword, 10000);
+        long selectsBefore = sessionSelects();
+        long started = System.nanoTime();
+        var summaries = service.findSummariesByOwnerIds(page);
+        long summaryNanos = System.nanoTime() - started;
+        assertThat(sessionSelects() - selectsBefore).isEqualTo(1);
+        assertThat(summaries).hasSize(100);
+        started = System.nanoTime();
+        var matches = service.findOwnerIdsByNameContaining(keyword, 10000);
+        long searchNanos = System.nanoTime() - started;
+        assertThat(matches).containsExactlyInAnyOrderElementsOf(owners);
+        assertThat(summaryNanos).isLessThan(java.time.Duration.ofSeconds(1).toNanos());
+        assertThat(searchNanos).isLessThan(java.time.Duration.ofSeconds(1).toNanos());
+        System.out.printf("store query 10k: summaries=%.3f ms, search=%.3f ms%n",
+                summaryNanos / 1_000_000.0, searchNanos / 1_000_000.0);
+    }
+
+    private long sessionSelects() {
+        return Long.parseLong((String) jdbc.queryForMap("show session status like 'Com_select'").get("Value"));
+    }
+    @Test
     void 최종_등록된_가게만_일괄_조회하고_누락_ID와_중복을_제외한다() {
         var result = service.findAllById(List.of(storeId, otherStoreId, draftStoreId, storeId, Long.MAX_VALUE));
 

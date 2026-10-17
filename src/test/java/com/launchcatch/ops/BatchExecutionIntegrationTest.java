@@ -1,6 +1,7 @@
 package com.launchcatch.ops;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.launchcatch.IntegrationTestSupport;
 import com.launchcatch.ops.entity.BatchExecutionLog;
@@ -68,6 +69,12 @@ class BatchExecutionIntegrationTest extends AbstractOpsIntegrationTest {
 
     private void claimAs(String jobName, String owner) {
         logs.saveAndFlush(BatchExecutionLog.running(jobName, DATE, owner));
+    }
+
+    /** 다른 서버가 이어받은 상태를 직접 만든다. takeOverStale은 언제나 내 것으로만 가져온다. */
+    private void takeOverAs(String jobName, String newOwner) {
+        jdbc.update("UPDATE batch_execution_log SET owner_id = ?, attempt_no = attempt_no + 1"
+                + " WHERE job_name = ?", newOwner, jobName);
     }
 
     /** 두 서버가 같은 순간에 점유를 시도한 결과를 모은다. */
@@ -362,5 +369,67 @@ class BatchExecutionIntegrationTest extends AbstractOpsIntegrationTest {
 
         assertThat(service.begin(JOB, DATE)).isEqualTo(StepOutcome.STARTED);
         assertThat(reload(JOB).getOwnerId()).isEqualTo(ME);
+    }
+
+    /*
+     * #360. claim=1, 이어받기=2, 수동 재실행=3이다. 자동 재실행(recordRetry)은 세대를 올리지
+     * 않는다. 같은 서버가 같은 시도를 이어가는 것이라 소유자나 결과 공개의 전제가 바뀌지 않는다.
+     */
+    @Test
+    @DisplayName("claim, 이어받기, 수동 재실행을 거치면 세대가 1, 2, 3이다")
+    void 세대가_claim_이어받기_재실행을_거치며_오른다() {
+        claimAs(JOB, OTHER);
+        assertThat(reload(JOB).getAttemptNo()).isEqualTo(1);
+
+        makeStale(JOB);
+        assertThat(service.takeOverStale()).hasSize(1);
+        assertThat(reload(JOB).getAttemptNo()).isEqualTo(2);
+
+        service.fail(JOB, DATE, "원본을 읽지 못했다");
+        assertThat(service.retry(JOB, DATE)).isTrue();
+        assertThat(reload(JOB).getAttemptNo()).isEqualTo(3);
+    }
+
+    @Test
+    @DisplayName("분석의 재실행(rerun)도 세대를 하나 올린다")
+    void 재실행도_세대를_올린다() {
+        service.claim(JOB, DATE);
+        service.succeed(JOB, DATE);
+
+        assertThat(service.rerun(JOB, DATE)).isTrue();
+
+        assertThat(reload(JOB).getAttemptNo()).isEqualTo(2);
+    }
+
+    /*
+     * #360. succeed/fail의 소유자 조건만으로는 임대를 잃은 서버를 막지 못한다. 그 조건은
+     * 결과가 이미 커밋된 뒤에야 걸린다. assertCurrentAttempt는 공개 전에 막는다.
+     */
+    @Test
+    @DisplayName("내 소유이고 세대가 같으면 통과한다")
+    void 세대가_맞으면_통과한다() {
+        service.claim(JOB, DATE);
+
+        service.assertCurrentAttempt(JOB, DATE, 1);
+    }
+
+    @Test
+    @DisplayName("임대를 잃어 다른 서버가 이어받은 뒤에는 예외가 난다")
+    void 임대를_잃으면_예외가_난다() {
+        service.claim(JOB, DATE);
+        takeOverAs(JOB, OTHER);
+
+        assertThatThrownBy(() -> service.assertCurrentAttempt(JOB, DATE, 1))
+                .isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    @DisplayName("새로 이어받은 서버의 확인은 통과한다")
+    void 새_소유_서버는_통과한다() {
+        claimAs(JOB, OTHER);
+        makeStale(JOB);
+        assertThat(service.takeOverStale()).hasSize(1);
+
+        service.assertCurrentAttempt(JOB, DATE, 2);
     }
 }

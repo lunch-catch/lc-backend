@@ -108,14 +108,13 @@ class TemplateReviseServiceTest {
                 .thenReturn(PREVIOUS_HTML.replace(
                         "<h1 data-slot=\"eventName\">title</h1>", "<h1 data-slot=\"eventName\">새 제목</h1>")
                         + "<script>alert(1)</script>");
-        when(templateRepository.saveAndFlush(any(Template.class)))
-                .thenAnswer(invocation -> invocation.getArgument(0));
 
         TemplateCreateResponse response = service.revise(TEMPLATE_ID, "버튼 색 바꿔줘", REQUEST_ID, ADMIN_ID);
 
         assertThat(response.templateId()).isEqualTo(TEMPLATE_ID);
         assertThat(response.versionNumber()).isEqualTo(2);
         assertThat(response.removedElements()).containsExactly("script");
+        verify(templateVersionRepository).saveAndFlush(any(TemplateVersion.class));
     }
 
     @Test
@@ -157,7 +156,7 @@ class TemplateReviseServiceTest {
                 .isEqualTo(PosterErrorCode.GENERATION_TIMEOUT);
 
         verify(templateHtmlGenerator, never()).revise(any(), any());
-        verify(templateRepository, never()).saveAndFlush(any());
+        verify(templateVersionRepository, never()).saveAndFlush(any());
         verify(redisTemplate, never()).execute(any(), any(), any());
     }
 
@@ -180,7 +179,7 @@ class TemplateReviseServiceTest {
         when(templateVersionRepository.findByRequestId(REQUEST_ID))
                 .thenReturn(Optional.empty(), Optional.of(existing));
         when(templateHtmlGenerator.revise(PREVIOUS_HTML, "버튼 색 바꿔줘")).thenReturn(PREVIOUS_HTML);
-        when(templateRepository.saveAndFlush(any(Template.class)))
+        when(templateVersionRepository.saveAndFlush(any(TemplateVersion.class)))
                 .thenThrow(new DataIntegrityViolationException("uk_template_version_request_id"));
 
         TemplateCreateResponse response = service.revise(TEMPLATE_ID, "버튼 색 바꿔줘", REQUEST_ID, ADMIN_ID);
@@ -194,7 +193,7 @@ class TemplateReviseServiceTest {
     void 저장_시점_제약_위반이_requestId_충돌이_아니면_그대로_던진다() {
         when(templateHtmlGenerator.revise(PREVIOUS_HTML, "버튼 색 바꿔줘")).thenReturn(PREVIOUS_HTML);
         DataIntegrityViolationException violation = new DataIntegrityViolationException("다른 제약 위반");
-        when(templateRepository.saveAndFlush(any(Template.class))).thenThrow(violation);
+        when(templateVersionRepository.saveAndFlush(any(TemplateVersion.class))).thenThrow(violation);
 
         assertThatThrownBy(() -> service.revise(TEMPLATE_ID, "버튼 색 바꿔줘", REQUEST_ID, ADMIN_ID))
                 .isSameAs(violation);
@@ -242,7 +241,7 @@ class TemplateReviseServiceTest {
         assertThatThrownBy(() -> service.revise(TEMPLATE_ID, "버튼 색 바꿔줘", REQUEST_ID, ADMIN_ID))
                 .isInstanceOfSatisfying(CampaignException.class, e ->
                         assertThat(e.getErrorCode()).isEqualTo(PosterErrorCode.TEMPLATE_NOT_DRAFT));
-        verify(templateRepository, never()).saveAndFlush(any());
+        verify(templateVersionRepository, never()).saveAndFlush(any());
     }
 
     @Test
@@ -269,7 +268,7 @@ class TemplateReviseServiceTest {
                     assertThat(e.getErrorCode()).isEqualTo(PosterErrorCode.GENERATION_TIMEOUT);
                     assertThat(e.getCause()).isSameAs(timeout);
                 });
-        verify(templateRepository, never()).saveAndFlush(any());
+        verify(templateVersionRepository, never()).saveAndFlush(any());
     }
 
     @Test
@@ -281,7 +280,7 @@ class TemplateReviseServiceTest {
         assertThatThrownBy(() -> service.revise(TEMPLATE_ID, "버튼 색 바꿔줘", REQUEST_ID, ADMIN_ID))
                 .isInstanceOfSatisfying(CampaignException.class, e ->
                         assertThat(e.getErrorCode()).isEqualTo(PosterErrorCode.SLOT_CONTRACT_VIOLATION));
-        verify(templateRepository, never()).saveAndFlush(any());
+        verify(templateVersionRepository, never()).saveAndFlush(any());
     }
 
     @Test
@@ -294,7 +293,53 @@ class TemplateReviseServiceTest {
         assertThatThrownBy(() -> service.revise(TEMPLATE_ID, "버튼 색 바꿔줘", REQUEST_ID, ADMIN_ID))
                 .isInstanceOfSatisfying(CampaignException.class, e ->
                         assertThat(e.getErrorCode()).isEqualTo(PosterErrorCode.STRUCTURE_CHANGED));
-        verify(templateRepository, never()).saveAndFlush(any());
+        verify(templateVersionRepository, never()).saveAndFlush(any());
+    }
+
+    /*
+     * #410. 상한 초과는 "새 버전 번호 - 20" 을 경계값으로 판정한다. 경계값이 0
+     * 이하면(상한을 넘기지 않았으면) DB 쪽에서 아무 행도 안 지워지므로, 서비스는
+     * 넘겼는지 따로 분기하지 않고 매번 그대로 부른다.
+     */
+    @Test
+    @DisplayName("버전이 상한(20개)에 딱 닿으면 경계값 0으로 호출해 아무것도 지우지 않는다")
+    void 버전이_상한에_닿아도_넘지_않으면_경계값이_0이다() throws Exception {
+        when(templateVersionRepository.findMaxVersionNumber(TEMPLATE_ID)).thenReturn(19);
+        when(templateHtmlGenerator.revise(PREVIOUS_HTML, "버튼 색 바꿔줘")).thenReturn(PREVIOUS_HTML);
+
+        TemplateCreateResponse response = service.revise(TEMPLATE_ID, "버튼 색 바꿔줘", REQUEST_ID, ADMIN_ID);
+
+        assertThat(response.versionNumber()).isEqualTo(20);
+        verify(templateVersionRepository).softDeleteUpToVersionNumber(TEMPLATE_ID, 0, LocalDateTime.now(FIXED_CLOCK));
+    }
+
+    @Test
+    @DisplayName("버전이 상한(20개)을 넘기면 경계값 1로 호출해 가장 오래된 버전을 지운다")
+    void 버전이_상한을_넘기면_경계값_1로_지운다() throws Exception {
+        when(templateVersionRepository.findMaxVersionNumber(TEMPLATE_ID)).thenReturn(20);
+        when(templateHtmlGenerator.revise(PREVIOUS_HTML, "버튼 색 바꿔줘")).thenReturn(PREVIOUS_HTML);
+
+        TemplateCreateResponse response = service.revise(TEMPLATE_ID, "버튼 색 바꿔줘", REQUEST_ID, ADMIN_ID);
+
+        assertThat(response.versionNumber()).isEqualTo(21);
+        verify(templateVersionRepository).softDeleteUpToVersionNumber(TEMPLATE_ID, 1, LocalDateTime.now(FIXED_CLOCK));
+    }
+
+    /*
+     * 코드래빗 리뷰. 이 기능이 배포되기 전부터 상한보다 훨씬 많이 쌓여 있던
+     * 템플릿(여기서는 25개)도, 가장 오래된 것 하나만 지우는 대신 넘친 만큼(6개)을
+     * 한 번에 지워 그 즉시 20개로 돌아와야 한다.
+     */
+    @Test
+    @DisplayName("배포 전부터 상한보다 훨씬 많이 쌓여 있던 템플릿도 한 번에 20개 이하로 맞춘다")
+    void 배포_전부터_상한을_넘겨_쌓여_있던_템플릿도_한번에_맞춘다() throws Exception {
+        when(templateVersionRepository.findMaxVersionNumber(TEMPLATE_ID)).thenReturn(25);
+        when(templateHtmlGenerator.revise(PREVIOUS_HTML, "버튼 색 바꿔줘")).thenReturn(PREVIOUS_HTML);
+
+        TemplateCreateResponse response = service.revise(TEMPLATE_ID, "버튼 색 바꿔줘", REQUEST_ID, ADMIN_ID);
+
+        assertThat(response.versionNumber()).isEqualTo(26);
+        verify(templateVersionRepository).softDeleteUpToVersionNumber(TEMPLATE_ID, 6, LocalDateTime.now(FIXED_CLOCK));
     }
 
     private Template draftTemplate() throws Exception {

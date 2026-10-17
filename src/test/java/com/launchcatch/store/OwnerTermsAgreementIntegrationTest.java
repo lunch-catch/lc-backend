@@ -42,6 +42,7 @@ class OwnerTermsAgreementIntegrationTest extends AbstractStoreIntegrationTest {
     @Autowired private OwnerTermsSubmissionService service;
     @Autowired private JwtTokenProvider jwt;
     @Autowired private JdbcTemplate jdbc;
+    @Autowired private com.launchcatch.store.service.StoreRegistrationProgressQueryService progressQuery;
     @Autowired private PlatformTransactionManager manager;
     private MockMvc mvc;
     private Long ownerId;
@@ -242,5 +243,53 @@ class OwnerTermsAgreementIntegrationTest extends AbstractStoreIntegrationTest {
                 .andExpect(jsonPath("$.data.version").value(1))
                 .andExpect(jsonPath("$.data.resumeStep").value("STORE_INFO"));
         assertThat(agreements.findByOwnerId(ownerId)).isPresent();
+    }
+
+    @Test
+    void 최초_GET은_행을_만들지_않고_약관_저장_후에는_새_단계와_버전을_반환한다() throws Exception {
+        var cookie = access(Role.OWNER);
+        mvc.perform(get("/v1/owner/store-registration-progress").cookie(cookie))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.storeId").isEmpty())
+                .andExpect(jsonPath("$.data.resumeStep").value("TERMS"))
+                .andExpect(jsonPath("$.data.version").value(0));
+        assertThat(jdbc.queryForObject("select count(*) from store_registration_progress where owner_id = ?",
+                Integer.class, ownerId)).isZero();
+
+        service.submit(ownerId);
+
+        mvc.perform(get("/v1/owner/store-registration-progress").cookie(cookie))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.resumeStep").value("STORE_INFO"))
+                .andExpect(jsonPath("$.data.version").value(1));
+    }
+
+    @Test
+    void 최초_GET과_약관_저장이_동시에_실행돼도_진행_상태는_한_개다() throws Exception {
+        var start = new CountDownLatch(1);
+        var workers = Executors.newFixedThreadPool(2);
+        try {
+            var query = workers.submit(() -> {
+                assertThat(start.await(5, TimeUnit.SECONDS)).isTrue();
+                return progressQuery.getProgress(ownerId);
+            });
+            var submit = workers.submit(() -> {
+                assertThat(start.await(5, TimeUnit.SECONDS)).isTrue();
+                return service.submit(ownerId);
+            });
+            start.countDown();
+            var observed = query.get(15, TimeUnit.SECONDS);
+            assertThat(observed.resumeStep().name()).isIn("TERMS", "STORE_INFO");
+            assertThat(observed.version()).isEqualTo(observed.resumeStep().name().equals("TERMS") ? 0L : 1L);
+            assertThat(submit.get(15, TimeUnit.SECONDS).version()).isEqualTo(1L);
+            assertThat(jdbc.queryForObject("select count(*) from store_registration_progress where owner_id = ?",
+                    Integer.class, ownerId)).isEqualTo(1);
+            assertThat(progressQuery.getProgress(ownerId).resumeStep().name()).isEqualTo("STORE_INFO");
+            assertThat(agreements.findByOwnerId(ownerId)).isPresent();
+        } finally {
+            start.countDown();
+            workers.shutdownNow();
+            assertThat(workers.awaitTermination(5, TimeUnit.SECONDS)).isTrue();
+        }
     }
 }

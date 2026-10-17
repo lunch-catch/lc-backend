@@ -8,8 +8,8 @@ QR 사용 정책은 API 설계의 [QR 사용 구현 전 확정 사항](./coupon-
 
 | 구분 | 내용 |
 |---|---|
-| 현재 구현 | 선착순 발급, 당일 발급 한도와 누적 통계 조회, 목록·단건 조회와 조회 시 만료 저장, 미사용 쿠폰 삭제, QR 생성·갱신·사용 확정, 매장 사용 이력과 오늘 이벤트 상태 조회를 처리한다 |
-| 후속 구현 | 이벤트·재고 생성, 캠페인 이벤트 수신과 분석 이벤트 발행을 연결한다 |
+| 현재 구현 | 선착순 발급, 당일 발급 한도와 누적 통계 조회, 목록·단건 조회와 조회 시 만료 저장, 미사용 쿠폰 삭제, QR 생성·갱신·사용 확정, 매장 사용 이력과 오늘 이벤트 상태 조회, 발급·사용 퍼널 이벤트 발행과 분석용 쿠폰 집계 조회를 처리한다 |
+| 후속 구현 | 이벤트·재고 생성과 캠페인 이벤트 수신, 오픈·만료 배치의 이벤트 발행을 연결한다 |
 | 다른 도메인의 소유 | 캠페인 할인 조건은 campaign, 현재 매장 관리 권한은 store, 계정 상태는 member·owner, 찜과 광고 후보는 adserving, 통계 집계는 analytics가 소유한다 |
 
 데이터 소유와 의존 방향의 근거는 [도메인 설계 1.2와 2장](../../architecture/런치캐치_도메인_구조와_의존성_설계.md)이다.
@@ -38,6 +38,7 @@ coupon은 다른 도메인의 내부 엔티티와 저장소를 읽지 않는다.
 
 ```text
 coupon/
+├── contract/      CouponStatsQueryService, 집계 결과와 오픈·발급·사용·만료 이벤트 record
 ├── CouponListFilter.java
 ├── CouponQrImageEncoder.java
 ├── config/        CouponSecurityConfig, CouponOpenApiConfig
@@ -46,12 +47,12 @@ coupon/
 ├── entity/        CouponEvent, CouponInventory, CouponDailyLimit,
 │                  MemberCoupon, CouponUsageHistory
 ├── repository/    각 엔티티 저장소와 목록용 Querydsl 구현
-├── service/       CouponCommandService, CouponLookUpService
+├── service/       CouponCommandService, CouponLookUpService, CouponStatsQueryServiceImpl
 └── exception/     CouponException, CouponErrorCode
 ```
 
 엔티티는 다른 엔티티를 객체 연관으로 쥐지 않고 ID로 참조한다.
-입구 넷 중 HTTP 요청만 연결되어 있다. `job/`, `listener/`, 외부에 공개하는 `contract/`는 아직 없다.
+HTTP 요청과 집계 조회 contract, 공개 이벤트가 연결되어 있다. `job/`과 캠페인 이벤트를 받는 `listener/`는 아직 없다.
 
 ### 규칙을 두는 곳
 
@@ -61,7 +62,7 @@ coupon/
 | 재고 소비와 카운터 증감 | `CouponInventory`, `CouponDailyLimit`이 자기 값의 불변식을 지킨다 |
 | 상태와 사용 가능 여부, 이벤트 발급 불가 사유 | `CouponLookUpService`가 시각과 조회 결과를 조합한다 |
 | 다른 도메인 조회, 잠금 순서와 트랜잭션 | 명령·조회 서비스가 조정한다 |
-| 할인액과 주문 금액 상한 | CouponEvent가 자기 스냅샷으로 계산하며 저장된 값을 변경하지 않는다 |
+| 메뉴 한 개의 할인액 | CouponEvent가 자기 스냅샷으로 계산하며 저장된 값을 변경하지 않는다 |
 | QR 이미지 변환 | `CouponQrImageEncoder`가 UUID를 PNG와 Base64로 변환한다 |
 
 ## 3. 저장
@@ -126,9 +127,9 @@ MENU이면 메뉴 네 컬럼을 모두 채우고 ALL이면 모두 NULL로 둔다
 ## 4. 계산 로직
 
 현재 서비스는 쿠폰 상태와 시각으로 사용 가능 여부를 계산한다.
-CouponEvent.calculateDiscount는 자기 스냅샷의 할인 대상·방식·값과 메뉴 가격에 주문 금액을 적용한다. 저장소 조회나 상태 변경 없이 할인액을 반환한다.
-전체 주문 정률도 사용 시 주문 금액으로 계산한다. V6은 할인 조합 CHECK를 넓히며 기존 스냅샷과 할인율 범위를 유지한다.
-메뉴 할인은 이미 반올림한 스냅샷 가격 차액을 사용한다. 반올림·주문 금액 상한의 기준은 [QR 사용 명세](../../api-spec/coupon-api-spec.md#qr-사용)가 갖는다.
+CouponEvent.calculateDiscount는 자기 스냅샷의 메뉴 가격 차액 또는 정액 할인값으로 할인액을 계산한다. 저장소 조회나 상태 변경 없이 할인액을 반환한다.
+V7은 전체 메뉴 정률 조합을 CHECK에서 제외한다. 지원하지 않는 조합은 계산에서도 거절한다.
+메뉴 할인은 이미 반올림한 스냅샷 가격 차액을 사용한다. 지원하는 조합과 메뉴 한 개 적용, 반올림의 기준은 [QR 사용 명세](../../api-spec/coupon-api-spec.md#qr-사용)가 갖는다.
 메뉴 스냅샷을 처음 계산하는 이벤트 생성 경로는 여전히 미구현이다.
 
 ## 5. 모듈 연결
@@ -141,12 +142,16 @@ CouponEvent.calculateDiscount는 자기 스냅샷의 할인 대상·방식·값�
 | QR 사용 연결됨 | 읽기, store | `StoreQueryService.canManageStore(Long, Long)`, `findAllById(List<Long>)` | QR 사용은 관리 권한과 좌표를 각각 한 번 조회한다. 기존 이력·이벤트 조회의 매장 검증은 미연결이다 |
 | 미연결 | 읽기·쓰기, adserving | 아키텍처의 `WishlistQueryService`, `CandidateStateUpdater` | #163에서 공개 계약을 준비한 뒤 발급과 이벤트 조회에 연결한다 |
 | 미연결 | 받음, campaign | `CampaignStatusChangedEvent`, `CampaignEndedEvent` | 이벤트의 정의는 있지만 coupon 수신 경로는 없다 |
-| 미연결 | 공개, analytics | 아키텍처의 쿠폰 발급·사용·만료 이벤트 | coupon의 실제 공개 타입과 발행 경로가 아직 없다 |
+| 연결됨 | 공개, analytics | `CouponIssuedEvent`, `CouponRedeemedEvent` | 발급·사용 트랜잭션 안에서 발행하며 분석은 커밋 후 비동기로 수신한다 |
+| 호출 대기 | 공개, analytics | `CouponIssueOpenedEvent`, `CouponExpiredEvent` | 이벤트 타입만 준비했다. 오픈·만료 배치를 구현할 때 발행한다 |
+| 공개됨 | 공개, analytics | `CouponStatsQueryService` | 캠페인별 일일 집계와 회원별 누적 단건 집계를 제공한다. 분석의 호출 연결은 후속 작업이다 |
 
 계약과 의존 방향은 [아키텍처 2장](../../architecture/런치캐치_도메인_구조와_의존성_설계.md)을 따른다.
 store 메서드의 반환 정책은 [공개 계약 문서](../store/store-query-contract.md)가 갖는다.
+쿠폰 집계 조회의 날짜·상태·반환·실패 정책은 [집계 조회 계약](./coupon-stats-query-contract.md)이 갖는다.
 현재 coupon은 공개 조회 계약 위에 자체 캐시를 추가하지 않는다.
-미연결 contract와 이벤트의 시그니처를 이번 문서에서 새로 정의하지 않는다.
+공개 이벤트의 필드는 [contract 디렉터리](../../../src/main/java/com/launchcatch/coupon/contract/)가 갖는다.
+분석 수신자가 비동기 리스너와 저장을 소유하며 coupon은 분석 내부를 호출하지 않는다.
 
 ## 6. 구조와 동작 그림
 
@@ -197,11 +202,11 @@ stateDiagram-v2
 
 | 전이 | 일으키는 쪽 | 현재 검증과 이벤트 |
 |---|---|---|
-| 생성 → ISSUED | 회원의 발급 요청 | 발급 조건을 서비스가 검사한다. 쿠폰 발급 이벤트는 아직 발행하지 않는다 |
+| 생성 → ISSUED | 회원의 발급 요청 | 발급 조건을 검사하고 발급 이벤트를 발행한다. 분석은 커밋 후 수신한다 |
 | ISSUED → EXPIRED | 목록·단건 조회 | `changeToExpired`가 기간 종료를 검사하며 QR·재고·카운터는 유지한다 |
 | ISSUED·EXPIRED → REMOVED | 본인 삭제 요청 | USED 삭제는 거절하며 최초 삭제만 발급 날짜의 카운터를 줄인다 |
 | REMOVED → REMOVED | 본인 삭제 재요청 | 추가 쓰기와 카운터 차감을 하지 않는다 |
-| ISSUED → USED | 점주의 QR 사용 요청 | CouponCommandService가 상태와 이력을 함께 저장한다. QR 식별 기준은 [QR 사용 설계](./coupon-api-design.md#qr-사용-구현-전-확정-사항)를 따른다 |
+| ISSUED → USED | 점주의 QR 사용 요청 | CouponCommandService가 상태와 이력을 함께 저장하고 사용 이벤트를 발행한다. QR 식별 기준은 [QR 사용 설계](./coupon-api-design.md#qr-사용-구현-전-확정-사항)를 따른다 |
 
 ```mermaid
 stateDiagram-v2
@@ -308,7 +313,23 @@ QR 생성·삭제·만료 저장은 같은 회원 쿠폰 행을 잠근다. 잠�
 
 영업일은 `Clock`을 Asia/Seoul로 읽어 정한다. 삭제 카운터는 삭제 날짜가 아닌 원래 발급 날짜를 쓴다.
 이벤트 상태 조회는 매장 최대 100개, 목록·이력은 페이지 최대 100개를 다룬다.
-커밋 후 비동기 작업과 되돌릴 수 없는 외부 효과는 현재 구현에 없다.
+### 퍼널 이벤트의 발행과 수신
+
+| 선택지 | 장점 | 단점 |
+|---|---|---|
+| 트랜잭션 안에서 발행하고 커밋 후 비동기로 수신한다 | 기존 업무 값을 그대로 쓰고 분석 저장을 요청에서 분리한다 | 프로세스 중단과 비동기 실행 실패로 유실될 수 있다 |
+| 같은 트랜잭션의 outbox를 폴링한다 | 커밋한 이벤트를 재전달할 수 있다 | 저장·폴링·보존을 관리해야 한다 |
+
+아키텍처와 #355가 퍼널 유실을 허용하므로 첫 번째 방식을 쓴다.
+`CouponCommandService`가 `ApplicationEventPublisher`를 직접 주입받는다. 기존 트랜잭션 안에서 이벤트 record를 생성해 `publishEvent`를 호출한다.
+별도 커밋 콜백과 실행기, DB 조회, outbox는 추가하지 않는다.
+분석 수신자가 `@Async`와 `@TransactionalEventListener(AFTER_COMMIT)`로 처리하며 롤백된 작업은 수신하지 않는다.
+발행된 이벤트에 일반 동기 리스너를 붙이면 트랜잭션 안에서 실행되므로 분석 저장에는 그 방식을 쓰지 않는다.
+비동기 실행기와 저장 실패·유실의 관측도 분석 수신자가 소유한다.
+
+`eventId`는 유형과 회차 ID 또는 회원 쿠폰 ID로 만든다. 같은 동작을 재처리해도 같은 ID를 유지한다.
+이벤트의 발급 시각은 회원 쿠폰, 사용 시각은 사용 이력의 `createdAt`을 그대로 전달한다.
+오픈·만료 이벤트는 타입만 준비했으며 발행은 후속 배치 작업에서 구현한다.
 
 ## 8. 외부 API
 
@@ -331,6 +352,7 @@ QR 생성·삭제·만료 저장은 같은 회원 쿠폰 행을 잠근다. 잠�
 ## 10. 배치
 
 현재 등록한 coupon 배치 작업은 없다. 조회 시 만료 저장은 배치가 아니다.
+오픈·만료 업무를 구현할 때 해당 서비스가 같은 트랜잭션에서 이벤트 record를 생성해 발행한다. 이벤트 전달만을 위한 별도 배치는 두지 않는다.
 회차·재고 생성과 캠페인 종료 반영은 아키텍처상 후속 연결 대상이다.
 각 작업의 실행 순서·재실행 키·실패 시 당일 서비스 범위는 아직 정하지 않았으며 구현 전에 이 장에 기록해야 한다.
 
@@ -368,6 +390,9 @@ QR 사용의 응답 시간·동시 요청 목표와 부하 검증은 아직 없�
 | 사용 완료 쿠폰 | 삭제한다 | 상태·QR·이력을 유지하며 거절한다 | `사용_완료_쿠폰은_409를_반환하고_사용_이력과_QR을_변경하지_않는다` |
 | 미사용 쿠폰 | QR을 동시에 갱신한다 | 마지막 토큰만 저장한다 | `동시_QR_갱신은_직렬화하여_마지막_토큰만_저장한다` |
 | 쿠폰 행 잠금 대기 중 기간 종료 | QR 잠금을 얻는다 | 갱신을 거절한다 | `잠금을_기다리는_중_사용_시간이_끝나면_잠금_획득_후_거절된다` |
+| HTTP로 발급한 쿠폰 | 같은 쿠폰을 QR로 사용한다 | 발급·사용 이벤트의 회원 쿠폰 ID가 같다 | `HTTP로_발급한_쿠폰의_사용_이벤트는_같은_회원_쿠폰_ID를_싣는다` |
+| 발급 트랜잭션 | 바깥 트랜잭션을 롤백한다 | 분석 리스너가 수신하지 않는다 | `HTTP_발급을_감싼_트랜잭션이_롤백하면_분석_리스너가_수신하지_않는다` |
+| 사용 트랜잭션 | 바깥 트랜잭션을 롤백한다 | 분석 수신과 사용 결과가 남지 않는다 | `HTTP_사용을_감싼_트랜잭션이_롤백하면_분석_리스너와_사용_결과에_남지_않는다` |
 
 모든 행의 테스트는 [CouponIntegrationTest](../../../src/test/java/com/launchcatch/coupon/CouponIntegrationTest.java)에 있다.
 엔티티의 입력·상태 규칙과 서비스 분기는 [쿠폰 테스트 디렉터리](../../../src/test/java/com/launchcatch/coupon/)의 단위 테스트가 보완한다.
@@ -379,7 +404,7 @@ USED 전이와 사용 시각·할인 계산, 실제 사용 요청의 동시 재�
 |---|---|---|
 | store 연결 | QR 사용은 공개 메서드를 연결했다. 기존 이력·이벤트 조회의 호출은 TODO다 | 이력 조회의 매장 관리 권한과 이벤트 조회의 매장 존재 검증을 완료하지 못했다 |
 | adserving 연결 | #163의 찜·소진 반영을 기다린다 | 발급 자격과 이벤트 조회의 발급 가능 안내가 완성되지 않았다 |
-| 회차·재고와 이벤트 연결 | 생성·수신·발행 경로가 없다. V2는 status_changed_at을 제거했다 | 이벤트 순서 판정과 재실행 저장 구조를 별도 작업에서 정해야 한다 |
+| 회차·재고와 이벤트 연결 | 생성·수신 경로와 오픈·만료 배치의 발행 연결은 없다. V2는 status_changed_at을 제거했다 | 이벤트 순서 판정과 재실행 저장 구조를 별도 작업에서 정해야 한다 |
 | 과거 스냅샷·이미지 유지 | 복원 출처와 이미지 보존 계약을 확정하지 않았다 | 과거 데이터를 임의의 현재 값으로 대체할 수 없다 |
 | 부하와 운영 장애 | 기능 테스트만 있으며 부하·장애 복구 시험은 미완료다 | 응답 시간과 처리량·복구 동작을 보장했다고 보고할 수 없다 |
 

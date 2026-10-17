@@ -2,9 +2,11 @@
 
 [구조와 동작 설계 가이드](../구조와_동작_설계_가이드.md)의 목차를 따른다. 2026-10-14에 확인한 노출 차감과 진행률 경로를 설명한다. 정산 전체의 결제·환불·관리자 설계는 이번 범위에서 검토하지 않았다.
 
+2026-10-16에 `develop` 코드와 맞춰 예약·해제·대사 작업, 충전 직후 재예약, `PG_VS_CHARGE` 대사, 분석 집계 조회(`BillingStatsQueryService`), 스키마 V3~V7의 서술을 고쳤다. 이 갱신은 그 부분의 구현 사실만 반영한 것이고 결제·환불·관리자 기능의 설계 검토를 뜻하지 않는다.
+
 커밋 뒤 작업의 설명은 `origin/develop`의 `e25cb2a`에 반영된 가이드 7장을 적용해 보완했다. 실행을 미루는 시점과 실제 실행 수단을 구분하며, 비동기 방식의 선택도 트레이드오프에 포함한다.
 
-장애 정책과 복구의 한계는 [장애 처리 설계](./billing_장애_처리_설계.md)가 소유한다. 공개 계약은 `billing.contract` 패키지(`PointDeductor`, `BudgetQueryService`), 예약·해제·대사 정책은 [정산 배치 설계](./billing-batch-design.md)가 소유한다. 이 문서의 그림에서 광고 서빙의 노출 수집은 아직 연동하지 않은 계약상 흐름이다.
+장애 정책과 복구의 한계는 [장애 처리 설계](./billing_장애_처리_설계.md)가 소유한다. 공개 계약은 `billing.contract` 패키지(`PointDeductor`, `BudgetQueryService`, `BillingStatsQueryService`), 예약·해제·대사 정책은 [정산 배치 설계](./billing-batch-design.md)가 소유한다. 이 문서의 그림에서 광고 서빙의 노출 수집은 아직 연동하지 않은 계약상 흐름이다.
 
 ### 확인 기준과 범위
 
@@ -14,7 +16,7 @@
 |---|---|
 | 정산의 차감·재구성·진행률 | `feat/193-billing-impression-deduct`의 `b7f9a104ba302888b4821f62b7080cbbcbc4b883`을 읽었다 |
 | 광고 서빙의 키·피드 배정 | #230의 `8241485a23bff71cc36df390cd47788f8018d789`을 읽었다. 그 스냅샷에는 노출 수집의 전체 연동이 없다 |
-| 예약·해제·소진 대사 | 별도 배치 설계와 구현 순서를 확인했다. 확인한 브랜치에서 전체 구현이 완료되었다는 증거는 없다 |
+| 예약·해제·소진 대사 | 2026-10-16에 `develop`의 `job/`과 `service/`를 읽었다. 00:00 묶음의 4개 단계, 13:30 해제 작업, `PG_VS_CHARGE` 대사가 있다. 서빙 시간대를 지나는 전체 정상 흐름을 연결해 돌린 검증은 없다 |
 | HTTP 오류 변환 | 차감 예외를 그대로 전파할 때의 전역 처리기를 확인했다. 아직 없는 노출 수집 컨트롤러의 실제 응답을 테스트한 결과는 아니다 |
 
 브랜치가 바뀌면 위 확인 기준도 갱신해야 한다. 과거 확인 상태를 현재 배포 상태로 읽지 않는다.
@@ -25,6 +27,7 @@
 |---|---|
 | 유효 노출의 과금 여부를 판정하고 원장에 기록한다 | [PointDeductor 계약](../../../src/main/java/com/launchcatch/billing/contract/PointDeductor.java), `deduction_result`, `point_ledger` |
 | 예약액·당일 소진액·시간대별 목표로 진행률을 돌려준다 | [BudgetQueryService 계약](../../../src/main/java/com/launchcatch/billing/contract/BudgetQueryService.java) |
+| 영업일별 원장 합계와 과금 상태 수, 그날 예산과 단가, 미소진 잔액을 분석에 집계해 준다 | [BillingStatsQueryService 계약](../../../src/main/java/com/launchcatch/billing/contract/BillingStatsQueryService.java) |
 | 캠페인의 중단 여부를 그날 계획과 Valkey에 반영한다 | 아키텍처 2.4와 `CampaignStatusChangedEvent`, `BudgetPlanStatusService` |
 | 해시가 사라지면 DB 정본으로 재구성한다 | #193의 `SpendHashRebuildService` |
 
@@ -48,24 +51,46 @@
 
 ```text
 billing/
-├── contract/  PointDeductor, DeductionStatus, BudgetQueryService, BudgetProgress
+├── contract/  PointDeductor, DeductionStatus, BudgetQueryService, BudgetProgress,
+│              BillingStatsQueryService, OwnerCampaignLedgerSum, CampaignBillingCount,
+│              CampaignDailyBudget, DailyLedgerTotals
 ├── BudgetPacing
 ├── cache/     DailySpendCounter, ValkeyDailySpendCounter, DeductOutcome, DailySpend
 ├── service/   PointDeductorImpl, DailyPlanSnapshotService, SpendHashRebuildService,
-│              BudgetQueryServiceImpl, HourlyTargetService, BudgetPlanStatusService
-├── listener/  CampaignStatusChangedListener, BudgetPlanStatusMirrorListener
+│              BudgetQueryServiceImpl, HourlyTargetService, BudgetPlanStatusService,
+│              BillingStatsQueryServiceImpl,
+│              DailyReservationService, DailyReleaseService, SpendReconciliationService,
+│              FundingJudgementService, RechargeReservationService,
+│              PgChargeReconciliationService
+├── job/       PreviousDaySpendReconciliationJob, DailyReservationJob, FundingJudgementJob,
+│              HourlyTargetJob (00:00 묶음의 DailyJob),
+│              DailyReleaseScheduler (13:30), PgChargeReconciliationScheduler (00:00),
+│              PaymentRecheckWorker
+├── listener/  CampaignStatusChangedListener, BudgetPlanStatusMirrorListener, PointChargedListener
 ├── repository/ BudgetDailyPlanRepository, BudgetHourlyTargetRepository,
-│               DeductionResultRepository, PointLedgerRepository
-├── entity/    BudgetDailyPlan, BudgetHourlyTarget, DeductionResult, PointLedger
+│               DeductionResultRepository, PointLedgerRepository, SettlementMismatchRepository
+├── entity/    BudgetDailyPlan, BudgetHourlyTarget, DeductionResult, PointLedger, SettlementMismatch
 ├── dto/       PlanSnapshot, PlanSnapshotKey, CampaignSpend, BudgetPlanStatusChanged
 └── config/    BillingScheduleProperties, PlanSnapshotCacheProperties
 ```
 
-노출 차감과 진행률의 입구는 다른 도메인의 호출이다. 중단 반영의 입구는 캠페인 이벤트다. 이 범위에 정산의 HTTP 입구는 없다. 예약·해제 스케줄 입구는 아직 전체 구현이 없으므로 10장에서 후속 설계로 표시한다.
+위 나무는 노출 차감부터 대사까지의 클래스만 적었다. `client/`(Toss), `controller/`(점주·관리자·웹훅), 결제·환불 서비스와 엔티티는 이 문서의 범위 밖이라 적지 않았다.
+
+노출 차감과 진행률의 입구는 다른 도메인의 호출이다. 중단 반영의 입구는 캠페인 이벤트다. 예약·해제·대사의 입구는 시각이다. 00:00 묶음의 네 단계는 운영의 `DailyJob`으로 등록돼 `@Order` 40, 50, 60, 70으로 순서대로 돈다. 13:30 해제와 00:00 `PG_VS_CHARGE` 대사는 정산의 스케줄 작업이며 `batch_execution_log` 점유로 배치 서버 두 대가 겹치지 않게 한다. 작업명과 시각은 10장이 갖는다. 노출 차감·진행률 경로에는 정산의 HTTP 입구가 없다. 결제·환불·조정의 HTTP 입구는 이 문서의 범위 밖이다.
 
 ## 3. 저장
 
-[정산 V1](../../../src/main/resources/db/migration/billing/V1__billing_init.sql)과 [V2](../../../src/main/resources/db/migration/billing/V2__billing_pause_mismatch_date_and_indexes.sql)가 스키마의 기준이다.
+[정산 V1](../../../src/main/resources/db/migration/billing/V1__billing_init.sql)에서 [V7](../../../src/main/resources/db/migration/billing/V7__billing_adjust_target_date.sql)까지가 스키마의 기준이다.
+
+| 버전 | 바꾼 것 |
+|---|---|
+| V1 | 결제, 원장, 계획, 판정, 대사 테이블 |
+| V2 | 계획의 `paused`, `status_changed_at`, 예약액 0 허용, 대사의 `business_date` |
+| V3 | 점주 계정 행 `point_account`(잔액을 읽고 쓰는 작업의 점주 단위 직렬화 기준), 시스템이 닫은 대사의 해결자 NULL 허용, 최초 정책 행 |
+| V4 | `budget_daily_plan(business_date)` 인덱스 |
+| V5 | 대사 종류 `CAMPAIGN_OVERSPEND` |
+| V6 | 재예약 RESERVE의 멱등 키를 결제×캠페인으로 나눔 |
+| V7 | `point_ledger.adjust_target_date`와 CHECK |
 
 | 데이터 | 원본과 의미 | 중복 또는 범위 제약 |
 |---|---|---|
@@ -78,28 +103,12 @@ billing/
 
 ### 노출부터 과금까지 사용하는 Valkey 키
 
-아래 여섯 종류가 확인한 피드·정산 경로의 키다. `{...}`는 치환할 값의 자리표시이며 실제 키의 중괄호가 아니다. 예를 들어 `billing:day:2026-10-14:101`이다. `StringRedisTemplate`을 사용하므로 숫자와 시각도 문자열로 저장한다.
+아래 두 종류는 billing이 노출 과금 경로에서 사용하는 키다. 피드 배정과 serve 검증에 쓰는 키는 [광고 서빙 설계 3장](../adserving/adserving_구조와_동작_설계.md#3-저장)이 소유한다. `{...}`는 치환할 값의 자리표시이며 실제 키의 중괄호가 아니다. 예를 들어 `billing:day:2026-10-14:101`이다. `StringRedisTemplate`을 사용하므로 숫자와 시각도 문자열로 저장한다.
 
 | 키 | 자료형과 값 | 생성·갱신·만료 | 용도 |
 |---|---|---|---|
-| `adserving:feed-rate:{memberId}` | Sorted Set에 요청 ID와 epoch 밀리초 score를 둔다 | 허용한 요청을 넣을 때 TTL 60초를 다시 설정한다. 최근 창 밖의 값은 Lua에서 지우고, 200으로 끝나지 않은 요청은 해당 member를 제거한다 | 최근 60초 피드 요청을 6회로 제한한다 |
-| `adserving:serve:{serveId}` | Hash에 카드 검증용 일곱 필드를 둔다 | 카드 기록 때 TTL 30분을 설정한다. 노출 수집 후의 삭제 시점은 아직 연동하지 않았다 | 내려준 카드와 요청 사용자를 검증한다 |
-| `adserving:served:{businessDate}:{memberId}` | Hash의 field는 캠페인 ID이고 value는 카드를 받은 횟수다 | 카드마다 `HINCRBY`로 올리고 피드 기록 때 TTL 26시간을 다시 설정한다 | 같은 캠페인을 하루 2회까지 내려주는 데 쓴다 |
-| `adserving:session:{memberId}` | Set에 이번 세션의 캠페인 ID를 둔다 | 카드마다 `SADD`하고 피드 기록 때 TTL 30분을 다시 설정한다 | 같은 세션에 같은 캠페인을 다시 내려주지 않는다 |
 | `billing:day:{businessDate}:{campaignId}` | Hash에 예약액·소진액·중단 여부·전이 시각을 둔다 | 해시 생성 시 TTL 3일을 설정한다. 차감과 상태 갱신으로 TTL을 연장하지 않는다 | 처음 처리하는 `serveId`의 과금 가능 여부를 판정한다 |
 | `billing:served:{serveId}` | String에 첫 판정 이름 하나를 둔다 | 첫 Lua 판정 때 TTL 2일을 설정한다. 재호출은 연장하지 않는다. 새 판정의 롤백 보상은 표시를 삭제한다 | 같은 `serveId`의 Redis 재판정과 소진 증가를 막는다 |
-
-피드의 키 기록은 파이프라인이므로 전체가 하나의 원자적 쓰기는 아니다. 회원 당일·세션 이력은 실제 표시 횟수나 과금 횟수가 아니라 카드 배정 이력이다. [카드 기록 구현](https://github.com/lunch-catch/lc-backend/blob/8241485a23bff71cc36df390cd47788f8018d789/src/main/java/com/launchcatch/adserving/feed/repository/ServeCacheRepository.java)이 필드와 TTL을 정한다.
-
-| `adserving:serve` 필드 | 저장값 예 | 의미 |
-|---|---|---|
-| `memberId` | `"3001"` | 카드를 받은 회원이다 |
-| `businessDate` | `"2026-10-14"` | 서빙한 영업일이다 |
-| `servedAt` | `"2026-10-14T10:15:30.123"` | 서버의 서빙 시각을 `LocalDateTime` 문자열로 적는다 |
-| `campaignId` | `"101"` | 카드의 캠페인이다 |
-| `storeId` | `"55"` | 카드의 가게다 |
-| `slotType` | `"ALLOCATION"` 또는 `"RELEVANCE"` | 배분 슬롯인지 관련성 슬롯인지 나타낸다 |
-| `slotPosition` | `"1"`~`"10"` | 피드에서의 카드 위치다 |
 
 | `billing:day` 필드 | 저장값 예 | 원본과 갱신 |
 |---|---|---|
@@ -129,7 +138,7 @@ billing/
 
 점주의 사용 가능한 잔액은 부호 있는 원장 금액을 더하되 `DEDUCT`를 제외한다. 예약할 때 이미 사용 가능한 잔액에서 빠졌으므로 노출별 차감을 다시 빼면 같은 비용을 두 번 뺀다. [잔액 합계 쿼리](../../../src/main/java/com/launchcatch/billing/repository/PointLedgerRepository.java)가 이 규칙을 갖는다.
 
-아래는 예약·해제까지 연결됐을 때의 금액 예다. 해제 작업이 이미 구현됐다는 뜻은 아니다.
+아래는 하루 동안 원장에 쌓이는 금액의 예다. 예약은 00:00, 해제는 13:30 작업이 기록한다.
 
 | 기록 | 금액 | 사용 가능한 잔액에 미치는 영향 |
 |---|---:|---|
@@ -173,8 +182,43 @@ Lua의 예산 비교는 원자적 갱신이 필요한 저장소 연산이다. �
 |---|---|---|
 | adserving이 호출한다 | `PointDeductor` | 처음 저장한 유효 노출마다 부른다. 반환과 입력은 [계약](../../../src/main/java/com/launchcatch/billing/contract/PointDeductor.java)이 소유한다 |
 | adserving이 조회한다 | `BudgetQueryService` | 캠페인 목록으로 한 번에 조회한다. 캐시가 데워진 뒤 원장 합계를 읽지 않는다 |
+| analytics가 조회한다 | `BillingStatsQueryService` | 분석의 일별 집계 배치가 영업일마다 부른다. 읽기 전용 트랜잭션에서 원장과 판정을 날짜로 묶어 읽는다. 아래 "집계 조회의 영업일 귀속"을 따른다 |
 | campaign의 이벤트를 받는다 | `CampaignStatusChangedEvent` | 발행자의 같은 트랜잭션에서 계획을 변경한다. 커밋 뒤 해시에 반영한다 |
 | 정산 내부에서 전달한다 | `BudgetPlanStatusChanged` | DB 변경이 커밋된 경우에만 Redis 상태 미러를 실행한다 |
+
+### 집계 조회의 영업일 귀속
+
+`BillingStatsQueryService`는 합계만 내주고 소진액(`DEDUCT` 합에서 양수 `ADJUST` 합을 뺀 값)은 분석이 계산한다. 영업일에 귀속하는 기준은 유형마다 다르다.
+
+| 값 | 영업일 기준 | 상태 |
+|---|---|---|
+| `RESERVE`, `RELEASE` | 원장의 `business_date` | 확정 |
+| `DEDUCT` | `deduction_result`의 `business_date`(`serve_id`로 맞춘다) | 확정 |
+| `CHARGE`, `REFUND` | 기록 시각의 KST 날짜 | 확정 |
+| `ADJUST` | `point_ledger.adjust_target_date`. 값이 없는 행(캠페인 없는 조정과 컬럼을 두기 전 행)은 기록 시각의 KST 날짜 | 확정. 이슈 #402 |
+| 미소진 잔액 | 영업일 다음 날 00:00 이전에 기록된 `CHARGE`, `REFUND`, `ADJUST`, `DEDUCT` 의 누적 합. 점주 잔액에 예약 중 포인트를 더한 값과 같다 | 확정. analytics 의 `unspent_balance` 정의를 따른다 |
+| 원장 대조용 합계 | 그 영업일의 기록 시각에 기록된 같은 네 유형의 합. 전날 말 미소진 잔액에 더하면 그날 말 값이 된다 | **임시.** 이슈 #352 |
+| 원장 불일치 건수 | `settlement_mismatch.business_date`가 그날인 행 수. 해결 여부는 가리지 않는다 | **임시.** 이슈 #352 |
+
+`correctionTargetDates(기록 영업일)`는 그 기록 영업일에 기록된 양수 `ADJUST`가 가리키는 정정 대상 영업일을 날짜 오름차순으로 중복 없이 돌려준다. 분석이 이미 집계한 날 중 다시 집계할 날을 찾는 데 쓴다. 대상이 없는 `ADJUST`는 목록에 없고, 기록 영업일과 같은 날을 가리키는 정정은 들어간다.
+
+미소진 잔액과 원장 대조용 합계는 돈이 움직인 시점이 기준이라 `ADJUST`도 정정 대상 영업일이 아니라 기록 시각으로 센다. 그래서 한 정정이 영업일 합계에서는 대상 영업일에, 미소진 잔액에서는 기록한 날에 들어간다.
+
+### 정정 대상 영업일
+
+관리자 포인트 조정(`POST /v1/admin/point-adjustments`)은 정정이 가리키는 원래 영업일을 `targetBusinessDate`로 받아 `point_ledger.adjust_target_date`에 저장한다. 요청 필드와 검증 규칙, 오류 코드는 [billing 명세서](../../api-spec/billing-api-spec.md#포인트-수동-조정)가 소유하고 여기서 다시 적지 않는다.
+
+이 절은 서버가 정한 이유만 갖는다.
+
+| 결정 | 이유 |
+|---|---|
+| 새 컬럼 `adjust_target_date`를 둔다 | `business_date`는 `RESERVE`와 `RELEASE`의 예약 영업일이고 `chk_point_ledger_business_date`가 그 둘로 묶는다. 의미가 다른 값을 같은 컬럼에 섞지 않는다 |
+| `ADJUST` 행에만 값을 갖게 `chk_point_ledger_adjust_target_date`로 막는다 | 다른 유형의 행이 정정 대상을 갖는 일을 DB가 막는다 |
+| 기존 행을 마이그레이션으로 채우지 않는다 | 원장은 추가만 하는 설계이고 `created_at`의 시간대 해석에 따라 날짜가 달라질 수 있다. 값이 없는 행은 집계가 기록 시각의 KST 날짜에 붙여 #352의 결과와 같다 |
+| 같은 키 재요청의 비교에 `targetBusinessDate`를 넣는다 | 날짜만 다른 요청이 처음 기록을 그대로 돌려받으면 관리자가 다른 날을 고쳤다고 착각한다 |
+| 클라이언트가 아직 없는 때 필수로 확정했다 | 날짜 없는 캠페인 정정이 조용히 기록일에 붙는 오류를 처음부터 막는다. 이슈 #402에서 정했다 |
+
+기록 시각의 하루는 날짜를 DB 함수로 자르지 않고 `[당일 00:00, 다음 날 00:00)` 범위로 묻는다. `created_at`은 Asia/Seoul 기준이라 영업일 경계와 같다.
 
 전환 퍼널 분석의 비동기 처리와 도메인 의존 방향은 [아키텍처 2.4](../../architecture/런치캐치_도메인_구조와_의존성_설계.md#24-도메인-간-상태-변경과-이벤트)를 따른다. 정산의 원장 쓰기는 분석 이벤트의 소비자가 실행하는 작업이 아니다.
 
@@ -237,7 +281,7 @@ stateDiagram-v2
     중단 --> 과금가능: 더 늦은 servable=true 통보
 ```
 
-계획 생성은 후속 예약 작업이다. 같은 시각이나 더 오래된 통보는 현재 값을 바꾸지 않는다. 예산 소진은 이 그림의 상태 전이가 아니다.
+계획은 00:00 예약이 만든다(`DailyReservationService`). 같은 시각이나 더 오래된 통보는 현재 값을 바꾸지 않는다. 예산 소진은 이 그림의 상태 전이가 아니다.
 
 ### 주요 흐름 1. 실제 표시부터 확정 과금까지
 
@@ -414,7 +458,7 @@ Lua는 당일 해시와 처리 표시 두 키를 사용한다. 현재 구현은 
 
 ## 8. 외부 API
 
-노출 차감·진행률 경로에는 결제대행사나 다른 HTTP API 호출이 없다. Valkey와 MySQL은 장애 문서의 저장소 대상이다. Toss 승인·조회와 결제 재조회 워커는 정산의 다른 기능이며 이번 문서에서 검토하지 않았다.
+노출 차감·진행률 경로에는 결제대행사나 다른 HTTP API 호출이 없다. Valkey와 MySQL은 장애 문서의 저장소 대상이다. Toss 승인·조회와 결제 재조회 워커는 정산의 다른 기능이며 이번 문서에서 검토하지 않았다. 전일 결제를 PG 조회로 대사하는 `PG_VS_CHARGE`(#391)의 외부 API 처리는 [장애 처리 설계 7장](./billing_장애_처리_설계.md#7-pg_vs_charge-대사391의-외부-api-처리)이 갖는다.
 
 ## 9. 실패 처리
 
@@ -423,25 +467,30 @@ Lua는 당일 해시와 처리 표시 두 키를 사용한다. 현재 구현은 
 | 흐름 | 불리하게 남는 결과 | 손해를 부담하는 쪽 | 현재 제한과 남은 일 |
 |---|---|---|---|
 | 실제 표시 뒤 과금 저장 실패 | 재처리가 끝내 성공하지 않으면 무료 노출이 된다 | 플랫폼 | 보상은 예산을 풀 뿐이다. 과금 복구 경로는 아직 없다 |
-| Redis 소진이 원장보다 커짐 | 확정 과금액보다 일찍 예산이 소진됐다고 판단한다 | 캠페인의 집행 기회를 잃는 점주와 플랫폼 | 롤백 보상이 오차를 줄인다. 남은 오차를 맞출 대사는 후속 작업이다 |
+| Redis 소진이 원장보다 커짐 | 확정 과금액보다 일찍 예산이 소진됐다고 판단한다 | 캠페인의 집행 기회를 잃는 점주와 플랫폼 | 롤백 보상이 오차를 줄인다. 남은 오차는 13:30 당일 대사와 다음 00:00 전일 대사가 원장 기준으로 카운터를 다시 만들어 맞춘다 |
 | Redis 소진이 원장보다 작아짐 | 예약액을 넘게 과금할 수 있다 | 점주 | 재구성·동시 롤백 경합이 남는다. 대사는 이미 기록된 과금을 자동 취소하지 않는다 |
 | 중단 상태 미러가 실패하고 삭제도 실패함 | 낡은 상태로 과금할 수 있다 | 점주 | ERROR로 기록한다. 완전히 막는 복구 경로는 정하지 않았다 |
 
 ## 10. 배치
 
-배치 정책은 [정산 배치 설계](./billing-batch-design.md)가 소유한다. 작업 상태는 해당 이슈(#193, #306, #317)가 갖는다. 아래 작업은 완료된 구현 목록이 아니다.
+배치 정책은 [정산 배치 설계](./billing-batch-design.md)가 소유한다. 작업 상태는 해당 이슈(#193, #306, #317, #391)가 갖는다. 아래 작업은 2026-10-16 `develop`에 구현돼 있다. 서빙 시간대를 지나는 전체 정상 흐름을 연결해 돌린 검증은 없다.
 
-| 후속 작업 | 하는 일 | 같은 날 다시 돌 때 필요한 조건 |
-|---|---|---|
-| 00:00 예약 | 그날 계획·RESERVE·목표를 만들고 해시를 준비한다 | 원장 멱등 제약과 작업 실행 이력을 지켜야 한다 |
-| 13:30 대사·해제 | 소진을 원장과 비교한 뒤 미소진액을 해제한다 | 같은 예약을 두 번 해제하지 않아야 한다 |
-| 다음 날 전일 대사·보정 해제 | 전일 카운터를 확인하고 실패한 해제를 보완한다 | 전일 영업일을 유지해야 한다 |
+| 작업 | 작업명과 실행 | 하는 일 | 같은 날 다시 돌 때 필요한 조건 |
+|---|---|---|---|
+| 전일 대사 | `BILLING_SPEND_RECON_PREV`, 00:00 묶음 `@Order(40)` | 전일 카운터를 원장과 견주고 어긋나면 카운터를 다시 만든다 | 전일 영업일을 유지해야 한다 |
+| 00:00 예약 | `BILLING_RESERVE`, 묶음 `@Order(50)` | 전날 해제하지 못한 예약을 보정 `RELEASE`로 정리하고, 그날 계획과 `RESERVE`를 만든 뒤 해시를 준비한다 | 원장 멱등 제약(`uk_point_ledger_day_reserve_dedup`)과 작업 실행 이력을 지켜야 한다 |
+| 잔액 부족 판정 | `BILLING_FUNDING_JUDGE`, 묶음 `@Order(60)` | 예약액이 단가보다 작은 캠페인을 판정해 캠페인에 통보한다 | 같은 판정을 두 번 통보해도 캠페인 상태가 같아야 한다 |
+| 시간대별 목표 | `BILLING_HOURLY_TARGET`, 묶음 `@Order(70)` | 중단되지 않은 계획의 서빙 시간대별 목표를 만든다 | 계획·시간 UNIQUE로 중복을 막는다 |
+| 13:30 대사·해제 | `BILLING_DAILY_RELEASE`, 정산의 `@Scheduled` 크론. 시각은 서빙 종료 다음 분에 노출 인정 시간을 더한 값(기본 13:30)이다 | 당일 카운터를 원장과 견준 뒤 남은 예약을 `RELEASE`한다. 대사가 실패하면 해제하지 않는다 | 같은 예약을 두 번 해제하지 않아야 한다. 해제하지 못한 몫은 다음 00:00 예약이 정리한다 |
+| 00:00 `PG_VS_CHARGE` 대사(#391) | `BILLING_PG_VS_CHARGE_RECON`, 독립 `@Scheduled`(00:00, Asia/Seoul) | 전일 생성 결제를 PG 조회로 대사하고 빠진 `CHARGE`를 보정한다 | 결제당 `CHARGE` 멱등 제약(`uk_point_ledger_payment_entry`)과 대사 불일치 UNIQUE를 지켜야 한다. 외부 API(PG 조회)의 처리는 [장애 처리 설계 7장](./billing_장애_처리_설계.md#7-pg_vs_charge-대사391의-외부-api-처리)이 갖는다 |
 
-카운터 대사는 실제 표시를 읽어 누락 과금을 찾아내는 작업이 아니다. 원장과 카운터의 비교만으로 원장에도 없는 무료 노출을 복구할 수 없다. 예약 작업이 없으면 계획 없는 캠페인의 차감은 실패한다.
+13:30 작업과 `PG_VS_CHARGE` 작업은 00:00 묶음이 아니라서 `batch_execution_log` 점유(`claim`)로 배치 서버 두 대가 같은 날을 겹쳐 돌지 않게 한다. 충전 직후 재예약은 시각이 아니라 `PointCharged` 커밋 뒤 리스너가 입구다.
+
+카운터 대사는 실제 표시를 읽어 누락 과금을 찾아내는 작업이 아니다. 원장과 카운터의 비교만으로 원장에도 없는 무료 노출을 복구할 수 없다. 예약 작업이 돌지 않으면 계획 없는 캠페인의 차감은 실패한다.
 
 ## 11. 성능
 
-목표 TPS와 측정 계획은 [정산 배치 설계](./billing-batch-design.md)가 소유한다. 부하 측정은 아직 별도 문서가 없고 `PointDeductorImpl`의 `TODO(부하 테스트 실행)`로만 남아 있다. 아래는 요청 비용이며 성능 달성을 입증하는 측정값이 아니다.
+목표 TPS와 측정 계획은 [정산 배치 설계](./billing-batch-design.md)가 소유하고, 측정 뒤에 고를 개선 후보와 집계 조회의 쿼리 비용은 [성능 개선](./billing_성능_개선.md)이 소유한다. 부하 측정은 아직 별도 문서가 없고 `PointDeductorImpl`의 `TODO(부하 테스트 실행)`로만 남아 있다. 아래는 요청 비용이며 성능 달성을 입증하는 측정값이 아니다.
 
 | 경로 | 요청 하나의 비용 |
 |---|---|
@@ -462,7 +511,8 @@ Lua는 당일 해시와 처리 표시 두 키를 사용한다. 현재 구현은 
 |---|---|
 | 광고 서빙 수집 연동 | 같은 트랜잭션 호출, serve 검증 근거의 수명, 저장된 첫 유효성 반환 순서를 확인해야 한다 |
 | 장애 후 복구 | 장애 설계의 미정 사항을 닫아야 한다. 이미 표시된 광고와 확정 과금의 차이를 줄이는 정책이 필요하다 |
-| 예약·대사 | 후속 작업을 구현하고 전체 정상 흐름을 연결해 검증해야 한다 |
+| 예약·대사 | 작업은 구현돼 있다. 00:00 묶음부터 서빙 시간대와 13:30 해제까지 전체 정상 흐름을 연결해 검증해야 한다 |
 | 성능 | 목표 부하와 해시 복구 구간을 실제 환경에서 측정해야 한다 |
+| 집계 조회의 쿼리 비용 | 기록 시각 범위와 영업일만의 집계는 날짜가 선두인 인덱스가 없다. 지금은 두지 않았고 선택지와 순서는 [성능 개선](./billing_성능_개선.md) 3장이 소유한다 |
 
 이미 구현된 동작을 변경하는 정책은 이 문서 작성만으로 승인하거나 확정하지 않는다.

@@ -107,6 +107,8 @@ GET /v1/admin/dashboard/members?period=DAILY&from=2026-09-01&to=2026-09-30
 | `withdrawnCount` | 누적 탈퇴자 | 마지막 날 |
 | `suspendedCount` | 정지 회원 수 | 마지막 날 |
 
+`avgDailyActiveMembers`는 묶음 안 일별 활성 회원의 합을 묶음의 일수로 나눠 소수점 첫째 자리에서 반올림한 정수다. 일부만 걸친 주와 월은 `from`~`to` 안의 일수로 나눈다. `status`가 `IN_PROGRESS`인 항목의 수치 필드는 `0`이 아니라 `null`이다.
+
 사용자 계정 정지 API가 구현 제외라([회원 API 명세](./member.md)) `suspendedCount`는 사실상 `0`이다. 필드와 목록의 `SUSPENDED` 필터는 정지 기능이 들어올 때를 위해 남기고, 화면은 정지 버튼을 숨긴다.
 
 ## A-02. `GET /v1/admin/dashboard/stores`

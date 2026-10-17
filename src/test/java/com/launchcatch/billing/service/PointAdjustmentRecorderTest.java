@@ -51,6 +51,7 @@ class PointAdjustmentRecorderTest {
     private static final Long CAMPAIGN = 12L;
     private static final Long PAYMENT = 101L;
     private static final Long MISMATCH = 55L;
+    private static final LocalDate TARGET = LocalDate.of(2026, 10, 13);
     private static final String KEY = "req-1";
     private static final String REASON = "중복 과금 정정";
 
@@ -77,12 +78,12 @@ class PointAdjustmentRecorderTest {
     }
 
     private static PointAdjustmentRequest request(long amount, Long campaignId, Long mismatchId) {
-        return new PointAdjustmentRequest(KEY, OWNER, amount, REASON, campaignId, mismatchId);
+        return new PointAdjustmentRequest(KEY, OWNER, amount, REASON, campaignId, campaignId == null ? null : TARGET, mismatchId);
     }
 
     private static SettlementMismatchRow mismatch(MismatchCheckType type, Long targetId,
                                                   MismatchResolutionType resolution) {
-        return new SettlementMismatchRow(MISMATCH, type, targetId, LocalDate.of(2026, 10, 13), 9800L, 9790L,
+        return new SettlementMismatchRow(MISMATCH, type, targetId, TARGET, 9800L, 9790L,
                 resolution, 301L, NOW.minusDays(1), null, null);
     }
 
@@ -142,7 +143,7 @@ class PointAdjustmentRecorderTest {
 
     @Test
     void 같은_키로_같은_내용이_다시_오면_처음_기록을_돌려주고_새로_쓰지_않는다() {
-        PointLedger first = persisted(PointLedger.adjust(OWNER, 1000L, REASON, CAMPAIGN, KEY), 9001L);
+        PointLedger first = persisted(PointLedger.adjust(OWNER, 1000L, REASON, CAMPAIGN, TARGET, KEY), 9001L);
         when(ledgerRepository.findByOwnerIdAndIdempotencyKey(OWNER, KEY)).thenReturn(Optional.of(first));
 
         /*
@@ -160,13 +161,43 @@ class PointAdjustmentRecorderTest {
 
     @Test
     void 같은_키로_금액이나_캠페인이나_사유가_다르면_거절한다() {
-        PointLedger first = persisted(PointLedger.adjust(OWNER, 1000L, REASON, CAMPAIGN, KEY), 9001L);
+        PointLedger first = persisted(PointLedger.adjust(OWNER, 1000L, REASON, CAMPAIGN, TARGET, KEY), 9001L);
         when(ledgerRepository.findByOwnerIdAndIdempotencyKey(OWNER, KEY)).thenReturn(Optional.of(first));
 
         assertRejected(request(2000L, CAMPAIGN, null), BillingErrorCode.IDEMPOTENCY_KEY_CONFLICT);
         assertRejected(request(1000L, null, null), BillingErrorCode.IDEMPOTENCY_KEY_CONFLICT);
-        assertRejected(new PointAdjustmentRequest(KEY, OWNER, 1000L, "다른 사유", CAMPAIGN, null),
+        assertRejected(new PointAdjustmentRequest(KEY, OWNER, 1000L, "다른 사유", CAMPAIGN, TARGET, null),
                 BillingErrorCode.IDEMPOTENCY_KEY_CONFLICT);
+    }
+
+    @Test
+    void 정정_대상_영업일을_원장과_응답에_담는다() {
+        PointAdjustmentResult result = recorder.record(ADMIN, request(1000L, CAMPAIGN, null));
+
+        ArgumentCaptor<PointLedger> saved = ArgumentCaptor.forClass(PointLedger.class);
+        verify(ledgerRepository).save(saved.capture());
+        assertThat(saved.getValue().getAdjustTargetDate()).isEqualTo(TARGET);
+        assertThat(result.adjustment().targetBusinessDate()).isEqualTo(TARGET);
+    }
+
+    @Test
+    void 같은_키로_정정_대상_영업일이_다르면_거절한다() {
+        PointLedger first = persisted(PointLedger.adjust(OWNER, 1000L, REASON, CAMPAIGN, TARGET, KEY), 9001L);
+        when(ledgerRepository.findByOwnerIdAndIdempotencyKey(OWNER, KEY)).thenReturn(Optional.of(first));
+
+        assertRejected(new PointAdjustmentRequest(KEY, OWNER, 1000L, REASON, CAMPAIGN, TARGET.minusDays(1), null),
+                BillingErrorCode.IDEMPOTENCY_KEY_CONFLICT);
+    }
+
+    @Test
+    void 캠페인_대상_대사_건을_닫을_때_정정_대상_영업일이_대사_건의_영업일과_다르면_거절한다() {
+        when(mismatchRepository.findRowById(MISMATCH)).thenReturn(Optional.of(
+                mismatch(MismatchCheckType.CAMPAIGN_SPEND_VS_LEDGER, CAMPAIGN, null)));
+        when(campaignQueryService.findAllById(List.of(CAMPAIGN))).thenReturn(List.of(campaign(OWNER)));
+
+        assertRejected(new PointAdjustmentRequest(KEY, OWNER, 1000L, REASON, CAMPAIGN, TARGET.minusDays(1), MISMATCH),
+                CommonErrorCode.INVALID_INPUT);
+        verify(ledgerRepository, never()).save(any());
     }
 
     @Test
