@@ -2,13 +2,11 @@ package com.launchcatch.store;
 
 import static org.assertj.core.api.Assertions.*;
 import static org.mockito.Mockito.*;
-import static org.mockito.ArgumentMatchers.anyList;
 import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 import com.launchcatch.auth.Role;
 import com.launchcatch.auth.jwt.JwtTokenProvider;
-import com.launchcatch.owner.dto.OwnerTermsAgreementRequest;
 import com.launchcatch.owner.entity.Owner;
 import com.launchcatch.owner.entity.OwnerStatus;
 import com.launchcatch.owner.repository.OwnerRepository;
@@ -47,10 +45,7 @@ class OwnerTermsAgreementIntegrationTest extends AbstractStoreIntegrationTest {
     @Autowired private PlatformTransactionManager manager;
     private MockMvc mvc;
     private Long ownerId;
-    private static final String BODY = """
-            {"version":0,"agreements":[{"termsType":"SERVICE","termsVersion":"1.0","agreed":true},
-            {"termsType":"PRIVACY","termsVersion":"1.0","agreed":true}]}
-            """;
+    private static final String BODY = "{}";
 
     @BeforeEach
     void setUp() {
@@ -78,12 +73,6 @@ class OwnerTermsAgreementIntegrationTest extends AbstractStoreIntegrationTest {
         return new Cookie("accessToken", token);
     }
 
-    private OwnerTermsAgreementRequest request() {
-        return new OwnerTermsAgreementRequest(0L, List.of(
-                new OwnerTermsAgreementRequest.Agreement("SERVICE", "1.0", true),
-                new OwnerTermsAgreementRequest.Agreement("PRIVACY", "1.0", true)));
-    }
-
     @Test
     void 실제_인증과_DB_저장을_거쳐_200을_반환하고_점주_토큰을_유지한다() throws Exception {
         Owner before = owners.findById(ownerId).orElseThrow();
@@ -94,7 +83,11 @@ class OwnerTermsAgreementIntegrationTest extends AbstractStoreIntegrationTest {
                 .andExpect(jsonPath("$.data.version").value(1))
                 .andExpect(jsonPath("$.data.resumeStep").value("STORE_INFO"))
                 .andExpect(header().doesNotExist("Set-Cookie"));
-        assertThat(agreements.findAllByOwnerId(ownerId)).hasSize(2).allSatisfy(row -> {
+        assertThat(agreements.findByOwnerId(ownerId)).hasValueSatisfying(row -> {
+            assertThat(row.isRequired()).isTrue();
+            assertThat(row.isAgreed()).isTrue();
+            assertThat(row.getAgreedAt()).isNotNull();
+            assertThat(row.getWithdrawnAt()).isNull();
             assertThat(row.getCreatedAt()).isNotNull();
             assertThat(row.getUpdatedAt()).isNotNull();
         });
@@ -111,7 +104,7 @@ class OwnerTermsAgreementIntegrationTest extends AbstractStoreIntegrationTest {
     void 인증_없이_요청하면_401이며_저장하지_않는다() throws Exception {
         mvc.perform(put("/v1/owner/terms-agreements").contentType(MediaType.APPLICATION_JSON).content(BODY))
                 .andExpect(status().isUnauthorized()).andExpect(jsonPath("$.code").value("AUTH-005"));
-        assertThat(agreements.findAllByOwnerId(ownerId)).isEmpty();
+        assertThat(agreements.findByOwnerId(ownerId)).isEmpty();
     }
 
     @Test
@@ -119,25 +112,24 @@ class OwnerTermsAgreementIntegrationTest extends AbstractStoreIntegrationTest {
         mvc.perform(put("/v1/owner/terms-agreements").cookie(access(Role.MEMBER))
                         .contentType(MediaType.APPLICATION_JSON).content(BODY))
                 .andExpect(status().isForbidden()).andExpect(jsonPath("$.code").value("AUTH-006"));
-        assertThat(agreements.findAllByOwnerId(ownerId)).isEmpty();
+        assertThat(agreements.findByOwnerId(ownerId)).isEmpty();
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"{}", "{\"version\":0,\"agreements\":[]}", "{\"version\":0,\"agreements\":[null]}",
-            "{\"version\":0,\"agreements\":[{\"termsType\":\"SERVICE\",\"termsVersion\":\"1.0\"}]}",
-            "{\"version\":0,\"agreements\":[{\"termsType\":\" \",\"termsVersion\":\"1.0\",\"agreed\":true}]}"})
-    void 누락과_잘못된_입력은_400이다(String body) throws Exception {
+    @ValueSource(strings = {"{\"version\":0}", "{\"required\":true}", "{\"agreed\":false}"})
+    void 허용하지_않는_요청_필드는_400이다(String body) throws Exception {
         mvc.perform(put("/v1/owner/terms-agreements").cookie(access(Role.OWNER)).contentType(MediaType.APPLICATION_JSON).content(body))
-                .andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("COMMON-002"));
-        assertThat(agreements.findAllByOwnerId(ownerId)).isEmpty();
+                .andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("COMMON-003"));
+        assertThat(agreements.findByOwnerId(ownerId)).isEmpty();
     }
 
     @Test
-    void 약관_미동의는_422이며_다른_약관도_저장하지_않는다() throws Exception {
+    void 이전_약관별_미동의_요청을_전체_동의로_처리하지_않는다() throws Exception {
         mvc.perform(put("/v1/owner/terms-agreements").cookie(access(Role.OWNER))
-                        .contentType(MediaType.APPLICATION_JSON).content(BODY.replace("true", "false")))
-                .andExpect(status().isUnprocessableEntity()).andExpect(jsonPath("$.code").value("STORE-006"));
-        assertThat(agreements.findAllByOwnerId(ownerId)).isEmpty();
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"agreements\":[{\"agreed\":false}]}"))
+                .andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("COMMON-003"));
+        assertThat(agreements.findByOwnerId(ownerId)).isEmpty();
     }
 
     @Test
@@ -145,10 +137,10 @@ class OwnerTermsAgreementIntegrationTest extends AbstractStoreIntegrationTest {
         doAnswer(call -> {
             call.callRealMethod();
             throw new DataAccessResourceFailureException("injected after flush");
-        }).when(agreements).saveAllAndFlush(anyList());
+        }).when(agreements).saveAndFlush(any());
         mvc.perform(put("/v1/owner/terms-agreements").cookie(access(Role.OWNER)).contentType(MediaType.APPLICATION_JSON).content(BODY))
                 .andExpect(status().isInternalServerError()).andExpect(header().doesNotExist("Set-Cookie"));
-        assertThat(agreements.findAllByOwnerId(ownerId)).isEmpty();
+        assertThat(agreements.findByOwnerId(ownerId)).isEmpty();
         assertThat(jdbc.queryForObject("select count(*) from store_registration_progress where owner_id = ?",
                 Integer.class, ownerId)).isZero();
     }
@@ -160,15 +152,15 @@ class OwnerTermsAgreementIntegrationTest extends AbstractStoreIntegrationTest {
         try {
             java.util.concurrent.Callable<String> submit = () -> {
                 assertThat(start.await(5, TimeUnit.SECONDS)).isTrue();
-                try { service.submit(ownerId, request()); return "created"; }
+                try { service.submit(ownerId); return "created"; }
                 catch (StoreException e) { return e.getErrorCode().getCode(); }
             };
             var first = workers.submit(submit);
             var second = workers.submit(submit);
             start.countDown();
             assertThat(List.of(first.get(15, TimeUnit.SECONDS), second.get(15, TimeUnit.SECONDS)))
-                    .containsExactlyInAnyOrder("created", "STORE-001");
-            assertThat(agreements.findAllByOwnerId(ownerId)).hasSize(2);
+                    .containsExactlyInAnyOrder("created", "TERMS-001");
+            assertThat(agreements.findByOwnerId(ownerId)).isPresent();
         } finally {
             start.countDown(); workers.shutdownNow();
             assertThat(workers.awaitTermination(5, TimeUnit.SECONDS)).isTrue();
@@ -191,30 +183,64 @@ class OwnerTermsAgreementIntegrationTest extends AbstractStoreIntegrationTest {
             }));
             assertThat(locked.await(5, TimeUnit.SECONDS)).isTrue();
             var submit = workers.submit(() -> {
-                try { service.submit(ownerId, request()); return "created"; }
+                try { service.submit(ownerId); return "created"; }
                 catch (com.launchcatch.owner.exception.OwnerException e) { return e.getErrorCode().getCode(); }
             });
             release.countDown();
             change.get(10, TimeUnit.SECONDS);
             assertThat(submit.get(10, TimeUnit.SECONDS)).isEqualTo("OWNER-002");
-            assertThat(agreements.findAllByOwnerId(ownerId)).isEmpty();
+            assertThat(agreements.findByOwnerId(ownerId)).isEmpty();
         } finally {
             release.countDown(); workers.shutdownNow();
             assertThat(workers.awaitTermination(5, TimeUnit.SECONDS)).isTrue();
         }
     }
     @Test
-    void DB_UNIQUE_충돌은_기존_동의와_진행_버전을_보존한다() throws Exception {
-        service.submit(ownerId, request());
-        when(agreements.findAllByOwnerId(ownerId)).thenReturn(List.of());
+    void 완료_후_재요청해도_동의와_진행_상태는_변경하지_않는다() throws Exception {
+        service.submit(ownerId);
+        var before = agreements.findByOwnerId(ownerId).orElseThrow();
+
         mvc.perform(put("/v1/owner/terms-agreements").cookie(access(Role.OWNER))
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(BODY.replace("\"version\":0", "\"version\":1")))
-                .andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("STORE-005"));
-        assertThat(jdbc.queryForObject("select count(*) from owner_terms_agreement where owner_id = ?",
-                Integer.class, ownerId)).isEqualTo(2);
+                        .contentType(MediaType.APPLICATION_JSON).content(BODY))
+                .andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("TERMS-001"));
+
+        var after = agreements.findByOwnerId(ownerId).orElseThrow();
+        assertThat(after.getId()).isEqualTo(before.getId());
+        assertThat(after.getAgreedAt()).isEqualTo(before.getAgreedAt());
+        assertThat(after.getWithdrawnAt()).isEqualTo(before.getWithdrawnAt());
+        assertThat(after.getUpdatedAt()).isEqualTo(before.getUpdatedAt());
+        assertThat(after.isAgreed()).isTrue();
+        assertThat(after.isRequired()).isTrue();
         assertThat(jdbc.queryForObject("select version from store_registration_progress where owner_id = ?",
                 Long.class, ownerId)).isEqualTo(1L);
+        assertThat(jdbc.queryForObject("select resume_step from store_registration_progress where owner_id = ?",
+                String.class, ownerId)).isEqualTo("STORE_INFO");
     }
 
+    @Test
+    void DB_UNIQUE_충돌은_기존_동의를_보존하고_진행_상태_생성을_롤백한다() throws Exception {
+        var existing = agreements.saveAndFlush(com.launchcatch.store.entity.OwnerTermsAgreement.record(
+                ownerId, LocalDateTime.of(2026, 10, 1, 10, 0)));
+        when(agreements.findByOwnerId(ownerId)).thenReturn(java.util.Optional.empty());
+
+        mvc.perform(put("/v1/owner/terms-agreements").cookie(access(Role.OWNER))
+                        .contentType(MediaType.APPLICATION_JSON).content(BODY))
+                .andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("TERMS-001"));
+
+        assertThat(jdbc.queryForObject("select count(*) from owner_terms_agreement where owner_id = ?",
+                Integer.class, ownerId)).isEqualTo(1);
+        assertThat(jdbc.queryForObject("select agreed_at from owner_terms_agreement where owner_id = ?",
+                LocalDateTime.class, ownerId)).isEqualTo(existing.getAgreedAt());
+        assertThat(jdbc.queryForObject("select count(*) from store_registration_progress where owner_id = ?",
+                Integer.class, ownerId)).isZero();
+    }
+    @Test
+    void 요청_본문과_버전_없이_최초_동의할_수_있다() throws Exception {
+        mvc.perform(put("/v1/owner/terms-agreements").cookie(access(Role.OWNER)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.requiredTermsCompleted").value(true))
+                .andExpect(jsonPath("$.data.version").value(1))
+                .andExpect(jsonPath("$.data.resumeStep").value("STORE_INFO"));
+        assertThat(agreements.findByOwnerId(ownerId)).isPresent();
+    }
 }

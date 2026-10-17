@@ -5,7 +5,6 @@ import com.launchcatch.global.response.ResponseEnvelope;
 import com.launchcatch.owner.dto.OwnerTermsAgreementRequest;
 import com.launchcatch.owner.dto.OwnerTermsAgreementResponse;
 import com.launchcatch.owner.service.OwnerTermsSubmissionService;
-import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -21,8 +20,8 @@ public class OwnerTermsAgreementController {
     @PutMapping("/v1/owner/terms-agreements")
     public ResponseEntity<ResponseEnvelope<OwnerTermsAgreementResponse>> agree(
             @AuthenticationPrincipal CustomUserDetails principal,
-            @Valid @RequestBody OwnerTermsAgreementRequest request) {
+            @RequestBody(required = false) OwnerTermsAgreementRequest request) {
         return ResponseEntity.ok()
-                .body(ResponseEnvelope.success(service.submit(principal.getId(), request)));
+                .body(ResponseEnvelope.success(service.submit(principal.getId())));
     }
 }

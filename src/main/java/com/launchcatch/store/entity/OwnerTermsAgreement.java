@@ -13,49 +13,37 @@ import lombok.NoArgsConstructor;
 
 @Entity
 @Table(name = "owner_terms_agreement", uniqueConstraints = @UniqueConstraint(
-        name = "uk_owner_terms_version", columnNames = {"owner_id", "terms_type", "terms_version"}))
+        name = "uk_owner_terms_agreement_owner", columnNames = "owner_id"))
 @AttributeOverride(name = "id", column = @Column(name = "owner_terms_agreement_id"))
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class OwnerTermsAgreement extends BaseTimeEntity {
-    @Column(name = "owner_id", nullable = false)
+    @Column(name = "owner_id", nullable = false, updatable = false)
     private Long ownerId;
-    @Column(name = "terms_type", nullable = false, length = 50)
-    private String termsType;
-    @Column(name = "terms_version", nullable = false, length = 30)
-    private String termsVersion;
     @Column(nullable = false)
     private boolean required;
     @Column(nullable = false)
     private boolean agreed;
+    @Column(name = "agreed_at")
+    private LocalDateTime agreedAt;
     @Column(name = "withdrawn_at")
     private LocalDateTime withdrawnAt;
 
-    private OwnerTermsAgreement(Long ownerId, String termsType, String termsVersion,
-            boolean required, boolean agreed) {
-        if (ownerId == null || ownerId <= 0 || termsType == null || termsType.isBlank()
-                || termsType.length() > 50 || termsVersion == null || termsVersion.isBlank()
-                || termsVersion.length() > 30 || (required && !agreed)) {
-            throw new IllegalArgumentException("유효한 점주와 약관 동의 정보가 필요합니다.");
+    private OwnerTermsAgreement(Long ownerId, LocalDateTime agreedAt) {
+        if (ownerId == null || ownerId <= 0) {
+            throw new IllegalArgumentException("유효한 점주 ID가 필요합니다.");
         }
         this.ownerId = ownerId;
-        this.termsType = termsType;
-        this.termsVersion = termsVersion;
-        this.required = required;
-        this.agreed = agreed;
-    }
-
-    public void revise(boolean required, boolean agreed) {
-        if (required && !agreed) {
-            throw new IllegalArgumentException("필수 약관에 동의해야 합니다.");
+        if (agreedAt == null) {
+            throw new IllegalArgumentException("동의 시각이 필요합니다.");
         }
-        this.required = required;
-        this.agreed = agreed;
+        this.required = true;
+        this.agreed = true;
+        this.agreedAt = agreedAt;
         this.withdrawnAt = null;
     }
 
-    public static OwnerTermsAgreement record(Long ownerId, String termsType, String termsVersion,
-            boolean required, boolean agreed) {
-        return new OwnerTermsAgreement(ownerId, termsType, termsVersion, required, agreed);
+    public static OwnerTermsAgreement record(Long ownerId, LocalDateTime agreedAt) {
+        return new OwnerTermsAgreement(ownerId, agreedAt);
     }
 }
