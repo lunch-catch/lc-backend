@@ -139,15 +139,17 @@ GET /v1/admin/dashboard/funnel?period=DAILY&from=&to=
 {
   "label": "2026-09-30", "status": "FINAL",
   "validImpressionCount": 182000, "invalidImpressionCount": 1450, "validRatio": 0.992,
-  "wishCount": 9100, "issueCount": 2300
+  "wishCount": 9100, "issueCount": 2300, "redeemCount": 700
 }
 ```
 
-- 이 API는 노출·찜·발급 건수와 유효 노출 비율까지만 내려준다. **사용(`redeem`) 건수는 넣지 않는다**. 실제 전환 추적은 점주 쪽 소관이고 플랫폼은 일별 근사치(날짜별 노출·찜·발급)만 낸다. 사용 건수는 A-04 분해에만 있다.
+- 이 API는 노출·찜·발급·사용 건수와 유효 노출 비율을 내려준다. 사용(`redeemCount`)은 쿠폰이 확정한 사용 기록의 건수다.
+- 건수는 모두 합계다. 집계 전(`IN_PROGRESS`) 항목의 수치 필드는 `0`이 아니라 `null`이다.
 - `validRatio = valid / (valid + invalid)`. 기간을 묶을 때는 합산한 값으로 **재계산**한다.
 - `invalidImpressionCount`는 무효 사유 2종(`EXPIRED_OR_UNKNOWN`, `NOT_OWNER`)의 합이다. 사유별 건수는 A-09에서 본다.
 - **미과금 노출은 `validImpressionCount`에 포함된다.** 예산을 넘겨 과금되지 않은 노출도 유효 노출이다(해당 요구사항).
-- 유효·무효 노출 수는 `AdservingStatsQueryService`에서 받고 찜·발급 수는 `AdservingStatsQueryService`와 `CouponStatsQueryService`에서 받는다. 점주 리포트와 A-10도 같은 계약을 사용하므로 화면마다 수치가 달라지지 않는다.
+- 유효·무효 노출 수는 `AdservingStatsQueryService`에서 받고 발급·사용 수는 `CouponStatsQueryService`에서 받는다. 점주 리포트와 A-10도 같은 계약을 사용하므로 화면마다 수치가 달라지지 않는다.
+- **`wishCount`는 피드 카드에서 찜한 수다.** 분석 자기 `event_log`의 `wish` 행 수이고 가게 상세에서 한 찜은 들어가지 않는다. 찜 해제는 세지 않는다. `event_log`가 유실을 허용해 실제보다 아주 조금 낮을 수 있다.
 - 대상 데이터가 없는 날은 `0`이고 `validRatio`는 `null`이다.
 
 ## A-04. `GET /v1/admin/dashboard/segments`

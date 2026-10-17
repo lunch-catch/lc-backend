@@ -36,6 +36,7 @@ Spring Batch는 사용하지 않는다. 각 단계는 평범한 서비스이고 
 | `SettlementMetricsStep` | `daily_settlement_analytics` | `BillingStatsQueryService` |
 | `OwnerSpendStep` | `daily_owner_spend` | `BillingStatsQueryService` |
 | `MemberMetricsStep` | `daily_member_analytics` | `MemberStatsQueryService`, analytics의 `event_log` |
+| `FunnelMetricsStep` | `daily_funnel_analytics` | `AdservingStatsQueryService`, `CouponStatsQueryService`, analytics의 `event_log` |
 | `StoreMetricsStep` | `daily_store_analytics` | `StoreStatsQueryService`, 캠페인과 점주 상태 집계 조회 |
 | `SegmentMetricsStep` | `daily_segment_analytics` | `AdservingStatsQueryService`, `CouponStatsQueryService`, `StoreStatsQueryService`, `CampaignQueryService`, `BillingStatsQueryService` |
 | `InvalidMetricsStep` | `daily_invalid_analytics` | `AdservingStatsQueryService` |
