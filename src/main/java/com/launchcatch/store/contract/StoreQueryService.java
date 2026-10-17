@@ -12,6 +12,16 @@ public interface StoreQueryService {
     /** 인증된 점주 화면용 조회다. 초안도 포함하며 가게가 없으면 빈 결과를 반환한다. 저장하지 않는다. */
     Optional<OwnerStoreSnapshot> findOwnerStore(Long ownerId);
 
+    /** 광고 후보용 조회 한 번에 전달할 수 있는 가게 ID 수이며 중복도 포함한다. */
+    int MAX_AD_CANDIDATE_STORE_IDS = 5000;
+
+    /**
+     * 광고 후보용 가게를 일괄 조회하며 미존재·등록 전·좌표 누락 가게는 제외한다.
+     * 검증된 LOGO가 없으면 이미지 URL은 null이다.
+     * @throws IllegalArgumentException ID가 유효하지 않거나 중복 포함 5,000개를 초과한 경우
+     */
+    List<StoreAdCandidateInfo> findAdCandidatesByStoreIds(List<Long> storeIds);
+
     /** 최종 등록 전 가게도 포함해 점주 ID로 일괄 조회하며 ID가 100개를 초과하면 IllegalArgumentException을 던진다. */
     List<StoreSummary> findSummariesByOwnerIds(Collection<Long> ownerIds);
 

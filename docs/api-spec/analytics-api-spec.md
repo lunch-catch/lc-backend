@@ -107,6 +107,8 @@ GET /v1/admin/dashboard/members?period=DAILY&from=2026-09-01&to=2026-09-30
 | `withdrawnCount` | 누적 탈퇴자 | 마지막 날 |
 | `suspendedCount` | 정지 회원 수 | 마지막 날 |
 
+`avgDailyActiveMembers`는 묶음 안 일별 활성 회원의 합을 묶음의 일수로 나눠 소수점 첫째 자리에서 반올림한 정수다. 일부만 걸친 주와 월은 `from`~`to` 안의 일수로 나눈다. `status`가 `IN_PROGRESS`인 항목의 수치 필드는 `0`이 아니라 `null`이다.
+
 사용자 계정 정지 API가 구현 제외라([회원 API 명세](./member.md)) `suspendedCount`는 사실상 `0`이다. 필드와 목록의 `SUSPENDED` 필터는 정지 기능이 들어올 때를 위해 남기고, 화면은 정지 버튼을 숨긴다.
 
 ## A-02. `GET /v1/admin/dashboard/stores`
@@ -122,8 +124,10 @@ GET /v1/admin/dashboard/stores?period=DAILY&from=&to=
 | 필드 | 뜻 | 합산 |
 | --- | --- | --- |
 | `newStoreCount` | 신규 입점 | 합계 |
-| `cumulativeStoreCount` | 누적 입점 업체 수. **점주 상태 `ACTIVE`** 기준 | 마지막 날 |
-| `activeCampaignCount` | 집행 중 캠페인 수 | 마지막 날 |
+| `cumulativeStoreCount` | 누적 입점 업체 수. 그날 말까지 **최종 등록한 가게** 수이며 점주 상태와 무관하다. 폐업하거나 등록이 취소된 가게도 남는다 | 마지막 날 |
+| `activeCampaignCount` | 집행 중 캠페인 수. 그날 말(23:59:59.999999 KST) 기준 `ACTIVE` 상태였던 캠페인 수 | 마지막 날 |
+
+`status`가 `IN_PROGRESS`인 항목의 수치 필드는 `0`이 아니라 `null`이다. 구간 마지막 날의 집계 행이 없으면 `cumulativeStoreCount`와 `activeCampaignCount`도 `null`이다.
 
 ## A-03. `GET /v1/admin/dashboard/funnel`
 

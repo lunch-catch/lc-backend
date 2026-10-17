@@ -2,6 +2,8 @@ package com.launchcatch.owner;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
+import org.springframework.http.MediaType;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -71,7 +73,7 @@ class OwnerStoreIntegrationTest extends AbstractOwnerIntegrationTest {
     }
 
     @Test
-    void 가게_생성_전_조회는_어떤_행도_만들지_않는다() throws Exception {
+    void 조회가_행을_만들지_않으며_약관과_기본정보_저장결과를_반환한다() throws Exception {
         Long id = owner("ONBOARDING");
         mvc.perform(get(PATH).cookie(token(id))).andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value("SUCCESS"))
@@ -79,16 +81,34 @@ class OwnerStoreIntegrationTest extends AbstractOwnerIntegrationTest {
                 .andExpect(jsonPath("$.data.onboarding.resumeStep").value("TERMS"))
                 .andExpect(jsonPath("$.data.onboarding.steps.length()").value(6))
                 .andExpect(jsonPath("$.data.onboarding.canComplete").value(false));
-        agree(id);
+        assertThat(jdbc.queryForObject("select count(*) from store_registration_progress where owner_id = ?",
+                Long.class, id)).isZero();
+        mvc.perform(put("/v1/owner/terms-agreements").cookie(token(id))).andExpect(status().isOk());
         mvc.perform(get(PATH).cookie(token(id))).andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.storeId").value(org.hamcrest.Matchers.nullValue()))
                 .andExpect(jsonPath("$.data.onboarding.resumeStep").value("STORE_INFO"))
                 .andExpect(jsonPath("$.data.onboarding.termsAgreement.required").value(true))
                 .andExpect(jsonPath("$.data.onboarding.termsAgreement.termsType").value(org.hamcrest.Matchers.nullValue()))
-                .andExpect(jsonPath("$.data.onboarding.steps[0].completed").value(true));
+                .andExpect(jsonPath("$.data.onboarding.steps[0].completed").value(true))
+                .andExpect(jsonPath("$.data.onboarding.termsAgreement.agreedAt").isString());
         assertThat(jdbc.queryForObject("select count(*) from store where owner_id = ?", Long.class, id)).isZero();
-        assertThat(jdbc.queryForObject("select count(*) from store_registration_progress where owner_id = ?",
-                Long.class, id)).isZero();
+        var progressBefore = jdbc.queryForMap("select * from store_registration_progress where owner_id = ?", id);
+        mvc.perform(get(PATH).cookie(token(id))).andExpect(status().isOk());
+        assertThat(jdbc.queryForMap("select * from store_registration_progress where owner_id = ?", id))
+                .isEqualTo(progressBefore);
+        mvc.perform(put("/v1/owner/store/basic").cookie(token(id)).contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"version":1,"name":"실제 식당","categoryCode":"KOREAN",
+                                 "representativeName":"점주","businessRegistrationNumber":"1234567890","phone":"02-123-4567"}
+                                """))
+                .andExpect(status().isOk());
+        Long savedStoreId = jdbc.queryForObject("select store_id from store where owner_id = ?", Long.class, id);
+        mvc.perform(get(PATH).cookie(token(id))).andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.storeId").value(savedStoreId))
+                .andExpect(jsonPath("$.data.name").value("실제 식당"))
+                .andExpect(jsonPath("$.data.onboarding.currentStep").value("LOCATION"))
+                .andExpect(jsonPath("$.data.onboarding.resumeStep").value("LOCATION"))
+                .andExpect(jsonPath("$.data.onboarding.steps[1].completed").value(true));
     }
 
     @ParameterizedTest
@@ -179,10 +199,9 @@ class OwnerStoreIntegrationTest extends AbstractOwnerIntegrationTest {
     }
 
     private void agree(Long id) {
-        // develop 스키마의 구 컬럼에는 테스트용 값만 채운다. 공개 조회는 종류·버전을 반환하지 않는다.
         jdbc.update("""
-                insert into owner_terms_agreement (owner_id, terms_type, terms_version, required, agreed, created_at, updated_at)
-                values (?, 'LEGACY', 'LEGACY', true, true, now(), now())
+                insert into owner_terms_agreement (owner_id, required, agreed, agreed_at, created_at, updated_at)
+                values (?, true, true, now(), now(), now())
                 """, id);
     }
 

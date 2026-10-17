@@ -249,8 +249,8 @@ public class CouponCommandService {
                     > MAX_DISTANCE_METERS) {
                 throw new CouponException(CouponErrorCode.LOCATION_NOT_ALLOWED);
             }
-            // 5. 메뉴 스냅샷 또는 전체 주문 금액으로 할인액을 계산하고 쿠폰을 사용 처리한다.
-            int discount = event.calculateDiscount(Math.toIntExact(request.orderAmount()));
+            // 5. 쿠폰 스냅샷으로 메뉴 한 개의 할인액을 계산하고 쿠폰을 사용 처리한다.
+            int discount = event.calculateDiscount();
             coupon.redeem(request.qrToken(), reference.getQrVersion(), now);
             // 6. 사용 이력을 JPA로 저장하고 쿠폰 상태도 함께 반영하며 실패하면 둘 다 롤백한다.
             CouponUsageHistory history = couponUsageHistoryRepository.saveAndFlush(

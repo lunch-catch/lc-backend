@@ -9,7 +9,6 @@ import com.launchcatch.store.dto.StoreRegistrationProgressSnapshot;
 import com.launchcatch.store.entity.StoreRegistrationStep;
 import java.sql.ResultSet;
 import java.sql.SQLException;
-import java.sql.Timestamp;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
@@ -86,20 +85,13 @@ public class OwnerStoreQueryRepository {
     }
 
     public Optional<TermsAgreement> findTermsAgreement(Long ownerId) {
-        // PR #148 적용 전후를 모두 읽는다. 제거 예정인 종류·버전 컬럼에는 의존하지 않는다.
-        return jdbc.queryForList("""
-                select * from owner_terms_agreement where owner_id = :ownerId
-                order by owner_terms_agreement_id desc limit 1
-                """, Map.of("ownerId", ownerId)).stream().map(row -> new TermsAgreement(
-                        null, null, true, Boolean.TRUE.equals(row.get("agreed")),
-                        dateTime(row.get("agreed_at")), dateTime(row.get("created_at")),
-                        dateTime(row.get("withdrawn_at")))).findFirst();
-    }
-
-    private static LocalDateTime dateTime(Object value) {
-        if (value instanceof Timestamp timestamp) {
-            return timestamp.toLocalDateTime();
-        }
-        return (LocalDateTime) value;
+        return jdbc.query("""
+                select agreed, agreed_at, created_at, withdrawn_at
+                from owner_terms_agreement where owner_id = :ownerId
+                """, Map.of("ownerId", ownerId), (rs, row) -> new TermsAgreement(
+                        null, null, true, rs.getBoolean("agreed"),
+                        rs.getObject("agreed_at", LocalDateTime.class),
+                        rs.getObject("created_at", LocalDateTime.class),
+                        rs.getObject("withdrawn_at", LocalDateTime.class))).stream().findFirst();
     }
 }

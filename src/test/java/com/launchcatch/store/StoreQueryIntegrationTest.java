@@ -48,6 +48,35 @@ class StoreQueryIntegrationTest extends AbstractStoreIntegrationTest {
     }
 
     @Test
+    void 광고_후보는_최종_등록된_가게를_중복_없이_SQL_한번으로_조회한다() {
+        insertStoreImage(storeId, "INTERIOR", "stores/interior.png", 1);
+        long selectsBefore = sessionSelects();
+
+        var result = service.findAdCandidatesByStoreIds(
+                List.of(storeId, otherStoreId, draftStoreId, storeId, Long.MAX_VALUE));
+
+        assertThat(sessionSelects() - selectsBefore).isEqualTo(1);
+        assertThat(result).extracting("storeId").containsExactlyInAnyOrder(storeId, otherStoreId);
+        assertThat(result).filteredOn(store -> store.storeId().equals(storeId)).singleElement().satisfies(store -> {
+            assertThat(store.storeName()).isEqualTo("첫 가게");
+            assertThat(store.categoryCode()).isEqualTo("KOREAN");
+            assertThat(store.storeImageUrl()).endsWith("/stores/" + storeId + ".png");
+            assertThat(store.latitude()).isEqualByComparingTo("37.1234567");
+            assertThat(store.longitude()).isEqualByComparingTo("127.1234567");
+        });
+    }
+
+    @Test
+    void 검증되지_않은_LOGO는_광고_후보의_이미지로_사용하지_않는다() {
+        jdbc.update("update store_image set upload_status = 'PENDING' where store_id = ?", storeId);
+
+        assertThat(service.findAdCandidatesByStoreIds(List.of(storeId, otherStoreId)))
+                .extracting("storeId").containsExactlyInAnyOrder(storeId, otherStoreId);
+        assertThat(service.findAdCandidatesByStoreIds(List.of(storeId))).singleElement()
+                .satisfies(store -> assertThat(store.storeImageUrl()).isNull());
+    }
+
+    @Test
     void 점주_요약은_등록_전_가게와_마스킹한_번호를_포함하고_없는_점주는_제외한다() {
         jdbc.update("update store set business_registration_number = '1234567890' where store_id = ?", storeId);
         assertThat(service.findSummariesByOwnerIds(List.of(ownerId, ownerId + 2, ownerId, Long.MAX_VALUE)))

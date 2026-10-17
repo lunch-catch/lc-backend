@@ -2,7 +2,7 @@
 
 요청과 응답은 [store-api-spec.md](../../api-spec/store-api-spec.md)가 소유한다.
 이 문서는 이슈 #331의 조회 구현, 다른 도메인에 공개하는 요약 저장 계약, 이슈 #375의
-점주 인테리어 이미지 업로드를 정의한다.
+점주 인테리어 이미지 업로드, 이슈 #389의 점주 대표 메뉴와 메뉴 이미지 업로드를 정의한다.
 
 ## 조회 구조
 
@@ -80,6 +80,88 @@ StoreListIntegrationTest 하나에서 실제 MySQL의 거리 정렬과 반올림
 같은 테스트에서 캠페인·메뉴 응답, 공통 보안 체인, MEMBER 권한과 updater의 저장·롤백도 검증한다.
 일괄 저장은 500개 메뉴 요약의 실제 SELECT·INSERT 실행 횟수와 기존 행 갱신, 메뉴 검증 실패와 롤백을 확인한다.
 
+## 점주 약관 동의
+
+계약은 [store-api-spec.md](../../api-spec/store-api-spec.md#점주-약관-동의)를 따른다.
+전체 약관이 필수이므로 요청 자체를 전체 동의로 처리한다. 약관별 정책 설정과 선택 약관 처리는 두지 않는다.
+owner는 점주 행을 잠그고 DB 현재 상태가 ONBOARDING인지 확인한 뒤 store.contract.OwnerTermsAgreementRecorder를 호출한다.
+store는 owner 내부에 의존하지 않는다.
+
+잠금 순서는 점주 행 → 진행 상태 행 → 약관 데이터다.
+OwnerTermsAgreementService는 호출자의 쓰기 트랜잭션에 참여하고 진행 상태를 초기화·잠근다. 약관 동의 요청에서는 버전을 받지 않는다.
+진행 상태 GET은 읽기만 수행하며 행이 없으면 TERMS, version=0을 반환한다.
+최초 생성은 점주 행 잠금 아래 약관 저장에서만 수행하므로 최초 조회와 저장이 경합해도 중복 생성하지 않는다.
+
+약관은 owner_id UNIQUE로 점주당 한 행을 저장한다.
+agreed_at은 공용 Clock을 사용한 최초 동의 저장 시각이며 이후 갱신하지 않는다.
+withdrawn_at은 향후 확장을 위해 NULL을 허용한다. 최초 동의 시 null로 저장하며 현재 수정·재동의·철회 기능은 제공하지 않는다.
+동의 완료 여부는 agreed=true이고 agreed_at이 존재하며 withdrawn_at이 null인지로 판단한다.
+약관 종류·버전은 애플리케이션에서 사용하지 않으며 약관별 정책 설정은 제거한다. required와 agreed는 향후 확장을 위해 유지하며 현재 동의 저장에서는 서버가 둘 다 true로 설정한다. 약관 동의는 점주 행 잠금과 기존 동의 확인·UNIQUE 제약으로 중복 저장을 막는다. 진행 상태의 현재 버전은 서버가 잠금 아래 읽으며 완료 후 증가한 버전을 다음 단계용 응답에 포함한다.
+
+기존 동의 행이 있으면 TERMS-001로 거부한다. 기존 행이 없더라도 현재 단계가 TERMS가 아니면 STORE-002로 거부한다.
+최초 성공 시에만 TERMS를 완료해 STORE_INFO로 진행한다. reviseStep은 호출하지 않으며 동의 완료 후의 약관 수정은 허용하지 않는다.
+약관과 진행 상태는 함께 커밋하거나 롤백한다. 점주 상태·튜토리얼·토큰·인증 쿠키는 변경하지 않는다.
+기존 동의 재요청과 약관 UNIQUE 충돌은 TERMS-001로 처리하며 다른 DB 오류는 그대로 전파한다.
+약관 오류는 전용 접두어 TERMS-001을 사용해 develop의 이미지 오류 STORE-005~010과 충돌하지 않는다. 약관 오류 번호와 STORE 오류 번호가 각각 연속이므로 공통 오류 코드 목록 검사도 유지한다. 정책 미설정과 약관별 미동의 오류는 제거한다.
+
+### 스키마 이관
+
+기존 V1은 체크섬을 유지하고 V5로 변경한다.
+V5는 terms_type과 terms_version을 삭제하지 않고 NULL을 허용해 새 코드가 두 값을 생략하고 저장할 수 있게 한다.
+두 컬럼은 새 코드 배포와 구버전 인스턴스 종료를 확인한 뒤 별도 배포의 후속 마이그레이션에서 제거한다.
+같은 배포에 삭제 마이그레이션을 포함하지 않는다. 기존 행 통합과 점주당 한 행 제약은 유지하므로 약관별 여러 행을 쓰는 코드와의 호환성을 보장하는 것은 아니다.
+기존 점주별 여러 행은 한 행으로 합친다. 모든 기존 기록이 동의 상태이고 철회되지 않은 경우에만 마지막 갱신 시각을 agreed_at으로 이관한다.
+이관 시 required=true로 설정한다. 미동의나 철회가 섞인 기록은 agreed=false, agreed_at=null로 남겨 전체 필수 약관 동의로 승격하지 않는다.
+기존 철회 시각은 보존한다. 실제 최초 동의 시각은 과거 스키마에 없으므로 이관 시각과 새 요청의 서버 동의 시각을 구분한다.
+
+## STORE_INFO 저장 (#415)
+
+HTTP 계약은 [store-api-spec.md](../../api-spec/store-api-spec.md#가게-등록-온보딩-2단계-기본-정보와-사업자-mock-검증)가 소유한다.
+owner의 OwnerStoreInfoController는 인증 주체의 ID와 입력값을 OwnerStoreInfoService에 전달한다.
+OwnerStoreInfoService가 점주를 확인한 뒤 store.contract.StoreInfoSaver를 호출한다.
+StoreInfoService는 기존 StoreRegistrationProgressService의 완료·수정 메서드를 호출한다.
+
+### 접근 확인과 트랜잭션
+
+owner는 이미 내 정보 조회에서 store의 진행 상태 계약을 사용한다.
+점주 상태 확인과 호출 순서는 owner의 서비스가 담당하며 가게 입력 검증과 저장은 store가 담당한다.
+OwnerStoreInfoService는 쓰기 트랜잭션을 시작하고 점주 행을 잠근 뒤 DB의 ONBOARDING 상태를 확인한다.
+상태 캐시와 토큰의 상태값은 사용하지 않는다.
+상태 확인 후 store가 공개한 StoreInfoSaver.save를 호출하며 StoreInfoService가 그 계약을 구현한다.
+StoreInfoService는 MANDATORY로 같은 트랜잭션에 참여하며 점주 데이터를 읽거나 owner의 구현을 호출하지 않는다.
+잠금 순서는 점주 행 → 진행 상태 행 → 가게 데이터이며 의존 방향은 기존 owner → store를 유지한다.
+가게의 유일한 owner_id와 진행 상태의 버전 검사로 동시 최초 요청의 중복 생성을 막는다.
+단계·버전 검사 후 입력값과 Mock 결과를 확인하며 가게 저장과 진행 상태 갱신은 한 트랜잭션이다.
+
+### 저장과 수정
+
+최초 성공은 Store.createDraft로 finalized=false인 가게를 생성하고 saveAndFlush로 ID를 확보한다.
+이어서 completeStep으로 가게 소유권을 확인하고 LOCATION으로 진행한다.
+완료 단계 재저장은 연결된 본인 가게만 수정하고 reviseStep으로 버전만 증가시킨다.
+StoreBasicInfo 값 객체가 필수 업무 입력의 불변식을 검증한다.
+기본 정보 교체는 검증 성공 시각을 Clock으로 기록하며 다른 단계 데이터는 건드리지 않는다.
+
+Mock 실패는 상태 변경 없이 결과만 반환한다.
+따라서 최초 실패 초안을 저장하기 위한 DB 제약 변경이 필요하지 않다.
+DB 장애·진행 상태 갱신 실패는 성공으로 바꾸지 않으며 가게 정보와 함께 롤백한다.
+현재 Mock은 순수 계산으로 외부 의존이 없다. 실제 기관 연동 시 외부 호출은 DB 잠금 밖으로 분리해야 한다.
+
+### 검증
+
+StoreInfoServiceTest가 입력 검증·최초 생성·수정·Mock 실패·진행 상태 오류를 확인한다.
+OwnerStoreInfoServiceTest가 점주 상태·계정 누락·DB 장애와 저장 계약 호출을 확인한다.
+StoreInfoIntegrationTest는 약관 동의 후 기본 정보 등록·HTTP 보안·실제 저장·다른 단계 데이터 보존·동시 요청·후속 갱신 실패의 롤백을 확인한다.
+
+### 가게 기본 정보 저장 공개 계약
+
+StoreInfoSaver와 입출력 record인 StoreInfoSaveCommand·StoreInfoSaveResult는 store.contract가 소유한다.
+StoreInfoService가 자기 도메인의 공개 계약을 구현하며 owner는 이 계약만 참조한다.
+호출자는 같은 쓰기 트랜잭션에서 본인 점주 행을 먼저 잠그고 ONBOARDING 상태를 확인해야 한다.
+트랜잭션이 없으면 MANDATORY가 호출을 거부한다.
+공개 입출력 타입은 HTTP DTO나 내부 엔티티를 참조하지 않는다.
+진행 단계와 검증 결과는 문자열로 전달하고 owner의 HTTP 응답 DTO가 결과를 변환한다.
+가게 기본 정보와 Mock 판정 규칙은 store 내부에 유지하며 공개 명령을 받은 뒤 검증한다.
+
 ## 점주 인테리어 이미지 업로드(`#375`)
 
 **서버가 하는 일**
@@ -108,8 +190,8 @@ StoreListIntegrationTest 하나에서 실제 MySQL의 거리 정렬과 반올림
   `store_image`의 `uk_store_image_single_logo` 제약과 별개로 여전히 필수 전제다.
 - **`completeStep`에 필요한 `version`을 돌려주는 조회 API(`GET /v1/owner/store-registration-progress`)를
   이 이슈에서 같이 만든다.** 등록 단계 API 전체가 아직 하나도 없어 클라이언트가 현재 버전을
-  얻을 곳이 없었다. 이 조회는 `StoreRegistrationProgressService.initialize`를 그대로 불러
-  진행 상태가 없으면 만들어서 돌려준다.
+  얻을 곳이 없었다. 이 조회는 저장된 진행 상태를 읽으며 없으면 TERMS와 버전 0을 반환한다.
+  GET은 진행 상태를 생성하지 않는다. 최초 생성은 점주 행 잠금 아래 약관 저장에서 처리한다.
 - **presigned 업로드 흐름을 이 이슈에서 처음 구현한다.** `S3Config`는 "가게 이미지, 포스터
   이미지, 증빙 서류가 같은 경로를 쓴다"고 전제해 뒀지만 실제로 쓰는 코드는 없었다. 이 구현은
   `store_image` 테이블(업로드 상태 추적 컬럼 포함)에 맞춘 것이라, 포스터 이미지처럼 추적
@@ -119,10 +201,48 @@ StoreListIntegrationTest 하나에서 실제 MySQL의 거리 정렬과 반올림
   컬렉션 경로에 바로 붙는 형태라 실제로 라우팅되는지 통합 테스트로 확인했다(`StoreImageSecurityIntegrationTest`).
 
 
+## 점주 대표 메뉴와 메뉴 이미지 업로드(`#389`)
+
+**서버가 하는 일**
+
+1. 메뉴 등록(`POST /v1/owner/store-menus`): 그 가게의 메뉴 개수를 세어 `sortOrder`를 매긴 뒤
+   `store_menu` 행을 만든다. 이름·가격·설명(선택)만 저장하며 이미지는 아직 없다.
+2. presigned URL 발급(`prepareUpload`): 요청한 `menuId`가 본인 가게의 메뉴인지 확인하고
+   파일 형식·크기를 검증한 뒤 `store_menu_image` 행을 `upload_status=PENDING`으로 먼저
+   만든다. 그다음 `S3Presigner`로 그 `objectKey`에 대한 presigned PUT URL을 발급한다.
+3. 업로드 확인(`confirmUpload`): `uploadId`로 `PENDING` 행을 찾아 그 메뉴가 본인 가게 소유인지
+   확인하고, `S3Client.headObject`로 실제 업로드됐는지 확인한 뒤 `VERIFIED`로 바꾼다.
+4. 단계 완료(`complete`): 그 가게의 메뉴 중 이미지가 `VERIFIED`가 아닌 메뉴이 하나라도 있으면
+   거부하고, 없으면(메뉴가 0개여도 통과한다) `StoreRegistrationProgressService.completeStep
+   (ownerId, version, MENU, null)`을 불러 버전을 올린다. `MENU`는 마지막 입력 단계라
+   다음 단계로 넘어가지 않는다.
+
+**정한 이유**
+
+- **메뉴 저장과 이미지 업로드를 분리한다.** `store_menu_image.store_menu_id`가 `NOT NULL` FK로
+  `store_menu`를 가리켜서, 가게 인테리어 이미지(`#375`, `store_id`로 바로 참조하며 가게는
+  이미 존재)와 달리 메뉴는 이 이슈에서 처음 만들어지는 대상이라 이미지보다 먼저 존재해야
+  한다. 그래서 이름·가격·설명 저장(1번)과 이미지 업로드(2~3번)를 별개 API로 나눴다(이슈
+  본문에서 사용자가 직접 정리, `#389` 결정).
+- **`upload_status`는 `PENDING` → `VERIFIED`만 쓴다.** `store_image`와 같은 이유로 중간
+  상태(`UPLOADED`)를 두지 않는다(`#375` 결정을 그대로 따름). 같은 이유라 `StoreImageUploadStatus`
+  enum을 새로 만들지 않고 재사용한다.
+- **메뉴 `sortOrder`는 점주가 지정하지 않고 서버가 등록 순서대로 자동으로 매긴다.** 인테리어
+  이미지(`#375`)와 같은 이유로, 재배치 기능이 없는 지금 범위에서는 점주 입력을 받을 이유가
+  없다. 재배치가 생기면 이 결정을 다시 봐야 한다.
+- **메뉴 수정·삭제는 이 이슈 범위 밖이다.** 등록만 다루며, `store_menu`에 수정이나 삭제 API를
+  두지 않는다. 삭제 기능이 생기면 메뉴 할당량이나 카운터를 따로 감소시킬 경로가 필요하다.
+- **기존 조회 전용 `StoreMenu` 엔티티를 확장해 쓴다.** 새 쓰기 전용 엔티티를 같은 테이블에
+  중복 매핑하지 않기 위해 `@Immutable`을 떼고 `description`, `sortOrder` 컬럼 매핑과
+  `register(...)` 팩터리를 추가했다. 기존에 읽던 `id`, `name`, `price`는 그대로라
+  `StoreMenuInfo`(쿠폰 contract)와 `StoreRepositoryImpl`의 메뉴 조회에는 영향이 없다.
+- **`menuId` 소유권 확인 실패는 "없음"과 "다른 가게 소유"를 구분하지 않고 같은 `403`
+  (`STORE-012`)으로 묶는다.** 업로드 확인 실패(`STORE-008`)와 같은 근거다(`api-spec.md`).
+
 ## 내 가게 조회 (#427)
 
 HTTP 계약은 [store-api-spec.md](../../api-spec/store-api-spec.md)의 `GET /v1/owner/store` 절이 소유한다.
-OwnerStoreController → OwnerStoreService → store.contract.StoreQueryService.findOwnerStore 순서로 호출한다.
+OwnerStoreController → OwnerStoreService → store.contract.StoreQueryService.getOwnerStoreOverview 순서로 호출한다.
 owner는 DB에서 현재 계정과 상태를 확인하고 store는 본인 가게의 업무 데이터를 조회한다.
 store가 owner를 역방향 참조하지 않으며 StoreQueryService의 기존 최종 등록 전용 메서드의 조회 조건은 유지한다.
 OwnerStoreSnapshot은 도메인 간 계약이며 OwnerStoreResponse가 HTTP 응답으로 변환한다.
@@ -131,7 +251,7 @@ OwnerStoreSnapshot은 도메인 간 계약이며 OwnerStoreResponse가 HTTP 응�
 MySQL 기본 REPEATABLE READ의 스냅샷으로 읽으며 쓰기 잠금과 진행 상태 초기화는 수행하지 않는다.
 가게가 없으면 후속 목록을 조회하지 않는다. 사진과 메뉴 이미지는 VERIFIED만 연결한다.
 이미지 URL은 기존 StoreImageUrlResolver로 생성하며 S3에 요청하지 않는다.
-TERMS는 PR #148의 필수 약관 단일 동의 계약을 반영하되 미병합 클래스나 마이그레이션을 복사하지 않는다.
+TERMS는 develop에 병합된 PR #148의 필수 약관 단일 동의 계약을 따른다.
 OwnerStoreOverview를 HTTP DTO로 변환해 가게 생성 전에도 약관·진행 정보를 반환한다.
 완료 단계는 현재 업무 데이터를 확인한다. 약관은 유효한 단일 동의, STORE_INFO는 필수 5항목과 검증 성공,
 LOCATION은 장소·주소·좌표, HOURS는 저장 행 존재, IMAGES는 검증된 대표 이미지로 판단한다.

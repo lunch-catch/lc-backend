@@ -60,3 +60,16 @@ ONBOARDING 점주는 store.contract.StoreRegistrationQuery로 현재 재개 단�
 현재 상태를 확인하는 API이므로 ONBOARDING을 차단하지 않고 별도의 상태별 업무 인가를 추가하지 않는다.
 토큰 무효화는 공용 인증 필터의 검증을 따르며 인증 로직을 복제하지 않는다.
 OwnerSecurityConfig의 회원가입·로그인·재발급·로그아웃·튜토리얼 완료 규칙과 조회 규칙을 함께 유지한다.
+
+## 가게 기본 정보 저장의 점주 확인 (#415)
+
+OwnerStoreInfoController와 HTTP 요청·응답 DTO는 owner에 두고 OwnerStoreInfoService가 호출 순서를 담당한다.
+가게 기본 정보의 업무 검증과 저장은 store가 담당하며 API 경로와 공개 요청·응답 형식은 유지한다.
+OwnerStoreInfoService는 쓰기 트랜잭션 안에서 requireOnboarding으로 점주 행을 잠그고 현재 상태를 확인한다.
+requireOnboarding은 owner 서비스의 내부 메서드이며 다른 도메인에 공개하지 않는다.
+기존 findByIdForLogin의 비관적 쓰기 잠금을 사용한다.
+점주 부재는 AUTH-005, ONBOARDING 이외의 상태는 기존 OWNER-002로 거부하고 DB 장애는 전파한다.
+확인을 마치면 store.contract.StoreInfoSaver에 StoreInfoSaveCommand를 전달한다.
+StoreInfoSaveResult는 owner의 StoreInfoResponse로 변환하며 HTTP DTO를 도메인 간 계약으로 사용하지 않는다.
+토큰·계정 상태·튜토리얼·상태 캐시는 변경하지 않는다.
+저장 계약과 트랜잭션의 단일 기준은 [가게 API 설계](../store/store-api-design.md#접근-확인과-트랜잭션)를 따른다.

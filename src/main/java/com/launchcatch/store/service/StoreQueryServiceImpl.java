@@ -8,6 +8,8 @@ import com.launchcatch.store.contract.OwnerStoreOverview;
 import com.launchcatch.store.contract.OwnerStoreSnapshot.Image;
 import com.launchcatch.store.contract.OwnerStoreSnapshot.Menu;
 import com.launchcatch.store.contract.OwnerStoreSnapshot;
+
+import com.launchcatch.store.contract.StoreAdCandidateInfo;
 import com.launchcatch.store.contract.StoreInfo;
 import com.launchcatch.store.contract.StoreMenuInfo;
 import com.launchcatch.store.contract.StoreQueryService;
@@ -23,7 +25,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-// 쿠폰이 사용하는 공개 인터페이스의 구현으로, DB 조회 결과의 이미지 저장 키를 URL로 바꿔 전달한다.
+// 가게 조회 공개 인터페이스의 구현으로, DB 조회 결과의 이미지 저장 키를 URL로 바꿔 전달한다.
 @Service
 @Transactional(readOnly = true)
 class StoreQueryServiceImpl implements StoreQueryService {
@@ -38,6 +40,22 @@ class StoreQueryServiceImpl implements StoreQueryService {
         this.stores = stores;
         this.ownerStores = ownerStores;
         this.images = new StoreImageUrlResolver(baseUrl);
+    }
+
+    // 가게 ID 목록으로 광고 후보용 상호·업종·대표 이미지 URL·좌표를 조회하며, 등록 전이거나 좌표가 누락된 가게는 제외한다.
+    @Override
+    public List<StoreAdCandidateInfo> findAdCandidatesByStoreIds(List<Long> storeIds) {
+        validateIds(storeIds);
+        if (storeIds.size() > MAX_AD_CANDIDATE_STORE_IDS) {
+            throw new IllegalArgumentException("광고 후보용 가게 ID는 최대 5000개까지 조회할 수 있습니다.");
+        }
+        if (storeIds.isEmpty()) {
+            return List.of();
+        }
+        return stores.findAdCandidatesByStoreIds(storeIds).stream()
+                .map(row -> new StoreAdCandidateInfo(row.storeId(), row.name(), row.categoryCode(),
+                        images.resolve(row.imageObjectKey()), row.latitude(), row.longitude()))
+                .toList();
     }
 
     @Override
