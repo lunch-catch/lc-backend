@@ -12,6 +12,7 @@ public enum StoreErrorCode implements ErrorCode {
     REGISTRATION_STEP_CONFLICT(HttpStatus.CONFLICT, "STORE-002", "현재 진행 단계와 요청한 단계가 일치하지 않습니다."),
     REGISTRATION_PROGRESS_NOT_FOUND(HttpStatus.CONFLICT, "STORE-003", "가게 등록 진행 상태를 먼저 초기화해야 합니다."),
     REGISTRATION_STORE_NOT_ALLOWED(HttpStatus.FORBIDDEN, "STORE-004", "해당 가게를 등록 진행 상태에 연결할 수 없습니다."),
+    TERMS_ALREADY_RECORDED(HttpStatus.CONFLICT, "TERMS-001", "이미 저장된 약관 동의 내역입니다."),
     IMAGE_CONTENT_TYPE_NOT_ALLOWED(HttpStatus.UNPROCESSABLE_ENTITY, "STORE-005", "jpg, png 파일만 업로드할 수 있습니다."),
     IMAGE_FILE_TOO_LARGE(HttpStatus.UNPROCESSABLE_ENTITY, "STORE-006", "파일 크기는 10MB를 넘을 수 없습니다."),
     INTERIOR_IMAGE_LIMIT_EXCEEDED(HttpStatus.UNPROCESSABLE_ENTITY, "STORE-007", "인테리어 이미지는 최대 3개까지 등록할 수 있습니다."),
