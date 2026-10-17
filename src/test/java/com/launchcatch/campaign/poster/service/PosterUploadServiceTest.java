@@ -301,6 +301,22 @@ class PosterUploadServiceTest {
     }
 
     @Test
+    @DisplayName("headObject 확인 사이에 캠페인이 사라지거나 본인 소유가 아니게 되면 생성을 거부한다")
+    void 잠금_재확인에서_캠페인을_못_찾으면_거부한다() {
+        when(campaignRepository.findById(CAMPAIGN_ID)).thenReturn(Optional.of(draftCampaign(CampaignStatus.DRAFT)));
+        when(campaignRepository.findByIdForUpdate(CAMPAIGN_ID)).thenReturn(Optional.empty());
+        when(templateRepository.findById(TEMPLATE_ID)).thenReturn(Optional.of(publishedActiveTemplate()));
+        when(storeQueryService.findAllById(List.of(STORE_ID)))
+                .thenReturn(List.of(new StoreInfo(STORE_ID, "분식집", "store.jpg", 37.5, 127.0)));
+        when(s3Client.headObject(any(HeadObjectRequest.class)))
+                .thenReturn(HeadObjectResponse.builder().contentType("image/jpeg").contentLength(1000L).build());
+
+        assertThatThrownBy(() -> service.createOrOverwritePoster(OWNER_ID, CAMPAIGN_ID, TEMPLATE_ID, OBJECT_KEY))
+                .isInstanceOfSatisfying(CampaignException.class, e ->
+                        assertThat(e.getErrorCode()).isEqualTo(CampaignErrorCode.CAMPAIGN_NOT_OWNED));
+    }
+
+    @Test
     @DisplayName("전체 할인이면 가게명, 할인 문구, 기간, 이미지를 슬롯에 채워 포스터를 만든다")
     void 전체_할인이면_포스터를_만든다() {
         Campaign campaign = draftCampaign(CampaignStatus.DRAFT);
