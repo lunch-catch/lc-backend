@@ -201,6 +201,15 @@ class PosterUploadServiceTest {
     }
 
     @Test
+    @DisplayName("다른 캠페인이나 다른 경로를 가리키는 objectKey면 생성을 거부한다")
+    void 다른_캠페인의_objectKey면_거부한다() {
+        assertThatThrownBy(() ->
+                service.createOrOverwritePoster(OWNER_ID, CAMPAIGN_ID, TEMPLATE_ID, "campaigns/999/poster/other.jpg"))
+                .isInstanceOfSatisfying(CampaignException.class, e ->
+                        assertThat(e.getErrorCode()).isEqualTo(PosterErrorCode.POSTER_IMAGE_OBJECT_KEY_INVALID));
+    }
+
+    @Test
     @DisplayName("실제로 업로드되지 않았으면 생성을 거부한다")
     void 업로드되지_않았으면_거부한다() {
         when(campaignRepository.findById(CAMPAIGN_ID)).thenReturn(Optional.of(draftCampaign(CampaignStatus.DRAFT)));

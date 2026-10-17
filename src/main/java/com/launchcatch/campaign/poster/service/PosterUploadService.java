@@ -109,6 +109,7 @@ public class PosterUploadService {
 
     public PosterCreateResponse createOrOverwritePoster(Long ownerId, Long campaignId, Long templateId, String objectKey) {
         validateActiveOwner(ownerId);
+        validateObjectKey(campaignId, objectKey);
 
         Campaign campaign = findDraftCampaign(ownerId, campaignId);
         Template template = findUsableTemplate(templateId);
@@ -270,7 +271,20 @@ public class PosterUploadService {
 
     private String buildObjectKey(Long campaignId, String contentType) {
         String extension = contentType.equals("image/png") ? "png" : "jpg";
-        return "campaigns/" + campaignId + "/poster/" + UUID.randomUUID() + "." + extension;
+        return objectKeyPrefix(campaignId) + UUID.randomUUID() + "." + extension;
+    }
+
+    // UUID 부분은 추측할 수 없어, 이 접두어 검사만으로 이 캠페인의 prepareUpload가 실제로
+    // 발급한 키인지가 보장된다(셀프 리뷰로 찾음 — 다른 캠페인·다른 객체의 키를 그대로 가져다
+    // 쓸 수 있는 문제였다).
+    private void validateObjectKey(Long campaignId, String objectKey) {
+        if (!objectKey.startsWith(objectKeyPrefix(campaignId))) {
+            throw new CampaignException(PosterErrorCode.POSTER_IMAGE_OBJECT_KEY_INVALID);
+        }
+    }
+
+    private String objectKeyPrefix(Long campaignId) {
+        return "campaigns/" + campaignId + "/poster/";
     }
 
     private String presign(String objectKey, String contentType, Long fileSize) {
