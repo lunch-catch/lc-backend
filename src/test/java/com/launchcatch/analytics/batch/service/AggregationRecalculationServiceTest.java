@@ -1,10 +1,12 @@
 package com.launchcatch.analytics.batch.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -160,12 +162,23 @@ class AggregationRecalculationServiceTest {
     }
 
     @Test
-    void 실제_실행기를_쓰는_생성자로도_만들고_내릴_수_있다() {
-        AggregationRecalculationService owned =
-                new AggregationRecalculationService(
-                        runner, executionQuery, auditLogWriter, transactionManager, CLOCK);
+    void 서비스가_직접_만든_실행기에서_다른_스레드로_집계를_돌린다() {
+        stubOldestRetained();
+        List<BatchExecutionRecord> before = List.of(run(301L, YESTERDAY, "SUCCESS"));
+        when(executionQuery.findByBusinessDate(YESTERDAY)).thenReturn(before);
+        when(runner.acquire(YESTERDAY, before)).thenReturn(true);
+        AggregationRecalculationService owned = new AggregationRecalculationService(
+                runner, executionQuery, auditLogWriter, transactionManager, CLOCK);
 
+        long runId = owned.request(ADMIN_ID, YESTERDAY);
         owned.shutdown();
-        service(direct).shutdown();
+
+        assertThat(runId).isEqualTo(301L);
+        verify(runner, timeout(5000)).aggregate(YESTERDAY);
+    }
+
+    @Test
+    void 실행기를_받은_생성자로_만든_서비스는_내릴_실행기가_없어도_내려진다() {
+        assertThatCode(() -> service(direct).shutdown()).doesNotThrowAnyException();
     }
 }
