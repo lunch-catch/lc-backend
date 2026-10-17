@@ -6,17 +6,13 @@ import com.launchcatch.store.dto.StoreRegistrationProgressResponse;
 import com.launchcatch.store.entity.StoreMenu;
 import com.launchcatch.store.entity.StoreImageUploadStatus;
 import com.launchcatch.store.entity.StoreMenuImage;
-import com.launchcatch.store.entity.StoreRegistrationProgress;
 import com.launchcatch.store.entity.StoreRegistrationStep;
 import com.launchcatch.store.exception.StoreErrorCode;
 import com.launchcatch.store.exception.StoreException;
 import com.launchcatch.store.repository.StoreMenuImageRepository;
 import com.launchcatch.store.repository.StoreMenuRepository;
-import com.launchcatch.store.repository.StoreRegistrationProgressRepository;
 import java.time.Clock;
-import java.time.Duration;
 import java.time.LocalDateTime;
-import java.util.Set;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
@@ -26,11 +22,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.HeadObjectRequest;
 import software.amazon.awssdk.services.s3.model.HeadObjectResponse;
-import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 import software.amazon.awssdk.services.s3.model.S3Exception;
-import software.amazon.awssdk.services.s3.presigner.S3Presigner;
-import software.amazon.awssdk.services.s3.presigner.model.PresignedPutObjectRequest;
-import software.amazon.awssdk.services.s3.presigner.model.PutObjectPresignRequest;
 
 /*
  * 점주 대표 메뉴와 메뉴 이미지 업로드(#389). store_menu_image.store_menu_id가 NOT NULL FK라
@@ -43,14 +35,11 @@ public class StoreMenuUploadService {
 
     private static final int MAX_MENUS = 3;
     private static final long MAX_FILE_SIZE = 10 * 1024 * 1024;
-    private static final Set<String> ALLOWED_CONTENT_TYPES = Set.of("image/jpeg", "image/png");
-    private static final Duration PRESIGN_DURATION = Duration.ofMinutes(10);
 
     private final StoreMenuRepository storeMenuRepository;
     private final StoreMenuImageRepository storeMenuImageRepository;
-    private final StoreRegistrationProgressRepository progressRepository;
     private final StoreRegistrationProgressService progressService;
-    private final S3Presigner s3Presigner;
+    private final StoreUploadSupport storeUploadSupport;
     private final S3Client s3Client;
     private final Clock clock;
     private final TransactionTemplate transactionTemplate;
@@ -60,7 +49,7 @@ public class StoreMenuUploadService {
 
     @Transactional
     public StoreMenuRegisterResponse registerMenu(Long ownerId, String name, long price, String description) {
-        Long storeId = findStoreIdForUpdate(ownerId);
+        Long storeId = storeUploadSupport.findStoreIdForUpdate(ownerId);
 
         long existing = storeMenuRepository.countByStoreId(storeId);
         if (existing >= MAX_MENUS) {
@@ -75,15 +64,15 @@ public class StoreMenuUploadService {
 
     public StoreMenuImagePrepareResult prepareMenuImageUpload(Long ownerId, Long menuId, String originalFilename,
             String contentType, Long fileSize) {
-        validateContentType(contentType);
-        validateFileSize(fileSize);
+        storeUploadSupport.validateContentType(contentType);
+        storeUploadSupport.validateFileSize(fileSize);
 
         StoreMenuImage image = transactionTemplate.execute(
                 status -> reserveMenuImage(ownerId, menuId, originalFilename, contentType, fileSize));
 
         String uploadUrl;
         try {
-            uploadUrl = presign(image.getObjectKey(), contentType, fileSize);
+            uploadUrl = storeUploadSupport.presign(image.getObjectKey(), contentType, fileSize);
         } catch (RuntimeException e) {
             // presign은 자격 증명을 원격으로 조회할 수 있어 잠금을 쥔 트랜잭션 밖에서 부른다(#375와 같은 근거).
             transactionTemplate.executeWithoutResult(status -> storeMenuImageRepository.delete(image));
@@ -101,7 +90,7 @@ public class StoreMenuUploadService {
      */
     private StoreMenuImage reserveMenuImage(Long ownerId, Long menuId, String originalFilename, String contentType,
             Long fileSize) {
-        Long storeId = findStoreIdForUpdate(ownerId);
+        Long storeId = storeUploadSupport.findStoreIdForUpdate(ownerId);
         if (!storeMenuRepository.existsByIdAndStoreId(menuId, storeId)) {
             throw new StoreException(StoreErrorCode.MENU_NOT_FOUND);
         }
@@ -161,7 +150,7 @@ public class StoreMenuUploadService {
     }
 
     private StoreMenuImage findOwnedImage(Long ownerId, String uploadId) {
-        Long storeId = findStoreIdForUpdate(ownerId);
+        Long storeId = storeUploadSupport.findStoreIdForUpdate(ownerId);
         return storeMenuImageRepository.findByUploadId(uploadId)
                 .filter(found -> storeMenuRepository.existsByIdAndStoreId(found.getStoreMenuId(), storeId))
                 .orElseThrow(() -> new StoreException(StoreErrorCode.MENU_NOT_FOUND));
@@ -176,7 +165,7 @@ public class StoreMenuUploadService {
      */
     @Transactional
     public StoreRegistrationProgressResponse completeMenuStep(Long ownerId, long expectedVersion) {
-        Long storeId = findStoreIdForUpdate(ownerId);
+        Long storeId = storeUploadSupport.findStoreIdForUpdate(ownerId);
 
         if (storeMenuRepository.countWithoutVerifiedImage(storeId) > 0) {
             throw new StoreException(StoreErrorCode.MENU_IMAGE_REQUIRED);
@@ -185,50 +174,8 @@ public class StoreMenuUploadService {
         return new StoreRegistrationProgressResponse(snapshot.storeId(), snapshot.resumeStep(), snapshot.version());
     }
 
-    // 개수 확인부터 저장까지 같은 점주의 동시 요청을 직렬화해 sortOrder 중복 저장을 막는다(#375와 같은 근거).
-    private Long findStoreIdForUpdate(Long ownerId) {
-        StoreRegistrationProgress progress = progressRepository.findByOwnerIdForUpdate(ownerId)
-                .orElseThrow(() -> new StoreException(StoreErrorCode.REGISTRATION_PROGRESS_NOT_FOUND));
-        return requireStoreId(progress);
-    }
-
-    private Long requireStoreId(StoreRegistrationProgress progress) {
-        Long storeId = progress.getStoreId();
-        if (storeId == null) {
-            throw new StoreException(StoreErrorCode.REGISTRATION_STEP_CONFLICT);
-        }
-        return storeId;
-    }
-
-    private void validateContentType(String contentType) {
-        if (!ALLOWED_CONTENT_TYPES.contains(contentType)) {
-            throw new StoreException(StoreErrorCode.IMAGE_CONTENT_TYPE_NOT_ALLOWED);
-        }
-    }
-
-    private void validateFileSize(Long fileSize) {
-        if (fileSize == null || fileSize <= 0 || fileSize > MAX_FILE_SIZE) {
-            throw new StoreException(StoreErrorCode.IMAGE_FILE_TOO_LARGE);
-        }
-    }
-
     private String buildObjectKey(Long storeId, Long menuId, String uploadId, String contentType) {
         String extension = contentType.equals("image/png") ? "png" : "jpg";
         return "stores/" + storeId + "/menu/" + menuId + "/" + uploadId + "." + extension;
-    }
-
-    private String presign(String objectKey, String contentType, Long fileSize) {
-        PutObjectRequest objectRequest = PutObjectRequest.builder()
-                .bucket(mediaBucket)
-                .key(objectKey)
-                .contentType(contentType)
-                .contentLength(fileSize)
-                .build();
-        PutObjectPresignRequest presignRequest = PutObjectPresignRequest.builder()
-                .signatureDuration(PRESIGN_DURATION)
-                .putObjectRequest(objectRequest)
-                .build();
-        PresignedPutObjectRequest presigned = s3Presigner.presignPutObject(presignRequest);
-        return presigned.url().toString();
     }
 }

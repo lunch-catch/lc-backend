@@ -64,9 +64,14 @@ class StoreImageUploadServiceTest {
     @SuppressWarnings("unchecked")
     @BeforeEach
     void setUp() throws Exception {
+        StoreUploadSupport storeUploadSupport = new StoreUploadSupport(progressRepository, s3Presigner);
+        Field supportBucketField = StoreUploadSupport.class.getDeclaredField("mediaBucket");
+        supportBucketField.setAccessible(true);
+        supportBucketField.set(storeUploadSupport, "test-media-bucket");
+
         service = new StoreImageUploadService(
                 storeImageRepository, progressRepository, progressService,
-                s3Presigner, s3Client, FIXED_CLOCK, transactionTemplate);
+                storeUploadSupport, s3Client, FIXED_CLOCK, transactionTemplate);
         Field bucketField = StoreImageUploadService.class.getDeclaredField("mediaBucket");
         bucketField.setAccessible(true);
         bucketField.set(service, "test-media-bucket");
