@@ -20,6 +20,13 @@ public interface BillingStatsQueryService {
     // 영업일의 캠페인별 하루 예산과 단가다. 그날 예산 계획이 없는 캠페인은 결과에 없다
     List<CampaignDailyBudget> dailyBudgets(LocalDate businessDate);
 
+    /*
+     * 기록 영업일에 기록된 정정(양수 ADJUST)이 가리키는 원래 영업일 목록이다. 날짜 오름차순이고 중복이 없다.
+     * 분석이 이미 집계한 영업일 중 다시 집계할 날을 찾는 데 쓴다. 정정 대상이 없는 ADJUST(캠페인 없는 조정)는 목록에 없다.
+     * 기록 영업일과 같은 날을 가리키는 정정도 목록에 들어간다.
+     */
+    List<LocalDate> correctionTargetDates(LocalDate recordedDate);
+
     // 영업일의 미소진 잔액과 원장 대조용 합계, 원장 불일치 건수다
     DailyLedgerTotals dailyTotals(LocalDate businessDate);
 }

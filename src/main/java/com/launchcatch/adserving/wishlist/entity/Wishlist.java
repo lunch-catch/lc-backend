@@ -49,4 +49,9 @@ public class Wishlist extends BaseTimeEntity {
     public static Wishlist fromFeed(Long memberId, Long campaignId, Long storeId, UUID serveId) {
         return new Wishlist(memberId, campaignId, storeId, Objects.requireNonNull(serveId));
     }
+
+    // 가게 상세에서 찜해두기로 넣은 찜이다. 출처 카드가 없다.
+    public static Wishlist fromStoreDetail(Long memberId, Long campaignId, Long storeId) {
+        return new Wishlist(memberId, campaignId, storeId, null);
+    }
 }

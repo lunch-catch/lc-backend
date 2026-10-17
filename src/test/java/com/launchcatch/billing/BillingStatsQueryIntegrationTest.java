@@ -1,6 +1,7 @@
 package com.launchcatch.billing;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.launchcatch.billing.contract.BillingStatsQueryService;
 import com.launchcatch.billing.contract.CampaignBillingCount;
@@ -8,12 +9,15 @@ import com.launchcatch.billing.contract.CampaignDailyBudget;
 import com.launchcatch.billing.contract.DailyLedgerTotals;
 import com.launchcatch.billing.contract.OwnerCampaignLedgerSum;
 import com.launchcatch.billing.dto.ServeIds;
+import com.launchcatch.billing.entity.PointLedger;
+import com.launchcatch.billing.repository.PointLedgerRepository;
 import java.time.LocalDate;
 import java.util.Objects;
 import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.DataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 /*
@@ -32,6 +36,7 @@ class BillingStatsQueryIntegrationTest extends AbstractBillingIntegrationTest {
 
     @Autowired BillingStatsQueryService stats;
     @Autowired JdbcTemplate jdbc;
+    @Autowired PointLedgerRepository ledgerRepository;
 
     @AfterEach
     void clean() {
@@ -170,5 +175,64 @@ class BillingStatsQueryIntegrationTest extends AbstractBillingIntegrationTest {
         assertThat(stats.ledgerSums(empty)).isEmpty();
         assertThat(stats.billingCounts(empty)).isEmpty();
         assertThat(stats.dailyBudgets(empty)).isEmpty();
+    }
+
+    // 정정은 JPA 로 저장해 adjust_target_date 매핑까지 함께 본다. 기록 시각은 created_at 을 직접 고쳐 정한다
+    private void adjust(long owner, Long campaign, LocalDate target, long amount, String at) {
+        PointLedger saved = ledgerRepository.save(
+                PointLedger.adjust(owner, amount, "정정", campaign, target, UUID.randomUUID().toString()));
+        jdbc.update("update point_ledger set created_at = ?, updated_at = ? where point_ledger_id = ?",
+                at, at, saved.getId());
+    }
+
+    @Test
+    void 정정은_정정_대상_영업일에_붙고_대상이_없는_정정은_기록_시각의_날에_붙는다() {
+        // 다음 날 기록했지만 DAY 를 가리키는 정정이다
+        adjust(OWNER, CAMPAIGN, DAY, 300L, NEXT_DAY_NOON);
+        adjust(OWNER, CAMPAIGN, DAY, -50L, NEXT_DAY_NOON);
+        // 대상이 DAY 가 아닌 정정은 DAY 합계에 들어가지 않는다
+        adjust(OWNER, CAMPAIGN, DAY.minusDays(1), 999L, DAY_NOON);
+        // 캠페인 없는 정정은 대상 영업일이 없어 기록 시각의 날에 붙는다
+        adjust(OWNER, null, null, 70L, DAY_NOON);
+
+        assertThat(sumOf(OWNER, CAMPAIGN)).isEqualTo(
+                new OwnerCampaignLedgerSum(OWNER, CAMPAIGN, 0, 0, 0, 0, 0, 300, -50));
+        assertThat(sumOf(OWNER, null)).isEqualTo(
+                new OwnerCampaignLedgerSum(OWNER, null, 0, 0, 0, 0, 0, 70, 0));
+        assertThat(stats.ledgerSums(DAY.plusDays(1)).stream()
+                .anyMatch(s -> s.ownerId().equals(OWNER) && s.positiveAdjustAmount() > 0)).isFalse();
+    }
+
+    @Test
+    void 컬럼을_두기_전에_기록된_정정은_캠페인이_있어도_기록_시각의_날에_붙는다() {
+        ledger(OWNER, CAMPAIGN, "ADJUST", 300L, null, DAY_NOON);
+
+        assertThat(sumOf(OWNER, CAMPAIGN).positiveAdjustAmount()).isEqualTo(300);
+    }
+
+    @Test
+    void 정정_대상일_목록은_그날_기록된_양수_정정이_가리키는_날짜를_중복_없이_오름차순으로_돌려준다() {
+        LocalDate recorded = DAY.plusDays(1);
+        adjust(OWNER, CAMPAIGN, DAY, 300L, NEXT_DAY_NOON);
+        adjust(OWNER, CAMPAIGN2, DAY, 100L, NEXT_DAY_NOON);
+        adjust(OWNER, CAMPAIGN, DAY.minusDays(3), 200L, NEXT_DAY_NOON);
+        // 음수 정정과 대상이 없는 정정과 다른 날 기록한 정정은 목록에 없다
+        adjust(OWNER, CAMPAIGN, DAY.minusDays(5), -40L, NEXT_DAY_NOON);
+        adjust(OWNER, null, null, 70L, NEXT_DAY_NOON);
+        adjust(OWNER, CAMPAIGN, DAY.minusDays(7), 500L, DAY_NOON);
+
+        assertThat(stats.correctionTargetDates(recorded)).containsExactly(DAY.minusDays(3), DAY);
+        assertThat(stats.correctionTargetDates(LocalDate.of(2031, 5, 25))).isEmpty();
+    }
+
+    @Test
+    void 정정이_아닌_행에는_정정_대상_영업일을_넣을_수_없다() {
+        assertThatThrownBy(() -> jdbc.update("""
+                insert into point_ledger (owner_id, campaign_id, business_date, adjust_target_date, entry_type, source,
+                                          amount, created_at, updated_at)
+                values (?, ?, ?, ?, 'RELEASE', 'RECONCILIATION', 100, now(6), now(6))
+                """, OWNER, CAMPAIGN, DAY, DAY))
+                .isInstanceOf(DataAccessException.class)
+                .hasMessageContaining("chk_point_ledger_adjust_target_date");
     }
 }

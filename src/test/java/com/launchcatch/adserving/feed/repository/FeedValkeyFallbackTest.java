@@ -8,6 +8,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import com.launchcatch.adserving.exclusion.repository.ExclusionRepository;
 import com.launchcatch.adserving.feed.repository.FeedRateLimitRepository.Admission;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Instant;
@@ -50,11 +51,11 @@ class FeedValkeyFallbackTest {
         when(redisTemplate.opsForSet()).thenReturn(setOps);
         when(setOps.members(anyString())).thenThrow(new QueryTimeoutException("timeout"));
 
-        var ids = new DailyExclusionRepository(redisTemplate, meterRegistry)
+        var ids = new ExclusionRepository(redisTemplate, meterRegistry)
                 .findCampaignIds(LocalDate.of(2026, 10, 1), 3001L);
 
         assertThat(ids).isEmpty();
-        assertThat(bypassCount("daily_exclusion")).isEqualTo(1);
+        assertThat(bypassCount("exclusion")).isEqualTo(1);
     }
 
     @Test
@@ -146,8 +147,8 @@ class FeedValkeyFallbackTest {
         when(redisTemplate.opsForSet()).thenReturn(setOps);
         when(setOps.add(anyString(), any(String[].class))).thenThrow(new QueryTimeoutException("timeout"));
 
-        new DailyExclusionRepository(redisTemplate, meterRegistry).add(LocalDate.of(2026, 10, 1), 3001L, 101L, NOW);
+        new ExclusionRepository(redisTemplate, meterRegistry).add(LocalDate.of(2026, 10, 1), 3001L, 101L, NOW);
 
-        assertThat(bypassCount("daily_exclusion")).isEqualTo(1);
+        assertThat(bypassCount("exclusion")).isEqualTo(1);
     }
 }

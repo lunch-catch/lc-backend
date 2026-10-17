@@ -113,15 +113,23 @@ class PointLedgerRepositoryImpl implements PointLedgerRepositoryCustom {
 
     @Override
     public List<FlowRow> findFlowRows(Long ownerId, LocalDateTime fromInclusive, LocalDateTime toExclusive) {
+        BooleanExpression recordedInRange = pointLedger.createdAt.goe(fromInclusive)
+                .and(pointLedger.createdAt.lt(toExclusive));
+        // ADJUST 는 정정 대상 영업일이 기간 안이면 언제 기록했든 들어간다. 대상이 없으면 기록 시각으로 본다
+        BooleanExpression adjustInRange = pointLedger.entryType.eq(EntryType.ADJUST).and(
+                pointLedger.adjustTargetDate.goe(fromInclusive.toLocalDate())
+                        .and(pointLedger.adjustTargetDate.lt(toExclusive.toLocalDate()))
+                        .or(pointLedger.adjustTargetDate.isNull().and(recordedInRange)));
+        BooleanExpression chargeOrRefundInRange =
+                pointLedger.entryType.in(EntryType.CHARGE, EntryType.REFUND).and(recordedInRange);
         return queryFactory
                 .select(Projections.constructor(FlowRow.class,
-                        pointLedger.entryType, pointLedger.createdAt, pointLedger.amount))
+                        pointLedger.entryType, pointLedger.createdAt, pointLedger.amount,
+                        pointLedger.adjustTargetDate))
                 .from(pointLedger)
                 .where(
                         pointLedger.ownerId.eq(ownerId),
-                        pointLedger.entryType.in(EntryType.CHARGE, EntryType.REFUND, EntryType.ADJUST),
-                        pointLedger.createdAt.goe(fromInclusive),
-                        pointLedger.createdAt.lt(toExclusive))
+                        chargeOrRefundInRange.or(adjustInRange))
                 .orderBy(pointLedger.createdAt.asc(), pointLedger.id.asc())
                 .fetch();
     }

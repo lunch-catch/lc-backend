@@ -11,8 +11,7 @@ public enum FeedErrorCode implements ErrorCode {
 
     ONBOARDING_REQUIRED(HttpStatus.FORBIDDEN, "ADSERVING-001", "온보딩을 완료한 뒤 피드를 이용할 수 있습니다."),
     LOCATION_REQUIRED(HttpStatus.UNPROCESSABLE_ENTITY, "ADSERVING-002", "위치를 설정한 뒤 피드를 이용할 수 있습니다."),
-    RATE_LIMITED(HttpStatus.TOO_MANY_REQUESTS, "ADSERVING-003", "잠시 후 다시 시도해 주세요."),
-    CAMPAIGN_NOT_SERVING(HttpStatus.NOT_FOUND, "ADSERVING-004", "오늘 노출 중인 캠페인이 아닙니다.");
+    RATE_LIMITED(HttpStatus.TOO_MANY_REQUESTS, "ADSERVING-003", "잠시 후 다시 시도해 주세요.");
 
     private final HttpStatus httpStatus;
     private final String code;
