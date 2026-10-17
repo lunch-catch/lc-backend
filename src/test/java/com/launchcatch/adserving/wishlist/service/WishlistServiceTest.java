@@ -19,7 +19,7 @@ import com.launchcatch.adserving.engine.entity.DiscountType;
 import com.launchcatch.adserving.engine.exception.CandidateErrorCode;
 import com.launchcatch.adserving.engine.exception.CandidateException;
 import com.launchcatch.adserving.engine.repository.AdCandidateRepository;
-import com.launchcatch.adserving.exclusion.repository.DailyExclusionRepository;
+import com.launchcatch.adserving.exclusion.repository.ExclusionRepository;
 import com.launchcatch.adserving.wishlist.dto.WishlistItemResponse;
 import com.launchcatch.adserving.wishlist.dto.WishlistResponse;
 import com.launchcatch.adserving.wishlist.entity.Wishlist;
@@ -51,8 +51,8 @@ class WishlistServiceTest {
 
     private final WishlistRepository wishlistRepository = mock(WishlistRepository.class);
     private final AdCandidateRepository adCandidateRepository = mock(AdCandidateRepository.class);
-    private final DailyExclusionRepository dailyExclusionRepository = mock(DailyExclusionRepository.class);
-    private final WishlistService service = new WishlistService(wishlistRepository, adCandidateRepository, dailyExclusionRepository, CLOCK);
+    private final ExclusionRepository exclusionRepository = mock(ExclusionRepository.class);
+    private final WishlistService service = new WishlistService(wishlistRepository, adCandidateRepository, exclusionRepository, CLOCK);
 
     // 찜은 저장소의 insertIgnore 로 넣어 식별자와 생성 시각이 엔티티에 없다. 리플렉션으로 채운다
     private static Wishlist wish(long id, long campaignId, LocalDateTime createdAt) {
@@ -139,7 +139,7 @@ class WishlistServiceTest {
         // UTC 로는 9월 30일 15:30, 한국 시각으로는 10월 1일 00:30 이다
         Clock afterMidnight = Clock.fixed(
                 LocalDateTime.of(2026, 10, 1, 0, 30).atZone(ClockConfig.ZONE).toInstant(), ZoneOffset.UTC);
-        WishlistService atMidnight = new WishlistService(wishlistRepository, adCandidateRepository, dailyExclusionRepository, afterMidnight);
+        WishlistService atMidnight = new WishlistService(wishlistRepository, adCandidateRepository, exclusionRepository, afterMidnight);
         when(wishlistRepository.findByMemberIdOrderByCreatedAtDescIdDesc(MEMBER_ID))
                 .thenReturn(List.of(wish(1, 101, LocalDateTime.of(2026, 9, 30, 11, 0))));
 
@@ -160,9 +160,9 @@ class WishlistServiceTest {
         WishResult result = service.wish(MEMBER_ID, 102L);
 
         ArgumentCaptor<Wishlist> inserted = ArgumentCaptor.forClass(Wishlist.class);
-        InOrder order = inOrder(wishlistRepository, dailyExclusionRepository);
+        InOrder order = inOrder(wishlistRepository, exclusionRepository);
         order.verify(wishlistRepository).insertIgnore(inserted.capture());
-        order.verify(dailyExclusionRepository).add(BUSINESS_DATE, MEMBER_ID, 102L, CLOCK.instant());
+        order.verify(exclusionRepository).add(BUSINESS_DATE, MEMBER_ID, 102L, CLOCK.instant());
         assertThat(inserted.getValue().getMemberId()).isEqualTo(MEMBER_ID);
         assertThat(inserted.getValue().getStoreId()).isEqualTo(1102L);
         assertThat(inserted.getValue().getServeId()).isNull();
@@ -186,7 +186,7 @@ class WishlistServiceTest {
 
         assertThat(result.created()).isFalse();
         assertThat(result.item().wishedAt()).isEqualTo(OffsetDateTime.of(firstWishedAt, ZoneOffset.ofHours(9)));
-        verify(dailyExclusionRepository).add(BUSINESS_DATE, MEMBER_ID, 101L, CLOCK.instant());
+        verify(exclusionRepository).add(BUSINESS_DATE, MEMBER_ID, 101L, CLOCK.instant());
     }
 
     // 어제 찜하고 오늘 후보에서 빠진 캠페인도 찜 여부와 관계없이 거절한다(#420)
@@ -198,7 +198,7 @@ class WishlistServiceTest {
                 .isInstanceOf(CandidateException.class)
                 .extracting("errorCode").isEqualTo(CandidateErrorCode.CAMPAIGN_NOT_SERVING);
         verify(wishlistRepository, never()).insertIgnore(any());
-        verify(dailyExclusionRepository, never()).add(any(), any(), any(), any());
+        verify(exclusionRepository, never()).add(any(), any(), any(), any());
     }
 
     // 당일 이력은 되돌릴 수 없어 찜이 실패하면 넣지 않는다. 넣으면 찜하지 않은 캠페인이 그날 피드에서 빠진다
@@ -209,14 +209,14 @@ class WishlistServiceTest {
         doThrow(new QueryTimeoutException("db")).when(wishlistRepository).insertIgnore(any());
 
         assertThatThrownBy(() -> service.wish(MEMBER_ID, 101L)).isInstanceOf(QueryTimeoutException.class);
-        verify(dailyExclusionRepository, never()).add(any(), any(), any(), any());
+        verify(exclusionRepository, never()).add(any(), any(), any(), any());
     }
 
     @Test
     void 찜할_때의_그날도_한국_시각의_날짜다() {
         Clock afterMidnight = Clock.fixed(
                 LocalDateTime.of(2026, 10, 1, 0, 30).atZone(ClockConfig.ZONE).toInstant(), ZoneOffset.UTC);
-        WishlistService atMidnight = new WishlistService(wishlistRepository, adCandidateRepository, dailyExclusionRepository, afterMidnight);
+        WishlistService atMidnight = new WishlistService(wishlistRepository, adCandidateRepository, exclusionRepository, afterMidnight);
         when(adCandidateRepository.findByIdBusinessDateAndIdCampaignId(LocalDate.of(2026, 10, 1), 101L))
                 .thenReturn(Optional.of(candidate(101, 37.4979, 127.0276).build()));
         when(wishlistRepository.findByMemberIdAndCampaignId(MEMBER_ID, 101L))
@@ -224,6 +224,6 @@ class WishlistServiceTest {
 
         atMidnight.wish(MEMBER_ID, 101L);
 
-        verify(dailyExclusionRepository).add(LocalDate.of(2026, 10, 1), MEMBER_ID, 101L, afterMidnight.instant());
+        verify(exclusionRepository).add(LocalDate.of(2026, 10, 1), MEMBER_ID, 101L, afterMidnight.instant());
     }
 }

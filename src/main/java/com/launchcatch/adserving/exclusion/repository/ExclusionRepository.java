@@ -22,9 +22,9 @@ import org.springframework.stereotype.Repository;
 @Slf4j
 @Repository
 @RequiredArgsConstructor
-public class DailyExclusionRepository {
+public class ExclusionRepository {
 
-    static final String KEY_PREFIX = "adserving:dailyExclusion:";
+    static final String KEY_PREFIX = "adserving:exclusion:";
 
     // Valkey 가 멈춰 막지 않고 통과시킨 횟수다. 경보는 이 지표에 건다(장애 처리 가이드).
     static final String BYPASS_METRIC = "adserving_cache_bypass_total";
@@ -45,9 +45,9 @@ public class DailyExclusionRepository {
             }
             return members.stream().map(Long::valueOf).collect(Collectors.toUnmodifiableSet());
         } catch (DataAccessException e) {
-            log.warn("event=FEED_DAILY_EXCLUSION_FAILED memberId={} cause={} 빈 이력으로 통과시킨다",
+            log.warn("event=FEED_EXCLUSION_FAILED memberId={} cause={} 빈 이력으로 통과시킨다",
                     memberId, RedisFailureClassifier.causeLabel(e), e);
-            meterRegistry.counter(BYPASS_METRIC, "use", "daily_exclusion").increment();
+            meterRegistry.counter(BYPASS_METRIC, "use", "exclusion").increment();
             return Set.of();
         }
     }
@@ -62,9 +62,9 @@ public class DailyExclusionRepository {
             redisTemplate.opsForSet().add(key, String.valueOf(campaignId));
             redisTemplate.expire(key, Duration.between(now, businessDate.plusDays(1).atStartOfDay(ClockConfig.ZONE)));
         } catch (DataAccessException e) {
-            log.warn("event=FEED_DAILY_EXCLUSION_WRITE_FAILED memberId={} campaignId={} cause={} 넣지 않고 통과시킨다",
+            log.warn("event=FEED_EXCLUSION_WRITE_FAILED memberId={} campaignId={} cause={} 넣지 않고 통과시킨다",
                     memberId, campaignId, RedisFailureClassifier.causeLabel(e), e);
-            meterRegistry.counter(BYPASS_METRIC, "use", "daily_exclusion").increment();
+            meterRegistry.counter(BYPASS_METRIC, "use", "exclusion").increment();
         }
     }
 }

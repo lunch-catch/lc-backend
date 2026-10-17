@@ -34,7 +34,7 @@ class WishlistIntegrationTest extends AbstractAdservingIntegrationTest {
     private static final long MEMBER_ID = 3001L;
     private static final long OTHER_MEMBER_ID = 3002L;
     private static final LocalDate TODAY = LocalDate.of(2026, 10, 1);
-    private static final String DAILY_EXCLUSION_KEY = "adserving:dailyExclusion:" + TODAY + ":" + MEMBER_ID;
+    private static final String EXCLUSION_KEY = "adserving:exclusion:" + TODAY + ":" + MEMBER_ID;
     private static final Instant NOW = LocalDateTime.of(2026, 10, 1, 10, 30).atZone(ClockConfig.ZONE).toInstant();
 
     @BeforeEach
@@ -51,7 +51,7 @@ class WishlistIntegrationTest extends AbstractAdservingIntegrationTest {
     void tearDown() {
         jdbcTemplate.update("DELETE FROM wishlist");
         jdbcTemplate.update("DELETE FROM ad_candidate");
-        redisTemplate.delete(DAILY_EXCLUSION_KEY);
+        redisTemplate.delete(EXCLUSION_KEY);
     }
 
     private void candidate(LocalDate date, long campaignId, long storeId, String storeName, String imageUrl,
@@ -177,7 +177,7 @@ class WishlistIntegrationTest extends AbstractAdservingIntegrationTest {
         assertThat(jdbcTemplate.queryForMap("SELECT member_id, campaign_id, store_id, serve_id FROM wishlist"))
                 .containsEntry("member_id", MEMBER_ID).containsEntry("campaign_id", 101L)
                 .containsEntry("store_id", 55L).containsEntry("serve_id", null);
-        assertThat(redisTemplate.opsForSet().members(DAILY_EXCLUSION_KEY)).containsExactly("101");
+        assertThat(redisTemplate.opsForSet().members(EXCLUSION_KEY)).containsExactly("101");
     }
 
     @Test
@@ -202,7 +202,7 @@ class WishlistIntegrationTest extends AbstractAdservingIntegrationTest {
                 .andExpect(jsonPath("$.code").value("ADSERVING-004"));
 
         assertThat(wishCount()).isEqualTo(1);
-        assertThat(redisTemplate.hasKey(DAILY_EXCLUSION_KEY)).isFalse();
+        assertThat(redisTemplate.hasKey(EXCLUSION_KEY)).isFalse();
     }
 
     @Test

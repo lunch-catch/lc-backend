@@ -66,7 +66,7 @@ B 를 고른다(#315). 서빙 로그는 유실을 0.1% 미만까지 허용한다
 B 를 고른다(#323). 원본(`impression_log`)이 이미 커밋돼 있어서 빠진 것은 그 테이블로 다시 셀 수 있다. 빠지면 상한이 그만큼 늦게 걸려 미과금 노출이 더 나갈 뿐이고, 과금은 정산이 예약액에서 막는다.
 올리지 못한 횟수는 `adserving_cache_bypass_total`(`use=impression_count`) 이 센다.
 
-스와이프의 당일 이력도 같은 이유로 B 다(#379). 스와이프 기록이 커밋된 뒤에 넣고, 넣지 못하면 그날 그 카드가 다시 보일 뿐이라 `use=daily_exclusion` 으로 센다. 원본(`swipe_log`)은 남아 있다.
+스와이프의 당일 이력도 같은 이유로 B 다(#379). 스와이프 기록이 커밋된 뒤에 넣고, 넣지 못하면 그날 그 카드가 다시 보일 뿐이라 `use=exclusion` 으로 센다. 원본(`swipe_log`)은 남아 있다.
 
 ## 유형별 점검
 
@@ -84,7 +84,7 @@ Valkey 가 멈춰 통과시킨 횟수는 `adserving_cache_bypass_total` 이 센�
 | `use` | 로그 `event` | 통과시키면 |
 |---|---|---|
 | `feed_rate_limit` | `FEED_RATE_LIMIT_FAILED` | 요청 제한이 풀리고 `nextFeedAvailableAt` 이 응답 시각이 된다 |
-| `daily_exclusion` | `FEED_DAILY_EXCLUSION_FAILED`, `FEED_DAILY_EXCLUSION_WRITE_FAILED` | 넘긴 카드가 다시 보인다 |
+| `exclusion` | `FEED_EXCLUSION_FAILED`, `FEED_EXCLUSION_WRITE_FAILED` | 넘긴 카드가 다시 보인다 |
 | `serve_frequency` | `FEED_SERVE_FREQUENCY_READ_FAILED`, `FEED_SERVE_FREQUENCY_WRITE_FAILED` | 같은 카드가 하루 2회, 세션 1회를 넘겨 나온다 |
 | `impression_count` | `FEED_IMPRESSION_COUNT_FAILED`, `FEED_IMPRESSION_COUNT_INCREMENT_FAILED` | 읽기는 유효 노출 수를 0 으로 보고 상한을 넘겨 내보낸다. 올리기는 그 노출을 세지 못해 상한이 늦게 걸린다. 넘긴 노출은 과금되지 않아 손해는 플랫폼에 남는다 |
 | `serve_record` | `FEED_SERVE_RECORD_WRITE_FAILED`, `FEED_SERVE_RECORD_READ_FAILED` | 쓰지 못하거나 읽지 못하면 그 카드의 노출이 무효(`EXPIRED_OR_UNKNOWN`)로 저장되어 과금되지 않는다. 다시 보내도 처음 판정이 남는다 |

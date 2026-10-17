@@ -49,7 +49,7 @@ adserving/
 │   ├── exception/CandidateErrorCode.java   그날 후보가 아니다(ADSERVING-004)
 │   └── repository/AdCandidateRepository.java
 ├── exclusion/
-│   └── repository/DailyExclusionRepository.java  Valkey. 스와이프와 가게 상세 찜이 쓰고 피드가 읽는다
+│   └── repository/ExclusionRepository.java  Valkey. 스와이프와 가게 상세 찜이 쓰고 피드가 읽는다
 └── feed/
     ├── controller/FeedController.java
     ├── controller/SwipeController.java
@@ -124,7 +124,7 @@ impression/
 | 데이터 | 키 | 만료 | 원본 | 읽는 곳 |
 |---|---|---|---|---|
 | 피드 요청 시각 | `adserving:feedRequests:{memberId}` 정렬 집합. 점수가 요청 시각(ms) | 마지막 요청 뒤 60초 | 없다. 잃으면 그 60초의 횟수가 비워진다 | `FeedRateLimitRepository` |
-| 당일 이력 | `adserving:dailyExclusion:{영업일}:{memberId}` 집합. 원소가 `campaignId` | 다음 영업일 00:00 까지 남은 시간 | 없다. 잃으면 그날 넘긴 카드가 다시 보인다 | `DailyExclusionRepository`. 쓰는 쪽은 `SwipeService` 와 `WishlistService` 의 가게 상세 찜이다 |
+| 당일 이력 | `adserving:exclusion:{영업일}:{memberId}` 집합. 원소가 `campaignId` | 다음 영업일 00:00 까지 남은 시간 | 없다. 잃으면 그날 넘긴 카드가 다시 보인다 | `ExclusionRepository`. 쓰는 쪽은 `SwipeService` 와 `WishlistService` 의 가게 상세 찜이다 |
 | 하루 내려준 횟수 | `adserving:servedDaily:{영업일}:{memberId}` 해시. 필드 `campaignId`, 값 횟수 | 다음 영업일 00:00 까지 남은 시간 | 없다. 잃으면 그날 같은 카드가 더 나온다 | `ServeFrequencyRepository` |
 | 세션에 내려준 캠페인 | `adserving:servedSession:{memberId}` 집합 | 피드 요청마다 30분을 다시 건다 | 없다. 키가 사라지면 새 세션이다 | `ServeFrequencyRepository` |
 | 그날 유효 노출 수 | `adserving:validImpressions:{영업일}` 해시. 필드 `campaignId`, 값 건수. 영업일은 카드를 내려준 날이다 | 올릴 때마다 이틀 | `impression_log` 의 유효 노출 | `ImpressionCountRepository`. 올리는 쪽은 `ImpressionService` 다 |
@@ -239,7 +239,7 @@ flowchart LR
         end
 
         subgraph exclusion["exclusion/ (당일 이력)"]
-            DE[("DailyExclusionRepository<br/>Valkey")]
+            DE[("ExclusionRepository<br/>Valkey")]
         end
 
         subgraph engine["engine/ (후보 스냅샷)"]
@@ -483,7 +483,7 @@ C 를 고른다. 이미 넘긴 카드는 찜을 쓰기 전에 먼저 걸러, 먼
 | 차감이 실패한 노출 | 노출까지 롤백돼 남지 않는다. 클라이언트는 1회 재시도하고 포기한다 | 플랫폼 | 노출 저장과 판정, 원장이 함께 롤백되어 점주에게 불리하게 남는 것은 없다 |
 | 카운터를 올리지 못한 노출 | 상한이 늦게 걸려 미과금 노출이 더 나간다 | 플랫폼 | `adserving_cache_bypass_total`(`use=impression_count`) 로 센다 |
 | 스와이프 기록이 끝내 실패한 찜 | 찜은 남고 스와이프 기록이 없다. 30일 업종 선호도에 그 찜이 빠진다 | 사용자 | 돈이 걸리지 않는다. 클라이언트가 다시 보내면 맞춰진다 |
-| 당일 이력에 넣지 못한 가게 상세 찜 | 찜은 남고 그날 그 캠페인이 피드에 다시 보일 수 있다 | 사용자 | 돈이 걸리지 않는다. `adserving_cache_bypass_total`(`use=daily_exclusion`) 로 센다. 다시 찜하면 넣는다 |
+| 당일 이력에 넣지 못한 가게 상세 찜 | 찜은 남고 그날 그 캠페인이 피드에 다시 보일 수 있다 | 사용자 | 돈이 걸리지 않는다. `adserving_cache_bypass_total`(`use=exclusion`) 로 센다. 다시 찜하면 넣는다 |
 
 대상이 멈췄을 때의 처리는 [`adserving_장애_처리_설계.md`](./adserving_장애_처리_설계.md) 에 있다.
 

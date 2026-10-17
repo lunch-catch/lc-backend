@@ -4,7 +4,7 @@ import com.launchcatch.adserving.engine.entity.AdCandidate;
 import com.launchcatch.adserving.engine.exception.CandidateErrorCode;
 import com.launchcatch.adserving.engine.exception.CandidateException;
 import com.launchcatch.adserving.engine.repository.AdCandidateRepository;
-import com.launchcatch.adserving.exclusion.repository.DailyExclusionRepository;
+import com.launchcatch.adserving.exclusion.repository.ExclusionRepository;
 import com.launchcatch.adserving.feed.dto.SwipeRequest;
 import com.launchcatch.adserving.feed.dto.SwipeResponse;
 import com.launchcatch.adserving.feed.entity.SwipeAction;
@@ -33,7 +33,7 @@ public class SwipeService {
     private final SwipeLogRepository swipeLogRepository;
     private final WishlistRepository wishlistRepository;
     private final AdCandidateRepository adCandidateRepository;
-    private final DailyExclusionRepository dailyExclusionRepository;
+    private final ExclusionRepository exclusionRepository;
     private final Clock clock;
 
     public SwipeResponse swipe(Long memberId, SwipeRequest request) {
@@ -59,7 +59,7 @@ public class SwipeService {
             return new SwipeResponse(false);
         }
         // 기록이 커밋된 뒤에 넣는다. Valkey 는 되돌릴 수 없어 기록보다 먼저 넣으면 실패한 스와이프도 피드에서 빠진다
-        dailyExclusionRepository.add(today, memberId, candidate.getCampaignId(), now);
+        exclusionRepository.add(today, memberId, candidate.getCampaignId(), now);
         return new SwipeResponse(true);
     }
 }

@@ -19,7 +19,7 @@ import com.launchcatch.adserving.engine.entity.AdCandidate;
 import com.launchcatch.adserving.engine.entity.DiscountTarget;
 import com.launchcatch.adserving.engine.entity.DiscountType;
 import com.launchcatch.adserving.engine.repository.AdCandidateRepository;
-import com.launchcatch.adserving.exclusion.repository.DailyExclusionRepository;
+import com.launchcatch.adserving.exclusion.repository.ExclusionRepository;
 import com.launchcatch.adserving.feed.dto.FeedCardResponse;
 import com.launchcatch.adserving.feed.dto.FeedRequest;
 import com.launchcatch.adserving.feed.dto.FeedResponse;
@@ -80,7 +80,7 @@ class FeedServiceTest {
     private final MemberQueryService memberQueryService = mock(MemberQueryService.class);
     private final FeedRateLimitRepository rateLimitRepository = mock(FeedRateLimitRepository.class);
     private final AdCandidateRepository adCandidateRepository = mock(AdCandidateRepository.class);
-    private final DailyExclusionRepository dailyExclusionRepository = mock(DailyExclusionRepository.class);
+    private final ExclusionRepository exclusionRepository = mock(ExclusionRepository.class);
     private final FeedFilterCategoryRepository filterCategoryRepository =
             mock(FeedFilterCategoryRepository.class);
     private final FeedFilterRepository feedFilterRepository = mock(FeedFilterRepository.class);
@@ -95,7 +95,7 @@ class FeedServiceTest {
     private FeedService serviceAt(LocalDateTime now) {
         Clock clock = Clock.fixed(now.atZone(ClockConfig.ZONE).toInstant(), ClockConfig.ZONE);
         return new FeedService(memberQueryService, rateLimitRepository, adCandidateRepository,
-                dailyExclusionRepository, filterCategoryRepository, feedFilterRepository, swipeLogRepository,
+                exclusionRepository, filterCategoryRepository, feedFilterRepository, swipeLogRepository,
                 serveFrequencyRepository, impressionCountRepository, budgetQueryService, serveRecordRepository,
                 serveLogBuffer, meterRegistry, clock);
     }
@@ -133,7 +133,7 @@ class FeedServiceTest {
 
     private void givenCandidates(List<AdCandidate> candidates) {
         when(adCandidateRepository.findServableWithin(eq(TODAY), any(BoundingBox.class))).thenReturn(candidates);
-        when(dailyExclusionRepository.findCampaignIds(TODAY, MEMBER_ID)).thenReturn(Set.of());
+        when(exclusionRepository.findCampaignIds(TODAY, MEMBER_ID)).thenReturn(Set.of());
         when(filterCategoryRepository.findCategoryCodes(MEMBER_ID)).thenReturn(List.of());
         when(serveFrequencyRepository.findHistory(TODAY, MEMBER_ID)).thenReturn(new ServedHistory(Map.of(), Set.of()));
         givenBudgetForAll();
@@ -308,7 +308,7 @@ class FeedServiceTest {
                     candidate(1, SAVED_LAT, SAVED_LNG).build(),
                     candidate(2, SAVED_LAT, SAVED_LNG).build(),
                     candidate(3, SAVED_LAT, SAVED_LNG).set("categoryCode", "JAPANESE").build()));
-            when(dailyExclusionRepository.findCampaignIds(TODAY, MEMBER_ID)).thenReturn(Set.of(1L));
+            when(exclusionRepository.findCampaignIds(TODAY, MEMBER_ID)).thenReturn(Set.of(1L));
             when(filterCategoryRepository.findCategoryCodes(MEMBER_ID)).thenReturn(List.of("KOREAN"));
             when(serveFrequencyRepository.findHistory(TODAY, MEMBER_ID)).thenReturn(new ServedHistory(Map.of(), Set.of()));
             givenBudgetForAll();

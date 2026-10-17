@@ -4,7 +4,7 @@ import com.launchcatch.adserving.engine.entity.AdCandidate;
 import com.launchcatch.adserving.engine.exception.CandidateErrorCode;
 import com.launchcatch.adserving.engine.exception.CandidateException;
 import com.launchcatch.adserving.engine.repository.AdCandidateRepository;
-import com.launchcatch.adserving.exclusion.repository.DailyExclusionRepository;
+import com.launchcatch.adserving.exclusion.repository.ExclusionRepository;
 import com.launchcatch.adserving.wishlist.dto.WishlistItemResponse;
 import com.launchcatch.adserving.wishlist.dto.WishlistResponse;
 import com.launchcatch.adserving.wishlist.entity.Wishlist;
@@ -31,7 +31,7 @@ public class WishlistService {
 
     private final WishlistRepository wishlistRepository;
     private final AdCandidateRepository adCandidateRepository;
-    private final DailyExclusionRepository dailyExclusionRepository;
+    private final ExclusionRepository exclusionRepository;
     private final Clock clock;
 
     // campaignId 를 주면 그 캠페인의 찜만 본다. 찜하지 않았으면 빈 배열이다(#416)
@@ -66,7 +66,7 @@ public class WishlistService {
 
         boolean created = wishlistRepository.insertIgnore(
                 Wishlist.fromStoreDetail(memberId, campaignId, candidate.getStoreId()));
-        dailyExclusionRepository.add(today, memberId, campaignId, now);
+        exclusionRepository.add(today, memberId, campaignId, now);
         // 이미 찜했으면 처음 찜한 시각을 돌려줘야 해서 넣은 뒤 다시 읽는다
         Wishlist wish = wishlistRepository.findByMemberIdAndCampaignId(memberId, campaignId).orElseThrow();
         return new WishResult(created, WishlistItemResponse.of(wish, candidate));
