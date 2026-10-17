@@ -12,7 +12,17 @@ import org.springframework.data.repository.query.Param;
 
 public interface TemplateVersionRepository extends JpaRepository<TemplateVersion, Long> {
 
-    @Query("select v from TemplateVersion v join fetch v.template where v.requestId = :requestId")
+    /*
+     * 소프트삭제된 버전은 제외한다(#410 코드래빗 리뷰). 상한에 밀려 지워진 버전의
+     * requestId 가 늦게 재요청으로 들어오면, 이 조회가 그 버전을 찾아 "이미 처리된
+     * 요청" 으로 보고 지워진 내용을 그대로 돌려줄 수 있다. 그 요청은 더는 idempotent
+     * 재시도로 보지 않고 새 요청처럼 다시 처리한다(request_id UNIQUE 제약에 걸려
+     * 결국 예외로 끝난다).
+     */
+    @Query("""
+            select v from TemplateVersion v join fetch v.template
+            where v.requestId = :requestId and v.deletedAt is null
+            """)
     Optional<TemplateVersion> findByRequestId(String requestId);
 
     /*
@@ -28,15 +38,6 @@ public interface TemplateVersionRepository extends JpaRepository<TemplateVersion
      * findPage() 와 같은 조건으로 맞춰 둔다.
      */
     Optional<TemplateVersion> findFirstByTemplateIdAndDeletedAtIsNullOrderByVersionNumberDesc(Long templateId);
-
-    /*
-     * 버전 상한(20개, #410)을 넘겼는지 볼 때 쓴다. 가장 오래된 살아있는 버전을 찾아
-     * (최신 번호 - 이 번호 + 1)로 지금 몇 개가 살아있는지 센다. DRAFT 동안은 이 조회로
-     * 찾은 가장 오래된 버전 하나만 지워서(softDelete), 살아있는 버전 사이에 빈틈이
-     * 생기지 않아 그 계산이 실제 개수와 같다. 게시할 때는 전부를 한 번에 지우고
-     * (softDeleteAllByTemplateId) 그 뒤로는 DRAFT 가 아니라 더 수정되지 않는다.
-     */
-    Optional<TemplateVersion> findFirstByTemplateIdAndDeletedAtIsNullOrderByVersionNumberAsc(Long templateId);
 
     /*
      * 다음 버전 번호를 매길 때 쓴다. HTML 을 전혀 안 가져오고 숫자 하나만 집계하므로
@@ -62,13 +63,30 @@ public interface TemplateVersionRepository extends JpaRepository<TemplateVersion
     int softDeleteAllByTemplateId(@Param("templateId") Long templateId, @Param("now") LocalDateTime now);
 
     /*
-     * 버전 상한을 넘겼을 때 가장 오래된 버전 하나만 소프트삭제한다(#410). id 로
-     * 지정해, findFirstByTemplateIdAndDeletedAtIsNullOrderByVersionNumberAsc 로
-     * 찾은 바로 그 행만 지운다. 번호는 건드리지 않는다.
+     * 버전 상한(20개, #410)을 넘긴 만큼을 한 번에 지운다. 호출하는 쪽이 넘기는
+     * thresholdVersionNumber(= 새 버전 번호 - 20) 이하인, 아직 살아있는 버전을 전부
+     * 소프트삭제한다. 번호는 건드리지 않는다.
+     *
+     * 몇 개가 넘쳤는지 상관없이 쿼리 한 번으로 20개 이하로 맞춘다(코드래빗 리뷰로
+     * 찾음). 가장 오래된 것 하나만 지우면, 이 기능이 배포되기 전부터 20개보다 훨씬
+     * 많이 쌓여 있던 템플릿은 수정할 때마다 하나 늘고 하나만 줄어 영원히 상한을
+     * 넘긴 채로 남는다.
+     *
+     * thresholdVersionNumber 가 0 이하이면(상한을 넘기지 않았으면) 그 이하 번호를 가진
+     * 버전이 있을 수 없어 자동으로 아무것도 지우지 않는다. 그래서 호출하는 쪽은
+     * "넘겼는지" 를 따로 분기하지 않고 매번 그대로 부른다.
      */
     @Modifying
-    @Query("update TemplateVersion v set v.deletedAt = :now where v.id = :id and v.deletedAt is null")
-    int softDelete(@Param("id") Long id, @Param("now") LocalDateTime now);
+    @Query("""
+            update TemplateVersion v set v.deletedAt = :now
+             where v.template.id = :templateId
+               and v.deletedAt is null
+               and v.versionNumber <= :thresholdVersionNumber
+            """)
+    int softDeleteUpToVersionNumber(
+            @Param("templateId") Long templateId,
+            @Param("thresholdVersionNumber") int thresholdVersionNumber,
+            @Param("now") LocalDateTime now);
 
     /*
      * 버전 목록 조회용 커서 페이징이다. versionNumber 가 템플릿 안에서 유일하고
