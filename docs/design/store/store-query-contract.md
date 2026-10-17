@@ -60,6 +60,27 @@ cdn.base-url에는 HTTP(S) 주소를 사용하며 쿼리, 프래그먼트, 사�
 
 #161의 광고 서빙용 업종 코드 확장은 이 계약에 포함하지 않는다.
 같은 인터페이스를 확장할 때 기존 소비자와 record 필드 변경을 함께 검토해야 한다.
+
+## 분석용 신규·누적 입점 수 집계
+
+이슈 #363의 공개 계약은 `StoreStatsQueryService.finalizedStoreCounts(LocalDate businessDate)`다.
+분석의 일별 집계 배치가 사용하며 `FinalizedStoreCounts(newCount, cumulativeCount)`를 반환한다.
+
+- `newCount`는 KST 영업일 00:00 이상, 다음 날 00:00 미만에 최종 등록한 가게 수다.
+- `cumulativeCount`는 다음 날 00:00 미만까지 최종 등록한 가게 수다. 과거 날짜도 그날 말 기준으로 센다.
+- `store.finalized=true`인 가게만 `finalized_at`으로 센다. 등록 중인 가게는 제외한다.
+- 점주 상태와 관계없이 탈퇴한 점주의 가게도 포함한다. 점주 테이블을 조회하거나 조인하지 않는다.
+- 대상이 없으면 두 수치는 0이다. 영업일이 null이면 NullPointerException을 던지고 DB 장애는 전파한다.
+
+앱이 `ClockConfig.ZONE`으로 날짜 경계를 계산한다.
+`finalized_at`은 KST 벽시계를 저장하는 DATETIME(6)이므로 경계도 LocalDateTime으로 전달한다.
+서버 기본 시간대나 DB 날짜 함수에 의존하지 않고 SQL 한 번으로 두 수치를 함께 읽는다.
+호출 날짜는 분석 배치가 확정된 영업일로 정하며 이 조회는 현재나 미래 날짜를 별도로 거부하지 않는다.
+
+현재 store 구현에는 최종 등록을 취소하는 경로가 없다.
+최종 등록 취소나 가게 삭제를 도입하면 과거 누적 수를 재현할 이력 정책도 함께 정해야 한다.
+현재 집계는 등록 이력 원장을 대신하지 않는다.
+
 ## 관리자 점주 목록용 조회 (#365)
 
 `findSummariesByOwnerIds(Collection<Long>)`는 점주 ID로 가게를 일괄 조회한다.
