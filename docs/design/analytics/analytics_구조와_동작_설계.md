@@ -194,6 +194,8 @@ sequenceDiagram
 
 일별 집계의 실행기(`DailyAggregationRunner`)는 01:00 작업(`DailyAggregationJob`)과 수동 재계산(A-05)이 함께 쓴다. 단계(`AggregationStep`)가 없어도 날짜를 잡고 공개하고 닫는 흐름이 돈다. 단계는 원천 집계 조회가 생긴 단위에서 더한다. 수동 재계산은 날짜를 잡은 뒤 202를 주고, 집계는 이 서비스가 직접 만든 단일 스레드 실행기(대기열 4개)에서 돈다. 스프링 빈으로 노출하지 않는다. `Executor` 빈이 있으면 부트가 기본 작업 실행기를 만들지 않아 뒤에 붙을 `@Async`가 이 실행기를 쓰게 되기 때문이다.
 
+**정산 지표 단계 (2026-10-17, #443).** `SettlementMetricsStep`(`@Order(100)`)이 `BillingStatsQueryService`의 점주와 캠페인별 합계를 더해 `daily_settlement_analytics`의 그날 한 행을 교체한다. 표의 CHECK가 금액을 0 이상으로 묶어 RESERVE, DEDUCT, REFUND는 절댓값으로 저장하고 조정액만 부호를 둔다. 정정이 가리키는 원래 영업일은 공개 때 `ADJUSTED`로 미처리 날짜에 남긴다. `SettlementConsistencyStep`(`@Order(900)`)은 같은 공개 트랜잭션에서 방금 쓴 행을 읽어 V-1, V-2, V-3, V-7을 확인하고 어긋나도 집계를 실패시키지 않으며 지표 `analytics_consistency_violations{check}`와 로그로 알린다. 점주 잔액 >= 0(V-4)은 점주별 잔액을 주는 집계 조회가 없어 하지 않는다. 소진액 계산은 `SpendFormula` 한 곳에 둔다. 매출 조회(A-07)는 집계가 끝나지 않은 구간의 금액을 `null`로 내린다.
+
 ## 11. 성능
 
 조회 API는 미리 계산한 일별 테이블만 읽는다. 일별 집계는 원천 행이 아니라 도메인별로 묶은 결과를 받는다. 공개 트랜잭션은 외부 호출 없이 하루 결과를 쓰는 동안만 유지한다.
