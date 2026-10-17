@@ -55,7 +55,7 @@ public class AggregationRecalculationService {
         this.clock = clock;
         this.ownedExecutor = new ThreadPoolExecutor(1, 1, 0L, TimeUnit.MILLISECONDS,
                 new ArrayBlockingQueue<>(QUEUE_CAPACITY),
-                new CustomizableThreadFactory("analytics-aggregation-"),
+                daemonThreads(),
                 new ThreadPoolExecutor.AbortPolicy());
         this.executor = ownedExecutor;
     }
@@ -102,6 +102,13 @@ public class AggregationRecalculationService {
         if (ownedExecutor != null) {
             ownedExecutor.shutdown();
         }
+    }
+
+    // 데몬 스레드로 둔다. 집계가 도는 중에도 서버가 내려갈 수 있고, 남은 실행 행은 다른 서버가 이어받는다.
+    private static CustomizableThreadFactory daemonThreads() {
+        CustomizableThreadFactory factory = new CustomizableThreadFactory("analytics-aggregation-");
+        factory.setDaemon(true);
+        return factory;
     }
 
     private void start(LocalDate businessDate) {
