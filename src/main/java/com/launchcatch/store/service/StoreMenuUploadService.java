@@ -123,13 +123,8 @@ public class StoreMenuUploadService {
         return image;
     }
 
-    @Transactional
     public void confirmMenuImageUpload(Long ownerId, String uploadId) {
-        Long storeId = findStoreId(ownerId);
-
-        StoreMenuImage image = storeMenuImageRepository.findByUploadId(uploadId)
-                .filter(found -> storeMenuRepository.existsByIdAndStoreId(found.getStoreMenuId(), storeId))
-                .orElseThrow(() -> new StoreException(StoreErrorCode.MENU_NOT_FOUND));
+        StoreMenuImage image = transactionTemplate.execute(status -> findOwnedImage(ownerId, uploadId));
 
         // 응답을 못 받은 클라이언트의 재시도는 같은 결과를 성공으로 돌려준다(#375와 같은 근거).
         if (image.getUploadStatus() == StoreImageUploadStatus.VERIFIED) {
@@ -138,6 +133,7 @@ public class StoreMenuUploadService {
 
         HeadObjectResponse headObject;
         try {
+            // headObject는 응답이 지연될 수 있어 DB 잠금을 쥐지 않은 채로 부른다(코드래빗 리뷰로 찾음).
             headObject = s3Client.headObject(HeadObjectRequest.builder()
                     .bucket(mediaBucket)
                     .key(image.getObjectKey())
@@ -155,7 +151,20 @@ public class StoreMenuUploadService {
             throw new StoreException(StoreErrorCode.IMAGE_FILE_TOO_LARGE);
         }
 
-        image.verify(LocalDateTime.now(clock));
+        // 호출 사이 다른 요청이 이 PENDING 행을 지우고 다시 만들었을 수 있어, 잠금을 다시 잡고 재조회한다.
+        transactionTemplate.executeWithoutResult(status -> {
+            StoreMenuImage current = findOwnedImage(ownerId, uploadId);
+            if (current.getUploadStatus() == StoreImageUploadStatus.PENDING) {
+                current.verify(LocalDateTime.now(clock));
+            }
+        });
+    }
+
+    private StoreMenuImage findOwnedImage(Long ownerId, String uploadId) {
+        Long storeId = findStoreIdForUpdate(ownerId);
+        return storeMenuImageRepository.findByUploadId(uploadId)
+                .filter(found -> storeMenuRepository.existsByIdAndStoreId(found.getStoreMenuId(), storeId))
+                .orElseThrow(() -> new StoreException(StoreErrorCode.MENU_NOT_FOUND));
     }
 
     /*
@@ -174,12 +183,6 @@ public class StoreMenuUploadService {
         }
         var snapshot = progressService.completeStep(ownerId, expectedVersion, StoreRegistrationStep.MENU, null);
         return new StoreRegistrationProgressResponse(snapshot.storeId(), snapshot.resumeStep(), snapshot.version());
-    }
-
-    private Long findStoreId(Long ownerId) {
-        StoreRegistrationProgress progress = progressRepository.findByOwnerId(ownerId)
-                .orElseThrow(() -> new StoreException(StoreErrorCode.REGISTRATION_PROGRESS_NOT_FOUND));
-        return requireStoreId(progress);
     }
 
     // 개수 확인부터 저장까지 같은 점주의 동시 요청을 직렬화해 sortOrder 중복 저장을 막는다(#375와 같은 근거).

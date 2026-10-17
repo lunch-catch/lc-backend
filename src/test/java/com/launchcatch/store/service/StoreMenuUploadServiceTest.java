@@ -221,7 +221,7 @@ class StoreMenuUploadServiceTest {
     @Test
     @DisplayName("등록 진행 상태가 없으면 업로드 확인을 거부한다")
     void 등록_진행_상태가_없으면_확인을_거부한다() {
-        when(progressRepository.findByOwnerId(OWNER_ID)).thenReturn(Optional.empty());
+        when(progressRepository.findByOwnerIdForUpdate(OWNER_ID)).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.confirmMenuImageUpload(OWNER_ID, "upload-1"))
                 .isInstanceOfSatisfying(StoreException.class, e ->
@@ -231,7 +231,7 @@ class StoreMenuUploadServiceTest {
     @Test
     @DisplayName("업로드를 확인하면 headObject로 실제 업로드를 확인하고 VERIFIED로 바꾼다")
     void 업로드를_확인한다() {
-        givenOwnerWithStore();
+        givenOwnerWithStoreForUpdate();
         StoreMenuImage image = StoreMenuImage.preparePending(
                 MENU_ID, "upload-1", "stores/20/menu/100/upload-1.jpg", "menu.jpg", "image/jpeg", 1000L);
         when(storeMenuImageRepository.findByUploadId("upload-1")).thenReturn(Optional.of(image));
@@ -248,7 +248,7 @@ class StoreMenuUploadServiceTest {
     @Test
     @DisplayName("이미 VERIFIED인 업로드를 다시 확인해도 headObject를 부르지 않고 그대로 성공한다(응답을 못 받은 재시도)")
     void 이미_확인된_업로드는_재시도해도_성공한다() {
-        givenOwnerWithStore();
+        givenOwnerWithStoreForUpdate();
         StoreMenuImage image = StoreMenuImage.preparePending(
                 MENU_ID, "upload-1", "stores/20/menu/100/upload-1.jpg", "menu.jpg", "image/jpeg", 1000L);
         image.verify(java.time.LocalDateTime.now(FIXED_CLOCK));
@@ -263,7 +263,7 @@ class StoreMenuUploadServiceTest {
     @Test
     @DisplayName("실제로 업로드되지 않았으면 거부한다")
     void 업로드되지_않았으면_거부한다() {
-        givenOwnerWithStore();
+        givenOwnerWithStoreForUpdate();
         StoreMenuImage image = StoreMenuImage.preparePending(
                 MENU_ID, "upload-1", "stores/20/menu/100/upload-1.jpg", "menu.jpg", "image/jpeg", 1000L);
         when(storeMenuImageRepository.findByUploadId("upload-1")).thenReturn(Optional.of(image));
@@ -279,7 +279,7 @@ class StoreMenuUploadServiceTest {
     @Test
     @DisplayName("다른 가게의 메뉴 이미지 업로드 확인이면 거부한다")
     void 다른_가게의_메뉴_이미지_확인이면_거부한다() {
-        givenOwnerWithStore();
+        givenOwnerWithStoreForUpdate();
         StoreMenuImage otherStoreImage = StoreMenuImage.preparePending(
                 999L, "upload-1", "stores/999/menu/999/upload-1.jpg", "menu.jpg", "image/jpeg", 1000L);
         when(storeMenuImageRepository.findByUploadId("upload-1")).thenReturn(Optional.of(otherStoreImage));
@@ -314,10 +314,6 @@ class StoreMenuUploadServiceTest {
 
         assertThat(response.resumeStep()).isEqualTo(StoreRegistrationStep.MENU);
         assertThat(response.version()).isEqualTo(6L);
-    }
-
-    private void givenOwnerWithStore() {
-        when(progressRepository.findByOwnerId(OWNER_ID)).thenReturn(Optional.of(progress()));
     }
 
     private void givenOwnerWithStoreForUpdate() {
