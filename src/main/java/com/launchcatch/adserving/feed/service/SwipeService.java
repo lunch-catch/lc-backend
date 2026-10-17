@@ -1,15 +1,15 @@
 package com.launchcatch.adserving.feed.service;
 
 import com.launchcatch.adserving.engine.entity.AdCandidate;
+import com.launchcatch.adserving.engine.exception.CandidateErrorCode;
+import com.launchcatch.adserving.engine.exception.CandidateException;
 import com.launchcatch.adserving.engine.repository.AdCandidateRepository;
+import com.launchcatch.adserving.exclusion.repository.DailyExclusionRepository;
 import com.launchcatch.adserving.feed.dto.SwipeRequest;
 import com.launchcatch.adserving.feed.dto.SwipeResponse;
 import com.launchcatch.adserving.feed.entity.SwipeAction;
 import com.launchcatch.adserving.feed.entity.SwipeLog;
 import com.launchcatch.adserving.feed.entity.SwipeLogId;
-import com.launchcatch.adserving.feed.exception.FeedErrorCode;
-import com.launchcatch.adserving.feed.exception.FeedException;
-import com.launchcatch.adserving.feed.repository.DailyExclusionRepository;
 import com.launchcatch.adserving.feed.repository.SwipeLogRepository;
 import com.launchcatch.adserving.wishlist.entity.Wishlist;
 import com.launchcatch.adserving.wishlist.repository.WishlistRepository;
@@ -47,7 +47,7 @@ public class SwipeService {
         LocalDate today = LocalDate.ofInstant(now, ClockConfig.ZONE);
         // 상태와 소진은 보지 않는다. 카드를 본 뒤 캠페인이 멈춰도 사용자의 스와이프는 남긴다(#379)
         AdCandidate candidate = adCandidateRepository.findByIdBusinessDateAndIdCampaignId(today, request.campaignId())
-                .orElseThrow(() -> new FeedException(FeedErrorCode.CAMPAIGN_NOT_SERVING));
+                .orElseThrow(() -> new CandidateException(CandidateErrorCode.CAMPAIGN_NOT_SERVING));
 
         if (request.swipeAction() == SwipeAction.WISH) {
             wishlistRepository.insertIgnore(Wishlist.fromFeed(memberId, candidate.getCampaignId(), candidate.getStoreId(), serveId));

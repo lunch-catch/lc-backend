@@ -1,4 +1,4 @@
-package com.launchcatch.adserving.feed.repository;
+package com.launchcatch.adserving.exclusion.repository;
 
 import com.launchcatch.auth.RedisFailureClassifier;
 import io.micrometer.core.instrument.MeterRegistry;

@@ -11,15 +11,15 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import com.launchcatch.adserving.engine.exception.CandidateErrorCode;
+import com.launchcatch.adserving.engine.exception.CandidateException;
 import com.launchcatch.adserving.engine.repository.AdCandidateRepository;
+import com.launchcatch.adserving.exclusion.repository.DailyExclusionRepository;
 import com.launchcatch.adserving.feed.dto.SwipeRequest;
 import com.launchcatch.adserving.feed.dto.SwipeResponse;
 import com.launchcatch.adserving.feed.entity.SwipeAction;
 import com.launchcatch.adserving.feed.entity.SwipeLog;
 import com.launchcatch.adserving.feed.entity.SwipeLogId;
-import com.launchcatch.adserving.feed.exception.FeedErrorCode;
-import com.launchcatch.adserving.feed.exception.FeedException;
-import com.launchcatch.adserving.feed.repository.DailyExclusionRepository;
 import com.launchcatch.adserving.feed.repository.SwipeLogRepository;
 import com.launchcatch.adserving.wishlist.entity.Wishlist;
 import com.launchcatch.adserving.wishlist.repository.WishlistRepository;
@@ -136,8 +136,8 @@ class SwipeServiceTest {
         when(adCandidateRepository.findByIdBusinessDateAndIdCampaignId(TODAY, 101L)).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.swipe(MEMBER_ID, request(SwipeAction.WISH)))
-                .isInstanceOf(FeedException.class)
-                .extracting("errorCode").isEqualTo(FeedErrorCode.CAMPAIGN_NOT_SERVING);
+                .isInstanceOf(CandidateException.class)
+                .extracting("errorCode").isEqualTo(CandidateErrorCode.CAMPAIGN_NOT_SERVING);
         verifyNoInteractions(wishlistRepository, dailyExclusionRepository);
         verify(swipeLogRepository, never()).insertIgnore(any());
     }

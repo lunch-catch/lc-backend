@@ -1,8 +1,10 @@
 package com.launchcatch.adserving;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.doReturn;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -18,19 +20,21 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
+import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 
 /*
- * GET /v1/wishlist 를 HTTP 입구부터 MySQL 의 wishlist, ad_candidate 까지 본다.
- * 권한과 남의 찜을 돌려주지 않는 것이 이 테스트의 축이다. 찜한 시각 순서와 그날 후보 조인도 실제 DB 로 본다.
+ * GET, POST /v1/wishlist 를 HTTP 입구부터 MySQL 의 wishlist, ad_candidate 와 Valkey 의 당일 이력까지 본다.
+ * 권한과 남의 찜을 돌려주지 않는 것이 이 테스트의 축이다. 찜한 시각 순서와 그날 후보 조인, 같은 찜의 두 번째 저장도 실제 DB 로 본다.
  */
-@DisplayName("찜 목록 조회 통합")
+@DisplayName("찜 목록 통합")
 class WishlistIntegrationTest extends AbstractAdservingIntegrationTest {
 
     private static final long MEMBER_ID = 3001L;
     private static final long OTHER_MEMBER_ID = 3002L;
     private static final LocalDate TODAY = LocalDate.of(2026, 10, 1);
+    private static final String DAILY_EXCLUSION_KEY = "adserving:dailyExclusion:" + TODAY + ":" + MEMBER_ID;
     private static final Instant NOW = LocalDateTime.of(2026, 10, 1, 10, 30).atZone(ClockConfig.ZONE).toInstant();
 
     @BeforeEach
@@ -47,6 +51,7 @@ class WishlistIntegrationTest extends AbstractAdservingIntegrationTest {
     void tearDown() {
         jdbcTemplate.update("DELETE FROM wishlist");
         jdbcTemplate.update("DELETE FROM ad_candidate");
+        redisTemplate.delete(DAILY_EXCLUSION_KEY);
     }
 
     private void candidate(LocalDate date, long campaignId, long storeId, String storeName, String imageUrl,
@@ -148,5 +153,76 @@ class WishlistIntegrationTest extends AbstractAdservingIntegrationTest {
     @Test
     void 로그인하지_않으면_401_이다() throws Exception {
         mockMvc.perform(get("/v1/wishlist")).andExpect(status().isUnauthorized());
+    }
+
+    private ResultActions wish(String json, Role role) throws Exception {
+        return perform(post("/v1/wishlist").contentType(MediaType.APPLICATION_JSON).content(json), role);
+    }
+
+    private long wishCount() {
+        return jdbcTemplate.queryForObject("SELECT COUNT(*) FROM wishlist", Long.class);
+    }
+
+    @Test
+    void 가게_상세에서_처음_찜하면_201_이고_출처_카드_없이_남고_그날_당일_이력에_들어간다() throws Exception {
+        wish("{\"campaignId\": 101}", Role.MEMBER)
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.code").value("SUCCESS"))
+                .andExpect(jsonPath("$.data.campaignId").value(101))
+                .andExpect(jsonPath("$.data.storeId").value(55))
+                .andExpect(jsonPath("$.data.storeName").value("점심식당"))
+                .andExpect(jsonPath("$.data.discount.menuName").value("갈비살 정식"))
+                .andExpect(jsonPath("$.data.wishedAt").exists());
+
+        assertThat(jdbcTemplate.queryForMap("SELECT member_id, campaign_id, store_id, serve_id FROM wishlist"))
+                .containsEntry("member_id", MEMBER_ID).containsEntry("campaign_id", 101L)
+                .containsEntry("store_id", 55L).containsEntry("serve_id", null);
+        assertThat(redisTemplate.opsForSet().members(DAILY_EXCLUSION_KEY)).containsExactly("101");
+    }
+
+    @Test
+    void 이미_찜한_캠페인이면_200_이고_행이_늘지_않으며_처음_찜한_시각을_돌려준다() throws Exception {
+        wish(MEMBER_ID, 101, 55, LocalDateTime.of(2026, 9, 30, 11, 0));
+
+        wish("{\"campaignId\": 101}", Role.MEMBER)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.campaignId").value(101))
+                .andExpect(jsonPath("$.data.wishedAt").value("2026-09-30T11:00:00+09:00"));
+
+        assertThat(wishCount()).isEqualTo(1);
+    }
+
+    // 어제 찜했어도 오늘 후보가 아니면 거절한다(#420)
+    @Test
+    void 오늘_노출_후보가_아니면_404_ADSERVING_004_이고_찜이_늘지_않는다() throws Exception {
+        wish(MEMBER_ID, 103, 57, LocalDateTime.of(2026, 9, 30, 11, 0));
+
+        wish("{\"campaignId\": 103}", Role.MEMBER)
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("ADSERVING-004"));
+
+        assertThat(wishCount()).isEqualTo(1);
+        assertThat(redisTemplate.hasKey(DAILY_EXCLUSION_KEY)).isFalse();
+    }
+
+    @Test
+    void campaignId_가_없으면_400_COMMON_002_이다() throws Exception {
+        wish("{}", Role.MEMBER)
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("COMMON-002"));
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = Role.class, names = "MEMBER", mode = EnumSource.Mode.EXCLUDE)
+    void MEMBER_가_아니면_찜할_수_없다(Role role) throws Exception {
+        wish("{\"campaignId\": 101}", role).andExpect(status().isForbidden());
+
+        assertThat(wishCount()).isZero();
+    }
+
+    @Test
+    void 로그인하지_않으면_찜할_수_없다() throws Exception {
+        mockMvc.perform(post("/v1/wishlist").contentType(MediaType.APPLICATION_JSON).content("{\"campaignId\": 101}"))
+                .andExpect(status().isUnauthorized());
     }
 }

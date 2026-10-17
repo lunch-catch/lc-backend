@@ -8,6 +8,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import com.launchcatch.adserving.exclusion.repository.DailyExclusionRepository;
 import com.launchcatch.adserving.feed.repository.FeedRateLimitRepository.Admission;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Instant;
