@@ -308,6 +308,8 @@ class BatchExecutionServiceTest {
         when(logs.findByStatusAndOwnerIdNotAndUpdatedAtBefore(BatchStatus.RUNNING, ME, STALE_BEFORE))
                 .thenReturn(List.of(row(BatchStatus.RUNNING, OTHER)));
         when(logs.takeOver(JOB, DATE, ME, NOW, STALE_BEFORE)).thenReturn(1);
+        when(logs.findByJobNameAndBusinessDate(JOB, DATE))
+                .thenReturn(Optional.of(row(BatchStatus.RUNNING, ME)));
 
         assertThat(service.takeOverStale()).hasSize(1);
         verify(alert).takenOver(JOB, DATE, OTHER, ME);
@@ -390,5 +392,53 @@ class BatchExecutionServiceTest {
         when(logs.restartFinished(JOB, DATE, ME, NOW)).thenReturn(0);
 
         assertThat(service.rerun(JOB, DATE)).isFalse();
+    }
+
+    private static BatchExecutionLog row(BatchStatus status, String owner, int attemptNo) {
+        BatchExecutionLog row = row(status, owner);
+        ReflectionTestUtils.setField(row, "attemptNo", attemptNo);
+        return row;
+    }
+
+    /*
+     * 소유자와 세대가 둘 다 맞아야 통과한다. succeed/fail의 소유자 조건만으로는 결과가 이미
+     * 커밋된 뒤에야 걸려서 늦다. 여기서는 공개 전에 막는다(#360).
+     */
+    @Test
+    @DisplayName("내 소유이고 세대가 같으면 통과한다")
+    void 세대가_맞으면_통과() {
+        when(logs.findByJobNameAndBusinessDateForUpdate(JOB, DATE))
+                .thenReturn(Optional.of(row(BatchStatus.RUNNING, ME, 2)));
+
+        service.assertCurrentAttempt(JOB, DATE, 2);
+    }
+
+    @Test
+    @DisplayName("임대를 잃어 소유자가 바뀐 뒤에는 예외를 던진다")
+    void 소유자가_다르면_예외() {
+        when(logs.findByJobNameAndBusinessDateForUpdate(JOB, DATE))
+                .thenReturn(Optional.of(row(BatchStatus.RUNNING, OTHER, 2)));
+
+        assertThatThrownBy(() -> service.assertCurrentAttempt(JOB, DATE, 2))
+                .isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    @DisplayName("이어받기나 수동 재실행으로 세대가 오른 뒤에는 예외를 던진다")
+    void 세대가_다르면_예외() {
+        when(logs.findByJobNameAndBusinessDateForUpdate(JOB, DATE))
+                .thenReturn(Optional.of(row(BatchStatus.RUNNING, ME, 3)));
+
+        assertThatThrownBy(() -> service.assertCurrentAttempt(JOB, DATE, 2))
+                .isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    @DisplayName("행이 없으면 예외를 던진다")
+    void 행이_없으면_예외() {
+        when(logs.findByJobNameAndBusinessDateForUpdate(JOB, DATE)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.assertCurrentAttempt(JOB, DATE, 1))
+                .isInstanceOf(IllegalStateException.class);
     }
 }

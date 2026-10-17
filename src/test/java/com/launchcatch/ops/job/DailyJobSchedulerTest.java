@@ -1,8 +1,10 @@
 package com.launchcatch.ops.job;
 
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.inOrder;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -11,6 +13,7 @@ import static org.mockito.Mockito.when;
 import com.launchcatch.ops.entity.BatchExecutionLog;
 import com.launchcatch.ops.scheduler.DailyJob;
 import com.launchcatch.ops.scheduler.RetryBackoff;
+import com.launchcatch.ops.scheduler.StandaloneJob;
 import com.launchcatch.ops.scheduler.StepOutcome;
 import com.launchcatch.ops.service.BatchExecutionService;
 import java.time.LocalDate;
@@ -22,6 +25,7 @@ import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.QueryTimeoutException;
+import org.springframework.test.util.ReflectionTestUtils;
 
 /*
  * 묶음이 순서를 지키고, 멈춰야 할 때 멈추는지 본다.
@@ -71,7 +75,43 @@ class DailyJobSchedulerTest {
     }
 
     private DailyJobScheduler scheduler(DailyJob... jobs) {
-        return new DailyJobScheduler(List.of(jobs), executions, backoff);
+        return new DailyJobScheduler(List.of(jobs), List.of(), executions, backoff);
+    }
+
+    private DailyJobScheduler schedulerWithStandalone(StandaloneJob... standaloneJobs) {
+        return new DailyJobScheduler(List.of(), List.of(standaloneJobs), executions, backoff);
+    }
+
+    private StandaloneJob standalone(String name) {
+        return new StandaloneJob() {
+            @Override
+            public String jobName() {
+                return name;
+            }
+
+            @Override
+            public void run(LocalDate businessDate, int attemptNo) {
+                // 테스트는 호출 여부만 본다
+            }
+        };
+    }
+
+    private StandaloneJob failingStandaloneTimes(String name, int failures, RuntimeException error) {
+        return new StandaloneJob() {
+            private int thrown;
+
+            @Override
+            public String jobName() {
+                return name;
+            }
+
+            @Override
+            public void run(LocalDate businessDate, int attemptNo) {
+                if (thrown++ < failures) {
+                    throw error;
+                }
+            }
+        };
     }
 
     /** 처음 몇 번만 던지고 그 뒤에는 성공하는 작업이다. 자동 재실행을 보려면 상태가 필요하다. */
@@ -352,5 +392,71 @@ class DailyJobSchedulerTest {
         scheduler().runDailyBundle();
 
         verify(executions).succeed(DailyJobScheduler.BUNDLE, DATE);
+    }
+
+    /*
+     * 묶음 밖 작업도 등록해 두면 이어받아 run 을 다시 부른다(#360).
+     * attemptNo 는 이어받기로 오른 세대 그대로 넘겨야, 구현이 결과를 공개할 때
+     * BatchAttemptGuard 로 자기 것인지 확인할 수 있다.
+     */
+    @Test
+    @DisplayName("등록된 묶음 밖 작업을 이어받으면 세대와 함께 run을 다시 불러 성공시킨다")
+    void 묶음_밖_작업을_이어받아_다시_돈다() {
+        BatchExecutionLog row = BatchExecutionLog.running("MEMBER_KAKAO_UNLINK_RETRY", DATE, "batch-2");
+        ReflectionTestUtils.setField(row, "attemptNo", 2);
+        when(executions.takeOverStale()).thenReturn(List.of(row));
+        StandaloneJob job = mock(StandaloneJob.class);
+        when(job.jobName()).thenReturn("MEMBER_KAKAO_UNLINK_RETRY");
+
+        schedulerWithStandalone(job).takeOverStale();
+
+        verify(job).run(DATE, 2);
+        verify(executions).succeed("MEMBER_KAKAO_UNLINK_RETRY", DATE);
+    }
+
+    @Test
+    @DisplayName("묶음 밖 작업도 일시적 오류면 다시 돌려 성공시킨다")
+    void 묶음_밖_작업의_일시적_오류는_다시_돌린다() {
+        BatchExecutionLog row = BatchExecutionLog.running("MEMBER_KAKAO_UNLINK_RETRY", DATE, "batch-2");
+        when(executions.takeOverStale()).thenReturn(List.of(row));
+        when(executions.recordRetry(eq("MEMBER_KAKAO_UNLINK_RETRY"), eq(DATE), anyString())).thenReturn(true);
+        when(backoff.pause(1)).thenReturn(true);
+        when(executions.renew("MEMBER_KAKAO_UNLINK_RETRY", DATE)).thenReturn(true);
+
+        schedulerWithStandalone(failingStandaloneTimes(
+                "MEMBER_KAKAO_UNLINK_RETRY", 1, new QueryTimeoutException("응답이 없다")))
+                .takeOverStale();
+
+        verify(executions).succeed("MEMBER_KAKAO_UNLINK_RETRY", DATE);
+        verify(executions, never()).fail(eq("MEMBER_KAKAO_UNLINK_RETRY"), eq(DATE), anyString());
+    }
+
+    /*
+     * 묶음 밖 작업은 번들과 무관하다. 실패해도 DAILY_0000 을 실패시키지 않는다.
+     * onFailure 를 번들 단계와 묶음 밖 작업이 다르게 받기 때문이다.
+     */
+    @Test
+    @DisplayName("묶음 밖 작업이 실패해도 묶음은 건드리지 않는다")
+    void 묶음_밖_작업이_실패해도_묶음은_그대로다() {
+        BatchExecutionLog row = BatchExecutionLog.running("MEMBER_KAKAO_UNLINK_RETRY", DATE, "batch-2");
+        when(executions.takeOverStale()).thenReturn(List.of(row));
+
+        schedulerWithStandalone(failingStandaloneTimes(
+                "MEMBER_KAKAO_UNLINK_RETRY", 9, new IllegalStateException("원본이 어긋났다")))
+                .takeOverStale();
+
+        verify(executions).fail("MEMBER_KAKAO_UNLINK_RETRY", DATE, "IllegalStateException: 원본이 어긋났다");
+        verify(executions, never()).fail(eq(DailyJobScheduler.BUNDLE), any(LocalDate.class), anyString());
+    }
+
+    @Test
+    @DisplayName("등록되지 않은 묶음 밖 작업은 지금처럼 FAILED와 알림으로 닫힌다")
+    void 등록되지_않은_작업은_실패로_닫는다() {
+        BatchExecutionLog orphan = BatchExecutionLog.running("EXPIRE_COUPON:42", DATE, "batch-2");
+        when(executions.takeOverStale()).thenReturn(List.of(orphan));
+
+        schedulerWithStandalone(standalone("MEMBER_KAKAO_UNLINK_RETRY")).takeOverStale();
+
+        verify(executions).fail("EXPIRE_COUPON:42", DATE, "멈춘 실행을 이어받았으나 다시 돌릴 경로가 없다");
     }
 }

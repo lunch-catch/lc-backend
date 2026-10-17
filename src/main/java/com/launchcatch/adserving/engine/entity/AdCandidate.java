@@ -17,7 +17,7 @@ import lombok.NoArgsConstructor;
 
 /*
  * 그날의 피드 후보 스냅샷이다. 서빙 경로는 이 테이블만 읽는다(FR-093).
- * 행은 00:00 적재 배치가 만들고 이 엔티티는 아직 읽기만 한다. 그래서 생성 경로를 두지 않았고 피드가 쓰는 컬럼만 매핑한다.
+ * 행은 00:00 적재 배치가 만들고 이 엔티티는 아직 읽기만 한다. 그래서 생성 경로를 두지 않았고 피드와 찜 목록이 쓰는 컬럼만 매핑한다.
  * 키가 (영업일, 캠페인) 복합키라 BaseTimeEntity 의 단일 식별자를 상속할 수 없다.
  */
 @Entity
@@ -34,6 +34,10 @@ public class AdCandidate {
 
     @Column(name = "store_name", nullable = false)
     private String storeName;
+
+    // 가게 대표 이미지(LOGO) 주소다. 가게가 올리지 않았으면 null 이다. 찜 목록이 표시한다.
+    @Column(name = "store_image_url")
+    private String storeImageUrl;
 
     @Column(name = "category_code", nullable = false)
     private String categoryCode;
@@ -65,6 +69,10 @@ public class AdCandidate {
 
     @Column(name = "discount_value", nullable = false)
     private int discountValue;
+
+    // 할인 대상 메뉴명이다. MENU 일 때만 값이 있다(chk_candidate_discount_menu). 찜 목록이 표시한다.
+    @Column(name = "discount_menu_name")
+    private String discountMenuName;
 
     @Column(name = "usable_start_time", nullable = false)
     private LocalTime usableStartTime;
