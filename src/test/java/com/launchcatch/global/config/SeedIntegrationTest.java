@@ -77,6 +77,24 @@ class SeedIntegrationTest extends IntegrationTestSupport {
     }
 
     @Test
+    void 시드를_켜면_결제와_원장과_환불과_대사_불일치가_들어가고_잔액이_맞는다() {
+        migrate(true, "2026-10-15");
+
+        assertThat(count("SELECT COUNT(*) FROM payment")).isEqualTo(12);
+        assertThat(count("SELECT COUNT(*) FROM payment_reconciliation_outbox")).isEqualTo(2);
+        assertThat(count("SELECT COUNT(*) FROM refund_request")).isEqualTo(3);
+        assertThat(count("SELECT COUNT(*) FROM settlement_mismatch")).isEqualTo(6);
+        assertThat(count("SELECT COUNT(DISTINCT check_type) FROM settlement_mismatch")).isEqualTo(3);
+        assertThat(count("SELECT COALESCE(SUM(amount), 0) FROM point_ledger WHERE owner_id = 9001 AND entry_type <> 'DEDUCT'"))
+                .isEqualTo(88200);
+        assertThat(count("SELECT COALESCE(SUM(amount), 0) FROM point_ledger WHERE owner_id = 9002 AND entry_type <> 'DEDUCT'"))
+                .isEqualTo(57000);
+        assertThat(count("SELECT COALESCE(SUM(amount), 0) FROM point_ledger WHERE owner_id = 9003 AND entry_type <> 'DEDUCT'"))
+                .isEqualTo(10000);
+        // 대기 중인 환불 요청 금액은 그 점주의 잔액 전액이다
+        assertThat(count("SELECT amount FROM refund_request WHERE status = 'REQUESTED'")).isEqualTo(57000);
+    }
+
     void 광고_서빙의_모든_테이블에_서로_맞물린_행이_들어간다() {
         migrate(true, "2026-10-15");
 
