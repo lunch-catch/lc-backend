@@ -346,3 +346,82 @@ OTHER
 | `409` | `STORE-001` | `version`이 현재 버전과 다름 |
 | `409` | `STORE-002` | 점주 상태가 `ONBOARDING`이 아님, 또는 현재 재개 단계가 `IMAGES`가 아님 |
 | `409` | `STORE-010` | 로고 이미지가 없음 |
+
+
+## `GET /v1/owner/store`
+
+인증된 점주의 가게 ID와 전체 저장 정보를 조회한다. ONBOARDING 초안과 ACTIVE 가게를 지원한다.
+가게 생성 전에는 `200`과 `data: null`을 반환한다. 조회로 가게나 진행 상태를 생성하지 않는다.
+요청 본문과 경로·쿼리 식별자는 받지 않으며 인증된 점주를 기준으로 조회한다.
+
+### 응답 `200`
+
+공통 응답 봉투의 `data`는 아래 필드를 갖는다. 가게가 있으면 목록은 항상 배열이다.
+
+| 필드 | 타입 | null | 설명 |
+|---|---|---|---|
+| storeId | integer(int64) | 아니오 | 가게 ID |
+| finalized | boolean | 아니오 | 최종 등록 여부 |
+| name, businessCategory, representativeName | string | 아니오 | 상호명, 업종 코드, 대표자 성명 |
+| businessRegistrationNumber, phone | string | 예 | 사업자등록번호, 전화번호. 기존 미입력 데이터는 null |
+| businessVerificationStatus | string | 예 | VERIFIED 또는 FAILED. 미검증은 null |
+| businessVerifiedAt | string(date-time) | 예 | 기존 저장 규약의 KST 검증 성공 시각 |
+| kakaoPlaceId, roadAddress | string | 예 | 카카오 장소 ID, 도로명 주소 |
+| latitude, longitude | number | 예 | 위도, 경도 |
+| businessHours | array | 아니오 | 월요일부터 일요일 순. 미입력은 [] |
+| logoImage | object | 예 | 검증된 대표 이미지. 없으면 null |
+| interiorImages | array | 아니오 | 검증된 내부 이미지. sortOrder 오름차순, 없으면 [] |
+| menus | array | 아니오 | sortOrder 오름차순. 메뉴 0개도 정상이며 [] |
+
+`businessHours` 항목은 `dayOfWeek`(MONDAY~SUNDAY), `openTime`, `closeTime`, `isClosed`,
+`breakStartTime`, `breakEndTime`, `lastOrderTime`을 갖는다. 시각은 `HH:mm:ss`이며 미입력은 null이다.
+`dayOfWeek`와 `isClosed`는 null이 아니다.
+
+이미지는 `objectKey`(string), `url`(string), `sortOrder`(integer 또는 null)를 갖는다.
+대표·메뉴 이미지의 sortOrder는 null이다. PENDING·UPLOADED 이미지는 반환하지 않는다.
+이미지가 있는데 CDN 설정이 없으면 500으로 처리하며 이미지가 없는 것처럼 숨기지 않는다.
+
+메뉴는 `menuId`(integer), `name`(string), `price`(integer, 원), `description`(string 또는 null),
+`sortOrder`(integer), `image`(이미지 또는 null)를 갖는다. 이미지 미검증 상태의 기존 메뉴도 반환한다.
+이 조회의 null 허용은 메뉴 저장·최종 등록의 필수 이미지 검증을 완화하지 않는다.
+
+### 오류
+
+| 상태·코드 | 조건 |
+|---|---|
+| 401 AUTH-005 | 인증이 없거나 유효하지 않음 |
+| 403 AUTH-006 | OWNER 외 역할 |
+| 403 OWNER-002 | DB의 현재 점주 상태가 SUSPENDED 또는 WITHDRAWN |
+
+조회는 저장된 정보만 반환한다. 단계별 완료 여부와 최종 등록 가능 여부는 별도 진행 상태 조회 범위다.
+
+
+가게 생성 전 응답 예시:
+
+```json
+{"code":"SUCCESS","message":"요청이 성공적으로 처리되었습니다.","data":null}
+```
+
+기본 정보 저장 후 초안의 data 예시:
+
+```json
+{
+  "storeId": 501,
+  "finalized": false,
+  "name": "런치식당",
+  "businessCategory": "KOREAN",
+  "representativeName": "홍길동",
+  "businessRegistrationNumber": "1234567890",
+  "phone": "02-1234-5678",
+  "businessVerificationStatus": "VERIFIED",
+  "businessVerifiedAt": "2026-10-17T10:00:00",
+  "kakaoPlaceId": null,
+  "roadAddress": null,
+  "latitude": null,
+  "longitude": null,
+  "businessHours": [],
+  "logoImage": null,
+  "interiorImages": [],
+  "menus": []
+}
+```

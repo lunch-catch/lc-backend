@@ -108,3 +108,20 @@ SQL은 limit보다 한 건 더 읽고 초과하면 IllegalArgumentException을 �
 StoreQueryIntegrationTest에서 실제 MySQL의 등록 전 가게, 제한 초과와 누락 ID를 확인한다.
 1만 건을 준비한 뒤 100명 요약 조회의 SELECT 한 번과 요약 및 상호 검색 각각 1초 이내를 검증한다.
 시간 측정은 워밍업 이후 해당 테스트 환경에서의 결과다.
+
+
+## 본인 가게 전체 조회 (#427)
+
+`StoreQueryService.findOwnerStore(ownerId)`는 owner가 인증된 점주의 화면 복원을 위해 호출한다.
+양수인 점주 ID를 받으며 null 또는 0 이하는 IllegalArgumentException으로 거부한다.
+점주 ID에 연결된 가게가 없으면 Optional.empty()를 반환한다.
+최종 등록 전 초안도 포함한다. 앞 절의 최종 등록 전용 메서드들은 기존 조건을 유지한다.
+
+반환 타입은 OwnerStoreSnapshot이다. 가게 기본 정보·사업자 검증·위치·시간·검증된 이미지·메뉴를 포함한다.
+초안의 미입력 단일 값은 null이며 목록은 빈 목록이다. 목록은 방어적으로 복사한다.
+메뉴 이미지를 아직 검증하지 않았으면 메뉴는 유지하고 이미지만 null로 반환한다.
+본인 화면에 필요한 사업자번호 원문을 포함하므로 다른 점주의 목록이나 사용자 화면에 사용하지 않는다.
+호출자는 인증과 현재 계정 상태를 먼저 확인해야 한다. 이 계약 자체는 인증을 대신하지 않는다.
+조회 장애와 CDN 설정 오류는 호출자에게 전파하며 조회가 저장 데이터를 변경하지 않는다.
+
+HTTP 응답과 오류는 [store-api-spec.md](../../api-spec/store-api-spec.md)의 내 가게 조회 절을 따른다.

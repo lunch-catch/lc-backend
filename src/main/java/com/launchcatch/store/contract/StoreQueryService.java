@@ -2,9 +2,13 @@ package com.launchcatch.store.contract;
 
 import java.util.Collection;
 import java.util.List;
+import java.util.Optional;
 
 /** 가게 조회 계약의 누락 데이터와 좌표 정책은 docs/design/store/store-query-contract.md를 따른다. */
 public interface StoreQueryService {
+    /** 인증된 점주 화면용 조회다. 초안도 포함하며 가게가 없으면 빈 결과를 반환한다. 저장하지 않는다. */
+    Optional<OwnerStoreSnapshot> findOwnerStore(Long ownerId);
+
     /** 최종 등록 전 가게도 포함해 점주 ID로 일괄 조회하며 ID가 100개를 초과하면 IllegalArgumentException을 던진다. */
     List<StoreSummary> findSummariesByOwnerIds(Collection<Long> ownerIds);
 

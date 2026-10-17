@@ -117,3 +117,18 @@ StoreListIntegrationTest 하나에서 실제 MySQL의 거리 정렬과 반올림
 - **콜론 커스텀 메서드 경로(`:prepareUpload` 등)를 쓴다.** `api-spec.md` 공통 규약의 예시이고
   `AdminRefundController`(`/{id}:approve`)가 이미 같은 표기를 쓴다. 다만 이번엔 경로 변수 없이
   컬렉션 경로에 바로 붙는 형태라 실제로 라우팅되는지 통합 테스트로 확인했다(`StoreImageSecurityIntegrationTest`).
+
+
+## 내 가게 조회 (#427)
+
+HTTP 계약은 [store-api-spec.md](../../api-spec/store-api-spec.md)의 `GET /v1/owner/store` 절이 소유한다.
+OwnerStoreController → OwnerStoreService → store.contract.StoreQueryService.findOwnerStore 순서로 호출한다.
+owner는 DB에서 현재 계정과 상태를 확인하고 store는 본인 가게의 업무 데이터를 조회한다.
+store가 owner를 역방향 참조하지 않으며 StoreQueryService의 기존 최종 등록 전용 메서드의 조회 조건은 유지한다.
+OwnerStoreSnapshot은 도메인 간 계약이며 OwnerStoreResponse가 HTTP 응답으로 변환한다.
+
+하나의 읽기 전용 트랜잭션에서 가게, 사진, 메뉴, 영업시간을 각각 조회한다.
+MySQL 기본 REPEATABLE READ의 스냅샷으로 읽으며 쓰기 잠금과 진행 상태 초기화는 수행하지 않는다.
+가게가 없으면 후속 목록을 조회하지 않는다. 사진과 메뉴 이미지는 VERIFIED만 연결한다.
+이미지 URL은 기존 StoreImageUrlResolver로 생성하며 S3에 요청하지 않는다.
+진행 중인 TERMS·STORE_INFO PR의 미확정 클래스에 의존하지 않고 develop의 저장 구조를 사용한다.
