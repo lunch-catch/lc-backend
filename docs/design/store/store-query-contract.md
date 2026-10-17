@@ -125,3 +125,15 @@ StoreQueryIntegrationTest에서 실제 MySQL의 등록 전 가게, 제한 초과
 조회 장애와 CDN 설정 오류는 호출자에게 전파하며 조회가 저장 데이터를 변경하지 않는다.
 
 HTTP 응답과 오류는 [store-api-spec.md](../../api-spec/store-api-spec.md)의 내 가게 조회 절을 따른다.
+
+
+## 온보딩 통합 조회
+
+`StoreQueryService.getOwnerStoreOverview(ownerId)`는 기존 findOwnerStore의 저장값과 약관·진행 상태를 합친다.
+반환 타입은 OwnerStoreOverview다. store는 가게 생성 전 null이어도 onboarding은 항상 존재한다.
+기존 findOwnerStore의 Optional 계약과 최종 등록 전용 조회 메서드는 유지한다.
+모든 SQL은 store 소유 테이블만 읽으며 owner 계정 검사는 호출자가 담당한다.
+약관은 PR #148의 점주당 한 건 계약을 사용한다. 종류·버전은 반환하지 않으며 required=true다.
+PR #148 적용 전후 스키마를 모두 읽기 위해 약관 행에서 agreed_at이 없으면 동의 시각을 null로 둔다.
+created_at을 동의 시각으로 대신하지 않으며 별도의 기록 생성 시각으로 전달한다.
+단계별 완료 계산과 canComplete는 내 가게 조회에 모은다. 가벼운 단계 조회는 상세 저장값을 반환하지 않는다.

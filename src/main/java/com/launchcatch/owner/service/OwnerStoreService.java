@@ -25,6 +25,6 @@ public class OwnerStoreService {
         if (owner.getStatus() != OwnerStatus.ONBOARDING && owner.getStatus() != OwnerStatus.ACTIVE) {
             throw new OwnerException(OwnerErrorCode.STATUS_NOT_ALLOWED);
         }
-        return stores.findOwnerStore(ownerId).map(OwnerStoreResponse::from).orElse(null);
+        return OwnerStoreResponse.from(stores.getOwnerStoreOverview(ownerId));
     }
 }

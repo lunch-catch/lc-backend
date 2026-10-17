@@ -6,6 +6,9 @@ import java.util.Optional;
 
 /** 가게 조회 계약의 누락 데이터와 좌표 정책은 docs/design/store/store-query-contract.md를 따른다. */
 public interface StoreQueryService {
+    /** 가게 생성 전에도 약관과 각 단계의 현재 저장·진행 상태를 함께 반환하며 저장하지 않는다. */
+    OwnerStoreOverview getOwnerStoreOverview(Long ownerId);
+
     /** 인증된 점주 화면용 조회다. 초안도 포함하며 가게가 없으면 빈 결과를 반환한다. 저장하지 않는다. */
     Optional<OwnerStoreSnapshot> findOwnerStore(Long ownerId);
 

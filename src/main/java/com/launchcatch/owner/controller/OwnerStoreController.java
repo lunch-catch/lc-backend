@@ -19,7 +19,7 @@ public class OwnerStoreController {
     private final OwnerStoreService stores;
 
     @GetMapping
-    @Operation(summary = "내 가게 조회", description = "미확정 초안을 포함한 본인 가게 정보를 조회합니다. 가게 생성 전에는 data가 null입니다.")
+    @Operation(summary = "내 가게 조회", description = "미확정 초안을 포함한 본인 가게 정보를 조회합니다. 가게 생성 전에도 storeId가 null인 객체와 약관·진행 정보를 반환합니다.")
     public ResponseEnvelope<OwnerStoreResponse> getMyStore(
             @Parameter(hidden = true) @AuthenticationPrincipal CustomUserDetails owner) {
         return ResponseEnvelope.success(stores.getMyStore(owner.getId()));

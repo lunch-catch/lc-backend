@@ -131,4 +131,9 @@ OwnerStoreSnapshot은 도메인 간 계약이며 OwnerStoreResponse가 HTTP 응�
 MySQL 기본 REPEATABLE READ의 스냅샷으로 읽으며 쓰기 잠금과 진행 상태 초기화는 수행하지 않는다.
 가게가 없으면 후속 목록을 조회하지 않는다. 사진과 메뉴 이미지는 VERIFIED만 연결한다.
 이미지 URL은 기존 StoreImageUrlResolver로 생성하며 S3에 요청하지 않는다.
-진행 중인 TERMS·STORE_INFO PR의 미확정 클래스에 의존하지 않고 develop의 저장 구조를 사용한다.
+TERMS는 PR #148의 필수 약관 단일 동의 계약을 반영하되 미병합 클래스나 마이그레이션을 복사하지 않는다.
+OwnerStoreOverview를 HTTP DTO로 변환해 가게 생성 전에도 약관·진행 정보를 반환한다.
+완료 단계는 현재 업무 데이터를 확인한다. 약관은 유효한 단일 동의, STORE_INFO는 필수 5항목과 검증 성공,
+LOCATION은 장소·주소·좌표, HOURS는 저장 행 존재, IMAGES는 검증된 대표 이미지로 판단한다.
+메뉴는 선택이며 입력한 메뉴가 있으면 3개 이하·메뉴명·가격·검증된 이미지를 확인한다.
+최종 등록 API가 추가 검증을 확정하면 조회의 canComplete와 같은 규칙을 사용해야 한다.

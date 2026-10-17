@@ -40,6 +40,7 @@ class OwnerStoreIntegrationTest extends AbstractOwnerIntegrationTest {
             jdbc.update("delete i from store_image i join store s on s.store_id = i.store_id where s.owner_id = ?", id);
             jdbc.update("delete h from store_business_hour h join store s on s.store_id = h.store_id where s.owner_id = ?", id);
             jdbc.update("delete from store where owner_id = ?", id);
+            jdbc.update("delete from owner_terms_agreement where owner_id = ?", id);
             jdbc.update("delete from owner where owner_id = ?", id);
         }
     }
@@ -74,7 +75,17 @@ class OwnerStoreIntegrationTest extends AbstractOwnerIntegrationTest {
         Long id = owner("ONBOARDING");
         mvc.perform(get(PATH).cookie(token(id))).andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value("SUCCESS"))
-                .andExpect(jsonPath("$.data").value(org.hamcrest.Matchers.nullValue()));
+                .andExpect(jsonPath("$.data.storeId").value(org.hamcrest.Matchers.nullValue()))
+                .andExpect(jsonPath("$.data.onboarding.resumeStep").value("TERMS"))
+                .andExpect(jsonPath("$.data.onboarding.steps.length()").value(6))
+                .andExpect(jsonPath("$.data.onboarding.canComplete").value(false));
+        agree(id);
+        mvc.perform(get(PATH).cookie(token(id))).andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.storeId").value(org.hamcrest.Matchers.nullValue()))
+                .andExpect(jsonPath("$.data.onboarding.resumeStep").value("STORE_INFO"))
+                .andExpect(jsonPath("$.data.onboarding.termsAgreement.required").value(true))
+                .andExpect(jsonPath("$.data.onboarding.termsAgreement.termsType").value(org.hamcrest.Matchers.nullValue()))
+                .andExpect(jsonPath("$.data.onboarding.steps[0].completed").value(true));
         assertThat(jdbc.queryForObject("select count(*) from store where owner_id = ?", Long.class, id)).isZero();
         assertThat(jdbc.queryForObject("select count(*) from store_registration_progress where owner_id = ?",
                 Long.class, id)).isZero();
@@ -104,7 +115,9 @@ class OwnerStoreIntegrationTest extends AbstractOwnerIntegrationTest {
                 .andExpect(jsonPath("$.data.logoImage").value(org.hamcrest.Matchers.nullValue()))
                 .andExpect(jsonPath("$.data.businessHours").isEmpty())
                 .andExpect(jsonPath("$.data.interiorImages").isEmpty())
-                .andExpect(jsonPath("$.data.menus").isEmpty());
+                .andExpect(jsonPath("$.data.menus").isEmpty())
+                .andExpect(jsonPath("$.data.onboarding.version").value(3))
+                .andExpect(jsonPath("$.data.onboarding.canComplete").value(false));
         mvc.perform(get(PATH).cookie(token(id))).andExpect(status().isOk());
         assertThat(jdbc.queryForMap("select * from store where store_id = ?", storeId)).isEqualTo(before);
         assertThat(jdbc.queryForMap("select * from store_registration_progress where owner_id = ?", id))
@@ -163,5 +176,48 @@ class OwnerStoreIntegrationTest extends AbstractOwnerIntegrationTest {
     void 제한된_점주는_403이다(String state) throws Exception {
         mvc.perform(get(PATH).cookie(token(owner(state)))).andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.code").value("OWNER-002"));
+    }
+
+    private void agree(Long id) {
+        // develop 스키마의 구 컬럼에는 테스트용 값만 채운다. 공개 조회는 종류·버전을 반환하지 않는다.
+        jdbc.update("""
+                insert into owner_terms_agreement (owner_id, terms_type, terms_version, required, agreed, created_at, updated_at)
+                values (?, 'LEGACY', 'LEGACY', true, true, now(), now())
+                """, id);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"NONE", "VALID", "INCOMPLETE"})
+    void 필수_저장값과_선택_메뉴의_유효성으로_최종_등록_가능_여부를_판단한다(String menuState) throws Exception {
+        Long id = owner("ONBOARDING");
+        Long storeId = store(id, false);
+        agree(id);
+        jdbc.update("update store set kakao_place_id = '123', road_address = '서울' where store_id = ?", storeId);
+        jdbc.update("""
+                insert into store_business_hour (store_id, day_of_week, open_time, close_time, closed, created_at, updated_at)
+                values (?, 'MONDAY', '09:00', '20:00', false, now(), now())
+                """, storeId);
+        jdbc.update("""
+                insert into store_image (store_id, image_type, object_key, upload_status, verified_at, created_at, updated_at)
+                values (?, 'LOGO', ?, 'VERIFIED', now(), now(), now())
+                """, storeId, "logo/" + storeId);
+        if (!menuState.equals("NONE")) {
+            jdbc.update("""
+                    insert into store_menu (store_id, name, price, sort_order, created_at, updated_at)
+                    values (?, '국수', 8000, 1, now(), now())
+                    """, storeId);
+        }
+        if (menuState.equals("VALID")) {
+            Long menuId = jdbc.queryForObject("select store_menu_id from store_menu where store_id = ?", Long.class, storeId);
+            jdbc.update("""
+                    insert into store_menu_image (store_menu_id, object_key, upload_status, verified_at, created_at, updated_at)
+                    values (?, ?, 'VERIFIED', now(), now(), now())
+                    """, menuId, "menu/" + storeId);
+        }
+        mvc.perform(get(PATH).cookie(token(id))).andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.onboarding.canComplete").value(!menuState.equals("INCOMPLETE")))
+                .andExpect(jsonPath("$.data.onboarding.resumeStep").value("MENU"))
+                .andExpect(jsonPath("$.data.onboarding.steps[5].optional").value(true))
+                .andExpect(jsonPath("$.data.onboarding.steps[5].completed").value(menuState.equals("VALID")));
     }
 }

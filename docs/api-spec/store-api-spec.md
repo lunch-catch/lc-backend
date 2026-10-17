@@ -351,18 +351,18 @@ OTHER
 ## `GET /v1/owner/store`
 
 인증된 점주의 가게 ID와 전체 저장 정보를 조회한다. ONBOARDING 초안과 ACTIVE 가게를 지원한다.
-가게 생성 전에는 `200`과 `data: null`을 반환한다. 조회로 가게나 진행 상태를 생성하지 않는다.
+가게 생성 전에도 `200`과 응답 객체를 반환한다. `storeId`는 null이며 약관과 진행 정보는 조회된다. 조회로 가게나 진행 상태를 생성하지 않는다.
 요청 본문과 경로·쿼리 식별자는 받지 않으며 인증된 점주를 기준으로 조회한다.
 
 ### 응답 `200`
 
-공통 응답 봉투의 `data`는 아래 필드를 갖는다. 가게가 있으면 목록은 항상 배열이다.
+공통 응답 봉투의 `data`는 항상 객체이며 아래 필드를 갖는다. 목록은 항상 배열이다.
 
 | 필드 | 타입 | null | 설명 |
 |---|---|---|---|
-| storeId | integer(int64) | 아니오 | 가게 ID |
+| storeId | integer(int64) | 예 | STORE_INFO 최초 저장 성공 시 생성되는 가게 ID. 생성 전에는 null |
 | finalized | boolean | 아니오 | 최종 등록 여부 |
-| name, businessCategory, representativeName | string | 아니오 | 상호명, 업종 코드, 대표자 성명 |
+| name, businessCategory, representativeName | string | 예 | 상호명, 업종 코드, 대표자 성명. 가게 생성 전에는 null |
 | businessRegistrationNumber, phone | string | 예 | 사업자등록번호, 전화번호. 기존 미입력 데이터는 null |
 | businessVerificationStatus | string | 예 | VERIFIED 또는 FAILED. 미검증은 null |
 | businessVerifiedAt | string(date-time) | 예 | 기존 저장 규약의 KST 검증 성공 시각 |
@@ -393,35 +393,35 @@ OTHER
 | 403 AUTH-006 | OWNER 외 역할 |
 | 403 OWNER-002 | DB의 현재 점주 상태가 SUSPENDED 또는 WITHDRAWN |
 
-조회는 저장된 정보만 반환한다. 단계별 완료 여부와 최종 등록 가능 여부는 별도 진행 상태 조회 범위다.
+내 가게 조회는 약관 동의 내역과 단계별 저장·완료 상태, 현재·재개 단계와 최종 등록 가능 여부를 함께 반환한다.
+별도 진행 상태 조회는 화면 이동에 필요한 단계·버전 중심의 가벼운 응답을 담당한다.
+
+### onboarding
+
+| 필드 | 타입 | 의미 |
+|---|---|---|
+| currentStep | string 또는 null | 저장된 진행 상태의 단계. 진행 상태가 없으면 TERMS, 최종 등록 후에는 null |
+| resumeStep | string 또는 null | 필수 저장값을 다시 확인한 첫 미완료 단계. 필수 단계가 충족되면 MENU, 최종 등록 후에는 null |
+| version | integer(int64) | 저장된 요청 버전. 진행 상태가 없으면 0 |
+| canComplete | boolean | 아직 최종 등록하지 않았고 필수 저장값과 선택 메뉴의 필수 항목이 충족되는지 여부 |
+| termsAgreement | object 또는 null | 저장된 약관 동의. 기록이 없으면 null |
+| steps | array | TERMS, STORE_INFO, LOCATION, HOURS, IMAGES, MENU 순서의 현재 저장 상태 |
+
+steps의 항목은 `step`, `optional`, `hasSavedData`, `completed`를 갖는다.
+MENU만 optional=true다. 메뉴가 없으면 hasSavedData=false, completed=false지만 최종 등록을 막지 않는다.
+메뉴가 있으면 메뉴명·0원 이상의 가격·검증된 이미지가 모두 있어야 완료다.
+현재 단계와 재개 단계는 데이터 누락이 있을 때 다를 수 있다. 이미 등록된 가게는 finalized를 먼저 확인한다.
+
+termsAgreement는 `termsType`, `termsVersion`, `required`, `agreed`, `agreedAt`, `recordedAt`, `withdrawnAt`을 갖는다.
+PR #148에 맞춰 종류·버전은 항상 null이며 required는 항상 true다. 동의 시각과 기록 생성 시각은 구분한다.
+agreedAt은 PR #148의 agreed_at 저장값이며 해당 컬럼이 없는 develop 스키마에서는 null이다.
+recordedAt은 저장 행의 created_at이다. agreed=true이고 철회 시각이 없을 때 TERMS 완료다.
+
+canComplete는 현재 조회의 입력 충족 여부다. 최종 등록 POST에서도 필수 조건을 다시 검증해야 한다.
+HOURS는 현재 저장 구조에서 영업시간 행이 존재하는지 확인한다. 향후 HOURS 저장 API의 추가 검증을 확정하면 같은 기준으로 맞춘다.
+진행 내역은 현재 저장 상태의 요약이며 덮어쓰기 전 값이나 단계별 과거 변경 이력을 생성하지 않는다.
 
 
-가게 생성 전 응답 예시:
-
-```json
-{"code":"SUCCESS","message":"요청이 성공적으로 처리되었습니다.","data":null}
-```
-
-기본 정보 저장 후 초안의 data 예시:
-
-```json
-{
-  "storeId": 501,
-  "finalized": false,
-  "name": "런치식당",
-  "businessCategory": "KOREAN",
-  "representativeName": "홍길동",
-  "businessRegistrationNumber": "1234567890",
-  "phone": "02-1234-5678",
-  "businessVerificationStatus": "VERIFIED",
-  "businessVerifiedAt": "2026-10-17T10:00:00",
-  "kakaoPlaceId": null,
-  "roadAddress": null,
-  "latitude": null,
-  "longitude": null,
-  "businessHours": [],
-  "logoImage": null,
-  "interiorImages": [],
-  "menus": []
-}
-```
+가게 생성 전에는 storeId와 가게 입력값이 null이며 목록은 []다. onboarding은 항상 반환한다.
+약관 동의가 없으면 resumeStep=TERMS이며 약관만 동의한 상태면 resumeStep=STORE_INFO다.
+어느 경우에도 GET에서 가게·진행 상태·약관을 생성하지 않는다.
