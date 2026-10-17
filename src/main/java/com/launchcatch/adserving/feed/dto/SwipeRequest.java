@@ -1,6 +1,6 @@
 package com.launchcatch.adserving.feed.dto;
 
-import com.launchcatch.adserving.feed.entity.SwipeAction;
+import com.launchcatch.adserving.contract.SwipeAction;
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;

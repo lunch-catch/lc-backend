@@ -12,9 +12,7 @@ import com.launchcatch.store.exception.StoreException;
 import com.launchcatch.store.repository.StoreImageRepository;
 import com.launchcatch.store.repository.StoreRegistrationProgressRepository;
 import java.time.Clock;
-import java.time.Duration;
 import java.time.LocalDateTime;
-import java.util.Set;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
@@ -24,11 +22,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.HeadObjectRequest;
 import software.amazon.awssdk.services.s3.model.HeadObjectResponse;
-import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 import software.amazon.awssdk.services.s3.model.S3Exception;
-import software.amazon.awssdk.services.s3.presigner.S3Presigner;
-import software.amazon.awssdk.services.s3.presigner.model.PresignedPutObjectRequest;
-import software.amazon.awssdk.services.s3.presigner.model.PutObjectPresignRequest;
 
 /*
  * 가게 인테리어 이미지 업로드(#375). 로고는 가게 입점 과정에서 이미 등록돼 있다는 전제로,
@@ -44,13 +38,11 @@ public class StoreImageUploadService {
 
     private static final int MAX_INTERIOR_IMAGES = 3;
     private static final long MAX_FILE_SIZE = 10 * 1024 * 1024;
-    private static final Set<String> ALLOWED_CONTENT_TYPES = Set.of("image/jpeg", "image/png");
-    private static final Duration PRESIGN_DURATION = Duration.ofMinutes(10);
 
     private final StoreImageRepository storeImageRepository;
     private final StoreRegistrationProgressRepository progressRepository;
     private final StoreRegistrationProgressService progressService;
-    private final S3Presigner s3Presigner;
+    private final StoreUploadSupport storeUploadSupport;
     private final S3Client s3Client;
     private final Clock clock;
     private final TransactionTemplate transactionTemplate;
@@ -60,15 +52,15 @@ public class StoreImageUploadService {
 
     public StoreImagePrepareResult prepareInteriorUpload(Long ownerId, String originalFilename,
             String contentType, Long fileSize) {
-        validateContentType(contentType);
-        validateFileSize(fileSize);
+        storeUploadSupport.validateContentType(contentType);
+        storeUploadSupport.validateFileSize(fileSize);
 
         StoreImage image = transactionTemplate.execute(
                 status -> reserveInteriorImage(ownerId, originalFilename, contentType, fileSize));
 
         String uploadUrl;
         try {
-            uploadUrl = presign(image.getObjectKey(), contentType, fileSize);
+            uploadUrl = storeUploadSupport.presign(image.getObjectKey(), contentType, fileSize);
         } catch (RuntimeException e) {
             // presign은 자격 증명을 원격으로 조회할 수 있어 잠금을 쥔 트랜잭션 밖에서 부른다(코드래빗 리뷰로 찾음).
             // 서명이 실패하면 예약해 둔 PENDING 행을 지워 순번과 3개 제한 자리를 돌려준다.
@@ -81,7 +73,7 @@ public class StoreImageUploadService {
 
     private StoreImage reserveInteriorImage(Long ownerId, String originalFilename,
             String contentType, Long fileSize) {
-        Long storeId = findStoreIdForUpdate(ownerId);
+        Long storeId = storeUploadSupport.findStoreIdForUpdate(ownerId);
 
         long existing = storeImageRepository.countByStoreIdAndImageType(storeId, StoreImageType.INTERIOR);
         if (existing >= MAX_INTERIOR_IMAGES) {
@@ -147,53 +139,11 @@ public class StoreImageUploadService {
     private Long findStoreId(Long ownerId) {
         StoreRegistrationProgress progress = progressRepository.findByOwnerId(ownerId)
                 .orElseThrow(() -> new StoreException(StoreErrorCode.REGISTRATION_PROGRESS_NOT_FOUND));
-        return requireStoreId(progress);
-    }
-
-    // 개수 확인부터 저장까지 같은 점주의 동시 요청을 직렬화해 sortOrder 중복 저장을 막는다(코드래빗 리뷰로 찾음).
-    private Long findStoreIdForUpdate(Long ownerId) {
-        StoreRegistrationProgress progress = progressRepository.findByOwnerIdForUpdate(ownerId)
-                .orElseThrow(() -> new StoreException(StoreErrorCode.REGISTRATION_PROGRESS_NOT_FOUND));
-        return requireStoreId(progress);
-    }
-
-    private Long requireStoreId(StoreRegistrationProgress progress) {
-        Long storeId = progress.getStoreId();
-        if (storeId == null) {
-            throw new StoreException(StoreErrorCode.REGISTRATION_STEP_CONFLICT);
-        }
-        return storeId;
-    }
-
-    private void validateContentType(String contentType) {
-        if (!ALLOWED_CONTENT_TYPES.contains(contentType)) {
-            throw new StoreException(StoreErrorCode.IMAGE_CONTENT_TYPE_NOT_ALLOWED);
-        }
-    }
-
-    private void validateFileSize(Long fileSize) {
-        if (fileSize == null || fileSize <= 0 || fileSize > MAX_FILE_SIZE) {
-            throw new StoreException(StoreErrorCode.IMAGE_FILE_TOO_LARGE);
-        }
+        return storeUploadSupport.requireStoreId(progress);
     }
 
     private String buildObjectKey(Long storeId, String uploadId, String contentType) {
         String extension = contentType.equals("image/png") ? "png" : "jpg";
         return "stores/" + storeId + "/interior/" + uploadId + "." + extension;
-    }
-
-    private String presign(String objectKey, String contentType, Long fileSize) {
-        PutObjectRequest objectRequest = PutObjectRequest.builder()
-                .bucket(mediaBucket)
-                .key(objectKey)
-                .contentType(contentType)
-                .contentLength(fileSize)
-                .build();
-        PutObjectPresignRequest presignRequest = PutObjectPresignRequest.builder()
-                .signatureDuration(PRESIGN_DURATION)
-                .putObjectRequest(objectRequest)
-                .build();
-        PresignedPutObjectRequest presigned = s3Presigner.presignPutObject(presignRequest);
-        return presigned.url().toString();
     }
 }

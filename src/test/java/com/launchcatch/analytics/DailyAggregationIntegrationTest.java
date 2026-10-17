@@ -24,7 +24,7 @@ import org.springframework.test.web.servlet.MockMvc;
 
 /*
  * 일별 집계의 두 입구를 실제 DB 로 확인한다. 시각(배치) 입구는 01:00 작업의 run(), HTTP 입구는
- * A-05 와 A-06 이다. 단계(AggregationStep)가 아직 없어 공개 트랜잭션이 쓰는 행은 0 이다.
+ * A-05 와 A-06 이다. 지금 등록된 단계는 정산 지표(1행), 회원 지표(1행), 정산 검증(0행)이라 공개 트랜잭션이 쓰는 행은 2 이다.
  */
 class DailyAggregationIntegrationTest extends AbstractAnalyticsIntegrationTest {
 
@@ -46,6 +46,8 @@ class DailyAggregationIntegrationTest extends AbstractAnalyticsIntegrationTest {
     void cleanUp() {
         jdbc.update("DELETE FROM batch_execution_log");
         jdbc.update("DELETE FROM aggregation_pending_date");
+        jdbc.update("DELETE FROM daily_settlement_analytics");
+        jdbc.update("DELETE FROM point_ledger");
     }
 
     @Test
@@ -57,7 +59,7 @@ class DailyAggregationIntegrationTest extends AbstractAnalyticsIntegrationTest {
 
         assertThat(statusOf(yesterday)).isEqualTo("SUCCESS");
         assertThat(statusOf(twoDaysAgo)).isEqualTo("SUCCESS");
-        assertThat(processedCountOf(yesterday)).isZero();
+        assertThat(processedCountOf(yesterday)).isEqualTo(2);
         assertThat(pendingDates()).isEmpty();
     }
 
@@ -120,7 +122,7 @@ class DailyAggregationIntegrationTest extends AbstractAnalyticsIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.jobName").value(JOB))
                 .andExpect(jsonPath("$.data.status").value("SUCCESS"))
-                .andExpect(jsonPath("$.data.processedCount").value(0));
+                .andExpect(jsonPath("$.data.processedCount").value(2));
     }
 
     @Test

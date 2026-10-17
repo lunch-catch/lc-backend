@@ -687,6 +687,40 @@ class CouponCommandServiceTest {
         }
 
         @ParameterizedTest
+        @CsvSource({"AMOUNT,3000,1500,3000", "PERCENT,15,3820,680"})
+        void 메뉴_한_개의_스냅샷_차액을_할인한다(DiscountType type, int value, long discountedPrice, int expected) {
+            ready();
+            ReflectionTestUtils.setField(event, "discountType", type);
+            ReflectionTestUtils.setField(event, "discountValue", value);
+            ReflectionTestUtils.setField(event, "targetMenuDiscountedPrice", discountedPrice);
+
+            CouponUseResponse response = service.redeem(9L, request());
+
+            assertThat(response.discountAmount()).isEqualTo(expected);
+        }
+
+        @ParameterizedTest
+        @CsvSource({"3000,3000", "3005,3010"})
+        void 전체_메뉴_정액은_주문_금액_없이_스냅샷_할인액을_반올림한다(int value, int expected) {
+            ready();
+            ReflectionTestUtils.setField(event, "discountTargetType", DiscountTargetType.ALL);
+            ReflectionTestUtils.setField(event, "discountType", DiscountType.AMOUNT);
+            ReflectionTestUtils.setField(event, "discountValue", value);
+
+            assertThat(service.redeem(9L, request()).discountAmount()).isEqualTo(expected);
+        }
+
+        @Test
+        void 전체_메뉴_정률은_사용하지_않고_상태와_이력을_유지한다() {
+            ready();
+            ReflectionTestUtils.setField(event, "discountTargetType", DiscountTargetType.ALL);
+
+            assertError(CommonErrorCode.INTERNAL_ERROR);
+            assertThat(coupon.getStatus()).isEqualTo(MemberCouponStatus.ISSUED);
+            verify(eventPublisher, never()).publishEvent(any(CouponRedeemedEvent.class));
+        }
+
+        @ParameterizedTest
         @EnumSource(value = OwnerAccountStatus.class, names = {"ONBOARDING", "SUSPENDED", "WITHDRAWN"})
         void 비활성_점주는_쿠폰을_조회하기_전에_거절한다(OwnerAccountStatus state) {
             when(owners.findCurrentStatus(9L)).thenReturn(Optional.of(state));
@@ -809,7 +843,7 @@ class CouponCommandServiceTest {
         }
 
         private CouponUseRequest request() {
-            return new CouponUseRequest(127.0, 37.5, TOKEN, 10000L);
+            return new CouponUseRequest(127.0, 37.5, TOKEN);
         }
 
         private void assertError(ErrorCode expected) {

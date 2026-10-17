@@ -127,7 +127,16 @@ public class TemplateReviseService {
         int nextVersionNumber = templateVersionRepository.findMaxVersionNumber(templateId) + 1;
         TemplateVersion version = template.addDraftVersion(
                 adminId, LocalDateTime.now(clock), requestPrompt, requestId, sanitized.html(), nextVersionNumber);
-        templateRepository.saveAndFlush(template);
+        /*
+         * template(이미 id가 있는, "새 것"이 아닌 엔티티)을 저장소로 saveAndFlush 하면
+         * JpaRepository가 merge()로 보낸다. merge가 versions 컬렉션의 cascade=PERSIST를
+         * 타면서 IDENTITY 생성 전략과 얽혀, version을 "먼저 빈 값으로 INSERT 하고 나중에
+         * UPDATE" 하는 순서로 처리된다(#433 재현으로 확인). html_content가 NOT NULL이라
+         * 그 첫 INSERT에서 바로 제약 위반이 난다. version은 새 엔티티(id 없음)라 그
+         * 저장소로 직접 저장하면 persist() 경로를 타 이 문제가 없다. template의
+         * lastModifiedBy/At 변경은 managed 상태라 이 flush에 같이 반영된다.
+         */
+        templateVersionRepository.saveAndFlush(version);
         evictVersionsOverCap(templateId, nextVersionNumber);
         return toResponse(version, sanitized.removedElements());
     }

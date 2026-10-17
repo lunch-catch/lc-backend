@@ -1,4 +1,4 @@
-package com.launchcatch.adserving.feed.entity;
+package com.launchcatch.adserving.contract;
 
 public enum SwipeAction {
     WISH,

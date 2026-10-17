@@ -1,6 +1,6 @@
 package com.launchcatch.adserving.feed.repository;
 
-import com.launchcatch.adserving.feed.entity.SwipeAction;
+import com.launchcatch.adserving.contract.SwipeAction;
 import com.launchcatch.adserving.feed.entity.SwipeLog;
 import com.launchcatch.adserving.feed.entity.SwipeLogId;
 import java.time.LocalDate;
