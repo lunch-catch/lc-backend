@@ -226,4 +226,32 @@ class WishlistServiceTest {
 
         verify(exclusionRepository).add(LocalDate.of(2026, 10, 1), MEMBER_ID, 101L, afterMidnight.instant());
     }
+
+    @Test
+    void 찜_행이_있으면_찜했다고_답한다() {
+        when(wishlistRepository.existsByMemberIdAndCampaignId(MEMBER_ID, 101L)).thenReturn(true);
+
+        assertThat(service.isWished(MEMBER_ID, 101L)).isTrue();
+    }
+
+    @Test
+    void 찜_행이_없으면_찜하지_않았다고_답한다() {
+        when(wishlistRepository.existsByMemberIdAndCampaignId(MEMBER_ID, 101L)).thenReturn(false);
+
+        assertThat(service.isWished(MEMBER_ID, 101L)).isFalse();
+    }
+
+    @Test
+    void 찜한_캠페인_ID_를_모두_돌려준다() {
+        when(wishlistRepository.findCampaignIdsByMemberId(MEMBER_ID)).thenReturn(List.of(101L, 102L));
+
+        assertThat(service.findWishedCampaignIds(MEMBER_ID)).containsExactlyInAnyOrder(101L, 102L);
+    }
+
+    @Test
+    void 찜이_없으면_빈_리스트다() {
+        when(wishlistRepository.findCampaignIdsByMemberId(MEMBER_ID)).thenReturn(List.of());
+
+        assertThat(service.findWishedCampaignIds(MEMBER_ID)).isNotNull().isEmpty();
+    }
 }

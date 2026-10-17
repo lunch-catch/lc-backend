@@ -1,5 +1,6 @@
 package com.launchcatch.adserving.wishlist.service;
 
+import com.launchcatch.adserving.contract.WishlistQueryService;
 import com.launchcatch.adserving.engine.entity.AdCandidate;
 import com.launchcatch.adserving.engine.exception.CandidateErrorCode;
 import com.launchcatch.adserving.engine.exception.CandidateException;
@@ -27,7 +28,7 @@ import org.springframework.stereotype.Service;
  */
 @Service
 @RequiredArgsConstructor
-public class WishlistService {
+public class WishlistService implements WishlistQueryService {
 
     private final WishlistRepository wishlistRepository;
     private final AdCandidateRepository adCandidateRepository;
@@ -70,5 +71,16 @@ public class WishlistService {
         // 이미 찜했으면 처음 찜한 시각을 돌려줘야 해서 넣은 뒤 다시 읽는다
         Wishlist wish = wishlistRepository.findByMemberIdAndCampaignId(memberId, campaignId).orElseThrow();
         return new WishResult(created, WishlistItemResponse.of(wish, candidate));
+    }
+
+    // 두 조회 모두 찜 행이 있는지만 본다. 찜을 지우거나 캠페인이 끝나면 행이 지워진다(#163)
+    @Override
+    public boolean isWished(Long memberId, Long campaignId) {
+        return wishlistRepository.existsByMemberIdAndCampaignId(memberId, campaignId);
+    }
+
+    @Override
+    public List<Long> findWishedCampaignIds(Long memberId) {
+        return wishlistRepository.findCampaignIdsByMemberId(memberId);
     }
 }

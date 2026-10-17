@@ -1,7 +1,7 @@
 # adserving 구조와 동작 설계
 
 광고 서빙 도메인의 구조와 동작을 적는다. 엔드포인트마다의 처리와 성능 목표는
-[`feed-api-design.md`](./feed-api-design.md) 가 갖는다. 지금은 `GET /v1/feed` 의 후보 선별(#236), 배정 규칙(#307), serve 기록과 서빙 로그(#315), `POST /v1/impressions`(#323), `POST /v1/swipes`(#379), `GET /v1/feed-filter`(#405), `PUT /v1/feed-filter`(#411)까지 훑었다.
+[`feed-api-design.md`](./feed-api-design.md) 가 갖는다. 지금은 `GET /v1/feed` 의 후보 선별(#236), 배정 규칙(#307), serve 기록과 서빙 로그(#315), `POST /v1/impressions`(#323), `POST /v1/swipes`(#379), `GET /v1/feed-filter`(#405), `PUT /v1/feed-filter`(#411), 쿠폰에 공개한 `WishlistQueryService` 와 `CandidateStateUpdater`(#163)까지 훑었다.
 나머지 엔드포인트는 그 이슈가 이 문서를 채운다.
 
 ## 1. 범위
@@ -20,6 +20,8 @@
 | 카드마다 serve 기록을 남겨 노출 검증에 쓰게 한다 | FR-097 |
 | 서빙 로그와 그날 첫 접속 위치를 응답 뒤에 쓴다 | FR-027, FR-042, FR-064 |
 | 카드가 보인 순간을 받아 유효와 무효를 가르고, 유효 노출을 정산에 넘겨 차감한다 | FR-066, FR-097, FR-100 |
+| 쿠폰에 회원의 찜 여부와 찜한 캠페인을 알려준다 | FR-080 |
+| 쿠폰의 선착순 소진 통보를 받아 그날 후보에 소진을 표시한다 | FR-093 |
 
 | 맡지 않는 것 | 소유 |
 |---|---|
@@ -40,6 +42,9 @@
 ```
 adserving/
 ├── config/AdservingSecurityConfig.java
+├── contract/
+│   ├── WishlistQueryService.java     쿠폰이 부르는 찜 조회
+│   └── CandidateStateUpdater.java    쿠폰이 부르는 소진 반영
 ├── engine/
 │   ├── FeedAssembler.java        카드 고르기와 슬롯 배치. 계층 밖의 순수 계산
 │   ├── FeedCandidate.java        계산이 받는 후보 record
@@ -47,6 +52,7 @@ adserving/
 │   ├── CampaignPacing.java       진행률과 노출 상한 판정
 │   ├── entity/AdCandidate.java
 │   ├── exception/CandidateErrorCode.java   그날 후보가 아니다(ADSERVING-004)
+│   ├── service/CandidateStateUpdaterImpl.java   CandidateStateUpdater 구현
 │   └── repository/AdCandidateRepository.java
 ├── exclusion/
 │   └── repository/ExclusionRepository.java  Valkey. 스와이프와 가게 상세 찜이 쓰고 피드가 읽는다
@@ -69,7 +75,7 @@ adserving/
     └── repository/FeedFilterCategoryRepository.java
 wishlist/
     ├── controller/WishlistController.java
-    ├── service/WishlistService.java                 조회와 가게 상세 찜
+    ├── service/WishlistService.java                 조회와 가게 상세 찜. WishlistQueryService 구현 포함
     ├── repository/WishlistRepository.java           쓰기는 INSERT IGNORE
     └── entity/Wishlist.java
 impression/
@@ -86,7 +92,7 @@ impression/
 - `wishlist` 의 찜 목록 조회는 `engine` 의 그날 후보에서 표시 값을 읽는다. 반대 방향은 없다.
 - 당일 이력은 스와이프와 가게 상세 찜이 함께 쓰고 피드가 읽어 `feed` 와 `wishlist` 밖의 `exclusion` 에 둔다. `wishlist` 가 `feed` 를 부르지 않게 하려는 것이다(#420). 오래 사는 찜 목록이 그날 단위의 피드에 기대지 않는다.
 - 그날 후보가 아니라는 판정(`ADSERVING-004`)은 스와이프와 가게 상세 찜이 함께 써서 `engine` 의 `CandidateErrorCode` 가 갖는다(#420).
-- 입구는 HTTP 요청 일곱(`GET /v1/feed`, `POST /v1/impressions`, `POST /v1/swipes`, `GET`, `PUT /v1/feed-filter`, `GET`, `POST /v1/wishlist`)이다. 스케줄, 이벤트, 다른 도메인의 호출은 아직 없다.
+- 입구는 HTTP 요청 일곱(`GET /v1/feed`, `POST /v1/impressions`, `POST /v1/swipes`, `GET`, `PUT /v1/feed-filter`, `GET`, `POST /v1/wishlist`)이다. 다른 도메인의 호출은 쿠폰이 부르는 `WishlistQueryService` 와 `CandidateStateUpdater` 둘이다(#163). 스케줄과 이벤트는 아직 없다.
 
 ### 규칙을 두는 곳
 
@@ -101,6 +107,8 @@ impression/
 | 같은 카드를 다시 넘길 때의 처리, 찜과 스와이프 기록과 당일 이력을 쓰는 순서 | `SwipeService` |
 | 필터를 저장하지 않은 회원의 기본값(전체 업종, 거리순) | `FeedFilterService`. 피드는 같은 기본값을 `FeedService` 에서 따로 정한다. 한 곳으로 모으지 않은 것은 #411 에서 임시로 정했다 |
 | 필터를 통째로 바꾸는 순서, 같은 업종이 두 번 올 때의 처리 | `FeedFilterService` |
+| 현재 유효한 찜의 기준(행이 있으면 유효) | `WishlistService` 의 `WishlistQueryService` 구현. 단건과 목록이 같은 기준을 쓴다(#163) |
+| 소진을 다시 통보받을 때와 후보가 없을 때의 처리 | `CandidateStateUpdaterImpl` |
 | 고를 수 있는 업종 코드와 정렬 값 | `FeedFilterSaveRequest` 의 애노테이션. 업종 코드는 store 가 소유하고 `contract` 로 공개하지 않아 `store.category_code` 의 CHECK 와 같은 목록을 따로 둔다(#411 에서 임시로 정했다) |
 | 찜 목록의 표시 값을 그날 후보 행 유무로 채우고 없으면 `null` 로 두는 규칙 | `WishlistService`, `WishlistItemResponse` |
 | 가게 상세 찜이 받는 캠페인(그날 후보 행), 처음 찜과 다시 찜의 구분, 찜과 당일 이력을 쓰는 순서 | `WishlistService` |
@@ -117,9 +125,11 @@ impression/
 | 필터 업종 | `feed_filter_category` 를 PK(`member_id`, `category_code`)로 읽고 업종 코드 오름차순으로 돌려준다(#405). 순서 컬럼이 없어 고른 순서는 남지 않는다 |
 | 필터 저장 | `feed_filter` 는 `INSERT ... ON DUPLICATE KEY UPDATE` 로 정렬을 넣거나 바꾸고, `feed_filter_category` 는 그 회원의 행을 지우고 다시 넣는다. 같은 업종이 두 번 오면 하나만 넣는다(#411 에서 임시로 정했다) |
 | 다른 도메인 데이터의 사본 | `ad_candidate` 는 00:00 의 캠페인과 가게 사본이다. 그날 안에서는 캠페인과 쿠폰의 통보로만 바뀐다 |
+| 쿠폰의 찜 조회 | `uk_wishlist_member_campaign`(`member_id`, `campaign_id`)으로 단건은 있는지만 보고, 목록은 앞 열로 그 회원의 `campaign_id` 만 읽는다. 순서는 정하지 않는다(#163) |
+| 소진 반영 | `ad_candidate` 의 PK(`business_date`, `campaign_id`)로 `sold_out_at IS NULL` 인 행만 바꾼다. 받은 소진 시각을 그대로 쓰고 부른 시각은 `updated_at` 에만 쓴다. 0행이면 PK 로 후보가 있는지 한 번 더 본다(#163) |
 | 집계를 세는 방식 | 그날 유효 노출 수는 `impression_log` 를 세지 않고 카운터를 읽는다. 틀리면 `impression_log` 에서 다시 센다 |
 | DB 제약으로 막을 것과 코드로 막을 것 | 같은 카드가 `serve_log` 에 두 번 들어가는 것은 PK(`serve_id`)와 `INSERT IGNORE` 로, 같은 날 두 번째 접속 위치는 PK(`business_date`, `member_id`)와 `INSERT IGNORE` 로 막는다. 같은 노출의 두 번째 저장은 `impression_log` 의 PK(`serve_id`, `member_id`)와 `INSERT IGNORE` 로, 같은 카드의 두 번째 스와이프는 `swipe_log` 의 같은 PK 로, 같은 캠페인의 두 번째 찜은 `uk_wishlist_member_campaign` 으로 막는다. 노출은 넣은 행 수로 처음 저장인지 가른다. 먼저 읽어 보는 것은 다시 온 요청을 빨리 돌려보내려는 것이고 동시 요청은 PK 가 막는다 |
-| 이력 | 해당 없음. 상태가 바뀌는 엔티티가 없다. `serve_log`, `feed_visit_daily`, `impression_log`, `swipe_log` 는 쌓기만 하고 고치지 않는다. `wishlist` 는 지울 때 행을 지운다 |
+| 이력 | 해당 없음. 그날 후보의 `sold_out_at` 은 한 번만 채워지고 다시 바뀌지 않는다. `serve_log`, `feed_visit_daily`, `impression_log`, `swipe_log` 는 쌓기만 하고 고치지 않는다. `wishlist` 는 지울 때 행을 지운다 |
 
 | 데이터 | 키 | 만료 | 원본 | 읽는 곳 |
 |---|---|---|---|---|
@@ -252,6 +262,8 @@ flowchart LR
             WS --> WR[(WishlistRepository)]
         end
 
+        CSU[CandidateStateUpdaterImpl] --> AR
+
         subgraph impression["impression/ (노출 로그)"]
             IMC[ImpressionController] --> IMS[ImpressionService]
             IMS --> IML[(ImpressionLogRepository)]
@@ -269,16 +281,18 @@ flowchart LR
         WS --> DE
     end
 
+    CP([coupon]) --> WS
+    CP --> CSU
     FS --> MQ["member.contract<br/>MemberQueryService"]
     FS --> BQ["billing.contract<br/>BudgetQueryService"]
     IMS --> PD["billing.contract<br/>PointDeductor"]
 
     classDef out fill:#f5f5f5,stroke:#999,stroke-dasharray:4 3
-    class MQ,BQ,PD out
+    class MQ,BQ,PD,CP out
 ```
 
 - `feed` 와 `impression` 과 `wishlist` 에서 `engine` 으로, `feed` 와 `wishlist` 에서 `exclusion` 으로, `impression` 에서 `feed` 로, `feed` 에서 `wishlist` 로만 화살표가 간다. 반대 방향은 없다
-- 스케줄, 이벤트, 다른 도메인의 호출로 들어오는 입구와 공개면(`contract`)은 아직 없다
+- 다른 도메인의 호출로 들어오는 입구는 쿠폰의 두 `contract` 다. 찜 조회는 `WishlistService` 가, 소진 반영은 `engine` 의 `CandidateStateUpdaterImpl` 이 받는다(#163). 스케줄과 이벤트로 들어오는 입구는 아직 없다
 
 ### 상태 변경
 
@@ -418,6 +432,8 @@ sequenceDiagram
 | 필터 조회 | 없다. 읽기 둘이 각자 끝난다 | 없음 |
 | 가게 상세 찜 | 없다. 찜 넣기가 혼자 커밋된다 | 당일 이력(Valkey) |
 | 필터 저장 | `feed_filter` 의 넣기 또는 바꾸기, `feed_filter_category` 의 지우기와 다시 넣기, 저장한 필터 다시 읽기 | 없음 |
+| 쿠폰의 찜 조회 | 없다. 읽기 하나가 혼자 끝난다 | 없음 |
+| 쿠폰의 소진 반영 | `ad_candidate` 갱신과 0행일 때의 후보 확인. 쿠폰 발급이 커밋된 뒤 트랜잭션 밖에서 불려 발급과 묶이지 않는다(#163) | 없음 |
 
 **결정: 서빙 로그와 접속 위치를 무엇으로 미루나** (#315 에서 정했다)
 
@@ -461,6 +477,7 @@ C 를 고른다. 이미 넘긴 카드는 찜을 쓰기 전에 먼저 걸러, 먼
 | 같은 캠페인을 가게 상세에서 다시 찜함 | (사용자, 캠페인) 이 멱등 키다(`uk_wishlist_member_campaign`). 동시에 두 건이 오면 `INSERT IGNORE` 가 한 건만 넣어 한쪽은 `201`, 다른 쪽은 `200` 이다. 두 요청 모두 당일 이력에 넣지만 집합이라 하나다. 둘 다 같은 행을 다시 읽어 처음 찜한 시각을 돌려준다 |
 | 같은 회원의 필터 저장이 동시에 옴 | 먼저 도는 `INSERT ... ON DUPLICATE KEY UPDATE` 가 그 회원의 `feed_filter` 행을 잠가, 뒤의 요청은 앞의 커밋까지 기다린 뒤 업종을 지우고 넣는다. 처음 저장이 둘 와도 PK 충돌 없이 한쪽이 넣고 다른 쪽이 바꾼다. 늦게 커밋한 쪽의 필터가 남는다 |
 | 같은 필터 저장이 다시 옴 | 통째로 바꾸므로 멱등 키 없이 결과가 같다 |
+| 같은 소진 통보가 다시 옴 | `sold_out_at IS NULL` 인 행만 바꿔 처음 소진 시각이 남는다. 동시에 두 통보가 오면 행 잠금으로 한쪽만 바꾸고 다른 쪽은 0행이다. 쿠폰이 재고 소진 거절 때마다 다시 부르는 복구가 이것에 기댄다 |
 | 같은 피드 요청이 다시 옴 | 멱등 키가 없다. 다시 오면 요청 횟수와 내려준 횟수에 한 번 더 들어가고 새 serveId 로 새 카드가 나간다. `serve_log` 와 `feed_visit_daily` 는 `INSERT IGNORE` 라 같은 키가 두 번 써져도 한 행이다 |
 | 여러 회원이 같은 자원에 씀 | 노출 상한은 읽기만 하고 판정 시점의 수로 거른다. 여러 피드가 동시에 같은 캠페인을 내려 상한을 조금 넘길 수 있다. 넘긴 노출은 정산이 과금하지 않는다 |
 | 이벤트가 늦거나 순서가 바뀜 | 해당 없음 |
@@ -483,6 +500,8 @@ C 를 고른다. 이미 넘긴 카드는 찜을 쓰기 전에 먼저 걸러, 먼
 | 차감이 실패한 노출 | 노출까지 롤백돼 남지 않는다. 클라이언트는 1회 재시도하고 포기한다 | 플랫폼 | 노출 저장과 판정, 원장이 함께 롤백되어 점주에게 불리하게 남는 것은 없다 |
 | 카운터를 올리지 못한 노출 | 상한이 늦게 걸려 미과금 노출이 더 나간다 | 플랫폼 | `adserving_cache_bypass_total`(`use=impression_count`) 로 센다 |
 | 스와이프 기록이 끝내 실패한 찜 | 찜은 남고 스와이프 기록이 없다. 30일 업종 선호도에 그 찜이 빠진다 | 사용자 | 돈이 걸리지 않는다. 클라이언트가 다시 보내면 맞춰진다 |
+| 소진 반영이 빠진 그날 후보 | 소진된 캠페인이 계속 나가고, 소진 뒤 노출이 `NOT_BILLED_SOLD_OUT` 으로 걸러지지 않아 과금된다 | 점주 | 쿠폰이 `INVENTORY_EXHAUSTED` 로 발급을 거절할 때마다 `markSoldOut` 을 다시 부른다(#163 에서 정했다). 소진 뒤 발급 요청이 없으면 복구되지 않는다. 쿠폰 쪽 연동은 후속 작업이다 |
+| 소진 통보가 온 날 후보가 없음 | 반영할 행이 없다. 예외 없이 반환한다 | 없음 | `adserving_sold_out_candidate_missing_total` 로 센다. 00:00 후보 적재 작업이 없는 동안은 운영에서 늘 오른다 |
 | 당일 이력에 넣지 못한 가게 상세 찜 | 찜은 남고 그날 그 캠페인이 피드에 다시 보일 수 있다 | 사용자 | 돈이 걸리지 않는다. `adserving_cache_bypass_total`(`use=exclusion`) 로 센다. 다시 찜하면 넣는다 |
 
 대상이 멈췄을 때의 처리는 [`adserving_장애_처리_설계.md`](./adserving_장애_처리_설계.md) 에 있다.
@@ -556,6 +575,11 @@ C 를 고른다. 이미 넘긴 카드는 찜을 쓰기 전에 먼저 걸러, 먼
 | 가게 상세에서 다시 찜함 | 어제 찜했다 | 같은 캠페인을 찜한다 | `200` 이고 행이 늘지 않으며 처음 찜한 시각을 돌려준다 | `WishlistIntegrationTest.이미_찜한_캠페인이면_200_이고_행이_늘지_않으며_처음_찜한_시각을_돌려준다` |
 | 오늘 후보가 아닌 캠페인을 찜함 | 어제 찜했고 오늘은 후보가 아니다 | 찜한다 | `404 ADSERVING-004` 이고 당일 이력에 넣지 않는다(#420) | `WishlistIntegrationTest.오늘_노출_후보가_아니면_404_ADSERVING_004_이고_찜이_늘지_않는다` |
 | 가게 상세 찜이 실패함(2) | 찜 넣기가 실패한다 | 찜한다 | 당일 이력에 넣지 않는다 | `WishlistServiceTest.찜을_넣지_못하면_당일_이력에_넣지_않는다` |
+| 쿠폰이 찜을 물음 | 한 회원이 두 캠페인을, 다른 회원이 한 캠페인을 찜했다 | 단건과 목록을 조회한다 | 둘이 같은 찜을 유효하다고 본다 | `WishlistQueryIntegrationTest.단건_조회와_목록_조회가_같은_찜을_유효하다고_본다` |
+| 찜을 지운 뒤 쿠폰이 물음 | 찜 행을 지웠다 | 단건과 목록을 조회한다 | 둘 모두에서 빠진다 | `WishlistQueryIntegrationTest.찜을_지우면_두_조회_모두에서_빠진다` |
+| 소진 통보 | 같은 캠페인의 오늘과 내일 후보, 다른 캠페인의 오늘 후보가 있다 | 오늘로 소진을 통보한다 | 오늘 그 캠페인 후보에만 받은 시각이 들어간다 | `CandidateSoldOutIntegrationTest.받은_영업일의_그_캠페인_후보에만_받은_소진_시각을_쓴다` |
+| 같은 소진 통보가 다시 옴 | 이미 소진됐다 | 더 늦은 시각으로 다시 통보한다 | 처음 소진 시각이 남는다 | `CandidateSoldOutIntegrationTest.다시_불러도_처음_소진_시각이_남는다` |
+| 그날 후보가 없음 | 다른 영업일의 후보만 있다 | 소진을 통보한다 | 예외 없이 아무것도 바꾸지 않고 센다 | `CandidateSoldOutIntegrationTest.그_영업일의_후보가_없으면_예외_없이_아무것도_바꾸지_않는다`, `CandidateStateUpdaterImplTest.그_영업일의_후보가_없으면_예외_없이_넘어가고_센다` |
 
 | 미정 항목 | 어디까지 정해졌나 | 막는 것 |
 |---|---|---|
@@ -563,7 +587,8 @@ C 를 고른다. 이미 넘긴 카드는 찜을 쓰기 전에 먼저 걸러, 먼
 | 찜 삭제가 당일 이력에 쓰는 쪽 | 스와이프(#379)와 가게 상세 찜(#420)이 쓴다. 찜 삭제는 아직 없다 | 명세의 "지운 캠페인은 그날 피드에 다시 나오지 않는다" 는 찜 삭제 API 가 생겨야 선다 |
 | 서빙 로그 대기열의 크기와 묶음 수 | 5,000건과 50건으로 임시로 정했다 | 없다. 부하 시험 뒤 `ServeLogBuffer` 의 두 값을 바꾼다 |
 | 세션을 늘리는 활동 | 피드 요청으로만 임시로 정했다 | 스와이프와 노출 요청도 세션을 늘릴지 정해야 한다. 두 API 모두 아직 늘리지 않는다 |
-| 끝난 캠페인의 찜 | 그날 후보에 행이 있으면 받아 끝난 캠페인도 찜에 들어간다(#379) | `CampaignEndedEvent` 를 받아 찜을 지우는 쪽이 아직 없다 |
+| 끝난 캠페인의 찜 | 그날 후보에 행이 있으면 받아 끝난 캠페인도 찜에 들어간다(#379) | `CampaignEndedEvent` 를 받아 찜을 지우는 쪽이 아직 없다. 그동안 쿠폰의 찜 조회도 끝난 캠페인의 찜을 유효로 본다(#163). 발급은 쿠폰이 이벤트 상태를 먼저 봐서 막힌다 |
+| 그날 후보를 만드는 00:00 적재 | 작업이 없다. `ad_candidate` 는 시드만 쓴다 | 운영에서 소진 반영이 늘 0행이다(#163). 가게 정보를 읽는 #161 이 먼저다 |
 | 노출이 분석으로 가는 이벤트(`ImpressionServedEvent`) | 이벤트 타입이 없다 | 분석의 전환 퍼널에 노출이 빠진다 |
 | 고를 수 있는 업종 코드 | store 의 CHECK 와 같은 목록을 광고 서빙 요청 타입에 따로 둔다(#411 에서 임시로 정했다) | 업종이 늘면 두 곳을 고쳐야 한다. store 가 업종 목록을 `contract` 로 공개하면 그것으로 검사한다 |
 | 필터가 없는 회원의 기본값 | `FeedFilterService` 와 `FeedService` 가 따로 정한다(#411 에서 임시로 정했다) | 없다. 기본값이 바뀌면 두 곳을 고친다 |
