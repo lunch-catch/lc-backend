@@ -8,6 +8,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import com.launchcatch.adserving.contract.ImpressionServedEvent;
 import com.launchcatch.adserving.engine.SlotType;
 import com.launchcatch.adserving.engine.repository.AdCandidateRepository;
 import com.launchcatch.adserving.feed.repository.ImpressionCountRepository;
@@ -37,6 +38,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
@@ -57,8 +59,9 @@ class ImpressionServiceTest {
     private final ImpressionCountRepository impressionCountRepository = mock(ImpressionCountRepository.class);
     private final PointDeductor pointDeductor = mock(PointDeductor.class);
     private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+    private final ApplicationEventPublisher eventPublisher = mock(ApplicationEventPublisher.class);
     private final ImpressionService service = new ImpressionService(serveRecordRepository, impressionLogRepository,
-            adCandidateRepository, impressionCountRepository, pointDeductor, meterRegistry,
+            adCandidateRepository, impressionCountRepository, pointDeductor, meterRegistry, eventPublisher,
             Clock.fixed(NOW, ClockConfig.ZONE));
 
     private static ImpressionRequest request(Long campaignId) {
@@ -259,6 +262,67 @@ class ImpressionServiceTest {
             commit();
 
             verifyNoInteractions(impressionCountRepository);
+        }
+    }
+
+    @Nested
+    @DisplayName("분석 이벤트")
+    class FunnelEvent {
+
+        @Test
+        void 처음_저장된_유효_노출은_serve_기록의_캠페인과_가게와_한국_시각의_표시_시각으로_한_번_발행한다() {
+            when(serveRecordRepository.findById(SERVE_ID)).thenReturn(Optional.of(RECORD));
+
+            service.record(MEMBER_ID, request(999L));
+
+            verify(eventPublisher).publishEvent(new ImpressionServedEvent("impression:" + SERVE_ID,
+                    LocalDateTime.of(2026, 10, 1, 10, 15, 31, 880_000_000), MEMBER_ID, 101L, 55L, SERVE_ID));
+        }
+
+        @Test
+        void 쿠폰이_소진된_뒤의_유효_노출도_발행한다() {
+            when(serveRecordRepository.findById(SERVE_ID)).thenReturn(Optional.of(RECORD));
+            when(adCandidateRepository.existsByIdBusinessDateAndIdCampaignIdAndSoldOutAtIsNotNull(SERVED_DATE, 101L))
+                    .thenReturn(true);
+
+            service.record(MEMBER_ID, request(101L));
+
+            verify(eventPublisher).publishEvent(any(ImpressionServedEvent.class));
+        }
+
+        @Test
+        void 무효_노출은_발행하지_않는다() {
+            when(serveRecordRepository.findById(SERVE_ID)).thenReturn(Optional.of(RECORD));
+
+            service.record(OTHER_MEMBER, request(101L));
+
+            verifyNoInteractions(eventPublisher);
+        }
+
+        @Test
+        void 이미_저장된_키면_발행하지_않는다() {
+            ImpressionLog first = ImpressionLog.valid(SERVE_ID, MEMBER_ID, SERVED_DATE,
+                    new ImpressionLog.Placement(101L, 55L, SlotType.ALLOCATION, 1),
+                    new ImpressionLog.Sighting(LocalDateTime.of(2026, 10, 1, 10, 15), 37.5, 127.0, null), false);
+            when(impressionLogRepository.findById(ImpressionLogId.of(SERVE_ID, MEMBER_ID))).thenReturn(Optional.of(first));
+
+            service.record(MEMBER_ID, request(101L));
+
+            verifyNoInteractions(eventPublisher);
+        }
+
+        @Test
+        void 동시에_와서_먼저_넣은_쪽이_있으면_발행하지_않는다() {
+            when(serveRecordRepository.findById(SERVE_ID)).thenReturn(Optional.of(RECORD));
+            when(impressionLogRepository.insertIgnore(any())).thenReturn(false);
+            when(impressionLogRepository.findById(ImpressionLogId.of(SERVE_ID, MEMBER_ID)))
+                    .thenReturn(Optional.empty(), Optional.of(ImpressionLog.valid(SERVE_ID, MEMBER_ID, SERVED_DATE,
+                            new ImpressionLog.Placement(101L, 55L, SlotType.ALLOCATION, 1),
+                            new ImpressionLog.Sighting(LocalDateTime.of(2026, 10, 1, 10, 15), 37.5, 127.0, null), false)));
+
+            service.record(MEMBER_ID, request(101L));
+
+            verifyNoInteractions(eventPublisher);
         }
     }
 }

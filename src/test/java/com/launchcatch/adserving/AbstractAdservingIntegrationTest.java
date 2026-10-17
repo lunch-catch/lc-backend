@@ -5,9 +5,11 @@ import com.launchcatch.billing.contract.BudgetQueryService;
 import com.launchcatch.billing.contract.PointDeductor;
 import com.launchcatch.member.contract.MemberQueryService;
 import java.time.Clock;
+import org.junit.jupiter.api.AfterEach;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.context.annotation.Import;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
@@ -22,6 +24,7 @@ import org.springframework.test.web.servlet.MockMvc;
  */
 @SpringBootTest
 @AutoConfigureMockMvc
+@Import(FunnelEventRecorder.class)
 abstract class AbstractAdservingIntegrationTest extends IntegrationTestSupport {
 
     @Autowired protected MockMvc mockMvc;
@@ -31,4 +34,10 @@ abstract class AbstractAdservingIntegrationTest extends IntegrationTestSupport {
     @MockitoBean protected MemberQueryService memberQueryService;
     @MockitoBean protected BudgetQueryService budgetQueryService;
     @MockitoBean protected PointDeductor pointDeductor;
+    @Autowired protected FunnelEventRecorder funnelEvents;
+
+    @AfterEach
+    void clearFunnelEvents() {
+        funnelEvents.clear();
+    }
 }

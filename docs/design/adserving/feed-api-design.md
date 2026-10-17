@@ -147,6 +147,25 @@ HTTP가 아니라 도메인 contract의 Java 클래스로 노출한다. 클라�
 | `CandidateStateUpdater` | coupon | 선착순 소진 시 그날 후보에 소진 표시(FR-093) |
 | `ImpressionServedEvent`, `SwipedEvent` | analytics | 전환 퍼널 기록(impression, wish, pass). 비동기 |
 
+**퍼널 이벤트 두 종은 아래처럼 나간다**(#349).
+
+| 항목 | `ImpressionServedEvent` | `SwipedEvent` |
+|---|---|---|
+| 발행하는 때 | 유효 노출을 처음 저장할 때. 무효 노출과 이미 저장된 노출은 발행하지 않는다 | 스와이프 기록이 반영될 때(`applied: true`). 이미 넘긴 카드는 발행하지 않는다 |
+| 발행하는 자리 | 노출 저장 트랜잭션 안 | 트랜잭션 밖. 기록은 이미 커밋돼 있다 |
+| `eventId` | `impression:{serveId}`. 유효 노출은 serve 의 주인 것뿐이라 사용자를 넣지 않는다 | `swipe:{serveId}:{memberId}`. 스와이프의 중복 키가 (serveId, 사용자) 다 |
+| `occurredAt` | 요청의 `displayedAt` 을 한국 시각으로 바꾼 값이다. `impression_log.displayed_at` 과 같다 | 요청의 `occurredAt` 을 한국 시각으로 바꾼 값이다. `swipe_log.occurred_at` 과 같다 |
+| 캠페인과 가게 | serve 기록의 것 | 그날 후보의 것 |
+| `wishId` | 없다 | `WISH` 면 그 사용자의 그 캠페인 찜의 id 다. 가게 상세에서 먼저 찜했으면 그 찜의 id 다. `PASS` 면 `null` 이다 |
+
+`occurredAt` 은 클라이언트 시각이다. 퍼널은 사용자 행동의 순서를 보고, 이벤트와 원본 행의 시각이 같아야 추적할 수 있다. 미래 시각은 분석이 받을 때 보정하고, 늦은 시계로 과거에 찍힌 값은 보정되지 않는다.
+
+**수신자는 아래 조건을 지킨다.** 왜 발행자가 아니라 수신자가 커밋 뒤를 맡는지는 [구조와 동작 설계](./adserving_구조와_동작_설계.md) 7장에 있다.
+
+- `@TransactionalEventListener(phase = AFTER_COMMIT, fallbackExecution = true)` 와 `@Async` 로 받는다. 노출은 커밋된 뒤에만 넘어가고 롤백되면 넘어가지 않는다
+- `fallbackExecution = true` 를 빠뜨리지 않는다. 스와이프는 트랜잭션 밖에서 발행돼, 빠뜨리면 스와이프 이벤트가 오류 없이 모두 사라진다
+- 예외를 발행자에게 올리지 않는다. 실행기가 거절하면 버린다. 올리면 이미 커밋된 노출과 스와이프의 요청이 `500` 이 된다
+
 ## 오류 코드를 나눈 기준
 
 **판정에 업무 지식이 필요 없는 실패는 공통 코드를 쓴다.** 필수값 누락, 좌표 범위, `action` 과 정렬 값과 업종 코드 같은 고정 값, `serveId` 형식,
