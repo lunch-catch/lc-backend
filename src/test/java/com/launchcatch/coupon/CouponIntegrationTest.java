@@ -62,6 +62,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
+import java.sql.SQLException;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -102,6 +103,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.dao.DataAccessException;
 import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.dao.QueryTimeoutException;
 import org.springframework.context.annotation.Import;
@@ -2545,7 +2547,10 @@ class CouponIntegrationTest extends IntegrationTestSupport {
         void 전체_메뉴_정률_스냅샷은_DB가_거절한다() {
             assertThatThrownBy(() -> jdbcTemplate.update(
                     "UPDATE coupon_event SET discount_type='PERCENT', discount_value=15 WHERE coupon_event_id=81"))
-                    .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
+                    .isInstanceOf(DataAccessException.class)
+                    .rootCause()
+                    .isInstanceOf(SQLException.class)
+                    .hasMessageContaining("chk_coupon_event_discount_combination");
             assertUnchanged();
         }
 
