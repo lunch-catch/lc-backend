@@ -1,5 +1,6 @@
 package com.launchcatch.analytics.event.repository;
 
+import com.launchcatch.analytics.event.EventType;
 import com.launchcatch.analytics.event.entity.EventLogEntry;
 import java.nio.ByteBuffer;
 import java.sql.PreparedStatement;
@@ -28,6 +29,12 @@ public class EventLogRepository {
             WHERE occurred_at >= ? AND occurred_at < ? AND member_id IS NOT NULL
             """;
 
+    private static final String COUNT_BY_TYPE = """
+            SELECT COUNT(*)
+            FROM event_log
+            WHERE event_type = ? AND occurred_at >= ? AND occurred_at < ?
+            """;
+
     private final JdbcTemplate jdbc;
 
     public EventLogRepository(JdbcTemplate jdbc) {
@@ -37,6 +44,14 @@ public class EventLogRepository {
     // 영업일 하루(KST 자정부터 다음 자정 전까지)에 이벤트가 기록된 회원을 중복 없이 센다
     public long countDistinctMembers(LocalDate businessDate) {
         Long count = jdbc.queryForObject(COUNT_DISTINCT_MEMBERS, Long.class,
+                Timestamp.valueOf(businessDate.atStartOfDay()),
+                Timestamp.valueOf(businessDate.plusDays(1).atStartOfDay()));
+        return count == null ? 0 : count;
+    }
+
+    // 영업일 하루(KST 자정부터 다음 자정 전까지)에 기록된 그 유형의 이벤트 행 수를 센다
+    public long countByType(LocalDate businessDate, EventType eventType) {
+        Long count = jdbc.queryForObject(COUNT_BY_TYPE, Long.class, eventType.value(),
                 Timestamp.valueOf(businessDate.atStartOfDay()),
                 Timestamp.valueOf(businessDate.plusDays(1).atStartOfDay()));
         return count == null ? 0 : count;

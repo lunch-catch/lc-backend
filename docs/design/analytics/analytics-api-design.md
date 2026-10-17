@@ -22,7 +22,7 @@ A-11 피드 요청 제한 초과 집계는 구현하지 않는다. 요청 제한
 - 일별 집계 배치만 원천 도메인의 집계 조회 contract를 부른다.
 - 리포트 소유 확인은 `CampaignQueryService.findAllById`를 요청마다 호출한다. 이 예외는 이슈 `#351`이 아키텍처 규칙과 테스트에 반영한다.
 - 돈과 맞아야 하는 노출, 발급, 사용 건수는 퍼널 이벤트 로그가 아니라 원천 도메인의 집계 조회에서 온다.
-- `event_log`는 활성 회원과 퍼널 비율에만 사용한다.
+- `event_log`는 활성 회원과 찜 수에만 사용한다.
 - 모든 영업일과 시계열 버킷은 `Asia/Seoul` 기준이다.
 
 ## 3. 시계열 규약
@@ -45,7 +45,7 @@ A-11 피드 요청 제한 초과 집계는 구현하지 않는다. 요청 제한
 |---|---|---|
 | A-01 회원 지표 | `daily_member_analytics` | `MemberStatsQueryService`, `event_log` |
 | A-02 가게 지표 | `daily_store_analytics` | `StoreStatsQueryService`, 캠페인과 점주 상태 집계 조회 |
-| A-03 퍼널 | `daily_segment_analytics`, `daily_invalid_analytics` | `AdservingStatsQueryService`, `CouponStatsQueryService`, `event_log` |
+| A-03 퍼널 | `daily_funnel_analytics` | `AdservingStatsQueryService`, `CouponStatsQueryService`, `event_log` |
 | A-04 세그먼트 | `daily_segment_analytics` | 광고서빙, 쿠폰, 가게, 캠페인, 정산 집계 조회 |
 | A-05 재집계 | 운영 실행 기록, `aggregation_pending_date` | `DailyAggregationRunner` |
 | A-06 실행 이력 | 운영 `batch_execution_log` | `BatchExecutionQueryService` |
@@ -70,7 +70,7 @@ A-11 피드 요청 제한 초과 집계는 구현하지 않는다. 요청 제한
 
 ### 퍼널과 세그먼트
 
-유효 노출과 무효 노출은 `AdservingStatsQueryService`에서 받는다. 찜, 발급, 사용은 돈과 맞아야 하는 건수라 광고서빙과 쿠폰 집계 조회에서 받는다. `event_log`는 화면 행동을 포함한 퍼널 비율 계산에만 쓴다.
+유효 노출과 무효 노출은 `AdservingStatsQueryService`에서 받는다. 발급과 사용은 돈과 맞아야 하는 건수라 쿠폰 집계 조회에서 받는다. 찜은 분석 자기 `event_log`의 `wish` 행 수로 센다. 광고 서빙의 `wishCount`는 31일만 보관하는 `swipe_log`가 원천이라 31일이 지난 날짜를 다시 집계하면 저장된 찜 수를 0으로 덮으므로 쓰지 않는다. `event_log`는 13개월 보존이라 재집계 한계와 같다. 이벤트가 유실을 허용해 아주 조금 낮을 수 있으나 찜 수는 돈과 맞아야 하는 값이 아니다.
 
 `map_view`와 `wishlist_view`는 캠페인과 가게가 없는 화면 조회 이벤트라 카테고리와 지역 세그먼트에 넣지 않는다. 캠페인에서 가게로 연결한 뒤 `StoreStatsQueryService`가 반환한 카테고리와 지역으로 묶는다.
 
