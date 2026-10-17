@@ -5,6 +5,9 @@ import java.util.List;
 
 /** 가게 조회 계약의 누락 데이터와 좌표 정책은 docs/design/store/store-query-contract.md를 따른다. */
 public interface StoreQueryService {
+    /** 광고 후보용 가게를 일괄 조회하며 미존재, 최종 등록 전, 좌표가 하나라도 없는 가게는 제외한다. */
+    List<StoreAdCandidateInfo> findAdCandidatesByStoreIds(List<Long> storeIds);
+
     /** 최종 등록 전 가게도 포함해 점주 ID로 일괄 조회하며 ID가 100개를 초과하면 IllegalArgumentException을 던진다. */
     List<StoreSummary> findSummariesByOwnerIds(Collection<Long> ownerIds);
 

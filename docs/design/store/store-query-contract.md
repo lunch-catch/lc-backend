@@ -1,6 +1,7 @@
 # 가게와 메뉴 조회 공개 계약
 
-이슈 #297의 쿠폰용 조회 계약이다. 공개 타입은 store.contract에 두며 구현은 store.service에 둔다.
+쿠폰(#297), 광고 서빙(#161), 분석(#363), 관리자 점주 목록(#365)이 사용하는 조회 계약이다.
+공개 타입은 store.contract에 두며 구현은 store.service에 둔다.
 HTTP API와 온보딩 저장 기능은 추가하지 않는다.
 
 ## 반환 정책
@@ -58,8 +59,27 @@ cdn.base-url에는 HTTP(S) 주소를 사용하며 쿼리, 프래그먼트, 사�
 테스트 클래스별 프로퍼티, 프로파일, 컨테이너 선언은 추가하지 않는다.
 테스트용 CDN 주소는 기존 공통 src/test/resources/application.properties 한 곳에서 설정한다.
 
-#161의 광고 서빙용 업종 코드 확장은 이 계약에 포함하지 않는다.
-같은 인터페이스를 확장할 때 기존 소비자와 record 필드 변경을 함께 검토해야 한다.
+## 광고 후보용 가게 일괄 조회 (#161)
+
+`StoreQueryService.findAdCandidatesByStoreIds(List<Long> storeIds)`는 광고 후보 스냅샷용 가게를 조회한다.
+`StoreAdCandidateInfo`는 storeId, storeName, categoryCode, storeImageUrl, latitude, longitude를 갖는다.
+기존 `StoreInfo`와 `findAllById`의 계약은 유지한다.
+업종 코드는 store.category_code의 문자열을 그대로 반환하며 스키마의 30자 제한을 따른다.
+좌표는 DB의 DECIMAL(10,7)을 BigDecimal로 반환해 스냅샷에 복사할 때 정밀도를 유지한다.
+
+최종 등록된 가게 중 두 좌표가 모두 있는 가게만 반환한다.
+미존재, 등록 전, 위도나 경도가 하나라도 null인 가게는 제외하며 좌표를 0으로 대체하지 않는다.
+현재 chk_store_finalized 제약은 최종 등록된 가게의 좌표 누락을 막으며 조회 SQL도 두 좌표의 존재를 명시한다.
+0인 좌표는 누락으로 취급하지 않는다.
+빈 입력, 중복, 누락 ID, 입력 검증과 DB 장애 전파는 기존 목록 조회 정책과 같다.
+VERIFIED 상태의 LOGO를 LEFT JOIN하는 SQL 한 번으로 읽으며 이미지 URL과 이미지 누락 오류는 위 이미지 정책을 따른다.
+
+할인 대상 메뉴명은 기존 `findMenusByIdIn`으로 메뉴 ID 목록을 일괄 조회한다.
+광고 서빙은 캠페인의 target_menu_id에 해당하는 menuId로 menuName을 연결하고 storeId가 캠페인의 가게와 일치하는지 확인한다.
+가게 조회에 메뉴를 조인하지 않으므로 메뉴가 여럿이어도 가게 결과가 늘어나지 않는다.
+메뉴가 없는 가게도 가게 조회에 포함하며 메뉴 ID의 누락을 다른 메뉴명으로 대체하지 않는다.
+메뉴 이미지 검증과 등록 전 메뉴 제외는 기존 메뉴 조회 계약을 따른다.
+광고 서빙은 store와 store_image를 직접 읽지 않고 이 공개 계약을 사용한다.
 
 ## 분석용 신규·누적 입점 수 집계
 
