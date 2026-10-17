@@ -43,6 +43,7 @@ class TemplateVersionRepositoryIntegrationTest extends AbstractCampaignIntegrati
     private EntityManager entityManager;
 
     private Long templateId;
+    private Long survivingTemplateId;
 
     private Template templateWithVersions(int count) {
         Template template = Template.createDraft("가을 신메뉴");
@@ -61,16 +62,22 @@ class TemplateVersionRepositoryIntegrationTest extends AbstractCampaignIntegrati
 
     @AfterEach
     void cleanUp() {
-        if (templateId != null) {
-            transactionTemplate.executeWithoutResult(status -> {
-                entityManager.createNativeQuery("delete from template_version where template_id = :id")
-                        .setParameter("id", templateId)
-                        .executeUpdate();
-                entityManager.createNativeQuery("delete from template where template_id = :id")
-                        .setParameter("id", templateId)
-                        .executeUpdate();
-            });
+        deleteTemplateAndVersions(templateId);
+        deleteTemplateAndVersions(survivingTemplateId);
+    }
+
+    private void deleteTemplateAndVersions(Long id) {
+        if (id == null) {
+            return;
         }
+        transactionTemplate.executeWithoutResult(status -> {
+            entityManager.createNativeQuery("delete from template_version where template_id = :id")
+                    .setParameter("id", id)
+                    .executeUpdate();
+            entityManager.createNativeQuery("delete from template where template_id = :id")
+                    .setParameter("id", id)
+                    .executeUpdate();
+        });
     }
 
     @Test
@@ -114,7 +121,7 @@ class TemplateVersionRepositoryIntegrationTest extends AbstractCampaignIntegrati
 
     @Test
     @Transactional(propagation = Propagation.NOT_SUPPORTED)
-    void 트랜잭션_없이_불러도_소프트삭제된_행을_지운다() {
+    void 트랜잭션_없이_불러도_소프트삭제된_행만_지운다() {
         LocalDateTime now = LocalDateTime.now(clock);
         templateId = transactionTemplate.execute(status -> {
             Template template = Template.createDraft("코드래빗 검증용 템플릿");
@@ -123,9 +130,13 @@ class TemplateVersionRepositoryIntegrationTest extends AbstractCampaignIntegrati
             templateVersionRepository.softDeleteAllByTemplateId(template.getId(), now);
             return template.getId();
         });
+        // 삭제 대상이 아닌 행도 같이 둬서, deleteBatchByDeletedAtIsNotNull의 조건이 틀려
+        // 전체를 지우는 회귀를 잡는다.
+        survivingTemplateId = templateWithVersions(1).getId();
 
         int deleted = templateVersionRepository.deleteBatchByDeletedAtIsNotNull(500);
 
         assertThat(deleted).isEqualTo(1);
+        assertThat(reload(survivingTemplateId, 1)).isNotNull();
     }
 }
