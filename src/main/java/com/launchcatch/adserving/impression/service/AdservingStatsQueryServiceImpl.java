@@ -64,6 +64,9 @@ public class AdservingStatsQueryServiceImpl implements AdservingStatsQueryServic
 
     @Override
     public List<CampaignMemberConcentration> memberConcentrations(LocalDate businessDate, int topMembers) {
+        if (topMembers < 1) {
+            throw new IllegalArgumentException("상위 회원 수는 1 이상이어야 한다: " + topMembers);
+        }
         return impressionLogRepository.concentrationByCampaignOn(businessDate, topMembers).stream()
                 .map(r -> new CampaignMemberConcentration(r.getCampaignId(), r.getDistinctMemberCount(),
                         r.getTopMembersValidCount()))

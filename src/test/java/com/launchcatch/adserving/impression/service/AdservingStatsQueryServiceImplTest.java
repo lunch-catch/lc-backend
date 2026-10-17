@@ -1,7 +1,9 @@
 package com.launchcatch.adserving.impression.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.launchcatch.adserving.contract.CampaignImpressionStats;
@@ -71,6 +73,13 @@ class AdservingStatsQueryServiceImplTest {
 
         assertThat(service.memberConcentrations(DATE, 5)).containsExactly(
                 new CampaignMemberConcentration(101L, 7, 40));
+    }
+
+    @Test
+    void 상위_회원_수가_1_미만이면_조회하지_않고_거부한다() {
+        assertThatThrownBy(() -> service.memberConcentrations(DATE, 0))
+                .isInstanceOf(IllegalArgumentException.class);
+        verifyNoInteractions(impressionLogRepository);
     }
 
     private static CampaignCounts counts(long campaignId, long valid, long soldOut, long expiredOrUnknown,

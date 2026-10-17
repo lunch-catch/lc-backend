@@ -17,6 +17,9 @@ public interface AdservingStatsQueryService {
     // 영업일의 캠페인과 회원별 무효 노출 건수다. 무효 노출이 있는 조합만 캠페인 ID, 회원 ID 오름차순으로 전부 돌려준다
     List<MemberInvalidImpressionCount> memberInvalidCounts(LocalDate businessDate);
 
-    // 영업일의 캠페인별 유효 노출 회원 수와 유효 노출이 많은 상위 topMembers 명의 노출 합이다. 캠페인 ID 오름차순이다
+    /*
+     * 영업일의 캠페인별 유효 노출 회원 수와 유효 노출이 많은 상위 topMembers 명의 노출 합이다. 캠페인 ID 오름차순이다.
+     * topMembers 가 1 미만이면 IllegalArgumentException 을 던진다.
+     */
     List<CampaignMemberConcentration> memberConcentrations(LocalDate businessDate, int topMembers);
 }
