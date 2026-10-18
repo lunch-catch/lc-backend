@@ -97,6 +97,22 @@ class OwnerStoreQueryServiceTest {
         assertThat(onboarding.canComplete()).isFalse();
     }
 
+    @Test
+    void 필수_데이터가_있어도_이미지_단계를_완료해야_최종_등록할_수_있다() {
+        draft();
+        when(readinessQuery.findByOwnerId(1L)).thenReturn(new StoreOnboardingQueryRow(
+                10L, 5, false, new StoreOnboardingReadiness(true, true, true, true, true, 0, true)));
+        when(stores.findProgress(1L)).thenReturn(Optional.of(
+                new StoreRegistrationProgressSnapshot(10L, StoreRegistrationStep.IMAGES, 5L)));
+
+        assertThat(service.getOwnerStoreOverview(1L).onboarding().canComplete()).isFalse();
+
+        when(stores.findProgress(1L)).thenReturn(Optional.of(
+                new StoreRegistrationProgressSnapshot(10L, StoreRegistrationStep.MENU, 6L)));
+
+        assertThat(service.getOwnerStoreOverview(1L).onboarding().canComplete()).isTrue();
+    }
+
     private OwnerStoreSnapshot store(boolean finalized, String verificationStatus) {
         return new OwnerStoreSnapshot(10L, finalized, "식당", "KOREAN", "점주", "1234567890", "02-123-4567",
                 verificationStatus, LocalDateTime.of(2026, 10, 17, 10, 0),

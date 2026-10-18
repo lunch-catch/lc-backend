@@ -14,6 +14,7 @@ import com.launchcatch.store.contract.StoreInfo;
 import com.launchcatch.store.contract.StoreMenuInfo;
 import com.launchcatch.store.contract.StoreQueryService;
 import com.launchcatch.store.contract.StoreSummary;
+import com.launchcatch.store.entity.StoreRegistrationStep;
 import com.launchcatch.store.repository.OwnerStoreQueryRepository;
 import com.launchcatch.store.repository.StoreQueryRepository;
 import java.math.BigDecimal;
@@ -198,7 +199,9 @@ class StoreQueryServiceImpl implements StoreQueryService {
         String current = finalized ? null : progress.map(value -> value.resumeStep().name()).orElse("TERMS");
         return new OwnerStoreOverview(store, new Onboarding(current, resume,
                 progress.map(value -> value.version()).orElse(0L),
-                !finalized && readiness.canFinalize(),
+                !finalized
+                        && progress.map(value -> value.resumeStep() == StoreRegistrationStep.MENU).orElse(false)
+                        && readiness.canFinalize(),
                 agreement, steps));
     }
 
