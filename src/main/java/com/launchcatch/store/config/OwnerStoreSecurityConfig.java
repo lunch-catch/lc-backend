@@ -10,13 +10,13 @@ import org.springframework.security.web.SecurityFilterChain;
 
 @Configuration
 public class OwnerStoreSecurityConfig {
-    // 점주용 가게 기본 정보 저장 API는 OWNER 권한이 있는 점주만 접근할 수 있다.
+    // 점주용 가게 기본 정보와 위치 저장 API는 OWNER 권한이 있는 점주만 접근할 수 있다.
     @Bean
     @Order(ApiSecurityDefaults.DOMAIN_CHAIN_ORDER)
     public SecurityFilterChain ownerStoreInfoFilterChain(HttpSecurity http, ApiSecurityDefaults defaults) throws Exception {
-        return defaults.apply(http.securityMatcher("/v1/owner/store/basic"))
+        return defaults.apply(http.securityMatcher("/v1/owner/store/basic", "/v1/owner/store/location"))
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers(HttpMethod.PUT, "/v1/owner/store/basic").hasRole("OWNER")
+                        .requestMatchers(HttpMethod.PUT, "/v1/owner/store/basic", "/v1/owner/store/location").hasRole("OWNER")
                         .anyRequest().denyAll())
                 .build();
     }

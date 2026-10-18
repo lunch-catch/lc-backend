@@ -257,3 +257,15 @@ OwnerStoreOverview를 HTTP DTO로 변환해 가게 생성 전에도 약관·진�
 LOCATION은 장소·주소·좌표, HOURS는 저장 행 존재, IMAGES는 검증된 대표 이미지로 판단한다.
 메뉴는 선택이며 입력한 메뉴가 있으면 3개 이하·메뉴명·가격·검증된 이미지를 확인한다.
 최종 등록 API가 추가 검증을 확정하면 조회의 canComplete와 같은 규칙을 사용해야 한다.
+
+## LOCATION 저장 (#482)
+
+HTTP 계약은 [가게 API 명세](../../api-spec/store-api-spec.md#가게-등록-온보딩-3단계-위치-저장-482)가 소유한다.
+OwnerStoreLocationService는 점주 행을 잠그고 ONBOARDING을 확인한 뒤 StoreLocationSaver를 호출한다.
+StoreLocationService는 호출자의 트랜잭션에 MANDATORY로 참여하고 진행 상태 행을 잠근다.
+잠금 순서는 기존 기본 정보 저장과 같은 점주 → 진행 상태 순서다.
+약관 동의·검증된 기본 정보·본인 초안 연결을 확인하고 기존 위치 컬럼과 진행 상태를 함께 저장한다.
+StoreLocation은 문자열 길이·좌표 범위를 검증하고 기존 DECIMAL(10,7)에 맞춰 좌표를 반올림한다. 카카오 클라이언트는 사용하지 않는다.
+최초 저장은 completeStep, 완료한 위치의 재저장은 reviseStep을 사용한다.
+기존 조회가 위치 컬럼으로 완료 여부를 계산하므로 별도 완료 플래그나 테이블을 추가하지 않는다.
+기존 스키마의 nullable 위치 컬럼을 매핑하며 미입력 초안의 null 허용을 유지한다.
