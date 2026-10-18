@@ -27,6 +27,7 @@ import com.launchcatch.campaign.contract.CampaignQueryService;
 import com.launchcatch.campaign.contract.CampaignStatus;
 import com.launchcatch.coupon.contract.CouponStatsQueryService;
 import com.launchcatch.coupon.contract.DailyCampaignCouponStats;
+import com.launchcatch.coupon.contract.DailyMemberCouponStats;
 import com.launchcatch.coupon.contract.MemberCouponStats;
 import com.launchcatch.coupon.dto.CouponDetailResponse;
 import com.launchcatch.coupon.dto.CouponUsageHistoryResponse;
@@ -263,6 +264,94 @@ class CouponIntegrationTest extends IntegrationTestSupport {
 
             assertThat(couponStats.memberStats(17))
                     .isEqualTo(new MemberCouponStats(3, 3_000_000_000L));
+        }
+
+        @Test
+        void 회원별_일일_집계는_0원과_같은_할인액을_각각_더하고_회원_ID_순으로_반환한다() {
+            event(81, 91, TODAY.minusDays(1), "ENDED");
+            event(82, 92, TODAY, "ACTIVE");
+            event(83, 93, TODAY.minusDays(1), "ENDED");
+            coupon(101, 81, 18, "USED");
+            coupon(102, 81, 17, "USED");
+            coupon(103, 82, 17, "USED");
+            coupon(104, 83, 17, "USED");
+            coupon(105, 82, 19, "ISSUED");
+            coupon(106, 82, 20, "USED");
+            usage(101, TODAY.atTime(12, 0), 5000);
+            usage(102, TODAY.atTime(12, 0), 0);
+            usage(103, TODAY.atTime(12, 1), 1500);
+            usage(104, TODAY.atTime(12, 2), 1500);
+            usage(106, TODAY.atTime(12, 3), 0);
+
+            assertThat(couponStats.dailyMemberStats(TODAY)).containsExactly(
+                    new DailyMemberCouponStats(17, 3, 3000), new DailyMemberCouponStats(18, 1, 5000),
+                    new DailyMemberCouponStats(20, 1, 0));
+        }
+
+        @Test
+        void 회원별_일일_집계는_발급일과_별개로_KST_사용일의_자정을_포함하고_다음_자정은_제외한다() {
+            event(81, 91, TODAY.minusDays(3), "ENDED");
+            event(82, 92, TODAY.minusDays(2), "ENDED");
+            event(83, 93, TODAY.minusDays(1), "ENDED");
+            event(84, 94, TODAY, "ACTIVE");
+            coupon(101, 81, 17, "USED");
+            coupon(102, 82, 17, "USED");
+            coupon(103, 83, 17, "USED");
+            coupon(104, 84, 17, "USED");
+            usage(101, TODAY.atStartOfDay().minusNanos(1000), 100);
+            usage(102, TODAY.atStartOfDay(), 200);
+            usage(103, TODAY.plusDays(1).atStartOfDay().minusNanos(1000), 300);
+            usage(104, TODAY.plusDays(1).atStartOfDay(), 400);
+
+            assertThat(couponStats.dailyMemberStats(TODAY))
+                    .containsExactly(new DailyMemberCouponStats(17, 2, 500));
+        }
+
+        @Test
+        void 회원별_일일_할인액의_합계가_32비트_범위를_넘어도_잘리지_않는다() {
+            event(81, 91, TODAY.minusDays(1), "ENDED");
+            event(82, 92, TODAY, "ACTIVE");
+            coupon(101, 81, 17, "USED");
+            coupon(102, 82, 17, "USED");
+            usage(101, TODAY.atTime(12, 0), 1_500_000_000);
+            usage(102, TODAY.atTime(12, 1), 1_500_000_000);
+
+            assertThat(couponStats.dailyMemberStats(TODAY))
+                    .containsExactly(new DailyMemberCouponStats(17, 2, 3_000_000_000L));
+        }
+
+        @Test
+        void 다른_날의_사용과_발급만_있는_회원은_일일_집계에_포함하지_않는다() {
+            event(81, 91, TODAY.minusDays(1), "ENDED");
+            event(82, 92, TODAY, "ACTIVE");
+            coupon(101, 81, 17, "USED");
+            coupon(102, 82, 18, "ISSUED");
+            usage(101, TODAY.minusDays(1).atTime(12, 0), 1500);
+
+            assertThat(couponStats.dailyMemberStats(TODAY)).isEmpty();
+        }
+
+        @Test
+        void 회원별_모든_날짜의_사용_수와_할인액을_더하면_누적_집계와_같다() {
+            event(81, 91, TODAY.minusDays(2), "ENDED");
+            event(82, 91, TODAY.minusDays(1), "ENDED");
+            event(83, 91, TODAY, "ACTIVE");
+            coupon(101, 81, 17, "USED");
+            coupon(102, 82, 17, "USED");
+            coupon(103, 83, 17, "USED");
+            coupon(104, 83, 18, "USED");
+            usage(101, TODAY.minusDays(2).atTime(12, 0), 1_500_000_000);
+            usage(102, TODAY.minusDays(1).atTime(12, 0), 1_500_000_000);
+            usage(103, TODAY.atTime(12, 0), 0);
+            usage(104, TODAY.atTime(12, 0), 5000);
+
+            var first = couponStats.dailyMemberStats(TODAY.minusDays(2)).getFirst();
+            var second = couponStats.dailyMemberStats(TODAY.minusDays(1)).getFirst();
+            var third = couponStats.dailyMemberStats(TODAY).getFirst();
+
+            assertThat(couponStats.memberStats(17)).isEqualTo(new MemberCouponStats(
+                    first.usedCount() + second.usedCount() + third.usedCount(),
+                    first.discountAmount() + second.discountAmount() + third.discountAmount()));
         }
 
         @Test
