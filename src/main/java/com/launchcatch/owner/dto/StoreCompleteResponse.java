@@ -1,6 +1,6 @@
 package com.launchcatch.owner.dto;
 
-import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 
-public record StoreCompleteResponse(Long storeId, boolean finalized, LocalDateTime finalizedAt,
+public record StoreCompleteResponse(Long storeId, boolean finalized, OffsetDateTime finalizedAt,
                                     String ownerStatus, long version) { }

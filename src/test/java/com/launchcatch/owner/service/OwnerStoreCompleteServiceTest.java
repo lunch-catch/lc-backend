@@ -10,6 +10,7 @@ import com.launchcatch.owner.repository.OwnerRepository;
 import com.launchcatch.store.contract.StoreCompleter;
 import com.launchcatch.store.contract.StoreCompleteResult;
 import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
 
@@ -28,6 +29,7 @@ class OwnerStoreCompleteServiceTest {
         var result = service.complete(1L, new StoreCompleteRequest(5L));
 
         assertThat(result.storeId()).isEqualTo(10L);
+        assertThat(result.finalizedAt()).isEqualTo(OffsetDateTime.parse("2026-10-19T10:00:00+09:00"));
     }
 
     @Test

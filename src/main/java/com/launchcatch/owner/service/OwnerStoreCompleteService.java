@@ -2,6 +2,7 @@ package com.launchcatch.owner.service;
 
 import com.launchcatch.auth.exception.AuthErrorCode;
 import com.launchcatch.auth.exception.AuthException;
+import com.launchcatch.global.config.ClockConfig;
 import com.launchcatch.owner.dto.StoreCompleteRequest;
 import com.launchcatch.owner.dto.StoreCompleteResponse;
 import com.launchcatch.owner.entity.OwnerStatus;
@@ -30,7 +31,7 @@ public class OwnerStoreCompleteService {
             throw new OwnerException(OwnerErrorCode.STATUS_NOT_ALLOWED);
         }
         var result = stores.complete(ownerId, request.version());
-        return new StoreCompleteResponse(result.storeId(), true, result.finalizedAt(),
+        return new StoreCompleteResponse(result.storeId(), true, result.finalizedAt().atZone(ClockConfig.ZONE).toOffsetDateTime(),
                 owner.getStatus().name(), result.version());
     }
 }

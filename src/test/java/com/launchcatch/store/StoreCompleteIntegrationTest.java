@@ -103,7 +103,7 @@ class StoreCompleteIntegrationTest extends AbstractStoreIntegrationTest {
         mvc.perform(request()).andExpect(status().isOk())
                 .andExpect(jsonPath("data.storeId").value(storeId))
                 .andExpect(jsonPath("data.finalized").value(true))
-                .andExpect(jsonPath("data.finalizedAt").isNotEmpty())
+                .andExpect(jsonPath("data.finalizedAt").value(org.hamcrest.Matchers.endsWith("+09:00")))
                 .andExpect(jsonPath("data.ownerStatus").value("ACTIVE"))
                 .andExpect(jsonPath("data.version").value(6));
         assertThat(cache.find(ownerId)).isEmpty();

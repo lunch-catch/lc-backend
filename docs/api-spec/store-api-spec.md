@@ -961,7 +961,7 @@ HOURS는 [영업시간 저장 규칙](#가게-등록-온보딩-4단계-매장-�
   "data": {
     "storeId": 10,
     "finalized": true,
-    "finalizedAt": "2026-10-19T10:00:00",
+    "finalizedAt": "2026-10-19T10:00:00+09:00",
     "ownerStatus": "ACTIVE",
     "version": 6
   }
@@ -972,7 +972,7 @@ HOURS는 [영업시간 저장 규칙](#가게-등록-온보딩-4단계-매장-�
 |---|---|---|---|
 | `storeId` | integer(int64) | 불가 | 최종 등록한 본인 가게 ID |
 | `finalized` | boolean | 불가 | 성공 시 true |
-| `finalizedAt` | string(date-time) | 불가 | 서버가 기록한 최초 확정 시각. 공통 시각 규약을 따른다 |
+| `finalizedAt` | string(date-time) | 불가 | 서버가 기록한 최초 확정 시각. 한국 시간 오프셋(+09:00)을 포함한다 |
 | `ownerStatus` | string | 불가 | 성공 시 ACTIVE |
 | `version` | integer(int64) | 불가 | 최종 등록 후 온보딩 버전 |
 
