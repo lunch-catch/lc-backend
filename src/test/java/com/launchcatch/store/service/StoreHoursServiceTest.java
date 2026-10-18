@@ -19,7 +19,6 @@ import java.util.*;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.ValueSource;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.springframework.dao.DataAccessResourceFailureException;
 
@@ -101,21 +100,26 @@ class StoreHoursServiceTest {
         verifyNoInteractions(hours);
     }
 
-    @ParameterizedTest
-    @ValueSource(booleans = {false, true})
-    void ACTIVE는_최종_등록된_가게만_수정하고_진행_상태에_접근하지_않는다(boolean finalized) {
-        store(finalized, "123");
-        if (finalized) {
-            var result = service.saveActive(1L, new StoreHoursSaveCommand(null, week));
-            assertThat(result.storeId()).isEqualTo(10L);
-            assertThat(result.resumeStep()).isNull();
-            assertThat(result.version()).isNull();
-            verify(hours).replace(10L, week, LocalDateTime.now(clock));
-        } else {
-            assertThatThrownBy(() -> service.saveActive(1L, new StoreHoursSaveCommand(null, week))).isInstanceOf(StoreException.class);
-            verifyNoInteractions(hours);
-        }
+    @Test
+    void ACTIVE는_최종_등록된_가게의_시간표만_교체하고_진행_상태에_접근하지_않는다() {
+        store(true, "123");
+
+        var result = service.saveActive(1L, new StoreHoursSaveCommand(null, week));
+
+        assertThat(result.storeId()).isEqualTo(10L);
+        assertThat(result.resumeStep()).isNull();
+        assertThat(result.version()).isNull();
+        verify(hours).replace(10L, week, LocalDateTime.now(clock));
         verifyNoInteractions(progresses, registration);
+    }
+
+    @Test
+    void ACTIVE에서_최종_등록되지_않은_가게는_저장하지_않는다() {
+        store(false, "123");
+
+        assertThatThrownBy(() -> service.saveActive(1L, new StoreHoursSaveCommand(null, week)))
+                .isInstanceOf(StoreException.class);
+        verifyNoInteractions(hours, progresses, registration);
     }
 
     @Test
