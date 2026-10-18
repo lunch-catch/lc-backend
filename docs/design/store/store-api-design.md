@@ -319,3 +319,53 @@ StoreOnboardingReadiness가 첫 미완료 단계와 최종 등록 가능 여부�
 후속 최종 등록 구현은 같은 판정 기준을 사용해 요청 시점에 다시 검증해야 한다.
 저장된 resume_step과 다른 화면을 안내하더라도 진행 상태와 버전은 변경하지 않는다.
 단계 저장 API가 쓰는 StoreRegistrationProgressResponse는 세 필드 계약을 유지한다.
+
+
+## 사용자 가게 상세 조회 (#503)
+
+HTTP 계약은 [가게 상세 조회 명세](../../api-spec/store-api-spec.md#get-v1storesstoreid)가 소유한다.
+요구사항 FR-071의 가게 정보와 활성 캠페인 요약 조회를 구현한다.
+외부 자료의 결정은 위 명세에 반영했다. 포스터·실시간 쿠폰·사용자별 상태는 화면이 따로 합친다.
+따라서 store가 campaign·coupon·member·adserving을 역방향으로 호출하지 않는다.
+
+StoreDetailController → StoreDetailService → StoreDetailRepository 순으로 호출한다.
+영업시간·메뉴 조회는 기존 OwnerStoreQueryRepository의 가게 ID 기반 읽기 쿼리를 재사용한다.
+점주 응답 전체를 반환하지 않고 StoreDetailResponse의 공개 필드만 구성한다.
+StoreDetailRepository는 같은 repository 패키지의 내부 조회 값인 StoreDetailData와 그 내부 record만 반환한다.
+StoreDetailService는 저장소 결과를 독립된 StoreDetailResponse로 변환한다.
+영업시간·메뉴의 기존 조회가 반환하는 OwnerStoreSnapshot 내부 값도 Service에서 HTTP DTO로 변환한다.
+OwnerStoreQueryRepository는 owner가 아닌 store 패키지에 속하므로 같은 도메인 내부 호출이다.
+타 도메인의 내부 클래스는 참조하지 않는다. 타 도메인 호출이 필요하면 해당 도메인의 contract만 사용한다.
+
+StoreDetailRepository는 store_id와 finalized=true를 함께 조회한다.
+기존 목록의 공개 기준과 같으며 최종 등록 PR #506이 확정한 finalized 값을 그대로 읽는다.
+최종 등록 기능을 이 브랜치에 복제하지 않으며 온보딩 초안을 공개하지 않는다.
+점주 상태의 별도 조회 조건은 목록과 동일하게 추가하지 않는다.
+
+하나의 읽기 전용 트랜잭션에서 가게, 대표 이미지, 영업시간, 내부 이미지, 메뉴와 캠페인 요약을 읽는다.
+MySQL 기본 REPEATABLE READ의 동일한 스냅샷을 사용한다.
+가게가 없거나 초안이면 후속 쿼리 전에 종료한다. 조회 수는 메뉴 개수와 무관하게 6회다.
+일대다 목록을 한 번에 조인해 이미지·메뉴가 서로 곱해지는 것을 피한다.
+등록 단계에서 보장한 1개 대표 이미지·최대 3개 내부 이미지·0~3개 메뉴를 잘라서 숨기지 않는다.
+
+서울 날짜는 주입한 Clock에서 구한다. 당일 ACTIVE 요약만 선택하며 캠페인의 사용 시간으로 거르지 않는다.
+store_campaign_summary의 campaign_id·할인·사용 시각을 읽는다.
+MENU 할인은 target_menu_id와 store_id를 함께 조인해 다른 가게의 메뉴가 노출되지 않게 한다.
+기존 캠페인 저장 계약의 가게별 당일 활성 캠페인 하나라는 전제를 따른다.
+ALL 할인은 targetMenu=null이다. 활성 요약이 없으면 가게는 유지하고 activeCampaign만 null이다.
+
+이미지는 VERIFIED만 읽고 기존 StoreImageUrlResolver로 CDN URL을 만든다.
+S3를 호출하지 않는다. 필수 대표·메뉴 이미지 누락, 할인 대상 메뉴 누락과 CDN 설정 누락은
+데이터·설정 오류로 전파한다. DB 장애도 가게 없음이나 빈 목록으로 바꾸지 않는다.
+오류 번호의 연속성을 검사하는 ErrorCodeCatalogTest에 맞춰 PR #506의 STORE-015 선언을 동일하게 포함한다.
+최종 등록 기능은 추가하지 않으며 상세 조회의 404는 STORE-016을 쓴다.
+
+가게 상세 조회에는 별도 수치 성능 목표가 확정되지 않았다.
+피드의 성능 목표를 이 API에 적용하지 않는다.
+
+### 검증 범위
+
+StoreDetailServiceTest는 서울 자정 경계, 이미지 URL과 필수 이미지 오류를 확인한다.
+StoreDetailIntegrationTest는 실제 HTTP 보안 체인과 MySQL 쿼리로 메뉴 0개, 초안 비공개, 정렬,
+업로드 상태, 활성 캠페인 날짜·상태와 다른 가게 메뉴 차단을 검증한다.
+선행 최종 등록 API와 연결한 테스트는 PR #506 병합 후 수행한다.
