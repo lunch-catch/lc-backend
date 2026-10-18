@@ -2,7 +2,6 @@ package com.launchcatch.auth;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.launchcatch.IntegrationTestSupport;
 import com.launchcatch.auth.jwt.AccessTokenValidAfterRepository;
 import com.launchcatch.auth.opaque.RefreshTokenRepository;
 import com.launchcatch.auth.opaque.TokenHasher;
@@ -12,11 +11,9 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.data.redis.core.StringRedisTemplate;
 
-@SpringBootTest
-class RefreshTokenOrderingIntegrationTest extends IntegrationTestSupport {
+class RefreshTokenOrderingIntegrationTest extends AbstractAuthIntegrationTest {
 
     @Autowired
     private RefreshTokenRepository repository;
