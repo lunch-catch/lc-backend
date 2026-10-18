@@ -12,6 +12,7 @@ import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.scheduling.concurrent.CustomizableThreadFactory;
 import org.springframework.stereotype.Service;
@@ -28,6 +29,7 @@ import org.springframework.transaction.support.TransactionTemplate;
  * 실행기를 스프링 빈으로 노출하지 않는다. Executor 빈이 하나라도 있으면 부트가 기본 작업
  * 실행기를 만들지 않아, 뒤에 붙을 다른 @Async 호출이 이 단일 스레드 실행기를 쓰게 된다.
  */
+@Slf4j
 @Service
 public class BatchExecutionRetryService {
 
@@ -133,10 +135,25 @@ public class BatchExecutionRetryService {
         try {
             transactions.executeWithoutResult(status -> auditLogWriter.write(
                     adminId, AUDIT_ACTION, jobName + " " + businessDate, "관리자 수동 재실행"));
-            executor.execute(() -> runner.resume(jobName, businessDate, attemptNo));
+            executor.execute(() -> resume(jobName, businessDate, attemptNo));
         } catch (RuntimeException failed) {
             executions.fail(jobName, businessDate, "수동 재실행을 시작하지 못했다");
             throw failed;
+        }
+    }
+
+    /*
+     * 별도 스레드에서 도는 재개다. runner.resume 이 던지는 예외는 ThreadPoolExecutor 작업
+     * 스레드에서 잡히지 않으면 JVM 기본 핸들러가 System.err 로만 남겨 구조화 로그를 거치지
+     * 않는다. 그 사이 행은 이 서버 소유의 RUNNING 으로 남아 생존 신호가 계속 갱신하므로
+     * 이어받기도 가져가지 않는다. 운영자가 원인을 찾을 단서가 이 로그뿐이라 여기서 남긴다.
+     */
+    private void resume(String jobName, LocalDate businessDate, int attemptNo) {
+        try {
+            runner.resume(jobName, businessDate, attemptNo);
+        } catch (RuntimeException e) {
+            log.error("수동 재실행 재개 중 예외가 났다. job={} businessDate={} attemptNo={}",
+                    jobName, businessDate, attemptNo, e);
         }
     }
 }
