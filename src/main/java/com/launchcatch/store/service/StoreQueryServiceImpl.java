@@ -1,16 +1,26 @@
 package com.launchcatch.store.service;
 
 import com.launchcatch.store.StoreImageUrlResolver;
+import com.launchcatch.store.contract.OwnerStoreOverview.Onboarding;
+import com.launchcatch.store.contract.OwnerStoreOverview.Step;
+import com.launchcatch.store.contract.OwnerStoreOverview.TermsAgreement;
+import com.launchcatch.store.contract.OwnerStoreOverview;
+import com.launchcatch.store.contract.OwnerStoreSnapshot.Image;
+import com.launchcatch.store.contract.OwnerStoreSnapshot.Menu;
+import com.launchcatch.store.contract.OwnerStoreSnapshot;
+
 import com.launchcatch.store.contract.StoreAdCandidateInfo;
 import com.launchcatch.store.contract.StoreInfo;
-import com.launchcatch.store.contract.StoreSummary;
 import com.launchcatch.store.contract.StoreMenuInfo;
 import com.launchcatch.store.contract.StoreQueryService;
+import com.launchcatch.store.contract.StoreSummary;
+import com.launchcatch.store.repository.OwnerStoreQueryRepository;
 import com.launchcatch.store.repository.StoreQueryRepository;
 import java.math.BigDecimal;
 import java.util.Collection;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -24,9 +34,11 @@ class StoreQueryServiceImpl implements StoreQueryService {
 
     private final StoreQueryRepository stores;
     private final StoreImageUrlResolver images;
+    private final OwnerStoreQueryRepository ownerStores;
 
-    StoreQueryServiceImpl(StoreQueryRepository stores, @Value("${cdn.base-url:}") String baseUrl) {
+    StoreQueryServiceImpl(StoreQueryRepository stores, OwnerStoreQueryRepository ownerStores, @Value("${cdn.base-url:}") String baseUrl) {
         this.stores = stores;
+        this.ownerStores = ownerStores;
         this.images = new StoreImageUrlResolver(baseUrl);
     }
 
@@ -128,5 +140,70 @@ class StoreQueryServiceImpl implements StoreQueryService {
         if (ids.stream().anyMatch(id -> id == null || id <= 0)) {
             throw new IllegalArgumentException("ID 목록에는 양수인 ID만 사용할 수 있습니다.");
         }
+    }
+    @Override
+    public Optional<OwnerStoreSnapshot> findOwnerStore(Long ownerId) {
+        if (ownerId == null || ownerId <= 0) {
+            throw new IllegalArgumentException("양수인 점주 ID가 필요합니다.");
+        }
+        return ownerStores.findByOwnerId(ownerId).map(store -> {
+            var savedImages = ownerStores.findImages(store.storeId());
+            Image logo = savedImages.stream().filter(image -> image.sortOrder() == null)
+                    .findFirst().map(this::resolveImage).orElse(null);
+            var interior = savedImages.stream().filter(image -> image.sortOrder() != null)
+                    .map(this::resolveImage).toList();
+            var menus = ownerStores.findMenus(store.storeId()).stream().map(menu -> new Menu(
+                    menu.menuId(), menu.name(), menu.price(), menu.description(), menu.sortOrder(),
+                    resolveImage(menu.image()))).toList();
+            return new OwnerStoreSnapshot(store.storeId(), store.finalized(), store.name(), store.businessCategory(),
+                    store.representativeName(), store.businessRegistrationNumber(), store.phone(),
+                    store.businessVerificationStatus(), store.businessVerifiedAt(), store.kakaoPlaceId(),
+                    store.roadAddress(), store.latitude(), store.longitude(), ownerStores.findBusinessHours(store.storeId()),
+                    logo, interior, menus);
+        });
+    }
+
+    private Image resolveImage(Image image) {
+        return image == null ? null : new Image(image.objectKey(), images.resolve(image.objectKey()), image.sortOrder());
+    }
+
+    @Override
+    public OwnerStoreOverview getOwnerStoreOverview(Long ownerId) {
+        var store = findOwnerStore(ownerId).orElse(null);
+        var progress = ownerStores.findProgress(ownerId);
+        var agreement = ownerStores.findTermsAgreement(ownerId).orElse(null);
+        boolean terms = agreement != null && agreement.agreed() && agreement.withdrawnAt() == null;
+        boolean basic = store != null && present(store.name()) && present(store.businessCategory())
+                && present(store.representativeName()) && present(store.businessRegistrationNumber())
+                && present(store.phone()) && "VERIFIED".equals(store.businessVerificationStatus())
+                && store.businessVerifiedAt() != null;
+        boolean location = store != null && present(store.kakaoPlaceId()) && present(store.roadAddress())
+                && store.latitude() != null && store.longitude() != null;
+        boolean hours = store != null && !store.businessHours().isEmpty();
+        boolean imagesComplete = store != null && store.logoImage() != null && store.interiorImages().size() <= 3;
+        boolean hasMenus = store != null && !store.menus().isEmpty();
+        boolean menusValid = store == null || store.menus().size() <= 3 && store.menus().stream()
+                .allMatch(menu -> present(menu.name()) && menu.price() >= 0 && menu.image() != null);
+        var steps = List.of(
+                new Step("TERMS", false, agreement != null, terms),
+                new Step("STORE_INFO", false, store != null, basic),
+                new Step("LOCATION", false, store != null && (store.kakaoPlaceId() != null
+                        || store.roadAddress() != null || store.latitude() != null || store.longitude() != null), location),
+                new Step("HOURS", false, hours, hours),
+                new Step("IMAGES", false, store != null && (store.logoImage() != null
+                        || !store.interiorImages().isEmpty()), imagesComplete),
+                new Step("MENU", true, hasMenus, hasMenus && menusValid));
+        boolean finalized = store != null && store.finalized();
+        String resume = finalized ? null : steps.stream().filter(step -> !step.optional() && !step.completed())
+                .map(Step::step).findFirst().orElse("MENU");
+        String current = finalized ? null : progress.map(value -> value.resumeStep().name()).orElse("TERMS");
+        return new OwnerStoreOverview(store, new Onboarding(current, resume,
+                progress.map(value -> value.version()).orElse(0L),
+                !finalized && terms && basic && location && hours && imagesComplete && menusValid,
+                agreement, steps));
+    }
+
+    private static boolean present(String value) {
+        return value != null && !value.isBlank();
     }
 }
