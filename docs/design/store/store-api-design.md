@@ -237,3 +237,19 @@ StoreInfoService가 자기 도메인의 공개 계약을 구현하며 owner는 �
   `StoreMenuInfo`(쿠폰 contract)와 `StoreRepositoryImpl`의 메뉴 조회에는 영향이 없다.
 - **`menuId` 소유권 확인 실패는 "없음"과 "다른 가게 소유"를 구분하지 않고 같은 `403`
   (`STORE-012`)으로 묶는다.** 업로드 확인 실패(`STORE-008`)와 같은 근거다(`api-spec.md`).
+
+## 입점 등록 진행 상태 조회 (#453)
+
+HTTP 계약과 단계별 완료 기준은 [가게 API 명세](../../api-spec/store-api-spec.md#get-v1ownerstore-registration-progress)가 소유한다.
+기존 URL을 유지하고 owner의 진입점에서 점주 상태를 확인한 뒤 StoreOnboardingQuery를 호출한다.
+StoreRegistrationProgressQueryService가 공개 계약을 구현하며 StoreOnboardingStatus를 반환한다.
+입출력 계약은 store.contract에 두고 HTTP 응답 변환은 owner에서 처리한다.
+
+StoreOnboardingQueryRepository는 본인 owner_id를 바인딩한 SELECT 한 번으로 약관·가게·진행 상태와 업무 데이터 완료 조건을 읽는다.
+가게·진행 상태가 없는 경우도 한 행을 반환하며 다른 점주의 가게를 연결된 store_id로 따라가지 않는다.
+업로드 확인은 DB의 VERIFIED와 객체 키를 사용하며 GET에서 S3를 호출하지 않는다.
+DB 오류를 최초 진입이나 미완료 상태로 숨기지 않는다.
+StoreOnboardingReadiness가 첫 미완료 단계와 최종 등록 가능 여부를 계산한다.
+후속 최종 등록 구현은 같은 판정 기준을 사용해 요청 시점에 다시 검증해야 한다.
+저장된 resume_step과 다른 화면을 안내하더라도 진행 상태와 버전은 변경하지 않는다.
+단계 저장 API가 쓰는 StoreRegistrationProgressResponse는 세 필드 계약을 유지한다.

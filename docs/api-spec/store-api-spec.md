@@ -188,15 +188,18 @@ OTHER
 
 ## `GET /v1/owner/store-registration-progress`
 
-점주가 지금 자신의 가게 등록에서 이어서 진행할 단계와, 다음 완료 요청에 실어 보낼
-버전을 조회한다. 진행 상태가 없으면 DB에 생성하지 않고 `storeId=null`, `resumeStep=TERMS`, `version=0`을 반환한다.
+인증된 점주의 실제 저장 데이터로 단계별 완료 여부, 지금 진행할 첫 미완료 단계와 최종 등록 가능 여부를 조회한다.
+요청 본문과 점주 ID 파라미터는 없으며 가게·약관·진행 상태를 생성하거나 변경하지 않는다.
+진행 상태가 없으면 version은 0이고 가게 초안이 없으면 storeId는 null이다.
 최초 진행 상태 생성은 점주 행을 잠근 약관 저장 트랜잭션에서 처리한다.
 
 ### 인증
 
-`OWNER`가 사용하며 `ONBOARDING` 상태에서만 호출할 수 있다.
+`OWNER`가 사용하며 DB 현재 상태가 `ONBOARDING`, `ACTIVE`인 점주만 조회할 수 있다.
 
 ### 응답 `200`
+
+필수 입력은 끝났고 메뉴는 등록하지 않은 경우:
 
 ```json
 {
@@ -204,25 +207,59 @@ OTHER
   "message": "요청이 성공적으로 처리되었습니다.",
   "data": {
     "storeId": 10,
-    "resumeStep": "IMAGES",
-    "version": 5
+    "resumeStep": "MENU",
+    "version": 5,
+    "finalized": false,
+    "canFinalize": true,
+    "steps": [
+      { "step": "TERMS", "required": true, "completed": true },
+      { "step": "STORE_INFO", "required": true, "completed": true },
+      { "step": "LOCATION", "required": true, "completed": true },
+      { "step": "HOURS", "required": true, "completed": true },
+      { "step": "IMAGES", "required": true, "completed": true },
+      { "step": "MENU", "required": false, "completed": false }
+    ]
   }
 }
 ```
 
 | 필드 | 타입 | null 허용 | 설명 |
 |---|---|---|---|
-| storeId | integer | 예 | 기본 정보 단계(`STORE_INFO`)를 아직 안 마쳤으면 `null` |
-| resumeStep | string(enum) | 아니오 | 이어서 진행할 단계. `TERMS`, `STORE_INFO`, `LOCATION`, `HOURS`, `IMAGES`, `MENU` 중 하나 |
-| version | integer | 아니오 | 다음 완료·수정 요청에 그대로 실어 보내는 값 |
+| storeId | integer(int64) | 예 | 본인 가게 ID. 초안 생성 전 null |
+| resumeStep | string(enum) | 예 | 지금 진행할 단계. 아래 순서의 첫 미완료 단계이며 필수 단계 완료 후에는 MENU. 최종 등록 후에는 null |
+| version | integer(int64) | 아니오 | 다음 저장·수정 요청에 사용하는 현재 버전. 진행 상태가 없으면 0 |
+| finalized | boolean | 아니오 | 가게 최종 등록 여부. true면 온보딩을 종료한다 |
+| canFinalize | boolean | 아니오 | 모든 필수 조건과 등록된 메뉴의 조건을 충족하고 아직 최종 등록하지 않았는지 여부 |
+| steps | array | 아니오 | 여섯 단계를 입력 순서대로 반환한다 |
+| steps[].step | string(enum) | 아니오 | TERMS, STORE_INFO, LOCATION, HOURS, IMAGES, MENU |
+| steps[].required | boolean | 아니오 | MENU만 false이며 나머지는 true |
+| steps[].completed | boolean | 아니오 | 해당 단계의 업무 데이터가 완료 조건을 충족하는지 여부 |
+
+### 완료와 화면 이동 기준
+
+| 단계 | 완료 기준 |
+|---|---|
+| TERMS | 전체 약관 agreed=true, 동의 시각 존재, 철회 시각 없음 |
+| STORE_INFO | 상호명·업종·대표자 성명·사업자등록번호·전화번호 저장, 사업자 검증 VERIFIED와 성공 시각 존재 |
+| LOCATION | 카카오 장소 ID·도로명 주소·위도·경도 모두 저장 |
+| HOURS | 월~일 7개 요일 모두 저장. 영업일은 시작·마감 시간 필수이고 휴무일도 휴무로 저장 |
+| IMAGES | 검증된 대표 이미지(LOGO) 1개. 내부 이미지는 0~3개이며 저장된 이미지는 모두 객체 확인 VERIFIED 상태와 객체 키 필요 |
+| MENU | 메뉴 1~3개이며 각 메뉴의 이름·0원 이상 가격·검증된 이미지 객체 키 필요. 설명은 선택 |
+
+- 첫 진입은 여섯 단계 completed=false, resumeStep=TERMS, canFinalize=false다.
+- 각 단계의 completed는 다른 단계와 독립적으로 계산한다. 저장된 resume_step보다 실제 데이터의 첫 미완료 단계를 우선하며 DB 진행 단계를 보정하지 않는다.
+- 메뉴가 0개면 MENU.completed=false지만 필수 단계가 모두 끝났으면 canFinalize=true다. 메뉴가 있으면 필수 항목 누락이나 미검증 이미지가 하나라도 있을 때 canFinalize=false다.
+- 모든 입력을 완료해도 최종 등록 전에는 resumeStep=MENU다. 최종 등록 후에는 finalized=true, resumeStep=null, canFinalize=false다.
+- canFinalize는 조회 시점의 안내다. 후속 최종 등록 API는 같은 조건을 요청 시점에 다시 검증해야 한다.
+- 이미지·메뉴 단계 저장 응답은 기존 StoreRegistrationProgressResponse의 storeId·resumeStep·version 세 필드만 유지한다. 이 GET의 추가 필드를 단계 저장 응답에 적용하지 않는다.
 
 ### 오류
 
 | 상태 | 코드 | 언제 |
 |---|---|---|
-| `401` | `AUTH-005` | 유효한 점주 인증이 없음 |
-| `403` | `AUTH-006` | 인증된 역할이 `OWNER`가 아님 |
-| `409` | `STORE-002` | 점주 상태가 `ONBOARDING`이 아님 |
+| `401` | `AUTH-005` | 유효한 점주 인증 또는 점주 계정이 없음 |
+| `403` | `AUTH-006` | 인증된 역할이 OWNER가 아님 |
+| `403` | `OWNER-002` | DB 현재 점주 상태가 SUSPENDED 또는 WITHDRAWN |
 
 ## 점주 약관 동의
 
