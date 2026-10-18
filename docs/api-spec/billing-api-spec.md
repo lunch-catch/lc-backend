@@ -1,10 +1,14 @@
 # 결제·포인트·정산 (billing) API 명세
 
-**설계서:** 서버 안의 처리 순서와 정한 이유를 담는 `docs/design/billing/billing-api-design.md`는 아직 저장소에 없다. 배치와 내부 흐름은 [정산 배치 설계](../design/billing/billing-batch-design.md)가 갖는다.
+**설계서:** 서버 안의 처리 순서와 정한 이유는 [billing API 설계](../design/billing/billing-api-design.md)가, 배치와 내부 흐름은 [정산 배치 설계](../design/billing/billing-batch-design.md)가 갖는다.
 
 **2026-10-14 수정:** 관리자 정책, 포인트 조정, 대사 불일치 조회를 구현 전에 확정했다. 조정의 멱등 키를 본문 `requestId`로 옮겼고, 오류 코드 `BILLING-019`~`022`를 더했고, 정책 이력과 대사 불일치 목록의 페이지 방식 근거를 적었다.
 
 **2026-10-16 수정:** 포인트 조정이 정정이 가리키는 원래 영업일 `targetBusinessDate`를 받는다(이슈 #402). 요청과 응답에 필드를 더했고, 기존에 `campaignId`만 보내던 요청은 `400`이 된다. 이 API를 부르는 관리자 화면이 아직 없어 호환을 고려하지 않고 필수로 확정했다. 대사 불일치의 `checkType`이 `CAMPAIGN_OVERSPEND`(V5)를 더해 3종이 됐다.
+
+**2026-10-18 수정 (실제 변경):** 점주 API를 점주 상태로 막는다는 문구를 실제 동작에 맞게 바로잡았다. 서버는 역할(`OWNER`)만 보고 점주 상태를 보지 않는다. 그래서 가게 등록 전인 `ONBOARDING` 점주도 충전, 잔액 조회, 환불 요청을 부를 수 있고 `403`을 받지 않는다.
+
+**2026-10-18 수정 (설명만):** 요청과 응답은 그대로다. 웹훅의 본문 형식과 응답 규칙, 점주별 합계를 원장에서 읽는 방법, 대사 불일치 저장 방식, 오류 코드 번호를 당긴 내부 이유를 설계서로 옮겼고, 이미 적용된 스키마를 "추가해야 할 스키마"로 적은 문구를 지웠다.
 
 점주의 **충전·잔액 조회·환불 요청**과 관리자의 **결제 내역·포인트 변동·환불 처리·정책·조정·대사 조회**를 다룬다.
 
@@ -13,7 +17,7 @@
 
 공통 규약(경로, 응답 봉투, 상태 코드, 식별자, 시각, 페이지)은 [api-spec.md](./api-spec.md)를 따르고 여기서는 반복하지 않는다.
 
-점주 API는 점주 상태가 `ACTIVE`일 때만 쓸 수 있다. `ONBOARDING`과 `SUSPENDED`는 `403`이다.
+점주 API는 역할이 `OWNER`이면 쓸 수 있다. 점주 상태로는 막지 않으므로 `ONBOARDING` 점주도 부를 수 있다. `SUSPENDED`, `WITHDRAWN` 점주는 로그인과 재발급이 막혀 새 토큰을 받지 못한다(`auth-api-spec.md`).
 
 ---
 
@@ -65,8 +69,8 @@
 | 항목 | 규약 |
 | --- | --- |
 | 금액 | 정수. **1원 = 1포인트.** 음수는 원장 변동에서만 쓴다 |
-| 잔액 | **저장하지 않는다.** 항상 원장에서 계산한다 — `DEDUCT`가 아닌 행의 `SUM(amount)`. **`DEDUCT`는 제외한다** (소진분은 `RESERVE`에서 이미 빠져 있어 또 빼면 이중 차감, `비즈니스 규칙` 16행). 캐시로 대신 내려주지 않는다(FR-047 예외). **2026-10-08 수정:** V51의 `CHARGE − RESERVE + RELEASE − REFUND + ADJUST`는 크기 기준 표기다. 원장은 부호를 포함해 저장하므로(`RESERVE`·`REFUND`는 음수) 그 식을 그대로 구현하면 부호가 뒤집힌다 |
-| 영업일 | KST 기준, 00:00에 바뀐다. `business_date`는 서버가 `Asia/Seoul` 기준으로 계산해 넣고 **DB 날짜 함수를 쓰지 않는다**(비기능 42행) |
+| 잔액 | **저장하지 않는다.** 항상 원장에서 계산한다. `DEDUCT`가 아닌 행의 `SUM(amount)`이다. **`DEDUCT`는 제외한다** (소진분은 `RESERVE`에서 이미 빠져 있어 또 빼면 이중 차감, 요구사항 명세서 `비즈니스 규칙` 시트 16행). 캐시로 대신 내려주지 않는다(FR-047 예외). **2026-10-08 수정:** V51의 `CHARGE − RESERVE + RELEASE − REFUND + ADJUST`는 크기 기준 표기다. 원장은 부호를 포함해 저장하므로(`RESERVE`·`REFUND`는 음수) 그 식을 그대로 구현하면 부호가 뒤집힌다 |
+| 영업일 | KST 기준, 00:00에 바뀐다. `business_date`는 서버가 `Asia/Seoul` 기준으로 계산해 넣고 **DB 날짜 함수를 쓰지 않는다**(요구사항 명세서 비기능 시트 42행) |
 | 오류 코드 | `BILLING-xxx`. 이 문서가 소유한다 |
 
 ### 원장 유형 (`point_ledger.entry_type`)
@@ -254,12 +258,7 @@ GET /v1/owner/payments?pageToken=&pageSize=20
 
 승인의 **주 경로는 웹훅이 아니다.** 결제창 인증이 끝나면 PG가 성공 URL(우리 프론트 페이지)로 `paymentKey`, `orderId`, `amount`를 붙여 돌려보내고, 프론트가 이를 `:confirm`에 넘기면 서버가 PG 승인 API를 호출해 충전한다. 웹훅은 이 경로가 놓친 결제의 상태를 맞추는 **보조 경로**다. 점주가 승인 전에 창을 닫아 만료됐거나, 서버가 승인 결과를 받지 못한 건이 여기에 해당한다.
 
-PG 서버가 호출한다. `/v1/` 접두사가 없는 것은 서버 대 서버 콜백이고 인증이 우리 JWT가 아니라 PG 방식이기 때문이다(`auth-api-spec.md`(저장소 `docs/api-spec/`)의 카카오 웹훅과 같은 이유).
-
-본문은 `eventType`(`PAYMENT_STATUS_CHANGED`), `createdAt`, 상태가 바뀐 Payment 객체인 `data`다. 우리는 `data.paymentKey`와 `data.orderId`만 꺼낸다. 확인한 Toss 문서에서 서명 헤더는 정산·셀러 웹훅에만 나오므로 **결제 상태 웹훅은 서명으로 검증할 수 없고, 본문의 상태값을 믿지 않는다.**
-
-
-**응답 규칙:** 처리할 수 없는 요청(모르는 `orderId`, 금액 불일치, 형식 오류)은 다시 보내도 소용없으므로 로그만 남기고 `200`을 돌려준다. PG 조회가 일시적으로 실패했거나 서버 오류가 난 경우에는 `5xx`로 응답해 PG의 재전송에 맡긴다. 확인한 Toss 가이드 기준으로 PG는 10초 안에 `200`을 받아야 하고, 아니면 최대 7회 재전송한다(1·4·16·64·256·1024·4096분 간격). 그래서 PG 조회 호출에는 짧은 타임아웃을 둔다. **2026-10-14:** 같은 `orderId`의 PG 조회가 10초 안에 반복되면 PG를 부르지 않고 `429`를 돌려준다. 정상 재전송은 최소 1분 간격이라 걸리지 않는다. 이미 확정된 결제는 PG를 조회하지 않고 `200`이다.
+PG 서버가 부르는 서버 간 경로라 **프론트는 부르지 않는다.** 웹훅으로 결제가 확정되면 프론트는 결제 상태 조회나 결제 내역에서 바뀐 상태를 본다. 본문 형식, 검증, 응답 규칙은 [billing API 설계](../design/billing/billing-api-design.md#post-webhookpayments)에 있다.
 
 ---
 
@@ -538,7 +537,7 @@ GET /v1/admin/point-ledger?ownerId=7&from=2026-09-01&to=2026-09-30&pageSize=20&s
 - **`balanceBefore`·`balanceAfter`는 저장값이 아니다.** `(created_at, point_ledger_id)` 순서로 그 점주의 누적을 계산해 표시한다(**`DEDUCT` 제외**, 잔액 공식과 동일). `DEDUCT` 행의 변동 전·후 잔액은 직전 값을 그대로 둔다.
 - FR-021 필수 데이터는 점주 ID, 원장 유형, 변동 전 잔액, 변동 금액, 변동 후 잔액, 일시다. 선택 데이터는 `campaignId`, `serveId`, PG 거래 ID(`pgTid`, `payment_id`로 조인)다.
 - 유형은 여섯 가지 전부를 조회하고 표시한다. **2026-10-08 수정:** FR-021 세부의 "예약/예약해제는 표시하지 않음"은 따르지 않는다. 관리자 화면이라 예약과 해제를 봐야 하고, 이 둘을 숨기면 변동 전·후 잔액이 이어지지 않는다. 점주용 FR-047은 `RESERVE`·`RELEASE`를 점주에게 보이되 `DEDUCT`는 내리지 않는다. **2026-10-09 명시:** 이 부분은 FR-021과 다르다. V51 xlsx는 고치지 않으며 **이 문서가 기준이다**.
-- **2026-10-08 수정:** FR-021 세부의 기간별(일/주/월) 합계는 원장을 직접 읽어야 하므로 `analytics-api-spec.md`가 아니라 이 문서의 `GET /v1/admin/point-ledger/summary`가 맡는다(정산 테이블은 정산만 읽는다, 분석 도메인 규칙 4). 플랫폼 전체 합계는 계속 `analytics-api-spec.md` A-07이다.
+- **2026-10-08 수정:** FR-021 세부의 기간별(일/주/월) 합계는 원장을 직접 읽어야 하므로 `analytics-api-spec.md`가 아니라 이 문서의 `GET /v1/admin/point-ledger/summary`가 맡는다(정산 테이블은 정산만 읽는다, [도메인 구조와 의존성 설계](../architecture/런치캐치_도메인_구조와_의존성_설계.md)의 규칙 4). 플랫폼 전체 합계는 계속 `analytics-api-spec.md` A-07이다.
 - 변동 전·후 잔액 계산은 커서 전환 뒤에도 유지한다.
 
 ---
@@ -579,7 +578,7 @@ GET /v1/admin/point-ledger/summary?ownerId=7&period=DAILY&from=2026-09-01&to=202
 | 필드 | 뜻 | 원장에서 |
 | --- | --- | --- |
 | `chargeAmount` | 충전액 | `CHARGE` 합 |
-| `spentAmount` | 소진액 | `DEDUCT` 합의 절댓값 − 과오 차감 정정(양수 `ADJUST`) 합. **2026-10-14 명시:** 양수 `ADJUST`는 모두 정정으로 본다. `비즈니스 규칙` 16행과 `analytics-api-spec.md` A-07의 `spentAmount`와 같은 정의다 |
+| `spentAmount` | 소진액 | `DEDUCT` 합의 절댓값 − 과오 차감 정정(양수 `ADJUST`) 합. **2026-10-14 명시:** 양수 `ADJUST`는 모두 정정으로 본다. 요구사항 명세서 `비즈니스 규칙` 시트 16행과 `analytics-api-spec.md` A-07의 `spentAmount`와 같은 정의다 |
 | `reservedAmount` | 예약액 | `RESERVE` 합의 절댓값 |
 | `releasedAmount` | 예약 해제액 | `RELEASE` 합 |
 | `refundAmount` | 환불액 | `REFUND` 합의 절댓값 |
@@ -591,10 +590,10 @@ GET /v1/admin/point-ledger/summary?ownerId=7&period=DAILY&from=2026-09-01&to=202
 
 ### 계산 규칙
 
-- **날짜 귀속:** `RESERVE`·`RELEASE`는 `business_date`로, `CHARGE`·`REFUND`는 `created_at`을 서버가 KST 날짜로 바꿔서, `ADJUST`는 `adjust_target_date`(없으면 `created_at`의 KST 날짜)로 구간에 넣는다. DB 날짜 함수는 쓰지 않는다(비기능 42행).
-- **`DEDUCT`는 읽지 않는다.** 노출당 1행이라 기간 합계를 위해 훑을 수 없다. 영업일별로 `RELEASE = RESERVE − DEDUCT`(`비즈니스 규칙` 16행)이므로 지난 영업일의 `|DEDUCT|`는 −(`RESERVE` 합 + `RELEASE` 합)이다. 오늘 영업일은 13:30 해제 전일 수 있어, 그날 `RELEASE`가 아직 없으면 그날의 `DEDUCT` 합을 직접 읽는다(하루치뿐이다).
+- **날짜 귀속:** `RESERVE`·`RELEASE`·소진은 그 영업일 구간에, `CHARGE`·`REFUND`는 기록된 시각의 KST 날짜 구간에, `ADJUST`는 정정 대상 영업일 구간(없으면 기록된 시각의 KST 날짜 구간)에 들어간다.
 - 13:30 해제가 실패한 영업일은 00:00 보정 `RELEASE`가 들어오기 전까지 `spentAmount`가 실제보다 크게 보인다.
-- 읽는 행은 기간 안의 `CHARGE`·`REFUND`, 정정 대상 영업일이 기간 안인 `ADJUST`(대상이 없는 `ADJUST`는 기록 시각이 기간 안인 것), 기간 영업일의 `RESERVE`·`RELEASE`, 오늘의 `DEDUCT`뿐이다. V2 마이그레이션의 `idx_point_ledger_owner_type_created`와 `idx_point_ledger_owner_business_date`를 쓴다.
+
+서버가 원장에서 이 합계를 계산하는 방법은 [billing API 설계](../design/billing/billing-api-design.md#get-v1adminpoint-ledgersummary)에 있다.
 
 ---
 
@@ -794,7 +793,7 @@ GET /v1/admin/settlement-mismatches?checkType=&resolved=false&from=&to=&page=0&s
 
 **2026-10-14 결정 (페이지 방식의 근거):** 관리자 표 목록이라 레포 공통 규약(`api-spec.md`)의 커서 대신 페이지 번호 방식을 쓴다(`member.md` 관리자 사용자 목록의 2026-10-09 결정과 같은 이유). 이 목록은 특히 `totalElements`를 매출 현황의 불일치 건수로 쓰므로(아래) 전체 건수를 주지 않는 커서 방식으로 바꿀 수 없다. 이 API의 예외는 이 문서가 소유한다. 같은 `createdAt`(또는 `businessDate`)이면 `mismatchId`가 보조 정렬이다.
 
-**2026-10-08 수정:** `from`~`to`는 대사 대상 영업일(`businessDate`) 기준이다(KST, 양끝 포함). `businessDate`는 추가해야 할 스키마의 컬럼이라 그 스키마를 적용하기 전에는 이 필터와 `sortBy=businessDate`를 쓸 수 없다 *(2026-10-14 수정: V2로 들어가 이 제약은 없어졌다)*. 정렬 이름은 `detectedAt`이 아니라 `createdAt`(첫 탐지 시각)이다. 같은 `(checkType, targetId, businessDate)`를 다시 탐지하면(`CAMPAIGN_SPEND_VS_LEDGER`는 13:30과 00:00, `PG_VS_CHARGE`는 00:00 전일분이며 수동 재실행도 있다. 2026-10-09 수정) 새 행을 만들지 않고 기존 행을 갱신한다(UNIQUE 때문에 upsert로 구현한다).
+**2026-10-08 수정:** `from`~`to`는 대사 대상 영업일(`businessDate`) 기준이다(KST, 양끝 포함). 정렬 이름은 `detectedAt`이 아니라 `createdAt`(첫 탐지 시각)이다. 같은 `(checkType, targetId, businessDate)`를 다시 탐지하면(`CAMPAIGN_SPEND_VS_LEDGER`는 13:30과 00:00, `PG_VS_CHARGE`는 00:00 전일분이며 수동 재실행도 있다. 2026-10-09 수정) 새 건을 만들지 않고 기존 건을 갱신한다. 그래서 같은 대상, 같은 영업일의 건은 목록에 하나만 있다.
 
 ### 응답 `200` (항목)
 
@@ -811,9 +810,8 @@ GET /v1/admin/settlement-mismatches?checkType=&resolved=false&from=&to=&page=0&s
 - `targetId`는 `checkType`에 따라 결제 ID 또는 캠페인 ID다. `diff`는 `actualValue - expectedValue`로 계산한다.
 - `resolved=false`는 `resolution_type`이 `NULL`인 미해결 건이다. `resolutionType`은 `CACHE_REBUILD` / `LEDGER_CORRECTION` / `OVERCHARGE_REVERSAL`이다.
 - 자동 복구(`CACHE_REBUILD`, `LEDGER_CORRECTION`)는 배치가 처리하므로 별도 해결 API를 두지 않는다. 사람이 처리하는 `OVERCHARGE_REVERSAL`은 포인트 수동 조정의 `mismatchId`로 닫는다.
-- **2026-10-08 수정:** `businessDate`와 `UNIQUE(check_type, target_id, business_date)`는 추가해야 할 스키마에 있다. V1만 적용된 DB에서는 그 스키마를 적용해야 이 응답이 나온다. *(2026-10-14 수정: `V2__billing_pause_mismatch_date_and_indexes.sql`로 develop에 들어갔다)*
 
-관리자 화면이 매출 현황(`analytics-api-spec.md` A-07)과 함께 쓸 때, **불일치 건수는 이 API의 `totalElements`로 센다.** 분석 조회 API는 정산 테이블을 읽지 못하기 때문이다(분석 도메인 규칙 4).
+관리자 화면이 매출 현황(`analytics-api-spec.md` A-07)과 함께 쓸 때, **불일치 건수는 이 API의 `totalElements`로 센다.** 분석 조회 API는 정산 테이블을 읽지 못하기 때문이다([도메인 구조와 의존성 설계](../architecture/런치캐치_도메인_구조와_의존성_설계.md)의 규칙 4).
 
 ---
 
@@ -848,7 +846,7 @@ GET /v1/admin/settlement-mismatches?checkType=&resolved=false&from=&to=&page=0&s
 
 **2026-10-14 수정:** `BILLING-019`~`022`를 더했다. 포인트 조정이 점주와 대사 건을 확인하며 쓰는 코드다. 번호는 `018` 뒤에 이어 붙였다.
 
-**2026-10-12 수정:** `BILLING-030`·`031`·`032`를 `016`·`017`·`018`로 당겼다. 저장소의 `ErrorCodeCatalogTest`가 접두어마다 번호가 1부터 끊기지 않기를 요구해 016~029를 비워 둘 수 없다. 뜻은 그대로다.
+**2026-10-12 수정:** `BILLING-030`·`031`·`032`를 `016`·`017`·`018`로 당겼다. 번호가 끊기지 않게 하려는 것이고 뜻은 그대로다.
 
 **2026-10-08 수정:** `BILLING-003`·`007`의 뜻을 고치고 `BILLING-008`·`009`를 되살렸다(2026-10-01의 결정).
 
