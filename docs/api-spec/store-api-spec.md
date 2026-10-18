@@ -588,8 +588,8 @@ HOURS는 현재 저장 구조에서 영업시간 행이 존재하는지 확인�
 
 ### 성공 응답
 
-`200`. `GET /v1/owner/onboarding`와 같은 모양이며 `resumeStep`이
-`MENU`, `version`이 1 증가한 값이다.
+`200`. `storeId`, `resumeStep`, `version`을 반환한다.
+`resumeStep`은 `MENU`이며 `version`은 1 증가한 값이다.
 
 ### 오류
 
@@ -768,8 +768,8 @@ HOURS는 현재 저장 구조에서 영업시간 행이 존재하는지 확인�
 
 ### 성공 응답
 
-`200`. `GET /v1/owner/onboarding`와 같은 모양이며 `resumeStep`이
-`MENU`, `version`이 1 증가한 값이다.
+`200`. `storeId`, `resumeStep`, `version`을 반환한다.
+`resumeStep`은 `MENU`이며 `version`은 1 증가한 값이다.
 
 ### 오류
 
