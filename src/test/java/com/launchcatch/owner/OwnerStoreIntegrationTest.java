@@ -214,8 +214,14 @@ class OwnerStoreIntegrationTest extends AbstractOwnerIntegrationTest {
         jdbc.update("update store set kakao_place_id = '123', road_address = '서울' where store_id = ?", storeId);
         jdbc.update("""
                 insert into store_business_hour (store_id, day_of_week, open_time, close_time, closed, created_at, updated_at)
-                values (?, 'MONDAY', '09:00', '20:00', false, now(), now())
-                """, storeId);
+                values (?, 'MONDAY', '09:00', '20:00', false, now(), now()),
+                    (?, 'TUESDAY', null, null, true, now(), now()),
+                    (?, 'WEDNESDAY', null, null, true, now(), now()),
+                    (?, 'THURSDAY', null, null, true, now(), now()),
+                    (?, 'FRIDAY', null, null, true, now(), now()),
+                    (?, 'SATURDAY', null, null, true, now(), now()),
+                    (?, 'SUNDAY', null, null, true, now(), now())
+                """, storeId, storeId, storeId, storeId, storeId, storeId, storeId);
         jdbc.update("""
                 insert into store_image (store_id, image_type, object_key, upload_status, verified_at, created_at, updated_at)
                 values (?, 'LOGO', ?, 'VERIFIED', now(), now(), now())

@@ -26,9 +26,21 @@ public class StoreOnboardingQueryRepository {
                         and s.business_verified_at is not null, false) as info_completed,
                     coalesce(length(trim(s.kakao_place_id)) > 0 and length(trim(s.road_address)) > 0
                         and s.latitude is not null and s.longitude is not null, false) as location_completed,
-                    (select count(*) from store_business_hour h where h.store_id = s.store_id
-                        and (h.closed = true or (h.open_time is not null and h.close_time is not null))) = 7
-                        as hours_completed,
+                    (select count(*) from store_business_hour h where h.store_id = s.store_id) = 7
+                    and not exists(select 1 from store_business_hour h where h.store_id = s.store_id
+                        and not coalesce(
+                            (h.closed = true and h.open_time is null and h.close_time is null
+                                and h.break_start_time is null and h.break_end_time is null and h.last_order_time is null)
+                            or (h.closed = false and h.open_time is not null and h.close_time is not null
+                                and h.open_time < h.close_time
+                                and ((h.break_start_time is null and h.break_end_time is null)
+                                    or (h.break_start_time is not null and h.break_end_time is not null
+                                        and h.open_time < h.break_start_time and h.break_start_time < h.break_end_time
+                                        and h.break_end_time < h.close_time))
+                                and (h.last_order_time is null or (h.last_order_time >= h.open_time
+                                    and h.last_order_time <= h.close_time and (h.break_start_time is null
+                                        or h.last_order_time < h.break_start_time or h.last_order_time >= h.break_end_time)))),
+                            false)) as hours_completed,
                     (select count(*) from store_image i where i.store_id = s.store_id
                         and i.image_type = 'LOGO' and i.upload_status = 'VERIFIED'
                         and length(trim(i.object_key)) > 0) = 1

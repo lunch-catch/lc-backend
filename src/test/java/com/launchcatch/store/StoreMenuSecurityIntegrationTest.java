@@ -25,18 +25,13 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.test.context.bean.override.mockito.MockitoBean;
-import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
-import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.HeadObjectResponse;
-import software.amazon.awssdk.services.s3.presigner.S3Presigner;
 import software.amazon.awssdk.services.s3.presigner.model.PresignedPutObjectRequest;
 
 /*
@@ -44,19 +39,15 @@ import software.amazon.awssdk.services.s3.presigner.model.PresignedPutObjectRequ
  * /v1/owner/store-menus:complete(#389)의 보안 체인과 실제 입구부터의 전체 흐름을 확인한다.
  * S3Presigner/S3Client는 실제 AWS를 부르지 않도록 목으로 바꾼다.
  */
-@AutoConfigureMockMvc
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class StoreMenuSecurityIntegrationTest extends AbstractStoreIntegrationTest {
 
     private static final String VERSION_CLAIM = "issuanceVersion";
 
-    @Autowired private MockMvc mvc;
     @Autowired private JwtTokenProvider jwt;
     @Autowired private JdbcTemplate jdbc;
     @Autowired private StoreRegistrationProgressService progressService;
     @Autowired private PlatformTransactionManager transactionManager;
-    @MockitoBean private S3Presigner s3Presigner;
-    @MockitoBean private S3Client s3Client;
 
     private final List<Long> createdOwnerIds = new ArrayList<>();
     private final List<Long> createdStoreIds = new ArrayList<>();
