@@ -289,6 +289,30 @@ DB 조회나 저장 실패는 공통 예외 처리로 전달하며 상태와 QR,
 쿠폰 행 잠금과 발급 카운터의 잠금 순서, QR 세대 재검증은 [구조와 동작 설계 7장](./coupon_구조와_동작_설계.md#7-트랜잭션과-동시성)을 따른다.
 삭제와 QR 갱신의 기존 검증, 후속 사용 확정에서 필요한 검증은 [12장](./coupon_구조와_동작_설계.md#12-테스트와-미정-사항)이 갖는다.
 
+## 매장의 날짜별 쿠폰 사용 건수 조회
+
+클라이언트 계약은 [쿠폰 명세의 날짜별 사용 건수](../../api-spec/coupon-api-spec.md#매장의-날짜별-쿠폰-사용-건수-조회)가 갖는다.
+`OwnerCouponController.getDailyUsages`는 조회 조건과 인증된 점주 ID를 `OwnerCouponService.getDailyUsages`에 전달한다.
+
+### 서버가 하는 일
+
+1. `CouponSecurityConfig`는 GET 경로에 OWNER 역할을 요구한다.
+2. 서비스는 매장 ID와 날짜 범위를 검증하고 `OwnerStatusQuery`로 현재 ACTIVE 상태를 확인한다.
+3. 서비스는 store의 [공개 조회 계약](../store/store-query-contract.md)에 있는 `canManageStore`로 현재 매장 관리 권한을 확인한다. 거절되면 사용 이력을 조회하지 않는다.
+4. `CouponUsageHistoryRepository.findDailyUsageCounts`는 매장과 실제 사용 시각의 범위를 적용한 뒤 날짜별 건수를 한 번에 집계한다. 캠페인이나 이벤트의 영업일로 범위를 좁히지 않는다.
+5. 서비스는 사용이 없는 날짜를 채우고 날짜별 건수의 합계를 응답에 담는다.
+
+### 집계와 장애 처리
+
+SQL은 `coupon_usage_history`만 읽으며 다른 엔티티를 조인하거나 사용 이력 전체를 메모리로 가져오지 않는다.
+WHERE 절은 `store_id`와 원래의 `created_at` 범위를 사용한다.
+`DATE(created_at)`는 조회 컬럼과 그룹, 정렬에만 적용한다.
+기존 `(store_id, created_at, coupon_usage_history_id)` 인덱스로 매장과 사용 시각의 범위를 좁힌다.
+날짜마다 SQL을 반복하지 않으며 서비스는 최대 31개의 응답 항목만 만든다.
+읽기 전용 트랜잭션에서 원천 이력을 집계하며 별도 캐시나 배치 집계 테이블을 추가하지 않는다.
+점주 상태 조회나 매장 권한 조회, DB 집계의 실패는 기존 공통 예외 처리로 전달한다.
+조회 실패를 0건으로 바꾸지 않으며 기존 컬럼과 인덱스를 사용하므로 마이그레이션은 추가하지 않는다.
+
 ## 매장 쿠폰 사용 이력 조회
 
 `GET /v1/owner/stores/{storeId}/coupon-usages`의 조회 코드는 `OwnerCouponController.getUsages`와 `OwnerCouponService.getUsages`가 갖는다.
