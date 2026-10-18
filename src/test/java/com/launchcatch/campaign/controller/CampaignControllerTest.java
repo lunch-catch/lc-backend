@@ -44,7 +44,7 @@ class CampaignControllerTest {
     private final CustomUserDetails owner = new CustomUserDetails(7L, Role.OWNER);
 
     private final CampaignCouponConditionRequest request = new CampaignCouponConditionRequest(
-            17L, DiscountTargetType.ALL, DiscountType.PERCENT, 15, null,
+            17L, DiscountTargetType.ALL, DiscountType.AMOUNT, 15, null,
             100, LocalTime.of(11, 30), LocalTime.of(13, 0), null, null);
 
     @Test
@@ -125,7 +125,7 @@ class CampaignControllerTest {
     void 상세_조회는_조회_서비스_결과를_그대로_반환한다() {
         CampaignDetailResponse response = new CampaignDetailResponse(
                 501L, 20L, CampaignStatus.ACTIVE, null,
-                DiscountTargetType.ALL, DiscountType.PERCENT, 10, null, 100,
+                DiscountTargetType.ALL, DiscountType.AMOUNT, 10, null, 100,
                 LocalTime.of(11, 30), LocalTime.of(13, 0), null, null,
                 1000, TargetGender.ALL, List.of(AgeGroup.AGE_20S),
                 null, null, null, LocalDateTime.now(), LocalDateTime.now());

@@ -159,7 +159,7 @@ class CampaignOwnerQueryServiceTest {
     private Campaign campaign(Long ownerId, Long campaignId) throws Exception {
         Campaign campaign = Campaign.create(
                 ownerId, 20L,
-                DiscountTargetType.ALL, DiscountType.PERCENT, 10, null,
+                DiscountTargetType.ALL, DiscountType.AMOUNT, 10, null,
                 100, LocalTime.of(11, 0), LocalTime.of(14, 0),
                 null, null,
                 1000, TargetGender.ALL, List.of(AgeGroup.AGE_20S),
