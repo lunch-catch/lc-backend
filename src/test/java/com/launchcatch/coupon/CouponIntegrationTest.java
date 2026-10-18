@@ -750,6 +750,7 @@ class CouponIntegrationTest extends IntegrationTestSupport {
         @BeforeEach
         void setUp() {
             when(ownerStatusQuery.findCurrentStatus(17L)).thenReturn(Optional.of(OwnerAccountStatus.ACTIVE));
+            when(stores.canManageStore(17L, 10L)).thenReturn(true);
             insertHistory(5001L, 10L, FROM.atStartOfDay().minusNanos(1000), 1000);
             insertHistory(5002L, 10L, FROM.atStartOfDay(), 2000);
             insertHistory(5003L, 10L, USE_TIME, 2700);
@@ -758,6 +759,22 @@ class CouponIntegrationTest extends IntegrationTestSupport {
             insertHistory(5006L, 20L, USE_TIME.plusMinutes(1), 5000);
             insertHistory(5007L, 10L, FROM.minusYears(2).atStartOfDay(), 1500);
             entityManager.clear();
+        }
+
+        @Test
+        void 현재_관리할_수_없는_매장의_이력은_HTTP_403으로_거절한다() throws Exception {
+            when(stores.canManageStore(17L, 10L)).thenReturn(false);
+            mockMvc.perform(get(PATH).with(user(new CustomUserDetails(17L, Role.OWNER)))
+                            .param("from", FROM.toString()).param("to", TO.toString()))
+                    .andExpect(status().isForbidden()).andExpect(jsonPath("$.code").value("AUTH-006"));
+        }
+
+        @Test
+        void 매장_권한_조회_장애는_HTTP_500으로_전파한다() throws Exception {
+            when(stores.canManageStore(17L, 10L)).thenThrow(new DataAccessResourceFailureException("store unavailable"));
+            mockMvc.perform(get(PATH).with(user(new CustomUserDetails(17L, Role.OWNER)))
+                            .param("from", FROM.toString()).param("to", TO.toString()))
+                    .andExpect(status().isInternalServerError()).andExpect(jsonPath("$.code").value("COMMON-001"));
         }
 
         @Test
@@ -802,7 +819,8 @@ class CouponIntegrationTest extends IntegrationTestSupport {
         }
 
         @Test
-        void 이력이_없는_매장은_빈_목록을_반환한다() {
+        void 이력이_없는_본인_매장은_빈_목록을_반환한다() {
+            when(stores.canManageStore(17L, 30L)).thenReturn(true);
             var response = couponLookUpService.getUsages(17L, 30L, FROM, TO, 20, null);
 
             assertThat(response.items()).isEmpty();
@@ -836,6 +854,7 @@ class CouponIntegrationTest extends IntegrationTestSupport {
         void 인증된_점주_ID로_현재_상태를_검증한다() throws Exception {
             when(ownerStatusQuery.findCurrentStatus(17L)).thenReturn(Optional.empty());
             when(ownerStatusQuery.findCurrentStatus(71L)).thenReturn(Optional.of(OwnerAccountStatus.ACTIVE));
+            when(stores.canManageStore(71L, 10L)).thenReturn(true);
 
             mockMvc.perform(get(PATH).param("from", FROM.toString()).param("to", TO.toString())
                             .with(user(new CustomUserDetails(71L, Role.OWNER))))
@@ -2359,6 +2378,10 @@ class CouponIntegrationTest extends IntegrationTestSupport {
 
         @BeforeEach
         void setUp() {
+            when(stores.findAllById(any())).thenAnswer(invocation -> {
+                List<Long> ids = invocation.getArgument(0);
+                return ids.stream().map(id -> new StoreInfo(id, "매장", null, 37.5, 127.0)).toList();
+            });
             when(clock.withZone(ClockConfig.ZONE)).thenReturn(
                     Clock.fixed(Instant.parse("2026-10-14T03:00:00.123456Z"), ClockConfig.ZONE));
             jdbcTemplate.update("""
@@ -2385,6 +2408,45 @@ class CouponIntegrationTest extends IntegrationTestSupport {
                     INSERT INTO coupon_daily_limit (member_id, business_date, issued_count, created_at, updated_at)
                     VALUES (17, ?, 1, ?, ?)
                     """, TODAY, NOW, NOW);
+        }
+
+        @Test
+        void 현재_찜한_회원에게_실제_발급_가능_상태를_안내한다() throws Exception {
+            when(wishes.findWishedCampaignIds(18L)).thenReturn(List.of(501L));
+            mockMvc.perform(post(PATH).with(user(new CustomUserDetails(18L, Role.MEMBER)))
+                            .contentType(MediaType.APPLICATION_JSON).content("{\"storeIds\":[10]}"))
+                    .andExpect(status().isOk()).andExpect(jsonPath("$.data.items[0].wished").value(true))
+                    .andExpect(jsonPath("$.data.items[0].canIssue").value(true))
+                    .andExpect(jsonPath("$.data.items[0].cannotIssueReason").value(org.hamcrest.Matchers.nullValue()));
+        }
+
+        @Test
+        void 미존재와_등록_전_매장은_제외하며_모두_없으면_빈_목록을_반환한다() throws Exception {
+            when(stores.findAllById(List.of(20L, 999L, 10L))).thenReturn(List.of(
+                    new StoreInfo(10L, "매장1", null, 37.5, 127.0), new StoreInfo(20L, "매장2", null, 37.5, 127.0)));
+            mockMvc.perform(post(PATH).with(user(MEMBER)).contentType(MediaType.APPLICATION_JSON)
+                            .content("{\"storeIds\":[20,999,10]}"))
+                    .andExpect(status().isOk()).andExpect(jsonPath("$.data.items.length()").value(2))
+                    .andExpect(jsonPath("$.data.items[0].storeId").value(20))
+                    .andExpect(jsonPath("$.data.items[1].storeId").value(10));
+            when(stores.findAllById(List.of(999L))).thenReturn(List.of());
+            mockMvc.perform(post(PATH).with(user(MEMBER)).contentType(MediaType.APPLICATION_JSON)
+                            .content("{\"storeIds\":[999]}"))
+                    .andExpect(status().isOk()).andExpect(jsonPath("$.data.items").isEmpty());
+        }
+
+        @ParameterizedTest
+        @ValueSource(strings = {"store", "wishlist"})
+        void 공개_조회_장애를_빈_결과로_바꾸지_않는다(String source) throws Exception {
+            var failure = new DataAccessResourceFailureException("contract unavailable");
+            if (source.equals("store")) {
+                when(stores.findAllById(List.of(10L))).thenThrow(failure);
+            } else {
+                when(wishes.findWishedCampaignIds(17L)).thenThrow(failure);
+            }
+            mockMvc.perform(post(PATH).with(user(MEMBER)).contentType(MediaType.APPLICATION_JSON)
+                            .content("{\"storeIds\":[10]}"))
+                    .andExpect(status().isInternalServerError()).andExpect(jsonPath("$.code").value("COMMON-001"));
         }
 
         @Test
@@ -2438,7 +2500,7 @@ class CouponIntegrationTest extends IntegrationTestSupport {
         }
 
         @Test
-        void 찜_contract를_연결하기_전에는_발급_가능으로_안내하지_않는다() throws Exception {
+        void 찜하지_않은_캠페인은_발급_가능으로_안내하지_않는다() throws Exception {
             mockMvc.perform(post(PATH).with(user(new CustomUserDetails(18L, Role.MEMBER)))
                             .contentType(MediaType.APPLICATION_JSON).content("{\"storeIds\":[10]}"))
                     .andExpect(status().isOk()).andExpect(jsonPath("$.data.items[0].wished").value(false))
