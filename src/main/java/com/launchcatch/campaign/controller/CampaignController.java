@@ -5,11 +5,13 @@ import com.launchcatch.campaign.dto.CampaignCouponConditionRequest;
 import com.launchcatch.campaign.dto.CampaignCouponConditionResponse;
 import com.launchcatch.campaign.dto.CampaignDetailResponse;
 import com.launchcatch.campaign.dto.CampaignListItemResponse;
+import com.launchcatch.campaign.dto.CampaignStatusResponse;
 import com.launchcatch.campaign.dto.CampaignUpdateRequest;
 import com.launchcatch.campaign.dto.CampaignUpdateResponse;
 import com.launchcatch.campaign.service.CampaignCouponConditionResult;
 import com.launchcatch.campaign.service.CampaignCouponConditionService;
 import com.launchcatch.campaign.service.CampaignOwnerQueryService;
+import com.launchcatch.campaign.service.CampaignPauseResumeService;
 import com.launchcatch.campaign.service.CampaignTargetAudienceService;
 import com.launchcatch.global.response.CursorPageResponse;
 import com.launchcatch.global.response.ResponseEnvelope;
@@ -41,6 +43,7 @@ public class CampaignController {
     private final CampaignCouponConditionService campaignCouponConditionService;
     private final CampaignTargetAudienceService campaignTargetAudienceService;
     private final CampaignOwnerQueryService campaignOwnerQueryService;
+    private final CampaignPauseResumeService campaignPauseResumeService;
 
     @PostMapping
     @Operation(
@@ -87,6 +90,42 @@ public class CampaignController {
             @Valid @RequestBody CampaignUpdateRequest request,
             @Parameter(hidden = true) @AuthenticationPrincipal CustomUserDetails owner) {
         return ResponseEnvelope.success(campaignTargetAudienceService.handle(owner.getId(), campaignId, request));
+    }
+
+    @PostMapping("/{campaignId}:pause")
+    @Operation(
+            summary = "캠페인 중단",
+            description = "ACTIVE 상태의 캠페인을 점주가 직접 중단합니다. 이미 점주 중단으로 PAUSED면 멱등하게 "
+                    + "다시 200을 돌려줍니다."
+    )
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "중단 성공."),
+            @ApiResponse(responseCode = "403", description = "CAMPAIGN-001: 점주 상태가 ACTIVE가 아닙니다. "
+                    + "CAMPAIGN-005: 그 campaignId가 없거나 본인 소유가 아닙니다."),
+            @ApiResponse(responseCode = "409", description = "CAMPAIGN-006: ACTIVE 상태가 아니라 중단할 수 없습니다.")
+    })
+    public ResponseEnvelope<CampaignStatusResponse> pause(
+            @Parameter(description = "중단할 캠페인 ID입니다.") @PathVariable Long campaignId,
+            @Parameter(hidden = true) @AuthenticationPrincipal CustomUserDetails owner) {
+        return ResponseEnvelope.success(campaignPauseResumeService.pause(owner.getId(), campaignId));
+    }
+
+    @PostMapping("/{campaignId}:resume")
+    @Operation(
+            summary = "캠페인 재개",
+            description = "PAUSED 상태의 캠페인을 점주가 직접 재개합니다. 이미 ACTIVE면 멱등하게 다시 200을 "
+                    + "돌려줍니다."
+    )
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "재개 성공."),
+            @ApiResponse(responseCode = "403", description = "CAMPAIGN-001: 점주 상태가 ACTIVE가 아닙니다. "
+                    + "CAMPAIGN-005: 그 campaignId가 없거나 본인 소유가 아닙니다."),
+            @ApiResponse(responseCode = "409", description = "CAMPAIGN-006: PAUSED 상태가 아니라 재개할 수 없습니다.")
+    })
+    public ResponseEnvelope<CampaignStatusResponse> resume(
+            @Parameter(description = "재개할 캠페인 ID입니다.") @PathVariable Long campaignId,
+            @Parameter(hidden = true) @AuthenticationPrincipal CustomUserDetails owner) {
+        return ResponseEnvelope.success(campaignPauseResumeService.resume(owner.getId(), campaignId));
     }
 
     @GetMapping

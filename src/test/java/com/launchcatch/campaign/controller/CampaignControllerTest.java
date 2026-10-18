@@ -16,11 +16,13 @@ import com.launchcatch.campaign.dto.CampaignCouponConditionRequest;
 import com.launchcatch.campaign.dto.CampaignCouponConditionResponse;
 import com.launchcatch.campaign.dto.CampaignDetailResponse;
 import com.launchcatch.campaign.dto.CampaignListItemResponse;
+import com.launchcatch.campaign.dto.CampaignStatusResponse;
 import com.launchcatch.campaign.dto.CampaignUpdateRequest;
 import com.launchcatch.campaign.dto.CampaignUpdateResponse;
 import com.launchcatch.campaign.service.CampaignCouponConditionResult;
 import com.launchcatch.campaign.service.CampaignCouponConditionService;
 import com.launchcatch.campaign.service.CampaignOwnerQueryService;
+import com.launchcatch.campaign.service.CampaignPauseResumeService;
 import com.launchcatch.campaign.service.CampaignTargetAudienceService;
 import com.launchcatch.global.response.CursorPageResponse;
 import com.launchcatch.global.response.ResponseEnvelope;
@@ -36,8 +38,9 @@ class CampaignControllerTest {
     private final CampaignCouponConditionService service = mock(CampaignCouponConditionService.class);
     private final CampaignTargetAudienceService targetAudienceService = mock(CampaignTargetAudienceService.class);
     private final CampaignOwnerQueryService ownerQueryService = mock(CampaignOwnerQueryService.class);
+    private final CampaignPauseResumeService pauseResumeService = mock(CampaignPauseResumeService.class);
     private final CampaignController controller =
-            new CampaignController(service, targetAudienceService, ownerQueryService);
+            new CampaignController(service, targetAudienceService, ownerQueryService, pauseResumeService);
     private final CustomUserDetails owner = new CustomUserDetails(7L, Role.OWNER);
 
     private final CampaignCouponConditionRequest request = new CampaignCouponConditionRequest(
@@ -81,6 +84,28 @@ class CampaignControllerTest {
                 controller.updateTargetAudience(501L, targetAudienceRequest, owner);
 
         verify(targetAudienceService).handle(7L, 501L, targetAudienceRequest);
+        assertThat(result.data()).isSameAs(response);
+    }
+
+    @Test
+    void 중단은_중단_서비스_결과를_그대로_반환한다() {
+        CampaignStatusResponse response = new CampaignStatusResponse(501L, CampaignStatus.PAUSED);
+        when(pauseResumeService.pause(7L, 501L)).thenReturn(response);
+
+        ResponseEnvelope<CampaignStatusResponse> result = controller.pause(501L, owner);
+
+        verify(pauseResumeService).pause(7L, 501L);
+        assertThat(result.data()).isSameAs(response);
+    }
+
+    @Test
+    void 재개는_재개_서비스_결과를_그대로_반환한다() {
+        CampaignStatusResponse response = new CampaignStatusResponse(501L, CampaignStatus.ACTIVE);
+        when(pauseResumeService.resume(7L, 501L)).thenReturn(response);
+
+        ResponseEnvelope<CampaignStatusResponse> result = controller.resume(501L, owner);
+
+        verify(pauseResumeService).resume(7L, 501L);
         assertThat(result.data()).isSameAs(response);
     }
 
