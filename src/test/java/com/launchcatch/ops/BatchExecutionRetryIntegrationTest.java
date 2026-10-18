@@ -1,4 +1,4 @@
-package com.launchcatch.ops.controller;
+package com.launchcatch.ops;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
@@ -8,7 +8,6 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.launchcatch.auth.CustomUserDetails;
 import com.launchcatch.auth.Role;
-import com.launchcatch.ops.AbstractOpsIntegrationTest;
 import com.launchcatch.ops.exception.OpsErrorCode;
 import com.launchcatch.ops.exception.OpsException;
 import com.launchcatch.ops.service.BatchExecutionRetryService;
