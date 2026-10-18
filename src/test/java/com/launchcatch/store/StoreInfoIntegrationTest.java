@@ -2,7 +2,6 @@ package com.launchcatch.store;
 
 import static org.assertj.core.api.Assertions.*;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
-import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 import com.launchcatch.auth.CustomUserDetails;
@@ -20,22 +19,16 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
-import org.springframework.test.web.servlet.setup.MockMvcBuilders;
-import org.springframework.web.context.WebApplicationContext;
 
 class StoreInfoIntegrationTest extends AbstractStoreIntegrationTest {
     private static final AtomicLong IDS = new AtomicLong(4150000000L);
     private static final String PATH = "/v1/owner/store/basic";
-    @Autowired WebApplicationContext context;
     @Autowired JdbcTemplate jdbc;
-    private MockMvc mvc;
     private long ownerId;
 
     @BeforeEach
     void prepare() {
-        mvc = MockMvcBuilders.webAppContextSetup(context).apply(springSecurity()).build();
         ownerId = IDS.incrementAndGet();
         var now = LocalDateTime.now();
         jdbc.update("insert into owner (owner_id,email,password_hash,role,status,created_at,updated_at) values (?,?,'test','OWNER','ONBOARDING',?,?)",

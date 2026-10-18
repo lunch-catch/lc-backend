@@ -20,4 +20,14 @@ public class OwnerStoreSecurityConfig {
                         .anyRequest().denyAll())
                 .build();
     }
+    @Bean
+    @Order(ApiSecurityDefaults.DOMAIN_CHAIN_ORDER)
+    public SecurityFilterChain ownerStoreOnboardingFilterChain(HttpSecurity http, ApiSecurityDefaults defaults)
+            throws Exception {
+        return defaults.apply(http.securityMatcher("/v1/owner/onboarding"))
+                .authorizeHttpRequests(auth -> auth
+                        .requestMatchers(HttpMethod.GET, "/v1/owner/onboarding").hasRole("OWNER")
+                        .anyRequest().denyAll())
+                .build();
+    }
 }

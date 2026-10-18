@@ -10,9 +10,8 @@ import org.springframework.security.web.SecurityFilterChain;
 @Configuration
 public class StoreSecurityConfig {
 
-    // 점주의 가게 등록 진행 상태와 이미지, 메뉴 등록 경로다(#375, #389).
+    // 점주의 이미지, 메뉴 등록 경로다(#375, #389).
     private static final String[] OWNER_PATHS = {
-            "/v1/owner/store-registration-progress",
             "/v1/owner/store-images:prepareUpload",
             "/v1/owner/store-images:confirmUpload",
             "/v1/owner/store-images:complete",

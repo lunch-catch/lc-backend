@@ -1,23 +1,33 @@
 package com.launchcatch.store.service;
 
-import com.launchcatch.store.dto.StoreRegistrationProgressResponse;
+import com.launchcatch.store.contract.StoreOnboardingQuery;
+import com.launchcatch.store.contract.StoreOnboardingStatus;
 import com.launchcatch.store.entity.StoreRegistrationStep;
-import com.launchcatch.store.repository.StoreRegistrationProgressRepository;
+import com.launchcatch.store.repository.StoreOnboardingQueryRepository;
+import java.util.Arrays;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
 @RequiredArgsConstructor
-public class StoreRegistrationProgressQueryService {
-    private final StoreRegistrationProgressRepository progresses;
+public class StoreRegistrationProgressQueryService implements StoreOnboardingQuery {
+    private final StoreOnboardingQueryRepository stores;
 
-    // 최초 조회는 DB에 쓰지 않으며 진행 상태 생성은 점주 행을 잠근 약관 저장 트랜잭션에서 처리한다.
+    @Override
     @Transactional(readOnly = true)
-    public StoreRegistrationProgressResponse getProgress(Long ownerId) {
-        return progresses.findByOwnerId(ownerId)
-                .map(progress -> new StoreRegistrationProgressResponse(
-                        progress.getStoreId(), progress.getResumeStep(), progress.getVersion()))
-                .orElseGet(() -> new StoreRegistrationProgressResponse(null, StoreRegistrationStep.TERMS, 0L));
+    public StoreOnboardingStatus getProgress(Long ownerId) {
+        if (ownerId == null || ownerId <= 0) {
+            throw new IllegalArgumentException("유효한 점주 ID가 필요합니다.");
+        }
+        var row = stores.findByOwnerId(ownerId);
+        var readiness = row.readiness();
+        var steps = Arrays.stream(StoreRegistrationStep.values())
+                .map(step -> new StoreOnboardingStatus.Step(step.name(), step != StoreRegistrationStep.MENU,
+                        readiness.completed(step)))
+                .toList();
+        return new StoreOnboardingStatus(row.storeId(),
+                row.finalized() ? null : readiness.firstIncompleteStep().name(), row.version(),
+                row.finalized(), !row.finalized() && readiness.canFinalize(), steps);
     }
 }
