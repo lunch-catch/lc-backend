@@ -2,43 +2,28 @@ package com.launchcatch.coupon.service;
 
 import com.launchcatch.coupon.CouponQrImageEncoder;
 import com.launchcatch.coupon.contract.CouponIssuedEvent;
-import com.launchcatch.coupon.contract.CouponRedeemedEvent;
 import com.launchcatch.coupon.dto.CouponIssueResponse;
 import com.launchcatch.coupon.dto.CouponQrResponse;
-import com.launchcatch.coupon.dto.CouponUseRequest;
-import com.launchcatch.coupon.dto.CouponUseResponse;
 import com.launchcatch.coupon.entity.CouponDailyLimit;
 import com.launchcatch.coupon.entity.CouponEvent;
 import com.launchcatch.coupon.entity.CouponEventStatus;
 import com.launchcatch.coupon.entity.CouponInventory;
 import com.launchcatch.coupon.entity.CouponInventoryStatus;
-import com.launchcatch.coupon.entity.CouponUsageHistory;
 import com.launchcatch.coupon.entity.MemberCoupon;
-import com.launchcatch.coupon.entity.MemberCouponStatus;
 import com.launchcatch.coupon.exception.CouponErrorCode;
 import com.launchcatch.coupon.exception.CouponException;
 import com.launchcatch.coupon.repository.CouponDailyLimitRepository;
 import com.launchcatch.coupon.repository.CouponEventRepository;
 import com.launchcatch.coupon.repository.CouponInventoryRepository;
-import com.launchcatch.coupon.repository.CouponUsageHistoryRepository;
-import com.launchcatch.coupon.repository.MemberCouponRepository.QrReference;
 import com.launchcatch.coupon.repository.MemberCouponRepository;
 import com.launchcatch.global.config.ClockConfig;
-import com.launchcatch.global.exception.CommonErrorCode;
-import com.launchcatch.global.geo.GeoDistance;
 import com.launchcatch.member.contract.MemberInfo;
 import com.launchcatch.member.contract.MemberQueryService;
 import com.launchcatch.member.contract.MemberStatus;
-import com.launchcatch.owner.contract.OwnerAccountStatus;
-import com.launchcatch.owner.contract.OwnerStatusQuery;
-import com.launchcatch.store.contract.StoreInfo;
-import com.launchcatch.store.contract.StoreQueryService;
 import java.time.Clock;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
-import java.time.temporal.ChronoUnit;
-import java.util.List;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -61,14 +46,9 @@ public class CouponCommandService {
     private final CouponInventoryRepository couponInventoryRepository;
     private final CouponQrImageEncoder imageEncoder;
     private final Clock clock;
-    private final CouponUsageHistoryRepository couponUsageHistoryRepository;
-    private final OwnerStatusQuery ownerStatusQuery;
-    private final StoreQueryService storeQueryService;
     private final ApplicationEventPublisher eventPublisher;
 
-    private static final double MAX_DISTANCE_METERS = 100;
     private static final String ISSUED_EVENT_ID_PREFIX = "coupon-issued:";
-    private static final String REDEEMED_EVENT_ID_PREFIX = "coupon-redeemed:";
 
     @Value("${coupon.daily-limit:3}")
     private int dailyLimit;
@@ -217,79 +197,4 @@ public class CouponCommandService {
         }
     }
 
-    /*
-     * 점주의 QR 사용 요청을 검증하고 쿠폰 상태와 사용 이력을 함께 확정한다.
-     * 사용한 마지막 토큰을 보존하여 같은 QR의 재시도와 교체된 QR을 구분한다.
-     */
-    @Transactional(isolation = Isolation.READ_COMMITTED)
-    public CouponUseResponse redeem(Long ownerId, CouponUseRequest request) {
-        try {
-            // 1. 현재 점주 상태를 확인한 뒤 토큰으로 쿠폰 ID와 QR 버전만 조회한다.
-            checkOwner(ownerId);
-            QrReference reference = memberCouponRepository.findQrReference(request.qrToken())
-                    .orElseThrow(() -> new CouponException(CouponErrorCode.QR_NOT_VALID));
-            // 2. QR 갱신·삭제·사용이 같은 쿠폰 행 잠금으로 직렬화되도록 최신 상태를 읽는다.
-            MemberCoupon coupon = memberCouponRepository.findByIdForUpdate(reference.getId())
-                    .orElseThrow(() -> new CouponException(CouponErrorCode.QR_NOT_VALID));
-            CouponEvent event = couponEventRepository.findById(coupon.getCouponEventId())
-                    .orElseThrow(() -> new CouponException(CommonErrorCode.INTERNAL_ERROR));
-            if (!storeQueryService.canManageStore(ownerId, event.getStoreId())) {
-                throw new CouponException(CouponErrorCode.COUPON_ACCESS_DENIED);
-            }
-            // 3. 현재 매장 권한을 확인한 점주에게만 실제 사용한 QR의 재요청을 구분한다.
-            if (coupon.getStatus() == MemberCouponStatus.USED) {
-                coupon.validateQrToken(request.qrToken(), reference.getQrVersion());
-                throw new CouponException(CouponErrorCode.COUPON_ALREADY_USED);
-            }
-            checkMemberStatusActive(coupon);
-            StoreInfo store = findStore(event.getStoreId());
-            // 4. 잠금 대기 후 현재 시각으로 유효 시간을 판정한다.
-            LocalDateTime now = LocalDateTime.now(clock.withZone(ClockConfig.ZONE)).truncatedTo(ChronoUnit.MICROS);
-            if (GeoDistance.meters(request.latitude(), request.longitude(), store.latitude(), store.longitude())
-                    > MAX_DISTANCE_METERS) {
-                throw new CouponException(CouponErrorCode.LOCATION_NOT_ALLOWED);
-            }
-            // 5. 쿠폰 스냅샷으로 메뉴 한 개의 할인액을 계산하고 쿠폰을 사용 처리한다.
-            int discount = event.calculateDiscount();
-            coupon.redeem(request.qrToken(), reference.getQrVersion(), now);
-            // 6. 사용 이력을 JPA로 저장하고 쿠폰 상태도 함께 반영하며 실패하면 둘 다 롤백한다.
-            CouponUsageHistory history = couponUsageHistoryRepository.saveAndFlush(
-                    CouponUsageHistory.record(coupon.getId(), event.getStoreId(), discount));
-            eventPublisher.publishEvent(new CouponRedeemedEvent(
-                    REDEEMED_EVENT_ID_PREFIX + coupon.getId(),
-                    history.getCreatedAt(),
-                    coupon.getMemberId(),
-                    event.getCampaignId(),
-                    event.getStoreId(),
-                    event.getId(),
-                    coupon.getId()));
-            // MySQL DATETIME(6)과 같은 정밀도로 auditing 시각을 반올림한다.
-            return new CouponUseResponse(coupon.getId(), history.getId(), discount,
-                    history.getCreatedAt().plusNanos(500).truncatedTo(ChronoUnit.MICROS)
-                            .atZone(ClockConfig.ZONE).toOffsetDateTime());
-        } catch (CouponException error) {
-            if (error.getErrorCode().getHttpStatus().is5xxServerError()) {
-                log.error("event=COUPON_USAGE_DATA_INVALID ownerId={} reason={}", ownerId, error.getErrorCode().getCode());
-            } else {
-                log.warn("event=COUPON_USAGE_FAILED ownerId={} reason={}", ownerId, error.getErrorCode().getCode());
-            }
-            throw error;
-        }
-    }
-
-    private void checkOwner(Long ownerId) {
-        if (ownerStatusQuery.findCurrentStatus(ownerId).orElse(null) != OwnerAccountStatus.ACTIVE) {
-            throw new CouponException(CouponErrorCode.OWNER_ACCOUNT_NOT_ALLOWED);
-        }
-    }
-
-    private StoreInfo findStore(Long storeId) {
-        StoreInfo store = storeQueryService.findAllById(List.of(storeId)).stream()
-                .findFirst()
-                .orElseThrow(() -> new CouponException(CommonErrorCode.INTERNAL_ERROR));
-        if (store.latitude() == null || store.longitude() == null) {
-            throw new CouponException(CommonErrorCode.INTERNAL_ERROR);
-        }
-        return store;
-    }
 }

@@ -38,6 +38,39 @@ public interface CouponEventRepository extends JpaRepository<CouponEvent, Long> 
         long getQuantity();
     }
 
+    // 네 수량을 같은 스냅샷에서 각각 집계해 재고와 사용 이력의 조인으로 수량이 중복되지 않게 한다.
+    @Query(value = """
+            SELECT
+                (SELECT COALESCE(SUM(event.issue_quantity), 0)
+                   FROM coupon_event event
+                  WHERE event.campaign_id = :campaignId AND event.business_date BETWEEN :from AND :to) AS totalQuantity,
+                (SELECT COUNT(coupon.member_coupon_id)
+                   FROM member_coupon coupon
+                   JOIN coupon_event event ON event.coupon_event_id = coupon.coupon_event_id
+                  WHERE event.campaign_id = :campaignId AND event.business_date BETWEEN :from AND :to) AS issuedCount,
+                (SELECT COUNT(history.coupon_usage_history_id)
+                   FROM coupon_usage_history history
+                   JOIN member_coupon coupon ON coupon.member_coupon_id = history.member_coupon_id
+                   JOIN coupon_event event ON event.coupon_event_id = coupon.coupon_event_id
+                  WHERE event.campaign_id = :campaignId
+                    AND history.created_at >= :fromInclusive AND history.created_at < :toExclusive) AS usedCount,
+                (SELECT COUNT(inventory.coupon_inventory_id)
+                   FROM coupon_inventory inventory
+                   JOIN coupon_event event ON event.coupon_event_id = inventory.coupon_event_id
+                  WHERE event.campaign_id = :campaignId AND event.business_date BETWEEN :from AND :to
+                    AND inventory.status = 'AVAILABLE') AS remainingQuantity
+            """, nativeQuery = true)
+    OwnerSummary findOwnerSummary(@Param("campaignId") long campaignId,
+            @Param("from") LocalDate from, @Param("to") LocalDate to,
+            @Param("fromInclusive") LocalDateTime fromInclusive, @Param("toExclusive") LocalDateTime toExclusive);
+
+    interface OwnerSummary {
+        long getTotalQuantity();
+        long getIssuedCount();
+        long getUsedCount();
+        long getRemainingQuantity();
+    }
+
     // 회차별 수치와 실제 사용일의 수치를 각각 묶어 조인으로 발급·오픈 수가 늘지 않게 한다.
     @Query(value = """
             SELECT stats.campaign_id AS campaignId,

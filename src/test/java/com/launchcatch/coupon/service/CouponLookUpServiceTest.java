@@ -5,21 +5,26 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.when;
-import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
-import com.launchcatch.auth.exception.AuthErrorCode;
+import com.launchcatch.campaign.contract.CampaignInfo;
+import com.launchcatch.campaign.contract.CampaignQueryService;
+import com.launchcatch.campaign.contract.CampaignStatus;
 import com.launchcatch.coupon.CouponListFilter;
 import com.launchcatch.coupon.dto.CouponDetailResponse;
+import com.launchcatch.coupon.dto.CouponEventStatusResponse.CannotIssueReason;
+import com.launchcatch.coupon.dto.CouponEventStatusResponse.EventState;
+import com.launchcatch.coupon.dto.CouponEventStatusResponse.Item;
 import com.launchcatch.coupon.dto.CouponIssuanceLimitResponse;
 import com.launchcatch.coupon.dto.CouponSummaryResponse;
 import com.launchcatch.coupon.entity.CouponEvent;
 import com.launchcatch.coupon.entity.CouponEventStatus;
+import com.launchcatch.coupon.entity.CouponInventoryStatus;
 import com.launchcatch.coupon.entity.CouponUsageHistory;
 import com.launchcatch.coupon.entity.DiscountTargetType;
 import com.launchcatch.coupon.entity.DiscountType;
@@ -35,29 +40,19 @@ import com.launchcatch.global.exception.CommonErrorCode;
 import com.launchcatch.global.response.CursorPageResponse;
 import com.launchcatch.global.response.PageCursor;
 import com.launchcatch.global.response.PageTokens;
-import com.launchcatch.owner.contract.OwnerAccountStatus;
-import com.launchcatch.owner.contract.OwnerStatusQuery;
-import com.launchcatch.campaign.contract.CampaignInfo;
-import com.launchcatch.campaign.contract.CampaignQueryService;
-import com.launchcatch.campaign.contract.CampaignStatus;
-import com.launchcatch.coupon.dto.CouponEventStatusResponse.Item;
-import com.launchcatch.coupon.dto.CouponEventStatusResponse.CannotIssueReason;
-import com.launchcatch.coupon.dto.CouponEventStatusResponse.EventState;
-import com.launchcatch.coupon.entity.CouponInventoryStatus;
 import com.launchcatch.member.contract.MemberInfo;
 import com.launchcatch.member.contract.MemberQueryService;
 import com.launchcatch.member.contract.MemberStatus;
-import java.time.LocalTime;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
-import java.util.stream.Stream;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -65,9 +60,7 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.CsvSource;
-import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.Mock;
@@ -78,7 +71,7 @@ import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.test.util.ReflectionTestUtils;
 
 @ExtendWith(MockitoExtension.class)
-@DisplayName("쿠폰 조회 서비스")
+@DisplayName("회원 쿠폰 조회 서비스")
 class CouponLookUpServiceTest {
 
     private static final LocalDate TODAY = LocalDate.of(2026, 10, 10);
@@ -87,7 +80,6 @@ class CouponLookUpServiceTest {
     @Mock MemberCouponRepository memberCouponRepository;
     @Mock CouponEventRepository couponEventRepository;
     @Mock CouponUsageHistoryRepository couponUsageHistoryRepository;
-    @Mock OwnerStatusQuery ownerStatusQuery;
     @Mock CampaignQueryService campaignQueryService;
     @Mock MemberQueryService memberQueryService;
 
@@ -169,7 +161,7 @@ class CouponLookUpServiceTest {
         @BeforeEach
         void setUp() {
             service = new CouponLookUpService(
-                    memberCouponRepository, couponEventRepository, couponUsageHistoryRepository, couponDailyLimitRepository, ownerStatusQuery, campaignQueryService, memberQueryService,
+                    memberCouponRepository, couponEventRepository, couponUsageHistoryRepository, couponDailyLimitRepository, campaignQueryService, memberQueryService,
                     Clock.fixed(Instant.parse("2026-10-10T03:00:00Z"), ZoneOffset.UTC));
         }
 
@@ -659,7 +651,7 @@ class CouponLookUpServiceTest {
         // 지정한 시각을 사용하는 상세 조회 서비스를 구성한다.
         private CouponLookUpService serviceAt(Instant instant) {
             CouponLookUpService configured = new CouponLookUpService(
-                    memberCouponRepository, couponEventRepository, couponUsageHistoryRepository, couponDailyLimitRepository, ownerStatusQuery, campaignQueryService, memberQueryService,
+                    memberCouponRepository, couponEventRepository, couponUsageHistoryRepository, couponDailyLimitRepository, campaignQueryService, memberQueryService,
                     Clock.fixed(instant, ZoneOffset.UTC));
             return configured;
         }
@@ -721,169 +713,11 @@ class CouponLookUpServiceTest {
 
     // 지정한 시계와 일일 발급 한도를 사용하는 조회 서비스를 구성한다.
     private CouponLookUpService configuredService(Clock clock, int dailyLimit) {
-        CouponLookUpService configured = new CouponLookUpService(memberCouponRepository, couponEventRepository, couponUsageHistoryRepository, repository, ownerStatusQuery, campaignQueryService, memberQueryService, clock);
+        CouponLookUpService configured = new CouponLookUpService(memberCouponRepository, couponEventRepository, couponUsageHistoryRepository, repository, campaignQueryService, memberQueryService, clock);
         ReflectionTestUtils.setField(configured, "dailyLimit", dailyLimit);
         ReflectionTestUtils.setField(configured, "issueStartTime", LocalTime.of(11, 0));
         ReflectionTestUtils.setField(configured, "issueEndTime", LocalTime.of(14, 0));
         return configured;
-    }
-
-    @Nested
-    @DisplayName("매장 사용 이력 조회")
-    class UsageHistoryQuery {
-
-        private static final LocalDate FROM = LocalDate.of(2026, 9, 1);
-        private static final LocalDate TO = LocalDate.of(2026, 9, 30);
-        private static final LocalDateTime USE_TIME = TO.atTime(12, 30, 0, 123456000);
-
-        @Mock MemberCouponRepository memberCouponRepository;
-        @Mock CouponEventRepository couponEventRepository;
-        @Mock CouponUsageHistoryRepository repository;
-        @Mock CouponDailyLimitRepository couponDailyLimitRepository;
-        @Mock Clock clock;
-        @Mock OwnerStatusQuery ownerStatusQuery;
-
-        private CouponLookUpService service;
-
-        @BeforeEach
-        void setUp() {
-            service = new CouponLookUpService(
-                    memberCouponRepository, couponEventRepository, repository, couponDailyLimitRepository, ownerStatusQuery, campaignQueryService, memberQueryService, clock);
-            when(ownerStatusQuery.findCurrentStatus(17L)).thenReturn(Optional.of(OwnerAccountStatus.ACTIVE));
-        }
-
-        @ParameterizedTest
-        @EnumSource(value = OwnerAccountStatus.class, names = "ACTIVE", mode = EnumSource.Mode.EXCLUDE)
-        void ACTIVE가_아닌_점주는_이력을_조회하지_않고_거절한다(OwnerAccountStatus status) {
-            when(ownerStatusQuery.findCurrentStatus(17L)).thenReturn(Optional.of(status));
-
-            assertThatThrownBy(() -> service.getUsages(17L, 10L, FROM, TO, 20, null))
-                    .isInstanceOfSatisfying(CouponException.class,
-                            e -> assertThat(e.getErrorCode()).isEqualTo(AuthErrorCode.ROLE_NOT_ALLOWED));
-            verifyNoInteractions(repository);
-        }
-
-        @Test
-        void 점주가_없으면_이력을_조회하지_않고_거절한다() {
-            when(ownerStatusQuery.findCurrentStatus(17L)).thenReturn(Optional.empty());
-
-            assertThatThrownBy(() -> service.getUsages(17L, 10L, FROM, TO, 20, null))
-                    .isInstanceOfSatisfying(CouponException.class,
-                            e -> assertThat(e.getErrorCode()).isEqualTo(AuthErrorCode.ROLE_NOT_ALLOWED));
-            verifyNoInteractions(repository);
-        }
-
-        @Test
-        void 점주_상태_조회_실패를_ACTIVE로_바꾸지_않는다() {
-            var failure = new DataAccessResourceFailureException("owner status query failed");
-            when(ownerStatusQuery.findCurrentStatus(17L)).thenThrow(failure);
-
-            assertThatThrownBy(() -> service.getUsages(17L, 10L, FROM, TO, 20, null)).isSameAs(failure);
-            verifyNoInteractions(repository);
-        }
-
-        @Test
-        void 사용_이력이_없으면_빈_목록과_null_커서를_반환한다() {
-            when(repository.findPage(eq(10L), any(), any(), any(), any(), anyInt())).thenReturn(List.of());
-
-            assertThat(service.getUsages(17L, 10L, FROM, TO, 20, null)).isEqualTo(CursorPageResponse.of(List.of(), null));
-        }
-
-        @ParameterizedTest
-        @ValueSource(ints = {0, 2700})
-        void 저장된_확정_할인액과_마이크로초를_보존한_한국_사용_시각을_반환한다(int discountAmount) {
-            when(repository.findPage(eq(10L), any(), any(), any(), any(), anyInt()))
-                    .thenReturn(List.of(history(5001L, 1001L, discountAmount, USE_TIME)));
-
-            var response = service.getUsages(17L, 10L, FROM, TO, 20, null);
-
-            var item = response.items().getFirst();
-            assertThat(item.usageHistoryId()).isEqualTo(5001L);
-            assertThat(item.memberCouponId()).isEqualTo(1001L);
-            assertThat(item.discountAmount()).isEqualTo(discountAmount);
-            assertThat(item.useTime()).isEqualTo(USE_TIME.atOffset(ZoneOffset.ofHours(9)));
-            assertThat(response.nextPageToken()).isNull();
-        }
-
-        @Test
-        void DB_조회_실패를_빈_이력으로_바꾸지_않는다() {
-            var failure = new DataAccessResourceFailureException("usage query failed");
-            when(repository.findPage(eq(10L), any(), any(), any(), any(), anyInt())).thenThrow(failure);
-
-            assertThatThrownBy(() -> service.getUsages(17L, 10L, FROM, TO, 20, null)).isSameAs(failure);
-        }
-
-        @Test
-        void 다음_페이지_커서는_반환한_마지막_항목을_가리키며_같은_조건으로_재사용할_수_있다() {
-            when(repository.findPage(10L, FROM.atStartOfDay(), TO.plusDays(1).atStartOfDay(), null, null, 3))
-                    .thenReturn(List.of(history(5003L, 1003L, 3000, USE_TIME),
-                            history(5002L, 1002L, 2000, USE_TIME), history(5001L, 1001L, 1000, USE_TIME)));
-            var first = service.getUsages(17L, 10L, FROM, TO, 2, null);
-            when(repository.findPage(10L, FROM.atStartOfDay(), TO.plusDays(1).atStartOfDay(), USE_TIME, 5002L, 3))
-                    .thenReturn(List.of(history(5001L, 1001L, 1000, USE_TIME)));
-
-            var second = service.getUsages(17L, 10L, FROM, TO, 2, first.nextPageToken());
-
-            assertThat(first.items()).extracting(item -> item.usageHistoryId()).containsExactly(5003L, 5002L);
-            assertThat(second.items()).extracting(item -> item.usageHistoryId()).containsExactly(5001L);
-            assertThat(second.nextPageToken()).isNull();
-        }
-
-        @ParameterizedTest
-        @ValueSource(strings = {"", "not-a-token", "cDox", "cDoxfA"})
-        void 해석할_수_없는_커서를_거절한다(String token) {
-            assertThatThrownBy(() -> service.getUsages(17L, 10L, FROM, TO, 20, token))
-                    .isInstanceOfSatisfying(CouponException.class,
-                            e -> assertThat(e.getErrorCode()).isEqualTo(CommonErrorCode.INVALID_INPUT));
-        }
-
-        static Stream<Arguments> invalidCursors() {
-            return Stream.of(
-                    Arguments.of(0L, USE_TIME + "|10|2026-09-01|2026-09-30"),
-                    Arguments.of(-1L, USE_TIME + "|10|2026-09-01|2026-09-30"),
-                    Arguments.of(1L, "not-a-time|10|2026-09-01|2026-09-30"),
-                    Arguments.of(1L, USE_TIME + "|11|2026-09-01|2026-09-30"),
-                    Arguments.of(1L, USE_TIME + "|10|2026-09-02|2026-09-30"),
-                    Arguments.of(1L, USE_TIME + "|10|2026-09-01|2026-10-01"),
-                    Arguments.of(1L, USE_TIME + "|ALL"),
-                    Arguments.of(1L, USE_TIME + "|10|2026-09-01|2026-09-30|extra"),
-                    Arguments.of(1L, "2026-08-31T23:59|10|2026-09-01|2026-09-30"),
-                    Arguments.of(1L, "2026-10-01T00:00|10|2026-09-01|2026-09-30"));
-        }
-
-        @ParameterizedTest
-        @MethodSource("invalidCursors")
-        void 커서_ID와_시각_및_조회_조건을_검증한다(Long id, String sortValue) {
-            String token = PageTokens.encode(new PageCursor(id, sortValue));
-
-            assertThatThrownBy(() -> service.getUsages(17L, 10L, FROM, TO, 20, token))
-                    .isInstanceOfSatisfying(CouponException.class,
-                            e -> assertThat(e.getErrorCode()).isEqualTo(CommonErrorCode.INVALID_INPUT));
-        }
-
-        static Stream<Arguments> invalidDateRanges() {
-            return Stream.of(
-                    Arguments.of(TO, FROM),
-                    Arguments.of(FROM, LocalDate.MAX));
-        }
-
-        @ParameterizedTest
-        @MethodSource("invalidDateRanges")
-        void 잘못된_조회_기간을_거절한다(LocalDate from, LocalDate to) {
-            assertThatThrownBy(() -> service.getUsages(17L, 10L, from, to, 20, null))
-                    .isInstanceOfSatisfying(CouponException.class,
-                            e -> assertThat(e.getErrorCode()).isEqualTo(CommonErrorCode.INVALID_INPUT));
-        }
-
-        // 매장 사용 이력 조회에 사용할 식별자와 확정 할인액, 사용 시각을 구성한다.
-        private CouponUsageHistory history(Long id, Long memberCouponId, int discountAmount, LocalDateTime useTime) {
-            CouponUsageHistory history = BeanUtils.instantiateClass(CouponUsageHistory.class);
-            ReflectionTestUtils.setField(history, "id", id);
-            ReflectionTestUtils.setField(history, "memberCouponId", memberCouponId);
-            ReflectionTestUtils.setField(history, "discountAmount", discountAmount);
-            ReflectionTestUtils.setField(history, "createdAt", useTime);
-            return history;
-        }
     }
 
     @Nested
