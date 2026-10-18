@@ -2,7 +2,6 @@ package com.launchcatch.store;
 
 import static org.assertj.core.api.Assertions.*;
 import static org.mockito.Mockito.*;
-import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 import com.launchcatch.auth.Role;
@@ -30,21 +29,16 @@ import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.util.ReflectionTestUtils;
-import org.springframework.test.web.servlet.MockMvc;
-import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
-import org.springframework.web.context.WebApplicationContext;
 
 class OwnerTermsAgreementIntegrationTest extends AbstractStoreIntegrationTest {
-    @Autowired private WebApplicationContext context;
     @Autowired private OwnerRepository owners;
     @Autowired private OwnerTermsSubmissionService service;
     @Autowired private JwtTokenProvider jwt;
     @Autowired private JdbcTemplate jdbc;
     @Autowired private com.launchcatch.store.service.StoreRegistrationProgressQueryService progressQuery;
     @Autowired private PlatformTransactionManager manager;
-    private MockMvc mvc;
     private Long ownerId;
     private static final String BODY = "{}";
 
@@ -54,7 +48,6 @@ class OwnerTermsAgreementIntegrationTest extends AbstractStoreIntegrationTest {
         var now = LocalDateTime.now();
         owner.recordLogin("a".repeat(64), now.plusDays(14), now);
         ownerId = owners.saveAndFlush(owner).getId();
-        mvc = MockMvcBuilders.webAppContextSetup(context).apply(springSecurity()).build();
     }
 
     @AfterEach

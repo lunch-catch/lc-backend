@@ -1,6 +1,7 @@
 package com.launchcatch.store.service;
 
 import com.launchcatch.store.StoreImageUrlResolver;
+import com.launchcatch.store.StoreBusinessHours;
 import com.launchcatch.store.contract.OwnerStoreOverview.Onboarding;
 import com.launchcatch.store.contract.OwnerStoreOverview.Step;
 import com.launchcatch.store.contract.OwnerStoreOverview.TermsAgreement;
@@ -179,7 +180,8 @@ class StoreQueryServiceImpl implements StoreQueryService {
                 && store.businessVerifiedAt() != null;
         boolean location = store != null && present(store.kakaoPlaceId()) && present(store.roadAddress())
                 && store.latitude() != null && store.longitude() != null;
-        boolean hours = store != null && !store.businessHours().isEmpty();
+        boolean hasHours = store != null && !store.businessHours().isEmpty();
+        boolean hours = store != null && StoreBusinessHours.isComplete(store.businessHours());
         boolean imagesComplete = store != null && store.logoImage() != null && store.interiorImages().size() <= 3;
         boolean hasMenus = store != null && !store.menus().isEmpty();
         boolean menusValid = store == null || store.menus().size() <= 3 && store.menus().stream()
@@ -189,7 +191,7 @@ class StoreQueryServiceImpl implements StoreQueryService {
                 new Step("STORE_INFO", false, store != null, basic),
                 new Step("LOCATION", false, store != null && (store.kakaoPlaceId() != null
                         || store.roadAddress() != null || store.latitude() != null || store.longitude() != null), location),
-                new Step("HOURS", false, hours, hours),
+                new Step("HOURS", false, hasHours, hours),
                 new Step("IMAGES", false, store != null && (store.logoImage() != null
                         || !store.interiorImages().isEmpty()), imagesComplete),
                 new Step("MENU", true, hasMenus, hasMenus && menusValid));

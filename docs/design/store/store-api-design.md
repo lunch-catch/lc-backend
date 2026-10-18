@@ -254,6 +254,43 @@ MySQL 기본 REPEATABLE READ의 스냅샷으로 읽으며 쓰기 잠금과 진�
 TERMS는 develop에 병합된 PR #148의 필수 약관 단일 동의 계약을 따른다.
 OwnerStoreOverview를 HTTP DTO로 변환해 가게 생성 전에도 약관·진행 정보를 반환한다.
 완료 단계는 현재 업무 데이터를 확인한다. 약관은 유효한 단일 동의, STORE_INFO는 필수 5항목과 검증 성공,
-LOCATION은 장소·주소·좌표, HOURS는 저장 행 존재, IMAGES는 검증된 대표 이미지로 판단한다.
+LOCATION은 장소·주소·좌표, HOURS는 유효한 7일 전체 저장값, IMAGES는 검증된 대표 이미지로 판단한다.
 메뉴는 선택이며 입력한 메뉴가 있으면 3개 이하·메뉴명·가격·검증된 이미지를 확인한다.
 최종 등록 API가 추가 검증을 확정하면 조회의 canComplete와 같은 규칙을 사용해야 한다.
+
+## 영업시간 저장
+
+이슈 #489의 HOURS 저장을 구현한다. HTTP 계약과 시간 검증 규칙은
+[가게 API 명세](../../api-spec/store-api-spec.md#매장-영업시간-등록수정)가 소유한다.
+
+`OwnerStoreHoursController`는 검증한 요청을 `OwnerStoreHoursService`로 전달한다.
+점주 서비스가 트랜잭션을 열고 `OwnerRepository.findByIdForLogin`으로 점주 행을 잠근다.
+점주 상태에 따라 공개 계약 `StoreHoursSaver.saveOnboarding` 또는 `saveActive`를 호출한다.
+store는 owner의 내부 타입을 참조하지 않으며 `StoreHoursService`가 MANDATORY로 같은 트랜잭션에 참여한다.
+
+ONBOARDING의 잠금 순서는 점주 행 → 진행 상태 행 → 영업시간 행이다.
+요청 버전, 본인 초안과 진행 상태의 연결, 실제 약관·기본 정보·Mock 검증·위치 저장을 확인한다.
+현재 HOURS면 completeStep으로 IMAGES로 진행하고 이미 완료한 HOURS면 reviseStep으로 재개 위치를 보존한다.
+영업시간 교체와 진행 상태 변경이 함께 커밋되며 어느 쪽의 실패도 모두 롤백한다.
+
+ACTIVE는 최종 등록된 본인 가게만 허용하며 온보딩 진행 상태 저장소나 서비스를 호출하지 않는다.
+같은 점주의 ACTIVE 저장은 점주 행 잠금으로 직렬화하고 나중에 처리한 전체 요청을 반영한다.
+온보딩 version을 운영 정보의 버전으로 재사용하지 않는다.
+
+요청은 영업일만 받으며 `StoreBusinessHours.normalize`가 빠진 요일을 휴무·모든 시각 null로 채운다.
+선택 시각의 생략은 null로 처리하고 빈 목록은 일주일 전체 휴무로 변환한다.
+정규화한 7일 전체가 유효한지 확인한 뒤 기존 `store_business_hour`의 해당 가게 행을 삭제하고 JDBC batch로 삽입한다.
+행 ID는 외부 계약에 없으므로 보존하지 않으며 시각은 공통 Clock으로 계산한다.
+JPA 진행 상태 변경과 JDBC 업무 데이터 변경은 같은 데이터소스 트랜잭션에 참여한다.
+다른 단계의 업무 데이터와 가게 행은 변경하지 않는다.
+기존 테이블을 사용하며 적용된 마이그레이션은 수정하지 않는다.
+
+`StoreBusinessHours.isComplete`가 시간표의 유효성을 판정한다.
+저장 시 이 기준을 통과하지 못하면 400을 반환하며 내 가게 조회도 같은 기준으로 HOURS 완료 여부를 판단한다.
+기존의 일부 요일만 있는 데이터는 조회값을 유지하되 완료로 간주하지 않는다.
+별도 진행 상태 GET은 기존의 storeId·resumeStep·version 계약을 유지한다.
+단계별 완료 여부와 실제 데이터 기준 재개 위치·최종 등록 가능 여부는 기존 내 가게 조회가 반환한다.
+
+이 작업의 기반 develop에는 #482 위치 저장 API가 아직 없다.
+위치 API를 대체 구현하지 않으며 통합 테스트는 저장된 위치와 HOURS 진행 상태를 준비한다.
+실제 온보딩 화면의 순차 연결에는 선행 위치 저장 PR 반영이 필요하다.

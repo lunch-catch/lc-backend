@@ -737,10 +737,95 @@ agreedAt은 develop에 병합된 PR #148의 agreed_at 저장값이다.
 recordedAt은 저장 행의 created_at이다. agreed=true이고 철회 시각이 없을 때 TERMS 완료다.
 
 canComplete는 현재 조회의 입력 충족 여부다. 최종 등록 POST에서도 필수 조건을 다시 검증해야 한다.
-HOURS는 현재 저장 구조에서 영업시간 행이 존재하는지 확인한다. 향후 HOURS 저장 API의 추가 검증을 확정하면 같은 기준으로 맞춘다.
+HOURS는 [영업시간 저장 규칙](#매장-영업시간-등록수정)에 맞는 월~일 7개 요일이 모두 저장되어야 완료다. 일부 요일만 있으면 hasSavedData=true, completed=false다.
 진행 내역은 현재 저장 상태의 요약이며 덮어쓰기 전 값이나 단계별 과거 변경 이력을 생성하지 않는다.
 
 
 가게 생성 전에는 storeId와 가게 입력값이 null이며 목록은 []다. onboarding은 항상 반환한다.
 약관 동의가 없으면 resumeStep=TERMS이며 약관만 동의한 상태면 resumeStep=STORE_INFO다.
 어느 경우에도 GET에서 가게·진행 상태·약관을 생성하지 않는다.
+
+## 매장 영업시간 등록·수정
+
+`PUT /v1/owner/store/hours`
+
+입점 신청의 HOURS 단계와 ACTIVE 가게 관리에서 공용으로 사용한다.
+요청에 가게 ID·점주 ID를 받지 않으며 인증된 OWNER 본인의 가게를 대상으로 한다.
+ONBOARDING은 약관, 기본 정보·사업자 Mock 검증, 위치 저장이 완료된 초안이 있어야 한다.
+ACTIVE는 본인 소유의 최종 등록된 가게가 있어야 한다.
+
+### 요청
+
+| 필드 | 타입 | 필수·null 허용 | 설명 |
+|---|---|---|---|
+| version | integer(int64) | ONBOARDING은 필수·null 불가 | 0 이상의 현재 온보딩 버전. ACTIVE는 생략 또는 null이며 숫자를 보내면 400 |
+| businessHours | array | 필수·null 불가 | 영업일만 0~7개 전달한다. 누락한 요일은 휴무·모든 시각 null로 채워 7일 전체를 덮어쓴다. 빈 배열은 모두 휴무 |
+
+businessHours 항목:
+
+| 필드 | 타입 | 필수·null 허용 | 설명 |
+|---|---|---|---|
+| dayOfWeek | string(enum) | 필수·null 불가 | MONDAY, TUESDAY, WEDNESDAY, THURSDAY, FRIDAY, SATURDAY, SUNDAY |
+| isClosed | boolean | 선택·null 허용 | 생략 또는 null이면 false(영업일). 기존 요청처럼 true로 휴무일을 직접 보내는 것도 허용 |
+| openTime, closeTime | string(time) | 영업일 필수·null 불가 | `HH:mm:ss`, KST 당일 시각. 휴무일은 생략 또는 null |
+| breakStartTime, breakEndTime | string(time) | 선택·null 허용 | `HH:mm:ss`. 브레이크타임은 두 값을 함께 보내거나 모두 생략·null |
+| lastOrderTime | string(time) | 선택·null 허용 | `HH:mm:ss` |
+
+- 프론트는 영업일만 전달한다. 누락한 요일은 백엔드가 `isClosed=true`, 모든 시각 null로 저장한다. 요일 중복·null 항목·8개 이상은 400이다.
+- `businessHours` 자체의 누락·null은 400이다. 명시적인 빈 배열 `[]`은 7일 모두 휴무로 저장한다.
+- PUT은 전체 교체다. 이전에 영업일이던 요일도 이번 요청에서 빠지면 휴무로 바뀐다.
+- 영업일은 `openTime < closeTime`이다. 익일 마감과 24시간 영업은 이번 범위에서 지원하지 않는다.
+- 브레이크타임이 있으면 `openTime < breakStartTime < breakEndTime < closeTime`이다.
+- 라스트오더는 오픈 이상·마감 이하여야 하며 브레이크타임 구간 `[시작, 종료)` 안에 둘 수 없다.
+- 휴무일에는 모든 시각을 생략하거나 null로 보낸다. 시각을 보내면 자동으로 지우지 않고 거절한다.
+- 시각은 초 단위이며 소수 초·시간대 오프셋·`24:00:00`을 허용하지 않는다.
+- 선택 시각을 생략·null로 보내면 기존 값은 삭제된다. 저장값은 기존 내 가게 조회에서 월~일 순서로 확인한다.
+
+일요일이 휴무인 ONBOARDING 요청 예시다. 휴무일 항목과 `isClosed`는 보내지 않아도 된다:
+
+```json
+{
+  "version": 3,
+  "businessHours": [
+    {"dayOfWeek": "MONDAY", "isClosed": false, "openTime": "09:00:00", "closeTime": "21:00:00", "breakStartTime": "14:00:00", "breakEndTime": "15:00:00", "lastOrderTime": "20:30:00"},
+    {"dayOfWeek": "TUESDAY", "isClosed": false, "openTime": "09:00:00", "closeTime": "21:00:00"},
+    {"dayOfWeek": "WEDNESDAY", "isClosed": false, "openTime": "09:00:00", "closeTime": "21:00:00"},
+    {"dayOfWeek": "THURSDAY", "isClosed": false, "openTime": "09:00:00", "closeTime": "21:00:00"},
+    {"dayOfWeek": "FRIDAY", "isClosed": false, "openTime": "09:00:00", "closeTime": "21:00:00"},
+    {"dayOfWeek": "SATURDAY", "openTime": "09:00:00", "closeTime": "21:00:00"}
+  ]
+}
+```
+
+### 응답 `200`
+
+공통 성공 봉투의 data는 다음과 같다.
+
+| 필드 | 타입 | null 허용 | 설명 |
+|---|---|---|---|
+| storeId | integer(int64) | 아니오 | 저장한 본인 가게 ID |
+| resumeStep | string(enum) | 예 | 최초 HOURS 저장 후 IMAGES. 완료한 단계 재저장은 기존 재개 위치 유지. ACTIVE는 null |
+| version | integer(int64) | 예 | ONBOARDING은 저장 전보다 1 증가한 버전. ACTIVE는 null |
+
+ONBOARDING의 최초 성공 예: `{"storeId": 10, "resumeStep": "IMAGES", "version": 4}`.
+같은 내용의 재저장도 버전이 1 증가하며 오래된 버전은 409다.
+ACTIVE는 온보딩 진행 상태·버전을 생성하거나 변경하지 않는다.
+ACTIVE의 동시 저장은 순서대로 처리되며 마지막으로 처리된 요청의 전체 시간표가 남는다.
+검증 실패나 저장 실패 시 기존 영업시간과 온보딩 버전은 바뀌지 않는다.
+일주일 전체를 휴무로 저장하는 것도 허용하며 HOURS 입력 완료로 판단한다.
+
+### 오류
+
+| 상태 | 코드 | 조건 |
+|---|---|---|
+| 400 | COMMON-002 | 필수값 누락, 요일 중복·개수 오류, 시간 관계 오류, 상태에 맞지 않는 version |
+| 400 | COMMON-003 | 잘못된 JSON·요일 enum·시각 형식 |
+| 401 | AUTH-005 | 미인증 또는 존재하지 않는 점주 |
+| 403 | AUTH-006 | OWNER 외 역할 |
+| 403 | OWNER-002 | SUSPENDED·WITHDRAWN 등 허용되지 않은 점주 상태 |
+| 403 | STORE-004 | 본인 가게 없음, 초안·진행 상태의 가게 연결 불일치, 점주 상태와 최종 등록 여부 불일치 |
+| 409 | STORE-001 | ONBOARDING 요청 버전 충돌 |
+| 409 | STORE-002 | HOURS 이전 단계이거나 실제 선행 단계 필수 정보가 누락됨 |
+| 409 | STORE-003 | ONBOARDING 진행 상태 없음 |
+
+진행 화면의 단계별 GET은 추가하지 않는다. 사진·메뉴 저장과 최종 등록 실행은 이 API의 범위에 포함하지 않는다.
