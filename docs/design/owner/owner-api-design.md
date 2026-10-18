@@ -73,3 +73,13 @@ requireOnboarding은 owner 서비스의 내부 메서드이며 다른 도메인�
 StoreInfoSaveResult는 owner의 StoreInfoResponse로 변환하며 HTTP DTO를 도메인 간 계약으로 사용하지 않는다.
 토큰·계정 상태·튜토리얼·상태 캐시는 변경하지 않는다.
 저장 계약과 트랜잭션의 단일 기준은 [가게 API 설계](../store/store-api-design.md#접근-확인과-트랜잭션)를 따른다.
+
+## 입점 등록 진행 상태 조회의 점주 확인 (#453)
+
+OwnerStoreOnboardingController와 OwnerStoreOnboardingService가 기존 진행 상태 GET의 진입점을 담당한다.
+읽기 전용 트랜잭션에서 OwnerRepository.findStatusById로 DB 현재 상태를 확인한다.
+ONBOARDING·ACTIVE만 허용하며 계정 부재는 AUTH-005, 정지·탈퇴는 OWNER-002로 거부한다.
+DB 장애는 그대로 전파하고 상태 캐시나 토큰 상태값으로 대체하지 않는다.
+가게 판정은 store.contract.StoreOnboardingQuery에 위임하고 결과를 OwnerStoreOnboardingResponse로 변환한다.
+owner → store 방향을 유지하며 store에서 owner 상태를 역으로 조회하지 않는다.
+HTTP 계약은 [가게 API 명세](../../api-spec/store-api-spec.md#get-v1owneronboarding)가 소유한다.

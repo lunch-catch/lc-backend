@@ -82,7 +82,7 @@ StoreListIntegrationTest 하나에서 실제 MySQL의 거리 정렬과 반올림
 
 ## 점주 약관 동의
 
-계약은 [store-api-spec.md](../../api-spec/store-api-spec.md#점주-약관-동의)를 따른다.
+계약은 [store-api-spec.md](../../api-spec/store-api-spec.md#가게-등록-온보딩-1단계-점주-약관-동의)를 따른다.
 전체 약관이 필수이므로 요청 자체를 전체 동의로 처리한다. 약관별 정책 설정과 선택 약관 처리는 두지 않는다.
 owner는 점주 행을 잠그고 DB 현재 상태가 ONBOARDING인지 확인한 뒤 store.contract.OwnerTermsAgreementRecorder를 호출한다.
 store는 owner 내부에 의존하지 않는다.
@@ -162,6 +162,18 @@ StoreInfoService가 자기 도메인의 공개 계약을 구현하며 owner는 �
 진행 단계와 검증 결과는 문자열로 전달하고 owner의 HTTP 응답 DTO가 결과를 변환한다.
 가게 기본 정보와 Mock 판정 규칙은 store 내부에 유지하며 공개 명령을 받은 뒤 검증한다.
 
+## LOCATION 저장 (#482)
+
+HTTP 계약은 [가게 API 명세](../../api-spec/store-api-spec.md#가게-등록-온보딩-3단계-위치-저장-482)가 소유한다.
+OwnerStoreLocationService는 점주 행을 잠그고 ONBOARDING을 확인한 뒤 StoreLocationSaver를 호출한다.
+StoreLocationService는 호출자의 트랜잭션에 MANDATORY로 참여하고 진행 상태 행을 잠근다.
+잠금 순서는 기존 기본 정보 저장과 같은 점주 → 진행 상태 순서다.
+약관 동의·검증된 기본 정보·본인 초안 연결을 확인하고 기존 위치 컬럼과 진행 상태를 함께 저장한다.
+StoreLocation은 문자열 길이·좌표 범위를 검증하고 기존 DECIMAL(10,7)에 맞춰 좌표를 반올림한다. 카카오 클라이언트는 사용하지 않는다.
+최초 저장은 completeStep, 완료한 위치의 재저장은 reviseStep을 사용한다.
+기존 조회가 위치 컬럼으로 완료 여부를 계산하므로 별도 완료 플래그나 테이블을 추가하지 않는다.
+기존 스키마의 nullable 위치 컬럼을 매핑하며 미입력 초안의 null 허용을 유지한다.
+
 ## 점주 인테리어 이미지 업로드(`#375`)
 
 **서버가 하는 일**
@@ -188,7 +200,7 @@ StoreInfoService가 자기 도메인의 공개 계약을 구현하며 owner는 �
   과정에서 이미 필수로 등록돼 있다는 전제다. 가게 담당이 "대표 메뉴가 선택으로 바뀌어
   온보딩이 끝나도 메뉴가 없을 수 있다"고 확인해 줬지만, 그건 메뉴 얘기고 로고(`image_type=LOGO`)는
   `store_image`의 `uk_store_image_single_logo` 제약과 별개로 여전히 필수 전제다.
-- **`completeStep`에 필요한 `version`을 돌려주는 조회 API(`GET /v1/owner/store-registration-progress`)를
+- **`completeStep`에 필요한 `version`을 돌려주는 조회 API(`GET /v1/owner/onboarding`)를
   이 이슈에서 같이 만든다.** 등록 단계 API 전체가 아직 하나도 없어 클라이언트가 현재 버전을
   얻을 곳이 없었다. 이 조회는 저장된 진행 상태를 읽으며 없으면 TERMS와 버전 0을 반환한다.
   GET은 진행 상태를 생성하지 않는다. 최초 생성은 점주 행 잠금 아래 약관 저장에서 처리한다.
@@ -199,7 +211,6 @@ StoreInfoService가 자기 도메인의 공개 계약을 구현하며 owner는 �
 - **콜론 커스텀 메서드 경로(`:prepareUpload` 등)를 쓴다.** `api-spec.md` 공통 규약의 예시이고
   `AdminRefundController`(`/{id}:approve`)가 이미 같은 표기를 쓴다. 다만 이번엔 경로 변수 없이
   컬렉션 경로에 바로 붙는 형태라 실제로 라우팅되는지 통합 테스트로 확인했다(`StoreImageSecurityIntegrationTest`).
-
 
 ## 점주 대표 메뉴와 메뉴 이미지 업로드(`#389`)
 
@@ -258,14 +269,18 @@ LOCATION은 장소·주소·좌표, HOURS는 저장 행 존재, IMAGES는 검증
 메뉴는 선택이며 입력한 메뉴가 있으면 3개 이하·메뉴명·가격·검증된 이미지를 확인한다.
 최종 등록 API가 추가 검증을 확정하면 조회의 canComplete와 같은 규칙을 사용해야 한다.
 
-## LOCATION 저장 (#482)
+## 입점 등록 진행 상태 조회 (#453)
 
-HTTP 계약은 [가게 API 명세](../../api-spec/store-api-spec.md#가게-등록-온보딩-3단계-위치-저장-482)가 소유한다.
-OwnerStoreLocationService는 점주 행을 잠그고 ONBOARDING을 확인한 뒤 StoreLocationSaver를 호출한다.
-StoreLocationService는 호출자의 트랜잭션에 MANDATORY로 참여하고 진행 상태 행을 잠근다.
-잠금 순서는 기존 기본 정보 저장과 같은 점주 → 진행 상태 순서다.
-약관 동의·검증된 기본 정보·본인 초안 연결을 확인하고 기존 위치 컬럼과 진행 상태를 함께 저장한다.
-StoreLocation은 문자열 길이·좌표 범위를 검증하고 기존 DECIMAL(10,7)에 맞춰 좌표를 반올림한다. 카카오 클라이언트는 사용하지 않는다.
-최초 저장은 completeStep, 완료한 위치의 재저장은 reviseStep을 사용한다.
-기존 조회가 위치 컬럼으로 완료 여부를 계산하므로 별도 완료 플래그나 테이블을 추가하지 않는다.
-기존 스키마의 nullable 위치 컬럼을 매핑하며 미입력 초안의 null 허용을 유지한다.
+HTTP 계약과 단계별 완료 기준은 [가게 API 명세](../../api-spec/store-api-spec.md#get-v1owneronboarding)가 소유한다.
+GET /v1/owner/onboarding의 owner 진입점에서 점주 상태를 확인한 뒤 StoreOnboardingQuery를 호출한다.
+StoreRegistrationProgressQueryService가 공개 계약을 구현하며 StoreOnboardingStatus를 반환한다.
+입출력 계약은 store.contract에 두고 HTTP 응답 변환은 owner에서 처리한다.
+
+StoreOnboardingQueryRepository는 본인 owner_id를 바인딩한 SELECT 한 번으로 약관·가게·진행 상태와 업무 데이터 완료 조건을 읽는다.
+가게·진행 상태가 없는 경우도 한 행을 반환하며 다른 점주의 가게를 연결된 store_id로 따라가지 않는다.
+업로드 확인은 DB의 VERIFIED와 객체 키를 사용하며 GET에서 S3를 호출하지 않는다.
+DB 오류를 최초 진입이나 미완료 상태로 숨기지 않는다.
+StoreOnboardingReadiness가 첫 미완료 단계와 최종 등록 가능 여부를 계산한다.
+후속 최종 등록 구현은 같은 판정 기준을 사용해 요청 시점에 다시 검증해야 한다.
+저장된 resume_step과 다른 화면을 안내하더라도 진행 상태와 버전은 변경하지 않는다.
+단계 저장 API가 쓰는 StoreRegistrationProgressResponse는 세 필드 계약을 유지한다.

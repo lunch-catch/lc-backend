@@ -5,8 +5,9 @@
 [campaign-api-design.md](../design/campaign/campaign-api-design.md)를 참고한다.
 
 캠페인 등록은 네 단계(쿠폰 조건, 포스터, 노출 대상, 하루 예산과 집행 기간)로 나뉜다. 이
-문서는 1, 3, 4단계와 점주의 조회를 담는다. 2단계(포스터)는 그 단계를 구현하는 이슈가 이
-문서에 절을 더한다.
+문서는 1, 3, 4단계와 점주의 조회를 담는다. 2단계(포스터)는
+[poster-api-spec.md](poster-api-spec.md)의 "포스터 이미지 업로드"와 "포스터 생성" 절이
+담는다(#376).
 
 ## API 목록
 
@@ -14,6 +15,8 @@
 |---|---|---|---|
 | POST | `/v1/owner/campaigns` | 캠페인 등록 1단계(쿠폰 조건) | OWNER 인증, ACTIVE 상태 |
 | PATCH | `/v1/owner/campaigns/{campaignId}` | 캠페인 등록 3·4단계(노출 대상, 하루 예산과 집행 기간) | OWNER 인증, ACTIVE 상태, 본인 소유 캠페인 |
+| POST | `/v1/owner/campaigns/{campaignId}:pause` | 캠페인 중단 | OWNER 인증, ACTIVE 상태, 본인 소유 캠페인 |
+| POST | `/v1/owner/campaigns/{campaignId}:resume` | 캠페인 재개 | OWNER 인증, ACTIVE 상태, 본인 소유 캠페인 |
 | GET | `/v1/owner/campaigns` | 캠페인 목록 조회 | OWNER 인증 |
 | GET | `/v1/owner/campaigns/{campaignId}` | 캠페인 상세 조회 | OWNER 인증, 본인 소유 캠페인 |
 
@@ -165,6 +168,87 @@
 | 422 | CAMPAIGN-007 | `dailyBudget`이 최소 하루 예산 미만 |
 | 422 | CAMPAIGN-008 | 집행 기간이 1일 미만이거나 `endDate`가 `startDate`보다 이전 |
 | 422 | CAMPAIGN-009 | `startDate`가 오늘 다음 날 이전 |
+| 500 | COMMON-001 | 처리하지 못한 서버 오류 |
+
+## 캠페인 중단
+
+`POST /v1/owner/campaigns/{campaignId}:pause`
+
+점주가 `ACTIVE` 상태의 캠페인을 직접 중단한다. 이미 점주가 중단해 `PAUSED` 상태면 다시
+요청해도 성공한다(멱등한 재시도).
+
+### 요청
+
+본문이 없다.
+
+### 성공 응답
+
+`200`.
+
+```json
+{
+  "code": "SUCCESS",
+  "message": "요청이 성공적으로 처리되었습니다.",
+  "data": {
+    "campaignId": 501,
+    "status": "PAUSED"
+  }
+}
+```
+
+| 필드 | 타입 | 필수 | null 허용 | 설명 |
+|---|---|---|---|---|
+| campaignId | integer | 예 | 아니요 | 중단한 캠페인 ID |
+| status | string | 예 | 아니요 | 처리 뒤의 캠페인 상태. 항상 `PAUSED` |
+
+### 오류
+
+| HTTP | 코드 | 조건 |
+|---|---|---|
+| 403 | CAMPAIGN-001 | 점주 상태가 ACTIVE가 아님 |
+| 403 | CAMPAIGN-005 | 그 campaignId가 없거나 본인 소유가 아님(존재 여부를 알려주지 않으려고 같은 코드로 묶는다, `api-spec.md`) |
+| 409 | CAMPAIGN-006 | 캠페인 상태가 `ACTIVE`가 아님. 점주 중단으로 이미 `PAUSED`인 경우는 멱등하게 `200`이다 |
+| 500 | COMMON-001 | 처리하지 못한 서버 오류 |
+
+## 캠페인 재개
+
+`POST /v1/owner/campaigns/{campaignId}:resume`
+
+점주가 `PAUSED` 상태의 캠페인을 직접 재개한다. 이미 `ACTIVE` 상태면 다시 요청해도
+성공한다(멱등한 재시도). 정산이 포인트 부족으로 중단한 캠페인(`PAUSED`, 사유
+`NO_POINTS`)도 점주가 직접 재개할 수 있다.
+
+### 요청
+
+본문이 없다.
+
+### 성공 응답
+
+`200`.
+
+```json
+{
+  "code": "SUCCESS",
+  "message": "요청이 성공적으로 처리되었습니다.",
+  "data": {
+    "campaignId": 501,
+    "status": "ACTIVE"
+  }
+}
+```
+
+| 필드 | 타입 | 필수 | null 허용 | 설명 |
+|---|---|---|---|---|
+| campaignId | integer | 예 | 아니요 | 재개한 캠페인 ID |
+| status | string | 예 | 아니요 | 처리 뒤의 캠페인 상태. 항상 `ACTIVE` |
+
+### 오류
+
+| HTTP | 코드 | 조건 |
+|---|---|---|
+| 403 | CAMPAIGN-001 | 점주 상태가 ACTIVE가 아님 |
+| 403 | CAMPAIGN-005 | 그 campaignId가 없거나 본인 소유가 아님(존재 여부를 알려주지 않으려고 같은 코드로 묶는다, `api-spec.md`) |
+| 409 | CAMPAIGN-006 | 캠페인 상태가 `PAUSED`가 아님. 이미 `ACTIVE`인 경우는 멱등하게 `200`이다 |
 | 500 | COMMON-001 | 처리하지 못한 서버 오류 |
 
 ## 캠페인 목록 조회
