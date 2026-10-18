@@ -47,7 +47,7 @@
 | 필드 | 타입 | 필수 | null 허용 | 조건 |
 |---|---|---|---|---|
 | discountTargetType | string | 예 | 아니요 | `ALL`, `MENU` 중 하나 |
-| discountType | string | 예 | 아니요 | `PERCENT`, `AMOUNT` 중 하나 |
+| discountType | string | 예 | 아니요 | `PERCENT`, `AMOUNT` 중 하나. `discountTargetType`이 `ALL`이면 `AMOUNT`만 허용 |
 | discountValue | integer | 예 | 아니요 | 양수. `discountType`이 `PERCENT`면 100 이하 |
 | targetMenuId | integer | `discountTargetType`이 `MENU`면 예 | `discountTargetType`이 `ALL`이면 예, `MENU`면 아니요 | |
 | issueQuantity | integer | 예 | 아니요 | 1 이상 |
@@ -83,7 +83,7 @@
 |---|---|---|
 | 400 | COMMON-002 | 필수값 누락, `discountTargetType`/`discountType`이 허용값 밖, `usableStartTime`/`usableEndTime` 형식 불일치 등 |
 | 403 | CAMPAIGN-001 | 점주 상태가 ACTIVE가 아님 |
-| 422 | CAMPAIGN-002 | `discountType`이 `PERCENT`이고 `discountValue`가 100 초과 |
+| 422 | CAMPAIGN-002 | `discountType`이 `PERCENT`이고 `discountValue`가 100 초과, 또는 `discountTargetType`이 `ALL`인데 `discountType`이 `PERCENT` |
 | 422 | CAMPAIGN-003 | `issueQuantity`가 0 이하 |
 | 422 | CAMPAIGN-004 | `usableStartTime`~`usableEndTime`이 11:30~15:00 밖이거나 30분 단위가 아니거나 1시간 미만 |
 | 500 | COMMON-001 | 처리하지 못한 서버 오류 |
