@@ -83,34 +83,101 @@ class StoreLocationServiceTest {
     }
 
     @Test
-    void 초기화_누락과_미도달_단계를_거부한다() {
+    void 진행_상태가_없으면_거부한다() {
         when(progresses.findByOwnerIdForUpdate(7L)).thenReturn(Optional.empty());
+
         assertCode(() -> service.save(7L, command(2)), StoreErrorCode.REGISTRATION_PROGRESS_NOT_FOUND);
-        when(progresses.findByOwnerIdForUpdate(7L)).thenReturn(Optional.of(StoreRegistrationProgress.start(7L)));
+        assertThat(store.getKakaoPlaceId()).isNull();
+        assertThat(store.getRoadAddress()).isNull();
+        assertThat(store.getLatitude()).isNull();
+        assertThat(store.getLongitude()).isNull();
+        assertThat(progress.getStoreId()).isEqualTo(9L);
+        assertThat(progress.getResumeStep()).isEqualTo(StoreRegistrationStep.LOCATION);
+        assertThat(progress.getVersion()).isEqualTo(2);
+    }
+
+    @Test
+    void LOCATION_이전_단계면_거부한다() {
+        progress = StoreRegistrationProgress.start(7L);
+        when(progresses.findByOwnerIdForUpdate(7L)).thenReturn(Optional.of(progress));
+
         assertCode(() -> service.save(7L, command(0)), StoreErrorCode.REGISTRATION_STEP_CONFLICT);
         assertThat(store.getKakaoPlaceId()).isNull();
+        assertThat(store.getRoadAddress()).isNull();
+        assertThat(store.getLatitude()).isNull();
+        assertThat(store.getLongitude()).isNull();
+        assertThat(progress.getStoreId()).isNull();
+        assertThat(progress.getResumeStep()).isEqualTo(StoreRegistrationStep.TERMS);
+        assertThat(progress.getVersion()).isZero();
     }
 
     @Test
-    void 본인_초안이_없거나_연결이_다르거나_최종등록했으면_거부한다() {
+    void 본인_초안이_없으면_거부한다() {
         when(stores.findByOwnerId(7L)).thenReturn(Optional.empty());
+
         assertCode(() -> service.save(7L, command(2)), StoreErrorCode.REGISTRATION_STORE_NOT_ALLOWED);
-        when(stores.findByOwnerId(7L)).thenReturn(Optional.of(store));
-        ReflectionTestUtils.setField(store, "id", 10L);
-        assertCode(() -> service.save(7L, command(2)), StoreErrorCode.REGISTRATION_STORE_NOT_ALLOWED);
-        ReflectionTestUtils.setField(store, "id", 9L);
-        ReflectionTestUtils.setField(store, "finalized", true);
-        assertCode(() -> service.save(7L, command(2)), StoreErrorCode.REGISTRATION_STORE_NOT_ALLOWED);
+        assertThat(store.getKakaoPlaceId()).isNull();
+        assertThat(store.getRoadAddress()).isNull();
+        assertThat(store.getLatitude()).isNull();
+        assertThat(store.getLongitude()).isNull();
+        assertThat(progress.getStoreId()).isEqualTo(9L);
+        assertThat(progress.getResumeStep()).isEqualTo(StoreRegistrationStep.LOCATION);
+        assertThat(progress.getVersion()).isEqualTo(2);
     }
 
     @Test
-    void 약관이나_사업자_검증이_유효하지_않으면_저장하지_않는다() {
+    void 초안과_진행_상태의_가게_ID가_다르면_거부한다() {
+        ReflectionTestUtils.setField(store, "id", 10L);
+
+        assertCode(() -> service.save(7L, command(2)), StoreErrorCode.REGISTRATION_STORE_NOT_ALLOWED);
+        assertThat(store.getKakaoPlaceId()).isNull();
+        assertThat(store.getRoadAddress()).isNull();
+        assertThat(store.getLatitude()).isNull();
+        assertThat(store.getLongitude()).isNull();
+        assertThat(progress.getStoreId()).isEqualTo(9L);
+        assertThat(progress.getResumeStep()).isEqualTo(StoreRegistrationStep.LOCATION);
+        assertThat(progress.getVersion()).isEqualTo(2);
+    }
+
+    @Test
+    void 최종_등록된_가게는_거부한다() {
+        ReflectionTestUtils.setField(store, "finalized", true);
+
+        assertCode(() -> service.save(7L, command(2)), StoreErrorCode.REGISTRATION_STORE_NOT_ALLOWED);
+        assertThat(store.getKakaoPlaceId()).isNull();
+        assertThat(store.getRoadAddress()).isNull();
+        assertThat(store.getLatitude()).isNull();
+        assertThat(store.getLongitude()).isNull();
+        assertThat(progress.getStoreId()).isEqualTo(9L);
+        assertThat(progress.getResumeStep()).isEqualTo(StoreRegistrationStep.LOCATION);
+        assertThat(progress.getVersion()).isEqualTo(2);
+    }
+
+    @Test
+    void 약관_동의가_없으면_저장하지_않는다() {
         when(agreements.findByOwnerId(7L)).thenReturn(Optional.empty());
-        assertCode(() -> service.save(7L, command(2)), StoreErrorCode.REGISTRATION_STEP_CONFLICT);
-        when(agreements.findByOwnerId(7L)).thenReturn(Optional.of(OwnerTermsAgreement.record(7L, LocalDateTime.now())));
-        ReflectionTestUtils.setField(store, "businessVerifiedAt", null);
+
         assertCode(() -> service.save(7L, command(2)), StoreErrorCode.REGISTRATION_STEP_CONFLICT);
         assertThat(store.getKakaoPlaceId()).isNull();
+        assertThat(store.getRoadAddress()).isNull();
+        assertThat(store.getLatitude()).isNull();
+        assertThat(store.getLongitude()).isNull();
+        assertThat(progress.getStoreId()).isEqualTo(9L);
+        assertThat(progress.getResumeStep()).isEqualTo(StoreRegistrationStep.LOCATION);
+        assertThat(progress.getVersion()).isEqualTo(2);
+    }
+
+    @Test
+    void 사업자_검증_성공_시각이_없으면_저장하지_않는다() {
+        ReflectionTestUtils.setField(store, "businessVerifiedAt", null);
+
+        assertCode(() -> service.save(7L, command(2)), StoreErrorCode.REGISTRATION_STEP_CONFLICT);
+        assertThat(store.getKakaoPlaceId()).isNull();
+        assertThat(store.getRoadAddress()).isNull();
+        assertThat(store.getLatitude()).isNull();
+        assertThat(store.getLongitude()).isNull();
+        assertThat(progress.getStoreId()).isEqualTo(9L);
+        assertThat(progress.getResumeStep()).isEqualTo(StoreRegistrationStep.LOCATION);
         assertThat(progress.getVersion()).isEqualTo(2);
     }
 
