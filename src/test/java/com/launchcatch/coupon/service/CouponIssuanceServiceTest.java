@@ -131,7 +131,11 @@ class CouponIssuanceServiceTest {
 
     @Test
     void 시작_시각은_포함한다() {
-        serviceAt(TODAY.atTime(11, 0)).issue(17L, 81L);
+        var result = serviceAt(TODAY.atTime(11, 0)).issue(17L, 81L);
+
+        assertThat(result.response().memberCouponId()).isEqualTo(1001L);
+        assertThat(inventory.getStatus()).isEqualTo(CouponInventoryStatus.ISSUED);
+        assertThat(counter.getIssuedCount()).isEqualTo(1);
     }
 
     @Test
