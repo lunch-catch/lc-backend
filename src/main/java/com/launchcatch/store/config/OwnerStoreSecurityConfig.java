@@ -24,9 +24,9 @@ public class OwnerStoreSecurityConfig {
     @Order(ApiSecurityDefaults.DOMAIN_CHAIN_ORDER)
     public SecurityFilterChain ownerStoreOnboardingFilterChain(HttpSecurity http, ApiSecurityDefaults defaults)
             throws Exception {
-        return defaults.apply(http.securityMatcher("/v1/owner/store-registration-progress"))
+        return defaults.apply(http.securityMatcher("/v1/owner/onboarding"))
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers(HttpMethod.GET, "/v1/owner/store-registration-progress").hasRole("OWNER")
+                        .requestMatchers(HttpMethod.GET, "/v1/owner/onboarding").hasRole("OWNER")
                         .anyRequest().denyAll())
                 .build();
     }

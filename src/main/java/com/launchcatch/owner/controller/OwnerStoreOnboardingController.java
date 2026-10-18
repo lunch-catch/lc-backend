@@ -14,7 +14,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
-@RequestMapping("/v1/owner/store-registration-progress")
+@RequestMapping("/v1/owner/onboarding")
 @RequiredArgsConstructor
 @Tag(name = "가게 등록 진행 상태", description = "점주가 자신의 가게 등록 진행 상태를 조회하는 API입니다.")
 public class OwnerStoreOnboardingController {

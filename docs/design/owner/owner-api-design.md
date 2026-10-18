@@ -82,4 +82,4 @@ ONBOARDING·ACTIVE만 허용하며 계정 부재는 AUTH-005, 정지·탈퇴는 
 DB 장애는 그대로 전파하고 상태 캐시나 토큰 상태값으로 대체하지 않는다.
 가게 판정은 store.contract.StoreOnboardingQuery에 위임하고 결과를 OwnerStoreOnboardingResponse로 변환한다.
 owner → store 방향을 유지하며 store에서 owner 상태를 역으로 조회하지 않는다.
-HTTP 계약은 [가게 API 명세](../../api-spec/store-api-spec.md#get-v1ownerstore-registration-progress)가 소유한다.
+HTTP 계약은 [가게 API 명세](../../api-spec/store-api-spec.md#get-v1owneronboarding)가 소유한다.

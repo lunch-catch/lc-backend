@@ -162,6 +162,41 @@ StoreInfoService가 자기 도메인의 공개 계약을 구현하며 owner는 �
 진행 단계와 검증 결과는 문자열로 전달하고 owner의 HTTP 응답 DTO가 결과를 변환한다.
 가게 기본 정보와 Mock 판정 규칙은 store 내부에 유지하며 공개 명령을 받은 뒤 검증한다.
 
+## 내 가게 조회 (#427)
+
+HTTP 계약은 [store-api-spec.md](../../api-spec/store-api-spec.md)의 `GET /v1/owner/store` 절이 소유한다.
+OwnerStoreController → OwnerStoreService → store.contract.StoreQueryService.getOwnerStoreOverview 순서로 호출한다.
+owner는 DB에서 현재 계정과 상태를 확인하고 store는 본인 가게의 업무 데이터를 조회한다.
+store가 owner를 역방향 참조하지 않으며 StoreQueryService의 기존 최종 등록 전용 메서드의 조회 조건은 유지한다.
+OwnerStoreSnapshot은 도메인 간 계약이며 OwnerStoreResponse가 HTTP 응답으로 변환한다.
+
+하나의 읽기 전용 트랜잭션에서 가게, 사진, 메뉴, 영업시간을 각각 조회한다.
+MySQL 기본 REPEATABLE READ의 스냅샷으로 읽으며 쓰기 잠금과 진행 상태 초기화는 수행하지 않는다.
+가게가 없으면 후속 목록을 조회하지 않는다. 사진과 메뉴 이미지는 VERIFIED만 연결한다.
+이미지 URL은 기존 StoreImageUrlResolver로 생성하며 S3에 요청하지 않는다.
+TERMS는 develop에 병합된 PR #148의 필수 약관 단일 동의 계약을 따른다.
+OwnerStoreOverview를 HTTP DTO로 변환해 가게 생성 전에도 약관·진행 정보를 반환한다.
+완료 단계는 현재 업무 데이터를 확인한다. 약관은 유효한 단일 동의, STORE_INFO는 필수 5항목과 검증 성공,
+LOCATION은 장소·주소·좌표, HOURS는 저장 행 존재, IMAGES는 검증된 대표 이미지로 판단한다.
+메뉴는 선택이며 입력한 메뉴가 있으면 3개 이하·메뉴명·가격·검증된 이미지를 확인한다.
+최종 등록 API가 추가 검증을 확정하면 조회의 canComplete와 같은 규칙을 사용해야 한다.
+
+## 입점 등록 진행 상태 조회 (#453)
+
+HTTP 계약과 단계별 완료 기준은 [가게 API 명세](../../api-spec/store-api-spec.md#get-v1owneronboarding)가 소유한다.
+GET /v1/owner/onboarding의 owner 진입점에서 점주 상태를 확인한 뒤 StoreOnboardingQuery를 호출한다.
+StoreRegistrationProgressQueryService가 공개 계약을 구현하며 StoreOnboardingStatus를 반환한다.
+입출력 계약은 store.contract에 두고 HTTP 응답 변환은 owner에서 처리한다.
+
+StoreOnboardingQueryRepository는 본인 owner_id를 바인딩한 SELECT 한 번으로 약관·가게·진행 상태와 업무 데이터 완료 조건을 읽는다.
+가게·진행 상태가 없는 경우도 한 행을 반환하며 다른 점주의 가게를 연결된 store_id로 따라가지 않는다.
+업로드 확인은 DB의 VERIFIED와 객체 키를 사용하며 GET에서 S3를 호출하지 않는다.
+DB 오류를 최초 진입이나 미완료 상태로 숨기지 않는다.
+StoreOnboardingReadiness가 첫 미완료 단계와 최종 등록 가능 여부를 계산한다.
+후속 최종 등록 구현은 같은 판정 기준을 사용해 요청 시점에 다시 검증해야 한다.
+저장된 resume_step과 다른 화면을 안내하더라도 진행 상태와 버전은 변경하지 않는다.
+단계 저장 API가 쓰는 StoreRegistrationProgressResponse는 세 필드 계약을 유지한다.
+
 ## 점주 인테리어 이미지 업로드(`#375`)
 
 **서버가 하는 일**
@@ -188,7 +223,7 @@ StoreInfoService가 자기 도메인의 공개 계약을 구현하며 owner는 �
   과정에서 이미 필수로 등록돼 있다는 전제다. 가게 담당이 "대표 메뉴가 선택으로 바뀌어
   온보딩이 끝나도 메뉴가 없을 수 있다"고 확인해 줬지만, 그건 메뉴 얘기고 로고(`image_type=LOGO`)는
   `store_image`의 `uk_store_image_single_logo` 제약과 별개로 여전히 필수 전제다.
-- **`completeStep`에 필요한 `version`을 돌려주는 조회 API(`GET /v1/owner/store-registration-progress`)를
+- **`completeStep`에 필요한 `version`을 돌려주는 조회 API(`GET /v1/owner/onboarding`)를
   이 이슈에서 같이 만든다.** 등록 단계 API 전체가 아직 하나도 없어 클라이언트가 현재 버전을
   얻을 곳이 없었다. 이 조회는 저장된 진행 상태를 읽으며 없으면 TERMS와 버전 0을 반환한다.
   GET은 진행 상태를 생성하지 않는다. 최초 생성은 점주 행 잠금 아래 약관 저장에서 처리한다.
@@ -237,19 +272,3 @@ StoreInfoService가 자기 도메인의 공개 계약을 구현하며 owner는 �
   `StoreMenuInfo`(쿠폰 contract)와 `StoreRepositoryImpl`의 메뉴 조회에는 영향이 없다.
 - **`menuId` 소유권 확인 실패는 "없음"과 "다른 가게 소유"를 구분하지 않고 같은 `403`
   (`STORE-012`)으로 묶는다.** 업로드 확인 실패(`STORE-008`)와 같은 근거다(`api-spec.md`).
-
-## 입점 등록 진행 상태 조회 (#453)
-
-HTTP 계약과 단계별 완료 기준은 [가게 API 명세](../../api-spec/store-api-spec.md#get-v1ownerstore-registration-progress)가 소유한다.
-기존 URL을 유지하고 owner의 진입점에서 점주 상태를 확인한 뒤 StoreOnboardingQuery를 호출한다.
-StoreRegistrationProgressQueryService가 공개 계약을 구현하며 StoreOnboardingStatus를 반환한다.
-입출력 계약은 store.contract에 두고 HTTP 응답 변환은 owner에서 처리한다.
-
-StoreOnboardingQueryRepository는 본인 owner_id를 바인딩한 SELECT 한 번으로 약관·가게·진행 상태와 업무 데이터 완료 조건을 읽는다.
-가게·진행 상태가 없는 경우도 한 행을 반환하며 다른 점주의 가게를 연결된 store_id로 따라가지 않는다.
-업로드 확인은 DB의 VERIFIED와 객체 키를 사용하며 GET에서 S3를 호출하지 않는다.
-DB 오류를 최초 진입이나 미완료 상태로 숨기지 않는다.
-StoreOnboardingReadiness가 첫 미완료 단계와 최종 등록 가능 여부를 계산한다.
-후속 최종 등록 구현은 같은 판정 기준을 사용해 요청 시점에 다시 검증해야 한다.
-저장된 resume_step과 다른 화면을 안내하더라도 진행 상태와 버전은 변경하지 않는다.
-단계 저장 API가 쓰는 StoreRegistrationProgressResponse는 세 필드 계약을 유지한다.

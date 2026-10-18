@@ -144,7 +144,7 @@ class StoreOnboardingStatusIntegrationTest extends AbstractStoreIntegrationTest 
         location(storeId);
         jdbc.update("update store set finalized=true, finalized_at=now(6) where store_id=?", storeId);
         jdbc.update("update owner set status='ACTIVE' where owner_id=?", ownerId);
-        mvc.perform(get("/v1/owner/store-registration-progress").cookie(token(ownerId)))
+        mvc.perform(get("/v1/owner/onboarding").cookie(token(ownerId)))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.data.finalized").value(true))
                 .andExpect(jsonPath("$.data.resumeStep").doesNotExist())
                 .andExpect(jsonPath("$.data.canFinalize").value(false));
@@ -153,14 +153,14 @@ class StoreOnboardingStatusIntegrationTest extends AbstractStoreIntegrationTest 
     @Test
     void 인증과_역할을_확인하고_본인_정보만_조회한다() throws Exception {
         Long storeId = draft();
-        mvc.perform(get("/v1/owner/store-registration-progress").cookie(token(ownerId)))
+        mvc.perform(get("/v1/owner/onboarding").cookie(token(ownerId)))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.data.storeId").value(storeId));
-        mvc.perform(get("/v1/owner/store-registration-progress")).andExpect(status().isUnauthorized());
-        mvc.perform(get("/v1/owner/store-registration-progress").cookie(new Cookie("accessToken",
+        mvc.perform(get("/v1/owner/onboarding")).andExpect(status().isUnauthorized());
+        mvc.perform(get("/v1/owner/onboarding").cookie(new Cookie("accessToken",
                         jwt.createAccessToken(999L, Role.MEMBER, Map.of("issuanceVersion", "0")))))
                 .andExpect(status().isForbidden());
         prepareOwner();
-        mvc.perform(get("/v1/owner/store-registration-progress").cookie(token(ownerId)))
+        mvc.perform(get("/v1/owner/onboarding").cookie(token(ownerId)))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.data.storeId").doesNotExist())
                 .andExpect(jsonPath("$.data.resumeStep").value("TERMS"));
     }

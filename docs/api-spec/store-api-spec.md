@@ -186,81 +186,6 @@ OTHER
 `distanceMeters`는 `310.4m`이면 `310`, `310.5m`이면 `311`로 반환한다.
 정렬에는 반올림 전 거리를 사용한다.
 
-## `GET /v1/owner/store-registration-progress`
-
-인증된 점주의 실제 저장 데이터로 단계별 완료 여부, 지금 진행할 첫 미완료 단계와 최종 등록 가능 여부를 조회한다.
-요청 본문과 점주 ID 파라미터는 없으며 가게·약관·진행 상태를 생성하거나 변경하지 않는다.
-진행 상태가 없으면 version은 0이고 가게 초안이 없으면 storeId는 null이다.
-최초 진행 상태 생성은 점주 행을 잠근 약관 저장 트랜잭션에서 처리한다.
-
-### 인증
-
-`OWNER`가 사용하며 DB 현재 상태가 `ONBOARDING`, `ACTIVE`인 점주만 조회할 수 있다.
-
-### 응답 `200`
-
-필수 입력은 끝났고 메뉴는 등록하지 않은 경우:
-
-```json
-{
-  "code": "SUCCESS",
-  "message": "요청이 성공적으로 처리되었습니다.",
-  "data": {
-    "storeId": 10,
-    "resumeStep": "MENU",
-    "version": 5,
-    "finalized": false,
-    "canFinalize": true,
-    "steps": [
-      { "step": "TERMS", "required": true, "completed": true },
-      { "step": "STORE_INFO", "required": true, "completed": true },
-      { "step": "LOCATION", "required": true, "completed": true },
-      { "step": "HOURS", "required": true, "completed": true },
-      { "step": "IMAGES", "required": true, "completed": true },
-      { "step": "MENU", "required": false, "completed": false }
-    ]
-  }
-}
-```
-
-| 필드 | 타입 | null 허용 | 설명 |
-|---|---|---|---|
-| storeId | integer(int64) | 예 | 본인 가게 ID. 초안 생성 전 null |
-| resumeStep | string(enum) | 예 | 지금 진행할 단계. 아래 순서의 첫 미완료 단계이며 필수 단계 완료 후에는 MENU. 최종 등록 후에는 null |
-| version | integer(int64) | 아니오 | 다음 저장·수정 요청에 사용하는 현재 버전. 진행 상태가 없으면 0 |
-| finalized | boolean | 아니오 | 가게 최종 등록 여부. true면 온보딩을 종료한다 |
-| canFinalize | boolean | 아니오 | 모든 필수 조건과 등록된 메뉴의 조건을 충족하고 아직 최종 등록하지 않았는지 여부 |
-| steps | array | 아니오 | 여섯 단계를 입력 순서대로 반환한다 |
-| steps[].step | string(enum) | 아니오 | TERMS, STORE_INFO, LOCATION, HOURS, IMAGES, MENU |
-| steps[].required | boolean | 아니오 | MENU만 false이며 나머지는 true |
-| steps[].completed | boolean | 아니오 | 해당 단계의 업무 데이터가 완료 조건을 충족하는지 여부 |
-
-### 완료와 화면 이동 기준
-
-| 단계 | 완료 기준 |
-|---|---|
-| TERMS | 전체 약관 agreed=true, 동의 시각 존재, 철회 시각 없음 |
-| STORE_INFO | 상호명·업종·대표자 성명·사업자등록번호·전화번호 저장, 사업자 검증 VERIFIED와 성공 시각 존재 |
-| LOCATION | 카카오 장소 ID·도로명 주소·위도·경도 모두 저장 |
-| HOURS | 월~일 7개 요일 모두 저장. 영업일은 시작·마감 시간 필수이고 휴무일도 휴무로 저장 |
-| IMAGES | 검증된 대표 이미지(LOGO) 1개. 내부 이미지는 0~3개이며 저장된 이미지는 모두 객체 확인 VERIFIED 상태와 객체 키 필요 |
-| MENU | 메뉴 1~3개이며 각 메뉴의 이름·0원 이상 가격·검증된 이미지 객체 키 필요. 설명은 선택 |
-
-- 첫 진입은 여섯 단계 completed=false, resumeStep=TERMS, canFinalize=false다.
-- 각 단계의 completed는 다른 단계와 독립적으로 계산한다. 저장된 resume_step보다 실제 데이터의 첫 미완료 단계를 우선하며 DB 진행 단계를 보정하지 않는다.
-- 메뉴가 0개면 MENU.completed=false지만 필수 단계가 모두 끝났으면 canFinalize=true다. 메뉴가 있으면 필수 항목 누락이나 미검증 이미지가 하나라도 있을 때 canFinalize=false다.
-- 모든 입력을 완료해도 최종 등록 전에는 resumeStep=MENU다. 최종 등록 후에는 finalized=true, resumeStep=null, canFinalize=false다.
-- canFinalize는 조회 시점의 안내다. 후속 최종 등록 API는 같은 조건을 요청 시점에 다시 검증해야 한다.
-- 이미지·메뉴 단계 저장 응답은 기존 StoreRegistrationProgressResponse의 storeId·resumeStep·version 세 필드만 유지한다. 이 GET의 추가 필드를 단계 저장 응답에 적용하지 않는다.
-
-### 오류
-
-| 상태 | 코드 | 언제 |
-|---|---|---|
-| `401` | `AUTH-005` | 유효한 점주 인증 또는 점주 계정이 없음 |
-| `403` | `AUTH-006` | 인증된 역할이 OWNER가 아님 |
-| `403` | `OWNER-002` | DB 현재 점주 상태가 SUSPENDED 또는 WITHDRAWN |
-
 ## 점주 약관 동의
 
 `PUT /v1/owner/terms-agreements`
@@ -399,6 +324,159 @@ Mock은 외부 기관을 호출하지 않는다. 형식이 유효한 번호 중 
 버전 충돌 시 입력값을 자동 재전송하지 않고 최신 진행 상태를 확인해야 한다.
 약관 API와 진행 상태 최초 생성은 선행 작업이며 이 API가 약관 단계를 자동 완료하거나 진행 상태를 생성하지 않는다.
 
+## `GET /v1/owner/store`
+
+인증된 점주의 가게 ID와 전체 저장 정보를 조회한다. ONBOARDING 초안과 ACTIVE 가게를 지원한다.
+가게 생성 전에도 `200`과 응답 객체를 반환한다. `storeId`는 null이며 약관과 진행 정보는 조회된다. 조회로 가게나 진행 상태를 생성하지 않는다.
+요청 본문과 경로·쿼리 식별자는 받지 않으며 인증된 점주를 기준으로 조회한다.
+
+### 응답 `200`
+
+공통 응답 봉투의 `data`는 항상 객체이며 아래 필드를 갖는다. 목록은 항상 배열이다.
+
+| 필드 | 타입 | null | 설명 |
+|---|---|---|---|
+| storeId | integer(int64) | 예 | STORE_INFO 최초 저장 성공 시 생성되는 가게 ID. 생성 전에는 null |
+| finalized | boolean | 아니오 | 최종 등록 여부 |
+| name, businessCategory, representativeName | string | 예 | 상호명, 업종 코드, 대표자 성명. 가게 생성 전에는 null |
+| businessRegistrationNumber, phone | string | 예 | 사업자등록번호, 전화번호. 기존 미입력 데이터는 null |
+| businessVerificationStatus | string | 예 | VERIFIED 또는 FAILED. 미검증은 null |
+| businessVerifiedAt | string(date-time) | 예 | 기존 저장 규약의 KST 검증 성공 시각 |
+| kakaoPlaceId, roadAddress | string | 예 | 카카오 장소 ID, 도로명 주소 |
+| latitude, longitude | number | 예 | 위도, 경도 |
+| businessHours | array | 아니오 | 월요일부터 일요일 순. 미입력은 [] |
+| logoImage | object | 예 | 검증된 대표 이미지. 없으면 null |
+| interiorImages | array | 아니오 | 검증된 내부 이미지. sortOrder 오름차순, 없으면 [] |
+| menus | array | 아니오 | sortOrder 오름차순. 메뉴 0개도 정상이며 [] |
+
+`businessHours` 항목은 `dayOfWeek`(MONDAY~SUNDAY), `openTime`, `closeTime`, `isClosed`,
+`breakStartTime`, `breakEndTime`, `lastOrderTime`을 갖는다. 시각은 `HH:mm:ss`이며 미입력은 null이다.
+`dayOfWeek`와 `isClosed`는 null이 아니다.
+
+이미지는 `objectKey`(string), `url`(string), `sortOrder`(integer 또는 null)를 갖는다.
+대표·메뉴 이미지의 sortOrder는 null이다. PENDING·UPLOADED 이미지는 반환하지 않는다.
+이미지가 있는데 CDN 설정이 없으면 500으로 처리하며 이미지가 없는 것처럼 숨기지 않는다.
+
+메뉴는 `menuId`(integer), `name`(string), `price`(integer, 원), `description`(string 또는 null),
+`sortOrder`(integer), `image`(이미지 또는 null)를 갖는다. 이미지 미검증 상태의 기존 메뉴도 반환한다.
+이 조회의 null 허용은 메뉴 저장·최종 등록의 필수 이미지 검증을 완화하지 않는다.
+
+### 오류
+
+| 상태·코드 | 조건 |
+|---|---|
+| 401 AUTH-005 | 인증이 없거나 유효하지 않음 |
+| 403 AUTH-006 | OWNER 외 역할 |
+| 403 OWNER-002 | DB의 현재 점주 상태가 SUSPENDED 또는 WITHDRAWN |
+
+내 가게 조회는 약관 동의 내역과 단계별 저장·완료 상태, 현재·재개 단계와 최종 등록 가능 여부를 함께 반환한다.
+별도 진행 상태 조회는 화면 이동에 필요한 단계·버전 중심의 가벼운 응답을 담당한다.
+
+### onboarding
+
+| 필드 | 타입 | 의미 |
+|---|---|---|
+| currentStep | string 또는 null | 저장된 진행 상태의 단계. 진행 상태가 없으면 TERMS, 최종 등록 후에는 null |
+| resumeStep | string 또는 null | 필수 저장값을 다시 확인한 첫 미완료 단계. 필수 단계가 충족되면 MENU, 최종 등록 후에는 null |
+| version | integer(int64) | 저장된 요청 버전. 진행 상태가 없으면 0 |
+| canComplete | boolean | 아직 최종 등록하지 않았고 필수 저장값과 선택 메뉴의 필수 항목이 충족되는지 여부 |
+| termsAgreement | object 또는 null | 저장된 약관 동의. 기록이 없으면 null |
+| steps | array | TERMS, STORE_INFO, LOCATION, HOURS, IMAGES, MENU 순서의 현재 저장 상태 |
+
+steps의 항목은 `step`, `optional`, `hasSavedData`, `completed`를 갖는다.
+MENU만 optional=true다. 메뉴가 없으면 hasSavedData=false, completed=false지만 최종 등록을 막지 않는다.
+메뉴가 있으면 메뉴명·0원 이상의 가격·검증된 이미지가 모두 있어야 완료다.
+현재 단계와 재개 단계는 데이터 누락이 있을 때 다를 수 있다. 이미 등록된 가게는 finalized를 먼저 확인한다.
+
+termsAgreement는 `termsType`, `termsVersion`, `required`, `agreed`, `agreedAt`, `recordedAt`, `withdrawnAt`을 갖는다.
+PR #148에 맞춰 종류·버전은 항상 null이며 required는 항상 true다. 동의 시각과 기록 생성 시각은 구분한다.
+agreedAt은 develop에 병합된 PR #148의 agreed_at 저장값이다.
+recordedAt은 저장 행의 created_at이다. agreed=true이고 철회 시각이 없을 때 TERMS 완료다.
+
+canComplete는 현재 조회의 입력 충족 여부다. 최종 등록 POST에서도 필수 조건을 다시 검증해야 한다.
+HOURS는 현재 저장 구조에서 영업시간 행이 존재하는지 확인한다. 향후 HOURS 저장 API의 추가 검증을 확정하면 같은 기준으로 맞춘다.
+진행 내역은 현재 저장 상태의 요약이며 덮어쓰기 전 값이나 단계별 과거 변경 이력을 생성하지 않는다.
+
+
+가게 생성 전에는 storeId와 가게 입력값이 null이며 목록은 []다. onboarding은 항상 반환한다.
+약관 동의가 없으면 resumeStep=TERMS이며 약관만 동의한 상태면 resumeStep=STORE_INFO다.
+어느 경우에도 GET에서 가게·진행 상태·약관을 생성하지 않는다.
+
+## `GET /v1/owner/onboarding`
+
+인증된 점주의 실제 저장 데이터로 단계별 완료 여부, 지금 진행할 첫 미완료 단계와 최종 등록 가능 여부를 조회한다.
+요청 본문과 점주 ID 파라미터는 없으며 가게·약관·진행 상태를 생성하거나 변경하지 않는다.
+진행 상태가 없으면 version은 0이고 가게 초안이 없으면 storeId는 null이다.
+최초 진행 상태 생성은 점주 행을 잠근 약관 저장 트랜잭션에서 처리한다.
+
+### 인증
+
+`OWNER`가 사용하며 DB 현재 상태가 `ONBOARDING`, `ACTIVE`인 점주만 조회할 수 있다.
+
+### 응답 `200`
+
+필수 입력은 끝났고 메뉴는 등록하지 않은 경우:
+
+```json
+{
+  "code": "SUCCESS",
+  "message": "요청이 성공적으로 처리되었습니다.",
+  "data": {
+    "storeId": 10,
+    "resumeStep": "MENU",
+    "version": 5,
+    "finalized": false,
+    "canFinalize": true,
+    "steps": [
+      { "step": "TERMS", "required": true, "completed": true },
+      { "step": "STORE_INFO", "required": true, "completed": true },
+      { "step": "LOCATION", "required": true, "completed": true },
+      { "step": "HOURS", "required": true, "completed": true },
+      { "step": "IMAGES", "required": true, "completed": true },
+      { "step": "MENU", "required": false, "completed": false }
+    ]
+  }
+}
+```
+
+| 필드 | 타입 | null 허용 | 설명 |
+|---|---|---|---|
+| storeId | integer(int64) | 예 | 본인 가게 ID. 초안 생성 전 null |
+| resumeStep | string(enum) | 예 | 지금 진행할 단계. 아래 순서의 첫 미완료 단계이며 필수 단계 완료 후에는 MENU. 최종 등록 후에는 null |
+| version | integer(int64) | 아니오 | 다음 저장·수정 요청에 사용하는 현재 버전. 진행 상태가 없으면 0 |
+| finalized | boolean | 아니오 | 가게 최종 등록 여부. true면 온보딩을 종료한다 |
+| canFinalize | boolean | 아니오 | 모든 필수 조건과 등록된 메뉴의 조건을 충족하고 아직 최종 등록하지 않았는지 여부 |
+| steps | array | 아니오 | 여섯 단계를 입력 순서대로 반환한다 |
+| steps[].step | string(enum) | 아니오 | TERMS, STORE_INFO, LOCATION, HOURS, IMAGES, MENU |
+| steps[].required | boolean | 아니오 | MENU만 false이며 나머지는 true |
+| steps[].completed | boolean | 아니오 | 해당 단계의 업무 데이터가 완료 조건을 충족하는지 여부 |
+
+### 완료와 화면 이동 기준
+
+| 단계 | 완료 기준 |
+|---|---|
+| TERMS | 전체 약관 agreed=true, 동의 시각 존재, 철회 시각 없음 |
+| STORE_INFO | 상호명·업종·대표자 성명·사업자등록번호·전화번호 저장, 사업자 검증 VERIFIED와 성공 시각 존재 |
+| LOCATION | 카카오 장소 ID·도로명 주소·위도·경도 모두 저장 |
+| HOURS | 월~일 7개 요일 모두 저장. 영업일은 시작·마감 시간 필수이고 휴무일도 휴무로 저장 |
+| IMAGES | 검증된 대표 이미지(LOGO) 1개. 내부 이미지는 0~3개이며 저장된 이미지는 모두 객체 확인 VERIFIED 상태와 객체 키 필요 |
+| MENU | 메뉴 1~3개이며 각 메뉴의 이름·0원 이상 가격·검증된 이미지 객체 키 필요. 설명은 선택 |
+
+- 첫 진입은 여섯 단계 completed=false, resumeStep=TERMS, canFinalize=false다.
+- 각 단계의 completed는 다른 단계와 독립적으로 계산한다. 저장된 resume_step보다 실제 데이터의 첫 미완료 단계를 우선하며 DB 진행 단계를 보정하지 않는다.
+- 메뉴가 0개면 MENU.completed=false지만 필수 단계가 모두 끝났으면 canFinalize=true다. 메뉴가 있으면 필수 항목 누락이나 미검증 이미지가 하나라도 있을 때 canFinalize=false다.
+- 모든 입력을 완료해도 최종 등록 전에는 resumeStep=MENU다. 최종 등록 후에는 finalized=true, resumeStep=null, canFinalize=false다.
+- canFinalize는 조회 시점의 안내다. 후속 최종 등록 API는 같은 조건을 요청 시점에 다시 검증해야 한다.
+- 이미지·메뉴 단계 저장 응답은 기존 StoreRegistrationProgressResponse의 storeId·resumeStep·version 세 필드만 유지한다. 이 GET의 추가 필드를 단계 저장 응답에 적용하지 않는다.
+
+### 오류
+
+| 상태 | 코드 | 언제 |
+|---|---|---|
+| `401` | `AUTH-005` | 유효한 점주 인증 또는 점주 계정이 없음 |
+| `403` | `AUTH-006` | 인증된 역할이 OWNER가 아님 |
+| `403` | `OWNER-002` | DB 현재 점주 상태가 SUSPENDED 또는 WITHDRAWN |
+
 ## `POST /v1/owner/store-images:prepareUpload`
 
 점주가 가게 인테리어 이미지를 올릴 presigned PUT URL을 발급받는다. 이미지 한 장당
@@ -407,7 +485,7 @@ Mock은 외부 기관을 호출하지 않는다. 형식이 유효한 번호 중 
 
 ### 인증
 
-`GET /v1/owner/store-registration-progress`와 같다.
+`GET /v1/owner/onboarding`와 같다.
 
 ### 요청
 
@@ -464,7 +542,7 @@ Mock은 외부 기관을 호출하지 않는다. 형식이 유효한 번호 중 
 
 ### 인증
 
-`GET /v1/owner/store-registration-progress`와 같다.
+`GET /v1/owner/onboarding`와 같다.
 
 ### 요청
 
@@ -494,7 +572,7 @@ Mock은 외부 기관을 호출하지 않는다. 형식이 유효한 번호 중 
 
 ### 인증
 
-`GET /v1/owner/store-registration-progress`와 같다.
+`GET /v1/owner/onboarding`와 같다.
 
 ### 요청
 
@@ -510,7 +588,7 @@ Mock은 외부 기관을 호출하지 않는다. 형식이 유효한 번호 중 
 
 ### 성공 응답
 
-`200`. `GET /v1/owner/store-registration-progress`와 같은 모양이며 `resumeStep`이
+`200`. `GET /v1/owner/onboarding`와 같은 모양이며 `resumeStep`이
 `MENU`, `version`이 1 증가한 값이다.
 
 ### 오류
@@ -531,7 +609,7 @@ Mock은 외부 기관을 호출하지 않는다. 형식이 유효한 번호 중 
 
 ### 인증
 
-`GET /v1/owner/store-registration-progress`와 같다.
+`GET /v1/owner/onboarding`와 같다.
 
 ### 요청
 
@@ -585,7 +663,7 @@ Mock은 외부 기관을 호출하지 않는다. 형식이 유효한 번호 중 
 
 ### 인증
 
-`GET /v1/owner/store-registration-progress`와 같다.
+`GET /v1/owner/onboarding`와 같다.
 
 ### 요청
 
@@ -642,7 +720,7 @@ Mock은 외부 기관을 호출하지 않는다. 형식이 유효한 번호 중 
 
 ### 인증
 
-`GET /v1/owner/store-registration-progress`와 같다.
+`GET /v1/owner/onboarding`와 같다.
 
 ### 요청
 
@@ -674,7 +752,7 @@ Mock은 외부 기관을 호출하지 않는다. 형식이 유효한 번호 중 
 
 ### 인증
 
-`GET /v1/owner/store-registration-progress`와 같다.
+`GET /v1/owner/onboarding`와 같다.
 
 ### 요청
 
@@ -690,7 +768,7 @@ Mock은 외부 기관을 호출하지 않는다. 형식이 유효한 번호 중 
 
 ### 성공 응답
 
-`200`. `GET /v1/owner/store-registration-progress`와 같은 모양이며 `resumeStep`이
+`200`. `GET /v1/owner/onboarding`와 같은 모양이며 `resumeStep`이
 `MENU`, `version`이 1 증가한 값이다.
 
 ### 오류
