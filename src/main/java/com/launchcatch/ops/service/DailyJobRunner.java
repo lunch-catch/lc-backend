@@ -98,7 +98,14 @@ public class DailyJobRunner {
         attempt(job.jobName(), businessDate, () -> job.run(businessDate, attemptNo), 1, () -> { });
     }
 
-    /** 한 단계를 돈다. 묶음을 계속 진행해도 되는지 돌려준다. */
+    /*
+     * 한 단계를 돈다. 묶음을 계속 진행해도 되는지 돌려준다.
+     *
+     * BLOCKED는 그 단계 행이 FAILED로 남아 있다는 뜻일 수 있다. 관리자가 묶음(DAILY_0000)을
+     * 수동 재실행하면 묶음 행만 RUNNING으로 되돌아가고, 실제로 실패했던 단계 행은 그대로
+     * FAILED다(#362). 그 행을 여기서 retry로 한 번 더 되돌려야 그 단계가 다시 실행된다.
+     * 되돌리지 못하면(다른 실행이 진행 중이거나 FAILED가 아닌 경우) 그대로 묶음을 실패시킨다.
+     */
     private boolean runStep(DailyJob job, LocalDate businessDate) {
         StepOutcome outcome = executions.begin(job.jobName(), businessDate);
         if (outcome == StepOutcome.ALREADY_DONE) {
@@ -106,8 +113,10 @@ public class DailyJobRunner {
             return true;
         }
         if (outcome == StepOutcome.BLOCKED) {
-            executions.fail(BUNDLE, businessDate, job.jobName() + " 단계를 시작할 수 없다");
-            return false;
+            if (!executions.retry(job.jobName(), businessDate)) {
+                executions.fail(BUNDLE, businessDate, job.jobName() + " 단계를 시작할 수 없다");
+                return false;
+            }
         }
         return attempt(job.jobName(), businessDate, () -> job.run(businessDate), 1,
                 () -> executions.fail(BUNDLE, businessDate, job.jobName() + " 단계가 실패했다"));

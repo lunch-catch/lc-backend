@@ -196,15 +196,38 @@ class DailyJobRunnerTest {
     }
 
     @Test
-    @DisplayName("막힌 단계를 만나면 묶음을 실패로 닫는다")
-    void 막힌_단계면_묶음을_닫는다() {
+    @DisplayName("막힌 단계를 되돌리지 못하면 묶음을 실패로 닫는다")
+    void 막힌_단계를_되돌리지_못하면_묶음을_닫는다() {
         stubRenew();
         when(executions.begin(FIRST, DATE)).thenReturn(StepOutcome.BLOCKED);
+        when(executions.retry(FIRST, DATE)).thenReturn(false);
 
         runner(job(FIRST), job(SECOND)).runBundle(DATE);
 
         verify(executions).fail(DailyJobRunner.BUNDLE, DATE, FIRST + " 단계를 시작할 수 없다");
         verify(executions, never()).begin(SECOND, DATE);
+    }
+
+    /*
+     * 관리자가 00:00 묶음을 수동 재실행하면 묶음 행만 RUNNING으로 되돌아가고, 실제로 실패했던
+     * 단계 행은 여전히 FAILED라 begin이 BLOCKED를 돌려준다(#362 코드래빗 리뷰로 찾음). 그
+     * 단계도 retry로 되돌려야 다시 실행되고, 되돌리지 않으면 관리자가 재실행을 눌러도 항상
+     * 같은 자리에서 다시 막힌다.
+     */
+    @Test
+    @DisplayName("막힌 단계를 되돌리면 그 단계부터 다시 돌아 묶음을 마친다")
+    void 막힌_단계를_되돌리면_다시_돌아_묶음을_마친다() {
+        stubRenew();
+        when(executions.begin(FIRST, DATE)).thenReturn(StepOutcome.BLOCKED);
+        when(executions.retry(FIRST, DATE)).thenReturn(true);
+        when(executions.begin(SECOND, DATE)).thenReturn(StepOutcome.STARTED);
+
+        runner(job(FIRST), job(SECOND)).runBundle(DATE);
+
+        verify(executions).succeed(FIRST, DATE);
+        verify(executions).succeed(SECOND, DATE);
+        verify(executions).succeed(DailyJobRunner.BUNDLE, DATE);
+        verify(executions, never()).fail(eq(DailyJobRunner.BUNDLE), eq(DATE), anyString());
     }
 
     @Test
