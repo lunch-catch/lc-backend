@@ -257,8 +257,7 @@ class CampaignBudgetPeriodIntegrationTest extends AbstractCampaignIntegrationTes
         return draftWithBudgetPeriod(ownerId, null, null, null);
     }
 
-    // campaignStatusService.pause가 StoreCampaignSummaryUpdater를 부르면서(#468) storeId가
-    // store 테이블의 하드 FK를 걸어, 더는 임의의 가짜 ID를 쓸 수 없다.
+    // campaignStatusService.pause가 StoreCampaignSummaryUpdater를 부르면서(#468) storeId가 store 테이블의 하드 FK를 걸어, 더는 임의의 가짜 ID를 쓸 수 없다.
     private Long createStore(Long ownerId) {
         LocalDateTime now = LocalDateTime.now();
         jdbc.update("insert into store (owner_id, name, category_code, representative_name, created_at, updated_at) "
