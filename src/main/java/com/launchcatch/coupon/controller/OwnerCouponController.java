@@ -4,6 +4,7 @@ import com.launchcatch.auth.CustomUserDetails;
 import com.launchcatch.coupon.dto.CouponUsageHistoryResponse;
 import com.launchcatch.coupon.dto.CouponUseRequest;
 import com.launchcatch.coupon.dto.CouponUseResponse;
+import com.launchcatch.coupon.dto.OwnerCouponDailyUsageResponse;
 import com.launchcatch.coupon.dto.OwnerCouponSummaryResponse;
 import com.launchcatch.coupon.service.OwnerCouponService;
 import com.launchcatch.global.response.CursorPageResponse;
@@ -66,6 +67,23 @@ public class OwnerCouponController {
             @Valid @RequestBody CouponUseRequest request) {
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body(ResponseEnvelope.success(service.redeem(user.getId(), request)));
+    }
+
+    @GetMapping("/stores/{storeId}/coupon-usages/daily")
+    @Operation(summary = "매장의 날짜별 쿠폰 사용 건수 조회",
+            description = "본인 매장의 모든 캠페인에서 사용한 쿠폰을 실제 한국 사용일로 합산한다. 양끝을 포함해 최대 31일이다.")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "날짜별 사용 건수와 합계를 반환한다.", useReturnTypeSchema = true),
+            @ApiResponse(responseCode = "400", description = "COMMON-002: 잘못된 ID 또는 기간. COMMON-003: 날짜 누락 또는 형식 오류"),
+            @ApiResponse(responseCode = "401", description = "AUTH-005: 인증 필요"),
+            @ApiResponse(responseCode = "403", description = "AUTH-006: OWNER 역할 또는 ACTIVE 상태가 아님. COUPON-011: 매장 관리 권한이 없음")
+    })
+    public ResponseEnvelope<OwnerCouponDailyUsageResponse> getDailyUsages(
+            @Parameter(hidden = true) @AuthenticationPrincipal CustomUserDetails owner,
+            @PathVariable @Positive long storeId,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to) {
+        return ResponseEnvelope.success(service.getDailyUsages(owner.getId(), storeId, from, to));
     }
 
     // 매장의 사용 이력을 한국 날짜 범위와 커서로 조회한다.

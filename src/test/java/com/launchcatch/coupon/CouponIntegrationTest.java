@@ -2886,6 +2886,143 @@ class CouponIntegrationTest extends IntegrationTestSupport {
     }
 
     @Nested
+    @DisplayName("매장의 날짜별 쿠폰 사용 건수 조회")
+    class DailyUsageQuery {
+
+        private static final LocalDate FROM = LocalDate.of(2026, 10, 14);
+        private static final LocalDate TO = LocalDate.of(2026, 10, 17);
+        private static final CustomUserDetails OWNER = new CustomUserDetails(7L, Role.OWNER);
+        private static final String PATH = "/v1/owner/stores/20/coupon-usages/daily";
+
+        @BeforeEach
+        void allowOwner() {
+            when(ownerStatusQuery.findCurrentStatus(7L)).thenReturn(Optional.of(OwnerAccountStatus.ACTIVE));
+            when(stores.canManageStore(7L, 20L)).thenReturn(true);
+            when(ownerTokenPolicy.supports(Role.OWNER)).thenReturn(true);
+            when(ownerTokenPolicy.isValid(any(), anyLong(), any(), any(), any())).thenReturn(true);
+        }
+
+        @AfterEach
+        void cleanUp() {
+            jdbcTemplate.update("DELETE FROM coupon_usage_history WHERE coupon_usage_history_id BETWEEN 61000 AND 61100");
+            jdbcTemplate.update("DELETE FROM member_coupon WHERE member_coupon_id BETWEEN 61000 AND 61100");
+            jdbcTemplate.update("DELETE FROM coupon_event WHERE coupon_event_id BETWEEN 61000 AND 61100");
+        }
+
+        @Test
+        void 실제_HTTP로_여러_캠페인의_사용을_사용일로_합산하고_0건_날짜를_포함한다() throws Exception {
+            insertUsage(61001, 20, 501, FROM, FROM.atStartOfDay().minusNanos(1000), 2000);
+            insertUsage(61002, 20, 501, FROM.minusDays(3), FROM.atStartOfDay(), 2000);
+            insertUsage(61003, 20, 502, FROM, FROM.atTime(12, 0), 0);
+            insertUsage(61004, 20, 503, FROM, FROM.plusDays(2).atTime(12, 0), 2000);
+            insertUsage(61005, 20, 502, FROM.plusDays(1), TO.plusDays(1).atStartOfDay().minusNanos(1000), 2000);
+            insertUsage(61006, 20, 502, FROM.plusDays(2), TO.plusDays(1).atStartOfDay(), 2000);
+            insertUsage(61007, 30, 504, FROM, FROM.atTime(12, 0), 2000);
+
+            try (HttpClient client = HttpClient.newHttpClient()) {
+                var response = client.send(httpRequest("GET", PATH + "?from=" + FROM + "&to=" + TO,
+                        null, accessToken(Role.OWNER, 7L)), HttpResponse.BodyHandlers.ofString());
+                assertThat(response.statusCode()).isEqualTo(200);
+                var result = objectMapper.readTree(response.body());
+                assertThat(result.path("code").asText()).isEqualTo("SUCCESS");
+                var data = result.path("data");
+                assertThat(data.path("storeId").asLong()).isEqualTo(20);
+                assertThat(data.path("from").asText()).isEqualTo(FROM.toString());
+                assertThat(data.path("to").asText()).isEqualTo(TO.toString());
+                assertThat(data.path("totalUsedCount").asLong()).isEqualTo(4);
+                var items = data.path("items");
+                assertThat(items.size()).isEqualTo(4);
+                long[] expected = {2, 0, 1, 1};
+                for (int day = 0; day < expected.length; day++) {
+                    assertThat(items.get(day).path("businessDate").asText()).isEqualTo(FROM.plusDays(day).toString());
+                    assertThat(items.get(day).path("usedCount").asLong()).isEqualTo(expected[day]);
+                }
+            }
+            assertThat(jdbcTemplate.queryForObject(
+                    "SELECT COUNT(*) FROM coupon_usage_history WHERE coupon_usage_history_id BETWEEN 61000 AND 61100", Long.class))
+                    .isEqualTo(7);
+        }
+
+        @Test
+        void 하루_조회는_그날만_반환하고_이력이_없어도_31일을_모두_반환한다() throws Exception {
+            insertUsage(61001, 20, 501, FROM, FROM.atTime(12, 0), 2000);
+            mockMvc.perform(get(PATH).with(user(OWNER)).param("from", FROM.toString()).param("to", FROM.toString()))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.totalUsedCount").value(1))
+                    .andExpect(jsonPath("$.data.items.length()").value(1))
+                    .andExpect(jsonPath("$.data.items[0].businessDate").value(FROM.toString()))
+                    .andExpect(jsonPath("$.data.items[0].usedCount").value(1));
+            mockMvc.perform(get(PATH).with(user(OWNER)).param("from", "2026-01-01").param("to", "2026-01-31"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.totalUsedCount").value(0))
+                    .andExpect(jsonPath("$.data.items.length()").value(31))
+                    .andExpect(jsonPath("$.data.items[0].usedCount").value(0))
+                    .andExpect(jsonPath("$.data.items[30].businessDate").value("2026-01-31"));
+        }
+
+        @ParameterizedTest
+        @ValueSource(longs = {20, 404})
+        void 다른_점주_매장과_없는_매장은_같은_오류로_거절한다(long storeId) throws Exception {
+            insertUsage(61001, 20, 501, FROM, FROM.atTime(12, 0), 2000);
+            when(stores.canManageStore(7L, storeId)).thenReturn(false);
+            mockMvc.perform(get("/v1/owner/stores/{storeId}/coupon-usages/daily", storeId).with(user(OWNER))
+                            .param("from", FROM.toString()).param("to", TO.toString()))
+                    .andExpect(status().isForbidden())
+                    .andExpect(jsonPath("$.code").value("COUPON-011"))
+                    .andExpect(jsonPath("$.data").isEmpty());
+        }
+
+        @ParameterizedTest
+        @EnumSource(value = OwnerAccountStatus.class, names = "ACTIVE", mode = EnumSource.Mode.EXCLUDE)
+        void 현재_점주_상태가_비활성이면_거절한다(OwnerAccountStatus state) throws Exception {
+            when(ownerStatusQuery.findCurrentStatus(7L)).thenReturn(Optional.of(state));
+            mockMvc.perform(get(PATH).with(user(OWNER)).param("from", FROM.toString()).param("to", TO.toString()))
+                    .andExpect(status().isForbidden()).andExpect(jsonPath("$.code").value("AUTH-006"));
+        }
+
+        @ParameterizedTest
+        @CsvSource({
+                "0, 2026-10-14, 2026-10-17, COMMON-002",
+                "20, , 2026-10-17, COMMON-003",
+                "20, 2026-10-14, , COMMON-003",
+                "20, invalid, 2026-10-17, COMMON-003",
+                "20, 2026-10-17, 2026-10-14, COMMON-002",
+                "20, 2026-10-01, 2026-11-01, COMMON-002"
+        })
+        void 잘못된_ID와_날짜_범위는_HTTP에서_거절한다(String storeId, String from, String to, String code) throws Exception {
+            var request = get("/v1/owner/stores/{storeId}/coupon-usages/daily", storeId).with(user(OWNER));
+            if (from != null) {
+                request.param("from", from);
+            }
+            if (to != null) {
+                request.param("to", to);
+            }
+            mockMvc.perform(request).andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value(code));
+        }
+
+        private void insertUsage(long id, long storeId, long campaignId, LocalDate eventDay, LocalDateTime usedAt, int discount) {
+            jdbcTemplate.update("""
+                    INSERT INTO coupon_event
+                        (coupon_event_id, campaign_id, business_date, issue_quantity, usable_start_at, usable_end_at,
+                         status, store_id, store_name, discount_target_type, discount_type, discount_value, created_at, updated_at)
+                    VALUES (?, ?, ?, 1, ?, ?, 'ENDED', ?, '테스트 매장', 'ALL', 'AMOUNT', 2000, ?, ?)
+                    """, id, campaignId, eventDay, eventDay.atTime(11, 30), eventDay.atTime(15, 0), storeId,
+                    eventDay.atStartOfDay(), eventDay.atStartOfDay());
+            jdbcTemplate.update("""
+                    INSERT INTO member_coupon (member_coupon_id, coupon_event_id, member_id, coupon_code, status,
+                        usable_start_at, usable_end_at, created_at, updated_at)
+                    VALUES (?, ?, 17, UNHEX(LPAD(HEX(?), 32, '0')), 'USED', ?, ?, ?, ?)
+                    """, id, id, id, eventDay.atTime(11, 30), eventDay.atTime(15, 0),
+                    eventDay.atTime(11, 0), eventDay.atTime(11, 0));
+            jdbcTemplate.update("""
+                    INSERT INTO coupon_usage_history
+                        (coupon_usage_history_id, member_coupon_id, store_id, discount_amount, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """, id, id, storeId, discount, usedAt, usedAt);
+        }
+    }
+
+    @Nested
     @DisplayName("점주 쿠폰 API 공통 HTTP 인증")
     class OwnerHttpAuthorization {
 
@@ -2906,6 +3043,7 @@ class CouponIntegrationTest extends IntegrationTestSupport {
         @CsvSource({
                 "GET, /v1/owner/campaigns/501/coupons/summary?from=2026-10-17&to=2026-10-17",
                 "GET, /v1/owner/stores/20/coupon-usages?from=2026-10-17&to=2026-10-17",
+                "GET, /v1/owner/stores/20/coupon-usages/daily?from=2026-10-17&to=2026-10-17",
                 "POST, /v1/owner/coupon-usages"
         })
         void 실제_HTTP로_미인증과_회원의_점주_API_접근을_차단한다(String method, String path) throws Exception {
