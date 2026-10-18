@@ -62,8 +62,12 @@ public class StoreDetailService {
     }
 
     private Menu menu(OwnerStoreSnapshot.Menu menu) {
+        var menuImage = menu.image();
+        if (menuImage == null) {
+            throw new IllegalStateException("등록 완료된 가게의 검증된 이미지가 누락되었습니다.");
+        }
         return new Menu(menu.menuId(), menu.name(), menu.price(), menu.description(), menu.sortOrder(),
-                image(menu.image() == null ? null : menu.image().objectKey(), null));
+                image(menuImage.objectKey(), null));
     }
 
     private BusinessHour businessHour(OwnerStoreSnapshot.BusinessHour hour) {
