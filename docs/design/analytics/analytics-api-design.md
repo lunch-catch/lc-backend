@@ -47,7 +47,7 @@ A-04 카테고리·지역별 분해와 A-08 점주별 상위 소진도 구현하
 |---|---|---|
 | A-01 회원 지표 | `daily_member_analytics` | `MemberStatsQueryService`, `event_log` |
 | A-02 가게 지표 | `daily_store_analytics` | `StoreStatsQueryService`, 캠페인과 점주 상태 집계 조회 |
-| A-03 퍼널 | `daily_segment_analytics`, `daily_invalid_analytics` | `AdservingStatsQueryService`, `CouponStatsQueryService`, `event_log` |
+| A-03 퍼널 | `campaign_daily_report`의 그날 합, `daily_invalid_analytics`의 플랫폼 합계 행 | 캠페인 리포트 집계, `AdservingStatsQueryService` |
 | A-05 재집계 | 운영 실행 기록, `aggregation_pending_date` | `DailyAggregationRunner` |
 | A-06 실행 이력 | 운영 `batch_execution_log` | `BatchExecutionQueryService` |
 | A-07 매출 | `daily_settlement_analytics` | `BillingStatsQueryService` |
@@ -71,6 +71,10 @@ A-04 카테고리·지역별 분해와 A-08 점주별 상위 소진도 구현하
 ### 퍼널
 
 유효 노출과 무효 노출은 `AdservingStatsQueryService`에서 받는다. 찜, 발급, 사용은 돈과 맞아야 하는 건수라 광고서빙과 쿠폰 집계 조회에서 받는다. 사용 수는 `CouponStatsQueryService.dailyCampaignStats`의 `usedCount`다. `event_log`는 화면 행동을 포함한 퍼널 비율 계산에만 쓴다.
+
+A-03은 따로 저장하지 않고 이미 있는 두 테이블에서 계산한다. 유효 노출, 찜, 발급, 사용은 `campaign_daily_report`의 그날 행을 모두 더한다. 무효 노출은 `daily_invalid_analytics`의 플랫폼 합계 행(`campaign_id`가 NULL)에서 읽는다. `EXPIRED_OR_UNKNOWN`은 서빙 기록이 없어 캠페인을 모를 수 있어서 캠페인 리포트의 합으로는 빠지기 때문이다. 그래서 A-03은 `CampaignReportStep`과 `InvalidMetricsStep`이 먼저 있어야 한다.
+
+처음에는 `daily_segment_analytics`를 원천으로 적었다. 이 테이블은 A-04(카테고리·지역별 분해)를 위해 `(category_code, region)`을 키로 만든 것이고 `region`이 NOT NULL이다. 가게에 지역 값을 두지 않기로 해서(#364) 쓸 수 없다. A-04용 `daily_segment_analytics`와 A-08용 `daily_owner_spend`는 채우는 단계가 없어 비어 있지만 폐기하지 않고 남겨 둔다.
 
 ## 6. 매출과 소진액
 
@@ -167,7 +171,6 @@ A-12는 현재 회원의 모든 일별 행을 합산한다. 원본 로그의 13�
 |---|---|---|
 | 회원 사용 통계 최종 소유 | analytics의 일별 집계를 제안한다. 쿠폰의 회원별 일 단위 집계 조회가 필요하다 | A-12 구현 |
 | 집중 경고의 기간 의미 | 하루라도 경고이고 최고 하루 점유율을 반환한다. 화면 확인이 남았다 | 화면 계약 확정 |
-| A-03의 저장 원천 | 4장 표는 `daily_segment_analytics`로 적었지만 이 테이블은 `(category_code, region)`이 키이고 `region`이 NOT NULL이다. 가게에 지역 값이 없으므로 A-03 전용 일별 합계를 둘지, 다른 키로 저장할지 정해야 한다 | A-03 구현 |
 | 리포트 행의 소유 점주 원천 | 캠페인의 `CampaignStatsQueryService`에 소유 점주 일괄 조회를 더해야 한다 | 점주 리포트 조회 |
 | 이슈 `#354` | 과거 영업일 말 ACTIVE 캠페인 수 제공 여부 | A-02 |
 | 이슈 `#360` | 실행 세대 확인 contract | 안전한 배치 결과 공개 |

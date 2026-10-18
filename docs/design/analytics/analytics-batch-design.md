@@ -36,7 +36,6 @@ Spring Batch는 사용하지 않는다. 각 단계는 평범한 서비스이고 
 | `SettlementMetricsStep` | `daily_settlement_analytics` | `BillingStatsQueryService` |
 | `MemberMetricsStep` | `daily_member_analytics` | `MemberStatsQueryService`, analytics의 `event_log` |
 | `StoreMetricsStep` | `daily_store_analytics` | `StoreStatsQueryService`, 캠페인과 점주 상태 집계 조회 |
-| `SegmentMetricsStep` | `daily_segment_analytics` | `AdservingStatsQueryService`, `CouponStatsQueryService`, `StoreStatsQueryService`, `CampaignStatsQueryService`, `BillingStatsQueryService` |
 | `InvalidMetricsStep` | `daily_invalid_analytics` | `AdservingStatsQueryService` |
 | `NotBilledMetricsStep` | `daily_campaign_not_billed_analytics` | `BillingStatsQueryService`, `AdservingStatsQueryService` |
 | `FraudMetricsStep` | `daily_campaign_fraud_analytics` | `AdservingStatsQueryService` |
@@ -44,7 +43,7 @@ Spring Batch는 사용하지 않는다. 각 단계는 평범한 서비스이고 
 | `MemberUsageStep` | `daily_member_usage` | `CouponStatsQueryService`, `MemberStatsQueryService`, analytics의 `event_log` |
 | `ConsistencyCheckStep` | 지표와 구조화 로그 | 앞 단계가 모은 결과 |
 
-A-08을 구현하지 않으므로 `daily_owner_spend`를 채우는 단계는 두지 않는다. `SegmentMetricsStep`의 저장 키는 A-03의 저장 원천과 함께 정한다([API 설계](./analytics-api-design.md#12-아직-정하지-못한-것) 12장). 분석이 캠페인에서 받는 값은 `CampaignStatsQueryService` 하나로 받는다(#394).
+A-04와 A-08을 구현하지 않으므로 `daily_segment_analytics`와 `daily_owner_spend`를 채우는 단계는 두지 않는다. 두 테이블은 폐기하지 않고 비워 둔다. A-03은 `CampaignReportStep`과 `InvalidMetricsStep`의 결과에서 계산한다([API 설계](./analytics-api-design.md#퍼널) 5장). 분석이 캠페인에서 받는 값은 `CampaignStatsQueryService` 하나로 받는다(#394).
 
 원천 도메인의 집계 조회가 아직 없으면 해당 단계는 구현하지 않는다. analytics가 다른 도메인의 contract 타입이나 행 단위 원본을 먼저 만들지 않는다.
 
