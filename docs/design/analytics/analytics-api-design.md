@@ -60,6 +60,16 @@ A-11 피드 요청 제한 초과 집계는 구현하지 않는다. 요청 제한
 
 ## 5. 대시보드
 
+### 점주 일별 리포트 조회
+
+[점주 일별 리포트 API 명세](../../api-spec/analytics-api-spec.md#점주-일별-리포트)의 조회는 `OwnerReportQueryService`가 맡는다. `OwnerReportQueryRepository`는 `campaign_daily_report`의 `(owner_id, business_date)` 인덱스로 로그인한 점주의 기간 내 행을 읽는다. 다른 도메인은 호출하지 않는다.
+
+소유 확인은 [아키텍처 설계 2.2](../../architecture/런치캐치_도메인_구조와_의존성_설계.md#22-그래프)에 따라 리포트에 저장된 `owner_id`로 한다. `owner_id`가 없는 기존 행은 반환하지 않는다.
+
+조회는 저장된 일별 지표를 그대로 반환하고 응답 항목의 소진액을 합산한다. 요청마다 집계하거나 원천 데이터로 보완하지 않는다.
+
+이슈 #492는 조회 API만 구현한다. `CampaignReportStep`은 아직 구현되지 않았으므로 배치가 리포트를 채우는 작업은 별도로 필요하다.
+
 ### 회원 지표
 
 신규, 탈퇴, 누적 회원은 `MemberStatsQueryService`가 영업일 기준으로 계산한다. 활성 회원은 그날 `event_log`에 기록된 회원의 중복을 제거해 센다. 회원 정지 기능은 현재 구현 범위가 아니므로 `suspendedCount`는 0이다.

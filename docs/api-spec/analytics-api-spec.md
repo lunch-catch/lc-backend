@@ -4,6 +4,7 @@
 
 - **집계 로직·원천 테이블·설계 근거·미결 항목**은 [analytics API 설계](../design/analytics/analytics-api-design.md)에 있다. 일별 집계 배치(I-01), 퍼널 이벤트 수신(I-02), 이벤트 로그 보존(I-03)은 [analytics 배치 설계](../design/analytics/analytics-batch-design.md)에 있다.
 - 점주 쿠폰 이력과 캠페인 리포트는 이 문서 아래 「점주 분석」이 소유한다. 원장과 정산 API는 billing 도메인이 소유한다.
+- 점주 일별 리포트 조회 계약은 이 문서의 [점주 일별 리포트](#점주-일별-리포트)가 소유한다.
 - 공통 규약(경로, 응답 봉투, 상태 코드, 식별자, 시각, 페이지)은 [공통 API 규약](./api-spec.md)를 따른다.
 
 이 문서는 관리자 분석, 회원 사용 통계, 이벤트 수집, 점주 리포트의 HTTP 계약을 소유한다.
@@ -81,7 +82,7 @@
 
 # 대시보드
 
-관리자가 사용자·플랫폼 지표를 일별/주별/월별로 본다. 해당 요구사항이 요구하는 플랫폼 지표 중 **유효 노출 비율은 A-03**, **충전액·소진액·미소진 잔액은 A-07**, **원장 불일치 건수는 대사 불일치 조회**에서 온다. 점주 개별 성과 지표(찜률·발급률·사용률, 예산 소진율 등)는 점주 대시보드 소관이라 여기 없다.
+관리자가 사용자·플랫폼 지표를 일별/주별/월별로 본다. 해당 요구사항이 요구하는 플랫폼 지표 중 **유효 노출 비율은 A-03**, **충전액·소진액·미소진 잔액은 A-07**, **원장 불일치 건수는 대사 불일치 조회**에서 온다. 점주 개별 성과 지표(찜률·발급률·사용률, 예산 소진율 등)는 점주 리포트 소관이라 여기 없다.
 
 ## A-01. `GET /v1/admin/dashboard/members`
 
@@ -435,6 +436,58 @@ GET /v1/admin/campaign-reports?campaignIds=12,15,31&from=2026-09-01&to=2026-09-3
 ```
 
 `map_view`와 `wishlist_view`는 `analytics/V2`에서 이벤트 대상 컬럼을 선택 값으로 바꾼 뒤 수집한다.
+
+---
+
+# 점주 일별 리포트
+
+로그인한 점주가 본인 가게의 날짜별 캠페인 성과와 포인트 소진 내역을 조회한다. 권한은 `OWNER`다. 서버는 로그인 정보에서 점주 ID를 확인하므로 요청으로 받지 않는다.
+
+```http
+GET /v1/owner/report?from=2026-10-16&to=2026-10-17
+```
+
+| 파라미터 | 위치 | 타입 | 필수 | 설명 |
+|---|---|---|---|---|
+| `from` | Query | string(date) | O | 조회 시작일을 `YYYY-MM-DD`로 보낸다 |
+| `to` | Query | string(date) | O | 조회 종료일을 `YYYY-MM-DD`로 보낸다 |
+
+조회 범위는 시작일과 종료일을 포함해 최대 30일이다. `from`은 `to`보다 늦을 수 없다. 하루만 조회할 때는 두 날짜를 같게 보낸다.
+
+성공하면 `200`과 공통 성공 봉투를 반환한다. `data`에는 다음 필드가 있다.
+
+| 필드 | 타입 | 설명 |
+|---|---|---|
+| `from` | string(date) | 조회 시작일이다 |
+| `to` | string(date) | 조회 종료일이다 |
+| `totalSpentAmount` | integer(int64) | `items[].spentAmount`를 합한 값이다 |
+| `items` | array(object) | 날짜 오름차순의 캠페인 집계다. 같은 날에는 캠페인 ID 오름차순으로 반환한다 |
+
+데이터는 일별 배치가 반영한 집계값이다. 해당 점주의 집계가 없으면 `items`는 빈 배열이고 `totalSpentAmount`는 0이다. 아직 집계되지 않은 날은 항목을 만들지 않는다.
+
+`data.items[]`의 필드는 다음과 같다.
+
+| 필드 | 타입 | 설명 |
+|---|---|---|
+| `businessDate` | string(date) | 집계 영업일이다 |
+| `campaignId` | integer(int64) | 해당 날짜에 집행한 캠페인 ID다 |
+| `dailyBudget` | integer(int64) | 해당 영업일에 실제 예약·배정된 포인트다. 점주가 설정한 예산과 다를 수 있다 |
+| `impressionUnitCost` | integer(int64) | 해당 영업일에 적용된 과금 노출 1회당 단가다 |
+| `validImpressionCount` | integer(int64) | 유효 노출 수다. 미과금 유효 노출을 포함한다 |
+| `invalidImpressionCount` | integer(int64) | 무효 노출 수다 |
+| `wishCount` | integer(int64) | 해당 영업일에 발생한 찜 건수다. 현재 찜한 사용자 수와 다르다 |
+| `issuedCount` | integer(int64) | 해당 영업일 쿠폰 회차의 발급 건수다 |
+| `redeemCount` | integer(int64) | 해당 영업일에 사용된 쿠폰 건수다. 다른 날짜에 발급된 쿠폰도 포함한다 |
+| `chargedAmount` | integer(int64) | 과금으로 차감된 포인트다 |
+| `refundedAmount` | integer(int64) | 과오 차감 정정으로 돌려준 포인트다. 일반 잔액 환불액은 포함하지 않는다 |
+| `spentAmount` | integer(int64) | `chargedAmount - refundedAmount`다. 정정액이 과금액보다 크면 음수다 |
+
+| 상태 | 오류 코드 | 조건 |
+|---|---|---|
+| `400` | `COMMON-003` | 필수 날짜가 없거나 날짜 형식이 잘못되었다 |
+| `400` | `ANALYTICS-001` | `from`이 `to`보다 늦거나 조회 범위가 30일을 초과했다 |
+| `401` | `AUTH-005` | 로그인하지 않았거나 인증이 유효하지 않다 |
+| `403` | `AUTH-006` | `OWNER` 역할이 없다 |
 
 ---
 
