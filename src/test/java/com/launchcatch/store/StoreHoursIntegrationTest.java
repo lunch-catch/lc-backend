@@ -79,7 +79,7 @@ class StoreHoursIntegrationTest extends AbstractStoreIntegrationTest {
     }
 
     private String body(Long version, String close) {
-        String days = Arrays.stream(DayOfWeek.values()).map(day -> day == DayOfWeek.SUNDAY
+        String days = Arrays.stream(DayOfWeek.values()).map(day -> DayOfWeek.SUNDAY.equals(day)
                 ? "{\"dayOfWeek\":\"SUNDAY\",\"isClosed\":true}"
                 : """
                   {"dayOfWeek":"%s","isClosed":false,"openTime":"09:00:00","closeTime":"%s",
