@@ -255,6 +255,62 @@ class StoreHoursIntegrationTest extends AbstractStoreIntegrationTest {
     }
 
     @Test
+    void develop의_위치_저장과_영업시간_저장을_온보딩_조회로_이어간다() throws Exception {
+        jdbc.update("delete from store_registration_progress where owner_id=?", ownerId);
+        jdbc.update("delete from owner_terms_agreement where owner_id=?", ownerId);
+        jdbc.update("delete from store where store_id=?", storeId);
+        mvc.perform(put("/v1/owner/terms-agreements").with(user(new CustomUserDetails(ownerId, Role.OWNER))))
+                .andExpect(status().isOk());
+        mvc.perform(put("/v1/owner/store/basic").with(user(new CustomUserDetails(ownerId, Role.OWNER)))
+                        .contentType(MediaType.APPLICATION_JSON).content("""
+                                {"version":1,"name":"시간 식당","categoryCode":"KOREAN","representativeName":"점주",
+                                 "businessRegistrationNumber":"1234567890","phone":"02-123-4567"}
+                                """))
+                .andExpect(status().isOk());
+        storeId = jdbc.queryForObject("select store_id from store where owner_id=?", Long.class, ownerId);
+        mvc.perform(put("/v1/owner/store/location").with(user(new CustomUserDetails(ownerId, Role.OWNER)))
+                        .contentType(MediaType.APPLICATION_JSON).content("""
+                                {"version":2,"kakaoPlaceId":"123","roadAddress":"서울 도로명 주소",
+                                 "latitude":37.5,"longitude":127.0}
+                                """))
+                .andExpect(status().isOk()).andExpect(jsonPath("data.resumeStep").value("HOURS"));
+        mvc.perform(get("/v1/owner/onboarding").with(user(new CustomUserDetails(ownerId, Role.OWNER))))
+                .andExpect(status().isOk()).andExpect(jsonPath("data.resumeStep").value("HOURS"))
+                .andExpect(jsonPath("data.steps[2].completed").value(true))
+                .andExpect(jsonPath("data.steps[3].completed").value(false));
+        mvc.perform(request("""
+                {"version":3,"businessHours":[
+                  {"dayOfWeek":"MONDAY","openTime":"09:00:00","closeTime":"21:00:00"}
+                ]}
+                """))
+                .andExpect(status().isOk()).andExpect(jsonPath("data.resumeStep").value("IMAGES"));
+        mvc.perform(get("/v1/owner/onboarding").with(user(new CustomUserDetails(ownerId, Role.OWNER))))
+                .andExpect(status().isOk()).andExpect(jsonPath("data.storeId").value(storeId))
+                .andExpect(jsonPath("data.resumeStep").value("IMAGES"))
+                .andExpect(jsonPath("data.version").value(4))
+                .andExpect(jsonPath("data.steps[3].completed").value(true));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"OPEN_TIME", "BREAK_TIME", "CLOSED_TIME"})
+    void 두_조회는_7행이_있어도_유효하지_않은_시간표를_HOURS_미완료로_판단한다(String kind) throws Exception {
+        mvc.perform(request(body(3L, "21:00:00"))).andExpect(status().isOk());
+        switch (kind) {
+            case "OPEN_TIME" -> jdbc.update("update store_business_hour set open_time=close_time where store_id=? and day_of_week='MONDAY'", storeId);
+            case "BREAK_TIME" -> jdbc.update("update store_business_hour set break_start_time=break_end_time where store_id=? and day_of_week='MONDAY'", storeId);
+            case "CLOSED_TIME" -> jdbc.update("update store_business_hour set last_order_time='18:00:00' where store_id=? and day_of_week='SUNDAY'", storeId);
+            default -> throw new IllegalArgumentException(kind);
+        }
+        mvc.perform(get("/v1/owner/onboarding").with(user(new CustomUserDetails(ownerId, Role.OWNER))))
+                .andExpect(status().isOk()).andExpect(jsonPath("data.resumeStep").value("HOURS"))
+                .andExpect(jsonPath("data.steps[3].completed").value(false))
+                .andExpect(jsonPath("data.canFinalize").value(false));
+        mvc.perform(get("/v1/owner/store").with(user(new CustomUserDetails(ownerId, Role.OWNER))))
+                .andExpect(status().isOk()).andExpect(jsonPath("data.onboarding.steps[3].completed").value(false))
+                .andExpect(jsonPath("data.onboarding.canComplete").value(false));
+    }
+
+    @Test
     void 일부_요일만_저장된_시간표는_조회에서_미완료다() throws Exception {
         jdbc.update("""
                 insert into store_business_hour (store_id,day_of_week,closed,created_at,updated_at)

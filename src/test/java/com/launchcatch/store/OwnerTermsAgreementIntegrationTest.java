@@ -241,7 +241,7 @@ class OwnerTermsAgreementIntegrationTest extends AbstractStoreIntegrationTest {
     @Test
     void 최초_GET은_행을_만들지_않고_약관_저장_후에는_새_단계와_버전을_반환한다() throws Exception {
         var cookie = access(Role.OWNER);
-        mvc.perform(get("/v1/owner/store-registration-progress").cookie(cookie))
+        mvc.perform(get("/v1/owner/onboarding").cookie(cookie))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.storeId").isEmpty())
                 .andExpect(jsonPath("$.data.resumeStep").value("TERMS"))
@@ -251,7 +251,7 @@ class OwnerTermsAgreementIntegrationTest extends AbstractStoreIntegrationTest {
 
         service.submit(ownerId);
 
-        mvc.perform(get("/v1/owner/store-registration-progress").cookie(cookie))
+        mvc.perform(get("/v1/owner/onboarding").cookie(cookie))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.resumeStep").value("STORE_INFO"))
                 .andExpect(jsonPath("$.data.version").value(1));
@@ -272,12 +272,12 @@ class OwnerTermsAgreementIntegrationTest extends AbstractStoreIntegrationTest {
             });
             start.countDown();
             var observed = query.get(15, TimeUnit.SECONDS);
-            assertThat(observed.resumeStep().name()).isIn("TERMS", "STORE_INFO");
-            assertThat(observed.version()).isEqualTo(observed.resumeStep().name().equals("TERMS") ? 0L : 1L);
+            assertThat(observed.resumeStep()).isIn("TERMS", "STORE_INFO");
+            assertThat(observed.version()).isEqualTo(observed.resumeStep().equals("TERMS") ? 0L : 1L);
             assertThat(submit.get(15, TimeUnit.SECONDS).version()).isEqualTo(1L);
             assertThat(jdbc.queryForObject("select count(*) from store_registration_progress where owner_id = ?",
                     Integer.class, ownerId)).isEqualTo(1);
-            assertThat(progressQuery.getProgress(ownerId).resumeStep().name()).isEqualTo("STORE_INFO");
+            assertThat(progressQuery.getProgress(ownerId).resumeStep()).isEqualTo("STORE_INFO");
             assertThat(agreements.findByOwnerId(ownerId)).isPresent();
         } finally {
             start.countDown();

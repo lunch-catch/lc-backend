@@ -3,12 +3,19 @@ package com.launchcatch.campaign.service;
 import com.launchcatch.campaign.contract.CampaignEndedEvent;
 import com.launchcatch.campaign.contract.CampaignStatus;
 import com.launchcatch.campaign.contract.CampaignStatusChangedEvent;
+import com.launchcatch.campaign.contract.DiscountTargetType;
+import com.launchcatch.campaign.contract.DiscountType;
 import com.launchcatch.campaign.contract.PauseReason;
 import com.launchcatch.campaign.entity.ActorType;
 import com.launchcatch.campaign.entity.Campaign;
 import com.launchcatch.campaign.entity.CampaignStatusLog;
 import com.launchcatch.campaign.repository.CampaignRepository;
 import com.launchcatch.campaign.repository.CampaignStatusLogRepository;
+import com.launchcatch.store.contract.StoreCampaignStatus;
+import com.launchcatch.store.contract.StoreCampaignSummaryCommand;
+import com.launchcatch.store.contract.StoreCampaignSummaryUpdater;
+import com.launchcatch.store.contract.StoreDiscountTargetType;
+import com.launchcatch.store.contract.StoreDiscountType;
 import java.time.Clock;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -28,7 +35,10 @@ import org.springframework.transaction.annotation.Transactional;
  * IllegalStateException이 그대로 막는다.
  *
  * store.contract.StoreCampaignSummaryUpdater 호출(설계 문서 2.4, campaign -> store 간선)은
- * store 쪽에 그 인터페이스가 아직 없어 이번 이슈에서 뺐다. 생기면 이어 붙인다.
+ * pause, resume에서만 건다(#468). 같은 트랜잭션 안에서 상태 변경과 로그 저장 다음에 부른다.
+ * schedule, activate, end, pauseFromFunding, resumeFromFunding은 아직 호출하지 않는다. 멱등한
+ * 재시도로 조용히 반환하는 자리(이미 목표 상태)에서는 아무것도 바뀌지 않으므로 이 호출도 하지
+ * 않는다.
  *
  * pauseFromFunding, resumeFromFunding은 정산의 FundingJudgement 전용 전이다(#198). pause,
  * resume과 다른 점은 "지금 상태가 그 판정을 받을 자리가 아니면 예외 대신 무시한다" 는 것이다.
@@ -42,6 +52,7 @@ public class CampaignStatusService {
 
     private final CampaignRepository campaignRepository;
     private final CampaignStatusLogRepository campaignStatusLogRepository;
+    private final StoreCampaignSummaryUpdater storeCampaignSummaryUpdater;
     private final ApplicationEventPublisher events;
     private final Clock clock;
 
@@ -77,6 +88,7 @@ public class CampaignStatusService {
         LocalDateTime now = LocalDateTime.now(clock);
         campaign.pause(reason, now);
         log(campaignId, from, campaign.getStatus(), actorTypeOf(reason), null);
+        updateStoreSummary(campaign, businessDate);
         events.publishEvent(new CampaignStatusChangedEvent(campaignId, businessDate, false, now));
     }
 
@@ -90,6 +102,7 @@ public class CampaignStatusService {
         LocalDateTime now = LocalDateTime.now(clock);
         campaign.resume(now);
         log(campaignId, from, campaign.getStatus(), actorType, null);
+        updateStoreSummary(campaign, businessDate);
         events.publishEvent(new CampaignStatusChangedEvent(campaignId, businessDate, true, now));
     }
 
@@ -158,6 +171,43 @@ public class CampaignStatusService {
             case ADMIN -> ActorType.ADMIN;
             case OWNER -> ActorType.OWNER;
             case NO_POINTS -> ActorType.SYSTEM;
+        };
+    }
+
+    private void updateStoreSummary(Campaign campaign, LocalDate businessDate) {
+        StoreCampaignSummaryCommand command = new StoreCampaignSummaryCommand(
+                businessDate,
+                toStoreCampaignStatus(campaign.getStatus()),
+                toStoreDiscountTargetType(campaign.getDiscountTargetType()),
+                toStoreDiscountType(campaign.getDiscountType()),
+                campaign.getDiscountValue(),
+                campaign.getTargetMenuId(),
+                campaign.getUsableStartTime(),
+                campaign.getUsableEndTime());
+        storeCampaignSummaryUpdater.update(campaign.getStoreId(), campaign.getId(), command);
+    }
+
+    private static StoreCampaignStatus toStoreCampaignStatus(CampaignStatus status) {
+        return switch (status) {
+            case DRAFT -> StoreCampaignStatus.DRAFT;
+            case SCHEDULED -> StoreCampaignStatus.SCHEDULED;
+            case ACTIVE -> StoreCampaignStatus.ACTIVE;
+            case PAUSED -> StoreCampaignStatus.PAUSED;
+            case ENDED -> StoreCampaignStatus.ENDED;
+        };
+    }
+
+    private static StoreDiscountTargetType toStoreDiscountTargetType(DiscountTargetType discountTargetType) {
+        return switch (discountTargetType) {
+            case ALL -> StoreDiscountTargetType.ALL;
+            case MENU -> StoreDiscountTargetType.MENU;
+        };
+    }
+
+    private static StoreDiscountType toStoreDiscountType(DiscountType discountType) {
+        return switch (discountType) {
+            case PERCENT -> StoreDiscountType.PERCENT;
+            case AMOUNT -> StoreDiscountType.AMOUNT;
         };
     }
 }

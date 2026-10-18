@@ -14,6 +14,7 @@ import com.launchcatch.store.entity.StoreRegistrationStep;
 import com.launchcatch.store.service.StoreRegistrationProgressService;
 import jakarta.servlet.http.Cookie;
 import java.net.URL;
+import java.time.DayOfWeek;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
@@ -34,7 +35,7 @@ import software.amazon.awssdk.services.s3.model.HeadObjectResponse;
 import software.amazon.awssdk.services.s3.presigner.model.PresignedPutObjectRequest;
 
 /*
- * GET /v1/owner/store-registration-progress, POST /v1/owner/store-images:prepareUpload,
+ * GET /v1/owner/onboarding, POST /v1/owner/store-images:prepareUpload,
  * :confirmUpload, :complete(#375)의 보안 체인과 콜론 커스텀 메서드 경로 라우팅을 실제
  * 입구부터 확인한다. S3Presigner/S3Client는 실제 AWS를 부르지 않도록 목으로 바꾼다.
  */
@@ -59,8 +60,10 @@ class StoreImageSecurityIntegrationTest extends AbstractStoreIntegrationTest {
                 jdbc.update("delete from store_registration_progress where owner_id = ?", ownerId));
         createdStoreIds.forEach(storeId -> {
             jdbc.update("delete from store_image where store_id = ?", storeId);
+            jdbc.update("delete from store_business_hour where store_id = ?", storeId);
             jdbc.update("delete from store where store_id = ?", storeId);
         });
+        createdOwnerIds.forEach(ownerId -> jdbc.update("delete from owner_terms_agreement where owner_id = ?", ownerId));
         createdOwnerIds.forEach(ownerId -> jdbc.update("delete from owner where owner_id = ?", ownerId));
         createdAdminIds.forEach(adminId -> jdbc.update("delete from admin where admin_id = ?", adminId));
     }
@@ -69,7 +72,6 @@ class StoreImageSecurityIntegrationTest extends AbstractStoreIntegrationTest {
     void 인테리어_이미지를_올리고_확인한_뒤_이미지_단계를_완료한다() throws Exception {
         Long ownerId = createOnboardingOwner();
         Long storeId = createStore(ownerId);
-        markLogoRegistered(storeId);
         advanceToImagesStep(ownerId, storeId);
 
         PresignedPutObjectRequest presigned = org.mockito.Mockito.mock(PresignedPutObjectRequest.class);
@@ -77,11 +79,13 @@ class StoreImageSecurityIntegrationTest extends AbstractStoreIntegrationTest {
         when(s3Presigner.presignPutObject(any(software.amazon.awssdk.services.s3.presigner.model.PutObjectPresignRequest.class)))
                 .thenReturn(presigned);
 
-        String progressBody = mvc.perform(get("/v1/owner/store-registration-progress").cookie(ownerToken(ownerId)))
+        String progressBody = mvc.perform(get("/v1/owner/onboarding").cookie(ownerToken(ownerId)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.resumeStep").value("IMAGES"))
                 .andReturn().getResponse().getContentAsString();
         long version = ((Number) JsonPath.read(progressBody, "$.data.version")).longValue();
+
+        markLogoRegistered(storeId);
 
         String prepareBody = mvc.perform(post("/v1/owner/store-images:prepareUpload")
                         .cookie(ownerToken(ownerId))
@@ -115,7 +119,7 @@ class StoreImageSecurityIntegrationTest extends AbstractStoreIntegrationTest {
 
     @Test
     void 토큰이_없으면_401이다() throws Exception {
-        mvc.perform(get("/v1/owner/store-registration-progress"))
+        mvc.perform(get("/v1/owner/onboarding"))
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.code").value("AUTH-005"));
     }
@@ -123,7 +127,7 @@ class StoreImageSecurityIntegrationTest extends AbstractStoreIntegrationTest {
     @ParameterizedTest
     @EnumSource(value = Role.class, names = {"MEMBER", "ADMIN", "SUPER_ADMIN"})
     void 점주가_아닌_토큰은_403이다(Role role) throws Exception {
-        mvc.perform(get("/v1/owner/store-registration-progress").cookie(nonOwnerToken(role)))
+        mvc.perform(get("/v1/owner/onboarding").cookie(nonOwnerToken(role)))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.code").value("AUTH-006"));
     }
@@ -174,6 +178,23 @@ class StoreImageSecurityIntegrationTest extends AbstractStoreIntegrationTest {
     }
 
     private void advanceToImagesStep(Long ownerId, Long storeId) {
+        // 진행 단계뿐 아니라 조회가 확인하는 선행 단계의 실제 데이터도 준비한다.
+        jdbc.update("""
+                insert into owner_terms_agreement(owner_id, required, agreed, agreed_at, created_at, updated_at)
+                values (?, true, true, now(6), now(6), now(6))
+                """, ownerId);
+        jdbc.update("""
+                update store set phone='02-123-4567', business_registration_number='1234567890',
+                    business_verification_status='VERIFIED', business_verified_at=now(6),
+                    kakao_place_id='test-place', road_address='테스트 도로명 주소', latitude=37.5, longitude=127.1
+                where store_id=?
+                """, storeId);
+        for (DayOfWeek day : DayOfWeek.values()) {
+            jdbc.update("""
+                    insert into store_business_hour(store_id, day_of_week, closed, created_at, updated_at)
+                    values (?, ?, true, now(6), now(6))
+                    """, storeId, day.name());
+        }
         new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
             progressService.initialize(ownerId);
             progressService.completeStep(ownerId, 0, StoreRegistrationStep.TERMS, null);
