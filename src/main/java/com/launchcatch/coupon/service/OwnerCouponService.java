@@ -6,6 +6,7 @@ import com.launchcatch.coupon.contract.CouponRedeemedEvent;
 import com.launchcatch.coupon.dto.CouponUsageHistoryResponse;
 import com.launchcatch.coupon.dto.CouponUseRequest;
 import com.launchcatch.coupon.dto.CouponUseResponse;
+import com.launchcatch.coupon.dto.OwnerCouponDailyUsageResponse;
 import com.launchcatch.coupon.dto.OwnerCouponSummaryResponse;
 import com.launchcatch.coupon.entity.CouponEvent;
 import com.launchcatch.coupon.entity.CouponUsageHistory;
@@ -36,6 +37,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
+import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationEventPublisher;
@@ -81,6 +83,28 @@ public class OwnerCouponService {
         var counts = couponEventRepository.findOwnerSummary(campaignId, from, to, from.atStartOfDay(), to.plusDays(1).atStartOfDay());
         return new OwnerCouponSummaryResponse(campaignId, from, to,
                 counts.getTotalQuantity(), counts.getIssuedCount(), counts.getUsedCount(), counts.getRemainingQuantity());
+    }
+
+    // 매장 관리 권한을 확인한 뒤 실제 사용일의 건수를 조회하고 사용이 없는 날짜를 채운다.
+    public OwnerCouponDailyUsageResponse getDailyUsages(Long ownerId, long storeId, LocalDate from, LocalDate to) {
+        if (storeId <= 0 || from == null || to == null || from.isAfter(to)
+                || ChronoUnit.DAYS.between(from, to) >= MAX_DAYS || to.equals(LocalDate.MAX)) {
+            throw new IllegalArgumentException("storeId must be positive and the inclusive date range must be 1 to 31 days");
+        }
+        validateActiveOwner(ownerId);
+        if (!storeQueryService.canManageStore(ownerId, storeId)) {
+            throw new CouponException(CouponErrorCode.COUPON_ACCESS_DENIED);
+        }
+
+        var counts = couponUsageHistoryRepository.findDailyUsageCounts(
+                        storeId, from.atStartOfDay(), to.plusDays(1).atStartOfDay()).stream()
+                .collect(Collectors.toMap(CouponUsageHistoryRepository.DailyUsageCount::getBusinessDate,
+                        CouponUsageHistoryRepository.DailyUsageCount::getUsedCount));
+        var items = from.datesUntil(to.plusDays(1))
+                .map(day -> new OwnerCouponDailyUsageResponse.Item(day, counts.getOrDefault(day, 0L)))
+                .toList();
+        long totalUsedCount = items.stream().mapToLong(OwnerCouponDailyUsageResponse.Item::usedCount).sum();
+        return new OwnerCouponDailyUsageResponse(storeId, from, to, totalUsedCount, items);
     }
 
     /**

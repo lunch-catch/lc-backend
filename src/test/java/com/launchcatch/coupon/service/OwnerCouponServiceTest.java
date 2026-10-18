@@ -18,6 +18,7 @@ import com.launchcatch.coupon.contract.CouponRedeemedEvent;
 import com.launchcatch.coupon.dto.CouponUseRequest;
 import com.launchcatch.coupon.dto.CouponUseResponse;
 import com.launchcatch.coupon.dto.OwnerCouponSummaryResponse;
+import com.launchcatch.coupon.dto.OwnerCouponDailyUsageResponse;
 import com.launchcatch.coupon.entity.CouponEvent;
 import com.launchcatch.coupon.entity.CouponUsageHistory;
 import com.launchcatch.coupon.entity.DiscountTargetType;
@@ -82,6 +83,8 @@ class OwnerCouponServiceTest {
     @Mock OwnerStatusQuery owners;
     @Mock CampaignQueryService campaigns;
     @Mock CouponEventRepository events;
+    @Mock CouponUsageHistoryRepository histories;
+    @Mock StoreQueryService stores;
     @Mock ApplicationEventPublisher eventPublisher;
     @InjectMocks OwnerCouponService service;
 
@@ -179,6 +182,110 @@ class OwnerCouponServiceTest {
         var campaign = mock(CampaignInfo.class);
         when(campaign.ownerId()).thenReturn(7L);
         when(campaigns.findAllById(List.of(501L))).thenReturn(List.of(campaign));
+    }
+
+    @Nested
+    @DisplayName("매장의 날짜별 쿠폰 사용 건수")
+    class DailyUsageQuery {
+
+        @Test
+        void 날짜별_건수를_반환하고_사용이_없는_날은_0으로_채운다() {
+            allowStore();
+            var counts = List.of(count(DAY, 2), count(DAY.plusDays(2), 4));
+            when(histories.findDailyUsageCounts(20L, DAY.atStartOfDay(), DAY.plusDays(3).atStartOfDay()))
+                    .thenReturn(counts);
+
+            var response = service.getDailyUsages(7L, 20L, DAY, DAY.plusDays(2));
+
+            assertThat(response).isEqualTo(new OwnerCouponDailyUsageResponse(20L, DAY, DAY.plusDays(2), 6,
+                    List.of(new OwnerCouponDailyUsageResponse.Item(DAY, 2),
+                            new OwnerCouponDailyUsageResponse.Item(DAY.plusDays(1), 0),
+                            new OwnerCouponDailyUsageResponse.Item(DAY.plusDays(2), 4))));
+            verifyNoInteractions(campaigns);
+        }
+
+        @Test
+        void 하루_조회와_이력이_없는_31일_조회도_날짜를_빠짐없이_반환한다() {
+            allowStore();
+            var count = count(DAY, 12);
+            when(histories.findDailyUsageCounts(20L, DAY.atStartOfDay(), DAY.plusDays(1).atStartOfDay()))
+                    .thenReturn(List.of(count));
+            when(histories.findDailyUsageCounts(20L, DAY.atStartOfDay(), DAY.plusDays(31).atStartOfDay()))
+                    .thenReturn(List.of());
+
+            assertThat(service.getDailyUsages(7L, 20L, DAY, DAY).items())
+                    .containsExactly(new OwnerCouponDailyUsageResponse.Item(DAY, 12));
+            var empty = service.getDailyUsages(7L, 20L, DAY, DAY.plusDays(30));
+            assertThat(empty.totalUsedCount()).isZero();
+            assertThat(empty.items()).hasSize(31).allSatisfy(item -> assertThat(item.usedCount()).isZero());
+            assertThat(empty.items().getFirst().businessDate()).isEqualTo(DAY);
+            assertThat(empty.items().getLast().businessDate()).isEqualTo(DAY.plusDays(30));
+        }
+
+        @Test
+        void 잘못된_매장_ID와_날짜_범위는_조회하기_전에_거절한다() {
+            assertThatThrownBy(() -> service.getDailyUsages(7L, 0L, DAY, DAY)).isInstanceOf(IllegalArgumentException.class);
+            assertThatThrownBy(() -> service.getDailyUsages(7L, 20L, null, DAY)).isInstanceOf(IllegalArgumentException.class);
+            assertThatThrownBy(() -> service.getDailyUsages(7L, 20L, DAY, null)).isInstanceOf(IllegalArgumentException.class);
+            assertThatThrownBy(() -> service.getDailyUsages(7L, 20L, DAY.plusDays(1), DAY)).isInstanceOf(IllegalArgumentException.class);
+            assertThatThrownBy(() -> service.getDailyUsages(7L, 20L, DAY, DAY.plusDays(31))).isInstanceOf(IllegalArgumentException.class);
+            assertThatThrownBy(() -> service.getDailyUsages(7L, 20L, LocalDate.MAX, LocalDate.MAX)).isInstanceOf(IllegalArgumentException.class);
+            verifyNoInteractions(histories, stores);
+        }
+
+        @ParameterizedTest
+        @EnumSource(value = OwnerAccountStatus.class, names = "ACTIVE", mode = EnumSource.Mode.EXCLUDE)
+        void 비활성_점주는_매장과_이력을_조회하지_못한다(OwnerAccountStatus state) {
+            when(owners.findCurrentStatus(7L)).thenReturn(Optional.of(state));
+
+            assertThatThrownBy(() -> service.getDailyUsages(7L, 20L, DAY, DAY))
+                    .isInstanceOfSatisfying(CouponException.class,
+                            error -> assertThat(error.getErrorCode()).isEqualTo(AuthErrorCode.ROLE_NOT_ALLOWED));
+            verifyNoInteractions(stores, histories);
+        }
+
+        @Test
+        void 관리할_수_없는_매장은_이력을_조회하지_않고_거절한다() {
+            when(owners.findCurrentStatus(7L)).thenReturn(Optional.of(OwnerAccountStatus.ACTIVE));
+            when(stores.canManageStore(7L, 20L)).thenReturn(false);
+
+            assertThatThrownBy(() -> service.getDailyUsages(7L, 20L, DAY, DAY))
+                    .isInstanceOfSatisfying(CouponException.class,
+                            error -> assertThat(error.getErrorCode()).isEqualTo(CouponErrorCode.COUPON_ACCESS_DENIED));
+            verifyNoInteractions(histories);
+        }
+
+        @Test
+        void 매장_권한_조회_장애를_접근_거절이나_0건으로_바꾸지_않는다() {
+            when(owners.findCurrentStatus(7L)).thenReturn(Optional.of(OwnerAccountStatus.ACTIVE));
+            var failure = new DataAccessResourceFailureException("store query unavailable");
+            when(stores.canManageStore(7L, 20L)).thenThrow(failure);
+
+            assertThatThrownBy(() -> service.getDailyUsages(7L, 20L, DAY, DAY)).isSameAs(failure);
+            verifyNoInteractions(histories);
+        }
+
+        @Test
+        void 집계_DB_장애를_0건으로_바꾸지_않는다() {
+            allowStore();
+            var failure = new DataAccessResourceFailureException("usage query unavailable");
+            when(histories.findDailyUsageCounts(20L, DAY.atStartOfDay(), DAY.plusDays(1).atStartOfDay()))
+                    .thenThrow(failure);
+
+            assertThatThrownBy(() -> service.getDailyUsages(7L, 20L, DAY, DAY)).isSameAs(failure);
+        }
+
+        private void allowStore() {
+            when(owners.findCurrentStatus(7L)).thenReturn(Optional.of(OwnerAccountStatus.ACTIVE));
+            when(stores.canManageStore(7L, 20L)).thenReturn(true);
+        }
+
+        private CouponUsageHistoryRepository.DailyUsageCount count(LocalDate day, long usedCount) {
+            var count = mock(CouponUsageHistoryRepository.DailyUsageCount.class);
+            when(count.getBusinessDate()).thenReturn(day);
+            when(count.getUsedCount()).thenReturn(usedCount);
+            return count;
+        }
     }
 
     @Nested
