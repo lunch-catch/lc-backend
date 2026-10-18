@@ -61,6 +61,7 @@ class CampaignPauseResumeSecurityIntegrationTest extends AbstractCampaignIntegra
                 storeId));
         createdStoreIds.forEach(storeId -> jdbc.update("delete from campaign where store_id = ?", storeId));
         createdStoreIds.forEach(storeId -> jdbc.update("delete from store_campaign_summary where store_id = ?", storeId));
+        createdStoreIds.forEach(storeId -> jdbc.update("delete from store_menu where store_id = ?", storeId));
         createdStoreIds.forEach(storeId -> jdbc.update("delete from store where store_id = ?", storeId));
         createdOwnerIds.forEach(ownerId -> jdbc.update("delete from owner where owner_id = ?", ownerId));
         createdAdminIds.forEach(adminId -> jdbc.update("delete from admin where admin_id = ?", adminId));
@@ -180,6 +181,32 @@ class CampaignPauseResumeSecurityIntegrationTest extends AbstractCampaignIntegra
                 .andExpect(jsonPath("$.code").value("CAMPAIGN-006"));
     }
 
+    /*
+     * 캠페인 등록 1단계(CampaignCouponConditionService)가 targetMenuId의 가게 소속을 검증하지
+     * 않아(#468 자체 리뷰로 찾음), MENU 할인 캠페인이 다른 가게의 메뉴를 참조한 채로 존재할 수
+     * 있다. 그 불일치가 StoreCampaignSummaryUpdater.update()에서 처음 걸러지는데, 500으로
+     * 답하고 캠페인 상태는 그대로(트랜잭션 롤백) 남아야 한다.
+     */
+    @Test
+    void 다른_가게의_메뉴를_참조하면_중단을_500으로_거부하고_상태를_되돌리지_않는다() throws Exception {
+        Long ownerId = createActiveOwner();
+        Long storeId = createStore(ownerId);
+        Long otherOwnerId = createActiveOwner();
+        Long otherStoreId = createStore(otherOwnerId);
+        Long otherStoresMenuId = createMenu(otherStoreId);
+        Campaign campaign = campaignRepository.saveAndFlush(
+                activeCampaignWithMenu(ownerId, storeId, otherStoresMenuId));
+        Long campaignId = campaign.getId();
+
+        mvc.perform(post(pausePath(campaignId)).cookie(ownerToken(ownerId)))
+                .andExpect(status().isInternalServerError())
+                .andExpect(jsonPath("$.code").value("COMMON-001"));
+
+        Campaign reloaded = campaignRepository.findById(campaignId).orElseThrow();
+        assertThat(reloaded.getStatus().name()).isEqualTo("ACTIVE");
+        assertThat(reloaded.getPausedReason()).isNull();
+    }
+
     private String pausePath(long campaignId) {
         return "/v1/owner/campaigns/" + campaignId + ":pause";
     }
@@ -227,6 +254,14 @@ class CampaignPauseResumeSecurityIntegrationTest extends AbstractCampaignIntegra
         return storeId;
     }
 
+    private Long createMenu(Long storeId) {
+        LocalDateTime now = LocalDateTime.now();
+        jdbc.update("insert into store_menu (store_id, name, price, sort_order, created_at, updated_at) "
+                + "values (?, ?, 8000, 1, ?, ?)", storeId, "campaign-pause-resume-test-menu-" + System.nanoTime(),
+                now, now);
+        return jdbc.queryForObject("select store_menu_id from store_menu where store_id = ?", Long.class, storeId);
+    }
+
     private Campaign draft(Long ownerId, Long storeId) {
         LocalDate startDate = LocalDate.now(ClockConfig.ZONE).plusDays(1);
         return Campaign.create(
@@ -241,6 +276,21 @@ class CampaignPauseResumeSecurityIntegrationTest extends AbstractCampaignIntegra
 
     private Campaign activeCampaign(Long ownerId, Long storeId) {
         Campaign campaign = draft(ownerId, storeId);
+        campaign.schedule(LocalDateTime.now());
+        campaign.activate(LocalDateTime.now());
+        return campaign;
+    }
+
+    private Campaign activeCampaignWithMenu(Long ownerId, Long storeId, Long targetMenuId) {
+        LocalDate startDate = LocalDate.now(ClockConfig.ZONE).plusDays(1);
+        Campaign campaign = Campaign.create(
+                ownerId, storeId,
+                DiscountTargetType.MENU, DiscountType.PERCENT, 10, targetMenuId,
+                50, LocalTime.of(12, 0), LocalTime.of(13, 30),
+                null, null,
+                1000, TargetGender.ALL, List.of(AgeGroup.AGE_20S),
+                10_000L, startDate, startDate.plusDays(3),
+                LocalDateTime.now());
         campaign.schedule(LocalDateTime.now());
         campaign.activate(LocalDateTime.now());
         return campaign;

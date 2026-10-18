@@ -2,6 +2,9 @@ package com.launchcatch.campaign.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.when;
 
 import com.launchcatch.campaign.contract.AgeGroup;
@@ -138,6 +141,23 @@ class CampaignPauseResumeServiceTest {
         CampaignStatusResponse response = service.pause(OWNER_ID, CAMPAIGN_ID);
 
         assertThat(response.status()).isEqualTo(CampaignStatus.PAUSED);
+    }
+
+    @Test
+    @DisplayName("가게-메뉴 불일치로 StoreCampaignSummaryUpdater가 IllegalArgumentException을 던지면 "
+            + "CampaignException이 아닌 RuntimeException으로 바꿔 던진다(500으로 보내려고)")
+    void 가게_메뉴_불일치면_CampaignException이_아닌_RuntimeException을_던진다() {
+        active();
+        Campaign campaign = activeCampaign(OWNER_ID);
+        when(campaignRepository.findByIdForUpdate(CAMPAIGN_ID)).thenReturn(Optional.of(campaign));
+        doThrow(new IllegalArgumentException("할인 대상 메뉴가 해당 가게에 속하지 않습니다."))
+                .when(storeCampaignSummaryUpdater).update(anyLong(), anyLong(), any());
+
+        assertThatThrownBy(() -> service.pause(OWNER_ID, CAMPAIGN_ID))
+                .isInstanceOf(RuntimeException.class)
+                .isNotInstanceOf(CampaignException.class)
+                .isNotInstanceOf(IllegalArgumentException.class)
+                .isNotInstanceOf(IllegalStateException.class);
     }
 
     @Test

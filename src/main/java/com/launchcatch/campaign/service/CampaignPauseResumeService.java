@@ -41,6 +41,8 @@ public class CampaignPauseResumeService {
             campaignStatusService.pause(campaignId, PauseReason.OWNER, businessDate);
         } catch (IllegalStateException e) {
             throw new CampaignException(CampaignErrorCode.CAMPAIGN_STATE_NOT_ALLOWED, e);
+        } catch (IllegalArgumentException e) {
+            throw storeSummaryMismatch("CAMPAIGN_PAUSE_FAILED", campaignId, e);
         }
         return toResponse(campaign);
     }
@@ -54,6 +56,8 @@ public class CampaignPauseResumeService {
             campaignStatusService.resume(campaignId, ActorType.OWNER, businessDate);
         } catch (IllegalStateException e) {
             throw new CampaignException(CampaignErrorCode.CAMPAIGN_STATE_NOT_ALLOWED, e);
+        } catch (IllegalArgumentException e) {
+            throw storeSummaryMismatch("CAMPAIGN_RESUME_FAILED", campaignId, e);
         }
         return toResponse(campaign);
     }
@@ -70,6 +74,21 @@ public class CampaignPauseResumeService {
         return campaignRepository.findByIdForUpdate(campaignId)
                 .filter(found -> found.getOwnerId().equals(ownerId))
                 .orElseThrow(() -> new CampaignException(CampaignErrorCode.CAMPAIGN_NOT_OWNED));
+    }
+
+    /*
+     * StoreCampaignSummaryUpdater.update()는 캠페인의 targetMenuId가 그 가게 소유가 아니면
+     * IllegalArgumentException을 던진다. 캠페인 등록 1단계(CampaignCouponConditionService)가
+     * 그 소속을 검증하지 않아(#468 리뷰로 찾음, 근본 조치는 별도 이슈) 생길 수 있는 서버 쪽
+     * 데이터 불일치라 점주의 요청이 잘못된 게 아니다. 그대로 두면
+     * GlobalExceptionHandler.handleIllegalArgument가 400 COMMON-002로 잘못 답한다.
+     * 어느 ErrorCode도 아닌 RuntimeException으로 다시 던져 handleUnexpected의 500
+     * COMMON-001로 보낸다.
+     */
+    private RuntimeException storeSummaryMismatch(String event, Long campaignId, IllegalArgumentException e) {
+        log.error("event={} reason=STORE_SUMMARY_MISMATCH campaignId={} detail={}",
+                event, campaignId, e.getMessage());
+        return new RuntimeException("store campaign summary update failed: campaignId=" + campaignId, e);
     }
 
     private CampaignStatusResponse toResponse(Campaign campaign) {

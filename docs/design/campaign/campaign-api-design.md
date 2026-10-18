@@ -127,6 +127,16 @@
 - **엔티티가 던지는 `IllegalStateException`(상태가 안 맞음)을 `CAMPAIGN-006`으로
   변환한다.** `Campaign.pause()`/`resume()`은 각각 `ACTIVE`/`PAUSED`가 아니면 이 예외를
   던진다. 새 서비스가 `CampaignStatusService` 호출을 `try-catch`로 감싸 변환한다
+- **`StoreCampaignSummaryUpdater.update()`가 던지는 `IllegalArgumentException`(가게-메뉴
+  불일치)은 그대로 두지 않고 `RuntimeException`으로 다시 던진다(자체 리뷰로 찾음,
+  2026-10-18).** 캠페인 등록 1단계(`CampaignCouponConditionService`)가 `targetMenuId`가
+  그 가게 소유인지 검증하지 않아서(해당 파일의 TODO), MENU 할인 캠페인의 `targetMenuId`가
+  실제로는 다른 가게 메뉴일 수 있다. 이 불일치는 점주의 요청이 잘못된 게 아니라 서버 쪽
+  데이터 문제라서, 그대로 두면 `GlobalExceptionHandler.handleIllegalArgument`가
+  `COMMON-002`(400, "입력값이 올바르지 않습니다")로 잘못 답한다. `CampaignException`도
+  `IllegalStateException`도 아닌 `RuntimeException`으로 다시 던져
+  `handleUnexpected`의 `COMMON-001`(500)로 보낸다. 근본 조치(등록 시점 검증)는 이 PR
+  범위 밖이라 아래 "아직 정해지지 않은 것"으로 넘긴다
 - **`store.contract.StoreCampaignSummaryUpdater.update()` 호출을
   `CampaignStatusService.pause()`/`resume()` 안에 추가한다(설계 문서 2.4, `#468`).** 호출자가
   누구든(점주, 나중에 추가될 관리자) 같은 트랜잭션 안에서 가게 요약이 함께 갱신되게
@@ -185,6 +195,7 @@
 | `Campaign.updateCouponCondition(...)` 메서드 시그니처 | `#244` 결정 | 아직 엔티티에 없다. `#244`가 추가한다 |
 | 00:00 배치가 `pendingDailyBudget`을 `dailyBudget`에 반영하는 호출 지점 | V51 45행, 102행 스케줄러 | `#330`은 컬럼에 쓰기만 한다. "스케줄러 캠페인 담당 스텝" 이슈가 그 반영 호출을 정한다. **그 배치는 반영 직전에 `status == ACTIVE`인지 다시 확인해야 한다.** `pause()`는 `pendingDailyBudget`을 지우지 않으므로(아래 "해소된 항목" 참고), `PAUSED`로 멈춰 있는 캠페인에 그 예약값을 그대로 적용하면 안 된다 |
 | 예약 값(`pendingDailyBudget`) 자체를 PATCH 응답에 노출할지 | V51 45행 | `#330`은 노출하지 않는다(응답은 늘 `dailyBudget`). 노출이 필요해지면 그때 명세를 바꾼다 |
+| `targetMenuId`가 그 가게(`storeId`) 소유인지 등록 시점(`CampaignCouponConditionService`)에 검증하는 것 | `#468` 자체 리뷰로 찾음(2026-10-18) | 지금은 검증 코드가 없다. `StoreCampaignSummaryUpdater.update()`가 `menuBelongsToStore`로 뒤늦게(중단·재개 시점에) 걸러내지만, 등록 시점에 막는 게 근본 조치다. 담당 이슈 미정 |
 
 해소된 항목(`#330`): 하루 예산의 "다음 영업일 적용 예약 값" 컬럼은 `Campaign.pendingDailyBudget`(`V13__campaign_pending_daily_budget.sql`, 양수만 허용하는
 `chk_campaign_pending_daily_budget` CHECK 포함)이고, 최소 하루 예산은 `ops.contract.PlatformSettingQueryService.getMinDailyBudget()`(요구사항명세서
