@@ -1,6 +1,8 @@
 package com.launchcatch.owner.entity;
 
 import com.launchcatch.auth.Role;
+import com.launchcatch.owner.exception.OwnerException;
+import com.launchcatch.owner.exception.OwnerErrorCode;
 import com.launchcatch.global.entity.BaseTimeEntity;
 import jakarta.persistence.AttributeOverride;
 import jakarta.persistence.Column;
@@ -77,6 +79,13 @@ public class Owner extends BaseTimeEntity {
         this.role = Role.OWNER;
         this.status = OwnerStatus.ONBOARDING;
         this.tutorialViewed = false;
+    }
+
+    public void activate() {
+        if (status != OwnerStatus.ONBOARDING) {
+            throw new OwnerException(OwnerErrorCode.STATUS_NOT_ALLOWED);
+        }
+        status = OwnerStatus.ACTIVE;
     }
 
     public boolean canLogin() {

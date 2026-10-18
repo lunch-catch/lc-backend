@@ -1,10 +1,9 @@
 package com.launchcatch.store.service;
 
 import com.launchcatch.store.StoreImageUrlResolver;
-import com.launchcatch.store.StoreBusinessHours;
+import com.launchcatch.store.repository.StoreOnboardingQueryRepository;
 import com.launchcatch.store.contract.OwnerStoreOverview.Onboarding;
 import com.launchcatch.store.contract.OwnerStoreOverview.Step;
-import com.launchcatch.store.contract.OwnerStoreOverview.TermsAgreement;
 import com.launchcatch.store.contract.OwnerStoreOverview;
 import com.launchcatch.store.contract.OwnerStoreSnapshot.Image;
 import com.launchcatch.store.contract.OwnerStoreSnapshot.Menu;
@@ -36,10 +35,12 @@ class StoreQueryServiceImpl implements StoreQueryService {
     private final StoreQueryRepository stores;
     private final StoreImageUrlResolver images;
     private final OwnerStoreQueryRepository ownerStores;
+    private final StoreOnboardingQueryRepository onboarding;
 
-    StoreQueryServiceImpl(StoreQueryRepository stores, OwnerStoreQueryRepository ownerStores, @Value("${cdn.base-url:}") String baseUrl) {
+    StoreQueryServiceImpl(StoreQueryRepository stores, OwnerStoreQueryRepository ownerStores, StoreOnboardingQueryRepository onboarding, @Value("${cdn.base-url:}") String baseUrl) {
         this.stores = stores;
         this.ownerStores = ownerStores;
+        this.onboarding = onboarding;
         this.images = new StoreImageUrlResolver(baseUrl);
     }
 
@@ -173,19 +174,15 @@ class StoreQueryServiceImpl implements StoreQueryService {
         var store = findOwnerStore(ownerId).orElse(null);
         var progress = ownerStores.findProgress(ownerId);
         var agreement = ownerStores.findTermsAgreement(ownerId).orElse(null);
-        boolean terms = agreement != null && agreement.agreed() && agreement.withdrawnAt() == null;
-        boolean basic = store != null && present(store.name()) && present(store.businessCategory())
-                && present(store.representativeName()) && present(store.businessRegistrationNumber())
-                && present(store.phone()) && "VERIFIED".equals(store.businessVerificationStatus())
-                && store.businessVerifiedAt() != null;
-        boolean location = store != null && present(store.kakaoPlaceId()) && present(store.roadAddress())
-                && store.latitude() != null && store.longitude() != null;
+        var readiness = onboarding.findByOwnerId(ownerId).readiness();
+        boolean terms = readiness.terms();
+        boolean basic = readiness.storeInfo();
+        boolean location = readiness.location();
         boolean hasHours = store != null && !store.businessHours().isEmpty();
-        boolean hours = store != null && StoreBusinessHours.isComplete(store.businessHours());
-        boolean imagesComplete = store != null && store.logoImage() != null && store.interiorImages().size() <= 3;
-        boolean hasMenus = store != null && !store.menus().isEmpty();
-        boolean menusValid = store == null || store.menus().size() <= 3 && store.menus().stream()
-                .allMatch(menu -> present(menu.name()) && menu.price() >= 0 && menu.image() != null);
+        boolean hours = readiness.hours();
+        boolean imagesComplete = readiness.images();
+        boolean hasMenus = readiness.menuCount() > 0;
+        boolean menusValid = readiness.validMenus();
         var steps = List.of(
                 new Step("TERMS", false, agreement != null, terms),
                 new Step("STORE_INFO", false, store != null, basic),
@@ -201,11 +198,8 @@ class StoreQueryServiceImpl implements StoreQueryService {
         String current = finalized ? null : progress.map(value -> value.resumeStep().name()).orElse("TERMS");
         return new OwnerStoreOverview(store, new Onboarding(current, resume,
                 progress.map(value -> value.version()).orElse(0L),
-                !finalized && terms && basic && location && hours && imagesComplete && menusValid,
+                !finalized && readiness.canFinalize(),
                 agreement, steps));
     }
 
-    private static boolean present(String value) {
-        return value != null && !value.isBlank();
-    }
 }

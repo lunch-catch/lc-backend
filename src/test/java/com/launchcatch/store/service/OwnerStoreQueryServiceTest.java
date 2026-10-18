@@ -12,15 +12,26 @@ import com.launchcatch.store.entity.StoreRegistrationStep;
 import java.time.LocalDateTime;
 import com.launchcatch.store.contract.OwnerStoreSnapshot.Image;
 import com.launchcatch.store.repository.OwnerStoreQueryRepository;
+import com.launchcatch.store.repository.StoreOnboardingQueryRepository;
 import com.launchcatch.store.repository.StoreQueryRepository;
 import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.BeforeEach;
+import com.launchcatch.store.StoreOnboardingReadiness;
+import com.launchcatch.store.dto.StoreOnboardingQueryRow;
 import org.springframework.dao.DataAccessResourceFailureException;
 
 class OwnerStoreQueryServiceTest {
+    private final StoreOnboardingQueryRepository readinessQuery = mock(StoreOnboardingQueryRepository.class);
     private final OwnerStoreQueryRepository stores = mock(OwnerStoreQueryRepository.class);
-    private final StoreQueryServiceImpl service = new StoreQueryServiceImpl(mock(StoreQueryRepository.class), stores, "https://cdn.example.com");
+    private final StoreQueryServiceImpl service = new StoreQueryServiceImpl(mock(StoreQueryRepository.class), stores, readinessQuery, "https://cdn.example.com");
+
+    @BeforeEach
+    void readiness() {
+        when(readinessQuery.findByOwnerId(1L)).thenReturn(new StoreOnboardingQueryRow(
+                null, 0, false, new StoreOnboardingReadiness(false, false, false, false, false, 0, true)));
+    }
 
     private void draft() {
         when(stores.findByOwnerId(1L)).thenReturn(Optional.of(new OwnerStoreSnapshot(
@@ -38,7 +49,7 @@ class OwnerStoreQueryServiceTest {
     void 이미지가_있는데_CDN_설정이_없으면_오류다() {
         draft();
         when(stores.findImages(10L)).thenReturn(List.of(new Image("logo.jpg", null, null)));
-        assertThatThrownBy(() -> new StoreQueryServiceImpl(mock(StoreQueryRepository.class), stores, "").findOwnerStore(1L))
+        assertThatThrownBy(() -> new StoreQueryServiceImpl(mock(StoreQueryRepository.class), stores, readinessQuery, "").findOwnerStore(1L))
                 .isInstanceOf(IllegalStateException.class);
     }
 
@@ -77,6 +88,8 @@ class OwnerStoreQueryServiceTest {
         when(stores.findProgress(1L)).thenReturn(Optional.of(
                 new StoreRegistrationProgressSnapshot(10L, StoreRegistrationStep.LOCATION, 2L)));
 
+        when(readinessQuery.findByOwnerId(1L)).thenReturn(new StoreOnboardingQueryRow(
+                10L, 2, false, new StoreOnboardingReadiness(true, false, false, false, false, 0, true)));
         var onboarding = service.getOwnerStoreOverview(1L).onboarding();
 
         assertThat(onboarding.steps().get(1).completed()).isFalse();

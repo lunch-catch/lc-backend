@@ -67,6 +67,7 @@ class StoreMenuUploadServiceTest {
     @SuppressWarnings("unchecked")
     @BeforeEach
     void setUp() throws Exception {
+        lenient().when(progressRepository.countDraftStoreOwnedBy(OWNER_ID, STORE_ID)).thenReturn(1L);
         StoreUploadSupport storeUploadSupport = new StoreUploadSupport(progressRepository, s3Presigner);
         Field supportBucketField = StoreUploadSupport.class.getDeclaredField("mediaBucket");
         supportBucketField.setAccessible(true);
