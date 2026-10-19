@@ -636,7 +636,7 @@ GET /v1/owner/report?from=2026-10-16&to=2026-10-17
 | `spentAmount` | `chargedAmount - refundedAmount` |
 | `notBilledReasons` | `campaign_daily_impression_reason_report`의 `UNBILLED` 행 |
 | `invalidReasons` | 같은 테이블의 `INVALID` 행 |
-| `hourlyImpressions` | `campaign_hourly_report`, 10·11·12시 |
+| `hourlyImpressions` | `campaign_hourly_report`, 0~23시 중 유효 노출이 있는 시간 |
 | `slotImpressions` | `campaign_daily_slot_report`의 `ALLOCATION`, `RELEVANCE` |
 
 무효 노출은 유효 노출에 포함하지 않고 과금하지 않는다. 미과금 노출은 유효 노출에 포함하지만 `spentAmount`에는 포함하지 않는다. 과금 노출 수에 단가를 곱해 차감액을 검증한다.
@@ -696,13 +696,14 @@ costPerVisit = spentAmount / redeemCount
 | 무효 | `NOT_OWNER` | 유효 노출·과금에서 제외, 사유별 표시 |
 | 미과금 | `NOT_BILLED_BUDGET` | 유효 노출에는 포함, 과금에는 제외 |
 | 미과금 | `NOT_BILLED_PAUSED` | 유효 노출에는 포함, 과금에는 제외 |
+| 미과금 | `NOT_BILLED_NO_PLAN` | 유효 노출에는 포함, 과금에는 제외. 노출을 받은 날에 그 캠페인의 예산 계획이 없었다(00:00 예약 전이거나 전날 집행이 끝난 캠페인). 2026-10-19 추가, #497 |
 | 미과금 | `NOT_BILLED_SOLD_OUT` | 유효 노출에는 포함, 과금에는 제외 |
 
 미과금 사유는 `BillingStatsQueryService`와 `AdservingStatsQueryService`가 같은 캠페인과 영업일에 반환한 값을 합쳐 생성한다. 미과금 노출은 광고 성과에는 포함되지만 점주에게 비용으로 청구되지 않는다.
 
 ### 시간대·슬롯·전환 지표
 
-`hourlyImpressions`는 10시, 11시, 12시의 유효 노출 수를 시간순으로 반환한다. `slotImpressions`는 `ALLOCATION`, `RELEVANCE`의 유효 노출 수를 반환한다. 슬롯 유형 비율은 각 값 ÷ `validImpressionCount`로 화면에서 계산한다. 분모가 0이면 비율은 `null`이다.
+`hourlyImpressions`는 0~23시 중 유효 노출이 저장된 시간의 노출 수를 시간순으로 반환한다. 노출이 없는 시간은 원소가 없고 화면이 0으로 채운다(2026-10-19 수정, #497: 서빙 시간대 10:00~12:59를 없앴다). `slotImpressions`는 `ALLOCATION`, `RELEVANCE`의 유효 노출 수를 반환한다. 슬롯 유형 비율은 각 값 ÷ `validImpressionCount`로 화면에서 계산한다. 분모가 0이면 비율은 `null`이다.
 
 찜·발급·사용 수와 전환율은 광고 성과 지표다. 정산 원장과는 독립이며 점주 리포트 화면에 “전환 지표는 비용 정산에 반영되지 않음”을 표시한다.
 
