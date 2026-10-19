@@ -23,6 +23,24 @@ public interface CouponDailyLimitRepository extends JpaRepository<CouponDailyLim
     void ensureCounter(@Param("memberId") Long memberId, @Param("businessDate") LocalDate businessDate,
             @Param("now") LocalDateTime now);
 
+    // 중복 발급과 일일 한도를 만족할 때만 횟수를 늘리며 호출자는 먼저 UPSERT로 카운터를 확보한다.
+    @Modifying
+    @Query(value = """
+            UPDATE coupon_daily_limit AS daily_limit
+               SET issued_count = issued_count + 1,
+                   updated_at = :now
+             WHERE daily_limit.member_id = :memberId
+               AND daily_limit.business_date = :businessDate
+               AND daily_limit.issued_count < :dailyLimit
+               AND NOT EXISTS (
+                   SELECT 1 FROM member_coupon AS coupon
+                    WHERE coupon.coupon_event_id = :eventId
+                      AND coupon.member_id = :memberId
+               )
+            """, nativeQuery = true)
+    int increaseForIssue(@Param("memberId") Long memberId, @Param("businessDate") LocalDate businessDate,
+            @Param("eventId") Long eventId, @Param("dailyLimit") int dailyLimit, @Param("now") LocalDateTime now);
+
     @Query("""
             SELECT dailyLimit.issuedCount
               FROM CouponDailyLimit dailyLimit

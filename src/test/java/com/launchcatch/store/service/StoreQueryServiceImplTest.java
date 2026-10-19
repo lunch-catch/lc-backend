@@ -84,7 +84,7 @@ class StoreQueryServiceImplTest {
                 new StoreSummaryQueryRow(2, 20, "등록 중", false, null)));
         assertThat(service.findSummariesByOwnerIds(List.of(1L, 2L)))
                 .extracting("ownerId", "storeId", "name", "finalized", "businessRegistrationNumber")
-                .containsExactly(tuple(1L, 10L, "가게", true, "123**67890"),
+                .containsExactly(tuple(1L, 10L, "가게", true, "123-45-*****"),
                         tuple(2L, 20L, "등록 중", false, null));
         var ownerIds = java.util.stream.LongStream.rangeClosed(1, 100).boxed().toList();
         when(repository.findSummariesByOwnerIds(ownerIds)).thenReturn(List.of(

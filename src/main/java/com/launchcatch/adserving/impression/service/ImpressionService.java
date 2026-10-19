@@ -65,18 +65,19 @@ public class ImpressionService {
             return ImpressionResponse.of(existing.get());
         }
 
+        // 판정, 차감, 소진 확인, 카운터가 같은 날을 보게 받은 날을 한 번만 구한다. 정산도 받은 날로 차감한다(PointDeductor 계약)
+        LocalDate receivedDate = LocalDate.now(clock);
         Optional<ServeRecord> found = serveRecordRepository.findById(serveId);
-        ImpressionLog log = judge(memberId, serveId, request, found);
+        ImpressionLog log = judge(memberId, serveId, receivedDate, request, found);
         if (!impressionLogRepository.insertIgnore(log)) {
             return ImpressionResponse.of(impressionLogRepository.findById(id).orElseThrow());
         }
         if (log.isValid()) {
             ServeRecord record = found.orElseThrow();
-            LocalDate servedDate = servedDate(record);
             if (!log.isSoldOut()) {
-                pointDeductor.deduct(serveId, record.campaignId(), servedDate);
+                pointDeductor.deduct(serveId, record.campaignId(), receivedDate);
             }
-            countAfterCommit(servedDate, record.campaignId());
+            countAfterCommit(receivedDate, record.campaignId());
             /*
              * 분석에 넘길 일을 커밋 전에 기록해 두지 않는다(장애 처리 가이드 "롤백 안 되는 효과"의 기본을 벗어난다).
              * 퍼널은 유실을 허용하고 노출 수는 impression_log 로 다시 센다(아키텍처 설계 2.4).
@@ -88,8 +89,8 @@ public class ImpressionService {
         return ImpressionResponse.of(log);
     }
 
-    private ImpressionLog judge(Long memberId, UUID serveId, ImpressionRequest request, Optional<ServeRecord> found) {
-        LocalDate receivedDate = LocalDate.now(clock);
+    private ImpressionLog judge(Long memberId, UUID serveId, LocalDate receivedDate, ImpressionRequest request,
+                                Optional<ServeRecord> found) {
         Sighting sighting = new Sighting(
                 request.displayedAt().atZoneSameInstant(ClockConfig.ZONE).toLocalDateTime(),
                 request.latitude(), request.longitude(), request.viewedMs());
@@ -105,24 +106,19 @@ public class ImpressionService {
             meterRegistry.counter(CAMPAIGN_MISMATCH_METRIC).increment();
         }
         boolean soldOut = adCandidateRepository.existsByIdBusinessDateAndIdCampaignIdAndSoldOutAtIsNotNull(
-                servedDate(record), record.campaignId());
+                receivedDate, record.campaignId());
         return ImpressionLog.valid(serveId, memberId, receivedDate, placement, sighting, soldOut);
-    }
-
-    // 차감과 카운터는 노출을 받은 날이 아니라 카드를 내려준 영업일로 센다(PointDeductor 계약).
-    private static LocalDate servedDate(ServeRecord record) {
-        return record.servedAt().atZone(ClockConfig.ZONE).toLocalDate();
     }
 
     /*
      * 피드의 노출 상한이 읽는 카운터는 트랜잭션이 되돌릴 수 없어 커밋된 뒤에 올린다(장애 처리 가이드 "롤백 안 되는 효과").
      * 커밋 전에 올리면 롤백된 노출까지 세어 상한이 이르게 걸린다.
      */
-    private void countAfterCommit(LocalDate servedDate, Long campaignId) {
+    private void countAfterCommit(LocalDate receivedDate, Long campaignId) {
         TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
             @Override
             public void afterCommit() {
-                impressionCountRepository.increment(servedDate, campaignId);
+                impressionCountRepository.increment(receivedDate, campaignId);
             }
         });
     }

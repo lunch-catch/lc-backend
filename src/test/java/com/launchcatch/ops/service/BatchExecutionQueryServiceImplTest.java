@@ -47,5 +47,6 @@ class BatchExecutionQueryServiceImplTest {
         assertThat(record.executedBy()).isEqualTo("server-1");
         assertThat(record.retryCount()).isZero();
         assertThat(record.failureReason()).isNull();
+        assertThat(record.attemptNo()).isEqualTo(1);
     }
 }

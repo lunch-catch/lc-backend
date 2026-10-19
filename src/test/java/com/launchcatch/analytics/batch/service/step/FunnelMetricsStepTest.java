@@ -18,6 +18,8 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -46,7 +48,9 @@ class FunnelMetricsStepTest {
 
     private static CampaignImpressionStats impressions(long campaignId, long valid, long expired, long notOwner,
             long wishFromContract) {
-        return new CampaignImpressionStats(campaignId, valid, 0, expired, notOwner, 0, 0, 0, 0, 0,
+        List<Long> hourlyCounts = new ArrayList<>(Collections.nCopies(24, 0L));
+        hourlyCounts.set(10, valid);
+        return new CampaignImpressionStats(campaignId, valid, 0, expired, notOwner, hourlyCounts, valid, 0,
                 wishFromContract);
     }
 

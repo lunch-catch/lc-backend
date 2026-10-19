@@ -8,8 +8,11 @@ import com.launchcatch.adserving.feed.repository.CampaignWishCount;
 import com.launchcatch.adserving.feed.repository.SwipeLogRepository;
 import com.launchcatch.adserving.impression.repository.ImpressionLogRepository;
 import com.launchcatch.adserving.impression.repository.ImpressionLogRepository.CampaignCounts;
+import com.launchcatch.adserving.impression.repository.ImpressionLogRepository.HourlyCounts;
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeSet;
@@ -35,6 +38,10 @@ public class AdservingStatsQueryServiceImpl implements AdservingStatsQueryServic
     public List<CampaignImpressionStats> campaignStats(LocalDate businessDate) {
         Map<Long, CampaignCounts> impressions = impressionLogRepository.countByCampaignOn(businessDate).stream()
                 .collect(Collectors.toMap(CampaignCounts::getCampaignId, Function.identity()));
+        Map<Long, Long[]> hourly = new HashMap<>();
+        for (HourlyCounts h : impressionLogRepository.countValidByCampaignAndHourOn(businessDate)) {
+            hourly.computeIfAbsent(h.getCampaignId(), id -> emptyHours())[h.getHour()] = h.getValidCount();
+        }
         Map<Long, Long> wishes = swipeLogRepository.countWishesByCampaign(businessDate).stream()
                 .collect(Collectors.toMap(CampaignWishCount::campaignId, CampaignWishCount::count));
 
@@ -44,14 +51,21 @@ public class AdservingStatsQueryServiceImpl implements AdservingStatsQueryServic
         for (Long campaignId : campaignIds) {
             long wishCount = wishes.getOrDefault(campaignId, 0L);
             CampaignCounts c = impressions.get(campaignId);
+            List<Long> hourlyCounts = List.of(hourly.getOrDefault(campaignId, emptyHours()));
             result.add(c == null
-                    ? new CampaignImpressionStats(campaignId, 0, 0, 0, 0, 0, 0, 0, 0, 0, wishCount)
+                    ? new CampaignImpressionStats(campaignId, 0, 0, 0, 0, hourlyCounts, 0, 0, wishCount)
                     : new CampaignImpressionStats(campaignId, c.getValidCount(), c.getSoldOutCount(),
-                            c.getExpiredOrUnknownCount(), c.getNotOwnerCount(), c.getHour10Count(),
-                            c.getHour11Count(), c.getHour12Count(), c.getAllocationCount(), c.getRelevanceCount(),
-                            wishCount));
+                            c.getExpiredOrUnknownCount(), c.getNotOwnerCount(), hourlyCounts,
+                            c.getAllocationCount(), c.getRelevanceCount(), wishCount));
         }
         return result;
+    }
+
+    // 시(0~23)를 인덱스로 하는 24칸이다. 노출이 없는 시는 0 이다
+    private static Long[] emptyHours() {
+        Long[] hours = new Long[24];
+        Arrays.fill(hours, 0L);
+        return hours;
     }
 
     @Override

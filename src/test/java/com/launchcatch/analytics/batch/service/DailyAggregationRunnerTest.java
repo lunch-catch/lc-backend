@@ -79,7 +79,7 @@ class DailyAggregationRunnerTest {
 
     private static BatchExecutionRecord execution(String jobName, LocalDate date, String status) {
         return new BatchExecutionRecord(1L, jobName, date, status, LocalDateTime.now(CLOCK), null, null,
-                "server-1", 0, null);
+                "server-1", 0, null, 1);
     }
 
     private static BatchExecutionRecord sourceDone(LocalDate date) {

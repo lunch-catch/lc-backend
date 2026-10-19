@@ -11,6 +11,7 @@ import java.sql.Timestamp;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.util.Arrays;
 import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
@@ -52,20 +53,23 @@ class AdservingStatsQueryIntegrationTest extends AbstractAdservingIntegrationTes
         List<CampaignImpressionStats> result = adservingStatsQueryService.campaignStats(DATE);
 
         assertThat(result).containsExactly(
-                new CampaignImpressionStats(CAMPAIGN, 3, 1, 2, 1, 1, 1, 1, 1, 2, 0),
-                new CampaignImpressionStats(OTHER_CAMPAIGN, 1, 0, 0, 0, 1, 0, 0, 1, 0, 0));
+                new CampaignImpressionStats(CAMPAIGN, 3, 1, 2, 1, hours(10, 1, 11, 1, 12, 1), 1, 2, 0),
+                new CampaignImpressionStats(OTHER_CAMPAIGN, 1, 0, 0, 0, hours(10, 1), 1, 0, 0));
         CampaignImpressionStats stats = result.getFirst();
-        assertThat(stats.hour10Count() + stats.hour11Count() + stats.hour12Count()).isEqualTo(stats.validCount());
+        assertThat(stats.hourlyCounts().stream().mapToLong(Long::longValue).sum()).isEqualTo(stats.validCount());
         assertThat(stats.allocationCount() + stats.relevanceCount()).isEqualTo(stats.validCount());
     }
 
+    // 서빙 시간대가 없어 0시부터 23시까지 받은 시각의 시로 센다(#498)
     @Test
-    void 서빙_종료_뒤_노출_인정_시간_안에_받은_노출은_그_영업일의_12시로_센다() {
-        valid(CAMPAIGN, 3001L, "ALLOCATION", false, LocalTime.of(12, 50));
-        valid(CAMPAIGN, 3002L, "ALLOCATION", false, LocalTime.of(13, 20));
+    void 받은_시각의_시를_0시부터_23시까지_그대로_센다() {
+        valid(CAMPAIGN, 3001L, "ALLOCATION", false, LocalTime.of(0, 5));
+        valid(CAMPAIGN, 3002L, "ALLOCATION", false, LocalTime.of(9, 30));
+        valid(CAMPAIGN, 3003L, "ALLOCATION", false, LocalTime.of(13, 20));
+        valid(CAMPAIGN, 3004L, "ALLOCATION", false, LocalTime.of(23, 59));
 
         assertThat(adservingStatsQueryService.campaignStats(DATE)).containsExactly(
-                new CampaignImpressionStats(CAMPAIGN, 2, 0, 0, 0, 0, 0, 2, 2, 0, 0));
+                new CampaignImpressionStats(CAMPAIGN, 4, 0, 0, 0, hours(0, 1, 9, 1, 13, 1, 23, 1), 4, 0, 0));
     }
 
     @Test
@@ -78,8 +82,8 @@ class AdservingStatsQueryIntegrationTest extends AbstractAdservingIntegrationTes
         swipe(OTHER_CAMPAIGN, 3001L, DATE, "WISH");
 
         assertThat(adservingStatsQueryService.campaignStats(DATE)).containsExactly(
-                new CampaignImpressionStats(CAMPAIGN, 1, 0, 0, 0, 1, 0, 0, 1, 0, 2),
-                new CampaignImpressionStats(OTHER_CAMPAIGN, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1));
+                new CampaignImpressionStats(CAMPAIGN, 1, 0, 0, 0, hours(10, 1), 1, 0, 2),
+                new CampaignImpressionStats(OTHER_CAMPAIGN, 0, 0, 0, 0, hours(), 0, 0, 1));
     }
 
     @Test
@@ -114,6 +118,16 @@ class AdservingStatsQueryIntegrationTest extends AbstractAdservingIntegrationTes
         assertThat(adservingStatsQueryService.memberConcentrations(DATE, 2)).containsExactly(
                 new CampaignMemberConcentration(CAMPAIGN, 4, 7),
                 new CampaignMemberConcentration(OTHER_CAMPAIGN, 1, 1));
+    }
+
+    // 시와 건수를 번갈아 받아 24칸을 채운다. 받지 않은 시는 0 이다
+    private static List<Long> hours(int... hourAndCount) {
+        Long[] counts = new Long[24];
+        Arrays.fill(counts, 0L);
+        for (int i = 0; i < hourAndCount.length; i += 2) {
+            counts[hourAndCount[i]] = (long) hourAndCount[i + 1];
+        }
+        return List.of(counts);
     }
 
     private void valid(long campaignId, long memberId, String slotType, boolean soldOut, LocalTime receivedAt) {

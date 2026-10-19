@@ -20,9 +20,12 @@ import java.util.Optional;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.dao.QueryTimeoutException;
 
 @ExtendWith(MockitoExtension.class)
 class MemberQueryServiceImplTest {
@@ -38,6 +41,30 @@ class MemberQueryServiceImplTest {
 
     @InjectMocks
     private MemberQueryServiceImpl memberQueryService;
+
+    @ParameterizedTest
+    @EnumSource(MemberStatus.class)
+    void 현재_상태_조회는_회원과_프로필을_만들지_않고_상태만_반환한다(MemberStatus status) {
+        when(memberRepository.findStatusById(1L)).thenReturn(Optional.of(status));
+
+        assertThat(memberQueryService.findCurrentStatus(1L)).contains(status);
+        verifyNoInteractions(member, memberProfile);
+    }
+
+    @Test
+    void 없는_회원의_현재_상태는_빈_결과를_반환한다() {
+        when(memberRepository.findStatusById(1L)).thenReturn(Optional.empty());
+
+        assertThat(memberQueryService.findCurrentStatus(1L)).isEmpty();
+    }
+
+    @Test
+    void 현재_상태_조회_장애는_그대로_전달한다() {
+        var failure = new QueryTimeoutException("member unavailable");
+        when(memberRepository.findStatusById(1L)).thenThrow(failure);
+
+        assertThatThrownBy(() -> memberQueryService.findCurrentStatus(1L)).isSameAs(failure);
+    }
 
     @Test
     @DisplayName("회원 조회는 다른 도메인에 필요한 상태와 동의 정보만 공개한다")
