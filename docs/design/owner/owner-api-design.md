@@ -1,6 +1,6 @@
 # 점주 API 설계
 
-회원가입·로그인·내 정보 조회·최초 튜토리얼 완료의 서버 내부 처리를 설명한다. 프론트 계약은 [owner-api-spec.md](../../api-spec/owner-api-spec.md), 공통 토큰 정책과 점주 재발급·로그아웃 설계는 [auth-api-design.md](../auth/auth-api-design.md#점주)를 따른다. 현재 브랜치 구현을 기준으로 하며, 가게 등록과 상태 변경은 별도 기능이다.
+회원가입·로그인·내 정보 조회·최초 튜토리얼 완료의 서버 내부 처리를 설명한다. 프론트 계약은 [owner-api-spec.md](../../api-spec/owner-api-spec.md), 공통 토큰 정책과 점주 재발급·로그아웃 설계는 [auth-api-design.md](../auth/auth-api-design.md#점주)를 따른다. 현재 브랜치 구현을 기준으로 한다. 가게 최종 등록과 ACTIVE 전환은 [가게 API 설계](../store/store-api-design.md#가게-최종-등록-502)를 따른다.
 
 ## 회원가입
 
