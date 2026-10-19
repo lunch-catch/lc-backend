@@ -31,11 +31,22 @@ class AnalyticsSecurityIntegrationTest extends AbstractAnalyticsIntegrationTest 
     @ParameterizedTest
     @ValueSource(strings = {
             "/v1/admin/sales/top-owners",
-            "/v1/admin/fraud/invalid-impressions",
             "/v1/admin/campaign-reports"
     })
     void 관리자_GET_경로는_인증과_관리자_역할을_요구한다(String path) throws Exception {
         assertAdminGet(path);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+            "/v1/admin/fraud/invalid-impressions",
+            "/v1/admin/fraud/campaign-warnings"
+    })
+    void 부정_관리_경로는_인증과_관리자_역할을_요구한다(String path) throws Exception {
+        mvc.perform(get(path)).andExpect(status().isUnauthorized());
+        mvc.perform(get(path).with(user("member").roles("MEMBER"))).andExpect(status().isForbidden());
+        mvc.perform(get(path).with(user("admin").roles("ADMIN"))).andExpect(status().isBadRequest());
+        mvc.perform(get(path).with(user("super").roles("SUPER_ADMIN"))).andExpect(status().isBadRequest());
     }
 
     @Test

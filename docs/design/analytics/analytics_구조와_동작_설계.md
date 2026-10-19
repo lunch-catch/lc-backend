@@ -252,6 +252,8 @@ sequenceDiagram
 
 **퍼널 지표 단계 (2026-10-17, #460).** `FunnelMetricsStep`(`@Order(400)`)이 `AdservingStatsQueryService.campaignStats`의 유효 노출과 무효 노출(`EXPIRED_OR_UNKNOWN`과 `NOT_OWNER`의 합), `CouponStatsQueryService.dailyCampaignStats`의 발급과 사용 수, 분석 자기 `event_log`의 `wish` 행 수를 `daily_funnel_analytics`(V3)의 그날 한 행으로 교체한다. 찜은 계약의 `wishCount`를 쓰지 않는다. 그 값은 31일만 보관하는 `swipe_log`가 원천이라 31일이 지난 날짜를 다시 집계(A-05, 정산 정정에 따른 자동 재집계)하면 저장된 찜 수를 0으로 덮는다. `event_log`는 13개월 보존이라 재집계 한계와 같다. 이벤트가 유실을 허용해 아주 조금 낮을 수 있으나 찜 수는 돈과 맞아야 하는 값이 아니다(AD-31). 퍼널 조회(A-03)는 건수를 합계로 내리고 유효 노출 비율은 합산한 유효와 무효로 다시 계산한다. 노출이 하나도 없으면 비율은 `null`이고 집계가 끝나지 않은 구간의 수치도 `null`이다.
 
+**부정 관리 단계 (2026-10-19, #540).** `InvalidMetricsStep`(`@Order(500)`)은 `AdservingStatsQueryService.memberInvalidCounts`의 건수를 (캠페인, 회원, 사유) 행으로 옮긴다. `NotBilledMetricsStep`(`@Order(510)`)은 정산의 예산, 중단, 예산 계획 없음 건수와 광고 서빙의 쿠폰 소진 뒤 노출을 캠페인과 사유별로 합친다. `FraudMetricsStep`(`@Order(520)`)은 캠페인 통계와 `memberConcentrations`로 유효·무효 노출, 회원 수, 상위 회원의 노출 합과 집중 의심을 캠페인마다 한 행으로 만든다. 노출이 하나도 없는 캠페인은 행이 없다. 세 표 모두 다시 집계했을 때 사라진 행이 남지 않게 그날 행을 지우고 넣는다. 임계값은 `AnalyticsFraudProperties`(`analytics.fraud.*`)이고 범위를 벗어나면 기동이 실패한다. 무효 비율은 무효 ÷ 유효이고 그 식은 `InvalidRatio` 한 곳에 있다.
+
 ## 11. 성능
 
 배치 지표 조회 API는 미리 계산한 일별 테이블만 읽는다. 이벤트 로그 기반 캠페인 성과의 조회 방식은 [API 설계](./analytics-api-design.md#이벤트-로그-기반-캠페인-성과-509)가 소유한다. 일별 집계는 원천 행이 아니라 도메인별로 묶은 결과를 받는다. 공개 트랜잭션은 외부 호출 없이 하루 결과를 쓰는 동안만 유지한다.
@@ -274,4 +276,4 @@ sequenceDiagram
 | 실행 세대 확인 | 이슈 `#360`은 병합됐다. 일별 집계 실행기는 정상 경로에서 자기 세대를 알 방법이 없어 아직 `BatchAttemptGuard`를 부르지 않는다 | 여러 서버의 안전한 공개 |
 | 집계 실행 조회(A-06)의 실행 기록이 없는 날짜 | 임시로 `200`과 `data: null`을 돌려준다. 테스트 `실행_기록이_없는_날짜의_조회는_data가_null이다`가 기록한다 | A-06 계약 확정 |
 | 회원 사용 통계 최종 확인 | 일별 집계안을 사용한다 | A-12 구현 |
-| 무효 비율 분모 | API 명세 계산을 임시 기준으로 사용한다 | A-10 계약 확정 |
+| 무효 비율 분모 | 유효 노출 수로 정했다(요구사항 BR-054, 2026-10-19). 화면 동작 확인(R-25)이 남았다 | 없음 |

@@ -13,7 +13,9 @@
 
 - A-04(카테고리·지역별 분해)와 A-08(점주별 상위 소진)을 구현하지 않기로 하고 절을 지웠다. 요구사항의 선택 데이터이고, 가게에 지역 값이 없다. 번호는 다시 매기지 않는다.
 - A-03에 사용 수 `redeemCount`를 더했다.
-- A-10의 무효 비율 분모를 `validCount + invalidCount`로 정했다. 세 임계값은 분석 서버의 설정값이다.
+- A-10의 무효 비율 분모를 `validCount`로 정했다(2026-10-19, 요구사항 BR-054와 같다). 비율이 1을 넘을 수 있다. 유효 노출이 0이어도 무효가 100건 이상이면 `invalidRatio`는 `null`인 채로 `invalidRatioWarning`이 `true`다. 무효가 100건 미만이면 비율이 높아도 경고하지 않는다. 임계값은 분석 서버의 설정값이다.
+- A-09, A-10의 `from`, `to`는 필수이고 기간은 최대 31일이다(2026-10-19). 생략하거나 넘으면 `400 ANALYTICS-001`이다.
+- A-10 응답에서 `storeId`를 뺐다(2026-10-19). 분석이 가게를 소유하지 않고 화면이 쓰지 않는다.
 - 점주 리포트의 소유 확인을 바꿨다. 기간에 집계 행이 없으면 본인 캠페인인지와 관계없이 빈 `items`이고, 집계 행이 있는데 소유 점주가 다르면 `403`이다.
 - A-06은 그 영업일에 실행 기록이 없으면 `data`가 `null`이다. `processedCount`는 성공한 실행에서 값이 있다.
 - A-13의 `map_view`, `wishlist_view`를 지금 보낼 수 있다.
@@ -274,7 +276,7 @@ GET /v1/admin/fraud/invalid-impressions?from=&to=&reasonCode=&campaignId=&member
 
 | 파라미터 | 필수 | 뜻 |
 | --- | --- | --- |
-| `from`, `to` | 아니오 | 기간(최대 31일) |
+| `from`, `to` | 예 | 기간(최대 31일). 생략하거나 범위를 넘으면 `400 ANALYTICS-001` |
 | `reasonCode` | 아니오 | `EXPIRED_OR_UNKNOWN` / `NOT_OWNER` |
 | `campaignId`, `memberId` | 아니오 | 필터 |
 | `page`, `size` | 아니오 | 0부터. `size` 기본 20, 최대 100 |
@@ -306,22 +308,22 @@ GET /v1/admin/fraud/invalid-impressions?from=&to=&reasonCode=&campaignId=&member
 GET /v1/admin/fraud/campaign-warnings?from=&to=&type=INVALID_RATIO|CONCENTRATION&page=0&size=20&sortBy=invalidRatio&sortDir=desc
 ```
 
-한 캠페인 단위로 두 경고를 판정해 내려준다. `type`을 생략하면 둘 중 하나라도 걸린 캠페인을 모두 내려준다. 페이징은 `page`(0부터)·`size`(기본 20, 최대 100), 정렬은 `sortBy`(`invalidRatio` 기본·`topMembersShare`·`campaignId`)·`sortDir`(`desc` 기본)이며 응답은 `items`와 `page`, `size`, `totalElements`를 담는다.
+한 캠페인 단위로 두 경고를 판정해 내려준다. `from`, `to`는 필수이고 기간은 최대 31일이다. `type`을 생략하면 둘 중 하나라도 걸린 캠페인을 모두 내려준다. 페이징은 `page`(0부터)·`size`(기본 20, 최대 100), 정렬은 `sortBy`(`invalidRatio` 기본·`topMembersShare`·`campaignId`)·`sortDir`(`desc` 기본)이며 응답은 `items`와 `page`, `size`, `totalElements`를 담는다.
 
 ```json
 {
-  "campaignId": 12, "storeId": 3,
-  "validCount": 4000, "invalidCount": 1100, "invalidRatio": 0.2157, "invalidRatioWarning": true,
+  "campaignId": 12,
+  "validCount": 4000, "invalidCount": 1100, "invalidRatio": 0.275, "invalidRatioWarning": true,
   "distinctMemberCount": 4, "topMembersShare": 0.92, "concentrationWarning": true
 }
 ```
 
 | 경고 | 판정 |
 | --- | --- |
-| `invalidRatioWarning` | `invalidRatio > 0.20`. 무효 노출 비율 20% 초과. `invalidRatio = invalidCount ÷ (validCount + invalidCount)`이고 둘 다 0이면 `null`, 경고 없음 |
+| `invalidRatioWarning` | `(invalidCount >= 100) AND (validCount == 0 OR invalidRatio > 0.20)`. 무효 노출 비율 20% 초과. `invalidRatio = invalidCount ÷ validCount`이고 `validCount`가 0이면 `null`이다. 유효 노출이 없고 무효가 100건 이상이면 비율 없이 경고한다. 0과 1 사이로 제한되지 않는다 |
 | `concentrationWarning` | `(validCount >= 100) AND (topMembersShare > 0.5)`. 소수 계정 집중 |
 
-`topMembersShare`는 상위 5개 계정의 노출 점유율이다. 세 임계값(상위 계정 수 5, 점유율 0.5, 최소 노출 100)은 **분석 서버의 설정값**이라 배포로 바뀔 수 있다. 판정식은 [설계서](../design/analytics/analytics-api-design.md#7-부정-관리) 7장에 있다.
+`topMembersShare`는 상위 5개 계정의 노출 점유율이다. 임계값(상위 계정 수 5, 점유율 0.5, 최소 노출 100, 비율 경고의 최소 무효 건수 100)은 **분석 서버의 설정값**이라 배포로 바뀔 수 있다. 판정식은 [설계서](../design/analytics/analytics-api-design.md#7-부정-관리) 7장에 있다.
 
 집중 경고는 캠페인·영업일 단위로 판정한다. 기간 조회의 `concentrationWarning`은 기간 중 하루라도 판정된 캠페인이면 `true`다. `topMembersShare`와 `distinctMemberCount`는 그 기간에서 점유율이 가장 높았던 하루의 값이다. `validCount`, `invalidCount`, `invalidRatio`는 기간 합계로 계산한다. 기간 전체의 회원별 노출은 보관하지 않는다. 날짜별로 판정하므로 한 달에 걸쳐 조금씩 나눠 소진시키는 공격은 놓칠 수 있다. 무효 비율 경고와 함께 본다.
 
