@@ -120,8 +120,8 @@ class StoreQueryServiceImpl implements StoreQueryService {
         return stores.findSummariesByOwnerIds(ownerIds).stream()
                 .map(row -> new StoreSummary(row.ownerId(), row.storeId(), row.name(), row.finalized(),
                         row.businessRegistrationNumber() == null ? null
-                                : row.businessRegistrationNumber().substring(0, 3) + "**"
-                                        + row.businessRegistrationNumber().substring(5)))
+                                : row.businessRegistrationNumber().substring(0, 3) + "-"
+                                        + row.businessRegistrationNumber().substring(3, 5) + "-*****"))
                 .toList();
     }
 

@@ -118,7 +118,7 @@ VERIFIED 상태의 LOGO를 LEFT JOIN하는 SQL 한 번으로 읽는다.
 이미지와 좌표는 조회하지 않으며 대표 이미지가 없는 등록 중 가게도 반환한다.
 
 `StoreSummary`는 ownerId, storeId, name, finalized, businessRegistrationNumber를 갖는다.
-사업자등록번호는 가운데 두 자리를 가려 `123**67890` 형식으로 반환한다.
+사업자등록번호는 뒤 다섯 자리를 가려 `123-45-*****` 형식으로 반환한다.
 아직 등록하지 않은 번호는 null로 유지한다.
 원문은 store 내부 조회 결과에만 두고 공개 계약에는 전달하지 않는다.
 
