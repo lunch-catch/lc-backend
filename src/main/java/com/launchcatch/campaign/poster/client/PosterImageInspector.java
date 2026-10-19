@@ -1,5 +1,6 @@
 package com.launchcatch.campaign.poster.client;
 
+import java.io.FilterInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.Iterator;
@@ -10,6 +11,7 @@ import javax.imageio.stream.ImageInputStream;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
+import software.amazon.awssdk.core.exception.SdkClientException;
 import software.amazon.awssdk.core.exception.SdkException;
 import software.amazon.awssdk.services.rekognition.RekognitionClient;
 import software.amazon.awssdk.services.rekognition.model.BoundingBox;
@@ -78,12 +80,17 @@ public class PosterImageInspector {
         }
     }
 
-    // 읽지 못하는 형식이면 null 이다. S3 호출 실패는 SdkException 으로 그대로 올린다.
+    /*
+     * 읽지 못하는 형식이면 null 이다.
+     * S3 스트림을 읽다가 난 오류는 SdkException 으로 올려 TOOL_FAILURE 로 가게 하고, 디코딩
+     * 자체가 안 되는 오류만 null 로 돌린다.
+     */
     private int[] readSize(String objectKey) {
-        try (InputStream in = s3Client.getObject(GetObjectRequest.builder()
+        try (InputStream raw = s3Client.getObject(GetObjectRequest.builder()
                         .bucket(mediaBucket)
                         .key(objectKey)
                         .build());
+                InputStream in = new S3StreamFailureTranslator(raw, objectKey);
                 ImageInputStream imageIn = ImageIO.createImageInputStream(in)) {
             if (imageIn == null) {
                 return null;
@@ -100,11 +107,55 @@ public class PosterImageInspector {
                 reader.dispose();
             }
         } catch (IOException e) {
+            log.info("poster image could not be decoded: key={}", objectKey, e);
             return null;
         }
     }
 
-    // 글자 줄 상자는 이미지 크기에 대한 비율 좌표라 넓이를 그대로 더한다. 상자가 겹치면 1을 넘을 수 있어 1로 자른다.
+    /*
+     * S3 에서 받은 스트림을 읽다가 난 IOException 을 SdkClientException 으로 바꿔 던진다.
+     *
+     * 감싸지 않으면 ImageIO 가 그 오류를 "디코딩 못 함" 으로 읽어 IMAGE_UNREADABLE 이 되고,
+     * S3 쪽 장애가 점주가 고칠 수 있는 원인으로 잘못 기록된다. SdkClientException 은
+     * RuntimeException 이라 여기서 던지면 readSize 의 IOException 처리를 타지 않고
+     * inspect() 의 SdkException 처리로 그대로 올라간다.
+     */
+    private static final class S3StreamFailureTranslator extends FilterInputStream {
+
+        private final String objectKey;
+
+        S3StreamFailureTranslator(InputStream in, String objectKey) {
+            super(in);
+            this.objectKey = objectKey;
+        }
+
+        @Override
+        public int read() throws IOException {
+            try {
+                return super.read();
+            } catch (IOException e) {
+                throw translate(e);
+            }
+        }
+
+        @Override
+        public int read(byte[] b, int off, int len) throws IOException {
+            try {
+                return super.read(b, off, len);
+            } catch (IOException e) {
+                throw translate(e);
+            }
+        }
+
+        private SdkClientException translate(IOException e) {
+            return SdkClientException.create("poster image stream read failed: key=" + objectKey, e);
+        }
+    }
+
+    /*
+     * 글자 줄 상자는 이미지 크기에 대한 비율 좌표라 넓이를 그대로 더한다.
+     * 상자가 겹치면 1을 넘을 수 있어 1로 자른다.
+     */
     private static double textRatio(List<TextDetection> lines) {
         double sum = 0;
         for (TextDetection line : lines) {

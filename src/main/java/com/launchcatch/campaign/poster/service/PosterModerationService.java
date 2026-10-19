@@ -109,7 +109,10 @@ public class PosterModerationService {
         return new PosterModerationOutcome(ModerationResult.FAIL, reasonList);
     }
 
-    // 이미지 슬롯(URL)을 뺀 텍스트 슬롯의 값만 모은다. HTML 태그와 속성은 보지 않는다.
+    /*
+     * 이미지 슬롯(URL)을 뺀 텍스트 슬롯의 값만 모은다.
+     * HTML 태그와 속성은 보지 않는다.
+     */
     private Map<String, String> slotTexts(String slotValuesJson) {
         JsonNode root;
         try {
