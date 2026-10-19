@@ -28,9 +28,8 @@ import software.amazon.awssdk.services.s3.model.S3Exception;
  * 가게 인테리어 이미지 업로드(#375). 로고는 가게 입점 과정에서 이미 등록돼 있다는 전제로,
  * 이 서비스는 로고를 새로 만들지 않고 존재 여부만 확인한다.
  *
- * ONBOARDING이 아닌 점주를 거부하는 검사는 두지 않는다. 그 전환(ACTIVE/SUSPENDED/WITHDRAWN)이
- * 아직 이 저장소에 구현돼 있지 않고, 나중에 필요해지면 owner가 이벤트로 알리는 쪽으로 풀어야
- * owner<->store 순환 의존이 생기지 않는다(런치캐치_도메인_구조와_의존성_설계.md 2.3).
+ * 업로드 예약과 단계 완료는 진행 상태 행 잠금 아래 본인 미확정 가게에만 허용한다.
+ * 최종 등록은 같은 잠금을 사용하므로 확정 이후 온보딩 업로드가 추가되지 않는다.
  */
 @Service
 @RequiredArgsConstructor
@@ -127,7 +126,7 @@ public class StoreImageUploadService {
 
     @Transactional
     public StoreRegistrationProgressResponse completeImagesStep(Long ownerId, long expectedVersion) {
-        Long storeId = findStoreId(ownerId);
+        Long storeId = storeUploadSupport.findStoreIdForUpdate(ownerId);
 
         if (!storeImageRepository.existsByStoreIdAndImageType(storeId, StoreImageType.LOGO)) {
             throw new StoreException(StoreErrorCode.LOGO_IMAGE_REQUIRED);

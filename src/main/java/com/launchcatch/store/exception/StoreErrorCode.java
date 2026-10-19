@@ -22,7 +22,8 @@ public enum StoreErrorCode implements ErrorCode {
     MENU_LIMIT_EXCEEDED(HttpStatus.UNPROCESSABLE_ENTITY, "STORE-011", "메뉴는 최대 3개까지 등록할 수 있습니다."),
     MENU_NOT_FOUND(HttpStatus.FORBIDDEN, "STORE-012", "그 메뉴에 접근할 권한이 없습니다."),
     MENU_IMAGE_REQUIRED(HttpStatus.CONFLICT, "STORE-013", "등록한 메뉴에는 이미지가 모두 있어야 합니다."),
-    MENU_IMAGE_ALREADY_EXISTS(HttpStatus.CONFLICT, "STORE-014", "이미 이미지가 등록된 메뉴입니다.");
+    MENU_IMAGE_ALREADY_EXISTS(HttpStatus.CONFLICT, "STORE-014", "이미 이미지가 등록된 메뉴입니다."),
+    REGISTRATION_REQUIREMENTS_NOT_MET(HttpStatus.CONFLICT, "STORE-015", "가게 최종 등록에 필요한 정보를 모두 저장해 주세요.");
 
     private final HttpStatus httpStatus;
     private final String code;

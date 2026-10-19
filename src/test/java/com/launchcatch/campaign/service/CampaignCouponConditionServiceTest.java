@@ -222,6 +222,44 @@ class CampaignCouponConditionServiceTest {
         assertThat(result.response().campaignId()).isEqualTo(501L);
         assertThat(existing.getDiscountValue()).isEqualTo(15);
         verify(campaignRepository, never()).saveAndFlush(any());
+        // 이어 쓰기는 새 캠페인을 만드는 게 아니라 "진행 중 1개" 제한을 볼 이유가 없다(#525).
+        verify(campaignRepository, never()).existsByOwnerIdAndStatusNotIn(any(), any());
+    }
+
+    /*
+     * #525. ENDED가 아닌 캠페인이 이미 있으면(DRAFT가 아닌 다른 캠페인, 즉 이 가게가 아닌
+     * 다른 가게를 가진 경우는 owner:store가 1:1이라 있을 수 없고, 같은 가게가 SCHEDULED
+     * 이상으로 넘어간 뒤 또 새로 만들려는 경우다) 새 등록을 막는다.
+     */
+    @Test
+    @DisplayName("이미 ENDED가 아닌 캠페인이 있으면 새 등록을 CAMPAIGN-010으로 거부한다")
+    void 진행중인_캠페인이_있으면_새_등록을_거부한다() {
+        when(campaignRepository.findByStoreIdAndStatus(STORE_ID, CampaignStatus.DRAFT)).thenReturn(Optional.empty());
+        when(campaignRepository.existsByOwnerIdAndStatusNotIn(OWNER_ID, List.of(CampaignStatus.ENDED)))
+                .thenReturn(true);
+
+        assertThatThrownBy(() -> service.handle(OWNER_ID, request()))
+                .isInstanceOfSatisfying(CampaignException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(CampaignErrorCode.CAMPAIGN_ALREADY_IN_PROGRESS));
+        verify(campaignRepository, never()).saveAndFlush(any());
+    }
+
+    @Test
+    @DisplayName("기존 캠페인이 ENDED뿐이면 새로 등록할 수 있다")
+    void ENDED뿐이면_새로_등록할_수_있다() throws Exception {
+        when(campaignRepository.findByStoreIdAndStatus(STORE_ID, CampaignStatus.DRAFT)).thenReturn(Optional.empty());
+        when(campaignRepository.existsByOwnerIdAndStatusNotIn(OWNER_ID, List.of(CampaignStatus.ENDED)))
+                .thenReturn(false);
+        when(campaignRepository.saveAndFlush(any(Campaign.class))).thenAnswer(invocation -> {
+            Campaign saved = invocation.getArgument(0);
+            setId(saved, 501L);
+            return saved;
+        });
+
+        CampaignCouponConditionResult result = service.handle(OWNER_ID, request());
+
+        assertThat(result.created()).isTrue();
+        assertThat(result.response().campaignId()).isEqualTo(501L);
     }
 
     @Test

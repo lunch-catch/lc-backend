@@ -226,6 +226,10 @@ class OwnerStoreIntegrationTest extends AbstractOwnerIntegrationTest {
                 insert into store_image (store_id, image_type, object_key, upload_status, verified_at, created_at, updated_at)
                 values (?, 'LOGO', ?, 'VERIFIED', now(), now(), now())
                 """, storeId, "logo/" + storeId);
+        jdbc.update("""
+                insert into store_registration_progress (owner_id, store_id, resume_step, version, created_at, updated_at)
+                values (?, ?, 'MENU', 6, now(), now())
+                """, id, storeId);
         if (!menuState.equals("NONE")) {
             jdbc.update("""
                     insert into store_menu (store_id, name, price, sort_order, created_at, updated_at)

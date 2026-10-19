@@ -36,7 +36,11 @@ public class StoreUploadSupport {
     public Long findStoreIdForUpdate(Long ownerId) {
         StoreRegistrationProgress progress = progressRepository.findByOwnerIdForUpdate(ownerId)
                 .orElseThrow(() -> new StoreException(StoreErrorCode.REGISTRATION_PROGRESS_NOT_FOUND));
-        return requireStoreId(progress);
+        Long storeId = requireStoreId(progress);
+        if (progressRepository.countDraftStoreOwnedBy(ownerId, storeId) != 1) {
+            throw new StoreException(StoreErrorCode.REGISTRATION_STORE_NOT_ALLOWED);
+        }
+        return storeId;
     }
 
     public Long requireStoreId(StoreRegistrationProgress progress) {

@@ -30,6 +30,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
+import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -57,7 +58,17 @@ class TemplateCreateServiceTest {
 
     private static final Long ADMIN_ID = 1L;
     private static final String REQUEST_ID = "req-1";
+
+    // 상수를 참조하지 않고 poster-api-design.md 의 문장을 그대로 적어야 목록이 바뀐 것을 잡는다.
+    private static final List<String> EXPECTED_SUGGESTED_PROMPTS = List.of(
+            "배경을 더 밝게 해줘",
+            "행사명 글자를 더 크게 해줘",
+            "할인 문구를 더 진한 강조색으로 바꿔줘",
+            "행사명을 중앙에서 오른쪽으로 1cm 옮겨줘",
+            "이미지 모서리를 더 둥글게 해줘");
     private static final Clock FIXED_CLOCK = Clock.fixed(Instant.parse("2026-10-08T01:00:00Z"), ZoneOffset.UTC);
+    // 실제 설계값(V51)이다. application.yml의 campaign.template-max-count는 임시 상향값(#529)이라 이 테스트와 무관하다.
+    private static final int MAX_TEMPLATES = 10;
 
     @Mock
     private TemplateRepository templateRepository;
@@ -78,7 +89,7 @@ class TemplateCreateServiceTest {
 
     @SuppressWarnings("unchecked")
     @BeforeEach
-    void setUp() {
+    void setUp() throws Exception {
         service = new TemplateCreateService(
                 templateRepository,
                 templateVersionRepository,
@@ -89,6 +100,9 @@ class TemplateCreateServiceTest {
                 new TemplateGenerationRateLimiter(redisTemplate),
                 transactionTemplate,
                 FIXED_CLOCK);
+        Field maxTemplatesField = TemplateCreateService.class.getDeclaredField("maxTemplates");
+        maxTemplatesField.setAccessible(true);
+        maxTemplatesField.setInt(service, MAX_TEMPLATES);
         lenient().when(templateVersionRepository.findByRequestId(REQUEST_ID)).thenReturn(Optional.empty());
         lenient().when(transactionTemplate.execute(any())).thenAnswer(invocation -> {
             TransactionCallback<?> callback = invocation.getArgument(0);
@@ -112,7 +126,7 @@ class TemplateCreateServiceTest {
     void 검증을_통과하면_저장한다() throws Exception {
         처음_보는_requestId로_설정한다();
         when(templateRepository.count()).thenReturn(9L);
-        when(templateQuotaRepository.tryReserve(TemplateCreateService.MAX_TEMPLATES)).thenReturn(1);
+        when(templateQuotaRepository.tryReserve(MAX_TEMPLATES)).thenReturn(1);
         when(templateHtmlGenerator.generate("가을 느낌")).thenReturn(VALID_HTML + "<script>alert(1)</script>");
         when(templateRepository.saveAndFlush(any(Template.class))).thenAnswer(invocation -> {
             Template saved = invocation.getArgument(0);
@@ -128,6 +142,7 @@ class TemplateCreateServiceTest {
         assertThat(response.status()).isEqualTo(TemplateStatus.DRAFT);
         assertThat(response.html()).isEqualTo(VALID_HTML);
         assertThat(response.removedElements()).containsExactly("script");
+        assertThat(response.suggestedPrompts()).containsExactlyElementsOf(EXPECTED_SUGGESTED_PROMPTS);
         ArgumentCaptor<Template> captor = ArgumentCaptor.forClass(Template.class);
         verify(templateRepository).saveAndFlush(captor.capture());
         assertThat(captor.getValue().isActive()).isFalse();
@@ -148,6 +163,7 @@ class TemplateCreateServiceTest {
         assertThat(response.versionNumber()).isEqualTo(1);
         assertThat(response.html()).isEqualTo(VALID_HTML);
         assertThat(response.removedElements()).isEmpty();
+        assertThat(response.suggestedPrompts()).containsExactlyElementsOf(EXPECTED_SUGGESTED_PROMPTS);
         verifyNoInteractions(
                 templateRepository, templateHtmlGenerator, templateQuotaRepository, transactionTemplate,
                 redisTemplate);
@@ -190,7 +206,7 @@ class TemplateCreateServiceTest {
         when(templateVersionRepository.findByRequestId(REQUEST_ID))
                 .thenReturn(Optional.empty(), Optional.of(existing));
         when(templateRepository.count()).thenReturn(0L);
-        when(templateQuotaRepository.tryReserve(TemplateCreateService.MAX_TEMPLATES)).thenReturn(1);
+        when(templateQuotaRepository.tryReserve(MAX_TEMPLATES)).thenReturn(1);
         when(templateHtmlGenerator.generate("가을 느낌")).thenReturn(VALID_HTML);
         when(templateRepository.saveAndFlush(any(Template.class)))
                 .thenThrow(new DataIntegrityViolationException("uk_template_version_request_id"));
@@ -207,7 +223,7 @@ class TemplateCreateServiceTest {
     void 저장_시점_제약_위반이_requestId_충돌이_아니면_그대로_던진다() {
         처음_보는_requestId로_설정한다();
         when(templateRepository.count()).thenReturn(0L);
-        when(templateQuotaRepository.tryReserve(TemplateCreateService.MAX_TEMPLATES)).thenReturn(1);
+        when(templateQuotaRepository.tryReserve(MAX_TEMPLATES)).thenReturn(1);
         when(templateHtmlGenerator.generate("가을 느낌")).thenReturn(VALID_HTML);
         DataIntegrityViolationException violation = new DataIntegrityViolationException("다른 제약 위반");
         when(templateRepository.saveAndFlush(any(Template.class))).thenThrow(violation);
@@ -235,7 +251,7 @@ class TemplateCreateServiceTest {
     void 저장_시점에_자리를_못_받으면_거부한다() {
         처음_보는_requestId로_설정한다();
         when(templateRepository.count()).thenReturn(9L);
-        when(templateQuotaRepository.tryReserve(TemplateCreateService.MAX_TEMPLATES)).thenReturn(0);
+        when(templateQuotaRepository.tryReserve(MAX_TEMPLATES)).thenReturn(0);
         when(templateHtmlGenerator.generate("가을 느낌")).thenReturn(VALID_HTML);
 
         assertThatThrownBy(() -> service.create("가을 신메뉴", "가을 느낌", REQUEST_ID, ADMIN_ID))

@@ -173,6 +173,11 @@ coupon:
   issue-start-time: "${COUPON_ISSUE_START_TIME:11:00}"
   issue-end-time: "${COUPON_ISSUE_END_TIME:14:00}"
 
+# 실제 설계값은 10이다(V51). 프론트 연동 테스트를 위해 100으로 임시 상향했다(#529,
+# 테스트가 끝나면 10으로 되돌린다).
+campaign:
+  template-max-count: "${CAMPAIGN_TEMPLATE_MAX_COUNT:100}"
+
 # 이미지 URL 앞에 붙는 주소다. 운영은 CloudFront 도메인이 들어온다.
 #
 # 기본값을 비워 둔다. 로컬에는 오브젝트 스토리지가 없어 어차피 이미지가 열리지 않는데,
