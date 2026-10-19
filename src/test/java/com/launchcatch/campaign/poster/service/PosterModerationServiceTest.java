@@ -6,7 +6,6 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.launchcatch.campaign.exception.CampaignException;
 import com.launchcatch.campaign.poster.ForbiddenExpressionDictionary;
 import com.launchcatch.campaign.poster.client.PosterImageInspection;
@@ -50,7 +49,7 @@ class PosterModerationServiceTest {
     @BeforeEach
     void setUp() {
         service = new PosterModerationService(posterRepository, posterModerationResultRepository,
-                new ForbiddenExpressionDictionary(), posterImageInspector, new ObjectMapper(), 0.5, 200, 200);
+                new ForbiddenExpressionDictionary(), posterImageInspector, 0.5, 200, 200);
     }
 
     @Test

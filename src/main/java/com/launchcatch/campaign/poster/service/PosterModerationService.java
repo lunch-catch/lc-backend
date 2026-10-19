@@ -44,7 +44,8 @@ public class PosterModerationService {
     private final PosterModerationResultRepository posterModerationResultRepository;
     private final ForbiddenExpressionDictionary forbiddenExpressionDictionary;
     private final PosterImageInspector posterImageInspector;
-    private final ObjectMapper objectMapper;
+    // 이 저장소에는 ObjectMapper 빈이 없어(PosterUploadService 도 같은 이유로 직접 둔다) 직접 둔다.
+    private final ObjectMapper objectMapper = new ObjectMapper();
     private final double maxTextRatio;
     private final int minImageWidth;
     private final int minImageHeight;
@@ -54,7 +55,6 @@ public class PosterModerationService {
             PosterModerationResultRepository posterModerationResultRepository,
             ForbiddenExpressionDictionary forbiddenExpressionDictionary,
             PosterImageInspector posterImageInspector,
-            ObjectMapper objectMapper,
             @Value("${campaign.moderation.max-text-ratio}") double maxTextRatio,
             @Value("${campaign.moderation.min-image-width}") int minImageWidth,
             @Value("${campaign.moderation.min-image-height}") int minImageHeight) {
@@ -62,7 +62,6 @@ public class PosterModerationService {
         this.posterModerationResultRepository = posterModerationResultRepository;
         this.forbiddenExpressionDictionary = forbiddenExpressionDictionary;
         this.posterImageInspector = posterImageInspector;
-        this.objectMapper = objectMapper;
         this.maxTextRatio = maxTextRatio;
         this.minImageWidth = minImageWidth;
         this.minImageHeight = minImageHeight;
