@@ -42,12 +42,12 @@ coupon/
 ├── CouponListFilter.java
 ├── CouponQrImageEncoder.java
 ├── config/        CouponSecurityConfig, CouponOpenApiConfig
-├── controller/    CouponController
+├── controller/    CouponController, OwnerCouponController
 ├── dto/           요청·응답 record와 입력 변환
 ├── entity/        CouponEvent, CouponInventory, CouponDailyLimit,
 │                  MemberCoupon, CouponUsageHistory
 ├── repository/    각 엔티티 저장소와 목록용 Querydsl 구현
-├── service/       CouponCommandService, CouponIssuanceService, CouponLookUpService, CouponStatsQueryServiceImpl
+├── service/       CouponCommandService, CouponIssuanceService, CouponLookUpService, OwnerCouponService, CouponStatsQueryServiceImpl
 └── exception/     CouponException, CouponErrorCode
 ```
 
@@ -137,7 +137,7 @@ V7은 전체 메뉴 정률 조합을 CHECK에서 제외한다. 지원하지 않�
 | 상태 | 방향과 대상 | 공개 계약 | 호출 시점 |
 |---|---|---|---|
 | 연결됨 | 읽기, member | `MemberQueryService.findById(Long)` | 발급·QR 생성·이벤트 상태·새 사용 확정마다 한 번 호출한다 |
-| 연결됨 | 읽기, owner | `OwnerStatusQuery.findCurrentStatus(Long)` | 매장 사용 이력·사용 확정 요청마다 한 번 호출하며 캐시를 우회한다 |
+| 연결됨 | 읽기, owner | `OwnerStatusQuery.findCurrentStatus(Long)` | 점주 수량·매장 사용 이력·사용 확정 요청마다 한 번 호출하며 캐시를 우회한다 |
 | 연결됨 | 읽기, campaign | `CampaignQueryService.findByStoreIdIn(List<Long>)` | 이벤트 상태 요청마다 한 번 일괄 호출한다 |
 | 연결됨 | 읽기, store | `StoreQueryService.canManageStore(Long, Long)`, `findAllById(List<Long>)` | QR 사용은 관리 권한과 좌표를 조회한다. 이력 조회는 현재 관리 권한, 이벤트 조회는 최종 등록 매장을 확인한다 |
 | 연결됨 | 읽기·쓰기, adserving | `WishlistQueryService`, `CandidateStateUpdater` | 발급·이벤트 조회에서 찜을 읽고 마지막 발급 커밋 뒤 소진을 알린다. 소진 거절에서도 누락 반영을 재시도한다 |
@@ -160,15 +160,16 @@ store 메서드의 반환 정책은 [공개 계약 문서](../store/store-query-
 ```mermaid
 flowchart LR
     HTTP([HTTP 요청]) --> Controller[CouponController]
+    HTTP --> OwnerController[OwnerCouponController]
     subgraph Coupon["coupon 도메인 루트"]
         Controller --> Command[CouponCommandService]
         Controller --> Lookup[CouponLookUpService]
+        OwnerController --> Owner[OwnerCouponService]
         Command --> Daily[(CouponDailyLimitRepository)]
-        Command --> Events[(CouponEventRepository)]
+        Issuance --> Events[(CouponEventRepository)]
         Command --> Issuance[CouponIssuanceService]
         Issuance --> Inventory[(CouponInventoryRepository)]
         Issuance --> Daily
-        Issuance --> Events
         Issuance --> Members
         Command --> Members[(MemberCouponRepository)]
         Command --> Image[CouponQrImageEncoder]
@@ -176,20 +177,23 @@ flowchart LR
         Lookup --> Events
         Lookup --> Members
         Lookup --> History[(CouponUsageHistoryRepository)]
-        Command --> History
-        Command --> Discount[CouponEvent.calculateDiscount]
+        Owner --> Events
+        Owner --> Members
+        Owner --> History
+        Owner --> Discount[CouponEvent.calculateDiscount]
     end
     Command --> MemberQuery["member.contract.MemberQueryService"]
     Lookup --> MemberQuery
-    Lookup --> OwnerQuery["owner.contract.OwnerStatusQuery"]
-    Command --> OwnerQuery
-    Command --> StoreQuery["store.contract.StoreQueryService"]
+    Owner --> MemberQuery
+    Owner --> OwnerQuery["owner.contract.OwnerStatusQuery"]
+    Owner --> StoreQuery["store.contract.StoreQueryService"]
     Lookup --> StoreQuery
     Issuance --> MemberQuery
     Issuance --> Wishlist["adserving.contract.WishlistQueryService"]
     Lookup --> Wishlist
     Command --> Candidate["adserving.contract.CandidateStateUpdater"]
     Lookup --> CampaignQuery["campaign.contract.CampaignQueryService"]
+    Owner --> CampaignQuery
     classDef outside fill:#f5f5f5,stroke:#999,stroke-dasharray:4 3
     class MemberQuery,OwnerQuery,CampaignQuery,StoreQuery,Wishlist,Candidate outside
 ```
@@ -215,7 +219,7 @@ stateDiagram-v2
 | ISSUED → EXPIRED | 목록·단건 조회 | `changeToExpired`가 기간 종료를 검사하며 QR·재고·카운터는 유지한다 |
 | ISSUED·EXPIRED → REMOVED | 본인 삭제 요청 | USED 삭제는 거절하며 최초 삭제만 발급 날짜의 카운터를 줄인다 |
 | REMOVED → REMOVED | 본인 삭제 재요청 | 추가 쓰기와 카운터 차감을 하지 않는다 |
-| ISSUED → USED | 점주의 QR 사용 요청 | CouponCommandService가 상태와 이력을 함께 저장하고 사용 이벤트를 발행한다. QR 식별 기준은 [QR 사용 설계](./coupon-api-design.md#qr-사용-구현-전-확정-사항)를 따른다 |
+| ISSUED → USED | 점주의 QR 사용 요청 | OwnerCouponService가 상태와 이력을 함께 저장하고 사용 이벤트를 발행한다. QR 식별 기준은 [QR 사용 설계](./coupon-api-design.md#qr-사용-구현-전-확정-사항)를 따른다 |
 
 ```mermaid
 stateDiagram-v2
@@ -340,7 +344,7 @@ QR 생성·삭제·만료 저장은 같은 회원 쿠폰 행을 잠근다. 잠�
 | 같은 트랜잭션의 outbox를 폴링한다 | 커밋한 이벤트를 재전달할 수 있다 | 저장·폴링·보존을 관리해야 한다 |
 
 아키텍처와 #355가 퍼널 유실을 허용하므로 첫 번째 방식을 쓴다.
-발급의 `CouponIssuanceService`와 사용 확정의 `CouponCommandService`가 `ApplicationEventPublisher`를 직접 주입받는다. 각 업무 트랜잭션 안에서 이벤트 record를 생성해 `publishEvent`를 호출한다.
+발급의 `CouponIssuanceService`와 사용 확정의 `OwnerCouponService`가 `ApplicationEventPublisher`를 직접 주입받는다. 각 업무 트랜잭션 안에서 이벤트 record를 생성해 `publishEvent`를 호출한다.
 별도 커밋 콜백과 실행기, DB 조회, outbox는 추가하지 않는다.
 분석 수신자가 `@Async`와 `@TransactionalEventListener(AFTER_COMMIT)`로 처리하며 롤백된 작업은 수신하지 않는다.
 발행된 이벤트에 일반 동기 리스너를 붙이면 트랜잭션 안에서 실행되므로 분석 저장에는 그 방식을 쓰지 않는다.
