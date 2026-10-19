@@ -10,7 +10,7 @@ analytics가 등록하는 일별 집계, 퍼널 이벤트 수신, 이벤트 로�
 |---|---|
 | 실행 시각 | 01:00 KST `@Scheduled`. 00:00 묶음 밖에서 실행한다 |
 | 작업명 | `DAILY_AGGREGATION` |
-| 대상 날짜 | 전일과 `aggregation_pending_date`에 남은 날짜. 운영의 `rerun`이 제공되면 전전일도 포함한다 |
+| 대상 날짜 | 전일, 전전일과 `aggregation_pending_date`에 남은 날짜를 오래된 순서로 처리한다 |
 | 보존 범위 | 현재 날짜에서 13개월 안의 날짜만 집계한다 |
 | 날짜 점유 | 실행 기록이 없으면 `claim`, FAILED면 `retry`, SUCCESS면 `rerun`, RUNNING이면 건너뛴다 |
 | 수동 재집계 | A-05가 정기 실행과 같은 실행기를 부른다 |
@@ -24,26 +24,31 @@ Spring Batch는 사용하지 않는다. 각 단계는 평범한 서비스이고 
 
 1. 모으기는 트랜잭션 없이 원천 도메인의 집계 조회 contract와 `event_log`를 읽어 메모리에 결과를 만든다.
 2. 일시적 실패만 트랜잭션 밖에서 기다린 뒤 하루 결과를 처음부터 다시 모은다.
-3. 공개는 한 트랜잭션에서 실행 세대를 확인하고 analytics 테이블의 하루 결과를 교체한다.
+3. 공개는 한 트랜잭션에서 analytics 테이블의 하루 결과를 교체한다.
 4. 검증 단계가 등식을 확인한 뒤 성공하면 미처리 날짜를 지운다.
 
-공개 트랜잭션은 외부 도메인을 호출하지 않는다. 임대를 잃은 서버가 늦게 결과를 공개하지 못하도록 트랜잭션 첫머리에서 실행 세대를 확인한다. 실행 세대 contract는 이슈 `#360`이 소유한다.
+공개 트랜잭션은 외부 도메인을 호출하지 않는다. 현재 `DailyAggregationRunner`는 모으기 단계 사이와 공개 직전에 `renew`로 소유를 확인한다. 공개 트랜잭션 안에서 실행 세대를 잠그는 처리는 없다. 마지막 확인과 공개 사이에 실행권을 잃으면 오래된 결과가 공개될 수 있다. ops의 이어받기 구현만으로 이 간극이 닫힌 것은 아니다.
+
+`succeed` 실행 기록과 미처리 날짜 삭제는 공개 트랜잭션 뒤다. 집계 데이터와 실행 상태가 동시에 커밋된다고 보장하지 않는다. 시계열의 `FINAL`은 실행 기록의 성공 여부를 따르므로 공개 뒤 상태 기록 실패도 별도 확인해야 한다.
+
+수동 재집계는 같은 실행기의 `acquire`와 `aggregate`를 사용하지만 정기 실행의 `runDate`가 하는 원천 해제 성공 확인을 거치지 않는다. 메모리 실행기는 한 스레드·대기열 네 개이며 서버 종료 시 작업을 잃을 수 있다. 시작 실패는 점유한 날짜를 FAILED·미처리로 남기지만 모든 중단에서 자동 복구된다는 보장은 없다.
 
 ### 단계 구성
 
-| 단계 | 산출 테이블 | 원천 |
-|---|---|---|
-| `SettlementMetricsStep` | `daily_settlement_analytics` | `BillingStatsQueryService` |
-| `MemberMetricsStep` | `daily_member_analytics` | `MemberStatsQueryService`, analytics의 `event_log` |
-| `StoreMetricsStep` | `daily_store_analytics` | `StoreStatsQueryService`, 캠페인과 점주 상태 집계 조회 |
-| `InvalidMetricsStep` | `daily_invalid_analytics` | `AdservingStatsQueryService` |
-| `NotBilledMetricsStep` | `daily_campaign_not_billed_analytics` | `BillingStatsQueryService`, `AdservingStatsQueryService` |
-| `FraudMetricsStep` | `daily_campaign_fraud_analytics` | `AdservingStatsQueryService` |
-| `CampaignReportStep` | `campaign_daily_report`와 자식 4종 | `BillingStatsQueryService`, `AdservingStatsQueryService`, `CouponStatsQueryService`, `CampaignStatsQueryService` |
-| `MemberUsageStep` | `daily_member_usage` | `CouponStatsQueryService`, `MemberStatsQueryService`, analytics의 `event_log` |
-| `ConsistencyCheckStep` | 지표와 구조화 로그 | 앞 단계가 모은 결과 |
+| 단계 | 산출 테이블 | 원천 | 현재 구현 |
+|---|---|---|---|
+| `SettlementMetricsStep` | `daily_settlement_analytics` | `BillingStatsQueryService` | 구현됨, 순서 100 |
+| `MemberMetricsStep` | `daily_member_analytics` | `MemberStatsQueryService`, `event_log` | 구현됨, 순서 200 |
+| `StoreMetricsStep` | `daily_store_analytics` | `StoreStatsQueryService`, `CampaignStatsQueryService` | 구현됨, 순서 300 |
+| `FunnelMetricsStep` | `daily_funnel_analytics` | 광고 서빙·쿠폰 집계 조회, `event_log` | PR #461에 있고 미병합, 순서 400 |
+| `InvalidMetricsStep` | `daily_invalid_analytics` | `AdservingStatsQueryService` | 설계만 있음 |
+| `NotBilledMetricsStep` | `daily_campaign_not_billed_analytics` | 정산·광고 서빙 집계 조회 | 설계만 있음 |
+| `FraudMetricsStep` | `daily_campaign_fraud_analytics` | `AdservingStatsQueryService` | 설계만 있음 |
+| `CampaignReportStep` | `campaign_daily_report`, 사유·시간대·슬롯·변경 이력 | 정산·광고 서빙·쿠폰 집계와 캠페인 연결 정보 | 설계만 있음 |
+| `MemberUsageStep` | `daily_member_usage` | `CouponStatsQueryService.dailyMemberStats`, `event_log` | 설계만 있음 |
+| `SettlementConsistencyStep` | 지표와 구조화 로그 | 정산 집계 조회와 공개한 매출 행 | 구현됨, 순서 900 |
 
-A-04와 A-08을 구현하지 않으므로 `daily_segment_analytics`와 `daily_owner_spend`를 채우는 단계는 두지 않는다. 두 테이블은 폐기하지 않고 비워 둔다. A-03은 `CampaignReportStep`과 `InvalidMetricsStep`의 결과에서 계산한다([API 설계](./analytics-api-design.md#퍼널) 5장). 분석이 캠페인에서 받는 값은 `CampaignStatsQueryService` 하나로 받는다(#394).
+A-04와 A-08을 구현하지 않으므로 `daily_segment_analytics`와 `daily_owner_spend`를 채우는 단계는 두지 않는다. 두 테이블은 폐기하지 않고 남긴다. A-03의 전용 테이블과 미병합 코드의 기준은 [API 설계의 퍼널 절](./analytics-api-design.md#퍼널)을 따른다. 캠페인 연결 정보의 원본 설계는 `CampaignQueryService.findAllById`이며 없는 집계 조회 메서드를 전제로 만들지 않는다.
 
 원천 도메인의 집계 조회가 아직 없으면 해당 단계는 구현하지 않는다. analytics가 다른 도메인의 contract 타입이나 행 단위 원본을 먼저 만들지 않는다.
 
@@ -74,14 +79,14 @@ A-04와 A-08을 구현하지 않으므로 `daily_segment_analytics`와 `daily_ow
 
 ### billing 집계 조회의 메서드
 
-billing은 2026-10-16에 `BillingStatsQueryService`를 공개했다(#352, #402). analytics 쪽 단계는 아직 구현 전이고 아래는 단계가 부를 메서드의 대응이다. 귀속 기준과 합계의 정의는 [billing 구조와 동작 설계](../billing/billing_구조와_동작_설계.md#집계-조회의-영업일-귀속)가 소유한다.
+billing은 `BillingStatsQueryService`를 공개했고 `SettlementMetricsStep`과 `SettlementConsistencyStep`이 사용한다. 아래 표의 후속 단계는 위 구현 상태를 함께 본다. 귀속 기준과 합계의 정의는 [billing 구조와 동작 설계](../billing/billing_구조와_동작_설계.md#집계-조회의-영업일-귀속)가 소유한다.
 
 | 메서드 | 돌려주는 것 | 쓰는 단계 |
 |---|---|---|
-| `ledgerSums(영업일)` | 점주와 캠페인별 `CHARGE`, `RESERVE`, `DEDUCT`, `RELEASE`, `REFUND`와 양수·음수 `ADJUST` 합 | `SettlementMetricsStep`, `OwnerSpendStep`, `CampaignReportStep` |
+| `ledgerSums(영업일)` | 점주와 캠페인별 `CHARGE`, `RESERVE`, `DEDUCT`, `RELEASE`, `REFUND`와 양수·음수 `ADJUST` 합 | `SettlementMetricsStep`, `SettlementConsistencyStep`, 후속 `CampaignReportStep` |
 | `billingCounts(영업일)` | 캠페인별 `BILLED`, `NOT_BILLED_BUDGET`, `NOT_BILLED_PAUSED` 건수 | `NotBilledMetricsStep`, `CampaignReportStep` |
 | `dailyBudgets(영업일)` | 캠페인별 그날 적용 하루 예산과 단가 | `CampaignReportStep` |
-| `dailyTotals(영업일)` | 그날 말 미소진 잔액, 원장 대조용 합계, 원장 불일치 건수 | 미소진 잔액은 `SettlementMetricsStep`(`unspent_balance`), 나머지 둘은 `ConsistencyCheckStep`의 검증. 불일치 건수는 A-07 응답에 없다 |
+| `dailyTotals(영업일)` | 그날 말 미소진 잔액, 원장 대조용 합계, 원장 불일치 건수 | `SettlementMetricsStep`은 미소진 잔액을 쓴다. 나머지 필드는 현재 단계에서 검증에 사용하지 않으며 A-07 응답에도 없다 |
 | `correctionTargetDates(기록 영업일)` | 그날 기록된 양수 `ADJUST`가 가리키는 정정 대상 영업일 | 재집계 대상 찾기 |
 
 - 합계의 부호는 저장 부호 그대로다. `RESERVE`, `DEDUCT`, `REFUND`와 음수 `ADJUST`는 0 이하다. 소진액 계산은 `SpendFormula`가 한 곳에서 한다.
@@ -90,6 +95,8 @@ billing은 2026-10-16에 `BillingStatsQueryService`를 공개했다(#352, #402).
 - 끝나지 않은 영업일을 넘겨도 billing은 막지 않고 그 시점까지 기록된 값을 돌려준다.
 
 ### 공개 규칙
+
+아래 리포트의 ID·자식·이력 규칙은 `CampaignReportStep`을 만들 때 적용할 설계다. 현재 구현된 세 일별 지표는 `replace`로 그날 행을 교체한다.
 
 - `daily_*` 테이블은 영업일 행을 지우고 새 결과를 넣는다.
 - `campaign_daily_report`는 ID를 유지하며 갱신한다. 자식 3개 테이블은 지우고 다시 넣는다.
@@ -111,9 +118,10 @@ billing은 2026-10-16에 `BillingStatsQueryService`를 공개했다(#352, #402).
 | `CouponIssuedEvent` | coupon | `issue` |
 | `CouponRedeemedEvent` | coupon | `redeem` |
 | `CouponExpiredEvent` | coupon | `expire` |
-| `NotificationSentEvent` | notification | `notification_sent` |
 
 화면 조회 이벤트 `poster_open`, `map_view`, `wishlist_view`는 A-13 HTTP 요청으로 받는다.
+
+현재 수신자는 광고 서빙과 쿠폰의 여섯 이벤트 타입을 받는다. `SwipedEvent`가 wish와 pass를 나눠 쓰므로 서버 이벤트 유형은 일곱 개다. 원본에서 제외한 알림 발송 이벤트는 수신 메서드가 없고, 스키마의 `notification_sent` 값만으로 구현됐다고 보지 않는다. 실행기와 실패·거절 지표의 상세는 PR #459가 보완하는 구조와 동작 설계의 "퍼널 이벤트 수신과 비동기 기록"이 갖는다.
 
 - 리스너는 `@TransactionalEventListener(AFTER_COMMIT)`과 전용 비동기 실행기를 사용한다.
 - 퍼널 기록은 유실을 허용한다. 돈과 맞아야 하는 건수는 원천 도메인의 집계 조회로 센다.
@@ -130,4 +138,4 @@ billing은 2026-10-16에 `BillingStatsQueryService`를 공개했다(#352, #402).
 
 `event_log`는 파티셔닝하지 않는다. MySQL은 파티션 키를 모든 UNIQUE 키에 포함하도록 요구하므로 `occurred_at`으로 파티셔닝하면 `event_id` 단독 멱등성을 DB 제약으로 지킬 수 없다.
 
-`EventLogRetentionJob`은 매일 04:00 KST에 실행하고 13개월보다 오래된 행을 1000건씩 반복 삭제한다. 작업명은 `EVENT_LOG_RETENTION`이다. `(occurred_at)` 인덱스로 삭제 범위를 찾는다. `daily_member_usage`는 원본 로그가 아니라 누적 계약을 유지하기 위한 집계라 보존 삭제 대상이 아니다.
+보존 설계는 매일 04:00 KST에 13개월보다 오래된 행을 1000건씩 삭제하고 작업명은 `EVENT_LOG_RETENTION`으로 두는 것이다. 현재 `EventLogRetentionJob`과 삭제 저장소 구현은 없다. 따라서 13개월이 지난 로그가 실제로 자동 삭제된다고 보장하지 않는다. `DailyAggregationRunner`의 13개월 재집계 제한은 구현돼 있으며 로그 삭제와 별개다. `daily_member_usage`는 누적 계약을 위한 집계라 이 삭제 대상에서 제외하는 설계다.

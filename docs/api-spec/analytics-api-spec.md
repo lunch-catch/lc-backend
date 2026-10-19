@@ -77,6 +77,8 @@
 | A-13 | `POST` | `/v1/events` | MEMBER | 클라이언트 발생 이벤트 수집 |
 | A-14 | `GET` | `/v1/admin/campaign-reports` | ADMIN, SUPER_ADMIN | 캠페인별 소진 포인트와 누적 유효 노출 |
 
+목록에는 후속 계약도 포함돼 있다. 현재 A-01·A-02·A-05·A-06·A-07·A-13은 구현됐고 A-03은 PR #461의 미병합 기능이다. A-09·A-10·A-12·A-14와 아래 상세 캠페인 리포트·변경 이력은 아직 제공하지 않는다. 별도의 점주 일별 리포트와 이벤트 로그 기반 캠페인 성과 조회는 구현돼 있다. 내부 집계 단계의 구현 여부는 [API 설계](../design/analytics/analytics-api-design.md#현재-구현과-후속-설계의-경계)를 따른다.
+
 **A-11(`GET /v1/admin/fraud/rate-limit-hits`, 피드 429 집계)은 구현하지 않는다.** 근거는 [설계서](../design/analytics/analytics-api-design.md#1-적용-범위) 1장에 있다.
 
 **A-04(`GET /v1/admin/dashboard/segments`, 카테고리·지역별 분해)와 A-08(`GET /v1/admin/sales/top-owners`, 점주별 상위 소진)도 구현하지 않는다.** 요구사항의 선택 데이터다. 번호는 다시 매기지 않는다.
@@ -86,7 +88,7 @@
 | 없는 값 | 어디에 없나 | 대신 호출할 것 |
 | --- | --- | --- |
 | 원장 불일치 건수 | A-07 | billing의 대사 불일치 조회 응답 `totalElements` |
-| 회원 상태 | A-09 | `GET /v1/admin/members` (같은 화면이 이미 호출) |
+| 회원 상태 | A-09 | 관리자 회원 목록은 ID 검색이 없어 A-09의 회원 ID와 자동 연결하지 않는다. 회원 상태와 정지 버튼을 이 응답으로 제공하지 않는다 |
 
 ---
 
@@ -158,8 +160,8 @@ GET /v1/admin/dashboard/funnel?period=DAILY&from=&to=
 - `validRatio = valid / (valid + invalid)`. 기간을 묶을 때는 합산한 값으로 **재계산**한다.
 - `invalidImpressionCount`는 무효 사유 2종(`EXPIRED_OR_UNKNOWN`, `NOT_OWNER`)의 합이다. 사유별 건수는 A-09에서 본다.
 - **미과금 노출은 `validImpressionCount`에 포함된다.** 예산을 넘겨 과금되지 않은 노출도 유효 노출이다(해당 요구사항).
-- 유효·무효 노출 수는 광고 서빙의 노출 기록에서, 찜은 광고 서빙에서, 발급과 사용은 쿠폰에서 센다. 점주 리포트와 A-10도 같은 원천이라 화면마다 수치가 달라지지 않는다.
-- 대상 데이터가 없는 날은 `0`이고 `validRatio`는 `null`이다.
+- 찜 수는 분석에 수집된 찜 이벤트의 누적 건수다. 이벤트 유실과 보존 기간 차이로 현재 찜 목록이나 원천 업무의 확정 건수와 같다고 보장하지 않는다. 발급·사용 수는 쿠폰의 확정 기록을 따른다.
+- 집계가 끝난 날에 대상 데이터가 없으면 수치는 `0`이고 `validRatio`는 `null`이다. `IN_PROGRESS` 버킷의 수치 필드는 공통 시계열 규약대로 모두 `null`이다.
 
 ---
 
@@ -196,11 +198,11 @@ GET /v1/admin/aggregation-runs?businessDate=2026-09-30
 
 ```json
 { "runId": 301, "jobName": "DAILY_AGGREGATION", "businessDate": "2026-09-30",
-  "status": "SUCCESS", "startedAt": "...", "finishedAt": "...", "processedCount": 5,
+  "status": "SUCCESS", "startedAt": "2026-10-01T01:00:00+09:00", "finishedAt": "2026-10-01T01:05:00+09:00", "processedCount": 5,
   "executedBy": "batch-02", "retryCount": 0, "failureReason": null }
 ```
 
-`status`는 `RUNNING` / `SUCCESS` / `FAILED`다. `executedBy`는 실행한 서버다. 작업명은 `DAILY_AGGREGATION`이다(운영과 아직 확정되지 않았다).
+`status`는 `RUNNING` / `SUCCESS` / `FAILED`다. `executedBy`는 실행한 서버이며 작업명은 `DAILY_AGGREGATION`이다. 시작·종료 시각은 KST 오프셋을 포함한다. 실행 중이면 `finishedAt`은 `null`이다.
 
 그 영업일에 실행 기록이 없으면 `data`가 `null`이다. `processedCount`는 성공한 실행이 저장한 집계 행 수이고, 실행 중이거나 실패하면 `null`이다.
 
@@ -377,7 +379,7 @@ GET /v1/admin/campaign-reports?campaignIds=12,15,31&from=2026-09-01&to=2026-09-3
 
 ## A-13. `POST /v1/events`
 
-**클라이언트가 직접 보내는 유일한 수집 API다.** 퍼널 이벤트 11종 중 서버가 알 수 없는 **화면 행동 3종만** 받는다. 나머지 8종은 서버가 내부에서 기록한다.
+**클라이언트가 직접 보내는 유일한 수집 API다.** 서버가 알 수 없는 **화면 행동 3종만** 받는다. 노출·찜·발급·사용 등 서버 업무 이벤트는 이 API로 보내지 않는다.
 
 | 허용 유형 | 설명 | `campaignId`·`storeId` |
 | --- | --- | --- |

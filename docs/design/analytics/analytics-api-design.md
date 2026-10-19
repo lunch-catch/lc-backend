@@ -19,6 +19,20 @@ A-11 피드 요청 제한 초과 집계는 구현하지 않는다. 요청 제한
 
 A-04 카테고리·지역별 분해와 A-08 점주별 상위 소진도 구현하지 않는다. 요구사항의 선택 데이터이고, 가게에 지역 값이 없어 지역 분해를 만들 수 없다.
 
+### 현재 구현과 후속 설계의 경계
+
+기준은 이 PR에 반영한 `develop`과 실제 컨트롤러·집계 단계다. 아래의 후속 설계는 엔드포인트가 이미 제공된다는 뜻이 아니다.
+
+| 기능 | 확인한 구현 상태 |
+|---|---|
+| A-01, A-02, A-07 | 조회와 일별 집계 단계가 구현돼 있다 |
+| A-05, A-06, A-13 | 재계산·실행 조회·이벤트 수집이 구현돼 있다 |
+| 점주 일별 리포트 | `OwnerReportQueryService`가 저장된 행을 조회한다. 채우는 `CampaignReportStep`은 없다 |
+| 이벤트 로그 기반 캠페인 성과 | `CampaignFunnelService`가 요청 시 자기 로그를 집계한다. A-03과 별개다 |
+| A-03 | 전용 테이블의 집계·조회는 PR #461 브랜치에 있다. 아직 `develop`에는 없다 |
+| A-09, A-10, A-12, A-14, 상세 캠페인 리포트와 변경 이력 | 저장 구조와 설계는 있으나 해당 조회·집계 구현은 없다 |
+| 이벤트 로그 13개월 삭제 | 설계만 있다. `EventLogRetentionJob` 구현은 없다 |
+
 ## 2. 공통 원칙
 
 - 배치 지표 조회 API는 analytics의 집계 테이블만 읽는다. 이벤트 로그 기반 캠페인 성과 조회는 `event`에서 자기 로그를 읽는다.
@@ -49,8 +63,8 @@ A-04 카테고리·지역별 분해와 A-08 점주별 상위 소진도 구현하
 | API | analytics 저장 원천 | 배치 원천 |
 |---|---|---|
 | A-01 회원 지표 | `daily_member_analytics` | `MemberStatsQueryService`, `event_log` |
-| A-02 가게 지표 | `daily_store_analytics` | `StoreStatsQueryService`, 캠페인과 점주 상태 집계 조회 |
-| A-03 퍼널 | `campaign_daily_report`의 그날 합, `daily_invalid_analytics`의 플랫폼 합계 행 | 캠페인 리포트 집계, `AdservingStatsQueryService` |
+| A-02 가게 지표 | `daily_store_analytics` | `StoreStatsQueryService`, `CampaignStatsQueryService` |
+| A-03 퍼널 | 전용 `daily_funnel_analytics`(PR #461, 미병합) | `AdservingStatsQueryService`, `CouponStatsQueryService`, analytics의 `event_log` |
 | A-05 재집계 | 운영 실행 기록, `aggregation_pending_date` | `DailyAggregationRunner` |
 | A-06 실행 이력 | 운영 `batch_execution_log` | `BatchExecutionQueryService` |
 | A-07 매출 | `daily_settlement_analytics` | `BillingStatsQueryService` |
@@ -84,9 +98,13 @@ A-04 카테고리·지역별 분해와 A-08 점주별 상위 소진도 구현하
 
 ### 퍼널
 
-유효 노출과 무효 노출은 `AdservingStatsQueryService`에서 받는다. 찜, 발급, 사용은 돈과 맞아야 하는 건수라 광고서빙과 쿠폰 집계 조회에서 받는다. 사용 수는 `CouponStatsQueryService.dailyCampaignStats`의 `usedCount`다. `event_log`는 화면 행동을 포함한 퍼널 비율 계산에만 쓴다.
+유효·무효 노출은 `AdservingStatsQueryService`, 발급·사용은 `CouponStatsQueryService.dailyCampaignStats`의 확정 건수를 사용한다. 찜은 아래 PR #461의 구현처럼 analytics의 `event_log`에서 센다. 확정 업무 건수와 유실 가능한 행동 로그를 같은 신뢰도로 취급하지 않는다.
 
-A-03은 따로 저장하지 않고 이미 있는 두 테이블에서 계산한다. 유효 노출, 찜, 발급, 사용은 `campaign_daily_report`의 그날 행을 모두 더한다. 무효 노출은 `daily_invalid_analytics`의 플랫폼 합계 행(`campaign_id`가 NULL)에서 읽는다. `EXPIRED_OR_UNKNOWN`은 서빙 기록이 없어 캠페인을 모를 수 있어서 캠페인 리포트의 합으로는 빠지기 때문이다. 그래서 A-03은 `CampaignReportStep`과 `InvalidMetricsStep`이 먼저 있어야 한다.
+A-03은 전용 `daily_funnel_analytics`에 영업일당 한 행으로 저장한다. 원본 설계의 전용 테이블 결정을 PR #461의 `FunnelMetricsStep`, `FunnelAnalyticsRepository`, `FunnelQueryService`와 대조했다. 이전의 캠페인 리포트 합산안은 채택하지 않는다. 캠페인을 확인할 수 없는 무효 노출도 플랫폼 합계에 들어가야 하고 캠페인 리포트 구현을 선행 조건으로 만들 필요가 없기 때문이다.
+
+PR #461 구현은 노출을 광고 서빙 집계 조회에서, 발급·사용을 쿠폰 집계 조회에서 받는다. 찜은 원본의 광고 서빙 집계안과 달리 `event_log`의 `wish`를 센다. 광고 서빙의 `swipe_log`는 31일 보존이라 그 뒤 재집계하면 0으로 덮일 수 있기 때문이다. 이벤트 유실 때문에 찜 수가 확정 원본보다 적을 수 있으며 현재 찜 목록 개수와도 다르다.
+
+`develop`에는 이 전용 테이블이 아직 없다. PR #461의 `V3__analytics_funnel.sql`은 이미 병합된 `V3__campaign_event_lookup_index.sql`과 버전이 겹친다. #461에서 새 마이그레이션 번호로 옮긴 뒤 통합 검증해야 한다. 이 문서 보완으로 스키마를 적용한 것은 아니다.
 
 처음에는 `daily_segment_analytics`를 원천으로 적었다. 이 테이블은 A-04(카테고리·지역별 분해)를 위해 `(category_code, region)`을 키로 만든 것이고 `region`이 NOT NULL이다. 가게에 지역 값을 두지 않기로 해서(#364) 쓸 수 없다. A-04용 `daily_segment_analytics`와 A-08용 `daily_owner_spend`는 채우는 단계가 없어 비어 있지만 폐기하지 않고 남겨 둔다.
 
@@ -114,9 +132,11 @@ validCount >= minimumImpressions
 topMembersShare > concentrationShare
 ```
 
-초기 설정은 상위 5명, 점유율 0.5, 최소 유효 노출 100건이고 analytics의 설정값으로 둔다. 배포로 바꿀 수 있다. 기간 조회는 하루라도 집중 경고가 있으면 `true`이고 `topMembersShare`는 기간 중 가장 높은 하루 값이다.
+설계의 초기 설정은 상위 5명, 점유율 0.5, 최소 유효 노출 100건이며 analytics의 설정값으로 둔다. 현재 `develop`에는 경고 집계 단계와 이 설정 구현이 없다. 기간 조회는 하루라도 집중 경고가 있으면 `true`이고 `topMembersShare`는 기간 중 가장 높은 하루 값이다.
 
 무효 비율은 `invalidCount / (validCount + invalidCount)`로 계산한다. 둘 다 0이면 `null`이고 경고하지 않는다.
+
+원본의 무효 비율 분모와 기간 경고 의미는 팀장·프론트 확인이 남아 있다. 유효 100·무효 21이면 `무효 / 유효`는 21%지만 이 설계는 약 17.4%라 경고하지 않는다. 두 기준은 같은 20%라도 결과가 다르므로 요구사항과 화면 계약의 최종 확인을 생략하지 않는다.
 
 날짜별로 판정하므로 한 달에 걸쳐 조금씩 나눠 소진시키는 공격은 놓칠 수 있다. 기간 전체의 회원별 노출을 보관하지 않기 때문이다. 화면은 무효 비율 경고와 함께 본다.
 
@@ -124,9 +144,9 @@ topMembersShare > concentrationShare
 
 `daily_member_usage`는 영업일과 회원별 찜 수, 사용 수, 확정 할인액을 저장한다. 사용 수와 확정 할인액은 유실 가능한 퍼널 이벤트가 아니라 `CouponStatsQueryService`가 반환한 쿠폰 확정 기록으로 계산한다. 찜 수는 analytics의 `event_log`에서 계산한다.
 
-A-12는 현재 회원의 모든 일별 행을 합산한다. 원본 로그의 13개월 보존과 무관하게 누적 계약을 유지하므로 `daily_member_usage`는 보존 삭제하지 않는다. 탈퇴 회원은 모든 날짜의 행을 지우고 과거 날짜를 다시 집계할 때도 새로 만들지 않는다.
+A-12 설계는 회원의 모든 일별 행을 합산한다. 원본의 2026-10-16 이후 결정은 `daily_member_usage`를 13개월 삭제 대상에서 제외하고 탈퇴 회원 행도 유지하는 안이다. 현재 집계·조회·탈퇴 연동 구현이 없으므로 삭제를 수행한다고 적지 않는다. 보존과 탈퇴 데이터 처리의 최종 합의는 구현 전에 확인해야 한다.
 
-이 방식은 팀 최종 확인이 남아 있다. 확인 전에도 V2 테이블은 만들지만 A-12 집계와 조회 구현은 후속 단위에서 진행한다. 지금 쿠폰 계약은 회원별 누적(`memberStats`)과 캠페인별 일 단위(`dailyCampaignStats`)만 주고 회원별 일 단위 집계는 없다. A-12를 만들려면 쿠폰에 회원별 일 단위 집계 조회를 요청해야 한다.
+V2 테이블은 만들어져 있다. `CouponStatsQueryService.dailyMemberStats(LocalDate)`도 #469로 들어왔으므로 회원별 일별 사용 수와 확정 할인액을 받을 수 있다. 원본의 "쿠폰 계약이 없어 착수할 수 없다"는 설명은 현재와 다르다. `MemberUsageStep`과 A-12 조회는 여전히 후속 구현이다.
 
 ## 9. 캠페인 리포트
 
@@ -138,7 +158,7 @@ A-12는 현재 회원의 모든 일별 행을 합산한다. 원본 로그의 13�
 | 유효, 무효, 미과금 노출과 사유, 슬롯, 시간대 | `AdservingStatsQueryService`와 `BillingStatsQueryService` |
 | 찜 | `AdservingStatsQueryService` |
 | 발급, 사용 | `CouponStatsQueryService` |
-| 점주와 가게 | `CampaignQueryService.findAllById` |
+| 점주와 가게 | 원본은 배치에서 `CampaignQueryService.findAllById`로 읽어 리포트 행에 저장하도록 정했다. 아직 배치 구현은 없다 |
 
 첫 집계가 끝나면 리포트는 `FINALIZED`다. 당일은 `AGGREGATING`으로 표시한다. 확정 뒤 공개 지표가 바뀌면 변경 전후 JSON과 사유를 `campaign_daily_report_history`에 남긴다.
 
@@ -148,7 +168,9 @@ A-12는 현재 회원의 모든 일별 행을 합산한다. 원본 로그의 13�
 | `OVERCHARGE_REVERSAL` | 과거 과금의 양수 ADJUST가 반영됨 |
 | `MANUAL_RECALCULATION` | 관리자가 수동 재집계를 실행함 |
 
-점주 리포트 조회는 리포트 행에 저장된 `owner_id`로 소유를 확인하고 다른 도메인을 부르지 않는다(#394). 기간에 집계 행이 있고 소유 점주가 다르면 `403`이다. 기간에 집계 행이 없으면 본인 캠페인인지와 관계없이 빈 `items`를 반환한다. 남의 캠페인이어도 같아서 존재 여부가 새지 않는다. 배치가 리포트 행에 저장하는 소유 점주와 가게는 캠페인의 `CampaignStatsQueryService`에 일괄 조회를 더해 받는다.
+상세 캠페인 리포트의 목표 계약은 리포트 행의 `owner_id`로 소유를 확인하는 것이다(#394). 기간에 집계 행이 있고 소유 점주가 다르면 `403`, 집계 행이 없으면 빈 `items`다. 이미 구현된 점주 일별 리포트는 요청에 캠페인 ID를 받지 않고 로그인한 점주의 모든 행만 읽는다. 이벤트 로그 기반 캠페인 성과는 별도 API이며 캠페인 contract로 소유권을 확인한다.
+
+캠페인 contract에는 `findAllById`가 이미 있고 `CampaignInfo`가 점주·가게 ID를 반환한다. 원본도 리포트의 연결 정보를 위한 새 집계 contract는 만들지 않기로 했다. `CampaignStatsQueryService`에 없는 일괄 조회를 구현된 것처럼 전제하지 않는다. 배치에서 연결 정보를 읽는 허용 범위는 실제 `CampaignReportStep`을 추가할 때 아키텍처 규칙과 함께 확인한다.
 
 주와 월 응답은 건수와 금액을 합산한다. `budgetSpendRate`와 `costPerVisit`은 합산 값으로 다시 계산한다. `impressionUnitCost`는 주와 월 응답에서 `null`이다. 기간 안 마지막 확정 시각을 사용하고 하루라도 변경 이력이 있으면 변경됨으로 표시한다.
 
@@ -170,7 +192,7 @@ A-12는 현재 회원의 모든 일별 행을 합산한다. 원본 로그의 13�
 
 `issue_id`는 새 쿠폰 식별자의 양쪽 쓰기와 읽기 전환이 끝날 때까지 유지한다. 기존 V1 행과 새 식별자를 사용하는 행을 함께 허용하고 후속 마이그레이션에서 제거한다.
 
-기존 `campaign_daily_report` 행에는 점주와 가게 정보가 없다. V2는 `owner_id`와 `store_id`를 nullable로 추가한다. 캠페인 조회 계약으로 기존 행을 백필한 뒤 후속 마이그레이션에서 `NOT NULL`로 바꾼다.
+V2는 `campaign_daily_report.owner_id`와 `store_id`를 nullable로 추가했다. 기존 행의 백필과 `NOT NULL` 전환은 아직 구현되지 않았다. 점주 일별 조회는 로그인한 점주의 `owner_id`로 거르므로 소유 점주가 없는 행을 반환하지 않는다.
 
 ## 11. 성능
 
@@ -193,8 +215,11 @@ A-12는 현재 회원의 모든 일별 행을 합산한다. 원본 로그의 13�
 
 | 항목 | 현재 기준 | 막는 작업 |
 |---|---|---|
-| 회원 사용 통계 최종 소유 | analytics의 일별 집계를 제안한다. 쿠폰의 회원별 일 단위 집계 조회가 필요하다 | A-12 구현 |
+| 회원 사용 통계의 보존·탈퇴 처리 | 쿠폰의 `dailyMemberStats` 계약은 있다. 일별 집계와 보존·탈퇴 정책의 최종 확인은 남았다 | A-12 구현 |
 | 집중 경고의 기간 의미 | 하루라도 경고이고 최고 하루 점유율을 반환한다. 화면 확인이 남았다 | 화면 계약 확정 |
-| 리포트 행의 소유 점주 원천 | 캠페인의 `CampaignStatsQueryService`에 소유 점주 일괄 조회를 더해야 한다 | 점주 리포트 조회 |
-| 이슈 `#354` | 과거 영업일 말 ACTIVE 캠페인 수 제공 여부 | A-02 |
-| 이슈 `#360` | 실행 세대 확인 contract | 안전한 배치 결과 공개 |
+| 리포트 집계와 연결 정보 | 기존 `CampaignQueryService.findAllById`를 쓰는 원본 설계와 배치 허용 범위를 확인해야 한다 | `CampaignReportStep`, 상세 리포트 |
+| 원래 영업일의 정정 반영 | `SettlementMetricsStep`은 정정 대상 날짜를 미처리 목록에 남긴다. 캠페인 리포트와 변경 이력을 쓰는 단계는 없다 | 리포트 정정 공개 |
+| 실행 세대 확인 | ops의 이어받기는 있어도 일별 집계 실행기가 자기 실행 세대를 전달받거나 공개 시 잠그지 않는다 | 여러 서버의 안전한 공개 |
+| A-03 마이그레이션 | PR #461과 develop의 V3 번호가 겹친다 | A-03 기능 병합 |
+
+`CampaignStatsQueryService.activeCampaignCount`와 A-02의 `StoreMetricsStep`은 구현돼 있으므로 과거의 #354 대기 항목은 남기지 않는다. A-06의 시각은 #490이 KST 오프셋을 붙이도록 고쳤다.
