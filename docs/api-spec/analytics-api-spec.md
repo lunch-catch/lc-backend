@@ -14,6 +14,7 @@
 - A-04(카테고리·지역별 분해)와 A-08(점주별 상위 소진)을 구현하지 않기로 하고 절을 지웠다. 요구사항의 선택 데이터이고, 가게에 지역 값이 없다. 번호는 다시 매기지 않는다.
 - A-03에 사용 수 `redeemCount`를 더했다.
 - A-10의 무효 비율 분모를 `validCount`로 정했다(2026-10-19, 요구사항 BR-054와 같다). 비율이 1을 넘을 수 있다. 유효 노출이 0이어도 무효가 100건 이상이면 `invalidRatio`는 `null`인 채로 `invalidRatioWarning`이 `true`다. 무효가 100건 미만이면 비율이 높아도 경고하지 않는다. 임계값은 분석 서버의 설정값이다.
+- A-09, A-10의 `from`, `to`는 필수이고 기간은 최대 31일이다(2026-10-19). 생략하거나 넘으면 `400 ANALYTICS-001`이다.
 - A-10 응답에서 `storeId`를 뺐다(2026-10-19). 분석이 가게를 소유하지 않고 화면이 쓰지 않는다.
 - 점주 리포트의 소유 확인을 바꿨다. 기간에 집계 행이 없으면 본인 캠페인인지와 관계없이 빈 `items`이고, 집계 행이 있는데 소유 점주가 다르면 `403`이다.
 - A-06은 그 영업일에 실행 기록이 없으면 `data`가 `null`이다. `processedCount`는 성공한 실행에서 값이 있다.
@@ -275,7 +276,7 @@ GET /v1/admin/fraud/invalid-impressions?from=&to=&reasonCode=&campaignId=&member
 
 | 파라미터 | 필수 | 뜻 |
 | --- | --- | --- |
-| `from`, `to` | 아니오 | 기간(최대 31일) |
+| `from`, `to` | 예 | 기간(최대 31일). 생략하거나 범위를 넘으면 `400 ANALYTICS-001` |
 | `reasonCode` | 아니오 | `EXPIRED_OR_UNKNOWN` / `NOT_OWNER` |
 | `campaignId`, `memberId` | 아니오 | 필터 |
 | `page`, `size` | 아니오 | 0부터. `size` 기본 20, 최대 100 |
@@ -307,7 +308,7 @@ GET /v1/admin/fraud/invalid-impressions?from=&to=&reasonCode=&campaignId=&member
 GET /v1/admin/fraud/campaign-warnings?from=&to=&type=INVALID_RATIO|CONCENTRATION&page=0&size=20&sortBy=invalidRatio&sortDir=desc
 ```
 
-한 캠페인 단위로 두 경고를 판정해 내려준다. `type`을 생략하면 둘 중 하나라도 걸린 캠페인을 모두 내려준다. 페이징은 `page`(0부터)·`size`(기본 20, 최대 100), 정렬은 `sortBy`(`invalidRatio` 기본·`topMembersShare`·`campaignId`)·`sortDir`(`desc` 기본)이며 응답은 `items`와 `page`, `size`, `totalElements`를 담는다.
+한 캠페인 단위로 두 경고를 판정해 내려준다. `from`, `to`는 필수이고 기간은 최대 31일이다. `type`을 생략하면 둘 중 하나라도 걸린 캠페인을 모두 내려준다. 페이징은 `page`(0부터)·`size`(기본 20, 최대 100), 정렬은 `sortBy`(`invalidRatio` 기본·`topMembersShare`·`campaignId`)·`sortDir`(`desc` 기본)이며 응답은 `items`와 `page`, `size`, `totalElements`를 담는다.
 
 ```json
 {
