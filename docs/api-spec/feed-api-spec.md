@@ -313,6 +313,7 @@ Retry-After: 37
         "storeName": "점심식당",
         "storeImageUrl": "https://cdn.example.com/stores/55/logo.jpg",
         "discount": { "target": "MENU", "type": "AMOUNT", "value": 3000, "menuName": "갈비살 정식" },
+        "campaignEnded": false,
         "wishedAt": "2026-10-01T10:15:34.020+09:00"
       }
     ]
@@ -332,9 +333,12 @@ Retry-After: 37
 | `wishlist[].discount.type` | string | 아니오 | `PERCENT`, `AMOUNT` |
 | `wishlist[].discount.value` | integer | 아니오 | `PERCENT` 면 1 ~ 100(%), `AMOUNT` 면 원 |
 | `wishlist[].discount.menuName` | string | 가능 | 할인 대상 메뉴명. `target` 이 `MENU` 일 때만 값이 있고 `ALL` 이면 `null` |
+| `wishlist[].campaignEnded` | boolean | 아니오 | 캠페인이 끝났으면 `true` |
 | `wishlist[].wishedAt` | string (시각) | 아니오 | 찜한 시각 |
 
-- 페이지네이션이 없다. 캠페인이 끝나면 찜 목록에서 자동으로 빠진다
+- 페이지네이션이 없다
+- 캠페인이 끝나도 찜은 바로 빠지지 않는다. `campaignEnded` 가 `true` 로 바뀌고 끝난 날을 빼고 3일 동안 보인 뒤 그다음 날 00:00 에 빠진다. 10/1 에 끝나면 10/4 까지 보인다
+- 끝난 캠페인의 찜도 찜한 시각 순서 그대로 섞여 나온다. `campaignEnded` 가 `true` 면 종료 표시를 보인다
 - 0건이면 빈 상태 화면과 피드 이동 버튼을 보인다
 - 이 화면 조회는 노출이 아니다. 분석 수집 API로 `wishlist_view` 를 따로 보낸다(`analytics-api-spec.md`)
 
