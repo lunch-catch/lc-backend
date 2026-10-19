@@ -3,6 +3,7 @@ package com.launchcatch.coupon.repository;
 import com.launchcatch.coupon.dto.CouponSummaryResponse;
 import com.launchcatch.coupon.entity.MemberCoupon;
 import jakarta.persistence.LockModeType;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -36,6 +37,10 @@ public interface MemberCouponRepository extends JpaRepository<MemberCoupon, Long
              WHERE coupon.memberId = :memberId AND coupon.couponEventId IN :eventIds
             """)
     List<Long> findIssuedEventIds(@Param("memberId") Long memberId, @Param("eventIds") List<Long> eventIds);
+
+    // 소진 복구에도 삭제한 쿠폰을 포함해 원래 마지막 발급 시각을 사용한다.
+    @Query("SELECT MAX(coupon.createdAt) FROM MemberCoupon coupon WHERE coupon.couponEventId = :eventId")
+    Optional<LocalDateTime> findLastIssuedAtByCouponEventId(@Param("eventId") Long eventId);
 
     // 삭제된 쿠폰도 발급 기록으로 남아 같은 이벤트에서 다시 발급받을 수 없다.
     boolean existsByCouponEventIdAndMemberId(Long couponEventId, Long memberId);

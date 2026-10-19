@@ -47,7 +47,7 @@ coupon/
 ├── entity/        CouponEvent, CouponInventory, CouponDailyLimit,
 │                  MemberCoupon, CouponUsageHistory
 ├── repository/    각 엔티티 저장소와 목록용 Querydsl 구현
-├── service/       CouponCommandService, CouponLookUpService, CouponStatsQueryServiceImpl
+├── service/       CouponCommandService, CouponIssuanceService, CouponLookUpService, CouponStatsQueryServiceImpl
 └── exception/     CouponException, CouponErrorCode
 ```
 
@@ -139,8 +139,8 @@ V7은 전체 메뉴 정률 조합을 CHECK에서 제외한다. 지원하지 않�
 | 연결됨 | 읽기, member | `MemberQueryService.findById(Long)` | 발급·QR 생성·이벤트 상태·새 사용 확정마다 한 번 호출한다 |
 | 연결됨 | 읽기, owner | `OwnerStatusQuery.findCurrentStatus(Long)` | 매장 사용 이력·사용 확정 요청마다 한 번 호출하며 캐시를 우회한다 |
 | 연결됨 | 읽기, campaign | `CampaignQueryService.findByStoreIdIn(List<Long>)` | 이벤트 상태 요청마다 한 번 일괄 호출한다 |
-| QR 사용 연결됨 | 읽기, store | `StoreQueryService.canManageStore(Long, Long)`, `findAllById(List<Long>)` | QR 사용은 관리 권한과 좌표를 각각 한 번 조회한다. 기존 이력·이벤트 조회의 매장 검증은 미연결이다 |
-| 미연결 | 읽기·쓰기, adserving | 아키텍처의 `WishlistQueryService`, `CandidateStateUpdater` | #163에서 공개 계약을 준비한 뒤 발급과 이벤트 조회에 연결한다 |
+| 연결됨 | 읽기, store | `StoreQueryService.canManageStore(Long, Long)`, `findAllById(List<Long>)` | QR 사용은 관리 권한과 좌표를 조회한다. 이력 조회는 현재 관리 권한, 이벤트 조회는 최종 등록 매장을 확인한다 |
+| 연결됨 | 읽기·쓰기, adserving | `WishlistQueryService`, `CandidateStateUpdater` | 발급·이벤트 조회에서 찜을 읽고 마지막 발급 커밋 뒤 소진을 알린다. 소진 거절에서도 누락 반영을 재시도한다 |
 | 미연결 | 받음, campaign | `CampaignStatusChangedEvent`, `CampaignEndedEvent` | 이벤트의 정의는 있지만 coupon 수신 경로는 없다 |
 | 연결됨 | 공개, analytics | `CouponIssuedEvent`, `CouponRedeemedEvent` | 발급·사용 트랜잭션 안에서 발행하며 분석은 커밋 후 비동기로 수신한다 |
 | 호출 대기 | 공개, analytics | `CouponIssueOpenedEvent`, `CouponExpiredEvent` | 이벤트 타입만 준비했다. 오픈·만료 배치를 구현할 때 발행한다 |
@@ -165,7 +165,11 @@ flowchart LR
         Controller --> Lookup[CouponLookUpService]
         Command --> Daily[(CouponDailyLimitRepository)]
         Command --> Events[(CouponEventRepository)]
-        Command --> Inventory[(CouponInventoryRepository)]
+        Command --> Issuance[CouponIssuanceService]
+        Issuance --> Inventory[(CouponInventoryRepository)]
+        Issuance --> Daily
+        Issuance --> Events
+        Issuance --> Members
         Command --> Members[(MemberCouponRepository)]
         Command --> Image[CouponQrImageEncoder]
         Lookup --> Daily
@@ -180,9 +184,14 @@ flowchart LR
     Lookup --> OwnerQuery["owner.contract.OwnerStatusQuery"]
     Command --> OwnerQuery
     Command --> StoreQuery["store.contract.StoreQueryService"]
+    Lookup --> StoreQuery
+    Issuance --> MemberQuery
+    Issuance --> Wishlist["adserving.contract.WishlistQueryService"]
+    Lookup --> Wishlist
+    Command --> Candidate["adserving.contract.CandidateStateUpdater"]
     Lookup --> CampaignQuery["campaign.contract.CampaignQueryService"]
     classDef outside fill:#f5f5f5,stroke:#999,stroke-dasharray:4 3
-    class MemberQuery,OwnerQuery,CampaignQuery,StoreQuery outside
+    class MemberQuery,OwnerQuery,CampaignQuery,StoreQuery,Wishlist,Candidate outside
 ```
 
 스케줄·이벤트 수신·다른 도메인의 직접 호출 입구는 아직 없으므로 연결선도 그리지 않았다.
@@ -233,16 +242,26 @@ stateDiagram-v2
 sequenceDiagram
     participant C as CouponController
     participant S as CouponCommandService
+    participant I as CouponIssuanceService
     participant D as coupon DB
     participant M as member.contract
+    participant A as adserving.contract
     C->>S: 발급 요청
+    S->>I: 트랜잭션 프록시로 발급 요청
     rect rgb(240, 248, 255)
-        Note over S,D: READ_COMMITTED 트랜잭션
-        S->>D: 카운터 생성·잠금 → 이벤트 잠금
-        S->>M: 현재 회원 상태 조회
-        S->>D: 중복 확인 → 카운터 증가 → 재고 잠금
-        S->>S: 재고 잠금 뒤 발급 시각 재검사
-        S->>D: 재고 ISSUED·회원 쿠폰 저장·커밋
+        Note over I,D: READ_COMMITTED 트랜잭션
+        I->>D: 카운터 생성·잠금 → 이벤트 잠금
+        I->>M: 현재 회원 상태 조회
+        I->>A: 현재 찜 조회
+        I->>D: 중복 확인 → 카운터 증가 → 재고 잠금
+        I->>I: 재고 잠금 뒤 발급 시각 재검사
+        I->>D: 재고 ISSUED·회원 쿠폰 저장·남은 재고 확인
+        I->>D: 커밋
+    end
+    I-->>S: 저장된 발급 결과와 마지막 재고 여부
+    opt 마지막 재고 발급
+        S->>A: 트랜잭션 밖에서 소진 반영
+        Note over S,A: 소진 반영 실패도 발급 성공은 유지한다
     end
     S-->>C: 저장된 발급 결과
 ```
@@ -321,7 +340,7 @@ QR 생성·삭제·만료 저장은 같은 회원 쿠폰 행을 잠근다. 잠�
 | 같은 트랜잭션의 outbox를 폴링한다 | 커밋한 이벤트를 재전달할 수 있다 | 저장·폴링·보존을 관리해야 한다 |
 
 아키텍처와 #355가 퍼널 유실을 허용하므로 첫 번째 방식을 쓴다.
-`CouponCommandService`가 `ApplicationEventPublisher`를 직접 주입받는다. 기존 트랜잭션 안에서 이벤트 record를 생성해 `publishEvent`를 호출한다.
+발급의 `CouponIssuanceService`와 사용 확정의 `CouponCommandService`가 `ApplicationEventPublisher`를 직접 주입받는다. 각 업무 트랜잭션 안에서 이벤트 record를 생성해 `publishEvent`를 호출한다.
 별도 커밋 콜백과 실행기, DB 조회, outbox는 추가하지 않는다.
 분석 수신자가 `@Async`와 `@TransactionalEventListener(AFTER_COMMIT)`로 처리하며 롤백된 작업은 수신하지 않는다.
 발행된 이벤트에 일반 동기 리스너를 붙이면 트랜잭션 안에서 실행되므로 분석 저장에는 그 방식을 쓰지 않는다.
@@ -362,14 +381,14 @@ QR 생성·삭제·만료 저장은 같은 회원 쿠폰 행을 잠근다. 잠�
 
 | 요청 | 현재 구조에서 발생하는 비용 |
 |---|---|
-| 정상 발급 | coupon DB 읽기 네 번과 쓰기 네 번, member 공개 조회 한 번을 수행한다. 카운터 UPSERT도 쓰기 한 번으로 센다 |
+| 정상 발급 | coupon DB 읽기 다섯 번과 쓰기 네 번, member·찜 공개 조회 각 한 번을 수행한다. 카운터 UPSERT도 쓰기 한 번으로 센다. 마지막 발급 뒤에는 광고 후보 소진 갱신이 추가된다 |
 | QR 생성 | 회원 쿠폰 잠금 조회·갱신과 member 조회, 이미지 인코딩을 수행한다 |
 | QR 사용 | coupon DB 읽기 세 번·쓰기 두 번과 owner·member 조회 각 한 번, store 공개 조회 두 번을 수행한다 |
 | 쿠폰 목록 | 회원 쿠폰 페이지와 이벤트 일괄 조회, 필요할 때 이력 일괄 조회를 수행한다. 만료된 반환 항목은 UPDATE한다 |
-| 이벤트 상태 | 이벤트 조회와 재고 집계, 회원 발급 이력과 카운터 조회를 수행한다. campaign·member 조회는 매장마다 반복하지 않는다 |
+| 이벤트 상태 | 이벤트 조회와 재고 집계, 회원 발급 이력과 카운터 조회를 수행한다. store·campaign·member·찜 조회는 매장마다 반복하지 않는다 |
 
 위 비용은 정상 경로의 논리적 SQL 기준이다. 다른 도메인 내부 SQL과 실행 계획·잠금 대기 비용은 측정하지 않았다.
-목표 피크 2,500 RPS에서 발급만으로 coupon DB 읽기와 쓰기가 각각 초당 10,000문장 수준이다.
+목표 피크 2,500 RPS에서 발급만으로 coupon DB 읽기는 초당 12,500문장, 쓰기는 초당 10,000문장 수준이다.
 모든 요청이 이벤트 하나에 몰리면 이벤트 잠금 구간은 요청당 평균 0.4ms 이하여야 그 처리율을 낼 수 있다.
 현재 구조가 이 조건을 충족한다고 판단할 측정은 없다. 작은 동시성 테스트의 통과를 부하 목표 달성으로 보지 않는다.
 실행 계획·잠금 보유 시간과 DB 처리량을 포함한 부하 시험이 필요하다.
@@ -402,8 +421,6 @@ USED 전이와 사용 시각·할인 계산, 실제 사용 요청의 동시 재�
 
 | 미정·미완료 항목 | 현재 상태 | 막는 것 |
 |---|---|---|
-| store 연결 | QR 사용은 공개 메서드를 연결했다. 기존 이력·이벤트 조회의 호출은 TODO다 | 이력 조회의 매장 관리 권한과 이벤트 조회의 매장 존재 검증을 완료하지 못했다 |
-| adserving 연결 | #163의 찜·소진 반영을 기다린다 | 발급 자격과 이벤트 조회의 발급 가능 안내가 완성되지 않았다 |
 | 회차·재고와 이벤트 연결 | 생성·수신 경로와 오픈·만료 배치의 발행 연결은 없다. V2는 status_changed_at을 제거했다 | 이벤트 순서 판정과 재실행 저장 구조를 별도 작업에서 정해야 한다 |
 | 과거 스냅샷·이미지 유지 | 복원 출처와 이미지 보존 계약을 확정하지 않았다 | 과거 데이터를 임의의 현재 값으로 대체할 수 없다 |
 | 부하와 운영 장애 | 기능 테스트만 있으며 부하·장애 복구 시험은 미완료다 | 응답 시간과 처리량·복구 동작을 보장했다고 보고할 수 없다 |
