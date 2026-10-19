@@ -28,6 +28,10 @@ import org.springframework.stereotype.Repository;
 public class ServeRecordRepository {
 
     static final String KEY_PREFIX = "adserving:serve:";
+    /*
+     * 노출 인정 시간이다. 정산은 이 값을 따로 두지 않아 이 TTL 이 과금을 인정하는 범위를 정한다(#497).
+     * 바꾸면 정산의 계획 없음 판정이 생기는 자정 직후 구간도 함께 바뀐다.
+     */
     static final Duration TTL = Duration.ofMinutes(30);
 
     // Valkey 가 멈춰 막지 않고 통과시킨 횟수다. 경보는 이 지표에 건다(장애 처리 가이드).
