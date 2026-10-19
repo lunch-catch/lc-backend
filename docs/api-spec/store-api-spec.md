@@ -773,6 +773,78 @@ ACTIVE의 동시 저장은 순서대로 처리되며 마지막으로 처리된 �
 | `409` | `STORE-002` | 점주 상태가 `ONBOARDING`이 아님, 또는 현재 재개 단계가 `MENU`가 아님 |
 | `409` | `STORE-013` | 등록한 메뉴 중 이미지가 `VERIFIED`가 아닌 메뉴가 있음 |
 
+## 가게 등록 온보딩 7단계: 가게 최종 등록
+
+## `POST /v1/owner/store:complete`
+
+저장한 가게를 최종 등록하고 점주 상태를 ONBOARDING에서 ACTIVE로 전환한다.
+인증된 OWNER 본인의 초안만 등록할 수 있다. 새로운 가게를 생성하지 않는다.
+
+### 요청
+
+```json
+{ "version": 5 }
+```
+
+| 필드 | 타입 | 필수 / null | 설명 |
+|---|---|---|---|
+| `version` | integer(int64) | 필수 / 불가 | 최신 내 가게·진행 상태 조회의 버전. 0 이상 |
+
+### 등록 조건
+
+- 필수 약관 동의와 기본 정보 5개(상호명·업종·대표자 성명·사업자등록번호·전화번호), 사업자번호 Mock 검증 성공이 저장되어 있어야 한다.
+- 카카오 장소 ID·도로명 주소·위도·경도와 휴무일을 포함한 유효한 7일 영업시간이 필요하다.
+- 업로드 확인된 대표 이미지 1개가 필요하다. 내부 이미지는 0~3개이며 저장된 내부 이미지도 모두 업로드 확인을 마쳐야 한다.
+- 메뉴는 0~3개다. 메뉴가 있으면 각 메뉴의 이름·가격·업로드 확인된 이미지가 필요하며 설명은 선택이다.
+- 메뉴가 0개이면 메뉴 저장이나 메뉴 단계 완료 API를 호출하지 않아도 된다.
+- `canComplete`·`canFinalize`는 입력 준비 상태를 알려 준다. 최종 등록 시점에 저장된 조건과 가게 연결·버전을 다시 확인하므로 동시 수정 시 실패할 수 있다.
+
+### 응답
+
+`200 OK`. 기존 가게 ID를 유지하며 성공마다 버전을 1 증가시킨다.
+
+```json
+{
+  "code": "SUCCESS",
+  "message": "요청이 성공적으로 처리되었습니다.",
+  "data": {
+    "storeId": 10,
+    "finalized": true,
+    "finalizedAt": "2026-10-19T10:00:00+09:00",
+    "ownerStatus": "ACTIVE",
+    "version": 6
+  }
+}
+```
+
+| 필드 | 타입 | null | 설명 |
+|---|---|---|---|
+| `storeId` | integer(int64) | 불가 | 최종 등록한 본인 가게 ID |
+| `finalized` | boolean | 불가 | 성공 시 true |
+| `finalizedAt` | string(date-time) | 불가 | 서버가 기록한 최초 확정 시각. 한국 시간 오프셋(+09:00)을 포함한다 |
+| `ownerStatus` | string | 불가 | 성공 시 ACTIVE |
+| `version` | integer(int64) | 불가 | 최종 등록 후 온보딩 버전 |
+
+성공 후 내 가게·진행 상태 조회에서 finalized=true, 재개 단계=null, 최종 등록 가능 여부=false다.
+점주 내 정보는 status=ACTIVE, registrationStep=null이다. 튜토리얼 확인 상태와 인증 쿠키는 변경하지 않는다.
+이미 ACTIVE인 점주가 다시 호출하면 403 OWNER-002로 거절한다. 최초 확정 시각과 버전은 바뀌지 않는다.
+응답을 받지 못했다면 조회 API로 등록 여부를 확인한다.
+
+### 오류
+
+| 상태 | 코드 | 조건 |
+|---|---|---|
+| 400 | COMMON-002 | version 누락·null·음수 등 유효성 검증 실패 |
+| 401 | AUTH-005 | 유효한 인증 또는 계정이 없음 |
+| 403 | AUTH-006 | OWNER 외 역할 |
+| 403 | OWNER-002 | ACTIVE·SUSPENDED·WITHDRAWN 상태 |
+| 403 | STORE-004 | 본인 초안이 없거나 진행 상태에 연결된 가게가 다름 |
+| 409 | STORE-001 | 요청 버전이 현재 버전과 다름 |
+| 409 | STORE-003 | 진행 상태가 없음 |
+| 409 | STORE-015 | 필수 데이터 미완료 또는 최종 입력 단계에 도달하지 않음 |
+
+검증·저장 실패 시 가게 확정, 점주 상태와 버전이 함께 롤백된다.
+
 ## `GET /v1/owner/store`
 
 인증된 점주의 가게 ID와 전체 저장 정보를 조회한다. ONBOARDING 초안과 ACTIVE 가게를 지원한다.
@@ -926,72 +998,84 @@ HOURS는 [영업시간 저장 규칙](#가게-등록-온보딩-4단계-매장-�
 | `403` | `AUTH-006` | 인증된 역할이 OWNER가 아님 |
 | `403` | `OWNER-002` | DB 현재 점주 상태가 SUSPENDED 또는 WITHDRAWN |
 
-## `POST /v1/owner/store:complete`
+## `GET /v1/stores/{storeId}`
 
-저장한 가게를 최종 등록하고 점주 상태를 ONBOARDING에서 ACTIVE로 전환한다.
-인증된 OWNER 본인의 초안만 등록할 수 있다. 새로운 가게를 생성하지 않는다.
+MEMBER가 최종 등록된 가게의 상세 정보를 조회한다. 활성 캠페인이 없는 가게도 조회된다.
+가게 목록, 피드, 찜 목록 등에서 받은 가게 ID를 사용한다.
 
 ### 요청
 
-```json
-{ "version": 5 }
-```
+`storeId`는 양수인 integer(int64) 경로 변수다. 요청 본문과 필수 쿼리 파라미터는 없다.
 
-| 필드 | 타입 | 필수 / null | 설명 |
-|---|---|---|---|
-| `version` | integer(int64) | 필수 / 불가 | 최신 내 가게·진행 상태 조회의 버전. 0 이상 |
+### 응답 `200`
 
-### 등록 조건
-
-- 필수 약관 동의와 기본 정보 5개(상호명·업종·대표자 성명·사업자등록번호·전화번호), 사업자번호 Mock 검증 성공이 저장되어 있어야 한다.
-- 카카오 장소 ID·도로명 주소·위도·경도와 휴무일을 포함한 유효한 7일 영업시간이 필요하다.
-- 업로드 확인된 대표 이미지 1개가 필요하다. 내부 이미지는 0~3개이며 저장된 내부 이미지도 모두 업로드 확인을 마쳐야 한다.
-- 메뉴는 0~3개다. 메뉴가 있으면 각 메뉴의 이름·가격·업로드 확인된 이미지가 필요하며 설명은 선택이다.
-- 메뉴가 0개이면 메뉴 저장이나 메뉴 단계 완료 API를 호출하지 않아도 된다.
-- `canComplete`·`canFinalize`는 입력 준비 상태를 알려 준다. 최종 등록 시점에 저장된 조건과 가게 연결·버전을 다시 확인하므로 동시 수정 시 실패할 수 있다.
-
-### 응답
-
-`200 OK`. 기존 가게 ID를 유지하며 성공마다 버전을 1 증가시킨다.
-
-```json
-{
-  "code": "SUCCESS",
-  "message": "요청이 성공적으로 처리되었습니다.",
-  "data": {
-    "storeId": 10,
-    "finalized": true,
-    "finalizedAt": "2026-10-19T10:00:00+09:00",
-    "ownerStatus": "ACTIVE",
-    "version": 6
-  }
-}
-```
+공통 응답 봉투의 `data`는 아래 객체다.
 
 | 필드 | 타입 | null | 설명 |
 |---|---|---|---|
-| `storeId` | integer(int64) | 불가 | 최종 등록한 본인 가게 ID |
-| `finalized` | boolean | 불가 | 성공 시 true |
-| `finalizedAt` | string(date-time) | 불가 | 서버가 기록한 최초 확정 시각. 한국 시간 오프셋(+09:00)을 포함한다 |
-| `ownerStatus` | string | 불가 | 성공 시 ACTIVE |
-| `version` | integer(int64) | 불가 | 최종 등록 후 온보딩 버전 |
+| storeId | integer(int64) | 불가 | 가게 ID |
+| name, businessCategory | string | 불가 | 상호명, 업종 코드 |
+| roadAddress, phone | string | 불가 | 도로명 주소, 전화번호 |
+| latitude, longitude | number | 불가 | 지도 미리보기용 위도·경도 |
+| businessHours | array | 불가 | 월요일부터 일요일 순으로 반환하는 영업시간 |
+| logoImage | object | 불가 | 업로드 확인된 대표 이미지 1개 |
+| interiorImages | array | 불가 | 업로드 확인된 내부 이미지. 표시 순서대로 최대 3개, 없으면 [] |
+| menus | array | 불가 | 대표 메뉴. 표시 순서대로 0~3개, 없으면 [] |
+| activeCampaign | object | 가능 | 서울 기준 오늘의 활성 캠페인. 없으면 null |
 
-성공 후 내 가게·진행 상태 조회에서 finalized=true, 재개 단계=null, 최종 등록 가능 여부=false다.
-점주 내 정보는 status=ACTIVE, registrationStep=null이다. 튜토리얼 확인 상태와 인증 쿠키는 변경하지 않는다.
-이미 ACTIVE인 점주가 다시 호출하면 403 OWNER-002로 거절한다. 최초 확정 시각과 버전은 바뀌지 않는다.
-응답을 받지 못했다면 조회 API로 등록 여부를 확인한다.
+`businessHours` 항목의 필드는 `dayOfWeek`(MONDAY~SUNDAY), `openTime`, `closeTime`,
+`isClosed`, `breakStartTime`, `breakEndTime`, `lastOrderTime`이다.
+`dayOfWeek`와 `isClosed`는 null이 아니다. 시각은 `HH:mm:ss`이며 휴무일의 영업 시각과
+입력하지 않은 선택 시각은 null이다. 등록 시 저장한 휴무일을 포함한 7일 정보를 반환한다.
+
+이미지 객체는 `objectKey`(string), `url`(string), `sortOrder`(integer 또는 null)를 갖는다.
+대표·메뉴 이미지의 sortOrder는 null이다. 프론트는 url로 이미지를 표시한다.
+PENDING·UPLOADED 이미지는 공개하지 않는다.
+
+메뉴 항목은 `menuId`(integer(int64)), `name`(string), `price`(integer(int64), 원),
+`description`(string 또는 null), `sortOrder`(integer), `image`(이미지 객체, null 불가)를 갖는다.
+대표자 성명, 사업자등록번호, 사업자 검증 결과와 온보딩 진행 정보는 반환하지 않는다.
+
+### activeCampaign
+
+| 필드 | 타입 | null | 설명 |
+|---|---|---|---|
+| campaignId | integer(int64) | 불가 | 포스터·쿠폰·찜 API에 사용할 캠페인 ID |
+| discountTargetType | string | 불가 | ALL 또는 MENU |
+| discountType | string | 불가 | PERCENT 또는 AMOUNT. ALL 할인은 AMOUNT만 사용 |
+| discountValue | integer | 불가 | 할인율(%) 또는 할인 금액(원) |
+| targetMenu | object | 가능 | MENU 할인일 때 menuId·name·price. ALL이면 null |
+| usableStartTime, usableEndTime | string | 불가 | 캠페인별 사용 가능 시간. HH:mm:ss |
+
+`targetMenu`의 menuId는 integer(int64), name은 string, price는 integer(int64, 할인 전 가격)다.
+다른 날짜이거나 DRAFT·SCHEDULED·PAUSED·ENDED인 캠페인은 활성 정보로 반환하지 않는다.
+캠페인 사용 시간 밖이라는 이유로 활성 정보를 숨기지는 않는다.
+
+### 화면에서 합치는 데이터
+
+이 API는 가게 정보와 캠페인 요약을 제공한다. 프론트는 아래 명세의 API를 별도로 호출한다.
+
+| 데이터·동작 | 연결할 명세 |
+|---|---|
+| 저장된 포스터 HTML | [포스터 명세](poster-api-spec.md)의 GET /v1/campaigns/{campaignId}/poster. develop에 구현 반영됨(#495, PR #524) |
+| 쿠폰 잔여 수량·발급 가능 여부·발급 | [쿠폰 명세](coupon-api-spec.md). campaignId로 조회한다 |
+| 관심 가게 등록 여부·변경 | [사용자 명세](member.md). storeId를 사용한다 |
+| 캠페인 찜 여부·등록·취소 | [광고 서빙 명세](feed-api-spec.md). campaignId를 사용한다 |
+
+쿠폰의 발급 오픈 시각과 실제 발급 가능 여부는 쿠폰 계약을 따른다.
+가게 상세 조회는 광고 노출로 집계하지 않는다. poster_open 등 화면 이벤트는 프론트가
+[분석 명세](analytics-api-spec.md)의 별도 수집 API로 보낸다.
 
 ### 오류
 
 | 상태 | 코드 | 조건 |
 |---|---|---|
-| 400 | COMMON-002 | version 누락·null·음수 등 유효성 검증 실패 |
-| 401 | AUTH-005 | 유효한 인증 또는 계정이 없음 |
-| 403 | AUTH-006 | OWNER 외 역할 |
-| 403 | OWNER-002 | ACTIVE·SUSPENDED·WITHDRAWN 상태 |
-| 403 | STORE-004 | 본인 초안이 없거나 진행 상태에 연결된 가게가 다름 |
-| 409 | STORE-001 | 요청 버전이 현재 버전과 다름 |
-| 409 | STORE-003 | 진행 상태가 없음 |
-| 409 | STORE-015 | 필수 데이터 미완료 또는 최종 입력 단계에 도달하지 않음 |
+| 400 | COMMON-002 | 가게 ID가 양수가 아님 |
+| 400 | COMMON-003 | 가게 ID가 integer(int64) 형식이 아님 |
+| 401 | AUTH-005 | 유효한 인증이 없음 |
+| 403 | AUTH-006 | MEMBER 외 역할 |
+| 404 | STORE-016 | 가게가 없거나 최종 등록되지 않음 |
+| 500 | COMMON-001 | 조회 장애, 필수 이미지·할인 대상 메뉴 누락 또는 이미지 URL 설정 오류 |
 
-검증·저장 실패 시 가게 확정, 점주 상태와 버전이 함께 롤백된다.
+없는 가게와 등록 중인 초안은 같은 오류를 반환한다.
+필수 이미지가 누락된 등록 가게를 정상 응답으로 반환하지 않는다.

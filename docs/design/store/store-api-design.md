@@ -285,6 +285,30 @@ develop에 반영된 #482 위치 저장과 연동하며 위치 저장 후 HOURS�
 - **`menuId` 소유권 확인 실패는 "없음"과 "다른 가게 소유"를 구분하지 않고 같은 `403`
   (`STORE-012`)으로 묶는다.** 업로드 확인 실패(`STORE-008`)와 같은 근거다(`api-spec.md`).
 
+## 가게 최종 등록 (#502)
+
+HTTP 계약은 [최종 등록 명세](../../api-spec/store-api-spec.md#post-v1ownerstorecomplete)가 소유한다.
+OwnerStoreCompleteService가 쓰기 트랜잭션을 열고 점주 행을 잠근 뒤 DB의 ONBOARDING 상태를 확인한다.
+store.contract.StoreCompleter를 호출하면 StoreCompleteService가 MANDATORY로 같은 트랜잭션에 참여한다.
+진행 상태 행 잠금 뒤 버전·본인 미확정 가게 연결과 MENU 재개 단계를 확인한다.
+StoreOnboardingQueryRepository·StoreOnboardingReadiness로 실제 저장값을 다시 검증한다.
+내 가게 조회도 같은 판정 결과를 사용하므로 PENDING 내부 이미지가 목록에서 제외되어도 등록 가능으로 표시되지 않는다.
+메뉴 0개는 유효하며 MENU 저장 이력이나 새 완료 단계는 만들지 않는다.
+
+가게의 기존 finalized_at 컬럼을 매핑하고 Clock으로 확정 시각을 기록한다.
+진행 단계는 MENU를 유지하고 버전을 1 증가시킨 뒤 가게를 flush한다.
+StoreFinalizedEvent를 동기로 발행하면 owner의 StoreFinalizedListener가 OwnerStoreActivationService를 호출한다.
+이 서비스도 MANDATORY로 참여하며 이미 잠근 점주를 ACTIVE로 전환한다.
+이벤트 처리 실패나 커밋 실패는 가게 확정·점주 상태·버전을 모두 롤백한다.
+튜토리얼과 토큰은 변경하지 않는다. 커밋 성공 후 OwnerStatusCacheInvalidationService의 캐시 무효화를 수행한다.
+캐시 삭제 실패는 기존 로그·TTL·DB 직접 조회 정책을 따르며 확정 성공 응답을 실패로 바꾸지 않는다.
+
+잠금 순서는 점주 → 진행 상태 → 가게다. 동기 수신의 점주 잠금은 같은 트랜잭션의 재진입이다.
+메뉴 생성과 이미지 예약은 같은 진행 상태 잠금을 사용하며 잠금 뒤 본인 미확정 가게인지 확인한다.
+이 검사로 최종 등록 뒤 대기하던 업로드·메뉴 요청이 불완전한 데이터를 추가하는 것을 막는다.
+이미지 단계 완료도 같은 잠금을 사용한다. 최종 등록 중에는 S3나 외부 사업자 검증 API를 호출하지 않는다.
+기존 스키마와 CHECK 제약을 그대로 사용하며 적용된 마이그레이션을 수정하지 않는다.
+
 ## 내 가게 조회 (#427)
 
 HTTP 계약은 [store-api-spec.md](../../api-spec/store-api-spec.md)의 `GET /v1/owner/store` 절이 소유한다.
@@ -320,26 +344,50 @@ StoreOnboardingReadiness가 첫 미완료 단계와 최종 등록 가능 여부�
 저장된 resume_step과 다른 화면을 안내하더라도 진행 상태와 버전은 변경하지 않는다.
 단계 저장 API가 쓰는 StoreRegistrationProgressResponse는 세 필드 계약을 유지한다.
 
-## 가게 최종 등록 (#502)
+## 사용자 가게 상세 조회 (#503)
 
-HTTP 계약은 [최종 등록 명세](../../api-spec/store-api-spec.md#post-v1ownerstorecomplete)가 소유한다.
-OwnerStoreCompleteService가 쓰기 트랜잭션을 열고 점주 행을 잠근 뒤 DB의 ONBOARDING 상태를 확인한다.
-store.contract.StoreCompleter를 호출하면 StoreCompleteService가 MANDATORY로 같은 트랜잭션에 참여한다.
-진행 상태 행 잠금 뒤 버전·본인 미확정 가게 연결과 MENU 재개 단계를 확인한다.
-StoreOnboardingQueryRepository·StoreOnboardingReadiness로 실제 저장값을 다시 검증한다.
-내 가게 조회도 같은 판정 결과를 사용하므로 PENDING 내부 이미지가 목록에서 제외되어도 등록 가능으로 표시되지 않는다.
-메뉴 0개는 유효하며 MENU 저장 이력이나 새 완료 단계는 만들지 않는다.
+HTTP 계약은 [가게 상세 조회 명세](../../api-spec/store-api-spec.md#get-v1storesstoreid)가 소유한다.
+요구사항 FR-071의 가게 정보와 활성 캠페인 요약 조회를 구현한다.
+외부 자료의 결정은 위 명세에 반영했다. 포스터·실시간 쿠폰·사용자별 상태는 화면이 따로 합친다.
+따라서 store가 campaign·coupon·member·adserving을 역방향으로 호출하지 않는다.
 
-가게의 기존 finalized_at 컬럼을 매핑하고 Clock으로 확정 시각을 기록한다.
-진행 단계는 MENU를 유지하고 버전을 1 증가시킨 뒤 가게를 flush한다.
-StoreFinalizedEvent를 동기로 발행하면 owner의 StoreFinalizedListener가 OwnerStoreActivationService를 호출한다.
-이 서비스도 MANDATORY로 참여하며 이미 잠근 점주를 ACTIVE로 전환한다.
-이벤트 처리 실패나 커밋 실패는 가게 확정·점주 상태·버전을 모두 롤백한다.
-튜토리얼과 토큰은 변경하지 않는다. 커밋 성공 후 OwnerStatusCacheInvalidationService의 캐시 무효화를 수행한다.
-캐시 삭제 실패는 기존 로그·TTL·DB 직접 조회 정책을 따르며 확정 성공 응답을 실패로 바꾸지 않는다.
+StoreDetailController → StoreDetailService → StoreDetailRepository 순으로 호출한다.
+영업시간·메뉴 조회는 기존 OwnerStoreQueryRepository의 가게 ID 기반 읽기 쿼리를 재사용한다.
+점주 응답 전체를 반환하지 않고 StoreDetailResponse의 공개 필드만 구성한다.
+StoreDetailRepository는 같은 repository 패키지의 내부 조회 값인 StoreDetailData와 그 내부 record만 반환한다.
+StoreDetailService는 저장소 결과를 독립된 StoreDetailResponse로 변환한다.
+영업시간·메뉴의 기존 조회가 반환하는 OwnerStoreSnapshot 내부 값도 Service에서 HTTP DTO로 변환한다.
+OwnerStoreQueryRepository는 owner가 아닌 store 패키지에 속하므로 같은 도메인 내부 호출이다.
+타 도메인의 내부 클래스는 참조하지 않는다. 타 도메인 호출이 필요하면 해당 도메인의 contract만 사용한다.
 
-잠금 순서는 점주 → 진행 상태 → 가게다. 동기 수신의 점주 잠금은 같은 트랜잭션의 재진입이다.
-메뉴 생성과 이미지 예약은 같은 진행 상태 잠금을 사용하며 잠금 뒤 본인 미확정 가게인지 확인한다.
-이 검사로 최종 등록 뒤 대기하던 업로드·메뉴 요청이 불완전한 데이터를 추가하는 것을 막는다.
-이미지 단계 완료도 같은 잠금을 사용한다. 최종 등록 중에는 S3나 외부 사업자 검증 API를 호출하지 않는다.
-기존 스키마와 CHECK 제약을 그대로 사용하며 적용된 마이그레이션을 수정하지 않는다.
+StoreDetailRepository는 store_id와 finalized=true를 함께 조회한다.
+기존 목록의 공개 기준과 같으며 최종 등록 PR #506이 확정한 finalized 값을 그대로 읽는다.
+최종 등록은 develop에 병합된 PR #506의 구현을 사용하며 온보딩 초안을 공개하지 않는다.
+점주 상태의 별도 조회 조건은 목록과 동일하게 추가하지 않는다.
+
+하나의 읽기 전용 트랜잭션에서 가게, 대표 이미지, 영업시간, 내부 이미지, 메뉴와 캠페인 요약을 읽는다.
+MySQL 기본 REPEATABLE READ의 동일한 스냅샷을 사용한다.
+가게가 없거나 초안이면 후속 쿼리 전에 종료한다. 조회 수는 메뉴 개수와 무관하게 6회다.
+일대다 목록을 한 번에 조인해 이미지·메뉴가 서로 곱해지는 것을 피한다.
+등록 단계에서 보장한 1개 대표 이미지·최대 3개 내부 이미지·0~3개 메뉴를 잘라서 숨기지 않는다.
+
+서울 날짜는 주입한 Clock에서 구한다. 당일 ACTIVE 요약만 선택하며 캠페인의 사용 시간으로 거르지 않는다.
+store_campaign_summary의 campaign_id·할인·사용 시각을 읽는다.
+MENU 할인은 target_menu_id와 store_id를 함께 조인해 다른 가게의 메뉴가 노출되지 않게 한다.
+기존 캠페인 저장 계약의 가게별 당일 활성 캠페인 하나라는 전제를 따른다.
+ALL 할인은 targetMenu=null이다. 활성 요약이 없으면 가게는 유지하고 activeCampaign만 null이다.
+
+이미지는 VERIFIED만 읽고 기존 StoreImageUrlResolver로 CDN URL을 만든다.
+S3를 호출하지 않는다. 필수 대표·메뉴 이미지 누락, 할인 대상 메뉴 누락과 CDN 설정 누락은
+데이터·설정 오류로 전파한다. DB 장애도 가게 없음이나 빈 목록으로 바꾸지 않는다.
+최종 등록의 STORE-015는 유지하고 상세 조회의 404는 STORE-016을 쓴다.
+
+가게 상세 조회에는 별도 수치 성능 목표가 확정되지 않았다.
+피드의 성능 목표를 이 API에 적용하지 않는다.
+
+### 검증 범위
+
+StoreDetailServiceTest는 서울 자정 경계, 이미지 URL과 필수 이미지 오류를 확인한다.
+StoreDetailIntegrationTest는 실제 HTTP 보안 체인과 MySQL 쿼리로 메뉴 0개, 초안 비공개, 정렬,
+업로드 상태, 활성 캠페인 날짜·상태와 다른 가게 메뉴 차단을 검증한다.
+StoreCompleteIntegrationTest의 기존 정상 등록 시나리오에서 등록 전 MEMBER 상세 조회의 404와 등록 후 200을 함께 검증한다.
