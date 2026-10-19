@@ -41,6 +41,9 @@ public class CouponEvent extends BaseTimeEntity {
     @Column(nullable = false, length = 20)
     private CouponEventStatus status;
 
+    @Column(name = "status_changed_at")
+    private LocalDateTime statusChangedAt;
+
     @Column(name = "store_id", nullable = false, updatable = false)
     private Long storeId;
 

@@ -13,6 +13,7 @@ QR 사용 확정도 같은 기본 처리를 따르며 상태·사용 이력의 �
 | member의 MemberQueryService | 발급·QR 생성·사용 자격과 이벤트 상태를 판정한다 | 기본(조회 장애를 전파한다). 정상적인 회원 부재와 구분한다 |
 | owner의 OwnerStatusQuery | 사용 이력 조회·사용 확정에서 현재 ACTIVE 상태를 확인한다 | 기본(조회 장애를 전파한다). findCurrentStatus로 상태 캐시를 우회한다 |
 | campaign의 CampaignQueryService | 이벤트 상태 조회에서 매장별 캠페인을 확인한다 | 기본(조회 장애를 전파한다) |
+| campaign의 CampaignStatusChangedEvent, CampaignEndedEvent | 쿠폰 회차의 발급 상태를 바꾼다 | 기본(발행자와 같은 트랜잭션). 회차 갱신이 실패하면 예외를 전파하며 캠페인 변경도 되돌린다 |
 | store의 StoreQueryService | 이벤트 조회의 매장 존재와 이력·QR 사용의 현재 관리 권한, QR 사용 좌표를 확인한다 | 기본(조회 장애와 내부 데이터 누락을 오류로 올린다) |
 | adserving의 WishlistQueryService | 발급 자격과 이벤트 조회의 찜 여부를 확인한다 | 기본(조회 장애를 전파하고 발급은 롤백한다) |
 | adserving의 CandidateStateUpdater | 발급 커밋 후 소진을 알린다 | 발급은 유지하고 소진 반영만 실패한다. 아래 절을 따른다 |
