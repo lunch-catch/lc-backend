@@ -13,53 +13,7 @@
 | `DELETE` | `/v1/admin/auth/tokens` | 관리자 로그아웃 | Access Token, `ADMIN` 또는 `SUPER_ADMIN` |
 | `POST` | `/v1/admin/auth/tokens:refresh` | 관리자 토큰 재발급 | Refresh Token. 상세 계약은 [인증 명세](./auth-api-spec.md#관리자) |
 | `POST` | `/v1/admin/batch-executions/{jobName}/{businessDate}:retry` | 배치 작업 수동 재실행 | Access Token, `ADMIN` 또는 `SUPER_ADMIN` |
-| `GET` | `/v1/admin/owners` | 점주 목록 조회와 검색. owner 도메인이 구현한다 | Access Token, `ADMIN` 또는 `SUPER_ADMIN` |
 
-
-## 관리자 점주 목록
-
-### `GET /v1/admin/owners`
-
-관리자가 점주 계정을 기준으로 목록을 조회한다. owner 도메인이 구현하며 서버 처리는 [점주 API 설계](../design/owner/owner-api-design.md#관리자-점주-목록-536)를 따른다. 기존 member 문서의 목록 제안을 #536에서 확정했다.
-
-### 요청
-
-| 파라미터 | 타입 | 필수 | 설명 |
-|---|---|---|---|
-| `status` | string(enum) | 아니오 | `ONBOARDING`, `ACTIVE`, `SUSPENDED`, `WITHDRAWN`. 생략하면 모든 상태를 포함한다 |
-| `joinedFrom` | string(date) | 아니오 | 가입일의 시작 날짜다. KST 날짜 기준으로 해당 날짜를 포함한다 |
-| `joinedTo` | string(date) | 아니오 | 가입일의 종료 날짜다. KST 날짜 기준으로 해당 날짜를 포함하며 시작 날짜보다 빠를 수 없다 |
-| `keyword` | string | 아니오 | 앞뒤 공백을 제거한다. 없거나 공백뿐이면 검색하지 않는다. 숫자만이면 점주 ID 정확히 일치로 검색하며 나머지는 상호 부분 일치로 검색한다 |
-| `page` | integer | 아니오 | 0부터 시작하며 기본값은 0이다. 한 페이지는 20건으로 고정한다 |
-
-이 목록은 페이지 번호 이동과 전체 건수 표시가 필요하므로 공통 커서 방식 대신 `page`를 쓴다. 가입일 내림차순이며 가입일이 같으면 점주 ID 내림차순이다. `size`나 정렬 옵션은 제공하지 않는다.
-
-상호 검색은 최종 등록 전 가게도 포함한다. `%`, `_`, `!`는 문자 그대로 검색한다. 상호 검색 결과가 1만 건을 넘으면 검색어를 좁혀 다시 요청해야 하며 일부 결과만 반환하지 않는다. 점주 ID 범위를 넘는 숫자는 일치하는 계정이 없어 빈 목록이다.
-
-### 응답 `200 OK`
-
-`data`는 `items`, `page`, `size`, `totalElements`를 갖는다. 조건에 맞는 점주가 없으면 `items`는 빈 배열이며 전체 건수는 0이다. 마지막 페이지를 넘겨 요청해도 전체 건수는 유지한다.
-
-| 항목 필드 | 타입 | null 가능 | 설명 |
-|---|---|---|---|
-| `ownerId` | number(int64) | 아니오 | 점주 식별자다 |
-| `storeName` | string | 예 | 상호다. 가게가 없으면 null이며 탈퇴 점주도 기존 상호를 유지한다 |
-| `status` | string(enum) | 아니오 | DB의 현재 점주 계정 상태다 |
-| `storeRegistered` | boolean | 아니오 | 가게의 최종 등록 여부다. 가게가 없으면 false다 |
-| `businessNo` | string | 예 | 일반 점주는 `123-45-*****`, 탈퇴 점주는 `***-**-*****`다. 번호가 없으면 null이다 |
-| `joinedAt` | string(date-time) | 아니오 | 한국 시간 오프셋을 포함한 가입 시각이다 |
-| `lastLoginAt` | string(date-time) | 예 | 최근 로그인 시각이다. 기록이 없거나 탈퇴 점주이면 null이다 |
-
-가게가 없는 점주도 목록에 포함한다. 이메일, 대표자 성명, 비밀번호와 토큰 관련 값은 반환하지 않는다.
-
-### 오류
-
-| 상태 | 코드 | 조건 |
-|---|---|---|
-| `400` | `COMMON-002` | 가입일 범위 역전, 음수 페이지 또는 상호 검색 결과 1만 건 초과 |
-| `400` | `COMMON-003` | 날짜·상태·페이지의 형식 오류 |
-| `401` | `AUTH-005` | 인증 없음·무효·만료 |
-| `403` | `AUTH-006` | 관리자 권한 없음 |
 
 ## 로그인·재발급 요청 제한
 
