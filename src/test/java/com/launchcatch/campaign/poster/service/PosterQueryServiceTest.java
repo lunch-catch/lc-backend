@@ -2,6 +2,7 @@ package com.launchcatch.campaign.poster.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.launchcatch.campaign.contract.AgeGroup;
@@ -111,6 +112,12 @@ class PosterQueryServiceTest {
         assertThat(response.html()).isEqualTo("<div>html</div>");
     }
 
+    /*
+     * 비공개 상태에서도 포스터 조회(posterRepository.findByCampaignId)를 그대로 호출해야
+     * 한다. 캠페인 조회에서만 끝내면 비공개·존재하지 않는 캠페인은 조회 1번, 포스터만 없는
+     * 공개 캠페인은 조회 2번이 걸려 응답 시간으로 공개 여부를 가를 수 있다(#495 자체 리뷰로
+     * 찾음).
+     */
     @ParameterizedTest
     @EnumSource(value = CampaignStatus.class, names = {"DRAFT", "SCHEDULED"})
     @DisplayName("DRAFT, SCHEDULED 캠페인은 사용자에게 비공개다")
@@ -121,6 +128,7 @@ class PosterQueryServiceTest {
         assertThatThrownBy(() -> service.findForMember(CAMPAIGN_ID))
                 .isInstanceOfSatisfying(CampaignException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(PosterErrorCode.POSTER_UNAVAILABLE));
+        verify(posterRepository).findByCampaignId(CAMPAIGN_ID);
     }
 
     @Test
@@ -132,6 +140,7 @@ class PosterQueryServiceTest {
         assertThatThrownBy(() -> service.findForMember(CAMPAIGN_ID))
                 .isInstanceOfSatisfying(CampaignException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(PosterErrorCode.POSTER_UNAVAILABLE));
+        verify(posterRepository).findByCampaignId(CAMPAIGN_ID);
     }
 
     @Test
