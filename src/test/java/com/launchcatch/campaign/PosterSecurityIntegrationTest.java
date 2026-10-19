@@ -1,6 +1,7 @@
 package com.launchcatch.campaign;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -75,16 +76,23 @@ class PosterSecurityIntegrationTest extends AbstractCampaignIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.campaignId").value(campaign.getId()))
                 .andExpect(jsonPath("$.data.status").value("ACTIVE"))
-                .andExpect(jsonPath("$.data.html").value("<div>html</div>"));
+                .andExpect(jsonPath("$.data.html").value("<div>html</div>"))
+                .andExpect(header().string("Cache-Control", "max-age=60, public"));
     }
 
+    /*
+     * 실패 응답은 캐시하지 않는다. Spring Security가 기본으로 붙이는
+     * "no-cache, no-store, max-age=0, must-revalidate"가 그대로 남아야 한다. 짧게 뒤에
+     * 포스터가 생겨도 캐시된 404가 가리면 안 된다.
+     */
     @Test
     void ACTIVE_캠페인이라도_포스터가_없으면_404다() throws Exception {
         Campaign campaign = campaignRepository.saveAndFlush(active());
 
         mvc.perform(get(path(campaign.getId())).cookie(memberToken()))
                 .andExpect(status().isNotFound())
-                .andExpect(jsonPath("$.code").value("POSTER-022"));
+                .andExpect(jsonPath("$.code").value("POSTER-022"))
+                .andExpect(header().string("Cache-Control", "no-cache, no-store, max-age=0, must-revalidate"));
     }
 
     @ParameterizedTest
