@@ -31,9 +31,9 @@ import org.springframework.transaction.annotation.Transactional;
  * ADJUST 는 정정 대상 영업일(없으면 기록 시각의 KST 날짜)로 넣는다. 분석의 소진액과 같은 귀속이다.
  *
  * DEDUCT 는 노출당 한 줄이라 기간 합계를 위해 훑지 않는다. 영업일마다 RELEASE = RESERVE - DEDUCT 이므로
- * 지난 영업일의 소진은 -(RESERVE 합 + RELEASE 합) 으로 구한다. 오늘 영업일만 13:30 해제 전일 수 있어서
+ * 지난 영업일의 소진은 -(RESERVE 합 + RELEASE 합) 으로 구한다. 오늘 영업일은 다음 날 00:00 해제 전이라서
  * 그날 RELEASE 가 아직 없으면 하루치 DEDUCT 를 직접 읽는다.
- * 13:30 해제가 실패한 영업일은 00:00 보정 해제가 들어오기 전까지 소진이 실제보다 크게 보인다.
+ * 00:00 해제가 실패한 영업일은 다음 00:00 해제가 들어오기 전까지 소진이 실제보다 크게 보인다.
  */
 @Service
 @RequiredArgsConstructor

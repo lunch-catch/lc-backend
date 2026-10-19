@@ -46,6 +46,7 @@ class ImpressionDeductionIntegrationTest extends AbstractBillingIntegrationTest 
     private static final Long OWNER = 7L;
     private static final long UNIT = 10L;
     private static final AtomicLong CAMPAIGN_SEQ = new AtomicLong(1000);
+    private static final long NO_PLAN_STORE = 970_001L;
 
     @Autowired PointDeductor deductor;
     @Autowired BudgetQueryService budgetQuery;
@@ -60,6 +61,7 @@ class ImpressionDeductionIntegrationTest extends AbstractBillingIntegrationTest 
         jdbc.update("delete from point_ledger");
         jdbc.update("delete from deduction_result");
         jdbc.update("delete from budget_daily_plan");
+        jdbc.update("delete from campaign where store_id = ?", NO_PLAN_STORE);
         redis.execute((RedisCallback<Object>) connection -> {
             connection.serverCommands().flushAll();
             return null;
@@ -292,6 +294,38 @@ class ImpressionDeductionIntegrationTest extends AbstractBillingIntegrationTest 
         assertThat(count(DeductionStatus.NOT_BILLED_BUDGET, results)).isEqualTo(15);
         assertThat(ledgerDeductSum(campaignId)).isEqualTo(-10 * UNIT);
         assertThat(spendInValkey(campaignId)).isEqualTo(10 * UNIT);
+    }
+
+    /*
+     * 00:00 예약 전이거나 전날 집행이 끝난 캠페인처럼 그날 계획이 없는 경우다. 캠페인의 점주와 운영 단가(ops V3 의 10)로
+     * 판정 행을 남겨 광고 서빙의 유효 노출 수와 판정 합이 맞게 한다. 과금하지 않아 원장과 Valkey 는 그대로다.
+     */
+    @Test
+    void 그날_계획이_없으면_계획_없음_판정만_남기고_원장과_Valkey는_그대로다() {
+        long campaignId = endedCampaignWithoutPlan();
+
+        DeductionStatus status = deductInTx(UUID.randomUUID(), campaignId);
+
+        assertThat(status).isEqualTo(DeductionStatus.NOT_BILLED_NO_PLAN);
+        assertThat(jdbc.queryForMap(
+                "select owner_id, billing_status, unit_price from deduction_result where campaign_id = ?", campaignId))
+                .containsEntry("owner_id", OWNER)
+                .containsEntry("billing_status", "NOT_BILLED_NO_PLAN")
+                .containsEntry("unit_price", 10L);
+        assertThat(rows("point_ledger", campaignId)).isZero();
+        assertThat(redis.hasKey("billing:day:" + DAY + ":" + campaignId)).isFalse();
+    }
+
+    private long endedCampaignWithoutPlan() {
+        jdbc.update("""
+                insert into campaign
+                    (owner_id, store_id, status, status_changed_at, discount_target_type, discount_type,
+                     discount_value, issue_quantity, usable_start_time, usable_end_time, daily_budget,
+                     start_date, end_date, created_at, updated_at)
+                values (?, ?, 'ENDED', '2026-01-01 00:00:00', 'ALL', 'AMOUNT', 1000, 100, '11:00:00', '14:00:00', 10000,
+                        '2026-10-01', '2026-10-13', now(6), now(6))
+                """, OWNER, NO_PLAN_STORE);
+        return jdbc.queryForObject("select campaign_id from campaign where store_id = ?", Long.class, NO_PLAN_STORE);
     }
 
     @Test

@@ -8,7 +8,7 @@ public enum AggregationOutcome {
     SUCCEEDED,
     /** 실패로 닫고 그 날짜를 미처리로 남겼다. */
     FAILED,
-    /** 정산 13:30 해제와 대사가 끝나지 않아 건너뛰고 미처리로 남겼다. */
+    /** 정산의 전날 해제가 끝나지 않아 건너뛰고 미처리로 남겼다. */
     SOURCE_NOT_READY,
     /** 다른 서버나 수동 재계산이 잡고 있어 건너뛰었다. */
     BUSY,

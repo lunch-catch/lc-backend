@@ -18,9 +18,10 @@ import com.launchcatch.billing.cache.DailySpend;
 import com.launchcatch.billing.cache.DailySpendCounter;
 import com.launchcatch.billing.exception.BudgetCounterUnavailableException;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
-import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -36,8 +37,16 @@ class BudgetQueryServiceImplTest {
 
     private static final LocalDate DAY = LocalDate.of(2026, 10, 14);
     private static final LocalDateTime AT = LocalDateTime.of(2026, 10, 14, 11, 30);
-    private static final BillingScheduleProperties SCHEDULE =
-            new BillingScheduleProperties("10:00", "12:59", Duration.ofMinutes(30), List.of(34, 33, 33));
+    // 10~12시에만 34·33·33 을 둔 24개 가중치다. 예약액 10,000 이면 11:30 의 계획 합이 5,050 이다
+    private static final BillingScheduleProperties SCHEDULE = new BillingScheduleProperties(lunchOnlyWeights());
+
+    private static List<Integer> lunchOnlyWeights() {
+        List<Integer> weights = new ArrayList<>(Collections.nCopies(24, 0));
+        weights.set(10, 34);
+        weights.set(11, 33);
+        weights.set(12, 33);
+        return weights;
+    }
 
     @Mock
     private DailyPlanSnapshotService snapshotService;

@@ -25,7 +25,7 @@ public class StoreSecurityConfig {
     @Bean
     @Order(ApiSecurityDefaults.DOMAIN_CHAIN_ORDER)
     public SecurityFilterChain storeFilterChain(HttpSecurity http, ApiSecurityDefaults defaults) throws Exception {
-        return defaults.apply(http.securityMatcher("/v1/stores"))
+        return defaults.apply(http.securityMatcher("/v1/stores", "/v1/stores/{storeId}"))
                 .authorizeHttpRequests(auth -> auth.anyRequest().hasRole("MEMBER"))
                 .build();
     }

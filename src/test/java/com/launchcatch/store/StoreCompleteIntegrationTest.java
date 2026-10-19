@@ -100,6 +100,9 @@ class StoreCompleteIntegrationTest extends AbstractStoreIntegrationTest {
     @Test
     void 메뉴_완료_호출_없이_최종_등록하고_조회와_캐시에_ACTIVE를_반영한다() throws Exception {
         cache.save(ownerId, "ONBOARDING");
+        mvc.perform(get("/v1/stores/{storeId}", storeId)
+                        .with(user(new CustomUserDetails(1L, Role.MEMBER))))
+                .andExpect(status().isNotFound()).andExpect(jsonPath("code").value("STORE-016"));
         mvc.perform(request()).andExpect(status().isOk())
                 .andExpect(jsonPath("data.storeId").value(storeId))
                 .andExpect(jsonPath("data.finalized").value(true))
@@ -107,6 +110,12 @@ class StoreCompleteIntegrationTest extends AbstractStoreIntegrationTest {
                 .andExpect(jsonPath("data.ownerStatus").value("ACTIVE"))
                 .andExpect(jsonPath("data.version").value(6));
         assertThat(cache.find(ownerId)).isEmpty();
+        mvc.perform(get("/v1/stores/{storeId}", storeId)
+                        .with(user(new CustomUserDetails(1L, Role.MEMBER))))
+                .andExpect(status().isOk()).andExpect(jsonPath("data.storeId").value(storeId))
+                .andExpect(jsonPath("data.name").value("최종 식당"))
+                .andExpect(jsonPath("data.businessHours.length()").value(7))
+                .andExpect(jsonPath("data.menus").isEmpty());
         mvc.perform(get("/v1/owner/store").with(user(new CustomUserDetails(ownerId, Role.OWNER))))
                 .andExpect(status().isOk()).andExpect(jsonPath("data.finalized").value(true))
                 .andExpect(jsonPath("data.onboarding.resumeStep").isEmpty())

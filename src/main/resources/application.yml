@@ -236,14 +236,11 @@ billing:
       claim-lease: 5m
       # 워커 실행 주기다. @Scheduled 가 읽으므로 ISO-8601 로 적는다.
       interval: PT1M
-  # 광고 서빙 시각과 시간대별 가중치(billing.config.BillingScheduleProperties).
-  # 시각은 따옴표로 감싼다. 따옴표가 없으면 YAML 이 숫자로 읽는다.
-  # hourly-weights 개수는 서빙 시간대 수(10, 11, 12시)와 같아야 하고 어기면 기동이 실패한다.
+  # 0~23시 시간대별 가중치(billing.config.BillingScheduleProperties). 광고 서빙은 하루 종일이다.
+  # 개수는 24개여야 하고 어기면 기동이 실패한다. 합은 비율로만 쓴다.
+  # 측정값이 아닌 가정이다. 운영 뒤 시간대별 노출 분포로 고친다. 새벽을 0 으로 두면 노출 몇 건으로 진행률이 1.2 를 넘는다.
   schedule:
-    serving-start: "10:00"
-    serving-end: "12:59"
-    impression-valid-for: 30m
-    hourly-weights: [34, 33, 33]
+    hourly-weights: [2, 1, 1, 1, 1, 1, 1, 3, 4, 5, 8, 10, 9, 7, 4, 4, 4, 5, 7, 8, 6, 4, 2, 2]
   # 그날 계획 스냅샷 캐시(billing.config.PlanSnapshotCacheProperties).
   # 근거 없는 임시값이다. 부하 측정 뒤에 조정한다.
   plan-snapshot-cache:
