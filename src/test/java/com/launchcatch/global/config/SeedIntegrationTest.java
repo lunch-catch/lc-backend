@@ -30,7 +30,7 @@ class SeedIntegrationTest extends IntegrationTestSupport {
             + "+ (SELECT COUNT(*) FROM serve_log) + (SELECT COUNT(*) FROM impression_log) + (SELECT COUNT(*) FROM swipe_log) "
             + "+ (SELECT COUNT(*) FROM wishlist) + (SELECT COUNT(*) FROM feed_visit_daily) + (SELECT COUNT(*) FROM feed_filter) "
             + "+ (SELECT COUNT(*) FROM feed_filter_category) + (SELECT COUNT(*) FROM member_profile) "
-            + "+ (SELECT COUNT(*) FROM deduction_result) + (SELECT COUNT(*) FROM point_ledger)";
+            + "+ (SELECT COUNT(*) FROM deduction_result) + (SELECT COUNT(*) FROM point_ledger)"
             + "+ (SELECT COUNT(*) FROM member_coupon) + (SELECT COUNT(*) FROM coupon_usage_history) "
             + "+ (SELECT COUNT(*) FROM event_log) + (SELECT COUNT(*) FROM campaign_daily_report)";
 
