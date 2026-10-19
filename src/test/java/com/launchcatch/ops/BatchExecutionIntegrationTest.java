@@ -134,14 +134,33 @@ class BatchExecutionIntegrationTest extends AbstractOpsIntegrationTest {
     }
 
     /*
-     * 유일 제약이 중복 실행을 막는다.
      * 두 서버가 같은 시각에 시도하는 것이 정상이라, 지는 쪽이 조용히 비켜야 한다.
+     * owner_id 로 가르므로 다른 서버여야 진다. 같은 서버의 재시도는 아래
+     * 같은_서버가_다시_불러도_자기_점유다 가 다룬다.
      */
     @Test
-    @DisplayName("같은 작업과 영업일은 한 번만 점유된다")
+    @DisplayName("같은 작업과 영업일은 다른 서버에는 한 번만 점유된다")
     void 점유는_한_번만() {
         assertThat(service.claim(JOB, DATE)).isTrue();
-        assertThat(service.claim(JOB, DATE)).isFalse();
+
+        BatchExecutionService other = new BatchExecutionService(logs, alert, clock, new BatchServerId(OTHER));
+        assertThat(other.claim(JOB, DATE)).isFalse();
+    }
+
+    /*
+     * #526. 연결이 끊겨 커밋 여부를 모른 채 같은 서버가 다시 시도해도, owner_id 가 그대로
+     * 나라 내 것으로 정확히 읽힌다. 상태가 바뀌거나 세대가 오르지 않는다.
+     */
+    @Test
+    @DisplayName("같은 서버가 다시 불러도 자기 점유로 판정한다")
+    void 같은_서버가_다시_불러도_자기_점유다() {
+        assertThat(service.claim(JOB, DATE)).isTrue();
+
+        assertThat(service.claim(JOB, DATE)).isTrue();
+
+        BatchExecutionLog row = reload(JOB);
+        assertThat(row.getOwnerId()).isEqualTo(ME);
+        assertThat(row.getAttemptNo()).isEqualTo(1);
     }
 
     /*

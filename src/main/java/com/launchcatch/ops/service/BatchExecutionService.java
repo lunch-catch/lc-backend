@@ -77,9 +77,13 @@ public class BatchExecutionService {
      * (#515, PR #520) 같은 문제가 반복된다.
      *
      * 영향받은 행 수로도 가르지 않는다. 드라이버 기본값(useAffectedRows=false)에서는
-     * 무변경 갱신도 1 로 보고될 수 있다. 그래서 upsert 뒤 그 행을 다시 읽어 owner_id 가
-     * 나인지로 점유를 가른다. owner_id 는 행을 만들 때 정해지고 이어받기 전에는 바뀌지
-     * 않으므로, 연결이 끊겨 커밋 여부를 모른 채 다시 불러도 내 것으로 정확히 읽힌다.
+     * 무변경 갱신도 1 로 보고될 수 있다. 그래서 upsert 뒤 그 행을 다시 읽어 RUNNING 이고
+     * owner_id 가 나인지로 점유를 가른다. owner_id 는 행을 만들 때 정해지고 이어받기 전에는
+     * 바뀌지 않으므로, 연결이 끊겨 커밋 여부를 모른 채 다시 불러도 내 것으로 정확히 읽힌다.
+     *
+     * 상태도 함께 본다. 이미 SUCCESS나 FAILED로 끝난 행도 owner_id는 그대로 나로 남아 있어,
+     * owner_id만 보면 끝난 단계를 다시 점유한 것으로 잘못 읽는다. begin()이 그 구분을
+     * 상태로 가르게 하려면 claim()이 RUNNING 이 아닌 내 행은 점유로 보지 않아야 한다.
      *
      * 두 서버가 같은 순간에 upsert 를 시도하면 상대의 커밋을 기다리는 구간이 있어 락 대기
      * 시간 초과나 교착(TransientFailures.isTransient 가 가리는 쪽)을 낼 수 있다(#515). 그
@@ -98,7 +102,8 @@ public class BatchExecutionService {
 
     private boolean attemptClaim(String jobName, LocalDate businessDate) {
         logs.upsertClaim(jobName, businessDate, ownerId, now());
-        return isMine(reload(jobName, businessDate));
+        BatchExecutionLog row = reload(jobName, businessDate);
+        return row.getStatus() == BatchStatus.RUNNING && isMine(row);
     }
 
     /*
