@@ -5,6 +5,7 @@ import com.launchcatch.campaign.poster.dto.PosterCreateRequest;
 import com.launchcatch.campaign.poster.dto.PosterCreateResponse;
 import com.launchcatch.campaign.poster.dto.PosterImagePrepareUploadRequest;
 import com.launchcatch.campaign.poster.dto.PosterImagePrepareUploadResponse;
+import com.launchcatch.campaign.poster.service.PosterQueryService;
 import com.launchcatch.campaign.poster.service.PosterUploadService;
 import com.launchcatch.global.response.ResponseEnvelope;
 import io.swagger.v3.oas.annotations.Operation;
@@ -13,6 +14,7 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -22,10 +24,11 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 @RequestMapping("/v1/owner/campaigns/{campaignId}")
 @RequiredArgsConstructor
-@Tag(name = "점주 포스터", description = "점주가 DRAFT 캠페인의 포스터를 생성하는 API입니다.")
+@Tag(name = "점주 포스터", description = "점주가 DRAFT 캠페인의 포스터를 생성하고 조회하는 API입니다.")
 public class OwnerPosterController {
 
     private final PosterUploadService posterUploadService;
+    private final PosterQueryService posterQueryService;
 
     @PostMapping("/poster:prepareUpload")
     @Operation(
@@ -53,6 +56,18 @@ public class OwnerPosterController {
             @Parameter(hidden = true) @AuthenticationPrincipal CustomUserDetails owner) {
         var response = posterUploadService.createOrOverwritePoster(
                 owner.getId(), campaignId, request.templateId(), request.objectKey());
+        return ResponseEnvelope.success(response);
+    }
+
+    @GetMapping("/poster")
+    @Operation(
+            summary = "점주용 포스터 조회",
+            description = "본인 소유 캠페인에 저장된 포스터를 조회합니다. 캠페인 상태와 무관합니다."
+    )
+    public ResponseEnvelope<PosterCreateResponse> get(
+            @PathVariable Long campaignId,
+            @Parameter(hidden = true) @AuthenticationPrincipal CustomUserDetails owner) {
+        var response = posterQueryService.findForOwner(owner.getId(), campaignId);
         return ResponseEnvelope.success(response);
     }
 }

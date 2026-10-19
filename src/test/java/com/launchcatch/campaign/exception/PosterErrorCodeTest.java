@@ -23,5 +23,9 @@ class PosterErrorCodeTest {
         assertThat(PosterErrorCode.TEMPLATE_NOT_FOUND.getHttpStatus()).isEqualTo(HttpStatus.NOT_FOUND);
         assertThat(PosterErrorCode.TEMPLATE_NOT_DRAFT.getCode()).isEqualTo("POSTER-006");
         assertThat(PosterErrorCode.TEMPLATE_NOT_DRAFT.getHttpStatus()).isEqualTo(HttpStatus.CONFLICT);
+        assertThat(PosterErrorCode.POSTER_NOT_SAVED.getCode()).isEqualTo("POSTER-021");
+        assertThat(PosterErrorCode.POSTER_NOT_SAVED.getHttpStatus()).isEqualTo(HttpStatus.NOT_FOUND);
+        assertThat(PosterErrorCode.POSTER_UNAVAILABLE.getCode()).isEqualTo("POSTER-022");
+        assertThat(PosterErrorCode.POSTER_UNAVAILABLE.getHttpStatus()).isEqualTo(HttpStatus.NOT_FOUND);
     }
 }
