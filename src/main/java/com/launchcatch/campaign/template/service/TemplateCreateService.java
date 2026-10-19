@@ -117,6 +117,7 @@ public class TemplateCreateService {
                 version.getVersionNumber(),
                 template.getStatus(),
                 version.getHtmlContent(),
-                removedElements);
+                removedElements,
+                TemplateCreateResponse.SUGGESTED_PROMPTS);
     }
 }

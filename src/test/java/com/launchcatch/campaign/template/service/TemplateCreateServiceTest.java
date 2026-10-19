@@ -30,6 +30,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
+import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -57,6 +58,14 @@ class TemplateCreateServiceTest {
 
     private static final Long ADMIN_ID = 1L;
     private static final String REQUEST_ID = "req-1";
+
+    // 상수를 참조하지 않고 poster-api-design.md 의 문장을 그대로 적어야 목록이 바뀐 것을 잡는다.
+    private static final List<String> EXPECTED_SUGGESTED_PROMPTS = List.of(
+            "배경을 더 밝게 해줘",
+            "행사명 글자를 더 크게 해줘",
+            "할인 문구를 더 진한 강조색으로 바꿔줘",
+            "행사명을 중앙에서 오른쪽으로 1cm 옮겨줘",
+            "이미지 모서리를 더 둥글게 해줘");
     private static final Clock FIXED_CLOCK = Clock.fixed(Instant.parse("2026-10-08T01:00:00Z"), ZoneOffset.UTC);
 
     @Mock
@@ -128,6 +137,7 @@ class TemplateCreateServiceTest {
         assertThat(response.status()).isEqualTo(TemplateStatus.DRAFT);
         assertThat(response.html()).isEqualTo(VALID_HTML);
         assertThat(response.removedElements()).containsExactly("script");
+        assertThat(response.suggestedPrompts()).containsExactlyElementsOf(EXPECTED_SUGGESTED_PROMPTS);
         ArgumentCaptor<Template> captor = ArgumentCaptor.forClass(Template.class);
         verify(templateRepository).saveAndFlush(captor.capture());
         assertThat(captor.getValue().isActive()).isFalse();
@@ -148,6 +158,7 @@ class TemplateCreateServiceTest {
         assertThat(response.versionNumber()).isEqualTo(1);
         assertThat(response.html()).isEqualTo(VALID_HTML);
         assertThat(response.removedElements()).isEmpty();
+        assertThat(response.suggestedPrompts()).containsExactlyElementsOf(EXPECTED_SUGGESTED_PROMPTS);
         verifyNoInteractions(
                 templateRepository, templateHtmlGenerator, templateQuotaRepository, transactionTemplate,
                 redisTemplate);
