@@ -2,6 +2,7 @@ package com.launchcatch.member.service;
 
 import com.launchcatch.member.contract.MemberInfo;
 import com.launchcatch.member.contract.MemberQueryService;
+import com.launchcatch.member.contract.MemberStatus;
 import com.launchcatch.member.entity.Member;
 import com.launchcatch.member.entity.MemberProfile;
 import com.launchcatch.member.repository.MemberRepository;
@@ -21,6 +22,11 @@ public class MemberQueryServiceImpl implements MemberQueryService {
     @Override
     public Optional<MemberInfo> findById(Long memberId) {
         return memberRepository.findById(memberId).map(this::toInfo);
+    }
+
+    @Override
+    public Optional<MemberStatus> findCurrentStatus(Long memberId) {
+        return memberRepository.findStatusById(memberId);
     }
 
     @Override

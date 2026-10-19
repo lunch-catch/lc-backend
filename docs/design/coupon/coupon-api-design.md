@@ -9,7 +9,8 @@
 ## MySQL 쿠폰 발급 v1
 
 이번 v1은 클라이언트가 API를 연동하기 위한 쿠폰 발급 최소 기능이다.
-기능 동작과 작은 규모의 동시 요청에서 중복·초과 발급을 확인했으며 현재 구현으로 부하 테스트는 시행하지 않았다.
+기능 동작과 작은 규모의 동시 요청에서 중복·초과 발급을 확인했다.
+이후 로컬 k6 부하를 측정했으며 최초 구현부터 최종 개선까지의 결과는 [v1 성능 개선 비교](../../troubleshooting/coupon/coupon-issuance-v1-improvement-comparison.md)에 기록했다.
 
 `POST /v1/coupons`는 `CouponCommandService.issue(memberId, eventId)`로 처리한다.
 `CouponCommandService.issue`는 조정만 맡고 별도 빈인 `CouponIssuanceService.issue`가 발급 트랜잭션을 처리한다.
@@ -19,17 +20,20 @@ Redis 순번 발급기와 대기열을 사용하지 않는다. v1과 이후 v2�
 
 ### 트랜잭션과 잠금
 
-1. 서버 시계로 한국 영업일을 정하고 해당 회원의 일일 카운터를 UPSERT한다. 이미 있는 행의 횟수와 감사 시각은 덮어쓰지 않는다.
-2. 일일 카운터 행과 이벤트 행을 차례로 쓰기 잠근다. 같은 회원의 다른 이벤트 요청은 카운터가 직렬화하며 같은 이벤트의 다른 회원 요청은 이벤트가 직렬화한다.
-3. 현재 영업일과 이벤트의 ACTIVE 상태, 시스템 발급 시간을 검사한다. 기본 발급 시간은 #264의 합의에 따라 11:00 이상 14:00 미만이다.
-4. `MemberQueryService`로 현재 ACTIVE 회원인지 확인한다. `WishlistQueryService.isWished`가 false이면 COUPON-004로 거절한다.
-5. 같은 이벤트의 기존 회원 쿠폰을 일반 조회한다. REMOVED도 재발급을 막으며 삭제 흐름과 반대 순서로 회원 쿠폰을 쓰기 잠그지 않는다.
-6. 카운터를 증가시키고 AVAILABLE 재고 중 가장 작은 `sequence_no` 한 장을 쓰기 잠근다. 재고 잠금 후 발급 시간을 다시 검사한다.
+1. 서버 시계로 한국 영업일을 정하고 이벤트를 일반 조회한다.
+2. 현재 영업일과 이벤트의 ACTIVE 상태, 시스템 발급 시간을 검사한다. 운영 상태와 발급 시간의 판정 시점은 [발급 명세](../../api-spec/coupon-api-spec.md#쿠폰-발급)를 따른다. 기본 발급 시간은 #264의 합의에 따라 11:00 이상 14:00 미만이다.
+3. `MemberQueryService.findCurrentStatus`로 현재 ACTIVE 회원인지 확인한다. 프로필을 읽지 않는 [회원 상태 조회 계약](../member/member-api-design.md#7-다른-도메인에-공개하는-회원-조회)을 따른다. `WishlistQueryService.isWished`가 false이면 COUPON-004로 거절한다.
+4. 자격 검증을 통과하면 해당 회원의 일일 카운터를 UPSERT한다. 없는 행은 0으로 만들고 기존 행의 횟수와 감사 시각은 덮어쓰지 않는다. UPSERT가 확보하는 쓰기 잠금으로 같은 회원의 다른 이벤트 요청을 직렬화한다.
+5. 조건부 UPDATE가 일일 한도와 같은 이벤트의 기존 발급 부재를 함께 검사하고 횟수를 늘린다. REMOVED도 중복 검사에 포함한다. 0행을 변경했으면 기존 회원 쿠폰의 존재만 일반 조회해 중복 발급을 먼저 거절하고 나머지는 일일 한도 초과로 거절한다.
+6. AVAILABLE 재고 중 가장 작은 `sequence_no` 한 장을 쓰기 잠근다.
 7. 재고를 ISSUED로 바꾸고 재고 코드와 이벤트 사용 시간을 가진 회원 쿠폰을 저장한다. 카운터와 재고, 회원 쿠폰을 함께 커밋한 뒤 201을 반환한다.
 
-발급 트랜잭션은 READ_COMMITTED로 실행한다. 이벤트 잠금을 기다린 요청도 앞 요청이 커밋한 회원 쿠폰을 중복 검사에서 읽어야 한다.
+발급 트랜잭션은 READ_COMMITTED로 실행한다. 카운터 잠금을 기다린 요청도 앞 요청이 커밋한 회원 쿠폰을 중복 검사에서 읽어야 한다.
+발급은 카운터 엔티티를 조회하지 않는다. 조건부 UPDATE는 재고 잠금을 잡기 전에 실행하고 재고 부족이나 이후 저장 실패가 발생하면 함께 롤백한다.
+중복 검사에서 기존 회원 쿠폰을 추가로 쓰기 잠그지 않으며 삭제 흐름과 반대 순서로 카운터·회원 쿠폰 잠금을 확보하지 않는다.
 `UNIQUE(event, member)`와 쿠폰 코드의 UNIQUE, 카운터의 CHECK가 DB에서도 불변식을 보호한다.
-V5는 `(coupon_event_id, status, sequence_no)` 인덱스를 추가한다. v1은 이벤트 잠금으로 재고 소비를 직렬화하며 SKIP LOCKED를 사용하지 않는다.
+V5는 `(coupon_event_id, status, sequence_no)` 인덱스를 추가한다. 재고 선택 SQL은 이 인덱스를 명시하고 가장 작은 AVAILABLE 순번을 쓰기 잠그며 SKIP LOCKED를 사용하지 않는다.
+이벤트 조회에 명시적인 잠금은 사용하지 않는다. 회원 쿠폰 INSERT의 외래 키 검사로 이벤트 행에 공유 잠금이 생길 수 있지만 운영 상태를 재판정하는 용도로 쓰지 않는다.
 
 발급 전용 트랜잭션 제한 시간은 두지 않는다. DB 오류는 공통 예외 처리로 전달한다.
 응답의 발급 시각은 저장된 `createdAt`을 사용한다. 실패한 요청은 재고와 카운터를 소비하지 않는다.
@@ -38,7 +42,7 @@ V5는 `(coupon_event_id, status, sequence_no)` 인덱스를 추가한다. v1은 
 
 찜 조회와 소진 반영의 반환·실패·복구 정책은 [광고 서빙 공개 계약](../adserving/feed-api-design.md#wishlistqueryservice)이 소유한다.
 찜 조회 장애는 발급을 롤백하며 찜 없음으로 바꾸지 않는다.
-`CouponIssuanceService`는 회원 쿠폰을 flush한 뒤 AVAILABLE 재고가 남았는지 확인한다. 같은 이벤트의 행 잠금이 이 확인까지 유지된다.
+`CouponIssuanceService`는 회원 쿠폰을 flush한 뒤 AVAILABLE 재고가 남았는지 확인한다. 선택한 재고의 행 잠금은 발급 커밋까지 유지된다.
 마지막 재고이면 응답과 함께 캠페인 ID, 이벤트의 영업일, 발급 시각을 반환한다. 소진 시각은 MySQL DATETIME(6)의 반올림 정밀도로 맞춰 복구 때 읽는 시각과 일치시킨다.
 `CouponCommandService`는 발급 서비스의 트랜잭션 프록시가 정상 반환한 뒤 `CandidateStateUpdater.markSoldOut`을 부른다.
 발급 저장이나 커밋이 실패하면 이 호출을 하지 않는다. 소진 반영 실패는 ERROR 로그를 남기며 이미 완료한 발급과 성공 응답은 유지한다.
@@ -52,9 +56,7 @@ V5는 `(coupon_event_id, status, sequence_no)` 인덱스를 추가한다. v1은 
 
 단위 테스트는 업무 조건과 커밋 실패를 검증한다. MySQL 통합 테스트는 중복과 재고 초과, 일일 한도, 삭제 후 재발급, 시간 경계, 롤백과 DB 오류의 공통 응답을 검증한다.
 동시 요청 테스트는 다섯 건으로 재고 초과와 중복 발급, 일일 한도 초과를 검증한다. 별도 부하 시험용 Gradle 작업은 두지 않는다.
-실제 HTTP 39건과 작은 규모의 동시 요청 결과는 [HTTP 기능 검증 기록](../../software-quality/coupon/coupon-issuance-v1-http-test.md)에 남긴다.
-[발급 성능 목표](#발급-성능-목표)는 후속 부하 테스트의 기준이며 이번 최소 기능에서 충족 여부를 검증하지 않았다.
-[이전 구현의 성능 측정 기록](../../software-quality/coupon/coupon-issuance-v1-performance.md)은 현재 구현의 검증 결과로 사용하지 않는다.
+[발급 성능 목표](#발급-성능-목표)를 기준으로 수행한 로컬 부하 측정과 남은 한계는 [v1 성능 개선 비교](../../troubleshooting/coupon/coupon-issuance-v1-improvement-comparison.md)가 소유한다.
 
 ## 쿠폰 QR 생성·갱신
 
