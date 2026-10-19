@@ -98,8 +98,9 @@ class BatchExecutionIntegrationTest extends AbstractOpsIntegrationTest {
     /*
      * 두 서버가 같은 시각에 시도하는 것이 정상 운영이다.
      *
-     * 유일 제약이 둘 중 하나를 떨어뜨리는데, 경합 상황에서 InnoDB 가 중복 키 대신 다른 예외를
-     * 내면 지는 쪽이 기동 실패처럼 보인다. 순차 시도로는 그 구간을 지나가지 않는다.
+     * 유일 제약이 둘 중 하나를 떨어뜨린다. 경합 상황에서 InnoDB 가 중복 키 대신 락 대기
+     * 시간 초과나 교착을 낼 수 있는데, claim 이 그 경우도 한 번 더 시도해 깨끗하게 가른다.
+     * 순차 시도로는 이 구간을 지나가지 않는다.
      */
     @Test
     @DisplayName("동시에 점유를 시도하면 정확히 하나만 이긴다")

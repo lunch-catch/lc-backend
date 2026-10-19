@@ -272,9 +272,8 @@ class ArchitectureTest {
             .allowEmptyShould(true);
 
     /*
-     * 규칙 4. 분석의 조회는 집계 테이블만 읽는다.
-     * 퍼널 이벤트 원본(analytics.event)과 다른 도메인은 집계 배치만 읽는다. 조회가 원본을 읽기
-     * 시작하면 대시보드 조회 부하를 집계로 분리한 이유가 사라진다.
+     * 규칙 4. analytics.query의 배치 지표 조회는 집계 테이블만 읽는다.
+     * 이벤트 로그 기반 캠페인 성과는 로그를 소유한 analytics.event에서 처리한다.
      */
     @ArchTest
     static final ArchRule 분석_조회는_집계만_읽는다 =

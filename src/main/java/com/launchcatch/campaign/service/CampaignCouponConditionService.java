@@ -2,6 +2,7 @@ package com.launchcatch.campaign.service;
 
 import com.launchcatch.campaign.contract.AgeGroup;
 import com.launchcatch.campaign.contract.CampaignStatus;
+import com.launchcatch.campaign.contract.DiscountTargetType;
 import com.launchcatch.campaign.contract.DiscountType;
 import com.launchcatch.campaign.contract.TargetGender;
 import com.launchcatch.campaign.dto.CampaignCouponConditionRequest;
@@ -51,7 +52,7 @@ public class CampaignCouponConditionService {
 
     public CampaignCouponConditionResult handle(Long ownerId, CampaignCouponConditionRequest request) {
         validateActiveOwner(ownerId);
-        validateDiscountValue(request.discountType(), request.discountValue());
+        validateDiscountValue(request.discountTargetType(), request.discountType(), request.discountValue());
         validateIssueQuantity(request.issueQuantity());
         validateUsableTime(request.usableStartTime(), request.usableEndTime());
 
@@ -134,10 +135,16 @@ public class CampaignCouponConditionService {
         }
     }
 
-    private void validateDiscountValue(DiscountType discountType, int discountValue) {
+    /*
+     * discountTargetType이 ALL(전체 메뉴)이면 discountType은 AMOUNT(정액)만 허용한다(#431,
+     * 팀 논의로 바뀐 사양). MENU(특정 메뉴)는 PERCENT/AMOUNT 둘 다 그대로 허용한다. 엔티티의
+     * requireDiscountValue(Campaign.create/updateCouponCondition)에도 같은 제약이 있다.
+     */
+    private void validateDiscountValue(DiscountTargetType discountTargetType, DiscountType discountType, int discountValue) {
         boolean positive = discountValue > 0;
         boolean withinPercent = discountType != DiscountType.PERCENT || discountValue <= 100;
-        if (!positive || !withinPercent) {
+        boolean allowedForAll = discountTargetType != DiscountTargetType.ALL || discountType == DiscountType.AMOUNT;
+        if (!positive || !withinPercent || !allowedForAll) {
             throw new CampaignException(CampaignErrorCode.DISCOUNT_VALUE_INVALID);
         }
     }

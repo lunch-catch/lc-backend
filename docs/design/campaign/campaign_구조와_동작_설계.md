@@ -32,7 +32,8 @@ campaign/
 │   ├── CampaignRepository.java
 │   └── CampaignStatusLogRepository.java
 └── service/
-    ├── CampaignStatusService.java        전이 5개 + pauseFromFunding/resumeFromFunding, 로그 기록, 이벤트 발행
+    ├── CampaignStatusService.java        전이 5개 + pauseFromFunding/resumeFromFunding, 로그 기록, 이벤트 발행, pause/resume의 가게 요약 갱신(#468)
+    ├── CampaignPauseResumeService.java   점주용 중단·재개(#468). 점주 상태·본인 소유를 확인하고 CampaignStatusService에 맡긴다
     ├── CampaignQueryServiceImpl.java     CampaignQueryService 구현
     ├── CampaignFundingUpdaterImpl.java   CampaignFundingUpdater 구현. FundingJudgement를 상태 전이 호출로 옮긴다
     └── CampaignStatsQueryServiceImpl.java  CampaignStatsQueryService 구현
@@ -42,7 +43,7 @@ campaign/
 
 `PauseReason`은 처음엔 `campaign.entity`에 뒀다가 `campaign.contract`로 옮겼다(2026-10-12). `CampaignStatus`, `TargetGender`, `DiscountTargetType`, `DiscountType`, `AgeGroup`처럼 캠페인 테이블 CHECK 제약과 1:1로 대응하는 enum은 전부 contract에 두고 엔티티가 그대로 쓰는 게 이미 있는 패턴인데, `PauseReason`만 거기서 벗어나 있었다. 다른 도메인(billing)이 `CampaignInfo.pauseReason` 필드로 이 타입을 그대로 쓰려는 계획이 나오면서, `ArchitectureTest`의 `contract는_entity와_repository를_참조하지_않는다`가 그 자리를 막는다는 게 드러나 옮겼다.
 
-입구 넷 가운데 이 이슈에서 실제로 연결된 것은 "다른 도메인의 호출"(`CampaignQueryService`, `CampaignFundingUpdater`)뿐이다. `CampaignStatusService`의 `schedule`/`activate`/`pause`/`resume`/`end`는 아직 아무도 부르지 않는다. `schedule`/`activate`/`end`는 "스케줄러 캠페인 담당 스텝" 이슈가, `pause`/`resume`은 "캠페인 수동 중단과 재개(점주)" 이슈가 부를 자리다.
+입구 넷 가운데 이 이슈에서 실제로 연결된 것은 "다른 도메인의 호출"(`CampaignQueryService`, `CampaignFundingUpdater`)뿐이었다. `pause`/`resume`은 "캠페인 수동 중단과 재개(점주)" 이슈(`#468`)가 `CampaignController`의 `POST .../{campaignId}:pause`, `:resume`으로 연결했다. `schedule`/`activate`/`end`는 아직 아무도 부르지 않는다. "스케줄러 캠페인 담당 스텝" 이슈가 부를 자리다.
 
 `#198`이 더한 `pauseFromFunding`/`resumeFromFunding`은 billing의 `CampaignFundingUpdaterImpl`이 바로 부른다(간접 전이). `pause`/`resume`과 다른 점 하나는, 지금 상태가 그 판정을 받을 자리가 아니면 `IllegalStateException`이 아니라 조용히 무시한다는 것이다(12장 "정산 확인 질문 5개" 중 질문 4 답변). 정산의 00:00 배치나 재시도가 "그 상태에서는 무시된다"는 것 때문에 멈출 이유가 없다.
 
@@ -69,7 +70,8 @@ campaign/
 | 공개 | 모든 도메인 | `CampaignQueryService`(`findByStoreIdIn`, `findAllById`, `findServableOn`, `findEligibleCampaigns`, `findByOwnerIdAndStatusIn`, `hasLiveCampaign`, `findOwnerIdsWithLiveCampaign`, `findByIdForUpdate`) | 요청마다. `findByIdForUpdate`는 호출자의 쓰기 트랜잭션 안에서 불러야 잠금이 유지된다(`#378`, billing의 재예약 경합 방지용, 실제 호출은 `#319`가 이어 붙인다) |
 | 공개 | analytics | `CampaignStatsQueryService.activeCampaignCount(businessDate)`. `businessDate`가 오늘이거나 미래면 `IllegalArgumentException`(#354 리뷰) | 분석의 일별 집계 배치마다(#354) |
 | 받음(직접 호출) | billing | `CampaignFundingUpdater.applyFundingJudgement` | 정산의 00:00 예산 판정, 충전 직후 재예약 판정 때마다. 이벤트가 아니라 정산의 트랜잭션 안에서 직접 부른다 |
-| 쓰기(미연결) | store | `StoreCampaignSummaryUpdater` | `activate`/`pause`/`resume`/`end`뿐 아니라 `pauseFromFunding`/`resumeFromFunding` 때도 호출해야 한다(잔액 부족 중단과 충전 후 재개도 가게 요약에 반영돼야 함, 가게 담당 회신 2026-10-13). store 쪽에 그 인터페이스가 아직 없어([설계 문서](../../architecture/런치캐치_도메인_구조와_의존성_설계.md) 2.4에 간선만 있음) 이번 이슈는 호출을 빼고 넘어간다. 생기면 `CampaignStatusService`에 이어 붙인다 |
+| 쓰기 | store | `StoreCampaignSummaryUpdater` | `pause`/`resume`은 `#468`이 연결했다. 같은 트랜잭션 안에서 상태 변경, `CampaignStatusLog` 저장 다음에 부른다 |
+| 쓰기(미연결) | store | `StoreCampaignSummaryUpdater` | `activate`/`end`/`pauseFromFunding`/`resumeFromFunding` 때도 호출해야 한다(잔액 부족 중단과 충전 후 재개도 가게 요약에 반영돼야 함, 가게 담당 회신 2026-10-13). 그 네 자리는 각자의 구현 이슈가 이어 붙인다 |
 
 받는 이벤트는 해당 없음.
 
@@ -245,7 +247,7 @@ sequenceDiagram
 
 | 미정 항목 | 어디까지 정해졌나 | 막는 것 |
 |---|---|---|
-| `StoreCampaignSummaryUpdater` 호출 | 전달 필드, 트랜잭션 기준, 호출 지점까지 가게 담당과 전부 확정했다(아래 "가게·분석 확정 사항" 참고) | `store.contract`에 그 인터페이스가 아직 없다(`com.launchcatch.store` 패키지 자체가 없음). store가 만들어 develop에 올려야 `CampaignStatusService`에 이어 붙일 수 있다 |
+| `StoreCampaignSummaryUpdater` 호출(`activate`/`end`/`pauseFromFunding`/`resumeFromFunding`) | 전달 필드, 트랜잭션 기준, 호출 지점까지 가게 담당과 전부 확정했다(아래 "가게·분석 확정 사항" 참고). `pause`/`resume`은 `#468`이 이어 붙여 해소됐다 | 네 자리는 각자의 구현 이슈(스케줄러 캠페인 담당 스텝 등)가 이어 붙여야 한다 |
 | 사용자(MEMBER)용 저장 포스터 조회 API 구현 | 계약(경로, 권한, 응답, 공개 상태, 오류 처리)을 가게 담당과 전부 확정하고 명세·설계까지 썼다(`poster-api-spec.md`, `poster-api-design.md`) | `Poster` 엔티티·레포지토리·컨트롤러 구현이 아직 없다. 명세가 merge된 뒤 별도 PR로 진행한다 |
 | `newPriorityUntil` | `ad_candidate`에만 컬럼이 있고 `campaign`엔 없다(#156 결정). `CampaignInfo`엔 항상 `null`로 채워 보낸다 | "신규 우선 노출" 계산 규칙 자체가 문서에 없다. campaign에 컬럼을 추가할지부터 정해야 한다 |
 
@@ -256,7 +258,7 @@ sequenceDiagram
 | 항목 | 확정 내용 |
 |---|---|
 | 가게 - 캠페인 참조 메뉴 수정 | 가게가 보유한 현재 메뉴 이름·가격을 그대로 쓴다. `campaign`은 `targetMenuId`만 유지하고 스냅샷을 두지 않는다. 메뉴 이름·가격 수정으로 캠페인 설정을 다시 저장하지 않는다. **campaign 쪽 코드 불필요** |
-| 가게 - `StoreCampaignSummaryUpdater` 전달 필드 | storeId, campaignId, 캠페인 상태, 할인 대상·유형·값, 대상 메뉴ID(MENU 할인일 때만 필수), 사용 가능 시작·종료시간, 상태 변경 시각, 점주 노출 반경. DTO는 `store.contract` 소유 타입으로 store가 직접 정의한다. `campaign` 내부 엔티티나 타입을 넘기지 않는다 |
+| 가게 - `StoreCampaignSummaryUpdater` 전달 필드 | storeId, campaignId, 영업일(`businessDate`), 캠페인 상태, 할인 대상·유형·값, 대상 메뉴ID(MENU 할인일 때만 필수), 사용 가능 시작·종료시간. 상태 변경 시각과 점주 노출 반경은 넣지 않는다. 가게 목록과 지도는 캠페인 노출 반경을 적용하지 않는다(`#331`, `#512`). DTO는 `store.contract` 소유 타입으로 store가 직접 정의한다. `campaign` 내부 엔티티나 타입을 넘기지 않는다 |
 | 가게 - 트랜잭션 기준 | 캠페인 상태 변경, `CampaignStatusLog` 저장, 가게 요약 갱신을 같은 트랜잭션으로 묶는다. 하나라도 실패하면 모두 롤백한다. store 쪽 구현은 기존 트랜잭션에 참여한다 |
 | 가게 - 호출 지점 | `activate`, `pause`, `resume`, `end`에 더해 `pauseFromFunding`, `resumeFromFunding`도 포함한다(위 5장) |
 | 분석 - 캠페인/소유 점주/가게 확인 | 분석이 리포트 요청마다 기존 `CampaignQueryService.findAllById`로 `ownerId`를 비교한다. 상태 필터 없이 신규·중단·종료 캠페인도 확인한다. **campaign 쪽 신규 메서드 불필요** |

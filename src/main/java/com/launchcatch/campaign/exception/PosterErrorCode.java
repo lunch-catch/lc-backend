@@ -26,7 +26,13 @@ public enum PosterErrorCode implements ErrorCode {
     DISALLOWED_ELEMENT(HttpStatus.UNPROCESSABLE_ENTITY, "POSTER-011", "템플릿에 허용되지 않은 태그나 속성이 있습니다."),
     GENERATION_THROTTLED(HttpStatus.SERVICE_UNAVAILABLE, "POSTER-012", "템플릿 생성 요청이 몰리고 있습니다. 잠시 후 다시 시도해 주세요."),
     GENERATION_BLOCKED(HttpStatus.UNPROCESSABLE_ENTITY, "POSTER-013", "요청한 문구로는 템플릿을 생성할 수 없습니다. 다른 표현으로 다시 시도해 주세요."),
-    GENERATION_RATE_LIMITED(HttpStatus.TOO_MANY_REQUESTS, "POSTER-014", "템플릿 생성 요청이 너무 잦습니다. 잠시 후 다시 시도해 주세요.");
+    GENERATION_RATE_LIMITED(HttpStatus.TOO_MANY_REQUESTS, "POSTER-014", "템플릿 생성 요청이 너무 잦습니다. 잠시 후 다시 시도해 주세요."),
+    TEMPLATE_NOT_USABLE_FOR_POSTER(HttpStatus.CONFLICT, "POSTER-015", "게시되지 않았거나 활성화되지 않은 템플릿으로는 포스터를 만들 수 없습니다."),
+    POSTER_IMAGE_NOT_UPLOADED(HttpStatus.UNPROCESSABLE_ENTITY, "POSTER-016", "이미지가 실제로 업로드되지 않았습니다."),
+    POSTER_IMAGE_CONTENT_TYPE_NOT_ALLOWED(HttpStatus.UNPROCESSABLE_ENTITY, "POSTER-017", "jpg, png 파일만 업로드할 수 있습니다."),
+    POSTER_IMAGE_FILE_TOO_LARGE(HttpStatus.UNPROCESSABLE_ENTITY, "POSTER-018", "파일 크기는 10MB를 넘을 수 없습니다."),
+    POSTER_IMAGE_OBJECT_KEY_INVALID(HttpStatus.UNPROCESSABLE_ENTITY, "POSTER-019", "이 캠페인의 업로드 요청으로 받은 객체 키가 아닙니다."),
+    CAMPAIGN_PERIOD_NOT_SET(HttpStatus.CONFLICT, "POSTER-020", "집행 기간을 먼저 설정한 뒤 포스터를 만들어 주세요.");
 
     private final HttpStatus httpStatus;
     private final String code;

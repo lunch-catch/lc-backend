@@ -7,8 +7,8 @@
 
 | 유형 | 대상 |
 |---|---|
-| DB | MySQL(JPA), `campaign`/`template`/`store_audience` 등. `ops.contract.PlatformSettingQueryService.getMinDailyBudget()`(같은 트랜잭션 안의 도메인 간 직접 호출, 외부 API 아님)도 DB 읽기와 같은 처리를 받는다(`#330`) |
-| 외부 API | Bedrock LLM(템플릿 생성·수정, `template/client/BedrockTemplateHtmlGenerator`) |
+| DB | MySQL(JPA), `campaign`/`template`/`store_audience`/`poster` 등. `ops.contract.PlatformSettingQueryService.getMinDailyBudget()`(같은 트랜잭션 안의 도메인 간 직접 호출, 외부 API 아님)도 DB 읽기와 같은 처리를 받는다(`#330`). `store.contract.StoreQueryService`(가게명·메뉴명 조회, 포스터 생성, `#376`)도 같은 처리다 |
+| 외부 API | Bedrock LLM(템플릿 생성·수정, `template/client/BedrockTemplateHtmlGenerator`). S3(`S3Presigner`, `S3Client`. presigned URL 발급과 `headObject` 확인, 포스터 이미지 업로드, `#376`) |
 | 캐시 | 해당 없음(이 도메인은 캐시에 기대지 않는다. `owner.contract.OwnerStatusQuery`가 캐시를 쓰지만 그건 owner 도메인이 소유한다) |
 | 애플리케이션 | 대용량 조회만 훑음(`#341`). 나머지(요청 폭주, graceful shutdown, 다중 서버)는 아직 훑지 않음 |
 | 롤백 안 되는 효과 | 해당 없음(아직 훑지 않음) |
@@ -50,3 +50,4 @@
 |---|---|
 | 캐시, 롤백 안 되는 효과 유형의 점검 | 이번 PR(`#244`)이 건드린 범위 밖이라 훑지 않았다 |
 | 애플리케이션: 요청 폭주, graceful shutdown, 다중 서버 | 이번 PR(`#341`)이 건드린 범위 밖이라 훑지 않았다. 대용량 조회는 훑었다(위 표) |
+| S3 호출의 재시도 | 기본 처리는 "멱등한 연산의 재시도 가능한 오류만 재시도"다. `headObject`(읽기, 멱등)와 presign 발급(로컬 서명, 네트워크 호출 없음) 모두 지금은 재시도를 두지 않는다. 이 저장소에 재시도 인프라가 아직 없어 store의 `#375`/`#389`와 같은 이유로 `#376`도 그대로 전파하고 넘어갔다(`store_장애_처리_설계.md`와 같은 결론) |

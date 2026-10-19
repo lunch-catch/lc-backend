@@ -14,6 +14,7 @@ import com.launchcatch.store.entity.StoreRegistrationStep;
 import com.launchcatch.store.service.StoreRegistrationProgressService;
 import jakarta.servlet.http.Cookie;
 import java.net.URL;
+import java.time.DayOfWeek;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
@@ -24,18 +25,13 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.test.context.bean.override.mockito.MockitoBean;
-import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
-import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.HeadObjectResponse;
-import software.amazon.awssdk.services.s3.presigner.S3Presigner;
 import software.amazon.awssdk.services.s3.presigner.model.PresignedPutObjectRequest;
 
 /*
@@ -43,19 +39,15 @@ import software.amazon.awssdk.services.s3.presigner.model.PresignedPutObjectRequ
  * /v1/owner/store-menus:complete(#389)의 보안 체인과 실제 입구부터의 전체 흐름을 확인한다.
  * S3Presigner/S3Client는 실제 AWS를 부르지 않도록 목으로 바꾼다.
  */
-@AutoConfigureMockMvc
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class StoreMenuSecurityIntegrationTest extends AbstractStoreIntegrationTest {
 
     private static final String VERSION_CLAIM = "issuanceVersion";
 
-    @Autowired private MockMvc mvc;
     @Autowired private JwtTokenProvider jwt;
     @Autowired private JdbcTemplate jdbc;
     @Autowired private StoreRegistrationProgressService progressService;
     @Autowired private PlatformTransactionManager transactionManager;
-    @MockitoBean private S3Presigner s3Presigner;
-    @MockitoBean private S3Client s3Client;
 
     private final List<Long> createdOwnerIds = new ArrayList<>();
     private final List<Long> createdStoreIds = new ArrayList<>();
@@ -70,8 +62,10 @@ class StoreMenuSecurityIntegrationTest extends AbstractStoreIntegrationTest {
                     + "(select store_menu_id from store_menu where store_id = ?)", storeId);
             jdbc.update("delete from store_menu where store_id = ?", storeId);
             jdbc.update("delete from store_image where store_id = ?", storeId);
+            jdbc.update("delete from store_business_hour where store_id = ?", storeId);
             jdbc.update("delete from store where store_id = ?", storeId);
         });
+        createdOwnerIds.forEach(ownerId -> jdbc.update("delete from owner_terms_agreement where owner_id = ?", ownerId));
         createdOwnerIds.forEach(ownerId -> jdbc.update("delete from owner where owner_id = ?", ownerId));
         createdAdminIds.forEach(adminId -> jdbc.update("delete from admin where admin_id = ?", adminId));
     }
@@ -83,7 +77,7 @@ class StoreMenuSecurityIntegrationTest extends AbstractStoreIntegrationTest {
         createdStoreIds.add(storeId);
         advanceToMenuStep(ownerId, storeId);
 
-        String progressBody = mvc.perform(get("/v1/owner/store-registration-progress").cookie(ownerToken(ownerId)))
+        String progressBody = mvc.perform(get("/v1/owner/onboarding").cookie(ownerToken(ownerId)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.resumeStep").value("MENU"))
                 .andReturn().getResponse().getContentAsString();
@@ -141,7 +135,7 @@ class StoreMenuSecurityIntegrationTest extends AbstractStoreIntegrationTest {
         advanceToMenuStep(ownerId, storeId);
         createdStoreIds.add(storeId);
 
-        String progressBody = mvc.perform(get("/v1/owner/store-registration-progress").cookie(ownerToken(ownerId)))
+        String progressBody = mvc.perform(get("/v1/owner/onboarding").cookie(ownerToken(ownerId)))
                 .andReturn().getResponse().getContentAsString();
         long version = ((Number) JsonPath.read(progressBody, "$.data.version")).longValue();
 
@@ -243,6 +237,27 @@ class StoreMenuSecurityIntegrationTest extends AbstractStoreIntegrationTest {
     }
 
     private void advanceToMenuStep(Long ownerId, Long storeId) {
+        // 진행 단계뿐 아니라 조회가 확인하는 선행 단계의 실제 데이터도 준비한다.
+        jdbc.update("""
+                insert into owner_terms_agreement(owner_id, required, agreed, agreed_at, created_at, updated_at)
+                values (?, true, true, now(6), now(6), now(6))
+                """, ownerId);
+        jdbc.update("""
+                update store set phone='02-123-4567', business_registration_number='1234567890',
+                    business_verification_status='VERIFIED', business_verified_at=now(6),
+                    kakao_place_id='test-place', road_address='테스트 도로명 주소', latitude=37.5, longitude=127.1
+                where store_id=?
+                """, storeId);
+        for (DayOfWeek day : DayOfWeek.values()) {
+            jdbc.update("""
+                    insert into store_business_hour(store_id, day_of_week, closed, created_at, updated_at)
+                    values (?, ?, true, now(6), now(6))
+                    """, storeId, day.name());
+        }
+        jdbc.update("""
+                insert into store_image(store_id, image_type, object_key, upload_status, verified_at, created_at, updated_at)
+                values (?, 'LOGO', ?, 'VERIFIED', now(6), now(6), now(6))
+                """, storeId, "stores/" + storeId + "/logo.jpg");
         new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
             progressService.initialize(ownerId);
             progressService.completeStep(ownerId, 0, StoreRegistrationStep.TERMS, null);

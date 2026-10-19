@@ -32,7 +32,7 @@ class CampaignRepositoryIntegrationTest extends com.launchcatch.campaign.Abstrac
     void 예산과_기간이_없는_단계별_저장_중인_DRAFT도_다시_읽힌다() {
         Campaign campaign = Campaign.create(
                 10L, 20L,
-                DiscountTargetType.ALL, DiscountType.PERCENT, 10, null,
+                DiscountTargetType.ALL, DiscountType.AMOUNT, 10, null,
                 100, LocalTime.of(11, 0), LocalTime.of(14, 0),
                 null, null,
                 1000, TargetGender.ALL, List.of(AgeGroup.AGE_20S),
@@ -53,7 +53,7 @@ class CampaignRepositoryIntegrationTest extends com.launchcatch.campaign.Abstrac
     void PAUSED_캠페인이_종료되면_paused_reason이_지워져_CHECK_제약을_어기지_않는다() {
         Campaign campaign = Campaign.create(
                 10L, 20L,
-                DiscountTargetType.ALL, DiscountType.PERCENT, 10, null,
+                DiscountTargetType.ALL, DiscountType.AMOUNT, 10, null,
                 100, LocalTime.of(11, 0), LocalTime.of(14, 0),
                 null, null,
                 1000, TargetGender.ALL, List.of(AgeGroup.AGE_20S),
@@ -279,7 +279,7 @@ class CampaignRepositoryIntegrationTest extends com.launchcatch.campaign.Abstrac
     private Campaign draftWithPeriod(Long storeId, LocalDate startDate, LocalDate endDate) {
         return Campaign.create(
                 10L, storeId,
-                DiscountTargetType.ALL, DiscountType.PERCENT, 10, null,
+                DiscountTargetType.ALL, DiscountType.AMOUNT, 10, null,
                 100, LocalTime.of(11, 0), LocalTime.of(14, 0),
                 null, null,
                 1000, TargetGender.ALL, List.of(AgeGroup.AGE_20S),
@@ -290,7 +290,7 @@ class CampaignRepositoryIntegrationTest extends com.launchcatch.campaign.Abstrac
     private Campaign draftWithOwner(Long ownerId, Long storeId) {
         return Campaign.create(
                 ownerId, storeId,
-                DiscountTargetType.ALL, DiscountType.PERCENT, 10, null,
+                DiscountTargetType.ALL, DiscountType.AMOUNT, 10, null,
                 100, LocalTime.of(11, 0), LocalTime.of(14, 0),
                 null, null,
                 1000, TargetGender.ALL, List.of(AgeGroup.AGE_20S),
