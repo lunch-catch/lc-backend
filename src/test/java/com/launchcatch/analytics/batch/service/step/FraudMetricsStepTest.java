@@ -16,6 +16,7 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
+import java.util.Collections;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -26,6 +27,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 class FraudMetricsStepTest {
 
     private static final LocalDate DAY = LocalDate.of(2026, 10, 16);
+    private static final List<Long> HOURLY = Collections.nCopies(24, 0L);
     private static final Clock CLOCK = Clock.fixed(Instant.parse("2026-10-16T16:00:00Z"),
             ZoneId.of("Asia/Seoul"));
     private static final AnalyticsFraudProperties PROPERTIES = new AnalyticsFraudProperties(5, 0.5, 100, 100);
@@ -40,7 +42,7 @@ class FraudMetricsStepTest {
     }
 
     private static CampaignImpressionStats stats(long campaignId, long valid, long expired, long notOwner) {
-        return new CampaignImpressionStats(campaignId, valid, 0, expired, notOwner, 0, 0, 0, 0, 0, 0);
+        return new CampaignImpressionStats(campaignId, valid, 0, expired, notOwner, HOURLY, 0, 0, 0);
     }
 
     @Test

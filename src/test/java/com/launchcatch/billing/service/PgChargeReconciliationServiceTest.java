@@ -108,7 +108,7 @@ class PgChargeReconciliationServiceTest {
     private void givenRunId() {
         when(batchExecutions.findByBusinessDate(RUN_DATE)).thenReturn(
                 List.of(new BatchExecutionRecord(RUN_ID, JOB, RUN_DATE, "RUNNING", NOW, null, null, "batch-1", 0,
-                        null)));
+                        null, 1)));
     }
 
     private double counted(String result) {

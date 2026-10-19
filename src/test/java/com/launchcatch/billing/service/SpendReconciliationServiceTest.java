@@ -71,7 +71,7 @@ class SpendReconciliationServiceTest {
     }
 
     private static BatchExecutionRecord run(long runId, String jobName) {
-        return new BatchExecutionRecord(runId, jobName, RUN_DATE, "RUNNING", NOW, null, null, "batch-1", 0, null);
+        return new BatchExecutionRecord(runId, jobName, RUN_DATE, "RUNNING", NOW, null, null, "batch-1", 0, null, 1);
     }
 
     @Test

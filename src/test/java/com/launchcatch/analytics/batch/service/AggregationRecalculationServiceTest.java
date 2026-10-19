@@ -57,7 +57,7 @@ class AggregationRecalculationServiceTest {
 
     private static BatchExecutionRecord run(long runId, LocalDate date, String status) {
         return new BatchExecutionRecord(runId, DailyAggregationRunner.JOB_NAME, date, status,
-                LocalDateTime.of(2026, 10, 17, 12, 0), null, null, "api-1", 0, null);
+                LocalDateTime.of(2026, 10, 17, 12, 0), null, null, "api-1", 0, null, 1);
     }
 
     private void stubOldestRetained() {

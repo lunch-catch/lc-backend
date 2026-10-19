@@ -14,6 +14,7 @@ public record BatchExecutionRecord(
         Integer processedCount,
         String executedBy,
         int retryCount,
-        String failureReason
+        String failureReason,
+        int attemptNo
 ) {
 }

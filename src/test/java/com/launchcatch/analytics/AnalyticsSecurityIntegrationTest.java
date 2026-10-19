@@ -73,6 +73,17 @@ class AnalyticsSecurityIntegrationTest extends AbstractAnalyticsIntegrationTest 
     }
 
     @Test
+    void 퍼널_경로는_인증과_관리자_역할을_요구한다() throws Exception {
+        mvc.perform(get("/v1/admin/dashboard/funnel")).andExpect(status().isUnauthorized());
+        mvc.perform(get("/v1/admin/dashboard/funnel").with(user("member").roles("MEMBER")))
+                .andExpect(status().isForbidden());
+        mvc.perform(get("/v1/admin/dashboard/funnel").with(user("admin").roles("ADMIN")))
+                .andExpect(status().isBadRequest());
+        mvc.perform(get("/v1/admin/dashboard/funnel").with(user("super").roles("SUPER_ADMIN")))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
     void 입점_지표_경로는_인증과_관리자_역할을_요구한다() throws Exception {
         mvc.perform(get("/v1/admin/dashboard/stores")).andExpect(status().isUnauthorized());
         mvc.perform(get("/v1/admin/dashboard/stores").with(user("member").roles("MEMBER")))

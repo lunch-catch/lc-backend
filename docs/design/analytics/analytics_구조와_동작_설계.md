@@ -250,6 +250,8 @@ sequenceDiagram
 
 **가게 지표 단계 (2026-10-17, #452).** `StoreMetricsStep`(`@Order(300)`)이 `StoreStatsQueryService.finalizedStoreCounts`의 신규와 누적 입점 수, `CampaignStatsQueryService.activeCampaignCount`의 그날 말 집행 중 캠페인 수를 `daily_store_analytics`의 그날 한 행으로 교체한다. 누적 입점은 그날 말까지 최종 등록한 가게 수이고 점주 상태와 무관하다. 가게 지표 조회(A-02)는 신규를 합계로, 누적 입점과 집행 중 캠페인을 구간 마지막 날 값으로 내린다. 구간 마지막 날 행이 없으면 스냅샷 지표는 `null`이고 집계가 끝나지 않은 구간의 수치도 `null`이다. 캠페인 집계 조회는 오늘이나 미래 날짜를 받으면 예외를 던지는데 일별 집계는 전일 이전만 부르므로 걸리지 않는다.
 
+**퍼널 지표 단계 (2026-10-17, #460).** `FunnelMetricsStep`(`@Order(400)`)이 `AdservingStatsQueryService.campaignStats`의 유효 노출과 무효 노출(`EXPIRED_OR_UNKNOWN`과 `NOT_OWNER`의 합), `CouponStatsQueryService.dailyCampaignStats`의 발급과 사용 수, 분석 자기 `event_log`의 `wish` 행 수를 `daily_funnel_analytics`(V3)의 그날 한 행으로 교체한다. 찜은 계약의 `wishCount`를 쓰지 않는다. 그 값은 31일만 보관하는 `swipe_log`가 원천이라 31일이 지난 날짜를 다시 집계(A-05, 정산 정정에 따른 자동 재집계)하면 저장된 찜 수를 0으로 덮는다. `event_log`는 13개월 보존이라 재집계 한계와 같다. 이벤트가 유실을 허용해 아주 조금 낮을 수 있으나 찜 수는 돈과 맞아야 하는 값이 아니다(AD-31). 퍼널 조회(A-03)는 건수를 합계로 내리고 유효 노출 비율은 합산한 유효와 무효로 다시 계산한다. 노출이 하나도 없으면 비율은 `null`이고 집계가 끝나지 않은 구간의 수치도 `null`이다.
+
 **부정 관리 단계 (2026-10-19, #540).** `InvalidMetricsStep`(`@Order(500)`)은 `AdservingStatsQueryService.memberInvalidCounts`의 건수를 (캠페인, 회원, 사유) 행으로 옮긴다. `NotBilledMetricsStep`(`@Order(510)`)은 정산의 예산, 중단, 예산 계획 없음 건수와 광고 서빙의 쿠폰 소진 뒤 노출을 캠페인과 사유별로 합친다. `FraudMetricsStep`(`@Order(520)`)은 캠페인 통계와 `memberConcentrations`로 유효·무효 노출, 회원 수, 상위 회원의 노출 합과 집중 의심을 캠페인마다 한 행으로 만든다. 노출이 하나도 없는 캠페인은 행이 없다. 세 표 모두 다시 집계했을 때 사라진 행이 남지 않게 그날 행을 지우고 넣는다. 임계값은 `AnalyticsFraudProperties`(`analytics.fraud.*`)이고 범위를 벗어나면 기동이 실패한다. 무효 비율은 무효 ÷ 유효이고 그 식은 `InvalidRatio` 한 곳에 있다.
 
 ## 11. 성능

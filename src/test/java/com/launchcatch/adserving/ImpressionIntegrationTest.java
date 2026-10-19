@@ -128,6 +128,29 @@ class ImpressionIntegrationTest extends AbstractAdservingIntegrationTest {
         assertThat(counter()).isEqualTo("1");
     }
 
+    // 정산이 받은 날로 차감하고 전날 예산은 00:00 에 해제가 끝난다(#497). 그래서 판정, 차감, 카운터가 모두 받은 날이다
+    @Test
+    void 자정을_넘겨_받은_노출은_받은_날로_저장하고_차감하며_그날_카운터를_올린다() throws Exception {
+        LocalDate nextDay = TODAY.plusDays(1);
+        String nextCounterKey = "adserving:validImpressions:" + nextDay;
+        UUID lateServeId = UUID.randomUUID();
+        serveRecordRepository.saveAll(List.of(new ServeRecord(lateServeId, MEMBER_ID, 101L, 55L, SlotType.ALLOCATION, 1,
+                LocalDateTime.of(2026, 10, 1, 23, 50).atZone(ClockConfig.ZONE).toInstant())));
+        doReturn(LocalDateTime.of(2026, 10, 2, 0, 10).atZone(ClockConfig.ZONE).toInstant()).when(clock).instant();
+        try {
+            send(body(lateServeId, 101L), Role.MEMBER).andExpect(status().isAccepted())
+                    .andExpect(jsonPath("$.data.validity").value("VALID"));
+
+            assertThat(jdbcTemplate.queryForObject("SELECT business_date FROM impression_log", LocalDate.class))
+                    .isEqualTo(nextDay);
+            verify(pointDeductor).deduct(lateServeId, 101L, nextDay);
+            assertThat(redisTemplate.opsForHash().get(nextCounterKey, "101")).isEqualTo("1");
+            assertThat(counter()).isNull();
+        } finally {
+            redisTemplate.delete(List.of(nextCounterKey, "adserving:serve:" + lateServeId));
+        }
+    }
+
     @Test
     void 같은_사용자가_같은_카드를_다시_보내면_처음_판정을_돌려주고_한_번만_차감하고_센다() throws Exception {
         send(body(serveId, 101L), Role.MEMBER).andExpect(status().isAccepted());
