@@ -244,6 +244,11 @@ tasks.named('bootJar') {
 tasks.named('test') {
     useJUnitPlatform()
     systemProperty 'user.timezone', 'Asia/Seoul'
+    testLogging {
+        exceptionFormat = 'full'
+        showCauses = true
+        showStackTraces = true
+    }
 
     /*
      * 주지 않으면 Gradle 기본값 512MB 로 돈다. 그 안에서 Spring 컨텍스트와 ArchUnit 의 전체
