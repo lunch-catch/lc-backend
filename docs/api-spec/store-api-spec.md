@@ -1,7 +1,7 @@
 # 가게 (store) API 명세
 
-공통 인증·응답·오류 규약은 [api-spec.md](api-spec.md)를 따른다. 서버 내부 처리와 근거는
-[store-api-design.md](../design/store/store-api-design.md)를 참고한다.
+공통 인증·응답·오류 규약은 [api-spec.md](api-spec.md)를 따른다.
+서버 내부 처리와 근거는 [store-api-design.md](../design/store/store-api-design.md)를 참고한다.
 
 ## `GET /v1/stores`
 
@@ -186,14 +186,20 @@ OTHER
 `distanceMeters`는 `310.4m`이면 `310`, `310.5m`이면 `311`로 반환한다.
 정렬에는 반올림 전 거리를 사용한다.
 
-## `GET /v1/owner/store-registration-progress`
+## 가게 등록 온보딩 1단계: 점주 약관 동의
 
-점주가 지금 자신의 가게 등록에서 이어서 진행할 단계와, 다음 완료 요청에 실어 보낼
-버전을 조회한다. 아직 진행 상태가 없으면 만들어서 돌려준다(`TERMS`, 버전 0).
+### `PUT /v1/owner/terms-agreements`
 
-### 인증
+인증된 OWNER의 DB 현재 상태가 ONBOARDING이고 진행 단계가 TERMS일 때 전체 필수 약관에 대한 최초 동의만 저장한다.
+이 API 호출 자체가 전체 필수 약관 동의를 의미한다. 미동의 상태에서는 호출하지 않는다.
+가게 생성 전에도 점주 ID만으로 저장할 수 있으며 점주 ID는 인증 주체에서 가져온다.
 
-`OWNER`가 사용하며 `ONBOARDING` 상태에서만 호출할 수 있다.
+### 요청
+
+요청 본문 없이 호출한다. 빈 JSON 객체 `{}`도 허용하지만 version을 포함한 입력 필드는 받지 않는다.
+약관별 종류·버전·필수 여부·동의 여부와 클라이언트 동의 시각은 받지 않는다.
+서버가 required=true와 agreed=true를 설정하고 저장 처리 시각을 agreed_at에 기록한다. 점주당 한 행을 유지한다.
+기존 동의 기록이 있으면 409 TERMS-001로 거부하며 agreed_at·withdrawn_at·진행 상태를 변경하지 않는다. ACTIVE 상태에서도 저장할 수 없다. 수정·재동의·철회 API는 제공하지 않는다.
 
 ### 응답 `200`
 
@@ -201,27 +207,265 @@ OTHER
 {
   "code": "SUCCESS",
   "message": "요청이 성공적으로 처리되었습니다.",
+  "data": {"requiredTermsCompleted": true, "version": 1, "resumeStep": "STORE_INFO"}
+}
+```
+
+최초 성공은 TERMS에서 STORE_INFO로 진행한다. 완료한 약관 단계로 돌아가 수정할 수 없다.
+최초 저장 성공 시 서버가 잠근 진행 상태의 현재 버전을 사용해 단계를 완료하고 버전을 1 증가시킨다. 응답 version은 다음 STORE_INFO 저장 요청에서 사용할 값이다.
+약관 내역과 진행 상태는 함께 커밋하거나 롤백한다. 점주 상태·튜토리얼·토큰·인증 쿠키는 변경하지 않는다.
+약관 정책 설정은 필요하지 않으며 정책 미설정 503과 필수 약관별 검증 422는 사용하지 않는다.
+
+### 오류
+
+| HTTP 상태 | 코드 | 조건 |
+|---|---|---|
+| 400 | COMMON-003 | 잘못된 JSON 또는 제거된 약관별 입력 등 지원하지 않는 필드 |
+| 401 | AUTH-005 | 인증 실패 |
+| 403 | AUTH-006 | OWNER 역할이 아님 |
+| 403 | OWNER-002 | 점주의 DB 현재 상태가 ONBOARDING이 아님 |
+| 409 | STORE-002 | 약관 기록이 없더라도 현재 진행 단계가 TERMS가 아님 |
+| 409 | TERMS-001 | 기존 약관 동의가 있거나 약관 동의 행의 DB UNIQUE 제약 충돌 |
+| 500 | COMMON-001 | 서버 처리 실패 |
+
+오류 응답은 공통 응답 봉투를 따른다.
+
+## 가게 등록 온보딩 2단계: 기본 정보와 사업자 Mock 검증
+
+### `PUT /v1/owner/store/basic`
+
+인증된 OWNER 중 DB의 현재 상태가 ONBOARDING인 점주가 사용한다.
+약관 동의 단계인 TERMS가 완료되어 STORE_INFO에 진입한 뒤 호출한다.
+이 API는 가게 초안 생성과 사업자등록번호 Mock 검증을 한 요청으로 처리한다.
+완료한 STORE_INFO를 다시 저장할 때도 같은 API에 해당 단계의 전체 입력값을 보낸다.
+
+```json
+{
+  "version": 1,
+  "name": "런치캐치 식당",
+  "categoryCode": "KOREAN",
+  "representativeName": "홍길동",
+  "businessRegistrationNumber": "1234567890",
+  "phone": "02-123-4567"
+}
+```
+
+| 필드 | 타입 | 필수 | 검증 |
+|---|---|---|---|
+| version | integer(int64) | 예 | 현재 진행 상태의 버전이며 0 이상이다 |
+| name | string | 예 | 상호명이며 공백만 있는 값을 제외한 1~100자다 |
+| categoryCode | string | 예 | 위 카테고리 코드 중 하나이며 ALL은 허용하지 않는다 |
+| representativeName | string | 예 | 대표자 성명이며 공백만 있는 값을 제외한 1~100자다 |
+| businessRegistrationNumber | string | 예 | 하이픈 없는 ASCII 숫자 10자리다 |
+| phone | string | 예 | 숫자 9~12자리 또는 `02-123-4567`, `010-1234-5678`처럼 `2~4자리-3~4자리-4자리` 형식이다 |
+
+모든 필드는 누락·null을 허용하지 않으며 문자열의 빈 값·공백만 있는 값도 거부한다.
+전화번호·사업자등록번호의 공백이나 구분 기호를 서버가 자동으로 제거하지 않는다.
+위치·영업시간·이미지·메뉴 정보는 이 요청에 포함하지 않는다.
+
+### 응답 `200`
+
+최초 저장 성공 예시다. 식별자는 공통 규약의 int64 숫자를 따른다.
+
+```json
+{
+  "code": "SUCCESS",
+  "message": "요청이 성공적으로 처리되었습니다.",
   "data": {
-    "storeId": 10,
-    "resumeStep": "IMAGES",
-    "version": 5
+    "storeId": 501,
+    "resumeStep": "LOCATION",
+    "version": 2,
+    "verificationStatus": "VERIFIED"
   }
 }
 ```
 
-| 필드 | 타입 | null 허용 | 설명 |
+| 필드 | 타입 | null 허용 | 의미 |
 |---|---|---|---|
-| storeId | integer | 예 | 기본 정보 단계(`STORE`)를 아직 안 마쳤으면 `null` |
-| resumeStep | string(enum) | 아니오 | 이어서 진행할 단계. `TERMS`, `STORE`, `BUSINESS_VERIFICATION`, `LOCATION`, `HOURS`, `IMAGES`, `MENU` 중 하나 |
-| version | integer | 아니오 | 다음 완료·수정 요청에 그대로 실어 보내는 값 |
+| storeId | integer(int64) | 예 | 최초 성공 때 생성한 본인 소유 초안의 ID다. 최초 검증 실패 때만 null이다 |
+| resumeStep | string | 아니오 | 저장 후 재개할 단계다. 최초 성공이면 LOCATION이고 완료 단계 수정이면 기존 단계다 |
+| version | integer(int64) | 아니오 | 다음 요청에 사용할 버전이다. 저장 성공마다 1 증가하고 Mock 실패 때는 유지한다 |
+| verificationStatus | string | 아니오 | 이번 요청의 Mock 결과인 VERIFIED 또는 FAILED다 |
+
+Mock은 외부 기관을 호출하지 않는다. 형식이 유효한 번호 중 `0000000000`은 FAILED이며 나머지는 VERIFIED다.
+실제 사업자의 존재·영업 상태나 사업자번호 체크섬을 검증하는 기능이 아니다.
+검증 실패도 정상 처리된 업무 결과이므로 `200`, `code: SUCCESS`, `verificationStatus: FAILED`를 반환한다.
+프론트는 HTTP 성공만으로 다음 단계로 이동하지 않고 verificationStatus도 확인해야 한다.
+
+최초 실패 응답의 data는 다음과 같다.
+
+```json
+{
+  "storeId": null,
+  "resumeStep": "STORE_INFO",
+  "version": 1,
+  "verificationStatus": "FAILED"
+}
+```
+
+실패한 입력값과 초안은 저장하지 않는다. 완료 단계 수정 중 재검증이 실패하면 기존 가게 ID·저장값·검증 성공 시각·재개 단계·버전이 유지된다.
+응답의 FAILED는 이번 요청 결과이며 기존 가게의 검증 상태를 FAILED로 덮어쓰지 않는다.
+최신 버전으로 재저장하면 같은 가게를 수정하며 이후 단계의 입력값은 보존한다.
+가게 최종 등록과 ACTIVE 전환은 수행하지 않는다.
 
 ### 오류
 
-| 상태 | 코드 | 언제 |
+| HTTP | 코드 | 조건 |
 |---|---|---|
-| `401` | `AUTH-005` | 유효한 점주 인증이 없음 |
-| `403` | `AUTH-006` | 인증된 역할이 `OWNER`가 아님 |
-| `409` | `STORE-002` | 점주 상태가 `ONBOARDING`이 아님 |
+| 400 | 공통 입력·파싱 오류 코드 | 필수값 누락, 형식·길이 오류, 잘못된 JSON |
+| 401 | AUTH-005 | 인증이 없거나 점주 계정이 존재하지 않음 |
+| 403 | AUTH-006 | OWNER 역할이 아님 |
+| 403 | OWNER-002 | DB의 현재 점주 상태가 ONBOARDING이 아님 |
+| 409 | STORE-001 | 요청 버전이 현재 진행 상태와 다름 |
+| 409 | STORE-002 | 아직 TERMS 단계임 |
+| 409 | STORE-003 | 진행 상태가 초기화되지 않음 |
+| 403 | STORE-004 | 진행 상태와 본인 가게의 연결이 일치하지 않거나 최종 등록된 가게임 |
+
+버전 충돌 시 입력값을 자동 재전송하지 않고 최신 진행 상태를 확인해야 한다.
+약관 API와 진행 상태 최초 생성은 선행 작업이며 이 API가 약관 단계를 자동 완료하거나 진행 상태를 생성하지 않는다.
+
+## 가게 등록 온보딩 3단계: 위치 저장
+
+### `PUT /v1/owner/store/location`
+
+`PUT /v1/owner/store/location`은 프론트가 카카오맵에서 선택·확정한 위치를 저장한다.
+백엔드는 카카오 API를 호출하거나 장소의 실재 여부를 재검증하지 않는다.
+인증된 OWNER 중 DB 현재 상태가 ONBOARDING인 점주만 본인의 미확정 가게에 저장할 수 있다.
+
+### 요청
+
+```json
+{
+  "version": 2,
+  "kakaoPlaceId": "12345678",
+  "roadAddress": "서울 강남구 테헤란로 123",
+  "latitude": 37.5000000,
+  "longitude": 127.0000000
+}
+```
+
+모든 필드가 필수다. version은 0 이상의 integer(int64)다.
+장소 ID는 최대 50자, 도로명 주소는 최대 255자이며 빈 문자열·공백만 있는 값은 거절한다.
+위도는 -90~90, 경도는 -180~180의 JSON 숫자다. 카카오 응답의 좌표를 그대로 전달할 수 있으며 저장 시 소수점 이하 7자리로 반올림한다(HALF_UP).
+점주 ID나 가게 ID는 받지 않는다. 기본 정보와 사업자 검증 성공 및 약관 동의가 선행되어야 한다.
+
+### 성공 응답 `200`
+
+```json
+{
+  "code": "SUCCESS",
+  "message": "요청이 성공적으로 처리되었습니다.",
+  "data": { "storeId": 501, "resumeStep": "HOURS", "version": 3 }
+}
+```
+
+최초 저장은 LOCATION을 완료해 HOURS로 진행한다.
+완료한 위치의 재저장은 네 위치 필드를 모두 덮어쓰며 기존 재개 단계와 다른 단계의 저장값을 유지한다.
+같은 값으로 저장해도 성공마다 version이 1 증가한다. 최신 버전으로 요청해야 한다.
+저장한 위치와 LOCATION 완료 여부는 기존 내 가게 조회에서 확인한다. 별도 위치 GET은 없다.
+가게 생성이나 최종 등록·ACTIVE 전환은 수행하지 않는다.
+
+### 오류
+
+| HTTP | 코드 | 조건 |
+|---|---|---|
+| 400 | 공통 입력·파싱 오류 코드 | 필수값 누락, 문자열·좌표·버전 오류, 잘못된 JSON, 저장된 기본 정보의 필수값 오류 |
+| 401 | AUTH-005 | 미인증 또는 점주 계정 부재 |
+| 403 | AUTH-006 | OWNER 외 역할 |
+| 403 | OWNER-002 | 현재 점주 상태가 ONBOARDING이 아님 |
+| 403 | STORE-004 | 본인 초안 부재, 진행 상태와 가게 연결 불일치 또는 최종 등록한 가게임 |
+| 409 | STORE-001 | 요청 버전이 현재 버전과 다름 |
+| 409 | STORE-002 | LOCATION 이전 단계이거나 유효한 약관 동의·사업자 검증 성공이 없음 |
+| 409 | STORE-003 | 진행 상태가 없음 |
+
+실패하면 위치·진행 상태·버전을 함께 보존한다. 버전 충돌 시 최신 조회 결과를 확인한 뒤 재저장한다.
+
+## 가게 등록 온보딩 4단계: 매장 영업시간 등록·수정
+
+`PUT /v1/owner/store/hours`
+
+입점 신청의 HOURS 단계와 ACTIVE 가게 관리에서 공용으로 사용한다.
+요청에 가게 ID·점주 ID를 받지 않으며 인증된 OWNER 본인의 가게를 대상으로 한다.
+ONBOARDING은 약관, 기본 정보·사업자 Mock 검증, 위치 저장이 완료된 초안이 있어야 한다.
+ACTIVE는 본인 소유의 최종 등록된 가게가 있어야 한다.
+
+### 요청
+
+| 필드 | 타입 | 필수·null 허용 | 설명 |
+|---|---|---|---|
+| version | integer(int64) | ONBOARDING은 필수·null 불가 | 0 이상의 현재 온보딩 버전. ACTIVE는 생략 또는 null이며 숫자를 보내면 400 |
+| businessHours | array | 필수·null 불가 | 영업일만 0~7개 전달한다. 누락한 요일은 휴무·모든 시각 null로 채워 7일 전체를 덮어쓴다. 빈 배열은 모두 휴무 |
+
+businessHours 항목:
+
+| 필드 | 타입 | 필수·null 허용 | 설명 |
+|---|---|---|---|
+| dayOfWeek | string(enum) | 필수·null 불가 | MONDAY, TUESDAY, WEDNESDAY, THURSDAY, FRIDAY, SATURDAY, SUNDAY |
+| isClosed | boolean | 선택·null 허용 | 생략 또는 null이면 false(영업일). 기존 요청처럼 true로 휴무일을 직접 보내는 것도 허용 |
+| openTime, closeTime | string(time) | 영업일 필수·null 불가 | `HH:mm:ss`, KST 당일 시각. 휴무일은 생략 또는 null |
+| breakStartTime, breakEndTime | string(time) | 선택·null 허용 | `HH:mm:ss`. 브레이크타임은 두 값을 함께 보내거나 모두 생략·null |
+| lastOrderTime | string(time) | 선택·null 허용 | `HH:mm:ss` |
+
+- 프론트는 영업일만 전달한다. 누락한 요일은 백엔드가 `isClosed=true`, 모든 시각 null로 저장한다. 요일 중복·null 항목·8개 이상은 400이다.
+- `businessHours` 자체의 누락·null은 400이다. 명시적인 빈 배열 `[]`은 7일 모두 휴무로 저장한다.
+- PUT은 전체 교체다. 이전에 영업일이던 요일도 이번 요청에서 빠지면 휴무로 바뀐다.
+- 영업일은 `openTime < closeTime`이다. 익일 마감과 24시간 영업은 이번 범위에서 지원하지 않는다.
+- 브레이크타임이 있으면 `openTime < breakStartTime < breakEndTime < closeTime`이다.
+- 라스트오더는 오픈 이상·마감 이하여야 하며 브레이크타임 구간 `[시작, 종료)` 안에 둘 수 없다.
+- 휴무일에는 모든 시각을 생략하거나 null로 보낸다. 시각을 보내면 자동으로 지우지 않고 거절한다.
+- 시각은 초 단위이며 소수 초·시간대 오프셋·`24:00:00`을 허용하지 않는다.
+- 선택 시각을 생략·null로 보내면 기존 값은 삭제된다. 저장값은 기존 내 가게 조회에서 월~일 순서로 확인한다.
+
+일요일이 휴무인 ONBOARDING 요청 예시다. 휴무일 항목과 `isClosed`는 보내지 않아도 된다:
+
+```json
+{
+  "version": 3,
+  "businessHours": [
+    {"dayOfWeek": "MONDAY", "isClosed": false, "openTime": "09:00:00", "closeTime": "21:00:00", "breakStartTime": "14:00:00", "breakEndTime": "15:00:00", "lastOrderTime": "20:30:00"},
+    {"dayOfWeek": "TUESDAY", "isClosed": false, "openTime": "09:00:00", "closeTime": "21:00:00"},
+    {"dayOfWeek": "WEDNESDAY", "isClosed": false, "openTime": "09:00:00", "closeTime": "21:00:00"},
+    {"dayOfWeek": "THURSDAY", "isClosed": false, "openTime": "09:00:00", "closeTime": "21:00:00"},
+    {"dayOfWeek": "FRIDAY", "isClosed": false, "openTime": "09:00:00", "closeTime": "21:00:00"},
+    {"dayOfWeek": "SATURDAY", "openTime": "09:00:00", "closeTime": "21:00:00"}
+  ]
+}
+```
+
+### 응답 `200`
+
+공통 성공 봉투의 data는 다음과 같다.
+
+| 필드 | 타입 | null 허용 | 설명 |
+|---|---|---|---|
+| storeId | integer(int64) | 아니오 | 저장한 본인 가게 ID |
+| resumeStep | string(enum) | 예 | 최초 HOURS 저장 후 IMAGES. 완료한 단계 재저장은 기존 재개 위치 유지. ACTIVE는 null |
+| version | integer(int64) | 예 | ONBOARDING은 저장 전보다 1 증가한 버전. ACTIVE는 null |
+
+ONBOARDING의 최초 성공 예: `{"storeId": 10, "resumeStep": "IMAGES", "version": 4}`.
+같은 내용의 재저장도 버전이 1 증가하며 오래된 버전은 409다.
+ACTIVE는 온보딩 진행 상태·버전을 생성하거나 변경하지 않는다.
+ACTIVE의 동시 저장은 순서대로 처리되며 마지막으로 처리된 요청의 전체 시간표가 남는다.
+검증 실패나 저장 실패 시 기존 영업시간과 온보딩 버전은 바뀌지 않는다.
+일주일 전체를 휴무로 저장하는 것도 허용하며 HOURS 입력 완료로 판단한다.
+
+### 오류
+
+| 상태 | 코드 | 조건 |
+|---|---|---|
+| 400 | COMMON-002 | 필수값 누락, 요일 중복·개수 오류, 시간 관계 오류, 상태에 맞지 않는 version |
+| 400 | COMMON-003 | 잘못된 JSON·요일 enum·시각 형식 |
+| 401 | AUTH-005 | 미인증 또는 존재하지 않는 점주 |
+| 403 | AUTH-006 | OWNER 외 역할 |
+| 403 | OWNER-002 | SUSPENDED·WITHDRAWN 등 허용되지 않은 점주 상태 |
+| 403 | STORE-004 | 본인 가게 없음, 초안·진행 상태의 가게 연결 불일치, 점주 상태와 최종 등록 여부 불일치 |
+| 409 | STORE-001 | ONBOARDING 요청 버전 충돌 |
+| 409 | STORE-002 | HOURS 이전 단계이거나 실제 선행 단계 필수 정보가 누락됨 |
+| 409 | STORE-003 | ONBOARDING 진행 상태 없음 |
+
+진행 화면의 단계별 GET은 추가하지 않는다. 사진·메뉴 저장과 최종 등록 실행은 이 API의 범위에 포함하지 않는다.
+
+## 가게 등록 온보딩 5단계: 가게 이미지 등록·수정
 
 ## `POST /v1/owner/store-images:prepareUpload`
 
@@ -231,7 +475,7 @@ OTHER
 
 ### 인증
 
-`GET /v1/owner/store-registration-progress`와 같다.
+`GET /v1/owner/onboarding`와 같다.
 
 ### 요청
 
@@ -288,7 +532,7 @@ OTHER
 
 ### 인증
 
-`GET /v1/owner/store-registration-progress`와 같다.
+`GET /v1/owner/onboarding`와 같다.
 
 ### 요청
 
@@ -318,7 +562,7 @@ OTHER
 
 ### 인증
 
-`GET /v1/owner/store-registration-progress`와 같다.
+`GET /v1/owner/onboarding`와 같다.
 
 ### 요청
 
@@ -334,8 +578,8 @@ OTHER
 
 ### 성공 응답
 
-`200`. `GET /v1/owner/store-registration-progress`와 같은 모양이며 `resumeStep`이
-`MENU`, `version`이 1 증가한 값이다.
+`200`. `storeId`, `resumeStep`, `version`을 반환한다.
+`resumeStep`은 `MENU`이며 `version`은 1 증가한 값이다.
 
 ### 오류
 
@@ -346,3 +590,338 @@ OTHER
 | `409` | `STORE-001` | `version`이 현재 버전과 다름 |
 | `409` | `STORE-002` | 점주 상태가 `ONBOARDING`이 아님, 또는 현재 재개 단계가 `IMAGES`가 아님 |
 | `409` | `STORE-010` | 로고 이미지가 없음 |
+
+## 가게 등록 온보딩 6단계: 대표 메뉴 등록·수정
+
+## `POST /v1/owner/store-menus`
+
+점주가 대표 메뉴 하나를 등록한다. 메뉴명·가격·상세설명을 저장하며, 이미지는 이 API로
+올리지 않는다. 이미지는 등록된 `menuId`로 `POST /v1/owner/store-menu-images:prepareUpload`를
+따로 호출해 올린다. 메뉴 한 건당 호출한다.
+
+### 인증
+
+`GET /v1/owner/onboarding`와 같다.
+
+### 요청
+
+```json
+{
+  "name": "제육볶음",
+  "price": 9000,
+  "description": "매콤한 제육볶음입니다."
+}
+```
+
+| 필드 | 타입 | 필수 | 조건 |
+|---|---|---|---|
+| name | string | 예 | 100자 이내 |
+| price | integer | 예 | 0 이상. 원 단위 |
+| description | string | 아니오 | 500자 이내 |
+
+### 성공 응답
+
+`200`.
+
+```json
+{
+  "code": "SUCCESS",
+  "message": "요청이 성공적으로 처리되었습니다.",
+  "data": {
+    "menuId": 10,
+    "sortOrder": 1
+  }
+}
+```
+
+| 필드 | 타입 | 설명 |
+|---|---|---|
+| menuId | integer | 등록된 메뉴의 식별자. 이미지 업로드 요청에 그대로 보낸다 |
+| sortOrder | integer | 이 메뉴가 몇 번째로 표시되는지(1~3). 서버가 등록 순서대로 자동으로 매긴다 |
+
+### 오류
+
+| 상태 | 코드 | 언제 |
+|---|---|---|
+| `401` | `AUTH-005` | 유효한 점주 인증이 없음 |
+| `403` | `AUTH-006` | 인증된 역할이 `OWNER`가 아님 |
+| `409` | `STORE-002` | 점주 상태가 `ONBOARDING`이 아님, 또는 기본 정보 단계를 아직 안 마침 |
+| `422` | `STORE-011` | 이미 메뉴가 3개 등록돼 있음 |
+
+## `POST /v1/owner/store-menu-images:prepareUpload`
+
+점주가 등록한 메뉴의 이미지를 올릴 presigned PUT URL을 발급받는다. 메뉴 이미지 한 장당
+호출한다.
+
+### 인증
+
+`GET /v1/owner/onboarding`와 같다.
+
+### 요청
+
+```json
+{
+  "menuId": 10,
+  "originalFilename": "menu.jpg",
+  "contentType": "image/jpeg",
+  "fileSize": 204800
+}
+```
+
+| 필드 | 타입 | 필수 | 조건 |
+|---|---|---|---|
+| menuId | integer | 예 | `POST /v1/owner/store-menus`로 받은 식별자 |
+| originalFilename | string | 예 | |
+| contentType | string | 예 | `image/jpeg`, `image/png` 중 하나 |
+| fileSize | integer | 예 | 1 이상, 10485760(10MB) 이하 |
+
+### 성공 응답
+
+`200`.
+
+```json
+{
+  "code": "SUCCESS",
+  "message": "요청이 성공적으로 처리되었습니다.",
+  "data": {
+    "uploadId": "a1b2c3d4-...",
+    "uploadUrl": "https://..."
+  }
+}
+```
+
+| 필드 | 타입 | 설명 |
+|---|---|---|
+| uploadId | string | 확인 요청에 그대로 보내는 식별자 |
+| uploadUrl | string | 이 주소로 파일을 직접 PUT 업로드한다. 10분 안에 사용해야 한다 |
+
+### 오류
+
+| 상태 | 코드 | 언제 |
+|---|---|---|
+| `401` | `AUTH-005` | 유효한 점주 인증이 없음 |
+| `403` | `AUTH-006` | 인증된 역할이 `OWNER`가 아님 |
+| `403` | `STORE-012` | 그 `menuId`가 없거나 본인 가게의 메뉴가 아님(존재 여부를 알려주지 않으려고 같은 코드로 묶는다, `api-spec.md`) |
+| `409` | `STORE-002` | 점주 상태가 `ONBOARDING`이 아님 |
+| `422` | `STORE-005` | `contentType`이 `image/jpeg`, `image/png`가 아님 |
+| `422` | `STORE-006` | `fileSize`가 10MB를 넘음 |
+
+## `POST /v1/owner/store-menu-images:confirmUpload`
+
+발급받은 URL로 실제 업로드했는지 확인한다. 메뉴 이미지 한 장당 호출한다.
+
+### 인증
+
+`GET /v1/owner/onboarding`와 같다.
+
+### 요청
+
+```json
+{
+  "uploadId": "a1b2c3d4-..."
+}
+```
+
+### 성공 응답
+
+`200`. 본문 `data`는 `null`이다.
+
+### 오류
+
+| 상태 | 코드 | 언제 |
+|---|---|---|
+| `401` | `AUTH-005` | 유효한 점주 인증이 없음 |
+| `403` | `AUTH-006` | 인증된 역할이 `OWNER`가 아님 |
+| `403` | `STORE-012` | 그 `uploadId`가 없거나 본인 가게의 메뉴 이미지가 아님 |
+| `409` | `STORE-002` | 점주 상태가 `ONBOARDING`이 아님 |
+| `422` | `STORE-006` | 실제 업로드된 크기가 선언한 크기나 10MB를 넘음 |
+| `422` | `STORE-009` | 실제로 업로드되지 않음(S3에 객체가 없음) |
+
+## `POST /v1/owner/store-menus:complete`
+
+대표 메뉴(0~3개) 등록을 마치고 `MENU` 단계를 완료한다. 다음 단계는 없으며 재개 단계는
+`MENU`를 유지한다.
+
+### 인증
+
+`GET /v1/owner/onboarding`와 같다.
+
+### 요청
+
+```json
+{
+  "version": 6
+}
+```
+
+| 필드 | 타입 | 필수 | 설명 |
+|---|---|---|---|
+| version | integer | 예 | 진행 상태 조회로 받은 현재 버전 |
+
+### 성공 응답
+
+`200`. `storeId`, `resumeStep`, `version`을 반환한다.
+`resumeStep`은 `MENU`이며 `version`은 1 증가한 값이다.
+
+### 오류
+
+| 상태 | 코드 | 언제 |
+|---|---|---|
+| `401` | `AUTH-005` | 유효한 점주 인증이 없음 |
+| `403` | `AUTH-006` | 인증된 역할이 `OWNER`가 아님 |
+| `409` | `STORE-001` | `version`이 현재 버전과 다름 |
+| `409` | `STORE-002` | 점주 상태가 `ONBOARDING`이 아님, 또는 현재 재개 단계가 `MENU`가 아님 |
+| `409` | `STORE-013` | 등록한 메뉴 중 이미지가 `VERIFIED`가 아닌 메뉴가 있음 |
+
+## `GET /v1/owner/store`
+
+인증된 점주의 가게 ID와 전체 저장 정보를 조회한다. ONBOARDING 초안과 ACTIVE 가게를 지원한다.
+가게 생성 전에도 `200`과 응답 객체를 반환한다. `storeId`는 null이며 약관과 진행 정보는 조회된다. 조회로 가게나 진행 상태를 생성하지 않는다.
+요청 본문과 경로·쿼리 식별자는 받지 않으며 인증된 점주를 기준으로 조회한다.
+
+### 응답 `200`
+
+공통 응답 봉투의 `data`는 항상 객체이며 아래 필드를 갖는다. 목록은 항상 배열이다.
+
+| 필드 | 타입 | null | 설명 |
+|---|---|---|---|
+| storeId | integer(int64) | 예 | STORE_INFO 최초 저장 성공 시 생성되는 가게 ID. 생성 전에는 null |
+| finalized | boolean | 아니오 | 최종 등록 여부 |
+| name, businessCategory, representativeName | string | 예 | 상호명, 업종 코드, 대표자 성명. 가게 생성 전에는 null |
+| businessRegistrationNumber, phone | string | 예 | 사업자등록번호, 전화번호. 기존 미입력 데이터는 null |
+| businessVerificationStatus | string | 예 | VERIFIED 또는 FAILED. 미검증은 null |
+| businessVerifiedAt | string(date-time) | 예 | 기존 저장 규약의 KST 검증 성공 시각 |
+| kakaoPlaceId, roadAddress | string | 예 | 카카오 장소 ID, 도로명 주소 |
+| latitude, longitude | number | 예 | 위도, 경도 |
+| businessHours | array | 아니오 | 월요일부터 일요일 순. 미입력은 [] |
+| logoImage | object | 예 | 검증된 대표 이미지. 없으면 null |
+| interiorImages | array | 아니오 | 검증된 내부 이미지. sortOrder 오름차순, 없으면 [] |
+| menus | array | 아니오 | sortOrder 오름차순. 메뉴 0개도 정상이며 [] |
+
+`businessHours` 항목은 `dayOfWeek`(MONDAY~SUNDAY), `openTime`, `closeTime`, `isClosed`,
+`breakStartTime`, `breakEndTime`, `lastOrderTime`을 갖는다. 시각은 `HH:mm:ss`이며 미입력은 null이다.
+`dayOfWeek`와 `isClosed`는 null이 아니다.
+
+이미지는 `objectKey`(string), `url`(string), `sortOrder`(integer 또는 null)를 갖는다.
+대표·메뉴 이미지의 sortOrder는 null이다. PENDING·UPLOADED 이미지는 반환하지 않는다.
+이미지가 있는데 CDN 설정이 없으면 500으로 처리하며 이미지가 없는 것처럼 숨기지 않는다.
+
+메뉴는 `menuId`(integer), `name`(string), `price`(integer, 원), `description`(string 또는 null),
+`sortOrder`(integer), `image`(이미지 또는 null)를 갖는다. 이미지 미검증 상태의 기존 메뉴도 반환한다.
+이 조회의 null 허용은 메뉴 저장·최종 등록의 필수 이미지 검증을 완화하지 않는다.
+
+### 오류
+
+| 상태·코드 | 조건 |
+|---|---|
+| 401 AUTH-005 | 인증이 없거나 유효하지 않음 |
+| 403 AUTH-006 | OWNER 외 역할 |
+| 403 OWNER-002 | DB의 현재 점주 상태가 SUSPENDED 또는 WITHDRAWN |
+
+내 가게 조회는 약관 동의 내역과 단계별 저장·완료 상태, 현재·재개 단계와 최종 등록 가능 여부를 함께 반환한다.
+별도 진행 상태 조회는 화면 이동에 필요한 단계·버전 중심의 가벼운 응답을 담당한다.
+
+### onboarding
+
+| 필드 | 타입 | 의미 |
+|---|---|---|
+| currentStep | string 또는 null | 저장된 진행 상태의 단계. 진행 상태가 없으면 TERMS, 최종 등록 후에는 null |
+| resumeStep | string 또는 null | 필수 저장값을 다시 확인한 첫 미완료 단계. 필수 단계가 충족되면 MENU, 최종 등록 후에는 null |
+| version | integer(int64) | 저장된 요청 버전. 진행 상태가 없으면 0 |
+| canComplete | boolean | 아직 최종 등록하지 않았고 필수 저장값과 선택 메뉴의 필수 항목이 충족되는지 여부 |
+| termsAgreement | object 또는 null | 저장된 약관 동의. 기록이 없으면 null |
+| steps | array | TERMS, STORE_INFO, LOCATION, HOURS, IMAGES, MENU 순서의 현재 저장 상태 |
+
+steps의 항목은 `step`, `optional`, `hasSavedData`, `completed`를 갖는다.
+MENU만 optional=true다. 메뉴가 없으면 hasSavedData=false, completed=false지만 최종 등록을 막지 않는다.
+메뉴가 있으면 메뉴명·0원 이상의 가격·검증된 이미지가 모두 있어야 완료다.
+현재 단계와 재개 단계는 데이터 누락이 있을 때 다를 수 있다. 이미 등록된 가게는 finalized를 먼저 확인한다.
+
+termsAgreement는 `termsType`, `termsVersion`, `required`, `agreed`, `agreedAt`, `recordedAt`, `withdrawnAt`을 갖는다.
+PR #148에 맞춰 종류·버전은 항상 null이며 required는 항상 true다. 동의 시각과 기록 생성 시각은 구분한다.
+agreedAt은 develop에 병합된 PR #148의 agreed_at 저장값이다.
+recordedAt은 저장 행의 created_at이다. agreed=true이고 철회 시각이 없을 때 TERMS 완료다.
+
+canComplete는 현재 조회의 입력 충족 여부다. 최종 등록 POST에서도 필수 조건을 다시 검증해야 한다.
+HOURS는 [영업시간 저장 규칙](#가게-등록-온보딩-4단계-매장-영업시간-등록수정)에 맞는 월~일 7개 요일이 모두 저장되어야 완료다. 일부 요일만 있으면 hasSavedData=true, completed=false다.
+진행 내역은 현재 저장 상태의 요약이며 덮어쓰기 전 값이나 단계별 과거 변경 이력을 생성하지 않는다.
+
+
+가게 생성 전에는 storeId와 가게 입력값이 null이며 목록은 []다. onboarding은 항상 반환한다.
+약관 동의가 없으면 resumeStep=TERMS이며 약관만 동의한 상태면 resumeStep=STORE_INFO다.
+어느 경우에도 GET에서 가게·진행 상태·약관을 생성하지 않는다.
+
+## `GET /v1/owner/onboarding`
+
+인증된 점주의 실제 저장 데이터로 단계별 완료 여부, 지금 진행할 첫 미완료 단계와 최종 등록 가능 여부를 조회한다.
+요청 본문과 점주 ID 파라미터는 없으며 가게·약관·진행 상태를 생성하거나 변경하지 않는다.
+진행 상태가 없으면 version은 0이고 가게 초안이 없으면 storeId는 null이다.
+최초 진행 상태 생성은 점주 행을 잠근 약관 저장 트랜잭션에서 처리한다.
+
+### 인증
+
+`OWNER`가 사용하며 DB 현재 상태가 `ONBOARDING`, `ACTIVE`인 점주만 조회할 수 있다.
+
+### 응답 `200`
+
+필수 입력은 끝났고 메뉴는 등록하지 않은 경우:
+
+```json
+{
+  "code": "SUCCESS",
+  "message": "요청이 성공적으로 처리되었습니다.",
+  "data": {
+    "storeId": 10,
+    "resumeStep": "MENU",
+    "version": 5,
+    "finalized": false,
+    "canFinalize": true,
+    "steps": [
+      { "step": "TERMS", "required": true, "completed": true },
+      { "step": "STORE_INFO", "required": true, "completed": true },
+      { "step": "LOCATION", "required": true, "completed": true },
+      { "step": "HOURS", "required": true, "completed": true },
+      { "step": "IMAGES", "required": true, "completed": true },
+      { "step": "MENU", "required": false, "completed": false }
+    ]
+  }
+}
+```
+
+| 필드 | 타입 | null 허용 | 설명 |
+|---|---|---|---|
+| storeId | integer(int64) | 예 | 본인 가게 ID. 초안 생성 전 null |
+| resumeStep | string(enum) | 예 | 지금 진행할 단계. 아래 순서의 첫 미완료 단계이며 필수 단계 완료 후에는 MENU. 최종 등록 후에는 null |
+| version | integer(int64) | 아니오 | 다음 저장·수정 요청에 사용하는 현재 버전. 진행 상태가 없으면 0 |
+| finalized | boolean | 아니오 | 가게 최종 등록 여부. true면 온보딩을 종료한다 |
+| canFinalize | boolean | 아니오 | 모든 필수 조건과 등록된 메뉴의 조건을 충족하고 아직 최종 등록하지 않았는지 여부 |
+| steps | array | 아니오 | 여섯 단계를 입력 순서대로 반환한다 |
+| steps[].step | string(enum) | 아니오 | TERMS, STORE_INFO, LOCATION, HOURS, IMAGES, MENU |
+| steps[].required | boolean | 아니오 | MENU만 false이며 나머지는 true |
+| steps[].completed | boolean | 아니오 | 해당 단계의 업무 데이터가 완료 조건을 충족하는지 여부 |
+
+### 완료와 화면 이동 기준
+
+| 단계 | 완료 기준 |
+|---|---|
+| TERMS | 전체 약관 agreed=true, 동의 시각 존재, 철회 시각 없음 |
+| STORE_INFO | 상호명·업종·대표자 성명·사업자등록번호·전화번호 저장, 사업자 검증 VERIFIED와 성공 시각 존재 |
+| LOCATION | 카카오 장소 ID·도로명 주소·위도·경도 모두 저장 |
+| HOURS | [영업시간 저장 규칙](#가게-등록-온보딩-4단계-매장-영업시간-등록수정)에 맞는 월~일 7개 요일 모두 저장. 누락한 요일은 저장 시 휴무로 보완 |
+| IMAGES | 검증된 대표 이미지(LOGO) 1개. 내부 이미지는 0~3개이며 저장된 이미지는 모두 객체 확인 VERIFIED 상태와 객체 키 필요 |
+| MENU | 메뉴 1~3개이며 각 메뉴의 이름·0원 이상 가격·검증된 이미지 객체 키 필요. 설명은 선택 |
+
+- 첫 진입은 여섯 단계 completed=false, resumeStep=TERMS, canFinalize=false다.
+- 각 단계의 completed는 다른 단계와 독립적으로 계산한다. 저장된 resume_step보다 실제 데이터의 첫 미완료 단계를 우선하며 DB 진행 단계를 보정하지 않는다.
+- 메뉴가 0개면 MENU.completed=false지만 필수 단계가 모두 끝났으면 canFinalize=true다. 메뉴가 있으면 필수 항목 누락이나 미검증 이미지가 하나라도 있을 때 canFinalize=false다.
+- 모든 입력을 완료해도 최종 등록 전에는 resumeStep=MENU다. 최종 등록 후에는 finalized=true, resumeStep=null, canFinalize=false다.
+- canFinalize는 조회 시점의 안내다. 후속 최종 등록 API는 같은 조건을 요청 시점에 다시 검증해야 한다.
+- 이미지·메뉴 단계 저장 응답은 기존 StoreRegistrationProgressResponse의 storeId·resumeStep·version 세 필드만 유지한다. 이 GET의 추가 필드를 단계 저장 응답에 적용하지 않는다.
+
+### 오류
+
+| 상태 | 코드 | 언제 |
+|---|---|---|
+| `401` | `AUTH-005` | 유효한 점주 인증 또는 점주 계정이 없음 |
+| `403` | `AUTH-006` | 인증된 역할이 OWNER가 아님 |
+| `403` | `OWNER-002` | DB 현재 점주 상태가 SUSPENDED 또는 WITHDRAWN |

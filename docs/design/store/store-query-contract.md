@@ -1,6 +1,7 @@
 # 가게와 메뉴 조회 공개 계약
 
-이슈 #297의 쿠폰용 조회 계약이다. 공개 타입은 store.contract에 두며 구현은 store.service에 둔다.
+쿠폰(#297), 광고 서빙(#161), 분석(#363), 관리자 점주 목록(#365)이 사용하는 조회 계약이다.
+공개 타입은 store.contract에 두며 구현은 store.service에 둔다.
 HTTP API와 온보딩 저장 기능은 추가하지 않는다.
 
 ## 반환 정책
@@ -35,6 +36,7 @@ canManageStore는 현재 본인 소유이면서 최종 등록된 가게인지 �
 ## 이미지 URL
 
 가게 이미지는 LOGO 중 VERIFIED만 반환하고 메뉴 이미지도 VERIFIED만 반환한다.
+아래 이미지 누락 예외 정책은 기존 쿠폰용 가게·메뉴 조회에 적용하며 광고 후보용 조회의 예외는 아래 #161 절에 명시한다.
 최종 등록된 가게는 대표 이미지가 필수다. 메뉴 등록은 선택이며 등록된 메뉴에 대해서만 메뉴 이미지가 필수다.
 메뉴가 없는 가게도 가게 조회 결과에 포함한다. 조회할 메뉴가 없으면 메뉴 목록은 빈 목록이다.
 쿠폰 응답에서 메뉴 미등록으로 메뉴 이미지가 null인 경우와 등록된 메뉴의 필수 이미지 누락 오류를 구분한다.
@@ -58,8 +60,32 @@ cdn.base-url에는 HTTP(S) 주소를 사용하며 쿼리, 프래그먼트, 사�
 테스트 클래스별 프로퍼티, 프로파일, 컨테이너 선언은 추가하지 않는다.
 테스트용 CDN 주소는 기존 공통 src/test/resources/application.properties 한 곳에서 설정한다.
 
-#161의 광고 서빙용 업종 코드 확장은 이 계약에 포함하지 않는다.
-같은 인터페이스를 확장할 때 기존 소비자와 record 필드 변경을 함께 검토해야 한다.
+## 광고 후보용 가게 일괄 조회 (#161)
+
+`StoreQueryService.findAdCandidatesByStoreIds(List<Long> storeIds)`는 광고 후보 스냅샷용 가게를 조회한다.
+`StoreAdCandidateInfo`는 storeId, storeName, categoryCode, storeImageUrl, latitude, longitude를 갖는다.
+기존 `StoreInfo`와 `findAllById`의 계약은 유지한다.
+업종 코드는 store.category_code의 문자열을 그대로 반환하며 스키마의 30자 제한을 따른다.
+좌표는 DB의 DECIMAL(10,7)을 BigDecimal로 반환해 스냅샷에 복사할 때 정밀도를 유지한다.
+
+최종 등록된 가게 중 두 좌표가 모두 있는 가게만 반환한다.
+미존재, 등록 전, 위도나 경도가 하나라도 null인 가게는 제외하며 좌표를 0으로 대체하지 않는다.
+현재 chk_store_finalized 제약은 최종 등록된 가게의 좌표 누락을 막으며 조회 SQL도 두 좌표의 존재를 명시한다.
+0인 좌표는 누락으로 취급하지 않는다.
+빈 입력, 중복, 누락 ID, 입력 검증과 DB 장애 전파는 기존 목록 조회 정책과 같다.
+입력은 중복을 포함해 최대 5,000개이며 `MAX_AD_CANDIDATE_STORE_IDS`로 상한을 공개한다.
+초과하면 DB 조회 전에 IllegalArgumentException을 던진다. 00:00 후보 적재 호출자가 상한 단위로 나눠 호출한다.
+VERIFIED 상태의 LOGO를 LEFT JOIN하는 SQL 한 번으로 읽는다.
+광고 서빙 명세에 따라 LOGO가 없거나 미검증이면 가게를 유지하고 storeImageUrl을 null로 반환한다.
+이미지가 있을 때의 CDN URL 변환과 설정 오류, DB 장애는 기존처럼 예외를 전파한다.
+기존 쿠폰용 가게·메뉴 조회의 이미지 누락 예외 정책은 유지한다.
+
+할인 대상 메뉴명은 기존 `findMenusByIdIn`으로 메뉴 ID 목록을 일괄 조회한다.
+광고 서빙은 캠페인의 target_menu_id에 해당하는 menuId로 menuName을 연결하고 storeId가 캠페인의 가게와 일치하는지 확인한다.
+가게 조회에 메뉴를 조인하지 않으므로 메뉴가 여럿이어도 가게 결과가 늘어나지 않는다.
+메뉴가 없는 가게도 가게 조회에 포함하며 메뉴 ID의 누락을 다른 메뉴명으로 대체하지 않는다.
+메뉴 이미지 검증과 등록 전 메뉴 제외는 기존 메뉴 조회 계약을 따른다.
+광고 서빙은 store와 store_image를 직접 읽지 않고 이 공개 계약을 사용한다.
 
 ## 분석용 신규·누적 입점 수 집계
 
@@ -108,3 +134,32 @@ SQL은 limit보다 한 건 더 읽고 초과하면 IllegalArgumentException을 �
 StoreQueryIntegrationTest에서 실제 MySQL의 등록 전 가게, 제한 초과와 누락 ID를 확인한다.
 1만 건을 준비한 뒤 100명 요약 조회의 SELECT 한 번과 요약 및 상호 검색 각각 1초 이내를 검증한다.
 시간 측정은 워밍업 이후 해당 테스트 환경에서의 결과다.
+
+
+## 본인 가게 전체 조회 (#427)
+
+`StoreQueryService.findOwnerStore(ownerId)`는 owner가 인증된 점주의 화면 복원을 위해 호출한다.
+양수인 점주 ID를 받으며 null 또는 0 이하는 IllegalArgumentException으로 거부한다.
+점주 ID에 연결된 가게가 없으면 Optional.empty()를 반환한다.
+최종 등록 전 초안도 포함한다. 앞 절의 최종 등록 전용 메서드들은 기존 조건을 유지한다.
+
+반환 타입은 OwnerStoreSnapshot이다. 가게 기본 정보·사업자 검증·위치·시간·검증된 이미지·메뉴를 포함한다.
+초안의 미입력 단일 값은 null이며 목록은 빈 목록이다. 목록은 방어적으로 복사한다.
+메뉴 이미지를 아직 검증하지 않았으면 메뉴는 유지하고 이미지만 null로 반환한다.
+본인 화면에 필요한 사업자번호 원문을 포함하므로 다른 점주의 목록이나 사용자 화면에 사용하지 않는다.
+호출자는 인증과 현재 계정 상태를 먼저 확인해야 한다. 이 계약 자체는 인증을 대신하지 않는다.
+조회 장애와 CDN 설정 오류는 호출자에게 전파하며 조회가 저장 데이터를 변경하지 않는다.
+
+HTTP 응답과 오류는 [store-api-spec.md](../../api-spec/store-api-spec.md)의 내 가게 조회 절을 따른다.
+
+
+## 온보딩 통합 조회
+
+`StoreQueryService.getOwnerStoreOverview(ownerId)`는 기존 findOwnerStore의 저장값과 약관·진행 상태를 합친다.
+반환 타입은 OwnerStoreOverview다. store는 가게 생성 전 null이어도 onboarding은 항상 존재한다.
+기존 findOwnerStore의 Optional 계약과 최종 등록 전용 조회 메서드는 유지한다.
+모든 SQL은 store 소유 테이블만 읽으며 owner 계정 검사는 호출자가 담당한다.
+약관은 PR #148의 점주당 한 건 계약을 사용한다. 종류·버전은 반환하지 않으며 required=true다.
+develop에 병합된 PR #148의 agreed_at을 직접 조회한다.
+created_at을 동의 시각으로 대신하지 않으며 별도의 기록 생성 시각으로 전달한다.
+단계별 완료 계산과 canComplete는 내 가게 조회에 모은다. 가벼운 단계 조회는 상세 저장값을 반환하지 않는다.

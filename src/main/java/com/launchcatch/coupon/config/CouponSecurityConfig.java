@@ -12,14 +12,18 @@ import org.springframework.security.web.SecurityFilterChain;
 public class CouponSecurityConfig {
 
     private static final String OWNER_USAGE_PATH = "/v1/owner/stores/{storeId}/coupon-usages";
+    private static final String OWNER_DAILY_USAGE_PATH = "/v1/owner/stores/{storeId}/coupon-usages/daily";
     private static final String OWNER_REDEEM_PATH = "/v1/owner/coupon-usages";
+    private static final String OWNER_SUMMARY_PATH = "/v1/owner/campaigns/{campaignId}/coupons/summary";
     private static final String EVENT_STATUS_PATH = "/v1/coupon-events:getStatus";
 
     private static final String[] COUPON_PATHS = {
             "/v1/coupons/**",
             EVENT_STATUS_PATH,
             OWNER_USAGE_PATH,
-            OWNER_REDEEM_PATH
+            OWNER_DAILY_USAGE_PATH,
+            OWNER_REDEEM_PATH,
+            OWNER_SUMMARY_PATH
     };
 
     private static final String LIST_PATH = "/v1/coupons";
@@ -40,6 +44,8 @@ public class CouponSecurityConfig {
                         .requestMatchers(HttpMethod.DELETE, DETAIL_PATH)
                         .hasRole("MEMBER")
                         .requestMatchers(HttpMethod.GET, OWNER_USAGE_PATH).hasRole("OWNER")
+                        .requestMatchers(HttpMethod.GET, OWNER_DAILY_USAGE_PATH).hasRole("OWNER")
+                        .requestMatchers(HttpMethod.GET, OWNER_SUMMARY_PATH).hasRole("OWNER")
                         .requestMatchers(HttpMethod.POST, OWNER_REDEEM_PATH).hasRole("OWNER")
                         .requestMatchers(HttpMethod.POST, QR_PATH, EVENT_STATUS_PATH, LIST_PATH)
                         .hasRole("MEMBER")

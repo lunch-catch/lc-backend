@@ -83,12 +83,62 @@ class CampaignCouponConditionServiceTest {
     @Test
     @DisplayName("PERCENT 할인율이 100을 넘으면 CAMPAIGN-002로 거부한다")
     void 할인율이_100_초과면_거부한다() {
-        CampaignCouponConditionRequest request = request(DiscountTargetType.ALL, DiscountType.PERCENT, 101, null);
+        CampaignCouponConditionRequest request = request(DiscountTargetType.MENU, DiscountType.PERCENT, 101, 42L);
 
         assertThatThrownBy(() -> service.handle(OWNER_ID, request))
                 .isInstanceOfSatisfying(CampaignException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(CampaignErrorCode.DISCOUNT_VALUE_INVALID));
         verifyNoInteractions(campaignRepository, transactionTemplate);
+    }
+
+    /*
+     * 팀 논의로 바뀐 사양이다(#431). discountTargetType이 ALL이면 discountType은 AMOUNT만
+     * 허용한다. MENU는 변동 없이 PERCENT/AMOUNT 둘 다 허용한다.
+     */
+    @Test
+    @DisplayName("전체 메뉴(ALL)에 PERCENT를 쓰면 CAMPAIGN-002로 거부한다")
+    void 전체_메뉴에_PERCENT를_쓰면_거부한다() {
+        CampaignCouponConditionRequest request = request(DiscountTargetType.ALL, DiscountType.PERCENT, 10, null);
+
+        assertThatThrownBy(() -> service.handle(OWNER_ID, request))
+                .isInstanceOfSatisfying(CampaignException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(CampaignErrorCode.DISCOUNT_VALUE_INVALID));
+        verifyNoInteractions(campaignRepository, transactionTemplate);
+    }
+
+    @Test
+    @DisplayName("전체 메뉴(ALL)에 AMOUNT는 허용한다")
+    void 전체_메뉴에_AMOUNT는_허용한다() throws Exception {
+        CampaignCouponConditionRequest request = request(DiscountTargetType.ALL, DiscountType.AMOUNT, 3000, null);
+        when(campaignRepository.findByStoreIdAndStatus(STORE_ID, CampaignStatus.DRAFT)).thenReturn(Optional.empty());
+        when(campaignRepository.saveAndFlush(any(Campaign.class))).thenAnswer(invocation -> {
+            Campaign saved = invocation.getArgument(0);
+            setId(saved, 501L);
+            return saved;
+        });
+
+        CampaignCouponConditionResult result = service.handle(OWNER_ID, request);
+
+        assertThat(result.response().campaignId()).isEqualTo(501L);
+    }
+
+    @Test
+    @DisplayName("특정 메뉴(MENU)는 PERCENT, AMOUNT 둘 다 허용한다")
+    void 특정_메뉴는_PERCENT_AMOUNT_둘다_허용한다() throws Exception {
+        when(campaignRepository.findByStoreIdAndStatus(STORE_ID, CampaignStatus.DRAFT)).thenReturn(Optional.empty());
+        when(campaignRepository.saveAndFlush(any(Campaign.class))).thenAnswer(invocation -> {
+            Campaign saved = invocation.getArgument(0);
+            setId(saved, 501L);
+            return saved;
+        });
+
+        CampaignCouponConditionResult percentResult = service.handle(
+                OWNER_ID, request(DiscountTargetType.MENU, DiscountType.PERCENT, 15, 42L));
+        CampaignCouponConditionResult amountResult = service.handle(
+                OWNER_ID, request(DiscountTargetType.MENU, DiscountType.AMOUNT, 3000, 42L));
+
+        assertThat(percentResult.response().campaignId()).isEqualTo(501L);
+        assertThat(amountResult.response().campaignId()).isEqualTo(501L);
     }
 
     @Test
@@ -234,7 +284,7 @@ class CampaignCouponConditionServiceTest {
     private Campaign existingDraft() {
         return Campaign.create(
                 OWNER_ID, STORE_ID,
-                DiscountTargetType.ALL, DiscountType.PERCENT, 10, null,
+                DiscountTargetType.ALL, DiscountType.AMOUNT, 10, null,
                 50, LocalTime.of(12, 0), LocalTime.of(13, 30),
                 null, null,
                 2000, TargetGender.MALE, List.of(AgeGroup.AGE_30S),
@@ -243,7 +293,7 @@ class CampaignCouponConditionServiceTest {
     }
 
     private CampaignCouponConditionRequest request() {
-        return request(DiscountTargetType.ALL, DiscountType.PERCENT, 15, null);
+        return request(DiscountTargetType.ALL, DiscountType.AMOUNT, 15, null);
     }
 
     private CampaignCouponConditionRequest request(
@@ -255,13 +305,13 @@ class CampaignCouponConditionServiceTest {
 
     private CampaignCouponConditionRequest requestWithQuantity(int issueQuantity) {
         return new CampaignCouponConditionRequest(
-                STORE_ID, DiscountTargetType.ALL, DiscountType.PERCENT, 15, null,
+                STORE_ID, DiscountTargetType.ALL, DiscountType.AMOUNT, 15, null,
                 issueQuantity, LocalTime.of(11, 30), LocalTime.of(13, 0), null, null);
     }
 
     private CampaignCouponConditionRequest requestWithUsableTime(LocalTime start, LocalTime end) {
         return new CampaignCouponConditionRequest(
-                STORE_ID, DiscountTargetType.ALL, DiscountType.PERCENT, 15, null,
+                STORE_ID, DiscountTargetType.ALL, DiscountType.AMOUNT, 15, null,
                 100, start, end, null, null);
     }
 

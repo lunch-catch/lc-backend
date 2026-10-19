@@ -5,6 +5,7 @@
 | 맡는 것 | 근거 |
 |---|---|
 | 전환 퍼널 이벤트 로그 | [analytics API 명세](../../api-spec/analytics-api-spec.md)의 A-13과 [아키텍처 설계](../../architecture/런치캐치_도메인_구조와_의존성_설계.md) 2.4 |
+| 이벤트 로그 기반 캠페인 성과 조회 | [analytics API 설계](./analytics-api-design.md#이벤트-로그-기반-캠페인-성과-509) |
 | 관리자 대시보드, 매출, 부정 관리 조회 | [analytics API 명세](../../api-spec/analytics-api-spec.md) |
 | 회원 사용 통계 | [analytics API 명세](../../api-spec/analytics-api-spec.md)의 A-12 |
 | 일별 집계와 캠페인 리포트 | [analytics 배치 설계](./analytics-batch-design.md) |
@@ -45,13 +46,14 @@ analytics/
 │   └── dto/
 └── event/
     ├── controller/
+    ├── dto/
     ├── listener/
     ├── service/
     ├── repository/
     └── entity/
 ```
 
-`batch`만 다른 도메인의 집계 조회 contract를 부른다. `query`는 analytics 집계 테이블과 ops 실행 기록만 읽는다. `event`는 `event_log` 쓰기를 소유한다.
+`batch`만 다른 도메인의 집계 조회 contract를 부른다. `query`는 analytics 집계 테이블과 ops 실행 기록만 읽는다. `event`는 `event_log`의 쓰기와 요청 시 캠페인 성과 조회를 소유한다. 성과 조회는 캠페인 공개 계약으로 소유권만 확인한다.
 
 ### 규칙을 두는 곳
 
@@ -194,9 +196,15 @@ sequenceDiagram
 
 일별 집계의 실행기(`DailyAggregationRunner`)는 01:00 작업(`DailyAggregationJob`)과 수동 재계산(A-05)이 함께 쓴다. 단계(`AggregationStep`)가 없어도 날짜를 잡고 공개하고 닫는 흐름이 돈다. 단계는 원천 집계 조회가 생긴 단위에서 더한다. 수동 재계산은 날짜를 잡은 뒤 202를 주고, 집계는 이 서비스가 직접 만든 단일 스레드 실행기(대기열 4개)에서 돈다. 스프링 빈으로 노출하지 않는다. `Executor` 빈이 있으면 부트가 기본 작업 실행기를 만들지 않아 뒤에 붙을 `@Async`가 이 실행기를 쓰게 되기 때문이다.
 
+**정산 지표 단계 (2026-10-17, #443).** `SettlementMetricsStep`(`@Order(100)`)이 `BillingStatsQueryService`의 점주와 캠페인별 합계를 더해 `daily_settlement_analytics`의 그날 한 행을 교체한다. 표의 CHECK가 금액을 0 이상으로 묶어 RESERVE, DEDUCT, REFUND는 절댓값으로 저장하고 조정액만 부호를 둔다. 정정이 가리키는 원래 영업일은 공개 때 `ADJUSTED`로 미처리 날짜에 남긴다. `SettlementConsistencyStep`(`@Order(900)`)은 같은 공개 트랜잭션에서 방금 쓴 행을 읽어 V-1, V-2, V-3, V-7을 확인하고 어긋나도 집계를 실패시키지 않으며 지표 `analytics_consistency_violations{check}`와 로그로 알린다. 점주 잔액 >= 0(V-4)은 점주별 잔액을 주는 집계 조회가 없어 하지 않는다. 소진액 계산은 `SpendFormula` 한 곳에 둔다. 매출 조회(A-07)는 집계가 끝나지 않은 구간의 금액을 `null`로 내린다.
+
+**회원 지표 단계 (2026-10-17, #450).** `MemberMetricsStep`(`@Order(200)`)이 `MemberStatsQueryService.dailyStats`의 신규, 누적, 탈퇴 수와 자기 `event_log`의 활성 회원 수를 합쳐 `daily_member_analytics`의 그날 한 행으로 교체한다. 활성 회원은 영업일 하루(KST 자정 이상, 다음 자정 미만)에 `member_id`가 있는 이벤트를 남긴 회원을 중복 없이 센다. 모든 이벤트 유형을 센다. `issue_open`은 회원이 없어 빠진다. 정지 회원은 정지 기능이 구현 제외라 0을 쓴다. 회원 지표 조회(A-01)는 신규를 합계로, 누적과 탈퇴와 정지를 구간 마지막 날 값으로 내리고 활성 회원은 구간 안 합을 구간의 일수로 나눠 반올림한 정수로 내린다. 구간 마지막 날 행이 없으면 스냅샷 지표는 `null`이고 행이 빠진 날은 활성 0으로 센다. 집계가 끝나지 않은 구간의 수치는 `null`이다.
+
+**가게 지표 단계 (2026-10-17, #452).** `StoreMetricsStep`(`@Order(300)`)이 `StoreStatsQueryService.finalizedStoreCounts`의 신규와 누적 입점 수, `CampaignStatsQueryService.activeCampaignCount`의 그날 말 집행 중 캠페인 수를 `daily_store_analytics`의 그날 한 행으로 교체한다. 누적 입점은 그날 말까지 최종 등록한 가게 수이고 점주 상태와 무관하다. 가게 지표 조회(A-02)는 신규를 합계로, 누적 입점과 집행 중 캠페인을 구간 마지막 날 값으로 내린다. 구간 마지막 날 행이 없으면 스냅샷 지표는 `null`이고 집계가 끝나지 않은 구간의 수치도 `null`이다. 캠페인 집계 조회는 오늘이나 미래 날짜를 받으면 예외를 던지는데 일별 집계는 전일 이전만 부르므로 걸리지 않는다.
+
 ## 11. 성능
 
-조회 API는 미리 계산한 일별 테이블만 읽는다. 일별 집계는 원천 행이 아니라 도메인별로 묶은 결과를 받는다. 공개 트랜잭션은 외부 호출 없이 하루 결과를 쓰는 동안만 유지한다.
+배치 지표 조회 API는 미리 계산한 일별 테이블만 읽는다. 이벤트 로그 기반 캠페인 성과의 조회 방식은 [API 설계](./analytics-api-design.md#이벤트-로그-기반-캠페인-성과-509)가 소유한다. 일별 집계는 원천 행이 아니라 도메인별로 묶은 결과를 받는다. 공개 트랜잭션은 외부 호출 없이 하루 결과를 쓰는 동안만 유지한다.
 
 구현 뒤 MySQL 8.4 통합 테스트로 V1에서 V2 적용 시간과 일별 교체 시간을 측정한다. 회원 축처럼 1000행을 넘을 수 있는 집계는 한 트랜잭션을 유지하되 실제 행 수를 측정해 배치 설계에 허용 범위를 기록한다.
 

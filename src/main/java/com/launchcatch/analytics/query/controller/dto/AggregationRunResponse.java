@@ -1,9 +1,11 @@
 package com.launchcatch.analytics.query.controller.dto;
 
+import com.launchcatch.global.config.ClockConfig;
 import com.launchcatch.ops.contract.BatchExecutionRecord;
 import io.swagger.v3.oas.annotations.media.Schema;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 
 public record AggregationRunResponse(
         @Schema(description = "실행 기록 ID입니다.", example = "301")
@@ -15,9 +17,9 @@ public record AggregationRunResponse(
         @Schema(description = "RUNNING, SUCCESS, FAILED 중 하나입니다.", example = "SUCCESS")
         String status,
         @Schema(description = "실행 시작 시각입니다(KST).")
-        LocalDateTime startedAt,
+        OffsetDateTime startedAt,
         @Schema(description = "실행 종료 시각입니다(KST). 실행 중이면 null입니다.")
-        LocalDateTime finishedAt,
+        OffsetDateTime finishedAt,
         @Schema(description = "공개 트랜잭션에서 쓴 집계 행 수입니다. 아직 기록되지 않았으면 null입니다.", example = "5")
         Integer processedCount,
         @Schema(description = "실행한 서버입니다.", example = "batch-02")
@@ -30,7 +32,11 @@ public record AggregationRunResponse(
 
     public static AggregationRunResponse from(BatchExecutionRecord record) {
         return new AggregationRunResponse(record.runId(), record.jobName(), record.businessDate(),
-                record.status(), record.startedAt(), record.finishedAt(), record.processedCount(),
-                record.executedBy(), record.retryCount(), record.failureReason());
+                record.status(), toOffset(record.startedAt()), toOffset(record.finishedAt()),
+                record.processedCount(), record.executedBy(), record.retryCount(), record.failureReason());
+    }
+
+    private static OffsetDateTime toOffset(LocalDateTime time) {
+        return time == null ? null : time.atZone(ClockConfig.ZONE).toOffsetDateTime();
     }
 }

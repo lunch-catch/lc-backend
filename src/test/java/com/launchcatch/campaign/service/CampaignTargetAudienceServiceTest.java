@@ -331,7 +331,7 @@ class CampaignTargetAudienceServiceTest {
     private Campaign draft(Long ownerId) {
         return Campaign.create(
                 ownerId, 17L,
-                DiscountTargetType.ALL, DiscountType.PERCENT, 10, null,
+                DiscountTargetType.ALL, DiscountType.AMOUNT, 10, null,
                 50, LocalTime.of(12, 0), LocalTime.of(13, 30),
                 null, null,
                 1000, TargetGender.ALL, List.of(AgeGroup.AGE_20S),
@@ -342,7 +342,7 @@ class CampaignTargetAudienceServiceTest {
     private Campaign activeCampaign() {
         Campaign campaign = Campaign.create(
                 OWNER_ID, 17L,
-                DiscountTargetType.ALL, DiscountType.PERCENT, 10, null,
+                DiscountTargetType.ALL, DiscountType.AMOUNT, 10, null,
                 50, LocalTime.of(12, 0), LocalTime.of(13, 30),
                 null, null,
                 1000, TargetGender.ALL, List.of(AgeGroup.AGE_20S),

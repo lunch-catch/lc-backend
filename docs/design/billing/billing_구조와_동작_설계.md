@@ -103,28 +103,12 @@ billing/
 
 ### 노출부터 과금까지 사용하는 Valkey 키
 
-아래 여섯 종류가 확인한 피드·정산 경로의 키다. `{...}`는 치환할 값의 자리표시이며 실제 키의 중괄호가 아니다. 예를 들어 `billing:day:2026-10-14:101`이다. `StringRedisTemplate`을 사용하므로 숫자와 시각도 문자열로 저장한다.
+아래 두 종류는 billing이 노출 과금 경로에서 사용하는 키다. 피드 배정과 serve 검증에 쓰는 키는 [광고 서빙 설계 3장](../adserving/adserving_구조와_동작_설계.md#3-저장)이 소유한다. `{...}`는 치환할 값의 자리표시이며 실제 키의 중괄호가 아니다. 예를 들어 `billing:day:2026-10-14:101`이다. `StringRedisTemplate`을 사용하므로 숫자와 시각도 문자열로 저장한다.
 
 | 키 | 자료형과 값 | 생성·갱신·만료 | 용도 |
 |---|---|---|---|
-| `adserving:feed-rate:{memberId}` | Sorted Set에 요청 ID와 epoch 밀리초 score를 둔다 | 허용한 요청을 넣을 때 TTL 60초를 다시 설정한다. 최근 창 밖의 값은 Lua에서 지우고, 200으로 끝나지 않은 요청은 해당 member를 제거한다 | 최근 60초 피드 요청을 6회로 제한한다 |
-| `adserving:serve:{serveId}` | Hash에 카드 검증용 일곱 필드를 둔다 | 카드 기록 때 TTL 30분을 설정한다. 노출 수집 후의 삭제 시점은 아직 연동하지 않았다 | 내려준 카드와 요청 사용자를 검증한다 |
-| `adserving:served:{businessDate}:{memberId}` | Hash의 field는 캠페인 ID이고 value는 카드를 받은 횟수다 | 카드마다 `HINCRBY`로 올리고 피드 기록 때 TTL 26시간을 다시 설정한다 | 같은 캠페인을 하루 2회까지 내려주는 데 쓴다 |
-| `adserving:session:{memberId}` | Set에 이번 세션의 캠페인 ID를 둔다 | 카드마다 `SADD`하고 피드 기록 때 TTL 30분을 다시 설정한다 | 같은 세션에 같은 캠페인을 다시 내려주지 않는다 |
 | `billing:day:{businessDate}:{campaignId}` | Hash에 예약액·소진액·중단 여부·전이 시각을 둔다 | 해시 생성 시 TTL 3일을 설정한다. 차감과 상태 갱신으로 TTL을 연장하지 않는다 | 처음 처리하는 `serveId`의 과금 가능 여부를 판정한다 |
 | `billing:served:{serveId}` | String에 첫 판정 이름 하나를 둔다 | 첫 Lua 판정 때 TTL 2일을 설정한다. 재호출은 연장하지 않는다. 새 판정의 롤백 보상은 표시를 삭제한다 | 같은 `serveId`의 Redis 재판정과 소진 증가를 막는다 |
-
-피드의 키 기록은 파이프라인이므로 전체가 하나의 원자적 쓰기는 아니다. 회원 당일·세션 이력은 실제 표시 횟수나 과금 횟수가 아니라 카드 배정 이력이다. [카드 기록 구현](https://github.com/lunch-catch/lc-backend/blob/8241485a23bff71cc36df390cd47788f8018d789/src/main/java/com/launchcatch/adserving/feed/repository/ServeCacheRepository.java)이 필드와 TTL을 정한다.
-
-| `adserving:serve` 필드 | 저장값 예 | 의미 |
-|---|---|---|
-| `memberId` | `"3001"` | 카드를 받은 회원이다 |
-| `businessDate` | `"2026-10-14"` | 서빙한 영업일이다 |
-| `servedAt` | `"2026-10-14T10:15:30.123"` | 서버의 서빙 시각을 `LocalDateTime` 문자열로 적는다 |
-| `campaignId` | `"101"` | 카드의 캠페인이다 |
-| `storeId` | `"55"` | 카드의 가게다 |
-| `slotType` | `"ALLOCATION"` 또는 `"RELEVANCE"` | 배분 슬롯인지 관련성 슬롯인지 나타낸다 |
-| `slotPosition` | `"1"`~`"10"` | 피드에서의 카드 위치다 |
 
 | `billing:day` 필드 | 저장값 예 | 원본과 갱신 |
 |---|---|---|

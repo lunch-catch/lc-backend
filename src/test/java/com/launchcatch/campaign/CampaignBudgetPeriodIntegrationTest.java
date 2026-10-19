@@ -76,6 +76,9 @@ class CampaignBudgetPeriodIntegrationTest extends AbstractCampaignIntegrationTes
                 "delete from campaign_status_log where campaign_id in (select campaign_id from campaign where store_id = ?)",
                 storeId));
         createdStoreIds.forEach(storeId -> jdbc.update("delete from campaign where store_id = ?", storeId));
+        // pause가 StoreCampaignSummaryUpdater를 부르면서(#468) 쓴 요약도 store의 FK 자식이라 store보다 먼저 지운다.
+        createdStoreIds.forEach(storeId -> jdbc.update("delete from store_campaign_summary where store_id = ?", storeId));
+        createdStoreIds.forEach(storeId -> jdbc.update("delete from store where store_id = ?", storeId));
         createdOwnerIds.forEach(ownerId -> jdbc.update("delete from owner where owner_id = ?", ownerId));
     }
 
@@ -254,12 +257,22 @@ class CampaignBudgetPeriodIntegrationTest extends AbstractCampaignIntegrationTes
         return draftWithBudgetPeriod(ownerId, null, null, null);
     }
 
-    private Campaign draftWithBudgetPeriod(Long ownerId, Long dailyBudget, LocalDate startDate, LocalDate endDate) {
-        long storeId = System.nanoTime();
+    // campaignStatusService.pause가 StoreCampaignSummaryUpdater를 부르면서(#468) storeId가 store 테이블의 하드 FK를 걸어, 더는 임의의 가짜 ID를 쓸 수 없다.
+    private Long createStore(Long ownerId) {
+        LocalDateTime now = LocalDateTime.now();
+        jdbc.update("insert into store (owner_id, name, category_code, representative_name, created_at, updated_at) "
+                        + "values (?, ?, 'KOREAN', ?, ?, ?)",
+                ownerId, "campaign-budget-period-test-store-" + System.nanoTime(), "대표자", now, now);
+        Long storeId = jdbc.queryForObject("select store_id from store where owner_id = ?", Long.class, ownerId);
         createdStoreIds.add(storeId);
+        return storeId;
+    }
+
+    private Campaign draftWithBudgetPeriod(Long ownerId, Long dailyBudget, LocalDate startDate, LocalDate endDate) {
+        long storeId = createStore(ownerId);
         return Campaign.create(
                 ownerId, storeId,
-                DiscountTargetType.ALL, DiscountType.PERCENT, 10, null,
+                DiscountTargetType.ALL, DiscountType.AMOUNT, 10, null,
                 50, LocalTime.of(12, 0), LocalTime.of(13, 30),
                 null, null,
                 1000, TargetGender.ALL, List.of(AgeGroup.AGE_20S),

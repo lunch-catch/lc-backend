@@ -19,6 +19,9 @@
 | `POST` | `/v1/admin/templates/{templateId}/publish` | 템플릿 게시 | ADMIN, SUPER_ADMIN |
 | `PATCH` | `/v1/admin/templates/{templateId}/active` | 템플릿 활성화 관리 | ADMIN, SUPER_ADMIN |
 | `GET` | `/v1/owner/templates` | 점주 템플릿 목록 조회 | OWNER |
+| `POST` | `/v1/owner/campaigns/{campaignId}/poster:prepareUpload` | 포스터 이미지 업로드 URL 발급 | OWNER |
+| `POST` | `/v1/owner/campaigns/{campaignId}/poster` | 포스터 생성 | OWNER |
+| `GET` | `/v1/owner/campaigns/{campaignId}/poster` | 점주용 포스터 조회 | OWNER |
 | `GET` | `/v1/campaigns/{campaignId}/poster` | 사용자용 포스터 조회 | MEMBER |
 
 ## 템플릿 생성
@@ -56,7 +59,8 @@
     "versionNumber": 1,
     "status": "DRAFT",
     "html": "<div>...</div>",
-    "removedElements": ["script", "div[onclick]"]
+    "removedElements": ["script", "div[onclick]"],
+    "suggestedPrompts": ["배경을 더 밝게 해줘", "행사명 글자를 더 크게 해줘"]
   }
 }
 ```
@@ -69,6 +73,7 @@
 | `status` | string | 아니오 | `DRAFT`, `PUBLISHED`. 생성 직후는 항상 `DRAFT` |
 | `html` | string | 아니오 | 검증을 거쳐 저장된 HTML |
 | `removedElements` | array of string | 아니오 | 정화 과정에서 제거된 태그와 속성. 없으면 빈 배열 |
+| `suggestedPrompts` | array of string | 아니오 | 퀵 리플라이 버튼으로 보여줄 수정 요청 문장. 서버가 정한 고정 목록이라 비지 않는다. 생성과 수정, 같은 `requestId` 의 재요청에서 모두 같다. 버튼을 누르면 그 문장을 그대로 템플릿 수정의 `requestPrompt` 로 보낸다 |
 
 **오류**
 
@@ -356,6 +361,162 @@
 
 0개면 빈 배열을 돌려준다.
 
+## 포스터 이미지 업로드
+
+### `POST /v1/owner/campaigns/{campaignId}/poster:prepareUpload`
+
+포스터에 쓸 이미지를 올릴 presigned PUT URL을 발급합니다. 캠페인이 `DRAFT`이고 본인 소유일
+때만 가능합니다.
+
+**요청**
+
+```json
+{
+  "contentType": "image/jpeg",
+  "fileSize": 204800
+}
+```
+
+| 필드 | 타입 | 필수 | 설명 |
+|---|---|---|---|
+| `contentType` | string | 예 | 파일 MIME 타입입니다. image/jpeg, image/png만 허용합니다 |
+| `fileSize` | integer | 예 | 파일 크기(byte)입니다. 10MB(10485760)를 넘을 수 없습니다 |
+
+**응답** `200`
+
+```json
+{
+  "code": "SUCCESS",
+  "message": "요청이 성공적으로 처리되었습니다.",
+  "data": {
+    "objectKey": "campaigns/10/poster/5b3f6c2a-9e1d-4b7a-8f0a-1c2d3e4f5a6b.jpg",
+    "uploadUrl": "https://..."
+  }
+}
+```
+
+| 필드 | 타입 | null | 설명 |
+|---|---|---|---|
+| `objectKey` | string | 아니오 | 업로드할 객체 키입니다. 포스터 생성 요청에 그대로 보냅니다 |
+| `uploadUrl` | string | 아니오 | 이 주소로 파일을 직접 PUT 업로드합니다. 10분 안에 사용해야 합니다 |
+
+**오류**
+
+| 상태 | 코드 | 언제 |
+|---|---|---|
+| `400` | `COMMON-002` | `contentType`이 비었거나 `fileSize`가 비었다 |
+| `403` | `CAMPAIGN-001` | 점주 상태가 ACTIVE가 아니다 |
+| `403` | `CAMPAIGN-005` | 그 campaignId가 없거나 본인 소유가 아니다 |
+| `409` | `CAMPAIGN-006` | 캠페인이 DRAFT 상태가 아니다 |
+| `422` | `POSTER-017` | jpg, png가 아닌 파일 형식이다 |
+| `422` | `POSTER-018` | 파일 크기가 10MB를 넘는다 |
+
+## 포스터 생성
+
+### `POST /v1/owner/campaigns/{campaignId}/poster`
+
+`templateId`와 업로드를 마친 이미지의 `objectKey`로 포스터를 만듭니다. 캠페인에 이미
+포스터가 있으면 새로 만들지 않고 덮어씁니다. `eventName`(가게명)과 `discount`·`period`
+(쿠폰 조건과 집행 기간으로 서버가 만든 문구)는 서버가 채우고, `adLabel`은 템플릿에
+이미 채워져 있는 값을 그대로 둡니다.
+
+**요청**
+
+```json
+{
+  "templateId": 1,
+  "objectKey": "campaigns/10/poster/5b3f6c2a-9e1d-4b7a-8f0a-1c2d3e4f5a6b.jpg"
+}
+```
+
+| 필드 | 타입 | 필수 | 설명 |
+|---|---|---|---|
+| `templateId` | integer | 예 | 포스터에 쓸 템플릿 ID입니다. 게시되고 활성인 템플릿만 가능합니다 |
+| `objectKey` | string | 예 | prepareUpload로 받아 실제 업로드까지 마친 객체 키입니다 |
+
+**응답** `200`
+
+```json
+{
+  "code": "SUCCESS",
+  "message": "요청이 성공적으로 처리되었습니다.",
+  "data": {
+    "posterId": 1,
+    "campaignId": 10,
+    "templateId": 1,
+    "title": "분식집 - 가을 신메뉴",
+    "html": "<div>...</div>"
+  }
+}
+```
+
+| 필드 | 타입 | null | 설명 |
+|---|---|---|---|
+| `posterId` | integer | 아니오 | 포스터 ID입니다 |
+| `campaignId` | integer | 아니오 | 이 포스터가 속한 캠페인 ID입니다 |
+| `templateId` | integer | 아니오 | 포스터에 쓴 템플릿 ID입니다 |
+| `title` | string | 아니오 | 목록 검색과 정렬용 제목입니다. "{가게명} - {템플릿 이름}"으로 만든 뒤 100자로 잘라 저장한 값입니다 |
+| `html` | string | 아니오 | 5개 슬롯이 전부 채워진 완성 HTML입니다 |
+
+**오류**
+
+| 상태 | 코드 | 언제 |
+|---|---|---|
+| `400` | `COMMON-002` | `templateId`나 `objectKey`가 비었거나 `objectKey`가 1024자를 넘는다 |
+| `403` | `CAMPAIGN-001` | 점주 상태가 ACTIVE가 아니다 |
+| `403` | `CAMPAIGN-005` | 그 campaignId가 없거나 본인 소유가 아니다 |
+| `404` | `POSTER-005` | 템플릿을 찾을 수 없다 |
+| `409` | `CAMPAIGN-006` | 캠페인이 DRAFT 상태가 아니다 |
+| `409` | `POSTER-015` | 템플릿이 게시되지 않았거나 활성화되지 않았다 |
+| `422` | `POSTER-016` | 이미지가 실제로 업로드되지 않았다 |
+| `422` | `POSTER-017` | 업로드된 파일이 허용되지 않는 형식이다 |
+| `422` | `POSTER-018` | 업로드된 파일이 10MB를 넘는다 |
+| `422` | `POSTER-019` | 다른 캠페인이나 다른 경로를 가리키는 `objectKey`다 |
+
+## 점주용 포스터 조회
+
+### `GET /v1/owner/campaigns/{campaignId}/poster`
+
+점주가 본인 소유 캠페인에 저장된 포스터 HTML을 돌려준다. 조회 시점에 새로 만들지 않고 저장된 그대로 돌려준다.
+캠페인 상태와 무관하게 조회할 수 있다.
+
+**요청**
+
+| 이름 | 위치 | 타입 | 필수 | 설명 |
+|---|---|---|---|---|
+| `campaignId` | 경로 | integer | 예 | 포스터를 조회할 캠페인 ID |
+
+**응답** `200`
+
+```json
+{
+  "code": "SUCCESS",
+  "message": "요청이 성공적으로 처리되었습니다.",
+  "data": {
+    "posterId": 1,
+    "campaignId": 10,
+    "templateId": 1,
+    "title": "분식집 - 가을 신메뉴",
+    "html": "<div>...</div>"
+  }
+}
+```
+
+| 필드 | 타입 | null | 설명 |
+|---|---|---|---|
+| `posterId` | integer | 아니오 | 포스터 ID다 |
+| `campaignId` | integer | 아니오 | 이 포스터가 속한 캠페인 ID다 |
+| `templateId` | integer | 아니오 | 포스터에 쓴 템플릿 ID다 |
+| `title` | string | 아니오 | "{가게명} - {템플릿 이름}"으로 만든 제목이다 |
+| `html` | string | 아니오 | 저장된 포스터 HTML이다 |
+
+**오류**
+
+| 상태 | 코드 | 언제 |
+|---|---|---|
+| `403` | `CAMPAIGN-005` | 그 campaignId가 없거나 본인 소유가 아니다 |
+| `404` | `POSTER-021` | 이 캠페인에 아직 저장된 포스터가 없다 |
+
 ## 사용자용 포스터 조회
 
 ### `GET /v1/campaigns/{campaignId}/poster`
@@ -394,7 +555,7 @@
 
 | 상태 | 코드 | 언제 |
 |---|---|---|
-| `404` | `POSTER-015` | 캠페인이 없거나, `DRAFT`나 `SCHEDULED`라 비공개거나, 포스터가 저장돼 있지 않다. 세 경우를 구분해 알려주지 않는다 |
+| `404` | `POSTER-022` | 캠페인이 없거나, `DRAFT`나 `SCHEDULED`라 비공개거나, 포스터가 저장돼 있지 않다. 세 경우를 구분해 알려주지 않는다 |
 
 ## 오류 코드
 
@@ -417,4 +578,10 @@
 | `POSTER-012` | `503` | 템플릿 생성 요청이 몰리고 있습니다. 잠시 후 다시 시도해 주세요. |
 | `POSTER-013` | `422` | 요청한 문구로는 템플릿을 생성할 수 없습니다. 다른 표현으로 다시 시도해 주세요. |
 | `POSTER-014` | `429` | 템플릿 생성 요청이 너무 잦습니다. 잠시 후 다시 시도해 주세요. |
-| `POSTER-015` | `404` | 포스터를 찾을 수 없습니다. |
+| `POSTER-015` | `409` | 게시되지 않았거나 활성화되지 않은 템플릿으로는 포스터를 만들 수 없습니다. |
+| `POSTER-016` | `422` | 이미지가 실제로 업로드되지 않았습니다. |
+| `POSTER-017` | `422` | jpg, png 파일만 업로드할 수 있습니다. |
+| `POSTER-018` | `422` | 파일 크기는 10MB를 넘을 수 없습니다. |
+| `POSTER-019` | `422` | 이 캠페인의 업로드 요청으로 받은 객체 키가 아닙니다. |
+| `POSTER-021` | `404` | 이 캠페인에 저장된 포스터가 없습니다. |
+| `POSTER-022` | `404` | 포스터를 조회할 수 없습니다. |

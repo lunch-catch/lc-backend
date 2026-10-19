@@ -9,6 +9,8 @@ import org.springframework.data.jpa.repository.Lock;
 
 public interface CouponInventoryRepository extends JpaRepository<CouponInventory, Long> {
 
+    boolean existsByCouponEventIdAndStatus(Long couponEventId, CouponInventoryStatus status);
+
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     Optional<CouponInventory> findFirstByCouponEventIdAndStatusOrderBySequenceNoAsc(
             Long couponEventId, CouponInventoryStatus status);
