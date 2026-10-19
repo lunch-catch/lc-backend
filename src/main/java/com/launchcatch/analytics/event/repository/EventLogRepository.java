@@ -1,5 +1,6 @@
 package com.launchcatch.analytics.event.repository;
 
+import com.launchcatch.analytics.event.CampaignEventCounts;
 import com.launchcatch.analytics.event.entity.EventLogEntry;
 import java.nio.ByteBuffer;
 import java.sql.PreparedStatement;
@@ -28,10 +29,27 @@ public class EventLogRepository {
             WHERE occurred_at >= ? AND occurred_at < ? AND member_id IS NOT NULL
             """;
 
+    private static final String COUNT_CAMPAIGN_EVENTS = """
+            SELECT COUNT(CASE WHEN event_type = 'impression' THEN 1 END) AS impression_count,
+                   COUNT(CASE WHEN event_type = 'wish' THEN 1 END) AS wish_count,
+                   COUNT(CASE WHEN event_type = 'pass' THEN 1 END) AS pass_count,
+                   COUNT(CASE WHEN event_type = 'issue' THEN 1 END) AS issued_count,
+                   COUNT(CASE WHEN event_type = 'redeem' THEN 1 END) AS redeem_count
+            FROM event_log
+            WHERE campaign_id = ? AND occurred_at >= ? AND occurred_at < ?
+            """;
+
     private final JdbcTemplate jdbc;
 
     public EventLogRepository(JdbcTemplate jdbc) {
         this.jdbc = jdbc;
+    }
+
+    public CampaignEventCounts countCampaignEvents(Long campaignId, LocalDate from, LocalDate to) {
+        return jdbc.queryForObject(COUNT_CAMPAIGN_EVENTS,
+                (rs, index) -> new CampaignEventCounts(rs.getLong("impression_count"), rs.getLong("wish_count"),
+                        rs.getLong("pass_count"), rs.getLong("issued_count"), rs.getLong("redeem_count")),
+                campaignId, Timestamp.valueOf(from.atStartOfDay()), Timestamp.valueOf(to.plusDays(1).atStartOfDay()));
     }
 
     // 영업일 하루(KST 자정부터 다음 자정 전까지)에 이벤트가 기록된 회원을 중복 없이 센다
