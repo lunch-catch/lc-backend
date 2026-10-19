@@ -1,6 +1,6 @@
 # 사용자와 회원 관리 API
 
-FR-007~FR-009, FR-059~FR-062, FR-074~FR-075, FR-084~FR-088, FR-091을 기준으로 한다. 공통 인증과 토큰 계약은 `auth-api-spec.md`, 공통 규약은 `api-spec.md`를 따른다. 서버가 하는 일과 그렇게 정한 이유는 설계서 [member-api-design.md](../design/member/member-api-design.md)에 있다. 저장 위치 API(`/v1/member-profiles/location`)는 아직 이 저장소의 명세에 적지 않았다.
+FR-007~FR-009, FR-059~FR-063, FR-074~FR-075, FR-084~FR-088, FR-090~FR-091을 기준으로 한다. 공통 인증과 토큰 계약은 `auth-api-spec.md`, 공통 규약은 `api-spec.md`를 따른다. 서버가 하는 일과 그렇게 정한 이유는 설계서 [member-api-design.md](../design/member/member-api-design.md)에 있다.
 
 구현 범위는 아래 "API 목록"의 구현 대상 표이며, 그 밖의 API는 "구현 제외" 절에 이유와 함께 모아 둔다. 구현 제외로 둔 것은 이번 계약에 포함하지 않으며 다시 채택하려면 해당 절의 확정 항목을 먼저 정한다.
 
@@ -15,6 +15,9 @@ FR-007~FR-009, FR-059~FR-062, FR-074~FR-075, FR-084~FR-088, FR-091을 기준으�
 | `PUT /v1/members/me/onboarding` | MEMBER | 63 | 성별, 연령대, 동의 입력 |
 | `GET /v1/members/me` | MEMBER | 88 | 내 프로필 조회 |
 | `PATCH /v1/members/me` | MEMBER | 87, 90 | 닉네임과 동의 수정 |
+| `PUT /v1/member-profiles/location` | MEMBER | 66, 93 | 대표 저장 위치를 설정하거나 대체함 |
+| `GET /v1/member-profiles/location` | MEMBER | 93 | 대표 저장 위치를 조회함 |
+| `DELETE /v1/member-profiles/location` | MEMBER | 93 | 대표 저장 위치를 삭제함 |
 | `POST /v1/members/me:withdraw` | MEMBER | 89 | 카카오 재인증 후 탈퇴 |
 | `GET`·`POST /webhook/kakao/unlink` | 공개 (카카오 호출) | 89 연계 | 카카오가 통보하는 연결 해제 |
 | `GET /v1/admin/members` | ADMIN, SUPER_ADMIN | 11 | 사용자 목록과 검색 |
@@ -37,6 +40,18 @@ FR-007~FR-009, FR-059~FR-062, FR-074~FR-075, FR-084~FR-088, FR-091을 기준으�
 
 `PUT /v1/members/me/onboarding`은 `gender`(`MALE`, `FEMALE`, `OTHER`), `ageGroup`(`AGE_20S`, `AGE_30S`, `AGE_40S`, `AGE_50_PLUS`), `locationOptIn`, `notificationOptIn`을 모두 받는다. 성별과 연령대가 없으면 완료할 수 없다. 위치 동의를 거부한 회원은 가입할 수 있지만 피드와 지도 이용 제한을 안내받는다. 성별과 연령대는 온보딩 이후 수정하는 API가 없다. `SUSPENDED` 회원도 온보딩할 수 있다.
 
+### 입력 필드
+
+| 필드 | 타입 | 온보딩 PUT | 내 정보 PATCH |
+|---|---|---|---|
+| `gender` | 문자열 enum | 필수, null 불가 | 수정하지 않음 |
+| `ageGroup` | 문자열 enum | 필수, null 불가 | 수정하지 않음 |
+| `notificationOptIn` | 불리언 | 필수, null 불가 | 선택, 생략·null이면 유지 |
+| `locationOptIn` | 불리언 | 필수, null 불가 | 선택, 생략·null이면 유지 |
+| `nickname` | 문자열 | 받지 않음 | 선택, 1~20자이며 공백만 있는 값은 거절함 |
+
+PATCH는 수정할 값이 최소 하나 있어야 한다. 동의 값을 다시 같은 값으로 보내면 동의 시각을 바꾸지 않는다. 두 API 모두 아래의 내 정보 응답과 같은 모양으로 `200`을 반환한다.
+
 가입 진행 상태는 별도 회원 상태값이 아니라 `member_profile.onboarding_completed_at`으로 판단하며, 응답은 `onboardingCompleted` 불리언을 제공한다. 미완료 회원은 다음 로그인 뒤 온보딩 화면으로 이동한다.
 
 응답의 `feedAvailable`은 `onboardingCompleted`와 `locationOptIn`이 모두 `true`일 때만 `true`다. 온보딩을 마치지 않았거나 위치정보 수집에 동의하지 않으면 `false`다(FR-060: 온보딩을 마치지 않으면 피드를 이용할 수 없다).
@@ -45,7 +60,7 @@ FR-007~FR-009, FR-059~FR-062, FR-074~FR-075, FR-084~FR-088, FR-091을 기준으�
 
 **2026-10-09 변경:** `feedAvailable`의 정의를 `locationOptIn`과 같은 값에서 `onboardingCompleted && locationOptIn`으로 바로잡았다. FR-060이 온보딩을 마치지 않으면 피드를 이용할 수 없다고 정하고, 온보딩 전에도 내 정보 수정으로 `locationOptIn`을 바꿀 수 있어서 두 정의가 달라지는 경우가 있었다.
 
-`GET /v1/members/me`과 `PATCH /v1/members/me`은 닉네임, 성별, 연령대, 두 동의 상태와 `onboardingCompleted`를 다룬다. 조회 응답에는 읽기 전용 nullable `profileImageUrl`을 포함한다. 닉네임은 1~20자만 검증하고 허용 패턴은 없다. 닉네임과 프로필 이미지는 카카오에서 최초 가입과 탈퇴 뒤 재가입 때 가져오고, 이후 사용자가 수정할 수 있는 것은 닉네임뿐이다.
+`GET /v1/members/me`과 `PATCH /v1/members/me`은 닉네임, 성별, 연령대, 두 동의 상태와 `onboardingCompleted`를 다룬다. 조회 응답에는 읽기 전용 nullable `profileImageUrl`을 포함한다. 닉네임은 1~20자와 공백만 있는 값의 금지를 검증하며 별도 문자 종류 제한은 없다. 닉네임과 프로필 이미지는 카카오에서 최초 가입과 탈퇴 뒤 재가입 때 가져오고, 이후 사용자가 수정할 수 있는 것은 닉네임뿐이다.
 
 ```json
 {
@@ -84,6 +99,65 @@ FR-007~FR-009, FR-059~FR-062, FR-074~FR-075, FR-084~FR-088, FR-091을 기준으�
 | `400` | `MEMBER-001` | 이미 탈퇴한 회원 |
 | `409` | `MEMBER-002` | 이미 온보딩을 완료함 (온보딩 API) |
 
+## 대표 저장 위치
+
+회원당 한 개의 대표 위치를 제공한다. 사용자는 인증 쿠키로 식별하며 요청에 `memberId`를 보내지 않는다. 여러 위치를 추가하거나 목록으로 관리하는 API는 제공하지 않는다.
+
+### `PUT /v1/member-profiles/location`
+
+위치 전체를 대체한다. 온보딩 전에도 저장할 수 있고 위치 수집 동의를 저장의 선행 조건으로 검사하지 않는다.
+
+| 필드 | 타입 | 필수·null | 제약과 동작 |
+|---|---|---|---|
+| `locationNickname` | 문자열 | 선택, null 허용 | 최대 50자, 생략·null이면 기존 별칭을 비움 |
+| `roadAddress` | 문자열 | 선택, null 허용 | 최대 255자, 생략·null이면 기존 주소를 비움 |
+| `latitude` | 숫자 | 필수, null 불가 | -90 이상 90 이하 |
+| `longitude` | 숫자 | 필수, null 불가 | -180 이상 180 이하 |
+
+주소 문자열만 보내는 요청은 받지 않는다. 주소 검색을 사용하면 검색 결과의 좌표를 함께 보내야 한다. 위치 동의가 없으면 클라이언트는 GPS를 수집하지 않고 주소 검색으로 선택한 좌표를 보낼 수 있다. 서버는 좌표가 GPS인지 주소 검색 결과인지 구분하지 않는다.
+
+```json
+{
+  "locationNickname": "회사",
+  "roadAddress": "서울특별시 강남구 테헤란로 1",
+  "latitude": 37.4979000,
+  "longitude": 127.0276000
+}
+```
+
+성공하면 아래 네 필드를 `data`에 담은 `200`을 반환한다. 좌표는 저장 위치의 정밀도를 유지하며 노출 로그에 적용하는 소수점 3자리 반올림 규칙을 적용하지 않는다.
+
+### `GET /v1/member-profiles/location`
+
+본문과 쿼리 없이 현재 위치를 조회한다. 응답은 다음과 같다.
+
+```json
+{
+  "code": "SUCCESS",
+  "message": "요청이 성공적으로 처리되었습니다.",
+  "data": {
+    "locationNickname": "회사",
+    "roadAddress": "서울특별시 강남구 테헤란로 1",
+    "latitude": 37.4979000,
+    "longitude": 127.0276000
+  }
+}
+```
+
+응답 필드의 타입은 PUT 입력과 같으며 모두 null을 허용한다. 프로필이나 저장 위치가 없으면 네 필드가 모두 `null`인 `200`이다.
+
+### `DELETE /v1/member-profiles/location`
+
+본문 없이 삭제하며 `204`를 반환한다. 위치가 없거나 이미 삭제됐어도 같은 응답이다. 온보딩 완료 상태와 위치 수집 동의는 유지한다. 저장 위치를 지우면 현재 위치를 얻지 못한 피드의 대체 위치도 없어진다. 피드의 위치 선택 규칙은 [피드 명세](./feed-api-spec.md)를 따른다.
+
+| 응답 | 코드 | 언제 |
+|---|---|---|
+| `400` | `COMMON-002` | PUT의 좌표 누락·범위 또는 문자열 길이 검증 실패 |
+| `400` | `COMMON-003` | PUT의 요청 본문을 해석할 수 없음 |
+| `400` | `MEMBER-001` | PUT 처리 중 이미 탈퇴한 회원임이 확인됨 |
+| `401` | `AUTH-005` | 인증이 없거나 유효하지 않음 |
+| `403` | `AUTH-006` | MEMBER 역할이 아님 |
+
 ## 탈퇴
 
 `POST /v1/members/me:withdraw`는 카카오 재인증(`GET /v1/auth/kakao/authorize?reauth=true`, `prompt=login`)에서 받은 `authorizationCode`와 `state`, 선택 `reason`(255자 이하)을 받는다. callback의 state는 재인증을 시작한 탭의 `sessionStorage` 값과 먼저 대조한다. 서버는 카카오 로그인과 같은 검증을 하고, 재인증한 카카오 계정이 현재 로그인한 회원의 계정인지 확인한다.
@@ -99,7 +173,7 @@ FR-007~FR-009, FR-059~FR-062, FR-074~FR-075, FR-084~FR-088, FR-091을 기준으�
 1. 재인증 코드를 검증한다.
 2. 회원을 `WITHDRAWN`으로 바꾸고 개인정보를 즉시 비식별 처리한다. 행은 남긴다(소프트 삭제).
 3. Refresh Token을 폐기하고 그 전에 받은 Access Token도 막으며, `accessToken`과 `refreshToken` 쿠키를 `Max-Age=0`으로 만료한다.
-4. 카카오 연결 해제는 응답 뒤에 처리한다. 해제가 실패해도 탈퇴는 완료로 응답하고 서버가 나중에 다시 시도한다. 프론트가 따로 할 일은 없다.
+4. DB에 탈퇴를 반영한 뒤 카카오 연결 해제를 요청한다. 해제가 실패해도 탈퇴는 완료로 응답하고 서버가 나중에 다시 시도한다. 프론트가 따로 할 일은 없다.
 
 연결 해제의 처리 순서와 재시도는 설계서에 있다.
 
@@ -108,6 +182,7 @@ FR-007~FR-009, FR-059~FR-062, FR-074~FR-075, FR-084~FR-088, FR-091을 기준으�
 | `204` | | 탈퇴 완료 |
 | `401` | `AUTH-007` | 카카오 재인증 정보가 유효하지 않음(`state` 불일치, 인가 코드 검증 실패 등) |
 | `400` | `MEMBER-001` | 이미 탈퇴한 회원 |
+| `503` | `AUTH-002` | 인증 토큰을 폐기하지 못함 |
 
 ### `GET`·`POST /webhook/kakao/unlink`
 
@@ -299,7 +374,7 @@ V51 > 레포 마이그레이션 > 문서 순서(`api-spec.md`)를 따르되, 아
 | --- | --- | --- | --- |
 | FR-059, FR-084 | 닉네임과 프로필 이미지는 최초 가입 시에만 동기화 | 탈퇴 뒤 재가입 때도 카카오에서 다시 가져온다 | 탈퇴 때 닉네임을 `탈퇴한 회원`으로, 프로필 이미지를 `NULL`로 비우기 때문이다 |
 | FR-084 | 프로필 사진을 수정한다 | 프로필 사진 수정 API를 두지 않는다. 수정은 닉네임만 | 사진은 카카오 선택 동의로만 수집한다 |
-| FR-084 | 닉네임이 허용 패턴을 통과하지 못하면 수정 실패 | 1~20자만 검증하고 허용 패턴은 없다 | 패턴 정의가 V51에 없다 |
+| FR-084 | 닉네임이 허용 패턴을 통과하지 못하면 수정 실패 | 1~20자와 공백만 있는 값의 금지를 검증한다. 문자 종류는 제한하지 않는다 | 구현의 입력 검증을 따른다 |
 | FR-085 | 닉네임, 이메일, 휴대폰, 프로필 이미지를 표시 | 이메일과 휴대폰은 수신, 저장, 응답하지 않는다 | 카카오에서 받지 않고 스키마에 컬럼이 없다 |
 | FR-086 | 탈퇴 사유를 선택 데이터로 받음 | 받되 저장하지 않고 처리 뒤 폐기한다 | 탈퇴 처리의 참고 입력일 뿐이다 |
 | FR-086 | 법정 기간 데이터 보존 | 보존 기간과 대상은 미정이며 파기 배치를 구현하지 않는다 | V51에 수치가 없다. 설계서의 미정 항목 참고 |
