@@ -67,6 +67,8 @@ class TemplateCreateServiceTest {
             "행사명을 중앙에서 오른쪽으로 1cm 옮겨줘",
             "이미지 모서리를 더 둥글게 해줘");
     private static final Clock FIXED_CLOCK = Clock.fixed(Instant.parse("2026-10-08T01:00:00Z"), ZoneOffset.UTC);
+    // 실제 설계값(V51)이다. application.yml의 campaign.template-max-count는 임시 상향값(#529)이라 이 테스트와 무관하다.
+    private static final int MAX_TEMPLATES = 10;
 
     @Mock
     private TemplateRepository templateRepository;
@@ -87,7 +89,7 @@ class TemplateCreateServiceTest {
 
     @SuppressWarnings("unchecked")
     @BeforeEach
-    void setUp() {
+    void setUp() throws Exception {
         service = new TemplateCreateService(
                 templateRepository,
                 templateVersionRepository,
@@ -98,6 +100,9 @@ class TemplateCreateServiceTest {
                 new TemplateGenerationRateLimiter(redisTemplate),
                 transactionTemplate,
                 FIXED_CLOCK);
+        Field maxTemplatesField = TemplateCreateService.class.getDeclaredField("maxTemplates");
+        maxTemplatesField.setAccessible(true);
+        maxTemplatesField.setInt(service, MAX_TEMPLATES);
         lenient().when(templateVersionRepository.findByRequestId(REQUEST_ID)).thenReturn(Optional.empty());
         lenient().when(transactionTemplate.execute(any())).thenAnswer(invocation -> {
             TransactionCallback<?> callback = invocation.getArgument(0);
@@ -121,7 +126,7 @@ class TemplateCreateServiceTest {
     void 검증을_통과하면_저장한다() throws Exception {
         처음_보는_requestId로_설정한다();
         when(templateRepository.count()).thenReturn(9L);
-        when(templateQuotaRepository.tryReserve(TemplateCreateService.MAX_TEMPLATES)).thenReturn(1);
+        when(templateQuotaRepository.tryReserve(MAX_TEMPLATES)).thenReturn(1);
         when(templateHtmlGenerator.generate("가을 느낌")).thenReturn(VALID_HTML + "<script>alert(1)</script>");
         when(templateRepository.saveAndFlush(any(Template.class))).thenAnswer(invocation -> {
             Template saved = invocation.getArgument(0);
@@ -201,7 +206,7 @@ class TemplateCreateServiceTest {
         when(templateVersionRepository.findByRequestId(REQUEST_ID))
                 .thenReturn(Optional.empty(), Optional.of(existing));
         when(templateRepository.count()).thenReturn(0L);
-        when(templateQuotaRepository.tryReserve(TemplateCreateService.MAX_TEMPLATES)).thenReturn(1);
+        when(templateQuotaRepository.tryReserve(MAX_TEMPLATES)).thenReturn(1);
         when(templateHtmlGenerator.generate("가을 느낌")).thenReturn(VALID_HTML);
         when(templateRepository.saveAndFlush(any(Template.class)))
                 .thenThrow(new DataIntegrityViolationException("uk_template_version_request_id"));
@@ -218,7 +223,7 @@ class TemplateCreateServiceTest {
     void 저장_시점_제약_위반이_requestId_충돌이_아니면_그대로_던진다() {
         처음_보는_requestId로_설정한다();
         when(templateRepository.count()).thenReturn(0L);
-        when(templateQuotaRepository.tryReserve(TemplateCreateService.MAX_TEMPLATES)).thenReturn(1);
+        when(templateQuotaRepository.tryReserve(MAX_TEMPLATES)).thenReturn(1);
         when(templateHtmlGenerator.generate("가을 느낌")).thenReturn(VALID_HTML);
         DataIntegrityViolationException violation = new DataIntegrityViolationException("다른 제약 위반");
         when(templateRepository.saveAndFlush(any(Template.class))).thenThrow(violation);
@@ -246,7 +251,7 @@ class TemplateCreateServiceTest {
     void 저장_시점에_자리를_못_받으면_거부한다() {
         처음_보는_requestId로_설정한다();
         when(templateRepository.count()).thenReturn(9L);
-        when(templateQuotaRepository.tryReserve(TemplateCreateService.MAX_TEMPLATES)).thenReturn(0);
+        when(templateQuotaRepository.tryReserve(MAX_TEMPLATES)).thenReturn(0);
         when(templateHtmlGenerator.generate("가을 느낌")).thenReturn(VALID_HTML);
 
         assertThatThrownBy(() -> service.create("가을 신메뉴", "가을 느낌", REQUEST_ID, ADMIN_ID))
