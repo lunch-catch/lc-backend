@@ -30,7 +30,8 @@ A-04 카테고리·지역별 분해와 A-08 점주별 상위 소진도 구현하
 | 점주 일별 리포트 | `OwnerReportQueryService`가 저장된 행을 조회한다. 채우는 `CampaignReportStep`은 없다 |
 | 이벤트 로그 기반 캠페인 성과 | `CampaignFunnelService`가 요청 시 자기 로그를 집계한다. A-03과 별개다 |
 | A-03 | 전용 테이블의 집계·조회는 PR #461 브랜치에 있다. 아직 `develop`에는 없다 |
-| A-09, A-10, A-12, A-14, 상세 캠페인 리포트와 변경 이력 | 저장 구조와 설계는 있으나 해당 조회·집계 구현은 없다 |
+| A-09, A-10 | `InvalidMetricsStep`, `NotBilledMetricsStep`, `FraudMetricsStep`과 조회가 구현돼 있다 |
+| A-12, A-14, 상세 캠페인 리포트와 변경 이력 | 저장 구조와 설계는 있으나 해당 조회·집계 구현은 없다 |
 | 이벤트 로그 13개월 삭제 | 설계만 있다. `EventLogRetentionJob` 구현은 없다 |
 
 ## 2. 공통 원칙
@@ -134,7 +135,7 @@ validCount >= minimumImpressions
 topMembersShare > concentrationShare
 ```
 
-설계의 초기 설정은 상위 5명, 점유율 0.5, 최소 유효 노출 100건이며 analytics의 설정값으로 둔다. 현재 `develop`에는 경고 집계 단계와 이 설정 구현이 없다. 기간 조회는 하루라도 집중 경고가 있으면 `true`이고 `topMembersShare`는 기간 중 가장 높은 하루 값이다.
+설계의 초기 설정은 상위 5명, 점유율 0.5, 최소 유효 노출 100건이며 analytics의 설정값으로 둔다. 설정은 `AnalyticsFraudProperties`이고 범위를 벗어나면 기동이 실패한다. 판정은 `FraudMetricsStep`이 영업일마다 한다. 기간 조회는 하루라도 집중 경고가 있으면 `true`이고 `topMembersShare`는 기간 중 가장 높은 하루 값이다.
 
 무효 비율은 `invalidCount / validCount`로 계산한다(요구사항 BR-054, 2026-10-19). `validCount`가 0이면 `null`이다. 비율은 1을 넘을 수 있다.
 
@@ -148,6 +149,8 @@ AND (validCount == 0 OR invalidCount / validCount > 0.20)
 유효 100·무효 21이면 비율은 21%라 경고한다. `invalidCount / (validCount + invalidCount)`였다면 약 17.4%라 경고하지 않았다. 분모가 바뀌면 같은 데이터의 경고 여부가 바뀌므로 화면 계약의 최종 확인(R-25)은 남아 있다.
 
 날짜별로 판정하므로 한 달에 걸쳐 조금씩 나눠 소진시키는 공격은 놓칠 수 있다. 기간 전체의 회원별 노출을 보관하지 않기 때문이다. 화면은 무효 비율 경고와 함께 본다.
+
+A-09와 A-10의 `from`, `to`는 필수이고 기간은 최대 31일이다. A-10은 `daily_campaign_fraud_analytics`를 캠페인마다 기간 합계 한 행으로 읽은 뒤 서비스에서 경고를 판정하고 정렬하고 쪽을 나눈다. 무효 비율 식을 SQL에 한 번 더 쓰지 않으려는 선택이다. 경고가 걸린 캠페인은 많아야 수천이라 메모리에서 처리한다. 비율이 없는 경고(유효 노출 0)는 `invalidRatio` 내림차순에서 맨 앞에 둔다. 응답에 `storeId`는 없다. 분석이 가게를 소유하지 않고 화면이 쓰지 않는다.
 
 ## 8. 회원 사용 통계
 
