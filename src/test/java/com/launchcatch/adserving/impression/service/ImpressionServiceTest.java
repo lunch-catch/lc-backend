@@ -49,6 +49,10 @@ class ImpressionServiceTest {
     private static final Long OTHER_MEMBER = 3002L;
     private static final UUID SERVE_ID = UUID.fromString("01925f3a-7c1e-7b2a-9d4e-3f5a6b7c8da0");
     private static final LocalDate SERVED_DATE = LocalDate.of(2026, 10, 1);
+    private static final LocalDate RECEIVED_DATE = LocalDate.of(2026, 10, 2);
+    // 23:50 에 내려준 카드를 자정을 넘겨 00:10 에 받는다
+    private static final Instant LATE_SERVED_AT = LocalDateTime.of(2026, 10, 1, 23, 50).atZone(ClockConfig.ZONE).toInstant();
+    private static final Instant AFTER_MIDNIGHT = LocalDateTime.of(2026, 10, 2, 0, 10).atZone(ClockConfig.ZONE).toInstant();
     private static final Instant SERVED_AT = LocalDateTime.of(2026, 10, 1, 10, 15, 30).atZone(ClockConfig.ZONE).toInstant();
     private static final Instant NOW = LocalDateTime.of(2026, 10, 1, 10, 15, 32).atZone(ClockConfig.ZONE).toInstant();
     private static final ServeRecord RECORD = new ServeRecord(SERVE_ID, MEMBER_ID, 101L, 55L, SlotType.ALLOCATION, 1, SERVED_AT);
@@ -63,6 +67,15 @@ class ImpressionServiceTest {
     private final ImpressionService service = new ImpressionService(serveRecordRepository, impressionLogRepository,
             adCandidateRepository, impressionCountRepository, pointDeductor, meterRegistry, eventPublisher,
             Clock.fixed(NOW, ClockConfig.ZONE));
+
+    private final ImpressionService afterMidnight = new ImpressionService(serveRecordRepository, impressionLogRepository,
+            adCandidateRepository, impressionCountRepository, pointDeductor, meterRegistry, eventPublisher,
+            Clock.fixed(AFTER_MIDNIGHT, ClockConfig.ZONE));
+
+    private void givenLateRecord() {
+        when(serveRecordRepository.findById(SERVE_ID)).thenReturn(Optional.of(
+                new ServeRecord(SERVE_ID, MEMBER_ID, 101L, 55L, SlotType.ALLOCATION, 1, LATE_SERVED_AT)));
+    }
 
     private static ImpressionRequest request(Long campaignId) {
         return new ImpressionRequest(SERVE_ID.toString(), campaignId,
@@ -127,7 +140,7 @@ class ImpressionServiceTest {
         }
 
         @Test
-        void 유효하면_serve_기록의_캠페인과_서빙한_영업일로_차감한다() {
+        void 유효하면_serve_기록의_캠페인과_받은_영업일로_차감한다() {
             when(serveRecordRepository.findById(SERVE_ID)).thenReturn(Optional.of(RECORD));
 
             ImpressionResponse response = service.record(MEMBER_ID, request(101L));
@@ -162,6 +175,29 @@ class ImpressionServiceTest {
             ImpressionResponse response = service.record(MEMBER_ID, request(101L));
 
             assertThat(response.validity()).isEqualTo(ImpressionValidity.VALID);
+            assertThat(saved().isSoldOut()).isTrue();
+            verifyNoInteractions(pointDeductor);
+        }
+
+        // 정산이 받은 날로 차감한다(#497). 전날 예산은 00:00 에 해제가 끝났다
+        @Test
+        void 자정을_넘겨_받은_노출은_받은_날로_판정하고_차감한다() {
+            givenLateRecord();
+
+            afterMidnight.record(MEMBER_ID, request(101L));
+
+            assertThat(saved().getBusinessDate()).isEqualTo(RECEIVED_DATE);
+            verify(pointDeductor).deduct(SERVE_ID, 101L, RECEIVED_DATE);
+        }
+
+        @Test
+        void 자정을_넘겨_받은_노출의_쿠폰_소진은_받은_날의_후보로_본다() {
+            givenLateRecord();
+            when(adCandidateRepository.existsByIdBusinessDateAndIdCampaignIdAndSoldOutAtIsNotNull(RECEIVED_DATE, 101L))
+                    .thenReturn(true);
+
+            afterMidnight.record(MEMBER_ID, request(101L));
+
             assertThat(saved().isSoldOut()).isTrue();
             verifyNoInteractions(pointDeductor);
         }
@@ -222,7 +258,7 @@ class ImpressionServiceTest {
     class Counter {
 
         @Test
-        void 처음_저장된_유효_노출은_커밋된_뒤에_서빙한_영업일의_카운터를_올린다() {
+        void 처음_저장된_유효_노출은_커밋된_뒤에_받은_영업일의_카운터를_올린다() {
             when(serveRecordRepository.findById(SERVE_ID)).thenReturn(Optional.of(RECORD));
 
             service.record(MEMBER_ID, request(101L));
@@ -230,6 +266,16 @@ class ImpressionServiceTest {
             verifyNoInteractions(impressionCountRepository);
             commit();
             verify(impressionCountRepository).increment(SERVED_DATE, 101L);
+        }
+
+        @Test
+        void 자정을_넘겨_받은_노출은_받은_날의_카운터를_올린다() {
+            givenLateRecord();
+
+            afterMidnight.record(MEMBER_ID, request(101L));
+            commit();
+
+            verify(impressionCountRepository).increment(RECEIVED_DATE, 101L);
         }
 
         @Test
