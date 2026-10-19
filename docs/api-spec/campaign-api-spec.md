@@ -15,6 +15,7 @@
 |---|---|---|---|
 | POST | `/v1/owner/campaigns` | 캠페인 등록 1단계(쿠폰 조건) | OWNER 인증, ACTIVE 상태 |
 | PATCH | `/v1/owner/campaigns/{campaignId}` | 캠페인 등록 3·4단계(노출 대상, 하루 예산과 집행 기간) | OWNER 인증, ACTIVE 상태, 본인 소유 캠페인 |
+| POST | `/v1/owner/campaigns/{campaignId}:activate` | 캠페인 활성화 | OWNER 인증, ACTIVE 상태, 본인 소유 캠페인 |
 | POST | `/v1/owner/campaigns/{campaignId}:pause` | 캠페인 중단 | OWNER 인증, ACTIVE 상태, 본인 소유 캠페인 |
 | POST | `/v1/owner/campaigns/{campaignId}:resume` | 캠페인 재개 | OWNER 인증, ACTIVE 상태, 본인 소유 캠페인 |
 | GET | `/v1/owner/campaigns` | 캠페인 목록 조회 | OWNER 인증 |
@@ -172,6 +173,77 @@
 | 422 | CAMPAIGN-007 | `dailyBudget`이 최소 하루 예산 미만 |
 | 422 | CAMPAIGN-008 | 집행 기간이 1일 미만이거나 `endDate`가 `startDate`보다 이전 |
 | 422 | CAMPAIGN-009 | `startDate`가 오늘 다음 날 이전 |
+| 500 | COMMON-001 | 처리하지 못한 서버 오류 |
+
+## 캠페인 활성화
+
+`POST /v1/owner/campaigns/{campaignId}:activate`
+
+점주가 `DRAFT` 상태 캠페인의 활성화를 요청한다. 포스터가 있는지 확인한 뒤 자동 검수를
+거친다. 검수를 통과하면 `SCHEDULED`로 바뀌고, 집행 시작일 00:00에 시스템이 `ACTIVE`로
+전환한다. 검수에 실패하면 캠페인은 `DRAFT`로 남고 실패 사유를 응답에 담는다.
+
+### 요청
+
+본문이 없다.
+
+### 성공 응답
+
+`200`. 검수 결과에 따라 `status`가 다르다.
+
+검수를 통과하면:
+
+```json
+{
+  "code": "SUCCESS",
+  "message": "요청이 성공적으로 처리되었습니다.",
+  "data": {
+    "campaignId": 501,
+    "status": "SCHEDULED",
+    "reasons": []
+  }
+}
+```
+
+검수에 실패하면:
+
+```json
+{
+  "code": "SUCCESS",
+  "message": "요청이 성공적으로 처리되었습니다.",
+  "data": {
+    "campaignId": 501,
+    "status": "DRAFT",
+    "reasons": ["AD_LABEL_MISSING", "RESOLUTION_TOO_LOW"]
+  }
+}
+```
+
+| 필드 | 타입 | 필수 | null 허용 | 설명 |
+|---|---|---|---|---|
+| campaignId | integer | 예 | 아니요 | 활성화를 요청한 캠페인 ID |
+| status | string | 예 | 아니요 | 처리 뒤의 캠페인 상태. 검수를 통과하면 `SCHEDULED`, 실패하면 `DRAFT` |
+| reasons | array\<string\> | 예 | 아니요 | 검수 실패 사유 코드 목록. 통과했으면 빈 배열. 값은 서버 enum 코드 원문이다(아래 표) |
+
+| reasons 값 | 뜻 |
+|---|---|
+| AD_LABEL_MISSING | 광고 표시 문구가 없음 |
+| FORBIDDEN_EXPRESSION | 금칙 표현이 포함됨 |
+| IMAGE_UNREADABLE | 이미지를 읽을 수 없음 |
+| RESOLUTION_TOO_LOW | 이미지 해상도가 최소값 미만 |
+| TEXT_RATIO_EXCEEDED | 이미지 속 글자 비율이 최대값 초과 |
+| MODERATION_TOOL_FAILURE | 검수 도구 장애 |
+
+**화면 문구는 이 표를 보고 프론트가 붙인다.** 서버는 사유 코드를 번역하지 않는다.
+
+### 오류
+
+| HTTP | 코드 | 조건 |
+|---|---|---|
+| 403 | CAMPAIGN-001 | 점주 상태가 ACTIVE가 아님 |
+| 403 | CAMPAIGN-005 | 그 campaignId가 없거나 본인 소유가 아님(존재 여부를 알려주지 않으려고 같은 코드로 묶는다, `api-spec.md`) |
+| 404 | POSTER-021 | 이 캠페인에 저장된 포스터가 없음(`poster-api-spec.md`) |
+| 409 | CAMPAIGN-006 | 캠페인 상태가 `DRAFT`가 아님 |
 | 500 | COMMON-001 | 처리하지 못한 서버 오류 |
 
 ## 캠페인 중단
