@@ -2,7 +2,7 @@ package com.launchcatch.ops.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -67,15 +67,6 @@ class BatchExecutionServiceTest {
         service = new BatchExecutionService(logs, alert, CLOCK, new BatchServerId(ME));
     }
 
-    /*
-     * 두 서버가 같은 작업을 점유하려 할 때 실제로 오는 예외다.
-     * Spring 의 DuplicateKeyException 이 아니다. 그것은 JDBC 번역기가 내는 것이고, JPA
-     * 경로에서는 Hibernate 의 ConstraintViolationException 이 감싸여 온다.
-     */
-    private static DataIntegrityViolationException uniqueViolation() {
-        return constraintViolation(ConstraintViolationException.ConstraintKind.UNIQUE);
-    }
-
     private static DataIntegrityViolationException constraintViolation(
             ConstraintViolationException.ConstraintKind kind) {
         return new DataIntegrityViolationException("could not execute statement",
@@ -97,62 +88,67 @@ class BatchExecutionServiceTest {
     }
 
     @Test
-    @DisplayName("행을 넣으면 점유한 것이다")
+    @DisplayName("upsert 뒤 그 행의 owner_id 가 나면 점유한 것이다")
     void 점유_성공() {
+        when(logs.findByJobNameAndBusinessDate(JOB, DATE))
+                .thenReturn(Optional.of(row(BatchStatus.RUNNING, ME)));
+
         assertThat(service.claim(JOB, DATE)).isTrue();
+        verify(logs).upsertClaim(JOB, DATE, ME, NOW);
     }
 
     /*
-     * 유일 제약 위반이 "다른 서버가 먼저 넣었다" 는 신호다.
-     * 이것을 예외로 흘리면 늦게 온 서버가 기동 실패처럼 보이고, 무시하면 둘이 함께 돈다.
+     * 중복은 INSERT ... ON DUPLICATE KEY UPDATE 가 흡수해 예외 없이 끝난다(#526).
+     * 점유 여부는 그 뒤 다시 읽은 행의 owner_id 로만 가른다.
      */
     @Test
-    @DisplayName("유일 제약에 걸리면 점유하지 못한 것이다")
+    @DisplayName("upsert 뒤 그 행의 owner_id 가 다른 서버면 점유하지 못한 것이다")
     void 점유_실패() {
-        when(logs.saveAndFlush(any(BatchExecutionLog.class)))
-                .thenThrow(uniqueViolation());
+        when(logs.findByJobNameAndBusinessDate(JOB, DATE))
+                .thenReturn(Optional.of(row(BatchStatus.RUNNING, OTHER)));
 
         assertThat(service.claim(JOB, DATE)).isFalse();
     }
 
     /*
-     * 유일 제약이 아닌 위반은 삼키지 않는다 (MNT-4-04).
-     *
-     * 길이 초과나 CHECK 위반까지 "이미 점유됐다" 로 읽으면 두 서버가 모두 점유에 실패하고도
-     * 스케줄러는 "다른 서버가 점유했다" 로 조용히 끝난다. 그날 작업이 하나도 돌지 않는다.
+     * 길이 초과나 CHECK 위반은 중복이 아니라 진짜 오류다 (MNT-4-04).
+     * 삼켜서 "이미 점유됐다" 로 읽으면 두 서버가 모두 점유에 실패하고도 조용하다.
      */
     @Test
-    @DisplayName("유일 제약이 아닌 위반은 다시 던진다")
+    @DisplayName("길이 초과나 CHECK 위반은 그대로 던진다")
     void 다른_제약_위반은_던진다() {
-        when(logs.saveAndFlush(any(BatchExecutionLog.class)))
-                .thenThrow(constraintViolation(ConstraintViolationException.ConstraintKind.CHECK));
+        doThrow(constraintViolation(ConstraintViolationException.ConstraintKind.CHECK))
+                .when(logs).upsertClaim(JOB, DATE, ME, NOW);
 
         assertThatThrownBy(() -> service.claim(JOB, DATE))
                 .isInstanceOf(DataIntegrityViolationException.class);
     }
 
     /*
-     * 두 서버가 같은 순간에 삽입을 시도하면 InnoDB 가 유일 제약 위반 대신 락 대기 시간
-     * 초과나 교착을 낼 수 있다(#515). 그 시점에는 상대의 트랜잭션이 곧 끝나므로, 한 번 더
-     * 시도하면 성공하거나 유일 제약 위반으로 깨끗하게 갈린다.
+     * 두 서버가 같은 순간에 upsert 를 시도하면 락 대기 시간 초과나 교착을 낼 수 있다(#515).
+     * 그 시점에는 상대의 트랜잭션이 곧 끝나므로, 한 번 더 시도하면 깨끗하게 갈린다.
      */
     @Test
     @DisplayName("일시적 실패는 한 번 더 시도해 점유한다")
     void 일시적_실패는_재시도한다() {
-        when(logs.saveAndFlush(any(BatchExecutionLog.class)))
-                .thenThrow(new CannotAcquireLockException("lock wait timeout"))
-                .thenReturn(row(BatchStatus.RUNNING, ME));
+        doThrow(new CannotAcquireLockException("lock wait timeout"))
+                .doNothing()
+                .when(logs).upsertClaim(JOB, DATE, ME, NOW);
+        when(logs.findByJobNameAndBusinessDate(JOB, DATE))
+                .thenReturn(Optional.of(row(BatchStatus.RUNNING, ME)));
 
         assertThat(service.claim(JOB, DATE)).isTrue();
-        verify(logs, times(2)).saveAndFlush(any(BatchExecutionLog.class));
+        verify(logs, times(2)).upsertClaim(JOB, DATE, ME, NOW);
     }
 
     @Test
-    @DisplayName("일시적 실패 뒤 재시도가 유일 제약에 걸리면 점유하지 못한 것이다")
-    void 일시적_실패_후_유일_제약이면_점유_실패() {
-        when(logs.saveAndFlush(any(BatchExecutionLog.class)))
-                .thenThrow(new CannotAcquireLockException("lock wait timeout"))
-                .thenThrow(uniqueViolation());
+    @DisplayName("일시적 실패 뒤 재시도해도 다른 서버 것이면 점유하지 못한 것이다")
+    void 일시적_실패_후_다른_소유면_점유_실패() {
+        doThrow(new CannotAcquireLockException("lock wait timeout"))
+                .doNothing()
+                .when(logs).upsertClaim(JOB, DATE, ME, NOW);
+        when(logs.findByJobNameAndBusinessDate(JOB, DATE))
+                .thenReturn(Optional.of(row(BatchStatus.RUNNING, OTHER)));
 
         assertThat(service.claim(JOB, DATE)).isFalse();
     }
@@ -162,23 +158,24 @@ class BatchExecutionServiceTest {
     @DisplayName("일시적 실패가 재시도에서도 나면 더는 시도하지 않고 던진다")
     void 일시적_실패가_반복되면_던진다() {
         CannotAcquireLockException failure = new CannotAcquireLockException("lock wait timeout");
-        when(logs.saveAndFlush(any(BatchExecutionLog.class))).thenThrow(failure);
+        doThrow(failure).when(logs).upsertClaim(JOB, DATE, ME, NOW);
 
         assertThatThrownBy(() -> service.claim(JOB, DATE)).isSameAs(failure);
-        verify(logs, times(2)).saveAndFlush(any(BatchExecutionLog.class));
+        verify(logs, times(2)).upsertClaim(JOB, DATE, ME, NOW);
     }
 
     @Test
     @DisplayName("행이 없던 단계는 점유해서 시작한다")
     void 단계_시작() {
+        when(logs.findByJobNameAndBusinessDate(JOB, DATE))
+                .thenReturn(Optional.of(row(BatchStatus.RUNNING, ME)));
+
         assertThat(service.begin(JOB, DATE)).isEqualTo(StepOutcome.STARTED);
     }
 
     @Test
     @DisplayName("이미 성공한 단계는 건너뛴다")
     void 단계_이미_완료() {
-        when(logs.saveAndFlush(any(BatchExecutionLog.class)))
-                .thenThrow(uniqueViolation());
         when(logs.findByJobNameAndBusinessDate(JOB, DATE))
                 .thenReturn(Optional.of(row(BatchStatus.SUCCESS, OTHER)));
 
@@ -192,8 +189,6 @@ class BatchExecutionServiceTest {
     @Test
     @DisplayName("실패로 닫힌 단계는 막는다")
     void 단계_실패로_막힘() {
-        when(logs.saveAndFlush(any(BatchExecutionLog.class)))
-                .thenThrow(uniqueViolation());
         when(logs.findByJobNameAndBusinessDate(JOB, DATE))
                 .thenReturn(Optional.of(row(BatchStatus.FAILED, OTHER)));
 
@@ -209,8 +204,6 @@ class BatchExecutionServiceTest {
     @Test
     @DisplayName("이미 내 것인 실행 중 단계는 이어받지 않고 바로 시작한다")
     void 내_것인_단계는_바로_시작() {
-        when(logs.saveAndFlush(any(BatchExecutionLog.class)))
-                .thenThrow(uniqueViolation());
         when(logs.findByJobNameAndBusinessDate(JOB, DATE))
                 .thenReturn(Optional.of(row(BatchStatus.RUNNING, ME)));
 
@@ -221,8 +214,6 @@ class BatchExecutionServiceTest {
     @Test
     @DisplayName("멈춘 실행 중 단계는 이어받아 시작한다")
     void 단계_이어받기() {
-        when(logs.saveAndFlush(any(BatchExecutionLog.class)))
-                .thenThrow(uniqueViolation());
         when(logs.findByJobNameAndBusinessDate(JOB, DATE))
                 .thenReturn(Optional.of(row(BatchStatus.RUNNING, OTHER)));
         when(logs.takeOver(JOB, DATE, ME, NOW, STALE_BEFORE)).thenReturn(1);
@@ -237,22 +228,9 @@ class BatchExecutionServiceTest {
     @Test
     @DisplayName("살아 있는 실행 중 단계는 가져오지 못한다")
     void 단계_이어받기_실패() {
-        when(logs.saveAndFlush(any(BatchExecutionLog.class)))
-                .thenThrow(uniqueViolation());
         when(logs.findByJobNameAndBusinessDate(JOB, DATE))
                 .thenReturn(Optional.of(row(BatchStatus.RUNNING, OTHER)));
         when(logs.takeOver(JOB, DATE, ME, NOW, STALE_BEFORE)).thenReturn(0);
-
-        assertThat(service.begin(JOB, DATE)).isEqualTo(StepOutcome.BLOCKED);
-    }
-
-    /** 점유에 실패했는데 행도 없는 경우다. 그 사이 누가 지웠다는 뜻이라 진행하지 않는다. */
-    @Test
-    @DisplayName("점유도 못 하고 행도 없으면 막는다")
-    void 단계_행이_사라짐() {
-        when(logs.saveAndFlush(any(BatchExecutionLog.class)))
-                .thenThrow(uniqueViolation());
-        when(logs.findByJobNameAndBusinessDate(JOB, DATE)).thenReturn(Optional.empty());
 
         assertThat(service.begin(JOB, DATE)).isEqualTo(StepOutcome.BLOCKED);
     }

@@ -14,8 +14,6 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
-import org.hibernate.exception.ConstraintViolationException;
-import org.springframework.dao.DataIntegrityViolationException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -71,20 +69,25 @@ public class BatchExecutionService {
     }
 
     /*
-     * 그 작업을 이 서버 것으로 점유한다. 이미 행이 있으면 false 다.
+     * 그 작업을 이 서버 것으로 점유한다. 이미 다른 서버 것이면 false 다.
      *
-     * 트랜잭션을 걸지 않는다. 유일 제약 위반을 판정에 쓰는데, 이 메서드가 트랜잭션 안이면
-     * 그 예외가 트랜잭션을 되돌릴 것으로 표시해서 잡고 넘어가도 커밋에서 터진다. 삽입만
-     * 저장소 쪽에서 자기 트랜잭션으로 돌린다(saveAndFlush 의 REQUIRES_NEW).
+     * INSERT ... ON DUPLICATE KEY UPDATE 로 중복을 흡수한다(#526). 유일 제약 위반 예외로
+     * 점유를 가르지 않으므로 중복이 평범한 결과가 되고, 길이 초과나 CHECK 위반은 그대로
+     * 예외로 올라온다(MNT-4-04). 예외 모양으로 승패를 읽으면 그 모양이 바뀔 때마다
+     * (#515, PR #520) 같은 문제가 반복된다.
      *
-     * 받아 넘기는 것은 유일 제약 위반뿐이다. DataIntegrityViolationException 을 통째로 잡으면
-     * 길이 초과나 CHECK 위반까지 "이미 점유됐다" 로 읽혀서, 두 서버가 모두 점유에 실패하고도
-     * 아무도 장애를 모른다(MNT-4-04).
+     * 영향받은 행 수로도 가르지 않는다. 드라이버 기본값(useAffectedRows=false)에서는
+     * 무변경 갱신도 1 로 보고될 수 있다. 그래서 upsert 뒤 그 행을 다시 읽어 RUNNING 이고
+     * owner_id 가 나인지로 점유를 가른다. owner_id 는 행을 만들 때 정해지고 이어받기 전에는
+     * 바뀌지 않으므로, 연결이 끊겨 커밋 여부를 모른 채 다시 불러도 내 것으로 정확히 읽힌다.
      *
-     * 두 서버가 같은 순간에 삽입을 시도하면 InnoDB 가 유일 제약 위반 대신 락 대기 시간
-     * 초과나 교착(TransientFailures.isTransient 가 가리는 쪽)을 낼 수 있다. 그 경합은
-     * 상대의 트랜잭션이 끝나는 순간 풀리므로, 한 번 더 시도하면 유일 제약 위반으로 깨끗하게
-     * 갈리거나 성공한다.
+     * 상태도 함께 본다. 이미 SUCCESS나 FAILED로 끝난 행도 owner_id는 그대로 나로 남아 있어,
+     * owner_id만 보면 끝난 단계를 다시 점유한 것으로 잘못 읽는다. begin()이 그 구분을
+     * 상태로 가르게 하려면 claim()이 RUNNING 이 아닌 내 행은 점유로 보지 않아야 한다.
+     *
+     * 두 서버가 같은 순간에 upsert 를 시도하면 상대의 커밋을 기다리는 구간이 있어 락 대기
+     * 시간 초과나 교착(TransientFailures.isTransient 가 가리는 쪽)을 낼 수 있다(#515). 그
+     * 경합은 상대의 트랜잭션이 끝나는 순간 풀리므로, 한 번 더 시도하면 깨끗하게 갈린다.
      */
     public boolean claim(String jobName, LocalDate businessDate) {
         try {
@@ -98,15 +101,9 @@ public class BatchExecutionService {
     }
 
     private boolean attemptClaim(String jobName, LocalDate businessDate) {
-        try {
-            logs.saveAndFlush(BatchExecutionLog.running(jobName, businessDate, ownerId));
-            return true;
-        } catch (DataIntegrityViolationException violation) {
-            if (isUniqueViolation(violation)) {
-                return false;
-            }
-            throw violation;
-        }
+        logs.upsertClaim(jobName, businessDate, ownerId, now());
+        BatchExecutionLog row = reload(jobName, businessDate);
+        return row.getStatus() == BatchStatus.RUNNING && isMine(row);
     }
 
     /*
@@ -274,25 +271,6 @@ public class BatchExecutionService {
         }
         log.warn("내 소유가 아닌 행은 닫지 않는다. job={} businessDate={} 상태={}",
                 jobName, businessDate, status);
-        return false;
-    }
-
-    /*
-     * 유일 제약 위반인지 본다.
-     *
-     * Spring 의 DuplicateKeyException 으로는 가를 수 없다. 그것은 JDBC 번역기가 내는 것이고,
-     * JPA 경로에서는 Hibernate 의 ConstraintViolationException 이 평범한
-     * DataIntegrityViolationException 으로 번역된다. 실제로 돌려 보고 확인했다.
-     *
-     * 그래서 Hibernate 가 붙여 주는 제약 종류를 본다. 제약 이름을 비교하는 방법도 있지만,
-     * 이름은 마이그레이션에서 바뀔 수 있고 종류는 바뀌지 않는다.
-     */
-    private boolean isUniqueViolation(DataIntegrityViolationException violation) {
-        for (Throwable cause = violation; cause != null; cause = cause.getCause()) {
-            if (cause instanceof ConstraintViolationException constraint) {
-                return constraint.getKind() == ConstraintViolationException.ConstraintKind.UNIQUE;
-            }
-        }
         return false;
     }
 
