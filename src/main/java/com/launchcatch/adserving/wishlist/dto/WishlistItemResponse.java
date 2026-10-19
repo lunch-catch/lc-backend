@@ -17,6 +17,8 @@ public record WishlistItemResponse(
         String storeImageUrl,
         @Schema(description = "할인 내용. 오늘 노출 후보가 아닌 캠페인이면 null", nullable = true)
         Discount discount,
+        @Schema(description = "캠페인이 끝났으면 true. 끝난 날을 빼고 3일 동안 보인 뒤 빠진다")
+        boolean campaignEnded,
         @Schema(description = "찜한 시각")
         OffsetDateTime wishedAt
 ) {
@@ -25,13 +27,14 @@ public record WishlistItemResponse(
     public static WishlistItemResponse of(Wishlist wish, AdCandidate candidate) {
         OffsetDateTime wishedAt = wish.getCreatedAt().atZone(ClockConfig.ZONE).toOffsetDateTime();
         if (candidate == null) {
-            return new WishlistItemResponse(wish.getCampaignId(), wish.getStoreId(), null, null, null, wishedAt);
+            return new WishlistItemResponse(wish.getCampaignId(), wish.getStoreId(), null, null, null,
+                    wish.isCampaignEnded(), wishedAt);
         }
         return new WishlistItemResponse(wish.getCampaignId(), wish.getStoreId(), candidate.getStoreName(),
                 candidate.getStoreImageUrl(),
                 new Discount(candidate.getDiscountTarget(), candidate.getDiscountType(), candidate.getDiscountValue(),
                         candidate.getDiscountMenuName()),
-                wishedAt);
+                wish.isCampaignEnded(), wishedAt);
     }
 
     public record Discount(

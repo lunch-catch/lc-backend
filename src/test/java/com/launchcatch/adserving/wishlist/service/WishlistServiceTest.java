@@ -4,6 +4,7 @@ import static com.launchcatch.adserving.engine.AdCandidateFixture.BUSINESS_DATE;
 import static com.launchcatch.adserving.engine.AdCandidateFixture.candidate;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.tuple;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.Mockito.doThrow;
@@ -87,10 +88,42 @@ class WishlistServiceTest {
         assertThat(response.wishlist()).containsExactly(
                 new WishlistItemResponse(102L, 1102L, "가게102", "https://cdn.example.com/stores/1102/logo.jpg",
                         new WishlistItemResponse.Discount(DiscountTarget.MENU, DiscountType.AMOUNT, 3000, "갈비살 정식"),
-                        OffsetDateTime.of(later, ZoneOffset.ofHours(9))),
+                        false, OffsetDateTime.of(later, ZoneOffset.ofHours(9))),
                 new WishlistItemResponse(101L, 1101L, "가게101", null,
                         new WishlistItemResponse.Discount(DiscountTarget.ALL, DiscountType.PERCENT, 20, null),
-                        OffsetDateTime.of(earlier, ZoneOffset.ofHours(9))));
+                        false, OffsetDateTime.of(earlier, ZoneOffset.ofHours(9))));
+    }
+
+    @Test
+    void 캠페인이_끝난_찜은_campaignEnded_가_true_다() {
+        LocalDateTime createdAt = LocalDateTime.of(2026, 9, 30, 11, 0);
+        Wishlist ended = wish(1, 101, createdAt);
+        ReflectionTestUtils.setField(ended, "campaignEndedAt", LocalDateTime.of(2026, 9, 30, 15, 0));
+        when(wishlistRepository.findByMemberIdOrderByCreatedAtDescIdDesc(MEMBER_ID))
+                .thenReturn(List.of(ended, wish(2, 102, createdAt.minusHours(1))));
+        when(adCandidateRepository.findByIdBusinessDateAndIdCampaignIdIn(any(), anyCollection())).thenReturn(List.of());
+
+        WishlistResponse response = service.getWishlist(MEMBER_ID, null);
+
+        assertThat(response.wishlist()).extracting(WishlistItemResponse::campaignId, WishlistItemResponse::campaignEnded)
+                .containsExactly(tuple(101L, true), tuple(102L, false));
+    }
+
+    @Test
+    void 캠페인이_끝나면_그_캠페인의_찜을_이벤트의_종료_시각으로_표시한다() {
+        LocalDateTime endedAt = LocalDateTime.of(2026, 10, 1, 9, 0);
+
+        service.endCampaign(101L, endedAt);
+
+        verify(wishlistRepository).markCampaignEnded(101L, endedAt, LocalDateTime.now(CLOCK));
+    }
+
+    // 끝난 날을 빼고 3일 동안 보인다. 10/5 00:00 작업은 10/1 까지 끝난 찜을 지운다(#548)
+    @Test
+    void 끝난_날을_빼고_3일이_지난_찜을_지운다() {
+        service.deleteExpiredEndedWishes(LocalDate.of(2026, 10, 5));
+
+        verify(wishlistRepository).deleteByCampaignEndedAtBefore(LocalDateTime.of(2026, 10, 2, 0, 0));
     }
 
     @Test
@@ -103,7 +136,7 @@ class WishlistServiceTest {
         WishlistResponse response = service.getWishlist(MEMBER_ID, null);
 
         assertThat(response.wishlist()).containsExactly(new WishlistItemResponse(101L, 1101L, null, null, null,
-                OffsetDateTime.of(createdAt, ZoneOffset.ofHours(9))));
+                false, OffsetDateTime.of(createdAt, ZoneOffset.ofHours(9))));
     }
 
     @Test
@@ -170,7 +203,7 @@ class WishlistServiceTest {
         assertThat(result).isEqualTo(new WishResult(true, new WishlistItemResponse(102L, 1102L, "가게102",
                 "https://cdn.example.com/stores/1102/logo.jpg",
                 new WishlistItemResponse.Discount(DiscountTarget.MENU, DiscountType.AMOUNT, 3000, "갈비살 정식"),
-                OffsetDateTime.of(createdAt, ZoneOffset.ofHours(9)))));
+                false, OffsetDateTime.of(createdAt, ZoneOffset.ofHours(9)))));
     }
 
     // 다시 넣어도 집합이라 그대로다. 앞 요청에서 Valkey 에 넣지 못했으면 여기서 채워진다
@@ -269,30 +302,31 @@ class WishlistServiceTest {
         verify(exclusionRepository).add(LocalDate.of(2026, 10, 1), MEMBER_ID, 101L, afterMidnight.instant());
     }
 
+    // 캠페인이 끝난 찜은 3일 동안 남지만 유효하지 않다(#548)
     @Test
-    void 찜_행이_있으면_찜했다고_답한다() {
-        when(wishlistRepository.existsByMemberIdAndCampaignId(MEMBER_ID, 101L)).thenReturn(true);
+    void 캠페인이_끝나지_않은_찜이_있으면_찜했다고_답한다() {
+        when(wishlistRepository.existsByMemberIdAndCampaignIdAndCampaignEndedAtIsNull(MEMBER_ID, 101L)).thenReturn(true);
 
         assertThat(service.isWished(MEMBER_ID, 101L)).isTrue();
     }
 
     @Test
-    void 찜_행이_없으면_찜하지_않았다고_답한다() {
-        when(wishlistRepository.existsByMemberIdAndCampaignId(MEMBER_ID, 101L)).thenReturn(false);
+    void 캠페인이_끝나지_않은_찜이_없으면_찜하지_않았다고_답한다() {
+        when(wishlistRepository.existsByMemberIdAndCampaignIdAndCampaignEndedAtIsNull(MEMBER_ID, 101L)).thenReturn(false);
 
         assertThat(service.isWished(MEMBER_ID, 101L)).isFalse();
     }
 
     @Test
-    void 찜한_캠페인_ID_를_모두_돌려준다() {
-        when(wishlistRepository.findCampaignIdsByMemberId(MEMBER_ID)).thenReturn(List.of(101L, 102L));
+    void 캠페인이_끝나지_않은_찜의_캠페인_ID_를_모두_돌려준다() {
+        when(wishlistRepository.findActiveCampaignIdsByMemberId(MEMBER_ID)).thenReturn(List.of(101L, 102L));
 
         assertThat(service.findWishedCampaignIds(MEMBER_ID)).containsExactlyInAnyOrder(101L, 102L);
     }
 
     @Test
     void 찜이_없으면_빈_리스트다() {
-        when(wishlistRepository.findCampaignIdsByMemberId(MEMBER_ID)).thenReturn(List.of());
+        when(wishlistRepository.findActiveCampaignIdsByMemberId(MEMBER_ID)).thenReturn(List.of());
 
         assertThat(service.findWishedCampaignIds(MEMBER_ID)).isNotNull().isEmpty();
     }
