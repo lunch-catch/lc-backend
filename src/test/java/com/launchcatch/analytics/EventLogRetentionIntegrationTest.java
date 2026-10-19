@@ -4,6 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.launchcatch.analytics.batch.job.EventLogRetentionJob;
 import com.launchcatch.global.config.ClockConfig;
+import com.launchcatch.ops.service.BatchExecutionService;
+import com.launchcatch.ops.service.DailyJobRunner;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.stream.IntStream;
@@ -27,6 +29,10 @@ class EventLogRetentionIntegrationTest extends AbstractAnalyticsIntegrationTest 
     private JdbcTemplate jdbc;
     @Autowired
     private EventLogRetentionJob job;
+    @Autowired
+    private BatchExecutionService executions;
+    @Autowired
+    private DailyJobRunner runner;
 
     @BeforeEach
     void cleanUp() {
@@ -72,6 +78,27 @@ class EventLogRetentionIntegrationTest extends AbstractAnalyticsIntegrationTest 
         assertThat(jdbc.queryForObject(
                 "SELECT COUNT(*) FROM batch_execution_log WHERE job_name = ?",
                 Long.class, EventLogRetentionJob.JOB_NAME)).isEqualTo(1);
+    }
+
+    /*
+     * 멈춘 실행을 이어받거나 관리자가 다시 돌리는 길은 DailyJobRunner.resume 이 부른다. 그 뒤 runner 가 건수 없는
+     * succeed 로 닫아도 지운 건수가 남는지 본다.
+     */
+    @Test
+    void 이어받아_다시_돌려도_삭제_건수가_실행_기록에_남는다() {
+        insertEvents(5, cutoff.minusDays(1));
+        LocalDate businessDate = executions.businessDate();
+        executions.claim(EventLogRetentionJob.JOB_NAME, businessDate);
+
+        runner.resume(EventLogRetentionJob.JOB_NAME, businessDate, 1);
+
+        assertThat(eventCount()).isZero();
+        assertThat(jdbc.queryForObject(
+                "SELECT processed_count FROM batch_execution_log WHERE job_name = ?",
+                Integer.class, EventLogRetentionJob.JOB_NAME)).isEqualTo(5);
+        assertThat(jdbc.queryForObject(
+                "SELECT status FROM batch_execution_log WHERE job_name = ?",
+                String.class, EventLogRetentionJob.JOB_NAME)).isEqualTo("SUCCESS");
     }
 
     private Long eventCount() {

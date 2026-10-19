@@ -95,13 +95,18 @@ class EventLogRetentionJobTest {
                 .isSameAs(failure).hasSuppressedException(recordFailure);
     }
 
+    /*
+     * DailyJobRunner 가 run 뒤에 건수 없는 succeed 로 행을 닫으면 처리 건수가 사라지므로, 이 길은 지운
+     * 건수와 함께 먼저 닫는다.
+     */
     @Test
-    @DisplayName("이어받은 서버가 부르면 삭제만 하고 행은 닫지 않는다")
-    void 이어받은_서버가_부르면_삭제만_한다() {
+    @DisplayName("이어받은 서버가 부르면 지우고 삭제 건수와 함께 성공으로 닫는다")
+    void 이어받은_서버가_부르면_삭제_건수와_함께_닫는다() {
+        when(retention.purge()).thenReturn(7);
+
         job.run(BUSINESS_DATE, 2);
 
-        verify(retention).purge();
-        verify(executions, never()).succeed(anyString(), eq(BUSINESS_DATE), anyInt());
+        verify(executions).succeed(EventLogRetentionJob.JOB_NAME, BUSINESS_DATE, 7);
         assertThat(job.jobName()).isEqualTo("EVENT_LOG_RETENTION");
     }
 }
