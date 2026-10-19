@@ -13,7 +13,7 @@ import org.springframework.context.annotation.Configuration;
  * 시간대를 Asia/Seoul 로 못 박는다. 영업일(business_date)과 모든 시각은 애플리케이션이
  * 계산해 넣고 관계형 DB 의 날짜 함수(CURDATE, NOW)는 쓰지 않는다.
  * systemDefaultZone() 으로 두면 개발자 기계와 배포 환경의 기본 시간대에 따라 영업일 경계가
- * 갈린다. 00:00 배치와 10:00~12:59 서빙 시간대 판정이 전부 이 값에 달려 있어 고정이 맞다.
+ * 갈린다. 00:00 배치와 노출 차감의 영업일이 전부 이 값에 달려 있어 고정이 맞다.
  */
 @Configuration
 public class ClockConfig {

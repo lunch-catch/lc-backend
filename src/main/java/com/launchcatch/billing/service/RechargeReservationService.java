@@ -1,6 +1,5 @@
 package com.launchcatch.billing.service;
 
-import com.launchcatch.billing.config.BillingScheduleProperties;
 import com.launchcatch.billing.dto.PointCharged;
 import com.launchcatch.billing.dto.RechargeReserveIncreased;
 import com.launchcatch.billing.entity.BudgetDailyPlan;
@@ -19,7 +18,6 @@ import com.launchcatch.campaign.contract.PauseReason;
 import java.time.Clock;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.time.LocalTime;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
@@ -33,9 +31,9 @@ import org.springframework.transaction.annotation.Transactional;
  * 충전 직후 재예약이다(V52 102행 (5)·51행, 배치 설계 I-03). PointChargedListener 가 커밋 뒤에 자기
  * 트랜잭션으로 부른다.
  *
- * 서빙 종료(BillingScheduleProperties.fixedFrom(), 기본 13:00) 뒤면 아무것도 하지 않는다. 다음 00:00
- * 예약이 반영한다. 대상은 이 점주의 PAUSED(NO_POINTS) 캠페인 중 집행 기간 안이고 그날 계획 행이 있는
- * 것뿐이다. 00:00 예약이 아직 돌지 않아 계획이 없는 캠페인은 건너뛴다.
+ * 서빙이 하루 종일이라 시각 제한이 없다. 대상은 이 점주의 PAUSED(NO_POINTS) 캠페인 중 집행 기간 안이고 그날
+ * 계획 행이 있는 것뿐이다. 00:00 예약이 아직 돌지 않아 계획이 없는 캠페인은 건너뛰고, 그 예약이 충전 뒤 잔액으로
+ * 배분한다. 00:00 예약과 겹쳐도 둘 다 점주 계정 행을 먼저 잠가서 차례로 돈다.
  *
  * 한 트랜잭션이고 점주 계정 행을 먼저 잠근다(D-8). 캠페인 ID 오름차순으로(D-4) 잔액이 남는 대로 채운다.
  *
@@ -49,7 +47,6 @@ import org.springframework.transaction.annotation.Transactional;
 public class RechargeReservationService {
 
     private final Clock clock;
-    private final BillingScheduleProperties schedule;
     private final CampaignQueryService campaignQuery;
     private final CampaignFundingUpdater fundingUpdater;
     private final PointAccountRepository accountRepository;
@@ -59,9 +56,6 @@ public class RechargeReservationService {
 
     @Transactional
     public void reserve(PointCharged charged) {
-        if (!LocalTime.now(clock).isBefore(schedule.fixedFrom())) {
-            return;
-        }
         LocalDate businessDate = LocalDate.now(clock);
         List<CampaignInfo> targets = campaignQuery
                 .findByOwnerIdAndStatusIn(charged.ownerId(), List.of(CampaignStatus.PAUSED)).stream()

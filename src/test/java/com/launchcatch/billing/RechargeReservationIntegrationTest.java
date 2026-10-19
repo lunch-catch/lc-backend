@@ -2,7 +2,6 @@ package com.launchcatch.billing;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.launchcatch.billing.config.BillingScheduleProperties;
 import com.launchcatch.billing.dto.PointCharged;
 import com.launchcatch.billing.repository.BudgetDailyPlanRepository;
 import com.launchcatch.billing.repository.PointAccountRepository;
@@ -34,10 +33,9 @@ import org.springframework.transaction.support.TransactionTemplate;
  * 커밋되는지, 결제×캠페인 멱등 키가 같은 결제의 재호출에서 중복을 막는지, 커밋 뒤 Valkey 해시의 예약액이
  * 늘어나는지다.
  *
- * reserve 는 실제 시계로 서빙 종료(13:00)를 거부한다. 이 테스트가 실제로 도는 시각과 무관하게 돌아야 해서,
+ * reserve 는 실제 시계의 날짜를 영업일로 쓴다. 테스트가 자정을 넘겨 돌아도 영업일이 바뀌지 않아야 해서,
  * 컨텍스트의 Clock 빈을 바꾸지 않고(다른 billing 통합 테스트와 컨텍스트를 공유하기 위해서다.
- * AbstractBillingIntegrationTest, DailyReleaseIntegrationTest 참고) 그 Clock 만 12:00 으로 고정한 서비스
- * 인스턴스를 여기서 직접 만든다. PointChargedListener 는 이 서비스를 그대로 부르는 위임이라 자체 단위
+ * AbstractBillingIntegrationTest 참고) 그 Clock 만 오늘 12:00 으로 고정한 서비스 인스턴스를 여기서 직접 만든다. PointChargedListener 는 이 서비스를 그대로 부르는 위임이라 자체 단위
  * 테스트(PointChargedListenerTest)가 보고, 여기서는 리스너가 커밋 뒤 새 트랜잭션에서 돈다는 것과 같은
  * 모양으로 TransactionTemplate 으로 직접 부른다. 실제 리스너도 커밋 뒤 자기 시계로 같은 영업일에 똑같이
  * 반응할 수 있지만 재예약은 결제×캠페인 멱등 키로 막혀 있어 중복되지 않는다.
@@ -59,7 +57,6 @@ class RechargeReservationIntegrationTest extends AbstractBillingIntegrationTest 
     @Autowired PointAccountRepository accountRepository;
     @Autowired PointLedgerRepository ledgerRepository;
     @Autowired BudgetDailyPlanRepository planRepository;
-    @Autowired BillingScheduleProperties schedule;
     @Autowired ApplicationEventPublisher eventPublisher;
     @Autowired PlatformTransactionManager transactionManager;
 
@@ -78,10 +75,10 @@ class RechargeReservationIntegrationTest extends AbstractBillingIntegrationTest 
         redis.delete("billing:day:" + DAY + ":" + CAMPAIGN);
     }
 
-    // 13:00 전으로 고정한 서비스다. 영업일은 실제 오늘이라 Clock 의 날짜 부분만 맞춰 둔다
+    // 오늘 12:00 으로 고정한 서비스다. 영업일은 실제 오늘이라 Clock 의 날짜 부분만 맞춰 둔다
     private RechargeReservationService recharge() {
         Clock fixed = Clock.fixed(DAY.atTime(LocalTime.of(12, 0)).atZone(ClockConfig.ZONE).toInstant(), ClockConfig.ZONE);
-        return new RechargeReservationService(fixed, schedule, campaignQuery, fundingUpdater,
+        return new RechargeReservationService(fixed, campaignQuery, fundingUpdater,
                 accountRepository, ledgerRepository, planRepository, eventPublisher);
     }
 

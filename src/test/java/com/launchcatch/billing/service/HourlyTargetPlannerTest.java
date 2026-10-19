@@ -16,12 +16,12 @@ import com.launchcatch.billing.entity.BudgetHourlyTarget;
 import com.launchcatch.billing.repository.BudgetDailyPlanRepository;
 import com.launchcatch.billing.repository.BudgetHourlyTargetRepository;
 import java.time.Clock;
-import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import org.assertj.core.groups.Tuple;
 import org.junit.jupiter.api.BeforeEach;
@@ -38,7 +38,7 @@ class HourlyTargetPlannerTest {
 
     private static final LocalDate DAY = LocalDate.of(2026, 10, 16);
     private static final BillingScheduleProperties SCHEDULE =
-            new BillingScheduleProperties("10:00", "12:59", Duration.ofMinutes(30), List.of(34, 33, 33));
+            new BillingScheduleProperties(Collections.nCopies(24, 1));
     private static final Clock CLOCK = Clock.fixed(Instant.parse("2026-10-15T15:00:00Z"), ZoneId.of("Asia/Seoul"));
     private static final LocalDateTime NOW = LocalDateTime.now(CLOCK);
 
@@ -91,9 +91,10 @@ class HourlyTargetPlannerTest {
         assertThat(planner.plan(DAY)).isEqualTo(2);
 
         // 조회 뒤 saveAll 이 아니라 이미 있으면 그대로 두는 INSERT 로 넣어 겹친 실행이 UNIQUE 위반으로 실패하지 않는다
-        assertThat(inserted(6)).containsExactly(
-                tuple(3L, 10, 3400L), tuple(3L, 11, 3300L), tuple(3L, 12, 3300L),
-                tuple(4L, 10, 3L), tuple(4L, 11, 3L), tuple(4L, 12, 4L));
+        List<Tuple> targets = inserted(48);
+        // 10000 / 24 = 416 이고 남는 16 은 23시에 얹는다. 10 / 24 는 0 이라 10 전부가 23시에 간다
+        assertThat(targets.subList(0, 24)).startsWith(tuple(3L, 0, 416L), tuple(3L, 1, 416L)).endsWith(tuple(3L, 23, 432L));
+        assertThat(targets.subList(24, 48)).startsWith(tuple(4L, 0, 0L)).endsWith(tuple(4L, 22, 0L), tuple(4L, 23, 10L));
     }
 
     @Test
@@ -103,7 +104,7 @@ class HourlyTargetPlannerTest {
                 .thenReturn(List.of(BudgetHourlyTarget.create(3L, 10, 3400L)));
 
         assertThat(planner.plan(DAY)).isEqualTo(1);
-        assertThat(inserted(3)).extracting(t -> t.toList().get(0)).containsOnly(4L);
+        assertThat(inserted(24)).extracting(t -> t.toList().get(0)).containsOnly(4L);
     }
 
     @Test

@@ -78,11 +78,12 @@ class BillingStatsQueryServiceImplTest {
         when(deductionRepository.countByStatusOn(DAY)).thenReturn(List.of(
                 new DeductionCountRow(10L, DeductionStatus.BILLED, 7L),
                 new DeductionCountRow(10L, DeductionStatus.NOT_BILLED_PAUSED, 2L),
-                new DeductionCountRow(11L, DeductionStatus.NOT_BILLED_BUDGET, 4L)));
+                new DeductionCountRow(11L, DeductionStatus.NOT_BILLED_BUDGET, 4L),
+                new DeductionCountRow(11L, DeductionStatus.NOT_BILLED_NO_PLAN, 3L)));
 
         assertThat(service.billingCounts(DAY)).containsExactlyInAnyOrder(
-                new CampaignBillingCount(10L, 7, 0, 2),
-                new CampaignBillingCount(11L, 0, 4, 0));
+                new CampaignBillingCount(10L, 7, 0, 2, 0),
+                new CampaignBillingCount(11L, 0, 4, 0, 3));
     }
 
     @Test
