@@ -121,7 +121,7 @@ POST /v1/admin/templates/{templateId}:publish
 |---|---|---|---|---|
 | 관리자 | 자체 아이디와 비밀번호 | 30분 | 1일 | `ADMIN`, `SUPER_ADMIN` |
 | 점주 | 이메일과 비밀번호 | 30분 | 1일 | `OWNER` |
-| 사용자 | 카카오 로그인 (인가 코드) | 30분 | 14일, 자동 로그인을 체크하지 않으면 브라우저를 닫을 때까지 | `MEMBER` |
+| 사용자 | 카카오 로그인 (인가 코드) | 30분 | 14일. 자동 로그인 선택 없이 persistent cookie로 발급함 | `MEMBER` |
 
 **토큰은 헤더가 아니라 쿠키로 오간다.** 두 토큰 모두 `HttpOnly`, `SameSite=Strict` 쿠키로 내려간다.
 클라이언트는 토큰 값을 읽거나 `Authorization` 헤더에 싣지 않는다. 응답 본문에도 토큰을 넣지 않는다.
@@ -141,7 +141,7 @@ Set-Cookie: refreshToken=<token>; HttpOnly; SameSite=Strict; Path=/v1/auth/
 - **로그아웃하면 Access Token도 막힌다.** 만료 전이라도 로그아웃 이전에 받은 Access Token은 거부된다
 - **권한은 역할로 판정한다.** 역할이 맞지 않으면 `403` 이다. 로그인 없이 부를 수 있는 경로는 로그인, 토큰 재발급, 점주 회원가입, 카카오 로그인뿐이다
 - **점주는 업무별로 현재 상태를 확인한다.** 내 정보 조회는 `ONBOARDING` 점주도 허용하고, 최초 튜토리얼 완료는 `ACTIVE` 점주만 허용한다. 입점 등록과 나머지 업무 API의 상태 제한은 각 도메인 계약을 따르며 현재 구현 범위는 `auth-api-spec.md`의 접근 제어 절을 참고한다
-- **로그인 실패는 사유를 구분하지 않는다.** 계정 없음, 비밀번호 불일치, 사용 불가 상태를 모두 같은 `401` 로 돌려준다
+- **관리자·점주의 비밀번호 로그인 실패는 사유를 구분하지 않는다.** 사용자 카카오 로그인과 재가입의 상태 오류는 [auth-api-spec.md](./auth-api-spec.md)의 계약을 따른다
 - **프론트 화면과 API 서버의 주소(출처: 프로토콜, 호스트, 포트)가 다르면** 서버는 CORS 응답에 `Access-Control-Expose-Headers: Retry-After` 를 넣는다. 예: 화면은 `app.launchcatch.com`, API는 `api.launchcatch.com`. 넣지 않으면 브라우저가 이 헤더를 자바스크립트에 보여 주지 않는다
 
 ### 응답 봉투

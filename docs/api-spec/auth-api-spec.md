@@ -26,7 +26,7 @@
 
 관리자·점주 로그인은 전체 인증 API를 안내하기 위해 목록에 포함한다. 점주 로그인·토큰 재발급·로그아웃은 모두 구현되어 있다.
 
-상세 명세는 각각 [admin-api-spec.md](./admin-api-spec.md), `owner-api-spec.md`에서 정의하며, 이 문서에서는 중복 정의하지 않는다.
+로그인의 상세 명세는 각각 [admin-api-spec.md](./admin-api-spec.md), `owner-api-spec.md`에서 정의한다. 재발급과 로그아웃은 아래 역할별 절을 따른다.
 
 "공개"는 기존 Access Token 없이 부를 수 있다는 뜻이다.
 
@@ -211,7 +211,11 @@ DB·Redis 처리 순서와 자동 복구 한계는 [인증 설계의 점주 로�
 
 ```json
 {
-  "authorizationUrl": "https://kauth.kakao.com/oauth/authorize?response_type=code&client_id=...&redirect_uri=...&scope=openid%20profile_nickname%20profile_image&state=...&nonce=..."
+  "code": "SUCCESS",
+  "message": "요청이 성공적으로 처리되었습니다.",
+  "data": {
+    "authorizationUrl": "https://kauth.kakao.com/oauth/authorize?response_type=code&client_id=...&redirect_uri=...&scope=openid%20profile_nickname%20profile_image&state=...&nonce=..."
+  }
 }
 ```
 
@@ -276,16 +280,18 @@ DB·Redis 처리 순서와 자동 복구 한계는 [인증 설계의 점주 로�
 | --- | --- | --- |
 | `400` | `COMMON-002` | 필수 필드 누락 |
 | `401` | `AUTH-007` | state 불일치·만료·재사용, 카카오 인가 코드나 ID 토큰(nonce 포함) 검증 실패 |
-| `403` | `MEMBER-003` | 정지 이력이 있는 회원번호의 재가입. 코드는 `member.md`가 정의한다 |
+| `403` | `MEMBER-003` | 정지 이력이 있는 탈퇴 회원의 재가입 또는 현재 ACTIVE가 아닌 기존 회원의 로그인. 코드는 `member.md`가 정의한다 |
 | `429` | 없음 | IP별 인증 요청 제한 초과. 본문 없이 `Retry-After` 제공 |
 | `503` | `AUTH-002` | Refresh Token 저장 실패. 서버 캐시 저장 실패만으로는 오류가 나지 않는다 |
 
 ### `POST /v1/auth/tokens:refresh`
 
-관리자 재발급과 같다. 카카오 재인증은 필요 없다.
+유효한 `refreshToken` 쿠키로 재발급한다. 기존 Access Token과 요청 본문, 카카오 재인증은 필요 없다.
 
 - 새 Refresh Token도 14일 persistent cookie로 발급한다. 서버 캐시 장애 중에 재발급해도 같다
-- 이미 쓴 Refresh Token이 다시 오면 그 사용자의 Refresh Token을 모두 폐기한다
+- 성공하면 `200`과 두 새 인증 쿠키를 반환한다. `data`는 사용자 로그인과 같은 `memberId`, `nickname`, `newMember`, `onboardingCompleted`이며 `newMember`는 `false`다
+- 재발급은 직렬화한다. 이미 교체된 Refresh Token의 재사용을 감지하면 사용자의 Refresh Token을 폐기하고 이전 Access Token도 차단한다
+- 결과가 불명인 `503 AUTH-002`를 받았을 때 기존 토큰으로 자동 반복 재시도하지 않는다. 다시 로그인한다
 
 **오류**: 관리자 재발급과 같다(`AUTH-002`, `AUTH-003`, `AUTH-004`, `429`).
 
@@ -301,6 +307,8 @@ DB·Redis 처리 순서와 자동 복구 한계는 [인증 설계의 점주 로�
 | 상태 | 코드 | 언제 |
 | --- | --- | --- |
 | `401` | `AUTH-005` | 로그인 상태가 아님 |
+| `403` | `AUTH-006` | MEMBER 역할이 아님 |
+| `503` | `AUTH-002` | 필수 토큰 폐기 처리 실패. 삭제 쿠키는 발급하지 않으며 일부 폐기는 이미 반영됐을 수 있음 |
 
 ## 접근 제어
 
