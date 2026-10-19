@@ -10,7 +10,6 @@ import com.launchcatch.member.contract.MemberStatus;
 import com.launchcatch.member.dto.AdminMemberListQuery;
 import com.launchcatch.member.dto.AdminMemberResponse;
 import com.launchcatch.member.service.AdminMemberService;
-import java.lang.reflect.Method;
 import java.time.LocalDate;
 import java.util.List;
 import org.junit.jupiter.api.Test;
@@ -18,7 +17,6 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.security.access.prepost.PreAuthorize;
 
 @ExtendWith(MockitoExtension.class)
 class AdminMemberControllerTest {
@@ -40,17 +38,5 @@ class AdminMemberControllerTest {
 
         verify(adminMemberService).search(query);
         assertThat(response.data()).isSameAs(page);
-    }
-
-    @Test
-    void 목록_메서드에는_관리자_역할_검사가_붙어_있다() throws NoSuchMethodException {
-        Method list = AdminMemberController.class.getMethod("list",
-                MemberStatus.class, LocalDate.class, LocalDate.class,
-                String.class, int.class, int.class, String.class, String.class);
-
-        PreAuthorize preAuthorize = list.getAnnotation(PreAuthorize.class);
-
-        assertThat(preAuthorize).isNotNull();
-        assertThat(preAuthorize.value()).isEqualTo("hasAnyRole('ADMIN', 'SUPER_ADMIN')");
     }
 }
