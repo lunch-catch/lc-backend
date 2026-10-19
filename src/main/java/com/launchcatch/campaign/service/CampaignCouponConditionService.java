@@ -94,7 +94,14 @@ public class CampaignCouponConditionService {
                 .orElseGet(() -> create(ownerId, request));
     }
 
+    /*
+     * 점주당 ENDED가 아닌 캠페인은 하나만 허용한다(#525). 같은 가게의 DRAFT를 다시 저장하는
+     * 경로(overwrite)는 이 메서드를 타지 않아서, 여기서는 "새 캠페인을 만드는 것"만 막는다.
+     */
     private CampaignCouponConditionResult create(Long ownerId, CampaignCouponConditionRequest request) {
+        if (campaignRepository.existsByOwnerIdAndStatusNotIn(ownerId, List.of(CampaignStatus.ENDED))) {
+            throw new CampaignException(CampaignErrorCode.CAMPAIGN_ALREADY_IN_PROGRESS);
+        }
         Campaign campaign = Campaign.create(
                 ownerId, request.storeId(),
                 request.discountTargetType(), request.discountType(), request.discountValue(), request.targetMenuId(),
