@@ -81,7 +81,7 @@ class StoreQueryIntegrationTest extends AbstractStoreIntegrationTest {
         jdbc.update("update store set business_registration_number = '1234567890' where store_id = ?", storeId);
         assertThat(service.findSummariesByOwnerIds(List.of(ownerId, ownerId + 2, ownerId, Long.MAX_VALUE)))
                 .extracting("ownerId", "storeId", "finalized", "businessRegistrationNumber")
-                .containsExactlyInAnyOrder(tuple(ownerId, storeId, true, "123**67890"),
+                .containsExactlyInAnyOrder(tuple(ownerId, storeId, true, "123-45-*****"),
                         tuple(ownerId + 2, draftStoreId, false, null));
         assertThat(service.findSummariesByOwnerIds(List.of())).isEmpty();
         assertThat(service.findSummariesByOwnerIds(List.of(Long.MAX_VALUE))).isEmpty();
