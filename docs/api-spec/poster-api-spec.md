@@ -59,7 +59,8 @@
     "versionNumber": 1,
     "status": "DRAFT",
     "html": "<div>...</div>",
-    "removedElements": ["script", "div[onclick]"]
+    "removedElements": ["script", "div[onclick]"],
+    "suggestedPrompts": ["배경을 더 밝게 해줘", "행사명 글자를 더 크게 해줘"]
   }
 }
 ```
@@ -72,6 +73,7 @@
 | `status` | string | 아니오 | `DRAFT`, `PUBLISHED`. 생성 직후는 항상 `DRAFT` |
 | `html` | string | 아니오 | 검증을 거쳐 저장된 HTML |
 | `removedElements` | array of string | 아니오 | 정화 과정에서 제거된 태그와 속성. 없으면 빈 배열 |
+| `suggestedPrompts` | array of string | 아니오 | 퀵 리플라이 버튼으로 보여줄 수정 요청 문장. 서버가 정한 고정 목록이라 비지 않는다. 생성과 수정, 같은 `requestId` 의 재요청에서 모두 같다. 버튼을 누르면 그 문장을 그대로 템플릿 수정의 `requestPrompt` 로 보낸다 |
 
 **오류**
 
