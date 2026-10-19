@@ -30,14 +30,13 @@ class AnalyticsMigrationIntegrationTest extends AbstractAnalyticsIntegrationTest
     @Autowired
     private JdbcTemplate jdbc;
 
-    // V4 는 퍼널 표(#461)가 쓴다. 그 PR 이 병합되면 "4" 가 3 과 5 사이에 들어간다
     @Test
     void analytics_V1부터_V5까지_적용되고_새_테이블과_컬럼이_생긴다() {
         List<String> versions = jdbc.queryForList(
                 "SELECT version FROM flyway_history_analytics WHERE success = 1 ORDER BY installed_rank",
                 String.class);
 
-        assertThat(versions).endsWith("1", "2", "3", "5");
+        assertThat(versions).endsWith("1", "2", "3", "4", "5");
         assertThat(columnsOf("event_log"))
                 .contains("issue_id", "coupon_event_id", "member_coupon_id");
         assertThat(columnsOf("daily_settlement_analytics")).contains("positive_adjust_amount");
@@ -45,6 +44,7 @@ class AnalyticsMigrationIntegrationTest extends AbstractAnalyticsIntegrationTest
         assertThat(existingTables()).contains(
                 "daily_campaign_fraud_analytics",
                 "daily_member_usage",
+                "daily_funnel_analytics",
                 "aggregation_pending_date");
     }
 

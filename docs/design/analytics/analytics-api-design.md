@@ -25,11 +25,10 @@ A-04 카테고리·지역별 분해와 A-08 점주별 상위 소진도 구현하
 
 | 기능 | 확인한 구현 상태 |
 |---|---|
-| A-01, A-02, A-07 | 조회와 일별 집계 단계가 구현돼 있다 |
+| A-01, A-02, A-03, A-07 | 조회와 일별 집계 단계가 구현돼 있다 |
 | A-05, A-06, A-13 | 재계산·실행 조회·이벤트 수집이 구현돼 있다 |
 | 점주 일별 리포트 | `OwnerReportQueryService`가 저장된 행을 조회한다. 채우는 `CampaignReportStep`은 없다 |
 | 이벤트 로그 기반 캠페인 성과 | `CampaignFunnelService`가 요청 시 자기 로그를 집계한다. A-03과 별개다 |
-| A-03 | 전용 테이블의 집계·조회는 PR #461 브랜치에 있다. 아직 `develop`에는 없다 |
 | A-09, A-10, A-12, A-14, 상세 캠페인 리포트와 변경 이력 | 저장 구조와 설계는 있으나 해당 조회·집계 구현은 없다 |
 | 이벤트 로그 13개월 삭제 | 설계만 있다. `EventLogRetentionJob` 구현은 없다 |
 
@@ -64,7 +63,7 @@ A-04 카테고리·지역별 분해와 A-08 점주별 상위 소진도 구현하
 |---|---|---|
 | A-01 회원 지표 | `daily_member_analytics` | `MemberStatsQueryService`, `event_log` |
 | A-02 가게 지표 | `daily_store_analytics` | `StoreStatsQueryService`, `CampaignStatsQueryService` |
-| A-03 퍼널 | 전용 `daily_funnel_analytics`(PR #461, 미병합) | `AdservingStatsQueryService`, `CouponStatsQueryService`, analytics의 `event_log` |
+| A-03 퍼널 | 전용 `daily_funnel_analytics` | `AdservingStatsQueryService`, `CouponStatsQueryService`, analytics의 `event_log` |
 | A-05 재집계 | 운영 실행 기록, `aggregation_pending_date` | `DailyAggregationRunner` |
 | A-06 실행 이력 | 운영 `batch_execution_log` | `BatchExecutionQueryService` |
 | A-07 매출 | `daily_settlement_analytics` | `BillingStatsQueryService` |
@@ -98,13 +97,13 @@ A-04 카테고리·지역별 분해와 A-08 점주별 상위 소진도 구현하
 
 ### 퍼널
 
-유효·무효 노출은 `AdservingStatsQueryService`, 발급·사용은 `CouponStatsQueryService.dailyCampaignStats`의 확정 건수를 사용한다. 찜은 아래 PR #461의 구현처럼 analytics의 `event_log`에서 센다. 확정 업무 건수와 유실 가능한 행동 로그를 같은 신뢰도로 취급하지 않는다.
+유효·무효 노출은 `AdservingStatsQueryService`, 발급·사용은 `CouponStatsQueryService.dailyCampaignStats`의 확정 건수를 사용한다. 찜은 analytics의 `event_log`에서 센다. 확정 업무 건수와 유실 가능한 행동 로그를 같은 신뢰도로 취급하지 않는다.
 
-A-03은 전용 `daily_funnel_analytics`에 영업일당 한 행으로 저장한다. 원본 설계의 전용 테이블 결정을 PR #461의 `FunnelMetricsStep`, `FunnelAnalyticsRepository`, `FunnelQueryService`와 대조했다. 이전의 캠페인 리포트 합산안은 채택하지 않는다. 캠페인을 확인할 수 없는 무효 노출도 플랫폼 합계에 들어가야 하고 캠페인 리포트 구현을 선행 조건으로 만들 필요가 없기 때문이다.
+A-03은 전용 `daily_funnel_analytics`에 영업일당 한 행으로 저장한다. `FunnelMetricsStep`이 `FunnelAnalyticsRepository`로 저장하고 `FunnelQueryService`가 조회한다. 이전의 캠페인 리포트 합산안은 채택하지 않는다. 캠페인을 확인할 수 없는 무효 노출도 플랫폼 합계에 들어가야 하고 캠페인 리포트 구현을 선행 조건으로 만들 필요가 없기 때문이다.
 
-PR #461 구현은 노출을 광고 서빙 집계 조회에서, 발급·사용을 쿠폰 집계 조회에서 받는다. 찜은 원본의 광고 서빙 집계안과 달리 `event_log`의 `wish`를 센다. 광고 서빙의 `swipe_log`는 31일 보존이라 그 뒤 재집계하면 0으로 덮일 수 있기 때문이다. 이벤트 유실 때문에 찜 수가 확정 원본보다 적을 수 있으며 현재 찜 목록 개수와도 다르다.
+이 단계는 노출을 광고 서빙 집계 조회에서, 발급·사용을 쿠폰 집계 조회에서 받는다. 찜은 원본의 광고 서빙 집계안과 달리 `event_log`의 `wish`를 센다. 광고 서빙의 `swipe_log`는 31일 보존이라 그 뒤 재집계하면 0으로 덮일 수 있기 때문이다. 이벤트 유실 때문에 찜 수가 확정 원본보다 적을 수 있으며 현재 찜 목록 개수와도 다르다.
 
-`develop`에는 이 전용 테이블이 아직 없다. PR #461의 `V3__analytics_funnel.sql`은 이미 병합된 `V3__campaign_event_lookup_index.sql`과 버전이 겹친다. #461에서 새 마이그레이션 번호로 옮긴 뒤 통합 검증해야 한다. 이 문서 보완으로 스키마를 적용한 것은 아니다.
+전용 테이블은 `V4__analytics_funnel.sql`이 만든다.
 
 처음에는 `daily_segment_analytics`를 원천으로 적었다. 이 테이블은 A-04(카테고리·지역별 분해)를 위해 `(category_code, region)`을 키로 만든 것이고 `region`이 NOT NULL이다. 가게에 지역 값을 두지 않기로 해서(#364) 쓸 수 없다. A-04용 `daily_segment_analytics`와 A-08용 `daily_owner_spend`는 채우는 단계가 없어 비어 있지만 폐기하지 않고 남겨 둔다.
 
@@ -220,6 +219,5 @@ V2는 `campaign_daily_report.owner_id`와 `store_id`를 nullable로 추가했다
 | 리포트 집계와 연결 정보 | 기존 `CampaignQueryService.findAllById`를 쓰는 원본 설계와 배치 허용 범위를 확인해야 한다 | `CampaignReportStep`, 상세 리포트 |
 | 원래 영업일의 정정 반영 | `SettlementMetricsStep`은 정정 대상 날짜를 미처리 목록에 남긴다. 캠페인 리포트와 변경 이력을 쓰는 단계는 없다 | 리포트 정정 공개 |
 | 실행 세대 확인 | ops의 이어받기는 있어도 일별 집계 실행기가 자기 실행 세대를 전달받거나 공개 시 잠그지 않는다 | 여러 서버의 안전한 공개 |
-| A-03 마이그레이션 | PR #461과 develop의 V3 번호가 겹친다 | A-03 기능 병합 |
 
 `CampaignStatsQueryService.activeCampaignCount`와 A-02의 `StoreMetricsStep`은 구현돼 있으므로 과거의 #354 대기 항목은 남기지 않는다. A-06의 시각은 #490이 KST 오프셋을 붙이도록 고쳤다.

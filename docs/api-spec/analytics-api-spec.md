@@ -77,7 +77,7 @@
 | A-13 | `POST` | `/v1/events` | MEMBER | 클라이언트 발생 이벤트 수집 |
 | A-14 | `GET` | `/v1/admin/campaign-reports` | ADMIN, SUPER_ADMIN | 캠페인별 소진 포인트와 누적 유효 노출 |
 
-목록에는 후속 계약도 포함돼 있다. 현재 A-01·A-02·A-05·A-06·A-07·A-13은 구현됐고 A-03은 PR #461의 미병합 기능이다. A-09·A-10·A-12·A-14와 아래 상세 캠페인 리포트·변경 이력은 아직 제공하지 않는다. 별도의 점주 일별 리포트와 이벤트 로그 기반 캠페인 성과 조회는 구현돼 있다. 내부 집계 단계의 구현 여부는 [API 설계](../design/analytics/analytics-api-design.md#현재-구현과-후속-설계의-경계)를 따른다.
+목록에는 후속 계약도 포함돼 있다. 현재 A-01·A-02·A-03·A-05·A-06·A-07·A-13은 구현됐다. A-09·A-10·A-12·A-14와 아래 상세 캠페인 리포트·변경 이력은 아직 제공하지 않는다. 별도의 점주 일별 리포트와 이벤트 로그 기반 캠페인 성과 조회는 구현돼 있다. 내부 집계 단계의 구현 여부는 [API 설계](../design/analytics/analytics-api-design.md#현재-구현과-후속-설계의-경계)를 따른다.
 
 **A-11(`GET /v1/admin/fraud/rate-limit-hits`, 피드 429 집계)은 구현하지 않는다.** 근거는 [설계서](../design/analytics/analytics-api-design.md#1-적용-범위) 1장에 있다.
 
