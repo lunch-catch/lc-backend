@@ -1,6 +1,21 @@
 # 관리자 점주 목록의 로컬 검증
 
-#536의 변경은 사용자 요청에 따라 Gradle 검증을 실행하지 않은 상태로 제공한다. 로컬에서 먼저 `./gradlew check`를 실행한다. HTTP 권한과 응답 마스킹은 `AdminOwnerIntegrationTest`, 서비스 분기는 `AdminOwnerServiceTest`가 확인한다.
+#536의 서비스 분기는 `AdminOwnerServiceTest`, HTTP 권한과 응답 마스킹은 `AdminOwnerIntegrationTest`가 확인한다. 전체 `./gradlew check`와 통합 테스트의 재실행은 사용자가 로컬에서 진행한다.
+
+## 서비스 단위 테스트와 커버리지 확인
+
+```powershell
+.\gradlew.bat test --tests com.launchcatch.owner.service.AdminOwnerServiceTest
+.\gradlew.bat jacocoTestReport -x test
+```
+
+두 번째 명령은 테스트를 다시 실행하지 않고 방금 실행한 테스트의 커버리지 보고서만 만든다. 테스트 결과는 `build/test-results/test/TEST-com.launchcatch.owner.service.AdminOwnerServiceTest.xml`, 커버리지 보고서는 `build/reports/jacoco/test/jacocoTestReport.xml`에서 확인한다.
+
+2026-10-19에 위 두 명령을 실행했다. 단위 테스트 10개가 모두 통과했으며 `AdminOwnerService`의 메서드는 3/3, 분기는 30/30, 라인은 29/29가 커버됐다. 실행한 범위에는 전체 check와 통합 테스트가 포함되지 않는다.
+
+앞선 전체 검사에서 해당 서비스의 커버리지가 0%로 보고됐을 때 새 단위 테스트의 결과 XML은 결과 폴더에 없었다. 해당 테스트만 다시 실행한 결과 100% 기록이 생성됐다. 이전 실행에서 테스트가 누락된 이유는 확인하지 못했으므로 런타임 코드나 커버리지 기준을 변경하지 않았다.
+
+테스트를 지정해 실행하면 `build/jacoco/test.exec`에는 지정한 테스트의 기록만 남는다. 이 상태에서 전체 클래스의 커버리지 검증만 별도로 실행하면 다른 서비스가 0%로 나올 수 있다. 전체 커버리지는 테스트 필터 없이 전체 테스트를 실행한 데이터로 판정해야 한다.
 
 ## 1만 건 성능 측정
 
