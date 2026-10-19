@@ -244,10 +244,18 @@ tasks.named('bootJar') {
 tasks.named('test') {
     useJUnitPlatform()
     systemProperty 'user.timezone', 'Asia/Seoul'
-    testLogging {
-        exceptionFormat = 'full'
-        showCauses = true
-        showStackTraces = true
+
+    // 진단용. 원인을 찾은 뒤 지운다. 전체 스택은 로그가 너무 커져 근본 원인 메시지만 한 줄로 찍는다.
+    afterTest { desc, result ->
+        if (result.resultType.name() == 'FAILURE') {
+            result.exceptions.each { ex ->
+                def root = ex
+                while (root.cause != null && root.cause != root) {
+                    root = root.cause
+                }
+                println "ROOTCAUSE ${desc.className}.${desc.name} :: ${root.class.name}: ${root.message}"
+            }
+        }
     }
 
     /*
