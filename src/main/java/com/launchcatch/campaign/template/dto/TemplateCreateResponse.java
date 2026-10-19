@@ -21,6 +21,18 @@ public record TemplateCreateResponse(
         String html,
 
         @Schema(description = "정화 과정에서 제거된 태그와 속성입니다. 없으면 빈 배열입니다.", example = "[\"script\", \"div[onclick]\"]")
-        List<String> removedElements
+        List<String> removedElements,
+
+        @Schema(description = "퀵 리플라이 버튼으로 보여줄 수정 요청 문장입니다. 서버가 정한 고정 목록이라 비지 않습니다.",
+                example = "[\"배경을 더 밝게 해줘\", \"행사명 글자를 더 크게 해줘\"]")
+        List<String> suggestedPrompts
 ) {
+
+    // 목록과 순서는 poster-api-design.md 의 "템플릿 생성 · 수정" 절이 정한다(#522).
+    public static final List<String> SUGGESTED_PROMPTS = List.of(
+            "배경을 더 밝게 해줘",
+            "행사명 글자를 더 크게 해줘",
+            "할인 문구를 더 진한 강조색으로 바꿔줘",
+            "행사명을 중앙에서 오른쪽으로 1cm 옮겨줘",
+            "이미지 모서리를 더 둥글게 해줘");
 }

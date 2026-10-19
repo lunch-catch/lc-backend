@@ -19,6 +19,7 @@ import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -26,8 +27,6 @@ import org.springframework.transaction.support.TransactionTemplate;
 @Service
 @RequiredArgsConstructor
 public class TemplateCreateService {
-
-    static final int MAX_TEMPLATES = 10;
 
     private final TemplateRepository templateRepository;
     private final TemplateVersionRepository templateVersionRepository;
@@ -38,6 +37,10 @@ public class TemplateCreateService {
     private final TemplateGenerationRateLimiter templateGenerationRateLimiter;
     private final TransactionTemplate transactionTemplate;
     private final Clock clock;
+
+    // 실제 설계값은 10이다. campaign.template-max-count 의 주석(application.yml)이 그 근거다.
+    @Value("${campaign.template-max-count}")
+    private int maxTemplates;
 
     /*
      * requestId 로 먼저 조회해 재시도인지 본다. 재시도면 LLM 을 다시 부르지 않고 그때 만든
@@ -57,7 +60,7 @@ public class TemplateCreateService {
             return toResponse(existing.get(), List.of());
         }
         templateGenerationRateLimiter.checkLimit(adminId, requestId);
-        if (templateRepository.count() >= MAX_TEMPLATES) {
+        if (templateRepository.count() >= maxTemplates) {
             throw new CampaignException(PosterErrorCode.TEMPLATE_LIMIT_EXCEEDED);
         }
         Document document = Jsoup.parseBodyFragment(generate(requestPrompt));
@@ -95,7 +98,7 @@ public class TemplateCreateService {
      */
     private TemplateCreateResponse save(
             String name, String requestPrompt, String requestId, Long adminId, TemplateSanitizeResult sanitized) {
-        if (templateQuotaRepository.tryReserve(MAX_TEMPLATES) == 0) {
+        if (templateQuotaRepository.tryReserve(maxTemplates) == 0) {
             throw new CampaignException(PosterErrorCode.TEMPLATE_LIMIT_EXCEEDED);
         }
         Template template = Template.createDraft(name);
@@ -117,6 +120,7 @@ public class TemplateCreateService {
                 version.getVersionNumber(),
                 template.getStatus(),
                 version.getHtmlContent(),
-                removedElements);
+                removedElements,
+                TemplateCreateResponse.SUGGESTED_PROMPTS);
     }
 }

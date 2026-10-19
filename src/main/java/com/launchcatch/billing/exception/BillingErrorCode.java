@@ -83,7 +83,11 @@ public enum BillingErrorCode implements ErrorCode {
     SETTLEMENT_MISMATCH_ALREADY_RESOLVED(HttpStatus.CONFLICT, "BILLING-021",
             "이미 해결된 대사 불일치 건입니다."),
     SETTLEMENT_MISMATCH_OWNER_MISMATCH(HttpStatus.CONFLICT, "BILLING-022",
-            "대사 불일치 건이 조정 대상 점주의 것이 아닙니다.");
+            "대사 불일치 건이 조정 대상 점주의 것이 아닙니다."),
+
+    // 점주 결제·포인트·환불 API는 ACTIVE 점주만 쓴다. 가게 등록 전이거나 정지, 탈퇴한 점주는 막는다
+    OWNER_NOT_ACTIVE(HttpStatus.FORBIDDEN, "BILLING-023",
+            "점주 상태가 ACTIVE가 아닙니다.");
 
     private final HttpStatus httpStatus;
     private final String code;

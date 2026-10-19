@@ -302,7 +302,7 @@ OwnerStoreOverview를 HTTP DTO로 변환해 가게 생성 전에도 약관·진�
 완료 단계는 현재 업무 데이터를 확인한다. 약관은 유효한 단일 동의, STORE_INFO는 필수 5항목과 검증 성공,
 LOCATION은 장소·주소·좌표, HOURS는 유효한 7일 전체 저장값, IMAGES는 검증된 대표 이미지로 판단한다.
 메뉴는 선택이며 입력한 메뉴가 있으면 3개 이하·메뉴명·가격·검증된 이미지를 확인한다.
-최종 등록 API가 추가 검증을 확정하면 조회의 canComplete와 같은 규칙을 사용해야 한다.
+최종 등록과 조회의 canComplete는 StoreOnboardingReadiness의 같은 판정 규칙을 사용한다.
 
 ## 입점 등록 진행 상태 조회 (#453)
 
@@ -316,6 +316,30 @@ StoreOnboardingQueryRepository는 본인 owner_id를 바인딩한 SELECT 한 번
 업로드 확인은 DB의 VERIFIED와 객체 키를 사용하며 GET에서 S3를 호출하지 않는다.
 DB 오류를 최초 진입이나 미완료 상태로 숨기지 않는다.
 StoreOnboardingReadiness가 첫 미완료 단계와 최종 등록 가능 여부를 계산한다.
-후속 최종 등록 구현은 같은 판정 기준을 사용해 요청 시점에 다시 검증해야 한다.
+최종 등록 구현은 같은 판정 기준을 사용해 요청 시점에 다시 검증한다.
 저장된 resume_step과 다른 화면을 안내하더라도 진행 상태와 버전은 변경하지 않는다.
 단계 저장 API가 쓰는 StoreRegistrationProgressResponse는 세 필드 계약을 유지한다.
+
+## 가게 최종 등록 (#502)
+
+HTTP 계약은 [최종 등록 명세](../../api-spec/store-api-spec.md#post-v1ownerstorecomplete)가 소유한다.
+OwnerStoreCompleteService가 쓰기 트랜잭션을 열고 점주 행을 잠근 뒤 DB의 ONBOARDING 상태를 확인한다.
+store.contract.StoreCompleter를 호출하면 StoreCompleteService가 MANDATORY로 같은 트랜잭션에 참여한다.
+진행 상태 행 잠금 뒤 버전·본인 미확정 가게 연결과 MENU 재개 단계를 확인한다.
+StoreOnboardingQueryRepository·StoreOnboardingReadiness로 실제 저장값을 다시 검증한다.
+내 가게 조회도 같은 판정 결과를 사용하므로 PENDING 내부 이미지가 목록에서 제외되어도 등록 가능으로 표시되지 않는다.
+메뉴 0개는 유효하며 MENU 저장 이력이나 새 완료 단계는 만들지 않는다.
+
+가게의 기존 finalized_at 컬럼을 매핑하고 Clock으로 확정 시각을 기록한다.
+진행 단계는 MENU를 유지하고 버전을 1 증가시킨 뒤 가게를 flush한다.
+StoreFinalizedEvent를 동기로 발행하면 owner의 StoreFinalizedListener가 OwnerStoreActivationService를 호출한다.
+이 서비스도 MANDATORY로 참여하며 이미 잠근 점주를 ACTIVE로 전환한다.
+이벤트 처리 실패나 커밋 실패는 가게 확정·점주 상태·버전을 모두 롤백한다.
+튜토리얼과 토큰은 변경하지 않는다. 커밋 성공 후 OwnerStatusCacheInvalidationService의 캐시 무효화를 수행한다.
+캐시 삭제 실패는 기존 로그·TTL·DB 직접 조회 정책을 따르며 확정 성공 응답을 실패로 바꾸지 않는다.
+
+잠금 순서는 점주 → 진행 상태 → 가게다. 동기 수신의 점주 잠금은 같은 트랜잭션의 재진입이다.
+메뉴 생성과 이미지 예약은 같은 진행 상태 잠금을 사용하며 잠금 뒤 본인 미확정 가게인지 확인한다.
+이 검사로 최종 등록 뒤 대기하던 업로드·메뉴 요청이 불완전한 데이터를 추가하는 것을 막는다.
+이미지 단계 완료도 같은 잠금을 사용한다. 최종 등록 중에는 S3나 외부 사업자 검증 API를 호출하지 않는다.
+기존 스키마와 CHECK 제약을 그대로 사용하며 적용된 마이그레이션을 수정하지 않는다.

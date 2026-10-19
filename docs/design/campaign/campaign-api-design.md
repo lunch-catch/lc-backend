@@ -39,6 +39,21 @@
   동시에 들어온 두 생성 요청 중 하나가 DB 제약으로 걸려 애플리케이션 레벨의 조회만으로는
   못 막는 경쟁을 막을 수 있다. 이 마이그레이션은 `#244`가 추가한다(명세 단계는 스키마를
   바꾸지 않는다)
+- **점주는 `ENDED`가 아닌 캠페인을 동시에 하나만 가질 수 있다(`#525`, 피드백 리뷰로
+  나온 요구사항).** 새로 만드는 경로(`create()`)에서만
+  `CampaignRepository.existsByOwnerIdAndStatusNotIn(ownerId, List.of(ENDED))`로 확인한다.
+  같은 가게의 `DRAFT`를 다시 저장하는 덮어쓰기 경로는 새 캠페인을 만드는 게 아니라서 이
+  확인을 타지 않는다
+  - **`DRAFT`도 "진행 중"으로 본다.** 아직 제출 전인 초안이라도 점주가 동시에 두 캠페인을
+    끌고 가는 걸 막는다는 의도에는 걸린다. billing의 `hasLiveCampaign`(환불 차단용,
+    `DRAFT`·`ENDED` 제외)과 범위가 다른 건 이 때문이고, 그쪽 기준을 그대로 가져오지
+    않았다
+  - **등록 1단계(새 캠페인 생성 시점)에서 막는다.** 활성화 시점까지 기다리면 점주가
+    이미 입력을 다 마친 뒤에야 거부당해 더 큰 손해다. 가장 일찍 걸 수 있는 자리에서 막는다
+  - **점주당 가게가 1개뿐이라(`uk_store_owner`) 별도 잠금을 추가하지 않는다.** 두 생성
+    요청이 동시에 들어와도 가게가 하나뿐이라 결국 같은 `uk_campaign_draft_store` 경쟁으로
+    수렴하고, 기존 `overwriteAfterConflict` 경로가 그 경쟁을 이미 처리한다. 이 확인은
+    그 경쟁 밖(둘 다 진행 중 캠페인이 전혀 없을 때만 통과)에서 한 번 더 거르는 것뿐이다
 - **노출 대상(3단계) 미입력분은 명세의 기본값을 그대로 쓴다.** `target_radius`(1000,
   1km)와 `target_gender`(`ALL`)는 `V1__campaign_init.sql`에 이미 DB `DEFAULT`로 있다.
   `target_age_groups`(전체 4개)도 `V3__campaign_draft_nullable.sql`에서 DB `DEFAULT`를

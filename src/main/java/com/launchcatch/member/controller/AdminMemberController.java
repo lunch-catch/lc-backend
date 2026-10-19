@@ -17,7 +17,6 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import java.time.LocalDate;
 import lombok.RequiredArgsConstructor;
 import org.springframework.format.annotation.DateTimeFormat;
-import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -32,8 +31,6 @@ public class AdminMemberController {
 
     private final AdminMemberService adminMemberService;
 
-    // TODO: 관리자 인증·인가 구현 후 실제 권한 정책으로 교체한다.
-    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
     @GetMapping
     @Operation(summary = "회원 목록 조회", description = "회원 상태, 가입일 범위, 닉네임 접두사로 검색합니다. 검색어의 앞뒤 공백을 제거하고 공백뿐이면 검색 조건에서 제외합니다. 숫자도 닉네임으로 검색하며 특수 문자는 문자 그대로 처리합니다. 정렬값이 같으면 회원 식별자를 같은 방향으로 정렬하고, 마지막 로그인 시각이 없는 회원은 항상 맨 뒤에 둡니다. 결과가 없으면 items는 빈 배열입니다.")
     @ApiResponses({

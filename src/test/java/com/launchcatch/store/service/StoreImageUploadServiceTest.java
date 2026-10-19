@@ -64,6 +64,7 @@ class StoreImageUploadServiceTest {
     @SuppressWarnings("unchecked")
     @BeforeEach
     void setUp() throws Exception {
+        lenient().when(progressRepository.countDraftStoreOwnedBy(OWNER_ID, STORE_ID)).thenReturn(1L);
         StoreUploadSupport storeUploadSupport = new StoreUploadSupport(progressRepository, s3Presigner);
         Field supportBucketField = StoreUploadSupport.class.getDeclaredField("mediaBucket");
         supportBucketField.setAccessible(true);
@@ -270,7 +271,7 @@ class StoreImageUploadServiceTest {
     @Test
     @DisplayName("로고가 없으면 이미지 단계를 완료할 수 없다")
     void 로고가_없으면_완료할_수_없다() {
-        givenOwnerWithStore();
+        givenOwnerWithStoreForUpdate();
         when(storeImageRepository.existsByStoreIdAndImageType(STORE_ID, StoreImageType.LOGO)).thenReturn(false);
 
         assertThatThrownBy(() -> service.completeImagesStep(OWNER_ID, 3L))
@@ -282,7 +283,7 @@ class StoreImageUploadServiceTest {
     @Test
     @DisplayName("로고가 있으면 IMAGES 단계를 완료하고 다음 상태를 돌려준다")
     void 로고가_있으면_완료한다() {
-        givenOwnerWithStore();
+        givenOwnerWithStoreForUpdate();
         when(storeImageRepository.existsByStoreIdAndImageType(STORE_ID, StoreImageType.LOGO)).thenReturn(true);
         var snapshot = new StoreRegistrationProgressSnapshot(STORE_ID, StoreRegistrationStep.MENU, 4L);
         when(progressService.completeStep(OWNER_ID, 3L, StoreRegistrationStep.IMAGES, null)).thenReturn(snapshot);

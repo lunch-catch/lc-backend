@@ -3,15 +3,26 @@
 관리자의 **플랫폼 대시보드·매출 현황·부정 관리**, 사용자의 **사용 통계**, 클라이언트 **이벤트 수집**이다. 프론트와 주고받는 요청·응답만 담는다.
 
 - **집계 로직·원천 테이블·설계 근거·미결 항목**은 [analytics API 설계](../design/analytics/analytics-api-design.md)에 있다. 일별 집계 배치(I-01), 퍼널 이벤트 수신(I-02), 이벤트 로그 보존(I-03)은 [analytics 배치 설계](../design/analytics/analytics-batch-design.md)에 있다.
-- 점주 쿠폰 이력과 캠페인 리포트는 이 문서 아래 「점주 분석」이 소유한다. 원장과 정산 API는 billing 도메인이 소유한다.
+- 캠페인 리포트는 이 문서 아래 「점주 분석」이 소유한다. 점주 쿠폰 이력은 coupon 도메인이 소유하고 원장과 정산 API는 billing 도메인이 소유한다.
 - 점주 일별 리포트 조회 계약은 이 문서의 [점주 일별 리포트](#점주-일별-리포트)가 소유한다.
 - 공통 규약(경로, 응답 봉투, 상태 코드, 식별자, 시각, 페이지)은 [공통 API 규약](./api-spec.md)를 따른다.
 
 이 문서는 관리자 분석, 회원 사용 통계, 이벤트 수집, 점주 리포트의 HTTP 계약을 소유한다.
 
+**2026-10-18 수정 (실제 변경):** 프론트 처리가 달라지는 것이다.
+
+- A-04(카테고리·지역별 분해)와 A-08(점주별 상위 소진)을 구현하지 않기로 하고 절을 지웠다. 요구사항의 선택 데이터이고, 가게에 지역 값이 없다. 번호는 다시 매기지 않는다.
+- A-03에 사용 수 `redeemCount`를 더했다.
+- A-10의 무효 비율 분모를 `validCount + invalidCount`로 정했다. 세 임계값은 분석 서버의 설정값이다.
+- 점주 리포트의 소유 확인을 바꿨다. 기간에 집계 행이 없으면 본인 캠페인인지와 관계없이 빈 `items`이고, 집계 행이 있는데 소유 점주가 다르면 `403`이다.
+- A-06은 그 영업일에 실행 기록이 없으면 `data`가 `null`이다. `processedCount`는 성공한 실행에서 값이 있다.
+- A-13의 `map_view`, `wishlist_view`를 지금 보낼 수 있다.
+
+**2026-10-18 수정 (설명만):** 요청과 응답은 그대로다. A-01 `withdrawnCount`의 정의를 실제 집계 방식으로 고쳤고, 점주 리포트와 A-03, A-12의 원천 테이블과 서비스 이름은 설계서로 옮겼다.
+
 ---
 
-## 시계열 조회 규약 (A-01~A-04, A-07)
+## 시계열 조회 규약 (A-01~A-03, A-07)
 
 공통 쿼리는 `period`(`DAILY` / `WEEKLY` / `MONTHLY`), `from`, `to`(KST 날짜, 양끝 포함)다.
 
@@ -22,8 +33,8 @@
 | 일부만 걸친 주·월 | `from`~`to` 안에 있는 일자만 합산한다 |
 | 정렬 | 시간 오름차순, **포맷팅하지 않은 숫자**, 같은 x축을 쓰는 지표는 한 배열에 담는다 |
 | 데이터 없음 | 집계가 끝난 날에 대상 데이터가 없으면 `0`이다. 비어 있는 배열을 내려주지 않는다 |
-| 집계 상태 | 버킷마다 `status`: `FINAL`(집계 완료) / `IN_PROGRESS`(당일·집계 전, "집계 중" 표시). 한 버킷 안에 `IN_PROGRESS` 일자가 하나라도 있으면 그 버킷 전체가 `IN_PROGRESS` |
-| 집계 시각 | 응답 최상위 `aggregatedAt` = 요청 범위에서 마지막으로 성공한 집계 실행 시각 |
+| 집계 상태 | 버킷마다 `status`: `FINAL`(집계 완료) / `IN_PROGRESS`(당일·집계 전, "집계 중" 표시). 한 버킷 안에 `IN_PROGRESS` 일자가 하나라도 있으면 그 버킷 전체가 `IN_PROGRESS`이고, 그 버킷의 수치 필드는 `0`이 아니라 `null`이다 |
+| 집계 시각 | 응답 최상위 `aggregatedAt` = 요청 범위에서 마지막으로 성공한 집계 실행 시각. 성공한 집계가 없으면 `null` |
 
 ```json
 {
@@ -56,27 +67,28 @@
 | --- | --- | --- | --- | --- |
 | A-01 | `GET` | `/v1/admin/dashboard/members` | ADMIN, SUPER_ADMIN | 사용자 지표 |
 | A-02 | `GET` | `/v1/admin/dashboard/stores` | ADMIN, SUPER_ADMIN | 점주 지표 |
-| A-03 | `GET` | `/v1/admin/dashboard/funnel` | ADMIN, SUPER_ADMIN | 노출·찜·발급 퍼널과 유효 노출 비율 |
-| A-04 | `GET` | `/v1/admin/dashboard/segments` | ADMIN, SUPER_ADMIN | 카테고리·지역별 분해 |
+| A-03 | `GET` | `/v1/admin/dashboard/funnel` | ADMIN, SUPER_ADMIN | 노출·찜·발급·사용 퍼널과 유효 노출 비율 |
 | A-05 | `POST` | `/v1/admin/aggregations:recalculate` | ADMIN, SUPER_ADMIN | 특정 영업일 집계 재실행 |
 | A-06 | `GET` | `/v1/admin/aggregation-runs` | ADMIN, SUPER_ADMIN | 집계 실행 상태 조회 |
 | A-07 | `GET` | `/v1/admin/sales` | ADMIN, SUPER_ADMIN | 매출 현황 |
-| A-08 | `GET` | `/v1/admin/sales/top-owners` | ADMIN, SUPER_ADMIN | 점주별 상위 소진 |
 | A-09 | `GET` | `/v1/admin/fraud/invalid-impressions` | ADMIN, SUPER_ADMIN | 무효 노출 사유별 집계 |
 | A-10 | `GET` | `/v1/admin/fraud/campaign-warnings` | ADMIN, SUPER_ADMIN | 캠페인 경고 |
 | A-12 | `GET` | `/v1/members/me/usage-stats` | MEMBER | 사용 통계 |
 | A-13 | `POST` | `/v1/events` | MEMBER | 클라이언트 발생 이벤트 수집 |
 | A-14 | `GET` | `/v1/admin/campaign-reports` | ADMIN, SUPER_ADMIN | 캠페인별 소진 포인트와 누적 유효 노출 |
 
-**A-11(`GET /v1/admin/fraud/rate-limit-hits`, 피드 429 집계)은 구현하지 않는다.** 근거는 설계 문서의 "피드 429를 집계하지 않는다"에 있다.
+목록에는 후속 계약도 포함돼 있다. 현재 A-01·A-02·A-03·A-05·A-06·A-07·A-13은 구현됐다. A-09·A-10·A-12·A-14와 아래 상세 캠페인 리포트·변경 이력은 아직 제공하지 않는다. 별도의 점주 일별 리포트와 이벤트 로그 기반 캠페인 성과 조회는 구현돼 있다. 내부 집계 단계의 구현 여부는 [API 설계](../design/analytics/analytics-api-design.md#현재-구현과-후속-설계의-경계)를 따른다.
 
-**화면이 다른 API와 합쳐야 하는 값이 셋 있다.** 분석 응답에 없으니 FE가 함께 호출한다.
+**A-11(`GET /v1/admin/fraud/rate-limit-hits`, 피드 429 집계)은 구현하지 않는다.** 근거는 [설계서](../design/analytics/analytics-api-design.md#1-적용-범위) 1장에 있다.
+
+**A-04(`GET /v1/admin/dashboard/segments`, 카테고리·지역별 분해)와 A-08(`GET /v1/admin/sales/top-owners`, 점주별 상위 소진)도 구현하지 않는다.** 요구사항의 선택 데이터다. 번호는 다시 매기지 않는다.
+
+**화면이 다른 API와 합쳐야 하는 값이 둘 있다.** 분석 응답에 없으니 FE가 함께 호출한다.
 
 | 없는 값 | 어디에 없나 | 대신 호출할 것 |
 | --- | --- | --- |
 | 원장 불일치 건수 | A-07 | billing의 대사 불일치 조회 응답 `totalElements` |
-| 점주 상호 | A-08 | `GET /v1/admin/owners` |
-| 회원 상태 | A-09 | `GET /v1/admin/members` (같은 화면이 이미 호출) |
+| 회원 상태 | A-09 | 관리자 회원 목록은 ID 검색이 없어 A-09의 회원 ID와 자동 연결하지 않는다. 회원 상태와 정지 버튼을 이 응답으로 제공하지 않는다 |
 
 ---
 
@@ -105,7 +117,7 @@ GET /v1/admin/dashboard/members?period=DAILY&from=2026-09-01&to=2026-09-30
 | `newMemberCount` | 그 기간 신규 가입자 | 합계 |
 | `cumulativeMemberCount` | 누적 회원 수 | 마지막 날 |
 | `avgDailyActiveMembers` | 일평균 활성 회원. **그날 이벤트가 발생한 회원** 기준(로그인 아님) | 일평균 |
-| `withdrawnCount` | 누적 탈퇴자 | 마지막 날 |
+| `withdrawnCount` | 탈퇴 회원 수. 집계할 때 `WITHDRAWN` 상태인 회원만 센다. 재가입한 회원은 과거 날짜를 다시 집계할 때 그날 탈퇴 수에서 빠질 수 있다 | 마지막 날 |
 | `suspendedCount` | 정지 회원 수 | 마지막 날 |
 
 `avgDailyActiveMembers`는 묶음 안 일별 활성 회원의 합을 묶음의 일수로 나눠 소수점 첫째 자리에서 반올림한 정수다. 일부만 걸친 주와 월은 `from`~`to` 안의 일수로 나눈다. `status`가 `IN_PROGRESS`인 항목의 수치 필드는 `0`이 아니라 `null`이다.
@@ -140,35 +152,16 @@ GET /v1/admin/dashboard/funnel?period=DAILY&from=&to=
 {
   "label": "2026-09-30", "status": "FINAL",
   "validImpressionCount": 182000, "invalidImpressionCount": 1450, "validRatio": 0.992,
-  "wishCount": 9100, "issueCount": 2300, "redeemCount": 700
+  "wishCount": 9100, "issueCount": 2300, "redeemCount": 410
 }
 ```
 
-- 이 API는 노출·찜·발급·사용 건수와 유효 노출 비율을 내려준다. 사용(`redeemCount`)은 쿠폰이 확정한 사용 기록의 건수다.
-- 건수는 모두 합계다. 집계 전(`IN_PROGRESS`) 항목의 수치 필드는 `0`이 아니라 `null`이다.
+- `redeemCount`는 그날 쿠폰 사용이 확정된 건수다. `redeem` 이벤트가 아니라 쿠폰의 사용 확정 기록으로 센다. 흐름 지표라 기간을 묶을 때 합계다. 전환율 계산은 화면이 한다.
 - `validRatio = valid / (valid + invalid)`. 기간을 묶을 때는 합산한 값으로 **재계산**한다.
 - `invalidImpressionCount`는 무효 사유 2종(`EXPIRED_OR_UNKNOWN`, `NOT_OWNER`)의 합이다. 사유별 건수는 A-09에서 본다.
 - **미과금 노출은 `validImpressionCount`에 포함된다.** 예산을 넘겨 과금되지 않은 노출도 유효 노출이다(해당 요구사항).
-- 유효·무효 노출 수는 `AdservingStatsQueryService`에서 받고 발급·사용 수는 `CouponStatsQueryService`에서 받는다. 점주 리포트와 A-10도 같은 계약을 사용하므로 화면마다 수치가 달라지지 않는다.
-- **`wishCount`는 피드 카드에서 찜한 수다.** 분석 자기 `event_log`의 `wish` 행 수이고 가게 상세에서 한 찜은 들어가지 않는다. 찜 해제는 세지 않는다. `event_log`가 유실을 허용해 실제보다 아주 조금 낮을 수 있다.
-- 대상 데이터가 없는 날은 `0`이고 `validRatio`는 `null`이다.
-
-## A-04. `GET /v1/admin/dashboard/segments`
-
-```
-GET /v1/admin/dashboard/segments?period=MONTHLY&from=&to=&groupBy=CATEGORY&category=&region=
-```
-
-`groupBy`는 `CATEGORY` / `REGION` / `CATEGORY_REGION`이다. `category`·`region`은 선택 필터다.
-
-```json
-{
-  "label": "2026-09", "status": "FINAL", "category": "한식", "region": null,
-  "impressionCount": 54000, "wishCount": 3100, "issueCount": 800, "redeemCount": 410, "spendAmount": 540000
-}
-```
-
-카테고리·지역 값의 목록은 가게 도메인이 정한다. 이 API는 집계에 있는 값을 그대로 내려준다. `map_view`·`wishlist_view` 이벤트는 가리킬 캠페인·가게가 없어 이 집계에 들어가지 않는다.
+- 찜 수는 분석에 수집된 찜 이벤트의 누적 건수다. 이벤트 유실과 보존 기간 차이로 현재 찜 목록이나 원천 업무의 확정 건수와 같다고 보장하지 않는다. 발급·사용 수는 쿠폰의 확정 기록을 따른다.
+- 집계가 끝난 날에 대상 데이터가 없으면 수치는 `0`이고 `validRatio`는 `null`이다. `IN_PROGRESS` 버킷의 수치 필드는 공통 시계열 규약대로 모두 `null`이다.
 
 ---
 
@@ -205,11 +198,13 @@ GET /v1/admin/aggregation-runs?businessDate=2026-09-30
 
 ```json
 { "runId": 301, "jobName": "DAILY_AGGREGATION", "businessDate": "2026-09-30",
-  "status": "SUCCESS", "startedAt": "...", "finishedAt": "...", "processedCount": 5,
+  "status": "SUCCESS", "startedAt": "2026-10-01T01:00:00+09:00", "finishedAt": "2026-10-01T01:05:00+09:00", "processedCount": 5,
   "executedBy": "batch-02", "retryCount": 0, "failureReason": null }
 ```
 
-`status`는 `RUNNING` / `SUCCESS` / `FAILED`다. `executedBy`는 실행한 서버다. 작업명은 `DAILY_AGGREGATION`이다(운영과 아직 확정되지 않았다). `processedCount`는 운영이 처리 건수를 기록하는 기능을 열기 전까지 `null`이다.
+`status`는 `RUNNING` / `SUCCESS` / `FAILED`다. `executedBy`는 실행한 서버이며 작업명은 `DAILY_AGGREGATION`이다. 시작·종료 시각은 KST 오프셋을 포함한다. 실행 중이면 `finishedAt`은 `null`이다.
+
+그 영업일에 실행 기록이 없으면 `data`가 `null`이다. `processedCount`는 성공한 실행이 저장한 집계 행 수이고, 실행 중이거나 실패하면 `null`이다.
 
 ---
 
@@ -256,19 +251,6 @@ GET /v1/admin/sales?period=MONTHLY&from=2026-07-01&to=2026-09-30
 - `reservedAmount`·`releasedAmount`는 내려주지 않는다. 요구사항이 예약·해제를 표시하지 않고 해당 요구사항 필수 데이터에도 없다.
 - `unspentBalance`는 그날 말까지의 원장에서 `CHARGE − REFUND + ADJUST − DEDUCT`를 누적해 계산한다. 예약과 해제는 잔액과 예약 사이를 오갈 뿐이라 서로 지워진다.
 
-## A-08. `GET /v1/admin/sales/top-owners`
-
-```
-GET /v1/admin/sales/top-owners?from=2026-09-01&to=2026-09-30&limit=10
-```
-
-```json
-{ "rank": 1, "ownerId": 7, "spentAmount": 420000, "shareOfTotal": 0.102 }
-```
-
-- 이 API는 대시보드 상위 N 카드용 순위 목록이다. `limit`은 기본 10, 최대 50이고 정렬은 `spentAmount` 내림차순으로 고정한다. 값이 같으면 `ownerId` 오름차순으로 정렬한다. 응답은 `items` 배열이고 `rank`는 1부터 매긴다. 기간 소진액이 0 이하인 점주는 제외하며 기간은 최대 31일이다. 특정 점주의 기간별 추이는 billing의 `GET /v1/admin/point-ledger/summary`가 맡는다.
-- **`storeName`은 이 응답에 없다.** 화면은 `ownerId` 목록으로 관리자 점주 목록 API를 한 번 호출해 상호를 붙인다. 현재 페이지에 없는 점주를 탈퇴 점주로 단정하지 않는다.
-
 ---
 
 # 부정 관리
@@ -282,7 +264,7 @@ GET /v1/admin/sales/top-owners?from=2026-09-01&to=2026-09-30&limit=10
 | `EXPIRED_OR_UNKNOWN` | 노출 이벤트가 도착했는데 그 `serve_id`의 serve 기록이 없다 |
 | `NOT_OWNER` | 다른 사용자가 받은 카드의 `serve_id`를 보냈다 |
 
-`EXPIRED_OR_UNKNOWN`에는 TTL 만료·위조·재전송 세 상황이 섞여 있어 그 자체로 부정 신호가 아니다. 화면에서 수치를 해석하는 법은 설계 문서의 "경고를 읽는 법"에 있다.
+`EXPIRED_OR_UNKNOWN`에는 TTL 만료·위조·재전송 세 상황이 섞여 있어 그 자체로 부정 신호가 아니다. 무효 비율 경고와 집중 경고를 함께 보고 판단한다.
 
 ## A-09. `GET /v1/admin/fraud/invalid-impressions`
 
@@ -336,12 +318,12 @@ GET /v1/admin/fraud/campaign-warnings?from=&to=&type=INVALID_RATIO|CONCENTRATION
 
 | 경고 | 판정 |
 | --- | --- |
-| `invalidRatioWarning` | `invalidRatio > 0.20`. 무효 노출 비율 20% 초과 |
+| `invalidRatioWarning` | `invalidRatio > 0.20`. 무효 노출 비율 20% 초과. `invalidRatio = invalidCount ÷ (validCount + invalidCount)`이고 둘 다 0이면 `null`, 경고 없음 |
 | `concentrationWarning` | `(validCount >= 100) AND (topMembersShare > 0.5)`. 소수 계정 집중 |
 
-`topMembersShare`는 상위 5개 계정의 노출 점유율이다. 세 임계값(상위 계정 수 5, 점유율 0.5, 최소 노출 100)은 **운영 플랫폼 설정값**이라 바뀔 수 있다. 각 값의 근거는 설계 문서의 "집중 경고의 판정식과 초기값"에 있다.
+`topMembersShare`는 상위 5개 계정의 노출 점유율이다. 세 임계값(상위 계정 수 5, 점유율 0.5, 최소 노출 100)은 **분석 서버의 설정값**이라 배포로 바뀔 수 있다. 판정식은 [설계서](../design/analytics/analytics-api-design.md#7-부정-관리) 7장에 있다.
 
-집중 경고는 캠페인·영업일 단위로 판정한다. 기간 조회의 `concentrationWarning`은 기간 중 하루라도 판정된 캠페인이면 `true`다. `topMembersShare`와 `distinctMemberCount`는 그 기간에서 점유율이 가장 높았던 하루의 값이다. `validCount`, `invalidCount`, `invalidRatio`는 기간 합계로 계산한다. 기간 전체의 회원별 노출은 보관하지 않는다.
+집중 경고는 캠페인·영업일 단위로 판정한다. 기간 조회의 `concentrationWarning`은 기간 중 하루라도 판정된 캠페인이면 `true`다. `topMembersShare`와 `distinctMemberCount`는 그 기간에서 점유율이 가장 높았던 하루의 값이다. `validCount`, `invalidCount`, `invalidRatio`는 기간 합계로 계산한다. 기간 전체의 회원별 노출은 보관하지 않는다. 날짜별로 판정하므로 한 달에 걸쳐 조금씩 나눠 소진시키는 공격은 놓칠 수 있다. 무효 비율 경고와 함께 본다.
 
 ---
 
@@ -393,11 +375,11 @@ GET /v1/admin/campaign-reports?campaignIds=12,15,31&from=2026-09-01&to=2026-09-3
 
 이벤트가 없으면 세 값 모두 `0`이다.
 
-세 값은 `daily_member_usage`에 회원과 영업일별로 저장한다. 찜은 `event_log`에서 계산하고 사용 수와 확정 할인액은 `CouponStatsQueryService`에서 받는다. 응답은 전날까지 확정된 일별 값을 합산하므로 오늘 사용한 쿠폰은 다음 날 반영된다.
+세 값은 전날까지 확정된 일별 값을 합산하므로 오늘 사용한 쿠폰은 다음 날 반영된다. 사용 수와 절약 금액은 `redeem` 이벤트가 아니라 쿠폰의 사용 확정 기록으로 센다.
 
 ## A-13. `POST /v1/events`
 
-**클라이언트가 직접 보내는 유일한 수집 API다.** 퍼널 이벤트 11종 중 서버가 알 수 없는 **화면 행동 3종만** 받는다. 나머지 8종은 서버가 내부에서 기록한다.
+**클라이언트가 직접 보내는 유일한 수집 API다.** 서버가 알 수 없는 **화면 행동 3종만** 받는다. 노출·찜·발급·사용 등 서버 업무 이벤트는 이 API로 보내지 않는다.
 
 | 허용 유형 | 설명 | `campaignId`·`storeId` |
 | --- | --- | --- |
@@ -437,7 +419,7 @@ GET /v1/admin/campaign-reports?campaignIds=12,15,31&from=2026-09-01&to=2026-09-3
   "data": { "accepted": 1, "duplicated": 0 } }
 ```
 
-`map_view`와 `wishlist_view`는 `analytics/V2`에서 이벤트 대상 컬럼을 선택 값으로 바꾼 뒤 수집한다.
+세 유형 모두 지금 보낼 수 있다.
 
 ---
 
@@ -495,7 +477,17 @@ GET /v1/owner/report?from=2026-10-16&to=2026-10-17
 
 # 점주 분석
 
-점주가 자신의 캠페인 광고 성과를 조회한다. 리포트 집계와 데이터 소유, 성능 기준은 [analytics API 설계](../design/analytics/analytics-api-design.md)에 있다. 쿠폰 발급·사용 이력은 coupon 도메인의 `GET /v1/owner/stores/{storeId}/coupon-usages`가 소유한다. 소유 확인은 `CampaignQueryService`로 현재 캠페인 소유자를 조회해서 판단한다. 요청 점주가 소유하지 않은 캠페인은 존재 여부와 관계없이 `403`을 반환한다.
+점주가 자신의 캠페인 광고 성과를 조회한다. 리포트 집계와 데이터 소유, 성능 기준은 [analytics API 설계](../design/analytics/analytics-api-design.md)에 있다. 쿠폰 발급·사용 이력은 coupon 도메인의 `GET /v1/owner/stores/{storeId}/coupon-usages`가 소유한다.
+
+아래 소유 확인 표와 상세 리포트·변경 이력은 아직 구현하지 않은 계약이다. 구현된 이벤트 로그 기반 성과 조회는 캠페인 공개 contract로 현재 소유를 확인하며 해당 절의 오류 규칙을 따른다. 점주 일별 리포트는 로그인한 점주의 집계만 조회한다.
+
+| 상황 | 응답 |
+| --- | --- |
+| 요청 기간에 집계 행이 있고 소유 점주가 요청한 점주가 아니다 | `403` |
+| 요청 기간에 집계 행이 없다 | 본인 캠페인인지와 관계없이 빈 `items`. 남의 캠페인이어도 같아서 존재 여부가 새지 않는다 |
+| 당일 | `AGGREGATING` |
+
+이전에는 남의 캠페인이나 없는 캠페인이면 존재 여부와 관계없이 `403`이었다.
 
 | API | 권한 | 설명 |
 | --- | --- | --- |
@@ -573,7 +565,7 @@ GET /v1/owner/report?from=2026-10-16&to=2026-10-17
 
 `GET /v1/owner/campaigns/{campaignId}/reports?period=DAILY&from=2026-10-01&to=2026-10-31`
 
-`period`는 `DAILY`, `WEEKLY`, `MONTHLY` 중 하나이고 `from`, `to`는 필수다. 최대 조회 기간은 31일이다. 일별 원본은 `campaign_daily_report`이며 주·월 값은 아래 규칙으로 묶는다.
+`period`는 `DAILY`, `WEEKLY`, `MONTHLY` 중 하나이고 `from`, `to`는 필수다. 최대 조회 기간은 31일이다. 주·월 값은 일별 값을 아래 규칙으로 묶는다.
 
 - 건수·금액은 합산한다.
 - `budgetSpendRate`는 합산한 `spentAmount`를 기간에 포함된 일별 예산의 합으로 나눠 다시 계산한다. 예산 합이 0이면 `null`이다.
@@ -629,17 +621,15 @@ GET /v1/owner/report?from=2026-10-16&to=2026-10-17
 }
 ```
 
-| 응답 필드 | 저장·계산 기준 |
+| 응답 필드 | 뜻 |
 | --- | --- |
-| `businessDate` | `campaign_daily_report.business_date` |
-| `dailyBudget` | `daily_budget` |
-| `chargedAmount` | 원장 `DEDUCT` 합 |
-| `refundedAmount` | 과오 차감 복구용 양수 `ADJUST` 합. 그 캠페인 ID가 달린 조정만 센다. 캠페인 없이 기록된 정정은 플랫폼 합계(A-07)에만 들어간다 |
-| `spentAmount` | `chargedAmount - refundedAmount` |
-| `notBilledReasons` | `campaign_daily_impression_reason_report`의 `UNBILLED` 행 |
-| `invalidReasons` | 같은 테이블의 `INVALID` 행 |
-| `hourlyImpressions` | `campaign_hourly_report`, 10·11·12시 |
-| `slotImpressions` | `campaign_daily_slot_report`의 `ALLOCATION`, `RELEVANCE` |
+| `refundedAmount` | 과오 차감 정정액. 그 캠페인에 대해 기록된 정정만 센다. 캠페인 없이 기록된 정정은 플랫폼 합계(A-07)에만 들어간다 |
+| `notBilledReasons` | 미과금 사유별 노출 수 |
+| `invalidReasons` | 무효 사유별 노출 수 |
+| `hourlyImpressions` | 10·11·12시의 시간대별 유효 노출 수 |
+| `slotImpressions` | `ALLOCATION`, `RELEVANCE` 슬롯별 유효 노출 수 |
+
+나머지 필드는 아래 「일별 응답 필드」에 있다. 각 값을 어디서 읽는지는 [설계서](../design/analytics/analytics-api-design.md#9-캠페인-리포트) 9장에 있다.
 
 무효 노출은 유효 노출에 포함하지 않고 과금하지 않는다. 미과금 노출은 유효 노출에 포함하지만 `spentAmount`에는 포함하지 않는다. 과금 노출 수에 단가를 곱해 차감액을 검증한다.
 
@@ -647,7 +637,7 @@ GET /v1/owner/report?from=2026-10-16&to=2026-10-17
 
 `GET /v1/owner/campaigns/{campaignId}/reports/{businessDate}/history`
 
-일별 리포트가 `FINALIZED`가 된 뒤 지연 도착 이벤트 또는 정정으로 바뀌면 `campaign_daily_report_history`에서 변경 전 값, 변경 후 값, 변경 시각, 변경 사유를 반환한다. 기본 리포트의 `changedAfterFinalization`은 이 이력이 존재할 때만 `true`다. 점주는 이 API로 요구사항이 요구하는 변경 내역을 확인한다.
+일별 리포트가 `FINALIZED`가 된 뒤 지연 도착 이벤트 또는 정정으로 바뀌면 변경 전 값, 변경 후 값, 변경 시각, 변경 사유를 반환한다. 기본 리포트의 `changedAfterFinalization`은 이 이력이 존재할 때만 `true`다. 점주는 이 API로 요구사항이 요구하는 변경 내역을 확인한다.
 
 당일 리포트는 `AGGREGATING` 상태로 반환하며 확정 전 수치라는 점을 화면에 표시한다. 찜·발급·사용은 성과 지표이며 정산 금액에 포함하지 않는다.
 
@@ -667,20 +657,21 @@ GET /v1/owner/report?from=2026-10-16&to=2026-10-17
 
 ### 일별 응답 필드
 
-| 필드 | 설명 | 원천 |
-| --- | --- | --- |
-| `dailyBudget` | 해당 영업일 예약된 하루 예산 | `campaign_daily_report.daily_budget` |
-| `chargedAmount` | 과금된 유효 노출의 원장 차감 합 | `DEDUCT` 집계 |
-| `refundedAmount` | 사후 과오 차감 복구액 | `BillingStatsQueryService`가 반환한 캠페인별 양수 `ADJUST` 집계 |
-| `spentAmount` | `chargedAmount - refundedAmount` | 리포트 집계 |
-| `budgetSpendRate` | `spentAmount / dailyBudget` | 리포트 집계. 분모 0이면 `null` |
-| `impressionUnitCost` | 그날 적용된 노출 단가 | `BillingStatsQueryService` |
-| `validImpressionCount` | 과금·미과금 유효 노출 합 | 리포트 집계 |
-| `billableImpressionCount` | 실제 과금된 유효 노출 수 | `BillingStatsQueryService`와 `AdservingStatsQueryService` |
-| `notBilledImpressionCount` | 과금되지 않은 유효 노출 수 | 세 미과금 사유 합 |
-| `invalidImpressionCount` | 무효 노출 수 | `AdservingStatsQueryService` |
-| `wishCount`, `issuedCount`, `redeemCount` | 찜·발급·사용 성과 | `AdservingStatsQueryService`와 `CouponStatsQueryService` |
-| `costPerVisit` | `spentAmount / redeemCount` | `redeemCount=0`이면 `null` |
+| 필드 | 설명 |
+| --- | --- |
+| `businessDate` | 영업일 |
+| `dailyBudget` | 해당 영업일 예약된 하루 예산 |
+| `chargedAmount` | 과금된 유효 노출의 차감 합 |
+| `refundedAmount` | 사후 과오 차감 정정액 |
+| `spentAmount` | `chargedAmount - refundedAmount` |
+| `budgetSpendRate` | `spentAmount / dailyBudget`. 분모 0이면 `null` |
+| `impressionUnitCost` | 그날 적용된 노출 단가 |
+| `validImpressionCount` | 과금·미과금 유효 노출 합 |
+| `billableImpressionCount` | 실제 과금된 유효 노출 수 |
+| `notBilledImpressionCount` | 과금되지 않은 유효 노출 수. 세 미과금 사유의 합 |
+| `invalidImpressionCount` | 무효 노출 수 |
+| `wishCount`, `issuedCount`, `redeemCount` | 찜·발급·사용 성과 |
+| `costPerVisit` | `spentAmount / redeemCount`. `redeemCount=0`이면 `null` |
 
 `chargedAmount`는 광고 비용이고 환불 요청으로 발생한 `REFUND`와 혼동하지 않는다. `refundedAmount`는 고객 환불이 아니라 과오 차감 사실이 확인됐을 때의 관리자 정정이다. 정산 `GET /v1/owner/points/spend-summary`의 `spentPoint`는 정정을 빼지 않은 집행액이라 정정이 있으면 이 리포트의 `spentAmount`와 정정액만큼 다르다.
 
@@ -700,7 +691,7 @@ costPerVisit = spentAmount / redeemCount
 | 미과금 | `NOT_BILLED_PAUSED` | 유효 노출에는 포함, 과금에는 제외 |
 | 미과금 | `NOT_BILLED_SOLD_OUT` | 유효 노출에는 포함, 과금에는 제외 |
 
-미과금 사유는 `BillingStatsQueryService`와 `AdservingStatsQueryService`가 같은 캠페인과 영업일에 반환한 값을 합쳐 생성한다. 미과금 노출은 광고 성과에는 포함되지만 점주에게 비용으로 청구되지 않는다.
+미과금 노출은 광고 성과에는 포함되지만 점주에게 비용으로 청구되지 않는다.
 
 ### 시간대·슬롯·전환 지표
 
@@ -748,11 +739,11 @@ GET /v1/owner/campaigns/801/reports/2026-10-01/history
 | 필드 | 설명 |
 | --- | --- |
 | `changedAt` | 재집계·정정이 반영된 시각 |
-| `reason` | 변경 사유 텍스트. 스키마의 `change_reason`은 자유 문자열이며, 예: `LATE_EVENT`, `OVERCHARGE_REVERSAL`, `MANUAL_RECALCULATION` |
+| `reason` | 변경 사유 텍스트. 정해진 값 목록이 없는 자유 문자열이며, 예: `LATE_EVENT`, `OVERCHARGE_REVERSAL`, `MANUAL_RECALCULATION` |
 | `before` | 변경 전 공개 지표 |
 | `after` | 변경 후 공개 지표 |
 
-변경 이력은 `campaign_daily_report_history`를 원천으로 하며, `FINALIZED` 이전의 집계 중 변경은 이력으로 만들지 않는다. 이력이 없으면 `items: []`를 반환한다.
+`FINALIZED` 이전의 집계 중 변경은 이력으로 만들지 않는다. 이력이 없으면 `items: []`를 반환한다.
 
 ---
 

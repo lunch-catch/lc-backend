@@ -8,18 +8,15 @@ import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-import com.launchcatch.IntegrationTestSupport;
 import com.launchcatch.auth.Role;
 import com.launchcatch.auth.jwt.AccessTokenValidAfterRepository;
 import com.launchcatch.auth.jwt.JwtTokenProvider;
 import com.launchcatch.auth.opaque.RefreshTokenRepository;
-import com.launchcatch.member.client.KakaoUnlinkClient;
 import com.launchcatch.member.contract.AgeGroup;
 import com.launchcatch.member.contract.Gender;
 import com.launchcatch.member.contract.MemberStatus;
 import com.launchcatch.member.entity.Member;
 import com.launchcatch.member.entity.MemberProfile;
-import com.launchcatch.member.oauth.KakaoIdTokenExchanger;
 import com.launchcatch.member.oauth.KakaoIdentity;
 import com.launchcatch.member.repository.KakaoUnlinkFailureRepository;
 import com.launchcatch.member.repository.MemberProfileRepository;
@@ -34,19 +31,12 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
-import org.springframework.test.context.ActiveProfiles;
-import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.support.TransactionTemplate;
 
-@ActiveProfiles("test")
-@SpringBootTest
-@AutoConfigureMockMvc
-class MemberWithdrawalIntegrationTest extends IntegrationTestSupport {
+class MemberWithdrawalIntegrationTest extends AbstractMemberIntegrationTest {
 
     @Autowired MockMvc mvc;
     @Autowired MemberRepository members;
@@ -59,8 +49,6 @@ class MemberWithdrawalIntegrationTest extends IntegrationTestSupport {
     @Autowired JwtTokenProvider jwt;
     @Autowired TransactionTemplate transactions;
     @Autowired Clock clock;
-    @MockitoBean KakaoIdTokenExchanger exchanger;
-    @MockitoBean KakaoUnlinkClient unlink;
 
     @ParameterizedTest
     @ValueSource(booleans = {true, false})

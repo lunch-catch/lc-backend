@@ -89,6 +89,17 @@ class TemplateHtmlSanitizerTest {
     }
 
     @Test
+    @DisplayName("퀵 리플라이 위치 조정이 만드는 cm 단위와 transform style 은 그대로 둔다")
+    void cm_단위와_transform_style은_남긴다() {
+        String html = "<h1 data-slot=\"eventName\" style=\"transform:translateX(1cm);margin-left:1cm\">title</h1>";
+
+        TemplateSanitizeResult result = sanitizer.sanitize(html);
+
+        assertThat(result.html()).isEqualTo(html);
+        assertThat(result.removedElements()).isEmpty();
+    }
+
+    @Test
     @DisplayName("역슬래시로 금칙어를 피해도 style 전체를 제거한다")
     void 역슬래시로_우회해도_제거한다() {
         TemplateSanitizeResult result = sanitizer.sanitize(
