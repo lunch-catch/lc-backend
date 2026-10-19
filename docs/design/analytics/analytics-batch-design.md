@@ -79,7 +79,7 @@ billing은 2026-10-16에 `BillingStatsQueryService`를 공개했다(#352, #402).
 | 메서드 | 돌려주는 것 | 쓰는 단계 |
 |---|---|---|
 | `ledgerSums(영업일)` | 점주와 캠페인별 `CHARGE`, `RESERVE`, `DEDUCT`, `RELEASE`, `REFUND`와 양수·음수 `ADJUST` 합 | `SettlementMetricsStep`, `OwnerSpendStep`, `CampaignReportStep` |
-| `billingCounts(영업일)` | 캠페인별 `BILLED`, `NOT_BILLED_BUDGET`, `NOT_BILLED_PAUSED` 건수 | `NotBilledMetricsStep`, `CampaignReportStep` |
+| `billingCounts(영업일)` | 캠페인별 `BILLED`, `NOT_BILLED_BUDGET`, `NOT_BILLED_PAUSED`, `NOT_BILLED_NO_PLAN` 건수 | `NotBilledMetricsStep`, `CampaignReportStep` |
 | `dailyBudgets(영업일)` | 캠페인별 그날 적용 하루 예산과 단가 | `CampaignReportStep` |
 | `dailyTotals(영업일)` | 그날 말 미소진 잔액, 원장 대조용 합계, 원장 불일치 건수 | 미소진 잔액은 `SettlementMetricsStep`(`unspent_balance`), 나머지 둘은 `ConsistencyCheckStep`의 검증. 불일치 건수는 A-07 응답에 없다 |
 | `correctionTargetDates(기록 영업일)` | 그날 기록된 양수 `ADJUST`가 가리키는 정정 대상 영업일 | 재집계 대상 찾기 |

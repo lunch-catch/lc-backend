@@ -11,7 +11,7 @@
 점주의 **충전·잔액 조회·환불 요청**과 관리자의 **결제 내역·포인트 변동·환불 처리·정책·조정·대사 조회**를 다룬다.
 
 
-00:00/13:30 예약·해제 배치, 노출 차감, 대사 배치처럼 HTTP가 아닌 내부 흐름은 [정산 배치 설계](../design/billing/billing-batch-design.md)에서 다룬다. 관리자 대시보드와 매출 현황(FR-017, FR-022)은 `analytics-api-spec.md`가, 점주 리포트는 `analytics-api-spec.md`(점주 분석)가 소유한다.
+00:00 예약·해제 배치, 노출 차감, 대사 배치처럼 HTTP가 아닌 내부 흐름은 [정산 배치 설계](../design/billing/billing-batch-design.md)에서 다룬다. 관리자 대시보드와 매출 현황(FR-017, FR-022)은 `analytics-api-spec.md`가, 점주 리포트는 `analytics-api-spec.md`(점주 분석)가 소유한다.
 
 공통 규약(경로, 응답 봉투, 상태 코드, 식별자, 시각, 페이지)은 [api-spec.md](./api-spec.md)를 따르고 여기서는 반복하지 않는다.
 
@@ -78,7 +78,7 @@
 | `CHARGE` | + | 결제가 `APPROVED`로 확정될 때만. 결제당 1건 |
 | `RESERVE` | − | 00:00에 그날 쓸 포인트를 캠페인 몫으로 배정, 또는 충전 직후 재예약 |
 | `DEDUCT` | − | 과금(`BILLED`) 노출 1건당 1행. 그날 예약액 안에서만 발생 |
-| `RELEASE` | + | 13:30에 그날 미소진 예약분을 잔액으로 반환 |
+| `RELEASE` | + | 다음 날 00:00에 전날 미소진 예약분을 잔액으로 반환(2026-10-19 수정, #497: 서빙이 하루 종일이 되어 13:30 해제를 없앴다) |
 | `REFUND` | − | 점주 환불 승인 시 |
 | `ADJUST` | ± | 관리자 수동 조정. 사유 필수, `source=MANUAL` 고정 |
 
@@ -301,7 +301,7 @@ PG 서버가 부르는 서버 간 경로라 **프론트는 부르지 않는다.*
 | 필드 | 계산 |
 | --- | --- |
 | `balance` | 원장 `SUM(amount)` (**`DEDUCT` 행 제외**, 부호를 포함한 저장값을 그대로 더한다. 2026-10-08 수정) |
-| `reservedPoint` | 예약 중 포인트 = 오늘 영업일 `RESERVE` 합 − `DEDUCT` 합 − `RELEASE` 합(절댓값 기준, 0 미만이면 0). 13:30 `RELEASE` 후에는 `balance`로 넘어가 이중 계산되지 않는다 |
+| `reservedPoint` | 예약 중 포인트 = 오늘 영업일 `RESERVE` 합 − `DEDUCT` 합 − `RELEASE` 합(절댓값 기준, 0 미만이면 0). 해제는 다음 날 00:00이라 오늘 예약분은 하루 종일 여기 남는다. 해제된 몫은 `balance`로 넘어가 이중 계산되지 않는다 |
 | `unspentTotal` | `balance + reservedPoint` |
 
 **원장 조회가 실패하면 잔액 대신 `503 BILLING-006`을 내려준다.** 캐시된 값으로 대신 표시하지 않는다(FR-047 예외).
@@ -340,7 +340,7 @@ GET /v1/owner/points/ledger?type=&from=&to=&campaignId=&pageToken=&pageSize=20
 ```
 
 - **`DEDUCT`는 이 목록에 내려주지 않는다.** 노출당 1행이라 초당 최대 1만 건이 쌓인다. 차감은 소진 집계로 본다.
-- **`RESERVE`와 `RELEASE`는 별도 유형으로 구분해 표시한다.** FR-047 세부가 "사후 조사로 과오 차감을 되돌린 금액은 조정(`ADJUST`), 예약 해제는 `RELEASE`로 별도 유형으로 표시"를 요구한다. `RELEASE`의 `createdAt`은 보통 13:30 전후다.
+- **`RESERVE`와 `RELEASE`는 별도 유형으로 구분해 표시한다.** FR-047 세부가 "사후 조사로 과오 차감을 되돌린 금액은 조정(`ADJUST`), 예약 해제는 `RELEASE`로 별도 유형으로 표시"를 요구한다. `RELEASE`의 `createdAt`은 보통 다음 날 00:00 직후다. `businessDate`는 해제한 전날이다.
 - `serveId`와 변동 전·후 잔액은 점주에게 내리지 않는다. 관리자 포인트 변동 조회 전용이다.
 
 ---
@@ -375,7 +375,7 @@ GET /v1/owner/points/spend-summary?groupBy=DAY&from=2026-09-24&to=2026-09-30&cam
 
 # 환불
 
-환불은 **잔액 전액만** 가능하다. 부분 환불은 없고, 그날 예약된 포인트는 잔액이 아니므로 환불 대상에서 제외된다 — 13:30 `RELEASE`로 돌아온 뒤에야 환불 대상이 된다(FR-020).
+환불은 **잔액 전액만** 가능하다. 부분 환불은 없고, 그날 예약된 포인트는 잔액이 아니므로 환불 대상에서 제외된다. 다음 날 00:00 `RELEASE`로 돌아온 뒤에야 환불 대상이 된다(FR-020, 2026-10-19 수정, #497).
 
 ## `GET /v1/owner/refund-requests/preview`
 
@@ -589,7 +589,7 @@ GET /v1/admin/point-ledger/summary?ownerId=7&period=DAILY&from=2026-09-01&to=202
 ### 계산 규칙
 
 - **날짜 귀속:** `RESERVE`·`RELEASE`·소진은 그 영업일 구간에, `CHARGE`·`REFUND`는 기록된 시각의 KST 날짜 구간에, `ADJUST`는 정정 대상 영업일 구간(없으면 기록된 시각의 KST 날짜 구간)에 들어간다.
-- 13:30 해제가 실패한 영업일은 00:00 보정 `RELEASE`가 들어오기 전까지 `spentAmount`가 실제보다 크게 보인다.
+- 00:00 해제가 실패한 영업일은 해제가 다시 돌기 전까지 `spentAmount`가 실제보다 크게 보인다.
 
 서버가 원장에서 이 합계를 계산하는 방법은 [billing API 설계](../design/billing/billing-api-design.md#get-v1adminpoint-ledgersummary)에 있다.
 
@@ -742,7 +742,7 @@ GET /v1/admin/point-policy/history?page=0&size=20
 | `ownerId` | 예 | 점주. **2026-10-14:** 없는 점주면 `404 BILLING-019`다. 점주 도메인의 상태 조회로 확인한다 | `point_ledger.owner_id` |
 | `amount` | 예 | 0이 아닌 정수. 양수면 잔액 증가 | `point_ledger.amount` |
 | `reason` | 예 | 사유. 비어 있으면 `400`(DB CHECK로도 막는다) | `point_ledger.reason` |
-| `campaignId` | 아니오 | 어느 캠페인의 정정인지 남긴다. **2026-10-14:** 정산 안의 계산(13:30 해제, 대사, 진행률, 점주 소진 요약)에는 넣지 않고, `analytics-api-spec.md` 캠페인 리포트의 `refundedAmount`에는 들어간다. `mismatchId`가 캠페인 대상 건(`CAMPAIGN_SPEND_VS_LEDGER`, `CAMPAIGN_OVERSPEND`)이면 **필수**이고 그 건의 대상 캠페인과 같아야 한다. `PG_VS_CHARGE` 건이거나 `mismatchId`가 없으면 선택이다. **2026-10-16:** 보내면 `targetBusinessDate`도 보내야 한다 | `point_ledger.campaign_id` |
+| `campaignId` | 아니오 | 어느 캠페인의 정정인지 남긴다. **2026-10-14:** 정산 안의 계산(00:00 해제, 대사, 진행률, 점주 소진 요약)에는 넣지 않고, `analytics-api-spec.md` 캠페인 리포트의 `refundedAmount`에는 들어간다. `mismatchId`가 캠페인 대상 건(`CAMPAIGN_SPEND_VS_LEDGER`, `CAMPAIGN_OVERSPEND`)이면 **필수**이고 그 건의 대상 캠페인과 같아야 한다. `PG_VS_CHARGE` 건이거나 `mismatchId`가 없으면 선택이다. **2026-10-16:** 보내면 `targetBusinessDate`도 보내야 한다 | `point_ledger.campaign_id` |
 | `targetBusinessDate` | 조건부 | **2026-10-16 추가.** 정정이 가리키는 원래 영업일(`YYYY-MM-DD`). `campaignId`를 보내면 **필수**이고 보내지 않으면 보낼 수 없다. 오늘(KST) 이후면 `400`. 캠페인 대상 대사 건을 닫을 때는 그 건의 `businessDate`와 같아야 한다. 분석의 소진액(`DEDUCT` 합 − 양수 `ADJUST` 합)에서 이 정정은 기록한 날이 아니라 이 영업일에 붙는다. 과거 하한과 그 영업일의 예산 계획 존재는 검사하지 않는다 | `point_ledger.adjust_target_date` |
 | `mismatchId` | 아니오 | 대사 불일치 건. 있으면 그 건의 `resolution_type`을 `OVERCHARGE_REVERSAL`로 닫는다. **2026-10-14:** 그 건이 `ownerId`의 것인지 확인한다. `PG_VS_CHARGE`는 대상 결제의 점주, `CAMPAIGN_SPEND_VS_LEDGER`는 대상 캠페인의 점주와 견준다. 없으면 `404 BILLING-020`, 이미 해결됐으면 `409 BILLING-021`, 다른 점주의 건이면 `409 BILLING-022`다 | 원장에 저장하지 않는다. 감사 로그에 남긴다 |
 
@@ -790,7 +790,7 @@ GET /v1/admin/settlement-mismatches?checkType=&resolved=false&from=&to=&page=0&s
 
 **2026-10-14 결정 (페이지 방식의 근거):** 관리자 표 목록이라 레포 공통 규약(`api-spec.md`)의 커서 대신 페이지 번호 방식을 쓴다(`member.md` 관리자 사용자 목록의 2026-10-09 결정과 같은 이유). 이 목록은 특히 `totalElements`를 매출 현황의 불일치 건수로 쓰므로(아래) 전체 건수를 주지 않는 커서 방식으로 바꿀 수 없다. 이 API의 예외는 이 문서가 소유한다. 같은 `createdAt`(또는 `businessDate`)이면 `mismatchId`가 보조 정렬이다.
 
-**2026-10-08 수정:** `from`~`to`는 대사 대상 영업일(`businessDate`) 기준이다(KST, 양끝 포함). 정렬 이름은 `detectedAt`이 아니라 `createdAt`(첫 탐지 시각)이다. 같은 `(checkType, targetId, businessDate)`를 다시 탐지하면(`CAMPAIGN_SPEND_VS_LEDGER`는 13:30과 00:00, `PG_VS_CHARGE`는 00:00 전일분이며 수동 재실행도 있다. 2026-10-09 수정) 새 건을 만들지 않고 기존 건을 갱신한다. 그래서 같은 대상, 같은 영업일의 건은 목록에 하나만 있다.
+**2026-10-08 수정:** `from`~`to`는 대사 대상 영업일(`businessDate`) 기준이다(KST, 양끝 포함). 정렬 이름은 `detectedAt`이 아니라 `createdAt`(첫 탐지 시각)이다. 같은 `(checkType, targetId, businessDate)`를 다시 탐지하면(`CAMPAIGN_SPEND_VS_LEDGER`는 00:00 전일분(2026-10-19 수정, #497: 13:30 당일 대조를 없앴다), `PG_VS_CHARGE`는 00:00 전일분이며 수동 재실행도 있다. 2026-10-09 수정) 새 건을 만들지 않고 기존 건을 갱신한다. 그래서 같은 대상, 같은 영업일의 건은 목록에 하나만 있다.
 
 ### 응답 `200` (항목)
 

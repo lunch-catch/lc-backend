@@ -96,7 +96,7 @@ PG 서버가 호출한다. `/v1/` 접두사가 없는 것은 서버 대 서버 �
 점주 한 명의 기간별 합계를 원장에서 바로 계산한다.
 
 - **날짜 귀속:** `RESERVE`·`RELEASE`는 `business_date`로, `CHARGE`·`REFUND`는 `created_at`을 서버가 KST 날짜로 바꿔서, `ADJUST`는 `adjust_target_date`(없으면 `created_at`의 KST 날짜)로 구간에 넣는다. DB 날짜 함수는 쓰지 않는다(요구사항 명세서 비기능 시트 42행).
-- **`DEDUCT`는 읽지 않는다.** 노출당 1행이라 기간 합계를 위해 훑을 수 없다. 영업일별로 `RELEASE = RESERVE − DEDUCT`(요구사항 명세서 `비즈니스 규칙` 시트 16행)이므로 지난 영업일의 `|DEDUCT|`는 −(`RESERVE` 합 + `RELEASE` 합)이다. 오늘 영업일은 13:30 해제 전일 수 있어, 그날 `RELEASE`가 아직 없으면 그날의 `DEDUCT` 합을 직접 읽는다(하루치뿐이다).
+- **`DEDUCT`는 읽지 않는다.** 노출당 1행이라 기간 합계를 위해 훑을 수 없다. 영업일별로 `RELEASE = RESERVE − DEDUCT`(요구사항 명세서 `비즈니스 규칙` 시트 16행)이므로 지난 영업일의 `|DEDUCT|`는 −(`RESERVE` 합 + `RELEASE` 합)이다. 오늘 영업일은 다음 날 00:00 해제 전이라, 그날 `RELEASE`가 아직 없으면 그날의 `DEDUCT` 합을 직접 읽는다(하루치뿐이다).
 - 읽는 행은 기간 안의 `CHARGE`·`REFUND`, 정정 대상 영업일이 기간 안인 `ADJUST`(대상이 없는 `ADJUST`는 기록 시각이 기간 안인 것), 기간 영업일의 `RESERVE`·`RELEASE`, 오늘의 `DEDUCT`뿐이다. V2 마이그레이션의 `idx_point_ledger_owner_type_created`와 `idx_point_ledger_owner_business_date`를 쓴다.
 
 ## 관리자 포인트 정책
