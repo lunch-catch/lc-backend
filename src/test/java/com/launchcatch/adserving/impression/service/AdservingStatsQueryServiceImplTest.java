@@ -13,9 +13,11 @@ import com.launchcatch.adserving.feed.repository.CampaignWishCount;
 import com.launchcatch.adserving.feed.repository.SwipeLogRepository;
 import com.launchcatch.adserving.impression.repository.ImpressionLogRepository;
 import com.launchcatch.adserving.impression.repository.ImpressionLogRepository.CampaignCounts;
+import com.launchcatch.adserving.impression.repository.ImpressionLogRepository.HourlyCounts;
 import com.launchcatch.adserving.impression.repository.ImpressionLogRepository.MemberConcentration;
 import com.launchcatch.adserving.impression.repository.ImpressionLogRepository.MemberInvalidCounts;
 import java.time.LocalDate;
+import java.util.Arrays;
 import java.util.List;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -33,8 +35,10 @@ class AdservingStatsQueryServiceImplTest {
     @Test
     void 노출과_찜을_캠페인_ID로_합치고_한쪽만_있는_캠페인은_다른_쪽을_0으로_채운다() {
         when(impressionLogRepository.countByCampaignOn(DATE)).thenReturn(List.of(
-                counts(101L, 9, 1, 2, 3, 2, 3, 4, 4, 5),
-                counts(103L, 1, 0, 0, 0, 1, 0, 0, 0, 1)));
+                counts(101L, 9, 1, 2, 3, 4, 5),
+                counts(103L, 1, 0, 0, 0, 0, 1)));
+        when(impressionLogRepository.countValidByCampaignAndHourOn(DATE)).thenReturn(List.of(
+                hourly(101L, 0, 1), hourly(101L, 11, 5), hourly(101L, 23, 3), hourly(103L, 10, 1)));
         when(swipeLogRepository.countWishesByCampaign(DATE)).thenReturn(List.of(
                 new CampaignWishCount(102L, 4),
                 new CampaignWishCount(101L, 2)));
@@ -42,9 +46,22 @@ class AdservingStatsQueryServiceImplTest {
         List<CampaignImpressionStats> result = service.campaignStats(DATE);
 
         assertThat(result).containsExactly(
-                new CampaignImpressionStats(101L, 9, 1, 2, 3, 2, 3, 4, 4, 5, 2),
-                new CampaignImpressionStats(102L, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4),
-                new CampaignImpressionStats(103L, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0));
+                new CampaignImpressionStats(101L, 9, 1, 2, 3, hours(0, 1, 11, 5, 23, 3), 4, 5, 2),
+                new CampaignImpressionStats(102L, 0, 0, 0, 0, hours(), 0, 0, 4),
+                new CampaignImpressionStats(103L, 1, 0, 0, 0, hours(10, 1), 0, 1, 0));
+    }
+
+    @Test
+    void 시간대는_노출이_없는_시도_0으로_채워_항상_24칸이다() {
+        when(impressionLogRepository.countByCampaignOn(DATE)).thenReturn(List.of(counts(101L, 2, 0, 0, 0, 2, 0)));
+        when(impressionLogRepository.countValidByCampaignAndHourOn(DATE)).thenReturn(List.of(hourly(101L, 3, 2)));
+        when(swipeLogRepository.countWishesByCampaign(DATE)).thenReturn(List.of());
+
+        List<Long> hourlyCounts = service.campaignStats(DATE).get(0).hourlyCounts();
+
+        assertThat(hourlyCounts).hasSize(24);
+        assertThat(hourlyCounts.get(3)).isEqualTo(2L);
+        assertThat(hourlyCounts.stream().mapToLong(Long::longValue).sum()).isEqualTo(2L);
     }
 
     @Test
@@ -82,18 +99,32 @@ class AdservingStatsQueryServiceImplTest {
         verifyNoInteractions(impressionLogRepository);
     }
 
+    // 시와 건수를 번갈아 받아 24칸을 채운다. 받지 않은 시는 0 이다
+    private static List<Long> hours(int... hourAndCount) {
+        Long[] counts = new Long[24];
+        Arrays.fill(counts, 0L);
+        for (int i = 0; i < hourAndCount.length; i += 2) {
+            counts[hourAndCount[i]] = (long) hourAndCount[i + 1];
+        }
+        return List.of(counts);
+    }
+
+    private static HourlyCounts hourly(long campaignId, int hour, long valid) {
+        return new HourlyCounts() {
+            public long getCampaignId() { return campaignId; }
+            public int getHour() { return hour; }
+            public long getValidCount() { return valid; }
+        };
+    }
+
     private static CampaignCounts counts(long campaignId, long valid, long soldOut, long expiredOrUnknown,
-                                         long notOwner, long hour10, long hour11, long hour12,
-                                         long allocation, long relevance) {
+                                         long notOwner, long allocation, long relevance) {
         return new CampaignCounts() {
             public long getCampaignId() { return campaignId; }
             public long getValidCount() { return valid; }
             public long getSoldOutCount() { return soldOut; }
             public long getExpiredOrUnknownCount() { return expiredOrUnknown; }
             public long getNotOwnerCount() { return notOwner; }
-            public long getHour10Count() { return hour10; }
-            public long getHour11Count() { return hour11; }
-            public long getHour12Count() { return hour12; }
             public long getAllocationCount() { return allocation; }
             public long getRelevanceCount() { return relevance; }
         };

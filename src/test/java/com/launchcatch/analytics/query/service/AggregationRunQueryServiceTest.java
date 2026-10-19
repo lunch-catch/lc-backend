@@ -28,7 +28,7 @@ class AggregationRunQueryServiceTest {
 
     private static BatchExecutionRecord record(long runId, String jobName) {
         return new BatchExecutionRecord(runId, jobName, DATE, "SUCCESS",
-                LocalDateTime.of(2026, 10, 1, 1, 0), LocalDateTime.of(2026, 10, 1, 1, 5), 5, "batch-02", 0, null);
+                LocalDateTime.of(2026, 10, 1, 1, 0), LocalDateTime.of(2026, 10, 1, 1, 5), 5, "batch-02", 0, null, 1);
     }
 
     @Test

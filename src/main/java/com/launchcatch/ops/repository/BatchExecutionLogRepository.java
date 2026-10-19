@@ -12,7 +12,6 @@ import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
-import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 /*
@@ -22,9 +21,12 @@ import org.springframework.transaction.annotation.Transactional;
  * 함께 읽고 둘 다 자기 것이라고 믿는 구간이 생긴다. 조건을 WHERE 에 넣으면 그 판정과 쓰기가
  * 한 문장이라 1건을 받은 서버만 이긴다.
  *
- * 갱신 메서드마다 @Transactional 을 붙인다. 점유 판정이 유일 제약 위반을 쓰는 탓에 부르는 쪽
- * (BatchExecutionService.begin)이 트랜잭션을 걸 수 없고, 그러면 @Modifying 질의가
- * TransactionRequiredException 으로 터진다. 바깥에 트랜잭션이 있으면 그것에 합류한다.
+ * 점유(upsertClaim)는 조건부 UPDATE 가 아니라 중복만 흡수하는 INSERT 다. 판정은 그 뒤 행을
+ * 다시 읽어 owner_id 로 본다(BatchExecutionService.attemptClaim, #526).
+ *
+ * 갱신 메서드마다 @Transactional 을 붙인다. 부르는 쪽(BatchExecutionService)이 트랜잭션을
+ * 걸지 않아서, 없으면 @Modifying 질의가 TransactionRequiredException 으로 터진다. 바깥에
+ * 트랜잭션이 있으면 그것에 합류한다.
  */
 public interface BatchExecutionLogRepository extends JpaRepository<BatchExecutionLog, Long> {
 
@@ -51,15 +53,26 @@ public interface BatchExecutionLogRepository extends JpaRepository<BatchExecutio
             BatchStatus status, String ownerId, LocalDateTime staleBefore);
 
     /*
-     * 점유는 이 메서드의 유일 제약 위반으로 판정한다. 그래서 자기 트랜잭션에서 돈다.
+     * 점유를 시도한다. 이미 있는 행은 job_name 을 그대로 두는 값 없는 갱신으로 흡수해, 중복이
+     * 정상 결과가 되게 한다. 길이 초과나 CHECK 위반은 그대로 예외로 올라온다(MNT-4-04, #526).
      *
-     * 제약 위반이 나면 Hibernate 가 그 트랜잭션을 되돌릴 것으로 표시한다. 바깥 트랜잭션 안에서
-     * 터지면 예외를 잡아 "이미 점유됐다" 로 넘겨도 커밋 시점에 되돌아간다. 트랜잭션을 떼어 두면
-     * 되돌아가는 것이 이 삽입 하나뿐이고, 부르는 쪽은 예외를 판정에 쓸 수 있다.
+     * 네이티브 쿼리라 JPA auditing 을 타지 않는다. created_at, updated_at 을 Clock 값으로 받는다.
+     *
+     * 영향받은 행 수는 점유 판정에 쓰지 않는다. 드라이버 기본값(useAffectedRows=false)에서는
+     * 무변경 갱신도 1 로 보고될 수 있다. 판정은 이 호출 뒤 그 행의 owner_id 로 한다
+     * (BatchExecutionService.attemptClaim).
      */
-    @Override
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
-    <S extends BatchExecutionLog> S saveAndFlush(S entity);
+    @Transactional
+    @Modifying
+    @Query(value = """
+            INSERT INTO batch_execution_log (job_name, business_date, status, owner_id, created_at, updated_at)
+            VALUES (:jobName, :businessDate, 'RUNNING', :ownerId, :now, :now)
+            ON DUPLICATE KEY UPDATE job_name = job_name
+            """, nativeQuery = true)
+    void upsertClaim(@Param("jobName") String jobName,
+                     @Param("businessDate") LocalDate businessDate,
+                     @Param("ownerId") String ownerId,
+                     @Param("now") LocalDateTime now);
 
     /** 생존 신호를 갱신한다. 내 소유이고 실행 중일 때만 걸린다. */
     @Transactional

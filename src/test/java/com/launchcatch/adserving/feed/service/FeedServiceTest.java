@@ -218,29 +218,13 @@ class FeedServiceTest {
     }
 
     @Nested
-    @DisplayName("서빙 시간대")
-    class ServingHours {
+    @DisplayName("시간대")
+    class AllDay {
 
+        // 서빙 시간대가 없다(#500). 예전 시간대의 앞뒤와 자정 언저리에서도 카드를 내려준다
         @ParameterizedTest
-        @ValueSource(strings = {"09:59:59.999", "13:00:00", "00:00:00"})
-        void 서빙_시간대_밖이면_후보를_찾지_않고_OUT_OF_SERVING_HOURS_다(String time) {
-            LocalDateTime now = LocalDateTime.of(TODAY, LocalTime.parse(time));
-            givenOnboardedMemberWithSavedLocation();
-            givenAdmitted(now);
-
-            FeedResponse response = serviceAt(now).getFeed(MEMBER_ID, NO_LOCATION);
-
-            assertThat(response.status()).isEqualTo(FeedStatus.OUT_OF_SERVING_HOURS);
-            assertThat(response.feedId()).isNull();
-            assertThat(response.radiusM()).isNull();
-            assertThat(response.cards()).isEmpty();
-            assertThat(response.nextFeedAvailableAt()).isEqualTo(offset(now));
-            verifyNoInteractions(adCandidateRepository);
-        }
-
-        @ParameterizedTest
-        @ValueSource(strings = {"10:00:00", "12:59:59.999"})
-        void 서빙_시간대의_처음과_끝은_시간대_안이다(String time) {
+        @ValueSource(strings = {"00:00:00", "09:59:59.999", "10:00:00", "12:59:59.999", "13:00:00", "23:59:59.999"})
+        void 하루_중_언제든_후보를_찾아_SERVING_으로_내려준다(String time) {
             LocalDateTime now = LocalDateTime.of(TODAY, LocalTime.parse(time));
             givenOnboardedMemberWithSavedLocation();
             givenAdmitted(now);
@@ -251,7 +235,7 @@ class FeedServiceTest {
     }
 
     @Nested
-    @DisplayName("서빙 시간대 안에서")
+    @DisplayName("후보를 찾은 뒤")
     class Serving {
 
         @Test
@@ -458,17 +442,6 @@ class FeedServiceTest {
 
             verify(serveFrequencyRepository).recordServed(TODAY, MEMBER_ID, List.of(), instant(SERVING_NOW));
         }
-
-        @Test
-        void 서빙_시간대_밖에서는_세지_않는다() {
-            LocalDateTime now = LocalDateTime.of(TODAY, LocalTime.of(9, 0));
-            givenOnboardedMemberWithSavedLocation();
-            givenAdmitted(now);
-
-            serviceAt(now).getFeed(MEMBER_ID, NO_LOCATION);
-
-            verify(serveFrequencyRepository, never()).recordServed(any(), any(), any(), any());
-        }
     }
 
     @Nested
@@ -540,17 +513,6 @@ class FeedServiceTest {
             assertThat(feed.cards()).isEmpty();
             assertThat(feed.latitude()).isEqualTo(37.4979);
             assertThat(feed.longitude()).isEqualTo(127.0276);
-        }
-
-        @Test
-        void 서빙_시간대_밖의_요청도_접속_위치는_대기열에_넣는다() {
-            LocalDateTime now = LocalDateTime.of(TODAY, LocalTime.of(9, 0));
-            givenOnboardedMemberWithSavedLocation();
-            givenAdmitted(now);
-
-            serviceAt(now).getFeed(MEMBER_ID, NO_LOCATION);
-
-            assertThat(offeredFeed().cards()).isEmpty();
         }
 
         @Test

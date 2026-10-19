@@ -41,7 +41,6 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
-import java.time.LocalTime;
 import java.time.OffsetDateTime;
 import java.time.ZonedDateTime;
 import java.time.temporal.ChronoUnit;
@@ -61,10 +60,6 @@ import org.springframework.stereotype.Service;
 @Service
 @RequiredArgsConstructor
 public class FeedService {
-
-    // 서빙 시간대는 10:00 부터 12:59 까지다. 13:00 은 밖이다.
-    private static final LocalTime SERVING_START = LocalTime.of(10, 0);
-    private static final LocalTime SERVING_END = LocalTime.of(13, 0);
 
     // 업종 선호도를 세는 기간이다. 오늘을 넣어 30일이다(#307).
     private static final int PREFERENCE_DAYS = 30;
@@ -90,10 +85,7 @@ public class FeedService {
     private final MeterRegistry meterRegistry;
     private final Clock clock;
 
-    /*
-     * 요청 제한은 온보딩과 위치를 확인한 뒤에 센다. 200 으로 끝나는 요청만 횟수에 들어가야 해서 403 과 422 는 세기 전에 거른다.
-     * 서빙 시간대 밖의 요청도 200 이라 센다.
-     */
+    // 요청 제한은 온보딩과 위치를 확인한 뒤에 센다. 200 으로 끝나는 요청만 횟수에 들어가야 해서 403 과 422 는 세기 전에 거른다.
     public FeedResponse getFeed(Long memberId, FeedRequest request) {
         MemberInfo member = memberQueryService.findById(memberId)
                 .filter(MemberInfo::onboardingCompleted)
@@ -109,12 +101,6 @@ public class FeedService {
 
         ZonedDateTime servedAt = now.atZone(ClockConfig.ZONE);
         LocalDate businessDate = servedAt.toLocalDate();
-        LocalTime time = servedAt.toLocalTime();
-        if (time.isBefore(SERVING_START) || !time.isBefore(SERVING_END)) {
-            recordVisit(businessDate, memberId, viewer, servedAt);
-            return FeedResponse.outOfServingHours(nextFeedAvailableAt);
-        }
-
         List<FeedCandidate> candidates = adCandidateRepository.findServableWithin(businessDate,
                         BoundingBox.around(viewer.latitude(), viewer.longitude(), FeedAssembler.MAX_RADIUS_M))
                 .stream().map(AdCandidate::toFeedCandidate).toList();
