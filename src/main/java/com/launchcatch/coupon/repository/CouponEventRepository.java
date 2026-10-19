@@ -7,10 +7,37 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 public interface CouponEventRepository extends JpaRepository<CouponEvent, Long> {
+
+    // 회차가 없거나 이미 종료됐거나 같은 시각 이후의 전이를 반영했으면 0을 돌려준다.
+    @Modifying
+    @Query("""
+            UPDATE CouponEvent event
+               SET event.status = :status, event.statusChangedAt = :changedAt, event.updatedAt = :now
+             WHERE event.campaignId = :campaignId AND event.businessDate = :businessDate
+               AND event.status <> com.launchcatch.coupon.entity.CouponEventStatus.ENDED
+               AND (event.statusChangedAt IS NULL OR event.statusChangedAt < :changedAt)
+            """)
+    int updateCampaignStatus(@Param("campaignId") long campaignId, @Param("businessDate") LocalDate businessDate,
+            @Param("status") CouponEventStatus status, @Param("changedAt") LocalDateTime changedAt,
+            @Param("now") LocalDateTime now);
+
+    // 같은 전이의 중단 이벤트가 먼저 반영돼도 종료는 반영하며 이미 종료된 회차는 그대로 둔다.
+    @Modifying
+    @Query("""
+            UPDATE CouponEvent event
+               SET event.status = com.launchcatch.coupon.entity.CouponEventStatus.ENDED,
+                   event.statusChangedAt = :changedAt, event.updatedAt = :now
+             WHERE event.campaignId = :campaignId
+               AND event.status <> com.launchcatch.coupon.entity.CouponEventStatus.ENDED
+               AND (event.statusChangedAt IS NULL OR event.statusChangedAt <= :changedAt)
+            """)
+    int endCampaign(@Param("campaignId") long campaignId, @Param("changedAt") LocalDateTime changedAt,
+            @Param("now") LocalDateTime now);
 
     // 요청한 매장의 오늘 조회 대상 이벤트를 한 번에 읽으며 상태나 재고를 변경하지 않는다.
     List<CouponEvent> findByStoreIdInAndBusinessDateAndStatusIn(
