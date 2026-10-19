@@ -135,6 +135,8 @@ dependencies {
     implementation 'software.amazon.awssdk:apache5-client'
     // 템플릿 생성 LLM 호출(Bedrock Converse). 연결 타임아웃은 위 apache5-client를 그대로 재사용한다.
     implementation 'software.amazon.awssdk:bedrockruntime'
+    // 포스터 자동 검수가 이미지 속 글자를 찾는다(Rekognition DetectText, #535).
+    implementation 'software.amazon.awssdk:rekognition'
 
     /*
      * @Scheduled 메서드 공통 로깅(SchedulerLoggingAspect)과 관리 행위 감사 로그가

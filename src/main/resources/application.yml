@@ -177,6 +177,11 @@ coupon:
 # 테스트가 끝나면 10으로 되돌린다).
 campaign:
   template-max-count: "${CAMPAIGN_TEMPLATE_MAX_COUNT:100}"
+  # 포스터 자동 검수 기준이다(명세서 29행 기본값, #535). 29행의 기준 관리가 생기면 DB 로 옮긴다.
+  moderation:
+    max-text-ratio: "${CAMPAIGN_MODERATION_MAX_TEXT_RATIO:0.5}"
+    min-image-width: "${CAMPAIGN_MODERATION_MIN_IMAGE_WIDTH:200}"
+    min-image-height: "${CAMPAIGN_MODERATION_MIN_IMAGE_HEIGHT:200}"
 
 # 이미지 URL 앞에 붙는 주소다. 운영은 CloudFront 도메인이 들어온다.
 #
