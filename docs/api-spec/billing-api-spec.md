@@ -615,16 +615,15 @@ GET /v1/admin/refund-requests?status=REQUESTED&ownerId=&from=&to=&page=0&size=20
 
 `auth-api-spec.md`(저장소 `docs/api-spec/`)의 `:refresh`와 같이 **서버가 규칙에 따라 수행하는 동작**이라 커스텀 메서드로 둔다. 본문은 없다.
 
-**2026-10-14 명시:** 요청이 없으면 `404 BILLING-014`, 점주 단위 락을 5초 안에 얻지 못하면 `503 BILLING-006`이다.
+요청이 없으면 `404 BILLING-014`, 잠금 대기로 처리하지 못하면 `503 BILLING-006`이다. 재시도할 수 있으나 응답을 반드시 5초 안에 받는다는 보장은 없다.
 
-한 트랜잭션, 점주 단위 락 아래에서:
+승인할 때 다음 조건을 다시 확인한다.
 
-1. `REQUESTED`인지 확인한다. 아니면 `409 BILLING-015`.
-2. 집행 중인 캠페인이 없는지 **다시** 확인한다(요청 이후 생겼을 수 있다). 있으면 `409 BILLING-010`.
-3. 현재 잔액이 `amount` 이상인지 확인한다. 아니면 `409 BILLING-013` — **환불 후 잔액이 음수가 되는 요청은 처리하지 않는다.**
-4. 환불을 수행한다. **2026-10-08 수정:** 이 프로젝트는 mock이다. PG 취소나 계좌이체 없이 5단계의 원장 `REFUND`만 기록한다. FR-020의 "결제대행사 결제 취소 또는 계좌 환급"은 하지 않고(FR-049의 "실제 환불은 mock 처리"에 맞춘다), 선택 데이터인 결제대행사 취소 ID는 쓰지 않는다. 잔액 전액 환불은 여러 결제의 합이라 결제 단위인 PG 취소와 맞지 않으므로 `refund_request.payment_id`도 쓰지 않는다(`NULL`).
-5. `point_ledger`에 `REFUND(-amount, refund_request_id)`를 기록한다. `UNIQUE(refund_request_id, entry_type)`가 중복 환불을 막는다.
-6. `refund_request`를 `COMPLETED`로 갱신하고 `processed_by`·`processed_at`을 채운다.
+1. 대기 중(`REQUESTED`) 요청이어야 한다. 아니면 `409 BILLING-015`다.
+2. 집행 중 캠페인이 없어야 한다. 있으면 `409 BILLING-010`이다.
+3. 현재 잔액이 요청 금액 이상이어야 한다. 아니면 `409 BILLING-013`이다.
+
+성공하면 잔액에서 요청 금액을 차감하고 요청을 `COMPLETED`로 바꾼다. 현재 환불은 mock이므로 실제 PG 취소나 계좌 송금은 수행하지 않는다. 서버의 잠금 순서와 원장 기록은 [billing API 설계](../design/billing/billing-api-design.md#관리자-환불-승인과-반려)를 따른다.
 
 ### 응답 `200`
 
@@ -637,7 +636,7 @@ GET /v1/admin/refund-requests?status=REQUESTED&ownerId=&from=&to=&page=0&size=20
 }
 ```
 
-포인트는 `amount`만큼 차감되고, 점주에게 실제로 지급되는 금액은 `amount - fee`다. 수수료가 `0`이라 `amount`와 같다(2026-10-08 수정).
+포인트는 `amount`만큼 차감된다. 환불 금액은 `amount - fee`이고 수수료는 `0`이다. 이 응답이 실제 송금 완료를 뜻하지는 않는다.
 
 ---
 
@@ -777,7 +776,7 @@ GET /v1/admin/point-policy/history?page=0&size=20
 | `409` | `BILLING-018` | 같은 키로 내용이 다른 요청 |
 | `409` | `BILLING-021` | 이미 해결된 대사 불일치 건 (2026-10-14) |
 | `409` | `BILLING-022` | 대사 불일치 건이 요청한 점주의 것이 아님 (2026-10-14) |
-| `503` | `BILLING-006` | 점주 단위 잠금을 5초 안에 얻지 못함 (2026-10-14). 잠시 후 같은 `requestId`로 다시 보내면 된다 |
+| `503` | `BILLING-006` | 점주 단위 잠금 대기로 처리하지 못함. 잠시 후 같은 `requestId`로 다시 보내면 된다 |
 
 ---
 
