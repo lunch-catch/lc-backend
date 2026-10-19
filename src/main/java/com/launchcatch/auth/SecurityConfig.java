@@ -1,5 +1,6 @@
 package com.launchcatch.auth;
 
+import jakarta.servlet.DispatcherType;
 import java.util.List;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.security.autoconfigure.actuate.web.servlet.EndpointRequest;
@@ -99,13 +100,19 @@ public class SecurityConfig {
      *
      * 점주 회원가입도 로그인 전에 열리지만 이 수에 넣지 않는다. 계정을 만드는 일이고 토큰
      * 정책과 무관해서 auth-api-design.md 가 소유하지 않는다. 점주 도메인의 문서와 체인이 가진다.
+     *
+     * ERROR 디스패치만 통과시킨다. 컨테이너나 필터가 sendError 로 끝낸 요청은 /error 로 다시
+     * 들어오는데 그 경로는 어느 도메인 체인도 맡지 않아 여기로 온다. 거부하면 원래 오류가 403 으로
+     * 덮인다. 이미 정해진 오류 응답을 그리는 것뿐이라 새로 열리는 업무 경로는 없다.
      */
     @Bean
     @Order(Ordered.LOWEST_PRECEDENCE)
     public SecurityFilterChain defaultFilterChain(HttpSecurity http, ApiSecurityDefaults defaults)
             throws Exception {
         return defaults.apply(http)
-                .authorizeHttpRequests(auth -> auth.anyRequest().authenticated())
+                .authorizeHttpRequests(auth -> auth
+                        .dispatcherTypeMatchers(DispatcherType.ERROR).permitAll()
+                        .anyRequest().denyAll())
                 .build();
     }
 

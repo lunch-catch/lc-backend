@@ -27,8 +27,8 @@ import org.springframework.security.web.SecurityFilterChain;
 @Configuration(proxyBeanMethods = false)
 public class BillingSecurityConfig {
 
-    /** 점주 자신의 결제, 잔액, 환불 경로다. */
-    private static final String[] OWNER_PATHS = {
+    /** 점주 자신의 결제, 잔액, 환불 경로다. 점주 상태 검사도 이 경로에 건다. */
+    static final String[] OWNER_PATHS = {
             "/v1/owner/payments",
             "/v1/owner/payments/**",
             "/v1/owner/point-policy",

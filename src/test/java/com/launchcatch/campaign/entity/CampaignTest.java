@@ -56,7 +56,7 @@ class CampaignTest {
     void updateCouponCondition은_1단계_필드만_바꾼다() {
         Campaign campaign = Campaign.create(
                 10L, 20L,
-                DiscountTargetType.ALL, DiscountType.PERCENT, 10, null,
+                DiscountTargetType.ALL, DiscountType.AMOUNT, 10, null,
                 100, LocalTime.of(11, 0), LocalTime.of(14, 0),
                 null, null,
                 1000, TargetGender.ALL, List.of(AgeGroup.AGE_20S),
@@ -104,7 +104,37 @@ class CampaignTest {
         Campaign campaign = campaign(10_000L, LocalDate.of(2026, 10, 1), LocalDate.of(2026, 10, 31));
 
         assertThatThrownBy(() -> campaign.updateCouponCondition(
-                DiscountTargetType.ALL, DiscountType.PERCENT, 101, null,
+                DiscountTargetType.MENU, DiscountType.PERCENT, 101, 42L,
+                100, LocalTime.of(11, 0), LocalTime.of(14, 0),
+                null, null))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    /*
+     * 팀 논의로 바뀐 사양이다(#431). discountTargetType이 ALL이면 discountType은 AMOUNT만
+     * 허용한다. create와 updateCouponCondition 양쪽 경로가 모두 requireDiscountValue를 거친다.
+     */
+    @Test
+    @DisplayName("전체 메뉴(ALL)에 PERCENT는 생성 시점부터 거부한다")
+    void 생성시_전체_메뉴에_PERCENT는_거부한다() {
+        assertThatThrownBy(() -> Campaign.create(
+                10L, 20L,
+                DiscountTargetType.ALL, DiscountType.PERCENT, 10, null,
+                100, LocalTime.of(11, 0), LocalTime.of(14, 0),
+                null, null,
+                1000, TargetGender.ALL, List.of(AgeGroup.AGE_20S),
+                10_000L, LocalDate.of(2026, 10, 1), LocalDate.of(2026, 10, 31),
+                NOW))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    @DisplayName("updateCouponCondition도 전체 메뉴(ALL)에 PERCENT를 거부한다")
+    void updateCouponCondition도_전체_메뉴에_PERCENT를_거부한다() {
+        Campaign campaign = campaign(10_000L, LocalDate.of(2026, 10, 1), LocalDate.of(2026, 10, 31));
+
+        assertThatThrownBy(() -> campaign.updateCouponCondition(
+                DiscountTargetType.ALL, DiscountType.PERCENT, 10, null,
                 100, LocalTime.of(11, 0), LocalTime.of(14, 0),
                 null, null))
                 .isInstanceOf(IllegalArgumentException.class);
@@ -113,7 +143,7 @@ class CampaignTest {
     private Campaign campaign(Long dailyBudget, LocalDate startDate, LocalDate endDate) {
         return Campaign.create(
                 10L, 20L,
-                DiscountTargetType.ALL, DiscountType.PERCENT, 10, null,
+                DiscountTargetType.ALL, DiscountType.AMOUNT, 10, null,
                 100, LocalTime.of(11, 0), LocalTime.of(14, 0),
                 null, null,
                 1000, TargetGender.ALL, List.of(AgeGroup.AGE_20S),

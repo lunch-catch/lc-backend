@@ -1,5 +1,6 @@
 package com.launchcatch.campaign;
 
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -11,6 +12,10 @@ import com.launchcatch.campaign.contract.DiscountTargetType;
 import com.launchcatch.campaign.contract.DiscountType;
 import com.launchcatch.campaign.contract.TargetGender;
 import com.launchcatch.campaign.entity.Campaign;
+import com.launchcatch.campaign.poster.entity.Poster;
+import com.launchcatch.campaign.poster.repository.PosterRepository;
+import com.launchcatch.campaign.template.entity.Template;
+import com.launchcatch.campaign.template.repository.TemplateRepository;
 import jakarta.servlet.http.Cookie;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
@@ -52,16 +57,24 @@ class OwnerPosterSecurityIntegrationTest extends AbstractCampaignIntegrationTest
     @Autowired private MockMvc mvc;
     @Autowired private JwtTokenProvider jwt;
     @Autowired private JdbcTemplate jdbc;
+    @Autowired private PosterRepository posterRepository;
+    @Autowired private TemplateRepository templateRepository;
 
     private final List<Long> createdStoreIds = new ArrayList<>();
     private final List<Long> createdOwnerIds = new ArrayList<>();
     private final List<Long> createdAdminIds = new ArrayList<>();
+    private final List<Long> createdTemplateIds = new ArrayList<>();
 
     @AfterEach
     void tearDown() {
+        // poster가 campaign을 FK로 참조해, campaign을 지우기 전에 먼저 지워야 한다.
+        createdStoreIds.forEach(storeId -> jdbc.update(
+                "delete from poster where campaign_id in (select campaign_id from campaign where store_id = ?)",
+                storeId));
         createdStoreIds.forEach(storeId -> jdbc.update("delete from campaign where store_id = ?", storeId));
         createdOwnerIds.forEach(ownerId -> jdbc.update("delete from owner where owner_id = ?", ownerId));
         createdAdminIds.forEach(adminId -> jdbc.update("delete from admin where admin_id = ?", adminId));
+        createdTemplateIds.forEach(templateId -> jdbc.update("delete from template where template_id = ?", templateId));
     }
 
     @Test
@@ -123,8 +136,80 @@ class OwnerPosterSecurityIntegrationTest extends AbstractCampaignIntegrationTest
                 .andExpect(jsonPath("$.code").value("AUTH-006"));
     }
 
+    @Test
+    void GET_본인_가게의_캠페인이_아니면_403이다() throws Exception {
+        Long ownerId = createActiveOwner();
+        Long otherOwnerId = createActiveOwner();
+        Campaign campaign = campaignRepository.saveAndFlush(draft(otherOwnerId));
+
+        mvc.perform(get(getPath(campaign.getId())).cookie(ownerToken(ownerId)))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("CAMPAIGN-005"));
+    }
+
+    @Test
+    void GET_캠페인이_없으면_403이다() throws Exception {
+        Long ownerId = createActiveOwner();
+
+        mvc.perform(get(getPath(999_999_999L)).cookie(ownerToken(ownerId)))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("CAMPAIGN-005"));
+    }
+
+    @Test
+    void GET_포스터가_없으면_404다() throws Exception {
+        Long ownerId = createActiveOwner();
+        Campaign campaign = campaignRepository.saveAndFlush(draft(ownerId));
+
+        mvc.perform(get(getPath(campaign.getId())).cookie(ownerToken(ownerId)))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("POSTER-021"));
+    }
+
+    /** 점주용 조회는 캠페인 상태를 보지 않는다. DRAFT에서도 저장된 포스터를 돌려준다. */
+    @Test
+    void GET_포스터가_있으면_200이다() throws Exception {
+        Long ownerId = createActiveOwner();
+        Campaign campaign = campaignRepository.saveAndFlush(draft(ownerId));
+        Long templateId = persistTemplate();
+        posterRepository.saveAndFlush(
+                Poster.create(campaign.getId(), templateId, "분식집 - 가을 신메뉴", "{}", "<div>html</div>",
+                        "campaigns/" + campaign.getId() + "/poster/a.jpg"));
+
+        mvc.perform(get(getPath(campaign.getId())).cookie(ownerToken(ownerId)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.campaignId").value(campaign.getId()))
+                .andExpect(jsonPath("$.data.templateId").value(templateId))
+                .andExpect(jsonPath("$.data.html").value("<div>html</div>"));
+    }
+
+    @Test
+    void GET_토큰이_없으면_401이다() throws Exception {
+        mvc.perform(get(getPath(1L)))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("AUTH-005"));
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = Role.class, names = {"MEMBER", "ADMIN", "SUPER_ADMIN"})
+    void GET_점주가_아닌_토큰은_403이다(Role role) throws Exception {
+        mvc.perform(get(getPath(1L)).cookie(nonOwnerToken(role)))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("AUTH-006"));
+    }
+
     private String path(long campaignId) {
         return "/v1/owner/campaigns/" + campaignId + "/poster:prepareUpload";
+    }
+
+    private String getPath(long campaignId) {
+        return "/v1/owner/campaigns/" + campaignId + "/poster";
+    }
+
+    private Long persistTemplate() {
+        Template template = templateRepository.saveAndFlush(Template.createDraft("가을 신메뉴"));
+        createdTemplateIds.add(template.getId());
+        return template.getId();
     }
 
     private Cookie ownerToken(Long ownerId) {
@@ -161,7 +246,7 @@ class OwnerPosterSecurityIntegrationTest extends AbstractCampaignIntegrationTest
         createdStoreIds.add(storeId);
         return Campaign.create(
                 ownerId, storeId,
-                DiscountTargetType.ALL, DiscountType.PERCENT, 10, null,
+                DiscountTargetType.ALL, DiscountType.AMOUNT, 10, null,
                 50, LocalTime.of(12, 0), LocalTime.of(13, 30),
                 null, null,
                 1000, TargetGender.ALL, List.of(AgeGroup.AGE_20S),

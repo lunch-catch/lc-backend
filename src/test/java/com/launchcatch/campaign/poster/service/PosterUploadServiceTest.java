@@ -327,7 +327,7 @@ class PosterUploadServiceTest {
 
         assertThat(response.title()).isEqualTo("분식집 - 가을 신메뉴");
         assertThat(response.html()).contains("분식집")
-                .contains("전체 메뉴 10% 할인")
+                .contains("전체 메뉴 10원 할인")
                 .contains("10.01~10.31")
                 .contains("광고")
                 .contains("https://cdn.example.com/" + OBJECT_KEY);
@@ -345,6 +345,24 @@ class PosterUploadServiceTest {
         PosterCreateResponse response = service.createOrOverwritePoster(OWNER_ID, CAMPAIGN_ID, TEMPLATE_ID, OBJECT_KEY);
 
         assertThat(response.html()).contains("제육볶음 3000원 할인");
+    }
+
+    /*
+     * ALL(전체 메뉴)은 AMOUNT만 허용해 "원" 문구만 남았다(#431). MENU(특정 메뉴)는
+     * PERCENT를 여전히 허용해, 할인 문구의 "%" 분기(formatDiscount)는 이 경로로만 확인된다.
+     */
+    @Test
+    @DisplayName("메뉴 할인이 PERCENT면 할인율 문구를 만든다")
+    void 메뉴_할인이_PERCENT면_할인율_문구를_만든다() {
+        Campaign campaign = menuPercentDiscountCampaign();
+        Template template = publishedActiveTemplate();
+        givenHappyPath(campaign, template);
+        when(storeQueryService.findMenusByIdIn(List.of(42L)))
+                .thenReturn(List.of(new StoreMenuInfo(42L, STORE_ID, "menu.jpg", "제육볶음", 9000L)));
+
+        PosterCreateResponse response = service.createOrOverwritePoster(OWNER_ID, CAMPAIGN_ID, TEMPLATE_ID, OBJECT_KEY);
+
+        assertThat(response.html()).contains("제육볶음 15% 할인");
     }
 
     @Test
@@ -388,7 +406,7 @@ class PosterUploadServiceTest {
     private Campaign draftCampaign(CampaignStatus status) {
         Campaign campaign = Campaign.create(
                 OWNER_ID, STORE_ID,
-                DiscountTargetType.ALL, DiscountType.PERCENT, 10, null,
+                DiscountTargetType.ALL, DiscountType.AMOUNT, 10, null,
                 50, LocalTime.of(12, 0), LocalTime.of(13, 30),
                 null, null,
                 1000, TargetGender.ALL, List.of(AgeGroup.AGE_20S),
@@ -402,7 +420,7 @@ class PosterUploadServiceTest {
     private Campaign draftCampaignWithoutPeriod() {
         return Campaign.create(
                 OWNER_ID, STORE_ID,
-                DiscountTargetType.ALL, DiscountType.PERCENT, 10, null,
+                DiscountTargetType.ALL, DiscountType.AMOUNT, 10, null,
                 50, LocalTime.of(12, 0), LocalTime.of(13, 30),
                 null, null,
                 1000, TargetGender.ALL, List.of(AgeGroup.AGE_20S),
@@ -414,6 +432,18 @@ class PosterUploadServiceTest {
         Campaign campaign = Campaign.create(
                 OWNER_ID, STORE_ID,
                 DiscountTargetType.MENU, DiscountType.AMOUNT, 3000, 42L,
+                50, LocalTime.of(12, 0), LocalTime.of(13, 30),
+                null, null,
+                1000, TargetGender.ALL, List.of(AgeGroup.AGE_20S),
+                10000L, LocalDate.of(2026, 10, 1), LocalDate.of(2026, 10, 31),
+                LocalDateTime.now());
+        return campaign;
+    }
+
+    private Campaign menuPercentDiscountCampaign() {
+        Campaign campaign = Campaign.create(
+                OWNER_ID, STORE_ID,
+                DiscountTargetType.MENU, DiscountType.PERCENT, 15, 42L,
                 50, LocalTime.of(12, 0), LocalTime.of(13, 30),
                 null, null,
                 1000, TargetGender.ALL, List.of(AgeGroup.AGE_20S),

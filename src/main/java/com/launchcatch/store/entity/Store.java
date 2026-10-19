@@ -63,6 +63,19 @@ public class Store extends BaseTimeEntity {
     @Column(nullable = false)
     private boolean finalized;
 
+    @Column(name = "finalized_at")
+    private LocalDateTime finalizedAt;
+
+    // 호출자는 같은 트랜잭션에서 필수 업무 데이터를 검증하고 진행 상태를 잠가야 한다.
+    public void completeRegistration(LocalDateTime completedAt) {
+        Objects.requireNonNull(completedAt, "최종 등록 시각이 필요합니다.");
+        if (finalized) {
+            throw new IllegalStateException("이미 최종 등록한 가게입니다.");
+        }
+        finalized = true;
+        finalizedAt = completedAt;
+    }
+
     private Store(Long ownerId, StoreBasicInfo info, LocalDateTime verifiedAt) {
         if (ownerId == null || ownerId <= 0) {
             throw new IllegalArgumentException("유효한 점주 ID가 필요합니다.");

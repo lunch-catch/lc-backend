@@ -20,11 +20,14 @@ public class MemberSecurityConfig {
             PathPatternRequestMatcher.pathPattern("/v1/members/**"),
             new NegatedRequestMatcher(PathPatternRequestMatcher.pathPattern("/v1/members/me/usage-stats")));
 
+    private static final String ADMIN_MEMBERS_PATH = "/v1/admin/members";
+
     private static final RequestMatcher SECURITY_MATCHER = new OrRequestMatcher(
             PathPatternRequestMatcher.pathPattern("/v1/auth/**"),
             MEMBER_API_PATHS,
             PathPatternRequestMatcher.pathPattern("/v1/member-profiles/**"),
-            PathPatternRequestMatcher.pathPattern("/webhook/kakao/**"));
+            PathPatternRequestMatcher.pathPattern("/webhook/kakao/**"),
+            PathPatternRequestMatcher.pathPattern(ADMIN_MEMBERS_PATH));
 
     @Bean
     @Order(ApiSecurityDefaults.DOMAIN_CHAIN_ORDER)
@@ -36,6 +39,7 @@ public class MemberSecurityConfig {
                         .requestMatchers(HttpMethod.GET, "/v1/auth/kakao/authorize").permitAll()
                         .requestMatchers(HttpMethod.POST, "/v1/auth/tokens", "/v1/auth/tokens:refresh").permitAll()
                         .requestMatchers("/webhook/kakao/**").permitAll()
+                        .requestMatchers(HttpMethod.GET, ADMIN_MEMBERS_PATH).hasAnyRole("ADMIN", "SUPER_ADMIN")
                         .requestMatchers("/v1/auth/**", "/v1/members/**", "/v1/member-profiles/**")
                         .hasRole("MEMBER")
                         .anyRequest().denyAll())

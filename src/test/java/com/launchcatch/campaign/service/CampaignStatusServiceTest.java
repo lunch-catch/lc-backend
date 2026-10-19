@@ -161,7 +161,7 @@ class CampaignStatusServiceTest {
         assertThat(event.businessDate()).isEqualTo(BUSINESS_DATE);
         assertThat(event.servable()).isFalse();
         verify(storeCampaignSummaryUpdater).update(20L, CAMPAIGN_ID, new StoreCampaignSummaryCommand(
-                BUSINESS_DATE, StoreCampaignStatus.PAUSED, StoreDiscountTargetType.ALL, StoreDiscountType.PERCENT,
+                BUSINESS_DATE, StoreCampaignStatus.PAUSED, StoreDiscountTargetType.ALL, StoreDiscountType.AMOUNT,
                 10, null, LocalTime.of(11, 0), LocalTime.of(14, 0)));
     }
 
@@ -252,7 +252,7 @@ class CampaignStatusServiceTest {
         CampaignStatusChangedEvent event = captureStatusChangedEvent();
         assertThat(event.servable()).isTrue();
         verify(storeCampaignSummaryUpdater).update(20L, CAMPAIGN_ID, new StoreCampaignSummaryCommand(
-                BUSINESS_DATE, StoreCampaignStatus.ACTIVE, StoreDiscountTargetType.ALL, StoreDiscountType.PERCENT,
+                BUSINESS_DATE, StoreCampaignStatus.ACTIVE, StoreDiscountTargetType.ALL, StoreDiscountType.AMOUNT,
                 10, null, LocalTime.of(11, 0), LocalTime.of(14, 0)));
     }
 
@@ -480,7 +480,7 @@ class CampaignStatusServiceTest {
     private Campaign draftCampaign() {
         Campaign campaign = Campaign.create(
                 10L, 20L,
-                DiscountTargetType.ALL, DiscountType.PERCENT, 10, null,
+                DiscountTargetType.ALL, DiscountType.AMOUNT, 10, null,
                 100, LocalTime.of(11, 0), LocalTime.of(14, 0),
                 null, null,
                 1000, TargetGender.ALL, List.of(AgeGroup.AGE_20S),
