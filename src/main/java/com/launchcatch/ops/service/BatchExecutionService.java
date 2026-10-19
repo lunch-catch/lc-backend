@@ -6,6 +6,7 @@ import com.launchcatch.ops.repository.BatchExecutionLogRepository;
 import com.launchcatch.ops.scheduler.BatchAlert;
 import com.launchcatch.ops.scheduler.BatchServerId;
 import com.launchcatch.ops.scheduler.StepOutcome;
+import com.launchcatch.ops.scheduler.TransientFailures;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.LocalDate;
@@ -79,8 +80,24 @@ public class BatchExecutionService {
      * 받아 넘기는 것은 유일 제약 위반뿐이다. DataIntegrityViolationException 을 통째로 잡으면
      * 길이 초과나 CHECK 위반까지 "이미 점유됐다" 로 읽혀서, 두 서버가 모두 점유에 실패하고도
      * 아무도 장애를 모른다(MNT-4-04).
+     *
+     * 두 서버가 같은 순간에 삽입을 시도하면 InnoDB 가 유일 제약 위반 대신 락 대기 시간
+     * 초과나 교착(TransientFailures.isTransient 가 가리는 쪽)을 낼 수 있다. 그 경합은
+     * 상대의 트랜잭션이 끝나는 순간 풀리므로, 한 번 더 시도하면 유일 제약 위반으로 깨끗하게
+     * 갈리거나 성공한다.
      */
     public boolean claim(String jobName, LocalDate businessDate) {
+        try {
+            return attemptClaim(jobName, businessDate);
+        } catch (RuntimeException failure) {
+            if (!TransientFailures.isTransient(failure)) {
+                throw failure;
+            }
+            return attemptClaim(jobName, businessDate);
+        }
+    }
+
+    private boolean attemptClaim(String jobName, LocalDate businessDate) {
         try {
             logs.saveAndFlush(BatchExecutionLog.running(jobName, businessDate, ownerId));
             return true;

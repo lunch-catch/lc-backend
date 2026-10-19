@@ -3,6 +3,7 @@ package com.launchcatch.campaign.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -21,6 +22,11 @@ import com.launchcatch.campaign.contract.PauseReason;
 import com.launchcatch.campaign.repository.CampaignRepository;
 import com.launchcatch.campaign.repository.CampaignStatusLogRepository;
 import com.launchcatch.global.entity.BaseTimeEntity;
+import com.launchcatch.store.contract.StoreCampaignStatus;
+import com.launchcatch.store.contract.StoreCampaignSummaryCommand;
+import com.launchcatch.store.contract.StoreCampaignSummaryUpdater;
+import com.launchcatch.store.contract.StoreDiscountTargetType;
+import com.launchcatch.store.contract.StoreDiscountType;
 import java.lang.reflect.Field;
 import java.time.Clock;
 import java.time.Instant;
@@ -51,13 +57,16 @@ class CampaignStatusServiceTest {
     @Mock
     private CampaignStatusLogRepository campaignStatusLogRepository;
     @Mock
+    private StoreCampaignSummaryUpdater storeCampaignSummaryUpdater;
+    @Mock
     private ApplicationEventPublisher events;
 
     private CampaignStatusService service;
 
     @BeforeEach
     void setUp() {
-        service = new CampaignStatusService(campaignRepository, campaignStatusLogRepository, events, FIXED_CLOCK);
+        service = new CampaignStatusService(
+                campaignRepository, campaignStatusLogRepository, storeCampaignSummaryUpdater, events, FIXED_CLOCK);
     }
 
     @Test
@@ -151,6 +160,9 @@ class CampaignStatusServiceTest {
         assertThat(event.campaignId()).isEqualTo(CAMPAIGN_ID);
         assertThat(event.businessDate()).isEqualTo(BUSINESS_DATE);
         assertThat(event.servable()).isFalse();
+        verify(storeCampaignSummaryUpdater).update(20L, CAMPAIGN_ID, new StoreCampaignSummaryCommand(
+                BUSINESS_DATE, StoreCampaignStatus.PAUSED, StoreDiscountTargetType.ALL, StoreDiscountType.AMOUNT,
+                10, null, LocalTime.of(11, 0), LocalTime.of(14, 0)));
     }
 
     @Test
@@ -184,6 +196,7 @@ class CampaignStatusServiceTest {
         assertThatThrownBy(() -> service.pause(CAMPAIGN_ID, PauseReason.ADMIN, BUSINESS_DATE))
                 .isInstanceOf(IllegalStateException.class);
         verify(events, never()).publishEvent(any());
+        verify(storeCampaignSummaryUpdater, never()).update(anyLong(), anyLong(), any());
     }
 
     @Test
@@ -209,6 +222,7 @@ class CampaignStatusServiceTest {
         assertThat(campaign.getStatus()).isEqualTo(CampaignStatus.PAUSED);
         verify(campaignStatusLogRepository, never()).save(any());
         verify(events, never()).publishEvent(any());
+        verify(storeCampaignSummaryUpdater, never()).update(anyLong(), anyLong(), any());
     }
 
     @Test
@@ -221,6 +235,7 @@ class CampaignStatusServiceTest {
                 .isInstanceOf(IllegalStateException.class);
         verify(campaignStatusLogRepository, never()).save(any());
         verify(events, never()).publishEvent(any());
+        verify(storeCampaignSummaryUpdater, never()).update(anyLong(), anyLong(), any());
     }
 
     @Test
@@ -236,6 +251,9 @@ class CampaignStatusServiceTest {
         assertThat(log.getActorType()).isEqualTo(ActorType.OWNER);
         CampaignStatusChangedEvent event = captureStatusChangedEvent();
         assertThat(event.servable()).isTrue();
+        verify(storeCampaignSummaryUpdater).update(20L, CAMPAIGN_ID, new StoreCampaignSummaryCommand(
+                BUSINESS_DATE, StoreCampaignStatus.ACTIVE, StoreDiscountTargetType.ALL, StoreDiscountType.AMOUNT,
+                10, null, LocalTime.of(11, 0), LocalTime.of(14, 0)));
     }
 
     @Test
@@ -246,6 +264,7 @@ class CampaignStatusServiceTest {
 
         assertThatThrownBy(() -> service.resume(CAMPAIGN_ID, ActorType.OWNER, BUSINESS_DATE))
                 .isInstanceOf(IllegalStateException.class);
+        verify(storeCampaignSummaryUpdater, never()).update(anyLong(), anyLong(), any());
     }
 
     @Test
@@ -259,6 +278,7 @@ class CampaignStatusServiceTest {
         assertThat(campaign.getStatus()).isEqualTo(CampaignStatus.ACTIVE);
         verify(campaignStatusLogRepository, never()).save(any());
         verify(events, never()).publishEvent(any());
+        verify(storeCampaignSummaryUpdater, never()).update(anyLong(), anyLong(), any());
     }
 
     @Test
@@ -345,6 +365,7 @@ class CampaignStatusServiceTest {
         assertThat(log.getReason()).isEqualTo("cause=DAILY");
         CampaignStatusChangedEvent event = captureStatusChangedEvent();
         assertThat(event.servable()).isFalse();
+        verify(storeCampaignSummaryUpdater, never()).update(anyLong(), anyLong(), any());
     }
 
     @Test
@@ -401,6 +422,7 @@ class CampaignStatusServiceTest {
         assertThat(log.getReason()).isEqualTo("cause=RECHARGE");
         CampaignStatusChangedEvent event = captureStatusChangedEvent();
         assertThat(event.servable()).isTrue();
+        verify(storeCampaignSummaryUpdater, never()).update(anyLong(), anyLong(), any());
     }
 
     @Test
@@ -458,7 +480,7 @@ class CampaignStatusServiceTest {
     private Campaign draftCampaign() {
         Campaign campaign = Campaign.create(
                 10L, 20L,
-                DiscountTargetType.ALL, DiscountType.PERCENT, 10, null,
+                DiscountTargetType.ALL, DiscountType.AMOUNT, 10, null,
                 100, LocalTime.of(11, 0), LocalTime.of(14, 0),
                 null, null,
                 1000, TargetGender.ALL, List.of(AgeGroup.AGE_20S),

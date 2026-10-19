@@ -77,7 +77,7 @@ class CampaignOwnerQuerySecurityIntegrationTest extends AbstractCampaignIntegrat
                 .andExpect(jsonPath("$.data.campaignId").value(campaign.getId().intValue()))
                 .andExpect(jsonPath("$.data.status").value("DRAFT"))
                 .andExpect(jsonPath("$.data.discountTargetType").value("ALL"))
-                .andExpect(jsonPath("$.data.discountType").value("PERCENT"))
+                .andExpect(jsonPath("$.data.discountType").value("AMOUNT"))
                 .andExpect(jsonPath("$.data.discountValue").value(10))
                 .andExpect(jsonPath("$.data.targetRadius").value(1000))
                 .andExpect(jsonPath("$.data.targetGender").value("ALL"))
@@ -154,7 +154,7 @@ class CampaignOwnerQuerySecurityIntegrationTest extends AbstractCampaignIntegrat
         createdStoreIds.add(storeId);
         return Campaign.create(
                 ownerId, storeId,
-                DiscountTargetType.ALL, DiscountType.PERCENT, 10, null,
+                DiscountTargetType.ALL, DiscountType.AMOUNT, 10, null,
                 50, LocalTime.of(12, 0), LocalTime.of(13, 30),
                 null, null,
                 1000, TargetGender.ALL, List.of(AgeGroup.AGE_20S),

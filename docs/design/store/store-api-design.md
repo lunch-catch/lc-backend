@@ -80,6 +80,135 @@ StoreListIntegrationTest 하나에서 실제 MySQL의 거리 정렬과 반올림
 같은 테스트에서 캠페인·메뉴 응답, 공통 보안 체인, MEMBER 권한과 updater의 저장·롤백도 검증한다.
 일괄 저장은 500개 메뉴 요약의 실제 SELECT·INSERT 실행 횟수와 기존 행 갱신, 메뉴 검증 실패와 롤백을 확인한다.
 
+## 점주 약관 동의
+
+계약은 [store-api-spec.md](../../api-spec/store-api-spec.md#가게-등록-온보딩-1단계-점주-약관-동의)를 따른다.
+전체 약관이 필수이므로 요청 자체를 전체 동의로 처리한다. 약관별 정책 설정과 선택 약관 처리는 두지 않는다.
+owner는 점주 행을 잠그고 DB 현재 상태가 ONBOARDING인지 확인한 뒤 store.contract.OwnerTermsAgreementRecorder를 호출한다.
+store는 owner 내부에 의존하지 않는다.
+
+잠금 순서는 점주 행 → 진행 상태 행 → 약관 데이터다.
+OwnerTermsAgreementService는 호출자의 쓰기 트랜잭션에 참여하고 진행 상태를 초기화·잠근다. 약관 동의 요청에서는 버전을 받지 않는다.
+진행 상태 GET은 읽기만 수행하며 행이 없으면 TERMS, version=0을 반환한다.
+최초 생성은 점주 행 잠금 아래 약관 저장에서만 수행하므로 최초 조회와 저장이 경합해도 중복 생성하지 않는다.
+
+약관은 owner_id UNIQUE로 점주당 한 행을 저장한다.
+agreed_at은 공용 Clock을 사용한 최초 동의 저장 시각이며 이후 갱신하지 않는다.
+withdrawn_at은 향후 확장을 위해 NULL을 허용한다. 최초 동의 시 null로 저장하며 현재 수정·재동의·철회 기능은 제공하지 않는다.
+동의 완료 여부는 agreed=true이고 agreed_at이 존재하며 withdrawn_at이 null인지로 판단한다.
+약관 종류·버전은 애플리케이션에서 사용하지 않으며 약관별 정책 설정은 제거한다. required와 agreed는 향후 확장을 위해 유지하며 현재 동의 저장에서는 서버가 둘 다 true로 설정한다. 약관 동의는 점주 행 잠금과 기존 동의 확인·UNIQUE 제약으로 중복 저장을 막는다. 진행 상태의 현재 버전은 서버가 잠금 아래 읽으며 완료 후 증가한 버전을 다음 단계용 응답에 포함한다.
+
+기존 동의 행이 있으면 TERMS-001로 거부한다. 기존 행이 없더라도 현재 단계가 TERMS가 아니면 STORE-002로 거부한다.
+최초 성공 시에만 TERMS를 완료해 STORE_INFO로 진행한다. reviseStep은 호출하지 않으며 동의 완료 후의 약관 수정은 허용하지 않는다.
+약관과 진행 상태는 함께 커밋하거나 롤백한다. 점주 상태·튜토리얼·토큰·인증 쿠키는 변경하지 않는다.
+기존 동의 재요청과 약관 UNIQUE 충돌은 TERMS-001로 처리하며 다른 DB 오류는 그대로 전파한다.
+약관 오류는 전용 접두어 TERMS-001을 사용해 develop의 이미지 오류 STORE-005~010과 충돌하지 않는다. 약관 오류 번호와 STORE 오류 번호가 각각 연속이므로 공통 오류 코드 목록 검사도 유지한다. 정책 미설정과 약관별 미동의 오류는 제거한다.
+
+### 스키마 이관
+
+기존 V1은 체크섬을 유지하고 V5로 변경한다.
+V5는 terms_type과 terms_version을 삭제하지 않고 NULL을 허용해 새 코드가 두 값을 생략하고 저장할 수 있게 한다.
+두 컬럼은 새 코드 배포와 구버전 인스턴스 종료를 확인한 뒤 별도 배포의 후속 마이그레이션에서 제거한다.
+같은 배포에 삭제 마이그레이션을 포함하지 않는다. 기존 행 통합과 점주당 한 행 제약은 유지하므로 약관별 여러 행을 쓰는 코드와의 호환성을 보장하는 것은 아니다.
+기존 점주별 여러 행은 한 행으로 합친다. 모든 기존 기록이 동의 상태이고 철회되지 않은 경우에만 마지막 갱신 시각을 agreed_at으로 이관한다.
+이관 시 required=true로 설정한다. 미동의나 철회가 섞인 기록은 agreed=false, agreed_at=null로 남겨 전체 필수 약관 동의로 승격하지 않는다.
+기존 철회 시각은 보존한다. 실제 최초 동의 시각은 과거 스키마에 없으므로 이관 시각과 새 요청의 서버 동의 시각을 구분한다.
+
+## STORE_INFO 저장 (#415)
+
+HTTP 계약은 [store-api-spec.md](../../api-spec/store-api-spec.md#가게-등록-온보딩-2단계-기본-정보와-사업자-mock-검증)가 소유한다.
+owner의 OwnerStoreInfoController는 인증 주체의 ID와 입력값을 OwnerStoreInfoService에 전달한다.
+OwnerStoreInfoService가 점주를 확인한 뒤 store.contract.StoreInfoSaver를 호출한다.
+StoreInfoService는 기존 StoreRegistrationProgressService의 완료·수정 메서드를 호출한다.
+
+### 접근 확인과 트랜잭션
+
+owner는 이미 내 정보 조회에서 store의 진행 상태 계약을 사용한다.
+점주 상태 확인과 호출 순서는 owner의 서비스가 담당하며 가게 입력 검증과 저장은 store가 담당한다.
+OwnerStoreInfoService는 쓰기 트랜잭션을 시작하고 점주 행을 잠근 뒤 DB의 ONBOARDING 상태를 확인한다.
+상태 캐시와 토큰의 상태값은 사용하지 않는다.
+상태 확인 후 store가 공개한 StoreInfoSaver.save를 호출하며 StoreInfoService가 그 계약을 구현한다.
+StoreInfoService는 MANDATORY로 같은 트랜잭션에 참여하며 점주 데이터를 읽거나 owner의 구현을 호출하지 않는다.
+잠금 순서는 점주 행 → 진행 상태 행 → 가게 데이터이며 의존 방향은 기존 owner → store를 유지한다.
+가게의 유일한 owner_id와 진행 상태의 버전 검사로 동시 최초 요청의 중복 생성을 막는다.
+단계·버전 검사 후 입력값과 Mock 결과를 확인하며 가게 저장과 진행 상태 갱신은 한 트랜잭션이다.
+
+### 저장과 수정
+
+최초 성공은 Store.createDraft로 finalized=false인 가게를 생성하고 saveAndFlush로 ID를 확보한다.
+이어서 completeStep으로 가게 소유권을 확인하고 LOCATION으로 진행한다.
+완료 단계 재저장은 연결된 본인 가게만 수정하고 reviseStep으로 버전만 증가시킨다.
+StoreBasicInfo 값 객체가 필수 업무 입력의 불변식을 검증한다.
+기본 정보 교체는 검증 성공 시각을 Clock으로 기록하며 다른 단계 데이터는 건드리지 않는다.
+
+Mock 실패는 상태 변경 없이 결과만 반환한다.
+따라서 최초 실패 초안을 저장하기 위한 DB 제약 변경이 필요하지 않다.
+DB 장애·진행 상태 갱신 실패는 성공으로 바꾸지 않으며 가게 정보와 함께 롤백한다.
+현재 Mock은 순수 계산으로 외부 의존이 없다. 실제 기관 연동 시 외부 호출은 DB 잠금 밖으로 분리해야 한다.
+
+### 검증
+
+StoreInfoServiceTest가 입력 검증·최초 생성·수정·Mock 실패·진행 상태 오류를 확인한다.
+OwnerStoreInfoServiceTest가 점주 상태·계정 누락·DB 장애와 저장 계약 호출을 확인한다.
+StoreInfoIntegrationTest는 약관 동의 후 기본 정보 등록·HTTP 보안·실제 저장·다른 단계 데이터 보존·동시 요청·후속 갱신 실패의 롤백을 확인한다.
+
+### 가게 기본 정보 저장 공개 계약
+
+StoreInfoSaver와 입출력 record인 StoreInfoSaveCommand·StoreInfoSaveResult는 store.contract가 소유한다.
+StoreInfoService가 자기 도메인의 공개 계약을 구현하며 owner는 이 계약만 참조한다.
+호출자는 같은 쓰기 트랜잭션에서 본인 점주 행을 먼저 잠그고 ONBOARDING 상태를 확인해야 한다.
+트랜잭션이 없으면 MANDATORY가 호출을 거부한다.
+공개 입출력 타입은 HTTP DTO나 내부 엔티티를 참조하지 않는다.
+진행 단계와 검증 결과는 문자열로 전달하고 owner의 HTTP 응답 DTO가 결과를 변환한다.
+가게 기본 정보와 Mock 판정 규칙은 store 내부에 유지하며 공개 명령을 받은 뒤 검증한다.
+
+## LOCATION 저장 (#482)
+
+HTTP 계약은 [가게 API 명세](../../api-spec/store-api-spec.md#가게-등록-온보딩-3단계-위치-저장-482)가 소유한다.
+OwnerStoreLocationService는 점주 행을 잠그고 ONBOARDING을 확인한 뒤 StoreLocationSaver를 호출한다.
+StoreLocationService는 호출자의 트랜잭션에 MANDATORY로 참여하고 진행 상태 행을 잠근다.
+잠금 순서는 기존 기본 정보 저장과 같은 점주 → 진행 상태 순서다.
+약관 동의·검증된 기본 정보·본인 초안 연결을 확인하고 기존 위치 컬럼과 진행 상태를 함께 저장한다.
+StoreLocation은 문자열 길이·좌표 범위를 검증하고 기존 DECIMAL(10,7)에 맞춰 좌표를 반올림한다. 카카오 클라이언트는 사용하지 않는다.
+최초 저장은 completeStep, 완료한 위치의 재저장은 reviseStep을 사용한다.
+기존 조회가 위치 컬럼으로 완료 여부를 계산하므로 별도 완료 플래그나 테이블을 추가하지 않는다.
+기존 스키마의 nullable 위치 컬럼을 매핑하며 미입력 초안의 null 허용을 유지한다.
+
+## 영업시간 저장
+
+이슈 #489의 HOURS 저장을 구현한다. HTTP 계약과 시간 검증 규칙은
+[가게 API 명세](../../api-spec/store-api-spec.md#가게-등록-온보딩-4단계-매장-영업시간-등록수정)가 소유한다.
+
+`OwnerStoreHoursController`는 검증한 요청을 `OwnerStoreHoursService`로 전달한다.
+점주 서비스가 트랜잭션을 열고 `OwnerRepository.findByIdForLogin`으로 점주 행을 잠근다.
+점주 상태에 따라 공개 계약 `StoreHoursSaver.saveOnboarding` 또는 `saveActive`를 호출한다.
+store는 owner의 내부 타입을 참조하지 않으며 `StoreHoursService`가 MANDATORY로 같은 트랜잭션에 참여한다.
+
+ONBOARDING의 잠금 순서는 점주 행 → 진행 상태 행 → 영업시간 행이다.
+요청 버전, 본인 초안과 진행 상태의 연결, 실제 약관·기본 정보·Mock 검증·위치 저장을 확인한다.
+현재 HOURS면 completeStep으로 IMAGES로 진행하고 이미 완료한 HOURS면 reviseStep으로 재개 위치를 보존한다.
+영업시간 교체와 진행 상태 변경이 함께 커밋되며 어느 쪽의 실패도 모두 롤백한다.
+
+ACTIVE는 최종 등록된 본인 가게만 허용하며 온보딩 진행 상태 저장소나 서비스를 호출하지 않는다.
+같은 점주의 ACTIVE 저장은 점주 행 잠금으로 직렬화하고 나중에 처리한 전체 요청을 반영한다.
+온보딩 version을 운영 정보의 버전으로 재사용하지 않는다.
+
+요청은 영업일만 받으며 `StoreBusinessHours.normalize`가 빠진 요일을 휴무·모든 시각 null로 채운다.
+선택 시각의 생략은 null로 처리하고 빈 목록은 일주일 전체 휴무로 변환한다.
+정규화한 7일 전체가 유효한지 확인한 뒤 기존 `store_business_hour`의 해당 가게 행을 삭제하고 JDBC batch로 삽입한다.
+행 ID는 외부 계약에 없으므로 보존하지 않으며 시각은 공통 Clock으로 계산한다.
+JPA 진행 상태 변경과 JDBC 업무 데이터 변경은 같은 데이터소스 트랜잭션에 참여한다.
+다른 단계의 업무 데이터와 가게 행은 변경하지 않는다.
+기존 테이블을 사용하며 적용된 마이그레이션은 수정하지 않는다.
+
+`StoreBusinessHours.isComplete`가 시간표의 유효성을 판정한다.
+저장 시 이 기준을 통과하지 못하면 400을 반환하며 내 가게 조회도 같은 기준으로 HOURS 완료 여부를 판단한다.
+기존의 일부 요일만 있는 데이터는 조회값을 유지하되 완료로 간주하지 않는다.
+진행 상태 조회는 develop의 GET /v1/owner/onboarding 계약을 따른다.
+이 조회와 내 가게 조회 모두 실제 저장된 7일 전체 시간표로 HOURS 완료 여부를 판단한다.
+
+develop에 반영된 #482 위치 저장과 연동하며 위치 저장 후 HOURS를 저장하고 진행 상태를 조회하는 흐름을 검증한다.
+
 ## 점주 인테리어 이미지 업로드(`#375`)
 
 **서버가 하는 일**
@@ -106,10 +235,10 @@ StoreListIntegrationTest 하나에서 실제 MySQL의 거리 정렬과 반올림
   과정에서 이미 필수로 등록돼 있다는 전제다. 가게 담당이 "대표 메뉴가 선택으로 바뀌어
   온보딩이 끝나도 메뉴가 없을 수 있다"고 확인해 줬지만, 그건 메뉴 얘기고 로고(`image_type=LOGO`)는
   `store_image`의 `uk_store_image_single_logo` 제약과 별개로 여전히 필수 전제다.
-- **`completeStep`에 필요한 `version`을 돌려주는 조회 API(`GET /v1/owner/store-registration-progress`)를
+- **`completeStep`에 필요한 `version`을 돌려주는 조회 API(`GET /v1/owner/onboarding`)를
   이 이슈에서 같이 만든다.** 등록 단계 API 전체가 아직 하나도 없어 클라이언트가 현재 버전을
-  얻을 곳이 없었다. 이 조회는 `StoreRegistrationProgressService.initialize`를 그대로 불러
-  진행 상태가 없으면 만들어서 돌려준다.
+  얻을 곳이 없었다. 이 조회는 저장된 진행 상태를 읽으며 없으면 TERMS와 버전 0을 반환한다.
+  GET은 진행 상태를 생성하지 않는다. 최초 생성은 점주 행 잠금 아래 약관 저장에서 처리한다.
 - **presigned 업로드 흐름을 이 이슈에서 처음 구현한다.** `S3Config`는 "가게 이미지, 포스터
   이미지, 증빙 서류가 같은 경로를 쓴다"고 전제해 뒀지만 실제로 쓰는 코드는 없었다. 이 구현은
   `store_image` 테이블(업로드 상태 추적 컬럼 포함)에 맞춘 것이라, 포스터 이미지처럼 추적
@@ -155,3 +284,38 @@ StoreListIntegrationTest 하나에서 실제 MySQL의 거리 정렬과 반올림
   `StoreMenuInfo`(쿠폰 contract)와 `StoreRepositoryImpl`의 메뉴 조회에는 영향이 없다.
 - **`menuId` 소유권 확인 실패는 "없음"과 "다른 가게 소유"를 구분하지 않고 같은 `403`
   (`STORE-012`)으로 묶는다.** 업로드 확인 실패(`STORE-008`)와 같은 근거다(`api-spec.md`).
+
+## 내 가게 조회 (#427)
+
+HTTP 계약은 [store-api-spec.md](../../api-spec/store-api-spec.md)의 `GET /v1/owner/store` 절이 소유한다.
+OwnerStoreController → OwnerStoreService → store.contract.StoreQueryService.getOwnerStoreOverview 순서로 호출한다.
+owner는 DB에서 현재 계정과 상태를 확인하고 store는 본인 가게의 업무 데이터를 조회한다.
+store가 owner를 역방향 참조하지 않으며 StoreQueryService의 기존 최종 등록 전용 메서드의 조회 조건은 유지한다.
+OwnerStoreSnapshot은 도메인 간 계약이며 OwnerStoreResponse가 HTTP 응답으로 변환한다.
+
+하나의 읽기 전용 트랜잭션에서 가게, 사진, 메뉴, 영업시간을 각각 조회한다.
+MySQL 기본 REPEATABLE READ의 스냅샷으로 읽으며 쓰기 잠금과 진행 상태 초기화는 수행하지 않는다.
+가게가 없으면 후속 목록을 조회하지 않는다. 사진과 메뉴 이미지는 VERIFIED만 연결한다.
+이미지 URL은 기존 StoreImageUrlResolver로 생성하며 S3에 요청하지 않는다.
+TERMS는 develop에 병합된 PR #148의 필수 약관 단일 동의 계약을 따른다.
+OwnerStoreOverview를 HTTP DTO로 변환해 가게 생성 전에도 약관·진행 정보를 반환한다.
+완료 단계는 현재 업무 데이터를 확인한다. 약관은 유효한 단일 동의, STORE_INFO는 필수 5항목과 검증 성공,
+LOCATION은 장소·주소·좌표, HOURS는 유효한 7일 전체 저장값, IMAGES는 검증된 대표 이미지로 판단한다.
+메뉴는 선택이며 입력한 메뉴가 있으면 3개 이하·메뉴명·가격·검증된 이미지를 확인한다.
+최종 등록 API가 추가 검증을 확정하면 조회의 canComplete와 같은 규칙을 사용해야 한다.
+
+## 입점 등록 진행 상태 조회 (#453)
+
+HTTP 계약과 단계별 완료 기준은 [가게 API 명세](../../api-spec/store-api-spec.md#get-v1owneronboarding)가 소유한다.
+GET /v1/owner/onboarding의 owner 진입점에서 점주 상태를 확인한 뒤 StoreOnboardingQuery를 호출한다.
+StoreRegistrationProgressQueryService가 공개 계약을 구현하며 StoreOnboardingStatus를 반환한다.
+입출력 계약은 store.contract에 두고 HTTP 응답 변환은 owner에서 처리한다.
+
+StoreOnboardingQueryRepository는 본인 owner_id를 바인딩한 SELECT 한 번으로 약관·가게·진행 상태와 업무 데이터 완료 조건을 읽는다.
+가게·진행 상태가 없는 경우도 한 행을 반환하며 다른 점주의 가게를 연결된 store_id로 따라가지 않는다.
+업로드 확인은 DB의 VERIFIED와 객체 키를 사용하며 GET에서 S3를 호출하지 않는다.
+DB 오류를 최초 진입이나 미완료 상태로 숨기지 않는다.
+StoreOnboardingReadiness가 첫 미완료 단계와 최종 등록 가능 여부를 계산한다.
+후속 최종 등록 구현은 같은 판정 기준을 사용해 요청 시점에 다시 검증해야 한다.
+저장된 resume_step과 다른 화면을 안내하더라도 진행 상태와 버전은 변경하지 않는다.
+단계 저장 API가 쓰는 StoreRegistrationProgressResponse는 세 필드 계약을 유지한다.

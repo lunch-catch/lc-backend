@@ -12,20 +12,23 @@
 | 관리자 캠페인 리포트 | A-14 |
 | 회원 사용 통계 | A-12 |
 | 이벤트 수집 | A-13 |
+| 이벤트 로그 기반 캠페인 성과 | 요청 시 캠페인별 이벤트 집계 |
 | 점주 캠페인 리포트 | 점주용 리포트와 변경 이력 조회 |
 
 A-11 피드 요청 제한 초과 집계는 구현하지 않는다. 요청 제한은 adserving의 운영 지표로 관측하고 회원별 429 건수는 analytics 테이블에 저장하지 않는다.
 
 ## 2. 공통 원칙
 
-- 조회 API는 analytics의 집계 테이블만 읽는다.
+- 배치 지표 조회 API는 analytics의 집계 테이블만 읽는다. 이벤트 로그 기반 캠페인 성과 조회는 `event`에서 자기 로그를 읽는다.
 - 일별 집계 배치만 원천 도메인의 집계 조회 contract를 부른다.
 - 리포트 소유 확인은 `CampaignQueryService.findAllById`를 요청마다 호출한다. 이 예외는 이슈 `#351`이 아키텍처 규칙과 테스트에 반영한다.
-- 돈과 맞아야 하는 노출, 발급, 사용 건수는 퍼널 이벤트 로그가 아니라 원천 도메인의 집계 조회에서 온다.
-- `event_log`는 활성 회원과 찜 수에만 사용한다.
+- 확정 리포트의 노출, 발급, 사용 건수는 퍼널 이벤트 로그가 아니라 원천 도메인의 집계 조회에서 온다.
+- `event_log`는 활성 회원과 퍼널 분석에 사용한다. 원천 업무의 확정 건수와 일치한다고 보장하지 않는다.
 - 모든 영업일과 시계열 버킷은 `Asia/Seoul` 기준이다.
 
 ## 3. 시계열 규약
+
+이 절은 배치 지표 조회에 적용한다. 이벤트 로그 기반 캠페인 성과의 요청과 계산 규약은 [API 명세](../../api-spec/analytics-api-spec.md#이벤트-로그-기반-캠페인-성과)를 따른다.
 
 | `period` | 최대 범위 | 버킷 |
 |---|---|---|
@@ -55,10 +58,21 @@ A-11 피드 요청 제한 초과 집계는 구현하지 않는다. 요청 제한
 | A-10 캠페인 경고 | `daily_campaign_fraud_analytics` | `AdservingStatsQueryService` |
 | A-12 회원 사용 통계 | `daily_member_usage` | `CouponStatsQueryService`, `MemberStatsQueryService`, `event_log` |
 | A-13 이벤트 수집 | `event_log` | HTTP 요청 |
+| 이벤트 로그 기반 캠페인 성과 | `event_log` | 배치 없이 요청 시 조회 |
 | A-14 관리자 캠페인 리포트 | `campaign_daily_report` | 캠페인 리포트 집계 |
 | 점주 캠페인 리포트 | `campaign_daily_report`와 자식 4종 | 캠페인 리포트 집계 |
 
 ## 5. 대시보드
+
+### 점주 일별 리포트 조회
+
+[점주 일별 리포트 API 명세](../../api-spec/analytics-api-spec.md#점주-일별-리포트)의 조회는 `OwnerReportQueryService`가 맡는다. `OwnerReportQueryRepository`는 `campaign_daily_report`의 `(owner_id, business_date)` 인덱스로 로그인한 점주의 기간 내 행을 읽는다. 다른 도메인은 호출하지 않는다.
+
+소유 확인은 [아키텍처 설계 2.2](../../architecture/런치캐치_도메인_구조와_의존성_설계.md#22-그래프)에 따라 리포트에 저장된 `owner_id`로 한다. `owner_id`가 없는 기존 행은 반환하지 않는다.
+
+조회는 저장된 일별 지표를 그대로 반환하고 응답 항목의 소진액을 합산한다. 요청마다 집계하거나 원천 데이터로 보완하지 않는다.
+
+이슈 #492는 조회 API만 구현한다. `CampaignReportStep`은 아직 구현되지 않았으므로 배치가 리포트를 채우는 작업은 별도로 필요하다.
 
 ### 회원 지표
 
@@ -158,11 +172,21 @@ A-12는 현재 회원의 모든 일별 행을 합산한다. 원본 로그의 13�
 
 ## 11. 성능
 
-- 조회 API는 다른 도메인을 호출하지 않고 미리 계산한 집계 테이블을 읽는다.
+- 배치 지표 조회 API는 다른 도메인을 호출하지 않고 미리 계산한 집계 테이블을 읽는다.
 - 관리자 목록은 요청당 최대 100건이고 캠페인 ID 일괄 조회는 최대 100개다.
 - A-08은 최대 50건이다.
 - 배치는 원천 도메인에서 하루치로 묶은 결과만 받아 메모리에서 합친다.
 - 공개 트랜잭션은 외부 호출 없이 analytics 테이블을 교체하는 시간만 유지한다.
+
+### 이벤트 로그 기반 캠페인 성과 (#509)
+
+`CampaignFunnelController`는 인증한 점주 ID와 조회 조건을 `CampaignFunnelService`에 전달한다. 서비스는 읽기 전용 트랜잭션에서 `CampaignQueryService.findAllById`로 소유권을 확인한다. `EventLogRepository.countCampaignEvents`가 자기 `event_log`를 조건부 COUNT 한 번으로 읽고 서비스가 비율을 계산한다.
+
+발생 시각은 한국 날짜의 시작 이상, 종료일 다음 날 시작 미만으로 제한한다. `(campaign_id, occurred_at, event_type)` 인덱스는 캠페인과 시각 범위를 찾으며 집계에 필요한 유형도 포함한다. 새 집계 테이블과 배치 작업은 만들지 않는다.
+
+이 API는 로그 애그리거트를 소유한 `analytics.event`에 둔다. 기존 `analytics.query`의 배치 지표 조회 제약은 유지한다. 도메인 경계와 소유권 조회의 예외는 [아키텍처 설계](../../architecture/런치캐치_도메인_구조와_의존성_설계.md#21-의존-규칙)가 소유한다.
+
+`AnalyticsSecurityConfig`가 이 경로의 OWNER 역할을 검사한다. `CampaignSecurityConfig`의 넓은 캠페인 경로에서는 이 경로만 제외해 보안 체인의 등록 순서에 의존하지 않는다.
 
 ## 12. 아직 정하지 못한 것
 

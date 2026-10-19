@@ -29,7 +29,9 @@ class SeedIntegrationTest extends IntegrationTestSupport {
     private static final String ROW_COUNTS = "SELECT (SELECT COUNT(*) FROM coupon_inventory) + (SELECT COUNT(*) FROM ad_candidate) "
             + "+ (SELECT COUNT(*) FROM serve_log) + (SELECT COUNT(*) FROM impression_log) + (SELECT COUNT(*) FROM swipe_log) "
             + "+ (SELECT COUNT(*) FROM wishlist) + (SELECT COUNT(*) FROM feed_visit_daily) + (SELECT COUNT(*) FROM feed_filter) "
-            + "+ (SELECT COUNT(*) FROM feed_filter_category) + (SELECT COUNT(*) FROM member_profile)";
+            + "+ (SELECT COUNT(*) FROM feed_filter_category) + (SELECT COUNT(*) FROM member_profile) "
+            + "+ (SELECT COUNT(*) FROM member_coupon) + (SELECT COUNT(*) FROM coupon_usage_history) "
+            + "+ (SELECT COUNT(*) FROM event_log) + (SELECT COUNT(*) FROM campaign_daily_report)";
 
     private DataSource dataSource;
     private JdbcTemplate jdbc;
@@ -72,7 +74,11 @@ class SeedIntegrationTest extends IntegrationTestSupport {
         assertThat(count("SELECT COUNT(*) FROM poster WHERE campaign_id BETWEEN 9001 AND 9016")).isEqualTo(16);
         assertThat(count("SELECT COUNT(*) FROM ad_candidate WHERE business_date = '2026-10-15' AND campaign_state = 'SERVABLE'")).isEqualTo(16);
         assertThat(count("SELECT COUNT(*) FROM budget_daily_plan WHERE business_date = '2026-10-15'")).isEqualTo(15);
-        assertThat(count("SELECT COUNT(*) FROM coupon_inventory")).isEqualTo(104);
+        assertThat(count("SELECT COUNT(*) FROM coupon_inventory")).isEqualTo(344);
+        assertThat(count("SELECT COUNT(*) FROM coupon_event WHERE campaign_id IN (9017, 9018) "
+                + "AND business_date BETWEEN '2026-10-01' AND '2026-10-15'")).isEqualTo(30);
+        assertThat(count("SELECT COUNT(DISTINCT business_date) FROM coupon_event "
+                + "WHERE campaign_id IN (9017, 9018)")).isEqualTo(15);
         assertThat(count("SELECT current_count FROM template_quota")).isEqualTo(1);
     }
 
@@ -138,7 +144,7 @@ class SeedIntegrationTest extends IntegrationTestSupport {
         migrate(true, "2026-10-16");
 
         assertThat(count("SELECT COUNT(*) FROM ad_candidate WHERE business_date = '2026-10-16'")).isEqualTo(16);
-        assertThat(count("SELECT COUNT(*) FROM coupon_event")).isEqualTo(8);
+        assertThat(count("SELECT COUNT(*) FROM coupon_event")).isEqualTo(38);
         assertThat(count("SELECT COUNT(*) FROM owner")).isEqualTo(18);
     }
 

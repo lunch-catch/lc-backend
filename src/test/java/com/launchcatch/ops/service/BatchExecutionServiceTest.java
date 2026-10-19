@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -29,6 +30,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import java.sql.SQLException;
 import org.hibernate.exception.ConstraintViolationException;
+import org.springframework.dao.CannotAcquireLockException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.test.util.ReflectionTestUtils;
 
@@ -127,6 +129,43 @@ class BatchExecutionServiceTest {
 
         assertThatThrownBy(() -> service.claim(JOB, DATE))
                 .isInstanceOf(DataIntegrityViolationException.class);
+    }
+
+    /*
+     * 두 서버가 같은 순간에 삽입을 시도하면 InnoDB 가 유일 제약 위반 대신 락 대기 시간
+     * 초과나 교착을 낼 수 있다(#515). 그 시점에는 상대의 트랜잭션이 곧 끝나므로, 한 번 더
+     * 시도하면 성공하거나 유일 제약 위반으로 깨끗하게 갈린다.
+     */
+    @Test
+    @DisplayName("일시적 실패는 한 번 더 시도해 점유한다")
+    void 일시적_실패는_재시도한다() {
+        when(logs.saveAndFlush(any(BatchExecutionLog.class)))
+                .thenThrow(new CannotAcquireLockException("lock wait timeout"))
+                .thenReturn(row(BatchStatus.RUNNING, ME));
+
+        assertThat(service.claim(JOB, DATE)).isTrue();
+        verify(logs, times(2)).saveAndFlush(any(BatchExecutionLog.class));
+    }
+
+    @Test
+    @DisplayName("일시적 실패 뒤 재시도가 유일 제약에 걸리면 점유하지 못한 것이다")
+    void 일시적_실패_후_유일_제약이면_점유_실패() {
+        when(logs.saveAndFlush(any(BatchExecutionLog.class)))
+                .thenThrow(new CannotAcquireLockException("lock wait timeout"))
+                .thenThrow(uniqueViolation());
+
+        assertThat(service.claim(JOB, DATE)).isFalse();
+    }
+
+    /** 한 번만 다시 시도한다. 재시도에서도 일시적 실패면 그대로 던진다. */
+    @Test
+    @DisplayName("일시적 실패가 재시도에서도 나면 더는 시도하지 않고 던진다")
+    void 일시적_실패가_반복되면_던진다() {
+        CannotAcquireLockException failure = new CannotAcquireLockException("lock wait timeout");
+        when(logs.saveAndFlush(any(BatchExecutionLog.class))).thenThrow(failure);
+
+        assertThatThrownBy(() -> service.claim(JOB, DATE)).isSameAs(failure);
+        verify(logs, times(2)).saveAndFlush(any(BatchExecutionLog.class));
     }
 
     @Test

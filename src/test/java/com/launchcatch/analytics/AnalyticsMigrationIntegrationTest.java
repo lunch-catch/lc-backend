@@ -31,7 +31,7 @@ class AnalyticsMigrationIntegrationTest extends AbstractAnalyticsIntegrationTest
     private JdbcTemplate jdbc;
 
     @Test
-    void analytics_V1_다음에_V2와_V3가_적용되고_새_테이블과_컬럼이_생긴다() {
+    void analytics_V1부터_V3까지_적용되고_새_테이블과_컬럼이_생긴다() {
         List<String> versions = jdbc.queryForList(
                 "SELECT version FROM flyway_history_analytics WHERE success = 1 ORDER BY installed_rank",
                 String.class);

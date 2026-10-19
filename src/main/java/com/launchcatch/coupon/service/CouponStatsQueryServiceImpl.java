@@ -2,8 +2,10 @@ package com.launchcatch.coupon.service;
 
 import com.launchcatch.coupon.contract.CouponStatsQueryService;
 import com.launchcatch.coupon.contract.DailyCampaignCouponStats;
+import com.launchcatch.coupon.contract.DailyMemberCouponStats;
 import com.launchcatch.coupon.contract.MemberCouponStats;
 import com.launchcatch.coupon.repository.CouponEventRepository;
+import com.launchcatch.coupon.repository.CouponUsageHistoryRepository;
 import com.launchcatch.coupon.repository.MemberCouponRepository;
 import java.time.LocalDate;
 import java.util.List;
@@ -19,6 +21,7 @@ class CouponStatsQueryServiceImpl implements CouponStatsQueryService {
 
     private final CouponEventRepository events;
     private final MemberCouponRepository coupons;
+    private final CouponUsageHistoryRepository histories;
 
     @Override
     public List<DailyCampaignCouponStats> dailyCampaignStats(LocalDate businessDate) {
@@ -28,6 +31,12 @@ class CouponStatsQueryServiceImpl implements CouponStatsQueryService {
                 .map(row -> new DailyCampaignCouponStats(row.getCampaignId(), row.getOpenCount(),
                         row.getIssuedCount(), row.getUsedCount(), row.getExpiredCount()))
                 .toList();
+    }
+
+    @Override
+    public List<DailyMemberCouponStats> dailyMemberStats(LocalDate businessDate) {
+        Objects.requireNonNull(businessDate, "영업일은 필수다.");
+        return histories.findDailyMemberStats(businessDate.atStartOfDay(), businessDate.plusDays(1).atStartOfDay());
     }
 
     @Override

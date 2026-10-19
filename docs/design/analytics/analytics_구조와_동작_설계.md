@@ -5,6 +5,7 @@
 | 맡는 것 | 근거 |
 |---|---|
 | 전환 퍼널 이벤트 로그 | [analytics API 명세](../../api-spec/analytics-api-spec.md)의 A-13과 [아키텍처 설계](../../architecture/런치캐치_도메인_구조와_의존성_설계.md) 2.4 |
+| 이벤트 로그 기반 캠페인 성과 조회 | [analytics API 설계](./analytics-api-design.md#이벤트-로그-기반-캠페인-성과-509) |
 | 관리자 대시보드, 매출, 부정 관리 조회 | [analytics API 명세](../../api-spec/analytics-api-spec.md) |
 | 회원 사용 통계 | [analytics API 명세](../../api-spec/analytics-api-spec.md)의 A-12 |
 | 일별 집계와 캠페인 리포트 | [analytics 배치 설계](./analytics-batch-design.md) |
@@ -45,13 +46,14 @@ analytics/
 │   └── dto/
 └── event/
     ├── controller/
+    ├── dto/
     ├── listener/
     ├── service/
     ├── repository/
     └── entity/
 ```
 
-`batch`만 다른 도메인의 집계 조회 contract를 부른다. `query`는 analytics 집계 테이블과 ops 실행 기록만 읽는다. `event`는 `event_log` 쓰기를 소유한다.
+`batch`만 다른 도메인의 집계 조회 contract를 부른다. `query`는 analytics 집계 테이블과 ops 실행 기록만 읽는다. `event`는 `event_log`의 쓰기와 요청 시 캠페인 성과 조회를 소유한다. 성과 조회는 캠페인 공개 계약으로 소유권만 확인한다.
 
 ### 규칙을 두는 곳
 
@@ -204,7 +206,7 @@ sequenceDiagram
 
 ## 11. 성능
 
-조회 API는 미리 계산한 일별 테이블만 읽는다. 일별 집계는 원천 행이 아니라 도메인별로 묶은 결과를 받는다. 공개 트랜잭션은 외부 호출 없이 하루 결과를 쓰는 동안만 유지한다.
+배치 지표 조회 API는 미리 계산한 일별 테이블만 읽는다. 이벤트 로그 기반 캠페인 성과의 조회 방식은 [API 설계](./analytics-api-design.md#이벤트-로그-기반-캠페인-성과-509)가 소유한다. 일별 집계는 원천 행이 아니라 도메인별로 묶은 결과를 받는다. 공개 트랜잭션은 외부 호출 없이 하루 결과를 쓰는 동안만 유지한다.
 
 구현 뒤 MySQL 8.4 통합 테스트로 V1에서 V2 적용 시간과 일별 교체 시간을 측정한다. 회원 축처럼 1000행을 넘을 수 있는 집계는 한 트랜잭션을 유지하되 실제 행 수를 측정해 배치 설계에 허용 범위를 기록한다.
 

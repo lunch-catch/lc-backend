@@ -10,9 +10,8 @@ import org.springframework.security.web.SecurityFilterChain;
 @Configuration
 public class StoreSecurityConfig {
 
-    // 점주의 가게 등록 진행 상태와 이미지, 메뉴 등록 경로다(#375, #389).
+    // 점주의 이미지, 메뉴 등록 경로다(#375, #389).
     private static final String[] OWNER_PATHS = {
-            "/v1/owner/store-registration-progress",
             "/v1/owner/store-images:prepareUpload",
             "/v1/owner/store-images:confirmUpload",
             "/v1/owner/store-images:complete",
@@ -22,6 +21,7 @@ public class StoreSecurityConfig {
             "/v1/owner/store-menu-images:confirmUpload"
     };
 
+    // 사용자용 가게 조회 API는 MEMBER 권한이 있는 사용자만 접근할 수 있다.
     @Bean
     @Order(ApiSecurityDefaults.DOMAIN_CHAIN_ORDER)
     public SecurityFilterChain storeFilterChain(HttpSecurity http, ApiSecurityDefaults defaults) throws Exception {

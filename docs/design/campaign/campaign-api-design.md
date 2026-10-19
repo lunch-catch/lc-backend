@@ -16,6 +16,8 @@
 |---|---|---|
 | `POST` | `/v1/owner/campaigns` | FR-040 |
 | `PATCH` | `/v1/owner/campaigns/{campaignId}` | FR-041, FR-042 |
+| `POST` | `/v1/owner/campaigns/{campaignId}:pause` | FR-092 |
+| `POST` | `/v1/owner/campaigns/{campaignId}:resume` | FR-092 |
 | `GET` | `/v1/owner/campaigns` | 없음(요구사항명세서에 조회 전용 행이 없다. 점주가 등록한 값을 다시 확인하는 화면 전제, `#341`) |
 | `GET` | `/v1/owner/campaigns/{campaignId}` | 없음(위와 같음) |
 
@@ -109,6 +111,53 @@
   `CAMPAIGN-008`이다. 시작일은 "오늘 다음 날 이후"만 허용해 `LocalDate.now(clock).plusDays(1)`보다
   이르면 `CAMPAIGN-009`다(요구사항명세서 [I45] 등록 마감 D-1 23:59와 같은 경계)
 
+## 캠페인 중단과 재개(점주)
+
+- **점주용 전이는 기존 `CampaignStatusService.pause()`/`resume()`을 그대로 부른다(FR-092,
+  `#198`).** 둘 다 이미 구현되어 있어 새 전이 메서드를 추가하지 않는다. `pause()`는
+  `PauseReason.OWNER`, `resume()`은 `ActorType.OWNER`로 부른다
+- **본인 소유 확인은 `CampaignTargetAudienceService`와 같은 패턴이다.**
+  `campaignRepository.findByIdForUpdate(campaignId)`(비관 잠금)로 조회한 뒤
+  `Campaign.ownerId`를 비교하고, 없거나 다르면 `CAMPAIGN-005`로 거부한다. 이 확인은 새
+  서비스(`CampaignPauseResumeService`)가 하고, `CampaignStatusService.pause()`/`resume()`은
+  여전히 `ownerId`를 모른다
+- **점주 상태(`ACTIVE`)도 등록·수정 엔드포인트와 같은 방식(`OwnerStatusQuery`)으로
+  확인한다.** 이슈 본문은 이 확인을 언급하지 않았지만, 다른 캠페인 쓰기 엔드포인트와
+  보안 수준을 맞추기로 했다(채팅으로 확인, 2026-10-18)
+- **엔티티가 던지는 `IllegalStateException`(상태가 안 맞음)을 `CAMPAIGN-006`으로
+  변환한다.** `Campaign.pause()`/`resume()`은 각각 `ACTIVE`/`PAUSED`가 아니면 이 예외를
+  던진다. 새 서비스가 `CampaignStatusService` 호출을 `try-catch`로 감싸 변환한다
+- **`StoreCampaignSummaryUpdater.update()`가 던지는 `IllegalArgumentException`(가게-메뉴
+  불일치)은 그대로 두지 않고 `RuntimeException`으로 다시 던진다(자체 리뷰로 찾음,
+  2026-10-18).** 캠페인 등록 1단계(`CampaignCouponConditionService`)가 `targetMenuId`가
+  그 가게 소유인지 검증하지 않아서(해당 파일의 TODO), MENU 할인 캠페인의 `targetMenuId`가
+  실제로는 다른 가게 메뉴일 수 있다. 이 불일치는 점주의 요청이 잘못된 게 아니라 서버 쪽
+  데이터 문제라서, 그대로 두면 `GlobalExceptionHandler.handleIllegalArgument`가
+  `COMMON-002`(400, "입력값이 올바르지 않습니다")로 잘못 답한다. `CampaignException`도
+  `IllegalStateException`도 아닌 `RuntimeException`으로 다시 던져
+  `handleUnexpected`의 `COMMON-001`(500)로 보낸다. 근본 조치(등록 시점 검증)는 이 PR
+  범위 밖이라 아래 "아직 정해지지 않은 것"으로 넘긴다
+- **`store.contract.StoreCampaignSummaryUpdater.update()` 호출을
+  `CampaignStatusService.pause()`/`resume()` 안에 추가한다(설계 문서 2.4, `#468`).** 호출자가
+  누구든(점주, 나중에 추가될 관리자) 같은 트랜잭션 안에서 가게 요약이 함께 갱신되게
+  하려고 호출 지점을 전이 메서드 내부에 둔다. `Campaign`의 `discountTargetType`,
+  `discountType`, `discountValue`, `targetMenuId`, `usableStartTime`, `usableEndTime`과
+  바뀐 `CampaignStatus`를 `StoreCampaignStatus`로 매핑해 `StoreCampaignSummaryCommand`를
+  구성한다. 두 enum의 값 이름이 같아 매핑은 단순 1:1 `switch`다
+- **멱등하게 조용히 반환하는 자리(이미 목표 상태)에서는 가게 요약 갱신도 건너뛴다.**
+  `CampaignStatusLog` 저장과 이벤트 발행이 이미 그 자리를 건너뛰고 있어 같은 기준을
+  따른다. 실제로 상태가 바뀌지 않았으니 가게 요약도 바뀔 이유가 없다
+- **`schedule`/`activate`/`end`/`pauseFromFunding`/`resumeFromFunding`은 이번 이슈에서
+  연동하지 않는다.** 가게 호출 지점은 다섯 곳 모두 필요하다고 이미 확정했지만(설계 문서
+  2.4, 가게 담당 회신 2026-10-13), 이번 이슈는 점주의 수동 중단·재개만 다룬다. 나머지는
+  각자의 구현 이슈가 이어 붙인다
+- **엔드포인트 경로는 `api-spec.md`의 커스텀 메서드 컨벤션 예시를 그대로 쓴다.**
+  `POST /v1/owner/campaigns/{campaignId}:pause`, `:resume`이다. 대체할 다른 패턴이
+  저장소에 없어 그 예시를 확정 계약으로 채택했다
+- **응답은 등록 1단계(`POST`)와 같은 최소 모양이다.** `campaignId`와 `status`만 담는다.
+  상세 조회처럼 `pausedReason`, `statusChangedAt`까지 담을 필요는 없다고 보았다(채팅으로
+  확인, 2026-10-18)
+
 ## 캠페인 조회(점주)
 
 - **두 엔드포인트 모두 점주 상태(`OwnerStatusQuery`) 확인을 하지 않는다.** 등록·수정과
@@ -146,6 +195,7 @@
 | `Campaign.updateCouponCondition(...)` 메서드 시그니처 | `#244` 결정 | 아직 엔티티에 없다. `#244`가 추가한다 |
 | 00:00 배치가 `pendingDailyBudget`을 `dailyBudget`에 반영하는 호출 지점 | V51 45행, 102행 스케줄러 | `#330`은 컬럼에 쓰기만 한다. "스케줄러 캠페인 담당 스텝" 이슈가 그 반영 호출을 정한다. **그 배치는 반영 직전에 `status == ACTIVE`인지 다시 확인해야 한다.** `pause()`는 `pendingDailyBudget`을 지우지 않으므로(아래 "해소된 항목" 참고), `PAUSED`로 멈춰 있는 캠페인에 그 예약값을 그대로 적용하면 안 된다 |
 | 예약 값(`pendingDailyBudget`) 자체를 PATCH 응답에 노출할지 | V51 45행 | `#330`은 노출하지 않는다(응답은 늘 `dailyBudget`). 노출이 필요해지면 그때 명세를 바꾼다 |
+| `targetMenuId`가 그 가게(`storeId`) 소유인지 등록 시점(`CampaignCouponConditionService`)에 검증하는 것 | `#468` 자체 리뷰로 찾음(2026-10-18) | 지금은 검증 코드가 없다. `StoreCampaignSummaryUpdater.update()`가 `menuBelongsToStore`로 뒤늦게(중단·재개 시점에) 걸러내지만, 등록 시점에 막는 게 근본 조치다. 담당 이슈 미정 |
 
 해소된 항목(`#330`): 하루 예산의 "다음 영업일 적용 예약 값" 컬럼은 `Campaign.pendingDailyBudget`(`V13__campaign_pending_daily_budget.sql`, 양수만 허용하는
 `chk_campaign_pending_daily_budget` CHECK 포함)이고, 최소 하루 예산은 `ops.contract.PlatformSettingQueryService.getMinDailyBudget()`(요구사항명세서
