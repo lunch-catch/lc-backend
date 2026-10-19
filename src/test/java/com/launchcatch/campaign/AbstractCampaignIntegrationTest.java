@@ -1,6 +1,7 @@
 package com.launchcatch.campaign;
 
 import com.launchcatch.IntegrationTestSupport;
+import com.launchcatch.campaign.poster.client.PosterImageInspector;
 import com.launchcatch.campaign.repository.CampaignRepository;
 import com.launchcatch.campaign.service.CampaignCouponConditionService;
 import java.time.Clock;
@@ -31,4 +32,8 @@ public abstract class AbstractCampaignIntegrationTest extends IntegrationTestSup
 
     @MockitoSpyBean
     protected CampaignCouponConditionService campaignCouponConditionService;
+
+    // 실제 구현은 S3 와 Rekognition 을 부른다. 검수 통합 테스트는 이 호출을 스텁한다(#535).
+    @MockitoSpyBean
+    protected PosterImageInspector posterImageInspector;
 }

@@ -8,7 +8,7 @@
 | 유형 | 대상 |
 |---|---|
 | DB | MySQL(JPA), `campaign`/`template`/`store_audience`/`poster` 등. `ops.contract.PlatformSettingQueryService.getMinDailyBudget()`(같은 트랜잭션 안의 도메인 간 직접 호출, 외부 API 아님)도 DB 읽기와 같은 처리를 받는다(`#330`). `store.contract.StoreQueryService`(가게명·메뉴명 조회, 포스터 생성, `#376`)도 같은 처리다 |
-| 외부 API | Bedrock LLM(템플릿 생성·수정, `template/client/BedrockTemplateHtmlGenerator`). S3(`S3Presigner`, `S3Client`. presigned URL 발급과 `headObject` 확인, 포스터 이미지 업로드, `#376`) |
+| 외부 API | Bedrock LLM(템플릿 생성·수정, `template/client/BedrockTemplateHtmlGenerator`). S3(`S3Presigner`, `S3Client`. presigned URL 발급과 `headObject` 확인, 포스터 이미지 업로드, `#376`. 포스터 자동 검수의 `GetObject`, `#535`). Rekognition(`DetectText`, 포스터 자동 검수, `poster/client/PosterImageInspector`, `#535`) |
 | 캐시 | 해당 없음(이 도메인은 캐시에 기대지 않는다. `owner.contract.OwnerStatusQuery`가 캐시를 쓰지만 그건 owner 도메인이 소유한다) |
 | 애플리케이션 | 대용량 조회만 훑음(`#341`). 나머지(요청 폭주, graceful shutdown, 다중 서버)는 아직 훑지 않음 |
 | 롤백 안 되는 효과 | 해당 없음(아직 훑지 않음) |
@@ -43,6 +43,19 @@
 - 가드레일(콘텐츠 검증) 위반은 교정 지시를 덧붙여 **1회만** 재시도한다(`POSTER-013`).
 - 호출 빈도 제한(관리자 1명당 분당 3회, `#227`)은 멱등성·재시도와는 다른 축이라 이 절이
   다루는 범위가 아니다(`TemplateGenerationRateLimiter`).
+
+### 외부 API: 포스터 자동 검수의 S3, Rekognition
+
+기본 처리는 "멱등한 연산의 재시도 가능한 오류만 재시도하고 한도에서 포기한다"다. 포스터 자동
+검수(`#535`)는 재시도하지 않고, 실패와 타임아웃을 예외로 올리지도 않는다. 대신 `FAIL`(사유
+`MODERATION_TOOL_FAILURE`)로 끝내고 결과를 저장한다.
+
+명세서 57행이 "외부 호출 실패나 타임아웃도 FAIL 로 처리하며, 점주는 수정 후 다시 활성화를
+요청한다"로 정했다. 점주가 다시 요청하는 것이 재시도 역할을 해서 서버가 따로 재시도할 이유가 없다.
+그래서 `RekognitionConfig` 는 SDK 자체 재시도도 끈다(`maxAttempts(1)`).
+
+이미지를 디코딩하지 못하는 것은 도구 장애가 아니라 점주가 고칠 수 있는 원인이라 `IMAGE_UNREADABLE`
+로 따로 나눈다. Rekognition 의 `InvalidImageFormatException` 도 같은 사유로 옮긴다.
 
 ## 아직 정하지 못한 것
 
