@@ -79,7 +79,7 @@ class CampaignQueryServiceImplTest {
         assertThat(info.status()).isEqualTo(campaign.getStatus());
         assertThat(info.issueQuantity()).isEqualTo(100);
         assertThat(info.discountTargetType()).isEqualTo(DiscountTargetType.ALL);
-        assertThat(info.discountType()).isEqualTo(DiscountType.PERCENT);
+        assertThat(info.discountType()).isEqualTo(DiscountType.AMOUNT);
         assertThat(info.discountValue()).isEqualTo(10);
         assertThat(info.targetMenuId()).isNull();
         assertThat(info.targetRadius()).isEqualTo(1000);
@@ -245,7 +245,7 @@ class CampaignQueryServiceImplTest {
     private Campaign campaign() {
         Campaign campaign = Campaign.create(
                 10L, 20L,
-                DiscountTargetType.ALL, DiscountType.PERCENT, 10, null,
+                DiscountTargetType.ALL, DiscountType.AMOUNT, 10, null,
                 100, LocalTime.of(11, 0), LocalTime.of(14, 0),
                 null, null,
                 1000, TargetGender.ALL, List.of(AgeGroup.AGE_20S),

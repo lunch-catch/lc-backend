@@ -79,7 +79,7 @@ class CampaignStatsQueryIntegrationTest extends AbstractCampaignIntegrationTest 
         long storeId = System.nanoTime();
         Campaign campaign = Campaign.create(
                 1L, storeId,
-                DiscountTargetType.ALL, DiscountType.PERCENT, 10, null,
+                DiscountTargetType.ALL, DiscountType.AMOUNT, 10, null,
                 50, LocalTime.of(12, 0), LocalTime.of(13, 30),
                 null, null,
                 1000, TargetGender.ALL, List.of(AgeGroup.AGE_20S),

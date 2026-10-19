@@ -108,7 +108,7 @@ class CampaignQueryServiceImplIntegrationTest extends com.launchcatch.campaign.A
     private Campaign draftWithPeriod(Long storeId, LocalDate startDate, LocalDate endDate) {
         return Campaign.create(
                 10L, storeId,
-                DiscountTargetType.ALL, DiscountType.PERCENT, 10, null,
+                DiscountTargetType.ALL, DiscountType.AMOUNT, 10, null,
                 100, LocalTime.of(11, 0), LocalTime.of(14, 0),
                 null, null,
                 1000, TargetGender.ALL, List.of(AgeGroup.AGE_20S),
