@@ -5,6 +5,7 @@ public record CampaignBillingCount(
         Long campaignId,
         long billedCount,
         long notBilledBudgetCount,
-        long notBilledPausedCount
+        long notBilledPausedCount,
+        long notBilledNoPlanCount
 ) {
 }

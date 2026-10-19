@@ -40,7 +40,7 @@ public class OwnerPointBalanceService {
     /*
      * 오늘 영업일에 예약했지만 아직 쓰지도 돌려받지도 않은 금액이다.
      * 저장값의 부호는 RESERVE 와 DEDUCT 가 음수, RELEASE 가 양수라서 크기로 옮기면
-     * 예약 크기 - 차감 크기 - 해제 크기가 된다. 13:30 해제 뒤에는 0 이 되어 잔액과 겹치지 않는다.
+     * 예약 크기 - 차감 크기 - 해제 크기가 된다. 해제는 다음 날 00:00 이라 오늘 예약분은 하루 종일 남는다.
      */
     private long reservedPoint(Long ownerId, LocalDate today) {
         long reserve = pointLedgerRepository.sumByBusinessDate(ownerId, EntryType.RESERVE, today);

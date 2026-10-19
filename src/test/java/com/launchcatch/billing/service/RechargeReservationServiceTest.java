@@ -3,11 +3,11 @@ package com.launchcatch.billing.service;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
-import com.launchcatch.billing.config.BillingScheduleProperties;
 import com.launchcatch.billing.dto.PointCharged;
 import com.launchcatch.billing.dto.RechargeReserveIncreased;
 import com.launchcatch.billing.entity.BudgetDailyPlan;
@@ -24,7 +24,6 @@ import com.launchcatch.campaign.contract.PauseReason;
 import com.launchcatch.campaign.contract.CampaignQueryService;
 import com.launchcatch.global.config.ClockConfig;
 import java.time.Clock;
-import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
@@ -42,8 +41,6 @@ class RechargeReservationServiceTest {
     private static final LocalDate DAY = LocalDate.of(2026, 10, 16);
     private static final Long OWNER_ID = 7L;
     private static final Long PAYMENT_ID = 42L;
-    private static final BillingScheduleProperties SCHEDULE =
-            new BillingScheduleProperties("10:00", "12:59", Duration.ofMinutes(30), List.of(34, 33, 33));
 
     @Mock
     private CampaignQueryService campaignQuery;
@@ -63,7 +60,7 @@ class RechargeReservationServiceTest {
     }
 
     private RechargeReservationService service(LocalTime now) {
-        return new RechargeReservationService(clockAt(now), SCHEDULE, campaignQuery, fundingUpdater,
+        return new RechargeReservationService(clockAt(now), campaignQuery, fundingUpdater,
                 accountRepository, ledgerRepository, planRepository, eventPublisher);
     }
 
@@ -120,19 +117,14 @@ class RechargeReservationServiceTest {
     }
 
     @Test
-    void 서빙_종료_이후_충전은_아무것도_읽지_않고_재예약하지_않는다() {
-        service(LocalTime.of(13, 0)).reserve(new PointCharged(OWNER_ID, PAYMENT_ID, 10000L));
-
-        verifyNoInteractions(campaignQuery, accountRepository, ledgerRepository, planRepository, fundingUpdater, eventPublisher);
-    }
-
-    @Test
-    void 서빙_종료_직전_충전은_재예약한다() {
+    void 서빙이_하루_종일이라_어느_시각의_충전이든_재예약을_시도한다() {
         when(campaignQuery.findByOwnerIdAndStatusIn(OWNER_ID, List.of(CampaignStatus.PAUSED))).thenReturn(List.of());
 
-        service(LocalTime.of(12, 59, 59)).reserve(new PointCharged(OWNER_ID, PAYMENT_ID, 10000L));
+        service(LocalTime.of(0, 0)).reserve(new PointCharged(OWNER_ID, PAYMENT_ID, 10000L));
+        service(LocalTime.of(13, 0)).reserve(new PointCharged(OWNER_ID, PAYMENT_ID, 10000L));
+        service(LocalTime.of(23, 59, 59)).reserve(new PointCharged(OWNER_ID, PAYMENT_ID, 10000L));
 
-        verify(campaignQuery).findByOwnerIdAndStatusIn(OWNER_ID, List.of(CampaignStatus.PAUSED));
+        verify(campaignQuery, times(3)).findByOwnerIdAndStatusIn(OWNER_ID, List.of(CampaignStatus.PAUSED));
     }
 
     @Test

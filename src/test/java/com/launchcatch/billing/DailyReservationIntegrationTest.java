@@ -74,6 +74,7 @@ class DailyReservationIntegrationTest extends AbstractBillingIntegrationTest {
         jdbc.update("delete from payment where owner_id >= ?", BASE_ID);
         jdbc.update("delete from deduction_result");
         jdbc.update("delete from point_account");
+        jdbc.update("delete from batch_execution_log where job_name = 'BILLING_DAILY_RELEASE' and business_date = ?", PREV);
         for (Long campaignId : campaignIds) {
             jdbc.update("delete from campaign_status_log where campaign_id = ?", campaignId);
             jdbc.update("delete from campaign where campaign_id = ?", campaignId);
@@ -176,8 +177,11 @@ class DailyReservationIntegrationTest extends AbstractBillingIntegrationTest {
         assertThat(jdbc.queryForObject("select status from campaign where campaign_id = ?", String.class, a1))
                 .isEqualTo("ACTIVE");
 
-        assertThat(hourlyTargets(a1)).containsExactly(3400L, 3300L, 3300L);
-        assertThat(hourlyTargets(a2)).containsExactly(1700L, 1650L, 1650L);
+        // 0~23시 24개 목표이고 합은 예약액과 같다(기본 가중치의 합이 100)
+        assertThat(hourlyTargets(a1)).containsExactly(200L, 100L, 100L, 100L, 100L, 100L, 100L, 300L, 400L, 500L,
+                800L, 1000L, 900L, 700L, 400L, 400L, 400L, 500L, 700L, 800L, 600L, 400L, 200L, 200L);
+        assertThat(hourlyTargets(a2)).hasSize(24).startsWith(100L, 50L).endsWith(100L, 100L);
+        assertThat(hourlyTargets(a2).stream().mapToLong(Long::longValue).sum()).isEqualTo(5000L);
         assertThat(hourlyTargets(a3)).isEmpty();
         assertThat(hourlyTargets(b1)).isEmpty();
 
@@ -185,7 +189,7 @@ class DailyReservationIntegrationTest extends AbstractBillingIntegrationTest {
     }
 
     @Test
-    void 전날_쓰고_남은_예약을_한_번만_보정_해제하고_예약은_그_뒤_잔액으로_한다() {
+    void 전날_쓰고_남은_예약을_한_번만_해제하고_해제_표시를_남기며_예약은_그_뒤_잔액으로_한다() {
         long owner = BASE_ID + 3;
         long prevCampaign = BASE_ID + 301;
         charge(owner, 10000L);
@@ -218,9 +222,13 @@ class DailyReservationIntegrationTest extends AbstractBillingIntegrationTest {
         assertThat(jdbc.queryForList("""
                 select amount from point_ledger where entry_type = 'RELEASE' and campaign_id = ? and business_date = ?
                 """, Long.class, prevCampaign, PREV)).containsExactly(2000L);
-        // 충전 10000 - 전날 예약 5000 + 보정 해제 2000 = 7000 이 오늘 예약에 쓰인다
+        // 충전 10000 - 전날 예약 5000 + 해제 2000 = 7000 이 오늘 예약에 쓰인다
         assertThat(reserves(today)).containsExactly(-7000L);
         assertThat(balance(owner)).isZero();
+        // 분석 01:00 집계가 전날 원천 확정에 읽는 행이다. 다시 돌려도 한 행이다
+        assertThat(jdbc.queryForList("""
+                select status from batch_execution_log where job_name = 'BILLING_DAILY_RELEASE' and business_date = ?
+                """, String.class, PREV)).containsExactly("SUCCESS");
     }
 
     /*

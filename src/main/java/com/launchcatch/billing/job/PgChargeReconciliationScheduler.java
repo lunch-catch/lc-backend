@@ -11,8 +11,7 @@ import org.springframework.stereotype.Component;
 
 /*
  * 전일 생성 결제를 PG와 대사한다(PG_VS_CHARGE, 구현 순서 13번). 00:00 묶음(DailyJob)이 아니라
- * 정산의 독립 스케줄 작업이다. 캠페인 예산 예약 체인과 데이터 의존이 없어서 13:30
- * 해제·대사(DailyReleaseScheduler)와 같은 자리에 둔다.
+ * 정산의 독립 스케줄 작업이다. 캠페인 예산 예약 체인과 데이터 의존이 없어서 묶음에 넣지 않는다.
  *
  * 배치 서버 두 대가 같은 시각에 시도하므로 batch_execution_log 점유로 겹치지 않게 한다(배치
  * 운영 문서 2장). KakaoUnlinkRetryScheduler 와 같은 패턴이다.

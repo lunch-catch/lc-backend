@@ -10,5 +10,8 @@ public enum DeductionStatus {
     NOT_BILLED_BUDGET,
 
     // 캠페인이 중단된 뒤 도착해 과금하지 않았다
-    NOT_BILLED_PAUSED
+    NOT_BILLED_PAUSED,
+
+    // 노출을 받은 날에 그 캠페인의 예산 계획이 없어 과금하지 않았다. 00:00 예약 전이거나 전날 집행이 끝난 캠페인이다
+    NOT_BILLED_NO_PLAN
 }

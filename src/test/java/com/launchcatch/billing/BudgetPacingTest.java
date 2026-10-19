@@ -3,56 +3,59 @@ package com.launchcatch.billing;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.launchcatch.billing.config.BillingScheduleProperties;
-import java.time.Duration;
 import java.time.LocalTime;
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 class BudgetPacingTest {
 
-    private static final BillingScheduleProperties SCHEDULE =
-            new BillingScheduleProperties("10:00", "12:59", Duration.ofMinutes(30), List.of(34, 33, 33));
+    // 24시간 균등 가중치다. 예약액 24,000 이면 시간대마다 1,000 이다
+    private static final BillingScheduleProperties SCHEDULE = new BillingScheduleProperties(Collections.nCopies(24, 1));
     private static final Map<Integer, Long> NO_TARGETS = Map.of();
-    private static final Map<Integer, Long> TARGETS = Map.of(10, 3400L, 11, 3300L, 12, 3300L);
+    private static final Map<Integer, Long> TARGETS = evenTargets();
+
+    private static Map<Integer, Long> evenTargets() {
+        Map<Integer, Long> targets = new HashMap<>();
+        for (int hour = 0; hour < 24; hour++) {
+            targets.put(hour, 1_000L);
+        }
+        return targets;
+    }
 
     private static long planned(Map<Integer, Long> targets, LocalTime at) {
-        return BudgetPacing.plannedAmountUntil(10_000L, targets, SCHEDULE, at);
+        return BudgetPacing.plannedAmountUntil(24_000L, targets, SCHEDULE, at);
     }
 
     @Test
-    void 서빙_시작_전은_0이고_정각은_0이다() {
-        assertThat(planned(TARGETS, LocalTime.of(9, 59))).isZero();
-        assertThat(planned(TARGETS, LocalTime.of(10, 0))).isZero();
+    void 자정_정각은_0이다() {
+        assertThat(planned(TARGETS, LocalTime.MIDNIGHT)).isZero();
     }
 
     @Test
     void 시간_중간은_그_시간대_목표를_경과_분으로_비례한다() {
-        assertThat(planned(TARGETS, LocalTime.of(11, 30))).isEqualTo(5_050L);
-        assertThat(planned(TARGETS, LocalTime.of(10, 30))).isEqualTo(1_700L);
+        assertThat(planned(TARGETS, LocalTime.of(0, 30))).isEqualTo(500L);
+        assertThat(planned(TARGETS, LocalTime.of(11, 30))).isEqualTo(11_500L);
     }
 
     @Test
     void 지난_시간대는_목표를_모두_더한다() {
-        assertThat(planned(TARGETS, LocalTime.of(11, 0))).isEqualTo(3_400L);
-        assertThat(planned(TARGETS, LocalTime.of(12, 0))).isEqualTo(6_700L);
+        assertThat(planned(TARGETS, LocalTime.of(1, 0))).isEqualTo(1_000L);
+        assertThat(planned(TARGETS, LocalTime.of(13, 0))).isEqualTo(13_000L);
     }
 
     @Test
-    void 서빙_종료_직전_분은_마지막_시간대의_59분_몫이다() {
-        assertThat(planned(TARGETS, LocalTime.of(12, 59))).isEqualTo(9_945L);
-    }
-
-    @Test
-    void 서빙_종료_다음_분부터는_예약액_전체로_고정한다() {
-        assertThat(planned(TARGETS, LocalTime.of(13, 0))).isEqualTo(10_000L);
-        assertThat(planned(TARGETS, LocalTime.of(23, 59))).isEqualTo(10_000L);
+    void 하루_끝_직전은_23시_목표의_59분_몫까지이고_고정하지_않는다() {
+        assertThat(planned(TARGETS, LocalTime.of(23, 0))).isEqualTo(23_000L);
+        assertThat(planned(TARGETS, LocalTime.of(23, 59))).isEqualTo(23_983L);
     }
 
     @Test
     void 목표_행이_없어도_가중치로_같은_결과가_나온다() {
-        for (LocalTime at : List.of(LocalTime.of(9, 0), LocalTime.of(10, 30), LocalTime.of(11, 30),
-                LocalTime.of(12, 59), LocalTime.of(13, 0))) {
+        for (LocalTime at : List.of(LocalTime.MIDNIGHT, LocalTime.of(3, 15), LocalTime.of(11, 30),
+                LocalTime.of(13, 0), LocalTime.of(23, 59))) {
             assertThat(planned(NO_TARGETS, at)).isEqualTo(planned(TARGETS, at));
         }
     }
@@ -66,11 +69,19 @@ class BudgetPacingTest {
     }
 
     @Test
-    void 분_단위_비례의_소수는_내림이다() {
-        Map<Integer, Long> targets = Map.of(10, 100L, 11, 0L, 12, 0L);
+    void 가중치_합이_100이_아니어도_비율로_나눠_합이_예약액과_같다() {
+        List<Long> targets = BudgetPacing.weightedTargets(10_000L, Collections.nCopies(24, 1));
 
-        assertThat(BudgetPacing.plannedAmountUntil(100L, targets, SCHEDULE, LocalTime.of(10, 1))).isEqualTo(1L);
-        assertThat(BudgetPacing.plannedAmountUntil(100L, targets, SCHEDULE, LocalTime.of(10, 59))).isEqualTo(98L);
+        assertThat(targets).hasSize(24);
+        assertThat(targets.stream().mapToLong(Long::longValue).sum()).isEqualTo(10_000L);
+    }
+
+    @Test
+    void 분_단위_비례의_소수는_내림이다() {
+        Map<Integer, Long> targets = Map.of(0, 100L);
+
+        assertThat(BudgetPacing.plannedAmountUntil(100L, targets, SCHEDULE, LocalTime.of(0, 1))).isEqualTo(1L);
+        assertThat(BudgetPacing.plannedAmountUntil(100L, targets, SCHEDULE, LocalTime.of(0, 59))).isEqualTo(98L);
     }
 
     @Test
@@ -78,6 +89,7 @@ class BudgetPacingTest {
         Map<Integer, Long> targets = Map.of(10, 5_000L);
 
         assertThat(BudgetPacing.plannedAmountUntil(5_000L, targets, SCHEDULE, LocalTime.of(12, 0))).isEqualTo(5_000L);
+        assertThat(BudgetPacing.plannedAmountUntil(5_000L, targets, SCHEDULE, LocalTime.of(9, 0))).isZero();
     }
 
     @Test

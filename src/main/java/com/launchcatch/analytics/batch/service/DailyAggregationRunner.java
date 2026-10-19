@@ -49,7 +49,8 @@ public class DailyAggregationRunner {
     public static final String JOB_NAME = "DAILY_AGGREGATION";
 
     /*
-     * 정산 13:30 해제·대사의 작업 이름이다. billing 의 같은 이름 상수와 문자열로만 이어진다. 분석은
+     * 정산이 그 영업일의 해제를 끝냈다고 남기는 작업 이름이다. 다음 날 00:00 예약 단계가 남긴다.
+     * billing 의 같은 이름 상수와 문자열로만 이어진다. 분석은
      * 정산 내부 타입을 참조하지 않는다.
      */
     static final String SOURCE_JOB_NAME = "BILLING_DAILY_RELEASE";

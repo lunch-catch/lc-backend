@@ -41,16 +41,6 @@ class SpendMismatchRecorderTest {
     }
 
     @Test
-    void 당일_대조는_초과_소진은_미해결로_카운터_불일치는_CACHE_REBUILD로_닫아_기록한다() {
-        recorder.recordToday(PREV, 42L, NOW,
-                List.of(new CampaignOverspend(7L, 1000L, 1200L)),
-                List.of(new CampaignCounterMismatch(8L, 400L, 500L)));
-
-        verify(repository).insertCampaignOverspendIfAbsent(PREV, 7L, 1000L, 1200L, 42L, NOW);
-        verify(repository).insertCampaignSpendMismatchResolvedIfAbsent(PREV, 8L, 400L, 500L, 42L, NOW);
-    }
-
-    @Test
     void 기록은_트랜잭션_하나다() throws Exception {
         assertThat(SpendMismatchRecorder.class.getMethod("record", LocalDate.class, Long.class, LocalDateTime.class,
                 List.class, List.class).isAnnotationPresent(Transactional.class)).isTrue();

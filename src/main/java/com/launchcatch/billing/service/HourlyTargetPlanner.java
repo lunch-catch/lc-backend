@@ -19,7 +19,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /*
- * 00:00 시간대별 목표 단계(V52 102행 (7))다. 판정까지 끝나 중단되지 않은 그날 계획마다 서빙 시간대별 목표를 만든다.
+ * 00:00 시간대별 목표 단계(V52 102행 (7))다. 판정까지 끝나 중단되지 않은 그날 계획마다 0~23시 시간대별 목표를 만든다.
  * 판정이 NO_POINTS 로 멈춘 캠페인과 PAUSED(OWNER) 는 계획이 중단으로 표시되어 대상에서 빠진다.
  *
  * 예약액을 설정 가중치 비율로 나누고 남는 금액은 마지막으로 가중치가 있는 시간대에 얹어 합을 예약액과 맞춘다.
@@ -51,7 +51,6 @@ public class HourlyTargetPlanner {
         Set<Long> done = targetRepository.findByBudgetDailyPlanIdIn(planIds).stream()
                 .map(BudgetHourlyTarget::getBudgetDailyPlanId)
                 .collect(Collectors.toSet());
-        int startHour = schedule.startTime().getHour();
         List<BudgetHourlyTarget> targets = new ArrayList<>();
         int planned = 0;
         for (BudgetDailyPlan plan : plans) {
@@ -59,8 +58,8 @@ public class HourlyTargetPlanner {
                 continue;
             }
             List<Long> amounts = BudgetPacing.weightedTargets(plan.getDailyBudget(), schedule.hourlyWeights());
-            for (int i = 0; i < amounts.size(); i++) {
-                targets.add(BudgetHourlyTarget.create(plan.getId(), startHour + i, amounts.get(i)));
+            for (int hour = 0; hour < amounts.size(); hour++) {
+                targets.add(BudgetHourlyTarget.create(plan.getId(), hour, amounts.get(hour)));
             }
             planned++;
         }
