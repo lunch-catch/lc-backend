@@ -2,6 +2,7 @@ package com.launchcatch.campaign.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -44,7 +45,11 @@ import org.springframework.context.ApplicationEventPublisher;
 /*
  * campaignStatusService는 스텁하지 않고 실제 구현을 쓴다. schedule()의 상태 전이와 로그는
  * CampaignStatusServiceTest가 이미 검증하므로 여기서는 점주 상태 확인, 본인 소유 확인, DRAFT
- * 여부 확인, 검수 결과에 따른 분기만 본다(#561).
+ * 여부 확인, 요청 빈도 제한, 검수 결과에 따른 분기만 본다(#561).
+ *
+ * 사전 확인(findById)과 schedule() 내부 전이(findByIdForUpdate)는 이제 서로 다른 저장소
+ * 메서드라 각각 따로 스텁한다. 둘이 다른 캠페인 상태를 돌려주는 조합으로 "사전 확인 뒤 실제
+ * 전이 사이에 상태가 바뀌는 경쟁"도 본다.
  */
 @ExtendWith(MockitoExtension.class)
 class CampaignActivationServiceTest {
@@ -66,6 +71,8 @@ class CampaignActivationServiceTest {
     @Mock
     private PosterModerationService posterModerationService;
     @Mock
+    private CampaignActivationRateLimiter rateLimiter;
+    @Mock
     private OwnerStatusQuery ownerStatusQuery;
 
     private CampaignActivationService service;
@@ -75,7 +82,7 @@ class CampaignActivationServiceTest {
         CampaignStatusService campaignStatusService = new CampaignStatusService(
                 campaignRepository, campaignStatusLogRepository, storeCampaignSummaryUpdater, events, FIXED_CLOCK);
         service = new CampaignActivationService(
-                campaignRepository, campaignStatusService, posterModerationService, ownerStatusQuery);
+                campaignRepository, campaignStatusService, posterModerationService, rateLimiter, ownerStatusQuery);
     }
 
     @Test
@@ -86,13 +93,14 @@ class CampaignActivationServiceTest {
         assertThatThrownBy(() -> service.activate(OWNER_ID, CAMPAIGN_ID))
                 .isInstanceOfSatisfying(CampaignException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(CampaignErrorCode.OWNER_NOT_ACTIVE));
+        verify(rateLimiter, never()).checkLimit(OWNER_ID);
     }
 
     @Test
     @DisplayName("캠페인이 없으면 CAMPAIGN-005로 거부한다")
     void 캠페인이_없으면_거부한다() {
         active();
-        when(campaignRepository.findByIdForUpdate(CAMPAIGN_ID)).thenReturn(Optional.empty());
+        when(campaignRepository.findById(CAMPAIGN_ID)).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.activate(OWNER_ID, CAMPAIGN_ID))
                 .isInstanceOfSatisfying(CampaignException.class,
@@ -104,7 +112,7 @@ class CampaignActivationServiceTest {
     void 본인_가게의_캠페인이_아니면_거부한다() {
         active();
         Campaign otherOwnersCampaign = draftCampaign(999L);
-        when(campaignRepository.findByIdForUpdate(CAMPAIGN_ID)).thenReturn(Optional.of(otherOwnersCampaign));
+        when(campaignRepository.findById(CAMPAIGN_ID)).thenReturn(Optional.of(otherOwnersCampaign));
 
         assertThatThrownBy(() -> service.activate(OWNER_ID, CAMPAIGN_ID))
                 .isInstanceOfSatisfying(CampaignException.class,
@@ -112,15 +120,31 @@ class CampaignActivationServiceTest {
     }
 
     @Test
-    @DisplayName("DRAFT가 아니면 CAMPAIGN-006으로 거부하고 검수를 부르지 않는다")
+    @DisplayName("DRAFT가 아니면 CAMPAIGN-006으로 거부하고 요청 빈도를 세거나 검수를 부르지 않는다")
     void DRAFT가_아니면_거부한다() {
         active();
         Campaign campaign = activeCampaign(OWNER_ID);
-        when(campaignRepository.findByIdForUpdate(CAMPAIGN_ID)).thenReturn(Optional.of(campaign));
+        when(campaignRepository.findById(CAMPAIGN_ID)).thenReturn(Optional.of(campaign));
 
         assertThatThrownBy(() -> service.activate(OWNER_ID, CAMPAIGN_ID))
                 .isInstanceOfSatisfying(CampaignException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(CampaignErrorCode.CAMPAIGN_STATE_NOT_ALLOWED));
+        verify(rateLimiter, never()).checkLimit(OWNER_ID);
+        verify(posterModerationService, never()).moderate(CAMPAIGN_ID);
+    }
+
+    @Test
+    @DisplayName("요청 빈도 제한에 걸리면 그 예외가 그대로 올라가고 검수를 부르지 않는다")
+    void 요청_빈도_제한에_걸리면_거부한다() {
+        active();
+        Campaign campaign = draftCampaign(OWNER_ID);
+        when(campaignRepository.findById(CAMPAIGN_ID)).thenReturn(Optional.of(campaign));
+        doThrow(new CampaignException(CampaignErrorCode.ACTIVATION_RATE_LIMITED))
+                .when(rateLimiter).checkLimit(OWNER_ID);
+
+        assertThatThrownBy(() -> service.activate(OWNER_ID, CAMPAIGN_ID))
+                .isInstanceOfSatisfying(CampaignException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(CampaignErrorCode.ACTIVATION_RATE_LIMITED));
         verify(posterModerationService, never()).moderate(CAMPAIGN_ID);
     }
 
@@ -129,7 +153,7 @@ class CampaignActivationServiceTest {
     void 포스터가_없으면_거부한다() {
         active();
         Campaign campaign = draftCampaign(OWNER_ID);
-        when(campaignRepository.findByIdForUpdate(CAMPAIGN_ID)).thenReturn(Optional.of(campaign));
+        when(campaignRepository.findById(CAMPAIGN_ID)).thenReturn(Optional.of(campaign));
         when(posterModerationService.moderate(CAMPAIGN_ID))
                 .thenThrow(new CampaignException(PosterErrorCode.POSTER_NOT_SAVED));
 
@@ -142,8 +166,8 @@ class CampaignActivationServiceTest {
     @DisplayName("검수를 통과하면 SCHEDULED로 바뀌고 사유는 비어 있다")
     void 검수를_통과하면_SCHEDULED가_된다() {
         active();
-        Campaign campaign = draftCampaign(OWNER_ID);
-        when(campaignRepository.findByIdForUpdate(CAMPAIGN_ID)).thenReturn(Optional.of(campaign));
+        when(campaignRepository.findById(CAMPAIGN_ID)).thenReturn(Optional.of(draftCampaign(OWNER_ID)));
+        when(campaignRepository.findByIdForUpdate(CAMPAIGN_ID)).thenReturn(Optional.of(draftCampaign(OWNER_ID)));
         when(posterModerationService.moderate(CAMPAIGN_ID))
                 .thenReturn(new PosterModerationOutcome(ModerationResult.PASS, List.of()));
 
@@ -152,14 +176,14 @@ class CampaignActivationServiceTest {
         assertThat(response.campaignId()).isEqualTo(CAMPAIGN_ID);
         assertThat(response.status()).isEqualTo(CampaignStatus.SCHEDULED);
         assertThat(response.reasons()).isEmpty();
+        verify(rateLimiter).checkLimit(OWNER_ID);
     }
 
     @Test
     @DisplayName("검수에 실패하면 DRAFT로 남고 사유를 모두 담아 응답한다")
     void 검수에_실패하면_DRAFT로_남는다() {
         active();
-        Campaign campaign = draftCampaign(OWNER_ID);
-        when(campaignRepository.findByIdForUpdate(CAMPAIGN_ID)).thenReturn(Optional.of(campaign));
+        when(campaignRepository.findById(CAMPAIGN_ID)).thenReturn(Optional.of(draftCampaign(OWNER_ID)));
         List<ModerationFailReason> reasons = List.of(
                 ModerationFailReason.AD_LABEL_MISSING, ModerationFailReason.RESOLUTION_TOO_LOW);
         when(posterModerationService.moderate(CAMPAIGN_ID))
@@ -170,6 +194,25 @@ class CampaignActivationServiceTest {
         assertThat(response.campaignId()).isEqualTo(CAMPAIGN_ID);
         assertThat(response.status()).isEqualTo(CampaignStatus.DRAFT);
         assertThat(response.reasons()).containsExactlyElementsOf(reasons);
+    }
+
+    /*
+     * 사전 확인(findById)은 DRAFT를 보고 통과시켰지만, 검수가 끝나고 schedule()을 부르는
+     * 순간에는(findByIdForUpdate) 이미 다른 요청이 먼저 ACTIVE로 바꿔 놓은 상황을 흉내낸다.
+     * 중복 전이는 이 레이스에서도 막혀야 한다.
+     */
+    @Test
+    @DisplayName("사전 확인과 schedule 사이에 상태가 바뀌면 CAMPAIGN-006으로 거부한다")
+    void 사전_확인과_전이_사이에_상태가_바뀌면_거부한다() {
+        active();
+        when(campaignRepository.findById(CAMPAIGN_ID)).thenReturn(Optional.of(draftCampaign(OWNER_ID)));
+        when(campaignRepository.findByIdForUpdate(CAMPAIGN_ID)).thenReturn(Optional.of(activeCampaign(OWNER_ID)));
+        when(posterModerationService.moderate(CAMPAIGN_ID))
+                .thenReturn(new PosterModerationOutcome(ModerationResult.PASS, List.of()));
+
+        assertThatThrownBy(() -> service.activate(OWNER_ID, CAMPAIGN_ID))
+                .isInstanceOfSatisfying(CampaignException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(CampaignErrorCode.CAMPAIGN_STATE_NOT_ALLOWED));
     }
 
     private void active() {

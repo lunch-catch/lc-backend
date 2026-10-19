@@ -132,12 +132,35 @@
 - **`DRAFT` → `SCHEDULED` 전이는 기존 `CampaignStatusService.schedule(campaignId)`를 그대로
   부른다(FR-092).** 이미 구현되어 있고 호출하는 곳이 없었다. `Campaign.schedule()`이
   `DRAFT`가 아니면 `IllegalStateException`을 던지는 것도 그대로 쓴다
-- **본인 소유 확인과 점주 계정 상태 확인은 `CampaignPauseResumeService`와 같은 패턴이다.**
-  `findByIdForUpdate`(비관 잠금)로 캠페인을 조회한 뒤 `ownerId`를 비교하고,
-  `OwnerStatusQuery`로 점주 계정이 `ACTIVE`인지 확인한다. 없거나 다르면 `CAMPAIGN-005`,
-  점주가 `ACTIVE`가 아니면 `CAMPAIGN-001`이다
-- **엔티티가 던지는 `IllegalStateException`을 `CAMPAIGN-006`으로 변환한다.**
-  `CampaignPauseResumeService.pause()`/`resume()`과 같은 처리다
+- **이 흐름 전체를 하나의 트랜잭션으로 묶지 않는다(자체 리뷰로 찾음, `#561`).**
+  `PosterModerationService.moderate()`가 S3·Rekognition을 부르는데, 그 호출을
+  트랜잭션 안에서 하면 그 시간만큼 캠페인 행 잠금과 DB 커넥션을 쥐고 있게 된다.
+  `PosterModerationService`의 클래스 주석이 이미 트랜잭션을 걸지 않는 이유로 든 것과 같은
+  문제라, 세 구간으로 나눈다.
+  1. 잠금 없는 `findById`로 본인 소유(`ownerId` 비교)·점주 계정 상태(`OwnerStatusQuery`)·
+     `DRAFT` 여부를 먼저 거른다. 없거나 다르면 `CAMPAIGN-005`, 점주가 `ACTIVE`가 아니면
+     `CAMPAIGN-001`, `DRAFT`가 아니면 `CAMPAIGN-006`이다. 여기서 걸러지면 검수를 부르지
+     않는다.
+  2. `CampaignActivationRateLimiter`로 점주 1명당 요청 빈도를 센 뒤(아래 항목)
+     `PosterModerationService.moderate()`를 트랜잭션 밖에서 부른다.
+  3. 검수가 `PASS`면 `CampaignStatusService.schedule(campaignId)`를 부른다. 이 메서드는
+     이미 자기 트랜잭션 안에서 `findByIdForUpdate`(비관 잠금)로 다시 잠그고 `DRAFT` 여부를
+     다시 확인한다. 1번과 3번 사이에 다른 요청이 먼저 전이를 끝내면 여기서
+     `IllegalStateException`이 나고, `CAMPAIGN-006`으로 변환해 응답한다
+     (`CampaignPauseResumeService.pause()`/`resume()`과 같은 처리).
+  1번의 확인은 최종 권위가 아니다. 1번을 통과한 두 요청이 거의 동시에 들어오면 둘 다 검수까지
+  진행할 수 있지만, 3번에서 먼저 도착한 쪽만 실제로 `SCHEDULED`가 되고 나머지는 거기서
+  거부된다. 같은 캠페인에 대한 중복 전이는 막되, 그 틈에 생기는 중복 검수 호출(낭비)은
+  감수하는 선택이다. 그 경쟁이 실제로 자주 일어날 일은 아니라서(점주가 같은 캠페인을 거의
+  동시에 두 번 누르는 경우) 더 무거운 해법(짧은 트랜잭션을 더 쪼개거나 `@Version` 낙관적
+  잠금으로 바꾸는 것)까지는 가지 않았다
+- **점주 1명당 캠페인 활성화 요청을 분당 3회로 제한한다(`CampaignActivationRateLimiter`,
+  자체 리뷰로 찾음, `#561`).** 검수가 `FAIL`이어도 점주가 다시 요청하면 매번 새로
+  Rekognition을 부르는데(아래 항목), 반복 요청을 막지 않으면 그 호출 비용과 쿼터를 그대로
+  소모한다. `TemplateGenerationRateLimiter`와 같은 고정 창 카운터(`auth_rate_limit.lua`
+  재사용)를 쓰고, 넘으면 `CAMPAIGN-011`(429)이다. 분당 3회는 근거 없는 예시값이고(`C` 등급),
+  실제 값은 운영 쪽과 정한다("아직 정해지지 않은 것" 참고). Redis 장애 시에는 세지 못하는
+  것뿐이지 막을 이유가 없어 통과시킨다(`장애_처리_설계_가이드.md`, 캐시 기본 처리)
 - **포스터 존재 확인은 `PosterRepository.findByCampaignId`로 하고, 없으면
   `PosterErrorCode.POSTER_NOT_SAVED`(`POSTER-021`, 404)로 거부한다.**
   `PosterModerationService.moderate()`가 같은 조회에서 쓰는 코드를 그대로 재사용한다. 새
@@ -254,6 +277,7 @@
 | 00:00 배치가 `pendingDailyBudget`을 `dailyBudget`에 반영하는 호출 지점 | V51 45행, 102행 스케줄러 | `#330`은 컬럼에 쓰기만 한다. "스케줄러 캠페인 담당 스텝" 이슈가 그 반영 호출을 정한다. **그 배치는 반영 직전에 `status == ACTIVE`인지 다시 확인해야 한다.** `pause()`는 `pendingDailyBudget`을 지우지 않으므로(아래 "해소된 항목" 참고), `PAUSED`로 멈춰 있는 캠페인에 그 예약값을 그대로 적용하면 안 된다 |
 | 예약 값(`pendingDailyBudget`) 자체를 PATCH 응답에 노출할지 | V51 45행 | `#330`은 노출하지 않는다(응답은 늘 `dailyBudget`). 노출이 필요해지면 그때 명세를 바꾼다 |
 | `targetMenuId`가 그 가게(`storeId`) 소유인지 등록 시점(`CampaignCouponConditionService`)에 검증하는 것 | `#468` 자체 리뷰로 찾음(2026-10-18) | 지금은 검증 코드가 없다. `StoreCampaignSummaryUpdater.update()`가 `menuBelongsToStore`로 뒤늦게(중단·재개 시점에) 걸러내지만, 등록 시점에 막는 게 근본 조치다. 담당 이슈 미정 |
+| 캠페인 활성화 요청 빈도 제한의 정확한 횟수·창 | `#561` 자체 리뷰로 찾음(2026-10-19) | `CampaignActivationRateLimiter`가 지금은 `TemplateGenerationRateLimiter`의 분당 3회를 그대로 가져와 썼다(근거 없는 예시값, `C` 등급). 실제 값은 운영 쪽과 정한다 |
 
 해소된 항목(`#330`): 하루 예산의 "다음 영업일 적용 예약 값" 컬럼은 `Campaign.pendingDailyBudget`(`V13__campaign_pending_daily_budget.sql`, 양수만 허용하는
 `chk_campaign_pending_daily_budget` CHECK 포함)이고, 최소 하루 예산은 `ops.contract.PlatformSettingQueryService.getMinDailyBudget()`(요구사항명세서
