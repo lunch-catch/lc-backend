@@ -33,8 +33,10 @@ import com.launchcatch.auth.CustomUserDetails;
 import com.launchcatch.auth.Role;
 import com.launchcatch.auth.contract.AccessTokenValidationPolicy;
 import com.launchcatch.campaign.contract.CampaignInfo;
+import com.launchcatch.campaign.contract.CampaignEndedEvent;
 import com.launchcatch.campaign.contract.CampaignQueryService;
 import com.launchcatch.campaign.contract.CampaignStatus;
+import com.launchcatch.campaign.contract.CampaignStatusChangedEvent;
 import com.launchcatch.coupon.contract.CouponStatsQueryService;
 import com.launchcatch.coupon.contract.DailyCampaignCouponStats;
 import com.launchcatch.coupon.contract.DailyMemberCouponStats;
@@ -123,6 +125,7 @@ import org.springframework.dao.DataAccessException;
 import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.dao.QueryTimeoutException;
 import org.springframework.context.annotation.Import;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
@@ -155,6 +158,7 @@ public class CouponIntegrationTest extends IntegrationTestSupport {
     @Autowired JdbcTemplate jdbcTemplate;
     @Autowired EntityManager entityManager;
     @Autowired PlatformTransactionManager transactionManager;
+    @Autowired ApplicationEventPublisher publisher;
     @Autowired CouponLookUpService couponLookUpService;
     @Autowired CouponCommandService couponCommandService;
     @Autowired OwnerCouponService ownerCouponService;
@@ -526,6 +530,252 @@ public class CouponIntegrationTest extends IntegrationTestSupport {
     }
 
     @Nested
+    @DisplayName("캠페인 이벤트의 쿠폰 회차 반영")
+    class CampaignEventState {
+
+        private static final LocalDateTime CHANGED_AT = TODAY.atTime(11, 30);
+
+        @BeforeEach
+        void setUp() {
+            event(81, 91, TODAY, "ACTIVE");
+        }
+
+        @AfterEach
+        void cleanUp() {
+            jdbcTemplate.update("DELETE FROM coupon_usage_history");
+            jdbcTemplate.update("DELETE FROM member_coupon");
+            jdbcTemplate.update("DELETE FROM coupon_inventory");
+            jdbcTemplate.update("DELETE FROM coupon_daily_limit");
+            jdbcTemplate.update("DELETE FROM coupon_event");
+        }
+
+        @Test
+        void 캠페인_트랜잭션_안에서_회차_상태를_함께_바꾼다() {
+            new TransactionTemplate(transactionManager).executeWithoutResult(transaction -> {
+                publisher.publishEvent(new CampaignStatusChangedEvent(91, TODAY, false, CHANGED_AT));
+                assertThat(states()).containsExactly("PAUSED");
+                assertThat(changedAt()).isEqualTo(CHANGED_AT);
+            });
+
+            assertThat(states()).containsExactly("PAUSED");
+            assertThat(changedAt()).isEqualTo(CHANGED_AT);
+        }
+
+        @Test
+        void 중단을_받으면_해당_영업일의_회차만_멈추고_발급을_거절한다() throws Exception {
+            event(82, 91, TODAY.minusDays(1), "ACTIVE");
+            event(83, 91, TODAY.plusDays(1), "SCHEDULED");
+            event(84, 92, TODAY, "ACTIVE");
+
+            publish(new CampaignStatusChangedEvent(91, TODAY, false, CHANGED_AT));
+
+            assertThat(states()).containsExactly("PAUSED", "ACTIVE", "SCHEDULED", "ACTIVE");
+            mockMvc.perform(post("/v1/coupons").with(user(MEMBER)).contentType(MediaType.APPLICATION_JSON)
+                            .content("{\"eventId\":81}"))
+                    .andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("COUPON-002"));
+            assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM member_coupon", Integer.class)).isZero();
+            assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM coupon_daily_limit", Integer.class)).isZero();
+        }
+
+        @Test
+        void 재개는_해당_영업일의_종료되지_않은_회차만_ACTIVE로_바꾼다() {
+            event(82, 91, TODAY.plusDays(1), "PAUSED");
+            publish(new CampaignStatusChangedEvent(91, TODAY, false, CHANGED_AT));
+
+            publish(new CampaignStatusChangedEvent(91, TODAY, true, CHANGED_AT.plusMinutes(1)));
+
+            assertThat(states()).containsExactly("ACTIVE", "PAUSED");
+            assertThat(changedAt()).isEqualTo(CHANGED_AT.plusMinutes(1));
+        }
+
+        @Test
+        void 종료는_해당_캠페인의_회차만_끝내고_새_발급을_거절한다() throws Exception {
+            event(82, 91, TODAY.minusDays(1), "ACTIVE");
+            event(83, 91, TODAY.plusDays(1), "SCHEDULED");
+            event(84, 92, TODAY, "ACTIVE");
+
+            publish(new CampaignEndedEvent(91, CHANGED_AT));
+
+            assertThat(states()).containsExactly("ENDED", "ENDED", "ENDED", "ACTIVE");
+            mockMvc.perform(post("/v1/coupons").with(user(MEMBER)).contentType(MediaType.APPLICATION_JSON)
+                            .content("{\"eventId\":81}"))
+                    .andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("COUPON-002"));
+        }
+
+        @Test
+        void 같은_시각의_중단_다음에_종료를_받아도_ENDED가_된다() {
+            publish(new CampaignStatusChangedEvent(91, TODAY, false, CHANGED_AT));
+
+            publish(new CampaignEndedEvent(91, CHANGED_AT));
+
+            assertThat(states()).containsExactly("ENDED");
+            assertThat(changedAt()).isEqualTo(CHANGED_AT);
+        }
+
+        @Test
+        void 종료_다음에_같은_시각의_중단을_받아도_ENDED를_유지한다() {
+            publish(new CampaignEndedEvent(91, CHANGED_AT));
+
+            publish(new CampaignStatusChangedEvent(91, TODAY, false, CHANGED_AT));
+
+            assertThat(states()).containsExactly("ENDED");
+        }
+
+        @Test
+        void 종료된_회차는_더_늦은_재개_이벤트가_와도_되살리지_않는다() {
+            publish(new CampaignEndedEvent(91, CHANGED_AT));
+            publish(new CampaignStatusChangedEvent(91, TODAY, true, CHANGED_AT.plusMinutes(1)));
+
+            assertThat(states()).containsExactly("ENDED");
+            assertThat(changedAt()).isEqualTo(CHANGED_AT);
+        }
+
+        @Test
+        void 같은_시각과_과거의_상태_이벤트는_최신_상태를_덮지_않는다() {
+            publish(new CampaignStatusChangedEvent(91, TODAY, false, CHANGED_AT));
+            var before = jdbcTemplate.queryForMap("SELECT * FROM coupon_event WHERE coupon_event_id=81");
+            doReturn(TODAY.atTime(12, 30).atZone(ClockConfig.ZONE).toInstant()).when(clock).instant();
+
+            publish(new CampaignStatusChangedEvent(91, TODAY, false, CHANGED_AT));
+            publish(new CampaignStatusChangedEvent(91, TODAY, true, CHANGED_AT));
+            publish(new CampaignStatusChangedEvent(91, TODAY, true, CHANGED_AT.minusMinutes(1)));
+            publish(new CampaignEndedEvent(91, CHANGED_AT.minusMinutes(1)));
+
+            assertThat(jdbcTemplate.queryForMap("SELECT * FROM coupon_event WHERE coupon_event_id=81")).isEqualTo(before);
+        }
+
+        @Test
+        void 종료_이벤트를_다시_받아도_처음_종료_시각과_수정_시각을_유지한다() {
+            publish(new CampaignEndedEvent(91, CHANGED_AT));
+            var before = jdbcTemplate.queryForMap("SELECT * FROM coupon_event WHERE coupon_event_id=81");
+            doReturn(TODAY.atTime(12, 30).atZone(ClockConfig.ZONE).toInstant()).when(clock).instant();
+
+            publish(new CampaignEndedEvent(91, CHANGED_AT));
+            publish(new CampaignEndedEvent(91, CHANGED_AT.plusMinutes(1)));
+
+            assertThat(jdbcTemplate.queryForMap("SELECT * FROM coupon_event WHERE coupon_event_id=81")).isEqualTo(before);
+        }
+
+        @Test
+        void 회차가_없는_캠페인의_이벤트는_회차를_만들지_않는다() {
+            publish(new CampaignStatusChangedEvent(999, TODAY, false, CHANGED_AT));
+            publish(new CampaignEndedEvent(999, CHANGED_AT));
+
+            assertThat(states()).containsExactly("ACTIVE");
+            assertThat(changedAt()).isNull();
+        }
+
+        @Test
+        void 캠페인_트랜잭션이_롤백되면_회차_변경도_함께_되돌린다() {
+            var before = jdbcTemplate.queryForMap("SELECT * FROM coupon_event WHERE coupon_event_id=81");
+
+            new TransactionTemplate(transactionManager).executeWithoutResult(transaction -> {
+                publisher.publishEvent(new CampaignStatusChangedEvent(91, TODAY, false, CHANGED_AT));
+                publisher.publishEvent(new CampaignEndedEvent(91, CHANGED_AT));
+                assertThat(states()).containsExactly("ENDED");
+                assertThat(changedAt()).isEqualTo(CHANGED_AT);
+                transaction.setRollbackOnly();
+            });
+
+            assertThat(jdbcTemplate.queryForMap("SELECT * FROM coupon_event WHERE coupon_event_id=81")).isEqualTo(before);
+        }
+
+        @Test
+        void 회차_상태_저장이_실패하면_발행자_변경도_되돌리고_재시도하면_반영한다() {
+            var event = new CampaignStatusChangedEvent(91, TODAY, false, CHANGED_AT);
+            jdbcTemplate.execute("ALTER TABLE coupon_event ADD CONSTRAINT chk_campaign_sync_failure CHECK (status='ACTIVE')");
+            try {
+                assertThatThrownBy(() -> new TransactionTemplate(transactionManager).executeWithoutResult(transaction -> {
+                    jdbcTemplate.update("UPDATE coupon_event SET issue_quantity=3 WHERE coupon_event_id=81");
+                    publisher.publishEvent(event);
+                })).isInstanceOf(DataAccessException.class).rootCause().isInstanceOf(SQLException.class)
+                        .hasMessageContaining("chk_campaign_sync_failure");
+
+                assertThat(jdbcTemplate.queryForObject("SELECT issue_quantity FROM coupon_event WHERE coupon_event_id=81", Integer.class))
+                        .isEqualTo(2);
+                assertThat(states()).containsExactly("ACTIVE");
+                assertThat(changedAt()).isNull();
+            } finally {
+                jdbcTemplate.execute("ALTER TABLE coupon_event DROP CHECK chk_campaign_sync_failure");
+            }
+            publish(event);
+
+            assertThat(states()).containsExactly("PAUSED");
+            assertThat(changedAt()).isEqualTo(CHANGED_AT);
+        }
+
+        @Test
+        void 회차_종료_저장이_실패하면_발행자_변경도_되돌리고_재시도하면_반영한다() {
+            var event = new CampaignEndedEvent(91, CHANGED_AT);
+            jdbcTemplate.execute("ALTER TABLE coupon_event ADD CONSTRAINT chk_campaign_sync_failure CHECK (status='ACTIVE')");
+            try {
+                assertThatThrownBy(() -> new TransactionTemplate(transactionManager).executeWithoutResult(transaction -> {
+                    jdbcTemplate.update("UPDATE coupon_event SET issue_quantity=3 WHERE coupon_event_id=81");
+                    publisher.publishEvent(event);
+                })).isInstanceOf(DataAccessException.class).rootCause().isInstanceOf(SQLException.class)
+                        .hasMessageContaining("chk_campaign_sync_failure");
+
+                assertThat(jdbcTemplate.queryForObject("SELECT issue_quantity FROM coupon_event WHERE coupon_event_id=81", Integer.class))
+                        .isEqualTo(2);
+                assertThat(states()).containsExactly("ACTIVE");
+                assertThat(changedAt()).isNull();
+            } finally {
+                jdbcTemplate.execute("ALTER TABLE coupon_event DROP CHECK chk_campaign_sync_failure");
+            }
+            publish(event);
+
+            assertThat(states()).containsExactly("ENDED");
+            assertThat(changedAt()).isEqualTo(CHANGED_AT);
+        }
+
+        @Test
+        void 같은_회차에_이벤트가_동시에_와도_마지막_전이_시각의_상태가_남는다() throws Exception {
+            CountDownLatch start = new CountDownLatch(1);
+            try (ExecutorService executor = Executors.newFixedThreadPool(2)) {
+                Future<?> earlier = executor.submit(() -> {
+                    assertThat(start.await(5, TimeUnit.SECONDS)).isTrue();
+                    publish(new CampaignStatusChangedEvent(91, TODAY, false, CHANGED_AT));
+                    return null;
+                });
+                Future<?> later = executor.submit(() -> {
+                    assertThat(start.await(5, TimeUnit.SECONDS)).isTrue();
+                    publish(new CampaignStatusChangedEvent(91, TODAY, true, CHANGED_AT.plusMinutes(1)));
+                    return null;
+                });
+                start.countDown();
+                earlier.get(10, TimeUnit.SECONDS);
+                later.get(10, TimeUnit.SECONDS);
+            }
+
+            assertThat(states()).containsExactly("ACTIVE");
+            assertThat(changedAt()).isEqualTo(CHANGED_AT.plusMinutes(1));
+        }
+
+        private LocalDateTime changedAt() {
+            return jdbcTemplate.queryForObject("SELECT status_changed_at FROM coupon_event WHERE coupon_event_id=81",
+                    LocalDateTime.class);
+        }
+
+        private void publish(Object event) {
+            new TransactionTemplate(transactionManager).executeWithoutResult(status -> publisher.publishEvent(event));
+        }
+
+        private List<String> states() {
+            return jdbcTemplate.queryForList("SELECT status FROM coupon_event ORDER BY coupon_event_id", String.class);
+        }
+
+        private void event(long eventId, long campaignId, LocalDate businessDate, String state) {
+            jdbcTemplate.update("""
+                    INSERT INTO coupon_event (coupon_event_id, campaign_id, business_date, issue_quantity,
+                            usable_start_at, usable_end_at, status, store_id, store_name, discount_target_type,
+                            discount_type, discount_value, created_at, updated_at)
+                    VALUES (?, ?, ?, 2, ?, ?, ?, 10, '런치식당', 'ALL', 'AMOUNT', 3000, ?, ?)
+                    """, eventId, campaignId, businessDate, businessDate.atTime(11, 0), businessDate.atTime(14, 0),
+                    state, businessDate.atStartOfDay(), businessDate.atStartOfDay());
+        }
+    }
+
+    @Nested
     @DisplayName("쿠폰 발급")
     class Issue {
 
@@ -565,6 +815,41 @@ public class CouponIntegrationTest extends IntegrationTestSupport {
             verifyNoInteractions(candidates);
         }
 
+        @ParameterizedTest
+        @EnumSource(value = CouponEventStatus.class, names = {"PAUSED", "ENDED"})
+        void 캠페인_중단과_종료는_새_발급만_막고_기존_쿠폰과_재고와_한도를_보존한다(CouponEventStatus target) {
+            assertThat(issue(17L, 81L)).isEqualTo("CREATED");
+            var couponsBefore = jdbcTemplate.queryForList("SELECT * FROM member_coupon");
+            var inventoryBefore = jdbcTemplate.queryForList("SELECT * FROM coupon_inventory ORDER BY sequence_no");
+            var counterBefore = jdbcTemplate.queryForList("SELECT * FROM coupon_daily_limit");
+            Object event = target == CouponEventStatus.ENDED
+                    ? new CampaignEndedEvent(81, TODAY.atTime(12, 0))
+                    : new CampaignStatusChangedEvent(81, TODAY, false, TODAY.atTime(12, 0));
+
+            new TransactionTemplate(transactionManager).executeWithoutResult(transaction -> publisher.publishEvent(event));
+
+            assertThat(jdbcTemplate.queryForObject("SELECT status FROM coupon_event WHERE coupon_event_id=81", String.class))
+                    .isEqualTo(target.name());
+            assertError(18L, 81L, CouponErrorCode.COUPON_NOT_AVAILABLE);
+            assertThat(jdbcTemplate.queryForList("SELECT * FROM member_coupon"))
+                    .usingRecursiveComparison().isEqualTo(couponsBefore);
+            assertThat(jdbcTemplate.queryForList("SELECT * FROM coupon_inventory ORDER BY sequence_no"))
+                    .usingRecursiveComparison().isEqualTo(inventoryBefore);
+            assertThat(jdbcTemplate.queryForList("SELECT * FROM coupon_daily_limit")).isEqualTo(counterBefore);
+            assertConsistent(1);
+        }
+
+        @Test
+        void 캠페인이_재개되면_기존_발급_검사로_다시_쿠폰을_발급한다() {
+            new TransactionTemplate(transactionManager).executeWithoutResult(transaction -> {
+                publisher.publishEvent(new CampaignStatusChangedEvent(81, TODAY, false, TODAY.atTime(11, 30)));
+                publisher.publishEvent(new CampaignStatusChangedEvent(81, TODAY, true, TODAY.atTime(11, 31)));
+            });
+
+            assertThat(issue(17L, 81L)).isEqualTo("CREATED");
+            assertConsistent(1);
+        }
+
         @Test
         void 중단_커밋_후에도_이미_허용된_발급은_완료하고_새_발급은_거절한다() throws Exception {
             CountDownLatch checked = new CountDownLatch(1);
@@ -579,8 +864,8 @@ public class CouponIntegrationTest extends IntegrationTestSupport {
                 try {
                     assertThat(checked.await(5, TimeUnit.SECONDS)).isTrue();
                     Future<?> pause = executor.submit(() -> new TransactionTemplate(transactionManager)
-                            .executeWithoutResult(transaction -> jdbcTemplate.update(
-                                    "UPDATE coupon_event SET status='PAUSED' WHERE coupon_event_id=81")));
+                            .executeWithoutResult(transaction -> publisher.publishEvent(
+                                    new CampaignStatusChangedEvent(81, TODAY, false, TODAY.atTime(12, 0)))));
                     pause.get(5, TimeUnit.SECONDS);
                     assertThat(jdbcTemplate.queryForObject(
                             "SELECT status FROM coupon_event WHERE coupon_event_id=81", String.class)).isEqualTo("PAUSED");
@@ -3033,6 +3318,34 @@ public class CouponIntegrationTest extends IntegrationTestSupport {
             jdbcTemplate.update("DELETE FROM member_coupon");
             jdbcTemplate.update("DELETE FROM coupon_event");
             jdbcTemplate.update("DELETE FROM member WHERE member_id=17");
+        }
+
+        @ParameterizedTest
+        @EnumSource(value = CouponEventStatus.class, names = {"PAUSED", "ENDED"})
+        void 캠페인이_중단되거나_끝나도_기존_쿠폰의_QR을_갱신하고_사용한다(CouponEventStatus target) throws Exception {
+            var before = jdbcTemplate.queryForMap("SELECT * FROM member_coupon WHERE member_coupon_id=1001");
+            Object event = target == CouponEventStatus.ENDED
+                    ? new CampaignEndedEvent(81, NOW)
+                    : new CampaignStatusChangedEvent(81, TODAY, false, NOW);
+
+            new TransactionTemplate(transactionManager).executeWithoutResult(transaction -> publisher.publishEvent(event));
+
+            assertThat(jdbcTemplate.queryForObject("SELECT status FROM coupon_event WHERE coupon_event_id=81", String.class))
+                    .isEqualTo(target.name());
+            assertThat(jdbcTemplate.queryForMap("SELECT * FROM member_coupon WHERE member_coupon_id=1001"))
+                    .usingRecursiveComparison().isEqualTo(before);
+            mockMvc.perform(get("/v1/coupons/1001").with(user(MEMBER)))
+                    .andExpect(status().isOk()).andExpect(jsonPath("$.data.usable").value(true));
+            mockMvc.perform(post("/v1/coupons/1001:generateQr").with(user(MEMBER)))
+                    .andExpect(status().isOk());
+            currentTime.set(NOW.plusSeconds(1).atZone(ClockConfig.ZONE).toInstant());
+            String token = jdbcTemplate.queryForObject(
+                    "SELECT BIN_TO_UUID(qr_token) FROM member_coupon WHERE member_coupon_id=1001", String.class);
+            mockMvc.perform(post(PATH).with(user(OWNER)).contentType(MediaType.APPLICATION_JSON)
+                            .content("{\"longitude\":127.0,\"latitude\":37.5,\"qrToken\":\"" + token + "\"}"))
+                    .andExpect(status().isCreated()).andExpect(jsonPath("$.data.discountAmount").value(3000));
+            assertThat(state()).isEqualTo("USED");
+            assertThat(historyCount()).isEqualTo(1);
         }
 
         @ParameterizedTest
