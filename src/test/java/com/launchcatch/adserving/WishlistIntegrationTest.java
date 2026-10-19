@@ -3,8 +3,10 @@ package com.launchcatch.adserving;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.doReturn;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -25,7 +27,7 @@ import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 
 /*
- * GET, POST /v1/wishlist 를 HTTP 입구부터 MySQL 의 wishlist, ad_candidate 와 Valkey 의 당일 이력까지 본다.
+ * GET, POST, DELETE /v1/wishlist 를 HTTP 입구부터 MySQL 의 wishlist, ad_candidate 와 Valkey 의 당일 이력까지 본다.
  * 권한과 남의 찜을 돌려주지 않는 것이 이 테스트의 축이다. 찜한 시각 순서와 그날 후보 조인, 같은 찜의 두 번째 저장도 실제 DB 로 본다.
  */
 @DisplayName("찜 목록 통합")
@@ -224,5 +226,53 @@ class WishlistIntegrationTest extends AbstractAdservingIntegrationTest {
     void 로그인하지_않으면_찜할_수_없다() throws Exception {
         mockMvc.perform(post("/v1/wishlist").contentType(MediaType.APPLICATION_JSON).content("{\"campaignId\": 101}"))
                 .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void 찜을_지우면_204_이고_내_그_찜만_사라지며_그날_당일_이력에_들어간다() throws Exception {
+        wish(MEMBER_ID, 101, 55, LocalDateTime.of(2026, 9, 30, 11, 0));
+        wish(MEMBER_ID, 102, 56, LocalDateTime.of(2026, 9, 30, 11, 5));
+        wish(OTHER_MEMBER_ID, 101, 55, LocalDateTime.of(2026, 9, 30, 11, 10));
+
+        perform(delete("/v1/wishlist/101"), Role.MEMBER)
+                .andExpect(status().isNoContent())
+                .andExpect(content().string(""));
+
+        assertThat(jdbcTemplate.queryForList("SELECT member_id, campaign_id FROM wishlist ORDER BY member_id, campaign_id"))
+                .extracting(row -> row.get("member_id") + ":" + row.get("campaign_id"))
+                .containsExactly(MEMBER_ID + ":102", OTHER_MEMBER_ID + ":101");
+        assertThat(redisTemplate.opsForSet().members(EXCLUSION_KEY)).containsExactly("101");
+    }
+
+    // 찜 목록에 없어도 204 다(명세). 그날 피드에서는 뺀다(#547)
+    @Test
+    void 찜하지_않은_캠페인을_지워도_204_이고_그날_당일_이력에_들어간다() throws Exception {
+        perform(delete("/v1/wishlist/999"), Role.MEMBER).andExpect(status().isNoContent());
+
+        assertThat(wishCount()).isZero();
+        assertThat(redisTemplate.opsForSet().members(EXCLUSION_KEY)).containsExactly("999");
+    }
+
+    // 공통 처리가 경로 변수의 타입 불일치를 COMMON-003 으로 돌려준다. api-spec.md 의 COMMON-002 행과 다르다(#547)
+    @Test
+    void 경로의_campaignId_가_숫자가_아니면_400_COMMON_003_이다() throws Exception {
+        perform(delete("/v1/wishlist/abc"), Role.MEMBER)
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("COMMON-003"));
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = Role.class, names = "MEMBER", mode = EnumSource.Mode.EXCLUDE)
+    void MEMBER_가_아니면_찜을_지울_수_없다(Role role) throws Exception {
+        wish(MEMBER_ID, 101, 55, LocalDateTime.of(2026, 9, 30, 11, 0));
+
+        perform(delete("/v1/wishlist/101"), role).andExpect(status().isForbidden());
+
+        assertThat(wishCount()).isEqualTo(1);
+    }
+
+    @Test
+    void 로그인하지_않으면_찜을_지울_수_없다() throws Exception {
+        mockMvc.perform(delete("/v1/wishlist/101")).andExpect(status().isUnauthorized());
     }
 }
