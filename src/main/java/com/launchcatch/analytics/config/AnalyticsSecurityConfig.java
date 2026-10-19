@@ -35,6 +35,7 @@ public class AnalyticsSecurityConfig {
             "/v1/admin/sales/**",
             "/v1/admin/fraud/**",
             "/v1/admin/campaign-reports",
+            "/v1/owner/report",
             "/v1/members/me/usage-stats",
             "/v1/events",
             OWNER_FUNNEL_PATH
@@ -48,6 +49,7 @@ public class AnalyticsSecurityConfig {
                 .securityMatcher(ANALYTICS_PATHS)
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(ADMIN_PATHS).hasAnyRole("ADMIN", "SUPER_ADMIN")
+                        .requestMatchers("/v1/owner/report").hasRole("OWNER")
                         .requestMatchers(MEMBER_PATHS).hasRole("MEMBER")
                         .requestMatchers(OWNER_FUNNEL_PATH).hasRole("OWNER")
                         .anyRequest().denyAll())
