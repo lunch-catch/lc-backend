@@ -109,6 +109,8 @@ PATCH는 DTO의 null을 미수정으로 취급한다. 동의는 값이 바뀔 �
 
 `MemberQueryService`는 단건 `findById(Long memberId)`와 일괄 `findAllById(List<Long> memberIds)`를 제공한다. [MemberInfo](../../../src/main/java/com/launchcatch/member/contract/MemberInfo.java)는 상태·온보딩·동의, 저장 좌표, 성별·연령대와 닉네임을 반환한다. HTTP 내 정보 DTO와는 별개의 계약이다.
 
+`findCurrentStatus(Long memberId)`는 프로필을 조회하지 않고 현재 회원 상태만 `Optional<MemberStatus>`로 반환한다. 없는 회원은 빈 결과를 반환하며 조회 장애는 호출자에게 그대로 전달한다. 쿠폰 발급은 이 계약으로 현재 ACTIVE 회원인지 확인한다.
+
 일괄 입력은 최대 1,000개다. 없는 회원은 결과에서 빠지며 순서를 보장하지 않는다. `MemberQueryServiceImpl`은 프로필을 함께 조회하고 프로필이 없으면 좌표·성별·연령대를 null로 반환한다. 회원 상태와 동의를 최종 사용 조건으로 판정하는 일은 호출자가 맡는다.
 
 분석용 `MemberStatsQueryService.dailyStats(LocalDate)`의 반환값과 현재 상태로 과거 탈퇴 수를 계산하는 한계는 [구조와 동작 설계 3~5장](./member_구조와_동작_설계.md#3-저장)이 갖는다.
