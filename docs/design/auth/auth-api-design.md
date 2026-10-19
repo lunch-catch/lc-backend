@@ -7,7 +7,7 @@
 | --- | --- |
 | 요구사항 | 명세서 기능 FR-002~FR-004(관리자), FR-028~FR-031(점주), FR-059, FR-061, FR-062(사용자), FR-091(공통 토큰 정책) |
 
-관리자 계정 발급(FR-001)은 [admin-api-design.md](../admin/admin-api-design.md), 사용자 온보딩(FR-060)과 탈퇴(FR-086)는 `member.md`, 점주 회원가입·로그인·내 정보 조회·튜토리얼 완료 처리는 [owner-api-design.md](../owner/owner-api-design.md)에 있다.
+관리자 계정 발급(FR-001)은 [admin-api-design.md](../admin/admin-api-design.md), 사용자 온보딩(FR-060)과 탈퇴(FR-086)의 계약은 [member 명세](../../api-spec/member.md), 점주 회원가입·로그인·내 정보 조회·튜토리얼 완료 처리는 [owner-api-design.md](../owner/owner-api-design.md)에 있다. member의 서버 처리 설계는 PR #474가 추가하는 `docs/design/member/member-api-design.md`가 갖는다.
 
 ## 목록과 요구사항 ID
 
@@ -184,9 +184,34 @@ state는 callback과 서버가 시작한 인가 시도를 묶고, 프론트의 `
 1. state를 Redis에서 원자적으로 소비해 저장된 nonce를 얻는다. 없거나 만료됐거나 재사용했으면 거부한다
 2. 인가 코드를 카카오 token endpoint에 서버 설정의 redirect URI와 client secret으로 교환한다. 받은 `id_token`의 서명, 발급자, audience, nonce를 검증하고 카카오 회원번호를 얻는다
 
+3. `MemberLoginService`가 별도 DB 트랜잭션에서 회원을 찾거나 만든다. 동시 최초 가입이 UNIQUE에 걸리면 새 트랜잭션에서 기존 회원을 다시 찾는다.
+4. 탈퇴 회원은 정지 이력이 없을 때 같은 행을 재활성화하고 대기 중인 카카오 연결 해제 행을 지운다. 재가입도 `newMember=true`다. 기존 ACTIVE 회원은 마지막 로그인 시각만 갱신하며 카카오 프로필을 덮어쓰지 않는다.
+5. `MemberTokenService.issue`가 토큰을 발급하고 DB에 RT 해시를 저장한다. 회원 생성과 토큰 발급은 한 트랜잭션이 아니므로 토큰 저장 실패 뒤에도 회원 행이 남을 수 있다.
+
+### 사용자 토큰 재발급과 로그아웃
+
+사용자는 `MemberTokenService`와 `OpaqueRefreshTokenLifecycle`을 사용한다. 관리자·점주의 개별 토큰 처리와 저장 순서까지 같다는 뜻으로 읽지 않는다.
+
+| 흐름 | 실제 처리와 한계 |
+|---|---|
+| 발급 | DB 해시 저장이 먼저다. Redis 저장만 실패하면 로그를 남기고 발급은 성공한다 |
+| 정상 재발급 | Redis에서 원자적으로 회전한 뒤 `MemberRefreshTokenBackupStore.rotateIfMatches`가 별도 트랜잭션으로 이전 해시를 비교해 DB를 갱신한다 |
+| Redis 장애 | `DataAccessException`일 때만 DB 현재 해시·만료·ACTIVE 상태를 확인하고 CAS로 회전한다. Redis가 정상적으로 무효·만료를 판정한 경우에는 DB를 우회하지 않는다 |
+| DB 회전 실패 | 현재 해시를 다시 확인한다. 새 해시가 있으면 성공으로 보고, 이전 해시가 있으면 이번 Redis 회전을 되돌린다. 다른 값이거나 확인 불가이면 새 캐시 토큰 폐기를 시도하고 저장소 오류를 반환한다 |
+| 재사용 감지 | 현재 RT를 폐기하고 AT valid-after도 갱신한 뒤 재사용 오류를 반환한다. DB 폴백 중에는 과거 RT의 Redis 재사용 흔적을 복원할 수 없다 |
+| 로그아웃 | 필수 토큰 폐기를 수행하고 커밋 뒤 카카오 로그아웃을 호출한다. 카카오 호출 실패는 로그만 남기며 서비스 로그아웃을 되돌리지 않는다. 영속 재시도 큐는 없다 |
+
+DB와 Redis의 변경은 원자적이지 않다. 저장소 오류가 나면 일부 토큰 변경이 이미 적용됐을 수 있다. 컨트롤러는 서비스가 성공한 뒤에만 새 쿠키 또는 삭제 쿠키를 응답한다. 탈퇴의 연결 해제 큐와 카카오 로그아웃의 실패 로그는 서로 다른 복구 방식이다.
+
+### 인증 요청 제한
+
+`AuthRateLimitFilter`는 로그인·재발급 POST 여섯 경로의 IP 카운터를 공유한다. 카카오 인가 URL GET과 로그아웃 DELETE는 대상이 아니다. Redis 오류이면 요청을 통과시키며, 초과 응답은 본문 없이 `429`와 `Retry-After`를 보낸다. 상한과 윈도우는 현 구현의 값이며 부하 측정으로 검증한 수치가 아니다.
+
 ## 접근 제어
 
-이 절은 구현할 접근 제어 계약이다. 현재 점주 내 정보 조회·로그아웃의 OWNER 인가와 튜토리얼 완료의 OWNER·ACTIVE 검증은 구현되어 있다. 계정 상태 변경 서비스와 캐시 무효화 호출부 및 일반 업무 API의 상태 제한은 아직 연결되어 있지 않다. 상태 변경을 추가할 때 DB 변경과 커밋 후 무효화 등록을 한 점주 서비스 작업으로 묶고, 각 업무 API는 역할과 필요한 현재 상태를 직접 검증해야 한다.
+아래 기본 거부 설명은 목표 계약이다. 현재 `SecurityConfig.defaultFilterChain`은 `authenticated()`이므로 어느 도메인도 선언하지 않은 경로에는 인증만 요구한다. 이 차이와 관리자 사용자 목록의 체인 선언은 별도 PR #484가 코드와 함께 고친다. 해당 PR의 수정 문단은 이 PR에서 덮어쓰지 않는다.
+
+이 절은 구현할 접근 제어 계약이다. 현재 점주 내 정보 조회·로그아웃의 OWNER 인가, 튜토리얼 완료의 OWNER·ACTIVE 검증, 약관 동의의 OWNER·ONBOARDING 검증은 구현되어 있다. 계정 상태 변경 서비스와 캐시 무효화 호출부 및 일반 업무 API의 상태 제한은 아직 연결되어 있지 않다. 상태 변경을 추가할 때 DB 변경과 커밋 후 무효화 등록을 한 점주 서비스 작업으로 묶고, 각 업무 API는 역할과 필요한 현재 상태를 직접 검증해야 한다.
 
 **이 판정의 오류 코드는 이 문서가 소유하지 않는다.** 점주 상태(`ONBOARDING`, `ACTIVE`,
 `SUSPENDED`)는 점주 도메인의 데이터이고, 역할만 아는 인증 모듈은 그 값을 판정할 수 없다.
@@ -238,3 +263,7 @@ state는 callback과 서버가 시작한 인가 시도를 묶고, 프론트의 `
 | 정지·탈퇴 기능의 RT 폐기와 AT 컷오프 | 실패 응답과 재시도·보상 정책을 기능과 함께 정해야 한다 |
 
 **이 문서는 위 항목을 현재 구현과 명세에 있는 것만으로 기술한다.** 결정되면 해당 절을 더하거나 고친다.
+
+## 구현 대조 범위
+
+카카오 인가·로그인과 회원 토큰은 `MemberAuthController`, `KakaoAuthorizationService`, `KakaoLoginStateRepository`, `KakaoIdTokenExchanger`, `MemberLoginService`, `MemberTokenService`, `MemberRefreshTokenBackupStore`, `OpaqueRefreshTokenLifecycle`을 대조했다. 쿠키와 요청 제한은 `AuthCookieFactory`, `AuthRateLimitFilter`를 확인했다. 원본의 자동 로그인 선택, 회원 응답에 프로필 이미지를 넣지 않는다는 과거 설명은 현재 구현과 달라 옮기지 않았다. 관리자·점주 내부 처리의 기준은 각 도메인의 설계서다.
