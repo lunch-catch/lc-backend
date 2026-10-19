@@ -142,6 +142,37 @@ V1 마이그레이션은 `issued_count`를 0부터 3까지로 제한한다. 한�
 다른 도메인의 contract, 캐시와 새 마이그레이션은 필요하지 않다.
 조회 실패를 0건으로 바꾸지 않고 기존 공통 예외 처리로 전달한다.
 
+## 점주 캠페인 쿠폰 수량 조회
+
+클라이언트 계약과 수량의 의미는 [쿠폰 명세](../../api-spec/coupon-api-spec.md#캠페인-쿠폰-수량-조회)가 소유한다.
+`OwnerCouponController`는 점주 전용 경로를 제공하며 `OwnerCouponService.summary`가 처리를 맡는다.
+
+### 서버가 하는 일
+
+1. `CouponSecurityConfig`는 정확한 조회 경로에 OWNER 역할을 요구한다. 다른 HTTP 메서드는 허용하지 않는다.
+2. 컨트롤러는 인증 주체의 점주 ID와 캠페인 ID, 필수 날짜를 서비스에 전달한다.
+3. 서비스는 양수 캠페인 ID와 양끝을 포함한 조회 기간을 검증한다. 종료일 다음 날 자정을 계산할 수 없는 입력도 거절한다.
+4. `OwnerStatusQuery.findCurrentStatus`로 현재 ACTIVE 상태를 확인한다. 계정 상태 캐시로 대신 판정하지 않는다.
+5. `CampaignQueryService.findAllById`로 해당 캠페인의 현재 점주 ID를 확인한다. 캠페인 부재와 다른 점주의 소유를 같은 접근 거절로 처리한다.
+6. `CouponEventRepository.findOwnerSummary`는 쿠폰 도메인의 원천 테이블에서 네 수량을 한 SQL로 조회한다.
+7. 서비스는 `OwnerCouponSummaryResponse`를 반환하고 컨트롤러는 공통 성공 봉투를 씌운다.
+
+### 쿼리를 구성한 이유
+
+전체 수량, 발급 수, 사용 수, 미발급 재고는 각각 스칼라 하위 쿼리로 묶는다.
+회원 쿠폰과 재고, 사용 이력을 한 번에 조인하지 않아 조인 행 수만큼 수량이 늘지 않는다.
+한 SQL 안에서 집계해 발급·사용 트랜잭션이 동시에 커밋돼도 네 수량이 같은 읽기 스냅샷을 따른다.
+
+회차는 `(campaign_id, business_date)` 인덱스로 좁히고 쿠폰과 재고는 회차 ID로 연결한다.
+사용 이력은 쿠폰 ID로 연결한 뒤 한국 날짜의 시작 이상과 다음 날 시작 미만으로 조회한다.
+사용 시각 컬럼을 날짜 함수로 감싸지 않는다. 엔티티 목록을 메모리에 올리거나 회차마다 쿼리를 반복하지 않는다.
+기간 상한은 원천 데이터 집계의 범위를 제한하며 구체적인 계약은 위 명세를 따른다.
+
+조회는 읽기 전용 트랜잭션이며 상태 변경이나 쓰기 잠금을 사용하지 않는다.
+정상 빈 결과의 수량은 SQL의 `COUNT`와 `COALESCE(SUM(...), 0)`가 반환한다.
+권한·DB 조회 오류는 [장애 처리의 기본 규칙](./coupon_장애_처리_설계.md)을 따라 그대로 전파한다.
+캐시와 새 마이그레이션은 추가하지 않으며 분석 배치용 `CouponStatsQueryService`를 호출하지 않는다.
+
 ## 매장별 쿠폰 이벤트 상태 조회
 
 `POST /v1/coupon-events:getStatus`는 `CouponLookUpService.getEventStatus(memberId, storeIds)`로 처리한다.
@@ -263,9 +294,33 @@ DB 조회나 저장 실패는 공통 예외 처리로 전달하며 상태와 QR,
 쿠폰 행 잠금과 발급 카운터의 잠금 순서, QR 세대 재검증은 [구조와 동작 설계 7장](./coupon_구조와_동작_설계.md#7-트랜잭션과-동시성)을 따른다.
 삭제와 QR 갱신의 기존 검증, 후속 사용 확정에서 필요한 검증은 [12장](./coupon_구조와_동작_설계.md#12-테스트와-미정-사항)이 갖는다.
 
+## 매장의 날짜별 쿠폰 사용 건수 조회
+
+클라이언트 계약은 [쿠폰 명세의 날짜별 사용 건수](../../api-spec/coupon-api-spec.md#매장의-날짜별-쿠폰-사용-건수-조회)가 갖는다.
+`OwnerCouponController.getDailyUsages`는 조회 조건과 인증된 점주 ID를 `OwnerCouponService.getDailyUsages`에 전달한다.
+
+### 서버가 하는 일
+
+1. `CouponSecurityConfig`는 GET 경로에 OWNER 역할을 요구한다.
+2. 서비스는 매장 ID와 날짜 범위를 검증하고 `OwnerStatusQuery`로 현재 ACTIVE 상태를 확인한다.
+3. 서비스는 store의 [공개 조회 계약](../store/store-query-contract.md)에 있는 `canManageStore`로 현재 매장 관리 권한을 확인한다. 거절되면 사용 이력을 조회하지 않는다.
+4. `CouponUsageHistoryRepository.findDailyUsageCounts`는 매장과 실제 사용 시각의 범위를 적용한 뒤 날짜별 건수를 한 번에 집계한다. 캠페인이나 이벤트의 영업일로 범위를 좁히지 않는다.
+5. 서비스는 사용이 없는 날짜를 채우고 날짜별 건수의 합계를 응답에 담는다.
+
+### 집계와 장애 처리
+
+SQL은 `coupon_usage_history`만 읽으며 다른 엔티티를 조인하거나 사용 이력 전체를 메모리로 가져오지 않는다.
+WHERE 절은 `store_id`와 원래의 `created_at` 범위를 사용한다.
+`DATE(created_at)`는 조회 컬럼과 그룹, 정렬에만 적용한다.
+기존 `(store_id, created_at, coupon_usage_history_id)` 인덱스로 매장과 사용 시각의 범위를 좁힌다.
+날짜마다 SQL을 반복하지 않으며 서비스는 최대 31개의 응답 항목만 만든다.
+읽기 전용 트랜잭션에서 원천 이력을 집계하며 별도 캐시나 배치 집계 테이블을 추가하지 않는다.
+점주 상태 조회나 매장 권한 조회, DB 집계의 실패는 기존 공통 예외 처리로 전달한다.
+조회 실패를 0건으로 바꾸지 않으며 기존 컬럼과 인덱스를 사용하므로 마이그레이션은 추가하지 않는다.
+
 ## 매장 쿠폰 사용 이력 조회
 
-`GET /v1/owner/stores/{storeId}/coupon-usages`의 조회 코드는 `CouponController.getUsages`와 `CouponLookUpService.getUsages`가 갖는다.
+`GET /v1/owner/stores/{storeId}/coupon-usages`의 조회 코드는 `OwnerCouponController.getUsages`와 `OwnerCouponService.getUsages`가 갖는다.
 클라이언트 계약은 [쿠폰 명세의 매장 쿠폰 사용 이력 확인](../../api-spec/coupon-api-spec.md#매장-쿠폰-사용-이력-확인)을 따른다.
 `coupon-inte`에서 보관한 구현 중 이력 조회만 분리했다.
 
@@ -309,7 +364,7 @@ false이면 사용 이력을 읽기 전에 공용 인가 오류인 `403 AUTH-006
 
 HTTP 접근 로그와 요청의 MDC는 공통 필터가 기록한다. 조회 성공과 입력 형식 오류는 공통 로그로 추적한다.
 서비스는 삭제와 단건 조회의 업무 거절을 WARN으로 기록하며 오류 코드를 `reason`에 넣는다.
-사용 이력 조회의 점주 상태 거절은 `COUPON_USAGE_HISTORY_FAILED` 이벤트와 점주 ID, 고정된 사유 및 오류 코드로 기록한다.
+점주 수량·사용 이력 조회의 점주 상태 거절은 `OWNER_COUPON_QUERY_FAILED` 이벤트와 점주 ID, 고정된 사유 및 오류 코드로 기록한다.
 데이터 정합성 오류는 ERROR로 기록하고 원인을 나타내는 `reason`과 오류 코드, 회원 쿠폰 ID 및 이벤트 ID를 남긴다.
 삭제 성공은 공통 HTTP 접근 로그의 204 응답으로 추적한다.
 비즈니스 로그는 `event=대문자_스네이크케이스` 형식을 사용하며 식별자와 고정된 사유만 전달한다. 엔티티·DTO 전체와 QR·인증 토큰은 전달하지 않는다.
@@ -321,7 +376,7 @@ DB 조회·저장 예외는 기존 공통 예외 처리와 HTTP 로그로 전달
 
 ## QR 사용 구현 전 확정 사항
 
-CouponCommandService.redeem(ownerId, request)는 [HTTP 명세의 QR 사용](../../api-spec/coupon-api-spec.md#qr-사용)을 구현한다.
+OwnerCouponService.redeem(ownerId, request)는 [HTTP 명세의 QR 사용](../../api-spec/coupon-api-spec.md#qr-사용)을 구현한다.
 요청은 위경도와 QR 토큰만 받으며 할인액은 이벤트 스냅샷으로 계산한다.
 
 | 항목 | 정책 |
@@ -348,8 +403,8 @@ CouponUsageHistory도 BaseTimeEntity를 상속하며 ID·생성·수정 시각�
 
 ### 서버가 하는 일
 
-1. CouponSecurityConfig는 POST /v1/owner/coupon-usages에 OWNER 역할을 요구한다. CouponController는 QR 토큰과 위치의 필수값·좌표 범위를 검증한다.
-2. CouponCommandService는 READ_COMMITTED 트랜잭션에서 OwnerStatusQuery.findCurrentStatus로 점주 상태를 확인한다. 점주가 없거나 비활성이면 COUPON-013으로 거절한다.
+1. CouponSecurityConfig는 POST /v1/owner/coupon-usages에 OWNER 역할을 요구한다. OwnerCouponController는 QR 토큰과 위치의 필수값·좌표 범위를 검증한다.
+2. OwnerCouponService는 READ_COMMITTED 트랜잭션에서 OwnerStatusQuery.findCurrentStatus로 점주 상태를 확인한다. 점주가 없거나 비활성이면 COUPON-013으로 거절한다.
 3. MemberCouponRepository.findQrReference는 토큰의 쿠폰 ID와 QR 버전만 읽는다. 엔티티를 미리 적재하지 않아 잠금 뒤 최신 상태 조회를 가리지 않는다.
 4. findByIdForUpdate로 회원 쿠폰을 잠그고 이벤트 스냅샷을 읽는다. StoreQueryService.canManageStore로 현재 관리 권한을 확인한다. USED 상태라면 마지막 토큰·버전을 확인하여 교체된 QR과 실제 사용한 QR의 재요청을 구분한다.
 5. MemberQueryService로 쿠폰 소유 회원의 현재 상태를 확인하고 StoreQueryService.findAllById로 현재 매장 좌표를 읽는다. 정상적인 부재와 조회 장애를 구분한다.
@@ -369,7 +424,7 @@ V7__coupon_supported_discount_combinations.sql은 할인 조합 CHECK에서 ALL 
 
 ### 검증과 남은 연동
 
-CouponCommandServiceTest의 Redeem이 서비스와 할인 계산·상태 전이를 검증한다.
+OwnerCouponServiceTest의 Redeem이 서비스와 할인 계산·상태 전이를 검증한다.
 CouponIntegrationTest의 Redeem 중첩 테스트는 실제 MySQL과 보안 체인을 사용해 HTTP 요청부터 커밋 결과까지 확인한다.
 MockMvc 검증과 함께 임의 포트로 실행한 서버에 JWT 쿠키를 담은 실제 HTTP 요청을 보낸다.
 CouponIntegrationTest 하나가 서버 설정과 빈 대역을 소유하고 QR 사용도 중첩 테스트로 묶는다.
