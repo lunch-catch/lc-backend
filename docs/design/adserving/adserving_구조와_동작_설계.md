@@ -59,6 +59,8 @@ adserving/
 │   ├── entity/AdCandidate.java
 │   ├── exception/CandidateErrorCode.java   그날 후보가 아니다(ADSERVING-004)
 │   ├── service/CandidateStateUpdaterImpl.java   CandidateStateUpdater 구현
+│   ├── service/CandidateStatusService.java      캠페인 상태 변경을 그날 후보의 서빙 상태에 반영한다
+│   ├── listener/CandidateStatusChangedListener.java  CampaignStatusChangedEvent 를 받는다
 │   └── repository/AdCandidateRepository.java
 ├── exclusion/
 │   └── repository/ExclusionRepository.java  Valkey. 스와이프와 가게 상세 찜, 찜 삭제가 쓰고 피드가 읽는다
@@ -121,6 +123,7 @@ impression/
 | 필터를 통째로 바꾸는 순서, 같은 업종이 두 번 올 때의 처리 | `FeedFilterService` |
 | 현재 유효한 찜의 기준(행이 있으면 유효) | `WishlistService` 의 `WishlistQueryService` 구현. 단건과 목록이 같은 기준을 쓴다(#163) |
 | 소진을 다시 통보받을 때와 후보가 없을 때의 처리 | `CandidateStateUpdaterImpl` |
+| 서빙 가능 여부를 후보 상태로 바꾸는 규칙, 늦은 통보만 반영하는 규칙, 후보가 없을 때의 처리 | `CandidateStatusService` 와 `AdCandidateRepository.changeState` |
 | 고를 수 있는 업종 코드와 정렬 값 | `FeedFilterSaveRequest` 의 애노테이션. 업종 코드는 store 가 소유하고 `contract` 로 공개하지 않아 `store.category_code` 의 CHECK 와 같은 목록을 따로 둔다(#411 에서 임시로 정했다) |
 | 찜 목록의 표시 값을 그날 후보 행 유무로 채우고 없으면 `null` 로 두는 규칙 | `WishlistService`, `WishlistItemResponse` |
 | 가게 상세 찜이 받는 캠페인(그날 후보 행), 처음 찜과 다시 찜의 구분, 찜과 당일 이력을 쓰는 순서, 찜 삭제가 당일 이력에 넣는 조건 | `WishlistService` |
@@ -253,6 +256,7 @@ A 를 고른다. 가게 상세 찜을 리포트에 넣어야 하면 그 찜을 �
 | 읽기 | member | `MemberQueryService.findById` | 피드 요청마다 1번 |
 | 읽기 | billing | `BudgetQueryService.getProgress` | 피드 요청마다 1번. 후보가 5000개를 넘으면 나눠 부른다 |
 | 쓰기 | billing | `PointDeductor.deduct` | 처음 저장된 유효 노출마다 1번. 노출 저장과 같은 트랜잭션이다. 쿠폰 소진 뒤의 노출은 부르지 않는다 |
+| 받기 | campaign | `CampaignStatusChangedEvent` | 캠페인이 낮에 멈추거나 재개될 때마다. 발행자와 같은 트랜잭션에서 그날 후보의 `campaign_state` 를 바꾼다(아키텍처 설계 2.4, #565) |
 | 받기 | campaign | `CampaignEndedEvent` | 캠페인이 끝날 때 1번. 발행자와 같은 트랜잭션에서 그 캠페인의 찜을 종료로 표시한다(아키텍처 설계 2.4, #553) |
 | 공개 | analytics 가 부른다 | `AdservingStatsQueryService` | 분석의 일별 집계 배치가 영업일마다 부른다. 읽기 전용 트랜잭션에서 묶은 건수만 돌려준다. 귀속은 3장 "집계 조회의 귀속" 을 따른다 |
 
@@ -314,6 +318,7 @@ flowchart LR
         end
 
         CSU[CandidateStateUpdaterImpl] --> AR
+        CSL[CandidateStatusChangedListener] --> CSS[CandidateStatusService] --> AR
 
         subgraph impression["impression/ (노출 로그)"]
             IMC[ImpressionController] --> IMS[ImpressionService]
@@ -343,11 +348,20 @@ flowchart LR
 ```
 
 - `feed` 와 `impression` 과 `wishlist` 에서 `engine` 으로, `feed` 와 `wishlist` 에서 `exclusion` 으로, `impression` 에서 `feed` 로, `feed` 에서 `wishlist` 로만 화살표가 간다. 반대 방향은 없다
-- 다른 도메인의 호출로 들어오는 입구는 쿠폰의 두 `contract` 다. 찜 조회는 `WishlistService` 가, 소진 반영은 `engine` 의 `CandidateStateUpdaterImpl` 이 받는다(#163). 스케줄과 이벤트로 들어오는 입구는 아직 없다
+- 다른 도메인의 호출로 들어오는 입구는 쿠폰의 두 `contract` 다. 찜 조회는 `WishlistService` 가, 소진 반영은 `engine` 의 `CandidateStateUpdaterImpl` 이 받는다(#163). 이벤트로 들어오는 입구는 캠페인의 상태 변경(`engine`)과 종료(`wishlist`) 둘이고, 스케줄로 들어오는 입구는 끝난 찜 정리(`wishlist`) 하나다
 
 ### 상태 변경
 
-해당 없음. 이 도메인이 쓰는 엔티티에 상태 전이가 없다. 후보의 `campaign_state` 는 캠페인의 통보로 바뀌고 그 처리는 아직 없다.
+그날 후보의 `campaign_state` 는 캠페인의 통보로만 바뀐다. 이 도메인이 스스로 전이시키지 않는다.
+
+| 통보 | 바뀌는 상태 | 조건 |
+|---|---|---|
+| `CampaignStatusChangedEvent(servable=false)` | `PAUSED` | 그 영업일, 그 캠페인의 행이고 `changedAt` 이 `state_changed_at` 보다 늦다 |
+| `CampaignStatusChangedEvent(servable=true)` | `SERVABLE` | 같다 |
+
+- 낮에 끝난 캠페인도 `PAUSED` 로 둔다. 이벤트가 서빙 가능 여부만 싣고, 피드에서 빠지는 결과가 같으며 다음 날 후보에 들어가지 않는다. `ENDED` 는 쓰지 않는다(#565 에서 정했다)
+- 소진(`sold_out_at`)은 상태와 따로 본다. 소진된 후보는 `SERVABLE` 로 돌아와도 피드에 나오지 않는다
+- 늦은 통보만 반영해 같은 통보가 다시 오거나 순서가 바뀌어 와도 결과가 같다(아키텍처 설계 2.4)
 
 ### 주요 흐름
 
@@ -490,6 +504,7 @@ sequenceDiagram
 | 찜 삭제 | 찜 행 지우기 하나(저장소 메서드의 트랜잭션) | 당일 이력(Valkey) |
 | 필터 저장 | `feed_filter` 의 넣기 또는 바꾸기, `feed_filter_category` 의 지우기와 다시 넣기, 저장한 필터 다시 읽기 | 없음 |
 | 쿠폰의 찜 조회 | 없다. 읽기 하나가 혼자 끝난다 | 없음 |
+| 캠페인 상태 변경 | campaign 의 상태 전이 트랜잭션에 참여해 그날 후보의 상태 UPDATE 를 한다. 반영이 실패하면 전이도 되돌아간다 | 없음 |
 | 캠페인 종료 | campaign 의 종료 트랜잭션에 참여해 찜의 종료 표시 UPDATE 를 한다. 표시가 실패하면 종료도 되돌아간다 | 없음 |
 | 끝난 찜 정리 | 기준 시각 전에 끝난 찜을 지우는 DELETE 하나(저장소 메서드의 트랜잭션) | 없음 |
 | 쿠폰의 소진 반영 | `ad_candidate` 갱신과 0행일 때의 후보 확인. 쿠폰 발급이 커밋된 뒤 트랜잭션 밖에서 불려 발급과 묶이지 않는다(#163) | 없음 |
@@ -573,6 +588,7 @@ A 를 고른다. 분석의 결정과 어긋났을 때 B 는 노출 이벤트를 
 | 카운터를 올리지 못한 노출 | 상한이 늦게 걸려 미과금 노출이 더 나간다 | 플랫폼 | `adserving_cache_bypass_total`(`use=impression_count`) 로 센다 |
 | 스와이프 기록이 끝내 실패한 찜 | 찜은 남고 스와이프 기록이 없다. 30일 업종 선호도에 그 찜이 빠진다 | 사용자 | 돈이 걸리지 않는다. 클라이언트가 다시 보내면 맞춰진다 |
 | 소진 반영이 빠진 그날 후보 | 소진된 캠페인이 계속 나가고, 소진 뒤 노출이 `NOT_BILLED_SOLD_OUT` 으로 걸러지지 않아 과금된다 | 점주 | 쿠폰이 `INVENTORY_EXHAUSTED` 로 발급을 거절할 때마다 `markSoldOut` 을 다시 부른다(#163 에서 정했다). 소진 뒤 발급 요청이 없으면 복구되지 않는다. 쿠폰 쪽 연동은 후속 작업이다 |
+| 상태 통보가 온 날 후보가 없음 | 반영할 행이 없다. 예외 없이 반환한다 | 없음 | `adserving_status_candidate_missing_total` 로 센다. 00:00 후보 적재 작업이 없는 동안은 운영에서 늘 오른다 |
 | 소진 통보가 온 날 후보가 없음 | 반영할 행이 없다. 예외 없이 반환한다 | 없음 | `adserving_sold_out_candidate_missing_total` 로 센다. 00:00 후보 적재 작업이 없는 동안은 운영에서 늘 오른다 |
 | 분석에 넘어가지 못한 노출과 스와이프 | 원본은 남고 퍼널 비율에서만 빠진다 | 분석 | 돈이 걸리지 않는다. 리포트의 노출 수는 원본을 세는 집계 조회가 낸다(아키텍처 설계 2.4) |
 | 당일 이력에 넣지 못한 가게 상세 찜 | 찜은 남고 그날 그 캠페인이 피드에 다시 보일 수 있다 | 사용자 | 돈이 걸리지 않는다. `adserving_cache_bypass_total`(`use=exclusion`) 로 센다. 다시 찜하면 넣는다 |
@@ -627,7 +643,7 @@ A 를 고른다. 분석의 결정과 어긋났을 때 B 는 노출 이벤트를 
 
 ## 12. 테스트와 미정 사항
 
-6장에 상태 전이가 없어 7장 동시성 표의 행과 6장 주요 흐름의 실패 지점에서 시나리오를 뽑았다.
+6장 상태 변경의 통보 두 가지와 7장 동시성 표의 행, 6장 주요 흐름의 실패 지점에서 시나리오를 뽑았다.
 
 | 시나리오 | Given | When | Then | 테스트 |
 |---|---|---|---|---|
@@ -673,6 +689,11 @@ A 를 고른다. 분석의 결정과 어긋났을 때 B 는 노출 이벤트를 
 | 끝난 찜 정리 | 10/1 23:59, 10/2 00:00 에 끝난 찜과 진행 중인 찜이 있다 | 10/5 정리 단계가 돈다 | 10/1 에 끝난 찜만 지워진다 | `WishlistCampaignEndedIntegrationTest.정리_단계는_끝난_날을_빼고_3일이_지난_찜만_지운다` |
 | 쿠폰이 찜을 물음 | 한 회원이 두 캠페인을, 다른 회원이 한 캠페인을 찜했다 | 단건과 목록을 조회한다 | 둘이 같은 찜을 유효하다고 본다 | `WishlistQueryIntegrationTest.단건_조회와_목록_조회가_같은_찜을_유효하다고_본다` |
 | 찜을 지운 뒤 쿠폰이 물음 | 찜 행을 지웠다 | 단건과 목록을 조회한다 | 둘 모두에서 빠진다 | `WishlistQueryIntegrationTest.찜을_지우면_두_조회_모두에서_빠진다` |
+| 캠페인이 멈추고 재개됨 | 같은 캠페인의 오늘과 내일 후보, 다른 캠페인의 오늘 후보가 있다 | 오늘로 멈춤과 재개를 통보한다 | 오늘 그 캠페인 후보만 피드에서 빠졌다가 다시 나온다 | `CandidateStatusChangedIntegrationTest.멈추면_그날_그_캠페인_후보만_피드에서_빠지고_재개하면_다시_나온다` |
+| 상태 통보의 순서가 바뀜 | 멈춤이 반영됐다 | 더 이른 재개와 같은 시각의 재개가 온다 | 멈춘 상태가 남는다 | `CandidateStatusChangedIntegrationTest.더_이른_전이가_늦게_와도_상태가_되돌아가지_않는다` |
+| 소진된 후보의 재개 | 소진된 뒤 멈췄다 | 재개를 통보한다 | 상태는 `SERVABLE` 이지만 피드에 나오지 않는다 | `CandidateStatusChangedIntegrationTest.소진된_후보는_재개돼도_피드에_나오지_않는다` |
+| 캠페인의 상태 전이가 되돌아감 | 전이 트랜잭션이 실패한다 | 멈춤 통보를 받은 뒤 되돌아간다 | 후보의 상태도 남지 않는다 | `CandidateStatusChangedIntegrationTest.캠페인의_상태_전이가_되돌아가면_후보의_상태도_되돌아간다` |
+| 상태 통보가 온 날 후보가 없음 | 후보가 없다 | 멈춤을 통보한다 | 예외 없이 넘어가고 센다 | `CandidateStatusChangedIntegrationTest.그날_후보가_없어도_예외_없이_넘어간다`, `CandidateStatusServiceTest.그_영업일의_후보가_없으면_예외_없이_넘어가고_센다` |
 | 소진 통보 | 같은 캠페인의 오늘과 내일 후보, 다른 캠페인의 오늘 후보가 있다 | 오늘로 소진을 통보한다 | 오늘 그 캠페인 후보에만 받은 시각이 들어간다 | `CandidateSoldOutIntegrationTest.받은_영업일의_그_캠페인_후보에만_받은_소진_시각을_쓴다` |
 | 같은 소진 통보가 다시 옴 | 이미 소진됐다 | 더 늦은 시각으로 다시 통보한다 | 처음 소진 시각이 남는다 | `CandidateSoldOutIntegrationTest.다시_불러도_처음_소진_시각이_남는다` |
 | 그날 후보가 없음 | 다른 영업일의 후보만 있다 | 소진을 통보한다 | 예외 없이 아무것도 바꾸지 않고 센다 | `CandidateSoldOutIntegrationTest.그_영업일의_후보가_없으면_예외_없이_아무것도_바꾸지_않는다`, `CandidateStateUpdaterImplTest.그_영업일의_후보가_없으면_예외_없이_넘어가고_센다` |
