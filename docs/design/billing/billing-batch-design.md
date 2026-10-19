@@ -136,6 +136,8 @@ PointDeductor.deduct(serveId, campaignId, businessDate)
 
 `NOT_BILLED_NO_PLAN`은 계획이 없으니 `owner_id`를 캠페인(`CampaignQueryService.findAllById`)에서, 단가를 운영 단가(`PlatformSettingQueryService.getImpressionUnitPrice`)에서 읽어 판정 행에 남긴다. 과금하지 않아 카운터와 원장은 건드리지 않는다. 행을 남겨야 광고 서빙의 유효 노출 수가 판정 합에 품절 뒤 노출을 더한 값과 같다. 캠페인 자체가 없으면 예외다.
 
+**조건 (2026-10-19, #497, #498):** 노출 인정 시간은 광고 서빙의 serve 기록 TTL(1800초)이 정한다. 정산에는 이 값이 없다(`impression-valid-for`를 지웠다). 그래서 `NOT_BILLED_NO_PLAN`이 생기는 범위(자정 직후 TTL 만큼)와 장중 중단 뒤 미과금이 생기는 범위(I-07)는 이 TTL에 기댄다. TTL을 바꾸면 이 범위도 함께 바뀐다. 광고 서빙은 같은 조건을 `adserving_구조와_동작_설계.md`에 적는다(#498).
+
 `NOT_BILLED_SOLD_OUT`은 차감을 부르지 않으므로 여기 없다. 광고서빙이 `impression_log.sold_out`에 기록하고 리포트가 `serve_id`로 조인한다.
 
 3. `BILLED`이면 `point_ledger`에 `DEDUCT(amount = -unit_price, serve_id, campaign_id, owner_id, source=REALTIME)`를 기록한다. `owner_id`는 `budget_daily_plan.owner_id`다.
