@@ -4,6 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.launchcatch.IntegrationTestSupport;
+import com.launchcatch.ops.contract.BatchExecutionQueryService;
+import com.launchcatch.ops.contract.BatchExecutionRecord;
 import com.launchcatch.ops.entity.BatchExecutionLog;
 import com.launchcatch.ops.entity.BatchStatus;
 import com.launchcatch.ops.repository.BatchExecutionLogRepository;
@@ -54,6 +56,9 @@ class BatchExecutionIntegrationTest extends AbstractOpsIntegrationTest {
 
     @Autowired
     private Clock clock;
+
+    @Autowired
+    private BatchExecutionQueryService batchExecutionQueryService;
 
     @Autowired
     private DataSource dataSource;
@@ -409,6 +414,33 @@ class BatchExecutionIntegrationTest extends AbstractOpsIntegrationTest {
         service.fail(JOB, DATE, "원본을 읽지 못했다");
         assertThat(service.retry(JOB, DATE)).isTrue();
         assertThat(reload(JOB).getAttemptNo()).isEqualTo(3);
+    }
+
+    /*
+     * #434. 분석이 claim/retry/rerun 직후 자기 세대를 알 방법이 없어 세대 확인
+     * (BatchAttemptGuard.assertCurrentAttempt)을 이어받은 경로에만 연결했다. attemptNo를
+     * BatchExecutionRecord로 공개해 정상 경로도 자기 세대를 읽을 수 있게 한다.
+     */
+    @Test
+    @DisplayName("claim, 이어받기, 수동 재실행을 거치며 오른 세대가 조회 결과에도 그대로 나온다")
+    void 세대_변화가_조회_결과에도_나온다() {
+        claimAs(JOB, OTHER);
+        assertThat(recordFor(JOB).attemptNo()).isEqualTo(1);
+
+        makeStale(JOB);
+        assertThat(service.takeOverStale()).hasSize(1);
+        assertThat(recordFor(JOB).attemptNo()).isEqualTo(2);
+
+        service.fail(JOB, DATE, "원본을 읽지 못했다");
+        assertThat(service.retry(JOB, DATE)).isTrue();
+        assertThat(recordFor(JOB).attemptNo()).isEqualTo(3);
+    }
+
+    private BatchExecutionRecord recordFor(String jobName) {
+        return batchExecutionQueryService.findByBusinessDate(DATE).stream()
+                .filter(record -> record.jobName().equals(jobName))
+                .findFirst()
+                .orElseThrow();
     }
 
     @Test

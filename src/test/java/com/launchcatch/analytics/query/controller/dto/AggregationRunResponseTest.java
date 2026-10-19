@@ -15,7 +15,7 @@ class AggregationRunResponseTest {
     void 시작과_종료_시각에_KST_오프셋을_붙인다() {
         BatchExecutionRecord record = new BatchExecutionRecord(301L, "DAILY_AGGREGATION", DATE, "SUCCESS",
                 LocalDateTime.of(2026, 10, 1, 1, 0, 0), LocalDateTime.of(2026, 10, 1, 1, 5, 0),
-                5, "batch-02", 0, null);
+                5, "batch-02", 0, null, 1);
 
         AggregationRunResponse response = AggregationRunResponse.from(record);
 
@@ -26,7 +26,7 @@ class AggregationRunResponseTest {
     @Test
     void 실행_중이면_종료_시각은_null이다() {
         BatchExecutionRecord record = new BatchExecutionRecord(301L, "DAILY_AGGREGATION", DATE, "RUNNING",
-                LocalDateTime.of(2026, 10, 1, 1, 0, 0), null, null, "batch-02", 0, null);
+                LocalDateTime.of(2026, 10, 1, 1, 0, 0), null, null, "batch-02", 0, null, 1);
 
         AggregationRunResponse response = AggregationRunResponse.from(record);
 
