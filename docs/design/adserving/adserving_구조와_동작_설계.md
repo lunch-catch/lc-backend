@@ -81,8 +81,10 @@ adserving/
     └── repository/FeedFilterCategoryRepository.java
 wishlist/
     ├── controller/WishlistController.java
-    ├── service/WishlistService.java                 조회, 가게 상세 찜, 찜 삭제. WishlistQueryService 구현 포함
-    ├── repository/WishlistRepository.java           쓰기는 INSERT IGNORE
+    ├── service/WishlistService.java                 조회, 가게 상세 찜, 찜 삭제, 종료 표시와 정리. WishlistQueryService 구현 포함
+    ├── listener/CampaignEndedListener.java          캠페인 종료를 받아 찜을 종료로 표시한다
+    ├── job/EndedWishlistCleanupJob.java             00:00 묶음 80. 끝난 날을 빼고 3일이 지난 찜을 지운다
+    ├── repository/WishlistRepository.java           넣기는 INSERT IGNORE, 종료 표시와 정리는 벌크 UPDATE 와 DELETE
     └── entity/Wishlist.java
 impression/
     ├── controller/ImpressionController.java
@@ -135,12 +137,13 @@ impression/
 | 필터 업종 | `feed_filter_category` 를 PK(`member_id`, `category_code`)로 읽고 업종 코드 오름차순으로 돌려준다(#405). 순서 컬럼이 없어 고른 순서는 남지 않는다 |
 | 필터 저장 | `feed_filter` 는 `INSERT ... ON DUPLICATE KEY UPDATE` 로 정렬을 넣거나 바꾸고, `feed_filter_category` 는 그 회원의 행을 지우고 다시 넣는다. 같은 업종이 두 번 오면 하나만 넣는다(#411 에서 임시로 정했다) |
 | 다른 도메인 데이터의 사본 | `ad_candidate` 는 00:00 의 캠페인과 가게 사본이다. 그날 안에서는 캠페인과 쿠폰의 통보로만 바뀐다 |
-| 쿠폰의 찜 조회 | `uk_wishlist_member_campaign`(`member_id`, `campaign_id`)으로 단건은 있는지만 보고, 목록은 앞 열로 그 회원의 `campaign_id` 만 읽는다. 순서는 정하지 않는다(#163) |
+| 쿠폰의 찜 조회 | `uk_wishlist_member_campaign`(`member_id`, `campaign_id`)으로 단건은 있는지만 보고, 목록은 앞 열로 그 회원의 `campaign_id` 만 읽는다. 둘 다 `campaign_ended_at IS NULL` 인 행만 유효로 본다. 순서는 정하지 않는다(#163, #553) |
+| 끝난 캠페인의 찜 | 종료 표시는 `idx_wishlist_campaign` 으로 그 캠페인의 행 중 `campaign_ended_at` 이 비어 있는 것만 채운다. 정리는 `idx_wishlist_campaign_ended` 로 기준 시각 전에 끝난 행을 지운다(#553) |
 | 소진 반영 | `ad_candidate` 의 PK(`business_date`, `campaign_id`)로 `sold_out_at IS NULL` 인 행만 바꾼다. 받은 소진 시각을 그대로 쓰고 부른 시각은 `updated_at` 에만 쓴다. 0행이면 PK 로 후보가 있는지 한 번 더 본다(#163) |
 | 집계를 세는 방식 | 그날 유효 노출 수는 `impression_log` 를 세지 않고 카운터를 읽는다. 틀리면 `impression_log` 에서 다시 센다. 분석의 집계 조회는 카운터를 읽지 않고 아래 "집계 조회의 귀속" 대로 원본을 센다 |
 | 집계 조회 | 노출은 `idx_imp_date_reason` 의 앞 열로 그날 행만 읽어 캠페인별로 한 번 훑는다. 판정, 사유, 슬롯을 같은 행들에서 세어 축끼리의 합이 맞는다. 시간대는 24칸이라 캠페인과 시로 묶는 쿼리를 따로 두고, 한 읽기 전용 트랜잭션에서 불러 같은 스냅샷을 본다(#498). 회원별 무효 노출은 그 인덱스의 두 열을 탄다. 찜은 `idx_swipe_date` 로 그날 `WISH` 만 센다. 두 테이블을 조인하지 않고 서비스가 캠페인 ID 로 합친다 |
 | DB 제약으로 막을 것과 코드로 막을 것 | 같은 카드가 `serve_log` 에 두 번 들어가는 것은 PK(`serve_id`)와 `INSERT IGNORE` 로, 같은 날 두 번째 접속 위치는 PK(`business_date`, `member_id`)와 `INSERT IGNORE` 로 막는다. 같은 노출의 두 번째 저장은 `impression_log` 의 PK(`serve_id`, `member_id`)와 `INSERT IGNORE` 로, 같은 카드의 두 번째 스와이프는 `swipe_log` 의 같은 PK 로, 같은 캠페인의 두 번째 찜은 `uk_wishlist_member_campaign` 으로 막는다. 노출은 넣은 행 수로 처음 저장인지 가른다. 먼저 읽어 보는 것은 다시 온 요청을 빨리 돌려보내려는 것이고 동시 요청은 PK 가 막는다 |
-| 이력 | 해당 없음. 그날 후보의 `sold_out_at` 은 한 번만 채워지고 다시 바뀌지 않는다. `serve_log`, `feed_visit_daily`, `impression_log`, `swipe_log` 는 쌓기만 하고 고치지 않는다. `wishlist` 는 지울 때 행을 지운다 |
+| 이력 | 해당 없음. 그날 후보의 `sold_out_at` 은 한 번만 채워지고 다시 바뀌지 않는다. `serve_log`, `feed_visit_daily`, `impression_log`, `swipe_log` 는 쌓기만 하고 고치지 않는다. `wishlist` 는 지울 때 행을 지우고, 캠페인이 끝나면 `campaign_ended_at` 을 한 번만 채운 뒤 3일 뒤 지운다 |
 
 | 데이터 | 키 | 만료 | 원본 | 읽는 곳 |
 |---|---|---|---|---|
@@ -250,6 +253,7 @@ A 를 고른다. 가게 상세 찜을 리포트에 넣어야 하면 그 찜을 �
 | 읽기 | member | `MemberQueryService.findById` | 피드 요청마다 1번 |
 | 읽기 | billing | `BudgetQueryService.getProgress` | 피드 요청마다 1번. 후보가 5000개를 넘으면 나눠 부른다 |
 | 쓰기 | billing | `PointDeductor.deduct` | 처음 저장된 유효 노출마다 1번. 노출 저장과 같은 트랜잭션이다. 쿠폰 소진 뒤의 노출은 부르지 않는다 |
+| 받기 | campaign | `CampaignEndedEvent` | 캠페인이 끝날 때 1번. 발행자와 같은 트랜잭션에서 그 캠페인의 찜을 종료로 표시한다(아키텍처 설계 2.4, #553) |
 | 공개 | analytics 가 부른다 | `AdservingStatsQueryService` | 분석의 일별 집계 배치가 영업일마다 부른다. 읽기 전용 트랜잭션에서 묶은 건수만 돌려준다. 귀속은 3장 "집계 조회의 귀속" 을 따른다 |
 
 - `getProgress` 에는 그날 사각 범위의 후보 전부를 넘긴다. 그 계약은 당일 카운터만 읽어 서빙 경로에서 불러도 된다고 적었다.
@@ -304,6 +308,8 @@ flowchart LR
 
         subgraph wishlist["wishlist/ (찜 목록)"]
             WC[WishlistController] --> WS[WishlistService]
+            WL[CampaignEndedListener] --> WS
+            WJ[EndedWishlistCleanupJob] --> WS
             WS --> WR[(WishlistRepository)]
         end
 
@@ -484,6 +490,8 @@ sequenceDiagram
 | 찜 삭제 | 찜 행 지우기 하나(저장소 메서드의 트랜잭션) | 당일 이력(Valkey) |
 | 필터 저장 | `feed_filter` 의 넣기 또는 바꾸기, `feed_filter_category` 의 지우기와 다시 넣기, 저장한 필터 다시 읽기 | 없음 |
 | 쿠폰의 찜 조회 | 없다. 읽기 하나가 혼자 끝난다 | 없음 |
+| 캠페인 종료 | campaign 의 종료 트랜잭션에 참여해 찜의 종료 표시 UPDATE 를 한다. 표시가 실패하면 종료도 되돌아간다 | 없음 |
+| 끝난 찜 정리 | 기준 시각 전에 끝난 찜을 지우는 DELETE 하나(저장소 메서드의 트랜잭션) | 없음 |
 | 쿠폰의 소진 반영 | `ad_candidate` 갱신과 0행일 때의 후보 확인. 쿠폰 발급이 커밋된 뒤 트랜잭션 밖에서 불려 발급과 묶이지 않는다(#163) | 없음 |
 
 **결정: 서빙 로그와 접속 위치를 무엇으로 미루나** (#315 에서 정했다)
@@ -574,7 +582,12 @@ A 를 고른다. 분석의 결정과 어긋났을 때 B 는 노출 이벤트를 
 
 ## 10. 배치
 
-아직 훑지 않았다. `ad_candidate` 를 만드는 00:00 적재 작업이 이 도메인의 것이다.
+| 작업 | 순서 | 하는 일 | 다시 불리면 |
+|---|---|---|---|
+| `ADSERVING_ENDED_WISHLIST_CLEANUP` | 00:00 묶음 80 | 영업일 D 에 D-3 00:00 전에 끝난 캠페인의 찜을 지운다. 끝난 날을 빼고 3일 동안 보이게 하려는 것이다(#548) | 지울 행이 없어 결과가 같다 |
+
+- 정리는 다른 단계의 결과를 읽지도 바꾸지도 않아 정산 단계(40~70) 뒤에 둔다. 앞 단계가 실패하면 정리가 하루 미뤄질 뿐이다(#553).
+- `ad_candidate` 를 만드는 00:00 적재 작업은 아직 훑지 않았다. 이 도메인의 것이고 정산의 예약 뒤에 돌아야 한다(5장).
 
 ## 11. 성능
 
@@ -654,6 +667,10 @@ A 를 고른다. 분석의 결정과 어긋났을 때 B 는 노출 이벤트를 
 | 찜을 지움 | 나와 다른 회원이 같은 캠페인을 찜했다 | 내 찜을 지운다 | `204` 이고 내 그 찜만 지워지며 당일 이력에 들어간다 | `WishlistIntegrationTest.찜을_지우면_204_이고_내_그_찜만_사라지며_그날_당일_이력에_들어간다` |
 | 찜하지 않은 캠페인을 지움 | 그 캠페인을 찜하지 않았다 | 지운다 | `204` 이고 당일 이력에 들어간다(#547) | `WishlistIntegrationTest.찜하지_않은_캠페인을_지워도_204_이고_그날_당일_이력에_들어간다` |
 | 찜 삭제가 실패함 | 행 지우기가 실패한다 | 지운다 | 당일 이력에 넣지 않는다 | `WishlistServiceTest.찜을_지우지_못하면_당일_이력에_넣지_않는다` |
+| 캠페인이 끝남 | 두 회원이 그 캠페인을, 한 회원이 다른 캠페인을 찜했다 | 종료 이벤트가 온다 | 그 캠페인의 찜만 종료로 표시되고 쿠폰의 찜 조회에서 빠지며 목록에는 `campaignEnded: true` 로 남는다 | `WishlistCampaignEndedIntegrationTest.캠페인이_끝나면_그_캠페인의_찜만_종료로_표시되고_쿠폰의_찜_조회에서_빠진다` |
+| 같은 종료 이벤트가 다시 옴 | 이미 종료로 표시됐다 | 더 늦은 시각으로 다시 온다 | 처음 종료 시각이 남는다 | `WishlistCampaignEndedIntegrationTest.같은_종료_이벤트가_다시_와도_처음_종료_시각이_남는다` |
+| 캠페인 종료가 되돌아감 | 종료 트랜잭션이 실패한다 | 종료 이벤트를 받은 뒤 되돌아간다 | 종료 표시도 남지 않는다 | `WishlistCampaignEndedIntegrationTest.캠페인_종료가_되돌아가면_종료_표시도_되돌아간다` |
+| 끝난 찜 정리 | 10/1 23:59, 10/2 00:00 에 끝난 찜과 진행 중인 찜이 있다 | 10/5 정리 단계가 돈다 | 10/1 에 끝난 찜만 지워진다 | `WishlistCampaignEndedIntegrationTest.정리_단계는_끝난_날을_빼고_3일이_지난_찜만_지운다` |
 | 쿠폰이 찜을 물음 | 한 회원이 두 캠페인을, 다른 회원이 한 캠페인을 찜했다 | 단건과 목록을 조회한다 | 둘이 같은 찜을 유효하다고 본다 | `WishlistQueryIntegrationTest.단건_조회와_목록_조회가_같은_찜을_유효하다고_본다` |
 | 찜을 지운 뒤 쿠폰이 물음 | 찜 행을 지웠다 | 단건과 목록을 조회한다 | 둘 모두에서 빠진다 | `WishlistQueryIntegrationTest.찜을_지우면_두_조회_모두에서_빠진다` |
 | 소진 통보 | 같은 캠페인의 오늘과 내일 후보, 다른 캠페인의 오늘 후보가 있다 | 오늘로 소진을 통보한다 | 오늘 그 캠페인 후보에만 받은 시각이 들어간다 | `CandidateSoldOutIntegrationTest.받은_영업일의_그_캠페인_후보에만_받은_소진_시각을_쓴다` |
@@ -671,7 +688,6 @@ A 를 고른다. 분석의 결정과 어긋났을 때 B 는 노출 이벤트를 
 | 탐색 반경을 넓히는 기준 | 10장 미만으로 임시로 정했다 | 없다. 기준이 정해지면 `FeedAssembler` 한 곳을 바꾼다 |
 | 서빙 로그 대기열의 크기와 묶음 수 | 5,000건과 50건으로 임시로 정했다 | 없다. 부하 시험 뒤 `ServeLogBuffer` 의 두 값을 바꾼다 |
 | 세션을 늘리는 활동 | 피드 요청으로만 임시로 정했다 | 스와이프와 노출 요청도 세션을 늘릴지 정해야 한다. 두 API 모두 아직 늘리지 않는다 |
-| 끝난 캠페인의 찜 | 그날 후보에 행이 있으면 받아 끝난 캠페인도 찜에 들어간다(#379). 끝나면 지우지 않고 종료로 표시해 3일 동안 보인다(#548 명세) | `CampaignEndedEvent` 를 받아 종료로 표시하는 쪽과 3일이 지난 찜을 지우는 일일 작업이 아직 없다. 그동안 쿠폰의 찜 조회도 끝난 캠페인의 찜을 유효로 본다(#163). 발급은 쿠폰이 이벤트 상태를 먼저 봐서 막힌다 |
 | 그날 후보를 만드는 00:00 적재 | 작업이 없다. `ad_candidate` 는 시드만 쓴다. 만들 때 정산의 예약(00:00 묶음 50) 뒤에 둔다(5장) | 운영에서 소진 반영이 늘 0행이다(#163). 가게 정보를 읽는 #161 이 먼저다. 적재가 끝나기 전의 피드는 `NO_CANDIDATE` 다(#498) |
 | 가게 상세 찜의 퍼널 기록 | 스와이프 찜만 `SwipedEvent` 로 분석에 간다(#349 에서 정했다) | 가게 상세에서 찜한 것은 퍼널의 `wish` 에 잡히지 않는다. 분석이 원하면 이벤트를 더한다 |
 | 퍼널 이벤트의 수신자 | 분석 리스너가 아직 없다 | 수신자가 `fallbackExecution` 을 빠뜨리면 스와이프 이벤트가 오류 없이 사라진다. 조건은 `feed-api-design.md` 에 있다 |

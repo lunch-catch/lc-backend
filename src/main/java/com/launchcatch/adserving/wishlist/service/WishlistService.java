@@ -14,6 +14,7 @@ import com.launchcatch.global.config.ClockConfig;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -29,6 +30,9 @@ import org.springframework.stereotype.Service;
 @Service
 @RequiredArgsConstructor
 public class WishlistService implements WishlistQueryService {
+
+    // 끝난 찜을 끝난 날을 빼고 보여 주는 날 수다(#548)
+    static final int ENDED_VISIBLE_DAYS = 3;
 
     private final WishlistRepository wishlistRepository;
     private final AdCandidateRepository adCandidateRepository;
@@ -84,14 +88,27 @@ public class WishlistService implements WishlistQueryService {
         exclusionRepository.add(LocalDate.ofInstant(now, ClockConfig.ZONE), memberId, campaignId, now);
     }
 
-    // 두 조회 모두 찜 행이 있는지만 본다. 찜을 지우거나 캠페인이 끝나면 행이 지워진다(#163)
+    // 캠페인이 끝나면 그 캠페인의 찜을 지우지 않고 종료로 표시한다. 사용자가 끝난 것을 알 수 있게 3일 동안 남긴다(#548)
+    public void endCampaign(Long campaignId, LocalDateTime endedAt) {
+        wishlistRepository.markCampaignEnded(campaignId, endedAt, LocalDateTime.now(clock));
+    }
+
+    /*
+     * 끝난 날을 빼고 3일이 지난 찜을 지운다. 00:00 작업이 그 영업일로 부른다(#548).
+     * 영업일 D 의 작업은 D-3 00:00 전에 끝난 찜을 지운다. 10/5 작업이면 10/1 까지 끝난 찜이고, 10/2 에 끝난 찜은 10/5 까지 보인다.
+     */
+    public void deleteExpiredEndedWishes(LocalDate businessDate) {
+        wishlistRepository.deleteByCampaignEndedAtBefore(businessDate.minusDays(ENDED_VISIBLE_DAYS).atStartOfDay());
+    }
+
+    // 두 조회 모두 찜 행이 있고 캠페인이 끝나지 않은 것을 유효로 본다. 찜을 지우면 행이 지워지고 캠페인이 끝나면 종료로 표시된다(#163, #548)
     @Override
     public boolean isWished(Long memberId, Long campaignId) {
-        return wishlistRepository.existsByMemberIdAndCampaignId(memberId, campaignId);
+        return wishlistRepository.existsByMemberIdAndCampaignIdAndCampaignEndedAtIsNull(memberId, campaignId);
     }
 
     @Override
     public List<Long> findWishedCampaignIds(Long memberId) {
-        return wishlistRepository.findCampaignIdsByMemberId(memberId);
+        return wishlistRepository.findActiveCampaignIdsByMemberId(memberId);
     }
 }
