@@ -7,8 +7,11 @@ import com.launchcatch.IntegrationTestSupport;
 import com.launchcatch.ops.entity.BatchExecutionLog;
 import com.launchcatch.ops.entity.BatchStatus;
 import com.launchcatch.ops.repository.BatchExecutionLogRepository;
+import com.launchcatch.ops.scheduler.BatchAlert;
+import com.launchcatch.ops.scheduler.BatchServerId;
 import com.launchcatch.ops.scheduler.StepOutcome;
 import com.launchcatch.ops.service.BatchExecutionService;
+import java.time.Clock;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -47,6 +50,12 @@ class BatchExecutionIntegrationTest extends AbstractOpsIntegrationTest {
     private BatchExecutionLogRepository logs;
 
     @Autowired
+    private BatchAlert alert;
+
+    @Autowired
+    private Clock clock;
+
+    @Autowired
     private DataSource dataSource;
 
     private JdbcTemplate jdbc;
@@ -77,17 +86,28 @@ class BatchExecutionIntegrationTest extends AbstractOpsIntegrationTest {
                 + " WHERE job_name = ?", newOwner, jobName);
     }
 
-    /** 두 서버가 같은 순간에 점유를 시도한 결과를 모은다. */
+    /*
+     * 서로 다른 소유자를 가진 두 서버가 같은 순간에 점유를 시도한 결과를 모은다.
+     *
+     * 점유는 upsert 뒤 그 행의 owner_id 가 나인지로 가른다(#526). 두 시도가 같은 ownerId를
+     * 쓰면 승자의 행도 결국 그 ownerId라 둘 다 자기 것으로 읽혀 "정확히 하나만 이긴다" 를
+     * 검증할 수 없다. 그래서 서버마다 다른 BatchExecutionService 인스턴스로 경합을 만든다.
+     */
     private List<Boolean> claimTogether() throws Exception {
+        BatchExecutionService asOther = new BatchExecutionService(logs, alert, clock, new BatchServerId(OTHER));
         ExecutorService pool = Executors.newFixedThreadPool(2);
         try {
             CountDownLatch gate = new CountDownLatch(1);
-            Callable<Boolean> attempt = () -> {
+            Callable<Boolean> asMe = () -> {
                 gate.await();
                 return service.claim(JOB, DATE);
             };
-            Future<Boolean> left = pool.submit(attempt);
-            Future<Boolean> right = pool.submit(attempt);
+            Callable<Boolean> asOtherServer = () -> {
+                gate.await();
+                return asOther.claim(JOB, DATE);
+            };
+            Future<Boolean> left = pool.submit(asMe);
+            Future<Boolean> right = pool.submit(asOtherServer);
             gate.countDown();
             return List.of(left.get(20, TimeUnit.SECONDS), right.get(20, TimeUnit.SECONDS));
         } finally {
@@ -98,9 +118,9 @@ class BatchExecutionIntegrationTest extends AbstractOpsIntegrationTest {
     /*
      * 두 서버가 같은 시각에 시도하는 것이 정상 운영이다.
      *
-     * 유일 제약이 둘 중 하나를 떨어뜨린다. 경합 상황에서 InnoDB 가 중복 키 대신 락 대기
-     * 시간 초과나 교착을 낼 수 있는데, claim 이 그 경우도 한 번 더 시도해 깨끗하게 가른다.
-     * 순차 시도로는 이 구간을 지나가지 않는다.
+     * 상대의 커밋을 기다리는 구간에서 InnoDB 가 락 대기 시간 초과나 교착을 낼 수 있는데,
+     * claim 이 그 경우도 한 번 더 시도해 깨끗하게 가른다. 순차 시도로는 이 구간을 지나가지
+     * 않는다.
      */
     @Test
     @DisplayName("동시에 점유를 시도하면 정확히 하나만 이긴다")
