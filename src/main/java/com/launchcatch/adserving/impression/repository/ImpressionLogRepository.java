@@ -11,9 +11,9 @@ import org.springframework.data.repository.query.Param;
 public interface ImpressionLogRepository extends JpaRepository<ImpressionLog, ImpressionLogId>, ImpressionLogInsert {
 
     /*
-     * 하루 노출을 캠페인별로 한 번 훑어 판정, 사유, 시간대, 슬롯을 함께 센다. 같은 행들에서 세어 축끼리의 합이 맞는다.
-     * 시간대는 받은 시각(created_at)의 시다. 서빙이 10:00~12:59 이고 받은 시각이 내려준 시각보다 늦어 13시만 12시로 붙이면 된다.
-     * created_at 은 엔티티에 매핑하지 않아 네이티브 쿼리로 쓴다. idx_imp_date_reason 의 앞 열로 그날 행만 읽는다.
+     * 하루 노출을 캠페인별로 한 번 훑어 판정, 사유, 슬롯을 함께 센다. 같은 행들에서 세어 축끼리의 합이 맞는다.
+     * 시간대는 24칸이라 countValidByCampaignAndHourOn 이 따로 센다. 집계 조회가 한 읽기 전용 트랜잭션에서 둘을 불러 같은 스냅샷을 본다.
+     * idx_imp_date_reason 의 앞 열로 그날 행만 읽는다.
      */
     @Query(value = """
             SELECT campaign_id AS campaignId,
@@ -21,9 +21,6 @@ public interface ImpressionLogRepository extends JpaRepository<ImpressionLog, Im
                    SUM(CASE WHEN validity = 'VALID' AND sold_out THEN 1 ELSE 0 END) AS soldOutCount,
                    SUM(CASE WHEN invalid_reason = 'EXPIRED_OR_UNKNOWN' THEN 1 ELSE 0 END) AS expiredOrUnknownCount,
                    SUM(CASE WHEN invalid_reason = 'NOT_OWNER' THEN 1 ELSE 0 END) AS notOwnerCount,
-                   SUM(CASE WHEN validity = 'VALID' AND HOUR(created_at) <= 10 THEN 1 ELSE 0 END) AS hour10Count,
-                   SUM(CASE WHEN validity = 'VALID' AND HOUR(created_at) = 11 THEN 1 ELSE 0 END) AS hour11Count,
-                   SUM(CASE WHEN validity = 'VALID' AND HOUR(created_at) >= 12 THEN 1 ELSE 0 END) AS hour12Count,
                    SUM(CASE WHEN validity = 'VALID' AND slot_type = 'ALLOCATION' THEN 1 ELSE 0 END) AS allocationCount,
                    SUM(CASE WHEN validity = 'VALID' AND slot_type = 'RELEVANCE' THEN 1 ELSE 0 END) AS relevanceCount
               FROM impression_log
@@ -32,6 +29,21 @@ public interface ImpressionLogRepository extends JpaRepository<ImpressionLog, Im
              ORDER BY campaign_id
             """, nativeQuery = true)
     List<CampaignCounts> countByCampaignOn(@Param("businessDate") LocalDate businessDate);
+
+    /*
+     * 그날 유효 노출을 캠페인과 받은 시각(created_at)의 시로 묶어 센다. 노출이 없는 시는 행이 없다.
+     * created_at 은 엔티티에 매핑하지 않아 네이티브 쿼리로 쓴다.
+     */
+    @Query(value = """
+            SELECT campaign_id AS campaignId,
+                   HOUR(created_at) AS hour,
+                   COUNT(*) AS validCount
+              FROM impression_log
+             WHERE business_date = :businessDate
+               AND validity = 'VALID'
+             GROUP BY campaign_id, HOUR(created_at)
+            """, nativeQuery = true)
+    List<HourlyCounts> countValidByCampaignAndHourOn(@Param("businessDate") LocalDate businessDate);
 
     // idx_imp_date_reason 의 두 열로 그날 무효 노출만 읽는다.
     @Query(value = """
@@ -76,11 +88,14 @@ public interface ImpressionLogRepository extends JpaRepository<ImpressionLog, Im
         long getSoldOutCount();
         long getExpiredOrUnknownCount();
         long getNotOwnerCount();
-        long getHour10Count();
-        long getHour11Count();
-        long getHour12Count();
         long getAllocationCount();
         long getRelevanceCount();
+    }
+
+    interface HourlyCounts {
+        long getCampaignId();
+        int getHour();
+        long getValidCount();
     }
 
     interface MemberInvalidCounts {
