@@ -182,6 +182,54 @@ sequenceDiagram
 
 같은 날짜의 정기 실행과 수동 재집계는 ops 실행 기록으로 하나만 점유한다. 같은 이벤트가 다시 오면 `event_id` UNIQUE로 한 건만 남긴다. 영업일은 `Asia/Seoul`로 계산한다.
 
+### 퍼널 이벤트 수신과 비동기 기록
+
+광고 서빙과 쿠폰이 발행한 이벤트 6종은 `FunnelEventListener`가 받는다. 리스너는 이벤트를 `EventRecord`로 바꿔 `FunnelEventRecorder`에 넘기고, 기록기는 자기가 가진 실행기(이하 이벤트 기록 실행기)에 기록 작업을 맡긴다. 실행기는 별도 스레드에서 `EventLogWriter`를 불러 `event_log`에 쓴다.
+
+```mermaid
+sequenceDiagram
+    participant S as 발행하는 서비스
+    participant L as FunnelEventListener
+    participant R as FunnelEventRecorder
+    participant E as 이벤트 기록 실행기
+    participant W as EventLogWriter
+    S->>S: 업무 트랜잭션 커밋
+    S-->>L: 이벤트 전달(커밋 뒤)
+    L->>R: record(EventRecord)
+    R->>E: execute(기록 작업)
+    R-->>L: 바로 반환
+    E->>W: write(EventRecord)
+    W->>W: event_log 저장(별도 트랜잭션)
+```
+
+**수신 조건.** 수신 메서드 여섯 모두 `@TransactionalEventListener(phase = AFTER_COMMIT, fallbackExecution = true)`다. 커밋 뒤에만 받는 이유와 `fallbackExecution`을 켜는 이유는 [analytics 장애 처리 설계](./analytics_장애_처리_설계.md)의 "롤백 안 되는 효과: 퍼널 이벤트 기록"에 있다.
+
+**실행기를 맡기는 이유.** 이벤트 수신은 기본이 동기라서 리스너가 발행한 쪽 스레드에서 돈다. 동기로 두면 두 가지가 발행한 쪽으로 번진다. 분석 DB 쓰기 시간이 노출과 발급 요청의 응답 시간에 들어가고, 기록 중 난 예외가 이미 커밋된 요청을 `500`으로 만든다. 실행기에 맡기면 호출한 쪽은 기다리지 않고 기록 예외는 다른 스레드에서 난다.
+
+**기록기가 하는 일.**
+
+| 일 | 방법 | 지표 `result` |
+|---|---|---|
+| 작업 맡기기 | `executor.execute`로 기록 작업을 던지고 바로 반환한다 | |
+| 대기열이 가득 참 | 실행기가 거절하면 그 이벤트를 버리고 예외를 삼킨다 | `rejected` |
+| 기록 성공 | `EventLogWriter.write`가 새 행을 저장한다 | `recorded` |
+| 이미 있는 이벤트 | `event_id` UNIQUE가 중복으로 분류한 건수를 센다 | `duplicate` |
+| 기록 실패 | 예외를 삼키고 경고 로그를 남긴다 | `failed` |
+
+지표 이름은 `analytics_funnel_event_total`이다. 라벨은 `result` 하나이고 회원이나 캠페인 id를 넣지 않는다. 버린 건수가 유실률을 재는 근거다.
+
+**이벤트 기록 실행기의 값.** 스레드 2개, 대기열 1000건, 가득 차면 거절(`AbortPolicy`)이다. 근거 없이 정한 예시값이라 측정한 뒤 확정한다. 스레드는 데몬이고 종료할 때 새 작업 받기를 멈춘다. 이미 대기열에 들어간 작업은 서버 종료 때 유실될 수 있다.
+
+**`@Async`를 쓰지 않는 이유.** 이 실행기를 스프링 빈으로 노출하지 않고 기록기가 직접 든다. `Executor` 타입 빈이 하나라도 있으면 부트가 기본 작업 실행기(`applicationTaskExecutor`)를 만들지 않는다. 그러면 실행기를 지정하지 않은 `@Async`와 스프링 MVC의 비동기 요청 처리가 이 실행기로 간다. 이 실행기는 가득 차면 작업을 버리므로 성격이 다른 작업이 섞이면 조용히 사라지거나 서로를 막는다. 지금은 `@Async`를 쓰는 곳이 없어 영향이 없고, 이 규칙은 앞으로 생길 코드를 막는 예방이다. 같은 이유로 `AggregationRecalculationService`도 자기 실행기를 직접 든다.
+
+**`@Async`로 바꾸는 조건.** 아키텍처 설계 2.4는 이 경로를 "`@Async` + `AFTER_COMMIT`"로 적는다. 구현은 `@Async` 없이 같은 효과를 낸다. 이 서비스 밖에서도 `@Async`를 쓰기 시작하면 아래 셋을 함께 바꾼다.
+
+| 바꾸는 것 | 이유 |
+|---|---|
+| 이벤트 기록 실행기를 이름 있는 `Executor` 빈으로 등록하고 `@Async("이름")`으로 지정한다 | 퍼널 이벤트만 이 실행기를 쓰게 한다 |
+| 기본 작업 실행기를 직접 등록한다 | 이름 없는 `@Async`와 MVC 비동기가 갈 곳을 둔다 |
+| `@EnableAsync`를 켠다 | `@Async`가 동작하려면 필요하다 |
+
 ## 8. 외부 API
 
 해당 없음. analytics는 외부 HTTP API를 호출하지 않는다. 다른 도메인은 같은 애플리케이션의 contract로 호출한다.
