@@ -124,7 +124,7 @@ public class Campaign extends BaseTimeEntity {
             Long dailyBudget, LocalDate startDate, LocalDate endDate,
             LocalDateTime now) {
         requireDiscountTarget(discountTargetType, targetMenuId);
-        requireDiscountValue(discountType, discountValue);
+        requireDiscountValue(discountTargetType, discountType, discountValue);
         requirePeriod(startDate, endDate);
         requireUsableTime(usableStartTime, usableEndTime);
         requireQuantity(issueQuantity);
@@ -181,7 +181,7 @@ public class Campaign extends BaseTimeEntity {
             throw new IllegalStateException("only DRAFT campaign can update coupon condition: " + this.status);
         }
         requireDiscountTarget(discountTargetType, targetMenuId);
-        requireDiscountValue(discountType, discountValue);
+        requireDiscountValue(discountTargetType, discountType, discountValue);
         requireUsableTime(usableStartTime, usableEndTime);
         requireQuantity(issueQuantity);
         this.discountTargetType = discountTargetType;
@@ -303,11 +303,18 @@ public class Campaign extends BaseTimeEntity {
         }
     }
 
-    private static void requireDiscountValue(DiscountType discountType, int discountValue) {
+    /*
+     * discountTargetType이 ALL(전체 메뉴)이면 discountType은 AMOUNT(정액)만 허용한다(#431,
+     * 팀 논의로 바뀐 사양). MENU(특정 메뉴)는 PERCENT/AMOUNT 둘 다 그대로 허용한다.
+     */
+    private static void requireDiscountValue(
+            DiscountTargetType discountTargetType, DiscountType discountType, int discountValue) {
         boolean positive = discountValue > 0;
         boolean withinPercent = discountType != DiscountType.PERCENT || discountValue <= 100;
-        if (!positive || !withinPercent) {
-            throw new IllegalArgumentException("discountValue is invalid for " + discountType + ": " + discountValue);
+        boolean allowedForAll = discountTargetType != DiscountTargetType.ALL || discountType == DiscountType.AMOUNT;
+        if (!positive || !withinPercent || !allowedForAll) {
+            throw new IllegalArgumentException("discountValue is invalid for " + discountTargetType + "/"
+                    + discountType + ": " + discountValue);
         }
     }
 

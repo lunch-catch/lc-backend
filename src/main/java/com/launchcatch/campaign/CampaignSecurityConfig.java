@@ -1,11 +1,17 @@
 package com.launchcatch.campaign;
 
 import com.launchcatch.auth.ApiSecurityDefaults;
+import java.util.Arrays;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.annotation.Order;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.servlet.util.matcher.PathPatternRequestMatcher;
+import org.springframework.security.web.util.matcher.AndRequestMatcher;
+import org.springframework.security.web.util.matcher.NegatedRequestMatcher;
+import org.springframework.security.web.util.matcher.OrRequestMatcher;
+import org.springframework.security.web.util.matcher.RequestMatcher;
 
 @Configuration
 public class CampaignSecurityConfig {
@@ -30,7 +36,11 @@ public class CampaignSecurityConfig {
         System.arraycopy(OWNER_PATHS, 0, paths, ADMIN_PATHS.length, OWNER_PATHS.length);
 
         return defaults.apply(http)
-                .securityMatcher(paths)
+                .securityMatcher(new AndRequestMatcher(
+                        new OrRequestMatcher(Arrays.stream(paths)
+                                .<RequestMatcher>map(PathPatternRequestMatcher::pathPattern).toList()),
+                        new NegatedRequestMatcher(PathPatternRequestMatcher.pathPattern(
+                                "/v1/owner/campaigns/*/analytics/funnel"))))
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(ADMIN_PATHS).hasAnyRole("ADMIN", "SUPER_ADMIN")
                         .requestMatchers(OWNER_PATHS).hasRole("OWNER")

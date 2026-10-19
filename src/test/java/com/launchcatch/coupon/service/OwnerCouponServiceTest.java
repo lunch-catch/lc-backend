@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -307,8 +308,26 @@ class OwnerCouponServiceTest {
         @BeforeEach
         void setUp() {
             service = new OwnerCouponService(ownerStatusQuery, campaigns, couponEventRepository, memberCouponRepository,
-                    repository, mock(MemberQueryService.class), mock(StoreQueryService.class), clock, eventPublisher);
+                    repository, mock(MemberQueryService.class), stores, clock, eventPublisher);
+            lenient().when(stores.canManageStore(17L, 10L)).thenReturn(true);
             when(ownerStatusQuery.findCurrentStatus(17L)).thenReturn(Optional.of(OwnerAccountStatus.ACTIVE));
+        }
+
+        @Test
+        void 현재_관리할_수_없는_매장은_이력을_읽지_않고_거절한다() {
+            when(stores.canManageStore(17L, 10L)).thenReturn(false);
+            assertThatThrownBy(() -> service.getUsages(17L, 10L, FROM, TO, 20, null))
+                    .isInstanceOfSatisfying(CouponException.class,
+                            error -> assertThat(error.getErrorCode()).isEqualTo(AuthErrorCode.ROLE_NOT_ALLOWED));
+            verifyNoInteractions(repository);
+        }
+
+        @Test
+        void 매장_관리_권한_조회_장애를_권한_없음으로_바꾸지_않는다() {
+            var failure = new DataAccessResourceFailureException("store unavailable");
+            when(stores.canManageStore(17L, 10L)).thenThrow(failure);
+            assertThatThrownBy(() -> service.getUsages(17L, 10L, FROM, TO, 20, null)).isSameAs(failure);
+            verifyNoInteractions(repository);
         }
 
         @ParameterizedTest

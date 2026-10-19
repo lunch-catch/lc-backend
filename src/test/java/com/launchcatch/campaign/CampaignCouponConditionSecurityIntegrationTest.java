@@ -56,7 +56,7 @@ class CampaignCouponConditionSecurityIntegrationTest extends AbstractCampaignInt
             {
               "storeId": %d,
               "discountTargetType": "ALL",
-              "discountType": "PERCENT",
+              "discountType": "AMOUNT",
               "discountValue": 15,
               "issueQuantity": 100,
               "usableStartTime": "11:30",
@@ -194,7 +194,7 @@ class CampaignCouponConditionSecurityIntegrationTest extends AbstractCampaignInt
     private Campaign draft(Long ownerId, long storeId) {
         return Campaign.create(
                 ownerId, storeId,
-                DiscountTargetType.ALL, DiscountType.PERCENT, 10, null,
+                DiscountTargetType.ALL, DiscountType.AMOUNT, 10, null,
                 50, LocalTime.of(12, 0), LocalTime.of(13, 30),
                 null, null,
                 1000, TargetGender.ALL, List.of(AgeGroup.AGE_20S),

@@ -6,9 +6,11 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import com.launchcatch.coupon.contract.DailyCampaignCouponStats;
+import com.launchcatch.coupon.contract.DailyMemberCouponStats;
 import com.launchcatch.coupon.contract.MemberCouponStats;
 import com.launchcatch.coupon.dto.CouponSummaryResponse;
 import com.launchcatch.coupon.repository.CouponEventRepository;
+import com.launchcatch.coupon.repository.CouponUsageHistoryRepository;
 import com.launchcatch.coupon.repository.MemberCouponRepository;
 import java.time.LocalDate;
 import java.util.List;
@@ -28,6 +30,7 @@ class CouponStatsQueryServiceImplTest {
 
     @Mock CouponEventRepository events;
     @Mock MemberCouponRepository coupons;
+    @Mock CouponUsageHistoryRepository histories;
     @InjectMocks CouponStatsQueryServiceImpl service;
 
     @Test
@@ -56,6 +59,38 @@ class CouponStatsQueryServiceImplTest {
     @Test
     void 영업일이_null이면_거절한다() {
         assertThatThrownBy(() -> service.dailyCampaignStats(null)).isInstanceOf(NullPointerException.class);
+    }
+
+    @Test
+    void 회원별_일일_집계는_영업일의_자정부터_다음_자정까지의_사용_결과를_공개한다() {
+        when(histories.findDailyMemberStats(DAY.atStartOfDay(), DAY.plusDays(1).atStartOfDay()))
+                .thenReturn(List.of(new DailyMemberCouponStats(17, 3, 3_000_000_000L),
+                        new DailyMemberCouponStats(18, 1, 0)));
+
+        assertThat(service.dailyMemberStats(DAY)).containsExactly(
+                new DailyMemberCouponStats(17, 3, 3_000_000_000L), new DailyMemberCouponStats(18, 1, 0));
+    }
+
+    @Test
+    void 회원별_일일_사용_기록이_없으면_빈_목록이다() {
+        when(histories.findDailyMemberStats(DAY.atStartOfDay(), DAY.plusDays(1).atStartOfDay()))
+                .thenReturn(List.of());
+
+        assertThat(service.dailyMemberStats(DAY)).isEmpty();
+    }
+
+    @Test
+    void 회원별_일일_집계의_영업일이_null이면_거절한다() {
+        assertThatThrownBy(() -> service.dailyMemberStats(null)).isInstanceOf(NullPointerException.class);
+    }
+
+    @Test
+    void 회원별_일일_집계의_DB_장애를_빈_목록으로_바꾸지_않는다() {
+        var failure = new DataAccessResourceFailureException("daily member stats query failed");
+        when(histories.findDailyMemberStats(DAY.atStartOfDay(), DAY.plusDays(1).atStartOfDay()))
+                .thenThrow(failure);
+
+        assertThatThrownBy(() -> service.dailyMemberStats(DAY)).isSameAs(failure);
     }
 
     @Test

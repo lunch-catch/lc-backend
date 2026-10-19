@@ -121,7 +121,11 @@ public class OwnerCouponService {
     public CursorPageResponse<CouponUsageHistoryResponse> getUsages(
             Long ownerId, Long storeId, LocalDate from, LocalDate to, int pageSize, String pageToken) {
         validateActiveOwner(ownerId);
-        // TODO: store 공개 contract가 제공되면 validate에 매장 존재 검증을 추가시킨다.
+        if (!storeQueryService.canManageStore(ownerId, storeId)) {
+            log.warn("event=COUPON_USAGE_HISTORY_FAILED ownerId={} storeId={} reason=STORE_NOT_MANAGEABLE code={}",
+                    ownerId, storeId, AuthErrorCode.ROLE_NOT_ALLOWED.getCode());
+            throw new CouponException(AuthErrorCode.ROLE_NOT_ALLOWED);
+        }
         validateDateRange(from, to);
         DateRange dateRange = parseDateRange(from, to);
         UsageCursor cursor = parsePageToken(pageToken, storeId, from, to);

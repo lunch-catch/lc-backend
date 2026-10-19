@@ -1,5 +1,6 @@
 package com.launchcatch.coupon.service;
 
+import com.launchcatch.adserving.contract.WishlistQueryService;
 import com.launchcatch.campaign.contract.CampaignInfo;
 import com.launchcatch.campaign.contract.CampaignQueryService;
 import com.launchcatch.campaign.contract.CampaignStatus;
@@ -31,6 +32,8 @@ import com.launchcatch.global.response.PageTokens;
 import com.launchcatch.member.contract.MemberInfo;
 import com.launchcatch.member.contract.MemberQueryService;
 import com.launchcatch.member.contract.MemberStatus;
+import com.launchcatch.store.contract.StoreInfo;
+import com.launchcatch.store.contract.StoreQueryService;
 import java.time.Clock;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -63,6 +66,8 @@ public class CouponLookUpService {
     private final CampaignQueryService campaignQueryService;
     private final MemberQueryService memberQueryService;
     private final Clock clock;
+    private final StoreQueryService storeQueryService;
+    private final WishlistQueryService wishlistQueryService;
 
     @Value("${coupon.daily-limit}")
     private int dailyLimit;
@@ -76,7 +81,6 @@ public class CouponLookUpService {
     /**
      * 매장별 오늘 이벤트와 조회 시점의 발급 가능 상태를 입력 순서로 반환한다.
      * 재고와 회원 발급 이력은 일괄 조회하며 쿠폰과 재고, 발급 횟수는 변경하지 않는다.
-     * 매장 존재 조회 -> 매장 이벤트 조회 -> 쿠폰 수량 조회 ->
      * @param memberId 인증된 회원 ID
      * @param storeIds 컨트롤러에서 검증한 1개 이상 100개 이하의 서로 다른 양수 매장 ID
      * @return 한국 서버 시각과 매장별 이벤트 상태
@@ -85,9 +89,14 @@ public class CouponLookUpService {
         OffsetDateTime serverTime = OffsetDateTime.now(clock.withZone(ClockConfig.ZONE));
         LocalDate businessDate = serverTime.toLocalDate();
 
-        // TODO: store의 매장 존재 조회 contract가 제공되면 없는 매장 ID를 여기서 제외한다.
+        Set<Long> existingStoreIds = storeQueryService.findAllById(storeIds).stream()
+                .map(StoreInfo::storeId).collect(Collectors.toSet());
+        List<Long> visibleStoreIds = storeIds.stream().filter(existingStoreIds::contains).toList();
+        if (visibleStoreIds.isEmpty()) {
+            return new CouponEventStatusResponse(serverTime, List.of());
+        }
         List<CouponEvent> events = couponEventRepository.findByStoreIdInAndBusinessDateAndStatusIn(
-                storeIds, businessDate, List.of(CouponEventStatus.ACTIVE, CouponEventStatus.SCHEDULED));
+                visibleStoreIds, businessDate, List.of(CouponEventStatus.ACTIVE, CouponEventStatus.SCHEDULED));
         Map<Long, CouponEvent> eventsByStore = findDuplicatedEvent(events, businessDate);
         List<Long> eventIds = events.stream().map(CouponEvent::getId).toList();
 
@@ -96,7 +105,7 @@ public class CouponLookUpService {
         Set<Long> issuedEventIds = eventIds.isEmpty() ? Set.of()
                 : Set.copyOf(memberCouponRepository.findIssuedEventIds(memberId, eventIds));
 
-        Set<Long> campaignStoreIds = campaignQueryService.findByStoreIdIn(storeIds).stream()
+        Set<Long> campaignStoreIds = campaignQueryService.findByStoreIdIn(visibleStoreIds).stream()
                 .filter(campaign -> campaign.status() == CampaignStatus.ACTIVE
                         || campaign.status() == CampaignStatus.SCHEDULED)
                 .map(CampaignInfo::storeId).collect(Collectors.toSet());
@@ -106,12 +115,11 @@ public class CouponLookUpService {
 
         boolean dailyLimitReached = findIssuedCount(memberId, businessDate) >= dailyLimit;
 
-        // TODO: #163의 WishlistQueryService가 제공되면 유효한 찜 캠페인 ID를 조회해 빈 Set을 대체한다.
-        Set<Long> wishedCampaignIds = Set.of();
+        Set<Long> wishedCampaignIds = Set.copyOf(wishlistQueryService.findWishedCampaignIds(memberId));
 
-        List<Item> items = new ArrayList<>(storeIds.size());
+        List<Item> items = new ArrayList<>(visibleStoreIds.size());
         LocalTime now = serverTime.toLocalTime();
-        for (Long storeId : storeIds) {
+        for (Long storeId : visibleStoreIds) {
             items.add(createEventStatusItem(
                     storeId,
                     eventsByStore.get(storeId),

@@ -5,7 +5,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import ch.qos.logback.classic.Level;
@@ -15,6 +17,9 @@ import ch.qos.logback.core.read.ListAppender;
 import com.launchcatch.campaign.contract.CampaignInfo;
 import com.launchcatch.campaign.contract.CampaignQueryService;
 import com.launchcatch.campaign.contract.CampaignStatus;
+import com.launchcatch.adserving.contract.WishlistQueryService;
+import com.launchcatch.store.contract.StoreQueryService;
+import com.launchcatch.store.contract.StoreInfo;
 import com.launchcatch.coupon.CouponListFilter;
 import com.launchcatch.coupon.dto.CouponDetailResponse;
 import com.launchcatch.coupon.dto.CouponEventStatusResponse.CannotIssueReason;
@@ -80,6 +85,8 @@ class CouponLookUpServiceTest {
     @Mock MemberCouponRepository memberCouponRepository;
     @Mock CouponEventRepository couponEventRepository;
     @Mock CouponUsageHistoryRepository couponUsageHistoryRepository;
+    @Mock StoreQueryService stores;
+    @Mock WishlistQueryService wishes;
     @Mock CampaignQueryService campaignQueryService;
     @Mock MemberQueryService memberQueryService;
 
@@ -162,7 +169,7 @@ class CouponLookUpServiceTest {
         void setUp() {
             service = new CouponLookUpService(
                     memberCouponRepository, couponEventRepository, couponUsageHistoryRepository, couponDailyLimitRepository, campaignQueryService, memberQueryService,
-                    Clock.fixed(Instant.parse("2026-10-10T03:00:00Z"), ZoneOffset.UTC));
+                    Clock.fixed(Instant.parse("2026-10-10T03:00:00Z"), ZoneOffset.UTC), stores, wishes);
         }
 
         @ParameterizedTest
@@ -652,7 +659,7 @@ class CouponLookUpServiceTest {
         private CouponLookUpService serviceAt(Instant instant) {
             CouponLookUpService configured = new CouponLookUpService(
                     memberCouponRepository, couponEventRepository, couponUsageHistoryRepository, couponDailyLimitRepository, campaignQueryService, memberQueryService,
-                    Clock.fixed(instant, ZoneOffset.UTC));
+                    Clock.fixed(instant, ZoneOffset.UTC), stores, wishes);
             return configured;
         }
 
@@ -713,7 +720,7 @@ class CouponLookUpServiceTest {
 
     // 지정한 시계와 일일 발급 한도를 사용하는 조회 서비스를 구성한다.
     private CouponLookUpService configuredService(Clock clock, int dailyLimit) {
-        CouponLookUpService configured = new CouponLookUpService(memberCouponRepository, couponEventRepository, couponUsageHistoryRepository, repository, campaignQueryService, memberQueryService, clock);
+        CouponLookUpService configured = new CouponLookUpService(memberCouponRepository, couponEventRepository, couponUsageHistoryRepository, repository, campaignQueryService, memberQueryService, clock, stores, wishes);
         ReflectionTestUtils.setField(configured, "dailyLimit", dailyLimit);
         ReflectionTestUtils.setField(configured, "issueStartTime", LocalTime.of(11, 0));
         ReflectionTestUtils.setField(configured, "issueEndTime", LocalTime.of(14, 0));
@@ -730,6 +737,55 @@ class CouponLookUpServiceTest {
         @BeforeEach
         void setUp() {
             service = eventServiceAt("2026-10-14T03:00:00.123456Z");
+            lenient().when(stores.findAllById(any())).thenAnswer(invocation -> {
+                List<Long> ids = invocation.getArgument(0);
+                return ids.stream().map(id -> new StoreInfo(id, "매장", null, 37.5, 127.0)).toList();
+            });
+        }
+
+        @Test
+        void 매장_조회_순서와_관계없이_존재하는_매장만_입력_순서대로_반환한다() {
+            when(stores.findAllById(List.of(30L, 999L, 10L))).thenReturn(List.of(
+                    new StoreInfo(10L, "매장1", null, 37.5, 127.0),
+                    new StoreInfo(30L, "매장3", null, 37.5, 127.0)));
+            assertThat(service.getEventStatus(17L, List.of(30L, 999L, 10L)).items())
+                    .extracting(Item::storeId).containsExactly(30L, 10L);
+        }
+
+        @Test
+        void 매장이_모두_없으면_빈_목록을_반환한다() {
+            when(stores.findAllById(List.of(999L))).thenReturn(List.of());
+            assertThat(service.getEventStatus(17L, List.of(999L)).items()).isEmpty();
+            verifyNoInteractions(couponEventRepository, wishes);
+        }
+
+        @Test
+        void 매장_조회_장애를_없는_매장으로_바꾸지_않는다() {
+            var failure = new DataAccessResourceFailureException("store unavailable");
+            when(stores.findAllById(List.of(10L))).thenThrow(failure);
+            assertThatThrownBy(() -> service.getEventStatus(17L, List.of(10L))).isSameAs(failure);
+        }
+
+        @Test
+        void 찜한_캠페인의_열린_이벤트는_발급_가능으로_안내한다() {
+            stubSingleEvent();
+            when(memberQueryService.findById(17L)).thenReturn(Optional.of(member(MemberStatus.ACTIVE)));
+            when(wishes.findWishedCampaignIds(17L)).thenReturn(List.of(999L, 501L));
+            var stock = quantity(501L, 2);
+            when(couponEventRepository.findQuantitiesByEventIdsAndStatus(List.of(501L), CouponInventoryStatus.AVAILABLE))
+                    .thenReturn(List.of(stock));
+            var item = service.getEventStatus(17L, List.of(10L)).items().getFirst();
+            assertThat(item.wished()).isTrue();
+            assertThat(item.canIssue()).isTrue();
+            assertThat(item.cannotIssueReason()).isNull();
+        }
+
+        @Test
+        void 찜_목록_조회_장애를_찜_없음으로_바꾸지_않는다() {
+            stubSingleEvent();
+            var failure = new DataAccessResourceFailureException("wishlist unavailable");
+            when(wishes.findWishedCampaignIds(17L)).thenThrow(failure);
+            assertThatThrownBy(() -> service.getEventStatus(17L, List.of(10L))).isSameAs(failure);
         }
 
         @Test
@@ -787,7 +843,7 @@ class CouponLookUpServiceTest {
         }
 
         @Test
-        void 일일_한도에_도달하면_찜_미연결보다_한도_사유를_우선한다() {
+        void 일일_한도에_도달하면_찜_미충족보다_한도_사유를_우선한다() {
             stubSingleEvent();
             when(memberQueryService.findById(17L)).thenReturn(Optional.of(member(MemberStatus.ACTIVE)));
             when(repository.findIssuedCountByMemberIdAndBusinessDate(17L, TODAY)).thenReturn(Optional.of(3));
