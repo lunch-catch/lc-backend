@@ -254,6 +254,8 @@ sequenceDiagram
 
 **부정 관리 단계 (2026-10-19, #540).** `InvalidMetricsStep`(`@Order(500)`)은 `AdservingStatsQueryService.memberInvalidCounts`의 건수를 (캠페인, 회원, 사유) 행으로 옮긴다. `NotBilledMetricsStep`(`@Order(510)`)은 정산의 예산, 중단, 예산 계획 없음 건수와 광고 서빙의 쿠폰 소진 뒤 노출을 캠페인과 사유별로 합친다. `FraudMetricsStep`(`@Order(520)`)은 캠페인 통계와 `memberConcentrations`로 유효·무효 노출, 회원 수, 상위 회원의 노출 합과 집중 의심을 캠페인마다 한 행으로 만든다. 노출이 하나도 없는 캠페인은 행이 없다. 세 표 모두 다시 집계했을 때 사라진 행이 남지 않게 그날 행을 지우고 넣는다. 임계값은 `AnalyticsFraudProperties`(`analytics.fraud.*`)이고 범위를 벗어나면 기동이 실패한다. 무효 비율은 무효 ÷ 유효이고 그 식은 `InvalidRatio` 한 곳에 있다.
 
+**이벤트 로그 보존 삭제 (2026-10-19, #555).** `EventLogRetentionJob`이 매일 04:00 KST에 `(EVENT_LOG_RETENTION, 영업일)` 행을 점유하고, `EventLogRetentionService`가 `occurred_at`이 (오늘 - 13개월) 00:00보다 이전인 `event_log` 행을 1000행씩 지운다. 삭제 선은 재집계를 허용하는 가장 오래된 영업일(`DailyAggregationRunner.oldestRetained`)과 같은 날짜라서, 재집계할 수 있는 날짜의 원본은 지워지지 않는다. 청크마다 자기 트랜잭션으로 커밋하고 청크 사이에 100ms 쉰다. `daily_member_usage`와 다른 집계 표는 지우지 않는다. 시각은 서빙 휴지 구간이 없어진 뒤로 시각 자체에 대한 의존이 없고, 01:00 집계가 끝난 뒤 이벤트 기록 쓰기와 겹치지 않는 새벽을 골랐다.
+
 ## 11. 성능
 
 배치 지표 조회 API는 미리 계산한 일별 테이블만 읽는다. 이벤트 로그 기반 캠페인 성과의 조회 방식은 [API 설계](./analytics-api-design.md#이벤트-로그-기반-캠페인-성과-509)가 소유한다. 일별 집계는 원천 행이 아니라 도메인별로 묶은 결과를 받는다. 공개 트랜잭션은 외부 호출 없이 하루 결과를 쓰는 동안만 유지한다.

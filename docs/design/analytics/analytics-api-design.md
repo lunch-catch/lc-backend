@@ -31,7 +31,7 @@ A-04 카테고리·지역별 분해와 A-08 점주별 상위 소진도 구현하
 | 이벤트 로그 기반 캠페인 성과 | `CampaignFunnelService`가 요청 시 자기 로그를 집계한다. A-03과 별개다 |
 | A-09, A-10 | `InvalidMetricsStep`, `NotBilledMetricsStep`, `FraudMetricsStep`과 조회가 구현돼 있다 |
 | A-12, A-14, 상세 캠페인 리포트와 변경 이력 | 저장 구조와 설계는 있으나 해당 조회·집계 구현은 없다 |
-| 이벤트 로그 13개월 삭제 | 설계만 있다. `EventLogRetentionJob` 구현은 없다 |
+| 이벤트 로그 13개월 삭제 | `EventLogRetentionJob`이 매일 04:00에 삭제한다 |
 
 ## 2. 공통 원칙
 
