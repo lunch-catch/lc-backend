@@ -21,6 +21,7 @@
 | `GET` | `/v1/owner/templates` | 점주 템플릿 목록 조회 | OWNER |
 | `POST` | `/v1/owner/campaigns/{campaignId}/poster:prepareUpload` | 포스터 이미지 업로드 URL 발급 | OWNER |
 | `POST` | `/v1/owner/campaigns/{campaignId}/poster` | 포스터 생성 | OWNER |
+| `GET` | `/v1/owner/campaigns/{campaignId}/poster` | 점주용 포스터 조회 | OWNER |
 | `GET` | `/v1/campaigns/{campaignId}/poster` | 사용자용 포스터 조회 | MEMBER |
 
 ## 템플릿 생성
@@ -470,6 +471,50 @@
 | `422` | `POSTER-018` | 업로드된 파일이 10MB를 넘는다 |
 | `422` | `POSTER-019` | 다른 캠페인이나 다른 경로를 가리키는 `objectKey`다 |
 
+## 점주용 포스터 조회
+
+### `GET /v1/owner/campaigns/{campaignId}/poster`
+
+점주가 본인 소유 캠페인에 저장된 포스터 HTML을 돌려준다. 조회 시점에 새로 만들지 않고 저장된 그대로 돌려준다.
+캠페인 상태와 무관하게 조회할 수 있다.
+
+**요청**
+
+| 이름 | 위치 | 타입 | 필수 | 설명 |
+|---|---|---|---|---|
+| `campaignId` | 경로 | integer | 예 | 포스터를 조회할 캠페인 ID |
+
+**응답** `200`
+
+```json
+{
+  "code": "SUCCESS",
+  "message": "요청이 성공적으로 처리되었습니다.",
+  "data": {
+    "posterId": 1,
+    "campaignId": 10,
+    "templateId": 1,
+    "title": "분식집 - 가을 신메뉴",
+    "html": "<div>...</div>"
+  }
+}
+```
+
+| 필드 | 타입 | null | 설명 |
+|---|---|---|---|
+| `posterId` | integer | 아니오 | 포스터 ID다 |
+| `campaignId` | integer | 아니오 | 이 포스터가 속한 캠페인 ID다 |
+| `templateId` | integer | 아니오 | 포스터에 쓴 템플릿 ID다 |
+| `title` | string | 아니오 | "{가게명} - {템플릿 이름}"으로 만든 제목이다 |
+| `html` | string | 아니오 | 저장된 포스터 HTML이다 |
+
+**오류**
+
+| 상태 | 코드 | 언제 |
+|---|---|---|
+| `403` | `CAMPAIGN-005` | 그 campaignId가 없거나 본인 소유가 아니다 |
+| `404` | `POSTER-020` | 이 캠페인에 아직 저장된 포스터가 없다 |
+
 ## 사용자용 포스터 조회
 
 ### `GET /v1/campaigns/{campaignId}/poster`
@@ -536,3 +581,4 @@
 | `POSTER-017` | `422` | jpg, png 파일만 업로드할 수 있습니다. |
 | `POSTER-018` | `422` | 파일 크기는 10MB를 넘을 수 없습니다. |
 | `POSTER-019` | `422` | 이 캠페인의 업로드 요청으로 받은 객체 키가 아닙니다. |
+| `POSTER-020` | `404` | 이 캠페인에 저장된 포스터가 없습니다. |
