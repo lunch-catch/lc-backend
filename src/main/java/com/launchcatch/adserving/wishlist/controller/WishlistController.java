@@ -16,7 +16,9 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -53,5 +55,16 @@ public class WishlistController {
         WishResult result = wishlistService.wish(user.getId(), request.campaignId());
         return ResponseEntity.status(result.created() ? HttpStatus.CREATED : HttpStatus.OK)
                 .body(ResponseEnvelope.success(result.item()));
+    }
+
+    // 찜 목록에서 지운다. 지운 캠페인은 그날 피드에 다시 나오지 않는다.
+    @DeleteMapping("/wishlist/{campaignId}")
+    @Operation(summary = "찜 삭제", description = "찜 목록에 없는 캠페인이어도 204 다. 지운 캠페인은 그날 피드에 다시 나오지 않는다.")
+    @ApiResponse(responseCode = "204", description = "본문이 없다.")
+    public ResponseEntity<Void> unwish(
+            @Parameter(hidden = true) @AuthenticationPrincipal CustomUserDetails user,
+            @Parameter(description = "찜을 지울 캠페인") @PathVariable Long campaignId) {
+        wishlistService.unwish(user.getId(), campaignId);
+        return ResponseEntity.noContent().build();
     }
 }

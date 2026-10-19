@@ -11,6 +11,7 @@ import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.launchcatch.adserving.engine.entity.AdCandidate;
@@ -223,6 +224,47 @@ class WishlistServiceTest {
                 .thenReturn(Optional.of(wish(1, 101, LocalDateTime.of(2026, 10, 1, 0, 30))));
 
         atMidnight.wish(MEMBER_ID, 101L);
+
+        verify(exclusionRepository).add(LocalDate.of(2026, 10, 1), MEMBER_ID, 101L, afterMidnight.instant());
+    }
+
+    @Test
+    void 찜을_지우고_그날_당일_이력에_넣으며_후보는_읽지_않는다() {
+        when(wishlistRepository.deleteByMemberIdAndCampaignId(MEMBER_ID, 101L)).thenReturn(1);
+
+        service.unwish(MEMBER_ID, 101L);
+
+        InOrder order = inOrder(wishlistRepository, exclusionRepository);
+        order.verify(wishlistRepository).deleteByMemberIdAndCampaignId(MEMBER_ID, 101L);
+        order.verify(exclusionRepository).add(BUSINESS_DATE, MEMBER_ID, 101L, CLOCK.instant());
+        verifyNoInteractions(adCandidateRepository);
+    }
+
+    // 앞 요청이 행만 지우고 당일 이력에 넣지 못했으면 다시 보낼 때 채워진다(#547)
+    @Test
+    void 찜이_없어도_당일_이력에_넣는다() {
+        when(wishlistRepository.deleteByMemberIdAndCampaignId(MEMBER_ID, 101L)).thenReturn(0);
+
+        service.unwish(MEMBER_ID, 101L);
+
+        verify(exclusionRepository).add(BUSINESS_DATE, MEMBER_ID, 101L, CLOCK.instant());
+    }
+
+    @Test
+    void 찜을_지우지_못하면_당일_이력에_넣지_않는다() {
+        when(wishlistRepository.deleteByMemberIdAndCampaignId(MEMBER_ID, 101L)).thenThrow(new QueryTimeoutException("db"));
+
+        assertThatThrownBy(() -> service.unwish(MEMBER_ID, 101L)).isInstanceOf(QueryTimeoutException.class);
+        verify(exclusionRepository, never()).add(any(), any(), any(), any());
+    }
+
+    @Test
+    void 지울_때의_그날도_한국_시각의_날짜다() {
+        Clock afterMidnight = Clock.fixed(
+                LocalDateTime.of(2026, 10, 1, 0, 30).atZone(ClockConfig.ZONE).toInstant(), ZoneOffset.UTC);
+        WishlistService atMidnight = new WishlistService(wishlistRepository, adCandidateRepository, exclusionRepository, afterMidnight);
+
+        atMidnight.unwish(MEMBER_ID, 101L);
 
         verify(exclusionRepository).add(LocalDate.of(2026, 10, 1), MEMBER_ID, 101L, afterMidnight.instant());
     }

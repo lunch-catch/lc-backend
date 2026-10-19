@@ -23,7 +23,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
 /*
- * 회원 본인의 찜 목록을 돌려주고 가게 상세의 찜을 넣는다(FR-071). 페이지네이션은 없다. 캠페인이 끝나면 찜이 빠져 진행 중인 캠페인 수만큼만 쌓인다.
+ * 회원 본인의 찜 목록을 돌려주고 가게 상세의 찜을 넣고 지운다(FR-071, FR-073). 페이지네이션은 없다. 캠페인이 끝나면 찜이 빠져 진행 중인 캠페인 수만큼만 쌓인다.
  * 표시 값은 그날 후보 스냅샷에서 채우고 후보 행이 있으면 상태와 소진을 보지 않는다. 명세의 null 조건이 "오늘 노출 후보가 아닌 캠페인" 이다.
  */
 @Service
@@ -71,6 +71,17 @@ public class WishlistService implements WishlistQueryService {
         // 이미 찜했으면 처음 찜한 시각을 돌려줘야 해서 넣은 뒤 다시 읽는다
         Wishlist wish = wishlistRepository.findByMemberIdAndCampaignId(memberId, campaignId).orElseThrow();
         return new WishResult(created, WishlistItemResponse.of(wish, candidate));
+    }
+
+    /*
+     * 찜 목록에서 지운다(FR-073). 찜하지 않은 캠페인이어도 거절하지 않는다.
+     * 행을 먼저 지우고 당일 이력에 넣는다. 지우지 못한 찜을 그날 피드에서 빼지 않으려는 것이다.
+     * 행이 없어도, 그날 후보가 아니어도 당일 이력에 넣는다. 앞 요청이 Valkey 에 넣지 못했으면 여기서 채워지고, 00:00 후보 적재 전에 지운 찜도 적재 뒤 그날 피드에 나오지 않는다(#547).
+     */
+    public void unwish(Long memberId, Long campaignId) {
+        Instant now = clock.instant();
+        wishlistRepository.deleteByMemberIdAndCampaignId(memberId, campaignId);
+        exclusionRepository.add(LocalDate.ofInstant(now, ClockConfig.ZONE), memberId, campaignId, now);
     }
 
     // 두 조회 모두 찜 행이 있는지만 본다. 찜을 지우거나 캠페인이 끝나면 행이 지워진다(#163)

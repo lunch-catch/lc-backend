@@ -61,7 +61,7 @@ adserving/
 │   ├── service/CandidateStateUpdaterImpl.java   CandidateStateUpdater 구현
 │   └── repository/AdCandidateRepository.java
 ├── exclusion/
-│   └── repository/ExclusionRepository.java  Valkey. 스와이프와 가게 상세 찜이 쓰고 피드가 읽는다
+│   └── repository/ExclusionRepository.java  Valkey. 스와이프와 가게 상세 찜, 찜 삭제가 쓰고 피드가 읽는다
 └── feed/
     ├── controller/FeedController.java
     ├── controller/SwipeController.java
@@ -81,7 +81,7 @@ adserving/
     └── repository/FeedFilterCategoryRepository.java
 wishlist/
     ├── controller/WishlistController.java
-    ├── service/WishlistService.java                 조회와 가게 상세 찜. WishlistQueryService 구현 포함
+    ├── service/WishlistService.java                 조회, 가게 상세 찜, 찜 삭제. WishlistQueryService 구현 포함
     ├── repository/WishlistRepository.java           쓰기는 INSERT IGNORE
     └── entity/Wishlist.java
 impression/
@@ -97,7 +97,7 @@ impression/
 - `impression` 은 `feed` 의 serve 기록과 유효 노출 수 카운터, `engine` 의 후보 소진 여부를 읽는다. 반대 방향은 없다.
 - `feed` 의 스와이프는 `wishlist` 에 찜을 넣는다. 두 애그리거트를 한 트랜잭션에 묶지 않고 쓰는 순서로 맞춘다(7장).
 - `wishlist` 의 찜 목록 조회는 `engine` 의 그날 후보에서 표시 값을 읽는다. 반대 방향은 없다.
-- 당일 이력은 스와이프와 가게 상세 찜이 함께 쓰고 피드가 읽어 `feed` 와 `wishlist` 밖의 `exclusion` 에 둔다. `wishlist` 가 `feed` 를 부르지 않게 하려는 것이다(#420). 오래 사는 찜 목록이 그날 단위의 피드에 기대지 않는다.
+- 당일 이력은 스와이프와 가게 상세 찜, 찜 삭제가 함께 쓰고 피드가 읽어 `feed` 와 `wishlist` 밖의 `exclusion` 에 둔다. `wishlist` 가 `feed` 를 부르지 않게 하려는 것이다(#420). 오래 사는 찜 목록이 그날 단위의 피드에 기대지 않는다.
 - 그날 후보가 아니라는 판정(`ADSERVING-004`)은 스와이프와 가게 상세 찜이 함께 써서 `engine` 의 `CandidateErrorCode` 가 갖는다(#420).
 - 입구는 HTTP 요청 일곱(`GET /v1/feed`, `POST /v1/impressions`, `POST /v1/swipes`, `GET`, `PUT /v1/feed-filter`, `GET`, `POST /v1/wishlist`)이다. 다른 도메인의 호출은 쿠폰이 부르는 `WishlistQueryService` 와 `CandidateStateUpdater` 둘(#163)과 analytics 가 부르는 `AdservingStatsQueryService`(#350)다. 스케줄과 이벤트는 아직 없다.
 - 집계 조회의 구현은 노출을 주로 세서 `impression` 에 둔다. 찜은 `feed` 의 `swipe_log` 에서 센다.
@@ -121,7 +121,7 @@ impression/
 | 소진을 다시 통보받을 때와 후보가 없을 때의 처리 | `CandidateStateUpdaterImpl` |
 | 고를 수 있는 업종 코드와 정렬 값 | `FeedFilterSaveRequest` 의 애노테이션. 업종 코드는 store 가 소유하고 `contract` 로 공개하지 않아 `store.category_code` 의 CHECK 와 같은 목록을 따로 둔다(#411 에서 임시로 정했다) |
 | 찜 목록의 표시 값을 그날 후보 행 유무로 채우고 없으면 `null` 로 두는 규칙 | `WishlistService`, `WishlistItemResponse` |
-| 가게 상세 찜이 받는 캠페인(그날 후보 행), 처음 찜과 다시 찜의 구분, 찜과 당일 이력을 쓰는 순서 | `WishlistService` |
+| 가게 상세 찜이 받는 캠페인(그날 후보 행), 처음 찜과 다시 찜의 구분, 찜과 당일 이력을 쓰는 순서, 찜 삭제가 당일 이력에 넣는 조건 | `WishlistService` |
 
 `ServeLogBuffer` 를 `FeedService` 와 나눈 것은 입구가 달라서다. 앞은 요청 스레드가, 뒤는 작업자 스레드가 부른다.
 
@@ -145,7 +145,7 @@ impression/
 | 데이터 | 키 | 만료 | 원본 | 읽는 곳 |
 |---|---|---|---|---|
 | 피드 요청 시각 | `adserving:feedRequests:{memberId}` 정렬 집합. 점수가 요청 시각(ms) | 마지막 요청 뒤 60초 | 없다. 잃으면 그 60초의 횟수가 비워진다 | `FeedRateLimitRepository` |
-| 당일 이력 | `adserving:exclusion:{영업일}:{memberId}` 집합. 원소가 `campaignId` | 다음 영업일 00:00 까지 남은 시간 | 없다. 잃으면 그날 넘긴 카드가 다시 보인다 | `ExclusionRepository`. 쓰는 쪽은 `SwipeService` 와 `WishlistService` 의 가게 상세 찜이다 |
+| 당일 이력 | `adserving:exclusion:{영업일}:{memberId}` 집합. 원소가 `campaignId` | 다음 영업일 00:00 까지 남은 시간 | 없다. 잃으면 그날 넘긴 카드가 다시 보인다 | `ExclusionRepository`. 쓰는 쪽은 `SwipeService` 와 `WishlistService` 의 가게 상세 찜과 찜 삭제다 |
 | 하루 내려준 횟수 | `adserving:servedDaily:{영업일}:{memberId}` 해시. 필드 `campaignId`, 값 횟수 | 다음 영업일 00:00 까지 남은 시간 | 없다. 잃으면 그날 같은 카드가 더 나온다 | `ServeFrequencyRepository` |
 | 세션에 내려준 캠페인 | `adserving:servedSession:{memberId}` 집합 | 피드 요청마다 30분을 다시 건다 | 없다. 키가 사라지면 새 세션이다 | `ServeFrequencyRepository` |
 | 그날 유효 노출 수 | `adserving:validImpressions:{영업일}` 해시. 필드 `campaignId`, 값 건수. 영업일은 노출을 받은 날이다(#498). 정산이 차감하는 영업일과 같아 노출 상한과 그날 예약액이 같은 날을 본다 | 올릴 때마다 이틀 | `impression_log` 의 유효 노출 | `ImpressionCountRepository`. 올리는 쪽은 `ImpressionService` 다 |
@@ -159,7 +159,7 @@ impression/
 | B. Valkey 에 사용자별 당일 집합을 둔다 | 명세를 다 지킨다 | 원본이 없어 캐시를 잃으면 그날 이력이 빠진다 |
 
 B 를 고른다. 빠질 때 잃는 것이 이미 넘긴 카드가 다시 보이는 것뿐이고 과금과 권한은 바뀌지 않는다.
-이 문서의 "원본은 MySQL" 규칙에서 벗어난다. 스와이프 API 가 반영된 스와이프마다 넣고(#379), 가게 상세 찜 API 가 찜마다 넣는다(#420). 찜 삭제 API 가 넣는 쪽은 아직 없다.
+이 문서의 "원본은 MySQL" 규칙에서 벗어난다. 스와이프 API 가 반영된 스와이프마다 넣고(#379), 가게 상세 찜 API 가 찜마다 넣는다(#420). 찜 삭제 API 는 지울 찜이 없어도, 그날 후보가 아니어도 넣는다(#547). 앞 요청이 Valkey 에 넣지 못했으면 다시 보낼 때 채워지고, 00:00 후보 적재 전에 지운 찜도 적재 뒤 그날 피드에 나오지 않는다.
 
 **결정: 하루 2회와 세션 1회를 어디서 세나** (#307 에서 정했다)
 
@@ -449,6 +449,8 @@ sequenceDiagram
 
 **가게 상세 찜.** 찜 목록 하나를 쓰고 당일 이력에 넣는다. 그날 후보가 아니면 이미 찜한 캠페인이어도 `404` 다(#420).
 
+**찜 삭제.** 찜 행을 지우고 당일 이력에 넣는다. 그날 후보를 읽지 않고 찜이 없어도 `204` 다. 행을 지우지 못하면 당일 이력에 넣지 않는다. 지우지 못한 찜을 그날 피드에서 빼지 않으려는 것이다(#547).
+
 ```mermaid
 sequenceDiagram
     participant C as WishlistController
@@ -479,6 +481,7 @@ sequenceDiagram
 | 스와이프 | 없다. 찜과 스와이프 기록이 각자 커밋된다 | 당일 이력(Valkey), 기록이 커밋된 뒤에 분석이 받는 스와이프 이벤트 |
 | 필터 조회 | 없다. 읽기 둘이 각자 끝난다 | 없음 |
 | 가게 상세 찜 | 없다. 찜 넣기가 혼자 커밋된다 | 당일 이력(Valkey) |
+| 찜 삭제 | 찜 행 지우기 하나(저장소 메서드의 트랜잭션) | 당일 이력(Valkey) |
 | 필터 저장 | `feed_filter` 의 넣기 또는 바꾸기, `feed_filter_category` 의 지우기와 다시 넣기, 저장한 필터 다시 읽기 | 없음 |
 | 쿠폰의 찜 조회 | 없다. 읽기 하나가 혼자 끝난다 | 없음 |
 | 쿠폰의 소진 반영 | `ad_candidate` 갱신과 0행일 때의 후보 확인. 쿠폰 발급이 커밋된 뒤 트랜잭션 밖에서 불려 발급과 묶이지 않는다(#163) | 없음 |
@@ -565,6 +568,7 @@ A 를 고른다. 분석의 결정과 어긋났을 때 B 는 노출 이벤트를 
 | 소진 통보가 온 날 후보가 없음 | 반영할 행이 없다. 예외 없이 반환한다 | 없음 | `adserving_sold_out_candidate_missing_total` 로 센다. 00:00 후보 적재 작업이 없는 동안은 운영에서 늘 오른다 |
 | 분석에 넘어가지 못한 노출과 스와이프 | 원본은 남고 퍼널 비율에서만 빠진다 | 분석 | 돈이 걸리지 않는다. 리포트의 노출 수는 원본을 세는 집계 조회가 낸다(아키텍처 설계 2.4) |
 | 당일 이력에 넣지 못한 가게 상세 찜 | 찜은 남고 그날 그 캠페인이 피드에 다시 보일 수 있다 | 사용자 | 돈이 걸리지 않는다. `adserving_cache_bypass_total`(`use=exclusion`) 로 센다. 다시 찜하면 넣는다 |
+| 당일 이력에 넣지 못한 찜 삭제 | 찜은 지워졌고 그날 그 캠페인이 피드에 다시 보일 수 있다 | 사용자 | 돈이 걸리지 않는다. 같은 지표로 센다. 다시 지우면 찜이 없어도 넣는다 |
 
 대상이 멈췄을 때의 처리는 [`adserving_장애_처리_설계.md`](./adserving_장애_처리_설계.md) 에 있다.
 
@@ -600,7 +604,7 @@ A 를 고른다. 분석의 결정과 어긋났을 때 B 는 노출 이벤트를 
 | 처리량 계산 | 목표 500 RPS x DB 읽기 2 = 초당 1,000 읽기. 둘 다 인덱스를 탄다. 행 수는 그 회원이 찜한 진행 중 캠페인 수다 |
 | 확인 방법 | 아직 없다. 10:50~11:00 에 5,000명이 10초 안에 몰리는 k6 시나리오로 p99 300ms 를 잰다 |
 
-가게 상세 찜은 `feed-api-design.md` 성능 목표에 TPS 와 응답 시간을 두지 않았고 유실 0.1% 미만만 둔다. 요청 하나에 DB 읽기 2(그날 후보, 찜 다시 읽기), DB 쓰기 1(찜), Valkey 호출 1(당일 이력)이다.
+가게 상세 찜은 `feed-api-design.md` 성능 목표에 TPS 와 응답 시간을 두지 않았고 유실 0.1% 미만만 둔다. 요청 하나에 DB 읽기 2(그날 후보, 찜 다시 읽기), DB 쓰기 1(찜), Valkey 호출 1(당일 이력)이다. 찜 삭제도 같은 목표이고 요청 하나에 DB 쓰기 1(유니크 키로 행 지우기)과 Valkey 호출 1 이다.
 
 | 적을 것 | 집계 조회 |
 |---|---|
@@ -647,6 +651,9 @@ A 를 고른다. 분석의 결정과 어긋났을 때 B 는 노출 이벤트를 
 | 가게 상세에서 다시 찜함 | 어제 찜했다 | 같은 캠페인을 찜한다 | `200` 이고 행이 늘지 않으며 처음 찜한 시각을 돌려준다 | `WishlistIntegrationTest.이미_찜한_캠페인이면_200_이고_행이_늘지_않으며_처음_찜한_시각을_돌려준다` |
 | 오늘 후보가 아닌 캠페인을 찜함 | 어제 찜했고 오늘은 후보가 아니다 | 찜한다 | `404 ADSERVING-004` 이고 당일 이력에 넣지 않는다(#420) | `WishlistIntegrationTest.오늘_노출_후보가_아니면_404_ADSERVING_004_이고_찜이_늘지_않는다` |
 | 가게 상세 찜이 실패함(2) | 찜 넣기가 실패한다 | 찜한다 | 당일 이력에 넣지 않는다 | `WishlistServiceTest.찜을_넣지_못하면_당일_이력에_넣지_않는다` |
+| 찜을 지움 | 나와 다른 회원이 같은 캠페인을 찜했다 | 내 찜을 지운다 | `204` 이고 내 그 찜만 지워지며 당일 이력에 들어간다 | `WishlistIntegrationTest.찜을_지우면_204_이고_내_그_찜만_사라지며_그날_당일_이력에_들어간다` |
+| 찜하지 않은 캠페인을 지움 | 그 캠페인을 찜하지 않았다 | 지운다 | `204` 이고 당일 이력에 들어간다(#547) | `WishlistIntegrationTest.찜하지_않은_캠페인을_지워도_204_이고_그날_당일_이력에_들어간다` |
+| 찜 삭제가 실패함 | 행 지우기가 실패한다 | 지운다 | 당일 이력에 넣지 않는다 | `WishlistServiceTest.찜을_지우지_못하면_당일_이력에_넣지_않는다` |
 | 쿠폰이 찜을 물음 | 한 회원이 두 캠페인을, 다른 회원이 한 캠페인을 찜했다 | 단건과 목록을 조회한다 | 둘이 같은 찜을 유효하다고 본다 | `WishlistQueryIntegrationTest.단건_조회와_목록_조회가_같은_찜을_유효하다고_본다` |
 | 찜을 지운 뒤 쿠폰이 물음 | 찜 행을 지웠다 | 단건과 목록을 조회한다 | 둘 모두에서 빠진다 | `WishlistQueryIntegrationTest.찜을_지우면_두_조회_모두에서_빠진다` |
 | 소진 통보 | 같은 캠페인의 오늘과 내일 후보, 다른 캠페인의 오늘 후보가 있다 | 오늘로 소진을 통보한다 | 오늘 그 캠페인 후보에만 받은 시각이 들어간다 | `CandidateSoldOutIntegrationTest.받은_영업일의_그_캠페인_후보에만_받은_소진_시각을_쓴다` |
@@ -662,7 +669,6 @@ A 를 고른다. 분석의 결정과 어긋났을 때 B 는 노출 이벤트를 
 | 미정 항목 | 어디까지 정해졌나 | 막는 것 |
 |---|---|---|
 | 탐색 반경을 넓히는 기준 | 10장 미만으로 임시로 정했다 | 없다. 기준이 정해지면 `FeedAssembler` 한 곳을 바꾼다 |
-| 찜 삭제가 당일 이력에 쓰는 쪽 | 스와이프(#379)와 가게 상세 찜(#420)이 쓴다. 찜 삭제는 아직 없다 | 명세의 "지운 캠페인은 그날 피드에 다시 나오지 않는다" 는 찜 삭제 API 가 생겨야 선다 |
 | 서빙 로그 대기열의 크기와 묶음 수 | 5,000건과 50건으로 임시로 정했다 | 없다. 부하 시험 뒤 `ServeLogBuffer` 의 두 값을 바꾼다 |
 | 세션을 늘리는 활동 | 피드 요청으로만 임시로 정했다 | 스와이프와 노출 요청도 세션을 늘릴지 정해야 한다. 두 API 모두 아직 늘리지 않는다 |
 | 끝난 캠페인의 찜 | 그날 후보에 행이 있으면 받아 끝난 캠페인도 찜에 들어간다(#379) | `CampaignEndedEvent` 를 받아 찜을 지우는 쪽이 아직 없다. 그동안 쿠폰의 찜 조회도 끝난 캠페인의 찜을 유효로 본다(#163). 발급은 쿠폰이 이벤트 상태를 먼저 봐서 막힌다 |
