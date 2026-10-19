@@ -30,13 +30,14 @@ class AnalyticsMigrationIntegrationTest extends AbstractAnalyticsIntegrationTest
     @Autowired
     private JdbcTemplate jdbc;
 
+    // V4 는 퍼널 표(#461)가 쓴다. 그 PR 이 병합되면 "4" 가 3 과 5 사이에 들어간다
     @Test
-    void analytics_V1부터_V3까지_적용되고_새_테이블과_컬럼이_생긴다() {
+    void analytics_V1부터_V5까지_적용되고_새_테이블과_컬럼이_생긴다() {
         List<String> versions = jdbc.queryForList(
                 "SELECT version FROM flyway_history_analytics WHERE success = 1 ORDER BY installed_rank",
                 String.class);
 
-        assertThat(versions).endsWith("1", "2", "3");
+        assertThat(versions).endsWith("1", "2", "3", "5");
         assertThat(columnsOf("event_log"))
                 .contains("issue_id", "coupon_event_id", "member_coupon_id");
         assertThat(columnsOf("daily_settlement_analytics")).contains("positive_adjust_amount");
@@ -45,6 +46,34 @@ class AnalyticsMigrationIntegrationTest extends AbstractAnalyticsIntegrationTest
                 "daily_campaign_fraud_analytics",
                 "daily_member_usage",
                 "aggregation_pending_date");
+    }
+
+    // 서빙이 하루 종일이라 시간대는 0~23시다(V5, #497)
+    @Test
+    void 시간대_리포트는_0시부터_23시까지만_받는다() {
+        long reportId = dailyReport();
+
+        assertThatCode(() -> insertHourly(reportId, 0)).doesNotThrowAnyException();
+        assertThatCode(() -> insertHourly(reportId, 23)).doesNotThrowAnyException();
+        assertRejected(() -> insertHourly(reportId, 24));
+    }
+
+    // 정산이 그날 계획이 없는 노출을 NOT_BILLED_NO_PLAN 으로 남긴다(billing V8, analytics V5, #497)
+    @Test
+    void 미과금_사유는_계획_없음을_받는다() {
+        long campaignId = Math.abs(UUID.randomUUID().getMostSignificantBits() % 1_000_000_000L);
+
+        assertThatCode(() -> jdbc.update("""
+                INSERT INTO daily_campaign_not_billed_analytics
+                    (business_date, campaign_id, not_billed_reason, not_billed_count, created_at, updated_at)
+                VALUES (?, ?, 'NOT_BILLED_NO_PLAN', 1, ?, ?)
+                """, BUSINESS_DATE, campaignId, OCCURRED_AT, OCCURRED_AT)).doesNotThrowAnyException();
+        long reportId = dailyReport();
+        assertThatCode(() -> jdbc.update("""
+                INSERT INTO campaign_daily_impression_reason_report
+                    (campaign_daily_report_id, impression_type, reason_code, impression_count, created_at, updated_at)
+                VALUES (?, 'UNBILLED', 'NOT_BILLED_NO_PLAN', 1, ?, ?)
+                """, reportId, OCCURRED_AT, OCCURRED_AT)).doesNotThrowAnyException();
     }
 
     @Test
@@ -182,6 +211,26 @@ class AnalyticsMigrationIntegrationTest extends AbstractAnalyticsIntegrationTest
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, UUID.randomUUID().toString(), eventType, memberId, campaignId, storeId, wishId,
                 couponEventId, memberCouponId, OCCURRED_AT, OCCURRED_AT, OCCURRED_AT);
+    }
+
+    // 다른 테스트와 겹치지 않게 캠페인 ID 를 무작위로 잡은 캠페인 일별 리포트 행이다
+    private long dailyReport() {
+        long campaignId = Math.abs(UUID.randomUUID().getMostSignificantBits() % 1_000_000_000L);
+        jdbc.update("""
+                INSERT INTO campaign_daily_report (campaign_id, business_date, created_at, updated_at)
+                VALUES (?, ?, ?, ?)
+                """, campaignId, BUSINESS_DATE, OCCURRED_AT, OCCURRED_AT);
+        return jdbc.queryForObject(
+                "SELECT campaign_daily_report_id FROM campaign_daily_report WHERE campaign_id = ? AND business_date = ?",
+                Long.class, campaignId, BUSINESS_DATE);
+    }
+
+    private void insertHourly(long reportId, int hour) {
+        jdbc.update("""
+                INSERT INTO campaign_hourly_report
+                    (campaign_daily_report_id, report_hour, impression_count, created_at, updated_at)
+                VALUES (?, ?, 1, ?, ?)
+                """, reportId, hour, OCCURRED_AT, OCCURRED_AT);
     }
 
     private void assertRejected(Runnable operation) {
