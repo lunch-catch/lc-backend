@@ -25,6 +25,6 @@ public class BatchExecutionQueryServiceImpl implements BatchExecutionQueryServic
         return new BatchExecutionRecord(
                 log.getId(), log.getJobName(), log.getBusinessDate(), log.getStatus().name(),
                 log.getCreatedAt(), log.getFinishedAt(), log.getProcessedCount(),
-                log.getOwnerId(), log.getRetryCount(), log.getFailureReason());
+                log.getOwnerId(), log.getRetryCount(), log.getFailureReason(), log.getAttemptNo());
     }
 }
