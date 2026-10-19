@@ -269,68 +269,7 @@ GET /v1/admin/members?status=ACTIVE&joinedFrom=2026-09-01&joinedTo=2026-09-30&ke
 
 ## 관리자 점주 목록 (member 구현 제외)
 
-**2026-10-07 변경:** 아래 내용은 참고용 기존 계약으로 남기되 member 도메인에서 구현하지 않는다. owner 도메인이 store 조회 계약으로 가게 정보를 조합하고, 최종 계약은 owner 도메인이 정한다.
-
-```
-GET /v1/admin/owners?status=ACTIVE&joinedFrom=2026-09-01&joinedTo=2026-09-30&keyword=런치&page=0
-```
-
-> **페이지 방식:** 사용자 목록과 같은 이유로 `page`를 쓴다(위 「관리자 사용자 목록」의 페이지 방식 주석 참고).
-
-사용자 목록과 같은 규약이며 응답 항목과 검색 대상만 다르다. 점주 1계정은 가게 1개이므로 한 줄이 점주와 가게를 함께 나타낸다.
-
-| 파라미터 | 필수 | 설명 |
-| --- | --- | --- |
-| `status` | 아니오 | `ONBOARDING`, `ACTIVE`, `SUSPENDED`, `WITHDRAWN`. V51은 활성, 정지, 탈퇴만 적었으나 점주 상태 정의에 `ONBOARDING`이 있어 함께 받는다 |
-| `joinedFrom`, `joinedTo` | 아니오 | 가입일(`owner.created_at`) 범위. 사용자 목록과 같은 규칙 |
-| `keyword` | 아니오 | 숫자만이면 `ownerId` 일치, 아니면 상호 부분 일치 (제안) |
-| `page` | 아니오 | 기본 0. 페이지당 20건 고정. 정렬은 가입일 최신순이고 같으면 `ownerId` 내림차순 |
-
-```json
-{
-  "code": "SUCCESS",
-  "message": "...",
-  "data": {
-    "items": [
-      { "ownerId": 7, "storeName": "런치식당", "status": "ACTIVE", "storeRegistered": true,
-        "businessNo": "123-45-*****", "joinedAt": "2026-09-20T10:00:00+09:00", "lastLoginAt": "2026-10-01T09:00:00+09:00" }
-    ],
-    "page": 0, "size": 20, "totalElements": 1
-  }
-}
-```
-
-| 필드 | 필수 데이터 | 출처 |
-| --- | --- | --- |
-| `ownerId` | 예 | `owner.owner_id` |
-| `storeName` | 예 | 가게 도메인의 `store.name`. 가게를 만들기 전 점주는 `null` |
-| `status` | 예 | `owner.status` |
-| `joinedAt` | 예 | `owner.created_at` |
-| `storeRegistered` | 예 (가게 최종 등록 여부) | `store.finalized`. 가게가 없으면 `false` |
-| `businessNo` | 선택 | `store.business_registration_number`를 부분 마스킹. 없으면 `null` |
-| `lastLoginAt` | 선택 | `owner.last_login_at` |
-
-- 목록은 점주 계정이 기준이다. 상호와 최종 등록 여부, 사업자등록번호는 가게 도메인 데이터라 점주 도메인이 가게 도메인의 조회 기능을 호출해 채운다. 목록 API는 점주 도메인 패키지에 둔다.
-- 이메일, 대표자 성명, 비밀번호 관련 값은 응답에 내리지 않는다.
-- 상호로 검색하려면 가게 도메인이 상호 검색 결과의 점주 ID 목록을 돌려주는 조회가 필요하다. 1만 건 기준 1초 이내를 지키려면 목록 한 페이지의 점주 ID를 묶어 한 번에 조회한다.
-- 조건에 맞는 점주가 없으면 `items`는 빈 배열이다.
-
-### 탈퇴 점주 표시 (제안)
-
-FR-007은 "탈퇴한 점주는 개인정보를 마스킹한 뒤 목록에 표시"라고만 하고 대상 필드를 정하지 않았다. 사용자와 달리 점주 탈퇴 시점에 비식별 처리하는 절차가 아직 없으므로, 목록 응답을 만들 때 `status`가 `WITHDRAWN`이면 서버가 다음처럼 가린다.
-
-| 필드 | 일반 점주 | 탈퇴 점주 |
-| --- | --- | --- |
-| `storeName` | 그대로 | 그대로 (사업체 정보이자 V51 필수 표시 항목) |
-| `businessNo` | 부분 마스킹 (`123-45-*****`) | 전체 마스킹 (`***-**-*****`) |
-| `lastLoginAt` | 그대로 | `null` |
-
-| 응답 | 코드 | 언제 |
-| --- | --- | --- |
-| `200` | | 조회 성공 |
-| `400` | 공통 검증 오류 | 날짜 형식 오류, 기간 역전, `page`가 음수, 허용되지 않는 `status` |
-| `401` | | 인증되지 않음 |
-| `403` | | 관리자 역할이 아님 |
+점주 목록은 owner 도메인이 구현한다. 확정 계약은 [관리자 API 명세](./admin-api-spec.md#관리자-점주-목록)가 소유한다.
 
 ---
 
