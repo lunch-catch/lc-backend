@@ -114,6 +114,12 @@ class TemplateReviseServiceTest {
         assertThat(response.templateId()).isEqualTo(TEMPLATE_ID);
         assertThat(response.versionNumber()).isEqualTo(2);
         assertThat(response.removedElements()).containsExactly("script");
+        assertThat(response.suggestedPrompts()).containsExactly(
+                "배경을 더 밝게 해줘",
+                "행사명 글자를 더 크게 해줘",
+                "할인 문구를 더 진한 강조색으로 바꿔줘",
+                "행사명을 중앙에서 오른쪽으로 1cm 옮겨줘",
+                "이미지 모서리를 더 둥글게 해줘");
         verify(templateVersionRepository).saveAndFlush(any(TemplateVersion.class));
     }
 
@@ -127,6 +133,12 @@ class TemplateReviseServiceTest {
 
         assertThat(response.templateId()).isEqualTo(TEMPLATE_ID);
         assertThat(response.removedElements()).isEmpty();
+        assertThat(response.suggestedPrompts()).containsExactly(
+                "배경을 더 밝게 해줘",
+                "행사명 글자를 더 크게 해줘",
+                "할인 문구를 더 진한 강조색으로 바꿔줘",
+                "행사명을 중앙에서 오른쪽으로 1cm 옮겨줘",
+                "이미지 모서리를 더 둥글게 해줘");
         verify(templateRepository, never()).findById(any());
         verify(templateRepository, never()).findByIdForUpdate(any());
         verify(templateHtmlGenerator, never()).revise(any(), any());
