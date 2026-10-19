@@ -16,6 +16,7 @@
 |---|---|---|
 | `POST` | `/v1/owner/campaigns` | FR-040 |
 | `PATCH` | `/v1/owner/campaigns/{campaignId}` | FR-041, FR-042 |
+| `POST` | `/v1/owner/campaigns/{campaignId}:activate` | FR-044 |
 | `POST` | `/v1/owner/campaigns/{campaignId}:pause` | FR-092 |
 | `POST` | `/v1/owner/campaigns/{campaignId}:resume` | FR-092 |
 | `GET` | `/v1/owner/campaigns` | 없음(요구사항명세서에 조회 전용 행이 없다. 점주가 등록한 값을 다시 확인하는 화면 전제, `#341`) |
@@ -125,6 +126,48 @@
 - **집행 기간은 최소 1일 차이를 요구한다.** `endDate`가 `startDate`보다 이르거나 같으면
   `CAMPAIGN-008`이다. 시작일은 "오늘 다음 날 이후"만 허용해 `LocalDate.now(clock).plusDays(1)`보다
   이르면 `CAMPAIGN-009`다(요구사항명세서 [I45] 등록 마감 D-1 23:59와 같은 경계)
+
+## 캠페인 활성화(점주)
+
+- **`DRAFT` → `SCHEDULED` 전이는 기존 `CampaignStatusService.schedule(campaignId)`를 그대로
+  부른다(FR-092).** 이미 구현되어 있고 호출하는 곳이 없었다. `Campaign.schedule()`이
+  `DRAFT`가 아니면 `IllegalStateException`을 던지는 것도 그대로 쓴다
+- **본인 소유 확인과 점주 계정 상태 확인은 `CampaignPauseResumeService`와 같은 패턴이다.**
+  `findByIdForUpdate`(비관 잠금)로 캠페인을 조회한 뒤 `ownerId`를 비교하고,
+  `OwnerStatusQuery`로 점주 계정이 `ACTIVE`인지 확인한다. 없거나 다르면 `CAMPAIGN-005`,
+  점주가 `ACTIVE`가 아니면 `CAMPAIGN-001`이다
+- **엔티티가 던지는 `IllegalStateException`을 `CAMPAIGN-006`으로 변환한다.**
+  `CampaignPauseResumeService.pause()`/`resume()`과 같은 처리다
+- **포스터 존재 확인은 `PosterRepository.findByCampaignId`로 하고, 없으면
+  `PosterErrorCode.POSTER_NOT_SAVED`(`POSTER-021`, 404)로 거부한다.**
+  `PosterModerationService.moderate()`가 같은 조회에서 쓰는 코드를 그대로 재사용한다. 새
+  코드를 추가하지 않는다
+- **자동 검수는 `PosterModerationService.moderate(campaignId)`를 그대로 부른다(FR-054,
+  `#535`).** 그 결과(`PosterModerationOutcome`)의 `result`가 `PASS`면 `schedule()`을
+  부르고, `FAIL`이면 `schedule()`을 부르지 않고 그 `reasons`를 응답에 담는다
+- **검수 `FAIL`도 `200 SUCCESS`로 응답한다(채팅으로 확인, 2026-10-19).** 여러 사유를
+  동시에 모두 담아야 하는데(`PosterModerationService`의 "사유는 하나에서 멈추지 않고 모두
+  모은다") 공통 응답 봉투의 오류 경로는 `data`가 항상 `null`이라 담을 수 없다. 쿠폰
+  선착순 소진(`COUPON-003`)처럼 사유가 하나로 좁혀지는 경우와 달리, 이 기능은 사유가
+  복수라 성공 봉투 안의 `reasons` 배열로 간다
+- **`reasons` 배열 값은 `ModerationFailReason` enum 코드 원문이다(채팅으로 확인,
+  2026-10-19).** 그 enum의 클래스 주석이 이미 "화면 문구는 이 코드를 받는 쪽(캠페인
+  활성화)이 붙인다"고 적어 둬서, 서버가 번역하지 않고 그대로 내려주는 쪽이 원래 의도와
+  맞다
+- **엔드포인트 경로는 `api-spec.md`의 커스텀 메서드 컨벤션 예시(`:activate`)를 그대로
+  쓴다.** "캠페인 중단과 재개"와 같은 선택이다
+- **잔액은 확인하지 않는다(FR-044 예외사항).** 캠페인이 정산을 조회하면 정산이 이미
+  캠페인을 조회하고 있어 도메인 간 순환이 생긴다(설계 문서 2.2). 잔액 부족 안내는 프론트가
+  정산 조회를 따로 불러서 화면에 표시한다
+- **`SCHEDULED` → `ACTIVE` 전환과 가게당 동시 1건 제한은 이 엔드포인트가 하지 않는다.**
+  D일 00:00 스케줄러(`SYSTEM`)가 `CampaignStatusService.activate()`를 불러 처리한다
+  (`campaign_구조와_동작_설계.md`). 이 엔드포인트는 `schedule()`만 부른다
+- **`PAUSED`(`ADMIN`) 캠페인의 재개는 이 엔드포인트가 다루지 않는다.** `DRAFT`가 아닌
+  상태에서의 요청은 전부 `CAMPAIGN-006`으로 막히므로 재개 기능과 분리된다
+- **이 설계는 `#535`(PR #552)가 아직 `develop`에 없는 상태에서 썼다.**
+  `PosterModerationService`, `PosterModerationOutcome`, `ModerationFailReason`은
+  `feat/535-poster-moderation` 브랜치 기준이다. 구현(`#561`)은 `#535`가 먼저 병합된 뒤
+  진행한다
 
 ## 캠페인 중단과 재개(점주)
 
