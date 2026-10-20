@@ -490,7 +490,7 @@ ACTIVE의 동시 저장은 순서대로 처리되며 마지막으로 처리된 �
 
 | 필드 | 타입 | 필수 | 조건 |
 |---|---|---|---|
-| imageType | string | 예 | `LOGO`, `INTERIOR` 중 하나 |
+| imageType | string | 아니요 | `LOGO`, `INTERIOR` 중 하나. 비우면 `INTERIOR`로 본다(이 필드가 생기기 전 클라이언트와의 호환) |
 | originalFilename | string | 예 | |
 | contentType | string | 예 | `image/jpeg`, `image/png` 중 하나 |
 | fileSize | integer | 예 | 1 이상, 10485760(10MB) 이하 |

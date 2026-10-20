@@ -7,8 +7,8 @@ import jakarta.validation.constraints.NotNull;
 
 public record StoreImagePrepareUploadRequest(
         @Schema(description = "올릴 이미지 종류입니다. LOGO는 가게당 1개이고 다시 올리면 교체합니다. "
-                + "INTERIOR는 최대 3개입니다.", example = "LOGO")
-        @NotNull StoreImageType imageType,
+                + "INTERIOR는 최대 3개입니다. 비우면 INTERIOR로 봅니다.", example = "LOGO")
+        StoreImageType imageType,
 
         @Schema(description = "원본 파일명입니다.", example = "interior.jpg")
         @NotBlank String originalFilename,
