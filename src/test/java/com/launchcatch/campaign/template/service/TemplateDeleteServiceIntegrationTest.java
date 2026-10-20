@@ -45,6 +45,9 @@ class TemplateDeleteServiceIntegrationTest extends AbstractCampaignIntegrationTe
                     "<div>" + number + "</div>", number);
         }
         Template saved = templateRepository.saveAndFlush(template);
+        // 템플릿을 직접 저장해서 만들었으므로 생성 가능 수를 하나 차지한 상태로 맞춘다. 안 그러면
+        // current_count 가 0 이라 release() 의 "0 초과일 때만 감소" 조건에 걸려 아무것도 줄지 않는다.
+        templateQuotaRepository.tryReserve(Integer.MAX_VALUE);
         // 영속성 컨텍스트를 비운다. 방금 저장한 버전들이 컨텍스트에 남아 있으면, 서비스가 템플릿을
         // 지운 뒤 flush 할 때 지워진 템플릿을 가리키는 버전이 걸려 TransientPropertyValueException 이 난다.
         // 운영에서는 버전을 컨텍스트에 올리지 않으므로 이 상황이 없다.
@@ -63,7 +66,9 @@ class TemplateDeleteServiceIntegrationTest extends AbstractCampaignIntegrationTe
         int countBeforeDelete = currentCount();
 
         templateDeleteService.delete(templateId);
-        // release()는 벌크 UPDATE 라 컨텍스트에 남은 template_quota 를 갱신하지 않는다. 비워서 DB 값을 다시 읽는다.
+        // 템플릿 삭제는 아직 flush 전이라 먼저 내보낸다. 그냥 비우면 예약된 삭제가 버려진다.
+        // release()는 벌크 UPDATE 라 컨텍스트에 남은 template_quota 를 갱신하지 않으므로 비워서 DB 값을 다시 읽는다.
+        entityManager.flush();
         entityManager.clear();
 
         assertThat(templateRepository.findById(templateId)).isEmpty();
