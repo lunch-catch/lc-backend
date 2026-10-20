@@ -88,6 +88,6 @@ A를 고른다. B는 이슈의 완료 조건("FAILED 행에 부르면 그 작업
 
 - 재개 결과(성공/실패)는 배치 실행 이력 조회(`GET /v1/admin/batch-executions`)로 확인한다.
   명세와 설계는 #570이 정했고([batch-execution-history-api-design.md](./batch-execution-history-api-design.md))
-  구현은 #575가 한다.
+  구현은 #575가 했다.
 - V52 요구사항명세서 102행의 정확한 기능 ID(FR 번호)를 확인하지 못했다. `api-spec.md`의
   "도메인과 문서" 표에 임시로 비워 두었다.
