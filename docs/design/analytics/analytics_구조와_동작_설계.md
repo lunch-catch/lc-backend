@@ -254,6 +254,8 @@ sequenceDiagram
 
 **부정 관리 단계 (2026-10-19, #540).** `InvalidMetricsStep`(`@Order(500)`)은 `AdservingStatsQueryService.memberInvalidCounts`의 건수를 (캠페인, 회원, 사유) 행으로 옮긴다. `NotBilledMetricsStep`(`@Order(510)`)은 정산의 예산, 중단, 예산 계획 없음 건수와 광고 서빙의 쿠폰 소진 뒤 노출을 캠페인과 사유별로 합친다. `FraudMetricsStep`(`@Order(520)`)은 캠페인 통계와 `memberConcentrations`로 유효·무효 노출, 회원 수, 상위 회원의 노출 합과 집중 의심을 캠페인마다 한 행으로 만든다. 노출이 하나도 없는 캠페인은 행이 없다. 세 표 모두 다시 집계했을 때 사라진 행이 남지 않게 그날 행을 지우고 넣는다. 임계값은 `AnalyticsFraudProperties`(`analytics.fraud.*`)이고 범위를 벗어나면 기동이 실패한다. 무효 비율은 무효 ÷ 유효이고 그 식은 `InvalidRatio` 한 곳에 있다.
 
+**회원 사용 통계 단계 (2026-10-20, #557).** `MemberUsageStep`(`@Order(700)`)이 `CouponStatsQueryService.dailyMemberStats`의 사용 수(`redeem_count`)와 확정 할인액(`saved_amount`), 분석 자기 `event_log`의 그날 `wish` 행 수(`wish_count`)를 `member_id`로 합쳐 `daily_member_usage`의 그날 행으로 교체한다. 사용 수는 `redeem` 이벤트로 세지 않는다. 찜은 쿠폰 계약의 값을 쓰지 않는다(AD-31). 찜 수는 영업일 하루(KST 자정 이상, 다음 자정 미만)로 센다. 사용도 찜도 없는 회원은 행이 없고 다시 집계했을 때 사라진 행이 남지 않게 그날 행을 지우고 넣는다. 이 표는 보존 삭제 대상이 아니고 탈퇴 회원의 행도 지우지 않는다(AD-16, AD-21 폐기). 조회(A-12)는 본인 행 전체의 합을 내리고 행이 없으면 세 값이 `0`이다. 전날까지 확정된 값의 합이라 오늘 쓴 쿠폰은 다음 날 반영된다.
+
 **이벤트 로그 보존 삭제 (2026-10-19, #555).** `EventLogRetentionJob`이 매일 04:00 KST에 `(EVENT_LOG_RETENTION, 영업일)` 행을 점유하고, `EventLogRetentionService`가 `occurred_at`이 (오늘 - 13개월) 00:00보다 이전인 `event_log` 행을 1000행씩 지운다. 삭제 선은 재집계를 허용하는 가장 오래된 영업일(`DailyAggregationRunner.oldestRetained`)과 같은 날짜라서, 재집계할 수 있는 날짜의 원본은 지워지지 않는다. 청크마다 자기 트랜잭션으로 커밋하고 청크 사이에 100ms 쉰다. `daily_member_usage`와 다른 집계 표는 지우지 않는다. 시각은 서빙 휴지 구간이 없어진 뒤로 시각 자체에 대한 의존이 없고, 01:00 집계가 끝난 뒤 이벤트 기록 쓰기와 겹치지 않는 새벽을 골랐다.
 
 ## 11. 성능
@@ -277,5 +279,5 @@ sequenceDiagram
 | 원천 도메인 집계 조회 | 이슈 `#350`, `#352`, `#354`, `#356`, `#357`, `#363`이 소유한다 | 후속 집계 단계 |
 | 실행 세대 확인 | 이슈 `#360`은 병합됐다. 일별 집계 실행기는 정상 경로에서 자기 세대를 알 방법이 없어 아직 `BatchAttemptGuard`를 부르지 않는다 | 여러 서버의 안전한 공개 |
 | 집계 실행 조회(A-06)의 실행 기록이 없는 날짜 | 임시로 `200`과 `data: null`을 돌려준다. 테스트 `실행_기록이_없는_날짜의_조회는_data가_null이다`가 기록한다 | A-06 계약 확정 |
-| 회원 사용 통계 최종 확인 | 일별 집계안을 사용한다 | A-12 구현 |
+| 회원 사용 통계 최종 확인 | 일별 집계안으로 구현했다(#557). 확인 결과가 달라지면 `MemberUsageStep`의 원천과 A-12의 응답 의미를 고친다 | 없음 |
 | 무효 비율 분모 | 유효 노출 수로 정했다(요구사항 BR-054, 2026-10-19). 화면 동작 확인(R-25)이 남았다 | 없음 |

@@ -30,7 +30,8 @@ A-04 카테고리·지역별 분해와 A-08 점주별 상위 소진도 구현하
 | 점주 일별 리포트 | `OwnerReportQueryService`가 저장된 행을 조회한다. 채우는 `CampaignReportStep`은 없다 |
 | 이벤트 로그 기반 캠페인 성과 | `CampaignFunnelService`가 요청 시 자기 로그를 집계한다. A-03과 별개다 |
 | A-09, A-10 | `InvalidMetricsStep`, `NotBilledMetricsStep`, `FraudMetricsStep`과 조회가 구현돼 있다 |
-| A-12, A-14, 상세 캠페인 리포트와 변경 이력 | 저장 구조와 설계는 있으나 해당 조회·집계 구현은 없다 |
+| A-12 | `MemberUsageStep`과 `MemberUsageStatsQueryService`가 구현돼 있다 |
+| A-14, 상세 캠페인 리포트와 변경 이력 | 저장 구조와 설계는 있으나 해당 조회·집계 구현은 없다 |
 | 이벤트 로그 13개월 삭제 | `EventLogRetentionJob`이 매일 04:00에 삭제한다 |
 
 ## 2. 공통 원칙
@@ -155,9 +156,11 @@ A-09와 A-10의 `from`, `to`는 필수이고 기간은 최대 31일이다. A-10�
 
 `daily_member_usage`는 영업일과 회원별 찜 수, 사용 수, 확정 할인액을 저장한다. 사용 수와 확정 할인액은 유실 가능한 퍼널 이벤트가 아니라 `CouponStatsQueryService`가 반환한 쿠폰 확정 기록으로 계산한다. 찜 수는 analytics의 `event_log`에서 계산한다.
 
-A-12 설계는 회원의 모든 일별 행을 합산한다. 원본의 2026-10-16 이후 결정은 `daily_member_usage`를 13개월 삭제 대상에서 제외하고 탈퇴 회원 행도 유지하는 안이다. 현재 집계·조회·탈퇴 연동 구현이 없으므로 삭제를 수행한다고 적지 않는다. 보존과 탈퇴 데이터 처리의 최종 합의는 구현 전에 확인해야 한다.
+A-12 설계는 회원의 모든 일별 행을 합산한다. 원본의 2026-10-16 이후 결정은 `daily_member_usage`를 13개월 삭제 대상에서 제외하고 탈퇴 회원 행도 유지하는 안이다. 탈퇴 회원의 행은 지우지 않는다(AD-21 폐기). 회원 도메인이 탈퇴 회원 ID 목록을 내주지 않고 요구사항에 삭제 규칙이 없으며, 탈퇴 회원은 로그인하지 못해 A-12를 볼 수 없다.
 
-V2 테이블은 만들어져 있다. `CouponStatsQueryService.dailyMemberStats(LocalDate)`도 #469로 들어왔으므로 회원별 일별 사용 수와 확정 할인액을 받을 수 있다. 원본의 "쿠폰 계약이 없어 착수할 수 없다"는 설명은 현재와 다르다. `MemberUsageStep`과 A-12 조회는 여전히 후속 구현이다.
+`MemberUsageStep`(`@Order(700)`)이 `CouponStatsQueryService.dailyMemberStats`의 `usedCount`와 `discountAmount`, `event_log`의 그날 `wish` 행 수를 `member_id`로 합쳐 `daily_member_usage`에 회원마다 한 행을 쓴다. 사용도 찜도 없는 회원은 행이 없다. 다시 집계하면 그날 행을 지우고 넣는다.
+
+A-12(`MemberUsageStatsQueryService`)는 본인의 `daily_member_usage` 전체 행을 날짜 범위 없이 합산하고 행이 없으면 세 값을 `0`으로 내린다. 자기 집계 표만 읽고 다른 도메인을 부르지 않는다. 가게 상세에서 한 찜은 `event_log`에 들어가지 않아 피드 카드의 찜만 센다(AD-31).
 
 ## 9. 캠페인 리포트
 
@@ -226,7 +229,7 @@ V2는 `campaign_daily_report.owner_id`와 `store_id`를 nullable로 추가했다
 
 | 항목 | 현재 기준 | 막는 작업 |
 |---|---|---|
-| 회원 사용 통계의 보존·탈퇴 처리 | 쿠폰의 `dailyMemberStats` 계약은 있다. 일별 집계와 보존·탈퇴 정책의 최종 확인은 남았다 | A-12 구현 |
+| 회원 사용 통계의 보존·탈퇴 처리 | 일별 집계안으로 구현했다. 삭제하지 않는다. 팀장·FE 확인(R-18, R-25)이 달라지면 `MemberUsageStep`의 원천과 A-12의 응답 의미를 고친다 | 없음 |
 | 집중 경고의 기간 의미 | 하루라도 경고이고 최고 하루 점유율을 반환한다. 화면 확인이 남았다 | 화면 계약 확정 |
 | 리포트 집계와 연결 정보 | 기존 `CampaignQueryService.findAllById`를 쓰는 원본 설계와 배치 허용 범위를 확인해야 한다 | `CampaignReportStep`, 상세 리포트 |
 | 원래 영업일의 정정 반영 | `SettlementMetricsStep`은 정정 대상 날짜를 미처리 목록에 남긴다. 캠페인 리포트와 변경 이력을 쓰는 단계는 없다 | 리포트 정정 공개 |
