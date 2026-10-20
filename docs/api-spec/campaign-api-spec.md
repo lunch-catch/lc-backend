@@ -570,7 +570,7 @@
     "notice": "1인 1매",
     "targetRadius": 1000,
     "targetGender": "ALL",
-    "targetAgeGroups": ["TWENTIES", "THIRTIES"],
+    "targetAgeGroups": ["AGE_20S", "AGE_30S"],
     "dailyBudget": 10000,
     "startDate": "2026-11-01",
     "endDate": "2026-11-30",
