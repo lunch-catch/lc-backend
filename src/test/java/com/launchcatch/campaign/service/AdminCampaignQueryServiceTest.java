@@ -105,17 +105,18 @@ class AdminCampaignQueryServiceTest {
     }
 
     @Test
-    @DisplayName("가게와 상태 필터, 커서를 저장소에 그대로 넘긴다")
-    void 필터와_커서를_넘긴다() {
+    @DisplayName("필터와 커서에 맞는 캠페인이 없으면 빈 페이지를 돌려주고 가게를 조회하지 않는다")
+    void 결과가_없으면_빈_페이지를_돌려준다() {
         String token = PageTokens.encode(new PageCursor(600L, null));
         when(campaignRepository.findAdminPage(
                 eq(STORE_ID), eq(CampaignStatus.ACTIVE), eq(600L), eq(PageRequest.of(0, 21))))
                 .thenReturn(List.of());
 
-        service().list(STORE_ID, CampaignStatus.ACTIVE, token, 20);
+        CursorPageResponse<AdminCampaignListItemResponse> response =
+                service().list(STORE_ID, CampaignStatus.ACTIVE, token, 20);
 
-        verify(campaignRepository).findAdminPage(
-                eq(STORE_ID), eq(CampaignStatus.ACTIVE), eq(600L), eq(PageRequest.of(0, 21)));
+        assertThat(response.items()).isEmpty();
+        assertThat(response.nextPageToken()).isNull();
         verify(storeQueryService, never()).findAllById(any());
     }
 
