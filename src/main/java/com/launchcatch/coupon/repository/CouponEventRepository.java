@@ -3,15 +3,24 @@ package com.launchcatch.coupon.repository;
 import com.launchcatch.coupon.entity.CouponEvent;
 import com.launchcatch.coupon.entity.CouponEventStatus;
 import com.launchcatch.coupon.entity.CouponInventoryStatus;
+import jakarta.persistence.LockModeType;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Optional;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 public interface CouponEventRepository extends JpaRepository<CouponEvent, Long> {
+
+    Optional<CouponEvent> findByCampaignIdAndBusinessDate(long campaignId, LocalDate businessDate);
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT event FROM CouponEvent event WHERE event.id = :id")
+    Optional<CouponEvent> findByIdForUpdate(@Param("id") long id);
 
     // 회차가 없거나 이미 종료됐거나 같은 시각 이후의 전이를 반영했으면 0을 돌려준다.
     @Modifying

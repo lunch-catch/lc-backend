@@ -8,6 +8,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import ch.qos.logback.classic.Level;
@@ -21,6 +22,7 @@ import com.launchcatch.adserving.contract.WishlistQueryService;
 import com.launchcatch.store.contract.StoreQueryService;
 import com.launchcatch.store.contract.StoreInfo;
 import com.launchcatch.coupon.CouponListFilter;
+import com.launchcatch.coupon.contract.CouponExpiredEvent;
 import com.launchcatch.coupon.dto.CouponDetailResponse;
 import com.launchcatch.coupon.dto.CouponEventStatusResponse.CannotIssueReason;
 import com.launchcatch.coupon.dto.CouponEventStatusResponse.EventState;
@@ -72,6 +74,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.BeanUtils;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.test.util.ReflectionTestUtils;
 
@@ -89,6 +92,7 @@ class CouponLookUpServiceTest {
     @Mock WishlistQueryService wishes;
     @Mock CampaignQueryService campaignQueryService;
     @Mock MemberQueryService memberQueryService;
+    @Mock ApplicationEventPublisher publisher;
 
     private CouponLookUpService service;
 
@@ -169,7 +173,7 @@ class CouponLookUpServiceTest {
         void setUp() {
             service = new CouponLookUpService(
                     memberCouponRepository, couponEventRepository, couponUsageHistoryRepository, couponDailyLimitRepository, campaignQueryService, memberQueryService,
-                    Clock.fixed(Instant.parse("2026-10-10T03:00:00Z"), ZoneOffset.UTC), stores, wishes);
+                    Clock.fixed(Instant.parse("2026-10-10T03:00:00Z"), ZoneOffset.UTC), stores, wishes, publisher);
         }
 
         @ParameterizedTest
@@ -364,6 +368,7 @@ class CouponLookUpServiceTest {
             CouponEvent event = BeanUtils.instantiateClass(CouponEvent.class);
             ReflectionTestUtils.setField(event, "id", 81L);
             ReflectionTestUtils.setField(event, "storeId", 10L);
+            ReflectionTestUtils.setField(event, "campaignId", 91L);
             ReflectionTestUtils.setField(event, "storeName", "런치식당");
             ReflectionTestUtils.setField(event, "storeImageUrl", "https://cdn.example.com/stores/10/logo-v1.jpg");
             ReflectionTestUtils.setField(event, "discountTargetType", DiscountTargetType.MENU);
@@ -528,6 +533,8 @@ class CouponLookUpServiceTest {
             assertThat(coupon.getQrToken()).isEqualTo(QR_TOKEN);
             assertThat(coupon.getQrVersion()).isEqualTo(4);
             assertThat(coupon.getQrExpiresAt()).isEqualTo(USE_TIME);
+            verify(publisher).publishEvent(new CouponExpiredEvent("coupon-expired:" + COUPON_ID, END_TIME,
+                    MEMBER_ID, 91L, 10L, EVENT_ID, COUPON_ID));
         }
 
         @ParameterizedTest
@@ -659,7 +666,7 @@ class CouponLookUpServiceTest {
         private CouponLookUpService serviceAt(Instant instant) {
             CouponLookUpService configured = new CouponLookUpService(
                     memberCouponRepository, couponEventRepository, couponUsageHistoryRepository, couponDailyLimitRepository, campaignQueryService, memberQueryService,
-                    Clock.fixed(instant, ZoneOffset.UTC), stores, wishes);
+                    Clock.fixed(instant, ZoneOffset.UTC), stores, wishes, publisher);
             return configured;
         }
 
@@ -690,6 +697,7 @@ class CouponLookUpServiceTest {
             CouponEvent event = BeanUtils.instantiateClass(CouponEvent.class);
             ReflectionTestUtils.setField(event, "id", EVENT_ID);
             ReflectionTestUtils.setField(event, "storeId", 10L);
+            ReflectionTestUtils.setField(event, "campaignId", 91L);
             ReflectionTestUtils.setField(event, "storeName", "런치식당");
             ReflectionTestUtils.setField(event, "storeImageUrl", "https://cdn.example.com/stores/10/logo-v1.jpg");
             ReflectionTestUtils.setField(event, "status", CouponEventStatus.ACTIVE);
@@ -720,7 +728,7 @@ class CouponLookUpServiceTest {
 
     // 지정한 시계와 일일 발급 한도를 사용하는 조회 서비스를 구성한다.
     private CouponLookUpService configuredService(Clock clock, int dailyLimit) {
-        CouponLookUpService configured = new CouponLookUpService(memberCouponRepository, couponEventRepository, couponUsageHistoryRepository, repository, campaignQueryService, memberQueryService, clock, stores, wishes);
+        CouponLookUpService configured = new CouponLookUpService(memberCouponRepository, couponEventRepository, couponUsageHistoryRepository, repository, campaignQueryService, memberQueryService, clock, stores, wishes, publisher);
         ReflectionTestUtils.setField(configured, "dailyLimit", dailyLimit);
         ReflectionTestUtils.setField(configured, "issueStartTime", LocalTime.of(11, 0));
         ReflectionTestUtils.setField(configured, "issueEndTime", LocalTime.of(14, 0));

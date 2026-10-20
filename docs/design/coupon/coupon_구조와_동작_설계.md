@@ -9,7 +9,7 @@ QR 사용 정책은 API 설계의 [QR 사용 구현 전 확정 사항](./coupon-
 | 구분 | 내용 |
 |---|---|
 | 현재 구현 | 선착순 발급, 당일 발급 한도와 누적 통계 조회, 목록·단건 조회와 조회 시 만료 저장, 미사용 쿠폰 삭제, QR 생성·갱신·사용 확정, 매장 사용 이력과 오늘 이벤트 상태 조회, 캠페인 이벤트 수신, 발급·사용 퍼널 이벤트 발행과 분석용 쿠폰 집계 조회를 처리한다 |
-| 후속 구현 | 이벤트·재고 생성과 오픈·만료 배치의 이벤트 발행을 연결한다 |
+| 배치 구현 | 회차·재고 생성, 발급 오픈·종료, 만료와 정합성 검증은 [쿠폰 배치 설계](./coupon-batch-design.md)를 따른다 |
 | 다른 도메인의 소유 | 캠페인 할인 조건은 campaign, 현재 매장 관리 권한은 store, 계정 상태는 member·owner, 찜과 광고 후보는 adserving, 통계 집계는 analytics가 소유한다 |
 
 데이터 소유와 의존 방향의 근거는 [도메인 설계 1.2와 2장](../../architecture/런치캐치_도메인_구조와_의존성_설계.md)이다.
@@ -47,13 +47,14 @@ coupon/
 ├── entity/        CouponEvent, CouponInventory, CouponDailyLimit,
 │                  MemberCoupon, CouponUsageHistory
 ├── listener/      CampaignEventListener
+├── job/           CouponPreparationJob, CouponIssueOpenJob, CouponIssueCloseJob, CouponExpirationJob, CouponConsistencyJob
 ├── repository/    각 엔티티 저장소와 목록용 Querydsl 구현
 ├── service/       CouponCommandService, CouponIssuanceService, CouponLookUpService, OwnerCouponService, CouponStatsQueryServiceImpl, CouponEventStateService
 └── exception/     CouponException, CouponErrorCode
 ```
 
 엔티티는 다른 엔티티를 객체 연관으로 쥐지 않고 ID로 참조한다.
-HTTP 요청과 집계 조회 contract, 공개 이벤트와 캠페인 이벤트 수신이 연결되어 있다. `job/`은 아직 없다.
+HTTP 요청과 집계 조회 contract, 공개 이벤트와 캠페인 이벤트 수신이 연결되어 있다. `job/`에는 다섯 StandaloneJob을 둔다.
 
 ### 규칙을 두는 곳
 
@@ -105,8 +106,8 @@ MENU이면 메뉴 네 컬럼을 모두 채우고 ALL이면 모두 NULL로 둔다
 | 조회·사용 때 원본을 읽는다 | 원본 변경을 즉시 볼 수 있다 | 발급 때의 혜택과 실제 사용 기준이 달라질 수 있다 |
 
 [쿠폰 명세의 공통 표시 정보](../../api-spec/coupon-api-spec.md#쿠폰-목록단건-공통-표시-정보)에 따라 이벤트 스냅샷을 쓴다.
-이벤트 생성 시 campaign·store의 공개 contract로 완성한 값을 준비하는 경로는 아직 미구현이다.
-이 경로는 대상 메뉴의 매장 소속도 검사해야 한다.
+이벤트 생성은 campaign·store의 공개 contract로 값을 준비하며 대상 메뉴의 매장 소속도 검사한다.
+생성과 재실행의 경계는 [쿠폰 배치 설계](./coupon-batch-design.md)가 갖는다.
 혜택과 사용 시간은 생성 이후 수정하지 않으며 이벤트 상태 변경과 구분한다.
 이벤트의 `created_at`을 스냅샷 생성 시각으로 사용한다.
 
@@ -131,7 +132,7 @@ MENU이면 메뉴 네 컬럼을 모두 채우고 ALL이면 모두 NULL로 둔다
 CouponEvent.calculateDiscount는 자기 스냅샷의 메뉴 가격 차액 또는 정액 할인값으로 할인액을 계산한다. 저장소 조회나 상태 변경 없이 할인액을 반환한다.
 V7은 전체 메뉴 정률 조합을 CHECK에서 제외한다. 지원하지 않는 조합은 계산에서도 거절한다.
 메뉴 할인은 이미 반올림한 스냅샷 가격 차액을 사용한다. 지원하는 조합과 메뉴 한 개 적용, 반올림의 기준은 [QR 사용 명세](../../api-spec/coupon-api-spec.md#qr-사용)가 갖는다.
-메뉴 스냅샷을 처음 계산하는 이벤트 생성 경로는 여전히 미구현이다.
+메뉴 스냅샷의 할인 후 가격은 이벤트 생성 시 CouponDiscountPrice가 계산한다.
 
 ## 5. 모듈 연결
 
@@ -144,7 +145,7 @@ V7은 전체 메뉴 정률 조합을 CHECK에서 제외한다. 지원하지 않�
 | 연결됨 | 읽기·쓰기, adserving | `WishlistQueryService`, `CandidateStateUpdater` | 발급·이벤트 조회에서 찜을 읽고 마지막 발급 커밋 뒤 소진을 알린다. 소진 거절에서도 누락 반영을 재시도한다 |
 | 연결됨 | 받음, campaign | `CampaignStatusChangedEvent`, `CampaignEndedEvent` | 발행자와 같은 트랜잭션에서 회차 상태를 바꾼다. 전이 기준은 6장의 캠페인 이벤트 반영 절을 따른다 |
 | 연결됨 | 공개, analytics | `CouponIssuedEvent`, `CouponRedeemedEvent` | 발급·사용 트랜잭션 안에서 발행하며 분석은 커밋 후 비동기로 수신한다 |
-| 호출 대기 | 공개, analytics | `CouponIssueOpenedEvent`, `CouponExpiredEvent` | 이벤트 타입만 준비했다. 오픈·만료 배치를 구현할 때 발행한다 |
+| 연결됨 | 공개, analytics | `CouponIssueOpenedEvent`, `CouponExpiredEvent` | 오픈·만료 배치가 업무 트랜잭션에서 발행한다. 상세는 [쿠폰 배치 설계](./coupon-batch-design.md)를 따른다 |
 | 공개됨 | 공개, analytics | `CouponStatsQueryService` | 캠페인별·회원별 일일 집계와 회원별 누적 단건 집계를 제공한다. 분석의 호출 연결은 후속 작업이다 |
 
 계약과 의존 방향은 [아키텍처 2장](../../architecture/런치캐치_도메인_구조와_의존성_설계.md)을 따른다.
@@ -201,7 +202,7 @@ flowchart LR
     class MemberQuery,OwnerQuery,CampaignQuery,StoreQuery,Wishlist,Candidate outside
 ```
 
-`CampaignEventListener`는 campaign의 공개 이벤트를 받는 Entry다. 스케줄 입구는 아직 없다.
+`CampaignEventListener`는 campaign의 공개 이벤트를 받는 Entry다. 스케줄 입구는 `job/`의 다섯 작업이다.
 
 ### 상태 변경
 
@@ -209,7 +210,7 @@ flowchart LR
 stateDiagram-v2
     [*] --> ISSUED: 발급
     ISSUED --> ISSUED: QR 생성·갱신
-    ISSUED --> EXPIRED: 목록·단건 조회 시 기간 만료
+    ISSUED --> EXPIRED: 목록·단건 조회 또는 만료 배치
     ISSUED --> REMOVED: 삭제
     EXPIRED --> REMOVED: 삭제
     REMOVED --> REMOVED: 삭제 재요청
@@ -219,14 +220,14 @@ stateDiagram-v2
 | 전이 | 일으키는 쪽 | 현재 검증과 이벤트 |
 |---|---|---|
 | 생성 → ISSUED | 회원의 발급 요청 | 발급 조건을 검사하고 발급 이벤트를 발행한다. 분석은 커밋 후 수신한다 |
-| ISSUED → EXPIRED | 목록·단건 조회 | `changeToExpired`가 기간 종료를 검사하며 QR·재고·카운터는 유지한다 |
+| ISSUED → EXPIRED | 목록·단건 조회 또는 만료 배치 | `changeToExpired`가 기간 종료를 검사하며 QR·재고·카운터는 유지한다 |
 | ISSUED·EXPIRED → REMOVED | 본인 삭제 요청 | USED 삭제는 거절하며 최초 삭제만 발급 날짜의 카운터를 줄인다 |
 | REMOVED → REMOVED | 본인 삭제 재요청 | 추가 쓰기와 카운터 차감을 하지 않는다 |
 | ISSUED → USED | 점주의 QR 사용 요청 | OwnerCouponService가 상태와 이력을 함께 저장하고 사용 이벤트를 발행한다. QR 식별 기준은 [QR 사용 설계](./coupon-api-design.md#qr-사용-구현-전-확정-사항)를 따른다 |
 
 ```mermaid
 stateDiagram-v2
-    [*] --> AVAILABLE: 재고 적재 [미구현]
+    [*] --> AVAILABLE: 회차·재고 생성 배치
     AVAILABLE --> ISSUED: 발급 트랜잭션
 ```
 
@@ -383,7 +384,7 @@ QR 생성·삭제·만료 저장은 같은 회원 쿠폰 행을 잠근다. 잠�
 
 `eventId`는 유형과 회차 ID 또는 회원 쿠폰 ID로 만든다. 같은 동작을 재처리해도 같은 ID를 유지한다.
 이벤트의 발급 시각은 회원 쿠폰, 사용 시각은 사용 이력의 `createdAt`을 그대로 전달한다.
-오픈·만료 이벤트는 타입만 준비했으며 발행은 후속 배치 작업에서 구현한다.
+오픈·만료 이벤트의 발행 조건과 중복 처리 기준은 [쿠폰 배치 설계](./coupon-batch-design.md)가 갖는다.
 
 ## 8. 외부 API
 
@@ -405,10 +406,7 @@ QR 생성·삭제·만료 저장은 같은 회원 쿠폰 행을 잠근다. 잠�
 
 ## 10. 배치
 
-현재 등록한 coupon 배치 작업은 없다. 조회 시 만료 저장은 배치가 아니다.
-오픈·만료 업무를 구현할 때 해당 서비스가 같은 트랜잭션에서 이벤트 record를 생성해 발행한다. 이벤트 전달만을 위한 별도 배치는 두지 않는다.
-회차·재고 생성은 아키텍처상 후속 연결 대상이다. 캠페인 이벤트 수신은 6장의 동기 리스너가 처리한다.
-각 작업의 실행 순서·재실행 키·실패 시 당일 서비스 범위는 아직 정하지 않았으며 구현 전에 이 장에 기록해야 한다.
+다섯 StandaloneJob의 실행 조건, 트랜잭션과 재실행 정책은 [쿠폰 배치 설계](./coupon-batch-design.md)가 갖는다.
 
 ## 11. 성능
 
@@ -465,7 +463,7 @@ USED 전이와 사용 시각·할인 계산, 실제 사용 요청의 동시 재�
 
 | 미정·미완료 항목 | 현재 상태 | 막는 것 |
 |---|---|---|
-| 회차·재고 생성과 배치 이벤트 | 생성 경로와 오픈·만료 배치의 발행 연결은 없다 | 생성 시 캠페인 상태와 전이 시각을 채우는 연결을 구현해야 한다 |
+| 회차·재고 생성과 배치 이벤트 | [쿠폰 배치 설계](./coupon-batch-design.md)에 따라 연결했다 | 원천 제공자의 실제 DB를 연결한 운영 환경 검증은 별도로 수행한다 |
 | 과거 스냅샷·이미지 유지 | 복원 출처와 이미지 보존 계약을 확정하지 않았다 | 과거 데이터를 임의의 현재 값으로 대체할 수 없다 |
 | 부하와 운영 장애 | 기능 테스트만 있으며 부하·장애 복구 시험은 미완료다 | 응답 시간과 처리량·복구 동작을 보장했다고 보고할 수 없다 |
 

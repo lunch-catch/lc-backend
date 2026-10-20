@@ -5,6 +5,7 @@ import com.launchcatch.campaign.contract.CampaignInfo;
 import com.launchcatch.campaign.contract.CampaignQueryService;
 import com.launchcatch.campaign.contract.CampaignStatus;
 import com.launchcatch.coupon.CouponListFilter;
+import com.launchcatch.coupon.contract.CouponExpiredEvent;
 import com.launchcatch.coupon.dto.CouponDetailResponse;
 import com.launchcatch.coupon.dto.CouponEventStatusResponse.CannotIssueReason;
 import com.launchcatch.coupon.dto.CouponEventStatusResponse.EventState;
@@ -50,6 +51,7 @@ import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -68,6 +70,7 @@ public class CouponLookUpService {
     private final Clock clock;
     private final StoreQueryService storeQueryService;
     private final WishlistQueryService wishlistQueryService;
+    private final ApplicationEventPublisher eventPublisher;
 
     @Value("${coupon.daily-limit}")
     private int dailyLimit;
@@ -161,7 +164,7 @@ public class CouponLookUpService {
 
         Map<Long, CouponEvent> events = findEvents(page);
         Map<Long, CouponUsageHistory> histories = findUsageHistories(page);
-        expireCoupons(page, now);
+        expireCoupons(page, events, now);
         List<CouponDetailResponse> items = createCouponDetailResponses(page, events, histories, now);
         String nextPageToken = createNextPageToken(page, listFilter, hasNext);
 
@@ -198,7 +201,7 @@ public class CouponLookUpService {
         CouponEvent event = couponEventRepository.findById(coupon.getCouponEventId())
                 .orElseThrow(() -> missingCouponData("EVENT_SNAPSHOT_MISSING", coupon));
         LocalDateTime now = LocalDateTime.now(clock.withZone(ClockConfig.ZONE));
-        MemberCouponStatus state = resolveState(coupon, now);
+        MemberCouponStatus state = resolveState(coupon, event, now);
         boolean usable = isUsable(coupon, state, now);
         CouponUsageHistory history = findUsageHistory(coupon, state);
 
@@ -319,8 +322,16 @@ public class CouponLookUpService {
     }
 
     // 미사용 쿠폰의 사용 종료 시각이 지났으면 엔티티 상태를 만료로 변경한다.
-    private MemberCouponStatus resolveState(MemberCoupon coupon, LocalDateTime now) {
+    private MemberCouponStatus resolveState(MemberCoupon coupon, CouponEvent event, LocalDateTime now) {
+        MemberCouponStatus previous = coupon.getStatus();
         coupon.changeToExpired(now);
+        if (previous == MemberCouponStatus.ISSUED && coupon.getStatus() == MemberCouponStatus.EXPIRED) {
+            if (event == null) {
+                throw missingCouponData("EVENT_SNAPSHOT_MISSING", coupon);
+            }
+            eventPublisher.publishEvent(new CouponExpiredEvent("coupon-expired:" + coupon.getId(), coupon.getUsableEndAt(),
+                    coupon.getMemberId(), event.getCampaignId(), event.getStoreId(), event.getId(), coupon.getId()));
+        }
         return coupon.getStatus();
     }
 
@@ -404,9 +415,9 @@ public class CouponLookUpService {
     }
 
     // 반환할 페이지에서 사용 종료 시각에 도달한 미사용 쿠폰의 상태를 만료로 변경한다.
-    private void expireCoupons(List<MemberCoupon> page, LocalDateTime now) {
+    private void expireCoupons(List<MemberCoupon> page, Map<Long, CouponEvent> events, LocalDateTime now) {
         for (MemberCoupon coupon : page) {
-            coupon.changeToExpired(now);
+            resolveState(coupon, events.get(coupon.getCouponEventId()), now);
         }
     }
 
