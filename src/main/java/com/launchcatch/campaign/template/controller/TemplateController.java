@@ -13,6 +13,7 @@ import com.launchcatch.campaign.template.dto.TemplateReviseRequest;
 import com.launchcatch.campaign.template.dto.TemplateVersionItemResponse;
 import com.launchcatch.campaign.template.service.TemplateActivationService;
 import com.launchcatch.campaign.template.service.TemplateCreateService;
+import com.launchcatch.campaign.template.service.TemplateDeleteService;
 import com.launchcatch.campaign.template.service.TemplatePublishService;
 import com.launchcatch.campaign.template.service.TemplateQueryService;
 import com.launchcatch.campaign.template.service.TemplateReviseService;
@@ -29,6 +30,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -49,6 +51,7 @@ public class TemplateController {
     private final TemplatePublishService templatePublishService;
     private final TemplateActivationService templateActivationService;
     private final TemplateQueryService templateQueryService;
+    private final TemplateDeleteService templateDeleteService;
 
     @PostMapping
     @Operation(
@@ -78,7 +81,7 @@ public class TemplateController {
             @ApiResponse(responseCode = "201", description = "템플릿 수정 성공. 새 버전이 저장됩니다."),
             @ApiResponse(responseCode = "400", description = "COMMON-002: 요청 문장이 비었거나 500자를 넘었거나, 요청 식별자가 비었거나 64자를 넘었습니다."),
             @ApiResponse(responseCode = "404", description = "POSTER-005: 템플릿을 찾을 수 없습니다."),
-            @ApiResponse(responseCode = "409", description = "POSTER-006: 게시된 템플릿은 수정할 수 없습니다."),
+            @ApiResponse(responseCode = "409", description = "POSTER-006: 게시된 템플릿은 수정하거나 삭제할 수 없습니다."),
             @ApiResponse(responseCode = "422", description = "POSTER-001: 슬롯이 빠졌거나 중복됨. POSTER-002: 슬롯 구조가 이전 버전과 다릅니다."),
             @ApiResponse(responseCode = "503", description = "POSTER-004: LLM 응답이 30초를 넘었습니다.")
     })
@@ -127,6 +130,22 @@ public class TemplateController {
         TemplateActiveUpdateResponse response =
                 templateActivationService.changeActive(templateId, request.active(), admin.getId());
         return ResponseEntity.ok(ResponseEnvelope.success(response));
+    }
+
+    @DeleteMapping("/{templateId}")
+    @Operation(
+            summary = "템플릿 삭제",
+            description = "게시 전(DRAFT) 템플릿을 완전히 삭제합니다. 템플릿과 그 버전이 모두 지워지고 템플릿 생성 가능 수가 1 늘어납니다."
+    )
+    @ApiResponses({
+            @ApiResponse(responseCode = "204", description = "템플릿 삭제 성공. 본문이 없습니다."),
+            @ApiResponse(responseCode = "404", description = "POSTER-005: 템플릿을 찾을 수 없습니다."),
+            @ApiResponse(responseCode = "409", description = "POSTER-006: 게시된 템플릿은 삭제할 수 없습니다.")
+    })
+    public ResponseEntity<Void> delete(
+            @Parameter(description = "삭제할 템플릿 ID입니다.") @PathVariable Long templateId) {
+        templateDeleteService.delete(templateId);
+        return ResponseEntity.noContent().build();
     }
 
     @GetMapping

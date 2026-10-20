@@ -95,7 +95,7 @@ public class TemplateReviseService {
     private String latestVersionHtml(Long templateId) {
         return templateVersionRepository.findFirstByTemplateIdOrderByVersionNumberDesc(templateId)
                 .map(TemplateVersion::getHtmlContent)
-                .orElseThrow(() -> new IllegalStateException("template has no version: id=" + templateId));
+                .orElseThrow(() -> new CampaignException(PosterErrorCode.TEMPLATE_NOT_FOUND));
     }
 
     private String generate(String previousHtml, String requestPrompt) {
