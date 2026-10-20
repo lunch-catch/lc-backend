@@ -254,12 +254,12 @@ public class PosterUploadService {
     private RenderedPoster render(String templateHtml, String eventName, String discount, String period,
             String imageUrl) {
         Document document = Jsoup.parseBodyFragment(templateHtml);
+        // 광고 표시를 넣지 않기로 했다(#628). 광고 표시가 들어 있는 옛 템플릿으로 만든 포스터에서도 뺀다.
+        document.select("[data-slot=adLabel]").remove();
         Map<String, PosterSlotValue> slotValues = new LinkedHashMap<>();
         slotValues.put("eventName", fillText(document, "eventName", eventName));
         slotValues.put("discount", fillText(document, "discount", discount));
         slotValues.put("period", fillText(document, "period", period));
-        // adLabel은 템플릿 생성 때 서버가 이미 채워 둔 값이라(BedrockTemplateHtmlGenerator) 그대로 읽기만 한다.
-        slotValues.put("adLabel", readText(document, "adLabel"));
         slotValues.put("image", fillImage(document, imageUrl));
         return new RenderedPoster(document.body().html(), writeSlotValues(slotValues));
     }
@@ -267,10 +267,6 @@ public class PosterUploadService {
     private PosterSlotValue fillText(Document document, String slot, String value) {
         requireSlot(document, slot).text(value);
         return new PosterSlotValue("text", value);
-    }
-
-    private PosterSlotValue readText(Document document, String slot) {
-        return new PosterSlotValue("text", requireSlot(document, slot).text());
     }
 
     private PosterSlotValue fillImage(Document document, String imageUrl) {

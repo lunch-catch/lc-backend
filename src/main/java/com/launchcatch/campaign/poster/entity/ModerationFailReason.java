@@ -6,7 +6,6 @@ package com.launchcatch.campaign.poster.entity;
  */
 public enum ModerationFailReason {
     FORBIDDEN_EXPRESSION,
-    AD_LABEL_MISSING,
     IMAGE_UNREADABLE,
     RESOLUTION_TOO_LOW,
     TEXT_RATIO_EXCEEDED,

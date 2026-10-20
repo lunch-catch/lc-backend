@@ -63,6 +63,7 @@ class PosterUploadServiceTest {
     private static final Long CAMPAIGN_ID = 501L;
     private static final Long TEMPLATE_ID = 1L;
     private static final String OBJECT_KEY = "campaigns/501/poster/upload-1.jpg";
+    // 광고 표시(adLabel)가 들어 있는 옛 템플릿이다. 포스터에는 광고 표시를 넣지 않는다(#628).
     private static final String TEMPLATE_HTML = ""
             + "<div data-slot=\"eventName\">old</div>"
             + "<div data-slot=\"discount\">old</div>"
@@ -329,7 +330,8 @@ class PosterUploadServiceTest {
         assertThat(response.html()).contains("분식집")
                 .contains("전체 메뉴 10원 할인")
                 .contains("10.01~10.31")
-                .contains("광고")
+                .doesNotContain("adLabel")
+                .doesNotContain("광고")
                 .contains("https://cdn.example.com/" + OBJECT_KEY);
     }
 

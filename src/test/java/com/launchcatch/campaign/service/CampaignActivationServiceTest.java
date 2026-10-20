@@ -201,7 +201,7 @@ class CampaignActivationServiceTest {
         active();
         when(campaignRepository.findById(CAMPAIGN_ID)).thenReturn(Optional.of(draftCampaign(OWNER_ID)));
         List<ModerationFailReason> reasons = List.of(
-                ModerationFailReason.AD_LABEL_MISSING, ModerationFailReason.RESOLUTION_TOO_LOW);
+                ModerationFailReason.FORBIDDEN_EXPRESSION, ModerationFailReason.RESOLUTION_TOO_LOW);
         when(posterModerationService.moderate(CAMPAIGN_ID))
                 .thenReturn(new PosterModerationOutcome(ModerationResult.FAIL, reasons));
 

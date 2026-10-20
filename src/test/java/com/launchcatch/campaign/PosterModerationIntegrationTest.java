@@ -45,7 +45,7 @@ class PosterModerationIntegrationTest extends AbstractCampaignIntegrationTest {
 
     @Test
     void PASS_결과를_저장한다() {
-        Poster poster = createPoster("광고");
+        Poster poster = createPoster("김밥천국");
         doReturn(PosterImageInspection.read(300, 300, 0.1, List.of()))
                 .when(posterImageInspector).inspect(any());
 
@@ -59,7 +59,7 @@ class PosterModerationIntegrationTest extends AbstractCampaignIntegrationTest {
 
     @Test
     void FAIL_결과를_사유와_함께_저장한다() {
-        Poster poster = createPoster("");
+        Poster poster = createPoster("최저가");
         doReturn(PosterImageInspection.toolFailure()).when(posterImageInspector).inspect(any());
 
         posterModerationService.moderate(poster.getCampaignId());
@@ -67,10 +67,10 @@ class PosterModerationIntegrationTest extends AbstractCampaignIntegrationTest {
         List<PosterModerationResult> saved = posterModerationResultRepository.findByPosterIdOrderByIdDesc(poster.getId());
         assertThat(saved).hasSize(1);
         assertThat(saved.getFirst().getResult()).isEqualTo(ModerationResult.FAIL);
-        assertThat(saved.getFirst().getReason()).isEqualTo("AD_LABEL_MISSING,MODERATION_TOOL_FAILURE");
+        assertThat(saved.getFirst().getReason()).isEqualTo("FORBIDDEN_EXPRESSION,MODERATION_TOOL_FAILURE");
     }
 
-    private Poster createPoster(String adLabel) {
+    private Poster createPoster(String eventName) {
         Campaign campaign = campaignRepository.saveAndFlush(Campaign.create(
                 1L, System.nanoTime(),
                 DiscountTargetType.ALL, DiscountType.AMOUNT, 10, null,
@@ -80,8 +80,7 @@ class PosterModerationIntegrationTest extends AbstractCampaignIntegrationTest {
                 null, null, null,
                 LocalDateTime.now()));
         Template template = templateRepository.saveAndFlush(Template.createDraft("가을 신메뉴"));
-        String slotValues = "{\"eventName\":{\"type\":\"text\",\"value\":\"김밥천국\"},"
-                + "\"adLabel\":{\"type\":\"text\",\"value\":\"" + adLabel + "\"},"
+        String slotValues = "{\"eventName\":{\"type\":\"text\",\"value\":\"" + eventName + "\"},"
                 + "\"image\":{\"type\":\"image\",\"value\":\"https://cdn.example.com/a.png\"}}";
         return posterRepository.saveAndFlush(Poster.create(
                 campaign.getId(), template.getId(), "김밥천국 - 가을 신메뉴", slotValues, "<div></div>",

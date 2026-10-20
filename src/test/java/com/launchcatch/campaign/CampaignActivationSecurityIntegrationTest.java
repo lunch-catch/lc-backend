@@ -87,7 +87,7 @@ class CampaignActivationSecurityIntegrationTest extends AbstractCampaignIntegrat
         Long ownerId = createActiveOwner();
         Long storeId = System.nanoTime();
         Campaign campaign = campaignRepository.saveAndFlush(draft(ownerId, storeId));
-        createPoster(campaign.getId(), "광고");
+        createPoster(campaign.getId(), "김밥천국");
         doReturn(PosterImageInspection.read(300, 300, 0.1, List.of()))
                 .when(posterImageInspector).inspect(any());
 
@@ -107,14 +107,14 @@ class CampaignActivationSecurityIntegrationTest extends AbstractCampaignIntegrat
         Long ownerId = createActiveOwner();
         Long storeId = System.nanoTime();
         Campaign campaign = campaignRepository.saveAndFlush(draft(ownerId, storeId));
-        createPoster(campaign.getId(), "");
+        createPoster(campaign.getId(), "최저가");
         doReturn(PosterImageInspection.toolFailure()).when(posterImageInspector).inspect(any());
 
         mvc.perform(post(activatePath(campaign.getId())).cookie(ownerToken(ownerId)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.status").value("DRAFT"))
                 .andExpect(jsonPath("$.data.reasons").isArray())
-                .andExpect(jsonPath("$.data.reasons", org.hamcrest.Matchers.hasItem("AD_LABEL_MISSING")))
+                .andExpect(jsonPath("$.data.reasons", org.hamcrest.Matchers.hasItem("FORBIDDEN_EXPRESSION")))
                 .andExpect(jsonPath("$.data.reasons", org.hamcrest.Matchers.hasItem("MODERATION_TOOL_FAILURE")));
 
         Campaign reloaded = campaignRepository.findById(campaign.getId()).orElseThrow();
@@ -212,11 +212,10 @@ class CampaignActivationSecurityIntegrationTest extends AbstractCampaignIntegrat
         return ownerId;
     }
 
-    private Poster createPoster(Long campaignId, String adLabel) {
+    private Poster createPoster(Long campaignId, String eventName) {
         Template template = templateRepository.saveAndFlush(Template.createDraft("가을 신메뉴"));
         createdTemplateIds.add(template.getId());
-        String slotValues = "{\"eventName\":{\"type\":\"text\",\"value\":\"김밥천국\"},"
-                + "\"adLabel\":{\"type\":\"text\",\"value\":\"" + adLabel + "\"},"
+        String slotValues = "{\"eventName\":{\"type\":\"text\",\"value\":\"" + eventName + "\"},"
                 + "\"image\":{\"type\":\"image\",\"value\":\"https://cdn.example.com/a.png\"}}";
         return posterRepository.saveAndFlush(Poster.create(
                 campaignId, template.getId(), "김밥천국 - 가을 신메뉴", slotValues, "<div></div>",
