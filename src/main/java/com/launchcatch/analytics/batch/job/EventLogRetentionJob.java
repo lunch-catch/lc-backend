@@ -63,17 +63,17 @@ public class EventLogRetentionJob implements StandaloneJob {
         return JOB_NAME;
     }
 
-    /*
-     * 이어받은 서버와 관리자 수동 재실행이 부른다.
-     *
-     * 지운 건수를 여기서 먼저 남긴다. 이 길은 DailyJobRunner 가 run 뒤에 건수 없는 succeed 로 행을
-     * 닫는데, 그 오버로드는 처리 건수를 null 로 덮어쓰고 run 은 건수를 돌려줄 길도 없다. 여기서 먼저
-     * 닫으면 이어지는 닫기는 행이 이미 RUNNING 이 아니라서 무시된다. 그 동작에 기대는 임시 처리다.
-     * ops 가 건수를 돌려주는 runCounting 을 더하면(#559) 그것을 재정의하고 이 호출을 지운다(#560).
-     */
     @Override
     public void run(LocalDate businessDate, int attemptNo) {
-        int deleted = retention.purge();
-        executions.succeed(JOB_NAME, businessDate, deleted);
+        runCounting(businessDate, attemptNo);
+    }
+
+    /*
+     * 이어받은 서버와 관리자 수동 재실행이 부른다. 지운 건수를 돌려주면 DailyJobRunner 가 그 건수로
+     * 행을 닫는다. 여기서 행을 닫지 않는다.
+     */
+    @Override
+    public Integer runCounting(LocalDate businessDate, int attemptNo) {
+        return retention.purge();
     }
 }

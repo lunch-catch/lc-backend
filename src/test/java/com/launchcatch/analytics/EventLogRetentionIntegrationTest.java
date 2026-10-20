@@ -85,8 +85,8 @@ class EventLogRetentionIntegrationTest extends AbstractAnalyticsIntegrationTest 
     }
 
     /*
-     * 멈춘 실행을 이어받거나 관리자가 다시 돌리는 길은 DailyJobRunner.resume 이 부른다. 그 뒤 runner 가 건수 없는
-     * succeed 로 닫아도 지운 건수가 남는지 본다.
+     * 멈춘 실행을 이어받거나 관리자가 다시 돌리는 길은 DailyJobRunner.resume 이 부른다. runner 가 runCounting 이
+     * 돌려준 건수로 닫아 지운 건수가 남는지 본다.
      */
     @Test
     void 이어받아_다시_돌려도_삭제_건수가_실행_기록에_남는다() {
