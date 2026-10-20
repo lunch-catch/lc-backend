@@ -68,7 +68,7 @@ class TemplateCreateServiceTest {
             "행사명을 중앙에서 오른쪽으로 1cm 옮겨줘",
             "이미지 모서리를 더 둥글게 해줘");
     private static final Clock FIXED_CLOCK = Clock.fixed(Instant.parse("2026-10-08T01:00:00Z"), ZoneOffset.UTC);
-    // 실제 설계값(V51)이다. application.yml의 campaign.template-max-count는 임시 상향값(#529)이라 이 테스트와 무관하다.
+    // 서비스에 직접 넣는 테스트용 값이다. application.yml의 campaign.template-max-count와는 무관하다.
     private static final int MAX_TEMPLATES = 10;
 
     @Mock

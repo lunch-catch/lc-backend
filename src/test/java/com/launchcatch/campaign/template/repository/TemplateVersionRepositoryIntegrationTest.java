@@ -7,6 +7,7 @@ import com.launchcatch.campaign.template.entity.Template;
 import com.launchcatch.campaign.template.entity.TemplateVersion;
 import jakarta.persistence.EntityManager;
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
@@ -104,6 +105,25 @@ class TemplateVersionRepositoryIntegrationTest extends AbstractCampaignIntegrati
 
         assertThat(deleted).isZero();
         assertThat(reload(template.getId(), 1)).isNotNull();
+    }
+
+    @Test
+    void 템플릿들의_살아있는_최신_버전을_한번에_가져온다() {
+        Template first = templateWithVersions(3);
+        Template second = templateWithVersions(2);
+        Template allDeleted = templateWithVersions(1);
+        templateVersionRepository.softDeleteUpToVersionNumber(first.getId(), 3, LocalDateTime.now());
+        templateVersionRepository.softDeleteUpToVersionNumber(allDeleted.getId(), 1, LocalDateTime.now());
+        entityManager.flush();
+        entityManager.clear();
+
+        List<TemplateVersion> latest = templateVersionRepository.findLatestAliveByTemplateIds(
+                List.of(first.getId(), second.getId(), allDeleted.getId()));
+
+        // first 는 3번이 이미 소프트삭제돼 살아있는 버전이 없고, allDeleted 도 없다.
+        assertThat(latest).extracting(version -> version.getTemplate().getId())
+                .containsExactly(second.getId());
+        assertThat(latest.get(0).getVersionNumber()).isEqualTo(2);
     }
 
     @Test

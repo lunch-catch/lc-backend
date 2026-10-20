@@ -5,6 +5,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -61,8 +63,8 @@ class TemplateQueryServiceTest {
         Template draft = draftTemplate(1L, "가을 신메뉴");
         Template published = publishedTemplate(2L);
         when(templateRepository.findAllByOrderByCreatedAtDesc()).thenReturn(List.of(published, draft));
-        when(templateVersionRepository.findFirstByTemplateIdAndDeletedAtIsNullOrderByVersionNumberDesc(1L))
-                .thenReturn(Optional.of(draft.latestVersion()));
+        when(templateVersionRepository.findLatestAliveByTemplateIds(List.of(1L)))
+                .thenReturn(List.of(draft.latestVersion()));
 
         List<TemplateListItemResponse> responses = service.list();
 
@@ -70,6 +72,45 @@ class TemplateQueryServiceTest {
                 .containsExactly(2L, 1L);
         assertThat(responses.get(0).html()).isEqualTo(PUBLISHED_HTML);
         assertThat(responses.get(1).html()).isEqualTo(draft.latestVersion().getHtmlContent());
+    }
+
+    @Test
+    @DisplayName("목록은 DRAFT 템플릿이 여럿이어도 최신 버전을 한 번에 조회한다(N+1 방지, #532)")
+    void 목록은_최신_버전을_한번에_조회한다() throws Exception {
+        Template first = draftTemplate(1L, "가을 신메뉴");
+        Template second = draftTemplate(3L, "겨울 신메뉴");
+        when(templateRepository.findAllByOrderByCreatedAtDesc()).thenReturn(List.of(second, first));
+        when(templateVersionRepository.findLatestAliveByTemplateIds(List.of(3L, 1L)))
+                .thenReturn(List.of(first.latestVersion(), second.latestVersion()));
+
+        List<TemplateListItemResponse> responses = service.list();
+
+        assertThat(responses).extracting(TemplateListItemResponse::html)
+                .containsExactly("html-3", "html-1");
+        verify(templateVersionRepository, times(1)).findLatestAliveByTemplateIds(any());
+        verify(templateVersionRepository, never())
+                .findFirstByTemplateIdAndDeletedAtIsNullOrderByVersionNumberDesc(any());
+    }
+
+    @Test
+    @DisplayName("게시된 템플릿만 있으면 최신 버전을 조회하지 않는다")
+    void 게시된_템플릿만_있으면_버전을_조회하지_않는다() throws Exception {
+        when(templateRepository.findAllByOrderByCreatedAtDesc()).thenReturn(List.of(publishedTemplate(2L)));
+
+        List<TemplateListItemResponse> responses = service.list();
+
+        assertThat(responses.get(0).html()).isEqualTo(PUBLISHED_HTML);
+        verify(templateVersionRepository, never()).findLatestAliveByTemplateIds(any());
+    }
+
+    @Test
+    @DisplayName("DRAFT 템플릿에 살아있는 버전이 없으면 불변식 위반으로 예외를 던진다")
+    void 목록에서_버전이_없으면_예외를_던진다() throws Exception {
+        Template draft = draftTemplate(1L, "가을 신메뉴");
+        when(templateRepository.findAllByOrderByCreatedAtDesc()).thenReturn(List.of(draft));
+        when(templateVersionRepository.findLatestAliveByTemplateIds(List.of(1L))).thenReturn(List.of());
+
+        assertThatThrownBy(() -> service.list()).isInstanceOf(IllegalStateException.class);
     }
 
     @Test

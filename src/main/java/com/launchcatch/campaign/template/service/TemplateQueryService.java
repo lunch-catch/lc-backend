@@ -15,6 +15,8 @@ import com.launchcatch.global.response.CursorPageResponse;
 import com.launchcatch.global.response.PageCursor;
 import com.launchcatch.global.response.PageTokens;
 import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -33,14 +35,36 @@ public class TemplateQueryService {
     private final TemplateVersionRepository templateVersionRepository;
 
     /*
-     * DRAFT 템플릿마다 htmlOf() 가 최신 버전을 따로 조회해 N+1 이다. 템플릿이 최대 10개로
-     * 제한돼 있어(TemplateQuota) 지금은 목록 조회 1번에 최대 11번 쿼리로 끝나지만, 그 제한이
-     * 풀리면 템플릿 수에 비례해 느려진다. 제한을 풀 때는 이 메서드도 같이 봐야 한다.
+     * DRAFT 템플릿의 미리보기 html 은 최신 버전들을 한 번에 조회해(findLatestAliveByTemplateIds)
+     * 채운다. 템플릿마다 htmlOf() 로 따로 조회하면 템플릿 수만큼 쿼리가 나가는 N+1 이라, 상한이
+     * 100개가 된 지금은 목록 한 번에 쿼리가 최대 101번 나간다(#532). 쿼리는 템플릿 수와 무관하게
+     * 템플릿 목록 1번, 최신 버전 1번이다.
      */
     public List<TemplateListItemResponse> list() {
-        return templateRepository.findAllByOrderByCreatedAtDesc().stream()
-                .map(template -> TemplateListItemResponse.of(template, htmlOf(template)))
+        List<Template> templates = templateRepository.findAllByOrderByCreatedAtDesc();
+        List<Long> draftIds = templates.stream()
+                .filter(template -> template.getStatus() != TemplateStatus.PUBLISHED)
+                .map(Template::getId)
                 .toList();
+        Map<Long, String> latestHtml = draftIds.isEmpty()
+                ? Map.of()
+                : templateVersionRepository.findLatestAliveByTemplateIds(draftIds).stream()
+                        .collect(Collectors.toMap(
+                                version -> version.getTemplate().getId(), TemplateVersion::getHtmlContent));
+        return templates.stream()
+                .map(template -> TemplateListItemResponse.of(template, previewHtml(template, latestHtml)))
+                .toList();
+    }
+
+    private String previewHtml(Template template, Map<Long, String> latestHtml) {
+        if (template.getStatus() == TemplateStatus.PUBLISHED) {
+            return template.getHtmlContent();
+        }
+        String html = latestHtml.get(template.getId());
+        if (html == null) {
+            throw new IllegalStateException("template has no version: id=" + template.getId());
+        }
+        return html;
     }
 
     /*

@@ -56,12 +56,12 @@ public class TemplateController {
     @PostMapping
     @Operation(
             summary = "템플릿 생성",
-            description = "관리자의 요청 문장으로 LLM 이 템플릿 HTML 을 만들고, 정화와 구조 검증을 통과한 결과를 임시저장 버전으로 저장합니다. 전체 템플릿은 10개로 제한됩니다."
+            description = "관리자의 요청 문장으로 LLM 이 템플릿 HTML 을 만들고, 정화와 구조 검증을 통과한 결과를 임시저장 버전으로 저장합니다. 전체 템플릿 개수에는 상한이 있습니다(현재 100개)."
     )
     @ApiResponses({
             @ApiResponse(responseCode = "201", description = "템플릿 생성 성공. DRAFT 템플릿과 1번 버전이 저장됩니다."),
             @ApiResponse(responseCode = "400", description = "COMMON-002: 이름이 비었거나 100자를 넘었거나, 요청 문장이 비었거나 500자를 넘었거나, 요청 식별자가 비었거나 64자를 넘었습니다."),
-            @ApiResponse(responseCode = "422", description = "POSTER-001: 슬롯이 빠졌거나 중복됨. POSTER-003: 템플릿이 이미 10개입니다."),
+            @ApiResponse(responseCode = "422", description = "POSTER-001: 슬롯이 빠졌거나 중복됨. POSTER-003: 템플릿 생성 한도에 도달했습니다."),
             @ApiResponse(responseCode = "503", description = "POSTER-004: LLM 응답이 30초를 넘었습니다.")
     })
     public ResponseEntity<ResponseEnvelope<TemplateCreateResponse>> create(
@@ -151,7 +151,7 @@ public class TemplateController {
     @GetMapping
     @Operation(
             summary = "템플릿 목록 조회",
-            description = "전체 템플릿을 생성일 최신순으로 조회합니다. html은 게시된 템플릿이면 게시된 HTML, DRAFT 템플릿이면 최신 버전의 HTML로, 미리보기에 씁니다. 템플릿은 최대 10개까지만 만들 수 있어 페이지네이션은 제공하지 않습니다."
+            description = "전체 템플릿을 생성일 최신순으로 조회합니다. html은 게시된 템플릿이면 게시된 HTML, DRAFT 템플릿이면 최신 버전의 HTML로, 미리보기에 씁니다. 템플릿 개수에 상한(현재 100개)이 있어 페이지네이션은 제공하지 않습니다."
     )
     @ApiResponse(responseCode = "200", description = "템플릿 목록 조회 성공.")
     public ResponseEntity<ResponseEnvelope<List<TemplateListItemResponse>>> list() {
