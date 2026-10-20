@@ -46,6 +46,11 @@ public class ServeLogRepository {
         });
     }
 
+    // 보관 기간이 지난 영업일의 행을 limit 개까지 지운다. 문장마다 따로 커밋한다(#610)
+    public int deleteBusinessDateBefore(LocalDate before, int limit) {
+        return jdbcTemplate.update("DELETE FROM serve_log WHERE business_date < ? LIMIT ?", before, limit);
+    }
+
     static byte[] bytes(UUID uuid) {
         return ByteBuffer.allocate(16).putLong(uuid.getMostSignificantBits()).putLong(uuid.getLeastSignificantBits()).array();
     }

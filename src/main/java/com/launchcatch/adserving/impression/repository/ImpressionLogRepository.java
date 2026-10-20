@@ -5,8 +5,10 @@ import com.launchcatch.adserving.impression.entity.ImpressionLogId;
 import java.time.LocalDate;
 import java.util.List;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
+import org.springframework.transaction.annotation.Transactional;
 
 public interface ImpressionLogRepository extends JpaRepository<ImpressionLog, ImpressionLogId>, ImpressionLogInsert {
 
@@ -110,4 +112,10 @@ public interface ImpressionLogRepository extends JpaRepository<ImpressionLog, Im
         long getDistinctMemberCount();
         long getTopMembersValidCount();
     }
+
+    // 보관 기간이 지난 영업일의 행을 limit 개까지 지운다. 문장마다 따로 커밋한다(#610)
+    @Transactional
+    @Modifying
+    @Query(value = "DELETE FROM impression_log WHERE business_date < :before LIMIT :limit", nativeQuery = true)
+    int deleteBusinessDateBefore(@Param("before") LocalDate before, @Param("limit") int limit);
 }
