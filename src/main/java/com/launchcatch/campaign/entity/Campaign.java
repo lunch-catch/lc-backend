@@ -245,6 +245,15 @@ public class Campaign extends BaseTimeEntity {
         this.statusChangedAt = now;
     }
 
+    // 점주가 집행 전에 취소해 DRAFT 로 되돌린다(#571, #597). 집행이 시작된 뒤에는 되돌리지 않는다
+    public void cancel(LocalDateTime now) {
+        if (this.status != CampaignStatus.SCHEDULED) {
+            throw new IllegalStateException("only SCHEDULED campaign can be cancelled: " + this.status);
+        }
+        this.status = CampaignStatus.DRAFT;
+        this.statusChangedAt = now;
+    }
+
     public void activate(LocalDateTime now) {
         if (this.status != CampaignStatus.SCHEDULED) {
             throw new IllegalStateException("only SCHEDULED campaign can be activated: " + this.status);

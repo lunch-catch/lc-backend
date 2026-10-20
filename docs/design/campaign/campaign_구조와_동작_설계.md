@@ -136,7 +136,7 @@ flowchart LR
 stateDiagram-v2
     [*] --> DRAFT
     DRAFT --> SCHEDULED: 자동 검수 통과 (SYSTEM)
-    SCHEDULED --> DRAFT: 점주 취소 (미구현, #597)
+    SCHEDULED --> DRAFT: 점주 취소 (#597)
     SCHEDULED --> ACTIVE: 00:00 스케줄러 (SYSTEM)
     ACTIVE --> PAUSED: 관리자, 점주, 포인트 부족
     PAUSED --> ACTIVE: 재개
@@ -147,7 +147,7 @@ stateDiagram-v2
 | 전이 | 일으키는 쪽 | 나가는 이벤트 | 금지일 때 응답 |
 |---|---|---|---|
 | DRAFT -> SCHEDULED | OWNER(활성화 요청, 자동 검수 통과) | 없음 | `CAMPAIGN-006` |
-| SCHEDULED -> DRAFT(미구현, `#597`) | OWNER(취소 요청) | `#597`에서 정한다 | `#597`에서 HTTP 계약을 정한다 |
+| SCHEDULED -> DRAFT(`#597`) | OWNER(취소 요청) | 없음(다른 도메인은 SCHEDULED 를 그때그때 읽기만 한다) | `CAMPAIGN-006` |
 | SCHEDULED -> ACTIVE | SYSTEM | 없음(00:00 배치가 같은 흐름에서 다시 조회) | `IllegalStateException` |
 | ACTIVE -> PAUSED | ADMIN, OWNER, SYSTEM(포인트 부족) | `CampaignStatusChangedEvent`(servable=false) | `IllegalStateException` |
 | PAUSED -> ACTIVE | OWNER, SYSTEM(충전 재예약) | `CampaignStatusChangedEvent`(servable=true) | `IllegalStateException` |
@@ -175,9 +175,10 @@ DRAFT -> SCHEDULED는 점주의 캠페인 활성화 요청(`#561`)이 호출부�
 | 하루 예산 | `DRAFT`의 하루 예산을 다시 설정할 수 있다. [예산과 집행 기간 설계](./campaign-api-design.md#캠페인-등록노출-대상-하루-예산과-집행-기간)의 기존 조건을 따른다 |
 
 수정한 캠페인을 다시 활성화할 때는 기존 활성화 절차와 자동 검수를 거쳐 `SCHEDULED`로 전환한다.
-실제 취소 기능은 [구현 이슈 #597](https://github.com/lunch-catch/lc-backend/issues/597)이 맡는다.
-이 결정은 취소를 허용할 상태와 취소 뒤 수정 범위를 정한다. 취소 API의 공개 계약과 상태 전이
-경합 처리는 구현 이슈에서 확정한다.
+실제 취소 기능은 [구현 이슈 #597](https://github.com/lunch-catch/lc-backend/issues/597)이 맡았다.
+이 결정은 취소를 허용할 상태와 취소 뒤 수정 범위를 정한다. 취소 API 의 공개 계약은
+[명세서](../../api-spec/campaign-api-spec.md#캠페인-취소)에, 00:00 전환과의 경합 처리는
+[API 설계](./campaign-api-design.md#캠페인-취소점주)에 있다.
 
 ### 주요 흐름
 

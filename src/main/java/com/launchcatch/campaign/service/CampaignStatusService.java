@@ -29,7 +29,7 @@ import org.springframework.transaction.annotation.Transactional;
  * 변경 이벤트를 발행하지 않는다(00:00 배치가 같은 흐름에서 바로 다시 조회하기 때문). pause,
  * resume, end만 낮에 일어나는 전이라 CampaignStatusChangedEvent를 발행한다.
  *
- * 다섯 메서드 모두 이미 목표 상태면 예외 대신 조용히 성공한다(멱등한 재시도). 00:00 묶음의
+ * 여섯 메서드(cancel 포함, #597) 모두 이미 목표 상태면 예외 대신 조용히 성공한다(멱등한 재시도). 00:00 묶음의
  * 이어받기와 자동 재실행, billing의 재시도가 모두 같은 단계를 두 번 실행할 수 있다고 전제하기
  * 때문이다(런치캐치_배치_운영.md). 목표 상태가 아닌데 전이가 안 되는 경우는 엔티티 쪽
  * IllegalStateException이 그대로 막는다.
@@ -102,6 +102,24 @@ public class CampaignStatusService {
         CampaignStatus from = campaign.getStatus();
         campaign.activate(LocalDateTime.now(clock));
         log(campaignId, from, campaign.getStatus(), ActorType.SYSTEM, null);
+    }
+
+    /*
+     * 점주의 취소다(#597). schedule 처럼 이벤트를 내지 않고 가게 요약도 갱신하지 않는다.
+     * 다른 도메인은 SCHEDULED 를 그때그때 읽기만 해서 되돌릴 것이 없다.
+     *
+     * 00:00 배치의 activate 와 같은 행 잠금으로 줄을 선다. 취소가 먼저면 activate 가 DRAFT 를 보고
+     * IllegalStateException 을 던진다.
+     */
+    @Transactional
+    public void cancel(Long campaignId) {
+        Campaign campaign = findOrThrow(campaignId);
+        if (campaign.getStatus() == CampaignStatus.DRAFT) {
+            return;
+        }
+        CampaignStatus from = campaign.getStatus();
+        campaign.cancel(LocalDateTime.now(clock));
+        log(campaignId, from, campaign.getStatus(), ActorType.OWNER, null);
     }
 
     @Transactional

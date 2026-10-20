@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.launchcatch.campaign.contract.AgeGroup;
+import com.launchcatch.campaign.contract.CampaignStatus;
 import com.launchcatch.campaign.contract.DiscountTargetType;
 import com.launchcatch.campaign.contract.DiscountType;
 import com.launchcatch.campaign.contract.TargetGender;
@@ -138,6 +139,23 @@ class CampaignTest {
                 100, LocalTime.of(11, 0), LocalTime.of(14, 0),
                 null, null))
                 .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    @DisplayName("SCHEDULED만 취소해 DRAFT로 되돌리고 상태 변경 시각을 남긴다")
+    void SCHEDULED만_취소한다() {
+        Campaign campaign = campaign(10_000L, LocalDate.of(2026, 10, 14), LocalDate.of(2026, 10, 31));
+        assertThatThrownBy(() -> campaign.cancel(NOW)).isInstanceOf(IllegalStateException.class);
+
+        campaign.schedule(NOW);
+        campaign.cancel(NOW.plusHours(1));
+
+        assertThat(campaign.getStatus()).isEqualTo(CampaignStatus.DRAFT);
+        assertThat(campaign.getStatusChangedAt()).isEqualTo(NOW.plusHours(1));
+
+        campaign.schedule(NOW.plusHours(2));
+        campaign.activate(NOW.plusHours(3));
+        assertThatThrownBy(() -> campaign.cancel(NOW.plusHours(4))).isInstanceOf(IllegalStateException.class);
     }
 
     private Campaign campaign(Long dailyBudget, LocalDate startDate, LocalDate endDate) {

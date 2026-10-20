@@ -21,6 +21,7 @@ import com.launchcatch.campaign.dto.CampaignStatusResponse;
 import com.launchcatch.campaign.dto.CampaignUpdateRequest;
 import com.launchcatch.campaign.dto.CampaignUpdateResponse;
 import com.launchcatch.campaign.service.CampaignActivationService;
+import com.launchcatch.campaign.service.CampaignCancelService;
 import com.launchcatch.campaign.service.CampaignCouponConditionResult;
 import com.launchcatch.campaign.service.CampaignCouponConditionService;
 import com.launchcatch.campaign.service.CampaignOwnerQueryService;
@@ -42,13 +43,22 @@ class CampaignControllerTest {
     private final CampaignOwnerQueryService ownerQueryService = mock(CampaignOwnerQueryService.class);
     private final CampaignPauseResumeService pauseResumeService = mock(CampaignPauseResumeService.class);
     private final CampaignActivationService activationService = mock(CampaignActivationService.class);
+    private final CampaignCancelService cancelService = mock(CampaignCancelService.class);
     private final CampaignController controller = new CampaignController(
-            service, targetAudienceService, ownerQueryService, pauseResumeService, activationService);
+            service, targetAudienceService, ownerQueryService, pauseResumeService, activationService, cancelService);
     private final CustomUserDetails owner = new CustomUserDetails(7L, Role.OWNER);
 
     private final CampaignCouponConditionRequest request = new CampaignCouponConditionRequest(
             17L, DiscountTargetType.ALL, DiscountType.AMOUNT, 15, null,
             100, LocalTime.of(11, 30), LocalTime.of(13, 0), null, null);
+
+    @Test
+    void 취소는_점주와_캠페인_ID로_서비스에_맡긴다() {
+        CampaignStatusResponse response = new CampaignStatusResponse(501L, CampaignStatus.DRAFT);
+        when(cancelService.cancel(7L, 501L)).thenReturn(response);
+
+        assertThat(controller.cancel(501L, owner).data()).isSameAs(response);
+    }
 
     @Test
     void 새로_만들면_201을_반환한다() {
