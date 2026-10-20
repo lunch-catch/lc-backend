@@ -469,9 +469,9 @@ ACTIVE의 동시 저장은 순서대로 처리되며 마지막으로 처리된 �
 
 ## `POST /v1/owner/store-images:prepareUpload`
 
-점주가 가게 인테리어 이미지를 올릴 presigned PUT URL을 발급받는다. 이미지 한 장당
-호출한다. 로고는 가게 입점 과정에서 이미 등록돼 있다고 보고 이 API로 새로 올리지
-않는다.
+점주가 가게 로고 이미지 또는 인테리어 이미지를 올릴 presigned PUT URL을 발급받는다.
+이미지 한 장당 호출한다. 로고는 가게당 1개이고, 이미 등록된 로고가 있어도 다시
+호출하면 그 로고를 새 이미지로 교체한다.
 
 ### 인증
 
@@ -481,7 +481,8 @@ ACTIVE의 동시 저장은 순서대로 처리되며 마지막으로 처리된 �
 
 ```json
 {
-  "originalFilename": "interior.jpg",
+  "imageType": "LOGO",
+  "originalFilename": "logo.jpg",
   "contentType": "image/jpeg",
   "fileSize": 204800
 }
@@ -489,6 +490,7 @@ ACTIVE의 동시 저장은 순서대로 처리되며 마지막으로 처리된 �
 
 | 필드 | 타입 | 필수 | 조건 |
 |---|---|---|---|
+| imageType | string | 예 | `LOGO`, `INTERIOR` 중 하나 |
 | originalFilename | string | 예 | |
 | contentType | string | 예 | `image/jpeg`, `image/png` 중 하나 |
 | fileSize | integer | 예 | 1 이상, 10485760(10MB) 이하 |
@@ -513,7 +515,7 @@ ACTIVE의 동시 저장은 순서대로 처리되며 마지막으로 처리된 �
 |---|---|---|
 | uploadId | string | 확인 요청에 그대로 보내는 식별자 |
 | uploadUrl | string | 이 주소로 파일을 직접 PUT 업로드한다. 10분 안에 사용해야 한다 |
-| sortOrder | integer | 이 이미지가 인테리어 이미지 중 몇 번째로 표시되는지(1~3). 서버가 업로드 순서대로 자동으로 매긴다 |
+| sortOrder | integer | `imageType`이 `INTERIOR`일 때 인테리어 이미지 중 몇 번째로 표시되는지(1~3). 서버가 업로드 순서대로 자동으로 매긴다. `imageType`이 `LOGO`면 `null`이다 |
 
 ### 오류
 
@@ -522,9 +524,10 @@ ACTIVE의 동시 저장은 순서대로 처리되며 마지막으로 처리된 �
 | `401` | `AUTH-005` | 유효한 점주 인증이 없음 |
 | `403` | `AUTH-006` | 인증된 역할이 `OWNER`가 아님 |
 | `409` | `STORE-002` | 점주 상태가 `ONBOARDING`이 아님, 또는 기본 정보 단계를 아직 안 마침 |
+| `400` | `COMMON-002` | `imageType`이 `LOGO`, `INTERIOR`가 아님 |
 | `422` | `STORE-005` | `contentType`이 `image/jpeg`, `image/png`가 아님 |
 | `422` | `STORE-006` | `fileSize`가 10MB를 넘음 |
-| `422` | `STORE-007` | 이미 인테리어 이미지가 3개 등록돼 있음 |
+| `422` | `STORE-007` | `imageType`이 `INTERIOR`인데 이미 인테리어 이미지가 3개 등록돼 있음 |
 
 ## `POST /v1/owner/store-images:confirmUpload`
 
@@ -558,7 +561,8 @@ ACTIVE의 동시 저장은 순서대로 처리되며 마지막으로 처리된 �
 
 ## `POST /v1/owner/store-images:complete`
 
-인테리어 이미지(0~3개) 등록을 마치고 `IMAGES` 단계를 완료해 `MENU`로 진행한다.
+로고 이미지(필수 1개)와 인테리어 이미지(0~3개) 등록을 마치고 `IMAGES` 단계를 완료해
+`MENU`로 진행한다.
 
 ### 인증
 
