@@ -76,7 +76,8 @@ class AdminCampaignQueryServiceTest {
         Campaign second = campaign(501L);
         when(campaignRepository.findAdminPage(isNull(), isNull(), isNull(), eq(PageRequest.of(0, 21))))
                 .thenReturn(List.of(first, second));
-        when(storeQueryService.findAllById(List.of(STORE_ID))).thenReturn(List.of(store("런치캐치 식당")));
+        StoreInfo storeInfo = store("런치캐치 식당");
+        when(storeQueryService.findAllById(List.of(STORE_ID))).thenReturn(List.of(storeInfo));
 
         CursorPageResponse<AdminCampaignListItemResponse> response = service().list(null, null, null, 20);
 
@@ -89,8 +90,10 @@ class AdminCampaignQueryServiceTest {
     @Test
     @DisplayName("다음 페이지가 더 있으면 요청한 개수만 자르고 nextPageToken을 채운다")
     void 다음_페이지가_있으면_토큰을_채운다() {
+        Campaign first = campaign(502L);
+        Campaign second = campaign(501L);
         when(campaignRepository.findAdminPage(isNull(), isNull(), isNull(), eq(PageRequest.of(0, 2))))
-                .thenReturn(List.of(campaign(502L), campaign(501L)));
+                .thenReturn(List.of(first, second));
         when(storeQueryService.findAllById(any())).thenReturn(List.of());
 
         CursorPageResponse<AdminCampaignListItemResponse> response = service().list(null, null, null, 1);
@@ -131,7 +134,8 @@ class AdminCampaignQueryServiceTest {
     void 상세는_이력과_포스터가_없어도_응답한다() {
         Campaign campaign = campaign(501L);
         when(campaignRepository.findById(501L)).thenReturn(Optional.of(campaign));
-        when(storeQueryService.findAllById(List.of(STORE_ID))).thenReturn(List.of(store("런치캐치 식당")));
+        StoreInfo storeInfo = store("런치캐치 식당");
+        when(storeQueryService.findAllById(List.of(STORE_ID))).thenReturn(List.of(storeInfo));
         when(campaignStatusLogRepository.findByCampaignIdOrderByIdAsc(501L)).thenReturn(List.of());
         when(posterRepository.findByCampaignId(501L)).thenReturn(Optional.empty());
 
