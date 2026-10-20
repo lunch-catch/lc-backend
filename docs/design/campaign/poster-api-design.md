@@ -131,9 +131,11 @@
    캠페인 상태를 바꿨을 수 있어서다
 3. `eventName`은 `store.contract.StoreQueryService.findAllById`로 읽은 가게명, `discount`는
    캠페인의 할인 대상·방식·값으로, `period`는 캠페인의 집행 기간으로 서버가 문구를 만든다.
-   `adLabel`은 템플릿 생성 때 `BedrockTemplateHtmlGenerator`가 이미 채워 둔 값이라
-   `[data-slot=adLabel]`을 그대로 읽기만 하고 다시 쓰지 않는다
-4. 템플릿의 `html_content`를 Jsoup으로 파싱해 슬롯 5개를 찾아 값을 채우거나(텍스트), `src`
+   포스터에는 광고 표시(`adLabel`)를 넣지 않기로 팀이 합의했다(`#628`). 템플릿 생성은 `adLabel`을
+   넣지 않고 모델이 써 넣은 것도 지운다. 광고 표시가 들어 있는 옛 템플릿으로 포스터를 만들 때는
+   `[data-slot=adLabel]`을 HTML에서 지우고 `slot_values`에도 넣지 않는다. 이미 저장된 포스터와
+   템플릿은 그대로 둔다
+4. 템플릿의 `html_content`를 Jsoup으로 파싱해 슬롯 4개를 찾아 값을 채우거나(텍스트), `src`
    속성을 바꾼다(이미지). 슬롯을 못 찾으면 `POSTER-001`(`SLOT_CONTRACT_VIOLATION`)을 재사용해
    던진다. 템플릿이 게시 전에 이미 슬롯 검증을 거치므로, 여기서 못 찾는 것은 그 사이 데이터가
    깨진 것으로 본다

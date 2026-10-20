@@ -218,7 +218,7 @@
   "data": {
     "campaignId": 501,
     "status": "DRAFT",
-    "reasons": ["AD_LABEL_MISSING", "RESOLUTION_TOO_LOW"]
+    "reasons": ["FORBIDDEN_EXPRESSION", "RESOLUTION_TOO_LOW"]
   }
 }
 ```
@@ -231,7 +231,6 @@
 
 | reasons 값 | 뜻 |
 |---|---|
-| AD_LABEL_MISSING | 광고 표시 문구가 없음 |
 | FORBIDDEN_EXPRESSION | 금칙 표현이 포함됨 |
 | IMAGE_UNREADABLE | 이미지를 읽을 수 없음 |
 | RESOLUTION_TOO_LOW | 이미지 해상도가 최소값 미만 |
