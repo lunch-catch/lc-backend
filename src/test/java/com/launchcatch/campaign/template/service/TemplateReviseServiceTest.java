@@ -12,6 +12,7 @@ import static org.mockito.Mockito.when;
 import com.launchcatch.campaign.exception.CampaignException;
 import com.launchcatch.campaign.exception.PosterErrorCode;
 import com.launchcatch.campaign.template.client.TemplateGenerationTimeoutException;
+import com.launchcatch.campaign.template.client.GeneratedTemplate;
 import com.launchcatch.campaign.template.client.TemplateHtmlGenerator;
 import com.launchcatch.campaign.template.dto.TemplateCreateResponse;
 import com.launchcatch.campaign.template.entity.Template;
@@ -189,7 +190,7 @@ class TemplateReviseServiceTest {
         TemplateVersion existing = existingVersion();
         when(templateVersionRepository.findByRequestId(REQUEST_ID))
                 .thenReturn(Optional.empty(), Optional.of(existing));
-        when(templateHtmlGenerator.revise(PREVIOUS_HTML, "버튼 색 바꿔줘")).thenReturn(PREVIOUS_HTML);
+        when(templateHtmlGenerator.revise(PREVIOUS_HTML, "버튼 색 바꿔줘")).thenReturn(new GeneratedTemplate(PREVIOUS_HTML, ""));
         when(templateVersionRepository.saveAndFlush(any(TemplateVersion.class)))
                 .thenThrow(new DataIntegrityViolationException("uk_template_version_request_id"));
 
@@ -202,7 +203,7 @@ class TemplateReviseServiceTest {
     @Test
     @DisplayName("저장 시점의 제약 위반이 requestId 충돌이 아니면 그 예외를 그대로 던진다")
     void 저장_시점_제약_위반이_requestId_충돌이_아니면_그대로_던진다() {
-        when(templateHtmlGenerator.revise(PREVIOUS_HTML, "버튼 색 바꿔줘")).thenReturn(PREVIOUS_HTML);
+        when(templateHtmlGenerator.revise(PREVIOUS_HTML, "버튼 색 바꿔줘")).thenReturn(new GeneratedTemplate(PREVIOUS_HTML, ""));
         DataIntegrityViolationException violation = new DataIntegrityViolationException("다른 제약 위반");
         when(templateVersionRepository.saveAndFlush(any(TemplateVersion.class))).thenThrow(violation);
 
@@ -235,7 +236,7 @@ class TemplateReviseServiceTest {
     @DisplayName("저장 시점에 템플릿이 이미 지워져 있으면 POSTER-005 로 거부한다")
     void 저장_시점에_템플릿이_없으면_거부한다() {
         when(templateRepository.findByIdForUpdate(TEMPLATE_ID)).thenReturn(Optional.empty());
-        when(templateHtmlGenerator.revise(PREVIOUS_HTML, "버튼 색 바꿔줘")).thenReturn(PREVIOUS_HTML);
+        when(templateHtmlGenerator.revise(PREVIOUS_HTML, "버튼 색 바꿔줘")).thenReturn(new GeneratedTemplate(PREVIOUS_HTML, ""));
 
         assertThatThrownBy(() -> service.revise(TEMPLATE_ID, "버튼 색 바꿔줘", REQUEST_ID, ADMIN_ID))
                 .isInstanceOfSatisfying(CampaignException.class, e ->
@@ -248,7 +249,7 @@ class TemplateReviseServiceTest {
         Template published = draftTemplate();
         setStatus(published, TemplateStatus.PUBLISHED);
         when(templateRepository.findByIdForUpdate(TEMPLATE_ID)).thenReturn(Optional.of(published));
-        when(templateHtmlGenerator.revise(PREVIOUS_HTML, "버튼 색 바꿔줘")).thenReturn(PREVIOUS_HTML);
+        when(templateHtmlGenerator.revise(PREVIOUS_HTML, "버튼 색 바꿔줘")).thenReturn(new GeneratedTemplate(PREVIOUS_HTML, ""));
 
         assertThatThrownBy(() -> service.revise(TEMPLATE_ID, "버튼 색 바꿔줘", REQUEST_ID, ADMIN_ID))
                 .isInstanceOfSatisfying(CampaignException.class, e ->
@@ -317,7 +318,7 @@ class TemplateReviseServiceTest {
     @DisplayName("버전이 상한(20개)에 딱 닿으면 경계값 0으로 호출해 아무것도 지우지 않는다")
     void 버전이_상한에_닿아도_넘지_않으면_경계값이_0이다() throws Exception {
         when(templateVersionRepository.findMaxVersionNumber(TEMPLATE_ID)).thenReturn(19);
-        when(templateHtmlGenerator.revise(PREVIOUS_HTML, "버튼 색 바꿔줘")).thenReturn(PREVIOUS_HTML);
+        when(templateHtmlGenerator.revise(PREVIOUS_HTML, "버튼 색 바꿔줘")).thenReturn(new GeneratedTemplate(PREVIOUS_HTML, ""));
 
         TemplateCreateResponse response = service.revise(TEMPLATE_ID, "버튼 색 바꿔줘", REQUEST_ID, ADMIN_ID);
 
@@ -329,7 +330,7 @@ class TemplateReviseServiceTest {
     @DisplayName("버전이 상한(20개)을 넘기면 경계값 1로 호출해 가장 오래된 버전을 지운다")
     void 버전이_상한을_넘기면_경계값_1로_지운다() throws Exception {
         when(templateVersionRepository.findMaxVersionNumber(TEMPLATE_ID)).thenReturn(20);
-        when(templateHtmlGenerator.revise(PREVIOUS_HTML, "버튼 색 바꿔줘")).thenReturn(PREVIOUS_HTML);
+        when(templateHtmlGenerator.revise(PREVIOUS_HTML, "버튼 색 바꿔줘")).thenReturn(new GeneratedTemplate(PREVIOUS_HTML, ""));
 
         TemplateCreateResponse response = service.revise(TEMPLATE_ID, "버튼 색 바꿔줘", REQUEST_ID, ADMIN_ID);
 
@@ -346,7 +347,7 @@ class TemplateReviseServiceTest {
     @DisplayName("배포 전부터 상한보다 훨씬 많이 쌓여 있던 템플릿도 한 번에 20개 이하로 맞춘다")
     void 배포_전부터_상한을_넘겨_쌓여_있던_템플릿도_한번에_맞춘다() throws Exception {
         when(templateVersionRepository.findMaxVersionNumber(TEMPLATE_ID)).thenReturn(25);
-        when(templateHtmlGenerator.revise(PREVIOUS_HTML, "버튼 색 바꿔줘")).thenReturn(PREVIOUS_HTML);
+        when(templateHtmlGenerator.revise(PREVIOUS_HTML, "버튼 색 바꿔줘")).thenReturn(new GeneratedTemplate(PREVIOUS_HTML, ""));
 
         TemplateCreateResponse response = service.revise(TEMPLATE_ID, "버튼 색 바꿔줘", REQUEST_ID, ADMIN_ID);
 

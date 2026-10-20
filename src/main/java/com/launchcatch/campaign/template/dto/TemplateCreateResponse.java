@@ -20,6 +20,10 @@ public record TemplateCreateResponse(
         @Schema(description = "검증을 거쳐 저장된 HTML입니다.")
         String html,
 
+        @Schema(description = "LLM이 HTML과 함께 보낸 설명입니다. 검증하지 않은 문장이라 텍스트로만 보여줘야 합니다. 설명이 없으면 빈 문자열입니다.",
+                example = "따뜻한 주황 톤의 카드형 템플릿으로 만들었어요.")
+        String message,
+
         @Schema(description = "정화 과정에서 제거된 태그와 속성입니다. 없으면 빈 배열입니다.", example = "[\"script\", \"div[onclick]\"]")
         List<String> removedElements,
 
