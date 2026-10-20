@@ -5,7 +5,9 @@ import com.launchcatch.adserving.contract.ImpressionServedEvent;
 import com.launchcatch.adserving.contract.SwipedEvent;
 import com.launchcatch.billing.contract.BudgetQueryService;
 import com.launchcatch.billing.contract.PointDeductor;
+import com.launchcatch.campaign.contract.CampaignQueryService;
 import com.launchcatch.member.contract.MemberQueryService;
+import com.launchcatch.store.contract.StoreQueryService;
 import java.time.Clock;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -40,6 +42,8 @@ abstract class AbstractAdservingIntegrationTest extends IntegrationTestSupport {
     @MockitoBean protected MemberQueryService memberQueryService;
     @MockitoBean protected BudgetQueryService budgetQueryService;
     @MockitoBean protected PointDeductor pointDeductor;
+    @MockitoBean protected CampaignQueryService campaignQueryService;
+    @MockitoBean protected StoreQueryService storeQueryService;
     @Autowired protected FunnelEventRecorder funnelEvents;
 
     @AfterEach
