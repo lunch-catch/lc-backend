@@ -29,6 +29,14 @@ VALUES (9001, 9001, '${seedBusinessDate}', 10000, 10, 0, NOW(6), NOW(6)),
        (9015, 9015, '${seedBusinessDate}', 10000, 10, 0, NOW(6), NOW(6))
 ON DUPLICATE KEY UPDATE campaign_id = campaign_id;
 
+-- 피드 시험 캠페인 9101~9200 의 예산이다(#611). 9105~9107 은 예산 계획이 없어 빠지는 경우라 넣지 않는다
+INSERT INTO budget_daily_plan (campaign_id, owner_id, business_date, daily_budget, unit_price, paused,
+                               created_at, updated_at)
+SELECT c.campaign_id, c.owner_id, '${seedBusinessDate}', 10000, 10, IF(c.status = 'PAUSED', 1, 0), NOW(6), NOW(6)
+FROM campaign c
+WHERE c.campaign_id BETWEEN 9101 AND 9200 AND c.campaign_id NOT BETWEEN 9105 AND 9107
+ON DUPLICATE KEY UPDATE budget_daily_plan.campaign_id = budget_daily_plan.campaign_id;
+
 /*
  * 피드가 읽는 후보다. 거리는 강남역(37.4979, 127.0276) 기준이다.
  * 1 km 안에 전 성별, 전 연령대 대상 후보가 8개(9001~9008)라 탐색 반경이 2000 으로 넓어지고 10장이 찬다.
@@ -92,6 +100,27 @@ VALUES ('${seedBusinessDate}', 9001, 9001, '런치 한식당', NULL, 'KOREAN', 3
         NULL, 'SERVABLE', NULL, NULL, NOW(6), NOW(6))
 ON DUPLICATE KEY UPDATE campaign_id = campaign_id;
 
+/*
+ * 피드 시험 캠페인 9101~9200 의 그날 후보다(#611).
+ * 00:00 적재가 만드는 값과 같도록 캠페인, 가게, 메뉴 행에서 옮긴다. 일시 중단 캠페인은 PAUSED 후보로 둔다.
+ * 생성 시각은 9001~9016 뒤로 1분씩 늦춘다.
+ */
+INSERT INTO ad_candidate (business_date, campaign_id, store_id, store_name, store_image_url, category_code,
+                          latitude, longitude, target_radius, target_gender, target_age_groups,
+                          discount_target_type, discount_type, discount_value, discount_menu_name,
+                          usable_start_time, usable_end_time, issue_quantity, campaign_created_at,
+                          new_priority_until, campaign_state, state_changed_at, sold_out_at, created_at, updated_at)
+SELECT '${seedBusinessDate}', c.campaign_id, s.store_id, s.name, NULL, s.category_code, s.latitude, s.longitude,
+       c.target_radius, c.target_gender, c.target_age_groups, c.discount_target_type, c.discount_type,
+       c.discount_value, m.name, c.usable_start_time, c.usable_end_time, c.issue_quantity,
+       NOW(6) + INTERVAL (c.campaign_id - 9080) MINUTE, NULL, IF(c.status = 'PAUSED', 'PAUSED', 'SERVABLE'),
+       NULL, NULL, NOW(6), NOW(6)
+FROM campaign c
+JOIN store s ON s.store_id = c.store_id
+LEFT JOIN store_menu m ON m.store_menu_id = c.target_menu_id
+WHERE c.campaign_id BETWEEN 9101 AND 9200
+ON DUPLICATE KEY UPDATE ad_candidate.campaign_id = ad_candidate.campaign_id;
+
 -- 쿠폰 이벤트는 주문 전체 할인을 금액(AMOUNT)으로만 받는다 (chk_coupon_event_discount)
 INSERT INTO coupon_event (campaign_id, business_date, issue_quantity, usable_start_at, usable_end_at, status,
                           store_id, store_name, store_image_url, discount_target_type, discount_type, discount_value,
@@ -105,9 +134,28 @@ VALUES (9001, '${seedBusinessDate}', 50, TIMESTAMP('${seedBusinessDate}', '11:00
         9004, '떡볶이', 6000, 4800, NOW(6), NOW(6))
 ON DUPLICATE KEY UPDATE coupon_event_id = coupon_event_id;
 
+-- 피드 시험 캠페인 9101~9200 가운데 그날 서빙되는 캠페인의 쿠폰 이벤트다(#611). 예산 계획이 없거나 일시 중단이면 만들지 않는다
+INSERT INTO coupon_event (campaign_id, business_date, issue_quantity, usable_start_at, usable_end_at, status,
+                          store_id, store_name, store_image_url, discount_target_type, discount_type, discount_value,
+                          target_menu_id, target_menu_name, target_menu_price, target_menu_discounted_price,
+                          created_at, updated_at)
+SELECT c.campaign_id, c.business_date, c.issue_quantity, TIMESTAMP(c.business_date, c.usable_start_time),
+       TIMESTAMP(c.business_date, c.usable_end_time), 'ACTIVE', c.store_id, c.store_name, NULL,
+       c.discount_target_type, c.discount_type, c.discount_value, m.store_menu_id, m.name, m.price,
+       CASE WHEN m.store_menu_id IS NULL THEN NULL
+            WHEN c.discount_type = 'PERCENT' THEN m.price * (100 - c.discount_value) / 100
+            ELSE m.price - c.discount_value END,
+       NOW(6), NOW(6)
+FROM ad_candidate c
+JOIN campaign p ON p.campaign_id = c.campaign_id
+JOIN budget_daily_plan b ON b.campaign_id = c.campaign_id AND b.business_date = c.business_date
+LEFT JOIN store_menu m ON m.store_menu_id = p.target_menu_id
+WHERE c.business_date = '${seedBusinessDate}' AND c.campaign_id BETWEEN 9101 AND 9200 AND c.campaign_state = 'SERVABLE'
+ON DUPLICATE KEY UPDATE coupon_event.coupon_event_id = coupon_event.coupon_event_id;
+
 /*
  * 쿠폰 재고다.
- * 이벤트마다 1~50 번을 만든다.
+ * 이벤트마다 1번부터 발급 수량까지 만든다.
  * 코드는 이벤트와 번호로 정해져 다시 돌아도 같다.
  */
 INSERT INTO coupon_inventory (coupon_event_id, sequence_no, coupon_code, status, usable_start_at, usable_end_at,
@@ -117,12 +165,14 @@ SELECT ce.coupon_event_id, seq.n, UNHEX(MD5(CONCAT('seed-', ce.coupon_event_id, 
        ce.usable_start_at, ce.usable_end_at, NOW(6), NOW(6)
 FROM coupon_event ce
 CROSS JOIN seq
-WHERE ce.campaign_id IN (9001, 9002) AND ce.business_date = '${seedBusinessDate}'
+WHERE (ce.campaign_id IN (9001, 9002) OR ce.campaign_id BETWEEN 9101 AND 9200)
+  AND ce.business_date = '${seedBusinessDate}' AND seq.n <= ce.issue_quantity
 ON DUPLICATE KEY UPDATE coupon_inventory_id = coupon_inventory_id;
 
 /*
  * 지난 6일의 후보다(#436).
  * 오늘 후보를 날짜만 바꿔 복사한다. 아래 로그가 그날 후보를 가리킨다.
+ * 피드 시험 캠페인 9101~9200 은 로그가 없어 복사하지 않는다(#611).
  */
 INSERT INTO ad_candidate (business_date, campaign_id, store_id, store_name, store_image_url, category_code,
                           latitude, longitude, target_radius, target_gender, target_age_groups,
@@ -137,7 +187,7 @@ SELECT DATE_SUB(c.business_date, INTERVAL ago.d DAY), c.campaign_id, c.store_id,
        c.new_priority_until, c.campaign_state, c.state_changed_at, c.sold_out_at, NOW(6), NOW(6)
 FROM ad_candidate c
 CROSS JOIN ago
-WHERE c.business_date = '${seedBusinessDate}'
+WHERE c.business_date = '${seedBusinessDate}' AND c.campaign_id NOT BETWEEN 9101 AND 9200
 ON DUPLICATE KEY UPDATE ad_candidate.campaign_id = ad_candidate.campaign_id;
 
 /*
