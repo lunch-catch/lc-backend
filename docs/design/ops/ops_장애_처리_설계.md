@@ -33,7 +33,7 @@
 
 접수에 성공한 뒤 재개가 도는 도중에 프로세스가 죽으면(별도 스레드라 요청은 이미 끝났다) 되돌릴
 방법이 없다. 이 경우는 배치 운영 공통 규칙의 이어받기(`DailyJobScheduler.takeOverStale` ->
-`DailyJobRunner.resume`)가
+`BatchJobRunner.resume`)가
 2분 뒤 다른 서버에서 같은 재개 경로로 다시 돈다. 그래서 별도의 보상 처리를 두지 않는다.
 
 ## 유형별 점검
