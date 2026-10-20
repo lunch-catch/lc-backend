@@ -3,6 +3,7 @@ package com.launchcatch.campaign.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -20,6 +21,8 @@ import com.launchcatch.campaign.exception.PosterErrorCode;
 import com.launchcatch.campaign.poster.dto.PosterModerationOutcome;
 import com.launchcatch.campaign.poster.entity.ModerationFailReason;
 import com.launchcatch.campaign.poster.entity.ModerationResult;
+import com.launchcatch.campaign.poster.entity.Poster;
+import com.launchcatch.campaign.poster.repository.PosterRepository;
 import com.launchcatch.campaign.poster.service.PosterModerationService;
 import com.launchcatch.campaign.repository.CampaignRepository;
 import com.launchcatch.campaign.repository.CampaignStatusLogRepository;
@@ -45,11 +48,13 @@ import org.springframework.context.ApplicationEventPublisher;
 /*
  * campaignStatusService는 스텁하지 않고 실제 구현을 쓴다. schedule()의 상태 전이와 로그는
  * CampaignStatusServiceTest가 이미 검증하므로 여기서는 점주 상태 확인, 본인 소유 확인, DRAFT
- * 여부 확인, 요청 빈도 제한, 검수 결과에 따른 분기만 본다(#561).
+ * 여부 확인, 요청 빈도 제한, 검수 결과에 따른 분기, 포스터 변경 재확인만 본다(#561).
  *
- * 사전 확인(findById)과 schedule() 내부 전이(findByIdForUpdate)는 이제 서로 다른 저장소
- * 메서드라 각각 따로 스텁한다. 둘이 다른 캠페인 상태를 돌려주는 조합으로 "사전 확인 뒤 실제
- * 전이 사이에 상태가 바뀌는 경쟁"도 본다.
+ * 사전 확인(findById)과 schedule() 내부 전이(findByIdForUpdate)는 서로 다른 저장소 메서드라
+ * 각각 따로 스텁한다. 둘이 다른 캠페인 상태를 돌려주는 조합으로 "사전 확인 뒤 실제 전이
+ * 사이에 상태가 바뀌는 경쟁"도 본다. posterRepository.findByCampaignId는 검수 전과
+ * schedule()의 precondition(캠페인 잠금 뒤) 두 번 불려서, 포스터가 안 바뀐 테스트는 같은
+ * updatedAt을 두 번 돌려주고 바뀌는 테스트만 다른 값을 순서대로 돌려준다.
  */
 @ExtendWith(MockitoExtension.class)
 class CampaignActivationServiceTest {
@@ -71,6 +76,8 @@ class CampaignActivationServiceTest {
     @Mock
     private PosterModerationService posterModerationService;
     @Mock
+    private PosterRepository posterRepository;
+    @Mock
     private CampaignActivationRateLimiter rateLimiter;
     @Mock
     private OwnerStatusQuery ownerStatusQuery;
@@ -82,7 +89,14 @@ class CampaignActivationServiceTest {
         CampaignStatusService campaignStatusService = new CampaignStatusService(
                 campaignRepository, campaignStatusLogRepository, storeCampaignSummaryUpdater, events, FIXED_CLOCK);
         service = new CampaignActivationService(
-                campaignRepository, campaignStatusService, posterModerationService, rateLimiter, ownerStatusQuery);
+                campaignRepository, campaignStatusService, posterModerationService, posterRepository,
+                rateLimiter, ownerStatusQuery);
+    }
+
+    private Poster posterUpdatedAt(LocalDateTime updatedAt) {
+        Poster poster = mock(Poster.class);
+        when(poster.getUpdatedAt()).thenReturn(updatedAt);
+        return poster;
     }
 
     @Test
@@ -168,6 +182,8 @@ class CampaignActivationServiceTest {
         active();
         when(campaignRepository.findById(CAMPAIGN_ID)).thenReturn(Optional.of(draftCampaign(OWNER_ID)));
         when(campaignRepository.findByIdForUpdate(CAMPAIGN_ID)).thenReturn(Optional.of(draftCampaign(OWNER_ID)));
+        Poster poster = posterUpdatedAt(LocalDateTime.now(FIXED_CLOCK));
+        when(posterRepository.findByCampaignId(CAMPAIGN_ID)).thenReturn(Optional.of(poster));
         when(posterModerationService.moderate(CAMPAIGN_ID))
                 .thenReturn(new PosterModerationOutcome(ModerationResult.PASS, List.of()));
 
@@ -207,12 +223,40 @@ class CampaignActivationServiceTest {
         active();
         when(campaignRepository.findById(CAMPAIGN_ID)).thenReturn(Optional.of(draftCampaign(OWNER_ID)));
         when(campaignRepository.findByIdForUpdate(CAMPAIGN_ID)).thenReturn(Optional.of(activeCampaign(OWNER_ID)));
+        Poster poster = posterUpdatedAt(LocalDateTime.now(FIXED_CLOCK));
+        when(posterRepository.findByCampaignId(CAMPAIGN_ID)).thenReturn(Optional.of(poster));
         when(posterModerationService.moderate(CAMPAIGN_ID))
                 .thenReturn(new PosterModerationOutcome(ModerationResult.PASS, List.of()));
 
         assertThatThrownBy(() -> service.activate(OWNER_ID, CAMPAIGN_ID))
                 .isInstanceOfSatisfying(CampaignException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(CampaignErrorCode.CAMPAIGN_STATE_NOT_ALLOWED));
+    }
+
+    /*
+     * 검수가 본 포스터(moderate() 부르기 전 캠페인 잠금 없이 읽은 값)와, schedule()이 캠페인
+     * 잠금을 잡은 뒤(precondition) 다시 읽은 포스터가 다르다. 점주가 검수 중에 포스터를 새로
+     * 올린 경우를 흉내낸다(코드래빗 리뷰로 찾음, #561). 그 PASS 결과로 전이해서는 안 된다.
+     */
+    @Test
+    @DisplayName("검수 뒤 포스터가 바뀌면 CAMPAIGN-006으로 거부하고 전이하지 않는다")
+    void 검수_뒤_포스터가_바뀌면_거부한다() {
+        active();
+        Campaign campaign = draftCampaign(OWNER_ID);
+        when(campaignRepository.findById(CAMPAIGN_ID)).thenReturn(Optional.of(campaign));
+        when(campaignRepository.findByIdForUpdate(CAMPAIGN_ID)).thenReturn(Optional.of(campaign));
+        Poster posterAtModeration = posterUpdatedAt(LocalDateTime.now(FIXED_CLOCK));
+        Poster posterAfterOverwrite = posterUpdatedAt(LocalDateTime.now(FIXED_CLOCK).plusMinutes(1));
+        when(posterRepository.findByCampaignId(CAMPAIGN_ID))
+                .thenReturn(Optional.of(posterAtModeration))
+                .thenReturn(Optional.of(posterAfterOverwrite));
+        when(posterModerationService.moderate(CAMPAIGN_ID))
+                .thenReturn(new PosterModerationOutcome(ModerationResult.PASS, List.of()));
+
+        assertThatThrownBy(() -> service.activate(OWNER_ID, CAMPAIGN_ID))
+                .isInstanceOfSatisfying(CampaignException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(CampaignErrorCode.CAMPAIGN_STATE_NOT_ALLOWED));
+        assertThat(campaign.getStatus()).isEqualTo(CampaignStatus.DRAFT);
     }
 
     private void active() {

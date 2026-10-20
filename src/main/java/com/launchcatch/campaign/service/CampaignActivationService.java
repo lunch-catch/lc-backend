@@ -5,12 +5,16 @@ import com.launchcatch.campaign.dto.CampaignActivateResponse;
 import com.launchcatch.campaign.entity.Campaign;
 import com.launchcatch.campaign.exception.CampaignErrorCode;
 import com.launchcatch.campaign.exception.CampaignException;
+import com.launchcatch.campaign.exception.PosterErrorCode;
 import com.launchcatch.campaign.poster.dto.PosterModerationOutcome;
 import com.launchcatch.campaign.poster.entity.ModerationResult;
+import com.launchcatch.campaign.poster.entity.Poster;
+import com.launchcatch.campaign.poster.repository.PosterRepository;
 import com.launchcatch.campaign.poster.service.PosterModerationService;
 import com.launchcatch.campaign.repository.CampaignRepository;
 import com.launchcatch.owner.contract.OwnerAccountStatus;
 import com.launchcatch.owner.contract.OwnerStatusQuery;
+import java.time.LocalDateTime;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -35,6 +39,13 @@ import org.springframework.stereotype.Service;
  * 진행할 수 있지만, 3번에서 먼저 도착한 쪽만 실제로 SCHEDULED가 되고 나머지는 그 메서드가
  * 던지는 IllegalStateException을 통해 CAMPAIGN_STATE_NOT_ALLOWED로 거부된다. 같은 캠페인에
  * 대한 중복 전이는 막되, 그 틈에 생기는 중복 검수 호출(낭비)은 감수하는 선택이다.
+ *
+ * 검수(2번)가 트랜잭션 밖에 있어서, 검수가 끝나고 schedule()이 캠페인 잠금을 잡기 전까지
+ * 포스터가 바뀔 수 있다(점주가 새 포스터를 올리는 요청은 PosterUploadService가 같은 캠페인
+ * 잠금을 거쳐 덮어쓴다). 그러면 검수 결과는 더 이상 지금 포스터의 것이 아니다. 그래서
+ * schedule()에 precondition을 넘겨, 캠페인 잠금을 잡은 뒤(포스터 덮어쓰기도 같은 잠금을
+ * 거치므로 그 사이엔 포스터가 못 바뀐다) 검수 시점의 포스터 updatedAt과 지금 값이 같은지
+ * 다시 확인한다. 바뀌었으면 전이하지 않는다(코드래빗 리뷰로 찾음, #561).
  */
 @Service
 @Slf4j
@@ -44,6 +55,7 @@ public class CampaignActivationService {
     private final CampaignRepository campaignRepository;
     private final CampaignStatusService campaignStatusService;
     private final PosterModerationService posterModerationService;
+    private final PosterRepository posterRepository;
     private final CampaignActivationRateLimiter rateLimiter;
     private final OwnerStatusQuery ownerStatusQuery;
 
@@ -52,13 +64,17 @@ public class CampaignActivationService {
         checkDraftOwnedCampaign(ownerId, campaignId);
         rateLimiter.checkLimit(ownerId);
 
+        LocalDateTime posterUpdatedAtAtModeration = posterRepository.findByCampaignId(campaignId)
+                .map(Poster::getUpdatedAt)
+                .orElse(null);
         PosterModerationOutcome outcome = posterModerationService.moderate(campaignId);
         if (outcome.result() != ModerationResult.PASS) {
             return new CampaignActivateResponse(campaignId, CampaignStatus.DRAFT, outcome.reasons());
         }
 
         try {
-            campaignStatusService.schedule(campaignId);
+            campaignStatusService.schedule(campaignId,
+                    () -> verifyPosterUnchanged(campaignId, posterUpdatedAtAtModeration));
         } catch (IllegalStateException e) {
             throw new CampaignException(CampaignErrorCode.CAMPAIGN_STATE_NOT_ALLOWED, e);
         }
@@ -83,6 +99,19 @@ public class CampaignActivationService {
                 .filter(found -> found.getOwnerId().equals(ownerId))
                 .orElseThrow(() -> new CampaignException(CampaignErrorCode.CAMPAIGN_NOT_OWNED));
         if (campaign.getStatus() != CampaignStatus.DRAFT) {
+            throw new CampaignException(CampaignErrorCode.CAMPAIGN_STATE_NOT_ALLOWED);
+        }
+    }
+
+    /*
+     * campaignStatusService.schedule()이 캠페인 잠금을 잡은 뒤 호출한다(그 메서드의
+     * precondition). 포스터 덮어쓰기(PosterUploadService)도 활성화 전에 같은 잠금을 거치므로,
+     * 이 확인과 schedule()의 실제 전이 사이에는 포스터가 바뀔 수 없다.
+     */
+    private void verifyPosterUnchanged(Long campaignId, LocalDateTime posterUpdatedAtAtModeration) {
+        Poster poster = posterRepository.findByCampaignId(campaignId)
+                .orElseThrow(() -> new CampaignException(PosterErrorCode.POSTER_NOT_SAVED));
+        if (!poster.getUpdatedAt().equals(posterUpdatedAtAtModeration)) {
             throw new CampaignException(CampaignErrorCode.CAMPAIGN_STATE_NOT_ALLOWED);
         }
     }

@@ -58,10 +58,22 @@ public class CampaignStatusService {
 
     @Transactional
     public void schedule(Long campaignId) {
+        schedule(campaignId, () -> { });
+    }
+
+    /*
+     * precondition은 캠페인 잠금을 잡은 뒤, 상태를 바꾸기 전에 실행한다. 호출하는 쪽이 이
+     * 잠금 밑에서 함께 확인하고 싶은 것(예: 캠페인 활성화의 포스터 변경 여부, #561 코드래빗
+     * 리뷰로 찾음)을 넣는다. 이 서비스는 그 확인이 무엇인지 모른다. precondition이 예외를
+     * 던지면 상태를 바꾸지 않고 트랜잭션이 롤백된다.
+     */
+    @Transactional
+    public void schedule(Long campaignId, Runnable precondition) {
         Campaign campaign = findOrThrow(campaignId);
         if (campaign.getStatus() == CampaignStatus.SCHEDULED) {
             return;
         }
+        precondition.run();
         CampaignStatus from = campaign.getStatus();
         campaign.schedule(LocalDateTime.now(clock));
         log(campaignId, from, campaign.getStatus(), ActorType.SYSTEM, null);

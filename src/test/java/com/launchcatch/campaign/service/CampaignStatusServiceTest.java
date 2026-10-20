@@ -109,6 +109,33 @@ class CampaignStatusServiceTest {
     }
 
     @Test
+    @DisplayName("precondition이 있는 schedule은 잠금을 잡은 뒤 상태를 바꾸기 전에 그것을 실행한다")
+    void precondition이_있는_schedule은_상태를_바꾸기_전에_그것을_실행한다() {
+        Campaign campaign = draftCampaign();
+        when(campaignRepository.findByIdForUpdate(CAMPAIGN_ID)).thenReturn(Optional.of(campaign));
+
+        service.schedule(CAMPAIGN_ID, () ->
+                assertThat(campaign.getStatus()).isEqualTo(CampaignStatus.DRAFT));
+
+        assertThat(campaign.getStatus()).isEqualTo(CampaignStatus.SCHEDULED);
+    }
+
+    @Test
+    @DisplayName("precondition이 실패하면 schedule하지 않고 그 예외를 그대로 올린다")
+    void precondition이_실패하면_schedule하지_않는다() {
+        Campaign campaign = draftCampaign();
+        when(campaignRepository.findByIdForUpdate(CAMPAIGN_ID)).thenReturn(Optional.of(campaign));
+        RuntimeException preconditionFailure = new IllegalArgumentException("precondition failed");
+
+        assertThatThrownBy(() -> service.schedule(CAMPAIGN_ID, () -> {
+            throw preconditionFailure;
+        })).isSameAs(preconditionFailure);
+
+        assertThat(campaign.getStatus()).isEqualTo(CampaignStatus.DRAFT);
+        verify(campaignStatusLogRepository, never()).save(any());
+    }
+
+    @Test
     @DisplayName("SCHEDULED 캠페인을 activate 하면 ACTIVE 로 바뀌고 SYSTEM 행위자로 로그가 남는다")
     void SCHEDULED를_activate하면_ACTIVE로_바뀐다() {
         Campaign campaign = scheduledCampaign();
