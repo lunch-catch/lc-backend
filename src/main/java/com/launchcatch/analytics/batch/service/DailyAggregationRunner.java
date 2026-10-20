@@ -163,7 +163,16 @@ public class DailyAggregationRunner {
         if (!acquired) {
             return Optional.empty();
         }
-        return Optional.of(ownRecord(executionQuery.findByBusinessDate(date)).orElseThrow());
+        try {
+            return Optional.of(ownRecord(executionQuery.findByBusinessDate(date)).orElseThrow());
+        } catch (RuntimeException readFailure) {
+            try {
+                abandon(date, "잡은 시도의 세대를 읽지 못했다");
+            } catch (RuntimeException abandonFailure) {
+                readFailure.addSuppressed(abandonFailure);
+            }
+            throw readFailure;
+        }
     }
 
     /*

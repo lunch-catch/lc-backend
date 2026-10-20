@@ -1,6 +1,7 @@
 package com.launchcatch.analytics.batch.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
@@ -175,6 +176,21 @@ class DailyAggregationRunnerTest {
         Optional<BatchExecutionRecord> acquired = runner().acquire(YESTERDAY, List.of());
 
         assertThat(acquired).map(BatchExecutionRecord::attemptNo).contains(1);
+    }
+
+    @Test
+    void 잡은_직후_재조회가_실패하면_실행을_닫고_원래_예외를_던진다() {
+        QueryTimeoutException readFailure = new QueryTimeoutException("실행 기록 조회 실패");
+        when(executions.claim(JOB, YESTERDAY)).thenReturn(true);
+        when(executionQuery.findByBusinessDate(YESTERDAY)).thenThrow(readFailure);
+        DailyAggregationRunner runner = runner();
+
+        assertThatThrownBy(() -> runner.acquire(YESTERDAY, List.of())).isSameAs(readFailure);
+
+        verify(executions).fail(JOB, YESTERDAY, "잡은 시도의 세대를 읽지 못했다");
+        verify(pending).record(eq(YESTERDAY), eq(PendingReason.FAILED), any(LocalDateTime.class));
+        assertThat(registry.get("analytics_aggregation_total").tag("result", "failed")
+                .counter().count()).isEqualTo(1.0);
     }
 
     @Test
