@@ -504,4 +504,44 @@ class BatchExecutionIntegrationTest extends AbstractOpsIntegrationTest {
 
         service.assertCurrentAttempt(JOB, DATE, 2);
     }
+
+    /*
+     * #591. 같은 서버가 실패한 행을 다시 잡으면 소유자는 그대로이고 세대만 오른다.
+     * 낡은 세대의 쓰기는 세대 조건에 걸려 새 시도의 상태, 처리 건수, 재실행 횟수를 바꾸지 못한다.
+     */
+    @Test
+    @DisplayName("같은 서버가 새 세대를 잡으면 낡은 세대의 닫기, 재실행 기록, 생존 확인은 걸리지 않는다")
+    void 낡은_세대의_쓰기는_새_세대의_행을_바꾸지_못한다() {
+        service.claim(JOB, DATE);
+        service.fail(JOB, DATE, "원본을 읽지 못했다");
+        assertThat(service.retry(JOB, DATE)).isTrue();
+
+        assertThat(service.renewAttempt(JOB, DATE, 1)).isFalse();
+        assertThat(service.recordRetryAttempt(JOB, DATE, 1, "교착")).isFalse();
+        service.succeedAttempt(JOB, DATE, 1, 7);
+        service.failAttempt(JOB, DATE, 1, "낡은 시도가 실패했다");
+
+        BatchExecutionLog row = reload(JOB);
+        assertThat(row.getStatus()).isEqualTo(BatchStatus.RUNNING);
+        assertThat(row.getAttemptNo()).isEqualTo(2);
+        assertThat(row.getProcessedCount()).isNull();
+        assertThat(row.getRetryCount()).isZero();
+    }
+
+    @Test
+    @DisplayName("세대가 맞으면 세대를 받은 쓰기가 그 행을 고친다")
+    void 세대가_맞으면_세대를_받은_쓰기가_걸린다() {
+        service.claim(JOB, DATE);
+        service.fail(JOB, DATE, "원본을 읽지 못했다");
+        assertThat(service.retry(JOB, DATE)).isTrue();
+
+        assertThat(service.renewAttempt(JOB, DATE, 2)).isTrue();
+        assertThat(service.recordRetryAttempt(JOB, DATE, 2, "교착")).isTrue();
+        service.succeedAttempt(JOB, DATE, 2, 7);
+
+        BatchExecutionLog row = reload(JOB);
+        assertThat(row.getStatus()).isEqualTo(BatchStatus.SUCCESS);
+        assertThat(row.getProcessedCount()).isEqualTo(7);
+        assertThat(row.getRetryCount()).isEqualTo(1);
+    }
 }

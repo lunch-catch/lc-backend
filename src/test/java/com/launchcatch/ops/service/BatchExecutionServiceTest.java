@@ -238,7 +238,7 @@ class BatchExecutionServiceTest {
     @Test
     @DisplayName("내 소유이면 생존 신호가 걸린다")
     void 생존_신호() {
-        when(logs.renew(JOB, DATE, ME, NOW)).thenReturn(1);
+        when(logs.renew(JOB, DATE, ME, null, NOW)).thenReturn(1);
 
         assertThat(service.renew(JOB, DATE)).isTrue();
     }
@@ -250,7 +250,7 @@ class BatchExecutionServiceTest {
     @Test
     @DisplayName("내 소유가 아니면 생존 신호가 걸리지 않는다")
     void 생존_신호_상실() {
-        when(logs.renew(JOB, DATE, ME, NOW)).thenReturn(0);
+        when(logs.renew(JOB, DATE, ME, null, NOW)).thenReturn(0);
 
         assertThat(service.renew(JOB, DATE)).isFalse();
     }
@@ -268,7 +268,7 @@ class BatchExecutionServiceTest {
     void 성공으로_닫는다() {
         service.succeed(JOB, DATE);
 
-        verify(logs).close(JOB, DATE, BatchStatus.SUCCESS, null, null, ME, NOW);
+        verify(logs).close(JOB, DATE, BatchStatus.SUCCESS, null, null, ME, null, NOW);
         verifyNoInteractions(alert);
     }
 
@@ -277,13 +277,13 @@ class BatchExecutionServiceTest {
     void 성공으로_닫는다_건수포함() {
         service.succeed(JOB, DATE, 120);
 
-        verify(logs).close(JOB, DATE, BatchStatus.SUCCESS, null, 120, ME, NOW);
+        verify(logs).close(JOB, DATE, BatchStatus.SUCCESS, null, 120, ME, null, NOW);
     }
 
     @Test
     @DisplayName("실패는 사유와 함께 닫고 관리자에게 알린다")
     void 실패로_닫는다() {
-        when(logs.close(JOB, DATE, BatchStatus.FAILED, "원본을 읽지 못했다", null, ME, NOW)).thenReturn(1);
+        when(logs.close(JOB, DATE, BatchStatus.FAILED, "원본을 읽지 못했다", null, ME, null, NOW)).thenReturn(1);
 
         service.fail(JOB, DATE, "원본을 읽지 못했다");
 
@@ -298,7 +298,7 @@ class BatchExecutionServiceTest {
     @Test
     @DisplayName("내 소유가 아닌 행은 닫지 않고 알리지도 않는다")
     void 남의_행은_닫지_않는다() {
-        when(logs.close(JOB, DATE, BatchStatus.FAILED, "원본을 읽지 못했다", null, ME, NOW)).thenReturn(0);
+        when(logs.close(JOB, DATE, BatchStatus.FAILED, "원본을 읽지 못했다", null, ME, null, NOW)).thenReturn(0);
 
         service.fail(JOB, DATE, "원본을 읽지 못했다");
 
@@ -316,7 +316,7 @@ class BatchExecutionServiceTest {
 
         service.fail(JOB, DATE, reason);
 
-        verify(logs).close(JOB, DATE, BatchStatus.FAILED, reason.substring(0, 500), null, ME, NOW);
+        verify(logs).close(JOB, DATE, BatchStatus.FAILED, reason.substring(0, 500), null, ME, null, NOW);
     }
 
     @Test
@@ -354,7 +354,7 @@ class BatchExecutionServiceTest {
     @Test
     @DisplayName("자동 재실행을 기록한다")
     void 자동_재실행_기록() {
-        when(logs.recordRetry(JOB, DATE, "교착", ME, 2, NOW)).thenReturn(1);
+        when(logs.recordRetry(JOB, DATE, "교착", ME, null, 2, NOW)).thenReturn(1);
 
         assertThat(service.recordRetry(JOB, DATE, "교착")).isTrue();
     }
@@ -362,7 +362,7 @@ class BatchExecutionServiceTest {
     @Test
     @DisplayName("상한에 닿으면 자동 재실행을 기록하지 않는다")
     void 자동_재실행_상한() {
-        when(logs.recordRetry(JOB, DATE, "교착", ME, 2, NOW)).thenReturn(0);
+        when(logs.recordRetry(JOB, DATE, "교착", ME, null, 2, NOW)).thenReturn(0);
 
         assertThat(service.recordRetry(JOB, DATE, "교착")).isFalse();
     }
@@ -372,9 +372,55 @@ class BatchExecutionServiceTest {
     @DisplayName("긴 재실행 사유도 컬럼 길이에 맞춘다")
     void 긴_재실행_사유를_자른다() {
         String reason = "나".repeat(600);
-        when(logs.recordRetry(JOB, DATE, reason.substring(0, 500), ME, 2, NOW)).thenReturn(1);
+        when(logs.recordRetry(JOB, DATE, reason.substring(0, 500), ME, null, 2, NOW)).thenReturn(1);
 
         assertThat(service.recordRetry(JOB, DATE, reason)).isTrue();
+    }
+
+    /*
+     * 세대를 받는 메서드는 그 세대를 쿼리 조건으로 넘긴다(#591).
+     * 같은 서버가 새 세대를 잡았을 때 소유자 조건만으로는 낡은 시도가 새 시도의 행을 고친다.
+     */
+    @Test
+    @DisplayName("세대를 받은 생존 확인은 그 세대를 조건으로 넘긴다")
+    void 세대를_받은_생존_확인() {
+        when(logs.renew(JOB, DATE, ME, 3, NOW)).thenReturn(0);
+
+        assertThat(service.renewAttempt(JOB, DATE, 3)).isFalse();
+    }
+
+    @Test
+    @DisplayName("세대를 받은 성공은 그 세대와 건수로 닫는다")
+    void 세대를_받은_성공() {
+        service.succeedAttempt(JOB, DATE, 3, 120);
+
+        verify(logs).close(JOB, DATE, BatchStatus.SUCCESS, null, 120, ME, 3, NOW);
+    }
+
+    @Test
+    @DisplayName("세대를 받은 성공은 건수가 없으면 null로 닫는다")
+    void 세대를_받은_성공_건수없음() {
+        service.succeedAttempt(JOB, DATE, 3, null);
+
+        verify(logs).close(JOB, DATE, BatchStatus.SUCCESS, null, null, ME, 3, NOW);
+    }
+
+    @Test
+    @DisplayName("세대를 받은 실패는 닫았을 때만 관리자에게 알린다")
+    void 세대를_받은_실패() {
+        when(logs.close(JOB, DATE, BatchStatus.FAILED, "원본을 읽지 못했다", null, ME, 3, NOW)).thenReturn(0);
+
+        service.failAttempt(JOB, DATE, 3, "원본을 읽지 못했다");
+
+        verifyNoInteractions(alert);
+    }
+
+    @Test
+    @DisplayName("세대를 받은 자동 재실행 기록은 그 세대를 조건으로 넘긴다")
+    void 세대를_받은_자동_재실행_기록() {
+        when(logs.recordRetry(JOB, DATE, "교착", ME, 3, 2, NOW)).thenReturn(1);
+
+        assertThat(service.recordRetryAttempt(JOB, DATE, 3, "교착")).isTrue();
     }
 
     @Test

@@ -74,7 +74,10 @@ public interface BatchExecutionLogRepository extends JpaRepository<BatchExecutio
                      @Param("ownerId") String ownerId,
                      @Param("now") LocalDateTime now);
 
-    /** 생존 신호를 갱신한다. 내 소유이고 실행 중일 때만 걸린다. */
+    /*
+     * 생존 신호를 갱신한다. 내 소유이고 실행 중일 때만 걸린다.
+     * attemptNo 를 주면 그 세대일 때만 걸린다(#591). null 이면 세대를 보지 않는다.
+     */
     @Transactional
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("""
@@ -84,10 +87,12 @@ public interface BatchExecutionLogRepository extends JpaRepository<BatchExecutio
                AND l.businessDate = :businessDate
                AND l.status = com.launchcatch.ops.entity.BatchStatus.RUNNING
                AND l.ownerId = :ownerId
+               AND (:attemptNo IS NULL OR l.attemptNo = :attemptNo)
             """)
     int renew(@Param("jobName") String jobName,
               @Param("businessDate") LocalDate businessDate,
               @Param("ownerId") String ownerId,
+              @Param("attemptNo") Integer attemptNo,
               @Param("now") LocalDateTime now);
 
     /** 내가 들고 있는 실행 중 행을 한 번에 갱신한다. 별도 스레드의 생존 신호가 쓴다. */
@@ -134,6 +139,9 @@ public interface BatchExecutionLogRepository extends JpaRepository<BatchExecutio
      *
      * 소유자도 조건이다. 생존 신호가 끊겼다가 늦게 깨어난 서버가 남이 들고 있는 실행을 닫는
      * 것을 막는다.
+     *
+     * attemptNo 를 주면 세대도 조건이다(#591). 같은 서버가 새 세대를 잡았으면 소유자 조건은
+     * 통과하므로, 낡은 시도가 새 시도의 행을 닫는 것은 세대로만 막힌다. null 이면 세대를 보지 않는다.
      */
     @Transactional
     @Modifying(clearAutomatically = true, flushAutomatically = true)
@@ -145,6 +153,7 @@ public interface BatchExecutionLogRepository extends JpaRepository<BatchExecutio
                AND l.businessDate = :businessDate
                AND l.status = com.launchcatch.ops.entity.BatchStatus.RUNNING
                AND l.ownerId = :ownerId
+               AND (:attemptNo IS NULL OR l.attemptNo = :attemptNo)
             """)
     int close(@Param("jobName") String jobName,
               @Param("businessDate") LocalDate businessDate,
@@ -152,6 +161,7 @@ public interface BatchExecutionLogRepository extends JpaRepository<BatchExecutio
               @Param("reason") String reason,
               @Param("processedCount") Integer processedCount,
               @Param("ownerId") String ownerId,
+              @Param("attemptNo") Integer attemptNo,
               @Param("now") LocalDateTime now);
 
     /*
@@ -163,6 +173,8 @@ public interface BatchExecutionLogRepository extends JpaRepository<BatchExecutio
      *
      * 소유자도 조건이다. 없으면 임대를 잃은 서버가 새 소유자의 재실행 예산을 깎고 사유를
      * 덮어쓴다. 재실행 횟수는 그 행을 들고 있는 서버만 쓸 수 있다.
+     *
+     * attemptNo 를 주면 세대도 조건이다(#591). null 이면 세대를 보지 않는다.
      */
     @Transactional
     @Modifying(clearAutomatically = true, flushAutomatically = true)
@@ -173,12 +185,14 @@ public interface BatchExecutionLogRepository extends JpaRepository<BatchExecutio
                AND l.businessDate = :businessDate
                AND l.status = com.launchcatch.ops.entity.BatchStatus.RUNNING
                AND l.ownerId = :ownerId
+               AND (:attemptNo IS NULL OR l.attemptNo = :attemptNo)
                AND l.retryCount < :maxRetries
             """)
     int recordRetry(@Param("jobName") String jobName,
                     @Param("businessDate") LocalDate businessDate,
                     @Param("reason") String reason,
                     @Param("ownerId") String ownerId,
+                    @Param("attemptNo") Integer attemptNo,
                     @Param("maxRetries") int maxRetries,
                     @Param("now") LocalDateTime now);
 

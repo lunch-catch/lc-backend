@@ -92,6 +92,9 @@ public class DailyJobRunner {
      *
      * StandaloneJob 은 runCounting 으로 돌려 돌려받은 건수로 닫는다(#559). 이 경로는 그 작업의
      * 스케줄러를 거치지 않아 건수를 남길 길이 이것뿐이다.
+     *
+     * StandaloneJob 의 행은 넘겨받은 세대로만 고친다(#591). 같은 서버가 새 세대를 잡으면 소유자
+     * 조건은 통과해서, 낡은 시도가 끝나며 새 시도의 행을 닫거나 재실행 횟수를 깎는다.
      */
     public void resume(String jobName, LocalDate businessDate, int attemptNo) {
         if (BUNDLE.equals(jobName)) {
@@ -99,7 +102,8 @@ public class DailyJobRunner {
             return;
         }
         StandaloneJob job = standaloneJobsByName.get(jobName);
-        attempt(job.jobName(), businessDate, () -> job.runCounting(businessDate, attemptNo), 1, () -> { });
+        attempt(attemptLease(job.jobName(), businessDate, attemptNo),
+                () -> job.runCounting(businessDate, attemptNo), 1, () -> { });
     }
 
     /*
@@ -122,7 +126,7 @@ public class DailyJobRunner {
                 return false;
             }
         }
-        return attempt(job.jobName(), businessDate, () -> {
+        return attempt(ownerLease(job.jobName(), businessDate), () -> {
             job.run(businessDate);
             return null;
         }, 1, () -> executions.fail(BUNDLE, businessDate, job.jobName() + " 단계가 실패했다"));
@@ -137,18 +141,12 @@ public class DailyJobRunner {
      *
      * action 은 처리 건수를 돌려준다. null 이면 건수 없이 닫는다(#559, 묶음 단계는 늘 null 이다).
      */
-    private boolean attempt(String jobName, LocalDate businessDate, Supplier<Integer> action, int attempt,
-                             Runnable onFailure) {
+    private boolean attempt(Lease lease, Supplier<Integer> action, int attempt, Runnable onFailure) {
         try {
-            Integer processed = action.get();
-            if (processed == null) {
-                executions.succeed(jobName, businessDate);
-            } else {
-                executions.succeed(jobName, businessDate, processed);
-            }
+            lease.succeed(action.get());
             return true;
         } catch (RuntimeException e) {
-            return retryOrFail(jobName, businessDate, action, attempt, e, onFailure);
+            return retryOrFail(lease, action, attempt, e, onFailure);
         }
     }
 
@@ -157,15 +155,15 @@ public class DailyJobRunner {
      * 일시적 오류인가, 재실행을 기록할 수 있는가(상한에 닿았거나 내 것이 아니면 0건이다),
      * 기다릴 수 있는가.
      *
-     * 내 것이 아니어서 실패로 가는 경우에도 close 가 소유자를 보므로 남의 행을 닫지 않는다.
+     * 내 것이 아니어서 실패로 가는 경우에도 close 가 소유자(와 세대)를 보므로 남의 행을 닫지 않는다.
      */
-    private boolean retryOrFail(String jobName, LocalDate businessDate, Supplier<Integer> action, int attempt,
-                                 RuntimeException e, Runnable onFailure) {
+    private boolean retryOrFail(Lease lease, Supplier<Integer> action, int attempt, RuntimeException e,
+                                 Runnable onFailure) {
         String reason = describe(e);
         if (!TransientFailures.isTransient(e)
-                || !executions.recordRetry(jobName, businessDate, reason)
+                || !lease.recordRetry(reason)
                 || !backoff.pause(attempt)) {
-            executions.fail(jobName, businessDate, reason);
+            lease.fail(reason);
             onFailure.run();
             return false;
         }
@@ -174,15 +172,110 @@ public class DailyJobRunner {
          * 확인하지 않으면 이어받은 서버와 같은 작업을 겹쳐 돌린다. 작업이 멱등이라도 겹쳐 돌면
          * 집계가 두 번 더해질 여지가 생긴다.
          */
-        if (!executions.renew(jobName, businessDate)) {
-            log.warn("대기 중에 작업을 다른 서버가 이어받아 중단한다. job={} businessDate={}",
-                    jobName, businessDate);
+        if (!lease.renew()) {
+            log.warn("대기 중에 작업을 다른 서버가 이어받았거나 새 시도가 시작돼 중단한다. job={} businessDate={}",
+                    lease.jobName(), lease.businessDate());
             return false;
         }
-        return attempt(jobName, businessDate, action, attempt + 1, onFailure);
+        return attempt(lease, action, attempt + 1, onFailure);
     }
 
     private String describe(RuntimeException e) {
         return e.getClass().getSimpleName() + ": " + e.getMessage();
+    }
+
+    /*
+     * 한 실행 행을 고치는 방법이다. 묶음 단계는 소유자만 보고 묶음 밖 작업은 세대까지 본다(#591).
+     *
+     * 세대를 Integer 로 들고 다니면 null 이 섞여 세대 검사가 조용히 빠질 수 있다. 그래서 어느 쪽인지를
+     * 만들 때 정하고, 세대를 보는 쪽은 int 로만 받는다.
+     */
+    private interface Lease {
+
+        String jobName();
+
+        LocalDate businessDate();
+
+        boolean renew();
+
+        boolean recordRetry(String reason);
+
+        void succeed(Integer processedCount);
+
+        void fail(String reason);
+    }
+
+    // 00:00 묶음 단계가 쓴다. 단계는 자기 세대를 모른다(begin 이 세대를 돌려주지 않는다).
+    private Lease ownerLease(String jobName, LocalDate businessDate) {
+        return new Lease() {
+            @Override
+            public String jobName() {
+                return jobName;
+            }
+
+            @Override
+            public LocalDate businessDate() {
+                return businessDate;
+            }
+
+            @Override
+            public boolean renew() {
+                return executions.renew(jobName, businessDate);
+            }
+
+            @Override
+            public boolean recordRetry(String reason) {
+                return executions.recordRetry(jobName, businessDate, reason);
+            }
+
+            @Override
+            public void succeed(Integer processedCount) {
+                if (processedCount == null) {
+                    executions.succeed(jobName, businessDate);
+                } else {
+                    executions.succeed(jobName, businessDate, processedCount);
+                }
+            }
+
+            @Override
+            public void fail(String reason) {
+                executions.fail(jobName, businessDate, reason);
+            }
+        };
+    }
+
+    // 이어받기와 수동 재실행으로 도는 묶음 밖 작업이 쓴다. 넘겨받은 세대일 때만 행을 고친다.
+    private Lease attemptLease(String jobName, LocalDate businessDate, int attemptNo) {
+        return new Lease() {
+            @Override
+            public String jobName() {
+                return jobName;
+            }
+
+            @Override
+            public LocalDate businessDate() {
+                return businessDate;
+            }
+
+            @Override
+            public boolean renew() {
+                return executions.renewAttempt(jobName, businessDate, attemptNo);
+            }
+
+            @Override
+            public boolean recordRetry(String reason) {
+                return executions.recordRetryAttempt(jobName, businessDate, attemptNo, reason);
+            }
+
+            @Override
+            public void succeed(Integer processedCount) {
+                executions.succeedAttempt(jobName, businessDate, attemptNo, processedCount);
+            }
+
+            @Override
+            public void fail(String reason) {
+                executions.failAttempt(jobName, businessDate, attemptNo, reason);
+            }
+        };
     }
 }

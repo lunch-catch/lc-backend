@@ -394,7 +394,7 @@ class DailyJobRunnerTest {
      * 그 기본 구현을 타도록 실제 default 메서드를 부르는 mock 을 쓴다.
      */
     @Test
-    @DisplayName("등록된 묶음 밖 작업은 resume이 세대와 함께 run을 다시 불러 건수 없이 성공시킨다")
+    @DisplayName("등록된 묶음 밖 작업은 resume이 세대와 함께 run을 다시 불러 그 세대로 건수 없이 성공시킨다")
     void 묶음_밖_작업을_resume으로_다시_돈다() {
         StandaloneJob job = org.mockito.Mockito.mock(StandaloneJob.class, org.mockito.Mockito.CALLS_REAL_METHODS);
         when(job.jobName()).thenReturn("MEMBER_KAKAO_UNLINK_RETRY");
@@ -402,53 +402,55 @@ class DailyJobRunnerTest {
         runnerWithStandalone(job).resume("MEMBER_KAKAO_UNLINK_RETRY", DATE, 2);
 
         verify(job).run(DATE, 2);
-        verify(executions).succeed("MEMBER_KAKAO_UNLINK_RETRY", DATE);
-        verify(executions, never()).succeed(eq("MEMBER_KAKAO_UNLINK_RETRY"), eq(DATE), anyInt());
+        verify(executions).succeedAttempt("MEMBER_KAKAO_UNLINK_RETRY", DATE, 2, null);
+        verifyNoOwnerOnlyWrites("MEMBER_KAKAO_UNLINK_RETRY");
     }
 
     /*
      * 이어받기와 수동 재실행은 작업의 스케줄러를 거치지 않아 건수를 남길 길이 runCounting 뿐이다(#559).
-     * 건수 없는 succeed 를 함께 부르면 processed_count 를 null 로 덮거나 같은 행을 두 번 닫는다.
+     * 건수 없는 닫기를 함께 부르면 processed_count 를 null 로 덮거나 같은 행을 두 번 닫는다.
      */
     @Test
-    @DisplayName("runCounting을 재정의한 묶음 밖 작업은 resume이 그 건수로 한 번만 성공을 닫는다")
+    @DisplayName("runCounting을 재정의한 묶음 밖 작업은 resume이 그 세대와 건수로 한 번만 성공을 닫는다")
     void runCounting이_돌려준_건수로_한_번만_닫는다() {
         runnerWithStandalone(countingStandaloneTimes("EVENT_LOG_RETENTION", 0, null, 7))
                 .resume("EVENT_LOG_RETENTION", DATE, 2);
 
-        verify(executions).succeed("EVENT_LOG_RETENTION", DATE, 7);
-        verify(executions, never()).succeed("EVENT_LOG_RETENTION", DATE);
+        verify(executions).succeedAttempt("EVENT_LOG_RETENTION", DATE, 2, 7);
+        verifyNoOwnerOnlyWrites("EVENT_LOG_RETENTION");
     }
 
     @Test
     @DisplayName("일시적 오류 뒤 다시 돈 runCounting의 건수로 한 번만 성공을 닫는다")
     void 다시_돈_runCounting의_건수로_한_번만_닫는다() {
-        when(executions.recordRetry(eq("EVENT_LOG_RETENTION"), eq(DATE), anyString())).thenReturn(true);
+        when(executions.recordRetryAttempt(eq("EVENT_LOG_RETENTION"), eq(DATE), eq(1), anyString())).thenReturn(true);
         when(backoff.pause(1)).thenReturn(true);
-        when(executions.renew("EVENT_LOG_RETENTION", DATE)).thenReturn(true);
+        when(executions.renewAttempt("EVENT_LOG_RETENTION", DATE, 1)).thenReturn(true);
 
         runnerWithStandalone(countingStandaloneTimes(
                 "EVENT_LOG_RETENTION", 1, new QueryTimeoutException("응답이 없다"), 3))
                 .resume("EVENT_LOG_RETENTION", DATE, 1);
 
-        verify(executions).succeed("EVENT_LOG_RETENTION", DATE, 3);
-        verify(executions, never()).succeed("EVENT_LOG_RETENTION", DATE);
-        verify(executions, never()).fail(eq("EVENT_LOG_RETENTION"), eq(DATE), anyString());
+        verify(executions).succeedAttempt("EVENT_LOG_RETENTION", DATE, 1, 3);
+        verify(executions, never()).failAttempt(eq("EVENT_LOG_RETENTION"), eq(DATE), anyInt(), anyString());
+        verifyNoOwnerOnlyWrites("EVENT_LOG_RETENTION");
     }
 
     @Test
     @DisplayName("묶음 밖 작업도 일시적 오류면 다시 돌려 성공시킨다")
     void 묶음_밖_작업의_일시적_오류는_다시_돌린다() {
-        when(executions.recordRetry(eq("MEMBER_KAKAO_UNLINK_RETRY"), eq(DATE), anyString())).thenReturn(true);
+        when(executions.recordRetryAttempt(eq("MEMBER_KAKAO_UNLINK_RETRY"), eq(DATE), eq(1), anyString()))
+                .thenReturn(true);
         when(backoff.pause(1)).thenReturn(true);
-        when(executions.renew("MEMBER_KAKAO_UNLINK_RETRY", DATE)).thenReturn(true);
+        when(executions.renewAttempt("MEMBER_KAKAO_UNLINK_RETRY", DATE, 1)).thenReturn(true);
 
         runnerWithStandalone(failingStandaloneTimes(
                 "MEMBER_KAKAO_UNLINK_RETRY", 1, new QueryTimeoutException("응답이 없다")))
                 .resume("MEMBER_KAKAO_UNLINK_RETRY", DATE, 1);
 
-        verify(executions).succeed("MEMBER_KAKAO_UNLINK_RETRY", DATE);
-        verify(executions, never()).fail(eq("MEMBER_KAKAO_UNLINK_RETRY"), eq(DATE), anyString());
+        verify(executions).succeedAttempt("MEMBER_KAKAO_UNLINK_RETRY", DATE, 1, null);
+        verify(executions, never()).failAttempt(eq("MEMBER_KAKAO_UNLINK_RETRY"), eq(DATE), anyInt(), anyString());
+        verifyNoOwnerOnlyWrites("MEMBER_KAKAO_UNLINK_RETRY");
     }
 
     /*
@@ -456,13 +458,62 @@ class DailyJobRunnerTest {
      * onFailure 를 번들 단계와 묶음 밖 작업이 다르게 받기 때문이다.
      */
     @Test
-    @DisplayName("묶음 밖 작업이 실패해도 묶음은 건드리지 않는다")
+    @DisplayName("묶음 밖 작업이 실패하면 그 세대로 실패를 닫고 묶음은 건드리지 않는다")
     void 묶음_밖_작업이_실패해도_묶음은_그대로다() {
         runnerWithStandalone(failingStandaloneTimes(
                 "MEMBER_KAKAO_UNLINK_RETRY", 9, new IllegalStateException("원본이 어긋났다")))
                 .resume("MEMBER_KAKAO_UNLINK_RETRY", DATE, 1);
 
-        verify(executions).fail("MEMBER_KAKAO_UNLINK_RETRY", DATE, "IllegalStateException: 원본이 어긋났다");
+        verify(executions).failAttempt("MEMBER_KAKAO_UNLINK_RETRY", DATE, 1, "IllegalStateException: 원본이 어긋났다");
         verify(executions, never()).fail(eq(DailyJobRunner.BUNDLE), any(LocalDate.class), anyString());
+        verifyNoOwnerOnlyWrites("MEMBER_KAKAO_UNLINK_RETRY");
+    }
+
+    /*
+     * 같은 서버가 새 세대를 잡았으면 낡은 시도의 재실행 기록은 세대 조건에 걸려 거절된다(#591).
+     * 그 뒤의 실패 닫기도 같은 세대로 해서 새 시도의 행을 닫지 않는다.
+     */
+    @Test
+    @DisplayName("재실행 기록이 세대 조건에 걸리면 기다리지 않고 그 세대로만 실패를 닫는다")
+    void 세대가_바뀌면_재실행을_기록하지_못하고_멈춘다() {
+        when(executions.recordRetryAttempt(eq("MEMBER_KAKAO_UNLINK_RETRY"), eq(DATE), eq(1), anyString()))
+                .thenReturn(false);
+
+        runnerWithStandalone(failingStandaloneTimes(
+                "MEMBER_KAKAO_UNLINK_RETRY", 1, new QueryTimeoutException("응답이 없다")))
+                .resume("MEMBER_KAKAO_UNLINK_RETRY", DATE, 1);
+
+        verify(executions).failAttempt(eq("MEMBER_KAKAO_UNLINK_RETRY"), eq(DATE), eq(1), anyString());
+        verifyNoInteractions(backoff);
+        verifyNoOwnerOnlyWrites("MEMBER_KAKAO_UNLINK_RETRY");
+    }
+
+    /*
+     * 기다린 사이에 같은 서버가 새 세대를 잡았으면 소유자는 그대로라 소유자 조건의 renew 는 통과한다.
+     * 세대 조건으로 확인해야 낡은 시도가 다시 돌지 않는다(#591).
+     */
+    @Test
+    @DisplayName("기다린 사이 세대가 바뀌면 다시 돌지 않고 행을 닫지 않는다")
+    void 기다린_사이_세대가_바뀌면_다시_돌지_않는다() {
+        when(executions.recordRetryAttempt(eq("EVENT_LOG_RETENTION"), eq(DATE), eq(1), anyString())).thenReturn(true);
+        when(backoff.pause(1)).thenReturn(true);
+        when(executions.renewAttempt("EVENT_LOG_RETENTION", DATE, 1)).thenReturn(false);
+
+        runnerWithStandalone(countingStandaloneTimes(
+                "EVENT_LOG_RETENTION", 1, new QueryTimeoutException("응답이 없다"), 3))
+                .resume("EVENT_LOG_RETENTION", DATE, 1);
+
+        verify(executions, never()).succeedAttempt(eq("EVENT_LOG_RETENTION"), eq(DATE), anyInt(), any());
+        verify(executions, never()).failAttempt(eq("EVENT_LOG_RETENTION"), eq(DATE), anyInt(), anyString());
+        verifyNoOwnerOnlyWrites("EVENT_LOG_RETENTION");
+    }
+
+    // 이어받기 경로는 소유자만 보는 쓰기를 하나도 부르지 않는다(#591).
+    private void verifyNoOwnerOnlyWrites(String jobName) {
+        verify(executions, never()).succeed(jobName, DATE);
+        verify(executions, never()).succeed(eq(jobName), eq(DATE), anyInt());
+        verify(executions, never()).fail(eq(jobName), eq(DATE), anyString());
+        verify(executions, never()).recordRetry(eq(jobName), eq(DATE), anyString());
+        verify(executions, never()).renew(jobName, DATE);
     }
 }
