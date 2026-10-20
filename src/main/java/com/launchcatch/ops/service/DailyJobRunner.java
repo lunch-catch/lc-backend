@@ -9,6 +9,7 @@ import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -88,6 +89,9 @@ public class DailyJobRunner {
      * 묶음은 runBundle 과 같은 경로로 SUCCESS 단계를 건너뛰고 이어간다. StandaloneJob 은
      * attempt 로 한 번 돌리고 일시적 오류면 자동 재시도한다. isRetryable 이 아닌 이름은
      * 호출자가 먼저 걸러야 한다.
+     *
+     * StandaloneJob 은 runCounting 으로 돌려 돌려받은 건수로 닫는다(#559). 이 경로는 그 작업의
+     * 스케줄러를 거치지 않아 건수를 남길 길이 이것뿐이다.
      */
     public void resume(String jobName, LocalDate businessDate, int attemptNo) {
         if (BUNDLE.equals(jobName)) {
@@ -95,7 +99,7 @@ public class DailyJobRunner {
             return;
         }
         StandaloneJob job = standaloneJobsByName.get(jobName);
-        attempt(job.jobName(), businessDate, () -> job.run(businessDate, attemptNo), 1, () -> { });
+        attempt(job.jobName(), businessDate, () -> job.runCounting(businessDate, attemptNo), 1, () -> { });
     }
 
     /*
@@ -118,8 +122,10 @@ public class DailyJobRunner {
                 return false;
             }
         }
-        return attempt(job.jobName(), businessDate, () -> job.run(businessDate), 1,
-                () -> executions.fail(BUNDLE, businessDate, job.jobName() + " 단계가 실패했다"));
+        return attempt(job.jobName(), businessDate, () -> {
+            job.run(businessDate);
+            return null;
+        }, 1, () -> executions.fail(BUNDLE, businessDate, job.jobName() + " 단계가 실패했다"));
     }
 
     /*
@@ -128,12 +134,18 @@ public class DailyJobRunner {
      * 묶음 단계와 묶음 밖 작업이 같은 재실행 규칙을 쓴다(#360). 다른 것은 실패했을 때 묶음까지
      * 실패시킬지뿐이라 onFailure 로 받는다. 다시 도는 것은 이 작업뿐이다. 묶음을 처음부터
      * 돌리면 이미 성공한 단계가 다시 돌아, 멱등이라도 집계가 두 번 더해질 여지가 생긴다.
+     *
+     * action 은 처리 건수를 돌려준다. null 이면 건수 없이 닫는다(#559, 묶음 단계는 늘 null 이다).
      */
-    private boolean attempt(String jobName, LocalDate businessDate, Runnable action, int attempt,
+    private boolean attempt(String jobName, LocalDate businessDate, Supplier<Integer> action, int attempt,
                              Runnable onFailure) {
         try {
-            action.run();
-            executions.succeed(jobName, businessDate);
+            Integer processed = action.get();
+            if (processed == null) {
+                executions.succeed(jobName, businessDate);
+            } else {
+                executions.succeed(jobName, businessDate, processed);
+            }
             return true;
         } catch (RuntimeException e) {
             return retryOrFail(jobName, businessDate, action, attempt, e, onFailure);
@@ -147,7 +159,7 @@ public class DailyJobRunner {
      *
      * 내 것이 아니어서 실패로 가는 경우에도 close 가 소유자를 보므로 남의 행을 닫지 않는다.
      */
-    private boolean retryOrFail(String jobName, LocalDate businessDate, Runnable action, int attempt,
+    private boolean retryOrFail(String jobName, LocalDate businessDate, Supplier<Integer> action, int attempt,
                                  RuntimeException e, Runnable onFailure) {
         String reason = describe(e);
         if (!TransientFailures.isTransient(e)

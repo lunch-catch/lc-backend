@@ -20,4 +20,16 @@ public interface StandaloneJob {
     String jobName();
 
     void run(LocalDate businessDate, int attemptNo);
+
+    /*
+     * 다시 돌리고 처리 건수를 돌려준다. 이어받기와 관리자 수동 재실행은 run 대신 이것을 부르고
+     * 돌려받은 건수를 batch_execution_log.processed_count 에 남긴다(#559).
+     *
+     * 기본 구현은 run 을 부르고 null 을 돌려준다. null 이면 건수 없이 닫는다. 건수가 필요한 작업만
+     * 재정의한다. 재정의하면 run 대신 이것이 불리므로 run 과 같은 일을 해야 한다.
+     */
+    default Integer runCounting(LocalDate businessDate, int attemptNo) {
+        run(businessDate, attemptNo);
+        return null;
+    }
 }
