@@ -5,12 +5,10 @@ import com.launchcatch.store.dto.StoreRegistrationProgressResponse;
 import com.launchcatch.store.entity.StoreImage;
 import com.launchcatch.store.entity.StoreImageType;
 import com.launchcatch.store.entity.StoreImageUploadStatus;
-import com.launchcatch.store.entity.StoreRegistrationProgress;
 import com.launchcatch.store.entity.StoreRegistrationStep;
 import com.launchcatch.store.exception.StoreErrorCode;
 import com.launchcatch.store.exception.StoreException;
 import com.launchcatch.store.repository.StoreImageRepository;
-import com.launchcatch.store.repository.StoreRegistrationProgressRepository;
 import java.time.Clock;
 import java.time.LocalDateTime;
 import java.util.Optional;
@@ -40,7 +38,6 @@ public class StoreImageUploadService {
     private static final long MAX_FILE_SIZE = 10 * 1024 * 1024;
 
     private final StoreImageRepository storeImageRepository;
-    private final StoreRegistrationProgressRepository progressRepository;
     private final StoreRegistrationProgressService progressService;
     private final StoreUploadSupport storeUploadSupport;
     private final S3Client s3Client;
@@ -139,7 +136,8 @@ public class StoreImageUploadService {
 
     @Transactional
     public void confirmUpload(Long ownerId, String uploadId) {
-        Long storeId = findStoreId(ownerId);
+        // 같은 로고 행을 덮어쓰는 prepareUpload 와 겹쳐 옛 값으로 행을 다시 쓰지 않도록 같은 잠금을 쓴다.
+        Long storeId = storeUploadSupport.findStoreIdForUpdate(ownerId);
 
         StoreImage image = storeImageRepository.findByUploadId(uploadId)
                 .filter(found -> found.getStoreId().equals(storeId))
@@ -182,12 +180,6 @@ public class StoreImageUploadService {
         }
         var snapshot = progressService.completeStep(ownerId, expectedVersion, StoreRegistrationStep.IMAGES, null);
         return new StoreRegistrationProgressResponse(snapshot.storeId(), snapshot.resumeStep(), snapshot.version());
-    }
-
-    private Long findStoreId(Long ownerId) {
-        StoreRegistrationProgress progress = progressRepository.findByOwnerId(ownerId)
-                .orElseThrow(() -> new StoreException(StoreErrorCode.REGISTRATION_PROGRESS_NOT_FOUND));
-        return storeUploadSupport.requireStoreId(progress);
     }
 
     private String buildObjectKey(Long storeId, String uploadId, String contentType, String folder) {
