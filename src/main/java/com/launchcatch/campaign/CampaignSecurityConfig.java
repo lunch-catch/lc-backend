@@ -18,7 +18,9 @@ import org.springframework.security.web.util.matcher.RequestMatcher;
 public class CampaignSecurityConfig {
 
     private static final String[] ADMIN_PATHS = {
-            "/v1/admin/templates/**"
+            "/v1/admin/templates/**",
+            "/v1/admin/campaigns",
+            "/v1/admin/campaigns/**"
     };
 
     /** 점주의 캠페인 등록 경로다. 기본 경로와 하위 경로를 둘 다 적는다(billing과 같은 이유). */
