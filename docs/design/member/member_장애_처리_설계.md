@@ -43,6 +43,7 @@
 | 항목 | 규약 |
 | --- | --- |
 | 주기 | 매일 03시(Asia/Seoul). 배치 서버가 두 대라 `batch_execution_log`의 작업 점유(`MEMBER_KAKAO_UNLINK_RETRY`)로 한 서버만 돈다 |
+| 서버가 멈춤 | `KakaoUnlinkRetryScheduler`가 `StandaloneJob`을 구현해 등록돼 있다(`#621`). 다른 서버가 멈춘 실행을 이어받아 같은 영업일로 다시 돌리고, `FAILED`로 닫힌 행은 관리자가 다시 실행할 수 있다. 성공한 행은 지워지고 끝난 행은 `resolved`로 빠지므로 다시 돌아도 남은 행만 부른다. 멈춘 실행이 선점한 채 남긴 행은 `processing`이라 다시 돈 실행도 부르지 않고 아래 실행 중단 복구를 따른다 |
 | 대상 | `resolved = FALSE AND processing = FALSE`인 행을 오래된 것부터 최대 100건. 행을 잠가 선점한 뒤 커밋한다 |
 | 성공 | 큐 행 삭제 |
 | 일시적 실패 | 선점을 해제하고 `attempt_count`를 올린다. 한도 5회에 닿으면 `resolved = TRUE`, `stop_reason = EXHAUSTED` |
