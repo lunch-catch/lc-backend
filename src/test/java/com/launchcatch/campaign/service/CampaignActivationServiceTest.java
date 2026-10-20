@@ -280,6 +280,31 @@ class CampaignActivationServiceTest {
         assertThat(campaign.getStatus()).isEqualTo(CampaignStatus.DRAFT);
     }
 
+    /*
+     * 검수 시점에는 포스터가 있었지만, schedule()이 캠페인 잠금을 잡은 뒤 precondition이 다시
+     * 조회할 때는 포스터가 사라진 상황을 흉내낸다. verifyPosterUnchanged()도 POSTER_NOT_SAVED를
+     * 그대로 던져야 한다.
+     */
+    @Test
+    @DisplayName("검수 뒤 포스터가 사라지면 POSTER_NOT_SAVED로 거부하고 전이하지 않는다")
+    void 검수_뒤_포스터가_사라지면_거부한다() {
+        active();
+        Campaign campaign = draftCampaign(OWNER_ID);
+        when(campaignRepository.findById(CAMPAIGN_ID)).thenReturn(Optional.of(campaign));
+        when(campaignRepository.findByIdForUpdate(CAMPAIGN_ID)).thenReturn(Optional.of(campaign));
+        Poster posterAtModeration = posterUpdatedAt(LocalDateTime.now(FIXED_CLOCK));
+        when(posterRepository.findByCampaignId(CAMPAIGN_ID))
+                .thenReturn(Optional.of(posterAtModeration))
+                .thenReturn(Optional.empty());
+        when(posterModerationService.moderate(CAMPAIGN_ID))
+                .thenReturn(new PosterModerationOutcome(ModerationResult.PASS, List.of()));
+
+        assertThatThrownBy(() -> service.activate(OWNER_ID, CAMPAIGN_ID))
+                .isInstanceOfSatisfying(CampaignException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(PosterErrorCode.POSTER_NOT_SAVED));
+        assertThat(campaign.getStatus()).isEqualTo(CampaignStatus.DRAFT);
+    }
+
     private void active() {
         when(ownerStatusQuery.findCurrentStatus(OWNER_ID)).thenReturn(Optional.of(OwnerAccountStatus.ACTIVE));
     }
