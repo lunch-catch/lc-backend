@@ -223,6 +223,23 @@ class CampaignPauseResumeServiceTest {
     }
 
     @Test
+    @DisplayName("종료 때 가게-메뉴 불일치로 IllegalArgumentException이 나면 CampaignException이 아닌 "
+            + "RuntimeException으로 바꿔 던진다(500으로 보내려고)")
+    void 종료_때_가게_메뉴_불일치면_RuntimeException을_던진다() {
+        active();
+        Campaign campaign = pausedCampaign(OWNER_ID);
+        when(campaignRepository.findByIdForUpdate(CAMPAIGN_ID)).thenReturn(Optional.of(campaign));
+        doThrow(new IllegalArgumentException("할인 대상 메뉴가 해당 가게에 속하지 않습니다."))
+                .when(storeCampaignSummaryUpdater).update(anyLong(), anyLong(), any());
+
+        assertThatThrownBy(() -> service.end(OWNER_ID, CAMPAIGN_ID))
+                .isInstanceOf(RuntimeException.class)
+                .isNotInstanceOf(CampaignException.class)
+                .isNotInstanceOf(IllegalArgumentException.class)
+                .isNotInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
     @DisplayName("PAUSED가 아니면 resume을 CAMPAIGN-006으로 거부한다")
     void PAUSED가_아니면_resume을_거부한다() {
         active();

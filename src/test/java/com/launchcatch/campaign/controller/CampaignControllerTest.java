@@ -112,6 +112,17 @@ class CampaignControllerTest {
     }
 
     @Test
+    void 종료는_중단_재개_서비스_결과를_그대로_반환한다() {
+        CampaignStatusResponse response = new CampaignStatusResponse(501L, CampaignStatus.ENDED);
+        when(pauseResumeService.end(7L, 501L)).thenReturn(response);
+
+        ResponseEnvelope<CampaignStatusResponse> result = controller.end(501L, owner);
+
+        verify(pauseResumeService).end(7L, 501L);
+        assertThat(result.data()).isSameAs(response);
+    }
+
+    @Test
     void 중단은_중단_서비스_결과를_그대로_반환한다() {
         CampaignStatusResponse response = new CampaignStatusResponse(501L, CampaignStatus.PAUSED);
         when(pauseResumeService.pause(7L, 501L)).thenReturn(response);

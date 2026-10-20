@@ -67,6 +67,7 @@ public class CampaignPauseResumeService {
      * 점주의 직접 종료(#600)다. 점주는 진행 중(ACTIVE)인 캠페인을 바로 종료할 수 없고, 먼저 일시중지(PAUSED)한
      * 뒤에만 종료할 수 있다(ACTIVE -> PAUSED -> ENDED). 종료는 되돌릴 수 없어서 PAUSED 가 아니면 이미
      * ENDED 인 재요청까지 pause/resume 처럼 멱등하게 받지 않고 CAMPAIGN-006 으로 거부한다.
+     * 위에서 PAUSED 를 확인하고 행 잠금을 쥐고 있어 end() 가 IllegalStateException 을 던질 수 없다.
      */
     @Transactional
     public CampaignStatusResponse end(Long ownerId, Long campaignId) {
@@ -78,8 +79,6 @@ public class CampaignPauseResumeService {
         LocalDate businessDate = LocalDate.now(clock);
         try {
             campaignStatusService.end(campaignId, ActorType.OWNER, businessDate);
-        } catch (IllegalStateException e) {
-            throw new CampaignException(CampaignErrorCode.CAMPAIGN_STATE_NOT_ALLOWED, e);
         } catch (IllegalArgumentException e) {
             throw storeSummaryMismatch("CAMPAIGN_END_FAILED", campaignId, e);
         }
