@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -189,6 +190,50 @@ class CampaignStatusServiceTest {
         service.activate(CAMPAIGN_ID);
 
         assertThat(campaign.getStatus()).isEqualTo(CampaignStatus.ACTIVE);
+        verify(campaignStatusLogRepository, never()).save(any());
+    }
+
+    /*
+     * 점주 취소(#597)다. schedule 과 같이 이벤트를 내지 않고 가게 요약도 갱신하지 않는다.
+     * 다른 도메인은 SCHEDULED 를 그때그때 읽기만 해서 되돌릴 것이 없다.
+     */
+    @Test
+    @DisplayName("SCHEDULED 캠페인을 cancel 하면 DRAFT 로 바뀌고 OWNER 행위자로 로그가 남고 이벤트는 없다")
+    void SCHEDULED를_cancel하면_DRAFT로_바뀐다() {
+        Campaign campaign = scheduledCampaign();
+        when(campaignRepository.findByIdForUpdate(CAMPAIGN_ID)).thenReturn(Optional.of(campaign));
+
+        service.cancel(CAMPAIGN_ID);
+
+        assertThat(campaign.getStatus()).isEqualTo(CampaignStatus.DRAFT);
+        CampaignStatusLog log = captureLog();
+        assertThat(log.getFromStatus()).isEqualTo(CampaignStatus.SCHEDULED);
+        assertThat(log.getToStatus()).isEqualTo(CampaignStatus.DRAFT);
+        assertThat(log.getActorType()).isEqualTo(ActorType.OWNER);
+        verify(events, never()).publishEvent(any());
+        verifyNoInteractions(storeCampaignSummaryUpdater);
+    }
+
+    @Test
+    @DisplayName("이미 DRAFT면 다시 cancel해도 로그 없이 조용히 성공한다(멱등한 재시도)")
+    void 이미_DRAFT면_다시_cancel해도_조용히_성공한다() {
+        Campaign campaign = draftCampaign();
+        when(campaignRepository.findByIdForUpdate(CAMPAIGN_ID)).thenReturn(Optional.of(campaign));
+
+        service.cancel(CAMPAIGN_ID);
+
+        assertThat(campaign.getStatus()).isEqualTo(CampaignStatus.DRAFT);
+        verify(campaignStatusLogRepository, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("집행이 시작됐거나 끝난 캠페인은 cancel을 거부한다")
+    void 집행이_시작됐으면_cancel을_거부한다() {
+        for (Campaign campaign : List.of(activeCampaign(), pausedCampaign(PauseReason.OWNER), endedCampaign())) {
+            when(campaignRepository.findByIdForUpdate(CAMPAIGN_ID)).thenReturn(Optional.of(campaign));
+
+            assertThatThrownBy(() -> service.cancel(CAMPAIGN_ID)).isInstanceOf(IllegalStateException.class);
+        }
         verify(campaignStatusLogRepository, never()).save(any());
     }
 

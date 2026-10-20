@@ -35,7 +35,7 @@ public class KakaoUnlinkWebhookController {
     private String adminKey;
 
     @RequestMapping(value = "/webhook/kakao/unlink", method = {RequestMethod.GET, RequestMethod.POST})
-    @Operation(summary = "카카오 연결 해제 통보", description = "카카오 관리자 키와 앱 식별자를 검증한 뒤 회원 탈퇴와 대기 중인 연결 해제 요청 정리를 수행합니다. 회원 토큰은 사용하지 않으며 카카오 연결 해제를 다시 요청하지 않습니다. 검증 실패와 내부 처리 실패에도 200을 반환하고 원인은 로그에 기록합니다.")
+    @Operation(summary = "카카오 연결 해제 통보", description = "카카오 관리자 키와 앱 식별자를 검증한 뒤 최초 가입 계정의 탈퇴를 수행합니다. 재가입 계정은 과거 통보와 구분할 수 없어 계정을 유지하고 경보로 남깁니다. 진행 중인 연결 해제 작업은 삭제하지 않습니다. 검증 실패와 내부 처리 실패에도 200을 반환합니다.")
     @ApiResponse(responseCode = "200", description = "통보 수신. 실패 여부와 관계없이 본문 없이 응답합니다.", content = @Content)
     public ResponseEntity<Void> handleUnlink(
             @Parameter(description = "카카오 관리자 키 인증 헤더. 형식은 KakaoAK {관리자 키}입니다.")

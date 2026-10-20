@@ -490,7 +490,7 @@ ACTIVE의 동시 저장은 순서대로 처리되며 마지막으로 처리된 �
 
 | 필드 | 타입 | 필수 | 조건 |
 |---|---|---|---|
-| imageType | string | 예 | `LOGO`, `INTERIOR` 중 하나 |
+| imageType | string | 아니요 | `LOGO`, `INTERIOR` 중 하나. 비우면 `INTERIOR`로 본다(이 필드가 생기기 전 클라이언트와의 호환) |
 | originalFilename | string | 예 | |
 | contentType | string | 예 | `image/jpeg`, `image/png` 중 하나 |
 | fileSize | integer | 예 | 1 이상, 10485760(10MB) 이하 |
@@ -593,7 +593,7 @@ ACTIVE의 동시 저장은 순서대로 처리되며 마지막으로 처리된 �
 | `403` | `AUTH-006` | 인증된 역할이 `OWNER`가 아님 |
 | `409` | `STORE-001` | `version`이 현재 버전과 다름 |
 | `409` | `STORE-002` | 점주 상태가 `ONBOARDING`이 아님, 또는 현재 재개 단계가 `IMAGES`가 아님 |
-| `409` | `STORE-010` | 로고 이미지가 없음 |
+| `409` | `STORE-010` | 업로드를 마친 로고 이미지가 없음(`prepareUpload`만 하고 `confirmUpload`를 하지 않은 로고도 없는 것으로 본다) |
 
 ## 가게 등록 온보딩 6단계: 대표 메뉴 등록·수정
 

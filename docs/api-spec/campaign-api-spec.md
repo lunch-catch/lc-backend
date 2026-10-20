@@ -18,6 +18,7 @@
 | POST | `/v1/owner/campaigns/{campaignId}:activate` | 캠페인 활성화 | OWNER 인증, ACTIVE 상태, 본인 소유 캠페인 |
 | POST | `/v1/owner/campaigns/{campaignId}:pause` | 캠페인 중단 | OWNER 인증, ACTIVE 상태, 본인 소유 캠페인 |
 | POST | `/v1/owner/campaigns/{campaignId}:resume` | 캠페인 재개 | OWNER 인증, ACTIVE 상태, 본인 소유 캠페인 |
+| POST | `/v1/owner/campaigns/{campaignId}:cancel` | 캠페인 취소(집행 전 `DRAFT`로 되돌리기) | OWNER 인증, ACTIVE 상태, 본인 소유 캠페인 |
 | GET | `/v1/owner/campaigns` | 캠페인 목록 조회 | OWNER 인증 |
 | GET | `/v1/owner/campaigns/{campaignId}` | 캠페인 상세 조회 | OWNER 인증, 본인 소유 캠페인 |
 | GET | `/v1/admin/campaigns` | 전체 캠페인 목록 조회(관리자) | ADMIN, SUPER_ADMIN |
@@ -328,6 +329,52 @@
 | 403 | CAMPAIGN-001 | 점주 상태가 ACTIVE가 아님 |
 | 403 | CAMPAIGN-005 | 그 campaignId가 없거나 본인 소유가 아님(존재 여부를 알려주지 않으려고 같은 코드로 묶는다, `api-spec.md`) |
 | 409 | CAMPAIGN-006 | 캠페인 상태가 `PAUSED`가 아님. 이미 `ACTIVE`인 경우는 멱등하게 `200`이다 |
+| 500 | COMMON-001 | 처리하지 못한 서버 오류 |
+
+## 캠페인 취소
+
+`POST /v1/owner/campaigns/{campaignId}:cancel`
+
+점주가 집행 전인 `SCHEDULED` 캠페인을 `DRAFT`로 되돌린다. 되돌린 뒤에는 `DRAFT`의 기존 규칙대로
+포스터, 쿠폰 조건, 하루 예산을 다시 고칠 수 있다. 고친 캠페인은 [캠페인 활성화](#캠페인-활성화)를
+다시 요청하면 자동 검수를 다시 거쳐 `SCHEDULED`가 된다. 이미 `DRAFT`면 다시 요청해도 성공한다(멱등한
+재시도).
+
+집행이 시작된 캠페인(`ACTIVE`, `PAUSED`)과 끝난 캠페인(`ENDED`)은 취소할 수 없다. 00:00 배치가
+`SCHEDULED`를 `ACTIVE`로 바꾸는 것과 취소가 거의 동시에 오면 먼저 처리된 쪽이 이긴다. 배치가 먼저면
+취소는 `409 CAMPAIGN-006`이다.
+
+### 요청
+
+본문이 없다.
+
+### 성공 응답
+
+`200`.
+
+```json
+{
+  "code": "SUCCESS",
+  "message": "요청이 성공적으로 처리되었습니다.",
+  "data": {
+    "campaignId": 501,
+    "status": "DRAFT"
+  }
+}
+```
+
+| 필드 | 타입 | 필수 | null 허용 | 설명 |
+|---|---|---|---|---|
+| campaignId | integer | 예 | 아니요 | 취소한 캠페인 ID |
+| status | string | 예 | 아니요 | 처리 뒤의 캠페인 상태. 항상 `DRAFT` |
+
+### 오류
+
+| HTTP | 코드 | 조건 |
+|---|---|---|
+| 403 | CAMPAIGN-001 | 점주 상태가 ACTIVE가 아님 |
+| 403 | CAMPAIGN-005 | 그 campaignId가 없거나 본인 소유가 아님(존재 여부를 알려주지 않으려고 같은 코드로 묶는다, `api-spec.md`) |
+| 409 | CAMPAIGN-006 | 캠페인 상태가 `SCHEDULED`가 아님(`ACTIVE`, `PAUSED`, `ENDED`). 이미 `DRAFT`인 경우는 멱등하게 `200`이다 |
 | 500 | COMMON-001 | 처리하지 못한 서버 오류 |
 
 ## 캠페인 목록 조회

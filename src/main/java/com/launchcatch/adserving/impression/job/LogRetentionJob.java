@@ -63,7 +63,7 @@ public class LogRetentionJob implements StandaloneJob {
 
     /*
      * 이어받은 서버와 수동 재실행이 부른다.
-     * 돌려준 건수로 DailyJobRunner 가 행을 닫는다.
+     * 돌려준 건수로 BatchJobRunner 가 행을 닫는다.
      */
     @Override
     public Integer runCounting(LocalDate businessDate, int attemptNo) {

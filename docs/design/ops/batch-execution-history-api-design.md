@@ -14,7 +14,7 @@
 1. `from`, `to` 를 확인한다. 없거나 `to` 가 `from` 보다 앞이거나 31일을 넘으면 `400 OPS-004` 다.
 2. `pageToken` 이 있으면 풀어서 마지막으로 내준 (`businessDate`, `runId`)를 얻는다. 풀 수 없으면 `400 COMMON-002` 다.
 3. `batch_execution_log` 에서 영업일 범위와 `jobName`, `status` 조건에 맞는 행을 `business_date DESC, batch_execution_log_id DESC` 로 `pageSize + 1` 개 읽는다. 하나 더 읽혔으면 다음 페이지가 있다.
-4. 행마다 `retryable` 을 계산한다. `status == FAILED` 이고 `DailyJobRunner.isRetryable(jobName)` 이 참이면 `true` 다.
+4. 행마다 `retryable` 을 계산한다. `status == FAILED` 이고 `BatchJobRegistry.classify(jobName).isRetryable()` 이 참이면 `true` 다(#585).
 5. 시각은 `+09:00` 을 붙여 내보낸다.
 
 **토큰은 저장소 공통 `PageTokens` 로 만든다(#575).** 정렬 기준값 자리에 영업일(`YYYY-MM-DD`)을, id 자리에 `runId` 를 넣는다. `PageTokens.decode` 는 풀 수 없는 토큰을 첫 페이지로 보지만, 이 API 는 비어 있지 않은 토큰이 풀리지 않거나 영업일이 아니면 명세대로 `400 COMMON-002` 다. `pageSize` 도 잘라 쓰지 않고 1~100 밖이면 `400 COMMON-002` 다. billing 의 목록들과 이 두 동작이 다르다.

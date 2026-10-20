@@ -10,6 +10,8 @@ import com.launchcatch.member.client.KakaoUnlinkFailureClassifier;
 import com.launchcatch.member.contract.MemberStatus;
 import com.launchcatch.member.entity.KakaoUnlinkFailure;
 import com.launchcatch.member.entity.Member;
+import com.launchcatch.member.entity.MemberWithdrawalHistory;
+import io.micrometer.core.instrument.Metrics;
 import com.launchcatch.member.exception.MemberErrorCode;
 import com.launchcatch.member.exception.MemberException;
 import com.launchcatch.member.oauth.KakaoIdTokenExchanger;
@@ -17,6 +19,7 @@ import com.launchcatch.member.oauth.KakaoIdentity;
 import com.launchcatch.member.repository.KakaoUnlinkFailureRepository;
 import com.launchcatch.member.repository.MemberProfileRepository;
 import com.launchcatch.member.repository.MemberRepository;
+import com.launchcatch.member.repository.MemberWithdrawalHistoryRepository;
 import java.time.Clock;
 import java.time.LocalDateTime;
 import java.util.NoSuchElementException;
@@ -33,6 +36,7 @@ public class MemberWithdrawalService {
     private final MemberRepository memberRepository;
     private final MemberProfileRepository memberProfileRepository;
     private final KakaoUnlinkFailureRepository kakaoUnlinkFailureRepository;
+    private final MemberWithdrawalHistoryRepository withdrawalHistoryRepository;
     private final MemberTokenService memberTokenService;
     private final KakaoUnlinkClient kakaoUnlinkClient;
     private final TransactionTemplate transactionTemplate;
@@ -88,16 +92,24 @@ public class MemberWithdrawalService {
     }
 
     /*
-     * 카카오가 연결 해제를 통보했다. 카카오 쪽은 이미 끊겼으니 우리가 호출할 것이 없다.
-     * 대기 중인 해제 요청도 함께 지운다. 남겨 두면 배치가 끊을 것이 없는 대상을 계속 부른다.
+     * 카카오 연결 해제 통보로 최초 가입 계정을 탈퇴시킨다.
+     * 기존 작업을 삭제하면 실행 중 외부 호출이 있는데도 재가입이 허용되므로 큐는 바꾸지 않는다.
      */
     public void withdrawByKakaoWebhook(String providerUserId) {
         transactionTemplate.executeWithoutResult(status ->
                 memberRepository.findByProviderUserIdForUpdate(providerUserId).ifPresent(member -> {
+                    /*
+                     * 현재 웹훅 계약에는 가입 회차와 발생 시각이 없다.
+                     * 재가입 계정에서는 과거 통보와 구분할 수 없어 계정을 유지하고 운영 확인 대상으로 센다.
+                     */
+                    if (withdrawalHistoryRepository.existsByProviderUserId(providerUserId)) {
+                        Metrics.counter("member.unlink.webhook.ambiguous").increment();
+                        log.error("event=KAKAO_UNLINK_WEBHOOK_AMBIGUOUS memberId={} action=REQUIRES_VERIFICATION", member.getId());
+                        return;
+                    }
                     if (member.getStatus() != MemberStatus.WITHDRAWN) {
                         withdrawMember(member, "KAKAO_WEBHOOK");
                     }
-                    kakaoUnlinkFailureRepository.deleteByMember_Id(member.getId());
                     Long memberId = member.getId();
                     TransactionLogging.afterCommit(() -> log.info("event=KAKAO_UNLINK_WEBHOOK_SUCCESS memberId={}", memberId));
                 }));
@@ -112,14 +124,17 @@ public class MemberWithdrawalService {
         if (!member.getProviderUserId().equals(authenticatedProviderUserId)) {
             throw new AuthException(AuthErrorCode.KAKAO_AUTHENTICATION_FAILED);
         }
-        withdrawMember(member, "MEMBER_REQUEST");
         enqueueUnlink(member);
-        return new UnlinkTarget(member.getId(), member.getProviderUserId());
+        String providerUserId = member.getProviderUserId();
+        withdrawMember(member, "MEMBER_REQUEST");
+        return new UnlinkTarget(member.getId(), providerUserId);
     }
 
     private void withdrawMember(Member member, String source) {
         var profile = memberProfileRepository.findByMember_Id(member.getId());
-        member.withdraw(LocalDateTime.now(clock));
+        LocalDateTime now = LocalDateTime.now(clock);
+        withdrawalHistoryRepository.save(MemberWithdrawalHistory.create(member, now));
+        member.withdraw(now);
         profile.ifPresent(memberProfileRepository::delete);
         memberTokenService.revoke(member.getId());
         Long memberId = member.getId();
@@ -127,35 +142,40 @@ public class MemberWithdrawalService {
     }
 
     /*
-     * 해제 대상을 큐에 올린다. 탈퇴와 같은 트랜잭션이라 둘이 함께 커밋되거나 함께 되돌아간다.
-     * 행이 이미 있으면 처음 상태로 되돌린다. UNIQUE(member_id) 때문에 새로 넣을 수 없고,
-     * 닫힌 행을 그대로 두면 이번 탈퇴의 해제가 시도되지 않는다.
+     * 회원의 카카오 번호를 비우기 전에 해제 대상을 저장하고 최초 호출을 선점한다.
+     * 이력과 함께 커밋되므로 배치가 같은 작업을 동시에 호출하지 않는다.
      */
     private void enqueueUnlink(Member member) {
-        kakaoUnlinkFailureRepository.findByMember_Id(member.getId()).ifPresentOrElse(
-                KakaoUnlinkFailure::reopen,
-                () -> kakaoUnlinkFailureRepository.save(KakaoUnlinkFailure.create(member)));
+        KakaoUnlinkFailure failure = kakaoUnlinkFailureRepository.findByMember_Id(member.getId())
+                .orElseGet(() -> kakaoUnlinkFailureRepository.save(KakaoUnlinkFailure.create(member)));
+        if (!failure.claim()) {
+            throw new MemberException(MemberErrorCode.UNLINK_PENDING);
+        }
     }
 
     /*
      * 원 시도가 실패했다. 행은 탈퇴 트랜잭션에서 이미 만들어져 있으므로 여기서 만들지 않는다.
-     * 카카오가 영구적으로 거부한 경우에만 닫고, 그 밖에는 손대지 않는다. 재시도 횟수는
-     * 재시도가 실패했을 때만 오른다. 이 실패 때문에 행이 남아 있는 것이므로 세면 한도가
-     * 실제 재시도 횟수보다 한 번 적어진다.
+     * 선점을 해제하고 카카오가 영구적으로 거부한 경우에만 닫는다.
+     * 최초 호출의 실패는 재시도 횟수에 포함하지 않는다.
      */
     private void markInitialUnlinkFailure(UnlinkTarget target, RuntimeException failure) {
+        try {
+            transactionTemplate.executeWithoutResult(status ->
+                    kakaoUnlinkFailureRepository.findByMember_Id(target.memberId())
+                            .ifPresent(row -> {
+                                row.release();
+                                if (KakaoUnlinkFailureClassifier.isTerminal(failure)) {
+                                    row.rejectPermanently();
+                                }
+                            }));
+        } catch (RuntimeException persistenceFailure) {
+            log.error("event=KAKAO_UNLINK_REJECTION_NOT_RECORDED memberId={}",
+                    target.memberId(), persistenceFailure);
+        }
         if (!KakaoUnlinkFailureClassifier.isTerminal(failure)) {
             log.warn("event=KAKAO_UNLINK_FAILED_QUEUED memberId={} causeType={} details={}",
                     target.memberId(), KakaoUnlinkFailureClassifier.causeType(failure), FailureLogDetails.from(failure));
             return;
-        }
-        try {
-            transactionTemplate.executeWithoutResult(status ->
-                    kakaoUnlinkFailureRepository.findByMember_Id(target.memberId())
-                            .ifPresent(KakaoUnlinkFailure::rejectPermanently));
-        } catch (RuntimeException persistenceFailure) {
-            log.error("event=KAKAO_UNLINK_REJECTION_NOT_RECORDED memberId={}",
-                    target.memberId(), persistenceFailure);
         }
         log.error("event=KAKAO_UNLINK_REJECTED memberId={} causeType={}",
                 target.memberId(),
