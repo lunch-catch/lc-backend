@@ -221,13 +221,14 @@ class TemplateReviseServiceTest {
     }
 
     @Test
-    @DisplayName("템플릿은 있는데 버전이 하나도 없으면(불변식 위반) 예외를 던진다")
-    void 버전이_없으면_예외를_던진다() {
+    @DisplayName("조회 뒤 삭제돼 버전이 하나도 없으면 POSTER-005 로 거부한다")
+    void 버전이_없으면_템플릿_없음으로_거부한다() {
         when(templateVersionRepository.findFirstByTemplateIdOrderByVersionNumberDesc(TEMPLATE_ID))
                 .thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.revise(TEMPLATE_ID, "버튼 색 바꿔줘", REQUEST_ID, ADMIN_ID))
-                .isInstanceOf(IllegalStateException.class);
+                .isInstanceOfSatisfying(CampaignException.class, e ->
+                        assertThat(e.getErrorCode()).isEqualTo(PosterErrorCode.TEMPLATE_NOT_FOUND));
     }
 
     @Test
