@@ -13,7 +13,7 @@ import org.springframework.data.repository.query.Param;
 public interface TemplateRepository extends JpaRepository<Template, Long> {
 
     /*
-     * 목록 조회용이다. 템플릿은 최대 10개로 제한돼 있어 페이징 없이 전체를
+     * 목록 조회용이다. 템플릿 개수에 상한(현재 100개)이 있어 페이징 없이 전체를
      * createdAt 최신순으로 가져온다.
      */
     List<Template> findAllByOrderByCreatedAtDesc();
