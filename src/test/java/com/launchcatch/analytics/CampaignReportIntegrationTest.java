@@ -55,6 +55,7 @@ class CampaignReportIntegrationTest extends AbstractAnalyticsIntegrationTest {
         jdbc.update("DELETE FROM daily_settlement_analytics");
         jdbc.update("DELETE FROM point_ledger");
         jdbc.update("DELETE FROM deduction_result WHERE owner_id = ?", OWNER);
+        jdbc.update("DELETE FROM payment WHERE owner_id = ?", OWNER);
         jdbc.update("DELETE FROM event_log WHERE campaign_id = ?", CAMPAIGN);
         for (String child : new String[] {"campaign_daily_impression_reason_report", "campaign_hourly_report",
                 "campaign_daily_slot_report"}) {
@@ -64,6 +65,7 @@ class CampaignReportIntegrationTest extends AbstractAnalyticsIntegrationTest {
         jdbc.update("DELETE FROM campaign_daily_report WHERE campaign_id = ?", CAMPAIGN);
         jdbc.update("DELETE FROM campaign WHERE campaign_id = ?", CAMPAIGN);
         campaign();
+        charge();
         sourceDone(yesterday);
         sourceDone(twoDaysAgo);
     }
@@ -151,6 +153,25 @@ class CampaignReportIntegrationTest extends AbstractAnalyticsIntegrationTest {
                         1000, 'ALL', 'AGE_20S', 10000, ?, ?, ?, ?)
                 """, CAMPAIGN, OWNER, STORE, now, Date.valueOf(twoDaysAgo), Date.valueOf(today.plusDays(30)),
                 now, now);
+    }
+
+    /*
+     * 차감만 심으면 정산 지표의 미소진 잔액이 음수가 되어 daily_settlement_analytics 의 CHECK 에 걸리고 그날 집계 전체가 실패한다.
+     * 그래서 차감보다 먼저 충전을 심는다.
+     */
+    private void charge() {
+        String orderId = "report-" + UUID.randomUUID();
+        jdbc.update("""
+                INSERT INTO payment (owner_id, order_id, pg_tid, amount, status, created_at, updated_at)
+                VALUES (?, ?, ?, 10000, 'REQUESTED', NOW(6), NOW(6))
+                """, OWNER, orderId, "pg-" + orderId);
+        Long paymentId = jdbc.queryForObject("SELECT payment_id FROM payment WHERE order_id = ?", Long.class, orderId);
+        String at = twoDaysAgo.atTime(9, 0).toString();
+        jdbc.update("""
+                INSERT INTO point_ledger (owner_id, campaign_id, payment_id, refund_request_id, business_date, entry_type,
+                                          source, amount, reason, idempotency_key, created_at, updated_at)
+                VALUES (?, NULL, ?, NULL, ?, 'CHARGE', 'RECONCILIATION', 10000, NULL, NULL, ?, ?)
+                """, OWNER, paymentId, twoDaysAgo.toString(), at, at);
     }
 
     private void billedDeduct(String at) {

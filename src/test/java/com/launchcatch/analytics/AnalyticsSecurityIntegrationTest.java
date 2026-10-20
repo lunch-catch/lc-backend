@@ -32,11 +32,20 @@ class AnalyticsSecurityIntegrationTest extends AbstractAnalyticsIntegrationTest 
 
     @ParameterizedTest
     @ValueSource(strings = {
-            "/v1/admin/sales/top-owners",
-            "/v1/admin/campaign-reports"
+            "/v1/admin/sales/top-owners"
     })
     void 관리자_GET_경로는_인증과_관리자_역할을_요구한다(String path) throws Exception {
         assertAdminGet(path);
+    }
+
+    // A-14 는 #625 로 구현돼 관리자가 campaignIds 없이 부르면 404 가 아니라 400 이다
+    @Test
+    void 관리자_캠페인_리포트_경로는_인증과_관리자_역할을_요구한다() throws Exception {
+        String path = "/v1/admin/campaign-reports";
+        mvc.perform(get(path)).andExpect(status().isUnauthorized());
+        mvc.perform(get(path).with(user("member").roles("MEMBER"))).andExpect(status().isForbidden());
+        mvc.perform(get(path).with(user("admin").roles("ADMIN"))).andExpect(status().isBadRequest());
+        mvc.perform(get(path).with(user("super").roles("SUPER_ADMIN"))).andExpect(status().isBadRequest());
     }
 
     @ParameterizedTest
