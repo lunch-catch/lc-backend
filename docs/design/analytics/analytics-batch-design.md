@@ -66,7 +66,7 @@ Spring Batch는 사용하지 않는다. 각 단계는 평범한 서비스이고 
 | `NotBilledMetricsStep` | `daily_campaign_not_billed_analytics` | 정산·광고 서빙 집계 조회 | 구현됨, 순서 510 |
 | `FraudMetricsStep` | `daily_campaign_fraud_analytics` | `AdservingStatsQueryService` | 구현됨, 순서 520 |
 | `CampaignReportStep` | `campaign_daily_report`, 사유·시간대·슬롯·변경 이력 | 정산·광고 서빙·쿠폰 집계와 캠페인 연결 정보 | 설계만 있음 |
-| `MemberUsageStep` | `daily_member_usage` | `CouponStatsQueryService.dailyMemberStats`, `event_log` | 설계만 있음 |
+| `MemberUsageStep` | `daily_member_usage` | `CouponStatsQueryService.dailyMemberStats`, `event_log` | 구현됨, 순서 700 |
 | `SettlementConsistencyStep` | 지표와 구조화 로그 | 정산 집계 조회와 공개한 매출 행 | 구현됨, 순서 900 |
 
 A-04와 A-08을 구현하지 않으므로 `daily_segment_analytics`와 `daily_owner_spend`를 채우는 단계는 두지 않는다. 두 테이블은 폐기하지 않고 남긴다. A-03의 전용 테이블과 퍼널 단계의 기준은 [API 설계의 퍼널 절](./analytics-api-design.md#퍼널)을 따른다. 캠페인 연결 정보의 원본 설계는 `CampaignQueryService.findAllById`이며 없는 집계 조회 메서드를 전제로 만들지 않는다.

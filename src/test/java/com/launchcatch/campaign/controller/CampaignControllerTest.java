@@ -12,6 +12,7 @@ import com.launchcatch.campaign.contract.CampaignStatus;
 import com.launchcatch.campaign.contract.DiscountTargetType;
 import com.launchcatch.campaign.contract.DiscountType;
 import com.launchcatch.campaign.contract.TargetGender;
+import com.launchcatch.campaign.dto.CampaignActivateResponse;
 import com.launchcatch.campaign.dto.CampaignCouponConditionRequest;
 import com.launchcatch.campaign.dto.CampaignCouponConditionResponse;
 import com.launchcatch.campaign.dto.CampaignDetailResponse;
@@ -19,6 +20,7 @@ import com.launchcatch.campaign.dto.CampaignListItemResponse;
 import com.launchcatch.campaign.dto.CampaignStatusResponse;
 import com.launchcatch.campaign.dto.CampaignUpdateRequest;
 import com.launchcatch.campaign.dto.CampaignUpdateResponse;
+import com.launchcatch.campaign.service.CampaignActivationService;
 import com.launchcatch.campaign.service.CampaignCouponConditionResult;
 import com.launchcatch.campaign.service.CampaignCouponConditionService;
 import com.launchcatch.campaign.service.CampaignOwnerQueryService;
@@ -39,8 +41,9 @@ class CampaignControllerTest {
     private final CampaignTargetAudienceService targetAudienceService = mock(CampaignTargetAudienceService.class);
     private final CampaignOwnerQueryService ownerQueryService = mock(CampaignOwnerQueryService.class);
     private final CampaignPauseResumeService pauseResumeService = mock(CampaignPauseResumeService.class);
-    private final CampaignController controller =
-            new CampaignController(service, targetAudienceService, ownerQueryService, pauseResumeService);
+    private final CampaignActivationService activationService = mock(CampaignActivationService.class);
+    private final CampaignController controller = new CampaignController(
+            service, targetAudienceService, ownerQueryService, pauseResumeService, activationService);
     private final CustomUserDetails owner = new CustomUserDetails(7L, Role.OWNER);
 
     private final CampaignCouponConditionRequest request = new CampaignCouponConditionRequest(
@@ -84,6 +87,17 @@ class CampaignControllerTest {
                 controller.updateTargetAudience(501L, targetAudienceRequest, owner);
 
         verify(targetAudienceService).handle(7L, 501L, targetAudienceRequest);
+        assertThat(result.data()).isSameAs(response);
+    }
+
+    @Test
+    void 활성화는_활성화_서비스_결과를_그대로_반환한다() {
+        CampaignActivateResponse response = new CampaignActivateResponse(501L, CampaignStatus.SCHEDULED, List.of());
+        when(activationService.activate(7L, 501L)).thenReturn(response);
+
+        ResponseEnvelope<CampaignActivateResponse> result = controller.activate(501L, owner);
+
+        verify(activationService).activate(7L, 501L);
         assertThat(result.data()).isSameAs(response);
     }
 

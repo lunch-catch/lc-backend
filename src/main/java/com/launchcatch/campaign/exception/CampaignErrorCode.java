@@ -22,7 +22,8 @@ public enum CampaignErrorCode implements ErrorCode {
     DAILY_BUDGET_TOO_LOW(HttpStatus.UNPROCESSABLE_ENTITY, "CAMPAIGN-007", "하루 예산은 최소 하루 예산 이상이어야 합니다."),
     PERIOD_TOO_SHORT(HttpStatus.UNPROCESSABLE_ENTITY, "CAMPAIGN-008", "집행 기간은 1일 이상이어야 합니다."),
     START_DATE_TOO_EARLY(HttpStatus.UNPROCESSABLE_ENTITY, "CAMPAIGN-009", "집행 시작일은 오늘 다음 날 이후여야 합니다."),
-    CAMPAIGN_ALREADY_IN_PROGRESS(HttpStatus.CONFLICT, "CAMPAIGN-010", "이미 진행 중인 캠페인이 있어 새로 등록할 수 없습니다.");
+    CAMPAIGN_ALREADY_IN_PROGRESS(HttpStatus.CONFLICT, "CAMPAIGN-010", "이미 진행 중인 캠페인이 있어 새로 등록할 수 없습니다."),
+    ACTIVATION_RATE_LIMITED(HttpStatus.TOO_MANY_REQUESTS, "CAMPAIGN-011", "캠페인 활성화 요청이 너무 잦습니다. 잠시 후 다시 시도해 주세요.");
 
     private final HttpStatus httpStatus;
     private final String code;

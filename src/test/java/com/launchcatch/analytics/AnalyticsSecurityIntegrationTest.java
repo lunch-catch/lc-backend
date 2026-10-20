@@ -6,6 +6,8 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.launchcatch.auth.CustomUserDetails;
+import com.launchcatch.auth.Role;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -122,8 +124,8 @@ class AnalyticsSecurityIntegrationTest extends AbstractAnalyticsIntegrationTest 
                 .andExpect(status().isUnauthorized());
         mvc.perform(get("/v1/members/me/usage-stats").with(user("admin").roles("ADMIN")))
                 .andExpect(status().isForbidden());
-        mvc.perform(get("/v1/members/me/usage-stats").with(user("member").roles("MEMBER")))
-                .andExpect(status().isNotFound());
+        mvc.perform(get("/v1/members/me/usage-stats").with(user(new CustomUserDetails(1L, Role.MEMBER))))
+                .andExpect(status().isOk());
     }
 
     @Test

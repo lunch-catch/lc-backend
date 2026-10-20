@@ -176,6 +176,35 @@ class SeedIntegrationTest extends IntegrationTestSupport {
                 + "WHERE balance <= 0")).isZero();
     }
 
+    /*
+     * 스케줄러가 꺼진 로컬은 시드의 그날 후보로 피드를 본다. 적재가 도는 서버에서는 적재가 같은 키를 덮어써서 두 값이 같아야 한다(#582).
+     * 적재가 캠페인과 가게에서 옮기는 열을 시드의 캠페인, 가게, 메뉴 행과 맞댄다. 등록 시각과 상태 전이 시각은 시드가 NOW 로 넣어 견주지 않는다.
+     */
+    @Test
+    void 시드의_그날_후보는_시드의_캠페인과_가게에서_적재가_만드는_값과_같다() {
+        migrate(true, "2026-10-15");
+
+        assertThat(count("SELECT COUNT(*) FROM ad_candidate WHERE business_date = '2026-10-15'")).isPositive();
+        assertThat(count("""
+                SELECT COUNT(*) FROM ad_candidate c
+                  JOIN campaign p ON p.campaign_id = c.campaign_id
+                  JOIN store s ON s.store_id = c.store_id
+                  LEFT JOIN store_menu m ON m.store_menu_id = p.target_menu_id
+                 WHERE c.business_date = '2026-10-15'
+                   AND NOT (c.store_id = p.store_id AND c.store_name = s.name AND c.category_code = s.category_code
+                        AND c.latitude = s.latitude AND c.longitude = s.longitude
+                        AND c.target_radius = p.target_radius AND c.target_gender = p.target_gender
+                        AND c.target_age_groups = p.target_age_groups AND c.discount_target_type = p.discount_target_type
+                        AND c.discount_type = p.discount_type AND c.discount_value = p.discount_value
+                        AND c.discount_menu_name <=> m.name AND c.usable_start_time = p.usable_start_time
+                        AND c.usable_end_time = p.usable_end_time AND c.issue_quantity = p.issue_quantity)
+                """)).isZero();
+        assertThat(count("""
+                SELECT COUNT(*) FROM ad_candidate c LEFT JOIN campaign p ON p.campaign_id = c.campaign_id
+                 WHERE c.business_date = '2026-10-15' AND p.campaign_id IS NULL
+                """)).isZero();
+    }
+
     @Test
     void 같은_날_다시_돌면_행이_늘지_않는다() {
         migrate(true, "2026-10-15");

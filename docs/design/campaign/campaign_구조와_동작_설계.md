@@ -145,13 +145,17 @@ stateDiagram-v2
 
 | 전이 | 일으키는 쪽 | 나가는 이벤트 | 금지일 때 응답 |
 |---|---|---|---|
-| DRAFT -> SCHEDULED | SYSTEM | 없음(00:00 배치가 같은 흐름에서 다시 조회) | `IllegalStateException` |
-| SCHEDULED -> ACTIVE | SYSTEM | 없음(위와 같음) | `IllegalStateException` |
+| DRAFT -> SCHEDULED | OWNER(활성화 요청, 자동 검수 통과) | 없음 | `CAMPAIGN-006` |
+| SCHEDULED -> ACTIVE | SYSTEM | 없음(00:00 배치가 같은 흐름에서 다시 조회) | `IllegalStateException` |
 | ACTIVE -> PAUSED | ADMIN, OWNER, SYSTEM(포인트 부족) | `CampaignStatusChangedEvent`(servable=false) | `IllegalStateException` |
 | PAUSED -> ACTIVE | OWNER, SYSTEM(충전 재예약) | `CampaignStatusChangedEvent`(servable=true) | `IllegalStateException` |
 | ACTIVE/PAUSED -> ENDED | SYSTEM | `CampaignStatusChangedEvent`(servable=false), `CampaignEndedEvent` | `IllegalStateException` |
 
-이 이슈엔 HTTP 엔드포인트가 없어 "금지일 때 응답"은 전부 엔티티의 `IllegalStateException`이다. 409로 바꿔 응답하는 일은 이 전이를 실제로 호출하는 컨트롤러가 생기는 이슈(점주 API 등)가 맡는다.
+DRAFT -> SCHEDULED는 점주의 캠페인 활성화 요청(`#561`)이 호출부가 되었다. `CampaignActivationService`가
+`CampaignStatusService.schedule()`을 부르기 전에 캠페인이 DRAFT인지 먼저 확인해서 거부하므로,
+`Campaign.schedule()`의 `IllegalStateException`은 이 경로에서 실제로 던져지지 않는다. 그 대신
+`CampaignActivationService`가 `CAMPAIGN-006`으로 응답한다. 나머지 전이(SCHEDULED -> ACTIVE 등)는
+아직 HTTP 엔드포인트가 없어 "금지일 때 응답"이 엔티티의 `IllegalStateException` 그대로다.
 
 ### 주요 흐름
 
