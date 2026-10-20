@@ -19,6 +19,7 @@
 | `POST` | `/v1/owner/campaigns/{campaignId}:activate` | FR-044 |
 | `POST` | `/v1/owner/campaigns/{campaignId}:pause` | FR-092 |
 | `POST` | `/v1/owner/campaigns/{campaignId}:resume` | FR-092 |
+| `POST` | `/v1/owner/campaigns/{campaignId}:cancel` | FR-092(요구사항명세서 상태 시트의 SCHEDULED "취소(DRAFT로)", `#571`) |
 | `GET` | `/v1/owner/campaigns` | 없음(요구사항명세서에 조회 전용 행이 없다. 점주가 등록한 값을 다시 확인하는 화면 전제, `#341`) |
 | `GET` | `/v1/owner/campaigns/{campaignId}` | 없음(위와 같음) |
 
@@ -251,6 +252,33 @@
   상세 조회처럼 `pausedReason`, `statusChangedAt`까지 담을 필요는 없다고 보았다(채팅으로
   확인, 2026-10-18)
 
+## 캠페인 취소(점주)
+
+허용할 상태와 취소 뒤 수정 범위는 `#571`이 정했다([구조와 동작 설계](./campaign_구조와_동작_설계.md#scheduled-캠페인의-취소571)).
+이 절은 그 결정을 HTTP 로 여는 방법을 적는다(`#597`).
+
+- **새 전이 `CampaignStatusService.cancel()`과 엔티티 `Campaign.cancel()`을 더한다.** `cancel()`은
+  `SCHEDULED`만 `DRAFT`로 바꾸고 나머지 상태면 `IllegalStateException`을 던진다. 상태 변경 이력은
+  `ActorType.OWNER`로 남긴다
+- **이미 `DRAFT`면 이력 없이 조용히 성공한다.** 다른 전이(`pause`, `resume`)와 같은 멱등 기준이다.
+  응답을 받지 못하고 다시 보낸 요청이 실제로는 성공한 취소를 오류로 보지 않게 한다. 한 번도 활성화하지
+  않은 `DRAFT`에 보낸 취소도 `200`이 되지만 상태는 같아 해가 없다
+- **이벤트를 발행하지 않고 가게 요약도 갱신하지 않는다.** `DRAFT -> SCHEDULED`(`schedule`)도 둘 다
+  하지 않는다. 다른 도메인은 `SCHEDULED`를 그때그때 읽기만 한다. coupon 의 쿠폰 행사 조회
+  (`CouponLookUpService`)와 billing 의 환불 차단(`hasLiveCampaign`)이 그렇다. 그래서 되돌릴 것이 없다.
+  `CampaignStatusChangedEvent`를 받는 billing, adserving, coupon 의 리스너는 집행 중인 캠페인을 다룬다
+- **본인 소유 확인과 점주 상태 확인은 중단·재개와 같다.** 새 서비스 `CampaignCancelService`가
+  `findByIdForUpdate`로 잠그고 `ownerId`를 비교한다(`CAMPAIGN-005`). 점주가 `ACTIVE`가 아니면
+  `CAMPAIGN-001`이다. 엔티티의 `IllegalStateException`은 `CAMPAIGN-006`으로 바꾼다
+- **00:00 의 `SCHEDULED -> ACTIVE`와는 캠페인 행 잠금으로 줄을 선다.** 취소도 `activate()`도
+  `findByIdForUpdate`로 같은 행을 잠근다. 배치가 먼저면 취소는 `ACTIVE`를 보고 `CAMPAIGN-006`이다.
+  취소가 먼저면 배치는 `DRAFT`를 보고 `Campaign.activate()`가 `IllegalStateException`을 던진다.
+  그 배치를 만드는 쪽(`#569`)이 이 예외를 "취소된 캠페인이라 건너뛴다"로 받아야 한다. 아래
+  "아직 정해지지 않은 것"에 남긴다
+- **응답은 중단·재개와 같은 `CampaignStatusResponse`다.** `campaignId`와 `status`만 담는다
+- **취소에는 요청 빈도 제한을 두지 않는다.** 취소는 외부 호출이 없는 행 하나의 갱신이다. 취소와 재활성화를
+  되풀이해 검수를 여러 번 부르는 것은 활성화 쪽 제한(`CAMPAIGN-011`)이 막는다
+
 ## 캠페인 조회(점주)
 
 - **두 엔드포인트 모두 점주 상태(`OwnerStatusQuery`) 확인을 하지 않는다.** 등록·수정과
@@ -308,6 +336,7 @@
 | 00:00 배치가 `pendingDailyBudget`을 `dailyBudget`에 반영하는 호출 지점 | V51 45행, 102행 스케줄러 | `#330`은 컬럼에 쓰기만 한다. "스케줄러 캠페인 담당 스텝" 이슈가 그 반영 호출을 정한다. **그 배치는 반영 직전에 `status == ACTIVE`인지 다시 확인해야 한다.** `pause()`는 `pendingDailyBudget`을 지우지 않으므로(아래 "해소된 항목" 참고), `PAUSED`로 멈춰 있는 캠페인에 그 예약값을 그대로 적용하면 안 된다 |
 | 예약 값(`pendingDailyBudget`) 자체를 PATCH 응답에 노출할지 | V51 45행 | `#330`은 노출하지 않는다(응답은 늘 `dailyBudget`). 노출이 필요해지면 그때 명세를 바꾼다 |
 | `targetMenuId`가 그 가게(`storeId`) 소유인지 등록 시점(`CampaignCouponConditionService`)에 검증하는 것 | `#468` 자체 리뷰로 찾음(2026-10-18) | 지금은 검증 코드가 없다. `StoreCampaignSummaryUpdater.update()`가 `menuBelongsToStore`로 뒤늦게(중단·재개 시점에) 걸러내지만, 등록 시점에 막는 게 근본 조치다. 담당 이슈 미정 |
+| 00:00 의 `SCHEDULED -> ACTIVE` 배치가 취소된 캠페인을 만났을 때의 처리 | `#597`(2026-10-20) | 취소가 먼저 잠금을 잡으면 배치의 `CampaignStatusService.activate()`가 `DRAFT`를 보고 `IllegalStateException`을 던진다. 그 배치를 만드는 `#569`가 이 예외를 건너뛰기로 받아야 한다. 받지 않으면 단계가 실패해 00:00 묶음이 멈춘다 |
 | 캠페인 활성화 요청 빈도 제한의 정확한 횟수·창 | `#561` 자체 리뷰로 찾음(2026-10-19) | `CampaignActivationRateLimiter`가 지금은 `TemplateGenerationRateLimiter`의 분당 3회를 그대로 가져와 썼다(근거 없는 예시값, `C` 등급). 실제 값은 운영 쪽과 정한다 |
 
 해소된 항목(`#330`): 하루 예산의 "다음 영업일 적용 예약 값" 컬럼은 `Campaign.pendingDailyBudget`(`V13__campaign_pending_daily_budget.sql`, 양수만 허용하는
