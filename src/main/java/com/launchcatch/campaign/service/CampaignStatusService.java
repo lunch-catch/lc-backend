@@ -58,7 +58,7 @@ public class CampaignStatusService {
 
     @Transactional
     public void schedule(Long campaignId) {
-        schedule(campaignId, () -> { });
+        schedule(campaignId, () -> { }, true);
     }
 
     /*
@@ -66,12 +66,26 @@ public class CampaignStatusService {
      * 잠금 밑에서 함께 확인하고 싶은 것(예: 캠페인 활성화의 포스터 변경 여부, #561 코드래빗
      * 리뷰로 찾음)을 넣는다. 이 서비스는 그 확인이 무엇인지 모른다. precondition이 예외를
      * 던지면 상태를 바꾸지 않고 트랜잭션이 롤백된다.
+     *
+     * 이미 SCHEDULED여도 멱등하게 조용히 성공하지 않고 IllegalStateException을 던진다(#576
+     * 코드래빗 리뷰로 찾음). 멱등하게 반환하면 그 precondition을 건너뛰어서, 사전 확인 뒤
+     * 다른 요청이 먼저 전이를 끝낸 경우 이 요청은 자신의 확인을 거치지 않은 채 성공
+     * 응답(SCHEDULED)을 내보내게 된다. CampaignActivationService가 이 예외를
+     * CAMPAIGN_STATE_NOT_ALLOWED로 바꿔 거부해야, 그 요청이 실제로 전이를 일으켰는지와
+     * 응답이 항상 맞는다.
      */
     @Transactional
     public void schedule(Long campaignId, Runnable precondition) {
+        schedule(campaignId, precondition, false);
+    }
+
+    private void schedule(Long campaignId, Runnable precondition, boolean idempotent) {
         Campaign campaign = findOrThrow(campaignId);
         if (campaign.getStatus() == CampaignStatus.SCHEDULED) {
-            return;
+            if (idempotent) {
+                return;
+            }
+            throw new IllegalStateException("campaign is already SCHEDULED: " + campaignId);
         }
         precondition.run();
         CampaignStatus from = campaign.getStatus();

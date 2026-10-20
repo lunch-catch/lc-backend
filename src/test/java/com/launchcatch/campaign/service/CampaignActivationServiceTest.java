@@ -234,6 +234,27 @@ class CampaignActivationServiceTest {
     }
 
     /*
+     * 사전 확인 뒤 다른 요청이 먼저 SCHEDULED로 전이를 끝낸 상황이다. schedule(Long, Runnable)이
+     * 이 경우 멱등하게 조용히 성공하면, 이 요청은 자신의 포스터 재확인(precondition)을 건너뛴
+     * 채 성공 응답을 받게 된다(#576 코드래빗 리뷰로 찾음). 거부돼야 한다.
+     */
+    @Test
+    @DisplayName("사전 확인 뒤 이미 SCHEDULED가 되어 있으면 CAMPAIGN-006으로 거부하고 포스터를 다시 확인하지 않는다")
+    void 사전_확인_뒤_이미_SCHEDULED면_거부한다() {
+        active();
+        when(campaignRepository.findById(CAMPAIGN_ID)).thenReturn(Optional.of(draftCampaign(OWNER_ID)));
+        when(campaignRepository.findByIdForUpdate(CAMPAIGN_ID)).thenReturn(Optional.of(scheduledCampaign(OWNER_ID)));
+        Poster poster = posterUpdatedAt(LocalDateTime.now(FIXED_CLOCK));
+        when(posterRepository.findByCampaignId(CAMPAIGN_ID)).thenReturn(Optional.of(poster));
+        when(posterModerationService.moderate(CAMPAIGN_ID))
+                .thenReturn(new PosterModerationOutcome(ModerationResult.PASS, List.of()));
+
+        assertThatThrownBy(() -> service.activate(OWNER_ID, CAMPAIGN_ID))
+                .isInstanceOfSatisfying(CampaignException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(CampaignErrorCode.CAMPAIGN_STATE_NOT_ALLOWED));
+    }
+
+    /*
      * 검수가 본 포스터(moderate() 부르기 전 캠페인 잠금 없이 읽은 값)와, schedule()이 캠페인
      * 잠금을 잡은 뒤(precondition) 다시 읽은 포스터가 다르다. 점주가 검수 중에 포스터를 새로
      * 올린 경우를 흉내낸다(코드래빗 리뷰로 찾음, #561). 그 PASS 결과로 전이해서는 안 된다.
@@ -274,6 +295,12 @@ class CampaignActivationServiceTest {
                 LocalDateTime.now(FIXED_CLOCK).toLocalDate().plusDays(4),
                 LocalDateTime.now(FIXED_CLOCK));
         setId(campaign, CAMPAIGN_ID);
+        return campaign;
+    }
+
+    private Campaign scheduledCampaign(Long ownerId) {
+        Campaign campaign = draftCampaign(ownerId);
+        campaign.schedule(LocalDateTime.now(FIXED_CLOCK));
         return campaign;
     }
 

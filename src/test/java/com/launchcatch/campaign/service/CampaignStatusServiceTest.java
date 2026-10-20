@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -132,6 +133,25 @@ class CampaignStatusServiceTest {
         })).isSameAs(preconditionFailure);
 
         assertThat(campaign.getStatus()).isEqualTo(CampaignStatus.DRAFT);
+        verify(campaignStatusLogRepository, never()).save(any());
+    }
+
+    /*
+     * precondition이 있는 schedule은 이미 SCHEDULED여도 멱등하게 조용히 성공하지 않고
+     * 거부한다(#576 코드래빗 리뷰로 찾음). 멱등하게 반환하면 그 요청이 precondition을
+     * 건너뛴 채 성공 응답을 받게 된다.
+     */
+    @Test
+    @DisplayName("precondition이 있는 schedule은 이미 SCHEDULED면 거부하고 precondition을 부르지 않는다")
+    void precondition이_있는_schedule은_이미_SCHEDULED면_거부한다() {
+        Campaign campaign = scheduledCampaign();
+        when(campaignRepository.findByIdForUpdate(CAMPAIGN_ID)).thenReturn(Optional.of(campaign));
+        Runnable precondition = mock(Runnable.class);
+
+        assertThatThrownBy(() -> service.schedule(CAMPAIGN_ID, precondition))
+                .isInstanceOf(IllegalStateException.class);
+
+        verify(precondition, never()).run();
         verify(campaignStatusLogRepository, never()).save(any());
     }
 
