@@ -19,6 +19,7 @@
 | `GET` | `/v1/admin/templates` | FR-013 |
 | `GET` | `/v1/admin/templates/{templateId}` | FR-013 (상세는 명세에 별도 기술 없음, 목록과 같은 근거로 둠) |
 | `GET` | `/v1/admin/templates/{templateId}/versions` | FR-014 |
+| `DELETE` | `/v1/admin/templates/{templateId}` | 요구사항명세서 V51 에는 없다. 프론트 요청으로 범위를 게시 전 템플릿으로 좁혀 추가(`#517`) |
 | `POST` | `/v1/admin/templates/{templateId}/publish` | FR-015 |
 | `PATCH` | `/v1/admin/templates/{templateId}/active` | FR-016 |
 | `GET` | `/v1/owner/templates` | FR-050 |
@@ -46,6 +47,23 @@
   5. 이미지 모서리를 더 둥글게 해줘
 - **제안 문구는 다음 규칙으로 쓴다(`#308`).** 색상·크기 계열의 범용 스타일 제안을 넣는다. 위치 조정은 "중앙에서 오른쪽으로 1cm 옮겨줘"처럼 매번 오프셋을 명시하고 "1cm 더" 같은 누적 표현은 쓰지 않는다. 모델이 이전 상태를 읽어 계산하지 않아도 되게 하려는 것이다. 새 슬롯을 추가하거나 내용을 크게 바꾸는 문구는 넣지 않는다. 퀵 리플라이는 같은 구조 안에서 모양을 다듬는 용도다
 - **버전 번호는 앞으로 당기지(재배치) 않는다.** `TemplatePublishRequest.versionNumber`(관리자가 직접 지정)와 버전 목록의 커서 페이지네이션이 번호를 고정 식별자로 쓴다. 번호를 당기면, 관리자가 화면에서 본 번호와 그 사이 밀려 바뀐 번호가 어긋나 다른 내용을 게시하거나 다른 페이지를 보게 된다. 번호는 계속 증가하고 지워진 번호는 다시 쓰지 않는다
+
+## 템플릿 삭제
+
+**서버가 하는 일**
+
+1. `findByIdForUpdate` 로 행 잠금을 건다. 게시(`TemplatePublishService.publish()`)와 수정 저장(`TemplateReviseService.save()`)도 같은 잠금을 쓰기 때문에, 삭제 중인 템플릿을 동시에 게시하거나 수정하는 경쟁에서 한쪽이 끝날 때까지 다른 쪽이 기다리게 된다
+2. `DRAFT` 가 아니면(`PUBLISHED`) `POSTER-006`(`TEMPLATE_NOT_DRAFT`)으로 거부한다. 수정이 쓰는 오류 코드를 그대로 재사용한다
+3. 그 템플릿의 버전 전부를 JPQL 벌크 `DELETE` 로 먼저 하드삭제하고, 템플릿 행을 하드삭제한다. 같은 트랜잭션에서 `template_quota.current_count` 를 1 줄인다(`TemplateQuotaRepository.release()`)
+
+**정한 이유**
+
+- **버전은 20개 상한(`#410`) 안이라 엔티티로 하나씩 지우지 않고 벌크 `DELETE` 한 번으로 지운다.** 템플릿 게시 때의 버전 소프트삭제(`softDeleteAllByTemplateId`)와 같은 이유다
+- **버전을 템플릿보다 먼저 지운다.** `template_version.template_id` 가 FK 로 `template` 을 가리켜서, 순서를 바꾸면 템플릿 행이 먼저 없어진 뒤 그 FK를 못 지운다
+- **`template_quota.current_count` 를 줄이는 조건부 `UPDATE`(`release()`)를 새로 둔다.** 지금까지 이 카운터는 늘어나기만 했다(`TemplateQuotaRepository.tryReserve`). 삭제로 줄이지 않으면 실제 템플릿 개수가 10개 미만으로 내려가도 생성이 영구히 거부된다. `tryReserve` 와 같은 조건부 `UPDATE` 모양으로 둬, 읽어서 빼고 저장하는 방식의 레이스를 피한다
+- **삭제 도중이나 삭제 뒤에 들어온 수정 요청은 따로 처리하지 않는다.** `TemplateReviseService.save()` 가 LLM 호출을 끝내고 저장 단계에서 같은 잠금(`findByIdForUpdate`)을 기다렸다가 들어오면, 그 시점엔 템플릿이 이미 없어 `findByIdForUpdate` 가 빈 값을 돌려주고 그대로 `POSTER-005`(`TEMPLATE_NOT_FOUND`)로 끝난다. 삭제 쪽이 수정 쪽의 존재를 알거나 막을 필요가 없다
+- **`POSTER-006` 메시지를 "게시된 템플릿은 수정하거나 삭제할 수 없습니다"로 넓힌다.** 수정과 삭제가 같은 조건(`DRAFT` 아님)과 같은 코드를 쓰므로 오류 코드를 새로 만들지 않는다
+- **동시성 테스트는 실제 스레드 경쟁을 만들지 않고, `findByIdForUpdate` 호출 여부(`verify`)까지만 확인한다.** 게시·활성화와 같은 기존 테스트 관례다
 
 ## 템플릿 목록 · 상세 조회
 

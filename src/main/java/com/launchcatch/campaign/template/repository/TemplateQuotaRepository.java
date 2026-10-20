@@ -17,4 +17,13 @@ public interface TemplateQuotaRepository extends JpaRepository<TemplateQuota, Lo
     @Modifying
     @Query("UPDATE TemplateQuota q SET q.currentCount = q.currentCount + 1 WHERE q.currentCount < :max")
     int tryReserve(@Param("max") int max);
+
+    /*
+     * DRAFT 템플릿을 하드삭제할 때 자리를 돌려준다(#517). 0 이하로는 못 내려가게 조건을
+     * 건다. chk_template_quota_current_count CHECK 제약과 같은 전제라, 이 조건이 없어도
+     * 결국 커밋 시점에 제약 위반으로 막히겠지만 그 전에 여기서 조용히 0행만 올린다.
+     */
+    @Modifying
+    @Query("UPDATE TemplateQuota q SET q.currentCount = q.currentCount - 1 WHERE q.currentCount > 0")
+    int release();
 }

@@ -125,4 +125,15 @@ public interface TemplateVersionRepository extends JpaRepository<TemplateVersion
     @Query(value = "delete from template_version where deleted_at is not null limit :batchSize",
             nativeQuery = true)
     int deleteBatchByDeletedAtIsNotNull(@Param("batchSize") int batchSize);
+
+    /*
+     * DRAFT 템플릿을 관리자가 직접 삭제할 때 쓴다(#517). 소프트삭제된 버전이 섞여 있을
+     * 일은 없지만(DRAFT는 게시 전이라 소프트삭제 경로를 안 탄다), deletedAt 조건 없이
+     * 전부 지워 그 전제가 바뀌어도 안전하다. TemplateDeleteService.delete()가 같은
+     * 트랜잭션에서 템플릿 행을 지우기 전에 불러야 한다. 순서를 바꾸면 템플릿 행이 먼저
+     * 없어져 FK로 이 버전들을 못 지운다.
+     */
+    @Modifying
+    @Query("delete from TemplateVersion v where v.template.id = :templateId")
+    int deleteAllByTemplateId(@Param("templateId") Long templateId);
 }

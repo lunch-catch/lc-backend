@@ -16,6 +16,7 @@
 | `GET` | `/v1/admin/templates` | 템플릿 목록 조회 | ADMIN, SUPER_ADMIN |
 | `GET` | `/v1/admin/templates/{templateId}` | 템플릿 상세 조회 | ADMIN, SUPER_ADMIN |
 | `GET` | `/v1/admin/templates/{templateId}/versions` | 템플릿 버전 목록 조회 | ADMIN, SUPER_ADMIN |
+| `DELETE` | `/v1/admin/templates/{templateId}` | 템플릿 삭제 | ADMIN, SUPER_ADMIN |
 | `POST` | `/v1/admin/templates/{templateId}/publish` | 템플릿 게시 | ADMIN, SUPER_ADMIN |
 | `PATCH` | `/v1/admin/templates/{templateId}/active` | 템플릿 활성화 관리 | ADMIN, SUPER_ADMIN |
 | `GET` | `/v1/owner/templates` | 점주 템플릿 목록 조회 | OWNER |
@@ -115,11 +116,27 @@
 |---|---|---|
 | `400` | `COMMON-002` | 요청 문장이 비었거나 500자를 넘었거나, 요청 식별자가 비었거나 64자를 넘었다 |
 | `404` | `POSTER-005` | 템플릿을 찾을 수 없다 |
-| `409` | `POSTER-006` | 게시된 템플릿은 수정할 수 없다 |
+| `409` | `POSTER-006` | 게시된 템플릿은 수정하거나 삭제할 수 없다 |
 | `422` | `POSTER-001` | 슬롯이 빠졌거나 중복됨 |
 | `422` | `POSTER-002` | 슬롯 구조가 이전 버전과 다르다 |
 | `429` | `POSTER-014` | 관리자 1명당 생성·수정을 합쳐 분당 3회 초과 |
 | `503` | `POSTER-004` | LLM 응답이 30초를 넘었다, 또는 같은 `requestId`가 아직 처리 중이다 |
+
+## 템플릿 삭제
+
+### `DELETE /v1/admin/templates/{templateId}`
+
+게시 전(`DRAFT`) 템플릿을 완전히 삭제한다. 템플릿 행과 그 버전 전부가 함께 지워지고,
+템플릿 생성 가능 수가 1 늘어난다. 게시된 템플릿은 삭제할 수 없다.
+
+**응답** `204`. 본문이 없다.
+
+**오류**
+
+| 상태 | 코드 | 언제 |
+|---|---|---|
+| `404` | `POSTER-005` | 템플릿을 찾을 수 없다 |
+| `409` | `POSTER-006` | 게시된 템플릿은 수정하거나 삭제할 수 없다 |
 
 ## 템플릿 목록 조회
 
@@ -569,7 +586,7 @@
 | `POSTER-003` | `422` | 템플릿은 최대 10개까지 만들 수 있습니다. |
 | `POSTER-004` | `503` | 템플릿 생성이 지연되고 있습니다. 잠시 후 다시 시도해 주세요. |
 | `POSTER-005` | `404` | 템플릿을 찾을 수 없습니다. |
-| `POSTER-006` | `409` | 게시된 템플릿은 수정할 수 없습니다. |
+| `POSTER-006` | `409` | 게시된 템플릿은 수정하거나 삭제할 수 없습니다. |
 | `POSTER-007` | `409` | 이미 게시된 템플릿은 다시 게시할 수 없습니다. |
 | `POSTER-008` | `404` | 존재하지 않는 버전 번호로 게시할 수 없습니다. |
 | `POSTER-009` | `409` | 게시되지 않은 템플릿은 활성화할 수 없습니다. |
