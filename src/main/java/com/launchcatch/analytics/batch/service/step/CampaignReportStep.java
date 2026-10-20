@@ -221,8 +221,9 @@ public class CampaignReportStep implements AggregationStep<CampaignReport> {
         return byCampaign;
     }
 
+    // 원천은 캠페인마다 한 행을 준다. 같은 캠페인이 두 번 오면 원천의 결함이라 그날 집계를 실패시켜 드러낸다
     private static <T> Map<Long, T> byCampaign(List<T> values, Function<T, Long> campaignId) {
-        return values.stream().collect(Collectors.toMap(campaignId, value -> value, (first, second) -> first));
+        return values.stream().collect(Collectors.toMap(campaignId, Function.identity()));
     }
 
     private static <K> void putPositive(Map<K, Long> target, K key, long count) {

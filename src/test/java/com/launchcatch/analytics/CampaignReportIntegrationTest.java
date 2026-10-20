@@ -17,6 +17,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.Map;
 import java.util.UUID;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -49,7 +50,24 @@ class CampaignReportIntegrationTest extends AbstractAnalyticsIntegrationTest {
     private DailyAggregationJob job;
 
     @BeforeEach
-    void cleanUp() {
+    void setUp() {
+        removeSeeds();
+        campaign();
+        charge();
+        sourceDone(yesterday);
+        sourceDone(twoDaysAgo);
+    }
+
+    /*
+     * 심은 행을 테스트가 끝날 때도 지운다. 같은 DB 를 쓰는 다른 집계 테스트가 이 테스트의 미과금 판정과 캠페인을
+     * 원천으로 읽어 그날 쓰는 행 수가 달라지기 때문이다.
+     */
+    @AfterEach
+    void tearDown() {
+        removeSeeds();
+    }
+
+    private void removeSeeds() {
         jdbc.update("DELETE FROM batch_execution_log");
         jdbc.update("DELETE FROM aggregation_pending_date");
         jdbc.update("DELETE FROM daily_settlement_analytics");
@@ -64,10 +82,6 @@ class CampaignReportIntegrationTest extends AbstractAnalyticsIntegrationTest {
         }
         jdbc.update("DELETE FROM campaign_daily_report WHERE campaign_id = ?", CAMPAIGN);
         jdbc.update("DELETE FROM campaign WHERE campaign_id = ?", CAMPAIGN);
-        campaign();
-        charge();
-        sourceDone(yesterday);
-        sourceDone(twoDaysAgo);
     }
 
     @Test
