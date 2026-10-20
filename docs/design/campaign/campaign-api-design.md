@@ -205,6 +205,27 @@
   `feat/535-poster-moderation` 브랜치 기준이다. 구현(`#561`)은 `#535`가 먼저 병합된 뒤
   진행한다
 
+## 캠페인 종료(점주)
+
+- **종료도 `CampaignPauseResumeService`가 맡는다(`#600`).** 점주 상태 확인, 본인 소유 확인
+  (`findByIdForUpdate`와 `ownerId` 비교, 실패하면 `CAMPAIGN-005`), 엔티티의
+  `IllegalStateException`을 `CAMPAIGN-006`으로 바꾸는 방식이 중단과 재개와 같다. 실제
+  전이는 `CampaignStatusService.end(campaignId, ActorType.OWNER, businessDate)`에 맡긴다.
+  기존 `end(campaignId, businessDate)`는 정기 종료용으로 `ActorType.SYSTEM`을 넘겨 그대로 둔다
+- **점주는 `PAUSED` 캠페인만 종료할 수 있다.** 진행 중(`ACTIVE`)인 캠페인은 먼저 중단하고 종료하는
+  순서(`ACTIVE` -> `PAUSED` -> `ENDED`)를 지킨다. 실수로 진행 중인 캠페인을 바로 끝내는 일을
+  막고, 중단으로 노출을 멈춘 뒤 종료를 한 번 더 확인하게 하려는 결정이다. 집행 기간이 끝난
+  정기 종료(`#569`)는 `ACTIVE`에서도 종료하므로 엔티티의 `Campaign.end()`는 `ACTIVE`와 `PAUSED`를
+  모두 받는다. 이 순서 제한은 점주용 서비스에만 있다
+- **이미 `ENDED`인 캠페인의 재요청은 멱등하게 받지 않고 `CAMPAIGN-006`으로 거부한다.**
+  종료는 되돌릴 수 없는 전이라, 중단과 재개처럼 "이미 그 상태면 성공"으로 받으면 점주가 실수로
+  두 번 누른 요청과 정말 끝난 캠페인의 구분이 사라진다. `CampaignStatusService.end()` 자체는
+  배치의 재실행을 위해 여전히 멱등하다
+- **종료할 때 가게 요약을 `ENDED`로 갱신한다.** 중단과 재개처럼 `StoreCampaignSummaryUpdater`를
+  같은 트랜잭션에서 부른다. 정기 종료(`#569`)도 같은 `end()`를 부르므로 이 갱신은 한 곳에 있다
+- **종료하면 `CampaignStatusChangedEvent`와 `CampaignEndedEvent`가 발행되어 정산과 광고
+  서빙이 받는다.** 점주 종료와 정기 종료가 같은 이벤트를 쓴다
+
 ## 캠페인 중단과 재개(점주)
 
 - **점주용 전이는 기존 `CampaignStatusService.pause()`/`resume()`을 그대로 부른다(FR-092,
