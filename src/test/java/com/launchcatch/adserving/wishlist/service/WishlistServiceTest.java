@@ -36,6 +36,8 @@ import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
+import java.util.stream.LongStream;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -322,6 +324,45 @@ class WishlistServiceTest {
         when(wishlistRepository.findActiveCampaignIdsByMemberId(MEMBER_ID)).thenReturn(List.of(101L, 102L));
 
         assertThat(service.findWishedCampaignIds(MEMBER_ID)).containsExactlyInAnyOrder(101L, 102L);
+    }
+
+    @Test
+    void 캠페인을_끝나지_않은_찜으로_찜한_입력_회원만_돌려준다() {
+        Set<Long> members = Set.of(3001L, 3002L, 3003L);
+        when(wishlistRepository.findActiveMemberIds(101L, members)).thenReturn(List.of(3001L, 3003L));
+
+        assertThat(service.findWishedMemberIds(101L, members)).containsExactlyInAnyOrder(3001L, 3003L);
+    }
+
+    @Test
+    void 회원_집합이_비면_조회하지_않고_빈_집합이다() {
+        assertThat(service.findWishedMemberIds(101L, Set.of())).isEmpty();
+        verifyNoInteractions(wishlistRepository);
+    }
+
+    @Test
+    void 캠페인이나_회원_집합이_없으면_거부한다() {
+        assertThatThrownBy(() -> service.findWishedMemberIds(null, Set.of(3001L))).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> service.findWishedMemberIds(101L, null)).isInstanceOf(IllegalArgumentException.class);
+        verifyNoInteractions(wishlistRepository);
+    }
+
+    // 쿠폰 묶음 발급의 최대 인원이다(#578)
+    @Test
+    void 회원이_500명을_넘으면_조회하지_않고_거부한다() {
+        Set<Long> members = LongStream.rangeClosed(1, 501).boxed().collect(Collectors.toSet());
+
+        assertThatThrownBy(() -> service.findWishedMemberIds(101L, members)).isInstanceOf(IllegalArgumentException.class);
+        verifyNoInteractions(wishlistRepository);
+    }
+
+    @Test
+    void 회원_500명은_한_번에_조회한다() {
+        Set<Long> members = LongStream.rangeClosed(1, 500).boxed().collect(Collectors.toSet());
+        when(wishlistRepository.findActiveMemberIds(101L, members)).thenReturn(List.of());
+
+        assertThat(service.findWishedMemberIds(101L, members)).isEmpty();
+        verify(wishlistRepository).findActiveMemberIds(101L, members);
     }
 
     @Test

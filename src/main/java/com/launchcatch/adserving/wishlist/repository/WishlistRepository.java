@@ -2,6 +2,7 @@ package com.launchcatch.adserving.wishlist.repository;
 
 import com.launchcatch.adserving.wishlist.entity.Wishlist;
 import java.time.LocalDateTime;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -28,6 +29,13 @@ public interface WishlistRepository extends JpaRepository<Wishlist, Long>, Wishl
 
     @Query("select w.campaignId from Wishlist w where w.memberId = :memberId and w.campaignEndedAt is null")
     List<Long> findActiveCampaignIdsByMemberId(@Param("memberId") Long memberId);
+
+    // 입력한 회원 가운데 그 캠페인을 끝나지 않은 찜으로 찜한 회원이다. uk_wishlist_member_campaign 을 탄다(#578)
+    @Query("""
+            select w.memberId from Wishlist w
+             where w.campaignId = :campaignId and w.memberId in :memberIds and w.campaignEndedAt is null
+            """)
+    List<Long> findActiveMemberIds(@Param("campaignId") Long campaignId, @Param("memberIds") Collection<Long> memberIds);
 
     // 이미 종료로 표시된 찜은 그대로 둔다. 같은 종료 이벤트가 다시 와도 처음 종료 시각이 남는다. idx_wishlist_campaign 을 탄다
     @Transactional
