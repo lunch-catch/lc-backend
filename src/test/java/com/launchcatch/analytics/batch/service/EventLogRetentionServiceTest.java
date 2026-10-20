@@ -1,9 +1,9 @@
 package com.launchcatch.analytics.batch.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
-import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -75,22 +75,21 @@ class EventLogRetentionServiceTest {
     }
 
     @Test
-    @DisplayName("쉬는 도중 중단 신호를 받으면 그때까지 지운 만큼만 돌려주고 멈춘다")
-    void 중단_신호를_받으면_멈춘다() {
+    @DisplayName("쉬는 도중 중단 신호를 받으면 더 지우지 않고 예외를 던진다")
+    void 중단_신호를_받으면_예외를_던진다() {
         int batch = EventLogRetentionService.BATCH_SIZE;
         when(repository.deleteOlderThan(CUTOFF, batch)).thenReturn(batch);
         Thread.currentThread().interrupt();
 
-        int deleted;
         try {
-            deleted = service.purge();
+            assertThatThrownBy(() -> service.purge())
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasCauseInstanceOf(InterruptedException.class);
         } finally {
-            // 중단 표시가 다음 테스트로 새지 않게 지운다.
+            // 중단 표시가 복원됐는지 보고, 다음 테스트로 새지 않게 지운다.
             assertThat(Thread.interrupted()).isTrue();
         }
 
-        assertThat(deleted).isEqualTo(batch);
         verify(repository, times(1)).deleteOlderThan(CUTOFF, batch);
-        verify(repository, never()).deleteOlderThan(CUTOFF, 0);
     }
 }

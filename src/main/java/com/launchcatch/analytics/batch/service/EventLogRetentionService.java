@@ -38,17 +38,21 @@ public class EventLogRetentionService {
     }
 
     /*
-     * 지운 행 수를 돌려준다. 중단 신호를 받으면 그때까지 지운 만큼만 돌려주고 멈춘다. 남은 행은 다음
-     * 실행이 이어서 지운다.
+     * 지운 행 수를 돌려준다.
+     * 중단 신호를 받으면 예외를 던진다. 덜 지운 실행을 성공으로 닫지 않고 호출자가 실패로 닫게 한다.
+     * 남은 행은 다음 실행이 이어서 지운다.
      */
     public int purge() {
         LocalDateTime cutoff = cutoff(LocalDate.now(clock));
         int total = 0;
-        int deleted;
-        do {
-            deleted = repository.deleteOlderThan(cutoff, BATCH_SIZE);
+        while (true) {
+            int deleted = repository.deleteOlderThan(cutoff, BATCH_SIZE);
             total += deleted;
-        } while (deleted == BATCH_SIZE && pause());
+            if (deleted < BATCH_SIZE) {
+                break;
+            }
+            pause();
+        }
         log.info("event=EVENT_LOG_RETENTION_DONE cutoff={} deleted={}", cutoff, total);
         return total;
     }
@@ -58,13 +62,12 @@ public class EventLogRetentionService {
         return today.minusMonths(DailyAggregationRunner.RETENTION_MONTHS).atStartOfDay();
     }
 
-    private boolean pause() {
+    private void pause() {
         try {
             Thread.sleep(PAUSE_MILLIS);
-            return true;
         } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt();
-            return false;
+            throw new IllegalStateException("Event log retention interrupted", interrupted);
         }
     }
 }
