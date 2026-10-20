@@ -103,7 +103,7 @@ class StoreOnboardingStatusIntegrationTest extends AbstractStoreIntegrationTest 
     }
 
     @Test
-    void 검증되지_않은_대표와_내부_이미지는_미완료다() {
+    void 로고는_검증이_필수이고_미완료_내부_이미지는_등록을_막지_않는다() {
         Long storeId = ready();
         jdbc.update("update store_image set upload_status='PENDING' where store_id=?", storeId);
         assertThat(service.getProgress(ownerId).resumeStep()).isEqualTo("IMAGES");
@@ -112,7 +112,8 @@ class StoreOnboardingStatusIntegrationTest extends AbstractStoreIntegrationTest 
                 insert into store_image(store_id, image_type, object_key, upload_status, sort_order, created_at, updated_at)
                 values (?, 'INTERIOR', ?, 'PENDING', 1, now(6), now(6))
                 """, storeId, UUID.randomUUID().toString());
-        assertThat(service.getProgress(ownerId).canFinalize()).isFalse();
+        assertThat(service.getProgress(ownerId).canFinalize()).isTrue();
+        assertThat(service.getProgress(ownerId).resumeStep()).isEqualTo("MENU");
         jdbc.update("update store_image set upload_status='VERIFIED', verified_at=now(6) where store_id=?", storeId);
         assertThat(service.getProgress(ownerId).canFinalize()).isTrue();
     }

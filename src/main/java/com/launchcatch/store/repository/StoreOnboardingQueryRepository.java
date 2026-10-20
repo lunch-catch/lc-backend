@@ -44,11 +44,6 @@ public class StoreOnboardingQueryRepository {
                     (select count(*) from store_image i where i.store_id = s.store_id
                         and i.image_type = 'LOGO' and i.upload_status = 'VERIFIED'
                         and length(trim(i.object_key)) > 0) = 1
-                    and (select count(*) from store_image i where i.store_id = s.store_id
-                        and i.image_type = 'INTERIOR') <= 3
-                    and not exists(select 1 from store_image i where i.store_id = s.store_id
-                        and i.image_type = 'INTERIOR'
-                        and (i.upload_status <> 'VERIFIED' or length(trim(i.object_key)) = 0))
                         as images_completed,
                     (select count(*) from store_menu m where m.store_id = s.store_id) as menu_count,
                     (select count(*) from store_menu m where m.store_id = s.store_id) <= 3

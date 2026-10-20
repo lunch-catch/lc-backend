@@ -307,7 +307,9 @@ OwnerStoreCompleteService가 쓰기 트랜잭션을 열고 점주 행을 잠근 
 store.contract.StoreCompleter를 호출하면 StoreCompleteService가 MANDATORY로 같은 트랜잭션에 참여한다.
 진행 상태 행 잠금 뒤 버전·본인 미확정 가게 연결과 MENU 재개 단계를 확인한다.
 StoreOnboardingQueryRepository·StoreOnboardingReadiness로 실제 저장값을 다시 검증한다.
-내 가게 조회도 같은 판정 결과를 사용하므로 PENDING 내부 이미지가 목록에서 제외되어도 등록 가능으로 표시되지 않는다.
+내 가게 조회와 진행 상태 조회도 같은 판정 결과를 사용하며 이미지 필수 조건은 검증된 로고 1개다.
+선택 항목인 내부 이미지의 미완료 업로드는 최종 등록을 막지 않으며 VERIFIED 이미지만 조회한다.
+최종 등록 뒤 남은 미완료 내부 업로드는 공개하지 않고 기존 초안 검사로 추가 업로드 확인을 거절한다.
 메뉴 0개는 유효하며 MENU 저장 이력이나 새 완료 단계는 만들지 않는다.
 
 가게의 기존 finalized_at 컬럼을 매핑하고 Clock으로 확정 시각을 기록한다.
