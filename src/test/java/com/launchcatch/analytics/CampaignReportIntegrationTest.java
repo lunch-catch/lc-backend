@@ -170,8 +170,8 @@ class CampaignReportIntegrationTest extends AbstractAnalyticsIntegrationTest {
         jdbc.update("""
                 INSERT INTO point_ledger (owner_id, campaign_id, payment_id, refund_request_id, business_date, entry_type,
                                           source, amount, reason, idempotency_key, created_at, updated_at)
-                VALUES (?, NULL, ?, NULL, ?, 'CHARGE', 'RECONCILIATION', 10000, NULL, NULL, ?, ?)
-                """, OWNER, paymentId, twoDaysAgo.toString(), at, at);
+                VALUES (?, NULL, ?, NULL, NULL, 'CHARGE', 'RECONCILIATION', 10000, NULL, NULL, ?, ?)
+                """, OWNER, paymentId, at, at);
     }
 
     private void billedDeduct(String at) {
