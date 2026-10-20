@@ -2,6 +2,7 @@ package com.launchcatch.campaign.template.repository;
 
 import com.launchcatch.campaign.template.entity.TemplateVersion;
 import java.time.LocalDateTime;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import org.springframework.data.domain.Pageable;
@@ -39,6 +40,22 @@ public interface TemplateVersionRepository extends JpaRepository<TemplateVersion
      * findPage() 와 같은 조건으로 맞춰 둔다.
      */
     Optional<TemplateVersion> findFirstByTemplateIdAndDeletedAtIsNullOrderByVersionNumberDesc(Long templateId);
+
+    /*
+     * 템플릿 목록 조회의 미리보기 html 용이다(#532). 주어진 템플릿들의 살아있는 최신 버전을 한 번에
+     * 가져온다. 템플릿마다 findFirstBy...로 따로 조회하면 템플릿 수만큼 쿼리가 나가는 N+1이 된다.
+     * 소프트삭제된 버전은 findFirstByTemplateIdAndDeletedAtIsNullOrderByVersionNumberDesc 와 같이
+     * 제외한다. 살아있는 버전이 하나도 없는 템플릿은 결과에 나오지 않는다.
+     */
+    @Query("""
+            select v from TemplateVersion v join fetch v.template t
+            where t.id in :templateIds
+              and v.deletedAt is null
+              and v.versionNumber = (
+                  select max(latest.versionNumber) from TemplateVersion latest
+                  where latest.template.id = t.id and latest.deletedAt is null)
+            """)
+    List<TemplateVersion> findLatestAliveByTemplateIds(@Param("templateIds") Collection<Long> templateIds);
 
     /*
      * 다음 버전 번호를 매길 때 쓴다. HTML 을 전혀 안 가져오고 숫자 하나만 집계하므로
