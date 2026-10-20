@@ -109,4 +109,22 @@ public interface CampaignRepository extends JpaRepository<Campaign, Long> {
             @Param("ownerId") Long ownerId,
             @Param("cursorId") Long cursorId,
             @Param("limit") int limit);
+
+    /*
+     * 관리자의 전체 캠페인 목록 조회(#603) 커서 페이징이다. 점주 목록과 같은 이유로 campaignId 하나를
+     * 커서로 쓴다. 가게와 상태 필터는 둘 다 선택이라 null이면 조건을 건너뛴다. 전체를 최신순으로
+     * 훑는 조회라 기본키 역순 스캔을 쓰고 FORCE INDEX는 걸지 않는다. limit은 Pageable로 받는다.
+     */
+    @Query("""
+            select c from Campaign c
+            where (:storeId is null or c.storeId = :storeId)
+              and (:status is null or c.status = :status)
+              and (:cursorId is null or c.id < :cursorId)
+            order by c.id desc
+            """)
+    List<Campaign> findAdminPage(
+            @Param("storeId") Long storeId,
+            @Param("status") CampaignStatus status,
+            @Param("cursorId") Long cursorId,
+            Pageable pageable);
 }

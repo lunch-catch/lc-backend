@@ -20,6 +20,8 @@
 | POST | `/v1/owner/campaigns/{campaignId}:resume` | 캠페인 재개 | OWNER 인증, ACTIVE 상태, 본인 소유 캠페인 |
 | GET | `/v1/owner/campaigns` | 캠페인 목록 조회 | OWNER 인증 |
 | GET | `/v1/owner/campaigns/{campaignId}` | 캠페인 상세 조회 | OWNER 인증, 본인 소유 캠페인 |
+| GET | `/v1/admin/campaigns` | 전체 캠페인 목록 조회(관리자) | ADMIN, SUPER_ADMIN |
+| GET | `/v1/admin/campaigns/{campaignId}` | 캠페인 상세 조회(관리자) | ADMIN, SUPER_ADMIN |
 
 ## 캠페인 등록(쿠폰 조건)
 
@@ -460,4 +462,160 @@
 | HTTP | 코드 | 조건 |
 |---|---|---|
 | 403 | CAMPAIGN-005 | 그 campaignId가 없거나 본인 소유가 아님(존재 여부를 알려주지 않으려고 같은 코드로 묶는다, `api-spec.md`) |
+| 500 | COMMON-001 | 처리하지 못한 서버 오류 |
+
+## 전체 캠페인 목록 조회(관리자)
+
+`GET /v1/admin/campaigns`
+
+관리자가 모든 점주의 캠페인을 최근 생성 순으로 조회한다. 커서 페이지네이션은 공통 규약
+(`api-spec.md`)을 따른다. 가게와 상태로 걸러 볼 수 있다. 상호로 찾으려면 클라이언트가
+가게 ID로 바꿔 `storeId`로 보낸다.
+
+### 요청
+
+| 파라미터 | 위치 | 타입 | 필수 | 조건 |
+|---|---|---|---|---|
+| storeId | 쿼리 | integer | 아니요 | 그 가게의 캠페인만 조회. 비우면 전체 |
+| status | 쿼리 | string | 아니요 | `DRAFT`, `SCHEDULED`, `ACTIVE`, `PAUSED`, `ENDED` 중 하나. 비우면 전체 |
+| pageSize | 쿼리 | integer | 아니요 | 한 번에 받을 개수. 기본 20, 최대 100 |
+| pageToken | 쿼리 | string | 아니요 | 다음 페이지 커서. 비우면 처음부터 |
+
+### 성공 응답
+
+`200`.
+
+```json
+{
+  "code": "SUCCESS",
+  "message": "요청이 성공적으로 처리되었습니다.",
+  "data": {
+    "items": [
+      {
+        "campaignId": 501,
+        "ownerId": 7,
+        "storeId": 20,
+        "storeName": "런치캐치 식당",
+        "status": "ACTIVE",
+        "discountTargetType": "MENU",
+        "discountType": "PERCENT",
+        "discountValue": 15,
+        "dailyBudget": 10000,
+        "startDate": "2026-11-01",
+        "endDate": "2026-11-30",
+        "createdAt": "2026-10-20T11:00:00+09:00"
+      }
+    ],
+    "nextPageToken": null
+  }
+}
+```
+
+| 필드 | 타입 | 필수 | null 허용 | 설명 |
+|---|---|---|---|---|
+| items[].campaignId | integer | 예 | 아니요 | 캠페인 ID |
+| items[].ownerId | integer | 예 | 아니요 | 캠페인을 만든 점주 ID |
+| items[].storeId | integer | 예 | 아니요 | 그 캠페인이 속한 가게 ID |
+| items[].storeName | string | 예 | 예 | 가게 상호. 최종 등록된 가게가 아니면 `null` |
+| items[].status | string | 예 | 아니요 | 캠페인 상태 |
+| items[].discountTargetType | string | 예 | 아니요 | 할인 대상 |
+| items[].discountType | string | 예 | 아니요 | 할인 방식 |
+| items[].discountValue | integer | 예 | 아니요 | 할인값 |
+| items[].dailyBudget | integer | 예 | 예 | 하루 예산. 아직 한 번도 설정 안 했으면 `null` |
+| items[].startDate | string(날짜) | 예 | 예 | 집행 시작일. 아직 한 번도 설정 안 했으면 `null` |
+| items[].endDate | string(날짜) | 예 | 예 | 집행 종료일. 아직 한 번도 설정 안 했으면 `null` |
+| items[].createdAt | string(시각) | 예 | 아니요 | 캠페인을 만든 시각 |
+| nextPageToken | string | 예 | 예 | 다음 페이지 커서. 마지막 페이지면 `null` |
+
+소진 포인트와 누적 유효 노출은 담지 않는다. 클라이언트가 분석의 캠페인 리포트를 따로
+불러 합친다.
+
+### 오류
+
+| HTTP | 코드 | 조건 |
+|---|---|---|
+| 400 | COMMON-002 | `status`가 허용값이 아니거나 `storeId` 형식이 올바르지 않음 |
+| 500 | COMMON-001 | 처리하지 못한 서버 오류 |
+
+## 캠페인 상세 조회(관리자)
+
+`GET /v1/admin/campaigns/{campaignId}`
+
+관리자가 캠페인 1건의 쿠폰 조건, 노출 대상, 하루 예산과 집행 기간, 상태, 상태 이력,
+포스터를 조회한다. 소유자를 가리지 않는다.
+
+### 성공 응답
+
+`200`.
+
+```json
+{
+  "code": "SUCCESS",
+  "message": "요청이 성공적으로 처리되었습니다.",
+  "data": {
+    "campaignId": 501,
+    "ownerId": 7,
+    "storeId": 20,
+    "storeName": "런치캐치 식당",
+    "status": "ACTIVE",
+    "pausedReason": null,
+    "discountTargetType": "MENU",
+    "discountType": "PERCENT",
+    "discountValue": 15,
+    "targetMenuId": 42,
+    "issueQuantity": 100,
+    "usableStartTime": "11:30",
+    "usableEndTime": "13:00",
+    "minOrderAmount": 8000,
+    "notice": "1인 1매",
+    "targetRadius": 1000,
+    "targetGender": "ALL",
+    "targetAgeGroups": ["AGE_20S", "AGE_30S"],
+    "dailyBudget": 10000,
+    "startDate": "2026-11-01",
+    "endDate": "2026-11-30",
+    "statusChangedAt": "2026-11-01T00:00:00+09:00",
+    "createdAt": "2026-10-20T11:00:00+09:00",
+    "statusLogs": [
+      {
+        "fromStatus": "SCHEDULED",
+        "toStatus": "ACTIVE",
+        "actorType": "SYSTEM",
+        "reason": null,
+        "changedAt": "2026-11-01T00:00:00+09:00"
+      }
+    ],
+    "poster": {
+      "posterId": 9,
+      "templateId": 3,
+      "title": "점심 특선",
+      "html": "<div>...</div>"
+    }
+  }
+}
+```
+
+점주용 상세 조회와 같은 필드(캠페인 ID부터 `createdAt`까지)에 아래 필드를 더한다.
+
+| 필드 | 타입 | 필수 | null 허용 | 설명 |
+|---|---|---|---|---|
+| ownerId | integer | 예 | 아니요 | 캠페인을 만든 점주 ID |
+| storeName | string | 예 | 예 | 가게 상호. 최종 등록된 가게가 아니면 `null` |
+| statusLogs | array | 예 | 아니요 | 상태 이력. 일어난 순서대로. 전이가 없으면 빈 배열 |
+| statusLogs[].fromStatus | string | 예 | 아니요 | 바뀌기 전 상태 |
+| statusLogs[].toStatus | string | 예 | 아니요 | 바뀐 뒤 상태 |
+| statusLogs[].actorType | string | 예 | 아니요 | 상태를 바꾼 주체 |
+| statusLogs[].reason | string | 예 | 예 | 상태를 바꾼 사유. 없으면 `null` |
+| statusLogs[].changedAt | string(시각) | 예 | 아니요 | 상태가 바뀐 시각 |
+| poster | object | 예 | 예 | 저장된 포스터. 아직 저장하지 않았으면 `null` |
+| poster.posterId | integer | 예 | 아니요 | 포스터 ID |
+| poster.templateId | integer | 예 | 아니요 | 포스터를 만든 템플릿 ID |
+| poster.title | string | 예 | 아니요 | 포스터 제목 |
+| poster.html | string | 예 | 아니요 | 저장된 포스터 HTML |
+
+### 오류
+
+| HTTP | 코드 | 조건 |
+|---|---|---|
+| 404 | CAMPAIGN-012 | 그 campaignId의 캠페인이 없음 |
 | 500 | COMMON-001 | 처리하지 못한 서버 오류 |
