@@ -1,11 +1,14 @@
 package com.launchcatch.billing.job;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.launchcatch.billing.service.PgChargeReconciliationService;
@@ -35,7 +38,8 @@ class PgChargeReconciliationSchedulerTest {
     @BeforeEach
     void setUp() {
         scheduler = new PgChargeReconciliationScheduler(reconciliationService, executions);
-        when(executions.businessDate()).thenReturn(BUSINESS_DATE);
+        // 이어받기 경로는 영업일을 넘겨받아 묻지 않는다
+        lenient().when(executions.businessDate()).thenReturn(BUSINESS_DATE);
     }
 
     @Test
@@ -88,5 +92,19 @@ class PgChargeReconciliationSchedulerTest {
         assertThatThrownBy(scheduler::reconcile).isSameAs(failure).hasSuppressedException(recordFailure);
 
         verify(executions, never()).succeed(anyString(), eq(BUSINESS_DATE));
+    }
+
+    /*
+     * 멈춘 실행을 이어받은 서버와 관리자 수동 재실행이 이 길로 다시 돌린다.
+     * 행을 닫는 일은 BatchJobRunner 가 한다.
+     */
+    @Test
+    @DisplayName("이어받은 서버가 부르면 넘겨받은 영업일로 대사하고 행은 직접 닫지 않는다")
+    void 이어받은_서버가_부르면_대사를_돌리고_행은_닫지_않는다() {
+        scheduler.run(BUSINESS_DATE, 2);
+
+        verify(reconciliationService).reconcilePreviousDay(BUSINESS_DATE, PgChargeReconciliationScheduler.JOB_NAME);
+        verifyNoInteractions(executions);
+        assertThat(scheduler.jobName()).isEqualTo("BILLING_PG_VS_CHARGE_RECON");
     }
 }
