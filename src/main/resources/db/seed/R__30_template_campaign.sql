@@ -195,3 +195,64 @@ VALUES (9001, 9001, 9001, '런치 한식당 점심 할인',
         '<div class="poster" style="background:#FFF4E5;color:#4A2C00;padding:24px;text-align:center"><span data-slot="adLabel">광고</span><h1 data-slot="eventName">런치 도시락 점심 할인</h1><p data-slot="discount">전 메뉴 1,000원 할인</p><p data-slot="period">매일 11:00 ~ 14:00</p><img data-slot="image" alt="메뉴 이미지"></div>',
         'seed/poster-9016.jpg', NOW(6), NOW(6))
 ON DUPLICATE KEY UPDATE poster_id = poster_id;
+
+/*
+ * 피드 시험용 캠페인 9101~9200 이다(#611). 가게와 빠지는 경우의 배치는 R__20 의 주석에 있다.
+ * 9111~9200 은 9111 부터 센 순번을 9로 나눈 나머지로 노출 대상 성별을 정한다. 0~4 는 전체, 5~6 은 남성, 7~8 은 여성이다.
+ * 빠지는 경우 9101~9110 도 전체 대상이라 모두 합치면 전체 60, 남성 20, 여성 20 이다.
+ * 9111~9200 의 전체 대상 50개 가운데 15개는 연령대 둘만, 성별 대상 40개의 절반은 연령대 하나만 받는다. 나머지는 전 연령대다.
+ * 쿠폰 이벤트가 전체 할인은 금액만 받아(chk_coupon_event_discount_combination) 할인율은 메뉴 할인으로만 섞는다.
+ * 사용 가능 시간은 점심, 저녁, 하루 종일을 섞고 여섯에 하나는 쿠폰 수량이 3 이라 소진을 볼 수 있다.
+ */
+INSERT INTO campaign (campaign_id, owner_id, store_id, status, status_changed_at, paused_reason, discount_target_type,
+                      discount_type, discount_value, target_menu_id, issue_quantity, usable_start_time, usable_end_time,
+                      min_order_amount, notice, target_radius, target_gender, target_age_groups, daily_budget,
+                      start_date, end_date, created_at, updated_at)
+WITH RECURSIVE seq (id) AS (SELECT 9101 UNION ALL SELECT id + 1 FROM seq WHERE id < 9200),
+               n AS (SELECT id, id - 9101 AS k, id - 9111 AS j, IF(id < 9111, id - 9101, id - 9111) AS v FROM seq),
+               p AS (SELECT id, k, j, v,
+                            CASE WHEN k < 10 OR MOD(j, 9) < 5 THEN 'ALL' WHEN MOD(j, 9) < 7 THEN 'MALE' ELSE 'FEMALE' END AS gender,
+                            CASE WHEN k < 10 THEN k
+                                 WHEN MOD(j, 9) < 5 THEN FLOOR(j / 9) * 5 + MOD(j, 9)
+                                 ELSE FLOOR(j / 9) * 4 + MOD(j, 9) - 5 END AS i,
+                            MOD(v + IF(k < 10, 0, FLOOR(j / 9)), 3) AS discount
+                     FROM n)
+SELECT id, id, id, IF(k BETWEEN 7 AND 9, 'PAUSED', 'ACTIVE'), NOW(6), IF(k BETWEEN 7 AND 9, 'OWNER', NULL),
+       IF(discount = 0, 'ALL', 'MENU'), IF(discount = 1, 'PERCENT', 'AMOUNT'),
+       CASE discount WHEN 0 THEN 1000 + MOD(v, 5) * 500 WHEN 1 THEN 10 + MOD(v, 4) * 5 ELSE 1000 + MOD(v, 3) * 1000 END,
+       IF(discount = 0, NULL, id + 200), IF(MOD(v, 6) = 0, 3, 50),
+       ELT(MOD(v, 4) + 1, '11:00', '11:00', '17:00', '00:00'), ELT(MOD(v, 4) + 1, '14:00', '14:00', '21:00', '23:59'),
+       NULL, '피드 시험 캠페인입니다',
+       CASE WHEN k < 2 THEN 500 WHEN k < 10 THEN 1000 WHEN j < 45 THEN IF(MOD(j, 3) = 0, 3000, 2000) ELSE 3000 END,
+       gender,
+       CASE WHEN k >= 10 AND gender = 'ALL' AND MOD(i, 10) IN (0, 4, 8)
+                THEN ELT(MOD(i, 4) + 1, 'AGE_20S,AGE_30S', 'AGE_30S,AGE_40S', 'AGE_40S,AGE_50_PLUS', 'AGE_20S,AGE_50_PLUS')
+            WHEN k >= 10 AND gender <> 'ALL' AND MOD(FLOOR(j / 9), 2) = 1
+                THEN ELT(MOD(i, 4) + 1, 'AGE_20S', 'AGE_30S', 'AGE_40S', 'AGE_50_PLUS')
+            ELSE 'AGE_20S,AGE_30S,AGE_40S,AGE_50_PLUS' END,
+       10000, '2026-10-01', '2027-12-31', NOW(6), NOW(6)
+FROM p
+ON DUPLICATE KEY UPDATE campaign_id = campaign_id;
+
+INSERT INTO poster (poster_id, campaign_id, template_id, title, slot_values, html_content, image_object_key,
+                    created_at, updated_at)
+SELECT d.campaign_id, d.campaign_id, 9001, CONCAT(d.store_name, ' 할인'),
+       JSON_OBJECT('adLabel', JSON_OBJECT('type', 'TEXT', 'value', '광고'),
+                   'eventName', JSON_OBJECT('type', 'TEXT', 'value', CONCAT(d.store_name, ' 할인')),
+                   'discount', JSON_OBJECT('type', 'TEXT', 'value', d.discount_text),
+                   'period', JSON_OBJECT('type', 'TEXT', 'value', d.period_text),
+                   'image', JSON_OBJECT('type', 'IMAGE', 'value', CONCAT('seed/poster-', d.campaign_id, '.jpg'))),
+       CONCAT('<div class="poster" style="background:#FFF4E5;color:#4A2C00;padding:24px;text-align:center">',
+              '<span data-slot="adLabel">광고</span><h1 data-slot="eventName">', d.store_name, ' 할인</h1>',
+              '<p data-slot="discount">', d.discount_text, '</p><p data-slot="period">', d.period_text, '</p></div>'),
+       CONCAT('seed/poster-', d.campaign_id, '.jpg'), NOW(6), NOW(6)
+FROM (SELECT c.campaign_id, s.name AS store_name,
+             CONCAT(IF(c.discount_target_type = 'ALL', '전 메뉴', m.name), ' ',
+                    IF(c.discount_type = 'PERCENT', CONCAT(c.discount_value, '%'), CONCAT(FORMAT(c.discount_value, 0), '원')),
+                    ' 할인') AS discount_text,
+             CONCAT('매일 ', TIME_FORMAT(c.usable_start_time, '%H:%i'), ' ~ ', TIME_FORMAT(c.usable_end_time, '%H:%i')) AS period_text
+      FROM campaign c
+      JOIN store s ON s.store_id = c.store_id
+      LEFT JOIN store_menu m ON m.store_menu_id = c.target_menu_id
+      WHERE c.campaign_id BETWEEN 9101 AND 9200) d
+ON DUPLICATE KEY UPDATE poster_id = poster_id;

@@ -70,12 +70,16 @@ class SeedIntegrationTest extends IntegrationTestSupport {
         assertThat(count("SELECT COUNT(*) FROM store WHERE store_id IN (9001, 9002) AND finalized = 1")).isEqualTo(2);
         assertThat(count("SELECT COUNT(*) FROM campaign WHERE campaign_id IN (9001, 9002) AND status = 'ACTIVE'")).isEqualTo(2);
         assertThat(count("SELECT COUNT(*) FROM member_profile WHERE onboarding_completed_at IS NOT NULL")).isEqualTo(50);
-        // 피드 시험용 9003~9016 이 더 있다. 9016 은 예산 계획이 없는 후보라 예산은 하나 적다
+        /*
+         * 피드 시험용 9003~9016 과 9101~9200 이 더 있다. 9108~9110 은 일시 중단이라 서빙 가능한 후보가 셋 적다.
+         * 9016 과 9105~9107 은 예산 계획이 없는 후보라 예산은 넷 적다.
+         */
         assertThat(count("SELECT COUNT(*) FROM campaign WHERE campaign_id BETWEEN 9001 AND 9016 AND status = 'ACTIVE'")).isEqualTo(16);
         assertThat(count("SELECT COUNT(*) FROM poster WHERE campaign_id BETWEEN 9001 AND 9016")).isEqualTo(16);
-        assertThat(count("SELECT COUNT(*) FROM ad_candidate WHERE business_date = '2026-10-15' AND campaign_state = 'SERVABLE'")).isEqualTo(16);
-        assertThat(count("SELECT COUNT(*) FROM budget_daily_plan WHERE business_date = '2026-10-15'")).isEqualTo(15);
-        assertThat(count("SELECT COUNT(*) FROM coupon_inventory")).isEqualTo(344);
+        assertThat(count("SELECT COUNT(*) FROM ad_candidate WHERE business_date = '2026-10-15' AND campaign_state = 'SERVABLE'")).isEqualTo(113);
+        assertThat(count("SELECT COUNT(*) FROM budget_daily_plan WHERE business_date = '2026-10-15'")).isEqualTo(112);
+        // 9101~9200 가운데 서빙되는 94개의 쿠폰 재고가 더해진다. 16개는 수량 3, 78개는 수량 50 이다
+        assertThat(count("SELECT COUNT(*) FROM coupon_inventory")).isEqualTo(344 + 16 * 3 + 78 * 50);
         assertThat(count("SELECT COUNT(*) FROM coupon_event WHERE campaign_id IN (9017, 9018) "
                 + "AND business_date BETWEEN '2026-10-01' AND '2026-10-15'")).isEqualTo(30);
         assertThat(count("SELECT COUNT(DISTINCT business_date) FROM coupon_event "
@@ -205,6 +209,46 @@ class SeedIntegrationTest extends IntegrationTestSupport {
                 """)).isZero();
     }
 
+    /*
+     * 강남역에 선 회원이 그날 받을 수 있는 후보를 세어 피드 시험 캠페인 9101~9200 의 배치를 본다(#611).
+     * 피드처럼 서빙 가능한 상태, 예산 계획, 노출 반경, 노출 대상 성별과 연령대로 거른다. 회원 성별 OTHER 는 전체 대상만 받는다.
+     */
+    private long visible(String gender, String ageGroup, String extra) {
+        return count("SELECT COUNT(*) FROM ad_candidate c "
+                + "JOIN budget_daily_plan b ON b.campaign_id = c.campaign_id AND b.business_date = c.business_date "
+                + "WHERE c.business_date = '2026-10-15' AND c.campaign_state = 'SERVABLE' "
+                + "AND ST_Distance_Sphere(POINT(c.longitude, c.latitude), POINT(127.0276, 37.4979)) <= c.target_radius "
+                + "AND (c.target_gender = 'ALL' OR c.target_gender = '" + gender + "') "
+                + "AND FIND_IN_SET('" + ageGroup + "', c.target_age_groups) > 0 " + extra);
+    }
+
+    @Test
+    void 강남역_회원은_성별과_연령대가_달라도_50개_넘게_받고_업종마다_5개_이상_받는다() {
+        migrate(true, "2026-10-15");
+
+        for (String gender : new String[]{"MALE", "FEMALE", "OTHER"}) {
+            for (String age : new String[]{"AGE_20S", "AGE_30S", "AGE_40S", "AGE_50_PLUS"}) {
+                assertThat(visible(gender, age, "")).as(gender + " " + age).isGreaterThan(50);
+                // 9014, 9015 를 함께 받는 20대 남성만 1 km 안이 10개라 반경이 1000 에 남는다
+                assertThat(visible(gender, age, "AND ST_Distance_Sphere(POINT(c.longitude, c.latitude), "
+                        + "POINT(127.0276, 37.4979)) <= 1000")).as(gender + " " + age).isLessThanOrEqualTo(10);
+                for (String category : new String[]{"KOREAN", "CHINESE", "JAPANESE", "WESTERN", "BUNSIK", "ASIAN",
+                        "FAST_FOOD", "CAFE_DESSERT", "OTHER"}) {
+                    assertThat(visible(gender, age, "AND c.category_code = '" + category + "'"))
+                            .as(gender + " " + age + " " + category).isGreaterThanOrEqualTo(5);
+                }
+            }
+        }
+        // 빠지는 경우 9101~9110 은 누구에게도 보이지 않는다
+        assertThat(visible("MALE", "AGE_30S", "AND c.campaign_id BETWEEN 9101 AND 9110")).isZero();
+        assertThat(count("SELECT COUNT(*) FROM campaign WHERE campaign_id BETWEEN 9101 AND 9200 AND target_gender = 'ALL'"))
+                .isEqualTo(60);
+        assertThat(count("SELECT COUNT(*) FROM campaign WHERE campaign_id BETWEEN 9101 AND 9200 AND target_gender = 'MALE'"))
+                .isEqualTo(20);
+        assertThat(count("SELECT COUNT(*) FROM campaign WHERE campaign_id BETWEEN 9101 AND 9200 AND target_gender = 'FEMALE'"))
+                .isEqualTo(20);
+    }
+
     @Test
     void 같은_날_다시_돌면_행이_늘지_않는다() {
         migrate(true, "2026-10-15");
@@ -221,9 +265,10 @@ class SeedIntegrationTest extends IntegrationTestSupport {
 
         migrate(true, "2026-10-16");
 
-        assertThat(count("SELECT COUNT(*) FROM ad_candidate WHERE business_date = '2026-10-16'")).isEqualTo(16);
-        assertThat(count("SELECT COUNT(*) FROM coupon_event")).isEqualTo(38);
-        assertThat(count("SELECT COUNT(*) FROM owner")).isEqualTo(18);
+        assertThat(count("SELECT COUNT(*) FROM ad_candidate WHERE business_date = '2026-10-16'")).isEqualTo(116);
+        // 9101~9200 가운데 서빙되는 94개는 날마다 쿠폰 이벤트를 받는다
+        assertThat(count("SELECT COUNT(*) FROM coupon_event")).isEqualTo(38 + 2 * 94);
+        assertThat(count("SELECT COUNT(*) FROM owner")).isEqualTo(118);
     }
 
     // 카카오로 가입한 회원은 시드보다 늦게 생긴다. 날짜 시드가 다음 날 다시 돌 때 홀수 회원만 찜 셋을 받는다
