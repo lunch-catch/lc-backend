@@ -104,7 +104,7 @@ A-03은 전용 `daily_funnel_analytics`에 영업일당 한 행으로 저장한�
 
 이 단계는 노출을 광고 서빙 집계 조회에서, 발급·사용을 쿠폰 집계 조회에서 받는다. 찜은 원본의 광고 서빙 집계안과 달리 `event_log`의 `wish`를 센다. 광고 서빙의 `swipe_log`는 31일 보존이라 그 뒤 재집계하면 0으로 덮일 수 있기 때문이다. 이벤트 유실 때문에 찜 수가 확정 원본보다 적을 수 있으며 현재 찜 목록 개수와도 다르다.
 
-전용 테이블은 `V4__analytics_funnel.sql`이 만든다.
+전용 테이블은 `V6__analytics_funnel.sql`이 만든다. 처음에는 V4 였지만 V5 가 먼저 병합되어 개발 DB 에 적용된 뒤라 V6 으로 옮겼다. V4 는 비워 둔다.
 
 처음에는 `daily_segment_analytics`를 원천으로 적었다. 이 테이블은 A-04(카테고리·지역별 분해)를 위해 `(category_code, region)`을 키로 만든 것이고 `region`이 NOT NULL이다. 가게에 지역 값을 두지 않기로 해서(#364) 쓸 수 없다. A-04용 `daily_segment_analytics`와 A-08용 `daily_owner_spend`는 채우는 단계가 없어 비어 있지만 폐기하지 않고 남겨 둔다.
 
