@@ -13,6 +13,7 @@ import com.launchcatch.store.repository.StoreImageRepository;
 import com.launchcatch.store.repository.StoreRegistrationProgressRepository;
 import java.time.Clock;
 import java.time.LocalDateTime;
+import java.util.Optional;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
@@ -25,8 +26,8 @@ import software.amazon.awssdk.services.s3.model.HeadObjectResponse;
 import software.amazon.awssdk.services.s3.model.S3Exception;
 
 /*
- * 가게 인테리어 이미지 업로드(#375). 로고는 가게 입점 과정에서 이미 등록돼 있다는 전제로,
- * 이 서비스는 로고를 새로 만들지 않고 존재 여부만 확인한다.
+ * 가게 로고와 인테리어 이미지 업로드(인테리어 #375, 로고 #588). 로고는 가게당 1개이고, 이미
+ * 등록된 로고가 있으면 새 행을 만들지 않고 그 행을 덮어써 교체한다.
  *
  * 업로드 예약과 단계 완료는 진행 상태 행 잠금 아래 본인 미확정 가게에만 허용한다.
  * 최종 등록은 같은 잠금을 사용하므로 확정 이후 온보딩 업로드가 추가되지 않는다.
@@ -70,6 +71,53 @@ public class StoreImageUploadService {
         return new StoreImagePrepareResult(image.getUploadId(), uploadUrl, image.getSortOrder());
     }
 
+    /*
+     * 로고 업로드를 준비한다. 이미 로고 행이 있으면 그 행을 PENDING 으로 되돌려 새 업로드로 덮어쓰고,
+     * 없으면 새로 만든다. 덮어쓰면 새 업로드를 confirm 하기 전까지 로고가 VERIFIED 가 아니다.
+     */
+    public StoreImagePrepareResult prepareLogoUpload(Long ownerId, String originalFilename,
+            String contentType, Long fileSize) {
+        storeUploadSupport.validateContentType(contentType);
+        storeUploadSupport.validateFileSize(fileSize);
+
+        LogoReservation reservation = transactionTemplate.execute(
+                status -> reserveLogoImage(ownerId, originalFilename, contentType, fileSize));
+        StoreImage image = reservation.image();
+
+        String uploadUrl;
+        try {
+            uploadUrl = storeUploadSupport.presign(image.getObjectKey(), contentType, fileSize);
+        } catch (RuntimeException e) {
+            // 새로 만든 행만 지운다. 덮어쓴 행은 지우면 기존 로고까지 사라져서 그대로 두고, 점주가 다시 요청한다.
+            if (reservation.created()) {
+                transactionTemplate.executeWithoutResult(status -> storeImageRepository.delete(image));
+            }
+            throw e;
+        }
+
+        return new StoreImagePrepareResult(image.getUploadId(), uploadUrl, null);
+    }
+
+    private LogoReservation reserveLogoImage(Long ownerId, String originalFilename,
+            String contentType, Long fileSize) {
+        Long storeId = storeUploadSupport.findStoreIdForUpdate(ownerId);
+
+        String uploadId = UUID.randomUUID().toString();
+        String objectKey = buildObjectKey(storeId, uploadId, contentType, "logo");
+        Optional<StoreImage> existing = storeImageRepository.findByStoreIdAndImageType(storeId, StoreImageType.LOGO);
+        if (existing.isPresent()) {
+            StoreImage logo = existing.get();
+            logo.restartUpload(uploadId, objectKey, originalFilename, contentType, fileSize);
+            return new LogoReservation(logo, false);
+        }
+        StoreImage logo = StoreImage.preparePending(
+                storeId, uploadId, StoreImageType.LOGO, objectKey, originalFilename, contentType, fileSize, null);
+        storeImageRepository.save(logo);
+        return new LogoReservation(logo, true);
+    }
+
+    private record LogoReservation(StoreImage image, boolean created) { }
+
     private StoreImage reserveInteriorImage(Long ownerId, String originalFilename,
             String contentType, Long fileSize) {
         Long storeId = storeUploadSupport.findStoreIdForUpdate(ownerId);
@@ -81,7 +129,7 @@ public class StoreImageUploadService {
         int sortOrder = (int) existing + 1;
 
         String uploadId = UUID.randomUUID().toString();
-        String objectKey = buildObjectKey(storeId, uploadId, contentType);
+        String objectKey = buildObjectKey(storeId, uploadId, contentType, "interior");
         StoreImage image = StoreImage.preparePending(
                 storeId, uploadId, StoreImageType.INTERIOR, objectKey, originalFilename, contentType, fileSize,
                 sortOrder);
@@ -128,7 +176,8 @@ public class StoreImageUploadService {
     public StoreRegistrationProgressResponse completeImagesStep(Long ownerId, long expectedVersion) {
         Long storeId = storeUploadSupport.findStoreIdForUpdate(ownerId);
 
-        if (!storeImageRepository.existsByStoreIdAndImageType(storeId, StoreImageType.LOGO)) {
+        if (!storeImageRepository.existsByStoreIdAndImageTypeAndUploadStatus(
+                storeId, StoreImageType.LOGO, StoreImageUploadStatus.VERIFIED)) {
             throw new StoreException(StoreErrorCode.LOGO_IMAGE_REQUIRED);
         }
         var snapshot = progressService.completeStep(ownerId, expectedVersion, StoreRegistrationStep.IMAGES, null);
@@ -141,8 +190,8 @@ public class StoreImageUploadService {
         return storeUploadSupport.requireStoreId(progress);
     }
 
-    private String buildObjectKey(Long storeId, String uploadId, String contentType) {
+    private String buildObjectKey(Long storeId, String uploadId, String contentType, String folder) {
         String extension = contentType.equals("image/png") ? "png" : "jpg";
-        return "stores/" + storeId + "/interior/" + uploadId + "." + extension;
+        return "stores/" + storeId + "/" + folder + "/" + uploadId + "." + extension;
     }
 }
