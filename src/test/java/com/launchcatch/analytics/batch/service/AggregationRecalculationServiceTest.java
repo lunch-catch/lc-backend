@@ -4,9 +4,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.timeout;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -21,6 +23,8 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.List;
+import java.util.Optional;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.Executor;
 import java.util.concurrent.RejectedExecutionException;
 import org.junit.jupiter.api.Test;
@@ -56,8 +60,12 @@ class AggregationRecalculationServiceTest {
     }
 
     private static BatchExecutionRecord run(long runId, LocalDate date, String status) {
+        return run(runId, date, status, 1);
+    }
+
+    private static BatchExecutionRecord run(long runId, LocalDate date, String status, int attemptNo) {
         return new BatchExecutionRecord(runId, DailyAggregationRunner.JOB_NAME, date, status,
-                LocalDateTime.of(2026, 10, 17, 12, 0), null, null, "api-1", 0, null, 1);
+                LocalDateTime.of(2026, 10, 17, 12, 0), null, null, "api-1", 0, null, attemptNo);
     }
 
     private void stubOldestRetained() {
@@ -69,13 +77,28 @@ class AggregationRecalculationServiceTest {
         stubOldestRetained();
         List<BatchExecutionRecord> before = List.of(run(301L, YESTERDAY, "SUCCESS"));
         when(executionQuery.findByBusinessDate(YESTERDAY)).thenReturn(before);
-        when(runner.acquire(YESTERDAY, before)).thenReturn(true);
+        when(runner.acquire(YESTERDAY, before)).thenReturn(Optional.of(run(301L, YESTERDAY, "RUNNING", 2)));
 
         long runId = service(direct).request(ADMIN_ID, YESTERDAY);
 
         assertThat(runId).isEqualTo(301L);
         verify(auditLogWriter).write(ADMIN_ID, "ANALYTICS_RECALCULATE", "2026-10-16", "DAILY_AGGREGATION");
-        verify(runner).aggregate(YESTERDAY);
+        verify(runner).aggregate(YESTERDAY, 2);
+    }
+
+    @Test
+    void 실행기에서_기다린_뒤에도_실행_기록을_다시_읽지_않고_접수할_때_확보한_세대로_집계한다() {
+        stubOldestRetained();
+        List<BatchExecutionRecord> before = List.of(run(301L, YESTERDAY, "SUCCESS", 1));
+        when(executionQuery.findByBusinessDate(YESTERDAY)).thenReturn(before);
+        when(runner.acquire(YESTERDAY, before)).thenReturn(Optional.of(run(301L, YESTERDAY, "RUNNING", 2)));
+        AtomicReference<Runnable> queued = new AtomicReference<>();
+
+        service(queued::set).request(ADMIN_ID, YESTERDAY);
+        queued.get().run();
+
+        verify(runner).aggregate(YESTERDAY, 2);
+        verify(executionQuery, times(1)).findByBusinessDate(YESTERDAY);
     }
 
     @Test
@@ -108,7 +131,7 @@ class AggregationRecalculationServiceTest {
         stubOldestRetained();
         List<BatchExecutionRecord> before = List.of(run(5L, OLDEST, "FAILED"));
         when(executionQuery.findByBusinessDate(OLDEST)).thenReturn(before);
-        when(runner.acquire(OLDEST, before)).thenReturn(true);
+        when(runner.acquire(OLDEST, before)).thenReturn(Optional.of(run(5L, OLDEST, "RUNNING", 2)));
 
         assertThat(service(direct).request(ADMIN_ID, OLDEST)).isEqualTo(5L);
     }
@@ -124,12 +147,12 @@ class AggregationRecalculationServiceTest {
     void 이미_실행_중이면_충돌이고_집계도_감사_로그도_없다() {
         stubOldestRetained();
         when(executionQuery.findByBusinessDate(YESTERDAY)).thenReturn(List.of(run(301L, YESTERDAY, "RUNNING")));
-        when(runner.acquire(any(), any())).thenReturn(false);
+        when(runner.acquire(any(), any())).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> service(direct).request(ADMIN_ID, YESTERDAY))
                 .isInstanceOfSatisfying(AnalyticsException.class, e ->
                         assertThat(e.getErrorCode()).isEqualTo(AnalyticsErrorCode.AGGREGATION_ALREADY_RUNNING));
-        verify(runner, never()).aggregate(any());
+        verify(runner, never()).aggregate(any(), anyInt());
         verify(auditLogWriter, never()).write(any(), any(), any(), any());
     }
 
@@ -137,7 +160,7 @@ class AggregationRecalculationServiceTest {
     void 실행기가_가득_차_집계를_시작하지_못하면_잡은_실행을_실패로_닫고_예외를_올린다() {
         stubOldestRetained();
         when(executionQuery.findByBusinessDate(YESTERDAY)).thenReturn(List.of(run(301L, YESTERDAY, "RUNNING")));
-        when(runner.acquire(any(), any())).thenReturn(true);
+        when(runner.acquire(any(), any())).thenReturn(Optional.of(run(301L, YESTERDAY, "RUNNING", 2)));
         Executor full = task -> {
             throw new RejectedExecutionException("가득 참");
         };
@@ -151,14 +174,14 @@ class AggregationRecalculationServiceTest {
     void 감사_로그를_남기지_못하면_집계를_시작하지_않고_잡은_실행을_실패로_닫고_예외를_올린다() {
         stubOldestRetained();
         when(executionQuery.findByBusinessDate(YESTERDAY)).thenReturn(List.of(run(301L, YESTERDAY, "RUNNING")));
-        when(runner.acquire(any(), any())).thenReturn(true);
+        when(runner.acquire(any(), any())).thenReturn(Optional.of(run(301L, YESTERDAY, "RUNNING", 2)));
         doThrow(new IllegalStateException("감사 로그 실패")).when(auditLogWriter)
                 .write(any(), any(), any(), any());
 
         assertThatThrownBy(() -> service(direct).request(ADMIN_ID, YESTERDAY))
                 .isInstanceOf(IllegalStateException.class);
         verify(runner).abandon(any(LocalDate.class), any(String.class));
-        verify(runner, never()).aggregate(any());
+        verify(runner, never()).aggregate(any(), anyInt());
     }
 
     @Test
@@ -166,7 +189,7 @@ class AggregationRecalculationServiceTest {
         stubOldestRetained();
         List<BatchExecutionRecord> before = List.of(run(301L, YESTERDAY, "SUCCESS"));
         when(executionQuery.findByBusinessDate(YESTERDAY)).thenReturn(before);
-        when(runner.acquire(YESTERDAY, before)).thenReturn(true);
+        when(runner.acquire(YESTERDAY, before)).thenReturn(Optional.of(run(301L, YESTERDAY, "RUNNING", 2)));
         AggregationRecalculationService owned = new AggregationRecalculationService(
                 runner, executionQuery, auditLogWriter, transactionManager, CLOCK);
 
@@ -174,7 +197,7 @@ class AggregationRecalculationServiceTest {
         owned.shutdown();
 
         assertThat(runId).isEqualTo(301L);
-        verify(runner, timeout(5000)).aggregate(YESTERDAY);
+        verify(runner, timeout(5000)).aggregate(YESTERDAY, 2);
     }
 
     @Test

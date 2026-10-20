@@ -95,12 +95,10 @@ public class AggregationRecalculationService {
             throw new AnalyticsException(AnalyticsErrorCode.UNAGGREGATABLE_DATE);
         }
         List<BatchExecutionRecord> records = executionQuery.findByBusinessDate(businessDate);
-        if (!runner.acquire(businessDate, records)) {
-            throw new AnalyticsException(AnalyticsErrorCode.AGGREGATION_ALREADY_RUNNING);
-        }
-        long runId = runIdOf(businessDate);
-        start(adminId, businessDate);
-        return runId;
+        BatchExecutionRecord acquired = runner.acquire(businessDate, records)
+                .orElseThrow(() -> new AnalyticsException(AnalyticsErrorCode.AGGREGATION_ALREADY_RUNNING));
+        start(adminId, businessDate, acquired.attemptNo());
+        return acquired.runId();
     }
 
     @PreDestroy
@@ -123,23 +121,18 @@ public class AggregationRecalculationService {
      * 감사 로그 기록(AuditLogWriter)은 호출자의 트랜잭션에 반드시 참여해야 한다(MANDATORY). 이 서비스는
      * 날짜 점유(claim)가 트랜잭션 밖에서 돌아야 해서 요청 전체를 트랜잭션으로 묶지 않고, 기록 한 번만
      * 따로 트랜잭션에 넣는다.
+     *
+     * 세대는 접수할 때 확보한 값을 작업에 고정해 넘긴다. 실행기에서 기다리다 돌 때 다시 읽으면 그사이
+     * 바뀐 새 시도의 세대를 자기 것으로 쓰게 된다.
      */
-    private void start(Long adminId, LocalDate businessDate) {
+    private void start(Long adminId, LocalDate businessDate, int attemptNo) {
         try {
             transactions.executeWithoutResult(status -> auditLogWriter.write(
                     adminId, AUDIT_ACTION, businessDate.toString(), DailyAggregationRunner.JOB_NAME));
-            executor.execute(() -> runner.aggregate(businessDate));
+            executor.execute(() -> runner.aggregate(businessDate, attemptNo));
         } catch (RuntimeException failed) {
             runner.abandon(businessDate, "수동 재계산을 시작하지 못했다");
             throw failed;
         }
-    }
-
-    private long runIdOf(LocalDate businessDate) {
-        return executionQuery.findByBusinessDate(businessDate).stream()
-                .filter(record -> DailyAggregationRunner.JOB_NAME.equals(record.jobName()))
-                .map(BatchExecutionRecord::runId)
-                .findFirst()
-                .orElseThrow();
     }
 }

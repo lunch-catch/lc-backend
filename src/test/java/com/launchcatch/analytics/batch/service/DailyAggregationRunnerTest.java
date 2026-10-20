@@ -1,6 +1,7 @@
 package com.launchcatch.analytics.batch.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
@@ -13,6 +14,7 @@ import static org.mockito.Mockito.when;
 import com.launchcatch.analytics.batch.AggregationOutcome;
 import com.launchcatch.analytics.batch.PendingReason;
 import com.launchcatch.analytics.batch.repository.PendingDateRepository;
+import com.launchcatch.ops.contract.BatchAttemptGuard;
 import com.launchcatch.ops.contract.BatchExecutionQueryService;
 import com.launchcatch.ops.contract.BatchExecutionRecord;
 import com.launchcatch.ops.contract.BatchRerunner;
@@ -27,6 +29,7 @@ import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -44,6 +47,7 @@ class DailyAggregationRunnerTest {
     private static final LocalDate TODAY = LocalDate.of(2026, 10, 17);
     private static final LocalDate YESTERDAY = LocalDate.of(2026, 10, 16);
     private static final LocalDate TWO_DAYS_AGO = LocalDate.of(2026, 10, 15);
+    private static final int ATTEMPT = 3;
     private static final Clock CLOCK = Clock.fixed(Instant.parse("2026-10-16T16:00:00Z"),
             ZoneId.of("Asia/Seoul"));
 
@@ -57,6 +61,8 @@ class DailyAggregationRunnerTest {
     private BatchRerunner rerunner;
     @Mock
     private PendingDateRepository pending;
+    @Mock
+    private BatchAttemptGuard guard;
     @Mock
     private RetryBackoff backoff;
     @Mock
@@ -73,13 +79,27 @@ class DailyAggregationRunnerTest {
 
     private DailyAggregationRunner runner() {
         when(stepProvider.orderedStream()).thenAnswer(invocation -> steps.stream());
-        return new DailyAggregationRunner(stepProvider, executions, executionQuery, rerunner, pending,
+        return new DailyAggregationRunner(stepProvider, executions, executionQuery, rerunner, guard, pending,
                 new AggregationMetrics(registry), backoff, transactionManager, CLOCK);
     }
 
     private static BatchExecutionRecord execution(String jobName, LocalDate date, String status) {
+        return execution(jobName, date, status, 1);
+    }
+
+    private static BatchExecutionRecord execution(String jobName, LocalDate date, String status, int attemptNo) {
         return new BatchExecutionRecord(1L, jobName, date, status, LocalDateTime.now(CLOCK), null, null,
-                "server-1", 0, null, 1);
+                "server-1", 0, null, attemptNo);
+    }
+
+    private void acquiredAs(int attemptNo) {
+        when(executionQuery.findByBusinessDate(YESTERDAY))
+                .thenReturn(List.of(execution(JOB, YESTERDAY, "RUNNING", attemptNo)));
+    }
+
+    private void attemptLost() {
+        doThrow(new IllegalStateException("attempt no longer current"))
+                .when(guard).assertCurrentAttempt(JOB, YESTERDAY, ATTEMPT);
     }
 
     private static BatchExecutionRecord sourceDone(LocalDate date) {
@@ -149,40 +169,89 @@ class DailyAggregationRunnerTest {
     }
 
     @Test
-    void 행이_없으면_claim으로_잡는다() {
+    void 행이_없으면_claim으로_잡고_잡은_직후의_세대를_돌려준다() {
         when(executions.claim(JOB, YESTERDAY)).thenReturn(true);
+        acquiredAs(1);
 
-        assertThat(runner().acquire(YESTERDAY, List.of())).isTrue();
+        Optional<BatchExecutionRecord> acquired = runner().acquire(YESTERDAY, List.of());
+
+        assertThat(acquired).map(BatchExecutionRecord::attemptNo).contains(1);
     }
 
     @Test
-    void 실패한_행은_retry로_잡는다() {
+    void 잡은_직후_재조회가_실패하면_실행을_닫고_원래_예외를_던진다() {
+        QueryTimeoutException readFailure = new QueryTimeoutException("실행 기록 조회 실패");
+        when(executions.claim(JOB, YESTERDAY)).thenReturn(true);
+        when(executionQuery.findByBusinessDate(YESTERDAY)).thenThrow(readFailure);
+        DailyAggregationRunner runner = runner();
+
+        assertThatThrownBy(() -> runner.acquire(YESTERDAY, List.of())).isSameAs(readFailure);
+
+        verify(executions).fail(JOB, YESTERDAY, "잡은 시도의 세대를 읽지 못했다");
+        verify(pending).record(eq(YESTERDAY), eq(PendingReason.FAILED), any(LocalDateTime.class));
+        assertThat(registry.get("analytics_aggregation_total").tag("result", "failed")
+                .counter().count()).isEqualTo(1.0);
+    }
+
+    @Test
+    void 실패한_행은_retry로_잡고_오른_세대를_돌려준다() {
         when(executions.retry(JOB, YESTERDAY)).thenReturn(true);
+        acquiredAs(2);
 
-        assertThat(runner().acquire(YESTERDAY, List.of(execution(JOB, YESTERDAY, "FAILED")))).isTrue();
+        Optional<BatchExecutionRecord> acquired =
+                runner().acquire(YESTERDAY, List.of(execution(JOB, YESTERDAY, "FAILED", 1)));
+
+        assertThat(acquired).map(BatchExecutionRecord::attemptNo).contains(2);
     }
 
     @Test
-    void 성공한_행은_rerun으로_잡는다() {
+    void 성공한_행은_rerun으로_잡고_오른_세대를_돌려준다() {
         when(rerunner.rerun(JOB, YESTERDAY)).thenReturn(true);
+        acquiredAs(2);
 
-        assertThat(runner().acquire(YESTERDAY, List.of(execution(JOB, YESTERDAY, "SUCCESS")))).isTrue();
+        Optional<BatchExecutionRecord> acquired =
+                runner().acquire(YESTERDAY, List.of(execution(JOB, YESTERDAY, "SUCCESS", 1)));
+
+        assertThat(acquired).map(BatchExecutionRecord::attemptNo).contains(2);
     }
 
     @Test
     void 실행_중인_행은_건너뛴다() {
-        assertThat(runner().acquire(YESTERDAY, List.of(execution(JOB, YESTERDAY, "RUNNING")))).isFalse();
+        assertThat(runner().acquire(YESTERDAY, List.of(execution(JOB, YESTERDAY, "RUNNING")))).isEmpty();
         verify(executions, never()).claim(any(), any());
         verify(executions, never()).retry(any(), any());
         verify(rerunner, never()).rerun(any(), any());
     }
 
     @Test
+    void 잡지_못하면_세대를_읽지_않는다() {
+        when(executions.retry(JOB, YESTERDAY)).thenReturn(false);
+
+        assertThat(runner().acquire(YESTERDAY, List.of(execution(JOB, YESTERDAY, "FAILED")))).isEmpty();
+        verify(executionQuery, never()).findByBusinessDate(any());
+    }
+
+    @Test
     void 다른_작업의_행은_내_행으로_보지_않는다() {
         when(executions.claim(JOB, YESTERDAY)).thenReturn(true);
+        acquiredAs(1);
 
         assertThat(runner().acquire(YESTERDAY,
-                List.of(execution("BILLING_DAILY_RELEASE", YESTERDAY, "RUNNING")))).isTrue();
+                List.of(execution("BILLING_DAILY_RELEASE", YESTERDAY, "RUNNING")))).isPresent();
+    }
+
+    @Test
+    void 정기_실행은_잡은_시도의_세대로_공개_트랜잭션에서_세대를_확인한다() {
+        when(executionQuery.findByBusinessDate(YESTERDAY)).thenReturn(
+                List.of(sourceDone(YESTERDAY), execution(JOB, YESTERDAY, "SUCCESS", 2)),
+                List.of(sourceDone(YESTERDAY), execution(JOB, YESTERDAY, "RUNNING", ATTEMPT)));
+        when(rerunner.rerun(JOB, YESTERDAY)).thenReturn(true);
+        aggregatableSetUp();
+
+        AggregationOutcome outcome = runner().runDate(YESTERDAY);
+
+        assertThat(outcome).isEqualTo(AggregationOutcome.SUCCEEDED);
+        verify(guard).assertCurrentAttempt(JOB, YESTERDAY, ATTEMPT);
     }
 
     @Test
@@ -203,7 +272,7 @@ class DailyAggregationRunnerTest {
     void 단계가_없어도_공개까지_마치고_성공으로_닫고_미처리에서_지운다() {
         aggregatableSetUp();
 
-        AggregationOutcome outcome = runner().aggregate(YESTERDAY);
+        AggregationOutcome outcome = runner().aggregate(YESTERDAY, ATTEMPT);
 
         assertThat(outcome).isEqualTo(AggregationOutcome.SUCCEEDED);
         verify(executions).succeed(JOB, YESTERDAY, 0);
@@ -212,12 +281,94 @@ class DailyAggregationRunnerTest {
     }
 
     @Test
+    void 세대_확인_공개_성공_기록_미처리_삭제를_한_트랜잭션에서_이_순서로_한다() {
+        aggregatableSetUp();
+        steps.add(new RecordingStep("FirstStep", 3, calls));
+
+        runner().aggregate(YESTERDAY, ATTEMPT);
+
+        InOrder order = inOrder(transactionManager, guard, executions, pending);
+        order.verify(transactionManager).getTransaction(any());
+        order.verify(guard).assertCurrentAttempt(JOB, YESTERDAY, ATTEMPT);
+        order.verify(executions).succeed(JOB, YESTERDAY, 3);
+        order.verify(pending).remove(YESTERDAY);
+        order.verify(transactionManager).commit(any());
+        assertThat(calls).containsExactly("FirstStep:collect", "FirstStep:publish");
+    }
+
+    @Test
+    void 공개_트랜잭션에서_세대가_맞지_않으면_공개를_롤백하고_실행_기록과_미처리를_건드리지_않는다() {
+        aggregatableSetUp();
+        attemptLost();
+        steps.add(new RecordingStep("FirstStep", 3, calls));
+
+        AggregationOutcome outcome = runner().aggregate(YESTERDAY, ATTEMPT);
+
+        assertThat(outcome).isEqualTo(AggregationOutcome.LEASE_LOST);
+        assertThat(calls).containsExactly("FirstStep:collect");
+        verify(transactionManager).rollback(any());
+        verify(transactionManager, never()).commit(any());
+        verify(executions, never()).succeed(any(), any(), anyInt());
+        verify(executions, never()).fail(any(), any(), any());
+        verify(pending, never()).remove(any());
+        verify(pending, never()).record(any(), any(), any());
+        assertThat(registry.get("analytics_aggregation_total").tag("result", "lease_lost").counter().count())
+                .isEqualTo(1.0);
+    }
+
+    @Test
+    void 성공_기록이_실패하면_공개와_함께_롤백하고_미처리를_지우지_않는다() {
+        aggregatableSetUp();
+        doThrow(new IllegalStateException("기록 실패")).when(executions).succeed(JOB, YESTERDAY, 3);
+        steps.add(new RecordingStep("FirstStep", 3, calls));
+
+        AggregationOutcome outcome = runner().aggregate(YESTERDAY, ATTEMPT);
+
+        assertThat(outcome).isEqualTo(AggregationOutcome.FAILED);
+        InOrder order = inOrder(transactionManager, executions, pending);
+        order.verify(transactionManager).rollback(any());
+        order.verify(executions).fail(eq(JOB), eq(YESTERDAY), any(String.class));
+        order.verify(pending).record(eq(YESTERDAY), eq(PendingReason.FAILED), any(LocalDateTime.class));
+        order.verify(transactionManager).commit(any());
+        verify(pending, never()).remove(any());
+    }
+
+    @Test
+    void 실패로_닫을_때_세대가_맞지_않으면_새_시도의_실행_기록과_미처리를_건드리지_않는다() {
+        aggregatableSetUp();
+        attemptLost();
+        steps.add(new FailingStep(new IllegalArgumentException("원천 데이터가 어긋났다")));
+
+        AggregationOutcome outcome = runner().aggregate(YESTERDAY, ATTEMPT);
+
+        assertThat(outcome).isEqualTo(AggregationOutcome.LEASE_LOST);
+        verify(executions, never()).fail(any(), any(), any());
+        verify(pending, never()).record(any(), any(), any());
+    }
+
+    @Test
+    void 재실행을_기록할_때_세대가_맞지_않으면_새_시도의_재실행_횟수를_건드리지_않고_멈춘다() {
+        aggregatableSetUp();
+        attemptLost();
+        FlakyStep flaky = new FlakyStep(5);
+        steps.add(flaky);
+
+        AggregationOutcome outcome = runner().aggregate(YESTERDAY, ATTEMPT);
+
+        assertThat(outcome).isEqualTo(AggregationOutcome.LEASE_LOST);
+        assertThat(flaky.collectCalls).isEqualTo(1);
+        verify(executions, never()).recordRetry(any(), any(), any());
+        verify(executions, never()).fail(any(), any(), any());
+        verify(backoff, never()).pause(anyInt());
+    }
+
+    @Test
     void 단계는_모으기를_모두_마친_뒤_한_트랜잭션에서_순서대로_공개한다() {
         aggregatableSetUp();
         steps.add(new RecordingStep("FirstStep", 3, calls));
         steps.add(new RecordingStep("SecondStep", 4, calls));
 
-        AggregationOutcome outcome = runner().aggregate(YESTERDAY);
+        AggregationOutcome outcome = runner().aggregate(YESTERDAY, ATTEMPT);
 
         assertThat(outcome).isEqualTo(AggregationOutcome.SUCCEEDED);
         assertThat(calls).containsExactly(
@@ -235,7 +386,7 @@ class DailyAggregationRunnerTest {
         aggregatableSetUp();
         steps.add(new FailingStep(new IllegalStateException("원천 데이터가 어긋났다")));
 
-        AggregationOutcome outcome = runner().aggregate(YESTERDAY);
+        AggregationOutcome outcome = runner().aggregate(YESTERDAY, ATTEMPT);
 
         assertThat(outcome).isEqualTo(AggregationOutcome.FAILED);
         verify(executions).fail(eq(JOB), eq(YESTERDAY), any(String.class));
@@ -249,13 +400,19 @@ class DailyAggregationRunnerTest {
     @Test
     void 공개_도중_오류는_트랜잭션을_롤백하고_실패로_닫는다() {
         aggregatableSetUp();
+        steps.add(new RecordingStep("FirstStep", 3, calls));
         steps.add(new PublishFailingStep());
 
-        AggregationOutcome outcome = runner().aggregate(YESTERDAY);
+        AggregationOutcome outcome = runner().aggregate(YESTERDAY, ATTEMPT);
 
         assertThat(outcome).isEqualTo(AggregationOutcome.FAILED);
-        verify(transactionManager).rollback(any());
-        verify(transactionManager, never()).commit(any());
+        assertThat(calls).containsExactly("FirstStep:collect", "FirstStep:publish");
+        InOrder order = inOrder(transactionManager, executions);
+        order.verify(transactionManager).rollback(any());
+        order.verify(executions).fail(eq(JOB), eq(YESTERDAY), any(String.class));
+        order.verify(transactionManager).commit(any());
+        verify(executions, never()).succeed(any(), any(), anyInt());
+        verify(pending, never()).remove(any());
     }
 
     @Test
@@ -266,7 +423,7 @@ class DailyAggregationRunnerTest {
         FlakyStep flaky = new FlakyStep(1);
         steps.add(flaky);
 
-        AggregationOutcome outcome = runner().aggregate(YESTERDAY);
+        AggregationOutcome outcome = runner().aggregate(YESTERDAY, ATTEMPT);
 
         assertThat(outcome).isEqualTo(AggregationOutcome.SUCCEEDED);
         assertThat(flaky.collectCalls).isEqualTo(2);
@@ -282,7 +439,7 @@ class DailyAggregationRunnerTest {
         when(executions.recordRetry(eq(JOB), eq(YESTERDAY), any(String.class))).thenReturn(false);
         steps.add(new FlakyStep(5));
 
-        AggregationOutcome outcome = runner().aggregate(YESTERDAY);
+        AggregationOutcome outcome = runner().aggregate(YESTERDAY, ATTEMPT);
 
         assertThat(outcome).isEqualTo(AggregationOutcome.FAILED);
         verify(backoff, never()).pause(anyInt());
@@ -296,7 +453,7 @@ class DailyAggregationRunnerTest {
         when(backoff.pause(1)).thenReturn(false);
         steps.add(new FlakyStep(5));
 
-        assertThat(runner().aggregate(YESTERDAY)).isEqualTo(AggregationOutcome.FAILED);
+        assertThat(runner().aggregate(YESTERDAY, ATTEMPT)).isEqualTo(AggregationOutcome.FAILED);
     }
 
     @Test
@@ -307,7 +464,7 @@ class DailyAggregationRunnerTest {
         FlakyStep flaky = new FlakyStep(5);
         steps.add(flaky);
 
-        AggregationOutcome outcome = runner().aggregate(YESTERDAY);
+        AggregationOutcome outcome = runner().aggregate(YESTERDAY, ATTEMPT);
 
         assertThat(outcome).isEqualTo(AggregationOutcome.LEASE_LOST);
         assertThat(flaky.collectCalls).isEqualTo(1);
@@ -320,7 +477,7 @@ class DailyAggregationRunnerTest {
         when(executions.renew(JOB, YESTERDAY)).thenReturn(false);
         steps.add(new RecordingStep("FirstStep", 1, calls));
 
-        AggregationOutcome outcome = runner().aggregate(YESTERDAY);
+        AggregationOutcome outcome = runner().aggregate(YESTERDAY, ATTEMPT);
 
         assertThat(outcome).isEqualTo(AggregationOutcome.LEASE_LOST);
         assertThat(calls).isEmpty();
@@ -332,7 +489,7 @@ class DailyAggregationRunnerTest {
         when(executions.renew(JOB, YESTERDAY)).thenReturn(true, false);
         steps.add(new RecordingStep("FirstStep", 1, calls));
 
-        AggregationOutcome outcome = runner().aggregate(YESTERDAY);
+        AggregationOutcome outcome = runner().aggregate(YESTERDAY, ATTEMPT);
 
         assertThat(outcome).isEqualTo(AggregationOutcome.LEASE_LOST);
         assertThat(calls).containsExactly("FirstStep:collect");
@@ -345,7 +502,7 @@ class DailyAggregationRunnerTest {
         doThrow(new IllegalStateException("기록 실패")).when(executions).fail(any(), any(), any());
         steps.add(new FailingStep(new IllegalArgumentException("원인")));
 
-        AggregationOutcome outcome = runner().aggregate(YESTERDAY);
+        AggregationOutcome outcome = runner().aggregate(YESTERDAY, ATTEMPT);
 
         assertThat(outcome).isEqualTo(AggregationOutcome.FAILED);
         verify(pending).record(eq(YESTERDAY), eq(PendingReason.FAILED), any(LocalDateTime.class));
@@ -367,7 +524,8 @@ class DailyAggregationRunnerTest {
         when(pending.count()).thenReturn(2L);
         when(executionQuery.findByBusinessDate(TWO_DAYS_AGO)).thenThrow(new IllegalStateException("조회 실패"));
         when(executionQuery.findByBusinessDate(YESTERDAY)).thenReturn(
-                List.of(sourceDone(YESTERDAY)));
+                List.of(sourceDone(YESTERDAY)),
+                List.of(sourceDone(YESTERDAY), execution(JOB, YESTERDAY, "RUNNING")));
         when(executions.claim(JOB, YESTERDAY)).thenReturn(true);
         aggregatableSetUp();
 

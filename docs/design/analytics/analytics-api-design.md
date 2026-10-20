@@ -233,6 +233,4 @@ V2는 `campaign_daily_report.owner_id`와 `store_id`를 nullable로 추가했다
 | 집중 경고의 기간 의미 | 하루라도 경고이고 최고 하루 점유율을 반환한다. 화면 확인이 남았다 | 화면 계약 확정 |
 | 리포트 집계와 연결 정보 | 기존 `CampaignQueryService.findAllById`를 쓰는 원본 설계와 배치 허용 범위를 확인해야 한다 | `CampaignReportStep`, 상세 리포트 |
 | 원래 영업일의 정정 반영 | `SettlementMetricsStep`은 정정 대상 날짜를 미처리 목록에 남긴다. 캠페인 리포트와 변경 이력을 쓰는 단계는 없다 | 리포트 정정 공개 |
-| 실행 세대 확인 | ops의 이어받기는 있어도 일별 집계 실행기가 자기 실행 세대를 전달받거나 공개 시 잠그지 않는다 | 여러 서버의 안전한 공개 |
-
 `CampaignStatsQueryService.activeCampaignCount`와 A-02의 `StoreMetricsStep`은 구현돼 있으므로 과거의 #354 대기 항목은 남기지 않는다. A-06의 시각은 #490이 KST 오프셋을 붙이도록 고쳤다.
