@@ -57,6 +57,13 @@
 이미지를 디코딩하지 못하는 것은 도구 장애가 아니라 점주가 고칠 수 있는 원인이라 `IMAGE_UNREADABLE`
 로 따로 나눈다. Rekognition 의 `InvalidImageFormatException` 도 같은 사유로 옮긴다.
 
+### 애플리케이션: 템플릿 버전 삭제 중 배치 서버가 멈춤
+
+04시 템플릿 버전 삭제(`TemplateVersionPurgeScheduler`, `CAMPAIGN_TEMPLATE_VERSION_PURGE`)는
+`StandaloneJob`을 구현해 등록돼 있다(`#622`). 실행 중에 서버가 멈추면 다른 서버가 이어받아 같은
+영업일로 다시 지우고, `FAILED`로 닫힌 행은 관리자가 다시 실행할 수 있다. 청크마다 따로 커밋되므로
+멈춘 실행이 지운 만큼은 사라져 있고, 다시 돈 실행은 남은 소프트삭제 버전만 지운다.
+
 ## 아직 정하지 못한 것
 
 | 항목 | 비고 |
