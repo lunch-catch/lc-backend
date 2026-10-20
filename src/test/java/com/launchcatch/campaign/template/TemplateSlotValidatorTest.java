@@ -12,7 +12,6 @@ import org.junit.jupiter.api.Test;
 class TemplateSlotValidatorTest {
 
     private static final String VALID = "<div>"
-            + "<span data-slot=\"adLabel\">ad</span>"
             + "<h1 data-slot=\"eventName\">title</h1>"
             + "<p data-slot=\"discount\">discount</p>"
             + "<p data-slot=\"period\">period</p>"
@@ -22,9 +21,17 @@ class TemplateSlotValidatorTest {
     private final TemplateSlotValidator validator = new TemplateSlotValidator();
 
     @Test
-    @DisplayName("슬롯 다섯 개가 각각 하나씩 허용된 태그에 있으면 통과한다")
+    @DisplayName("슬롯 네 개가 각각 하나씩 허용된 태그에 있으면 통과한다")
     void 슬롯이_모두_있으면_통과한다() {
         assertThatCode(() -> validator.validate(VALID)).doesNotThrowAnyException();
+    }
+
+    @Test
+    @DisplayName("광고 표시(adLabel)가 있어도 없어도 통과한다(옛 템플릿 호환, #628)")
+    void adLabel은_요구하지도_막지도_않는다() {
+        String legacy = VALID.replace("<h1", "<span data-slot=\"adLabel\">ad</span><h1");
+
+        assertThatCode(() -> validator.validate(legacy)).doesNotThrowAnyException();
     }
 
     @Test

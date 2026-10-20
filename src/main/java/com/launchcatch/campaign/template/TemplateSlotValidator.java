@@ -10,8 +10,9 @@ import org.jsoup.select.Elements;
 import org.springframework.stereotype.Component;
 
 /*
- * 슬롯 5개가 각각 정확히 하나씩 있고 허용된 태그 안에 있는지 확인한다.
- * 어긋나면 POSTER-001 이다.
+ * 슬롯 4개(eventName, discount, period, image)가 각각 정확히 하나씩 있고 허용된 태그 안에 있는지
+ * 확인한다. 어긋나면 POSTER-001 이다. 포스터에 광고 표시를 넣지 않게 되어(#628) adLabel은 요구하지
+ * 않는다. 광고 표시가 들어 있는 옛 템플릿도 막지 않으려고 있어도 검사하지 않는다.
  */
 @Component
 public class TemplateSlotValidator {
@@ -26,7 +27,6 @@ public class TemplateSlotValidator {
             "eventName", TEXT_TAGS,
             "discount", TEXT_TAGS,
             "period", TEXT_TAGS,
-            "adLabel", TEXT_TAGS,
             "image", Set.of("img"));
 
     public void validate(String html) {

@@ -50,7 +50,6 @@ import org.springframework.transaction.support.TransactionTemplate;
 class TemplateCreateServiceTest {
 
     private static final String VALID_HTML = "<div style=\"color:#000000\">"
-            + "<span data-slot=\"adLabel\">ad</span>"
             + "<h1 data-slot=\"eventName\">title</h1>"
             + "<p data-slot=\"discount\">discount</p>"
             + "<p data-slot=\"period\">period</p>"
