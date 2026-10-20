@@ -13,7 +13,7 @@
 | `DELETE` | `/v1/admin/auth/tokens` | 관리자 로그아웃 | Access Token, `ADMIN` 또는 `SUPER_ADMIN` |
 | `POST` | `/v1/admin/auth/tokens:refresh` | 관리자 토큰 재발급 | Refresh Token. 상세 계약은 [인증 명세](./auth-api-spec.md#관리자) |
 | `POST` | `/v1/admin/batch-executions/{jobName}/{businessDate}:retry` | 배치 작업 수동 재실행 | Access Token, `ADMIN` 또는 `SUPER_ADMIN` |
-| `GET` | `/v1/admin/batch-executions` | 배치 실행 이력 조회. 명세만 있고 구현은 #575 가 한다 | Access Token, `ADMIN` 또는 `SUPER_ADMIN` |
+| `GET` | `/v1/admin/batch-executions` | 배치 실행 이력 조회 | Access Token, `ADMIN` 또는 `SUPER_ADMIN` |
 
 
 ## 로그인·재발급 요청 제한
@@ -227,7 +227,7 @@ Cookie: accessToken=<JWT>
 
 ### `GET /v1/admin/batch-executions`
 
-관리자가 영업일 범위 안의 배치 실행 기록을 조회한다. 00:00 묶음(`DAILY_0000`)과 그 단계, 묶음 밖 작업, 캠페인 단위 작업(`작업명:캠페인ID`)을 모두 담는다. 명세만 있고 구현은 #575 가 한다.
+관리자가 영업일 범위 안의 배치 실행 기록을 조회한다. 00:00 묶음(`DAILY_0000`)과 그 단계, 묶음 밖 작업, 캠페인 단위 작업(`작업명:캠페인ID`)을 모두 담는다.
 
 **(`jobName`, `businessDate`)마다 한 항목이다.** 서버는 실행 기록을 (작업명, 영업일)마다 한 행으로 두고, 재실행하면 그 행을 새 시도로 덮어쓴다. 그래서 지난 시도의 시각과 실패 사유는 이 응답에 없다. 재실행했다는 사실은 `attemptNo`와 `retryCount`로 보인다.
 

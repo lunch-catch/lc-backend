@@ -7,6 +7,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Modifying;
@@ -48,6 +49,28 @@ public interface BatchExecutionLogRepository extends JpaRepository<BatchExecutio
             @Param("jobName") String jobName, @Param("businessDate") LocalDate businessDate);
 
     List<BatchExecutionLog> findByBusinessDate(LocalDate businessDate);
+
+    /*
+     * 관리자 배치 실행 이력 조회(#575)다. 영업일 내림차순, 같은 날 id 내림차순으로 읽는다.
+     * jobName, status, 커서는 null 이면 조건에서 빠진다. 커서는 마지막으로 내준 (영업일, id)라 그 뒤부터 읽는다.
+     */
+    @Query("""
+            SELECT l FROM BatchExecutionLog l
+             WHERE l.businessDate BETWEEN :from AND :to
+               AND (:jobName IS NULL OR l.jobName = :jobName)
+               AND (:status IS NULL OR l.status = :status)
+               AND (:cursorDate IS NULL
+                    OR l.businessDate < :cursorDate
+                    OR (l.businessDate = :cursorDate AND l.id < :cursorId))
+             ORDER BY l.businessDate DESC, l.id DESC
+            """)
+    List<BatchExecutionLog> searchHistory(@Param("from") LocalDate from,
+                                          @Param("to") LocalDate to,
+                                          @Param("jobName") String jobName,
+                                          @Param("status") BatchStatus status,
+                                          @Param("cursorDate") LocalDate cursorDate,
+                                          @Param("cursorId") Long cursorId,
+                                          Pageable limit);
 
     List<BatchExecutionLog> findByStatusAndOwnerIdNotAndUpdatedAtBefore(
             BatchStatus status, String ownerId, LocalDateTime staleBefore);

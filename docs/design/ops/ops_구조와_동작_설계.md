@@ -210,5 +210,4 @@ sequenceDiagram
 
 | 미정 항목 | 어디까지 정해졌나 | 막는 것 |
 |---|---|---|
-| 운영 전역의 배치 실행 기록 조회 API | 명세와 설계는 #570이 정했다([batch-execution-history-api-design.md](./batch-execution-history-api-design.md)). 구현은 #575가 한다 | 관리자가 수동 재실행 결과를 화면에서 바로 확인하는 것 |
 | 플랫폼 설정값의 캐시 전략, 조회 API | 아직 훑지 않았다 | 이 PR과 무관하다 |
