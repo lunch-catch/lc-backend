@@ -3,11 +3,13 @@ package com.launchcatch.analytics;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.launchcatch.analytics.batch.job.EventLogRetentionJob;
+import com.launchcatch.analytics.batch.service.EventLogRetentionService;
 import com.launchcatch.global.config.ClockConfig;
 import com.launchcatch.ops.service.BatchExecutionService;
 import com.launchcatch.ops.service.DailyJobRunner;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.TimeZone;
 import java.util.stream.IntStream;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -33,6 +35,8 @@ class EventLogRetentionIntegrationTest extends AbstractAnalyticsIntegrationTest 
     private BatchExecutionService executions;
     @Autowired
     private DailyJobRunner runner;
+    @Autowired
+    private EventLogRetentionService retention;
 
     @BeforeEach
     void cleanUp() {
@@ -99,6 +103,27 @@ class EventLogRetentionIntegrationTest extends AbstractAnalyticsIntegrationTest 
         assertThat(jdbc.queryForObject(
                 "SELECT status FROM batch_execution_log WHERE job_name = ?",
                 String.class, EventLogRetentionJob.JOB_NAME)).isEqualTo("SUCCESS");
+    }
+
+    /*
+     * 운영 이미지는 JVM 시간대를 따로 주지 않아 UTC 로 뜰 수 있다. 그때도 삭제 선이 KST 자정에서 밀리지 않는지 본다.
+     * 삭제 선을 Timestamp 로 넘기면 드라이버가 9시간을 옮겨 아래 두 남을 행까지 지운다.
+     */
+    @Test
+    void 서버_기본_시간대가_UTC여도_KST_자정을_삭제_선으로_쓴다() {
+        insertEvents(1, cutoff.minusSeconds(1));
+        insertEvents(1, cutoff);
+        insertEvents(1, cutoff.plusHours(8));
+        TimeZone original = TimeZone.getDefault();
+        try {
+            TimeZone.setDefault(TimeZone.getTimeZone("UTC"));
+
+            assertThat(retention.purge()).isEqualTo(1);
+        } finally {
+            TimeZone.setDefault(original);
+        }
+
+        assertThat(eventCount()).isEqualTo(2);
     }
 
     private Long eventCount() {

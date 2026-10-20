@@ -1,6 +1,5 @@
 package com.launchcatch.analytics.batch.repository;
 
-import java.sql.Timestamp;
 import java.time.LocalDateTime;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
@@ -19,9 +18,12 @@ public class EventLogRetentionRepository {
         this.jdbc = jdbc;
     }
 
-    /** cutoff 보다 이전에 일어난 이벤트를 최대 limit 행 지우고 지운 행 수를 돌려준다. */
+    /*
+     * cutoff 보다 이전에 일어난 이벤트를 최대 limit 행 지우고 지운 행 수를 돌려준다.
+     * cutoff 는 LocalDateTime 그대로 넘긴다. Timestamp 로 바꾸면 드라이버가 JVM 시간대에서 connectionTimeZone 으로
+     * 옮겨, JVM 이 UTC 일 때 삭제 선이 9시간 늦어진다.
+     */
     public int deleteOlderThan(LocalDateTime cutoff, int limit) {
-        return jdbc.update("DELETE FROM event_log WHERE occurred_at < ? LIMIT ?",
-                Timestamp.valueOf(cutoff), limit);
+        return jdbc.update("DELETE FROM event_log WHERE occurred_at < ? LIMIT ?", cutoff, limit);
     }
 }
