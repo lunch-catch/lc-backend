@@ -65,7 +65,7 @@ Spring Batch는 사용하지 않는다. 각 단계는 평범한 서비스이고 
 | `InvalidMetricsStep` | `daily_invalid_analytics` | `AdservingStatsQueryService` | 구현됨, 순서 500 |
 | `NotBilledMetricsStep` | `daily_campaign_not_billed_analytics` | 정산·광고 서빙 집계 조회 | 구현됨, 순서 510 |
 | `FraudMetricsStep` | `daily_campaign_fraud_analytics` | `AdservingStatsQueryService` | 구현됨, 순서 520 |
-| `CampaignReportStep` | `campaign_daily_report`, 사유·시간대·슬롯·변경 이력 | 정산·광고 서빙·쿠폰 집계와 캠페인 연결 정보 | 설계만 있음 |
+| `CampaignReportStep` | `campaign_daily_report`, 사유·시간대·슬롯. 변경 이력은 #632 | 정산·광고 서빙·쿠폰 집계 조회, `event_log`, `CampaignQueryService.findAllById` | 구현됨, 순서 600 |
 | `MemberUsageStep` | `daily_member_usage` | `CouponStatsQueryService.dailyMemberStats`, `event_log` | 구현됨, 순서 700 |
 | `SettlementConsistencyStep` | 지표와 구조화 로그 | 정산 집계 조회와 공개한 매출 행 | 구현됨, 순서 900 |
 
@@ -104,7 +104,7 @@ billing은 `BillingStatsQueryService`를 공개했고 `SettlementMetricsStep`과
 
 | 메서드 | 돌려주는 것 | 쓰는 단계 |
 |---|---|---|
-| `ledgerSums(영업일)` | 점주와 캠페인별 `CHARGE`, `RESERVE`, `DEDUCT`, `RELEASE`, `REFUND`와 양수·음수 `ADJUST` 합 | `SettlementMetricsStep`, `SettlementConsistencyStep`, 후속 `CampaignReportStep` |
+| `ledgerSums(영업일)` | 점주와 캠페인별 `CHARGE`, `RESERVE`, `DEDUCT`, `RELEASE`, `REFUND`와 양수·음수 `ADJUST` 합 | `SettlementMetricsStep`, `SettlementConsistencyStep`, `CampaignReportStep` |
 | `billingCounts(영업일)` | 캠페인별 `BILLED`, `NOT_BILLED_BUDGET`, `NOT_BILLED_PAUSED`, `NOT_BILLED_NO_PLAN` 건수 | `NotBilledMetricsStep`, `CampaignReportStep` |
 | `dailyBudgets(영업일)` | 캠페인별 그날 적용 하루 예산과 단가 | `CampaignReportStep` |
 | `dailyTotals(영업일)` | 그날 말 미소진 잔액, 원장 대조용 합계, 원장 불일치 건수 | `SettlementMetricsStep`은 미소진 잔액을 쓴다. 나머지 필드는 현재 단계에서 검증에 사용하지 않으며 A-07 응답에도 없다 |
@@ -117,7 +117,7 @@ billing은 `BillingStatsQueryService`를 공개했고 `SettlementMetricsStep`과
 
 ### 공개 규칙
 
-아래 리포트의 ID·자식·이력 규칙은 `CampaignReportStep`을 만들 때 적용할 설계다. 현재 구현된 세 일별 지표는 `replace`로 그날 행을 교체한다.
+`daily_*` 지표는 `replace`로 그날 행을 교체한다. 리포트는 `CampaignReportStep`(#625)이 아래 ID·자식 규칙을 따른다. 변경 이력은 아직 쓰지 않는다(#632).
 
 - `daily_*` 테이블은 영업일 행을 지우고 새 결과를 넣는다.
 - `campaign_daily_report`는 ID를 유지하며 갱신한다. 자식 3개 테이블은 지우고 다시 넣는다.
