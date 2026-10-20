@@ -106,7 +106,7 @@ impression/
 - `wishlist` 의 찜 목록 조회는 `engine` 의 그날 후보에서 표시 값을 읽는다. 반대 방향은 없다.
 - 당일 이력은 스와이프와 가게 상세 찜, 찜 삭제가 함께 쓰고 피드가 읽어 `feed` 와 `wishlist` 밖의 `exclusion` 에 둔다. `wishlist` 가 `feed` 를 부르지 않게 하려는 것이다(#420). 오래 사는 찜 목록이 그날 단위의 피드에 기대지 않는다.
 - 그날 후보가 아니라는 판정(`ADSERVING-004`)은 스와이프와 가게 상세 찜이 함께 써서 `engine` 의 `CandidateErrorCode` 가 갖는다(#420).
-- 입구는 HTTP 요청 일곱(`GET /v1/feed`, `POST /v1/impressions`, `POST /v1/swipes`, `GET`, `PUT /v1/feed-filter`, `GET`, `POST /v1/wishlist`)이다. 다른 도메인의 호출은 쿠폰이 부르는 `WishlistQueryService` 와 `CandidateStateUpdater` 둘(#163)과 analytics 가 부르는 `AdservingStatsQueryService`(#350)다. 스케줄과 이벤트는 아직 없다.
+- 입구는 HTTP 요청 여덟(`GET /v1/feed`, `POST /v1/impressions`, `POST /v1/swipes`, `GET`, `PUT /v1/feed-filter`, `GET`, `POST /v1/wishlist`, `DELETE /v1/wishlist/{campaignId}`)이다. 다른 도메인의 호출은 쿠폰이 부르는 `WishlistQueryService` 와 `CandidateStateUpdater` 둘(#163)과 analytics 가 부르는 `AdservingStatsQueryService`(#350)다. 이벤트는 캠페인의 상태 변경(#565)과 종료(#553) 둘이고, 스케줄은 00:00 묶음의 후보 적재(#582)와 끝난 찜 정리(#553) 둘이다.
 - 집계 조회의 구현은 노출을 주로 세서 `impression` 에 둔다. 찜은 `feed` 의 `swipe_log` 에서 센다.
 
 ### 규칙을 두는 곳
@@ -353,7 +353,7 @@ flowchart LR
 ```
 
 - `feed` 와 `impression` 과 `wishlist` 에서 `engine` 으로, `feed` 와 `wishlist` 에서 `exclusion` 으로, `impression` 에서 `feed` 로, `feed` 에서 `wishlist` 로만 화살표가 간다. 반대 방향은 없다
-- 다른 도메인의 호출로 들어오는 입구는 쿠폰의 두 `contract` 다. 찜 조회는 `WishlistService` 가, 소진 반영은 `engine` 의 `CandidateStateUpdaterImpl` 이 받는다(#163). 이벤트로 들어오는 입구는 캠페인의 상태 변경(`engine`)과 종료(`wishlist`) 둘이고, 스케줄로 들어오는 입구는 끝난 찜 정리(`wishlist`) 하나다
+- 다른 도메인의 호출로 들어오는 입구는 쿠폰의 두 `contract` 다. 찜 조회는 `WishlistService` 가, 소진 반영은 `engine` 의 `CandidateStateUpdaterImpl` 이 받는다(#163). 이벤트로 들어오는 입구는 캠페인의 상태 변경(`engine`)과 종료(`wishlist`) 둘이고, 스케줄로 들어오는 입구는 후보 적재(`engine`)와 끝난 찜 정리(`wishlist`) 둘이다
 
 ### 상태 변경
 
@@ -513,6 +513,7 @@ sequenceDiagram
 | 캠페인 종료 | campaign 의 종료 트랜잭션에 참여해 찜의 종료 표시 UPDATE 를 한다. 표시가 실패하면 종료도 되돌아간다 | 없음 |
 | 끝난 찜 정리 | 기준 시각 전에 끝난 찜을 지우는 DELETE 하나(저장소 메서드의 트랜잭션) | 없음 |
 | 후보 적재 | 그날 후보 upsert 와 7일 지난 행 지우기를 한 트랜잭션으로 한다. 실패하면 아무것도 남지 않고 그 단계만 다시 돈다 | 없음 |
+| 늦게 커밋된 이전 적재 | 이어받기 뒤 이전 서버가 끝까지 돌아 늦게 커밋할 수 있다. 적재가 원천을 읽은 시각(`snapshot_read_at`)이 가진 값보다 늦거나 같을 때만 스냅샷 값을 바꿔, 먼저 읽은 적재가 나중에 읽은 값을 되돌리지 않는다. 서빙 상태와 소진 시각은 이 시각과 따로 지킨다(#582) | 없음 |
 | 적재 직후 재조회 | 적재가 커밋된 뒤 새 트랜잭션에서 캠페인을 다시 읽고 늦은 전이만 상태를 바꾼다. 같은 트랜잭션이면 반복 읽기의 스냅샷 때문에 적재 중의 커밋이 보이지 않는다 | 없음 |
 | 쿠폰의 소진 반영 | `ad_candidate` 갱신과 0행일 때의 후보 확인. 쿠폰 발급이 커밋된 뒤 트랜잭션 밖에서 불려 발급과 묶이지 않는다(#163) | 없음 |
 
@@ -614,7 +615,7 @@ A 를 고른다. 분석의 결정과 어긋났을 때 B 는 노출 이벤트를 
 - 정리는 다른 단계의 결과를 읽지도 바꾸지도 않아 정산 단계(40~70) 뒤에 둔다. 앞 단계가 실패하면 정리가 하루 미뤄질 뿐이다(#553).
 - 적재는 정산의 예약(50)과 시간대별 목표(70) 뒤, 끝난 찜 정리(80) 앞이다. FR-099 의 (8) 적재가 (11) 찜 정리보다 앞인 순서다(#582).
 - 이어받기가 같은 단계를 겹쳐 돌릴 수 있다(`런치캐치_배치_운영.md` 2장). 적재는 멱등 upsert 라 다시 돌아도 같다. 두 서버가 같은 순간 같은 행을 upsert 하면 교착이 날 수 있고, 묶음 규칙이 일시적 오류로 보고 다시 돌린다.
-- 실행 세대 확인(`BatchAttemptGuard`)은 쓰지 않는다. `DailyJob.run` 이 세대를 받지 않고, 늦게 깨어난 서버가 다시 써도 같은 값이거나 더 오래된 상태는 반영되지 않는다(#582 에서 정했다).
+- 실행 세대 확인(`BatchAttemptGuard`)은 쓰지 않는다. `DailyJob.run` 이 세대를 받지 않는다. 대신 적재가 원천을 읽은 시각(`snapshot_read_at`, V4)을 행에 남기고 그보다 늦게 읽은 적재만 스냅샷 값을 바꾼다. 늦게 깨어난 서버가 먼저 읽은 값으로 새 값을 되돌리지 않는다(#582 에서 정했다).
 - 지난 후보는 7일 보관한다. 지금 그날 행만 읽는다(#582 에서 정했다).
 - 스케줄러가 꺼진 로컬은 시드(`R__50_daily.sql`)의 그날 후보로 피드를 본다. 적재가 도는 서버에서는 적재가 같은 키를 덮어쓴다. 두 값이 같은지 `SeedIntegrationTest` 가 본다(#582 에서 정했다).
 
@@ -700,6 +701,7 @@ A 를 고른다. 분석의 결정과 어긋났을 때 B 는 노출 이벤트를 
 | 같은 종료 이벤트가 다시 옴 | 이미 종료로 표시됐다 | 더 늦은 시각으로 다시 온다 | 처음 종료 시각이 남는다 | `WishlistCampaignEndedIntegrationTest.같은_종료_이벤트가_다시_와도_처음_종료_시각이_남는다` |
 | 캠페인 종료가 되돌아감 | 종료 트랜잭션이 실패한다 | 종료 이벤트를 받은 뒤 되돌아간다 | 종료 표시도 남지 않는다 | `WishlistCampaignEndedIntegrationTest.캠페인_종료가_되돌아가면_종료_표시도_되돌아간다` |
 | 그날 후보 적재 | ACTIVE 와 예약이 있는 PAUSED 캠페인이 있다 | 적재 단계가 돈다 | 캠페인과 가게 값으로 `SERVABLE`, `PAUSED` 가 들어가고 피드 조건에 ACTIVE 만 걸린다 | `CandidateLoadIntegrationTest.서빙_대상을_캠페인과_가게_값으로_적재하고_피드가_그_후보를_찾는다` |
+| 늦게 커밋된 이전 적재 | 나중에 읽은 적재가 새 상호를 넣었다 | 먼저 읽은 적재가 예전 상호로 늦게 돈다 | 새 상호가 남는다 | `CandidateLoadIntegrationTest.먼저_읽은_적재가_늦게_커밋해도_나중에_읽은_스냅샷_값이_남는다` |
 | 적재가 다시 돔 | 적재 뒤 소진과 더 늦은 멈춤이 들어왔다 | 같은 영업일로 다시 돈다 | 행이 늘지 않고 소진 시각과 멈춤이 남는다 | `CandidateLoadIntegrationTest.다시_돌아도_행이_늘지_않고_소진_시각과_더_늦은_상태_통보가_남는다` |
 | 적재 중의 상태 전이 | 적재가 읽은 뒤 캠페인이 멈췄다 | 적재 단계가 돈다 | 재조회로 `PAUSED` 가 된다 | `CandidateLoadIntegrationTest.적재_중에_상태가_바뀐_캠페인은_재조회로_반영한다` |
 | 가게나 메뉴가 없음 | 가게가 없는 캠페인과 메뉴명을 찾지 못한 메뉴 할인 캠페인이 있다 | 적재 단계가 돈다 | 둘을 빼고 나머지를 적재한다 | `CandidateLoadIntegrationTest.가게나_메뉴를_찾지_못한_캠페인은_빼고_나머지를_적재한다` |

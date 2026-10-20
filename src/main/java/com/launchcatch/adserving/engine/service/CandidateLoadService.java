@@ -52,6 +52,8 @@ public class CandidateLoadService {
      */
     @Transactional
     public Map<Long, LocalDateTime> load(LocalDate businessDate) {
+        // 원천을 읽기 전에 잡는다. 늦게 커밋된 이전 적재가 이 적재의 값을 되돌리지 못하게 하는 기준이다
+        LocalDateTime readAt = LocalDateTime.now(clock);
         List<CampaignInfo> campaigns = campaignQueryService.findServableOn(businessDate);
         Map<Long, StoreAdCandidateInfo> stores = readStores(campaigns);
         Map<Long, String> menuNames = readMenuNames(campaigns);
@@ -76,7 +78,7 @@ public class CandidateLoadService {
             rows.add(toRow(businessDate, campaign, store, menuName));
             loaded.put(campaign.campaignId(), campaign.statusChangedAt());
         }
-        adCandidateRepository.upsertAll(rows, LocalDateTime.now(clock));
+        adCandidateRepository.upsertAll(rows, readAt, LocalDateTime.now(clock));
         adCandidateRepository.deleteByBusinessDateBefore(businessDate.minusDays(RETENTION_DAYS));
         log.info("event=CANDIDATE_LOADED businessDate={} campaigns={} loaded={}", businessDate, campaigns.size(), rows.size());
         return loaded;

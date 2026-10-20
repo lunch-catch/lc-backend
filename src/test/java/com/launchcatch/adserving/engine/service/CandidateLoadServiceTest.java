@@ -7,7 +7,6 @@ import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -75,7 +74,7 @@ class CandidateLoadServiceTest {
     @SuppressWarnings("unchecked")
     private List<CandidateRow> upserted() {
         ArgumentCaptor<List<CandidateRow>> captor = ArgumentCaptor.forClass(List.class);
-        verify(adCandidateRepository).upsertAll(captor.capture(), eq(NOW));
+        verify(adCandidateRepository).upsertAll(captor.capture(), eq(NOW), eq(NOW));
         return captor.getValue();
     }
 
@@ -133,17 +132,24 @@ class CandidateLoadServiceTest {
         assertThat(skipped("menu_missing")).isEqualTo(1);
     }
 
+    // 가게 계약은 상한을 넘는 입력을 거부한다. 상한 단위로 나눠 읽어 모두 적재하는지 본다
     @Test
-    void 가게는_계약의_상한_단위로_나눠_읽는다() {
+    void 가게가_계약의_상한을_넘어도_나눠_읽어_모두_적재한다() {
         int count = StoreQueryService.MAX_AD_CANDIDATE_STORE_IDS + 1;
         List<CampaignInfo> campaigns = LongStream.rangeClosed(1, count)
                 .mapToObj(i -> campaign(i, i, CampaignStatus.ACTIVE, null, DiscountTargetType.ALL, null)).toList();
         when(campaignQueryService.findServableOn(TODAY)).thenReturn(campaigns);
-        when(storeQueryService.findAdCandidatesByStoreIds(anyList())).thenReturn(List.of());
+        when(storeQueryService.findAdCandidatesByStoreIds(anyList())).thenAnswer(invocation -> {
+            List<Long> ids = invocation.getArgument(0);
+            if (ids.size() > StoreQueryService.MAX_AD_CANDIDATE_STORE_IDS) {
+                throw new IllegalArgumentException("가게 ID 가 상한을 넘었다: " + ids.size());
+            }
+            return ids.stream().map(CandidateLoadServiceTest::store).toList();
+        });
 
         service.load(TODAY);
 
-        verify(storeQueryService, times(2)).findAdCandidatesByStoreIds(anyList());
+        assertThat(upserted()).hasSize(count);
     }
 
     @Test
@@ -156,13 +162,11 @@ class CandidateLoadServiceTest {
     }
 
     @Test
-    void 대상이_없으면_가게와_메뉴를_읽지_않는다() {
+    void 대상이_없으면_적재한_캠페인이_없다() {
         when(campaignQueryService.findServableOn(TODAY)).thenReturn(List.of());
 
         assertThat(service.load(TODAY)).isEmpty();
-
-        verify(storeQueryService, never()).findAdCandidatesByStoreIds(anyList());
-        verify(storeQueryService, never()).findMenusByIdIn(anyList());
+        assertThat(upserted()).isEmpty();
     }
 
     // 적재 중에 커밋된 전이를 반영한다. 적재 때 읽은 시각보다 늦은 것만 고친다(#582)
@@ -183,9 +187,9 @@ class CandidateLoadServiceTest {
     }
 
     @Test
-    void 적재한_캠페인이_없으면_다시_읽지_않는다() {
+    void 적재한_캠페인이_없으면_상태를_바꾸지_않는다() {
         service.reconcile(TODAY, Map.of());
 
-        verify(campaignQueryService, never()).findAllById(anyList());
+        verify(adCandidateRepository, never()).changeState(any(), any(), any(), any(), any());
     }
 }

@@ -129,6 +129,22 @@ class CandidateLoadIntegrationTest extends AbstractAdservingIntegrationTest {
         assertThat(row(101)).containsEntry("campaign_state", "PAUSED").containsEntry("state_changed_at", pausedAt);
     }
 
+    // 이어받기 뒤 이전 서버가 늦게 커밋하는 경우다. 먼저 읽은 적재는 나중에 읽은 적재의 값을 되돌리지 못한다(#582)
+    @Test
+    void 먼저_읽은_적재가_늦게_커밋해도_나중에_읽은_스냅샷_값이_남는다() {
+        when(campaignQueryService.findServableOn(TODAY)).thenReturn(List.of(
+                campaign(101, 55, CampaignStatus.ACTIVE, null, DiscountTargetType.ALL, null, CHANGED_AT)));
+        when(campaignQueryService.findAllById(anyList())).thenReturn(List.of());
+        job.run(TODAY);
+        doReturn(LocalDateTime.of(2026, 10, 1, 0, 0, 1).atZone(ClockConfig.ZONE).toInstant()).when(clock).instant();
+        when(storeQueryService.findAdCandidatesByStoreIds(anyList())).thenReturn(List.of(
+                new StoreAdCandidateInfo(55L, "예전 상호", "KOREAN", null, new BigDecimal("37.4979000"), new BigDecimal("127.0276000"))));
+
+        job.run(TODAY);
+
+        assertThat(row(101)).containsEntry("store_name", "점심식당");
+    }
+
     @Test
     void 가게나_메뉴를_찾지_못한_캠페인은_빼고_나머지를_적재한다() {
         when(campaignQueryService.findServableOn(TODAY)).thenReturn(List.of(
