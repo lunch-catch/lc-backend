@@ -68,6 +68,9 @@ adserving/
 ├── exclusion/
 │   └── repository/ExclusionRepository.java  Valkey. 스와이프와 가게 상세 찜, 찜 삭제가 쓰고 피드가 읽는다
 └── feed/
+    ├── StoreAudienceCounter.java                    가게별 반경 안 대상 인원 세기. 계층 밖의 순수 계산
+    ├── job/StoreAudienceJob.java                    00:00 묶음 90. 대상 인원을 세어 캠페인에 넘긴다
+    ├── service/StoreAudienceService.java            접속 위치, 회원, 가게를 읽어 세고 1,000칸씩 넘긴다
     ├── controller/FeedController.java
     ├── controller/SwipeController.java
     ├── controller/FeedFilterController.java
@@ -106,7 +109,7 @@ impression/
 - `wishlist` 의 찜 목록 조회는 `engine` 의 그날 후보에서 표시 값을 읽는다. 반대 방향은 없다.
 - 당일 이력은 스와이프와 가게 상세 찜, 찜 삭제가 함께 쓰고 피드가 읽어 `feed` 와 `wishlist` 밖의 `exclusion` 에 둔다. `wishlist` 가 `feed` 를 부르지 않게 하려는 것이다(#420). 오래 사는 찜 목록이 그날 단위의 피드에 기대지 않는다.
 - 그날 후보가 아니라는 판정(`ADSERVING-004`)은 스와이프와 가게 상세 찜이 함께 써서 `engine` 의 `CandidateErrorCode` 가 갖는다(#420).
-- 입구는 HTTP 요청 여덟(`GET /v1/feed`, `POST /v1/impressions`, `POST /v1/swipes`, `GET`, `PUT /v1/feed-filter`, `GET`, `POST /v1/wishlist`, `DELETE /v1/wishlist/{campaignId}`)이다. 다른 도메인의 호출은 쿠폰이 부르는 `WishlistQueryService` 와 `CandidateStateUpdater` 둘(#163)과 analytics 가 부르는 `AdservingStatsQueryService`(#350)다. 이벤트는 캠페인의 상태 변경(#565)과 종료(#553) 둘이고, 스케줄은 00:00 묶음의 후보 적재(#582)와 끝난 찜 정리(#553) 둘이다.
+- 입구는 HTTP 요청 여덟(`GET /v1/feed`, `POST /v1/impressions`, `POST /v1/swipes`, `GET`, `PUT /v1/feed-filter`, `GET`, `POST /v1/wishlist`, `DELETE /v1/wishlist/{campaignId}`)이다. 다른 도메인의 호출은 쿠폰이 부르는 `WishlistQueryService` 와 `CandidateStateUpdater` 둘(#163)과 analytics 가 부르는 `AdservingStatsQueryService`(#350)다. 이벤트는 캠페인의 상태 변경(#565)과 종료(#553) 둘이고, 스케줄은 00:00 묶음의 후보 적재(#582), 끝난 찜 정리(#553), 가게별 대상 인원 집계(#592) 셋이다.
 - 집계 조회의 구현은 노출을 주로 세서 `impression` 에 둔다. 찜은 `feed` 의 `swipe_log` 에서 센다.
 
 ### 규칙을 두는 곳
@@ -252,6 +255,16 @@ A 를 고른다. 가게 상세 찜을 리포트에 넣어야 하면 그 찜을 �
 
 예산을 읽지 못했으면 2 와 4 를 건너뛰고 10장 모두 관련성이다(9장).
 
+### 가게별 대상 인원
+
+`StoreAudienceCounter.count` 가 센다. 접속 위치, 회원 프로필, 가게 좌표는 `StoreAudienceService` 가 읽어 넘긴다(#592).
+
+- 반경은 포함 관계다. 회원은 7일 동안 접속한 위치 가운데 가게에서 가장 가까운 곳으로 재고, 그 거리 안의 반경 칸마다 한 번 센다
+- 성별 칸은 캠페인의 타겟 성별이다. `MALE`, `FEMALE` 은 그 성별의 회원이고 `ALL` 은 프로필이 있는 모든 회원이다. 회원 성별 `OTHER` 는 `ALL` 칸에만 든다(#218)
+- 성별이나 연령대가 없는 회원은 세지 않는다
+- 인원이 0 인 칸도 만들어 전날 값을 덮는다. 가게 하나에 반경 4 x 성별 3 x 연령대 4 = 48칸이다
+- 가게마다 모든 접속 위치와 거리를 재지 않도록 위치를 0.05도 격자로 나누고 반경 3 km 상자에 걸치는 격자만 본다
+
 ## 5. 모듈 연결
 
 | 방향 | 대상 도메인 | 인터페이스 | 시점 |
@@ -260,6 +273,8 @@ A 를 고른다. 가게 상세 찜을 리포트에 넣어야 하면 그 찜을 �
 | 읽기 | campaign | `CampaignQueryService.findServableOn`, `findAllById` | 00:00 후보 적재에 1번씩. 적재 대상과 적재 직후 재조회다(#582) |
 | 읽기 | store | `StoreQueryService.findAdCandidatesByStoreIds`, `findMenusByIdIn` | 00:00 후보 적재에서. 가게는 계약 상수 `MAX_AD_CANDIDATE_STORE_IDS` 단위로 나눠 부른다(#582) |
 | 읽기 | billing | `BudgetQueryService.getProgress` | 피드 요청마다 1번. 후보가 5000개를 넘으면 나눠 부른다 |
+| 쓰기 | campaign | `StoreAudienceUpdater.overwrite` | 00:00 묶음 90 에서 1,000칸씩. 호출마다 캠페인의 트랜잭션이다. 캠페인이 광고 서빙을 조회하면 순환이 생겨 광고 서빙이 넣어 준다(FR-042, #592) |
+| 읽기 | member | `MemberQueryService.findAllById` | 00:00 대상 인원 집계에서 최근 7일 접속 회원을 1,000명씩. 성별과 연령대만 쓴다(#592) |
 | 쓰기 | billing | `PointDeductor.deduct` | 처음 저장된 유효 노출마다 1번. 노출 저장과 같은 트랜잭션이다. 쿠폰 소진 뒤의 노출은 부르지 않는다 |
 | 받기 | campaign | `CampaignStatusChangedEvent` | 캠페인이 낮에 멈추거나 재개될 때마다. 발행자와 같은 트랜잭션에서 그날 후보의 `campaign_state` 를 바꾼다(아키텍처 설계 2.4, #565) |
 | 받기 | campaign | `CampaignEndedEvent` | 캠페인이 끝날 때 1번. 발행자와 같은 트랜잭션에서 그 캠페인의 찜을 종료로 표시한다(아키텍처 설계 2.4, #553) |
@@ -353,7 +368,7 @@ flowchart LR
 ```
 
 - `feed` 와 `impression` 과 `wishlist` 에서 `engine` 으로, `feed` 와 `wishlist` 에서 `exclusion` 으로, `impression` 에서 `feed` 로, `feed` 에서 `wishlist` 로만 화살표가 간다. 반대 방향은 없다
-- 다른 도메인의 호출로 들어오는 입구는 쿠폰의 두 `contract` 다. 찜 조회는 `WishlistService` 가, 소진 반영은 `engine` 의 `CandidateStateUpdaterImpl` 이 받는다(#163). 이벤트로 들어오는 입구는 캠페인의 상태 변경(`engine`)과 종료(`wishlist`) 둘이고, 스케줄로 들어오는 입구는 후보 적재(`engine`)와 끝난 찜 정리(`wishlist`) 둘이다
+- 다른 도메인의 호출로 들어오는 입구는 쿠폰의 두 `contract` 다. 찜 조회는 `WishlistService` 가, 소진 반영은 `engine` 의 `CandidateStateUpdaterImpl` 이 받는다(#163). 이벤트로 들어오는 입구는 캠페인의 상태 변경(`engine`)과 종료(`wishlist`) 둘이고, 스케줄로 들어오는 입구는 후보 적재(`engine`), 끝난 찜 정리(`wishlist`), 대상 인원 집계(`feed`) 셋이다
 
 ### 상태 변경
 
@@ -512,6 +527,7 @@ sequenceDiagram
 | 캠페인 상태 변경 | campaign 의 상태 전이 트랜잭션에 참여해 그날 후보의 상태 UPDATE 를 한다. 반영이 실패하면 전이도 되돌아간다 | 없음 |
 | 캠페인 종료 | campaign 의 종료 트랜잭션에 참여해 찜의 종료 표시 UPDATE 를 한다. 표시가 실패하면 종료도 되돌아간다 | 없음 |
 | 끝난 찜 정리 | 기준 시각 전에 끝난 찜을 지우는 DELETE 하나(저장소 메서드의 트랜잭션) | 없음 |
+| 대상 인원 집계 | 광고 서빙 쪽 쓰기는 없다. 캠페인에 넘기는 호출마다 캠페인의 트랜잭션이라 도중에 실패하면 앞의 가게만 오늘 값으로 남는다 | 없음 |
 | 후보 적재 | 그날 후보 upsert 와 7일 지난 행 지우기를 한 트랜잭션으로 한다. 실패하면 아무것도 남지 않고 그 단계만 다시 돈다 | 없음 |
 | 늦게 커밋된 이전 적재 | 이어받기 뒤 이전 서버가 끝까지 돌아 늦게 커밋할 수 있다. 적재가 원천을 읽은 시각(`snapshot_read_at`)이 가진 값보다 늦거나 같을 때만 스냅샷 값을 바꿔, 먼저 읽은 적재가 나중에 읽은 값을 되돌리지 않는다. 서빙 상태와 소진 시각은 이 시각과 따로 지킨다(#582) | 없음 |
 | 적재 직후 재조회 | 적재가 커밋된 뒤 새 트랜잭션에서 캠페인을 다시 읽고 늦은 전이만 상태를 바꾼다. 같은 트랜잭션이면 반복 읽기의 스냅샷 때문에 적재 중의 커밋이 보이지 않는다 | 없음 |
@@ -596,6 +612,7 @@ A 를 고른다. 분석의 결정과 어긋났을 때 B 는 노출 이벤트를 
 | 카운터를 올리지 못한 노출 | 상한이 늦게 걸려 미과금 노출이 더 나간다 | 플랫폼 | `adserving_cache_bypass_total`(`use=impression_count`) 로 센다 |
 | 스와이프 기록이 끝내 실패한 찜 | 찜은 남고 스와이프 기록이 없다. 30일 업종 선호도에 그 찜이 빠진다 | 사용자 | 돈이 걸리지 않는다. 클라이언트가 다시 보내면 맞춰진다 |
 | 소진 반영이 빠진 그날 후보 | 소진된 캠페인이 계속 나가고, 소진 뒤 노출이 `NOT_BILLED_SOLD_OUT` 으로 걸러지지 않아 과금된다 | 점주 | 쿠폰이 `INVENTORY_EXHAUSTED` 로 발급을 거절할 때마다 `markSoldOut` 을 다시 부른다(#163 에서 정했다). 소진 뒤 발급 요청이 없으면 복구되지 않는다. 쿠폰 쪽 연동은 후속 작업이다 |
+| 대상 인원을 넘기다 실패 | 앞서 넘긴 가게만 오늘 값이고 나머지는 전날 값이다. 칸의 영업일로 구별된다 | 점주(추천값이 하루 늦다) | 단계를 실패로 남겨 묶음 규칙대로 다시 돈다. 덮어쓰기라 다시 돌면 모두 오늘 값이다. 그사이 캠페인은 전날 값으로 추천한다(FR-042, #592) |
 | 가게나 메뉴명을 찾지 못한 캠페인 | 그 캠페인만 적재하지 않는다. 그날 피드에 나오지 않는다 | 점주 | `adserving_candidate_load_skipped_total`(`reason=store_missing`, `menu_missing`) 로 센다. 메뉴 할인에 메뉴명 없이 넣으면 CHECK 에 걸려 적재 전체가 실패해서 뺀다 |
 | 상태 통보가 온 날 후보가 없음 | 반영할 행이 없다. 예외 없이 반환한다 | 없음 | `adserving_status_candidate_missing_total` 로 센다. 적재 전이거나 적재에서 빠진 캠페인이다 |
 | 소진 통보가 온 날 후보가 없음 | 반영할 행이 없다. 예외 없이 반환한다 | 없음 | `adserving_sold_out_candidate_missing_total` 로 센다. 적재 전이거나 적재에서 빠진 캠페인이다 |
@@ -611,12 +628,16 @@ A 를 고른다. 분석의 결정과 어긋났을 때 B 는 노출 이벤트를 
 |---|---|---|---|
 | `ADSERVING_CANDIDATE_LOAD` | 00:00 묶음 75 | 그날 서빙 대상 캠페인(`findServableOn`)과 가게를 읽어 그날 후보를 넣는다. ACTIVE 는 `SERVABLE`, 예약이 있는 PAUSED 는 `PAUSED` 다. 7일 지난 영업일의 행을 지운다. 커밋 뒤 캠페인을 다시 읽어 적재 중의 상태 전이를 반영한다(#582) | 행이 늘지 않고 소진 시각을 덮지 않으며 상태는 늦을 때만 바꾼다 |
 | `ADSERVING_ENDED_WISHLIST_CLEANUP` | 00:00 묶음 80 | 영업일 D 에 D-3 00:00 전에 끝난 캠페인의 찜을 지운다. 끝난 날을 빼고 3일 동안 보이게 하려는 것이다(#548) | 지울 행이 없어 결과가 같다 |
+| `ADSERVING_STORE_AUDIENCE` | 00:00 묶음 90 | 그날 서빙 대상 캠페인(`findServableOn`)의 가게마다 최근 7일(D-7 ~ D-1) 접속 회원을 점주 반경 500/1000/2000/3000 m x 성별(`MALE`, `FEMALE`, `ALL`) x 연령대 칸으로 세어 캠페인에 넘긴다(FR-099 (10), FR-042, #592) | 덮어쓰기라 결과가 같다 |
 
 - 정리는 다른 단계의 결과를 읽지도 바꾸지도 않아 정산 단계(40~70) 뒤에 둔다. 앞 단계가 실패하면 정리가 하루 미뤄질 뿐이다(#553).
 - 적재는 정산의 예약(50)과 시간대별 목표(70) 뒤, 끝난 찜 정리(80) 앞이다. FR-099 의 (8) 적재가 (11) 찜 정리보다 앞인 순서다(#582).
 - 이어받기가 같은 단계를 겹쳐 돌릴 수 있다(`런치캐치_배치_운영.md` 2장). 적재는 멱등 upsert 라 다시 돌아도 같다. 두 서버가 같은 순간 같은 행을 upsert 하면 교착이 날 수 있고, 묶음 규칙이 일시적 오류로 보고 다시 돌린다.
 - 실행 세대 확인(`BatchAttemptGuard`)은 쓰지 않는다. `DailyJob.run` 이 세대를 받지 않는다. 대신 적재가 원천을 읽은 시각(`snapshot_read_at`, V4)을 행에 남기고 그보다 늦게 읽은 적재만 스냅샷 값을 바꾼다. 늦게 깨어난 서버가 먼저 읽은 값으로 새 값을 되돌리지 않는다(#582 에서 정했다).
 - 지난 후보는 7일 보관한다. 지금 그날 행만 읽는다(#582 에서 정했다).
+- 대상 인원 집계는 맨 뒤 90 이다. 다른 단계의 결과를 읽지도 바꾸지도 않는다. 집계할 가게는 그날 서빙 대상 캠페인의 가게로 좁혔다. 첫 캠페인을 등록하는 가게는 집계에 없어 부트스트랩 하루 예산을 받는다(#592 에서 정했다).
+- 대상 인원은 점심 시간대를 구분하지 않고 최근 7일 접속 회원을 센다. 서빙 시간대를 없앴고(#498) `feed_visit_daily` 는 시각 구분 없이 그날 첫 위치를 남긴다(#592 에서 정했다).
+- 7일치 접속 위치를 한 번 읽어 메모리에서 센다. 가게마다 조회하지 않는다(#592 에서 정했다).
 - 스케줄러가 꺼진 로컬은 시드(`R__50_daily.sql`)의 그날 후보로 피드를 본다. 적재가 도는 서버에서는 적재가 같은 키를 덮어쓴다. 두 값이 같은지 `SeedIntegrationTest` 가 본다(#582 에서 정했다).
 
 ## 11. 성능
@@ -705,6 +726,7 @@ A 를 고른다. 분석의 결정과 어긋났을 때 B 는 노출 이벤트를 
 | 적재가 다시 돔 | 적재 뒤 소진과 더 늦은 멈춤이 들어왔다 | 같은 영업일로 다시 돈다 | 행이 늘지 않고 소진 시각과 멈춤이 남는다 | `CandidateLoadIntegrationTest.다시_돌아도_행이_늘지_않고_소진_시각과_더_늦은_상태_통보가_남는다` |
 | 적재 중의 상태 전이 | 적재가 읽은 뒤 캠페인이 멈췄다 | 적재 단계가 돈다 | 재조회로 `PAUSED` 가 된다 | `CandidateLoadIntegrationTest.적재_중에_상태가_바뀐_캠페인은_재조회로_반영한다` |
 | 가게나 메뉴가 없음 | 가게가 없는 캠페인과 메뉴명을 찾지 못한 메뉴 할인 캠페인이 있다 | 적재 단계가 돈다 | 둘을 빼고 나머지를 적재한다 | `CandidateLoadIntegrationTest.가게나_메뉴를_찾지_못한_캠페인은_빼고_나머지를_적재한다` |
+| 대상 인원 집계 | 최근 7일 안과 밖, 오늘의 접속, 남성, 여성, OTHER 회원이 있다 | 집계 단계가 돈다 | 7일 안 접속만 회원마다 한 번 세고 OTHER 는 ALL 칸에만 든다 | `StoreAudienceIntegrationTest.최근_7일_접속만_회원마다_한_번_세고_OTHER_는_ALL_칸에만_넘긴다` |
 | 지난 후보 정리 | 8일 전, 7일 전 후보가 있다 | 오늘 적재가 돈다 | 8일 전 후보만 지워진다 | `CandidateLoadIntegrationTest.보관_기간_7일이_지난_영업일의_후보만_지운다` |
 | 끝난 찜 정리 | 10/1 23:59, 10/2 00:00 에 끝난 찜과 진행 중인 찜이 있다 | 10/5 정리 단계가 돈다 | 10/1 에 끝난 찜만 지워진다 | `WishlistCampaignEndedIntegrationTest.정리_단계는_끝난_날을_빼고_3일이_지난_찜만_지운다` |
 | 쿠폰이 찜을 물음 | 한 회원이 두 캠페인을, 다른 회원이 한 캠페인을 찜했다 | 단건과 목록을 조회한다 | 둘이 같은 찜을 유효하다고 본다 | `WishlistQueryIntegrationTest.단건_조회와_목록_조회가_같은_찜을_유효하다고_본다` |

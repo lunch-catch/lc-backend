@@ -37,8 +37,22 @@ public class FeedVisitRepository {
         });
     }
 
+    /*
+     * 영업일 범위(양 끝 포함)의 접속 위치를 회원과 함께 읽는다. 같은 회원의 같은 위치는 한 번만 돌려준다.
+     * PK(business_date, member_id)의 앞 열로 범위만 읽는다. 대상 인원 집계(FR-042)가 부른다(#592).
+     */
+    public List<VisitPoint> findPointsBetween(LocalDate from, LocalDate to) {
+        return jdbcTemplate.query("""
+                SELECT DISTINCT member_id, lat_rounded, lng_rounded FROM feed_visit_daily
+                 WHERE business_date BETWEEN ? AND ?
+                """, (rs, i) -> new VisitPoint(rs.getLong(1), rs.getDouble(2), rs.getDouble(3)), from, to);
+    }
+
     static BigDecimal round(double coordinate) {
         return BigDecimal.valueOf(coordinate).setScale(3, RoundingMode.HALF_UP);
+    }
+
+    public record VisitPoint(long memberId, double latitude, double longitude) {
     }
 
     // requestedAt 은 그 피드 요청을 받은 한국 시각이다. created_at 에 남는다.
