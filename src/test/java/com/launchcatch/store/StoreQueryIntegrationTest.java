@@ -189,14 +189,12 @@ class StoreQueryIntegrationTest extends AbstractStoreIntegrationTest {
     }
 
     @Test
-    void 대표_이미지가_없으면_내부_이미지가_있어도_대표_이미지_URL은_null이다() {
+    void 대표_이미지가_없으면_내부_이미지가_있어도_가게_조회는_실패한다() {
         jdbc.update("delete from store_image where store_id = ?", storeId);
         insertStoreImage(storeId, "INTERIOR", "interior/" + storeId + ".png", 1);
 
-        assertThat(service.findAllById(List.of(storeId, otherStoreId)))
-                .extracting("storeId").containsExactlyInAnyOrder(storeId, otherStoreId);
-        assertThat(service.findAllById(List.of(storeId))).singleElement()
-                .satisfies(store -> assertThat(store.storeImageUrl()).isNull());
+        assertThatThrownBy(() -> service.findAllById(List.of(storeId, otherStoreId)))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("이미지가 누락");
     }
 
     @Test
@@ -209,12 +207,12 @@ class StoreQueryIntegrationTest extends AbstractStoreIntegrationTest {
 
     @ParameterizedTest
     @ValueSource(strings = {"PENDING", "UPLOADED"})
-    void 대표_이미지_검증이_완료되지_않았으면_URL은_null이다(String uploadStatus) {
+    void 대표_이미지_검증이_완료되지_않았으면_가게_조회는_실패한다(String uploadStatus) {
         jdbc.update("update store_image set upload_status = ?, verified_at = null where store_id = ?",
                 uploadStatus, storeId);
 
-        assertThat(service.findAllById(List.of(storeId))).singleElement()
-                .satisfies(store -> assertThat(store.storeImageUrl()).isNull());
+        assertThatThrownBy(() -> service.findAllById(List.of(storeId)))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("이미지가 누락");
     }
 
     @ParameterizedTest

@@ -153,7 +153,9 @@ class StoreCompleteIntegrationTest extends AbstractStoreIntegrationTest {
         "update store set business_verification_status='FAILED',business_verified_at=null where owner_id=?",
         "update store set road_address=null where owner_id=?",
         "delete h from store_business_hour h join store s on s.store_id=h.store_id where s.owner_id=? and h.day_of_week='SUNDAY'",
-        "update store_image i join store s on s.store_id=i.store_id set i.upload_status='PENDING',i.verified_at=null where s.owner_id=?"
+        "delete i from store_image i join store s on s.store_id=i.store_id where s.owner_id=? and i.image_type='LOGO'",
+        "update store_image i join store s on s.store_id=i.store_id set i.upload_status='PENDING',i.verified_at=null where s.owner_id=?",
+        "update store_image i join store s on s.store_id=i.store_id set i.upload_status='UPLOADED',i.verified_at=null where s.owner_id=?"
     })
     void 필수_데이터가_없으면_두_조회와_최종_등록이_같이_미완료로_판정한다(String sql) throws Exception {
         jdbc.update(sql, ownerId);
