@@ -107,11 +107,13 @@ PATCH는 DTO의 null을 미수정으로 취급한다. 동의는 값이 바뀔 �
 
 ## 7. 다른 도메인에 공개하는 회원 조회
 
-`MemberQueryService`는 단건 `findById(Long memberId)`와 일괄 `findAllById(List<Long> memberIds)`를 제공한다. [MemberInfo](../../../src/main/java/com/launchcatch/member/contract/MemberInfo.java)는 상태·온보딩·동의, 저장 좌표, 성별·연령대와 닉네임을 반환한다. HTTP 내 정보 DTO와는 별개의 계약이다.
+`MemberQueryService`는 단건 `findById(Long memberId)`와 일괄 `findAllById(List<Long> memberIds)`를 제공한다. 상태만 필요한 호출자를 위한 `findCurrentStatus`와 `findCurrentStatuses`는 아래에 따로 적는다. [MemberInfo](../../../src/main/java/com/launchcatch/member/contract/MemberInfo.java)는 상태·온보딩·동의, 저장 좌표, 성별·연령대와 닉네임을 반환한다. HTTP 내 정보 DTO와는 별개의 계약이다.
 
 `findCurrentStatus(Long memberId)`는 프로필을 조회하지 않고 현재 회원 상태만 `Optional<MemberStatus>`로 반환한다. 없는 회원은 빈 결과를 반환하며 조회 장애는 호출자에게 그대로 전달한다. 쿠폰 발급은 이 계약으로 현재 ACTIVE 회원인지 확인한다.
 
-일괄 입력은 최대 1,000개다. 없는 회원은 결과에서 빠지며 순서를 보장하지 않는다. `MemberQueryServiceImpl`은 프로필을 함께 조회하고 프로필이 없으면 좌표·성별·연령대를 null로 반환한다. 회원 상태와 동의를 최종 사용 조건으로 판정하는 일은 호출자가 맡는다.
+`findCurrentStatuses(Set<Long> memberIds)`는 프로필을 조회하지 않고 회원 ID를 키로 현재 상태를 `Map<Long, MemberStatus>`로 반환한다. 저장소를 한 번만 부르며 `ACTIVE`, `SUSPENDED`, `WITHDRAWN`을 `findCurrentStatus`와 같은 값으로 돌려준다. 없는 회원은 결과에서 빠지고 빈 집합은 저장소를 부르지 않고 빈 결과를 반환한다. 입력이 1,000개를 넘으면 `IllegalArgumentException`을 던진다. 조회 장애는 빈 결과로 바꾸지 않고 호출자에게 그대로 전달한다. 쿠폰 묶음 발급은 이 계약으로 묶음의 회원 상태를 한 번에 확인한다.
+
+`findAllById`의 일괄 입력은 최대 1,000개다. 없는 회원은 결과에서 빠지며 순서를 보장하지 않는다. `MemberQueryServiceImpl`은 프로필을 함께 조회하고 프로필이 없으면 좌표·성별·연령대를 null로 반환한다. 회원 상태와 동의를 최종 사용 조건으로 판정하는 일은 호출자가 맡는다.
 
 분석용 `MemberStatsQueryService.dailyStats(LocalDate)`의 반환값과 현재 상태로 과거 탈퇴 수를 계산하는 한계는 [구조와 동작 설계 3~5장](./member_구조와_동작_설계.md#3-저장)이 갖는다.
 
