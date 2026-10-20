@@ -9,6 +9,8 @@ import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.sql.Types;
 import java.time.LocalDate;
+import java.util.HashMap;
+import java.util.Map;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
@@ -34,6 +36,12 @@ public class EventLogRepository {
             SELECT COUNT(*)
             FROM event_log
             WHERE event_type = ? AND occurred_at >= ? AND occurred_at < ?
+            """;
+    private static final String COUNT_WISHES_BY_MEMBER = """
+            SELECT member_id, COUNT(*) AS wish_count
+            FROM event_log
+            WHERE event_type = 'wish' AND occurred_at >= ? AND occurred_at < ? AND member_id IS NOT NULL
+            GROUP BY member_id
             """;
     private static final String COUNT_CAMPAIGN_EVENTS = """
             SELECT COUNT(CASE WHEN event_type = 'impression' THEN 1 END) AS impression_count,
@@ -72,6 +80,16 @@ public class EventLogRepository {
                 Timestamp.valueOf(businessDate.atStartOfDay()),
                 Timestamp.valueOf(businessDate.plusDays(1).atStartOfDay()));
         return count == null ? 0 : count;
+    }
+
+    // 영업일 하루(KST 자정부터 다음 자정 전까지)에 기록된 wish 행 수를 회원마다 센다
+    public Map<Long, Long> countWishesByMember(LocalDate businessDate) {
+        Map<Long, Long> counts = new HashMap<>();
+        jdbc.query(COUNT_WISHES_BY_MEMBER, rs -> {
+            counts.put(rs.getLong("member_id"), rs.getLong("wish_count"));
+        }, Timestamp.valueOf(businessDate.atStartOfDay()),
+                Timestamp.valueOf(businessDate.plusDays(1).atStartOfDay()));
+        return counts;
     }
 
     public boolean insert(EventLogEntry entry) {
