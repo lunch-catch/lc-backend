@@ -5,7 +5,6 @@ import java.sql.Time;
 import java.sql.Timestamp;
 import java.time.LocalDateTime;
 import java.util.List;
-import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import org.springframework.jdbc.core.JdbcTemplate;
 
@@ -17,17 +16,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 @RequiredArgsConstructor
 class AdCandidateLoadImpl implements AdCandidateLoad {
 
-    // 원천을 읽은 시각으로 지키는 스냅샷 열이다. 서빙 상태와 소진 시각은 여기에 넣지 않는다
-    private static final List<String> SNAPSHOT_COLUMNS = List.of("store_id", "store_name", "store_image_url", "category_code",
-            "latitude", "longitude", "target_radius", "target_gender", "target_age_groups", "discount_target_type",
-            "discount_type", "discount_value", "discount_menu_name", "usable_start_time", "usable_end_time", "issue_quantity",
-            "campaign_created_at", "new_priority_until");
-
-    private static final String NEWER_SNAPSHOT =
-            "(ad_candidate.snapshot_read_at IS NULL OR ad_candidate.snapshot_read_at <= n.snapshot_read_at)";
-    private static final String LATER_STATE =
-            "(ad_candidate.state_changed_at IS NULL OR ad_candidate.state_changed_at < n.state_changed_at)";
-
+    // 고정된 문장이다. 스냅샷 열(가게, 위치, 노출 대상, 할인, 사용 시간 등)은 읽은 시각으로, 서빙 상태는 전이 시각으로 지킨다
     private static final String UPSERT = """
             INSERT INTO ad_candidate (business_date, campaign_id, store_id, store_name, store_image_url, category_code,
                 latitude, longitude, target_radius, target_gender, target_age_groups, discount_target_type, discount_type,
@@ -35,15 +24,50 @@ class AdCandidateLoadImpl implements AdCandidateLoad {
                 new_priority_until, campaign_state, state_changed_at, snapshot_read_at, created_at, updated_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) AS n
             ON DUPLICATE KEY UPDATE
-            """ + SNAPSHOT_COLUMNS.stream()
-                    .map(c -> c + " = IF(" + NEWER_SNAPSHOT + ", n." + c + ", ad_candidate." + c + ")")
-                    .collect(Collectors.joining(", ")) + """
-            ,
-                campaign_state = IF(%1$s, n.campaign_state, ad_candidate.campaign_state),
-                state_changed_at = IF(%1$s, n.state_changed_at, ad_candidate.state_changed_at),
-                snapshot_read_at = IF(%2$s, n.snapshot_read_at, ad_candidate.snapshot_read_at),
+                store_id = IF(ad_candidate.snapshot_read_at IS NULL OR ad_candidate.snapshot_read_at <= n.snapshot_read_at,
+                    n.store_id, ad_candidate.store_id),
+                store_name = IF(ad_candidate.snapshot_read_at IS NULL OR ad_candidate.snapshot_read_at <= n.snapshot_read_at,
+                    n.store_name, ad_candidate.store_name),
+                store_image_url = IF(ad_candidate.snapshot_read_at IS NULL OR ad_candidate.snapshot_read_at <= n.snapshot_read_at,
+                    n.store_image_url, ad_candidate.store_image_url),
+                category_code = IF(ad_candidate.snapshot_read_at IS NULL OR ad_candidate.snapshot_read_at <= n.snapshot_read_at,
+                    n.category_code, ad_candidate.category_code),
+                latitude = IF(ad_candidate.snapshot_read_at IS NULL OR ad_candidate.snapshot_read_at <= n.snapshot_read_at,
+                    n.latitude, ad_candidate.latitude),
+                longitude = IF(ad_candidate.snapshot_read_at IS NULL OR ad_candidate.snapshot_read_at <= n.snapshot_read_at,
+                    n.longitude, ad_candidate.longitude),
+                target_radius = IF(ad_candidate.snapshot_read_at IS NULL OR ad_candidate.snapshot_read_at <= n.snapshot_read_at,
+                    n.target_radius, ad_candidate.target_radius),
+                target_gender = IF(ad_candidate.snapshot_read_at IS NULL OR ad_candidate.snapshot_read_at <= n.snapshot_read_at,
+                    n.target_gender, ad_candidate.target_gender),
+                target_age_groups = IF(ad_candidate.snapshot_read_at IS NULL OR ad_candidate.snapshot_read_at <= n.snapshot_read_at,
+                    n.target_age_groups, ad_candidate.target_age_groups),
+                discount_target_type = IF(ad_candidate.snapshot_read_at IS NULL OR ad_candidate.snapshot_read_at <= n.snapshot_read_at,
+                    n.discount_target_type, ad_candidate.discount_target_type),
+                discount_type = IF(ad_candidate.snapshot_read_at IS NULL OR ad_candidate.snapshot_read_at <= n.snapshot_read_at,
+                    n.discount_type, ad_candidate.discount_type),
+                discount_value = IF(ad_candidate.snapshot_read_at IS NULL OR ad_candidate.snapshot_read_at <= n.snapshot_read_at,
+                    n.discount_value, ad_candidate.discount_value),
+                discount_menu_name = IF(ad_candidate.snapshot_read_at IS NULL OR ad_candidate.snapshot_read_at <= n.snapshot_read_at,
+                    n.discount_menu_name, ad_candidate.discount_menu_name),
+                usable_start_time = IF(ad_candidate.snapshot_read_at IS NULL OR ad_candidate.snapshot_read_at <= n.snapshot_read_at,
+                    n.usable_start_time, ad_candidate.usable_start_time),
+                usable_end_time = IF(ad_candidate.snapshot_read_at IS NULL OR ad_candidate.snapshot_read_at <= n.snapshot_read_at,
+                    n.usable_end_time, ad_candidate.usable_end_time),
+                issue_quantity = IF(ad_candidate.snapshot_read_at IS NULL OR ad_candidate.snapshot_read_at <= n.snapshot_read_at,
+                    n.issue_quantity, ad_candidate.issue_quantity),
+                campaign_created_at = IF(ad_candidate.snapshot_read_at IS NULL OR ad_candidate.snapshot_read_at <= n.snapshot_read_at,
+                    n.campaign_created_at, ad_candidate.campaign_created_at),
+                new_priority_until = IF(ad_candidate.snapshot_read_at IS NULL OR ad_candidate.snapshot_read_at <= n.snapshot_read_at,
+                    n.new_priority_until, ad_candidate.new_priority_until),
+                campaign_state = IF(ad_candidate.state_changed_at IS NULL OR ad_candidate.state_changed_at < n.state_changed_at,
+                    n.campaign_state, ad_candidate.campaign_state),
+                state_changed_at = IF(ad_candidate.state_changed_at IS NULL OR ad_candidate.state_changed_at < n.state_changed_at,
+                    n.state_changed_at, ad_candidate.state_changed_at),
+                snapshot_read_at = IF(ad_candidate.snapshot_read_at IS NULL OR ad_candidate.snapshot_read_at <= n.snapshot_read_at,
+                    n.snapshot_read_at, ad_candidate.snapshot_read_at),
                 updated_at = n.updated_at
-            """.formatted(LATER_STATE, NEWER_SNAPSHOT);
+            """;
 
     private final JdbcTemplate jdbcTemplate;
 
