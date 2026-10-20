@@ -69,21 +69,16 @@ class KakaoUnlinkFailureTest {
         assertThat(failure.getStopReason()).isEqualTo(KakaoUnlinkStopReason.REJECTED);
     }
 
-    /*
-     * 재가입이 대기 행을 지우지 못한 채로 같은 회원이 다시 탈퇴하면, UNIQUE(member_id) 때문에
-     * 새 행을 넣을 수 없다. 닫힌 행을 그대로 두면 이번 탈퇴의 해제가 한 번도 시도되지 않는다.
-     */
     @Test
-    @DisplayName("다시 열면 닫힌 행이 처음 상태로 돌아간다")
-    void 다시_열면_닫힌_행이_처음_상태로_돌아간다() {
+    void 실행_중이거나_포기한_작업은_다시_선점하지_않는다() {
         KakaoUnlinkFailure failure = failure();
+        assertThat(failure.claim()).isTrue();
+        assertThat(failure.claim()).isFalse();
+        failure.release();
+        assertThat(failure.claim()).isTrue();
         failure.rejectPermanently();
-
-        failure.reopen();
-
-        assertThat(failure.getAttemptCount()).isZero();
-        assertThat(failure.isResolved()).isFalse();
-        assertThat(failure.getStopReason()).isNull();
+        assertThat(failure.claim()).isFalse();
+        assertThat(failure.isProcessing()).isFalse();
     }
 
     private KakaoUnlinkFailure failure() {

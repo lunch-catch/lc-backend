@@ -97,7 +97,8 @@ public class MemberAuthController {
             @ApiResponse(responseCode = "200", description = "로그인 또는 가입 성공. accessToken과 refreshToken 쿠키가 설정됩니다.", useReturnTypeSchema = true, content = @Content(mediaType = "application/json")),
             @ApiResponse(responseCode = "400", description = "COMMON-002: 인가 코드 또는 상태 검증값이 비어 있습니다. COMMON-003: 요청 형식 오류", content = @Content(mediaType = "application/json", schema = @Schema(implementation = ResponseEnvelope.class))),
             @ApiResponse(responseCode = "401", description = "AUTH-007: 상태 검증값이 만료·재사용되었거나 카카오 인증에 실패했습니다.", content = @Content(mediaType = "application/json", schema = @Schema(implementation = ResponseEnvelope.class))),
-            @ApiResponse(responseCode = "403", description = "MEMBER-003: 정지 이력이 있거나 로그인할 수 없는 회원입니다.", content = @Content(mediaType = "application/json", schema = @Schema(implementation = ResponseEnvelope.class))),
+            @ApiResponse(responseCode = "403", description = "MEMBER-003: 정지 이력이 있거나 로그인할 수 없는 회원입니다. MEMBER-004: 탈퇴한 당일에는 재가입할 수 없습니다.", content = @Content(mediaType = "application/json", schema = @Schema(implementation = ResponseEnvelope.class))),
+            @ApiResponse(responseCode = "409", description = "MEMBER-005: 이전 계정의 카카오 연결 해제가 완료되지 않았습니다.", content = @Content(mediaType = "application/json", schema = @Schema(implementation = ResponseEnvelope.class))),
             @ApiResponse(responseCode = "503", description = "AUTH-002: 갱신 토큰의 DB 해시 백업 저장에 실패했습니다.", content = @Content(mediaType = "application/json", schema = @Schema(implementation = ResponseEnvelope.class)))
     })
     public ResponseEntity<ResponseEnvelope<MemberLoginResponse>> login(

@@ -23,6 +23,7 @@ import com.launchcatch.member.oauth.KakaoIdentity;
 import com.launchcatch.member.repository.KakaoUnlinkFailureRepository;
 import com.launchcatch.member.repository.MemberProfileRepository;
 import com.launchcatch.member.repository.MemberRepository;
+import com.launchcatch.member.repository.MemberWithdrawalHistoryRepository;
 import java.lang.reflect.Field;
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
@@ -56,6 +57,8 @@ class MemberWithdrawalServiceTest {
     @Mock PlatformTransactionManager transactionManager;
     @Mock TransactionStatus transactionStatus;
 
+    @Mock MemberWithdrawalHistoryRepository withdrawalHistoryRepository;
+
     private MemberWithdrawalService memberWithdrawalService;
 
     @BeforeEach
@@ -67,6 +70,7 @@ class MemberWithdrawalServiceTest {
                 memberRepository,
                 memberProfileRepository,
                 kakaoUnlinkFailureRepository,
+                withdrawalHistoryRepository,
                 memberTokenService,
                 kakaoUnlinkClient,
                 new TransactionTemplate(transactionManager),
@@ -186,19 +190,20 @@ class MemberWithdrawalServiceTest {
      * 닫힌 행을 그대로 두면 이번 탈퇴의 해제가 한 번도 시도되지 않는다.
      */
     @Test
-    @DisplayName("남아 있던 닫힌 행은 다시 열어서 쓴다")
-    void 남아_있던_닫힌_행은_다시_열어서_쓴다() throws Exception {
+    @DisplayName("이미 포기한 해제 작업은 성공으로 간주하지 않는다")
+    void 이미_포기한_해제_작업은_성공으로_간주하지_않는다() throws Exception {
         Member member = member();
         KakaoUnlinkFailure stale = KakaoUnlinkFailure.create(member);
         stale.rejectPermanently();
         givenReauthenticated(member);
         when(kakaoUnlinkFailureRepository.findByMember_Id(1L)).thenReturn(Optional.of(stale));
-        doThrow(new RuntimeException("network")).when(kakaoUnlinkClient).unlink("kakao-1");
+        assertThatThrownBy(() -> memberWithdrawalService.withdraw(1L, "code", "state"))
+                .isInstanceOfSatisfying(MemberException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(MemberErrorCode.UNLINK_PENDING));
 
-        memberWithdrawalService.withdraw(1L, "code", "state");
-
-        assertThat(stale.isResolved()).isFalse();
-        assertThat(stale.getStopReason()).isNull();
+        assertThat(stale.isResolved()).isTrue();
+        assertThat(member.getStatus()).isEqualTo(MemberStatus.ACTIVE);
+        verify(kakaoUnlinkClient, never()).unlink(any());
         verify(kakaoUnlinkFailureRepository, never()).save(any(KakaoUnlinkFailure.class));
     }
 
@@ -242,22 +247,31 @@ class MemberWithdrawalServiceTest {
         assertThat(member.getProfile()).isNull();
         verify(memberProfileRepository).delete(profile);
         verify(memberTokenService).revoke(1L);
-        verify(kakaoUnlinkFailureRepository).deleteByMember_Id(1L);
+        verify(kakaoUnlinkFailureRepository, never()).deleteByMember_Id(1L);
         verify(kakaoUnlinkClient, never()).unlink(any());
         verify(kakaoUnlinkFailureRepository, never()).save(any(KakaoUnlinkFailure.class));
     }
 
     @Test
-    @DisplayName("이미 탈퇴한 회원의 웹훅은 남은 대기 행만 정리한다")
-    void 이미_탈퇴한_회원의_웹훅은_남은_대기_행만_정리한다() throws Exception {
+    @DisplayName("이미 탈퇴한 회원의 웹훅은 진행 중인 해제 작업을 지우지 않는다")
+    void 이미_탈퇴한_회원의_웹훅은_진행_중인_해제_작업을_지우지_않는다() {
+        memberWithdrawalService.withdrawByKakaoWebhook("kakao-1");
+
+        verify(kakaoUnlinkFailureRepository, never()).deleteByMember_Id(any());
+        verify(memberTokenService, never()).revoke(any());
+    }
+
+    @Test
+    void 재가입_계정의_웹훅은_이전_통보와_구분할_수_없어_회원과_토큰을_유지한다() throws Exception {
         Member member = member();
-        setField(member, "status", MemberStatus.WITHDRAWN);
         when(memberRepository.findByProviderUserIdForUpdate("kakao-1")).thenReturn(Optional.of(member));
+        when(withdrawalHistoryRepository.existsByProviderUserId("kakao-1")).thenReturn(true);
 
         memberWithdrawalService.withdrawByKakaoWebhook("kakao-1");
 
-        verify(kakaoUnlinkFailureRepository).deleteByMember_Id(1L);
+        assertThat(member.getStatus()).isEqualTo(MemberStatus.ACTIVE);
         verify(memberTokenService, never()).revoke(any());
+        verify(withdrawalHistoryRepository, never()).save(any());
     }
 
     private void givenReauthenticated(Member member) {

@@ -46,6 +46,9 @@ public class KakaoUnlinkFailure extends BaseTimeEntity {
     @Column(nullable = false)
     private boolean resolved;
 
+    @Column(nullable = false)
+    private boolean processing;
+
     @Enumerated(EnumType.STRING)
     @Column(name = "stop_reason", length = 20)
     private KakaoUnlinkStopReason stopReason;
@@ -66,6 +69,18 @@ public class KakaoUnlinkFailure extends BaseTimeEntity {
         return new KakaoUnlinkFailure(member);
     }
 
+    public boolean claim() {
+        if (resolved || processing) {
+            return false;
+        }
+        processing = true;
+        return true;
+    }
+
+    public void release() {
+        processing = false;
+    }
+
     /*
      * 재시도 한 번이 실패했다. 한도에 닿으면 그 자리에서 닫는다.
      *
@@ -81,19 +96,6 @@ public class KakaoUnlinkFailure extends BaseTimeEntity {
     }
 
     /*
-     * 같은 회원이 다시 탈퇴했다. 남아 있던 행을 처음 상태로 돌린다.
-     *
-     * 재가입은 대기 행을 지우므로 보통 이 자리에 행이 없다. 그래도 지우지 못한 행이 남아
-     * 있으면 UNIQUE(member_id) 때문에 새 행을 넣을 수 없고, 그 행이 resolved 로 닫혀 있으면
-     * 이번 탈퇴의 해제가 한 번도 시도되지 않는다. 그 침묵을 막는다.
-     */
-    public void reopen() {
-        this.attemptCount = 0;
-        this.resolved = false;
-        this.stopReason = null;
-    }
-
-    /*
      * 카카오가 영구적으로 거부했다. 재시도 횟수는 건드리지 않는다.
      * 횟수로 종료를 표현하면 "다섯 번 시도했다" 와 "한 번 만에 거부당했다" 가 같은 값이 된다.
      */
@@ -103,6 +105,7 @@ public class KakaoUnlinkFailure extends BaseTimeEntity {
 
     private void stop(KakaoUnlinkStopReason reason) {
         this.resolved = true;
+        this.processing = false;
         this.stopReason = reason;
     }
 }
