@@ -14,6 +14,7 @@ import com.launchcatch.store.dto.StoreRegistrationProgressResponse;
 import com.launchcatch.store.dto.StoreRegistrationProgressSnapshot;
 import com.launchcatch.store.entity.StoreImage;
 import com.launchcatch.store.entity.StoreImageType;
+import com.launchcatch.store.entity.StoreImageUploadStatus;
 import com.launchcatch.store.entity.StoreRegistrationProgress;
 import com.launchcatch.store.entity.StoreRegistrationStep;
 import com.launchcatch.store.exception.StoreErrorCode;
@@ -24,6 +25,7 @@ import java.lang.reflect.Field;
 import java.net.URL;
 import java.time.Clock;
 import java.time.Instant;
+import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.Optional;
 import java.util.function.Consumer;
@@ -110,6 +112,94 @@ class StoreImageUploadServiceTest {
         ArgumentCaptor<PutObjectPresignRequest> presignCaptor = ArgumentCaptor.forClass(PutObjectPresignRequest.class);
         verify(s3Presigner).presignPutObject(presignCaptor.capture());
         assertThat(presignCaptor.getValue().putObjectRequest().contentLength()).isEqualTo(1000L);
+    }
+
+    @Test
+    @DisplayName("로고 업로드를 처음 준비하면 sortOrder 없는 LOGO PENDING 행을 만든다")
+    void 로고_업로드를_처음_준비한다() throws Exception {
+        givenOwnerWithStoreForUpdate();
+        when(storeImageRepository.findByStoreIdAndImageType(STORE_ID, StoreImageType.LOGO))
+                .thenReturn(Optional.empty());
+        when(s3Presigner.presignPutObject(any(PutObjectPresignRequest.class))).thenReturn(presignedPutObjectRequest);
+        when(presignedPutObjectRequest.url()).thenReturn(new URL("https://example.com/presigned"));
+
+        var result = service.prepareLogoUpload(OWNER_ID, "logo.png", "image/png", 1000L);
+
+        assertThat(result.sortOrder()).isNull();
+        assertThat(result.uploadUrl()).isEqualTo("https://example.com/presigned");
+        ArgumentCaptor<StoreImage> captor = ArgumentCaptor.forClass(StoreImage.class);
+        verify(storeImageRepository).save(captor.capture());
+        assertThat(captor.getValue().getImageType()).isEqualTo(StoreImageType.LOGO);
+        assertThat(captor.getValue().getSortOrder()).isNull();
+        assertThat(captor.getValue().getObjectKey()).startsWith("stores/" + STORE_ID + "/logo/").endsWith(".png");
+        assertThat(captor.getValue().getUploadStatus()).isEqualTo(StoreImageUploadStatus.PENDING);
+    }
+
+    @Test
+    @DisplayName("이미 로고가 있으면 새 행을 만들지 않고 그 행을 새 업로드로 덮어쓴다")
+    void 이미_로고가_있으면_덮어쓴다() throws Exception {
+        givenOwnerWithStoreForUpdate();
+        StoreImage existing = StoreImage.preparePending(
+                STORE_ID, "old-upload", StoreImageType.LOGO, "stores/20/logo/old.jpg", "old.jpg", "image/jpeg",
+                500L, null);
+        existing.verify(LocalDateTime.now(FIXED_CLOCK));
+        when(storeImageRepository.findByStoreIdAndImageType(STORE_ID, StoreImageType.LOGO))
+                .thenReturn(Optional.of(existing));
+        when(s3Presigner.presignPutObject(any(PutObjectPresignRequest.class))).thenReturn(presignedPutObjectRequest);
+        when(presignedPutObjectRequest.url()).thenReturn(new URL("https://example.com/presigned"));
+
+        var result = service.prepareLogoUpload(OWNER_ID, "logo.jpg", "image/jpeg", 1000L);
+
+        verify(storeImageRepository, never()).save(any(StoreImage.class));
+        assertThat(result.uploadId()).isNotEqualTo("old-upload");
+        assertThat(existing.getUploadId()).isEqualTo(result.uploadId());
+        assertThat(existing.getUploadStatus()).isEqualTo(StoreImageUploadStatus.PENDING);
+        assertThat(existing.getVerifiedAt()).isNull();
+        assertThat(existing.getFileSize()).isEqualTo(1000L);
+    }
+
+    @Test
+    @DisplayName("로고 presign이 실패하면 새로 만든 행은 지운다")
+    void 로고_presign이_실패하면_새_행을_지운다() {
+        givenOwnerWithStoreForUpdate();
+        when(storeImageRepository.findByStoreIdAndImageType(STORE_ID, StoreImageType.LOGO))
+                .thenReturn(Optional.empty());
+        RuntimeException presignFailure = new RuntimeException("자격 증명을 가져오지 못했다");
+        when(s3Presigner.presignPutObject(any(PutObjectPresignRequest.class))).thenThrow(presignFailure);
+
+        assertThatThrownBy(() -> service.prepareLogoUpload(OWNER_ID, "logo.jpg", "image/jpeg", 1000L))
+                .isSameAs(presignFailure);
+
+        verify(storeImageRepository).delete(any(StoreImage.class));
+    }
+
+    @Test
+    @DisplayName("로고 presign이 실패해도 덮어쓴 행은 지우지 않는다")
+    void 로고_presign이_실패해도_덮어쓴_행은_남긴다() {
+        givenOwnerWithStoreForUpdate();
+        StoreImage existing = StoreImage.preparePending(
+                STORE_ID, "old-upload", StoreImageType.LOGO, "stores/20/logo/old.jpg", "old.jpg", "image/jpeg",
+                500L, null);
+        when(storeImageRepository.findByStoreIdAndImageType(STORE_ID, StoreImageType.LOGO))
+                .thenReturn(Optional.of(existing));
+        RuntimeException presignFailure = new RuntimeException("자격 증명을 가져오지 못했다");
+        when(s3Presigner.presignPutObject(any(PutObjectPresignRequest.class))).thenThrow(presignFailure);
+
+        assertThatThrownBy(() -> service.prepareLogoUpload(OWNER_ID, "logo.jpg", "image/jpeg", 1000L))
+                .isSameAs(presignFailure);
+
+        verify(storeImageRepository, never()).delete(any(StoreImage.class));
+    }
+
+    @Test
+    @DisplayName("로고의 형식과 크기도 인테리어와 같은 기준으로 검증한다")
+    void 로고의_형식과_크기를_검증한다() {
+        assertThatThrownBy(() -> service.prepareLogoUpload(OWNER_ID, "logo.gif", "image/gif", 1000L))
+                .isInstanceOfSatisfying(StoreException.class, e ->
+                        assertThat(e.getErrorCode()).isEqualTo(StoreErrorCode.IMAGE_CONTENT_TYPE_NOT_ALLOWED));
+        assertThatThrownBy(() -> service.prepareLogoUpload(OWNER_ID, "logo.jpg", "image/jpeg", 10L * 1024 * 1024 + 1))
+                .isInstanceOfSatisfying(StoreException.class, e ->
+                        assertThat(e.getErrorCode()).isEqualTo(StoreErrorCode.IMAGE_FILE_TOO_LARGE));
     }
 
     @Test
@@ -272,7 +362,8 @@ class StoreImageUploadServiceTest {
     @DisplayName("로고가 없으면 이미지 단계를 완료할 수 없다")
     void 로고가_없으면_완료할_수_없다() {
         givenOwnerWithStoreForUpdate();
-        when(storeImageRepository.existsByStoreIdAndImageType(STORE_ID, StoreImageType.LOGO)).thenReturn(false);
+        when(storeImageRepository.existsByStoreIdAndImageTypeAndUploadStatus(
+                STORE_ID, StoreImageType.LOGO, StoreImageUploadStatus.VERIFIED)).thenReturn(false);
 
         assertThatThrownBy(() -> service.completeImagesStep(OWNER_ID, 3L))
                 .isInstanceOfSatisfying(StoreException.class, e ->
@@ -284,7 +375,8 @@ class StoreImageUploadServiceTest {
     @DisplayName("로고가 있으면 IMAGES 단계를 완료하고 다음 상태를 돌려준다")
     void 로고가_있으면_완료한다() {
         givenOwnerWithStoreForUpdate();
-        when(storeImageRepository.existsByStoreIdAndImageType(STORE_ID, StoreImageType.LOGO)).thenReturn(true);
+        when(storeImageRepository.existsByStoreIdAndImageTypeAndUploadStatus(
+                STORE_ID, StoreImageType.LOGO, StoreImageUploadStatus.VERIFIED)).thenReturn(true);
         var snapshot = new StoreRegistrationProgressSnapshot(STORE_ID, StoreRegistrationStep.MENU, 4L);
         when(progressService.completeStep(OWNER_ID, 3L, StoreRegistrationStep.IMAGES, null)).thenReturn(snapshot);
 
