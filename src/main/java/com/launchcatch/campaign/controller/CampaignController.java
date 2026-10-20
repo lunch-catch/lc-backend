@@ -1,6 +1,7 @@
 package com.launchcatch.campaign.controller;
 
 import com.launchcatch.auth.CustomUserDetails;
+import com.launchcatch.campaign.dto.CampaignActivateResponse;
 import com.launchcatch.campaign.dto.CampaignCouponConditionRequest;
 import com.launchcatch.campaign.dto.CampaignCouponConditionResponse;
 import com.launchcatch.campaign.dto.CampaignDetailResponse;
@@ -8,6 +9,7 @@ import com.launchcatch.campaign.dto.CampaignListItemResponse;
 import com.launchcatch.campaign.dto.CampaignStatusResponse;
 import com.launchcatch.campaign.dto.CampaignUpdateRequest;
 import com.launchcatch.campaign.dto.CampaignUpdateResponse;
+import com.launchcatch.campaign.service.CampaignActivationService;
 import com.launchcatch.campaign.service.CampaignCouponConditionResult;
 import com.launchcatch.campaign.service.CampaignCouponConditionService;
 import com.launchcatch.campaign.service.CampaignOwnerQueryService;
@@ -44,6 +46,7 @@ public class CampaignController {
     private final CampaignTargetAudienceService campaignTargetAudienceService;
     private final CampaignOwnerQueryService campaignOwnerQueryService;
     private final CampaignPauseResumeService campaignPauseResumeService;
+    private final CampaignActivationService campaignActivationService;
 
     @PostMapping
     @Operation(
@@ -90,6 +93,25 @@ public class CampaignController {
             @Valid @RequestBody CampaignUpdateRequest request,
             @Parameter(hidden = true) @AuthenticationPrincipal CustomUserDetails owner) {
         return ResponseEnvelope.success(campaignTargetAudienceService.handle(owner.getId(), campaignId, request));
+    }
+
+    @PostMapping("/{campaignId}:activate")
+    @Operation(
+            summary = "캠페인 활성화",
+            description = "DRAFT 상태 캠페인의 활성화를 요청합니다. 포스터가 있는지 확인한 뒤 자동 검수를 "
+                    + "거칩니다. 검수를 통과하면 SCHEDULED로 바뀌고, 실패하면 DRAFT로 남아 사유를 돌려줍니다."
+    )
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "처리 성공. 검수 통과면 SCHEDULED, 실패면 DRAFT와 사유."),
+            @ApiResponse(responseCode = "403", description = "CAMPAIGN-001: 점주 상태가 ACTIVE가 아닙니다. "
+                    + "CAMPAIGN-005: 그 campaignId가 없거나 본인 소유가 아닙니다."),
+            @ApiResponse(responseCode = "404", description = "POSTER-021: 이 캠페인에 저장된 포스터가 없습니다."),
+            @ApiResponse(responseCode = "409", description = "CAMPAIGN-006: DRAFT 상태가 아니라 활성화할 수 없습니다.")
+    })
+    public ResponseEnvelope<CampaignActivateResponse> activate(
+            @Parameter(description = "활성화할 캠페인 ID입니다.") @PathVariable Long campaignId,
+            @Parameter(hidden = true) @AuthenticationPrincipal CustomUserDetails owner) {
+        return ResponseEnvelope.success(campaignActivationService.activate(owner.getId(), campaignId));
     }
 
     @PostMapping("/{campaignId}:pause")

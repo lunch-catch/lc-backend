@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -105,6 +106,52 @@ class CampaignStatusServiceTest {
         when(campaignRepository.findByIdForUpdate(CAMPAIGN_ID)).thenReturn(Optional.of(campaign));
 
         assertThatThrownBy(() -> service.schedule(CAMPAIGN_ID)).isInstanceOf(IllegalStateException.class);
+        verify(campaignStatusLogRepository, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("precondition이 있는 schedule은 잠금을 잡은 뒤 상태를 바꾸기 전에 그것을 실행한다")
+    void precondition이_있는_schedule은_상태를_바꾸기_전에_그것을_실행한다() {
+        Campaign campaign = draftCampaign();
+        when(campaignRepository.findByIdForUpdate(CAMPAIGN_ID)).thenReturn(Optional.of(campaign));
+
+        service.schedule(CAMPAIGN_ID, () ->
+                assertThat(campaign.getStatus()).isEqualTo(CampaignStatus.DRAFT));
+
+        assertThat(campaign.getStatus()).isEqualTo(CampaignStatus.SCHEDULED);
+    }
+
+    @Test
+    @DisplayName("precondition이 실패하면 schedule하지 않고 그 예외를 그대로 올린다")
+    void precondition이_실패하면_schedule하지_않는다() {
+        Campaign campaign = draftCampaign();
+        when(campaignRepository.findByIdForUpdate(CAMPAIGN_ID)).thenReturn(Optional.of(campaign));
+        RuntimeException preconditionFailure = new IllegalArgumentException("precondition failed");
+
+        assertThatThrownBy(() -> service.schedule(CAMPAIGN_ID, () -> {
+            throw preconditionFailure;
+        })).isSameAs(preconditionFailure);
+
+        assertThat(campaign.getStatus()).isEqualTo(CampaignStatus.DRAFT);
+        verify(campaignStatusLogRepository, never()).save(any());
+    }
+
+    /*
+     * precondition이 있는 schedule은 이미 SCHEDULED여도 멱등하게 조용히 성공하지 않고
+     * 거부한다(#576 코드래빗 리뷰로 찾음). 멱등하게 반환하면 그 요청이 precondition을
+     * 건너뛴 채 성공 응답을 받게 된다.
+     */
+    @Test
+    @DisplayName("precondition이 있는 schedule은 이미 SCHEDULED면 거부하고 precondition을 부르지 않는다")
+    void precondition이_있는_schedule은_이미_SCHEDULED면_거부한다() {
+        Campaign campaign = scheduledCampaign();
+        when(campaignRepository.findByIdForUpdate(CAMPAIGN_ID)).thenReturn(Optional.of(campaign));
+        Runnable precondition = mock(Runnable.class);
+
+        assertThatThrownBy(() -> service.schedule(CAMPAIGN_ID, precondition))
+                .isInstanceOf(IllegalStateException.class);
+
+        verify(precondition, never()).run();
         verify(campaignStatusLogRepository, never()).save(any());
     }
 
