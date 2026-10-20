@@ -10,6 +10,7 @@ import com.launchcatch.ops.entity.BatchStatus;
 import com.launchcatch.ops.exception.OpsErrorCode;
 import com.launchcatch.ops.exception.OpsException;
 import com.launchcatch.ops.repository.BatchExecutionLogRepository;
+import com.launchcatch.ops.scheduler.BatchJobRegistry;
 import java.time.LocalDate;
 import java.time.format.DateTimeParseException;
 import java.util.List;
@@ -36,7 +37,7 @@ public class BatchExecutionHistoryService {
     private static final int MAX_PAGE_SIZE = 100;
 
     private final BatchExecutionLogRepository logs;
-    private final DailyJobRunner runner;
+    private final BatchJobRegistry registry;
 
     @Transactional(readOnly = true)
     public CursorPageResponse<BatchExecutionHistoryItem> search(String from, String to, String jobName,
@@ -63,7 +64,7 @@ public class BatchExecutionHistoryService {
     }
 
     private BatchExecutionHistoryItem toItem(BatchExecutionLog log) {
-        boolean retryable = log.getStatus() == BatchStatus.FAILED && runner.isRetryable(log.getJobName());
+        boolean retryable = log.getStatus() == BatchStatus.FAILED && registry.classify(log.getJobName()).isRetryable();
         return BatchExecutionHistoryItem.of(log, retryable);
     }
 

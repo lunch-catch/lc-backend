@@ -10,8 +10,8 @@ import com.launchcatch.auth.CustomUserDetails;
 import com.launchcatch.auth.Role;
 import com.launchcatch.ops.exception.OpsErrorCode;
 import com.launchcatch.ops.exception.OpsException;
+import com.launchcatch.ops.scheduler.BatchJobRegistry;
 import com.launchcatch.ops.service.BatchExecutionRetryService;
-import com.launchcatch.ops.service.DailyJobRunner;
 import java.sql.Timestamp;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -33,12 +33,12 @@ import org.springframework.test.web.servlet.MockMvc;
  *
  * 00:00 묶음(DAILY_0000)으로 확인한다. 지금 운영 컨텍스트에는 등록된 DailyJob 과 StandaloneJob
  * 이 없어(아직 비어 있는 것, 런치캐치_배치_운영.md), 등록된 StandaloneJob 이 받는 분기는
- * DailyJobRunner.resume 에 올바른 인자로 위임하는지를 단위 테스트(BatchExecutionRetryServiceTest)
- * 와 그 분기 자체의 동작(DailyJobRunnerTest)으로 나눠 확인했다.
+ * BatchJobRunner.resume 에 올바른 인자로 위임하는지를 단위 테스트(BatchExecutionRetryServiceTest)
+ * 와 그 분기 자체의 동작(BatchJobRunnerTest)으로 나눠 확인했다.
  */
 class BatchExecutionRetryIntegrationTest extends AbstractOpsIntegrationTest {
 
-    private static final String JOB = DailyJobRunner.BUNDLE;
+    private static final String JOB = BatchJobRegistry.BUNDLE;
     private static final LocalDate DATE = LocalDate.of(2031, 3, 17);
     private static final Long ADMIN_ID = 9001L;
 

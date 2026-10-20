@@ -19,6 +19,8 @@ import com.launchcatch.ops.entity.BatchExecutionLog;
 import com.launchcatch.ops.entity.BatchStatus;
 import com.launchcatch.ops.exception.OpsErrorCode;
 import com.launchcatch.ops.repository.BatchExecutionLogRepository;
+import com.launchcatch.ops.scheduler.BatchJobRegistry;
+import com.launchcatch.ops.scheduler.BatchJobRegistry.Kind;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
@@ -49,7 +51,7 @@ class BatchExecutionHistoryServiceTest {
     private BatchExecutionLogRepository logs;
 
     @Mock
-    private DailyJobRunner runner;
+    private BatchJobRegistry registry;
 
     @InjectMocks
     private BatchExecutionHistoryService service;
@@ -204,8 +206,8 @@ class BatchExecutionHistoryServiceTest {
                 row(3, "DAILY_0000", TO, BatchStatus.FAILED),
                 row(2, "RESERVE_DAILY_BUDGET", TO, BatchStatus.FAILED),
                 row(1, "EVENT_LOG_RETENTION", TO, BatchStatus.SUCCESS)));
-        when(runner.isRetryable("DAILY_0000")).thenReturn(true);
-        when(runner.isRetryable("RESERVE_DAILY_BUDGET")).thenReturn(false);
+        when(registry.classify("DAILY_0000")).thenReturn(Kind.BUNDLE);
+        when(registry.classify("RESERVE_DAILY_BUDGET")).thenReturn(Kind.STEP);
 
         List<BatchExecutionHistoryItem> items =
                 service.search("2026-09-30", "2026-09-30", null, null, null, null).items();
@@ -221,7 +223,7 @@ class BatchExecutionHistoryServiceTest {
         ReflectionTestUtils.setField(failed, "retryReason", "교착");
         ReflectionTestUtils.setField(failed, "attemptNo", 3);
         stubRows(List.of(failed));
-        when(runner.isRetryable("DAILY_0000")).thenReturn(true);
+        when(registry.classify("DAILY_0000")).thenReturn(Kind.BUNDLE);
 
         BatchExecutionHistoryItem item =
                 service.search("2026-09-30", "2026-09-30", null, null, null, null).items().get(0);

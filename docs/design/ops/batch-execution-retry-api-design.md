@@ -13,13 +13,13 @@
 ## 서버가 하는 일
 
 1. `jobName`이 00:00 묶음(`DAILY_0000`)이거나 등록된 `StandaloneJob`인지 본다
-   (`DailyJobRunner.isRetryable`). 아니면 `422 OPS-001`이다.
+   (`BatchJobRegistry.classify(jobName).isRetryable()`, #585). 아니면 `422 OPS-001`이다.
 2. (`jobName`, `businessDate`) 행을 읽는다. 없으면 `404 OPS-002`다.
 3. 상태가 `FAILED`가 아니면 `409 OPS-003`이다.
 4. `BatchExecutionService.retry`로 조건부 `UPDATE`를 건다. 0건이면(동시에 다른 요청이 먼저
    걸렸다) `409 OPS-003`이다.
 5. 감사 로그를 요청 트랜잭션에 남긴다.
-6. 재개를 별도 스레드에 접수시키고 `202`를 돌려준다. 실제 재개는 `DailyJobRunner.resume`이
+6. 재개를 별도 스레드에 접수시키고 `202`를 돌려준다. 실제 재개는 `BatchJobRunner.resume`이
    한다.
 
 ## 정한 이유
@@ -55,11 +55,14 @@ A를 고른다. B는 이슈의 완료 조건("FAILED 행에 부르면 그 작업
 그 둘을 어디에 둘지는 계층 규칙(설계 문서 1.5절, Service 는 Controller 와 Entry 에게만 불린다)이
 정했다. `DailyJobScheduler`는 `job/`(Entry 계층)이라 Service 계층인 이 API의
 `BatchExecutionRetryService`가 직접 부를 수 없다. 그래서 묶음을 실제로 도는 로직(`runBundle`,
-`runStep`, `attempt`, `retryOrFail`)과 새 `isRetryable`/`resume`을 묶어 `ops.service.DailyJobRunner`
+`runStep`, `attempt`, `retryOrFail`)과 새 `isRetryable`/`resume`을 묶어 `ops.service.BatchJobRunner`
 (Service 계층)로 옮겼다. `DailyJobScheduler`는 점유 확인(`claim`)과 스케줄 트리거만 남고
-`DailyJobRunner`에 위임한다. 동작은 바뀌지 않았다. 기존 `DailyJobSchedulerTest`의 실행 로직
-검증은 새 `DailyJobRunnerTest`로 옮기고, `DailyJobSchedulerTest`는 트리거가 `DailyJobRunner`에
+`BatchJobRunner`에 위임한다. 동작은 바뀌지 않았다. 기존 `DailyJobSchedulerTest`의 실행 로직
+검증은 새 `BatchJobRunnerTest`로 옮기고, `DailyJobSchedulerTest`는 트리거가 `BatchJobRunner`에
 올바르게 위임하는지만 보도록 줄였다. 둘 다 통과하는 것으로 확인했다.
+
+#585 가 이름 분류(`isStep`/`isRetryable`)를 `ops.scheduler.BatchJobRegistry.classify` 로 떼어내고
+실행 클래스 이름도 `BatchJobRunner` 로 바꿨다. 묶음만 돌리지 않고 묶음 밖 작업의 재개도 맡기 때문이다.
 
 ## 동시성
 
@@ -71,7 +74,7 @@ A를 고른다. B는 이슈의 완료 조건("FAILED 행에 부르면 그 작업
 ## 트랜잭션
 
 상태 조회와 조건부 `UPDATE`는 트랜잭션 밖에서 돈다. 감사 로그 기록만 별도 트랜잭션
-(`TransactionTemplate`)에 담는다. 실제 재개(`DailyJobRunner.resume`)는 트랜잭션 밖, 별도
+(`TransactionTemplate`)에 담는다. 실제 재개(`BatchJobRunner.resume`)는 트랜잭션 밖, 별도
 스레드에서 돈다. 감사 로그 기록이나 접수 자체(실행기 가득 참)가 실패하면 되돌린 행을 다시
 `FAILED`로 닫는다. 그러지 않으면 아무도 재개하지 않는 `RUNNING` 행이 영원히 남는다.
 

@@ -12,7 +12,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.jayway.jsonpath.JsonPath;
 import com.launchcatch.auth.CustomUserDetails;
 import com.launchcatch.auth.Role;
-import com.launchcatch.ops.service.DailyJobRunner;
+import com.launchcatch.ops.scheduler.BatchJobRegistry;
 import java.sql.Timestamp;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -51,13 +51,13 @@ class BatchExecutionHistoryIntegrationTest extends AbstractOpsIntegrationTest {
     void 기간_안의_기록을_영업일_내림차순으로_돌려주고_시각에_오프셋을_붙인다() throws Exception {
         insert("EVENT_LOG_RETENTION", DAY1, "SUCCESS", 7, 1);
         insert("LOAD_DAILY_CANDIDATE", DAY1, "RUNNING", null, 1);
-        insert(DailyJobRunner.BUNDLE, DAY2, "FAILED", null, 1);
+        insert(BatchJobRegistry.BUNDLE, DAY2, "FAILED", null, 1);
 
         mvc.perform(admin(get("/v1/admin/batch-executions")
                         .param("from", DAY1.toString()).param("to", DAY2.toString())))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.items", hasSize(3)))
-                .andExpect(jsonPath("$.data.items[0].jobName").value(DailyJobRunner.BUNDLE))
+                .andExpect(jsonPath("$.data.items[0].jobName").value(BatchJobRegistry.BUNDLE))
                 .andExpect(jsonPath("$.data.items[0].businessDate").value(DAY2.toString()))
                 .andExpect(jsonPath("$.data.items[0].startedAt", endsWith("+09:00")))
                 .andExpect(jsonPath("$.data.items[0].finishedAt", endsWith("+09:00")))
@@ -71,7 +71,7 @@ class BatchExecutionHistoryIntegrationTest extends AbstractOpsIntegrationTest {
 
     @Test
     void 작업명과_상태로_거른다() throws Exception {
-        insert(DailyJobRunner.BUNDLE, DAY2, "FAILED", null, 1);
+        insert(BatchJobRegistry.BUNDLE, DAY2, "FAILED", null, 1);
         insert("RESERVE_DAILY_BUDGET", DAY2, "FAILED", null, 1);
         insert("EVENT_LOG_RETENTION", DAY2, "SUCCESS", 3, 1);
 
@@ -93,12 +93,12 @@ class BatchExecutionHistoryIntegrationTest extends AbstractOpsIntegrationTest {
      */
     @Test
     void 실패한_묶음만_retryable이고_실패한_단계는_아니다() throws Exception {
-        insert(DailyJobRunner.BUNDLE, DAY2, "FAILED", null, 1);
+        insert(BatchJobRegistry.BUNDLE, DAY2, "FAILED", null, 1);
         insert("RESERVE_DAILY_BUDGET", DAY2, "FAILED", null, 1);
 
         mvc.perform(admin(get("/v1/admin/batch-executions")
                         .param("from", DAY2.toString()).param("to", DAY2.toString())
-                        .param("jobName", DailyJobRunner.BUNDLE)))
+                        .param("jobName", BatchJobRegistry.BUNDLE)))
                 .andExpect(jsonPath("$.data.items[0].retryable").value(true));
         mvc.perform(admin(get("/v1/admin/batch-executions")
                         .param("from", DAY2.toString()).param("to", DAY2.toString())
@@ -109,7 +109,7 @@ class BatchExecutionHistoryIntegrationTest extends AbstractOpsIntegrationTest {
     // 실행 기록은 (작업명, 영업일)마다 한 행이라 재실행한 기록도 한 항목으로 나오고 오른 세대를 담는다
     @Test
     void 재실행한_기록은_한_항목으로_나오고_오른_세대를_담는다() throws Exception {
-        insert(DailyJobRunner.BUNDLE, DAY2, "RUNNING", null, 2);
+        insert(BatchJobRegistry.BUNDLE, DAY2, "RUNNING", null, 2);
 
         mvc.perform(admin(get("/v1/admin/batch-executions")
                         .param("from", DAY2.toString()).param("to", DAY2.toString())))

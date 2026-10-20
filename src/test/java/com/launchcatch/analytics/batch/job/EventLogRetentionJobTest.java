@@ -97,7 +97,7 @@ class EventLogRetentionJobTest {
     }
 
     /*
-     * 행을 닫는 일은 DailyJobRunner 가 한다. 이 길은 지운 건수를 돌려주기만 한다.
+     * 행을 닫는 일은 BatchJobRunner 가 한다. 이 길은 지운 건수를 돌려주기만 한다.
      */
     @Test
     @DisplayName("이어받은 서버가 부르면 지우고 삭제 건수를 돌려주며 행은 직접 닫지 않는다")
