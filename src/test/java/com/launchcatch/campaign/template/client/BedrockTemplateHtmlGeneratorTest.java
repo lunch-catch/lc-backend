@@ -96,11 +96,33 @@ class BedrockTemplateHtmlGeneratorTest {
         when(bedrockRuntimeClient.converse(any(ConverseRequest.class)))
                 .thenReturn(textResponse(StopReason.END_TURN, LLM_HTML));
 
-        String result = generator.generate("돈까스 세트 홍보");
+        String result = generator.generate("돈까스 세트 홍보").html();
 
         assertThat(result).contains("data-slot=\"adLabel\"").contains("광고");
         assertThat(result).contains("data-slot=\"eventName\"");
         verify(bedrockRuntimeClient, times(1)).converse(any(ConverseRequest.class));
+    }
+
+    @Test
+    void 코드펜스_밖의_설명은_message로_돌려준다() {
+        String wrapped = "따뜻한 톤의 카드형으로 만들었어요.\n```html\n" + LLM_HTML + "\n```";
+        when(bedrockRuntimeClient.converse(any(ConverseRequest.class)))
+                .thenReturn(textResponse(StopReason.END_TURN, wrapped));
+
+        GeneratedTemplate result = generator.generate("돈까스 세트 홍보");
+
+        assertThat(result.message()).isEqualTo("따뜻한 톤의 카드형으로 만들었어요.");
+        assertThat(result.html()).contains("data-slot=\"eventName\"");
+    }
+
+    @Test
+    void 코드펜스가_없으면_message는_빈_값이다() {
+        when(bedrockRuntimeClient.converse(any(ConverseRequest.class)))
+                .thenReturn(textResponse(StopReason.END_TURN, LLM_HTML));
+
+        GeneratedTemplate result = generator.generate("돈까스 세트 홍보");
+
+        assertThat(result.message()).isEmpty();
     }
 
     @Test
@@ -110,7 +132,7 @@ class BedrockTemplateHtmlGeneratorTest {
         when(bedrockRuntimeClient.converse(any(ConverseRequest.class)))
                 .thenReturn(textResponse(StopReason.END_TURN, withModelAdLabel));
 
-        String result = generator.generate("돈까스 세트 홍보");
+        String result = generator.generate("돈까스 세트 홍보").html();
 
         assertThat(Jsoup.parseBodyFragment(result).select("[data-slot=adLabel]")).hasSize(1);
     }
@@ -121,7 +143,7 @@ class BedrockTemplateHtmlGeneratorTest {
         when(bedrockRuntimeClient.converse(any(ConverseRequest.class)))
                 .thenReturn(textResponse(StopReason.END_TURN, wrapped));
 
-        String result = generator.generate("돈까스 세트 홍보");
+        String result = generator.generate("돈까스 세트 홍보").html();
 
         assertThat(result).contains("data-slot=\"eventName\"");
     }
@@ -132,7 +154,7 @@ class BedrockTemplateHtmlGeneratorTest {
         when(bedrockRuntimeClient.converse(any(ConverseRequest.class)))
                 .thenReturn(textResponse(StopReason.END_TURN, wrapped));
 
-        String result = generator.generate("돈까스 세트 홍보");
+        String result = generator.generate("돈까스 세트 홍보").html();
 
         assertThat(result).contains("data-slot=\"eventName\"");
     }
@@ -144,7 +166,7 @@ class BedrockTemplateHtmlGeneratorTest {
                 .thenReturn(textResponse(StopReason.END_TURN, withScript))
                 .thenReturn(textResponse(StopReason.END_TURN, LLM_HTML));
 
-        String result = generator.generate("돈까스 세트 홍보");
+        String result = generator.generate("돈까스 세트 홍보").html();
 
         assertThat(result).doesNotContain("script");
         verify(bedrockRuntimeClient, times(2)).converse(any(ConverseRequest.class));
@@ -170,7 +192,7 @@ class BedrockTemplateHtmlGeneratorTest {
                 .thenReturn(textResponse(StopReason.END_TURN, missingSlot))
                 .thenReturn(textResponse(StopReason.END_TURN, LLM_HTML));
 
-        String result = generator.generate("돈까스 세트 홍보");
+        String result = generator.generate("돈까스 세트 홍보").html();
 
         assertThat(result).contains("data-slot=\"discount\"");
     }
@@ -193,7 +215,7 @@ class BedrockTemplateHtmlGeneratorTest {
                 .thenReturn(textResponse(StopReason.MAX_TOKENS, "생각하는 중이었는데 잘림"))
                 .thenReturn(textResponse(StopReason.END_TURN, LLM_HTML));
 
-        String result = generator.generate("돈까스 세트 홍보");
+        String result = generator.generate("돈까스 세트 홍보").html();
 
         assertThat(result).contains("data-slot=\"eventName\"");
     }
@@ -228,7 +250,7 @@ class BedrockTemplateHtmlGeneratorTest {
         when(bedrockRuntimeClient.converse(any(ConverseRequest.class)))
                 .thenReturn(textResponse(StopReason.END_TURN, LLM_HTML));
 
-        String result = generator.revise(PREVIOUS_STORED_HTML, "색상만 바꿔줘");
+        String result = generator.revise(PREVIOUS_STORED_HTML, "색상만 바꿔줘").html();
 
         assertThat(result).contains("data-slot=\"adLabel\"");
     }
@@ -271,7 +293,7 @@ class BedrockTemplateHtmlGeneratorTest {
                 .thenReturn(textResponse(StopReason.GUARDRAIL_INTERVENED, "막힘"))
                 .thenReturn(textResponse(StopReason.END_TURN, LLM_HTML));
 
-        String result = generator.generate("돈까스 세트 홍보");
+        String result = generator.generate("돈까스 세트 홍보").html();
 
         assertThat(result).contains("data-slot=\"eventName\"");
     }
