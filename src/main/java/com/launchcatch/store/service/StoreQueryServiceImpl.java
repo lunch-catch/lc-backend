@@ -67,9 +67,12 @@ class StoreQueryServiceImpl implements StoreQueryService {
         if (storeIds.isEmpty()) {
             return List.of();
         }
-        // 조회 대상은 최종 등록된 가게이며 필수 이미지 누락을 정상 응답으로 숨기지 않는다.
+        /*
+         * TODO(#608): S3 이미지 업로드와 검증 기능이 완료되면 최종 등록 시 VERIFIED 대표 이미지(LOGO)를 필수로 검사한다.
+         * findAllById에서 requireImageKey 검증을 복원하고 StoreInfo 및 store-query-contract.md의 null 허용 계약과 회귀 테스트를 함께 변경한다.
+         */
         return stores.findAllById(storeIds).stream()
-                .map(row -> new StoreInfo(row.storeId(), row.name(), images.resolve(requireImageKey(row.imageObjectKey())),
+                .map(row -> new StoreInfo(row.storeId(), row.name(), images.resolve(row.imageObjectKey()),
                         toCoordinate(row.latitude()), toCoordinate(row.longitude())))
                 .toList();
     }
