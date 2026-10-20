@@ -141,7 +141,16 @@ public class BatchExecutionService {
      */
     @Transactional
     public boolean renew(String jobName, LocalDate businessDate) {
-        return logs.renew(jobName, businessDate, ownerId, now()) == 1;
+        return logs.renew(jobName, businessDate, ownerId, null, now()) == 1;
+    }
+
+    /*
+     * 세대까지 맞을 때만 갱신한다(#591). 이어받기와 수동 재실행으로 도는 묶음 밖 작업이 쓴다.
+     * 같은 서버가 새 세대를 잡으면 소유자는 그대로라 renew 는 통과하고, 낡은 시도가 계속 돈다.
+     */
+    @Transactional
+    public boolean renewAttempt(String jobName, LocalDate businessDate, int attemptNo) {
+        return logs.renew(jobName, businessDate, ownerId, attemptNo, now()) == 1;
     }
 
     /** 내가 들고 있는 실행 중 행을 모두 갱신한다. 30초마다 도는 생존 신호가 부른다. */
@@ -152,7 +161,7 @@ public class BatchExecutionService {
 
     @Transactional
     public void succeed(String jobName, LocalDate businessDate) {
-        close(jobName, businessDate, BatchStatus.SUCCESS, null, null);
+        close(jobName, businessDate, BatchStatus.SUCCESS, null, null, null);
     }
 
     /*
@@ -161,7 +170,7 @@ public class BatchExecutionService {
      */
     @Transactional
     public void succeed(String jobName, LocalDate businessDate, int processedCount) {
-        close(jobName, businessDate, BatchStatus.SUCCESS, null, processedCount);
+        close(jobName, businessDate, BatchStatus.SUCCESS, null, processedCount, null);
     }
 
     /*
@@ -170,7 +179,24 @@ public class BatchExecutionService {
      */
     @Transactional
     public void fail(String jobName, LocalDate businessDate, String reason) {
-        if (close(jobName, businessDate, BatchStatus.FAILED, shorten(reason), null)) {
+        if (close(jobName, businessDate, BatchStatus.FAILED, shorten(reason), null, null)) {
+            alert.failed(jobName, businessDate, reason);
+        }
+    }
+
+    /*
+     * 세대까지 맞을 때만 성공으로 닫는다(#591). 건수가 null 이면 건수 없이 닫는다.
+     * 같은 서버가 새 세대를 잡았으면 소유자 조건은 통과해서, 세대를 보지 않으면 낡은 시도가 새 시도의 행을 닫는다.
+     */
+    @Transactional
+    public void succeedAttempt(String jobName, LocalDate businessDate, int attemptNo, Integer processedCount) {
+        close(jobName, businessDate, BatchStatus.SUCCESS, null, processedCount, attemptNo);
+    }
+
+    // 세대까지 맞을 때만 실패로 닫고, 닫았을 때만 알린다(#591).
+    @Transactional
+    public void failAttempt(String jobName, LocalDate businessDate, int attemptNo, String reason) {
+        if (close(jobName, businessDate, BatchStatus.FAILED, shorten(reason), null, attemptNo)) {
             alert.failed(jobName, businessDate, reason);
         }
     }
@@ -212,7 +238,14 @@ public class BatchExecutionService {
     @Transactional
     public boolean recordRetry(String jobName, LocalDate businessDate, String reason) {
         return logs.recordRetry(
-                jobName, businessDate, shorten(reason), ownerId, MAX_AUTO_RETRIES, now()) == 1;
+                jobName, businessDate, shorten(reason), ownerId, null, MAX_AUTO_RETRIES, now()) == 1;
+    }
+
+    // 세대까지 맞을 때만 자동 재실행을 기록한다(#591). 낡은 시도가 새 시도의 재실행 예산을 깎지 못한다.
+    @Transactional
+    public boolean recordRetryAttempt(String jobName, LocalDate businessDate, int attemptNo, String reason) {
+        return logs.recordRetry(
+                jobName, businessDate, shorten(reason), ownerId, attemptNo, MAX_AUTO_RETRIES, now()) == 1;
     }
 
     /*
@@ -263,14 +296,16 @@ public class BatchExecutionService {
      *
      * 닫지 못한 것은 알리지 않는다. 그 행은 이미 다른 서버가 들고 있어서 그쪽이 판정한다.
      * 양쪽이 알리면 한 번의 장애가 두 번 울린다.
+     *
+     * attemptNo 가 null 이면 세대를 보지 않는다. null 은 소유자만 보는 공개 메서드만 넘긴다(#591).
      */
     private boolean close(String jobName, LocalDate businessDate, BatchStatus status, String reason,
-                          Integer processedCount) {
-        if (logs.close(jobName, businessDate, status, reason, processedCount, ownerId, now()) == 1) {
+                          Integer processedCount, Integer attemptNo) {
+        if (logs.close(jobName, businessDate, status, reason, processedCount, ownerId, attemptNo, now()) == 1) {
             return true;
         }
-        log.warn("내 소유가 아닌 행은 닫지 않는다. job={} businessDate={} 상태={}",
-                jobName, businessDate, status);
+        log.warn("내 소유가 아니거나 세대가 지난 행은 닫지 않는다. job={} businessDate={} 상태={} attemptNo={}",
+                jobName, businessDate, status, attemptNo);
         return false;
     }
 

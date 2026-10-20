@@ -172,6 +172,8 @@ sequenceDiagram
 | 여러 회원이 같은 자원에 씀 | 수량, 잔액 초과 | 해당 없음 |
 | 이벤트가 늦거나 순서가 바뀜 | 늦은 이벤트가 최신 상태를 덮는지 | 해당 없음. 이 도메인은 이벤트를 받지 않는다 |
 
+묶음 밖 작업의 재개(`DailyJobRunner.resume`)는 생존 확인, 재실행 기록, 닫기의 조건부 UPDATE에 소유자와 함께 넘겨받은 세대를 넣는다(#591). 같은 서버가 새 세대를 잡은 뒤 낡은 시도가 끝나도 새 시도의 행은 바뀌지 않는다. 세대를 받지 않는 기존 메서드는 쿼리에 `null`을 넘겨 소유자만 본다. `null`은 그 메서드만 넘기고, 세대를 받는 메서드는 `int`로 받아 세대 검사가 빠지지 않게 한다.
+
 경쟁 지점은 모두 조건부 UPDATE다. 비관 잠금은 `findByJobNameAndBusinessDateForUpdate`
 (`assertCurrentAttempt`)와 00:00 묶음의 단계 동시성 테스트(`DailyJobRunnerTest`)가 쓴다.
 영업일은 Asia/Seoul 00:00 기준이고(`BatchExecutionService.businessDate`), 한 번에 다루는
