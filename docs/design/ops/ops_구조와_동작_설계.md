@@ -54,7 +54,7 @@
 | 공개 | 모든 도메인 | `AuditLogWriter` | 관리자 행위를 기록할 때 |
 | 공개 | 분석, 정산 | `BatchExecutionQueryService` | 배치 실행 기록을 조회할 때. `BatchExecutionRecord.attemptNo`(#434)로 정상 경로(claim, retry, rerun 직후)도 자기 세대를 읽어 `BatchAttemptGuard.assertCurrentAttempt`에 넘길 수 있다. 전에는 이어받은 경로(`StandaloneJob.run`)만 세대를 받았다 |
 | 공개 | 각 도메인의 결과 공개 코드 | `BatchAttemptGuard` | 결과를 커밋하기 전 자기 소유와 세대를 확인할 때(#360, 실제 호출자는 아직 없다) |
-| 받음 | 각 업무 도메인 | `DailyJob`, `StandaloneJob` | 각 도메인이 00:00 묶음 단계 또는 묶음 밖 작업을 등록할 때 |
+| 받음 | 각 업무 도메인 | `DailyJob`, `StandaloneJob` | 각 도메인이 00:00 묶음 단계 또는 묶음 밖 작업을 등록할 때. 이어받기와 수동 재실행은 `StandaloneJob.runCounting`을 부르고 돌려받은 건수를 `processed_count`에 남긴다(#559) |
 
 - `ops`는 어떤 업무 도메인도 의존하지 않는다(설계 문서 1.1절). 그래서 위 "공개"는 모두
   `ops.contract`의 인터페이스를 다른 도메인이 구현 없이 그대로 호출하는 것이고, "받음"은

@@ -2,6 +2,7 @@ package com.launchcatch.ops.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.inOrder;
@@ -127,6 +128,31 @@ class DailyJobRunnerTest {
                 if (thrown++ < failures) {
                     throw error;
                 }
+            }
+        };
+    }
+
+    /** runCounting 을 재정의해 처음 몇 번만 던지고 그 뒤에는 건수를 돌려주는 작업이다. */
+    private StandaloneJob countingStandaloneTimes(String name, int failures, RuntimeException error, int count) {
+        return new StandaloneJob() {
+            private int thrown;
+
+            @Override
+            public String jobName() {
+                return name;
+            }
+
+            @Override
+            public void run(LocalDate businessDate, int attemptNo) {
+                throw new AssertionError("runCounting 을 재정의한 작업은 run 이 불리지 않는다");
+            }
+
+            @Override
+            public Integer runCounting(LocalDate businessDate, int attemptNo) {
+                if (thrown++ < failures) {
+                    throw error;
+                }
+                return count;
             }
         };
     }
@@ -363,17 +389,51 @@ class DailyJobRunnerTest {
      * 묶음 밖 작업도 등록해 두면 resume이 세대와 함께 run을 다시 불러 성공시킨다(#360, #362).
      * attemptNo는 이어받기로 오른 세대이거나 관리자 수동 재실행이 되돌린 세대 그대로 넘겨야,
      * 구현이 결과를 공개할 때 BatchAttemptGuard로 자기 것인지 확인할 수 있다.
+     *
+     * runCounting 을 재정의하지 않은 작업은 기본 구현이 run 을 부르고 건수 없이 닫는다(#559).
+     * 그 기본 구현을 타도록 실제 default 메서드를 부르는 mock 을 쓴다.
      */
     @Test
-    @DisplayName("등록된 묶음 밖 작업은 resume이 세대와 함께 run을 다시 불러 성공시킨다")
+    @DisplayName("등록된 묶음 밖 작업은 resume이 세대와 함께 run을 다시 불러 건수 없이 성공시킨다")
     void 묶음_밖_작업을_resume으로_다시_돈다() {
-        StandaloneJob job = org.mockito.Mockito.mock(StandaloneJob.class);
+        StandaloneJob job = org.mockito.Mockito.mock(StandaloneJob.class, org.mockito.Mockito.CALLS_REAL_METHODS);
         when(job.jobName()).thenReturn("MEMBER_KAKAO_UNLINK_RETRY");
 
         runnerWithStandalone(job).resume("MEMBER_KAKAO_UNLINK_RETRY", DATE, 2);
 
         verify(job).run(DATE, 2);
         verify(executions).succeed("MEMBER_KAKAO_UNLINK_RETRY", DATE);
+        verify(executions, never()).succeed(eq("MEMBER_KAKAO_UNLINK_RETRY"), eq(DATE), anyInt());
+    }
+
+    /*
+     * 이어받기와 수동 재실행은 작업의 스케줄러를 거치지 않아 건수를 남길 길이 runCounting 뿐이다(#559).
+     * 건수 없는 succeed 를 함께 부르면 processed_count 를 null 로 덮거나 같은 행을 두 번 닫는다.
+     */
+    @Test
+    @DisplayName("runCounting을 재정의한 묶음 밖 작업은 resume이 그 건수로 한 번만 성공을 닫는다")
+    void runCounting이_돌려준_건수로_한_번만_닫는다() {
+        runnerWithStandalone(countingStandaloneTimes("EVENT_LOG_RETENTION", 0, null, 7))
+                .resume("EVENT_LOG_RETENTION", DATE, 2);
+
+        verify(executions).succeed("EVENT_LOG_RETENTION", DATE, 7);
+        verify(executions, never()).succeed("EVENT_LOG_RETENTION", DATE);
+    }
+
+    @Test
+    @DisplayName("일시적 오류 뒤 다시 돈 runCounting의 건수로 한 번만 성공을 닫는다")
+    void 다시_돈_runCounting의_건수로_한_번만_닫는다() {
+        when(executions.recordRetry(eq("EVENT_LOG_RETENTION"), eq(DATE), anyString())).thenReturn(true);
+        when(backoff.pause(1)).thenReturn(true);
+        when(executions.renew("EVENT_LOG_RETENTION", DATE)).thenReturn(true);
+
+        runnerWithStandalone(countingStandaloneTimes(
+                "EVENT_LOG_RETENTION", 1, new QueryTimeoutException("응답이 없다"), 3))
+                .resume("EVENT_LOG_RETENTION", DATE, 1);
+
+        verify(executions).succeed("EVENT_LOG_RETENTION", DATE, 3);
+        verify(executions, never()).succeed("EVENT_LOG_RETENTION", DATE);
+        verify(executions, never()).fail(eq("EVENT_LOG_RETENTION"), eq(DATE), anyString());
     }
 
     @Test
