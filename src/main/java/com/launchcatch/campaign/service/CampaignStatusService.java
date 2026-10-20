@@ -152,6 +152,12 @@ public class CampaignStatusService {
 
     @Transactional
     public void end(Long campaignId, LocalDate businessDate) {
+        end(campaignId, ActorType.SYSTEM, businessDate);
+    }
+
+    // 점주가 직접 종료할 때(#600)는 행위자를 OWNER 로 남긴다. 집행 기간이 끝난 정기 종료는 SYSTEM 이다.
+    @Transactional
+    public void end(Long campaignId, ActorType actorType, LocalDate businessDate) {
         Campaign campaign = findOrThrow(campaignId);
         if (campaign.getStatus() == CampaignStatus.ENDED) {
             return;
@@ -159,7 +165,8 @@ public class CampaignStatusService {
         CampaignStatus from = campaign.getStatus();
         LocalDateTime now = LocalDateTime.now(clock);
         campaign.end(now);
-        log(campaignId, from, campaign.getStatus(), ActorType.SYSTEM, null);
+        log(campaignId, from, campaign.getStatus(), actorType, null);
+        updateStoreSummary(campaign, businessDate);
         events.publishEvent(new CampaignStatusChangedEvent(campaignId, businessDate, false, now));
         events.publishEvent(new CampaignEndedEvent(campaignId, now));
     }

@@ -152,6 +152,25 @@ public class CampaignController {
         return ResponseEnvelope.success(campaignPauseResumeService.resume(owner.getId(), campaignId));
     }
 
+    @PostMapping("/{campaignId}:end")
+    @Operation(
+            summary = "캠페인 종료",
+            description = "PAUSED 상태의 캠페인을 점주가 직접 종료합니다. 진행 중인 캠페인은 먼저 중단한 뒤에만 "
+                    + "종료할 수 있습니다. 종료는 되돌릴 수 없고, 종료하면 같은 점주가 새 캠페인을 등록할 수 있습니다."
+    )
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "종료 성공."),
+            @ApiResponse(responseCode = "403", description = "CAMPAIGN-001: 점주 상태가 ACTIVE가 아닙니다. "
+                    + "CAMPAIGN-005: 그 campaignId가 없거나 본인 소유가 아닙니다."),
+            @ApiResponse(responseCode = "409", description = "CAMPAIGN-006: PAUSED 상태가 아니라 "
+                    + "종료할 수 없습니다. ACTIVE나 이미 ENDED여도 거부합니다.")
+    })
+    public ResponseEnvelope<CampaignStatusResponse> end(
+            @Parameter(description = "종료할 캠페인 ID입니다.") @PathVariable Long campaignId,
+            @Parameter(hidden = true) @AuthenticationPrincipal CustomUserDetails owner) {
+        return ResponseEnvelope.success(campaignPauseResumeService.end(owner.getId(), campaignId));
+    }
+
     @PostMapping("/{campaignId}:cancel")
     @Operation(
             summary = "캠페인 취소",
