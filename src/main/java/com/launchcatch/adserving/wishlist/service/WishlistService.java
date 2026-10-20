@@ -107,6 +107,21 @@ public class WishlistService implements WishlistQueryService {
         return wishlistRepository.existsByMemberIdAndCampaignIdAndCampaignEndedAtIsNull(memberId, campaignId);
     }
 
+    // 쿠폰 묶음 발급이 회원마다 isWished 를 부르지 않게 캠페인당 한 번 읽는다. 기준은 isWished 와 같다(#578)
+    @Override
+    public Set<Long> findWishedMemberIds(Long campaignId, Set<Long> memberIds) {
+        if (campaignId == null || memberIds == null) {
+            throw new IllegalArgumentException("캠페인 ID 와 회원 ID 집합이 있어야 한다");
+        }
+        if (memberIds.size() > MAX_WISHED_MEMBER_IDS) {
+            throw new IllegalArgumentException("회원은 한 번에 " + MAX_WISHED_MEMBER_IDS + "명까지다: " + memberIds.size());
+        }
+        if (memberIds.isEmpty()) {
+            return Set.of();
+        }
+        return Set.copyOf(wishlistRepository.findActiveMemberIds(campaignId, memberIds));
+    }
+
     @Override
     public List<Long> findWishedCampaignIds(Long memberId) {
         return wishlistRepository.findActiveCampaignIdsByMemberId(memberId);

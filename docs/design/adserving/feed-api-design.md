@@ -153,7 +153,7 @@ HTTP가 아니라 도메인 contract의 Java 클래스로 노출한다. 클라�
 
 | 공개 항목 | 쓰는 도메인 | 하는 일 |
 |---|---|---|
-| `WishlistQueryService` | coupon, notification | 찜 여부(FR-080 발급 자격), 그날 서빙 가능한 캠페인을 찜한 사용자(FR-076 10:50 발송 대상) |
+| `WishlistQueryService` | coupon, notification | 찜 여부와 캠페인별 회원 일괄 찜 여부(FR-080 발급 자격), 그날 서빙 가능한 캠페인을 찜한 사용자(FR-076 10:50 발송 대상) |
 | `CandidateStateUpdater` | coupon | 선착순 소진 시 그날 후보에 소진 표시(FR-093) |
 | `ImpressionServedEvent`, `SwipedEvent` | analytics | 전환 퍼널 기록(impression, wish, pass). 비동기 |
 
@@ -184,6 +184,9 @@ HTTP가 아니라 도메인 contract의 Java 클래스로 노출한다. 클라�
 - 그날 후보인지는 보지 않는다. 00:00 후보 적재가 없는 동안 모든 발급이 막히고, 가게 상세에서 다음 날 캠페인을 찜하는 경우(FR-071 미정)에도 묶이기 때문이다
 - 10:50 알림 대상 조회가 생기면 같은 기준으로 끝난 캠페인의 찜을 뺀다
 - `findWishedCampaignIds` 는 찜이 없으면 빈 리스트다. 순서는 정하지 않는다
+- **`findWishedMemberIds(campaignId, memberIds)` 는 쿠폰 묶음 발급이 캠페인당 한 번 부르는 일괄 조회다.** 회원마다 `isWished` 를 부르면 한 캠페인에 최대 500번 조회한다. 입력한 회원 가운데 유효하게 찜한 회원만 수정할 수 없는 집합으로 돌려주고 순서는 정하지 않는다. 기준은 `isWished` 와 같다(#578 에서 정했다)
+- 입력은 500명까지이고 넘으면 `IllegalArgumentException` 이다. 쿠폰 묶음 발급의 최대 인원이며 늘릴 때는 계약 상수 `MAX_WISHED_MEMBER_IDS` 만 바꾼다. 회원 집합이 비면 조회하지 않고 빈 집합, null 이면 `IllegalArgumentException` 이다
+- 잠그지 않는 읽기라 호출자의 트랜잭션 스냅샷을 본다. 조회 장애는 빈 집합으로 바꾸지 않고 올린다. 찜 여부가 발급 자격이라 실패를 찜 없음으로 바꾸면 발급이 조용히 거절된다
 
 ### `CandidateStateUpdater`
 
