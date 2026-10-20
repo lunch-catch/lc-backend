@@ -22,7 +22,7 @@ import lombok.NoArgsConstructor;
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class Member extends BaseTimeEntity {
 
-    @Column(name = "provider_user_id", nullable = false, unique = true, length = 100)
+    @Column(name = "provider_user_id", unique = true, length = 100)
     private String providerUserId;
 
     @Column(nullable = false, length = 50)
@@ -92,28 +92,13 @@ public class Member extends BaseTimeEntity {
         this.lastLoginAt = loggedInAt;
     }
 
-    public boolean hasSuspensionHistory() {
-        return suspendedAt != null;
-    }
-
-    public void reactivate(String nickname, String profileImageUrl, LocalDateTime loggedInAt) {
-        if (status != MemberStatus.WITHDRAWN) {
-            throw new IllegalStateException("탈퇴한 회원만 재가입할 수 있습니다.");
-        }
-        if (hasSuspensionHistory()) {
-            throw new IllegalStateException("정지 이력이 있는 회원은 재가입할 수 없습니다.");
-        }
-        this.nickname = requiredText(nickname, "닉네임은 비어 있을 수 없습니다.");
-        this.profileImageUrl = profileImageUrl;
-        this.status = MemberStatus.ACTIVE;
-        this.withdrawnAt = null;
-        this.lastLoginAt = loggedInAt;
-    }
-
     public void withdraw(LocalDateTime now) {
         if (status == MemberStatus.WITHDRAWN) {
             throw new IllegalStateException("이미 탈퇴한 회원입니다.");
         }
+        this.providerUserId = null;
+        this.suspendedUntil = null;
+        this.suspensionReason = null;
         this.nickname = "탈퇴한 회원";
         this.profileImageUrl = null;
         this.profile = null;

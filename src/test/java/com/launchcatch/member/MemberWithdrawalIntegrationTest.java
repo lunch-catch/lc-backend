@@ -21,6 +21,7 @@ import com.launchcatch.member.oauth.KakaoIdentity;
 import com.launchcatch.member.repository.KakaoUnlinkFailureRepository;
 import com.launchcatch.member.repository.MemberProfileRepository;
 import com.launchcatch.member.repository.MemberRepository;
+import com.launchcatch.member.repository.MemberWithdrawalHistoryRepository;
 import com.launchcatch.member.service.MemberTokenService;
 import com.launchcatch.member.service.MemberWithdrawalService;
 import jakarta.servlet.http.Cookie;
@@ -40,6 +41,7 @@ class MemberWithdrawalIntegrationTest extends AbstractMemberIntegrationTest {
 
     @Autowired MockMvc mvc;
     @Autowired MemberRepository members;
+    @Autowired MemberWithdrawalHistoryRepository history;
     @Autowired MemberProfileRepository profiles;
     @Autowired KakaoUnlinkFailureRepository unlinkQueue;
     @Autowired MemberTokenService tokens;
@@ -113,6 +115,8 @@ class MemberWithdrawalIntegrationTest extends AbstractMemberIntegrationTest {
         transactions.executeWithoutResult(status -> {
             Member member = members.findById(memberId).orElseThrow();
             assertThat(member.getStatus()).isEqualTo(MemberStatus.WITHDRAWN);
+            assertThat(member.getProviderUserId()).isNull();
+            assertThat(history.findByMemberId(memberId)).isPresent();
             assertThat(member.getWithdrawnAt()).isNotNull();
             assertThat(member.getNickname()).isEqualTo("탈퇴한 회원");
             assertThat(member.getProfileImageUrl()).isNull();

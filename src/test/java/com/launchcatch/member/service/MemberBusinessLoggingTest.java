@@ -31,6 +31,7 @@ import com.launchcatch.member.oauth.KakaoIdentity;
 import com.launchcatch.member.repository.KakaoUnlinkFailureRepository;
 import com.launchcatch.member.repository.MemberProfileRepository;
 import com.launchcatch.member.repository.MemberRepository;
+import com.launchcatch.member.repository.MemberWithdrawalHistoryRepository;
 import java.math.BigDecimal;
 import java.sql.SQLException;
 import java.time.Clock;
@@ -120,7 +121,7 @@ class MemberBusinessLoggingTest {
         TestTransactionManager manager = new TestTransactionManager();
         manager.failCommit = failCommit;
         return new MemberWithdrawalService(exchanger, members, profiles,
-                mock(KakaoUnlinkFailureRepository.class), mock(MemberTokenService.class), mock(KakaoUnlinkClient.class),
+                mock(KakaoUnlinkFailureRepository.class), mock(MemberWithdrawalHistoryRepository.class), mock(MemberTokenService.class), mock(KakaoUnlinkClient.class),
                 new TransactionTemplate(manager), clock);
     }
 
@@ -256,7 +257,7 @@ class MemberBusinessLoggingTest {
         when(exchanger.exchange("인가코드원문", "상태검증원문"))
                 .thenThrow(new AuthException(AuthErrorCode.KAKAO_AUTHENTICATION_FAILED));
         MemberLoginService service = new MemberLoginService(exchanger, members, profiles,
-                mock(KakaoUnlinkFailureRepository.class), mock(MemberTokenService.class), mock(TransactionTemplate.class), clock);
+                mock(KakaoUnlinkFailureRepository.class), mock(MemberWithdrawalHistoryRepository.class), mock(MemberTokenService.class), mock(TransactionTemplate.class), clock);
         try (Capture capture = new Capture(MemberLoginService.class)) {
             assertThatThrownBy(() -> service.login("인가코드원문", "상태검증원문")).isInstanceOf(AuthException.class);
 
@@ -317,12 +318,12 @@ class MemberBusinessLoggingTest {
         KakaoIdTokenExchanger exchanger = mock(KakaoIdTokenExchanger.class);
         when(exchanger.exchange("인가코드원문", "상태검증원문"))
                 .thenReturn(new KakaoIdentity(member.getProviderUserId(), "닉네임원문", null));
-        when(members.findByProviderUserId(member.getProviderUserId())).thenReturn(Optional.of(member));
+        when(members.findByProviderUserIdForUpdate(member.getProviderUserId())).thenReturn(Optional.of(member));
         MemberTokenService tokens = mock(MemberTokenService.class);
         AuthException failure = storeFailure();
         when(tokens.issue(member)).thenThrow(failure);
         MemberLoginService service = new MemberLoginService(exchanger, members, profiles,
-                mock(KakaoUnlinkFailureRepository.class), tokens, new TransactionTemplate(new TestTransactionManager()), clock);
+                mock(KakaoUnlinkFailureRepository.class), mock(MemberWithdrawalHistoryRepository.class), tokens, new TransactionTemplate(new TestTransactionManager()), clock);
         try (Capture capture = new Capture(MemberLoginService.class)) {
             assertThatThrownBy(() -> service.login("인가코드원문", "상태검증원문")).isSameAs(failure);
 
@@ -370,9 +371,9 @@ class MemberBusinessLoggingTest {
         KakaoIdTokenExchanger exchanger = mock(KakaoIdTokenExchanger.class);
         when(exchanger.exchange("인가코드원문", "상태검증원문"))
                 .thenReturn(new KakaoIdentity(member.getProviderUserId(), "닉네임원문", null));
-        when(members.findByProviderUserId(member.getProviderUserId())).thenReturn(Optional.of(member));
+        when(members.findByProviderUserIdForUpdate(member.getProviderUserId())).thenReturn(Optional.of(member));
         MemberLoginService service = new MemberLoginService(exchanger, members, profiles,
-                mock(KakaoUnlinkFailureRepository.class), mock(MemberTokenService.class),
+                mock(KakaoUnlinkFailureRepository.class), mock(MemberWithdrawalHistoryRepository.class), mock(MemberTokenService.class),
                 new TransactionTemplate(new TestTransactionManager()), clock);
         try (Capture capture = new Capture(MemberLoginService.class)) {
             assertThatThrownBy(() -> service.login("인가코드원문", "상태검증원문")).isInstanceOf(MemberException.class);
