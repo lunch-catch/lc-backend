@@ -11,6 +11,7 @@ import com.launchcatch.analytics.batch.job.DailyAggregationJob;
 import com.launchcatch.auth.CustomUserDetails;
 import com.launchcatch.auth.Role;
 import com.launchcatch.global.config.ClockConfig;
+import com.launchcatch.ops.job.DailyJobScheduler;
 import java.sql.Timestamp;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -23,13 +24,15 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.web.servlet.MockMvc;
 
 /*
- * 일별 집계의 두 입구를 실제 DB 로 확인한다. 시각(배치) 입구는 01:00 작업의 run(), HTTP 입구는
- * A-05 와 A-06 이다. 지금 등록된 단계는 정산 지표(1행), 회원 지표(1행), 가게 지표(1행), 퍼널 지표(1행), 정산 검증(0행)이라 공개 트랜잭션이 쓰는 행은 4 이다.
+ * 일별 집계의 세 입구를 실제 DB 로 확인한다. 시각(배치) 입구는 01:00 작업의 run(), HTTP 입구는
+ * A-05 와 A-06 이다. 다른 도메인의 호출 입구는 ops 의 이어받기와 관리자 수동 재실행이 부르는
+ * StandaloneJob.run 이다. 지금 등록된 단계는 정산 지표(1행), 회원 지표(1행), 가게 지표(1행), 퍼널 지표(1행), 정산 검증(0행)이라 공개 트랜잭션이 쓰는 행은 4 이다.
  */
 class DailyAggregationIntegrationTest extends AbstractAnalyticsIntegrationTest {
 
     private static final String JOB = "DAILY_AGGREGATION";
     private static final String SOURCE_JOB = "BILLING_DAILY_RELEASE";
+    private static final String OTHER = "other-server";
 
     private final LocalDate today = LocalDate.now(ClockConfig.ZONE);
     private final LocalDate yesterday = today.minusDays(1);
@@ -41,6 +44,8 @@ class DailyAggregationIntegrationTest extends AbstractAnalyticsIntegrationTest {
     private MockMvc mvc;
     @Autowired
     private DailyAggregationJob job;
+    @Autowired
+    private DailyJobScheduler scheduler;
 
     @BeforeEach
     void cleanUp() {
@@ -106,6 +111,75 @@ class DailyAggregationIntegrationTest extends AbstractAnalyticsIntegrationTest {
     }
 
     @Test
+    void 실패한_날짜는_retry로_다시_잡아_오른_세대로_공개한다() {
+        sourceDone(yesterday);
+        sourceDone(twoDaysAgo);
+        insertLog(JOB, yesterday, "FAILED", OTHER, 1, now());
+
+        job.run();
+
+        assertThat(statusOf(yesterday)).isEqualTo("SUCCESS");
+        assertThat(attemptNoOf(yesterday)).isEqualTo(2);
+        assertThat(processedCountOf(yesterday)).isEqualTo(4);
+    }
+
+    /*
+     * 다른 도메인의 호출 입구다. ops 의 이어받기 스캔이 멈춘 행을 가져와 StandaloneJob 으로 이 작업을 다시 돌린다.
+     * 전전일도 집계할 수 있게 두어, 이어받은 날짜만 돌고 01:00 전체 실행을 다시 하지 않는지 함께 본다.
+     */
+    @Test
+    void 멈춘_집계를_이어받은_서버가_넘겨받은_세대로_그_날짜만_집계하고_미처리를_지운다() {
+        sourceDone(twoDaysAgo);
+        insertLog(JOB, yesterday, "RUNNING", OTHER, 1, now().minusMinutes(5));
+        pendingDate(yesterday);
+
+        scheduler.takeOverStale();
+
+        assertThat(statusOf(yesterday)).isEqualTo("SUCCESS");
+        assertThat(ownerOf(yesterday)).isEqualTo(BATCH_OWNER);
+        assertThat(attemptNoOf(yesterday)).isEqualTo(2);
+        assertThat(processedCountOf(yesterday)).isEqualTo(4);
+        assertThat(pendingDates()).isEmpty();
+        assertThat(statusOf(twoDaysAgo)).isNull();
+    }
+
+    @Test
+    void 관리자_수동_재실행이_실패한_집계_날짜를_다시_집계한다() throws Exception {
+        insertLog(JOB, yesterday, "FAILED", OTHER, 1, now());
+
+        mvc.perform(post("/v1/admin/batch-executions/" + JOB + "/" + yesterday + ":retry")
+                        .with(user(new CustomUserDetails(1L, Role.ADMIN))))
+                .andExpect(status().isAccepted());
+
+        awaitStatus(yesterday, "SUCCESS");
+        assertThat(attemptNoOf(yesterday)).isEqualTo(2);
+        assertThat(processedCountOf(yesterday)).isEqualTo(4);
+    }
+
+    /*
+     * 같은 서버가 새 세대(2)를 잡은 뒤 세대 1 의 오래된 실행이 늦게 공개하려는 경우다. 소유자가 같아 생존 신호와
+     * 소유자 조건으로는 가려지지 않고 공개 트랜잭션의 세대 확인만 막는다.
+     */
+    @Test
+    void 같은_서버라도_세대가_바뀌면_이전_실행은_공개하지_못하고_새_시도의_상태와_미처리를_건드리지_않는다() {
+        insertLog(JOB, yesterday, "RUNNING", BATCH_OWNER, 2, now());
+        pendingDate(yesterday);
+
+        job.run(yesterday, 1);
+
+        assertThat(statusOf(yesterday)).isEqualTo("RUNNING");
+        assertThat(attemptNoOf(yesterday)).isEqualTo(2);
+        assertThat(processedCountOf(yesterday)).isNull();
+        assertThat(jdbc.queryForObject(
+                "SELECT retry_count FROM batch_execution_log WHERE job_name = ? AND business_date = ?",
+                Integer.class, JOB, java.sql.Date.valueOf(yesterday))).isZero();
+        assertThat(pendingDates()).containsExactly(yesterday);
+        assertThat(jdbc.queryForObject(
+                "SELECT COUNT(*) FROM daily_settlement_analytics WHERE business_date = ?",
+                Long.class, java.sql.Date.valueOf(yesterday))).isZero();
+    }
+
+    @Test
     void 재계산을_접수하면_202이고_집계가_끝난_뒤_실행_조회로_확인한다() throws Exception {
         mvc.perform(post("/v1/admin/aggregations:recalculate")
                         .with(user(new CustomUserDetails(1L, Role.ADMIN)))
@@ -166,13 +240,45 @@ class DailyAggregationIntegrationTest extends AbstractAnalyticsIntegrationTest {
     }
 
     private void insertLog(String jobName, LocalDate date, String status) {
-        Timestamp now = Timestamp.valueOf(LocalDateTime.now(ClockConfig.ZONE));
+        insertLog(jobName, date, status, OTHER, 1, now());
+    }
+
+    private void insertLog(String jobName, LocalDate date, String status, String owner, int attemptNo,
+                           LocalDateTime updatedAt) {
+        Timestamp at = Timestamp.valueOf(updatedAt);
         boolean finished = !"RUNNING".equals(status);
+        String reason = "FAILED".equals(status) ? "앞 시도가 실패했다" : null;
         jdbc.update("""
                 INSERT INTO batch_execution_log
-                    (job_name, business_date, status, finished_at, processed_count, owner_id, created_at, updated_at)
-                VALUES (?, ?, ?, ?, NULL, 'other-server', ?, ?)
-                """, jobName, java.sql.Date.valueOf(date), status, finished ? now : null, now, now);
+                    (job_name, business_date, status, finished_at, processed_count, owner_id, failure_reason,
+                     attempt_no, created_at, updated_at)
+                VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?)
+                """, jobName, java.sql.Date.valueOf(date), status, finished ? at : null, owner, reason,
+                attemptNo, at, at);
+    }
+
+    private LocalDateTime now() {
+        return LocalDateTime.now(ClockConfig.ZONE);
+    }
+
+    private void pendingDate(LocalDate date) {
+        Timestamp at = Timestamp.valueOf(now());
+        jdbc.update("""
+                INSERT INTO aggregation_pending_date (business_date, reason, recorded_at, created_at, updated_at)
+                VALUES (?, 'FAILED', ?, ?, ?)
+                """, java.sql.Date.valueOf(date), at, at, at);
+    }
+
+    private Integer attemptNoOf(LocalDate date) {
+        return jdbc.queryForObject(
+                "SELECT attempt_no FROM batch_execution_log WHERE job_name = ? AND business_date = ?",
+                Integer.class, JOB, java.sql.Date.valueOf(date));
+    }
+
+    private String ownerOf(LocalDate date) {
+        return jdbc.queryForObject(
+                "SELECT owner_id FROM batch_execution_log WHERE job_name = ? AND business_date = ?",
+                String.class, JOB, java.sql.Date.valueOf(date));
     }
 
     private String statusOf(LocalDate date) {
