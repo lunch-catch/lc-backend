@@ -1,0 +1,191 @@
+package com.launchcatch.adserving.engine.service;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.tuple;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+import com.launchcatch.adserving.engine.entity.CandidateCampaignState;
+import com.launchcatch.adserving.engine.repository.AdCandidateRepository;
+import com.launchcatch.adserving.engine.repository.CandidateRow;
+import com.launchcatch.campaign.contract.AgeGroup;
+import com.launchcatch.campaign.contract.CampaignInfo;
+import com.launchcatch.campaign.contract.CampaignQueryService;
+import com.launchcatch.campaign.contract.CampaignStatus;
+import com.launchcatch.campaign.contract.DiscountTargetType;
+import com.launchcatch.campaign.contract.DiscountType;
+import com.launchcatch.campaign.contract.PauseReason;
+import com.launchcatch.campaign.contract.TargetGender;
+import com.launchcatch.global.config.ClockConfig;
+import com.launchcatch.store.contract.StoreAdCandidateInfo;
+import com.launchcatch.store.contract.StoreMenuInfo;
+import com.launchcatch.store.contract.StoreQueryService;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import java.math.BigDecimal;
+import java.time.Clock;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.LocalTime;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.stream.LongStream;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
+
+@DisplayName("그날 후보 적재")
+class CandidateLoadServiceTest {
+
+    private static final LocalDate TODAY = LocalDate.of(2026, 10, 1);
+    private static final LocalDateTime NOW = LocalDateTime.of(2026, 10, 1, 0, 0, 5);
+    private static final LocalDateTime CHANGED_AT = LocalDateTime.of(2026, 9, 30, 23, 0);
+
+    private final CampaignQueryService campaignQueryService = mock(CampaignQueryService.class);
+    private final StoreQueryService storeQueryService = mock(StoreQueryService.class);
+    private final AdCandidateRepository adCandidateRepository = mock(AdCandidateRepository.class);
+    private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+    private final CandidateLoadService service = new CandidateLoadService(campaignQueryService, storeQueryService,
+            adCandidateRepository, meterRegistry, Clock.fixed(NOW.atZone(ClockConfig.ZONE).toInstant(), ClockConfig.ZONE));
+
+    private static CampaignInfo campaign(long id, long storeId, CampaignStatus status, PauseReason reason,
+                                         DiscountTargetType target, Long menuId) {
+        return campaign(id, storeId, status, reason, target, menuId, CHANGED_AT);
+    }
+
+    private static CampaignInfo campaign(long id, long storeId, CampaignStatus status, PauseReason reason,
+                                         DiscountTargetType target, Long menuId, LocalDateTime changedAt) {
+        return new CampaignInfo(id, 1L, storeId, status, 30, LocalTime.of(12, 0), LocalTime.of(14, 0),
+                TODAY.minusDays(3), TODAY.plusDays(3), target, DiscountType.PERCENT, 20, menuId, 1000,
+                TargetGender.ALL, List.of(AgeGroup.AGE_20S, AgeGroup.AGE_30S), LocalDateTime.of(2026, 9, 1, 9, 0),
+                LocalDate.of(2026, 10, 3), changedAt, reason, 10_000L);
+    }
+
+    private static StoreAdCandidateInfo store(long id) {
+        return new StoreAdCandidateInfo(id, "가게" + id, "KOREAN", "https://cdn.example.com/" + id + ".jpg",
+                new BigDecimal("37.4979000"), new BigDecimal("127.0276000"));
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<CandidateRow> upserted() {
+        ArgumentCaptor<List<CandidateRow>> captor = ArgumentCaptor.forClass(List.class);
+        verify(adCandidateRepository).upsertAll(captor.capture(), eq(NOW));
+        return captor.getValue();
+    }
+
+    private double skipped(String reason) {
+        return meterRegistry.counter(CandidateLoadService.SKIPPED_METRIC, "reason", reason).count();
+    }
+
+    @Test
+    void ACTIVE_는_SERVABLE_로_예약이_있는_PAUSED_는_PAUSED_로_캠페인과_가게_값을_옮겨_적재한다() {
+        when(campaignQueryService.findServableOn(TODAY)).thenReturn(List.of(
+                campaign(101, 55, CampaignStatus.ACTIVE, null, DiscountTargetType.ALL, null),
+                campaign(102, 56, CampaignStatus.PAUSED, PauseReason.NO_POINTS, DiscountTargetType.ALL, null)));
+        when(storeQueryService.findAdCandidatesByStoreIds(anyList())).thenReturn(List.of(store(55), store(56)));
+
+        Map<Long, LocalDateTime> loaded = service.load(TODAY);
+
+        List<CandidateRow> rows = upserted();
+        assertThat(rows).extracting(CandidateRow::campaignId, CandidateRow::campaignState)
+                .containsExactly(tuple(101L, CandidateCampaignState.SERVABLE),
+                        tuple(102L, CandidateCampaignState.PAUSED));
+        CandidateRow row = rows.get(0);
+        assertThat(row).isEqualTo(new CandidateRow(TODAY, 101L, 55L, "가게55", "https://cdn.example.com/55.jpg", "KOREAN",
+                new BigDecimal("37.4979000"), new BigDecimal("127.0276000"), 1000, "ALL", "AGE_20S,AGE_30S", "ALL",
+                "PERCENT", 20, null, LocalTime.of(12, 0), LocalTime.of(14, 0), 30, LocalDateTime.of(2026, 9, 1, 9, 0),
+                LocalDate.of(2026, 10, 3), CandidateCampaignState.SERVABLE, CHANGED_AT));
+        assertThat(loaded).containsOnlyKeys(101L, 102L).containsEntry(101L, CHANGED_AT);
+    }
+
+    @Test
+    void 가게가_없으면_그_캠페인은_적재하지_않고_센다() {
+        when(campaignQueryService.findServableOn(TODAY)).thenReturn(List.of(
+                campaign(101, 55, CampaignStatus.ACTIVE, null, DiscountTargetType.ALL, null),
+                campaign(102, 99, CampaignStatus.ACTIVE, null, DiscountTargetType.ALL, null)));
+        when(storeQueryService.findAdCandidatesByStoreIds(anyList())).thenReturn(List.of(store(55)));
+
+        service.load(TODAY);
+
+        assertThat(upserted()).extracting(CandidateRow::campaignId).containsExactly(101L);
+        assertThat(skipped("store_missing")).isEqualTo(1);
+    }
+
+    // MENU 할인에 메뉴명이 없으면 CHECK 에 걸려 적재 전체가 실패한다(#582)
+    @Test
+    void 메뉴_할인은_메뉴명을_채우고_메뉴를_찾지_못하면_적재하지_않고_센다() {
+        when(campaignQueryService.findServableOn(TODAY)).thenReturn(List.of(
+                campaign(101, 55, CampaignStatus.ACTIVE, null, DiscountTargetType.MENU, 7001L),
+                campaign(102, 56, CampaignStatus.ACTIVE, null, DiscountTargetType.MENU, 7002L)));
+        when(storeQueryService.findAdCandidatesByStoreIds(anyList())).thenReturn(List.of(store(55), store(56)));
+        when(storeQueryService.findMenusByIdIn(anyList())).thenReturn(List.of(new StoreMenuInfo(7001L, 55L, null, "갈비살 정식", 12000L)));
+
+        service.load(TODAY);
+
+        assertThat(upserted()).extracting(CandidateRow::campaignId, CandidateRow::discountMenuName)
+                .containsExactly(tuple(101L, "갈비살 정식"));
+        assertThat(skipped("menu_missing")).isEqualTo(1);
+    }
+
+    @Test
+    void 가게는_계약의_상한_단위로_나눠_읽는다() {
+        int count = StoreQueryService.MAX_AD_CANDIDATE_STORE_IDS + 1;
+        List<CampaignInfo> campaigns = LongStream.rangeClosed(1, count)
+                .mapToObj(i -> campaign(i, i, CampaignStatus.ACTIVE, null, DiscountTargetType.ALL, null)).toList();
+        when(campaignQueryService.findServableOn(TODAY)).thenReturn(campaigns);
+        when(storeQueryService.findAdCandidatesByStoreIds(anyList())).thenReturn(List.of());
+
+        service.load(TODAY);
+
+        verify(storeQueryService, times(2)).findAdCandidatesByStoreIds(anyList());
+    }
+
+    @Test
+    void 보관_기간_7일이_지난_영업일의_후보를_지운다() {
+        when(campaignQueryService.findServableOn(TODAY)).thenReturn(List.of());
+
+        service.load(TODAY);
+
+        verify(adCandidateRepository).deleteByBusinessDateBefore(TODAY.minusDays(7));
+    }
+
+    @Test
+    void 대상이_없으면_가게와_메뉴를_읽지_않는다() {
+        when(campaignQueryService.findServableOn(TODAY)).thenReturn(List.of());
+
+        assertThat(service.load(TODAY)).isEmpty();
+
+        verify(storeQueryService, never()).findAdCandidatesByStoreIds(anyList());
+        verify(storeQueryService, never()).findMenusByIdIn(anyList());
+    }
+
+    // 적재 중에 커밋된 전이를 반영한다. 적재 때 읽은 시각보다 늦은 것만 고친다(#582)
+    @Test
+    void 적재_뒤_더_늦게_전이한_캠페인만_상태를_고친다() {
+        LocalDateTime later = CHANGED_AT.plusMinutes(30);
+        Map<Long, LocalDateTime> loaded = new HashMap<>(Map.of(101L, CHANGED_AT, 102L, CHANGED_AT, 103L, CHANGED_AT));
+        when(campaignQueryService.findAllById(anyList())).thenReturn(List.of(
+                campaign(101, 55, CampaignStatus.PAUSED, PauseReason.OWNER, DiscountTargetType.ALL, null, later),
+                campaign(102, 56, CampaignStatus.ACTIVE, null, DiscountTargetType.ALL, null),
+                campaign(103, 57, CampaignStatus.ENDED, null, DiscountTargetType.ALL, null, later)));
+
+        service.reconcile(TODAY, loaded);
+
+        verify(adCandidateRepository).changeState(TODAY, 101L, "PAUSED", later, NOW);
+        verify(adCandidateRepository).changeState(TODAY, 103L, "PAUSED", later, NOW);
+        verify(adCandidateRepository, never()).changeState(eq(TODAY), eq(102L), any(), any(), any());
+    }
+
+    @Test
+    void 적재한_캠페인이_없으면_다시_읽지_않는다() {
+        service.reconcile(TODAY, Map.of());
+
+        verify(campaignQueryService, never()).findAllById(anyList());
+    }
+}

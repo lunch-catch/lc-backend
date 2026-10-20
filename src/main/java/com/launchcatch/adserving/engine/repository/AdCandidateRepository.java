@@ -15,7 +15,7 @@ import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
-public interface AdCandidateRepository extends JpaRepository<AdCandidate, AdCandidateId> {
+public interface AdCandidateRepository extends JpaRepository<AdCandidate, AdCandidateId>, AdCandidateLoad {
 
     // 그날 서빙할 수 있는 후보 가운데 상자 안의 가게만 읽는다. 원 바깥은 부르는 쪽이 거리로 거른다.
     default List<AdCandidate> findServableWithin(LocalDate businessDate, BoundingBox box) {
@@ -73,4 +73,9 @@ public interface AdCandidateRepository extends JpaRepository<AdCandidate, AdCand
             """, nativeQuery = true)
     int changeState(@Param("businessDate") LocalDate businessDate, @Param("campaignId") Long campaignId,
             @Param("state") String state, @Param("changedAt") LocalDateTime changedAt, @Param("now") LocalDateTime now);
+
+    // 보관 기간이 지난 영업일의 후보를 지운다(#582)
+    @Modifying
+    @Query("delete from AdCandidate c where c.id.businessDate < :before")
+    int deleteByBusinessDateBefore(@Param("before") LocalDate before);
 }
