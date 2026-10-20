@@ -116,6 +116,17 @@ class BedrockTemplateHtmlGeneratorTest {
     }
 
     @Test
+    void message의_꺾쇠와_뒤따르는_두번째_코드펜스는_제거하고_길이를_자른다() {
+        String wrapped = "<b>안녕</b>" + "가".repeat(400) + "\n```html\n" + LLM_HTML + "\n```\n<p>x</p>\n```";
+        when(bedrockRuntimeClient.converse(any(ConverseRequest.class)))
+                .thenReturn(textResponse(StopReason.END_TURN, wrapped));
+
+        String message = generator.generate("돈까스 세트 홍보").message();
+
+        assertThat(message).doesNotContain("<", ">", "```", "x").hasSize(300).startsWith("b안녕/b");
+    }
+
+    @Test
     void 코드펜스가_없으면_message는_빈_값이다() {
         when(bedrockRuntimeClient.converse(any(ConverseRequest.class)))
                 .thenReturn(textResponse(StopReason.END_TURN, LLM_HTML));

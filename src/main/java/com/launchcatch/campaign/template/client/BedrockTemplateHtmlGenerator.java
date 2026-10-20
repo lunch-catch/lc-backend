@@ -53,6 +53,8 @@ public class BedrockTemplateHtmlGenerator implements TemplateHtmlGenerator {
 
     private static final int MAX_OUTPUT_TOKENS = 4000;
     private static final int MAX_RETRIES = 1;
+    // 프롬프트는 100자 이내를 요구한다. 어긴 응답이 그대로 저장되지 않게 서버에서도 자른다.
+    private static final int MESSAGE_MAX_LENGTH = 300;
     private static final String AD_LABEL_SLOT = "adLabel";
     private static final String AD_LABEL_TEXT = "광고";
 
@@ -292,7 +294,11 @@ public class BedrockTemplateHtmlGenerator implements TemplateHtmlGenerator {
         if (!fenced.find()) {
             return "";
         }
-        return (raw.substring(0, fenced.start()) + raw.substring(fenced.end())).trim();
+        // 코드펜스가 둘 이상이어도 그 안의 코드가 설명에 섞이지 않게 전부 뺀다.
+        String outside = CODE_FENCE.matcher(raw).replaceAll("");
+        // 검증하지 않은 LLM 문장이라 프론트가 실수로 HTML 로 그려도 태그가 되지 않게 꺾쇠를 뺀다.
+        String text = outside.replace("<", "").replace(">", "").replace("```", "").trim();
+        return text.length() > MESSAGE_MAX_LENGTH ? text.substring(0, MESSAGE_MAX_LENGTH) : text;
     }
 
     /*
