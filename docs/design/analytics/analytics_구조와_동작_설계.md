@@ -256,6 +256,8 @@ sequenceDiagram
 
 **회원 사용 통계 단계 (2026-10-20, #557).** `MemberUsageStep`(`@Order(700)`)이 `CouponStatsQueryService.dailyMemberStats`의 사용 수(`redeem_count`)와 확정 할인액(`saved_amount`), 분석 자기 `event_log`의 그날 `wish` 행 수(`wish_count`)를 `member_id`로 합쳐 `daily_member_usage`의 그날 행으로 교체한다. 사용 수는 `redeem` 이벤트로 세지 않는다. 찜은 쿠폰 계약의 값을 쓰지 않는다(AD-31). 찜 수는 영업일 하루(KST 자정 이상, 다음 자정 미만)로 센다. 사용도 찜도 없는 회원은 행이 없고 다시 집계했을 때 사라진 행이 남지 않게 그날 행을 지우고 넣는다. 이 표는 보존 삭제 대상이 아니고 탈퇴 회원의 행도 지우지 않는다(AD-16, AD-21 폐기). 조회(A-12)는 본인 행 전체의 합을 내리고 행이 없으면 세 값이 `0`이다. 전날까지 확정된 값의 합이라 오늘 쓴 쿠폰은 다음 날 반영된다.
 
+**이벤트 로그 보존 삭제 (2026-10-19, #555).** `EventLogRetentionJob`이 매일 04:00 KST에 `(EVENT_LOG_RETENTION, 영업일)` 행을 점유하고, `EventLogRetentionService`가 `occurred_at`이 (오늘 - 13개월) 00:00보다 이전인 `event_log` 행을 1000행씩 지운다. 삭제 선은 재집계를 허용하는 가장 오래된 영업일(`DailyAggregationRunner.oldestRetained`)과 같은 날짜라서, 재집계할 수 있는 날짜의 원본은 지워지지 않는다. 청크마다 자기 트랜잭션으로 커밋하고 청크 사이에 100ms 쉰다. `daily_member_usage`와 다른 집계 표는 지우지 않는다. 시각은 서빙 휴지 구간이 없어진 뒤로 시각 자체에 대한 의존이 없고, 01:00 집계가 끝난 뒤 이벤트 기록 쓰기와 겹치지 않는 새벽을 골랐다.
+
 ## 11. 성능
 
 배치 지표 조회 API는 미리 계산한 일별 테이블만 읽는다. 이벤트 로그 기반 캠페인 성과의 조회 방식은 [API 설계](./analytics-api-design.md#이벤트-로그-기반-캠페인-성과-509)가 소유한다. 일별 집계는 원천 행이 아니라 도메인별로 묶은 결과를 받는다. 공개 트랜잭션은 외부 호출 없이 하루 결과를 쓰는 동안만 유지한다.

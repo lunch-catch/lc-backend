@@ -138,4 +138,8 @@ billing은 `BillingStatsQueryService`를 공개했고 `SettlementMetricsStep`과
 
 `event_log`는 파티셔닝하지 않는다. MySQL은 파티션 키를 모든 UNIQUE 키에 포함하도록 요구하므로 `occurred_at`으로 파티셔닝하면 `event_id` 단독 멱등성을 DB 제약으로 지킬 수 없다.
 
-보존 설계는 매일 04:00 KST에 13개월보다 오래된 행을 1000건씩 삭제하고 작업명은 `EVENT_LOG_RETENTION`으로 두는 것이다. 현재 `EventLogRetentionJob`과 삭제 저장소 구현은 없다. 따라서 13개월이 지난 로그가 실제로 자동 삭제된다고 보장하지 않는다. `DailyAggregationRunner`의 13개월 재집계 제한은 구현돼 있으며 로그 삭제와 별개다. `daily_member_usage`는 누적 계약을 위한 집계라 이 삭제 대상에서 제외하는 설계다.
+`EventLogRetentionJob`이 매일 04:00 KST에 13개월보다 오래된 행을 1000건씩 삭제한다. 작업명은 `EVENT_LOG_RETENTION`이고 `batch_execution_log`의 점유를 이긴 서버만 돈다. 01:00 집계가 끝난 뒤의 새벽이며 서빙 휴지 구간이 없어졌으므로 시각 자체에 대한 의존은 없다.
+
+삭제 선은 오늘에서 `DailyAggregationRunner.RETENTION_MONTHS`를 뺀 날짜의 00:00이다. 재집계를 허용하는 가장 오래된 영업일(`oldestRetained`)과 같은 날짜라서, 재집계할 수 있는 날짜의 원본 이벤트는 지워지지 않는다. 청크 사이에는 짧게 쉬어 이벤트 기록 쓰기와 락을 다투는 시간을 줄이고, 청크마다 자기 트랜잭션으로 커밋한다.
+
+작업은 `StandaloneJob`으로도 등록돼 있어 멈춘 실행을 다른 서버가 이어받을 수 있다. 삭제는 멱등이라 이어받아 다시 돌려도 남은 행만 지운다. `daily_member_usage`는 누적 계약을 위한 집계라 이 삭제 대상에서 제외한다.
