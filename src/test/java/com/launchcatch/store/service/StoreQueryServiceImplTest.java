@@ -175,12 +175,14 @@ class StoreQueryServiceImplTest {
     }
 
     @Test
-    void 최종_등록된_가게의_대표_이미지가_없으면_실패한다() {
+    void 최종_등록된_가게의_대표_이미지가_없어도_가게와_좌표를_반환한다() {
+        var unconfigured = new StoreQueryServiceImpl(repository, mock(OwnerStoreQueryRepository.class),
+                mock(StoreOnboardingQueryRepository.class), "");
         when(repository.findAllById(List.of(1L))).thenReturn(List.of(
-                new StoreQueryRow(1L, "가게", null, null, null)));
+                new StoreQueryRow(1L, "가게", null, new BigDecimal("37.5"), new BigDecimal("127.0"))));
 
-        assertThatThrownBy(() -> service.findAllById(List.of(1L)))
-                .isInstanceOf(IllegalStateException.class).hasMessageContaining("이미지가 누락");
+        assertThat(unconfigured.findAllById(List.of(1L)))
+                .containsExactly(new StoreInfo(1L, "가게", null, 37.5, 127.0));
     }
 
     @Test
