@@ -25,7 +25,10 @@ public class LogRetentionJob implements StandaloneJob {
     private final LogRetentionService retention;
     private final BatchExecutionService executions;
 
-    // 시간대를 값으로 적는다. 서버 기본 시간대로 두면 컨테이너가 UTC 로 뜨는 순간 낮에 돈다
+    /*
+     * 시간대를 값으로 적는다.
+     * 서버 기본 시간대로 두면 컨테이너가 UTC 로 뜨는 순간 낮에 돈다.
+     */
     @Scheduled(cron = "0 0 2 * * *", zone = "Asia/Seoul")
     public void purgeExpired() {
         LocalDate businessDate = executions.businessDate();
@@ -58,7 +61,10 @@ public class LogRetentionJob implements StandaloneJob {
         runCounting(businessDate, attemptNo);
     }
 
-    // 이어받은 서버와 수동 재실행이 부른다. 돌려준 건수로 DailyJobRunner 가 행을 닫는다
+    /*
+     * 이어받은 서버와 수동 재실행이 부른다.
+     * 돌려준 건수로 DailyJobRunner 가 행을 닫는다.
+     */
     @Override
     public Integer runCounting(LocalDate businessDate, int attemptNo) {
         return retention.purge(businessDate);

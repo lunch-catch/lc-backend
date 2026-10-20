@@ -46,7 +46,10 @@ public interface SwipeLogRepository extends JpaRepository<SwipeLog, SwipeLogId>,
     List<CampaignWishCount> countByCampaign(@Param("businessDate") LocalDate businessDate,
                                             @Param("action") SwipeAction action);
 
-    // 보관 기간이 지난 영업일의 행을 limit 개까지 지운다. 문장마다 따로 커밋한다(#610)
+    /*
+     * 보관 기간이 지난 영업일의 행을 limit 개까지 지운다.
+     * 문장마다 따로 커밋한다(#610).
+     */
     @Transactional
     @Modifying
     @Query(value = "DELETE FROM swipe_log WHERE business_date < :before LIMIT :limit", nativeQuery = true)

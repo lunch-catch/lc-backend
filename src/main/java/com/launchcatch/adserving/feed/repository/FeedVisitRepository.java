@@ -48,7 +48,10 @@ public class FeedVisitRepository {
                 """, (rs, i) -> new VisitPoint(rs.getLong(1), rs.getDouble(2), rs.getDouble(3)), from, to);
     }
 
-    // 보관 기간이 지난 영업일의 행을 limit 개까지 지운다. 문장마다 따로 커밋한다(#610)
+    /*
+     * 보관 기간이 지난 영업일의 행을 limit 개까지 지운다.
+     * 문장마다 따로 커밋한다(#610).
+     */
     public int deleteBusinessDateBefore(LocalDate before, int limit) {
         return jdbcTemplate.update("DELETE FROM feed_visit_daily WHERE business_date < ? LIMIT ?", before, limit);
     }
