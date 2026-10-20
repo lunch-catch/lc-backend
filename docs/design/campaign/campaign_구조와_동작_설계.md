@@ -136,6 +136,7 @@ flowchart LR
 stateDiagram-v2
     [*] --> DRAFT
     DRAFT --> SCHEDULED: 자동 검수 통과 (SYSTEM)
+    SCHEDULED --> DRAFT: 점주 취소 (미구현, #597)
     SCHEDULED --> ACTIVE: 00:00 스케줄러 (SYSTEM)
     ACTIVE --> PAUSED: 관리자, 점주, 포인트 부족
     PAUSED --> ACTIVE: 재개
@@ -146,6 +147,7 @@ stateDiagram-v2
 | 전이 | 일으키는 쪽 | 나가는 이벤트 | 금지일 때 응답 |
 |---|---|---|---|
 | DRAFT -> SCHEDULED | OWNER(활성화 요청, 자동 검수 통과) | 없음 | `CAMPAIGN-006` |
+| SCHEDULED -> DRAFT(미구현, `#597`) | OWNER(취소 요청) | `#597`에서 정한다 | `#597`에서 HTTP 계약을 정한다 |
 | SCHEDULED -> ACTIVE | SYSTEM | 없음(00:00 배치가 같은 흐름에서 다시 조회) | `IllegalStateException` |
 | ACTIVE -> PAUSED | ADMIN, OWNER, SYSTEM(포인트 부족) | `CampaignStatusChangedEvent`(servable=false) | `IllegalStateException` |
 | PAUSED -> ACTIVE | OWNER, SYSTEM(충전 재예약) | `CampaignStatusChangedEvent`(servable=true) | `IllegalStateException` |
@@ -154,8 +156,28 @@ stateDiagram-v2
 DRAFT -> SCHEDULED는 점주의 캠페인 활성화 요청(`#561`)이 호출부가 되었다. `CampaignActivationService`가
 `CampaignStatusService.schedule()`을 부르기 전에 캠페인이 DRAFT인지 먼저 확인해서 거부하므로,
 `Campaign.schedule()`의 `IllegalStateException`은 이 경로에서 실제로 던져지지 않는다. 그 대신
-`CampaignActivationService`가 `CAMPAIGN-006`으로 응답한다. 나머지 전이(SCHEDULED -> ACTIVE 등)는
+`CampaignActivationService`가 `CAMPAIGN-006`으로 응답한다. 기존의 나머지 전이(SCHEDULED -> ACTIVE 등)는
 아직 HTTP 엔드포인트가 없어 "금지일 때 응답"이 엔티티의 `IllegalStateException` 그대로다.
+
+#### SCHEDULED 캠페인의 취소(`#571`)
+
+점주가 본인 소유 `SCHEDULED` 캠페인을 취소해 같은 캠페인을 `DRAFT`로 되돌리는 전이를 허용한다.
+`SCHEDULED`에서는 포스터와 쿠폰 조건을 고칠 수 없다. 점주가 `ENDED`가 아닌 캠페인을 동시에
+하나만 가질 수 있다는 제한(`#525`)도 있어 새 캠페인을 만들어 잘못 입력한 내용을 고칠 수도 없다.
+취소로 기존 캠페인을 다시 수정하게 해 점주가 집행 전에 잘못된 내용을 스스로 고칠 수 있게 한다.
+
+취소 뒤에는 `DRAFT`의 기존 수정 규칙을 적용한다.
+
+| 대상 | 취소 뒤 수정 범위 |
+|---|---|
+| 포스터 | 포스터를 다시 만들거나 교체할 수 있다. [포스터 생성 설계](./poster-api-design.md#포스터-생성)의 기존 조건을 따른다 |
+| 쿠폰 조건 | 같은 캠페인의 쿠폰 조건을 다시 입력할 수 있다. [캠페인 등록 설계](./campaign-api-design.md#캠페인-등록쿠폰-조건)의 기존 조건을 따른다 |
+| 하루 예산 | `DRAFT`의 하루 예산을 다시 설정할 수 있다. [예산과 집행 기간 설계](./campaign-api-design.md#캠페인-등록노출-대상-하루-예산과-집행-기간)의 기존 조건을 따른다 |
+
+수정한 캠페인을 다시 활성화할 때는 기존 활성화 절차와 자동 검수를 거쳐 `SCHEDULED`로 전환한다.
+실제 취소 기능은 [구현 이슈 #597](https://github.com/lunch-catch/lc-backend/issues/597)이 맡는다.
+이 결정은 취소를 허용할 상태와 취소 뒤 수정 범위를 정한다. 취소 API의 공개 계약과 상태 전이
+경합 처리는 구현 이슈에서 확정한다.
 
 ### 주요 흐름
 
