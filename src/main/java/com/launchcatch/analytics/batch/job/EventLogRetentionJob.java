@@ -69,7 +69,7 @@ public class EventLogRetentionJob implements StandaloneJob {
     }
 
     /*
-     * 이어받은 서버와 관리자 수동 재실행이 부른다. 지운 건수를 돌려주면 DailyJobRunner 가 그 건수로
+     * 이어받은 서버와 관리자 수동 재실행이 부른다. 지운 건수를 돌려주면 BatchJobRunner 가 그 건수로
      * 행을 닫는다. 여기서 행을 닫지 않는다.
      */
     @Override

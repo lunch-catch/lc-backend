@@ -6,7 +6,7 @@ import com.launchcatch.analytics.batch.job.EventLogRetentionJob;
 import com.launchcatch.analytics.batch.service.EventLogRetentionService;
 import com.launchcatch.global.config.ClockConfig;
 import com.launchcatch.ops.service.BatchExecutionService;
-import com.launchcatch.ops.service.DailyJobRunner;
+import com.launchcatch.ops.service.BatchJobRunner;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.TimeZone;
@@ -34,7 +34,7 @@ class EventLogRetentionIntegrationTest extends AbstractAnalyticsIntegrationTest 
     @Autowired
     private BatchExecutionService executions;
     @Autowired
-    private DailyJobRunner runner;
+    private BatchJobRunner runner;
     @Autowired
     private EventLogRetentionService retention;
 
@@ -85,7 +85,7 @@ class EventLogRetentionIntegrationTest extends AbstractAnalyticsIntegrationTest 
     }
 
     /*
-     * 멈춘 실행을 이어받거나 관리자가 다시 돌리는 길은 DailyJobRunner.resume 이 부른다. runner 가 runCounting 이
+     * 멈춘 실행을 이어받거나 관리자가 다시 돌리는 길은 BatchJobRunner.resume 이 부른다. runner 가 runCounting 이
      * 돌려준 건수로 닫아 지운 건수가 남는지 본다.
      */
     @Test

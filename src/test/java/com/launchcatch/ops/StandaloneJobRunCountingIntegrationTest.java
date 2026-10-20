@@ -21,7 +21,7 @@ import org.springframework.test.web.servlet.MockMvc;
 /*
  * 관리자 수동 재실행으로 묶음 밖 작업을 다시 돌리면 runCounting 이 돌려준 건수가
  * batch_execution_log.processed_count 에 남는지 실제 입구부터 DB 재조회까지 확인한다(#559).
- * 이어받기도 같은 DailyJobRunner.resume 을 탄다.
+ * 이어받기도 같은 BatchJobRunner.resume 을 탄다.
  */
 class StandaloneJobRunCountingIntegrationTest extends AbstractOpsIntegrationTest {
 

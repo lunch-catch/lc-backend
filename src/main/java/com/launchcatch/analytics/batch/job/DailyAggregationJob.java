@@ -46,10 +46,10 @@ public class DailyAggregationJob implements StandaloneJob {
      * 이어받은 서버와 관리자 수동 재실행이 부른다. 그 날짜는 이미 점유돼 있어 다시 잡지 않고 넘겨받은 세대로
      * 그 날짜만 집계한다.
      *
-     * 집계가 실행 행을 건수와 함께 먼저 닫는다. DailyJobRunner 가 이어서 부르는 건수 없는 succeed 는 행이 이미
+     * 집계가 실행 행을 건수와 함께 먼저 닫는다. BatchJobRunner 가 이어서 부르는 건수 없는 succeed 는 행이 이미
      * RUNNING 이 아니라서 무시된다. EventLogRetentionJob 과 같은 임시 처리다(#559, #560).
      *
-     * 실행권을 잃어도 예외를 던지지 않는다. 던지면 DailyJobRunner 가 소유자 조건만으로 fail 을 불러, 같은
+     * 실행권을 잃어도 예외를 던지지 않는다. 던지면 BatchJobRunner 가 소유자 조건만으로 fail 을 불러, 같은
      * 서버가 잡은 새 세대의 행을 실패로 닫는다. 던지지 않아도 이어지는 succeed 가 그 행을 닫는 틈은 남는다.
      * 그 틈은 ops 가 세대로 닫게 해야 막히고 #591 이 맡는다.
      */

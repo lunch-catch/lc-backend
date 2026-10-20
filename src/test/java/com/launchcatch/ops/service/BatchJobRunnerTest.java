@@ -1,6 +1,6 @@
 package com.launchcatch.ops.service;
 
-import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -11,6 +11,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import com.launchcatch.ops.scheduler.BatchJobRegistry;
 import com.launchcatch.ops.scheduler.DailyJob;
 import com.launchcatch.ops.scheduler.RetryBackoff;
 import com.launchcatch.ops.scheduler.StandaloneJob;
@@ -33,7 +34,7 @@ import org.springframework.dao.QueryTimeoutException;
  * 남은 단계를 계속 도는 것이다. 둘 다 결과가 두 번 반영되거나 어긋난 상태로 남는다.
  */
 @ExtendWith(MockitoExtension.class)
-class DailyJobRunnerTest {
+class BatchJobRunnerTest {
 
     private static final LocalDate DATE = LocalDate.of(2026, 10, 6);
     private static final String FIRST = "LOAD_DAILY_CANDIDATE";
@@ -73,26 +74,12 @@ class DailyJobRunnerTest {
         };
     }
 
-    private DailyJobRunner runner(DailyJob... jobs) {
-        return new DailyJobRunner(List.of(jobs), List.of(), executions, backoff);
+    private BatchJobRunner runner(DailyJob... jobs) {
+        return new BatchJobRunner(List.of(jobs), new BatchJobRegistry(List.of(jobs), List.of()), executions, backoff);
     }
 
-    private DailyJobRunner runnerWithStandalone(StandaloneJob... standaloneJobs) {
-        return new DailyJobRunner(List.of(), List.of(standaloneJobs), executions, backoff);
-    }
-
-    private StandaloneJob standalone(String name) {
-        return new StandaloneJob() {
-            @Override
-            public String jobName() {
-                return name;
-            }
-
-            @Override
-            public void run(LocalDate businessDate, int attemptNo) {
-                // 테스트는 호출 여부만 본다
-            }
-        };
+    private BatchJobRunner runnerWithStandalone(StandaloneJob... standaloneJobs) {
+        return new BatchJobRunner(List.of(), new BatchJobRegistry(List.of(), List.of(standaloneJobs)), executions, backoff);
     }
 
     private StandaloneJob failingStandaloneTimes(String name, int failures, RuntimeException error) {
@@ -158,7 +145,7 @@ class DailyJobRunnerTest {
     }
 
     private void stubRenew() {
-        when(executions.renew(DailyJobRunner.BUNDLE, DATE)).thenReturn(true);
+        when(executions.renew(BatchJobRegistry.BUNDLE, DATE)).thenReturn(true);
     }
 
     @Test
@@ -173,7 +160,7 @@ class DailyJobRunnerTest {
         InOrder order = inOrder(executions);
         order.verify(executions).succeed(FIRST, DATE);
         order.verify(executions).succeed(SECOND, DATE);
-        order.verify(executions).succeed(DailyJobRunner.BUNDLE, DATE);
+        order.verify(executions).succeed(BatchJobRegistry.BUNDLE, DATE);
     }
 
     /*
@@ -189,7 +176,7 @@ class DailyJobRunnerTest {
         runner(failing(FIRST), job(SECOND)).runBundle(DATE);
 
         verify(executions).fail(FIRST, DATE, "IllegalStateException: 원본을 읽지 못했다");
-        verify(executions).fail(DailyJobRunner.BUNDLE, DATE, FIRST + " 단계가 실패했다");
+        verify(executions).fail(BatchJobRegistry.BUNDLE, DATE, FIRST + " 단계가 실패했다");
         verify(executions, never()).begin(SECOND, DATE);
     }
 
@@ -200,12 +187,12 @@ class DailyJobRunnerTest {
     @Test
     @DisplayName("묶음 점유를 잃으면 단계를 시작하지 않는다")
     void 점유를_잃으면_멈춘다() {
-        when(executions.renew(DailyJobRunner.BUNDLE, DATE)).thenReturn(false);
+        when(executions.renew(BatchJobRegistry.BUNDLE, DATE)).thenReturn(false);
 
         runner(job(FIRST)).runBundle(DATE);
 
         verify(executions, never()).begin(FIRST, DATE);
-        verify(executions, never()).succeed(DailyJobRunner.BUNDLE, DATE);
+        verify(executions, never()).succeed(BatchJobRegistry.BUNDLE, DATE);
     }
 
     @Test
@@ -230,7 +217,7 @@ class DailyJobRunnerTest {
 
         runner(job(FIRST), job(SECOND)).runBundle(DATE);
 
-        verify(executions).fail(DailyJobRunner.BUNDLE, DATE, FIRST + " 단계를 시작할 수 없다");
+        verify(executions).fail(BatchJobRegistry.BUNDLE, DATE, FIRST + " 단계를 시작할 수 없다");
         verify(executions, never()).begin(SECOND, DATE);
     }
 
@@ -252,8 +239,8 @@ class DailyJobRunnerTest {
 
         verify(executions).succeed(FIRST, DATE);
         verify(executions).succeed(SECOND, DATE);
-        verify(executions).succeed(DailyJobRunner.BUNDLE, DATE);
-        verify(executions, never()).fail(eq(DailyJobRunner.BUNDLE), eq(DATE), anyString());
+        verify(executions).succeed(BatchJobRegistry.BUNDLE, DATE);
+        verify(executions, never()).fail(eq(BatchJobRegistry.BUNDLE), eq(DATE), anyString());
     }
 
     @Test
@@ -261,7 +248,7 @@ class DailyJobRunnerTest {
     void 단계가_없으면_바로_닫는다() {
         runner().runBundle(DATE);
 
-        verify(executions).succeed(DailyJobRunner.BUNDLE, DATE);
+        verify(executions).succeed(BatchJobRegistry.BUNDLE, DATE);
     }
 
     /*
@@ -280,7 +267,7 @@ class DailyJobRunnerTest {
         runner(failingTimes(FIRST, 1, new QueryTimeoutException("응답이 없다"))).runBundle(DATE);
 
         verify(executions).succeed(FIRST, DATE);
-        verify(executions).succeed(DailyJobRunner.BUNDLE, DATE);
+        verify(executions).succeed(BatchJobRegistry.BUNDLE, DATE);
         verify(executions, never()).fail(eq(FIRST), eq(DATE), anyString());
     }
 
@@ -298,7 +285,7 @@ class DailyJobRunnerTest {
         runner(failingTimes(FIRST, 9, new QueryTimeoutException("응답이 없다"))).runBundle(DATE);
 
         verify(executions).fail(FIRST, DATE, "QueryTimeoutException: 응답이 없다");
-        verify(executions).fail(DailyJobRunner.BUNDLE, DATE, FIRST + " 단계가 실패했다");
+        verify(executions).fail(BatchJobRegistry.BUNDLE, DATE, FIRST + " 단계가 실패했다");
         verifyNoInteractions(backoff);
     }
 
@@ -351,26 +338,25 @@ class DailyJobRunnerTest {
         runner(failingTimes(FIRST, 9, new QueryTimeoutException("응답이 없다"))).runBundle(DATE);
 
         verify(executions, never()).fail(eq(FIRST), eq(DATE), anyString());
-        verify(executions, never()).succeed(DailyJobRunner.BUNDLE, DATE);
+        verify(executions, never()).succeed(BatchJobRegistry.BUNDLE, DATE);
     }
 
+    /*
+     * 다시 돌릴 수 없는 이름은 NPE 가 아니라 그 이름을 담은 예외로 멈춘다(#585).
+     * 단계 이름도 여기에 든다. 단계는 묶음 드라이버로만 다시 돈다.
+     */
     @Test
-    @DisplayName("isStep은 등록된 단계 이름만 참이다")
-    void isStep은_등록된_단계만_참이다() {
-        DailyJobRunner runner = runner(job(FIRST));
+    @DisplayName("resume은 묶음도 등록된 묶음 밖 작업도 아닌 이름이면 그 이름을 담아 던지고 행을 건드리지 않는다")
+    void resume은_다시_돌릴_수_없는_이름이면_던진다() {
+        BatchJobRunner runner = runner(job(FIRST));
 
-        assertThat(runner.isStep(FIRST)).isTrue();
-        assertThat(runner.isStep(DailyJobRunner.BUNDLE)).isFalse();
-    }
-
-    @Test
-    @DisplayName("isRetryable은 묶음이거나 등록된 StandaloneJob일 때만 참이다")
-    void isRetryable은_묶음과_등록된_작업만_참이다() {
-        DailyJobRunner runner = runnerWithStandalone(standalone("MEMBER_KAKAO_UNLINK_RETRY"));
-
-        assertThat(runner.isRetryable(DailyJobRunner.BUNDLE)).isTrue();
-        assertThat(runner.isRetryable("MEMBER_KAKAO_UNLINK_RETRY")).isTrue();
-        assertThat(runner.isRetryable("EXPIRE_COUPON:42")).isFalse();
+        assertThatThrownBy(() -> runner.resume("EXPIRE_COUPON:42", DATE, 1))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("EXPIRE_COUPON:42");
+        assertThatThrownBy(() -> runner.resume(FIRST, DATE, 1))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining(FIRST);
+        verifyNoInteractions(executions);
     }
 
     @Test
@@ -379,10 +365,10 @@ class DailyJobRunnerTest {
         stubRenew();
         when(executions.begin(FIRST, DATE)).thenReturn(StepOutcome.STARTED);
 
-        runner(job(FIRST)).resume(DailyJobRunner.BUNDLE, DATE, 1);
+        runner(job(FIRST)).resume(BatchJobRegistry.BUNDLE, DATE, 1);
 
         verify(executions).succeed(FIRST, DATE);
-        verify(executions).succeed(DailyJobRunner.BUNDLE, DATE);
+        verify(executions).succeed(BatchJobRegistry.BUNDLE, DATE);
     }
 
     /*
@@ -465,7 +451,7 @@ class DailyJobRunnerTest {
                 .resume("MEMBER_KAKAO_UNLINK_RETRY", DATE, 1);
 
         verify(executions).failAttempt("MEMBER_KAKAO_UNLINK_RETRY", DATE, 1, "IllegalStateException: 원본이 어긋났다");
-        verify(executions, never()).fail(eq(DailyJobRunner.BUNDLE), any(LocalDate.class), anyString());
+        verify(executions, never()).fail(eq(BatchJobRegistry.BUNDLE), any(LocalDate.class), anyString());
         verifyNoOwnerOnlyWrites("MEMBER_KAKAO_UNLINK_RETRY");
     }
 

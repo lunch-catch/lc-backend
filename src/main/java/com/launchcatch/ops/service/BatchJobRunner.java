@@ -1,5 +1,6 @@
 package com.launchcatch.ops.service;
 
+import com.launchcatch.ops.scheduler.BatchJobRegistry;
 import com.launchcatch.ops.scheduler.DailyJob;
 import com.launchcatch.ops.scheduler.RetryBackoff;
 import com.launchcatch.ops.scheduler.StandaloneJob;
@@ -7,15 +8,12 @@ import com.launchcatch.ops.scheduler.StepOutcome;
 import com.launchcatch.ops.scheduler.TransientFailures;
 import java.time.LocalDate;
 import java.util.List;
-import java.util.Map;
-import java.util.Set;
 import java.util.function.Supplier;
-import java.util.stream.Collectors;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 /*
- * 00:00 묶음과 등록된 묶음 밖 작업(StandaloneJob)을 실제로 돌린다 (배치 운영 문서 2장, 3장).
+ * 00:00 묶음을 돌리고, 묶음과 등록된 묶음 밖 작업(StandaloneJob)을 다시 돌린다 (배치 운영 문서 2장, 3장).
  *
  * DailyJobScheduler(Entry 계층, job/)가 트리거(스케줄, 이어받기 스캔)를 쥐고, 이 클래스가
  * 실행을 책임진다. 계층 규칙(Service 는 Controller, Entry 에게만 불린다, 설계 문서 1.5절)
@@ -24,43 +22,25 @@ import org.springframework.stereotype.Service;
  * DailyJobScheduler 와 함께 쓴다.
  *
  * 작업 내용은 모른다. 각 도메인이 DailyJob 을 구현해 등록하고 순서는 @Order 가 정한다 (규칙 6).
+ * 작업 이름이 묶음, 단계, 묶음 밖 작업 중 무엇인지는 BatchJobRegistry 가 가른다(#585).
  */
 @Slf4j
 @Service
-public class DailyJobRunner {
+public class BatchJobRunner {
 
-    /** 묶음 전체의 점유를 나타내는 작업 이름이다. 단계는 각자 자기 이름으로 행을 남긴다. */
-    public static final String BUNDLE = "DAILY_0000";
+    private static final String BUNDLE = BatchJobRegistry.BUNDLE;
 
     private final List<DailyJob> jobs;
-    private final Set<String> stepNames;
-    /*
-     * 생성 시점에 한 번만 만든다(코드래빗 #403). 매 스캔마다 만들면 jobName() 이 겹치는
-     * 등록이 있을 때 Collectors.toMap 이 매번 던져 묶음 행을 포함한 모든 이어받기가
-     * 막힌다. 여기서 만들면 겹치는 등록은 기동 시점에 바로 드러난다.
-     */
-    private final Map<String, StandaloneJob> standaloneJobsByName;
+    private final BatchJobRegistry registry;
     private final BatchExecutionService executions;
     private final RetryBackoff backoff;
 
-    public DailyJobRunner(List<DailyJob> jobs, List<StandaloneJob> standaloneJobs,
+    public BatchJobRunner(List<DailyJob> jobs, BatchJobRegistry registry,
                           BatchExecutionService executions, RetryBackoff backoff) {
         this.jobs = jobs;
-        this.stepNames = jobs.stream().map(DailyJob::jobName).collect(Collectors.toSet());
-        this.standaloneJobsByName = standaloneJobs.stream()
-                .collect(Collectors.toMap(StandaloneJob::jobName, job -> job));
+        this.registry = registry;
         this.executions = executions;
         this.backoff = backoff;
-    }
-
-    /** 그 이름이 00:00 묶음의 등록된 단계인지 본다. 단계는 묶음 드라이버로만 다시 돈다(독자 재개 대상이 아니다). */
-    public boolean isStep(String jobName) {
-        return stepNames.contains(jobName);
-    }
-
-    /** 그 이름이 다시 실행할 수 있는 작업인지 본다. 묶음이거나 등록된 StandaloneJob 이어야 한다(#362, 관리자 수동 재실행도 이 경계를 그대로 쓴다). */
-    public boolean isRetryable(String jobName) {
-        return BUNDLE.equals(jobName) || standaloneJobsByName.containsKey(jobName);
     }
 
     /*
@@ -87,8 +67,8 @@ public class DailyJobRunner {
      * 이어받기와 관리자 수동 재실행이 함께 쓰는 재개 경로다(#362).
      *
      * 묶음은 runBundle 과 같은 경로로 SUCCESS 단계를 건너뛰고 이어간다. StandaloneJob 은
-     * attempt 로 한 번 돌리고 일시적 오류면 자동 재시도한다. isRetryable 이 아닌 이름은
-     * 호출자가 먼저 걸러야 한다.
+     * attempt 로 한 번 돌리고 일시적 오류면 자동 재시도한다. 그 둘이 아닌 이름은
+     * BatchJobRegistry.standaloneJob 이 IllegalArgumentException 으로 던진다(#585).
      *
      * StandaloneJob 은 runCounting 으로 돌려 돌려받은 건수로 닫는다(#559). 이 경로는 그 작업의
      * 스케줄러를 거치지 않아 건수를 남길 길이 이것뿐이다.
@@ -101,7 +81,7 @@ public class DailyJobRunner {
             runBundle(businessDate);
             return;
         }
-        StandaloneJob job = standaloneJobsByName.get(jobName);
+        StandaloneJob job = registry.standaloneJob(jobName);
         attempt(attemptLease(job.jobName(), businessDate, attemptNo),
                 () -> job.runCounting(businessDate, attemptNo), 1, () -> { });
     }
