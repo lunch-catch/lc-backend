@@ -7,6 +7,7 @@ import com.launchcatch.campaign.template.entity.Template;
 import com.launchcatch.campaign.template.repository.TemplateQuotaRepository;
 import com.launchcatch.campaign.template.repository.TemplateRepository;
 import com.launchcatch.campaign.template.repository.TemplateVersionRepository;
+import jakarta.persistence.EntityManager;
 import java.time.LocalDateTime;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -33,6 +34,9 @@ class TemplateDeleteServiceIntegrationTest extends AbstractCampaignIntegrationTe
     @Autowired
     private TemplateQuotaRepository templateQuotaRepository;
 
+    @Autowired
+    private EntityManager entityManager;
+
     private Template draftTemplateWithVersions(int count) {
         Template template = Template.createDraft("가을 신메뉴");
         LocalDateTime now = LocalDateTime.now();
@@ -40,7 +44,12 @@ class TemplateDeleteServiceIntegrationTest extends AbstractCampaignIntegrationTe
             template.addDraftVersion(ADMIN_ID, now, "요청 " + number, "req-" + number + "-" + System.nanoTime(),
                     "<div>" + number + "</div>", number);
         }
-        return templateRepository.saveAndFlush(template);
+        Template saved = templateRepository.saveAndFlush(template);
+        // 영속성 컨텍스트를 비운다. 방금 저장한 버전들이 컨텍스트에 남아 있으면, 서비스가 템플릿을
+        // 지운 뒤 flush 할 때 지워진 템플릿을 가리키는 버전이 걸려 TransientPropertyValueException 이 난다.
+        // 운영에서는 버전을 컨텍스트에 올리지 않으므로 이 상황이 없다.
+        entityManager.clear();
+        return saved;
     }
 
     private int currentCount() {
@@ -54,6 +63,8 @@ class TemplateDeleteServiceIntegrationTest extends AbstractCampaignIntegrationTe
         int countBeforeDelete = currentCount();
 
         templateDeleteService.delete(templateId);
+        // release()는 벌크 UPDATE 라 컨텍스트에 남은 template_quota 를 갱신하지 않는다. 비워서 DB 값을 다시 읽는다.
+        entityManager.clear();
 
         assertThat(templateRepository.findById(templateId)).isEmpty();
         assertThat(templateVersionRepository.findFirstByTemplateIdOrderByVersionNumberDesc(templateId))
