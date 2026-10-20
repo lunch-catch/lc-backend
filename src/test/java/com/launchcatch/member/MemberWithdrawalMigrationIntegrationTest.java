@@ -4,11 +4,14 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.sql.DriverManager;
+import java.sql.SQLException;
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.UUID;
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.MigrationVersion;
 import org.junit.jupiter.api.Test;
+import org.springframework.dao.DataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 
@@ -49,10 +52,17 @@ class MemberWithdrawalMigrationIntegrationTest extends AbstractMemberIntegration
                 assertThat(jdbc.queryForObject("SELECT provider_user_id FROM kakao_unlink_failure WHERE member_id = 1", String.class))
                         .isEqualTo("old-provider");
                 assertThat(jdbc.queryForObject("SELECT processing FROM kakao_unlink_failure WHERE member_id = 1", Boolean.class)).isFalse();
-                assertThatThrownBy(() -> jdbc.update("UPDATE member SET provider_user_id = NULL WHERE member_id = 2"))
-                        .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
-                assertThatThrownBy(() -> jdbc.update("UPDATE member SET provider_user_id = 'old-provider' WHERE member_id = 1"))
-                        .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
+                for (String update : List.of(
+                        "UPDATE member SET provider_user_id = NULL WHERE member_id = 2",
+                        "UPDATE member SET provider_user_id = 'old-provider' WHERE member_id = 1")) {
+                    assertThatThrownBy(() -> jdbc.update(update))
+                            .isInstanceOfSatisfying(DataAccessException.class, failure ->
+                                    assertThat(failure.getMostSpecificCause())
+                                            .isInstanceOfSatisfying(SQLException.class, sqlFailure -> {
+                                                assertThat(sqlFailure.getErrorCode()).isEqualTo(3819);
+                                                assertThat(sqlFailure.getMessage()).contains("chk_member_provider_state");
+                                            }));
+                }
             } finally {
                 statement.execute("DROP DATABASE " + database);
             }
