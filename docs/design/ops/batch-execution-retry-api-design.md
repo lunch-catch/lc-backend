@@ -86,8 +86,8 @@ A를 고른다. B는 이슈의 완료 조건("FAILED 행에 부르면 그 작업
 
 ## 아직 정해지지 않은 것
 
-- 재개 결과(성공/실패)를 관리자 화면이 바로 확인할 수 있는 조회 API는 아직 없다. 분석의
-  `GET /v1/admin/aggregation-runs`(A-06)는 `DAILY_AGGREGATION` 전용이라 이 API의 결과를
-  보여주지 못한다. 운영 전역의 배치 실행 기록 조회는 별도 이슈로 다룬다.
+- 재개 결과(성공/실패)는 배치 실행 이력 조회(`GET /v1/admin/batch-executions`)로 확인한다.
+  명세와 설계는 #570이 정했고([batch-execution-history-api-design.md](./batch-execution-history-api-design.md))
+  구현은 #575가 한다.
 - V52 요구사항명세서 102행의 정확한 기능 ID(FR 번호)를 확인하지 못했다. `api-spec.md`의
   "도메인과 문서" 표에 임시로 비워 두었다.

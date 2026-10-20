@@ -54,7 +54,7 @@
 | `coupon` | `coupon-api-spec.md` | 전체 | FR-055~FR-056, FR-080~FR-083, FR-088 |
 | `notification` | `notification-api-spec.md` | 전체 | FR-058, FR-079 |
 | `analytics` | `analytics-api-spec.md` | 전체 | FR-017, FR-022, FR-025, FR-057, FR-088, FR-098 |
-| `ops` | `admin-api-spec.md` | 플랫폼 설정값, 감사 로그, 배치 수동 재실행 | FR-024, FR-101 (배치 수동 재실행의 기능 ID는 아직 확인하지 못했다, V51 기준 FR-099 다음 자리다) |
+| `ops` | `admin-api-spec.md` | 플랫폼 설정값, 감사 로그, 배치 수동 재실행, 배치 실행 이력 조회 | FR-024, FR-101 (배치 수동 재실행의 기능 ID는 아직 확인하지 못했다, V51 기준 FR-099 다음 자리다) |
 | `auth` | `auth-api-spec.md` | 공통 정책 | FR-091 |
 
 **API가 없는 요구사항이 있다.** 서버 안에서만 도는 기능이라 경로를 만들지 않는다.
