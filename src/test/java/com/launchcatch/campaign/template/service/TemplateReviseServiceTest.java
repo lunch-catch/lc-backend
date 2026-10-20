@@ -115,9 +115,9 @@ class TemplateReviseServiceTest {
     @DisplayName("검증을 통과하면 새 버전을 저장하고 제거 내용을 돌려준다")
     void 검증을_통과하면_저장한다() {
         when(templateHtmlGenerator.revise(PREVIOUS_HTML, "버튼 색 바꿔줘"))
-                .thenReturn(PREVIOUS_HTML.replace(
+                .thenReturn(new GeneratedTemplate(PREVIOUS_HTML.replace(
                         "<h1 data-slot=\"eventName\">title</h1>", "<h1 data-slot=\"eventName\">새 제목</h1>")
-                        + "<script>alert(1)</script>");
+                        + "<script>alert(1)</script>", ""));
 
         TemplateCreateResponse response = service.revise(TEMPLATE_ID, "버튼 색 바꿔줘", REQUEST_ID, ADMIN_ID);
 
@@ -288,7 +288,7 @@ class TemplateReviseServiceTest {
     @DisplayName("슬롯이 빠진 HTML 은 POSTER-001 이고 저장하지 않는다")
     void 슬롯이_빠지면_저장하지_않는다() {
         when(templateHtmlGenerator.revise(PREVIOUS_HTML, "버튼 색 바꿔줘"))
-                .thenReturn("<div data-slot=\"eventName\">title</div>");
+                .thenReturn(new GeneratedTemplate("<div data-slot=\"eventName\">title</div>", ""));
 
         assertThatThrownBy(() -> service.revise(TEMPLATE_ID, "버튼 색 바꿔줘", REQUEST_ID, ADMIN_ID))
                 .isInstanceOfSatisfying(CampaignException.class, e ->
@@ -300,8 +300,8 @@ class TemplateReviseServiceTest {
     @DisplayName("슬롯 구조가 바뀌면 POSTER-002 이고 저장하지 않는다")
     void 슬롯_구조가_바뀌면_저장하지_않는다() {
         when(templateHtmlGenerator.revise(PREVIOUS_HTML, "버튼 색 바꿔줘"))
-                .thenReturn(PREVIOUS_HTML.replace(
-                        "<h1 data-slot=\"eventName\">title</h1>", "<span data-slot=\"eventName\">title</span>"));
+                .thenReturn(new GeneratedTemplate(PREVIOUS_HTML.replace(
+                        "<h1 data-slot=\"eventName\">title</h1>", "<span data-slot=\"eventName\">title</span>"), ""));
 
         assertThatThrownBy(() -> service.revise(TEMPLATE_ID, "버튼 색 바꿔줘", REQUEST_ID, ADMIN_ID))
                 .isInstanceOfSatisfying(CampaignException.class, e ->
