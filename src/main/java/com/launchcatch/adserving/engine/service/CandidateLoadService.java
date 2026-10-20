@@ -120,7 +120,7 @@ public class CandidateLoadService {
             return Map.of();
         }
         return storeQueryService.findMenusByIdIn(menuIds).stream()
-                .collect(Collectors.toMap(StoreMenuInfo::menuId, StoreMenuInfo::menuName, (a, b) -> a));
+                .collect(Collectors.toMap(StoreMenuInfo::menuId, StoreMenuInfo::menuName));
     }
 
     private static CandidateRow toRow(LocalDate businessDate, CampaignInfo c, StoreAdCandidateInfo store, String menuName) {
