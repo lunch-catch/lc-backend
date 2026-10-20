@@ -55,6 +55,7 @@
 | 방향 | 대상 도메인 | 인터페이스 | 시점 |
 |---|---|---|---|
 | 공개 | analytics가 부른다 | `MemberStatsQueryService` | 일별 집계 |
+| 공개 | coupon이 부른다 | `MemberQueryService.findCurrentStatuses` | 쿠폰 묶음 발급. 계약은 [member-api-design.md](./member-api-design.md) 7장이 갖는다 |
 
 ```java
 public interface MemberStatsQueryService {

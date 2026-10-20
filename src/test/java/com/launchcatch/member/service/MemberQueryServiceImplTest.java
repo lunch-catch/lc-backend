@@ -2,7 +2,10 @@ package com.launchcatch.member.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
 import com.launchcatch.member.contract.AgeGroup;
@@ -13,10 +16,16 @@ import com.launchcatch.member.contract.MemberStatus;
 import com.launchcatch.member.entity.Member;
 import com.launchcatch.member.entity.MemberProfile;
 import com.launchcatch.member.repository.MemberRepository;
+import com.launchcatch.member.repository.MemberStatusRow;
 import java.math.BigDecimal;
 import java.util.Collections;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
+import java.util.stream.Collectors;
+import java.util.stream.LongStream;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -64,6 +73,80 @@ class MemberQueryServiceImplTest {
         when(memberRepository.findStatusById(1L)).thenThrow(failure);
 
         assertThatThrownBy(() -> memberQueryService.findCurrentStatus(1L)).isSameAs(failure);
+    }
+
+    @Test
+    void 일괄_상태_조회는_세_상태를_단건_계약과_같게_회원_ID로_반환한다() {
+        Set<Long> memberIds = Set.of(1L, 2L, 3L);
+        when(memberRepository.findStatusesByIdIn(memberIds)).thenReturn(List.of(
+                new MemberStatusRow(1L, MemberStatus.ACTIVE),
+                new MemberStatusRow(2L, MemberStatus.SUSPENDED),
+                new MemberStatusRow(3L, MemberStatus.WITHDRAWN)));
+
+        Map<Long, MemberStatus> result = memberQueryService.findCurrentStatuses(memberIds);
+
+        assertThat(result).containsOnly(
+                Map.entry(1L, MemberStatus.ACTIVE),
+                Map.entry(2L, MemberStatus.SUSPENDED),
+                Map.entry(3L, MemberStatus.WITHDRAWN));
+        verifyNoInteractions(member, memberProfile);
+    }
+
+    @Test
+    void 일괄_상태_조회는_회원_수만큼_부르지_않고_저장소를_한_번만_부른다() {
+        Set<Long> memberIds = ids(500);
+        when(memberRepository.findStatusesByIdIn(memberIds)).thenReturn(List.of());
+
+        memberQueryService.findCurrentStatuses(memberIds);
+
+        verify(memberRepository, times(1)).findStatusesByIdIn(memberIds);
+        verifyNoMoreInteractions(memberRepository);
+    }
+
+    @Test
+    void 일괄_상태_조회는_없는_회원을_결과에서_뺀다() {
+        Set<Long> memberIds = Set.of(1L, 99L);
+        when(memberRepository.findStatusesByIdIn(memberIds))
+                .thenReturn(List.of(new MemberStatusRow(1L, MemberStatus.ACTIVE)));
+
+        assertThat(memberQueryService.findCurrentStatuses(memberIds))
+                .containsOnly(Map.entry(1L, MemberStatus.ACTIVE));
+    }
+
+    @Test
+    void 일괄_상태_조회는_빈_입력이면_저장소를_부르지_않고_빈_결과를_반환한다() {
+        assertThat(memberQueryService.findCurrentStatuses(Set.of())).isEmpty();
+        verifyNoInteractions(memberRepository);
+    }
+
+    @Test
+    void 일괄_상태_조회는_상한까지_받는다() {
+        Set<Long> memberIds = ids(MemberQueryService.MAX_FIND_ALL_SIZE);
+        when(memberRepository.findStatusesByIdIn(memberIds)).thenReturn(List.of());
+
+        assertThat(memberQueryService.findCurrentStatuses(memberIds)).isEmpty();
+    }
+
+    @Test
+    void 일괄_상태_조회는_상한을_넘으면_저장소를_부르지_않고_예외를_던진다() {
+        Set<Long> memberIds = ids(MemberQueryService.MAX_FIND_ALL_SIZE + 1);
+
+        assertThatThrownBy(() -> memberQueryService.findCurrentStatuses(memberIds))
+                .isInstanceOf(IllegalArgumentException.class);
+        verifyNoInteractions(memberRepository);
+    }
+
+    @Test
+    void 일괄_상태_조회_장애는_빈_결과로_바꾸지_않고_그대로_전달한다() {
+        Set<Long> memberIds = Set.of(1L);
+        var failure = new QueryTimeoutException("member unavailable");
+        when(memberRepository.findStatusesByIdIn(memberIds)).thenThrow(failure);
+
+        assertThatThrownBy(() -> memberQueryService.findCurrentStatuses(memberIds)).isSameAs(failure);
+    }
+
+    private Set<Long> ids(int count) {
+        return LongStream.rangeClosed(1, count).boxed().collect(Collectors.toCollection(LinkedHashSet::new));
     }
 
     @Test

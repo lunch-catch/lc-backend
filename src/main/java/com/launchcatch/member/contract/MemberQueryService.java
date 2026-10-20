@@ -1,7 +1,9 @@
 package com.launchcatch.member.contract;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 public interface MemberQueryService {
 
@@ -12,6 +14,13 @@ public interface MemberQueryService {
 
     /** 프로필을 읽지 않고 현재 회원 상태를 조회하며 없는 회원은 빈 결과를 반환한다. */
     Optional<MemberStatus> findCurrentStatus(Long memberId);
+
+    /**
+     * 프로필을 읽지 않고 회원 PK 집합의 현재 상태를 한 번에 조회한다. 없는 회원은 결과에서 빠지고
+     * 빈 집합이면 빈 결과를 반환한다. 집합이 MAX_FIND_ALL_SIZE 를 넘으면 IllegalArgumentException 을 던지고
+     * 조회 장애는 빈 결과로 바꾸지 않고 그대로 전달한다.
+     */
+    Map<Long, MemberStatus> findCurrentStatuses(Set<Long> memberIds);
 
     /**
      * 회원 PK 목록으로 한 번에 조회한다. 없는 회원은 결과에서 빠지고 순서는 보장하지 않는다.
