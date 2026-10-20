@@ -388,6 +388,19 @@ class CampaignStatusServiceTest {
     }
 
     @Test
+    @DisplayName("점주가 end 하면 행위자는 OWNER로 남고 가게 요약을 ENDED로 갱신한다(#600)")
+    void 점주가_end하면_행위자가_OWNER이고_가게_요약을_갱신한다() {
+        Campaign campaign = activeCampaign();
+        when(campaignRepository.findByIdForUpdate(CAMPAIGN_ID)).thenReturn(Optional.of(campaign));
+
+        service.end(CAMPAIGN_ID, ActorType.OWNER, BUSINESS_DATE);
+
+        assertThat(campaign.getStatus()).isEqualTo(CampaignStatus.ENDED);
+        assertThat(captureLog().getActorType()).isEqualTo(ActorType.OWNER);
+        verify(storeCampaignSummaryUpdater).update(anyLong(), anyLong(), any());
+    }
+
+    @Test
     @DisplayName("PAUSED 캠페인도 end 할 수 있다")
     void PAUSED도_end할_수_있다() {
         Campaign campaign = pausedCampaign(PauseReason.ADMIN);

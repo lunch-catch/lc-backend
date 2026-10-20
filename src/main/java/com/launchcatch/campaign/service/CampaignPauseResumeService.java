@@ -1,5 +1,6 @@
 package com.launchcatch.campaign.service;
 
+import com.launchcatch.campaign.contract.CampaignStatus;
 import com.launchcatch.campaign.contract.PauseReason;
 import com.launchcatch.campaign.dto.CampaignStatusResponse;
 import com.launchcatch.campaign.entity.ActorType;
@@ -17,7 +18,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /*
- * 점주의 캠페인 수동 중단·재개(#468)다. 본인 소유 확인은 CampaignTargetAudienceService와 같은
+ * 점주의 캠페인 수동 중단·재개(#468)와 직접 종료(#600)다. 본인 소유 확인은 CampaignTargetAudienceService와 같은
  * 패턴(findByIdForUpdate + ownerId 필터)을 쓰고, 실제 상태 전이는 CampaignStatusService.pause()/
  * resume()에 맡긴다. 이 메서드가 @Transactional이라 CampaignStatusService의 findByIdForUpdate가
  * 같은 트랜잭션에 참여해, 아래 조회가 쥔 행 잠금이 그 호출이 끝날 때까지 유지된다.
@@ -58,6 +59,28 @@ public class CampaignPauseResumeService {
             throw new CampaignException(CampaignErrorCode.CAMPAIGN_STATE_NOT_ALLOWED, e);
         } catch (IllegalArgumentException e) {
             throw storeSummaryMismatch("CAMPAIGN_RESUME_FAILED", campaignId, e);
+        }
+        return toResponse(campaign);
+    }
+
+    /*
+     * 점주의 직접 종료(#600)다. 점주는 진행 중(ACTIVE)인 캠페인을 바로 종료할 수 없고, 먼저 일시중지(PAUSED)한
+     * 뒤에만 종료할 수 있다(ACTIVE -> PAUSED -> ENDED). 종료는 되돌릴 수 없어서 PAUSED 가 아니면 이미
+     * ENDED 인 재요청까지 pause/resume 처럼 멱등하게 받지 않고 CAMPAIGN-006 으로 거부한다.
+     * 위에서 PAUSED 를 확인하고 행 잠금을 쥐고 있어 end() 가 IllegalStateException 을 던질 수 없다.
+     */
+    @Transactional
+    public CampaignStatusResponse end(Long ownerId, Long campaignId) {
+        validateActiveOwner(ownerId, "CAMPAIGN_END_FAILED");
+        Campaign campaign = findOwnedCampaign(ownerId, campaignId);
+        if (campaign.getStatus() != CampaignStatus.PAUSED) {
+            throw new CampaignException(CampaignErrorCode.CAMPAIGN_STATE_NOT_ALLOWED);
+        }
+        LocalDate businessDate = LocalDate.now(clock);
+        try {
+            campaignStatusService.end(campaignId, ActorType.OWNER, businessDate);
+        } catch (IllegalArgumentException e) {
+            throw storeSummaryMismatch("CAMPAIGN_END_FAILED", campaignId, e);
         }
         return toResponse(campaign);
     }

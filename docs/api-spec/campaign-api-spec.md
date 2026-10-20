@@ -18,6 +18,7 @@
 | POST | `/v1/owner/campaigns/{campaignId}:activate` | 캠페인 활성화 | OWNER 인증, ACTIVE 상태, 본인 소유 캠페인 |
 | POST | `/v1/owner/campaigns/{campaignId}:pause` | 캠페인 중단 | OWNER 인증, ACTIVE 상태, 본인 소유 캠페인 |
 | POST | `/v1/owner/campaigns/{campaignId}:resume` | 캠페인 재개 | OWNER 인증, ACTIVE 상태, 본인 소유 캠페인 |
+| POST | `/v1/owner/campaigns/{campaignId}:end` | 캠페인 종료 | OWNER 인증, ACTIVE 상태, 본인 소유 캠페인, 캠페인이 `PAUSED` |
 | POST | `/v1/owner/campaigns/{campaignId}:cancel` | 캠페인 취소(집행 전 `DRAFT`로 되돌리기) | OWNER 인증, ACTIVE 상태, 본인 소유 캠페인 |
 | GET | `/v1/owner/campaigns` | 캠페인 목록 조회 | OWNER 인증 |
 | GET | `/v1/owner/campaigns/{campaignId}` | 캠페인 상세 조회 | OWNER 인증, 본인 소유 캠페인 |
@@ -288,6 +289,49 @@
 | 403 | CAMPAIGN-001 | 점주 상태가 ACTIVE가 아님 |
 | 403 | CAMPAIGN-005 | 그 campaignId가 없거나 본인 소유가 아님(존재 여부를 알려주지 않으려고 같은 코드로 묶는다, `api-spec.md`) |
 | 409 | CAMPAIGN-006 | 캠페인 상태가 `ACTIVE`가 아님. 점주 중단으로 이미 `PAUSED`인 경우는 멱등하게 `200`이다 |
+| 500 | COMMON-001 | 처리하지 못한 서버 오류 |
+
+## 캠페인 종료
+
+`POST /v1/owner/campaigns/{campaignId}:end`
+
+점주가 `PAUSED` 상태의 캠페인을 직접 종료한다. 진행 중(`ACTIVE`)인 캠페인은 바로 종료할
+수 없고, 먼저 `:pause`로 중단한 뒤에만 종료할 수 있다(`ACTIVE` -> `PAUSED` -> `ENDED`).
+종료는 되돌릴 수 없다. 종료한 캠페인은 재개할 수 없고, 점주는 `ENDED`가 아닌 캠페인이
+없어지므로 새 캠페인을 등록할 수 있다(`CAMPAIGN-010`에 걸리지 않는다). 중단과 재개와 달리
+이미 `ENDED`인 캠페인을 다시 종료하는 요청은 성공으로 받지 않고 거부한다.
+
+### 요청
+
+본문이 없다.
+
+### 성공 응답
+
+`200`.
+
+```json
+{
+  "code": "SUCCESS",
+  "message": "요청이 성공적으로 처리되었습니다.",
+  "data": {
+    "campaignId": 501,
+    "status": "ENDED"
+  }
+}
+```
+
+| 필드 | 타입 | 필수 | null 허용 | 설명 |
+|---|---|---|---|---|
+| campaignId | integer | 예 | 아니요 | 종료한 캠페인 ID |
+| status | string | 예 | 아니요 | 처리 뒤의 캠페인 상태. 항상 `ENDED` |
+
+### 오류
+
+| HTTP | 코드 | 조건 |
+|---|---|---|
+| 403 | CAMPAIGN-001 | 점주 상태가 ACTIVE가 아님 |
+| 403 | CAMPAIGN-005 | 그 campaignId가 없거나 본인 소유가 아님(존재 여부를 알려주지 않으려고 같은 코드로 묶는다, `api-spec.md`) |
+| 409 | CAMPAIGN-006 | 캠페인 상태가 `PAUSED`가 아님(`DRAFT`, `SCHEDULED`, `ACTIVE`, 이미 `ENDED`) |
 | 500 | COMMON-001 | 처리하지 못한 서버 오류 |
 
 ## 캠페인 재개
