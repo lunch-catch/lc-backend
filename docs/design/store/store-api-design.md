@@ -209,16 +209,19 @@ JPA 진행 상태 변경과 JDBC 업무 데이터 변경은 같은 데이터소�
 
 develop에 반영된 #482 위치 저장과 연동하며 위치 저장 후 HOURS를 저장하고 진행 상태를 조회하는 흐름을 검증한다.
 
-## 점주 인테리어 이미지 업로드(`#375`)
+## 점주 가게 이미지 업로드(인테리어 `#375`, 로고 `#588`)
 
 **서버가 하는 일**
 
 1. presigned URL 발급(`prepareUpload`): 점주 상태(`ONBOARDING`)와 파일 형식·크기를 검증하고,
-   그 가게의 인테리어 이미지 개수를 세어 `sortOrder`를 매긴 뒤 `store_image` 행을
-   `upload_status=PENDING`으로 먼저 만든다. 그다음 `S3Presigner`로 그 `objectKey`에 대한
-   presigned PUT URL을 발급한다.
+   `imageType`으로 분기한다. `INTERIOR`면 그 가게의 인테리어 이미지 개수를 세어 `sortOrder`를
+   매긴 뒤 `store_image` 행을 새로 만든다. `LOGO`면 그 가게에 이미 `LOGO` 행이 있는지 찾고,
+   있으면 그 행을 덮어써 `PENDING`으로 되돌리고 없으면 새로 만든다. `sortOrder`는 `LOGO`면
+   항상 `null`이다. 그다음 `S3Presigner`로 그 `objectKey`에 대한 presigned PUT URL을
+   발급한다.
 2. 업로드 확인(`confirmUpload`): `uploadId`로 `PENDING` 행을 찾아 본인 가게 소유인지 확인하고,
-   `S3Client.headObject`로 실제 업로드됐는지 확인한 뒤 `VERIFIED`로 바꾼다.
+   `S3Client.headObject`로 실제 업로드됐는지 확인한 뒤 `VERIFIED`로 바꾼다. `imageType`을
+   가리지 않는다.
 3. 단계 완료(`complete`): 그 가게에 로고(`LOGO`) 이미지가 있는지 확인한 뒤
    `StoreRegistrationProgressService.completeStep(ownerId, version, IMAGES, null)`을 불러
    `MENU`로 진행한다.
@@ -231,10 +234,21 @@ develop에 반영된 #482 위치 저장과 연동하며 위치 저장 후 HOURS�
 - **인테리어 `sortOrder`는 점주가 지정하지 않고 서버가 업로드 순서대로 자동으로 매긴다(#375 결정).**
   재배치(순서 바꾸기) 기능이 없는 지금 범위에서는 점주 입력을 받을 이유가 없어 더 단순한
   쪽을 택했다. 재배치가 생기면 이 결정을 다시 봐야 한다.
-- **로고는 이 기능으로 새로 올리지 않고 존재만 확인한다(#375 결정).** 로고는 가게 입점
-  과정에서 이미 필수로 등록돼 있다는 전제다. 가게 담당이 "대표 메뉴가 선택으로 바뀌어
-  온보딩이 끝나도 메뉴가 없을 수 있다"고 확인해 줬지만, 그건 메뉴 얘기고 로고(`image_type=LOGO`)는
-  `store_image`의 `uk_store_image_single_logo` 제약과 별개로 여전히 필수 전제다.
+- **로고 업로드를 `prepareUpload`/`confirmUpload`에 `imageType`으로 합친다(`#589` 결정).**
+  명세서 `FR-038`이 "가게 이미지와 메뉴는 `IMAGES`와 `MENU` 단계로 나누어 저장한다"고 적고,
+  대표 이미지(로고)와 인테리어 이미지를 같은 단계의 필수·선택 항목으로 나란히 두고 있다.
+  `#375`가 적었던 "로고는 가게 입점 과정에서 이미 등록돼 있다"는 전제는 그 전제를 채우는
+  단계가 실제로 없어서(`#589`가 찾음) 틀린 전제였다. 별도 엔드포인트로 빼는 대신 같은 단계,
+  같은 presigned 흐름을 그대로 재사용한다
+- **이미 등록된 로고를 다시 올리면 그 행을 덮어써 교체한다(`#589` 결정).** 명세서 `FR-038`의
+  예외사항이 "저장 완료한 가게 이미지 수정 시, 필수 대표 이미지가 사라지는 요청은 거부"라고
+  적어서, 로고를 없애는 것만 막고 바꾸는 것은 허용한다. 새 행을 만들지 않고 기존 행을
+  덮어쓰는 이유는 `store_image`의 `uk_store_image_single_logo` UNIQUE 제약(가게당 `LOGO`
+  1개)이 같은 가게에 `LOGO` 행이 두 개 있는 것을 막기 때문이다. 같은 캠페인 도메인의
+  `Poster.overwrite()`(포스터도 1:1이라 새로 만들지 않고 덮어쓴다, `#376`)와 같은 이유다.
+  덮어쓰는 순간 기존 로고는 `PENDING`으로 되돌아가, 새 업로드가 `confirmUpload`로 끝나기
+  전까지는 조회 쪽(`StoreQueryService` 등)이 `VERIFIED`만 읽어서 로고가 잠깐 `null`로 보일
+  수 있다. 이미 있는 "검증된 것만 읽는다"는 규칙을 그대로 따르는 것이라 새로 처리하지 않는다
 - **`completeStep`에 필요한 `version`을 돌려주는 조회 API(`GET /v1/owner/onboarding`)를
   이 이슈에서 같이 만든다.** 등록 단계 API 전체가 아직 하나도 없어 클라이언트가 현재 버전을
   얻을 곳이 없었다. 이 조회는 저장된 진행 상태를 읽으며 없으면 TERMS와 버전 0을 반환한다.
