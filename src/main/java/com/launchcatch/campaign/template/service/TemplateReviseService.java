@@ -2,6 +2,7 @@ package com.launchcatch.campaign.template.service;
 
 import com.launchcatch.campaign.exception.CampaignException;
 import com.launchcatch.campaign.exception.PosterErrorCode;
+import com.launchcatch.campaign.template.client.GeneratedTemplate;
 import com.launchcatch.campaign.template.client.TemplateGenerationTimeoutException;
 import com.launchcatch.campaign.template.client.TemplateHtmlGenerator;
 import com.launchcatch.campaign.template.dto.TemplateCreateResponse;
@@ -63,13 +64,14 @@ public class TemplateReviseService {
         findDraftTemplate(templateId);
         String previousHtml = latestVersionHtml(templateId);
         Document previousDocument = Jsoup.parseBodyFragment(previousHtml);
-        Document document = Jsoup.parseBodyFragment(generate(previousHtml, requestPrompt));
+        GeneratedTemplate generated = generate(previousHtml, requestPrompt);
+        Document document = Jsoup.parseBodyFragment(generated.html());
         TemplateSanitizeResult sanitized = templateHtmlSanitizer.sanitize(document);
         templateSlotValidator.validate(document);
         templateStructureValidator.validate(document, previousDocument);
         try {
             return transactionTemplate.execute(
-                    status -> save(templateId, requestPrompt, requestId, adminId, sanitized));
+                    status -> save(templateId, requestPrompt, requestId, adminId, sanitized, generated.message()));
         } catch (DataIntegrityViolationException e) {
             return templateVersionRepository.findByRequestId(requestId)
                     .map(found -> toResponseForMatchingTemplate(found, templateId))
@@ -98,7 +100,7 @@ public class TemplateReviseService {
                 .orElseThrow(() -> new CampaignException(PosterErrorCode.TEMPLATE_NOT_FOUND));
     }
 
-    private String generate(String previousHtml, String requestPrompt) {
+    private GeneratedTemplate generate(String previousHtml, String requestPrompt) {
         try {
             return templateHtmlGenerator.revise(previousHtml, requestPrompt);
         } catch (TemplateGenerationTimeoutException e) {
@@ -118,7 +120,8 @@ public class TemplateReviseService {
      * 이 템플릿을 게시해 커밋했을 수 있는데, 잠금을 잡고 나서야 그 최신 상태를 안전하게 본다.
      */
     private TemplateCreateResponse save(
-            Long templateId, String requestPrompt, String requestId, Long adminId, TemplateSanitizeResult sanitized) {
+            Long templateId, String requestPrompt, String requestId, Long adminId, TemplateSanitizeResult sanitized,
+            String message) {
         Template template = templateRepository.findByIdForUpdate(templateId)
                 .orElseThrow(() -> new CampaignException(PosterErrorCode.TEMPLATE_NOT_FOUND));
         if (template.getStatus() != TemplateStatus.DRAFT) {
@@ -126,7 +129,8 @@ public class TemplateReviseService {
         }
         int nextVersionNumber = templateVersionRepository.findMaxVersionNumber(templateId) + 1;
         TemplateVersion version = template.addDraftVersion(
-                adminId, LocalDateTime.now(clock), requestPrompt, requestId, sanitized.html(), nextVersionNumber);
+                adminId, LocalDateTime.now(clock), requestPrompt, requestId, sanitized.html(), message,
+                nextVersionNumber);
         /*
          * template(이미 id가 있는, "새 것"이 아닌 엔티티)을 저장소로 saveAndFlush 하면
          * JpaRepository가 merge()로 보낸다. merge가 versions 컬렉션의 cascade=PERSIST를
@@ -187,6 +191,7 @@ public class TemplateReviseService {
                 version.getVersionNumber(),
                 template.getStatus(),
                 version.getHtmlContent(),
+                version.getMessage() == null ? "" : version.getMessage(),
                 removedElements,
                 TemplateCreateResponse.SUGGESTED_PROMPTS);
     }

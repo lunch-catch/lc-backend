@@ -13,6 +13,7 @@ import static org.mockito.Mockito.when;
 import com.launchcatch.campaign.exception.CampaignException;
 import com.launchcatch.campaign.exception.PosterErrorCode;
 import com.launchcatch.campaign.template.client.TemplateGenerationTimeoutException;
+import com.launchcatch.campaign.template.client.GeneratedTemplate;
 import com.launchcatch.campaign.template.client.TemplateHtmlGenerator;
 import com.launchcatch.campaign.template.dto.TemplateCreateResponse;
 import com.launchcatch.campaign.template.entity.Template;
@@ -127,7 +128,7 @@ class TemplateCreateServiceTest {
         처음_보는_requestId로_설정한다();
         when(templateRepository.count()).thenReturn(9L);
         when(templateQuotaRepository.tryReserve(MAX_TEMPLATES)).thenReturn(1);
-        when(templateHtmlGenerator.generate("가을 느낌")).thenReturn(VALID_HTML + "<script>alert(1)</script>");
+        when(templateHtmlGenerator.generate("가을 느낌")).thenReturn(new GeneratedTemplate(VALID_HTML + "<script>alert(1)</script>", ""));
         when(templateRepository.saveAndFlush(any(Template.class))).thenAnswer(invocation -> {
             Template saved = invocation.getArgument(0);
             setId(saved, 1L);
@@ -207,7 +208,7 @@ class TemplateCreateServiceTest {
                 .thenReturn(Optional.empty(), Optional.of(existing));
         when(templateRepository.count()).thenReturn(0L);
         when(templateQuotaRepository.tryReserve(MAX_TEMPLATES)).thenReturn(1);
-        when(templateHtmlGenerator.generate("가을 느낌")).thenReturn(VALID_HTML);
+        when(templateHtmlGenerator.generate("가을 느낌")).thenReturn(new GeneratedTemplate(VALID_HTML, ""));
         when(templateRepository.saveAndFlush(any(Template.class)))
                 .thenThrow(new DataIntegrityViolationException("uk_template_version_request_id"));
 
@@ -224,7 +225,7 @@ class TemplateCreateServiceTest {
         처음_보는_requestId로_설정한다();
         when(templateRepository.count()).thenReturn(0L);
         when(templateQuotaRepository.tryReserve(MAX_TEMPLATES)).thenReturn(1);
-        when(templateHtmlGenerator.generate("가을 느낌")).thenReturn(VALID_HTML);
+        when(templateHtmlGenerator.generate("가을 느낌")).thenReturn(new GeneratedTemplate(VALID_HTML, ""));
         DataIntegrityViolationException violation = new DataIntegrityViolationException("다른 제약 위반");
         when(templateRepository.saveAndFlush(any(Template.class))).thenThrow(violation);
 
@@ -252,7 +253,7 @@ class TemplateCreateServiceTest {
         처음_보는_requestId로_설정한다();
         when(templateRepository.count()).thenReturn(9L);
         when(templateQuotaRepository.tryReserve(MAX_TEMPLATES)).thenReturn(0);
-        when(templateHtmlGenerator.generate("가을 느낌")).thenReturn(VALID_HTML);
+        when(templateHtmlGenerator.generate("가을 느낌")).thenReturn(new GeneratedTemplate(VALID_HTML, ""));
 
         assertThatThrownBy(() -> service.create("가을 신메뉴", "가을 느낌", REQUEST_ID, ADMIN_ID))
                 .isInstanceOfSatisfying(CampaignException.class, e ->
@@ -281,7 +282,7 @@ class TemplateCreateServiceTest {
     void 슬롯이_빠지면_저장하지_않는다() {
         처음_보는_requestId로_설정한다();
         when(templateRepository.count()).thenReturn(0L);
-        when(templateHtmlGenerator.generate("가을 느낌")).thenReturn("<div data-slot=\"eventName\">title</div>");
+        when(templateHtmlGenerator.generate("가을 느낌")).thenReturn(new GeneratedTemplate("<div data-slot=\"eventName\">title</div>", ""));
 
         assertThatThrownBy(() -> service.create("가을 신메뉴", "가을 느낌", REQUEST_ID, ADMIN_ID))
                 .isInstanceOfSatisfying(CampaignException.class, e ->

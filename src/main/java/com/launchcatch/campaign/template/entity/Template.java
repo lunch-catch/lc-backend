@@ -83,8 +83,14 @@ public class Template extends BaseTimeEntity {
     public TemplateVersion addDraftVersion(
             Long adminId, LocalDateTime now, String requestPrompt, String requestId, String htmlContent,
             int versionNumber) {
+        return addDraftVersion(adminId, now, requestPrompt, requestId, htmlContent, null, versionNumber);
+    }
+
+    public TemplateVersion addDraftVersion(
+            Long adminId, LocalDateTime now, String requestPrompt, String requestId, String htmlContent,
+            String message, int versionNumber) {
         TemplateVersion version =
-                TemplateVersion.create(this, versionNumber, requestPrompt, requestId, htmlContent);
+                TemplateVersion.create(this, versionNumber, requestPrompt, requestId, htmlContent, message);
         versions.add(version);
         this.lastModifiedBy = adminId;
         this.lastModifiedAt = now;

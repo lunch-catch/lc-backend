@@ -2,6 +2,7 @@ package com.launchcatch.campaign.template.service;
 
 import com.launchcatch.campaign.exception.CampaignException;
 import com.launchcatch.campaign.exception.PosterErrorCode;
+import com.launchcatch.campaign.template.client.GeneratedTemplate;
 import com.launchcatch.campaign.template.client.TemplateGenerationTimeoutException;
 import com.launchcatch.campaign.template.client.TemplateHtmlGenerator;
 import com.launchcatch.campaign.template.dto.TemplateCreateResponse;
@@ -63,11 +64,12 @@ public class TemplateCreateService {
         if (templateRepository.count() >= maxTemplates) {
             throw new CampaignException(PosterErrorCode.TEMPLATE_LIMIT_EXCEEDED);
         }
-        Document document = Jsoup.parseBodyFragment(generate(requestPrompt));
+        GeneratedTemplate generated = generate(requestPrompt);
+        Document document = Jsoup.parseBodyFragment(generated.html());
         TemplateSanitizeResult sanitized = templateHtmlSanitizer.sanitize(document);
         templateSlotValidator.validate(document);
         try {
-            return transactionTemplate.execute(status -> save(name, requestPrompt, requestId, adminId, sanitized));
+            return transactionTemplate.execute(status -> save(name, requestPrompt, requestId, adminId, sanitized, generated.message()));
         } catch (DataIntegrityViolationException e) {
             return templateVersionRepository.findByRequestId(requestId)
                     .map(found -> toResponse(found, List.<String>of()))
@@ -75,7 +77,7 @@ public class TemplateCreateService {
         }
     }
 
-    private String generate(String requestPrompt) {
+    private GeneratedTemplate generate(String requestPrompt) {
         try {
             return templateHtmlGenerator.generate(requestPrompt);
         } catch (TemplateGenerationTimeoutException e) {
@@ -97,13 +99,14 @@ public class TemplateCreateService {
      * 가 트랜잭션 밖에서 다시 조회해 먼저 저장된 버전으로 응답한다.
      */
     private TemplateCreateResponse save(
-            String name, String requestPrompt, String requestId, Long adminId, TemplateSanitizeResult sanitized) {
+            String name, String requestPrompt, String requestId, Long adminId, TemplateSanitizeResult sanitized,
+            String message) {
         if (templateQuotaRepository.tryReserve(maxTemplates) == 0) {
             throw new CampaignException(PosterErrorCode.TEMPLATE_LIMIT_EXCEEDED);
         }
         Template template = Template.createDraft(name);
         TemplateVersion version = template.addDraftVersion(
-                adminId, LocalDateTime.now(clock), requestPrompt, requestId, sanitized.html(), 1);
+                adminId, LocalDateTime.now(clock), requestPrompt, requestId, sanitized.html(), message, 1);
         templateRepository.saveAndFlush(template);
         return toResponse(version, sanitized.removedElements());
     }
@@ -120,6 +123,7 @@ public class TemplateCreateService {
                 version.getVersionNumber(),
                 template.getStatus(),
                 version.getHtmlContent(),
+                version.getMessage() == null ? "" : version.getMessage(),
                 removedElements,
                 TemplateCreateResponse.SUGGESTED_PROMPTS);
     }

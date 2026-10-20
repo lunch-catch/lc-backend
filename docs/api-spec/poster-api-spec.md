@@ -60,6 +60,7 @@
     "versionNumber": 1,
     "status": "DRAFT",
     "html": "<div>...</div>",
+    "message": "따뜻한 주황 톤의 카드형 템플릿으로 만들었어요.",
     "removedElements": ["script", "div[onclick]"],
     "suggestedPrompts": ["배경을 더 밝게 해줘", "행사명 글자를 더 크게 해줘"]
   }
@@ -73,6 +74,7 @@
 | `versionNumber` | integer | 아니오 | 저장된 임시저장 버전 번호. 생성 직후는 항상 1 |
 | `status` | string | 아니오 | `DRAFT`, `PUBLISHED`. 생성 직후는 항상 `DRAFT` |
 | `html` | string | 아니오 | 검증을 거쳐 저장된 HTML |
+| `message` | string | 아니오 | LLM 이 HTML 과 함께 보낸 짧은 설명. 설명이 없으면 빈 문자열. 검증하지 않은 LLM 문장이므로 HTML 이 아닌 텍스트로만 보여준다. 같은 `requestId` 의 재요청에서도 처음과 같은 값이다 |
 | `removedElements` | array of string | 아니오 | 정화 과정에서 제거된 태그와 속성. 없으면 빈 배열 |
 | `suggestedPrompts` | array of string | 아니오 | 퀵 리플라이 버튼으로 보여줄 수정 요청 문장. 서버가 정한 고정 목록이라 비지 않는다. 생성과 수정, 같은 `requestId` 의 재요청에서 모두 같다. 다만 첫 응답과 재요청 사이에 서버가 목록을 바꿔 배포했으면 재요청은 바뀐 목록을 받는다. 버튼을 누르면 그 문장을 그대로 템플릿 수정의 `requestPrompt` 로 보낸다 |
 
@@ -222,7 +224,8 @@
         "versionNumber": 2,
         "requestPrompt": "버튼 색상을 바꿔줘",
         "createdAt": "2026-10-05T09:30:00+09:00",
-        "html": "<div>...</div>"
+        "html": "<div>...</div>",
+        "message": "버튼을 더 눈에 띄는 색으로 바꿨어요."
       }
     ],
     "nextPageToken": "eyJ..."
@@ -237,6 +240,7 @@
 | `items[].requestPrompt` | string | 아니오 | 이 버전을 만들 때 입력한 요청 문장 |
 | `items[].createdAt` | string (시각) | 아니오 | 이 버전이 만들어진 시각 |
 | `items[].html` | string | 아니오 | 이 버전의 HTML |
+| `items[].message` | string | 아니오 | 이 버전을 만들 때 LLM 이 보낸 설명. 설명이 없던 버전은 빈 문자열. 검증하지 않은 LLM 문장이므로 텍스트로만 보여준다 |
 | `nextPageToken` | string | 가능 | 다음 페이지 커서. 마지막 페이지면 `null` |
 
 **오류**

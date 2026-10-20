@@ -14,7 +14,7 @@ class FakeTemplateHtmlGeneratorTest {
     @Test
     @DisplayName("가짜 구현이 만든 HTML 은 정화와 슬롯 검증을 모두 통과한다")
     void 가짜_HTML은_검증을_통과한다() {
-        String html = new FakeTemplateHtmlGenerator().generate("아무 문장");
+        String html = new FakeTemplateHtmlGenerator().generate("아무 문장").html();
 
         TemplateSanitizeResult sanitized = new TemplateHtmlSanitizer().sanitize(html);
 
@@ -25,7 +25,7 @@ class FakeTemplateHtmlGeneratorTest {
     @Test
     @DisplayName("가짜 구현이 다시 만든 HTML 도 정화와 슬롯 검증을 모두 통과한다")
     void 가짜_수정_HTML도_검증을_통과한다() {
-        String html = new FakeTemplateHtmlGenerator().revise("<div></div>", "아무 문장");
+        String html = new FakeTemplateHtmlGenerator().revise("<div></div>", "아무 문장").html();
 
         TemplateSanitizeResult sanitized = new TemplateHtmlSanitizer().sanitize(html);
 

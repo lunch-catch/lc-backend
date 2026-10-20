@@ -36,11 +36,19 @@ public class TemplateVersion extends BaseTimeEntity {
     @Column(name = "html_content", nullable = false, columnDefinition = "TEXT")
     private String htmlContent;
 
+    /*
+     * LLM 이 HTML 과 함께 보낸 설명이다. 검증하지 않은 문장이고, 이 컬럼을 추가하기 전에 만든
+     * 버전과 설명이 없던 응답은 null 이다.
+     */
+    @Column(name = "message", columnDefinition = "TEXT")
+    private String message;
+
     @Column(name = "deleted_at")
     private LocalDateTime deletedAt;
 
     private TemplateVersion(
-            Template template, int versionNumber, String requestPrompt, String requestId, String htmlContent) {
+            Template template, int versionNumber, String requestPrompt, String requestId, String htmlContent,
+            String message) {
         if (versionNumber < 1) {
             throw new IllegalArgumentException("versionNumber must be positive");
         }
@@ -49,11 +57,18 @@ public class TemplateVersion extends BaseTimeEntity {
         this.requestPrompt = requiredText(requestPrompt, "requestPrompt");
         this.requestId = requiredText(requestId, "requestId");
         this.htmlContent = requiredText(htmlContent, "htmlContent");
+        this.message = message;
     }
 
     static TemplateVersion create(
             Template template, int versionNumber, String requestPrompt, String requestId, String htmlContent) {
-        return new TemplateVersion(template, versionNumber, requestPrompt, requestId, htmlContent);
+        return create(template, versionNumber, requestPrompt, requestId, htmlContent, null);
+    }
+
+    static TemplateVersion create(
+            Template template, int versionNumber, String requestPrompt, String requestId, String htmlContent,
+            String message) {
+        return new TemplateVersion(template, versionNumber, requestPrompt, requestId, htmlContent, message);
     }
 
     private static String requiredText(String value, String fieldName) {

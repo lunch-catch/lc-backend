@@ -53,6 +53,8 @@ public class BedrockTemplateHtmlGenerator implements TemplateHtmlGenerator {
 
     private static final int MAX_OUTPUT_TOKENS = 4000;
     private static final int MAX_RETRIES = 1;
+    // 프롬프트는 100자 이내를 요구한다. 어긴 응답이 그대로 저장되지 않게 서버에서도 자른다.
+    private static final int MESSAGE_MAX_LENGTH = 300;
     private static final String AD_LABEL_SLOT = "adLabel";
     private static final String AD_LABEL_TEXT = "광고";
 
@@ -127,7 +129,9 @@ public class BedrockTemplateHtmlGenerator implements TemplateHtmlGenerator {
               요청에 없는 부분은 위 지침으로 정한다. 단 A4 비율 규칙은 요청과 상관없이 언제나 지킨다
 
             [출력 형식]
-            - HTML 코드만 답한다. 설명 문장이나 코드펜스(```)를 앞뒤에 절대 붙이지 않는다""";
+            - 먼저 만든 템플릿을 소개하는 설명을 한국어 1~2문장(100자 이내)으로 쓴다
+            - 이어서 HTML 코드를 ```html 코드펜스 하나에 담아 답한다
+            - 코드펜스 밖에는 위 설명 문장 외에 아무것도 쓰지 않는다""";
 
     private final BedrockRuntimeClient bedrockRuntimeClient;
     private final TemplateHtmlSanitizer templateHtmlSanitizer;
@@ -138,14 +142,14 @@ public class BedrockTemplateHtmlGenerator implements TemplateHtmlGenerator {
     private String modelId;
 
     @Override
-    public String generate(String requestPrompt) {
+    public GeneratedTemplate generate(String requestPrompt) {
         List<Message> messages = new ArrayList<>();
         messages.add(userMessage(requestPrompt));
         return runConversation(SYSTEM_PROMPT, messages, null);
     }
 
     @Override
-    public String revise(String previousHtml, String requestPrompt) {
+    public GeneratedTemplate revise(String previousHtml, String requestPrompt) {
         Document previousDocument = Jsoup.parseBodyFragment(previousHtml);
         Map<String, String> previousTags = templateStructureValidator.slotTags(previousDocument);
         String systemPrompt = SYSTEM_PROMPT + reviseAddendum(previousTags);
@@ -171,7 +175,8 @@ public class BedrockTemplateHtmlGenerator implements TemplateHtmlGenerator {
      * 재시도까지 포함해 최대 2번 부른다. 매번 Bedrock에 보내는 요청과 검증 순서가 같아서
      * 한 메서드에 모았다. previousDocument가 null이면 생성(구조 비교 생략), 아니면 수정이다.
      */
-    private String runConversation(String systemPrompt, List<Message> messages, Document previousDocument) {
+    private GeneratedTemplate runConversation(
+            String systemPrompt, List<Message> messages, Document previousDocument) {
         for (int attempt = 0; attempt <= MAX_RETRIES; attempt++) {
             boolean lastAttempt = attempt == MAX_RETRIES;
             ConverseResponse response = converse(systemPrompt, messages);
@@ -221,7 +226,7 @@ public class BedrockTemplateHtmlGenerator implements TemplateHtmlGenerator {
                 continue;
             }
 
-            return document.body().html();
+            return new GeneratedTemplate(document.body().html(), extractMessage(rawText));
         }
         throw new IllegalStateException("unreachable: retry loop must return or throw");
     }
@@ -278,6 +283,22 @@ public class BedrockTemplateHtmlGenerator implements TemplateHtmlGenerator {
             return raw;
         }
         return raw.substring(start, end + 1);
+    }
+
+    /*
+     * 코드펜스 밖의 텍스트를 설명으로 쓴다. 코드펜스가 없으면 설명이 어디까지인지 알 수
+     * 없어(HTML 과 섞여 있을 수 있다) 빈 문자열로 둔다.
+     */
+    private String extractMessage(String raw) {
+        Matcher fenced = CODE_FENCE.matcher(raw);
+        if (!fenced.find()) {
+            return "";
+        }
+        // 코드펜스가 둘 이상이어도 그 안의 코드가 설명에 섞이지 않게 전부 뺀다.
+        String outside = CODE_FENCE.matcher(raw).replaceAll("");
+        // 검증하지 않은 LLM 문장이라 프론트가 실수로 HTML 로 그려도 태그가 되지 않게 꺾쇠를 뺀다.
+        String text = outside.replace("<", "").replace(">", "").replace("```", "").trim();
+        return text.length() > MESSAGE_MAX_LENGTH ? text.substring(0, MESSAGE_MAX_LENGTH) : text;
     }
 
     /*

@@ -24,13 +24,15 @@ public class FakeTemplateHtmlGenerator implements TemplateHtmlGenerator {
             </div>
             """;
 
+    private static final String MESSAGE = "요청하신 분위기로 템플릿을 만들었어요.";
+
     @Override
-    public String generate(String requestPrompt) {
-        return HTML;
+    public GeneratedTemplate generate(String requestPrompt) {
+        return new GeneratedTemplate(HTML, MESSAGE);
     }
 
     @Override
-    public String revise(String previousHtml, String requestPrompt) {
-        return HTML;
+    public GeneratedTemplate revise(String previousHtml, String requestPrompt) {
+        return new GeneratedTemplate(HTML, MESSAGE);
     }
 }
