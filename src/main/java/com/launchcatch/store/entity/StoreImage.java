@@ -73,6 +73,25 @@ public class StoreImage extends BaseTimeEntity {
                 sortOrder);
     }
 
+    /*
+     * 로고를 다시 올릴 때 같은 행을 PENDING 으로 되돌려 새 업로드로 바꾼다. 가게당 로고는
+     * uk_store_image_single_logo 로 한 행뿐이라 새 행을 만들 수 없다. 새 업로드를 confirm 하기
+     * 전까지는 로고가 VERIFIED 가 아니다.
+     */
+    public void restartUpload(String uploadId, String objectKey, String originalFilename, String contentType,
+            Long fileSize) {
+        if (imageType != StoreImageType.LOGO) {
+            throw new IllegalStateException("only LOGO image can restart upload: " + imageType);
+        }
+        this.uploadId = Objects.requireNonNull(uploadId, "uploadId");
+        this.objectKey = Objects.requireNonNull(objectKey, "objectKey");
+        this.originalFilename = originalFilename;
+        this.contentType = contentType;
+        this.fileSize = fileSize;
+        this.uploadStatus = StoreImageUploadStatus.PENDING;
+        this.verifiedAt = null;
+    }
+
     // 호출자가 S3Client.headObject로 실제 업로드를 확인한 뒤에만 불러야 한다.
     public void verify(LocalDateTime now) {
         if (uploadStatus != StoreImageUploadStatus.PENDING) {

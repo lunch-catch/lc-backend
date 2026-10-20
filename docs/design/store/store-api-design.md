@@ -222,7 +222,8 @@ develop에 반영된 #482 위치 저장과 연동하며 위치 저장 후 HOURS�
 2. 업로드 확인(`confirmUpload`): `uploadId`로 `PENDING` 행을 찾아 본인 가게 소유인지 확인하고,
    `S3Client.headObject`로 실제 업로드됐는지 확인한 뒤 `VERIFIED`로 바꾼다. `imageType`을
    가리지 않는다.
-3. 단계 완료(`complete`): 그 가게에 로고(`LOGO`) 이미지가 있는지 확인한 뒤
+3. 단계 완료(`complete`): 그 가게에 업로드를 마친(`VERIFIED`) 로고(`LOGO`) 이미지가 있는지 확인한다.
+   `prepareUpload`만 하고 `confirmUpload`를 하지 않은 `PENDING` 로고는 없는 것으로 본다. 그다음
    `StoreRegistrationProgressService.completeStep(ownerId, version, IMAGES, null)`을 불러
    `MENU`로 진행한다.
 
