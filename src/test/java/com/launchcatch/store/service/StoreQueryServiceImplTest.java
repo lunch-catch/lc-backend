@@ -18,6 +18,9 @@ import java.math.BigDecimal;
 import java.util.Arrays;
 import java.util.List;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.NullAndEmptySource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.dao.DataAccessResourceFailureException;
 
 class StoreQueryServiceImplTest {
@@ -174,15 +177,15 @@ class StoreQueryServiceImplTest {
                 .isInstanceOf(IllegalStateException.class);
     }
 
-    @Test
-    void 최종_등록된_가게의_대표_이미지가_없어도_가게와_좌표를_반환한다() {
-        var unconfigured = new StoreQueryServiceImpl(repository, mock(OwnerStoreQueryRepository.class),
-                mock(StoreOnboardingQueryRepository.class), "");
+    @ParameterizedTest
+    @NullAndEmptySource
+    @ValueSource(strings = {" ", "\t"})
+    void 최종_등록된_가게의_대표_이미지_키가_없거나_공백이면_실패한다(String imageKey) {
         when(repository.findAllById(List.of(1L))).thenReturn(List.of(
-                new StoreQueryRow(1L, "가게", null, new BigDecimal("37.5"), new BigDecimal("127.0"))));
+                new StoreQueryRow(1L, "가게", imageKey, new BigDecimal("37.5"), new BigDecimal("127.0"))));
 
-        assertThat(unconfigured.findAllById(List.of(1L)))
-                .containsExactly(new StoreInfo(1L, "가게", null, 37.5, 127.0));
+        assertThatThrownBy(() -> service.findAllById(List.of(1L)))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("이미지가 누락");
     }
 
     @Test
