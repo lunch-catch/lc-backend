@@ -8,6 +8,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.launchcatch.analytics.batch.service.EventLogRetentionService;
@@ -96,17 +97,29 @@ class EventLogRetentionJobTest {
     }
 
     /*
-     * DailyJobRunner 가 run 뒤에 건수 없는 succeed 로 행을 닫으면 처리 건수가 사라지므로, 이 길은 지운
-     * 건수와 함께 먼저 닫는다.
+     * 행을 닫는 일은 DailyJobRunner 가 한다. 이 길은 지운 건수를 돌려주기만 한다.
      */
     @Test
-    @DisplayName("이어받은 서버가 부르면 지우고 삭제 건수와 함께 성공으로 닫는다")
-    void 이어받은_서버가_부르면_삭제_건수와_함께_닫는다() {
+    @DisplayName("이어받은 서버가 부르면 지우고 삭제 건수를 돌려주며 행은 직접 닫지 않는다")
+    void 이어받은_서버가_부르면_삭제_건수를_돌려주고_행은_닫지_않는다() {
+        when(retention.purge()).thenReturn(7);
+
+        Integer deleted = job.runCounting(BUSINESS_DATE, 2);
+
+        assertThat(deleted).isEqualTo(7);
+        verify(executions, never()).succeed(anyString(), eq(BUSINESS_DATE), anyInt());
+        verify(executions, never()).succeed(anyString(), eq(BUSINESS_DATE));
+        assertThat(job.jobName()).isEqualTo("EVENT_LOG_RETENTION");
+    }
+
+    @Test
+    @DisplayName("run 은 runCounting 과 같이 지우고 행은 직접 닫지 않는다")
+    void run은_지우기만_하고_행은_닫지_않는다() {
         when(retention.purge()).thenReturn(7);
 
         job.run(BUSINESS_DATE, 2);
 
-        verify(executions).succeed(EventLogRetentionJob.JOB_NAME, BUSINESS_DATE, 7);
-        assertThat(job.jobName()).isEqualTo("EVENT_LOG_RETENTION");
+        verify(retention).purge();
+        verifyNoInteractions(executions);
     }
 }
