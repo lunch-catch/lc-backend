@@ -36,9 +36,6 @@ public class StoreAudienceService {
     // 접속을 세는 날 수다. 그날을 빼고 D-7 ~ D-1 이다
     static final int VISIT_DAYS = 7;
 
-    // StoreAudienceUpdater 가 한 번에 받는 칸 수다. 넘으면 거부한다
-    static final int MAX_CELLS_PER_CALL = 1000;
-
     private final CampaignQueryService campaignQueryService;
     private final StoreQueryService storeQueryService;
     private final MemberQueryService memberQueryService;
@@ -60,8 +57,8 @@ public class StoreAudienceService {
         Map<Long, Profile> profiles = readProfiles(List.copyOf(visits.keySet()));
 
         List<StoreAudienceCell> cells = StoreAudienceCounter.count(businessDate, stores, visits, profiles);
-        for (int from = 0; from < cells.size(); from += MAX_CELLS_PER_CALL) {
-            storeAudienceUpdater.overwrite(cells.subList(from, Math.min(from + MAX_CELLS_PER_CALL, cells.size())));
+        for (int from = 0; from < cells.size(); from += StoreAudienceUpdater.MAX_CELLS) {
+            storeAudienceUpdater.overwrite(cells.subList(from, Math.min(from + StoreAudienceUpdater.MAX_CELLS, cells.size())));
         }
         log.info("event=STORE_AUDIENCE_OVERWRITTEN businessDate={} stores={} members={} cells={}",
                 businessDate, stores.size(), profiles.size(), cells.size());

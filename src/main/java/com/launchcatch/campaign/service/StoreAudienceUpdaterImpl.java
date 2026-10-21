@@ -30,7 +30,6 @@ import org.springframework.transaction.annotation.Transactional;
 @RequiredArgsConstructor
 public class StoreAudienceUpdaterImpl implements StoreAudienceUpdater {
 
-    static final int MAX_CELLS_PER_CALL = 1000;
     private static final int UPSERT_CHUNK_SIZE = 250;
     private static final String VALUE_TUPLE = "(?, ?, ?, ?, ?, ?, ?, ?)";
 
@@ -59,9 +58,9 @@ public class StoreAudienceUpdaterImpl implements StoreAudienceUpdater {
     @Transactional
     public void overwrite(List<StoreAudienceCell> cells) {
         Objects.requireNonNull(cells, "cells");
-        if (cells.size() > MAX_CELLS_PER_CALL) {
+        if (cells.size() > MAX_CELLS) {
             throw new IllegalArgumentException(
-                    "cells must not exceed " + MAX_CELLS_PER_CALL + " per call: " + cells.size());
+                    "cells must not exceed " + MAX_CELLS + " per call: " + cells.size());
         }
         LocalDateTime now = LocalDateTime.now(clock);
         for (int from = 0; from < cells.size(); from += UPSERT_CHUNK_SIZE) {
