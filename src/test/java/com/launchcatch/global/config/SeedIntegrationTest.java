@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.launchcatch.IntegrationTestSupport;
 import com.launchcatch.global.config.DomainFlywayMigrator.SeedSettings;
+import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
@@ -13,8 +14,11 @@ import java.util.UUID;
 import javax.sql.DataSource;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.core.io.ByteArrayResource;
+import org.springframework.core.io.ClassPathResource;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
+import org.springframework.jdbc.datasource.init.ResourceDatabasePopulator;
 
 /*
  * 시드(db/seed)가 실제 MySQL 에 들어가는지, 다시 돌아도 행이 늘지 않는지, 날짜가 바뀌면 그날 행이 새로 생기는지 본다.
@@ -33,7 +37,8 @@ class SeedIntegrationTest extends IntegrationTestSupport {
             + "+ (SELECT COUNT(*) FROM deduction_result) + (SELECT COUNT(*) FROM point_ledger)"
             + "+ (SELECT COUNT(*) FROM member_coupon) + (SELECT COUNT(*) FROM coupon_usage_history) "
             + "+ (SELECT COUNT(*) FROM event_log) + (SELECT COUNT(*) FROM campaign_daily_report)"
-            + "+ (SELECT COUNT(*) FROM store_business_hour) + (SELECT COUNT(*) FROM store_campaign_summary)";
+            + "+ (SELECT COUNT(*) FROM store_business_hour) + (SELECT COUNT(*) FROM store_campaign_summary)"
+            + "+ (SELECT COUNT(*) FROM store_image)";
 
     private DataSource dataSource;
     private JdbcTemplate jdbc;
@@ -63,12 +68,18 @@ class SeedIntegrationTest extends IntegrationTestSupport {
     }
 
     @Test
-    void 이미지_없는_시드_가게도_상세_조회에_필요한_시간과_당일_할인을_갖는다() {
+    void 시드_가게는_공통_대표_이미지와_상세_조회에_필요한_시간과_당일_할인을_갖는다() {
         migrate(true, "2026-10-15");
 
         assertThat(count("SELECT COUNT(*) FROM store_business_hour WHERE store_id IN (9001, 9002, 9003)"))
                 .isEqualTo(21);
-        assertThat(count("SELECT COUNT(*) FROM store_image")).isZero();
+        assertThat(count("SELECT COUNT(*) FROM store_image")).isEqualTo(116);
+        assertThat(count("""
+                SELECT COUNT(DISTINCT store_id) FROM store_image
+                WHERE image_type = 'LOGO' AND upload_status = 'VERIFIED'
+                  AND object_key = 'stores/9222/logo/afecbe89-4e07-424a-ba4f-ad9baa9c8bf6.jpg'
+                  AND sort_order IS NULL AND verified_at IS NOT NULL
+                """)).isEqualTo(116);
         assertThat(count("SELECT COUNT(*) FROM store_menu_image")).isZero();
         assertThat(count("SELECT COUNT(*) FROM store_campaign_summary WHERE business_date = '2026-10-15'"))
                 .isEqualTo(113);
@@ -80,11 +91,28 @@ class SeedIntegrationTest extends IntegrationTestSupport {
 
         migrate(true, "2026-10-16");
 
+        assertThat(count("SELECT COUNT(*) FROM store_image")).isEqualTo(116);
         assertThat(count("SELECT COUNT(*) FROM store_business_hour")).isEqualTo(hours);
         assertThat(count("SELECT COUNT(*) FROM store_campaign_summary WHERE business_date = '2026-10-16'"))
                 .isEqualTo(113);
         assertThat(count("SELECT COUNT(*) FROM store_campaign_summary WHERE business_date = '2026-10-15'"))
                 .isEqualTo(113);
+    }
+
+    @Test
+    void R20을_다시_실행해도_기존_대표_이미지를_유지하고_이미지_행이_늘지_않는다() throws Exception {
+        migrate(true, "2026-10-15");
+        jdbc.update("UPDATE store_image SET object_key = 'stores/9001/logo/custom.jpg' "
+                + "WHERE store_id = 9001 AND image_type = 'LOGO'");
+        String sql = new ClassPathResource("db/seed/R__20_owner_store.sql")
+                .getContentAsString(StandardCharsets.UTF_8).replace("${seedPasswordHash}", HASH);
+
+        new ResourceDatabasePopulator(new ByteArrayResource(sql.getBytes(StandardCharsets.UTF_8))).execute(dataSource);
+
+        assertThat(count("SELECT COUNT(*) FROM store_image")).isEqualTo(116);
+        assertThat(jdbc.queryForObject("SELECT object_key FROM store_image "
+                + "WHERE store_id = 9001 AND image_type = 'LOGO'", String.class))
+                .isEqualTo("stores/9001/logo/custom.jpg");
     }
 
     @Test

@@ -68,6 +68,7 @@ GET /v1/stores?query=국수&longitude=127.1111967&latitude=37.3947766&filter=KOR
 | `400` | 필수 좌표 또는 필터 누락, 빈 검색어, 빈 필터, 허용하지 않는 카테고리, `ALL`과 개별 카테고리 혼용 또는 좌표, `pageSize`, `pageToken`이 올바르지 않음 |
 | `401` | 유효한 사용자 인증이 없음 |
 | `403` | 인증된 사용자가 `MEMBER` 권한이 아님 |
+| `500` | 이미지가 있는데 CDN URL을 생성할 설정이 누락됨 |
 
 ## 카테고리 필터
 
@@ -135,6 +136,7 @@ OTHER
       {
         "storeId": 10,
         "name": "런치식당",
+        "storeImageUrl": "https://cdn.example.com/stores/10/logo.png",
         "businessCategory": "KOREAN",
         "longitude": 127.1135000,
         "latitude": 37.3960000,
@@ -167,6 +169,7 @@ OTHER
 | `nextPageToken` | string | 예 | 다음 페이지 커서를 반환한다. 마지막 페이지면 `null`이다 |
 | `storeId` | integer | 아니오 | 가게 ID를 반환한다 |
 | `name` | string | 아니오 | 가게명을 반환한다 |
+| `storeImageUrl` | string | 예 | 업로드 확인을 마친 대표 이미지(LOGO)의 CDN URL을 반환한다. 이미지가 없거나 업로드 확인 전이면 `null`이다 |
 | `businessCategory` | string(enum) | 아니오 | 가게의 업종 코드를 반환한다. [카테고리 필터](#카테고리-필터)에 나열한 코드 중 `ALL`을 제외한 값을 사용한다 |
 | `longitude` | number | 아니오 | 가게 경도를 반환한다 |
 | `latitude` | number | 아니오 | 가게 위도를 반환한다 |

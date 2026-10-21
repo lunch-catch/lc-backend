@@ -15,7 +15,7 @@ WHERE s.finalized = 1 AND s.owner_id = s.store_id
   AND o.email = CONCAT('owner', s.store_id - 9000, '@seed.lunchcatch.com')
 ON DUPLICATE KEY UPDATE store_business_hour.store_id = store_business_hour.store_id;
 
--- TODO: S3 이미지가 준비되면 실제 객체를 검증한 대표·메뉴 이미지 시드를 추가하고 상세 조회의 임시 null 허용을 복구한다.
+-- TODO: S3 메뉴 이미지가 준비되면 실제 객체를 검증한 메뉴 이미지 시드를 추가하고 상세 조회의 임시 null 허용을 복구한다.
 
 -- 요약은 쿠폰·피드 시드가 참조하는 캠페인과 같은 할인 및 사용 시간을 갖는다.
 INSERT INTO store_campaign_summary (store_id, campaign_id, business_date, campaign_status,
