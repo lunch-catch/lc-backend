@@ -67,9 +67,9 @@ public class MemberWithdrawalService {
             }
         } catch (BusinessException e) {
             if (e.getErrorCode().getHttpStatus().is5xxServerError()) {
-                log.error("event=MEMBER_WITHDRAWAL_FAILED memberId={} reason={} details={}", memberId, e.getErrorCode().getCode(), FailureLogDetails.from(e));
+                log.error("event=MEMBER_WITHDRAWAL_FAILED memberId={} errorCode={} details={}", memberId, e.getErrorCode().getCode(), FailureLogDetails.from(e));
             } else {
-                log.warn("event=MEMBER_WITHDRAWAL_FAILED memberId={} reason={}", memberId, e.getErrorCode().getCode());
+                log.warn("event=MEMBER_WITHDRAWAL_FAILED memberId={} errorCode={}", memberId, e.getErrorCode().getCode());
             }
             throw e;
         } catch (RuntimeException e) {

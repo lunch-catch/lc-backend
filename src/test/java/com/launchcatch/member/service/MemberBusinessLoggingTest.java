@@ -242,7 +242,7 @@ class MemberBusinessLoggingTest {
             assertThatThrownBy(() -> service.completeOnboarding(42L, onboarding())).isInstanceOf(MemberException.class);
 
             assertThat(capture.appender.list).singleElement().satisfies(event -> {
-                assertThat(event.getLevel()).isEqualTo(Level.WARN);
+                assertThat(event.getLevel()).isEqualTo(Level.INFO);
                 assertThat(event.getFormattedMessage()).isEqualTo("event=MEMBER_ONBOARDING_FAILED memberId=42 reason=ONBOARDING_ALREADY_COMPLETED");
             });
         }
@@ -275,7 +275,7 @@ class MemberBusinessLoggingTest {
 
             assertThat(capture.appender.list).singleElement().satisfies(event -> {
                 assertThat(event.getLevel()).isEqualTo(Level.WARN);
-                assertThat(event.getFormattedMessage()).isEqualTo("event=MEMBER_LOGIN_FAILED memberId=null reason=AUTH-007");
+                assertThat(event.getFormattedMessage()).isEqualTo("event=MEMBER_LOGIN_FAILED memberId=null errorCode=AUTH-007");
                 assertThat(event.getThrowableProxy()).isNull();
             });
         }
@@ -369,7 +369,7 @@ class MemberBusinessLoggingTest {
     private void assertStoreFailure(Capture capture, String event) {
         assertThat(capture.appender.list).singleElement().satisfies(log -> {
             assertThat(log.getLevel()).isEqualTo(Level.ERROR);
-            assertThat(log.getFormattedMessage()).contains("event=" + event, "reason=AUTH-002",
+            assertThat(log.getFormattedMessage()).contains("event=" + event, "errorCode=AUTH-002",
                     "DataAccessResourceFailureException", "SQLException", "sqlState=08001", "sqlErrorCode=1045")
                     .doesNotContain("원문");
             assertThat(log.getThrowableProxy()).isNull();
@@ -392,7 +392,7 @@ class MemberBusinessLoggingTest {
 
             assertThat(capture.appender.list).singleElement().satisfies(event -> {
                 assertThat(event.getLevel()).isEqualTo(Level.WARN);
-                assertThat(event.getFormattedMessage()).isEqualTo("event=MEMBER_LOGIN_FAILED memberId=42 reason=MEMBER-003");
+                assertThat(event.getFormattedMessage()).isEqualTo("event=MEMBER_LOGIN_FAILED memberId=42 errorCode=MEMBER-003");
             });
         }
     }
