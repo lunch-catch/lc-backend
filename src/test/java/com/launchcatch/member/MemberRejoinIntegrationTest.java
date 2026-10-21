@@ -34,6 +34,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
@@ -83,6 +84,8 @@ class MemberRejoinIntegrationTest extends AbstractMemberIntegrationTest {
         assertThat(after.withdrawnCount()).isEqualTo(before.withdrawnCount());
     }
 
+    //Todo: 탈퇴 당일 재가입을 비활성화함. 활성화하려면 이 주석을 해제한다
+    @Disabled
     @Test
     void 당일에는_HTTP_재가입을_거부하고_새_회원_행을_만들지_않는다() throws Exception {
         Member previous = createMember();

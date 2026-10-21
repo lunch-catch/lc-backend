@@ -110,10 +110,11 @@ public class MemberLoginService {
         if (withdrawalHistoryRepository.existsByProviderUserIdAndSuspendedAtIsNotNull(providerUserId)) {
             throw new MemberException(MemberErrorCode.SUSPENDED_REJOIN_NOT_ALLOWED);
         }
-        if (history.isPresent() && !history.get().getWithdrawnAt().toLocalDate()
-                .isBefore(LocalDateTime.now(clock).toLocalDate())) {
-            throw new MemberException(MemberErrorCode.SAME_DAY_REJOIN_NOT_ALLOWED);
-        }
+        //Todo: 탈퇴 당일 재가입을 비활성화함. 활성화하려면 이 주석을 해제한다
+        // if (history.isPresent() && !history.get().getWithdrawnAt().toLocalDate()
+        //         .isBefore(LocalDateTime.now(clock).toLocalDate())) {
+        //     throw new MemberException(MemberErrorCode.SAME_DAY_REJOIN_NOT_ALLOWED);
+        // }
         // 포기한 작업도 해제 성공은 아니므로 resolved 여부와 무관하게 남은 행 전체가 재가입을 막는다.
         if (kakaoUnlinkFailureRepository.existsByProviderUserId(providerUserId)) {
             throw new MemberException(MemberErrorCode.UNLINK_PENDING);
