@@ -17,9 +17,8 @@
              주의: %logger{36} 바로 뒤에 괄호로 시작하는 리터럴("(%F:%line)")을 붙이면 Logback의
              PatternParser가 그 여는 괄호를 또 다른 컴포지트 컨버터(%word(...) 형태)의 시작으로
              오인해서 그 뒤 " - %msg%n"까지 파싱에 실패해 통째로 사라진다. 그래서 괄호 없이
-             %F:%line으로 쓴다. 또한 %X{traceId:-} 같은 ":-" 기본값 문법은 Log4j2 전용이라
-             Logback의 %X는 지원하지 않으므로(값이 없으면 그냥 빈 문자열) 콜론 없이 %X{traceId}로
-             쓴다. -->
+             %F:%line으로 쓴다. Logback은 %X{key:-default} 문법을 지원한다. 지금은 값이 없을 때
+             빈 문자열을 내보내려고 기본값 없이 %X{traceId}로 쓴다. -->
         <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
             <encoder>
                 <pattern>
