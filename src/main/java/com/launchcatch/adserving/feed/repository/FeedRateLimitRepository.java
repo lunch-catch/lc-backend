@@ -1,5 +1,7 @@
 package com.launchcatch.adserving.feed.repository;
 
+import static com.launchcatch.adserving.exclusion.repository.ExclusionRepository.BYPASS_METRIC;
+
 import com.launchcatch.auth.RedisFailureClassifier;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.time.Duration;
@@ -30,9 +32,6 @@ public class FeedRateLimitRepository {
     static final int LIMIT = 6;
 
     private static final RedisScript<List> SCRIPT = loadScript();
-
-    // Valkey 가 멈춰 막지 않고 통과시킨 횟수다. 경보는 이 지표에 건다(장애 처리 가이드).
-    static final String BYPASS_METRIC = "adserving_cache_bypass_total";
 
     private final StringRedisTemplate redisTemplate;
     private final MeterRegistry meterRegistry;

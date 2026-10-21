@@ -29,7 +29,7 @@ class FeedValkeyFallbackTest {
     private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
 
     private double bypassCount(String use) {
-        return meterRegistry.counter(FeedRateLimitRepository.BYPASS_METRIC, "use", use).count();
+        return meterRegistry.counter(ExclusionRepository.BYPASS_METRIC, "use", use).count();
     }
 
     @Test

@@ -1,5 +1,7 @@
 package com.launchcatch.adserving.feed.repository;
 
+import static com.launchcatch.adserving.exclusion.repository.ExclusionRepository.BYPASS_METRIC;
+
 import com.launchcatch.auth.RedisFailureClassifier;
 import com.launchcatch.global.config.ClockConfig;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -34,9 +36,6 @@ public class ServeFrequencyRepository {
     static final String DAILY_KEY_PREFIX = "adserving:servedDaily:";
     static final String SESSION_KEY_PREFIX = "adserving:servedSession:";
     static final Duration SESSION_TTL = Duration.ofMinutes(30);
-
-    // Valkey 가 멈춰 막지 않고 통과시킨 횟수다. 경보는 이 지표에 건다(장애 처리 가이드).
-    static final String BYPASS_METRIC = "adserving_cache_bypass_total";
 
     private static final RedisScript<Long> RECORD_SCRIPT = loadScript();
 
