@@ -1,5 +1,7 @@
 package com.launchcatch.auth;
 
+import static com.launchcatch.auth.AuthCookieNames.ACCESS_TOKEN_COOKIE_NAME;
+
 import com.launchcatch.auth.jwt.JwtTokenProvider;
 import java.time.Duration;
 import lombok.RequiredArgsConstructor;
@@ -21,7 +23,6 @@ import org.springframework.stereotype.Component;
 @RequiredArgsConstructor
 public class AuthCookieFactory {
 
-    private static final String ACCESS_TOKEN_COOKIE_NAME = "accessToken";
     private static final String REFRESH_TOKEN_COOKIE_NAME = "refreshToken";
     private static final String SAME_SITE_STRICT = "Strict";
 

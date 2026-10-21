@@ -1,5 +1,10 @@
 package com.launchcatch.owner.repository;
 
+import static com.launchcatch.auth.opaque.RefreshTokenFormat.ACTIVE_KEY_PREFIX;
+import static com.launchcatch.auth.opaque.RefreshTokenFormat.ISSUANCE_VERSION_KEY_PREFIX;
+import static com.launchcatch.auth.opaque.RefreshTokenFormat.KEY_PREFIX;
+import static com.launchcatch.auth.opaque.RefreshTokenFormat.REVOKED_SUFFIX;
+
 import com.launchcatch.auth.Role;
 import com.launchcatch.auth.opaque.RefreshTokenRepository.RefreshTokenData;
 import com.launchcatch.auth.opaque.TokenHasher;
@@ -19,9 +24,7 @@ import org.springframework.stereotype.Repository;
 @Repository
 @RequiredArgsConstructor
 public class OwnerRefreshTokenRepository {
-    private static final String KEY_PREFIX = "refreshToken:";
     private static final String PENDING_SUFFIX = "|PENDING";
-    private static final String REVOKED_SUFFIX = "|REVOKED";
     private static final RedisScript<Long> CONFIRM_CONSUMED_SCRIPT = script("refresh_token_confirm_consumed.lua", Long.class);
     private static final RedisScript<String> CONSUME_SCRIPT = script("refresh_token_consume.lua", String.class);
     private static final RedisScript<Long> RESTORE_CONSUMED_SCRIPT = script("refresh_token_restore_consumed.lua", Long.class);
@@ -75,7 +78,7 @@ public class OwnerRefreshTokenRepository {
             throw new IllegalArgumentException("폐기 순번은 양수여야 한다");
         }
         Long revoked = redisTemplate.execute(REVOKE_THROUGH_VERSION_SCRIPT,
-                List.of(activeKey(id), "refreshTokenIssuanceVersion:OWNER:" + id),
+                List.of(activeKey(id), ISSUANCE_VERSION_KEY_PREFIX + "OWNER:" + id),
                 String.format(java.util.Locale.ROOT, "%019d", version),
                 databaseHash == null ? "" : databaseHash, KEY_PREFIX);
         if (revoked == null) {
@@ -96,7 +99,7 @@ public class OwnerRefreshTokenRepository {
     }
 
     private String activeKey(Long id) {
-        return "activeRefreshToken:OWNER:" + id;
+        return ACTIVE_KEY_PREFIX + "OWNER:" + id;
     }
 
     private RefreshTokenData parse(String raw) {
