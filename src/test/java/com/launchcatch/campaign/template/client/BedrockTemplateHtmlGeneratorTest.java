@@ -232,6 +232,21 @@ class BedrockTemplateHtmlGeneratorTest {
     }
 
     @Test
+    void 토큰_잘림_재시도_지시는_설명과_코드펜스_형식을_유지하게_한다() {
+        when(bedrockRuntimeClient.converse(any(ConverseRequest.class)))
+                .thenReturn(textResponse(StopReason.MAX_TOKENS, "잘림"))
+                .thenReturn(textResponse(StopReason.END_TURN, "QR코드는 반영하지 못했어요.\n```html\n" + LLM_HTML + "\n```"));
+
+        GeneratedTemplate result = generator.generate("돈까스 세트 홍보 QR코드 넣어줘");
+
+        ArgumentCaptor<ConverseRequest> captor = ArgumentCaptor.forClass(ConverseRequest.class);
+        verify(bedrockRuntimeClient, times(2)).converse(captor.capture());
+        String correction = captor.getAllValues().get(1).messages().get(2).content().get(0).text();
+        assertThat(correction).contains("코드펜스").contains("설명은 한 문장으로").doesNotContain("설명 없이");
+        assertThat(result.message()).isEqualTo("QR코드는 반영하지 못했어요.");
+    }
+
+    @Test
     void 토큰_잘림이_재시도까지_반복되면_POSTER_010을_던진다() {
         when(bedrockRuntimeClient.converse(any(ConverseRequest.class)))
                 .thenReturn(textResponse(StopReason.MAX_TOKENS, "잘림"));
@@ -338,5 +353,41 @@ class BedrockTemplateHtmlGeneratorTest {
         assertThat(systemPrompt).contains("aspect-ratio:210/297");
         assertThat(new TemplateHtmlSanitizer().sanitize(example).removedElements()).isEmpty();
         assertThatCode(() -> new TemplateSlotValidator().validate(example)).doesNotThrowAnyException();
+    }
+
+    @Test
+    void 생성_시스템_프롬프트에_반영하지_못한_요청을_안내하는_지시가_있다() {
+        when(bedrockRuntimeClient.converse(any(ConverseRequest.class)))
+                .thenReturn(textResponse(StopReason.END_TURN, LLM_HTML));
+
+        generator.generate("돈까스 세트 홍보");
+
+        assertNoticeInstructions(capturedSystemPrompt());
+    }
+
+    @Test
+    void 수정_시스템_프롬프트에도_반영하지_못한_요청을_안내하는_지시가_있다() {
+        when(bedrockRuntimeClient.converse(any(ConverseRequest.class)))
+                .thenReturn(textResponse(StopReason.END_TURN, LLM_HTML));
+
+        generator.revise(PREVIOUS_STORED_HTML, "색상만 바꿔줘");
+
+        assertNoticeInstructions(capturedSystemPrompt());
+    }
+
+    private String capturedSystemPrompt() {
+        ArgumentCaptor<ConverseRequest> captor = ArgumentCaptor.forClass(ConverseRequest.class);
+        verify(bedrockRuntimeClient).converse(captor.capture());
+        return captor.getValue().system().get(0).text();
+    }
+
+    // 모델이 따르는지는 서버가 검증할 수 없어, 지시가 프롬프트에 들어 있는지만 본다(#675).
+    private void assertNoticeInstructions(String systemPrompt) {
+        assertThat(systemPrompt)
+                .contains("[반영하지 못하는 요청]")
+                .contains("나중에 서버가 채운다")
+                .contains("QR코드")
+                .contains("A4 비율을 유지한다")
+                .contains("한 문장으로 밝힌다");
     }
 }
