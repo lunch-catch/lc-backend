@@ -144,7 +144,13 @@ class AdminLoginSecurityIntegrationTest extends AbstractAdminIntegrationTest {
     }
 
     private ListAppender<ILoggingEvent> attach(Class<?> target) {
-        var appender = new ListAppender<ILoggingEvent>();
+        var appender = new ListAppender<ILoggingEvent>() {
+            @Override
+            protected void append(ILoggingEvent event) {
+                event.prepareForDeferredProcessing();
+                super.append(event);
+            }
+        };
         appender.start();
         ((Logger) LoggerFactory.getLogger(target)).addAppender(appender);
         return appender;
@@ -340,11 +346,18 @@ class AdminLoginSecurityIntegrationTest extends AbstractAdminIntegrationTest {
         try {
             mvc.perform(login(body)).andExpect(status().isOk());
             mvc.perform(login(requestBody("login.absent", PASSWORD))).andExpect(status().isUnauthorized());
-            assertThat(appender.list).hasSize(2).allSatisfy(event ->
-                    assertThat(event.getFormattedMessage()).contains("event=ADMIN_LOGIN", "occurredAt=",
-                            "clientIp=" + clientIp).doesNotContain(PASSWORD, "password", "refreshToken"));
-            assertThat(appender.list.get(0).getFormattedMessage()).contains("success=true", "status=200");
-            assertThat(appender.list.get(1).getFormattedMessage()).contains("success=false", "status=401");
+            assertThat(appender.list).hasSize(2).allSatisfy(event -> {
+                assertThat(event.getFormattedMessage()).contains("durationMs=")
+                        .doesNotContain(PASSWORD, "password", "refreshToken", "occurredAt=", "clientIp=", "success=");
+                assertThat(event.getMDCPropertyMap()).containsEntry("clientIp", clientIp);
+                assertThat(event.getMDCPropertyMap().get("traceId")).isNotBlank();
+                assertThat(event.getThrowableProxy()).isNull();
+            });
+            assertThat(appender.list.get(0).getFormattedMessage())
+                    .contains("event=ADMIN_LOGIN_SUCCESS", "httpStatus=200");
+            assertThat(appender.list.get(1).getFormattedMessage())
+                    .contains("event=ADMIN_LOGIN_FAILED", "httpStatus=401");
+            assertThat(appender.list).extracting(ILoggingEvent::getLevel).containsExactly(Level.INFO, Level.INFO);
         } finally {
             detach(AdminLoginAuditFilter.class, appender);
         }
