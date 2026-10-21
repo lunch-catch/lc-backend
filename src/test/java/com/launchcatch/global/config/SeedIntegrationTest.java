@@ -88,6 +88,30 @@ class SeedIntegrationTest extends IntegrationTestSupport {
     }
 
     @Test
+    void 결제_테스트_점주_10명은_이력_없이_생성되고_재실행해도_기존_정보를_유지한다() {
+        migrate(true, "2026-10-15");
+
+        assertThat(count("SELECT COUNT(*) FROM owner WHERE owner_id BETWEEN 9019 AND 9028 "
+                + "AND email = CONCAT('owner', owner_id - 9000, '@seed.lunchcatch.com') "
+                + "AND role = 'OWNER' AND status = 'ACTIVE' AND tutorial_viewed = 1")).isEqualTo(10);
+        assertThat(jdbc.queryForList("SELECT password_hash FROM owner WHERE owner_id BETWEEN 9019 AND 9028", String.class))
+                .hasSize(10).containsOnly(HASH);
+        assertThat(count("SELECT COUNT(*) FROM payment WHERE owner_id BETWEEN 9019 AND 9028")).isZero();
+        assertThat(count("SELECT COUNT(*) FROM point_ledger WHERE owner_id BETWEEN 9019 AND 9028")).isZero();
+        assertThat(count("SELECT COUNT(*) FROM refund_request WHERE owner_id BETWEEN 9019 AND 9028")).isZero();
+        jdbc.update("UPDATE owner SET password_hash = ?, status = 'SUSPENDED', suspended_at = NOW(6) WHERE owner_id = 9019", HASH.replace("$2a$", "$2b$"));
+        jdbc.update("DELETE FROM flyway_history_seed WHERE script = 'R__22_payment_test_owners.sql'");
+
+        migrate(true, "2026-10-15");
+
+        assertThat(count("SELECT COUNT(*) FROM owner WHERE owner_id BETWEEN 9019 AND 9028")).isEqualTo(10);
+        assertThat(jdbc.queryForObject("SELECT password_hash FROM owner WHERE owner_id = 9019", String.class))
+                .isEqualTo(HASH.replace("$2a$", "$2b$"));
+        assertThat(count("SELECT COUNT(*) FROM owner WHERE owner_id = 9019 AND status = 'SUSPENDED'")).isEqualTo(1);
+        assertThat(count("SELECT COUNT(*) FROM payment WHERE owner_id BETWEEN 9019 AND 9028")).isZero();
+    }
+
+    @Test
     void 시드를_켜면_계정과_가게와_오늘의_피드_행이_들어간다() {
         migrate(true, "2026-10-15");
 
@@ -294,7 +318,7 @@ class SeedIntegrationTest extends IntegrationTestSupport {
         assertThat(count("SELECT COUNT(*) FROM ad_candidate WHERE business_date = '2026-10-16'")).isEqualTo(116);
         // 9101~9200 가운데 서빙되는 94개는 날마다 쿠폰 이벤트를 받는다
         assertThat(count("SELECT COUNT(*) FROM coupon_event")).isEqualTo(38 + 2 * 94);
-        assertThat(count("SELECT COUNT(*) FROM owner")).isEqualTo(118);
+        assertThat(count("SELECT COUNT(*) FROM owner")).isEqualTo(128);
     }
 
     // 카카오로 가입한 회원은 시드보다 늦게 생긴다. 날짜 시드가 다음 날 다시 돌 때 홀수 회원만 찜 셋을 받는다
