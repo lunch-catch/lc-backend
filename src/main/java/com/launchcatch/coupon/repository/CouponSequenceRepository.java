@@ -11,7 +11,7 @@ import org.springframework.stereotype.Repository;
  * 이벤트마다 Redis 키 세 개로 재고 순번 큐를 관리한다.
  * available은 아직 예약하지 않은 순번 목록이고 pending은 예약한 뒤 커밋이나 반납을 기다리는 순번이다.
  * pending의 값은 "순번:예약 ID"이고 점수는 예약한 시각이다.
- * meta는 state(READY 또는 BLOCKED), total(전체 재고), completed(커밋된 발급 수)를 갖는 해시다.
+ * meta는 state(READY, SOLD_OUT, BLOCKED), total(전체 재고), completed(커밋된 발급 수)를 갖는 해시다.
  * 여러 키를 함께 바꾸는 동작은 Lua 스크립트로 원자적으로 실행한다.
  */
 @Repository
@@ -47,7 +47,7 @@ public class CouponSequenceRepository {
 
     /*
      * 커밋된 예약을 pending에서 지우고 completed를 1 늘린다.
-     * 이번 완료로 completed가 total에 닿았으면 true를 돌려줘 호출자가 소진을 통보하게 한다.
+     * 이번 완료로 completed가 total에 닿았으면 SOLD_OUT으로 바꾸고 true를 돌려줘 호출자가 소진을 통보하게 한다.
      * 큐가 READY가 아니거나 같은 예약이 pending에 없으면 아무것도 바꾸지 않고 false를 돌려준다.
      */
     public boolean complete(long eventId, int sequence, String reservationId) {
@@ -67,15 +67,21 @@ public class CouponSequenceRepository {
     // 큐가 준비되지 않았으면 -1, 완료 수가 총량에 닿았으면 0, 남았으면 1을 돌려줘 reserveAll과 같은 부호를 쓴다.
     public int availability(long eventId) {
         List<Object> values = redis.opsForHash().multiGet(keys(eventId).get(2), List.of("state", "total", "completed", "expiresAt"));
-        if (!"READY".equals(values.get(0)) || values.get(1) == null || values.get(3) == null) {
+        Object state = values.get(0);
+        if ((!"READY".equals(state) && !"SOLD_OUT".equals(state))
+                || values.get(1) == null || values.get(2) == null || values.get(3) == null) {
             return -1;
         }
-        return values.get(1).equals(values.get(2)) ? 0 : 1;
+        boolean soldOut = values.get(1).equals(values.get(2));
+        if ("SOLD_OUT".equals(state) && !soldOut) {
+            return -1;
+        }
+        return soldOut ? 0 : 1;
     }
 
     /*
      * 이벤트의 키를 모두 지우고 DB에서 읽은 AVAILABLE 순번과 발급 수로 큐를 다시 만든다.
-     * 채우는 동안은 BLOCKED로 두고 넣은 수가 맞을 때만 READY로 바꾼다.
+     * 채우는 동안은 BLOCKED로 두고 넣은 수가 맞을 때만 남은 재고에 따라 READY 또는 SOLD_OUT으로 바꾼다.
      * 호출자는 이벤트의 DB 배타 잠금을 커밋까지 유지해 큐를 채우는 동안 발급을 막는다.
      */
     public void rebuild(long eventId, List<Integer> sequences, long completed, long expiresAt) {

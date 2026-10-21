@@ -124,6 +124,37 @@ class CouponSequenceServiceTest {
         assertThat(service.needsRecovery(81L)).isTrue();
     }
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.CsvSource({"-1, false", "0, true", "1, false"})
+    void 사전_검사는_준비된_큐의_확정_소진만_반환한다(int availability, boolean soldOut) {
+        when(repository.availability(81L)).thenReturn(availability);
+
+        assertThat(service.isConfirmedSoldOut(81L)).isEqualTo(soldOut);
+        assertThat(service.needsRecovery(81L)).isFalse();
+    }
+
+    @Test
+    void 사전_검사의_Redis_조회_장애는_소진으로_바꾸지_않고_복구를_요청한다() {
+        TransactionSynchronizationManager.setActualTransactionActive(false);
+        when(repository.availability(81L)).thenThrow(new RedisConnectionFailureException("availability failed"));
+
+        assertThatThrownBy(() -> service.isConfirmedSoldOut(81L)).isInstanceOfSatisfying(CouponException.class,
+                error -> {
+                    assertThat(error.getErrorCode()).isEqualTo(CouponErrorCode.ISSUANCE_BUSY);
+                    assertThat(error.canResumeIssuance(81L)).isTrue();
+                });
+        assertThat(service.needsRecovery(81L)).isTrue();
+    }
+
+    @Test
+    void 로컬에서_차단된_이벤트는_사전_검사에서도_Redis를_다시_읽지_않는다() {
+        service.block(81L, null);
+
+        assertThatThrownBy(() -> service.isConfirmedSoldOut(81L)).isInstanceOfSatisfying(CouponException.class,
+                error -> assertThat(error.getErrorCode()).isEqualTo(CouponErrorCode.ISSUANCE_BUSY));
+        verify(repository, never()).availability(81L);
+    }
+
     // 소진 확인에서 큐가 아직 준비되지 않았으면 소진이 아니라 차단으로 처리해 다음 요청이 복구하게 해야 한다.
     @Test
     void 큐가_준비되지_않았으면_소진_확인이_이벤트를_차단한다() {

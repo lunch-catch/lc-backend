@@ -94,23 +94,32 @@ public class CouponSequenceService {
     }
 
     /*
-     * 묶음 발급이 자격 판정 전에 소진을 먼저 알리려고 읽는다.
-     * 큐가 준비되지 않았거나 Redis 오류가 나면 예약과 같이 차단해 다음 요청이 복구하게 한다.
+     * 요청을 발급 대기열에 넣기 전에 정상 Redis 정보의 확정 소진만 확인한다.
+     * 큐가 없거나 준비 중이면 false를 반환해 이벤트 존재와 상태 검사 및 기존 복구로 넘긴다.
      */
+    public boolean isConfirmedSoldOut(long eventId) {
+        return readAvailability(eventId) == 0;
+    }
+
+    // 묶음 발급은 이벤트를 확인한 뒤 큐가 준비되지 않았으면 차단하고 DB 기준 복구를 요청한다.
     public boolean isSoldOut(long eventId) {
-        checkAdmission(eventId);
-        int availability;
-        try {
-            availability = sequences.availability(eventId);
-        } catch (RuntimeException error) {
-            block(eventId, error);
-            throw rejectForRecovery(eventId);
-        }
+        int availability = readAvailability(eventId);
         if (availability < 0) {
             block(eventId, null);
             throw rejectForRecovery(eventId);
         }
         return availability == 0;
+    }
+
+    // Redis 조회 장애를 소진으로 바꾸지 않고 해당 이벤트를 차단해 복구하도록 한다.
+    private int readAvailability(long eventId) {
+        checkAdmission(eventId);
+        try {
+            return sequences.availability(eventId);
+        } catch (RuntimeException error) {
+            block(eventId, error);
+            throw rejectForRecovery(eventId);
+        }
     }
 
     // DB 커밋이 끝난 뒤 완료를 반영하며 Redis 실패로 이미 발급한 쿠폰을 실패로 바꾸지 않는다.

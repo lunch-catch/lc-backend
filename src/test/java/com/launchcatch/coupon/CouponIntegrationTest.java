@@ -1835,6 +1835,7 @@ public class CouponIntegrationTest extends IntegrationTestSupport {
         @Test
         void 발급과_중복_거절_후_실패한_순번을_다른_회원에게_반납한다() {
             couponCommandService.issue(memberId, eventId);
+            assertThat(redis.opsForHash().get(prefix + "meta", "state")).isEqualTo("READY");
             assertThatThrownBy(() -> couponCommandService.issue(memberId, eventId)).isInstanceOfSatisfying(CouponException.class,
                     error -> assertThat(error.getErrorCode()).isEqualTo(CouponErrorCode.EVENT_ALREADY_ISSUED));
             couponCommandService.issue(memberId + 1, eventId);
@@ -1842,9 +1843,56 @@ public class CouponIntegrationTest extends IntegrationTestSupport {
             assertThatThrownBy(() -> couponCommandService.issue(memberId + 3, eventId)).isInstanceOfSatisfying(CouponException.class,
                     error -> assertThat(error.getErrorCode()).isEqualTo(CouponErrorCode.INVENTORY_EXHAUSTED));
             assertThat(redis.opsForHash().get(prefix + "meta", "completed")).isEqualTo("3");
+            assertThat(redis.opsForHash().get(prefix + "meta", "state")).isEqualTo("SOLD_OUT");
             assertThat(redis.opsForZSet().size(prefix + "pending")).isZero();
             assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM member_coupon WHERE coupon_event_id=?",
                     Integer.class, eventId)).isEqualTo(3);
+        }
+
+        @Test
+        void 전량_발급한_이벤트는_직접_예약해도_소진으로_거절하고_중복_완료는_무시한다() {
+            couponCommandService.issue(memberId, eventId);
+            couponCommandService.issue(memberId + 1, eventId);
+            couponCommandService.issue(memberId + 2, eventId);
+
+            assertThat(sequences.reserveAll(eventId, List.of("late-one", "late-two"), 30000)).containsExactly(0L, 0L);
+            assertThat(sequences.complete(eventId, 3, "already-completed")).isFalse();
+            assertThat(redis.opsForHash().get(prefix + "meta", "state")).isEqualTo("SOLD_OUT");
+            assertThat(redis.opsForHash().get(prefix + "meta", "completed")).isEqualTo("3");
+        }
+
+        @Test
+        void 전량_발급한_이벤트를_DB로_복구하면_SOLD_OUT으로_재구축한다() {
+            couponCommandService.issue(memberId, eventId);
+            couponCommandService.issue(memberId + 1, eventId);
+            couponCommandService.issue(memberId + 2, eventId);
+            sequenceService.block(eventId, null);
+
+            assertThat(sequenceRecoveryService.recover(eventId)).isTrue();
+
+            assertThat(redis.opsForHash().get(prefix + "meta", "state")).isEqualTo("SOLD_OUT");
+            assertThat(sequenceService.isConfirmedSoldOut(eventId)).isTrue();
+        }
+
+        @Test
+        void 이전_READY_형식의_전량_발급_정보도_소진으로_읽고_예약_시_SOLD_OUT으로_맞춘다() {
+            couponCommandService.issue(memberId, eventId);
+            couponCommandService.issue(memberId + 1, eventId);
+            couponCommandService.issue(memberId + 2, eventId);
+            redis.opsForHash().put(prefix + "meta", "state", "READY");
+
+            assertThat(sequenceService.isConfirmedSoldOut(eventId)).isTrue();
+            assertThat(sequences.reserveAll(eventId, List.of("legacy"), 30000)).containsExactly(0L);
+            assertThat(redis.opsForHash().get(prefix + "meta", "state")).isEqualTo("SOLD_OUT");
+        }
+
+        @Test
+        void SOLD_OUT인데_발급_완료_수가_부족하면_소진으로_믿지_않고_예약을_차단한다() {
+            redis.opsForHash().put(prefix + "meta", "state", "SOLD_OUT");
+
+            assertThat(sequenceService.isConfirmedSoldOut(eventId)).isFalse();
+            assertThat(sequences.reserveAll(eventId, List.of("inconsistent"), 30000)).containsExactly(-1L);
+            assertThat(redis.opsForHash().get(prefix + "meta", "state")).isEqualTo("BLOCKED");
         }
 
         // 묶음 경로는 자격 판정을 통과한 요청만 순번을 예약하므로 거절된 요청은 큐를 건드리지 않는다.
