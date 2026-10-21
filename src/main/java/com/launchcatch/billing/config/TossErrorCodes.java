@@ -17,7 +17,8 @@ public final class TossErrorCodes {
 
     // 우리 쪽 키 설정이 틀렸다는 코드다. 모든 호출이 같은 이유로 실패한다.
     private static final Set<String> CONFIG_ERROR_CODES = Set.of(
-            "UNAUTHORIZED_KEY", "FORBIDDEN_REQUEST", "INCORRECT_BASIC_AUTH_FORMAT", "INVALID_API_KEY");
+            "UNAUTHORIZED_KEY", "FORBIDDEN_REQUEST", "INCORRECT_BASIC_AUTH_FORMAT", "INVALID_API_KEY",
+            "NOT_FOUND_MERCHANT");
 
     private TossErrorCodes() {
     }

@@ -87,13 +87,13 @@ public class PaymentRecheckService {
     }
 
     /*
-     * 주문 번호로 결제대행사에 묻고 판정한다. 결제를 바꾸지 않는다. 관리자 재조회도 같은 판정을 쓴다.
+     * 저장한 결제 키로 결제대행사에 묻고 판정한다. 결제를 바꾸지 않는다. 관리자 재조회도 같은 판정을 쓴다.
      * 승인 뒤 결제대행사에서 취소된 결제(CANCELED)도 우리 쪽은 승인한 적이 없으므로 충전 없이 취소로 닫는다.
      */
     public PaymentRecheckVerdict judge(Payment payment) {
         PaymentGatewayInquiryResult inquiry;
         try {
-            inquiry = paymentGateway.inquireByOrderId(payment.getOrderId());
+            inquiry = paymentGateway.inquireByPaymentKey(payment.getPgTid());
         } catch (PgNotSentException | PgUnknownException e) {
             log.warn("event=PAYMENT_RECHECK_INQUIRY_FAILED paymentId={}", payment.getId(), e);
             return PaymentRecheckVerdict.miss(INQUIRY_FAILED_REASON);

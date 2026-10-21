@@ -26,10 +26,12 @@
 | 승인 응답의 주문 번호와 금액이 일치함 | `APPROVED`와 `CHARGE`를 함께 기록한다 |
 | 명확한 거절 | 실패 사유와 `FAILED`를 기록한다 |
 | 미전송이 확실함(`PgNotSentException`) | `REQUESTED`를 유지한다. 재조회 아웃박스를 만들지 않는다 |
-| 결과 불명(`PgUnknownException`) | 주문 번호로 동기 재조회를 한 번 한다 |
+| 결과 불명(`PgUnknownException`) | 저장한 결제 키(`pgTid`)로 동기 재조회를 한 번 한다 |
 | 승인 응답의 주문 번호나 금액이 다름 | 승인이나 실패로 단정하지 않고 `UNKNOWN`과 아웃박스를 기록한다 |
 
 동기 재조회에서 `APPROVED`는 주문 번호와 금액이 일치해야 승인한다. `FAILED`는 실패로, `EXPIRED`와 `CANCELED`는 충전 없이 취소로 닫는다. `PENDING`, `NOT_FOUND`, 조회 실패와 승인 정보 불일치는 `UNKNOWN`으로 남긴다. `ALREADY_PROCESSED_PAYMENT`도 게이트웨이가 결과 불명으로 분류하므로 동기 재조회가 결과를 정한다.
+
+승인 확정의 동기 재조회와 워커·관리자 재조회는 저장한 결제 키로 조회한다. 결제위젯 테스트 키로 결제 키 조회는 정상 응답했다(#669). 같은 키로 주문 번호를 조회하면 `NOT_FOUND_MERCHANT`를 반환했다. [토스 API 키 안내](https://docs.tosspayments.com/reference/using-api/api-keys)의 결제 시크릿 키 지원 목록에도 결제 키 조회가 명시돼 있다. 승인 요청에서 `NOT_FOUND_MERCHANT`를 받으면 상점 설정 오류로 분류해 `PgNotSentException`을 던진다.
 
 `PaymentResultService`는 결과를 쓸 때마다 결제 행을 잠그고 상태를 다시 읽는다. 이미 `APPROVED`, `FAILED`, `CANCELLED`이면 덮어쓰지 않는다. 승인 확정·웹훅·재조회 워커·관리자 재조회가 같은 기록 메서드를 사용한다.
 
