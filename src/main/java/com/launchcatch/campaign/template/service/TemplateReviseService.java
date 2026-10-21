@@ -13,6 +13,7 @@ import com.launchcatch.campaign.template.entity.TemplateVersion;
 import com.launchcatch.campaign.template.repository.TemplateRepository;
 import com.launchcatch.campaign.template.repository.TemplateVersionRepository;
 import com.launchcatch.campaign.template.TemplateHtmlSanitizer;
+import com.launchcatch.campaign.template.TemplatePromptValidator;
 import com.launchcatch.campaign.template.TemplateSlotValidator;
 import com.launchcatch.campaign.template.TemplateStructureValidator;
 import java.time.Clock;
@@ -38,6 +39,7 @@ public class TemplateReviseService {
     private final TemplateHtmlSanitizer templateHtmlSanitizer;
     private final TemplateSlotValidator templateSlotValidator;
     private final TemplateStructureValidator templateStructureValidator;
+    private final TemplatePromptValidator templatePromptValidator;
     private final TemplateGenerationRateLimiter templateGenerationRateLimiter;
     private final TransactionTemplate transactionTemplate;
     private final Clock clock;
@@ -61,6 +63,7 @@ public class TemplateReviseService {
             return toResponseForMatchingTemplate(existing.get(), templateId);
         }
         templateGenerationRateLimiter.checkLimit(adminId, requestId);
+        validatePrompt(requestPrompt, requestId);
         findDraftTemplate(templateId);
         String previousHtml = latestVersionHtml(templateId);
         Document previousDocument = Jsoup.parseBodyFragment(previousHtml);
@@ -76,6 +79,16 @@ public class TemplateReviseService {
             return templateVersionRepository.findByRequestId(requestId)
                     .map(found -> toResponseForMatchingTemplate(found, templateId))
                     .orElseThrow(() -> e);
+        }
+    }
+
+    // 요청 문구를 모델에 보내기 전에 거른다(#428). 거부해도 분당 3회에는 이미 센 상태다.
+    private void validatePrompt(String requestPrompt, String requestId) {
+        try {
+            templatePromptValidator.validate(requestPrompt);
+        } catch (CampaignException e) {
+            templateGenerationRateLimiter.releaseInFlight(requestId);
+            throw e;
         }
     }
 

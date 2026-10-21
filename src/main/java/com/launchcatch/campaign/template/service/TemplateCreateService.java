@@ -13,6 +13,7 @@ import com.launchcatch.campaign.template.repository.TemplateQuotaRepository;
 import com.launchcatch.campaign.template.repository.TemplateRepository;
 import com.launchcatch.campaign.template.repository.TemplateVersionRepository;
 import com.launchcatch.campaign.template.TemplateHtmlSanitizer;
+import com.launchcatch.campaign.template.TemplatePromptValidator;
 import com.launchcatch.campaign.template.TemplateSlotValidator;
 import java.time.Clock;
 import java.time.LocalDateTime;
@@ -35,6 +36,7 @@ public class TemplateCreateService {
     private final TemplateHtmlGenerator templateHtmlGenerator;
     private final TemplateHtmlSanitizer templateHtmlSanitizer;
     private final TemplateSlotValidator templateSlotValidator;
+    private final TemplatePromptValidator templatePromptValidator;
     private final TemplateGenerationRateLimiter templateGenerationRateLimiter;
     private final TransactionTemplate transactionTemplate;
     private final Clock clock;
@@ -61,6 +63,7 @@ public class TemplateCreateService {
             return toResponse(existing.get(), List.of());
         }
         templateGenerationRateLimiter.checkLimit(adminId, requestId);
+        validatePrompt(requestPrompt, requestId);
         if (templateRepository.count() >= maxTemplates) {
             throw new CampaignException(PosterErrorCode.TEMPLATE_LIMIT_EXCEEDED);
         }
@@ -74,6 +77,16 @@ public class TemplateCreateService {
             return templateVersionRepository.findByRequestId(requestId)
                     .map(found -> toResponse(found, List.<String>of()))
                     .orElseThrow(() -> e);
+        }
+    }
+
+    // 요청 문구를 모델에 보내기 전에 거른다(#428). 거부해도 분당 3회에는 이미 센 상태다.
+    private void validatePrompt(String requestPrompt, String requestId) {
+        try {
+            templatePromptValidator.validate(requestPrompt);
+        } catch (CampaignException e) {
+            templateGenerationRateLimiter.releaseInFlight(requestId);
+            throw e;
         }
     }
 

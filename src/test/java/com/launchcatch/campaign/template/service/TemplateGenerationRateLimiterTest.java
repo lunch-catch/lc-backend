@@ -61,6 +61,14 @@ class TemplateGenerationRateLimiterTest {
     }
 
     @Test
+    @DisplayName("요청 문구 검증이 거부한 requestId 의 진행 중 표시를 지운다(#428)")
+    void 진행_중_표시를_풀어준다() {
+        rateLimiter.releaseInFlight(REQUEST_ID);
+
+        verify(redisTemplate).delete(IN_FLIGHT_KEY);
+    }
+
+    @Test
     @DisplayName("분당 3회를 넘으면 POSTER-014을 던지고, 남긴 진행 중 표시를 지운다")
     void 분당_삼회를_넘으면_거부한다() {
         처음_보는_requestId로_설정한다();

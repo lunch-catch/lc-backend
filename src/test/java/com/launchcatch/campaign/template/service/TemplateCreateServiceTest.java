@@ -23,6 +23,7 @@ import com.launchcatch.campaign.template.repository.TemplateQuotaRepository;
 import com.launchcatch.campaign.template.repository.TemplateRepository;
 import com.launchcatch.campaign.template.repository.TemplateVersionRepository;
 import com.launchcatch.campaign.template.TemplateHtmlSanitizer;
+import com.launchcatch.campaign.template.TemplatePromptValidator;
 import com.launchcatch.campaign.template.TemplateSlotValidator;
 import com.launchcatch.global.entity.BaseTimeEntity;
 import java.lang.reflect.Field;
@@ -97,6 +98,7 @@ class TemplateCreateServiceTest {
                 templateHtmlGenerator,
                 new TemplateHtmlSanitizer(),
                 new TemplateSlotValidator(),
+                new TemplatePromptValidator(),
                 new TemplateGenerationRateLimiter(redisTemplate),
                 transactionTemplate,
                 FIXED_CLOCK);
@@ -230,6 +232,19 @@ class TemplateCreateServiceTest {
 
         assertThatThrownBy(() -> service.create("가을 신메뉴", "가을 느낌", REQUEST_ID, ADMIN_ID))
                 .isSameAs(violation);
+    }
+
+    @Test
+    @DisplayName("요청 문구가 검증에 걸리면 LLM 을 부르지 않고 사유 코드로 거부하며 처리 중 표식을 푼다(#428)")
+    void 요청_문구가_검증에_걸리면_LLM을_부르지_않는다() {
+        처음_보는_requestId로_설정한다();
+
+        assertThatThrownBy(() -> service.create("가을 신메뉴", "ㅁ", REQUEST_ID, ADMIN_ID))
+                .isInstanceOfSatisfying(CampaignException.class, e ->
+                        assertThat(e.getErrorCode()).isEqualTo(PosterErrorCode.PROMPT_TOO_SHORT));
+
+        verifyNoInteractions(templateHtmlGenerator);
+        verify(redisTemplate).delete("templateGenerationInFlight:" + REQUEST_ID);
     }
 
     @Test
