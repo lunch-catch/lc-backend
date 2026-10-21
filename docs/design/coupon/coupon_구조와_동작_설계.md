@@ -157,7 +157,7 @@ V7은 전체 메뉴 정률 조합을 CHECK에서 제외한다. 지원하지 않�
 | 연결됨 | 읽기, owner | `OwnerStatusQuery.findCurrentStatus(Long)` | 점주 수량·매장 사용 이력·사용 확정 요청마다 한 번 호출하며 캐시를 우회한다 |
 | 연결됨 | 읽기, campaign | `CampaignQueryService.findByStoreIdIn(List<Long>)` | 이벤트 상태 요청마다 한 번 일괄 호출한다 |
 | 연결됨 | 읽기, store | `StoreQueryService.canManageStore(Long, Long)`, `findAllById(List<Long>)` | QR 사용은 관리 권한과 좌표를 조회한다. 이력 조회는 현재 관리 권한, 이벤트 조회는 최종 등록 매장을 확인한다 |
-| 연결됨 | 읽기·쓰기, adserving | `WishlistQueryService`, `CandidateStateUpdater` | 발급·이벤트 조회에서 찜을 읽고 마지막 발급 커밋 뒤 소진을 알린다. 소진 거절에서도 누락 반영을 재시도한다 |
+| 연결됨 | 읽기·쓰기, adserving | `WishlistQueryService`, `CandidateStateUpdater` | 발급·이벤트 조회에서 찜을 읽는다. 소진 통보의 실행 위치와 재시도는 [API 설계](./coupon-api-design.md#찜과-소진-contract-연결)를 따른다 |
 | 연결됨 | 받음, campaign | `CampaignStatusChangedEvent`, `CampaignEndedEvent` | 발행자와 같은 트랜잭션에서 회차 상태를 바꾼다. 전이 기준은 6장의 캠페인 이벤트 반영 절을 따른다 |
 | 연결됨 | 공개, analytics | `CouponIssuedEvent`, `CouponRedeemedEvent` | 발급·사용 트랜잭션 안에서 발행하며 분석은 커밋 후 비동기로 수신한다 |
 | 연결됨 | 공개, analytics | `CouponIssueOpenedEvent`, `CouponExpiredEvent` | 오픈·만료 배치가 업무 트랜잭션에서 발행한다. 상세는 [쿠폰 배치 설계](./coupon-batch-design.md)를 따른다 |

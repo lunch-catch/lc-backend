@@ -36,9 +36,9 @@ QR 사용 확정도 같은 기본 처리를 따르며 상태·사용 이력의 �
 
 쿠폰 발급을 먼저 커밋한 뒤 소진을 반영하므로 광고 서빙의 실패로 완료된 쿠폰을 취소하지 않는다.
 소진 통보 실패는 COUPON_SOLD_OUT_NOTIFICATION_FAILED로 기록하고 발급 성공을 유지한다.
-소진 거절 후 복구 조회가 실패하면 COUPON_SOLD_OUT_RECOVERY_FAILED로 기록하고 COUPON-006을 유지한다.
+소진 통보에 필요한 조회도 별도 작업자에서 수행하며 실패하면 같은 재시도 대상으로 남긴다.
 호출 경계와 재시도는 [API 설계](./coupon-api-design.md#찜과-소진-contract-연결)가 갖는다.
-후속 발급 요청이 없는 경우의 복구 한계는 [광고 서빙 계약](../adserving/feed-api-design.md#candidatestateupdater)을 따른다.
+접수 상한과 재시도 기간, 서버 종료 뒤 복구 한계도 같은 API 설계를 따른다.
 
 ## 유형별 점검
 

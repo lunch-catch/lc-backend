@@ -16,12 +16,13 @@ HTTP 응답은 요청마다 따로 반환하며 DB 커밋 뒤에만 발급 성�
 
 | 구성 요소 | 실행 위치와 책임 |
 |---|---|
-| `CouponCommandService.issue` | 요청 스레드에서 발급의 진입점, 차단 복구와 소진 통보를 조정한다. `Propagation.NEVER`로 호출자의 트랜잭션 안에서 대기하지 못하게 한다. |
+| `CouponCommandService.issue` | 요청 스레드에서 Redis 확정 소진을 먼저 검사하고 소진이면 DB와 발급 대기열 없이 거절한다. 차단 복구와 소진 통보 접수도 조정하며 `Propagation.NEVER`로 호출자의 트랜잭션 안에서 대기하지 못하게 한다. |
 | `CouponIssueBatcher.submitAndAwait` | 요청 정보와 결과 통로인 Future를 대기열에 넣고 자기 결과를 기다린다. DB 커넥션을 잡지 않는다. |
 | `CouponIssueBatcher.runWorker` | 별도 작업자 스레드에서 첫 요청과 이미 쌓인 요청을 꺼내 묶음을 만든다. |
 | `CouponIssueBatcher.process` | 묶음 서비스를 호출하고 커밋 후 Redis 예약을 완료한다. 각 요청의 Future에 결과를 전달한다. |
 | `CouponBatchIssuanceService.issueBatch` | 묶음 하나의 자격·중복·한도를 판정하고 재고·카운터·회원 쿠폰을 한 트랜잭션으로 저장한다. |
 | `CouponBatchIssueRepository` | 여러 행을 다루는 SQL을 실행한다. JdbcTemplate은 서비스의 Spring 트랜잭션과 같은 커넥션을 사용한다. |
+| `CouponSoldOutNotificationService` | 별도 작업자 하나가 소진 통보를 처리한다. 중복 접수와 실패 재시도의 기준은 [API 설계](./coupon-api-design.md#찜과-소진-contract-연결)를 따른다. |
 
 작업자 수는 동시에 실행할 발급 묶음 수를 정한다. DB 커넥션 풀의 크기와 별도 설정이다.
 이 제한은 묶음 발급 경로에 적용하며 쿠폰 조회·사용·복구까지 같은 수로 제한하지 않는다.
@@ -38,9 +39,15 @@ sequenceDiagram
     participant W as Batcher 작업자
     participant S as BatchIssuanceService
     participant R as SequenceService / Redis
+    participant N as 소진 통보 작업자
 
     H->>C: issue(memberId, eventId)
     C->>R: 이벤트의 로컬 차단 여부 확인
+    C->>R: 확정 소진 사전 검사
+    alt 소진 확정
+        C->>N: 소진 통보 접수
+        C-->>H: DB·발급 대기열 없이 COUPON-006
+    else 소진 미확정
     C->>B: submitAndAwait(memberId, eventId)
     B->>B: 요청 시각과 요청별 Future 생성
     B->>Q: 요청과 Future를 함께 등록
@@ -58,14 +65,16 @@ sequenceDiagram
         else 발급 성공
             W->>R: complete(reservation)
             R-->>W: 마지막 재고 완료 여부
+            opt 마지막 재고 완료
+                W->>N: 이벤트의 소진 통보 접수
+            end
             W-->>B: Future에 발급 응답과 소진 여부 전달
         end
     end
     B-->>C: 자기 요청의 결과 또는 예외
-    opt 마지막 재고 완료
-        C->>C: DB 소진 확인 뒤 광고 후보에 통보
-    end
+    Note over C,N: 소진 거절도 통보만 접수하며 요청은 통보 완료를 기다리지 않음
     C-->>H: 자기 요청의 HTTP 응답
+    end
 ```
 
 서비스를 배처와 별도 빈으로 둔 이유는 트랜잭션 프록시를 거쳐 묶음마다 커밋하게 하기 위해서다.

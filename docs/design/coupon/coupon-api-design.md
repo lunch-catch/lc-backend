@@ -19,7 +19,9 @@ HTTP 경로의 버전과 발급 구조의 버전은 별개다.
 
 `POST /v1/coupons`는 `CouponCommandService.issue(memberId, eventId)`로 처리한다.
 조정 메서드는 `Propagation.NEVER`로 호출자의 트랜잭션 안에서 실행하는 것을 막는다.
-요청 스레드는 DB 커넥션을 잡지 않고 `CouponIssueBatcher.submitAndAwait`로 대기열에 요청을 넣은 뒤 자기 결과를 기다린다.
+요청 스레드는 Redis의 확정 소진을 먼저 검사한다. 사전 검사의 응답 우선순위는 [발급 명세](../../api-spec/coupon-api-spec.md#쿠폰-발급)를 따른다.
+`CouponSequenceService.isConfirmedSoldOut`이 true면 발급 대기열이나 발급 DB 조회를 사용하지 않는다.
+소진이 확정되지 않은 요청만 DB 커넥션 없이 `CouponIssueBatcher.submitAndAwait`로 대기열에 넣고 자기 결과를 기다린다.
 작업자 스레드가 대기열에서 요청을 꺼내 `CouponBatchIssuanceService.issueBatch`로 묶음 하나를 READ_COMMITTED 트랜잭션 하나에서 처리한다.
 요청마다 트랜잭션을 열던 단건 경로는 두지 않는다.
 
@@ -36,7 +38,7 @@ HTTP 경로의 버전과 발급 구조의 버전은 별개다.
 | `queue-capacity` | 2,000 | 대기열이 가득 차면 기다리지 않고 `503 COUPON-008`로 거절한다 |
 | `wait-timeout` | 10초 | 복구와 발급 결과 대기가 공유하는 처리 기한이며 대기 시간 초과는 `500 COMMON-001`로 응답한다 |
 
-요청 시각은 대기열에 넣은 순간으로 정한다. 대기열에서 기다린 시간은 발급 시간 판정에 들어가지 않는다.
+요청 시각은 Redis 사전 검사 전에 한 번 기록한다. 사전 검사와 대기열에서 기다린 시간은 발급 시간 판정에 들어가지 않는다.
 
 ### 트랜잭션과 잠금
 
@@ -65,16 +67,27 @@ Redis 키의 절대 만료 시각과 보관 여유시간은 [v2의 TTL 정책](.
 
 찜 조회와 소진 반영의 반환·실패·복구 정책은 [광고 서빙 공개 계약](../adserving/feed-api-design.md#wishlistqueryservice)이 소유한다.
 찜 조회 장애는 묶음을 롤백하며 찜 없음으로 바꾸지 않는다.
-`CouponIssueBatcher`는 발급 커밋 후 Redis의 completed를 한 번만 증가시키고 소진 여부를 요청 스레드에 전달한다.
-`CouponCommandService`는 completed가 total에 도달한 요청에서만 DB의 AVAILABLE 부재와 마지막 발급 시각을 확인한다.
-`CouponLookUpService.findSoldOut`은 저장된 마지막 createdAt과 이벤트의 캠페인·영업일을 반환한다.
-`CouponCommandService`가 트랜잭션 밖에서 `CandidateStateUpdater.markSoldOut`을 부른다.
-발급 저장이나 커밋이 실패하면 이 호출을 하지 않는다. 소진 반영 실패는 ERROR 로그를 남기며 이미 완료한 발급과 성공 응답은 유지한다.
+`CouponIssueBatcher`는 발급 커밋 후 Redis의 completed를 한 번만 증가시킨다.
+completed가 total에 도달하면 HTTP 대기 종료 여부와 관계없이 `CouponSoldOutNotificationService`에 이벤트를 접수한다.
+소진 거절도 같은 서비스에 접수하지만 요청 스레드는 재고를 DB에서 다시 확인하거나 광고 통보를 기다리지 않는다.
+사전 검사에서 소진되지 않은 요청은 기존 묶음 트랜잭션에서 이벤트의 운영 상태와 발급 시간을 검사한다.
+묶음 트랜잭션의 재고 검사는 사전 검사 뒤에 소진되거나 다른 요청이 재고를 예약한 경우를 처리한다.
 
-발급이 INVENTORY_EXHAUSTED로 거절되면 묶음 트랜잭션이 끝난 뒤 `CouponLookUpService.findSoldOut`으로 마지막 발급 시각을 읽는다.
-삭제된 쿠폰도 발급 기록에 포함한다. 이벤트나 발급 기록이 없으면 소진 시각을 임의로 만들지 않는다.
-캠페인과 영업일은 해당 이벤트의 값으로 다시 통보하며 복구 조회·통보 실패도 원래의 소진 거절을 바꾸지 않는다.
-복구 한계와 반복 통보의 처리 기준은 [소진 반영 계약](../adserving/feed-api-design.md#candidatestateupdater)을 따른다.
+통보 서비스는 이 서버에서 대기하거나 성공한 이벤트의 중복 접수를 합친다.
+별도 작업자 하나가 `CouponLookUpService.findSoldOut`으로 소진 통보에 필요한 값을 읽는다.
+삭제된 쿠폰도 포함한 마지막 createdAt과 이벤트의 캠페인·영업일을 그대로 전달한다.
+이벤트나 발급 기록이 없으면 소진 시각을 임의로 만들지 않고 실패한 작업으로 남긴다.
+서비스는 조회 트랜잭션이 끝난 뒤 `CandidateStateUpdater.markSoldOut`을 부른다.
+성공한 이벤트는 최대 10,000개를 하루 동안 기억하며 서버가 여러 대면 각 서버가 한 번씩 통보할 수 있다.
+반복 통보는 [소진 반영 계약](../adserving/feed-api-design.md#candidatestateupdater)의 멱등성으로 처리한다.
+
+대기 작업은 최대 2,000개이며 작업자는 1초마다 처리할 작업을 확인한다.
+조회나 통보가 실패하면 새 HTTP 요청 없이 5초 간격으로 재시도한다.
+접수한 뒤 한 시간이 지나면 작업을 만료시키고 ERROR 로그를 남긴다.
+접수 거절, 재시도 실패와 종료 때 남은 작업도 ERROR 로그로 남기며 원래 HTTP 결과는 유지한다.
+대기 작업과 성공 표시는 서버 메모리에 있으므로 재시작 뒤에는 남지 않는다.
+서버 재시작이나 대기열 포화로 접수를 잃으면 후속 소진 거절이 다시 접수한다.
+후속 요청 없이 서버가 종료된 경우의 통보 복구는 보장하지 않는다.
 
 ### 검증
 

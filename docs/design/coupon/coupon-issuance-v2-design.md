@@ -101,14 +101,18 @@ expiresAt = "1792476000000"
 
 | 필드 | 의미와 변경 규칙 |
 |---|---|
-| `state` | READY에서만 새 순번을 예약한다. 이상을 발견하거나 재구축하는 동안에는 BLOCKED로 둔다. |
+| `state` | READY에서 새 순번을 예약하고 전량 발급을 완료하면 SOLD_OUT으로 바꾼다. 이상을 발견하거나 재구축하는 동안에는 BLOCKED로 둔다. |
 | `total` | 이벤트의 전체 재고 수다. 재구축은 DB의 AVAILABLE 수와 ISSUED 수의 합으로 채운다. |
 | `completed` | DB 커밋 뒤 Redis 완료까지 반영한 수다. 정상 완료가 일치하는 pending을 제거했을 때만 1 증가한다. 재구축은 DB의 ISSUED 수로 다시 맞춘다. |
 | `expiresAt` | 해당 영업일의 발급 종료 시각에 보관 여유시간을 더한 Unix 밀리초다. 세 키는 같은 절대 시각에 만료하며 예약·완료·반납·차단은 만료를 연장하지 않는다. |
 
 `completed`는 실시간 DB 발급 수와 잠시 다를 수 있다.
 DB 커밋 뒤 Redis 완료 전에는 해당 순번이 아직 pending에 들어 있기 때문이다.
-`completed == total`이면 발급 완료를 소진으로 판단한다. 마지막 완료 뒤 광고 후보에 통보하기 전에는 DB의 실제 소진도 확인한다.
+마지막 완료 Lua는 `completed == total`이 되는 증가와 `state = SOLD_OUT` 전환을 함께 수행한다.
+DB 기준 재구축도 전량 발급을 확인했으면 SOLD_OUT으로 마친다.
+SOLD_OUT에서는 available과 pending이 모두 비어 있고 completed가 total과 같아야 한다.
+이전 코드가 남긴 READY와 `completed == total` 조합도 소진으로 읽으며 예약 Lua가 같은 조합을 만나면 SOLD_OUT으로 맞춘다.
+소진 사전 응답과 광고 후보 통보의 실행 위치는 [API 설계](./coupon-api-design.md#찜과-소진-contract-연결)를 따른다.
 
 ### 2.5 세 키의 수량은 함께 맞아야 한다
 
@@ -117,9 +121,10 @@ LLEN(available) + ZCARD(pending) + completed = total
 0 <= completed <= total
 ```
 
-예약 Lua는 READY와 오래된 pending을 확인한 뒤 위 수량을 검사한다.
+예약 Lua는 READY 또는 SOLD_OUT과 오래된 pending을 확인한 뒤 위 수량을 검사한다.
 정상 초기화 직후 pending은 비어 있다. 빈 목록·집합의 키가 없는 상태와 meta가 유실된 상태를 같은 의미로 처리하지 않는다.
-meta가 없거나 READY가 아니면 발급기가 준비됐다고 판단하지 않는다.
+meta가 없거나 BLOCKED이면 발급기가 준비됐다고 판단하지 않는다.
+SOLD_OUT인데 completed가 total보다 작으면 정상 소진으로 응답하지 않고 복구 대상으로 삼는다.
 
 | 상태 | 해석 |
 |---|---|
@@ -162,7 +167,7 @@ TTL은 발급이 끝난 이벤트의 Redis 데이터를 정리하기 위해 둔�
 HTTP 응답 대기 제한만으로 DB 작업이 끝났다고 판단하지 않는다.
 
 **코드 반영 상태:** 절대 만료 시각과 재생성 차단을 구현했다.
-`rebuild.lua`는 초기화·분할 적재·READY 전환마다 만료를 검사하고 생성한 키의 TTL을 같은 Lua 호출 안에서 설정한다.
+`rebuild.lua`는 초기화·분할 적재·정상 상태로의 전환마다 만료를 검사하고 생성한 키의 TTL을 같은 Lua 호출 안에서 설정한다.
 `block.lua`는 보존 기한 안의 기존 meta만 차단한다. 키가 없으면 새 HASH를 만들지 않는다.
 Redis TIME으로 이미 지난 만료 시각을 검사하므로 복구 중간에 키가 만료돼도 뒤늦은 적재가 키를 되살리지 않는다.
 
@@ -183,10 +188,10 @@ stateDiagram-v2
 
 ### 3.1 예약은 꺼내기와 예약 기록을 함께 수행한다
 
-1. meta가 READY인지 확인한다.
+1. meta가 READY 또는 SOLD_OUT인지 확인한다.
 2. 가장 오래된 pending이 `stale-after`를 넘겼는지 확인한다. 넘겼으면 BLOCKED로 바꾸고 중단한다.
 3. 수량 합과 completed의 범위를 검사한다. 맞지 않으면 BLOCKED로 바꾸고 중단한다.
-4. 발급 완료 수가 전체 재고 수에 닿았으면 소진을 반환한다.
+4. 발급 완료 수가 전체 재고 수에 닿았으면 SOLD_OUT으로 맞추고 소진을 반환한다.
 5. available에서 순번을 LPOP하고 `순번:예약 UUID`를 pending에 ZADD한다.
 6. 호출자에게 순번을 반환하고 DB 트랜잭션 종료 결과에 참여시킨다.
 
@@ -206,12 +211,12 @@ v2의 단건 흐름은 한 건을 예약하는 경우이며 v3는 통과한 요�
 
 | 동작 | 선행 조건 | Redis 안에서 함께 수행하는 변경 |
 |---|---|---|
-| 예약 완료 | DB 커밋이 확정됐다. | READY인지 검사하고 정확히 일치하는 pending을 ZREM한다. 실제로 제거했을 때만 completed를 1 늘린다. |
+| 예약 완료 | DB 커밋이 확정됐다. | READY인지 검사하고 정확히 일치하는 pending을 ZREM한다. 실제로 제거했을 때만 completed를 1 늘리고 total에 도달하면 SOLD_OUT으로 함께 바꾼다. |
 | 순번 반납 | DB 롤백이 확정됐다. | READY인지 검사하고 정확히 일치하는 pending을 ZREM한다. 실제로 제거했을 때만 순번을 available 끝에 RPUSH한다. |
 
 완료 스크립트의 `1`은 이번 완료로 total에 도달했다는 뜻이다.
 `0`은 정상 완료했지만 마지막 재고가 아닌 경우에도 반환한다.
-BLOCKED이거나 일치하는 예약이 없을 때도 `0`이므로 완료 반환값만으로 모든 누락을 구분하지 않는다.
+SOLD_OUT이나 BLOCKED이거나 일치하는 예약이 없을 때도 `0`이므로 완료 반환값만으로 모든 누락을 구분하지 않는다.
 반납 스크립트의 반환값은 실제 반납이면 `1`, 변경하지 않았으면 `0`이며 현재 Java 반납 메서드는 이 값을 사용하지 않는다.
 
 ### 3.3 재고 세 장의 변경 예시
@@ -426,13 +431,13 @@ v3에서는 해당 요청 한 건을 기존 배처에 접수하며 실제 DB 발
 4. 해당 이벤트의 Redis 키 세 개를 DEL하고 meta를 BLOCKED로 만든다. total은 두 수의 합, completed는 DB의 ISSUED 수로 채운다.
 5. AVAILABLE 순번을 RPUSH로 적재한다. 현재 저장소는 호출 한 번에 최대 500개씩 넣는다. 이 값은 복구 적재 단위이며 v3의 발급 묶음 크기와 별개다.
 6. LIST 길이가 DB에서 읽은 AVAILABLE 수와 같은지 확인한다. 과거 pending은 복원하지 않는다.
-7. Redis state를 READY로 바꾼다. 이때까지 DB 배타 잠금을 유지해 새 발급이 공유 잠금을 먼저 얻지 못하게 한다.
+7. Redis state를 남은 재고가 있으면 READY로, 전량 발급됐으면 SOLD_OUT으로 바꾼다. 이때까지 DB 배타 잠금을 유지해 새 발급이 공유 잠금을 먼저 얻지 못하게 한다.
 8. DB 복구 트랜잭션이 끝나면 해당 서버의 로컬 차단과 복구 재시도 대기를 해제한다.
 
 재구축 전체를 Redis Lua 한 번으로 실행하지는 않는다.
 중간 상태를 정상 예약에 사용하지 못하도록 BLOCKED와 DB 배타 잠금을 함께 사용한다.
 Redis 재구축 도중의 오류나 DB 트랜잭션 종료 실패는 다시 차단하는 경로로 처리한다.
-READY 전환과 DB 트랜잭션 종료가 하나의 분산 커밋으로 묶인 구조는 아니다.
+Redis 정상 상태로의 전환과 DB 트랜잭션 종료가 하나의 분산 커밋으로 묶인 구조는 아니다.
 
 ```mermaid
 sequenceDiagram
@@ -454,7 +459,7 @@ sequenceDiagram
         F->>R: available에 RPUSH
     end
     F->>R: 적재한 LIST 길이 확인
-    F->>R: meta.state를 READY로 변경
+    F->>R: meta.state를 READY 또는 SOLD_OUT으로 변경
     Note over F,D: 아직 DB 배타 잠금 유지
     F->>D: 복구 트랜잭션 종료·배타 잠금 해제
     F->>F: 로컬 차단 해제
