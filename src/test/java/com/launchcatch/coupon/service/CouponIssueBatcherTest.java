@@ -33,8 +33,9 @@ class CouponIssueBatcherTest {
 
     private final CouponBatchIssuanceService batchService = mock(CouponBatchIssuanceService.class);
     private final CouponSequenceService sequenceService = mock(CouponSequenceService.class);
+    private final CouponSoldOutNotificationService soldOutNotifications = mock(CouponSoldOutNotificationService.class);
     private final Clock clock = Clock.fixed(Instant.parse("2026-10-20T03:00:00Z"), ZoneOffset.ofHours(9));
-    private final CouponIssueBatcher batcher = new CouponIssueBatcher(batchService, sequenceService, clock);
+    private final CouponIssueBatcher batcher = new CouponIssueBatcher(batchService, sequenceService, soldOutNotifications, clock);
     private final CouponReservation reservation =
             new CouponReservation(81L, 1, "reservation");
     private final CouponIssueResponse response = new CouponIssueResponse(1001L, OffsetDateTime.now(clock));
@@ -63,6 +64,7 @@ class CouponIssueBatcherTest {
 
         assertThat(result.response()).isEqualTo(response);
         assertThat(result.soldOut()).isTrue();
+        verify(soldOutNotifications).request(81L);
         verify(sequenceService).complete(reservation);
     }
 
@@ -174,7 +176,7 @@ class CouponIssueBatcherTest {
         });
         when(sequenceService.complete(reservation)).thenAnswer(invocation -> {
             completed.countDown();
-            return false;
+            return true;
         });
 
         try {
@@ -188,5 +190,6 @@ class CouponIssueBatcherTest {
 
         assertThat(completed.await(5, TimeUnit.SECONDS)).isTrue();
         verify(sequenceService).complete(reservation);
+        await().atMost(Duration.ofSeconds(3)).untilAsserted(() -> verify(soldOutNotifications).request(81L));
     }
 }

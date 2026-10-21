@@ -215,6 +215,7 @@ public class CouponIntegrationTest extends IntegrationTestSupport {
     @MockitoBean StoreQueryService stores;
     @MockitoSpyBean WishlistQueryService wishes;
     @MockitoBean CandidateStateUpdater candidates;
+    @MockitoBean com.launchcatch.coupon.service.CouponSoldOutNotificationService soldOutNotifications;
     @MockitoBean(name = "ownerAccessTokenPolicy") AccessTokenValidationPolicy ownerTokenPolicy;
     @MockitoSpyBean CouponQrImageEncoder imageEncoder;
     @MockitoSpyBean MemberQueryService members;
@@ -1028,7 +1029,7 @@ public class CouponIntegrationTest extends IntegrationTestSupport {
         }
 
         @Test
-        void 마지막_재고를_커밋한_뒤에만_트랜잭션_밖에서_소진을_알린다() {
+        void 마지막_재고를_커밋한_뒤에만_트랜잭션_밖에서_소진_통보를_접수한다() {
             couponCommandService.issue(17L, 81L);
             couponCommandService.issue(18L, 81L);
             verifyNoInteractions(candidates);
@@ -1037,35 +1038,30 @@ public class CouponIntegrationTest extends IntegrationTestSupport {
                         .isFalse();
                 assertConsistent(3);
                 assertThat(invocation.<Long>getArgument(0)).isEqualTo(81L);
-                assertThat(invocation.<LocalDate>getArgument(1)).isEqualTo(TODAY);
-                assertThat(invocation.<LocalDateTime>getArgument(2)).isEqualTo(TODAY.atTime(12, 0));
                 return null;
-            }).when(candidates).markSoldOut(any(), any(), any());
+            }).when(soldOutNotifications).request(81L);
 
             couponCommandService.issue(19L, 81L);
 
-            verify(candidates).markSoldOut(81L, TODAY, TODAY.atTime(12, 0));
+            verify(soldOutNotifications).request(81L);
         }
 
         @Test
-        void 소진_반영이_실패해도_HTTP_발급은_성공하고_후속_소진_거절에서_복구한다() throws Exception {
+        void 마지막_발급과_후속_소진_거절은_통보를_접수하고_HTTP_결과를_유지한다() throws Exception {
             couponCommandService.issue(17L, 81L);
             couponCommandService.issue(18L, 81L);
-            doThrow(new DataAccessResourceFailureException("candidate unavailable"))
-                    .when(candidates).markSoldOut(any(), any(), any());
             mockMvc.perform(post("/v1/coupons").with(user(new CustomUserDetails(19L, Role.MEMBER)))
                             .contentType(MediaType.APPLICATION_JSON).content("{\"eventId\":81}"))
                     .andExpect(status().isCreated());
             assertConsistent(3);
-            doNothing().when(candidates).markSoldOut(any(), any(), any());
             time.set(Instant.parse("2026-10-10T03:05:00Z"));
 
             mockMvc.perform(post("/v1/coupons").with(user(new CustomUserDetails(20L, Role.MEMBER)))
                             .contentType(MediaType.APPLICATION_JSON).content("{\"eventId\":81}"))
                     .andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("COUPON-006"));
 
-            verify(candidates, times(2))
-                    .markSoldOut(81L, TODAY, TODAY.atTime(12, 0));
+            verify(soldOutNotifications, times(2)).request(81L);
+            verifyNoInteractions(candidates);
             assertConsistent(3);
             assertThat(jdbcTemplate.queryForObject(
                     "SELECT COUNT(*) FROM coupon_daily_limit WHERE member_id=20", Integer.class)).isZero();

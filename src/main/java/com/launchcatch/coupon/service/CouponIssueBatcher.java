@@ -37,6 +37,7 @@ public class CouponIssueBatcher implements SmartLifecycle {
 
     private final CouponBatchIssuanceService batchService;
     private final CouponSequenceService sequenceService;
+    private final CouponSoldOutNotificationService soldOutNotifications;
     private final Clock clock;
     private final List<Thread> workers = new ArrayList<>();
     // 요청 스레드가 넣고 작업자가 꺼내는 대기열이며 start에서 만든다.
@@ -158,6 +159,9 @@ public class CouponIssueBatcher implements SmartLifecycle {
             } else {
                 // 요청 스레드가 타임아웃됐어도 커밋된 예약은 작업자가 완료한다.
                 boolean soldOut = sequenceService.complete(outcome.reservation());
+                if (soldOut) {
+                    soldOutNotifications.request(outcome.reservation().eventId());
+                }
                 batch.get(i).future().complete(new CouponIssuanceResult(outcome.response(), soldOut));
             }
         }

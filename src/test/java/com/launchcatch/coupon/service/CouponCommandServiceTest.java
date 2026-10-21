@@ -21,7 +21,6 @@ import com.google.zxing.DecodeHintType;
 import com.google.zxing.client.j2se.BufferedImageLuminanceSource;
 import com.google.zxing.common.HybridBinarizer;
 import com.google.zxing.qrcode.QRCodeReader;
-import com.launchcatch.adserving.contract.CandidateStateUpdater;
 import com.launchcatch.coupon.dto.CouponIssueResponse;
 import com.launchcatch.coupon.CouponQrImageEncoder;
 import com.launchcatch.coupon.dto.CouponQrResponse;
@@ -85,8 +84,7 @@ class CouponCommandServiceTest {
 
     @Mock MemberCouponRepository memberCouponRepository;
     @Mock CouponDailyLimitRepository couponDailyLimitRepository;
-    @Mock CouponLookUpService couponLookUpService;
-    @Mock CandidateStateUpdater candidateStateUpdater;
+    @Mock CouponSoldOutNotificationService soldOutNotifications;
     @Mock CouponSequenceService sequenceService;
     @Mock CouponSequenceRecoveryService sequenceRecoveryService;
     @Mock CouponIssueBatcher batcher;
@@ -281,8 +279,8 @@ class CouponCommandServiceTest {
         @BeforeEach
         void setUp() {
             service = new CouponCommandService(repository, couponDailyLimitRepository, memberQuery,
-                    mock(CouponLookUpService.class), new CouponQrImageEncoder(),
-                    Clock.fixed(Instant.parse("2026-10-10T03:00:00Z"), ZoneOffset.UTC), mock(CandidateStateUpdater.class), mock(CouponSequenceService.class), mock(CouponSequenceRecoveryService.class),
+                    new CouponQrImageEncoder(),
+                    Clock.fixed(Instant.parse("2026-10-10T03:00:00Z"), ZoneOffset.UTC), mock(CouponSoldOutNotificationService.class), mock(CouponSequenceService.class), mock(CouponSequenceRecoveryService.class),
                     mock(CouponIssueBatcher.class));
         }
 
@@ -451,16 +449,12 @@ class CouponCommandServiceTest {
 
 
     @Test
-    void 마지막_재고의_소진_반영_장애는_발급_성공을_바꾸지_않는다() {
+    void 마지막_재고를_발급한_요청은_DB_재확인과_광고_통보를_기다리지_않는다() {
         CouponIssueResponse response = new CouponIssueResponse(1001L, ISSUE_DATE.atTime(12, 0).atOffset(ZoneOffset.ofHours(9)));
-        CouponLookUpService.SoldOut soldOut = new CouponLookUpService.SoldOut(91L, ISSUE_DATE, ISSUE_DATE.atTime(12, 0));
         when(batcher.submitAndAwait(any(CouponIssuanceRequest.class), anyLong())).thenReturn(new CouponIssuanceResult(response, true));
-        when(couponLookUpService.findSoldOut(81L)).thenReturn(Optional.of(soldOut));
-        doThrow(new QueryTimeoutException("candidate unavailable")).when(candidateStateUpdater)
-                .markSoldOut(91L, ISSUE_DATE, soldOut.soldOutAt());
 
         assertThat(service.issue(MEMBER_ID, 81L)).isEqualTo(response);
-        assertThat(logs.list).anyMatch(log -> log.getFormattedMessage().contains("COUPON_SOLD_OUT_NOTIFICATION_FAILED"));
+        verifyNoInteractions(soldOutNotifications);
     }
 
     @Test
@@ -468,27 +462,16 @@ class CouponCommandServiceTest {
         CouponIssueResponse response = new CouponIssueResponse(1001L, ISSUE_DATE.atTime(12, 0).atOffset(ZoneOffset.ofHours(9)));
         when(batcher.submitAndAwait(any(CouponIssuanceRequest.class), anyLong())).thenReturn(new CouponIssuanceResult(response, false));
         assertThat(service.issue(MEMBER_ID, 81L)).isEqualTo(response);
-        verifyNoInteractions(candidateStateUpdater);
+        verifyNoInteractions(soldOutNotifications);
     }
 
     @Test
-    void 소진으로_거절하면_원래_발급_시각으로_소진을_다시_통보한다() {
+    void 소진_거절은_DB_재확인_없이_통보를_접수하고_원래_결과를_반환한다() {
         CouponException failure = new CouponException(CouponErrorCode.INVENTORY_EXHAUSTED);
-        CouponLookUpService.SoldOut soldOut = new CouponLookUpService.SoldOut(91L, ISSUE_DATE, ISSUE_DATE.atTime(11, 45));
         when(batcher.submitAndAwait(any(CouponIssuanceRequest.class), anyLong())).thenThrow(failure);
-        when(couponLookUpService.findSoldOut(81L)).thenReturn(Optional.of(soldOut));
-        assertThatThrownBy(() -> service.issue(MEMBER_ID, 81L)).isSameAs(failure);
-        verify(candidateStateUpdater).markSoldOut(91L, ISSUE_DATE, soldOut.soldOutAt());
-    }
 
-    @Test
-    void 소진_복구_조회가_실패해도_원래_소진_거절을_유지한다() {
-        CouponException failure = new CouponException(CouponErrorCode.INVENTORY_EXHAUSTED);
-        when(batcher.submitAndAwait(any(CouponIssuanceRequest.class), anyLong())).thenThrow(failure);
-        when(couponLookUpService.findSoldOut(81L)).thenThrow(new QueryTimeoutException("recovery unavailable"));
         assertThatThrownBy(() -> service.issue(MEMBER_ID, 81L)).isSameAs(failure);
-        verifyNoInteractions(candidateStateUpdater);
-        assertThat(logs.list).anyMatch(log -> log.getFormattedMessage().contains("COUPON_SOLD_OUT_RECOVERY_FAILED"));
+        verify(soldOutNotifications).request(81L);
     }
 
     @Test
@@ -513,7 +496,7 @@ class CouponCommandServiceTest {
         CouponException failure = new CouponException(CouponErrorCode.CAMPAIGN_NOT_WISHED);
         when(batcher.submitAndAwait(any(CouponIssuanceRequest.class), anyLong())).thenThrow(failure);
         assertThatThrownBy(() -> service.issue(MEMBER_ID, 81L)).isSameAs(failure);
-        verifyNoInteractions(candidateStateUpdater);
+        verifyNoInteractions(soldOutNotifications);
     }
     @Test
     void 차단을_복구한_요청은_실제_발급까지_이어간다() {
