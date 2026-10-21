@@ -75,7 +75,7 @@ class PaymentRecheckServiceTest {
     }
 
     private void inquiryReturns(Status status, String orderId, long amount) {
-        when(paymentGateway.inquireByOrderId(ORDER_ID)).thenReturn(
+        when(paymentGateway.inquireByPaymentKey(PG_TID)).thenReturn(
                 new PaymentGatewayInquiryResult(status, PG_TID, orderId, amount, APPROVED_AT, null, null));
     }
 
@@ -97,7 +97,7 @@ class PaymentRecheckServiceTest {
     @Test
     void 실패가_확인되면_사유와_함께_실패로_닫는다() {
         unknown();
-        when(paymentGateway.inquireByOrderId(ORDER_ID)).thenReturn(new PaymentGatewayInquiryResult(
+        when(paymentGateway.inquireByPaymentKey(PG_TID)).thenReturn(new PaymentGatewayInquiryResult(
                 Status.FAILED, PG_TID, ORDER_ID, AMOUNT, null, "REJECT_CARD_COMPANY", "카드사 거절"));
 
         service().recheck(PAYMENT_ID);
@@ -109,7 +109,7 @@ class PaymentRecheckServiceTest {
     @Test
     void 실패_사유가_비어_있으면_기본_문구로_닫는다() {
         unknown();
-        when(paymentGateway.inquireByOrderId(ORDER_ID)).thenReturn(new PaymentGatewayInquiryResult(
+        when(paymentGateway.inquireByPaymentKey(PG_TID)).thenReturn(new PaymentGatewayInquiryResult(
                 Status.FAILED, PG_TID, ORDER_ID, AMOUNT, null, null, " "));
 
         service().recheck(PAYMENT_ID);
@@ -158,10 +158,10 @@ class PaymentRecheckServiceTest {
     void 조회가_실패하면_닫지_않고_시도만_기록한다() {
         unknown();
         doThrow(new PgUnknownException("read timeout", new RuntimeException()))
-                .when(paymentGateway).inquireByOrderId(ORDER_ID);
+                .when(paymentGateway).inquireByPaymentKey(PG_TID);
         service().recheck(PAYMENT_ID);
         doThrow(new PgNotSentException("connect", new RuntimeException()))
-                .when(paymentGateway).inquireByOrderId(ORDER_ID);
+                .when(paymentGateway).inquireByPaymentKey(PG_TID);
         service().recheck(PAYMENT_ID);
 
         verify(resultService, times(2))

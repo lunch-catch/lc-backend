@@ -46,6 +46,12 @@ public class FakePaymentGateway implements PaymentGateway {
         return this;
     }
 
+    /** 결제 키 조회에만 이 결과를 등록한다. */
+    public FakePaymentGateway givenPaymentByKey(PaymentGatewayInquiryResult result) {
+        byPaymentKey.put(result.paymentKey(), result);
+        return this;
+    }
+
     public List<ConfirmCall> confirmCalls() {
         return List.copyOf(confirmCalls);
     }

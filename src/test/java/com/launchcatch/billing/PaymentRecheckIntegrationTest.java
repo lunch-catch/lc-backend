@@ -101,6 +101,36 @@ class PaymentRecheckIntegrationTest extends AbstractBillingIntegrationTest {
     }
 
     @Test
+    void 결제_키로만_조회되는_결제를_복구하면_충전되고_새_주문도_만들_수_있다() {
+        Order order = unknownOrder(OWNER, "tgen_widget_recheck");
+        gateway.givenPaymentByKey(new PaymentGatewayInquiryResult(
+                Status.APPROVED, order.paymentKey(), order.orderId(), AMOUNT, APPROVED_AT, null, null));
+
+        recheckService.recheck(order.paymentId());
+
+        assertThat(status(order.paymentId())).isEqualTo("APPROVED");
+        assertThat(charges(order.paymentId())).isEqualTo(1);
+        assertThat(outboxStatus(order.paymentId())).isEqualTo("RESOLVED");
+        assertThat(orderService.order(OWNER, AMOUNT).paymentId()).isNotEqualTo(order.paymentId());
+    }
+
+    @Test
+    void 승인_응답이_불명이어도_결제_키로_승인을_확인하면_바로_충전된다() {
+        var order = orderService.order(OWNER, AMOUNT);
+        String paymentKey = "tgen_widget_confirm";
+        gateway.failConfirmWith(new PgUnknownException("read timeout", new RuntimeException()));
+        gateway.givenPaymentByKey(new PaymentGatewayInquiryResult(
+                Status.APPROVED, paymentKey, order.orderId(), AMOUNT, APPROVED_AT, null, null));
+
+        var response = confirmationService.confirm(OWNER, order.paymentId(), order.orderId(), paymentKey);
+
+        assertThat(response.status()).isEqualTo(PaymentStatus.APPROVED);
+        assertThat(charges(order.paymentId())).isEqualTo(1);
+        assertThat(jdbc.queryForObject("select count(*) from payment_reconciliation_outbox where payment_id = ?",
+                Integer.class, order.paymentId())).isZero();
+    }
+
+    @Test
     void 웹훅과_워커와_관리자_재조회가_동시에_같은_결제를_확정해도_충전은_한_번이다() throws Exception {
         Order order = unknownOrder(OWNER, "tgen_race_1");
         pgSays(order, Status.APPROVED);

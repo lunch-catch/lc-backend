@@ -322,6 +322,7 @@ class TossPaymentGatewayTest {
     @CsvSource({
             "403, FORBIDDEN_REQUEST",
             "403, INCORRECT_BASIC_AUTH_FORMAT",
+            "404, NOT_FOUND_MERCHANT",
             "400, INVALID_API_KEY",
             "401, UNAUTHORIZED_KEY"
     })
