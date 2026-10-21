@@ -1046,6 +1046,28 @@ public class CouponIntegrationTest extends IntegrationTestSupport {
             verify(soldOutNotifications).request(81L);
         }
 
+        @ParameterizedTest
+        @CsvSource({"ACTIVE, false", "PAUSED, false", "ENDED, false", "ACTIVE, true"})
+        void 확정_소진은_이벤트_상태와_발급_시간보다_먼저_DB_조회_없이_반환한다(String eventStatus, boolean closed) {
+            couponCommandService.issue(17L, 81L);
+            couponCommandService.issue(18L, 81L);
+            couponCommandService.issue(19L, 81L);
+            jdbcTemplate.update("UPDATE coupon_event SET status=? WHERE coupon_event_id=81", eventStatus);
+            if (closed) {
+                time.set(TODAY.atTime(14, 0).atZone(ClockConfig.ZONE).toInstant());
+            }
+            org.mockito.Mockito.clearInvocations(events, members, wishes, batchIssues);
+
+            List<String> statements = SqlCapture.capture(
+                    () -> assertError(20L, 81L, CouponErrorCode.INVENTORY_EXHAUSTED));
+
+            assertThat(statements).isEmpty();
+            verify(events, org.mockito.Mockito.never()).findAllForIssue(any());
+            verify(members, org.mockito.Mockito.never()).findCurrentStatuses(any());
+            verify(wishes, org.mockito.Mockito.never()).findWishedMemberIds(any(), any());
+            verifyNoInteractions(batchIssues);
+        }
+
         @Test
         void 마지막_발급과_후속_소진_거절은_통보를_접수하고_HTTP_결과를_유지한다() throws Exception {
             couponCommandService.issue(17L, 81L);

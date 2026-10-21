@@ -61,6 +61,9 @@ public class CouponCommandService {
                     request = new CouponIssuanceRequest(memberId, eventId,
                             LocalDateTime.now(clock.withZone(ClockConfig.ZONE)));
                 }
+                if (sequenceService.isConfirmedSoldOut(eventId)) {
+                    throw new CouponException(CouponErrorCode.INVENTORY_EXHAUSTED);
+                }
                 CouponIssuanceResult result = batcher.submitAndAwait(request, deadlineNanos);
                 return result.response();
             } catch (CouponException error) {

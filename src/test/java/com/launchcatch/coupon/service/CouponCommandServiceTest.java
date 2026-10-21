@@ -449,6 +449,40 @@ class CouponCommandServiceTest {
 
 
     @Test
+    void Redis에서_소진이_확정되면_발급_대기열과_DB_작업을_사용하지_않는다() {
+        when(sequenceService.isConfirmedSoldOut(81L)).thenReturn(true);
+
+        assertThatThrownBy(() -> service.issue(MEMBER_ID, 81L)).isInstanceOfSatisfying(CouponException.class,
+                error -> assertThat(error.getErrorCode()).isEqualTo(CouponErrorCode.INVENTORY_EXHAUSTED));
+        verifyNoInteractions(batcher, memberCouponRepository, couponDailyLimitRepository, sequenceRecoveryService);
+        verify(soldOutNotifications).request(81L);
+    }
+
+    @Test
+    void 사전_검사_뒤_소진돼도_발급_작업자가_돌려준_소진_거절을_유지한다() {
+        when(sequenceService.isConfirmedSoldOut(81L)).thenReturn(false);
+        CouponException failure = new CouponException(CouponErrorCode.INVENTORY_EXHAUSTED);
+        when(batcher.submitAndAwait(any(CouponIssuanceRequest.class), anyLong())).thenThrow(failure);
+
+        assertThatThrownBy(() -> service.issue(MEMBER_ID, 81L)).isSameAs(failure);
+        verify(soldOutNotifications).request(81L);
+    }
+
+    @Test
+    void Redis_사전_검사를_복구한_뒤_소진이_확정되면_큐에_넣지_않는다() {
+        CouponException failure = CouponException.recoveryRequired(81L);
+        failure.confirmIssuanceNotCommitted();
+        when(sequenceService.isConfirmedSoldOut(81L)).thenThrow(failure).thenReturn(true);
+        when(sequenceService.needsRecovery(81L)).thenReturn(true);
+        when(sequenceRecoveryService.recover(eq(81L), anyLong())).thenReturn(true);
+
+        assertThatThrownBy(() -> service.issue(MEMBER_ID, 81L)).isInstanceOfSatisfying(CouponException.class,
+                error -> assertThat(error.getErrorCode()).isEqualTo(CouponErrorCode.INVENTORY_EXHAUSTED));
+        verifyNoInteractions(batcher);
+        verify(soldOutNotifications).request(81L);
+    }
+
+    @Test
     void 마지막_재고를_발급한_요청은_DB_재확인과_광고_통보를_기다리지_않는다() {
         CouponIssueResponse response = new CouponIssueResponse(1001L, ISSUE_DATE.atTime(12, 0).atOffset(ZoneOffset.ofHours(9)));
         when(batcher.submitAndAwait(any(CouponIssuanceRequest.class), anyLong())).thenReturn(new CouponIssuanceResult(response, true));
