@@ -230,13 +230,14 @@ kakao:
   admin-key: "${KAKAO_ADMIN_KEY}"
 
 # 토스페이먼츠 접속 설정(billing.config.TossProperties).
-# secret-key 는 기본값을 두지 않는다. 비어 있으면 기동을 멈춘다. 빈 문자열로 Basic 인증을 보내면
-# 운영에서 모든 승인이 401 로 끝나는데 첫 결제가 들어와야 드러난다.
+# secret-key 는 기본값을 빈 값으로 둔다. 환경변수가 없으면 비어서 @NotBlank 가 기동을 멈춘다.
+# 기본값 없이 ${TOSS_SECRET_KEY} 로 두면 설정 바인딩이 자리표시자 글자를 그대로 넣어 검사를 통과하고,
+# 그 글자로 Basic 인증을 보내면 토스가 본문 없는 500 을 준다. 개발 서버가 그렇게 결제 조회를 전부 실패했다(2026-10-21).
 # 타임아웃은 시작값이다. 실제 지연 분포를 본 뒤 여기서 조정한다.
 billing:
   toss:
     base-url: "${TOSS_API_BASE_URL:https://api.tosspayments.com}"
-    secret-key: "${TOSS_SECRET_KEY}"
+    secret-key: "${TOSS_SECRET_KEY:}"
     connect-timeout: 3s
     read-timeout: 10s
   # 승인 결과를 모르는 결제의 재조회 설정(billing.config.PaymentRecheckProperties).
@@ -359,3 +360,9 @@ spring:
 
 seed:
   enabled: true
+
+# 로컬은 결제를 실제로 쓰지 않아도 뜨게 토스 문서에 공개된 테스트 키를 기본값으로 둔다.
+# 팀 상점으로 시험하려면 TOSS_SECRET_KEY 나 application-local.yml 로 바꾼다.
+billing:
+  toss:
+    secret-key: "${TOSS_SECRET_KEY:test_gsk_docs_OaPz8L5KdmQXkzRz3y47BMw6}"
