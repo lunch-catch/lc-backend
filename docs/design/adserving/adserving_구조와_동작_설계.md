@@ -275,7 +275,7 @@ A 를 고른다. 가게 상세 찜을 리포트에 넣어야 하면 그 찜을 �
 | 읽기 | campaign | `CampaignQueryService.findServableOn`, `findAllById` | 00:00 후보 적재에 1번씩. 적재 대상과 적재 직후 재조회다(#582) |
 | 읽기 | store | `StoreQueryService.findAdCandidatesByStoreIds`, `findMenusByIdIn` | 00:00 후보 적재에서. 가게는 계약 상수 `MAX_AD_CANDIDATE_STORE_IDS` 단위로 나눠 부른다(#582) |
 | 읽기 | billing | `BudgetQueryService.getProgress` | 피드 요청마다 1번. 후보가 5000개를 넘으면 나눠 부른다 |
-| 쓰기 | campaign | `StoreAudienceUpdater.overwrite` | 00:00 묶음 90 에서 1,000칸씩. 호출마다 캠페인의 트랜잭션이다. 캠페인이 광고 서빙을 조회하면 순환이 생겨 광고 서빙이 넣어 준다(FR-042, #592) |
+| 쓰기 | campaign | `StoreAudienceUpdater.overwrite` | 00:00 묶음 90 에서 계약의 `MAX_CELLS`(1,000칸)씩. 호출마다 캠페인의 트랜잭션이다. 캠페인이 광고 서빙을 조회하면 순환이 생겨 광고 서빙이 넣어 준다(FR-042, #592) |
 | 읽기 | member | `MemberQueryService.findAllById` | 00:00 대상 인원 집계에서 최근 7일 접속 회원을 1,000명씩. 성별과 연령대만 쓴다(#592) |
 | 쓰기 | billing | `PointDeductor.deduct` | 처음 저장된 유효 노출마다 1번. 노출 저장과 같은 트랜잭션이다. 쿠폰 소진 뒤의 노출은 부르지 않는다 |
 | 받기 | campaign | `CampaignStatusChangedEvent` | 캠페인이 낮에 멈추거나 재개될 때마다. 발행자와 같은 트랜잭션에서 그날 후보의 `campaign_state` 를 바꾼다(아키텍처 설계 2.4, #565) |

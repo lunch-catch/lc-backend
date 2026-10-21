@@ -120,7 +120,7 @@ class StoreAudienceServiceTest {
         service.aggregate(TODAY);
 
         verify(storeAudienceUpdater, org.mockito.Mockito.times(2)).overwrite(captor.capture());
-        assertThat(captor.getAllValues()).allMatch(chunk -> chunk.size() <= StoreAudienceService.MAX_CELLS_PER_CALL);
+        assertThat(captor.getAllValues()).allMatch(chunk -> chunk.size() <= StoreAudienceUpdater.MAX_CELLS);
         assertThat(captor.getAllValues().stream().mapToInt(List::size).sum()).isEqualTo(30 * 48);
         assertThat(captor.getAllValues().stream().flatMap(List::stream)
                 .filter(c -> c.storeId() == 1L && c.targetRadius() == 500 && c.gender() == TargetGender.FEMALE
