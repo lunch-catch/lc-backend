@@ -32,7 +32,8 @@ class SeedIntegrationTest extends IntegrationTestSupport {
             + "+ (SELECT COUNT(*) FROM feed_filter_category) + (SELECT COUNT(*) FROM member_profile) "
             + "+ (SELECT COUNT(*) FROM deduction_result) + (SELECT COUNT(*) FROM point_ledger)"
             + "+ (SELECT COUNT(*) FROM member_coupon) + (SELECT COUNT(*) FROM coupon_usage_history) "
-            + "+ (SELECT COUNT(*) FROM event_log) + (SELECT COUNT(*) FROM campaign_daily_report)";
+            + "+ (SELECT COUNT(*) FROM event_log) + (SELECT COUNT(*) FROM campaign_daily_report)"
+            + "+ (SELECT COUNT(*) FROM store_business_hour) + (SELECT COUNT(*) FROM store_campaign_summary)";
 
     private DataSource dataSource;
     private JdbcTemplate jdbc;
@@ -59,6 +60,31 @@ class SeedIntegrationTest extends IntegrationTestSupport {
 
     private long count(String sql) {
         return jdbc.queryForObject(sql, Long.class);
+    }
+
+    @Test
+    void 이미지_없는_시드_가게도_상세_조회에_필요한_시간과_당일_할인을_갖는다() {
+        migrate(true, "2026-10-15");
+
+        assertThat(count("SELECT COUNT(*) FROM store_business_hour WHERE store_id IN (9001, 9002, 9003)"))
+                .isEqualTo(21);
+        assertThat(count("SELECT COUNT(*) FROM store_image")).isZero();
+        assertThat(count("SELECT COUNT(*) FROM store_menu_image")).isZero();
+        assertThat(count("SELECT COUNT(*) FROM store_campaign_summary WHERE business_date = '2026-10-15'"))
+                .isEqualTo(113);
+        assertThat(count("SELECT COUNT(*) FROM store_campaign_summary WHERE campaign_id = 9001 "
+                + "AND discount_target_type = 'ALL' AND discount_value = 2000")).isEqualTo(1);
+        assertThat(count("SELECT COUNT(*) FROM store_campaign_summary WHERE campaign_id = 9002 "
+                + "AND discount_target_type = 'MENU' AND target_menu_id = 9004")).isEqualTo(1);
+        long hours = count("SELECT COUNT(*) FROM store_business_hour");
+
+        migrate(true, "2026-10-16");
+
+        assertThat(count("SELECT COUNT(*) FROM store_business_hour")).isEqualTo(hours);
+        assertThat(count("SELECT COUNT(*) FROM store_campaign_summary WHERE business_date = '2026-10-16'"))
+                .isEqualTo(113);
+        assertThat(count("SELECT COUNT(*) FROM store_campaign_summary WHERE business_date = '2026-10-15'"))
+                .isEqualTo(113);
     }
 
     @Test

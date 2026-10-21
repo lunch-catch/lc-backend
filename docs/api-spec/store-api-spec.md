@@ -1024,7 +1024,7 @@ MEMBER가 최종 등록된 가게의 상세 정보를 조회한다. 활성 캠�
 | roadAddress, phone | string | 불가 | 도로명 주소, 전화번호 |
 | latitude, longitude | number | 불가 | 지도 미리보기용 위도·경도 |
 | businessHours | array | 불가 | 월요일부터 일요일 순으로 반환하는 영업시간 |
-| logoImage | object | 불가 | 업로드 확인된 대표 이미지 1개 |
+| logoImage | object | 허용 | 업로드 확인된 대표 이미지 1개. S3 준비 전 임시로 이미지가 없으면 null |
 | interiorImages | array | 불가 | 업로드 확인된 내부 이미지. 표시 순서대로 최대 3개, 없으면 [] |
 | menus | array | 불가 | 대표 메뉴. 표시 순서대로 0~3개, 없으면 [] |
 | activeCampaign | object | 가능 | 서울 기준 오늘의 활성 캠페인. 없으면 null |
@@ -1039,7 +1039,7 @@ MEMBER가 최종 등록된 가게의 상세 정보를 조회한다. 활성 캠�
 PENDING·UPLOADED 이미지는 공개하지 않는다.
 
 메뉴 항목은 `menuId`(integer(int64)), `name`(string), `price`(integer(int64), 원),
-`description`(string 또는 null), `sortOrder`(integer), `image`(이미지 객체, null 불가)를 갖는다.
+`description`(string 또는 null), `sortOrder`(integer), `image`(이미지 객체, S3 준비 전 임시로 null 허용)를 갖는다.
 대표자 성명, 사업자등록번호, 사업자 검증 결과와 온보딩 진행 정보는 반환하지 않는다.
 
 ### activeCampaign
@@ -1081,7 +1081,7 @@ PENDING·UPLOADED 이미지는 공개하지 않는다.
 | 401 | AUTH-005 | 유효한 인증이 없음 |
 | 403 | AUTH-006 | MEMBER 외 역할 |
 | 404 | STORE-016 | 가게가 없거나 최종 등록되지 않음 |
-| 500 | COMMON-001 | 조회 장애, 필수 이미지·할인 대상 메뉴 누락 또는 이미지 URL 설정 오류 |
+| 500 | COMMON-001 | 조회 장애, 저장된 이미지 객체 키·할인 대상 메뉴 오류 또는 이미지 URL 설정 오류 |
 
 없는 가게와 등록 중인 초안은 같은 오류를 반환한다.
 필수 이미지가 누락된 등록 가게를 정상 응답으로 반환하지 않는다.

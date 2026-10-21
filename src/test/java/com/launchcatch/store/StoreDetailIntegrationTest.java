@@ -46,6 +46,20 @@ class StoreDetailIntegrationTest extends AbstractStoreIntegrationTest {
     }
 
     @Test
+    void 대표와_메뉴_이미지가_없어도_상세를_반환한다() throws Exception {
+        long id = store(true);
+        long menuId = menu(id, 1);
+        jdbc.update("delete from store_image where store_id = ?", id);
+        jdbc.update("delete from store_menu_image where store_menu_id = ?", menuId);
+        mvc.perform(get("/v1/stores/{storeId}", id).with(user(new CustomUserDetails(1L, Role.MEMBER))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.logoImage").value((Object) null))
+                .andExpect(jsonPath("$.data.menus[0].menuId").value(menuId))
+                .andExpect(jsonPath("$.data.menus[0].name").value("국수"))
+                .andExpect(jsonPath("$.data.menus[0].image").value((Object) null));
+    }
+
+    @Test
     void 영업시간과_검증된_사진과_메뉴를_표시_순서대로_반환한다() throws Exception {
         long id = store(true);
         image(id, "INTERIOR", 2, "VERIFIED");
