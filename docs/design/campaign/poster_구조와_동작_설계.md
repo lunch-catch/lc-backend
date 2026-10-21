@@ -39,7 +39,7 @@ campaign/poster/
 | 적을 것 | 내용 |
 |---|---|
 | DB 제약과 코드 검사 | `chk_poster_moderation_result`(FAIL 이면 사유 필수)를 `PosterModerationResult.fail()` 이 한 번 더 검사한다 |
-| 사유 형식 | `ModerationFailReason` 이름을 쉼표로 이어 `reason`(200자)에 넣는다. 예: `AD_LABEL_MISSING,TEXT_RATIO_EXCEEDED`. 코드 6개를 모두 이어도 200자를 넘지 않는다. 화면 문구는 코드를 받는 캠페인 활성화가 붙인다 |
+| 사유 형식 | `ModerationFailReason` 이름을 쉼표로 이어 `reason`(200자)에 넣는다. 예: `FORBIDDEN_EXPRESSION,TEXT_RATIO_EXCEEDED`. 코드 5개를 모두 이어도 200자를 넘지 않는다. 화면 문구는 코드를 받는 캠페인 활성화가 붙인다 |
 | 기준값 | 숫자 기준(텍스트 비율 0.5, 최소 가로·세로 200px)은 `application.yml` 의 `campaign.moderation.*` 에 두고 환경 변수로 바꾼다. 금지 표현은 `src/main/resources/campaign/moderation/forbidden-expressions.txt` 에 둔다. 29행의 기준 관리가 생기면 둘 다 DB 로 옮긴다 |
 
 ## 4. 판정 규칙
@@ -47,7 +47,6 @@ campaign/poster/
 | 기준(29행) | 판정 | 사유 코드 |
 |---|---|---|
 | 금지 표현 | 포스터 `title`, `slot_values` 의 텍스트 값, 이미지 속 글자(DetectText 의 `LINE`)에서 찾는다. 이미지 슬롯의 URL 과 HTML 태그, 속성은 보지 않는다 | `FORBIDDEN_EXPRESSION` |
-| 광고 라벨 | `slot_values` 의 `adLabel` 값이 비었거나 없으면 FAIL 이다(57행) | `AD_LABEL_MISSING` |
 | 해상도 | 가로나 세로가 200px 보다 작으면 FAIL 이다 | `RESOLUTION_TOO_LOW` |
 | 텍스트 비율 | 글자 줄 상자의 면적 비율 합이 0.5 를 넘으면 FAIL 이다. 상자가 겹쳐 1 을 넘으면 1 로 자른다 | `TEXT_RATIO_EXCEEDED` |
 | 이미지 형식 | 이미지를 디코딩하지 못하면 FAIL 이다. Rekognition 은 부르지 않는다 | `IMAGE_UNREADABLE` |
@@ -82,7 +81,7 @@ sequenceDiagram
     participant R as Rekognition
     A->>S: moderate(campaignId)
     S->>DB: poster 조회
-    S->>S: adLabel, 포스터 글자의 금지 표현
+    S->>S: 포스터 글자의 금지 표현
     S->>I: inspect(imageObjectKey)
     I->>S3: GetObject(헤더만 읽고 닫음)
     I->>R: DetectText(S3 객체)

@@ -16,7 +16,6 @@ public class FakeTemplateHtmlGenerator implements TemplateHtmlGenerator {
 
     private static final String HTML = """
             <div class="poster" style="background-color:#FFFFFF;color:#000000">
-              <span data-slot="adLabel">광고</span>
               <h1 data-slot="eventName">이벤트명</h1>
               <p data-slot="discount">할인 내용</p>
               <p data-slot="period">기간</p>

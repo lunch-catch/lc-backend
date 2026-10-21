@@ -55,7 +55,7 @@ class PosterModerationServiceTest {
     @Test
     @DisplayName("기준을 모두 지키면 PASS 를 저장하고 돌려준다")
     void 모두_지키면_PASS() {
-        givenPoster("김밥천국 - 가을 세일", "광고");
+        givenPoster("김밥천국 - 가을 세일");
         givenImage(PosterImageInspection.read(200, 200, 0.5, List.of("오늘만 10% 할인")));
 
         PosterModerationOutcome outcome = service.moderate(CAMPAIGN_ID);
@@ -70,7 +70,7 @@ class PosterModerationServiceTest {
     @Test
     @DisplayName("해상도가 기준보다 1px 작으면 FAIL 이다")
     void 해상도_경계() {
-        givenPoster("김밥천국 - 가을 세일", "광고");
+        givenPoster("김밥천국 - 가을 세일");
         givenImage(PosterImageInspection.read(199, 200, 0.1, List.of()));
 
         PosterModerationOutcome outcome = service.moderate(CAMPAIGN_ID);
@@ -81,7 +81,7 @@ class PosterModerationServiceTest {
     @Test
     @DisplayName("이미지 속 글자 비율이 50% 를 넘으면 FAIL 이다")
     void 텍스트_비율_경계() {
-        givenPoster("김밥천국 - 가을 세일", "광고");
+        givenPoster("김밥천국 - 가을 세일");
         givenImage(PosterImageInspection.read(300, 300, 0.5001, List.of()));
 
         PosterModerationOutcome outcome = service.moderate(CAMPAIGN_ID);
@@ -90,18 +90,9 @@ class PosterModerationServiceTest {
     }
 
     @Test
-    @DisplayName("광고 라벨 슬롯이 비어 있으면 FAIL 이다")
-    void 광고_라벨_없음() {
-        givenPoster("김밥천국 - 가을 세일", "");
-        givenImage(PosterImageInspection.read(300, 300, 0.1, List.of()));
-
-        assertThat(service.moderate(CAMPAIGN_ID).reasons()).containsExactly(ModerationFailReason.AD_LABEL_MISSING);
-    }
-
-    @Test
     @DisplayName("이미지 속 글자에 금지 표현이 있으면 FAIL 이다")
     void 이미지_속_금지_표현() {
-        givenPoster("김밥천국 - 가을 세일", "광고");
+        givenPoster("김밥천국 - 가을 세일");
         givenImage(PosterImageInspection.read(300, 300, 0.1, List.of("동네 최 저 가")));
 
         assertThat(service.moderate(CAMPAIGN_ID).reasons()).containsExactly(ModerationFailReason.FORBIDDEN_EXPRESSION);
@@ -110,7 +101,7 @@ class PosterModerationServiceTest {
     @Test
     @DisplayName("포스터 제목에 금지 표현이 있으면 FAIL 이다")
     void 제목_금지_표현() {
-        givenPoster("무조건 할인 가게 - 가을 세일", "광고");
+        givenPoster("무조건 할인 가게 - 가을 세일");
         givenImage(PosterImageInspection.read(300, 300, 0.1, List.of()));
 
         assertThat(service.moderate(CAMPAIGN_ID).reasons()).containsExactly(ModerationFailReason.FORBIDDEN_EXPRESSION);
@@ -119,7 +110,7 @@ class PosterModerationServiceTest {
     @Test
     @DisplayName("이미지를 읽을 수 없으면 형식 오류 사유로 FAIL 이다")
     void 이미지_형식_오류() {
-        givenPoster("김밥천국 - 가을 세일", "광고");
+        givenPoster("김밥천국 - 가을 세일");
         givenImage(PosterImageInspection.unreadable());
 
         assertThat(service.moderate(CAMPAIGN_ID).reasons()).containsExactly(ModerationFailReason.IMAGE_UNREADABLE);
@@ -128,7 +119,7 @@ class PosterModerationServiceTest {
     @Test
     @DisplayName("검수 도구가 실패하면 도구 장애 사유로 FAIL 을 저장한다")
     void 도구_장애() {
-        givenPoster("김밥천국 - 가을 세일", "광고");
+        givenPoster("김밥천국 - 가을 세일");
         givenImage(PosterImageInspection.toolFailure());
 
         PosterModerationOutcome outcome = service.moderate(CAMPAIGN_ID);
@@ -141,18 +132,17 @@ class PosterModerationServiceTest {
     @Test
     @DisplayName("걸린 사유를 모두 모아 쉼표로 저장한다")
     void 사유를_모두_모은다() {
-        givenPoster("김밥천국 - 가을 세일", "");
+        givenPoster("김밥천국 - 가을 세일");
         givenImage(PosterImageInspection.read(100, 100, 0.9, List.of("최저가")));
 
         PosterModerationOutcome outcome = service.moderate(CAMPAIGN_ID);
 
         assertThat(outcome.reasons()).containsExactly(
                 ModerationFailReason.FORBIDDEN_EXPRESSION,
-                ModerationFailReason.AD_LABEL_MISSING,
                 ModerationFailReason.RESOLUTION_TOO_LOW,
                 ModerationFailReason.TEXT_RATIO_EXCEEDED);
         assertThat(savedResult().getReason())
-                .isEqualTo("FORBIDDEN_EXPRESSION,AD_LABEL_MISSING,RESOLUTION_TOO_LOW,TEXT_RATIO_EXCEEDED");
+                .isEqualTo("FORBIDDEN_EXPRESSION,RESOLUTION_TOO_LOW,TEXT_RATIO_EXCEEDED");
     }
 
     @Test
@@ -163,11 +153,10 @@ class PosterModerationServiceTest {
         assertThatThrownBy(() -> service.moderate(CAMPAIGN_ID)).isInstanceOf(CampaignException.class);
     }
 
-    private void givenPoster(String title, String adLabel) {
+    private void givenPoster(String title) {
         String slotValues = "{\"eventName\":{\"type\":\"text\",\"value\":\"김밥천국\"},"
                 + "\"discount\":{\"type\":\"text\",\"value\":\"10% 할인\"},"
                 + "\"period\":{\"type\":\"text\",\"value\":\"10.20 ~ 10.31\"},"
-                + "\"adLabel\":{\"type\":\"text\",\"value\":\"" + adLabel + "\"},"
                 + "\"image\":{\"type\":\"image\",\"value\":\"https://cdn.example.com/최저가.png\"}}";
         Poster poster = Poster.create(CAMPAIGN_ID, 1L, title, slotValues, "<div></div>", OBJECT_KEY);
         ReflectionTestUtils.setField(poster, "id", POSTER_ID);

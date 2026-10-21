@@ -15,7 +15,6 @@ import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
-import org.jsoup.nodes.Element;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
@@ -37,10 +36,9 @@ import software.amazon.awssdk.services.bedrockruntime.model.SystemContentBlock;
 import software.amazon.awssdk.services.bedrockruntime.model.ThrottlingException;
 
 /*
- * Bedrock Converse로 LLM이 템플릿 HTML을 직접 쓰게 한다(#182). 슬롯 5개 중 adLabel은
- * 표시광고법상 의무 표기라 LLM에게 맡기지 않고 이 클래스가 강제로 채운다
- * (feed-api-design.md "광고 라벨을 서버가 내려주지 않는다"와 같은 이유로, 여기서는 반대로
- * LLM이 아니라 서버가 그 자리를 직접 채운다).
+ * Bedrock Converse로 LLM이 템플릿 HTML을 직접 쓰게 한다(#182). 포스터에는 광고 표시(adLabel)를
+ * 넣지 않기로 팀이 합의해서(#628), 이 클래스는 adLabel을 넣지 않고 모델이 써 넣은 adLabel도
+ * 지운다.
  *
  * 검증 실패(허용 안 된 태그, 슬롯 누락, 구조 불일치, 토큰 잘림, 가드레일 차단) 다섯 가지
  * 다 같은 대화에 교정 지시를 이어 붙여 1회만 재시도한다. 재시도까지 실패하면 그 시점
@@ -56,7 +54,6 @@ public class BedrockTemplateHtmlGenerator implements TemplateHtmlGenerator {
     // 프롬프트는 100자 이내를 요구한다. 어긴 응답이 그대로 저장되지 않게 서버에서도 자른다.
     private static final int MESSAGE_MAX_LENGTH = 300;
     private static final String AD_LABEL_SLOT = "adLabel";
-    private static final String AD_LABEL_TEXT = "광고";
 
     /** ```html ... ``` 또는 ``` ... ``` 코드펜스 안의 내용을 뽑아낸다. */
     private static final Pattern CODE_FENCE = Pattern.compile("```(?:html)?\\s*(.*?)```", Pattern.DOTALL);
@@ -91,7 +88,7 @@ public class BedrockTemplateHtmlGenerator implements TemplateHtmlGenerator {
 
             [필수 규칙]
             - 다음 4개의 data-slot을 각각 정확히 하나씩 포함한다: eventName, discount, period, image
-              (adLabel은 네가 채우지 않는다. 서버가 따로 채운다)
+              (그 밖의 data-slot은 쓰지 않는다)
             - eventName, discount, period는 div, span, p, h1, h2, h3, strong, em 중 하나의 태그에 올려라
             - image는 반드시 img 태그에 올려라. src는 쓰지 않는다. alt는 "메뉴 이미지"로 둔다
             - 전체 태그는 div, span, p, h1, h2, h3, strong, em, br, img 만 쓴다.
@@ -160,7 +157,6 @@ public class BedrockTemplateHtmlGenerator implements TemplateHtmlGenerator {
 
     private String reviseAddendum(Map<String, String> previousTags) {
         String tagList = previousTags.entrySet().stream()
-                .filter(entry -> !entry.getKey().equals(AD_LABEL_SLOT))
                 .map(entry -> entry.getKey() + "=" + entry.getValue())
                 .collect(Collectors.joining(", "));
         return """
@@ -210,7 +206,7 @@ public class BedrockTemplateHtmlGenerator implements TemplateHtmlGenerator {
                 continue;
             }
 
-            insertAdLabel(document);
+            removeAdLabel(document);
 
             try {
                 templateSlotValidator.validate(document);
@@ -302,19 +298,12 @@ public class BedrockTemplateHtmlGenerator implements TemplateHtmlGenerator {
     }
 
     /*
-     * body 바로 아래 첫 자식으로 둔다. LLM이 만든 루트 래퍼 안에 넣으면 배경색을 그대로
-     * 물려받지만, 루트가 항상 div 하나라고 가정할 수 없어 더 단순하고 항상 유효한
-     * 위치(body 바로 아래)를 쓴다. 시각적으로는 꾸밈이 덜할 수 있어도 구조는 항상 맞다.
-     *
-     * 넣기 전에 혹시 모델이 지시를 어기고 넣은 adLabel을 먼저 지운다. revise에서는 이전
-     * 버전 HTML(서버가 이미 채운 adLabel 포함)을 모델에게 그대로 보여주기 때문에, 모델이
-     * 그걸 베껴 같이 돌려줄 수 있다. 안 지우면 adLabel이 2개가 돼 슬롯 검증이
-     * SLOT_CONTRACT_VIOLATION으로 잘못 떨어진다(#182 코드 리뷰로 찾음).
+     * 모델이 써 넣은 adLabel을 지운다. 포스터에는 광고 표시를 넣지 않기로 했다(#628). 광고 표시가
+     * 있던 옛 템플릿을 수정할 때는 이전 버전 HTML(adLabel 포함)을 모델에게 그대로 보여주기
+     * 때문에 모델이 그걸 베껴 돌려줄 수 있다.
      */
-    private void insertAdLabel(Document document) {
+    private void removeAdLabel(Document document) {
         document.select("[data-slot=" + AD_LABEL_SLOT + "]").remove();
-        Element adLabel = document.createElement("span").attr("data-slot", AD_LABEL_SLOT).text(AD_LABEL_TEXT);
-        document.body().prependChild(adLabel);
     }
 
     private String disallowedElementCorrection(List<String> removedElements) {

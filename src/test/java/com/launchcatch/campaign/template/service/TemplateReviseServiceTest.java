@@ -48,7 +48,6 @@ import org.springframework.transaction.support.TransactionTemplate;
 class TemplateReviseServiceTest {
 
     private static final String PREVIOUS_HTML = "<div>"
-            + "<span data-slot=\"adLabel\">ad</span>"
             + "<h1 data-slot=\"eventName\">title</h1>"
             + "<p data-slot=\"discount\">discount</p>"
             + "<p data-slot=\"period\">period</p>"

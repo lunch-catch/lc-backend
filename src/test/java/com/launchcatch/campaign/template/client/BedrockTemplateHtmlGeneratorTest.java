@@ -92,13 +92,13 @@ class BedrockTemplateHtmlGeneratorTest {
     }
 
     @Test
-    void 정상_응답이면_adLabel을_서버가_채워서_돌려준다() {
+    void 정상_응답이면_광고_표시_없이_돌려준다() {
         when(bedrockRuntimeClient.converse(any(ConverseRequest.class)))
                 .thenReturn(textResponse(StopReason.END_TURN, LLM_HTML));
 
         String result = generator.generate("돈까스 세트 홍보").html();
 
-        assertThat(result).contains("data-slot=\"adLabel\"").contains("광고");
+        assertThat(result).doesNotContain("data-slot=\"adLabel\"");
         assertThat(result).contains("data-slot=\"eventName\"");
         verify(bedrockRuntimeClient, times(1)).converse(any(ConverseRequest.class));
     }
@@ -137,7 +137,7 @@ class BedrockTemplateHtmlGeneratorTest {
     }
 
     @Test
-    void 모델이_지시를_어기고_adLabel을_같이_써도_하나만_남는다() {
+    void 모델이_지시를_어기고_adLabel을_써도_저장되는_HTML에는_남지_않는다() {
         String withModelAdLabel = LLM_HTML.replace(
                 "<h1 data-slot=\"eventName\">", "<span data-slot=\"adLabel\">광고</span><h1 data-slot=\"eventName\">");
         when(bedrockRuntimeClient.converse(any(ConverseRequest.class)))
@@ -145,7 +145,7 @@ class BedrockTemplateHtmlGeneratorTest {
 
         String result = generator.generate("돈까스 세트 홍보").html();
 
-        assertThat(Jsoup.parseBodyFragment(result).select("[data-slot=adLabel]")).hasSize(1);
+        assertThat(Jsoup.parseBodyFragment(result).select("[data-slot=adLabel]")).isEmpty();
     }
 
     @Test
@@ -263,7 +263,8 @@ class BedrockTemplateHtmlGeneratorTest {
 
         String result = generator.revise(PREVIOUS_STORED_HTML, "색상만 바꿔줘").html();
 
-        assertThat(result).contains("data-slot=\"adLabel\"");
+        // 옛 템플릿(광고 표시 포함)을 수정해도 광고 표시는 새 버전에 남지 않고, 구조 검증도 통과한다
+        assertThat(result).doesNotContain("data-slot=\"adLabel\"");
     }
 
     @Test
@@ -336,8 +337,6 @@ class BedrockTemplateHtmlGeneratorTest {
 
         assertThat(systemPrompt).contains("aspect-ratio:210/297");
         assertThat(new TemplateHtmlSanitizer().sanitize(example).removedElements()).isEmpty();
-        // 서버가 따로 채우는 adLabel을 붙여야 검증기가 5개 슬롯을 모두 본다
-        String withAdLabel = "<span data-slot=\"adLabel\">광고</span>" + example;
-        assertThatCode(() -> new TemplateSlotValidator().validate(withAdLabel)).doesNotThrowAnyException();
+        assertThatCode(() -> new TemplateSlotValidator().validate(example)).doesNotThrowAnyException();
     }
 }

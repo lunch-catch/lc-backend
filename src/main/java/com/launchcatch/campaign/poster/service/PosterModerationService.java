@@ -37,7 +37,6 @@ import org.springframework.stereotype.Service;
 @Service
 public class PosterModerationService {
 
-    private static final String AD_LABEL_SLOT = "adLabel";
     private static final String IMAGE_SLOT = "image";
 
     private final PosterRepository posterRepository;
@@ -73,10 +72,6 @@ public class PosterModerationService {
 
         Set<ModerationFailReason> reasons = EnumSet.noneOf(ModerationFailReason.class);
         Map<String, String> slotTexts = slotTexts(poster.getSlotValues());
-        String adLabel = slotTexts.get(AD_LABEL_SLOT);
-        if (adLabel == null || adLabel.isBlank()) {
-            reasons.add(ModerationFailReason.AD_LABEL_MISSING);
-        }
         List<String> posterTexts = new ArrayList<>(slotTexts.values());
         posterTexts.add(poster.getTitle());
         if (forbiddenExpressionDictionary.containsAny(posterTexts)) {
