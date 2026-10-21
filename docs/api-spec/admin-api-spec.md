@@ -1,14 +1,15 @@
 # 관리자 (admin) API 명세
 
-관리자 계정 발급·로그인·토큰 재발급·로그아웃, 그리고 운영(`ops`)이 소유한 배치 작업 수동 재실행과 배치 실행 이력 조회 API를 안내한다. 계정 발급과 로그인, 배치 수동 재실행과 실행 이력 조회의 요청·응답·오류는 이 문서에서 정의한다. 토큰·쿠키 정책과 재발급·로그아웃의 상세 계약은 [auth-api-spec.md](./auth-api-spec.md)를 따른다. 공통 규약은 [api-spec.md](./api-spec.md)를 따른다. 관리자 계정 기능의 서버 처리와 저장 구조는 [admin-api-design.md](../design/admin/admin-api-design.md)에, 배치 수동 재실행의 서버 처리는 [batch-execution-retry-api-design.md](../design/ops/batch-execution-retry-api-design.md)에, 실행 이력 조회의 서버 처리는 [batch-execution-history-api-design.md](../design/ops/batch-execution-history-api-design.md)에 있다.
+관리자 계정 발급·목록 조회·로그인·토큰 재발급·로그아웃, 그리고 운영(`ops`)이 소유한 배치 작업 수동 재실행과 배치 실행 이력 조회 API를 안내한다. 계정 발급과 로그인, 배치 수동 재실행과 실행 이력 조회의 요청·응답·오류는 이 문서에서 정의한다. 토큰·쿠키 정책과 재발급·로그아웃의 상세 계약은 [auth-api-spec.md](./auth-api-spec.md)를 따른다. 공통 규약은 [api-spec.md](./api-spec.md)를 따른다. 관리자 계정 기능의 서버 처리와 저장 구조는 [admin-api-design.md](../design/admin/admin-api-design.md)에, 배치 수동 재실행의 서버 처리는 [batch-execution-retry-api-design.md](../design/ops/batch-execution-retry-api-design.md)에, 실행 이력 조회의 서버 처리는 [batch-execution-history-api-design.md](../design/ops/batch-execution-history-api-design.md)에 있다.
 
 ## 목록과 구현 범위
 
-관리자 API의 전체 문서 범위는 계정 발급·로그인·토큰 재발급·로그아웃, 점주와 사용자 관리, 입점 신청 조회, 플랫폼 설정값, 감사 로그, 배치 작업 수동 재실행을 포함한다. 아래 표는 현재 이 문서에서 안내하는 구현된 관리자 API다. 나머지 관리 기능은 전체 문서 범위에 포함되지만, 이 목록만으로 구현 완료를 의미하지는 않는다.
+관리자 API의 전체 문서 범위는 계정 발급·목록 조회·로그인·토큰 재발급·로그아웃, 점주와 사용자 관리, 입점 신청 조회, 플랫폼 설정값, 감사 로그, 배치 작업 수동 재실행을 포함한다. 아래 표는 현재 이 문서에서 안내하는 구현된 관리자 API다. 나머지 관리 기능은 전체 문서 범위에 포함되지만, 이 목록만으로 구현 완료를 의미하지는 않는다.
 
 | 메서드 | 경로 | 기능 | 인증 및 권한 |
 | --- | --- | --- | --- |
 | `POST` | `/v1/admin/admins` | 관리자 계정 발급 | Access Token, `SUPER_ADMIN` |
+| `GET` | `/v1/admin/admins` | 관리자 계정 목록 조회 | Access Token, `SUPER_ADMIN` |
 | `POST` | `/v1/admin/auth/tokens` | 관리자 로그인 | 기존 토큰 불필요 |
 | `DELETE` | `/v1/admin/auth/tokens` | 관리자 로그아웃 | Access Token, `ADMIN` 또는 `SUPER_ADMIN` |
 | `POST` | `/v1/admin/auth/tokens:refresh` | 관리자 토큰 재발급 | Refresh Token. 상세 계약은 [인증 명세](./auth-api-spec.md#관리자) |
@@ -85,6 +86,49 @@ Cookie: accessToken=<JWT>
 | `403` | `AUTH-006` | 최고 관리자 권한 없음 또는 DB 재확인 시 발급자 계정 없음·비활성·권한 변경 |
 | `409` | `ADMIN-001` | 로그인 ID 중복 |
 | `503` | `AUTH-002` | 필수 Access Token 폐기 기준 조회 장애 |
+
+## 관리자 계정 목록 조회
+
+### `GET /v1/admin/admins`
+
+최고 관리자가 본인을 포함한 활성(`ACTIVE`) 관리자 계정을 조회한다. `ADMIN`, `SUPER_ADMIN` 모두 포함하며 비활성 계정은 제외한다.
+
+### 요청
+
+```http
+GET /v1/admin/admins?keyword=admin
+Cookie: accessToken=<JWT>
+```
+
+| 쿼리 파라미터 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `keyword` | string | 아니오 | ID 또는 이름 부분 일치. 앞뒤 공백을 제거하고 영문 대소문자를 구분하지 않는다. 생략·빈 문자열·공백뿐인 값은 전체 조회한다. `%`, `_`, `!`는 문자 그대로 검색한다 |
+
+최근 계정 발급순(`created_at` 내림차순)이며 생성 시각이 같으면 내부 PK 내림차순이다. 계정 수가 적어 페이지네이션 없이 전체 반환한다. 발급 시각은 응답에 포함하지 않는다.
+
+### 응답 `200 OK`
+
+```json
+{
+  "code": "SUCCESS",
+  "message": "요청이 성공적으로 처리되었습니다.",
+  "data": [
+    { "loginId": "admin01", "name": "홍길동", "role": "ADMIN" }
+  ]
+}
+```
+
+각 항목의 `loginId`, `name`, `role`은 null이 아닌 문자열이다. `role`은 `ADMIN` 또는 `SUPER_ADMIN`이다. 결과가 없으면 `data`는 빈 배열(`[]`)이다.
+
+### 인증 및 오류
+
+유효한 Access Token과 현재 DB 계정의 `ACTIVE`·`SUPER_ADMIN` 상태를 확인한다.
+
+| 상태 | 코드 | 조건 |
+| --- | --- | --- |
+| `401` | `AUTH-005` | Access Token 없음·무효·만료·폐기 |
+| `403` | `AUTH-006` | 최고 관리자 권한 없음 또는 현재 DB 계정 없음·비활성·권한 변경 |
+| `503` | `AUTH-002` | 필수 토큰 폐기 기준 조회 장애 |
 
 ## 관리자 로그인
 
