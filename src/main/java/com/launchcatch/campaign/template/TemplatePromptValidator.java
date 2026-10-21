@@ -87,10 +87,19 @@ public class TemplatePromptValidator {
         }
     }
 
-    // 자음, 모음 낱자(ㅁ, ㅇ)는 글자로 세지 않는다.
+    /*
+     * 자음, 모음 낱자(ㅁ, ㅇ)는 글자로 세지 않는다. NFKC 정규화가 호환 자모(U+3131~318E)를 조합용 자모
+     * (U+1100~11FF 등)로 바꾸므로 두 범위를 모두 뺀다.
+     */
     private static boolean isMeaningful(int codePoint) {
-        boolean jamo = codePoint >= 0x3131 && codePoint <= 0x318E;
-        return Character.isLetterOrDigit(codePoint) && !jamo;
+        return Character.isLetterOrDigit(codePoint) && !isJamo(codePoint);
+    }
+
+    private static boolean isJamo(int codePoint) {
+        return (codePoint >= 0x1100 && codePoint <= 0x11FF)
+                || (codePoint >= 0x3130 && codePoint <= 0x318F)
+                || (codePoint >= 0xA960 && codePoint <= 0xA97F)
+                || (codePoint >= 0xD7B0 && codePoint <= 0xD7FF);
     }
 
     private void requireNoInjection(String normalized) {
