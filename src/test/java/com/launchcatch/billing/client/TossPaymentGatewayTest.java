@@ -183,6 +183,63 @@ class TossPaymentGatewayTest {
     }
 
     @Test
+    void 빈_500_승인_응답은_본문이_없다는_진단_로그를_남긴다() {
+        server.reply(500, "");
+
+        assertThatThrownBy(() -> gateway.confirm(PAYMENT_KEY, ORDER_ID, AMOUNT))
+                .isInstanceOf(PgUnknownException.class);
+
+        assertThat(logs.list).anySatisfy(event -> assertThat(event.getFormattedMessage())
+                .contains("event=TOSS_CONFIRM_UNKNOWN", "orderId=" + ORDER_ID, "httpStatus=500",
+                        "code=null", "pgMessage=null", "contentType=application/json", "responseBodyBytes=0"));
+    }
+
+    @Test
+    void JSON_조회_오류는_코드와_마스킹한_메시지와_본문_크기를_남긴다() {
+        String basic = Base64.getEncoder().encodeToString((SECRET + ":").getBytes(StandardCharsets.UTF_8));
+        String body = """
+                {"code":"FAILED_INTERNAL_SYSTEM_PROCESSING","message":"오류 %s %s\\n다음 줄"}
+                """.formatted(SECRET, basic);
+        server.reply(500, body);
+
+        assertThatThrownBy(() -> gateway.inquireByPaymentKey(PAYMENT_KEY))
+                .isInstanceOf(PgUnknownException.class);
+
+        assertThat(logs.list).anySatisfy(event -> assertThat(event.getFormattedMessage())
+                .contains("event=TOSS_INQUIRE_UNKNOWN", "httpStatus=500",
+                        "code=FAILED_INTERNAL_SYSTEM_PROCESSING", "pgMessage=오류 **** **** 다음 줄",
+                        "contentType=application/json", "responseBodyBytes=" + body.getBytes(StandardCharsets.UTF_8).length)
+                .doesNotContain(SECRET, basic, "\n"));
+    }
+
+    @Test
+    void HTML_500_승인_응답은_형식과_크기만_남기고_원문은_남기지_않는다() {
+        String body = "<html>private-upstream-response</html>";
+        server.reply(500, body, "text/html");
+
+        assertThatThrownBy(() -> gateway.confirm(PAYMENT_KEY, ORDER_ID, AMOUNT))
+                .isInstanceOf(PgUnknownException.class);
+
+        assertThat(logs.list).anySatisfy(event -> assertThat(event.getFormattedMessage())
+                .contains("event=TOSS_CONFIRM_UNKNOWN", "httpStatus=500", "contentType=text/html",
+                        "responseBodyBytes=" + body.getBytes(StandardCharsets.UTF_8).length)
+                .doesNotContain("private-upstream-response"));
+    }
+
+    @Test
+    void 긴_승인_오류_메시지는_마스킹한_뒤_512자로_제한한다() {
+        String body = "{\"code\":\"X\",\"message\":\"" + SECRET + "a".repeat(600) + "\"}";
+        server.reply(500, body);
+
+        assertThatThrownBy(() -> gateway.confirm(PAYMENT_KEY, ORDER_ID, AMOUNT))
+                .isInstanceOf(PgUnknownException.class);
+
+        assertThat(logs.list).anySatisfy(event -> assertThat(event.getFormattedMessage())
+                .contains("event=TOSS_CONFIRM_UNKNOWN", "pgMessage=****" + "a".repeat(508) + " contentType=")
+                .doesNotContain(SECRET, "a".repeat(509)));
+    }
+
+    @Test
     void 응답이_읽기_타임아웃을_넘기면_PgUnknownException_이다() {
         server.replyAfter(1_500, 200, DONE_BODY);
 
