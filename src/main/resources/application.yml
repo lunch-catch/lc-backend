@@ -172,6 +172,9 @@ coupon:
   daily-limit: "${COUPON_DAILY_LIMIT:3}"
   issue-start-time: "${COUPON_ISSUE_START_TIME:11:00}"
   issue-end-time: "${COUPON_ISSUE_END_TIME:14:00}"
+  sequence:
+    # 순번 키는 이벤트 영업일의 발급 종료 시각에 이 여유시간을 더한 시각에 함께 만료한다
+    retention-grace: "${COUPON_SEQUENCE_RETENTION_GRACE:1h}"
 
 # 템플릿 생성 상한이다. 처음 설계값은 10이었으나 프론트 연동 테스트를 위해 100으로 올린 뒤(#529)
 # 팀 논의로 100을 그대로 유지하기로 했다(#532).

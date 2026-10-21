@@ -6,6 +6,7 @@ import com.launchcatch.coupon.entity.CouponInventoryStatus;
 import jakarta.persistence.LockModeType;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import org.springframework.data.jpa.repository.Lock;
@@ -21,6 +22,19 @@ public interface CouponEventRepository extends JpaRepository<CouponEvent, Long> 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT event FROM CouponEvent event WHERE event.id = :id")
     Optional<CouponEvent> findByIdForUpdate(@Param("id") long id);
+
+    /*
+     * 묶음 발급이 담긴 이벤트를 ID 순으로 한 번에 공유 잠금한다.
+     * 발급 묶음끼리는 함께 진행하고 복구의 배타 잠금이 진행 중인 발급의 커밋과 롤백을 기다리게 한다.
+     */
+    @Lock(LockModeType.PESSIMISTIC_READ)
+    @Query("SELECT event FROM CouponEvent event WHERE event.id IN :eventIds ORDER BY event.id")
+    List<CouponEvent> findAllForIssue(@Param("eventIds") Collection<Long> eventIds);
+
+    // 큐 복구가 이벤트를 배타 잠금해 진행 중인 발급 묶음이 끝나기를 기다리고 복구가 끝날 때까지 새 발급을 막는다.
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT event FROM CouponEvent event WHERE event.id = :eventId")
+    Optional<CouponEvent> findForRecovery(@Param("eventId") Long eventId);
 
     // 회차가 없거나 이미 종료됐거나 같은 시각 이후의 전이를 반영했으면 0을 돌려준다.
     @Modifying
