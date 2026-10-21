@@ -43,6 +43,12 @@ public class EventLogRepository {
             WHERE event_type = 'wish' AND occurred_at >= ? AND occurred_at < ? AND member_id IS NOT NULL
             GROUP BY member_id
             """;
+    private static final String COUNT_WISHES_BY_CAMPAIGN = """
+            SELECT campaign_id, COUNT(*) AS wish_count
+            FROM event_log
+            WHERE event_type = 'wish' AND occurred_at >= ? AND occurred_at < ? AND campaign_id IS NOT NULL
+            GROUP BY campaign_id
+            """;
     private static final String COUNT_CAMPAIGN_EVENTS = """
             SELECT COUNT(CASE WHEN event_type = 'impression' THEN 1 END) AS impression_count,
                    COUNT(CASE WHEN event_type = 'wish' THEN 1 END) AS wish_count,
@@ -87,6 +93,16 @@ public class EventLogRepository {
         Map<Long, Long> counts = new HashMap<>();
         jdbc.query(COUNT_WISHES_BY_MEMBER, rs -> {
             counts.put(rs.getLong("member_id"), rs.getLong("wish_count"));
+        }, Timestamp.valueOf(businessDate.atStartOfDay()),
+                Timestamp.valueOf(businessDate.plusDays(1).atStartOfDay()));
+        return counts;
+    }
+
+    // 영업일 하루(KST 자정부터 다음 자정 전까지)에 기록된 wish 행 수를 캠페인마다 센다
+    public Map<Long, Long> countWishesByCampaign(LocalDate businessDate) {
+        Map<Long, Long> counts = new HashMap<>();
+        jdbc.query(COUNT_WISHES_BY_CAMPAIGN, rs -> {
+            counts.put(rs.getLong("campaign_id"), rs.getLong("wish_count"));
         }, Timestamp.valueOf(businessDate.atStartOfDay()),
                 Timestamp.valueOf(businessDate.plusDays(1).atStartOfDay()));
         return counts;

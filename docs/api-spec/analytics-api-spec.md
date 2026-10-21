@@ -9,6 +9,8 @@
 
 이 문서는 관리자 분석, 회원 사용 통계, 이벤트 수집, 점주 리포트의 HTTP 계약을 소유한다.
 
+**2026-10-20 수정 (실제 변경, #625):** A-14 의 오류 계약을 정했다. `campaignIds` 형식 위반은 `400 COMMON-002`, 기간을 하나만 주거나 역전·92일 초과면 `400 ANALYTICS-001` 이다. 중복 ID 는 오류가 아니라 처음 자리에 한 번만 내려준다. 응답 예시를 공통 봉투로 고쳤다.
+
 **2026-10-18 수정 (실제 변경):** 프론트 처리가 달라지는 것이다.
 
 - A-04(카테고리·지역별 분해)와 A-08(점주별 상위 소진)을 구현하지 않기로 하고 절을 지웠다. 요구사항의 선택 데이터이고, 가게에 지역 값이 없다. 번호는 다시 매기지 않는다.
@@ -79,7 +81,7 @@
 | A-13 | `POST` | `/v1/events` | MEMBER | 클라이언트 발생 이벤트 수집 |
 | A-14 | `GET` | `/v1/admin/campaign-reports` | ADMIN, SUPER_ADMIN | 캠페인별 소진 포인트와 누적 유효 노출 |
 
-목록에는 후속 계약도 포함돼 있다. 현재 A-01·A-02·A-03·A-05·A-06·A-07·A-12·A-13은 구현됐다. A-09·A-10·A-14와 아래 상세 캠페인 리포트·변경 이력은 아직 제공하지 않는다. 별도의 점주 일별 리포트와 이벤트 로그 기반 캠페인 성과 조회는 구현돼 있다. 내부 집계 단계의 구현 여부는 [API 설계](../design/analytics/analytics-api-design.md#현재-구현과-후속-설계의-경계)를 따른다.
+목록에는 후속 계약도 포함돼 있다. 어느 API 와 집계 단계가 구현됐는지는 [API 설계의 구현 경계 표](../design/analytics/analytics-api-design.md#현재-구현과-후속-설계의-경계)가 소유한다.
 
 **A-11(`GET /v1/admin/fraud/rate-limit-hits`, 피드 429 집계)은 구현하지 않는다.** 근거는 [설계서](../design/analytics/analytics-api-design.md#1-적용-범위) 1장에 있다.
 
@@ -341,11 +343,12 @@ GET /v1/admin/campaign-reports?campaignIds=12,15,31&from=2026-09-01&to=2026-09-3
 
 | 파라미터 | 필수 | 뜻 |
 | --- | --- | --- |
-| `campaignIds` | 예 | 최대 100개 |
-| `from`, `to` | 아니오 | 생략하면 각 캠페인의 집계된 전체 기간. 지정하면 최대 92일 |
+| `campaignIds` | 예 | 쉼표로 나눈 양수 ID. 최대 100개. 같은 ID 를 두 번 보내면 처음 자리에 한 번만 내려준다 |
+| `from`, `to` | 아니오 | 둘 다 주거나 둘 다 생략한다. 생략하면 각 캠페인의 집계된 전체 기간. 지정하면 양끝 포함 최대 92일 |
 
 ```json
-{ "items": [ { "campaignId": 12, "spentAmount": 84000, "validImpressionCount": 9100, "todayStatus": "IN_PROGRESS" } ] }
+{ "code": "SUCCESS", "message": "요청이 성공적으로 처리되었습니다.",
+  "data": { "items": [ { "campaignId": 12, "spentAmount": 84000, "validImpressionCount": 9100, "todayStatus": "IN_PROGRESS" } ] } }
 ```
 
 | 필드 | 뜻 |
@@ -354,7 +357,16 @@ GET /v1/admin/campaign-reports?campaignIds=12,15,31&from=2026-09-01&to=2026-09-3
 | `validImpressionCount` | 기간 누적 유효 노출 (미과금 포함) |
 | `todayStatus` | 당일은 집계 전이라 항상 `IN_PROGRESS`. 값은 전일 확정 기준이다(해당 요구사항) |
 
-집계가 없는 캠페인은 두 값이 `0`이다. 응답 순서는 요청한 `campaignIds` 순서다.
+집계가 없는 캠페인은 두 값이 `0`이다. 응답 순서는 요청한 `campaignIds` 순서다. 소진 포인트는 정정이 차감보다 큰 날이 있으면 음수일 수 있다.
+
+### 오류
+
+| 상태 | 코드 | 조건 |
+|---|---|---|
+| `400` | `COMMON-002` | `campaignIds` 가 없거나 비었다. 100개를 넘는다. 양수가 아니거나 숫자가 아닌 ID 가 있다 |
+| `400` | `ANALYTICS-001` | `from`, `to` 중 하나만 보냈다. `from` 이 `to` 보다 늦다. 92일을 넘는다 |
+| `401` | 공통 인증 코드 | 인증 쿠키가 없거나 유효하지 않다 |
+| `403` | 공통 인가 코드 | `ADMIN`, `SUPER_ADMIN` 이 아니다 |
 
 ---
 

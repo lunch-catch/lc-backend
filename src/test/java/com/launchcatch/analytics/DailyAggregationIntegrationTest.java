@@ -27,6 +27,8 @@ import org.springframework.test.web.servlet.MockMvc;
  * 일별 집계의 세 입구를 실제 DB 로 확인한다. 시각(배치) 입구는 01:00 작업의 run(), HTTP 입구는
  * A-05 와 A-06 이다. 다른 도메인의 호출 입구는 ops 의 이어받기와 관리자 수동 재실행이 부르는
  * StandaloneJob.run 이다. 지금 등록된 단계는 정산 지표(1행), 회원 지표(1행), 가게 지표(1행), 퍼널 지표(1행), 정산 검증(0행)이라 공개 트랜잭션이 쓰는 행은 4 이다.
+ * 캠페인 리포트(#625)는 캠페인마다 1행이다. 같은 DB 에 다른 테스트가 남긴 캠페인과 이벤트에 따라 행 수가 달라진다.
+ * 그래서 리포트 표를 비우고 시작해 그날 저장된 리포트 행 수를 4 에 더해 비교한다.
  */
 class DailyAggregationIntegrationTest extends AbstractAnalyticsIntegrationTest {
 
@@ -53,6 +55,11 @@ class DailyAggregationIntegrationTest extends AbstractAnalyticsIntegrationTest {
         jdbc.update("DELETE FROM aggregation_pending_date");
         jdbc.update("DELETE FROM daily_settlement_analytics");
         jdbc.update("DELETE FROM point_ledger");
+        jdbc.update("DELETE FROM campaign_daily_impression_reason_report");
+        jdbc.update("DELETE FROM campaign_hourly_report");
+        jdbc.update("DELETE FROM campaign_daily_slot_report");
+        jdbc.update("DELETE FROM campaign_daily_report_history");
+        jdbc.update("DELETE FROM campaign_daily_report");
     }
 
     @Test
@@ -64,7 +71,7 @@ class DailyAggregationIntegrationTest extends AbstractAnalyticsIntegrationTest {
 
         assertThat(statusOf(yesterday)).isEqualTo("SUCCESS");
         assertThat(statusOf(twoDaysAgo)).isEqualTo("SUCCESS");
-        assertThat(processedCountOf(yesterday)).isEqualTo(4);
+        assertThat(processedCountOf(yesterday)).isEqualTo(publishedRows(yesterday));
         assertThat(pendingDates()).isEmpty();
     }
 
@@ -120,7 +127,7 @@ class DailyAggregationIntegrationTest extends AbstractAnalyticsIntegrationTest {
 
         assertThat(statusOf(yesterday)).isEqualTo("SUCCESS");
         assertThat(attemptNoOf(yesterday)).isEqualTo(2);
-        assertThat(processedCountOf(yesterday)).isEqualTo(4);
+        assertThat(processedCountOf(yesterday)).isEqualTo(publishedRows(yesterday));
     }
 
     /*
@@ -138,7 +145,7 @@ class DailyAggregationIntegrationTest extends AbstractAnalyticsIntegrationTest {
         assertThat(statusOf(yesterday)).isEqualTo("SUCCESS");
         assertThat(ownerOf(yesterday)).isEqualTo(BATCH_OWNER);
         assertThat(attemptNoOf(yesterday)).isEqualTo(2);
-        assertThat(processedCountOf(yesterday)).isEqualTo(4);
+        assertThat(processedCountOf(yesterday)).isEqualTo(publishedRows(yesterday));
         assertThat(pendingDates()).isEmpty();
         assertThat(statusOf(twoDaysAgo)).isNull();
     }
@@ -153,7 +160,7 @@ class DailyAggregationIntegrationTest extends AbstractAnalyticsIntegrationTest {
 
         awaitStatus(yesterday, "SUCCESS");
         assertThat(attemptNoOf(yesterday)).isEqualTo(2);
-        assertThat(processedCountOf(yesterday)).isEqualTo(4);
+        assertThat(processedCountOf(yesterday)).isEqualTo(publishedRows(yesterday));
     }
 
     /*
@@ -196,7 +203,7 @@ class DailyAggregationIntegrationTest extends AbstractAnalyticsIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.jobName").value(JOB))
                 .andExpect(jsonPath("$.data.status").value("SUCCESS"))
-                .andExpect(jsonPath("$.data.processedCount").value(4));
+                .andExpect(jsonPath("$.data.processedCount").value(publishedRows(yesterday)));
     }
 
     @Test
@@ -286,6 +293,12 @@ class DailyAggregationIntegrationTest extends AbstractAnalyticsIntegrationTest {
                 "SELECT status FROM batch_execution_log WHERE job_name = ? AND business_date = ?",
                 String.class, JOB, java.sql.Date.valueOf(date));
         return rows.isEmpty() ? null : rows.get(0);
+    }
+
+    private int publishedRows(LocalDate date) {
+        Integer reports = jdbc.queryForObject("SELECT COUNT(*) FROM campaign_daily_report WHERE business_date = ?",
+                Integer.class, java.sql.Date.valueOf(date));
+        return 4 + (reports == null ? 0 : reports);
     }
 
     private Integer processedCountOf(LocalDate date) {
