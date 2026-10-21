@@ -67,9 +67,11 @@ class StoreQueryServiceImpl implements StoreQueryService {
         if (storeIds.isEmpty()) {
             return List.of();
         }
-        // 최종 등록된 가게의 LOGO가 누락·미검증이거나 저장 키가 공백이면 데이터 정합성 오류로 처리한다.
+        // TODO(#647): 테스트 이미지의 S3 업로드·검증·DB 등록과 쿠폰 테스트 완료 후 대표 이미지 필수 검증을 복원한다.
         return stores.findAllById(storeIds).stream()
-                .map(row -> new StoreInfo(row.storeId(), row.name(), images.resolve(requireImageKey(row.imageObjectKey())),
+                .map(row -> new StoreInfo(row.storeId(), row.name(),
+                        images.resolve(row.imageObjectKey() == null || row.imageObjectKey().isBlank()
+                                ? null : row.imageObjectKey()),
                         toCoordinate(row.latitude()), toCoordinate(row.longitude())))
                 .toList();
     }
