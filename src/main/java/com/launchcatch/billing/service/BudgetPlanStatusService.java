@@ -114,7 +114,7 @@ public class BudgetPlanStatusService {
         try {
             spendCounter.increaseReserved(increased.businessDate(), increased.campaignId(), increased.reservedAmount());
         } catch (DataAccessException e) {
-            log.error("event=RECHARGE_RESERVE_MIRROR_FAILED campaignId={} businessDate={} reserved={}",
+            log.warn("event=BILLING_RECHARGE_RESERVE_MIRROR_FAILED campaignId={} businessDate={} reserved={} fallback=NEXT_DAILY_RESERVE",
                     increased.campaignId(), increased.businessDate(), increased.reservedAmount(), e);
         }
     }

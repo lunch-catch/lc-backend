@@ -64,7 +64,8 @@ public class FundingJudgementService {
             BudgetDailyPlan plan = plans.get(campaign.campaignId());
             if (plan == null) {
                 // 예약 단계 뒤에 서빙 대상이 된 캠페인이다. 계획이 없어 판정할 값이 없고, 차감도 계획 없이는 과금하지 않는다
-                log.warn("event=FUNDING_JUDGE_NO_PLAN businessDate={} campaignId={}", businessDate, campaign.campaignId());
+                log.info("event=BILLING_FUNDING_JUDGE_SKIPPED businessDate={} campaignId={} reason=NO_PLAN",
+                        businessDate, campaign.campaignId());
                 continue;
             }
             Judgement judgement = judgementOf(campaign, plan);
