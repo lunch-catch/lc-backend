@@ -9,17 +9,21 @@ import com.launchcatch.coupon.exception.CouponErrorCode;
 import com.launchcatch.coupon.exception.CouponException;
 import com.launchcatch.coupon.repository.CouponDailyLimitRepository;
 import com.launchcatch.coupon.repository.MemberCouponRepository;
+import com.launchcatch.coupon.service.model.CouponIssuanceResult;
+import com.launchcatch.coupon.service.model.CouponIssuanceRequest;
 import com.launchcatch.global.config.ClockConfig;
 import com.launchcatch.member.contract.MemberInfo;
 import com.launchcatch.member.contract.MemberQueryService;
 import com.launchcatch.member.contract.MemberStatus;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -32,41 +36,74 @@ public class CouponCommandService {
     private final MemberCouponRepository memberCouponRepository;
     private final CouponDailyLimitRepository couponDailyLimitRepository;
     private final MemberQueryService memberQueryService;
-    private final CouponIssuanceService couponIssuanceService;
+    private final CouponLookUpService couponLookUpService;
     private final CouponQrImageEncoder imageEncoder;
     private final Clock clock;
     private final CandidateStateUpdater candidateStateUpdater;
+    private final CouponSequenceService sequenceService;
+    private final CouponSequenceRecoveryService sequenceRecoveryService;
+    private final CouponIssueBatcher batcher;
+
+    @Value("${coupon.issue.batch.wait-timeout:10s}")
+    private Duration waitTimeout = Duration.ofSeconds(10);
 
     /*
-     * 발급 트랜잭션 프록시가 커밋한 뒤에만 광고 후보에 소진을 알린다.
+     * 발급 트랜잭션이 커밋한 뒤에만 광고 후보에 소진을 알린다.
      * NEVER는 트랜잭션을 만들지 않으며 호출자가 연 트랜잭션 안에서 조정하는 것도 막는다.
      */
     @Transactional(propagation = Propagation.NEVER)
     public CouponIssueResponse issue(Long memberId, Long eventId) {
-        CouponIssuanceService.Result result;
-        try {
-            result = couponIssuanceService.issue(memberId, eventId);
-        } catch (CouponException error) {
-            if (error.getErrorCode() == CouponErrorCode.INVENTORY_EXHAUSTED) {
-                retrySoldOut(eventId);
+        long deadlineNanos = System.nanoTime() + waitTimeout.toNanos();
+        CouponIssuanceRequest request = null;
+        boolean resumed = false;
+        while (true) {
+            try {
+                sequenceService.checkAdmission(eventId);
+                if (request == null) {
+                    request = new CouponIssuanceRequest(memberId, eventId,
+                            LocalDateTime.now(clock.withZone(ClockConfig.ZONE)));
+                }
+                CouponIssuanceResult result = batcher.submitAndAwait(request, deadlineNanos);
+                if (result.soldOut()) {
+                    retrySoldOut(eventId);
+                }
+                return result.response();
+            } catch (CouponException error) {
+                if (error.getErrorCode() == CouponErrorCode.INVENTORY_EXHAUSTED) {
+                    retrySoldOut(eventId);
+                }
+                if (!resumed && error.getErrorCode() == CouponErrorCode.ISSUANCE_BUSY && sequenceService.needsRecovery(eventId)) {
+                    boolean recovered = sequenceRecoveryService.recover(eventId, deadlineNanos);
+                    if (error.canResumeIssuance(eventId) && recovered
+                            && !Thread.currentThread().isInterrupted() && deadlineNanos - System.nanoTime() > 0) {
+                        resumed = true;
+                        continue;
+                    }
+                }
+                throw error;
+            } catch (RuntimeException error) {
+                if (sequenceService.needsRecovery(eventId)) {
+                    sequenceRecoveryService.recover(eventId, deadlineNanos);
+                }
+                throw error;
             }
-            throw error;
         }
-        if (result.soldOut() != null) {
-            notifySoldOut(result.soldOut());
-        }
-        return result.response();
     }
 
+    /*
+     * 소진으로 거절했거나 마지막 재고를 발급했을 때 DB에서 소진을 확인해 광고 후보에 알린다.
+     * 조회가 실패해도 이미 정한 발급 결과는 바꾸지 않고 ERROR 로그만 남긴다.
+     */
     private void retrySoldOut(Long eventId) {
         try {
-            couponIssuanceService.findSoldOut(eventId).ifPresent(this::notifySoldOut);
+            couponLookUpService.findSoldOut(eventId).ifPresent(this::notifySoldOut);
         } catch (RuntimeException error) {
             log.error("event=COUPON_SOLD_OUT_RECOVERY_FAILED couponEventId={}", eventId, error);
         }
     }
 
-    private void notifySoldOut(CouponIssuanceService.SoldOut soldOut) {
+    // 광고 후보에 캠페인의 그날 소진을 알리며 실패해도 발급 결과는 바꾸지 않고 ERROR 로그만 남긴다.
+    private void notifySoldOut(CouponLookUpService.SoldOut soldOut) {
         try {
             candidateStateUpdater.markSoldOut(soldOut.campaignId(), soldOut.businessDate(), soldOut.soldOutAt());
         } catch (RuntimeException error) {

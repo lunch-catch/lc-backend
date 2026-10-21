@@ -27,16 +27,4 @@ public interface CouponInventoryRepository extends JpaRepository<CouponInventory
 
     // 이벤트에서 해당 상태인 재고 수를 세며 큐 복구가 발급된 수를 구할 때 쓴다.
     long countByCouponEventIdAndStatus(Long eventId, CouponInventoryStatus status);
-    // 발급된 앞 순번을 반복해서 훑지 않도록 이벤트·상태·순번 인덱스로 재고 한 장을 잠근다.
-    @Query(value = """
-            SELECT inventory.*
-              FROM coupon_inventory inventory
-              FORCE INDEX (idx_coupon_inventory_event_status_sequence)
-             WHERE inventory.coupon_event_id = :eventId
-               AND inventory.status = :#{#status.name()}
-             ORDER BY inventory.sequence_no
-             LIMIT 1 FOR UPDATE
-            """, nativeQuery = true)
-    Optional<CouponInventory> findFirstByCouponEventIdAndStatusOrderBySequenceNoAsc(
-            @Param("eventId") Long couponEventId, @Param("status") CouponInventoryStatus status);
 }
