@@ -11,6 +11,7 @@ import com.launchcatch.coupon.dto.CouponQrResponse;
 import com.launchcatch.coupon.dto.CouponSummaryResponse;
 import com.launchcatch.coupon.service.CouponCommandService;
 import com.launchcatch.coupon.service.CouponLookUpService;
+import com.launchcatch.global.logging.AccessLogSignal;
 import com.launchcatch.global.response.CursorPageResponse;
 import com.launchcatch.global.response.ResponseEnvelope;
 import io.swagger.v3.oas.annotations.Operation;
@@ -19,6 +20,7 @@ import io.swagger.v3.oas.annotations.media.Content;
 import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
@@ -61,9 +63,11 @@ public class CouponController {
     @ApiResponse(responseCode = "201", description = "발급과 재고 변경, 일일 횟수 반영을 완료한 결과다.", useReturnTypeSchema = true)
     public ResponseEntity<ResponseEnvelope<CouponIssueResponse>> issueCoupon(
             @Parameter(hidden = true) @AuthenticationPrincipal CustomUserDetails user,
-            @Valid @RequestBody CouponIssueRequest request) {
+            @Valid @RequestBody CouponIssueRequest request, HttpServletRequest httpRequest) {
+        CouponIssueResponse response = couponCommandService.issue(user.getId(), request.eventId());
+        AccessLogSignal.markExpected(httpRequest);
         return ResponseEntity.status(HttpStatus.CREATED)
-                .body(ResponseEnvelope.success(couponCommandService.issue(user.getId(), request.eventId())));
+                .body(ResponseEnvelope.success(response));
     }
 
     // 본인 쿠폰의 QR을 생성하거나 갱신하고 응답 캐시를 금지한다.

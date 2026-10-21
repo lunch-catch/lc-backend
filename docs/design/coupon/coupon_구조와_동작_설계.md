@@ -26,12 +26,12 @@ coupon은 다른 도메인의 내부 엔티티와 저장소를 읽지 않는다.
 | 회원의 일일 한도 | `coupon_daily_limit` | 회원과 영업일마다 카운터 한 행을 갖고 발급·삭제 때 횟수 변경을 잃지 않는다 |
 | 회원 쿠폰과 사용 결과 | `member_coupon`, `coupon_usage_history` | 상태 변경과 사용 이력을 같은 트랜잭션으로 확정하고 저장한 할인액을 조회한다 |
 
-현재 발급은 카운터·재고·회원 쿠폰을 한 트랜잭션으로 바꾼다.
-이 경계의 근거는 [MySQL 발급 v1](./coupon-api-design.md#mysql-쿠폰-발급-v1)이며 이번 문서 작업에서 경계를 바꾸지 않는다.
+현재 발급은 묶음에 든 요청들의 카운터·재고·회원 쿠폰을 한 트랜잭션으로 바꾼다.
+이 경계의 근거는 [쿠폰 발급](./coupon-api-design.md#묶음으로-처리하는-쿠폰-발급)이며 이번 문서 작업에서 경계를 바꾸지 않는다.
 
 | 선택지 | 장점 | 단점 |
 |---|---|---|
-| 현재 MySQL 트랜잭션을 유지한다 | 실패한 발급이 카운터나 재고를 소비하지 않는다 | 같은 회차의 발급은 앞 순번 재고의 행 잠금에 대기한다 |
+| Redis가 배정한 순번을 기존 DB 발급 트랜잭션에서 소비한다 | 실패한 발급이 카운터나 재고를 소비하지 않는다 | Redis 장애와 불확실한 예약은 발급을 차단하고 DB 기준으로 복구해야 한다 |
 | 재고 예약과 발급을 나눈다 | 재고 행을 잠그는 구간을 줄일 여지가 있다 | 예약 만료와 보상 처리가 필요하며 현재 구현에 없다 |
 
 현재 구현은 첫 번째 방식을 쓴다. 부하 목표 충족 여부는 11장에서 구분한다.
@@ -49,12 +49,27 @@ coupon/
 ├── listener/      CampaignEventListener
 ├── job/           CouponPreparationJob, CouponIssueOpenJob, CouponIssueCloseJob, CouponExpirationJob, CouponConsistencyJob
 ├── repository/    각 엔티티 저장소와 목록용 Querydsl 구현
-├── service/       CouponCommandService, CouponIssuanceService, CouponLookUpService, OwnerCouponService, CouponStatsQueryServiceImpl, CouponEventStateService
+├── service/       CouponCommandService, CouponIssueBatcher, CouponBatchIssuanceService, CouponLookUpService, OwnerCouponService, CouponStatsQueryServiceImpl, CouponEventStateService
 └── exception/     CouponException, CouponErrorCode
 ```
 
 엔티티는 다른 엔티티를 객체 연관으로 쥐지 않고 ID로 참조한다.
 HTTP 요청과 집계 조회 contract, 공개 이벤트와 캠페인 이벤트 수신이 연결되어 있다. `job/`에는 다섯 StandaloneJob을 둔다.
+
+### 발급과 예약의 전달값
+
+발급 서비스들이 함께 쓰는 record는 `service/model/` 패키지에 모은다.
+
+| 타입 | 담는 값 |
+|---|---|
+| `CouponIssuanceRequest` | 큐에 접수한 회원 ID와 이벤트 ID, 요청 시각을 담는다 |
+| `CouponIssuanceOutcome` | 묶음 안의 요청 한 건에 대한 발급 응답과 예약 또는 거절 코드를 담는다 |
+| `CouponIssuanceResult` | 배처가 요청 스레드에 돌려주는 발급 응답과 소진 여부를 담는다 |
+| `CouponReservation` | Redis가 배정한 이벤트 ID와 재고 순번, 예약 ID를 담는다 |
+| `CouponReservationOutcome` | 순번 예약 한 건의 예약 정보 또는 거절 코드를 담는다 |
+
+대기 중인 요청과 결과 전달 통로를 묶는 `Pending`은 배처 내부에 둔다.
+중복 발급 조회 키인 `Pair`와 쿠폰 저장값인 `NewCoupon`은 저장소 내부에 둔다.
 
 ### 규칙을 두는 곳
 
@@ -75,7 +90,7 @@ HTTP 요청과 집계 조회 contract, 공개 이벤트와 캠페인 이벤트 �
 |---|---|---|
 | 일일 카운터 | 회원·영업일 UNIQUE와 0~3 CHECK를 둔다 | 행 잠금 아래 설정된 일일 한도와 증감을 검사한다 |
 | 이벤트 | 캠페인·영업일 UNIQUE, 할인 조합과 메뉴 스냅샷 CHECK를 둔다 | 조회 대상 매장·영업일에 이벤트가 둘이면 대표를 고르지 않고 정합성 오류를 낸다 |
-| 재고 | 이벤트·순번 UNIQUE와 쿠폰 코드 UNIQUE를 둔다 | AVAILABLE만 순번으로 잠가 ISSUED로 바꾼다 |
+| 재고 | 이벤트·순번 UNIQUE와 쿠폰 코드 UNIQUE를 둔다 | Redis가 배정한 순번의 AVAILABLE만 조건부 UPDATE로 ISSUED로 바꾼다 |
 | 회원 쿠폰 | 이벤트·회원 UNIQUE와 쿠폰 코드 UNIQUE를 둔다 | 삭제한 쿠폰도 재발급을 막고 행 잠금으로 상태 전이를 조정한다 |
 | 사용 이력 | 회원 쿠폰에 대한 FK를 둔다. 현재 회원 쿠폰 ID 인덱스는 UNIQUE가 아니다 | 사용 확정은 회원 쿠폰 행 잠금 아래 이력을 한 번만 저장한다 |
 
@@ -138,7 +153,7 @@ V7은 전체 메뉴 정률 조합을 CHECK에서 제외한다. 지원하지 않�
 
 | 상태 | 방향과 대상 | 공개 계약 | 호출 시점 |
 |---|---|---|---|
-| 연결됨 | 읽기, member | `MemberQueryService.findCurrentStatus(Long)`, `findById(Long)` | 발급은 현재 상태만 읽고 QR 생성·이벤트 상태·새 사용 확정은 기존 회원 정보를 읽는다 |
+| 연결됨 | 읽기, member | `MemberQueryService.findCurrentStatuses(Set<Long>)`, `findById(Long)` | 발급은 묶음의 현재 회원 상태를 한 번에 읽고 QR 생성·이벤트 상태·새 사용 확정은 기존 회원 정보를 읽는다 |
 | 연결됨 | 읽기, owner | `OwnerStatusQuery.findCurrentStatus(Long)` | 점주 수량·매장 사용 이력·사용 확정 요청마다 한 번 호출하며 캐시를 우회한다 |
 | 연결됨 | 읽기, campaign | `CampaignQueryService.findByStoreIdIn(List<Long>)` | 이벤트 상태 요청마다 한 번 일괄 호출한다 |
 | 연결됨 | 읽기, store | `StoreQueryService.canManageStore(Long, Long)`, `findAllById(List<Long>)` | QR 사용은 관리 권한과 좌표를 조회한다. 이력 조회는 현재 관리 권한, 이벤트 조회는 최종 등록 매장을 확인한다 |
@@ -170,11 +185,12 @@ flowchart LR
         Listener[CampaignEventListener] --> EventState[CouponEventStateService]
         EventState --> Events
         Command --> Daily[(CouponDailyLimitRepository)]
-        Issuance --> Events[(CouponEventRepository)]
-        Command --> Issuance[CouponIssuanceService]
-        Issuance --> Inventory[(CouponInventoryRepository)]
-        Issuance --> Daily
-        Issuance --> Members
+        Batch --> Events[(CouponEventRepository)]
+        Command --> Batcher[CouponIssueBatcher]
+        Command --> Lookup
+        Batcher --> Batch[CouponBatchIssuanceService]
+        Batch --> BatchSql[(CouponBatchIssueRepository)]
+        Lookup --> Inventory[(CouponInventoryRepository)]
         Command --> Members[(MemberCouponRepository)]
         Command --> Image[CouponQrImageEncoder]
         Lookup --> Daily
@@ -231,7 +247,7 @@ stateDiagram-v2
     AVAILABLE --> ISSUED: 발급 트랜잭션
 ```
 
-`CouponInventory.issue`만 현재 상태 변경 메서드다. 발급 후 삭제해도 재고를 AVAILABLE로 돌리지 않는다.
+`CouponBatchIssueRepository.issueSequences`가 배정한 순번들의 AVAILABLE 재고만 한 문장으로 변경한다. 발급 후 삭제해도 재고를 AVAILABLE로 돌리지 않는다.
 
 ```mermaid
 stateDiagram-v2
@@ -278,22 +294,30 @@ V8이 다시 추가한 `status_changed_at`은 마지막으로 반영한 캠페�
 sequenceDiagram
     participant C as CouponController
     participant S as CouponCommandService
-    participant I as CouponIssuanceService
+    participant Q as CouponIssueBatcher
+    participant I as CouponBatchIssuanceService
     participant D as coupon DB
+    participant R as Redis
     participant M as member.contract
     participant A as adserving.contract
     C->>S: 발급 요청
-    S->>I: 트랜잭션 프록시로 발급 요청
+    S->>Q: 대기열에 넣고 결과를 기다린다
+    Q->>I: 작업자가 쌓인 요청을 묶음으로 넘긴다
     rect rgb(240, 248, 255)
-        Note over I,D: READ_COMMITTED 트랜잭션
-        I->>D: 이벤트 일반 조회·상태와 시각 검사
-        I->>M: 현재 회원 상태 조회
-        I->>A: 현재 찜 조회
-        I->>D: 카운터 UPSERT → 중복·한도 조건부 증가 → 재고 잠금
-        I->>D: 재고 ISSUED·회원 쿠폰 저장·남은 재고 확인
+        Note over I,D: 묶음 하나의 READ_COMMITTED 트랜잭션
+        I->>D: 이벤트들 공유 잠금·상태와 시각 검사
+        I->>R: 이벤트별 소진 여부 확인
+        I->>M: 묶음의 현재 회원 상태 일괄 조회
+        I->>A: 캠페인별 찜한 회원 일괄 조회
+        I->>D: 카운터 다건 UPSERT → 회원 ID 순 잠금 → 발급 기록 조회와 중복·한도 판정
+        I->>R: 통과한 요청 수만큼 순번 POP·예약 기록
+        I->>D: 재고 ISSUED·카운터 증가·회원 쿠폰 다건 INSERT
         I->>D: 커밋
     end
-    I-->>S: 저장된 발급 결과와 마지막 재고 여부
+    I-->>Q: 요청별 발급 결과와 예약
+    Q->>R: 예약 완료·completed 증가
+    Q-->>S: 이 요청의 발급 응답과 소진 여부
+    Note over S,R: 마지막 완료에서만 DB 소진 확인
     opt 마지막 재고 발급
         S->>A: 트랜잭션 밖에서 소진 반영
         Note over S,A: 소진 반영 실패도 발급 성공은 유지한다
@@ -330,7 +354,7 @@ sequenceDiagram
 
 | 실패 지점 | 남는 상태 | 재요청 결과 |
 |---|---|---|
-| 발급의 조회·검사·저장·커밋 | 실패한 트랜잭션의 카운터·재고·회원 쿠폰 변경은 남지 않는다 | 조건을 다시 검사하며 커밋된 중복 발급은 거절한다 |
+| 발급의 조회·검사·저장·커밋 | 확정된 롤백은 카운터·재고·회원 쿠폰을 되돌린다. 커밋 결과가 불분명하면 Redis 발급을 차단한다 | DB 기준으로 큐를 복구한 뒤 조건을 다시 검사한다 |
 | QR 이미지 생성 또는 저장 | 기존 토큰과 버전·만료 시각을 유지한다 | 새 QR 생성을 다시 요청할 수 있다 |
 | 삭제의 카운터 저장 | 삭제 상태와 QR 무효화도 함께 되돌린다 | 최초 삭제로 다시 처리한다 |
 | 목록·단건의 조립 또는 저장 | 이번 요청의 만료 변경을 되돌린다 | 최신 상태를 다시 읽는다 |
@@ -339,7 +363,7 @@ sequenceDiagram
 
 | 흐름 | 같은 트랜잭션에 묶는 것 | 잠금 순서 |
 |---|---|---|
-| 발급 | 카운터 생성·증가, 재고 소비, 회원 쿠폰 INSERT를 묶는다 | 카운터 → AVAILABLE 재고 |
+| 발급 | 묶음에 든 요청들의 카운터 생성·증가, 재고 소비, 회원 쿠폰 INSERT를 묶는다 | 이벤트 ID 순 공유 잠금 → 회원 ID 순 카운터 → 배정한 재고 |
 | 최초 삭제 | 쿠폰 REMOVED, QR 무효화, 발급 날짜 카운터 차감을 묶는다 | 회원 쿠폰 → 카운터 |
 | QR 생성·갱신 | 본인 범위 조회, 회원 상태 확인, QR 교체를 묶는다 | 회원 쿠폰 |
 | QR 사용 | 쿠폰 USED 전이와 이력 INSERT를 묶는다. 이력을 JPA로 저장하며 auditing의 createdAt을 사용 시각으로 쓴다 | 토큰 참조 조회 → 회원 쿠폰 잠금 |
@@ -360,7 +384,7 @@ QR 생성·삭제·만료 저장은 같은 회원 쿠폰 행을 잠근다. 잠�
 |---|---|
 | 같은 발급이 다시 온다 | DB UNIQUE와 발급 검사로 한 번만 반영한다. 삭제된 쿠폰도 중복 검사에 포함한다 |
 | 같은 회원이 여러 이벤트를 발급한다 | 회원·영업일 카운터 행이 한도를 직렬화한다 |
-| 여러 회원이 같은 이벤트를 발급한다 | 앞 순번 재고의 쓰기 잠금과 쿠폰 코드 UNIQUE로 같은 재고의 중복 소비를 막는다 |
+| 여러 회원이 같은 이벤트를 발급한다 | 서로 다른 Redis 순번을 배정하고 DB 조건부 UPDATE와 UNIQUE로 같은 재고의 중복 소비를 막는다 |
 | 같은 쿠폰을 두 번 삭제한다 | 최초 삭제만 카운터를 줄인다 |
 | QR 갱신·삭제·조회가 겹친다 | 먼저 커밋된 상태를 다음 요청이 읽어 만료나 QR 변경으로 덮어쓰지 않는다 |
 | 사용·삭제·QR 갱신이 겹친다 | 사용 HTTP 통합 테스트가 실제 잠금 선후와 재요청을 검증한다 |
@@ -376,8 +400,8 @@ QR 생성·삭제·만료 저장은 같은 회원 쿠폰 행을 잠근다. 잠�
 | 같은 트랜잭션의 outbox를 폴링한다 | 커밋한 이벤트를 재전달할 수 있다 | 저장·폴링·보존을 관리해야 한다 |
 
 아키텍처와 #355가 퍼널 유실을 허용하므로 첫 번째 방식을 쓴다.
-발급의 `CouponIssuanceService`와 사용 확정의 `OwnerCouponService`가 `ApplicationEventPublisher`를 직접 주입받는다. 각 업무 트랜잭션 안에서 이벤트 record를 생성해 `publishEvent`를 호출한다.
-별도 커밋 콜백과 실행기, DB 조회, outbox는 추가하지 않는다.
+발급의 `CouponBatchIssuanceService`와 사용 확정의 `OwnerCouponService`가 `ApplicationEventPublisher`를 직접 주입받는다. 각 업무 트랜잭션 안에서 이벤트 record를 생성해 `publishEvent`를 호출한다.
+퍼널 전달을 위한 별도 커밋 콜백과 실행기, DB 조회, outbox는 추가하지 않는다.
 분석 수신자가 `@Async`와 `@TransactionalEventListener(AFTER_COMMIT)`로 처리하며 롤백된 작업은 수신하지 않는다.
 발행된 이벤트에 일반 동기 리스너를 붙이면 트랜잭션 안에서 실행되므로 분석 저장에는 그 방식을 쓰지 않는다.
 비동기 실행기와 저장 실패·유실의 관측도 분석 수신자가 소유한다.
@@ -385,6 +409,12 @@ QR 생성·삭제·만료 저장은 같은 회원 쿠폰 행을 잠근다. 잠�
 `eventId`는 유형과 회차 ID 또는 회원 쿠폰 ID로 만든다. 같은 동작을 재처리해도 같은 ID를 유지한다.
 이벤트의 발급 시각은 회원 쿠폰, 사용 시각은 사용 이력의 `createdAt`을 그대로 전달한다.
 오픈·만료 이벤트의 발행 조건과 중복 처리 기준은 [쿠폰 배치 설계](./coupon-batch-design.md)가 갖는다.
+
+### Redis 순번과 예약
+
+Redis 키와 자료형, 예약·완료·반납의 변경 규칙은 [v2 설계도의 Redis 키 설계](./coupon-issuance-v2-design.md#2-redis-키-설계)가 소유한다.
+수량 불변식과 요청별 결과 코드는 [예약 상태 변경](./coupon-issuance-v2-design.md#3-예약완료반납이-키를-바꾸는-순서)을 따른다.
+v3도 같은 순번·복구 설계를 사용한다. 묶음 트랜잭션과 작업자의 책임은 [v3 설계도](./coupon-issuance-v3-design.md)가 갖는다.
 
 ## 8. 외부 API
 
@@ -414,14 +444,14 @@ QR 생성·삭제·만료 저장은 같은 회원 쿠폰 행을 잠근다. 잠�
 
 | 요청 | 현재 구조에서 발생하는 비용 |
 |---|---|
-| 정상 발급 | coupon DB 읽기 세 번과 쓰기 네 번, member·찜 공개 조회 각 한 번을 수행한다. 카운터 UPSERT도 쓰기 한 번으로 센다. 마지막 발급 뒤에는 광고 후보 소진 갱신이 추가된다 |
+| 정상 발급 | 묶음 하나마다 coupon DB 읽기 네 번과 쓰기 네 번, 회원 수만큼의 member·찜 공개 조회, 커밋 한 번을 수행한다. TODO member, adserving 도메인과 합의되면 member·찜 조회도 묶음당 한 번으로 줄인다. 카운터 UPSERT도 쓰기 한 번으로 센다. 요청마다 Redis 완료 한 번이 더해지고 마지막 발급 뒤에는 광고 후보 소진 갱신이 추가된다 |
 | QR 생성 | 회원 쿠폰 잠금 조회·갱신과 member 조회, 이미지 인코딩을 수행한다 |
 | QR 사용 | coupon DB 읽기 세 번·쓰기 두 번과 owner·member 조회 각 한 번, store 공개 조회 두 번을 수행한다 |
 | 쿠폰 목록 | 회원 쿠폰 페이지와 이벤트 일괄 조회, 필요할 때 이력 일괄 조회를 수행한다. 만료된 반환 항목은 UPDATE한다 |
 | 이벤트 상태 | 이벤트 조회와 재고 집계, 회원 발급 이력과 카운터 조회를 수행한다. store·campaign·member·찜 조회는 매장마다 반복하지 않는다 |
 
 위 비용은 정상 경로의 논리적 SQL 기준이다. 실제 발급 SQL과 실행 계획·잠금 대기의 측정 결과는 [v1 성능 개선 비교](../../troubleshooting/coupon/coupon-issuance-v1-improvement-comparison.md)를 따른다.
-목표 피크 2,500 RPS에서 발급만으로 coupon DB 읽기는 초당 7,500문장, 쓰기는 초당 10,000문장 수준이다.
+목표 피크 2,500 RPS에서 문장 수는 묶음 크기에 반비례한다. 묶음 평균이 25건이면 coupon DB 읽기와 쓰기는 각각 초당 400문장 수준이다.
 모든 요청이 이벤트 하나에 몰리면 재고 소비가 직렬화되는 구간은 요청당 평균 0.4ms 이하여야 그 처리율을 낼 수 있다.
 작은 동시성 테스트의 통과를 부하 목표 달성으로 보지 않는다.
 최종 코드의 로컬 부하 결과와 같은 조건의 장시간 재측정 범위는 위 비교 기록이 소유한다.

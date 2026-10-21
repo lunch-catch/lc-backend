@@ -16,7 +16,6 @@ public enum CouponErrorCode implements ErrorCode {
     EVENT_ALREADY_ISSUED(HttpStatus.CONFLICT, "COUPON-005", "오늘 이 이벤트에서 이미 쿠폰을 발급받았습니다."),
     INVENTORY_EXHAUSTED(HttpStatus.CONFLICT, "COUPON-006", "쿠폰이 모두 소진되었습니다."),
     DAILY_LIMIT_REACHED(HttpStatus.CONFLICT, "COUPON-007", "오늘 발급 가능한 쿠폰 수를 모두 사용했습니다."),
-    // 현재 반환하지 않는 예약 코드다.
     ISSUANCE_BUSY(HttpStatus.SERVICE_UNAVAILABLE, "COUPON-008", "발급 요청이 몰리고 있습니다. 잠시 후 다시 시도해 주세요."),
     LOCATION_NOT_ALLOWED(HttpStatus.FORBIDDEN, "COUPON-009", "현재 위치에서 사용할 수 없습니다."),
     QR_NOT_VALID(HttpStatus.CONFLICT, "COUPON-010", "QR이 만료되었거나 유효하지 않습니다."),

@@ -23,6 +23,7 @@ import com.launchcatch.coupon.exception.CouponErrorCode;
 import com.launchcatch.coupon.exception.CouponException;
 import com.launchcatch.coupon.repository.CouponDailyLimitRepository;
 import com.launchcatch.coupon.repository.CouponEventRepository;
+import com.launchcatch.coupon.repository.CouponInventoryRepository;
 import com.launchcatch.coupon.repository.CouponUsageHistoryRepository;
 import com.launchcatch.coupon.repository.MemberCouponRepository;
 import com.launchcatch.global.config.ClockConfig;
@@ -38,6 +39,7 @@ import com.launchcatch.store.contract.StoreQueryService;
 import java.time.Clock;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.Optional;
 import java.time.LocalTime;
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeParseException;
@@ -71,6 +73,7 @@ public class CouponLookUpService {
     private final StoreQueryService storeQueryService;
     private final WishlistQueryService wishlistQueryService;
     private final ApplicationEventPublisher eventPublisher;
+    private final CouponInventoryRepository couponInventoryRepository;
 
     @Value("${coupon.daily-limit}")
     private int dailyLimit;
@@ -453,4 +456,20 @@ public class CouponLookUpService {
 
     private record CouponCursor(LocalDateTime issueTime, Long id) {
     }
+
+    /*
+     * 소진으로 거절했거나 마지막 재고를 발급한 뒤 남은 재고가 없으면 소진 통보에 쓸 값을 돌려준다.
+     * 소진 시각은 삭제한 쿠폰도 포함한 마지막 발급 시각이며 이벤트나 발급 기록이 없으면 빈 값을 돌려준다.
+     */
+    public Optional<SoldOut> findSoldOut(Long eventId) {
+        if (couponInventoryRepository.existsByCouponEventIdAndStatus(eventId, CouponInventoryStatus.AVAILABLE)) {
+            return Optional.empty();
+        }
+        return couponEventRepository.findById(eventId).flatMap(event ->
+                memberCouponRepository.findLastIssuedAtByCouponEventId(eventId)
+                        .map(issuedAt -> new SoldOut(event.getCampaignId(), event.getBusinessDate(), issuedAt)));
+    }
+
+    // 광고 후보에 소진을 알릴 캠페인과 영업일, 소진 시각이다.
+    public record SoldOut(long campaignId, LocalDate businessDate, LocalDateTime soldOutAt) { }
 }

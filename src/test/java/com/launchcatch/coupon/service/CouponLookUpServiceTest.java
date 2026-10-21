@@ -41,6 +41,7 @@ import com.launchcatch.coupon.exception.CouponErrorCode;
 import com.launchcatch.coupon.exception.CouponException;
 import com.launchcatch.coupon.repository.CouponDailyLimitRepository;
 import com.launchcatch.coupon.repository.CouponEventRepository;
+import com.launchcatch.coupon.repository.CouponInventoryRepository;
 import com.launchcatch.coupon.repository.CouponUsageHistoryRepository;
 import com.launchcatch.coupon.repository.MemberCouponRepository;
 import com.launchcatch.global.exception.CommonErrorCode;
@@ -93,6 +94,7 @@ class CouponLookUpServiceTest {
     @Mock CampaignQueryService campaignQueryService;
     @Mock MemberQueryService memberQueryService;
     @Mock ApplicationEventPublisher publisher;
+    @Mock CouponInventoryRepository inventories;
 
     private CouponLookUpService service;
 
@@ -173,7 +175,7 @@ class CouponLookUpServiceTest {
         void setUp() {
             service = new CouponLookUpService(
                     memberCouponRepository, couponEventRepository, couponUsageHistoryRepository, couponDailyLimitRepository, campaignQueryService, memberQueryService,
-                    Clock.fixed(Instant.parse("2026-10-10T03:00:00Z"), ZoneOffset.UTC), stores, wishes, publisher);
+                    Clock.fixed(Instant.parse("2026-10-10T03:00:00Z"), ZoneOffset.UTC), stores, wishes, publisher, mock(CouponInventoryRepository.class));
         }
 
         @ParameterizedTest
@@ -666,7 +668,7 @@ class CouponLookUpServiceTest {
         private CouponLookUpService serviceAt(Instant instant) {
             CouponLookUpService configured = new CouponLookUpService(
                     memberCouponRepository, couponEventRepository, couponUsageHistoryRepository, couponDailyLimitRepository, campaignQueryService, memberQueryService,
-                    Clock.fixed(instant, ZoneOffset.UTC), stores, wishes, publisher);
+                    Clock.fixed(instant, ZoneOffset.UTC), stores, wishes, publisher, mock(CouponInventoryRepository.class));
             return configured;
         }
 
@@ -728,7 +730,7 @@ class CouponLookUpServiceTest {
 
     // 지정한 시계와 일일 발급 한도를 사용하는 조회 서비스를 구성한다.
     private CouponLookUpService configuredService(Clock clock, int dailyLimit) {
-        CouponLookUpService configured = new CouponLookUpService(memberCouponRepository, couponEventRepository, couponUsageHistoryRepository, repository, campaignQueryService, memberQueryService, clock, stores, wishes, publisher);
+        CouponLookUpService configured = new CouponLookUpService(memberCouponRepository, couponEventRepository, couponUsageHistoryRepository, repository, campaignQueryService, memberQueryService, clock, stores, wishes, publisher, inventories);
         ReflectionTestUtils.setField(configured, "dailyLimit", dailyLimit);
         ReflectionTestUtils.setField(configured, "issueStartTime", LocalTime.of(11, 0));
         ReflectionTestUtils.setField(configured, "issueEndTime", LocalTime.of(14, 0));
@@ -972,5 +974,46 @@ class CouponLookUpServiceTest {
             return quantity;
         }
 
+    }
+
+    @Nested
+    @DisplayName("소진 통보 복구 조회")
+    class SoldOutLookup {
+
+        private CouponEvent event() {
+            CouponEvent event = BeanUtils.instantiateClass(CouponEvent.class);
+            ReflectionTestUtils.setField(event, "id", 81L);
+            ReflectionTestUtils.setField(event, "campaignId", 91L);
+            ReflectionTestUtils.setField(event, "businessDate", TODAY);
+            return event;
+        }
+
+        @Test
+        void 소진_복구는_마지막_발급_시각을_사용한다() {
+            when(couponEventRepository.findById(81L)).thenReturn(java.util.Optional.of(event()));
+            when(memberCouponRepository.findLastIssuedAtByCouponEventId(81L))
+                    .thenReturn(java.util.Optional.of(TODAY.atTime(11, 30)));
+            assertThat(service.findSoldOut(81L))
+                    .contains(new CouponLookUpService.SoldOut(91L, TODAY, TODAY.atTime(11, 30)));
+        }
+
+        @Test
+        void 이벤트가_없으면_복구할_소진도_없다() {
+            assertThat(service.findSoldOut(81L)).isEmpty();
+        }
+
+        @Test
+        void 발급_기록이_없으면_소진_시각을_만들지_않는다() {
+            when(couponEventRepository.findById(81L)).thenReturn(java.util.Optional.of(event()));
+            assertThat(service.findSoldOut(81L)).isEmpty();
+        }
+
+        @Test
+        void 남은_재고가_있으면_소진이_아니다() {
+            when(inventories.existsByCouponEventIdAndStatus(81L, com.launchcatch.coupon.entity.CouponInventoryStatus.AVAILABLE))
+                    .thenReturn(true);
+            assertThat(service.findSoldOut(81L)).isEmpty();
+            verifyNoInteractions(couponEventRepository);
+        }
     }
 }

@@ -4,6 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyCollection;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doCallRealMethod;
@@ -27,7 +29,6 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.launchcatch.adserving.contract.WishlistQueryService;
 import com.launchcatch.adserving.contract.CandidateStateUpdater;
-import com.launchcatch.coupon.service.CouponIssuanceService;
 import com.launchcatch.coupon.job.CouponPreparationJob;
 import com.launchcatch.coupon.job.CouponIssueOpenJob;
 import com.launchcatch.coupon.job.CouponIssueCloseJob;
@@ -56,6 +57,7 @@ import com.launchcatch.coupon.contract.DailyCampaignCouponStats;
 import com.launchcatch.coupon.contract.DailyMemberCouponStats;
 import com.launchcatch.coupon.contract.MemberCouponStats;
 import com.launchcatch.coupon.dto.CouponDetailResponse;
+import com.launchcatch.coupon.dto.CouponIssueResponse;
 import com.launchcatch.coupon.dto.CouponUsageHistoryResponse;
 import com.launchcatch.coupon.entity.CouponEventStatus;
 import com.launchcatch.coupon.entity.CouponInventory;
@@ -63,17 +65,22 @@ import com.launchcatch.coupon.entity.CouponInventoryStatus;
 import com.launchcatch.coupon.entity.MemberCouponStatus;
 import com.launchcatch.coupon.exception.CouponErrorCode;
 import com.launchcatch.coupon.exception.CouponException;
+import com.launchcatch.coupon.repository.CouponBatchIssueRepository;
 import com.launchcatch.coupon.repository.CouponEventRepository;
 import com.launchcatch.coupon.repository.CouponInventoryRepository;
 import com.launchcatch.coupon.repository.CouponUsageHistoryRepository;
 import com.launchcatch.coupon.repository.MemberCouponRepository;
+import com.launchcatch.coupon.service.CouponBatchIssuanceService;
 import com.launchcatch.coupon.service.CouponCommandService;
-import com.launchcatch.coupon.service.OwnerCouponService;
+import com.launchcatch.coupon.service.model.CouponIssuanceOutcome;
+import com.launchcatch.coupon.service.model.CouponIssuanceRequest;
+import com.launchcatch.coupon.service.CouponLookUpService;
 import com.launchcatch.coupon.contract.CouponIssueOpenedEvent;
 import com.launchcatch.coupon.contract.CouponIssuedEvent;
 import com.launchcatch.coupon.contract.CouponRedeemedEvent;
 import com.launchcatch.coupon.contract.CouponExpiredEvent;
-import com.launchcatch.coupon.service.CouponLookUpService;
+import com.launchcatch.coupon.service.CouponSequenceRecoveryService;
+import com.launchcatch.coupon.service.OwnerCouponService;
 import com.launchcatch.global.config.ClockConfig;
 import com.launchcatch.global.response.CursorPageResponse;
 import com.launchcatch.member.contract.MemberInfo;
@@ -92,6 +99,8 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.sql.SQLException;
 import java.time.Clock;
 import java.time.Duration;
@@ -106,13 +115,17 @@ import java.util.List;
 import java.util.Map;
 import java.util.Locale;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
@@ -124,12 +137,14 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.TestInfo;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.mockito.stubbing.Answer;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -140,6 +155,8 @@ import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.dao.QueryTimeoutException;
 import org.springframework.context.annotation.Import;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.data.redis.RedisConnectionFailureException;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
@@ -158,6 +175,10 @@ import tools.jackson.databind.ObjectMapper;
 
 @SpringBootTest(properties = {
         "coupon.daily-limit=3",
+        // 고정된 과거 영업일의 테스트 데이터가 실제 Redis 시계에서 즉시 만료되지 않게 한다.
+        "coupon.sequence.retention-grace=36500d",
+        "coupon.issue.batch.workers=2",
+        "coupon.issue.batch.max-size=8",
         "spring.jpa.properties.hibernate.session_factory.statement_inspector="
                 + "com.launchcatch.coupon.CouponIntegrationTest$SqlCapture"
 }, webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
@@ -176,8 +197,12 @@ public class CouponIntegrationTest extends IntegrationTestSupport {
     @Autowired CouponLookUpService couponLookUpService;
     @Autowired CouponCommandService couponCommandService;
     @Autowired OwnerCouponService ownerCouponService;
-    @Autowired CouponIssuanceService couponIssuanceService;
     @Autowired com.launchcatch.ops.service.BatchJobRunner batchJobRunner;
+    @Autowired CouponBatchIssuanceService batchIssuanceService;
+    @MockitoSpyBean com.launchcatch.coupon.repository.CouponSequenceRepository sequences;
+    @Autowired com.launchcatch.coupon.service.CouponSequenceService sequenceService;
+    @Autowired CouponSequenceRecoveryService sequenceRecoveryService;
+    @Autowired StringRedisTemplate redis;
     @Autowired CouponStatsQueryService couponStats;
     @Autowired FunnelRecorder funnel;
     @Autowired ObjectMapper objectMapper;
@@ -196,6 +221,7 @@ public class CouponIntegrationTest extends IntegrationTestSupport {
     @MockitoSpyBean CouponEventRepository events;
     @MockitoSpyBean CouponInventoryRepository inventories;
     @MockitoSpyBean MemberCouponRepository memberCouponRepository;
+    @MockitoSpyBean CouponBatchIssueRepository batchIssues;
     @MockitoSpyBean CouponUsageHistoryRepository histories;
     @MockitoSpyBean CouponBatchRepository batches;
     @MockitoBean RetryBackoff retryBackoff;
@@ -205,10 +231,22 @@ public class CouponIntegrationTest extends IntegrationTestSupport {
         funnel.received.clear();
         doReturn(List.of()).when(wishes).findWishedCampaignIds(any());
         doReturn(false).when(wishes).isWished(any(), any());
+        doReturn(Set.of()).when(wishes).findWishedMemberIds(any(), any());
         when(clock.withZone(ClockConfig.ZONE))
                 .thenReturn(Clock.fixed(Instant.parse("2026-10-10T03:00:00Z"), ClockConfig.ZONE));
         when(clock.getZone()).thenReturn(ClockConfig.ZONE);
         when(clock.instant()).thenReturn(Instant.parse("2026-10-10T03:00:00Z"));
+    }
+
+    private void stubActiveMembers() {
+        doAnswer(invocation -> invocation.<Set<Long>>getArgument(0).stream()
+                .collect(Collectors.toMap(id -> id, id -> MemberStatus.ACTIVE)))
+                .when(members).findCurrentStatuses(any());
+    }
+
+    private void stubWishedMembers() {
+        doAnswer(invocation -> Set.copyOf(invocation.<Set<Long>>getArgument(1)))
+                .when(wishes).findWishedMemberIds(any(), any());
     }
 
     @Nested
@@ -453,11 +491,12 @@ public class CouponIntegrationTest extends IntegrationTestSupport {
     class IssuanceSql {
         @BeforeEach
         void setUp() {
-            doCallRealMethod().when(wishes).isWished(99017L, 99091L);
+            doCallRealMethod().when(wishes).findWishedMemberIds(99091L, Set.of(99017L, 99018L));
             jdbcTemplate.update("""
                     INSERT INTO member (member_id, provider_user_id, nickname, status, created_at, updated_at)
-                    VALUES (99017, 'issuance-sql-test', '회원', 'ACTIVE', ?, ?)
-                    """, TODAY.atTime(12, 0), TODAY.atTime(12, 0));
+                    VALUES (99017, 'issuance-sql-test', '회원', 'ACTIVE', ?, ?),
+                           (99018, 'issuance-sql-test-2', '회원2', 'ACTIVE', ?, ?)
+                    """, TODAY.atTime(12, 0), TODAY.atTime(12, 0), TODAY.atTime(12, 0), TODAY.atTime(12, 0));
             jdbcTemplate.update("""
                     INSERT INTO coupon_event (coupon_event_id, campaign_id, business_date, issue_quantity,
                         usable_start_at, usable_end_at, status, store_id, store_name,
@@ -475,50 +514,66 @@ public class CouponIntegrationTest extends IntegrationTestSupport {
             }
             jdbcTemplate.update("""
                     INSERT INTO wishlist (member_id, campaign_id, store_id, created_at, updated_at)
-                    VALUES (99017, 99091, 99010, ?, ?)
-                    """, TODAY.atTime(12, 0), TODAY.atTime(12, 0));
+                    VALUES (99017, 99091, 99010, ?, ?), (99018, 99091, 99010, ?, ?)
+                    """, TODAY.atTime(12, 0), TODAY.atTime(12, 0), TODAY.atTime(12, 0), TODAY.atTime(12, 0));
         }
 
         @AfterEach
         void cleanUp() {
-            jdbcTemplate.update("DELETE FROM event_log WHERE member_id=99017");
+            jdbcTemplate.update("DELETE FROM event_log WHERE member_id IN (99017,99018)");
             jdbcTemplate.update("DELETE FROM member_coupon WHERE coupon_event_id=99081");
-            jdbcTemplate.update("DELETE FROM coupon_daily_limit WHERE member_id=99017");
+            jdbcTemplate.update("DELETE FROM coupon_daily_limit WHERE member_id IN (99017,99018)");
             jdbcTemplate.update("DELETE FROM coupon_inventory WHERE coupon_event_id=99081");
             jdbcTemplate.update("DELETE FROM coupon_event WHERE coupon_event_id=99081");
-            jdbcTemplate.update("DELETE FROM wishlist WHERE member_id=99017");
-            jdbcTemplate.update("DELETE FROM member WHERE member_id=99017");
+            jdbcTemplate.update("DELETE FROM wishlist WHERE member_id IN (99017,99018)");
+            jdbcTemplate.update("DELETE FROM member WHERE member_id IN (99017,99018)");
         }
 
         @ParameterizedTest
         @CsvSource({"false, false", "true, false", "false, true", "true, true"})
-        void 프로필과_기존_카운터_유무에_관계없이_정상_발급은_SQL_아홉_개로_처리한다(
+        void 프로필과_기존_카운터_유무에_관계없이_두_회원의_발급은_묶음_하나에_SQL_열_개로_처리한다(
                 boolean hasProfile, boolean hasCounter) {
             if (hasProfile) {
                 jdbcTemplate.update("""
                         INSERT INTO member_profile (member_id, gender, age_group, created_at, updated_at)
-                        VALUES (99017, 'MALE', 'AGE_20S', ?, ?)
-                        """, TODAY.atTime(12, 0), TODAY.atTime(12, 0));
+                        VALUES (99017, 'MALE', 'AGE_20S', ?, ?), (99018, 'MALE', 'AGE_20S', ?, ?)
+                        """, TODAY.atTime(12, 0), TODAY.atTime(12, 0), TODAY.atTime(12, 0), TODAY.atTime(12, 0));
             }
             if (hasCounter) {
                 jdbcTemplate.update("""
                         INSERT INTO coupon_daily_limit (member_id, business_date, issued_count, created_at, updated_at)
-                        VALUES (99017, ?, 0, ?, ?)
-                        """, TODAY, TODAY.atTime(12, 0), TODAY.atTime(12, 0));
+                        VALUES (99017, ?, 0, ?, ?), (99018, ?, 0, ?, ?)
+                        """, TODAY, TODAY.atTime(12, 0), TODAY.atTime(12, 0),
+                        TODAY, TODAY.atTime(12, 0), TODAY.atTime(12, 0));
             }
 
-            List<String> statements = SqlCapture.capture(() -> couponIssuanceService.issue(99017L, 99081L));
+            sequences.rebuild(99081L, List.of(1, 2), 0, Instant.now().plusSeconds(3600).toEpochMilli());
+            sequenceService.resume(99081L);
+            CouponIssuanceRequest request = new CouponIssuanceRequest(99017L, 99081L, TODAY.atTime(12, 0));
+            CouponIssuanceRequest second = new CouponIssuanceRequest(99018L, 99081L, TODAY.atTime(12, 0));
+            List<String> statements = SqlCapture.capture(() -> batchIssuanceService.issueBatch(List.of(request, second)));
 
-            assertThat(statements).hasSize(9);
+            /*
+             * Hibernate 검사기는 이벤트 잠금, 회원 상태, 찜 조회 세 문장만 센다.
+             * 카운터 생성과 잠금, 발급 기록, 재고 갱신, 쿠폰 코드, 카운터 증가, 쿠폰 저장 일곱 문장은 JdbcTemplate이 보낸다.
+             */
+            assertThat(statements).hasSize(3);
             assertThat(statements).noneMatch(sql -> sql.contains("member_profile"));
             assertThat(statements).noneMatch(sql -> sql.startsWith("select") && sql.contains("coupon_daily_limit"));
             assertThat(jdbcTemplate.queryForObject(
                     "SELECT issued_count FROM coupon_daily_limit WHERE member_id=99017", Integer.class)).isEqualTo(1);
             assertThat(jdbcTemplate.queryForObject(
-                    "SELECT COUNT(*) FROM member_coupon WHERE coupon_event_id=99081", Integer.class)).isEqualTo(1);
+                    "SELECT COUNT(*) FROM member_coupon WHERE coupon_event_id=99081", Integer.class)).isEqualTo(2);
             assertThat(jdbcTemplate.queryForObject("""
                     SELECT COUNT(*) FROM coupon_inventory WHERE coupon_event_id=99081 AND status='ISSUED'
-                    """, Integer.class)).isEqualTo(1);
+                    """, Integer.class)).isEqualTo(2);
+            assertThat(jdbcTemplate.queryForObject("""
+                    SELECT COUNT(*) FROM member_coupon coupon
+                      JOIN coupon_inventory inventory ON inventory.coupon_code = coupon.coupon_code
+                     WHERE coupon.coupon_event_id=99081 AND coupon.member_id=99017
+                       AND coupon.status='ISSUED' AND inventory.status='ISSUED'
+                       AND coupon.usable_start_at=? AND coupon.usable_end_at=?
+                    """, Integer.class, TODAY.atTime(11, 0), TODAY.atTime(14, 0))).isEqualTo(1);
         }
 
     }
@@ -821,8 +876,8 @@ public class CouponIntegrationTest extends IntegrationTestSupport {
             doAnswer(invocation -> Optional.of(new MemberInfo(
                     invocation.getArgument(0), "회원", MemberStatus.ACTIVE, false, false, false, null, null, null, null)))
                     .when(members).findById(any());
-            doReturn(Optional.of(MemberStatus.ACTIVE)).when(members).findCurrentStatus(any());
-            when(wishes.isWished(any(), any())).thenReturn(true);
+            stubActiveMembers();
+            stubWishedMembers();
             insertEvent(81L, 3);
         }
 
@@ -882,30 +937,30 @@ public class CouponIntegrationTest extends IntegrationTestSupport {
         }
 
         @Test
-        void 중단_커밋_후에도_이미_허용된_발급은_완료하고_새_발급은_거절한다() throws Exception {
+        void 중단은_진행_중인_발급을_기다린_뒤_반영하고_새_발급을_거절한다() throws Exception {
             CountDownLatch checked = new CountDownLatch(1);
             CountDownLatch release = new CountDownLatch(1);
-            when(wishes.isWished(17L, 81L)).thenAnswer(invocation -> {
+            when(wishes.findWishedMemberIds(81L, Set.of(17L))).thenAnswer(invocation -> {
                 checked.countDown();
                 await(release);
-                return true;
+                return Set.of(17L);
             });
             try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
                 Future<String> request = executor.submit(() -> issue(17L, 81L));
+                assertThat(checked.await(5, TimeUnit.SECONDS)).isTrue();
+                Future<?> pause = executor.submit(() -> new TransactionTemplate(transactionManager)
+                        .executeWithoutResult(transaction -> publisher.publishEvent(
+                                new CampaignStatusChangedEvent(81, TODAY, false, TODAY.atTime(12, 0)))));
                 try {
-                    assertThat(checked.await(5, TimeUnit.SECONDS)).isTrue();
-                    Future<?> pause = executor.submit(() -> new TransactionTemplate(transactionManager)
-                            .executeWithoutResult(transaction -> publisher.publishEvent(
-                                    new CampaignStatusChangedEvent(81, TODAY, false, TODAY.atTime(12, 0)))));
-                    pause.get(5, TimeUnit.SECONDS);
-                    assertThat(jdbcTemplate.queryForObject(
-                            "SELECT status FROM coupon_event WHERE coupon_event_id=81", String.class)).isEqualTo("PAUSED");
+                    assertThatThrownBy(() -> pause.get(150, TimeUnit.MILLISECONDS)).isInstanceOf(TimeoutException.class);
                 } finally {
                     release.countDown();
                 }
                 assertThat(request.get(5, TimeUnit.SECONDS)).isEqualTo("CREATED");
+                pause.get(5, TimeUnit.SECONDS);
             }
-
+            assertThat(jdbcTemplate.queryForObject(
+                    "SELECT status FROM coupon_event WHERE coupon_event_id=81", String.class)).isEqualTo("PAUSED");
             assertError(18L, 81L, CouponErrorCode.COUPON_NOT_AVAILABLE);
             assertConsistent(1);
         }
@@ -917,7 +972,7 @@ public class CouponIntegrationTest extends IntegrationTestSupport {
                     INSERT INTO coupon_daily_limit (member_id, issued_count, business_date, created_at, updated_at)
                     VALUES (17, 0, ?, ?, ?)
                     """, TODAY, now, now);
-            when(wishes.isWished(17L, 81L)).thenReturn(false);
+            when(wishes.findWishedMemberIds(81L, Set.of(17L))).thenReturn(Set.of());
             CountDownLatch locked = new CountDownLatch(1);
             CountDownLatch release = new CountDownLatch(1);
             try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
@@ -947,14 +1002,14 @@ public class CouponIntegrationTest extends IntegrationTestSupport {
             CountDownLatch firstChecked = new CountDownLatch(1);
             CountDownLatch secondChecked = new CountDownLatch(1);
             CountDownLatch release = new CountDownLatch(1);
-            when(wishes.isWished(17L, 81L)).thenAnswer(invocation -> {
+            when(wishes.findWishedMemberIds(81L, Set.of(17L))).thenAnswer(invocation -> {
                 firstChecked.countDown();
                 await(release);
-                return true;
+                return Set.of(17L);
             });
-            when(wishes.isWished(18L, 81L)).thenAnswer(invocation -> {
+            when(wishes.findWishedMemberIds(81L, Set.of(18L))).thenAnswer(invocation -> {
                 secondChecked.countDown();
-                return true;
+                return Set.of(18L);
             });
             try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
                 Future<String> first = executor.submit(() -> issue(17L, 81L));
@@ -1018,7 +1073,7 @@ public class CouponIntegrationTest extends IntegrationTestSupport {
 
         @Test
         void 찜하지_않은_회원은_HTTP_403이며_발급_상태를_변경하지_않는다() throws Exception {
-            when(wishes.isWished(17L, 81L)).thenReturn(false);
+            when(wishes.findWishedMemberIds(81L, Set.of(17L))).thenReturn(Set.of());
             mockMvc.perform(post("/v1/coupons").with(user(MEMBER))
                             .contentType(MediaType.APPLICATION_JSON).content("{\"eventId\":81}"))
                     .andExpect(status().isForbidden()).andExpect(jsonPath("$.code").value("COUPON-004"));
@@ -1028,7 +1083,8 @@ public class CouponIntegrationTest extends IntegrationTestSupport {
 
         @Test
         void 찜_조회_장애는_HTTP_500이며_발급을_롤백한다() throws Exception {
-            when(wishes.isWished(17L, 81L)).thenThrow(new DataAccessResourceFailureException("wishlist unavailable"));
+            when(wishes.findWishedMemberIds(81L, Set.of(17L)))
+                    .thenThrow(new DataAccessResourceFailureException("wishlist unavailable"));
             mockMvc.perform(post("/v1/coupons").with(user(MEMBER))
                             .contentType(MediaType.APPLICATION_JSON).content("{\"eventId\":81}"))
                     .andExpect(status().isInternalServerError()).andExpect(jsonPath("$.code").value("COMMON-001"));
@@ -1040,7 +1096,7 @@ public class CouponIntegrationTest extends IntegrationTestSupport {
         void 마지막_발급의_커밋이_실패하면_소진을_통보하지_않는다() {
             jdbcTemplate.update("DELETE FROM coupon_inventory WHERE sequence_no > 1");
             var failure = new DataAccessResourceFailureException("commit failed");
-            var real = mockingDetails(memberCouponRepository).getMockCreationSettings().getDefaultAnswer();
+            Answer<?> real = mockingDetails(batchIssues).getMockCreationSettings().getDefaultAnswer();
             doAnswer(invocation -> {
                 Object saved = real.answer(invocation);
                 TransactionSynchronizationManager.registerSynchronization(
@@ -1051,7 +1107,7 @@ public class CouponIntegrationTest extends IntegrationTestSupport {
                             }
                         });
                 return saved;
-            }).when(memberCouponRepository).saveAndFlush(any());
+            }).when(batchIssues).insertCoupons(anyList());
 
             assertThatThrownBy(() -> couponCommandService.issue(17L, 81L)).isSameAs(failure);
             assertConsistent(0);
@@ -1088,7 +1144,7 @@ public class CouponIntegrationTest extends IntegrationTestSupport {
         @Test
         void 발급_트랜잭션이_롤백하면_분석_리스너가_수신하지_않는다() {
             new TransactionTemplate(transactionManager).executeWithoutResult(transaction -> {
-                couponIssuanceService.issue(17L, 81L);
+                batchIssuanceService.issueBatch(List.of(new CouponIssuanceRequest(17L, 81L, TODAY.atTime(12, 0))));
                 assertThat(funnel.received).isEmpty();
                 transaction.setRollbackOnly();
             });
@@ -1147,7 +1203,7 @@ public class CouponIntegrationTest extends IntegrationTestSupport {
         void 서로_다른_회원_다섯_명이_동시에_요청해도_재고_세_장만_발급한다() throws Exception {
             List<String> results = concurrently(IntStream.range(0, 5).mapToObj(i -> new long[] {100L + i, 81L}).toList());
             assertThat(results.stream().filter("CREATED"::equals)).hasSize(3);
-            assertThat(results).allMatch(code -> code.equals("CREATED") || code.equals("COUPON-006"));
+            assertThat(results).allMatch(code -> List.of("CREATED", "COUPON-006", "COUPON-008").contains(code));
             assertConsistent(3);
             assertThat(jdbcTemplate.queryForObject("SELECT COUNT(DISTINCT coupon_code) FROM member_coupon", Integer.class))
                     .isEqualTo(3);
@@ -1164,7 +1220,7 @@ public class CouponIntegrationTest extends IntegrationTestSupport {
                     """);
 
             CouponInventory inventory = new TransactionTemplate(transactionManager).execute(transaction ->
-                    inventories.findFirstByCouponEventIdAndStatusOrderBySequenceNoAsc(81L, inventoryStatus)
+                    inventories.findByCouponEventIdAndSequenceNo(81L, expectedSequence)
                             .orElseThrow());
 
             assertThat(inventory.getCouponEventId()).isEqualTo(81L);
@@ -1176,13 +1232,13 @@ public class CouponIntegrationTest extends IntegrationTestSupport {
         void 같은_회원의_동시_재요청은_한_장만_발급한다() throws Exception {
             List<String> results = concurrently(IntStream.range(0, 5).mapToObj(i -> new long[] {17L, 81L}).toList());
             assertThat(results.stream().filter("CREATED"::equals)).hasSize(1);
-            assertThat(results.stream().filter("COUPON-005"::equals)).hasSize(4);
+            assertThat(results).allMatch(code -> List.of("CREATED", "COUPON-005", "COUPON-008").contains(code));
             assertConsistent(1);
         }
 
         @ParameterizedTest
         @CsvSource({"true, false", "false, true", "true, true"})
-        void 중복_발급은_일일_한도나_재고_소진보다_먼저_거절한다(boolean dailyLimitReached, boolean soldOut) {
+        void 재고가_남으면_중복을_우선하고_전량_발급됐으면_소진을_반환한다(boolean dailyLimitReached, boolean soldOut) {
             couponCommandService.issue(17L, 81L);
             if (dailyLimitReached) {
                 insertEvent(82L, 3);
@@ -1195,7 +1251,7 @@ public class CouponIntegrationTest extends IntegrationTestSupport {
                 couponCommandService.issue(19L, 81L);
             }
 
-            assertError(17L, 81L, CouponErrorCode.EVENT_ALREADY_ISSUED);
+            assertError(17L, 81L, soldOut ? CouponErrorCode.INVENTORY_EXHAUSTED : CouponErrorCode.EVENT_ALREADY_ISSUED);
 
             assertConsistent(1 + (dailyLimitReached ? 2 : 0) + (soldOut ? 2 : 0));
         }
@@ -1300,16 +1356,16 @@ public class CouponIntegrationTest extends IntegrationTestSupport {
             }
             var failure = new DataAccessResourceFailureException("발급 저장 실패");
             if (stage.equals("event")) {
-                doThrow(failure).when(events).findById(81L);
+                doThrow(failure).when(events).findAllForIssue(anyCollection());
             } else if (stage.equals("inventory")) {
-                doThrow(failure).when(inventories)
-                        .findFirstByCouponEventIdAndStatusOrderBySequenceNoAsc(81L, CouponInventoryStatus.AVAILABLE);
+                doThrow(failure).when(batchIssues)
+                        .issueSequences(org.mockito.ArgumentMatchers.eq(81L), anyList(), any());
             } else {
+                Answer<?> real = mockingDetails(batchIssues).getMockCreationSettings().getDefaultAnswer();
                 doAnswer(invocation -> {
-                    entityManager.persist(invocation.getArgument(0));
-                    entityManager.flush();
+                    real.answer(invocation);
                     throw failure;
-                }).when(memberCouponRepository).saveAndFlush(any());
+                }).when(batchIssues).insertCoupons(anyList());
             }
             assertThatThrownBy(() -> couponCommandService.issue(17L, 81L)).isSameAs(failure);
             assertConsistent(0);
@@ -1320,7 +1376,7 @@ public class CouponIntegrationTest extends IntegrationTestSupport {
 
         @Test
         void DB_조회가_실패하면_공통_서버_오류를_반환하고_롤백한다() throws Exception {
-            doThrow(new QueryTimeoutException("DB 조회 실패")).when(events).findById(81L);
+            doThrow(new QueryTimeoutException("DB 조회 실패")).when(events).findAllForIssue(anyCollection());
             mockMvc.perform(post("/v1/coupons").with(user(new CustomUserDetails(17L, Role.MEMBER)))
                             .contentType("application/json").content("{\"eventId\":81}"))
                     .andExpect(status().isInternalServerError())
@@ -1414,6 +1470,294 @@ public class CouponIntegrationTest extends IntegrationTestSupport {
             }
         }
 
+
+        @Nested
+        @DisplayName("실제 HTTP 쿠폰 발급")
+        class Http {
+
+            private static final AtomicLong NEXT_EVENT = new AtomicLong(70000);
+            private long httpEventId;
+            private String prefix;
+            private final List<Map<String, Object>> exchanges = new CopyOnWriteArrayList<>();
+
+            @BeforeEach
+            void prepareMembers() {
+                httpEventId = NEXT_EVENT.incrementAndGet();
+                prefix = "coupon:{" + httpEventId + "}:";
+                insertEvent(httpEventId, 3);
+                jdbcTemplate.batchUpdate("""
+                        INSERT INTO member (member_id, provider_user_id, nickname, status, created_at, updated_at)
+                        VALUES (?, ?, 'HTTP 발급 회원', 'ACTIVE', ?, ?)
+                        """, IntStream.range(17, 29).mapToObj(id -> new Object[] {
+                            id, "http-coupon-member-" + id, TODAY.atTime(12, 0), TODAY.atTime(12, 0)
+                        }).toList());
+                jdbcTemplate.batchUpdate("""
+                        INSERT INTO wishlist (member_id,campaign_id,store_id,created_at,updated_at)
+                        VALUES (?,?,10,?,?)
+                        """, IntStream.range(17, 29).mapToObj(id -> new Object[] {
+                            id, httpEventId, TODAY.atTime(12, 0), TODAY.atTime(12, 0)
+                        }).toList());
+                doCallRealMethod().when(members).findCurrentStatuses(any());
+                doCallRealMethod().when(wishes).findWishedMemberIds(org.mockito.ArgumentMatchers.eq(httpEventId), any());
+            }
+
+            @AfterEach
+            void recordResponsesAndCleanMembers(TestInfo info) throws Exception {
+                Path directory = Path.of("build", "reports", "coupon-issuance-http");
+                Files.createDirectories(directory);
+                String filename = info.getTestMethod().orElseThrow().getName() + "-"
+                        + Integer.toHexString(info.getDisplayName().hashCode()) + ".json";
+                Files.writeString(directory.resolve(filename), objectMapper.writeValueAsString(
+                        Map.of("case", info.getDisplayName(), "exchanges", exchanges)));
+                redis.delete(List.of(prefix + "available", prefix + "pending", prefix + "meta"));
+                sequenceService.resume(httpEventId);
+                jdbcTemplate.update("DELETE FROM event_log WHERE member_id BETWEEN 17 AND 28");
+                jdbcTemplate.update("DELETE FROM wishlist WHERE member_id BETWEEN 17 AND 28");
+                jdbcTemplate.update("DELETE FROM member WHERE member_id BETWEEN 17 AND 28");
+            }
+
+            @Test
+            void JWT_쿠키로_발급하면_201과_DB에_저장한_ID와_한국_시각을_받는다() throws Exception {
+                try (HttpClient client = HttpClient.newHttpClient()) {
+                    var response = send(client, 17L);
+                    assertCreated(response, 17L);
+                }
+                assertConsistent(1);
+            }
+
+            @Test
+            void Redis_초기화가_없어도_같은_HTTP_요청에서_복구하고_201을_받는다() throws Exception {
+                redis.delete(List.of(prefix + "available", prefix + "pending", prefix + "meta"));
+                try (HttpClient client = HttpClient.newHttpClient()) {
+                    assertCreated(send(client, 17L), 17L);
+                }
+                assertConsistent(1);
+                assertThat(redis.opsForHash().get(prefix + "meta", "state")).isEqualTo("READY");
+            }
+
+            @Test
+            void 로컬_차단을_복구한_최초_HTTP_요청도_201로_응답한다() throws Exception {
+                sequenceService.block(httpEventId, null);
+                try (HttpClient client = HttpClient.newHttpClient()) {
+                    assertCreated(send(client, 17L), 17L);
+                }
+                assertThat(sequenceService.needsRecovery(httpEventId)).isFalse();
+                assertConsistent(1);
+            }
+
+            @Test
+            void 오래된_예약을_복구한_HTTP_요청은_한_장만_발급한다() throws Exception {
+                assertThat(sequences.reserveAll(httpEventId, List.of("lost-http-reservation"), 30000)).containsExactly(1L);
+                redis.opsForZSet().add(prefix + "pending", "1:lost-http-reservation", 1);
+                try (HttpClient client = HttpClient.newHttpClient()) {
+                    assertCreated(send(client, 17L), 17L);
+                }
+                assertConsistent(1);
+                assertThat(redis.opsForZSet().size(prefix + "pending")).isZero();
+                assertThat(redis.opsForHash().get(prefix + "meta", "completed")).isEqualTo("1");
+            }
+
+            @Test
+            void Redis_완료_응답이_유실돼도_HTTP_201을_유지하고_다음_요청도_복구해_발급한다() throws Exception {
+                doAnswer(invocation -> {
+                    invocation.callRealMethod();
+                    throw new RedisConnectionFailureException("HTTP completion reply lost");
+                }).doCallRealMethod().when(sequences)
+                        .complete(org.mockito.ArgumentMatchers.eq(httpEventId), org.mockito.ArgumentMatchers.anyInt(), any());
+                try (HttpClient client = HttpClient.newHttpClient()) {
+                    assertCreated(send(client, 17L), 17L);
+                    assertThat(sequenceService.needsRecovery(httpEventId)).isTrue();
+                    assertCreated(send(client, 18L), 18L);
+                }
+                assertThat(sequenceService.needsRecovery(httpEventId)).isFalse();
+                assertConsistent(2);
+            }
+
+            @Test
+            void 같은_이벤트의_재요청은_409와_중복_코드를_받는다() throws Exception {
+                try (HttpClient client = HttpClient.newHttpClient()) {
+                    assertCreated(send(client, 17L), 17L);
+                    assertRejected(send(client, 17L), 409, "COUPON-005");
+                }
+                assertConsistent(1);
+            }
+
+            @Test
+            void 세_장을_모두_발급하면_다음_HTTP_요청은_409와_소진_코드를_받는다() throws Exception {
+                try (HttpClient client = HttpClient.newHttpClient()) {
+                    assertCreated(send(client, 17L), 17L);
+                    assertCreated(send(client, 18L), 18L);
+                    assertCreated(send(client, 19L), 19L);
+                    assertRejected(send(client, 20L), 409, "COUPON-006");
+                }
+                assertConsistent(3);
+            }
+
+            @Test
+            void 찜하지_않은_회원의_HTTP_요청은_403과_자격_거절을_받는다() throws Exception {
+                doReturn(Set.of()).when(wishes).findWishedMemberIds(any(), any());
+                try (HttpClient client = HttpClient.newHttpClient()) {
+                    assertRejected(send(client, 17L), 403, "COUPON-004");
+                }
+                assertConsistent(0);
+            }
+
+            @Test
+            void 현재_회원_상태가_정지면_HTTP_403을_받고_발급하지_않는다() throws Exception {
+                doReturn(Map.of(17L, MemberStatus.SUSPENDED)).when(members).findCurrentStatuses(any());
+                try (HttpClient client = HttpClient.newHttpClient()) {
+                    assertRejected(send(client, 17L), 403, "COUPON-003");
+                }
+                assertConsistent(0);
+            }
+
+            @Test
+            void 일일_한도에_도달한_HTTP_요청은_409와_한도_거절을_받는다() throws Exception {
+                jdbcTemplate.update("""
+                        INSERT INTO coupon_daily_limit(member_id,business_date,issued_count,created_at,updated_at)
+                        VALUES (17,?,3,?,?)
+                        """, TODAY, TODAY.atTime(12, 0), TODAY.atTime(12, 0));
+                try (HttpClient client = HttpClient.newHttpClient()) {
+                    assertRejected(send(client, 17L), 409, "COUPON-007");
+                }
+                assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM member_coupon", Integer.class)).isZero();
+                assertThat(jdbcTemplate.queryForObject("SELECT issued_count FROM coupon_daily_limit WHERE member_id=17",
+                        Integer.class)).isEqualTo(3);
+            }
+
+            @Test
+            void 없는_이벤트의_HTTP_요청은_404를_받는다() throws Exception {
+                try (HttpClient client = HttpClient.newHttpClient()) {
+                    assertRejected(send(client, "{\"eventId\":999999999}", accessToken(Role.MEMBER, 17L)),
+                            404, "COUPON-001");
+                }
+                assertConsistent(0);
+            }
+
+            @Test
+            void 발급_종료_시각의_HTTP_요청은_409를_받는다() throws Exception {
+                time.set(TODAY.atTime(14, 0).atZone(ClockConfig.ZONE).toInstant());
+                try (HttpClient client = HttpClient.newHttpClient()) {
+                    assertRejected(send(client, 17L), 409, "COUPON-002");
+                }
+                assertConsistent(0);
+            }
+
+            @ParameterizedTest
+            @CsvSource(value = {"{}|COMMON-002", "{\"eventId\":0}|COMMON-002", "{\"eventId\":\"bad\"}|COMMON-003"}, delimiter = '|')
+            void 잘못된_HTTP_본문은_400과_공통_오류를_받는다(String body, String code) throws Exception {
+                try (HttpClient client = HttpClient.newHttpClient()) {
+                    assertRejected(send(client, body, accessToken(Role.MEMBER, 17L)), 400, code);
+                }
+                assertConsistent(0);
+            }
+
+            @Test
+            void 쿠키가_없거나_회원_역할이_아니면_HTTP_인증과_인가_오류를_받는다() throws Exception {
+                when(ownerTokenPolicy.supports(Role.OWNER)).thenReturn(true);
+                when(ownerTokenPolicy.isValid(any(), any(), any(), any(), any())).thenReturn(true);
+                try (HttpClient client = HttpClient.newHttpClient()) {
+                    assertRejected(send(client, requestBody(), null), 401, "AUTH-005");
+                    assertRejected(send(client, requestBody(), accessToken(Role.OWNER, 17L)), 403, "AUTH-006");
+                }
+                assertConsistent(0);
+            }
+
+            @Test
+            void DB_저장_장애는_HTTP_500으로_응답하고_발급과_예약을_되돌린다() throws Exception {
+                doThrow(new DataAccessResourceFailureException("HTTP issuance storage unavailable"))
+                        .when(batchIssues).insertCoupons(anyList());
+                try (HttpClient client = HttpClient.newHttpClient()) {
+                    assertRejected(send(client, 17L), 500, "COMMON-001");
+                }
+                assertConsistent(0);
+                assertThat(redis.opsForList().size(prefix + "available")).isEqualTo(3);
+                assertThat(redis.opsForZSet().size(prefix + "pending")).isZero();
+            }
+
+            @Test
+            void Redis_복구에_실패하면_HTTP_503을_받고_발급하지_않는다() throws Exception {
+                redis.delete(List.of(prefix + "available", prefix + "pending", prefix + "meta"));
+                doThrow(new RedisConnectionFailureException("HTTP issuance recovery unavailable"))
+                        .when(sequences).rebuild(org.mockito.ArgumentMatchers.eq(httpEventId), anyList(), anyLong(), anyLong());
+                try (HttpClient client = HttpClient.newHttpClient()) {
+                    assertRejected(send(client, 17L), 503, "COUPON-008");
+                }
+                assertConsistent(0);
+            }
+
+            @Test
+            void 실제_HTTP_동시_요청_열두_건은_재고_세_장까지만_발급한다() throws Exception {
+                CountDownLatch start = new CountDownLatch(1);
+                try (HttpClient client = HttpClient.newHttpClient(); var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+                    List<Future<HttpResponse<String>>> requests = IntStream.range(17, 29).mapToObj(id -> executor.submit(() -> {
+                        start.await();
+                        return send(client, id);
+                    })).toList();
+                    start.countDown();
+                    Set<Long> couponIds = ConcurrentHashMap.newKeySet();
+                    int successes = 0;
+                    for (Future<HttpResponse<String>> request : requests) {
+                        var response = request.get(15, TimeUnit.SECONDS);
+                        if (response.statusCode() == 201) {
+                            successes++;
+                            var body = objectMapper.readTree(response.body());
+                            assertThat(body.path("code").asText()).isEqualTo("SUCCESS");
+                            assertThat(couponIds.add(body.path("data").path("memberCouponId").asLong())).isTrue();
+                        } else {
+                            assertThat(response.statusCode()).isIn(409, 503);
+                            assertThat(objectMapper.readTree(response.body()).path("code").asText())
+                                    .isIn("COUPON-006", "COUPON-008");
+                        }
+                    }
+                    assertThat(successes).isEqualTo(3);
+                }
+                assertConsistent(3);
+            }
+
+            private String requestBody() {
+                return "{\"eventId\":" + httpEventId + "}";
+            }
+
+            private HttpResponse<String> send(HttpClient client, long memberId) throws Exception {
+                return send(client, requestBody(), accessToken(Role.MEMBER, memberId));
+            }
+
+            private HttpResponse<String> send(HttpClient client, String body, String token) throws Exception {
+                long started = System.nanoTime();
+                var response = client.send(httpRequest("POST", "/v1/coupons", body, token), HttpResponse.BodyHandlers.ofString());
+                exchanges.add(Map.of("method", "POST", "path", "/v1/coupons", "request", body,
+                        "status", response.statusCode(), "response", objectMapper.readTree(response.body()),
+                        "elapsedMs", (System.nanoTime() - started) / 1_000_000.0));
+                return response;
+            }
+
+            private void assertCreated(HttpResponse<String> response, long memberId) throws Exception {
+                assertThat(response.statusCode()).isEqualTo(201);
+                assertThat(response.headers().firstValue("Content-Type").orElseThrow()).startsWith("application/json");
+                var body = objectMapper.readTree(response.body());
+                assertThat(body.path("code").asText()).isEqualTo("SUCCESS");
+                assertThat(body.path("message").asText()).isEqualTo("요청이 성공적으로 처리되었습니다.");
+                var data = body.path("data");
+                long couponId = data.path("memberCouponId").asLong();
+                assertThat(couponId).isPositive();
+                assertThat(data.path("issueTime").asText()).isEqualTo("2026-10-10T12:00:00+09:00");
+                var saved = jdbcTemplate.queryForMap("SELECT member_id, coupon_event_id, created_at FROM member_coupon WHERE member_coupon_id=?", couponId);
+                assertThat(((Number) saved.get("member_id")).longValue()).isEqualTo(memberId);
+                assertThat(((Number) saved.get("coupon_event_id")).longValue()).isEqualTo(httpEventId);
+                assertThat(saved.get("created_at")).isEqualTo(TODAY.atTime(12, 0));
+            }
+
+            private void assertRejected(HttpResponse<String> response, int status, String code) throws Exception {
+                assertThat(response.statusCode()).isEqualTo(status);
+                assertThat(response.headers().firstValue("Content-Type").orElseThrow()).startsWith("application/json");
+                var body = objectMapper.readTree(response.body());
+                assertThat(body.path("code").asText()).isEqualTo(code);
+                assertThat(body.path("message").asText()).isNotBlank();
+                assertThat(body.path("data").isNull()).isTrue();
+            }
+        }
+
         private int lockWaits() {
             return Integer.parseInt(jdbcTemplate.queryForMap("SHOW GLOBAL STATUS LIKE 'Innodb_row_lock_current_waits'")
                     .get("Value").toString());
@@ -1434,6 +1778,528 @@ public class CouponIntegrationTest extends IntegrationTestSupport {
                     """, IntStream.rangeClosed(1, quantity).mapToObj(sequence -> new Object[] {
                         eventId, sequence, eventId + ":" + sequence, TODAY.atTime(11, 0), TODAY.atTime(14, 0), now, now
                     }).toList());
+            sequences.rebuild(eventId, IntStream.rangeClosed(1, quantity).boxed().toList(), 0, Instant.now().plusSeconds(3600).toEpochMilli());
+            sequenceService.resume(eventId);
+        }
+    }
+
+    @Nested
+    @DisplayName("Redis 순번 예약과 복구")
+    class SequenceRecovery {
+
+        private static final AtomicLong NEXT_EVENT = new AtomicLong(80000);
+        private long eventId;
+        private long memberId;
+        private String prefix;
+
+        // 재고 세 장짜리 이벤트를 만들고 모든 회원을 ACTIVE이자 찜한 회원으로 고정한 뒤 Redis 큐를 DB 기준으로 채운다.
+        @BeforeEach
+        void prepare() {
+            eventId = NEXT_EVENT.incrementAndGet();
+            memberId = eventId * 10;
+            prefix = "coupon:{" + eventId + "}:";
+            LocalDate today = TODAY;
+            jdbcTemplate.update("""
+                    INSERT INTO coupon_event(coupon_event_id,campaign_id,business_date,issue_quantity,
+                        usable_start_at,usable_end_at,status,store_id,store_name,discount_target_type,
+                        discount_type,discount_value,created_at,updated_at)
+                    VALUES (?,?,?,3,?,?,'ACTIVE',10,'발급 시험','ALL','AMOUNT',1000,?,?)
+                    """, eventId, eventId, today, today.atStartOfDay(), today.plusDays(1).atStartOfDay(),
+                    today.atStartOfDay(), today.atStartOfDay());
+            for (int sequence = 1; sequence <= 3; sequence++) {
+                jdbcTemplate.update("""
+                        INSERT INTO coupon_inventory(coupon_event_id,sequence_no,coupon_code,status,
+                            usable_start_at,usable_end_at,created_at,updated_at)
+                        VALUES (?,?,UUID_TO_BIN(UUID()),'AVAILABLE',?,?,?,?)
+                        """, eventId, sequence, today.atStartOfDay(), today.plusDays(1).atStartOfDay(),
+                        today.atStartOfDay(), today.atStartOfDay());
+            }
+            stubActiveMembers();
+            stubWishedMembers();
+            sequenceRecoveryService.recover(eventId);
+            assertThat(redis.opsForHash().get(prefix + "meta", "state")).isEqualTo("READY");
+        }
+
+        // 테스트가 만든 이벤트, 재고, 쿠폰, 카운터와 Redis 키를 지우고 차단 표시를 푼다.
+        @AfterEach
+        void cleanUp() {
+            jdbcTemplate.update("DELETE FROM member_coupon WHERE coupon_event_id=?", eventId);
+            jdbcTemplate.update("DELETE FROM coupon_inventory WHERE coupon_event_id=?", eventId);
+            jdbcTemplate.update("DELETE FROM coupon_event WHERE coupon_event_id=?", eventId);
+            jdbcTemplate.update("DELETE FROM coupon_daily_limit WHERE member_id BETWEEN ? AND ?", memberId, memberId + 20);
+            redis.delete(List.of(prefix + "available", prefix + "pending", prefix + "meta"));
+            sequenceService.resume(eventId);
+        }
+
+        // 발급, 중복 거절, 남은 재고 발급, 소진 거절을 차례로 거친 뒤 Redis 완료 수와 DB 쿠폰 수가 3으로 맞아야 한다.
+        @Test
+        void 발급과_중복_거절_후_실패한_순번을_다른_회원에게_반납한다() {
+            couponCommandService.issue(memberId, eventId);
+            assertThatThrownBy(() -> couponCommandService.issue(memberId, eventId)).isInstanceOfSatisfying(CouponException.class,
+                    error -> assertThat(error.getErrorCode()).isEqualTo(CouponErrorCode.EVENT_ALREADY_ISSUED));
+            couponCommandService.issue(memberId + 1, eventId);
+            couponCommandService.issue(memberId + 2, eventId);
+            assertThatThrownBy(() -> couponCommandService.issue(memberId + 3, eventId)).isInstanceOfSatisfying(CouponException.class,
+                    error -> assertThat(error.getErrorCode()).isEqualTo(CouponErrorCode.INVENTORY_EXHAUSTED));
+            assertThat(redis.opsForHash().get(prefix + "meta", "completed")).isEqualTo("3");
+            assertThat(redis.opsForZSet().size(prefix + "pending")).isZero();
+            assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM member_coupon WHERE coupon_event_id=?",
+                    Integer.class, eventId)).isEqualTo(3);
+        }
+
+        // 묶음 경로는 자격 판정을 통과한 요청만 순번을 예약하므로 거절된 요청은 큐를 건드리지 않는다.
+        @Test
+        void 자격_검증에_실패하면_순번을_예약하지_않는다() {
+            doReturn(Set.of()).when(wishes).findWishedMemberIds(any(), any());
+            assertThatThrownBy(() -> couponCommandService.issue(memberId, eventId)).isInstanceOfSatisfying(CouponException.class,
+                    error -> assertThat(error.getErrorCode()).isEqualTo(CouponErrorCode.CAMPAIGN_NOT_WISHED));
+            assertThat(redis.opsForList().range(prefix + "available", 0, -1)).containsExactly("1", "2", "3");
+            assertThat(redis.opsForZSet().size(prefix + "pending")).isZero();
+        }
+
+        // 이미 반납한 예약의 반납이 늦게 한 번 더 와도, 그 순번을 새로 예약한 사람이 있으면 큐에 다시 넣지 않아야 한다.
+        @Test
+        void 오래된_반납이_다시_예약한_순번을_중복으로_넣지_않는다() {
+            reserve("old");
+            sequences.release(eventId, 1, "old");
+            reserve("two");
+            reserve("three");
+            assertThat(reserve("new")).isEqualTo(1);
+            sequences.release(eventId, 1, "old");
+            assertThat(redis.opsForList().size(prefix + "available")).isZero();
+            assertThat(redis.opsForZSet().score(prefix + "pending", "1:new")).isNotNull();
+        }
+
+        /*
+         * 커밋 뒤 Redis 완료 응답을 잃어도 발급 성공은 유지하고 이벤트를 차단한다.
+         * 다음 요청이 DB 기준으로 큐를 다시 만들어 발급된 순번이 빠져야 한다.
+         */
+        @Test
+        void 완료_응답_유실은_발급_성공을_유지하고_후속_요청에서_DB로_복구한다() {
+            doAnswer(invocation -> {
+                invocation.callRealMethod();
+                throw new RedisConnectionFailureException("completion reply lost");
+            }).doCallRealMethod().when(sequences)
+                    .complete(org.mockito.ArgumentMatchers.eq(eventId), org.mockito.ArgumentMatchers.anyInt(), any());
+            assertThat(couponCommandService.issue(memberId, eventId).memberCouponId()).isPositive();
+            assertThat(sequenceService.needsRecovery(eventId)).isTrue();
+            assertThat(couponCommandService.issue(memberId + 1, eventId).memberCouponId()).isPositive();
+            assertThat(redis.opsForHash().get(prefix + "meta", "completed")).isEqualTo("2");
+            assertThat(redis.opsForList().range(prefix + "available", 0, -1)).containsExactly("3");
+            assertThat(sequenceService.needsRecovery(eventId)).isFalse();
+        }
+
+        // 오래 남은 예약을 발견하면 그 예약자에게 순번을 넘기지 않고 큐를 차단한 뒤 DB의 남은 재고로 다시 만들어야 한다.
+        @Test
+        void 오래된_예약은_이전_예약자에게_돌려주지_않고_DB의_남은_재고로_복구한다() {
+            reserve("lost-response");
+            redis.opsForZSet().add(prefix + "pending", "1:lost-response", 1);
+            assertThat(couponCommandService.issue(memberId, eventId).memberCouponId()).isPositive();
+            assertThat(redis.opsForList().range(prefix + "available", 0, -1)).containsExactly("2", "3");
+            assertThat(redis.opsForZSet().size(prefix + "pending")).isZero();
+            assertThat(couponCommandService.issue(memberId + 1, eventId).memberCouponId()).isPositive();
+        }
+
+        // 큐를 다시 만들기 전에 받은 예약의 완료나 반납은 새 큐를 바꾸지 않아야 한다.
+        @Test
+        void 재구축_이전의_예약_완료와_반납은_새_큐를_바꾸지_않는다() {
+            reserve("before-rebuild");
+            sequenceService.block(eventId, null);
+            sequenceRecoveryService.recover(eventId);
+            sequences.complete(eventId, 1, "before-rebuild");
+            sequences.release(eventId, 1, "before-rebuild");
+            assertThat(redis.opsForList().range(prefix + "available", 0, -1)).containsExactly("1", "2", "3");
+            assertThat(redis.opsForHash().get(prefix + "meta", "completed")).isEqualTo("0");
+        }
+
+        // 남은 순번이 모두 다른 요청의 처리 중이면 소진이나 큐 복구가 아니라 잠시 바쁨(ISSUANCE_BUSY)으로 응답해야 한다.
+        @Test
+        void 모든_재고가_처리_중이면_소진이나_전체_복구로_바꾸지_않는다() {
+            reserve("one");
+            reserve("two");
+            reserve("three");
+            assertThatThrownBy(() -> couponCommandService.issue(memberId, eventId)).isInstanceOfSatisfying(CouponException.class,
+                    error -> assertThat(error.getErrorCode()).isEqualTo(CouponErrorCode.ISSUANCE_BUSY));
+            assertThat(redis.opsForZSet().size(prefix + "pending")).isEqualTo(3);
+            assertThat(sequenceService.needsRecovery(eventId)).isFalse();
+            assertThat(redis.opsForHash().get(prefix + "meta", "state")).isEqualTo("READY");
+        }
+
+        // Redis 키가 통째로 사라지면 발급을 막고 DB 기준으로 다시 만들어 이미 발급된 순번은 빠져야 한다.
+        @Test
+        void Redis_키가_사라져도_DB에_커밋된_순번을_큐에_다시_넣지_않는다() {
+            couponCommandService.issue(memberId, eventId);
+            redis.delete(List.of(prefix + "available", prefix + "pending", prefix + "meta"));
+            assertThat(couponCommandService.issue(memberId + 1, eventId).memberCouponId()).isPositive();
+            assertThat(redis.opsForList().range(prefix + "available", 0, -1)).containsExactly("3");
+            assertThat(redis.opsForHash().get(prefix + "meta", "completed")).isEqualTo("2");
+        }
+
+        // 열두 명이 동시에 요청해도 재고 세 장만 발급되고 나머지는 소진이나 바쁨으로 거절돼야 한다.
+        @Test
+        void 여러_요청이_함께_발급해도_세_장을_초과하지_않는다() throws Exception {
+            try (ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
+                List<Future<String>> jobs = IntStream.range(0, 12).mapToObj(i -> executor.submit(() -> {
+                    try {
+                        couponCommandService.issue(memberId + i, eventId);
+                        return "CREATED";
+                    } catch (CouponException error) {
+                        return error.getErrorCode().getCode();
+                    }
+                })).toList();
+                List<String> results = new ArrayList<>();
+                for (Future<String> job : jobs) {
+                    results.add(job.get(10, TimeUnit.SECONDS));
+                }
+                assertThat(results).filteredOn("CREATED"::equals).hasSize(3);
+                assertThat(results).isSubsetOf("CREATED", "COUPON-006", "COUPON-008");
+            }
+            assertThat(redis.opsForHash().get(prefix + "meta", "completed")).isEqualTo("3");
+        }
+
+        /*
+         * 발급 묶음이 순번을 예약한 뒤 재고를 갱신하기 직전에 멈춘 사이 큐를 차단하고 복구를 시작한다.
+         * 복구의 배타 잠금은 진행 중인 발급의 공유 잠금이 풀릴 때까지 기다려야 하고 그 뒤에 커밋된 결과를 읽어야 한다.
+         */
+        @Test
+        void 복구는_다른_서버의_DB_발급이_끝난_뒤_커밋_결과를_읽는다() throws Exception {
+            CountDownLatch entered = new CountDownLatch(1);
+            CountDownLatch finish = new CountDownLatch(1);
+            CountDownLatch recovering = new CountDownLatch(1);
+            doAnswer(invocation -> {
+                entered.countDown();
+                assertThat(finish.await(10, TimeUnit.SECONDS)).isTrue();
+                return invocation.callRealMethod();
+            }).when(batchIssues).issueSequences(org.mockito.ArgumentMatchers.eq(eventId),
+                    org.mockito.ArgumentMatchers.anyList(), any());
+            try (ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
+                Future<CouponIssueResponse> issuing = executor.submit(() -> couponCommandService.issue(memberId, eventId));
+                assertThat(entered.await(10, TimeUnit.SECONDS)).isTrue();
+                sequenceService.block(eventId, null);
+                Future<?> rebuilding = executor.submit(() -> {
+                    recovering.countDown();
+                    sequenceRecoveryService.recover(eventId);
+                });
+                try {
+                    assertThat(recovering.await(10, TimeUnit.SECONDS)).isTrue();
+                    assertThatThrownBy(() -> rebuilding.get(150, TimeUnit.MILLISECONDS)).isInstanceOf(TimeoutException.class);
+                } finally {
+                    finish.countDown();
+                }
+                assertThat(issuing.get(10, TimeUnit.SECONDS).memberCouponId()).isPositive();
+                rebuilding.get(10, TimeUnit.SECONDS);
+            }
+            assertThat(redis.opsForList().range(prefix + "available", 0, -1)).containsExactly("2", "3");
+            assertThat(redis.opsForHash().get(prefix + "meta", "completed")).isEqualTo("1");
+            assertThat(redis.opsForZSet().size(prefix + "pending")).isZero();
+        }
+
+        @Test
+        void 재구축과_예약_완료_반납은_같은_절대_만료_시각을_유지한다() {
+            long expiresAt = Instant.now().plusSeconds(60).toEpochMilli();
+            sequences.rebuild(eventId, List.of(1, 2, 3), 0, expiresAt);
+            assertThat(expiration("available")).isEqualTo(expiresAt);
+            assertThat(expiration("meta")).isEqualTo(expiresAt);
+            assertThat(reserve("one")).isEqualTo(1);
+            assertThat(expiration("pending")).isEqualTo(expiresAt);
+            reserve("two");
+            reserve("three");
+            assertThat(redis.hasKey(prefix + "available")).isFalse();
+
+            sequences.release(eventId, 1, "one");
+            assertThat(expiration("available")).isEqualTo(expiresAt);
+            sequences.complete(eventId, 2, "two");
+            sequenceService.block(eventId, null);
+            assertThat(expiration("meta")).isEqualTo(expiresAt);
+            assertThat(expiration("pending")).isEqualTo(expiresAt);
+            sequences.rebuild(eventId, List.of(1, 3), 1, expiresAt);
+            assertThat(expiration("available")).isEqualTo(expiresAt);
+            assertThat(expiration("meta")).isEqualTo(expiresAt);
+        }
+
+        @Test
+        void 만료된_예약의_완료_반납_차단과_복구는_키를_되살리지_않는다() {
+            reserve("expired");
+            for (String suffix : List.of("available", "pending", "meta")) {
+                redis.expireAt(prefix + suffix, Instant.EPOCH);
+            }
+
+            sequences.complete(eventId, 1, "expired");
+            sequences.release(eventId, 1, "expired");
+            sequenceService.block(eventId, null);
+            assertThatThrownBy(() -> sequences.rebuild(eventId, List.of(1, 2, 3), 0,
+                    Instant.now().minusSeconds(1).toEpochMilli())).rootCause().isInstanceOf(IllegalStateException.class);
+
+            assertThat(redis.hasKey(prefix + "available")).isFalse();
+            assertThat(redis.hasKey(prefix + "pending")).isFalse();
+            assertThat(redis.hasKey(prefix + "meta")).isFalse();
+        }
+
+        @Test
+        void 재구축이_시작한_뒤_만료돼도_나머지_적재로_키를_다시_만들지_않는다() {
+            var script = new org.springframework.data.redis.core.script.DefaultRedisScript<Long>();
+            script.setResultType(Long.class);
+            script.setLocation(new org.springframework.core.io.ClassPathResource("scripts/coupon/rebuild.lua"));
+            List<String> keys = List.of(prefix + "available", prefix + "pending", prefix + "meta");
+            long expiresAt = Instant.now().plusSeconds(60).toEpochMilli();
+            String expiry = Long.toString(expiresAt);
+            assertThat(redis.execute(script, keys, "start", expiry, "3", "0")).isEqualTo(1L);
+            redis.expireAt(prefix + "meta", Instant.EPOCH);
+
+            assertThat(redis.execute(script, keys, "append", expiry, "1", "2", "3")).isZero();
+            assertThat(redis.execute(script, keys, "finish", expiry, "3")).isZero();
+            assertThat(redis.hasKey(prefix + "available")).isFalse();
+            assertThat(redis.hasKey(prefix + "meta")).isFalse();
+        }
+
+        private Long expiration(String suffix) {
+            return redis.execute(new org.springframework.data.redis.core.script.DefaultRedisScript<>(
+                    "return redis.call('PEXPIRETIME', KEYS[1])", Long.class), List.of(prefix + suffix));
+        }
+
+        // 순번 하나를 Redis에 바로 예약하고 결과 부호를 돌려준다.
+        private long reserve(String reservationId) {
+            return sequences.reserveAll(eventId, List.of(reservationId), 30000).getFirst();
+        }
+    }
+
+    @Nested
+    @DisplayName("묶음 쿠폰 발급")
+    class BatchIssuance {
+
+        private static final AtomicLong NEXT_EVENT = new AtomicLong(90000);
+        private final List<Long> events = new ArrayList<>();
+        private final Set<Long> notWished = ConcurrentHashMap.newKeySet();
+        private long memberBase;
+
+        // 테스트마다 서로 겹치지 않는 회원 ID 구간을 정하고 회원 상태와 찜 조회를 고정한다.
+        @BeforeEach
+        void prepare() {
+            memberBase = NEXT_EVENT.get() * 100;
+            stubActiveMembers();
+            doAnswer(invocation -> invocation.<Set<Long>>getArgument(1).stream()
+                    .filter(id -> !notWished.contains(id)).collect(Collectors.toSet()))
+                    .when(wishes).findWishedMemberIds(any(), any());
+        }
+
+        // 테스트가 만든 이벤트와 재고, 쿠폰, 카운터와 Redis 키를 지우고 차단 표시를 푼다.
+        @AfterEach
+        void cleanUp() {
+            for (long eventId : events) {
+                jdbcTemplate.update("DELETE FROM member_coupon WHERE coupon_event_id=?", eventId);
+                jdbcTemplate.update("DELETE FROM coupon_inventory WHERE coupon_event_id=?", eventId);
+                jdbcTemplate.update("DELETE FROM coupon_event WHERE coupon_event_id=?", eventId);
+                String prefix = "coupon:{" + eventId + "}:";
+                redis.delete(List.of(prefix + "available", prefix + "pending", prefix + "meta"));
+                sequenceService.resume(eventId);
+            }
+            jdbcTemplate.update("DELETE FROM coupon_daily_limit WHERE member_id BETWEEN ? AND ?", memberBase, memberBase + 99);
+        }
+
+        // 재고보다 많은 회원이 동시에 요청하면 재고만큼만 발급되고 DB와 Redis의 수가 맞아야 한다.
+        @Test
+        void 여러_회원이_동시에_요청해도_재고만큼만_발급하고_카운터와_코드가_맞는다() throws Exception {
+            long eventId = event(12);
+            Map<String, Integer> results = concurrently(40, i -> couponCommandService.issue(memberBase + i, eventId));
+
+            assertThat(results.get("ISSUED")).isEqualTo(12);
+            assertThat(results.keySet()).isSubsetOf("ISSUED", CouponErrorCode.INVENTORY_EXHAUSTED.name(),
+                    CouponErrorCode.ISSUANCE_BUSY.name());
+            assertConsistent(eventId, 12);
+        }
+
+        /*
+         * 같은 회원의 동시 요청은 한 장만 발급되고 나머지는 중복으로 거절돼야 한다.
+         * 거절된 요청이 순번을 잡지 않으므로 남은 재고가 모두 Redis 목록에 그대로 남아야 한다.
+         */
+        @Test
+        void 같은_회원의_동시_요청은_한_장만_발급하고_나머지는_중복으로_거절한다() throws Exception {
+            long eventId = event(5);
+            Map<String, Integer> results = concurrently(10, i -> couponCommandService.issue(memberBase, eventId));
+
+            assertThat(results).containsEntry("ISSUED", 1)
+                    .containsEntry(CouponErrorCode.EVENT_ALREADY_ISSUED.name(), 9);
+            assertConsistent(eventId, 1);
+            assertThat(redis.opsForList().size("coupon:{" + eventId + "}:available")).isEqualTo(4);
+        }
+
+        // 한 회원이 다섯 이벤트에 동시에 요청하면 일일 한도 세 장까지만 발급돼야 한다.
+        @Test
+        void 한_회원이_여러_이벤트에_동시에_요청해도_일일_한도까지만_발급한다() throws Exception {
+            List<Long> ids = List.of(event(2), event(2), event(2), event(2), event(2));
+            Map<String, Integer> results = concurrently(5, i -> couponCommandService.issue(memberBase, ids.get(i)));
+
+            assertThat(results).containsEntry("ISSUED", 3)
+                    .containsEntry(CouponErrorCode.DAILY_LIMIT_REACHED.name(), 2);
+            assertThat(jdbcTemplate.queryForObject("SELECT issued_count FROM coupon_daily_limit WHERE member_id=?",
+                    Integer.class, memberBase)).isEqualTo(3);
+        }
+
+        /*
+         * 대기열을 거치지 않고 묶음 하나를 직접 넘겨 묶음 안의 판정 순서를 확인한다.
+         * 찜하지 않은 회원과 같은 묶음 안의 중복 요청은 거절되고 나머지 두 건만 발급돼야 한다.
+         * 거절된 요청은 순번을 잡지 않으므로 Redis 목록에 세 장이 남고 대기 중인 예약은 없어야 한다.
+         */
+        @Test
+        void 한_묶음_안의_거절은_다른_요청의_발급을_막지_않고_순번을_돌려놓는다() {
+            long eventId = event(5);
+            notWished.add(memberBase + 1);
+            LocalDateTime now = TODAY.atTime(12, 0);
+            List<CouponIssuanceOutcome> outcomes = batchIssuanceService.issueBatch(List.of(
+                    new CouponIssuanceRequest(memberBase, eventId, now),
+                    new CouponIssuanceRequest(memberBase + 1, eventId, now),
+                    new CouponIssuanceRequest(memberBase, eventId, now),
+                    new CouponIssuanceRequest(memberBase + 2, eventId, now)));
+
+            assertThat(outcomes.get(0).response()).isNotNull();
+            assertThat(outcomes.get(1).rejection()).isEqualTo(CouponErrorCode.CAMPAIGN_NOT_WISHED);
+            assertThat(outcomes.get(2).rejection()).isEqualTo(CouponErrorCode.EVENT_ALREADY_ISSUED);
+            assertThat(outcomes.get(3).response()).isNotNull();
+            outcomes.stream().filter(outcome -> outcome.reservation() != null)
+                    .forEach(outcome -> sequenceService.complete(outcome.reservation()));
+            assertConsistent(eventId, 2);
+            assertThat(redis.opsForList().size("coupon:{" + eventId + "}:available")).isEqualTo(3);
+            assertThat(redis.opsForZSet().size("coupon:{" + eventId + "}:pending")).isZero();
+        }
+
+        @Test
+        void 일괄_상태_조회에서_정지와_탈퇴와_없는_회원은_각각_거절한다() {
+            long eventId = event(4);
+            Set<Long> memberIds = Set.of(memberBase, memberBase + 1, memberBase + 2, memberBase + 3);
+            doReturn(Map.of(memberBase, MemberStatus.ACTIVE, memberBase + 1, MemberStatus.SUSPENDED,
+                    memberBase + 2, MemberStatus.WITHDRAWN)).when(members).findCurrentStatuses(memberIds);
+            LocalDateTime now = TODAY.atTime(12, 0);
+
+            List<CouponIssuanceOutcome> outcomes = batchIssuanceService.issueBatch(List.of(
+                    new CouponIssuanceRequest(memberBase, eventId, now),
+                    new CouponIssuanceRequest(memberBase + 1, eventId, now),
+                    new CouponIssuanceRequest(memberBase + 2, eventId, now),
+                    new CouponIssuanceRequest(memberBase + 3, eventId, now)));
+
+            assertThat(outcomes.getFirst().response()).isNotNull();
+            assertThat(outcomes.subList(1, 4)).extracting(CouponIssuanceOutcome::rejection)
+                    .containsExactly(CouponErrorCode.MEMBER_ACCOUNT_NOT_ALLOWED,
+                            CouponErrorCode.MEMBER_ACCOUNT_NOT_ALLOWED, CouponErrorCode.MEMBER_ACCOUNT_NOT_ALLOWED);
+            sequenceService.complete(outcomes.getFirst().reservation());
+            assertConsistent(eventId, 1);
+        }
+
+        @Test
+        void 한_묶음의_캠페인마다_찜한_회원에게만_발급한다() {
+            long firstEvent = event(2);
+            long secondEvent = event(2);
+            Set<Long> memberIds = Set.of(memberBase, memberBase + 1);
+            doReturn(Set.of(memberBase)).when(wishes).findWishedMemberIds(firstEvent, memberIds);
+            doReturn(Set.of(memberBase + 1)).when(wishes).findWishedMemberIds(secondEvent, memberIds);
+            LocalDateTime now = TODAY.atTime(12, 0);
+
+            List<CouponIssuanceOutcome> outcomes = batchIssuanceService.issueBatch(List.of(
+                    new CouponIssuanceRequest(memberBase, firstEvent, now),
+                    new CouponIssuanceRequest(memberBase + 1, firstEvent, now),
+                    new CouponIssuanceRequest(memberBase, secondEvent, now),
+                    new CouponIssuanceRequest(memberBase + 1, secondEvent, now)));
+
+            assertThat(outcomes.get(0).response()).isNotNull();
+            assertThat(outcomes.get(1).rejection()).isEqualTo(CouponErrorCode.CAMPAIGN_NOT_WISHED);
+            assertThat(outcomes.get(2).rejection()).isEqualTo(CouponErrorCode.CAMPAIGN_NOT_WISHED);
+            assertThat(outcomes.get(3).response()).isNotNull();
+            sequenceService.complete(outcomes.get(0).reservation());
+            sequenceService.complete(outcomes.get(3).reservation());
+            assertThat(jdbcTemplate.queryForList("""
+                    SELECT coupon_event_id FROM member_coupon WHERE member_id IN (?,?) ORDER BY member_id
+                    """, Long.class, memberBase, memberBase + 1)).containsExactly(firstEvent, secondEvent);
+            assertThat(jdbcTemplate.queryForList("""
+                    SELECT coupon_event_id FROM coupon_inventory
+                     WHERE coupon_event_id IN (?,?) AND status='ISSUED' ORDER BY coupon_event_id
+                    """, Long.class, firstEvent, secondEvent)).containsExactly(firstEvent, secondEvent);
+            assertThat(jdbcTemplate.queryForList("""
+                    SELECT issued_count FROM coupon_daily_limit WHERE member_id IN (?,?) ORDER BY member_id
+                    """, Integer.class, memberBase, memberBase + 1)).containsExactly(1, 1);
+            assertThat(redis.opsForHash().get("coupon:{" + firstEvent + "}:meta", "completed")).isEqualTo("1");
+            assertThat(redis.opsForHash().get("coupon:{" + secondEvent + "}:meta", "completed")).isEqualTo("1");
+        }
+
+        // 오늘 발급 가능한 이벤트와 재고를 quantity장 만들고 Redis 큐를 DB 기준으로 채운다.
+        private long event(int quantity) {
+            long eventId = NEXT_EVENT.incrementAndGet();
+            events.add(eventId);
+            LocalDate today = TODAY;
+            jdbcTemplate.update("""
+                    INSERT INTO coupon_event(coupon_event_id,campaign_id,business_date,issue_quantity,
+                        usable_start_at,usable_end_at,status,store_id,store_name,discount_target_type,
+                        discount_type,discount_value,created_at,updated_at)
+                    VALUES (?,?,?,?,?,?,'ACTIVE',10,'묶음 발급 시험','ALL','AMOUNT',1000,?,?)
+                    """, eventId, eventId, today, quantity, today.atStartOfDay(), today.plusDays(1).atStartOfDay(),
+                    today.atStartOfDay(), today.atStartOfDay());
+            for (int sequence = 1; sequence <= quantity; sequence++) {
+                jdbcTemplate.update("""
+                        INSERT INTO coupon_inventory(coupon_event_id,sequence_no,coupon_code,status,
+                            usable_start_at,usable_end_at,created_at,updated_at)
+                        VALUES (?,?,UUID_TO_BIN(UUID()),'AVAILABLE',?,?,?,?)
+                        """, eventId, sequence, today.atStartOfDay(), today.plusDays(1).atStartOfDay(),
+                        today.atStartOfDay(), today.atStartOfDay());
+            }
+            sequenceRecoveryService.recover(eventId);
+            assertThat(redis.opsForHash().get("coupon:{" + eventId + "}:meta", "state")).isEqualTo("READY");
+            return eventId;
+        }
+
+        /*
+         * count개 스레드가 준비를 마친 뒤 동시에 action을 실행하고 결과별 건수를 돌려준다.
+         * 발급에 성공하면 ISSUED로, CouponException이면 오류 코드 이름으로 센다.
+         */
+        private Map<String, Integer> concurrently(int count, IndexedAction action) throws Exception {
+            ExecutorService executor = Executors.newFixedThreadPool(count);
+            CountDownLatch ready = new CountDownLatch(count);
+            CountDownLatch start = new CountDownLatch(1);
+            Map<String, Integer> results = new ConcurrentHashMap<>();
+            List<Future<?>> futures = new ArrayList<>();
+            for (int i = 0; i < count; i++) {
+                int index = i;
+                futures.add(executor.submit(() -> {
+                    ready.countDown();
+                    start.await();
+                    String result;
+                    try {
+                        action.run(index);
+                        result = "ISSUED";
+                    } catch (CouponException error) {
+                        result = String.valueOf(error.getErrorCode());
+                    }
+                    results.merge(result, 1, Integer::sum);
+                    return null;
+                }));
+            }
+            assertThat(ready.await(10, TimeUnit.SECONDS)).isTrue();
+            start.countDown();
+            for (Future<?> future : futures) {
+                future.get(30, TimeUnit.SECONDS);
+            }
+            executor.shutdown();
+            return results;
+        }
+
+        // 회원 쿠폰, ISSUED 재고, 쿠폰 코드 연결, 일일 카운터 합, Redis 완료 수가 모두 발급 수와 같은지 확인한다.
+        private void assertConsistent(long eventId, int issued) {
+            assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM member_coupon WHERE coupon_event_id=?",
+                    Integer.class, eventId)).isEqualTo(issued);
+            assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM coupon_inventory WHERE coupon_event_id=? AND status='ISSUED'",
+                    Integer.class, eventId)).isEqualTo(issued);
+            assertThat(jdbcTemplate.queryForObject("""
+                    SELECT COUNT(*) FROM member_coupon coupon
+                      JOIN coupon_inventory inventory ON inventory.coupon_code = coupon.coupon_code
+                     WHERE coupon.coupon_event_id=? AND inventory.coupon_event_id=? AND inventory.status='ISSUED'
+                    """, Integer.class, eventId, eventId)).isEqualTo(issued);
+            assertThat(jdbcTemplate.queryForObject("""
+                    SELECT COALESCE(SUM(issued_count), 0) FROM coupon_daily_limit WHERE member_id BETWEEN ? AND ?
+                    """, Integer.class, memberBase, memberBase + 99)).isEqualTo(issued);
+            assertThat(redis.opsForHash().get("coupon:{" + eventId + "}:meta", "completed")).isEqualTo(String.valueOf(issued));
+        }
+
+        // 몇 번째 스레드인지를 받아 요청을 보내는 동작이다.
+        @FunctionalInterface
+        private interface IndexedAction {
+            void run(int index);
         }
     }
 

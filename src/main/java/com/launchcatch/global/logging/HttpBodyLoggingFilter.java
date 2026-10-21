@@ -180,8 +180,10 @@ public class HttpBodyLoggingFilter extends OncePerRequestFilter {
         String resBody = needsBody ? maskedBody(response.getContentAsByteArray()) : null;
 
         if (expected) {
-            log.debug("event=HTTP_ACCESS status={} durationMs={} reqBody=\"{}\" resBody=\"{}\"",
-                    status, durationMs, reqBody, resBody);
+            if (log.isDebugEnabled()) {
+                log.debug("event=HTTP_ACCESS status={} durationMs={} reqBody=\"{}\" resBody=\"{}\"",
+                        status, durationMs, reqBody, resBody);
+            }
         } else if (status >= 500) {
             log.error("event=HTTP_ACCESS status={} durationMs={} reqBody=\"{}\" resBody=\"{}\"",
                     status, durationMs, reqBody, resBody);

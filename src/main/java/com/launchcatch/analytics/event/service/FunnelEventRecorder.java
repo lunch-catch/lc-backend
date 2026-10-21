@@ -33,7 +33,7 @@ public class FunnelEventRecorder {
 
     static final String METRIC = "analytics_funnel_event_total";
     private static final int THREADS = 2;
-    private static final int QUEUE_CAPACITY = 1_000;
+    private static final int QUEUE_CAPACITY = 20_000;
 
     private final EventLogWriter writer;
     private final MeterRegistry registry;

@@ -1,0 +1,119 @@
+package com.launchcatch.coupon.service;
+
+import com.launchcatch.coupon.entity.CouponEvent;
+import com.launchcatch.coupon.entity.CouponInventoryStatus;
+import com.launchcatch.coupon.repository.CouponEventRepository;
+import com.launchcatch.coupon.repository.CouponInventoryRepository;
+import com.launchcatch.coupon.repository.CouponSequenceRepository;
+import com.launchcatch.global.config.ClockConfig;
+import java.time.Clock;
+import java.time.Duration;
+import java.time.LocalTime;
+import java.util.List;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.TransactionTemplate;
+
+/*
+ * 차단된 이벤트의 Redis 큐를 DB 기준으로 다시 만든다.
+ * 별도 스케줄러 없이 차단을 발견한 후속 발급 요청이 recover를 부른다.
+ */
+@Service
+@Slf4j
+@RequiredArgsConstructor
+public class CouponSequenceRecoveryService {
+
+    private final CouponEventRepository events;
+    private final CouponInventoryRepository inventories;
+    private final CouponSequenceRepository sequences;
+    private final CouponSequenceService sequenceService;
+    private final PlatformTransactionManager transactionManager;
+    private final Clock clock;
+
+    @Value("${coupon.issue-end-time:14:00}")
+    private LocalTime issueEndTime = LocalTime.of(14, 0);
+
+    @Value("${coupon.sequence.retention-grace:1h}")
+    private Duration retentionGrace = Duration.ofHours(1);
+
+    @Value("${coupon.issue.batch.wait-timeout:10s}")
+    private Duration waitTimeout = Duration.ofSeconds(10);
+    // 이 서버에서 지금 복구 중인 이벤트 ID이며 같은 이벤트를 두 스레드가 함께 복구하지 않게 한다.
+    private final Set<Long> recovering = ConcurrentHashMap.newKeySet();
+    // 복구에 실패한 이벤트를 다시 시도할 수 있는 시각(System.nanoTime 기준)이다.
+    private final ConcurrentHashMap<Long, Long> retryAfter = new ConcurrentHashMap<>();
+
+    /*
+     * 이벤트를 배타 잠금하고 DB의 AVAILABLE 순번과 ISSUED 수로 Redis 큐를 다시 만든다.
+     * 배타 잠금은 진행 중인 발급 묶음이 공유 잠금을 풀 때까지 기다리므로 커밋된 결과만 읽는다.
+     * 두 수의 합이 이벤트 발급 수량과 다르면 큐를 만들지 않고 실패로 남긴다.
+     * 성공하면 이 서버의 차단을 풀고, 실패하면 차단을 유지한 채 1초 동안 다시 시도하지 않는다.
+     */
+    public boolean recover(long eventId) {
+        return recover(eventId, System.nanoTime() + waitTimeout.toNanos());
+    }
+
+    // 호출자와 같은 처리 기한을 사용하며 실제 재구축과 트랜잭션 종료에 성공한 경우만 true를 반환한다.
+    public boolean recover(long eventId, long deadlineNanos) {
+        long nextRetryAt = retryAfter.getOrDefault(eventId, Long.MIN_VALUE);
+
+        // 이전 복구 실패 후 아직 1초가 안 지났으면 이번 복구 시도를 건너뛴다.
+        if (System.nanoTime() < nextRetryAt || deadlineNanos - System.nanoTime() <= 0
+                || Thread.currentThread().isInterrupted()) {
+            return false;
+        }
+
+        // 이 서버에서 다른 스레드가 이미 같은 이벤트를 복구 중이면 건너뛴다.
+        if (!recovering.add(eventId)) {
+            return false;
+        }
+        try {
+            TransactionTemplate transaction = new TransactionTemplate(transactionManager);
+            transaction.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
+            long remaining = deadlineNanos - System.nanoTime();
+            if (remaining <= 0) {
+                return false;
+            }
+            transaction.setTimeout((int) Math.max(1, TimeUnit.NANOSECONDS.toSeconds(remaining - 1) + 1));
+            boolean rebuilt = Boolean.TRUE.equals(transaction.execute(status -> {
+                CouponEvent event = events.findForRecovery(eventId).orElseThrow();
+                long expiresAt = event.getBusinessDate().atTime(issueEndTime).atZone(ClockConfig.ZONE)
+                        .toInstant().plus(retentionGrace).toEpochMilli();
+                if (clock.millis() >= expiresAt || deadlineNanos - System.nanoTime() <= 0) {
+                    return false;
+                }
+                List<Integer> available = inventories.findAvailableSequences(eventId);
+                long completed = inventories.countByCouponEventIdAndStatus(eventId, CouponInventoryStatus.ISSUED);
+                if (available.size() + completed != event.getIssueQuantity()) {
+                    throw new IllegalStateException("Coupon inventory count differs from event quantity");
+                }
+                if (deadlineNanos - System.nanoTime() <= 0) {
+                    throw new IllegalStateException("Coupon recovery deadline expired");
+                }
+                sequences.rebuild(eventId, available, completed, expiresAt);
+                return true;
+            }));
+            if (!rebuilt) {
+                return false;
+            }
+            sequenceService.resume(eventId);
+            retryAfter.remove(eventId);
+            log.info("event=COUPON_ISSUANCE_RECOVERED couponEventId={}", eventId);
+            return true;
+        } catch (RuntimeException error) {
+            sequenceService.block(eventId, error);
+            retryAfter.put(eventId, System.nanoTime() + TimeUnit.SECONDS.toNanos(1));
+            log.warn("event=COUPON_ISSUANCE_RECOVERY_FAILED couponEventId={} reason={}", eventId, error.toString());
+            return false;
+        } finally {
+            recovering.remove(eventId);
+        }
+    }
+}
