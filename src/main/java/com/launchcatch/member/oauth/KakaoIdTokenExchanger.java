@@ -1,5 +1,7 @@
 package com.launchcatch.member.oauth;
 
+import static com.launchcatch.auth.KakaoOAuth.REGISTRATION_ID;
+
 import com.launchcatch.auth.exception.AuthErrorCode;
 import com.launchcatch.auth.exception.AuthException;
 import com.launchcatch.global.logging.FailureLogDetails;
@@ -18,8 +20,6 @@ import org.springframework.stereotype.Service;
 @Service
 @RequiredArgsConstructor
 public class KakaoIdTokenExchanger {
-
-    private static final String REGISTRATION_ID = "kakao";
 
     private final ClientRegistrationRepository clientRegistrationRepository;
     private final KakaoLoginStateRepository kakaoLoginStateRepository;

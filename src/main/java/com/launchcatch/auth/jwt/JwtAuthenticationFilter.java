@@ -1,5 +1,7 @@
 package com.launchcatch.auth.jwt;
 
+import static com.launchcatch.auth.AuthCookieNames.ACCESS_TOKEN_COOKIE_NAME;
+
 import com.launchcatch.auth.CustomUserDetails;
 import com.launchcatch.auth.Role;
 import com.launchcatch.auth.contract.AccessTokenValidationPolicy;
@@ -34,8 +36,6 @@ import org.springframework.web.filter.OncePerRequestFilter;
  */
 @Slf4j
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
-
-    private static final String ACCESS_TOKEN_COOKIE_NAME = "accessToken";
 
     private final JwtTokenProvider jwtTokenProvider;
     private final AccessTokenCutoffVerifier cutoffVerifier;

@@ -1,5 +1,7 @@
 package com.launchcatch.auth;
 
+import static com.launchcatch.auth.KakaoOAuth.REGISTRATION_ID;
+
 import java.util.List;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
@@ -30,8 +32,6 @@ import org.springframework.web.reactive.function.client.WebClient;
 // 자동으로 채워 넣는다.
 @Configuration
 public class KakaoOidcConfig {
-
-    private static final String REGISTRATION_ID = "kakao";
 
     // ClientRegistration.ProviderDetails에도 issuer-uri를 꺼내는 방법이 있지만, application.yml에
     // 이미 우리가 적어둔 값(spring.security.oauth2.client.provider.kakao.issuer-uri)을 그대로
