@@ -1,5 +1,7 @@
 package com.launchcatch.billing.service;
 
+import static com.launchcatch.billing.PaymentConstants.FAILED_WITHOUT_REASON;
+
 import com.launchcatch.billing.client.PaymentGateway;
 import com.launchcatch.billing.client.PaymentGatewayInquiryResult;
 import com.launchcatch.billing.client.PgNotSentException;
@@ -33,7 +35,6 @@ public class PaymentRecheckService {
 
     static final String RECHECK_METRIC = "billing.payment.recheck";
 
-    private static final String FAILED_WITHOUT_REASON = "결제대행사 조회 결과 결제가 실패했습니다.";
     private static final String PENDING_REASON = "결제대행사가 아직 처리 중입니다.";
     private static final String NOT_FOUND_REASON = "결제대행사에 결제가 없습니다.";
     private static final String INQUIRY_FAILED_REASON = "결제대행사 조회에 실패했습니다.";
