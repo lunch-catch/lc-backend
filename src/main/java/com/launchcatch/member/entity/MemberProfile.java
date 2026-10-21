@@ -34,7 +34,7 @@ public class MemberProfile extends BaseTimeEntity {
     private Gender gender;
 
     @Enumerated(EnumType.STRING)
-    @Column(name = "age_group", length = 10)
+    @Column(name = "age_group", length = 20)
     private AgeGroup ageGroup;
 
     @Column(name = "location_nickname", length = 50)
