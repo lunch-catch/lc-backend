@@ -50,7 +50,7 @@ class TossPropertiesTest {
         Binder binder = new Binder(ConfigurationPropertySources.from(sources),
                 new PropertySourcesPlaceholdersResolver(sources));
 
-        String secretKey = binder.bind("billing.toss.secret-key", String.class).orElse("");
+        String secretKey = binder.bind("billing.toss.secret-key", String.class).get();
 
         assertThat(secretKey).isEmpty();
     }
