@@ -12,6 +12,7 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.launchcatch.analytics.DailyAggregation;
 import com.launchcatch.analytics.exception.AnalyticsErrorCode;
 import com.launchcatch.analytics.exception.AnalyticsException;
 import com.launchcatch.ops.contract.AuditLogWriter;
@@ -64,7 +65,7 @@ class AggregationRecalculationServiceTest {
     }
 
     private static BatchExecutionRecord run(long runId, LocalDate date, String status, int attemptNo) {
-        return new BatchExecutionRecord(runId, DailyAggregationRunner.JOB_NAME, date, status,
+        return new BatchExecutionRecord(runId, DailyAggregation.JOB_NAME, date, status,
                 LocalDateTime.of(2026, 10, 17, 12, 0), null, null, "api-1", 0, null, attemptNo);
     }
 

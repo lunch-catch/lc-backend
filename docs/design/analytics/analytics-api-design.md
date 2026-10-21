@@ -60,6 +60,8 @@ A-04 카테고리·지역별 분해와 A-08 점주별 상위 소진도 구현하
 
 시계열 항목의 상태는 `BatchExecutionQueryService`가 반환한 `DAILY_AGGREGATION` 실행 기록으로 만든다. 성공한 날짜는 `FINAL`, 아직 확정되지 않은 날짜는 `IN_PROGRESS`다. `aggregatedAt`은 마지막 성공 시각이다.
 
+실행과 조회가 함께 사용하는 작업 식별자의 소유 위치는 [구조와 동작 설계](./analytics_구조와_동작_설계.md#규칙을-두는-곳)를 따른다.
+
 ## 4. API와 저장 원천
 
 | API | analytics 저장 원천 | 배치 원천 |

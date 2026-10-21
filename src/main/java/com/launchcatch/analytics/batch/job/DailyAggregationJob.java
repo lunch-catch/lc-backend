@@ -1,5 +1,6 @@
 package com.launchcatch.analytics.batch.job;
 
+import com.launchcatch.analytics.DailyAggregation;
 import com.launchcatch.analytics.batch.AggregationOutcome;
 import com.launchcatch.analytics.batch.service.DailyAggregationRunner;
 import com.launchcatch.ops.scheduler.StandaloneJob;
@@ -39,7 +40,7 @@ public class DailyAggregationJob implements StandaloneJob {
 
     @Override
     public String jobName() {
-        return DailyAggregationRunner.JOB_NAME;
+        return DailyAggregation.JOB_NAME;
     }
 
     /*

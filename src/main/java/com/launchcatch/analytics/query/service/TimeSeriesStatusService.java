@@ -1,5 +1,7 @@
 package com.launchcatch.analytics.query.service;
 
+import static com.launchcatch.analytics.DailyAggregation.JOB_NAME;
+
 import com.launchcatch.analytics.query.AggregationStatus;
 import com.launchcatch.analytics.query.AnalyticsDateRange;
 import com.launchcatch.analytics.query.AnalyticsPeriod;
@@ -22,7 +24,6 @@ import org.springframework.stereotype.Service;
 @RequiredArgsConstructor
 public class TimeSeriesStatusService {
 
-    private static final String JOB_NAME = "DAILY_AGGREGATION";
     private static final String SUCCESS = "SUCCESS";
 
     private final BatchExecutionQueryService batchExecutions;

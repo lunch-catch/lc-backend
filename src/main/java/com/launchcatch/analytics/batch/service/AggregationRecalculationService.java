@@ -1,5 +1,6 @@
 package com.launchcatch.analytics.batch.service;
 
+import com.launchcatch.analytics.DailyAggregation;
 import com.launchcatch.analytics.exception.AnalyticsErrorCode;
 import com.launchcatch.analytics.exception.AnalyticsException;
 import com.launchcatch.ops.contract.AuditLogWriter;
@@ -128,7 +129,7 @@ public class AggregationRecalculationService {
     private void start(Long adminId, LocalDate businessDate, int attemptNo) {
         try {
             transactions.executeWithoutResult(status -> auditLogWriter.write(
-                    adminId, AUDIT_ACTION, businessDate.toString(), DailyAggregationRunner.JOB_NAME));
+                    adminId, AUDIT_ACTION, businessDate.toString(), DailyAggregation.JOB_NAME));
             executor.execute(() -> runner.aggregate(businessDate, attemptNo));
         } catch (RuntimeException failed) {
             runner.abandon(businessDate, "수동 재계산을 시작하지 못했다");
