@@ -1,0 +1,1140 @@
+{
+  "scope": "local-performance",
+  "passed": false,
+  "awsExecuted": false,
+  "date": "2026-10-21",
+  "startedAt": "2026-10-21T21:29:39.231646+09:00",
+  "finishedAt": "2026-10-21T21:31:16.447059+09:00",
+  "code": {
+    "baseAtMeasurement": "9af025e7644f6fbdf5459618a0aada9342d5d243",
+    "implementationCommit": "9aa3049500b1cbc83a35cedf2c1097970e256d5b",
+    "jarSha256": "802bd04a392d812480207a1ac50f98e4eb2658d2760542b72288fc12d0693c57",
+    "couponSourceSha256": {
+      "src/main/java/com/launchcatch/coupon/CouponBatchTask.java": "e2c39f2248089224845e1463172c30937289308c2246b5b69b307405128aac54",
+      "src/main/java/com/launchcatch/coupon/CouponConsistencyFinding.java": "543c1976f58fae3d102372104c5cda46ed318926f318b2ac6b137db5c7d0d0c7",
+      "src/main/java/com/launchcatch/coupon/CouponDiscountPrice.java": "f003d51705945dca1baeb55e821423060c096750a30901ba83e536faf8790af1",
+      "src/main/java/com/launchcatch/coupon/CouponListFilter.java": "61556b7084f4ede8e2509b310b4ef357183aa8de19c26332bbb8559bc4a6be96",
+      "src/main/java/com/launchcatch/coupon/CouponQrImageEncoder.java": "505da285494396a8a48ac0b8a76b279f8bfa5d69d219b6ae1e92cc130a7d1a6c",
+      "src/main/java/com/launchcatch/coupon/config/CouponOpenApiConfig.java": "6aecc5951253588ef0582405e878c7f5b1c6f0fbacb9a30ca17118b55cc928ed",
+      "src/main/java/com/launchcatch/coupon/config/CouponSecurityConfig.java": "6558456e9a618f0c8de5eaa9fe4cb220ebb620605c6ad42ffa6fa9ef691bca6e",
+      "src/main/java/com/launchcatch/coupon/contract/CouponExpiredEvent.java": "535745457698e3ad0df423b52f9d0ed44dc09590502540f7aaa4ead299b6bd93",
+      "src/main/java/com/launchcatch/coupon/contract/CouponIssueOpenedEvent.java": "b0e8285b665660e9bc4631b751bc23cd5881b5255804a8e63f248abbab50c9c3",
+      "src/main/java/com/launchcatch/coupon/contract/CouponIssuedEvent.java": "81b6e67ac603bbfff13752dabbc9d3506ea3fc25a7a8f05cfbb9a509c791f4c2",
+      "src/main/java/com/launchcatch/coupon/contract/CouponRedeemedEvent.java": "4f75902ba52f0e06d42dd0b74f18c67a47cc218250275270e46206267e5551a1",
+      "src/main/java/com/launchcatch/coupon/contract/CouponStatsQueryService.java": "1980ff28d0bc1262ab2be854de3ed1a5ecd2daa88c2a6ae00ddc9b82037e7e50",
+      "src/main/java/com/launchcatch/coupon/contract/DailyCampaignCouponStats.java": "65f89620f43db9cb7e72f26e133e2c0ed4411c13aa5a73caff383bf0717cda89",
+      "src/main/java/com/launchcatch/coupon/contract/DailyMemberCouponStats.java": "88950238f243ae7e4da4d8dfc9de4a88841aaf8e148d0e8aed2faf76e140eae9",
+      "src/main/java/com/launchcatch/coupon/contract/MemberCouponStats.java": "08def78cdb09602e04ff16e58543c8d9a13ae8cc3ce11fdc41ac03ed53b7c7e8",
+      "src/main/java/com/launchcatch/coupon/controller/CouponController.java": "1efe60eddeb075ea40cba2d378597225c50ca3f70eddebfe7ed15b5775faf801",
+      "src/main/java/com/launchcatch/coupon/controller/OwnerCouponController.java": "550dfa120185034a3ae051e73524fe18166aa72fcf53aa50c0c00937fc27d66d",
+      "src/main/java/com/launchcatch/coupon/dto/CouponDetailResponse.java": "d0cefdb1ab2cf1b4e6ce6f46b6e1d5a399f25111ad166a8d1a56f271176c4075",
+      "src/main/java/com/launchcatch/coupon/dto/CouponEventIdDeserializer.java": "81d7df9f36d26b2690b8b6180804aaf32e4fc269a0b6b285295261713b866f61",
+      "src/main/java/com/launchcatch/coupon/dto/CouponEventStatusRequest.java": "9e091882d19c952993ffbad7f7356a8f023cc30462bc0644f66a84eb997802e4",
+      "src/main/java/com/launchcatch/coupon/dto/CouponEventStatusResponse.java": "57040f03901f41fd39485e2031feaf91199761cb57f18043c5f0d36bcf1a786a",
+      "src/main/java/com/launchcatch/coupon/dto/CouponIssuanceLimitResponse.java": "7fafc30038db7159aaf08dd37b86f3c4fe9f07aa6adc49fcf49943a829f8697d",
+      "src/main/java/com/launchcatch/coupon/dto/CouponIssueRequest.java": "252296c36e9b9a7547560d4ece161fafc03e89d8b6556ff34c339b40fbf77720",
+      "src/main/java/com/launchcatch/coupon/dto/CouponIssueResponse.java": "91677dc06a720a81a0d8b65d3e05939d0b2cb0cacf4689c197088cdead72909e",
+      "src/main/java/com/launchcatch/coupon/dto/CouponQrResponse.java": "e1e5b856ea13dbcbc26013a850821a2a62c039bcdc442cbc359ab6b2786be6a0",
+      "src/main/java/com/launchcatch/coupon/dto/CouponSummaryResponse.java": "0fb39761f1f25d69e8764b77372ee9710bfb4250dba464985d8cdd50fd49c3d0",
+      "src/main/java/com/launchcatch/coupon/dto/CouponUsageHistoryResponse.java": "8e0a011f7ba20ffa791937cf70083aff843c40b74bafce85d38c571562acea0c",
+      "src/main/java/com/launchcatch/coupon/dto/CouponUseRequest.java": "5aabcbd697b4d6db65e984efd9e41e6f1cfd45f9de4889d1a724d0fba3c7ef42",
+      "src/main/java/com/launchcatch/coupon/dto/CouponUseResponse.java": "bcc768e86034cbabf1d9603a724256543016b158eaf2b1856fe4a463a7565daa",
+      "src/main/java/com/launchcatch/coupon/dto/OwnerCouponDailyUsageResponse.java": "f4116a4fff6d894ee4ad90ce359980193b10f5ae081fca4e33e27d3fa3148e7b",
+      "src/main/java/com/launchcatch/coupon/dto/OwnerCouponSummaryResponse.java": "182fa4b58d1222dee47f95425c80e8c6d4d9da43ac406edbc04334a3f5690ee6",
+      "src/main/java/com/launchcatch/coupon/entity/CouponDailyLimit.java": "853dae25ce5f93712252858a398cca737c3ea089811f2767b9671c7d0205ad52",
+      "src/main/java/com/launchcatch/coupon/entity/CouponEvent.java": "4fe9e0b4576a80d05c1f1767faf8e4f2b57ee541a4107388a554901c0227d8ce",
+      "src/main/java/com/launchcatch/coupon/entity/CouponEventStatus.java": "ebcef19c301b26aa59d12277f2e02e5728f48180247c7682180188b074024362",
+      "src/main/java/com/launchcatch/coupon/entity/CouponInventory.java": "f808dbcf9024b11aceaeed0994e84514adcca02c3d73f1702d349f8cbeb32a8d",
+      "src/main/java/com/launchcatch/coupon/entity/CouponInventoryStatus.java": "3458c4c5ee2afc5dd6afb7cbccad1663d950525410d92c33fe22ab158bc75d8d",
+      "src/main/java/com/launchcatch/coupon/entity/CouponUsageHistory.java": "9880f3b0cd1d143a0d885f3c8898e7392cfb50e9564f205baf0342031e645d16",
+      "src/main/java/com/launchcatch/coupon/entity/DiscountTargetType.java": "27386b7f692ee9f6a9d937ff2172bf9fb722789b88c4f2d1a6699cf56f1da810",
+      "src/main/java/com/launchcatch/coupon/entity/DiscountType.java": "b54afe688caca7700b14af68897e464562b178588a0d16632f2c8807abd2b3cf",
+      "src/main/java/com/launchcatch/coupon/entity/MemberCoupon.java": "8a81a2ada0628108b6d963e222ee28241c7d4c4a08a0eeb95f918b74d54ef1a8",
+      "src/main/java/com/launchcatch/coupon/entity/MemberCouponStatus.java": "c3a677989bf8983e1da7ec37935ce6384a2907e3e5037f61e27b114045a7eda6",
+      "src/main/java/com/launchcatch/coupon/exception/CouponErrorCode.java": "9482104bf218eadb6f2b054b22c2eaba10078c0d7d8870475ab8578861a12d3f",
+      "src/main/java/com/launchcatch/coupon/exception/CouponException.java": "ce7d1074067bab8c1052037d8553a4a3a362def05009425386687d538648d2c3",
+      "src/main/java/com/launchcatch/coupon/job/CouponConsistencyJob.java": "80eac4954e414ebf6135512cc0fad745fad469dad23f14dd1fe33354bdae304c",
+      "src/main/java/com/launchcatch/coupon/job/CouponExpirationJob.java": "c107888760b1c04adeb54a7d33cec6c1c6af7a3ada59b8f65960ad2ce95f9acb",
+      "src/main/java/com/launchcatch/coupon/job/CouponIssueCloseJob.java": "c331475ccdd4216119011b34726f78f8503c91687d47334b4949c019acdcf576",
+      "src/main/java/com/launchcatch/coupon/job/CouponIssueOpenJob.java": "e4aa099678578080c094303820b274ad913038b9f14227bc58be37d454c8dfc4",
+      "src/main/java/com/launchcatch/coupon/job/CouponPreparationJob.java": "d913a79fd037a1b3e0234c17bf64dfa3a5410d48d6b067a9fbc8777e5b4af66f",
+      "src/main/java/com/launchcatch/coupon/listener/CampaignEventListener.java": "c84cb7117ae4ac73431b589e3656b413998c32262f4d1d2153dac9c8486cb41e",
+      "src/main/java/com/launchcatch/coupon/repository/CouponBatchIssueRepository.java": "576498eb57ec89ed461f6bd1e5713124ae5e006b54d82d7904f64094c7f5b285",
+      "src/main/java/com/launchcatch/coupon/repository/CouponBatchRepository.java": "d172ce691ea09c5c51d0349f9d18b6234e3371d6cc20407773f0ed378c4aff66",
+      "src/main/java/com/launchcatch/coupon/repository/CouponConsistencyRepository.java": "972be4a7a60941e5e18a87fb20c972b11dfa8d8fc43118aaad1bf6d498f7b9c6",
+      "src/main/java/com/launchcatch/coupon/repository/CouponDailyLimitRepository.java": "8619bafe6b11c9773a5900a5c4b59b56951e595e462aa6834f4088cbfe2505a2",
+      "src/main/java/com/launchcatch/coupon/repository/CouponEventRepository.java": "f13d5cdcc3c42b4226623face682948d547ef670e55e43ffea156e6e24f4fb1d",
+      "src/main/java/com/launchcatch/coupon/repository/CouponInventoryRepository.java": "f9634c290c00430fa460195f4b7591c19ab40697eec8be8c103d26e2b51ae7b1",
+      "src/main/java/com/launchcatch/coupon/repository/CouponSequenceRepository.java": "9be687dd662e74c84e715b489dd9feacf9c2a1653c80399ce4b9c7bc81f7629a",
+      "src/main/java/com/launchcatch/coupon/repository/CouponUsageHistoryRepository.java": "9f0c2929351cba532db90c3d0ef434a6fa316cc6dd57f6acc3bc52e6654b0b1e",
+      "src/main/java/com/launchcatch/coupon/repository/CouponUsageHistoryRepositoryCustom.java": "b596825999ed36e17bc324f33dac1aa4ff4b2db10f04940199640ddcb07e1a53",
+      "src/main/java/com/launchcatch/coupon/repository/CouponUsageHistoryRepositoryImpl.java": "1e31979fdc74ba9b8afcd0c6cad9c2e1095a23f746d174b95e9573994f9fe0bf",
+      "src/main/java/com/launchcatch/coupon/repository/MemberCouponRepository.java": "499e430ed885593d508df4f139408909fa10180bd1a71cf51456026e2c413028",
+      "src/main/java/com/launchcatch/coupon/repository/MemberCouponRepositoryCustom.java": "4eb0932ca635ee482599b838f98c3532e444d9b801abd2d12725e6668ef955e3",
+      "src/main/java/com/launchcatch/coupon/repository/MemberCouponRepositoryImpl.java": "00b889d9d2977c7a1a853d4b39b2b7e5090d8f5ebf9b9b51ebaa7c63c08b834a",
+      "src/main/java/com/launchcatch/coupon/service/CouponBatchExecutionService.java": "f305b4d7965923e8ab1c1d2dd5ac71262c99a72f85394ff23ddbd28a3da83496",
+      "src/main/java/com/launchcatch/coupon/service/CouponBatchIssuanceService.java": "83aa6009653c9b36ecbc31fb407fbb13f8ef2573b8e33d1aafed10ecd99401f4",
+      "src/main/java/com/launchcatch/coupon/service/CouponCommandService.java": "0b5b1d4e3fe26c666fa4a745534dedb8183c48476996be362227624ae44d2088",
+      "src/main/java/com/launchcatch/coupon/service/CouponConsistencyService.java": "30270ce6b2f8b3051757c2af3fee7009f1444e0d7bf88f38d3ddd84398a5da46",
+      "src/main/java/com/launchcatch/coupon/service/CouponEventStateService.java": "7409019150d1c82de1c72bcb2361833df2b202933a17f4401f129b782f4db9d6",
+      "src/main/java/com/launchcatch/coupon/service/CouponExpirationService.java": "47a2a95735a8d8df95ea827414c395b00a54f312706cc5b7a1f0df13bee8191f",
+      "src/main/java/com/launchcatch/coupon/service/CouponIssueBatcher.java": "420ddc269ffc45875bd66f143cde42da1d492780af08efd59c0f0dab65b65f43",
+      "src/main/java/com/launchcatch/coupon/service/CouponLifecycleService.java": "f30a427c5789752b9ef5825d7714cf75a2ee2b4f16d287106c86322bad3051df",
+      "src/main/java/com/launchcatch/coupon/service/CouponLookUpService.java": "c2531539d3f09ff66b874784fe3c5c531ae96b9f0ba1780d3bcf7f86a70b8757",
+      "src/main/java/com/launchcatch/coupon/service/CouponPreparationService.java": "fba1692a9e7ee43db2e43662c1e5104c13b93ac51736ad7a3baaf3a711b3f369",
+      "src/main/java/com/launchcatch/coupon/service/CouponSequenceRecoveryService.java": "b8877b10ed89d0791f950db67c3c8bc555c43b73815d2914b69b467af961866c",
+      "src/main/java/com/launchcatch/coupon/service/CouponSequenceService.java": "24a93b1665d28a1f981df621588aebebc1b314aa116a63a0d78f95d6db8389d6",
+      "src/main/java/com/launchcatch/coupon/service/CouponSoldOutNotificationService.java": "a9eb6bc1df50a6cbb2c37ecec6d6229119f989340616e2ab852e153ed764ea09",
+      "src/main/java/com/launchcatch/coupon/service/CouponStatsQueryServiceImpl.java": "75daea7ff1ba52aa23156392f5b5cf7c719965f40448b93c79d928bb2385195e",
+      "src/main/java/com/launchcatch/coupon/service/OwnerCouponService.java": "b8f2266e5aa58c842cd04abcdf4c8c230904c19db2c8d1f2a5fb602a7996adf1",
+      "src/main/java/com/launchcatch/coupon/service/model/CouponIssuanceOutcome.java": "458fcaf0776c4871c33bcc4bd2371eeaf8e89948d4c0896ee2d24bc3a7058e99",
+      "src/main/java/com/launchcatch/coupon/service/model/CouponIssuanceRequest.java": "4d929f0d81b52f05b7742bb0494f8df299694cf8a344189e210078c2a43c6ce6",
+      "src/main/java/com/launchcatch/coupon/service/model/CouponIssuanceResult.java": "dfdeb345a417821b676347266fa3d621e09534132db6e5b4c9a07ccc1ea7997b",
+      "src/main/java/com/launchcatch/coupon/service/model/CouponReservation.java": "0106504767e1d8d899fe01f801e74efc6d813ec9a15e1a9c87e3a681dded36ea",
+      "src/main/java/com/launchcatch/coupon/service/model/CouponReservationOutcome.java": "eb2e873502aa5633b2cf9214a32c9cbf160ea1a00e6871a734e30d33bf38bfd9",
+      "src/main/resources/scripts/coupon/block.lua": "ab8ed5e4685deff3e5f1789aa62634e21247714222ff1bd9e37b2e5159492a05",
+      "src/main/resources/scripts/coupon/complete.lua": "b7b4f72eef039517d317a1c035caffc662a9d5a424ad7d918b285ac1c7ef7cf6",
+      "src/main/resources/scripts/coupon/rebuild.lua": "54f8f2e05256146c9a6dcedb9713b069b1f8ef3861e7cd7f47dc52c36d6dc941",
+      "src/main/resources/scripts/coupon/release.lua": "ae1a7dc2fab6c388edbb87a9499008de5958ffb3d7cae3ee9150a91c928ce6d5",
+      "src/main/resources/scripts/coupon/reserve_many.lua": "75244228fe0263f3acbb3c4d80ba0bd86563d4d79539a4d85c59607ec8466df2"
+    }
+  },
+  "environment": {
+    "host": {
+      "memoryBytes": 8589934592,
+      "cpus": 8,
+      "model": "MacBookAir10,1"
+    },
+    "docker": {
+      "Architecture": "aarch64",
+      "NCPU": 4,
+      "MemTotal": 2068389888,
+      "OperatingSystem": "Docker Desktop",
+      "ServerVersion": "29.6.1"
+    },
+    "databaseVersion": "8.4.7",
+    "javaVersion": "Temurin 21.0.11 arm64",
+    "k6Version": "k6 v1.7.1 (commit/9f82e6f1fc, go1.26.1, darwin/arm64)",
+    "openFileLimit": 65536
+  },
+  "settings": {
+    "hikariMax": 8,
+    "batchWorkers": 4,
+    "batchMaxSize": 500,
+    "batchQueueCapacity": 2000,
+    "tomcatThreadsMax": 200,
+    "notificationWorkers": 1,
+    "jvmHeapMaxMiB": 768,
+    "mysqlMemoryLimitMiB": 1024,
+    "mysqlBufferPoolMiB": 256,
+    "valkeyMemoryLimitMiB": 128,
+    "issuanceTime": "00:00 <= time < 23:59:59"
+  },
+  "scenario": {
+    "name": "campaign20-event20-stock100-users5000",
+    "campaigns": 20,
+    "events": 20,
+    "stockPerEvent": 100,
+    "users": 5000,
+    "initialUsers": 100,
+    "rampUpSeconds": 10,
+    "holdSeconds": 0,
+    "requestTimeoutSeconds": 60,
+    "firstEventId": 20000,
+    "firstMemberId": 2000000,
+    "warmup": {
+      "usersPerBatch": 100,
+      "secondsPerBatch": 20,
+      "maxBatches": 3,
+      "p95LimitMs": 700,
+      "p99LimitMs": 1000,
+      "p95ToleranceMs": 25,
+      "p95ToleranceRatio": 0.25
+    },
+    "expected": {
+      "issued": 2000,
+      "soldOut": 3000,
+      "requestsPerEvent": 250,
+      "issuedPerEvent": 100,
+      "soldOutPerEvent": 150
+    },
+    "versions": {
+      "v1": {
+        "role": "MySQL 단독 발급",
+        "image": "639793187090.dkr.ecr.ap-northeast-2.amazonaws.com/lunchcatch-coupon-bench:v1-d5ccd64b-3467244e87d2",
+        "digest": "sha256:4611ffcfba682a12f9a8f022d2268a52a53138eaaec44cea9a7f784ed9cf9ef7",
+        "jarSha256": "3467244e87d23b0fa0193b896e70b63c0bfd2c5cf59772dee37587cc6441eef9",
+        "database": "coupon_bench_v1"
+      },
+      "v2": {
+        "role": "Redis 순번과 단건 DB 처리",
+        "image": "639793187090.dkr.ecr.ap-northeast-2.amazonaws.com/lunchcatch-coupon-bench:v2-0ab21f98-03df09da1f79",
+        "digest": "sha256:ae855c1cf5df773fc5d4ef91990b9a0e526e68a96102b4ac4440b2a7f4764393",
+        "jarSha256": "03df09da1f795825405b4992749dc7545f0ba25a87f3ffdc7bde425b41e7b375",
+        "database": "coupon_bench_v2"
+      },
+      "v3": {
+        "role": "Redis 순번과 묶음 DB 처리",
+        "image": "639793187090.dkr.ecr.ap-northeast-2.amazonaws.com/lunchcatch-coupon-bench:v3-f05b8e45-15975c12b0bd",
+        "digest": "sha256:34774b270fa9a4fbba8e67a414fe3b2989272729632cff72e191a77f58b5cd87",
+        "jarSha256": "15975c12b0bdf98ce8b3af92015f3446a28533d1aa4557ae7f1cc8319877d4e7",
+        "database": "coupon_bench_v3"
+      }
+    }
+  },
+  "scriptSha256": {
+    "coupon-multi-event.js": "24b2ae8e83f283a128f3c519acdcc5303b1853b592c00aadcbeb8addde9b6385",
+    "scenario.json": "770232b5d3e39d1c48b6ad1fb769437f2e767817b955a35637b08c0d6242a1b0",
+    "fixture.py": "28d3569deeffd4c3be6801e1aba05731d4873b665fc8ba7356ba0ce289f1768d",
+    "cache-plan.py": "b7f705bac335928797fc0c88ead17e83fdb6553040952ded690bfbc3b3d68cdd",
+    "mint-tokens.py": "f58963e6efd3e90d7d0c156230b762fcd675940e8ae1dbd2186423ded9c17788",
+    "assess-warmup.py": "28ff69ffb7063fe2196d836c15614f9e69d45344659582a8a86072d575f701bb"
+  },
+  "sameAsAwsScript": {
+    "coupon-multi-event.js": true,
+    "scenario.json": true,
+    "fixture.py": true,
+    "cache-plan.py": true,
+    "mint-tokens.py": true,
+    "assess-warmup.py": true
+  },
+  "warmup": {
+    "batches": 2,
+    "assessment": {
+      "stable": true,
+      "version": "v3",
+      "batches": 2,
+      "expectedAnalyticsDelta": 200,
+      "reasons": [],
+      "next": "Wait for all async and DB/Redis/batch work to drain, then reset and verify stock"
+    },
+    "results": [
+      {
+        "attempted": 100,
+        "sent": 100,
+        "issued": 100,
+        "soldOut": 0,
+        "unexpected": 0,
+        "notSent": 0,
+        "dropped": 0,
+        "durationMs": {
+          "p(95)": 52.97994999999994,
+          "p(99)": 189.89019999999985,
+          "avg": 45.48169999999999,
+          "min": 20.677,
+          "med": 39.4935,
+          "max": 361.18
+        },
+        "successDurationMs": {
+          "avg": 45.48169999999999,
+          "min": 20.677,
+          "med": 39.4935,
+          "max": 361.18,
+          "p(95)": 52.97994999999994,
+          "p(99)": 189.89019999999985
+        },
+        "soldOutDurationMs": {},
+        "requestStartSeconds": {
+          "avg": 10.000460000000006,
+          "min": 0.001,
+          "med": 10.000499999999999,
+          "max": 20,
+          "p(95)": 19.000099999999996,
+          "p(99)": 19.800019999999996
+        },
+        "scheduleLatenessMs": {
+          "min": 0,
+          "med": 0.5202020202018502,
+          "max": 1.9595959595959016,
+          "p(95)": 1.4974747474740069,
+          "p(99)": 1.6795959595954995,
+          "avg": 0.5730303030302693
+        }
+      },
+      {
+        "attempted": 100,
+        "sent": 100,
+        "issued": 100,
+        "soldOut": 0,
+        "unexpected": 0,
+        "notSent": 0,
+        "dropped": 0,
+        "durationMs": {
+          "med": 35.278000000000006,
+          "max": 85.644,
+          "p(95)": 45.44974999999999,
+          "p(99)": 64.94507999999999,
+          "avg": 34.956869999999995,
+          "min": 19.617
+        },
+        "successDurationMs": {
+          "med": 35.278000000000006,
+          "max": 85.644,
+          "p(95)": 45.44974999999999,
+          "p(99)": 64.94507999999999,
+          "avg": 34.956869999999995,
+          "min": 19.617
+        },
+        "soldOutDurationMs": {},
+        "requestStartSeconds": {
+          "avg": 10.000510000000007,
+          "min": 0,
+          "med": 10.000499999999999,
+          "max": 19.999,
+          "p(95)": 19.000099999999996,
+          "p(99)": 19.800009999999997
+        },
+        "scheduleLatenessMs": {
+          "avg": 0.5707070707070452,
+          "min": 0,
+          "med": 0.5404040404041552,
+          "max": 1.8585858585859114,
+          "p(95)": 1.3545454545445408,
+          "p(99)": 1.8185858585857977
+        }
+      }
+    ],
+    "appRestartedBeforeMain": false
+  },
+  "main": {
+    "config": {
+      "variant": "v3",
+      "phase": "main",
+      "runId": "coupon-698-local-load-20261021-main",
+      "model": "multi-event-members-once",
+      "rate": null,
+      "baseUrl": "http://127.0.0.1:28380",
+      "eventIds": [
+        20000,
+        20001,
+        20002,
+        20003,
+        20004,
+        20005,
+        20006,
+        20007,
+        20008,
+        20009,
+        20010,
+        20011,
+        20012,
+        20013,
+        20014,
+        20015,
+        20016,
+        20017,
+        20018,
+        20019
+      ],
+      "scenarioName": "campaign20-event20-stock100-users5000",
+      "campaigns": 20,
+      "events": 20,
+      "stockPerEvent": 100,
+      "perEventRequests": 250,
+      "tokenOffset": 0,
+      "startVUs": 100,
+      "vus": 5000,
+      "rampUpSeconds": 10,
+      "seconds": 10,
+      "stock": 2000,
+      "planned": 5000,
+      "expectedIssued": 2000,
+      "expectedSoldOut": 3000,
+      "requestTimeoutSeconds": 60
+    },
+    "actual": {
+      "attempted": 5000,
+      "sent": 5000,
+      "issued": 2000,
+      "soldOut": 2889,
+      "unexpected": 111,
+      "notSent": 0,
+      "dropped": 0,
+      "durationMs": {
+        "min": 1.999,
+        "med": 1006.3015,
+        "max": 2650.263,
+        "p(95)": 2061.0768000000003,
+        "p(99)": 2306.8573899999997,
+        "avg": 947.5021435999943
+      },
+      "successDurationMs": {
+        "p(95)": 2060.4414500000003,
+        "p(99)": 2078.43287,
+        "avg": 1568.1117709999985,
+        "min": 218.561,
+        "med": 1573.983,
+        "max": 2151.26
+      },
+      "soldOutDurationMs": {
+        "avg": 476.66751194184855,
+        "min": 1.999,
+        "med": 137.522,
+        "max": 2650.263,
+        "p(95)": 1575.1981999999991,
+        "p(99)": 2462.2422399999996
+      },
+      "requestStartSeconds": {
+        "avg": 4.909842399999995,
+        "min": 0,
+        "med": 4.9005,
+        "max": 9.999,
+        "p(95)": 9.4901,
+        "p(99)": 9.89703
+      },
+      "scheduleLatenessMs": {
+        "avg": 8.938342857142857,
+        "min": 0,
+        "med": 0.4693877551017067,
+        "max": 311.1428571428578,
+        "p(95)": 46.21122448979628,
+        "p(99)": 220.4283673469386
+      }
+    },
+    "perEvent": [
+      {
+        "eventId": 20000,
+        "attempted": 250,
+        "issued": 100,
+        "soldOut": 144,
+        "issuedDurationMs": {
+          "med": 1575.2185,
+          "max": 2072.537,
+          "p(95)": 2056.62775,
+          "p(99)": 2065.65353,
+          "avg": 1563.2688999999998,
+          "min": 258.903
+        }
+      },
+      {
+        "eventId": 20001,
+        "attempted": 250,
+        "issued": 100,
+        "soldOut": 144,
+        "issuedDurationMs": {
+          "med": 1576.615,
+          "max": 2129.277,
+          "p(95)": 2058.78355,
+          "p(99)": 2076.13479,
+          "avg": 1565.4936699999994,
+          "min": 238.698
+        }
+      },
+      {
+        "eventId": 20002,
+        "attempted": 250,
+        "issued": 100,
+        "soldOut": 144,
+        "issuedDurationMs": {
+          "avg": 1531.1025599999994,
+          "min": 353.092,
+          "med": 1576.3025,
+          "max": 2138.838,
+          "p(95)": 2061.75355,
+          "p(99)": 2080.2102
+        }
+      },
+      {
+        "eventId": 20003,
+        "attempted": 250,
+        "issued": 100,
+        "soldOut": 143,
+        "issuedDurationMs": {
+          "avg": 1562.3052100000004,
+          "min": 404.281,
+          "med": 1577.507,
+          "max": 2130.709,
+          "p(95)": 2059.13535,
+          "p(99)": 2074.1354499999998
+        }
+      },
+      {
+        "eventId": 20004,
+        "attempted": 250,
+        "issued": 100,
+        "soldOut": 143,
+        "issuedDurationMs": {
+          "med": 1574.5295,
+          "max": 2143.042,
+          "p(95)": 2061.13935,
+          "p(99)": 2078.3286700000003,
+          "avg": 1543.1561500000005,
+          "min": 336.541
+        }
+      },
+      {
+        "eventId": 20005,
+        "attempted": 250,
+        "issued": 100,
+        "soldOut": 143,
+        "issuedDurationMs": {
+          "avg": 1551.9591300000002,
+          "min": 218.561,
+          "med": 1577.8025,
+          "max": 2137.733,
+          "p(95)": 2060.7545,
+          "p(99)": 2078.28944
+        }
+      },
+      {
+        "eventId": 20006,
+        "attempted": 250,
+        "issued": 100,
+        "soldOut": 143,
+        "issuedDurationMs": {
+          "avg": 1569.0084300000008,
+          "min": 226.77,
+          "med": 1574.233,
+          "max": 2151.26,
+          "p(95)": 2064.2667,
+          "p(99)": 2077.93268
+        }
+      },
+      {
+        "eventId": 20007,
+        "attempted": 250,
+        "issued": 100,
+        "soldOut": 145,
+        "issuedDurationMs": {
+          "avg": 1565.25296,
+          "min": 372.944,
+          "med": 1575.9995,
+          "max": 2079.916,
+          "p(95)": 2059.2217,
+          "p(99)": 2066.7173199999997
+        }
+      },
+      {
+        "eventId": 20008,
+        "attempted": 250,
+        "issued": 100,
+        "soldOut": 145,
+        "issuedDurationMs": {
+          "med": 1570.1280000000002,
+          "max": 2086.635,
+          "p(95)": 2059.15365,
+          "p(99)": 2065.3005,
+          "avg": 1585.6676900000002,
+          "min": 377.435
+        }
+      },
+      {
+        "eventId": 20009,
+        "attempted": 250,
+        "issued": 100,
+        "soldOut": 145,
+        "issuedDurationMs": {
+          "avg": 1569.7879399999997,
+          "min": 261.442,
+          "med": 1573.955,
+          "max": 2078.424,
+          "p(95)": 2056.43655,
+          "p(99)": 2064.73032
+        }
+      },
+      {
+        "eventId": 20010,
+        "attempted": 250,
+        "issued": 100,
+        "soldOut": 145,
+        "issuedDurationMs": {
+          "med": 1573.3094999999998,
+          "max": 2109.321,
+          "p(95)": 2056.65645,
+          "p(99)": 2065.46004,
+          "avg": 1571.13053,
+          "min": 359.763
+        }
+      },
+      {
+        "eventId": 20011,
+        "attempted": 250,
+        "issued": 100,
+        "soldOut": 145,
+        "issuedDurationMs": {
+          "p(99)": 2066.90431,
+          "avg": 1571.6678400000008,
+          "min": 245.273,
+          "med": 1570.725,
+          "max": 2100.496,
+          "p(95)": 2059.7994
+        }
+      },
+      {
+        "eventId": 20012,
+        "attempted": 250,
+        "issued": 100,
+        "soldOut": 145,
+        "issuedDurationMs": {
+          "avg": 1592.50641,
+          "min": 372.166,
+          "med": 1569.681,
+          "max": 2118.325,
+          "p(95)": 2061.2424,
+          "p(99)": 2066.10844
+        }
+      },
+      {
+        "eventId": 20013,
+        "attempted": 250,
+        "issued": 100,
+        "soldOut": 145,
+        "issuedDurationMs": {
+          "avg": 1562.0344799999998,
+          "min": 258.317,
+          "med": 1571.3945,
+          "max": 2109.728,
+          "p(95)": 2058.8104,
+          "p(99)": 2066.76299
+        }
+      },
+      {
+        "eventId": 20014,
+        "attempted": 250,
+        "issued": 100,
+        "soldOut": 145,
+        "issuedDurationMs": {
+          "p(99)": 2066.8433,
+          "avg": 1563.6942500000005,
+          "min": 398.787,
+          "med": 1572.0279999999998,
+          "max": 2124.491,
+          "p(95)": 2059.6346
+        }
+      },
+      {
+        "eventId": 20015,
+        "attempted": 250,
+        "issued": 100,
+        "soldOut": 145,
+        "issuedDurationMs": {
+          "min": 407.956,
+          "med": 1575.1715,
+          "max": 2114.069,
+          "p(95)": 2059.47915,
+          "p(99)": 2066.4133699999998,
+          "avg": 1590.62247
+        }
+      },
+      {
+        "eventId": 20016,
+        "attempted": 250,
+        "issued": 100,
+        "soldOut": 145,
+        "issuedDurationMs": {
+          "p(95)": 2061.0187,
+          "p(99)": 2064.20007,
+          "avg": 1594.6751399999994,
+          "min": 695.432,
+          "med": 1569.301,
+          "max": 2119.845
+        }
+      },
+      {
+        "eventId": 20017,
+        "attempted": 250,
+        "issued": 100,
+        "soldOut": 145,
+        "issuedDurationMs": {
+          "min": 266.627,
+          "med": 1572.74,
+          "max": 2124.661,
+          "p(95)": 2059.8383000000003,
+          "p(99)": 2068.47256,
+          "avg": 1561.0489200000009
+        }
+      },
+      {
+        "eventId": 20018,
+        "attempted": 250,
+        "issued": 100,
+        "soldOut": 145,
+        "issuedDurationMs": {
+          "avg": 1560.6578199999997,
+          "min": 219.111,
+          "med": 1572.9645,
+          "max": 2120.903,
+          "p(95)": 2059.2803,
+          "p(99)": 2069.27153
+        }
+      },
+      {
+        "eventId": 20019,
+        "attempted": 250,
+        "issued": 100,
+        "soldOut": 145,
+        "issuedDurationMs": {
+          "avg": 1587.1949200000004,
+          "min": 698.601,
+          "med": 1576.6165,
+          "max": 2130.059,
+          "p(95)": 2057.9961,
+          "p(99)": 2069.48882
+        }
+      }
+    ],
+    "httpStatusCounts": {
+      "0": 0,
+      "200": 0,
+      "201": 2000,
+      "400": 0,
+      "401": 0,
+      "403": 0,
+      "404": 0,
+      "409": 2889,
+      "422": 0,
+      "429": 0,
+      "500": 0,
+      "502": 0,
+      "503": 111,
+      "504": 0
+    },
+    "businessCodeCounts": {
+      "SUCCESS": 2000,
+      "COUPON-005": 0,
+      "COUPON-006": 2889,
+      "COUPON-008": 111,
+      "COMMON-001": 0,
+      "INVALID_RESPONSE": 0
+    }
+  },
+  "k6ExitCode": 99,
+  "verification": {
+    "httpExpected": false,
+    "perEventExpected": false,
+    "databaseMatches": true,
+    "redisMatches": true,
+    "analyticsMatches": true
+  },
+  "events": [
+    {
+      "issued": 100,
+      "coupons": 100,
+      "eventId": 20000,
+      "available": 0,
+      "inventory": 100,
+      "campaignId": 20000
+    },
+    {
+      "issued": 100,
+      "coupons": 100,
+      "eventId": 20001,
+      "available": 0,
+      "inventory": 100,
+      "campaignId": 20001
+    },
+    {
+      "issued": 100,
+      "coupons": 100,
+      "eventId": 20002,
+      "available": 0,
+      "inventory": 100,
+      "campaignId": 20002
+    },
+    {
+      "issued": 100,
+      "coupons": 100,
+      "eventId": 20003,
+      "available": 0,
+      "inventory": 100,
+      "campaignId": 20003
+    },
+    {
+      "issued": 100,
+      "coupons": 100,
+      "eventId": 20004,
+      "available": 0,
+      "inventory": 100,
+      "campaignId": 20004
+    },
+    {
+      "issued": 100,
+      "coupons": 100,
+      "eventId": 20005,
+      "available": 0,
+      "inventory": 100,
+      "campaignId": 20005
+    },
+    {
+      "issued": 100,
+      "coupons": 100,
+      "eventId": 20006,
+      "available": 0,
+      "inventory": 100,
+      "campaignId": 20006
+    },
+    {
+      "issued": 100,
+      "coupons": 100,
+      "eventId": 20007,
+      "available": 0,
+      "inventory": 100,
+      "campaignId": 20007
+    },
+    {
+      "issued": 100,
+      "coupons": 100,
+      "eventId": 20008,
+      "available": 0,
+      "inventory": 100,
+      "campaignId": 20008
+    },
+    {
+      "issued": 100,
+      "coupons": 100,
+      "eventId": 20009,
+      "available": 0,
+      "inventory": 100,
+      "campaignId": 20009
+    },
+    {
+      "issued": 100,
+      "coupons": 100,
+      "eventId": 20010,
+      "available": 0,
+      "inventory": 100,
+      "campaignId": 20010
+    },
+    {
+      "issued": 100,
+      "coupons": 100,
+      "eventId": 20011,
+      "available": 0,
+      "inventory": 100,
+      "campaignId": 20011
+    },
+    {
+      "issued": 100,
+      "coupons": 100,
+      "eventId": 20012,
+      "available": 0,
+      "inventory": 100,
+      "campaignId": 20012
+    },
+    {
+      "issued": 100,
+      "coupons": 100,
+      "eventId": 20013,
+      "available": 0,
+      "inventory": 100,
+      "campaignId": 20013
+    },
+    {
+      "issued": 100,
+      "coupons": 100,
+      "eventId": 20014,
+      "available": 0,
+      "inventory": 100,
+      "campaignId": 20014
+    },
+    {
+      "issued": 100,
+      "coupons": 100,
+      "eventId": 20015,
+      "available": 0,
+      "inventory": 100,
+      "campaignId": 20015
+    },
+    {
+      "issued": 100,
+      "coupons": 100,
+      "eventId": 20016,
+      "available": 0,
+      "inventory": 100,
+      "campaignId": 20016
+    },
+    {
+      "issued": 100,
+      "coupons": 100,
+      "eventId": 20017,
+      "available": 0,
+      "inventory": 100,
+      "campaignId": 20017
+    },
+    {
+      "issued": 100,
+      "coupons": 100,
+      "eventId": 20018,
+      "available": 0,
+      "inventory": 100,
+      "campaignId": 20018
+    },
+    {
+      "issued": 100,
+      "coupons": 100,
+      "eventId": 20019,
+      "available": 0,
+      "inventory": 100,
+      "campaignId": 20019
+    }
+  ],
+  "redis": [
+    {
+      "eventId": 20000,
+      "available": 0,
+      "pending": 0,
+      "meta": {
+        "state": "SOLD_OUT",
+        "total": "100",
+        "completed": "100",
+        "expiresAt": "1792594800000"
+      }
+    },
+    {
+      "eventId": 20001,
+      "available": 0,
+      "pending": 0,
+      "meta": {
+        "state": "SOLD_OUT",
+        "total": "100",
+        "completed": "100",
+        "expiresAt": "1792594800000"
+      }
+    },
+    {
+      "eventId": 20002,
+      "available": 0,
+      "pending": 0,
+      "meta": {
+        "state": "SOLD_OUT",
+        "total": "100",
+        "completed": "100",
+        "expiresAt": "1792594800000"
+      }
+    },
+    {
+      "eventId": 20003,
+      "available": 0,
+      "pending": 0,
+      "meta": {
+        "state": "SOLD_OUT",
+        "total": "100",
+        "completed": "100",
+        "expiresAt": "1792594800000"
+      }
+    },
+    {
+      "eventId": 20004,
+      "available": 0,
+      "pending": 0,
+      "meta": {
+        "state": "SOLD_OUT",
+        "total": "100",
+        "completed": "100",
+        "expiresAt": "1792594800000"
+      }
+    },
+    {
+      "eventId": 20005,
+      "available": 0,
+      "pending": 0,
+      "meta": {
+        "state": "SOLD_OUT",
+        "total": "100",
+        "completed": "100",
+        "expiresAt": "1792594800000"
+      }
+    },
+    {
+      "eventId": 20006,
+      "available": 0,
+      "pending": 0,
+      "meta": {
+        "state": "SOLD_OUT",
+        "total": "100",
+        "completed": "100",
+        "expiresAt": "1792594800000"
+      }
+    },
+    {
+      "eventId": 20007,
+      "available": 0,
+      "pending": 0,
+      "meta": {
+        "state": "SOLD_OUT",
+        "total": "100",
+        "completed": "100",
+        "expiresAt": "1792594800000"
+      }
+    },
+    {
+      "eventId": 20008,
+      "available": 0,
+      "pending": 0,
+      "meta": {
+        "state": "SOLD_OUT",
+        "total": "100",
+        "completed": "100",
+        "expiresAt": "1792594800000"
+      }
+    },
+    {
+      "eventId": 20009,
+      "available": 0,
+      "pending": 0,
+      "meta": {
+        "state": "SOLD_OUT",
+        "total": "100",
+        "completed": "100",
+        "expiresAt": "1792594800000"
+      }
+    },
+    {
+      "eventId": 20010,
+      "available": 0,
+      "pending": 0,
+      "meta": {
+        "state": "SOLD_OUT",
+        "total": "100",
+        "completed": "100",
+        "expiresAt": "1792594800000"
+      }
+    },
+    {
+      "eventId": 20011,
+      "available": 0,
+      "pending": 0,
+      "meta": {
+        "state": "SOLD_OUT",
+        "total": "100",
+        "completed": "100",
+        "expiresAt": "1792594800000"
+      }
+    },
+    {
+      "eventId": 20012,
+      "available": 0,
+      "pending": 0,
+      "meta": {
+        "state": "SOLD_OUT",
+        "total": "100",
+        "completed": "100",
+        "expiresAt": "1792594800000"
+      }
+    },
+    {
+      "eventId": 20013,
+      "available": 0,
+      "pending": 0,
+      "meta": {
+        "state": "SOLD_OUT",
+        "total": "100",
+        "completed": "100",
+        "expiresAt": "1792594800000"
+      }
+    },
+    {
+      "eventId": 20014,
+      "available": 0,
+      "pending": 0,
+      "meta": {
+        "state": "SOLD_OUT",
+        "total": "100",
+        "completed": "100",
+        "expiresAt": "1792594800000"
+      }
+    },
+    {
+      "eventId": 20015,
+      "available": 0,
+      "pending": 0,
+      "meta": {
+        "state": "SOLD_OUT",
+        "total": "100",
+        "completed": "100",
+        "expiresAt": "1792594800000"
+      }
+    },
+    {
+      "eventId": 20016,
+      "available": 0,
+      "pending": 0,
+      "meta": {
+        "state": "SOLD_OUT",
+        "total": "100",
+        "completed": "100",
+        "expiresAt": "1792594800000"
+      }
+    },
+    {
+      "eventId": 20017,
+      "available": 0,
+      "pending": 0,
+      "meta": {
+        "state": "SOLD_OUT",
+        "total": "100",
+        "completed": "100",
+        "expiresAt": "1792594800000"
+      }
+    },
+    {
+      "eventId": 20018,
+      "available": 0,
+      "pending": 0,
+      "meta": {
+        "state": "SOLD_OUT",
+        "total": "100",
+        "completed": "100",
+        "expiresAt": "1792594800000"
+      }
+    },
+    {
+      "eventId": 20019,
+      "available": 0,
+      "pending": 0,
+      "meta": {
+        "state": "SOLD_OUT",
+        "total": "100",
+        "completed": "100",
+        "expiresAt": "1792594800000"
+      }
+    }
+  ],
+  "analyticsDelta": {
+    "recorded": 2000.0
+  },
+  "notifications": {
+    "COUPON_SOLD_OUT_NOTIFIED": 20,
+    "COUPON_SOLD_OUT_NOTIFICATION_FAILED": 0,
+    "COUPON_SOLD_OUT_NOTIFICATION_REJECTED": 0,
+    "COUPON_SOLD_OUT_NOTIFICATION_EXPIRED": 0
+  },
+  "metrics": {
+    "sampleCount": 31,
+    "sampleIntervalTargetSeconds": 0.5,
+    "maxObserved": {
+      "hikaricp_connections_active": 7.0,
+      "hikaricp_connections_pending": 0.0,
+      "hikaricp_connections_max": 8.0,
+      "hikaricp_connections_timeout_total": 0.0,
+      "hikaricp_connections_acquire_seconds_max": 0.03,
+      "tomcat_threads_busy_threads": 200.0,
+      "tomcat_threads_current_threads": 200.0
+    },
+    "connectionTimeoutDelta": 0.0,
+    "processes": {
+      "application": {
+        "maxCpuPercent": 329.9,
+        "maxRssMiB": 666.609375
+      },
+      "loadGenerator": {
+        "maxCpuPercent": 489.3,
+        "maxRssMiB": 1162.796875
+      }
+    },
+    "candidateMissingDelta": 20.0
+  },
+  "cleanup": {
+    "appExitCode": 143,
+    "coupon-698-local-load-20261021-valkey": "removed",
+    "coupon-698-local-load-20261021-mysql": "removed"
+  },
+  "limitations": [
+    "One run; no local before/after comparison.",
+    "Application and generator share the Mac; MySQL and Valkey share Docker Desktop.",
+    "MySQL 8.4.7 differs from AWS RDS 8.4.11 and no Multi-AZ or ALB exists locally.",
+    "No ad_candidate fixture; notification completed with missing-candidate no-op.",
+    "Connection pending is a sampled gauge, not proof that no brief wait occurred.",
+    "AWS performance was not measured in this run."
+  ]
+}
