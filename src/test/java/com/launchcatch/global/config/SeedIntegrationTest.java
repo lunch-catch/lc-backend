@@ -24,6 +24,7 @@ import org.springframework.jdbc.datasource.DriverManagerDataSource;
  */
 class SeedIntegrationTest extends IntegrationTestSupport {
 
+    private static final String CDN = "https://cdn.example.com";
     private static final String HASH = "$2a$10$MRk.eo1/rGQNUGClHmwVB.Z5zREkJzDzDfu9M4oJsZ.vd0s3n6tAu";
 
     private static final String ROW_COUNTS = "SELECT (SELECT COUNT(*) FROM coupon_inventory) + (SELECT COUNT(*) FROM ad_candidate) "
@@ -54,7 +55,8 @@ class SeedIntegrationTest extends IntegrationTestSupport {
     }
 
     private void migrate(boolean seedEnabled, String businessDate) {
-        Map<String, String> placeholders = Map.of("seedPasswordHash", HASH, "seedBusinessDate", businessDate);
+        Map<String, String> placeholders = Map.of("seedPasswordHash", HASH, "seedBusinessDate", businessDate,
+                "seedCdnBaseUrl", CDN);
         new DomainFlywayMigrator(dataSource, new SeedSettings(seedEnabled, placeholders)).afterPropertiesSet();
     }
 
@@ -135,6 +137,11 @@ class SeedIntegrationTest extends IntegrationTestSupport {
         assertThat(count("SELECT COUNT(DISTINCT business_date) FROM coupon_event "
                 + "WHERE campaign_id IN (9017, 9018)")).isEqualTo(15);
         assertThat(count("SELECT current_count FROM template_quota")).isEqualTo(1);
+        // 시드 포스터는 모두 이미지 주소를 CDN 주소와 이미지 key 로 갖는다. 피드의 포스터 조회가 그대로 그린다
+        assertThat(count("SELECT COUNT(*) FROM poster WHERE (poster_id BETWEEN 9001 AND 9016 OR poster_id BETWEEN 9101 AND 9200) "
+                + "AND html_content NOT LIKE "
+                + "CONCAT('%<img data-slot=\"image\" alt=\"메뉴 이미지\" src=\"" + CDN + "/', image_object_key, '\">%')"))
+                .isZero();
     }
 
     @Test

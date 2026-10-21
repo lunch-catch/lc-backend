@@ -31,17 +31,29 @@ public class FlywayConfig {
      * 개발 서버는 인프라가 다른 값을 넣는다.
      * seedBusinessDate 는 오늘(Asia/Seoul)이다. 피드는 오늘 날짜의 행만 읽으므로 날짜에 묶인 시드가 이 값을 쓴다.
      * 값이 바뀌면 그 시드 파일의 체크섬이 바뀌어 하루의 첫 기동에 다시 돈다.
+     * seedCdnBaseUrl 은 cdn.base-url 이다. 시드 포스터 HTML 의 이미지 주소 앞에 붙는다. 실제 포스터도 저장할 때 같은 값을 붙인다.
      */
     @Bean(MIGRATOR_BEAN)
     public DomainFlywayMigrator domainFlywayMigrator(
             DataSource dataSource,
             @Value("${seed.enabled:false}") boolean seedEnabled,
             @Value("${seed.password-hash:}") String seedPasswordHash,
+            @Value("${cdn.base-url:}") String cdnBaseUrl,
             Clock clock) {
         Map<String, String> placeholders = Map.of(
                 "seedPasswordHash", seedPasswordHash,
-                "seedBusinessDate", LocalDate.now(clock).toString());
+                "seedBusinessDate", LocalDate.now(clock).toString(),
+                "seedCdnBaseUrl", withoutTrailingSlash(cdnBaseUrl));
         return new DomainFlywayMigrator(dataSource, new SeedSettings(seedEnabled, placeholders));
+    }
+
+    // 시드 HTML 이 주소 뒤에 / 를 붙이므로 끝의 / 를 뗀다. 정규식은 백트래킹이 있어 쓰지 않는다
+    static String withoutTrailingSlash(String url) {
+        int end = url.length();
+        while (end > 0 && url.charAt(end - 1) == '/') {
+            end--;
+        }
+        return url.substring(0, end);
     }
 
     /** 엔티티 매니저가 위 빈을 기다리게 한다. */
