@@ -38,4 +38,4 @@ SELECT seq.n, 9001 + MOD(seq.n + pick.k * 4, 12), 9001 + MOD(seq.n + pick.k * 4,
 FROM seq
 CROSS JOIN pick
 WHERE MOD(seq.n, 3) <> 0
-ON DUPLICATE KEY UPDATE wishlist.wishlist_id = wishlist.wishlist_id;
+ON DUPLICATE KEY UPDATE wishlist.updated_at = wishlist.updated_at;
