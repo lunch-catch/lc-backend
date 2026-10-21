@@ -1,6 +1,10 @@
 package com.launchcatch.admin.repository;
 
 import com.launchcatch.admin.entity.Admin;
+import com.launchcatch.admin.entity.AdminStatus;
+import com.launchcatch.admin.dto.AdminAccountResponse;
+import com.launchcatch.auth.Role;
+import java.util.List;
 import java.util.Optional;
 import java.time.LocalDateTime;
 
@@ -13,6 +17,18 @@ import org.springframework.data.repository.query.Param;
 
 public interface AdminRepository extends JpaRepository<Admin, Long> {
     Optional<Admin> findByLoginId(String loginId);
+
+    @Query("""
+            select new com.launchcatch.admin.dto.AdminAccountResponse(a.loginId, a.name, a.role)
+              from Admin a
+             where a.status = :status and a.role in :roles
+               and (lower(a.loginId) like :pattern escape '!' or lower(a.name) like :pattern escape '!')
+             order by a.createdAt desc, a.id desc
+            """)
+    List<AdminAccountResponse> findAccounts(
+            @Param("status") AdminStatus status,
+            @Param("roles") List<Role> roles,
+            @Param("pattern") String pattern);
 
     // 캐시가 없거나 장애가 났을 때, Refresh Token 해시로 관리자 ID를 조회함.
     @Query("select a.id from Admin a where a.refreshTokenHash = :hash")
