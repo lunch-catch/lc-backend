@@ -99,6 +99,8 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.sql.SQLException;
 import java.time.Clock;
 import java.time.Duration;
@@ -116,6 +118,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -134,6 +137,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.TestInfo;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.CsvSource;
@@ -1463,6 +1467,294 @@ public class CouponIntegrationTest extends IntegrationTestSupport {
             } catch (InterruptedException exception) {
                 Thread.currentThread().interrupt();
                 throw new IllegalStateException(exception);
+            }
+        }
+
+
+        @Nested
+        @DisplayName("실제 HTTP 쿠폰 발급")
+        class Http {
+
+            private static final AtomicLong NEXT_EVENT = new AtomicLong(70000);
+            private long httpEventId;
+            private String prefix;
+            private final List<Map<String, Object>> exchanges = new CopyOnWriteArrayList<>();
+
+            @BeforeEach
+            void prepareMembers() {
+                httpEventId = NEXT_EVENT.incrementAndGet();
+                prefix = "coupon:{" + httpEventId + "}:";
+                insertEvent(httpEventId, 3);
+                jdbcTemplate.batchUpdate("""
+                        INSERT INTO member (member_id, provider_user_id, nickname, status, created_at, updated_at)
+                        VALUES (?, ?, 'HTTP 발급 회원', 'ACTIVE', ?, ?)
+                        """, IntStream.range(17, 29).mapToObj(id -> new Object[] {
+                            id, "http-coupon-member-" + id, TODAY.atTime(12, 0), TODAY.atTime(12, 0)
+                        }).toList());
+                jdbcTemplate.batchUpdate("""
+                        INSERT INTO wishlist (member_id,campaign_id,store_id,created_at,updated_at)
+                        VALUES (?,?,10,?,?)
+                        """, IntStream.range(17, 29).mapToObj(id -> new Object[] {
+                            id, httpEventId, TODAY.atTime(12, 0), TODAY.atTime(12, 0)
+                        }).toList());
+                doCallRealMethod().when(members).findCurrentStatuses(any());
+                doCallRealMethod().when(wishes).findWishedMemberIds(org.mockito.ArgumentMatchers.eq(httpEventId), any());
+            }
+
+            @AfterEach
+            void recordResponsesAndCleanMembers(TestInfo info) throws Exception {
+                Path directory = Path.of("build", "reports", "coupon-issuance-http");
+                Files.createDirectories(directory);
+                String filename = info.getTestMethod().orElseThrow().getName() + "-"
+                        + Integer.toHexString(info.getDisplayName().hashCode()) + ".json";
+                Files.writeString(directory.resolve(filename), objectMapper.writeValueAsString(
+                        Map.of("case", info.getDisplayName(), "exchanges", exchanges)));
+                redis.delete(List.of(prefix + "available", prefix + "pending", prefix + "meta"));
+                sequenceService.resume(httpEventId);
+                jdbcTemplate.update("DELETE FROM event_log WHERE member_id BETWEEN 17 AND 28");
+                jdbcTemplate.update("DELETE FROM wishlist WHERE member_id BETWEEN 17 AND 28");
+                jdbcTemplate.update("DELETE FROM member WHERE member_id BETWEEN 17 AND 28");
+            }
+
+            @Test
+            void JWT_쿠키로_발급하면_201과_DB에_저장한_ID와_한국_시각을_받는다() throws Exception {
+                try (HttpClient client = HttpClient.newHttpClient()) {
+                    var response = send(client, 17L);
+                    assertCreated(response, 17L);
+                }
+                assertConsistent(1);
+            }
+
+            @Test
+            void Redis_초기화가_없어도_같은_HTTP_요청에서_복구하고_201을_받는다() throws Exception {
+                redis.delete(List.of(prefix + "available", prefix + "pending", prefix + "meta"));
+                try (HttpClient client = HttpClient.newHttpClient()) {
+                    assertCreated(send(client, 17L), 17L);
+                }
+                assertConsistent(1);
+                assertThat(redis.opsForHash().get(prefix + "meta", "state")).isEqualTo("READY");
+            }
+
+            @Test
+            void 로컬_차단을_복구한_최초_HTTP_요청도_201로_응답한다() throws Exception {
+                sequenceService.block(httpEventId, null);
+                try (HttpClient client = HttpClient.newHttpClient()) {
+                    assertCreated(send(client, 17L), 17L);
+                }
+                assertThat(sequenceService.needsRecovery(httpEventId)).isFalse();
+                assertConsistent(1);
+            }
+
+            @Test
+            void 오래된_예약을_복구한_HTTP_요청은_한_장만_발급한다() throws Exception {
+                assertThat(sequences.reserveAll(httpEventId, List.of("lost-http-reservation"), 30000)).containsExactly(1L);
+                redis.opsForZSet().add(prefix + "pending", "1:lost-http-reservation", 1);
+                try (HttpClient client = HttpClient.newHttpClient()) {
+                    assertCreated(send(client, 17L), 17L);
+                }
+                assertConsistent(1);
+                assertThat(redis.opsForZSet().size(prefix + "pending")).isZero();
+                assertThat(redis.opsForHash().get(prefix + "meta", "completed")).isEqualTo("1");
+            }
+
+            @Test
+            void Redis_완료_응답이_유실돼도_HTTP_201을_유지하고_다음_요청도_복구해_발급한다() throws Exception {
+                doAnswer(invocation -> {
+                    invocation.callRealMethod();
+                    throw new RedisConnectionFailureException("HTTP completion reply lost");
+                }).doCallRealMethod().when(sequences)
+                        .complete(org.mockito.ArgumentMatchers.eq(httpEventId), org.mockito.ArgumentMatchers.anyInt(), any());
+                try (HttpClient client = HttpClient.newHttpClient()) {
+                    assertCreated(send(client, 17L), 17L);
+                    assertThat(sequenceService.needsRecovery(httpEventId)).isTrue();
+                    assertCreated(send(client, 18L), 18L);
+                }
+                assertThat(sequenceService.needsRecovery(httpEventId)).isFalse();
+                assertConsistent(2);
+            }
+
+            @Test
+            void 같은_이벤트의_재요청은_409와_중복_코드를_받는다() throws Exception {
+                try (HttpClient client = HttpClient.newHttpClient()) {
+                    assertCreated(send(client, 17L), 17L);
+                    assertRejected(send(client, 17L), 409, "COUPON-005");
+                }
+                assertConsistent(1);
+            }
+
+            @Test
+            void 세_장을_모두_발급하면_다음_HTTP_요청은_409와_소진_코드를_받는다() throws Exception {
+                try (HttpClient client = HttpClient.newHttpClient()) {
+                    assertCreated(send(client, 17L), 17L);
+                    assertCreated(send(client, 18L), 18L);
+                    assertCreated(send(client, 19L), 19L);
+                    assertRejected(send(client, 20L), 409, "COUPON-006");
+                }
+                assertConsistent(3);
+            }
+
+            @Test
+            void 찜하지_않은_회원의_HTTP_요청은_403과_자격_거절을_받는다() throws Exception {
+                doReturn(Set.of()).when(wishes).findWishedMemberIds(any(), any());
+                try (HttpClient client = HttpClient.newHttpClient()) {
+                    assertRejected(send(client, 17L), 403, "COUPON-004");
+                }
+                assertConsistent(0);
+            }
+
+            @Test
+            void 현재_회원_상태가_정지면_HTTP_403을_받고_발급하지_않는다() throws Exception {
+                doReturn(Map.of(17L, MemberStatus.SUSPENDED)).when(members).findCurrentStatuses(any());
+                try (HttpClient client = HttpClient.newHttpClient()) {
+                    assertRejected(send(client, 17L), 403, "COUPON-003");
+                }
+                assertConsistent(0);
+            }
+
+            @Test
+            void 일일_한도에_도달한_HTTP_요청은_409와_한도_거절을_받는다() throws Exception {
+                jdbcTemplate.update("""
+                        INSERT INTO coupon_daily_limit(member_id,business_date,issued_count,created_at,updated_at)
+                        VALUES (17,?,3,?,?)
+                        """, TODAY, TODAY.atTime(12, 0), TODAY.atTime(12, 0));
+                try (HttpClient client = HttpClient.newHttpClient()) {
+                    assertRejected(send(client, 17L), 409, "COUPON-007");
+                }
+                assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM member_coupon", Integer.class)).isZero();
+                assertThat(jdbcTemplate.queryForObject("SELECT issued_count FROM coupon_daily_limit WHERE member_id=17",
+                        Integer.class)).isEqualTo(3);
+            }
+
+            @Test
+            void 없는_이벤트의_HTTP_요청은_404를_받는다() throws Exception {
+                try (HttpClient client = HttpClient.newHttpClient()) {
+                    assertRejected(send(client, "{\"eventId\":999999999}", accessToken(Role.MEMBER, 17L)),
+                            404, "COUPON-001");
+                }
+                assertConsistent(0);
+            }
+
+            @Test
+            void 발급_종료_시각의_HTTP_요청은_409를_받는다() throws Exception {
+                time.set(TODAY.atTime(14, 0).atZone(ClockConfig.ZONE).toInstant());
+                try (HttpClient client = HttpClient.newHttpClient()) {
+                    assertRejected(send(client, 17L), 409, "COUPON-002");
+                }
+                assertConsistent(0);
+            }
+
+            @ParameterizedTest
+            @CsvSource(value = {"{}|COMMON-002", "{\"eventId\":0}|COMMON-002", "{\"eventId\":\"bad\"}|COMMON-003"}, delimiter = '|')
+            void 잘못된_HTTP_본문은_400과_공통_오류를_받는다(String body, String code) throws Exception {
+                try (HttpClient client = HttpClient.newHttpClient()) {
+                    assertRejected(send(client, body, accessToken(Role.MEMBER, 17L)), 400, code);
+                }
+                assertConsistent(0);
+            }
+
+            @Test
+            void 쿠키가_없거나_회원_역할이_아니면_HTTP_인증과_인가_오류를_받는다() throws Exception {
+                when(ownerTokenPolicy.supports(Role.OWNER)).thenReturn(true);
+                when(ownerTokenPolicy.isValid(any(), any(), any(), any(), any())).thenReturn(true);
+                try (HttpClient client = HttpClient.newHttpClient()) {
+                    assertRejected(send(client, requestBody(), null), 401, "AUTH-005");
+                    assertRejected(send(client, requestBody(), accessToken(Role.OWNER, 17L)), 403, "AUTH-006");
+                }
+                assertConsistent(0);
+            }
+
+            @Test
+            void DB_저장_장애는_HTTP_500으로_응답하고_발급과_예약을_되돌린다() throws Exception {
+                doThrow(new DataAccessResourceFailureException("HTTP issuance storage unavailable"))
+                        .when(batchIssues).insertCoupons(anyList());
+                try (HttpClient client = HttpClient.newHttpClient()) {
+                    assertRejected(send(client, 17L), 500, "COMMON-001");
+                }
+                assertConsistent(0);
+                assertThat(redis.opsForList().size(prefix + "available")).isEqualTo(3);
+                assertThat(redis.opsForZSet().size(prefix + "pending")).isZero();
+            }
+
+            @Test
+            void Redis_복구에_실패하면_HTTP_503을_받고_발급하지_않는다() throws Exception {
+                redis.delete(List.of(prefix + "available", prefix + "pending", prefix + "meta"));
+                doThrow(new RedisConnectionFailureException("HTTP issuance recovery unavailable"))
+                        .when(sequences).rebuild(org.mockito.ArgumentMatchers.eq(httpEventId), anyList(), anyLong(), anyLong());
+                try (HttpClient client = HttpClient.newHttpClient()) {
+                    assertRejected(send(client, 17L), 503, "COUPON-008");
+                }
+                assertConsistent(0);
+            }
+
+            @Test
+            void 실제_HTTP_동시_요청_열두_건은_재고_세_장까지만_발급한다() throws Exception {
+                CountDownLatch start = new CountDownLatch(1);
+                try (HttpClient client = HttpClient.newHttpClient(); var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+                    List<Future<HttpResponse<String>>> requests = IntStream.range(17, 29).mapToObj(id -> executor.submit(() -> {
+                        start.await();
+                        return send(client, id);
+                    })).toList();
+                    start.countDown();
+                    Set<Long> couponIds = ConcurrentHashMap.newKeySet();
+                    int successes = 0;
+                    for (Future<HttpResponse<String>> request : requests) {
+                        var response = request.get(15, TimeUnit.SECONDS);
+                        if (response.statusCode() == 201) {
+                            successes++;
+                            var body = objectMapper.readTree(response.body());
+                            assertThat(body.path("code").asText()).isEqualTo("SUCCESS");
+                            assertThat(couponIds.add(body.path("data").path("memberCouponId").asLong())).isTrue();
+                        } else {
+                            assertThat(response.statusCode()).isIn(409, 503);
+                            assertThat(objectMapper.readTree(response.body()).path("code").asText())
+                                    .isIn("COUPON-006", "COUPON-008");
+                        }
+                    }
+                    assertThat(successes).isEqualTo(3);
+                }
+                assertConsistent(3);
+            }
+
+            private String requestBody() {
+                return "{\"eventId\":" + httpEventId + "}";
+            }
+
+            private HttpResponse<String> send(HttpClient client, long memberId) throws Exception {
+                return send(client, requestBody(), accessToken(Role.MEMBER, memberId));
+            }
+
+            private HttpResponse<String> send(HttpClient client, String body, String token) throws Exception {
+                long started = System.nanoTime();
+                var response = client.send(httpRequest("POST", "/v1/coupons", body, token), HttpResponse.BodyHandlers.ofString());
+                exchanges.add(Map.of("method", "POST", "path", "/v1/coupons", "request", body,
+                        "status", response.statusCode(), "response", objectMapper.readTree(response.body()),
+                        "elapsedMs", (System.nanoTime() - started) / 1_000_000.0));
+                return response;
+            }
+
+            private void assertCreated(HttpResponse<String> response, long memberId) throws Exception {
+                assertThat(response.statusCode()).isEqualTo(201);
+                assertThat(response.headers().firstValue("Content-Type").orElseThrow()).startsWith("application/json");
+                var body = objectMapper.readTree(response.body());
+                assertThat(body.path("code").asText()).isEqualTo("SUCCESS");
+                assertThat(body.path("message").asText()).isEqualTo("요청이 성공적으로 처리되었습니다.");
+                var data = body.path("data");
+                long couponId = data.path("memberCouponId").asLong();
+                assertThat(couponId).isPositive();
+                assertThat(data.path("issueTime").asText()).isEqualTo("2026-10-10T12:00:00+09:00");
+                var saved = jdbcTemplate.queryForMap("SELECT member_id, coupon_event_id, created_at FROM member_coupon WHERE member_coupon_id=?", couponId);
+                assertThat(((Number) saved.get("member_id")).longValue()).isEqualTo(memberId);
+                assertThat(((Number) saved.get("coupon_event_id")).longValue()).isEqualTo(httpEventId);
+                assertThat(saved.get("created_at")).isEqualTo(TODAY.atTime(12, 0));
+            }
+
+            private void assertRejected(HttpResponse<String> response, int status, String code) throws Exception {
+                assertThat(response.statusCode()).isEqualTo(status);
+                assertThat(response.headers().firstValue("Content-Type").orElseThrow()).startsWith("application/json");
+                var body = objectMapper.readTree(response.body());
+                assertThat(body.path("code").asText()).isEqualTo(code);
+                assertThat(body.path("message").asText()).isNotBlank();
+                assertThat(body.path("data").isNull()).isTrue();
             }
         }
 
