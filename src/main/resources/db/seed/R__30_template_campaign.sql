@@ -245,14 +245,15 @@ ON DUPLICATE KEY UPDATE poster_id = poster_id;
  * 실제 포스터도 저장할 때 cdn.base-url 과 이미지 key 를 붙인 주소를 HTML 에 넣는다(PosterUploadService).
  * 위 INSERT 는 이미 있는 행을 건드리지 않아, 앞서 시드가 들어간 DB 도 맞추려고 따로 고친다.
  * 이미지 파일은 개발 버킷의 seed/ 아래에 있다. 로컬은 cdn.base-url 이 비어 있어 이미지가 보이지 않는다.
+ * 대상은 위에서 넣은 시드 포스터(9001~9016, 9101~9200)뿐이다. 시드 뒤에 만든 포스터는 9201 부터 번호를 받아 건드리지 않는다.
  */
 UPDATE poster
 SET html_content = REPLACE(html_content, '</p></div>', '</p><img data-slot="image" alt="메뉴 이미지"></div>')
-WHERE poster_id >= 9001
+WHERE (poster_id BETWEEN 9001 AND 9016 OR poster_id BETWEEN 9101 AND 9200)
   AND html_content NOT LIKE '%data-slot="image"%';
 
 UPDATE poster
 SET html_content = REGEXP_REPLACE(html_content, '<img data-slot="image"[^>]*>',
                                   CONCAT('<img data-slot="image" alt="메뉴 이미지" src="${seedCdnBaseUrl}/',
                                          image_object_key, '">'))
-WHERE poster_id >= 9001;
+WHERE poster_id BETWEEN 9001 AND 9016 OR poster_id BETWEEN 9101 AND 9200;

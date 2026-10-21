@@ -114,7 +114,8 @@ class SeedIntegrationTest extends IntegrationTestSupport {
                 + "WHERE campaign_id IN (9017, 9018)")).isEqualTo(15);
         assertThat(count("SELECT current_count FROM template_quota")).isEqualTo(1);
         // 시드 포스터는 모두 이미지 주소를 CDN 주소와 이미지 key 로 갖는다. 피드의 포스터 조회가 그대로 그린다
-        assertThat(count("SELECT COUNT(*) FROM poster WHERE poster_id >= 9001 AND html_content NOT LIKE "
+        assertThat(count("SELECT COUNT(*) FROM poster WHERE (poster_id BETWEEN 9001 AND 9016 OR poster_id BETWEEN 9101 AND 9200) "
+                + "AND html_content NOT LIKE "
                 + "CONCAT('%<img data-slot=\"image\" alt=\"메뉴 이미지\" src=\"" + CDN + "/', image_object_key, '\">%')"))
                 .isZero();
     }
