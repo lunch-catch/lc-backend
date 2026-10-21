@@ -43,11 +43,12 @@ public class StoreDetailService {
         }
         var store = stores.findFinalized(storeId)
                 .orElseThrow(() -> new StoreException(StoreErrorCode.STORE_NOT_FOUND));
+        // TODO: S3 대표 이미지 준비 후 쿠폰 테스트용 null 허용을 제거하고 필수 이미지 검증을 복구한다.
         var logo = stores.findImages(storeId, "LOGO").stream().findFirst()
-                .orElseThrow(() -> new IllegalStateException("등록 완료된 가게의 대표 이미지가 누락되었습니다."));
+                .map(row -> image(row.objectKey(), row.sortOrder())).orElse(null);
         return new StoreDetailResponse(store.storeId(), store.name(), store.businessCategory(), store.roadAddress(),
                 store.phone(), store.latitude(), store.longitude(), details.findBusinessHours(storeId).stream().map(this::businessHour).toList(),
-                image(logo.objectKey(), logo.sortOrder()),
+                logo,
                 stores.findImages(storeId, "INTERIOR").stream().map(row -> image(row.objectKey(), row.sortOrder())).toList(),
                 details.findMenus(storeId).stream().map(this::menu).toList(),
                 stores.findActiveCampaign(storeId, LocalDate.now(clock.withZone(ZoneId.of("Asia/Seoul"))))
@@ -63,11 +64,9 @@ public class StoreDetailService {
 
     private Menu menu(OwnerStoreSnapshot.Menu menu) {
         var menuImage = menu.image();
-        if (menuImage == null) {
-            throw new IllegalStateException("등록 완료된 가게의 검증된 이미지가 누락되었습니다.");
-        }
+        // TODO: S3 메뉴 이미지 준비 후 테스트용 null 허용을 제거하고 필수 이미지 검증을 복구한다.
         return new Menu(menu.menuId(), menu.name(), menu.price(), menu.description(), menu.sortOrder(),
-                image(menuImage.objectKey(), null));
+                menuImage == null ? null : image(menuImage.objectKey(), null));
     }
 
     private BusinessHour businessHour(OwnerStoreSnapshot.BusinessHour hour) {

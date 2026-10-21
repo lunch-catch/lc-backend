@@ -65,17 +65,20 @@ class StoreDetailServiceTest {
     }
 
     @Test
-    void 확정된_가게에_대표_이미지가_없으면_데이터_오류다() {
+    void 확정된_가게에_대표_이미지가_없어도_null로_조회된다() {
         registered();
         when(stores.findImages(10L, "LOGO")).thenReturn(List.of());
-        assertThatThrownBy(() -> service.find(10L)).isInstanceOf(IllegalStateException.class);
+        var withoutCdn = new StoreDetailService(stores, details, "", clock);
+        assertThat(withoutCdn.find(10L).logoImage()).isNull();
     }
 
     @Test
-    void 미검증_메뉴_이미지를_정상_응답으로_숨기지_않는다() {
+    void 검증된_메뉴_이미지가_없어도_메뉴는_유지한다() {
         registered();
         when(details.findMenus(10L)).thenReturn(List.of(new Menu(20L, "국수", 9000, null, 1, null)));
-        assertThatThrownBy(() -> service.find(10L)).isInstanceOf(IllegalStateException.class);
+        var menu = service.find(10L).menus().getFirst();
+        assertThat(menu.name()).isEqualTo("국수");
+        assertThat(menu.image()).isNull();
     }
 
 }
