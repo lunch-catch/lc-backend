@@ -79,6 +79,16 @@ public class TemplateGenerationRateLimiter {
         }
     }
 
+    /*
+     * 요청 문구 검증(TemplatePromptValidator)이 거부한 요청의 "처리 중" 표식을 지운다(#428). 거부된 요청도
+     * 분당 3회에는 센다. 비용이 들지 않는 거부 응답으로 우회 패턴을 무제한 시험하지 못하게 하려는 것이다.
+     * 다만 모델을 부르지 않았으므로 표식은 남기지 않는다. 남기면 문구를 고친 같은 requestId 재요청이
+     * TTL 동안 POSTER-004 로만 거부된다.
+     */
+    public void releaseInFlight(String requestId) {
+        clearInFlight(requestId);
+    }
+
     private boolean isFirstAttempt(String requestId) {
         String key = IN_FLIGHT_KEY_PREFIX + requestId;
         try {
