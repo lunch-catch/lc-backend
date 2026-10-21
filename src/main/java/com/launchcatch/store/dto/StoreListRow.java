@@ -13,5 +13,5 @@ public record StoreListRow(
         long storeId, String name, String businessCategory, BigDecimal longitude, BigDecimal latitude,
         double distanceMeters, Long campaignId, StoreDiscountTargetType discountTargetType,
         StoreDiscountType discountType, Integer discountValue, Long targetMenuId, String targetMenuName,
-        Long targetMenuPrice
+        Long targetMenuPrice, String storeImageObjectKey
 ) { }

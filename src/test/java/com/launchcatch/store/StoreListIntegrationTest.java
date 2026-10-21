@@ -43,6 +43,48 @@ class StoreListIntegrationTest extends AbstractStoreIntegrationTest {
     @Autowired Clock clock;
 
     @Test
+    void 검증된_대표_이미지_URL을_반환하고_인테리어_이미지로_가게가_중복되지_않는다() throws Exception {
+        long storeId = createStore(KEYWORD, "KOREAN", "37", "127", true);
+        createImage(storeId, "LOGO", null, "VERIFIED");
+        createImage(storeId, "INTERIOR", 1, "VERIFIED");
+        createImage(storeId, "INTERIOR", 2, "VERIFIED");
+
+        String body = mvc.perform(stores().param("query", KEYWORD).param("pageSize", "1"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.items[0].storeImageUrl")
+                        .value("https://cdn.example.com/stores/" + storeId + "/LOGO.png"))
+                .andExpect(jsonPath("$.data.nextPageToken").value((Object) null))
+                .andReturn().getResponse().getContentAsString();
+
+        assertThat(ids(body)).containsExactly(storeId);
+    }
+
+    @Test
+    void 대표_이미지가_없으면_가게를_유지하고_이미지_URL은_null로_반환한다() throws Exception {
+        long storeId = createStore(KEYWORD, "KOREAN", "37", "127", true);
+        createImage(storeId, "INTERIOR", 1, "VERIFIED");
+
+        mvc.perform(stores().param("query", KEYWORD))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.items[0].storeId").value(storeId))
+                .andExpect(jsonPath("$.data.items[0].storeImageUrl").hasJsonPath())
+                .andExpect(jsonPath("$.data.items[0].storeImageUrl").value((Object) null));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"PENDING", "UPLOADED"})
+    void 업로드_확인_전_대표_이미지는_URL을_공개하지_않는다(String state) throws Exception {
+        long storeId = createStore(KEYWORD, "KOREAN", "37", "127", true);
+        createImage(storeId, "LOGO", null, state);
+
+        mvc.perform(stores().param("query", KEYWORD))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.items[0].storeId").value(storeId))
+                .andExpect(jsonPath("$.data.items[0].storeImageUrl").hasJsonPath())
+                .andExpect(jsonPath("$.data.items[0].storeImageUrl").value((Object) null));
+    }
+
+    @Test
     void 검색어가_없어도_현재_위치에서_거리순으로_조회한다() throws Exception {
         long near = createStore(KEYWORD + " 가까운 가게", "KOREAN", "10", "10", true);
         long far = createStore(KEYWORD + " 먼 가게", "JAPANESE", "10.1", "10", true);
@@ -413,6 +455,15 @@ class StoreListIntegrationTest extends AbstractStoreIntegrationTest {
     private static List<Long> ids(String body) {
         List<Number> values = JsonPath.read(body, "$.data.items[*].storeId");
         return values.stream().map(Number::longValue).toList();
+    }
+
+    private void createImage(long storeId, String type, Integer order, String state) {
+        var now = LocalDateTime.now(clock);
+        jdbc.update("""
+                insert into store_image(store_id, image_type, object_key, sort_order, upload_status,
+                    verified_at, created_at, updated_at) values (?, ?, ?, ?, ?, ?, ?, ?)
+                """, storeId, type, "stores/" + storeId + "/" + type + (order == null ? "" : order) + ".png",
+                order, state, state.equals("VERIFIED") ? now : null, now, now);
     }
 
     private long createStore(String name, String category, String latitude, String longitude, boolean finalized) {

@@ -2,11 +2,14 @@ package com.launchcatch.store.repository;
 
 import static com.launchcatch.store.entity.QStore.store;
 import static com.launchcatch.store.entity.QStoreCampaignSummary.storeCampaignSummary;
+import static com.launchcatch.store.entity.QStoreImage.storeImage;
 import static com.launchcatch.store.entity.QStoreMenu.storeMenu;
 
 import com.launchcatch.global.response.PageCursor;
 import com.launchcatch.store.contract.StoreCampaignStatus;
 import com.launchcatch.store.dto.StoreListRow;
+import com.launchcatch.store.entity.StoreImageType;
+import com.launchcatch.store.entity.StoreImageUploadStatus;
 import com.querydsl.core.BooleanBuilder;
 import com.querydsl.core.types.Projections;
 import com.querydsl.core.types.dsl.CaseBuilder;
@@ -45,15 +48,18 @@ class StoreRepositoryImpl implements StoreRepositoryCustom {
         }
 
         /*
-         * 가게 정보와 계산 거리, 당일 활성 캠페인과 할인 대상 메뉴를 한 쿼리로 가져온다.
-         * 캠페인이나 메뉴가 없는 가게도 목록에 남도록 LEFT JOIN을 사용한다.
+         * 가게 정보와 대표 이미지, 계산 거리, 당일 활성 캠페인과 할인 대상 메뉴를 한 쿼리로 가져온다.
+         * 이미지나 캠페인, 메뉴가 없는 가게도 목록에 남도록 LEFT JOIN을 사용한다.
          */
         return queryFactory.select(Projections.constructor(StoreListRow.class,
                         store.id, store.name, store.categoryCode, store.longitude, store.latitude, distance,
                         storeCampaignSummary.campaignId, storeCampaignSummary.discountTargetType,
                         storeCampaignSummary.discountType, storeCampaignSummary.discountValue,
-                        storeMenu.id, storeMenu.name, storeMenu.price))
+                        storeMenu.id, storeMenu.name, storeMenu.price, storeImage.objectKey))
                 .from(store)
+                .leftJoin(storeImage).on(storeImage.storeId.eq(store.id),
+                        storeImage.imageType.eq(StoreImageType.LOGO),
+                        storeImage.uploadStatus.eq(StoreImageUploadStatus.VERIFIED))
                 .leftJoin(storeCampaignSummary).on(storeCampaignSummary.storeId.eq(store.id),
                         storeCampaignSummary.businessDate.eq(businessDate),
                         storeCampaignSummary.campaignStatus.eq(StoreCampaignStatus.ACTIVE))

@@ -149,3 +149,15 @@ FROM store s
 CROSS JOIN dow
 WHERE s.store_id BETWEEN 9101 AND 9200
 ON DUPLICATE KEY UPDATE store_business_hour_id = store_business_hour_id;
+
+-- 시드 가게의 대표 이미지는 공통 객체를 사용하며 이미 등록된 대표 이미지는 유지한다.
+INSERT INTO store_image (store_image_id, store_id, image_type, object_key, content_type, sort_order,
+                         upload_status, verified_at, created_at, updated_at)
+SELECT s.store_id, s.store_id, 'LOGO', 'stores/9222/logo/afecbe89-4e07-424a-ba4f-ad9baa9c8bf6.jpg',
+       'image/jpeg', NULL, 'VERIFIED', NOW(6), NOW(6), NOW(6)
+FROM store s
+JOIN owner o ON o.owner_id = s.owner_id
+WHERE s.finalized = 1 AND s.owner_id = s.store_id
+  AND (s.store_id BETWEEN 9001 AND 9016 OR s.store_id BETWEEN 9101 AND 9200)
+  AND o.email = CONCAT('owner', s.store_id - 9000, '@seed.lunchcatch.com')
+ON DUPLICATE KEY UPDATE store_image.store_id = store_image.store_id;
