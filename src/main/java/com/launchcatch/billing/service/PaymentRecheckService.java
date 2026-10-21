@@ -57,7 +57,8 @@ public class PaymentRecheckService {
             try {
                 recheck(paymentId);
             } catch (RuntimeException e) {
-                log.error("event=PAYMENT_RECHECK_ERROR paymentId={}", paymentId, e);
+                log.warn("event=BILLING_PAYMENT_RECHECK_FAILED paymentId={} exceptionType={}",
+                        paymentId, e.getClass().getSimpleName());
                 meterRegistry.counter(RECHECK_METRIC, "result", "error").increment();
             }
         }

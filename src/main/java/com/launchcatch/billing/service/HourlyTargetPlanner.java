@@ -6,6 +6,7 @@ import com.launchcatch.billing.entity.BudgetDailyPlan;
 import com.launchcatch.billing.entity.BudgetHourlyTarget;
 import com.launchcatch.billing.repository.BudgetDailyPlanRepository;
 import com.launchcatch.billing.repository.BudgetHourlyTargetRepository;
+import com.launchcatch.global.logging.TransactionLogging;
 import java.time.Clock;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -67,7 +68,9 @@ public class HourlyTargetPlanner {
         for (BudgetHourlyTarget target : targets) {
             targetRepository.insertIfAbsent(target.getBudgetDailyPlanId(), target.getHour(), target.getTargetAmount(), now);
         }
-        log.info("event=HOURLY_TARGET_DONE businessDate={} plans={}", businessDate, planned);
+        int plannedCount = planned;
+        TransactionLogging.afterCommit(() -> log.info(
+                "event=BILLING_HOURLY_TARGET_DONE businessDate={} planCount={}", businessDate, plannedCount));
         return planned;
     }
 }

@@ -26,7 +26,7 @@ public class PointChargedListener {
         try {
             rechargeReservation.reserve(charged);
         } catch (Exception e) {
-            log.error("event=RECHARGE_RESERVE_FAILED ownerId={} paymentId={}",
+            log.warn("event=BILLING_RECHARGE_RESERVE_FAILED ownerId={} paymentId={} fallback=NEXT_DAILY_RESERVE",
                     charged.ownerId(), charged.paymentId(), e);
         }
     }

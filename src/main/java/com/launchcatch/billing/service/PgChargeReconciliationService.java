@@ -79,10 +79,16 @@ public class PgChargeReconciliationService {
                 mismatches += reconcileOne(payment, target, jobExecutionId, now);
             } catch (RuntimeException e) {
                 meterRegistry.counter(RECON_METRIC, "result", "error").increment();
-                log.error("event=PG_RECON_ERROR paymentId={} businessDate={}", payment.getId(), target, e);
+                log.error("event=BILLING_PG_RECON_FAILED paymentId={} businessDate={}", payment.getId(), target, e);
             }
         }
-        log.info("event=PG_RECON_DONE businessDate={} targets={} mismatches={}", target, targets.size(), mismatches);
+        if (mismatches > 0) {
+            log.error("event=BILLING_PG_RECON_DONE businessDate={} paymentCount={} mismatchCount={}",
+                    target, targets.size(), mismatches);
+        } else {
+            log.info("event=BILLING_PG_RECON_DONE businessDate={} paymentCount={} mismatchCount={}",
+                    target, targets.size(), mismatches);
+        }
         return mismatches;
     }
 
@@ -100,12 +106,16 @@ public class PgChargeReconciliationService {
         if (pgClaim == ourClaim) {
             if (ourClaim > 0 && !ledgerRepository.existsByPaymentIdAndEntryType(payment.getId(), EntryType.CHARGE)) {
                 mismatchRecorder.recordMissingCharge(payment, businessDate, jobExecutionId, now);
+                log.warn("event=BILLING_PG_RECON_CHARGE_RECOVERED paymentId={} businessDate={} fallback=AUTO_RECOVER",
+                        payment.getId(), businessDate);
                 meterRegistry.counter(RECON_METRIC, "result", "recovered").increment();
                 return 1;
             }
             return 0;
         }
         mismatchRecorder.recordMismatch(payment.getId(), pgClaim, ourClaim, businessDate, jobExecutionId, now);
+        log.warn("event=BILLING_PG_RECON_MISMATCH paymentId={} expectedAmount={} actualAmount={}",
+                payment.getId(), ourClaim, pgClaim);
         meterRegistry.counter(RECON_METRIC, "result", "mismatch").increment();
         return 1;
     }
@@ -118,7 +128,7 @@ public class PgChargeReconciliationService {
             try {
                 return paymentGateway.inquireByPaymentKey(pgTid);
             } catch (PgNotSentException | PgUnknownException second) {
-                log.error("event=PG_RECON_INQUIRY_FAILED pgTid={}", pgTid, second);
+                log.error("event=BILLING_PG_RECON_INQUIRY_FAILED pgTid={}", pgTid, second);
                 return null;
             }
         }

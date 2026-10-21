@@ -85,7 +85,7 @@ public class SpendReconciliationService {
                 long reserved = reservedByCampaign.get(campaignId);
                 if (ledgerSpend > reserved) {
                     overspends.add(new CampaignOverspend(campaignId, reserved, ledgerSpend));
-                    log.warn("event=SPEND_RECON_OVERSPEND businessDate={} campaignId={} reserved={} ledger={}",
+                    log.warn("event=BILLING_SPEND_RECON_OVERSPEND_MISMATCH businessDate={} campaignId={} reserved={} ledger={}",
                             target, campaignId, reserved, ledgerSpend);
                 }
                 DailySpend counter = counters.get(campaignId);
@@ -95,7 +95,7 @@ public class SpendReconciliationService {
                 }
                 if (counter.spend() != ledgerSpend) {
                     counterMismatches.add(new CampaignCounterMismatch(campaignId, ledgerSpend, counter.spend()));
-                    log.warn("event=SPEND_RECON_MISMATCH businessDate={} campaignId={} ledger={} counter={}",
+                    log.warn("event=BILLING_SPEND_RECON_MISMATCH businessDate={} campaignId={} ledger={} counter={}",
                             target, campaignId, ledgerSpend, counter.spend());
                 }
             }
@@ -105,10 +105,15 @@ public class SpendReconciliationService {
             }
         }
         if (missing > 0) {
-            log.warn("event=SPEND_RECON_HASH_MISSING businessDate={} missing={}", target, missing);
+            log.warn("event=BILLING_SPEND_RECON_HASH_MISSING businessDate={} missingCount={}", target, missing);
         }
-        log.info("event=SPEND_RECON_DONE businessDate={} campaigns={} mismatches={}",
-                target, campaignIds.size(), mismatches);
+        if (mismatches > 0) {
+            log.error("event=BILLING_SPEND_RECON_DONE businessDate={} campaignCount={} mismatchCount={}",
+                    target, campaignIds.size(), mismatches);
+        } else {
+            log.info("event=BILLING_SPEND_RECON_DONE businessDate={} campaignCount={} mismatchCount={}",
+                    target, campaignIds.size(), mismatches);
+        }
         return mismatches;
     }
 
