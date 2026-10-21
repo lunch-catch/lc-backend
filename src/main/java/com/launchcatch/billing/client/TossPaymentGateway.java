@@ -16,6 +16,7 @@ import java.util.Set;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
@@ -44,6 +45,7 @@ public class TossPaymentGateway implements PaymentGateway {
 
     private static final String STATUS_DONE = "DONE";
     private static final String NOT_FOUND_CODE = "NOT_FOUND_PAYMENT";
+    private static final int MAX_DIAGNOSTIC_VALUE_LENGTH = 512;
 
     // reactor-netty 가 셰이딩한 내부 클래스라 타입 대신 이름으로 본다.
     private static final String POOL_ACQUIRE_TIMEOUT = "PoolAcquireTimeoutException";
@@ -170,8 +172,10 @@ public class TossPaymentGateway implements PaymentGateway {
             if (TossErrorCodes.isConfigFailure(http)) {
                 return authFailure("승인", orderId, http, code);
             }
-            log.warn("event=TOSS_CONFIRM_UNKNOWN orderId={} httpStatus={} code={}",
-                    orderId, http.getStatusCode().value(), code);
+            log.warn("event=TOSS_CONFIRM_UNKNOWN orderId={} httpStatus={} code={} pgMessage={} contentType={} responseBodyBytes={}",
+                    orderId, http.getStatusCode().value(), diagnosticValue(code), diagnosticValue(message),
+                    diagnosticValue(http.getHeaders().getFirst(HttpHeaders.CONTENT_TYPE)),
+                    http.getResponseBodyAsByteArray().length);
             return new PgUnknownException("토스 승인 응답을 확정할 수 없다 (httpStatus="
                     + http.getStatusCode().value() + ", code=" + code + ")", e);
         }
@@ -187,11 +191,15 @@ public class TossPaymentGateway implements PaymentGateway {
     private RuntimeException classifyInquiryFailure(RuntimeException e) {
         WebClientResponseException http = causeOfType(e, WebClientResponseException.class);
         if (http != null) {
+            TossErrorResponse error = readErrorBody(http);
             if (TossErrorCodes.isConfigFailure(http)) {
-                TossErrorResponse error = readErrorBody(http);
                 return authFailure("조회", null, http, error == null ? null : error.code());
             }
-            log.warn("event=TOSS_INQUIRE_UNKNOWN httpStatus={}", http.getStatusCode().value());
+            log.warn("event=TOSS_INQUIRE_UNKNOWN httpStatus={} code={} pgMessage={} contentType={} responseBodyBytes={}",
+                    http.getStatusCode().value(), diagnosticValue(error == null ? null : error.code()),
+                    diagnosticValue(error == null ? null : error.message()),
+                    diagnosticValue(http.getHeaders().getFirst(HttpHeaders.CONTENT_TYPE)),
+                    http.getResponseBodyAsByteArray().length);
             return new PgUnknownException("토스 조회 응답을 처리할 수 없다 (httpStatus="
                     + http.getStatusCode().value() + ")", e);
         }
@@ -246,6 +254,16 @@ public class TossPaymentGateway implements PaymentGateway {
             log.warn("event=TOSS_ERROR_BODY_PARSE_FAILED httpStatus={}", e.getStatusCode().value());
             return null;
         }
+    }
+
+    // 외부 문자열은 비밀키를 지우고 제어 문자와 길이를 제한한 뒤 진단 로그에 넣는다.
+    private String diagnosticValue(String value) {
+        String masked = masker.mask(value);
+        if (masked == null) {
+            return null;
+        }
+        String singleLine = masked.replaceAll("\\p{Cntrl}", " ");
+        return singleLine.substring(0, Math.min(singleLine.length(), MAX_DIAGNOSTIC_VALUE_LENGTH));
     }
 
     private static <T extends Throwable> T causeOfType(Throwable throwable, Class<T> type) {

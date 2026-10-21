@@ -31,6 +31,8 @@
 
 동기 재조회에서 `APPROVED`는 주문 번호와 금액이 일치해야 승인한다. `FAILED`는 실패로, `EXPIRED`와 `CANCELED`는 충전 없이 취소로 닫는다. `PENDING`, `NOT_FOUND`, 조회 실패와 승인 정보 불일치는 `UNKNOWN`으로 남긴다. `ALREADY_PROCESSED_PAYMENT`도 게이트웨이가 결과 불명으로 분류하므로 동기 재조회가 결과를 정한다.
 
+승인·조회에서 결과를 확정할 수 없는 HTTP 오류는 `TOSS_CONFIRM_UNKNOWN`·`TOSS_INQUIRE_UNKNOWN` 로그에 HTTP 상태, 토스 오류 코드(`code`), 오류 메시지(`pgMessage`), 응답 Content-Type(`contentType`), 수신 본문 바이트 수(`responseBodyBytes`)를 남긴다. 본문이 없는 HTTP 500과 JSON이 아닌 오류 응답을 구분하기 위한 값이다. 외부 문자열은 비밀키 원문과 인코딩을 마스킹하고 제어 문자를 공백으로 바꾼 뒤 512자로 제한한다. 요청 헤더와 응답 본문 전체는 남기지 않는다. 본문이 비어 있으면 세부 오류 사유는 이 로그만으로 알 수 없다.
+
 `PaymentResultService`는 결과를 쓸 때마다 결제 행을 잠그고 상태를 다시 읽는다. 이미 `APPROVED`, `FAILED`, `CANCELLED`이면 덮어쓰지 않는다. 승인 확정·웹훅·재조회 워커·관리자 재조회가 같은 기록 메서드를 사용한다.
 
 승인 트랜잭션은 점주 계정 행이 없으면 만들고 `CHARGE`를 기록한다. 아웃박스가 있으면 `RESOLVED`로 닫는다. 새 충전에만 내부 통보 `PointCharged`를 발행하며 재예약 리스너는 커밋 뒤 실행한다. `UNKNOWN` 전환과 `PENDING` 아웃박스 생성도 한 트랜잭션이다.
