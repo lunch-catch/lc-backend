@@ -65,6 +65,11 @@ spring:
 #   cors:
 #     allowed-origins: "http://localhost:5173"
 
+# 로컬에서 http://127.0.0.1:8765 로 이미지를 제공할 때 application-local.yml 에서 아래 주석을 푼다.
+# 환경변수 CDN_BASE_URL 로 설정하려면 아래 줄은 주석으로 둔다.
+# cdn:
+#   base-url: "http://127.0.0.1:8765"
+
 # 시험 데이터(시드)는 local 프로필에서 자동으로 켜진다(로컬 실행 문서 4절).
 # 끄려면 아래 주석을 푼다.
 # seed:
