@@ -33,7 +33,7 @@ public class MemberLocationService {
         try {
             Member member = lockedMember(memberId);
             if (member.getStatus() == MemberStatus.WITHDRAWN) {
-                log.warn("event=MEMBER_LOCATION_SAVE_FAILED memberId={} reason=ALREADY_WITHDRAWN", memberId);
+                log.info("event=MEMBER_LOCATION_SAVE_FAILED memberId={} reason=ALREADY_WITHDRAWN", memberId);
                 throw new MemberException(MemberErrorCode.ALREADY_WITHDRAWN);
             }
             MemberProfile profile = memberProfileRepository.findByMember_Id(memberId)
