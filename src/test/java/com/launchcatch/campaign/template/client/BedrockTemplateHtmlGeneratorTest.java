@@ -235,10 +235,7 @@ class BedrockTemplateHtmlGeneratorTest {
     void 토큰_잘림_재시도_지시는_설명과_코드펜스_형식을_유지하게_한다() {
         when(bedrockRuntimeClient.converse(any(ConverseRequest.class)))
                 .thenReturn(textResponse(StopReason.MAX_TOKENS, "잘림"))
-                .thenReturn(textResponse(StopReason.END_TURN, "QR코드는 반영하지 못했어요.
-```html
-" + LLM_HTML + "
-```"));
+                .thenReturn(textResponse(StopReason.END_TURN, "QR코드는 반영하지 못했어요.\n```html\n" + LLM_HTML + "\n```"));
 
         GeneratedTemplate result = generator.generate("돈까스 세트 홍보 QR코드 넣어줘");
 
