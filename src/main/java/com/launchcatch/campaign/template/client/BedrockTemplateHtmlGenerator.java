@@ -58,8 +58,14 @@ public class BedrockTemplateHtmlGenerator implements TemplateHtmlGenerator {
     /** ```html ... ``` 또는 ``` ... ``` 코드펜스 안의 내용을 뽑아낸다. */
     private static final Pattern CODE_FENCE = Pattern.compile("```(?:html)?\\s*(.*?)```", Pattern.DOTALL);
 
+    /*
+     * 설명을 아예 빼라고 하면 재시도 응답에 코드펜스가 없어 extractMessage 가 빈 문자열을 돌려주고, 반영하지 못한
+     * 요청 안내(#675)가 사라진다. 그래서 설명은 한 문장으로 줄이되 코드펜스 형식은 유지하게 한다.
+     */
     private static final String TRUNCATED_CORRECTION =
-            "방금 답변이 끝맺지 못하고 중간에 잘렸다. 생각 과정과 설명 없이, 더 짧고 간결하게 HTML만 바로 써라.";
+            "방금 답변이 끝맺지 못하고 중간에 잘렸다. 생각 과정은 쓰지 말고, 설명은 한 문장으로 줄이고 "
+                    + "(반영하지 못한 요청이 있을 때만 그 안내를 담는다), HTML도 더 짧고 간결하게 써서 "
+                    + "```html 코드펜스 하나에 담아 답해라.";
 
     private static final String BLOCKED_CORRECTION =
             "방금 답변이 가드레일에 막혀 생성되지 않았다. 민감하거나 부적절할 수 있는 표현 없이, "

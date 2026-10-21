@@ -232,6 +232,24 @@ class BedrockTemplateHtmlGeneratorTest {
     }
 
     @Test
+    void 토큰_잘림_재시도_지시는_설명과_코드펜스_형식을_유지하게_한다() {
+        when(bedrockRuntimeClient.converse(any(ConverseRequest.class)))
+                .thenReturn(textResponse(StopReason.MAX_TOKENS, "잘림"))
+                .thenReturn(textResponse(StopReason.END_TURN, "QR코드는 반영하지 못했어요.
+```html
+" + LLM_HTML + "
+```"));
+
+        GeneratedTemplate result = generator.generate("돈까스 세트 홍보 QR코드 넣어줘");
+
+        ArgumentCaptor<ConverseRequest> captor = ArgumentCaptor.forClass(ConverseRequest.class);
+        verify(bedrockRuntimeClient, times(2)).converse(captor.capture());
+        String correction = captor.getAllValues().get(1).messages().get(2).content().get(0).text();
+        assertThat(correction).contains("코드펜스").contains("설명은 한 문장으로").doesNotContain("설명 없이");
+        assertThat(result.message()).isEqualTo("QR코드는 반영하지 못했어요.");
+    }
+
+    @Test
     void 토큰_잘림이_재시도까지_반복되면_POSTER_010을_던진다() {
         when(bedrockRuntimeClient.converse(any(ConverseRequest.class)))
                 .thenReturn(textResponse(StopReason.MAX_TOKENS, "잘림"));
