@@ -18,6 +18,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
+import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.reactive.function.client.WebClientResponseException;
@@ -37,6 +38,8 @@ import org.springframework.web.reactive.function.client.WebClientResponseExcepti
  */
 @Slf4j
 @Component
+// 부하 시험(loadtest)에서는 LoadTestPaymentGateway 가 대신한다
+@Profile("!loadtest")
 public class TossPaymentGateway implements PaymentGateway {
 
     private static final String CONFIRM_URI = "/v1/payments/confirm";
