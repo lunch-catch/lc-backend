@@ -123,7 +123,7 @@ public class SettlementConsistencyStep implements AggregationStep<SettlementFind
         metrics.recordViolations("V-7", spentViolations);
         if (findings.billedAmountViolations() + findings.overDeductViolations()
                 + findings.releaseViolations() + spentViolations > 0) {
-            log.warn("event=SETTLEMENT_CONSISTENCY_VIOLATION businessDate={} v1={} v2={} v3={} v7={}",
+            log.error("event=ANALYTICS_SETTLEMENT_CONSISTENCY_MISMATCH businessDate={} v1={} v2={} v3={} v7={}",
                     businessDate, findings.billedAmountViolations(), findings.overDeductViolations(),
                     findings.releaseViolations(), spentViolations);
         }

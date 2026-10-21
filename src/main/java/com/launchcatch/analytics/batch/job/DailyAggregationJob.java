@@ -35,7 +35,15 @@ public class DailyAggregationJob implements StandaloneJob {
     @Scheduled(cron = "0 0 1 * * *", zone = "Asia/Seoul")
     public void run() {
         Map<LocalDate, AggregationOutcome> outcomes = runner.runAll();
-        log.info("event=DAILY_AGGREGATION_DONE outcomes={}", outcomes);
+        log.info("event=ANALYTICS_DAILY_AGGREGATION_DONE dateCount={} succeededCount={} failedCount={} "
+                        + "sourceNotReadyCount={} busyCount={} leaseLostCount={}",
+                outcomes.size(), count(outcomes, AggregationOutcome.SUCCEEDED),
+                count(outcomes, AggregationOutcome.FAILED), count(outcomes, AggregationOutcome.SOURCE_NOT_READY),
+                count(outcomes, AggregationOutcome.BUSY), count(outcomes, AggregationOutcome.LEASE_LOST));
+    }
+
+    private static long count(Map<LocalDate, AggregationOutcome> outcomes, AggregationOutcome outcome) {
+        return outcomes.values().stream().filter(outcome::equals).count();
     }
 
     @Override
@@ -57,7 +65,7 @@ public class DailyAggregationJob implements StandaloneJob {
     @Override
     public void run(LocalDate businessDate, int attemptNo) {
         AggregationOutcome outcome = runner.aggregate(businessDate, attemptNo);
-        log.info("event=DAILY_AGGREGATION_RESUMED businessDate={} attemptNo={} outcome={}",
+        log.info("event=ANALYTICS_DAILY_AGGREGATION_RESUMED businessDate={} attemptNo={} outcome={}",
                 businessDate, attemptNo, outcome);
     }
 }

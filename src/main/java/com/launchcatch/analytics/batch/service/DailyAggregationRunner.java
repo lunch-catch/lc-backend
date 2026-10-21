@@ -195,7 +195,7 @@ public class DailyAggregationRunner {
                 }
             }
         } catch (AttemptLost lost) {
-            log.warn("event=DAILY_AGGREGATION_ATTEMPT_LOST businessDate={} attemptNo={}", date, attemptNo);
+            log.warn("event=ANALYTICS_DAILY_AGGREGATION_ATTEMPT_LOST businessDate={} attemptNo={}", date, attemptNo);
             metrics.countResult("lease_lost");
             return AggregationOutcome.LEASE_LOST;
         }
@@ -215,8 +215,11 @@ public class DailyAggregationRunner {
         try {
             return runDate(date);
         } catch (RuntimeException unexpected) {
-            log.error("event=DAILY_AGGREGATION_ERROR businessDate={} cause={}",
-                    date, FailureLogDetails.from(unexpected));
+            FailureLogDetails details = FailureLogDetails.from(unexpected);
+            log.error("event=ANALYTICS_DAILY_AGGREGATION_FAILED businessDate={} reason=UNEXPECTED_ERROR "
+                            + "exceptionType={} sqlState={} sqlErrorCode={} origin={}",
+                    date, unexpected.getClass().getSimpleName(), details.sqlState(), details.sqlErrorCode(),
+                    details.origin());
             pending.record(date, PendingReason.FAILED, now());
             metrics.countResult("failed");
             return AggregationOutcome.FAILED;
@@ -315,7 +318,7 @@ public class DailyAggregationRunner {
         if (executions.renew(JOB_NAME, date)) {
             return true;
         }
-        log.warn("event=DAILY_AGGREGATION_LEASE_LOST businessDate={}", date);
+        log.warn("event=ANALYTICS_DAILY_AGGREGATION_LEASE_LOST businessDate={}", date);
         metrics.countResult("lease_lost");
         return false;
     }
@@ -325,8 +328,18 @@ public class DailyAggregationRunner {
      * 올라가 아무것도 남기지 않는다. 기록이 다른 이유로 실패하면 미처리만은 따로 남긴다.
      */
     private AggregationOutcome fail(LocalDate date, int attemptNo, RuntimeException failure) {
-        log.error("event=DAILY_AGGREGATION_FAILED businessDate={} cause={}",
-                date, FailureLogDetails.from(failure));
+        FailureLogDetails details = FailureLogDetails.from(failure);
+        boolean transientFailure = TransientFailures.isTransient(failure);
+        String reason = transientFailure ? "TRANSIENT_EXHAUSTED" : "SYSTEM_ERROR";
+        String message = "event=ANALYTICS_DAILY_AGGREGATION_FAILED businessDate={} reason={} exceptionType={} "
+                + "sqlState={} sqlErrorCode={} origin={}";
+        Object[] fields = {date, reason, failure.getClass().getSimpleName(), details.sqlState(),
+                details.sqlErrorCode(), details.origin()};
+        if (transientFailure) {
+            log.warn(message, fields);
+        } else {
+            log.error(message, fields);
+        }
         try {
             inAttempt(date, attemptNo, () -> {
                 executions.fail(JOB_NAME, date, describe(failure));

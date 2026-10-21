@@ -4,6 +4,7 @@ import com.launchcatch.analytics.event.EventRecord;
 import com.launchcatch.analytics.event.EventWriteResult;
 import io.micrometer.core.instrument.MeterRegistry;
 import jakarta.annotation.PreDestroy;
+import java.util.Map;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.Executor;
 import java.util.concurrent.RejectedExecutionException;
@@ -12,6 +13,7 @@ import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import lombok.extern.slf4j.Slf4j;
+import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
@@ -61,9 +63,32 @@ public class FunnelEventRecorder {
 
     public void record(EventRecord record) {
         try {
-            executor.execute(() -> write(record));
+            Map<String, String> mdc = MDC.getCopyOfContextMap();
+            executor.execute(() -> writeWithMdc(record, mdc));
         } catch (RejectedExecutionException e) {
             count("rejected");
+        }
+    }
+
+    /*
+     * 기록은 전용 실행기의 스레드에서 돌아 요청의 MDC 가 없다. 부른 쪽의 MDC 를 복사해 넘기고, 돌기 전에 이
+     * 스레드에 있던 MDC 는 끝난 뒤 되돌린다. 테스트처럼 호출 스레드에서 바로 돌 때 요청의 MDC 를 지우지 않으려는 것이다.
+     */
+    private void writeWithMdc(EventRecord record, Map<String, String> mdc) {
+        Map<String, String> previous = MDC.getCopyOfContextMap();
+        try {
+            if (mdc == null) {
+                MDC.clear();
+            } else {
+                MDC.setContextMap(mdc);
+            }
+            write(record);
+        } finally {
+            if (previous == null) {
+                MDC.clear();
+            } else {
+                MDC.setContextMap(previous);
+            }
         }
     }
 
@@ -73,7 +98,8 @@ public class FunnelEventRecorder {
             count(result.duplicated() > 0 ? "duplicate" : "recorded");
         } catch (RuntimeException e) {
             count("failed");
-            log.warn("퍼널 이벤트를 기록하지 못했다 type={}", record.eventType(), e);
+            log.warn("event=ANALYTICS_FUNNEL_EVENT_RECORD_FAILED eventType={} exceptionType={} fallback=DROP_EVENT",
+                    record.eventType(), e.getClass().getSimpleName());
         }
     }
 
