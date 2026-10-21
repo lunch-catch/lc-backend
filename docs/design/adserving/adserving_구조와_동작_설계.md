@@ -66,7 +66,7 @@ adserving/
 │   ├── listener/CandidateStatusChangedListener.java  CampaignStatusChangedEvent 를 받는다
 │   └── repository/AdCandidateRepository.java
 ├── exclusion/
-│   └── repository/ExclusionRepository.java  Valkey. 스와이프와 가게 상세 찜, 찜 삭제가 쓰고 피드가 읽는다
+│   └── repository/ExclusionRepository.java  Valkey. 스와이프와 가게 상세 찜, 찜 삭제가 쓰고 피드가 읽는다. 광고 서빙의 Valkey 저장소가 함께 쓰는 캐시 우회 지표 이름(`BYPASS_METRIC`)도 갖는다(#654)
 └── feed/
     ├── StoreAudienceCounter.java                    가게별 반경 안 대상 인원 세기. 계층 밖의 순수 계산
     ├── job/StoreAudienceJob.java                    00:00 묶음 90. 대상 인원을 세어 캠페인에 넘긴다

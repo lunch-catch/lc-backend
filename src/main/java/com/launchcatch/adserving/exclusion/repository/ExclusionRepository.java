@@ -26,8 +26,11 @@ public class ExclusionRepository {
 
     static final String KEY_PREFIX = "adserving:exclusion:";
 
-    // Valkey 가 멈춰 막지 않고 통과시킨 횟수다. 경보는 이 지표에 건다(장애 처리 가이드).
-    static final String BYPASS_METRIC = "adserving_cache_bypass_total";
+    /*
+     * Valkey 가 멈춰 막지 않고 통과시킨 횟수다. 경보는 이 지표에 건다(장애 처리 가이드).
+     * 광고 서빙의 Valkey 저장소가 모두 이 이름을 쓰고 use 태그로 쓰임새를 가른다(#654).
+     */
+    public static final String BYPASS_METRIC = "adserving_cache_bypass_total";
 
     private final StringRedisTemplate redisTemplate;
     private final MeterRegistry meterRegistry;

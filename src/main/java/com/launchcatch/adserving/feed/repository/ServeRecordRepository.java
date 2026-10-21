@@ -1,6 +1,8 @@
 package com.launchcatch.adserving.feed.repository;
 
 
+import static com.launchcatch.adserving.exclusion.repository.ExclusionRepository.BYPASS_METRIC;
+
 import com.launchcatch.adserving.engine.SlotType;
 import com.launchcatch.auth.RedisFailureClassifier;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -33,9 +35,6 @@ public class ServeRecordRepository {
      * 바꾸면 정산의 계획 없음 판정이 생기는 자정 직후 구간도 함께 바뀐다.
      */
     static final Duration TTL = Duration.ofMinutes(30);
-
-    // Valkey 가 멈춰 막지 않고 통과시킨 횟수다. 경보는 이 지표에 건다(장애 처리 가이드).
-    static final String BYPASS_METRIC = "adserving_cache_bypass_total";
 
     private final StringRedisTemplate redisTemplate;
     private final MeterRegistry meterRegistry;

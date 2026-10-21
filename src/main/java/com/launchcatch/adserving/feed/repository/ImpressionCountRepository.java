@@ -1,5 +1,7 @@
 package com.launchcatch.adserving.feed.repository;
 
+import static com.launchcatch.adserving.exclusion.repository.ExclusionRepository.BYPASS_METRIC;
+
 import com.launchcatch.auth.RedisFailureClassifier;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.time.Duration;
@@ -27,9 +29,6 @@ public class ImpressionCountRepository {
 
     // 피드는 그날 키만 읽는다. 다음 날까지 남겨 두면 대조할 때 볼 수 있어 이틀 뒤에 지운다.
     static final Duration TTL = Duration.ofDays(2);
-
-    // Valkey 가 멈춰 막지 않고 통과시킨 횟수다. 경보는 이 지표에 건다(장애 처리 가이드).
-    static final String BYPASS_METRIC = "adserving_cache_bypass_total";
 
     private final StringRedisTemplate redisTemplate;
     private final MeterRegistry meterRegistry;
