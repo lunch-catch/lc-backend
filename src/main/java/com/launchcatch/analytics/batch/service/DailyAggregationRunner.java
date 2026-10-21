@@ -1,5 +1,7 @@
 package com.launchcatch.analytics.batch.service;
 
+import static com.launchcatch.analytics.DailyAggregation.JOB_NAME;
+
 import com.launchcatch.analytics.batch.AggregationOutcome;
 import com.launchcatch.analytics.batch.PendingReason;
 import com.launchcatch.analytics.batch.repository.PendingDateRepository;
@@ -46,9 +48,6 @@ import org.springframework.transaction.support.TransactionTemplate;
 @Slf4j
 @Service
 public class DailyAggregationRunner {
-
-    /** batch_execution_log.job_name 이다. 영업일은 붙이지 않는다. */
-    public static final String JOB_NAME = "DAILY_AGGREGATION";
 
     /*
      * 정산이 그 영업일의 해제를 끝냈다고 남기는 작업 이름이다. 다음 날 00:00 예약 단계가 남긴다.

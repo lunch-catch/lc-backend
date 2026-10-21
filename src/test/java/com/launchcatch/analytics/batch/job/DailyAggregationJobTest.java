@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
+import com.launchcatch.analytics.DailyAggregation;
 import com.launchcatch.analytics.batch.AggregationOutcome;
 import com.launchcatch.analytics.batch.service.DailyAggregationRunner;
 import java.time.LocalDate;
@@ -39,7 +40,7 @@ class DailyAggregationJobTest {
 
     @Test
     void 이어받기와_수동_재실행이_찾는_작업_이름은_일별_집계다() {
-        assertThat(job.jobName()).isEqualTo(DailyAggregationRunner.JOB_NAME);
+        assertThat(job.jobName()).isEqualTo(DailyAggregation.JOB_NAME);
     }
 
     @Test

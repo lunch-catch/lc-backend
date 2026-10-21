@@ -31,6 +31,7 @@
 
 ```text
 analytics/
+├── DailyAggregation.java
 ├── config/
 ├── exception/
 ├── batch/
@@ -62,8 +63,11 @@ analytics/
 | 이벤트 유형별 식별자 조합 | DB CHECK와 `EventLogWriter` |
 | 시계열 기간과 버킷 계산 | 순수 계산 클래스 |
 | 소진액 계산 | `SpendFormula` 순수 계산 클래스 |
+| 일별 집계 작업의 식별자 | `DailyAggregation.JOB_NAME` |
 | 집계 단계 순서와 공개 트랜잭션 | `DailyAggregationRunner` |
 | 조회 권한과 응답 조합 | `query`의 service |
+
+`DailyAggregation`은 #657에서 실행과 조회가 함께 참조할 작업 식별자의 소유 위치로 정했다. 실행기 구현에 속하지 않는 정의라 analytics 루트에 둔다. 예약 작업의 등록 이름과 재집계 감사 로그도 같은 정의를 사용한다. 두 집계 상태 조회 서비스는 이 상수를 참조하고 배치 실행기 구현에는 의존하지 않는다.
 
 ## 3. 저장
 

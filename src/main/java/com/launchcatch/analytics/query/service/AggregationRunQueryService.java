@@ -1,5 +1,7 @@
 package com.launchcatch.analytics.query.service;
 
+import static com.launchcatch.analytics.DailyAggregation.JOB_NAME;
+
 import com.launchcatch.ops.contract.BatchExecutionQueryService;
 import com.launchcatch.ops.contract.BatchExecutionRecord;
 import java.time.LocalDate;
@@ -9,13 +11,11 @@ import org.springframework.stereotype.Service;
 /*
  * A-06 집계 실행 상태 조회다. 운영의 실행 기록에서 일별 집계 작업의 행만 골라 내준다.
  *
- * 작업 이름은 분석 배치 쪽 상수를 참조하지 않고 문자열로만 맞춘다. 조회 패키지는 배치 패키지를
- * 모르고, 실행 기록은 운영 소유라 운영의 조회 기능만 거친다.
+ * 작업 이름은 analytics의 공통 정의를 참조해 실행과 조회가 함께 사용한다.
+ * 이 조회는 배치 실행기를 참조하지 않고, 실행 기록은 운영 소유라 운영의 조회 기능만 거친다.
  */
 @Service
 public class AggregationRunQueryService {
-
-    private static final String JOB_NAME = "DAILY_AGGREGATION";
 
     private final BatchExecutionQueryService executionQuery;
 

@@ -11,6 +11,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.launchcatch.analytics.DailyAggregation;
 import com.launchcatch.analytics.batch.AggregationOutcome;
 import com.launchcatch.analytics.batch.PendingReason;
 import com.launchcatch.analytics.batch.repository.PendingDateRepository;
@@ -43,7 +44,7 @@ import org.springframework.transaction.PlatformTransactionManager;
 @ExtendWith(MockitoExtension.class)
 class DailyAggregationRunnerTest {
 
-    private static final String JOB = DailyAggregationRunner.JOB_NAME;
+    private static final String JOB = DailyAggregation.JOB_NAME;
     private static final LocalDate TODAY = LocalDate.of(2026, 10, 17);
     private static final LocalDate YESTERDAY = LocalDate.of(2026, 10, 16);
     private static final LocalDate TWO_DAYS_AGO = LocalDate.of(2026, 10, 15);
