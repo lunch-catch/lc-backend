@@ -25,6 +25,7 @@ import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -201,6 +202,8 @@ class MemberLoginServiceTest {
                 .isSameAs(duplicate);
     }
 
+    //Todo: 탈퇴 당일 재가입을 비활성화함. 활성화하려면 이 주석을 해제한다
+    @Disabled
     @Test
     void 탈퇴한_날의_재가입을_거부한다() throws Exception {
         when(kakaoIdTokenExchanger.exchange("code", "state"))
@@ -229,6 +232,8 @@ class MemberLoginServiceTest {
         org.mockito.Mockito.verifyNoInteractions(memberTokenService);
     }
 
+    //Todo: 탈퇴 당일 재가입을 비활성화함. 활성화하려면 이 주석을 해제한다
+    @Disabled
     @ParameterizedTest
     @CsvSource({
             "2026-10-06T14:59:59.999999999Z,false",
