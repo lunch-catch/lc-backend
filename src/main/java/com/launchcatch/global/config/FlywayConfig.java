@@ -43,8 +43,17 @@ public class FlywayConfig {
         Map<String, String> placeholders = Map.of(
                 "seedPasswordHash", seedPasswordHash,
                 "seedBusinessDate", LocalDate.now(clock).toString(),
-                "seedCdnBaseUrl", cdnBaseUrl.replaceAll("/+$", ""));
+                "seedCdnBaseUrl", withoutTrailingSlash(cdnBaseUrl));
         return new DomainFlywayMigrator(dataSource, new SeedSettings(seedEnabled, placeholders));
+    }
+
+    // 시드 HTML 이 주소 뒤에 / 를 붙이므로 끝의 / 를 뗀다. 정규식은 백트래킹이 있어 쓰지 않는다
+    static String withoutTrailingSlash(String url) {
+        int end = url.length();
+        while (end > 0 && url.charAt(end - 1) == '/') {
+            end--;
+        }
+        return url.substring(0, end);
     }
 
     /** 엔티티 매니저가 위 빈을 기다리게 한다. */
