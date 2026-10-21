@@ -65,11 +65,11 @@ class StoreDetailServiceTest {
     }
 
     @Test
-    void 확정된_가게에_대표_이미지가_없어도_null로_조회된다() {
+    void 확정된_가게에_대표_이미지가_없으면_데이터_오류다() {
         registered();
         when(stores.findImages(10L, "LOGO")).thenReturn(List.of());
-        var withoutCdn = new StoreDetailService(stores, details, "", clock);
-        assertThat(withoutCdn.find(10L).logoImage()).isNull();
+        assertThatThrownBy(() -> service.find(10L)).isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("대표 이미지가 누락");
     }
 
     @Test

@@ -180,12 +180,12 @@ class StoreQueryServiceImplTest {
     @ParameterizedTest
     @NullAndEmptySource
     @ValueSource(strings = {" ", "\t"})
-    void 최종_등록된_가게의_대표_이미지_키가_없거나_공백이면_URL은_null이다(String imageKey) {
+    void 최종_등록된_가게의_대표_이미지_키가_없거나_공백이면_실패한다(String imageKey) {
         when(repository.findAllById(List.of(1L))).thenReturn(List.of(
                 new StoreQueryRow(1L, "가게", imageKey, new BigDecimal("37.5"), new BigDecimal("127.0"))));
 
-        assertThat(service.findAllById(List.of(1L))).containsExactly(
-                new StoreInfo(1L, "가게", null, 37.5, 127.0));
+        assertThatThrownBy(() -> service.findAllById(List.of(1L)))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("이미지가 누락");
     }
 
     @Test
