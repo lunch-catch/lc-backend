@@ -227,7 +227,10 @@ class WishlistServiceTest {
                 false, OffsetDateTime.of(createdAt, ZoneOffset.ofHours(9)))));
     }
 
-    // 다시 넣어도 집합이라 그대로다. 앞 요청에서 Valkey 에 넣지 못했으면 여기서 채워진다
+    /*
+     * 다시 넣어도 집합이라 그대로다.
+     * 앞 요청에서 Valkey 에 넣지 못했으면 여기서 채워진다.
+     */
     @Test
     void 이미_찜했으면_created_가_아니고_처음_찜한_시각을_돌려주며_당일_이력에_다시_넣는다() {
         LocalDateTime firstWishedAt = LocalDateTime.of(2026, 9, 30, 11, 0);
@@ -256,7 +259,10 @@ class WishlistServiceTest {
         verify(exclusionRepository, never()).add(any(), any(), any(), any());
     }
 
-    // 당일 이력은 되돌릴 수 없어 찜이 실패하면 넣지 않는다. 넣으면 찜하지 않은 캠페인이 그날 피드에서 빠진다
+    /*
+     * 당일 이력은 되돌릴 수 없어 찜이 실패하면 넣지 않는다.
+     * 넣으면 찜하지 않은 캠페인이 그날 피드에서 빠진다.
+     */
     @Test
     void 찜을_넣지_못하면_당일_이력에_넣지_않는다() {
         when(adCandidateRepository.findByIdBusinessDateAndIdCampaignId(BUSINESS_DATE, 101L))

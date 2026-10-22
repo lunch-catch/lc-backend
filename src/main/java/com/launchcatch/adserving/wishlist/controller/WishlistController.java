@@ -47,7 +47,10 @@ public class WishlistController {
         return ResponseEnvelope.success(wishlistService.getWishlist(user.getId(), campaignId));
     }
 
-    // 가게 상세에서 찜한다. 피드의 찜은 POST /v1/swipes 로 한다.
+    /*
+     * 가게 상세에서 찜한다.
+     * 피드의 찜은 POST /v1/swipes 로 한다.
+     */
     @PostMapping("/wishlist")
     @Operation(summary = "가게 상세에서 찜", description = "처음 찜하면 201, 이미 찜한 캠페인이면 200 이다. 오늘 노출 중인 캠페인이 아니면 404 ADSERVING-004 다.")
     @ApiResponse(responseCode = "201", description = "찜 목록 항목 하나를 반환한다.", useReturnTypeSchema = true)

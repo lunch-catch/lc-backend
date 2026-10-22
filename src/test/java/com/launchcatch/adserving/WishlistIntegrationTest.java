@@ -191,7 +191,8 @@ class WishlistIntegrationTest extends AbstractAdservingIntegrationTest {
                 .andExpect(jsonPath("$.data.storeId").value(55))
                 .andExpect(jsonPath("$.data.storeName").value("점심식당"))
                 .andExpect(jsonPath("$.data.discount.menuName").value("갈비살 정식"))
-                .andExpect(jsonPath("$.data.wishedAt").exists());
+                // 201 은 서버가 created_at 을 직접 쓰는 유일한 경로라 시간대가 어긋나면 이 값이 9시간 밀린다(#777)
+                .andExpect(jsonPath("$.data.wishedAt").value("2026-10-01T10:30:00+09:00"));
 
         assertThat(jdbcTemplate.queryForMap("SELECT member_id, campaign_id, store_id, serve_id FROM wishlist"))
                 .containsEntry("member_id", MEMBER_ID).containsEntry("campaign_id", 101L)
