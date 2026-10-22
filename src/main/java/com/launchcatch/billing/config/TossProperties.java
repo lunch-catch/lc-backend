@@ -14,7 +14,7 @@ import org.springframework.validation.annotation.Validated;
  * 그 실패는 첫 결제가 들어와야 드러난다.
  *
  * @param baseUrl        API 주소. 테스트 키와 운영 키가 같은 호스트를 쓴다
- * @param secretKey      비밀키. 토스 개발자센터의 API 개별 연동 키
+ * @param secretKey      비밀키. 토스 개발자센터의 결제위젯 연동 키 중 시크릿 키(gsk)
  * @param connectTimeout 연결 타임아웃. 이 안에 못 붙으면 요청이 나가지 않은 것이다
  * @param readTimeout    읽기 타임아웃. 요청을 보낸 뒤 응답을 기다리는 시간이라 넘기면 결과를 알 수 없다
  */
