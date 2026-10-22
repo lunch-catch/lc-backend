@@ -60,7 +60,7 @@ public class TemplateCreateService {
     public TemplateCreateResponse create(String name, String requestPrompt, String requestId, Long adminId) {
         var existing = templateVersionRepository.findByRequestId(requestId);
         if (existing.isPresent()) {
-            return toResponse(existing.get(), List.of());
+            return toResponse(existing.get(), List.of(), List.of());
         }
         templateGenerationRateLimiter.checkLimit(adminId, requestId);
         validatePrompt(requestPrompt, requestId);
@@ -72,10 +72,10 @@ public class TemplateCreateService {
         TemplateSanitizeResult sanitized = templateHtmlSanitizer.sanitize(document);
         templateSlotValidator.validate(document);
         try {
-            return transactionTemplate.execute(status -> save(name, requestPrompt, requestId, adminId, sanitized, generated.message()));
+            return transactionTemplate.execute(status -> save(name, requestPrompt, requestId, adminId, sanitized, generated.message(), generated.suggestedPrompts()));
         } catch (DataIntegrityViolationException e) {
             return templateVersionRepository.findByRequestId(requestId)
-                    .map(found -> toResponse(found, List.<String>of()))
+                    .map(found -> toResponse(found, List.<String>of(), List.<String>of()))
                     .orElseThrow(() -> e);
         }
     }
@@ -113,7 +113,7 @@ public class TemplateCreateService {
      */
     private TemplateCreateResponse save(
             String name, String requestPrompt, String requestId, Long adminId, TemplateSanitizeResult sanitized,
-            String message) {
+            String message, List<String> suggestedPrompts) {
         if (templateQuotaRepository.tryReserve(maxTemplates) == 0) {
             throw new CampaignException(PosterErrorCode.TEMPLATE_LIMIT_EXCEEDED);
         }
@@ -121,14 +121,15 @@ public class TemplateCreateService {
         TemplateVersion version = template.addDraftVersion(
                 adminId, LocalDateTime.now(clock), requestPrompt, requestId, sanitized.html(), message, 1);
         templateRepository.saveAndFlush(template);
-        return toResponse(version, sanitized.removedElements());
+        return toResponse(version, sanitized.removedElements(), suggestedPrompts);
     }
 
     /*
      * 재시도로 되돌려주는 응답은 removedElements 를 비워 둔다. 그 목록은 저장하지 않아
      * 처음 응답 이후로는 다시 만들어낼 수 없다.
      */
-    private TemplateCreateResponse toResponse(TemplateVersion version, List<String> removedElements) {
+    private TemplateCreateResponse toResponse(
+            TemplateVersion version, List<String> removedElements, List<String> suggestedPrompts) {
         Template template = version.getTemplate();
         return new TemplateCreateResponse(
                 template.getId(),
@@ -138,6 +139,6 @@ public class TemplateCreateService {
                 version.getHtmlContent(),
                 version.getMessage() == null ? "" : version.getMessage(),
                 removedElements,
-                TemplateCreateResponse.SUGGESTED_PROMPTS);
+                suggestedPrompts);
     }
 }

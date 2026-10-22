@@ -59,13 +59,8 @@ class TemplateReviseServiceTest {
     private static final Long TEMPLATE_ID = 1L;
     private static final String REQUEST_ID = "req-1";
 
-    // 상수를 참조하지 않고 poster-api-design.md 의 문장을 그대로 적어야 목록이 바뀐 것을 잡는다.
-    private static final List<String> EXPECTED_SUGGESTED_PROMPTS = List.of(
-            "배경을 더 밝게 해줘",
-            "행사명 글자를 더 크게 해줘",
-            "할인 문구를 더 진한 강조색으로 바꿔줘",
-            "행사명을 중앙에서 오른쪽으로 1cm 옮겨줘",
-            "이미지 모서리를 더 둥글게 해줘");
+    private static final List<String> GENERATED_SUGGESTIONS =
+            List.of("행사명 글자를 조금 더 크게 해줘", "배경을 조금 더 밝게 해줘");
     private static final Clock FIXED_CLOCK = Clock.fixed(Instant.parse("2026-10-08T01:00:00Z"), ZoneOffset.UTC);
 
     @Mock
@@ -118,14 +113,14 @@ class TemplateReviseServiceTest {
         when(templateHtmlGenerator.revise(PREVIOUS_HTML, "버튼 색 바꿔줘"))
                 .thenReturn(new GeneratedTemplate(PREVIOUS_HTML.replace(
                         "<h1 data-slot=\"eventName\">title</h1>", "<h1 data-slot=\"eventName\">새 제목</h1>")
-                        + "<script>alert(1)</script>", ""));
+                        + "<script>alert(1)</script>", "", GENERATED_SUGGESTIONS));
 
         TemplateCreateResponse response = service.revise(TEMPLATE_ID, "버튼 색 바꿔줘", REQUEST_ID, ADMIN_ID);
 
         assertThat(response.templateId()).isEqualTo(TEMPLATE_ID);
         assertThat(response.versionNumber()).isEqualTo(2);
         assertThat(response.removedElements()).containsExactly("script");
-        assertThat(response.suggestedPrompts()).containsExactlyElementsOf(EXPECTED_SUGGESTED_PROMPTS);
+        assertThat(response.suggestedPrompts()).containsExactlyElementsOf(GENERATED_SUGGESTIONS);
         verify(templateVersionRepository).saveAndFlush(any(TemplateVersion.class));
     }
 
@@ -139,7 +134,8 @@ class TemplateReviseServiceTest {
 
         assertThat(response.templateId()).isEqualTo(TEMPLATE_ID);
         assertThat(response.removedElements()).isEmpty();
-        assertThat(response.suggestedPrompts()).containsExactlyElementsOf(EXPECTED_SUGGESTED_PROMPTS);
+        // 재시도 응답은 저장된 버전에서 만들어지고 제안은 저장하지 않으므로 비어 있다(#732)
+        assertThat(response.suggestedPrompts()).isEmpty();
         verify(templateRepository, never()).findById(any());
         verify(templateRepository, never()).findByIdForUpdate(any());
         verify(templateHtmlGenerator, never()).revise(any(), any());
