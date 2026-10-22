@@ -43,7 +43,15 @@ public class AuthExceptionHandler {
     @ExceptionHandler(AuthenticationException.class)
     public ResponseEntity<ResponseEnvelope<Void>> handleAuthentication(
             AuthenticationException e, HttpServletRequest request) {
-        return toResponse(AuthErrorCode.LOGIN_REQUIRED, request, "AUTH_UNAUTHENTICATED", e);
+        AuthErrorCode errorCode = AuthErrorCode.LOGIN_REQUIRED;
+        if (errorCode.isExpectedTraffic()) {
+            log.debug("event=AUTH_UNAUTHENTICATED errorCode={} exceptionType={}",
+                    errorCode.getCode(), e.getClass().getSimpleName());
+        } else {
+            log.warn("event=AUTH_UNAUTHENTICATED errorCode={} exceptionType={}",
+                    errorCode.getCode(), e.getClass().getSimpleName());
+        }
+        return toResponse(errorCode, request);
     }
 
     /*
@@ -56,7 +64,15 @@ public class AuthExceptionHandler {
     @ExceptionHandler(AccessDeniedException.class)
     public ResponseEntity<ResponseEnvelope<Void>> handleAccessDenied(
             AccessDeniedException e, HttpServletRequest request) {
-        return toResponse(AuthErrorCode.ROLE_NOT_ALLOWED, request, "AUTH_PERMISSION_DENIED", e);
+        AuthErrorCode errorCode = AuthErrorCode.ROLE_NOT_ALLOWED;
+        if (errorCode.isExpectedTraffic()) {
+            log.debug("event=AUTH_PERMISSION_DENIED errorCode={} exceptionType={}",
+                    errorCode.getCode(), e.getClass().getSimpleName());
+        } else {
+            log.warn("event=AUTH_PERMISSION_DENIED errorCode={} exceptionType={}",
+                    errorCode.getCode(), e.getClass().getSimpleName());
+        }
+        return toResponse(errorCode, request);
     }
 
     /*
@@ -67,14 +83,9 @@ public class AuthExceptionHandler {
      * 로그가 그 규모만큼 늘어난다. 세는 일은 지표가 한다.
      */
     private ResponseEntity<ResponseEnvelope<Void>> toResponse(
-            AuthErrorCode errorCode, HttpServletRequest request, String event, Exception e) {
+            AuthErrorCode errorCode, HttpServletRequest request) {
         if (errorCode.isExpectedTraffic()) {
             AccessLogSignal.markExpected(request);
-            log.debug("event={} errorCode={} exceptionType={}",
-                    event, errorCode.getCode(), e.getClass().getSimpleName());
-        } else {
-            log.warn("event={} errorCode={} exceptionType={}",
-                    event, errorCode.getCode(), e.getClass().getSimpleName());
         }
         return ResponseEntity.status(errorCode.getHttpStatus())
                 .body(ResponseEnvelope.fail(errorCode));
