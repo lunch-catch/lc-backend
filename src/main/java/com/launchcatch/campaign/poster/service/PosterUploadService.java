@@ -28,6 +28,7 @@ import java.time.Duration;
 import java.time.format.DateTimeFormatter;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
@@ -251,6 +252,16 @@ public class PosterUploadService {
         return title.length() > TITLE_MAX_LENGTH ? title.substring(0, TITLE_MAX_LENGTH) : title;
     }
 
+    // 이미지 칸 크기 보정 속성이다(#731). withImageFit 주석 참고.
+    private static final Map<String, String> IMAGE_FIT_STYLE = new LinkedHashMap<>();
+
+    static {
+        IMAGE_FIT_STYLE.put("width", "100%");
+        IMAGE_FIT_STYLE.put("height", "100%");
+        IMAGE_FIT_STYLE.put("min-height", "0");
+        IMAGE_FIT_STYLE.put("object-fit", "cover");
+    }
+
     private RenderedPoster render(String templateHtml, String eventName, String discount, String period,
             String imageUrl) {
         Document document = Jsoup.parseBodyFragment(templateHtml);
@@ -270,8 +281,33 @@ public class PosterUploadService {
     }
 
     private PosterSlotValue fillImage(Document document, String imageUrl) {
-        requireSlot(document, "image").attr("src", imageUrl);
+        Element image = requireSlot(document, "image");
+        image.attr("src", imageUrl);
+        image.attr("style", withImageFit(image.attr("style")));
         return new PosterSlotValue("image", imageUrl);
+    }
+
+    /*
+     * 큰 이미지가 이미지 칸을 밀어내 포스터가 깨지지 않게 크기 스타일을 서버가 보정한다(#731). 칸의 크기는
+     * 템플릿(LLM 이 만든 CSS)이 정하고 서버는 업로드 파일의 가로세로 크기를 제한하지 않으므로, 템플릿이
+     * 이 속성을 빠뜨려도 안전하도록 항상 덧씌운다. cover 는 비율을 유지한 채 칸을 채우고 넘치는 부분을
+     * 자른다(왜곡 없음).
+     *
+     * 템플릿이 이미 가진 이미지 스타일(border-radius, box-shadow 등)은 그대로 두고, 보정 속성이 이미
+     * 있으면 서버 값으로 덮어쓴다. 같은 속성이 두 번 들어가지 않는다. 이 메서드는 템플릿 HTML 에서 매번
+     * 새로 렌더링하므로 덮어쓰는 포스터에서도 중복되지 않는다.
+     */
+    private String withImageFit(String existingStyle) {
+        Map<String, String> declarations = new LinkedHashMap<>();
+        for (String declaration : existingStyle.split(";")) {
+            int colon = declaration.indexOf(':');
+            if (colon <= 0) {
+                continue;
+            }
+            declarations.put(declaration.substring(0, colon).trim().toLowerCase(Locale.ROOT), declaration.trim());
+        }
+        IMAGE_FIT_STYLE.forEach((property, value) -> declarations.put(property, property + ":" + value));
+        return String.join(";", declarations.values());
     }
 
     // 템플릿은 게시 전에 이미 슬롯 검증을 거치므로, 여기서 못 찾으면 그 사이 데이터가 깨진 것이다.
