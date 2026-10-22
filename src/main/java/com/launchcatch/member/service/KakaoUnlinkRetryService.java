@@ -42,11 +42,10 @@ public class KakaoUnlinkRetryService {
     private final TransactionTemplate transactionTemplate;
 
     public void retryPending() {
-        List<PendingUnlink> pending = transactionTemplate.execute(status -> loadPending());
-        if (pending == null) {
-            return;
-        }
-        pending.forEach(this::retryOne);
+        // execute 는 콜백이 null 을 돌려줄 수 있어 @Nullable 이다. 빈 목록으로 바꿔 분기 없이 돈다
+        Optional.ofNullable(transactionTemplate.execute(status -> loadPending()))
+                .orElse(List.of())
+                .forEach(this::retryOne);
     }
 
     /*
