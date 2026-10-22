@@ -8,6 +8,7 @@ import com.launchcatch.billing.client.PgUnknownException;
 import com.launchcatch.billing.entity.EntryType;
 import com.launchcatch.billing.entity.Payment;
 import com.launchcatch.billing.entity.PaymentStatus;
+import com.launchcatch.billing.entity.PointLedger;
 import com.launchcatch.billing.repository.PaymentRepository;
 import com.launchcatch.billing.repository.PointLedgerRepository;
 import com.launchcatch.billing.repository.PgChargeReconciliationPendingRepository;
@@ -18,6 +19,7 @@ import java.time.Clock;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.LinkedHashMap;
+import java.util.Optional;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -108,21 +110,29 @@ public class PgChargeReconciliationService {
         mismatchRecorder.resolvePending(payment.getId());
         long pgClaim = result.status() == Status.APPROVED ? result.amount() : 0L;
         long ourClaim = payment.getStatus() == PaymentStatus.APPROVED ? payment.getAmount() : 0L;
-        if (pgClaim == ourClaim) {
-            if (ourClaim > 0 && !ledgerRepository.existsByPaymentIdAndEntryType(payment.getId(), EntryType.CHARGE)) {
+        Optional<PointLedger> charge = ledgerRepository.findByPaymentIdAndEntryType(payment.getId(), EntryType.CHARGE);
+        if (pgClaim != ourClaim) {
+            mismatchRecorder.recordMismatch(payment.getId(), pgClaim, ourClaim, businessDate, jobExecutionId, now);
+            log.warn("event=BILLING_PG_RECON_MISMATCH paymentId={} expectedAmount={} actualAmount={}",
+                    payment.getId(), ourClaim, pgClaim);
+            meterRegistry.counter(RECON_METRIC, "result", "mismatch").increment();
+            return 1;
+        }
+        if (ourClaim > 0 && charge.isEmpty()) {
                 mismatchRecorder.recordMissingCharge(payment, businessDate, jobExecutionId, now);
                 log.warn("event=BILLING_PG_RECON_CHARGE_RECOVERED paymentId={} businessDate={} fallback=AUTO_RECOVER",
                         payment.getId(), businessDate);
                 meterRegistry.counter(RECON_METRIC, "result", "recovered").increment();
                 return 1;
-            }
-            return 0;
         }
-        mismatchRecorder.recordMismatch(payment.getId(), pgClaim, ourClaim, businessDate, jobExecutionId, now);
-        log.warn("event=BILLING_PG_RECON_MISMATCH paymentId={} expectedAmount={} actualAmount={}",
-                payment.getId(), ourClaim, pgClaim);
-        meterRegistry.counter(RECON_METRIC, "result", "mismatch").increment();
-        return 1;
+        if (charge.isPresent() && (charge.get().getAmount() != ourClaim
+                || !charge.get().getOwnerId().equals(payment.getOwnerId()))) {
+            mismatchRecorder.recordMismatch(payment.getId(), ourClaim, charge.get().getAmount(),
+                    businessDate, jobExecutionId, now);
+            meterRegistry.counter(RECON_METRIC, "result", "mismatch").increment();
+            return 1;
+        }
+        return 0;
     }
 
     // 조회가 멱등(읽기 전용)이라 재시도해도 안전하다. 짧게 1회만 재시도하고 그래도 실패하면 포기한다

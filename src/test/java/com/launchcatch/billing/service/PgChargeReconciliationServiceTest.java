@@ -19,6 +19,8 @@ import com.launchcatch.billing.client.PgUnknownException;
 import com.launchcatch.billing.entity.EntryType;
 import com.launchcatch.billing.entity.Payment;
 import com.launchcatch.billing.entity.PaymentStatus;
+import com.launchcatch.billing.entity.PointLedger;
+import com.launchcatch.billing.entity.LedgerSource;
 import com.launchcatch.billing.repository.PaymentRepository;
 import com.launchcatch.billing.repository.PointLedgerRepository;
 import com.launchcatch.billing.repository.PgChargeReconciliationPendingRepository;
@@ -32,6 +34,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.List;
+import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -181,7 +184,8 @@ class PgChargeReconciliationServiceTest {
         givenTargets(payment);
         givenRunId();
         when(paymentGateway.inquireByPaymentKey(PG_TID)).thenReturn(pgResult(Status.APPROVED, AMOUNT));
-        when(ledgerRepository.existsByPaymentIdAndEntryType(PAYMENT_ID, EntryType.CHARGE)).thenReturn(true);
+        when(ledgerRepository.findByPaymentIdAndEntryType(PAYMENT_ID, EntryType.CHARGE))
+                .thenReturn(Optional.of(PointLedger.charge(OWNER_ID, PAYMENT_ID, AMOUNT, LedgerSource.REALTIME)));
 
         assertThat(service.reconcilePreviousDay(RUN_DATE, JOB)).isZero();
 
@@ -327,5 +331,18 @@ class PgChargeReconciliationServiceTest {
         assertThat(counted("error")).isEqualTo(1.0);
         verify(mismatchRecorder).recordMissingCharge(ok, PREV, RUN_ID, NOW);
         verify(mismatchRecorder).resolvePending(PAYMENT_ID);
+    }
+    @Test
+    void PG와_결제는_같아도_CHARGE_금액이_다르면_불일치로_기록한다() {
+        Payment payment = payment(PaymentStatus.APPROVED, AMOUNT);
+        givenTargets(payment);
+        givenRunId();
+        when(paymentGateway.inquireByPaymentKey(PG_TID)).thenReturn(pgResult(Status.APPROVED, AMOUNT));
+        when(ledgerRepository.findByPaymentIdAndEntryType(PAYMENT_ID, EntryType.CHARGE))
+                .thenReturn(Optional.of(PointLedger.charge(OWNER_ID, PAYMENT_ID, AMOUNT - 1_000, LedgerSource.REALTIME)));
+
+        assertThat(service.reconcilePreviousDay(RUN_DATE, JOB)).isEqualTo(1);
+
+        verify(mismatchRecorder).recordMismatch(PAYMENT_ID, AMOUNT, AMOUNT - 1_000, PREV, RUN_ID, NOW);
     }
 }

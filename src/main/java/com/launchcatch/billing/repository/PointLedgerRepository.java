@@ -46,6 +46,8 @@ public interface PointLedgerRepository extends JpaRepository<PointLedger, Long>,
     // PG_VS_CHARGE 대사(13번)가 묻는다. 결제당 CHARGE 는 많아야 한 줄이다(uk_point_ledger_payment_entry)
     boolean existsByPaymentIdAndEntryType(Long paymentId, EntryType entryType);
 
+    Optional<PointLedger> findByPaymentIdAndEntryType(Long paymentId, EntryType entryType);
+
     // 영업일로 귀속되는 RESERVE 와 RELEASE 의 합이다
     @Query("""
             select coalesce(sum(l.amount), 0L)
