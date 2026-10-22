@@ -102,7 +102,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
             Long remaining = redisTemplate.getExpire(KEY_PREFIX + ip, TimeUnit.SECONDS);
             return remaining != null && remaining > 0 ? remaining : WINDOW.toSeconds();
         } catch (DataAccessException e) {
-            log.warn("event=RATE_LIMIT_TTL_FAILED ip={} cause={} 윈도우 길이로 답한다",
+            log.warn("event=AUTH_RATE_LIMIT_TTL_FAILED clientIp={} reason={} fallback=WINDOW_LENGTH",
                     ip, RedisFailureClassifier.causeLabel(e), e);
             return WINDOW.toSeconds();
         }
@@ -115,7 +115,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
                     RATE_LIMIT_SCRIPT, List.of(key), String.valueOf(WINDOW.toMillis()));
             return count != null && count > LIMIT;
         } catch (DataAccessException e) {
-            log.warn("event=RATE_LIMIT_CHECK_FAILED ip={} cause={} 통과시킨다",
+            log.warn("event=AUTH_RATE_LIMIT_CHECK_FAILED clientIp={} reason={} fallback=PASS_THROUGH",
                     ip, RedisFailureClassifier.causeLabel(e), e);
             return false;
         }
