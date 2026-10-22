@@ -73,7 +73,7 @@ public class MemberWithdrawalService {
             }
             throw e;
         } catch (RuntimeException e) {
-            log.error("event=MEMBER_WITHDRAWAL_FAILED memberId={} reason=SYSTEM_ERROR causeType={}", memberId, e.getClass().getSimpleName());
+            log.error("event=MEMBER_WITHDRAWAL_FAILED memberId={} reason=SYSTEM_ERROR exceptionType={}", memberId, e.getClass().getSimpleName());
             throw e;
         }
         try {
@@ -173,11 +173,11 @@ public class MemberWithdrawalService {
                     target.memberId(), persistenceFailure);
         }
         if (!KakaoUnlinkFailureClassifier.isTerminal(failure)) {
-            log.warn("event=KAKAO_UNLINK_FAILED_QUEUED memberId={} causeType={} details={}",
+            log.warn("event=KAKAO_UNLINK_FAILED_QUEUED memberId={} exceptionType={} details={}",
                     target.memberId(), KakaoUnlinkFailureClassifier.causeType(failure), FailureLogDetails.from(failure));
             return;
         }
-        log.error("event=KAKAO_UNLINK_REJECTED memberId={} causeType={}",
+        log.error("event=KAKAO_UNLINK_REJECTED memberId={} exceptionType={}",
                 target.memberId(),
                 KakaoUnlinkFailureClassifier.causeType(failure), failure);
     }

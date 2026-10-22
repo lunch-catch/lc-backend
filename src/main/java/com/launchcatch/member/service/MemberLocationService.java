@@ -46,7 +46,7 @@ public class MemberLocationService {
         } catch (MemberException e) {
             throw e;
         } catch (RuntimeException e) {
-            log.error("event=MEMBER_LOCATION_SAVE_FAILED memberId={} reason=SYSTEM_ERROR causeType={}", memberId, e.getClass().getSimpleName());
+            log.error("event=MEMBER_LOCATION_SAVE_FAILED memberId={} reason=SYSTEM_ERROR exceptionType={}", memberId, e.getClass().getSimpleName());
             throw e;
         }
     }
@@ -57,7 +57,7 @@ public class MemberLocationService {
                     .map(this::response)
                     .orElse(new MemberLocationResponse(null, null, null, null));
         } catch (RuntimeException e) {
-            log.error("event=MEMBER_LOCATION_READ_FAILED memberId={} reason=SYSTEM_ERROR causeType={}", memberId, e.getClass().getSimpleName());
+            log.error("event=MEMBER_LOCATION_READ_FAILED memberId={} reason=SYSTEM_ERROR exceptionType={}", memberId, e.getClass().getSimpleName());
             throw e;
         }
     }
@@ -69,7 +69,7 @@ public class MemberLocationService {
             TransactionLogging.afterCommit(() -> log.info("event=MEMBER_LOCATION_DELETE_SUCCESS memberId={}", memberId));
             TransactionLogging.afterFailure(() -> log.error("event=MEMBER_LOCATION_DELETE_FAILED memberId={} reason=TRANSACTION_COMPLETION_FAILED", memberId));
         } catch (RuntimeException e) {
-            log.error("event=MEMBER_LOCATION_DELETE_FAILED memberId={} reason=SYSTEM_ERROR causeType={}", memberId, e.getClass().getSimpleName());
+            log.error("event=MEMBER_LOCATION_DELETE_FAILED memberId={} reason=SYSTEM_ERROR exceptionType={}", memberId, e.getClass().getSimpleName());
             throw e;
         }
     }
