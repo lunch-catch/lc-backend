@@ -6,12 +6,16 @@ import com.launchcatch.global.config.ClockConfig;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.core.io.ClassPathResource;
 import org.springframework.dao.DataAccessException;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.script.DefaultRedisScript;
+import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.stereotype.Repository;
 
 /*
@@ -31,6 +35,8 @@ public class ExclusionRepository {
      * 광고 서빙의 Valkey 저장소가 모두 이 이름을 쓰고 use 태그로 쓰임새를 가른다(#654).
      */
     public static final String BYPASS_METRIC = "adserving_cache_bypass_total";
+
+    private static final RedisScript<Long> ADD_SCRIPT = loadScript();
 
     private final StringRedisTemplate redisTemplate;
     private final MeterRegistry meterRegistry;
@@ -62,12 +68,20 @@ public class ExclusionRepository {
     public void add(LocalDate businessDate, Long memberId, Long campaignId, Instant now) {
         String key = key(businessDate, memberId);
         try {
-            redisTemplate.opsForSet().add(key, String.valueOf(campaignId));
-            redisTemplate.expire(key, Duration.between(now, businessDate.plusDays(1).atStartOfDay(ClockConfig.ZONE)));
+            // 넣기와 만료를 한 번에 보낸다. 만료만 실패해 키가 TTL 없이 남거나 넣었는데 못 넣었다고 세지 않게 한다(#783)
+            Duration remaining = Duration.between(now, businessDate.plusDays(1).atStartOfDay(ClockConfig.ZONE));
+            redisTemplate.execute(ADD_SCRIPT, List.of(key), String.valueOf(remaining.toMillis()), String.valueOf(campaignId));
         } catch (DataAccessException e) {
             log.warn("event=ADSERVING_FEED_EXCLUSION_WRITE_FAILED memberId={} campaignId={} reason={} fallback=SKIP_WRITE",
                     memberId, campaignId, RedisFailureClassifier.causeLabel(e), e);
             meterRegistry.counter(BYPASS_METRIC, "use", "exclusion").increment();
         }
+    }
+
+    private static RedisScript<Long> loadScript() {
+        DefaultRedisScript<Long> script = new DefaultRedisScript<>();
+        script.setLocation(new ClassPathResource("scripts/feed_exclusion_add.lua"));
+        script.setResultType(Long.class);
+        return script;
     }
 }

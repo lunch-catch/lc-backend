@@ -9,11 +9,13 @@ import java.time.LocalDate;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.core.io.ClassPathResource;
 import org.springframework.dao.DataAccessException;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.script.DefaultRedisScript;
+import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.stereotype.Repository;
 
 /*
@@ -30,6 +32,8 @@ public class ImpressionCountRepository {
 
     // 피드는 그날 키만 읽는다. 다음 날까지 남겨 두면 대조할 때 볼 수 있어 이틀 뒤에 지운다.
     static final Duration TTL = Duration.ofDays(2);
+
+    private static final RedisScript<Long> INCREMENT_SCRIPT = loadScript();
 
     private final StringRedisTemplate redisTemplate;
     private final MeterRegistry meterRegistry;
@@ -57,9 +61,9 @@ public class ImpressionCountRepository {
             }
             return counts;
         } catch (DataAccessException e) {
-            log.warn("event=ADSERVING_FEED_IMPRESSION_COUNT_FAILED businessDate={} campaignIds={} reason={} fallback=ZERO_COUNT",
-                    businessDate, campaignIds.stream().map(String::valueOf).collect(Collectors.joining(",")),
-                    RedisFailureClassifier.causeLabel(e), e);
+            // 원인이 캠페인이 아니라 Valkey 라 ID 대신 개수만 남겨 장애 중 로그가 후보 수만큼 길어지지 않게 한다(#778)
+            log.warn("event=ADSERVING_FEED_IMPRESSION_COUNT_FAILED businessDate={} campaignCount={} reason={} fallback=ZERO_COUNT",
+                    businessDate, campaignIds.size(), RedisFailureClassifier.causeLabel(e), e);
             meterRegistry.counter(BYPASS_METRIC, "use", "impression_count").increment();
             return Map.of();
         }
@@ -71,12 +75,20 @@ public class ImpressionCountRepository {
      */
     public void increment(LocalDate businessDate, Long campaignId) {
         try {
-            redisTemplate.opsForHash().increment(key(businessDate), String.valueOf(campaignId), 1);
-            redisTemplate.expire(key(businessDate), TTL);
+            // 올리기와 만료를 한 번에 보낸다. 만료만 실패해 키가 TTL 없이 남거나 올렸는데 못 올렸다고 세지 않게 한다(#783)
+            redisTemplate.execute(INCREMENT_SCRIPT, List.of(key(businessDate)),
+                    String.valueOf(TTL.toMillis()), String.valueOf(campaignId));
         } catch (DataAccessException e) {
             log.warn("event=ADSERVING_FEED_IMPRESSION_COUNT_INCREMENT_FAILED campaignId={} reason={} fallback=SKIP_WRITE",
                     campaignId, RedisFailureClassifier.causeLabel(e), e);
             meterRegistry.counter(BYPASS_METRIC, "use", "impression_count").increment();
         }
+    }
+
+    private static RedisScript<Long> loadScript() {
+        DefaultRedisScript<Long> script = new DefaultRedisScript<>();
+        script.setLocation(new ClassPathResource("scripts/feed_impression_count_increment.lua"));
+        script.setResultType(Long.class);
+        return script;
     }
 }

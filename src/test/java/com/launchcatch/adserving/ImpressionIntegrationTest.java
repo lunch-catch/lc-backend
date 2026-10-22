@@ -170,6 +170,8 @@ class ImpressionIntegrationTest extends AbstractAdservingIntegrationTest {
         assertThat(rows()).isEqualTo(1);
         verify(pointDeductor, times(1)).deduct(any(), any(), any());
         assertThat(counter()).isEqualTo("1");
+        // 올리기와 만료를 한 스크립트로 보내 카운터에 만료가 걸려 있다(#783)
+        assertThat(redisTemplate.getExpire(COUNTER_KEY)).isPositive();
     }
 
     /*

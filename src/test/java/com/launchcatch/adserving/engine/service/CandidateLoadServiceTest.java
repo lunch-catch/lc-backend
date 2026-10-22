@@ -136,6 +136,21 @@ class CandidateLoadServiceTest {
         assertThat(skipped("menu_missing")).isEqualTo(1);
     }
 
+    // 캠페인의 연령대에 중복이 있어도 한 번씩만 넣는다. 저장값에 중복이 남지 않게 한다(#783)
+    @Test
+    void 연령대의_중복은_한_번씩만_적재한다() {
+        CampaignInfo duplicated = new CampaignInfo(101L, 1L, 55L, CampaignStatus.ACTIVE, 30, LocalTime.of(12, 0),
+                LocalTime.of(14, 0), TODAY.minusDays(3), TODAY.plusDays(3), DiscountTargetType.ALL, DiscountType.PERCENT, 20,
+                null, 1000, TargetGender.ALL, List.of(AgeGroup.AGE_20S, AgeGroup.AGE_20S, AgeGroup.AGE_30S),
+                LocalDateTime.of(2026, 9, 1, 9, 0), LocalDate.of(2026, 10, 3), CHANGED_AT, null, 10_000L);
+        when(campaignQueryService.findServableOn(TODAY)).thenReturn(List.of(duplicated));
+        when(storeQueryService.findAdCandidatesByStoreIds(anyList())).thenReturn(List.of(store(55)));
+
+        service.load(TODAY);
+
+        assertThat(upserted()).extracting(CandidateRow::targetAgeGroups).containsExactly("AGE_20S,AGE_30S");
+    }
+
     /*
      * 캠페인의 메뉴가 다른 가게의 메뉴면 그 가게가 팔지 않는 메뉴의 할인이 카드에 나간다.
      * 가게 계약이 이 확인을 광고 서빙에 맡겼다(store-query-contract.md). 메뉴를 찾지 못한 것과 같이 뺀다(#783).
@@ -254,10 +269,34 @@ class CandidateLoadServiceTest {
         verify(adCandidateRepository, never()).changeState(eq(TODAY), eq(102L), any(), any(), any());
     }
 
+    /*
+     * 앞 실행이 행을 넣고 재조회 전에 멈춘 뒤 다시 돈 경우다. 그사이 끝난 캠페인은 이번 적재 대상에 없어 넣은 목록에 없다.
+     * 그날 행이 있는 캠페인은 넣은 목록에 없어도 다시 읽어 상태를 고친다(#782).
+     */
     @Test
-    void 적재한_캠페인이_없으면_상태를_바꾸지_않는다() {
+    void 이번_적재가_넣지_않은_그날_행도_캠페인을_다시_읽어_상태를_고친다() {
+        LocalDateTime endedAt = CHANGED_AT.plusMinutes(30);
+        when(adCandidateRepository.findCampaignIdsByBusinessDate(TODAY)).thenReturn(List.of(101L, 102L));
+        // 계약처럼 요청한 ID 의 캠페인만 돌려준다
+        List<CampaignInfo> campaigns = List.of(
+                campaign(101, 55, CampaignStatus.ACTIVE, null, DiscountTargetType.ALL, null),
+                campaign(102, 56, CampaignStatus.ENDED, null, DiscountTargetType.ALL, null, endedAt));
+        when(campaignQueryService.findAllById(anyList())).thenAnswer(invocation -> {
+            List<Long> ids = invocation.getArgument(0);
+            return campaigns.stream().filter(c -> ids.contains(c.campaignId())).toList();
+        });
+
+        service.reconcile(TODAY, new HashMap<>(Map.of(101L, CHANGED_AT)));
+
+        verify(adCandidateRepository).changeState(TODAY, 102L, "PAUSED", endedAt, NOW);
+        verify(adCandidateRepository, never()).changeState(eq(TODAY), eq(101L), any(), any(), any());
+    }
+
+    @Test
+    void 적재한_캠페인도_그날_행도_없으면_캠페인을_읽지_않는다() {
         service.reconcile(TODAY, Map.of());
 
+        verify(campaignQueryService, never()).findAllById(anyList());
         verify(adCandidateRepository, never()).changeState(any(), any(), any(), any(), any());
     }
 }

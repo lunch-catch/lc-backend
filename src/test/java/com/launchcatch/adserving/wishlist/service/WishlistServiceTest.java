@@ -73,7 +73,10 @@ class WishlistServiceTest {
                 List.of(AgeGroup.AGE_20S), LocalDateTime.of(2026, 9, 1, 9, 0), null, changedAt, null, 10_000L);
     }
 
-    // 찜은 저장소의 insertIgnore 로 넣어 식별자와 생성 시각이 엔티티에 없다. 리플렉션으로 채운다
+    /*
+     * 찜은 저장소의 insertIgnore 로 넣어 식별자와 생성 시각이 엔티티에 없다.
+     * 리플렉션으로 채운다.
+     */
     private static Wishlist wish(long id, long campaignId, LocalDateTime createdAt) {
         Wishlist wish = Wishlist.fromFeed(MEMBER_ID, campaignId, campaignId + 1000, UUID.randomUUID());
         ReflectionTestUtils.setField(wish, "id", id);
@@ -224,7 +227,10 @@ class WishlistServiceTest {
                 false, OffsetDateTime.of(createdAt, ZoneOffset.ofHours(9)))));
     }
 
-    // 다시 넣어도 집합이라 그대로다. 앞 요청에서 Valkey 에 넣지 못했으면 여기서 채워진다
+    /*
+     * 다시 넣어도 집합이라 그대로다.
+     * 앞 요청에서 Valkey 에 넣지 못했으면 여기서 채워진다.
+     */
     @Test
     void 이미_찜했으면_created_가_아니고_처음_찜한_시각을_돌려주며_당일_이력에_다시_넣는다() {
         LocalDateTime firstWishedAt = LocalDateTime.of(2026, 9, 30, 11, 0);
@@ -253,7 +259,10 @@ class WishlistServiceTest {
         verify(exclusionRepository, never()).add(any(), any(), any(), any());
     }
 
-    // 당일 이력은 되돌릴 수 없어 찜이 실패하면 넣지 않는다. 넣으면 찜하지 않은 캠페인이 그날 피드에서 빠진다
+    /*
+     * 당일 이력은 되돌릴 수 없어 찜이 실패하면 넣지 않는다.
+     * 넣으면 찜하지 않은 캠페인이 그날 피드에서 빠진다.
+     */
     @Test
     void 찜을_넣지_못하면_당일_이력에_넣지_않는다() {
         when(adCandidateRepository.findByIdBusinessDateAndIdCampaignId(BUSINESS_DATE, 101L))
@@ -441,5 +450,21 @@ class WishlistServiceTest {
         service.wish(MEMBER_ID, 101L);
 
         verify(wishlistRepository).markCampaignEnded(101L, endedAt, LocalDateTime.now(CLOCK));
+    }
+
+    // 넣은 뒤 같은 사용자의 찜 삭제가 먼저 커밋되면 다시 읽을 찜이 없다. 찜하고 지운 순서대로 끝난 것이라 성공으로 답한다(#783)
+    @Test
+    void 넣은_찜이_곧바로_지워져도_넣은_값과_지금_시각으로_답한다() {
+        when(adCandidateRepository.findByIdBusinessDateAndIdCampaignId(BUSINESS_DATE, 101L))
+                .thenReturn(Optional.of(candidate(101, 37.4979, 127.0276).build()));
+        when(wishlistRepository.insertIgnore(any())).thenReturn(true);
+        when(wishlistRepository.findByMemberIdAndCampaignId(MEMBER_ID, 101L)).thenReturn(Optional.empty());
+
+        WishResult result = service.wish(MEMBER_ID, 101L);
+
+        assertThat(result.created()).isTrue();
+        assertThat(result.item().campaignId()).isEqualTo(101L);
+        assertThat(result.item().storeId()).isEqualTo(1101L);
+        assertThat(result.item().wishedAt()).isEqualTo(OffsetDateTime.now(CLOCK));
     }
 }

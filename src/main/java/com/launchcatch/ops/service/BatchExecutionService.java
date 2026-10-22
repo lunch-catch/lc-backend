@@ -304,7 +304,7 @@ public class BatchExecutionService {
         if (logs.close(jobName, businessDate, status, reason, processedCount, ownerId, attemptNo, now()) == 1) {
             return true;
         }
-        log.warn("내 소유가 아니거나 세대가 지난 행은 닫지 않는다. job={} businessDate={} 상태={} attemptNo={}",
+        log.warn("event=BATCH_EXECUTION_CLOSE_SKIPPED reason=NOT_OWNER_OR_STALE_ATTEMPT job={} businessDate={} status={} attemptNo={}",
                 jobName, businessDate, status, attemptNo);
         return false;
     }

@@ -18,7 +18,10 @@ import org.springframework.transaction.annotation.Transactional;
 @RequiredArgsConstructor
 public class CandidateStatusService {
 
-    // 상태 통보를 받았는데 그날 후보가 없던 횟수다. 00:00 후보 적재가 없거나 빠졌는지 본다
+    /*
+     * 상태 통보를 받았는데 그날 후보가 없던 횟수다.
+     * 00:00 후보 적재가 없거나 빠졌는지 본다.
+     */
     static final String CANDIDATE_MISSING_METRIC = "adserving_status_candidate_missing_total";
 
     private final AdCandidateRepository adCandidateRepository;

@@ -79,7 +79,10 @@ class StoreAudienceIntegrationTest extends AbstractAdservingIntegrationTest {
                 "점심식당", "KOREAN", null, new BigDecimal("37.4979000"), new BigDecimal("127.0276000"))));
         when(memberQueryService.findAllById(anyList())).thenReturn(List.of(member(1L, Gender.MALE), member(2L, Gender.OTHER),
                 member(3L, Gender.FEMALE)));
-        // 회원 1 은 사흘 접속했다. 회원 2 는 7일 전, 회원 3 은 오늘과 8일 전만 접속해 세지 않는다
+        /*
+         * 회원 1 은 사흘 접속했다.
+         * 회원 2 는 7일 전, 회원 3 은 오늘과 8일 전만 접속해 세지 않는다.
+         */
         visit(TODAY.minusDays(1), 1L, "37.498", "127.028");
         visit(TODAY.minusDays(2), 1L, "37.498", "127.028");
         visit(TODAY.minusDays(3), 1L, "37.505", "127.028");

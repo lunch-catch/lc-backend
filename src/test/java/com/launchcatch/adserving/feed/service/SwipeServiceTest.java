@@ -203,4 +203,42 @@ class SwipeServiceTest {
 
         verify(wishlistService, never()).endIfCampaignEnded(any());
     }
+
+    // 넣은 뒤 같은 사용자의 찜 삭제가 먼저 커밋되면 다시 읽을 찜이 없다. 찜 id 없이 이어 간다(#783)
+    @Test
+    void 넣은_찜이_곧바로_지워져도_찜_id_없이_스와이프를_남긴다() {
+        when(wishlistRepository.findByMemberIdAndCampaignId(MEMBER_ID, 101L)).thenReturn(Optional.empty());
+
+        SwipeResponse response = service.swipe(MEMBER_ID, request(SwipeAction.WISH));
+
+        assertThat(response.applied()).isTrue();
+        verify(eventPublisher).publishEvent(new SwipedEvent("swipe:" + SERVE_ID + ":" + MEMBER_ID,
+                LocalDateTime.of(2026, 10, 1, 10, 15, 34, 20_000_000), MEMBER_ID, 101L, 1101L, SERVE_ID,
+                SwipeAction.WISH, null));
+    }
+
+    /*
+     * 같은 카드의 PASS 가 기록을 먼저 넣으면 이 WISH 는 진다. 패스한 카드가 찜에 남지 않게 이 요청이 새로 넣은 찜을 지운다.
+     * 이미 있던 찜은 다른 카드나 가게 상세에서 넣은 것이라 둔다(#783).
+     */
+    @Test
+    void 기록_넣기에서_진_찜은_이_요청이_새로_넣은_찜을_지운다() {
+        when(wishlistRepository.insertIgnore(any())).thenReturn(true);
+        when(swipeLogRepository.insertIgnore(any())).thenReturn(false);
+
+        SwipeResponse response = service.swipe(MEMBER_ID, request(SwipeAction.WISH));
+
+        assertThat(response.applied()).isFalse();
+        verify(wishlistRepository).deleteByMemberIdAndCampaignId(MEMBER_ID, 101L);
+    }
+
+    @Test
+    void 기록_넣기에서_져도_이미_있던_찜은_지우지_않는다() {
+        when(wishlistRepository.insertIgnore(any())).thenReturn(false);
+        when(swipeLogRepository.insertIgnore(any())).thenReturn(false);
+
+        service.swipe(MEMBER_ID, request(SwipeAction.WISH));
+
+        verify(wishlistRepository, never()).deleteByMemberIdAndCampaignId(any(), any());
+    }
 }

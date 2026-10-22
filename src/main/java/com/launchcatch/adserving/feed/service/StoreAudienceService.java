@@ -1,11 +1,10 @@
 package com.launchcatch.adserving.feed.service;
 
 import com.launchcatch.adserving.feed.StoreAudienceCounter;
-import com.launchcatch.adserving.feed.StoreAudienceCounter.Point;
 import com.launchcatch.adserving.feed.StoreAudienceCounter.Profile;
 import com.launchcatch.adserving.feed.StoreAudienceCounter.Store;
+import com.launchcatch.adserving.feed.StoreAudienceCounter.VisitGrid;
 import com.launchcatch.adserving.feed.repository.FeedVisitRepository;
-import com.launchcatch.adserving.feed.repository.FeedVisitRepository.VisitPoint;
 import com.launchcatch.campaign.contract.CampaignInfo;
 import com.launchcatch.campaign.contract.CampaignQueryService;
 import com.launchcatch.campaign.contract.StoreAudienceCell;
@@ -18,7 +17,6 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -33,7 +31,10 @@ import org.springframework.stereotype.Service;
 @RequiredArgsConstructor
 public class StoreAudienceService {
 
-    // 접속을 세는 날 수다. 그날을 빼고 D-7 ~ D-1 이다
+    /*
+     * 접속을 세는 날 수다.
+     * 그날을 빼고 D-7 ~ D-1 이다.
+     */
     static final int VISIT_DAYS = 7;
 
     private final CampaignQueryService campaignQueryService;
@@ -42,7 +43,10 @@ public class StoreAudienceService {
     private final FeedVisitRepository feedVisitRepository;
     private final StoreAudienceUpdater storeAudienceUpdater;
 
-    // 넘긴 칸 수를 돌려준다. 집계할 가게는 그날 서빙 대상 캠페인의 가게다(#592)
+    /*
+     * 넘긴 칸 수를 돌려준다.
+     * 집계할 가게는 그날 서빙 대상 캠페인의 가게다(#592).
+     */
     public int aggregate(LocalDate businessDate) {
         List<Long> storeIds = campaignQueryService.findServableOn(businessDate).stream()
                 .map(CampaignInfo::storeId).distinct().toList();
@@ -50,22 +54,29 @@ public class StoreAudienceService {
             return 0;
         }
         List<Store> stores = readStores(storeIds);
-        Map<Long, List<Point>> visits = feedVisitRepository
-                .findPointsBetween(businessDate.minusDays(VISIT_DAYS), businessDate.minusDays(1)).stream()
-                .collect(Collectors.groupingBy(VisitPoint::memberId,
-                        Collectors.mapping(v -> new Point(v.latitude(), v.longitude()), Collectors.toList())));
-        Map<Long, Profile> profiles = readProfiles(List.copyOf(visits.keySet()));
+        VisitGrid grid = new VisitGrid();
+        feedVisitRepository.forEachPointBetween(businessDate.minusDays(VISIT_DAYS), businessDate.minusDays(1),
+                v -> grid.add(v.memberId(), v.latitude(), v.longitude()));
+        Map<Long, Profile> profiles = readProfiles(List.copyOf(grid.memberIds()));
 
-        List<StoreAudienceCell> cells = StoreAudienceCounter.count(businessDate, stores, visits, profiles);
-        for (int from = 0; from < cells.size(); from += StoreAudienceUpdater.MAX_CELLS) {
-            storeAudienceUpdater.overwrite(cells.subList(from, Math.min(from + StoreAudienceUpdater.MAX_CELLS, cells.size())));
+        List<StoreAudienceCell> cells = StoreAudienceCounter.count(businessDate, stores, grid, profiles);
+        /*
+         * 계약의 상한 안에서 가게 단위로 나눠 넘긴다. 넘기다 실패하면 앞서 넘긴 가게만 오늘 값이라,
+         * 가게 하나의 칸이 두 호출로 갈리면 그 가게가 오늘 값과 전날 값으로 섞인다(#774).
+         */
+        int cellsPerCall = StoreAudienceUpdater.MAX_CELLS / StoreAudienceCounter.CELLS_PER_STORE * StoreAudienceCounter.CELLS_PER_STORE;
+        for (int from = 0; from < cells.size(); from += cellsPerCall) {
+            storeAudienceUpdater.overwrite(cells.subList(from, Math.min(from + cellsPerCall, cells.size())));
         }
         log.info("event=ADSERVING_STORE_AUDIENCE_OVERWRITTEN businessDate={} storeCount={} memberCount={} cellCount={}",
                 businessDate, stores.size(), profiles.size(), cells.size());
         return cells.size();
     }
 
-    // 가게 계약의 상한 단위로 나눠 읽는다. 등록 전이거나 좌표가 없는 가게는 결과에 없다
+    /*
+     * 가게 계약의 상한 단위로 나눠 읽는다.
+     * 등록 전이거나 좌표가 없는 가게는 결과에 없다.
+     */
     private List<Store> readStores(List<Long> storeIds) {
         List<Store> stores = new ArrayList<>(storeIds.size());
         for (int from = 0; from < storeIds.size(); from += StoreQueryService.MAX_AD_CANDIDATE_STORE_IDS) {
@@ -76,7 +87,10 @@ public class StoreAudienceService {
         return stores;
     }
 
-    // 회원 계약의 상한 단위로 나눠 읽는다. 성별이나 연령대가 없는 회원(프로필 없음)은 세지 않는다
+    /*
+     * 회원 계약의 상한 단위로 나눠 읽는다.
+     * 성별이나 연령대가 없는 회원(프로필 없음)은 세지 않는다.
+     */
     private Map<Long, Profile> readProfiles(List<Long> memberIds) {
         Map<Long, Profile> profiles = new HashMap<>();
         for (int from = 0; from < memberIds.size(); from += MemberQueryService.MAX_FIND_ALL_SIZE) {

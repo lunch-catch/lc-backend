@@ -62,8 +62,9 @@ public class ServeRecordRepository {
                 }
             });
         } catch (DataAccessException e) {
-            log.warn("event=ADSERVING_FEED_SERVE_RECORD_WRITE_FAILED cardCount={} reason={} fallback=SKIP_WRITE",
-                    records.size(), RedisFailureClassifier.causeLabel(e), e);
+            // 이 피드의 노출은 과금되지 않아 문의가 오면 찾을 수 있게 회원을 남긴다(#778)
+            log.warn("event=ADSERVING_FEED_SERVE_RECORD_WRITE_FAILED memberId={} cardCount={} reason={} fallback=SKIP_WRITE",
+                    records.get(0).memberId(), records.size(), RedisFailureClassifier.causeLabel(e), e);
             meterRegistry.counter(BYPASS_METRIC, "use", "serve_record").increment();
         }
     }

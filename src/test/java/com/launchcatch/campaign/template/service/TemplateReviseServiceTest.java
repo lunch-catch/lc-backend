@@ -230,6 +230,22 @@ class TemplateReviseServiceTest {
     }
 
     @Test
+    @DisplayName("수정 요청이 아니라 대화만 있는 응답이면 새 버전을 저장하지 않고 message 만 돌려준다(#733)")
+    void 대화만_있는_응답이면_새_버전을_저장하지_않는다() {
+        when(templateHtmlGenerator.revise(PREVIOUS_HTML, "이 화면은 어떻게 써?"))
+                .thenReturn(GeneratedTemplate.chatOnly("요청을 입력하면 템플릿을 고쳐 드려요."));
+
+        TemplateCreateResponse response = service.revise(TEMPLATE_ID, "이 화면은 어떻게 써?", REQUEST_ID, ADMIN_ID);
+
+        assertThat(response.templateId()).isNull();
+        assertThat(response.versionNumber()).isNull();
+        assertThat(response.html()).isNull();
+        assertThat(response.message()).isEqualTo("요청을 입력하면 템플릿을 고쳐 드려요.");
+        verify(templateVersionRepository, never()).saveAndFlush(any(TemplateVersion.class));
+        verify(redisTemplate).delete("templateGenerationInFlight:" + REQUEST_ID);
+    }
+
+    @Test
     @DisplayName("조회 뒤 삭제돼 버전이 하나도 없으면 POSTER-005 로 거부한다")
     void 버전이_없으면_템플릿_없음으로_거부한다() {
         when(templateVersionRepository.findFirstByTemplateIdOrderByVersionNumberDesc(TEMPLATE_ID))

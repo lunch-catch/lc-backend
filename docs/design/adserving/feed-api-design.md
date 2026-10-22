@@ -111,7 +111,7 @@
 - **중복 키는 `(serveId, 요청 사용자)` 다**(FR-097, `impression_log` PK). 다른 사용자가 먼저 보낸 무효 노출이 원래 사용자의 유효 노출을 막지 못한다
 - **`202` 를 쓴다.** 서버는 처리를 끝내고 판정을 돌려주지만, 클라이언트는 화면을 벗어나며 보낸 요청의 응답을 받지 못할 수 있어 응답에 의존하지 않는다(FR-097)
 - **클라이언트는 기다리지 않지만 서버는 동기로 처리한다.** 기다리지 않는 이유는 스와이프를 끊지 않기 위해서다. 화면을 벗어나며 보낸 요청은 응답도 받지 못한다(FR-066). 서버가 비동기로 받지 않는 이유는 유효 노출의 저장, 판정, 원장이 한 트랜잭션이어야 하기 때문이다(FR-100). 비동기로 받으면 "받았다"고 답한 뒤 저장에 실패한 노출을 되살릴 길이 없다
-- **요청의 `campaignId` 가 serve 기록과 다르면 serve 기록의 캠페인으로 저장하고 판정한다.** 무효 사유를 더하지 않고 불일치는 `adserving_impression_campaign_mismatch_total` 로 센다. 과금은 서버가 실제로 내려준 캠페인에만 간다. 무효 사유를 더하려면 명세의 `invalidReason` 과 `impression_log.invalid_reason` 을 먼저 바꿔야 한다(#323 에서 정했다)
+- **요청의 `campaignId` 가 serve 기록과 다르면 serve 기록의 캠페인으로 저장하고 판정한다.** 무효 사유를 더하지 않고 불일치는 처음 저장된 노출이 커밋된 뒤 `adserving_impression_campaign_mismatch_total` 로 센다. 다시 온 요청과 롤백된 요청은 세지 않는다(#783). 과금은 서버가 실제로 내려준 캠페인에만 간다. 무효 사유를 더하려면 명세의 `invalidReason` 과 `impression_log.invalid_reason` 을 먼저 바꿔야 한다(#323 에서 정했다)
 - **`invalidReason` 은 유효면 `null` 이다.** 사유는 무효일 때만 뜻이 있다. `impression_log.invalid_reason` 도 같은 규칙이라 `invalid_reason IS NOT NULL` 이 곧 무효 노출이다
 - 요청이 많아지면 여러 건을 묶어 받는 방식으로 바꿀 수 있고, 검증과 중복 처리는 같다(FR-097)
 

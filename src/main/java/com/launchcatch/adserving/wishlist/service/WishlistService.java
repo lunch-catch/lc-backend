@@ -43,7 +43,10 @@ public class WishlistService implements WishlistQueryService {
     private final CampaignQueryService campaignQueryService;
     private final Clock clock;
 
-    // campaignId 를 주면 그 캠페인의 찜만 본다. 찜하지 않았으면 빈 배열이다(#416)
+    /*
+     * campaignId 를 주면 그 캠페인의 찜만 본다.
+     * 찜하지 않았으면 빈 배열이다(#416).
+     */
     public WishlistResponse getWishlist(Long memberId, Long campaignId) {
         List<Wishlist> wishes = campaignId == null
                 ? wishlistRepository.findByMemberIdOrderByCreatedAtDescIdDesc(memberId)
@@ -69,7 +72,10 @@ public class WishlistService implements WishlistQueryService {
     public WishResult wish(Long memberId, Long campaignId) {
         Instant now = clock.instant();
         LocalDate today = LocalDate.ofInstant(now, ClockConfig.ZONE);
-        // 상태와 소진은 보지 않는다. 스와이프와 같다(#379)
+        /*
+         * 상태와 소진은 보지 않는다.
+         * 스와이프와 같다(#379).
+         */
         AdCandidate candidate = adCandidateRepository.findByIdBusinessDateAndIdCampaignId(today, campaignId)
                 .orElseThrow(() -> new CandidateException(CandidateErrorCode.CAMPAIGN_NOT_SERVING));
 
@@ -77,9 +83,14 @@ public class WishlistService implements WishlistQueryService {
                 Wishlist.fromStoreDetail(memberId, campaignId, candidate.getStoreId()));
         exclusionRepository.add(today, memberId, campaignId, now);
         endIfCampaignEnded(campaignId);
-        // 이미 찜했으면 처음 찜한 시각을 돌려줘야 해서 넣은 뒤 다시 읽는다
-        Wishlist wish = wishlistRepository.findByMemberIdAndCampaignId(memberId, campaignId).orElseThrow();
-        return new WishResult(created, WishlistItemResponse.of(wish, candidate));
+        /*
+         * 이미 찜했으면 처음 찜한 시각을 돌려줘야 해서 넣은 뒤 다시 읽는다.
+         * 그사이 같은 사용자의 찜 삭제가 커밋됐으면 읽을 찜이 없다. 찜하고 지운 순서대로 끝난 것이라 넣은 값과 지금 시각으로 답한다(#783).
+         */
+        WishlistItemResponse item = wishlistRepository.findByMemberIdAndCampaignId(memberId, campaignId)
+                .map(wish -> WishlistItemResponse.of(wish, candidate))
+                .orElseGet(() -> WishlistItemResponse.notStored(campaignId, candidate, now.atZone(ClockConfig.ZONE).toOffsetDateTime()));
+        return new WishResult(created, item);
     }
 
     /*
