@@ -225,7 +225,7 @@ public class PosterUploadService {
     }
 
     private String findMenuName(Long campaignId, Long menuId) {
-        return storeQueryService.findMenusByIdIn(List.of(menuId)).stream()
+        return storeQueryService.findMenusByIdIn(List.of(menuId)).menus().stream()
                 .findFirst()
                 .map(StoreMenuInfo::menuName)
                 .orElseThrow(() -> {

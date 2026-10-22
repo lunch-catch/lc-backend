@@ -74,7 +74,11 @@ public class CouponPreparationService {
                 .orElseThrow(() -> new IllegalStateException("최종 등록된 매장이 없다: " + campaign.storeId()));
         StoreMenuInfo menu = null;
         if (campaign.discountTargetType() == com.launchcatch.campaign.contract.DiscountTargetType.MENU) {
-            menu = stores.findMenusByIdIn(List.of(campaign.targetMenuId())).stream().findFirst()
+            var result = stores.findMenusByIdIn(List.of(campaign.targetMenuId()));
+            if (!result.invalidMenuIds().isEmpty()) {
+                throw new IllegalStateException("할인 대상 메뉴의 검증된 이미지가 없다: " + campaign.targetMenuId());
+            }
+            menu = result.menus().stream().findFirst()
                     .orElseThrow(() -> new IllegalStateException("할인 대상 메뉴가 없다: " + campaign.targetMenuId()));
             if (!menu.storeId().equals(store.storeId())) {
                 throw new IllegalStateException("할인 대상 메뉴가 캠페인의 매장에 속하지 않는다.");
