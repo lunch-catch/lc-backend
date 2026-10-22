@@ -31,8 +31,8 @@ import com.launchcatch.coupon.exception.CouponErrorCode;
 import com.launchcatch.coupon.exception.CouponException;
 import com.launchcatch.coupon.repository.CouponDailyLimitRepository;
 import com.launchcatch.coupon.repository.MemberCouponRepository;
-import com.launchcatch.coupon.service.model.CouponIssuanceResult;
-import com.launchcatch.coupon.service.model.CouponIssuanceRequest;
+import com.launchcatch.coupon.model.CouponIssuanceResult;
+import com.launchcatch.coupon.model.CouponIssuanceRequest;
 import com.launchcatch.member.contract.MemberInfo;
 import com.launchcatch.member.contract.MemberQueryService;
 import com.launchcatch.member.contract.MemberStatus;
@@ -447,6 +447,39 @@ class CouponCommandServiceTest {
         }
     }
 
+
+    @Test
+    void 접수_상한에_닿아도_확정_소진을_먼저_반환한다() {
+        ReflectionTestUtils.setField(service, "requestCapacity", 0);
+        when(sequenceService.isConfirmedSoldOut(81L)).thenReturn(true);
+
+        assertThatThrownBy(() -> service.issue(MEMBER_ID, 81L)).isInstanceOfSatisfying(CouponException.class,
+                error -> assertThat(error.getErrorCode()).isEqualTo(CouponErrorCode.INVENTORY_EXHAUSTED));
+
+        verify(soldOutNotifications).request(81L);
+        verifyNoInteractions(batcher, memberCouponRepository, couponDailyLimitRepository, sequenceRecoveryService);
+    }
+
+    @Test
+    void 접수_상한에_닿고_소진이_아니면_혼잡으로_거절한다() {
+        ReflectionTestUtils.setField(service, "requestCapacity", 0);
+
+        assertThatThrownBy(() -> service.issue(MEMBER_ID, 81L)).isInstanceOfSatisfying(CouponException.class,
+                error -> assertThat(error.getErrorCode()).isEqualTo(CouponErrorCode.ISSUANCE_BUSY));
+
+        verifyNoInteractions(batcher, soldOutNotifications, sequenceRecoveryService);
+    }
+
+    @Test
+    void 접수_상한에서_Redis_복구가_필요해도_요청_스레드는_복구를_시작하지_않는다() {
+        ReflectionTestUtils.setField(service, "requestCapacity", 0);
+        when(sequenceService.isConfirmedSoldOut(81L)).thenThrow(CouponException.recoveryRequired(81L));
+
+        assertThatThrownBy(() -> service.issue(MEMBER_ID, 81L)).isInstanceOfSatisfying(CouponException.class,
+                error -> assertThat(error.getErrorCode()).isEqualTo(CouponErrorCode.ISSUANCE_BUSY));
+
+        verifyNoInteractions(batcher, soldOutNotifications, sequenceRecoveryService);
+    }
 
     @Test
     void Redis에서_소진이_확정되면_발급_대기열과_DB_작업을_사용하지_않는다() {

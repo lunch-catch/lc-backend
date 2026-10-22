@@ -1,4 +1,4 @@
-package com.launchcatch.coupon.service.model;
+package com.launchcatch.coupon.model;
 
 import java.time.LocalDateTime;
 

@@ -44,6 +44,7 @@ coupon/
 ├── config/        CouponSecurityConfig, CouponOpenApiConfig
 ├── controller/    CouponController, OwnerCouponController
 ├── dto/           요청·응답 record와 입력 변환
+├── model/         발급 서비스 사이에서 주고받는 내부 전달값
 ├── entity/        CouponEvent, CouponInventory, CouponDailyLimit,
 │                  MemberCoupon, CouponUsageHistory
 ├── listener/      CampaignEventListener
@@ -58,7 +59,8 @@ HTTP 요청과 집계 조회 contract, 공개 이벤트와 캠페인 이벤트 �
 
 ### 발급과 예약의 전달값
 
-발급 서비스들이 함께 쓰는 record는 `service/model/` 패키지에 모은다.
+발급 서비스들이 함께 쓰는 record는 `model/` 패키지에 모은다.
+HTTP 요청·응답은 `dto/`에 두며 취소와 커밋 시작을 조정하는 `CouponBatchDeadline`은 `service/model/`에 둔다.
 
 | 타입 | 담는 값 |
 |---|---|

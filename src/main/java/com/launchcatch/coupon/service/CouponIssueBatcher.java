@@ -2,9 +2,9 @@ package com.launchcatch.coupon.service;
 
 import com.launchcatch.coupon.exception.CouponErrorCode;
 import com.launchcatch.coupon.exception.CouponException;
-import com.launchcatch.coupon.service.model.CouponIssuanceOutcome;
-import com.launchcatch.coupon.service.model.CouponIssuanceRequest;
-import com.launchcatch.coupon.service.model.CouponIssuanceResult;
+import com.launchcatch.coupon.model.CouponIssuanceOutcome;
+import com.launchcatch.coupon.model.CouponIssuanceRequest;
+import com.launchcatch.coupon.model.CouponIssuanceResult;
 import com.launchcatch.global.config.ClockConfig;
 import java.time.Clock;
 import java.time.Duration;
