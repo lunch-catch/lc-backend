@@ -5065,6 +5065,37 @@ public class CouponIntegrationTest extends IntegrationTestSupport {
         }
 
         @Test
+        void 만료_재시도가_소진돼도_다음_주기에_남은_쿠폰을_다시_처리한다() {
+            prepareExpiringCoupon();
+            expirationJob.expireCoupons();
+            issue(2, 18, "ISSUED");
+            var failures = new java.util.concurrent.atomic.AtomicInteger();
+            doAnswer(call -> {
+                if (failures.getAndIncrement() < 4) {
+                    throw new IllegalStateException("쿠폰 만료 중 실패");
+                }
+                return call.callRealMethod();
+            }).when(batches).expiringIds(any(), any(), anyLong());
+
+            expirationJob.expireCoupons();
+
+            assertThat(jdbc.queryForMap("SELECT status, retry_count, attempt_no FROM batch_execution_log WHERE job_name='COUPON_EXPIRE'"))
+                    .containsEntry("status", "FAILED").containsEntry("retry_count", 2).containsEntry("attempt_no", 2);
+            assertThat(jdbc.queryForList("SELECT status FROM member_coupon ORDER BY member_coupon_id", String.class))
+                    .containsExactly("EXPIRED", "ISSUED");
+
+            at(DATE.atTime(15, 5));
+            expirationJob.expireCoupons();
+
+            assertThat(jdbc.queryForMap("SELECT status, retry_count, attempt_no, processed_count FROM batch_execution_log WHERE job_name='COUPON_EXPIRE'"))
+                    .containsEntry("status", "SUCCESS").containsEntry("retry_count", 1)
+                    .containsEntry("attempt_no", 3).containsEntry("processed_count", 1);
+            assertThat(jdbc.queryForList("SELECT status FROM member_coupon ORDER BY member_coupon_id", String.class))
+                    .containsExactly("EXPIRED", "EXPIRED");
+            assertThat(funnel.received).filteredOn(CouponExpiredEvent.class::isInstance).hasSize(2);
+        }
+
+        @Test
         void 공통_복구_경로에서도_재시도_횟수가_늘어나지_않는다() {
             executions.claim("COUPON_PREPARE", DATE);
             doThrow(new DataAccessResourceFailureException("계속 실패"))
