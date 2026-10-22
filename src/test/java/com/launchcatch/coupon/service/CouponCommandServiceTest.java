@@ -121,6 +121,53 @@ class CouponCommandServiceTest {
     }
 
     @Test
+    void 비동기_접수_상한을_넘으면_즉시_혼잡으로_거절하고_집계한다() {
+        ReflectionTestUtils.setField(service, "requestCapacity", 0);
+
+        assertThatThrownBy(() -> service.issueAsync(MEMBER_ID, 81L))
+                .isInstanceOfSatisfying(CouponException.class, error -> {
+                    assertThat(error.getErrorCode()).isEqualTo(CouponErrorCode.ISSUANCE_BUSY);
+                    verify(issuanceMetrics).record(error);
+                });
+
+        verifyNoInteractions(batcher, soldOutNotifications);
+    }
+
+    @Test
+    void 비동기_접수_상한을_넘어도_확정_소진을_우선_응답한다() {
+        ReflectionTestUtils.setField(service, "requestCapacity", 0);
+        when(sequenceService.isConfirmedSoldOut(81L)).thenReturn(true);
+
+        assertThatThrownBy(() -> service.issueAsync(MEMBER_ID, 81L))
+                .isInstanceOfSatisfying(CouponException.class, error -> {
+                    assertThat(error.getErrorCode()).isEqualTo(CouponErrorCode.INVENTORY_EXHAUSTED);
+                    verify(issuanceMetrics).record(error);
+                });
+
+        verify(soldOutNotifications).request(81L);
+        verifyNoInteractions(batcher);
+    }
+
+    @Test
+    void 비동기_복구가_실패하면_재접수하지_않고_원래_오류를_반환한다() {
+        var rejection = CouponException.recoveryRequired(81L);
+        rejection.confirmIssuanceNotCommitted();
+        when(batcher.submit(any(), anyLong())).thenReturn(CompletableFuture.failedFuture(rejection));
+        when(sequenceService.needsRecovery(81L)).thenReturn(true);
+        when(sequenceRecoveryService.recover(eq(81L), anyLong())).thenReturn(false);
+        try {
+            var result = service.issueAsync(MEMBER_ID, 81L);
+
+            assertThatThrownBy(() -> result.get(2, TimeUnit.SECONDS)).hasCause(rejection);
+            verify(batcher).submit(any(), anyLong());
+            verify(issuanceMetrics).record(any(Throwable.class));
+            org.mockito.Mockito.verifyNoMoreInteractions(batcher, issuanceMetrics);
+        } finally {
+            service.stopIssuanceRecovery();
+        }
+    }
+
+    @Test
     void 비동기_접수는_발급_완료_전에는_응답을_확정하지_않는다() throws Exception {
         var pending = new CompletableFuture<CouponIssuanceResult>();
         var response = new CouponIssueResponse(COUPON_ID, ISSUE_DATE.atTime(12, 0).atOffset(ZoneOffset.ofHours(9)));
