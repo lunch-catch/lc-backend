@@ -3,6 +3,7 @@ package com.launchcatch.billing;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.launchcatch.billing.dto.AdminPointSummaryItem;
+import com.launchcatch.billing.dto.ServeIds;
 import com.launchcatch.billing.dto.SummaryPeriod;
 import com.launchcatch.billing.service.AdminPointSummaryService;
 import java.time.LocalDate;
@@ -28,6 +29,7 @@ class AdminPointSummaryIntegrationTest extends AbstractBillingIntegrationTest {
     @AfterEach
     void clean() {
         jdbc.update("delete from point_ledger where owner_id = ?", OWNER);
+        jdbc.update("delete from deduction_result where owner_id = ?", OWNER);
     }
 
     private void adjust(long amount, Long campaign, LocalDate target, String createdAt) {
@@ -61,5 +63,24 @@ class AdminPointSummaryIntegrationTest extends AbstractBillingIntegrationTest {
                 new AdminPointSummaryItem(DAY.plusDays(1).toString(), 0, 0, 0, 0, 0, -300));
         assertThat(item(DAY.minusDays(1).toString())).isEqualTo(
                 new AdminPointSummaryItem(DAY.minusDays(1).toString(), 0, -70, 0, 0, 0, 70));
+    }
+
+    @Test
+    void 소진은_DEDUCT를_기록한_날이_아니라_서빙_영업일에_들어간다() {
+        // DAY 의 노출이 다음 날 00:30 에 기록됐다. 기록일에는 예약도 해제도 없다
+        byte[] serveId = ServeIds.toBytes(UUID.randomUUID());
+        jdbc.update("""
+                insert into deduction_result
+                    (serve_id, campaign_id, owner_id, business_date, billing_status, unit_price, created_at, updated_at)
+                values (?, 12, ?, ?, 'BILLED', 700, '2032-03-11 00:30:00', '2032-03-11 00:30:00')
+                """, serveId, OWNER, DAY);
+        jdbc.update("""
+                insert into point_ledger (owner_id, campaign_id, serve_id, entry_type, source, amount, created_at, updated_at)
+                values (?, 12, ?, 'DEDUCT', 'REALTIME', -700, '2032-03-11 00:30:00', '2032-03-11 00:30:00')
+                """, OWNER, serveId);
+
+        assertThat(item(DAY.toString())).isEqualTo(new AdminPointSummaryItem(DAY.toString(), 0, 700, 0, 0, 0, 0));
+        assertThat(item(DAY.plusDays(1).toString()))
+                .isEqualTo(new AdminPointSummaryItem(DAY.plusDays(1).toString(), 0, 0, 0, 0, 0, 0));
     }
 }
