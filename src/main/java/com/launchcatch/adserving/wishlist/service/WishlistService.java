@@ -69,7 +69,10 @@ public class WishlistService implements WishlistQueryService {
     public WishResult wish(Long memberId, Long campaignId) {
         Instant now = clock.instant();
         LocalDate today = LocalDate.ofInstant(now, ClockConfig.ZONE);
-        // 상태와 소진은 보지 않는다. 스와이프와 같다(#379)
+        /*
+         * 상태와 소진은 보지 않는다.
+         * 스와이프와 같다(#379).
+         */
         AdCandidate candidate = adCandidateRepository.findByIdBusinessDateAndIdCampaignId(today, campaignId)
                 .orElseThrow(() -> new CandidateException(CandidateErrorCode.CAMPAIGN_NOT_SERVING));
 
