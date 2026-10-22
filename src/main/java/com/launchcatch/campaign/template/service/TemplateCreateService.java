@@ -68,6 +68,9 @@ public class TemplateCreateService {
             throw new CampaignException(PosterErrorCode.TEMPLATE_LIMIT_EXCEEDED);
         }
         GeneratedTemplate generated = generate(requestPrompt);
+        if (generated.chatOnly()) {
+            return chatOnlyResponse(requestId, generated);
+        }
         Document document = Jsoup.parseBodyFragment(generated.html());
         TemplateSanitizeResult sanitized = templateHtmlSanitizer.sanitize(document);
         templateSlotValidator.validate(document);
@@ -88,6 +91,16 @@ public class TemplateCreateService {
             templateGenerationRateLimiter.releaseInFlight(requestId);
             throw e;
         }
+    }
+
+    /*
+     * 템플릿을 만들거나 고치라는 요청이 아니어서 모델이 자연어로만 답한 경우다(#733). 템플릿, 버전, template_quota 를
+     * 만들지 않고 message 만 돌려준다. 저장된 것이 없어 같은 requestId 재시도는 모델을 다시 부르므로, 처리 중 표식은
+     * 풀어 재시도가 POSTER-004 로 막히지 않게 한다.
+     */
+    private TemplateCreateResponse chatOnlyResponse(String requestId, GeneratedTemplate generated) {
+        templateGenerationRateLimiter.releaseInFlight(requestId);
+        return TemplateCreateResponse.chatOnly(generated.message());
     }
 
     private GeneratedTemplate generate(String requestPrompt) {

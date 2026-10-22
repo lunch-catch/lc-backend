@@ -60,6 +60,7 @@ public class TemplateController {
     )
     @ApiResponses({
             @ApiResponse(responseCode = "201", description = "템플릿 생성 성공. DRAFT 템플릿과 1번 버전이 저장됩니다."),
+            @ApiResponse(responseCode = "200", description = "템플릿을 만들거나 고치라는 요청이 아니라 질문이나 인사여서 자연어로만 응답합니다. 템플릿을 만들지 않고 message 만 돌려주며 templateId, versionNumber, html 은 null 입니다."),
             @ApiResponse(responseCode = "400", description = "COMMON-002: 이름이 비었거나 100자를 넘었거나, 요청 문장이 비었거나 500자를 넘었거나, 요청 식별자가 비었거나 64자를 넘었습니다."),
             @ApiResponse(responseCode = "422", description = "POSTER-001: 슬롯이 빠졌거나 중복됨. POSTER-003: 템플릿 생성 한도에 도달했습니다."),
             @ApiResponse(responseCode = "503", description = "POSTER-004: LLM 응답이 30초를 넘었습니다.")
@@ -69,7 +70,12 @@ public class TemplateController {
             @AuthenticationPrincipal CustomUserDetails admin) {
         TemplateCreateResponse response = templateCreateService.create(
                 request.name(), request.requestPrompt(), request.requestId(), admin.getId());
-        return ResponseEntity.status(HttpStatus.CREATED).body(ResponseEnvelope.success(response));
+        return ResponseEntity.status(statusOf(response)).body(ResponseEnvelope.success(response));
+    }
+
+    // 템플릿을 만들거나 고치라는 요청이 아니어서 자연어로만 응답했으면 새로 만든 것이 없어 200 이다(#733).
+    private HttpStatus statusOf(TemplateCreateResponse response) {
+        return response.versionNumber() == null ? HttpStatus.OK : HttpStatus.CREATED;
     }
 
     @PostMapping("/{templateId}/versions")
@@ -79,6 +85,7 @@ public class TemplateController {
     )
     @ApiResponses({
             @ApiResponse(responseCode = "201", description = "템플릿 수정 성공. 새 버전이 저장됩니다."),
+            @ApiResponse(responseCode = "200", description = "수정 요청이 아니라 질문이나 인사여서 자연어로만 응답합니다. 새 버전을 저장하지 않고 message 만 돌려주며 templateId, versionNumber, html 은 null 입니다."),
             @ApiResponse(responseCode = "400", description = "COMMON-002: 요청 문장이 비었거나 500자를 넘었거나, 요청 식별자가 비었거나 64자를 넘었습니다."),
             @ApiResponse(responseCode = "404", description = "POSTER-005: 템플릿을 찾을 수 없습니다."),
             @ApiResponse(responseCode = "409", description = "POSTER-006: 게시된 템플릿은 수정하거나 삭제할 수 없습니다."),
@@ -91,7 +98,7 @@ public class TemplateController {
             @AuthenticationPrincipal CustomUserDetails admin) {
         TemplateCreateResponse response = templateReviseService.revise(
                 templateId, request.requestPrompt(), request.requestId(), admin.getId());
-        return ResponseEntity.status(HttpStatus.CREATED).body(ResponseEnvelope.success(response));
+        return ResponseEntity.status(statusOf(response)).body(ResponseEnvelope.success(response));
     }
 
     @PostMapping("/{templateId}/publish")
