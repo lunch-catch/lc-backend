@@ -336,6 +336,36 @@ class PosterUploadServiceTest {
     }
 
     @Test
+    @DisplayName("스타일이 없는 이미지 슬롯에도 크기 보정 스타일을 넣는다(#731)")
+    void 스타일이_없으면_크기_보정_스타일을_넣는다() {
+        Campaign campaign = draftCampaign(CampaignStatus.DRAFT);
+        Template template = publishedActiveTemplate();
+        givenHappyPath(campaign, template);
+
+        PosterCreateResponse response = service.createOrOverwritePoster(OWNER_ID, CAMPAIGN_ID, TEMPLATE_ID, OBJECT_KEY);
+
+        assertThat(imageStyle(response.html()))
+                .contains("width:100%").contains("height:100%").contains("min-height:0").contains("object-fit:cover");
+    }
+
+    @Test
+    @DisplayName("이미지 슬롯의 기존 스타일은 유지하고 같은 속성은 서버 값으로 한 번만 덮어쓴다(#731)")
+    void 기존_스타일은_유지하고_같은_속성은_덮어쓴다() {
+        Campaign campaign = draftCampaign(CampaignStatus.DRAFT);
+        Template template = publishedActiveTemplate(TEMPLATE_HTML.replace(
+                "<img data-slot=\"image\" src=\"old\">",
+                "<img data-slot=\"image\" src=\"old\" style=\"border-radius:16px;WIDTH:50%;box-shadow:0 6px 16px rgba(0,0,0,0.25)\">"));
+        givenHappyPath(campaign, template);
+
+        PosterCreateResponse response = service.createOrOverwritePoster(OWNER_ID, CAMPAIGN_ID, TEMPLATE_ID, OBJECT_KEY);
+
+        String style = imageStyle(response.html());
+        assertThat(style).contains("border-radius:16px").contains("box-shadow:0 6px 16px rgba(0,0,0,0.25)")
+                .contains("width:100%").doesNotContain("50%");
+        assertThat(style.split("width:", -1)).hasSize(2);
+    }
+
+    @Test
     @DisplayName("메뉴 할인이면 메뉴명을 넣어 할인 문구를 만든다")
     void 메뉴_할인이면_메뉴명을_넣는다() {
         Campaign campaign = menuDiscountCampaign();
@@ -397,10 +427,18 @@ class PosterUploadServiceTest {
         lenient().when(posterRepository.save(any(Poster.class))).thenAnswer(invocation -> invocation.getArgument(0));
     }
 
+    private String imageStyle(String html) {
+        return org.jsoup.Jsoup.parseBodyFragment(html).selectFirst("[data-slot=image]").attr("style");
+    }
+
     private Template publishedActiveTemplate() {
+        return publishedActiveTemplate(TEMPLATE_HTML);
+    }
+
+    private Template publishedActiveTemplate(String html) {
         Template template = Template.createDraft("가을 신메뉴");
-        template.addDraftVersion(1L, LocalDateTime.now(), "요청", "req-1", TEMPLATE_HTML, 1);
-        template.publish(TEMPLATE_HTML, LocalDateTime.now(), 1);
+        template.addDraftVersion(1L, LocalDateTime.now(), "요청", "req-1", html, 1);
+        template.publish(html, LocalDateTime.now(), 1);
         template.changeActive(true, 1L, LocalDateTime.now());
         return template;
     }
