@@ -790,7 +790,7 @@ GET /v1/admin/settlement-mismatches?checkType=&resolved=false&from=&to=&page=0&s
 
 **2026-10-14 결정 (페이지 방식의 근거):** 관리자 표 목록이라 레포 공통 규약(`api-spec.md`)의 커서 대신 페이지 번호 방식을 쓴다(`member.md` 관리자 사용자 목록의 2026-10-09 결정과 같은 이유). 이 목록은 특히 `totalElements`를 매출 현황의 불일치 건수로 쓰므로(아래) 전체 건수를 주지 않는 커서 방식으로 바꿀 수 없다. 이 API의 예외는 이 문서가 소유한다. 같은 `createdAt`(또는 `businessDate`)이면 `mismatchId`가 보조 정렬이다.
 
-**2026-10-08 수정:** `from`~`to`는 대사 대상 영업일(`businessDate`) 기준이다(KST, 양끝 포함). 정렬 이름은 `detectedAt`이 아니라 `createdAt`(첫 탐지 시각)이다. 같은 `(checkType, targetId, businessDate)`를 다시 탐지하면(`CAMPAIGN_SPEND_VS_LEDGER`는 00:00 전일분(2026-10-19 수정, #497: 13:30 당일 대조를 없앴다), `PG_VS_CHARGE`는 00:05 전일분이며 수동 재실행도 있다. 2026-10-09 수정) 새 건을 만들지 않고 기존 건을 갱신한다. 그래서 같은 대상, 같은 영업일의 건은 목록에 하나만 있다.
+**2026-10-08 수정:** `from`~`to`는 대사 대상 영업일(`businessDate`) 기준이다(KST, 양끝 포함). 정렬 이름은 `detectedAt`이 아니라 `createdAt`(첫 탐지 시각)이다. 같은 `(checkType, targetId, businessDate)`를 다시 탐지하면(`CAMPAIGN_SPEND_VS_LEDGER`는 00:00 전일분(2026-10-19 수정, #497: 13:30 당일 대조를 없앴다), `PG_VS_CHARGE`는 01:30 전일분이며 수동 재실행도 있다. 2026-10-09 수정) 새 건을 만들지 않고 기존 건을 갱신한다. 그래서 같은 대상, 같은 영업일의 건은 목록에 하나만 있다.
 
 ### 응답 `200` (항목)
 

@@ -44,15 +44,15 @@ class PgChargeReconciliationSchedulerTest {
     }
 
     /*
-     * 워터마크가 5분이라 00:00 에 돌면 전일 23:55 ~ 24:00 결제가 빠진다. 5분 뒤에 돌아야 전일 전체가 대상이 된다.
+     * 워터마크가 5분이라 00:00 에 돌면 전일 23:55 ~ 24:00 결제가 빠진다. 워터마크가 지난 뒤에 돌아야 전일 전체가 대상이 된다.
      */
     @Test
-    @DisplayName("00:05 KST 에 돈다")
-    void 영업일_경계의_워터마크가_지난_00시_05분에_돈다() throws NoSuchMethodException {
+    @DisplayName("01:30 KST 에 돈다")
+    void 영업일_경계의_워터마크가_지난_01시_30분에_돈다() throws NoSuchMethodException {
         Scheduled scheduled = PgChargeReconciliationScheduler.class.getMethod("reconcile")
                 .getAnnotation(Scheduled.class);
 
-        assertThat(scheduled.cron()).isEqualTo("0 5 0 * * *");
+        assertThat(scheduled.cron()).isEqualTo("0 30 1 * * *");
         assertThat(scheduled.zone()).isEqualTo("Asia/Seoul");
     }
 

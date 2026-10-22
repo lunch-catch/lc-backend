@@ -140,9 +140,9 @@ class PgChargeReconciliationServiceTest {
     }
 
     @Test
-    void 영업일_경계_5분_뒤에_돌면_전영업일_끝까지_대상이다() {
-        // KST 2026-10-16 00:05
-        PgChargeReconciliationService atScheduledTime = serviceAt("2026-10-15T15:05:00Z");
+    void 예약_실행_시각에는_전영업일_끝까지_대상이다() {
+        // KST 2026-10-16 01:30
+        PgChargeReconciliationService atScheduledTime = serviceAt("2026-10-15T16:30:00Z");
         when(paymentRepository.findForPgReconciliation(FROM, NOW)).thenReturn(List.of());
 
         atScheduledTime.reconcilePreviousDay(RUN_DATE, JOB);
