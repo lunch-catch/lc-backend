@@ -4,6 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -32,7 +34,10 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.function.Consumer;
 import java.util.stream.LongStream;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -74,6 +79,16 @@ class StoreAudienceServiceTest {
         return captor.getAllValues().stream().flatMap(List::stream).toList();
     }
 
+    // 저장소는 한 행씩 넘긴다. 그 순서대로 받는 쪽에 건넨다
+    @SuppressWarnings("unchecked")
+    private void givenVisits(LocalDate from, LocalDate to, List<VisitPoint> visits) {
+        doAnswer(invocation -> {
+            Consumer<VisitPoint> each = invocation.getArgument(2);
+            visits.forEach(each);
+            return null;
+        }).when(feedVisitRepository).forEachPointBetween(eq(from), eq(to), any(Consumer.class));
+    }
+
     private void givenStores() {
         when(storeQueryService.findAdCandidatesByStoreIds(anyList())).thenAnswer(invocation -> {
             List<Long> ids = invocation.getArgument(0);
@@ -85,8 +100,8 @@ class StoreAudienceServiceTest {
     void 그날_서빙_대상_캠페인의_가게마다_최근_7일_접속_회원을_세어_넘긴다() {
         when(campaignQueryService.findServableOn(TODAY)).thenReturn(List.of(campaign(101, 55), campaign(102, 55)));
         givenStores();
-        when(feedVisitRepository.findPointsBetween(TODAY.minusDays(7), TODAY.minusDays(1))).thenReturn(List.of(
-                new VisitPoint(1L, 37.4979, 127.0276), new VisitPoint(2L, 37.4979, 127.0276)));
+        givenVisits(TODAY.minusDays(7), TODAY.minusDays(1),
+                List.of(new VisitPoint(1L, 37.4979, 127.0276), new VisitPoint(2L, 37.4979, 127.0276)));
         when(memberQueryService.findAllById(anyList())).thenReturn(List.of(
                 member(1L, Gender.MALE, com.launchcatch.member.contract.AgeGroup.AGE_20S),
                 member(2L, null, null)));
@@ -99,7 +114,10 @@ class StoreAudienceServiceTest {
                 && c.ageGroup() == AgeGroup.AGE_20S).findFirst().orElseThrow().memberCount()).isEqualTo(1);
     }
 
-    // 회원 계약은 한 번에 1,000명, 캠페인 계약은 한 번에 1,000칸까지다. 넘으면 거부한다
+    /*
+     * 회원 계약은 한 번에 1,000명, 캠페인 계약은 한 번에 1,000칸까지다.
+     * 넘으면 거부한다.
+     */
     @Test
     void 회원과_칸이_계약의_상한을_넘어도_나눠_읽고_나눠_넘긴다() {
         List<CampaignInfo> campaigns = LongStream.rangeClosed(1, 30).mapToObj(i -> campaign(i, i)).toList();
@@ -107,7 +125,7 @@ class StoreAudienceServiceTest {
         givenStores();
         List<VisitPoint> visits = new ArrayList<>();
         LongStream.rangeClosed(1, MemberQueryService.MAX_FIND_ALL_SIZE + 1).forEach(i -> visits.add(new VisitPoint(i, 37.4979, 127.0276)));
-        when(feedVisitRepository.findPointsBetween(any(), any())).thenReturn(visits);
+        givenVisits(TODAY.minusDays(7), TODAY.minusDays(1), visits);
         when(memberQueryService.findAllById(anyList())).thenAnswer(invocation -> {
             List<Long> ids = invocation.getArgument(0);
             if (ids.size() > MemberQueryService.MAX_FIND_ALL_SIZE) {
@@ -128,6 +146,27 @@ class StoreAudienceServiceTest {
                 .isEqualTo(MemberQueryService.MAX_FIND_ALL_SIZE + 1);
     }
 
+    /*
+     * 넘기다 실패하면 앞서 넘긴 가게만 오늘 값이다. 가게 하나의 48칸이 두 호출로 갈리면 그 가게가 오늘 값과 전날 값으로 섞인다.
+     * 한 호출에는 가게의 칸을 모두 넣는다(#774).
+     */
+    @Test
+    void 가게_하나의_칸은_한_호출에_모두_넘긴다() {
+        List<CampaignInfo> campaigns = LongStream.rangeClosed(1, 30).mapToObj(i -> campaign(i, i)).toList();
+        when(campaignQueryService.findServableOn(TODAY)).thenReturn(campaigns);
+        givenStores();
+        givenVisits(TODAY.minusDays(7), TODAY.minusDays(1), List.of());
+        ArgumentCaptor<List<StoreAudienceCell>> captor = ArgumentCaptor.forClass(List.class);
+
+        service.aggregate(TODAY);
+
+        verify(storeAudienceUpdater, org.mockito.Mockito.atLeastOnce()).overwrite(captor.capture());
+        Map<Long, Long> callsPerStore = new HashMap<>();
+        captor.getAllValues().forEach(chunk -> chunk.stream().map(StoreAudienceCell::storeId).distinct()
+                .forEach(storeId -> callsPerStore.merge(storeId, 1L, Long::sum)));
+        assertThat(callsPerStore).hasSize(30).allSatisfy((storeId, calls) -> assertThat(calls).isEqualTo(1L));
+    }
+
     @Test
     void 그날_서빙_대상이_없으면_넘기지_않는다() {
         when(campaignQueryService.findServableOn(TODAY)).thenReturn(List.of());
@@ -142,7 +181,7 @@ class StoreAudienceServiceTest {
     void 넘기다_실패하면_예외를_올린다() {
         when(campaignQueryService.findServableOn(TODAY)).thenReturn(List.of(campaign(101, 55)));
         givenStores();
-        when(feedVisitRepository.findPointsBetween(any(), any())).thenReturn(List.of());
+        givenVisits(TODAY.minusDays(7), TODAY.minusDays(1), List.of());
         doThrow(new QueryTimeoutException("db")).when(storeAudienceUpdater).overwrite(anyList());
 
         assertThatThrownBy(() -> service.aggregate(TODAY)).isInstanceOf(QueryTimeoutException.class);
