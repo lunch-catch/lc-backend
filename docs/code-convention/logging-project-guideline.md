@@ -44,6 +44,7 @@
 | `PiiMasker` | 개인정보를 가리는 유일한 유틸이다. `maskEmail`, `maskPhone`, `maskName`, `maskProviderId`(외부 계정 식별자), `maskGeneric`, `redact`(완전히 가림) | `LOG-7-03` |
 | `RedisFailureClassifier.causeLabel(e)` | Redis 실패를 `TIMEOUT`, `OTHER` 로 분류한다. 값은 `reason` 키에 넣는다 | `LOG-4-01` |
 | `FailureLogDetails.from(e)` | 예외 메시지 없이 원인 타입, HTTP 상태, SQLState, 발생 위치를 뽑는다. 지금은 객체째 `details=` 에 넣고 있어 `LOG-4-04` 에 맞지 않는다(7장) | `LOG-4-04` |
+| `ClientIpResolver`(`global/http`) | 클라이언트 IP 를 정한다. `X-Forwarded-For` 의 마지막 항목을 쓰고 없거나 형식이 틀리면 `getRemoteAddr()` 로 돌아간다. `MdcLoggingFilter`, `AdminLoginAuditFilter`, `AuthRateLimitFilter` 가 같은 값을 쓴다. `getRemoteAddr()` 는 이 클래스 밖에서 부르지 않고 `ArchitectureTest` 가 막는다. `X-Forwarded-For` 를 읽는 코드는 리뷰에서 막는다. `server.forward-headers-strategy` 와 `server.tomcat.remoteip.internal-proxies` 는 함께 켜지 않는다. 이유는 [근거 문서 5장](./logging-project-rationale.md#5-clientip-를-검증하는-방식)에 있다 | `LOG-8-05` |
 | `LogCapture`(테스트) | 대상 클래스의 로거에 붙어 남긴 로그를 모은다. 로그 테스트에 쓴다 | `LOG-8-09` |
 | `AuditLogWriter`(`ops/contract`) | 관리자 행위와 돈이 오간 처리의 감사 기록을 DB 에 쓴다. 관리자 로그아웃, 계정 등록, 토큰 재발급, 포인트 정책, 환불, 포인트 조정, 결제 재조회, 재집계가 이미 쓴다 | `LOG-8-11` |
 
@@ -170,7 +171,6 @@
 | `LOG-7-09` | `HttpBodyLoggingFilter` | 민감 키를 정규식으로 찾는다. 값 안에 이스케이프된 따옴표가 있으면(`"password":"ab\"cd"`) 따옴표 뒤가 남고, 좌표 외의 숫자 값(`"kakaoUserId":123`)은 가려지지 않는다 | JSON 은 파서로 읽어 키마다 값을 가린다. 자료형과 관계없이 가리고, 파싱에 실패하면 바디 전체를 가린다. form 은 디코딩한 뒤 키를 본다 |
 | `LOG-7-13` | `logback-spring.xml` 의 `ShortenedThrowableConverter`, 예외를 끝내는 곳(`GlobalExceptionHandler`, 각 외부 클라이언트) | 스택에 찍히는 예외 메시지를 가리지 않는다. 5.1 의 예외도 스택과 함께 남을 수 있다. `WebClientResponseException` 의 스택이 남으면 외부 호출 로그에서 뺀 쿼리 문자열이 다시 나온다 | 기본 변환기는 메시지 마스킹을 지원하지 않는다. 5.1 의 예외는 끝내는 곳에서 원인 정보만 남긴다. 그 밖의 예외 메시지를 출력 단계에서 가릴지는 사용자 정의 변환기 구현 이슈에서 정하고, 정하기 전에는 지원하는 기능처럼 적지 않는다 |
 | `LOG-7-06` | `CouponSequenceRecoveryService`(`COUPON_ISSUANCE_RECOVERY_FAILED`), `CouponSequenceService`(`COUPON_REDIS_BLOCK_FAILED`) | `reason={}` 에 `error.toString()` 을 넣어 예외 메시지가 들어간다 | `exceptionType` 을 쓰고, 사유는 `RedisFailureClassifier` 의 라벨로 `reason` 에 넣는다 |
-| `LOG-8-05` | `MdcLoggingFilter`, `AdminLoginAuditFilter`, `AuthRateLimitFilter` | `MdcLoggingFilter` 는 `X-Forwarded-For` 의 첫 값을 `clientIp` 로 쓴다. 첫 값은 클라이언트가 마음대로 보낼 수 있다. 나머지 두 필터는 로드 밸런서가 붙인 마지막 값을 써서 같은 요청의 IP 가 둘로 찍힌다 | `lc-infra` 가 실제 프록시 대역을 확인한 뒤 `server.forward-headers-strategy=native` 와 `server.tomcat.remoteip.internal-proxies` 를 설정한다. 세 필터는 헤더를 직접 파싱하지 않고 `request.getRemoteAddr()` 를 쓴다. 헤더를 위조한 요청의 MDC 에 실제 IP 가 남는지 테스트한다 |
 
 ### 7.2 우선순위 2
 
