@@ -75,7 +75,7 @@ public class DailyReservationService {
         // 예약이 모두 커밋된 뒤에 확인해야 캠페인을 읽은 뒤 계획을 만들기 전에 커밋된 중단을 놓치지 않는다
         confirmPlans(businessDate);
         mirror(businessDate, campaigns.stream().map(CampaignInfo::campaignId).toList());
-        log.info("event=DAILY_RESERVE_DONE businessDate={} campaigns={} owners={} unitPrice={}",
+        log.info("event=BILLING_DAILY_RESERVE_DONE businessDate={} campaignCount={} ownerCount={} unitPrice={}",
                 businessDate, campaigns.size(), byOwner.size(), unitPrice);
         return campaigns.size();
     }
@@ -143,7 +143,7 @@ public class DailyReservationService {
             campaigns += entry.getValue().size();
         }
         if (campaigns > 0) {
-            log.info("event=RESERVE_LEFTOVER_RELEASED businessDate={} owners={} campaigns={}",
+            log.info("event=BILLING_RESERVE_LEFTOVER_RELEASED businessDate={} ownerCount={} campaignCount={}",
                     businessDate, releasesByOwner.size(), campaigns);
         }
     }
@@ -162,7 +162,7 @@ public class DailyReservationService {
             List<Long> chunk = campaignIds.subList(from, Math.min(from + MIRROR_CHUNK, campaignIds.size()));
             changed += recorder.confirmStatus(chunk, businessDate);
         }
-        log.info("event=RESERVE_STATUS_CONFIRMED businessDate={} plans={} changed={}",
+        log.info("event=BILLING_RESERVE_STATUS_CONFIRMED businessDate={} planCount={} changedCount={}",
                 businessDate, campaignIds.size(), changed);
     }
 
@@ -176,7 +176,7 @@ public class DailyReservationService {
             try {
                 hashRebuild.rebuildAllIfAbsent(businessDate, chunk);
             } catch (DataAccessException e) {
-                log.warn("event=RESERVE_HASH_MIRROR_FAILED businessDate={} campaigns={}",
+                log.warn("event=BILLING_RESERVE_HASH_MIRROR_FAILED businessDate={} campaignCount={}",
                         businessDate, chunk.size(), e);
             }
         }
