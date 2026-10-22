@@ -1,6 +1,12 @@
 package com.launchcatch.coupon.repository;
 
 import java.util.List;
+import java.util.ArrayList;
+import java.util.Map;
+import java.util.LinkedHashMap;
+import java.nio.charset.StandardCharsets;
+import org.springframework.data.redis.core.RedisCallback;
+import org.springframework.data.redis.connection.ReturnType;
 import lombok.RequiredArgsConstructor;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -19,8 +25,10 @@ import org.springframework.stereotype.Repository;
 public class CouponSequenceRepository {
 
     private static final DefaultRedisScript<Long> COMPLETE = script("complete");
+    private static final DefaultRedisScript<Long> COMPLETE_MANY = script("complete_many");
     private static final DefaultRedisScript<Long> RELEASE = script("release");
     private static final DefaultRedisScript<List<Long>> RESERVE_MANY = listScript("reserve_many");
+    private static final DefaultRedisScript<Long> RETRY_AVAILABILITY = script("retry_availability");
     private static final DefaultRedisScript<Long> BLOCK = script("block");
     private static final DefaultRedisScript<Long> REBUILD = script("rebuild");
     // 큐를 다시 만들 때 순번을 RPUSH 한 번에 넣는 최대 개수다.
@@ -45,6 +53,41 @@ public class CouponSequenceRepository {
         return result;
     }
 
+    // 이벤트별 Lua의 원자성은 유지하며 여러 이벤트의 예약 응답을 파이프라인으로 함께 받는다.
+    public Map<Long, List<Long>> reserveAll(Map<Long, List<String>> reservationIds, long staleAfterMillis) {
+        List<Long> events = new ArrayList<>(reservationIds.keySet());
+        List<Object> replies = redis.executePipelined((RedisCallback<Object>) connection -> {
+            for (long eventId : events) {
+                List<String> arguments = new ArrayList<>(keys(eventId));
+                arguments.add(Long.toString(staleAfterMillis));
+                arguments.addAll(reservationIds.get(eventId));
+                connection.scriptingCommands().eval(RESERVE_MANY.getScriptAsString().getBytes(StandardCharsets.UTF_8),
+                        ReturnType.MULTI, 3, arguments.stream().map(value -> value.getBytes(StandardCharsets.UTF_8))
+                                .toArray(byte[][]::new));
+            }
+            return null;
+        });
+        if (replies.size() != events.size()) {
+            throw new IllegalStateException("Redis did not return a result for each coupon event");
+        }
+        Map<Long, List<Long>> results = new LinkedHashMap<>();
+        for (int i = 0; i < events.size(); i++) {
+            long eventId = events.get(i);
+            if (!(replies.get(i) instanceof List<?> reply) || reply.size() != reservationIds.get(eventId).size()) {
+                throw new IllegalStateException("Redis did not return a result for each coupon reservation");
+            }
+            List<Long> sequences = new ArrayList<>(reply.size());
+            for (Object value : reply) {
+                if (!(value instanceof Long sequence) || sequence < -2 || sequence > Integer.MAX_VALUE) {
+                    throw new IllegalStateException("Redis returned an invalid coupon sequence");
+                }
+                sequences.add(sequence);
+            }
+            results.put(eventId, sequences);
+        }
+        return results;
+    }
+
     /*
      * 커밋된 예약을 pending에서 지우고 completed를 1 늘린다.
      * 이번 완료로 completed가 total에 닿았으면 SOLD_OUT으로 바꾸고 true를 돌려줘 호출자가 소진을 통보하게 한다.
@@ -54,9 +97,24 @@ public class CouponSequenceRepository {
         return Long.valueOf(1).equals(redis.execute(COMPLETE, keys(eventId), Integer.toString(sequence), reservationId));
     }
 
+    public boolean completeAll(long eventId, List<Integer> sequences, List<String> reservationIds) {
+        String[] args = new String[sequences.size() * 2];
+        for (int i = 0; i < sequences.size(); i++) {
+            args[i * 2] = sequences.get(i).toString();
+            args[i * 2 + 1] = reservationIds.get(i);
+        }
+        return Long.valueOf(1).equals(redis.execute(COMPLETE_MANY, keys(eventId), (Object[]) args));
+    }
+
     // 롤백된 예약을 pending에서 지우고 순번을 available 끝에 돌려놓으며 같은 예약이 없으면 아무것도 하지 않는다.
     public void release(long eventId, int sequence, String reservationId) {
         redis.execute(RELEASE, keys(eventId), Integer.toString(sequence), reservationId);
+    }
+
+    // 예약 대기 요청만 사용하는 조회이며 2는 예약이 끝날 때까지 기다려야 한다는 뜻이다.
+    public int retryAvailability(long eventId, long staleAfterMillis) {
+        Long result = redis.execute(RETRY_AVAILABILITY, keys(eventId), Long.toString(staleAfterMillis));
+        return result == null ? -1 : Math.toIntExact(result);
     }
 
     // 큐를 BLOCKED로 바꿔 모든 서버의 새 예약을 막는다.
@@ -64,9 +122,48 @@ public class CouponSequenceRepository {
         redis.execute(BLOCK, keys(eventId));
     }
 
+    // 부분 실행 여부를 모르는 여러 이벤트를 한 번의 대기로 차단하며 기존 보존 기한을 유지한다.
+    public void blockAll(java.util.Set<Long> eventIds) {
+        redis.executePipelined((RedisCallback<Object>) connection -> {
+            for (long eventId : eventIds) {
+                connection.scriptingCommands().eval(BLOCK.getScriptAsString().getBytes(StandardCharsets.UTF_8),
+                        ReturnType.INTEGER, 3, keys(eventId).stream()
+                                .map(value -> value.getBytes(StandardCharsets.UTF_8)).toArray(byte[][]::new));
+            }
+            return null;
+        });
+    }
+
     // 큐가 준비되지 않았으면 -1, 완료 수가 총량에 닿았으면 0, 남았으면 1을 돌려줘 reserveAll과 같은 부호를 쓴다.
     public int availability(long eventId) {
         List<Object> values = redis.opsForHash().multiGet(keys(eventId).get(2), List.of("state", "total", "completed", "expiresAt"));
+        return parseAvailability(values);
+    }
+
+    // 같은 묶음의 이벤트 정보를 한 왕복으로 읽되 각 이벤트의 상태는 별도로 판정한다.
+    public Map<Long, Integer> availability(List<Long> eventIds) {
+        byte[][] fields = List.of("state", "total", "completed", "expiresAt").stream()
+                .map(value -> value.getBytes(StandardCharsets.UTF_8)).toArray(byte[][]::new);
+        List<Object> replies = redis.executePipelined((RedisCallback<Object>) connection -> {
+            for (long eventId : eventIds) {
+                connection.hashCommands().hMGet(keys(eventId).get(2).getBytes(StandardCharsets.UTF_8), fields);
+            }
+            return null;
+        });
+        if (replies.size() != eventIds.size()) {
+            throw new IllegalStateException("Redis did not return availability for each coupon event");
+        }
+        Map<Long, Integer> results = new LinkedHashMap<>();
+        for (int i = 0; i < eventIds.size(); i++) {
+            if (!(replies.get(i) instanceof List<?> values) || values.size() != 4) {
+                throw new IllegalStateException("Redis returned invalid coupon availability");
+            }
+            results.put(eventIds.get(i), parseAvailability(values));
+        }
+        return results;
+    }
+
+    private int parseAvailability(List<?> values) {
         Object state = values.get(0);
         if ((!"READY".equals(state) && !"SOLD_OUT".equals(state))
                 || values.get(1) == null || values.get(2) == null || values.get(3) == null) {

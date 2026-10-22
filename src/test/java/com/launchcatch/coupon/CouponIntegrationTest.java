@@ -1377,7 +1377,7 @@ public class CouponIntegrationTest extends IntegrationTestSupport {
                 doThrow(failure).when(events).findAllForIssue(anyCollection());
             } else if (stage.equals("inventory")) {
                 doThrow(failure).when(batchIssues)
-                        .issueSequences(org.mockito.ArgumentMatchers.eq(81L), anyList(), any());
+                        .issueSequences(org.mockito.ArgumentMatchers.anyMap(), any());
             } else {
                 Answer<?> real = mockingDetails(batchIssues).getMockCreationSettings().getDefaultAnswer();
                 doAnswer(invocation -> {
@@ -1581,7 +1581,7 @@ public class CouponIntegrationTest extends IntegrationTestSupport {
                     invocation.callRealMethod();
                     throw new RedisConnectionFailureException("HTTP completion reply lost");
                 }).doCallRealMethod().when(sequences)
-                        .complete(org.mockito.ArgumentMatchers.eq(httpEventId), org.mockito.ArgumentMatchers.anyInt(), any());
+                        .completeAll(org.mockito.ArgumentMatchers.eq(httpEventId), anyList(), anyList());
                 try (HttpClient client = HttpClient.newHttpClient()) {
                     assertCreated(send(client, 17L), 17L);
                     assertThat(sequenceService.needsRecovery(httpEventId)).isTrue();
@@ -1946,7 +1946,7 @@ public class CouponIntegrationTest extends IntegrationTestSupport {
                 invocation.callRealMethod();
                 throw new RedisConnectionFailureException("completion reply lost");
             }).doCallRealMethod().when(sequences)
-                    .complete(org.mockito.ArgumentMatchers.eq(eventId), org.mockito.ArgumentMatchers.anyInt(), any());
+                    .completeAll(org.mockito.ArgumentMatchers.eq(eventId), anyList(), anyList());
             assertThat(couponCommandService.issue(memberId, eventId).memberCouponId()).isPositive();
             assertThat(sequenceService.needsRecovery(eventId)).isTrue();
             assertThat(couponCommandService.issue(memberId + 1, eventId).memberCouponId()).isPositive();
@@ -2036,8 +2036,7 @@ public class CouponIntegrationTest extends IntegrationTestSupport {
                 entered.countDown();
                 assertThat(finish.await(10, TimeUnit.SECONDS)).isTrue();
                 return invocation.callRealMethod();
-            }).when(batchIssues).issueSequences(org.mockito.ArgumentMatchers.eq(eventId),
-                    org.mockito.ArgumentMatchers.anyList(), any());
+            }).when(batchIssues).issueSequences(org.mockito.ArgumentMatchers.anyMap(), any());
             try (ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
                 Future<CouponIssueResponse> issuing = executor.submit(() -> couponCommandService.issue(memberId, eventId));
                 assertThat(entered.await(10, TimeUnit.SECONDS)).isTrue();

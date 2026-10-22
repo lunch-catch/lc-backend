@@ -19,6 +19,7 @@ import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicInteger;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -42,6 +43,11 @@ public class CouponCommandService {
     private final CouponSequenceRecoveryService sequenceRecoveryService;
     private final CouponIssueBatcher batcher;
 
+    private final AtomicInteger activeIssueRequests = new AtomicInteger();
+
+    @Value("${coupon.issue.batch.queue-capacity:2000}")
+    private int requestCapacity = 2000;
+
     @Value("${coupon.issue.batch.wait-timeout:10s}")
     private Duration waitTimeout = Duration.ofSeconds(10);
 
@@ -51,16 +57,47 @@ public class CouponCommandService {
      */
     @Transactional(propagation = Propagation.NEVER)
     public CouponIssueResponse issue(Long memberId, Long eventId) {
-        long deadlineNanos = System.nanoTime() + waitTimeout.toNanos();
-        CouponIssuanceRequest request = null;
+        return issue(new CouponIssuanceRequest(memberId, eventId,
+                LocalDateTime.now(clock.withZone(ClockConfig.ZONE))), System.nanoTime() + waitTimeout.toNanos());
+    }
+
+    @Transactional(propagation = Propagation.NEVER)
+    public CouponIssueResponse issue(CouponIssuanceRequest request, long deadlineNanos) {
+        if (activeIssueRequests.incrementAndGet() > requestCapacity) {
+            activeIssueRequests.decrementAndGet();
+            rejectIfConfirmedSoldOut(request.eventId());
+            throw new CouponException(CouponErrorCode.ISSUANCE_BUSY);
+        }
+        try {
+            return issueWithinDeadline(request, deadlineNanos);
+        } finally {
+            activeIssueRequests.decrementAndGet();
+        }
+    }
+
+    // 접수 상한에 닿아도 확정 소진은 혼잡 응답보다 먼저 반환하며 복구는 작업자에게 맡긴다.
+    @Transactional(propagation = Propagation.NEVER)
+    public void rejectIfConfirmedSoldOut(long eventId) {
+        try {
+            if (!sequenceService.isConfirmedSoldOut(eventId)) {
+                return;
+            }
+        } catch (CouponException error) {
+            if (error.getErrorCode() == CouponErrorCode.ISSUANCE_BUSY) {
+                return;
+            }
+            throw error;
+        }
+        soldOutNotifications.request(eventId);
+        throw new CouponException(CouponErrorCode.INVENTORY_EXHAUSTED);
+    }
+
+    private CouponIssueResponse issueWithinDeadline(CouponIssuanceRequest request, long deadlineNanos) {
+        long eventId = request.eventId();
         boolean resumed = false;
         while (true) {
             try {
                 sequenceService.checkAdmission(eventId);
-                if (request == null) {
-                    request = new CouponIssuanceRequest(memberId, eventId,
-                            LocalDateTime.now(clock.withZone(ClockConfig.ZONE)));
-                }
                 if (sequenceService.isConfirmedSoldOut(eventId)) {
                     throw new CouponException(CouponErrorCode.INVENTORY_EXHAUSTED);
                 }

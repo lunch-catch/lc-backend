@@ -11,6 +11,14 @@ import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Semaphore;
+import com.launchcatch.coupon.service.model.CouponBatchDeadline;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CompletableFuture;
@@ -27,13 +35,15 @@ import org.springframework.stereotype.Component;
  * 발급 요청을 대기열에 모아 작업자 스레드가 묶음으로 처리하게 한다.
  * 요청 스레드는 DB 커넥션을 잡지 않고 대기열에 요청을 넣은 뒤 자기 결과만 기다린다.
  * 작업자는 한 건을 꺼낸 뒤 그동안 쌓인 요청을 최대 묶음 크기까지 바로 함께 꺼낸다.
- * 묶음이 차기를 기다리지 않으므로 한산할 때는 한 건짜리 묶음이 바로 처리된다.
+ * 최대 20ms만 추가 요청을 모으며 요청 기한이나 묶음 상한에 닿으면 먼저 처리한다.
  * 몰릴 때는 앞 묶음을 처리하는 동안 요청이 쌓여 묶음이 저절로 커진다.
  */
 @Component
 @Slf4j
 @RequiredArgsConstructor
 public class CouponIssueBatcher implements SmartLifecycle {
+
+    private static final long MAX_COLLECTION_NANOS = TimeUnit.MILLISECONDS.toNanos(20);
 
     private final CouponBatchIssuanceService batchService;
     private final CouponSequenceService sequenceService;
@@ -42,6 +52,13 @@ public class CouponIssueBatcher implements SmartLifecycle {
     private final List<Thread> workers = new ArrayList<>();
     // 요청 스레드가 넣고 작업자가 꺼내는 대기열이며 start에서 만든다.
     private BlockingQueue<Pending> queue;
+    private BlockingQueue<Pending> awaitingReservations;
+    private ScheduledExecutorService reservationWaiter;
+    private ExecutorService eventTasks;
+    private Semaphore admission;
+    private final Set<Pending> active = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    // 접수 상한 안에서 이벤트마다 한 번씩 예약 상태를 조회한다.
+    private final Set<Long> pollingEvents = java.util.concurrent.ConcurrentHashMap.newKeySet();
     // 작업자 반복과 새 요청 접수를 함께 멈추는 표시다.
     private volatile boolean running;
 
@@ -57,7 +74,7 @@ public class CouponIssueBatcher implements SmartLifecycle {
     @Value("${coupon.issue.batch.queue-capacity:2000}")
     private int queueCapacity;
 
-    // 요청 스레드가 결과를 기다리는 상한이며 넘기면 서버 오류로 응답한다.
+    // 커밋 전까지 결과를 기다리는 기한이며 만료되면 취소를 요청한다.
     @Value("${coupon.issue.batch.wait-timeout:10s}")
     private Duration waitTimeout;
 
@@ -72,7 +89,7 @@ public class CouponIssueBatcher implements SmartLifecycle {
      * @param eventId 발급받을 당일 쿠폰 이벤트의 ID
      * @return 커밋된 발급 응답과 Redis 예약 완료로 확인한 소진 여부
      * @throws CouponException 업무 조건으로 거절됐거나 대기열이 가득 찬 경우
-     * @throws IllegalStateException 결과를 기다리는 동안 시간이 다 됐거나 스레드가 중단된 경우
+     * @throws CouponException 처리 기한이 끝나 커밋 전에 취소한 경우
      */
     public CouponIssuanceResult submitAndAwait(long memberId, long eventId) {
         return submitAndAwait(new CouponIssuanceRequest(memberId, eventId,
@@ -83,11 +100,23 @@ public class CouponIssueBatcher implements SmartLifecycle {
     public CouponIssuanceResult submitAndAwait(CouponIssuanceRequest request, long deadlineNanos) {
         long remaining = deadlineNanos - System.nanoTime();
         if (remaining <= 0) {
-            throw new IllegalStateException("Coupon issuance deadline expired");
-        }
-        Pending pending = new Pending(request, new CompletableFuture<>());
-        if (!running || !queue.offer(pending)) {
             throw new CouponException(CouponErrorCode.ISSUANCE_BUSY);
+        }
+        if (!running || !admission.tryAcquire()) {
+            throw new CouponException(CouponErrorCode.ISSUANCE_BUSY);
+        }
+        Pending pending = new Pending(request, new CompletableFuture<>(), deadlineNanos);
+        active.add(pending);
+        pending.future().whenComplete((result, error) -> {
+            active.remove(pending);
+            admission.release();
+        });
+        if (!running || !queue.offer(pending)) {
+            pending.future().completeExceptionally(new CouponException(CouponErrorCode.ISSUANCE_BUSY));
+            throw new CouponException(CouponErrorCode.ISSUANCE_BUSY);
+        }
+        if (!running && queue.remove(pending)) {
+            pending.future().completeExceptionally(new CouponException(CouponErrorCode.ISSUANCE_BUSY));
         }
         try {
             return pending.future().get(Math.max(0, deadlineNanos - System.nanoTime()), TimeUnit.NANOSECONDS);
@@ -97,10 +126,30 @@ public class CouponIssueBatcher implements SmartLifecycle {
             }
             throw new IllegalStateException("Coupon batch issuance failed", error.getCause());
         } catch (TimeoutException error) {
-            throw new IllegalStateException("Coupon batch issuance did not finish in " + waitTimeout, error);
+            return cancelOrAwaitCommit(pending);
         } catch (InterruptedException error) {
             Thread.currentThread().interrupt();
-            throw new IllegalStateException("Interrupted while waiting for coupon batch issuance", error);
+            return cancelOrAwaitCommit(pending);
+        }
+    }
+
+    private CouponIssuanceResult cancelOrAwaitCommit(Pending pending) {
+        if (pending.cancel()) {
+            queue.remove(pending);
+            awaitingReservations.remove(pending);
+            // 실행 중인 묶음은 롤백 후 Future를 끝내므로 접수 허용량도 그때 반납한다.
+            if (pending.deadline() == null) {
+                pending.future().completeExceptionally(new CouponException(CouponErrorCode.ISSUANCE_BUSY));
+            }
+            throw new CouponException(CouponErrorCode.ISSUANCE_BUSY);
+        }
+        try {
+            return pending.future().join();
+        } catch (java.util.concurrent.CompletionException error) {
+            if (error.getCause() instanceof RuntimeException cause) {
+                throw cause;
+            }
+            throw error;
         }
     }
 
@@ -124,13 +173,41 @@ public class CouponIssueBatcher implements SmartLifecycle {
             }
             List<Pending> batch = new ArrayList<>(maxSize);
             batch.add(first);
-            queue.drainTo(batch, maxSize - 1);
+            try {
+                collectMoreRequests(first, batch);
+            } catch (InterruptedException error) {
+                Thread.currentThread().interrupt();
+                batch.forEach(pending -> pending.future().completeExceptionally(
+                        new CouponException(CouponErrorCode.ISSUANCE_BUSY)));
+                return;
+            }
+            batch.removeIf(this::expireBeforeStart);
+            if (batch.isEmpty()) {
+                continue;
+            }
             try {
                 process(batch);
             } catch (Throwable error) {
                 batch.forEach(pending -> pending.future().completeExceptionally(error));
                 log.error("event=COUPON_BATCH_WORKER_FAILED size={}", batch.size(), error);
             }
+        }
+    }
+
+    private void collectMoreRequests(Pending first, List<Pending> batch) throws InterruptedException {
+        queue.drainTo(batch, maxSize - 1);
+        long collectUntil = Math.min(first.deadlineNanos(), System.nanoTime() + MAX_COLLECTION_NANOS);
+        while (batch.size() < maxSize) {
+            long remaining = collectUntil - System.nanoTime();
+            if (remaining <= 0) {
+                break;
+            }
+            Pending next = queue.poll(remaining, TimeUnit.NANOSECONDS);
+            if (next == null) {
+                break;
+            }
+            batch.add(next);
+            queue.drainTo(batch, maxSize - batch.size());
         }
     }
 
@@ -142,28 +219,128 @@ public class CouponIssueBatcher implements SmartLifecycle {
     private void process(List<Pending> batch) {
         List<CouponIssuanceOutcome> outcomes;
         try {
-            outcomes = batchService.issueBatch(batch.stream().map(Pending::request).toList());
+            CouponBatchDeadline deadline = new CouponBatchDeadline(batch.stream()
+                    .mapToLong(Pending::deadlineNanos).min().orElseThrow());
+            batch.forEach(pending -> pending.attach(deadline));
+            deadline.check();
+            outcomes = batchService.issueBatch(batch.stream().map(Pending::request).toList(), deadline);
         } catch (RuntimeException error) {
             batch.forEach(pending -> pending.future().completeExceptionally(error));
             return;
         }
+        Map<Long, List<Completion>> byEvent = new LinkedHashMap<>();
         for (int i = 0; i < batch.size(); i++) {
-            CouponIssuanceOutcome outcome = outcomes.get(i);
-            if (outcome.rejection() != null) {
-                CouponException rejection = new CouponException(outcome.rejection());
-                if (outcome.recoveryRequired()) {
-                    rejection = CouponException.recoveryRequired(batch.get(i).request().eventId());
-                    rejection.confirmIssuanceNotCommitted();
-                }
-                batch.get(i).future().completeExceptionally(rejection);
-            } else {
-                // 요청 스레드가 타임아웃됐어도 커밋된 예약은 작업자가 완료한다.
-                boolean soldOut = sequenceService.complete(outcome.reservation());
-                if (soldOut) {
-                    soldOutNotifications.request(outcome.reservation().eventId());
-                }
-                batch.get(i).future().complete(new CouponIssuanceResult(outcome.response(), soldOut));
+            Pending pending = batch.get(i);
+            byEvent.computeIfAbsent(pending.request().eventId(), key -> new ArrayList<>())
+                    .add(new Completion(pending, outcomes.get(i)));
+        }
+        byEvent.values().forEach(completions -> dispatchEvent(() -> finishEvent(completions)));
+    }
+
+    private void dispatchEvent(Runnable task) {
+        try {
+            eventTasks.execute(task);
+        } catch (java.util.concurrent.RejectedExecutionException error) {
+            // 종료와 경쟁해도 커밋된 예약의 정리와 결과 전달은 생략하지 않는다.
+            task.run();
+        }
+    }
+
+    // 커밋된 결과의 Redis 완료와 응답을 이벤트별로 처리해 다른 이벤트의 지연을 기다리지 않는다.
+    private void finishEvent(List<Completion> completions) {
+        try {
+            Set<Long> soldOutEvents = sequenceService.completeAll(completions.stream().map(Completion::outcome)
+                    .filter(outcome -> outcome.reservation() != null).map(CouponIssuanceOutcome::reservation).toList());
+            soldOutEvents.forEach(soldOutNotifications::request);
+            for (Completion completion : completions) {
+                completeOrDeferRequest(completion, soldOutEvents);
             }
+        } catch (Throwable error) {
+            completions.forEach(completion -> completion.pending().future().completeExceptionally(error));
+            log.error("event=COUPON_BATCH_COMPLETION_FAILED", error);
+        }
+    }
+
+    private void completeOrDeferRequest(Completion completion, Set<Long> soldOutEvents) {
+        CouponIssuanceOutcome outcome = completion.outcome();
+        Pending pending = completion.pending();
+        if (outcome.awaitingReservation()) {
+            pending.detach();
+            deferReservation(pending);
+        } else if (outcome.rejection() != null) {
+            CouponException rejection = new CouponException(outcome.rejection());
+            if (outcome.recoveryRequired()) {
+                rejection = CouponException.recoveryRequired(pending.request().eventId());
+                rejection.confirmIssuanceNotCommitted();
+            }
+            pending.future().completeExceptionally(rejection);
+        } else {
+            pending.future().complete(new CouponIssuanceResult(outcome.response(),
+                    soldOutEvents.contains(outcome.reservation().eventId())));
+        }
+    }
+
+    // DB 작업을 시작하기 전에 취소되거나 기한이 지난 요청을 제외한다.
+    private boolean expireBeforeStart(Pending pending) {
+        if (!running || pending.future().isDone() || pending.cancelled()) {
+            pending.future().completeExceptionally(new CouponException(CouponErrorCode.ISSUANCE_BUSY));
+            return true;
+        }
+        if (pending.deadlineNanos() - System.nanoTime() <= 0) {
+            pending.future().completeExceptionally(new CouponException(CouponErrorCode.ISSUANCE_BUSY));
+            return true;
+        }
+        return false;
+    }
+
+    private void deferReservation(Pending pending) {
+        if (!expireBeforeStart(pending) && (!running || !awaitingReservations.offer(pending))) {
+            pending.future().completeExceptionally(new CouponException(CouponErrorCode.ISSUANCE_BUSY));
+        }
+    }
+
+    /*
+     * 예약 대기를 이벤트별로 모아 한 번씩 조회하며 DB 연결과 발급 작업자를 점유하지 않는다.
+     * 소진되면 대기 요청을 함께 끝내고 반납된 재고가 있으면 원래 처리 기한으로 다시 접수한다.
+     */
+    private void resolveReservations() {
+        List<Pending> waiting = new ArrayList<>();
+        awaitingReservations.drainTo(waiting);
+        Map<Long, List<Pending>> byEvent = new LinkedHashMap<>();
+        for (Pending pending : waiting) {
+            if (!expireBeforeStart(pending)) {
+                byEvent.computeIfAbsent(pending.request().eventId(), key -> new ArrayList<>()).add(pending);
+            }
+        }
+        byEvent.forEach((eventId, requests) -> {
+            if (!pollingEvents.add(eventId)) {
+                requests.forEach(this::deferReservation);
+                return;
+            }
+            dispatchEvent(() -> resolveEvent(eventId, requests));
+        });
+    }
+
+    private void resolveEvent(long eventId, List<Pending> requests) {
+        try {
+            int availability = sequenceService.retryAvailability(eventId);
+            if (availability == 0) {
+                soldOutNotifications.request(eventId);
+                requests.forEach(pending -> pending.future().completeExceptionally(
+                        new CouponException(CouponErrorCode.INVENTORY_EXHAUSTED)));
+            } else if (availability == 1) {
+                for (Pending pending : requests) {
+                    if (!expireBeforeStart(pending) && (!running || !queue.offer(pending))) {
+                        pending.future().completeExceptionally(new CouponException(CouponErrorCode.ISSUANCE_BUSY));
+                    }
+                }
+            } else {
+                requests.forEach(this::deferReservation);
+            }
+        } catch (RuntimeException error) {
+            requests.forEach(pending -> pending.future().completeExceptionally(error));
+        } finally {
+            pollingEvents.remove(eventId);
         }
     }
 
@@ -171,7 +348,13 @@ public class CouponIssueBatcher implements SmartLifecycle {
     @Override
     public void start() {
         queue = new ArrayBlockingQueue<>(queueCapacity);
+        awaitingReservations = new ArrayBlockingQueue<>(queueCapacity);
+        admission = new Semaphore(queueCapacity);
+        eventTasks = Executors.newThreadPerTaskExecutor(Thread.ofVirtual().name("coupon-event-", 0).factory());
         running = true;
+        reservationWaiter = Executors.newSingleThreadScheduledExecutor(
+                Thread.ofPlatform().name("coupon-reservation-waiter").daemon(true).factory());
+        reservationWaiter.scheduleWithFixedDelay(this::resolveReservations, 10, 10, TimeUnit.MILLISECONDS);
         for (int i = 0; i < workerCount; i++) {
             workers.add(Thread.ofPlatform().name("coupon-batch-" + i).daemon(true).start(this::runWorker));
         }
@@ -180,25 +363,58 @@ public class CouponIssueBatcher implements SmartLifecycle {
 
     /*
      * 스프링이 종료할 때 새 요청 접수와 작업자 반복을 멈춘다.
-     * 작업자가 처리 중인 묶음은 최대 5초 기다려 끝낸다.
+     * 커밋 전 묶음은 취소하고 커밋 중인 작업에는 DB 호출 상한을 포함한 종료 시간을 준다.
      * 대기열에 남은 요청은 ISSUANCE_BUSY로 끝내 요청 스레드가 결과를 무한히 기다리지 않게 한다.
      */
     @Override
     public void stop() {
         running = false;
+        active.forEach(Pending::cancel);
+        long stopDeadline = System.nanoTime() + waitTimeout.plusSeconds(12).toNanos();
+        if (reservationWaiter != null) {
+            reservationWaiter.shutdown();
+            try {
+                reservationWaiter.awaitTermination(5, TimeUnit.SECONDS);
+            } catch (InterruptedException error) {
+                Thread.currentThread().interrupt();
+            }
+        }
         for (Thread worker : workers) {
             try {
-                worker.join(5000);
+                long remaining = stopDeadline - System.nanoTime();
+                if (remaining > 0) {
+                    worker.join(Math.max(1, TimeUnit.NANOSECONDS.toMillis(remaining)));
+                }
             } catch (InterruptedException error) {
                 Thread.currentThread().interrupt();
             }
         }
         workers.clear();
+        if (eventTasks != null) {
+            eventTasks.shutdown();
+            try {
+                eventTasks.awaitTermination(5, TimeUnit.SECONDS);
+            } catch (InterruptedException error) {
+                Thread.currentThread().interrupt();
+            }
+        }
+        if (awaitingReservations != null) {
+            Pending pending;
+            while ((pending = awaitingReservations.poll()) != null) {
+                pending.future().completeExceptionally(new CouponException(CouponErrorCode.ISSUANCE_BUSY));
+            }
+        }
         if (queue != null) {
             List<Pending> left = new ArrayList<>();
             queue.drainTo(left);
             left.forEach(pending -> pending.future().completeExceptionally(new CouponException(CouponErrorCode.ISSUANCE_BUSY)));
         }
+    }
+
+    // HTTP의 graceful 종료 단계보다 뒤에 멈추고 DB·Redis 연결보다 먼저 정리한다.
+    @Override
+    public int getPhase() {
+        return SmartLifecycle.DEFAULT_PHASE - 2048;
     }
 
     // 작업자가 요청을 받고 있으면 true를 돌려주며 스프링이 종료 순서를 정할 때 쓴다.
@@ -208,6 +424,42 @@ public class CouponIssueBatcher implements SmartLifecycle {
     }
 
     // 대기열에 들어간 요청 한 건과 그 결과를 요청 스레드에 넘겨줄 통로다.
-    private record Pending(CouponIssuanceRequest request,
-            CompletableFuture<CouponIssuanceResult> future) { }
+    private record Completion(Pending pending, CouponIssuanceOutcome outcome) { }
+
+    private static final class Pending {
+        private final CouponIssuanceRequest request;
+        private final CompletableFuture<CouponIssuanceResult> future;
+        private final long deadlineNanos;
+        private boolean cancelled;
+        private CouponBatchDeadline deadline;
+
+        private Pending(CouponIssuanceRequest request, CompletableFuture<CouponIssuanceResult> future, long deadlineNanos) {
+            this.request = request;
+            this.future = future;
+            this.deadlineNanos = deadlineNanos;
+        }
+
+        CouponIssuanceRequest request() { return request; }
+        CompletableFuture<CouponIssuanceResult> future() { return future; }
+        long deadlineNanos() { return deadlineNanos; }
+        synchronized boolean cancelled() { return cancelled; }
+        synchronized CouponBatchDeadline deadline() { return deadline; }
+
+        synchronized void attach(CouponBatchDeadline deadline) {
+            this.deadline = deadline;
+            if (cancelled) {
+                deadline.cancel();
+            }
+        }
+
+        synchronized void detach() { deadline = null; }
+
+        synchronized boolean cancel() {
+            if (deadline != null && !deadline.cancel()) {
+                return false;
+            }
+            cancelled = true;
+            return true;
+        }
+    }
 }

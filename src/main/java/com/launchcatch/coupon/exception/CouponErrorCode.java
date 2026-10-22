@@ -23,6 +23,11 @@ public enum CouponErrorCode implements ErrorCode {
     COUPON_ALREADY_USED(HttpStatus.CONFLICT, "COUPON-012", "이미 사용된 쿠폰입니다."),
     OWNER_ACCOUNT_NOT_ALLOWED(HttpStatus.FORBIDDEN, "COUPON-013", "쿠폰을 사용할 수 없는 점주 계정입니다.");
 
+    @Override
+    public boolean isExpectedTraffic() {
+        return this == INVENTORY_EXHAUSTED;
+    }
+
     private final HttpStatus httpStatus;
     private final String code;
     private final String message;

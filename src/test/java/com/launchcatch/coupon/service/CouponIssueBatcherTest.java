@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.awaitility.Awaitility.await;
 import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -18,11 +19,11 @@ import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -57,20 +58,20 @@ class CouponIssueBatcherTest {
 
     @Test
     void 예약을_완료한_뒤_발급_응답과_소진_여부를_돌려준다() {
-        when(batchService.issueBatch(anyList())).thenReturn(List.of(issued));
-        when(sequenceService.complete(reservation)).thenReturn(true);
+        when(batchService.issueBatch(anyList(), any())).thenReturn(List.of(issued));
+        when(sequenceService.completeAll(List.of(reservation))).thenReturn(Set.of(81L));
 
         CouponIssuanceResult result = batcher.submitAndAwait(17L, 81L);
 
         assertThat(result.response()).isEqualTo(response);
         assertThat(result.soldOut()).isTrue();
         verify(soldOutNotifications).request(81L);
-        verify(sequenceService).complete(reservation);
+        verify(sequenceService).completeAll(List.of(reservation));
     }
 
     @Test
     void 커밋된_결과에서_순번을_못_받은_요청만_복구_후_재접수를_허용한다() {
-        when(batchService.issueBatch(anyList())).thenReturn(List.of(CouponIssuanceOutcome.requiringRecovery()));
+        when(batchService.issueBatch(anyList(), any())).thenReturn(List.of(CouponIssuanceOutcome.requiringRecovery()));
 
         assertThatThrownBy(() -> batcher.submitAndAwait(17L, 81L))
                 .isInstanceOfSatisfying(com.launchcatch.coupon.exception.CouponException.class,
@@ -83,14 +84,14 @@ class CouponIssueBatcherTest {
                 java.time.LocalDateTime.now(clock));
 
         assertThatThrownBy(() -> batcher.submitAndAwait(request, System.nanoTime() - 1))
-                .isInstanceOf(IllegalStateException.class);
+                .isInstanceOf(com.launchcatch.coupon.exception.CouponException.class);
         org.mockito.Mockito.verifyNoInteractions(batchService);
     }
 
     @Test
     void 예상하지_못한_작업자_오류도_요청을_실패로_완료하고_다음_요청을_처리한다() {
         AssertionError failure = new AssertionError("unexpected worker failure");
-        when(batchService.issueBatch(anyList())).thenThrow(failure).thenReturn(List.of(issued));
+        when(batchService.issueBatch(anyList(), any())).thenThrow(failure).thenReturn(List.of(issued));
 
         assertThatThrownBy(() -> batcher.submitAndAwait(17L, 81L)).rootCause().isSameAs(failure);
         assertThat(batcher.submitAndAwait(18L, 81L).response()).isEqualTo(response);
@@ -100,7 +101,7 @@ class CouponIssueBatcherTest {
     void 종료는_실행_중인_묶음을_마치고_대기열의_요청을_거절한다() throws Exception {
         CountDownLatch started = new CountDownLatch(1);
         CountDownLatch finish = new CountDownLatch(1);
-        when(batchService.issueBatch(anyList())).thenAnswer(invocation -> {
+        when(batchService.issueBatch(anyList(), any())).thenAnswer(invocation -> {
             started.countDown();
             assertThat(finish.await(5, TimeUnit.SECONDS)).isTrue();
             return List.of(issued);
@@ -133,7 +134,7 @@ class CouponIssueBatcherTest {
         CountDownLatch started = new CountDownLatch(1);
         CountDownLatch finishFirst = new CountDownLatch(1);
         RuntimeException failure = new DataAccessResourceFailureException("DB connection failed");
-        when(batchService.issueBatch(anyList())).thenAnswer(invocation -> {
+        when(batchService.issueBatch(anyList(), any())).thenAnswer(invocation -> {
             List<?> requests = invocation.getArgument(0);
             if (requests.size() > 1) {
                 throw failure;
@@ -164,32 +165,31 @@ class CouponIssueBatcherTest {
     }
 
     @Test
-    void 요청이_타임아웃된_뒤_발급_결과가_돌아와도_예약을_완료한다() throws Exception {
+    void 커밋이_시작된_요청은_기한이_지나도_실제_완료를_기다린다() throws Exception {
         ReflectionTestUtils.setField(batcher, "waitTimeout", Duration.ofMillis(100));
         CountDownLatch started = new CountDownLatch(1);
         CountDownLatch returnResult = new CountDownLatch(1);
-        CountDownLatch completed = new CountDownLatch(1);
-        when(batchService.issueBatch(anyList())).thenAnswer(invocation -> {
+        when(batchService.issueBatch(anyList(), any())).thenAnswer(invocation -> {
+            invocation.getArgument(1, com.launchcatch.coupon.service.model.CouponBatchDeadline.class).beginCommit();
             started.countDown();
             assertThat(returnResult.await(5, TimeUnit.SECONDS)).isTrue();
             return List.of(issued);
         });
-        when(sequenceService.complete(reservation)).thenAnswer(invocation -> {
-            completed.countDown();
-            return true;
-        });
+        when(sequenceService.completeAll(List.of(reservation))).thenReturn(Set.of(81L));
 
-        try {
-            assertThatThrownBy(() -> batcher.submitAndAwait(17L, 81L))
-                    .isInstanceOf(IllegalStateException.class)
-                    .hasCauseInstanceOf(TimeoutException.class);
-            assertThat(started.await(5, TimeUnit.SECONDS)).isTrue();
-        } finally {
-            returnResult.countDown();
+        try (var caller = Executors.newSingleThreadExecutor()) {
+            var result = caller.submit(() -> batcher.submitAndAwait(17L, 81L));
+            try {
+                assertThat(started.await(5, TimeUnit.SECONDS)).isTrue();
+                await().during(Duration.ofMillis(150)).atMost(Duration.ofSeconds(1))
+                        .untilAsserted(() -> assertThat(result).isNotDone());
+            } finally {
+                returnResult.countDown();
+            }
+            assertThat(result.get(5, TimeUnit.SECONDS).response()).isEqualTo(response);
         }
 
-        assertThat(completed.await(5, TimeUnit.SECONDS)).isTrue();
-        verify(sequenceService).complete(reservation);
+        verify(sequenceService).completeAll(List.of(reservation));
         await().atMost(Duration.ofSeconds(3)).untilAsserted(() -> verify(soldOutNotifications).request(81L));
     }
 }

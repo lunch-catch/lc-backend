@@ -11,6 +11,9 @@ import com.launchcatch.coupon.repository.CouponBatchIssueRepository.NewCoupon;
 import com.launchcatch.coupon.repository.CouponBatchIssueRepository.Pair;
 import com.launchcatch.coupon.repository.CouponEventRepository;
 import com.launchcatch.coupon.service.model.CouponIssuanceOutcome;
+import com.launchcatch.coupon.service.model.CouponBatchDeadline;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import com.launchcatch.coupon.service.model.CouponIssuanceRequest;
 import com.launchcatch.coupon.service.model.CouponReservation;
 import com.launchcatch.coupon.service.model.CouponReservationOutcome;
@@ -75,7 +78,7 @@ public class CouponBatchIssuanceService {
      * 4. 남은 회원의 일일 카운터를 만들고 회원 ID 순으로 잠근 뒤 기존 발급 기록을 읽는다.
      *    이 값으로 요청 순서대로 중복과 일일 한도를 판정하며 같은 묶음 안의 앞 요청도 함께 센다.
      * 5. 판정을 통과한 요청 수만큼만 이벤트마다 Redis 호출 한 번으로 순번을 예약한다.
-     * 6. 예약한 순번의 재고를 이벤트마다 한 문장으로 ISSUED로 바꾸고 쿠폰 코드를 읽는다.
+     * 6. 예약한 순번의 재고를 한 문장으로 ISSUED로 바꾸고 쿠폰 코드를 읽는다.
      * 7. 카운터를 늘리고 회원 쿠폰을 다건 INSERT 한 문장으로 저장한 뒤 발급 이벤트를 발행한다.
      *
      * <p>업무 거절은 쓰기 전에 걸러 같은 묶음의 다른 요청에 영향을 주지 않는다.
@@ -89,6 +92,18 @@ public class CouponBatchIssuanceService {
      */
     @Transactional(isolation = Isolation.READ_COMMITTED)
     public List<CouponIssuanceOutcome> issueBatch(List<CouponIssuanceRequest> requests) {
+        return issueBatch(requests, new CouponBatchDeadline(System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(10)));
+    }
+
+    @Transactional(isolation = Isolation.READ_COMMITTED)
+    public List<CouponIssuanceOutcome> issueBatch(List<CouponIssuanceRequest> requests, CouponBatchDeadline deadline) {
+        deadline.check();
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void beforeCommit(boolean readOnly) {
+                deadline.beginCommit();
+            }
+        });
         // 요청과 같은 위치에 결과와 예약을 채우며 결과가 null이면 아직 판정 중인 요청이다.
         CouponIssuanceOutcome[] outcomes = new CouponIssuanceOutcome[requests.size()];
         CouponReservation[] reservations = new CouponReservation[requests.size()];
@@ -97,6 +112,7 @@ public class CouponBatchIssuanceService {
         Set<Long> eventIds = requests.stream().map(CouponIssuanceRequest::eventId).collect(Collectors.toCollection(TreeSet::new));
         Map<Long, CouponEvent> events = couponEventRepository.findAllForIssue(eventIds).stream()
                 .collect(Collectors.toMap(CouponEvent::getId, Function.identity()));
+        deadline.check();
         LocalDateTime now = LocalDateTime.now(clock.withZone(ClockConfig.ZONE));
         for (int i = 0; i < requests.size(); i++) {
             CouponEvent event = events.get(requests.get(i).eventId());
@@ -108,19 +124,86 @@ public class CouponBatchIssuanceService {
         }
 
         // 2. 소진된 이벤트는 회원·중복·한도보다 먼저 소진으로 거절한다.
-        Set<Long> soldOut = new HashSet<>();
-        for (Long eventId : pendingEvents(requests, outcomes)) {
-            if (sequenceService.isSoldOut(eventId)) {
-                soldOut.add(eventId);
-            }
-        }
+        Set<Long> soldOut = sequenceService.soldOutEvents(pendingEvents(requests, outcomes));
         for (int i = 0; i < requests.size(); i++) {
             if (outcomes[i] == null && soldOut.contains(requests.get(i).eventId())) {
                 outcomes[i] = CouponIssuanceOutcome.rejected(CouponErrorCode.INVENTORY_EXHAUSTED);
             }
         }
 
+        deadline.check();
         // 3. 회원 상태는 묶음당 한 번, 찜은 캠페인당 한 번 공개 계약으로 조회한다.
+        rejectIneligibleMembers(requests, events, outcomes);
+
+        deadline.check();
+        // 4. 자격을 통과한 회원의 카운터를 만들고 회원 ID 순으로 잠근 뒤 중복과 일일 한도를 판정한다.
+        LocalDate businessDate = now.toLocalDate();
+        rejectDuplicateOrOverLimitRequests(requests, outcomes, businessDate, now);
+
+        /*
+         * 5. 판정을 통과한 요청 수만큼만 이벤트마다 Redis 호출 한 번으로 예약한다.
+         * 거절할 요청의 순번을 잡지 않아 같은 순간의 다른 묶음이 재고를 못 받는 일을 줄인다.
+         */
+        Map<Long, Integer> increments = reserveEligibleRequests(requests, outcomes, reservations, deadline);
+
+        deadline.check();
+        // 모든 요청이 거절됐으면 쓸 것이 없으므로 카운터 행 생성만 커밋하고 끝낸다.
+        if (increments.isEmpty()) {
+            return List.of(outcomes);
+        }
+
+        // 6. 배정한 이벤트·순번 쌍의 재고를 함께 갱신하고 쿠폰 코드를 읽는다.
+        Map<Long, List<Integer>> sequencesByEvent = new LinkedHashMap<>();
+        for (int i = 0; i < requests.size(); i++) {
+            if (reservations[i] != null) {
+                sequencesByEvent.computeIfAbsent(requests.get(i).eventId(), key -> new ArrayList<>())
+                        .add(reservations[i].sequence());
+            }
+        }
+        int reservedCount = sequencesByEvent.values().stream().mapToInt(List::size).sum();
+        if (batchRepository.issueSequences(sequencesByEvent, now) != reservedCount) {
+            sequencesByEvent.keySet().forEach(eventId -> sequenceService.block(eventId, null));
+            throw sequenceService.rejectForRecovery(sequencesByEvent.keySet().iterator().next());
+        }
+        deadline.check();
+        Map<Long, Map<Integer, byte[]>> codes = batchRepository.findCouponCodes(sequencesByEvent);
+
+        deadline.check();
+        // 7. 카운터를 늘리고 회원 쿠폰을 한 문장으로 저장한다.
+        batchRepository.increaseCounters(businessDate, increments, now);
+        LocalDateTime issuedAt = LocalDateTime.now(clock.withZone(ClockConfig.ZONE));
+        List<Integer> acceptedIndexes = new ArrayList<>();
+        List<NewCoupon> coupons = new ArrayList<>();
+        for (int i = 0; i < requests.size(); i++) {
+            if (reservations[i] != null) {
+                CouponIssuanceRequest request = requests.get(i);
+                CouponEvent event = events.get(request.eventId());
+                acceptedIndexes.add(i);
+                coupons.add(new NewCoupon(request.eventId(), request.memberId(),
+                        codes.get(request.eventId()).get(reservations[i].sequence()),
+                        event.getUsableStartAt(), event.getUsableEndAt(), issuedAt));
+            }
+        }
+        deadline.check();
+        List<Long> couponIds = batchRepository.insertCoupons(coupons);
+
+        // 생성된 ID는 넣은 순서와 같으므로 acceptedIndexes로 원래 요청 위치에 결과를 돌려놓는다.
+
+        for (int k = 0; k < acceptedIndexes.size(); k++) {
+            int i = acceptedIndexes.get(k);
+            CouponIssuanceRequest request = requests.get(i);
+            CouponEvent event = events.get(request.eventId());
+            long couponId = couponIds.get(k);
+            eventPublisher.publishEvent(new CouponIssuedEvent(ISSUED_EVENT_ID_PREFIX + couponId, issuedAt,
+                    request.memberId(), event.getCampaignId(), event.getStoreId(), event.getId(), couponId));
+            outcomes[i] = CouponIssuanceOutcome.issued(new CouponIssueResponse(couponId,
+                    issuedAt.atZone(ClockConfig.ZONE).toOffsetDateTime()), reservations[i]);
+        }
+        return List.of(outcomes);
+    }
+
+    private void rejectIneligibleMembers(List<CouponIssuanceRequest> requests, Map<Long, CouponEvent> events,
+            CouponIssuanceOutcome[] outcomes) {
         Set<Long> memberIds = pendingMembers(requests, outcomes);
         Map<Long, MemberStatus> statuses = memberIds.isEmpty() ? Map.of()
                 : memberQueryService.findCurrentStatuses(memberIds);
@@ -147,9 +230,10 @@ public class CouponBatchIssuanceService {
                 }
             }
         }
+    }
 
-        // 4. 자격을 통과한 회원의 카운터를 만들고 회원 ID 순으로 잠근 뒤 중복과 일일 한도를 판정한다.
-        LocalDate businessDate = now.toLocalDate();
+    private void rejectDuplicateOrOverLimitRequests(List<CouponIssuanceRequest> requests,
+            CouponIssuanceOutcome[] outcomes, LocalDate businessDate, LocalDateTime now) {
         List<Long> counterMembers = new ArrayList<>(new TreeSet<>(pendingMembers(requests, outcomes)));
         Map<Long, Integer> counts = new HashMap<>();
         Set<Pair> issued = new HashSet<>();
@@ -173,25 +257,31 @@ public class CouponBatchIssuanceService {
                 eligibleCounts.merge(request.memberId(), 1, Integer::sum);
             }
         }
+    }
 
-        /*
-         * 5. 판정을 통과한 요청 수만큼만 이벤트마다 Redis 호출 한 번으로 예약한다.
-         * 거절할 요청의 순번을 잡지 않아 같은 순간의 다른 묶음이 재고를 못 받는 일을 줄인다.
-         */
+    private Map<Long, Integer> reserveEligibleRequests(List<CouponIssuanceRequest> requests,
+            CouponIssuanceOutcome[] outcomes, CouponReservation[] reservations, CouponBatchDeadline deadline) {
         Map<Long, List<Integer>> eligibleByEvent = new LinkedHashMap<>();
         for (int i = 0; i < requests.size(); i++) {
             if (outcomes[i] == null) {
                 eligibleByEvent.computeIfAbsent(requests.get(i).eventId(), key -> new ArrayList<>()).add(i);
             }
         }
+        deadline.check();
+        Map<Long, Integer> requestedCounts = new LinkedHashMap<>();
+        eligibleByEvent.forEach((eventId, indexes) -> requestedCounts.put(eventId, indexes.size()));
+        Map<Long, List<CouponReservationOutcome>> reservationsByEvent = requestedCounts.isEmpty() ? Map.of()
+                : sequenceService.reserveAll(requestedCounts);
         Map<Long, Integer> increments = new HashMap<>();
         for (Map.Entry<Long, List<Integer>> entry : eligibleByEvent.entrySet()) {
             List<Integer> indexes = entry.getValue();
-            List<CouponReservationOutcome> reserved = sequenceService.reserveAll(entry.getKey(), indexes.size());
+            deadline.check();
+            List<CouponReservationOutcome> reserved = reservationsByEvent.get(entry.getKey());
             for (int k = 0; k < indexes.size(); k++) {
                 int i = indexes.get(k);
                 if (reserved.get(k).reservation() == null) {
-                    outcomes[i] = reserved.get(k).recoveryRequired() ? CouponIssuanceOutcome.requiringRecovery()
+                    outcomes[i] = reserved.get(k).awaitingReservation() ? CouponIssuanceOutcome.awaitingReservationResult()
+                            : reserved.get(k).recoveryRequired() ? CouponIssuanceOutcome.requiringRecovery()
                             : CouponIssuanceOutcome.rejected(reserved.get(k).rejection());
                 } else {
                     reservations[i] = reserved.get(k).reservation();
@@ -199,59 +289,7 @@ public class CouponBatchIssuanceService {
                 }
             }
         }
-        // 모든 요청이 거절됐으면 쓸 것이 없으므로 카운터 행 생성만 커밋하고 끝낸다.
-        if (increments.isEmpty()) {
-            return List.of(outcomes);
-        }
-
-        // 6. 이벤트마다 배정한 순번의 재고를 한 문장으로 갱신하고 쿠폰 코드를 읽는다.
-        Map<Long, List<Integer>> sequencesByEvent = new LinkedHashMap<>();
-        for (int i = 0; i < requests.size(); i++) {
-            if (reservations[i] != null) {
-                sequencesByEvent.computeIfAbsent(requests.get(i).eventId(), key -> new ArrayList<>())
-                        .add(reservations[i].sequence());
-            }
-        }
-        // 바꾼 행 수가 예약 수와 다르면 다른 요청이 같은 순번을 이미 썼다는 뜻이라 묶음을 멈추고 복구를 맡긴다.
-        Map<Long, Map<Integer, byte[]>> codes = new HashMap<>();
-        for (Map.Entry<Long, List<Integer>> entry : sequencesByEvent.entrySet()) {
-            if (batchRepository.issueSequences(entry.getKey(), entry.getValue(), now) != entry.getValue().size()) {
-                sequenceService.block(entry.getKey(), null);
-                throw sequenceService.rejectForRecovery(entry.getKey());
-            }
-            codes.put(entry.getKey(), batchRepository.findCouponCodes(entry.getKey(), entry.getValue()));
-        }
-
-        // 7. 카운터를 늘리고 회원 쿠폰을 한 문장으로 저장한다.
-        batchRepository.increaseCounters(businessDate, increments, now);
-        LocalDateTime issuedAt = LocalDateTime.now(clock.withZone(ClockConfig.ZONE));
-        List<Integer> acceptedIndexes = new ArrayList<>();
-        List<NewCoupon> coupons = new ArrayList<>();
-        for (int i = 0; i < requests.size(); i++) {
-            if (reservations[i] != null) {
-                CouponIssuanceRequest request = requests.get(i);
-                CouponEvent event = events.get(request.eventId());
-                acceptedIndexes.add(i);
-                coupons.add(new NewCoupon(request.eventId(), request.memberId(),
-                        codes.get(request.eventId()).get(reservations[i].sequence()),
-                        event.getUsableStartAt(), event.getUsableEndAt(), issuedAt));
-            }
-        }
-        List<Long> couponIds = batchRepository.insertCoupons(coupons);
-
-        // 생성된 ID는 넣은 순서와 같으므로 acceptedIndexes로 원래 요청 위치에 결과를 돌려놓는다.
-
-        for (int k = 0; k < acceptedIndexes.size(); k++) {
-            int i = acceptedIndexes.get(k);
-            CouponIssuanceRequest request = requests.get(i);
-            CouponEvent event = events.get(request.eventId());
-            long couponId = couponIds.get(k);
-            eventPublisher.publishEvent(new CouponIssuedEvent(ISSUED_EVENT_ID_PREFIX + couponId, issuedAt,
-                    request.memberId(), event.getCampaignId(), event.getStoreId(), event.getId(), couponId));
-            outcomes[i] = CouponIssuanceOutcome.issued(new CouponIssueResponse(couponId,
-                    issuedAt.atZone(ClockConfig.ZONE).toOffsetDateTime()), reservations[i]);
-        }
-        return List.of(outcomes);
+        return increments;
     }
 
     /*
