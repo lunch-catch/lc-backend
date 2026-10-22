@@ -3,6 +3,7 @@ package com.launchcatch.billing.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -164,5 +165,44 @@ class SpendReconciliationServiceTest {
         assertThat(SpendReconciliationService.class.getMethod("reconcilePreviousDay", LocalDate.class, String.class)
                 .isAnnotationPresent(Transactional.class)).isFalse();
         assertThat(SpendReconciliationService.class.isAnnotationPresent(Transactional.class)).isFalse();
+    }
+
+    @Test
+    void 해제_뒤_소진과_해제의_합이_예약액을_넘는_캠페인을_이틀_뒤에_초과로_기록한다() {
+        LocalDate released = RUN_DATE.minusDays(2);
+        when(planRepository.findByBusinessDate(released)).thenReturn(List.of(
+                BudgetDailyPlan.create(7L, 7L, released, 1000L, 10L, false, null),
+                BudgetDailyPlan.create(8L, 7L, released, 1000L, 10L, false, null),
+                BudgetDailyPlan.create(9L, 7L, released, 1000L, 10L, false, null)));
+        when(batchExecutions.findByBusinessDate(RUN_DATE)).thenReturn(List.of(run(42L, JOB)));
+        // 7 은 소진 400 에 해제 600 이 정확히 예약액이다. 8 은 해제 뒤 소진 100 이 더 들어와 1100 이다. 9 는 해제가 없다
+        when(ledgerRepository.sumReleaseForCampaignsOn(List.of(7L, 8L, 9L), released))
+                .thenReturn(List.of(new CampaignSpend(7L, 600L), new CampaignSpend(8L, 600L)));
+        when(ledgerRepository.sumDeductForCampaignsOn(List.of(7L, 8L, 9L), released)).thenReturn(List.of(
+                new CampaignSpend(7L, 400L), new CampaignSpend(8L, 500L), new CampaignSpend(9L, 1200L)));
+
+        assertThat(service.reconcileReleasedDay(RUN_DATE, JOB)).isEqualTo(1);
+
+        // 기대값은 예약액이고 실제값은 소진과 해제의 합이다. 해제 없는 9 는 전일 대사가 본 것이라 여기서 기록하지 않는다
+        verify(mismatchRecorder).record(released, 42L, NOW,
+                List.of(new CampaignOverspend(8L, 1000L, 1100L)), List.of());
+    }
+
+    @Test
+    void 이틀_전_계획이_없거나_해제가_없으면_원장_합을_읽지_않는다() {
+        LocalDate released = RUN_DATE.minusDays(2);
+        when(planRepository.findByBusinessDate(released)).thenReturn(List.of());
+
+        assertThat(service.reconcileReleasedDay(RUN_DATE, JOB)).isZero();
+        verifyNoInteractions(ledgerRepository, mismatchRecorder);
+
+        when(planRepository.findByBusinessDate(released)).thenReturn(List.of(
+                BudgetDailyPlan.create(7L, 7L, released, 1000L, 10L, false, null)));
+        when(batchExecutions.findByBusinessDate(RUN_DATE)).thenReturn(List.of());
+        when(ledgerRepository.sumReleaseForCampaignsOn(List.of(7L), released)).thenReturn(List.of());
+
+        assertThat(service.reconcileReleasedDay(RUN_DATE, JOB)).isZero();
+        verify(ledgerRepository, never()).sumDeductForCampaignsOn(any(), any());
+        verifyNoInteractions(mismatchRecorder);
     }
 }

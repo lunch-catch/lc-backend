@@ -260,7 +260,7 @@
 | B-105 | 전일 소진 대사 일치 | 40 BILLING_SPEND_RECON_PREV | SpendReconciliationService.reconcilePreviousDay | - | D-1 budget_daily_plan 존재, Valkey 카운터 = 원장 DEDUCT 합, DEDUCT 합 <= daily_budget | settlement_mismatch 기록 없음, 단계 SUCCESS | 대상일 D-1 |
 | B-106 | 전일 계획 없음 | 40 단계 | SpendReconciliationService | - | D-1 budget_daily_plan 0건 | 0 반환, 기록 없음, SUCCESS | 대상일 D-1 |
 | B-107 | 카운터와 원장 불일치 | 40 단계 | SpendMismatchRecorder.insertCampaignSpendMismatchIfAbsent | CAMPAIGN_SPEND_VS_LEDGER | 카운터 spend != 원장 DEDUCT 합 | 불일치 행 1건(종류+캠페인당 1건), resolution_type 비움, 카운터 재구성 안 함, 단계 SUCCESS | 대상일 D-1 |
-| B-108 | 초과 소진 | 40 단계 | SpendMismatchRecorder.insertCampaignOverspendIfAbsent | CAMPAIGN_OVERSPEND | 원장 DEDUCT 합 > 계획 daily_budget | 기대값=예약액, 실제값=DEDUCT 합으로 기록, 되돌리지 않음, 카운터 없는 캠페인도 검사 | 대상일 D-1 |
+| B-108 | 초과 소진 | 40 단계 | SpendMismatchRecorder.insertCampaignOverspendIfAbsent | CAMPAIGN_OVERSPEND | 원장 DEDUCT 합 > 계획 daily_budget, 또는 해제된 D-2 의 DEDUCT 합 + RELEASE 합 > daily_budget(자정 직전에 시작해 해제 뒤 커밋된 전날 차감, reconcileReleasedDay) | 기대값=예약액, 실제값=DEDUCT 합(해제 뒤 대조는 DEDUCT 합 + RELEASE 합)으로 기록, 되돌리지 않음, 카운터 없는 캠페인도 검사 | 대상일 D-1(해제 뒤 대조는 D-2) |
 | B-109 | Valkey 해시 없음 | 40 단계 | SpendReconciliationService | - | 계획은 있으나 카운터 해시 없음(재시작/만료) | 카운터 대조 건너뜀, BILLING_SPEND_RECON_HASH_MISSING WARN, 초과 소진 검사는 수행 | 대상일 D-1 |
 | B-110 | 대사 재실행 멱등 | 40 단계 재실행 | SettlementMismatchRepository(ON DUPLICATE KEY) | - | 같은 D-1 불일치가 이미 있음 | 불일치 행 중복 없음 | 같은 D |
 | B-111 | 전일 남은 예약 해제 | 50 BILLING_RESERVE 앞부분 release(D-1) | DailyReservationService.release -> DailyReservationRecorder.releaseForOwner | - | D-1 계획 daily_budget - DEDUCT 합 > 0, RELEASE 없음 | 점주마다 계정 행 잠금 후 RELEASE 원장 1줄, 잔액 복귀 | 대상일 D-1 |
@@ -279,8 +279,8 @@
 | B-124 | PAUSED(ADMIN) 캠페인 | 50 단계 | findServableOn | - | PAUSED, pausedReason=ADMIN | 서빙 대상 아님, 예약 없음 | D |
 | B-125 | 예약 후 계획 상태 확인 | 50 단계 confirmPlans | DailyReservationRecorder.confirmStatus | - | 예약 중 캠페인이 중단/종료로 바뀜 | 캠페인 현재 상태로 paused 맞춤(ACTIVE 만 false), 캠페인 조회에서 빠진 계획은 paused 유지 | D |
 | B-126 | 당일 소진 해시 생성 실패 | 50 단계 mirror | SpendHashRebuildService.rebuildAllIfAbsent | - | Valkey DataAccessException | RESERVE_HASH_MIRROR_FAILED WARN, 단계는 SUCCESS(차감 시 계획으로 재구성) | D |
-| B-127 | 해제 완료 표시 | 50 단계 끝 markReleased | BatchExecutionService.begin/succeed | - | 예약 성공 | (BILLING_DAILY_RELEASE, D-1) SUCCESS 기록, 01:00 집계의 원천 확정 신호 | 행 날짜는 D-1 |
-| B-128 | 해제 표시 막힘 | 50 단계 markReleased | DailyReservationJob | - | (BILLING_DAILY_RELEASE, D-1) 가 FAILED 또는 남의 RUNNING | BILLING_RELEASE_MARK_BLOCKED WARN 만 남기고 단계는 SUCCESS, D-1 집계는 SOURCE_NOT_READY 지속 | D-1 |
+| B-127 | 해제 완료 표시 | 50 단계 날짜별 해제 직후 DailyReleaseMarker.mark | BatchExecutionService.begin/succeed | - | 해당 날짜의 해제가 끝남(오늘 예약의 성공과 무관, 전날은 남은 해제액이 0이어도 표시) | (BILLING_DAILY_RELEASE, 그 날짜) SUCCESS 기록, 01:00 집계의 원천 확정 신호 | 행 날짜는 해제한 날짜(D-1 포함) |
+| B-128 | 해제 표시 막힘 | 50 단계 DailyReleaseMarker.mark | DailyReleaseMarker | - | (BILLING_DAILY_RELEASE, 날짜) 가 남의 RUNNING(FAILED 는 다시 열어 SUCCESS 로 닫는다) | BILLING_RELEASE_MARK_BLOCKED WARN 만 남기고 단계는 계속, 그 날짜 집계는 SOURCE_NOT_READY 지속 | D-1 |
 | B-129 | 예약 중간 실패 후 재실행 | 50 단계 재실행 | DailyReservationRecorder(insertIfAbsent) | - | 일부 점주만 계획/RESERVE 커밋됨 | 계획 있는 캠페인 건너뛰고 나머지만 배분, 중복 RESERVE 없음 | 같은 D |
 | B-130 | 판정 OK | 60 BILLING_FUNDING_JUDGE | FundingJudgementService.judge | - | ACTIVE, 계획 daily_budget >= unit_price | Judgement.OK, 상태 변화 없음 | D |
 | B-131 | 판정 NO_POINTS 중단 | 60 단계 | CampaignStatusService.pauseFromFunding | - | ACTIVE, daily_budget < unit_price(잔액 0 또는 부분) | PAUSED(NO_POINTS), status_log(SYSTEM, cause=DAILY), CampaignStatusChangedEvent(servable=false) -> 계획 paused, 후보 PAUSED, 쿠폰 회차 반영 | D |
@@ -317,7 +317,7 @@
 | ID | 시나리오 | 단계/트리거 | API 또는 작업 | 오류 코드 | 필요한 데이터 상태 | 기대 결과 | 시각 조건 |
 |---|---|---|---|---|---|---|---|
 | B-159 | 정기 집계 정상 | cron 0 0 1 (Asia/Seoul) | DailyAggregationJob.run -> DailyAggregationRunner.runAll | SUCCEEDED | (BILLING_DAILY_RELEASE, T-1) SUCCESS | 날짜별 (DAILY_AGGREGATION, 날짜) claim 후 단계 100~900 collect, 한 트랜잭션에서 publish + succeed(행 수) + pending 삭제 | 실행일 T, 대상 T-1, T-2, pending |
-| B-160 | 대상 날짜 구성 | runAll targetDates | DailyAggregationRunner.targetDates | - | aggregation_pending_date 에 과거 날짜 | 오래된 날짜부터 pending + T-1 + T-2, T 이후와 13개월 밖 제외 | T 01:00 |
+| B-160 | 대상 날짜 구성 | runAll targetDates | DailyAggregationRunner.targetDates | - | aggregation_pending_date 에 과거 날짜, 또는 원천 확정(BILLING_DAILY_RELEASE SUCCESS)인데 집계(DAILY_AGGREGATION)가 SUCCESS 가 아닌 과거 날짜 | 오래된 날짜부터 pending + 미집계 확정 날짜 + T-1 + T-2, T 이후와 13개월 밖 제외 | T 01:00 |
 | B-161 | 보존 기간 밖 pending 삭제 | targetDates | pending.removeBefore | - | pending 날짜 < T-13개월 | pending 에서 삭제, 집계 안 함 | T |
 | B-162 | 원천 미확정 | runDate | DailyAggregationRunner.sourceConfirmed | SOURCE_NOT_READY | (BILLING_DAILY_RELEASE, 날짜) SUCCESS 없음(T 00:00 묶음 40/50 실패 등) | pending(SOURCE_NOT_READY) 기록, 실행 행 안 만듦, 다음 01:00 재시도 | 날짜=T-1 |
 | B-163 | 다른 서버가 집계 중 | acquire | DailyAggregationRunner.acquire | BUSY | (DAILY_AGGREGATION, 날짜) RUNNING | 건너뜀 | T 01:00 |
@@ -346,10 +346,10 @@
 | B-181 | PG 만 승인 | 01:30 | recordMismatch | PG_VS_CHARGE | payment UNKNOWN/REQUESTED/FAILED/CANCELLED, PG APPROVED | 미해결 불일치(expected=0, actual=PG 금액) | D-1 |
 | B-182 | 금액 불일치 | 01:30 | recordMismatch | PG_VS_CHARGE | 양쪽 APPROVED, 금액 다름 | 미해결 불일치 | D-1 |
 | B-183 | 양쪽 미승인 | 01:30 | reconcileOne | - | payment 미승인, PG CANCELED/FAILED | 0 = 0 이라 기록 없음 | D-1 |
-| B-184 | PG PENDING | 01:30 | reconcileOne | - | PG 조회 결과 PENDING | 건너뜀, 다시 보지 않음 | D-1 |
-| B-185 | PG 조회 실패 | 01:30 inquireWithRetry | PaymentGateway.inquireByPaymentKey | - | PgNotSentException/PgUnknownException 2회 | 1회 재시도 후 포기, inquiry_failed 지표, 불일치로 기록 안 함 | D-1 |
-| B-186 | 건별 기록 예외 | 01:30 | PgChargeReconciliationService | - | 한 결제 기록 중 RuntimeException | error 지표와 ERROR 로그 후 다음 결제 계속, 작업은 SUCCESS | D-1 |
-| B-187 | 워터마크 | 01:30 | to = min(D 00:00, now-5분) | - | 00:00 직후 수동 실행 등 now-5분 < D 00:00 | 최근 5분 결제 제외(정기 01:30 은 D-1 전체) | D |
+| B-184 | PG PENDING | 01:30 | reconcileOne | - | PG 조회 결과 PENDING | 재검증 대기 행(pg_charge_reconciliation_pending)으로 남기고 다음 실행이 다시 조회 | D-1 |
+| B-185 | PG 조회 실패 | 01:30 inquireWithRetry | PaymentGateway.inquireByPaymentKey | - | PgNotSentException/PgUnknownException 2회 | 1회 재시도 후 포기, inquiry_failed 지표, 불일치로 기록 안 함, 재검증 대기 행으로 남김 | D-1 |
+| B-186 | 건별 예외(기록 실패, PG 응답 주문번호 불일치) | 01:30 | PgChargeReconciliationService | - | 한 결제 기록 중 RuntimeException, 또는 PG 응답의 주문번호가 결제와 다름 | error 지표와 ERROR 로그 후 그 결제를 재검증 대기 행으로 남기고 다음 결제 계속, 보정하지 않음, 작업은 SUCCESS | D-1 |
+| B-187 | 시각 직전 결제 | 01:30 | to = D 00:00 | - | D-1 23:55 이후 생성된 결제 | 워터마크 없이 D-1 전체를 조회, PG 상태가 확정 전이면 재검증 대기 | D |
 | B-188 | 대조 재실행 멱등 | 이어받기/수동 재실행 | uk_point_ledger_payment_entry, insert...IfAbsent | - | 이미 보정/기록된 결제 | 중복 CHARGE, 중복 불일치 없음 | 같은 D |
 | B-189 | 정기 실행 중 예외 | reconcile 예외 | executions.fail | FAILED | 결제 목록 조회 등 서비스 전체 예외 | 자동 재시도 없이 바로 FAILED + 알림, 예외 재던짐 | D 01:30 |
 | B-190 | 이어받은 PG 대조 | takeOverStale -> resume(STANDALONE) | PgChargeReconciliationScheduler.run | - | 행 RUNNING, 2분 넘게 갱신 없음 | 다른 서버가 다시 돌림(일시적 오류면 자동 재시도 2회), 세대 맞을 때만 닫음 | 1분 주기 |

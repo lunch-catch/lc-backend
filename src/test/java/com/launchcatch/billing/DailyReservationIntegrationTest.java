@@ -12,6 +12,7 @@ import com.launchcatch.billing.job.HourlyTargetJob;
 import com.launchcatch.billing.repository.BudgetDailyPlanRepository;
 import com.launchcatch.billing.service.DailyReservationRecorder;
 import com.launchcatch.billing.service.PaymentResultService;
+import com.launchcatch.billing.service.SpendReconciliationService;
 import com.launchcatch.billing.service.RefundApprovalRecorder;
 import com.launchcatch.campaign.contract.CampaignInfo;
 import com.launchcatch.campaign.contract.CampaignQueryService;
@@ -57,6 +58,7 @@ class DailyReservationIntegrationTest extends AbstractBillingIntegrationTest {
     @Autowired FundingJudgementJob judgementJob;
     @Autowired HourlyTargetJob hourlyTargetJob;
     @Autowired BudgetDailyPlanRepository planRepository;
+    @Autowired SpendReconciliationService spendReconciliation;
     @Autowired JdbcTemplate jdbc;
     @Autowired StringRedisTemplate redis;
     @Autowired DailyReservationRecorder recorder;
@@ -69,6 +71,7 @@ class DailyReservationIntegrationTest extends AbstractBillingIntegrationTest {
 
     @AfterEach
     void clean() {
+        jdbc.update("delete from settlement_mismatch where check_type = 'CAMPAIGN_OVERSPEND' and target_id >= ?", BASE_ID);
         jdbc.update("delete from budget_hourly_target");
         jdbc.update("delete from budget_daily_plan");
         jdbc.update("delete from point_ledger");
@@ -282,6 +285,58 @@ class DailyReservationIntegrationTest extends AbstractBillingIntegrationTest {
                 select status from batch_execution_log where job_name = 'BILLING_DAILY_RELEASE' and business_date = ?
                 """, String.class, older)).containsExactly("SUCCESS");
         assertThat(planRepository.findUnreleasedBusinessDatesBefore(DAY)).isEmpty();
+    }
+
+    /*
+     * 자정 직전에 시작한 차감이 00:00 해제 뒤에 커밋된 경우다(7-1). 해제는 그 차감을 모르고 계산되어 소진과 해제의 합이
+     * 예약액을 넘는다. 소진 자체는 예약액보다 작아 전일 대사가 보지 못하고, 해제가 끝난 뒤의 대사가 초과로 기록한다.
+     */
+    @Test
+    void 해제_뒤에_커밋된_전날_차감은_이틀_뒤_대사가_예약액_초과로_기록한다() {
+        long owner = BASE_ID + 21;
+        long campaign = BASE_ID + 2101;
+        charge(owner, 10000L);
+        jdbc.update("""
+                insert into budget_daily_plan
+                    (campaign_id, owner_id, business_date, daily_budget, unit_price, paused, created_at, updated_at)
+                values (?, ?, ?, 5000, 1000, false, now(6), now(6))
+                """, campaign, owner, PREV);
+        jdbc.update("""
+                insert into point_ledger (owner_id, campaign_id, business_date, entry_type, source, amount, created_at, updated_at)
+                values (?, ?, ?, 'RESERVE', 'RECONCILIATION', -5000, now(6), now(6))
+                """, owner, campaign, PREV);
+        for (int i = 0; i < 3; i++) {
+            deduct(owner, campaign, PREV);
+        }
+        reservationJob.run(DAY);
+        assertThat(jdbc.queryForObject("""
+                select amount from point_ledger where entry_type = 'RELEASE' and campaign_id = ? and business_date = ?
+                """, Long.class, campaign, PREV)).isEqualTo(2000L);
+
+        assertThat(spendReconciliation.reconcileReleasedDay(DAY.plusDays(1), "TEST_BILLING_SPEND_RECON")).isZero();
+
+        // 해제가 커밋된 뒤에 전날 영업일로 들어온 차감이다
+        deduct(owner, campaign, PREV);
+
+        assertThat(spendReconciliation.reconcileReleasedDay(DAY.plusDays(1), "TEST_BILLING_SPEND_RECON")).isEqualTo(1);
+        assertThat(spendReconciliation.reconcileReleasedDay(DAY.plusDays(1), "TEST_BILLING_SPEND_RECON")).isEqualTo(1);
+        assertThat(jdbc.queryForList("""
+                select concat(expected_value, ':', actual_value) from settlement_mismatch
+                 where check_type = 'CAMPAIGN_OVERSPEND' and target_id = ? and business_date = ?
+                """, String.class, campaign, PREV)).containsExactly("5000:6000");
+    }
+
+    private void deduct(long owner, long campaign, LocalDate businessDate) {
+        byte[] serveId = ServeIds.toBytes(UUID.randomUUID());
+        jdbc.update("""
+                insert into deduction_result
+                    (serve_id, campaign_id, owner_id, business_date, billing_status, unit_price, created_at, updated_at)
+                values (?, ?, ?, ?, 'BILLED', 1000, now(6), now(6))
+                """, serveId, campaign, owner, businessDate);
+        jdbc.update("""
+                insert into point_ledger (owner_id, campaign_id, serve_id, entry_type, source, amount, created_at, updated_at)
+                values (?, ?, ?, 'DEDUCT', 'REALTIME', -1000, now(6), now(6))
+                """, owner, campaign, serveId);
     }
 
     /*

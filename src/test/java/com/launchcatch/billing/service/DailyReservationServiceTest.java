@@ -162,6 +162,28 @@ class DailyReservationServiceTest {
     }
 
     @Test
+    void 남은_해제액이_0이라_미해제_목록에_없는_전날도_해제_완료로_표시한다() {
+        when(platformSetting.getImpressionUnitPrice()).thenReturn(10);
+        when(planRepository.findUnreleasedBusinessDatesBefore(DAY)).thenReturn(List.of());
+        when(campaignQuery.findServableOn(DAY)).thenReturn(List.of());
+
+        service.reserve(DAY);
+
+        verify(releaseMarker).mark(PREV);
+    }
+
+    @Test
+    void 오늘_예약이_실패해도_해제가_끝난_전날의_표시는_이미_남아_있다() {
+        when(platformSetting.getImpressionUnitPrice()).thenReturn(10);
+        when(planRepository.findByBusinessDate(PREV)).thenReturn(List.of());
+        when(campaignQuery.findServableOn(DAY)).thenThrow(new IllegalStateException("캠페인 조회 실패"));
+
+        assertThatThrownBy(() -> service.reserve(DAY)).isInstanceOf(IllegalStateException.class);
+
+        verify(releaseMarker).mark(PREV);
+    }
+
+    @Test
     void 해제할_몫이_없으면_기록하지_않는다() {
         when(platformSetting.getImpressionUnitPrice()).thenReturn(10);
         when(planRepository.findByBusinessDate(PREV)).thenReturn(List.of(prevPlan(1L, 7L, 0L)));

@@ -18,10 +18,12 @@ import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.TreeSet;
 import java.util.function.Supplier;
 import lombok.extern.slf4j.Slf4j;
@@ -109,17 +111,29 @@ public class DailyAggregationRunner {
     }
 
     /*
-     * 오늘 집계할 날짜다. 전일, 전전일, 미처리 날짜를 오래된 날짜부터 돌려준다. 보존 기간 밖이면
+     * 오늘 집계할 날짜다. 전일, 전전일, 미처리 날짜, 원천 확정 뒤 집계가 끝나지 않은 날짜를 오래된 날짜부터 돌려준다. 보존 기간 밖이면
      * 빼고 미처리 목록에서도 지운다.
      */
     public List<LocalDate> targetDates(LocalDate today) {
         LocalDate oldestRetained = oldestRetained(today);
         pending.removeBefore(oldestRetained);
         TreeSet<LocalDate> dates = new TreeSet<>(pending.dates());
+        dates.addAll(unaggregatedConfirmedDates(oldestRetained, today));
         dates.add(today.minusDays(1));
         dates.add(today.minusDays(2));
         dates.removeIf(date -> date.isBefore(oldestRetained) || !date.isBefore(today));
         return List.copyOf(dates);
+    }
+
+    /*
+     * 원천 확정은 됐는데 집계가 SUCCESS 로 끝나지 않은 영업일이다. 여러 날 집계가 돌지 못했거나 미처리 기록마저 남기지
+     * 못한 날짜가 전일과 전전일 밖에 남아 있어도 여기서 찾는다.
+     */
+    private List<LocalDate> unaggregatedConfirmedDates(LocalDate oldestRetained, LocalDate today) {
+        Set<LocalDate> aggregated = new HashSet<>(executionQuery.findSucceededBusinessDates(JOB_NAME, oldestRetained, today));
+        return executionQuery.findSucceededBusinessDates(SOURCE_JOB_NAME, oldestRetained, today).stream()
+                .filter(date -> !aggregated.contains(date))
+                .toList();
     }
 
     // 집계를 다시 돌릴 수 있는 가장 오래된 영업일이다.
