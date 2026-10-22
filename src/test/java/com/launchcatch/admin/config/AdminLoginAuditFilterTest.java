@@ -29,7 +29,13 @@ class AdminLoginAuditFilterTest {
     private final MockHttpServletRequest request = new MockHttpServletRequest("POST", "/v1/admin/auth/tokens");
     private final MockHttpServletResponse response = new MockHttpServletResponse();
     private final Logger logger = (Logger) LoggerFactory.getLogger(AdminLoginAuditFilter.class);
-    private final ListAppender<ILoggingEvent> logs = new ListAppender<>();
+    private final ListAppender<ILoggingEvent> logs = new ListAppender<>() {
+        @Override
+        protected void append(ILoggingEvent event) {
+            event.prepareForDeferredProcessing();
+            super.append(event);
+        }
+    };
     private Level originalLevel;
 
     @BeforeEach
@@ -49,6 +55,7 @@ class AdminLoginAuditFilterTest {
         logger.detachAppender(logs);
         logger.setLevel(originalLevel);
         logs.stop();
+        MDC.clear();
     }
 
     @ParameterizedTest
@@ -122,5 +129,37 @@ class AdminLoginAuditFilterTest {
         } finally {
             MDC.clear();
         }
+    }
+    @Test
+    void 공유_해석기로_정한_IP를_기록한_뒤_기존_MDC를_복원한다() throws Exception {
+        MDC.put("clientIp", "198.51.100.30");
+        MDC.put("traceId", "existing-trace");
+        request.addHeader("X-Forwarded-For", "198.51.100.10, 203.0.113.20");
+
+        filter.doFilter(request, response, (req, res) -> { });
+
+        assertThat(logs.list).singleElement().satisfies(event ->
+                assertThat(event.getMDCPropertyMap()).containsEntry("clientIp", "203.0.113.20")
+                        .containsEntry("traceId", "existing-trace"));
+        assertThat(MDC.get("clientIp")).isEqualTo("198.51.100.30");
+        assertThat(MDC.get("traceId")).isEqualTo("existing-trace");
+    }
+
+    @Test
+    void 체인_예외에도_감사_IP를_기록하고_새_MDC값을_남기지_않는다() {
+        MDC.clear();
+        request.addHeader("X-Forwarded-For", "198.51.100.10, 10.0.0.7");
+
+        assertThatThrownBy(() -> filter.doFilter(request, response, (req, res) -> {
+            throw new ServletException("SensitivePassword!");
+        })).isInstanceOf(ServletException.class);
+
+        assertThat(logs.list).singleElement().satisfies(event -> {
+            assertThat(event.getMDCPropertyMap()).containsEntry("clientIp", "10.0.0.7");
+            assertThat(event.getFormattedMessage()).contains("event=ADMIN_LOGIN_FAILED", "httpStatus=500")
+                    .doesNotContain("SensitivePassword!", "clientIp=");
+            assertThat(event.getThrowableProxy()).isNull();
+        });
+        assertThat(MDC.get("clientIp")).isNull();
     }
 }
