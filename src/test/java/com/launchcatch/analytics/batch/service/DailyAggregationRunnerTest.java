@@ -122,6 +122,22 @@ class DailyAggregationRunnerTest {
         assertThat(dates).containsExactly(LocalDate.of(2026, 10, 1), TWO_DAYS_AGO, YESTERDAY);
     }
 
+
+    @Test
+    void 원천이_확정됐는데_집계가_끝나지_않은_날짜도_대상에_넣고_이미_집계된_날짜는_뺀다() {
+        LocalDate missed = LocalDate.of(2026, 10, 5);
+        LocalDate aggregated = LocalDate.of(2026, 10, 6);
+        LocalDate oldest = TODAY.minusMonths(13);
+        when(pending.dates()).thenReturn(List.of());
+        when(executionQuery.findSucceededBusinessDates(DailyAggregationRunner.SOURCE_JOB_NAME, oldest, TODAY))
+                .thenReturn(List.of(missed, aggregated));
+        when(executionQuery.findSucceededBusinessDates(JOB, oldest, TODAY)).thenReturn(List.of(aggregated));
+
+        List<LocalDate> dates = runner().targetDates(TODAY);
+
+        assertThat(dates).containsExactly(missed, TWO_DAYS_AGO, YESTERDAY);
+    }
+
     @Test
     void 보존_기간_밖_날짜는_빼고_미처리_목록에서도_지운다() {
         LocalDate tooOld = TODAY.minusMonths(13).minusDays(1);
