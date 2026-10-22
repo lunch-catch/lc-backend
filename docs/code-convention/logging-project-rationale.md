@@ -367,8 +367,8 @@ Logback 1.5.32, Reactor Core 3.8.4, Tomcat 11.0.20, logstash-logback-encoder 8.0
 | R10 | 직접 | [Prometheus 잡과 인스턴스](https://prometheus.io/docs/concepts/jobs_instances/) | 스크랩할 때 `job` 라벨이 자동으로 붙는다 | 예 |
 | R11 | 조건부 | [Prometheus 설정, `honor_labels`](https://prometheus.io/docs/prometheus/latest/configuration/configuration/) | `honor_labels` 가 `false` 일 때 충돌한 라벨이 `exported_` 접두사로 바뀐다. `lc-infra` 의 값은 확인하지 못했다 | 예 |
 | R12 | 조건부 | [Loki 로그 쿼리](https://grafana.com/docs/loki/latest/query/log_queries/) | `json`, `line_format`, `logfmt` 파서 문법. 수집한 JSON 의 모양은 `lc-infra` 에 달려 있다 | 예 |
-| R13 | 교체 | [개인정보의 안전성 확보조치 기준 제8조](https://www.law.go.kr/LSW/admRulSideInfoP.do?admRulSeq=2100000281400&chrClsCd=010201&docCls=jo&joNo=0008&joBrNo=00) | 접속기록의 관리 대상과 보존 기간. 현행 국가법령정보센터 원문이며 열람을 두 번 시도했으나 조문 본문이 반환되지 않았다. 사람이 원문과 대조해야 한다 | 아니오 |
-| R14 | 조건부 | [개인정보 보호법 제2조](https://www.law.go.kr/법령/개인정보보호법) | 다른 정보와 쉽게 결합해 알아볼 수 있는 정보도 개인정보다. 열람을 두 번 시도했으나 조문 본문이 반환되지 않았다. 사람이 원문과 대조해야 한다 | 아니오 |
+| R13 | 교체 | [개인정보의 안전성 확보조치 기준 제8조](https://www.law.go.kr/LSW/admRulSideInfoP.do?admRulSeq=2100000281400&chrClsCd=010201&docCls=jo&joNo=0008&joBrNo=00) | 접속기록의 관리 대상과 보존 기간. 현행 국가법령정보센터 원문이다. 도구로는 본문이 열리지 않아 사람이 원문과 대조했고 본문 문장과 맞다 | 예 |
+| R14 | 조건부 | [개인정보 보호법 제2조](https://www.law.go.kr/법령/개인정보보호법) | 제1호 나목. 해당 정보만으로는 알아볼 수 없어도 다른 정보와 쉽게 결합해 알아볼 수 있는 정보는 개인정보다. 쉽게 결합할 수 있는지는 다른 정보의 입수 가능성과 개인을 알아보는 데 드는 시간, 비용, 기술을 합리적으로 고려해 정한다. 도구로는 본문이 열리지 않아 사람이 원문과 대조했다 | 예 |
 | R15 | 조건부 | [Spring Boot 트레이싱](https://docs.spring.io/spring-boot/4.0/reference/actuator/tracing.html) | Micrometer Tracing 을 쓰면 `traceId` 와 `spanId` 를 MDC 로 로그에 상관시킨다. 이 저장소에는 추적 의존성이 없다 | 예 |
 | R16 | 직접 | [OWASP Logging Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Logging_Cheat_Sheet.html) | 인증 성공과 실패를 보안 이벤트로 기록하라는 권고 | 예 |
 | R17 | 직접 | [Logback `AsyncAppenderBase` 1.5.32](https://github.com/qos-ch/logback/blob/v_1.5.32/logback-core/src/main/java/ch/qos/logback/core/AsyncAppenderBase.java) | `maxFlushTime` 의 기본값이 `DEFAULT_MAX_FLUSH_TIME = 1000` 밀리초다 | 예 |
