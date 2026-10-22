@@ -60,6 +60,20 @@ public interface PointLedgerRepository extends JpaRepository<PointLedger, Long>,
                            @Param("entryType") EntryType entryType,
                            @Param("businessDate") LocalDate businessDate);
 
+    @Query("""
+            select coalesce(sum(case
+                when l.entryType = com.launchcatch.billing.entity.EntryType.RESERVE then -l.amount
+                when l.entryType = com.launchcatch.billing.entity.EntryType.RELEASE then -l.amount
+                when l.entryType = com.launchcatch.billing.entity.EntryType.DEDUCT then l.amount
+                else 0L end), 0L)
+              from PointLedger l
+             where l.ownerId = :ownerId
+               and l.entryType in (com.launchcatch.billing.entity.EntryType.RESERVE,
+                                   com.launchcatch.billing.entity.EntryType.RELEASE,
+                                   com.launchcatch.billing.entity.EntryType.DEDUCT)
+            """)
+    long sumReservedPoint(@Param("ownerId") Long ownerId);
+
     // 기록 시각이 [from, to) 인 행의 합이다. 날짜를 DB 함수로 자르지 않고 범위로 묻는다
     @Query("""
             select coalesce(sum(l.amount), 0L)

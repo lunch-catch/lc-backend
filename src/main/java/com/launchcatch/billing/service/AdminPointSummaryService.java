@@ -108,10 +108,8 @@ public class AdminPointSummaryService {
             long reserved = -reserve.getOrDefault(date, 0L);
             long released = release.getOrDefault(date, 0L);
             // 오늘은 해제 전일 수 있어 DEDUCT 를 직접 읽고, 지난 날은 예약에서 해제를 뺀 값이 곧 소진이다
-            long spent = date.equals(today) && released == 0
-                    ? -pointLedgerRepository.sumByCreatedAt(ownerId, EntryType.DEDUCT,
-                            date.atStartOfDay(), date.plusDays(1).atStartOfDay())
-                    : reserved - released;
+            long spent = -pointLedgerRepository.sumByCreatedAt(ownerId, EntryType.DEDUCT,
+                    date.atStartOfDay(), date.plusDays(1).atStartOfDay());
             byDate.get(date).addReservation(reserved, released, spent);
         }
     }

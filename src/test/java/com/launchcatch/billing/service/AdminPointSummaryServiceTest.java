@@ -59,6 +59,10 @@ class AdminPointSummaryServiceTest {
                 new BusinessDateSumRow(D01, EntryType.RESERVE, -10000L)));
         when(repository.sumByCreatedAt(OWNER, EntryType.DEDUCT,
                 LocalDateTime.of(2026, 10, 1, 0, 0), LocalDateTime.of(2026, 10, 2, 0, 0))).thenReturn(-4000L);
+        when(repository.sumByCreatedAt(OWNER, EntryType.DEDUCT,
+                LocalDateTime.of(2026, 9, 29, 0, 0), LocalDateTime.of(2026, 9, 30, 0, 0))).thenReturn(-9800L);
+        when(repository.sumByCreatedAt(OWNER, EntryType.DEDUCT,
+                LocalDateTime.of(2026, 9, 30, 0, 0), LocalDateTime.of(2026, 10, 1, 0, 0))).thenReturn(-9800L);
     }
 
     @Test
@@ -95,11 +99,12 @@ class AdminPointSummaryServiceTest {
         when(repository.sumReserveAndReleaseByBusinessDate(OWNER, D01, D01)).thenReturn(List.of(
                 new BusinessDateSumRow(D01, EntryType.RESERVE, -10000L),
                 new BusinessDateSumRow(D01, EntryType.RELEASE, 3500L)));
+        when(repository.sumByCreatedAt(OWNER, EntryType.DEDUCT,
+                D01.atStartOfDay(), D01.plusDays(1).atStartOfDay())).thenReturn(-6500L);
 
         AdminPointSummaryItem item = service().summarize(OWNER, SummaryPeriod.DAILY, D01, D01, "asc").items().get(0);
 
         assertThat(item.spentAmount()).isEqualTo(6500);
-        verify(repository, never()).sumByCreatedAt(any(), any(), any(), any());
     }
 
     @Test
@@ -109,7 +114,7 @@ class AdminPointSummaryServiceTest {
 
         AdminPointSummaryItem item = service().summarize(OWNER, SummaryPeriod.DAILY, D30, D30, null).items().get(0);
 
-        assertThat(item.spentAmount()).isEqualTo(10000);
+        assertThat(item.spentAmount()).isZero();
         assertThat(item.releasedAmount()).isZero();
     }
 
