@@ -26,6 +26,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 /*
@@ -55,7 +56,7 @@ public class RechargeReservationService {
     private final BudgetDailyPlanRepository planRepository;
     private final ApplicationEventPublisher eventPublisher;
 
-    @Transactional
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void reserve(PointCharged charged) {
         LocalDate businessDate = LocalDate.now(clock);
         List<CampaignInfo> targets = campaignQuery
