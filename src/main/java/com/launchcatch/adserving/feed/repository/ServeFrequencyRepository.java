@@ -68,7 +68,7 @@ public class ServeFrequencyRepository {
                     session == null ? Set.of()
                             : session.stream().map(Long::valueOf).collect(Collectors.toUnmodifiableSet()));
         } catch (DataAccessException e) {
-            log.warn("event=FEED_SERVE_FREQUENCY_READ_FAILED memberId={} cause={} 빈 이력으로 통과시킨다",
+            log.warn("event=ADSERVING_FEED_SERVE_FREQUENCY_READ_FAILED memberId={} reason={} fallback=EMPTY_HISTORY",
                     memberId, RedisFailureClassifier.causeLabel(e), e);
             meterRegistry.counter(BYPASS_METRIC, "use", "serve_frequency").increment();
             return new ServedHistory(Map.of(), Set.of());
@@ -86,7 +86,7 @@ public class ServeFrequencyRepository {
             redisTemplate.execute(RECORD_SCRIPT, List.of(dailyKey(businessDate, memberId), sessionKey(memberId)),
                     args.toArray());
         } catch (DataAccessException e) {
-            log.warn("event=FEED_SERVE_FREQUENCY_WRITE_FAILED memberId={} cause={} 세지 않고 통과시킨다",
+            log.warn("event=ADSERVING_FEED_SERVE_FREQUENCY_WRITE_FAILED memberId={} reason={} fallback=SKIP_WRITE",
                     memberId, RedisFailureClassifier.causeLabel(e), e);
             meterRegistry.counter(BYPASS_METRIC, "use", "serve_frequency").increment();
         }
