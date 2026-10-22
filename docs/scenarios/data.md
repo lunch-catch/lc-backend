@@ -8,7 +8,7 @@
 
 | 항목 | 개수 |
 |---|---|
-| 묶음 | 261 (기본 세계 173, 실행으로 만듦 36, 확인 전용 52) |
+| 묶음 | 261 (기본 세계 169, 실행으로 만듦 36, 확인 전용 56) |
 | 시나리오 | 1,222 (묶음이 붙은 것 818, 데이터가 아닌 것 404) |
 | 데이터가 아닌 시나리오 | NONE:장애 171, NONE:입력 132, NONE:없음 54, NONE:외부 29, NONE:시각 18 |
 
@@ -165,12 +165,12 @@
 | `TPL.DRAFT` | 기본 세계 | 버전 3개가 있는 임시저장 템플릿 | template: template_id=4001, name='점심 특가 기본형', status='DRAFT', html_content=NULL, active=0, published_at=NULL, published_version_number=NULL, last_modified_by=2, last_modified_at=D-1. template_version 3행: version_number=1~3, request_prompt='따뜻한 색감의 점심 할인 포스터', request_id='seed-4001-v1'~'v3', html_content(슬롯 영역 포함), message='설명', deleted_at=NULL. template_quota 는 마이그레이션이 넣은 1행을 UPDATE 해 current_count = template 행 수로 맞춘다(행을 더 넣지 않는다) | chk_template_status(DRAFT 면 published_at, published_version_number NULL), uk_template_version_template_id_version_number, uk_template_version_request_id, fk_template_version_template, chk_template_quota_current_count. 먼저 넣을 묶음: ADM.ADMIN_ACTIVE | created_at D-3 ~ D-1 | 1 템플릿 + 3 버전 | 14 |
 | `TPL.DRAFT_20_VERSIONS` | 기본 세계 | 버전이 상한 20개에 닿은 임시저장 템플릿 | template: template_id=4002, status='DRAFT' 외 TPL.DRAFT 와 같음. template_version 20행(version_number=1~20, request_id='seed-4002-v{n}', deleted_at=NULL). template_quota 는 마이그레이션이 넣은 1행을 UPDATE 해 current_count = template 행 수로 맞춘다(행을 더 넣지 않는다) | TPL.DRAFT 와 같다. 먼저 넣을 묶음: ADM.ADMIN_ACTIVE | created_at D-5 ~ D-1 | 1 템플릿 + 20 버전 | 1 |
 | `TPL.DRAFT_25_VERSIONS` | 기본 세계 | 첫 쪽(20개) 뒤에 이전 버전이 더 있는 임시저장 템플릿 | template: template_id=4003, status='DRAFT'. template_version 25행(version_number=1~25, deleted_at=NULL, request_id='seed-4003-v{n}'). 상한 20 은 수정 요청 때만 정리하므로 직접 넣으면 25개가 남는다. template_quota 는 마이그레이션이 넣은 1행을 UPDATE 해 current_count = template 행 수로 맞춘다(행을 더 넣지 않는다) | TPL.DRAFT 와 같다. 먼저 넣을 묶음: ADM.ADMIN_ACTIVE | created_at D-5 ~ D-1 | 1 템플릿 + 25 버전 | 1 |
-| `TPL.NONE_AVAILABLE` | 기본 세계 | 게시되고 활성인 템플릿이 0개 | template 는 status DRAFT(published_at, published_version_number NULL, active false) 또는 PUBLISHED 이면서 active false 만 둔다. PUBLISHED + active true 행 없음 | chk_template_status | D-30 | 템플릿 0~1 | 1 |
+| `TPL.NONE_AVAILABLE` | 확인 전용 | 게시되고 활성인 템플릿이 0개 | template 는 status DRAFT(published_at, published_version_number NULL, active false) 또는 PUBLISHED 이면서 active false 만 둔다. PUBLISHED + active true 행 없음 | chk_template_status | D-30 | 템플릿 0~1 | 1 |
 | `TPL.PUBLISHED_ACTIVE` | 기본 세계 | 게시되고 점주에게 노출 중인 템플릿 | template: template_id=4004, name='게시 기본형', status='PUBLISHED', html_content=게시 버전 HTML, published_at=D-10, published_version_number=2, active=1, activated_by=2, activated_at=D-10. template_version 2행(version_number=1, 2) 모두 deleted_at=D-10(게시 때 소프트 삭제, 04:00 정리 전). template_quota 는 마이그레이션이 넣은 1행을 UPDATE 해 current_count = template 행 수로 맞춘다(행을 더 넣지 않는다) | chk_template_status(PUBLISHED 면 published_at, published_version_number 값), uk_template_version_request_id. 먼저 넣을 묶음: ADM.ADMIN_ACTIVE | published_at D-10, deleted_at D-10 | 1 템플릿 + 2 버전 | 41 |
 | `TPL.PUBLISHED_INACTIVE` | 기본 세계 | 게시됐지만 비활성인 템플릿 | template: template_id=4005, TPL.PUBLISHED_ACTIVE 와 같고 active=0, activated_by=NULL, activated_at=NULL, published_version_number=1. template_version 1행 deleted_at=D-8. template_quota 는 마이그레이션이 넣은 1행을 UPDATE 해 current_count = template 행 수로 맞춘다(행을 더 넣지 않는다) | TPL.PUBLISHED_ACTIVE 와 같다. 먼저 넣을 묶음: ADM.ADMIN_ACTIVE | published_at D-8 | 1 템플릿 + 1 버전 | 3 |
-| `TPL.QUOTA_FULL` | 기본 세계 | 템플릿이 상한 100개인 상태 | template 100행(template_id=4101~4200, DRAFT 와 PUBLISHED 섞음, 각 template_version 1행). template_quota.current_count=100 | 상한은 application.yml campaign.template-max-count=100. 생성은 template 행 수와 template_quota 둘 다 본다. chk_template_status, uk_template_version_request_id. 먼저 넣을 묶음: ADM.ADMIN_ACTIVE | created_at D-30 ~ D-1 | 100 | 1 |
-| `TPL.QUOTA_NEAR_FULL` | 기본 세계 | 템플릿이 99개라 1개만 더 만들 수 있는 상태 | TPL.QUOTA_FULL 과 같고 template 99행, template_quota.current_count=99 | TPL.QUOTA_FULL 과 같다. 둘을 함께 넣지 않는다. 먼저 넣을 묶음: ADM.ADMIN_ACTIVE | created_at D-30 ~ D-1 | 99 | 1 |
-| `TPL.VERSION_SOFT_DELETED` | 기본 세계 | 소프트 삭제된 템플릿 버전 | template_version(deleted_at NOT NULL) 1,200행 + 살아 있는 버전 3행 | uk_template_version_template_id_version_number, uk_template_version_request_id | deleted_at D-1 이전 | 1,203 | 1 |
+| `TPL.QUOTA_FULL` | 확인 전용 | 템플릿이 상한 100개인 상태 | template 100행(template_id=4101~4200, DRAFT 와 PUBLISHED 섞음, 각 template_version 1행). template_quota.current_count=100 | 상한은 application.yml campaign.template-max-count=100. 생성은 template 행 수와 template_quota 둘 다 본다. chk_template_status, uk_template_version_request_id. 먼저 넣을 묶음: ADM.ADMIN_ACTIVE | created_at D-30 ~ D-1 | 100 | 1 |
+| `TPL.QUOTA_NEAR_FULL` | 확인 전용 | 템플릿이 99개라 1개만 더 만들 수 있는 상태 | TPL.QUOTA_FULL 과 같고 template 99행, template_quota.current_count=99 | TPL.QUOTA_FULL 과 같다. 둘을 함께 넣지 않는다. 먼저 넣을 묶음: ADM.ADMIN_ACTIVE | created_at D-30 ~ D-1 | 99 | 1 |
+| `TPL.VERSION_SOFT_DELETED` | 확인 전용 | 소프트 삭제된 템플릿 버전 | template_version(deleted_at NOT NULL) 1,200행 + 살아 있는 버전 3행 | uk_template_version_template_id_version_number, uk_template_version_request_id | deleted_at D-1 이전 | 1,203 | 1 |
 
 ## ADS 광고 서빙 (15)
 
