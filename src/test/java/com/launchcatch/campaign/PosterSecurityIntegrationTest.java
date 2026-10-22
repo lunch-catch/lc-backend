@@ -91,7 +91,7 @@ class PosterSecurityIntegrationTest extends AbstractCampaignIntegrationTest {
 
         mvc.perform(get(path(campaign.getId())).cookie(memberToken()))
                 .andExpect(status().isNotFound())
-                .andExpect(jsonPath("$.code").value("POSTER-022"))
+                .andExpect(jsonPath("$.code").value("POSTER-021"))
                 .andExpect(header().string("Cache-Control", "no-cache, no-store, max-age=0, must-revalidate"));
     }
 
@@ -102,14 +102,14 @@ class PosterSecurityIntegrationTest extends AbstractCampaignIntegrationTest {
 
         mvc.perform(get(path(campaign.getId())).cookie(memberToken()))
                 .andExpect(status().isNotFound())
-                .andExpect(jsonPath("$.code").value("POSTER-022"));
+                .andExpect(jsonPath("$.code").value("POSTER-021"));
     }
 
     @Test
     void 캠페인이_없으면_같은_404다() throws Exception {
         mvc.perform(get(path(999_999_999L)).cookie(memberToken()))
                 .andExpect(status().isNotFound())
-                .andExpect(jsonPath("$.code").value("POSTER-022"));
+                .andExpect(jsonPath("$.code").value("POSTER-021"));
     }
 
     @Test
