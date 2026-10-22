@@ -67,7 +67,7 @@ public class MemberProfileService {
             log.info("event=MEMBER_ONBOARDING_FAILED memberId={} reason=INVALID_INPUT exceptionType={}", memberId, e.getClass().getSimpleName());
             throw e;
         } catch (RuntimeException e) {
-            log.error("event=MEMBER_ONBOARDING_FAILED memberId={} reason=SYSTEM_ERROR causeType={}", memberId, e.getClass().getSimpleName());
+            log.error("event=MEMBER_ONBOARDING_FAILED memberId={} reason=SYSTEM_ERROR exceptionType={}", memberId, e.getClass().getSimpleName());
             throw e;
         }
     }
@@ -83,7 +83,7 @@ public class MemberProfileService {
         } catch (MemberException e) {
             throw e;
         } catch (RuntimeException e) {
-            log.error("event=MEMBER_PROFILE_READ_FAILED memberId={} reason=SYSTEM_ERROR causeType={}", memberId, e.getClass().getSimpleName());
+            log.error("event=MEMBER_PROFILE_READ_FAILED memberId={} reason=SYSTEM_ERROR exceptionType={}", memberId, e.getClass().getSimpleName());
             throw e;
         }
     }
@@ -111,7 +111,7 @@ public class MemberProfileService {
             log.info("event=MEMBER_PROFILE_UPDATE_FAILED memberId={} reason=INVALID_INPUT exceptionType={}", memberId, e.getClass().getSimpleName());
             throw e;
         } catch (RuntimeException e) {
-            log.error("event=MEMBER_PROFILE_UPDATE_FAILED memberId={} reason=SYSTEM_ERROR causeType={}", memberId, e.getClass().getSimpleName());
+            log.error("event=MEMBER_PROFILE_UPDATE_FAILED memberId={} reason=SYSTEM_ERROR exceptionType={}", memberId, e.getClass().getSimpleName());
             throw e;
         }
     }

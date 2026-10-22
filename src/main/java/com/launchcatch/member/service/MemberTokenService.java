@@ -70,7 +70,7 @@ public class MemberTokenService {
             }
             throw e;
         } catch (RuntimeException e) {
-            log.error("event=MEMBER_TOKEN_REFRESH_FAILED memberId={} reason=SYSTEM_ERROR causeType={}", memberId, e.getClass().getSimpleName());
+            log.error("event=MEMBER_TOKEN_REFRESH_FAILED memberId={} reason=SYSTEM_ERROR exceptionType={}", memberId, e.getClass().getSimpleName());
             throw e;
         }
     }
@@ -107,7 +107,7 @@ public class MemberTokenService {
             log.error("event=MEMBER_LOGOUT_FAILED memberId={} errorCode={} details={}", memberId, e.getErrorCode().getCode(), FailureLogDetails.from(e));
             throw e;
         } catch (RuntimeException e) {
-            log.error("event=MEMBER_LOGOUT_FAILED memberId={} reason=SYSTEM_ERROR causeType={}", memberId, e.getClass().getSimpleName());
+            log.error("event=MEMBER_LOGOUT_FAILED memberId={} reason=SYSTEM_ERROR exceptionType={}", memberId, e.getClass().getSimpleName());
             throw e;
         }
     }

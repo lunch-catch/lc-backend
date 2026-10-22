@@ -68,7 +68,7 @@ class MemberBusinessLoggingTest {
                 assertThat(event.getLevel()).isEqualTo(Level.ERROR);
                 assertThat(event.getFormattedMessage()).isEqualTo("event=" + operation.event()
                         + "_FAILED memberId=" + (mutation == Mutation.TOKEN_REFRESH ? "null" : "42")
-                        + " reason=SYSTEM_ERROR causeType=DataAccessResourceFailureException");
+                        + " reason=SYSTEM_ERROR exceptionType=DataAccessResourceFailureException");
                 assertThat(event.getThrowableProxy()).isNull();
             });
         }
@@ -108,7 +108,7 @@ class MemberBusinessLoggingTest {
 
             assertThat(capture.appender.list).singleElement().satisfies(event -> {
                 assertThat(event.getLevel()).isEqualTo(Level.ERROR);
-                assertThat(event.getFormattedMessage()).isEqualTo("event=MEMBER_WITHDRAWAL_FAILED memberId=42 reason=SYSTEM_ERROR causeType="
+                assertThat(event.getFormattedMessage()).isEqualTo("event=MEMBER_WITHDRAWAL_FAILED memberId=42 reason=SYSTEM_ERROR exceptionType="
                         + expectedType.getSimpleName());
                 assertThat(event.getFormattedMessage()).doesNotContain("원문", "SUCCESS");
                 assertThat(event.getThrowableProxy()).isNull();
@@ -152,7 +152,7 @@ class MemberBusinessLoggingTest {
             assertThat(capture.appender.list).singleElement().satisfies(event -> {
                 assertThat(event.getLevel()).isEqualTo(Level.ERROR);
                 assertThat(event.getFormattedMessage()).isEqualTo("event=MEMBER_" + (location ? "LOCATION" : "PROFILE")
-                        + "_READ_FAILED memberId=42 reason=SYSTEM_ERROR causeType=DataAccessResourceFailureException");
+                        + "_READ_FAILED memberId=42 reason=SYSTEM_ERROR exceptionType=DataAccessResourceFailureException");
             });
         }
     }

@@ -148,7 +148,7 @@ public class KakaoUnlinkRetryService {
         try {
             transactionTemplate.executeWithoutResult(status -> markFailed(pending, callFailure));
         } catch (RuntimeException recordFailure) {
-            log.error("event=KAKAO_UNLINK_RETRY_MARK_FAILED failureId={} memberId={} callCauseType={}",
+            log.error("event=KAKAO_UNLINK_RETRY_MARK_FAILED failureId={} memberId={} callExceptionType={}",
                     pending.failureId(), pending.memberId(),
                     KakaoUnlinkFailureClassifier.causeType(callFailure), recordFailure);
         }
@@ -164,19 +164,19 @@ public class KakaoUnlinkRetryService {
             Long failureId = failure.getId();
             if (KakaoUnlinkFailureClassifier.isTerminal(cause)) {
                 failure.rejectPermanently();
-                TransactionLogging.afterCommit(() -> log.error("event=KAKAO_UNLINK_RETRY_REJECTED failureId={} memberId={} causeType={}",
+                TransactionLogging.afterCommit(() -> log.error("event=KAKAO_UNLINK_RETRY_REJECTED failureId={} memberId={} exceptionType={}",
                         failureId, pending.memberId(), causeType, cause));
                 return;
             }
             int attempts = failure.recordRetryFailure(MAX_RETRY_ATTEMPTS);
             if (failure.isResolved()) {
-                TransactionLogging.afterCommit(() -> log.error("event=KAKAO_UNLINK_RETRY_EXHAUSTED failureId={} memberId={} attempts={} causeType={}",
+                TransactionLogging.afterCommit(() -> log.error("event=KAKAO_UNLINK_RETRY_EXHAUSTED failureId={} memberId={} attempts={} exceptionType={}",
                         failureId, pending.memberId(), attempts, causeType, cause));
             } else {
-                TransactionLogging.afterCommit(() -> log.warn("event=KAKAO_UNLINK_RETRY_FAILED failureId={} memberId={} attempts={} causeType={}",
+                TransactionLogging.afterCommit(() -> log.warn("event=KAKAO_UNLINK_RETRY_FAILED failureId={} memberId={} attempts={} exceptionType={}",
                         failureId, pending.memberId(), attempts, causeType, cause));
             }
-        }, () -> log.warn("event=KAKAO_UNLINK_RETRY_FAILED failureId={} memberId={} reason=QUEUE_ROW_MISSING causeType={} details={}",
+        }, () -> log.warn("event=KAKAO_UNLINK_RETRY_FAILED failureId={} memberId={} reason=QUEUE_ROW_MISSING exceptionType={} details={}",
                 pending.failureId(), pending.memberId(), KakaoUnlinkFailureClassifier.causeType(cause), FailureLogDetails.from(cause)));
     }
 
