@@ -7,6 +7,7 @@ import com.launchcatch.billing.client.PaymentGatewayInquiryResult;
 import com.launchcatch.billing.client.PaymentGatewayInquiryResult.Status;
 import com.launchcatch.billing.repository.PaymentRepository;
 import com.launchcatch.billing.repository.PointLedgerRepository;
+import com.launchcatch.billing.repository.PgChargeReconciliationPendingRepository;
 import com.launchcatch.billing.service.PgChargeMismatchRecorder;
 import com.launchcatch.billing.service.PgChargeReconciliationService;
 import com.launchcatch.global.config.ClockConfig;
@@ -41,6 +42,7 @@ class PgChargeReconciliationIntegrationTest extends AbstractBillingIntegrationTe
 
     @Autowired PaymentRepository paymentRepository;
     @Autowired PointLedgerRepository ledgerRepository;
+    @Autowired PgChargeReconciliationPendingRepository pendingRepository;
     @Autowired PgChargeMismatchRecorder mismatchRecorder;
     @Autowired BatchExecutionQueryService batchExecutions;
     @Autowired MeterRegistry meterRegistry;
@@ -69,7 +71,7 @@ class PgChargeReconciliationIntegrationTest extends AbstractBillingIntegrationTe
     // DAY 00:00 에 이 작업이 도는 것으로 고정한다. 워터마크는 DAY 23:55 다
     private PgChargeReconciliationService serviceAtMidnightOf(LocalDate runDate) {
         Clock fixed = Clock.fixed(runDate.atStartOfDay().atZone(ClockConfig.ZONE).toInstant(), ClockConfig.ZONE);
-        return new PgChargeReconciliationService(paymentRepository, ledgerRepository, gateway, mismatchRecorder,
+        return new PgChargeReconciliationService(paymentRepository, ledgerRepository, pendingRepository, gateway, mismatchRecorder,
                 batchExecutions, meterRegistry, fixed);
     }
 
@@ -161,8 +163,8 @@ class PgChargeReconciliationIntegrationTest extends AbstractBillingIntegrationTe
 
         int mismatches = service.reconcilePreviousDay(RUN_DATE, JOB);
 
-        assertThat(mismatches).isZero();
-        assertThat(chargeCount(paymentId)).isZero();
-        assertThat(mismatchCount(paymentId)).isZero();
+        assertThat(mismatches).isEqualTo(1);
+        assertThat(chargeCount(paymentId)).isEqualTo(1);
+        assertThat(mismatchCount(paymentId)).isEqualTo(1);
     }
 }

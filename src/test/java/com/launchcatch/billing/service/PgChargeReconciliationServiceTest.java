@@ -21,6 +21,7 @@ import com.launchcatch.billing.entity.Payment;
 import com.launchcatch.billing.entity.PaymentStatus;
 import com.launchcatch.billing.repository.PaymentRepository;
 import com.launchcatch.billing.repository.PointLedgerRepository;
+import com.launchcatch.billing.repository.PgChargeReconciliationPendingRepository;
 import com.launchcatch.ops.contract.BatchExecutionQueryService;
 import com.launchcatch.ops.contract.BatchExecutionRecord;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -53,7 +54,7 @@ class PgChargeReconciliationServiceTest {
     private static final LocalDateTime NOW = LocalDateTime.of(2026, 10, 16, 0, 0);
     private static final LocalDateTime FROM = PREV.atStartOfDay();
     // 워터마크(5분)가 전영업일 끝보다 앞이라 실제 상한은 이 값이다
-    private static final LocalDateTime TO = NOW.minusMinutes(5);
+    private static final LocalDateTime TO = NOW;
 
     private static final Long PAYMENT_ID = 101L;
     private static final Long OWNER_ID = 7L;
@@ -63,6 +64,7 @@ class PgChargeReconciliationServiceTest {
 
     @Mock PaymentRepository paymentRepository;
     @Mock PointLedgerRepository ledgerRepository;
+    @Mock PgChargeReconciliationPendingRepository pendingRepository;
     @Mock PaymentGateway paymentGateway;
     @Mock PgChargeMismatchRecorder mismatchRecorder;
     @Mock BatchExecutionQueryService batchExecutions;
@@ -73,7 +75,8 @@ class PgChargeReconciliationServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new PgChargeReconciliationService(paymentRepository, ledgerRepository, paymentGateway,
+        when(pendingRepository.findAllByOrderByCreatedAtAsc()).thenReturn(List.of());
+        service = new PgChargeReconciliationService(paymentRepository, ledgerRepository, pendingRepository, paymentGateway,
                 mismatchRecorder, batchExecutions, meterRegistry, CLOCK);
     }
 
@@ -135,7 +138,7 @@ class PgChargeReconciliationServiceTest {
 
     private PgChargeReconciliationService serviceAt(String instant) {
         Clock clock = Clock.fixed(Instant.parse(instant), ZoneId.of("Asia/Seoul"));
-        return new PgChargeReconciliationService(paymentRepository, ledgerRepository, paymentGateway,
+        return new PgChargeReconciliationService(paymentRepository, ledgerRepository, pendingRepository, paymentGateway,
                 mismatchRecorder, batchExecutions, meterRegistry, clock);
     }
 
@@ -165,11 +168,11 @@ class PgChargeReconciliationServiceTest {
     void 영업일_경계_직전에_돌면_워터마크로_자른다() {
         // KST 2026-10-16 00:03 이면 워터마크 23:58 이 경계보다 앞이다
         PgChargeReconciliationService early = serviceAt("2026-10-15T15:03:00Z");
-        when(paymentRepository.findForPgReconciliation(FROM, NOW.minusMinutes(2))).thenReturn(List.of());
+        when(paymentRepository.findForPgReconciliation(FROM, NOW)).thenReturn(List.of());
 
         early.reconcilePreviousDay(RUN_DATE, JOB);
 
-        verify(paymentRepository).findForPgReconciliation(FROM, NOW.minusMinutes(2));
+        verify(paymentRepository).findForPgReconciliation(FROM, NOW);
     }
 
     @Test
@@ -182,7 +185,7 @@ class PgChargeReconciliationServiceTest {
 
         assertThat(service.reconcilePreviousDay(RUN_DATE, JOB)).isZero();
 
-        verifyNoInteractions(mismatchRecorder);
+        verify(mismatchRecorder).resolvePending(PAYMENT_ID);
     }
 
     @Test
@@ -196,6 +199,7 @@ class PgChargeReconciliationServiceTest {
         assertThat(service.reconcilePreviousDay(RUN_DATE, JOB)).isEqualTo(1);
 
         verify(mismatchRecorder).recordMissingCharge(payment, PREV, RUN_ID, NOW);
+        verify(mismatchRecorder).resolvePending(PAYMENT_ID);
         verify(mismatchRecorder, never()).recordMismatch(any(), anyLong(), anyLong(), any(), any(), any());
     }
 
@@ -209,6 +213,7 @@ class PgChargeReconciliationServiceTest {
         assertThat(service.reconcilePreviousDay(RUN_DATE, JOB)).isEqualTo(1);
 
         verify(mismatchRecorder).recordMismatch(PAYMENT_ID, AMOUNT - 1_000, AMOUNT, PREV, RUN_ID, NOW);
+        verify(mismatchRecorder).resolvePending(PAYMENT_ID);
         verify(mismatchRecorder, never()).recordMissingCharge(any(), any(), any(), any());
         verifyNoInteractions(ledgerRepository);
     }
@@ -223,6 +228,7 @@ class PgChargeReconciliationServiceTest {
         assertThat(service.reconcilePreviousDay(RUN_DATE, JOB)).isEqualTo(1);
 
         verify(mismatchRecorder).recordMismatch(PAYMENT_ID, AMOUNT, 0L, PREV, RUN_ID, NOW);
+        verify(mismatchRecorder).resolvePending(PAYMENT_ID);
         verify(mismatchRecorder, never()).recordMissingCharge(any(), any(), any(), any());
         verifyNoInteractions(ledgerRepository);
     }
@@ -237,6 +243,7 @@ class PgChargeReconciliationServiceTest {
         assertThat(service.reconcilePreviousDay(RUN_DATE, JOB)).isEqualTo(1);
 
         verify(mismatchRecorder).recordMismatch(PAYMENT_ID, 0L, AMOUNT, PREV, RUN_ID, NOW);
+        verify(mismatchRecorder).resolvePending(PAYMENT_ID);
     }
 
     @Test
@@ -248,7 +255,8 @@ class PgChargeReconciliationServiceTest {
 
         assertThat(service.reconcilePreviousDay(RUN_DATE, JOB)).isZero();
 
-        verifyNoInteractions(mismatchRecorder, ledgerRepository);
+        verify(mismatchRecorder).recordPending(PAYMENT_ID, PREV, "PG payment is pending");
+        verifyNoInteractions(ledgerRepository);
     }
 
     @Test
@@ -265,6 +273,7 @@ class PgChargeReconciliationServiceTest {
 
         verify(paymentGateway, times(2)).inquireByPaymentKey(PG_TID);
         verify(mismatchRecorder).recordMissingCharge(payment, PREV, RUN_ID, NOW);
+        verify(mismatchRecorder).resolvePending(PAYMENT_ID);
         assertThat(counted("inquiry_failed")).isZero();
     }
 
@@ -279,7 +288,8 @@ class PgChargeReconciliationServiceTest {
         assertThat(service.reconcilePreviousDay(RUN_DATE, JOB)).isZero();
 
         verify(paymentGateway, times(2)).inquireByPaymentKey(PG_TID);
-        verifyNoInteractions(mismatchRecorder, ledgerRepository);
+        verify(mismatchRecorder).recordPending(PAYMENT_ID, PREV, "PG inquiry failed");
+        verifyNoInteractions(ledgerRepository);
         assertThat(counted("inquiry_failed")).isEqualTo(1.0);
     }
 
@@ -297,6 +307,7 @@ class PgChargeReconciliationServiceTest {
 
         assertThat(counted("inquiry_failed")).isEqualTo(1.0);
         verify(mismatchRecorder).recordMismatch(PAYMENT_ID, AMOUNT - 1, AMOUNT, PREV, RUN_ID, NOW);
+        verify(mismatchRecorder).resolvePending(PAYMENT_ID);
     }
 
     @Test
@@ -315,5 +326,6 @@ class PgChargeReconciliationServiceTest {
 
         assertThat(counted("error")).isEqualTo(1.0);
         verify(mismatchRecorder).recordMissingCharge(ok, PREV, RUN_ID, NOW);
+        verify(mismatchRecorder).resolvePending(PAYMENT_ID);
     }
 }

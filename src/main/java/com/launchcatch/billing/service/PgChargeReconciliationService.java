@@ -10,13 +10,14 @@ import com.launchcatch.billing.entity.Payment;
 import com.launchcatch.billing.entity.PaymentStatus;
 import com.launchcatch.billing.repository.PaymentRepository;
 import com.launchcatch.billing.repository.PointLedgerRepository;
+import com.launchcatch.billing.repository.PgChargeReconciliationPendingRepository;
 import com.launchcatch.ops.contract.BatchExecutionQueryService;
 import com.launchcatch.ops.contract.BatchExecutionRecord;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.time.Clock;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.util.List;
+import java.util.LinkedHashMap;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -48,11 +49,9 @@ public class PgChargeReconciliationService {
 
     static final String RECON_METRIC = "billing.pg.recon";
 
-    // 대사 시각 직전 이 시간 안에 커밋된 결제는 비교에서 뺀다(워터마크)
-    private static final int WATERMARK_MINUTES = 5;
-
     private final PaymentRepository paymentRepository;
     private final PointLedgerRepository ledgerRepository;
+    private final PgChargeReconciliationPendingRepository pendingRepository;
     private final PaymentGateway paymentGateway;
     private final PgChargeMismatchRecorder mismatchRecorder;
     private final BatchExecutionQueryService batchExecutions;
@@ -64,17 +63,20 @@ public class PgChargeReconciliationService {
         LocalDate target = runDate.minusDays(1);
         LocalDateTime now = LocalDateTime.now(clock);
         LocalDateTime from = target.atStartOfDay();
-        LocalDateTime targetEnd = runDate.atStartOfDay();
-        LocalDateTime watermark = now.minusMinutes(WATERMARK_MINUTES);
-        LocalDateTime to = watermark.isBefore(targetEnd) ? watermark : targetEnd;
-
-        List<Payment> targets = paymentRepository.findForPgReconciliation(from, to);
+        LocalDateTime to = runDate.atStartOfDay();
+        LinkedHashMap<Long, Payment> targets = new LinkedHashMap<>();
+        paymentRepository.findForPgReconciliation(from, to)
+                .forEach(payment -> targets.put(payment.getId(), payment));
+        paymentRepository.findAllById(pendingRepository.findAllByOrderByCreatedAtAsc().stream()
+                        .map(pending -> pending.getPaymentId())
+                        .toList())
+                .forEach(payment -> targets.put(payment.getId(), payment));
         if (targets.isEmpty()) {
             return 0;
         }
         Long jobExecutionId = findRunId(runDate, jobName);
         int mismatches = 0;
-        for (Payment payment : targets) {
+        for (Payment payment : targets.values()) {
             try {
                 mismatches += reconcileOne(payment, target, jobExecutionId, now);
             } catch (RuntimeException e) {
@@ -95,12 +97,15 @@ public class PgChargeReconciliationService {
     private int reconcileOne(Payment payment, LocalDate businessDate, Long jobExecutionId, LocalDateTime now) {
         PaymentGatewayInquiryResult result = inquireWithRetry(payment.getPgTid());
         if (result == null) {
+            mismatchRecorder.recordPending(payment.getId(), businessDate, "PG inquiry failed");
             meterRegistry.counter(RECON_METRIC, "result", "inquiry_failed").increment();
             return 0;
         }
         if (result.status() == Status.PENDING) {
+            mismatchRecorder.recordPending(payment.getId(), businessDate, "PG payment is pending");
             return 0;
         }
+        mismatchRecorder.resolvePending(payment.getId());
         long pgClaim = result.status() == Status.APPROVED ? result.amount() : 0L;
         long ourClaim = payment.getStatus() == PaymentStatus.APPROVED ? payment.getAmount() : 0L;
         if (pgClaim == ourClaim) {

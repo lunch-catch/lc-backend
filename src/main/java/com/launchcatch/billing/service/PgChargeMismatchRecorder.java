@@ -3,7 +3,9 @@ package com.launchcatch.billing.service;
 import com.launchcatch.billing.entity.LedgerSource;
 import com.launchcatch.billing.entity.Payment;
 import com.launchcatch.billing.entity.PointLedger;
+import com.launchcatch.billing.entity.PgChargeReconciliationPending;
 import com.launchcatch.billing.repository.PointLedgerRepository;
+import com.launchcatch.billing.repository.PgChargeReconciliationPendingRepository;
 import com.launchcatch.billing.repository.SettlementMismatchRepository;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -24,6 +26,7 @@ public class PgChargeMismatchRecorder {
 
     private final PointLedgerRepository ledgerRepository;
     private final SettlementMismatchRepository mismatchRepository;
+    private final PgChargeReconciliationPendingRepository pendingRepository;
 
     /*
      * PG와 payment 양쪽이 같은 금액을 승인으로 보는데 원장에 CHARGE가 없을 때 보정한다.
@@ -46,5 +49,17 @@ public class PgChargeMismatchRecorder {
                                LocalDate businessDate, Long jobExecutionId, LocalDateTime now) {
         mismatchRepository.insertPgChargeMismatchIfAbsent(
                 businessDate, paymentId, expectedAmount, actualAmount, jobExecutionId, now);
+    }
+
+    @Transactional
+    public void recordPending(Long paymentId, LocalDate businessDate, String reason) {
+        if (!pendingRepository.existsByPaymentId(paymentId)) {
+            pendingRepository.save(PgChargeReconciliationPending.pending(paymentId, businessDate, reason));
+        }
+    }
+
+    @Transactional
+    public void resolvePending(Long paymentId) {
+        pendingRepository.deleteByPaymentId(paymentId);
     }
 }

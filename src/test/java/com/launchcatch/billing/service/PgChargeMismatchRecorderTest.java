@@ -9,6 +9,7 @@ import com.launchcatch.billing.entity.LedgerSource;
 import com.launchcatch.billing.entity.Payment;
 import com.launchcatch.billing.entity.PointLedger;
 import com.launchcatch.billing.repository.PointLedgerRepository;
+import com.launchcatch.billing.repository.PgChargeReconciliationPendingRepository;
 import com.launchcatch.billing.repository.SettlementMismatchRepository;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -28,8 +29,9 @@ class PgChargeMismatchRecorderTest {
 
     private final PointLedgerRepository ledgerRepository = mock(PointLedgerRepository.class);
     private final SettlementMismatchRepository mismatchRepository = mock(SettlementMismatchRepository.class);
+    private final PgChargeReconciliationPendingRepository pendingRepository = mock(PgChargeReconciliationPendingRepository.class);
     private final PgChargeMismatchRecorder recorder =
-            new PgChargeMismatchRecorder(ledgerRepository, mismatchRepository);
+            new PgChargeMismatchRecorder(ledgerRepository, mismatchRepository, pendingRepository);
 
     private static Payment payment() {
         Payment payment = Payment.order(OWNER_ID, "ord_20261015_abc", AMOUNT);
