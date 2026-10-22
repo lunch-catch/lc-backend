@@ -21,7 +21,10 @@ class CandidateStatusServiceTest {
     private static final Long CAMPAIGN_ID = 101L;
     private static final LocalDate BUSINESS_DATE = LocalDate.of(2026, 10, 1);
     private static final LocalDateTime CHANGED_AT = LocalDateTime.of(2026, 10, 1, 11, 3);
-    // 반영한 시각은 전이 시각보다 늦다. 둘을 갈라 전이 시각을 그대로 쓰는지 본다
+    /*
+     * 반영한 시각은 전이 시각보다 늦다.
+     * 둘을 갈라 전이 시각을 그대로 쓰는지 본다.
+     */
     private static final LocalDateTime NOW = LocalDateTime.of(2026, 10, 1, 11, 5);
 
     private final AdCandidateRepository adCandidateRepository = mock(AdCandidateRepository.class);
@@ -54,7 +57,10 @@ class CandidateStatusServiceTest {
         verify(adCandidateRepository).changeState(BUSINESS_DATE, CAMPAIGN_ID, CandidateCampaignState.SERVABLE.name(), CHANGED_AT, NOW);
     }
 
-    // 더 늦은 전이가 이미 반영된 후보다. 순서가 바뀌어 온 이벤트라 세지 않는다
+    /*
+     * 더 늦은 전이가 이미 반영된 후보다.
+     * 순서가 바뀌어 온 이벤트라 세지 않는다.
+     */
     @Test
     void 이미_더_늦은_전이가_반영됐으면_넘어가고_세지_않는다() {
         when(adCandidateRepository.changeState(BUSINESS_DATE, CAMPAIGN_ID, CandidateCampaignState.PAUSED.name(), CHANGED_AT, NOW))
