@@ -133,6 +133,45 @@ class PgChargeReconciliationServiceTest {
         verify(paymentRepository).findForPgReconciliation(FROM, TO);
     }
 
+    private PgChargeReconciliationService serviceAt(String instant) {
+        Clock clock = Clock.fixed(Instant.parse(instant), ZoneId.of("Asia/Seoul"));
+        return new PgChargeReconciliationService(paymentRepository, ledgerRepository, paymentGateway,
+                mismatchRecorder, batchExecutions, meterRegistry, clock);
+    }
+
+    @Test
+    void 영업일_경계_5분_뒤에_돌면_전영업일_끝까지_대상이다() {
+        // KST 2026-10-16 00:05
+        PgChargeReconciliationService atScheduledTime = serviceAt("2026-10-15T15:05:00Z");
+        when(paymentRepository.findForPgReconciliation(FROM, NOW)).thenReturn(List.of());
+
+        atScheduledTime.reconcilePreviousDay(RUN_DATE, JOB);
+
+        verify(paymentRepository).findForPgReconciliation(FROM, NOW);
+    }
+
+    @Test
+    void 늦게_돌면_상한은_영업일_경계다() {
+        // KST 2026-10-16 09:00 에 수동 재실행해도 다음 영업일 결제는 들어오지 않는다
+        PgChargeReconciliationService late = serviceAt("2026-10-16T00:00:00Z");
+        when(paymentRepository.findForPgReconciliation(FROM, NOW)).thenReturn(List.of());
+
+        late.reconcilePreviousDay(RUN_DATE, JOB);
+
+        verify(paymentRepository).findForPgReconciliation(FROM, NOW);
+    }
+
+    @Test
+    void 영업일_경계_직전에_돌면_워터마크로_자른다() {
+        // KST 2026-10-16 00:03 이면 워터마크 23:58 이 경계보다 앞이다
+        PgChargeReconciliationService early = serviceAt("2026-10-15T15:03:00Z");
+        when(paymentRepository.findForPgReconciliation(FROM, NOW.minusMinutes(2))).thenReturn(List.of());
+
+        early.reconcilePreviousDay(RUN_DATE, JOB);
+
+        verify(paymentRepository).findForPgReconciliation(FROM, NOW.minusMinutes(2));
+    }
+
     @Test
     void PG_승인과_우리_CHARGE가_일치하면_기록하지_않는다() {
         Payment payment = payment(PaymentStatus.APPROVED, AMOUNT);

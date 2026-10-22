@@ -23,7 +23,7 @@ import org.springframework.stereotype.Service;
 
 /*
  * 전일 생성된 결제를 PG 결제 조회로 대사한다(PG_VS_CHARGE, 배치 설계 I-05, 구현 순서 13번).
- * 00:00 전일분 1회만 실행하고, pg_tid 가 있는 결제를 건별로 조회한다. PG 거래 목록 API 는
+ * 00:05 전일분 1회만 실행하고, pg_tid 가 있는 결제를 건별로 조회한다. PG 거래 목록 API 는
  * 쓰지 않는다.
  *
  * 비교는 "서로 얼마를 승인된 것으로 보는가"로 통일한다. ourClaim 은 payment.status 가

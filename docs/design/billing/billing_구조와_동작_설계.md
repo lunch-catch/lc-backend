@@ -72,7 +72,7 @@ billing/
 │              PgChargeReconciliationService
 ├── job/       PreviousDaySpendReconciliationJob, DailyReservationJob, FundingJudgementJob,
 │              HourlyTargetJob (00:00 묶음의 DailyJob),
-│              PgChargeReconciliationScheduler (00:00),
+│              PgChargeReconciliationScheduler (00:05),
 │              PaymentRecheckWorker
 ├── listener/  CampaignStatusChangedListener, BudgetPlanStatusMirrorListener, PointChargedListener
 ├── repository/ BudgetDailyPlanRepository, BudgetHourlyTargetRepository,
@@ -84,7 +84,7 @@ billing/
 
 위 나무는 노출 차감부터 대사까지의 클래스만 적었다. `client/`(Toss), `controller/`(점주·관리자·웹훅), 결제·환불 서비스와 엔티티는 이 문서의 범위 밖이라 적지 않았다.
 
-노출 차감과 진행률의 입구는 다른 도메인의 호출이다. 중단 반영의 입구는 캠페인 이벤트다. 예약·해제·대사의 입구는 시각이다. 00:00 묶음의 네 단계는 운영의 `DailyJob`으로 등록돼 `@Order` 40, 50, 60, 70으로 순서대로 돈다. 전날 해제는 50단계가 한다. 00:00 `PG_VS_CHARGE` 대사는 정산의 스케줄 작업이며 `batch_execution_log` 점유로 배치 서버 두 대가 겹치지 않게 한다. 작업명과 시각은 10장이 갖는다. 노출 차감·진행률 경로에는 정산의 HTTP 입구가 없다. 결제·환불·조정의 HTTP 입구는 이 문서의 범위 밖이다.
+노출 차감과 진행률의 입구는 다른 도메인의 호출이다. 중단 반영의 입구는 캠페인 이벤트다. 예약·해제·대사의 입구는 시각이다. 00:00 묶음의 네 단계는 운영의 `DailyJob`으로 등록돼 `@Order` 40, 50, 60, 70으로 순서대로 돈다. 전날 해제는 50단계가 한다. 00:05 `PG_VS_CHARGE` 대사는 정산의 스케줄 작업이며 `batch_execution_log` 점유로 배치 서버 두 대가 겹치지 않게 한다. 작업명과 시각은 10장이 갖는다. 노출 차감·진행률 경로에는 정산의 HTTP 입구가 없다. 결제·환불·조정의 HTTP 입구는 이 문서의 범위 밖이다.
 
 ## 3. 저장
 
@@ -490,7 +490,7 @@ Lua는 당일 해시와 처리 표시 두 키를 사용한다. 현재 구현은 
 | 00:00 해제·예약 | `BILLING_RESERVE`, 묶음 `@Order(50)` | 전날 남은 예약을 `RELEASE`하고(전날의 정식 해제), 그날 계획과 `RESERVE`를 만든 뒤 해시를 준비한다. 끝나면 `(BILLING_DAILY_RELEASE, 전날)`을 SUCCESS로 남겨 분석의 원천 확정에 쓴다 | 원장 멱등 제약(`uk_point_ledger_day_reserve_dedup`)과 작업 실행 이력을 지켜야 한다. 같은 예약을 두 번 해제하지 않는다 |
 | 잔액 부족 판정 | `BILLING_FUNDING_JUDGE`, 묶음 `@Order(60)` | 예약액이 단가보다 작은 캠페인을 판정해 캠페인에 통보한다 | 같은 판정을 두 번 통보해도 캠페인 상태가 같아야 한다 |
 | 시간대별 목표 | `BILLING_HOURLY_TARGET`, 묶음 `@Order(70)` | 중단되지 않은 계획의 0~23시 시간대별 목표를 만든다 | 계획·시간 UNIQUE로 중복을 막는다 |
-| 00:00 `PG_VS_CHARGE` 대사(#391) | `BILLING_PG_VS_CHARGE_RECON`, 독립 `@Scheduled`(00:00, Asia/Seoul) | 전일 생성 결제를 PG 조회로 대사하고 빠진 `CHARGE`를 보정한다 | 결제당 `CHARGE` 멱등 제약(`uk_point_ledger_payment_entry`)과 대사 불일치 UNIQUE를 지켜야 한다. 외부 API(PG 조회)의 처리는 [장애 처리 설계 7장](./billing_장애_처리_설계.md#7-pg_vs_charge-대사391의-외부-api-처리)이 갖는다 |
+| 00:05 `PG_VS_CHARGE` 대사(#391) | `BILLING_PG_VS_CHARGE_RECON`, 독립 `@Scheduled`(00:05, Asia/Seoul) | 전일 생성 결제를 PG 조회로 대사하고 빠진 `CHARGE`를 보정한다 | 결제당 `CHARGE` 멱등 제약(`uk_point_ledger_payment_entry`)과 대사 불일치 UNIQUE를 지켜야 한다. 외부 API(PG 조회)의 처리는 [장애 처리 설계 7장](./billing_장애_처리_설계.md#7-pg_vs_charge-대사391의-외부-api-처리)이 갖는다 |
 
 `PG_VS_CHARGE` 작업은 00:00 묶음이 아니라서 `batch_execution_log` 점유(`claim`)로 배치 서버 두 대가 같은 날을 겹쳐 돌지 않게 한다. 충전 직후 재예약은 시각이 아니라 `PointCharged` 커밋 뒤 리스너가 입구다.
 
