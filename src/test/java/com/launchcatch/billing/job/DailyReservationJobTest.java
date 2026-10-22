@@ -60,10 +60,22 @@ class DailyReservationJobTest {
     @Test
     void 막힌_행은_건드리지_않는다() {
         when(executions.begin(DailyReservationJob.RELEASE_JOB_NAME, PREV)).thenReturn(StepOutcome.BLOCKED);
+        when(executions.retry(DailyReservationJob.RELEASE_JOB_NAME, PREV)).thenReturn(false);
 
         job.run(DAY);
 
         verify(executions, never()).succeed(any(), any());
+    }
+
+    @Test
+    void 해제는_끝났지만_실패로_남은_표시는_다시_열어_성공으로_닫는다() {
+        when(executions.begin(DailyReservationJob.RELEASE_JOB_NAME, PREV))
+                .thenReturn(StepOutcome.BLOCKED, StepOutcome.STARTED);
+        when(executions.retry(DailyReservationJob.RELEASE_JOB_NAME, PREV)).thenReturn(true);
+
+        job.run(DAY);
+
+        verify(executions).succeed(DailyReservationJob.RELEASE_JOB_NAME, PREV);
     }
 
     @Test

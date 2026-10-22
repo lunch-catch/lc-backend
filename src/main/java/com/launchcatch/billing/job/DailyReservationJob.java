@@ -42,9 +42,12 @@ public class DailyReservationJob implements DailyJob {
         markReleased(businessDate.minusDays(1));
     }
 
-    // 이미 SUCCESS 면 그대로 둔다. 다른 서버가 쥐고 있거나 FAILED 로 남은 행은 건드리지 않고 경고만 남긴다
+    // 이미 SUCCESS 면 그대로 둔다. FAILED 는 해제가 끝난 뒤 표시만 남기지 못한 경우일 수 있어 다시 열어 닫는다
     private void markReleased(LocalDate releasedDate) {
         StepOutcome outcome = executions.begin(RELEASE_JOB_NAME, releasedDate);
+        if (outcome == StepOutcome.BLOCKED && executions.retry(RELEASE_JOB_NAME, releasedDate)) {
+            outcome = executions.begin(RELEASE_JOB_NAME, releasedDate);
+        }
         if (outcome == StepOutcome.STARTED) {
             executions.succeed(RELEASE_JOB_NAME, releasedDate);
         } else if (outcome == StepOutcome.BLOCKED) {
