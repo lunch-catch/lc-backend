@@ -8,6 +8,7 @@ import com.launchcatch.store.contract.StoreQueryService;
 import com.launchcatch.store.dto.StoreAdCandidateQueryRow;
 import com.launchcatch.store.contract.StoreInfo;
 import com.launchcatch.store.contract.StoreMenuInfo;
+import com.launchcatch.store.contract.StoreMenuQueryResult;
 import com.launchcatch.store.dto.StoreMenuQueryRow;
 import com.launchcatch.store.dto.StoreQueryRow;
 import com.launchcatch.store.dto.StoreSummaryQueryRow;
@@ -26,6 +27,20 @@ import org.springframework.dao.DataAccessResourceFailureException;
 class StoreQueryServiceImplTest {
     private final StoreQueryRepository repository = mock(StoreQueryRepository.class);
     private final StoreQueryServiceImpl service = new StoreQueryServiceImpl(repository, mock(OwnerStoreQueryRepository.class), mock(StoreOnboardingQueryRepository.class), "https://cdn.example.com/");
+
+    @Test
+    void 정상_메뉴와_데이터_오류_메뉴_ID를_한번에_반환한다() {
+        when(repository.findMenusByIdIn(List.of(10L, 11L, 12L))).thenReturn(List.of(
+                new StoreMenuQueryRow(10L, 1L, null, "이미지 누락", 9000L),
+                new StoreMenuQueryRow(11L, 1L, "menus/11.png", "정상 메뉴", 8000L),
+                new StoreMenuQueryRow(12L, 1L, " ", "저장 키 공백", 7000L)));
+
+        var result = service.findMenusByIdIn(List.of(10L, 11L, 12L));
+
+        assertThat(result).extracting("menus", "invalidMenuIds").containsExactly(
+                List.of(new StoreMenuInfo(11L, 1L, "https://cdn.example.com/menus/11.png", "정상 메뉴", 8000L)),
+                List.of(10L, 12L));
+    }
 
     @Test
     void 광고_후보는_업종과_LOGO_URL과_DECIMAL_좌표를_반환한다() {
@@ -118,7 +133,9 @@ class StoreQueryServiceImplTest {
                 new StoreMenuQueryRow(10L, 1L, "menus/10.png", "국밥", 9000L),
                 new StoreMenuQueryRow(11L, 1L, "menus/11.png", "서비스", 0L)));
 
-        assertThat(service.findMenusByIdIn(List.of(10L, 11L))).containsExactly(
+        var result = service.findMenusByIdIn(List.of(10L, 11L));
+        assertThat(result.invalidMenuIds()).isEmpty();
+        assertThat(result.menus()).containsExactly(
                 new StoreMenuInfo(10L, 1L, "https://cdn.example.com/menus/10.png", "국밥", 9000L),
                 new StoreMenuInfo(11L, 1L, "https://cdn.example.com/menus/11.png", "서비스", 0L));
     }
@@ -129,9 +146,9 @@ class StoreQueryServiceImplTest {
         when(repository.findMenusByIdIn(List.of(99L))).thenReturn(List.of());
 
         assertThat(service.findAllById(List.of())).isEmpty();
-        assertThat(service.findMenusByIdIn(List.of())).isEmpty();
+        assertThat(service.findMenusByIdIn(List.of())).isEqualTo(new StoreMenuQueryResult(List.of(), List.of()));
         assertThat(service.findAllById(List.of(99L))).isEmpty();
-        assertThat(service.findMenusByIdIn(List.of(99L))).isEmpty();
+        assertThat(service.findMenusByIdIn(List.of(99L))).isEqualTo(new StoreMenuQueryResult(List.of(), List.of()));
     }
 
     @Test
@@ -188,22 +205,53 @@ class StoreQueryServiceImplTest {
                 new StoreInfo(1L, "가게", null, 37.5, 127.0));
     }
 
-    @Test
-    void 최종_등록된_가게의_메뉴_이미지가_없으면_실패한다() {
+    @ParameterizedTest
+    @NullAndEmptySource
+    @ValueSource(strings = {" ", "\t"})
+    void 메뉴_이미지_키가_없거나_공백이면_오류_메뉴_ID를_반환한다(String imageKey) {
         when(repository.findMenusByIdIn(List.of(10L))).thenReturn(List.of(
-                new StoreMenuQueryRow(10L, 1L, null, "국밥", 9000L)));
+                new StoreMenuQueryRow(10L, 1L, imageKey, "국밥", 9000L)));
 
-        assertThatThrownBy(() -> service.findMenusByIdIn(List.of(10L)))
-                .isInstanceOf(IllegalStateException.class).hasMessageContaining("이미지가 누락");
+        assertThat(service.findMenusByIdIn(List.of(10L)))
+                .isEqualTo(new StoreMenuQueryResult(List.of(), List.of(10L)));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"", " ", "\t"})
+    void 데이터_오류_뒤의_정상_메뉴에서_CDN_설정_오류가_나면_전파한다(String baseUrl) {
+        var unconfigured = new StoreQueryServiceImpl(repository, mock(OwnerStoreQueryRepository.class),
+                mock(StoreOnboardingQueryRepository.class), baseUrl);
+        when(repository.findMenusByIdIn(List.of(10L, 11L))).thenReturn(List.of(
+                new StoreMenuQueryRow(10L, 1L, null, "이미지 누락", 9000L),
+                new StoreMenuQueryRow(11L, 1L, "menus/11.png", "정상 메뉴", 8000L)));
+
+        assertThatThrownBy(() -> unconfigured.findMenusByIdIn(List.of(10L, 11L)))
+                .isExactlyInstanceOf(IllegalStateException.class).hasMessageContaining("cdn.base-url");
     }
 
     @Test
-    void 이미지_저장_키가_공백이어도_실패한다() {
+    void CDN_설정이_없어도_모든_메뉴가_데이터_오류면_오류_ID를_반환한다() {
+        var unconfigured = new StoreQueryServiceImpl(repository, mock(OwnerStoreQueryRepository.class),
+                mock(StoreOnboardingQueryRepository.class), "");
         when(repository.findMenusByIdIn(List.of(10L))).thenReturn(List.of(
-                new StoreMenuQueryRow(10L, 1L, " ", "국밥", 9000L)));
+                new StoreMenuQueryRow(10L, 1L, null, "국밥", 9000L)));
 
-        assertThatThrownBy(() -> service.findMenusByIdIn(List.of(10L)))
-                .isInstanceOf(IllegalStateException.class).hasMessageContaining("이미지가 누락");
+        assertThat(unconfigured.findMenusByIdIn(List.of(10L)))
+                .isEqualTo(new StoreMenuQueryResult(List.of(), List.of(10L)));
+    }
+
+    @Test
+    void 메뉴_조회_결과의_두_목록은_방어적으로_복사한다() {
+        var menus = new java.util.ArrayList<>(List.of(new StoreMenuInfo(11L, 1L, "image", "국밥", 9000L)));
+        var invalidIds = new java.util.ArrayList<>(List.of(10L));
+        var result = new StoreMenuQueryResult(menus, invalidIds);
+        menus.clear();
+        invalidIds.clear();
+
+        assertThat(result.menus()).hasSize(1);
+        assertThat(result.invalidMenuIds()).containsExactly(10L);
+        assertThatThrownBy(() -> result.menus().clear()).isInstanceOf(UnsupportedOperationException.class);
+        assertThatThrownBy(() -> result.invalidMenuIds().clear()).isInstanceOf(UnsupportedOperationException.class);
     }
 
     @Test

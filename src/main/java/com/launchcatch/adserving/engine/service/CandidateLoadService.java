@@ -10,6 +10,7 @@ import com.launchcatch.campaign.contract.CampaignStatus;
 import com.launchcatch.campaign.contract.DiscountTargetType;
 import com.launchcatch.store.contract.StoreAdCandidateInfo;
 import com.launchcatch.store.contract.StoreMenuInfo;
+import com.launchcatch.store.contract.StoreMenuQueryResult;
 import com.launchcatch.store.contract.StoreQueryService;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.time.Clock;
@@ -19,6 +20,8 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -37,7 +40,10 @@ public class CandidateLoadService {
     // 지난 후보를 남기는 영업일 수다. 영업일 D 의 적재가 D-7 보다 앞선 행을 지운다(#582)
     static final int RETENTION_DAYS = 7;
 
-    // 가게가 없거나 메뉴 할인의 메뉴명을 찾지 못해 적재하지 못한 캠페인 수다. reason 태그로 가른다
+    /*
+     * 가게가 없거나 메뉴 할인의 메뉴명을 얻지 못해 적재하지 못한 캠페인 수다. reason 태그로 가른다.
+     * 메뉴가 없으면 menu_missing, 가게 계약이 메뉴 이미지의 데이터 오류로 돌려주면 menu_invalid 다(#779).
+     */
     static final String SKIPPED_METRIC = "adserving_candidate_load_skipped_total";
 
     private final CampaignQueryService campaignQueryService;
@@ -56,7 +62,10 @@ public class CandidateLoadService {
         LocalDateTime readAt = LocalDateTime.now(clock);
         List<CampaignInfo> campaigns = campaignQueryService.findServableOn(businessDate);
         Map<Long, StoreAdCandidateInfo> stores = readStores(campaigns);
-        Map<Long, String> menuNames = readMenuNames(campaigns);
+        StoreMenuQueryResult menus = readMenus(campaigns);
+        Map<Long, StoreMenuInfo> menusById = menus.menus().stream()
+                .collect(Collectors.toMap(StoreMenuInfo::menuId, Function.identity()));
+        Set<Long> invalidMenuIds = Set.copyOf(menus.invalidMenuIds());
 
         List<CandidateRow> rows = new ArrayList<>(campaigns.size());
         Map<Long, LocalDateTime> loaded = new HashMap<>();
@@ -68,12 +77,23 @@ public class CandidateLoadService {
             }
             String menuName = null;
             if (campaign.discountTargetType() == DiscountTargetType.MENU) {
-                menuName = menuNames.get(campaign.targetMenuId());
-                // MENU 할인에 메뉴명이 없으면 CHECK chk_candidate_discount_menu 에 걸려 적재 전체가 실패한다
-                if (menuName == null) {
+                // 메뉴가 없는 것과 가르도록 이미지 데이터 오류는 따로 세고 메뉴 ID 를 남긴다(#779)
+                if (invalidMenuIds.contains(campaign.targetMenuId())) {
+                    log.warn("event=ADSERVING_CANDIDATE_MENU_INVALID campaignId={} menuId={} fallback=SKIP_CAMPAIGN",
+                            campaign.campaignId(), campaign.targetMenuId());
+                    skip("menu_invalid");
+                    continue;
+                }
+                StoreMenuInfo menu = menusById.get(campaign.targetMenuId());
+                /*
+                 * MENU 할인에 메뉴명이 없으면 CHECK chk_candidate_discount_menu 에 걸려 적재 전체가 실패한다.
+                 * 다른 가게의 메뉴면 그 가게가 팔지 않는 메뉴의 할인이 나간다. 가게 계약이 이 확인을 광고 서빙에 맡겼다(#783).
+                 */
+                if (menu == null || !menu.storeId().equals(campaign.storeId())) {
                     skip("menu_missing");
                     continue;
                 }
+                menuName = menu.menuName();
             }
             rows.add(toRow(businessDate, campaign, store, menuName));
             loaded.put(campaign.campaignId(), campaign.statusChangedAt());
@@ -114,15 +134,14 @@ public class CandidateLoadService {
         return stores;
     }
 
-    private Map<Long, String> readMenuNames(List<CampaignInfo> campaigns) {
+    private StoreMenuQueryResult readMenus(List<CampaignInfo> campaigns) {
         List<Long> menuIds = campaigns.stream()
                 .filter(c -> c.discountTargetType() == DiscountTargetType.MENU && c.targetMenuId() != null)
                 .map(CampaignInfo::targetMenuId).distinct().toList();
         if (menuIds.isEmpty()) {
-            return Map.of();
+            return new StoreMenuQueryResult(List.of(), List.of());
         }
-        return storeQueryService.findMenusByIdIn(menuIds).stream()
-                .collect(Collectors.toMap(StoreMenuInfo::menuId, StoreMenuInfo::menuName));
+        return storeQueryService.findMenusByIdIn(menuIds);
     }
 
     private static CandidateRow toRow(LocalDate businessDate, CampaignInfo c, StoreAdCandidateInfo store, String menuName) {

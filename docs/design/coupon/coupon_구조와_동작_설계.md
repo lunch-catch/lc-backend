@@ -167,6 +167,7 @@ V7은 전체 메뉴 정률 조합을 CHECK에서 제외한다. 지원하지 않�
 
 계약과 의존 방향은 [아키텍처 2장](../../architecture/런치캐치_도메인_구조와_의존성_설계.md)을 따른다.
 store 메서드의 반환 정책은 [공개 계약 문서](../store/store-query-contract.md)가 갖는다.
+회차 준비의 메뉴 조회도 [메뉴 조회 결과 계약](../store/store-query-contract.md#메뉴-조회-결과-788)을 사용한다(#788). 데이터 오류 메뉴를 받으면 해당 회차의 트랜잭션을 실패시키며 회차와 재고를 생성하지 않는다.
 쿠폰 집계 조회의 날짜·상태·반환·실패 정책은 [집계 조회 계약](./coupon-stats-query-contract.md)이 갖는다.
 현재 coupon은 공개 조회 계약 위에 자체 캐시를 추가하지 않는다.
 공개 이벤트의 필드는 [contract 디렉터리](../../../src/main/java/com/launchcatch/coupon/contract/)가 갖는다.
