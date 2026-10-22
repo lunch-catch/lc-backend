@@ -27,35 +27,36 @@ public class DomainFlywayMigrator implements InitializingBean {
     static final String ROOT = "db/migration";
 
     /*
-     * 시험 데이터다. 스키마와 섞지 않고 따로 둔다. 이력도 flyway_history_seed 로 따로 둔다.
-     * 섞으면 운영 이력에 시드 흔적이 남고, 스키마 버전과 시드가 서로의 순서를 막는다.
+     * 시나리오 데이터다 (#741). 스키마와 섞지 않고 따로 둔다. 이력도 flyway_history_base 로 따로 둔다.
+     * 섞으면 스키마 버전과 데이터가 서로의 순서를 막는다.
+     * V__ 는 기본 세계, R__demo 는 시연 층이다 (docs/scenarios/data.md, demo.md).
      */
-    static final String SEED_ROOT = "db/seed";
+    static final String BASE_ROOT = "db/base";
 
     /** 도메인 폴더 안의 SQL 경로에서 폴더 이름을 뽑는다. jar 안의 경로에도 걸린다. */
     private static final Pattern DOMAIN_OF = Pattern.compile(ROOT + "/([^/]+)/[^/]+\\.sql$");
 
     private final DataSource dataSource;
-    private final SeedSettings seed;
+    private final BaseSettings base;
 
     public DomainFlywayMigrator(DataSource dataSource) {
-        this(dataSource, SeedSettings.DISABLED);
+        this(dataSource, BaseSettings.DISABLED);
     }
 
-    public DomainFlywayMigrator(DataSource dataSource, SeedSettings seed) {
+    public DomainFlywayMigrator(DataSource dataSource, BaseSettings base) {
         this.dataSource = dataSource;
-        this.seed = seed;
+        this.base = base;
     }
 
     /*
-     * 시드를 돌릴지와 SQL 의 자리표시자 값이다.
-     * 기본은 꺼짐이다. 켜는 것은 로컬과 개발 서버뿐이고 운영과 테스트는 켜지 않는다.
+     * 시나리오 데이터를 돌릴지와 SQL 의 자리표시자 값이다.
+     * 기본은 꺼짐이다. 로컬은 local 프로필이, 개발과 운영은 인프라가 BASE_ENABLED 로 켠다. 테스트는 켜지 않는다.
      */
-    public record SeedSettings(boolean enabled, Map<String, String> placeholders) {
+    public record BaseSettings(boolean enabled, Map<String, String> placeholders) {
 
-        public static final SeedSettings DISABLED = new SeedSettings(false, Map.of());
+        public static final BaseSettings DISABLED = new BaseSettings(false, Map.of());
 
-        public SeedSettings {
+        public BaseSettings {
             placeholders = Map.copyOf(placeholders);
         }
     }
@@ -73,23 +74,24 @@ public class DomainFlywayMigrator implements InitializingBean {
                             + stray + ". 도메인 폴더로 옮긴다");
         }
         domains().forEach(this::migrate);
-        if (seed.enabled()) {
-            migrateSeed();
+        if (base.enabled()) {
+            migrateBase();
         }
     }
 
     /*
-     * 모든 도메인이 끝난 뒤 한 번 돈다. 시드는 점주, 가게, 캠페인처럼 여러 도메인 테이블에 걸친다.
-     * 파일은 R__ (repeatable) 이라 내용이 바뀌면 다시 돈다. 그래서 SQL 은 여러 번 돌아도 같은 결과가 되게 쓴다.
+     * 모든 도메인이 끝난 뒤 한 번 돈다. 데이터는 점주, 가게, 캠페인처럼 여러 도메인 테이블에 걸친다.
+     * V__ 는 DB 마다 한 번만 돈다. 이미 적용된 V__ 를 고치면 체크섬이 어긋나 기동이 막히므로 바꿀 것은 새 V__ 로 더한다.
+     * R__demo 는 내용이 바뀌면 다시 돌므로 여러 번 돌아도 같은 결과가 되게 쓴다.
      */
-    private void migrateSeed() {
+    private void migrateBase() {
         Flyway.configure()
                 .dataSource(dataSource)
-                .locations("classpath:" + SEED_ROOT)
-                .table("flyway_history_seed")
+                .locations("classpath:" + BASE_ROOT)
+                .table("flyway_history_base")
                 .baselineOnMigrate(true)
                 .baselineVersion("0")
-                .placeholders(seed.placeholders())
+                .placeholders(base.placeholders())
                 .load()
                 .migrate();
     }

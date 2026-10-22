@@ -344,13 +344,19 @@ resilience4j:
       # 그 문턱은 자기 앱의 지연 분포를 알아야 정할 수 있다.
       # 목표 처리량으로 부하 시험을 돌린 뒤 실측으로 채운다
 
-# 시험 데이터(db/seed). 스키마 마이그레이션 뒤에 넣는다 (db/seed/README.md).
-# 기본은 꺼짐이라 운영에서는 돌지 않는다. 로컬은 아래 local 문서가 켜고, 개발 서버는 인프라가 SEED_ENABLED 로 켠다.
-seed:
-  enabled: "${SEED_ENABLED:false}"
-  # 시드 계정(관리자, 점주)의 BCrypt 해시. 기본값은 lunchcatch1234! 이고 저장소에 공개돼 있다. 점주 비밀번호 규칙(10~20자)에 맞춘 길이다.
-  # 개발 서버는 인프라가 SEED_PASSWORD_HASH 로 다른 값을 넣는다
-  password-hash: "${SEED_PASSWORD_HASH:$2a$10$MRk.eo1/rGQNUGClHmwVB.Z5zREkJzDzDfu9M4oJsZ.vd0s3n6tAu}"
+# 시나리오 데이터(db/base). 스키마 마이그레이션 뒤에 넣는다 (#741, docs/scenarios/data.md).
+# 기본은 꺼짐이다. 로컬은 아래 local 문서가 켜고, 개발과 운영은 인프라가 BASE_ENABLED 와 해시 넷을 넣는다.
+base:
+  enabled: "${BASE_ENABLED:false}"
+  # 데이터 날짜의 기준일(YYYY-MM-DD). 비우면 오늘이다. 시연용 운영은 2026-10-28
+  date: "${BASE_DATE:}"
+
+# 기본 계정 비밀번호의 BCrypt 해시. 켜져 있는데 비면 기동을 막는다
+account:
+  superadmin-password-hash: "${ACCOUNT_SUPERADMIN_PASSWORD_HASH:}"
+  demo-admin-password-hash: "${ACCOUNT_DEMO_ADMIN_PASSWORD_HASH:}"
+  demo-owner-password-hash: "${ACCOUNT_DEMO_OWNER_PASSWORD_HASH:}"
+  scenario-password-hash: "${ACCOUNT_SCENARIO_PASSWORD_HASH:}"
 
 ---
 spring:
@@ -358,8 +364,15 @@ spring:
     activate:
       on-profile: local
 
-seed:
+base:
   enabled: true
+
+# 로컬은 저장소에 공개된 lunchcatch1234! 의 해시를 쓴다. 점주 비밀번호 규칙(10~20자)에 맞춘 길이다
+account:
+  superadmin-password-hash: "${ACCOUNT_SUPERADMIN_PASSWORD_HASH:$2a$10$MRk.eo1/rGQNUGClHmwVB.Z5zREkJzDzDfu9M4oJsZ.vd0s3n6tAu}"
+  demo-admin-password-hash: "${ACCOUNT_DEMO_ADMIN_PASSWORD_HASH:$2a$10$MRk.eo1/rGQNUGClHmwVB.Z5zREkJzDzDfu9M4oJsZ.vd0s3n6tAu}"
+  demo-owner-password-hash: "${ACCOUNT_DEMO_OWNER_PASSWORD_HASH:$2a$10$MRk.eo1/rGQNUGClHmwVB.Z5zREkJzDzDfu9M4oJsZ.vd0s3n6tAu}"
+  scenario-password-hash: "${ACCOUNT_SCENARIO_PASSWORD_HASH:$2a$10$MRk.eo1/rGQNUGClHmwVB.Z5zREkJzDzDfu9M4oJsZ.vd0s3n6tAu}"
 
 # 로컬은 결제를 실제로 쓰지 않아도 뜨게 토스 문서에 공개된 테스트 키를 기본값으로 둔다.
 # 팀 상점으로 시험하려면 TOSS_SECRET_KEY 나 application-local.yml 로 바꾼다.
