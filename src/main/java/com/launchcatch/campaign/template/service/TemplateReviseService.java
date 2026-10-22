@@ -68,6 +68,9 @@ public class TemplateReviseService {
         String previousHtml = latestVersionHtml(templateId);
         Document previousDocument = Jsoup.parseBodyFragment(previousHtml);
         GeneratedTemplate generated = generate(previousHtml, requestPrompt);
+        if (generated.chatOnly()) {
+            return chatOnlyResponse(requestId, generated);
+        }
         Document document = Jsoup.parseBodyFragment(generated.html());
         TemplateSanitizeResult sanitized = templateHtmlSanitizer.sanitize(document);
         templateSlotValidator.validate(document);
@@ -90,6 +93,15 @@ public class TemplateReviseService {
             templateGenerationRateLimiter.releaseInFlight(requestId);
             throw e;
         }
+    }
+
+    /*
+     * 수정 요청이 아니라 질문이나 인사여서 모델이 자연어로만 답한 경우다(#733). 새 버전을 저장하지 않으므로 버전 번호와
+     * 20개 보존 상한에 영향이 없다. 같은 requestId 재시도는 모델을 다시 부르므로 처리 중 표식은 푼다.
+     */
+    private TemplateCreateResponse chatOnlyResponse(String requestId, GeneratedTemplate generated) {
+        templateGenerationRateLimiter.releaseInFlight(requestId);
+        return TemplateCreateResponse.chatOnly(generated.message());
     }
 
     /*

@@ -244,6 +244,26 @@ class TemplateCreateServiceTest {
     }
 
     @Test
+    @DisplayName("템플릿 요청이 아니라 대화만 있는 응답이면 템플릿을 만들지 않고 message 만 돌려준다(#733)")
+    void 대화만_있는_응답이면_템플릿을_만들지_않는다() {
+        처음_보는_requestId로_설정한다();
+        when(templateRepository.count()).thenReturn(9L);
+        when(templateHtmlGenerator.generate("이 도구는 뭘 할 수 있어?"))
+                .thenReturn(GeneratedTemplate.chatOnly("템플릿의 색과 배치를 요청하시면 만들어 드려요."));
+
+        TemplateCreateResponse response = service.create("가을 신메뉴", "이 도구는 뭘 할 수 있어?", REQUEST_ID, ADMIN_ID);
+
+        assertThat(response.templateId()).isNull();
+        assertThat(response.versionNumber()).isNull();
+        assertThat(response.html()).isNull();
+        assertThat(response.message()).isEqualTo("템플릿의 색과 배치를 요청하시면 만들어 드려요.");
+        assertThat(response.suggestedPrompts()).isEmpty();
+        verify(templateRepository, never()).saveAndFlush(any());
+        verifyNoInteractions(templateQuotaRepository);
+        verify(redisTemplate).delete("templateGenerationInFlight:" + REQUEST_ID);
+    }
+
+    @Test
     @DisplayName("템플릿이 이미 10개면 LLM 을 부르지 않고 POSTER-003 으로 거부한다")
     void 템플릿이_10개면_거부한다() {
         처음_보는_requestId로_설정한다();
