@@ -58,12 +58,20 @@ public class DailyReservationService {
      * 단가를 먼저 정한다(unitPriceOf). 키가 없거나 0 이하이면 아무것도 쓰지 않고 예외로 단계를 실패시킨다. 0 으로 진행하면
      * 계획 행을 만들 수 없고, 잘못된 값으로 진행하면 모든 캠페인이 NO_POINTS 로 판정될 수 있다.
      * 보정 RELEASE 가 실패하면 예약을 진행하지 않는다. RESERVE 가 쓰는 잔액은 보정 뒤의 잔액이어야 한다.
+     * 해제가 끝난 날짜는 오늘 예약 결과를 기다리지 않고 바로 해제 완료로 표시한다(BILLING_DAILY_RELEASE).
      */
     public int reserve(LocalDate businessDate) {
         long unitPrice = unitPriceOf(businessDate);
+        LocalDate yesterday = businessDate.minusDays(1);
+        boolean yesterdayMarked = false;
         for (LocalDate unreleasedDate : planRepository.findUnreleasedBusinessDatesBefore(businessDate)) {
             release(unreleasedDate);
             releaseMarker.mark(unreleasedDate);
+            yesterdayMarked |= unreleasedDate.equals(yesterday);
+        }
+        // 전날은 남은 해제액이 0 이라 위 목록에 없을 수 있다. 오늘 예약의 성공과 무관하게 해제가 끝난 시점에 표시한다
+        if (!yesterdayMarked) {
+            releaseMarker.mark(yesterday);
         }
 
         List<CampaignInfo> campaigns = campaignQuery.findServableOn(businessDate);
