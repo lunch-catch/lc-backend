@@ -118,11 +118,12 @@ class MdcLoggingFilterTest {
         assertThat(mdc).containsEntry("method", "POST").containsEntry("uri", "/v1/auth/tokens");
     }
 
+    // ALB 는 받은 헤더 끝에 실제 접속 IP 를 덧붙인다. 앞쪽 1.2.3.4 는 클라이언트가 꾸민 값이다 (#722)
     @Test
-    void X_Forwarded_For의_첫_주소를_클라이언트_IP로_쓴다() throws Exception {
+    void X_Forwarded_For의_마지막_주소를_클라이언트_IP로_쓴다() throws Exception {
         // given
         MockHttpServletRequest request = request();
-        request.addHeader("X-Forwarded-For", "203.0.113.5, 10.0.0.1");
+        request.addHeader("X-Forwarded-For", "1.2.3.4, 203.0.113.5");
 
         // when
         Map<String, String> mdc = mdcSeenByChain(request, new MockHttpServletResponse());
