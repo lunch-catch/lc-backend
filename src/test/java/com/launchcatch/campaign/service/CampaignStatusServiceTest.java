@@ -173,6 +173,31 @@ class CampaignStatusServiceTest {
     }
 
     @Test
+    @DisplayName("영업일을 받는 activate 는 ACTIVE 로 바꾸고 가게 요약도 갱신한다(#569)")
+    void 영업일을_받는_activate_는_가게_요약도_갱신한다() {
+        Campaign campaign = scheduledCampaign();
+        when(campaignRepository.findByIdForUpdate(CAMPAIGN_ID)).thenReturn(Optional.of(campaign));
+
+        service.activate(CAMPAIGN_ID, BUSINESS_DATE);
+
+        assertThat(campaign.getStatus()).isEqualTo(CampaignStatus.ACTIVE);
+        assertThat(captureLog().getActorType()).isEqualTo(ActorType.SYSTEM);
+        verify(storeCampaignSummaryUpdater).update(anyLong(), anyLong(), any());
+    }
+
+    @Test
+    @DisplayName("이미 ACTIVE 면 영업일을 받는 activate 를 다시 불러도 가게 요약을 갱신하지 않는다(멱등)")
+    void 이미_ACTIVE면_영업일을_받는_activate_는_요약을_갱신하지_않는다() {
+        Campaign campaign = activeCampaign();
+        when(campaignRepository.findByIdForUpdate(CAMPAIGN_ID)).thenReturn(Optional.of(campaign));
+
+        service.activate(CAMPAIGN_ID, BUSINESS_DATE);
+
+        verify(storeCampaignSummaryUpdater, never()).update(anyLong(), anyLong(), any());
+        verify(campaignStatusLogRepository, never()).save(any());
+    }
+
+    @Test
     @DisplayName("SCHEDULED가 아니면 activate를 거부한다")
     void SCHEDULED가_아니면_activate를_거부한다() {
         Campaign campaign = draftCampaign();

@@ -95,13 +95,31 @@ public class CampaignStatusService {
 
     @Transactional
     public void activate(Long campaignId) {
+        activateCampaign(campaignId);
+    }
+
+    /*
+     * 00:00 배치(#569)가 집행 시작일이 된 캠페인을 켤 때 쓴다. 상태 변경과 로그에 더해 가게 요약을 ACTIVE 로 갱신한다.
+     * 이미 ACTIVE 면 아무것도 하지 않아 같은 영업일에 두 번 불려도 결과가 같다(멱등).
+     */
+    @Transactional
+    public void activate(Long campaignId, LocalDate businessDate) {
+        Campaign campaign = activateCampaign(campaignId);
+        if (campaign != null) {
+            updateStoreSummary(campaign, businessDate);
+        }
+    }
+
+    // 이미 ACTIVE 라 바꿀 것이 없으면 null 을 돌려준다.
+    private Campaign activateCampaign(Long campaignId) {
         Campaign campaign = findOrThrow(campaignId);
         if (campaign.getStatus() == CampaignStatus.ACTIVE) {
-            return;
+            return null;
         }
         CampaignStatus from = campaign.getStatus();
         campaign.activate(LocalDateTime.now(clock));
         log(campaignId, from, campaign.getStatus(), ActorType.SYSTEM, null);
+        return campaign;
     }
 
     /*
