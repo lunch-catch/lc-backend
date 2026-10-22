@@ -53,7 +53,7 @@ public class EventLogRetentionService {
             }
             pause();
         }
-        log.info("event=EVENT_LOG_RETENTION_DONE cutoff={} deleted={}", cutoff, total);
+        log.info("event=ANALYTICS_EVENT_LOG_RETENTION_DONE cutoff={} deletedCount={}", cutoff, total);
         return total;
     }
 

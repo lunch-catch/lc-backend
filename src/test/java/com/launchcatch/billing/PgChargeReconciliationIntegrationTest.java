@@ -1,12 +1,15 @@
 package com.launchcatch.billing;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.launchcatch.billing.client.FakePaymentGateway;
 import com.launchcatch.billing.client.PaymentGatewayInquiryResult;
 import com.launchcatch.billing.client.PaymentGatewayInquiryResult.Status;
+import com.launchcatch.billing.client.PgUnknownException;
 import com.launchcatch.billing.repository.PaymentRepository;
 import com.launchcatch.billing.repository.PointLedgerRepository;
+import com.launchcatch.billing.repository.PgChargeReconciliationPendingRepository;
 import com.launchcatch.billing.service.PgChargeMismatchRecorder;
 import com.launchcatch.billing.service.PgChargeReconciliationService;
 import com.launchcatch.global.config.ClockConfig;
@@ -18,6 +21,7 @@ import java.time.LocalDateTime;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 /*
@@ -41,6 +45,7 @@ class PgChargeReconciliationIntegrationTest extends AbstractBillingIntegrationTe
 
     @Autowired PaymentRepository paymentRepository;
     @Autowired PointLedgerRepository ledgerRepository;
+    @Autowired PgChargeReconciliationPendingRepository pendingRepository;
     @Autowired PgChargeMismatchRecorder mismatchRecorder;
     @Autowired BatchExecutionQueryService batchExecutions;
     @Autowired MeterRegistry meterRegistry;
@@ -49,6 +54,9 @@ class PgChargeReconciliationIntegrationTest extends AbstractBillingIntegrationTe
 
     @AfterEach
     void clean() {
+        gateway.failInquiryWith(null);
+        jdbc.update("delete from pg_charge_reconciliation_pending where payment_id in"
+                + " (select payment_id from payment where owner_id = ?)", OWNER);
         jdbc.update("delete from settlement_mismatch where check_type = 'PG_VS_CHARGE'"
                 + " and target_id in (select payment_id from payment where owner_id = ?)", OWNER);
         jdbc.update("delete from point_ledger where owner_id = ?", OWNER);
@@ -69,7 +77,7 @@ class PgChargeReconciliationIntegrationTest extends AbstractBillingIntegrationTe
     // DAY 00:00 에 이 작업이 도는 것으로 고정한다. 워터마크는 DAY 23:55 다
     private PgChargeReconciliationService serviceAtMidnightOf(LocalDate runDate) {
         Clock fixed = Clock.fixed(runDate.atStartOfDay().atZone(ClockConfig.ZONE).toInstant(), ClockConfig.ZONE);
-        return new PgChargeReconciliationService(paymentRepository, ledgerRepository, gateway, mismatchRecorder,
+        return new PgChargeReconciliationService(paymentRepository, ledgerRepository, pendingRepository, gateway, mismatchRecorder,
                 batchExecutions, meterRegistry, fixed);
     }
 
@@ -101,6 +109,80 @@ class PgChargeReconciliationIntegrationTest extends AbstractBillingIntegrationTe
         return jdbc.queryForObject(
                 "select count(*) from settlement_mismatch where check_type = 'PG_VS_CHARGE' and target_id = ?",
                 Integer.class, paymentId);
+    }
+
+
+    private int pendingCount(long paymentId) {
+        return jdbc.queryForObject(
+                "select count(*) from pg_charge_reconciliation_pending where payment_id = ?",
+                Integer.class, paymentId);
+    }
+
+    @Test
+    void 조회가_실패한_결제는_대기로_남고_다음_실행에서_성공하면_보정하고_대기를_해소한다() {
+        long paymentId = approvedPayment("ord_pg_recon_4", "tgen_pg_recon_4", 30_000L);
+        gateway.failInquiryWith(new PgUnknownException("read timeout", new RuntimeException()));
+        PgChargeReconciliationService service = serviceAtMidnightOf(RUN_DATE);
+
+        assertThat(service.reconcilePreviousDay(RUN_DATE, JOB)).isZero();
+
+        assertThat(pendingCount(paymentId)).isEqualTo(1);
+        assertThat(chargeCount(paymentId)).isZero();
+
+        gateway.failInquiryWith(null);
+        gateway.givenPayment(new PaymentGatewayInquiryResult(Status.APPROVED, "tgen_pg_recon_4", "ord_pg_recon_4",
+                30_000L, DAY.atTime(10, 0), null, null));
+
+        assertThat(service.reconcilePreviousDay(RUN_DATE, JOB)).isEqualTo(1);
+
+        assertThat(chargeCount(paymentId)).isEqualTo(1);
+        assertThat(pendingCount(paymentId)).isZero();
+    }
+
+    @Test
+    void 재검증_대기_결제는_처음_영업일로_다시_보고_며칠_뒤에도_불일치가_한_건이다() {
+        long paymentId = approvedPayment("ord_pg_recon_6", "tgen_pg_recon_6", 30_000L);
+        gateway.failInquiryWith(new PgUnknownException("read timeout", new RuntimeException()));
+        serviceAtMidnightOf(RUN_DATE).reconcilePreviousDay(RUN_DATE, JOB);
+        assertThat(pendingCount(paymentId)).isEqualTo(1);
+
+        gateway.failInquiryWith(null);
+        gateway.givenPayment(new PaymentGatewayInquiryResult(Status.APPROVED, "tgen_pg_recon_6", "ord_pg_recon_6",
+                29_000L, DAY.atTime(10, 0), null, null));
+        LocalDate nextRun = RUN_DATE.plusDays(1);
+        assertThat(serviceAtMidnightOf(nextRun).reconcilePreviousDay(nextRun, JOB)).isEqualTo(1);
+        assertThat(pendingCount(paymentId)).isZero();
+
+        // 대기 해소가 실패해 대기가 남은 상태를 만든다. 다음 날 다시 봐도 같은 영업일이라 불일치가 늘지 않는다
+        mismatchRecorder.recordPending(paymentId, DAY, "resolve failed");
+        LocalDate laterRun = nextRun.plusDays(1);
+        serviceAtMidnightOf(laterRun).reconcilePreviousDay(laterRun, JOB);
+
+        assertThat(mismatchCount(paymentId)).isEqualTo(1);
+        assertThat(jdbc.queryForObject("select business_date from settlement_mismatch"
+                + " where check_type = 'PG_VS_CHARGE' and target_id = ?", LocalDate.class, paymentId)).isEqualTo(DAY);
+    }
+
+    @Test
+    void PG_응답의_주문번호가_결제와_다르면_보정하지_않고_대기로_남긴다() {
+        long paymentId = approvedPayment("ord_pg_recon_5", "tgen_pg_recon_5", 30_000L);
+        gateway.givenPayment(new PaymentGatewayInquiryResult(Status.APPROVED, "tgen_pg_recon_5", "ord_other",
+                30_000L, DAY.atTime(10, 0), null, null));
+
+        assertThat(serviceAtMidnightOf(RUN_DATE).reconcilePreviousDay(RUN_DATE, JOB)).isZero();
+
+        assertThat(chargeCount(paymentId)).isZero();
+        assertThat(mismatchCount(paymentId)).isZero();
+        assertThat(pendingCount(paymentId)).isEqualTo(1);
+    }
+
+    @Test
+    void 대기_행은_존재하는_결제만_가리킬_수_있다() {
+        assertThatThrownBy(() -> jdbc.update("""
+                insert into pg_charge_reconciliation_pending
+                    (payment_id, business_date, last_error, created_at, updated_at)
+                values (?, ?, 'x', now(6), now(6))
+                """, 999_999_999L, DAY)).isInstanceOf(DataIntegrityViolationException.class);
     }
 
     @Test
@@ -161,8 +243,8 @@ class PgChargeReconciliationIntegrationTest extends AbstractBillingIntegrationTe
 
         int mismatches = service.reconcilePreviousDay(RUN_DATE, JOB);
 
-        assertThat(mismatches).isZero();
-        assertThat(chargeCount(paymentId)).isZero();
-        assertThat(mismatchCount(paymentId)).isZero();
+        assertThat(mismatches).isEqualTo(1);
+        assertThat(chargeCount(paymentId)).isEqualTo(1);
+        assertThat(mismatchCount(paymentId)).isEqualTo(1);
     }
 }

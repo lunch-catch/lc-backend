@@ -16,6 +16,7 @@ import com.launchcatch.campaign.contract.TargetGender;
 import com.launchcatch.global.config.ClockConfig;
 import com.launchcatch.store.contract.StoreAdCandidateInfo;
 import com.launchcatch.store.contract.StoreMenuInfo;
+import com.launchcatch.store.contract.StoreMenuQueryResult;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -48,7 +49,8 @@ class CandidateLoadIntegrationTest extends AbstractAdservingIntegrationTest {
                 new StoreAdCandidateInfo(55L, "점심식당", "KOREAN", null, new BigDecimal("37.4979000"), new BigDecimal("127.0276000")),
                 new StoreAdCandidateInfo(56L, "저녁식당", "JAPANESE", "https://cdn.example.com/56.jpg",
                         new BigDecimal("37.4999000"), new BigDecimal("127.0276000"))));
-        when(storeQueryService.findMenusByIdIn(anyList())).thenReturn(List.of(new StoreMenuInfo(7001L, 56L, null, "돈코츠 라멘", 9000L)));
+        when(storeQueryService.findMenusByIdIn(anyList())).thenReturn(
+                new StoreMenuQueryResult(List.of(new StoreMenuInfo(7001L, 56L, null, "돈코츠 라멘", 9000L)), List.of()));
     }
 
     @AfterEach

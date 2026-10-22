@@ -390,4 +390,55 @@ class BedrockTemplateHtmlGeneratorTest {
                 .contains("A4 비율을 유지한다")
                 .contains("한 문장으로 밝힌다");
     }
+
+    @Test
+    void 코드펜스_밖의_제안_줄은_퀵_리플라이로_뽑고_설명에는_넣지_않는다() {
+        String wrapped = "글자를 키웠어요.\n[제안] 행사명 글자를 조금 더 크게 해줘\n[제안] 한 단계 작게 해줘\n```html\n" + LLM_HTML + "\n```";
+        when(bedrockRuntimeClient.converse(any(ConverseRequest.class)))
+                .thenReturn(textResponse(StopReason.END_TURN, wrapped));
+
+        GeneratedTemplate result = generator.generate("글자를 크게 해줘");
+
+        assertThat(result.suggestedPrompts()).containsExactly("행사명 글자를 조금 더 크게 해줘", "한 단계 작게 해줘");
+        assertThat(result.message()).isEqualTo("글자를 키웠어요.");
+    }
+
+    @Test
+    void 제안은_꺾쇠를_없애고_빈_것_긴_것_중복을_빼고_3개까지만_남긴다() {
+        String wrapped = "설명이에요.\n[제안] <b>색을 조금 더 진하게</b>\n[제안]   \n"
+                + "[제안] 아주 아주 아주 아주 아주 아주 아주 아주 긴 제안 문장은 서른 자를 넘으므로 버려진다\n"
+                + "[제안] 색을 조금 더 진하게\n[제안] 배경을 조금 더 밝게\n[제안] 모서리를 조금 더 둥글게\n[제안] 글자를 조금 더 크게\n```html\n"
+                + LLM_HTML + "\n```";
+        when(bedrockRuntimeClient.converse(any(ConverseRequest.class)))
+                .thenReturn(textResponse(StopReason.END_TURN, wrapped));
+
+        GeneratedTemplate result = generator.generate("색을 바꿔줘");
+
+        assertThat(result.suggestedPrompts()).containsExactly("b색을 조금 더 진하게/b", "색을 조금 더 진하게", "배경을 조금 더 밝게")
+                .doesNotContain("글자를 조금 더 크게");
+    }
+
+    @Test
+    void 제안_줄이_없거나_코드펜스가_없으면_빈_목록이다() {
+        when(bedrockRuntimeClient.converse(any(ConverseRequest.class)))
+                .thenReturn(textResponse(StopReason.END_TURN, "설명이에요.\n```html\n" + LLM_HTML + "\n```"))
+                .thenReturn(textResponse(StopReason.END_TURN, "[제안] 글자를 크게 해줘\n" + LLM_HTML));
+
+        assertThat(generator.generate("요청").suggestedPrompts()).isEmpty();
+        assertThat(generator.generate("요청").suggestedPrompts()).isEmpty();
+    }
+
+    @Test
+    void 시스템_프롬프트에_후속_제안_지시가_있다() {
+        when(bedrockRuntimeClient.converse(any(ConverseRequest.class)))
+                .thenReturn(textResponse(StopReason.END_TURN, LLM_HTML));
+
+        generator.generate("돈까스 세트 홍보");
+
+        assertThat(capturedSystemPrompt())
+                .contains("[제안] ")
+                .contains("단계 표현")
+                .contains("2~3개만 쓰고")
+                .contains("30자 이내");
+    }
 }

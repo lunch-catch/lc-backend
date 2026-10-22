@@ -3,8 +3,10 @@ package com.launchcatch.adserving;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -12,17 +14,26 @@ import com.launchcatch.adserving.contract.WishlistQueryService;
 import com.launchcatch.adserving.wishlist.job.EndedWishlistCleanupJob;
 import com.launchcatch.auth.CustomUserDetails;
 import com.launchcatch.auth.Role;
+import com.launchcatch.campaign.contract.AgeGroup;
 import com.launchcatch.campaign.contract.CampaignEndedEvent;
+import com.launchcatch.campaign.contract.CampaignInfo;
+import com.launchcatch.campaign.contract.CampaignStatus;
+import com.launchcatch.campaign.contract.DiscountTargetType;
+import com.launchcatch.campaign.contract.DiscountType;
+import com.launchcatch.campaign.contract.TargetGender;
 import com.launchcatch.global.config.ClockConfig;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.util.List;
+import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.http.MediaType;
 import org.springframework.transaction.support.TransactionTemplate;
 
 /*
@@ -50,6 +61,28 @@ class WishlistCampaignEndedIntegrationTest extends AbstractAdservingIntegrationT
     @AfterEach
     void tearDown() {
         jdbcTemplate.update("DELETE FROM wishlist");
+        jdbcTemplate.update("DELETE FROM swipe_log");
+        jdbcTemplate.update("DELETE FROM ad_candidate");
+        // 찜 요청이 넣은 그날 당일 이력이다. 남기면 같은 회원과 날을 쓰는 다른 통합 테스트가 깨진다
+        redisTemplate.delete("adserving:exclusion:2026-10-01:" + MEMBER_ID);
+    }
+
+    // 끝난 캠페인도 그날 후보 행은 남는다(PAUSED). 찜은 그 행이 있는지만 본다(#379)
+    private void pausedCandidate(long campaignId) {
+        jdbcTemplate.update("""
+                INSERT INTO ad_candidate (business_date, campaign_id, store_id, store_name, category_code,
+                    latitude, longitude, target_radius, target_gender, target_age_groups,
+                    discount_target_type, discount_type, discount_value, usable_start_time, usable_end_time,
+                    issue_quantity, campaign_created_at, campaign_state, state_changed_at, created_at, updated_at)
+                VALUES ('2026-10-01', ?, 55, '점심식당', 'KOREAN', 37.4979, 127.0276, 1000, 'ALL', 'AGE_20S',
+                    'ALL', 'PERCENT', 20, '12:00', '14:00', 30, NOW(6), 'PAUSED', ?, NOW(6), NOW(6))
+                """, campaignId, ENDED_AT);
+    }
+
+    private static CampaignInfo endedCampaign(long campaignId) {
+        return new CampaignInfo(campaignId, 1L, 55L, CampaignStatus.ENDED, 30, LocalTime.of(12, 0), LocalTime.of(14, 0),
+                LocalDate.of(2026, 9, 28), LocalDate.of(2026, 10, 1), DiscountTargetType.ALL, DiscountType.PERCENT, 20, null,
+                1000, TargetGender.ALL, List.of(AgeGroup.AGE_20S), LocalDateTime.of(2026, 9, 1, 9, 0), null, ENDED_AT, null, 10_000L);
     }
 
     private void wish(long memberId, long campaignId, LocalDateTime endedAt) {
@@ -121,5 +154,40 @@ class WishlistCampaignEndedIntegrationTest extends AbstractAdservingIntegrationT
 
         assertThat(jdbcTemplate.queryForList("SELECT campaign_id FROM wishlist ORDER BY campaign_id", Long.class))
                 .containsExactly(102L, 103L);
+    }
+
+    /*
+     * 종료 이벤트가 지나간 뒤에 들어온 찜이다. 종료 이벤트는 다시 오지 않아 넣을 때 표시해야 한다.
+     * 표시하지 않으면 쿠폰의 찜 조회에 유효한 찜으로 잡히고 정리 작업이 지우지 않는다(#780).
+     */
+    @Test
+    void 끝난_캠페인을_가게_상세에서_찜하면_종료로_표시되고_쿠폰의_찜_조회에서_빠진다() throws Exception {
+        pausedCandidate(101);
+        publishInTransaction(new CampaignEndedEvent(101L, ENDED_AT));
+        when(campaignQueryService.findAllById(List.of(101L))).thenReturn(List.of(endedCampaign(101)));
+
+        mockMvc.perform(post("/v1/wishlist").contentType(MediaType.APPLICATION_JSON).content("{\"campaignId\": 101}")
+                        .with(user(new CustomUserDetails(MEMBER_ID, Role.MEMBER))))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.data.campaignEnded").value(true));
+
+        assertThat(endedAtOf(101)).containsExactly(ENDED_AT);
+        assertThat(wishlistQueryService.isWished(MEMBER_ID, 101L)).isFalse();
+    }
+
+    @Test
+    void 끝난_캠페인을_피드에서_찜해도_종료로_표시된다() throws Exception {
+        pausedCandidate(101);
+        publishInTransaction(new CampaignEndedEvent(101L, ENDED_AT));
+        when(campaignQueryService.findAllById(List.of(101L))).thenReturn(List.of(endedCampaign(101)));
+
+        mockMvc.perform(post("/v1/swipes").contentType(MediaType.APPLICATION_JSON).content("""
+                        {"serveId": "%s", "campaignId": 101, "action": "WISH", "occurredAt": "2026-10-01T09:00:01.000+09:00"}
+                        """.formatted(UUID.randomUUID()))
+                        .with(user(new CustomUserDetails(MEMBER_ID, Role.MEMBER))))
+                .andExpect(status().isOk());
+
+        assertThat(endedAtOf(101)).containsExactly(ENDED_AT);
+        assertThat(wishlistQueryService.findWishedCampaignIds(MEMBER_ID)).isEmpty();
     }
 }

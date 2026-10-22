@@ -597,9 +597,9 @@ class CouponLookUpServiceTest {
                         assertThat(exception.getErrorCode().getHttpStatus().value()).isEqualTo(403);
                     });
             assertThat(diagnosticLogs.list).singleElement().satisfies(event -> {
-                assertThat(event.getLevel()).isEqualTo(Level.WARN);
+                assertThat(event.getLevel()).isEqualTo(Level.INFO);
                 assertThat(event.getFormattedMessage()).isEqualTo(
-                        "event=COUPON_DETAIL_FAILED memberId=17 memberCouponId=" + memberCouponId + " reason=COUPON-011");
+                        "event=COUPON_DETAIL_FAILED memberId=17 memberCouponId=" + memberCouponId + " errorCode=COUPON-011");
             });
         }
 
@@ -615,9 +615,9 @@ class CouponLookUpServiceTest {
                         assertThat(exception.getErrorCode().getHttpStatus().value()).isEqualTo(404);
                     });
             assertThat(diagnosticLogs.list).singleElement().satisfies(event -> {
-                assertThat(event.getLevel()).isEqualTo(Level.WARN);
+                assertThat(event.getLevel()).isEqualTo(Level.INFO);
                 assertThat(event.getFormattedMessage()).isEqualTo(
-                        "event=COUPON_DETAIL_FAILED memberId=17 memberCouponId=1001 reason=COUPON-001");
+                        "event=COUPON_DETAIL_FAILED memberId=17 memberCouponId=1001 errorCode=COUPON-001");
             });
         }
 
@@ -638,7 +638,7 @@ class CouponLookUpServiceTest {
             assertThat(diagnosticLogs.list).singleElement().satisfies(event -> {
                 assertThat(event.getLevel()).isEqualTo(Level.ERROR);
                 assertThat(event.getFormattedMessage()).isEqualTo(
-                        "event=COUPON_DATA_INTEGRITY_FAILED reason=EVENT_SNAPSHOT_MISSING code=COMMON-001 memberCouponId=1001 eventId=81");
+                        "event=COUPON_DATA_INTEGRITY_FAILED reason=EVENT_SNAPSHOT_MISSING errorCode=COMMON-001 memberCouponId=1001 couponEventId=81");
                 assertThat(event.getThrowableProxy()).isNull();
             });
         }
@@ -659,7 +659,7 @@ class CouponLookUpServiceTest {
             assertThat(diagnosticLogs.list).singleElement().satisfies(event -> {
                 assertThat(event.getLevel()).isEqualTo(Level.ERROR);
                 assertThat(event.getFormattedMessage()).isEqualTo(
-                        "event=COUPON_DATA_INTEGRITY_FAILED reason=USAGE_HISTORY_MISSING code=COMMON-001 memberCouponId=1001 eventId=81");
+                        "event=COUPON_DATA_INTEGRITY_FAILED reason=USAGE_HISTORY_MISSING errorCode=COMMON-001 memberCouponId=1001 couponEventId=81");
                 assertThat(event.getThrowableProxy()).isNull();
             });
         }

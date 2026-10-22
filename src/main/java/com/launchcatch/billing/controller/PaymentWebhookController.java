@@ -48,7 +48,7 @@ public class PaymentWebhookController {
     // 읽을 수 없는 본문은 다시 보내도 같으므로 400 대신 200 으로 끝낸다
     @ExceptionHandler(HttpMessageNotReadableException.class)
     public ResponseEntity<Void> unreadable(HttpMessageNotReadableException e) {
-        log.warn("event=PAYMENT_WEBHOOK_IGNORED reason=unreadable exceptionType={}", e.getClass().getSimpleName());
+        log.warn("event=BILLING_PAYMENT_WEBHOOK_SKIPPED reason=UNREADABLE exceptionType={}", e.getClass().getSimpleName());
         return ResponseEntity.ok().build();
     }
 }

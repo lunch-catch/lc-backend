@@ -56,7 +56,7 @@ public class MemberLoginService {
             }
             throw e;
         } catch (RuntimeException e) {
-            log.error("event=MEMBER_LOGIN_FAILED memberId={} reason=SYSTEM_ERROR causeType={}", attempt.memberId, e.getClass().getSimpleName());
+            log.error("event=MEMBER_LOGIN_FAILED memberId={} reason=SYSTEM_ERROR exceptionType={}", attempt.memberId, e.getClass().getSimpleName());
             throw e;
         }
     }

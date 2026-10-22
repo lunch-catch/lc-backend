@@ -1,11 +1,10 @@
 # 로깅 규칙의 근거: 런치캐치 백엔드
 
 이 문서는 [logging-project-guideline.md](./logging-project-guideline.md) 의 장치와 설정이 왜 지금
-모양인지를 설명한다. 공통 규칙의 근거는 [logging-rationale.md](./logging-rationale.md) 가 갖고,
-이 문서는 이 저장소에만 해당하는 사정만 적는다. 같은 내용이 코드 주석에도 있으면 코드 주석이
-기준이고, 이 문서는 흩어진 주석을 한곳에서 찾게 해 준다. 코드 주석이 틀렸으면 이 문서가 바로잡은
-내용을 적고, 주석을 고치는 일은 규칙 문서 7장에 둔다. 이 문서는 공통 규칙 4판(2026-10-21)을 기준으로
-쓴다.
+모양인지를 설명한다. 이 저장소에만 해당하는 사정과 외부 자료가 보장하는 범위를 적는다. 같은
+내용이 코드 주석에도 있으면 코드 주석이 기준이고, 이 문서는 흩어진 주석을 한곳에서 찾게 해 준다.
+코드 주석이 틀렸으면 이 문서가 바로잡은 내용을 적고, 주석을 고치는 일은 규칙 문서 7장에 둔다.
+이 문서는 공통 규칙 4판(2026-10-21)을 기준으로 쓴다. `[R번호]` 는 17장의 외부 자료를 가리킨다.
 
 ---
 
@@ -18,15 +17,17 @@
 11,590건과 504 응답 13,374건을 냈다. 혼잡이 5,134건이던 회차에는 연결 오류가 0건이었다.
 
 그래서 `neverBlock=true` 로 맞바꿈을 뒤집었다. 로그를 잃지 않으려고 느려지던 것을, 느려지지 않으려고
-로그를 버리는 쪽으로 바꿨다. 버려진 만큼의 건수는 `coupon_issue_results_total` 이 정확히 센다.
-`queueSize` 는 1024 에서 8192 로 올렸다. 버리는 것은 마지막 수단이고, 순간의 폭주는 큐가 흡수하는
-편이 낫다. 큐에 쌓이는 것은 인코딩 전의 이벤트 객체라 한 건이 가볍다. `discardingThreshold=0` 은
-큐가 차기 전에 INFO 이하를 미리 버리지 않게 한다.
+로그를 버리는 쪽으로 바꿨다. Logback 은 이 설정에서 큐가 차면 이벤트를 버리고 호출자를 막지 않는다.
+`discardingThreshold=0` 은 큐가 차기 전에 INFO 이하를 미리 버리지 않게 한다.[R1] `queueSize` 는
+1024 에서 8192 로 올렸다. 버리는 것은 마지막 수단이고, 순간의 폭주는 큐가 흡수하는 편이 낫다는
+프로젝트 판단이다. `coupon_issue_results_total` 을 등록하거나 증가시키는 코드는 현재 저장소에 없으므로
+이 지표가 버린 로그를 센다고 보지 않는다.
 
-종료할 때 큐를 비우는 시간(`maxFlushTime`)은 지정하지 않아 기본 1초다. 큐 8192건이 차 있는 상태에서
-배포가 인스턴스를 내리면 1초 안에 내보내지 못한 로그는 버려진다. graceful shutdown 은 30초를 기다리므로
-그 안에서 값을 정한다(7.2). 이 사건과 같은 이유로, 버려지면 안 되는 감사 기록은 로그가 아니라
-`AuditLogWriter` 로 감사 저장소에 쓴다(공통 규칙 `LOG-8-11`).
+종료할 때 큐를 비우는 시간(`maxFlushTime`)은 지정하지 않아 기본 1초다.[R17] 큐 8192건이 차 있는 상태에서
+배포가 인스턴스를 내리면 이 시간 안에 내보내지 못한 로그는 버려진다.[R1] graceful shutdown 의
+30초와 Logback 종료 순서가 같은 시간 예산을 공유한다고 보장할 근거는 없다. 실제 종료 순서를 측정한 뒤
+값을 정한다(7.2). 이 사건과 같은 이유로 버려지면 안 되는 감사 기록은 로그가 아니라 `AuditLogWriter` 로
+감사 저장소에 쓴다(공통 규칙 `LOG-8-11`).
 
 ## 2. 예상된 대량 거절을 DEBUG 로 내리는 장치
 
@@ -56,7 +57,9 @@
 | `providerUserId`, `kakaoUserId`, `user_id`, `paymentKey` | 값이 새면 계정이나 결제 건을 특정할 수 있다 |
 | `businessRegistrationNumber`, `businessNumber` | 증빙 서류와 같은 급으로 다룬다 |
 
-`nickname` 은 넣지 않았다. 본인이 정하는 공개 표시용 값이라 개인정보로 볼 근거가 약하다.
+`nickname` 은 회원 계정과 연결되므로 공개 표시용 값이어도 개인정보가 될 수 있다.[R14] 지금은 서비스
+화면에 공개되는 값이고 장애 분석에 필요하다는 프로젝트 판단으로 마스킹 예외에 두었다. 이 예외를
+유지할지는 개인정보 노출 위험과 진단 필요성을 함께 검토해 정한다.
 
 form-urlencoded 바디를 따로 잡는 이유는 JSON 패턴이 `password=1234&token=…` 모양에 걸리지 않기
 때문이다(OBS-3-04, SEC-4-02). 바디를 남기는 Content-Type 을 텍스트 계열로 제한한 이유는 이미지
@@ -78,21 +81,22 @@ OpenTelemetry 같은 분산 추적이 아니라서 span 의 부모 자식 관계
 우리가 만든 다른 서비스를 호출하게 될 때 바로 쓰려고 미리 둔 것이고, 비용은 거의 없다. 여러 서비스에
 걸친 지연 분석이 필요해지면 이 필터를 걷어 내고 OpenTelemetry 로 옮긴다.
 
-MDC 는 스레드에 붙는다. 1판은 "외부 클라이언트를 `.block()` 으로 동기 호출하는 동안은 스레드가 바뀌지
-않아 문제가 없다" 고 적었는데 틀린 설명이다. `.block()` 은 호출한 스레드가 결과를 기다릴 뿐이고, 응답을
-받아 실행하는 `ExternalApiLoggingExchangeFilter` 의 `doOnNext`, `doOnError` 는 Reactor Netty 의 이벤트 루프
-스레드에서 돈다. 그 스레드에는 MDC 가 없어 `EXTERNAL_API_CALL` 로그의 `traceId` 가 빈다.
-`TraceIdExchangeFilter` 가 헤더를 붙이는 요청 처리 단계는 구독할 때 돌아서 호출한 스레드의 MDC 를 읽을
-가능성이 크지만, 실행해서 확인하지는 않았다. 이 저장소에는 Reactor 의 컨텍스트 전파(`Hooks`,
-`context-propagation`) 등록도 없다. 고치는 방법은 이관 대상 7.1 에 있다.
+MDC 는 스레드에 붙지만 Reactor `Context` 는 구독에 붙는다. Reactor 는 실행 스레드를 고정하지 않으므로
+스케줄러를 바꾸면 MDC 가 자동으로 따라가지 않는다.[R4][R5] 1판은 "외부 클라이언트를 `.block()` 으로
+동기 호출하는 동안은 스레드가 바뀌지 않아 문제가 없다" 고 적었는데 틀린 설명이다. `.block()` 은 호출한
+스레드가 결과를 기다릴 뿐이다. `ExternalApiLoggingExchangeFilterTest` 로 확인한 결과 `doOnNext` 와
+`doOnError` 는 응답 Publisher 가 신호를 보낸 스레드에서 실행됐다. 요청 스레드에서 신호를 보내면 MDC 가
+남았고 다른 스레드에서 보내면 `traceId` 가 빠졌다. 실제 WebClient 요청의 콜백이 항상 Reactor Netty
+이벤트 루프에서 돈다고 단정하지 않는다. 이 저장소에는 Reactor 컨텍스트와 MDC 를 잇는 장치가 없다.
+고치는 방법은 이관 대상 7.1 에 있다.
 
 `application.yml` 에 `management.tracing.sampling.probability` 가 있지만 추적 라이브러리 의존성이
 없어서 아무 효과가 없다. 이 설정은 이전 프로젝트(fm-backend)에서 함께 옮겨 왔다. fm-backend 에서는
 "장애 주입 실험 직전에 100% 로 올릴 수 있어야 한다" 는 의도로 넣었지만, 그 저장소의 히스토리 전체에
 추적 의존성이 들어온 적이 없어 그곳에서도 동작한 적이 없다. 남겨 두면 추적이 켜져 있다고 오해하게
 만들므로 지운다(7.3). 추적이 필요해지면 `micrometer-tracing` 브리지와 추적 백엔드를 함께 들인다.
-그때는 Micrometer 가 MDC 에 `traceId` 와 `spanId` 를 직접 넣으므로 `MdcLoggingFilter` 와
-`TraceIdExchangeFilter` 의 역할을 함께 정리한다.
+추적 브리지와 로그 상관관계를 구성하면 Micrometer Tracing 이 현재 span 의 `traceId` 와 `spanId` 를
+MDC 에 연결할 수 있다.[R15] 그때 `MdcLoggingFilter` 와 `TraceIdExchangeFilter` 의 역할을 함께 정리한다.
 
 ## 5. clientIp 를 검증하는 방식
 
@@ -101,15 +105,50 @@ MDC 는 스레드에 붙는다. 1판은 "외부 클라이언트를 `.block()` �
 값을 막는 것이다(SEC-3-01).
 
 형식 검사로는 위조를 막지 못한다. 로드 밸런서는 실제 접속 IP 를 `X-Forwarded-For` 의 마지막 항목에
-덧붙인다. 시도 횟수 제한 필터와 관리자 로그인 감사 필터는 마지막 항목을 쓰는데 `MdcLoggingFilter` 는
-첫 항목을 쓴다. 첫 항목은 클라이언트가 보낸 값이다.
+덧붙인다. 앞쪽 항목은 클라이언트가 보낸 값이다. 그래서 `MdcLoggingFilter`, `AdminLoginAuditFilter`,
+`AuthRateLimitFilter` 가 `ClientIpResolver` 하나를 공유하고, 이 해석기가 마지막 항목을 쓴다. 헤더가 없거나
+마지막 항목의 형식이 틀리면 `getRemoteAddr()` 로 돌아간다.
 
-이관 대상 7.1 은 필터마다 헤더를 파싱하는 대신 Tomcat 에 맡긴다. `server.forward-headers-strategy=native`
-와 신뢰할 프록시 대역(`server.tomcat.remoteip.internal-proxies`)을 설정하면, Tomcat 이 필터보다 먼저
-신뢰할 프록시가 붙인 항목을 오른쪽부터 걷어 내고 `request.getRemoteAddr()` 를 실제 클라이언트 IP 로
-바꾼다. 세 필터가 공유하는 해석기를 직접 만드는 방법도 있다. 다만 "마지막 항목" 규칙은 로드 밸런서
-앞에 CDN 같은 프록시가 하나 더 붙으면 그 프록시의 IP 를 가리키게 된다. 신뢰할 대역으로 판단하는
-Tomcat 방식은 프록시가 늘어도 설정만 바꾸면 된다.
+### 공유 해석기를 기준으로 삼는 이유
+
+Tomcat 의 Remote IP Valve 에 맡기는 방법도 있다. 이 Valve 는 신뢰하거나 내부 프록시로 설정된 프록시가
+`remoteIpHeader` 에 남긴 항목을 믿는다.[R8] 지금은 해석기를 기준으로 삼는다. 이유는 넷이다.
+
+1. **현재 구성에서 두 방법이 같은 값을 낸다.** ALB 는 TCP 피어라 자기 IP 를 헤더에 넣지 않고 받은 헤더 끝에
+   실제 접속 IP 를 덧붙인다. 맨 오른쪽 항목이 공인 IP 라 Valve 가 걷어 낼 항목이 없고, 그 값이 그대로
+   `getRemoteAddr()` 가 된다. 이 설명은 Tomcat 이 오른쪽부터 처리한다는 구현에 기대고 있어서, 공식 문서가
+   보장하는 사실이 아니다.[R8]
+2. **Tomcat 방식은 저장소 밖 확인이 선행 조건이다.** 실제 프록시 대역과 첫 프록시가 전달 헤더를 지우는지가
+   확인되지 않았다(lunch-catch/lc-infra#25). 해석기는 그 확인 없이 지금 맞는 값을 낸다.
+3. **`internalProxies` 기본값은 사설 대역 전체를 프록시로 본다.**[R8] VPC 안에서 ALB 를 거쳐 들어오는
+   클라이언트의 IP 는 사설이라 함께 걷혀 나가고, 남는 항목이 없으면 ALB 의 IP 가 `getRemoteAddr()` 가
+   된다. 그러면 시도 횟수 제한이 그 트래픽 전체를 한 바구니로 묶는다. 해석기는 마지막 항목을 그대로 쓰므로
+   사설이든 공인이든 구분이 남는다.
+4. **비용 차이가 크다.** 해석기는 구현과 테스트가 끝나 있다. Tomcat 방식은 설정 변경, 프록시 대역 합의,
+   세 필터 되돌리기가 필요한데 1번에서 보듯 얻는 값은 같다.
+
+### 두 방법을 함께 켜지 않는다
+
+`server.forward-headers-strategy` 와 `server.tomcat.remoteip.internal-proxies` 를 켜면서 해석기도 쓰면
+위조한 IP 가 들어온다. Valve 는 신뢰 대역에 해당하는 항목을 `X-Forwarded-For` 에서 걷어 내 `getRemoteAddr()`
+로 옮기고 남은 항목만 헤더에 다시 쓴다. 남는 것은 클라이언트가 보낸 항목이다. 그 뒤에 마지막 항목을 읽는
+해석기가 돌면 위조한 값을 클라이언트 IP 로 돌려준다. 이 조합은 #722 가 막은 구멍을 다시 연다. 지금은
+`forward-headers-strategy` 를 설정하지 않아 문제가 없다.
+
+### Tomcat 방식으로 넘어가는 조건
+
+틀렸다는 뜻이 아니라 지금 쓰지 않는다는 뜻이다. 아래 가운데 하나가 생기면 넘어간다. 그때는 해석기를
+걷어 내고 Valve 설정으로 바꾼다.
+
+- **ALB 앞에 프록시가 하나 더 붙는다.** 마지막 항목이 그 프록시의 IP 를 가리키므로, 신뢰 대역으로
+  판단하는 Tomcat 방식이 맞다.
+- **`X-Forwarded-Proto` 나 `X-Forwarded-Host` 가 필요해진다.** 쿠키의 `Secure` 판정이나 리다이렉트 URL
+  생성이 그렇다. Valve 는 그것까지 함께 처리하고 해석기는 IP 만 본다.
+- **클라이언트 IP 를 보는 코드가 세 필터 밖으로 늘어난다.** Valve 는 `getRemoteAddr()` 하나로 전부 맞춘다.
+  해석기 아래에서 새 코드가 `getRemoteAddr()` 를 그냥 부르면 ALB 의 IP 를 받는다.
+
+`getRemoteAddr()` 호출은 `ArchitectureTest` 가 `ClientIpResolver` 밖에서 막는다. `X-Forwarded-For` 를
+`getHeader` 로 읽는 코드는 문자열 인자라 ArchUnit 이 못 잡아서 리뷰에서 막는다.
 
 ## 6. 외부 호출 로그가 경로만 남기는 이유
 
@@ -124,32 +163,39 @@ Tomcat 방식은 프록시가 늘어도 설정만 바꾸면 된다.
 위해서다. 성공할 때만 값이 갱신되므로 실패만 반복하면 값이 그대로 낡아 알람이 울린다. 0 으로 두면
 기동 직후부터 낡은 값으로 보여 첫 실행 전에 알람이 울린다. 대신 이 방식에는 빈틈이 둘 있다. 게이지는
 첫 실행에서 생기므로 재기동 뒤 작업이 한 번도 돌지 않으면 시계열이 없다. 재기동할 때마다 값이 그 시각으로
-다시 시작하므로, 재기동이 잦으면 계속 실패하는 작업도 낡아 보이지 않는다. 앞의 것은 `absent()` 조건으로
-막는다(7.2). 뒤의 것은 실패 이벤트(`SCHEDULER_FAILED`)의 건수 알림이 함께 잡는다.
+다시 시작하므로, 재기동이 잦으면 계속 실패하는 작업도 낡아 보이지 않는다. 앞의 것은 시계열이 없을 때
+결과를 만드는 `absent()` 조건으로 막는다.[R9] 뒤의 것은 실패 이벤트(`SCHEDULER_FAILED`)의 건수 알림이
+함께 잡는다. 실제 경보 선택자가 배치 서버만 고르는지는 이번 PR 에서 확인하지 않았다.
 
-태그 이름은 `job` 이 아니라 `scheduler` 다. Prometheus 에서 `job` 은 스크랩 잡 이름으로 예약되어
-있다. 같은 이름을 쓰면 수집할 때 `exported_job` 으로 밀려나고 알람이 엉뚱한 값을 가리킨다.
+태그 이름은 `job` 이 아니라 `scheduler` 다. Prometheus 가 대상을 스크랩할 때 `job` 라벨을 자동으로
+붙이고 그 값은 설정한 스크랩 잡 이름이다.[R10] 애플리케이션이 같은 이름의 태그를 내보내면
+`honor_labels` 가 기본값인 `false` 일 때 애플리케이션의 라벨은 `exported_job` 으로 바뀐다.[R11]
+이 경우 `job` 을 기준으로 작성한 알람은 스케줄러 이름이 아니라 스크랩 잡 이름을 본다. `lc-infra` 의
+실제 `honor_labels` 값은 이번 PR 에서 확인하지 않았다.
 
 ## 8. 로컬 설정의 모양
 
-`%F:%line` 은 호출 위치를 계산해야 해서 비용이 있다. 로컬은 트래픽이 적고 동기 로깅이라 부담이
+`%F` 는 호출 위치 정보를 계산하므로 빠른 변환자가 아니다.[R2] 로컬은 트래픽이 적고 동기 로깅이라 부담이
 작다. IntelliJ 콘솔은 `ClassName.java:42` 모양을 클릭하면 그 줄로 가는 링크로 만든다. 그래서 로컬에서만
 켠다. `%logger{36}` 바로 뒤에 괄호로 시작하는 글자를 붙이면 Logback 의 패턴 파서가 그 괄호를 다른
-변환자의 시작으로 읽어 뒤의 메시지까지 사라진다. 그래서 괄호 없이 쓴다.
+변환자의 시작으로 읽는다. Logback 문서도 리터럴 괄호를 이스케이프하도록 정한다.[R2]
+`LogbackPatternTest` 는 이스케이프하지 않으면 뒤의 메시지가 출력되지 않고 이스케이프하면 출력되는 것을
+현재 Logback 버전에서 확인한다. 지금 패턴은 괄호 없이 쓴다.
 
 `logback-spring.xml` 주석은 `%X{traceId:-}` 같은 기본값 문법이 Log4j2 전용이라 Logback 이 지원하지 않는다고
 적는다. 1판도 이 설명을 옮겨 적었는데 틀렸다. Logback 의 `%X{key:-default}` 는 값이 없을 때 기본값을
-출력한다. 지금 패턴은 기본값 없이 `%X{traceId}` 를 써서 값이 없으면 빈 문자열이 찍힌다. 이 선택은 그대로
-둬도 되고, 주석만 고친다(7.3).
+출력한다.[R2] `LogbackPatternTest` 도 같은 동작을 확인한다. 지금 패턴은 기본값 없이 `%X{traceId}` 를
+써서 값이 없으면 빈 문자열이 찍힌다. 이 선택은 그대로 두고 주석만 고친다(7.3).
 
 로컬의 루트 레벨이 DEBUG 인 이유는 접근 로그 필터가 정상 응답의 바디를 DEBUG 에서만 남기기 때문이다.
 서드파티까지 DEBUG 라 기동 로그가 길다. 줄이려면 시끄러운 로거만 따로 올린다.
 
 ## 9. 운영 스택 설정의 값
 
-스택이 길게 쏟아지는 것을 막으려고 예외당 30 프레임, 최대 8192자로 자른다. 원인을 먼저 보이게 하고,
-`jdk.internal`, `java.lang.reflect`, `org.springframework.web.filter`, `jakarta.servlet` 프레임을
-뺀다. 이 패키지들은 거의 모든 스택에 나오지만 원인을 알려 주지 않는다.
+스택이 길게 쏟아지는 것을 막으려고 예외당 30 프레임, 최대 8192자로 자르고 클래스 이름을 36자로
+줄인다. 원인을 먼저 보이게 하고 설정한 정규식과 연속해서 일치하는 프레임을 줄인다.[R3] 이 변환기는
+예외 메시지를 그대로 출력하고 메시지 마스킹 기능을 제공하지 않는다.[R3] 현재 제외한 패키지가 진단에
+필요한 프레임까지 숨기는지는 실제 스택을 보고 조정한다.
 
 ## 10. 관리자 로그인 감사 필터를 따로 둔 이유
 
@@ -180,10 +226,13 @@ Tomcat 방식은 프록시가 늘어도 설정만 바꾸면 된다.
 이 변경은 admin 서비스 코드를 고치는 일이라 로깅 이슈가 아니다. admin 담당자와 합의해 별도 이슈로 처리하고, 합의 전에는
 지금처럼 애플리케이션 로그로만 남는다.
 
-「개인정보의 안전성 확보조치 기준」 제8조는 개인정보처리시스템의 접속기록을 1년 이상(정보주체 5만 명 이상이거나
-고유식별정보, 민감정보를 처리하면 2년 이상) 보관하고 위·변조를 막으라고 한다. 관리자가 회원의 개인정보를 볼 수
-있다면 관리자 로그인 기록이 이 접속기록에 해당할 가능성이 크다. 적용 여부는 팀에서 확인한다. 이 문서는 법률
-검토가 아니다. 애플리케이션 로그는 보존 기간이 수집 설정을 따르고 큐가 차면 버려져 이 요건을 보장하지 못한다.
+「개인정보의 안전성 확보조치 기준」 제8조는 개인정보취급자가 개인정보처리시스템에 접속해 처리한 업무 내역을
+접속기록으로 관리하도록 한다. 일반적인 보존 기간은 1년이고 정보주체 수, 처리 정보, 사업자 조건 가운데 고시의
+조건에 해당하면 2년이다. 접속기록이 위·변조와 도난, 분실되지 않게 보관해야 한다.[R13] 관리자 로그인 기록은
+접속기록의 일부가 될 수 있지만 로그인 성공과 실패만으로 처리한 정보주체와 업무 내역까지 기록하지는 못한다.
+따라서 로그인 기록만으로 제8조의 접속기록 요건을 충족한다고 단정하지 않는다. 인증 성공과 실패를 보안 이벤트로
+기록하는 근거는 OWASP 로깅 지침이 더 직접적이다.[R16] 구체적인 법률 적용 범위와 보존 기간은 별도로 확인한다.
+애플리케이션 로그는 보존 기간이 수집 설정을 따르고 큐가 차면 버려져 법률상 보존을 보장하지 못한다.
 
 ## 11. 액추에이터를 8081 로 나눈 이유
 
@@ -194,7 +243,7 @@ Tomcat 방식은 프록시가 늘어도 설정만 바꾸면 된다.
 
 이관 대상 7장은 로그 호출 254곳 가운데 상당수를 건드린다. 한 번에 바꾸면 리뷰가 어렵고, Loki 에 이미
 걸린 쿼리와 알림이 한꺼번에 깨진다. 그래서 우선순위를 나눴다. 우선순위 1 은 사실과 다른 로그를
-남기거나 민감한 값을 흘리는 버그라 먼저 고친다. 우선순위 2 는 검색, 알림, 보안에 영향을 준다.
+남기거나 민감한 값을 흘리는 버그라 먼저 고친다. 우선순위 2 는 검색, 알림, 감사에 영향을 준다.
 우선순위 3 은 모양만 다르므로 그 도메인을 고칠 때 같이 고친다. 이벤트명이나 키를 바꿀 때는 그
 이벤트에 걸린 쿼리와 알림을 같은 PR 에서 고친다.
 
@@ -279,14 +328,47 @@ jjwt 의 `JwtException` 과 Spring Security 의 `JwtException` 은 메시지 내
 막으면 원인을 찾을 단서가 줄어든다. 목록 밖의 예외는 출력 단계의 마스킹이 거르고, 새로 민감한 메시지를
 발견하면 목록에 더한다.
 
-## 16. 구현을 정하며 생긴 결정의 근거
+## 16. 런타임 동작을 어디서 확인했나
 
-규칙 문서 1장, 5장에 반영한 결정 가운데 구현 수단을 견줘서 나온 것은 그 근거를 공통
-[구현 가이드](./logging-implementation-guide.md) 가 갖는다. 같은 근거를 두 문서에 두지 않기 위해 여기에는 위치만 적는다.
+이 문서의 런타임 동작 주장은 아래 테스트가 현재 의존성 버전에서 확인한다. 테스트로 확인하지 못한 것은
+본문에 확인하지 않았다고 적었다. 공통 로깅 문서 3개(`logging-guideline.md`, `logging-rationale.md`,
+`logging-implementation-guide.md`)는 이 저장소의 어느 브랜치 이력에도 없어서 링크하지 않는다. 복구할지는
+#703 이 이어서 정한다.
 
-| 결정 | 근거가 있는 곳 |
+| 주장 | 확인하는 곳 |
 |---|---|
-| 민감 키를 정규화하고 접미사 규칙을 쓰는 판정, 파싱 실패 표기 | 구현 가이드 2.4 |
-| 스케줄러의 MDC 를 `TaskDecorator` 가 넣고, 스택은 Spring 의 오류 처리기에 맡기는 것 | 구현 가이드 3.4 |
-| 민감 필드 검사 테스트의 방식 | 구현 가이드 3.6 |
+| 외부 호출 콜백이 요청 스레드에서 돌면 MDC 가 남고, 다른 스레드에서 돌면 자동으로 전파되지 않는다 | `ExternalApiLoggingExchangeFilterTest` 의 응답과 오류 콜백 테스트 3개 |
+| 스케줄러 작업이 실패하면 애스펙트와 Spring 오류 처리기가 스택을 각각 남긴다. Spring 쪽 메시지는 `Unexpected error occurred in scheduled task` 다.[R6][R7] | `SchedulerLoggingAspectTest.반복_작업이_실패하면_애스펙트와_Spring_오류_처리기가_스택을_각각_남긴다` |
+| `%X{key:-default}` 는 기본값을 출력하고, 리터럴 괄호는 이스케이프하지 않으면 뒤의 메시지가 사라진다 | `LogbackPatternTest` |
+| 민감 키 값이 가려진다 | `HttpBodyLoggingFilterTest` 의 민감 키 테스트 |
+| Loki 쿼리의 `json` 뒤 예시 | 확인하지 못했다. 수집한 JSON 에 `message` 필드가 있고 그 값이 logfmt 모양이라는 전제다.[R12] `lc-infra` 의 실제 레이블과 JSON 구조는 이번 PR 에서 확인하지 않았다 |
 
+## 17. 외부 자료
+
+본문의 `[R번호]` 가 가리키는 자료다. 규칙 문서(`logging-project-guideline.md`)는 이 목록을 복사하지 않는다.
+버전을 고정할 수 있는 자료는 이 저장소가 쓰는 버전(Spring Boot 4.0.5, Spring Framework 7.0.6,
+Logback 1.5.32, Reactor Core 3.8.4, Tomcat 11.0.20, logstash-logback-encoder 8.0)에 맞췄다.
+
+구분은 셋이다. `직접` 은 자료가 본문의 사실을 그대로 말한다. `조건부` 는 자료는 말하지만 본문의 적용에
+조건이나 범위가 붙는다. `교체` 는 자료를 원문으로 바꿔 인용해야 한다. `열람` 열은 이 작업에서 주소를 직접
+열어 내용을 확인했는지를 적는다.
+
+| 번호 | 구분 | 자료 | 본문에서 근거로 쓰는 것 | 열람 |
+|---|---|---|---|---|
+| R1 | 직접 | [Logback AsyncAppender](https://logback.qos.ch/manual/appenders-async-sift.html) | 큐가 차면 이벤트를 버리는 조건과 `discardingThreshold`, `maxFlushTime` 의 뜻. `maxFlushTime` 의 기본값은 매뉴얼에 없다. 매뉴얼에 버전 고정 주소가 없다 | 예 |
+| R2 | 직접 | [Logback PatternLayout](https://logback.qos.ch/manual/layouts.html) | `%F` 의 비용, 리터럴 괄호 이스케이프, `%X{key:-default}`. `LogbackPatternTest` 가 1.5.32 에서 같은 결과를 낸다 | 예 |
+| R3 | 직접 | [`ShortenedThrowableConverter` 8.0](https://github.com/logfellow/logstash-logback-encoder/blob/logstash-logback-encoder-8.0/src/main/java/net/logstash/logback/stacktrace/ShortenedThrowableConverter.java) | 프레임 줄이기와 예외 메시지를 그대로 출력하는 동작 | 예 |
+| R4 | 조건부 | [Reactor FAQ, MDC](https://projectreactor.io/docs/core/3.8.4/reference/faq.html#faq.mdc) | MDC 가 스레드에 붙고 Reactor 컨텍스트는 구독에 붙는다. 이 저장소에서 `traceId` 가 빠지는지는 콜백 스레드에 달려 있어 테스트로 가른다 | 예 |
+| R5 | 직접 | [Reactor 스케줄러](https://projectreactor.io/docs/core/3.8.4/reference/coreFeatures/schedulers.html) | 스케줄러를 바꾸면 실행 스레드가 바뀐다 | 예 |
+| R6 | 직접 | [Spring `TaskUtils` 7.0.6](https://github.com/spring-projects/spring-framework/blob/v7.0.6/spring-context/src/main/java/org/springframework/scheduling/support/TaskUtils.java) | 반복 작업의 기본 오류 처리기가 `Unexpected error occurred in scheduled task` 로 스택을 남긴다 | 예 |
+| R7 | 조건부 | [`ThreadPoolTaskScheduler` 7.0.6](https://docs.spring.io/spring-framework/docs/7.0.6/javadoc-api/org/springframework/scheduling/concurrent/ThreadPoolTaskScheduler.html) | 오류 처리기를 따로 두지 않았을 때의 기본 처리. 이 저장소의 실제 스케줄러 빈 구성은 확인하지 않았다 | 예 |
+| R8 | 조건부 | [Tomcat 11.0 Remote IP Valve](https://tomcat.apache.org/tomcat-11.0-doc/config/valve.html#Remote_IP_Valve) | `internalProxies` 의 기본값과 첫 프록시의 헤더 제거 요구. 헤더를 처리하는 순서는 문서에 없다 | 예 |
+| R9 | 직접 | [Prometheus `absent`](https://prometheus.io/docs/prometheus/latest/querying/functions/#absent) | 시계열이 없을 때 결과를 만드는 함수 | 예 |
+| R10 | 직접 | [Prometheus 잡과 인스턴스](https://prometheus.io/docs/concepts/jobs_instances/) | 스크랩할 때 `job` 라벨이 자동으로 붙는다 | 예 |
+| R11 | 조건부 | [Prometheus 설정, `honor_labels`](https://prometheus.io/docs/prometheus/latest/configuration/configuration/) | `honor_labels` 가 `false` 일 때 충돌한 라벨이 `exported_` 접두사로 바뀐다. `lc-infra` 의 값은 확인하지 못했다 | 예 |
+| R12 | 조건부 | [Loki 로그 쿼리](https://grafana.com/docs/loki/latest/query/log_queries/) | `json`, `line_format`, `logfmt` 파서 문법. 수집한 JSON 의 모양은 `lc-infra` 에 달려 있다 | 예 |
+| R13 | 교체 | [개인정보의 안전성 확보조치 기준 제8조](https://www.law.go.kr/LSW/admRulSideInfoP.do?admRulSeq=2100000281400&chrClsCd=010201&docCls=jo&joNo=0008&joBrNo=00) | 접속기록의 관리 대상과 보존 기간. 현행 국가법령정보센터 원문이다. 도구로는 본문이 열리지 않아 사람이 원문과 대조했고 본문 문장과 맞다 | 예 |
+| R14 | 조건부 | [개인정보 보호법 제2조](https://www.law.go.kr/법령/개인정보보호법) | 제1호 나목. 해당 정보만으로는 알아볼 수 없어도 다른 정보와 쉽게 결합해 알아볼 수 있는 정보는 개인정보다. 쉽게 결합할 수 있는지는 다른 정보의 입수 가능성과 개인을 알아보는 데 드는 시간, 비용, 기술을 합리적으로 고려해 정한다. 도구로는 본문이 열리지 않아 사람이 원문과 대조했다 | 예 |
+| R15 | 조건부 | [Spring Boot 트레이싱](https://docs.spring.io/spring-boot/4.0/reference/actuator/tracing.html) | Micrometer Tracing 을 쓰면 `traceId` 와 `spanId` 를 MDC 로 로그에 상관시킨다. 이 저장소에는 추적 의존성이 없다 | 예 |
+| R16 | 직접 | [OWASP Logging Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Logging_Cheat_Sheet.html) | 인증 성공과 실패를 보안 이벤트로 기록하라는 권고 | 예 |
+| R17 | 직접 | [Logback `AsyncAppenderBase` 1.5.32](https://github.com/qos-ch/logback/blob/v_1.5.32/logback-core/src/main/java/ch/qos/logback/core/AsyncAppenderBase.java) | `maxFlushTime` 의 기본값이 `DEFAULT_MAX_FLUSH_TIME = 1000` 밀리초다 | 예 |

@@ -50,6 +50,7 @@ public class DailyReservationService {
     private final PointLedgerRepository ledgerRepository;
     private final DailyReservationRecorder recorder;
     private final SpendHashRebuildService hashRebuild;
+    private final DailyReleaseMarker releaseMarker;
 
     /*
      * 그날 예약을 마치고 대상 캠페인 수를 돌려준다.
@@ -57,10 +58,21 @@ public class DailyReservationService {
      * 단가를 먼저 정한다(unitPriceOf). 키가 없거나 0 이하이면 아무것도 쓰지 않고 예외로 단계를 실패시킨다. 0 으로 진행하면
      * 계획 행을 만들 수 없고, 잘못된 값으로 진행하면 모든 캠페인이 NO_POINTS 로 판정될 수 있다.
      * 보정 RELEASE 가 실패하면 예약을 진행하지 않는다. RESERVE 가 쓰는 잔액은 보정 뒤의 잔액이어야 한다.
+     * 해제가 끝난 날짜는 오늘 예약 결과를 기다리지 않고 바로 해제 완료로 표시한다(BILLING_DAILY_RELEASE).
      */
     public int reserve(LocalDate businessDate) {
         long unitPrice = unitPriceOf(businessDate);
-        release(businessDate.minusDays(1));
+        LocalDate yesterday = businessDate.minusDays(1);
+        boolean yesterdayMarked = false;
+        for (LocalDate unreleasedDate : planRepository.findUnreleasedBusinessDatesBefore(businessDate)) {
+            release(unreleasedDate);
+            releaseMarker.mark(unreleasedDate);
+            yesterdayMarked |= unreleasedDate.equals(yesterday);
+        }
+        // 전날은 남은 해제액이 0 이라 위 목록에 없을 수 있다. 오늘 예약의 성공과 무관하게 해제가 끝난 시점에 표시한다
+        if (!yesterdayMarked) {
+            releaseMarker.mark(yesterday);
+        }
 
         List<CampaignInfo> campaigns = campaignQuery.findServableOn(businessDate);
         Map<Long, List<CampaignInfo>> byOwner = new TreeMap<>();
@@ -75,7 +87,7 @@ public class DailyReservationService {
         // 예약이 모두 커밋된 뒤에 확인해야 캠페인을 읽은 뒤 계획을 만들기 전에 커밋된 중단을 놓치지 않는다
         confirmPlans(businessDate);
         mirror(businessDate, campaigns.stream().map(CampaignInfo::campaignId).toList());
-        log.info("event=DAILY_RESERVE_DONE businessDate={} campaigns={} owners={} unitPrice={}",
+        log.info("event=BILLING_DAILY_RESERVE_DONE businessDate={} campaignCount={} ownerCount={} unitPrice={}",
                 businessDate, campaigns.size(), byOwner.size(), unitPrice);
         return campaigns.size();
     }
@@ -118,33 +130,21 @@ public class DailyReservationService {
         if (plans.isEmpty()) {
             return;
         }
-        List<Long> campaignIds = plans.stream().map(BudgetDailyPlan::getCampaignId).toList();
-        Set<Long> ownerIds = plans.stream().map(BudgetDailyPlan::getOwnerId).collect(Collectors.toSet());
-        Set<Long> released = new HashSet<>(ledgerRepository.findReleasedCampaignIds(ownerIds, businessDate));
-        Map<Long, Long> spends = new HashMap<>();
-        for (CampaignSpend spend : ledgerRepository.sumDeductForCampaignsOn(campaignIds, businessDate)) {
-            spends.put(spend.campaignId(), spend.spend());
-        }
-        // 점주 ID 순으로 점주마다 따로 기록한다. 점주 계정 행을 잠근 짧은 트랜잭션이다
-        Map<Long, List<PointLedger>> releasesByOwner = new TreeMap<>();
+        // 점주 ID 순으로 묶되 해제액은 여기서 계산하지 않는다. 충전 재예약과 경합해도 최신 계획을
+        // 기준으로 계산하려면 계정 행 잠금 뒤에 읽어야 한다.
+        Map<Long, List<Long>> campaignsByOwner = new TreeMap<>();
         for (BudgetDailyPlan plan : plans) {
-            if (released.contains(plan.getCampaignId())) {
-                continue;
-            }
-            long left = plan.getDailyBudget() - spends.getOrDefault(plan.getCampaignId(), 0L);
-            if (left > 0) {
-                releasesByOwner.computeIfAbsent(plan.getOwnerId(), ownerId -> new ArrayList<>())
-                        .add(PointLedger.release(plan.getOwnerId(), plan.getCampaignId(), businessDate, left));
-            }
+            campaignsByOwner.computeIfAbsent(plan.getOwnerId(), ownerId -> new ArrayList<>())
+                    .add(plan.getCampaignId());
         }
         int campaigns = 0;
-        for (Map.Entry<Long, List<PointLedger>> entry : releasesByOwner.entrySet()) {
-            recorder.releaseForOwner(entry.getKey(), entry.getValue());
+        for (Map.Entry<Long, List<Long>> entry : campaignsByOwner.entrySet()) {
+            recorder.releaseForOwner(entry.getKey(), businessDate, entry.getValue());
             campaigns += entry.getValue().size();
         }
         if (campaigns > 0) {
-            log.info("event=RESERVE_LEFTOVER_RELEASED businessDate={} owners={} campaigns={}",
-                    businessDate, releasesByOwner.size(), campaigns);
+            log.info("event=BILLING_RESERVE_LEFTOVER_RELEASED businessDate={} ownerCount={} campaignCount={}",
+                    businessDate, campaignsByOwner.size(), campaigns);
         }
     }
 
@@ -162,7 +162,7 @@ public class DailyReservationService {
             List<Long> chunk = campaignIds.subList(from, Math.min(from + MIRROR_CHUNK, campaignIds.size()));
             changed += recorder.confirmStatus(chunk, businessDate);
         }
-        log.info("event=RESERVE_STATUS_CONFIRMED businessDate={} plans={} changed={}",
+        log.info("event=BILLING_RESERVE_STATUS_CONFIRMED businessDate={} planCount={} changedCount={}",
                 businessDate, campaignIds.size(), changed);
     }
 
@@ -176,7 +176,7 @@ public class DailyReservationService {
             try {
                 hashRebuild.rebuildAllIfAbsent(businessDate, chunk);
             } catch (DataAccessException e) {
-                log.warn("event=RESERVE_HASH_MIRROR_FAILED businessDate={} campaigns={}",
+                log.warn("event=BILLING_RESERVE_HASH_MIRROR_FAILED businessDate={} campaignCount={}",
                         businessDate, chunk.size(), e);
             }
         }

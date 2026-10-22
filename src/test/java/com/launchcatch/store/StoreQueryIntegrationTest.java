@@ -157,14 +157,17 @@ class StoreQueryIntegrationTest extends AbstractStoreIntegrationTest {
     void 최종_등록된_가게의_메뉴만_조회하고_누락_ID와_중복을_제외한다() {
         var result = service.findMenusByIdIn(List.of(menuId, otherMenuId, draftMenuId, menuId, Long.MAX_VALUE));
 
-        assertThat(result).extracting("menuId").containsExactlyInAnyOrder(menuId, otherMenuId);
-        assertThat(result).filteredOn(menu -> menu.menuId().equals(menuId)).singleElement().satisfies(menu -> {
+        assertThat(result.invalidMenuIds()).isEmpty();
+        assertThat(result.menus()).extracting("menuId").containsExactlyInAnyOrder(menuId, otherMenuId);
+        assertThat(result.menus()).filteredOn(menu -> menu.menuId().equals(menuId)).singleElement().satisfies(menu -> {
             assertThat(menu.storeId()).isEqualTo(storeId);
             assertThat(menu.menuName()).isEqualTo("국밥");
             assertThat(menu.price()).isEqualTo(9000L);
             assertThat(menu.menuImageUrl()).isNotBlank();
         });
-        assertThat(service.findMenusByIdIn(List.of(draftMenuId, Long.MAX_VALUE))).isEmpty();
+        var missing = service.findMenusByIdIn(List.of(draftMenuId, Long.MAX_VALUE));
+        assertThat(missing.menus()).isEmpty();
+        assertThat(missing.invalidMenuIds()).isEmpty();
     }
 
     @Test
@@ -228,11 +231,13 @@ class StoreQueryIntegrationTest extends AbstractStoreIntegrationTest {
     }
 
     @Test
-    void 메뉴_이미지가_없으면_메뉴_조회는_실패한다() {
+    void 메뉴_이미지가_없으면_정상_메뉴와_오류_메뉴_ID를_나누어_반환한다() {
         jdbc.update("delete from store_menu_image where store_menu_id = ?", menuId);
 
-        assertThatThrownBy(() -> service.findMenusByIdIn(List.of(menuId, otherMenuId)))
-                .isInstanceOf(IllegalStateException.class).hasMessageContaining("이미지가 누락");
+        var result = service.findMenusByIdIn(List.of(menuId, otherMenuId, menuId));
+
+        assertThat(result.invalidMenuIds()).containsExactly(menuId);
+        assertThat(result.menus()).extracting("menuId").containsExactly(otherMenuId);
     }
 
     @ParameterizedTest
@@ -247,12 +252,14 @@ class StoreQueryIntegrationTest extends AbstractStoreIntegrationTest {
 
     @ParameterizedTest
     @ValueSource(strings = {"PENDING", "UPLOADED"})
-    void 메뉴_이미지_검증이_완료되지_않았으면_메뉴_조회는_실패한다(String uploadStatus) {
+    void 메뉴_이미지_검증이_완료되지_않았으면_오류_메뉴_ID를_반환한다(String uploadStatus) {
         jdbc.update("update store_menu_image set upload_status = ?, verified_at = null where store_menu_id = ?",
                 uploadStatus, menuId);
 
-        assertThatThrownBy(() -> service.findMenusByIdIn(List.of(menuId)))
-                .isInstanceOf(IllegalStateException.class).hasMessageContaining("이미지가 누락");
+        var result = service.findMenusByIdIn(List.of(menuId));
+
+        assertThat(result.menus()).isEmpty();
+        assertThat(result.invalidMenuIds()).containsExactly(menuId);
     }
 
     @Test

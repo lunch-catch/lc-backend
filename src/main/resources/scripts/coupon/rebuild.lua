@@ -17,7 +17,11 @@ if ARGV[1] == 'append' then
     return 1
 end
 if ARGV[1] == 'finish' and redis.call('LLEN', KEYS[1]) == tonumber(ARGV[3]) then
-    redis.call('HSET', KEYS[3], 'state', 'READY')
+    local state = 'READY'
+    if redis.call('HGET', KEYS[3], 'completed') == redis.call('HGET', KEYS[3], 'total') then
+        state = 'SOLD_OUT'
+    end
+    redis.call('HSET', KEYS[3], 'state', state)
     for i = 1, #KEYS do redis.call('PEXPIREAT', KEYS[i], expires) end
     return 1
 end

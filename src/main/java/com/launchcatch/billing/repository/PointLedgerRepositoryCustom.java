@@ -28,4 +28,7 @@ public interface PointLedgerRepositoryCustom {
 
     // 영업일 범위의 RESERVE 와 RELEASE 를 영업일과 종류별로 묶는다
     List<BusinessDateSumRow> sumReserveAndReleaseByBusinessDate(Long ownerId, LocalDate from, LocalDate to);
+
+    // 영업일 범위의 DEDUCT 를 판정 기록의 서빙 영업일로 묶는다. 원장 DEDUCT 의 영업일은 NULL 이라 판정 기록과 serve_id 로 잇는다
+    List<BusinessDateSumRow> sumDeductByServedBusinessDate(Long ownerId, LocalDate from, LocalDate to);
 }

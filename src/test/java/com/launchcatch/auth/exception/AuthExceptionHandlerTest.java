@@ -2,10 +2,16 @@ package com.launchcatch.auth.exception;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
+
 import com.launchcatch.global.logging.AccessLogSignal;
 import com.launchcatch.global.response.ResponseEnvelope;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.mock.web.MockHttpServletRequest;
@@ -86,5 +92,50 @@ class AuthExceptionHandlerTest {
 
         assertThat(response.getBody()).isNotNull();
         assertThat(response.getBody().message()).doesNotContain("campaign", "42", "owner", "7");
+    }
+
+    @Test
+    @DisplayName("인증 실패는 이벤트명이 리터럴인 DEBUG 로그에 errorCode 와 exceptionType 을 남긴다")
+    void 인증_실패_로그는_리터럴_이벤트명이다() {
+        Logger logger = (Logger) LoggerFactory.getLogger(AuthExceptionHandler.class);
+        Level original = logger.getLevel();
+        ListAppender<ILoggingEvent> logs = new ListAppender<>();
+        logs.start();
+        logger.setLevel(Level.DEBUG);
+        logger.addAppender(logs);
+
+        try {
+            handler.handleAuthentication(new BadCredentialsException("no token"), new MockHttpServletRequest());
+        } finally {
+            logger.detachAppender(logs);
+            logger.setLevel(original);
+        }
+
+        assertThat(logs.list).singleElement().satisfies(event -> {
+            assertThat(event.getLevel()).isEqualTo(Level.DEBUG);
+            assertThat(event.getFormattedMessage())
+                    .isEqualTo("event=AUTH_UNAUTHENTICATED errorCode=AUTH-005 exceptionType=BadCredentialsException");
+        });
+    }
+
+    @Test
+    @DisplayName("인가 실패는 이벤트명이 리터럴인 WARN 로그를 남긴다")
+    void 인가_실패_로그는_리터럴_이벤트명이다() {
+        Logger logger = (Logger) LoggerFactory.getLogger(AuthExceptionHandler.class);
+        ListAppender<ILoggingEvent> logs = new ListAppender<>();
+        logs.start();
+        logger.addAppender(logs);
+
+        try {
+            handler.handleAccessDenied(new AccessDeniedException("denied"), new MockHttpServletRequest());
+        } finally {
+            logger.detachAppender(logs);
+        }
+
+        assertThat(logs.list).singleElement().satisfies(event -> {
+            assertThat(event.getLevel()).isEqualTo(Level.WARN);
+            assertThat(event.getFormattedMessage())
+                    .isEqualTo("event=AUTH_PERMISSION_DENIED errorCode=AUTH-006 exceptionType=AccessDeniedException");
+        });
     }
 }

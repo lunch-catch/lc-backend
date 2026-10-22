@@ -1,20 +1,20 @@
 # 로깅 규칙: 런치캐치 백엔드
 
-이 문서는 [logging-guideline.md](./logging-guideline.md)(공통 규칙)를 이 저장소에 적용할 때 필요한
-것만 담는다. 공통 규칙을 다시 적지 않는다. 이 저장소의 장치 이름, 설정값, 마스킹 키, 그리고
-아직 공통 규칙에 맞지 않는 코드의 목록을 갖는다. 이 저장소에만 해당하는 이유는
+이 문서는 공통 로깅 규칙 4판(2026-10-21)을 이 저장소에 적용한 결과다. 이 저장소의 장치 이름,
+설정값, 마스킹 키, 그리고 아직 규칙에 맞지 않는 코드의 목록을 갖는다. 이 저장소에만 해당하는 이유는
 [logging-project-rationale.md](./logging-project-rationale.md) 가 갖는다.
 
 | 문서 | 소유 |
 |---|---|
-| `logging-guideline.md` | 모든 프로젝트에 같은 규칙. 다른 곳에서 원본을 관리하고 이 저장소에는 그대로 복사해 둔다. 이 저장소에서 고치지 않는다. 이 문서는 공통 규칙 4판(2026-10-21)을 기준으로 쓴다 |
-| `logging-rationale.md` | 공통 규칙의 근거. 위와 같이 복사본이다 |
-| `logging-implementation-guide.md` | 공통 모듈(`global/logging`)의 작성과 검증 방법. 위와 같이 복사본이다 |
 | `logging-project-guideline.md` | 이 문서. 이 저장소의 장치, 설정, 마스킹 키, 이관 대상 |
 | `logging-project-rationale.md` | 이 저장소에만 해당하는 근거 |
 
-공통 규칙과 이 문서가 다르게 말하면 이 문서의 3장(예외)을 따른다. 7장(이관 대상)에 있는 코드는
-고쳐질 때까지 기존 모양을 허용하지만, 새 코드는 공통 규칙을 따른다.
+이 문서가 기대는 외부 자료의 출처와 확인 범위는 [logging-project-rationale.md](./logging-project-rationale.md) 의
+17장이 갖는다. 이 문서에는 출처 목록을 복사하지 않는다.
+
+`LOG-*` 번호는 공통 로깅 규칙 4판의 식별자를 유지한다. 공통 문서 3개는 이 저장소의 현재 이력에
+없으므로 존재하는 복사본처럼 링크하지 않는다. 7장(이관 대상)에 있는 코드는 고쳐질 때까지 기존
+모양을 허용하지만 새 코드는 이 문서의 규칙을 따른다.
 
 ---
 
@@ -27,7 +27,7 @@
 |---|---|---|---|
 | 요청 컨텍스트 | `MdcLoggingFilter` | 가장 먼저 실행된다. MDC 에 `traceId`, `method`, `uri`, `clientIp` 를 넣고 요청이 끝나면 비운다. 요청 헤더 `X-Trace-Id` 가 형식에 맞으면 이어받고, 응답 헤더로 돌려준다 | 없음 |
 | 기술 로그 | `HttpBodyLoggingFilter` | 요청마다 접근 로그를 남기고 4xx, 5xx 는 가린 바디를 함께 남긴다. 바디 로깅에서 뺀 경로와 텍스트가 아닌 Content-Type 은 `shouldNotFilter` 가 필터 전체를 건너뛰어 접근 로그도 남지 않는다(7.2) | `HTTP_ACCESS` |
-| 기술 로그 | `ExternalApiLoggingExchangeFilter` | `WebClientConfig` 의 `WebClientCustomizer` 가 모든 `WebClient.Builder` 에 붙인다. 쿼리 문자열을 뺀 경로만 남긴다. 지금은 실패할 때 스택과 `ex.toString()` 을 함께 남기고, 콜백이 Reactor Netty 스레드에서 돌아 MDC 가 비어 있다(7.1) | `EXTERNAL_API_CALL`, `EXTERNAL_API_CALL_FAILED` |
+| 기술 로그 | `ExternalApiLoggingExchangeFilter` | `WebClientConfig` 의 `WebClientCustomizer` 가 모든 `WebClient.Builder` 에 붙인다. 쿼리 문자열을 뺀 경로만 남긴다. 지금은 실패할 때 스택과 `ex.toString()` 을 함께 남긴다. 콜백이 요청 스레드와 다른 스레드에서 실행되면 MDC 가 자동으로 전파되지 않아 `traceId` 가 빠진다(7.1) | `EXTERNAL_API_CALL`, `EXTERNAL_API_CALL_FAILED` |
 | 기술 로그 | `TraceIdExchangeFilter` | 나가는 호출에 `X-Trace-Id` 헤더를 싣는다. 지금은 받는 쪽이 이 헤더를 쓰지 않아 효과가 없다 | 없음 |
 | 기술 로그 | `SchedulerLoggingAspect` | `@Scheduled` 메서드마다 시작, 끝, 실패를 남긴다. 마지막 성공 시각을 게이지 `batch.job.last.success.timestamp`(태그 `scheduler`)로 내보낸다. 지금은 실패할 때 스택을 남기고 다시 던져 Spring 의 기본 오류 처리기가 스택을 한 번 더 남긴다(7.2). 고친 뒤에는 실행의 MDC 를 스케줄러의 `TaskDecorator` 가 넣고(실행의 시작점), 애스펙트는 `SCHEDULER_FAILED` 에 `exceptionType` 만 남기고 다시 던진다. 스택은 Spring 의 기본 오류 처리기가 한 번 남기고, 알림은 `SCHEDULER_FAILED` 에 건다 | `SCHEDULER_START`, `SCHEDULER_END`, `SCHEDULER_FAILED` |
 | 기술 로그 | `AdminLoginAuditFilter`(`admin/config`) | 관리자 로그인은 바디 로깅에서 빠지므로 시각, IP, 성공 여부만 따로 남긴다. 지금은 애플리케이션 로그로만 남고 감사 저장소(`ops` 의 `AuditLogWriter`)에는 쓰지 않는다. 고친 뒤에는 성공과 존재하는 계정의 실패를 감사 저장소에도 쓴다(7.2) | `ADMIN_LOGIN` |
@@ -44,6 +44,7 @@
 | `PiiMasker` | 개인정보를 가리는 유일한 유틸이다. `maskEmail`, `maskPhone`, `maskName`, `maskProviderId`(외부 계정 식별자), `maskGeneric`, `redact`(완전히 가림) | `LOG-7-03` |
 | `RedisFailureClassifier.causeLabel(e)` | Redis 실패를 `TIMEOUT`, `OTHER` 로 분류한다. 값은 `reason` 키에 넣는다 | `LOG-4-01` |
 | `FailureLogDetails.from(e)` | 예외 메시지 없이 원인 타입, HTTP 상태, SQLState, 발생 위치를 뽑는다. 지금은 객체째 `details=` 에 넣고 있어 `LOG-4-04` 에 맞지 않는다(7장) | `LOG-4-04` |
+| `ClientIpResolver`(`global/http`) | 클라이언트 IP 를 정한다. `X-Forwarded-For` 의 마지막 항목을 쓰고 없거나 형식이 틀리면 `getRemoteAddr()` 로 돌아간다. `MdcLoggingFilter`, `AdminLoginAuditFilter`, `AuthRateLimitFilter` 가 같은 값을 쓴다. `getRemoteAddr()` 는 이 클래스 밖에서 부르지 않고 `ArchitectureTest` 가 막는다. `X-Forwarded-For` 를 읽는 코드는 리뷰에서 막는다. `server.forward-headers-strategy` 와 `server.tomcat.remoteip.internal-proxies` 는 함께 켜지 않는다. 이유는 [근거 문서 5장](./logging-project-rationale.md#5-clientip-를-검증하는-방식)에 있다 | `LOG-8-05` |
 | `LogCapture`(테스트) | 대상 클래스의 로거에 붙어 남긴 로그를 모은다. 로그 테스트에 쓴다 | `LOG-8-09` |
 | `AuditLogWriter`(`ops/contract`) | 관리자 행위와 돈이 오간 처리의 감사 기록을 DB 에 쓴다. 관리자 로그아웃, 계정 등록, 토큰 재발급, 포인트 정책, 환불, 포인트 조정, 결제 재조회, 재집계가 이미 쓴다 | `LOG-8-11` |
 
@@ -80,10 +81,10 @@
 `HttpBodyLoggingFilter` 가 갖는다. 공통 규칙의 기본 키(`LOG-7-08`) 외에 이 저장소가 더하거나
 따로 정한 것만 적는다.
 
-**민감 키를 판정하는 방법** 공통 모듈의 `SensitiveKeys` 가 판정한다(구현 가이드 2.4). 키를 정규화한 뒤 제외,
+**민감 키를 판정하는 방법** 공통 모듈의 `SensitiveKeys` 가 판정한다. 키를 정규화한 뒤 제외,
 접미사(`password`, `token`, `secret`, `address`), 정확히 같은 키의 순서로 본다. 민감 키의 값은 자료형과 관계없이
 `***REDACTED***` 로 바꾸고, 파싱하지 못한 바디는 전체를 `***UNPARSEABLE_BODY_REDACTED***` 로 남긴다. 이 저장소는
-아래 표의 키 가운데 모듈의 기본값(구현 가이드 1.2)에 없는 키를 `app.logging.sensitive-keys.extra` 에 넣고,
+아래 표의 키 가운데 모듈의 기본값에 없는 키를 `app.logging.sensitive-keys.extra` 에 넣고,
 `nickname` 을 `app.logging.sensitive-keys.excluded` 에 넣는다.
 
 **지금 코드는 아직 정규식이다** 위 방법은 7.1 의 `LOG-7-09` 항목을 고친 뒤의 기준이다. 고치기 전까지는
@@ -108,8 +109,8 @@
 
 새 민감 필드를 요청이나 응답에 넣으면 접미사 규칙에 걸리는지 먼저 본다. 걸리지 않으면 위 표와 `extra` 설정에 키를 더한다.
 정규식을 쓰는 동안에는 `SENSITIVE_JSON_FIELD` 와 `SENSITIVE_FORM_FIELD` 두 패턴에 같은 키를 더하고, 좌표처럼
-숫자로 오는 값이면 `SENSITIVE_NUMERIC_COORDINATE` 에도 더한다. 빠뜨리면 [구현 가이드 3.6](./logging-implementation-guide.md#36-민감-필드-검사-테스트) 의
-테스트가 실패한다.
+숫자로 오는 값이면 `SENSITIVE_NUMERIC_COORDINATE` 에도 더한다. 빠뜨리면
+[`HttpBodyLoggingFilterTest`](../../src/test/java/com/launchcatch/global/logging/HttpBodyLoggingFilterTest.java) 의 민감 필드 검사 테스트가 실패한다.
 
 ### 5.1 스택 대신 원인 정보로 남기는 외부 예외
 
@@ -131,7 +132,7 @@
 ## 6. Loki 쿼리
 
 스트림 선택자는 수집 설정(`lc-infra`)이 정한 라벨로 바꿔 쓴다. 아래 예의 `{app="launchcatch"}` 는
-자리표시다.
+자리표시다. `json` 뒤의 예시는 수집한 JSON 에 `message` 필드가 있고 그 값이 logfmt 모양이라는 전제다.
 
 ```logql
 # 이벤트 하나 고르기
@@ -157,8 +158,8 @@
 공통 규칙에 맞지 않는 기존 코드다. develop `1eb4c27` 기준으로 조사했고, develop `1873a1f`(2026-10-21)에서
 다시 확인했다. 그 사이에 바뀐 로그 코드는 `HttpBodyLoggingFilter` 의 DEBUG 가드와 `coupon` 의 새 로그뿐이라
 기존 항목은 모두 유효하다. 새 로그에서 찾은 항목은 표에 더했다. 우선순위 1 은 잘못된
-로그를 남기는 버그다. 2 는 검색, 알림, 보안에 영향을 준다. 3 은 모양만 다르다. 해당 도메인을 고칠
-때 같이 고치고, 고치면 이 표에서 지운다.
+로그를 남기거나 민감한 값이 새는 버그다. 2 는 검색, 알림, 감사에 영향을 준다. 3 은 모양만 다르다.
+해당 도메인을 고칠 때 같이 고치고, 고치면 이 표에서 지운다.
 
 ### 7.1 우선순위 1
 
@@ -166,11 +167,10 @@
 |---|---|---|---|
 | `LOG-6-01` | `billing/service/RechargeReservationService`, `billing/service/HourlyTargetPlanner` | `@Transactional` 안에서 `RECHARGE_RESERVE_DONE`, `HOURLY_TARGET_DONE` 을 바로 남겨 롤백돼도 성공이 찍힌다 | `TransactionLogging.afterCommit` 으로 남긴다 |
 | `LOG-7-06` | `GlobalExceptionHandler`(잘못된 파라미터, 잘못된 인자), `AuthExceptionHandler` | `detail={}` 에 `e.getMessage()` 를 넣는다 | 메시지를 빼고 `exceptionType`, `errorCode` 를 남긴다 |
-| `LOG-7-06`, `LOG-8-07`, `LOG-6-07` | `ExternalApiLoggingExchangeFilter` | `EXTERNAL_API_CALL_FAILED` 의 `err={}` 에 `ex.toString()` 을 넣어 예외 메시지가 들어간다. 예외 객체도 함께 넘겨 스택을 남기는데, 예외는 호출자에게 전파되어 끝내는 곳에서 한 번 더 남는다. `doOnNext`, `doOnError` 가 Reactor Netty 스레드에서 돌아 MDC 가 비어 있어 `traceId` 가 빠진다 | `exceptionType` 만 남기고 스택은 넘기지 않는다. 호출을 시작할 때 MDC 를 복사해 두고, 콜백은 진입할 때의 MDC 를 보관한 뒤 복사본을 적용하고 `finally` 에서 보관한 MDC 로 되돌린다(`LOG-6-07`). 콜백이 요청 스레드에서 도는 경우에 요청의 MDC 가 지워지지 않는지도 테스트한다. 기존 테스트 `호출이_실패하면_WARN으로_남기고_스택트레이스도_함께_남긴다` 를 새 기준으로 바꾸고, 콜백 로그에 `traceId` 가 있는지 확인하는 테스트를 더한다 |
+| `LOG-7-06`, `LOG-8-07`, `LOG-6-07` | `ExternalApiLoggingExchangeFilter` | `EXTERNAL_API_CALL_FAILED` 의 `err={}` 에 `ex.toString()` 을 넣어 예외 메시지가 들어간다. 예외 객체도 함께 넘겨 스택을 남기는데, 예외는 호출자에게 전파되어 끝내는 곳에서 한 번 더 남는다. 콜백이 요청 스레드와 다른 스레드에서 실행되면 MDC 가 자동으로 전파되지 않아 `traceId` 가 빠진다 | `exceptionType` 만 남기고 스택은 넘기지 않는다. 호출을 시작할 때 MDC 를 복사해 두고, 콜백은 진입할 때의 MDC 를 보관한 뒤 복사본을 적용하고 `finally` 에서 보관한 MDC 로 되돌린다(`LOG-6-07`). 콜백이 요청 스레드에서 도는 경우에 요청의 MDC 가 지워지지 않는지도 테스트한다. 기존 테스트 `호출이_실패하면_WARN으로_남기고_스택트레이스도_함께_남긴다` 를 새 기준으로 바꾸고, 콜백 로그에 `traceId` 가 있는지 확인하는 테스트를 더한다 |
 | `LOG-7-09` | `HttpBodyLoggingFilter` | 민감 키를 정규식으로 찾는다. 값 안에 이스케이프된 따옴표가 있으면(`"password":"ab\"cd"`) 따옴표 뒤가 남고, 좌표 외의 숫자 값(`"kakaoUserId":123`)은 가려지지 않는다 | JSON 은 파서로 읽어 키마다 값을 가린다. 자료형과 관계없이 가리고, 파싱에 실패하면 바디 전체를 가린다. form 은 디코딩한 뒤 키를 본다 |
-| `LOG-7-13` | `logback-spring.xml` 의 `ShortenedThrowableConverter`, 예외를 끝내는 곳(`GlobalExceptionHandler`, 각 외부 클라이언트) | 스택에 찍히는 예외 메시지를 가리지 않는다. 5.1 의 예외도 스택과 함께 남을 수 있다. `WebClientResponseException` 의 스택이 남으면 외부 호출 로그에서 뺀 쿼리 문자열이 다시 나온다 | 스택을 출력하는 변환자가 예외, 원인, 억제된 예외의 메시지에 마스킹을 적용한다. 5.1 의 예외는 끝내는 곳에서 원인 정보만 남긴다. 쿼리 문자열이 든 메시지를 넣은 예외로 두 경로를 테스트한다 |
+| `LOG-7-13` | `logback-spring.xml` 의 `ShortenedThrowableConverter`, 예외를 끝내는 곳(`GlobalExceptionHandler`, 각 외부 클라이언트) | 스택에 찍히는 예외 메시지를 가리지 않는다. 5.1 의 예외도 스택과 함께 남을 수 있다. `WebClientResponseException` 의 스택이 남으면 외부 호출 로그에서 뺀 쿼리 문자열이 다시 나온다 | 기본 변환기는 메시지 마스킹을 지원하지 않는다. 5.1 의 예외는 끝내는 곳에서 원인 정보만 남긴다. 그 밖의 예외 메시지를 출력 단계에서 가릴지는 사용자 정의 변환기 구현 이슈에서 정하고, 정하기 전에는 지원하는 기능처럼 적지 않는다 |
 | `LOG-7-06` | `CouponSequenceRecoveryService`(`COUPON_ISSUANCE_RECOVERY_FAILED`), `CouponSequenceService`(`COUPON_REDIS_BLOCK_FAILED`) | `reason={}` 에 `error.toString()` 을 넣어 예외 메시지가 들어간다 | `exceptionType` 을 쓰고, 사유는 `RedisFailureClassifier` 의 라벨로 `reason` 에 넣는다 |
-| `LOG-8-05` | `MdcLoggingFilter`, `AdminLoginAuditFilter`, `AuthRateLimitFilter` | `MdcLoggingFilter` 는 `X-Forwarded-For` 의 첫 값을 `clientIp` 로 쓴다. 첫 값은 클라이언트가 마음대로 보낼 수 있다. 나머지 두 필터는 로드 밸런서가 붙인 마지막 값을 써서 같은 요청의 IP 가 둘로 찍힌다 | `server.forward-headers-strategy=native` 와 `server.tomcat.remoteip.internal-proxies`(로드 밸런서가 있는 VPC 대역, `lc-infra` 에서 확인)를 설정한다. 세 필터는 헤더를 직접 파싱하지 않고 `request.getRemoteAddr()` 를 쓴다. 헤더를 위조한 요청의 MDC 에 실제 IP 가 남는지 테스트한다 |
 
 ### 7.2 우선순위 2
 
@@ -186,15 +186,15 @@
 | `LOG-6-10` | `SpendReconciliationService`, `PgChargeReconciliationService`, `SettlementConsistencyStep`, `CampaignReportStep` | 배치 검사가 찾은 불일치를 WARN 으로만 남기거나(소진 대사, 정합성, 리포트) 아예 남기지 않는다(PG 대사) | 7.4 의 모양으로 바꾼다. 건마다 WARN, 실행 요약을 ERROR 로 남긴다 |
 | `LOG-3-05` | `PgChargeReconciliationService` | PG 와 우리 금액이 다른 결제(`recordMismatch`)와 빠진 충전을 자동 복구한 결제(`recordMissingCharge`)를 기록 테이블과 메트릭에만 남기고 로그를 남기지 않는다 | `BILLING_PG_RECON_MISMATCH`(WARN)와 `BILLING_PG_RECON_CHARGE_RECOVERED`(WARN, `fallback=AUTO_RECOVER`)를 남긴다 |
 | `LOG-5-07` | `application.yml` 의 `management.endpoints.web.exposure.include` | `loggers` 가 없어 런타임에 레벨을 바꿀 수 없다 | `loggers` 를 더한다. 8081 이 외부에 열려 있지 않은지 함께 확인한다 |
-| `LOG-6-07` | `SchedulerLoggingAspect` | 스케줄러 실행에 `traceId` 가 없다 | 스케줄러의 `TaskDecorator` 가 실행마다 `traceId` 를 만들어 MDC 에 넣고 끝나면 되돌린다. 애스펙트는 MDC 를 다루지 않는다(1장, 구현 가이드 3.4) |
+| `LOG-6-07` | `SchedulerLoggingAspect` | 스케줄러 실행에 `traceId` 가 없다 | 스케줄러의 `TaskDecorator` 가 실행마다 `traceId` 를 만들어 MDC 에 넣고 끝나면 되돌린다. 애스펙트는 MDC 를 다루지 않는다(1장) |
 | `LOG-8-07` | `WebClientConfig` 주석 | `ArchitectureTest` 의 `WebClient는_직접_생성하지_않는다` 규칙이 빌드에서 막는다고 적지만 그 규칙이 없다 | 그 문장을 "직접 생성하지 않는다. 리뷰에서 확인한다" 로 바꾼다. 우회하면 무엇이 빠지는지 설명하는 앞 문장은 남긴다(3장) |
 | `LOG-7-07` | 전역 | 사용자 입력 값의 CR, LF 를 지우는 유틸이 없다 | `PiiMasker` 옆에 유틸을 두고 사용자 입력을 값으로 넣는 곳에 쓴다 |
-| `LOG-7-10` | 테스트 | 새 민감 필드가 마스킹 목록에 있는지 확인하는 테스트가 없다 | DTO 의 필드 이름이 민감해 보이는데 마스킹 판정에 걸리지 않으면 실패하는 테스트를 더한다(구현 가이드 3.6) |
+| `LOG-7-10` | 테스트 | 새 민감 필드가 마스킹 목록에 있는지 확인하는 테스트가 없다 | DTO 의 필드 이름이 민감해 보이는데 마스킹 판정에 걸리지 않으면 실패하는 테스트를 더한다 |
 | `LOG-8-06`, `LOG-7-11` | `HttpBodyLoggingFilter` | 바디 제외 경로(`/v1/admin/auth/`, `/v1/admin/admins`, `/notifications/stream`)와 텍스트가 아닌 Content-Type(멀티파트 업로드 등)은 `shouldNotFilter` 가 필터 전체를 건너뛰어 `HTTP_ACCESS` 가 남지 않는다 | 필터는 모든 요청에 돌고, 바디를 캐싱하고 남길지만 경로와 Content-Type 으로 정한다 |
 | `LOG-8-06` | `HttpBodyLoggingFilter` | `ContentCachingResponseWrapper` 에 상한이 없어 응답 전체를 메모리에 올린다 | 응답 캐싱에 상한을 두고, 상한을 넘거나 스트리밍인 응답은 캐싱하지 않는다 |
 | `LOG-2-06` | `HttpBodyLoggingFilter` | `reqBody="{}" resBody="{}"` 에 넣는 바디의 큰따옴표와 역슬래시를 이스케이프하지 않아 logfmt 값이 첫 내부 따옴표에서 끝난다 | 감싸기 전에 `\` 와 `"` 를 이스케이프한다 |
 | `LOG-8-08`, `LOG-6-02` | `SchedulerLoggingAspect` | `SCHEDULER_FAILED` 에 예외 객체를 넘겨 스택을 남기고 다시 던진다. Spring 의 기본 오류 처리기가 `Unexpected error occurred in scheduled task` 로 스택을 한 번 더 남긴다 | 애스펙트는 `exceptionType` 만 남기고 스택은 프레임워크 오류 처리기에 맡긴다 |
-| `LOG-8-08` | 경보 설정(`lc-infra`) | 마지막 성공 시각 게이지는 작업이 처음 실행될 때 생긴다. 재기동 뒤 한 번도 돌지 않으면 시계열이 없어 낡은 값을 보는 알림이 울리지 않는다 | `absent()` 조건을 함께 둔다. 배치 서버에서만 도는 작업이라 배치 서버의 시계열로 본다 |
+| `LOG-8-08` | 경보 설정(`lc-infra`) | 마지막 성공 시각 게이지는 작업이 처음 실행될 때 생긴다. 재기동 뒤 한 번도 돌지 않으면 시계열이 없어 낡은 값을 보는 알림이 울리지 않는다 | `absent()` 조건을 함께 둔다. 실제 선택자가 배치 서버 시계열만 고르는지는 `lc-infra` 에서 확인한다 |
 | `LOG-6-07` | `CouponIssueBatcher`(`coupon-batch-*` 스레드), `FunnelEventRecorder`, `BatchExecutionRetryService` 의 실행기 | 직접 만든 스레드에서 남기는 로그에 MDC 가 없다 | 작업을 넘길 때 MDC 를 복사해 넘긴다. 받는 쪽은 진입할 때의 MDC 를 보관하고 복사본을 적용한 뒤 `finally` 에서 되돌린다(`LOG-6-07`) |
 | `LOG-8-11` | `AdminLoginAuditFilter` | 관리자 로그인 시도가 애플리케이션 로그로만 남아 큐가 차면 버려질 수 있다 | 성공과 존재하는 계정의 실패는 `AuditLogWriter` 로 감사 저장소에도 쓴다. 없는 계정과 시도 횟수 제한으로 거절된 요청은 애플리케이션 로그와 메트릭으로만 남긴다. `audit_log.admin_id` 가 NOT NULL 이라 없는 계정은 저장할 수 없다. 결과와 `adminId` 를 아는 `AdminLoginService` 로 기록 위치를 옮기고, 필터는 없는 계정과 거절 요청의 로그만 남긴다. IP 는 칸이 없어 `detail` 에 `clientIp=…` 로 담는다. `AdminLoginService.login` 은 `@Transactional(NEVER)` 이고 `AuditLogWriterImpl` 은 `MANDATORY` 라서, 기록은 `AdminLoginTransactionService` 처럼 별도 트랜잭션으로 커밋한 뒤 실패 예외를 던진다. 시도 횟수 제한(`AuthRateLimitFilter`)은 IP 별 1분 10회뿐이라 분산 시도의 쓰기량 상한이 아니다. 대신 계정별 로그인 실패 건수 메트릭을 두고 알림을 건다. 계정별 잠금은 로깅 범위 밖이라 별도 이슈로 다룬다. 이 변경은 admin 서비스 코드를 고치므로 로깅 이슈가 아니라 admin 담당자와 합의해 별도 이슈로 처리한다(`LOG-5-08` 과 같은 방식). 합의 전에는 지금처럼 애플리케이션 로그로만 남는다 |
 | `LOG-8-02` | `logback-spring.xml` | `maxFlushTime` 을 지정하지 않아 종료 때 1초 안에 내보내지 못한 로그가 버려진다 | 큐 크기 8192 와 graceful shutdown(30초)에 맞춰 값을 정한다 |

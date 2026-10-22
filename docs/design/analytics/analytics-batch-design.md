@@ -10,7 +10,7 @@ analytics가 등록하는 일별 집계, 퍼널 이벤트 수신, 이벤트 로�
 |---|---|
 | 실행 시각 | 01:00 KST `@Scheduled`. 00:00 묶음 밖에서 실행한다 |
 | 작업명 | `DailyAggregation.JOB_NAME`을 따른다. 소유 위치는 [구조와 동작 설계](./analytics_구조와_동작_설계.md#규칙을-두는-곳)가 갖는다 |
-| 대상 날짜 | 전일, 전전일과 `aggregation_pending_date`에 남은 날짜를 오래된 순서로 처리한다 |
+| 대상 날짜 | 전일, 전전일, `aggregation_pending_date`에 남은 날짜, 정산의 해제 완료 표시(`BILLING_DAILY_RELEASE`)가 `SUCCESS`인데 집계(`DAILY_AGGREGATION`)가 `SUCCESS`가 아닌 날짜를 오래된 순서로 처리한다. 마지막 조건이 여러 날 중단되어 미처리 기록마저 남지 않은 날짜를 찾는다 |
 | 보존 범위 | 현재 날짜에서 13개월 안의 날짜만 집계한다 |
 | 날짜 점유 | 실행 기록이 없으면 `claim`, FAILED면 `retry`, SUCCESS면 `rerun`, RUNNING이면 건너뛴다 |
 | 수동 재집계 | A-05가 정기 실행과 같은 실행기를 부른다 |

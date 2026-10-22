@@ -175,7 +175,7 @@
   실제 값은 운영 쪽과 정한다("아직 정해지지 않은 것" 참고). Redis 장애 시에는 세지 못하는
   것뿐이지 막을 이유가 없어 통과시킨다(`장애_처리_설계_가이드.md`, 캐시 기본 처리)
 - **포스터 존재 확인은 `PosterRepository.findByCampaignId`로 하고, 없으면
-  `PosterErrorCode.POSTER_NOT_SAVED`(`POSTER-021`, 404)로 거부한다.**
+  `PosterErrorCode.POSTER_NOT_SAVED`(`POSTER-020`, 404)로 거부한다.**
   `PosterModerationService.moderate()`가 같은 조회에서 쓰는 코드를 그대로 재사용한다. 새
   코드를 추가하지 않는다
 - **자동 검수는 `PosterModerationService.moderate(campaignId)`를 그대로 부른다(FR-054,

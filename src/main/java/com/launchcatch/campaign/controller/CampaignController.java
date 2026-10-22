@@ -107,7 +107,7 @@ public class CampaignController {
             @ApiResponse(responseCode = "200", description = "처리 성공. 검수 통과면 SCHEDULED, 실패면 DRAFT와 사유."),
             @ApiResponse(responseCode = "403", description = "CAMPAIGN-001: 점주 상태가 ACTIVE가 아닙니다. "
                     + "CAMPAIGN-005: 그 campaignId가 없거나 본인 소유가 아닙니다."),
-            @ApiResponse(responseCode = "404", description = "POSTER-021: 이 캠페인에 저장된 포스터가 없습니다."),
+            @ApiResponse(responseCode = "404", description = "POSTER-020: 이 캠페인에 저장된 포스터가 없습니다."),
             @ApiResponse(responseCode = "409", description = "CAMPAIGN-006: DRAFT 상태가 아니라 활성화할 수 없습니다.")
     })
     public ResponseEnvelope<CampaignActivateResponse> activate(

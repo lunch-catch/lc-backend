@@ -1,5 +1,6 @@
 package com.launchcatch.billing.repository;
 
+import static com.launchcatch.billing.entity.QDeductionResult.deductionResult;
 import static com.launchcatch.billing.entity.QPayment.payment;
 import static com.launchcatch.billing.entity.QPointLedger.pointLedger;
 
@@ -145,6 +146,21 @@ class PointLedgerRepositoryImpl implements PointLedgerRepositoryCustom {
                         pointLedger.entryType.in(EntryType.RESERVE, EntryType.RELEASE),
                         pointLedger.businessDate.between(from, to))
                 .groupBy(pointLedger.businessDate, pointLedger.entryType)
+                .fetch();
+    }
+
+    @Override
+    public List<BusinessDateSumRow> sumDeductByServedBusinessDate(Long ownerId, LocalDate from, LocalDate to) {
+        return queryFactory
+                .select(Projections.constructor(BusinessDateSumRow.class,
+                        deductionResult.businessDate, pointLedger.entryType, pointLedger.amount.sum()))
+                .from(pointLedger)
+                .join(deductionResult).on(deductionResult.serveId.eq(pointLedger.serveId))
+                .where(
+                        pointLedger.ownerId.eq(ownerId),
+                        pointLedger.entryType.eq(EntryType.DEDUCT),
+                        deductionResult.businessDate.between(from, to))
+                .groupBy(deductionResult.businessDate, pointLedger.entryType)
                 .fetch();
     }
 

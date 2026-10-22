@@ -14,10 +14,12 @@ import static org.mockito.Mockito.when;
 import com.launchcatch.coupon.exception.CouponErrorCode;
 import com.launchcatch.coupon.exception.CouponException;
 import com.launchcatch.coupon.repository.CouponSequenceRepository;
-import com.launchcatch.coupon.service.model.CouponReservation;
-import com.launchcatch.coupon.service.model.CouponReservationOutcome;
+import com.launchcatch.coupon.model.CouponReservation;
+import com.launchcatch.coupon.model.CouponReservationOutcome;
 import java.time.Duration;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -124,6 +126,37 @@ class CouponSequenceServiceTest {
         assertThat(service.needsRecovery(81L)).isTrue();
     }
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.CsvSource({"-1, false", "0, true", "1, false"})
+    void 사전_검사는_준비된_큐의_확정_소진만_반환한다(int availability, boolean soldOut) {
+        when(repository.availability(81L)).thenReturn(availability);
+
+        assertThat(service.isConfirmedSoldOut(81L)).isEqualTo(soldOut);
+        assertThat(service.needsRecovery(81L)).isFalse();
+    }
+
+    @Test
+    void 사전_검사의_Redis_조회_장애는_소진으로_바꾸지_않고_복구를_요청한다() {
+        TransactionSynchronizationManager.setActualTransactionActive(false);
+        when(repository.availability(81L)).thenThrow(new RedisConnectionFailureException("availability failed"));
+
+        assertThatThrownBy(() -> service.isConfirmedSoldOut(81L)).isInstanceOfSatisfying(CouponException.class,
+                error -> {
+                    assertThat(error.getErrorCode()).isEqualTo(CouponErrorCode.ISSUANCE_BUSY);
+                    assertThat(error.canResumeIssuance(81L)).isTrue();
+                });
+        assertThat(service.needsRecovery(81L)).isTrue();
+    }
+
+    @Test
+    void 로컬에서_차단된_이벤트는_사전_검사에서도_Redis를_다시_읽지_않는다() {
+        service.block(81L, null);
+
+        assertThatThrownBy(() -> service.isConfirmedSoldOut(81L)).isInstanceOfSatisfying(CouponException.class,
+                error -> assertThat(error.getErrorCode()).isEqualTo(CouponErrorCode.ISSUANCE_BUSY));
+        verify(repository, never()).availability(81L);
+    }
+
     // 소진 확인에서 큐가 아직 준비되지 않았으면 소진이 아니라 차단으로 처리해 다음 요청이 복구하게 해야 한다.
     @Test
     void 큐가_준비되지_않았으면_소진_확인이_이벤트를_차단한다() {
@@ -145,6 +178,130 @@ class CouponSequenceServiceTest {
 
         assertThat(failure.canResumeIssuance(81L)).isEqualTo(allowed);
         assertThat(failure.canResumeIssuance(82L)).isFalse();
+    }
+
+    @Test
+    void 여러_이벤트의_예약은_이벤트별_요청_순서와_대기_여부를_유지한다() {
+        when(repository.reserveAll(org.mockito.ArgumentMatchers.anyMap(), eq(30_000L)))
+                .thenReturn(Map.of(81L, List.of(4L, -2L), 82L, List.of(0L)));
+
+        Map<Long, List<CouponReservationOutcome>> reserved = service.reserveAll(Map.of(81L, 2, 82L, 1));
+
+        CouponReservation taken = reserved.get(81L).getFirst().reservation();
+        assertThat(taken.eventId()).isEqualTo(81L);
+        assertThat(taken.sequence()).isEqualTo(4);
+        assertThat(reserved.get(81L).get(1).awaitingReservation()).isTrue();
+        assertThat(reserved.get(81L).get(1).recoveryRequired()).isFalse();
+        assertThat(reserved.get(82L).getFirst().rejection()).isEqualTo(CouponErrorCode.INVENTORY_EXHAUSTED);
+        TransactionSynchronizationManager.getSynchronizations().forEach(
+                sync -> sync.afterCompletion(TransactionSynchronization.STATUS_ROLLED_BACK));
+        verify(repository).release(81L, 4, taken.id());
+    }
+
+    @Test
+    void 여러_이벤트의_예약_응답을_잃으면_부분_실행된_이벤트도_모두_차단한다() {
+        when(repository.reserveAll(org.mockito.ArgumentMatchers.anyMap(), eq(30_000L)))
+                .thenThrow(new RedisConnectionFailureException("pipeline reply lost"));
+
+        assertThatThrownBy(() -> service.reserveAll(Map.of(81L, 1, 82L, 1)))
+                .isInstanceOfSatisfying(CouponException.class,
+                        error -> assertThat(error.getErrorCode()).isEqualTo(CouponErrorCode.ISSUANCE_BUSY));
+
+        assertThat(service.needsRecovery(81L)).isTrue();
+        assertThat(service.needsRecovery(82L)).isTrue();
+        verify(repository).blockAll(Set.of(81L, 82L));
+    }
+
+    @Test
+    void 여러_이벤트를_조회하면_확정_소진만_모은다() {
+        when(repository.availability(anyList())).thenReturn(Map.of(81L, 0, 82L, 1, 83L, 2));
+
+        assertThat(service.soldOutEvents(Set.of(81L, 82L, 83L))).containsExactly(81L);
+        assertThat(service.needsRecovery(82L)).isFalse();
+    }
+
+    @Test
+    void 여러_이벤트의_소진_조회가_실패하면_모든_이벤트를_복구_대상으로_남긴다() {
+        when(repository.availability(anyList())).thenThrow(new RedisConnectionFailureException("pipeline failed"));
+
+        assertThatThrownBy(() -> service.soldOutEvents(Set.of(81L, 82L))).isInstanceOf(CouponException.class);
+
+        assertThat(service.needsRecovery(81L)).isTrue();
+        assertThat(service.needsRecovery(82L)).isTrue();
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(ints = {0, 1, 2})
+    void 예약_대기는_소진과_반납된_재고와_미완료_예약을_구분한다(int availability) {
+        when(repository.retryAvailability(81L, 30_000L)).thenReturn(availability);
+
+        assertThat(service.retryAvailability(81L)).isEqualTo(availability);
+        assertThat(service.needsRecovery(81L)).isFalse();
+    }
+
+    @Test
+    void 예약_대기_중_큐가_차단되면_복구를_요청한다() {
+        when(repository.retryAvailability(81L, 30_000L)).thenReturn(-1);
+
+        assertThatThrownBy(() -> service.retryAvailability(81L)).isInstanceOfSatisfying(CouponException.class,
+                error -> assertThat(error.getErrorCode()).isEqualTo(CouponErrorCode.ISSUANCE_BUSY));
+        assertThat(service.needsRecovery(81L)).isTrue();
+    }
+
+    @Test
+    void 예약_완료는_저장소가_확인한_소진_여부를_돌려준다() {
+        CouponReservation reservation = new CouponReservation(81L, 1, "first");
+        when(repository.complete(81L, 1, "first")).thenReturn(true);
+
+        assertThat(service.complete(reservation)).isTrue();
+        assertThat(service.needsRecovery(81L)).isFalse();
+    }
+
+    @Test
+    void 묶음_예약을_완료하면_소진된_이벤트만_돌려준다() {
+        when(repository.completeAll(81L, List.of(1, 2), List.of("first", "second"))).thenReturn(true);
+        List<CouponReservation> reservations = List.of(new CouponReservation(81L, 1, "first"),
+                new CouponReservation(81L, 2, "second"), new CouponReservation(82L, 1, "third"));
+
+        assertThat(service.completeAll(reservations)).containsExactly(81L);
+        assertThat(service.needsRecovery(82L)).isFalse();
+    }
+
+    @Test
+    void 한_이벤트의_완료가_실패해도_다른_이벤트의_소진_결과를_유지한다() {
+        when(repository.completeAll(81L, List.of(1), List.of("first")))
+                .thenThrow(new RedisConnectionFailureException("complete failed"));
+        when(repository.completeAll(82L, List.of(1), List.of("second"))).thenReturn(true);
+
+        assertThat(service.completeAll(List.of(new CouponReservation(81L, 1, "first"),
+                new CouponReservation(82L, 1, "second")))).containsExactly(82L);
+        assertThat(service.needsRecovery(81L)).isTrue();
+        assertThat(service.needsRecovery(82L)).isFalse();
+    }
+
+    @Test
+    void 복구가_완료되면_로컬_차단을_풀고_새_요청을_받는다() {
+        service.block(81L, null);
+
+        service.resume(81L);
+
+        assertThat(service.needsRecovery(81L)).isFalse();
+        org.assertj.core.api.Assertions.assertThatCode(() -> service.checkAdmission(81L)).doesNotThrowAnyException();
+    }
+
+    @Test
+    void Redis_차단_실패는_예외_메시지_없이_분류한_사유를_남긴다() {
+        doThrow(new org.springframework.dao.QueryTimeoutException("secret-token")).when(repository).block(81L);
+        try (var logs = new CouponLogCapture(CouponSequenceService.class)) {
+            service.block(81L, null);
+
+            assertThat(logs.events).filteredOn(event -> event.getFormattedMessage().contains("COUPON_REDIS_BLOCK_FAILED"))
+                    .singleElement().satisfies(event -> {
+                        assertThat(event.getFormattedMessage()).contains("exceptionType=QueryTimeoutException", "reason=TIMEOUT")
+                                .doesNotContain("secret-token");
+                        assertThat(event.getThrowableProxy()).isNull();
+                    });
+        }
     }
 
     // 순번 하나를 예약하고 그 예약을 돌려준다.

@@ -40,7 +40,7 @@ public class EventLogRetentionJob implements StandaloneJob {
     public void purgeExpiredEvents() {
         LocalDate businessDate = executions.businessDate();
         if (!executions.claim(JOB_NAME, businessDate)) {
-            log.info("event=EVENT_LOG_RETENTION_SKIPPED reason=ALREADY_CLAIMED businessDate={}", businessDate);
+            log.info("event=ANALYTICS_EVENT_LOG_RETENTION_SKIPPED reason=ALREADY_CLAIMED businessDate={}", businessDate);
             return;
         }
         int deleted;

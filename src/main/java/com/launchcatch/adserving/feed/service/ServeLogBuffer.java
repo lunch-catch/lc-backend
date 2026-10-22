@@ -80,7 +80,7 @@ public class ServeLogBuffer implements SmartLifecycle {
             try {
                 serveLogRepository.insertAll(rows);
             } catch (RuntimeException e) {
-                log.error("event=FEED_SERVE_LOG_WRITE_FAILED feeds={} rows={} 버린다", batch.size(), rows.size(), e);
+                log.error("event=ADSERVING_FEED_SERVE_LOG_WRITE_FAILED feedCount={} rowCount={} fallback=DROP_ROWS", batch.size(), rows.size(), e);
                 meterRegistry.counter(FAILED_METRIC).increment(rows.size());
             }
         }
@@ -90,7 +90,7 @@ public class ServeLogBuffer implements SmartLifecycle {
         try {
             feedVisitRepository.insertAll(visits);
         } catch (RuntimeException e) {
-            log.error("event=FEED_VISIT_WRITE_FAILED visits={} 버린다", visits.size(), e);
+            log.error("event=ADSERVING_FEED_VISIT_WRITE_FAILED visitCount={} fallback=DROP_ROWS", visits.size(), e);
             meterRegistry.counter(VISIT_FAILED_METRIC).increment(visits.size());
         }
     }

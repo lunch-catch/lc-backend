@@ -1,5 +1,6 @@
 package com.launchcatch.auth;
 
+import com.launchcatch.global.http.ClientIpResolver;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -9,7 +10,6 @@ import java.time.Duration;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
-import java.util.regex.Pattern;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.io.ClassPathResource;
@@ -58,7 +58,6 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
 
     private static final int LIMIT = 10;
     private static final Duration WINDOW = Duration.ofMinutes(1);
-    private static final Pattern SAFE_IP = Pattern.compile("^[0-9a-fA-F.:]{1,45}$");
     private static final RedisScript<Long> RATE_LIMIT_SCRIPT = loadRateLimitScript();
 
     private final StringRedisTemplate redisTemplate;
@@ -79,7 +78,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
             return;
         }
 
-        String ip = resolveClientIp(request);
+        String ip = ClientIpResolver.resolve(request);
         if (isOverLimit(ip)) {
             response.setStatus(HttpStatus.TOO_MANY_REQUESTS.value());
             response.setHeader(HttpHeaders.RETRY_AFTER, String.valueOf(retryAfterSeconds(ip)));
@@ -103,7 +102,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
             Long remaining = redisTemplate.getExpire(KEY_PREFIX + ip, TimeUnit.SECONDS);
             return remaining != null && remaining > 0 ? remaining : WINDOW.toSeconds();
         } catch (DataAccessException e) {
-            log.warn("event=RATE_LIMIT_TTL_FAILED ip={} cause={} 윈도우 길이로 답한다",
+            log.warn("event=AUTH_RATE_LIMIT_TTL_FAILED clientIp={} reason={} fallback=WINDOW_LENGTH",
                     ip, RedisFailureClassifier.causeLabel(e), e);
             return WINDOW.toSeconds();
         }
@@ -116,24 +115,9 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
                     RATE_LIMIT_SCRIPT, List.of(key), String.valueOf(WINDOW.toMillis()));
             return count != null && count > LIMIT;
         } catch (DataAccessException e) {
-            log.warn("event=RATE_LIMIT_CHECK_FAILED ip={} cause={} 통과시킨다",
+            log.warn("event=AUTH_RATE_LIMIT_CHECK_FAILED clientIp={} reason={} fallback=PASS_THROUGH",
                     ip, RedisFailureClassifier.causeLabel(e), e);
             return false;
         }
-    }
-
-    /*
-     * 로드 밸런서 기본 설정은 실제 클라이언트 IP 를 X-Forwarded-For 의 마지막 항목에 덧붙인다.
-     * 이 앱의 8080 은 보안 그룹에서 로드 밸런서에게만 열려 있어야 한다.
-     * 그렇지 않으면 직접 접속한 클라이언트가 이 헤더를 위조할 수 있다.
-     */
-    private String resolveClientIp(HttpServletRequest request) {
-        String forwarded = request.getHeader("X-Forwarded-For");
-        if (forwarded == null || forwarded.isBlank()) {
-            return request.getRemoteAddr();
-        }
-        String[] addresses = forwarded.split(",");
-        String candidate = addresses[addresses.length - 1].trim();
-        return SAFE_IP.matcher(candidate).matches() ? candidate : request.getRemoteAddr();
     }
 }

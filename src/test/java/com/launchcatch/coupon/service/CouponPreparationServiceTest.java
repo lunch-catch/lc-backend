@@ -18,6 +18,7 @@ import com.launchcatch.coupon.repository.CouponBatchRepository;
 import com.launchcatch.coupon.repository.CouponEventRepository;
 import com.launchcatch.ops.contract.BatchAttemptGuard;
 import com.launchcatch.store.contract.StoreInfo;
+import com.launchcatch.store.contract.StoreMenuQueryResult;
 import com.launchcatch.store.contract.StoreQueryService;
 import java.time.Clock;
 import java.time.Instant;
@@ -116,10 +117,26 @@ class CouponPreparationServiceTest {
         when(campaigns.findServableOn(DATE)).thenReturn(List.of(campaign));
         when(campaigns.findByIdForUpdate(91L)).thenReturn(Optional.of(campaign));
         when(stores.findAllById(List.of(10L))).thenReturn(List.of(new StoreInfo(10L, "식당", null, null, null)));
-        when(stores.findMenusByIdIn(List.of(100L))).thenReturn(List.of());
+        when(stores.findMenusByIdIn(List.of(100L))).thenReturn(new StoreMenuQueryResult(List.of(), List.of()));
 
         assertThatThrownBy(() -> service().prepare(DATE, 1))
                 .isInstanceOf(IllegalStateException.class).hasMessageContaining("메뉴가 없다");
+        verifyNoInteractions(batches);
+    }
+
+    @Test
+    void 할인_메뉴의_데이터_오류는_회차와_재고를_만들지_않고_롤백한다() {
+        var campaign = CouponBatchFixture.menuCampaign();
+        when(campaigns.findServableOn(DATE)).thenReturn(List.of(campaign));
+        when(campaigns.findByIdForUpdate(91L)).thenReturn(Optional.of(campaign));
+        when(stores.findAllById(List.of(10L))).thenReturn(List.of(new StoreInfo(10L, "식당", null, null, null)));
+        when(stores.findMenusByIdIn(List.of(100L))).thenReturn(new StoreMenuQueryResult(List.of(), List.of(100L)));
+
+        assertThatThrownBy(() -> service().prepare(DATE, 1))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("검증된 이미지가 없다");
+
+        verify(manager).rollback(any());
+        verify(events, org.mockito.Mockito.never()).saveAndFlush(any());
         verifyNoInteractions(batches);
     }
 

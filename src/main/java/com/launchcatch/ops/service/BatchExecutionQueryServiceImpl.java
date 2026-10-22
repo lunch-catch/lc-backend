@@ -20,6 +20,11 @@ public class BatchExecutionQueryServiceImpl implements BatchExecutionQueryServic
         return batchExecutionLogRepository.findByBusinessDate(businessDate).stream().map(this::toRecord).toList();
     }
 
+    @Override
+    public List<LocalDate> findSucceededBusinessDates(String jobName, LocalDate fromInclusive, LocalDate toExclusive) {
+        return batchExecutionLogRepository.findSucceededBusinessDates(jobName, fromInclusive, toExclusive);
+    }
+
     /** startedAt은 created_at을 쓴다. 점유 행이 RUNNING으로 생성되는 시점이 실행 시작이다. */
     private BatchExecutionRecord toRecord(BatchExecutionLog log) {
         return new BatchExecutionRecord(

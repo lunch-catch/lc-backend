@@ -9,7 +9,8 @@ local function fill(code)
     for i = #out + 1, n do out[i] = code end
     return out
 end
-if redis.call('HGET', KEYS[3], 'state') ~= 'READY' then return fill(-1) end
+local state = redis.call('HGET', KEYS[3], 'state')
+if state ~= 'READY' and state ~= 'SOLD_OUT' then return fill(-1) end
 local time = redis.call('TIME')
 local now = time[1] * 1000 + math.floor(time[2] / 1000)
 local expires = tonumber(redis.call('HGET', KEYS[3], 'expiresAt'))
@@ -23,11 +24,15 @@ end
 local total = tonumber(redis.call('HGET', KEYS[3], 'total'))
 local completed = tonumber(redis.call('HGET', KEYS[3], 'completed'))
 if not total or not completed or completed < 0 or completed > total
+    or (state == 'SOLD_OUT' and completed ~= total)
     or redis.call('LLEN', KEYS[1]) + redis.call('ZCARD', KEYS[2]) + completed ~= total then
     redis.call('HSET', KEYS[3], 'state', 'BLOCKED')
     return fill(-1)
 end
-if completed == total then return fill(0) end
+if completed == total then
+    redis.call('HSET', KEYS[3], 'state', 'SOLD_OUT')
+    return fill(0)
+end
 -- 예약 ID마다 순번을 하나 꺼내 pending 에 현재 시각과 함께 넣어 커밋이나 반납을 기다린다.
 for i = 1, n do
     local sequence = redis.call('LPOP', KEYS[1])

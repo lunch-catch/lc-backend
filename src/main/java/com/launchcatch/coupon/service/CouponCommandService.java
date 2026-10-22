@@ -1,6 +1,5 @@
 package com.launchcatch.coupon.service;
 
-import com.launchcatch.adserving.contract.CandidateStateUpdater;
 import com.launchcatch.coupon.CouponQrImageEncoder;
 import com.launchcatch.coupon.dto.CouponIssueResponse;
 import com.launchcatch.coupon.dto.CouponQrResponse;
@@ -9,8 +8,8 @@ import com.launchcatch.coupon.exception.CouponErrorCode;
 import com.launchcatch.coupon.exception.CouponException;
 import com.launchcatch.coupon.repository.CouponDailyLimitRepository;
 import com.launchcatch.coupon.repository.MemberCouponRepository;
-import com.launchcatch.coupon.service.model.CouponIssuanceResult;
-import com.launchcatch.coupon.service.model.CouponIssuanceRequest;
+import com.launchcatch.coupon.model.CouponIssuanceResult;
+import com.launchcatch.coupon.model.CouponIssuanceRequest;
 import com.launchcatch.global.config.ClockConfig;
 import com.launchcatch.member.contract.MemberInfo;
 import com.launchcatch.member.contract.MemberQueryService;
@@ -20,6 +19,7 @@ import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicInteger;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -36,41 +36,76 @@ public class CouponCommandService {
     private final MemberCouponRepository memberCouponRepository;
     private final CouponDailyLimitRepository couponDailyLimitRepository;
     private final MemberQueryService memberQueryService;
-    private final CouponLookUpService couponLookUpService;
     private final CouponQrImageEncoder imageEncoder;
     private final Clock clock;
-    private final CandidateStateUpdater candidateStateUpdater;
+    private final CouponSoldOutNotificationService soldOutNotifications;
     private final CouponSequenceService sequenceService;
     private final CouponSequenceRecoveryService sequenceRecoveryService;
     private final CouponIssueBatcher batcher;
+
+    private final AtomicInteger activeIssueRequests = new AtomicInteger();
+
+    @Value("${coupon.issue.batch.queue-capacity:2000}")
+    private int requestCapacity = 2000;
 
     @Value("${coupon.issue.batch.wait-timeout:10s}")
     private Duration waitTimeout = Duration.ofSeconds(10);
 
     /*
-     * 발급 트랜잭션이 커밋한 뒤에만 광고 후보에 소진을 알린다.
+     * 소진 결과는 DB 재확인 없이 반환하며 누락 통보의 접수만 수행한다.
      * NEVER는 트랜잭션을 만들지 않으며 호출자가 연 트랜잭션 안에서 조정하는 것도 막는다.
      */
     @Transactional(propagation = Propagation.NEVER)
     public CouponIssueResponse issue(Long memberId, Long eventId) {
-        long deadlineNanos = System.nanoTime() + waitTimeout.toNanos();
-        CouponIssuanceRequest request = null;
+        return issue(new CouponIssuanceRequest(memberId, eventId,
+                LocalDateTime.now(clock.withZone(ClockConfig.ZONE))), System.nanoTime() + waitTimeout.toNanos());
+    }
+
+    @Transactional(propagation = Propagation.NEVER)
+    public CouponIssueResponse issue(CouponIssuanceRequest request, long deadlineNanos) {
+        if (activeIssueRequests.incrementAndGet() > requestCapacity) {
+            activeIssueRequests.decrementAndGet();
+            rejectIfConfirmedSoldOut(request.eventId());
+            throw new CouponException(CouponErrorCode.ISSUANCE_BUSY);
+        }
+        try {
+            return issueWithinDeadline(request, deadlineNanos);
+        } finally {
+            activeIssueRequests.decrementAndGet();
+        }
+    }
+
+    // 접수 상한에 닿아도 확정 소진은 혼잡 응답보다 먼저 반환하며 복구는 작업자에게 맡긴다.
+    @Transactional(propagation = Propagation.NEVER)
+    public void rejectIfConfirmedSoldOut(long eventId) {
+        try {
+            if (!sequenceService.isConfirmedSoldOut(eventId)) {
+                return;
+            }
+        } catch (CouponException error) {
+            if (error.getErrorCode() == CouponErrorCode.ISSUANCE_BUSY) {
+                return;
+            }
+            throw error;
+        }
+        soldOutNotifications.request(eventId);
+        throw new CouponException(CouponErrorCode.INVENTORY_EXHAUSTED);
+    }
+
+    private CouponIssueResponse issueWithinDeadline(CouponIssuanceRequest request, long deadlineNanos) {
+        long eventId = request.eventId();
         boolean resumed = false;
         while (true) {
             try {
                 sequenceService.checkAdmission(eventId);
-                if (request == null) {
-                    request = new CouponIssuanceRequest(memberId, eventId,
-                            LocalDateTime.now(clock.withZone(ClockConfig.ZONE)));
+                if (sequenceService.isConfirmedSoldOut(eventId)) {
+                    throw new CouponException(CouponErrorCode.INVENTORY_EXHAUSTED);
                 }
                 CouponIssuanceResult result = batcher.submitAndAwait(request, deadlineNanos);
-                if (result.soldOut()) {
-                    retrySoldOut(eventId);
-                }
                 return result.response();
             } catch (CouponException error) {
                 if (error.getErrorCode() == CouponErrorCode.INVENTORY_EXHAUSTED) {
-                    retrySoldOut(eventId);
+                    soldOutNotifications.request(eventId);
                 }
                 if (!resumed && error.getErrorCode() == CouponErrorCode.ISSUANCE_BUSY && sequenceService.needsRecovery(eventId)) {
                     boolean recovered = sequenceRecoveryService.recover(eventId, deadlineNanos);
@@ -90,28 +125,6 @@ public class CouponCommandService {
         }
     }
 
-    /*
-     * 소진으로 거절했거나 마지막 재고를 발급했을 때 DB에서 소진을 확인해 광고 후보에 알린다.
-     * 조회가 실패해도 이미 정한 발급 결과는 바꾸지 않고 ERROR 로그만 남긴다.
-     */
-    private void retrySoldOut(Long eventId) {
-        try {
-            couponLookUpService.findSoldOut(eventId).ifPresent(this::notifySoldOut);
-        } catch (RuntimeException error) {
-            log.error("event=COUPON_SOLD_OUT_RECOVERY_FAILED couponEventId={}", eventId, error);
-        }
-    }
-
-    // 광고 후보에 캠페인의 그날 소진을 알리며 실패해도 발급 결과는 바꾸지 않고 ERROR 로그만 남긴다.
-    private void notifySoldOut(CouponLookUpService.SoldOut soldOut) {
-        try {
-            candidateStateUpdater.markSoldOut(soldOut.campaignId(), soldOut.businessDate(), soldOut.soldOutAt());
-        } catch (RuntimeException error) {
-            log.error("event=COUPON_SOLD_OUT_NOTIFICATION_FAILED campaignId={} businessDate={} soldOutAt={}",
-                    soldOut.campaignId(), soldOut.businessDate(), soldOut.soldOutAt(), error);
-        }
-    }
-
     // 본인 쿠폰을 잠가 현재 회원 상태와 사용 조건을 확인하고 QR을 교체한다.
     public CouponQrResponse generateQr(Long memberId, Long memberCouponId) {
         try {
@@ -123,7 +136,7 @@ public class CouponCommandService {
             return new CouponQrResponse(imageEncoder.encode(coupon.getQrToken()),
                     coupon.getQrExpiresAt().atZone(ClockConfig.ZONE).toOffsetDateTime());
         } catch (CouponException e) {
-            log.warn("event=COUPON_QR_GENERATION_FAILED memberId={} memberCouponId={} reason={}",
+            log.info("event=COUPON_QR_GENERATION_FAILED memberId={} memberCouponId={} errorCode={}",
                     memberId, memberCouponId, e.getErrorCode().getCode());
             throw e;
         }
@@ -159,7 +172,7 @@ public class CouponCommandService {
                 return;
             }
         } catch (CouponException e) {
-            log.warn("event=COUPON_DELETE_FAILED memberId={} memberCouponId={} reason={}",
+            log.info("event=COUPON_DELETE_FAILED memberId={} memberCouponId={} errorCode={}",
                     memberId, memberCouponId, e.getErrorCode().getCode());
             throw e;
         }

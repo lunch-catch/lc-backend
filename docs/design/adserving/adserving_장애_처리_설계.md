@@ -18,6 +18,7 @@
 | analytics 의 퍼널 이벤트 수신 | 노출과 스와이프의 퍼널 이벤트 | 벗어났다. 아래 |
 | campaign 의 `CampaignStatusChangedEvent` | 그날 후보의 서빙 상태 | 기본(같은 트랜잭션). 상태 UPDATE 가 실패하면 캠페인의 상태 전이도 되돌아간다 |
 | campaign 의 `CampaignEndedEvent` | 찜의 종료 표시 | 기본(같은 트랜잭션). 표시 UPDATE 가 실패하면 캠페인 종료도 되돌아간다 |
+| campaign 의 `CampaignQueryService.findAllById` | 찜 요청의 종료 확인 | 기본(오류로 올린다). 찜은 이미 커밋돼 남고, 다시 보낸 찜 요청이 이미 있는 찜에도 확인해 표시를 채운다(#780) |
 | 00:00 묶음(`DailyJob`) | 후보 적재(캠페인과 가게 계약 읽기 포함), 끝난 찜 정리, 대상 인원 집계(캠페인 계약에 쓰기 포함) | 기본(실패로 남기고 묶음 규칙대로 다시 실행한다). 다시 불려도 결과가 같다 |
 | 02:00 묶음 밖 작업(`StandaloneJob`) | 보관 기간 삭제(`feed_visit_daily`, `swipe_log`, `serve_log`, `impression_log`) | 기본(실패로 닫고 알린다. 멈추면 다른 서버가 이어받아 다시 돈다). 남은 행만 지워 다시 불려도 결과가 같다 |
 
@@ -97,11 +98,11 @@ Valkey 가 멈춰 통과시킨 횟수는 `adserving_cache_bypass_total` 이 센�
 
 | `use` | 로그 `event` | 통과시키면 |
 |---|---|---|
-| `feed_rate_limit` | `FEED_RATE_LIMIT_FAILED` | 요청 제한이 풀리고 `nextFeedAvailableAt` 이 응답 시각이 된다 |
-| `exclusion` | `FEED_EXCLUSION_FAILED`, `FEED_EXCLUSION_WRITE_FAILED` | 넘긴 카드가 다시 보인다 |
-| `serve_frequency` | `FEED_SERVE_FREQUENCY_READ_FAILED`, `FEED_SERVE_FREQUENCY_WRITE_FAILED` | 같은 카드가 하루 2회, 세션 1회를 넘겨 나온다 |
-| `impression_count` | `FEED_IMPRESSION_COUNT_FAILED`, `FEED_IMPRESSION_COUNT_INCREMENT_FAILED` | 읽기는 유효 노출 수를 0 으로 보고 상한을 넘겨 내보낸다. 올리기는 그 노출을 세지 못해 상한이 늦게 걸린다. 넘긴 노출은 과금되지 않아 손해는 플랫폼에 남는다 |
-| `serve_record` | `FEED_SERVE_RECORD_WRITE_FAILED`, `FEED_SERVE_RECORD_READ_FAILED` | 쓰지 못하거나 읽지 못하면 그 카드의 노출이 무효(`EXPIRED_OR_UNKNOWN`)로 저장되어 과금되지 않는다. 다시 보내도 처음 판정이 남는다 |
+| `feed_rate_limit` | `ADSERVING_FEED_RATE_LIMIT_FAILED` | 요청 제한이 풀리고 `nextFeedAvailableAt` 이 응답 시각이 된다 |
+| `exclusion` | `ADSERVING_FEED_EXCLUSION_FAILED`, `ADSERVING_FEED_EXCLUSION_WRITE_FAILED` | 넘긴 카드가 다시 보인다 |
+| `serve_frequency` | `ADSERVING_FEED_SERVE_FREQUENCY_READ_FAILED`, `ADSERVING_FEED_SERVE_FREQUENCY_WRITE_FAILED` | 같은 카드가 하루 2회, 세션 1회를 넘겨 나온다 |
+| `impression_count` | `ADSERVING_FEED_IMPRESSION_COUNT_FAILED`, `ADSERVING_FEED_IMPRESSION_COUNT_INCREMENT_FAILED` | 읽기는 유효 노출 수를 0 으로 보고 상한을 넘겨 내보낸다. 올리기는 그 노출을 세지 못해 상한이 늦게 걸린다. 넘긴 노출은 과금되지 않아 손해는 플랫폼에 남는다 |
+| `serve_record` | `ADSERVING_FEED_SERVE_RECORD_WRITE_FAILED`, `ADSERVING_FEED_SERVE_RECORD_READ_FAILED` | 쓰지 못하거나 읽지 못하면 그 카드의 노출이 무효(`EXPIRED_OR_UNKNOWN`)로 저장되어 과금되지 않는다. 다시 보내도 처음 판정이 남는다 |
 
 ### DB
 

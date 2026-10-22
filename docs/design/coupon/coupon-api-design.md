@@ -17,15 +17,17 @@ HTTP 경로의 버전과 발급 구조의 버전은 별개다.
 
 ## 묶음으로 처리하는 쿠폰 발급
 
-`POST /v1/coupons`는 `CouponCommandService.issue(memberId, eventId)`로 처리한다.
+`POST /v1/coupons`는 기존 동기 컨트롤러에서 `CouponCommandService.issue`로 처리한다. HTTP 요청 스레드는 DB 연결을 잡지 않고 발급 결과를 기다리며 Tomcat 작업자 200개 제한은 유지한다.
 조정 메서드는 `Propagation.NEVER`로 호출자의 트랜잭션 안에서 실행하는 것을 막는다.
-요청 스레드는 DB 커넥션을 잡지 않고 `CouponIssueBatcher.submitAndAwait`로 대기열에 요청을 넣은 뒤 자기 결과를 기다린다.
+발급 조정자는 배처에 접수하기 전에 Redis의 확정 소진을 검사한다. 사전 검사의 응답 우선순위는 [발급 명세](../../api-spec/coupon-api-spec.md#쿠폰-발급)를 따른다.
+`CouponSequenceService.isConfirmedSoldOut`이 true면 발급 대기열이나 발급 DB 조회를 사용하지 않는다.
+소진이 확정되지 않은 요청만 DB 커넥션 없이 `CouponIssueBatcher.submitAndAwait`로 대기열에 넣고 자기 결과를 기다린다.
 작업자 스레드가 대기열에서 요청을 꺼내 `CouponBatchIssuanceService.issueBatch`로 묶음 하나를 READ_COMMITTED 트랜잭션 하나에서 처리한다.
 요청마다 트랜잭션을 열던 단건 경로는 두지 않는다.
 
 ### 대기열과 작업자
 
-작업자는 한 건을 꺼낸 뒤 그동안 쌓인 요청을 최대 묶음 크기까지 함께 꺼낸다. 묶음이 차기를 기다리지 않는다.
+묶음을 모으는 시간과 기한 판정은 [v3 설계](./coupon-issuance-v3-design.md#여러-이벤트의-redis-왕복을-함께-기다린다)를 따른다.
 작업자마다 DB 커넥션을 하나씩 쓰므로 작업자 수는 커넥션 풀보다 작게 둔다.
 설정은 `coupon.issue.batch` 아래에 두며 기본값은 아래와 같다.
 
@@ -33,20 +35,21 @@ HTTP 경로의 버전과 발급 구조의 버전은 별개다.
 |---|---:|---|
 | `workers` | 4 | 작업자 수만큼만 묶음을 동시에 처리한다 |
 | `max-size` | 500 | 한 트랜잭션에 담는 요청 수의 상한이다 |
-| `queue-capacity` | 2,000 | 대기열이 가득 차면 기다리지 않고 `503 COUPON-008`로 거절한다 |
-| `wait-timeout` | 10초 | 복구와 발급 결과 대기가 공유하는 처리 기한이며 대기 시간 초과는 `500 COMMON-001`로 응답한다 |
+| `queue-capacity` | 2,000 | Redis 사전 검사·복구를 포함한 실행 요청과 배처의 전체 미완료 작업 수를 각각 제한한다. 상한에 닿으면 `503 COUPON-008`로 거절한다 |
+| `wait-timeout` | 10초 | 복구와 발급이 공유하는 기한이다. 커밋 전 만료는 `503 COUPON-008`이며 커밋 시작 뒤에는 실제 결과를 기다린다 |
 
-요청 시각은 대기열에 넣은 순간으로 정한다. 대기열에서 기다린 시간은 발급 시간 판정에 들어가지 않는다.
+발급 요청은 접수 상한 안에서 배처 대기열로 바로 보낸다. 앞단에 별도의 200건 제한을 두지 않으며 작업자 4개와 묶음 상한 500건으로 DB 작업을 제한한다. Tomcat 작업자 수와 묶음에 담는 요청 수는 별개다.
+요청 시각은 Redis 사전 검사 전에 한 번 기록한다. 사전 검사와 대기열에서 기다린 시간은 발급 시간 판정에 들어가지 않는다.
 
 ### 트랜잭션과 잠금
 
 1. 묶음에 든 이벤트를 ID 순으로 공유 잠금하고 이벤트의 영업일과 ACTIVE 상태, 요청 시각의 시스템 발급 시간을 검사한다.
-2. Redis에서 이벤트의 소진 여부를 읽는다. 소진이면 회원·찜·중복·한도보다 먼저 `COUPON-006`으로 거절한다.
-3. `MemberQueryService.findCurrentStatuses`로 묶음의 회원 상태를 한 번 조회한다. ACTIVE 회원을 캠페인별로 모아 `WishlistQueryService.findWishedMemberIds`로 캠페인당 한 번 찜을 조회한다. 반환된 상태가 없으면 회원 자격을 거절하고 반환된 찜 집합에 없으면 찜 자격을 거절한다. 조회 장애는 그대로 전파한다.
+2. 같은 묶음의 여러 이벤트에 대한 Redis 소진 조회를 파이프라인으로 보낸다. 소진이면 회원·찜·중복·한도보다 먼저 `COUPON-006`으로 거절한다.
+3. `MemberQueryService.findCurrentStatuses`로 묶음의 회원 상태를 한 번 조회한다. ACTIVE 회원을 캠페인별로 모아 기존 공개 계약인 `WishlistQueryService.findWishedMemberIds`로 캠페인당 한 번 찜을 조회한다. 반환된 상태가 없으면 회원 자격을 거절하고 반환된 찜 집합에 없으면 찜 자격을 거절한다. 조회 장애는 그대로 전파한다.
 4. 남은 회원의 일일 카운터를 다건 UPSERT로 만들고 회원 ID 순으로 `FOR UPDATE` 잠근다. 잠금 쿼리는 `uk_coupon_daily_limit_member_date`를 고정해 잠금 순서를 맞춘다.
 5. 잠근 뒤 기존 발급 기록을 읽고 요청 순서대로 중복과 일일 한도를 판정한다. 같은 묶음 안의 앞 요청도 함께 센다. REMOVED도 중복 기록에 포함한다.
 6. 판정을 통과한 요청 수만큼만 이벤트마다 Redis 호출 한 번으로 순번을 예약한다. 거절할 요청은 순번을 잡지 않는다.
-7. 예약한 순번의 AVAILABLE 재고를 이벤트마다 한 문장으로 ISSUED로 바꾸고 쿠폰 코드를 읽는다. 바꾼 행 수가 예약 수와 다르면 이벤트를 차단하고 묶음 전체를 실패시킨다.
+7. 예약한 이벤트·순번 쌍의 AVAILABLE 재고를 한 문장으로 ISSUED로 바꾸고 코드를 한 번에 읽는다. 바꾼 행 수가 전체 예약 수와 다르면 관련 이벤트를 모두 차단하고 묶음을 롤백한다.
 8. 카운터를 늘리고 회원 쿠폰을 다건 INSERT 한 문장으로 저장한다. 생성된 ID는 JDBC 생성 키로 받는다. 카운터·재고·회원 쿠폰을 함께 커밋한다.
 9. 커밋 후 작업자 스레드가 Redis 예약을 완료하고 요청 스레드에 발급 응답과 소진 여부를 전달한다. 요청 스레드가 타임아웃돼도 예약 완료는 수행한다. 롤백되면 받은 순번을 모두 반납한다.
 
@@ -65,16 +68,27 @@ Redis 키의 절대 만료 시각과 보관 여유시간은 [v2의 TTL 정책](.
 
 찜 조회와 소진 반영의 반환·실패·복구 정책은 [광고 서빙 공개 계약](../adserving/feed-api-design.md#wishlistqueryservice)이 소유한다.
 찜 조회 장애는 묶음을 롤백하며 찜 없음으로 바꾸지 않는다.
-`CouponIssueBatcher`는 발급 커밋 후 Redis의 completed를 한 번만 증가시키고 소진 여부를 요청 스레드에 전달한다.
-`CouponCommandService`는 completed가 total에 도달한 요청에서만 DB의 AVAILABLE 부재와 마지막 발급 시각을 확인한다.
-`CouponLookUpService.findSoldOut`은 저장된 마지막 createdAt과 이벤트의 캠페인·영업일을 반환한다.
-`CouponCommandService`가 트랜잭션 밖에서 `CandidateStateUpdater.markSoldOut`을 부른다.
-발급 저장이나 커밋이 실패하면 이 호출을 하지 않는다. 소진 반영 실패는 ERROR 로그를 남기며 이미 완료한 발급과 성공 응답은 유지한다.
+`CouponIssueBatcher`는 발급 커밋 후 Redis의 completed를 한 번만 증가시킨다.
+completed가 total에 도달하면 HTTP 대기 종료 여부와 관계없이 `CouponSoldOutNotificationService`에 이벤트를 접수한다.
+소진 거절도 같은 서비스에 접수하지만 요청 스레드는 재고를 DB에서 다시 확인하거나 광고 통보를 기다리지 않는다.
+사전 검사에서 소진되지 않은 요청은 기존 묶음 트랜잭션에서 이벤트의 운영 상태와 발급 시간을 검사한다.
+묶음 트랜잭션의 재고 검사는 사전 검사 뒤에 소진되거나 다른 요청이 재고를 예약한 경우를 처리한다.
 
-발급이 INVENTORY_EXHAUSTED로 거절되면 묶음 트랜잭션이 끝난 뒤 `CouponLookUpService.findSoldOut`으로 마지막 발급 시각을 읽는다.
-삭제된 쿠폰도 발급 기록에 포함한다. 이벤트나 발급 기록이 없으면 소진 시각을 임의로 만들지 않는다.
-캠페인과 영업일은 해당 이벤트의 값으로 다시 통보하며 복구 조회·통보 실패도 원래의 소진 거절을 바꾸지 않는다.
-복구 한계와 반복 통보의 처리 기준은 [소진 반영 계약](../adserving/feed-api-design.md#candidatestateupdater)을 따른다.
+통보 서비스는 이 서버에서 대기하거나 성공한 이벤트의 중복 접수를 합친다.
+별도 작업자 하나가 `CouponLookUpService.findSoldOut`으로 소진 통보에 필요한 값을 읽는다.
+삭제된 쿠폰도 포함한 마지막 createdAt과 이벤트의 캠페인·영업일을 그대로 전달한다.
+이벤트나 발급 기록이 없으면 소진 시각을 임의로 만들지 않고 실패한 작업으로 남긴다.
+서비스는 조회 트랜잭션이 끝난 뒤 `CandidateStateUpdater.markSoldOut`을 부른다.
+성공한 이벤트는 최대 10,000개를 하루 동안 기억하며 서버가 여러 대면 각 서버가 한 번씩 통보할 수 있다.
+반복 통보는 [소진 반영 계약](../adserving/feed-api-design.md#candidatestateupdater)의 멱등성으로 처리한다.
+
+대기 작업은 최대 2,000개이며 작업자는 1초마다 처리할 작업을 확인한다.
+조회나 통보가 실패하면 새 HTTP 요청 없이 5초 간격으로 재시도한다.
+접수한 뒤 한 시간이 지나면 작업을 만료시키고 ERROR 로그를 남긴다.
+접수 거절, 재시도 실패와 종료 때 남은 작업도 ERROR 로그로 남기며 원래 HTTP 결과는 유지한다.
+대기 작업과 성공 표시는 서버 메모리에 있으므로 재시작 뒤에는 남지 않는다.
+서버 재시작이나 대기열 포화로 접수를 잃으면 후속 소진 거절이 다시 접수한다.
+후속 요청 없이 서버가 종료된 경우의 통보 복구는 보장하지 않는다.
 
 ### 검증
 
@@ -85,7 +99,7 @@ Redis 키의 절대 만료 시각과 보관 여유시간은 [v2의 TTL 정책](.
 
 단위 테스트는 업무 조건과 커밋 실패를 검증한다. MySQL 통합 테스트는 중복과 재고 초과, 일일 한도, 삭제 후 재발급, 시간 경계, 롤백과 DB 오류의 공통 응답을 검증한다.
 기존 MySQL 동시 요청 테스트는 다섯 건으로 재고 초과와 중복 발급, 일일 한도 초과를 검증한다. 별도 부하 시험용 Gradle 작업은 두지 않는다.
-[발급 성능 목표](#발급-성능-목표)를 기준으로 수행한 로컬 부하 측정과 개선 이력은 트러블슈팅의 [v1](../../troubleshooting/coupon/coupon-issuance-v1-improvement-comparison.md), [v2](../../troubleshooting/coupon/coupon-issuance-v2-improvement-comparison.md), [v3](../../troubleshooting/coupon/coupon-issuance-v3-improvement-comparison.md)에 기록한다.
+[발급 성능 목표](#발급-성능-목표)를 기준으로 수행한 대표 측정은 [쿠폰 v3 부하 시험 결과](../../troubleshooting/coupon/coupon-load-test-results.md)에 기록한다. 측정 당시 빌드와 현재 코드의 차이도 해당 문서에서 확인한다.
 
 ## 쿠폰 QR 생성·갱신
 
