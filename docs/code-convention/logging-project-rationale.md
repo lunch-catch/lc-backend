@@ -23,7 +23,7 @@
 프로젝트 판단이다. `coupon_issue_results_total` 을 등록하거나 증가시키는 코드는 현재 저장소에 없으므로
 이 지표가 버린 로그를 센다고 보지 않는다.
 
-종료할 때 큐를 비우는 시간(`maxFlushTime`)은 지정하지 않아 기본 1초다. 큐 8192건이 차 있는 상태에서
+종료할 때 큐를 비우는 시간(`maxFlushTime`)은 지정하지 않아 기본 1초다.[R17] 큐 8192건이 차 있는 상태에서
 배포가 인스턴스를 내리면 이 시간 안에 내보내지 못한 로그는 버려진다.[R1] graceful shutdown 의
 30초와 Logback 종료 순서가 같은 시간 예산을 공유한다고 보장할 근거는 없다. 실제 종료 순서를 측정한 뒤
 값을 정한다(7.2). 이 사건과 같은 이유로 버려지면 안 되는 감사 기록은 로그가 아니라 `AuditLogWriter` 로
@@ -355,19 +355,20 @@ Logback 1.5.32, Reactor Core 3.8.4, Tomcat 11.0.20, logstash-logback-encoder 8.0
 
 | 번호 | 구분 | 자료 | 본문에서 근거로 쓰는 것 | 열람 |
 |---|---|---|---|---|
-| R1 | 직접 | [Logback AsyncAppender](https://logback.qos.ch/manual/appenders-async-sift.html) | 큐가 차면 이벤트를 버리는 조건과 `discardingThreshold`, `maxFlushTime` 의 뜻. 매뉴얼에 버전 고정 주소가 없다 | 아니오 |
-| R2 | 직접 | [Logback PatternLayout](https://logback.qos.ch/manual/layouts.html) | `%F` 의 비용, 리터럴 괄호 이스케이프, `%X{key:-default}`. `LogbackPatternTest` 가 1.5.32 에서 같은 결과를 낸다 | 아니오 |
-| R3 | 직접 | [`ShortenedThrowableConverter` 8.0](https://github.com/logfellow/logstash-logback-encoder/blob/logstash-logback-encoder-8.0/src/main/java/net/logstash/logback/stacktrace/ShortenedThrowableConverter.java) | 프레임 줄이기와 예외 메시지를 그대로 출력하는 동작 | 아니오 |
+| R1 | 직접 | [Logback AsyncAppender](https://logback.qos.ch/manual/appenders-async-sift.html) | 큐가 차면 이벤트를 버리는 조건과 `discardingThreshold`, `maxFlushTime` 의 뜻. `maxFlushTime` 의 기본값은 매뉴얼에 없다. 매뉴얼에 버전 고정 주소가 없다 | 예 |
+| R2 | 직접 | [Logback PatternLayout](https://logback.qos.ch/manual/layouts.html) | `%F` 의 비용, 리터럴 괄호 이스케이프, `%X{key:-default}`. `LogbackPatternTest` 가 1.5.32 에서 같은 결과를 낸다 | 예 |
+| R3 | 직접 | [`ShortenedThrowableConverter` 8.0](https://github.com/logfellow/logstash-logback-encoder/blob/logstash-logback-encoder-8.0/src/main/java/net/logstash/logback/stacktrace/ShortenedThrowableConverter.java) | 프레임 줄이기와 예외 메시지를 그대로 출력하는 동작 | 예 |
 | R4 | 조건부 | [Reactor FAQ, MDC](https://projectreactor.io/docs/core/3.8.4/reference/faq.html#faq.mdc) | MDC 가 스레드에 붙고 Reactor 컨텍스트는 구독에 붙는다. 이 저장소에서 `traceId` 가 빠지는지는 콜백 스레드에 달려 있어 테스트로 가른다 | 예 |
 | R5 | 직접 | [Reactor 스케줄러](https://projectreactor.io/docs/core/3.8.4/reference/coreFeatures/schedulers.html) | 스케줄러를 바꾸면 실행 스레드가 바뀐다 | 예 |
 | R6 | 직접 | [Spring `TaskUtils` 7.0.6](https://github.com/spring-projects/spring-framework/blob/v7.0.6/spring-context/src/main/java/org/springframework/scheduling/support/TaskUtils.java) | 반복 작업의 기본 오류 처리기가 `Unexpected error occurred in scheduled task` 로 스택을 남긴다 | 예 |
 | R7 | 조건부 | [`ThreadPoolTaskScheduler` 7.0.6](https://docs.spring.io/spring-framework/docs/7.0.6/javadoc-api/org/springframework/scheduling/concurrent/ThreadPoolTaskScheduler.html) | 오류 처리기를 따로 두지 않았을 때의 기본 처리. 이 저장소의 실제 스케줄러 빈 구성은 확인하지 않았다 | 예 |
 | R8 | 조건부 | [Tomcat 11.0 Remote IP Valve](https://tomcat.apache.org/tomcat-11.0-doc/config/valve.html#Remote_IP_Valve) | `internalProxies` 의 기본값과 첫 프록시의 헤더 제거 요구. 헤더를 처리하는 순서는 문서에 없다 | 예 |
-| R9 | 직접 | [Prometheus `absent`](https://prometheus.io/docs/prometheus/latest/querying/functions/#absent) | 시계열이 없을 때 결과를 만드는 함수 | 아니오 |
-| R10 | 직접 | [Prometheus 잡과 인스턴스](https://prometheus.io/docs/concepts/jobs_instances/) | 스크랩할 때 `job` 라벨이 자동으로 붙는다 | 아니오 |
-| R11 | 조건부 | [Prometheus 설정, `honor_labels`](https://prometheus.io/docs/prometheus/latest/configuration/configuration/) | `honor_labels` 가 `false` 일 때 충돌한 라벨이 `exported_` 접두사로 바뀐다. `lc-infra` 의 값은 확인하지 못했다 | 아니오 |
-| R12 | 조건부 | [Loki 로그 쿼리](https://grafana.com/docs/loki/latest/query/log_queries/) | `json`, `line_format`, `logfmt` 파서 문법. 수집한 JSON 의 모양은 `lc-infra` 에 달려 있다 | 아니오 |
-| R13 | 교체 | [개인정보의 안전성 확보조치 기준 제8조](https://www.law.go.kr/LSW/admRulSideInfoP.do?admRulSeq=2100000281400&chrClsCd=010201&docCls=jo&joNo=0008&joBrNo=00) | 접속기록의 관리 대상과 보존 기간. 현행 국가법령정보센터 원문이며 자동 열람이 되지 않아 사람이 원문과 대조해야 한다 | 아니오 |
-| R14 | 조건부 | [개인정보 보호법 제2조](https://www.law.go.kr/법령/개인정보보호법) | 다른 정보와 쉽게 결합해 알아볼 수 있는 정보도 개인정보다. 자동 열람이 되지 않아 사람이 원문과 대조해야 한다 | 아니오 |
+| R9 | 직접 | [Prometheus `absent`](https://prometheus.io/docs/prometheus/latest/querying/functions/#absent) | 시계열이 없을 때 결과를 만드는 함수 | 예 |
+| R10 | 직접 | [Prometheus 잡과 인스턴스](https://prometheus.io/docs/concepts/jobs_instances/) | 스크랩할 때 `job` 라벨이 자동으로 붙는다 | 예 |
+| R11 | 조건부 | [Prometheus 설정, `honor_labels`](https://prometheus.io/docs/prometheus/latest/configuration/configuration/) | `honor_labels` 가 `false` 일 때 충돌한 라벨이 `exported_` 접두사로 바뀐다. `lc-infra` 의 값은 확인하지 못했다 | 예 |
+| R12 | 조건부 | [Loki 로그 쿼리](https://grafana.com/docs/loki/latest/query/log_queries/) | `json`, `line_format`, `logfmt` 파서 문법. 수집한 JSON 의 모양은 `lc-infra` 에 달려 있다 | 예 |
+| R13 | 교체 | [개인정보의 안전성 확보조치 기준 제8조](https://www.law.go.kr/LSW/admRulSideInfoP.do?admRulSeq=2100000281400&chrClsCd=010201&docCls=jo&joNo=0008&joBrNo=00) | 접속기록의 관리 대상과 보존 기간. 현행 국가법령정보센터 원문이며 열람을 두 번 시도했으나 조문 본문이 반환되지 않았다. 사람이 원문과 대조해야 한다 | 아니오 |
+| R14 | 조건부 | [개인정보 보호법 제2조](https://www.law.go.kr/법령/개인정보보호법) | 다른 정보와 쉽게 결합해 알아볼 수 있는 정보도 개인정보다. 열람을 두 번 시도했으나 조문 본문이 반환되지 않았다. 사람이 원문과 대조해야 한다 | 아니오 |
 | R15 | 조건부 | [Spring Boot 트레이싱](https://docs.spring.io/spring-boot/4.0/reference/actuator/tracing.html) | Micrometer Tracing 을 쓰면 `traceId` 와 `spanId` 를 MDC 로 로그에 상관시킨다. 이 저장소에는 추적 의존성이 없다 | 예 |
-| R16 | 직접 | [OWASP Logging Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Logging_Cheat_Sheet.html) | 인증 성공과 실패를 보안 이벤트로 기록하라는 권고 | 아니오 |
+| R16 | 직접 | [OWASP Logging Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Logging_Cheat_Sheet.html) | 인증 성공과 실패를 보안 이벤트로 기록하라는 권고 | 예 |
+| R17 | 직접 | [Logback `AsyncAppenderBase` 1.5.32](https://github.com/qos-ch/logback/blob/v_1.5.32/logback-core/src/main/java/ch/qos/logback/core/AsyncAppenderBase.java) | `maxFlushTime` 의 기본값이 `DEFAULT_MAX_FLUSH_TIME = 1000` 밀리초다 | 예 |
