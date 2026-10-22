@@ -36,7 +36,11 @@ public class AdCandidate {
     @Column(name = "store_name", nullable = false)
     private String storeName;
 
-    // 가게 대표 이미지(LOGO) 주소다. 가게가 올리지 않았으면 null 이다. 찜 목록이 표시한다.
+    /*
+     * 가게 대표 이미지(LOGO) 주소다.
+     * 가게가 올리지 않았으면 null 이다.
+     * 찜 목록이 표시한다.
+     */
     @Column(name = "store_image_url")
     private String storeImageUrl;
 
@@ -71,7 +75,11 @@ public class AdCandidate {
     @Column(name = "discount_value", nullable = false)
     private int discountValue;
 
-    // 할인 대상 메뉴명이다. MENU 일 때만 값이 있다(chk_candidate_discount_menu). 찜 목록이 표시한다.
+    /*
+     * 할인 대상 메뉴명이다.
+     * MENU 일 때만 값이 있다(chk_candidate_discount_menu).
+     * 찜 목록이 표시한다.
+     */
     @Column(name = "discount_menu_name")
     private String discountMenuName;
 

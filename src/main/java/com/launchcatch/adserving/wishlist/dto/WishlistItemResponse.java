@@ -7,6 +7,7 @@ import com.launchcatch.adserving.wishlist.entity.Wishlist;
 import com.launchcatch.global.config.ClockConfig;
 import io.swagger.v3.oas.annotations.media.Schema;
 import java.time.OffsetDateTime;
+import java.time.temporal.ChronoUnit;
 
 public record WishlistItemResponse(
         Long campaignId,
@@ -23,9 +24,13 @@ public record WishlistItemResponse(
         OffsetDateTime wishedAt
 ) {
 
-    // 표시 값은 그날 후보 스냅샷에서 채운다. 후보가 없으면 셋을 null 로 둔다.
+    /*
+     * 표시 값은 그날 후보 스냅샷에서 채운다.
+     * 후보가 없으면 셋을 null 로 둔다.
+     */
     public static WishlistItemResponse of(Wishlist wish, AdCandidate candidate) {
-        OffsetDateTime wishedAt = wish.getCreatedAt().atZone(ClockConfig.ZONE).toOffsetDateTime();
+        // created_at 은 마이크로초까지 남는다. 명세 예시처럼 밀리초까지만 내보낸다(#776)
+        OffsetDateTime wishedAt = wish.getCreatedAt().truncatedTo(ChronoUnit.MILLIS).atZone(ClockConfig.ZONE).toOffsetDateTime();
         if (candidate == null) {
             return new WishlistItemResponse(wish.getCampaignId(), wish.getStoreId(), null, null, null,
                     wish.isCampaignEnded(), wishedAt);
@@ -43,7 +48,7 @@ public record WishlistItemResponse(
                 candidate.getStoreImageUrl(),
                 new Discount(candidate.getDiscountTarget(), candidate.getDiscountType(), candidate.getDiscountValue(),
                         candidate.getDiscountMenuName()),
-                false, wishedAt);
+                false, wishedAt.truncatedTo(ChronoUnit.MILLIS));
     }
 
     public record Discount(

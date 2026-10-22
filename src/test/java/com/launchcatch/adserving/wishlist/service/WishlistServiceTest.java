@@ -73,7 +73,10 @@ class WishlistServiceTest {
                 List.of(AgeGroup.AGE_20S), LocalDateTime.of(2026, 9, 1, 9, 0), null, changedAt, null, 10_000L);
     }
 
-    // 찜은 저장소의 insertIgnore 로 넣어 식별자와 생성 시각이 엔티티에 없다. 리플렉션으로 채운다
+    /*
+     * 찜은 저장소의 insertIgnore 로 넣어 식별자와 생성 시각이 엔티티에 없다.
+     * 리플렉션으로 채운다.
+     */
     private static Wishlist wish(long id, long campaignId, LocalDateTime createdAt) {
         Wishlist wish = Wishlist.fromFeed(MEMBER_ID, campaignId, campaignId + 1000, UUID.randomUUID());
         ReflectionTestUtils.setField(wish, "id", id);

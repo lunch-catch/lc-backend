@@ -1,6 +1,7 @@
 package com.launchcatch.adserving;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.hamcrest.Matchers.nullValue;
 import static org.mockito.Mockito.doReturn;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
@@ -45,7 +46,10 @@ class WishlistIntegrationTest extends AbstractAdservingIntegrationTest {
         doReturn(ClockConfig.ZONE).when(clock).getZone();
         candidate(TODAY, 101, 55, "점심식당", "https://cdn.example.com/stores/55/logo.jpg", "MENU", "AMOUNT", 3000, "갈비살 정식");
         candidate(TODAY, 102, 56, "저녁식당", null, "ALL", "PERCENT", 20, null);
-        // 103 은 어제만 후보였다. 오늘은 노출 후보가 아니다
+        /*
+         * 103 은 어제만 후보였다.
+         * 오늘은 노출 후보가 아니다.
+         */
         candidate(TODAY.minusDays(1), 103, 57, "어제식당", null, "ALL", "PERCENT", 10, null);
     }
 
@@ -99,9 +103,22 @@ class WishlistIntegrationTest extends AbstractAdservingIntegrationTest {
                 .andExpect(jsonPath("$.data.wishlist[0].discount.menuName").value("갈비살 정식"))
                 .andExpect(jsonPath("$.data.wishlist[0].wishedAt").value("2026-10-01T10:15:34.02+09:00"))
                 .andExpect(jsonPath("$.data.wishlist[1].campaignId").value(102))
-                .andExpect(jsonPath("$.data.wishlist[1].storeImageUrl").isEmpty())
+                .andExpect(jsonPath("$.data.wishlist[1].storeImageUrl").value(nullValue()))
                 .andExpect(jsonPath("$.data.wishlist[1].discount.target").value("ALL"))
-                .andExpect(jsonPath("$.data.wishlist[1].discount.menuName").isEmpty());
+                .andExpect(jsonPath("$.data.wishlist[1].discount.menuName").value(nullValue()));
+    }
+
+    /*
+     * created_at 은 DATETIME(6) 이라 서버가 넣은 찜은 마이크로초까지 남는다. 명세 예시(10:15:34.020+09:00)처럼 밀리초까지만 내보낸다.
+     * 예시만 보고 3자리로 파싱하는 클라이언트가 깨지지 않게 한다(#776).
+     */
+    @Test
+    void 찜한_시각은_밀리초까지만_내보낸다() throws Exception {
+        wish(MEMBER_ID, 101, 55, LocalDateTime.of(2026, 10, 1, 10, 15, 34, 123_456_000));
+
+        perform(get("/v1/wishlist"), Role.MEMBER)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.wishlist[0].wishedAt").value("2026-10-01T10:15:34.123+09:00"));
     }
 
     @Test
@@ -113,9 +130,9 @@ class WishlistIntegrationTest extends AbstractAdservingIntegrationTest {
                 .andExpect(jsonPath("$.data.wishlist[0].campaignId").value(103))
                 .andExpect(jsonPath("$.data.wishlist[0].storeId").value(57))
                 .andExpect(jsonPath("$.data.wishlist[0].wishedAt").value("2026-09-30T11:00:00+09:00"))
-                .andExpect(jsonPath("$.data.wishlist[0].storeName").isEmpty())
-                .andExpect(jsonPath("$.data.wishlist[0].storeImageUrl").isEmpty())
-                .andExpect(jsonPath("$.data.wishlist[0].discount").isEmpty());
+                .andExpect(jsonPath("$.data.wishlist[0].storeName").value(nullValue()))
+                .andExpect(jsonPath("$.data.wishlist[0].storeImageUrl").value(nullValue()))
+                .andExpect(jsonPath("$.data.wishlist[0].discount").value(nullValue()));
     }
 
     @Test

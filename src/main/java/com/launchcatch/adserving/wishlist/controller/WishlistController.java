@@ -33,7 +33,10 @@ public class WishlistController {
 
     private final WishlistService wishlistService;
 
-    // 내 찜 목록을 조회한다. 쿠폰 잔여 수량과 발급 가능 여부는 화면이 쿠폰 API 로 따로 받는다.
+    /*
+     * 내 찜 목록을 조회한다.
+     * 쿠폰 잔여 수량과 발급 가능 여부는 화면이 쿠폰 API 로 따로 받는다.
+     */
     @GetMapping("/wishlist")
     @Operation(summary = "찜 목록 조회", description = "찜한 시각 내림차순이다. 오늘 노출 후보가 아닌 캠페인은 storeName, storeImageUrl, discount 가 null 이다.")
     @ApiResponse(responseCode = "200", description = "찜 목록을 반환한다. 0건이면 빈 배열이다.", useReturnTypeSchema = true)
