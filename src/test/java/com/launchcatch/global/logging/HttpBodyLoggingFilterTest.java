@@ -1,14 +1,19 @@
 package com.launchcatch.global.logging;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.AsyncEvent;
 import jakarta.servlet.DispatcherType;
+import jakarta.servlet.ServletException;
+import jakarta.servlet.ServletOutputStream;
+import jakarta.servlet.WriteListener;
 import jakarta.servlet.http.HttpServletResponse;
 import java.nio.charset.StandardCharsets;
+import java.io.IOException;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -37,6 +42,38 @@ class HttpBodyLoggingFilterTest {
     @AfterEach
     void detachLogs() {
         logs.close();
+    }
+
+    @Test
+    void 응답_전송까지_실패해도_원래_처리_오류를_유지한다() {
+        var original = new ServletException("upstream failed");
+        var writeFailure = new IOException("connection closed");
+        var response = new MockHttpServletResponse() {
+            @Override
+            public ServletOutputStream getOutputStream() {
+                return new ServletOutputStream() {
+                    @Override
+                    public boolean isReady() {
+                        return true;
+                    }
+
+                    @Override
+                    public void setWriteListener(WriteListener listener) {
+                    }
+
+                    @Override
+                    public void write(int value) throws IOException {
+                        throw writeFailure;
+                    }
+                };
+            }
+        };
+
+        assertThatThrownBy(() -> filter.doFilter(jsonPost("{}"), response, (req, res) -> {
+            res.getWriter().write("response body");
+            throw original;
+        })).isSameAs(original).satisfies(error ->
+                assertThat(error.getSuppressed()).containsExactly(writeFailure));
     }
 
     @Test

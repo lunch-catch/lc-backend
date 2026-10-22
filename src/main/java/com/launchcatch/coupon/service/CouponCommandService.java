@@ -166,21 +166,22 @@ public class CouponCommandService {
     @PreDestroy
     void stopIssuanceRecovery() {
         issuanceRecovery.shutdown();
-        boolean interrupted = false;
         try {
             if (issuanceRecovery.awaitTermination(waitTimeout.plusSeconds(12).toMillis(), TimeUnit.MILLISECONDS)) {
                 return;
             }
         } catch (InterruptedException error) {
-            interrupted = true;
+            Thread.currentThread().interrupt();
         }
-        cancelRecoveryRequests();
+        // 남은 작업을 정리하는 동안만 중단 표시를 내리고 마지막에 복원한다.
+        boolean interrupted = Thread.interrupted();
         try {
+            cancelRecoveryRequests();
             if (!issuanceRecovery.awaitTermination(5, TimeUnit.SECONDS)) {
                 log.error("event=COUPON_ISSUANCE_RECOVERY_STOP_FAILED reason=TERMINATION_TIMEOUT");
             }
         } catch (InterruptedException error) {
-            interrupted = true;
+            Thread.currentThread().interrupt();
         } finally {
             if (interrupted) {
                 Thread.currentThread().interrupt();

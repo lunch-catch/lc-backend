@@ -154,29 +154,42 @@ public class HttpBodyLoggingFilter extends OncePerRequestFilter {
         }
         try {
             filterChain.doFilter(wrappedRequest, wrappedResponse);
-        } finally {
-            long start = (long) request.getAttribute(key + ".start");
-            AtomicBoolean logged = (AtomicBoolean) request.getAttribute(key + ".logged");
-            if (request.isAsyncStarted() && !isAsyncDispatch(request)) {
-                if (logged == null) {
-                    logged = new AtomicBoolean();
-                    request.setAttribute(key + ".logged", logged);
+        } catch (IOException | ServletException | RuntimeException | Error error) {
+            try {
+                finishDispatch(request, wrappedRequest, wrappedResponse, key);
+            } catch (IOException | RuntimeException finishError) {
+                if (finishError != error) {
+                    error.addSuppressed(finishError);
                 }
-                AsyncAccessLog listener = new AsyncAccessLog(wrappedResponse, start, logged);
-                try {
-                    request.getAsyncContext().addListener(listener);
-                } catch (IllegalStateException alreadyCompleted) {
-                    listener.logUnfinished();
-                }
-            } else if (!request.isAsyncStarted() && (logged == null || logged.compareAndSet(false, true))) {
-                logAccess(wrappedRequest, wrappedResponse, System.currentTimeMillis() - start);
-                try {
-                    wrappedResponse.copyBodyToResponse();
-                } catch (IOException error) {
-                    log.warn("event=HTTP_RESPONSE_WRITE_FAILED durationMs={} exceptionType={}",
-                            System.currentTimeMillis() - start, error.getClass().getSimpleName());
-                    throw error;
-                }
+            }
+            throw error;
+        }
+        finishDispatch(request, wrappedRequest, wrappedResponse, key);
+    }
+
+    private void finishDispatch(HttpServletRequest request, ContentCachingRequestWrapper wrappedRequest,
+            ContentCachingResponseWrapper wrappedResponse, String key) throws IOException {
+        long start = (long) request.getAttribute(key + ".start");
+        AtomicBoolean logged = (AtomicBoolean) request.getAttribute(key + ".logged");
+        if (request.isAsyncStarted() && !isAsyncDispatch(request)) {
+            if (logged == null) {
+                logged = new AtomicBoolean();
+                request.setAttribute(key + ".logged", logged);
+            }
+            AsyncAccessLog listener = new AsyncAccessLog(wrappedResponse, start, logged);
+            try {
+                request.getAsyncContext().addListener(listener);
+            } catch (IllegalStateException alreadyCompleted) {
+                listener.logUnfinished();
+            }
+        } else if (!request.isAsyncStarted() && (logged == null || logged.compareAndSet(false, true))) {
+            logAccess(wrappedRequest, wrappedResponse, System.currentTimeMillis() - start);
+            try {
+                wrappedResponse.copyBodyToResponse();
+            } catch (IOException error) {
+                log.warn("event=HTTP_RESPONSE_WRITE_FAILED durationMs={} exceptionType={}",
+                        System.currentTimeMillis() - start, error.getClass().getSimpleName());
+                throw error;
             }
         }
     }
