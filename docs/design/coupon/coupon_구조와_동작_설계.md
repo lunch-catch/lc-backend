@@ -44,6 +44,7 @@ coupon/
 ├── config/        CouponSecurityConfig, CouponOpenApiConfig
 ├── controller/    CouponController, OwnerCouponController
 ├── dto/           요청·응답 record와 입력 변환
+├── model/         발급 서비스 사이에서 주고받는 내부 전달값
 ├── entity/        CouponEvent, CouponInventory, CouponDailyLimit,
 │                  MemberCoupon, CouponUsageHistory
 ├── listener/      CampaignEventListener
@@ -58,7 +59,8 @@ HTTP 요청과 집계 조회 contract, 공개 이벤트와 캠페인 이벤트 �
 
 ### 발급과 예약의 전달값
 
-발급 서비스들이 함께 쓰는 record는 `service/model/` 패키지에 모은다.
+발급 서비스들이 함께 쓰는 record는 `model/` 패키지에 모은다.
+HTTP 요청·응답은 `dto/`에 두며 취소와 커밋 시작을 조정하는 `CouponBatchDeadline`은 `service/model/`에 둔다.
 
 | 타입 | 담는 값 |
 |---|---|
@@ -157,7 +159,7 @@ V7은 전체 메뉴 정률 조합을 CHECK에서 제외한다. 지원하지 않�
 | 연결됨 | 읽기, owner | `OwnerStatusQuery.findCurrentStatus(Long)` | 점주 수량·매장 사용 이력·사용 확정 요청마다 한 번 호출하며 캐시를 우회한다 |
 | 연결됨 | 읽기, campaign | `CampaignQueryService.findByStoreIdIn(List<Long>)` | 이벤트 상태 요청마다 한 번 일괄 호출한다 |
 | 연결됨 | 읽기, store | `StoreQueryService.canManageStore(Long, Long)`, `findAllById(List<Long>)` | QR 사용은 관리 권한과 좌표를 조회한다. 이력 조회는 현재 관리 권한, 이벤트 조회는 최종 등록 매장을 확인한다 |
-| 연결됨 | 읽기·쓰기, adserving | `WishlistQueryService`, `CandidateStateUpdater` | 발급·이벤트 조회에서 찜을 읽고 마지막 발급 커밋 뒤 소진을 알린다. 소진 거절에서도 누락 반영을 재시도한다 |
+| 연결됨 | 읽기·쓰기, adserving | `WishlistQueryService`, `CandidateStateUpdater` | 발급·이벤트 조회에서 찜을 읽는다. 소진 통보의 실행 위치와 재시도는 [API 설계](./coupon-api-design.md#찜과-소진-contract-연결)를 따른다 |
 | 연결됨 | 받음, campaign | `CampaignStatusChangedEvent`, `CampaignEndedEvent` | 발행자와 같은 트랜잭션에서 회차 상태를 바꾼다. 전이 기준은 6장의 캠페인 이벤트 반영 절을 따른다 |
 | 연결됨 | 공개, analytics | `CouponIssuedEvent`, `CouponRedeemedEvent` | 발급·사용 트랜잭션 안에서 발행하며 분석은 커밋 후 비동기로 수신한다 |
 | 연결됨 | 공개, analytics | `CouponIssueOpenedEvent`, `CouponExpiredEvent` | 오픈·만료 배치가 업무 트랜잭션에서 발행한다. 상세는 [쿠폰 배치 설계](./coupon-batch-design.md)를 따른다 |
@@ -450,7 +452,7 @@ v3도 같은 순번·복구 설계를 사용한다. 묶음 트랜잭션과 작�
 | 쿠폰 목록 | 회원 쿠폰 페이지와 이벤트 일괄 조회, 필요할 때 이력 일괄 조회를 수행한다. 만료된 반환 항목은 UPDATE한다 |
 | 이벤트 상태 | 이벤트 조회와 재고 집계, 회원 발급 이력과 카운터 조회를 수행한다. store·campaign·member·찜 조회는 매장마다 반복하지 않는다 |
 
-위 비용은 정상 경로의 논리적 SQL 기준이다. 실제 발급 SQL과 실행 계획·잠금 대기의 측정 결과는 [v1 성능 개선 비교](../../troubleshooting/coupon/coupon-issuance-v1-improvement-comparison.md)를 따른다.
+위 비용은 정상 경로의 논리적 SQL 기준이다. 대표 부하의 응답 시간과 데이터 정합성은 [쿠폰 v3 부하 시험 결과](../../troubleshooting/coupon/coupon-load-test-results.md)에 기록한다. 이 결과는 v1 SQL의 실행 계획이나 잠금 대기를 측정한 자료가 아니다.
 목표 피크 2,500 RPS에서 문장 수는 묶음 크기에 반비례한다. 묶음 평균이 25건이면 coupon DB 읽기와 쓰기는 각각 초당 400문장 수준이다.
 모든 요청이 이벤트 하나에 몰리면 재고 소비가 직렬화되는 구간은 요청당 평균 0.4ms 이하여야 그 처리율을 낼 수 있다.
 작은 동시성 테스트의 통과를 부하 목표 달성으로 보지 않는다.

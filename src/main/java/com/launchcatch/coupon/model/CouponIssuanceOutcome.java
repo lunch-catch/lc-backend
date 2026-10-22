@@ -1,4 +1,4 @@
-package com.launchcatch.coupon.service.model;
+package com.launchcatch.coupon.model;
 
 import com.launchcatch.coupon.dto.CouponIssueResponse;
 import com.launchcatch.coupon.exception.CouponErrorCode;
@@ -8,21 +8,30 @@ public record CouponIssuanceOutcome(
         CouponIssueResponse response,
         CouponReservation reservation,
         CouponErrorCode rejection,
-        boolean recoveryRequired
+        boolean recoveryRequired,
+        boolean awaitingReservation
 ) {
+
+    public CouponIssuanceOutcome(CouponIssueResponse response, CouponReservation reservation, CouponErrorCode rejection, boolean recoveryRequired) {
+        this(response, reservation, rejection, recoveryRequired, false);
+    }
 
     // 발급에 성공한 결과를 만든다.
     public static CouponIssuanceOutcome issued(CouponIssueResponse response, CouponReservation reservation) {
-        return new CouponIssuanceOutcome(response, reservation, null, false);
+        return new CouponIssuanceOutcome(response, reservation, null, false, false);
     }
 
     // 업무 조건으로 거절한 결과를 만든다.
     public static CouponIssuanceOutcome rejected(CouponErrorCode rejection) {
-        return new CouponIssuanceOutcome(null, null, rejection, false);
+        return new CouponIssuanceOutcome(null, null, rejection, false, false);
+    }
+
+    public static CouponIssuanceOutcome awaitingReservationResult() {
+        return new CouponIssuanceOutcome(null, null, CouponErrorCode.ISSUANCE_BUSY, false, true);
     }
 
     // 순번 예약을 받지 못한 요청만 복구 후 재접수할 수 있게 구분한다.
     public static CouponIssuanceOutcome requiringRecovery() {
-        return new CouponIssuanceOutcome(null, null, CouponErrorCode.ISSUANCE_BUSY, true);
+        return new CouponIssuanceOutcome(null, null, CouponErrorCode.ISSUANCE_BUSY, true, false);
     }
 }

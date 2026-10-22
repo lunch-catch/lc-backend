@@ -72,8 +72,8 @@ import com.launchcatch.coupon.repository.CouponUsageHistoryRepository;
 import com.launchcatch.coupon.repository.MemberCouponRepository;
 import com.launchcatch.coupon.service.CouponBatchIssuanceService;
 import com.launchcatch.coupon.service.CouponCommandService;
-import com.launchcatch.coupon.service.model.CouponIssuanceOutcome;
-import com.launchcatch.coupon.service.model.CouponIssuanceRequest;
+import com.launchcatch.coupon.model.CouponIssuanceOutcome;
+import com.launchcatch.coupon.model.CouponIssuanceRequest;
 import com.launchcatch.coupon.service.CouponLookUpService;
 import com.launchcatch.coupon.contract.CouponIssueOpenedEvent;
 import com.launchcatch.coupon.contract.CouponIssuedEvent;
@@ -215,6 +215,7 @@ public class CouponIntegrationTest extends IntegrationTestSupport {
     @MockitoBean StoreQueryService stores;
     @MockitoSpyBean WishlistQueryService wishes;
     @MockitoBean CandidateStateUpdater candidates;
+    @MockitoBean com.launchcatch.coupon.service.CouponSoldOutNotificationService soldOutNotifications;
     @MockitoBean(name = "ownerAccessTokenPolicy") AccessTokenValidationPolicy ownerTokenPolicy;
     @MockitoSpyBean CouponQrImageEncoder imageEncoder;
     @MockitoSpyBean MemberQueryService members;
@@ -1028,7 +1029,7 @@ public class CouponIntegrationTest extends IntegrationTestSupport {
         }
 
         @Test
-        void 마지막_재고를_커밋한_뒤에만_트랜잭션_밖에서_소진을_알린다() {
+        void 마지막_재고를_커밋한_뒤에만_트랜잭션_밖에서_소진_통보를_접수한다() {
             couponCommandService.issue(17L, 81L);
             couponCommandService.issue(18L, 81L);
             verifyNoInteractions(candidates);
@@ -1037,35 +1038,52 @@ public class CouponIntegrationTest extends IntegrationTestSupport {
                         .isFalse();
                 assertConsistent(3);
                 assertThat(invocation.<Long>getArgument(0)).isEqualTo(81L);
-                assertThat(invocation.<LocalDate>getArgument(1)).isEqualTo(TODAY);
-                assertThat(invocation.<LocalDateTime>getArgument(2)).isEqualTo(TODAY.atTime(12, 0));
                 return null;
-            }).when(candidates).markSoldOut(any(), any(), any());
+            }).when(soldOutNotifications).request(81L);
 
             couponCommandService.issue(19L, 81L);
 
-            verify(candidates).markSoldOut(81L, TODAY, TODAY.atTime(12, 0));
+            verify(soldOutNotifications).request(81L);
+        }
+
+        @ParameterizedTest
+        @CsvSource({"ACTIVE, false", "PAUSED, false", "ENDED, false", "ACTIVE, true"})
+        void 확정_소진은_이벤트_상태와_발급_시간보다_먼저_DB_조회_없이_반환한다(String eventStatus, boolean closed) {
+            couponCommandService.issue(17L, 81L);
+            couponCommandService.issue(18L, 81L);
+            couponCommandService.issue(19L, 81L);
+            jdbcTemplate.update("UPDATE coupon_event SET status=? WHERE coupon_event_id=81", eventStatus);
+            if (closed) {
+                time.set(TODAY.atTime(14, 0).atZone(ClockConfig.ZONE).toInstant());
+            }
+            org.mockito.Mockito.clearInvocations(events, members, wishes, batchIssues);
+
+            List<String> statements = SqlCapture.capture(
+                    () -> assertError(20L, 81L, CouponErrorCode.INVENTORY_EXHAUSTED));
+
+            assertThat(statements).isEmpty();
+            verify(events, org.mockito.Mockito.never()).findAllForIssue(any());
+            verify(members, org.mockito.Mockito.never()).findCurrentStatuses(any());
+            verify(wishes, org.mockito.Mockito.never()).findWishedMemberIds(any(), any());
+            verifyNoInteractions(batchIssues);
         }
 
         @Test
-        void 소진_반영이_실패해도_HTTP_발급은_성공하고_후속_소진_거절에서_복구한다() throws Exception {
+        void 마지막_발급과_후속_소진_거절은_통보를_접수하고_HTTP_결과를_유지한다() throws Exception {
             couponCommandService.issue(17L, 81L);
             couponCommandService.issue(18L, 81L);
-            doThrow(new DataAccessResourceFailureException("candidate unavailable"))
-                    .when(candidates).markSoldOut(any(), any(), any());
             mockMvc.perform(post("/v1/coupons").with(user(new CustomUserDetails(19L, Role.MEMBER)))
                             .contentType(MediaType.APPLICATION_JSON).content("{\"eventId\":81}"))
                     .andExpect(status().isCreated());
             assertConsistent(3);
-            doNothing().when(candidates).markSoldOut(any(), any(), any());
             time.set(Instant.parse("2026-10-10T03:05:00Z"));
 
             mockMvc.perform(post("/v1/coupons").with(user(new CustomUserDetails(20L, Role.MEMBER)))
                             .contentType(MediaType.APPLICATION_JSON).content("{\"eventId\":81}"))
                     .andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("COUPON-006"));
 
-            verify(candidates, times(2))
-                    .markSoldOut(81L, TODAY, TODAY.atTime(12, 0));
+            verify(soldOutNotifications, times(2)).request(81L);
+            verifyNoInteractions(candidates);
             assertConsistent(3);
             assertThat(jdbcTemplate.queryForObject(
                     "SELECT COUNT(*) FROM coupon_daily_limit WHERE member_id=20", Integer.class)).isZero();
@@ -1359,7 +1377,7 @@ public class CouponIntegrationTest extends IntegrationTestSupport {
                 doThrow(failure).when(events).findAllForIssue(anyCollection());
             } else if (stage.equals("inventory")) {
                 doThrow(failure).when(batchIssues)
-                        .issueSequences(org.mockito.ArgumentMatchers.eq(81L), anyList(), any());
+                        .issueSequences(org.mockito.ArgumentMatchers.anyMap(), any());
             } else {
                 Answer<?> real = mockingDetails(batchIssues).getMockCreationSettings().getDefaultAnswer();
                 doAnswer(invocation -> {
@@ -1563,7 +1581,7 @@ public class CouponIntegrationTest extends IntegrationTestSupport {
                     invocation.callRealMethod();
                     throw new RedisConnectionFailureException("HTTP completion reply lost");
                 }).doCallRealMethod().when(sequences)
-                        .complete(org.mockito.ArgumentMatchers.eq(httpEventId), org.mockito.ArgumentMatchers.anyInt(), any());
+                        .completeAll(org.mockito.ArgumentMatchers.eq(httpEventId), anyList(), anyList());
                 try (HttpClient client = HttpClient.newHttpClient()) {
                     assertCreated(send(client, 17L), 17L);
                     assertThat(sequenceService.needsRecovery(httpEventId)).isTrue();
@@ -1835,6 +1853,7 @@ public class CouponIntegrationTest extends IntegrationTestSupport {
         @Test
         void 발급과_중복_거절_후_실패한_순번을_다른_회원에게_반납한다() {
             couponCommandService.issue(memberId, eventId);
+            assertThat(redis.opsForHash().get(prefix + "meta", "state")).isEqualTo("READY");
             assertThatThrownBy(() -> couponCommandService.issue(memberId, eventId)).isInstanceOfSatisfying(CouponException.class,
                     error -> assertThat(error.getErrorCode()).isEqualTo(CouponErrorCode.EVENT_ALREADY_ISSUED));
             couponCommandService.issue(memberId + 1, eventId);
@@ -1842,9 +1861,56 @@ public class CouponIntegrationTest extends IntegrationTestSupport {
             assertThatThrownBy(() -> couponCommandService.issue(memberId + 3, eventId)).isInstanceOfSatisfying(CouponException.class,
                     error -> assertThat(error.getErrorCode()).isEqualTo(CouponErrorCode.INVENTORY_EXHAUSTED));
             assertThat(redis.opsForHash().get(prefix + "meta", "completed")).isEqualTo("3");
+            assertThat(redis.opsForHash().get(prefix + "meta", "state")).isEqualTo("SOLD_OUT");
             assertThat(redis.opsForZSet().size(prefix + "pending")).isZero();
             assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM member_coupon WHERE coupon_event_id=?",
                     Integer.class, eventId)).isEqualTo(3);
+        }
+
+        @Test
+        void 전량_발급한_이벤트는_직접_예약해도_소진으로_거절하고_중복_완료는_무시한다() {
+            couponCommandService.issue(memberId, eventId);
+            couponCommandService.issue(memberId + 1, eventId);
+            couponCommandService.issue(memberId + 2, eventId);
+
+            assertThat(sequences.reserveAll(eventId, List.of("late-one", "late-two"), 30000)).containsExactly(0L, 0L);
+            assertThat(sequences.complete(eventId, 3, "already-completed")).isFalse();
+            assertThat(redis.opsForHash().get(prefix + "meta", "state")).isEqualTo("SOLD_OUT");
+            assertThat(redis.opsForHash().get(prefix + "meta", "completed")).isEqualTo("3");
+        }
+
+        @Test
+        void 전량_발급한_이벤트를_DB로_복구하면_SOLD_OUT으로_재구축한다() {
+            couponCommandService.issue(memberId, eventId);
+            couponCommandService.issue(memberId + 1, eventId);
+            couponCommandService.issue(memberId + 2, eventId);
+            sequenceService.block(eventId, null);
+
+            assertThat(sequenceRecoveryService.recover(eventId)).isTrue();
+
+            assertThat(redis.opsForHash().get(prefix + "meta", "state")).isEqualTo("SOLD_OUT");
+            assertThat(sequenceService.isConfirmedSoldOut(eventId)).isTrue();
+        }
+
+        @Test
+        void 이전_READY_형식의_전량_발급_정보도_소진으로_읽고_예약_시_SOLD_OUT으로_맞춘다() {
+            couponCommandService.issue(memberId, eventId);
+            couponCommandService.issue(memberId + 1, eventId);
+            couponCommandService.issue(memberId + 2, eventId);
+            redis.opsForHash().put(prefix + "meta", "state", "READY");
+
+            assertThat(sequenceService.isConfirmedSoldOut(eventId)).isTrue();
+            assertThat(sequences.reserveAll(eventId, List.of("legacy"), 30000)).containsExactly(0L);
+            assertThat(redis.opsForHash().get(prefix + "meta", "state")).isEqualTo("SOLD_OUT");
+        }
+
+        @Test
+        void SOLD_OUT인데_발급_완료_수가_부족하면_소진으로_믿지_않고_예약을_차단한다() {
+            redis.opsForHash().put(prefix + "meta", "state", "SOLD_OUT");
+
+            assertThat(sequenceService.isConfirmedSoldOut(eventId)).isFalse();
+            assertThat(sequences.reserveAll(eventId, List.of("inconsistent"), 30000)).containsExactly(-1L);
+            assertThat(redis.opsForHash().get(prefix + "meta", "state")).isEqualTo("BLOCKED");
         }
 
         // 묶음 경로는 자격 판정을 통과한 요청만 순번을 예약하므로 거절된 요청은 큐를 건드리지 않는다.
@@ -1880,7 +1946,7 @@ public class CouponIntegrationTest extends IntegrationTestSupport {
                 invocation.callRealMethod();
                 throw new RedisConnectionFailureException("completion reply lost");
             }).doCallRealMethod().when(sequences)
-                    .complete(org.mockito.ArgumentMatchers.eq(eventId), org.mockito.ArgumentMatchers.anyInt(), any());
+                    .completeAll(org.mockito.ArgumentMatchers.eq(eventId), anyList(), anyList());
             assertThat(couponCommandService.issue(memberId, eventId).memberCouponId()).isPositive();
             assertThat(sequenceService.needsRecovery(eventId)).isTrue();
             assertThat(couponCommandService.issue(memberId + 1, eventId).memberCouponId()).isPositive();
@@ -1970,8 +2036,7 @@ public class CouponIntegrationTest extends IntegrationTestSupport {
                 entered.countDown();
                 assertThat(finish.await(10, TimeUnit.SECONDS)).isTrue();
                 return invocation.callRealMethod();
-            }).when(batchIssues).issueSequences(org.mockito.ArgumentMatchers.eq(eventId),
-                    org.mockito.ArgumentMatchers.anyList(), any());
+            }).when(batchIssues).issueSequences(org.mockito.ArgumentMatchers.anyMap(), any());
             try (ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
                 Future<CouponIssueResponse> issuing = executor.submit(() -> couponCommandService.issue(memberId, eventId));
                 assertThat(entered.await(10, TimeUnit.SECONDS)).isTrue();

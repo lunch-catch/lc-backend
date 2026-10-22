@@ -21,7 +21,6 @@ import com.google.zxing.DecodeHintType;
 import com.google.zxing.client.j2se.BufferedImageLuminanceSource;
 import com.google.zxing.common.HybridBinarizer;
 import com.google.zxing.qrcode.QRCodeReader;
-import com.launchcatch.adserving.contract.CandidateStateUpdater;
 import com.launchcatch.coupon.dto.CouponIssueResponse;
 import com.launchcatch.coupon.CouponQrImageEncoder;
 import com.launchcatch.coupon.dto.CouponQrResponse;
@@ -32,8 +31,8 @@ import com.launchcatch.coupon.exception.CouponErrorCode;
 import com.launchcatch.coupon.exception.CouponException;
 import com.launchcatch.coupon.repository.CouponDailyLimitRepository;
 import com.launchcatch.coupon.repository.MemberCouponRepository;
-import com.launchcatch.coupon.service.model.CouponIssuanceResult;
-import com.launchcatch.coupon.service.model.CouponIssuanceRequest;
+import com.launchcatch.coupon.model.CouponIssuanceResult;
+import com.launchcatch.coupon.model.CouponIssuanceRequest;
 import com.launchcatch.member.contract.MemberInfo;
 import com.launchcatch.member.contract.MemberQueryService;
 import com.launchcatch.member.contract.MemberStatus;
@@ -85,8 +84,7 @@ class CouponCommandServiceTest {
 
     @Mock MemberCouponRepository memberCouponRepository;
     @Mock CouponDailyLimitRepository couponDailyLimitRepository;
-    @Mock CouponLookUpService couponLookUpService;
-    @Mock CandidateStateUpdater candidateStateUpdater;
+    @Mock CouponSoldOutNotificationService soldOutNotifications;
     @Mock CouponSequenceService sequenceService;
     @Mock CouponSequenceRecoveryService sequenceRecoveryService;
     @Mock CouponIssueBatcher batcher;
@@ -281,8 +279,8 @@ class CouponCommandServiceTest {
         @BeforeEach
         void setUp() {
             service = new CouponCommandService(repository, couponDailyLimitRepository, memberQuery,
-                    mock(CouponLookUpService.class), new CouponQrImageEncoder(),
-                    Clock.fixed(Instant.parse("2026-10-10T03:00:00Z"), ZoneOffset.UTC), mock(CandidateStateUpdater.class), mock(CouponSequenceService.class), mock(CouponSequenceRecoveryService.class),
+                    new CouponQrImageEncoder(),
+                    Clock.fixed(Instant.parse("2026-10-10T03:00:00Z"), ZoneOffset.UTC), mock(CouponSoldOutNotificationService.class), mock(CouponSequenceService.class), mock(CouponSequenceRecoveryService.class),
                     mock(CouponIssueBatcher.class));
         }
 
@@ -451,16 +449,79 @@ class CouponCommandServiceTest {
 
 
     @Test
-    void 마지막_재고의_소진_반영_장애는_발급_성공을_바꾸지_않는다() {
+    void 접수_상한에_닿아도_확정_소진을_먼저_반환한다() {
+        ReflectionTestUtils.setField(service, "requestCapacity", 0);
+        when(sequenceService.isConfirmedSoldOut(81L)).thenReturn(true);
+
+        assertThatThrownBy(() -> service.issue(MEMBER_ID, 81L)).isInstanceOfSatisfying(CouponException.class,
+                error -> assertThat(error.getErrorCode()).isEqualTo(CouponErrorCode.INVENTORY_EXHAUSTED));
+
+        verify(soldOutNotifications).request(81L);
+        verifyNoInteractions(batcher, memberCouponRepository, couponDailyLimitRepository, sequenceRecoveryService);
+    }
+
+    @Test
+    void 접수_상한에_닿고_소진이_아니면_혼잡으로_거절한다() {
+        ReflectionTestUtils.setField(service, "requestCapacity", 0);
+
+        assertThatThrownBy(() -> service.issue(MEMBER_ID, 81L)).isInstanceOfSatisfying(CouponException.class,
+                error -> assertThat(error.getErrorCode()).isEqualTo(CouponErrorCode.ISSUANCE_BUSY));
+
+        verifyNoInteractions(batcher, soldOutNotifications, sequenceRecoveryService);
+    }
+
+    @Test
+    void 접수_상한에서_Redis_복구가_필요해도_요청_스레드는_복구를_시작하지_않는다() {
+        ReflectionTestUtils.setField(service, "requestCapacity", 0);
+        when(sequenceService.isConfirmedSoldOut(81L)).thenThrow(CouponException.recoveryRequired(81L));
+
+        assertThatThrownBy(() -> service.issue(MEMBER_ID, 81L)).isInstanceOfSatisfying(CouponException.class,
+                error -> assertThat(error.getErrorCode()).isEqualTo(CouponErrorCode.ISSUANCE_BUSY));
+
+        verifyNoInteractions(batcher, soldOutNotifications, sequenceRecoveryService);
+    }
+
+    @Test
+    void Redis에서_소진이_확정되면_발급_대기열과_DB_작업을_사용하지_않는다() {
+        when(sequenceService.isConfirmedSoldOut(81L)).thenReturn(true);
+
+        assertThatThrownBy(() -> service.issue(MEMBER_ID, 81L)).isInstanceOfSatisfying(CouponException.class,
+                error -> assertThat(error.getErrorCode()).isEqualTo(CouponErrorCode.INVENTORY_EXHAUSTED));
+        verifyNoInteractions(batcher, memberCouponRepository, couponDailyLimitRepository, sequenceRecoveryService);
+        verify(soldOutNotifications).request(81L);
+    }
+
+    @Test
+    void 사전_검사_뒤_소진돼도_발급_작업자가_돌려준_소진_거절을_유지한다() {
+        when(sequenceService.isConfirmedSoldOut(81L)).thenReturn(false);
+        CouponException failure = new CouponException(CouponErrorCode.INVENTORY_EXHAUSTED);
+        when(batcher.submitAndAwait(any(CouponIssuanceRequest.class), anyLong())).thenThrow(failure);
+
+        assertThatThrownBy(() -> service.issue(MEMBER_ID, 81L)).isSameAs(failure);
+        verify(soldOutNotifications).request(81L);
+    }
+
+    @Test
+    void Redis_사전_검사를_복구한_뒤_소진이_확정되면_큐에_넣지_않는다() {
+        CouponException failure = CouponException.recoveryRequired(81L);
+        failure.confirmIssuanceNotCommitted();
+        when(sequenceService.isConfirmedSoldOut(81L)).thenThrow(failure).thenReturn(true);
+        when(sequenceService.needsRecovery(81L)).thenReturn(true);
+        when(sequenceRecoveryService.recover(eq(81L), anyLong())).thenReturn(true);
+
+        assertThatThrownBy(() -> service.issue(MEMBER_ID, 81L)).isInstanceOfSatisfying(CouponException.class,
+                error -> assertThat(error.getErrorCode()).isEqualTo(CouponErrorCode.INVENTORY_EXHAUSTED));
+        verifyNoInteractions(batcher);
+        verify(soldOutNotifications).request(81L);
+    }
+
+    @Test
+    void 마지막_재고를_발급한_요청은_DB_재확인과_광고_통보를_기다리지_않는다() {
         CouponIssueResponse response = new CouponIssueResponse(1001L, ISSUE_DATE.atTime(12, 0).atOffset(ZoneOffset.ofHours(9)));
-        CouponLookUpService.SoldOut soldOut = new CouponLookUpService.SoldOut(91L, ISSUE_DATE, ISSUE_DATE.atTime(12, 0));
         when(batcher.submitAndAwait(any(CouponIssuanceRequest.class), anyLong())).thenReturn(new CouponIssuanceResult(response, true));
-        when(couponLookUpService.findSoldOut(81L)).thenReturn(Optional.of(soldOut));
-        doThrow(new QueryTimeoutException("candidate unavailable")).when(candidateStateUpdater)
-                .markSoldOut(91L, ISSUE_DATE, soldOut.soldOutAt());
 
         assertThat(service.issue(MEMBER_ID, 81L)).isEqualTo(response);
-        assertThat(logs.list).anyMatch(log -> log.getFormattedMessage().contains("COUPON_SOLD_OUT_NOTIFICATION_FAILED"));
+        verifyNoInteractions(soldOutNotifications);
     }
 
     @Test
@@ -468,27 +529,16 @@ class CouponCommandServiceTest {
         CouponIssueResponse response = new CouponIssueResponse(1001L, ISSUE_DATE.atTime(12, 0).atOffset(ZoneOffset.ofHours(9)));
         when(batcher.submitAndAwait(any(CouponIssuanceRequest.class), anyLong())).thenReturn(new CouponIssuanceResult(response, false));
         assertThat(service.issue(MEMBER_ID, 81L)).isEqualTo(response);
-        verifyNoInteractions(candidateStateUpdater);
+        verifyNoInteractions(soldOutNotifications);
     }
 
     @Test
-    void 소진으로_거절하면_원래_발급_시각으로_소진을_다시_통보한다() {
+    void 소진_거절은_DB_재확인_없이_통보를_접수하고_원래_결과를_반환한다() {
         CouponException failure = new CouponException(CouponErrorCode.INVENTORY_EXHAUSTED);
-        CouponLookUpService.SoldOut soldOut = new CouponLookUpService.SoldOut(91L, ISSUE_DATE, ISSUE_DATE.atTime(11, 45));
         when(batcher.submitAndAwait(any(CouponIssuanceRequest.class), anyLong())).thenThrow(failure);
-        when(couponLookUpService.findSoldOut(81L)).thenReturn(Optional.of(soldOut));
-        assertThatThrownBy(() -> service.issue(MEMBER_ID, 81L)).isSameAs(failure);
-        verify(candidateStateUpdater).markSoldOut(91L, ISSUE_DATE, soldOut.soldOutAt());
-    }
 
-    @Test
-    void 소진_복구_조회가_실패해도_원래_소진_거절을_유지한다() {
-        CouponException failure = new CouponException(CouponErrorCode.INVENTORY_EXHAUSTED);
-        when(batcher.submitAndAwait(any(CouponIssuanceRequest.class), anyLong())).thenThrow(failure);
-        when(couponLookUpService.findSoldOut(81L)).thenThrow(new QueryTimeoutException("recovery unavailable"));
         assertThatThrownBy(() -> service.issue(MEMBER_ID, 81L)).isSameAs(failure);
-        verifyNoInteractions(candidateStateUpdater);
-        assertThat(logs.list).anyMatch(log -> log.getFormattedMessage().contains("COUPON_SOLD_OUT_RECOVERY_FAILED"));
+        verify(soldOutNotifications).request(81L);
     }
 
     @Test
@@ -513,7 +563,7 @@ class CouponCommandServiceTest {
         CouponException failure = new CouponException(CouponErrorCode.CAMPAIGN_NOT_WISHED);
         when(batcher.submitAndAwait(any(CouponIssuanceRequest.class), anyLong())).thenThrow(failure);
         assertThatThrownBy(() -> service.issue(MEMBER_ID, 81L)).isSameAs(failure);
-        verifyNoInteractions(candidateStateUpdater);
+        verifyNoInteractions(soldOutNotifications);
     }
     @Test
     void 차단을_복구한_요청은_실제_발급까지_이어간다() {
