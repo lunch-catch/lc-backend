@@ -1,5 +1,6 @@
 package com.launchcatch.auth;
 
+import com.launchcatch.global.http.ClientIpResolver;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -77,7 +78,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
             return;
         }
 
-        String ip = request.getRemoteAddr();
+        String ip = ClientIpResolver.resolve(request);
         if (isOverLimit(ip)) {
             response.setStatus(HttpStatus.TOO_MANY_REQUESTS.value());
             response.setHeader(HttpHeaders.RETRY_AFTER, String.valueOf(retryAfterSeconds(ip)));

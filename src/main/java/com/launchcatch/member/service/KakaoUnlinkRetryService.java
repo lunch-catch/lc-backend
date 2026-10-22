@@ -125,13 +125,13 @@ public class KakaoUnlinkRetryService {
     private void markSucceeded(PendingUnlink pending) {
         Optional<KakaoUnlinkFailure> row = failureRepository.findById(pending.failureId());
         if (row.isEmpty()) {
-            log.error("event=KAKAO_UNLINK_RACED_REACTIVATION memberId={} cause=QUEUE_ROW_DELETED action=REQUIRES_RELINK",
+            log.error("event=KAKAO_UNLINK_RACED_REACTIVATION memberId={} reason=QUEUE_ROW_DELETED action=REQUIRES_RELINK",
                     pending.memberId());
             return;
         }
         KakaoUnlinkFailure failure = row.get();
         if (failure.getMember().getStatus() != MemberStatus.WITHDRAWN) {
-            log.error("event=KAKAO_UNLINK_RACED_REACTIVATION memberId={} cause=MEMBER_REACTIVATED action=REQUIRES_RELINK",
+            log.error("event=KAKAO_UNLINK_RACED_REACTIVATION memberId={} reason=MEMBER_REACTIVATED action=REQUIRES_RELINK",
                     pending.memberId());
         }
         failureRepository.delete(failure);
@@ -148,7 +148,7 @@ public class KakaoUnlinkRetryService {
         try {
             transactionTemplate.executeWithoutResult(status -> markFailed(pending, callFailure));
         } catch (RuntimeException recordFailure) {
-            log.error("event=KAKAO_UNLINK_RETRY_MARK_FAILED_ERROR failureId={} memberId={} callCauseType={}",
+            log.error("event=KAKAO_UNLINK_RETRY_MARK_FAILED failureId={} memberId={} callCauseType={}",
                     pending.failureId(), pending.memberId(),
                     KakaoUnlinkFailureClassifier.causeType(callFailure), recordFailure);
         }

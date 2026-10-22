@@ -5,12 +5,15 @@ import java.time.Duration;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Profile;
 import org.springframework.http.client.reactive.ReactorClientHttpConnector;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.netty.http.client.HttpClient;
 import reactor.netty.resources.ConnectionProvider;
 
+// 부하 시험(loadtest)에서는 토스를 부르지 않아 접속 설정과 비밀키 검사를 만들지 않는다
 @Configuration
+@Profile("!loadtest")
 @EnableConfigurationProperties(TossProperties.class)
 public class TossClientConfig {
 

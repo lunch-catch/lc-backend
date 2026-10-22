@@ -19,6 +19,7 @@
 |---|---|
 | `R__{두 자리 순서}_{설명}.sql` | repeatable 이라 내용이 바뀌면 다시 돈다. Flyway 는 설명 순으로 돌리므로 앞 숫자로 순서를 정한다 |
 | 여러 번 돌아도 결과가 같게 쓴다 | `INSERT ... ON DUPLICATE KEY UPDATE pk = pk`. 이미 있는 행은 건드리지 않는다 |
+| 자동 증가 PK 를 빼고 넣는 행은 PK 를 갱신 대상으로 쓰지 않는다 | `ON DUPLICATE KEY UPDATE t.updated_at = t.updated_at`. 한 문장 안에서 새로 넣은 행이 다시 중복으로 걸리면 `pk = pk` 가 방금 생성된 값을 갱신해 MySQL 이 1869 로 거절한다 (2026-10-22 개발 서버 기동 실패) |
 | PK 는 9000번대 | 시험하며 만든 행(1번부터)과 부딪히지 않는다 |
 | 날짜에 묶인 행은 `${seedBusinessDate}` 를 쓴다 | 오늘(Asia/Seoul)이 들어간다. 날짜가 바뀌면 체크섬이 바뀌어 하루의 첫 기동에 그날 행이 생긴다. `CURDATE()` 를 쓰면 처음 넣은 날에 멈춘다 |
 | 계정 비밀번호는 `${seedPasswordHash}` 를 쓴다 | 로컬 기본값은 `lunchcatch1234!` 의 BCrypt 해시이고 저장소에 공개돼 있다. 개발 서버는 인프라가 `SEED_PASSWORD_HASH` 로 다른 값을 넣는다 |

@@ -78,7 +78,8 @@ public class BudgetQueryServiceImpl implements BudgetQueryService {
             DailySpend spend = spends.get(campaignId);
             Map<Integer, Long> hourlyTargets = targets.getOrDefault(plan.planId(), Map.of());
             if (hourlyTargets.isEmpty()) {
-                log.warn("시간대별 목표 행이 없어 가중치로 계산합니다. campaignId={}, businessDate={}", campaignId, businessDate);
+                log.warn("event=BILLING_HOURLY_TARGET_MISSING campaignId={} businessDate={} fallback=WEIGHTED_TARGET",
+                        campaignId, businessDate);
                 meterRegistry.counter(FALLBACK_METRIC).increment();
             }
             long planned = BudgetPacing.plannedAmountUntil(spend.reserved(), hourlyTargets, schedule, time);

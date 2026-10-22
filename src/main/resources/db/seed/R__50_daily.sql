@@ -132,7 +132,7 @@ VALUES (9001, '${seedBusinessDate}', 50, TIMESTAMP('${seedBusinessDate}', '11:00
        (9002, '${seedBusinessDate}', 50, TIMESTAMP('${seedBusinessDate}', '11:00:00'),
         TIMESTAMP('${seedBusinessDate}', '14:00:00'), 'ACTIVE', 9002, '런치 분식', NULL, 'MENU', 'PERCENT', 20,
         9004, '떡볶이', 6000, 4800, NOW(6), NOW(6))
-ON DUPLICATE KEY UPDATE coupon_event_id = coupon_event_id;
+ON DUPLICATE KEY UPDATE coupon_event.updated_at = coupon_event.updated_at;
 
 -- 피드 시험 캠페인 9101~9200 가운데 그날 서빙되는 캠페인의 쿠폰 이벤트다(#611). 예산 계획이 없거나 일시 중단이면 만들지 않는다
 INSERT INTO coupon_event (campaign_id, business_date, issue_quantity, usable_start_at, usable_end_at, status,
@@ -151,7 +151,7 @@ JOIN campaign p ON p.campaign_id = c.campaign_id
 JOIN budget_daily_plan b ON b.campaign_id = c.campaign_id AND b.business_date = c.business_date
 LEFT JOIN store_menu m ON m.store_menu_id = p.target_menu_id
 WHERE c.business_date = '${seedBusinessDate}' AND c.campaign_id BETWEEN 9101 AND 9200 AND c.campaign_state = 'SERVABLE'
-ON DUPLICATE KEY UPDATE coupon_event.coupon_event_id = coupon_event.coupon_event_id;
+ON DUPLICATE KEY UPDATE coupon_event.updated_at = coupon_event.updated_at;
 
 /*
  * 쿠폰 재고다.
@@ -167,7 +167,7 @@ FROM coupon_event ce
 CROSS JOIN seq
 WHERE (ce.campaign_id IN (9001, 9002) OR ce.campaign_id BETWEEN 9101 AND 9200)
   AND ce.business_date = '${seedBusinessDate}' AND seq.n <= ce.issue_quantity
-ON DUPLICATE KEY UPDATE coupon_inventory_id = coupon_inventory_id;
+ON DUPLICATE KEY UPDATE coupon_inventory.updated_at = coupon_inventory.updated_at;
 
 /*
  * 지난 6일의 후보다(#436).
@@ -240,7 +240,7 @@ INSERT INTO wishlist (member_id, campaign_id, store_id, serve_id, created_at, up
 SELECT w.member_id, w.campaign_id, w.campaign_id, w.serve_id, w.occurred_at, w.occurred_at
 FROM swipe_log w
 WHERE w.member_id BETWEEN 9001 AND 9999 AND w.action = 'WISH'
-ON DUPLICATE KEY UPDATE wishlist.wishlist_id = wishlist.wishlist_id;
+ON DUPLICATE KEY UPDATE wishlist.updated_at = wishlist.updated_at;
 
 /*
  * 카카오로 가입해 온보딩한 회원의 찜이다. 시험 회원은 로그인할 수 없어 HTTP 로 찜 목록을 받으려면 이 행이 있어야 한다.
@@ -259,7 +259,7 @@ WHERE mp.onboarding_completed_at IS NOT NULL
   AND m.status = 'ACTIVE'
   AND m.member_id NOT BETWEEN 9000 AND 9999
   AND MOD(m.member_id, 2) = 1
-ON DUPLICATE KEY UPDATE wishlist.wishlist_id = wishlist.wishlist_id;
+ON DUPLICATE KEY UPDATE wishlist.updated_at = wishlist.updated_at;
 
 -- 시험 회원 50명의 어제와 그제 첫 접속 위치다
 INSERT INTO feed_visit_daily (business_date, member_id, lat_rounded, lng_rounded, created_at, updated_at)

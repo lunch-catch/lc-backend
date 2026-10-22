@@ -15,6 +15,7 @@ import com.launchcatch.campaign.contract.Cause;
 import com.launchcatch.campaign.contract.FundingJudgement;
 import com.launchcatch.campaign.contract.Judgement;
 import com.launchcatch.campaign.contract.PauseReason;
+import com.launchcatch.global.logging.TransactionLogging;
 import java.time.Clock;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -110,8 +111,9 @@ public class RechargeReservationService {
         if (newReserved >= plan.getUnitPrice()) {
             notifyResume(charged, businessDate, latest, plan, newReserved);
         }
-        log.info("event=RECHARGE_RESERVE_DONE businessDate={} campaignId={} paymentId={} delta={} newReserved={}",
-                businessDate, latest.campaignId(), charged.paymentId(), delta, newReserved);
+        TransactionLogging.afterCommit(() -> log.info(
+                "event=BILLING_RECHARGE_RESERVE_DONE businessDate={} campaignId={} paymentId={} delta={} newReserved={}",
+                businessDate, latest.campaignId(), charged.paymentId(), delta, newReserved));
         return remaining - delta;
     }
 
@@ -139,7 +141,7 @@ public class RechargeReservationService {
     private long balanceOf(Long ownerId) {
         long balance = ledgerRepository.sumBalance(ownerId);
         if (balance < 0) {
-            log.error("event=RECHARGE_RESERVE_NEGATIVE_BALANCE ownerId={} balance={}", ownerId, balance);
+            log.error("event=BILLING_RECHARGE_RESERVE_NEGATIVE_BALANCE ownerId={} balance={}", ownerId, balance);
             return 0L;
         }
         return balance;

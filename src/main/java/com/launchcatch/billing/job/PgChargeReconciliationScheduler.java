@@ -11,7 +11,7 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 /*
- * 전일 생성 결제를 PG와 대사한다(PG_VS_CHARGE, 구현 순서 13번). 00:00 묶음(DailyJob)이 아니라
+ * 전일 생성 결제를 PG와 대사한다(PG_VS_CHARGE, 구현 순서 13번). 01:30 에 돈다. 00:00 묶음(DailyJob)이 아니라
  * 정산의 독립 스케줄 작업이다. 캠페인 예산 예약 체인과 데이터 의존이 없어서 묶음에 넣지 않는다.
  *
  * 배치 서버 두 대가 같은 시각에 시도하므로 batch_execution_log 점유로 겹치지 않게 한다(배치
@@ -36,8 +36,13 @@ public class PgChargeReconciliationScheduler implements StandaloneJob {
     private final PgChargeReconciliationService reconciliationService;
     private final BatchExecutionService executions;
 
-    // 영업일 경계 작업과 같이 시간대를 값으로 적는다. 서버 기본 시간대로 두면 컨테이너가 UTC 로 뜨는 순간 정오에 돈다
-    @Scheduled(cron = "0 0 0 * * *", zone = "Asia/Seoul")
+    /*
+     * 영업일 경계 작업과 같이 시간대를 값으로 적는다. 서버 기본 시간대로 두면 컨테이너가 UTC 로 뜨는 순간 정오에 돈다.
+     * 01:30 에 도는 것은 두 가지 때문이다. 서비스의 워터마크(5분) 때문에 00:00 에 돌면 전일 23:55 이후 결제가
+     * 대상에서 빠지고 다음 날 실행도 그 결제를 다시 보지 않는다. 또 00:00 묶음과 01:00 분석 집계가 도는 시각을 피해
+     * 부하가 겹치지 않게 한다.
+     */
+    @Scheduled(cron = "0 30 1 * * *", zone = "Asia/Seoul")
     public void reconcile() {
         LocalDate businessDate = executions.businessDate();
         if (!executions.claim(JOB_NAME, businessDate)) {
