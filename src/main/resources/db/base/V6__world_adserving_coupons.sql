@@ -19,7 +19,10 @@ SELECT a.d + b.d * 10 + c.d * 100 + e.d * 1000 + 1
 CREATE TEMPORARY TABLE base_k (n INT PRIMARY KEY);
 INSERT INTO base_k (n) SELECT n FROM base_n WHERE n <= 100;
 
--- 일차 dn 과 날짜. dn = 8 - (D 에서 거슬러 간 날 수), D 는 8, D-8 은 0
+/*
+ * 일차 dn 과 날짜.
+ * dn = 8 - (D 에서 거슬러 간 날 수), D 는 8, D-8 은 0.
+ */
 CREATE TEMPORARY TABLE base_day (dn INT PRIMARY KEY, bdate DATE NOT NULL, d0 DATETIME(6) NOT NULL);
 INSERT INTO base_day (dn, bdate, d0)
 SELECT n - 1, DATE_SUB('${baseDate}', INTERVAL 9 - n DAY), TIMESTAMP(DATE_SUB('${baseDate}', INTERVAL 9 - n DAY))
@@ -87,7 +90,7 @@ SELECT x.n, 10000000 + x.n, 10000000 + x.n, 10000000 + x.n,
        IF(x.n % 3 = 0, 'AGE_20S,AGE_30S,AGE_40S,AGE_50_PLUS',
           ELT(x.n % 4 + 1, 'AGE_20S', 'AGE_20S,AGE_30S', 'AGE_20S,AGE_30S,AGE_40S', 'AGE_20S,AGE_30S,AGE_40S,AGE_50_PLUS')),
        IF(x.is_menu, 'MENU', 'ALL'),
-       IF(x.is_menu AND x.n % 4 <> 3, 'PERCENT', 'AMOUNT'),
+       IF(x.is_menu AND x.n % 8 <> 6, 'PERCENT', 'AMOUNT'),
        x.dvalue,
        IF(x.is_menu, 10000000 + x.n * 10 + 1, NULL),
        IF(x.is_menu, CONCAT(c.label, ' 메뉴 1'), NULL),
@@ -105,8 +108,8 @@ SELECT x.n, 10000000 + x.n, 10000000 + x.n, 10000000 + x.n,
   FROM (
     SELECT y.*,
            -- 할인 대상 메뉴 1번 가격에서 깎는 금액 (CouponDiscountPrice: 10원 단위 반올림, 가격 넘지 않음)
-           IF(y.is_menu, LEAST(y.price, IF(y.n % 4 = 3, 2000, ROUND(y.price * (10 + y.n % 4 * 5) / 100 / 10) * 10)), 0) AS menu_cut,
-           IF(y.is_menu, IF(y.n % 4 = 3, 2000, 10 + y.n % 4 * 5), 1000 + (y.n % 5) * 1000) AS dvalue
+           IF(y.is_menu, LEAST(y.price, IF(y.n % 8 = 6, 2000, ROUND(y.price * (10 + y.n % 3 * 5) / 100 / 10) * 10)), 0) AS menu_cut,
+           IF(y.is_menu, IF(y.n % 8 = 6, 2000, 10 + y.n % 3 * 5), 1000 + (y.n % 5) * 1000) AS dvalue
       FROM (
         SELECT b.n,
                b.n % 4 > 0 AND b.n % 2 = 0 AS is_menu,
@@ -226,7 +229,10 @@ SELECT UNHEX(CONCAT('000000000001', '7000', '8', LPAD(HEX(v.s), 15, '0'))), 1000
  WHERE v.valid
     ON DUPLICATE KEY UPDATE swipe_log.serve_id = swipe_log.serve_id;
 
--- ADS.WISHLIST: 찜 스와이프마다 (회원, 캠페인) 1행. 오늘 찜도 있다
+/*
+ * ADS.WISHLIST: 찜 스와이프마다 (회원, 캠페인) 1행.
+ * 오늘 찜도 있다.
+ */
 INSERT INTO wishlist (wishlist_id, member_id, campaign_id, store_id, serve_id, campaign_ended_at, created_at, updated_at)
 SELECT 10000000 + s, 10000000 + m, 10000000 + n, 10000000 + n,
        UNHEX(CONCAT('000000000001', '7000', '8', LPAD(HEX(s), 15, '0'))), NULL,
@@ -249,7 +255,10 @@ SELECT 10000000 + 900000 + w.k, 10000000 + w.m, 10000000 + w.c, 10000000 + w.st,
   ) w
     ON DUPLICATE KEY UPDATE wishlist.wishlist_id = wishlist.wishlist_id;
 
--- 가게 상세에서 오늘 아침 누른 찜 (serve_id NULL). 회원 2 와 3 이 캠페인 150 을 찜했다
+/*
+ * 가게 상세에서 오늘 아침 누른 찜 (serve_id NULL).
+ * 회원 2 와 3 이 캠페인 150 을 찜했다.
+ */
 INSERT INTO wishlist (wishlist_id, member_id, campaign_id, store_id, serve_id, campaign_ended_at, created_at, updated_at)
 SELECT 10000000 + 900010 + k.n, 10000000 + 1 + k.n, 10000000 + 150, 10000000 + 150, NULL, NULL,
        TIMESTAMP('${baseDate}', '09:30:00'), TIMESTAMP('${baseDate}', '09:30:00')
@@ -495,7 +504,10 @@ SELECT r.s, r.dn, r.m, r.n, r.seq_no, r.event_id, 10000000 + (r.n * 10 + r.dn) *
 
 UPDATE base_issue SET used_at = NULL WHERE mstatus <> 'USED';
 
--- 재고: 회차마다 sequence_no 1 ~ 수량. 발급된 순번은 ISSUED, 나머지는 AVAILABLE
+/*
+ * 재고: 회차마다 sequence_no 1 ~ 수량.
+ * 발급된 순번은 ISSUED, 나머지는 AVAILABLE.
+ */
 INSERT INTO coupon_inventory (coupon_inventory_id, coupon_event_id, sequence_no, coupon_code, status, usable_start_at,
                               usable_end_at, created_at, updated_at)
 SELECT 10000000 + (e.n * 10 + e.dn) * 1000 + k.n, e.event_id, k.n,

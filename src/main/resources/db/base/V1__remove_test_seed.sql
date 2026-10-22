@@ -111,7 +111,10 @@ WHERE campaign_id IN (SELECT campaign_id FROM base_seed_campaign)
 DELETE FROM campaign_status_log WHERE campaign_id IN (SELECT campaign_id FROM base_seed_campaign);
 DELETE FROM campaign WHERE campaign_id IN (SELECT campaign_id FROM base_seed_campaign);
 
--- 시드 템플릿은 실제 점주의 포스터가 쓰지 않을 때만 지운다. 쓰고 있으면 외래 키가 막는다
+/*
+ * 시드 템플릿은 실제 점주의 포스터가 쓰지 않을 때만 지운다.
+ * 쓰고 있으면 외래 키가 막는다.
+ */
 CREATE TEMPORARY TABLE base_seed_template AS
 SELECT t.template_id FROM template t
 WHERE t.name = '시드 기본 템플릿'
@@ -138,10 +141,16 @@ DELETE FROM member_withdrawal_history WHERE member_id IN (SELECT member_id FROM 
 DELETE FROM member_profile WHERE member_id IN (SELECT member_id FROM base_seed_member);
 DELETE FROM member WHERE member_id IN (SELECT member_id FROM base_seed_member);
 
--- 시드 관리자는 admin_id 9001 의 superadmin 이다. 개발 서버처럼 seed-admin.sh 가 먼저 만든 superadmin 은 번호가 달라 남는다
+/*
+ * 시드 관리자는 admin_id 9001 의 superadmin 이다.
+ * 개발 서버처럼 seed-admin.sh 가 먼저 만든 superadmin 은 번호가 달라 남는다.
+ */
 DELETE FROM admin WHERE admin_id = 9001 AND login_id = 'superadmin';
 
--- 시드 이력 테이블. 시드가 돈 적 없으면 없다
+/*
+ * 시드 이력 테이블.
+ * 시드가 돈 적 없으면 없다.
+ */
 DROP TABLE IF EXISTS flyway_history_seed;
 
 DROP TEMPORARY TABLE base_seed_template;

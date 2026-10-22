@@ -231,11 +231,14 @@ INSERT INTO base_cmp (n, s, status, paused_reason, start_date, end_date, status_
 VALUES (2101, 177, 'PAUSED', 'OWNER', DATE_SUB(DATE('${baseDate}'), INTERVAL 14 DAY), DATE_ADD(DATE('${baseDate}'), INTERVAL 14 DAY),
         TIMESTAMP(DATE_SUB(DATE('${baseDate}'), INTERVAL 8 DAY), '14:00:00'), TIMESTAMP(DATE_SUB(DATE('${baseDate}'), INTERVAL 17 DAY), '10:00:00'));
 
--- 쿠폰 조건, 대상, 예산 공식 (WORLD_SPEC 캠페인 (V4) 아래 목록)
+/*
+ * 쿠폰 조건, 대상, 예산 공식 (WORLD_SPEC 캠페인 (V4) 아래 목록).
+ * 메뉴 할인은 n % 4 = 2 일 때만 나오므로 정률과 정액은 n % 8 로 가른다 (6 이면 정액 2000).
+ */
 UPDATE base_cmp
 SET target_type = CASE WHEN s % 4 > 0 AND n % 2 = 0 THEN 'MENU' ELSE 'ALL' END,
-    discount_type = CASE WHEN s % 4 > 0 AND n % 2 = 0 AND n % 4 <> 3 THEN 'PERCENT' ELSE 'AMOUNT' END,
-    discount_value = CASE WHEN s % 4 > 0 AND n % 2 = 0 THEN IF(n % 4 = 3, 2000, 10 + n % 4 * 5)
+    discount_type = CASE WHEN s % 4 > 0 AND n % 2 = 0 AND n % 8 <> 6 THEN 'PERCENT' ELSE 'AMOUNT' END,
+    discount_value = CASE WHEN s % 4 > 0 AND n % 2 = 0 THEN IF(n % 8 = 6, 2000, 10 + n % 3 * 5)
                           ELSE 1000 + n % 5 * 1000 END,
     target_menu_id = CASE WHEN s % 4 > 0 AND n % 2 = 0 THEN 10000000 + s * 10 + 1 END,
     qty = CASE WHEN n % 17 = 0 THEN 3 ELSE ELT(n % 5 + 1, 10, 20, 30, 50, 100) END,
