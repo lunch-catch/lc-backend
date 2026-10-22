@@ -30,6 +30,7 @@ import com.launchcatch.owner.contract.OwnerAccountStatus;
 import com.launchcatch.owner.contract.OwnerStatusQuery;
 import com.launchcatch.store.contract.StoreInfo;
 import com.launchcatch.store.contract.StoreMenuInfo;
+import com.launchcatch.store.contract.StoreMenuQueryResult;
 import com.launchcatch.store.contract.StoreQueryService;
 import java.lang.reflect.Field;
 import java.net.URL;
@@ -299,7 +300,21 @@ class PosterUploadServiceTest {
         when(templateRepository.findById(TEMPLATE_ID)).thenReturn(Optional.of(publishedActiveTemplate()));
         when(storeQueryService.findAllById(List.of(STORE_ID)))
                 .thenReturn(List.of(new StoreInfo(STORE_ID, "분식집", "store.jpg", 37.5, 127.0)));
-        when(storeQueryService.findMenusByIdIn(List.of(42L))).thenReturn(List.of());
+        when(storeQueryService.findMenusByIdIn(List.of(42L))).thenReturn(new StoreMenuQueryResult(List.of(), List.of()));
+
+        assertThatThrownBy(() -> service.createOrOverwritePoster(OWNER_ID, CAMPAIGN_ID, TEMPLATE_ID, OBJECT_KEY))
+                .isInstanceOfSatisfying(CampaignException.class, e ->
+                        assertThat(e.getErrorCode()).isEqualTo(CommonErrorCode.INTERNAL_ERROR));
+    }
+
+    @Test
+    void 메뉴의_데이터_오류가_있으면_내부_오류로_포스터_생성을_거부한다() {
+        when(campaignRepository.findById(CAMPAIGN_ID)).thenReturn(Optional.of(menuDiscountCampaign()));
+        when(templateRepository.findById(TEMPLATE_ID)).thenReturn(Optional.of(publishedActiveTemplate()));
+        when(storeQueryService.findAllById(List.of(STORE_ID)))
+                .thenReturn(List.of(new StoreInfo(STORE_ID, "분식집", "store.jpg", 37.5, 127.0)));
+        when(storeQueryService.findMenusByIdIn(List.of(42L)))
+                .thenReturn(new StoreMenuQueryResult(List.of(), List.of(42L)));
 
         assertThatThrownBy(() -> service.createOrOverwritePoster(OWNER_ID, CAMPAIGN_ID, TEMPLATE_ID, OBJECT_KEY))
                 .isInstanceOfSatisfying(CampaignException.class, e ->
@@ -377,7 +392,7 @@ class PosterUploadServiceTest {
         Template template = publishedActiveTemplate();
         givenHappyPath(campaign, template);
         when(storeQueryService.findMenusByIdIn(List.of(42L)))
-                .thenReturn(List.of(new StoreMenuInfo(42L, STORE_ID, "menu.jpg", "제육볶음", 9000L)));
+                .thenReturn(new StoreMenuQueryResult(List.of(new StoreMenuInfo(42L, STORE_ID, "menu.jpg", "제육볶음", 9000L)), List.of()));
 
         PosterCreateResponse response = service.createOrOverwritePoster(OWNER_ID, CAMPAIGN_ID, TEMPLATE_ID, OBJECT_KEY);
 
@@ -395,7 +410,7 @@ class PosterUploadServiceTest {
         Template template = publishedActiveTemplate();
         givenHappyPath(campaign, template);
         when(storeQueryService.findMenusByIdIn(List.of(42L)))
-                .thenReturn(List.of(new StoreMenuInfo(42L, STORE_ID, "menu.jpg", "제육볶음", 9000L)));
+                .thenReturn(new StoreMenuQueryResult(List.of(new StoreMenuInfo(42L, STORE_ID, "menu.jpg", "제육볶음", 9000L)), List.of()));
 
         PosterCreateResponse response = service.createOrOverwritePoster(OWNER_ID, CAMPAIGN_ID, TEMPLATE_ID, OBJECT_KEY);
 

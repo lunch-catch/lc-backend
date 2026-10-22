@@ -121,7 +121,7 @@ public class CandidateLoadService {
         if (menuIds.isEmpty()) {
             return Map.of();
         }
-        return storeQueryService.findMenusByIdIn(menuIds).stream()
+        return storeQueryService.findMenusByIdIn(menuIds).menus().stream()
                 .collect(Collectors.toMap(StoreMenuInfo::menuId, StoreMenuInfo::menuName));
     }
 
