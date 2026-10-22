@@ -169,7 +169,8 @@ public class FeedService {
         try {
             progress = readProgress(campaignIds, businessDate, servedAt);
         } catch (RuntimeException e) {
-            log.warn("event=FEED_BUDGET_UNAVAILABLE 예산 규칙 없이 내보낸다", e);
+            log.warn("event=ADSERVING_FEED_BUDGET_UNAVAILABLE businessDate={} campaignIds={} fallback=SKIP_BUDGET_RULE",
+                    businessDate, campaignIds.stream().map(String::valueOf).collect(Collectors.joining(",")), e);
             meterRegistry.counter(BUDGET_UNAVAILABLE_METRIC).increment();
             return null;
         }

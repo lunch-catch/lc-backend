@@ -73,32 +73,58 @@
 
 ## 장면과 데이터
 
-장면마다 필요한 데이터와 어느 층에 넣는지다. 층은 #741 1절을 따른다: **기본 세계**는 버전 마이그레이션(`V__`)으로 넣는 넓은 데이터, **시연 층**은 시연 계정만을 위한 반복 마이그레이션(`R__demo.sql`)이다. 자세한 데이터 목록은 #741 에서 이 표를 채워 정한다.
+장면마다 쓰는 데이터 묶음([data.md](data.md))과 층이다. 층은 #741 1절을 따른다: **기본 세계**는 버전 마이그레이션(`V__`), **시연 층**은 시연 계정만을 위한 반복 마이그레이션(`R__demo.sql`)이다. 묶음 목록은 각 장면 시나리오의 [data-map.md](data-map.md) 를 모은 것이다.
 
-| 장면 | 필요한 데이터 | 층 |
+### 시연 계정
+
+점주 한 명은 끝나지 않은 캠페인을 하나만 가질 수 있다(앱 규칙). 그래서 장면 역할마다 시연 점주를 나눈다. 비밀번호는 #741 5절의 자리표시자로 받는다.
+
+| 계정 | 역할 | 장면 | 상태 |
+|---|---|---|---|
+| `demo-admin` | 관리자 (ADMIN) | 1, 22 ~ 28 | ACTIVE |
+| `superadmin` | 최고 관리자 | 29 | ACTIVE. 개발 서버의 기존 계정은 그대로 둔다 |
+| `demo-owner@lunchcatch.com` | 진행 중 캠페인을 가진 점주 | 2, 3, 4, 7, 8, 10, 13, 14, 16, 17, 19, 20 | ACTIVE, 튜토리얼 본 상태 |
+| `demo-owner-new@lunchcatch.com` | 새 캠페인을 만드는 점주 | 5, 6 | ACTIVE, 확정 가게, 캠페인 없음 |
+| `demo-owner-scheduled@lunchcatch.com` | 전날 활성화한 캠페인의 점주 | 11 | ACTIVE, SCHEDULED 캠페인(시작일 = 시연일) |
+| `demo-owner-soldout@lunchcatch.com` | 수량이 적은 캠페인의 점주 | 15 | ACTIVE, 진행 중 캠페인(그날 남은 수량 1) |
+| `demo-owner-nopoints@lunchcatch.com` | 잔액이 없어 멈춘 캠페인의 점주 | 21 | ACTIVE, PAUSED(NO_POINTS), 잔액 0 |
+| 회원 | 시연자 본인 카카오 | 9 ~ 18 | 시연 중 가입한다. 미리 넣지 않는다 |
+
+### 시연 층에 넣는 것 (`R__demo.sql`)
+
+| 계정 | 넣는 것 | 묶음 |
 |---|---|---|
-| 1 | 관리자 `demo-admin`, Bedrock 설정, 대비용 게시 템플릿 1 | 시연 층 |
-| 2, 3 | `demo-owner`, 확정된 가게, 진행 중 캠페인과 포스터, 지난 리포트와 쿠폰 사용 | 시연 층 |
-| 4 | 충전 정책(기본 세계), `demo-owner` 잔액 | 기본 세계, 시연 층 |
-| 5 | `demo-owner` 의 확정 가게(진행 중 캠페인과 별개로 새 캠페인을 낼 수 있는 상태), 0막 템플릿 | 시연 층 |
-| 6 | 검수에 걸리는 금지 표현 예시 | 데이터 없음 (시연자가 입력) |
-| 7 | `demo-owner` 의 진행 중 캠페인 | 시연 층 |
-| 8 | `demo-owner` 가게 영업시간 | 시연 층 |
-| 9, 10, 12 | 강남역 근처 진행 중 캠페인 10개 이상(성별, 연령 ALL), 그날 예산과 후보 | 기본 세계 |
-| 11 | 전날 활성화한 SCHEDULED 캠페인(시작일 = 시연일) | 시연 층 |
-| 13 | 강남역 근처 확정 가게, 영업 상태가 갈리는 영업시간(수요일 휴무 포함), 메뉴와 사진 | 기본 세계 |
-| 14 | 그날 쿠폰 이벤트와 재고 | 기본 세계 |
-| 15 | 수량 3개짜리 진행 중 캠페인 | 시연 층 |
-| 16 | 사용 시간이 시연 시각을 덮는 캠페인 | 시연 층 |
-| 17, 18 | `demo-owner` 가게의 쿠폰, 다른 가게 쿠폰, 이미 사용한 쿠폰 | 시연 층 |
-| 19, 20 | `demo-owner` 의 지난 리포트, 충전, 예약, 해제 원장 | 시연 층 |
-| 21 | 잔액 부족으로 멈춘 캠페인을 가진 시연 점주 | 시연 층 |
-| 22, 23, 27 | 60일 분석, 배치 이력, 부정 집계, 매출 | 기본 세계 |
-| 24 | 캠페인 상태별 데이터와 상태 이력 | 기본 세계 |
-| 25 | 결제 상태별, 환불 요청(승인 가능 1, 집행 중 캠페인으로 차단 1) | 기본 세계, 시연 층 |
-| 26 | 원장 유형별 | 기본 세계 |
-| 28 | 회원과 점주 상태별, 가입일 분산 | 기본 세계 |
-| 29 | `superadmin` | 시연 층 |
+| `demo-admin`, `superadmin` | 관리자 계정 | `ADM.ADMIN_ACTIVE`, `ADM.SUPER_ADMIN_ACTIVE` |
+| (공통) | 대비용 게시 템플릿 "시연 기본형" 1개(활성). 0막 Bedrock 이 늦거나 실패하면 쓴다 | `TPL.PUBLISHED_ACTIVE` |
+| `demo-owner` | 강남역 1 km 안 확정 가게(로고, 매장 사진 3, 메뉴 3 과 사진, 브레이크 있는 영업시간, 수요일 영업) | `STO.FINALIZED_FULL` |
+| | 진행 중 캠페인 1(대상 ALL, 연령 전부, 반경 1000, 전 메뉴 3,000원, 수량 50, 사용 11:30 ~ 15:00, 기간 D-14 ~ D+14)과 검수 통과 포스터 | `CMP.ACTIVE`, `PST.PASSED` |
+| | 끝난 캠페인 3(D-60 ~ D-15)과 리포트. 캠페인 비교에 쓴다 | `CMP.ENDED`, `ANA.REPORT_DAYS` |
+| | 진행 중 캠페인의 리포트 D-14 ~ D-1, 쿠폰 발급과 사용 내역 | `ANA.REPORT_DAYS`, `CPN.COUPON_USED` |
+| | 잔액(충분), 원장 90일(충전, 예약, 해제), 오늘 예약 | `BIL.BALANCE_ENOUGH`, `BIL.LEDGER_SETTLED_DAYS`, `BIL.LEDGER_TODAY_RESERVED` |
+| `demo-owner-new` | 강남역 확정 가게(사진과 메뉴 있음), 잔액 100,000, 캠페인 없음 | `STO.FINALIZED_FULL`, `BIL.BALANCE_ENOUGH` |
+| `demo-owner-scheduled` | 확정 가게, SCHEDULED 캠페인(시작일 = baseDate, 상태 기록 DRAFT -> SCHEDULED), 검수 통과 포스터, 잔액 | `CMP.SCHEDULED_START_REACHED`, `PST.PASSED`, `BIL.BALANCE_ENOUGH` |
+| `demo-owner-soldout` | 강남역 확정 가게, 진행 중 캠페인(수량 3, 그날 2장 발급) | `CMP.ACTIVE`, `CPN.EVENT_LAST_ONE` |
+| `demo-owner-nopoints` | 확정 가게, PAUSED(NO_POINTS) 캠페인과 상태 기록, 잔액 0, 그날 예산 0 | `CMP.PAUSED_NO_POINTS`, `BIL.BALANCE_ZERO`, `ADS.BUDGET_PLAN_TODAY` |
+| 시연 캠페인 전부 | baseDate 당일 행: 예산, 시간대 목표, 후보, 쿠폰 이벤트와 재고, 가게 캠페인 요약. 다음 날부터는 00:00 배치가 만든다 | `BIL.PLAN_D`, `ADS.CANDIDATE_TODAY`, `CPN.EVENT_ACTIVE` |
+
+시연 캠페인의 쿠폰 사용 시간은 모두 11:30 ~ 15:00 안 30분 단위로 둔다. 시연 시각(11:30 ~ 14:00)을 덮어야 QR 장면(16, 17)이 된다.
+
+### 기본 세계에 있어야 하는 것
+
+| 장면 | 묶음 | 조건 |
+|---|---|---|
+| 10, 12, 13 | `STO.MANY_NEARBY`, `CMP.ACTIVE_MANY`, `ADS.CANDIDATES_MANY`, `STO.NO_CAMPAIGN`, `CMP.ACTIVE_MENU` | 강남역 1 km 안 진행 중 캠페인 25 이상, 그중 10 이상은 대상 ALL 과 연령 전부(시연자 성별과 연령에 상관없이 피드 10장). 업종 9가지가 섞여야 필터(12)가 보인다. 캠페인 없는 가게와 메뉴 할인 캠페인도 둔다 |
+| 13 | `STO.CLOSED_TODAY` 등 영업시간 변형 | 수요일 휴무, 브레이크, 늦게 여는 가게 |
+| 22, 27 | `OPS.AGG_FINAL_D60_D1`, `ANA.DAILY_METRICS_D60_D1` | D-60 ~ D-1 분석과 `DAILY_AGGREGATION` SUCCESS |
+| 23 | `ANA.FRAUD_INVALID_D30`, `ANA.FRAUD_CAMPAIGN_WARNINGS` | D-30 ~ D-1 |
+| 24 | `CMP.MANY`, `CMP.PAUSED_ADMIN`, `CMP.SCHEDULED`, `ANA.CAMPAIGN_DAILY_REPORT_D7` | 상태별 캠페인과 상태 기록 |
+| 25 | `BIL.PAYMENTS_ALL_STATUSES`, `BIL.REFUND_REQUESTED_APPROVABLE`, `BIL.REFUND_REQUESTED_ACTIVE_CAMPAIGN`, `BIL.REFUND_PROCESSED` | 승인 가능한 요청 1, 집행 중 캠페인으로 막히는 요청 1 |
+| 26 | `BIL.LEDGER_MIXED` | 원장 6가지 유형 |
+| 28 | `MEM.MANY_MIXED`, `OWN.MANY_MIXED` | 상태별, 가입일 분산 |
+
+### 실행으로 만드는 것
+
+`CACHE.COUPON_QUEUE_READY`(첫 발급 요청이 DB 기준으로 만든다), `ADM.SESSION_VALID`(로그인으로 만든다). 미리 넣지 않는다.
 
 ## 바꾸는 법
 
