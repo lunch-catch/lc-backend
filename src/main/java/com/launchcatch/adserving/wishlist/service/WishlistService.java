@@ -10,6 +10,9 @@ import com.launchcatch.adserving.wishlist.dto.WishlistItemResponse;
 import com.launchcatch.adserving.wishlist.dto.WishlistResponse;
 import com.launchcatch.adserving.wishlist.entity.Wishlist;
 import com.launchcatch.adserving.wishlist.repository.WishlistRepository;
+import com.launchcatch.campaign.contract.CampaignInfo;
+import com.launchcatch.campaign.contract.CampaignQueryService;
+import com.launchcatch.campaign.contract.CampaignStatus;
 import com.launchcatch.global.config.ClockConfig;
 import java.time.Clock;
 import java.time.Instant;
@@ -37,6 +40,7 @@ public class WishlistService implements WishlistQueryService {
     private final WishlistRepository wishlistRepository;
     private final AdCandidateRepository adCandidateRepository;
     private final ExclusionRepository exclusionRepository;
+    private final CampaignQueryService campaignQueryService;
     private final Clock clock;
 
     // campaignId 를 주면 그 캠페인의 찜만 본다. 찜하지 않았으면 빈 배열이다(#416)
@@ -72,6 +76,7 @@ public class WishlistService implements WishlistQueryService {
         boolean created = wishlistRepository.insertIgnore(
                 Wishlist.fromStoreDetail(memberId, campaignId, candidate.getStoreId()));
         exclusionRepository.add(today, memberId, campaignId, now);
+        endIfCampaignEnded(campaignId);
         // 이미 찜했으면 처음 찜한 시각을 돌려줘야 해서 넣은 뒤 다시 읽는다
         Wishlist wish = wishlistRepository.findByMemberIdAndCampaignId(memberId, campaignId).orElseThrow();
         return new WishResult(created, WishlistItemResponse.of(wish, candidate));
@@ -91,6 +96,23 @@ public class WishlistService implements WishlistQueryService {
     // 캠페인이 끝나면 그 캠페인의 찜을 지우지 않고 종료로 표시한다. 사용자가 끝난 것을 알 수 있게 3일 동안 남긴다(#548)
     public void endCampaign(Long campaignId, LocalDateTime endedAt) {
         wishlistRepository.markCampaignEnded(campaignId, endedAt, LocalDateTime.now(clock));
+    }
+
+    /*
+     * 찜한 캠페인이 이미 끝났으면 종료로 표시한다. 그날 끝난 캠페인도 찜에 들어가는데(#379) 종료 이벤트는 다시 오지 않는다(#780).
+     * 넣은 뒤에 읽는다. 넣기가 종료 표시의 잠금을 기다리므로, 넣기가 먼저 커밋되면 종료 표시가 그 행을 덮고 늦게 커밋되면 여기서 끝난 캠페인을 본다.
+     * 이미 있던 찜에도 부른다. 앞 요청이 넣은 뒤 이 조회에서 실패했으면 다시 보낸 요청이 표시를 채운다.
+     */
+    public void endIfCampaignEnded(Long campaignId) {
+        campaignQueryService.findAllById(List.of(campaignId)).stream()
+                .filter(campaign -> campaign.status() == CampaignStatus.ENDED)
+                .findFirst()
+                .ifPresent(campaign -> endCampaign(campaignId, endedAt(campaign)));
+    }
+
+    // 종료 시각이 없으면 지금으로 둔다. 비워 두면 정리 작업이 지우지 않는다
+    private LocalDateTime endedAt(CampaignInfo campaign) {
+        return campaign.statusChangedAt() != null ? campaign.statusChangedAt() : LocalDateTime.now(clock);
     }
 
     /*

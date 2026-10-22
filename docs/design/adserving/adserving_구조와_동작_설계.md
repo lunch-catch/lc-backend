@@ -149,7 +149,7 @@ impression/
 | 필터 저장 | `feed_filter` 는 `INSERT ... ON DUPLICATE KEY UPDATE` 로 정렬을 넣거나 바꾸고, `feed_filter_category` 는 그 회원의 행을 지우고 다시 넣는다. 같은 업종이 두 번 오면 하나만 넣는다(#411 에서 임시로 정했다) |
 | 다른 도메인 데이터의 사본 | `ad_candidate` 는 00:00 의 캠페인과 가게 사본이다. 그날 안에서는 캠페인과 쿠폰의 통보로만 바뀐다 |
 | 쿠폰의 찜 조회 | `uk_wishlist_member_campaign`(`member_id`, `campaign_id`)으로 단건은 있는지만 보고, 목록은 앞 열로 그 회원의 `campaign_id` 만 읽는다. 캠페인별 회원 일괄 조회는 같은 키로 입력한 회원(500명까지)의 행만 읽는다(#578). 셋 다 `campaign_ended_at IS NULL` 인 행만 유효로 본다. 순서는 정하지 않는다(#163, #553) |
-| 끝난 캠페인의 찜 | 종료 표시는 `idx_wishlist_campaign` 으로 그 캠페인의 행 중 `campaign_ended_at` 이 비어 있는 것만 채운다. 정리는 `idx_wishlist_campaign_ended` 로 기준 시각 전에 끝난 행을 지운다(#553) |
+| 끝난 캠페인의 찜 | 종료 표시는 `idx_wishlist_campaign` 으로 그 캠페인의 행 중 `campaign_ended_at` 이 비어 있는 것만 채운다. 정리는 `idx_wishlist_campaign_ended` 로 기준 시각 전에 끝난 행을 지운다(#553). 종료 이벤트 뒤에 들어온 찜은 찜 요청이 넣은 뒤 캠페인을 읽어 같은 표시를 부른다(#780) |
 | 소진 반영 | `ad_candidate` 의 PK(`business_date`, `campaign_id`)로 `sold_out_at IS NULL` 인 행만 바꾼다. 받은 소진 시각을 그대로 쓰고 부른 시각은 `updated_at` 에만 쓴다. 0행이면 PK 로 후보가 있는지 한 번 더 본다(#163) |
 | 집계를 세는 방식 | 그날 유효 노출 수는 `impression_log` 를 세지 않고 카운터를 읽는다. 틀리면 `impression_log` 에서 다시 센다. 분석의 집계 조회는 카운터를 읽지 않고 아래 "집계 조회의 귀속" 대로 원본을 센다 |
 | 집계 조회 | 노출은 `idx_imp_date_reason` 의 앞 열로 그날 행만 읽어 캠페인별로 한 번 훑는다. 판정, 사유, 슬롯을 같은 행들에서 세어 축끼리의 합이 맞는다. 시간대는 24칸이라 캠페인과 시로 묶는 쿼리를 따로 두고, 한 읽기 전용 트랜잭션에서 불러 같은 스냅샷을 본다(#498). 회원별 무효 노출은 그 인덱스의 두 열을 탄다. 찜은 `idx_swipe_date` 로 그날 `WISH` 만 센다. 두 테이블을 조인하지 않고 서비스가 캠페인 ID 로 합친다 |
@@ -273,6 +273,7 @@ A 를 고른다. 가게 상세 찜을 리포트에 넣어야 하면 그 찜을 �
 |---|---|---|---|
 | 읽기 | member | `MemberQueryService.findById` | 피드 요청마다 1번 |
 | 읽기 | campaign | `CampaignQueryService.findServableOn`, `findAllById` | 00:00 후보 적재에 1번씩. 적재 대상과 적재 직후 재조회다(#582) |
+| 읽기 | campaign | `CampaignQueryService.findAllById` | 찜 요청(가게 상세 찜, 스와이프 WISH)마다 1번. 찜을 넣은 뒤 캠페인이 `ENDED` 면 그 캠페인의 끝나지 않은 찜을 `statusChangedAt` 으로 종료 표시한다. 종료 이벤트는 다시 오지 않아서다(#780) |
 | 읽기 | store | `StoreQueryService.findAdCandidatesByStoreIds`, `findMenusByIdIn` | 00:00 후보 적재에서. 가게는 계약 상수 `MAX_AD_CANDIDATE_STORE_IDS` 단위로 나눠 부른다(#582) |
 | 읽기 | billing | `BudgetQueryService.getProgress` | 피드 요청마다 1번. 후보가 5000개를 넘으면 나눠 부른다 |
 | 쓰기 | campaign | `StoreAudienceUpdater.overwrite` | 00:00 묶음 90 에서 계약의 `MAX_CELLS`(1,000칸)씩. 호출마다 캠페인의 트랜잭션이다. 캠페인이 광고 서빙을 조회하면 순환이 생겨 광고 서빙이 넣어 준다(FR-042, #592) |
@@ -727,6 +728,8 @@ A 를 고른다. 분석의 결정과 어긋났을 때 B 는 노출 이벤트를 
 | 찜하지 않은 캠페인을 지움 | 그 캠페인을 찜하지 않았다 | 지운다 | `204` 이고 당일 이력에 들어간다(#547) | `WishlistIntegrationTest.찜하지_않은_캠페인을_지워도_204_이고_그날_당일_이력에_들어간다` |
 | 찜 삭제가 실패함 | 행 지우기가 실패한다 | 지운다 | 당일 이력에 넣지 않는다 | `WishlistServiceTest.찜을_지우지_못하면_당일_이력에_넣지_않는다` |
 | 캠페인이 끝남 | 두 회원이 그 캠페인을, 한 회원이 다른 캠페인을 찜했다 | 종료 이벤트가 온다 | 그 캠페인의 찜만 종료로 표시되고 쿠폰의 찜 조회에서 빠지며 목록에는 `campaignEnded: true` 로 남는다 | `WishlistCampaignEndedIntegrationTest.캠페인이_끝나면_그_캠페인의_찜만_종료로_표시되고_쿠폰의_찜_조회에서_빠진다` |
+| 종료 뒤 가게 상세 찜 | 캠페인이 끝났고 그날 후보 행은 PAUSED 로 남았다 | 가게 상세에서 찜한다 | 찜이 종료로 표시되어 `campaignEnded: true` 로 답하고 쿠폰의 찜 조회에서 빠진다 | `WishlistCampaignEndedIntegrationTest.끝난_캠페인을_가게_상세에서_찜하면_종료로_표시되고_쿠폰의_찜_조회에서_빠진다` |
+| 종료 뒤 피드 찜 | 캠페인이 끝났고 그날 후보 행은 PAUSED 로 남았다 | 피드에서 찜으로 넘긴다 | 찜이 종료로 표시되어 쿠폰의 찜 조회에서 빠진다 | `WishlistCampaignEndedIntegrationTest.끝난_캠페인을_피드에서_찜해도_종료로_표시된다` |
 | 같은 종료 이벤트가 다시 옴 | 이미 종료로 표시됐다 | 더 늦은 시각으로 다시 온다 | 처음 종료 시각이 남는다 | `WishlistCampaignEndedIntegrationTest.같은_종료_이벤트가_다시_와도_처음_종료_시각이_남는다` |
 | 캠페인 종료가 되돌아감 | 종료 트랜잭션이 실패한다 | 종료 이벤트를 받은 뒤 되돌아간다 | 종료 표시도 남지 않는다 | `WishlistCampaignEndedIntegrationTest.캠페인_종료가_되돌아가면_종료_표시도_되돌아간다` |
 | 그날 후보 적재 | ACTIVE 와 예약이 있는 PAUSED 캠페인이 있다 | 적재 단계가 돈다 | 캠페인과 가게 값으로 `SERVABLE`, `PAUSED` 가 들어가고 피드 조건에 ACTIVE 만 걸린다 | `CandidateLoadIntegrationTest.서빙_대상을_캠페인과_가게_값으로_적재하고_피드가_그_후보를_찾는다` |
