@@ -32,7 +32,7 @@ public class OwnerStatusCacheInvalidationService {
                 try {
                     cache.delete(ownerId);
                 } catch (DataAccessException e) {
-                    log.warn("event=OWNER_STATUS_CACHE_INVALIDATION_FAILED ownerId={} TTL 만료까지 이전 상태가 남을 수 있습니다.", ownerId, e);
+                    log.warn("event=OWNER_STATUS_CACHE_INVALIDATION_FAILED ownerId={} exceptionType={} fallback=TTL_EXPIRY", ownerId, e.getClass().getSimpleName());
                 }
             }
         });

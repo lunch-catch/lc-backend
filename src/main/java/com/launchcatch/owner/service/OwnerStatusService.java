@@ -32,7 +32,7 @@ public class OwnerStatusService implements OwnerStatusQuery {
                 return Optional.of(OwnerAccountStatus.valueOf(stored.get()));
             }
         } catch (DataAccessException | IllegalArgumentException e) {
-            log.warn("event=OWNER_STATUS_CACHE_READ_FAILED ownerId={} DB에서 점주 상태를 조회합니다.", ownerId, e);
+            log.warn("event=OWNER_STATUS_CACHE_READ_FAILED ownerId={} exceptionType={} fallback=DB", ownerId, e.getClass().getSimpleName());
         }
         // DB에 존재하는 점주만 캐시하며, 캐시 저장 실패가 DB 조회 결과를 바꾸지 않게 한다.
         Optional<OwnerAccountStatus> status = findCurrentStatus(ownerId);
@@ -40,7 +40,7 @@ public class OwnerStatusService implements OwnerStatusQuery {
             try {
                 cache.save(ownerId, value.name());
             } catch (DataAccessException e) {
-                log.warn("event=OWNER_STATUS_CACHE_WRITE_FAILED ownerId={} DB 조회 결과를 유지합니다.", ownerId, e);
+                log.warn("event=OWNER_STATUS_CACHE_WRITE_FAILED ownerId={} exceptionType={} fallback=KEEP_DB_RESULT", ownerId, e.getClass().getSimpleName());
             }
         });
         return status;
