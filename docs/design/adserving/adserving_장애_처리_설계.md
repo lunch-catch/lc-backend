@@ -53,6 +53,8 @@ B 를 고른다. 차감은 정산이 따로 막아(`NOT_BILLED_BUDGET`) 점주�
 
 B 를 고른다(#779). 빠진 캠페인은 `adserving_candidate_load_skipped_total`(`reason=menu_invalid`) 로 센다.
 DB 장애처럼 데이터 오류가 아닌 예외는 기본대로 적재를 실패시킨다.
+일괄 조회만 던지고 메뉴별로는 모두 읽히면 메뉴별 로그가 남지 않는다. 그때는 일괄 조회의 예외를 `ADSERVING_CANDIDATE_MENU_BATCH_FAILED` 로 한 번 남긴다.
+계약은 `cdn.base-url` 이 빈 설정 오류도 같은 `IllegalStateException` 으로 던져 그 오류도 흡수된다. 가게 조회가 먼저 LOGO URL 을 만들어 그쪽에서 먼저 실패할 것으로 보지만 호출 순서에 기대는 방어다. 두 오류를 나누는 것은 store 의 #788 이고, 나뉘면 메뉴 데이터 오류만 잡도록 좁힌다.
 계약 구현이 적재 트랜잭션에 참여한 채 던지면 적재 트랜잭션이 롤백 전용이 되어 예외를 잡아도 커밋이 실패한다. 그래서 메뉴 조회는 적재 트랜잭션을 멈추고 부른다.
 
 ### DB 쓰기: 응답 뒤의 `serve_log`, `feed_visit_daily`

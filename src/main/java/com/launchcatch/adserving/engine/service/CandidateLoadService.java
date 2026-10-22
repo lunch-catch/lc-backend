@@ -140,6 +140,8 @@ public class CandidateLoadService {
     /*
      * 가게 계약은 등록된 메뉴의 이미지가 없거나 미검증이면 IllegalStateException 을 던진다. 메뉴 하나 때문에 적재 전체가 실패하지 않게,
      * 그때만 메뉴 하나씩 다시 읽어 던지는 메뉴를 가려낸다(#779). 다른 예외(DB 장애 등)는 기본 처리대로 적재를 실패시킨다.
+     * 계약은 cdn.base-url 이 빈 설정 오류도 같은 IllegalStateException 으로 던져 그 오류도 여기서 흡수된다.
+     * 가게 조회가 먼저 LOGO URL 을 만들어 그쪽에서 먼저 실패할 것으로 보지만, 두 오류가 나뉘면(#788) catch 를 메뉴 데이터 오류로 좁힌다.
      */
     private MenuNames readMenuNames(List<CampaignInfo> campaigns) {
         List<Long> menuIds = campaigns.stream()
@@ -160,6 +162,10 @@ public class CandidateLoadService {
                     log.warn("event=ADSERVING_CANDIDATE_MENU_INVALID menuId={} fallback=SKIP_CAMPAIGN", menuId, invalidMenu);
                     invalid.add(menuId);
                 }
+            }
+            // 메뉴별로 모두 읽히면 메뉴별 로그가 없어 일괄 조회가 실패한 흔적을 여기서 남긴다
+            if (invalid.isEmpty()) {
+                log.warn("event=ADSERVING_CANDIDATE_MENU_BATCH_FAILED menuCount={} fallback=PER_MENU_RETRY", menuIds.size(), e);
             }
             return new MenuNames(names, invalid);
         }

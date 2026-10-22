@@ -159,6 +159,39 @@ class CandidateLoadServiceTest {
         assertThat(skipped("menu_missing")).isZero();
     }
 
+    /*
+     * 일괄 조회만 던지고 메뉴별로는 모두 읽히면 메뉴별 로그가 남지 않는다.
+     * 그때는 일괄 조회의 예외를 스택과 함께 한 번 남긴다.
+     */
+    @Test
+    void 일괄_조회만_던지고_메뉴별로는_모두_읽히면_모두_적재하고_일괄_조회의_예외를_남긴다() {
+        when(campaignQueryService.findServableOn(TODAY)).thenReturn(List.of(
+                campaign(101, 55, CampaignStatus.ACTIVE, null, DiscountTargetType.MENU, 7001L),
+                campaign(102, 56, CampaignStatus.ACTIVE, null, DiscountTargetType.MENU, 7002L)));
+        when(storeQueryService.findAdCandidatesByStoreIds(anyList())).thenReturn(List.of(store(55), store(56)));
+        when(storeQueryService.findMenusByIdIn(List.of(7001L, 7002L))).thenThrow(new IllegalStateException("일괄 조회 실패"));
+        when(storeQueryService.findMenusByIdIn(List.of(7001L))).thenReturn(List.of(new StoreMenuInfo(7001L, 55L, null, "갈비살 정식", 12000L)));
+        when(storeQueryService.findMenusByIdIn(List.of(7002L))).thenReturn(List.of(new StoreMenuInfo(7002L, 56L, null, "냉면", 9000L)));
+        var logger = (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger(CandidateLoadService.class);
+        var appender = new ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            service.load(TODAY);
+
+            assertThat(upserted()).extracting(CandidateRow::campaignId).containsExactly(101L, 102L);
+            assertThat(skipped("menu_invalid")).isZero();
+            assertThat(appender.list).filteredOn(event -> event.getFormattedMessage().contains("ADSERVING_CANDIDATE_MENU_BATCH_FAILED"))
+                    .singleElement().satisfies(event -> {
+                        assertThat(event.getFormattedMessage()).contains("menuCount=2", "fallback=PER_MENU_RETRY");
+                        assertThat(event.getThrowableProxy().getMessage()).isEqualTo("일괄 조회 실패");
+                    });
+        } finally {
+            logger.detachAppender(appender);
+            appender.stop();
+        }
+    }
+
     // 데이터 오류가 아닌 예외(DB 장애 등)는 기본 처리대로 적재를 실패시킨다
     @Test
     void 메뉴_조회가_다른_예외를_던지면_적재가_실패한다() {
