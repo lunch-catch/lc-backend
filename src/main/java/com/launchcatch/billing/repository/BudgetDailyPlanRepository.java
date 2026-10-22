@@ -106,6 +106,7 @@ public interface BudgetDailyPlanRepository extends JpaRepository<BudgetDailyPlan
     // 그 영업일의 계획 전부다. idx_budget_daily_plan_business_date 를 탄다
     List<BudgetDailyPlan> findByBusinessDate(LocalDate businessDate);
 
+    // RELEASE 가 없고 남은 해제액(하루 예산에서 그날 DEDUCT 합을 뺀 값)이 양수인 계획의 영업일이다. 남은 몫이 0 인 계획은 해제할 것이 없어 처리를 마친 것으로 본다
     @Query("""
             select distinct p.businessDate
               from BudgetDailyPlan p
@@ -116,6 +117,13 @@ public interface BudgetDailyPlanRepository extends JpaRepository<BudgetDailyPlan
                       and l.businessDate = p.businessDate
                       and l.entryType = com.launchcatch.billing.entity.EntryType.RELEASE
                )
+               and p.dailyBudget > coalesce((
+                   select -sum(d2.amount) from PointLedger d2, DeductionResult r
+                    where r.serveId = d2.serveId
+                      and d2.entryType = com.launchcatch.billing.entity.EntryType.DEDUCT
+                      and d2.campaignId = p.campaignId
+                      and r.businessDate = p.businessDate
+               ), 0L)
              order by p.businessDate
             """)
     List<LocalDate> findUnreleasedBusinessDatesBefore(@Param("before") LocalDate before);

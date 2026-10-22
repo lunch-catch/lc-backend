@@ -60,13 +60,15 @@ class DailyReservationServiceTest {
     private DailyReservationRecorder recorder;
     @Mock
     private SpendHashRebuildService hashRebuild;
+    @Mock
+    private DailyReleaseMarker releaseMarker;
 
     private DailyReservationService service;
 
     @BeforeEach
     void setUp() {
         service = new DailyReservationService(campaignQuery, platformSetting, planRepository, ledgerRepository,
-                recorder, hashRebuild);
+                recorder, hashRebuild, releaseMarker);
         // 예약이 끝나면 그날 계획 전부를 읽어 상태를 확인한다. 전일 계획 조회만 스텁한 테스트에서 엄격 스텁이
         // 인자가 다른 호출로 실패하지 않게 기본은 빈 목록으로 둔다
         lenient().when(planRepository.findByBusinessDate(DAY)).thenReturn(List.of());
@@ -142,6 +144,21 @@ class DailyReservationServiceTest {
         // 1 은 5000 - 3000 = 2000 을 돌려받는다. 2 는 이미 해제됐고 3 은 남은 몫이 없고 4 는 예약을 넘겨 썼다
         verify(recorder).releaseForOwner(7L, PREV, List.of(1L, 3L));
         verify(recorder).releaseForOwner(8L, PREV, List.of(2L, 4L));
+    }
+
+    @Test
+    void 해제를_마친_날짜마다_해제_완료_표시를_남기고_해제가_실패하면_남기지_않는다() {
+        LocalDate older = PREV.minusDays(2);
+        when(platformSetting.getImpressionUnitPrice()).thenReturn(10);
+        when(planRepository.findUnreleasedBusinessDatesBefore(DAY)).thenReturn(List.of(older, PREV));
+        when(planRepository.findByBusinessDate(older)).thenReturn(List.of(prevPlan(1L, 7L, 1000L)));
+        when(planRepository.findByBusinessDate(PREV)).thenReturn(List.of(prevPlan(2L, 7L, 1000L)));
+        lenient().doThrow(new IllegalStateException("해제 실패")).when(recorder).releaseForOwner(7L, PREV, List.of(2L));
+
+        assertThatThrownBy(() -> service.reserve(DAY)).isInstanceOf(IllegalStateException.class);
+
+        verify(releaseMarker).mark(older);
+        verify(releaseMarker, never()).mark(PREV);
     }
 
     @Test

@@ -50,6 +50,7 @@ public class DailyReservationService {
     private final PointLedgerRepository ledgerRepository;
     private final DailyReservationRecorder recorder;
     private final SpendHashRebuildService hashRebuild;
+    private final DailyReleaseMarker releaseMarker;
 
     /*
      * 그날 예약을 마치고 대상 캠페인 수를 돌려준다.
@@ -62,6 +63,7 @@ public class DailyReservationService {
         long unitPrice = unitPriceOf(businessDate);
         for (LocalDate unreleasedDate : planRepository.findUnreleasedBusinessDatesBefore(businessDate)) {
             release(unreleasedDate);
+            releaseMarker.mark(unreleasedDate);
         }
 
         List<CampaignInfo> campaigns = campaignQuery.findServableOn(businessDate);
