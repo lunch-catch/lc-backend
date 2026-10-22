@@ -74,6 +74,10 @@ public interface AdCandidateRepository extends JpaRepository<AdCandidate, AdCand
     int changeState(@Param("businessDate") LocalDate businessDate, @Param("campaignId") Long campaignId,
             @Param("state") String state, @Param("changedAt") LocalDateTime changedAt, @Param("now") LocalDateTime now);
 
+    // 그날 후보에 있는 캠페인 ID 다. 다시 돈 적재의 재조회가 이번 적재가 넣지 않은 행까지 보려고 읽는다(#782)
+    @Query("select c.id.campaignId from AdCandidate c where c.id.businessDate = :businessDate")
+    List<Long> findCampaignIdsByBusinessDate(@Param("businessDate") LocalDate businessDate);
+
     // 보관 기간이 지난 영업일의 후보를 지운다(#582)
     @Modifying
     @Query("delete from AdCandidate c where c.id.businessDate < :before")

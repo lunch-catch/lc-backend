@@ -17,8 +17,10 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -90,11 +92,17 @@ public class CandidateLoadService {
      */
     @Transactional
     public void reconcile(LocalDate businessDate, Map<Long, LocalDateTime> loaded) {
-        if (loaded.isEmpty()) {
+        /*
+         * 이번 적재가 넣지 않은 그날 행도 본다. 앞 실행이 넣고 재조회 전에 멈춘 뒤 그 캠페인이 끝나거나 멈추면 이번 적재 대상에 없다(#782).
+         * 그 행은 넣은 목록에 없어 읽은 시각과 견주지 않는다. 같은 시각의 통보를 다시 쓰지 않는 것은 changeState 의 전이 시각 조건이 막는다.
+         */
+        Set<Long> campaignIds = new HashSet<>(loaded.keySet());
+        campaignIds.addAll(adCandidateRepository.findCampaignIdsByBusinessDate(businessDate));
+        if (campaignIds.isEmpty()) {
             return;
         }
         LocalDateTime now = LocalDateTime.now(clock);
-        for (CampaignInfo campaign : campaignQueryService.findAllById(List.copyOf(loaded.keySet()))) {
+        for (CampaignInfo campaign : campaignQueryService.findAllById(List.copyOf(campaignIds))) {
             LocalDateTime changedAt = campaign.statusChangedAt();
             LocalDateTime before = loaded.get(campaign.campaignId());
             if (changedAt != null && (before == null || changedAt.isAfter(before))) {
