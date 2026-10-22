@@ -3,7 +3,6 @@ package com.launchcatch.adserving.impression.repository;
 import com.launchcatch.adserving.impression.entity.ImpressionLog;
 import java.nio.ByteBuffer;
 import java.sql.Timestamp;
-import java.time.Clock;
 import java.time.LocalDateTime;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
@@ -24,11 +23,10 @@ class ImpressionLogInsertImpl implements ImpressionLogInsert {
             """;
 
     private final JdbcTemplate jdbcTemplate;
-    private final Clock clock;
 
     @Override
-    public boolean insertIgnore(ImpressionLog log) {
-        Timestamp now = Timestamp.valueOf(LocalDateTime.now(clock));
+    public boolean insertIgnore(ImpressionLog log, LocalDateTime receivedAt) {
+        Timestamp now = Timestamp.valueOf(receivedAt);
         return jdbcTemplate.update(INSERT, bytes(log.getId().getServeId()), log.getId().getMemberId(),
                 log.getBusinessDate(), log.getCampaignId(), log.getStoreId(),
                 log.getSlotType() == null ? null : log.getSlotType().name(), log.getSlotPosition(),

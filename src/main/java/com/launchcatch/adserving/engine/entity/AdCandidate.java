@@ -10,6 +10,7 @@ import jakarta.persistence.Table;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.util.List;
 import java.util.Set;
 import lombok.AccessLevel;
 import lombok.Getter;
@@ -101,7 +102,7 @@ public class AdCandidate {
     public FeedCandidate toFeedCandidate() {
         return new FeedCandidate(getCampaignId(), storeId, storeName, categoryCode,
                 latitude.doubleValue(), longitude.doubleValue(), targetRadius, targetGender,
-                Set.of(targetAgeGroups.split(",")), discountTarget, discountType, discountValue,
+                Set.copyOf(List.of(targetAgeGroups.split(","))), discountTarget, discountType, discountValue,
                 usableStartTime, usableEndTime, issueQuantity, campaignCreatedAt);
     }
 }

@@ -180,6 +180,8 @@ class WishlistIntegrationTest extends AbstractAdservingIntegrationTest {
                 .containsEntry("member_id", MEMBER_ID).containsEntry("campaign_id", 101L)
                 .containsEntry("store_id", 55L).containsEntry("serve_id", null);
         assertThat(redisTemplate.opsForSet().members(EXCLUSION_KEY)).containsExactly("101");
+        // 넣기와 만료를 한 스크립트로 보내 당일 이력에 만료가 걸려 있다(#783)
+        assertThat(redisTemplate.getExpire(EXCLUSION_KEY)).isPositive();
     }
 
     @Test

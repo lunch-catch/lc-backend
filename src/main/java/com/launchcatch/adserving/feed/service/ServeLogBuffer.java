@@ -120,12 +120,15 @@ public class ServeLogBuffer implements SmartLifecycle {
         worker = Thread.ofPlatform().name("serve-log-writer").daemon(true).start(this::runWorker);
     }
 
-    // 웹 서버가 요청을 다 받은 뒤 멈추고 남은 것을 비운다.
+    /*
+     * 웹 서버가 요청을 다 받은 뒤 멈추고 남은 것을 비운다.
+     * 작업 스레드를 interrupt 하지 않는다. 쓰던 묶음이 커넥션을 기다리다 실패하면 대기열에서 이미 빠져 아래 비우기에도 없다(#783).
+     * 작업 스레드는 poll 의 대기(200ms)가 끝나면 쓰던 묶음을 마치고 나온다.
+     */
     @Override
     public void stop() {
         running = false;
         if (worker != null) {
-            worker.interrupt();
             try {
                 worker.join(5_000);
             } catch (InterruptedException e) {

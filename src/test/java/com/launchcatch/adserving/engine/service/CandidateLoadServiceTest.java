@@ -132,6 +132,21 @@ class CandidateLoadServiceTest {
         assertThat(skipped("menu_missing")).isEqualTo(1);
     }
 
+    // 캠페인의 연령대에 중복이 있어도 한 번씩만 넣는다. 저장값에 중복이 남지 않게 한다(#783)
+    @Test
+    void 연령대의_중복은_한_번씩만_적재한다() {
+        CampaignInfo duplicated = new CampaignInfo(101L, 1L, 55L, CampaignStatus.ACTIVE, 30, LocalTime.of(12, 0),
+                LocalTime.of(14, 0), TODAY.minusDays(3), TODAY.plusDays(3), DiscountTargetType.ALL, DiscountType.PERCENT, 20,
+                null, 1000, TargetGender.ALL, List.of(AgeGroup.AGE_20S, AgeGroup.AGE_20S, AgeGroup.AGE_30S),
+                LocalDateTime.of(2026, 9, 1, 9, 0), LocalDate.of(2026, 10, 3), CHANGED_AT, null, 10_000L);
+        when(campaignQueryService.findServableOn(TODAY)).thenReturn(List.of(duplicated));
+        when(storeQueryService.findAdCandidatesByStoreIds(anyList())).thenReturn(List.of(store(55)));
+
+        service.load(TODAY);
+
+        assertThat(upserted()).extracting(CandidateRow::targetAgeGroups).containsExactly("AGE_20S,AGE_30S");
+    }
+
     // 가게 계약은 상한을 넘는 입력을 거부한다. 상한 단위로 나눠 읽어 모두 적재하는지 본다
     @Test
     void 가게가_계약의_상한을_넘어도_나눠_읽어_모두_적재한다() {

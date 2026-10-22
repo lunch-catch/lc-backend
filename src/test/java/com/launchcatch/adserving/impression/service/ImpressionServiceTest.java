@@ -29,6 +29,7 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.time.OffsetDateTime;
 import java.util.Optional;
 import java.util.UUID;
@@ -87,7 +88,7 @@ class ImpressionServiceTest {
     void startSynchronization() {
         TransactionSynchronizationManager.initSynchronization();
         when(impressionLogRepository.findById(any())).thenReturn(Optional.empty());
-        when(impressionLogRepository.insertIgnore(any())).thenReturn(true);
+        when(impressionLogRepository.insertIgnore(any(), any())).thenReturn(true);
     }
 
     @AfterEach
@@ -106,7 +107,7 @@ class ImpressionServiceTest {
 
     private ImpressionLog saved() {
         ArgumentCaptor<ImpressionLog> captor = ArgumentCaptor.forClass(ImpressionLog.class);
-        verify(impressionLogRepository).insertIgnore(captor.capture());
+        verify(impressionLogRepository).insertIgnore(captor.capture(), any());
         return captor.getValue();
     }
 
@@ -163,7 +164,65 @@ class ImpressionServiceTest {
 
             assertThat(saved().getCampaignId()).isEqualTo(101L);
             verify(pointDeductor).deduct(SERVE_ID, 101L, SERVED_DATE);
+            // 처음 저장된 노출이 커밋된 뒤에만 센다. 롤백되거나 다시 온 요청은 세지 않는다(#783)
+            assertThat(meterRegistry.counter(ImpressionService.CAMPAIGN_MISMATCH_METRIC).count()).isZero();
+            commit();
             assertThat(meterRegistry.counter(ImpressionService.CAMPAIGN_MISMATCH_METRIC).count()).isEqualTo(1);
+        }
+
+        @Test
+        void 동시에_와서_먼저_넣은_쪽이_있으면_캠페인이_달라도_세지_않는다() {
+            when(serveRecordRepository.findById(SERVE_ID)).thenReturn(Optional.of(RECORD));
+            when(impressionLogRepository.insertIgnore(any(), any())).thenReturn(false);
+            when(impressionLogRepository.findByIdForShare(ImpressionLogId.of(SERVE_ID, MEMBER_ID)))
+                    .thenReturn(Optional.of(ImpressionLog.valid(SERVE_ID, MEMBER_ID, SERVED_DATE,
+                            new ImpressionLog.Placement(101L, 55L, SlotType.ALLOCATION, 1),
+                            new ImpressionLog.Sighting(LocalDateTime.of(2026, 10, 1, 10, 15), 37.5, 127.0, null), false)));
+
+            service.record(MEMBER_ID, request(999L));
+            commit();
+
+            assertThat(meterRegistry.counter(ImpressionService.CAMPAIGN_MISMATCH_METRIC).count()).isZero();
+        }
+
+        /*
+         * 자정 직전에 받아 처리 중에 자정을 넘긴다. 받은 시각을 한 번만 읽어 영업일과 저장 시각(created_at)을 같은 날로 둔다.
+         * 따로 읽으면 전날 노출이 전날의 0시 구간으로 집계된다(#783).
+         */
+        @Test
+        void 받은_시각을_한_번만_읽어_영업일과_저장_시각이_같은_날이다() {
+            Instant justBefore = LocalDateTime.of(2026, 10, 1, 23, 59, 59, 999_000_000).atZone(ClockConfig.ZONE).toInstant();
+            Clock ticking = new Clock() {
+                private Instant next = justBefore;
+
+                @Override
+                public ZoneId getZone() {
+                    return ClockConfig.ZONE;
+                }
+
+                @Override
+                public Clock withZone(ZoneId zone) {
+                    return this;
+                }
+
+                @Override
+                public Instant instant() {
+                    Instant now = next;
+                    next = next.plusMillis(5);
+                    return now;
+                }
+            };
+            ImpressionService atMidnight = new ImpressionService(serveRecordRepository, impressionLogRepository,
+                    adCandidateRepository, impressionCountRepository, pointDeductor, meterRegistry, eventPublisher, ticking);
+            when(serveRecordRepository.findById(SERVE_ID)).thenReturn(Optional.of(RECORD));
+
+            atMidnight.record(MEMBER_ID, request(101L));
+
+            ArgumentCaptor<ImpressionLog> log = ArgumentCaptor.forClass(ImpressionLog.class);
+            ArgumentCaptor<LocalDateTime> receivedAt = ArgumentCaptor.forClass(LocalDateTime.class);
+            verify(impressionLogRepository).insertIgnore(log.capture(), receivedAt.capture());
+            assertThat(receivedAt.getValue()).isEqualTo(LocalDateTime.of(2026, 10, 1, 23, 59, 59, 999_000_000));
+            assertThat(log.getValue().getBusinessDate()).isEqualTo(LocalDate.of(2026, 10, 1));
         }
 
         @Test
@@ -230,14 +289,14 @@ class ImpressionServiceTest {
             ImpressionResponse response = service.record(MEMBER_ID, request(101L));
 
             assertThat(response).isEqualTo(new ImpressionResponse(ImpressionValidity.INVALID, InvalidReason.EXPIRED_OR_UNKNOWN));
-            verify(impressionLogRepository, never()).insertIgnore(any());
+            verify(impressionLogRepository, never()).insertIgnore(any(), any());
             verifyNoInteractions(pointDeductor, serveRecordRepository);
         }
 
         @Test
         void 동시에_와서_먼저_넣은_쪽이_있으면_그_판정을_돌려주고_차감하지_않는다() {
             when(serveRecordRepository.findById(SERVE_ID)).thenReturn(Optional.of(RECORD));
-            when(impressionLogRepository.insertIgnore(any())).thenReturn(false);
+            when(impressionLogRepository.insertIgnore(any(), any())).thenReturn(false);
             ImpressionLog winner = ImpressionLog.valid(SERVE_ID, MEMBER_ID, SERVED_DATE,
                     new ImpressionLog.Placement(101L, 55L, SlotType.ALLOCATION, 1),
                     new ImpressionLog.Sighting(LocalDateTime.of(2026, 10, 1, 10, 15), 37.5, 127.0, null), false);
@@ -361,7 +420,7 @@ class ImpressionServiceTest {
         @Test
         void 동시에_와서_먼저_넣은_쪽이_있으면_발행하지_않는다() {
             when(serveRecordRepository.findById(SERVE_ID)).thenReturn(Optional.of(RECORD));
-            when(impressionLogRepository.insertIgnore(any())).thenReturn(false);
+            when(impressionLogRepository.insertIgnore(any(), any())).thenReturn(false);
             when(impressionLogRepository.findById(ImpressionLogId.of(SERVE_ID, MEMBER_ID))).thenReturn(Optional.empty());
             when(impressionLogRepository.findByIdForShare(ImpressionLogId.of(SERVE_ID, MEMBER_ID)))
                     .thenReturn(Optional.of(ImpressionLog.valid(SERVE_ID, MEMBER_ID, SERVED_DATE,

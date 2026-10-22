@@ -126,7 +126,8 @@ public class CandidateLoadService {
     }
 
     private static CandidateRow toRow(LocalDate businessDate, CampaignInfo c, StoreAdCandidateInfo store, String menuName) {
-        String ageGroups = c.targetAgeGroups().stream().map(AgeGroup::name).collect(Collectors.joining(","));
+        // 캠페인 값에 중복이 있어도 한 번씩만 넣는다(#783)
+        String ageGroups = c.targetAgeGroups().stream().distinct().map(AgeGroup::name).collect(Collectors.joining(","));
         return new CandidateRow(businessDate, c.campaignId(), c.storeId(), store.storeName(), store.storeImageUrl(),
                 store.categoryCode(), store.latitude(), store.longitude(), c.targetRadius(), c.targetGender().name(),
                 ageGroups, c.discountTargetType().name(), c.discountType().name(), c.discountValue(), menuName,

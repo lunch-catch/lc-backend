@@ -58,15 +58,28 @@ public class SwipeService {
                 .orElseThrow(() -> new CandidateException(CandidateErrorCode.CAMPAIGN_NOT_SERVING));
 
         Long wishId = null;
+        boolean wishCreated = false;
         if (request.swipeAction() == SwipeAction.WISH) {
-            wishlistRepository.insertIgnore(Wishlist.fromFeed(memberId, candidate.getCampaignId(), candidate.getStoreId(), serveId));
+            wishCreated = wishlistRepository.insertIgnore(
+                    Wishlist.fromFeed(memberId, candidate.getCampaignId(), candidate.getStoreId(), serveId));
             wishlistService.endIfCampaignEnded(candidate.getCampaignId());
-            // 이미 찜한 캠페인이면 넣기가 무시되므로 다시 읽어 그 찜의 id 를 싣는다
-            wishId = wishlistRepository.findByMemberIdAndCampaignId(memberId, candidate.getCampaignId()).orElseThrow().getId();
+            /*
+             * 이미 찜한 캠페인이면 넣기가 무시되므로 다시 읽어 그 찜의 id 를 싣는다.
+             * 그사이 같은 사용자의 찜 삭제가 커밋됐으면 읽을 찜이 없어 id 없이 이어 간다(#783).
+             */
+            wishId = wishlistRepository.findByMemberIdAndCampaignId(memberId, candidate.getCampaignId())
+                    .map(Wishlist::getId).orElse(null);
         }
         SwipeLog log = SwipeLog.of(serveId, memberId, today, candidate.getCampaignId(), candidate.getCategoryCode(),
                 request.swipeAction(), request.occurredAt().atZoneSameInstant(ClockConfig.ZONE).toLocalDateTime());
         if (!swipeLogRepository.insertIgnore(log)) {
+            /*
+             * 같은 카드의 다른 스와이프가 기록을 먼저 넣었다. 그쪽이 PASS 면 이 요청이 넣은 찜이 패스한 카드에 남는다.
+             * 이 요청이 새로 넣은 찜만 지운다. 이미 있던 찜은 다른 카드나 가게 상세에서 넣은 것이다(#783).
+             */
+            if (wishCreated) {
+                wishlistRepository.deleteByMemberIdAndCampaignId(memberId, candidate.getCampaignId());
+            }
             return new SwipeResponse(false);
         }
         // 기록이 커밋된 뒤에 넣는다. Valkey 는 되돌릴 수 없어 기록보다 먼저 넣으면 실패한 스와이프도 피드에서 빠진다
