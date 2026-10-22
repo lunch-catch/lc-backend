@@ -63,7 +63,7 @@
     "html": "<div>...</div>",
     "message": "따뜻한 주황 톤의 카드형 템플릿으로 만들었어요.",
     "removedElements": ["script", "div[onclick]"],
-    "suggestedPrompts": ["배경을 더 밝게 해줘", "행사명 글자를 더 크게 해줘"]
+    "suggestedPrompts": ["행사명 글자를 조금 더 크게 해줘", "행사명 글자를 한 단계 작게 해줘"]
   }
 }
 ```
@@ -77,7 +77,7 @@
 | `html` | string | 아니오 | 검증을 거쳐 저장된 HTML |
 | `message` | string | 아니오 | LLM 이 HTML 과 함께 보낸 짧은 설명. 설명이 없으면 빈 문자열. 검증하지 않은 LLM 문장이므로 HTML 이 아닌 텍스트로만 보여준다. 같은 `requestId` 의 재요청에서도 처음과 같은 값이다 |
 | `removedElements` | array of string | 아니오 | 정화 과정에서 제거된 태그와 속성. 없으면 빈 배열 |
-| `suggestedPrompts` | array of string | 아니오 | 퀵 리플라이 버튼으로 보여줄 수정 요청 문장. 서버가 정한 고정 목록이라 비지 않는다. 생성과 수정, 같은 `requestId` 의 재요청에서 모두 같다. 다만 첫 응답과 재요청 사이에 서버가 목록을 바꿔 배포했으면 재요청은 바뀐 목록을 받는다. 버튼을 누르면 그 문장을 그대로 템플릿 수정의 `requestPrompt` 로 보낸다 |
+| `suggestedPrompts` | array of string | 아니오 | 퀵 리플라이 버튼으로 보여줄 수정 요청 문장. 모델이 이번 요청과 결과에 맞춰 만든 제안이며 최대 3개, 항목당 30자 이내다. 더 조정할 것이 없으면 빈 배열이다. 같은 `requestId` 의 재요청 응답에서는 제안을 저장하지 않으므로 빈 배열이고, 편집 화면에 다시 들어올 때도 복원되지 않는다. 검증하지 않은 모델 문장이라 텍스트로만 보여준다. 버튼을 누르면 그 문장을 그대로 템플릿 수정의 `requestPrompt` 로 보낸다 |
 
 **오류**
 
