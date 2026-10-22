@@ -74,20 +74,6 @@ public interface PointLedgerRepository extends JpaRepository<PointLedger, Long>,
             """)
     long sumReservedPoint(@Param("ownerId") Long ownerId);
 
-    // 기록 시각이 [from, to) 인 행의 합이다. 날짜를 DB 함수로 자르지 않고 범위로 묻는다
-    @Query("""
-            select coalesce(sum(l.amount), 0L)
-              from PointLedger l
-             where l.ownerId = :ownerId
-               and l.entryType = :entryType
-               and l.createdAt >= :from
-               and l.createdAt < :to
-            """)
-    long sumByCreatedAt(@Param("ownerId") Long ownerId,
-                        @Param("entryType") EntryType entryType,
-                        @Param("from") LocalDateTime from,
-                        @Param("to") LocalDateTime to);
-
     // 기간 시작 전의 잔액이다. 변동 전후 잔액 누적의 출발점이 된다
     @Query("""
             select coalesce(sum(l.amount), 0L)

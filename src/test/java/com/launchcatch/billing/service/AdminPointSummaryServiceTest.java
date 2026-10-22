@@ -15,10 +15,7 @@ import com.launchcatch.billing.exception.BillingException;
 import com.launchcatch.billing.repository.BusinessDateSumRow;
 import com.launchcatch.billing.repository.FlowRow;
 import com.launchcatch.billing.repository.PointLedgerRepository;
-import com.launchcatch.global.config.ClockConfig;
 import com.launchcatch.global.exception.CommonErrorCode;
-import java.time.Clock;
-import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -37,11 +34,8 @@ class AdminPointSummaryServiceTest {
 
     @Mock PointLedgerRepository repository;
 
-    // 2026-10-01 12:00 KST, 13:30 해제 전이다
-    private final Clock clock = Clock.fixed(Instant.parse("2026-10-01T03:00:00Z"), ClockConfig.ZONE);
-
     private AdminPointSummaryService service() {
-        return new AdminPointSummaryService(repository, clock);
+        return new AdminPointSummaryService(repository);
     }
 
     private void threeDaysOfLedger() {
@@ -57,16 +51,14 @@ class AdminPointSummaryServiceTest {
                 new BusinessDateSumRow(D30, EntryType.RESERVE, -10000L),
                 new BusinessDateSumRow(D30, EntryType.RELEASE, 200L),
                 new BusinessDateSumRow(D01, EntryType.RESERVE, -10000L)));
-        when(repository.sumByCreatedAt(OWNER, EntryType.DEDUCT,
-                LocalDateTime.of(2026, 10, 1, 0, 0), LocalDateTime.of(2026, 10, 2, 0, 0))).thenReturn(-4000L);
-        when(repository.sumByCreatedAt(OWNER, EntryType.DEDUCT,
-                LocalDateTime.of(2026, 9, 29, 0, 0), LocalDateTime.of(2026, 9, 30, 0, 0))).thenReturn(-9800L);
-        when(repository.sumByCreatedAt(OWNER, EntryType.DEDUCT,
-                LocalDateTime.of(2026, 9, 30, 0, 0), LocalDateTime.of(2026, 10, 1, 0, 0))).thenReturn(-9800L);
+        when(repository.sumDeductByServedBusinessDate(OWNER, D29, D01)).thenReturn(List.of(
+                new BusinessDateSumRow(D29, EntryType.DEDUCT, -9800L),
+                new BusinessDateSumRow(D30, EntryType.DEDUCT, -9800L),
+                new BusinessDateSumRow(D01, EntryType.DEDUCT, -4000L)));
     }
 
     @Test
-    void 지난_영업일의_소진은_예약에서_해제를_뺀_값이고_오늘은_차감을_직접_읽는다() {
+    void 날짜별_소진은_서빙_영업일의_DEDUCT_합이다() {
         threeDaysOfLedger();
 
         AdminPointSummaryResponse response = service().summarize(OWNER, SummaryPeriod.DAILY, D29, D01, null);
@@ -95,16 +87,27 @@ class AdminPointSummaryServiceTest {
     }
 
     @Test
-    void 오늘_해제가_이미_있으면_차감을_읽지_않고_예약에서_해제를_뺀다() {
+    void 소진은_기록일이_아니라_서빙_영업일의_DEDUCT로_센다() {
         when(repository.sumReserveAndReleaseByBusinessDate(OWNER, D01, D01)).thenReturn(List.of(
                 new BusinessDateSumRow(D01, EntryType.RESERVE, -10000L),
                 new BusinessDateSumRow(D01, EntryType.RELEASE, 3500L)));
-        when(repository.sumByCreatedAt(OWNER, EntryType.DEDUCT,
-                D01.atStartOfDay(), D01.plusDays(1).atStartOfDay())).thenReturn(-6500L);
+        when(repository.sumDeductByServedBusinessDate(OWNER, D01, D01))
+                .thenReturn(List.of(new BusinessDateSumRow(D01, EntryType.DEDUCT, -6500L)));
 
         AdminPointSummaryItem item = service().summarize(OWNER, SummaryPeriod.DAILY, D01, D01, "asc").items().get(0);
 
         assertThat(item.spentAmount()).isEqualTo(6500);
+    }
+
+    @Test
+    void 예약과_해제가_없는_날도_서빙_영업일의_DEDUCT가_있으면_소진으로_보인다() {
+        when(repository.sumDeductByServedBusinessDate(OWNER, D30, D30))
+                .thenReturn(List.of(new BusinessDateSumRow(D30, EntryType.DEDUCT, -700L)));
+
+        AdminPointSummaryItem item = service().summarize(OWNER, SummaryPeriod.DAILY, D30, D30, null).items().get(0);
+
+        assertThat(item.spentAmount()).isEqualTo(700);
+        assertThat(item.reservedAmount()).isZero();
     }
 
     @Test
