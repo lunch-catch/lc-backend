@@ -44,7 +44,7 @@ public class DailyJobScheduler {
     public void runDailyBundle() {
         LocalDate businessDate = executions.businessDate();
         if (!executions.claim(BatchJobRegistry.BUNDLE, businessDate)) {
-            log.info("00:00 묶음은 다른 배치 서버가 점유했다. businessDate={}", businessDate);
+            log.info("event=BATCH_BUNDLE_SKIPPED reason=OWNED_BY_OTHER_SERVER businessDate={}", businessDate);
             return;
         }
         runner.runBundle(businessDate);
