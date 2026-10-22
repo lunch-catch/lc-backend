@@ -3,6 +3,7 @@ package com.launchcatch.billing.service;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -32,6 +33,7 @@ import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
+import org.mockito.InOrder;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.context.ApplicationEventPublisher;
 
@@ -125,6 +127,17 @@ class RechargeReservationServiceTest {
         service(LocalTime.of(23, 59, 59)).reserve(new PointCharged(OWNER_ID, PAYMENT_ID, 10000L));
 
         verify(campaignQuery, times(3)).findByOwnerIdAndStatusIn(OWNER_ID, List.of(CampaignStatus.PAUSED));
+    }
+
+    @Test
+    void 계정_잠금을_후보_조회보다_먼저_잡아_최신_잔액_스냅샷에서_재예약한다() {
+        when(campaignQuery.findByOwnerIdAndStatusIn(OWNER_ID, List.of(CampaignStatus.PAUSED))).thenReturn(List.of());
+
+        service(LocalTime.of(12, 0)).reserve(new PointCharged(OWNER_ID, PAYMENT_ID, 10000L));
+
+        InOrder order = inOrder(accountRepository, campaignQuery);
+        order.verify(accountRepository).lockByOwnerId(OWNER_ID);
+        order.verify(campaignQuery).findByOwnerIdAndStatusIn(OWNER_ID, List.of(CampaignStatus.PAUSED));
     }
 
     @Test
