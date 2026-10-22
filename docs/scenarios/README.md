@@ -22,6 +22,7 @@ LunchCatch 의 구현 코드가 실제로 하는 일을 시나리오로 모두 �
 | [admin.md](admin.md) | 관리자 앱 (`apps/admin`) | 266 (A-001 ~ A-266) |
 | [backend.md](backend.md) | 화면이 부르지 않는 API, 웹훅, 배치, 인증과 토큰, 속도 제한 | 401 (B-001 ~ B-401) |
 | [defects.md](defects.md) | 시나리오를 뽑으며 찾은 결함 | |
+| [demo.md](demo.md) | 2026-10-28 시연 핵심 시나리오와 고칠 결함 | 29 장면 |
 
 ## 표의 열
 
