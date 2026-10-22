@@ -169,8 +169,9 @@ public class FeedService {
         try {
             progress = readProgress(campaignIds, businessDate, servedAt);
         } catch (RuntimeException e) {
-            log.warn("event=ADSERVING_FEED_BUDGET_UNAVAILABLE businessDate={} campaignIds={} fallback=SKIP_BUDGET_RULE",
-                    businessDate, campaignIds.stream().map(String::valueOf).collect(Collectors.joining(",")), e);
+            // 원인이 캠페인이 아니라 정산이라 ID 대신 개수만 남겨 장애 중 로그가 후보 수만큼 길어지지 않게 한다(#778)
+            log.warn("event=ADSERVING_FEED_BUDGET_UNAVAILABLE businessDate={} campaignCount={} fallback=SKIP_BUDGET_RULE",
+                    businessDate, campaignIds.size(), e);
             meterRegistry.counter(BUDGET_UNAVAILABLE_METRIC).increment();
             return null;
         }

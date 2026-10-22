@@ -9,7 +9,6 @@ import java.time.LocalDate;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.io.ClassPathResource;
@@ -62,9 +61,9 @@ public class ImpressionCountRepository {
             }
             return counts;
         } catch (DataAccessException e) {
-            log.warn("event=ADSERVING_FEED_IMPRESSION_COUNT_FAILED businessDate={} campaignIds={} reason={} fallback=ZERO_COUNT",
-                    businessDate, campaignIds.stream().map(String::valueOf).collect(Collectors.joining(",")),
-                    RedisFailureClassifier.causeLabel(e), e);
+            // 원인이 캠페인이 아니라 Valkey 라 ID 대신 개수만 남겨 장애 중 로그가 후보 수만큼 길어지지 않게 한다(#778)
+            log.warn("event=ADSERVING_FEED_IMPRESSION_COUNT_FAILED businessDate={} campaignCount={} reason={} fallback=ZERO_COUNT",
+                    businessDate, campaignIds.size(), RedisFailureClassifier.causeLabel(e), e);
             meterRegistry.counter(BYPASS_METRIC, "use", "impression_count").increment();
             return Map.of();
         }
