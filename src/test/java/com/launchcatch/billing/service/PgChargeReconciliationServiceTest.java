@@ -205,7 +205,8 @@ class PgChargeReconciliationServiceTest {
         assertThat(service.reconcilePreviousDay(RUN_DATE, JOB)).isEqualTo(1);
 
         verify(mismatchRecorder).recordMissingCharge(payment, PREV, RUN_ID, NOW);
-        verify(mismatchRecorder).resolvePending(PAYMENT_ID);
+        // 대기 해소는 기록과 같은 트랜잭션에서 recorder 가 한다
+        verify(mismatchRecorder, never()).resolvePending(PAYMENT_ID);
         verify(mismatchRecorder, never()).recordMismatch(any(), anyLong(), anyLong(), any(), any(), any());
     }
 
@@ -219,7 +220,8 @@ class PgChargeReconciliationServiceTest {
         assertThat(service.reconcilePreviousDay(RUN_DATE, JOB)).isEqualTo(1);
 
         verify(mismatchRecorder).recordMismatch(PAYMENT_ID, AMOUNT - 1_000, AMOUNT, PREV, RUN_ID, NOW);
-        verify(mismatchRecorder).resolvePending(PAYMENT_ID);
+        // 대기 해소는 기록과 같은 트랜잭션에서 recorder 가 한다
+        verify(mismatchRecorder, never()).resolvePending(PAYMENT_ID);
         verify(mismatchRecorder, never()).recordMissingCharge(any(), any(), any(), any());
     }
 
@@ -233,7 +235,8 @@ class PgChargeReconciliationServiceTest {
         assertThat(service.reconcilePreviousDay(RUN_DATE, JOB)).isEqualTo(1);
 
         verify(mismatchRecorder).recordMismatch(PAYMENT_ID, AMOUNT, 0L, PREV, RUN_ID, NOW);
-        verify(mismatchRecorder).resolvePending(PAYMENT_ID);
+        // 대기 해소는 기록과 같은 트랜잭션에서 recorder 가 한다
+        verify(mismatchRecorder, never()).resolvePending(PAYMENT_ID);
         verify(mismatchRecorder, never()).recordMissingCharge(any(), any(), any(), any());
     }
 
@@ -247,7 +250,8 @@ class PgChargeReconciliationServiceTest {
         assertThat(service.reconcilePreviousDay(RUN_DATE, JOB)).isEqualTo(1);
 
         verify(mismatchRecorder).recordMismatch(PAYMENT_ID, 0L, AMOUNT, PREV, RUN_ID, NOW);
-        verify(mismatchRecorder).resolvePending(PAYMENT_ID);
+        // 대기 해소는 기록과 같은 트랜잭션에서 recorder 가 한다
+        verify(mismatchRecorder, never()).resolvePending(PAYMENT_ID);
     }
 
     @Test
@@ -277,7 +281,8 @@ class PgChargeReconciliationServiceTest {
 
         verify(paymentGateway, times(2)).inquireByPaymentKey(PG_TID);
         verify(mismatchRecorder).recordMissingCharge(payment, PREV, RUN_ID, NOW);
-        verify(mismatchRecorder).resolvePending(PAYMENT_ID);
+        // 대기 해소는 기록과 같은 트랜잭션에서 recorder 가 한다
+        verify(mismatchRecorder, never()).resolvePending(PAYMENT_ID);
         assertThat(counted("inquiry_failed")).isZero();
     }
 
@@ -311,7 +316,8 @@ class PgChargeReconciliationServiceTest {
 
         assertThat(counted("inquiry_failed")).isEqualTo(1.0);
         verify(mismatchRecorder).recordMismatch(PAYMENT_ID, AMOUNT - 1, AMOUNT, PREV, RUN_ID, NOW);
-        verify(mismatchRecorder).resolvePending(PAYMENT_ID);
+        // 대기 해소는 기록과 같은 트랜잭션에서 recorder 가 한다
+        verify(mismatchRecorder, never()).resolvePending(PAYMENT_ID);
     }
 
     @Test
@@ -332,7 +338,8 @@ class PgChargeReconciliationServiceTest {
         assertThat(counted("error")).isEqualTo(1.0);
         verify(mismatchRecorder).recordPending(201L, PREV, "Reconciliation failed: IllegalStateException");
         verify(mismatchRecorder).recordMissingCharge(ok, PREV, RUN_ID, NOW);
-        verify(mismatchRecorder).resolvePending(PAYMENT_ID);
+        // 대기 해소는 기록과 같은 트랜잭션에서 recorder 가 한다
+        verify(mismatchRecorder, never()).resolvePending(PAYMENT_ID);
     }
     @Test
     void PG_응답의_주문번호가_결제와_다르면_복구하지_않고_다음_대사_대상으로_남긴다() {
@@ -361,7 +368,8 @@ class PgChargeReconciliationServiceTest {
         assertThat(service.reconcilePreviousDay(RUN_DATE, JOB)).isEqualTo(1);
 
         verify(mismatchRecorder).recordMismatch(PAYMENT_ID, 0L, AMOUNT, PREV, RUN_ID, NOW);
-        verify(mismatchRecorder).resolvePending(PAYMENT_ID);
+        // 대기 해소는 기록과 같은 트랜잭션에서 recorder 가 한다
+        verify(mismatchRecorder, never()).resolvePending(PAYMENT_ID);
     }
 
     @Test

@@ -40,6 +40,7 @@ import com.launchcatch.coupon.service.CouponPreparationService;
 import com.launchcatch.ops.service.BatchExecutionService;
 import com.launchcatch.ops.scheduler.RetryBackoff;
 import com.launchcatch.store.contract.StoreMenuInfo;
+import com.launchcatch.store.contract.StoreMenuQueryResult;
 import com.launchcatch.campaign.contract.DiscountTargetType;
 import com.launchcatch.campaign.contract.DiscountType;
 import java.time.LocalTime;
@@ -4928,7 +4929,7 @@ public class CouponIntegrationTest extends IntegrationTestSupport {
             when(stores.findAllById(List.of(10L)))
                     .thenReturn(List.of(new StoreInfo(10L, "쿠폰 식당", null, 37.5, 127.0)));
             when(stores.findMenusByIdIn(List.of(100L)))
-                    .thenReturn(List.of(new StoreMenuInfo(100L, 10L, "image", "점심", 4500L)));
+                    .thenReturn(new StoreMenuQueryResult(List.of(new StoreMenuInfo(100L, 10L, "image", "점심", 4500L)), List.of()));
         }
 
 

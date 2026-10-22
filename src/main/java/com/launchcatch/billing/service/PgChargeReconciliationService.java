@@ -19,6 +19,8 @@ import java.time.Clock;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -69,9 +71,14 @@ public class PgChargeReconciliationService {
         LinkedHashMap<Long, Payment> targets = new LinkedHashMap<>();
         paymentRepository.findForPgReconciliation(from, to)
                 .forEach(payment -> targets.put(payment.getId(), payment));
-        paymentRepository.findAllById(pendingRepository.findAllByOrderByCreatedAtAsc().stream()
-                        .map(pending -> pending.getPaymentId())
-                        .toList())
+        /*
+         * 재검증 대기 결제는 처음 대사한 영업일로 다시 본다.
+         * 실행일의 전날로 보면 날마다 business_date 가 바뀌어 같은 결제의 불일치가 날짜마다 따로 쌓인다.
+         */
+        Map<Long, LocalDate> pendingDates = new LinkedHashMap<>();
+        pendingRepository.findAllByOrderByCreatedAtAsc()
+                .forEach(pending -> pendingDates.put(pending.getPaymentId(), pending.getBusinessDate()));
+        paymentRepository.findAllById(List.copyOf(pendingDates.keySet()))
                 .forEach(payment -> targets.put(payment.getId(), payment));
         if (targets.isEmpty()) {
             return 0;
@@ -79,12 +86,13 @@ public class PgChargeReconciliationService {
         Long jobExecutionId = findRunId(runDate, jobName);
         int mismatches = 0;
         for (Payment payment : targets.values()) {
+            LocalDate businessDate = pendingDates.getOrDefault(payment.getId(), target);
             try {
-                mismatches += reconcileOne(payment, target, jobExecutionId, now);
+                mismatches += reconcileOne(payment, businessDate, jobExecutionId, now);
             } catch (RuntimeException e) {
-                preserveForRetry(payment, target, e);
+                preserveForRetry(payment, businessDate, e);
                 meterRegistry.counter(RECON_METRIC, "result", "error").increment();
-                log.error("event=BILLING_PG_RECON_FAILED paymentId={} businessDate={}", payment.getId(), target, e);
+                log.error("event=BILLING_PG_RECON_FAILED paymentId={} businessDate={}", payment.getId(), businessDate, e);
             }
         }
         if (mismatches > 0) {
@@ -117,7 +125,6 @@ public class PgChargeReconciliationService {
         Optional<PointLedger> charge = ledgerRepository.findByPaymentIdAndEntryType(payment.getId(), EntryType.CHARGE);
         if (pgClaim != ourClaim) {
             mismatchRecorder.recordMismatch(payment.getId(), pgClaim, ourClaim, businessDate, jobExecutionId, now);
-            mismatchRecorder.resolvePending(payment.getId());
             log.warn("event=BILLING_PG_RECON_MISMATCH paymentId={} expectedAmount={} actualAmount={}",
                     payment.getId(), ourClaim, pgClaim);
             meterRegistry.counter(RECON_METRIC, "result", "mismatch").increment();
@@ -125,7 +132,6 @@ public class PgChargeReconciliationService {
         }
         if (ourClaim > 0 && charge.isEmpty()) {
                 mismatchRecorder.recordMissingCharge(payment, businessDate, jobExecutionId, now);
-                mismatchRecorder.resolvePending(payment.getId());
                 log.warn("event=BILLING_PG_RECON_CHARGE_RECOVERED paymentId={} businessDate={} fallback=AUTO_RECOVER",
                         payment.getId(), businessDate);
                 meterRegistry.counter(RECON_METRIC, "result", "recovered").increment();
@@ -135,7 +141,6 @@ public class PgChargeReconciliationService {
                 || !charge.get().getOwnerId().equals(payment.getOwnerId()))) {
             mismatchRecorder.recordMismatch(payment.getId(), ourClaim, charge.get().getAmount(),
                     businessDate, jobExecutionId, now);
-            mismatchRecorder.resolvePending(payment.getId());
             meterRegistry.counter(RECON_METRIC, "result", "mismatch").increment();
             return 1;
         }
