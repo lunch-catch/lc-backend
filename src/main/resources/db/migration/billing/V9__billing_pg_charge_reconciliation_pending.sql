@@ -6,5 +6,7 @@ CREATE TABLE pg_charge_reconciliation_pending (
     created_at DATETIME(6) NOT NULL,
     updated_at DATETIME(6) NOT NULL,
     PRIMARY KEY (pg_charge_reconciliation_pending_id),
-    CONSTRAINT uk_pg_charge_reconciliation_pending_payment UNIQUE (payment_id)
+    CONSTRAINT uk_pg_charge_reconciliation_pending_payment UNIQUE (payment_id),
+    CONSTRAINT fk_pg_charge_reconciliation_pending_payment
+        FOREIGN KEY (payment_id) REFERENCES payment (payment_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;

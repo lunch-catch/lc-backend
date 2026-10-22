@@ -82,6 +82,7 @@ public class PgChargeReconciliationService {
             try {
                 mismatches += reconcileOne(payment, target, jobExecutionId, now);
             } catch (RuntimeException e) {
+                preserveForRetry(payment, target, e);
                 meterRegistry.counter(RECON_METRIC, "result", "error").increment();
                 log.error("event=BILLING_PG_RECON_FAILED paymentId={} businessDate={}", payment.getId(), target, e);
             }
@@ -103,16 +104,19 @@ public class PgChargeReconciliationService {
             meterRegistry.counter(RECON_METRIC, "result", "inquiry_failed").increment();
             return 0;
         }
+        if (!payment.getOrderId().equals(result.orderId())) {
+            throw new IllegalStateException("PG 응답의 주문번호가 결제와 다릅니다. paymentId=" + payment.getId());
+        }
         if (result.status() == Status.PENDING) {
             mismatchRecorder.recordPending(payment.getId(), businessDate, "PG payment is pending");
             return 0;
         }
-        mismatchRecorder.resolvePending(payment.getId());
         long pgClaim = result.status() == Status.APPROVED ? result.amount() : 0L;
         long ourClaim = payment.getStatus() == PaymentStatus.APPROVED ? payment.getAmount() : 0L;
         Optional<PointLedger> charge = ledgerRepository.findByPaymentIdAndEntryType(payment.getId(), EntryType.CHARGE);
         if (pgClaim != ourClaim) {
             mismatchRecorder.recordMismatch(payment.getId(), pgClaim, ourClaim, businessDate, jobExecutionId, now);
+            mismatchRecorder.resolvePending(payment.getId());
             log.warn("event=BILLING_PG_RECON_MISMATCH paymentId={} expectedAmount={} actualAmount={}",
                     payment.getId(), ourClaim, pgClaim);
             meterRegistry.counter(RECON_METRIC, "result", "mismatch").increment();
@@ -120,6 +124,7 @@ public class PgChargeReconciliationService {
         }
         if (ourClaim > 0 && charge.isEmpty()) {
                 mismatchRecorder.recordMissingCharge(payment, businessDate, jobExecutionId, now);
+                mismatchRecorder.resolvePending(payment.getId());
                 log.warn("event=BILLING_PG_RECON_CHARGE_RECOVERED paymentId={} businessDate={} fallback=AUTO_RECOVER",
                         payment.getId(), businessDate);
                 meterRegistry.counter(RECON_METRIC, "result", "recovered").increment();
@@ -129,10 +134,21 @@ public class PgChargeReconciliationService {
                 || !charge.get().getOwnerId().equals(payment.getOwnerId()))) {
             mismatchRecorder.recordMismatch(payment.getId(), ourClaim, charge.get().getAmount(),
                     businessDate, jobExecutionId, now);
+            mismatchRecorder.resolvePending(payment.getId());
             meterRegistry.counter(RECON_METRIC, "result", "mismatch").increment();
             return 1;
         }
+        mismatchRecorder.resolvePending(payment.getId());
         return 0;
+    }
+
+    private void preserveForRetry(Payment payment, LocalDate businessDate, RuntimeException failure) {
+        try {
+            mismatchRecorder.recordPending(payment.getId(), businessDate,
+                    "Reconciliation failed: " + failure.getClass().getSimpleName());
+        } catch (RuntimeException pendingFailure) {
+            failure.addSuppressed(pendingFailure);
+        }
     }
 
     // 조회가 멱등(읽기 전용)이라 재시도해도 안전하다. 짧게 1회만 재시도하고 그래도 실패하면 포기한다

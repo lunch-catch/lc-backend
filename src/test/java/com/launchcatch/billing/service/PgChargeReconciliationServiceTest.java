@@ -62,6 +62,7 @@ class PgChargeReconciliationServiceTest {
     private static final Long PAYMENT_ID = 101L;
     private static final Long OWNER_ID = 7L;
     private static final String PG_TID = "tgen_20261015_0001";
+    private static final String ORDER_ID = "ord_20261015_abc";
     private static final long AMOUNT = 30_000L;
     private static final Long RUN_ID = 55L;
 
@@ -89,7 +90,7 @@ class PgChargeReconciliationServiceTest {
 
     // pgTid 는 한 번 적으면 다른 값으로 못 바꾸므로(assignPgTid), 결제마다 다른 pgTid 가 필요하면 이 생성자로 만든다
     private static Payment payment(Long id, String pgTid, PaymentStatus status, long amount) {
-        Payment payment = Payment.order(OWNER_ID, "ord_" + pgTid, amount);
+        Payment payment = Payment.order(OWNER_ID, ORDER_ID, amount);
         ReflectionTestUtils.setField(payment, "id", id);
         payment.assignPgTid(pgTid);
         switch (status) {
@@ -103,7 +104,7 @@ class PgChargeReconciliationServiceTest {
     }
 
     private static PaymentGatewayInquiryResult pgResult(Status status, long amount) {
-        return new PaymentGatewayInquiryResult(status, PG_TID, "ord_20261015_abc", amount,
+        return new PaymentGatewayInquiryResult(status, PG_TID, ORDER_ID, amount,
                 LocalDateTime.of(2026, 10, 15, 10, 0), null, null);
     }
 
@@ -198,7 +199,7 @@ class PgChargeReconciliationServiceTest {
         givenTargets(payment);
         givenRunId();
         when(paymentGateway.inquireByPaymentKey(PG_TID)).thenReturn(pgResult(Status.APPROVED, AMOUNT));
-        when(ledgerRepository.existsByPaymentIdAndEntryType(PAYMENT_ID, EntryType.CHARGE)).thenReturn(false);
+        when(ledgerRepository.findByPaymentIdAndEntryType(PAYMENT_ID, EntryType.CHARGE)).thenReturn(Optional.empty());
 
         assertThat(service.reconcilePreviousDay(RUN_DATE, JOB)).isEqualTo(1);
 
@@ -219,7 +220,6 @@ class PgChargeReconciliationServiceTest {
         verify(mismatchRecorder).recordMismatch(PAYMENT_ID, AMOUNT - 1_000, AMOUNT, PREV, RUN_ID, NOW);
         verify(mismatchRecorder).resolvePending(PAYMENT_ID);
         verify(mismatchRecorder, never()).recordMissingCharge(any(), any(), any(), any());
-        verifyNoInteractions(ledgerRepository);
     }
 
     @Test
@@ -234,7 +234,6 @@ class PgChargeReconciliationServiceTest {
         verify(mismatchRecorder).recordMismatch(PAYMENT_ID, AMOUNT, 0L, PREV, RUN_ID, NOW);
         verify(mismatchRecorder).resolvePending(PAYMENT_ID);
         verify(mismatchRecorder, never()).recordMissingCharge(any(), any(), any(), any());
-        verifyNoInteractions(ledgerRepository);
     }
 
     @Test
@@ -271,7 +270,7 @@ class PgChargeReconciliationServiceTest {
         when(paymentGateway.inquireByPaymentKey(PG_TID))
                 .thenThrow(new PgUnknownException("read timeout", new RuntimeException()))
                 .thenReturn(pgResult(Status.APPROVED, AMOUNT));
-        when(ledgerRepository.existsByPaymentIdAndEntryType(PAYMENT_ID, EntryType.CHARGE)).thenReturn(false);
+        when(ledgerRepository.findByPaymentIdAndEntryType(PAYMENT_ID, EntryType.CHARGE)).thenReturn(Optional.empty());
 
         assertThat(service.reconcilePreviousDay(RUN_DATE, JOB)).isEqualTo(1);
 
@@ -323,15 +322,33 @@ class PgChargeReconciliationServiceTest {
         when(paymentGateway.inquireByPaymentKey("tgen_other")).thenReturn(pgResult(Status.APPROVED, AMOUNT - 1));
         doThrow(new IllegalStateException("db down")).when(mismatchRecorder)
                 .recordMismatch(eq(201L), anyLong(), anyLong(), eq(PREV), eq(RUN_ID), eq(NOW));
+        when(ledgerRepository.findByPaymentIdAndEntryType(201L, EntryType.CHARGE)).thenReturn(Optional.empty());
         when(paymentGateway.inquireByPaymentKey(PG_TID)).thenReturn(pgResult(Status.APPROVED, AMOUNT));
-        when(ledgerRepository.existsByPaymentIdAndEntryType(PAYMENT_ID, EntryType.CHARGE)).thenReturn(false);
+        when(ledgerRepository.findByPaymentIdAndEntryType(PAYMENT_ID, EntryType.CHARGE)).thenReturn(Optional.empty());
 
         assertThat(service.reconcilePreviousDay(RUN_DATE, JOB)).isEqualTo(1);
 
         assertThat(counted("error")).isEqualTo(1.0);
+        verify(mismatchRecorder).recordPending(201L, PREV, "Reconciliation failed: IllegalStateException");
         verify(mismatchRecorder).recordMissingCharge(ok, PREV, RUN_ID, NOW);
         verify(mismatchRecorder).resolvePending(PAYMENT_ID);
     }
+    @Test
+    void PG_응답의_주문번호가_결제와_다르면_복구하지_않고_다음_대사_대상으로_남긴다() {
+        Payment payment = payment(PaymentStatus.APPROVED, AMOUNT);
+        givenTargets(payment);
+        givenRunId();
+        when(paymentGateway.inquireByPaymentKey(PG_TID)).thenReturn(new PaymentGatewayInquiryResult(
+                Status.APPROVED, PG_TID, "ord_other", AMOUNT, LocalDateTime.of(2026, 10, 15, 10, 0), null, null));
+
+        assertThat(service.reconcilePreviousDay(RUN_DATE, JOB)).isZero();
+
+        assertThat(counted("error")).isEqualTo(1.0);
+        verify(mismatchRecorder).recordPending(PAYMENT_ID, PREV, "Reconciliation failed: IllegalStateException");
+        verify(mismatchRecorder, never()).recordMissingCharge(any(), any(), any(), any());
+        verify(mismatchRecorder, never()).resolvePending(any());
+    }
+
     @Test
     void PG와_결제는_같아도_CHARGE_금액이_다르면_불일치로_기록한다() {
         Payment payment = payment(PaymentStatus.APPROVED, AMOUNT);
