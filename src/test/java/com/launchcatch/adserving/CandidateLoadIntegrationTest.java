@@ -27,6 +27,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 /*
  * 00:00 묶음의 후보 적재 단계(DailyJob.run)를 입구로 MySQL 의 ad_candidate 까지 본다(#582).
@@ -39,6 +41,7 @@ class CandidateLoadIntegrationTest extends AbstractAdservingIntegrationTest {
     private static final LocalDateTime CHANGED_AT = LocalDateTime.of(2026, 9, 30, 23, 0);
 
     @Autowired LoadDailyCandidateJob job;
+    @Autowired PlatformTransactionManager transactionManager;
 
     @BeforeEach
     void setUp() {
@@ -156,6 +159,34 @@ class CandidateLoadIntegrationTest extends AbstractAdservingIntegrationTest {
         job.run(TODAY);
 
         assertThat(jdbcTemplate.queryForList("SELECT campaign_id FROM ad_candidate", Long.class)).containsExactly(101L);
+    }
+
+    /*
+     * 가게 계약 구현이 트랜잭션 안에서 메뉴 데이터 오류를 던지는 경우다. 참여한 트랜잭션이 롤백 전용이 되는 것까지 흉내 낸다.
+     * 그 메뉴의 캠페인만 빠지고 나머지는 커밋되는지 본다(#779).
+     */
+    @Test
+    void 메뉴_조회가_트랜잭션_안에서_데이터_오류를_던져도_그_캠페인만_빼고_적재한다() {
+        when(campaignQueryService.findServableOn(TODAY)).thenReturn(List.of(
+                campaign(101, 55, CampaignStatus.ACTIVE, null, DiscountTargetType.ALL, null, CHANGED_AT),
+                campaign(102, 56, CampaignStatus.ACTIVE, null, DiscountTargetType.MENU, 7001L, CHANGED_AT),
+                campaign(103, 56, CampaignStatus.ACTIVE, null, DiscountTargetType.MENU, 7002L, CHANGED_AT)));
+        when(campaignQueryService.findAllById(anyList())).thenReturn(List.of());
+        TransactionTemplate storeTransaction = new TransactionTemplate(transactionManager);
+        when(storeQueryService.findMenusByIdIn(anyList())).thenAnswer(invocation -> {
+            List<Long> menuIds = invocation.getArgument(0);
+            return storeTransaction.execute(status -> {
+                if (menuIds.contains(7002L)) {
+                    throw new IllegalStateException("메뉴 이미지 누락");
+                }
+                return List.of(new StoreMenuInfo(7001L, 56L, null, "돈코츠 라멘", 9000L));
+            });
+        });
+
+        job.run(TODAY);
+
+        assertThat(jdbcTemplate.queryForList("SELECT campaign_id FROM ad_candidate ORDER BY campaign_id", Long.class))
+                .containsExactly(101L, 102L);
     }
 
     @Test

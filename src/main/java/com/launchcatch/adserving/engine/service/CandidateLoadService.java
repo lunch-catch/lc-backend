@@ -17,13 +17,17 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 /*
  * 00:00 묶음에서 그날의 피드 후보 스냅샷을 만든다(FR-099 (8), FR-093). 서빙은 이 스냅샷만 읽고 다른 도메인 테이블을 읽지 않는다.
@@ -31,13 +35,15 @@ import org.springframework.transaction.annotation.Transactional;
  */
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class CandidateLoadService {
 
     // 지난 후보를 남기는 영업일 수다. 영업일 D 의 적재가 D-7 보다 앞선 행을 지운다(#582)
     static final int RETENTION_DAYS = 7;
 
-    // 가게가 없거나 메뉴 할인의 메뉴명을 찾지 못해 적재하지 못한 캠페인 수다. reason 태그로 가른다
+    /*
+     * 가게가 없거나 메뉴 할인의 메뉴명을 얻지 못해 적재하지 못한 캠페인 수다. reason 태그로 가른다.
+     * 메뉴가 없으면 menu_missing, 가게 계약이 메뉴 데이터 오류를 던지면 menu_invalid 다(#779).
+     */
     static final String SKIPPED_METRIC = "adserving_candidate_load_skipped_total";
 
     private final CampaignQueryService campaignQueryService;
@@ -45,6 +51,19 @@ public class CandidateLoadService {
     private final AdCandidateRepository adCandidateRepository;
     private final MeterRegistry meterRegistry;
     private final Clock clock;
+    private final TransactionTemplate outsideLoad;
+
+    public CandidateLoadService(CampaignQueryService campaignQueryService, StoreQueryService storeQueryService,
+                                AdCandidateRepository adCandidateRepository, MeterRegistry meterRegistry, Clock clock,
+                                PlatformTransactionManager transactionManager) {
+        this.campaignQueryService = campaignQueryService;
+        this.storeQueryService = storeQueryService;
+        this.adCandidateRepository = adCandidateRepository;
+        this.meterRegistry = meterRegistry;
+        this.clock = clock;
+        this.outsideLoad = new TransactionTemplate(transactionManager);
+        this.outsideLoad.setPropagationBehavior(TransactionDefinition.PROPAGATION_NOT_SUPPORTED);
+    }
 
     /*
      * 그날 서빙 대상을 읽어 후보로 넣고, 넣은 캠페인과 그때 읽은 상태 전이 시각을 돌려준다. 재조회가 이 시각과 견준다.
@@ -56,7 +75,7 @@ public class CandidateLoadService {
         LocalDateTime readAt = LocalDateTime.now(clock);
         List<CampaignInfo> campaigns = campaignQueryService.findServableOn(businessDate);
         Map<Long, StoreAdCandidateInfo> stores = readStores(campaigns);
-        Map<Long, String> menuNames = readMenuNames(campaigns);
+        MenuNames menuNames = readMenuNames(campaigns);
 
         List<CandidateRow> rows = new ArrayList<>(campaigns.size());
         Map<Long, LocalDateTime> loaded = new HashMap<>();
@@ -68,7 +87,11 @@ public class CandidateLoadService {
             }
             String menuName = null;
             if (campaign.discountTargetType() == DiscountTargetType.MENU) {
-                menuName = menuNames.get(campaign.targetMenuId());
+                if (menuNames.invalid().contains(campaign.targetMenuId())) {
+                    skip("menu_invalid");
+                    continue;
+                }
+                menuName = menuNames.names().get(campaign.targetMenuId());
                 // MENU 할인에 메뉴명이 없으면 CHECK chk_candidate_discount_menu 에 걸려 적재 전체가 실패한다
                 if (menuName == null) {
                     skip("menu_missing");
@@ -114,15 +137,44 @@ public class CandidateLoadService {
         return stores;
     }
 
-    private Map<Long, String> readMenuNames(List<CampaignInfo> campaigns) {
+    /*
+     * 가게 계약은 등록된 메뉴의 이미지가 없거나 미검증이면 IllegalStateException 을 던진다. 메뉴 하나 때문에 적재 전체가 실패하지 않게,
+     * 그때만 메뉴 하나씩 다시 읽어 던지는 메뉴를 가려낸다(#779). 다른 예외(DB 장애 등)는 기본 처리대로 적재를 실패시킨다.
+     */
+    private MenuNames readMenuNames(List<CampaignInfo> campaigns) {
         List<Long> menuIds = campaigns.stream()
                 .filter(c -> c.discountTargetType() == DiscountTargetType.MENU && c.targetMenuId() != null)
                 .map(CampaignInfo::targetMenuId).distinct().toList();
         if (menuIds.isEmpty()) {
-            return Map.of();
+            return new MenuNames(Map.of(), Set.of());
         }
-        return storeQueryService.findMenusByIdIn(menuIds).stream()
-                .collect(Collectors.toMap(StoreMenuInfo::menuId, StoreMenuInfo::menuName));
+        try {
+            return new MenuNames(toNames(findMenus(menuIds)), Set.of());
+        } catch (IllegalStateException e) {
+            Map<Long, String> names = new HashMap<>();
+            Set<Long> invalid = new HashSet<>();
+            for (Long menuId : menuIds) {
+                try {
+                    names.putAll(toNames(findMenus(List.of(menuId))));
+                } catch (IllegalStateException invalidMenu) {
+                    log.warn("event=ADSERVING_CANDIDATE_MENU_INVALID menuId={} fallback=SKIP_CAMPAIGN", menuId, invalidMenu);
+                    invalid.add(menuId);
+                }
+            }
+            return new MenuNames(names, invalid);
+        }
+    }
+
+    /*
+     * 적재 트랜잭션을 멈추고 가게 계약을 부른다. 계약 구현이 트랜잭션에 참여한 채 예외를 던지면 적재 트랜잭션이 롤백 전용이 되어,
+     * 예외를 잡아도 커밋이 실패하기 때문이다(#779).
+     */
+    private List<StoreMenuInfo> findMenus(List<Long> menuIds) {
+        return outsideLoad.execute(status -> storeQueryService.findMenusByIdIn(menuIds));
+    }
+
+    private static Map<Long, String> toNames(List<StoreMenuInfo> menus) {
+        return menus.stream().collect(Collectors.toMap(StoreMenuInfo::menuId, StoreMenuInfo::menuName));
     }
 
     private static CandidateRow toRow(LocalDate businessDate, CampaignInfo c, StoreAdCandidateInfo store, String menuName) {
@@ -141,5 +193,9 @@ public class CandidateLoadService {
 
     private void skip(String reason) {
         meterRegistry.counter(SKIPPED_METRIC, "reason", reason).increment();
+    }
+
+    // 메뉴 ID 별 메뉴명과, 가게 계약이 데이터 오류를 던진 메뉴 ID 다
+    private record MenuNames(Map<Long, String> names, Set<Long> invalid) {
     }
 }
