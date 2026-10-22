@@ -25,7 +25,7 @@ public enum CouponErrorCode implements ErrorCode {
 
     @Override
     public boolean isExpectedTraffic() {
-        return this == INVENTORY_EXHAUSTED;
+        return this == INVENTORY_EXHAUSTED || this == ISSUANCE_BUSY;
     }
 
     private final HttpStatus httpStatus;

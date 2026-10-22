@@ -289,6 +289,21 @@ class CouponSequenceServiceTest {
         org.assertj.core.api.Assertions.assertThatCode(() -> service.checkAdmission(81L)).doesNotThrowAnyException();
     }
 
+    @Test
+    void Redis_차단_실패는_예외_메시지_없이_분류한_사유를_남긴다() {
+        doThrow(new org.springframework.dao.QueryTimeoutException("secret-token")).when(repository).block(81L);
+        try (var logs = new CouponLogCapture(CouponSequenceService.class)) {
+            service.block(81L, null);
+
+            assertThat(logs.events).filteredOn(event -> event.getFormattedMessage().contains("COUPON_REDIS_BLOCK_FAILED"))
+                    .singleElement().satisfies(event -> {
+                        assertThat(event.getFormattedMessage()).contains("exceptionType=QueryTimeoutException", "reason=TIMEOUT")
+                                .doesNotContain("secret-token");
+                        assertThat(event.getThrowableProxy()).isNull();
+                    });
+        }
+    }
+
     // 순번 하나를 예약하고 그 예약을 돌려준다.
     private CouponReservation reserveOne() {
         return service.reserveAll(81L, 1).getFirst().reservation();

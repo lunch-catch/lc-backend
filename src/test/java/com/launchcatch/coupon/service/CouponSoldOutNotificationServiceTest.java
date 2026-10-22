@@ -44,6 +44,7 @@ class CouponSoldOutNotificationServiceTest {
     @AfterEach
     void stop() {
         service.stop();
+        org.slf4j.MDC.clear();
     }
 
     @Test
@@ -139,6 +140,32 @@ class CouponSoldOutNotificationServiceTest {
 
         assertThat(service.isRunning()).isFalse();
         verifyNoInteractions(lookUp, candidates);
+    }
+
+    @Test
+    void 재시도도_접수할_때의_MDC를_사용하고_실행_전의_MDC로_돌아간다() {
+        org.slf4j.MDC.put("traceId", "request-1");
+        when(lookUp.findSoldOut(81L)).thenReturn(Optional.of(soldOut));
+        doThrow(new org.springframework.dao.DataIntegrityViolationException("secret-token",
+                new java.sql.SQLException("secret-value", "23000", 1062))).doNothing()
+                .when(candidates).markSoldOut(91L, DATE, soldOut.soldOutAt());
+        service.request(81L);
+        org.slf4j.MDC.put("traceId", "scheduler");
+        try (var logs = new CouponLogCapture(CouponSoldOutNotificationService.class)) {
+            service.processPending();
+            assertThat(org.slf4j.MDC.get("traceId")).isEqualTo("scheduler");
+            when(clock.instant()).thenReturn(NOW.plusSeconds(5));
+            service.processPending();
+
+            assertThat(logs.events).hasSize(2).allSatisfy(event -> {
+                assertThat(event.getMDCPropertyMap()).containsEntry("traceId", "request-1");
+                assertThat(event.getFormattedMessage()).doesNotContain("secret-token", "secret-value");
+                assertThat(event.getThrowableProxy()).isNull();
+            });
+            assertThat(logs.events.getFirst().getFormattedMessage()).contains("sqlState=23000", "fallback=RETRY");
+            assertThat(logs.events.getLast().getFormattedMessage()).contains("COUPON_SOLD_OUT_NOTIFICATION_DONE");
+            assertThat(org.slf4j.MDC.get("traceId")).isEqualTo("scheduler");
+        }
     }
 
     @Test

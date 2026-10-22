@@ -136,7 +136,7 @@ public class CouponCommandService {
             return new CouponQrResponse(imageEncoder.encode(coupon.getQrToken()),
                     coupon.getQrExpiresAt().atZone(ClockConfig.ZONE).toOffsetDateTime());
         } catch (CouponException e) {
-            log.warn("event=COUPON_QR_GENERATION_FAILED memberId={} memberCouponId={} reason={}",
+            log.info("event=COUPON_QR_GENERATION_FAILED memberId={} memberCouponId={} errorCode={}",
                     memberId, memberCouponId, e.getErrorCode().getCode());
             throw e;
         }
@@ -172,7 +172,7 @@ public class CouponCommandService {
                 return;
             }
         } catch (CouponException e) {
-            log.warn("event=COUPON_DELETE_FAILED memberId={} memberCouponId={} reason={}",
+            log.info("event=COUPON_DELETE_FAILED memberId={} memberCouponId={} errorCode={}",
                     memberId, memberCouponId, e.getErrorCode().getCode());
             throw e;
         }

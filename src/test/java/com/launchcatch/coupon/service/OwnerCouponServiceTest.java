@@ -90,6 +90,32 @@ class OwnerCouponServiceTest {
     @InjectMocks OwnerCouponService service;
 
     @Test
+    void 다른_점주의_캠페인_거절은_INFO와_업무_사유로_남긴다() {
+        when(owners.findCurrentStatus(7L)).thenReturn(Optional.of(OwnerAccountStatus.ACTIVE));
+        when(campaigns.findAllById(List.of(501L))).thenReturn(List.of());
+        try (var logs = new CouponLogCapture(OwnerCouponService.class)) {
+            assertThatThrownBy(() -> service.summary(7L, 501L, DAY, DAY)).isInstanceOf(CouponException.class);
+
+            assertThat(logs.events).singleElement().satisfies(event -> {
+                assertThat(event.getLevel()).isEqualTo(ch.qos.logback.classic.Level.INFO);
+                assertThat(event.getFormattedMessage()).contains("reason=CAMPAIGN_ACCESS_DENIED", "errorCode=COUPON-011");
+            });
+        }
+    }
+
+    @Test
+    void 비활성_점주의_조회_거절은_INFO와_오류_코드로_남긴다() {
+        try (var logs = new CouponLogCapture(OwnerCouponService.class)) {
+            assertThatThrownBy(() -> service.summary(7L, 501L, DAY, DAY)).isInstanceOf(CouponException.class);
+
+            assertThat(logs.events).singleElement().satisfies(event -> {
+                assertThat(event.getLevel()).isEqualTo(ch.qos.logback.classic.Level.INFO);
+                assertThat(event.getFormattedMessage()).contains("reason=OWNER_NOT_ACTIVE", "errorCode=AUTH-006");
+            });
+        }
+    }
+
+    @Test
     void 누적_발급_수와_사용_수를_구분해_본인_캠페인_수량을_반환한다() {
         allowOwner();
         var counts = mock(CouponEventRepository.OwnerSummary.class);

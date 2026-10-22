@@ -57,6 +57,43 @@ class CouponLifecycleServiceTest {
         assertThat(event.getStatus()).isEqualTo(com.launchcatch.coupon.entity.CouponEventStatus.ACTIVE);
     }
 
+    @Test
+    void 마감_성공_로그는_커밋한_뒤에만_남긴다() {
+        CouponLifecycleService service = service(DATE.atTime(14, 0));
+        org.springframework.transaction.support.TransactionSynchronizationManager.initSynchronization();
+        try (var logs = new CouponLogCapture(CouponLifecycleService.class)) {
+            org.mockito.Mockito.doAnswer(invocation -> {
+                assertThat(logs.events).isEmpty();
+                org.springframework.transaction.support.TransactionSynchronizationManager.getSynchronizations()
+                        .forEach(org.springframework.transaction.support.TransactionSynchronization::afterCommit);
+                return null;
+            }).when(manager).commit(any());
+
+            service.close(DATE, 1);
+
+            assertThat(logs.events).singleElement().satisfies(event ->
+                    assertThat(event.getFormattedMessage()).contains("event=COUPON_ISSUE_CLOSE_DONE"));
+        } finally {
+            org.springframework.transaction.support.TransactionSynchronizationManager.clearSynchronization();
+        }
+    }
+
+    @Test
+    void 마감_트랜잭션의_커밋이_실패하면_성공_로그를_남기지_않는다() {
+        CouponLifecycleService service = service(DATE.atTime(14, 0));
+        org.mockito.Mockito.doThrow(new org.springframework.transaction.UnexpectedRollbackException("commit failed"))
+                .when(manager).commit(any());
+        org.springframework.transaction.support.TransactionSynchronizationManager.initSynchronization();
+        try (var logs = new CouponLogCapture(CouponLifecycleService.class)) {
+            assertThatThrownBy(() -> service.close(DATE, 1))
+                    .isInstanceOf(org.springframework.transaction.UnexpectedRollbackException.class);
+
+            assertThat(logs.events).isEmpty();
+        } finally {
+            org.springframework.transaction.support.TransactionSynchronizationManager.clearSynchronization();
+        }
+    }
+
     private CouponLifecycleService service(LocalDateTime now) {
         when(manager.getTransaction(any())).thenReturn(new SimpleTransactionStatus());
         when(batches.eventIds(DATE, 0)).thenReturn(List.of(1L));
