@@ -105,18 +105,50 @@ MDC 에 연결할 수 있다.[R15] 그때 `MdcLoggingFilter` 와 `TraceIdExchang
 값을 막는 것이다(SEC-3-01).
 
 형식 검사로는 위조를 막지 못한다. 로드 밸런서는 실제 접속 IP 를 `X-Forwarded-For` 의 마지막 항목에
-덧붙인다. 시도 횟수 제한 필터와 관리자 로그인 감사 필터는 마지막 항목을 쓰는데 `MdcLoggingFilter` 는
-첫 항목을 쓴다. 첫 항목은 클라이언트가 보낸 값이다.
+덧붙인다. 앞쪽 항목은 클라이언트가 보낸 값이다. 그래서 `MdcLoggingFilter`, `AdminLoginAuditFilter`,
+`AuthRateLimitFilter` 가 `ClientIpResolver` 하나를 공유하고, 이 해석기가 마지막 항목을 쓴다. 헤더가 없거나
+마지막 항목의 형식이 틀리면 `getRemoteAddr()` 로 돌아간다.
 
-이관 대상 7.1 은 필터마다 헤더를 파싱하는 대신 Tomcat 에 맡긴다. Tomcat 의 Remote IP Valve 는 신뢰하거나
-내부 프록시로 설정된 프록시가 `remoteIpHeader` 에 남긴 항목을 믿는다.[R8] 공식 문서는 헤더를 어느 쪽부터
-처리하는지와 어느 주소가 `request.getRemoteAddr()` 가 되는지를 직접 적지 않는다. 오른쪽부터 처리해 첫 번째
-신뢰하지 않는 주소를 쓴다는 설명은 Tomcat 구현에 대한 것이라, 헤더를 위조한 요청으로 확인하기 전에는
-보장으로 쓰지 않는다. `internalProxies` 를 지정하지 않으면 사설 대역(`10.0.0.0/8` 등)이 기본값이고, 첫 번째
-프록시는 신뢰하지 않는 요청에서 온 전달 헤더를 지워야 한다.[R8] 따라서 `server.forward-headers-strategy=native`
-와 실제 프록시 대역을 반영한 `server.tomcat.remoteip.internal-proxies` 를 함께 설정해야 한다. 실제 프록시
-대역과 첫 프록시의 헤더 제거는 이번 PR 에서 확인하지 않았다. 세 필터가 공유하는 해석기를 직접 만드는
-방법도 있지만 프록시가 늘 때마다 코드를 고쳐야 하므로 Tomcat 설정을 쓰는 방향을 유지한다.
+### 공유 해석기를 기준으로 삼는 이유
+
+Tomcat 의 Remote IP Valve 에 맡기는 방법도 있다. 이 Valve 는 신뢰하거나 내부 프록시로 설정된 프록시가
+`remoteIpHeader` 에 남긴 항목을 믿는다.[R8] 지금은 해석기를 기준으로 삼는다. 이유는 넷이다.
+
+1. **현재 구성에서 두 방법이 같은 값을 낸다.** ALB 는 TCP 피어라 자기 IP 를 헤더에 넣지 않고 받은 헤더 끝에
+   실제 접속 IP 를 덧붙인다. 맨 오른쪽 항목이 공인 IP 라 Valve 가 걷어 낼 항목이 없고, 그 값이 그대로
+   `getRemoteAddr()` 가 된다. 이 설명은 Tomcat 이 오른쪽부터 처리한다는 구현에 기대고 있어서, 공식 문서가
+   보장하는 사실이 아니다.[R8]
+2. **Tomcat 방식은 저장소 밖 확인이 선행 조건이다.** 실제 프록시 대역과 첫 프록시가 전달 헤더를 지우는지가
+   확인되지 않았다(lunch-catch/lc-infra#25). 해석기는 그 확인 없이 지금 맞는 값을 낸다.
+3. **`internalProxies` 기본값은 사설 대역 전체를 프록시로 본다.**[R8] VPC 안에서 ALB 를 거쳐 들어오는
+   클라이언트의 IP 는 사설이라 함께 걷혀 나가고, 남는 항목이 없으면 ALB 의 IP 가 `getRemoteAddr()` 가
+   된다. 그러면 시도 횟수 제한이 그 트래픽 전체를 한 바구니로 묶는다. 해석기는 마지막 항목을 그대로 쓰므로
+   사설이든 공인이든 구분이 남는다.
+4. **비용 차이가 크다.** 해석기는 구현과 테스트가 끝나 있다. Tomcat 방식은 설정 변경, 프록시 대역 합의,
+   세 필터 되돌리기가 필요한데 1번에서 보듯 얻는 값은 같다.
+
+### 두 방법을 함께 켜지 않는다
+
+`server.forward-headers-strategy` 와 `server.tomcat.remoteip.internal-proxies` 를 켜면서 해석기도 쓰면
+위조한 IP 가 들어온다. Valve 는 신뢰 대역에 해당하는 항목을 `X-Forwarded-For` 에서 걷어 내 `getRemoteAddr()`
+로 옮기고 남은 항목만 헤더에 다시 쓴다. 남는 것은 클라이언트가 보낸 항목이다. 그 뒤에 마지막 항목을 읽는
+해석기가 돌면 위조한 값을 클라이언트 IP 로 돌려준다. 이 조합은 #722 가 막은 구멍을 다시 연다. 지금은
+`forward-headers-strategy` 를 설정하지 않아 문제가 없다.
+
+### Tomcat 방식으로 넘어가는 조건
+
+틀렸다는 뜻이 아니라 지금 쓰지 않는다는 뜻이다. 아래 가운데 하나가 생기면 넘어간다. 그때는 해석기를
+걷어 내고 Valve 설정으로 바꾼다.
+
+- **ALB 앞에 프록시가 하나 더 붙는다.** 마지막 항목이 그 프록시의 IP 를 가리키므로, 신뢰 대역으로
+  판단하는 Tomcat 방식이 맞다.
+- **`X-Forwarded-Proto` 나 `X-Forwarded-Host` 가 필요해진다.** 쿠키의 `Secure` 판정이나 리다이렉트 URL
+  생성이 그렇다. Valve 는 그것까지 함께 처리하고 해석기는 IP 만 본다.
+- **클라이언트 IP 를 보는 코드가 세 필터 밖으로 늘어난다.** Valve 는 `getRemoteAddr()` 하나로 전부 맞춘다.
+  해석기 아래에서 새 코드가 `getRemoteAddr()` 를 그냥 부르면 ALB 의 IP 를 받는다.
+
+`getRemoteAddr()` 호출은 `ArchitectureTest` 가 `ClientIpResolver` 밖에서 막는다. `X-Forwarded-For` 를
+`getHeader` 로 읽는 코드는 문자열 인자라 ArchUnit 이 못 잡아서 리뷰에서 막는다.
 
 ## 6. 외부 호출 로그가 경로만 남기는 이유
 
