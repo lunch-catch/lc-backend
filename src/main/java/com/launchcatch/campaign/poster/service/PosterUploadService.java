@@ -63,7 +63,7 @@ public class PosterUploadService {
     private static final int TITLE_MAX_LENGTH = 100;
     private static final Set<String> ALLOWED_CONTENT_TYPES = Set.of("image/jpeg", "image/png");
     private static final Duration PRESIGN_DURATION = Duration.ofMinutes(10);
-    private static final DateTimeFormatter PERIOD_FORMAT = DateTimeFormatter.ofPattern("MM.dd");
+    private static final DateTimeFormatter PERIOD_TIME_FORMAT = DateTimeFormatter.ofPattern("HH:mm");
 
     private final CampaignRepository campaignRepository;
     private final TemplateRepository templateRepository;
@@ -104,7 +104,6 @@ public class PosterUploadService {
         validateFileSize(fileSize);
 
         Campaign campaign = findDraftCampaign(ownerId, campaignId);
-        requirePeriod(campaign);
 
         String objectKey = buildObjectKey(campaignId, contentType);
         String uploadUrl = presign(objectKey, contentType, fileSize);
@@ -116,7 +115,6 @@ public class PosterUploadService {
         validateObjectKey(campaignId, objectKey);
 
         Campaign campaign = findDraftCampaign(ownerId, campaignId);
-        requirePeriod(campaign);
         Template template = findUsableTemplate(templateId);
 
         // 캠페인 잠금과 상관없는 다른 도메인 조회라 잠금을 잡기 전에 끝낸다(셀프 리뷰로 찾음).
@@ -198,14 +196,6 @@ public class PosterUploadService {
         }
     }
 
-    // 캠페인 등록 1단계만 끝낸 DRAFT는 집행 기간이 비어 있을 수 있다(V3__campaign_draft_nullable.sql).
-    // discount/period 문구를 만들기 전에 막아야 널 포인터가 아니라 업무 오류로 알려준다(코드래빗 리뷰로 찾음).
-    private void requirePeriod(Campaign campaign) {
-        if (campaign.getStartDate() == null || campaign.getEndDate() == null) {
-            throw new CampaignException(PosterErrorCode.CAMPAIGN_PERIOD_NOT_SET);
-        }
-    }
-
     private Template findUsableTemplate(Long templateId) {
         Template template = templateRepository.findById(templateId)
                 .orElseThrow(() -> new CampaignException(PosterErrorCode.TEMPLATE_NOT_FOUND));
@@ -244,8 +234,14 @@ public class PosterUploadService {
                 });
     }
 
+    /*
+     * 포스터의 기간 문구는 집행 기간(날짜)이 아니라 쿠폰 사용 가능 시간이다(#763). 등록 순서가 쿠폰 조건, 포스터,
+     * 노출 대상, 하루 예산과 집행 기간이라 포스터를 만들 때는 집행 기간이 아직 없을 수 있고, 쿠폰 사용 시간은
+     * 1단계에서 이미 저장된다. 시드 포스터의 기간 문구(매일 11:00 ~ 14:00)와 같은 형식이다.
+     */
     private String formatPeriod(Campaign campaign) {
-        return campaign.getStartDate().format(PERIOD_FORMAT) + "~" + campaign.getEndDate().format(PERIOD_FORMAT);
+        return "매일 " + campaign.getUsableStartTime().format(PERIOD_TIME_FORMAT)
+                + " ~ " + campaign.getUsableEndTime().format(PERIOD_TIME_FORMAT);
     }
 
     private String truncateTitle(String title) {

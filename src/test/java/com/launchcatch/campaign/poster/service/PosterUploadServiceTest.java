@@ -151,13 +151,16 @@ class PosterUploadServiceTest {
     }
 
     @Test
-    @DisplayName("집행 기간이 비어 있으면 업로드 준비를 거부한다")
-    void 집행_기간이_없으면_준비를_거부한다() {
+    @DisplayName("집행 기간이 비어 있어도 업로드 준비가 통과한다(#763, 등록 순서가 포스터 다음에 집행 기간이다)")
+    void 집행_기간이_없어도_준비가_통과한다() throws Exception {
         when(campaignRepository.findById(CAMPAIGN_ID)).thenReturn(Optional.of(draftCampaignWithoutPeriod()));
+        when(s3Presigner.presignPutObject(any(PutObjectPresignRequest.class))).thenReturn(presignedPutObjectRequest);
+        when(presignedPutObjectRequest.url()).thenReturn(new URL("https://example.com/presigned"));
 
-        assertThatThrownBy(() -> service.prepareImageUpload(OWNER_ID, CAMPAIGN_ID, "image/jpeg", 1000L))
-                .isInstanceOfSatisfying(CampaignException.class, e ->
-                        assertThat(e.getErrorCode()).isEqualTo(PosterErrorCode.CAMPAIGN_PERIOD_NOT_SET));
+        PosterImagePrepareUploadResponse response =
+                service.prepareImageUpload(OWNER_ID, CAMPAIGN_ID, "image/jpeg", 1000L);
+
+        assertThat(response.uploadUrl()).isEqualTo("https://example.com/presigned");
     }
 
     @Test
@@ -175,13 +178,15 @@ class PosterUploadServiceTest {
     }
 
     @Test
-    @DisplayName("집행 기간이 비어 있으면 생성을 거부한다")
-    void 집행_기간이_없으면_거부한다() {
-        when(campaignRepository.findById(CAMPAIGN_ID)).thenReturn(Optional.of(draftCampaignWithoutPeriod()));
+    @DisplayName("집행 기간이 비어 있어도 쿠폰 사용 시간으로 기간 문구를 만들어 포스터를 만든다(#763)")
+    void 집행_기간이_없어도_포스터를_만든다() {
+        Campaign campaign = draftCampaignWithoutPeriod();
+        Template template = publishedActiveTemplate();
+        givenHappyPath(campaign, template);
 
-        assertThatThrownBy(() -> service.createOrOverwritePoster(OWNER_ID, CAMPAIGN_ID, TEMPLATE_ID, OBJECT_KEY))
-                .isInstanceOfSatisfying(CampaignException.class, e ->
-                        assertThat(e.getErrorCode()).isEqualTo(PosterErrorCode.CAMPAIGN_PERIOD_NOT_SET));
+        PosterCreateResponse response = service.createOrOverwritePoster(OWNER_ID, CAMPAIGN_ID, TEMPLATE_ID, OBJECT_KEY);
+
+        assertThat(response.html()).contains("매일 12:00 ~ 13:30");
     }
 
     @Test
@@ -329,7 +334,7 @@ class PosterUploadServiceTest {
         assertThat(response.title()).isEqualTo("분식집 - 가을 신메뉴");
         assertThat(response.html()).contains("분식집")
                 .contains("전체 메뉴 10원 할인")
-                .contains("10.01~10.31")
+                .contains("매일 12:00 ~ 13:30")
                 .doesNotContain("adLabel")
                 .doesNotContain("광고")
                 .contains("https://cdn.example.com/" + OBJECT_KEY);
