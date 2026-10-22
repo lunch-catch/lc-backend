@@ -32,7 +32,8 @@ public class OwnerStatusCacheInvalidationService {
                 try {
                     cache.delete(ownerId);
                 } catch (DataAccessException e) {
-                    log.warn("event=OWNER_STATUS_CACHE_INVALIDATION_FAILED ownerId={} exceptionType={} fallback=TTL_EXPIRY", ownerId, e.getClass().getSimpleName());
+                    log.warn("event=OWNER_STATUS_CACHE_INVALIDATION_FAILED ownerId={} exceptionType={} fallback=TTL_EXPIRY",
+                            ownerId, e.getClass().getSimpleName(), e);
                 }
             }
         });
