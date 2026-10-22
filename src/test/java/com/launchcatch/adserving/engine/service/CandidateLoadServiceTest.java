@@ -136,6 +136,21 @@ class CandidateLoadServiceTest {
         assertThat(skipped("menu_missing")).isEqualTo(1);
     }
 
+    // 캠페인의 연령대에 중복이 있어도 한 번씩만 넣는다. 저장값에 중복이 남지 않게 한다(#783)
+    @Test
+    void 연령대의_중복은_한_번씩만_적재한다() {
+        CampaignInfo duplicated = new CampaignInfo(101L, 1L, 55L, CampaignStatus.ACTIVE, 30, LocalTime.of(12, 0),
+                LocalTime.of(14, 0), TODAY.minusDays(3), TODAY.plusDays(3), DiscountTargetType.ALL, DiscountType.PERCENT, 20,
+                null, 1000, TargetGender.ALL, List.of(AgeGroup.AGE_20S, AgeGroup.AGE_20S, AgeGroup.AGE_30S),
+                LocalDateTime.of(2026, 9, 1, 9, 0), LocalDate.of(2026, 10, 3), CHANGED_AT, null, 10_000L);
+        when(campaignQueryService.findServableOn(TODAY)).thenReturn(List.of(duplicated));
+        when(storeQueryService.findAdCandidatesByStoreIds(anyList())).thenReturn(List.of(store(55)));
+
+        service.load(TODAY);
+
+        assertThat(upserted()).extracting(CandidateRow::targetAgeGroups).containsExactly("AGE_20S,AGE_30S");
+    }
+
     /*
      * 캠페인의 메뉴가 다른 가게의 메뉴면 그 가게가 팔지 않는 메뉴의 할인이 카드에 나간다.
      * 가게 계약이 이 확인을 광고 서빙에 맡겼다(store-query-contract.md). 메뉴를 찾지 못한 것과 같이 뺀다(#783).

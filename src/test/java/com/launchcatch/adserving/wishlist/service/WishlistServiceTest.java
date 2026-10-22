@@ -442,4 +442,20 @@ class WishlistServiceTest {
 
         verify(wishlistRepository).markCampaignEnded(101L, endedAt, LocalDateTime.now(CLOCK));
     }
+
+    // 넣은 뒤 같은 사용자의 찜 삭제가 먼저 커밋되면 다시 읽을 찜이 없다. 찜하고 지운 순서대로 끝난 것이라 성공으로 답한다(#783)
+    @Test
+    void 넣은_찜이_곧바로_지워져도_넣은_값과_지금_시각으로_답한다() {
+        when(adCandidateRepository.findByIdBusinessDateAndIdCampaignId(BUSINESS_DATE, 101L))
+                .thenReturn(Optional.of(candidate(101, 37.4979, 127.0276).build()));
+        when(wishlistRepository.insertIgnore(any())).thenReturn(true);
+        when(wishlistRepository.findByMemberIdAndCampaignId(MEMBER_ID, 101L)).thenReturn(Optional.empty());
+
+        WishResult result = service.wish(MEMBER_ID, 101L);
+
+        assertThat(result.created()).isTrue();
+        assertThat(result.item().campaignId()).isEqualTo(101L);
+        assertThat(result.item().storeId()).isEqualTo(1101L);
+        assertThat(result.item().wishedAt()).isEqualTo(OffsetDateTime.now(CLOCK));
+    }
 }

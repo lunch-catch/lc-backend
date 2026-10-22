@@ -37,6 +37,15 @@ public record WishlistItemResponse(
                 wish.isCampaignEnded(), wishedAt);
     }
 
+    // 넣은 찜이 곧바로 지워져 다시 읽을 행이 없을 때다. 그날 후보로 채우고 찜한 시각은 부르는 쪽이 준다(#783)
+    public static WishlistItemResponse notStored(Long campaignId, AdCandidate candidate, OffsetDateTime wishedAt) {
+        return new WishlistItemResponse(campaignId, candidate.getStoreId(), candidate.getStoreName(),
+                candidate.getStoreImageUrl(),
+                new Discount(candidate.getDiscountTarget(), candidate.getDiscountType(), candidate.getDiscountValue(),
+                        candidate.getDiscountMenuName()),
+                false, wishedAt);
+    }
+
     public record Discount(
             @Schema(description = "ALL(전체 메뉴), MENU(특정 메뉴)")
             DiscountTarget target,

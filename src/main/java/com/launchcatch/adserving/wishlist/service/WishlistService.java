@@ -77,9 +77,14 @@ public class WishlistService implements WishlistQueryService {
                 Wishlist.fromStoreDetail(memberId, campaignId, candidate.getStoreId()));
         exclusionRepository.add(today, memberId, campaignId, now);
         endIfCampaignEnded(campaignId);
-        // 이미 찜했으면 처음 찜한 시각을 돌려줘야 해서 넣은 뒤 다시 읽는다
-        Wishlist wish = wishlistRepository.findByMemberIdAndCampaignId(memberId, campaignId).orElseThrow();
-        return new WishResult(created, WishlistItemResponse.of(wish, candidate));
+        /*
+         * 이미 찜했으면 처음 찜한 시각을 돌려줘야 해서 넣은 뒤 다시 읽는다.
+         * 그사이 같은 사용자의 찜 삭제가 커밋됐으면 읽을 찜이 없다. 찜하고 지운 순서대로 끝난 것이라 넣은 값과 지금 시각으로 답한다(#783).
+         */
+        WishlistItemResponse item = wishlistRepository.findByMemberIdAndCampaignId(memberId, campaignId)
+                .map(wish -> WishlistItemResponse.of(wish, candidate))
+                .orElseGet(() -> WishlistItemResponse.notStored(campaignId, candidate, now.atZone(ClockConfig.ZONE).toOffsetDateTime()));
+        return new WishResult(created, item);
     }
 
     /*
