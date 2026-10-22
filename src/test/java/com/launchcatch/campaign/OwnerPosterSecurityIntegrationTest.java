@@ -163,7 +163,7 @@ class OwnerPosterSecurityIntegrationTest extends AbstractCampaignIntegrationTest
 
         mvc.perform(get(getPath(campaign.getId())).cookie(ownerToken(ownerId)))
                 .andExpect(status().isNotFound())
-                .andExpect(jsonPath("$.code").value("POSTER-021"));
+                .andExpect(jsonPath("$.code").value("POSTER-020"));
     }
 
     /** 점주용 조회는 캠페인 상태를 보지 않는다. DRAFT에서도 저장된 포스터를 돌려준다. */

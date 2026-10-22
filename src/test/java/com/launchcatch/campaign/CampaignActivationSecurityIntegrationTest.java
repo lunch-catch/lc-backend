@@ -129,7 +129,7 @@ class CampaignActivationSecurityIntegrationTest extends AbstractCampaignIntegrat
 
         mvc.perform(post(activatePath(campaign.getId())).cookie(ownerToken(ownerId)))
                 .andExpect(status().isNotFound())
-                .andExpect(jsonPath("$.code").value("POSTER-021"));
+                .andExpect(jsonPath("$.code").value("POSTER-020"));
     }
 
     @Test
