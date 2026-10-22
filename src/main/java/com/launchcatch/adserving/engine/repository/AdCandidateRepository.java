@@ -62,7 +62,10 @@ public interface AdCandidateRepository extends JpaRepository<AdCandidate, AdCand
     int markSoldOut(@Param("businessDate") LocalDate businessDate, @Param("campaignId") Long campaignId,
             @Param("soldOutAt") LocalDateTime soldOutAt, @Param("now") LocalDateTime now);
 
-    // 그날 후보의 서빙 상태를 바꾼다. 가진 전이 시각보다 늦은 통보만 반영해 다시 오거나 순서가 바뀌어도 결과가 같다(#565)
+    /*
+     * 그날 후보의 서빙 상태를 바꾼다.
+     * 가진 전이 시각보다 늦은 통보만 반영해 다시 오거나 순서가 바뀌어도 결과가 같다(#565).
+     */
     @Modifying
     @Query(value = """
             UPDATE ad_candidate
