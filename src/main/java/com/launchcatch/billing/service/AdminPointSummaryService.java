@@ -11,7 +11,6 @@ import com.launchcatch.billing.repository.BusinessDateSumRow;
 import com.launchcatch.billing.repository.FlowRow;
 import com.launchcatch.billing.repository.PointLedgerRepository;
 import com.launchcatch.global.exception.CommonErrorCode;
-import java.time.Clock;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -41,7 +40,6 @@ import org.springframework.transaction.annotation.Transactional;
 public class AdminPointSummaryService {
 
     private final PointLedgerRepository pointLedgerRepository;
-    private final Clock clock;
 
     public AdminPointSummaryResponse summarize(Long ownerId, SummaryPeriod period,
                                                LocalDate from, LocalDate to, String sortDir) {
@@ -101,17 +99,20 @@ public class AdminPointSummaryService {
             (row.entryType() == EntryType.RESERVE ? reserve : release).put(row.businessDate(), row.amount());
         }
 
-        LocalDate today = LocalDate.now(clock);
+        Map<LocalDate, Long> deduct = new HashMap<>();
+        for (BusinessDateSumRow row : pointLedgerRepository.sumDeductByServedBusinessDate(
+                ownerId, range.from(), range.to())) {
+            deduct.put(row.businessDate(), row.amount());
+        }
+
         Set<LocalDate> dates = new HashSet<>(reserve.keySet());
         dates.addAll(release.keySet());
+        dates.addAll(deduct.keySet());
         for (LocalDate date : dates) {
             long reserved = -reserve.getOrDefault(date, 0L);
             long released = release.getOrDefault(date, 0L);
-            // 오늘은 해제 전일 수 있어 DEDUCT 를 직접 읽고, 지난 날은 예약에서 해제를 뺀 값이 곧 소진이다
-            long spent = date.equals(today) && released == 0
-                    ? -pointLedgerRepository.sumByCreatedAt(ownerId, EntryType.DEDUCT,
-                            date.atStartOfDay(), date.plusDays(1).atStartOfDay())
-                    : reserved - released;
+            // 소진은 DEDUCT 를 서빙 영업일로 읽는다. 자정 뒤에 기록된 전날 노출도 전날에 들어간다
+            long spent = -deduct.getOrDefault(date, 0L);
             byDate.get(date).addReservation(reserved, released, spent);
         }
     }

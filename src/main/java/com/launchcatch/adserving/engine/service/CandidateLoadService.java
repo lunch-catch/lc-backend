@@ -80,7 +80,7 @@ public class CandidateLoadService {
         }
         adCandidateRepository.upsertAll(rows, readAt, LocalDateTime.now(clock));
         adCandidateRepository.deleteByBusinessDateBefore(businessDate.minusDays(RETENTION_DAYS));
-        log.info("event=CANDIDATE_LOADED businessDate={} campaigns={} loaded={}", businessDate, campaigns.size(), rows.size());
+        log.info("event=ADSERVING_CANDIDATE_LOADED businessDate={} campaignCount={} loadedCount={}", businessDate, campaigns.size(), rows.size());
         return loaded;
     }
 

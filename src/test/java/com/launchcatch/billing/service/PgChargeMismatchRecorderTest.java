@@ -1,14 +1,19 @@
 package com.launchcatch.billing.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 import com.launchcatch.billing.entity.EntryType;
 import com.launchcatch.billing.entity.LedgerSource;
 import com.launchcatch.billing.entity.Payment;
+import com.launchcatch.billing.entity.PgChargeReconciliationPending;
 import com.launchcatch.billing.entity.PointLedger;
 import com.launchcatch.billing.repository.PointLedgerRepository;
+import com.launchcatch.billing.repository.PgChargeReconciliationPendingRepository;
 import com.launchcatch.billing.repository.SettlementMismatchRepository;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -28,8 +33,9 @@ class PgChargeMismatchRecorderTest {
 
     private final PointLedgerRepository ledgerRepository = mock(PointLedgerRepository.class);
     private final SettlementMismatchRepository mismatchRepository = mock(SettlementMismatchRepository.class);
+    private final PgChargeReconciliationPendingRepository pendingRepository = mock(PgChargeReconciliationPendingRepository.class);
     private final PgChargeMismatchRecorder recorder =
-            new PgChargeMismatchRecorder(ledgerRepository, mismatchRepository);
+            new PgChargeMismatchRecorder(ledgerRepository, mismatchRepository, pendingRepository);
 
     private static Payment payment() {
         Payment payment = Payment.order(OWNER_ID, "ord_20261015_abc", AMOUNT);
@@ -58,6 +64,36 @@ class PgChargeMismatchRecorderTest {
         recorder.recordMismatch(PAYMENT_ID, 900L, 1000L, PREV, RUN_ID, NOW);
 
         verify(mismatchRepository).insertPgChargeMismatchIfAbsent(PREV, PAYMENT_ID, 900L, 1000L, RUN_ID, NOW);
+    }
+
+    @Test
+    void 재검증_대기_행이_없으면_새로_남긴다() {
+        when(pendingRepository.existsByPaymentId(PAYMENT_ID)).thenReturn(false);
+
+        recorder.recordPending(PAYMENT_ID, PREV, "PG inquiry failed");
+
+        ArgumentCaptor<PgChargeReconciliationPending> captor =
+                ArgumentCaptor.forClass(PgChargeReconciliationPending.class);
+        verify(pendingRepository).save(captor.capture());
+        assertThat(captor.getValue().getPaymentId()).isEqualTo(PAYMENT_ID);
+        assertThat(captor.getValue().getBusinessDate()).isEqualTo(PREV);
+        assertThat(captor.getValue().getLastError()).isEqualTo("PG inquiry failed");
+    }
+
+    @Test
+    void 재검증_대기_행이_이미_있으면_다시_남기지_않는다() {
+        when(pendingRepository.existsByPaymentId(PAYMENT_ID)).thenReturn(true);
+
+        recorder.recordPending(PAYMENT_ID, PREV, "PG inquiry failed");
+
+        verify(pendingRepository, never()).save(any());
+    }
+
+    @Test
+    void 재검증_대기_행을_해소한다() {
+        recorder.resolvePending(PAYMENT_ID);
+
+        verify(pendingRepository).deleteByPaymentId(PAYMENT_ID);
     }
 
     @Test

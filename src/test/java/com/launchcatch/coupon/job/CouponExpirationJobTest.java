@@ -63,13 +63,25 @@ class CouponExpirationJobTest {
     }
 
     @Test
-    void 실패한_작업은_반복_스케줄로_재시도_상한을_초기화하지_않는다() {
+    void 실패한_작업도_다음_주기에_다시_점유해_남은_쿠폰을_처리한다() {
+        when(expiration.expiringDates()).thenReturn(List.of(DATE));
+        when(query.findByBusinessDate(DATE)).thenReturn(List.of(record("FAILED", 1)), List.of(record("RUNNING", 2)));
+        when(executions.rerun("COUPON_EXPIRE", DATE)).thenReturn(true);
+        when(expiration.expire(DATE, 2)).thenReturn(2);
+
+        job.expireCoupons();
+
+        verify(executions).succeedAttempt("COUPON_EXPIRE", DATE, 2, 2);
+    }
+
+    @Test
+    void 실패한_작업의_재점유에_실패하면_만료_처리를_시작하지_않는다() {
         when(expiration.expiringDates()).thenReturn(List.of(DATE));
         when(query.findByBusinessDate(DATE)).thenReturn(List.of(record("FAILED", 1)));
 
         job.expireCoupons();
 
-        verifyNoInteractions(executions);
+        verify(executions).rerun("COUPON_EXPIRE", DATE);
         verify(expiration, never()).expire(any(), org.mockito.ArgumentMatchers.anyInt());
     }
 

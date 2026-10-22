@@ -3,6 +3,7 @@ package com.launchcatch.billing.service;
 import com.launchcatch.billing.entity.BudgetDailyPlan;
 import com.launchcatch.billing.entity.EntryType;
 import com.launchcatch.billing.entity.PointLedger;
+import com.launchcatch.billing.dto.CampaignSpend;
 import com.launchcatch.billing.repository.BudgetDailyPlanRepository;
 import com.launchcatch.billing.repository.PointAccountRepository;
 import com.launchcatch.billing.repository.PointLedgerRepository;
@@ -13,6 +14,7 @@ import java.time.Clock;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
@@ -148,6 +150,31 @@ public class DailyReservationRecorder {
         for (PointLedger release : releases) {
             ledgerRepository.insertReleaseIfAbsent(release.getOwnerId(), release.getCampaignId(),
                     release.getBusinessDate(), release.getAmount(), now);
+        }
+    }
+
+    /*
+     * 잠금 뒤에 최신 계획과 소진을 다시 읽어 남은 예약만 해제한다. 충전 재예약이 계획을 늘린 뒤에도
+     * 이전 계획으로 부족하게 해제하지 않도록 계산과 기록을 같은 점주 트랜잭션에 둔다.
+     */
+    @Transactional
+    public void releaseForOwner(Long ownerId, LocalDate businessDate, List<Long> campaignIds) {
+        LocalDateTime now = LocalDateTime.now(clock);
+        accountRepository.createIfAbsent(ownerId, now);
+        accountRepository.lockByOwnerId(ownerId);
+        List<BudgetDailyPlan> plans = planRepository.findByBusinessDateAndCampaignIdIn(businessDate, campaignIds);
+        Set<Long> released = ledgerRepository.findReleasedCampaignIds(Set.of(ownerId), businessDate).stream()
+                .collect(Collectors.toSet());
+        Map<Long, Long> spends = ledgerRepository.sumDeductForCampaignsOn(campaignIds, businessDate).stream()
+                .collect(Collectors.toMap(CampaignSpend::campaignId, CampaignSpend::spend));
+        for (BudgetDailyPlan plan : plans) {
+            if (!ownerId.equals(plan.getOwnerId()) || released.contains(plan.getCampaignId())) {
+                continue;
+            }
+            long left = plan.getDailyBudget() - spends.getOrDefault(plan.getCampaignId(), 0L);
+            if (left > 0) {
+                ledgerRepository.insertReleaseIfAbsent(ownerId, plan.getCampaignId(), businessDate, left, now);
+            }
         }
     }
 

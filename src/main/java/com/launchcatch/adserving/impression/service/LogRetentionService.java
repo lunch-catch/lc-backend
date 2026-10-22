@@ -40,7 +40,7 @@ public class LogRetentionService {
         int swipes = deleteAll(swipeLogRepository::deleteBusinessDateBefore, businessDate.minusDays(SWIPE_DAYS - 1));
         int serves = deleteAll(serveLogRepository::deleteBusinessDateBefore, logBefore);
         int impressions = deleteAll(impressionLogRepository::deleteBusinessDateBefore, logBefore);
-        log.info("event=ADSERVING_LOG_PURGED businessDate={} visits={} swipes={} serves={} impressions={}",
+        log.info("event=ADSERVING_LOG_PURGED businessDate={} visitCount={} swipeCount={} serveCount={} impressionCount={}",
                 businessDate, visits, swipes, serves, impressions);
         return visits + swipes + serves + impressions;
     }

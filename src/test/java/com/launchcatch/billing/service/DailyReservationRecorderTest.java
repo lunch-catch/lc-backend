@@ -15,6 +15,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.launchcatch.billing.entity.BudgetDailyPlan;
+import com.launchcatch.billing.dto.CampaignSpend;
 import com.launchcatch.billing.entity.EntryType;
 import com.launchcatch.billing.entity.PointLedger;
 import com.launchcatch.billing.repository.BudgetDailyPlanRepository;
@@ -32,6 +33,7 @@ import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -233,6 +235,24 @@ class DailyReservationRecorderTest {
     }
 
     @Test
+    void 잠근_뒤_최신_계획과_소진을_읽어_남은_예약만_해제한다() {
+        when(planRepository.findByBusinessDateAndCampaignIdIn(DAY, List.of(1L, 2L))).thenReturn(List.of(
+                BudgetDailyPlan.create(1L, OWNER, DAY, 5000L, UNIT, false, CHANGED_AT),
+                BudgetDailyPlan.create(2L, OWNER, DAY, 1000L, UNIT, false, CHANGED_AT)));
+        when(ledgerRepository.findReleasedCampaignIds(Set.of(OWNER), DAY)).thenReturn(List.of(2L));
+        when(ledgerRepository.sumDeductForCampaignsOn(List.of(1L, 2L), DAY))
+                .thenReturn(List.of(new CampaignSpend(1L, 3000L)));
+
+        recorder.releaseForOwner(OWNER, DAY, List.of(1L, 2L));
+
+        InOrder order = inOrder(accountRepository, planRepository, ledgerRepository);
+        order.verify(accountRepository).lockByOwnerId(OWNER);
+        order.verify(planRepository).findByBusinessDateAndCampaignIdIn(DAY, List.of(1L, 2L));
+        order.verify(ledgerRepository).insertReleaseIfAbsent(OWNER, 1L, DAY, 2000L, LocalDateTime.now(CLOCK));
+        verify(ledgerRepository, never()).insertReleaseIfAbsent(OWNER, 2L, DAY, 1000L, LocalDateTime.now(CLOCK));
+    }
+
+    @Test
     void 보정_해제에_RELEASE가_아니거나_다른_점주의_원장을_넘기면_잠그기_전에_거부한다() {
         List<PointLedger> reserves = List.of(PointLedger.reserve(OWNER, 1L, DAY, 2000L));
         List<PointLedger> others = List.of(PointLedger.release(8L, 2L, DAY.minusDays(1), 500L));
@@ -265,6 +285,8 @@ class DailyReservationRecorderTest {
         assertThat(DailyReservationRecorder.class.getMethod("reserveForOwner", Long.class, List.class,
                 LocalDate.class, long.class).isAnnotationPresent(Transactional.class)).isTrue();
         assertThat(DailyReservationRecorder.class.getMethod("releaseForOwner", Long.class, List.class)
+                .isAnnotationPresent(Transactional.class)).isTrue();
+        assertThat(DailyReservationRecorder.class.getMethod("releaseForOwner", Long.class, LocalDate.class, List.class)
                 .isAnnotationPresent(Transactional.class)).isTrue();
         assertThat(DailyReservationRecorder.class.getMethod("confirmStatus", List.class, LocalDate.class)
                 .isAnnotationPresent(Transactional.class)).isTrue();

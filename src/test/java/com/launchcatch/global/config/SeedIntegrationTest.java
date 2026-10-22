@@ -167,10 +167,10 @@ class SeedIntegrationTest extends IntegrationTestSupport {
         assertThat(count("SELECT COUNT(DISTINCT business_date) FROM coupon_event "
                 + "WHERE campaign_id IN (9017, 9018)")).isEqualTo(15);
         assertThat(count("SELECT current_count FROM template_quota")).isEqualTo(1);
-        // 시드 포스터는 모두 이미지 주소를 CDN 주소와 이미지 key 로 갖는다. 피드의 포스터 조회가 그대로 그린다
+        // 시드 포스터는 모두 이미지 주소를 CDN 주소와 이미지 key 로 갖고, 이미지 칸을 채우는 스타일(#731)을 유지한다. 피드의 포스터 조회가 그대로 그린다
         assertThat(count("SELECT COUNT(*) FROM poster WHERE (poster_id BETWEEN 9001 AND 9016 OR poster_id BETWEEN 9101 AND 9200) "
                 + "AND html_content NOT LIKE "
-                + "CONCAT('%<img data-slot=\"image\" alt=\"메뉴 이미지\" src=\"" + CDN + "/', image_object_key, '\">%')"))
+                + "CONCAT('%<img data-slot=\"image\" alt=\"메뉴 이미지\" style=\"flex:1;min-height:0;width:100%;object-fit:cover\" src=\"" + CDN + "/', image_object_key, '\">%')"))
                 .isZero();
     }
 

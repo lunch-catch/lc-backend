@@ -62,7 +62,7 @@ public class ServeRecordRepository {
                 }
             });
         } catch (DataAccessException e) {
-            log.warn("event=FEED_SERVE_RECORD_WRITE_FAILED cards={} cause={} 기록 없이 내보낸다",
+            log.warn("event=ADSERVING_FEED_SERVE_RECORD_WRITE_FAILED cardCount={} reason={} fallback=SKIP_WRITE",
                     records.size(), RedisFailureClassifier.causeLabel(e), e);
             meterRegistry.counter(BYPASS_METRIC, "use", "serve_record").increment();
         }
@@ -77,7 +77,7 @@ public class ServeRecordRepository {
             String value = redisTemplate.opsForValue().get(key(serveId));
             return Optional.ofNullable(value).map(v -> decode(serveId, v));
         } catch (DataAccessException e) {
-            log.warn("event=FEED_SERVE_RECORD_READ_FAILED serveId={} cause={} 기록 없음으로 본다",
+            log.warn("event=ADSERVING_FEED_SERVE_RECORD_READ_FAILED serveId={} reason={} fallback=TREAT_AS_MISSING",
                     serveId, RedisFailureClassifier.causeLabel(e), e);
             meterRegistry.counter(BYPASS_METRIC, "use", "serve_record").increment();
             return Optional.empty();
