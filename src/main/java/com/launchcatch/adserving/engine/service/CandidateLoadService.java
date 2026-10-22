@@ -21,6 +21,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -62,8 +63,8 @@ public class CandidateLoadService {
         List<CampaignInfo> campaigns = campaignQueryService.findServableOn(businessDate);
         Map<Long, StoreAdCandidateInfo> stores = readStores(campaigns);
         StoreMenuQueryResult menus = readMenus(campaigns);
-        Map<Long, String> menuNames = menus.menus().stream()
-                .collect(Collectors.toMap(StoreMenuInfo::menuId, StoreMenuInfo::menuName));
+        Map<Long, StoreMenuInfo> menusById = menus.menus().stream()
+                .collect(Collectors.toMap(StoreMenuInfo::menuId, Function.identity()));
         Set<Long> invalidMenuIds = Set.copyOf(menus.invalidMenuIds());
 
         List<CandidateRow> rows = new ArrayList<>(campaigns.size());
@@ -83,12 +84,16 @@ public class CandidateLoadService {
                     skip("menu_invalid");
                     continue;
                 }
-                menuName = menuNames.get(campaign.targetMenuId());
-                // MENU 할인에 메뉴명이 없으면 CHECK chk_candidate_discount_menu 에 걸려 적재 전체가 실패한다
-                if (menuName == null) {
+                StoreMenuInfo menu = menusById.get(campaign.targetMenuId());
+                /*
+                 * MENU 할인에 메뉴명이 없으면 CHECK chk_candidate_discount_menu 에 걸려 적재 전체가 실패한다.
+                 * 다른 가게의 메뉴면 그 가게가 팔지 않는 메뉴의 할인이 나간다. 가게 계약이 이 확인을 광고 서빙에 맡겼다(#783).
+                 */
+                if (menu == null || !menu.storeId().equals(campaign.storeId())) {
                     skip("menu_missing");
                     continue;
                 }
+                menuName = menu.menuName();
             }
             rows.add(toRow(businessDate, campaign, store, menuName));
             loaded.put(campaign.campaignId(), campaign.statusChangedAt());
