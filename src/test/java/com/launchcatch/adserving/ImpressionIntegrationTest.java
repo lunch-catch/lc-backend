@@ -1,6 +1,7 @@
 package com.launchcatch.adserving;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
@@ -35,6 +36,12 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -44,6 +51,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
+import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /*
@@ -162,6 +170,45 @@ class ImpressionIntegrationTest extends AbstractAdservingIntegrationTest {
         assertThat(rows()).isEqualTo(1);
         verify(pointDeductor, times(1)).deduct(any(), any(), any());
         assertThat(counter()).isEqualTo("1");
+        // 올리기와 만료를 한 스크립트로 보내 카운터에 만료가 걸려 있다(#783)
+        assertThat(redisTemplate.getExpire(COUNTER_KEY)).isPositive();
+    }
+
+    /*
+     * 먼저 온 요청이 넣고 차감 중일 때 늦은 요청이 중복 확인을 지나 넣기에서 기다린다. 늦은 요청의 스냅샷에는 먼저 넣은 행이 없다.
+     * 먼저 온 요청이 커밋한 뒤 늦은 요청도 그 판정을 돌려주고 차감하지 않는지 본다(#781).
+     */
+    @Test
+    void 같은_노출이_동시에_오면_늦은_요청도_먼저_저장된_판정을_돌려주고_한_번만_차감한다() throws Exception {
+        CountDownLatch deducting = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        doAnswer(invocation -> {
+            deducting.countDown();
+            if (!release.await(10, TimeUnit.SECONDS)) {
+                throw new IllegalStateException("timeout");
+            }
+            return DeductionStatus.BILLED;
+        }).when(pointDeductor).deduct(any(), any(), any());
+
+        try (ExecutorService pool = Executors.newFixedThreadPool(2)) {
+            Future<MvcResult> first = pool.submit(() -> send(body(serveId, 101L), Role.MEMBER).andReturn());
+            try {
+                assertThat(deducting.await(10, TimeUnit.SECONDS)).isTrue();
+                Future<MvcResult> late = pool.submit(() -> send(body(serveId, 101L), Role.MEMBER).andReturn());
+                // 늦은 요청은 먼저 넣은 행의 잠금에 걸려 끝나지 않는다. 중복 확인은 이미 지났다
+                assertThatThrownBy(() -> late.get(500, TimeUnit.MILLISECONDS)).isInstanceOf(TimeoutException.class);
+                release.countDown();
+
+                assertThat(first.get(10, TimeUnit.SECONDS).getResponse().getStatus()).isEqualTo(202);
+                MvcResult lateResult = late.get(10, TimeUnit.SECONDS);
+                assertThat(lateResult.getResponse().getStatus()).isEqualTo(202);
+                assertThat(lateResult.getResponse().getContentAsString()).contains("\"validity\":\"VALID\"");
+            } finally {
+                release.countDown();
+            }
+        }
+        assertThat(rows()).isEqualTo(1);
+        verify(pointDeductor, times(1)).deduct(any(), any(), any());
     }
 
     @Test

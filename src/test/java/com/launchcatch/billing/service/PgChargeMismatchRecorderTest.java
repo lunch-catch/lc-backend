@@ -57,6 +57,7 @@ class PgChargeMismatchRecorderTest {
         assertThat(saved.getSource()).isEqualTo(LedgerSource.RECONCILIATION);
 
         verify(mismatchRepository).insertPgChargeMismatchResolvedIfAbsent(PREV, PAYMENT_ID, AMOUNT, 0L, RUN_ID, NOW);
+        verify(pendingRepository).deleteByPaymentId(PAYMENT_ID);
     }
 
     @Test
@@ -64,6 +65,7 @@ class PgChargeMismatchRecorderTest {
         recorder.recordMismatch(PAYMENT_ID, 900L, 1000L, PREV, RUN_ID, NOW);
 
         verify(mismatchRepository).insertPgChargeMismatchIfAbsent(PREV, PAYMENT_ID, 900L, 1000L, RUN_ID, NOW);
+        verify(pendingRepository).deleteByPaymentId(PAYMENT_ID);
     }
 
     @Test

@@ -13,7 +13,10 @@ import org.springframework.transaction.annotation.Transactional;
 
 public interface WishlistRepository extends JpaRepository<Wishlist, Long>, WishlistInsert {
 
-    // 찜한 시각 내림차순이다. 같은 시각이면 나중에 넣은 행을 앞에 둔다.
+    /*
+     * 찜한 시각 내림차순이다.
+     * 같은 시각이면 나중에 넣은 행을 앞에 둔다.
+     */
     List<Wishlist> findByMemberIdOrderByCreatedAtDescIdDesc(Long memberId);
 
     Optional<Wishlist> findByMemberIdAndCampaignId(Long memberId, Long campaignId);

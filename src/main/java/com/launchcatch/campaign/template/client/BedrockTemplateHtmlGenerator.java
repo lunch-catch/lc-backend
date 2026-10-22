@@ -61,8 +61,8 @@ public class BedrockTemplateHtmlGenerator implements TemplateHtmlGenerator {
     private static final Pattern WHITESPACE = Pattern.compile("\\s+");
     private static final String AD_LABEL_SLOT = "adLabel";
 
-    /** ```html ... ``` 또는 ``` ... ``` 코드펜스 안의 내용을 뽑아낸다. */
-    private static final Pattern CODE_FENCE = Pattern.compile("```(?:html)?\\s*(.*?)```", Pattern.DOTALL);
+    /** ```html ... ``` 또는 ``` ... ``` 코드펜스 안의 내용을 뽑아낸다. 앞 공백은 소유 수량자로 먹어 내용 쪽과 겹쳐 되짚지 않는다. */
+    private static final Pattern CODE_FENCE = Pattern.compile("```(?:html)?\\s*+(.*?)```", Pattern.DOTALL);
 
     /*
      * 설명을 아예 빼라고 하면 재시도 응답에 코드펜스가 없어 extractMessage 가 빈 문자열을 돌려주고, 반영하지 못한

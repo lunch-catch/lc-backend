@@ -3,10 +3,12 @@ package com.launchcatch.adserving.feed;
 import com.launchcatch.campaign.contract.AgeGroup;
 import com.launchcatch.campaign.contract.StoreAudienceCell;
 import com.launchcatch.campaign.contract.TargetGender;
+import com.launchcatch.global.geo.BoundingBox;
 import com.launchcatch.global.geo.GeoDistance;
 import com.launchcatch.member.contract.Gender;
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -20,51 +22,52 @@ import java.util.Set;
  */
 public final class StoreAudienceCounter {
 
-    // 캠페인이 고를 수 있는 점주 반경(m)이다. 가장 넓은 반경까지만 접속 위치를 본다
+    /*
+     * 캠페인이 고를 수 있는 점주 반경(m)이다.
+     * 가장 넓은 반경까지만 접속 위치를 본다.
+     */
     static final List<Integer> RADII_M = List.of(500, 1000, 2000, 3000);
     private static final int MAX_RADIUS_M = 3000;
 
-    // 접속 위치를 나누는 격자 한 칸의 크기(도)다. 가게마다 반경 3km 상자에 걸치는 격자만 본다
+    // 가게 하나의 칸 수다. 반경 4 x 성별 3 x 연령대 4 = 48칸이다
+    public static final int CELLS_PER_STORE = RADII_M.size() * TargetGender.values().length * AgeGroup.values().length;
+
+    /*
+     * 접속 위치를 나누는 격자 한 칸의 크기(도)다.
+     * 가게마다 반경 3km 상자에 걸치는 격자만 본다.
+     */
     private static final double GRID_DEGREES = 0.05;
-    private static final double METERS_PER_DEGREE_LATITUDE = 111_320;
 
     private StoreAudienceCounter() {
     }
 
-    public static List<StoreAudienceCell> count(LocalDate businessDate, List<Store> stores,
-                                                Map<Long, List<Point>> visitsByMember, Map<Long, Profile> profiles) {
-        Map<Long, List<Located>> grid = new HashMap<>();
-        visitsByMember.forEach((memberId, points) -> {
-            Profile profile = profiles.get(memberId);
-            if (profile == null) {
-                return;
-            }
-            for (Point point : points) {
-                grid.computeIfAbsent(cell(point.latitude(), point.longitude()), k -> new ArrayList<>())
-                        .add(new Located(memberId, profile, point));
-            }
-        });
-
-        List<StoreAudienceCell> cells = new ArrayList<>(stores.size() * 48);
+    public static List<StoreAudienceCell> count(LocalDate businessDate, List<Store> stores, VisitGrid grid,
+                                                Map<Long, Profile> profiles) {
+        List<StoreAudienceCell> cells = new ArrayList<>(stores.size() * CELLS_PER_STORE);
         for (Store store : stores) {
-            cells.addAll(countStore(businessDate, store, grid));
+            cells.addAll(countStore(businessDate, store, grid, profiles));
         }
         return cells;
     }
 
-    private static List<StoreAudienceCell> countStore(LocalDate businessDate, Store store, Map<Long, List<Located>> grid) {
+    private static List<StoreAudienceCell> countStore(LocalDate businessDate, Store store, VisitGrid grid,
+                                                      Map<Long, Profile> profiles) {
         // 회원마다 가게에서 가장 가까운 접속 위치의 거리다
         Map<Long, Double> nearest = new HashMap<>();
         Map<Long, Profile> profileOf = new HashMap<>();
-        double latSpan = MAX_RADIUS_M / METERS_PER_DEGREE_LATITUDE;
-        double lngSpan = latSpan / Math.cos(Math.toRadians(store.latitude()));
-        for (long row = index(store.latitude() - latSpan); row <= index(store.latitude() + latSpan); row++) {
-            for (long col = index(store.longitude() - lngSpan); col <= index(store.longitude() + lngSpan); col++) {
-                for (Located v : grid.getOrDefault(key(row, col), List.of())) {
-                    double distance = GeoDistance.meters(store.latitude(), store.longitude(), v.point().latitude(), v.point().longitude());
+        // 거리 계산과 같은 반지름으로 원을 반드시 덮는 상자다. 상자가 원보다 작으면 격자선 너머의 회원이 빠진다(#774)
+        BoundingBox box = BoundingBox.around(store.latitude(), store.longitude(), MAX_RADIUS_M);
+        for (long row = index(box.minLatitude()); row <= index(box.maxLatitude()); row++) {
+            for (long col = index(box.minLongitude()); col <= index(box.maxLongitude()); col++) {
+                for (Located v : grid.cells.getOrDefault(key(row, col), List.of())) {
+                    Profile profile = profiles.get(v.memberId());
+                    if (profile == null) {
+                        continue;
+                    }
+                    double distance = GeoDistance.meters(store.latitude(), store.longitude(), v.latitude(), v.longitude());
                     if (distance <= MAX_RADIUS_M) {
                         nearest.merge(v.memberId(), distance, Math::min);
-                        profileOf.put(v.memberId(), v.profile());
+                        profileOf.put(v.memberId(), profile);
                     }
                 }
             }
@@ -114,13 +117,32 @@ public final class StoreAudienceCounter {
     public record Store(long storeId, double latitude, double longitude) {
     }
 
-    public record Point(double latitude, double longitude) {
-    }
-
-    // 회원의 성별과 연령대다. 둘 중 하나라도 없으면 부르는 쪽이 넘기지 않는다
+    /*
+     * 회원의 성별과 연령대다.
+     * 둘 중 하나라도 없으면 부르는 쪽이 넘기지 않는다.
+     */
     public record Profile(Gender gender, com.launchcatch.member.contract.AgeGroup ageGroup) {
     }
 
-    private record Located(long memberId, Profile profile, Point point) {
+    /*
+     * 최근 접속 위치를 격자 칸으로 나눠 담는다. 저장소가 한 행씩 넘기는 대로 넣어 접속 위치를 한 벌만 든다(#774).
+     * 프로필은 담지 않고 셀 때 회원 ID 로 찾는다. 프로필을 읽으려면 회원 ID 가 먼저 다 모여야 해서다.
+     */
+    public static final class VisitGrid {
+
+        private final Map<Long, List<Located>> cells = new HashMap<>();
+        private final Set<Long> memberIds = new HashSet<>();
+
+        public void add(long memberId, double latitude, double longitude) {
+            cells.computeIfAbsent(cell(latitude, longitude), k -> new ArrayList<>()).add(new Located(memberId, latitude, longitude));
+            memberIds.add(memberId);
+        }
+
+        public Set<Long> memberIds() {
+            return Collections.unmodifiableSet(memberIds);
+        }
+    }
+
+    private record Located(long memberId, double latitude, double longitude) {
     }
 }

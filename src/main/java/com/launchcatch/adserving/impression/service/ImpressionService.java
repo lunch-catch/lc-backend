@@ -17,6 +17,7 @@ import com.launchcatch.global.config.ClockConfig;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.time.Clock;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.Optional;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
@@ -65,19 +66,27 @@ public class ImpressionService {
             return ImpressionResponse.of(existing.get());
         }
 
-        // 판정, 차감, 소진 확인, 카운터가 같은 날을 보게 받은 날을 한 번만 구한다. 정산도 받은 날로 차감한다(PointDeductor 계약)
-        LocalDate receivedDate = LocalDate.now(clock);
+        /*
+         * 판정, 차감, 소진 확인, 카운터가 같은 날을 보게 받은 시각을 한 번만 읽는다. 정산도 받은 날로 차감한다(PointDeductor 계약).
+         * 저장 시각(created_at)도 이 값이다. 따로 읽으면 자정 직전 노출이 전날의 0시 구간으로 집계된다(#783).
+         */
+        LocalDateTime receivedAt = LocalDateTime.now(clock);
+        LocalDate receivedDate = receivedAt.toLocalDate();
         Optional<ServeRecord> found = serveRecordRepository.findById(serveId);
         ImpressionLog log = judge(memberId, serveId, receivedDate, request, found);
-        if (!impressionLogRepository.insertIgnore(log)) {
-            return ImpressionResponse.of(impressionLogRepository.findById(id).orElseThrow());
+        if (!impressionLogRepository.insertIgnore(log, receivedAt)) {
+            /*
+             * 먼저 넣은 쪽이 위 중복 확인 뒤에 커밋했다. 그 확인이 이 트랜잭션의 스냅샷을 잡아 같은 조회로는 보이지 않는다.
+             * 잠금 읽기로 최신 커밋을 읽어 그 판정을 돌려준다(#781).
+             */
+            return ImpressionResponse.of(impressionLogRepository.findByIdForShare(id).orElseThrow());
         }
         if (log.isValid()) {
             ServeRecord record = found.orElseThrow();
             if (!log.isSoldOut()) {
                 pointDeductor.deduct(serveId, record.campaignId(), receivedDate);
             }
-            countAfterCommit(receivedDate, record.campaignId());
+            countAfterCommit(receivedDate, record.campaignId(), !record.campaignId().equals(request.campaignId()));
             /*
              * 분석에 넘길 일을 커밋 전에 기록해 두지 않는다(장애 처리 가이드 "롤백 안 되는 효과"의 기본을 벗어난다).
              * 퍼널은 유실을 허용하고 노출 수는 impression_log 로 다시 센다(아키텍처 설계 2.4).
@@ -102,9 +111,6 @@ public class ImpressionService {
         if (!record.memberId().equals(memberId)) {
             return ImpressionLog.notOwner(serveId, memberId, receivedDate, placement, sighting);
         }
-        if (!record.campaignId().equals(request.campaignId())) {
-            meterRegistry.counter(CAMPAIGN_MISMATCH_METRIC).increment();
-        }
         boolean soldOut = adCandidateRepository.existsByIdBusinessDateAndIdCampaignIdAndSoldOutAtIsNotNull(
                 receivedDate, record.campaignId());
         return ImpressionLog.valid(serveId, memberId, receivedDate, placement, sighting, soldOut);
@@ -113,12 +119,16 @@ public class ImpressionService {
     /*
      * 피드의 노출 상한이 읽는 카운터는 트랜잭션이 되돌릴 수 없어 커밋된 뒤에 올린다(장애 처리 가이드 "롤백 안 되는 효과").
      * 커밋 전에 올리면 롤백된 노출까지 세어 상한이 이르게 걸린다.
+     * 캠페인 불일치 지표도 여기서 센다. 다시 온 요청과 롤백된 요청은 세지 않는다(#783).
      */
-    private void countAfterCommit(LocalDate receivedDate, Long campaignId) {
+    private void countAfterCommit(LocalDate receivedDate, Long campaignId, boolean campaignMismatch) {
         TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
             @Override
             public void afterCommit() {
                 impressionCountRepository.increment(receivedDate, campaignId);
+                if (campaignMismatch) {
+                    meterRegistry.counter(CAMPAIGN_MISMATCH_METRIC).increment();
+                }
             }
         });
     }

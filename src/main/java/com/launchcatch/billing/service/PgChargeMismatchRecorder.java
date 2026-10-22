@@ -32,6 +32,7 @@ public class PgChargeMismatchRecorder {
      * PG와 payment 양쪽이 같은 금액을 승인으로 보는데 원장에 CHARGE가 없을 때 보정한다.
      * CHARGE를 기록하고 그 불일치를 LEDGER_CORRECTION으로 닫힌 채 남긴다(resolved_by NULL, D-3).
      * PointCharged는 발행하지 않는다 — 이 메서드는 그 이벤트의 퍼블리셔를 아예 모른다.
+     * 재검증 대기도 같은 트랜잭션에서 지운다.
      */
     @Transactional
     public void recordMissingCharge(Payment payment, LocalDate businessDate, Long jobExecutionId,
@@ -41,14 +42,19 @@ public class PgChargeMismatchRecorder {
                         LedgerSource.RECONCILIATION));
         mismatchRepository.insertPgChargeMismatchResolvedIfAbsent(
                 businessDate, payment.getId(), payment.getAmount(), 0L, jobExecutionId, now);
+        pendingRepository.deleteByPaymentId(payment.getId());
     }
 
-    // PG와 payment가 서로 다른 금액을 승인으로 본다. 자동 복구 없이 미해결 불일치만 남긴다
+    /*
+     * PG와 payment가 서로 다른 금액을 승인으로 본다. 자동 복구 없이 미해결 불일치만 남긴다.
+     * 재검증 대기도 같은 트랜잭션에서 지운다. 따로 지우다 실패하면 불일치는 남고 대기도 남아 다음 날 같은 결제를 다시 본다.
+     */
     @Transactional
     public void recordMismatch(Long paymentId, long expectedAmount, long actualAmount,
                                LocalDate businessDate, Long jobExecutionId, LocalDateTime now) {
         mismatchRepository.insertPgChargeMismatchIfAbsent(
                 businessDate, paymentId, expectedAmount, actualAmount, jobExecutionId, now);
+        pendingRepository.deleteByPaymentId(paymentId);
     }
 
     @Transactional
