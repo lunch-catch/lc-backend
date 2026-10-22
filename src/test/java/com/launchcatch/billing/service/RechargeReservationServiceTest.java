@@ -150,7 +150,8 @@ class RechargeReservationServiceTest {
 
         service(LocalTime.of(12, 0)).reserve(new PointCharged(OWNER_ID, PAYMENT_ID, 10000L));
 
-        verifyNoInteractions(accountRepository, planRepository, ledgerRepository, fundingUpdater, eventPublisher);
+        verify(accountRepository).lockByOwnerId(OWNER_ID);
+        verifyNoInteractions(planRepository, ledgerRepository, fundingUpdater, eventPublisher);
     }
 
     @Test
