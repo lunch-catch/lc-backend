@@ -1,5 +1,6 @@
 package com.launchcatch.admin.config;
 
+import com.launchcatch.global.http.ClientIpResolver;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -8,7 +9,6 @@ import java.io.IOException;
 import java.time.Clock;
 import java.time.ZonedDateTime;
 import java.util.concurrent.TimeUnit;
-import java.util.regex.Pattern;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.Ordered;
@@ -27,7 +27,6 @@ import org.springframework.web.filter.OncePerRequestFilter;
 @Order(Ordered.HIGHEST_PRECEDENCE + 2)
 public class AdminLoginAuditFilter extends OncePerRequestFilter {
     private static final String LOGIN_PATH = "/v1/admin/auth/tokens";
-    private static final Pattern SAFE_IP = Pattern.compile("^[0-9a-fA-F.:]{1,45}$");
     private final Clock clock;
 
     @Override
@@ -48,7 +47,7 @@ public class AdminLoginAuditFilter extends OncePerRequestFilter {
             int status = completed ? response.getStatus() : HttpServletResponse.SC_INTERNAL_SERVER_ERROR;
             boolean success = completed && status == HttpServletResponse.SC_OK;
             long durationMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started);
-            String clientIp = resolveClientIp(request);
+            String clientIp = ClientIpResolver.resolve(request);
             String message = "event=ADMIN_LOGIN occurredAt={} clientIp={} success={} status={} durationMs={}";
             if (status >= 500) {
                 log.error(message, occurredAt, clientIp, success, status, durationMs);
@@ -58,18 +57,5 @@ public class AdminLoginAuditFilter extends OncePerRequestFilter {
                 log.info(message, occurredAt, clientIp, true, status, durationMs);
             }
         }
-    }
-
-    // 시도 횟수 제한 필터와 같이 로드 밸런서가 마지막에 덧붙인 IP를 사용한다.
-    private String resolveClientIp(HttpServletRequest request) {
-        String forwarded = request.getHeader("X-Forwarded-For");
-        if (forwarded != null && !forwarded.isBlank()) {
-            String[] addresses = forwarded.split(",");
-            String candidate = addresses[addresses.length - 1].trim();
-            if (SAFE_IP.matcher(candidate).matches()) {
-                return candidate;
-            }
-        }
-        return request.getRemoteAddr();
     }
 }
