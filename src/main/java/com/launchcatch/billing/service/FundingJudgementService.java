@@ -77,7 +77,7 @@ public class FundingJudgementService {
                     plan.getDailyBudget(), plan.getUnitPrice(), campaign.dailyBudget(),
                     spends.getOrDefault(campaign.campaignId(), 0L)));
         }
-        log.info("event=FUNDING_JUDGE_DONE businessDate={} judged={} noPoints={}", businessDate, targets.size(), noPoints);
+        log.info("event=BILLING_FUNDING_JUDGE_DONE businessDate={} judgedCount={} noPointsCount={}", businessDate, targets.size(), noPoints);
         return noPoints;
     }
 

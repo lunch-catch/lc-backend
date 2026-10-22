@@ -105,7 +105,7 @@ public class DailyReservationRecorder {
         int changed = 0;
         List<CampaignInfo> campaigns = campaignQuery.findAllById(campaignIds);
         if (campaigns.size() != campaignIds.size()) {
-            log.warn("event=RESERVE_STATUS_CAMPAIGN_MISSING businessDate={} requested={} found={}",
+            log.warn("event=BILLING_RESERVE_STATUS_CAMPAIGN_MISSING businessDate={} requestedCount={} foundCount={}",
                     businessDate, campaignIds.size(), campaigns.size());
         }
         for (CampaignInfo campaign : campaigns) {
@@ -158,7 +158,7 @@ public class DailyReservationRecorder {
     private long balanceOf(Long ownerId) {
         long balance = ledgerRepository.sumBalance(ownerId);
         if (balance < 0) {
-            log.error("event=RESERVE_NEGATIVE_BALANCE ownerId={} balance={}", ownerId, balance);
+            log.error("event=BILLING_RESERVE_NEGATIVE_BALANCE ownerId={} balance={}", ownerId, balance);
             return 0L;
         }
         return balance;

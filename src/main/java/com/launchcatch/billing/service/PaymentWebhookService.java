@@ -51,7 +51,7 @@ public class PaymentWebhookService {
 
     public Result handle(PaymentWebhookRequest request) {
         if (!isUsable(request)) {
-            log.warn("event=PAYMENT_WEBHOOK_IGNORED reason=malformed");
+            log.warn("event=BILLING_PAYMENT_WEBHOOK_SKIPPED reason=MALFORMED");
             count("ignored");
             return Result.HANDLED;
         }
@@ -59,7 +59,7 @@ public class PaymentWebhookService {
         String orderId = request.data().orderId();
         Optional<Payment> found = paymentRepository.findByOrderId(orderId);
         if (found.isEmpty()) {
-            log.warn("event=PAYMENT_WEBHOOK_IGNORED reason=unknown_order orderId={}", orderId);
+            log.warn("event=BILLING_PAYMENT_WEBHOOK_SKIPPED reason=UNKNOWN_ORDER orderId={}", orderId);
             count("ignored");
             return Result.HANDLED;
         }
@@ -74,7 +74,7 @@ public class PaymentWebhookService {
         }
         PaymentGatewayInquiryResult inquiry = paymentGateway.inquireByPaymentKey(paymentKey);
         if (!matches(payment, inquiry)) {
-            log.warn("event=PAYMENT_WEBHOOK_IGNORED reason=mismatch paymentId={} status={}",
+            log.warn("event=BILLING_PAYMENT_WEBHOOK_SKIPPED reason=MISMATCH paymentId={} status={}",
                     payment.getId(), inquiry.status());
             count("ignored");
             return Result.HANDLED;
@@ -124,13 +124,13 @@ public class PaymentWebhookService {
             if (e.getErrorCode() != BillingErrorCode.ORDER_ID_MISMATCH) {
                 throw e;
             }
-            log.warn("event=PAYMENT_WEBHOOK_IGNORED reason=pg_tid_conflict paymentId={}", payment.getId());
+            log.warn("event=BILLING_PAYMENT_WEBHOOK_SKIPPED reason=PG_TID_CONFLICT paymentId={}", payment.getId());
             return false;
         } catch (DataIntegrityViolationException e) {
             if (!ConstraintViolations.isConstraintViolation(e, PG_TID_UNIQUE)) {
                 throw e;
             }
-            log.warn("event=PAYMENT_WEBHOOK_IGNORED reason=pg_tid_already_used paymentId={}", payment.getId());
+            log.warn("event=BILLING_PAYMENT_WEBHOOK_SKIPPED reason=PG_TID_ALREADY_USED paymentId={}", payment.getId());
             return false;
         }
     }
