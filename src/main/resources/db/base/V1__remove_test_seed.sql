@@ -78,6 +78,7 @@ WHERE (check_type = 'PG_VS_CHARGE' AND target_id IN (SELECT payment_id FROM base
    OR (check_type <> 'PG_VS_CHARGE' AND target_id IN (SELECT campaign_id FROM base_seed_campaign));
 DELETE FROM point_ledger WHERE owner_id IN (SELECT owner_id FROM base_seed_owner);
 DELETE FROM refund_request WHERE owner_id IN (SELECT owner_id FROM base_seed_owner);
+DELETE FROM pg_charge_reconciliation_pending WHERE payment_id IN (SELECT payment_id FROM base_seed_payment);
 DELETE FROM payment_reconciliation_outbox WHERE payment_id IN (SELECT payment_id FROM base_seed_payment);
 DELETE FROM payment WHERE payment_id IN (SELECT payment_id FROM base_seed_payment);
 DELETE FROM point_account WHERE owner_id IN (SELECT owner_id FROM base_seed_owner);

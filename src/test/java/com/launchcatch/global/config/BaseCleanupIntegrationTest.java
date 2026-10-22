@@ -64,10 +64,26 @@ class BaseCleanupIntegrationTest extends IntegrationTestSupport {
     }
 
     private void migrateBase() {
-        Map<String, String> placeholders = Map.of("baseDate", "2026-10-28", "superadminPasswordHash", HASH,
-                "demoAdminPasswordHash", HASH, "demoOwnerPasswordHash", HASH, "scenarioPasswordHash", HASH,
-                "baseCdnBaseUrl", "https://cdn.example.com");
-        new DomainFlywayMigrator(dataSource, new BaseSettings(true, placeholders)).afterPropertiesSet();
+        new DomainFlywayMigrator(dataSource, new BaseSettings(true, basePlaceholders())).afterPropertiesSet();
+    }
+
+    private static Map<String, String> basePlaceholders() {
+        return Map.of("baseDate", "2026-10-28", "superadminPasswordHash", HASH, "demoAdminPasswordHash", HASH,
+                "demoOwnerPasswordHash", HASH, "scenarioPasswordHash", HASH, "baseCdnBaseUrl", "https://cdn.example.com");
+    }
+
+    // V1 까지만 돌린다. 뒤의 기본 세계가 같은 테이블을 채우므로 테이블이 비었는지 보려면 V1 에서 멈춰야 한다
+    private void migrateCleanupOnly() {
+        Flyway.configure()
+                .dataSource(dataSource)
+                .locations("classpath:db/base")
+                .table("flyway_history_base")
+                .baselineOnMigrate(true)
+                .baselineVersion("0")
+                .target("1")
+                .placeholders(basePlaceholders())
+                .load()
+                .migrate();
     }
 
     private long count(String sql, Object... args) {
@@ -99,12 +115,15 @@ class BaseCleanupIntegrationTest extends IntegrationTestSupport {
     void 시드_캠페인에_딸린_행은_모두_지운다() {
         migrateSchema();
         insertLegacySeed();
+        // 개발 서버에서는 PG 대사가 시드 결제를 재검증 대기로 남길 수 있다. 결제를 지우기 전에 이 행이 먼저 지워져야 한다
+        jdbc.update("INSERT INTO pg_charge_reconciliation_pending (payment_id, business_date, last_error, created_at, updated_at) "
+                + "SELECT payment_id, '2026-10-20', 'PG 응답 없음', NOW(6), NOW(6) FROM payment ORDER BY payment_id LIMIT 1");
 
-        migrateBase();
+        migrateCleanupOnly();
 
         for (String table : new String[] {"ad_candidate", "budget_daily_plan", "serve_log", "impression_log", "swipe_log",
                 "deduction_result", "coupon_event", "coupon_inventory", "member_coupon", "coupon_usage_history",
-                "store_campaign_summary", "poster", "point_ledger", "payment", "refund_request", "settlement_mismatch",
+                "store_campaign_summary", "poster", "point_ledger", "payment", "pg_charge_reconciliation_pending", "refund_request", "settlement_mismatch",
                 "daily_invalid_analytics", "daily_campaign_fraud_analytics", "event_log", "wishlist", "feed_filter",
                 "store_menu", "store_image", "store_business_hour", "store"}) {
             assertThat(count("SELECT COUNT(*) FROM " + table)).as(table).isZero();
