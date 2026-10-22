@@ -52,7 +52,7 @@ public class BatchJobRunner {
     public void runBundle(LocalDate businessDate) {
         for (DailyJob job : jobs) {
             if (!executions.renew(BUNDLE, businessDate)) {
-                log.warn("묶음 점유를 잃어 중단한다. businessDate={} 멈춘단계={}", businessDate, job.jobName());
+                log.warn("event=BATCH_BUNDLE_STOPPED reason=OWNERSHIP_LOST businessDate={} stoppedJob={}", businessDate, job.jobName());
                 return;
             }
             if (!runStep(job, businessDate)) {
@@ -60,7 +60,7 @@ public class BatchJobRunner {
             }
         }
         executions.succeed(BUNDLE, businessDate);
-        log.info("00:00 묶음을 마쳤다. businessDate={} 단계={}", businessDate, jobs.size());
+        log.info("event=BATCH_BUNDLE_DONE businessDate={} jobCount={}", businessDate, jobs.size());
     }
 
     /*
@@ -97,7 +97,7 @@ public class BatchJobRunner {
     private boolean runStep(DailyJob job, LocalDate businessDate) {
         StepOutcome outcome = executions.begin(job.jobName(), businessDate);
         if (outcome == StepOutcome.ALREADY_DONE) {
-            log.info("이미 끝난 단계를 건너뛴다. job={} businessDate={}", job.jobName(), businessDate);
+            log.info("event=BATCH_JOB_SKIPPED reason=ALREADY_DONE job={} businessDate={}", job.jobName(), businessDate);
             return true;
         }
         if (outcome == StepOutcome.BLOCKED) {
@@ -153,7 +153,7 @@ public class BatchJobRunner {
          * 집계가 두 번 더해질 여지가 생긴다.
          */
         if (!lease.renew()) {
-            log.warn("대기 중에 작업을 다른 서버가 이어받았거나 새 시도가 시작돼 중단한다. job={} businessDate={}",
+            log.warn("event=BATCH_JOB_STOPPED reason=TAKEN_OVER_OR_NEW_ATTEMPT job={} businessDate={}",
                     lease.jobName(), lease.businessDate());
             return false;
         }

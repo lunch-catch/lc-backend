@@ -35,7 +35,7 @@ public class BatchServerId {
 
     public BatchServerId(@Value("${launchcatch.batch.owner-id:}") String configured) {
         this.value = shorten(configured.isBlank() ? generate() : configured);
-        log.info("배치 서버 식별자는 {} 다", value);
+        log.info("event=BATCH_SERVER_ID_RESOLVED serverId={}", value);
     }
 
     public String value() {

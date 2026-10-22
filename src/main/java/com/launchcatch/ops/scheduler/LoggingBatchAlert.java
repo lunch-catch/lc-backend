@@ -17,13 +17,13 @@ public class LoggingBatchAlert implements BatchAlert {
 
     @Override
     public void takenOver(String jobName, LocalDate businessDate, String previousOwner, String newOwner) {
-        log.warn("배치를 이어받았다. job={} businessDate={} 이전소유자={} 새소유자={}",
+        log.warn("event=BATCH_JOB_TAKEN_OVER job={} businessDate={} previousOwner={} newOwner={}",
                 jobName, businessDate, previousOwner, newOwner);
     }
 
     @Override
     public void failed(String jobName, LocalDate businessDate, String reason) {
-        log.error("배치가 실패했다. 자동으로 다시 돌지 않는다. job={} businessDate={} 사유={}",
+        log.error("event=BATCH_JOB_FAILED job={} businessDate={} reason={}",
                 jobName, businessDate, reason);
     }
 }
