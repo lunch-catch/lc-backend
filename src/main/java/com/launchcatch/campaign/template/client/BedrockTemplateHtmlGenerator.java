@@ -7,7 +7,9 @@ import com.launchcatch.campaign.template.TemplateHtmlSanitizer;
 import com.launchcatch.campaign.template.TemplateSlotValidator;
 import com.launchcatch.campaign.template.TemplateStructureValidator;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -53,6 +55,10 @@ public class BedrockTemplateHtmlGenerator implements TemplateHtmlGenerator {
     private static final int MAX_RETRIES = 1;
     // 프롬프트는 100자 이내를 요구한다. 어긴 응답이 그대로 저장되지 않게 서버에서도 자른다.
     private static final int MESSAGE_MAX_LENGTH = 300;
+    private static final String SUGGESTION_PREFIX = "[제안]";
+    private static final int MAX_SUGGESTIONS = 3;
+    private static final int SUGGESTION_MAX_LENGTH = 30;
+    private static final Pattern WHITESPACE = Pattern.compile("\\s+");
     private static final String AD_LABEL_SLOT = "adLabel";
 
     /** ```html ... ``` 또는 ``` ... ``` 코드펜스 안의 내용을 뽑아낸다. */
@@ -142,8 +148,16 @@ public class BedrockTemplateHtmlGenerator implements TemplateHtmlGenerator {
             [출력 형식]
             - 먼저 만든 템플릿을 소개하는 설명을 한국어 1~2문장(100자 이내)으로 쓴다.
               반영하지 못한 요청이 있으면 이 설명에 그 안내를 포함한다
+            - 설명 다음에 후속 제안을 쓴다. 제안은 한 줄에 하나이고 "[제안] "으로 시작한다.
+              방금 요청으로 바꾼 속성(글자 크기, 색, 모서리 등)을 더 조정하는 제안만 쓴다.
+              양은 숫자 대신 "조금 더 크게", "한 단계 작게"처럼 단계 표현으로 쓴다.
+              2~3개만 쓰고, 더 조정할 것이 없으면 제안을 쓰지 않는다
+            - 제안은 이 템플릿에서 할 수 있는 수정만 쓴다. 애니메이션, 버튼, QR코드 같은 요소 추가, 슬롯이나 문구 내용 변경,
+              구조를 새로 만드는 제안은 쓰지 않는다
+            - 제안은 그대로 다음 요청으로 보내지므로 30자 이내의 짧은 한 문장으로 쓴다
+              (예: "[제안] 행사명 글자를 조금 더 크게 해줘")
             - 이어서 HTML 코드를 ```html 코드펜스 하나에 담아 답한다
-            - 코드펜스 밖에는 위 설명 문장 외에 아무것도 쓰지 않는다""";
+            - 코드펜스 밖에는 위 설명과 제안 줄 외에 아무것도 쓰지 않는다""";
 
     private final BedrockRuntimeClient bedrockRuntimeClient;
     private final TemplateHtmlSanitizer templateHtmlSanitizer;
@@ -237,7 +251,7 @@ public class BedrockTemplateHtmlGenerator implements TemplateHtmlGenerator {
                 continue;
             }
 
-            return new GeneratedTemplate(document.body().html(), extractMessage(rawText));
+            return new GeneratedTemplate(document.body().html(), extractMessage(rawText), extractSuggestions(rawText));
         }
         throw new IllegalStateException("unreachable: retry loop must return or throw");
     }
@@ -305,11 +319,40 @@ public class BedrockTemplateHtmlGenerator implements TemplateHtmlGenerator {
         if (!fenced.find()) {
             return "";
         }
-        // 코드펜스가 둘 이상이어도 그 안의 코드가 설명에 섞이지 않게 전부 뺀다.
-        String outside = CODE_FENCE.matcher(raw).replaceAll("");
+        // 코드펜스가 둘 이상이어도 그 안의 코드가 설명에 섞이지 않게 전부 뺀다. 제안 줄도 설명이 아니라 뺀다.
+        String outside = CODE_FENCE.matcher(raw).replaceAll("").lines()
+                .filter(line -> !line.strip().startsWith(SUGGESTION_PREFIX))
+                .collect(Collectors.joining(String.valueOf((char) 10)));
         // 검증하지 않은 LLM 문장이라 프론트가 실수로 HTML 로 그려도 태그가 되지 않게 꺾쇠를 뺀다.
         String text = outside.replace("<", "").replace(">", "").replace("```", "").trim();
         return text.length() > MESSAGE_MAX_LENGTH ? text.substring(0, MESSAGE_MAX_LENGTH) : text;
+    }
+
+    /*
+     * 코드펜스 밖의 "[제안] ..." 줄을 후속 제안(퀵 리플라이)으로 뽑는다(#732). 코드펜스가 없으면 빈 목록이다.
+     * 검증하지 않은 LLM 문장이라 꺾쇠와 코드펜스 문자를 없애고 공백을 정리한다. 빈 항목, 30자를 넘는 항목(잘라 쓰면
+     * 뜻이 깨져 버리고 다음 요청으로 보내지 못하게 한다), 중복을 빼고 최대 3개만 남긴다. 형식이 깨졌거나 제안이
+     * 없으면 고정 목록으로 되돌리지 않고 빈 목록이다.
+     */
+    private List<String> extractSuggestions(String raw) {
+        Matcher fenced = CODE_FENCE.matcher(raw);
+        if (!fenced.find()) {
+            return List.of();
+        }
+        String outside = CODE_FENCE.matcher(raw).replaceAll("");
+        Map<String, String> unique = new LinkedHashMap<>();
+        outside.lines()
+                .map(String::strip)
+                .filter(line -> line.startsWith(SUGGESTION_PREFIX))
+                .map(line -> cleanSuggestion(line.substring(SUGGESTION_PREFIX.length())))
+                .filter(text -> !text.isEmpty() && text.length() <= SUGGESTION_MAX_LENGTH)
+                .forEach(text -> unique.putIfAbsent(text.toLowerCase(Locale.ROOT), text));
+        return unique.values().stream().limit(MAX_SUGGESTIONS).toList();
+    }
+
+    private String cleanSuggestion(String text) {
+        String cleaned = text.replace("<", "").replace(">", "").replace("```", "");
+        return WHITESPACE.matcher(cleaned).replaceAll(" ").strip();
     }
 
     /*
