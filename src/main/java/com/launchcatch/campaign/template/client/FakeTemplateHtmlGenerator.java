@@ -1,5 +1,6 @@
 package com.launchcatch.campaign.template.client;
 
+import java.util.List;
 import org.springframework.context.annotation.Conditional;
 import org.springframework.stereotype.Component;
 
@@ -24,14 +25,16 @@ public class FakeTemplateHtmlGenerator implements TemplateHtmlGenerator {
             """;
 
     private static final String MESSAGE = "요청하신 분위기로 템플릿을 만들었어요.";
+    private static final List<String> SUGGESTED_PROMPTS =
+            List.of("행사명 글자를 조금 더 크게 해줘", "배경을 조금 더 밝게 해줘");
 
     @Override
     public GeneratedTemplate generate(String requestPrompt) {
-        return new GeneratedTemplate(HTML, MESSAGE);
+        return new GeneratedTemplate(HTML, MESSAGE, SUGGESTED_PROMPTS);
     }
 
     @Override
     public GeneratedTemplate revise(String previousHtml, String requestPrompt) {
-        return new GeneratedTemplate(HTML, MESSAGE);
+        return new GeneratedTemplate(HTML, MESSAGE, SUGGESTED_PROMPTS);
     }
 }

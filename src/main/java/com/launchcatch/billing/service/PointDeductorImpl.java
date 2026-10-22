@@ -132,7 +132,7 @@ public class PointDeductorImpl implements PointDeductor {
                 .orElseThrow(() -> new IllegalStateException("노출한 캠페인이 없습니다. campaignId=" + campaignId));
         long unitPrice = platformSetting.getImpressionUnitPrice();
         meterRegistry.counter(NO_PLAN_METRIC).increment();
-        log.warn("event=BILLING_DEDUCT_NO_PLAN campaignId={} businessDate={}", campaignId, businessDate);
+        log.debug("event=BILLING_DEDUCT_NO_PLAN campaignId={} businessDate={}", campaignId, businessDate);
         int inserted = deductionResultRepository.insertIfAbsent(serveId, campaignId, ownerId, businessDate,
                 DeductionStatus.NOT_BILLED_NO_PLAN, unitPrice, LocalDateTime.now(clock));
         if (inserted != 1) {
@@ -158,7 +158,7 @@ public class PointDeductorImpl implements PointDeductor {
                     meterRegistry.counter(UNDO_METRIC, "result", "ok").increment();
                 } catch (RuntimeException e) {
                     meterRegistry.counter(UNDO_METRIC, "result", "failed").increment();
-                    log.error("롤백된 노출의 판정을 되돌리지 못했습니다. 소진이 원장보다 앞선 채 남고 대사가 맞춥니다. serveId={}, campaignId={}",
+                    log.warn("event=BILLING_DEDUCT_UNDO_FAILED serveId={} campaignId={} fallback=LEAVE_FOR_RECON",
                             serveId, campaignId, e);
                 }
             }
@@ -175,7 +175,7 @@ public class PointDeductorImpl implements PointDeductor {
         DeductionStatus first = deductionResultRepository.findFirstStatus(serveId)
                 .orElseThrow(() -> new IllegalStateException("판정 행이 있다고 했는데 읽을 수 없습니다. serveId=" + serveId));
         if (first != judged) {
-            log.warn("처음 판정과 다시 판정한 값이 달라 처음 판정을 돌려줍니다. serveId={}, first={}, rejudged={}",
+            log.warn("event=BILLING_DEDUCT_REJUDGE_MISMATCH serveId={} first={} rejudged={} fallback=KEEP_FIRST",
                     serveId, first, judged);
         }
         return first;

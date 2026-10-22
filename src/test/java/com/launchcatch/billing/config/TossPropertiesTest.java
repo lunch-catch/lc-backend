@@ -6,7 +6,13 @@ import java.time.Duration;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.context.properties.bind.Binder;
+import org.springframework.boot.context.properties.bind.PropertySourcesPlaceholdersResolver;
+import org.springframework.boot.context.properties.source.ConfigurationPropertySources;
 import org.springframework.boot.context.properties.source.MapConfigurationPropertySource;
+import org.springframework.boot.env.YamlPropertySourceLoader;
+import org.springframework.core.env.MutablePropertySources;
+import org.springframework.core.env.PropertySource;
+import org.springframework.core.io.ClassPathResource;
 
 class TossPropertiesTest {
 
@@ -32,6 +38,21 @@ class TossPropertiesTest {
 
         assertThat(properties.connectTimeout()).isEqualTo(Duration.ofSeconds(1));
         assertThat(properties.readTimeout()).isEqualTo(Duration.ofSeconds(20));
+    }
+
+    @Test
+    void 환경변수가_없으면_비밀키가_비어_기동_검사에_걸린다() throws Exception {
+        // application.yml 의 첫 문서(공통 설정)만 읽는다. local 문서는 기본 키를 따로 둔다
+        PropertySource<?> common = new YamlPropertySourceLoader()
+                .load("application", new ClassPathResource("application.yml")).get(0);
+        MutablePropertySources sources = new MutablePropertySources();
+        sources.addFirst(common);
+        Binder binder = new Binder(ConfigurationPropertySources.from(sources),
+                new PropertySourcesPlaceholdersResolver(sources));
+
+        String secretKey = binder.bind("billing.toss.secret-key", String.class).get();
+
+        assertThat(secretKey).isEmpty();
     }
 
     @Test

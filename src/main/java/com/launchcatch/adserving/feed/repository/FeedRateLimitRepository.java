@@ -57,7 +57,7 @@ public class FeedRateLimitRepository {
             Instant nextAvailableAt = nextAvailableMs < 0 ? now : Instant.ofEpochMilli(nextAvailableMs);
             return new Admission(admitted, nextAvailableAt);
         } catch (DataAccessException e) {
-            log.warn("event=FEED_RATE_LIMIT_FAILED memberId={} cause={} 통과시킨다",
+            log.warn("event=ADSERVING_FEED_RATE_LIMIT_FAILED memberId={} reason={} fallback=ADMIT",
                     memberId, RedisFailureClassifier.causeLabel(e), e);
             meterRegistry.counter(BYPASS_METRIC, "use", "feed_rate_limit").increment();
             return new Admission(true, now);

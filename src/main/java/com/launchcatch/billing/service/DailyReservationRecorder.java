@@ -3,6 +3,7 @@ package com.launchcatch.billing.service;
 import com.launchcatch.billing.entity.BudgetDailyPlan;
 import com.launchcatch.billing.entity.EntryType;
 import com.launchcatch.billing.entity.PointLedger;
+import com.launchcatch.billing.dto.CampaignSpend;
 import com.launchcatch.billing.repository.BudgetDailyPlanRepository;
 import com.launchcatch.billing.repository.PointAccountRepository;
 import com.launchcatch.billing.repository.PointLedgerRepository;
@@ -13,6 +14,7 @@ import java.time.Clock;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
@@ -105,7 +107,7 @@ public class DailyReservationRecorder {
         int changed = 0;
         List<CampaignInfo> campaigns = campaignQuery.findAllById(campaignIds);
         if (campaigns.size() != campaignIds.size()) {
-            log.warn("event=RESERVE_STATUS_CAMPAIGN_MISSING businessDate={} requested={} found={}",
+            log.warn("event=BILLING_RESERVE_STATUS_CAMPAIGN_MISSING businessDate={} requestedCount={} foundCount={}",
                     businessDate, campaignIds.size(), campaigns.size());
         }
         for (CampaignInfo campaign : campaigns) {
@@ -152,13 +154,38 @@ public class DailyReservationRecorder {
     }
 
     /*
+     * 잠금 뒤에 최신 계획과 소진을 다시 읽어 남은 예약만 해제한다. 충전 재예약이 계획을 늘린 뒤에도
+     * 이전 계획으로 부족하게 해제하지 않도록 계산과 기록을 같은 점주 트랜잭션에 둔다.
+     */
+    @Transactional
+    public void releaseForOwner(Long ownerId, LocalDate businessDate, List<Long> campaignIds) {
+        LocalDateTime now = LocalDateTime.now(clock);
+        accountRepository.createIfAbsent(ownerId, now);
+        accountRepository.lockByOwnerId(ownerId);
+        List<BudgetDailyPlan> plans = planRepository.findByBusinessDateAndCampaignIdIn(businessDate, campaignIds);
+        Set<Long> released = ledgerRepository.findReleasedCampaignIds(Set.of(ownerId), businessDate).stream()
+                .collect(Collectors.toSet());
+        Map<Long, Long> spends = ledgerRepository.sumDeductForCampaignsOn(campaignIds, businessDate).stream()
+                .collect(Collectors.toMap(CampaignSpend::campaignId, CampaignSpend::spend));
+        for (BudgetDailyPlan plan : plans) {
+            if (!ownerId.equals(plan.getOwnerId()) || released.contains(plan.getCampaignId())) {
+                continue;
+            }
+            long left = plan.getDailyBudget() - spends.getOrDefault(plan.getCampaignId(), 0L);
+            if (left > 0) {
+                ledgerRepository.insertReleaseIfAbsent(ownerId, plan.getCampaignId(), businessDate, left, now);
+            }
+        }
+    }
+
+    /*
      * 잔액이 음수면 0 으로 보고 ERROR 로 남긴다. 원장이 어긋났다는 신호지만, 예외로 멈추면 뒤 순서 점주의 예약까지
      * 그날 하루 막힌다.
      */
     private long balanceOf(Long ownerId) {
         long balance = ledgerRepository.sumBalance(ownerId);
         if (balance < 0) {
-            log.error("event=RESERVE_NEGATIVE_BALANCE ownerId={} balance={}", ownerId, balance);
+            log.error("event=BILLING_RESERVE_NEGATIVE_BALANCE ownerId={} balance={}", ownerId, balance);
             return 0L;
         }
         return balance;

@@ -30,7 +30,7 @@ public class OwnerPointBalanceService {
         LocalDate today = LocalDate.now(clock);
         try {
             long balance = pointLedgerRepository.sumBalance(ownerId);
-            long reserved = reservedPoint(ownerId, today);
+            long reserved = reservedPoint(ownerId);
             return new PointBalanceResponse(balance, reserved, balance + reserved, today);
         } catch (DataAccessException | TransactionException e) {
             throw new BillingException(BillingErrorCode.LEDGER_UNAVAILABLE, e);
@@ -42,11 +42,7 @@ public class OwnerPointBalanceService {
      * 저장값의 부호는 RESERVE 와 DEDUCT 가 음수, RELEASE 가 양수라서 크기로 옮기면
      * 예약 크기 - 차감 크기 - 해제 크기가 된다. 해제는 다음 날 00:00 이라 오늘 예약분은 하루 종일 남는다.
      */
-    private long reservedPoint(Long ownerId, LocalDate today) {
-        long reserve = pointLedgerRepository.sumByBusinessDate(ownerId, EntryType.RESERVE, today);
-        long release = pointLedgerRepository.sumByBusinessDate(ownerId, EntryType.RELEASE, today);
-        long deduct = pointLedgerRepository.sumByCreatedAt(ownerId, EntryType.DEDUCT,
-                today.atStartOfDay(), today.plusDays(1).atStartOfDay());
-        return Math.max(0, -reserve + deduct - release);
+    private long reservedPoint(Long ownerId) {
+        return Math.max(0, pointLedgerRepository.sumReservedPoint(ownerId));
     }
 }

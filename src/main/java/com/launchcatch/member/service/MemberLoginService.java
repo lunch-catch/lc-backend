@@ -50,13 +50,13 @@ public class MemberLoginService {
             return new LoginResult(resolvedMember.member(), resolvedMember.newMember(), onboardingCompleted, tokenPair);
         } catch (BusinessException e) {
             if (e.getErrorCode().getHttpStatus().is5xxServerError()) {
-                log.error("event=MEMBER_LOGIN_FAILED memberId={} reason={} details={}", attempt.memberId, e.getErrorCode().getCode(), FailureLogDetails.from(e));
+                log.error("event=MEMBER_LOGIN_FAILED memberId={} errorCode={} details={}", attempt.memberId, e.getErrorCode().getCode(), FailureLogDetails.from(e));
             } else {
-                log.warn("event=MEMBER_LOGIN_FAILED memberId={} reason={}", attempt.memberId, e.getErrorCode().getCode());
+                log.warn("event=MEMBER_LOGIN_FAILED memberId={} errorCode={}", attempt.memberId, e.getErrorCode().getCode());
             }
             throw e;
         } catch (RuntimeException e) {
-            log.error("event=MEMBER_LOGIN_FAILED memberId={} reason=SYSTEM_ERROR causeType={}", attempt.memberId, e.getClass().getSimpleName());
+            log.error("event=MEMBER_LOGIN_FAILED memberId={} reason=SYSTEM_ERROR exceptionType={}", attempt.memberId, e.getClass().getSimpleName());
             throw e;
         }
     }

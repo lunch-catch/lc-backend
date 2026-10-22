@@ -3,11 +3,14 @@ package com.launchcatch.coupon.service;
 import com.launchcatch.coupon.exception.CouponErrorCode;
 import com.launchcatch.coupon.exception.CouponException;
 import com.launchcatch.coupon.repository.CouponSequenceRepository;
-import com.launchcatch.coupon.service.model.CouponReservation;
-import com.launchcatch.coupon.service.model.CouponReservationOutcome;
+import com.launchcatch.coupon.model.CouponReservation;
+import com.launchcatch.coupon.model.CouponReservationOutcome;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.LinkedHashMap;
+import java.util.HashSet;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -63,20 +66,43 @@ public class CouponSequenceService {
             block(eventId, error);
             throw rejectForRecovery(eventId);
         }
-        List<CouponReservationOutcome> reserved = new ArrayList<>(count);
-        List<CouponReservation> taken = new ArrayList<>(count);
-        for (int i = 0; i < count; i++) {
+        return reservationOutcomes(eventId, ids, results);
+    }
+
+    // 모든 응답을 확인하기 전 오류가 나면 일부 예약이 실행됐을 수 있으므로 묶음의 이벤트를 모두 차단한다.
+    public Map<Long, List<CouponReservationOutcome>> reserveAll(Map<Long, Integer> counts) {
+        counts.keySet().forEach(this::checkAdmission);
+        Map<Long, List<String>> ids = new LinkedHashMap<>();
+        counts.forEach((eventId, count) -> ids.put(eventId,
+                java.util.stream.IntStream.range(0, count).mapToObj(index -> UUID.randomUUID().toString()).toList()));
+        Map<Long, List<Long>> results;
+        try {
+            results = sequences.reserveAll(ids, staleAfter.toMillis());
+        } catch (RuntimeException error) {
+            blockAll(counts.keySet(), error);
+            throw rejectForRecovery(counts.keySet().iterator().next());
+        }
+        Map<Long, List<CouponReservationOutcome>> reserved = new LinkedHashMap<>();
+        ids.forEach((eventId, pending) -> reserved.put(eventId,
+                reservationOutcomes(eventId, pending, results.get(eventId))));
+        return reserved;
+    }
+
+    private List<CouponReservationOutcome> reservationOutcomes(long eventId, List<String> ids, List<Long> results) {
+        List<CouponReservationOutcome> reserved = new ArrayList<>(ids.size());
+        List<CouponReservation> taken = new ArrayList<>(ids.size());
+        for (int i = 0; i < ids.size(); i++) {
             long sequence = results.get(i);
             if (sequence > 0) {
                 CouponReservation reservation = new CouponReservation(eventId, Math.toIntExact(sequence), ids.get(i));
                 taken.add(reservation);
-                reserved.add(new CouponReservationOutcome(reservation, null, false));
+                reserved.add(new CouponReservationOutcome(reservation, null, false, false));
             } else {
                 if (sequence == -1) {
                     block(eventId, null);
                 }
                 reserved.add(new CouponReservationOutcome(null, sequence == 0
-                        ? CouponErrorCode.INVENTORY_EXHAUSTED : CouponErrorCode.ISSUANCE_BUSY, sequence == -1));
+                        ? CouponErrorCode.INVENTORY_EXHAUSTED : CouponErrorCode.ISSUANCE_BUSY, sequence == -1, sequence == -2));
             }
         }
         // 트랜잭션이 끝난 결과를 보고 롤백이면 받은 순번을 돌려놓고 결과를 모르면 이벤트를 차단한다.
@@ -94,14 +120,64 @@ public class CouponSequenceService {
     }
 
     /*
-     * 묶음 발급이 자격 판정 전에 소진을 먼저 알리려고 읽는다.
-     * 큐가 준비되지 않았거나 Redis 오류가 나면 예약과 같이 차단해 다음 요청이 복구하게 한다.
+     * 요청을 발급 대기열에 넣기 전에 정상 Redis 정보의 확정 소진만 확인한다.
+     * 큐가 없거나 준비 중이면 false를 반환해 이벤트 존재와 상태 검사 및 기존 복구로 넘긴다.
      */
+    public boolean isConfirmedSoldOut(long eventId) {
+        return readAvailability(eventId) == 0;
+    }
+
+    // 묶음 발급은 이벤트를 확인한 뒤 큐가 준비되지 않았으면 차단하고 DB 기준 복구를 요청한다.
     public boolean isSoldOut(long eventId) {
+        int availability = readAvailability(eventId);
+        if (availability < 0) {
+            block(eventId, null);
+            throw rejectForRecovery(eventId);
+        }
+        return availability == 0;
+    }
+
+    public Set<Long> soldOutEvents(Set<Long> eventIds) {
+        if (eventIds.isEmpty()) {
+            return Set.of();
+        }
+        eventIds.forEach(this::checkAdmission);
+        Map<Long, Integer> availability;
+        try {
+            availability = sequences.availability(new ArrayList<>(eventIds));
+        } catch (RuntimeException error) {
+            blockAll(eventIds, error);
+            throw rejectForRecovery(eventIds.iterator().next());
+        }
+        Set<Long> soldOut = new HashSet<>();
+        availability.forEach((eventId, value) -> {
+            if (value < 0) {
+                block(eventId, null);
+                throw rejectForRecovery(eventId);
+            }
+            if (value == 0) {
+                soldOut.add(eventId);
+            }
+        });
+        return soldOut;
+    }
+
+    // Redis 조회 장애를 소진으로 바꾸지 않고 해당 이벤트를 차단해 복구하도록 한다.
+    private int readAvailability(long eventId) {
+        checkAdmission(eventId);
+        try {
+            return sequences.availability(eventId);
+        } catch (RuntimeException error) {
+            block(eventId, error);
+            throw rejectForRecovery(eventId);
+        }
+    }
+
+    public int retryAvailability(long eventId) {
         checkAdmission(eventId);
         int availability;
         try {
-            availability = sequences.availability(eventId);
+            availability = sequences.retryAvailability(eventId, staleAfter.toMillis());
         } catch (RuntimeException error) {
             block(eventId, error);
             throw rejectForRecovery(eventId);
@@ -110,7 +186,7 @@ public class CouponSequenceService {
             block(eventId, null);
             throw rejectForRecovery(eventId);
         }
-        return availability == 0;
+        return availability;
     }
 
     // DB 커밋이 끝난 뒤 완료를 반영하며 Redis 실패로 이미 발급한 쿠폰을 실패로 바꾸지 않는다.
@@ -123,18 +199,60 @@ public class CouponSequenceService {
         }
     }
 
+    // DB 커밋이 끝난 묶음의 예약을 이벤트마다 한 번 완료하며 Redis 실패로 발급 성공을 바꾸지 않는다.
+    public Set<Long> completeAll(List<CouponReservation> reservations) {
+        Map<Long, List<CouponReservation>> byEvent = new LinkedHashMap<>();
+        reservations.forEach(reservation -> byEvent.computeIfAbsent(reservation.eventId(), key -> new ArrayList<>())
+                .add(reservation));
+        Set<Long> soldOut = new HashSet<>();
+        byEvent.forEach((eventId, pending) -> {
+            try {
+                if (sequences.completeAll(eventId, pending.stream().map(CouponReservation::sequence).toList(),
+                        pending.stream().map(CouponReservation::id).toList())) {
+                    soldOut.add(eventId);
+                }
+            } catch (RuntimeException error) {
+                block(eventId, error);
+            }
+        });
+        return soldOut;
+    }
+
+    private void blockAll(Set<Long> eventIds, Throwable cause) {
+        for (long eventId : eventIds) {
+            if (blockedEvents.add(eventId)) {
+                log.warn("event=COUPON_ISSUANCE_BLOCK_DONE couponEventId={} exceptionType={} reason={} requestTraceIds={}",
+                        eventId, cause == null ? "NONE" : cause.getClass().getSimpleName(),
+                        cause == null ? "STATE_UNAVAILABLE" : CouponFailureDetails.reason(cause),
+                        CouponLogContext.requestTraceIds());
+            }
+        }
+        try {
+            sequences.blockAll(eventIds);
+        } catch (RuntimeException error) {
+            log.warn("event=COUPON_REDIS_BLOCK_FAILED couponEventIds={} exceptionType={} reason={} requestTraceIds={}",
+                    eventIds.stream().sorted().map(String::valueOf).collect(java.util.stream.Collectors.joining(",")),
+                    error.getClass().getSimpleName(), CouponFailureDetails.reason(error), CouponLogContext.requestTraceIds());
+        }
+    }
+
     /*
      * 이벤트를 이 서버의 메모리와 Redis 큐 양쪽에서 차단한다.
      * 처음 차단할 때만 경고 로그를 남기고 Redis 차단이 실패해도 메모리 차단은 유지한다.
      */
     public void block(long eventId, Throwable cause) {
         if (blockedEvents.add(eventId)) {
-            log.warn("event=COUPON_ISSUANCE_BLOCKED couponEventId={}", eventId, cause);
+            log.warn("event=COUPON_ISSUANCE_BLOCK_DONE couponEventId={} exceptionType={} reason={} requestTraceIds={}",
+                    eventId, cause == null ? "NONE" : cause.getClass().getSimpleName(),
+                    cause == null ? "STATE_UNAVAILABLE" : CouponFailureDetails.reason(cause),
+                    CouponLogContext.requestTraceIds());
         }
         try {
             sequences.block(eventId);
         } catch (RuntimeException error) {
-            log.warn("event=COUPON_REDIS_BLOCK_FAILED couponEventId={} reason={}", eventId, error.toString());
+            log.warn("event=COUPON_REDIS_BLOCK_FAILED couponEventId={} exceptionType={} reason={} requestTraceIds={}",
+                    eventId, error.getClass().getSimpleName(), CouponFailureDetails.reason(error),
+                    CouponLogContext.requestTraceIds());
         }
     }
 

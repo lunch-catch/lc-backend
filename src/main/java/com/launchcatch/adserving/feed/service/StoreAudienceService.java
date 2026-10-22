@@ -60,7 +60,7 @@ public class StoreAudienceService {
         for (int from = 0; from < cells.size(); from += StoreAudienceUpdater.MAX_CELLS) {
             storeAudienceUpdater.overwrite(cells.subList(from, Math.min(from + StoreAudienceUpdater.MAX_CELLS, cells.size())));
         }
-        log.info("event=STORE_AUDIENCE_OVERWRITTEN businessDate={} stores={} members={} cells={}",
+        log.info("event=ADSERVING_STORE_AUDIENCE_OVERWRITTEN businessDate={} storeCount={} memberCount={} cellCount={}",
                 businessDate, stores.size(), profiles.size(), cells.size());
         return cells.size();
     }

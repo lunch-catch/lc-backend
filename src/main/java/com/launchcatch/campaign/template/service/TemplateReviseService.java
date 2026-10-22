@@ -74,7 +74,7 @@ public class TemplateReviseService {
         templateStructureValidator.validate(document, previousDocument);
         try {
             return transactionTemplate.execute(
-                    status -> save(templateId, requestPrompt, requestId, adminId, sanitized, generated.message()));
+                    status -> save(templateId, requestPrompt, requestId, adminId, sanitized, generated.message(), generated.suggestedPrompts()));
         } catch (DataIntegrityViolationException e) {
             return templateVersionRepository.findByRequestId(requestId)
                     .map(found -> toResponseForMatchingTemplate(found, templateId))
@@ -134,7 +134,7 @@ public class TemplateReviseService {
      */
     private TemplateCreateResponse save(
             Long templateId, String requestPrompt, String requestId, Long adminId, TemplateSanitizeResult sanitized,
-            String message) {
+            String message, List<String> suggestedPrompts) {
         Template template = templateRepository.findByIdForUpdate(templateId)
                 .orElseThrow(() -> new CampaignException(PosterErrorCode.TEMPLATE_NOT_FOUND));
         if (template.getStatus() != TemplateStatus.DRAFT) {
@@ -155,7 +155,7 @@ public class TemplateReviseService {
          */
         templateVersionRepository.saveAndFlush(version);
         evictVersionsOverCap(templateId, nextVersionNumber);
-        return toResponse(version, sanitized.removedElements());
+        return toResponse(version, sanitized.removedElements(), suggestedPrompts);
     }
 
     /*
@@ -189,14 +189,15 @@ public class TemplateReviseService {
         if (!version.getTemplate().getId().equals(templateId)) {
             throw new CampaignException(PosterErrorCode.TEMPLATE_NOT_FOUND);
         }
-        return toResponse(version, List.of());
+        return toResponse(version, List.of(), List.of());
     }
 
     /*
      * 재시도로 되돌려주는 응답은 removedElements 를 비워 둔다. 그 목록은 저장하지 않아
      * 처음 응답 이후로는 다시 만들어낼 수 없다.
      */
-    private TemplateCreateResponse toResponse(TemplateVersion version, List<String> removedElements) {
+    private TemplateCreateResponse toResponse(
+            TemplateVersion version, List<String> removedElements, List<String> suggestedPrompts) {
         Template template = version.getTemplate();
         return new TemplateCreateResponse(
                 template.getId(),
@@ -206,6 +207,6 @@ public class TemplateReviseService {
                 version.getHtmlContent(),
                 version.getMessage() == null ? "" : version.getMessage(),
                 removedElements,
-                TemplateCreateResponse.SUGGESTED_PROMPTS);
+                suggestedPrompts);
     }
 }

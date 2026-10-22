@@ -107,6 +107,33 @@ public class CouponBatchIssueRepository {
         return codes;
     }
 
+    // 여러 이벤트의 정확한 (이벤트, 순번) 쌍을 한 SQL로 갱신한다.
+    public int issueSequences(Map<Long, List<Integer>> sequencesByEvent, LocalDateTime now) {
+        String sql = "UPDATE coupon_inventory SET status = 'ISSUED', updated_at = :now"
+                + " WHERE status = 'AVAILABLE' AND (coupon_event_id, sequence_no) IN (:pairs)";
+        return jdbcTemplate.update(sql, new MapSqlParameterSource("now", Timestamp.valueOf(now))
+                .addValue("pairs", inventoryPairs(sequencesByEvent)));
+    }
+
+    // 서로 다른 이벤트의 코드도 정확한 쌍으로 한 번에 읽는다.
+    public Map<Long, Map<Integer, byte[]>> findCouponCodes(Map<Long, List<Integer>> sequencesByEvent) {
+        String sql = "SELECT coupon_event_id, sequence_no, coupon_code FROM coupon_inventory"
+                + " WHERE (coupon_event_id, sequence_no) IN (:pairs)";
+        Map<Long, Map<Integer, byte[]>> codes = new HashMap<>();
+        jdbcTemplate.query(sql, new MapSqlParameterSource("pairs", inventoryPairs(sequencesByEvent)), rs -> {
+            codes.computeIfAbsent(rs.getLong(1), key -> new HashMap<>()).put(rs.getInt(2), rs.getBytes(3));
+        });
+        return codes;
+    }
+
+    private List<Object[]> inventoryPairs(Map<Long, List<Integer>> sequencesByEvent) {
+        List<Object[]> pairs = new ArrayList<>();
+        sequencesByEvent.entrySet().stream().sorted(Map.Entry.comparingByKey()).forEach(entry ->
+                entry.getValue().stream().sorted().forEach(sequence ->
+                        pairs.add(new Object[]{entry.getKey(), sequence})));
+        return pairs;
+    }
+
     /*
      * 회원마다 이번 묶음에서 발급한 수만큼 해당 영업일 카운터를 늘린다.
      * 대부분 한 장씩이라 같은 증가량을 받는 회원끼리 묶어 UPDATE … WHERE member_id IN 한 문장으로 보낸다.

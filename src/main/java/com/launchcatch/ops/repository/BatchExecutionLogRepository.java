@@ -50,6 +50,18 @@ public interface BatchExecutionLogRepository extends JpaRepository<BatchExecutio
 
     List<BatchExecutionLog> findByBusinessDate(LocalDate businessDate);
 
+    // 그 작업이 SUCCESS 로 끝난 영업일이다. 범위는 [fromInclusive, toExclusive) 다
+    @Query("""
+            SELECT l.businessDate FROM BatchExecutionLog l
+             WHERE l.jobName = :jobName
+               AND l.status = com.launchcatch.ops.entity.BatchStatus.SUCCESS
+               AND l.businessDate >= :fromInclusive
+               AND l.businessDate < :toExclusive
+            """)
+    List<LocalDate> findSucceededBusinessDates(@Param("jobName") String jobName,
+                                               @Param("fromInclusive") LocalDate fromInclusive,
+                                               @Param("toExclusive") LocalDate toExclusive);
+
     /*
      * 관리자 배치 실행 이력 조회(#575)다. 영업일 내림차순, 같은 날 id 내림차순으로 읽는다.
      * jobName, status, 커서는 null 이면 조건에서 빠진다. 커서는 마지막으로 내준 (영업일, id)라 그 뒤부터 읽는다.

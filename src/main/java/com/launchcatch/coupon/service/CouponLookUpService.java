@@ -252,7 +252,7 @@ public class CouponLookUpService {
         Map<Long, CouponEvent> eventsByStore = new HashMap<>();
         for (CouponEvent event : events) {
             if (eventsByStore.putIfAbsent(event.getStoreId(), event) != null) {
-                log.error("event=COUPON_EVENT_STATUS_DATA_INVALID reason=DUPLICATE_STORE_EVENT storeId={} businessDate={}",
+                log.error("event=COUPON_EVENT_STATUS_FAILED reason=DUPLICATE_STORE_EVENT storeId={} businessDate={}",
                         event.getStoreId(), businessDate);
                 throw new CouponException(CommonErrorCode.INTERNAL_ERROR);
             }
@@ -312,12 +312,12 @@ public class CouponLookUpService {
     private MemberCoupon findOwnedCoupon(Long memberId, Long memberCouponId) {
         MemberCoupon coupon = memberCouponRepository.findByIdAndMemberId(memberCouponId, memberId)
                 .orElseThrow(() -> {
-                    log.warn("event=COUPON_DETAIL_FAILED memberId={} memberCouponId={} reason={}",
+                    log.info("event=COUPON_DETAIL_FAILED memberId={} memberCouponId={} errorCode={}",
                             memberId, memberCouponId, CouponErrorCode.COUPON_ACCESS_DENIED.getCode());
                     return new CouponException(CouponErrorCode.COUPON_ACCESS_DENIED);
                 });
         if (coupon.getStatus() == MemberCouponStatus.REMOVED) {
-            log.warn("event=COUPON_DETAIL_FAILED memberId={} memberCouponId={} reason={}",
+            log.info("event=COUPON_DETAIL_FAILED memberId={} memberCouponId={} errorCode={}",
                     memberId, memberCouponId, CouponErrorCode.COUPON_NOT_FOUND.getCode());
             throw new CouponException(CouponErrorCode.COUPON_NOT_FOUND);
         }
@@ -356,7 +356,7 @@ public class CouponLookUpService {
 
     // 정합성 오류의 원인을 추적할 식별자는 서버 로그에만 남긴다.
     private CouponException missingCouponData(String reason, MemberCoupon coupon) {
-        log.error("event=COUPON_DATA_INTEGRITY_FAILED reason={} code={} memberCouponId={} eventId={}",
+        log.error("event=COUPON_DATA_INTEGRITY_FAILED reason={} errorCode={} memberCouponId={} couponEventId={}",
                 reason, CommonErrorCode.INTERNAL_ERROR.getCode(), coupon.getId(), coupon.getCouponEventId());
         return new CouponException(CommonErrorCode.INTERNAL_ERROR);
     }

@@ -135,14 +135,19 @@ public class CampaignReportStep implements AggregationStep<CampaignReport> {
             CampaignImpressionStats served = impressions.get(campaignId);
             if (served != null && served.validCount() != row.validCount()) {
                 mismatched++;
-                log.warn("event=CAMPAIGN_REPORT_VALID_IMPRESSION_MISMATCH businessDate={} campaignId={} served={} judged={}",
+                log.warn("event=ANALYTICS_CAMPAIGN_REPORT_VALID_IMPRESSION_MISMATCH businessDate={} campaignId={} served={} judged={}",
                         businessDate, campaignId, served.validCount(), row.validCount());
             }
             rows.add(row);
         }
         metrics.recordViolations(VALID_IMPRESSION_CHECK, mismatched);
         if (unknown > 0) {
-            log.info("event=CAMPAIGN_REPORT_UNKNOWN_CAMPAIGN businessDate={} skipped={}", businessDate, unknown);
+            log.info("event=ANALYTICS_CAMPAIGN_REPORT_UNKNOWN_CAMPAIGN businessDate={} skippedCount={}",
+                    businessDate, unknown);
+        }
+        if (mismatched > 0) {
+            log.error("event=ANALYTICS_CAMPAIGN_REPORT_DONE businessDate={} campaignCount={} mismatchCount={}",
+                    businessDate, rows.size(), mismatched);
         }
         return new CampaignReport(rows);
     }

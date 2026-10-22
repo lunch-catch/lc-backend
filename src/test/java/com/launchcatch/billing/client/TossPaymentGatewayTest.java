@@ -191,7 +191,7 @@ class TossPaymentGatewayTest {
 
         assertThat(logs.list).anySatisfy(event -> assertThat(event.getFormattedMessage())
                 .contains("event=TOSS_CONFIRM_UNKNOWN", "orderId=" + ORDER_ID, "httpStatus=500",
-                        "code=null", "pgMessage=null", "contentType=application/json", "responseBodyBytes=0"));
+                        "externalErrorCode=null", "pgMessage=null", "contentType=application/json", "responseBodyBytes=0"));
     }
 
     @Test
@@ -207,7 +207,7 @@ class TossPaymentGatewayTest {
 
         assertThat(logs.list).anySatisfy(event -> assertThat(event.getFormattedMessage())
                 .contains("event=TOSS_INQUIRE_UNKNOWN", "httpStatus=500",
-                        "code=FAILED_INTERNAL_SYSTEM_PROCESSING", "pgMessage=오류 **** **** 다음 줄",
+                        "externalErrorCode=FAILED_INTERNAL_SYSTEM_PROCESSING", "pgMessage=오류 **** **** 다음 줄",
                         "contentType=application/json", "responseBodyBytes=" + body.getBytes(StandardCharsets.UTF_8).length)
                 .doesNotContain(SECRET, basic, "\n"));
     }

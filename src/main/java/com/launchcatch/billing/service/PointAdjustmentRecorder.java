@@ -63,6 +63,7 @@ public class PointAdjustmentRecorder {
         if (request.mismatchId() != null) {
             checkMismatch(request);
         }
+        checkCampaignOwner(request);
         if (request.amount() < 0 && pointLedgerRepository.sumBalance(request.ownerId()) + request.amount() < 0) {
             throw new BillingException(BillingErrorCode.ADJUSTMENT_MAKES_BALANCE_NEGATIVE);
         }
@@ -131,6 +132,13 @@ public class PointAdjustmentRecorder {
         // 캠페인 대사 건의 영업일이 정정이 가리키는 영업일이다. 다르면 엉뚱한 날의 합계가 고쳐진다
         if (campaignTarget && !mismatch.businessDate().equals(request.targetBusinessDate())) {
             throw new BillingException(CommonErrorCode.INVALID_INPUT);
+        }
+    }
+
+    // 일반 조정도 캠페인을 가리키면 대사 건이 없어도 존재와 점주 소유를 확인한다
+    private void checkCampaignOwner(PointAdjustmentRequest request) {
+        if (request.campaignId() != null && !request.ownerId().equals(campaignOwnerId(request.campaignId()))) {
+            throw new BillingException(BillingErrorCode.SETTLEMENT_MISMATCH_OWNER_MISMATCH);
         }
     }
 

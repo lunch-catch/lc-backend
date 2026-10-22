@@ -8,6 +8,9 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import com.launchcatch.analytics.batch.repository.EventLogRetentionRepository;
 import java.time.Clock;
 import java.time.Instant;
@@ -20,6 +23,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.slf4j.LoggerFactory;
 
 @ExtendWith(MockitoExtension.class)
 class EventLogRetentionServiceTest {
@@ -91,5 +95,26 @@ class EventLogRetentionServiceTest {
         }
 
         verify(repository, times(1)).deleteOlderThan(CUTOFF, batch);
+    }
+
+    @Test
+    @DisplayName("끝나면 접두사가 붙은 이벤트에 지운 개수를 deletedCount 로 남긴다")
+    void 끝나면_지운_개수를_deletedCount로_남긴다() {
+        when(repository.deleteOlderThan(CUTOFF, EventLogRetentionService.BATCH_SIZE)).thenReturn(7);
+        Logger logger = (Logger) LoggerFactory.getLogger(EventLogRetentionService.class);
+        ListAppender<ILoggingEvent> logs = new ListAppender<>();
+        logs.start();
+        logger.addAppender(logs);
+
+        try {
+            service.purge();
+        } finally {
+            logger.detachAppender(logs);
+        }
+
+        assertThat(logs.list).singleElement().satisfies(event ->
+                assertThat(event.getFormattedMessage())
+                        .startsWith("event=ANALYTICS_EVENT_LOG_RETENTION_DONE")
+                        .contains("deletedCount=7"));
     }
 }

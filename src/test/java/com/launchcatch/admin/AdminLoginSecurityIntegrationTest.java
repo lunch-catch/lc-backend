@@ -363,6 +363,24 @@ class AdminLoginSecurityIntegrationTest extends AbstractAdminIntegrationTest {
         }
     }
 
+    @ParameterizedTest
+    @ValueSource(strings = {"203.0.113.20", "10.0.0.7"})
+    void 전달_헤더의_마지막_IP를_공유_해석기가_정한_감사_MDC로_사용한다(String forwardedIp) throws Exception {
+        var appender = attach(AdminLoginAuditFilter.class);
+        try {
+            mvc.perform(login(body).header("X-Forwarded-For", "198.51.100.10, " + forwardedIp))
+                    .andExpect(status().isOk());
+            assertThat(appender.list).singleElement().satisfies(event -> {
+                assertThat(event.getMDCPropertyMap()).containsEntry("clientIp", forwardedIp);
+                assertThat(event.getMDCPropertyMap().get("traceId")).isNotBlank();
+                assertThat(event.getFormattedMessage()).contains("event=ADMIN_LOGIN_SUCCESS", "httpStatus=200")
+                        .doesNotContain("clientIp=", "198.51.100.10", forwardedIp, PASSWORD, "refreshToken");
+            });
+        } finally {
+            detach(AdminLoginAuditFilter.class, appender);
+        }
+    }
+
     /*
      * DB 백업을 커밋한 뒤 최종 검사 전에 계정이 바뀌는 창을 만든다. 그 두 조회 사이에서 앱이
      * 부르는 것이 JWT 생성이라 그 자리에 계정 변경을 끼운다. 목으로 두 번째 조회의 응답을

@@ -3,6 +3,7 @@ package com.launchcatch.billing.service;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -32,6 +33,7 @@ import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
+import org.mockito.InOrder;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.context.ApplicationEventPublisher;
 
@@ -128,6 +130,17 @@ class RechargeReservationServiceTest {
     }
 
     @Test
+    void 계정_잠금을_후보_조회보다_먼저_잡아_최신_잔액_스냅샷에서_재예약한다() {
+        when(campaignQuery.findByOwnerIdAndStatusIn(OWNER_ID, List.of(CampaignStatus.PAUSED))).thenReturn(List.of());
+
+        service(LocalTime.of(12, 0)).reserve(new PointCharged(OWNER_ID, PAYMENT_ID, 10000L));
+
+        InOrder order = inOrder(accountRepository, campaignQuery);
+        order.verify(accountRepository).lockByOwnerId(OWNER_ID);
+        order.verify(campaignQuery).findByOwnerIdAndStatusIn(OWNER_ID, List.of(CampaignStatus.PAUSED));
+    }
+
+    @Test
     void 관리자나_점주가_중단한_캠페인과_집행_기간이_끝난_캠페인은_재예약하지_않는다() {
         CampaignInfo admin = campaign(1L, PauseReason.ADMIN, DAY.minusDays(1), DAY.plusDays(1), 10000L);
         CampaignInfo owner = campaign(2L, PauseReason.OWNER, DAY.minusDays(1), DAY.plusDays(1), 10000L);
@@ -137,7 +150,8 @@ class RechargeReservationServiceTest {
 
         service(LocalTime.of(12, 0)).reserve(new PointCharged(OWNER_ID, PAYMENT_ID, 10000L));
 
-        verifyNoInteractions(accountRepository, planRepository, ledgerRepository, fundingUpdater, eventPublisher);
+        verify(accountRepository).lockByOwnerId(OWNER_ID);
+        verifyNoInteractions(planRepository, ledgerRepository, fundingUpdater, eventPublisher);
     }
 
     @Test

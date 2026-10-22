@@ -38,16 +38,14 @@ class OwnerPointBalanceServiceTest {
         return new OwnerPointBalanceService(repository, clock);
     }
 
-    private void today(long reserve, long release, long deduct) {
-        when(repository.sumByBusinessDate(OWNER, EntryType.RESERVE, TODAY)).thenReturn(reserve);
-        when(repository.sumByBusinessDate(OWNER, EntryType.RELEASE, TODAY)).thenReturn(release);
-        when(repository.sumByCreatedAt(OWNER, EntryType.DEDUCT, DAY_START, DAY_END)).thenReturn(deduct);
+    private void reserved(long amount) {
+        when(repository.sumReservedPoint(OWNER)).thenReturn(amount);
     }
 
     @Test
     void 예약_중인_포인트는_예약에서_차감과_해제를_뺀_크기다() {
         when(repository.sumBalance(OWNER)).thenReturn(12000L);
-        today(-10000, 0, -6500);
+        reserved(3500);
 
         PointBalanceResponse response = service().getBalance(OWNER);
 
@@ -60,7 +58,7 @@ class OwnerPointBalanceServiceTest {
     @Test
     void 해제가_끝나면_예약_중인_포인트는_0이고_잔액과_겹치지_않는다() {
         when(repository.sumBalance(OWNER)).thenReturn(15500L);
-        today(-10000, 3500, -6500);
+        reserved(0);
 
         PointBalanceResponse response = service().getBalance(OWNER);
 
@@ -71,7 +69,7 @@ class OwnerPointBalanceServiceTest {
     @Test
     void 계산이_음수가_되어도_예약_중인_포인트는_0_미만으로_내리지_않는다() {
         when(repository.sumBalance(OWNER)).thenReturn(0L);
-        today(-1000, 0, -1500);
+        reserved(-500);
 
         assertThat(service().getBalance(OWNER).reservedPoint()).isZero();
     }

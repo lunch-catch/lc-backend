@@ -64,7 +64,7 @@ WITH RECURSIVE seq (n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM seq WHERE n < 10
 SELECT campaign_id, campaign_id, d, 'RESERVE', 'RECONCILIATION', -10000, TIMESTAMP(d, '00:00:05'), TIMESTAMP(d, '00:00:05')
 FROM imp
 GROUP BY campaign_id, d
-ON DUPLICATE KEY UPDATE point_ledger.point_ledger_id = point_ledger.point_ledger_id;
+ON DUPLICATE KEY UPDATE point_ledger.updated_at = point_ledger.updated_at;
 
 -- 노출마다 판정이다. 예산 안이라 모두 BILLED 다
 INSERT INTO deduction_result (serve_id, campaign_id, owner_id, business_date, billing_status, unit_price,
@@ -93,7 +93,7 @@ WITH RECURSIVE seq (n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM seq WHERE n < 10
 SELECT campaign_id, campaign_id, serve_id, 'DEDUCT', 'REALTIME', -10,
        TIMESTAMP(d, '10:30:00') + INTERVAL slot + 1 SECOND, TIMESTAMP(d, '10:30:00') + INTERVAL slot + 1 SECOND
 FROM imp
-ON DUPLICATE KEY UPDATE point_ledger.point_ledger_id = point_ledger.point_ledger_id;
+ON DUPLICATE KEY UPDATE point_ledger.updated_at = point_ledger.updated_at;
 
 -- 13:30 해제다. 예약에서 그 영업일의 차감을 뺀 나머지를 돌려준다
 INSERT INTO point_ledger (owner_id, campaign_id, business_date, entry_type, source, amount, created_at, updated_at)
@@ -108,4 +108,4 @@ SELECT campaign_id, campaign_id, d, 'RELEASE', 'RECONCILIATION', 10000 - 10 * CO
        TIMESTAMP(d, '13:30:05'), TIMESTAMP(d, '13:30:05')
 FROM imp
 GROUP BY campaign_id, d
-ON DUPLICATE KEY UPDATE point_ledger.point_ledger_id = point_ledger.point_ledger_id;
+ON DUPLICATE KEY UPDATE point_ledger.updated_at = point_ledger.updated_at;

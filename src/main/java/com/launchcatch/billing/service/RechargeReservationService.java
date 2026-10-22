@@ -15,6 +15,7 @@ import com.launchcatch.campaign.contract.Cause;
 import com.launchcatch.campaign.contract.FundingJudgement;
 import com.launchcatch.campaign.contract.Judgement;
 import com.launchcatch.campaign.contract.PauseReason;
+import com.launchcatch.global.logging.TransactionLogging;
 import java.time.Clock;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -25,6 +26,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 /*
@@ -37,9 +39,10 @@ import org.springframework.transaction.annotation.Transactional;
  *
  * 한 트랜잭션이고 점주 계정 행을 먼저 잠근다(D-8). 캠페인 ID 오름차순으로(D-4) 잔액이 남는 대로 채운다.
  *
- * 후보 목록은 계정 행을 잠그기 전에 읽으므로 잠금을 기다리는 동안 낡을 수 있다. 그래서 캠페인마다
- * 원장을 쓰기 직전에 `CampaignQueryService.findByIdForUpdate`로 그 캠페인 하나만 다시 잠그고 최신
- * 상태를 확인한다(#378). 이미 재개됐거나 관리자·점주가 중단했거나 종료됐으면 건너뛴다.
+ * 계정 행을 첫 조회로 잠근 뒤 영업일과 후보를 읽는다. 잠금을 기다리는 동안 만든 REPEATABLE READ 스냅샷을
+ * 재사용하지 않아 최신 잔액과 영업일 안에서만 예약한다. 캠페인마다 원장을 쓰기 직전에
+ * `CampaignQueryService.findByIdForUpdate`로 그 캠페인 하나도 다시 잠그고 최신 상태를 확인한다(#378).
+ * 이미 재개됐거나 관리자·점주가 중단했거나 종료됐으면 건너뛴다.
  */
 @Slf4j
 @Service
@@ -54,8 +57,9 @@ public class RechargeReservationService {
     private final BudgetDailyPlanRepository planRepository;
     private final ApplicationEventPublisher eventPublisher;
 
-    @Transactional
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void reserve(PointCharged charged) {
+        accountRepository.lockByOwnerId(charged.ownerId());
         LocalDate businessDate = LocalDate.now(clock);
         List<CampaignInfo> targets = campaignQuery
                 .findByOwnerIdAndStatusIn(charged.ownerId(), List.of(CampaignStatus.PAUSED)).stream()
@@ -66,7 +70,6 @@ public class RechargeReservationService {
         if (targets.isEmpty()) {
             return;
         }
-        accountRepository.lockByOwnerId(charged.ownerId());
         long remaining = balanceOf(charged.ownerId());
         LocalDateTime now = LocalDateTime.now(clock);
         for (CampaignInfo campaign : targets) {
@@ -110,8 +113,9 @@ public class RechargeReservationService {
         if (newReserved >= plan.getUnitPrice()) {
             notifyResume(charged, businessDate, latest, plan, newReserved);
         }
-        log.info("event=RECHARGE_RESERVE_DONE businessDate={} campaignId={} paymentId={} delta={} newReserved={}",
-                businessDate, latest.campaignId(), charged.paymentId(), delta, newReserved);
+        TransactionLogging.afterCommit(() -> log.info(
+                "event=BILLING_RECHARGE_RESERVE_DONE businessDate={} campaignId={} paymentId={} delta={} newReserved={}",
+                businessDate, latest.campaignId(), charged.paymentId(), delta, newReserved));
         return remaining - delta;
     }
 
@@ -139,7 +143,7 @@ public class RechargeReservationService {
     private long balanceOf(Long ownerId) {
         long balance = ledgerRepository.sumBalance(ownerId);
         if (balance < 0) {
-            log.error("event=RECHARGE_RESERVE_NEGATIVE_BALANCE ownerId={} balance={}", ownerId, balance);
+            log.error("event=BILLING_RECHARGE_RESERVE_NEGATIVE_BALANCE ownerId={} balance={}", ownerId, balance);
             return 0L;
         }
         return balance;

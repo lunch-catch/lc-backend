@@ -9,6 +9,7 @@ import java.time.LocalDate;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataAccessException;
@@ -56,7 +57,8 @@ public class ImpressionCountRepository {
             }
             return counts;
         } catch (DataAccessException e) {
-            log.warn("event=FEED_IMPRESSION_COUNT_FAILED cause={} 0 으로 보고 통과시킨다",
+            log.warn("event=ADSERVING_FEED_IMPRESSION_COUNT_FAILED businessDate={} campaignIds={} reason={} fallback=ZERO_COUNT",
+                    businessDate, campaignIds.stream().map(String::valueOf).collect(Collectors.joining(",")),
                     RedisFailureClassifier.causeLabel(e), e);
             meterRegistry.counter(BYPASS_METRIC, "use", "impression_count").increment();
             return Map.of();
@@ -72,7 +74,7 @@ public class ImpressionCountRepository {
             redisTemplate.opsForHash().increment(key(businessDate), String.valueOf(campaignId), 1);
             redisTemplate.expire(key(businessDate), TTL);
         } catch (DataAccessException e) {
-            log.warn("event=FEED_IMPRESSION_COUNT_INCREMENT_FAILED campaignId={} cause={} 올리지 않고 통과시킨다",
+            log.warn("event=ADSERVING_FEED_IMPRESSION_COUNT_INCREMENT_FAILED campaignId={} reason={} fallback=SKIP_WRITE",
                     campaignId, RedisFailureClassifier.causeLabel(e), e);
             meterRegistry.counter(BYPASS_METRIC, "use", "impression_count").increment();
         }
