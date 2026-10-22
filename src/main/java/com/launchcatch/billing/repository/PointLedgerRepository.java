@@ -147,6 +147,18 @@ public interface PointLedgerRepository extends JpaRepository<PointLedger, Long>,
     List<CampaignSpend> sumDeductForCampaignsOn(@Param("campaignIds") Collection<Long> campaignIds,
                                                 @Param("businessDate") LocalDate businessDate);
 
+    // 그 영업일에 캠페인 여러 개가 돌려받은 RELEASE 합이다. RELEASE 가 없는 캠페인은 결과에 없다
+    @Query("""
+            select new com.launchcatch.billing.dto.CampaignSpend(l.campaignId, sum(l.amount))
+              from PointLedger l
+             where l.entryType = com.launchcatch.billing.entity.EntryType.RELEASE
+               and l.campaignId in :campaignIds
+               and l.businessDate = :businessDate
+             group by l.campaignId
+            """)
+    List<CampaignSpend> sumReleaseForCampaignsOn(@Param("campaignIds") Collection<Long> campaignIds,
+                                                 @Param("businessDate") LocalDate businessDate);
+
     /*
      * 집계 조회가 쓰는 점주와 캠페인과 유형별 합이다. 양수 행과 음수 행을 나눠 더해 ADJUST 의 방향을 살린다.
      * RESERVE 와 RELEASE 는 원장의 영업일로 묻는다.
