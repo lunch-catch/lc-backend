@@ -221,13 +221,17 @@ public class CouponSequenceService {
     private void blockAll(Set<Long> eventIds, Throwable cause) {
         for (long eventId : eventIds) {
             if (blockedEvents.add(eventId)) {
-                log.warn("event=COUPON_ISSUANCE_BLOCKED couponEventId={}", eventId, cause);
+                log.warn("event=COUPON_ISSUANCE_BLOCK_DONE couponEventId={} exceptionType={} reason={}",
+                        eventId, cause == null ? "NONE" : cause.getClass().getSimpleName(),
+                        cause == null ? "STATE_UNAVAILABLE" : CouponFailureDetails.reason(cause));
             }
         }
         try {
             sequences.blockAll(eventIds);
         } catch (RuntimeException error) {
-            log.warn("event=COUPON_REDIS_BLOCK_FAILED couponEventIds={} reason={}", eventIds, error.toString());
+            log.warn("event=COUPON_REDIS_BLOCK_FAILED couponEventIds={} exceptionType={} reason={}",
+                    eventIds.stream().sorted().map(String::valueOf).collect(java.util.stream.Collectors.joining(",")),
+                    error.getClass().getSimpleName(), CouponFailureDetails.reason(error));
         }
     }
 
@@ -237,12 +241,15 @@ public class CouponSequenceService {
      */
     public void block(long eventId, Throwable cause) {
         if (blockedEvents.add(eventId)) {
-            log.warn("event=COUPON_ISSUANCE_BLOCKED couponEventId={}", eventId, cause);
+            log.warn("event=COUPON_ISSUANCE_BLOCK_DONE couponEventId={} exceptionType={} reason={}",
+                    eventId, cause == null ? "NONE" : cause.getClass().getSimpleName(),
+                    cause == null ? "STATE_UNAVAILABLE" : CouponFailureDetails.reason(cause));
         }
         try {
             sequences.block(eventId);
         } catch (RuntimeException error) {
-            log.warn("event=COUPON_REDIS_BLOCK_FAILED couponEventId={} reason={}", eventId, error.toString());
+            log.warn("event=COUPON_REDIS_BLOCK_FAILED couponEventId={} exceptionType={} reason={}",
+                    eventId, error.getClass().getSimpleName(), CouponFailureDetails.reason(error));
         }
     }
 

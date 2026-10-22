@@ -74,6 +74,21 @@ class CouponSequenceRecoveryServiceTest {
     }
 
     @Test
+    void 복구_실패는_메시지와_스택_없이_예외_종류와_타임아웃_사유만_남긴다() {
+        doThrow(new org.springframework.dao.QueryTimeoutException("secret-token"))
+                .when(sequences).rebuild(eq(81L), anyList(), anyLong(), anyLong());
+        try (var logs = new CouponLogCapture(CouponSequenceRecoveryService.class)) {
+            assertThat(service.recover(81L)).isFalse();
+
+            assertThat(logs.events).singleElement().satisfies(event -> {
+                assertThat(event.getFormattedMessage()).contains("exceptionType=QueryTimeoutException", "reason=TIMEOUT")
+                        .doesNotContain("secret-token");
+                assertThat(event.getThrowableProxy()).isNull();
+            });
+        }
+    }
+
+    @Test
     void 이미_다른_복구가_진행_중이면_건너뛴_결과를_실패로_반환한다() {
         @SuppressWarnings("unchecked")
         Set<Long> recovering = (Set<Long>) ReflectionTestUtils.getField(service, "recovering");

@@ -130,6 +130,23 @@ class CouponBatchExecutionServiceTest {
         assertThat(failure.getSuppressed()).containsExactly(recordFailure);
     }
 
+    @Test
+    void SQL_제약_위반은_민감한_값과_스택_없이_원인_정보로_남긴다() {
+        when(query.findByBusinessDate(DATE)).thenReturn(List.of(record(TASK.jobName(), 3)));
+        var failure = new org.springframework.dao.DataIntegrityViolationException("secret-token",
+                new java.sql.SQLException("secret-value", "23000", 1062));
+        try (var logs = new CouponLogCapture(CouponBatchExecutionService.class)) {
+            service.runClaimed(TASK, DATE, attempt -> { throw failure; });
+
+            assertThat(logs.events).singleElement().satisfies(event -> {
+                assertThat(event.getFormattedMessage()).contains("event=COUPON_BATCH_FAILED",
+                        "exceptionType=DataIntegrityViolationException>SQLException", "sqlState=23000", "sqlErrorCode=1062")
+                        .doesNotContain("secret-token", "secret-value");
+                assertThat(event.getThrowableProxy()).isNull();
+            });
+        }
+    }
+
     private void retryAllowed() {
         when(executions.recordRetryAttempt(eq(TASK.jobName()), eq(DATE), eq(3), anyString())).thenReturn(true);
         when(executions.renewAttempt(TASK.jobName(), DATE, 3)).thenReturn(true);
