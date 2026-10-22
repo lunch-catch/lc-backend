@@ -48,7 +48,7 @@ public class ExclusionRepository {
             }
             return members.stream().map(Long::valueOf).collect(Collectors.toUnmodifiableSet());
         } catch (DataAccessException e) {
-            log.warn("event=FEED_EXCLUSION_FAILED memberId={} cause={} 빈 이력으로 통과시킨다",
+            log.warn("event=ADSERVING_FEED_EXCLUSION_FAILED memberId={} reason={} fallback=EMPTY_HISTORY",
                     memberId, RedisFailureClassifier.causeLabel(e), e);
             meterRegistry.counter(BYPASS_METRIC, "use", "exclusion").increment();
             return Set.of();
@@ -65,7 +65,7 @@ public class ExclusionRepository {
             redisTemplate.opsForSet().add(key, String.valueOf(campaignId));
             redisTemplate.expire(key, Duration.between(now, businessDate.plusDays(1).atStartOfDay(ClockConfig.ZONE)));
         } catch (DataAccessException e) {
-            log.warn("event=FEED_EXCLUSION_WRITE_FAILED memberId={} campaignId={} cause={} 넣지 않고 통과시킨다",
+            log.warn("event=ADSERVING_FEED_EXCLUSION_WRITE_FAILED memberId={} campaignId={} reason={} fallback=SKIP_WRITE",
                     memberId, campaignId, RedisFailureClassifier.causeLabel(e), e);
             meterRegistry.counter(BYPASS_METRIC, "use", "exclusion").increment();
         }
