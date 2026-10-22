@@ -60,13 +60,8 @@ class TemplateCreateServiceTest {
     private static final Long ADMIN_ID = 1L;
     private static final String REQUEST_ID = "req-1";
 
-    // 상수를 참조하지 않고 poster-api-design.md 의 문장을 그대로 적어야 목록이 바뀐 것을 잡는다.
-    private static final List<String> EXPECTED_SUGGESTED_PROMPTS = List.of(
-            "배경을 더 밝게 해줘",
-            "행사명 글자를 더 크게 해줘",
-            "할인 문구를 더 진한 강조색으로 바꿔줘",
-            "행사명을 중앙에서 오른쪽으로 1cm 옮겨줘",
-            "이미지 모서리를 더 둥글게 해줘");
+    private static final List<String> GENERATED_SUGGESTIONS =
+            List.of("행사명 글자를 조금 더 크게 해줘", "배경을 조금 더 밝게 해줘");
     private static final Clock FIXED_CLOCK = Clock.fixed(Instant.parse("2026-10-08T01:00:00Z"), ZoneOffset.UTC);
     // 서비스에 직접 넣는 테스트용 값이다. application.yml의 campaign.template-max-count와는 무관하다.
     private static final int MAX_TEMPLATES = 10;
@@ -129,7 +124,7 @@ class TemplateCreateServiceTest {
         처음_보는_requestId로_설정한다();
         when(templateRepository.count()).thenReturn(9L);
         when(templateQuotaRepository.tryReserve(MAX_TEMPLATES)).thenReturn(1);
-        when(templateHtmlGenerator.generate("가을 느낌")).thenReturn(new GeneratedTemplate(VALID_HTML + "<script>alert(1)</script>", ""));
+        when(templateHtmlGenerator.generate("가을 느낌")).thenReturn(new GeneratedTemplate(VALID_HTML + "<script>alert(1)</script>", "", GENERATED_SUGGESTIONS));
         when(templateRepository.saveAndFlush(any(Template.class))).thenAnswer(invocation -> {
             Template saved = invocation.getArgument(0);
             setId(saved, 1L);
@@ -144,7 +139,7 @@ class TemplateCreateServiceTest {
         assertThat(response.status()).isEqualTo(TemplateStatus.DRAFT);
         assertThat(response.html()).isEqualTo(VALID_HTML);
         assertThat(response.removedElements()).containsExactly("script");
-        assertThat(response.suggestedPrompts()).containsExactlyElementsOf(EXPECTED_SUGGESTED_PROMPTS);
+        assertThat(response.suggestedPrompts()).containsExactlyElementsOf(GENERATED_SUGGESTIONS);
         ArgumentCaptor<Template> captor = ArgumentCaptor.forClass(Template.class);
         verify(templateRepository).saveAndFlush(captor.capture());
         assertThat(captor.getValue().isActive()).isFalse();
@@ -165,7 +160,8 @@ class TemplateCreateServiceTest {
         assertThat(response.versionNumber()).isEqualTo(1);
         assertThat(response.html()).isEqualTo(VALID_HTML);
         assertThat(response.removedElements()).isEmpty();
-        assertThat(response.suggestedPrompts()).containsExactlyElementsOf(EXPECTED_SUGGESTED_PROMPTS);
+        // 재시도 응답은 저장된 버전에서 만들어지고 제안은 저장하지 않으므로 비어 있다(#732)
+        assertThat(response.suggestedPrompts()).isEmpty();
         verifyNoInteractions(
                 templateRepository, templateHtmlGenerator, templateQuotaRepository, transactionTemplate,
                 redisTemplate);
