@@ -8,8 +8,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.querydsl.core.types.dsl.EntityPathBase;
 import com.tngtech.archunit.core.domain.Dependency;
+import com.tngtech.archunit.core.domain.JavaCall;
 import com.tngtech.archunit.core.domain.JavaClass;
 import com.tngtech.archunit.core.domain.JavaMethod;
+import com.tngtech.archunit.core.domain.properties.HasName;
 import com.tngtech.archunit.core.importer.ImportOption;
 import com.tngtech.archunit.junit.AnalyzeClasses;
 import com.tngtech.archunit.junit.ArchTest;
@@ -126,6 +128,16 @@ class ArchitectureTest {
             noClasses().that().resideInAPackage("..global..")
                     .should().dependOnClassesThat()
                     .resideInAnyPackage(withExtra(domainPackages(), "..ops..", "..auth.."))
+                    .allowEmptyShould(true);
+
+    /*
+     * 클라이언트 IP 는 ClientIpResolver 만 정한다. getRemoteAddr() 를 그냥 부르면 ALB 의 IP 를 받는다.
+     * X-Forwarded-For 를 읽는 것은 getHeader 의 인자라 이 규칙으로 막지 못하고 리뷰가 본다.
+     */
+    @ArchTest
+    static final ArchRule 클라이언트_IP는_공유_해석기만_정한다 =
+            noClasses().that().doNotHaveFullyQualifiedName(BASE + ".global.http.ClientIpResolver")
+                    .should().callMethodWhere(JavaCall.Predicates.target(HasName.Predicates.name("getRemoteAddr")))
                     .allowEmptyShould(true);
 
     /*

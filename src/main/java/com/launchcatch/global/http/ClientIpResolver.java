@@ -9,6 +9,11 @@ import java.util.regex.Pattern;
  * ALB 는 받은 X-Forwarded-For 끝에 자기가 본 접속 IP 를 덧붙인다. 앞쪽 항목은 클라이언트가 마음대로
  * 넣을 수 있으므로 마지막 항목만 믿는다. 이 앱의 8080 은 보안 그룹에서 ALB 에게만 열려 있어야 한다.
  * 그렇지 않으면 직접 접속한 클라이언트가 마지막 항목까지 꾸밀 수 있다 (lc-backend #722).
+ *
+ * server.forward-headers-strategy 와 server.tomcat.remoteip.internal-proxies 를 함께 켜지 않는다.
+ * Tomcat 의 Remote IP Valve 는 신뢰 대역 항목을 걷어 내 getRemoteAddr() 로 옮기고 남은 항목만 헤더에 다시
+ * 쓴다. 남는 것은 클라이언트가 보낸 항목이라, 그 뒤에 마지막 항목을 읽으면 위조한 값이 클라이언트 IP 가 된다.
+ * 클라이언트 IP 는 이 클래스 밖에서 getRemoteAddr() 나 X-Forwarded-For 로 직접 읽지 않는다.
  */
 public final class ClientIpResolver {
 
