@@ -12,7 +12,6 @@ import com.launchcatch.store.contract.OwnerStoreSnapshot;
 import com.launchcatch.store.contract.StoreAdCandidateInfo;
 import com.launchcatch.store.contract.StoreInfo;
 import com.launchcatch.store.contract.StoreMenuInfo;
-import com.launchcatch.store.contract.StoreMenuDataException;
 import com.launchcatch.store.contract.StoreQueryService;
 import com.launchcatch.store.contract.StoreSummary;
 import com.launchcatch.store.entity.StoreRegistrationStep;
@@ -93,8 +92,8 @@ class StoreQueryServiceImpl implements StoreQueryService {
             return List.of();
         }
         return stores.findMenusByIdIn(menuIds).stream()
-                .map(row -> new StoreMenuInfo(row.menuId(), row.storeId(),
-                        images.resolve(requireImageKey(row.menuId(), row.imageObjectKey())), row.name(), row.price()))
+                .map(row -> new StoreMenuInfo(row.menuId(), row.storeId(), images.resolve(requireImageKey(row.imageObjectKey())),
+                        row.name(), row.price()))
                 .toList();
     }
 
@@ -134,9 +133,9 @@ class StoreQueryServiceImpl implements StoreQueryService {
     }
 
     // 최종 등록 시 필수인 이미지가 없으면 데이터 오류이므로 null이나 기본 이미지로 대신하지 않는다.
-    private static String requireImageKey(long menuId, String objectKey) {
+    private static String requireImageKey(String objectKey) {
         if (objectKey == null || objectKey.isBlank()) {
-            throw new StoreMenuDataException(menuId);
+            throw new IllegalStateException("최종 등록된 가게 또는 메뉴의 검증된 이미지가 누락되었습니다.");
         }
         return objectKey;
     }

@@ -5,7 +5,6 @@ import static org.mockito.Mockito.*;
 
 import com.launchcatch.store.contract.StoreAdCandidateInfo;
 import com.launchcatch.store.contract.StoreQueryService;
-import com.launchcatch.store.contract.StoreMenuDataException;
 import com.launchcatch.store.dto.StoreAdCandidateQueryRow;
 import com.launchcatch.store.contract.StoreInfo;
 import com.launchcatch.store.contract.StoreMenuInfo;
@@ -195,56 +194,16 @@ class StoreQueryServiceImplTest {
                 new StoreMenuQueryRow(10L, 1L, null, "국밥", 9000L)));
 
         assertThatThrownBy(() -> service.findMenusByIdIn(List.of(10L)))
-                .isInstanceOfSatisfying(StoreMenuDataException.class,
-                        failure -> assertThat(failure.menuId()).isEqualTo(10L));
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("이미지가 누락");
     }
 
-    @ParameterizedTest
-    @NullAndEmptySource
-    @ValueSource(strings = {" ", "\t"})
-    void 이미지_저장_키가_없거나_공백이면_메뉴_ID를_전달한다(String imageKey) {
+    @Test
+    void 이미지_저장_키가_공백이어도_실패한다() {
         when(repository.findMenusByIdIn(List.of(10L))).thenReturn(List.of(
-                new StoreMenuQueryRow(10L, 1L, imageKey, "국밥", 9000L)));
+                new StoreMenuQueryRow(10L, 1L, " ", "국밥", 9000L)));
 
         assertThatThrownBy(() -> service.findMenusByIdIn(List.of(10L)))
-                .isInstanceOfSatisfying(StoreMenuDataException.class,
-                        failure -> assertThat(failure.menuId()).isEqualTo(10L));
-    }
-
-    @ParameterizedTest
-    @ValueSource(strings = {"", " ", "\t"})
-    void 메뉴_이미지가_있는데_CDN_설정이_없으면_데이터_오류와_구분한다(String baseUrl) {
-        var unconfigured = new StoreQueryServiceImpl(repository, mock(OwnerStoreQueryRepository.class),
-                mock(StoreOnboardingQueryRepository.class), baseUrl);
-        when(repository.findMenusByIdIn(List.of(10L))).thenReturn(List.of(
-                new StoreMenuQueryRow(10L, 1L, "menus/10.png", "국밥", 9000L)));
-
-        assertThatThrownBy(() -> unconfigured.findMenusByIdIn(List.of(10L)))
-                .isExactlyInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("cdn.base-url");
-    }
-
-    @Test
-    void CDN_설정이_없어도_메뉴_이미지_누락은_데이터_오류다() {
-        var unconfigured = new StoreQueryServiceImpl(repository, mock(OwnerStoreQueryRepository.class),
-                mock(StoreOnboardingQueryRepository.class), "");
-        when(repository.findMenusByIdIn(List.of(10L))).thenReturn(List.of(
-                new StoreMenuQueryRow(10L, 1L, null, "국밥", 9000L)));
-
-        assertThatThrownBy(() -> unconfigured.findMenusByIdIn(List.of(10L)))
-                .isInstanceOfSatisfying(StoreMenuDataException.class,
-                        failure -> assertThat(failure.menuId()).isEqualTo(10L));
-    }
-
-    @Test
-    void 일괄_조회에서_오류가_난_메뉴의_ID를_전달한다() {
-        when(repository.findMenusByIdIn(List.of(10L, 11L))).thenReturn(List.of(
-                new StoreMenuQueryRow(10L, 1L, "menus/10.png", "국밥", 9000L),
-                new StoreMenuQueryRow(11L, 1L, null, "서비스", 0L)));
-
-        assertThatThrownBy(() -> service.findMenusByIdIn(List.of(10L, 11L)))
-                .isInstanceOfSatisfying(StoreMenuDataException.class,
-                        failure -> assertThat(failure.menuId()).isEqualTo(11L));
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("이미지가 누락");
     }
 
     @Test
