@@ -1,6 +1,7 @@
 package com.launchcatch.coupon.config;
 
 import com.launchcatch.auth.ApiSecurityDefaults;
+import jakarta.servlet.DispatcherType;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.annotation.Order;
@@ -39,6 +40,10 @@ public class CouponSecurityConfig {
         return defaults.apply(http)
                 .securityMatcher(COUPON_PATHS)
                 .authorizeHttpRequests(auth -> auth
+                        // 최초 MEMBER 인증을 통과한 발급 결과의 재디스패치만 허용한다.
+                        .requestMatchers(request -> request.getDispatcherType() == DispatcherType.ASYNC
+                                && "POST".equals(request.getMethod()) && LIST_PATH.equals(request.getRequestURI()))
+                        .permitAll()
                         .requestMatchers(HttpMethod.GET, LIST_PATH, ISSUANCE_LIMIT_PATH, SUMMARY_PATH, DETAIL_PATH)
                         .hasRole("MEMBER")
                         .requestMatchers(HttpMethod.DELETE, DETAIL_PATH)
