@@ -43,7 +43,10 @@ public class WishlistService implements WishlistQueryService {
     private final CampaignQueryService campaignQueryService;
     private final Clock clock;
 
-    // campaignId 를 주면 그 캠페인의 찜만 본다. 찜하지 않았으면 빈 배열이다(#416)
+    /*
+     * campaignId 를 주면 그 캠페인의 찜만 본다.
+     * 찜하지 않았으면 빈 배열이다(#416).
+     */
     public WishlistResponse getWishlist(Long memberId, Long campaignId) {
         List<Wishlist> wishes = campaignId == null
                 ? wishlistRepository.findByMemberIdOrderByCreatedAtDescIdDesc(memberId)

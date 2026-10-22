@@ -47,7 +47,10 @@ public interface AdCandidateRepository extends JpaRepository<AdCandidate, AdCand
     // 그날 후보의 그 캠페인 행이다. 상태와 소진은 보지 않는다.
     Optional<AdCandidate> findByIdBusinessDateAndIdCampaignId(LocalDate businessDate, Long campaignId);
 
-    // 그날 후보 가운데 그 캠페인들의 행이다. 상태와 소진은 보지 않는다.
+    /*
+     * 그날 후보 가운데 그 캠페인들의 행이다.
+     * 상태와 소진은 보지 않는다.
+     */
     List<AdCandidate> findByIdBusinessDateAndIdCampaignIdIn(LocalDate businessDate, Collection<Long> campaignIds);
 
     // 아직 소진되지 않은 그날 후보에만 쓴다. 다시 와도 처음 소진 시각이 남는다(#163)
