@@ -305,7 +305,7 @@
 | A-229 | 정정 점주 불일치 | 다른 점주 ID 로 확정 | 정산 불일치 정정 모달 | POST /v1/admin/point-adjustments | BILLING-022 | 대상 결제나 캠페인의 점주와 다름 | "정산 불일치 건이 입력한 점주의 내역이 아닙니다." | - |
 | A-230 | 이미 해결된 불일치 | 확정 | 정산 불일치 정정 모달 | POST /v1/admin/point-adjustments | BILLING-021 | 다른 관리자가 먼저 정정 | "이미 해결된 정산 불일치 건입니다." 원장 롤백 | - |
 | A-231 | 없는 불일치 | 확정 | 정산 불일치 정정 모달 | POST /v1/admin/point-adjustments | BILLING-020 | 불일치 없음 | "정산 불일치 건을 찾을 수 없습니다." | - |
-| A-232 | 전일 소진 대사 생성 | 배치 실행 후 조회 | /settlements?tab=mismatches | GET /v1/admin/settlement-mismatches | - | 전날 카운터와 DEDUCT 합 차이, DEDUCT 합 > 예약액 | CAMPAIGN_SPEND_VS_LEDGER, CAMPAIGN_OVERSPEND 미해결 행. 재실행해도 종류, 캠페인, 날짜당 1행 | 00:00 BILLING_SPEND_RECON_PREV |
+| A-232 | 전일 소진 대사 생성 | 배치 실행 후 조회 | /settlements?tab=mismatches | GET /v1/admin/settlement-mismatches | - | 전날 카운터와 DEDUCT 합 차이, DEDUCT 합 > 예약액, 이틀 전 해제 뒤 DEDUCT 합 + RELEASE 합 > 예약액 | CAMPAIGN_SPEND_VS_LEDGER, CAMPAIGN_OVERSPEND 미해결 행. 재실행해도 종류, 캠페인, 날짜당 1행 | 00:00 BILLING_SPEND_RECON_PREV |
 | A-233 | PG 대사 불일치 생성 | 배치 실행 후 조회 | /settlements?tab=mismatches | GET /v1/admin/settlement-mismatches | - | 전일 결제의 우리 승인액과 PG 승인액 다름 | PG_VS_CHARGE 미해결 행(대상 ID 결제 ID) | 01:30 BILLING_PG_VS_CHARGE_RECON |
 | A-234 | PG 대사 자동 보정 | 배치 실행 후 조회 | /settlements?tab=mismatches | GET /v1/admin/settlement-mismatches | - | 양쪽 승인 같고 CHARGE 원장 없음 | CHARGE 자동 기록, LEDGER_CORRECTION 해결 상태(처리자 대시)로 남음 | 01:30 |
 | A-235 | 불일치 없음, 실패 | 조회 | /settlements?tab=mismatches | GET /v1/admin/settlement-mismatches | COMMON-002, COMMON-001 | - | "조회된 정산 불일치 내역이 없습니다." 또는 표 오류 + 재시도 | - |

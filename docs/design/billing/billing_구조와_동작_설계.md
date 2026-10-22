@@ -67,7 +67,7 @@ billing/
 ├── service/   PointDeductorImpl, DailyPlanSnapshotService, SpendHashRebuildService,
 │              BudgetQueryServiceImpl, HourlyTargetService, BudgetPlanStatusService,
 │              BillingStatsQueryServiceImpl,
-│              DailyReservationService, SpendReconciliationService,
+│              DailyReservationService, DailyReleaseMarker, SpendReconciliationService,
 │              FundingJudgementService, RechargeReservationService,
 │              PgChargeReconciliationService
 ├── job/       PreviousDaySpendReconciliationJob, DailyReservationJob, FundingJudgementJob,
