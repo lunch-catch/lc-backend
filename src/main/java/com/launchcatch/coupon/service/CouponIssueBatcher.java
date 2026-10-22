@@ -98,6 +98,49 @@ public class CouponIssueBatcher implements SmartLifecycle {
 
     // 복구 전의 요청 시각과 처리 기한을 유지해 재접수한 요청도 남은 시간만 기다린다.
     public CouponIssuanceResult submitAndAwait(CouponIssuanceRequest request, long deadlineNanos) {
+        Pending pending = enqueue(request, deadlineNanos);
+        try {
+            return pending.future().get(Math.max(0, deadlineNanos - System.nanoTime()), TimeUnit.NANOSECONDS);
+        } catch (ExecutionException error) {
+            if (error.getCause() instanceof RuntimeException cause) {
+                throw cause;
+            }
+            throw new IllegalStateException("Coupon batch issuance failed", error.getCause());
+        } catch (TimeoutException error) {
+            return cancelOrAwaitCommit(pending);
+        } catch (InterruptedException error) {
+            Thread.currentThread().interrupt();
+            return cancelOrAwaitCommit(pending);
+        }
+    }
+
+    // 결과 대기용 스레드 없이 완료 알림을 반환하며 커밋 전 기한 만료만 취소한다.
+    public CompletableFuture<CouponIssuanceResult> submit(CouponIssuanceRequest request, long deadlineNanos) {
+        Pending pending = enqueue(request, deadlineNanos);
+        try {
+            var expiration = reservationWaiter.schedule(() -> {
+                if (!pending.future().isDone() && pending.cancel()) {
+                    queue.remove(pending);
+                    awaitingReservations.remove(pending);
+                    if (pending.deadline() == null) {
+                        pending.future().completeExceptionally(new CouponException(CouponErrorCode.ISSUANCE_BUSY));
+                    }
+                }
+            }, Math.max(0, deadlineNanos - System.nanoTime()), TimeUnit.NANOSECONDS);
+            pending.future().whenComplete((result, error) -> expiration.cancel(false));
+        } catch (java.util.concurrent.RejectedExecutionException error) {
+            if (pending.cancel()) {
+                queue.remove(pending);
+                awaitingReservations.remove(pending);
+                if (pending.deadline() == null) {
+                    pending.future().completeExceptionally(new CouponException(CouponErrorCode.ISSUANCE_BUSY));
+                }
+            }
+        }
+        return pending.future();
+    }
+
+    private Pending enqueue(CouponIssuanceRequest request, long deadlineNanos) {
         long remaining = deadlineNanos - System.nanoTime();
         if (remaining <= 0) {
             throw new CouponException(CouponErrorCode.ISSUANCE_BUSY);
@@ -118,19 +161,7 @@ public class CouponIssueBatcher implements SmartLifecycle {
         if (!running && queue.remove(pending)) {
             pending.future().completeExceptionally(new CouponException(CouponErrorCode.ISSUANCE_BUSY));
         }
-        try {
-            return pending.future().get(Math.max(0, deadlineNanos - System.nanoTime()), TimeUnit.NANOSECONDS);
-        } catch (ExecutionException error) {
-            if (error.getCause() instanceof RuntimeException cause) {
-                throw cause;
-            }
-            throw new IllegalStateException("Coupon batch issuance failed", error.getCause());
-        } catch (TimeoutException error) {
-            return cancelOrAwaitCommit(pending);
-        } catch (InterruptedException error) {
-            Thread.currentThread().interrupt();
-            return cancelOrAwaitCommit(pending);
-        }
+        return pending;
     }
 
     private CouponIssuanceResult cancelOrAwaitCommit(Pending pending) {

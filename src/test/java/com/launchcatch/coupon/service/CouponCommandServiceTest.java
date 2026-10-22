@@ -23,6 +23,7 @@ import com.google.zxing.common.HybridBinarizer;
 import com.google.zxing.qrcode.QRCodeReader;
 import com.launchcatch.coupon.dto.CouponIssueResponse;
 import com.launchcatch.coupon.CouponQrImageEncoder;
+import com.launchcatch.coupon.config.CouponIssuanceMetrics;
 import com.launchcatch.coupon.dto.CouponQrResponse;
 import com.launchcatch.coupon.entity.CouponDailyLimit;
 import com.launchcatch.coupon.entity.MemberCoupon;
@@ -47,6 +48,11 @@ import java.util.Base64;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import javax.imageio.ImageIO;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -62,6 +68,7 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 import org.springframework.aop.framework.ProxyFactory;
 import org.springframework.beans.BeanUtils;
 import org.springframework.dao.DataAccessResourceFailureException;
@@ -88,6 +95,7 @@ class CouponCommandServiceTest {
     @Mock CouponSequenceService sequenceService;
     @Mock CouponSequenceRecoveryService sequenceRecoveryService;
     @Mock CouponIssueBatcher batcher;
+    @Mock CouponIssuanceMetrics issuanceMetrics;
     @InjectMocks CouponCommandService service;
 
     private Logger logger;
@@ -110,6 +118,105 @@ class CouponCommandServiceTest {
         logger.detachAppender(logs);
         logger.setLevel(originalLevel);
         logs.stop();
+    }
+
+    @Test
+    void 비동기_접수는_발급_완료_전에는_응답을_확정하지_않는다() throws Exception {
+        var pending = new CompletableFuture<CouponIssuanceResult>();
+        var response = new CouponIssueResponse(COUPON_ID, ISSUE_DATE.atTime(12, 0).atOffset(ZoneOffset.ofHours(9)));
+        when(batcher.submit(any(), anyLong())).thenReturn(pending);
+
+        var result = service.issueAsync(MEMBER_ID, 81L);
+
+        assertThat(result).isNotDone();
+        verifyNoInteractions(issuanceMetrics);
+        pending.complete(new CouponIssuanceResult(response, false));
+        assertThat(result.get(2, TimeUnit.SECONDS)).isEqualTo(response);
+        verify(issuanceMetrics).record(null);
+    }
+
+    @Test
+    void 확정_소진은_배처에_접수하지_않고_통보와_결과를_한번만_기록한다() {
+        var registry = new SimpleMeterRegistry();
+        try {
+            ReflectionTestUtils.setField(service, "issuanceMetrics", new CouponIssuanceMetrics(registry));
+            when(sequenceService.isConfirmedSoldOut(81L)).thenReturn(true);
+
+            var result = service.issueAsync(MEMBER_ID, 81L);
+
+            assertThatThrownBy(result::join).hasCauseInstanceOf(CouponException.class);
+            assertThat(registry.get("coupon.issue.results").tag("result", "COUPON-006").counter().count())
+                    .isEqualTo(1);
+            assertThat(registry.get("coupon.issue.results").tag("result", "SUCCESS").counter().count()).isZero();
+            verify(soldOutNotifications).request(81L);
+            verifyNoInteractions(batcher);
+        } finally {
+            registry.close();
+        }
+    }
+
+    @Test
+    void 복구와_재접수는_원래_추적ID를_유지하고_최종_결과만_집계한다() throws Exception {
+        var rejection = CouponException.recoveryRequired(81L);
+        rejection.confirmIssuanceNotCommitted();
+        var response = new CouponIssueResponse(COUPON_ID, ISSUE_DATE.atTime(12, 0).atOffset(ZoneOffset.ofHours(9)));
+        var recoveryTrace = new AtomicReference<String>();
+        var retryTrace = new AtomicReference<String>();
+        when(batcher.submit(any(), anyLong()))
+                .thenReturn(CompletableFuture.failedFuture(rejection))
+                .thenAnswer(invocation -> {
+                    retryTrace.set(MDC.get("traceId"));
+                    return CompletableFuture.completedFuture(new CouponIssuanceResult(response, false));
+                });
+        when(sequenceService.needsRecovery(81L)).thenReturn(true);
+        when(sequenceRecoveryService.recover(eq(81L), anyLong())).thenAnswer(invocation -> {
+            recoveryTrace.set(MDC.get("traceId"));
+            return true;
+        });
+        try {
+            MDC.put("traceId", "request-trace");
+
+            assertThat(service.issueAsync(MEMBER_ID, 81L).get(2, TimeUnit.SECONDS)).isEqualTo(response);
+
+            assertThat(recoveryTrace.get()).isEqualTo("request-trace");
+            assertThat(retryTrace.get()).isEqualTo("request-trace");
+            assertThat(MDC.get("traceId")).isEqualTo("request-trace");
+            verify(issuanceMetrics).record(null);
+            org.mockito.Mockito.verifyNoMoreInteractions(issuanceMetrics);
+        } finally {
+            MDC.clear();
+            service.stopIssuanceRecovery();
+        }
+    }
+
+    @Test
+    void 종료_대기가_중단돼도_복구중이거나_대기중인_요청을_모두_끝낸다() throws Exception {
+        var started = new CountDownLatch(1);
+        var release = new CountDownLatch(1);
+        var rejection = new CouponException(CouponErrorCode.ISSUANCE_BUSY);
+        when(batcher.submit(any(), anyLong())).thenReturn(CompletableFuture.failedFuture(rejection));
+        when(sequenceService.needsRecovery(anyLong())).thenReturn(true);
+        when(sequenceRecoveryService.recover(anyLong(), anyLong())).thenAnswer(invocation -> {
+            started.countDown();
+            release.await();
+            return false;
+        });
+
+        var running = service.issueAsync(MEMBER_ID, 81L);
+        try {
+            assertThat(started.await(2, TimeUnit.SECONDS)).isTrue();
+            var queued = service.issueAsync(MEMBER_ID, 82L);
+            Thread.currentThread().interrupt();
+            service.stopIssuanceRecovery();
+
+            assertThat(running).isCompletedExceptionally();
+            assertThat(queued).isCompletedExceptionally();
+            assertThat(Thread.currentThread().isInterrupted()).isTrue();
+        } finally {
+            Thread.interrupted();
+            release.countDown();
+            service.stopIssuanceRecovery();
+        }
     }
 
     @ParameterizedTest
@@ -281,7 +388,7 @@ class CouponCommandServiceTest {
             service = new CouponCommandService(repository, couponDailyLimitRepository, memberQuery,
                     new CouponQrImageEncoder(),
                     Clock.fixed(Instant.parse("2026-10-10T03:00:00Z"), ZoneOffset.UTC), mock(CouponSoldOutNotificationService.class), mock(CouponSequenceService.class), mock(CouponSequenceRecoveryService.class),
-                    mock(CouponIssueBatcher.class));
+                    mock(CouponIssueBatcher.class), mock(CouponIssuanceMetrics.class));
         }
 
         @ParameterizedTest
