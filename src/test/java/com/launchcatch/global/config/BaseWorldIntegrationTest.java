@@ -45,7 +45,13 @@ class BaseWorldIntegrationTest extends IntegrationTestSupport {
             {"원장의 캠페인 점주가 맞다", "SELECT COUNT(*) FROM point_ledger l JOIN campaign c ON c.campaign_id = l.campaign_id WHERE l.owner_id <> c.owner_id"},
             {"잔액이 음수인 점주가 없다", "SELECT COUNT(*) FROM (SELECT owner_id, SUM(amount) b FROM point_ledger WHERE entry_type <> 'DEDUCT' GROUP BY owner_id HAVING b < 0) x"},
             {"포인트 계정 없는 원장 점주가 없다", "SELECT COUNT(DISTINCT l.owner_id) FROM point_ledger l LEFT JOIN point_account a ON a.owner_id = l.owner_id WHERE a.owner_id IS NULL"},
-            {"발급 쿠폰의 회원이 있다", "SELECT COUNT(*) FROM member_coupon mc LEFT JOIN member m ON m.member_id = mc.member_id WHERE m.member_id IS NULL"}
+            {"발급 쿠폰의 회원이 있다", "SELECT COUNT(*) FROM member_coupon mc LEFT JOIN member m ON m.member_id = mc.member_id WHERE m.member_id IS NULL"},
+            {"최근 7일 리포트의 유효 노출이 노출 기록과 같다", "SELECT COUNT(*) FROM campaign_daily_report r LEFT JOIN (SELECT campaign_id, business_date, COUNT(*) n FROM impression_log WHERE validity = 'VALID' GROUP BY campaign_id, business_date) i ON i.campaign_id = r.campaign_id AND i.business_date = r.business_date WHERE r.business_date BETWEEN DATE_SUB('2026-10-28', INTERVAL 7 DAY) AND DATE_SUB('2026-10-28', INTERVAL 1 DAY) AND r.valid_impression_count <> COALESCE(i.n, 0)"},
+            {"최근 7일 리포트의 차감액이 차감 원장과 같다", "SELECT COUNT(*) FROM campaign_daily_report r LEFT JOIN (SELECT campaign_id, DATE(created_at) d, -SUM(amount) n FROM point_ledger WHERE entry_type = 'DEDUCT' GROUP BY campaign_id, DATE(created_at)) l ON l.campaign_id = r.campaign_id AND l.d = r.business_date WHERE r.business_date BETWEEN DATE_SUB('2026-10-28', INTERVAL 7 DAY) AND DATE_SUB('2026-10-28', INTERVAL 1 DAY) AND r.charged_amount <> COALESCE(l.n, 0)"},
+            {"리포트의 유효 노출은 과금과 미과금의 합이다", "SELECT COUNT(*) FROM campaign_daily_report WHERE valid_impression_count <> billable_impression_count + not_billed_impression_count"},
+            {"리포트 캠페인이 있다", "SELECT COUNT(*) FROM campaign_daily_report r LEFT JOIN campaign c ON c.campaign_id = r.campaign_id WHERE c.campaign_id IS NULL"},
+            {"분석 날짜마다 집계 SUCCESS 가 있다", "SELECT 60 - COUNT(DISTINCT business_date) FROM batch_execution_log WHERE job_name = 'DAILY_AGGREGATION' AND status = 'SUCCESS' AND finished_at IS NOT NULL AND business_date BETWEEN DATE_SUB('2026-10-28', INTERVAL 60 DAY) AND DATE_SUB('2026-10-28', INTERVAL 1 DAY)"},
+            {"RUNNING 배치가 없다", "SELECT COUNT(*) FROM batch_execution_log WHERE status = 'RUNNING'"}
     };
 
     private DataSource dataSource;
