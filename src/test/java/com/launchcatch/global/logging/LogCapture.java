@@ -32,6 +32,10 @@ final class LogCapture implements AutoCloseable {
         return new LogCapture((Logger) LoggerFactory.getLogger(target));
     }
 
+    static LogCapture attach(String loggerName) {
+        return new LogCapture((Logger) LoggerFactory.getLogger(loggerName));
+    }
+
     void level(Level level) {
         logger.setLevel(level);
     }

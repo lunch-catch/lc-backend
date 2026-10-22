@@ -17,6 +17,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.aop.aspectj.annotation.AspectJProxyFactory;
 import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.scheduling.support.TaskUtils;
 
 class SchedulerLoggingAspectTest {
 
@@ -230,5 +231,25 @@ class SchedulerLoggingAspectTest {
 
         // then
         assertThat(registry.find(LAST_SUCCESS).gauges()).hasSize(2);
+    }
+
+    @Test
+    void 반복_작업이_실패하면_애스펙트와_Spring_오류_처리기가_스택을_각각_남긴다() {
+        // given
+        target.failure = new IllegalStateException("boom");
+
+        try (LogCapture springLogs = LogCapture.attach(
+                "org.springframework.scheduling.support.TaskUtils$LoggingErrorHandler")) {
+            // when
+            TaskUtils.decorateTaskWithErrorHandler(job::run, null, true).run();
+
+            // then
+            ILoggingEvent aspectFailure = logs.events().get(1);
+            ILoggingEvent springFailure = springLogs.only();
+            assertThat(aspectFailure.getFormattedMessage()).startsWith("event=SCHEDULER_FAILED");
+            assertThat(aspectFailure.getThrowableProxy()).isNotNull();
+            assertThat(springFailure.getFormattedMessage()).isEqualTo("Unexpected error occurred in scheduled task");
+            assertThat(springFailure.getThrowableProxy()).isNotNull();
+        }
     }
 }

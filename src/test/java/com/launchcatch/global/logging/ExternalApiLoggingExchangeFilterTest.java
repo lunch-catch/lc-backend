@@ -9,12 +9,15 @@ import java.net.URI;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.slf4j.MDC;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.reactive.function.client.ClientRequest;
 import org.springframework.web.reactive.function.client.ClientResponse;
 import org.springframework.web.reactive.function.client.ExchangeFunction;
 import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Scheduler;
+import reactor.core.scheduler.Schedulers;
 
 class ExternalApiLoggingExchangeFilterTest {
 
@@ -27,6 +30,7 @@ class ExternalApiLoggingExchangeFilterTest {
 
     @AfterEach
     void detachLogs() {
+        MDC.clear();
         logs.close();
     }
 
@@ -111,5 +115,64 @@ class ExternalApiLoggingExchangeFilterTest {
         // when, then
         assertThatThrownBy(() -> ExternalApiLoggingExchangeFilter.logCalls().filter(request, failing).block())
                 .isSameAs(cause);
+    }
+
+    @Test
+    void 응답_콜백이_요청_스레드에서_돌면_MDC가_로그에_남는다() {
+        // given
+        MDC.put("traceId", "same-thread-trace");
+        ClientRequest request = request("http://localhost/oauth/token");
+
+        // when
+        ExternalApiLoggingExchangeFilter.logCalls().filter(request, respondingWith(HttpStatus.OK)).block();
+
+        // then
+        assertThat(logs.only().getMDCPropertyMap()).containsEntry("traceId", "same-thread-trace");
+    }
+
+    @Test
+    void 응답_콜백이_다른_스레드에서_돌면_요청_MDC가_자동으로_전파되지_않는다() {
+        // given
+        MDC.put("traceId", "request-trace");
+        ClientRequest request = request("http://localhost/oauth/token");
+        Scheduler scheduler = Schedulers.newSingle("external-api-response");
+        ExchangeFunction responding = ignored -> Mono.fromSupplier(
+                        () -> ClientResponse.create(HttpStatus.OK).build())
+                .subscribeOn(scheduler);
+
+        try {
+            // when
+            ExternalApiLoggingExchangeFilter.logCalls().filter(request, responding).block();
+
+            // then
+            ILoggingEvent event = logs.only();
+            assertThat(event.getThreadName()).startsWith("external-api-response");
+            assertThat(event.getMDCPropertyMap()).doesNotContainKey("traceId");
+        } finally {
+            scheduler.dispose();
+        }
+    }
+
+    @Test
+    void 오류_콜백이_다른_스레드에서_돌면_요청_MDC가_자동으로_전파되지_않는다() {
+        // given
+        MDC.put("traceId", "request-trace");
+        ClientRequest request = request("http://localhost/oauth/token");
+        Scheduler scheduler = Schedulers.newSingle("external-api-error");
+        ExchangeFunction failing = ignored -> Mono.<ClientResponse>error(new IllegalStateException("failed"))
+                .subscribeOn(scheduler);
+
+        try {
+            // when
+            assertThatThrownBy(() -> ExternalApiLoggingExchangeFilter.logCalls().filter(request, failing).block())
+                    .isInstanceOf(IllegalStateException.class);
+
+            // then
+            ILoggingEvent event = logs.only();
+            assertThat(event.getThreadName()).startsWith("external-api-error");
+            assertThat(event.getMDCPropertyMap()).doesNotContainKey("traceId");
+        } finally {
+            scheduler.dispose();
+        }
     }
 }
