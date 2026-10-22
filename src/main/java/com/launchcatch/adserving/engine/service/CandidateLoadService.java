@@ -21,6 +21,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -91,12 +92,16 @@ public class CandidateLoadService {
                     skip("menu_invalid");
                     continue;
                 }
-                menuName = menuNames.names().get(campaign.targetMenuId());
-                // MENU 할인에 메뉴명이 없으면 CHECK chk_candidate_discount_menu 에 걸려 적재 전체가 실패한다
-                if (menuName == null) {
+                StoreMenuInfo menu = menuNames.menus().get(campaign.targetMenuId());
+                /*
+                 * MENU 할인에 메뉴명이 없으면 CHECK chk_candidate_discount_menu 에 걸려 적재 전체가 실패한다.
+                 * 다른 가게의 메뉴면 그 가게가 팔지 않는 메뉴의 할인이 나간다. 가게 계약이 이 확인을 광고 서빙에 맡겼다(#783).
+                 */
+                if (menu == null || !menu.storeId().equals(campaign.storeId())) {
                     skip("menu_missing");
                     continue;
                 }
+                menuName = menu.menuName();
             }
             rows.add(toRow(businessDate, campaign, store, menuName));
             loaded.put(campaign.campaignId(), campaign.statusChangedAt());
@@ -151,13 +156,13 @@ public class CandidateLoadService {
             return new MenuNames(Map.of(), Set.of());
         }
         try {
-            return new MenuNames(toNames(findMenus(menuIds)), Set.of());
+            return new MenuNames(toMenus(findMenus(menuIds)), Set.of());
         } catch (IllegalStateException e) {
-            Map<Long, String> names = new HashMap<>();
+            Map<Long, StoreMenuInfo> menus = new HashMap<>();
             Set<Long> invalid = new HashSet<>();
             for (Long menuId : menuIds) {
                 try {
-                    names.putAll(toNames(findMenus(List.of(menuId))));
+                    menus.putAll(toMenus(findMenus(List.of(menuId))));
                 } catch (IllegalStateException invalidMenu) {
                     log.warn("event=ADSERVING_CANDIDATE_MENU_INVALID menuId={} fallback=SKIP_CAMPAIGN", menuId, invalidMenu);
                     invalid.add(menuId);
@@ -167,7 +172,7 @@ public class CandidateLoadService {
             if (invalid.isEmpty()) {
                 log.warn("event=ADSERVING_CANDIDATE_MENU_BATCH_FAILED menuCount={} fallback=PER_MENU_RETRY", menuIds.size(), e);
             }
-            return new MenuNames(names, invalid);
+            return new MenuNames(menus, invalid);
         }
     }
 
@@ -179,8 +184,8 @@ public class CandidateLoadService {
         return outsideLoad.execute(status -> storeQueryService.findMenusByIdIn(menuIds));
     }
 
-    private static Map<Long, String> toNames(List<StoreMenuInfo> menus) {
-        return menus.stream().collect(Collectors.toMap(StoreMenuInfo::menuId, StoreMenuInfo::menuName));
+    private static Map<Long, StoreMenuInfo> toMenus(List<StoreMenuInfo> menus) {
+        return menus.stream().collect(Collectors.toMap(StoreMenuInfo::menuId, Function.identity()));
     }
 
     private static CandidateRow toRow(LocalDate businessDate, CampaignInfo c, StoreAdCandidateInfo store, String menuName) {
@@ -201,7 +206,7 @@ public class CandidateLoadService {
         meterRegistry.counter(SKIPPED_METRIC, "reason", reason).increment();
     }
 
-    // 메뉴 ID 별 메뉴명과, 가게 계약이 데이터 오류를 던진 메뉴 ID 다
-    private record MenuNames(Map<Long, String> names, Set<Long> invalid) {
+    // 메뉴 ID 별 메뉴와, 가게 계약이 데이터 오류를 던진 메뉴 ID 다
+    private record MenuNames(Map<Long, StoreMenuInfo> menus, Set<Long> invalid) {
     }
 }

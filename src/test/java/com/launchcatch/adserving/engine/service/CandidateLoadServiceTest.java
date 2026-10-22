@@ -192,6 +192,26 @@ class CandidateLoadServiceTest {
         }
     }
 
+    /*
+     * 캠페인의 메뉴가 다른 가게의 메뉴면 그 가게가 팔지 않는 메뉴의 할인이 카드에 나간다.
+     * 가게 계약이 이 확인을 광고 서빙에 맡겼다(store-query-contract.md). 메뉴를 찾지 못한 것과 같이 뺀다(#783).
+     */
+    @Test
+    void 메뉴가_캠페인의_가게_것이_아니면_적재하지_않고_센다() {
+        when(campaignQueryService.findServableOn(TODAY)).thenReturn(List.of(
+                campaign(101, 55, CampaignStatus.ACTIVE, null, DiscountTargetType.MENU, 7001L),
+                campaign(102, 56, CampaignStatus.ACTIVE, null, DiscountTargetType.MENU, 7002L)));
+        when(storeQueryService.findAdCandidatesByStoreIds(anyList())).thenReturn(List.of(store(55), store(56)));
+        when(storeQueryService.findMenusByIdIn(anyList())).thenReturn(List.of(
+                new StoreMenuInfo(7001L, 99L, null, "다른 가게 메뉴", 12000L),
+                new StoreMenuInfo(7002L, 56L, null, "돈코츠 라멘", 9000L)));
+
+        service.load(TODAY);
+
+        assertThat(upserted()).extracting(CandidateRow::campaignId).containsExactly(102L);
+        assertThat(skipped("menu_missing")).isEqualTo(1);
+    }
+
     // 데이터 오류가 아닌 예외(DB 장애 등)는 기본 처리대로 적재를 실패시킨다
     @Test
     void 메뉴_조회가_다른_예외를_던지면_적재가_실패한다() {
