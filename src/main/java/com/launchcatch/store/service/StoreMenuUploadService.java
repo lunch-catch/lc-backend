@@ -15,6 +15,7 @@ import java.time.Clock;
 import java.time.LocalDateTime;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -29,6 +30,7 @@ import software.amazon.awssdk.services.s3.model.S3Exception;
  * 이미지보다 메뉴(이름·가격·설명)를 먼저 저장해야 한다. 그래서 가게 인테리어 이미지(#375)와
  * 달리 등록과 이미지 업로드 사이에 메뉴 저장 단계가 하나 더 있다.
  */
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class StoreMenuUploadService {
@@ -74,8 +76,16 @@ public class StoreMenuUploadService {
         try {
             uploadUrl = storeUploadSupport.presign(image.getObjectKey(), contentType, fileSize);
         } catch (RuntimeException e) {
+            log.error("event=STORE_UPLOAD_PREPARE_FAILED ownerId={} resourceType=MENU_IMAGE exceptionType={}",
+                    ownerId, e.getClass().getSimpleName());
             // presign은 자격 증명을 원격으로 조회할 수 있어 잠금을 쥔 트랜잭션 밖에서 부른다(#375와 같은 근거).
-            transactionTemplate.executeWithoutResult(status -> storeMenuImageRepository.delete(image));
+            try {
+                transactionTemplate.executeWithoutResult(status -> storeMenuImageRepository.delete(image));
+            } catch (RuntimeException compensationFailure) {
+                log.error("event=STORE_UPLOAD_COMPENSATION_FAILED ownerId={} resourceType=MENU_IMAGE exceptionType={}",
+                        ownerId, compensationFailure.getClass().getSimpleName());
+                throw compensationFailure;
+            }
             throw e;
         }
 
@@ -129,14 +139,24 @@ public class StoreMenuUploadService {
                     .build());
         } catch (S3Exception e) {
             if (e.statusCode() != 404) {
+                log.error("event=STORE_UPLOAD_CONFIRM_FAILED ownerId={} resourceType=MENU_IMAGE httpStatus={} exceptionType={}",
+                        ownerId, e.statusCode(), e.getClass().getSimpleName());
                 throw e;
             }
+            log.info("event=STORE_UPLOAD_CONFIRM_FAILED ownerId={} resourceType=MENU_IMAGE reason=NOT_UPLOADED",
+                    ownerId);
             throw new StoreException(StoreErrorCode.IMAGE_NOT_UPLOADED);
+        } catch (RuntimeException e) {
+            log.error("event=STORE_UPLOAD_CONFIRM_FAILED ownerId={} resourceType=MENU_IMAGE exceptionType={}",
+                    ownerId, e.getClass().getSimpleName());
+            throw e;
         }
         if (headObject.contentLength() == null
                 || headObject.contentLength() > MAX_FILE_SIZE
                 || image.getFileSize() == null
                 || headObject.contentLength() > image.getFileSize()) {
+            log.info("event=STORE_UPLOAD_CONFIRM_FAILED ownerId={} resourceType=MENU_IMAGE reason=INVALID_SIZE",
+                    ownerId);
             throw new StoreException(StoreErrorCode.IMAGE_FILE_TOO_LARGE);
         }
 
