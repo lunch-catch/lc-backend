@@ -588,8 +588,8 @@ GET /v1/admin/point-ledger/summary?ownerId=7&period=DAILY&from=2026-09-01&to=202
 
 ### 계산 규칙
 
-- **날짜 귀속:** `RESERVE`·`RELEASE`·소진은 그 영업일 구간에, `CHARGE`·`REFUND`는 기록된 시각의 KST 날짜 구간에, `ADJUST`는 정정 대상 영업일 구간(없으면 기록된 시각의 KST 날짜 구간)에 들어간다.
-- 00:00 해제가 실패한 영업일은 해제가 다시 돌기 전까지 `spentAmount`가 실제보다 크게 보인다.
+- **날짜 귀속:** `RESERVE`·`RELEASE`는 원장의 영업일 구간에, 소진(`DEDUCT`)은 판정 기록(`deduction_result`)의 서빙 영업일 구간에, `CHARGE`·`REFUND`는 기록된 시각의 KST 날짜 구간에, `ADJUST`는 정정 대상 영업일 구간(없으면 기록된 시각의 KST 날짜 구간)에 들어간다. 자정 뒤에 기록된 전날 노출의 차감도 전날 구간에 들어간다.
+- `spentAmount`는 `DEDUCT`에서 읽으므로 00:00 해제가 실패하거나 아직 돌지 않은 영업일에도 예약 전체가 아니라 실제 소진만 보인다. 이때 `reservedAmount`는 예약액 그대로이고 `releasedAmount`는 0이다.
 
 서버가 원장에서 이 합계를 계산하는 방법은 [billing API 설계](../design/billing/billing-api-design.md#get-v1adminpoint-ledgersummary)에 있다.
 
@@ -803,7 +803,7 @@ GET /v1/admin/settlement-mismatches?checkType=&resolved=false&from=&to=&page=0&s
 }
 ```
 
-- `checkType`은 `PG_VS_CHARGE` / `CAMPAIGN_SPEND_VS_LEDGER` / `CAMPAIGN_OVERSPEND` 3종이다. *(2026-10-16 수정: `CAMPAIGN_OVERSPEND`는 캠페인의 그날 원장 `DEDUCT` 합이 그날 예약액을 넘은 건이고 `targetId`는 캠페인 ID, `expectedValue`는 예약액, `actualValue`는 `DEDUCT` 합이다. V5)*
+- `checkType`은 `PG_VS_CHARGE` / `CAMPAIGN_SPEND_VS_LEDGER` / `CAMPAIGN_OVERSPEND` 3종이다. *(2026-10-16 수정: `CAMPAIGN_OVERSPEND`는 캠페인의 그날 원장 `DEDUCT` 합이 그날 예약액을 넘은 건이고 `targetId`는 캠페인 ID, `expectedValue`는 예약액, `actualValue`는 `DEDUCT` 합이다. V5. 해제가 끝난 날은 `DEDUCT` 합과 `RELEASE` 합의 합이다)*
 - `targetId`는 `checkType`에 따라 결제 ID 또는 캠페인 ID다. `diff`는 `actualValue - expectedValue`로 계산한다.
 - `resolved=false`는 `resolution_type`이 `NULL`인 미해결 건이다. `resolutionType`은 `CACHE_REBUILD` / `LEDGER_CORRECTION` / `OVERCHARGE_REVERSAL`이다.
 - 자동 복구(`CACHE_REBUILD`, `LEDGER_CORRECTION`)는 배치가 처리하므로 별도 해결 API를 두지 않는다. 사람이 처리하는 `OVERCHARGE_REVERSAL`은 포인트 수동 조정의 `mismatchId`로 닫는다.
