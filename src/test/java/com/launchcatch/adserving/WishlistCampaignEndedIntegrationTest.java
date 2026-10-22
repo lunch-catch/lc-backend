@@ -63,6 +63,8 @@ class WishlistCampaignEndedIntegrationTest extends AbstractAdservingIntegrationT
         jdbcTemplate.update("DELETE FROM wishlist");
         jdbcTemplate.update("DELETE FROM swipe_log");
         jdbcTemplate.update("DELETE FROM ad_candidate");
+        // 찜 요청이 넣은 그날 당일 이력이다. 남기면 같은 회원과 날을 쓰는 다른 통합 테스트가 깨진다
+        redisTemplate.delete("adserving:exclusion:2026-10-01:" + MEMBER_ID);
     }
 
     // 끝난 캠페인도 그날 후보 행은 남는다(PAUSED). 찜은 그 행이 있는지만 본다(#379)
