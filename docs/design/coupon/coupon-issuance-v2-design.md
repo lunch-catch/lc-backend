@@ -9,7 +9,7 @@ v2는 요청마다 다른 재고 순번을 Redis에서 예약하고 MySQL에서 
 
 [v1 설계도](./coupon-issuance-v1-design.md)에서 재고 선택의 책임을 분리했다.
 여러 요청을 한 번에 커밋하는 구조는 [v3 설계도](./coupon-issuance-v3-design.md)다.
-측정과 개선 이력은 [v2 트러블슈팅](../../troubleshooting/coupon/coupon-issuance-v2-improvement-comparison.md)에 있다.
+대표 부하 측정 결과는 [쿠폰 v3 부하 시험 결과](../../troubleshooting/coupon/coupon-load-test-results.md)에 있다. v2의 측정 결과와는 조건이 다르다.
 
 ## 1. 구성 요소와 데이터의 책임
 

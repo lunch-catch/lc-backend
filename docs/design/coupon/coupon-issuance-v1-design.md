@@ -6,7 +6,7 @@ v1은 MySQL에서 재고를 선택하고 요청 한 건의 발급을 트랜잭�
 초기 이벤트 배타 잠금과의 차이는 아래의 잠금 설계에 구분한다.
 
 업무 조건과 HTTP 응답은 [발급 명세](../../api-spec/coupon-api-spec.md#쿠폰-발급)를 따른다.
-인덱스 개선과 측정 기록은 [v1 트러블슈팅](../../troubleshooting/coupon/coupon-issuance-v1-improvement-comparison.md)에 있다.
+대표 부하 측정 결과는 [쿠폰 v3 부하 시험 결과](../../troubleshooting/coupon/coupon-load-test-results.md)에 있다. v1의 측정 결과와는 조건이 다르다.
 다음 구조는 [v2 순번 발급기 설계도](./coupon-issuance-v2-design.md)다.
 
 ## 1. 구성 요소의 책임
