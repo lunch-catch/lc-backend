@@ -39,7 +39,8 @@ class SeedIntegrationTest extends IntegrationTestSupport {
             + "+ (SELECT COUNT(*) FROM member_coupon) + (SELECT COUNT(*) FROM coupon_usage_history) "
             + "+ (SELECT COUNT(*) FROM event_log) + (SELECT COUNT(*) FROM campaign_daily_report)"
             + "+ (SELECT COUNT(*) FROM store_business_hour) + (SELECT COUNT(*) FROM store_campaign_summary)"
-            + "+ (SELECT COUNT(*) FROM store_image)";
+            + "+ (SELECT COUNT(*) FROM store_image)"
+            + "+ (SELECT COUNT(*) FROM daily_invalid_analytics) + (SELECT COUNT(*) FROM daily_campaign_fraud_analytics)";
 
     private DataSource dataSource;
     private JdbcTemplate jdbc;
@@ -333,6 +334,50 @@ class SeedIntegrationTest extends IntegrationTestSupport {
                 .isEqualTo(20);
         assertThat(count("SELECT COUNT(*) FROM campaign WHERE campaign_id BETWEEN 9101 AND 9200 AND target_gender = 'FEMALE'"))
                 .isEqualTo(20);
+    }
+
+    @Test
+    void 부정_관리_집계에_경고가_걸리는_캠페인과_회원별_무효가_들어가고_두_표의_무효_합이_같다() {
+        migrate(true, "2026-10-15");
+
+        assertThat(count("SELECT COUNT(*) FROM daily_invalid_analytics")).isEqualTo(91);
+        assertThat(count("SELECT COUNT(*) FROM daily_campaign_fraud_analytics")).isEqualTo(64);
+        // 최초 적용일에서 2일 전부터 8일 전까지다. 어제는 배치가 지우고 다시 만들어 비워 둔다
+        assertThat(jdbc.queryForObject("SELECT CAST(MIN(business_date) AS CHAR) FROM daily_campaign_fraud_analytics",
+                String.class)).isEqualTo("2026-10-07");
+        assertThat(jdbc.queryForObject("SELECT CAST(MAX(business_date) AS CHAR) FROM daily_campaign_fraud_analytics",
+                String.class)).isEqualTo("2026-10-13");
+        // 캠페인마다 A-09 의 원천과 A-10 의 원천이 무효 합이 같다
+        assertThat(count("SELECT COUNT(*) FROM (SELECT campaign_id, SUM(invalid_count) n FROM daily_invalid_analytics "
+                + "GROUP BY campaign_id) i JOIN (SELECT campaign_id, SUM(invalid_count) n FROM daily_campaign_fraud_analytics "
+                + "GROUP BY campaign_id) f USING (campaign_id)")).isEqualTo(12);
+        assertThat(count("SELECT COUNT(*) FROM (SELECT campaign_id, SUM(invalid_count) n FROM daily_invalid_analytics "
+                + "GROUP BY campaign_id) i JOIN (SELECT campaign_id, SUM(invalid_count) n FROM daily_campaign_fraud_analytics "
+                + "GROUP BY campaign_id) f USING (campaign_id) WHERE i.n <> f.n")).isZero();
+        // 무효 비율 경고는 무효 100건 이상이고 유효가 0이거나 무효 x 5 가 유효를 넘는 캠페인이다
+        assertThat(jdbc.queryForObject("SELECT GROUP_CONCAT(campaign_id ORDER BY campaign_id) FROM ("
+                + "SELECT campaign_id FROM daily_campaign_fraud_analytics GROUP BY campaign_id "
+                + "HAVING SUM(invalid_count) >= 100 AND (SUM(valid_count) = 0 OR SUM(invalid_count) * 5 > SUM(valid_count))"
+                + ") warned", String.class)).isEqualTo("9001,9002,9006");
+        assertThat(jdbc.queryForObject("SELECT GROUP_CONCAT(campaign_id ORDER BY campaign_id) FROM ("
+                + "SELECT campaign_id FROM daily_campaign_fraud_analytics GROUP BY campaign_id "
+                + "HAVING MAX(concentration_suspected) = 1) concentrated", String.class)).isEqualTo("9005,9006");
+        // 사유 둘이 모두 있고 한 회원이 여러 캠페인에 걸친다
+        assertThat(count("SELECT COUNT(DISTINCT reason_code) FROM daily_invalid_analytics")).isEqualTo(2);
+        assertThat(count("SELECT COUNT(DISTINCT campaign_id) FROM daily_invalid_analytics WHERE member_id = 9001"))
+                .isGreaterThan(1);
+    }
+
+    @Test
+    void 날짜가_바뀌어_다시_돌아도_부정_관리_집계의_날짜와_행이_그대로다() {
+        migrate(true, "2026-10-15");
+
+        migrate(true, "2026-10-16");
+
+        assertThat(count("SELECT COUNT(*) FROM daily_invalid_analytics")).isEqualTo(91);
+        assertThat(count("SELECT COUNT(*) FROM daily_campaign_fraud_analytics")).isEqualTo(64);
+        assertThat(jdbc.queryForObject("SELECT CAST(MIN(business_date) AS CHAR) FROM daily_invalid_analytics",
+                String.class)).isEqualTo("2026-10-07");
     }
 
     @Test
