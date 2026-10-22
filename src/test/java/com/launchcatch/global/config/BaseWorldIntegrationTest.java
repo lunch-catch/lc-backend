@@ -96,7 +96,10 @@ class BaseWorldIntegrationTest extends IntegrationTestSupport {
         System.out.println(report);
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM flyway_history_base WHERE success = 0", Long.class)).isZero();
 
-        // 파일끼리 같은 공식으로 계산한 값이 서로 맞는지 본다. 어긋난 행 수를 모두 남기고 한 번에 판정한다
+        /*
+         * 파일끼리 같은 공식으로 계산한 값이 서로 맞는지 본다.
+         * 어긋난 행 수를 모두 남기고 한 번에 판정한다.
+         */
         StringBuilder mismatches = new StringBuilder();
         for (String[] check : CONSISTENCY) {
             long bad = jdbc.queryForObject(check[1], Long.class);
@@ -106,5 +109,10 @@ class BaseWorldIntegrationTest extends IntegrationTestSupport {
             }
         }
         assertThat(mismatches.toString()).isEmpty();
+
+        // 메뉴 할인 캠페인에는 정률과 정액이 둘 다 있어야 한다
+        assertThat(jdbc.queryForList("SELECT DISTINCT discount_type FROM campaign "
+                + "WHERE campaign_id >= 10000000 AND discount_target_type = 'MENU'", String.class))
+                .containsExactlyInAnyOrder("PERCENT", "AMOUNT");
     }
 }

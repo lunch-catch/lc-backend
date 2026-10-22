@@ -64,7 +64,10 @@ public class FlywayConfig {
         });
     }
 
-    // 데이터 HTML 이 주소 뒤에 / 를 붙이므로 끝의 / 를 뗀다. 정규식은 백트래킹이 있어 쓰지 않는다
+    /*
+     * 데이터 HTML 이 주소 뒤에 / 를 붙이므로 끝의 / 를 뗀다.
+     * 정규식은 백트래킹이 있어 쓰지 않는다.
+     */
     static String withoutTrailingSlash(String url) {
         int end = url.length();
         while (end > 0 && url.charAt(end - 1) == '/') {
