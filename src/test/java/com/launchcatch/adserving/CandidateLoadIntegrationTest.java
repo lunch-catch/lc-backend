@@ -6,6 +6,7 @@ import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.when;
 
 import com.launchcatch.adserving.engine.job.LoadDailyCandidateJob;
+import com.launchcatch.adserving.engine.service.CandidateLoadService;
 import com.launchcatch.campaign.contract.AgeGroup;
 import com.launchcatch.campaign.contract.CampaignInfo;
 import com.launchcatch.campaign.contract.CampaignStatus;
@@ -40,6 +41,7 @@ class CandidateLoadIntegrationTest extends AbstractAdservingIntegrationTest {
     private static final LocalDateTime CHANGED_AT = LocalDateTime.of(2026, 9, 30, 23, 0);
 
     @Autowired LoadDailyCandidateJob job;
+    @Autowired CandidateLoadService candidateLoadService;
 
     @BeforeEach
     void setUp() {
@@ -132,6 +134,35 @@ class CandidateLoadIntegrationTest extends AbstractAdservingIntegrationTest {
     }
 
     // 이어받기 뒤 이전 서버가 늦게 커밋하는 경우다. 먼저 읽은 적재는 나중에 읽은 적재의 값을 되돌리지 못한다(#582)
+    /*
+     * 앞 실행이 101 을 SERVABLE 로 넣고 재조회 전에 멈췄다. 그사이 101 이 끝나 다시 돈 적재의 대상에 없다.
+     * 다시 돈 단계의 재조회가 그 행도 PAUSED 로 고치는지 본다(#782).
+     */
+    @Test
+    void 다시_돈_적재는_앞_실행이_넣고_대상에서_빠진_캠페인도_재조회로_고친다() {
+        LocalDateTime endedAt = CHANGED_AT.plusMinutes(70);
+        when(campaignQueryService.findServableOn(TODAY)).thenReturn(List.of(
+                campaign(101, 55, CampaignStatus.ACTIVE, null, DiscountTargetType.ALL, null, CHANGED_AT)));
+        when(campaignQueryService.findAllById(anyList())).thenReturn(List.of(
+                campaign(101, 55, CampaignStatus.ACTIVE, null, DiscountTargetType.ALL, null, CHANGED_AT)));
+        candidateLoadService.load(TODAY);
+        when(campaignQueryService.findServableOn(TODAY)).thenReturn(List.of(
+                campaign(102, 55, CampaignStatus.ACTIVE, null, DiscountTargetType.ALL, null, CHANGED_AT)));
+        // 계약처럼 요청한 ID 의 캠페인만 돌려준다
+        List<CampaignInfo> campaigns = List.of(
+                campaign(101, 55, CampaignStatus.ENDED, null, DiscountTargetType.ALL, null, endedAt),
+                campaign(102, 55, CampaignStatus.ACTIVE, null, DiscountTargetType.ALL, null, CHANGED_AT));
+        when(campaignQueryService.findAllById(anyList())).thenAnswer(invocation -> {
+            List<Long> ids = invocation.getArgument(0);
+            return campaigns.stream().filter(c -> ids.contains(c.campaignId())).toList();
+        });
+
+        job.run(TODAY);
+
+        assertThat(row(101)).containsEntry("campaign_state", "PAUSED").containsEntry("state_changed_at", endedAt);
+        assertThat(row(102)).containsEntry("campaign_state", "SERVABLE");
+    }
+
     @Test
     void 먼저_읽은_적재가_늦게_커밋해도_나중에_읽은_스냅샷_값이_남는다() {
         when(campaignQueryService.findServableOn(TODAY)).thenReturn(List.of(
