@@ -24,6 +24,7 @@ import com.launchcatch.adserving.feed.entity.SwipeLogId;
 import com.launchcatch.adserving.feed.repository.SwipeLogRepository;
 import com.launchcatch.adserving.wishlist.entity.Wishlist;
 import com.launchcatch.adserving.wishlist.repository.WishlistRepository;
+import com.launchcatch.adserving.wishlist.service.WishlistService;
 import com.launchcatch.global.config.ClockConfig;
 import java.time.Clock;
 import java.time.Instant;
@@ -53,7 +54,8 @@ class SwipeServiceTest {
     private final AdCandidateRepository adCandidateRepository = mock(AdCandidateRepository.class);
     private final ExclusionRepository exclusionRepository = mock(ExclusionRepository.class);
     private final ApplicationEventPublisher eventPublisher = mock(ApplicationEventPublisher.class);
-    private final SwipeService service = new SwipeService(swipeLogRepository, wishlistRepository,
+    private final WishlistService wishlistService = mock(WishlistService.class);
+    private final SwipeService service = new SwipeService(swipeLogRepository, wishlistRepository, wishlistService,
             adCandidateRepository, exclusionRepository, eventPublisher, Clock.fixed(NOW, ClockConfig.ZONE));
 
     private static SwipeRequest request(SwipeAction action) {
@@ -183,5 +185,22 @@ class SwipeServiceTest {
         service.swipe(MEMBER_ID, request(SwipeAction.WISH));
 
         verifyNoInteractions(eventPublisher);
+    }
+
+    // 그날 끝난 캠페인도 찜에 들어간다. 찜하면 끝났는지 보고 종료로 표시하게 한다(#780)
+    @Test
+    void 찜하면_찜을_넣은_뒤_캠페인이_끝났는지_보게_한다() {
+        service.swipe(MEMBER_ID, request(SwipeAction.WISH));
+
+        InOrder order = inOrder(wishlistRepository, wishlistService);
+        order.verify(wishlistRepository).insertIgnore(any());
+        order.verify(wishlistService).endIfCampaignEnded(101L);
+    }
+
+    @Test
+    void 패스면_캠페인이_끝났는지_보지_않는다() {
+        service.swipe(MEMBER_ID, request(SwipeAction.PASS));
+
+        verify(wishlistService, never()).endIfCampaignEnded(any());
     }
 }

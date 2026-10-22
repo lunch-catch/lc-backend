@@ -18,6 +18,7 @@
 | analytics 의 퍼널 이벤트 수신 | 노출과 스와이프의 퍼널 이벤트 | 벗어났다. 아래 |
 | campaign 의 `CampaignStatusChangedEvent` | 그날 후보의 서빙 상태 | 기본(같은 트랜잭션). 상태 UPDATE 가 실패하면 캠페인의 상태 전이도 되돌아간다 |
 | campaign 의 `CampaignEndedEvent` | 찜의 종료 표시 | 기본(같은 트랜잭션). 표시 UPDATE 가 실패하면 캠페인 종료도 되돌아간다 |
+| campaign 의 `CampaignQueryService.findAllById` | 찜 요청의 종료 확인 | 기본(오류로 올린다). 찜은 이미 커밋돼 남고, 다시 보낸 찜 요청이 이미 있는 찜에도 확인해 표시를 채운다(#780) |
 | 00:00 묶음(`DailyJob`) | 후보 적재(캠페인과 가게 계약 읽기 포함), 끝난 찜 정리, 대상 인원 집계(캠페인 계약에 쓰기 포함) | 기본(실패로 남기고 묶음 규칙대로 다시 실행한다). 다시 불려도 결과가 같다 |
 | 02:00 묶음 밖 작업(`StandaloneJob`) | 보관 기간 삭제(`feed_visit_daily`, `swipe_log`, `serve_log`, `impression_log`) | 기본(실패로 닫고 알린다. 멈추면 다른 서버가 이어받아 다시 돈다). 남은 행만 지워 다시 불려도 결과가 같다 |
 

@@ -14,6 +14,7 @@ import com.launchcatch.adserving.feed.entity.SwipeLogId;
 import com.launchcatch.adserving.feed.repository.SwipeLogRepository;
 import com.launchcatch.adserving.wishlist.entity.Wishlist;
 import com.launchcatch.adserving.wishlist.repository.WishlistRepository;
+import com.launchcatch.adserving.wishlist.service.WishlistService;
 import com.launchcatch.global.config.ClockConfig;
 import java.time.Clock;
 import java.time.Instant;
@@ -37,6 +38,7 @@ public class SwipeService {
 
     private final SwipeLogRepository swipeLogRepository;
     private final WishlistRepository wishlistRepository;
+    private final WishlistService wishlistService;
     private final AdCandidateRepository adCandidateRepository;
     private final ExclusionRepository exclusionRepository;
     private final ApplicationEventPublisher eventPublisher;
@@ -58,6 +60,7 @@ public class SwipeService {
         Long wishId = null;
         if (request.swipeAction() == SwipeAction.WISH) {
             wishlistRepository.insertIgnore(Wishlist.fromFeed(memberId, candidate.getCampaignId(), candidate.getStoreId(), serveId));
+            wishlistService.endIfCampaignEnded(candidate.getCampaignId());
             // 이미 찜한 캠페인이면 넣기가 무시되므로 다시 읽어 그 찜의 id 를 싣는다
             wishId = wishlistRepository.findByMemberIdAndCampaignId(memberId, candidate.getCampaignId()).orElseThrow().getId();
         }

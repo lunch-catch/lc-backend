@@ -26,10 +26,16 @@ import com.launchcatch.adserving.wishlist.dto.WishlistItemResponse;
 import com.launchcatch.adserving.wishlist.dto.WishlistResponse;
 import com.launchcatch.adserving.wishlist.entity.Wishlist;
 import com.launchcatch.adserving.wishlist.repository.WishlistRepository;
+import com.launchcatch.campaign.contract.AgeGroup;
+import com.launchcatch.campaign.contract.CampaignInfo;
+import com.launchcatch.campaign.contract.CampaignQueryService;
+import com.launchcatch.campaign.contract.CampaignStatus;
+import com.launchcatch.campaign.contract.TargetGender;
 import com.launchcatch.global.config.ClockConfig;
 import java.time.Clock;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
@@ -56,7 +62,16 @@ class WishlistServiceTest {
     private final WishlistRepository wishlistRepository = mock(WishlistRepository.class);
     private final AdCandidateRepository adCandidateRepository = mock(AdCandidateRepository.class);
     private final ExclusionRepository exclusionRepository = mock(ExclusionRepository.class);
-    private final WishlistService service = new WishlistService(wishlistRepository, adCandidateRepository, exclusionRepository, CLOCK);
+    private final CampaignQueryService campaignQueryService = mock(CampaignQueryService.class);
+    private final WishlistService service = new WishlistService(wishlistRepository, adCandidateRepository, exclusionRepository,
+            campaignQueryService, CLOCK);
+
+    private static CampaignInfo campaign(long id, CampaignStatus status, LocalDateTime changedAt) {
+        return new CampaignInfo(id, 1L, id + 1000, status, 30, LocalTime.of(12, 0), LocalTime.of(14, 0),
+                BUSINESS_DATE.minusDays(3), BUSINESS_DATE, com.launchcatch.campaign.contract.DiscountTargetType.ALL,
+                com.launchcatch.campaign.contract.DiscountType.PERCENT, 20, null, 1000, TargetGender.ALL,
+                List.of(AgeGroup.AGE_20S), LocalDateTime.of(2026, 9, 1, 9, 0), null, changedAt, null, 10_000L);
+    }
 
     // 찜은 저장소의 insertIgnore 로 넣어 식별자와 생성 시각이 엔티티에 없다. 리플렉션으로 채운다
     private static Wishlist wish(long id, long campaignId, LocalDateTime createdAt) {
@@ -175,7 +190,8 @@ class WishlistServiceTest {
         // UTC 로는 9월 30일 15:30, 한국 시각으로는 10월 1일 00:30 이다
         Clock afterMidnight = Clock.fixed(
                 LocalDateTime.of(2026, 10, 1, 0, 30).atZone(ClockConfig.ZONE).toInstant(), ZoneOffset.UTC);
-        WishlistService atMidnight = new WishlistService(wishlistRepository, adCandidateRepository, exclusionRepository, afterMidnight);
+        WishlistService atMidnight = new WishlistService(wishlistRepository, adCandidateRepository, exclusionRepository,
+                campaignQueryService, afterMidnight);
         when(wishlistRepository.findByMemberIdOrderByCreatedAtDescIdDesc(MEMBER_ID))
                 .thenReturn(List.of(wish(1, 101, LocalDateTime.of(2026, 9, 30, 11, 0))));
 
@@ -252,7 +268,8 @@ class WishlistServiceTest {
     void 찜할_때의_그날도_한국_시각의_날짜다() {
         Clock afterMidnight = Clock.fixed(
                 LocalDateTime.of(2026, 10, 1, 0, 30).atZone(ClockConfig.ZONE).toInstant(), ZoneOffset.UTC);
-        WishlistService atMidnight = new WishlistService(wishlistRepository, adCandidateRepository, exclusionRepository, afterMidnight);
+        WishlistService atMidnight = new WishlistService(wishlistRepository, adCandidateRepository, exclusionRepository,
+                campaignQueryService, afterMidnight);
         when(adCandidateRepository.findByIdBusinessDateAndIdCampaignId(LocalDate.of(2026, 10, 1), 101L))
                 .thenReturn(Optional.of(candidate(101, 37.4979, 127.0276).build()));
         when(wishlistRepository.findByMemberIdAndCampaignId(MEMBER_ID, 101L))
@@ -297,7 +314,8 @@ class WishlistServiceTest {
     void 지울_때의_그날도_한국_시각의_날짜다() {
         Clock afterMidnight = Clock.fixed(
                 LocalDateTime.of(2026, 10, 1, 0, 30).atZone(ClockConfig.ZONE).toInstant(), ZoneOffset.UTC);
-        WishlistService atMidnight = new WishlistService(wishlistRepository, adCandidateRepository, exclusionRepository, afterMidnight);
+        WishlistService atMidnight = new WishlistService(wishlistRepository, adCandidateRepository, exclusionRepository,
+                campaignQueryService, afterMidnight);
 
         atMidnight.unwish(MEMBER_ID, 101L);
 
@@ -370,5 +388,58 @@ class WishlistServiceTest {
         when(wishlistRepository.findActiveCampaignIdsByMemberId(MEMBER_ID)).thenReturn(List.of());
 
         assertThat(service.findWishedCampaignIds(MEMBER_ID)).isNotNull().isEmpty();
+    }
+
+    /*
+     * 그날 끝난 캠페인도 찜에 들어간다(#379). 종료 이벤트는 다시 오지 않아, 새로 넣은 찜은 캠페인을 읽어 끝났으면 종료로 표시한다.
+     * 표시하지 않으면 쿠폰 발급 자격과 알림 대상에 유효한 찜으로 잡히고 정리 작업이 지우지 않는다(#780).
+     */
+    @Test
+    void 끝난_캠페인을_새로_찜하면_캠페인의_종료_시각으로_표시한다() {
+        LocalDateTime endedAt = LocalDateTime.of(2026, 10, 1, 9, 0);
+        when(adCandidateRepository.findByIdBusinessDateAndIdCampaignId(BUSINESS_DATE, 101L))
+                .thenReturn(Optional.of(candidate(101, 37.4979, 127.0276).build()));
+        when(wishlistRepository.insertIgnore(any())).thenReturn(true);
+        when(wishlistRepository.findByMemberIdAndCampaignId(MEMBER_ID, 101L))
+                .thenReturn(Optional.of(wish(1, 101, LocalDateTime.now(CLOCK))));
+        when(campaignQueryService.findAllById(List.of(101L))).thenReturn(List.of(campaign(101, CampaignStatus.ENDED, endedAt)));
+
+        service.wish(MEMBER_ID, 101L);
+
+        InOrder order = inOrder(wishlistRepository);
+        order.verify(wishlistRepository).insertIgnore(any());
+        order.verify(wishlistRepository).markCampaignEnded(101L, endedAt, LocalDateTime.now(CLOCK));
+        order.verify(wishlistRepository).findByMemberIdAndCampaignId(MEMBER_ID, 101L);
+    }
+
+    @Test
+    void 진행_중인_캠페인을_찜하면_종료로_표시하지_않는다() {
+        when(adCandidateRepository.findByIdBusinessDateAndIdCampaignId(BUSINESS_DATE, 101L))
+                .thenReturn(Optional.of(candidate(101, 37.4979, 127.0276).build()));
+        when(wishlistRepository.insertIgnore(any())).thenReturn(true);
+        when(wishlistRepository.findByMemberIdAndCampaignId(MEMBER_ID, 101L))
+                .thenReturn(Optional.of(wish(1, 101, LocalDateTime.now(CLOCK))));
+        when(campaignQueryService.findAllById(List.of(101L)))
+                .thenReturn(List.of(campaign(101, CampaignStatus.PAUSED, LocalDateTime.of(2026, 10, 1, 9, 0))));
+
+        service.wish(MEMBER_ID, 101L);
+
+        verify(wishlistRepository, never()).markCampaignEnded(any(), any(), any());
+    }
+
+    // 앞 요청이 넣은 뒤 캠페인 조회에서 실패했으면 다시 보낸 요청이 표시를 채운다
+    @Test
+    void 이미_찜한_캠페인이어도_끝났으면_종료로_표시한다() {
+        LocalDateTime endedAt = LocalDateTime.of(2026, 10, 1, 9, 0);
+        when(adCandidateRepository.findByIdBusinessDateAndIdCampaignId(BUSINESS_DATE, 101L))
+                .thenReturn(Optional.of(candidate(101, 37.4979, 127.0276).build()));
+        when(wishlistRepository.insertIgnore(any())).thenReturn(false);
+        when(wishlistRepository.findByMemberIdAndCampaignId(MEMBER_ID, 101L))
+                .thenReturn(Optional.of(wish(1, 101, LocalDateTime.now(CLOCK))));
+        when(campaignQueryService.findAllById(List.of(101L))).thenReturn(List.of(campaign(101, CampaignStatus.ENDED, endedAt)));
+
+        service.wish(MEMBER_ID, 101L);
+
+        verify(wishlistRepository).markCampaignEnded(101L, endedAt, LocalDateTime.now(CLOCK));
     }
 }
