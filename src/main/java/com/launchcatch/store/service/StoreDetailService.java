@@ -43,12 +43,11 @@ public class StoreDetailService {
         }
         var store = stores.findFinalized(storeId)
                 .orElseThrow(() -> new StoreException(StoreErrorCode.STORE_NOT_FOUND));
-        // TODO: S3 대표 이미지 준비 후 쿠폰 테스트용 null 허용을 제거하고 필수 이미지 검증을 복구한다.
         var logo = stores.findImages(storeId, "LOGO").stream().findFirst()
-                .map(row -> image(row.objectKey(), row.sortOrder())).orElse(null);
+                .orElseThrow(() -> new IllegalStateException("등록 완료된 가게의 대표 이미지가 누락되었습니다."));
         return new StoreDetailResponse(store.storeId(), store.name(), store.businessCategory(), store.roadAddress(),
                 store.phone(), store.latitude(), store.longitude(), details.findBusinessHours(storeId).stream().map(this::businessHour).toList(),
-                logo,
+                image(logo.objectKey(), logo.sortOrder()),
                 stores.findImages(storeId, "INTERIOR").stream().map(row -> image(row.objectKey(), row.sortOrder())).toList(),
                 details.findMenus(storeId).stream().map(this::menu).toList(),
                 stores.findActiveCampaign(storeId, LocalDate.now(clock.withZone(ZoneId.of("Asia/Seoul"))))

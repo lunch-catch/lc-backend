@@ -46,17 +46,30 @@ class StoreDetailIntegrationTest extends AbstractStoreIntegrationTest {
     }
 
     @Test
-    void 대표와_메뉴_이미지가_없어도_상세를_반환한다() throws Exception {
+    void 메뉴_이미지가_없어도_대표_이미지와_메뉴를_반환한다() throws Exception {
         long id = store(true);
         long menuId = menu(id, 1);
-        jdbc.update("delete from store_image where store_id = ?", id);
         jdbc.update("delete from store_menu_image where store_menu_id = ?", menuId);
         mvc.perform(get("/v1/stores/{storeId}", id).with(user(new CustomUserDetails(1L, Role.MEMBER))))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.logoImage").value((Object) null))
+                .andExpect(jsonPath("$.data.logoImage.url").value("https://cdn.example.com/stores/" + id + "/logo.png"))
                 .andExpect(jsonPath("$.data.menus[0].menuId").value(menuId))
                 .andExpect(jsonPath("$.data.menus[0].name").value("국수"))
                 .andExpect(jsonPath("$.data.menus[0].image").value((Object) null));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"PENDING", "UPLOADED", "MISSING"})
+    void 검증된_대표_이미지가_없으면_상세_조회는_실패한다(String state) throws Exception {
+        long id = store(true);
+        if (state.equals("MISSING")) {
+            jdbc.update("delete from store_image where store_id = ?", id);
+        } else {
+            jdbc.update("update store_image set upload_status = ?, verified_at = null where store_id = ?", state, id);
+        }
+        mvc.perform(get("/v1/stores/{storeId}", id).with(user(new CustomUserDetails(1L, Role.MEMBER))))
+                .andExpect(status().isInternalServerError())
+                .andExpect(jsonPath("$.code").value("COMMON-001"));
     }
 
     @Test

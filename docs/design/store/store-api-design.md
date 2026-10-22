@@ -404,10 +404,11 @@ MENU 할인은 target_menu_id와 store_id를 함께 조인해 다른 가게의 �
 ALL 할인은 targetMenu=null이다. 활성 요약이 없으면 가게는 유지하고 activeCampaign만 null이다.
 
 이미지는 VERIFIED만 읽고 기존 StoreImageUrlResolver로 CDN URL을 만든다.
-S3를 호출하지 않는다. S3 준비 전 테스트를 위해 대표·메뉴 이미지가 없으면 해당 이미지만 null로 반환한다.
+S3를 호출하지 않는다. 검증된 대표 이미지가 없으면 데이터 오류로 처리한다.
+S3 메뉴 이미지 준비 전까지 메뉴 이미지의 임시 null 허용은 유지한다.
 온보딩의 필수 이미지 등록과 최종 등록 검증은 유지한다.
 저장된 이미지 객체 키 오류, 할인 대상 메뉴 누락과 CDN 설정 누락은 데이터·설정 오류로 전파한다.
-이미지가 전혀 없으면 CDN 설정 없이 조회할 수 있다. DB 장애도 가게 없음이나 빈 목록으로 바꾸지 않는다.
+DB 장애도 가게 없음이나 빈 목록으로 바꾸지 않는다.
 최종 등록의 STORE-015는 유지하고 상세 조회의 404는 STORE-016을 쓴다.
 
 가게 상세 조회에는 별도 수치 성능 목표가 확정되지 않았다.
@@ -415,7 +416,7 @@ S3를 호출하지 않는다. S3 준비 전 테스트를 위해 대표·메뉴 �
 
 ### 검증 범위
 
-StoreDetailServiceTest는 서울 자정 경계, 이미지 URL과 임시 이미지 null 응답을 확인한다.
+StoreDetailServiceTest는 서울 자정 경계, 이미지 URL, 필수 대표 이미지 오류와 임시 메뉴 이미지 null 응답을 확인한다.
 StoreDetailIntegrationTest는 실제 HTTP 보안 체인과 MySQL 쿼리로 메뉴 0개, 초안 비공개, 정렬,
 업로드 상태, 활성 캠페인 날짜·상태와 다른 가게 메뉴 차단을 검증한다.
 StoreCompleteIntegrationTest의 기존 정상 등록 시나리오에서 등록 전 MEMBER 상세 조회의 404와 등록 후 200을 함께 검증한다.

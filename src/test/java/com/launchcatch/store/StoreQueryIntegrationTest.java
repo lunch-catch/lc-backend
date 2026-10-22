@@ -197,27 +197,25 @@ class StoreQueryIntegrationTest extends AbstractStoreIntegrationTest {
     }
 
     @Test
-    void 대표_이미지가_없으면_내부_이미지가_있어도_URL은_null이다() {
+    void 대표_이미지가_없으면_내부_이미지가_있어도_가게_조회는_실패한다() {
         jdbc.update("delete from store_image where store_id = ?", storeId);
         insertStoreImage(storeId, "INTERIOR", "interior/" + storeId + ".png", 1);
 
-        assertThat(service.findAllById(List.of(storeId, otherStoreId))).hasSize(2)
-                .filteredOn(store -> store.storeId().equals(storeId)).singleElement()
-                .satisfies(store -> assertThat(store.storeImageUrl()).isNull());
+        assertThatThrownBy(() -> service.findAllById(List.of(storeId, otherStoreId)))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("이미지가 누락");
     }
 
     @ParameterizedTest
     @ValueSource(strings = {"", " ", "\t"})
-    void 대표_이미지_키가_공백이면_URL은_null이다(String key) {
+    void 대표_이미지_키가_공백이면_실패한다(String key) {
         jdbc.update("update store_image set object_key = ? where store_id = ?", key, storeId);
 
-        assertThat(service.findAllById(List.of(storeId))).singleElement()
-                .satisfies(store -> assertThat(store.storeImageUrl()).isNull());
+        assertThatThrownBy(() -> service.findAllById(List.of(storeId)))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("이미지가 누락");
     }
 
     @Test
-    void 대표_이미지가_없는_가게의_쿠폰_상태를_실제_조회로_확인한다() throws Exception {
-        jdbc.update("delete from store_image where store_id = ?", storeId);
+    void 검증된_대표_이미지가_있는_가게의_쿠폰_상태를_실제_조회로_확인한다() throws Exception {
 
         mvc.perform(post("/v1/coupon-events:getStatus")
                         .with(user(new CustomUserDetails(ownerId, Role.MEMBER)))
@@ -225,6 +223,18 @@ class StoreQueryIntegrationTest extends AbstractStoreIntegrationTest {
                         .content("{\"storeIds\":[" + storeId + "]}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.items[0].storeId").value(storeId));
+    }
+
+    @Test
+    void 대표_이미지가_없는_가게의_쿠폰_상태_조회는_실패한다() throws Exception {
+        jdbc.update("delete from store_image where store_id = ?", storeId);
+
+        mvc.perform(post("/v1/coupon-events:getStatus")
+                        .with(user(new CustomUserDetails(ownerId, Role.MEMBER)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"storeIds\":[" + storeId + "]}"))
+                .andExpect(status().isInternalServerError())
+                .andExpect(jsonPath("$.code").value("COMMON-001"));
     }
 
     @Test
@@ -237,12 +247,12 @@ class StoreQueryIntegrationTest extends AbstractStoreIntegrationTest {
 
     @ParameterizedTest
     @ValueSource(strings = {"PENDING", "UPLOADED"})
-    void 대표_이미지_검증이_완료되지_않았으면_URL은_null이다(String uploadStatus) {
+    void 대표_이미지_검증이_완료되지_않았으면_가게_조회는_실패한다(String uploadStatus) {
         jdbc.update("update store_image set upload_status = ?, verified_at = null where store_id = ?",
                 uploadStatus, storeId);
 
-        assertThat(service.findAllById(List.of(storeId))).singleElement()
-                .satisfies(store -> assertThat(store.storeImageUrl()).isNull());
+        assertThatThrownBy(() -> service.findAllById(List.of(storeId)))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("이미지가 누락");
     }
 
     @ParameterizedTest
