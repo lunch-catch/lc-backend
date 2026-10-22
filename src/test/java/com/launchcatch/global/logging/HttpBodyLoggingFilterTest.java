@@ -5,6 +5,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import jakarta.servlet.FilterChain;
+import jakarta.servlet.AsyncEvent;
+import jakarta.servlet.DispatcherType;
 import jakarta.servlet.http.HttpServletResponse;
 import java.nio.charset.StandardCharsets;
 import java.util.stream.Stream;
@@ -16,6 +18,8 @@ import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.Arguments;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
+import org.springframework.mock.web.MockAsyncContext;
+import org.slf4j.MDC;
 
 class HttpBodyLoggingFilterTest {
 
@@ -33,6 +37,51 @@ class HttpBodyLoggingFilterTest {
     @AfterEach
     void detachLogs() {
         logs.close();
+    }
+
+    @Test
+    void 비동기_재디스패치와_완료_통지가_와도_접근_로그는_한번만_남긴다() throws Exception {
+        MockHttpServletRequest request = jsonPost("{}");
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        request.setAsyncSupported(true);
+        filter.doFilter(request, response, (req, res) -> req.startAsync(req, res));
+        MockAsyncContext context = (MockAsyncContext) request.getAsyncContext();
+        assertThat(logs.events()).isEmpty();
+
+        request.setDispatcherType(DispatcherType.ASYNC);
+        request.setAsyncStarted(false);
+        filter.doFilter(request, response, respond(201, "{\"issued\":true}"));
+        context.complete();
+
+        assertThat(logs.events()).hasSize(1);
+        assertThat(logs.only().getFormattedMessage()).contains("status=201");
+        assertThat(response.getContentAsString()).isEqualTo("{\"issued\":true}");
+    }
+
+    @Test
+    void 재디스패치_없이_끊긴_비동기_요청도_원래_추적ID로_기록한다() throws Exception {
+        MockHttpServletRequest request = jsonPost("{\"password\":\"secret-value\"}");
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        request.setAsyncSupported(true);
+        try {
+            MDC.put("traceId", "request-trace");
+            filter.doFilter(request, response, (req, res) -> req.startAsync(req, res));
+            MockAsyncContext context = (MockAsyncContext) request.getAsyncContext();
+            MDC.put("traceId", "completion-thread");
+            for (var listener : context.getListeners()) {
+                listener.onError(new AsyncEvent(context, new java.io.IOException("secret-value")));
+            }
+            context.complete();
+            context.complete();
+
+            assertThat(logs.events()).hasSize(1);
+            assertThat(logs.only().getFormattedMessage()).contains("reason=ASYNC_ERROR")
+                    .doesNotContain("secret-value");
+            assertThat(logs.only().getMDCPropertyMap()).containsEntry("traceId", "request-trace");
+            assertThat(MDC.get("traceId")).isEqualTo("completion-thread");
+        } finally {
+            MDC.clear();
+        }
     }
 
     @Test

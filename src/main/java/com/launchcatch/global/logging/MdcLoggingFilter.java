@@ -46,7 +46,11 @@ public class MdcLoggingFilter extends OncePerRequestFilter {
             FilterChain filterChain
     ) throws ServletException, IOException {
 
-        String traceId = resolveTraceId(request);
+        String traceId = (String) request.getAttribute(TRACE_ID);
+        if (traceId == null) {
+            traceId = resolveTraceId(request);
+            request.setAttribute(TRACE_ID, traceId);
+        }
 
         try {
             MDC.put(TRACE_ID, traceId);
@@ -60,6 +64,11 @@ public class MdcLoggingFilter extends OncePerRequestFilter {
         } finally {
             MDC.clear();
         }
+    }
+
+    @Override
+    protected boolean shouldNotFilterAsyncDispatch() {
+        return false;
     }
 
     // 들어온 요청에 이미 X-Trace-Id가 있으면(예: 우리 스스로가 호출한 다른 내부 서비스로부터
