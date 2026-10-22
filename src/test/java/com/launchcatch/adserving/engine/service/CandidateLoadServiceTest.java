@@ -9,6 +9,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.launchcatch.adserving.engine.entity.CandidateCampaignState;
@@ -25,6 +26,7 @@ import com.launchcatch.campaign.contract.TargetGender;
 import com.launchcatch.global.config.ClockConfig;
 import com.launchcatch.store.contract.StoreAdCandidateInfo;
 import com.launchcatch.store.contract.StoreMenuInfo;
+import com.launchcatch.store.contract.StoreMenuQueryResult;
 import com.launchcatch.store.contract.StoreQueryService;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.math.BigDecimal;
@@ -39,8 +41,6 @@ import java.util.stream.LongStream;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
-import org.springframework.dao.QueryTimeoutException;
-import org.springframework.transaction.PlatformTransactionManager;
 
 @DisplayName("그날 후보 적재")
 class CandidateLoadServiceTest {
@@ -54,8 +54,7 @@ class CandidateLoadServiceTest {
     private final AdCandidateRepository adCandidateRepository = mock(AdCandidateRepository.class);
     private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
     private final CandidateLoadService service = new CandidateLoadService(campaignQueryService, storeQueryService,
-            adCandidateRepository, meterRegistry, Clock.fixed(NOW.atZone(ClockConfig.ZONE).toInstant(), ClockConfig.ZONE),
-            mock(PlatformTransactionManager.class));
+            adCandidateRepository, meterRegistry, Clock.fixed(NOW.atZone(ClockConfig.ZONE).toInstant(), ClockConfig.ZONE));
 
     private static CampaignInfo campaign(long id, long storeId, CampaignStatus status, PauseReason reason,
                                          DiscountTargetType target, Long menuId) {
@@ -127,7 +126,8 @@ class CandidateLoadServiceTest {
                 campaign(101, 55, CampaignStatus.ACTIVE, null, DiscountTargetType.MENU, 7001L),
                 campaign(102, 56, CampaignStatus.ACTIVE, null, DiscountTargetType.MENU, 7002L)));
         when(storeQueryService.findAdCandidatesByStoreIds(anyList())).thenReturn(List.of(store(55), store(56)));
-        when(storeQueryService.findMenusByIdIn(anyList())).thenReturn(List.of(new StoreMenuInfo(7001L, 55L, null, "갈비살 정식", 12000L)));
+        when(storeQueryService.findMenusByIdIn(anyList())).thenReturn(
+                new StoreMenuQueryResult(List.of(new StoreMenuInfo(7001L, 55L, null, "갈비살 정식", 12000L)), List.of()));
 
         service.load(TODAY);
 
@@ -136,92 +136,48 @@ class CandidateLoadServiceTest {
         assertThat(skipped("menu_missing")).isEqualTo(1);
     }
 
-    /*
-     * 가게 계약은 등록된 메뉴의 이미지가 없거나 미검증이면 IllegalStateException 을 던진다.
-     * 그 메뉴의 캠페인만 빼고 나머지는 적재한다(#779).
-     */
+    // 메뉴가 없는 것과 이미지 데이터 오류를 운영에서 가르도록 다른 reason 으로 세고 메뉴 ID 를 남긴다(#779)
     @Test
-    void 메뉴_조회가_데이터_오류를_던지면_그_메뉴의_캠페인만_빼고_나머지를_적재한다() {
+    void 데이터_오류_메뉴의_캠페인만_빼고_정상_메뉴와_전체_메뉴_캠페인은_적재한다() {
         when(campaignQueryService.findServableOn(TODAY)).thenReturn(List.of(
                 campaign(101, 55, CampaignStatus.ACTIVE, null, DiscountTargetType.MENU, 7001L),
                 campaign(102, 56, CampaignStatus.ACTIVE, null, DiscountTargetType.MENU, 7002L),
-                campaign(103, 57, CampaignStatus.ACTIVE, null, DiscountTargetType.ALL, null)));
-        when(storeQueryService.findAdCandidatesByStoreIds(anyList())).thenReturn(List.of(store(55), store(56), store(57)));
-        when(storeQueryService.findMenusByIdIn(List.of(7001L, 7002L))).thenThrow(new IllegalStateException("메뉴 이미지 누락"));
-        when(storeQueryService.findMenusByIdIn(List.of(7001L))).thenReturn(List.of(new StoreMenuInfo(7001L, 55L, null, "갈비살 정식", 12000L)));
-        when(storeQueryService.findMenusByIdIn(List.of(7002L))).thenThrow(new IllegalStateException("메뉴 이미지 누락"));
-
-        service.load(TODAY);
-
-        assertThat(upserted()).extracting(CandidateRow::campaignId, CandidateRow::discountMenuName)
-                .containsExactly(tuple(101L, "갈비살 정식"), tuple(103L, null));
-        assertThat(skipped("menu_invalid")).isEqualTo(1);
-        assertThat(skipped("menu_missing")).isZero();
-    }
-
-    /*
-     * 일괄 조회만 던지고 메뉴별로는 모두 읽히면 메뉴별 로그가 남지 않는다.
-     * 그때는 일괄 조회의 예외를 스택과 함께 한 번 남긴다.
-     */
-    @Test
-    void 일괄_조회만_던지고_메뉴별로는_모두_읽히면_모두_적재하고_일괄_조회의_예외를_남긴다() {
-        when(campaignQueryService.findServableOn(TODAY)).thenReturn(List.of(
-                campaign(101, 55, CampaignStatus.ACTIVE, null, DiscountTargetType.MENU, 7001L),
-                campaign(102, 56, CampaignStatus.ACTIVE, null, DiscountTargetType.MENU, 7002L)));
+                campaign(103, 55, CampaignStatus.ACTIVE, null, DiscountTargetType.ALL, null)));
         when(storeQueryService.findAdCandidatesByStoreIds(anyList())).thenReturn(List.of(store(55), store(56)));
-        when(storeQueryService.findMenusByIdIn(List.of(7001L, 7002L))).thenThrow(new IllegalStateException("일괄 조회 실패"));
-        when(storeQueryService.findMenusByIdIn(List.of(7001L))).thenReturn(List.of(new StoreMenuInfo(7001L, 55L, null, "갈비살 정식", 12000L)));
-        when(storeQueryService.findMenusByIdIn(List.of(7002L))).thenReturn(List.of(new StoreMenuInfo(7002L, 56L, null, "냉면", 9000L)));
+        when(storeQueryService.findMenusByIdIn(List.of(7001L, 7002L))).thenReturn(new StoreMenuQueryResult(
+                List.of(new StoreMenuInfo(7001L, 55L, "menu.jpg", "갈비살 정식", 12000L)), List.of(7002L)));
+
         var logger = (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger(CandidateLoadService.class);
         var appender = new ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent>();
         appender.start();
         logger.addAppender(appender);
         try {
-            service.load(TODAY);
+            var loaded = service.load(TODAY);
 
-            assertThat(upserted()).extracting(CandidateRow::campaignId).containsExactly(101L, 102L);
-            assertThat(skipped("menu_invalid")).isZero();
-            assertThat(appender.list).filteredOn(event -> event.getFormattedMessage().contains("ADSERVING_CANDIDATE_MENU_BATCH_FAILED"))
-                    .singleElement().satisfies(event -> {
-                        assertThat(event.getFormattedMessage()).contains("menuCount=2", "fallback=PER_MENU_RETRY");
-                        assertThat(event.getThrowableProxy().getMessage()).isEqualTo("일괄 조회 실패");
-                    });
+            assertThat(loaded).containsOnlyKeys(101L, 103L);
+            assertThat(upserted()).extracting(CandidateRow::campaignId).containsExactly(101L, 103L);
+            assertThat(skipped("menu_invalid")).isEqualTo(1);
+            assertThat(skipped("menu_missing")).isZero();
+            assertThat(appender.list).extracting(event -> event.getFormattedMessage())
+                    .contains("event=ADSERVING_CANDIDATE_MENU_INVALID campaignId=102 menuId=7002 fallback=SKIP_CAMPAIGN");
         } finally {
             logger.detachAppender(appender);
             appender.stop();
         }
     }
 
-    /*
-     * 캠페인의 메뉴가 다른 가게의 메뉴면 그 가게가 팔지 않는 메뉴의 할인이 카드에 나간다.
-     * 가게 계약이 이 확인을 광고 서빙에 맡겼다(store-query-contract.md). 메뉴를 찾지 못한 것과 같이 뺀다(#783).
-     */
     @Test
-    void 메뉴가_캠페인의_가게_것이_아니면_적재하지_않고_센다() {
-        when(campaignQueryService.findServableOn(TODAY)).thenReturn(List.of(
-                campaign(101, 55, CampaignStatus.ACTIVE, null, DiscountTargetType.MENU, 7001L),
-                campaign(102, 56, CampaignStatus.ACTIVE, null, DiscountTargetType.MENU, 7002L)));
-        when(storeQueryService.findAdCandidatesByStoreIds(anyList())).thenReturn(List.of(store(55), store(56)));
-        when(storeQueryService.findMenusByIdIn(anyList())).thenReturn(List.of(
-                new StoreMenuInfo(7001L, 99L, null, "다른 가게 메뉴", 12000L),
-                new StoreMenuInfo(7002L, 56L, null, "돈코츠 라멘", 9000L)));
-
-        service.load(TODAY);
-
-        assertThat(upserted()).extracting(CandidateRow::campaignId).containsExactly(102L);
-        assertThat(skipped("menu_missing")).isEqualTo(1);
-    }
-
-    // 데이터 오류가 아닌 예외(DB 장애 등)는 기본 처리대로 적재를 실패시킨다
-    @Test
-    void 메뉴_조회가_다른_예외를_던지면_적재가_실패한다() {
+    void 메뉴_조회의_CDN_설정_오류는_메뉴_제외로_숨기지_않고_적재를_실패시킨다() {
         when(campaignQueryService.findServableOn(TODAY)).thenReturn(List.of(
                 campaign(101, 55, CampaignStatus.ACTIVE, null, DiscountTargetType.MENU, 7001L)));
         when(storeQueryService.findAdCandidatesByStoreIds(anyList())).thenReturn(List.of(store(55)));
-        when(storeQueryService.findMenusByIdIn(anyList())).thenThrow(new QueryTimeoutException("timeout"));
+        var failure = new IllegalStateException("cdn.base-url 설정 누락");
+        when(storeQueryService.findMenusByIdIn(List.of(7001L))).thenThrow(failure);
 
-        assertThatThrownBy(() -> service.load(TODAY)).isInstanceOf(QueryTimeoutException.class);
-        verify(adCandidateRepository, never()).upsertAll(anyList(), any(), any());
+        assertThatThrownBy(() -> service.load(TODAY)).isSameAs(failure);
+
+        verifyNoInteractions(adCandidateRepository);
+        assertThat(skipped("menu_missing")).isZero();
     }
 
     // 가게 계약은 상한을 넘는 입력을 거부한다. 상한 단위로 나눠 읽어 모두 적재하는지 본다

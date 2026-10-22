@@ -92,6 +92,28 @@ class DailyAggregationIntegrationTest extends AbstractAnalyticsIntegrationTest {
         assertThat(pendingDates()).isEmpty();
     }
 
+    /*
+     * 여러 날 집계가 멈췄고 미처리 기록도 남지 않은 날짜가 전전일 밖에 있다(7-9). 원천이 확정됐는데 집계가 SUCCESS 가 아닌
+     * 날짜를 실행 기록에서 찾아 집계하고, 이미 집계가 끝난 날짜는 다시 돌리지 않는다.
+     */
+    @Test
+    void 전전일_밖에서_원천이_확정됐는데_집계되지_않은_날짜를_찾아_집계한다() {
+        LocalDate missed = today.minusDays(6);
+        LocalDate aggregated = today.minusDays(5);
+        sourceDone(missed);
+        sourceDone(aggregated);
+        insertLog(JOB, aggregated, "SUCCESS");
+        Timestamp aggregatedFinish = finishedAtOf(aggregated);
+        sourceDone(yesterday);
+        sourceDone(twoDaysAgo);
+
+        job.run();
+
+        assertThat(statusOf(missed)).isEqualTo("SUCCESS");
+        assertThat(finishedAtOf(aggregated)).isEqualTo(aggregatedFinish);
+        assertThat(pendingDates()).isEmpty();
+    }
+
     @Test
     void 이미_성공한_날짜는_다음_실행에서_다시_집계한다() {
         sourceDone(yesterday);

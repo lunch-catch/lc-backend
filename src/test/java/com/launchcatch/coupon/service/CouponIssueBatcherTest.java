@@ -57,6 +57,112 @@ class CouponIssueBatcherTest {
     @AfterEach
     void stopWorker() {
         batcher.stop();
+        org.slf4j.MDC.clear();
+    }
+
+    @Test
+    void 발급과_예약_완료는_공유_추적_ID를_갖고_다음_요청에_원본_MDC가_섞이지_않는다() {
+        List<java.util.Map<String, String>> issuanceContexts = new java.util.concurrent.CopyOnWriteArrayList<>();
+        List<java.util.Map<String, String>> completionContexts = new java.util.concurrent.CopyOnWriteArrayList<>();
+        when(batchService.issueBatch(anyList(), any())).thenAnswer(invocation -> {
+            issuanceContexts.add(org.slf4j.MDC.getCopyOfContextMap());
+            return List.of(issued);
+        });
+        when(sequenceService.completeAll(anyList())).thenAnswer(invocation -> {
+            completionContexts.add(org.slf4j.MDC.getCopyOfContextMap());
+            return Set.of();
+        });
+        org.slf4j.MDC.put("traceId", "request-1");
+        org.slf4j.MDC.put("clientIp", "127.0.0.1");
+        batcher.submitAndAwait(17L, 81L);
+        assertThat(org.slf4j.MDC.get("traceId")).isEqualTo("request-1");
+        org.slf4j.MDC.put("traceId", "request-2");
+        batcher.submitAndAwait(18L, 81L);
+
+        assertThat(issuanceContexts).hasSize(2);
+        assertThat(issuanceContexts.get(0)).containsEntry("requestTraceIds", "request-1").doesNotContainKey("clientIp");
+        assertThat(issuanceContexts.get(1)).containsEntry("requestTraceIds", "request-2");
+        assertThat(completionContexts).hasSize(2);
+        assertThat(completionContexts.get(0)).containsEntry("requestTraceIds", "request-1");
+        assertThat(completionContexts.get(1)).containsEntry("requestTraceIds", "request-2");
+        assertThat(issuanceContexts.get(0).get("traceId")).matches("[a-f0-9]{32}");
+        assertThat(org.slf4j.MDC.get("traceId")).isEqualTo("request-2");
+    }
+
+    @Test
+    void 예약_대기_조회에도_원본_요청의_추적_ID를_전달한다() {
+        when(batchService.issueBatch(anyList(), any()))
+                .thenReturn(List.of(CouponIssuanceOutcome.awaitingReservationResult()));
+        var context = new java.util.concurrent.atomic.AtomicReference<java.util.Map<String, String>>();
+        when(sequenceService.retryAvailability(81L)).thenAnswer(invocation -> {
+            context.set(org.slf4j.MDC.getCopyOfContextMap());
+            return 0;
+        });
+        org.slf4j.MDC.put("traceId", "request-1");
+
+        assertThatThrownBy(() -> batcher.submitAndAwait(17L, 81L)).isInstanceOf(CouponException.class);
+
+        assertThat(context.get()).containsEntry("requestTraceIds", "request-1");
+        assertThat(org.slf4j.MDC.get("traceId")).isEqualTo("request-1");
+    }
+
+    @Test
+    void 종료된_실행기의_동기_후처리도_MDC를_복원한다() {
+        ((java.util.concurrent.ExecutorService) ReflectionTestUtils.getField(batcher, "eventTasks")).shutdown();
+        when(batchService.issueBatch(anyList(), any())).thenReturn(List.of(issued));
+        when(sequenceService.completeAll(anyList())).thenAnswer(invocation -> {
+            assertThat(CouponLogContext.requestTraceIds()).isEqualTo("request-1");
+            return Set.of();
+        });
+        org.slf4j.MDC.put("traceId", "request-1");
+
+        assertThat(batcher.submitAndAwait(17L, 81L).response()).isEqualTo(response);
+
+        assertThat(org.slf4j.MDC.get("traceId")).isEqualTo("request-1");
+    }
+
+    @Test
+    void 묶음의_DB_실패는_원본_추적_ID와_진단_정보만_남기고_요청에_그대로_전달한다() {
+        var failure = new org.springframework.dao.DataIntegrityViolationException("secret-token",
+                new java.sql.SQLException("secret-value", "23000", 1062));
+        when(batchService.issueBatch(anyList(), any())).thenThrow(failure);
+        org.slf4j.MDC.put("traceId", "request-1");
+        try (var logs = new CouponLogCapture(CouponIssueBatcher.class)) {
+            assertThatThrownBy(() -> batcher.submitAndAwait(17L, 81L)).isSameAs(failure);
+
+            assertThat(logs.events).singleElement().satisfies(event -> {
+                assertThat(event.getFormattedMessage()).contains("event=COUPON_BATCH_ISSUANCE_FAILED", "requestTraceIds=request-1",
+                        "sqlState=23000", "sqlErrorCode=1062").doesNotContain("secret-token", "secret-value");
+                assertThat(event.getThrowableProxy()).isNull();
+            });
+        }
+    }
+
+    @Test
+    void 예상된_혼잡은_작업자의_오류_로그를_남기지_않는다() {
+        when(batchService.issueBatch(anyList(), any())).thenThrow(new CouponException(CouponErrorCode.ISSUANCE_BUSY));
+        try (var logs = new CouponLogCapture(CouponIssueBatcher.class)) {
+            assertThatThrownBy(() -> batcher.submitAndAwait(17L, 81L)).isInstanceOf(CouponException.class);
+
+            assertThat(logs.events).isEmpty();
+        }
+    }
+
+    @Test
+    void 예약_완료의_오류는_스택을_다시_남기지_않고_요청에_전달한다() {
+        when(batchService.issueBatch(anyList(), any())).thenReturn(List.of(issued));
+        var failure = new IllegalStateException("completion failed");
+        when(sequenceService.completeAll(anyList())).thenThrow(failure);
+        try (var logs = new CouponLogCapture(CouponIssueBatcher.class)) {
+            assertThatThrownBy(() -> batcher.submitAndAwait(17L, 81L)).isSameAs(failure);
+
+            await().atMost(Duration.ofSeconds(3)).untilAsserted(() ->
+                    assertThat(logs.events).singleElement().satisfies(event -> {
+                        assertThat(event.getFormattedMessage()).contains("event=COUPON_BATCH_COMPLETION_FAILED",
+                                "exceptionType=IllegalStateException");
+                        assertThat(event.getThrowableProxy()).isNull();
+                    }));
+        }
     }
 
     @Test
@@ -296,6 +402,54 @@ class CouponIssueBatcherTest {
                 assertThat(first.get(5, TimeUnit.SECONDS).response()).isEqualTo(response);
                 assertThatThrownBy(() -> second.get(5, TimeUnit.SECONDS)).hasCause(failure);
                 assertThatThrownBy(() -> third.get(5, TimeUnit.SECONDS)).hasCause(failure);
+                assertThat(batcher.submitAndAwait(20L, 81L).response()).isEqualTo(response);
+            } finally {
+                finishFirst.countDown();
+            }
+        }
+    }
+
+    @Test
+    void 공유_작업_실패는_원본_요청_ID들을_남기고_다음_묶음에_섞지_않는다() throws Exception {
+        CountDownLatch started = new CountDownLatch(1);
+        CountDownLatch finishFirst = new CountDownLatch(1);
+        AssertionError failure = new AssertionError("worker failed");
+        when(batchService.issueBatch(anyList(), any())).thenAnswer(invocation -> {
+            List<?> requests = invocation.getArgument(0);
+            if (requests.size() > 1) {
+                throw failure;
+            }
+            started.countDown();
+            assertThat(finishFirst.await(5, TimeUnit.SECONDS)).isTrue();
+            return List.of(issued);
+        });
+
+        try (var logs = new CouponLogCapture(CouponIssueBatcher.class);
+                var executor = Executors.newFixedThreadPool(3)) {
+            try {
+                var first = executor.submit(() -> batcher.submitAndAwait(17L, 81L));
+                assertThat(started.await(5, TimeUnit.SECONDS)).isTrue();
+                var second = executor.submit(() -> {
+                    org.slf4j.MDC.put("traceId", "request-2");
+                    return batcher.submitAndAwait(18L, 81L);
+                });
+                var third = executor.submit(() -> {
+                    org.slf4j.MDC.put("traceId", "request-3");
+                    return batcher.submitAndAwait(19L, 81L);
+                });
+                BlockingQueue<?> queue = (BlockingQueue<?>) ReflectionTestUtils.getField(batcher, "queue");
+                await().atMost(Duration.ofSeconds(5)).until(() -> queue.size() == 2);
+                finishFirst.countDown();
+
+                assertThat(first.get(5, TimeUnit.SECONDS).response()).isEqualTo(response);
+                assertThatThrownBy(() -> second.get(5, TimeUnit.SECONDS)).hasRootCause(failure);
+                assertThatThrownBy(() -> third.get(5, TimeUnit.SECONDS)).hasRootCause(failure);
+                await().atMost(Duration.ofSeconds(3)).untilAsserted(() ->
+                        assertThat(logs.events).anySatisfy(event -> {
+                            assertThat(event.getFormattedMessage()).contains("event=COUPON_BATCH_WORKER_FAILED", "requestCount=2",
+                                    "request-2", "request-3", "exceptionType=AssertionError");
+                            assertThat(event.getMDCPropertyMap().get("traceId")).matches("[a-f0-9]{32}");
+                        }));
                 assertThat(batcher.submitAndAwait(20L, 81L).response()).isEqualTo(response);
             } finally {
                 finishFirst.countDown();

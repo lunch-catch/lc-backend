@@ -45,11 +45,12 @@ public class CouponSoldOutNotificationService implements SmartLifecycle {
             return;
         }
         if (!running || pending.size() >= MAX_PENDING) {
-            log.error("event=COUPON_SOLD_OUT_NOTIFICATION_REJECTED couponEventId={} pending={}", eventId, pending.size());
+            log.error("event=COUPON_SOLD_OUT_NOTIFICATION_FAILED reason=REJECTED couponEventId={} pendingCount={} requestTraceIds={}",
+                    eventId, pending.size(), CouponLogContext.requestTraceIds());
             return;
         }
         Instant now = clock.instant();
-        pending.put(eventId, new Pending(now, now.plus(RETRY_WINDOW)));
+        pending.put(eventId, new Pending(now, now.plus(RETRY_WINDOW), CouponLogContext.capture()));
     }
 
     // DB에서 확인한 마지막 발급 시각으로 통보하며 실패한 이벤트만 다음 실행으로 넘긴다.
@@ -57,25 +58,31 @@ public class CouponSoldOutNotificationService implements SmartLifecycle {
         for (var entry : pending.entrySet()) {
             long eventId = entry.getKey();
             Pending task = entry.getValue();
-            Instant now = clock.instant();
-            if (!now.isBefore(task.expiresAt())) {
-                pending.remove(eventId);
-                log.error("event=COUPON_SOLD_OUT_NOTIFICATION_EXPIRED couponEventId={}", eventId);
-                continue;
-            }
-            if (now.isBefore(task.retryAt())) {
-                continue;
-            }
-            try {
-                CouponLookUpService.SoldOut soldOut = lookUpService.findSoldOut(eventId).orElseThrow(
-                        () -> new IllegalStateException("Committed coupon exhaustion is not visible"));
-                candidateStateUpdater.markSoldOut(soldOut.campaignId(), soldOut.businessDate(), soldOut.soldOutAt());
-                completed.put(eventId, true);
-                pending.remove(eventId);
-                log.info("event=COUPON_SOLD_OUT_NOTIFIED couponEventId={}", eventId);
-            } catch (RuntimeException error) {
-                pending.put(eventId, new Pending(clock.instant().plus(RETRY_INTERVAL), task.expiresAt()));
-                log.error("event=COUPON_SOLD_OUT_NOTIFICATION_FAILED couponEventId={}", eventId, error);
+            try (var ignored = task.logContext().open()) {
+                Instant now = clock.instant();
+                if (!now.isBefore(task.expiresAt())) {
+                    pending.remove(eventId);
+                    log.error("event=COUPON_SOLD_OUT_NOTIFICATION_FAILED reason=RETRY_EXPIRED couponEventId={} requestTraceIds={}",
+                            eventId, CouponLogContext.requestTraceIds());
+                    continue;
+                }
+                if (now.isBefore(task.retryAt())) {
+                    continue;
+                }
+                try {
+                    CouponLookUpService.SoldOut soldOut = lookUpService.findSoldOut(eventId).orElseThrow(
+                            () -> new IllegalStateException("Committed coupon exhaustion is not visible"));
+                    candidateStateUpdater.markSoldOut(soldOut.campaignId(), soldOut.businessDate(), soldOut.soldOutAt());
+                    completed.put(eventId, true);
+                    pending.remove(eventId);
+                    log.info("event=COUPON_SOLD_OUT_NOTIFICATION_DONE couponEventId={}", eventId);
+                } catch (RuntimeException error) {
+                    pending.put(eventId, new Pending(clock.instant().plus(RETRY_INTERVAL), task.expiresAt(), task.logContext()));
+                    CouponFailureDetails details = CouponFailureDetails.from(error);
+                    log.error("event=COUPON_SOLD_OUT_NOTIFICATION_FAILED reason=RETRY_SCHEDULED couponEventId={} fallback=RETRY requestTraceIds={} exceptionType={} httpStatus={} sqlState={} sqlErrorCode={} origin=\"{}\"",
+                            eventId, CouponLogContext.requestTraceIds(), details.exceptionType(), details.httpStatus(),
+                            details.sqlState(), details.sqlErrorCode(), details.origin(), details.stackTrace());
+                }
             }
         }
     }
@@ -106,13 +113,13 @@ public class CouponSoldOutNotificationService implements SmartLifecycle {
         stopping.shutdown();
         try {
             if (!stopping.awaitTermination(5, TimeUnit.SECONDS)) {
-                log.error("event=COUPON_SOLD_OUT_NOTIFICATION_STOP_TIMEOUT pending={}", pending.size());
+                log.error("event=COUPON_SOLD_OUT_NOTIFICATION_FAILED reason=STOP_TIMEOUT pendingCount={}", pending.size());
             }
         } catch (InterruptedException error) {
             Thread.currentThread().interrupt();
         }
         if (!pending.isEmpty()) {
-            log.error("event=COUPON_SOLD_OUT_NOTIFICATION_UNFINISHED pending={}", pending.size());
+            log.error("event=COUPON_SOLD_OUT_NOTIFICATION_FAILED reason=UNFINISHED pendingCount={}", pending.size());
         }
     }
 
@@ -121,5 +128,5 @@ public class CouponSoldOutNotificationService implements SmartLifecycle {
         return running;
     }
 
-    private record Pending(Instant retryAt, Instant expiresAt) { }
+    private record Pending(Instant retryAt, Instant expiresAt, CouponLogContext logContext) { }
 }

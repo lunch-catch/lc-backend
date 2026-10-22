@@ -40,6 +40,7 @@ import com.launchcatch.coupon.service.CouponPreparationService;
 import com.launchcatch.ops.service.BatchExecutionService;
 import com.launchcatch.ops.scheduler.RetryBackoff;
 import com.launchcatch.store.contract.StoreMenuInfo;
+import com.launchcatch.store.contract.StoreMenuQueryResult;
 import com.launchcatch.campaign.contract.DiscountTargetType;
 import com.launchcatch.campaign.contract.DiscountType;
 import java.time.LocalTime;
@@ -4928,7 +4929,7 @@ public class CouponIntegrationTest extends IntegrationTestSupport {
             when(stores.findAllById(List.of(10L)))
                     .thenReturn(List.of(new StoreInfo(10L, "쿠폰 식당", null, 37.5, 127.0)));
             when(stores.findMenusByIdIn(List.of(100L)))
-                    .thenReturn(List.of(new StoreMenuInfo(100L, 10L, "image", "점심", 4500L)));
+                    .thenReturn(new StoreMenuQueryResult(List.of(new StoreMenuInfo(100L, 10L, "image", "점심", 4500L)), List.of()));
         }
 
 
@@ -5062,6 +5063,37 @@ public class CouponIntegrationTest extends IntegrationTestSupport {
             assertThat(jdbc.queryForMap("SELECT status, retry_count FROM batch_execution_log WHERE job_name='COUPON_PREPARE'"))
                     .containsEntry("status", "FAILED").containsEntry("retry_count", 2);
             verify(batches, times(3)).prepareInventory(anyLong(), org.mockito.ArgumentMatchers.anyInt(), any(), any(), any());
+        }
+
+        @Test
+        void 만료_재시도가_소진돼도_다음_주기에_남은_쿠폰을_다시_처리한다() {
+            prepareExpiringCoupon();
+            expirationJob.expireCoupons();
+            issue(2, 18, "ISSUED");
+            var failures = new java.util.concurrent.atomic.AtomicInteger();
+            doAnswer(call -> {
+                if (failures.getAndIncrement() < 4) {
+                    throw new IllegalStateException("쿠폰 만료 중 실패");
+                }
+                return call.callRealMethod();
+            }).when(batches).expiringIds(any(), any(), anyLong());
+
+            expirationJob.expireCoupons();
+
+            assertThat(jdbc.queryForMap("SELECT status, retry_count, attempt_no FROM batch_execution_log WHERE job_name='COUPON_EXPIRE'"))
+                    .containsEntry("status", "FAILED").containsEntry("retry_count", 2).containsEntry("attempt_no", 2);
+            assertThat(jdbc.queryForList("SELECT status FROM member_coupon ORDER BY member_coupon_id", String.class))
+                    .containsExactly("EXPIRED", "ISSUED");
+
+            at(DATE.atTime(15, 5));
+            expirationJob.expireCoupons();
+
+            assertThat(jdbc.queryForMap("SELECT status, retry_count, attempt_no, processed_count FROM batch_execution_log WHERE job_name='COUPON_EXPIRE'"))
+                    .containsEntry("status", "SUCCESS").containsEntry("retry_count", 1)
+                    .containsEntry("attempt_no", 3).containsEntry("processed_count", 1);
+            assertThat(jdbc.queryForList("SELECT status FROM member_coupon ORDER BY member_coupon_id", String.class))
+                    .containsExactly("EXPIRED", "EXPIRED");
+            assertThat(funnel.received).filteredOn(CouponExpiredEvent.class::isInstance).hasSize(2);
         }
 
         @Test

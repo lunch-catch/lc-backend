@@ -185,11 +185,17 @@ public class CouponIssueBatcher implements SmartLifecycle {
             if (batch.isEmpty()) {
                 continue;
             }
-            try {
-                process(batch);
-            } catch (Throwable error) {
-                batch.forEach(pending -> pending.future().completeExceptionally(error));
-                log.error("event=COUPON_BATCH_WORKER_FAILED size={}", batch.size(), error);
+            CouponLogContext context = CouponLogContext.shared(batch.stream().map(Pending::logContext).toList());
+            try (var ignored = context.open()) {
+                try {
+                    process(batch);
+                } catch (Throwable error) {
+                    batch.forEach(pending -> pending.future().completeExceptionally(error));
+                    CouponFailureDetails details = CouponFailureDetails.from(error);
+                    log.error("event=COUPON_BATCH_WORKER_FAILED requestCount={} requestTraceIds={} exceptionType={} httpStatus={} sqlState={} sqlErrorCode={} origin=\"{}\"",
+                            batch.size(), CouponLogContext.requestTraceIds(), details.exceptionType(), details.httpStatus(),
+                            details.sqlState(), details.sqlErrorCode(), details.origin());
+                }
             }
         }
     }
@@ -225,6 +231,12 @@ public class CouponIssueBatcher implements SmartLifecycle {
             deadline.check();
             outcomes = batchService.issueBatch(batch.stream().map(Pending::request).toList(), deadline);
         } catch (RuntimeException error) {
+            if (!(error instanceof CouponException)) {
+                CouponFailureDetails details = CouponFailureDetails.from(error);
+                log.error("event=COUPON_BATCH_ISSUANCE_FAILED requestCount={} requestTraceIds={} exceptionType={} httpStatus={} sqlState={} sqlErrorCode={} origin=\"{}\"",
+                        batch.size(), CouponLogContext.requestTraceIds(), details.exceptionType(), details.httpStatus(),
+                        details.sqlState(), details.sqlErrorCode(), details.origin());
+            }
             batch.forEach(pending -> pending.future().completeExceptionally(error));
             return;
         }
@@ -234,15 +246,21 @@ public class CouponIssueBatcher implements SmartLifecycle {
             byEvent.computeIfAbsent(pending.request().eventId(), key -> new ArrayList<>())
                     .add(new Completion(pending, outcomes.get(i)));
         }
-        byEvent.values().forEach(completions -> dispatchEvent(() -> finishEvent(completions)));
+        byEvent.values().forEach(completions -> dispatchEvent(CouponLogContext.shared(completions.stream()
+                .map(completion -> completion.pending().logContext()).toList()), () -> finishEvent(completions)));
     }
 
-    private void dispatchEvent(Runnable task) {
+    private void dispatchEvent(CouponLogContext context, Runnable task) {
+        Runnable contextualTask = () -> {
+            try (var ignored = context.open()) {
+                task.run();
+            }
+        };
         try {
-            eventTasks.execute(task);
+            eventTasks.execute(contextualTask);
         } catch (java.util.concurrent.RejectedExecutionException error) {
             // 종료와 경쟁해도 커밋된 예약의 정리와 결과 전달은 생략하지 않는다.
-            task.run();
+            contextualTask.run();
         }
     }
 
@@ -253,11 +271,16 @@ public class CouponIssueBatcher implements SmartLifecycle {
                     .filter(outcome -> outcome.reservation() != null).map(CouponIssuanceOutcome::reservation).toList());
             soldOutEvents.forEach(soldOutNotifications::request);
             for (Completion completion : completions) {
-                completeOrDeferRequest(completion, soldOutEvents);
+                try (var ignored = completion.pending().logContext().open()) {
+                    completeOrDeferRequest(completion, soldOutEvents);
+                }
             }
         } catch (Throwable error) {
             completions.forEach(completion -> completion.pending().future().completeExceptionally(error));
-            log.error("event=COUPON_BATCH_COMPLETION_FAILED", error);
+            CouponFailureDetails details = CouponFailureDetails.from(error);
+            log.error("event=COUPON_BATCH_COMPLETION_FAILED requestCount={} requestTraceIds={} exceptionType={} httpStatus={} sqlState={} sqlErrorCode={} origin=\"{}\"",
+                    completions.size(), CouponLogContext.requestTraceIds(), details.exceptionType(), details.httpStatus(),
+                    details.sqlState(), details.sqlErrorCode(), details.origin());
         }
     }
 
@@ -317,7 +340,8 @@ public class CouponIssueBatcher implements SmartLifecycle {
                 requests.forEach(this::deferReservation);
                 return;
             }
-            dispatchEvent(() -> resolveEvent(eventId, requests));
+            dispatchEvent(CouponLogContext.shared(requests.stream().map(Pending::logContext).toList()),
+                    () -> resolveEvent(eventId, requests));
         });
     }
 
@@ -358,7 +382,7 @@ public class CouponIssueBatcher implements SmartLifecycle {
         for (int i = 0; i < workerCount; i++) {
             workers.add(Thread.ofPlatform().name("coupon-batch-" + i).daemon(true).start(this::runWorker));
         }
-        log.info("event=COUPON_BATCH_STARTED workers={} maxSize={} queueCapacity={}", workerCount, maxSize, queueCapacity);
+        log.info("event=COUPON_BATCH_START_DONE workerCount={} maxSize={} queueCapacity={}", workerCount, maxSize, queueCapacity);
     }
 
     /*
@@ -430,6 +454,7 @@ public class CouponIssueBatcher implements SmartLifecycle {
         private final CouponIssuanceRequest request;
         private final CompletableFuture<CouponIssuanceResult> future;
         private final long deadlineNanos;
+        private final CouponLogContext logContext;
         private boolean cancelled;
         private CouponBatchDeadline deadline;
 
@@ -437,8 +462,10 @@ public class CouponIssueBatcher implements SmartLifecycle {
             this.request = request;
             this.future = future;
             this.deadlineNanos = deadlineNanos;
+            this.logContext = CouponLogContext.capture();
         }
 
+        CouponLogContext logContext() { return logContext; }
         CouponIssuanceRequest request() { return request; }
         CompletableFuture<CouponIssuanceResult> future() { return future; }
         long deadlineNanos() { return deadlineNanos; }

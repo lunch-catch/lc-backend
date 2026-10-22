@@ -10,6 +10,7 @@ import com.launchcatch.campaign.contract.CampaignStatus;
 import com.launchcatch.campaign.contract.DiscountTargetType;
 import com.launchcatch.store.contract.StoreAdCandidateInfo;
 import com.launchcatch.store.contract.StoreMenuInfo;
+import com.launchcatch.store.contract.StoreMenuQueryResult;
 import com.launchcatch.store.contract.StoreQueryService;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.time.Clock;
@@ -17,18 +18,14 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.function.Function;
 import java.util.stream.Collectors;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.PlatformTransactionManager;
-import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.transaction.support.TransactionTemplate;
 
 /*
  * 00:00 묶음에서 그날의 피드 후보 스냅샷을 만든다(FR-099 (8), FR-093). 서빙은 이 스냅샷만 읽고 다른 도메인 테이블을 읽지 않는다.
@@ -36,6 +33,7 @@ import org.springframework.transaction.support.TransactionTemplate;
  */
 @Slf4j
 @Service
+@RequiredArgsConstructor
 public class CandidateLoadService {
 
     // 지난 후보를 남기는 영업일 수다. 영업일 D 의 적재가 D-7 보다 앞선 행을 지운다(#582)
@@ -43,7 +41,7 @@ public class CandidateLoadService {
 
     /*
      * 가게가 없거나 메뉴 할인의 메뉴명을 얻지 못해 적재하지 못한 캠페인 수다. reason 태그로 가른다.
-     * 메뉴가 없으면 menu_missing, 가게 계약이 메뉴 데이터 오류를 던지면 menu_invalid 다(#779).
+     * 메뉴가 없으면 menu_missing, 가게 계약이 메뉴 이미지의 데이터 오류로 돌려주면 menu_invalid 다(#779).
      */
     static final String SKIPPED_METRIC = "adserving_candidate_load_skipped_total";
 
@@ -52,19 +50,6 @@ public class CandidateLoadService {
     private final AdCandidateRepository adCandidateRepository;
     private final MeterRegistry meterRegistry;
     private final Clock clock;
-    private final TransactionTemplate outsideLoad;
-
-    public CandidateLoadService(CampaignQueryService campaignQueryService, StoreQueryService storeQueryService,
-                                AdCandidateRepository adCandidateRepository, MeterRegistry meterRegistry, Clock clock,
-                                PlatformTransactionManager transactionManager) {
-        this.campaignQueryService = campaignQueryService;
-        this.storeQueryService = storeQueryService;
-        this.adCandidateRepository = adCandidateRepository;
-        this.meterRegistry = meterRegistry;
-        this.clock = clock;
-        this.outsideLoad = new TransactionTemplate(transactionManager);
-        this.outsideLoad.setPropagationBehavior(TransactionDefinition.PROPAGATION_NOT_SUPPORTED);
-    }
 
     /*
      * 그날 서빙 대상을 읽어 후보로 넣고, 넣은 캠페인과 그때 읽은 상태 전이 시각을 돌려준다. 재조회가 이 시각과 견준다.
@@ -76,7 +61,10 @@ public class CandidateLoadService {
         LocalDateTime readAt = LocalDateTime.now(clock);
         List<CampaignInfo> campaigns = campaignQueryService.findServableOn(businessDate);
         Map<Long, StoreAdCandidateInfo> stores = readStores(campaigns);
-        MenuNames menuNames = readMenuNames(campaigns);
+        StoreMenuQueryResult menus = readMenus(campaigns);
+        Map<Long, String> menuNames = menus.menus().stream()
+                .collect(Collectors.toMap(StoreMenuInfo::menuId, StoreMenuInfo::menuName));
+        Set<Long> invalidMenuIds = Set.copyOf(menus.invalidMenuIds());
 
         List<CandidateRow> rows = new ArrayList<>(campaigns.size());
         Map<Long, LocalDateTime> loaded = new HashMap<>();
@@ -88,20 +76,19 @@ public class CandidateLoadService {
             }
             String menuName = null;
             if (campaign.discountTargetType() == DiscountTargetType.MENU) {
-                if (menuNames.invalid().contains(campaign.targetMenuId())) {
+                // 메뉴가 없는 것과 가르도록 이미지 데이터 오류는 따로 세고 메뉴 ID 를 남긴다(#779)
+                if (invalidMenuIds.contains(campaign.targetMenuId())) {
+                    log.warn("event=ADSERVING_CANDIDATE_MENU_INVALID campaignId={} menuId={} fallback=SKIP_CAMPAIGN",
+                            campaign.campaignId(), campaign.targetMenuId());
                     skip("menu_invalid");
                     continue;
                 }
-                StoreMenuInfo menu = menuNames.menus().get(campaign.targetMenuId());
-                /*
-                 * MENU 할인에 메뉴명이 없으면 CHECK chk_candidate_discount_menu 에 걸려 적재 전체가 실패한다.
-                 * 다른 가게의 메뉴면 그 가게가 팔지 않는 메뉴의 할인이 나간다. 가게 계약이 이 확인을 광고 서빙에 맡겼다(#783).
-                 */
-                if (menu == null || !menu.storeId().equals(campaign.storeId())) {
+                menuName = menuNames.get(campaign.targetMenuId());
+                // MENU 할인에 메뉴명이 없으면 CHECK chk_candidate_discount_menu 에 걸려 적재 전체가 실패한다
+                if (menuName == null) {
                     skip("menu_missing");
                     continue;
                 }
-                menuName = menu.menuName();
             }
             rows.add(toRow(businessDate, campaign, store, menuName));
             loaded.put(campaign.campaignId(), campaign.statusChangedAt());
@@ -142,50 +129,14 @@ public class CandidateLoadService {
         return stores;
     }
 
-    /*
-     * 가게 계약은 등록된 메뉴의 이미지가 없거나 미검증이면 IllegalStateException 을 던진다. 메뉴 하나 때문에 적재 전체가 실패하지 않게,
-     * 그때만 메뉴 하나씩 다시 읽어 던지는 메뉴를 가려낸다(#779). 다른 예외(DB 장애 등)는 기본 처리대로 적재를 실패시킨다.
-     * 계약은 cdn.base-url 이 빈 설정 오류도 같은 IllegalStateException 으로 던져 그 오류도 여기서 흡수된다.
-     * 가게 조회가 먼저 LOGO URL 을 만들어 그쪽에서 먼저 실패할 것으로 보지만, 두 오류가 나뉘면(#788) catch 를 메뉴 데이터 오류로 좁힌다.
-     */
-    private MenuNames readMenuNames(List<CampaignInfo> campaigns) {
+    private StoreMenuQueryResult readMenus(List<CampaignInfo> campaigns) {
         List<Long> menuIds = campaigns.stream()
                 .filter(c -> c.discountTargetType() == DiscountTargetType.MENU && c.targetMenuId() != null)
                 .map(CampaignInfo::targetMenuId).distinct().toList();
         if (menuIds.isEmpty()) {
-            return new MenuNames(Map.of(), Set.of());
+            return new StoreMenuQueryResult(List.of(), List.of());
         }
-        try {
-            return new MenuNames(toMenus(findMenus(menuIds)), Set.of());
-        } catch (IllegalStateException e) {
-            Map<Long, StoreMenuInfo> menus = new HashMap<>();
-            Set<Long> invalid = new HashSet<>();
-            for (Long menuId : menuIds) {
-                try {
-                    menus.putAll(toMenus(findMenus(List.of(menuId))));
-                } catch (IllegalStateException invalidMenu) {
-                    log.warn("event=ADSERVING_CANDIDATE_MENU_INVALID menuId={} fallback=SKIP_CAMPAIGN", menuId, invalidMenu);
-                    invalid.add(menuId);
-                }
-            }
-            // 메뉴별로 모두 읽히면 메뉴별 로그가 없어 일괄 조회가 실패한 흔적을 여기서 남긴다
-            if (invalid.isEmpty()) {
-                log.warn("event=ADSERVING_CANDIDATE_MENU_BATCH_FAILED menuCount={} fallback=PER_MENU_RETRY", menuIds.size(), e);
-            }
-            return new MenuNames(menus, invalid);
-        }
-    }
-
-    /*
-     * 적재 트랜잭션을 멈추고 가게 계약을 부른다. 계약 구현이 트랜잭션에 참여한 채 예외를 던지면 적재 트랜잭션이 롤백 전용이 되어,
-     * 예외를 잡아도 커밋이 실패하기 때문이다(#779).
-     */
-    private List<StoreMenuInfo> findMenus(List<Long> menuIds) {
-        return outsideLoad.execute(status -> storeQueryService.findMenusByIdIn(menuIds));
-    }
-
-    private static Map<Long, StoreMenuInfo> toMenus(List<StoreMenuInfo> menus) {
-        return menus.stream().collect(Collectors.toMap(StoreMenuInfo::menuId, Function.identity()));
+        return storeQueryService.findMenusByIdIn(menuIds);
     }
 
     private static CandidateRow toRow(LocalDate businessDate, CampaignInfo c, StoreAdCandidateInfo store, String menuName) {
@@ -204,9 +155,5 @@ public class CandidateLoadService {
 
     private void skip(String reason) {
         meterRegistry.counter(SKIPPED_METRIC, "reason", reason).increment();
-    }
-
-    // 메뉴 ID 별 메뉴와, 가게 계약이 데이터 오류를 던진 메뉴 ID 다
-    private record MenuNames(Map<Long, StoreMenuInfo> menus, Set<Long> invalid) {
     }
 }

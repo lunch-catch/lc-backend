@@ -8,4 +8,7 @@ public interface BatchExecutionQueryService {
 
     /** 그 영업일에 실행된 모든 작업의 기록을 돌려준다. */
     List<BatchExecutionRecord> findByBusinessDate(LocalDate businessDate);
+
+    /** 그 작업이 SUCCESS 로 끝난 영업일 가운데 [fromInclusive, toExclusive) 안의 것을 돌려준다. 분석이 미집계 날짜를 찾는 데 쓴다. */
+    List<LocalDate> findSucceededBusinessDates(String jobName, LocalDate fromInclusive, LocalDate toExclusive);
 }

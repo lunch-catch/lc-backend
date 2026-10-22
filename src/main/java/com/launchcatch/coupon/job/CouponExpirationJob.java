@@ -35,15 +35,16 @@ public class CouponExpirationJob implements StandaloneJob {
     }
 
     /*
-     * 실행 이력은 작업명과 영업일로 유지하며 새 만료 대상이 생기면 이전 SUCCESS를 다시 점유한다.
-     * RUNNING은 공통 이어받기에 맡기고 FAILED는 자동 재시도가 끝난 상태로 보존한다.
-     * 반복 스케줄이 재시도 상한을 초기화하지 않도록 실패한 실행은 운영에서 수동으로 복구한다.
+     * 실행 이력은 작업명과 영업일로 유지하며 만료 대상이 남으면 이전 SUCCESS나 FAILED를 다시 점유한다.
+     * 다음 주기의 재점유는 재시도 횟수를 초기화하고 새 실행 세대로 남은 쿠폰을 처리한다.
+     * RUNNING은 공통 이어받기에 맡긴다.
      */
     private void expireDue(LocalDate businessDate) {
         Optional<BatchExecutionRecord> previous = executionQuery.findByBusinessDate(businessDate).stream()
                 .filter(row -> jobName().equals(row.jobName())).findFirst();
         boolean acquired = previous.isEmpty() ? executions.claim(jobName(), businessDate)
-                : "SUCCESS".equals(previous.get().status()) && executions.rerun(jobName(), businessDate);
+                : ("SUCCESS".equals(previous.get().status()) || "FAILED".equals(previous.get().status()))
+                        && executions.rerun(jobName(), businessDate);
         if (acquired) {
             batchExecution.runClaimed(CouponBatchTask.EXPIRE, businessDate,
                     attemptNo -> expiration.expire(businessDate, attemptNo));

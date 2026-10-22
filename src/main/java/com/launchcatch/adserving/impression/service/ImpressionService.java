@@ -70,7 +70,11 @@ public class ImpressionService {
         Optional<ServeRecord> found = serveRecordRepository.findById(serveId);
         ImpressionLog log = judge(memberId, serveId, receivedDate, request, found);
         if (!impressionLogRepository.insertIgnore(log)) {
-            return ImpressionResponse.of(impressionLogRepository.findById(id).orElseThrow());
+            /*
+             * 먼저 넣은 쪽이 위 중복 확인 뒤에 커밋했다. 그 확인이 이 트랜잭션의 스냅샷을 잡아 같은 조회로는 보이지 않는다.
+             * 잠금 읽기로 최신 커밋을 읽어 그 판정을 돌려준다(#781).
+             */
+            return ImpressionResponse.of(impressionLogRepository.findByIdForShare(id).orElseThrow());
         }
         if (log.isValid()) {
             ServeRecord record = found.orElseThrow();

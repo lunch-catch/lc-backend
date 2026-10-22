@@ -9,6 +9,7 @@ import com.launchcatch.coupon.entity.CouponEventStatus;
 import com.launchcatch.coupon.repository.CouponBatchRepository;
 import com.launchcatch.coupon.repository.CouponEventRepository;
 import com.launchcatch.ops.contract.BatchAttemptGuard;
+import com.launchcatch.global.logging.TransactionLogging;
 import java.time.Clock;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -63,7 +64,7 @@ public class CouponLifecycleService {
                 throw new IllegalStateException("발급 종료 시각 전에는 마감할 수 없다.");
             }
             int count = batches.eventCount(date);
-            log.info("event=COUPON_ISSUE_CLOSED businessDate={} eventCount={}", date, count);
+            TransactionLogging.afterCommit(() -> log.info("event=COUPON_ISSUE_CLOSE_DONE businessDate={} eventCount={}", date, count));
             return count;
         }));
     }
