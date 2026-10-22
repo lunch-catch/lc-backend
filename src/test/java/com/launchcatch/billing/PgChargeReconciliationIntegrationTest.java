@@ -140,6 +140,30 @@ class PgChargeReconciliationIntegrationTest extends AbstractBillingIntegrationTe
     }
 
     @Test
+    void 재검증_대기_결제는_처음_영업일로_다시_보고_며칠_뒤에도_불일치가_한_건이다() {
+        long paymentId = approvedPayment("ord_pg_recon_6", "tgen_pg_recon_6", 30_000L);
+        gateway.failInquiryWith(new PgUnknownException("read timeout", new RuntimeException()));
+        serviceAtMidnightOf(RUN_DATE).reconcilePreviousDay(RUN_DATE, JOB);
+        assertThat(pendingCount(paymentId)).isEqualTo(1);
+
+        gateway.failInquiryWith(null);
+        gateway.givenPayment(new PaymentGatewayInquiryResult(Status.APPROVED, "tgen_pg_recon_6", "ord_pg_recon_6",
+                29_000L, DAY.atTime(10, 0), null, null));
+        LocalDate nextRun = RUN_DATE.plusDays(1);
+        assertThat(serviceAtMidnightOf(nextRun).reconcilePreviousDay(nextRun, JOB)).isEqualTo(1);
+        assertThat(pendingCount(paymentId)).isZero();
+
+        // 대기 해소가 실패해 대기가 남은 상태를 만든다. 다음 날 다시 봐도 같은 영업일이라 불일치가 늘지 않는다
+        mismatchRecorder.recordPending(paymentId, DAY, "resolve failed");
+        LocalDate laterRun = nextRun.plusDays(1);
+        serviceAtMidnightOf(laterRun).reconcilePreviousDay(laterRun, JOB);
+
+        assertThat(mismatchCount(paymentId)).isEqualTo(1);
+        assertThat(jdbc.queryForObject("select business_date from settlement_mismatch"
+                + " where check_type = 'PG_VS_CHARGE' and target_id = ?", LocalDate.class, paymentId)).isEqualTo(DAY);
+    }
+
+    @Test
     void PG_응답의_주문번호가_결제와_다르면_보정하지_않고_대기로_남긴다() {
         long paymentId = approvedPayment("ord_pg_recon_5", "tgen_pg_recon_5", 30_000L);
         gateway.givenPayment(new PaymentGatewayInquiryResult(Status.APPROVED, "tgen_pg_recon_5", "ord_other",
