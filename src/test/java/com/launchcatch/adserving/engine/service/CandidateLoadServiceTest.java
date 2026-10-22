@@ -136,6 +136,27 @@ class CandidateLoadServiceTest {
         assertThat(skipped("menu_missing")).isEqualTo(1);
     }
 
+    /*
+     * 캠페인의 메뉴가 다른 가게의 메뉴면 그 가게가 팔지 않는 메뉴의 할인이 카드에 나간다.
+     * 가게 계약이 이 확인을 광고 서빙에 맡겼다(store-query-contract.md). 메뉴를 찾지 못한 것과 같이 뺀다(#783).
+     */
+    @Test
+    void 메뉴가_캠페인의_가게_것이_아니면_적재하지_않고_센다() {
+        when(campaignQueryService.findServableOn(TODAY)).thenReturn(List.of(
+                campaign(101, 55, CampaignStatus.ACTIVE, null, DiscountTargetType.MENU, 7001L),
+                campaign(102, 56, CampaignStatus.ACTIVE, null, DiscountTargetType.MENU, 7002L)));
+        when(storeQueryService.findAdCandidatesByStoreIds(anyList())).thenReturn(List.of(store(55), store(56)));
+        when(storeQueryService.findMenusByIdIn(anyList())).thenReturn(new StoreMenuQueryResult(List.of(
+                new StoreMenuInfo(7001L, 99L, null, "다른 가게 메뉴", 12000L),
+                new StoreMenuInfo(7002L, 56L, null, "돈코츠 라멘", 9000L)), List.of()));
+
+        service.load(TODAY);
+
+        assertThat(upserted()).extracting(CandidateRow::campaignId).containsExactly(102L);
+        assertThat(skipped("menu_missing")).isEqualTo(1);
+    }
+
+    // 메뉴가 없는 것과 이미지 데이터 오류를 운영에서 가르도록 다른 reason 으로 세고 메뉴 ID 를 남긴다(#779)
     @Test
     void 데이터_오류_메뉴의_캠페인만_빼고_정상_메뉴와_전체_메뉴_캠페인은_적재한다() {
         when(campaignQueryService.findServableOn(TODAY)).thenReturn(List.of(
@@ -146,11 +167,23 @@ class CandidateLoadServiceTest {
         when(storeQueryService.findMenusByIdIn(List.of(7001L, 7002L))).thenReturn(new StoreMenuQueryResult(
                 List.of(new StoreMenuInfo(7001L, 55L, "menu.jpg", "갈비살 정식", 12000L)), List.of(7002L)));
 
-        var loaded = service.load(TODAY);
+        var logger = (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger(CandidateLoadService.class);
+        var appender = new ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            var loaded = service.load(TODAY);
 
-        assertThat(loaded).containsOnlyKeys(101L, 103L);
-        assertThat(upserted()).extracting(CandidateRow::campaignId).containsExactly(101L, 103L);
-        assertThat(skipped("menu_missing")).isEqualTo(1);
+            assertThat(loaded).containsOnlyKeys(101L, 103L);
+            assertThat(upserted()).extracting(CandidateRow::campaignId).containsExactly(101L, 103L);
+            assertThat(skipped("menu_invalid")).isEqualTo(1);
+            assertThat(skipped("menu_missing")).isZero();
+            assertThat(appender.list).extracting(event -> event.getFormattedMessage())
+                    .contains("event=ADSERVING_CANDIDATE_MENU_INVALID campaignId=102 menuId=7002 fallback=SKIP_CAMPAIGN");
+        } finally {
+            logger.detachAppender(appender);
+            appender.stop();
+        }
     }
 
     @Test
