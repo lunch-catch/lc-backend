@@ -59,8 +59,6 @@ cdn.base-url에는 HTTP(S) 주소를 사용하며 쿼리, 프래그먼트, 사�
 
 ## 메뉴 조회 결과 (#788)
 
-이 절은 공개 예외를 폐기한 뒤 승인된 반환값 계약이다.
-
 ```java
 StoreMenuQueryResult findMenusByIdIn(List<Long> menuIds);
 
