@@ -60,6 +60,12 @@ class DemoLayerIntegrationTest extends IntegrationTestSupport {
         return count("SELECT COALESCE(SUM(amount), 0) FROM point_ledger WHERE owner_id = ? AND entry_type <> 'DEDUCT'", ownerId);
     }
 
+    // OwnerPointBalanceService 의 예약 포인트와 같은 계산이다 (예약 - 해제 - DEDUCT)
+    private long reserved(long ownerId) {
+        return count("SELECT COALESCE(SUM(CASE entry_type WHEN 'DEDUCT' THEN amount ELSE -amount END), 0) FROM point_ledger "
+                + "WHERE owner_id = ? AND entry_type IN ('RESERVE', 'RELEASE', 'DEDUCT')", ownerId);
+    }
+
     @Test
     void 시연_계정과_장면별_상태를_만든다() {
         migrate("2026-10-28");
@@ -81,6 +87,8 @@ class DemoLayerIntegrationTest extends IntegrationTestSupport {
         assertThat(count("SELECT COUNT(*) FROM point_ledger WHERE owner_id = ? AND entry_type = 'RESERVE' AND business_date = '2026-10-28'",
                 OWNER)).isEqualTo(1);
         assertThat(balance(OWNER)).isPositive();
+        // 예약 포인트는 오늘 예약 20,000 뿐이다. 지난 날은 해제와 DEDUCT 로 모두 닫혔다
+        assertThat(reserved(OWNER)).isEqualTo(20_000L);
         assertThat(count("SELECT COUNT(*) FROM campaign_daily_report WHERE campaign_id = 20000101 AND report_status = 'FINALIZED'"))
                 .isEqualTo(14);
         assertThat(count("SELECT COUNT(*) FROM coupon_inventory i JOIN coupon_event e ON e.coupon_event_id = i.coupon_event_id "
@@ -104,6 +112,7 @@ class DemoLayerIntegrationTest extends IntegrationTestSupport {
         assertThat(count("SELECT COUNT(*) FROM campaign WHERE owner_id = ? AND status = 'PAUSED' AND paused_reason = 'NO_POINTS'",
                 OWNER_NOPOINTS)).isEqualTo(1);
         assertThat(balance(OWNER_NOPOINTS)).isZero();
+        assertThat(reserved(OWNER_NOPOINTS)).isZero();
         assertThat(count("SELECT COUNT(*) FROM budget_daily_plan WHERE campaign_id = 20000501 AND business_date = '2026-10-28' "
                 + "AND daily_budget = 0 AND paused = 1")).isEqualTo(1);
 

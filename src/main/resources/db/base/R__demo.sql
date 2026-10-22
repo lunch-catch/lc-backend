@@ -1741,8 +1741,9 @@ VALUES
 
 
 /*
- * 9. 최근 7일 원천 (서빙, 노출, 과금, DEDUCT 원장).
+ * 9. 소진한 날마다 원천 (서빙, 노출, 과금, DEDUCT 원장).
  * 01:00 집계가 어제와 그제를 원천에서 다시 세므로, 원천이 없으면 위 리포트가 0 으로 덮인다.
+ * 예약 포인트는 예약 - 해제 - DEDUCT 라, 지난 날에 DEDUCT 가 없으면 그날 소진이 예약으로 남아 보인다.
  * 유효 노출 수는 그날 소진 / 10 이고 노출 단가는 10 이다. 회원은 시연 회원을 돌아가며 쓴다.
  */
 CREATE TEMPORARY TABLE demo_n (n INT PRIMARY KEY);
@@ -1765,6 +1766,13 @@ CREATE TEMPORARY TABLE demo_src (
 
 INSERT INTO demo_src (c, k, store_id, cnt)
 VALUES
+    (101, -14, 20000011, 307),
+    (101, -13, 20000011, 273),
+    (101, -12, 20000011, 239),
+    (101, -11, 20000011, 206),
+    (101, -10, 20000011, 172),
+    (101, -9, 20000011, 138),
+    (101, -8, 20000011, 104),
     (101, -7, 20000011, 471),
     (101, -6, 20000011, 437),
     (101, -5, 20000011, 403),
@@ -1772,6 +1780,27 @@ VALUES
     (101, -3, 20000011, 336),
     (101, -2, 20000011, 302),
     (101, -1, 20000011, 269),
+    (111, -60, 20000011, 310),
+    (111, -59, 20000011, 276),
+    (111, -58, 20000011, 242),
+    (111, -57, 20000011, 209),
+    (111, -56, 20000011, 175),
+    (111, -55, 20000011, 141),
+    (111, -54, 20000011, 108),
+    (112, -45, 20000011, 210),
+    (112, -44, 20000011, 176),
+    (112, -43, 20000011, 142),
+    (112, -42, 20000011, 109),
+    (112, -41, 20000011, 475),
+    (112, -40, 20000011, 441),
+    (112, -39, 20000011, 407),
+    (113, -30, 20000011, 109),
+    (113, -29, 20000011, 476),
+    (113, -28, 20000011, 442),
+    (113, -27, 20000011, 408),
+    (113, -26, 20000011, 375),
+    (113, -25, 20000011, 341),
+    (113, -24, 20000011, 307),
     (401, -7, 20000014, 117),
     (401, -6, 20000014, 96),
     (401, -5, 20000014, 75),
@@ -1779,6 +1808,9 @@ VALUES
     (401, -3, 20000014, 123),
     (401, -2, 20000014, 102),
     (401, -1, 20000014, 81),
+    (501, -10, 20000015, 300),
+    (501, -9, 20000015, 300),
+    (501, -8, 20000015, 300),
     (501, -7, 20000015, 300),
     (501, -6, 20000015, 300),
     (501, -5, 20000015, 300),
@@ -1791,7 +1823,7 @@ VALUES
 CREATE TEMPORARY TABLE demo_serve AS
 SELECT x.c, x.k, x.store_id, n.n AS i, DATE_ADD(@d, INTERVAL x.k DAY) AS bdate,
        TIMESTAMP(DATE_ADD(@d, INTERVAL x.k DAY), '11:30:00') + INTERVAL n.n * 7 SECOND AS served_at,
-       UNHEX(CONCAT('0000000000d1', '7000', '8', LPAD(HEX(x.c * 1000000 + (x.k + 50) * 1000 + n.n), 15, '0'))) AS serve_id,
+       UNHEX(CONCAT('0000000000d1', '7000', '8', LPAD(HEX(x.c * 1000000 + (x.k + 100) * 1000 + n.n), 15, '0'))) AS serve_id,
        20000200 + (n.n - 1) % 10 + 1 AS member_id,
        (n.n - 1) % 10 + 1 AS slot
   FROM demo_src x
@@ -1800,7 +1832,7 @@ SELECT x.c, x.k, x.store_id, n.n AS i, DATE_ADD(@d, INTERVAL x.k DAY) AS bdate,
 INSERT INTO serve_log (serve_id, business_date, feed_id, member_id, campaign_id, store_id, slot_type, slot_position,
                        served_at, created_at, updated_at)
 SELECT serve_id, bdate,
-       UNHEX(CONCAT('0000000000d2', '7000', '8', LPAD(HEX((k + 50) * 100 + (member_id - 20000200)), 15, '0'))),
+       UNHEX(CONCAT('0000000000d2', '7000', '8', LPAD(HEX(c * 100000 + (k + 100) * 100 + (member_id - 20000200)), 15, '0'))),
        member_id, 20000000 + c, store_id, IF(slot % 2 = 1, 'ALLOCATION', 'RELEVANCE'), slot, served_at, served_at, served_at
   FROM demo_serve;
 
@@ -1814,13 +1846,13 @@ SELECT serve_id, member_id, bdate, 20000000 + c, store_id, IF(slot % 2 = 1, 'ALL
 
 INSERT INTO deduction_result (deduction_result_id, serve_id, campaign_id, owner_id, business_date, billing_status,
                               unit_price, created_at, updated_at)
-SELECT 30000000 + c * 100000 + (k + 50) * 1000 + i, serve_id, 20000000 + c, store_id, bdate, 'BILLED', 10,
+SELECT 30000000 + c * 100000 + (k + 100) * 1000 + i, serve_id, 20000000 + c, store_id, bdate, 'BILLED', 10,
        served_at + INTERVAL 2 SECOND, served_at + INTERVAL 2 SECOND
   FROM demo_serve;
 
 INSERT INTO point_ledger (point_ledger_id, owner_id, campaign_id, serve_id, payment_id, refund_request_id, business_date,
                           adjust_target_date, entry_type, source, amount, reason, idempotency_key, created_at, updated_at)
-SELECT 30000000 + c * 100000 + (k + 50) * 1000 + i, store_id, 20000000 + c, serve_id, NULL, NULL, NULL, NULL,
+SELECT 30000000 + c * 100000 + (k + 100) * 1000 + i, store_id, 20000000 + c, serve_id, NULL, NULL, NULL, NULL,
        'DEDUCT', 'REALTIME', -10, NULL, NULL, served_at + INTERVAL 2 SECOND, served_at + INTERVAL 2 SECOND
   FROM demo_serve;
 
