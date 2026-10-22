@@ -110,8 +110,10 @@ public class CouponSequenceRecoveryService {
         } catch (RuntimeException error) {
             sequenceService.block(eventId, error);
             retryAfter.put(eventId, System.nanoTime() + TimeUnit.SECONDS.toNanos(1));
-            log.warn("event=COUPON_ISSUANCE_RECOVERY_FAILED couponEventId={} exceptionType={} reason={}",
-                    eventId, error.getClass().getSimpleName(), CouponFailureDetails.reason(error));
+            CouponFailureDetails details = CouponFailureDetails.from(error);
+            log.warn("event=COUPON_ISSUANCE_RECOVERY_FAILED couponEventId={} exceptionType={} reason={} httpStatus={} sqlState={} sqlErrorCode={} origin=\"{}\"",
+                    eventId, details.exceptionType(), CouponFailureDetails.reason(error), details.httpStatus(),
+                    details.sqlState(), details.sqlErrorCode(), details.origin());
             return false;
         } finally {
             recovering.remove(eventId);

@@ -43,6 +43,10 @@ public class CouponBatchExecutionService {
                 }
             } catch (RuntimeException recordFailure) {
                 failure.addSuppressed(recordFailure);
+                CouponFailureDetails details = CouponFailureDetails.from(recordFailure);
+                log.error("event=COUPON_BATCH_FAILURE_RECORD_FAILED job={} businessDate={} attemptNo={} exceptionType={} httpStatus={} sqlState={} sqlErrorCode={} origin=\"{}\"",
+                        task.jobName(), date, attemptNo, details.exceptionType(), details.httpStatus(),
+                        details.sqlState(), details.sqlErrorCode(), details.origin());
             }
             CouponFailureDetails details = CouponFailureDetails.from(failure);
             log.error("event=COUPON_BATCH_FAILED job={} businessDate={} attemptNo={} exceptionType={} httpStatus={} sqlState={} sqlErrorCode={} origin=\"{}\"",

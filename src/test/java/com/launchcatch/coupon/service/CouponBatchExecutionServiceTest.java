@@ -147,6 +147,29 @@ class CouponBatchExecutionServiceTest {
         }
     }
 
+    @Test
+    void 실패_기록의_SQL_오류도_메시지와_스택_없이_별도로_남긴다() {
+        when(query.findByBusinessDate(DATE)).thenReturn(List.of(record(TASK.jobName(), 3)));
+        var failure = new IllegalStateException("operation failed");
+        var recordFailure = new org.springframework.dao.DataAccessResourceFailureException("secret-connection",
+                new java.sql.SQLException("secret-database", "08006", 2013));
+        doThrow(recordFailure).when(executions).failAttempt(TASK.jobName(), DATE, 3, "IllegalStateException: operation failed");
+        try (var logs = new CouponLogCapture(CouponBatchExecutionService.class)) {
+            service.runClaimed(TASK, DATE, attempt -> { throw failure; });
+
+            assertThat(logs.events).hasSize(2).allSatisfy(event -> {
+                assertThat(event.getFormattedMessage()).doesNotContain("secret-connection", "secret-database");
+                assertThat(event.getThrowableProxy()).isNull();
+            });
+            assertThat(logs.events).anySatisfy(event -> assertThat(event.getFormattedMessage()).contains(
+                    "event=COUPON_BATCH_FAILURE_RECORD_FAILED", "job=" + TASK.jobName(),
+                    "businessDate=" + DATE, "attemptNo=3", "exceptionType=DataAccessResourceFailureException>SQLException",
+                    "sqlState=08006", "sqlErrorCode=2013", "origin=\"").doesNotContain("origin=\"null\""));
+            assertThat(logs.events).anySatisfy(event -> assertThat(event.getFormattedMessage()).contains(
+                    "event=COUPON_BATCH_FAILED", "exceptionType=IllegalStateException"));
+        }
+    }
+
     private void retryAllowed() {
         when(executions.recordRetryAttempt(eq(TASK.jobName()), eq(DATE), eq(3), anyString())).thenReturn(true);
         when(executions.renewAttempt(TASK.jobName(), DATE, 3)).thenReturn(true);
