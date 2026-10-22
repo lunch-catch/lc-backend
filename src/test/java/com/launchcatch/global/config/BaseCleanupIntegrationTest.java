@@ -80,7 +80,8 @@ class BaseCleanupIntegrationTest extends IntegrationTestSupport {
 
     /*
      * V1 까지만 돌린다.
-     * 뒤의 기본 세계가 같은 테이블을 채우므로 테이블이 비었는지 보려면 V1 에서 멈춰야 한다.
+     * 뒤의 기본 세계와 시연 층이 같은 테이블을 채우므로 테이블이 비었는지 보려면 V1 에서 멈춰야 한다.
+     * target 은 반복 마이그레이션(R__demo)을 막지 않으므로, 반복 접두사를 쓰지 않는 값으로 바꿔 R__ 파일을 읽지 않게 한다.
      */
     private void migrateCleanupOnly() {
         Flyway.configure()
@@ -90,6 +91,7 @@ class BaseCleanupIntegrationTest extends IntegrationTestSupport {
                 .baselineOnMigrate(true)
                 .baselineVersion("0")
                 .target("1")
+                .repeatableSqlMigrationPrefix("NOT_USED_")
                 .placeholders(basePlaceholders())
                 .load()
                 .migrate();
