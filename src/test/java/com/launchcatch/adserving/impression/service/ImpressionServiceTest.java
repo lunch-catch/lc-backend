@@ -241,8 +241,9 @@ class ImpressionServiceTest {
             ImpressionLog winner = ImpressionLog.valid(SERVE_ID, MEMBER_ID, SERVED_DATE,
                     new ImpressionLog.Placement(101L, 55L, SlotType.ALLOCATION, 1),
                     new ImpressionLog.Sighting(LocalDateTime.of(2026, 10, 1, 10, 15), 37.5, 127.0, null), false);
-            when(impressionLogRepository.findById(ImpressionLogId.of(SERVE_ID, MEMBER_ID)))
-                    .thenReturn(Optional.empty(), Optional.of(winner));
+            when(impressionLogRepository.findById(ImpressionLogId.of(SERVE_ID, MEMBER_ID))).thenReturn(Optional.empty());
+            // 먼저 넣은 쪽은 이 트랜잭션의 스냅샷 뒤에 커밋돼 잠금 읽기로만 보인다(#781)
+            when(impressionLogRepository.findByIdForShare(ImpressionLogId.of(SERVE_ID, MEMBER_ID))).thenReturn(Optional.of(winner));
 
             ImpressionResponse response = service.record(MEMBER_ID, request(101L));
 
@@ -361,8 +362,9 @@ class ImpressionServiceTest {
         void 동시에_와서_먼저_넣은_쪽이_있으면_발행하지_않는다() {
             when(serveRecordRepository.findById(SERVE_ID)).thenReturn(Optional.of(RECORD));
             when(impressionLogRepository.insertIgnore(any())).thenReturn(false);
-            when(impressionLogRepository.findById(ImpressionLogId.of(SERVE_ID, MEMBER_ID)))
-                    .thenReturn(Optional.empty(), Optional.of(ImpressionLog.valid(SERVE_ID, MEMBER_ID, SERVED_DATE,
+            when(impressionLogRepository.findById(ImpressionLogId.of(SERVE_ID, MEMBER_ID))).thenReturn(Optional.empty());
+            when(impressionLogRepository.findByIdForShare(ImpressionLogId.of(SERVE_ID, MEMBER_ID)))
+                    .thenReturn(Optional.of(ImpressionLog.valid(SERVE_ID, MEMBER_ID, SERVED_DATE,
                             new ImpressionLog.Placement(101L, 55L, SlotType.ALLOCATION, 1),
                             new ImpressionLog.Sighting(LocalDateTime.of(2026, 10, 1, 10, 15), 37.5, 127.0, null), false)));
 
