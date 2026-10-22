@@ -1,6 +1,7 @@
 package com.launchcatch.global.config;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.util.Map;
@@ -39,6 +40,6 @@ class FlywayConfigTest {
     void 해시가_모두_있으면_통과한다() {
         Map<String, String> placeholders = Map.of("baseDate", "2026-10-28", "superadminPasswordHash", "$2a$10$x",
                 "demoAdminPasswordHash", "$2a$10$x", "demoOwnerPasswordHash", "$2a$10$x", "scenarioPasswordHash", "$2a$10$x");
-        FlywayConfig.requireHashes(placeholders);
+        assertThatCode(() -> FlywayConfig.requireHashes(placeholders)).doesNotThrowAnyException();
     }
 }
