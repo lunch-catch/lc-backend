@@ -1,8 +1,8 @@
 # 광고 서빙 (adserving) API 명세
 
 스와이프 피드, 찜과 패스, 노출 수집, 피드 필터, 찜 목록, 피드 배정 진단 API의 요청, 응답, 오류를 적는다.
-공통 규약(경로, 인증, 응답 봉투, 상태 코드, 식별자, 시각)은 `README.md` 를 따르고 여기서는 반복하지 않는다.
-서버가 내부에서 어떻게 처리하는지와 그렇게 정한 이유는 설계서 `feed-api-design.md` 에 있다.
+공통 규약(경로, 인증, 응답 봉투, 상태 코드, 식별자, 시각)은 `./api-spec.md` 를 따르고 여기서는 반복하지 않는다.
+서버가 내부에서 어떻게 처리하는지와 그렇게 정한 이유는 설계서 `../design/adserving/feed-api-design.md` 에 있다.
 
 **표 읽는 법.** 응답 필드 표의 "null" 칸이 "가능"이면 그 필드에 `null` 이 올 수 있고, 언제 오는지는 설명 칸에 적는다.
 "아니오"면 항상 값이 있다. 배열은 비어 있을 수는 있어도 `null` 은 아니다.
@@ -25,7 +25,7 @@
 
 ### `GET /v1/feed`
 
-서빙 시간대(10:00~12:59)에 현재 위치 기준 카드 10장을 내려준다.
+현재 위치 기준 카드 10장을 내려준다. 시간대 제한 없이 하루 종일 받을 수 있다.
 
 **요청**
 
@@ -75,9 +75,9 @@ GET /v1/feed?latitude=37.4979&longitude=127.0276
 
 | 필드 | 타입 | null | 설명 |
 |---|---|---|---|
-| `status` | string | 아니오 | `SERVING`(카드 있음), `OUT_OF_SERVING_HOURS`(서빙 시간대 밖), `NO_CANDIDATE`(후보 없음) |
+| `status` | string | 아니오 | `SERVING`(카드 있음), `NO_CANDIDATE`(후보 없음) |
 | `feedId` | string (UUID) | 가능 | 이 요청 한 번의 카드 묶음 ID. `SERVING` 이 아니면 `null` |
-| `radiusM` | integer | 가능 | 후보를 찾는 데 실제로 쓴 반경(미터). 1000, 2000, 3000, 5000 중 하나. 후보가 모자라면 서버가 넓혀 가므로 요청마다 다를 수 있다. 점주가 캠페인에 지정한 노출 반경과는 다른 값이다. `OUT_OF_SERVING_HOURS` 면 `null` |
+| `radiusM` | integer | 아니오 | 후보를 찾는 데 실제로 쓴 반경(미터). 1000, 2000, 3000, 5000 중 하나. 후보가 모자라면 서버가 넓혀 가므로 요청마다 다를 수 있다. 점주가 캠페인에 지정한 노출 반경과는 다른 값이다 |
 | `nextFeedAvailableAt` | string (시각) | 아니오 | 다음 피드를 요청해도 거부되지 않는 가장 이른 시각. 지금 바로 요청할 수 있으면 응답 시각과 같다 |
 | `cards` | array | 아니오 | 카드 목록. 최대 10장. `SERVING` 이 아니면 빈 배열 |
 | `cards[].serveId` | string (UUID) | 아니오 | 카드 1장의 식별자. 노출과 스와이프 요청에 그대로 돌려보낸다 |
@@ -90,18 +90,18 @@ GET /v1/feed?latitude=37.4979&longitude=127.0276
 | `cards[].discount.target` | string | 아니오 | `ALL`(전체 메뉴), `MENU`(특정 메뉴) |
 | `cards[].discount.type` | string | 아니오 | `PERCENT`(할인율), `AMOUNT`(할인 금액) |
 | `cards[].discount.value` | integer | 아니오 | `PERCENT` 면 1 ~ 100(%), `AMOUNT` 면 원 |
-| `cards[].issueOpenTime` | string (HH:mm) | 아니오 | 선착순 오픈 시각. 지금은 항상 `11:00` |
-| `cards[].usableStartTime` | string (HH:mm) | 아니오 | 쿠폰 사용 시작 시각 |
-| `cards[].usableEndTime` | string (HH:mm) | 아니오 | 쿠폰 사용 종료 시각 |
+| `cards[].issueOpenTime` | string (HH:mm) | 아니오 | 선착순 오픈 시각. 지금은 항상 `11:00`. 날짜 없이 매일의 시각이라 카드를 받은 시각과 관계없이 같다 |
+| `cards[].usableStartTime` | string (HH:mm) | 아니오 | 쿠폰 사용 시작 시각. `issueOpenTime` 처럼 매일의 시각이다 |
+| `cards[].usableEndTime` | string (HH:mm) | 아니오 | 쿠폰 사용 종료 시각. `issueOpenTime` 처럼 매일의 시각이다 |
 | `cards[].issueQuantity` | integer | 아니오 | 선착순 발급 수량(표시용). 잔여 수량은 싣지 않는다 |
-| `cards[].posterUrl` | string | 아니오 | 포스터 주소. 사용자 포스터 조회 API(`poster.md`)의 경로다 |
+| `cards[].posterUrl` | string | 아니오 | 포스터 주소. 사용자 포스터 조회 API(`poster-api-spec.md`)의 경로다 |
 
 **클라이언트 규칙**
 
 - **받은 순서를 바꾸지 않는다**
 - **모든 카드에 "광고" 라벨을 항상 표시한다.** 서버는 라벨 여부를 내려주지 않는다
 - 피드에서는 찜과 패스만 할 수 있다. 발급 버튼을 두지 않는다
-- `OUT_OF_SERVING_HOURS` 면 "내일 10시에 만나요"를, `NO_CANDIDATE` 면 빈 피드 안내를 보인다
+- `NO_CANDIDATE` 면 빈 피드 안내를 보인다
 - 마지막 카드에 닿았을 때 지금 시각이 `nextFeedAvailableAt` 이후면 바로 다음 피드를 요청한다. 아직 전이면 "N초 후 새 카드"를 보여 주고, 그 시각에 한 번 요청한다
 - 포스터는 `posterUrl` 을 불러 받은 `data.html` 을 `<iframe sandbox srcdoc=...>` 에 그린다. 점주가 만든 HTML이라 앱 화면과 격리한다. 같은 주소는 항상 같은 포스터라 브라우저 캐시를 그대로 쓴다
 
@@ -169,6 +169,7 @@ Retry-After: 37
 
 - 같은 카드(`serveId`)는 처음 넘긴 것 하나만 반영한다. 다시 보내면 `applied: false` 로 성공을 돌려준다
 - `WISH` 면 찜 목록에 들어간다. 찜한 캠페인과 패스한 캠페인은 그날 피드에 다시 나오지 않는다. 다음 날에는 다시 후보가 된다
+- 00:00 이 지나 전날 받은 카드를 넘기면 새 날 기준으로 처리한다. 그 캠페인이 새 날에도 노출 중이면 반영하고 새 날 피드에서 뺀다. 노출 중이 아니면 `404 ADSERVING-004` 다
 
 **오류**
 
@@ -237,7 +238,7 @@ Retry-After: 37
 
 | 상태 | 코드 | 언제 |
 |---|---|---|
-| `400` | `COMMON-002` | 필수 필드 누락, `serveId` 형식 오류 |
+| `400` | `COMMON-002` | 필수 필드 누락, `serveId` 형식 오류, 범위 밖 좌표(위도 -90 ~ 90, 경도 -180 ~ 180) |
 
 ## 피드 필터
 
@@ -290,7 +291,7 @@ Retry-After: 37
 ### `GET /v1/wishlist`
 
 찜한 캠페인 목록이다. 잔여 수량, 발급 가능 여부, 하루 발급 잔여 횟수는 여기에 없다.
-받은 `campaignId` 들로 쿠폰 API(`coupon.md`)를 따로 불러 화면에서 합친다.
+받은 `campaignId` 들로 쿠폰 API(`coupon-api-spec.md`)를 따로 불러 화면에서 합친다.
 
 **요청**
 
@@ -312,6 +313,7 @@ Retry-After: 37
         "storeName": "점심식당",
         "storeImageUrl": "https://cdn.example.com/stores/55/logo.jpg",
         "discount": { "target": "MENU", "type": "AMOUNT", "value": 3000, "menuName": "갈비살 정식" },
+        "campaignEnded": false,
         "wishedAt": "2026-10-01T10:15:34.020+09:00"
       }
     ]
@@ -331,11 +333,14 @@ Retry-After: 37
 | `wishlist[].discount.type` | string | 아니오 | `PERCENT`, `AMOUNT` |
 | `wishlist[].discount.value` | integer | 아니오 | `PERCENT` 면 1 ~ 100(%), `AMOUNT` 면 원 |
 | `wishlist[].discount.menuName` | string | 가능 | 할인 대상 메뉴명. `target` 이 `MENU` 일 때만 값이 있고 `ALL` 이면 `null` |
+| `wishlist[].campaignEnded` | boolean | 아니오 | 캠페인이 끝났으면 `true` |
 | `wishlist[].wishedAt` | string (시각) | 아니오 | 찜한 시각 |
 
-- 페이지네이션이 없다. 캠페인이 끝나면 찜 목록에서 자동으로 빠진다
+- 페이지네이션이 없다
+- 캠페인이 끝나도 찜은 바로 빠지지 않는다. `campaignEnded` 가 `true` 로 바뀌고 끝난 날을 빼고 3일 동안 보인 뒤 그다음 날 00:00 에 빠진다. 10/1 에 끝나면 10/4 까지 보인다
+- 끝난 캠페인의 찜도 찜한 시각 순서 그대로 섞여 나온다. `campaignEnded` 가 `true` 면 종료 표시를 보인다
 - 0건이면 빈 상태 화면과 피드 이동 버튼을 보인다
-- 이 화면 조회는 노출이 아니다. 분석 수집 API로 `wishlist_view` 를 따로 보낸다(`analytics.md`)
+- 이 화면 조회는 노출이 아니다. 분석 수집 API로 `wishlist_view` 를 따로 보낸다(`analytics-api-spec.md`)
 
 ### `POST /v1/wishlist`
 
@@ -438,7 +443,7 @@ Retry-After: 37
 
 ## 오류 코드
 
-요청 형식이 틀린 실패는 공통 코드(`COMMON-002`)로 온다. 공통 코드 목록은 `README.md` 에 있다.
+요청 형식이 틀린 실패는 공통 코드(`COMMON-002`)로 온다. 공통 코드 목록은 `./api-spec.md` 에 있다.
 여기에는 광고 서빙만 아는 실패를 둔다.
 
 | 코드 | 상태 | 메시지 |

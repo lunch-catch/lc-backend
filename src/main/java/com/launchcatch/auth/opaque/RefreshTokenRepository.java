@@ -1,5 +1,10 @@
 package com.launchcatch.auth.opaque;
 
+import static com.launchcatch.auth.opaque.RefreshTokenFormat.ACTIVE_KEY_PREFIX;
+import static com.launchcatch.auth.opaque.RefreshTokenFormat.ISSUANCE_VERSION_KEY_PREFIX;
+import static com.launchcatch.auth.opaque.RefreshTokenFormat.KEY_PREFIX;
+import static com.launchcatch.auth.opaque.RefreshTokenFormat.REVOKED_SUFFIX;
+
 import com.launchcatch.auth.Role;
 import java.time.Duration;
 import java.util.List;
@@ -16,7 +21,8 @@ import org.springframework.stereotype.Repository;
  * 캐시 장애 시 DataAccessException 을 그대로 던지며, 관계형 DB 백업과 폴백은 호출자 책임이다.
  *
  * 인증 정책은 SHA-256 해시를 관계형 DB 에 백업한다. 최초 발급은 캐시 저장이 실패해도 DB 백업으로
- * 로그인을 유지하지만, 재발급은 재사용 탐지를 보존하기 위해 캐시 장애 시 fail-close 한다.
+ * 로그인을 유지하고, 재발급은 캐시 장애 시 DB 해시로 폴백한다. 폴백 중에는 재사용을 탐지하지 못하지만,
+ * 캐시가 정상적으로 만료, 폐기, 재사용을 판정한 토큰에는 폴백하지 않는다.
  *
  * 이 클래스는 캐시만 책임진다. 폐기는 각 역할의 DB 백업 해시와 이 저장소를 함께 사용한다. 캐시와 DB 를 한
  * 클래스가 함께 다루면 캐시 장애 때 어느 쪽이 기준인지가 이 안에서 갈려 읽기 어려워진다.
@@ -38,18 +44,28 @@ import org.springframework.stereotype.Repository;
 @RequiredArgsConstructor
 public class RefreshTokenRepository {
 
-    private static final String KEY_PREFIX = "refreshToken:";
-    private static final String ACTIVE_KEY_PREFIX = "activeRefreshToken:";
     private static final String FIELD_DELIMITER = "\\|";
-    private static final String REVOKED_SUFFIX = "|REVOKED";
+
+    private static final RedisScript<Long> REVOKE_BEFORE_VERSION_SCRIPT = loadRevokeBeforeVersionScript();
 
     private static final RedisScript<Long> SAVE_SCRIPT = loadSaveScript();
+    private static final RedisScript<Long> ORDERED_SAVE_SCRIPT = loadOrderedSaveScript();
     private static final RedisScript<String> ROTATE_SCRIPT = loadRotateScript();
     private static final RedisScript<Long> ROLLBACK_ROTATION_SCRIPT = loadRollbackRotationScript();
     private static final RedisScript<Long> REVOKE_SCRIPT = loadRevokeScript();
     private static final RedisScript<Long> DELETE_ACTIVE_KEY_IF_MATCHES_SCRIPT = loadDeleteActiveKeyIfMatchesScript();
 
     private final StringRedisTemplate redisTemplate;
+
+    // DB 폐기 순번을 게시해 이전 로그인이나 회전의 지연된 캐시 저장을 차단한다.
+    public void revokeBeforeVersion(Long id, Role role, long version) {
+        Long result = redisTemplate.execute(REVOKE_BEFORE_VERSION_SCRIPT,
+                List.of(activeKey(role, id), ISSUANCE_VERSION_KEY_PREFIX + role.name() + ":" + id),
+                String.format(java.util.Locale.ROOT, "%019d", version), KEY_PREFIX);
+        if (result == null) {
+            throw new org.springframework.dao.DataAccessResourceFailureException("폐기 순번 저장 결과가 없다");
+        }
+    }
 
     /** 로그인과 온보딩 발급 시 새 Refresh Token 을 저장한다. */
     public void save(String refreshToken, Long id, Role role, boolean remember, Duration ttl) {
@@ -61,6 +77,26 @@ public class RefreshTokenRepository {
                 hash,
                 String.valueOf(ttl.toMillis())
         );
+    }
+
+    /*
+     * DB에서 확정한 발급 순번보다 큰 게시가 이미 있으면 이전 토큰을 저장하지 않는다.
+     * 순번 키는 토큰 만료와 함께 지우지 않아 지연된 요청이 만료 후 최신 포인터를 되살리지 못한다.
+     * 캐시 유실 시 DB가 권위 저장소이며 후속 재발급은 DB 해시와 상태를 반드시 확인해야 한다.
+     */
+    public boolean saveIfNewer(String refreshToken, Long id, Role role, boolean remember, Duration ttl, long version) {
+        if (version <= 0 || ttl.isNegative() || ttl.isZero() || ttl.toMillis() <= 0) {
+            throw new IllegalArgumentException("발급 순번과 유효기간은 양수여야 합니다.");
+        }
+        String hash = TokenHasher.sha256(refreshToken);
+        Long saved = redisTemplate.execute(ORDERED_SAVE_SCRIPT,
+                List.of(primaryKey(hash), activeKey(role, id), ISSUANCE_VERSION_KEY_PREFIX + role.name() + ":" + id),
+                serialize(id, role, remember), hash, String.valueOf(ttl.toMillis()),
+                String.format(java.util.Locale.ROOT, "%019d", version));
+        if (saved == null) {
+            throw new org.springframework.dao.DataAccessResourceFailureException("발급 순번 저장 결과가 없다");
+        }
+        return saved == 1L;
     }
 
     /** @return 저장된 값이 있으면 그 소유자 정보. 없거나 만료됐으면 empty. */
@@ -175,6 +211,20 @@ public class RefreshTokenRepository {
     }
 
     public record RefreshTokenData(Long id, Role role, boolean remember) {
+    }
+
+    private static RedisScript<Long> loadRevokeBeforeVersionScript() {
+        DefaultRedisScript<Long> script = new DefaultRedisScript<>();
+        script.setLocation(new ClassPathResource("scripts/refresh_token_revoke_before_version.lua"));
+        script.setResultType(Long.class);
+        return script;
+    }
+
+    private static RedisScript<Long> loadOrderedSaveScript() {
+        DefaultRedisScript<Long> script = new DefaultRedisScript<>();
+        script.setLocation(new ClassPathResource("scripts/refresh_token_save_if_newer.lua"));
+        script.setResultType(Long.class);
+        return script;
     }
 
     private static RedisScript<Long> loadSaveScript() {

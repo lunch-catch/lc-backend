@@ -22,7 +22,7 @@ import lombok.NoArgsConstructor;
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class Member extends BaseTimeEntity {
 
-    @Column(name = "provider_user_id", nullable = false, unique = true, length = 100)
+    @Column(name = "provider_user_id", unique = true, length = 100)
     private String providerUserId;
 
     @Column(nullable = false, length = 50)
@@ -78,8 +78,8 @@ public class Member extends BaseTimeEntity {
     private MemberProfile profile;
 
     private Member(String providerUserId, String nickname, String profileImageUrl) {
-        this.providerUserId = requiredText(providerUserId, "providerUserId");
-        this.nickname = requiredText(nickname, "nickname");
+        this.providerUserId = requiredText(providerUserId, "카카오 회원번호는 비어 있을 수 없습니다.");
+        this.nickname = requiredText(nickname, "닉네임은 비어 있을 수 없습니다.");
         this.profileImageUrl = profileImageUrl;
         this.status = MemberStatus.ACTIVE;
     }
@@ -92,31 +92,57 @@ public class Member extends BaseTimeEntity {
         this.lastLoginAt = loggedInAt;
     }
 
-    public boolean hasSuspensionHistory() {
-        return suspendedAt != null;
-    }
-
-    public void reactivate(String nickname, String profileImageUrl, LocalDateTime loggedInAt) {
-        if (status != MemberStatus.WITHDRAWN) {
-            throw new IllegalStateException("only withdrawn member can reactivate");
+    public void withdraw(LocalDateTime now) {
+        if (status == MemberStatus.WITHDRAWN) {
+            throw new IllegalStateException("이미 탈퇴한 회원입니다.");
         }
-        if (hasSuspensionHistory()) {
-            throw new IllegalStateException("member with suspension history cannot reactivate");
-        }
-        this.nickname = requiredText(nickname, "nickname");
-        this.profileImageUrl = profileImageUrl;
-        this.status = MemberStatus.ACTIVE;
-        this.withdrawnAt = null;
-        this.lastLoginAt = loggedInAt;
+        this.providerUserId = null;
+        this.suspendedUntil = null;
+        this.suspensionReason = null;
+        this.nickname = "탈퇴한 회원";
+        this.profileImageUrl = null;
+        this.profile = null;
+        this.lastLoginAt = null;
+        this.notificationOptIn = false;
+        this.notificationOptInAt = null;
+        this.notificationWithdrawnAt = null;
+        this.locationOptIn = false;
+        this.locationOptInAt = null;
+        this.locationWithdrawnAt = null;
+        this.status = MemberStatus.WITHDRAWN;
+        this.withdrawnAt = now;
     }
 
     void attachProfile(MemberProfile profile) {
         this.profile = profile;
     }
 
-    private static String requiredText(String value, String fieldName) {
+    public void completeOnboarding(boolean notificationOptIn, boolean locationOptIn, LocalDateTime now) {
+        this.notificationOptIn = notificationOptIn;
+        this.notificationOptInAt = notificationOptIn ? now : null;
+        this.locationOptIn = locationOptIn;
+        this.locationOptInAt = locationOptIn ? now : null;
+    }
+
+    public void updateProfile(String nickname, Boolean notificationOptIn, Boolean locationOptIn, LocalDateTime now) {
+        if (nickname != null) {
+            this.nickname = requiredText(nickname, "닉네임은 비어 있을 수 없습니다.");
+        }
+        if (notificationOptIn != null && this.notificationOptIn != notificationOptIn) {
+            this.notificationOptIn = notificationOptIn;
+            this.notificationOptInAt = notificationOptIn ? now : null;
+            this.notificationWithdrawnAt = notificationOptIn ? null : now;
+        }
+        if (locationOptIn != null && this.locationOptIn != locationOptIn) {
+            this.locationOptIn = locationOptIn;
+            this.locationOptInAt = locationOptIn ? now : null;
+            this.locationWithdrawnAt = locationOptIn ? null : now;
+        }
+    }
+
+    private static String requiredText(String value, String message) {
         if (value == null || value.isBlank()) {
-            throw new IllegalArgumentException(fieldName + " must not be blank");
+            throw new IllegalArgumentException(message);
         }
         return value;
     }

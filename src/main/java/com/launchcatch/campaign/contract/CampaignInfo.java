@@ -1,7 +1,9 @@
 package com.launchcatch.campaign.contract;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.util.List;
 
 public record CampaignInfo(
         Long campaignId,
@@ -16,6 +18,17 @@ public record CampaignInfo(
         DiscountTargetType discountTargetType,
         DiscountType discountType,
         int discountValue,
-        Long targetMenuId
+        Long targetMenuId,
+        int targetRadius,
+        TargetGender targetGender,
+        List<AgeGroup> targetAgeGroups,
+        LocalDateTime createdAt,
+        LocalDate newPriorityUntil,
+        LocalDateTime statusChangedAt,
+        PauseReason pauseReason,
+        Long dailyBudget
 ) {
+    public CampaignInfo {
+        targetAgeGroups = List.copyOf(targetAgeGroups);
+    }
 }

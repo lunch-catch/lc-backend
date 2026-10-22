@@ -6,6 +6,7 @@ import com.launchcatch.ops.repository.BatchExecutionLogRepository;
 import com.launchcatch.ops.scheduler.BatchAlert;
 import com.launchcatch.ops.scheduler.BatchServerId;
 import com.launchcatch.ops.scheduler.StepOutcome;
+import com.launchcatch.ops.scheduler.TransientFailures;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.LocalDate;
@@ -13,8 +14,6 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
-import org.hibernate.exception.ConstraintViolationException;
-import org.springframework.dao.DataIntegrityViolationException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -70,26 +69,41 @@ public class BatchExecutionService {
     }
 
     /*
-     * 그 작업을 이 서버 것으로 점유한다. 이미 행이 있으면 false 다.
+     * 그 작업을 이 서버 것으로 점유한다. 이미 다른 서버 것이면 false 다.
      *
-     * 트랜잭션을 걸지 않는다. 유일 제약 위반을 판정에 쓰는데, 이 메서드가 트랜잭션 안이면
-     * 그 예외가 트랜잭션을 되돌릴 것으로 표시해서 잡고 넘어가도 커밋에서 터진다. 삽입만
-     * 저장소 쪽에서 자기 트랜잭션으로 돌린다(saveAndFlush 의 REQUIRES_NEW).
+     * INSERT ... ON DUPLICATE KEY UPDATE 로 중복을 흡수한다(#526). 유일 제약 위반 예외로
+     * 점유를 가르지 않으므로 중복이 평범한 결과가 되고, 길이 초과나 CHECK 위반은 그대로
+     * 예외로 올라온다(MNT-4-04). 예외 모양으로 승패를 읽으면 그 모양이 바뀔 때마다
+     * (#515, PR #520) 같은 문제가 반복된다.
      *
-     * 받아 넘기는 것은 유일 제약 위반뿐이다. DataIntegrityViolationException 을 통째로 잡으면
-     * 길이 초과나 CHECK 위반까지 "이미 점유됐다" 로 읽혀서, 두 서버가 모두 점유에 실패하고도
-     * 아무도 장애를 모른다(MNT-4-04).
+     * 영향받은 행 수로도 가르지 않는다. 드라이버 기본값(useAffectedRows=false)에서는
+     * 무변경 갱신도 1 로 보고될 수 있다. 그래서 upsert 뒤 그 행을 다시 읽어 RUNNING 이고
+     * owner_id 가 나인지로 점유를 가른다. owner_id 는 행을 만들 때 정해지고 이어받기 전에는
+     * 바뀌지 않으므로, 연결이 끊겨 커밋 여부를 모른 채 다시 불러도 내 것으로 정확히 읽힌다.
+     *
+     * 상태도 함께 본다. 이미 SUCCESS나 FAILED로 끝난 행도 owner_id는 그대로 나로 남아 있어,
+     * owner_id만 보면 끝난 단계를 다시 점유한 것으로 잘못 읽는다. begin()이 그 구분을
+     * 상태로 가르게 하려면 claim()이 RUNNING 이 아닌 내 행은 점유로 보지 않아야 한다.
+     *
+     * 두 서버가 같은 순간에 upsert 를 시도하면 상대의 커밋을 기다리는 구간이 있어 락 대기
+     * 시간 초과나 교착(TransientFailures.isTransient 가 가리는 쪽)을 낼 수 있다(#515). 그
+     * 경합은 상대의 트랜잭션이 끝나는 순간 풀리므로, 한 번 더 시도하면 깨끗하게 갈린다.
      */
     public boolean claim(String jobName, LocalDate businessDate) {
         try {
-            logs.saveAndFlush(BatchExecutionLog.running(jobName, businessDate, ownerId));
-            return true;
-        } catch (DataIntegrityViolationException violation) {
-            if (isUniqueViolation(violation)) {
-                return false;
+            return attemptClaim(jobName, businessDate);
+        } catch (RuntimeException failure) {
+            if (!TransientFailures.isTransient(failure)) {
+                throw failure;
             }
-            throw violation;
+            return attemptClaim(jobName, businessDate);
         }
+    }
+
+    private boolean attemptClaim(String jobName, LocalDate businessDate) {
+        logs.upsertClaim(jobName, businessDate, ownerId, now());
+        BatchExecutionLog row = reload(jobName, businessDate);
+        return row.getStatus() == BatchStatus.RUNNING && isMine(row);
     }
 
     /*
@@ -127,7 +141,16 @@ public class BatchExecutionService {
      */
     @Transactional
     public boolean renew(String jobName, LocalDate businessDate) {
-        return logs.renew(jobName, businessDate, ownerId, now()) == 1;
+        return logs.renew(jobName, businessDate, ownerId, null, now()) == 1;
+    }
+
+    /*
+     * 세대까지 맞을 때만 갱신한다(#591). 이어받기와 수동 재실행으로 도는 묶음 밖 작업이 쓴다.
+     * 같은 서버가 새 세대를 잡으면 소유자는 그대로라 renew 는 통과하고, 낡은 시도가 계속 돈다.
+     */
+    @Transactional
+    public boolean renewAttempt(String jobName, LocalDate businessDate, int attemptNo) {
+        return logs.renew(jobName, businessDate, ownerId, attemptNo, now()) == 1;
     }
 
     /** 내가 들고 있는 실행 중 행을 모두 갱신한다. 30초마다 도는 생존 신호가 부른다. */
@@ -138,7 +161,16 @@ public class BatchExecutionService {
 
     @Transactional
     public void succeed(String jobName, LocalDate businessDate) {
-        close(jobName, businessDate, BatchStatus.SUCCESS, null);
+        close(jobName, businessDate, BatchStatus.SUCCESS, null, null, null);
+    }
+
+    /*
+     * 원천 행을 보지 못해 집계 결과로 쓴 행 수를 처리 건수로 넘기는 호출자를 위한
+     * 오버로드다(#359, 분석). 건수의 뜻은 작업마다 그 호출자가 정한다.
+     */
+    @Transactional
+    public void succeed(String jobName, LocalDate businessDate, int processedCount) {
+        close(jobName, businessDate, BatchStatus.SUCCESS, null, processedCount, null);
     }
 
     /*
@@ -147,7 +179,24 @@ public class BatchExecutionService {
      */
     @Transactional
     public void fail(String jobName, LocalDate businessDate, String reason) {
-        if (close(jobName, businessDate, BatchStatus.FAILED, shorten(reason))) {
+        if (close(jobName, businessDate, BatchStatus.FAILED, shorten(reason), null, null)) {
+            alert.failed(jobName, businessDate, reason);
+        }
+    }
+
+    /*
+     * 세대까지 맞을 때만 성공으로 닫는다(#591). 건수가 null 이면 건수 없이 닫는다.
+     * 같은 서버가 새 세대를 잡았으면 소유자 조건은 통과해서, 세대를 보지 않으면 낡은 시도가 새 시도의 행을 닫는다.
+     */
+    @Transactional
+    public void succeedAttempt(String jobName, LocalDate businessDate, int attemptNo, Integer processedCount) {
+        close(jobName, businessDate, BatchStatus.SUCCESS, null, processedCount, attemptNo);
+    }
+
+    // 세대까지 맞을 때만 실패로 닫고, 닫았을 때만 알린다(#591).
+    @Transactional
+    public void failAttempt(String jobName, LocalDate businessDate, int attemptNo, String reason) {
+        if (close(jobName, businessDate, BatchStatus.FAILED, shorten(reason), null, attemptNo)) {
             alert.failed(jobName, businessDate, reason);
         }
     }
@@ -166,7 +215,11 @@ public class BatchExecutionService {
                 BatchStatus.RUNNING, ownerId, staleBefore)) {
             if (logs.takeOver(stale.getJobName(), stale.getBusinessDate(), ownerId, now(), staleBefore) == 1) {
                 alert.takenOver(stale.getJobName(), stale.getBusinessDate(), stale.getOwnerId(), ownerId);
-                taken.add(stale);
+                /*
+                 * takeOver 는 벌크 UPDATE라 stale 의 attemptNo 는 그대로다. 묶음 밖 작업을
+                 * 다시 돌리려면 오른 세대가 필요해 다시 읽는다(#360).
+                 */
+                taken.add(reload(stale.getJobName(), stale.getBusinessDate()));
             }
         }
         return taken;
@@ -185,16 +238,54 @@ public class BatchExecutionService {
     @Transactional
     public boolean recordRetry(String jobName, LocalDate businessDate, String reason) {
         return logs.recordRetry(
-                jobName, businessDate, shorten(reason), ownerId, MAX_AUTO_RETRIES, now()) == 1;
+                jobName, businessDate, shorten(reason), ownerId, null, MAX_AUTO_RETRIES, now()) == 1;
+    }
+
+    // 세대까지 맞을 때만 자동 재실행을 기록한다(#591). 낡은 시도가 새 시도의 재실행 예산을 깎지 못한다.
+    @Transactional
+    public boolean recordRetryAttempt(String jobName, LocalDate businessDate, int attemptNo, String reason) {
+        return logs.recordRetry(
+                jobName, businessDate, shorten(reason), ownerId, attemptNo, MAX_AUTO_RETRIES, now()) == 1;
     }
 
     /*
      * 관리자의 수동 재실행이다. 실패한 행만 실행 중으로 되돌린다.
-     * 상태를 조건에 넣었으므로 두 번 눌러도 한 번만 걸린다.
+     * 상태를 조건에 넣었으므로 두 번 눌러도 한 번만 걸린다. 시작 시각과 처리 건수도 이
+     * 시도의 것으로 새로 한다(#359).
      */
     @Transactional
     public boolean retry(String jobName, LocalDate businessDate) {
         return logs.restartFailed(jobName, businessDate, ownerId, now()) == 1;
+    }
+
+    /*
+     * 분석이 쓰는 재실행이다. 실패한 행과 이미 끝난(성공) 행을 모두 실행 중으로 되돌린다.
+     * RUNNING인 행은 조건에 걸리지 않아 아무것도 바뀌지 않는다. retry와 같이 시작 시각과
+     * 처리 건수를 새로 한다(#359).
+     */
+    @Transactional
+    public boolean rerun(String jobName, LocalDate businessDate) {
+        return logs.restartFinished(jobName, businessDate, ownerId, now()) == 1;
+    }
+
+    /*
+     * 실행 행의 소유자와 세대가 지금도 맞는지 본다(#360).
+     *
+     * 호출자 트랜잭션에 참여해 행을 잠근다. succeed/fail의 소유자 조건만으로는 임대를 잃은
+     * 서버를 막지 못한다. 그 조건은 결과가 이미 커밋된 뒤에야 걸린다. 여기서는 결과를 공개하기
+     * 전에, 같은 트랜잭션 안에서 확인하고 맞지 않으면 그 트랜잭션 전체를 롤백시킨다.
+     */
+    @Transactional
+    public void assertCurrentAttempt(String jobName, LocalDate businessDate, int attemptNo) {
+        BatchExecutionLog row = logs.findByJobNameAndBusinessDateForUpdate(jobName, businessDate)
+                .orElseThrow(() -> new IllegalStateException(
+                        "batch_execution_log missing row: " + jobName + " " + businessDate));
+        if (!isMine(row) || row.getAttemptNo() != attemptNo) {
+            throw new IllegalStateException(
+                    "attempt no longer current: " + jobName + " " + businessDate
+                            + " expected=" + attemptNo + " actual=" + row.getAttemptNo()
+                            + " owner=" + row.getOwnerId());
+        }
     }
 
     /*
@@ -205,37 +296,25 @@ public class BatchExecutionService {
      *
      * 닫지 못한 것은 알리지 않는다. 그 행은 이미 다른 서버가 들고 있어서 그쪽이 판정한다.
      * 양쪽이 알리면 한 번의 장애가 두 번 울린다.
+     *
+     * attemptNo 가 null 이면 세대를 보지 않는다. null 은 소유자만 보는 공개 메서드만 넘긴다(#591).
      */
-    private boolean close(String jobName, LocalDate businessDate, BatchStatus status, String reason) {
-        if (logs.close(jobName, businessDate, status, reason, ownerId, now()) == 1) {
+    private boolean close(String jobName, LocalDate businessDate, BatchStatus status, String reason,
+                          Integer processedCount, Integer attemptNo) {
+        if (logs.close(jobName, businessDate, status, reason, processedCount, ownerId, attemptNo, now()) == 1) {
             return true;
         }
-        log.warn("내 소유가 아닌 행은 닫지 않는다. job={} businessDate={} 상태={}",
-                jobName, businessDate, status);
-        return false;
-    }
-
-    /*
-     * 유일 제약 위반인지 본다.
-     *
-     * Spring 의 DuplicateKeyException 으로는 가를 수 없다. 그것은 JDBC 번역기가 내는 것이고,
-     * JPA 경로에서는 Hibernate 의 ConstraintViolationException 이 평범한
-     * DataIntegrityViolationException 으로 번역된다. 실제로 돌려 보고 확인했다.
-     *
-     * 그래서 Hibernate 가 붙여 주는 제약 종류를 본다. 제약 이름을 비교하는 방법도 있지만,
-     * 이름은 마이그레이션에서 바뀔 수 있고 종류는 바뀌지 않는다.
-     */
-    private boolean isUniqueViolation(DataIntegrityViolationException violation) {
-        for (Throwable cause = violation; cause != null; cause = cause.getCause()) {
-            if (cause instanceof ConstraintViolationException constraint) {
-                return constraint.getKind() == ConstraintViolationException.ConstraintKind.UNIQUE;
-            }
-        }
+        log.warn("내 소유가 아니거나 세대가 지난 행은 닫지 않는다. job={} businessDate={} 상태={} attemptNo={}",
+                jobName, businessDate, status, attemptNo);
         return false;
     }
 
     private boolean isMine(BatchExecutionLog row) {
         return ownerId.equals(row.getOwnerId());
+    }
+
+    private BatchExecutionLog reload(String jobName, LocalDate businessDate) {
+        return logs.findByJobNameAndBusinessDate(jobName, businessDate).orElseThrow();
     }
 
     /** 멈춘 실행 중 행 하나를 이어받는다. 조건에 걸린 서버만 1건을 받는다. */

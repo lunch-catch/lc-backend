@@ -23,7 +23,7 @@ spring:
     oauth2:
       client:
         registration:
-          # 사용자 로그인(카카오 OIDC, 62행). 카카오 개발자 콘솔의 내 애플리케이션 > 앱 키 /
+          # 사용자 로그인(카카오 OIDC, FR-059). 카카오 개발자 콘솔의 내 애플리케이션 > 앱 키 /
           # 카카오 로그인에서 확인한다. redirect-uri 는 콘솔에 등록한 값과 정확히 같아야 한다.
           # 카카오가 이 주소로 code 를 붙여 302 리다이렉트하면 프론트가 받아서 백엔드로 넘긴다.
           # kakao:
@@ -36,18 +36,25 @@ spring:
 #   app-id: ""
 #   admin-key: ""
 
+# 토스페이먼츠 비밀키. 토스 개발자센터의 API 개별 연동 키(테스트는 test_sk_ 로 시작)를 쓴다.
+# 비워 두면 application.yml 의 local 문서가 토스 문서용 공개 테스트 키를 쓴다. 팀 상점으로 시험할 때만 넣는다.
+# 환경변수로 채우려면 TOSS_SECRET_KEY 를 쓰고 이 줄은 주석으로 둔다.
+# billing:
+#   toss:
+#     secret-key: ""
+
 # JWT 서명 키. 최소 32바이트(HS256 기준) 이상의 랜덤 값이어야 한다.
 #   openssl rand -base64 64
 # jwt:
 #   secret: ""
-#   # Access 는 세 역할이 모두 30분이고 Refresh 만 역할마다 다르다(94행).
+#   # Access 는 세 역할이 모두 30분이고 Refresh 만 역할마다 다르다(FR-091).
 #   access-token-validity-ms: 1800000
 #   refresh:
 #     # 관리자 1일
 #     admin-validity-ms: 86400000
-#     # 점주 14일
-#     owner-validity-ms: 1209600000
-#     # 사용자 14일. 자동 로그인을 체크하지 않으면 세션 쿠키로 내려 이 값을 쓰지 않는다(64행)
+#     # 점주 1일
+#     owner-validity-ms: 86400000
+#     # 사용자 14일. 자동 로그인을 체크하지 않으면 세션 쿠키로 내려 이 값을 쓰지 않는다(FR-061)
 #     member-validity-ms: 1209600000
 #   cookie:
 #     # 로컬은 http 라 꺼둔다. 운영(https)에서는 반드시 true 로
@@ -57,3 +64,13 @@ spring:
 # app:
 #   cors:
 #     allowed-origins: "http://localhost:5173"
+
+# 로컬에서 http://127.0.0.1:8765 로 이미지를 제공할 때 application-local.yml 에서 아래 주석을 푼다.
+# 환경변수 CDN_BASE_URL 로 설정하려면 아래 줄은 주석으로 둔다.
+# cdn:
+#   base-url: "http://127.0.0.1:8765"
+
+# 시험 데이터(시드)는 local 프로필에서 자동으로 켜진다(로컬 실행 문서 4절).
+# 끄려면 아래 주석을 푼다.
+# seed:
+#   enabled: false

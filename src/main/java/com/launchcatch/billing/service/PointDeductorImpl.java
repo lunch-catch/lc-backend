@@ -1,0 +1,183 @@
+package com.launchcatch.billing.service;
+
+import com.launchcatch.billing.contract.DeductionStatus;
+import com.launchcatch.billing.contract.PointDeductor;
+import com.launchcatch.billing.dto.PlanSnapshot;
+import com.launchcatch.billing.cache.DailySpendCounter;
+import com.launchcatch.billing.cache.DeductOutcome;
+import com.launchcatch.billing.repository.DeductionResultRepository;
+import com.launchcatch.billing.repository.PointLedgerRepository;
+import com.launchcatch.campaign.contract.CampaignInfo;
+import com.launchcatch.campaign.contract.CampaignQueryService;
+import com.launchcatch.ops.contract.PlatformSettingQueryService;
+import io.micrometer.core.instrument.MeterRegistry;
+import java.time.Clock;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.util.List;
+import java.util.Optional;
+import java.util.UUID;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
+
+/*
+ * 유효 노출 1건의 과금을 판정하고 기록한다(I-01).
+ *
+ * 순서는 ① 그날 계획의 점주와 단가 ② 당일 소진 해시에서 판정 ③ 판정 기록 ④ BILLED 면 원장 DEDUCT 다.
+ * 그날 계획이 없으면 NOT_BILLED_NO_PLAN 판정만 남긴다.
+ * 해시가 없으면 DB 정본으로 한 번 만들고 다시 판정한다. 그래도 없으면 예외다.
+ * 판정 기록과 원장은 무변경 갱신 INSERT 라서 같은 serveId 의 재호출이 예외 없이 지나가고, 판정은 Valkey 가
+ * 첫 결과를 돌려준다. 잔액은 읽지 않는다.
+ *
+ * Valkey 는 DB 트랜잭션에 묶이지 않아서 판정이 소진을 올린 뒤 트랜잭션이 롤백되면 소진만 앞서간다(L-1).
+ * 그래서 이번 호출이 새로 판정했으면 롤백 직후 그 판정을 되돌린다(처리 표시 삭제, BILLED 였으면 소진 감소).
+ * 되돌리기가 실패하거나 프로세스가 죽으면 소진이 원장보다 큰 채로 그날 끝까지 남고, 다음 날 00:00 대사가 기록한다.
+ *
+ * 노출을 저장하는 트랜잭션 안에서만 부른다. 밖에서 부르면 Spring 이 바로 예외를 낸다(E-5).
+ * 금전 값이라 대체값을 돌려주지 않는다. 실패는 예외이고 노출 저장까지 롤백된다.
+ */
+/*
+ * TODO(부하 테스트 실행): 측정 도구(v1 하네스, v2 k6)는 아직 없고 측정도 하지 않았다. 프로젝트가 어느 정도 완성된 뒤
+ *   별도 작업으로 도구를 만들고 "노출 차감 부하 테스트.md" 순서대로 실행해 결과를 문서에 남긴다
+ *   (billing-구현-계획.md 5.2의 Todo, 이슈 #193 작업 8). 그 전까지 아래 TODO(성능 측정)의 값과 개선 후보는 가정이다.
+ *
+ * TODO(성능 측정): 이 클래스가 노출 차감 부하 테스트의 측정 대상이다. 초당 1만 건(NFR-014)에 못 미치면
+ *   "노출 차감 성능 개선 선택지.md" 4장 순서대로 이 클래스와 아래 저장소, 스크립트, 스키마를 바꾸고
+ *   ./gradlew perfTest 로 전후를 비교한다. 하네스는 PointDeductor 만 부르므로 바꾸지 않는다.
+ *   하네스를 같이 고쳐야 하는 경우(0단계 구간 분해, 명세를 바꾸는 4단계)는 "노출 차감 부하 테스트.md" 2.4절.
+ */
+@Slf4j
+@Service
+@RequiredArgsConstructor
+public class PointDeductorImpl implements PointDeductor {
+
+    private final DailyPlanSnapshotService snapshotService;
+    private final SpendHashRebuildService rebuildService;
+    private final DailySpendCounter spendCounter;
+    private final DeductionResultRepository deductionResultRepository;
+    private final PointLedgerRepository ledgerRepository;
+    private final CampaignQueryService campaignQuery;
+    private final PlatformSettingQueryService platformSetting;
+    private final Clock clock;
+    private final MeterRegistry meterRegistry;
+
+    static final String UNDO_METRIC = "billing_deduct_undo_total";
+    static final String NO_PLAN_METRIC = "billing_deduct_no_plan_total";
+
+    @Override
+    @Transactional(propagation = Propagation.MANDATORY)
+    public DeductionStatus deduct(UUID serveId, Long campaignId, LocalDate businessDate) {
+        Optional<PlanSnapshot> found = snapshotService.find(businessDate, campaignId);
+        if (found.isEmpty()) {
+            return recordNoPlan(serveId, campaignId, businessDate);
+        }
+        PlanSnapshot plan = found.get();
+
+        /*
+         * TODO(성능 측정): Valkey 왕복 1회(측정 0-a). 0-a 만으로 1만 건이 안 나오면 DB 개선은 소용없다.
+         * Lua 내용과 커넥션 설정을 먼저 본다.
+         */
+        DeductOutcome outcome = spendCounter.deduct(businessDate, campaignId, serveId, plan.unitPrice());
+        if (outcome.isHashMissing()) {
+            rebuildService.rebuildIfAbsent(businessDate, campaignId);
+            outcome = spendCounter.deduct(businessDate, campaignId, serveId, plan.unitPrice());
+            if (outcome.isHashMissing()) {
+                throw new IllegalStateException(
+                        "재구성한 뒤에도 당일 소진 해시가 없습니다. campaignId=" + campaignId + ", businessDate=" + businessDate);
+            }
+        }
+        DeductionStatus status = outcome.status();
+        if (!outcome.replayed()) {
+            undoOnRollback(businessDate, campaignId, serveId, plan.unitPrice());
+        }
+        LocalDateTime now = LocalDateTime.now(clock);
+
+        // TODO: 노출당 INSERT 2건(deduction_result, point_ledger)이 초당 1만 건을 못 버티면 "노출 차감 성능 개선 선택지.md"를 보고 개선한다
+        /*
+         * TODO(성능 측정): INSERT 1/2(측정 0-b, 0-b'). 바꿀 후보: A serveId v7(광고 서빙 발급),
+         * C-1 기본 키를 serve_id 로(마이그레이션), B-1 두 INSERT 를 한 요청으로(차감 전용 데이터소스),
+         * B-2 BILLED 면 이 INSERT 생략(명세 변경, 4단계)
+         */
+        int inserted = deductionResultRepository.insertIfAbsent(
+                serveId, campaignId, plan.ownerId(), businessDate, status, plan.unitPrice(), now);
+        if (inserted != 1) {
+            return firstStatus(serveId, status);
+        }
+
+        if (status == DeductionStatus.BILLED) {
+            /*
+             * TODO(성능 측정): INSERT 2/2. 바꿀 후보: C-2 DEDUCT 가 쓰지 않는 원장 조회 인덱스 점검(마이그레이션),
+             * B-1 위와 같음, F 분 단위 묶음 행(명세 변경, 4단계).
+             * 커밋 비용(fsync)이 병목이면 이 자리가 아니라 E-1 커넥션 풀 설정을 본다
+             */
+            ledgerRepository.insertDeductIfAbsent(plan.ownerId(), campaignId, serveId, -plan.unitPrice(), now);
+        }
+        return status;
+    }
+
+    /*
+     * 그날 계획이 없는 캠페인의 노출을 NOT_BILLED_NO_PLAN 으로 남긴다. 00:00 예약이 그 캠페인의 계획을 만들기 전이거나
+     * 전날 집행이 끝난 캠페인이다. 행을 남겨야 광고 서빙의 유효 노출 수가 판정 합과 맞는다.
+     * 계획이 없으니 점주는 캠페인에서, 단가는 운영 설정에서 읽는다. 과금하지 않으므로 Valkey 와 원장은 건드리지 않는다.
+     */
+    private DeductionStatus recordNoPlan(UUID serveId, Long campaignId, LocalDate businessDate) {
+        Long ownerId = campaignQuery.findAllById(List.of(campaignId)).stream()
+                .findFirst()
+                .map(CampaignInfo::ownerId)
+                .orElseThrow(() -> new IllegalStateException("노출한 캠페인이 없습니다. campaignId=" + campaignId));
+        long unitPrice = platformSetting.getImpressionUnitPrice();
+        meterRegistry.counter(NO_PLAN_METRIC).increment();
+        log.debug("event=BILLING_DEDUCT_NO_PLAN campaignId={} businessDate={}", campaignId, businessDate);
+        int inserted = deductionResultRepository.insertIfAbsent(serveId, campaignId, ownerId, businessDate,
+                DeductionStatus.NOT_BILLED_NO_PLAN, unitPrice, LocalDateTime.now(clock));
+        if (inserted != 1) {
+            return firstStatus(serveId, DeductionStatus.NOT_BILLED_NO_PLAN);
+        }
+        return DeductionStatus.NOT_BILLED_NO_PLAN;
+    }
+
+    /*
+     * 이 트랜잭션이 롤백으로 끝나면 이번 호출이 새로 남긴 판정을 되돌린다. 커밋이면 두고, 결과를 알 수 없으면(UNKNOWN)
+     * 커밋됐을 수 있으니 되돌리지 않는다. 되돌리기 실패는 노출 저장의 결과를 바꾸지 못하므로 예외를 올리지 않고
+     * 기록한다. 소진이 원장보다 큰 채로 남으면 안전한 쪽의 오차이고 다음 날 00:00 대사가 기록한다.
+     */
+    private void undoOnRollback(LocalDate businessDate, Long campaignId, UUID serveId, long unitPrice) {
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCompletion(int completionStatus) {
+                if (completionStatus != STATUS_ROLLED_BACK) {
+                    return;
+                }
+                try {
+                    spendCounter.undo(businessDate, campaignId, serveId, unitPrice);
+                    meterRegistry.counter(UNDO_METRIC, "result", "ok").increment();
+                } catch (RuntimeException e) {
+                    meterRegistry.counter(UNDO_METRIC, "result", "failed").increment();
+                    log.warn("event=BILLING_DEDUCT_UNDO_FAILED serveId={} campaignId={} fallback=LEAVE_FOR_RECON",
+                            serveId, campaignId, e);
+                }
+            }
+        });
+    }
+
+    /*
+     * 같은 serveId 의 판정 행이 이미 있으면 그 행의 판정이 정본이다. 처리 표시(2일)가 사라진 뒤 도착한 재호출은 Lua 가
+     * 현재 예산으로 다시 판정하므로 처음 판정과 다를 수 있다. 계약은 처음 판정을 약속하고 원장은 처음 판정이
+     * BILLED 일 때 같은 트랜잭션에서 이미 남았으므로, 저장된 판정을 돌려주고 원장은 쓰지 않는다.
+     * 다시 판정하면서 올라간 카운터는 되돌리지 않는다. 다음 날 00:00 대사가 불일치로 기록한다.
+     */
+    private DeductionStatus firstStatus(UUID serveId, DeductionStatus judged) {
+        DeductionStatus first = deductionResultRepository.findFirstStatus(serveId)
+                .orElseThrow(() -> new IllegalStateException("판정 행이 있다고 했는데 읽을 수 없습니다. serveId=" + serveId));
+        if (first != judged) {
+            log.warn("event=BILLING_DEDUCT_REJUDGE_MISMATCH serveId={} first={} rejudged={} fallback=KEEP_FIRST",
+                    serveId, first, judged);
+        }
+        return first;
+    }
+}

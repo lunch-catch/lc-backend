@@ -1,6 +1,8 @@
 package com.launchcatch.member.entity;
 
 import com.launchcatch.global.entity.BaseTimeEntity;
+import com.launchcatch.member.contract.AgeGroup;
+import com.launchcatch.member.contract.Gender;
 import jakarta.persistence.AttributeOverride;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -32,7 +34,7 @@ public class MemberProfile extends BaseTimeEntity {
     private Gender gender;
 
     @Enumerated(EnumType.STRING)
-    @Column(name = "age_group", length = 10)
+    @Column(name = "age_group", length = 20)
     private AgeGroup ageGroup;
 
     @Column(name = "location_nickname", length = 50)
@@ -56,7 +58,7 @@ public class MemberProfile extends BaseTimeEntity {
 
     public static MemberProfile create(Member member) {
         if (member == null) {
-            throw new IllegalArgumentException("member must not be null");
+            throw new IllegalArgumentException("회원 정보는 필수입니다.");
         }
         MemberProfile profile = new MemberProfile(member);
         member.attachProfile(profile);
@@ -65,5 +67,25 @@ public class MemberProfile extends BaseTimeEntity {
 
     public boolean isOnboardingCompleted() {
         return onboardingCompletedAt != null;
+    }
+
+    public void completeOnboarding(Gender gender, AgeGroup ageGroup, LocalDateTime now) {
+        if (gender == null || ageGroup == null) {
+            throw new IllegalArgumentException("성별과 연령대는 필수입니다.");
+        }
+        this.gender = gender;
+        this.ageGroup = ageGroup;
+        this.onboardingCompletedAt = now;
+    }
+
+    public void updateLocation(String locationNickname, String roadAddress, BigDecimal latitude, BigDecimal longitude) {
+        this.locationNickname = locationNickname;
+        this.roadAddress = roadAddress;
+        this.latitude = latitude;
+        this.longitude = longitude;
+    }
+
+    public void clearLocation() {
+        updateLocation(null, null, null, null);
     }
 }

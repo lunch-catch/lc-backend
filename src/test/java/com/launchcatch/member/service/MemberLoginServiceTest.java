@@ -9,12 +9,15 @@ import static org.mockito.Mockito.when;
 
 import com.launchcatch.member.contract.MemberStatus;
 import com.launchcatch.member.entity.Member;
+import com.launchcatch.member.entity.MemberWithdrawalHistory;
+import com.launchcatch.member.exception.MemberErrorCode;
 import com.launchcatch.member.exception.MemberException;
 import com.launchcatch.member.oauth.KakaoIdTokenExchanger;
 import com.launchcatch.member.oauth.KakaoIdentity;
 import com.launchcatch.member.repository.KakaoUnlinkFailureRepository;
 import com.launchcatch.member.repository.MemberProfileRepository;
 import com.launchcatch.member.repository.MemberRepository;
+import com.launchcatch.member.repository.MemberWithdrawalHistoryRepository;
 import java.lang.reflect.Field;
 import java.time.Clock;
 import java.time.Instant;
@@ -22,12 +25,16 @@ import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.dao.CannotAcquireLockException;
 import org.springframework.transaction.support.TransactionCallback;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -47,6 +54,9 @@ class MemberLoginServiceTest {
     @Mock
     private TransactionTemplate transactionTemplate;
 
+    @Mock
+    private MemberWithdrawalHistoryRepository withdrawalHistoryRepository;
+
     private MemberLoginService service;
 
     @SuppressWarnings("unchecked")
@@ -58,6 +68,7 @@ class MemberLoginServiceTest {
                 memberRepository,
                 memberProfileRepository,
                 kakaoUnlinkFailureRepository,
+                withdrawalHistoryRepository,
                 memberTokenService,
                 transactionTemplate,
                 clock);
@@ -72,7 +83,7 @@ class MemberLoginServiceTest {
     void 최초_로그인() throws Exception {
         KakaoIdentity identity = new KakaoIdentity("kakao-1", "점심헌터", null);
         when(kakaoIdTokenExchanger.exchange("code", "state")).thenReturn(identity);
-        when(memberRepository.findByProviderUserId("kakao-1")).thenReturn(Optional.empty());
+        when(memberRepository.findByProviderUserIdForUpdate("kakao-1")).thenReturn(Optional.empty());
         when(memberRepository.saveAndFlush(any(Member.class))).thenAnswer(invocation -> {
             Member savedMember = invocation.getArgument(0);
             setId(savedMember, 1L);
@@ -98,7 +109,7 @@ class MemberLoginServiceTest {
         Member member = Member.create("kakao-1", "기존닉네임", "https://old-image");
         setId(member, 1L);
         when(kakaoIdTokenExchanger.exchange("code", "state")).thenReturn(identity);
-        when(memberRepository.findByProviderUserId("kakao-1")).thenReturn(Optional.of(member));
+        when(memberRepository.findByProviderUserIdForUpdate("kakao-1")).thenReturn(Optional.of(member));
         when(memberTokenService.issue(member)).thenReturn(new MemberTokenService.TokenPair("access", "refresh", 1L));
         when(memberProfileRepository.existsByMember_IdAndOnboardingCompletedAtIsNotNull(1L)).thenReturn(true);
 
@@ -119,31 +130,43 @@ class MemberLoginServiceTest {
         setField(member, "suspendedAt", LocalDateTime.of(2026, 10, 1, 9, 0));
         when(kakaoIdTokenExchanger.exchange("code", "state"))
                 .thenReturn(new KakaoIdentity("kakao-1", "점심헌터", null));
-        when(memberRepository.findByProviderUserId("kakao-1")).thenReturn(Optional.of(member));
+        when(withdrawalHistoryRepository.existsByProviderUserIdAndSuspendedAtIsNotNull("kakao-1"))
+                .thenReturn(true);
 
         assertThatThrownBy(() -> service.login("code", "state"))
-                .isInstanceOf(MemberException.class);
+                .isInstanceOfSatisfying(MemberException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(MemberErrorCode.SUSPENDED_REJOIN_NOT_ALLOWED));
     }
 
     @Test
-    @DisplayName("탈퇴 회원은 같은 카카오 번호로 재가입하고 unlink 실패 행을 지운다")
+    @DisplayName("탈퇴 다음 날에는 같은 카카오 번호로 새 회원을 만든다")
     void 탈퇴_회원_재가입() throws Exception {
         Member member = Member.create("kakao-1", "이전닉네임", null);
         setId(member, 1L);
-        setField(member, "status", MemberStatus.WITHDRAWN);
-        setField(member, "withdrawnAt", LocalDateTime.of(2026, 10, 1, 9, 0));
+        var history = MemberWithdrawalHistory.create(
+                member, LocalDateTime.of(2026, 10, 1, 9, 0));
+        member.withdraw(history.getWithdrawnAt());
         when(kakaoIdTokenExchanger.exchange("code", "state"))
                 .thenReturn(new KakaoIdentity("kakao-1", "새닉네임", "https://image"));
-        when(memberRepository.findByProviderUserId("kakao-1")).thenReturn(Optional.of(member));
-        when(memberTokenService.issue(member)).thenReturn(new MemberTokenService.TokenPair("access", "refresh", 1L));
-        when(memberProfileRepository.existsByMember_IdAndOnboardingCompletedAtIsNotNull(1L)).thenReturn(false);
+        when(withdrawalHistoryRepository.findFirstByProviderUserIdOrderByWithdrawnAtDescIdDesc("kakao-1"))
+                .thenReturn(Optional.of(history));
+        when(memberRepository.saveAndFlush(any(Member.class))).thenAnswer(invocation -> {
+            Member fresh = invocation.getArgument(0);
+            setId(fresh, 2L);
+            return fresh;
+        });
+        when(memberTokenService.issue(any(Member.class)))
+                .thenReturn(new MemberTokenService.TokenPair("access", "refresh", 2L));
 
         MemberLoginService.LoginResult result = service.login("code", "state");
 
         assertThat(result.newMember()).isTrue();
-        assertThat(member.getStatus()).isEqualTo(MemberStatus.ACTIVE);
-        assertThat(member.getNickname()).isEqualTo("새닉네임");
-        verify(kakaoUnlinkFailureRepository).deleteByMember_Id(1L);
+        assertThat(result.onboardingCompleted()).isFalse();
+        assertThat(result.member().getId()).isEqualTo(2L);
+        assertThat(result.member().getNickname()).isEqualTo("새닉네임");
+        assertThat(member.getStatus()).isEqualTo(MemberStatus.WITHDRAWN);
+        assertThat(member.getWithdrawnAt()).isEqualTo(history.getWithdrawnAt());
+        assertThat(member.getProviderUserId()).isNull();
     }
 
     @Test
@@ -153,7 +176,7 @@ class MemberLoginServiceTest {
         setId(member, 1L);
         when(kakaoIdTokenExchanger.exchange("code", "state"))
                 .thenReturn(new KakaoIdentity("kakao-1", "새닉네임", null));
-        when(memberRepository.findByProviderUserId("kakao-1"))
+        when(memberRepository.findByProviderUserIdForUpdate("kakao-1"))
                 .thenReturn(Optional.empty(), Optional.of(member));
         when(memberRepository.saveAndFlush(any(Member.class)))
                 .thenThrow(new DataIntegrityViolationException("duplicate provider user id"));
@@ -172,11 +195,92 @@ class MemberLoginServiceTest {
         DataIntegrityViolationException duplicate = new DataIntegrityViolationException("duplicate provider user id");
         when(kakaoIdTokenExchanger.exchange("code", "state"))
                 .thenReturn(new KakaoIdentity("kakao-1", "점심헌터", null));
-        when(memberRepository.findByProviderUserId("kakao-1")).thenReturn(Optional.empty());
+        when(memberRepository.findByProviderUserIdForUpdate("kakao-1")).thenReturn(Optional.empty());
         when(memberRepository.saveAndFlush(any(Member.class))).thenThrow(duplicate);
 
         assertThatThrownBy(() -> service.login("code", "state"))
                 .isSameAs(duplicate);
+    }
+
+    //Todo: 탈퇴 당일 재가입을 비활성화함. 활성화하려면 이 주석을 해제한다
+    @Disabled
+    @Test
+    void 탈퇴한_날의_재가입을_거부한다() throws Exception {
+        when(kakaoIdTokenExchanger.exchange("code", "state"))
+                .thenReturn(new KakaoIdentity("kakao-1", "새닉네임", null));
+        Member previous = Member.create("kakao-1", "이전닉네임", null);
+        setId(previous, 1L);
+        var history = MemberWithdrawalHistory.create(
+                previous, LocalDateTime.of(2026, 10, 6, 0, 0));
+        when(withdrawalHistoryRepository.findFirstByProviderUserIdOrderByWithdrawnAtDescIdDesc("kakao-1"))
+                .thenReturn(Optional.of(history));
+
+        assertThatThrownBy(() -> service.login("code", "state"))
+                .isInstanceOfSatisfying(MemberException.class,
+                        e -> assertThat(e.getErrorCode().getCode()).isEqualTo("MEMBER-004"));
+    }
+
+    @Test
+    void 해제_작업이_남으면_다음_날에도_재가입을_보류한다() {
+        when(kakaoIdTokenExchanger.exchange("code", "state"))
+                .thenReturn(new KakaoIdentity("kakao-1", "새닉네임", null));
+        when(kakaoUnlinkFailureRepository.existsByProviderUserId("kakao-1")).thenReturn(true);
+
+        assertThatThrownBy(() -> service.login("code", "state"))
+                .isInstanceOfSatisfying(MemberException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(MemberErrorCode.UNLINK_PENDING));
+        org.mockito.Mockito.verifyNoInteractions(memberTokenService);
+    }
+
+    //Todo: 탈퇴 당일 재가입을 비활성화함. 활성화하려면 이 주석을 해제한다
+    @Disabled
+    @ParameterizedTest
+    @CsvSource({
+            "2026-10-06T14:59:59.999999999Z,false",
+            "2026-10-06T15:00:00Z,true"
+    })
+    void 한국_자정부터_재가입을_허용한다(String instant, boolean allowed) throws Exception {
+        service = new MemberLoginService(kakaoIdTokenExchanger, memberRepository, memberProfileRepository,
+                kakaoUnlinkFailureRepository, withdrawalHistoryRepository, memberTokenService, transactionTemplate,
+                Clock.fixed(Instant.parse(instant), ZoneId.of("Asia/Seoul")));
+        when(kakaoIdTokenExchanger.exchange("code", "state"))
+                .thenReturn(new KakaoIdentity("kakao-1", "새닉네임", null));
+        Member previous = Member.create("kakao-1", "이전닉네임", null);
+        setId(previous, 1L);
+        when(withdrawalHistoryRepository.findFirstByProviderUserIdOrderByWithdrawnAtDescIdDesc("kakao-1"))
+                .thenReturn(Optional.of(MemberWithdrawalHistory.create(
+                        previous, LocalDateTime.of(2026, 10, 6, 23, 58))));
+        if (!allowed) {
+            assertThatThrownBy(() -> service.login("code", "state"))
+                    .isInstanceOfSatisfying(MemberException.class,
+                            e -> assertThat(e.getErrorCode()).isEqualTo(MemberErrorCode.SAME_DAY_REJOIN_NOT_ALLOWED));
+            return;
+        }
+        when(memberRepository.saveAndFlush(any(Member.class))).thenAnswer(invocation -> {
+            Member fresh = invocation.getArgument(0);
+            setId(fresh, 2L);
+            return fresh;
+        });
+        when(memberTokenService.issue(any(Member.class)))
+                .thenReturn(new MemberTokenService.TokenPair("access", "refresh", 2L));
+
+        assertThat(service.login("code", "state").member().getId()).isEqualTo(2L);
+    }
+
+    @Test
+    void 일시적인_잠금_교착은_새_트랜잭션으로_다시_판정한다() throws Exception {
+        when(kakaoIdTokenExchanger.exchange("code", "state"))
+                .thenReturn(new KakaoIdentity("kakao-1", "닉네임", null));
+        Member member = Member.create("kakao-1", "닉네임", null);
+        setId(member, 1L);
+        when(memberRepository.findByProviderUserIdForUpdate("kakao-1"))
+                .thenThrow(new CannotAcquireLockException("deadlock"))
+                .thenReturn(Optional.of(member));
+        when(memberTokenService.issue(member))
+                .thenReturn(new MemberTokenService.TokenPair("access", "refresh", 1L));
+
+        assertThat(service.login("code", "state").member()).isSameAs(member);
+        verify(transactionTemplate, org.mockito.Mockito.times(2)).execute(any());
     }
 
     private void setId(Member member, Long id) throws Exception {

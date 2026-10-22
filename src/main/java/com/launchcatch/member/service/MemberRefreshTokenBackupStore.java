@@ -1,6 +1,7 @@
 package com.launchcatch.member.service;
 
 import com.launchcatch.auth.Role;
+import com.launchcatch.auth.opaque.RefreshTokenBackup;
 import com.launchcatch.auth.opaque.RefreshTokenBackupStore;
 import com.launchcatch.member.contract.MemberStatus;
 import com.launchcatch.member.entity.Member;
@@ -23,6 +24,17 @@ class MemberRefreshTokenBackupStore implements RefreshTokenBackupStore {
     @Override
     public Role role() {
         return ROLE;
+    }
+
+    @Override
+    @Transactional(readOnly = true, propagation = Propagation.REQUIRES_NEW)
+    public Optional<RefreshTokenBackup> findValidByHash(String tokenHash, LocalDateTime now) {
+        return memberRepository.findByRefreshTokenHash(tokenHash)
+                .filter(member -> member.getStatus() == MemberStatus.ACTIVE)
+                .filter(member -> member.getRefreshTokenExpiresAt() != null
+                        && member.getRefreshTokenExpiresAt().isAfter(now))
+                .map(member -> new RefreshTokenBackup(
+                        member.getId(), ROLE, member.getRefreshTokenHash(), member.getRefreshTokenExpiresAt()));
     }
 
     @Override

@@ -28,6 +28,10 @@ dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
     implementation 'org.springframework.boot:spring-boot-starter-validation'
 
+    // QR 토큰을 PNG 이미지로 인코딩한다.
+    implementation 'com.google.zxing:core:3.5.4'
+    implementation 'com.google.zxing:javase:3.5.4'
+
     /*
      * 로드 밸런서가 /actuator/health/readiness 를 찌르고 Prometheus 가 /actuator/prometheus 를 긁는다
      *. 이 의존성이 없으면 인스턴스가 healthy 가 되지 않는다.
@@ -77,7 +81,6 @@ dependencies {
     /*
      * JwtTokenProvider 가 io.jsonwebtoken(JJWT) 0.12.x 플루언트 API 를 쓴다.
      * api 는 컴파일 타임에, impl 과 jackson 은 런타임에만 필요하다(서명 클레임 직렬화에 Jackson).
-     * 동적 QR 의 서명 토큰도 같은 라이브러리를 쓴다.
      */
     implementation 'io.jsonwebtoken:jjwt-api:0.12.7'
     runtimeOnly 'io.jsonwebtoken:jjwt-impl:0.12.7'
@@ -130,6 +133,10 @@ dependencies {
     implementation platform('software.amazon.awssdk:bom:2.46.7')
     implementation 'software.amazon.awssdk:s3'
     implementation 'software.amazon.awssdk:apache5-client'
+    // 템플릿 생성 LLM 호출(Bedrock Converse). 연결 타임아웃은 위 apache5-client를 그대로 재사용한다.
+    implementation 'software.amazon.awssdk:bedrockruntime'
+    // 포스터 자동 검수가 이미지 속 글자를 찾는다(Rekognition DetectText, #535).
+    implementation 'software.amazon.awssdk:rekognition'
 
     /*
      * @Scheduled 메서드 공통 로깅(SchedulerLoggingAspect)과 관리 행위 감사 로그가
@@ -193,6 +200,12 @@ dependencies {
      */
     testImplementation 'org.testcontainers:testcontainers-junit-jupiter'
     testImplementation 'org.testcontainers:testcontainers-mysql'
+
+    /*
+     * LLM 이 만든 템플릿 HTML 을 파싱하고 정화한다.
+     * 정화 규칙은 TemplateHtmlSanitizer 가 갖는다.
+     */
+    implementation 'org.jsoup:jsoup:1.23.2'
 }
 
 /*
@@ -231,6 +244,19 @@ tasks.named('bootJar') {
 tasks.named('test') {
     useJUnitPlatform()
     systemProperty 'user.timezone', 'Asia/Seoul'
+
+    /*
+     * 주지 않으면 Gradle 기본값 512MB 로 돈다. 그 안에서 Spring 컨텍스트와 ArchUnit 의 전체
+     * 클래스 그래프가 함께 살아 있어야 한다.
+     *
+     * 재 보니 컨텍스트가 상주로 225MB 를 쓰고 사용 최고가 491MB 였다. 여유가 21MB 라 컨텍스트가
+     * 하나 늘면 테스트 실행기가 종료를 완료하지 못하고 깨진다. 실제로 그렇게 깨진 PR 이 있다.
+     * 컨텍스트 하나가 힙 20~25MB 와 메타스페이스 20~26MB 를 쓴다.
+     *
+     * 컨텍스트 수를 줄이는 것이 근본이고 그 작업은 따로 간다. 이 값은 그때까지 빌드가 한
+     * 테스트 추가에 깨지지 않게 하는 것이다.
+     */
+    maxHeapSize = '2g'
 }
 
 jacoco {

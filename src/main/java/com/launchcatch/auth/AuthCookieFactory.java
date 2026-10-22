@@ -1,5 +1,7 @@
 package com.launchcatch.auth;
 
+import static com.launchcatch.auth.AuthCookieNames.ACCESS_TOKEN_COOKIE_NAME;
+
 import com.launchcatch.auth.jwt.JwtTokenProvider;
 import java.time.Duration;
 import lombok.RequiredArgsConstructor;
@@ -21,7 +23,6 @@ import org.springframework.stereotype.Component;
 @RequiredArgsConstructor
 public class AuthCookieFactory {
 
-    private static final String ACCESS_TOKEN_COOKIE_NAME = "accessToken";
     private static final String REFRESH_TOKEN_COOKIE_NAME = "refreshToken";
     private static final String SAME_SITE_STRICT = "Strict";
 
@@ -31,7 +32,7 @@ public class AuthCookieFactory {
     /*
      * Refresh 는 재발급과 로그아웃 경로에만 실린다.
      *
-     * 소비자가 셋이라 경로도 셋이다(docs/api-spec/auth.md 의 공통 토큰 정책). 옮겨온 쪽은
+     * 소비자가 셋이라 경로도 셋이다(docs/api-spec/auth-api-spec.md 의 공통 토큰 정책). 옮겨온 쪽은
      * 회원과 관리자 둘이어서 경로가 둘이었다.
      *
      * 끝의 슬래시가 중요하다. RFC 6265 5.1.4 의 path-match 는 경로가 같거나, 쿠키 path 가

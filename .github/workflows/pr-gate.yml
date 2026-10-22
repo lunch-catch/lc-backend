@@ -58,11 +58,63 @@ jobs:
               exit 1 ;;
           esac
 
+      # develop 으로 가는 PR 은 본문에 이슈를 닫는 키워드를 둔다 (AGENTS.md 의 이슈와 PR 규칙).
+      #
+      # 기본 브랜치가 develop 이라 그 키워드가 있으면 병합 시점에 깃허브가 이슈를 닫는다.
+      # 없으면 일이 끝나도 이슈가 열린 채로 남는다. 지금까지 병합된 99건 중 21건에 키워드가
+      # 없었고 그중 셋은 이슈가 열린 채였다. 사람이 세어 보기 전에는 아무도 몰랐다.
+      #
+      # 릴리스 PR 은 main 으로 가므로 이 조건에 걸리지 않고, 되병합 PR 은 출처가 main 이라 뺀다.
+      # 그 둘은 이슈를 만들지 않는다.
+      - name: 이슈를 닫는 키워드 확인
+        if: github.event_name == 'pull_request' && github.base_ref == 'develop' && github.head_ref != 'main'
+        env:
+          BODY: ${{ github.event.pull_request.body }}
+        run: |
+          # 다른 저장소의 이슈를 닫는 owner/repo#N 꼴도 받는다. 깃허브가 닫아 주는 표기를 다 받아야
+          # 이 검사 때문에 멀쩡한 PR 이 막히지 않는다.
+          if printf '%s' "$BODY" | grep -qiE '(close[sd]?|fix(e[sd])?|resolve[sd]?)[[:space:]]+([-A-Za-z0-9_.]+/[-A-Za-z0-9_.]+)?#[0-9]+'; then
+            echo "이슈를 닫는 키워드가 있다."
+          else
+            echo "::error::본문의 '변경 이유' 절에 Closes #<이슈번호> 를 적는다. 기본 브랜치가 develop 이라 그 키워드가 있어야 병합 시점에 이슈가 닫힌다. 본문을 고친 뒤에는 이 검사를 Re-run jobs 로 다시 돌린다. 본문 수정만으로는 다시 돌지 않는다."
+            exit 1
+          fi
+
       - name: 체크아웃
         uses: actions/checkout@v4
         with:
           # SonarQube 가 신규 코드를 가리려고 blame 을 읽으므로 전체 이력이 필요하다
           fetch-depth: 0
+
+      # 바꾼 파일이 docs/ 아래뿐이면 테스트와 정적 분석을 건너뛴다.
+      #
+      # 게이트를 끄는 것이 아니라 볼 것이 없을 때 빨리 통과시키는 것이다. 코드가 한 줄도 바뀌지
+      # 않았으면 테스트 결과와 커버리지가 base 와 같다. 그 6분을 문서 PR 이 치를 이유가 없다.
+      #
+      # paths-ignore 로 워크플로를 끄지 않는 이유는 필수 체크가 보고되지 않으면 머지 큐가
+      # 그 PR 을 영원히 기다리기 때문이다. 같은 잡으로 돌면서 무거운 단계만 건너뛴다.
+      #
+      # 판정은 base 와의 세 점 비교다. 체크아웃이 fetch-depth 0 이라 merge-base 를 찾을 수 있다.
+      # 문서 밖 파일이 하나라도 있으면 전부 돌린다. .github/ 변경도 여기에 걸린다.
+      - id: scope
+        name: 변경 범위 확인
+        env:
+          BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+        run: |
+          files=$(git diff --name-only "$BASE_SHA"...HEAD)
+          if [ -z "$files" ]; then
+            echo "바뀐 파일이 없다. 전부 돌린다."
+            echo "docs_only=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          printf '바뀐 파일\n%s\n' "$files"
+          if printf '%s\n' "$files" | grep -qvE '^docs/'; then
+            echo "문서 밖 변경이 있다. 전부 돌린다."
+            echo "docs_only=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "docs/ 아래만 바뀌었다. 테스트와 정적 분석을 건너뛴다."
+            echo "docs_only=true" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: JDK 21
         uses: actions/setup-java@v4
@@ -77,6 +129,7 @@ jobs:
       # 커버리지 기준은 com.launchcatch.*.service.* 의 메서드 100% 다.
       # 통합 테스트를 쓰면 Testcontainers 가 MySQL 8.4 와 Valkey 9 를 띄우므로 러너의 도커가 필요하다.
       - name: 테스트와 커버리지
+        if: steps.scope.outputs.docs_only != 'true'
         run: ./gradlew check --no-daemon
 
       # SONAR_TOKEN 이 없으면 건너뛴다. 토큰을 넣기 전에도 커버리지 게이트는 돌아야 한다.
@@ -88,7 +141,7 @@ jobs:
       # 정적 분석은 PR 실행이 맡는다. 단 SONAR_TOKEN 이 없으면 PR 실행도 건너뛰므로,
       # 그 상태에서는 신규 Blocker 를 아무도 보지 않는다. 토큰이 있어야 성립하는 분담이다.
       - name: 정적 분석
-        if: github.event_name == 'pull_request' && env.SONAR_TOKEN != ''
+        if: steps.scope.outputs.docs_only != 'true' && github.event_name == 'pull_request' && env.SONAR_TOKEN != ''
         run: ./gradlew sonar --no-daemon
 
       # sonar 태스크는 분석 결과를 올리기만 하고 성공으로 끝난다. 차단은 여기서 한다.
@@ -99,7 +152,7 @@ jobs:
       # 커스텀 게이트로 그 조건을 빼려면 Team 플랜이 필요하다.
       # 이슈 검색 API 는 무료 플랜에서도 되므로 신규 Blocker 만 직접 센다 (BLD-2-02).
       - name: 신규 Blocker 0건 확인
-        if: github.event_name == 'pull_request' && env.SONAR_TOKEN != ''
+        if: steps.scope.outputs.docs_only != 'true' && github.event_name == 'pull_request' && env.SONAR_TOKEN != ''
         env:
           PR: ${{ github.event.pull_request.number }}
         run: |
@@ -129,7 +182,7 @@ jobs:
           fi
 
       - name: 정적 분석을 건너뛴 이유
-        if: github.event_name == 'pull_request' && env.SONAR_TOKEN == ''
+        if: steps.scope.outputs.docs_only != 'true' && github.event_name == 'pull_request' && env.SONAR_TOKEN == ''
         run: |
           echo "::warning::SONAR_TOKEN 이 없어 정적 분석을 건너뛰었다. 저장소 Secrets 에 등록해야 한다."
 

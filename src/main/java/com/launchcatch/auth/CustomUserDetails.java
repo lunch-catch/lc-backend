@@ -1,7 +1,9 @@
 package com.launchcatch.auth;
 
+import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.userdetails.UserDetails;
@@ -17,11 +19,32 @@ public class CustomUserDetails implements UserDetails {
 
     private final Long id;
     private final Role role;
+    private final LocalDateTime issuedAt;
+    // JWT의 추가 정보를 도메인에 전달하며 정보의 의미는 해당 도메인이 해석한다.
+    private final Map<String, Object> additionalClaims;
 
     public CustomUserDetails(Long id, Role role) {
+        this(id, role, null);
+    }
+
+    // 추가 정보가 없는 기존 호출은 빈 Map으로 처리한다.
+    public CustomUserDetails(Long id, Role role, LocalDateTime issuedAt) {
+        this(id, role, issuedAt, Map.of());
+    }
+
+    public CustomUserDetails(Long id, Role role, LocalDateTime issuedAt, Map<String, Object> additionalClaims) {
+        // 인증 후 다른 코드가 클레임 항목을 추가하거나 바꾸지 못하도록 복사한다.
+        this.additionalClaims = Map.copyOf(additionalClaims);
         this.id = id;
         this.role = role;
+        this.issuedAt = issuedAt;
     }
+
+    public LocalDateTime getIssuedAt() {
+        return issuedAt;
+    }
+
+    public Map<String, Object> getAdditionalClaims() { return additionalClaims; }
 
     public Long getId() {
         return id;
@@ -30,7 +53,7 @@ public class CustomUserDetails implements UserDetails {
     public Role getRole() {
         return role;
     }
-
+  
     @Override
     public Collection<? extends GrantedAuthority> getAuthorities() {
         return List.of(new SimpleGrantedAuthority(role.toAuthority()));

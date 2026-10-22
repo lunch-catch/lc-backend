@@ -23,6 +23,7 @@
 | 도메인 경계와 의존 방향 | [domain-boundary-guideline.md](./code-convention/domain-boundary-guideline.md) | [domain-boundary-rationale.md](./code-convention/domain-boundary-rationale.md) |
 | 빌드 게이트 (커버리지, 정적 분석) | [build-gate-guideline.md](./code-convention/build-gate-guideline.md) | [build-gate-rationale.md](./code-convention/build-gate-rationale.md) |
 | 응답과 예외 흐름 | [response-exception-flow.md](./code-convention/response-exception-flow.md) | - |
+| 로깅 (이 저장소 적용편) | [logging-project-guideline.md](./code-convention/logging-project-guideline.md) | [logging-project-rationale.md](./code-convention/logging-project-rationale.md) |
 
 ### 품질 속성 (`docs/software-quality`)
 
@@ -170,7 +171,7 @@
 | 트랜잭션 경계, 외부 호출 위치, 트랜잭션 길이 | `DI-4-*` | 설계 문서 2.4절의 이벤트 처리 기준 |
 | 잠금 전략, 획득 순서, 갱신 손실 | `DI-2-*` | 아직 저장소에 없다. 정하면 이 칸을 채운다 |
 | N+1, 인덱스, 쿼리 성능 | `PERF-2-*` | 아직 저장소에 없다. 응답 시간 목표를 정하면 이 칸을 채운다 |
-| 인가와 소유권 검증 | `SEC-1-*` | [api-spec/README.md](./api-spec/README.md) 의 인증 절, 설계 문서의 의존 규칙 5 |
+| 인가와 소유권 검증 | `SEC-1-*` | [api-spec/api-spec.md](./api-spec/api-spec.md) 의 인증 절, 설계 문서의 의존 규칙 5 |
 | 타임아웃, 재시도, 서킷 브레이커 | `REL-2-*` | `application.yml` 의 resilience4j 설정과 그 주석 |
 
 **가이드는 유형을 주고 수치는 주지 않는다.** 임계치가 대부분 등급 `C`(근거 없는 예시값)라서
@@ -185,7 +186,7 @@
 
 | 사안 | 지금 어디를 근거로 보는가 |
 |------|--------------------------|
-| 엔티티 뼈대와 시각 컬럼, 식별자 전략 | `global.entity` 의 `BaseTimeEntity`, `docs/api-spec/README.md` 의 식별자 절 |
+| 엔티티 뼈대와 시각 컬럼, 식별자 전략 | `global.entity` 의 `BaseTimeEntity`, `docs/api-spec/api-spec.md` 의 식별자 절 |
 
 경계 기준은 **품질 속성은 "얼마나 잘 하는가", `code-convention` 은 "어떻게 쓰는가"(코드 관용과 패턴)**다.
 
@@ -229,6 +230,7 @@ effective-java-guideline.md와 설계 문서의 경계 규칙은 변경 위치�
 | qa-performance-efficiency-guideline.md | 반복문 안의 조회, 컬렉션 순회 중 연관 접근, 페이지네이션, 대량 조회 |
 | qa-reliability-guideline.md | `WebClient`, `RestClient`, 타임아웃과 재시도 설정, `@Retryable`, 서킷 브레이커, 멱등 키 |
 | qa-observability-guideline.md | 로깅 호출, MDC, 예외 처리에서 남기는 정보, 메트릭 등록 |
+| logging-project-guideline.md | `log.info`, `log.warn`, `log.error`, `log.debug` 호출, `event=` 이벤트명, MDC 와 `traceId`, 로그에 넣는 예외 정보, `PiiMasker` 와 민감 키, `logback-spring.xml` |
 | qa-compatibility-guideline.md | 응답 필드 제거나 이름 변경, enum 값 삭제, 마이그레이션의 컬럼 제거, 오류 응답 본문 |
 | qa-maintainability-guideline.md | 긴 메서드와 깊은 분기, 중복 블록, 죽은 코드, 설정 하드코딩 |
 
@@ -250,6 +252,7 @@ effective-java-guideline.md와 설계 문서의 경계 규칙은 변경 위치�
 | `**/service/**` | qa-data-integrity-guideline.md, qa-reliability-guideline.md |
 | `**/repository/**` | qa-performance-efficiency-guideline.md |
 | `src/main/resources/db/migration/**/*.sql` | qa-compatibility-guideline.md |
+| `**/global/logging/**`, `src/main/resources/logback-spring.xml` | logging-project-guideline.md |
 
 ### 도메인 경계 점검의 자동화
 

@@ -1,13 +1,21 @@
 package com.launchcatch.ops;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.launchcatch.IntegrationTestSupport;
+import com.launchcatch.ops.contract.BatchExecutionQueryService;
+import com.launchcatch.ops.contract.BatchExecutionRecord;
 import com.launchcatch.ops.entity.BatchExecutionLog;
 import com.launchcatch.ops.entity.BatchStatus;
 import com.launchcatch.ops.repository.BatchExecutionLogRepository;
+import com.launchcatch.ops.scheduler.BatchAlert;
+import com.launchcatch.ops.scheduler.BatchServerId;
 import com.launchcatch.ops.scheduler.StepOutcome;
 import com.launchcatch.ops.service.BatchExecutionService;
+import java.time.Clock;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
@@ -20,14 +28,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.test.context.DynamicPropertyRegistry;
-import org.springframework.test.context.DynamicPropertySource;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
-import org.testcontainers.mysql.MySQLContainer;
-import org.testcontainers.utility.DockerImageName;
 
 /*
  * 점유와 이어받기를 실제 MySQL 에서 확인한다.
@@ -37,36 +38,27 @@ import org.testcontainers.utility.DockerImageName;
  * 종료 시각, 실패 사유는 짝을 요구하는 제약이 걸려 있어 한쪽만 바꾸면 저장이 거부된다.
  * 그 거부는 배치가 실패를 기록하려는 순간에 터지므로, 실패 기록 자체가 사라진다.
  */
-@Testcontainers
-@SpringBootTest
-class BatchExecutionIntegrationTest {
+class BatchExecutionIntegrationTest extends AbstractOpsIntegrationTest {
 
-    private static final String ME = "batch-1";
+    private static final String ME = IntegrationTestSupport.BATCH_OWNER;
     private static final String OTHER = "batch-2";
     private static final String JOB = "LOAD_DAILY_CANDIDATE";
     private static final LocalDate DATE = LocalDate.of(2026, 10, 6);
-
-    @Container
-    static final MySQLContainer MYSQL = new MySQLContainer(DockerImageName.parse("mysql:8.4"));
-
-    /** 운영 비밀이 아니라 컨텍스트를 띄우기 위한 자리 채움이다. */
-    private static final String DUMMY_JWT_SECRET =
-            "test-only-secret-not-used-anywhere-else-0123456789abcdef";
-
-    @DynamicPropertySource
-    static void properties(DynamicPropertyRegistry registry) {
-        registry.add("spring.datasource.url", MYSQL::getJdbcUrl);
-        registry.add("spring.datasource.username", MYSQL::getUsername);
-        registry.add("spring.datasource.password", MYSQL::getPassword);
-        registry.add("jwt.secret", () -> DUMMY_JWT_SECRET);
-        registry.add("launchcatch.batch.owner-id", () -> ME);
-    }
 
     @Autowired
     private BatchExecutionService service;
 
     @Autowired
     private BatchExecutionLogRepository logs;
+
+    @Autowired
+    private BatchAlert alert;
+
+    @Autowired
+    private Clock clock;
+
+    @Autowired
+    private BatchExecutionQueryService batchExecutionQueryService;
 
     @Autowired
     private DataSource dataSource;
@@ -93,17 +85,34 @@ class BatchExecutionIntegrationTest {
         logs.saveAndFlush(BatchExecutionLog.running(jobName, DATE, owner));
     }
 
-    /** 두 서버가 같은 순간에 점유를 시도한 결과를 모은다. */
+    /** 다른 서버가 이어받은 상태를 직접 만든다. takeOverStale은 언제나 내 것으로만 가져온다. */
+    private void takeOverAs(String jobName, String newOwner) {
+        jdbc.update("UPDATE batch_execution_log SET owner_id = ?, attempt_no = attempt_no + 1"
+                + " WHERE job_name = ?", newOwner, jobName);
+    }
+
+    /*
+     * 서로 다른 소유자를 가진 두 서버가 같은 순간에 점유를 시도한 결과를 모은다.
+     *
+     * 점유는 upsert 뒤 그 행의 owner_id 가 나인지로 가른다(#526). 두 시도가 같은 ownerId를
+     * 쓰면 승자의 행도 결국 그 ownerId라 둘 다 자기 것으로 읽혀 "정확히 하나만 이긴다" 를
+     * 검증할 수 없다. 그래서 서버마다 다른 BatchExecutionService 인스턴스로 경합을 만든다.
+     */
     private List<Boolean> claimTogether() throws Exception {
+        BatchExecutionService asOther = new BatchExecutionService(logs, alert, clock, new BatchServerId(OTHER));
         ExecutorService pool = Executors.newFixedThreadPool(2);
         try {
             CountDownLatch gate = new CountDownLatch(1);
-            Callable<Boolean> attempt = () -> {
+            Callable<Boolean> asMe = () -> {
                 gate.await();
                 return service.claim(JOB, DATE);
             };
-            Future<Boolean> left = pool.submit(attempt);
-            Future<Boolean> right = pool.submit(attempt);
+            Callable<Boolean> asOtherServer = () -> {
+                gate.await();
+                return asOther.claim(JOB, DATE);
+            };
+            Future<Boolean> left = pool.submit(asMe);
+            Future<Boolean> right = pool.submit(asOtherServer);
             gate.countDown();
             return List.of(left.get(20, TimeUnit.SECONDS), right.get(20, TimeUnit.SECONDS));
         } finally {
@@ -114,8 +123,9 @@ class BatchExecutionIntegrationTest {
     /*
      * 두 서버가 같은 시각에 시도하는 것이 정상 운영이다.
      *
-     * 유일 제약이 둘 중 하나를 떨어뜨리는데, 경합 상황에서 InnoDB 가 중복 키 대신 다른 예외를
-     * 내면 지는 쪽이 기동 실패처럼 보인다. 순차 시도로는 그 구간을 지나가지 않는다.
+     * 상대의 커밋을 기다리는 구간에서 InnoDB 가 락 대기 시간 초과나 교착을 낼 수 있는데,
+     * claim 이 그 경우도 한 번 더 시도해 깨끗하게 가른다. 순차 시도로는 이 구간을 지나가지
+     * 않는다.
      */
     @Test
     @DisplayName("동시에 점유를 시도하면 정확히 하나만 이긴다")
@@ -124,14 +134,33 @@ class BatchExecutionIntegrationTest {
     }
 
     /*
-     * 유일 제약이 중복 실행을 막는다.
      * 두 서버가 같은 시각에 시도하는 것이 정상이라, 지는 쪽이 조용히 비켜야 한다.
+     * owner_id 로 가르므로 다른 서버여야 진다. 같은 서버의 재시도는 아래
+     * 같은_서버가_다시_불러도_자기_점유다 가 다룬다.
      */
     @Test
-    @DisplayName("같은 작업과 영업일은 한 번만 점유된다")
+    @DisplayName("같은 작업과 영업일은 다른 서버에는 한 번만 점유된다")
     void 점유는_한_번만() {
         assertThat(service.claim(JOB, DATE)).isTrue();
-        assertThat(service.claim(JOB, DATE)).isFalse();
+
+        BatchExecutionService other = new BatchExecutionService(logs, alert, clock, new BatchServerId(OTHER));
+        assertThat(other.claim(JOB, DATE)).isFalse();
+    }
+
+    /*
+     * #526. 연결이 끊겨 커밋 여부를 모른 채 같은 서버가 다시 시도해도, owner_id 가 그대로
+     * 나라 내 것으로 정확히 읽힌다. 상태가 바뀌거나 세대가 오르지 않는다.
+     */
+    @Test
+    @DisplayName("같은 서버가 다시 불러도 자기 점유로 판정한다")
+    void 같은_서버가_다시_불러도_자기_점유다() {
+        assertThat(service.claim(JOB, DATE)).isTrue();
+
+        assertThat(service.claim(JOB, DATE)).isTrue();
+
+        BatchExecutionLog row = reload(JOB);
+        assertThat(row.getOwnerId()).isEqualTo(ME);
+        assertThat(row.getAttemptNo()).isEqualTo(1);
     }
 
     /*
@@ -139,7 +168,7 @@ class BatchExecutionIntegrationTest {
      * 상태만 바꾸는 UPDATE 를 쓰면 여기서 저장이 거부된다.
      */
     @Test
-    @DisplayName("성공으로 닫으면 종료 시각이 남고 사유는 비어 있다")
+    @DisplayName("성공으로 닫으면 종료 시각이 남고 사유와 처리 건수는 비어 있다")
     void 성공으로_닫는다() {
         service.claim(JOB, DATE);
 
@@ -149,6 +178,18 @@ class BatchExecutionIntegrationTest {
         assertThat(row.getStatus()).isEqualTo(BatchStatus.SUCCESS);
         assertThat(row.getFinishedAt()).isNotNull();
         assertThat(row.getFailureReason()).isNull();
+        assertThat(row.getProcessedCount()).isNull();
+    }
+
+    /** #359. 원천 행을 보지 못하는 호출자(분석)가 집계 결과로 쓴 행 수를 처리 건수로 남긴다. */
+    @Test
+    @DisplayName("건수를 주고 성공으로 닫으면 처리 건수가 그 값으로 남는다")
+    void 성공으로_닫으면_처리_건수가_남는다() {
+        service.claim(JOB, DATE);
+
+        service.succeed(JOB, DATE, 120);
+
+        assertThat(reload(JOB).getProcessedCount()).isEqualTo(120);
     }
 
     /** chk_batch_failure_reason 이 FAILED 와 사유를 짝으로 요구한다. */
@@ -183,6 +224,19 @@ class BatchExecutionIntegrationTest {
         assertThat(row.getFailureReason()).isNull();
         assertThat(row.getOwnerId()).isEqualTo(ME);
         assertThat(service.retry(JOB, DATE)).isFalse();
+    }
+
+    /** #359. 지난 시도의 시작 시각이 남으면 운영 대시보드가 지난 시도의 소요 시간을 보여 준다. */
+    @Test
+    @DisplayName("수동 재실행은 시작 시각을 새 시도의 시각으로 되돌린다")
+    void 수동_재실행이_시작_시각을_새로_한다() {
+        service.claim(JOB, DATE);
+        LocalDateTime startedAt = reload(JOB).getCreatedAt();
+        service.fail(JOB, DATE, "원본을 읽지 못했다");
+
+        assertThat(service.retry(JOB, DATE)).isTrue();
+
+        assertThat(reload(JOB).getCreatedAt()).isAfter(startedAt);
     }
 
     @Test
@@ -274,6 +328,70 @@ class BatchExecutionIntegrationTest {
     }
 
     /*
+     * 재실행(rerun)은 retry와 달리 실패한 행도 되돌린다. restartFailed와 같은 리셋 필드를 쓰므로
+     * chk_batch_failure_reason, chk_batch_finished 가 짝을 요구하는 것도 같이 확인된다.
+     */
+    @Test
+    @DisplayName("재실행은 실패한 행을 되돌리고 두 번은 걸리지 않는다")
+    void 재실행_FAILED() {
+        service.claim(JOB, DATE);
+        service.fail(JOB, DATE, "원본을 읽지 못했다");
+
+        assertThat(service.rerun(JOB, DATE)).isTrue();
+
+        BatchExecutionLog row = reload(JOB);
+        assertThat(row.getStatus()).isEqualTo(BatchStatus.RUNNING);
+        assertThat(row.getFinishedAt()).isNull();
+        assertThat(row.getFailureReason()).isNull();
+        assertThat(row.getOwnerId()).isEqualTo(ME);
+        assertThat(service.rerun(JOB, DATE)).isFalse();
+    }
+
+    /** retry는 FAILED만 다뤄서 이 행을 못 되돌린다. rerun만 되는 새 경로다(#339). */
+    @Test
+    @DisplayName("재실행은 이미 성공한 행도 되돌린다")
+    void 재실행_SUCCESS() {
+        service.claim(JOB, DATE);
+        service.succeed(JOB, DATE);
+
+        assertThat(service.retry(JOB, DATE)).isFalse();
+        assertThat(service.rerun(JOB, DATE)).isTrue();
+
+        BatchExecutionLog row = reload(JOB);
+        assertThat(row.getStatus()).isEqualTo(BatchStatus.RUNNING);
+        assertThat(row.getFinishedAt()).isNull();
+        assertThat(row.getFailureReason()).isNull();
+        assertThat(row.getOwnerId()).isEqualTo(ME);
+    }
+
+    /*
+     * #359. 분석이 매일 밤 전날 FAILED나 SUCCESS로 끝난 영업일을 사람 없이 재실행해도, 그
+     * 시도의 시작 시각과 처리 건수가 지난 시도의 것으로 뒤섞이지 않아야 한다.
+     */
+    @Test
+    @DisplayName("재실행은 시작 시각을 새로 하고 처리 건수를 비운다")
+    void 재실행이_시작_시각과_처리_건수를_새로_한다() {
+        service.claim(JOB, DATE);
+        LocalDateTime startedAt = reload(JOB).getCreatedAt();
+        service.succeed(JOB, DATE, 77);
+
+        assertThat(service.rerun(JOB, DATE)).isTrue();
+
+        BatchExecutionLog row = reload(JOB);
+        assertThat(row.getCreatedAt()).isAfter(startedAt);
+        assertThat(row.getProcessedCount()).isNull();
+    }
+
+    @Test
+    @DisplayName("실행 중인 행은 재실행으로 되돌리지 않는다")
+    void 재실행_RUNNING은_무효() {
+        service.claim(JOB, DATE);
+
+        assertThat(service.rerun(JOB, DATE)).isFalse();
+        assertThat(reload(JOB).getStatus()).isEqualTo(BatchStatus.RUNNING);
+    }
+
+    /*
      * 서버가 죽으면 묶음 행과 단계 행이 함께 오래된다. 이어받기는 둘을 함께 가져오고
      * updated_at 을 지금으로 바꾼다. 그 뒤 묶음을 다시 도는 길에서 그 단계를 시작할 수 있어야
      * "SUCCESS 가 아닌 첫 단계부터 다시 실행한다" 가 성립한다.
@@ -296,5 +414,134 @@ class BatchExecutionIntegrationTest {
 
         assertThat(service.begin(JOB, DATE)).isEqualTo(StepOutcome.STARTED);
         assertThat(reload(JOB).getOwnerId()).isEqualTo(ME);
+    }
+
+    /*
+     * #360. claim=1, 이어받기=2, 수동 재실행=3이다. 자동 재실행(recordRetry)은 세대를 올리지
+     * 않는다. 같은 서버가 같은 시도를 이어가는 것이라 소유자나 결과 공개의 전제가 바뀌지 않는다.
+     */
+    @Test
+    @DisplayName("claim, 이어받기, 수동 재실행을 거치면 세대가 1, 2, 3이다")
+    void 세대가_claim_이어받기_재실행을_거치며_오른다() {
+        claimAs(JOB, OTHER);
+        assertThat(reload(JOB).getAttemptNo()).isEqualTo(1);
+
+        makeStale(JOB);
+        assertThat(service.takeOverStale()).hasSize(1);
+        assertThat(reload(JOB).getAttemptNo()).isEqualTo(2);
+
+        service.fail(JOB, DATE, "원본을 읽지 못했다");
+        assertThat(service.retry(JOB, DATE)).isTrue();
+        assertThat(reload(JOB).getAttemptNo()).isEqualTo(3);
+    }
+
+    /*
+     * #434. 분석이 claim/retry/rerun 직후 자기 세대를 알 방법이 없어 세대 확인
+     * (BatchAttemptGuard.assertCurrentAttempt)을 이어받은 경로에만 연결했다. attemptNo를
+     * BatchExecutionRecord로 공개해 정상 경로도 자기 세대를 읽을 수 있게 한다.
+     */
+    @Test
+    @DisplayName("claim, 이어받기, 수동 재실행을 거치며 오른 세대가 조회 결과에도 그대로 나온다")
+    void 세대_변화가_조회_결과에도_나온다() {
+        claimAs(JOB, OTHER);
+        assertThat(recordFor(JOB).attemptNo()).isEqualTo(1);
+
+        makeStale(JOB);
+        assertThat(service.takeOverStale()).hasSize(1);
+        assertThat(recordFor(JOB).attemptNo()).isEqualTo(2);
+
+        service.fail(JOB, DATE, "원본을 읽지 못했다");
+        assertThat(service.retry(JOB, DATE)).isTrue();
+        assertThat(recordFor(JOB).attemptNo()).isEqualTo(3);
+    }
+
+    private BatchExecutionRecord recordFor(String jobName) {
+        return batchExecutionQueryService.findByBusinessDate(DATE).stream()
+                .filter(record -> record.jobName().equals(jobName))
+                .findFirst()
+                .orElseThrow();
+    }
+
+    @Test
+    @DisplayName("분석의 재실행(rerun)도 세대를 하나 올린다")
+    void 재실행도_세대를_올린다() {
+        service.claim(JOB, DATE);
+        service.succeed(JOB, DATE);
+
+        assertThat(service.rerun(JOB, DATE)).isTrue();
+
+        assertThat(reload(JOB).getAttemptNo()).isEqualTo(2);
+    }
+
+    /*
+     * #360. succeed/fail의 소유자 조건만으로는 임대를 잃은 서버를 막지 못한다. 그 조건은
+     * 결과가 이미 커밋된 뒤에야 걸린다. assertCurrentAttempt는 공개 전에 막는다.
+     */
+    @Test
+    @DisplayName("내 소유이고 세대가 같으면 통과한다")
+    void 세대가_맞으면_통과한다() {
+        service.claim(JOB, DATE);
+
+        service.assertCurrentAttempt(JOB, DATE, 1);
+    }
+
+    @Test
+    @DisplayName("임대를 잃어 다른 서버가 이어받은 뒤에는 예외가 난다")
+    void 임대를_잃으면_예외가_난다() {
+        service.claim(JOB, DATE);
+        takeOverAs(JOB, OTHER);
+
+        assertThatThrownBy(() -> service.assertCurrentAttempt(JOB, DATE, 1))
+                .isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    @DisplayName("새로 이어받은 서버의 확인은 통과한다")
+    void 새_소유_서버는_통과한다() {
+        claimAs(JOB, OTHER);
+        makeStale(JOB);
+        assertThat(service.takeOverStale()).hasSize(1);
+
+        service.assertCurrentAttempt(JOB, DATE, 2);
+    }
+
+    /*
+     * #591. 같은 서버가 실패한 행을 다시 잡으면 소유자는 그대로이고 세대만 오른다.
+     * 낡은 세대의 쓰기는 세대 조건에 걸려 새 시도의 상태, 처리 건수, 재실행 횟수를 바꾸지 못한다.
+     */
+    @Test
+    @DisplayName("같은 서버가 새 세대를 잡으면 낡은 세대의 닫기, 재실행 기록, 생존 확인은 걸리지 않는다")
+    void 낡은_세대의_쓰기는_새_세대의_행을_바꾸지_못한다() {
+        service.claim(JOB, DATE);
+        service.fail(JOB, DATE, "원본을 읽지 못했다");
+        assertThat(service.retry(JOB, DATE)).isTrue();
+
+        assertThat(service.renewAttempt(JOB, DATE, 1)).isFalse();
+        assertThat(service.recordRetryAttempt(JOB, DATE, 1, "교착")).isFalse();
+        service.succeedAttempt(JOB, DATE, 1, 7);
+        service.failAttempt(JOB, DATE, 1, "낡은 시도가 실패했다");
+
+        BatchExecutionLog row = reload(JOB);
+        assertThat(row.getStatus()).isEqualTo(BatchStatus.RUNNING);
+        assertThat(row.getAttemptNo()).isEqualTo(2);
+        assertThat(row.getProcessedCount()).isNull();
+        assertThat(row.getRetryCount()).isZero();
+    }
+
+    @Test
+    @DisplayName("세대가 맞으면 세대를 받은 쓰기가 그 행을 고친다")
+    void 세대가_맞으면_세대를_받은_쓰기가_걸린다() {
+        service.claim(JOB, DATE);
+        service.fail(JOB, DATE, "원본을 읽지 못했다");
+        assertThat(service.retry(JOB, DATE)).isTrue();
+
+        assertThat(service.renewAttempt(JOB, DATE, 2)).isTrue();
+        assertThat(service.recordRetryAttempt(JOB, DATE, 2, "교착")).isTrue();
+        service.succeedAttempt(JOB, DATE, 2, 7);
+
+        BatchExecutionLog row = reload(JOB);
+        assertThat(row.getStatus()).isEqualTo(BatchStatus.SUCCESS);
+        assertThat(row.getProcessedCount()).isEqualTo(7);
+        assertThat(row.getRetryCount()).isEqualTo(1);
     }
 }

@@ -1,5 +1,6 @@
 package com.launchcatch.auth;
 
+import jakarta.servlet.DispatcherType;
 import java.util.List;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.security.autoconfigure.actuate.web.servlet.EndpointRequest;
@@ -8,6 +9,7 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
+import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
@@ -38,6 +40,7 @@ import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
  */
 @Configuration
 @EnableWebSecurity
+@EnableMethodSecurity
 public class SecurityConfig {
 
     private static final int PLATFORM_CHAIN_ORDER = 10;
@@ -90,20 +93,26 @@ public class SecurityConfig {
      * 도메인 체인을 새로 추가하는 것을 잊어도 열리지 않고 막히는 쪽으로 실패한다.
      *
      * 로그인 전에 열리는 경로는 여섯이다. 로그인 셋과 토큰 재발급 셋이다
-     * (docs/api-spec/auth.md 의 목록). 그 여섯은 해당 도메인 체인이 permitAll 로 선언한다.
+     * (docs/api-spec/auth-api-spec.md 의 목록). 그 여섯은 해당 도메인 체인이 permitAll 로 선언한다.
      *
      * 카카오 인가 코드 교환은 따로 세지 않는다. 사용자의 로그인 수단이 카카오뿐이라
      * 사용자 로그인과 같은 경로다.
      *
      * 점주 회원가입도 로그인 전에 열리지만 이 수에 넣지 않는다. 계정을 만드는 일이고 토큰
-     * 정책과 무관해서 auth.md 가 소유하지 않는다. 점주 도메인의 문서와 체인이 가진다.
+     * 정책과 무관해서 auth-api-design.md 가 소유하지 않는다. 점주 도메인의 문서와 체인이 가진다.
+     *
+     * ERROR 디스패치만 통과시킨다. 컨테이너나 필터가 sendError 로 끝낸 요청은 /error 로 다시
+     * 들어오는데 그 경로는 어느 도메인 체인도 맡지 않아 여기로 온다. 거부하면 원래 오류가 403 으로
+     * 덮인다. 이미 정해진 오류 응답을 그리는 것뿐이라 새로 열리는 업무 경로는 없다.
      */
     @Bean
     @Order(Ordered.LOWEST_PRECEDENCE)
     public SecurityFilterChain defaultFilterChain(HttpSecurity http, ApiSecurityDefaults defaults)
             throws Exception {
         return defaults.apply(http)
-                .authorizeHttpRequests(auth -> auth.anyRequest().authenticated())
+                .authorizeHttpRequests(auth -> auth
+                        .dispatcherTypeMatchers(DispatcherType.ERROR).permitAll()
+                        .anyRequest().denyAll())
                 .build();
     }
 
@@ -118,7 +127,7 @@ public class SecurityConfig {
         configuration.setAllowedMethods(List.of("GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"));
         configuration.setAllowedHeaders(List.of("Content-Type"));
         /*
-         * Retry-After 를 자바스크립트가 읽을 수 있게 한다 (api-spec/README.md 의 429).
+         * Retry-After 를 자바스크립트가 읽을 수 있게 한다 (api-spec/api-spec.md 의 429).
          *
          * 브라우저는 다른 오리진의 응답에서 몇 개의 기본 헤더만 스크립트에 보여 준다. 여기에
          * 적지 않으면 서버가 보낸 Retry-After 가 프론트에 아예 보이지 않는다. 그러면 언제 다시
