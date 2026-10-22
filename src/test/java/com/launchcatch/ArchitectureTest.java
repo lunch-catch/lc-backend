@@ -156,6 +156,7 @@ class ArchitectureTest {
      * contract 에 로직이 들어갈 자리를 없앤다 (설계 문서 1.3절).
      * 조회와 명령을 모두 인터페이스로 두고 구현은 내부 service 에 둔다. 그래야 다른 도메인이
      * 보는 것이 계약뿐이고, 내부를 리팩터링해도 남의 코드가 바뀌지 않는다.
+     * #788의 StoreMenuDataException은 호출자가 데이터 오류를 구분하는 공개 예외라 명시적으로 허용한다.
      */
     @ArchTest
     static final ArchRule contract에는_인터페이스_record_enum만_둔다 = classes()
@@ -166,7 +167,8 @@ class ArchitectureTest {
                     if (!c.isTopLevelClass()) {
                         return;
                     }
-                    if (c.isInterface() || c.isEnum() || isRecord(c)) {
+                    if (c.isInterface() || c.isEnum() || isRecord(c)
+                            || c.getName().equals("com.launchcatch.store.contract.StoreMenuDataException")) {
                         return;
                     }
                     events.add(SimpleConditionEvent.violated(c,

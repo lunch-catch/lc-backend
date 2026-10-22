@@ -11,6 +11,7 @@ import com.launchcatch.auth.Role;
 import org.springframework.http.MediaType;
 
 import com.launchcatch.store.contract.StoreQueryService;
+import com.launchcatch.store.contract.StoreMenuDataException;
 import com.launchcatch.store.repository.StoreQueryRepository;
 import java.math.BigDecimal;
 import java.util.List;
@@ -232,7 +233,8 @@ class StoreQueryIntegrationTest extends AbstractStoreIntegrationTest {
         jdbc.update("delete from store_menu_image where store_menu_id = ?", menuId);
 
         assertThatThrownBy(() -> service.findMenusByIdIn(List.of(menuId, otherMenuId)))
-                .isInstanceOf(IllegalStateException.class).hasMessageContaining("이미지가 누락");
+                .isInstanceOfSatisfying(StoreMenuDataException.class,
+                        failure -> assertThat(failure.menuId()).isEqualTo(menuId));
     }
 
     @ParameterizedTest
@@ -252,7 +254,8 @@ class StoreQueryIntegrationTest extends AbstractStoreIntegrationTest {
                 uploadStatus, menuId);
 
         assertThatThrownBy(() -> service.findMenusByIdIn(List.of(menuId)))
-                .isInstanceOf(IllegalStateException.class).hasMessageContaining("이미지가 누락");
+                .isInstanceOfSatisfying(StoreMenuDataException.class,
+                        failure -> assertThat(failure.menuId()).isEqualTo(menuId));
     }
 
     @Test
