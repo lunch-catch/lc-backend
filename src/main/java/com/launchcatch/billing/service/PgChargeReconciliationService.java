@@ -104,7 +104,8 @@ public class PgChargeReconciliationService {
             meterRegistry.counter(RECON_METRIC, "result", "inquiry_failed").increment();
             return 0;
         }
-        if (!payment.getOrderId().equals(result.orderId())) {
+        // NOT_FOUND 는 PG 에 결제가 없다는 응답이라 주문번호가 비어 있다. 아래에서 우리 쪽 승인과 견줘 불일치로 남긴다
+        if (result.status() != Status.NOT_FOUND && !payment.getOrderId().equals(result.orderId())) {
             throw new IllegalStateException("PG 응답의 주문번호가 결제와 다릅니다. paymentId=" + payment.getId());
         }
         if (result.status() == Status.PENDING) {

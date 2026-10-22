@@ -19,6 +19,7 @@ import com.launchcatch.billing.client.PgUnknownException;
 import com.launchcatch.billing.entity.EntryType;
 import com.launchcatch.billing.entity.Payment;
 import com.launchcatch.billing.entity.PaymentStatus;
+import com.launchcatch.billing.entity.PgChargeReconciliationPending;
 import com.launchcatch.billing.entity.PointLedger;
 import com.launchcatch.billing.entity.LedgerSource;
 import com.launchcatch.billing.repository.PaymentRepository;
@@ -347,6 +348,36 @@ class PgChargeReconciliationServiceTest {
         verify(mismatchRecorder).recordPending(PAYMENT_ID, PREV, "Reconciliation failed: IllegalStateException");
         verify(mismatchRecorder, never()).recordMissingCharge(any(), any(), any(), any());
         verify(mismatchRecorder, never()).resolvePending(any());
+    }
+
+    @Test
+    void PG에_결제가_없으면_주문번호_검증_없이_불일치로_기록한다() {
+        Payment payment = payment(PaymentStatus.APPROVED, AMOUNT);
+        givenTargets(payment);
+        givenRunId();
+        when(paymentGateway.inquireByPaymentKey(PG_TID)).thenReturn(PaymentGatewayInquiryResult.notFound());
+        when(ledgerRepository.findByPaymentIdAndEntryType(PAYMENT_ID, EntryType.CHARGE)).thenReturn(Optional.empty());
+
+        assertThat(service.reconcilePreviousDay(RUN_DATE, JOB)).isEqualTo(1);
+
+        verify(mismatchRecorder).recordMismatch(PAYMENT_ID, 0L, AMOUNT, PREV, RUN_ID, NOW);
+        verify(mismatchRecorder).resolvePending(PAYMENT_ID);
+    }
+
+    @Test
+    void 재검증_대기_결제도_전일_결제와_함께_대사하고_끝나면_대기를_해소한다() {
+        Payment payment = payment(PaymentStatus.APPROVED, AMOUNT);
+        when(pendingRepository.findAllByOrderByCreatedAtAsc()).thenReturn(List.of(
+                PgChargeReconciliationPending.pending(PAYMENT_ID, PREV.minusDays(1), "PG inquiry failed")));
+        when(paymentRepository.findAllById(List.of(PAYMENT_ID))).thenReturn(List.of(payment));
+        givenRunId();
+        when(paymentGateway.inquireByPaymentKey(PG_TID)).thenReturn(pgResult(Status.APPROVED, AMOUNT));
+        when(ledgerRepository.findByPaymentIdAndEntryType(PAYMENT_ID, EntryType.CHARGE))
+                .thenReturn(Optional.of(PointLedger.charge(OWNER_ID, PAYMENT_ID, AMOUNT, LedgerSource.REALTIME)));
+
+        assertThat(service.reconcilePreviousDay(RUN_DATE, JOB)).isZero();
+
+        verify(mismatchRecorder).resolvePending(PAYMENT_ID);
     }
 
     @Test
