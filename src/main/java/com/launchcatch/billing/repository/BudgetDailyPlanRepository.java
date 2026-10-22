@@ -106,6 +106,20 @@ public interface BudgetDailyPlanRepository extends JpaRepository<BudgetDailyPlan
     // 그 영업일의 계획 전부다. idx_budget_daily_plan_business_date 를 탄다
     List<BudgetDailyPlan> findByBusinessDate(LocalDate businessDate);
 
+    @Query("""
+            select distinct p.businessDate
+              from BudgetDailyPlan p
+             where p.businessDate < :before
+               and not exists (
+                   select l.id from PointLedger l
+                    where l.campaignId = p.campaignId
+                      and l.businessDate = p.businessDate
+                      and l.entryType = com.launchcatch.billing.entity.EntryType.RELEASE
+               )
+             order by p.businessDate
+            """)
+    List<LocalDate> findUnreleasedBusinessDatesBefore(@Param("before") LocalDate before);
+
     // 그 영업일에 중단되지 않은 계획이다. 시간대별 목표를 만들 대상이다
     List<BudgetDailyPlan> findByBusinessDateAndPausedFalse(LocalDate businessDate);
 

@@ -60,7 +60,9 @@ public class DailyReservationService {
      */
     public int reserve(LocalDate businessDate) {
         long unitPrice = unitPriceOf(businessDate);
-        release(businessDate.minusDays(1));
+        for (LocalDate unreleasedDate : planRepository.findUnreleasedBusinessDatesBefore(businessDate)) {
+            release(unreleasedDate);
+        }
 
         List<CampaignInfo> campaigns = campaignQuery.findServableOn(businessDate);
         Map<Long, List<CampaignInfo>> byOwner = new TreeMap<>();

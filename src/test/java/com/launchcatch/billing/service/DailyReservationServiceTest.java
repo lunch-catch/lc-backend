@@ -70,6 +70,7 @@ class DailyReservationServiceTest {
         // 예약이 끝나면 그날 계획 전부를 읽어 상태를 확인한다. 전일 계획 조회만 스텁한 테스트에서 엄격 스텁이
         // 인자가 다른 호출로 실패하지 않게 기본은 빈 목록으로 둔다
         lenient().when(planRepository.findByBusinessDate(DAY)).thenReturn(List.of());
+        lenient().when(planRepository.findUnreleasedBusinessDatesBefore(DAY)).thenReturn(List.of(PREV));
     }
 
     private static CampaignInfo campaign(long id, long ownerId) {
