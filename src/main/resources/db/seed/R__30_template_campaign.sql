@@ -254,6 +254,6 @@ WHERE (poster_id BETWEEN 9001 AND 9016 OR poster_id BETWEEN 9101 AND 9200)
 
 UPDATE poster
 SET html_content = REGEXP_REPLACE(html_content, '<img data-slot="image"[^>]*>',
-                                  CONCAT('<img data-slot="image" alt="메뉴 이미지" src="${seedCdnBaseUrl}/',
+                                  CONCAT('<img data-slot="image" alt="메뉴 이미지" style="flex:1;min-height:0;width:100%;object-fit:cover" src="${seedCdnBaseUrl}/',
                                          image_object_key, '">'))
 WHERE poster_id BETWEEN 9001 AND 9016 OR poster_id BETWEEN 9101 AND 9200;
