@@ -216,7 +216,7 @@ public class DailyAggregationRunner {
             return runDate(date);
         } catch (RuntimeException unexpected) {
             FailureLogDetails details = FailureLogDetails.from(unexpected);
-            log.error("event=ANALYTICS_DAILY_AGGREGATION_FAILED businessDate={} reason=UNEXPECTED_ERROR "
+            log.error("event=ANALYTICS_DAILY_AGGREGATION_FAILED businessDate={} reason=SYSTEM_ERROR "
                             + "exceptionType={} sqlState={} sqlErrorCode={} origin={}",
                     date, unexpected.getClass().getSimpleName(), details.sqlState(), details.sqlErrorCode(),
                     details.origin());
