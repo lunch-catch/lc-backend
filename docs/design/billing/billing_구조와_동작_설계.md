@@ -99,6 +99,7 @@ billing/
 | V5 | 대사 종류 `CAMPAIGN_OVERSPEND` |
 | V6 | 재예약 RESERVE의 멱등 키를 결제×캠페인으로 나눔 |
 | V7 | `point_ledger.adjust_target_date`와 CHECK |
+| V9 | PG 대사 재검증 대기 행과 `payment` FK |
 
 | 데이터 | 원본과 의미 | 중복 또는 범위 제약 |
 |---|---|---|
@@ -106,6 +107,7 @@ billing/
 | 시간대별 목표 | `budget_hourly_target`에 그날 계획의 시간별 소진 목표를 둔다 | 계획·시간 UNIQUE로 중복을 막는다 |
 | 과금 판정 | `deduction_result`에 유효 노출의 정산 판정과 서빙 영업일을 둔다 | `serve_id` UNIQUE로 중복을 막는다 |
 | 확정 과금 | `point_ledger`의 `DEDUCT`를 음수 단가로 기록한다 | `(serve_id, entry_type)` UNIQUE와 금액 부호 CHECK를 둔다 |
+| PG 대사 재검증 대기 | `pg_charge_reconciliation_pending`은 PENDING 또는 조회·기록 실패 결제의 재조회 대상이다 | 결제당 한 행이며 `payment_id`는 같은 billing 도메인의 `payment`를 FK로 참조한다 |
 
 `DEDUCT.business_date`는 스키마 규칙에 따라 NULL이다. 캠페인·영업일의 실제 과금액은 `serve_id`로 판정 기록과 원장을 연결해 구한다. 수신 시각의 날짜로 대체하지 않는다. 원장 전체를 업데이트해서 잔액을 맞추지 않고 거래 행을 추가한다.
 
@@ -487,10 +489,10 @@ Lua는 당일 해시와 처리 표시 두 키를 사용한다. 현재 구현은 
 | 작업 | 작업명과 실행 | 하는 일 | 같은 날 다시 돌 때 필요한 조건 |
 |---|---|---|---|
 | 전일 대사 | `BILLING_SPEND_RECON_PREV`, 00:00 묶음 `@Order(40)` | 전일 카운터를 원장과 견주고 어긋나면 카운터를 다시 만든다 | 전일 영업일을 유지해야 한다 |
-| 00:00 해제·예약 | `BILLING_RESERVE`, 묶음 `@Order(50)` | 전날 남은 예약을 `RELEASE`하고(전날의 정식 해제), 그날 계획과 `RESERVE`를 만든 뒤 해시를 준비한다. 끝나면 `(BILLING_DAILY_RELEASE, 전날)`을 SUCCESS로 남겨 분석의 원천 확정에 쓴다 | 원장 멱등 제약(`uk_point_ledger_day_reserve_dedup`)과 작업 실행 이력을 지켜야 한다. 같은 예약을 두 번 해제하지 않는다 |
+| 00:00 해제·예약 | `BILLING_RESERVE`, 묶음 `@Order(50)` | 전날 남은 예약을 `RELEASE`하고(전날의 정식 해제), 그날 계획과 `RESERVE`를 만든 뒤 해시를 준비한다. 끝나면 `(BILLING_DAILY_RELEASE, 전날)`을 SUCCESS로 남겨 분석의 원천 확정에 쓴다. 전날보다 오래된 미해제 날짜는 해제를 마칠 때마다 그 날짜의 표시를 남기고, 남은 해제액이 0인 계획은 해제를 마친 것으로 보고 다시 찾지 않는다 | 원장 멱등 제약(`uk_point_ledger_day_reserve_dedup`)과 작업 실행 이력을 지켜야 한다. 같은 예약을 두 번 해제하지 않는다 |
 | 잔액 부족 판정 | `BILLING_FUNDING_JUDGE`, 묶음 `@Order(60)` | 예약액이 단가보다 작은 캠페인을 판정해 캠페인에 통보한다 | 같은 판정을 두 번 통보해도 캠페인 상태가 같아야 한다 |
 | 시간대별 목표 | `BILLING_HOURLY_TARGET`, 묶음 `@Order(70)` | 중단되지 않은 계획의 0~23시 시간대별 목표를 만든다 | 계획·시간 UNIQUE로 중복을 막는다 |
-| 01:30 `PG_VS_CHARGE` 대사(#391) | `BILLING_PG_VS_CHARGE_RECON`, 독립 `@Scheduled`(01:30, Asia/Seoul) | 전일 생성 결제를 PG 조회로 대사하고 빠진 `CHARGE`를 보정한다 | 결제당 `CHARGE` 멱등 제약(`uk_point_ledger_payment_entry`)과 대사 불일치 UNIQUE를 지켜야 한다. 외부 API(PG 조회)의 처리는 [장애 처리 설계 7장](./billing_장애_처리_설계.md#7-pg_vs_charge-대사391의-외부-api-처리)이 갖는다 |
+| 01:30 `PG_VS_CHARGE` 대사(#391) | `BILLING_PG_VS_CHARGE_RECON`, 독립 `@Scheduled`(01:30, Asia/Seoul) | 전일 생성 결제와 재검증 대기 결제를 PG 조회로 대사하고 빠진 `CHARGE`를 보정한다. PG 응답의 주문번호가 결제와 다르면 보정하지 않고 재검증 대기로 남기며, 대기 행은 불일치 기록이 끝난 뒤에 지운다 | 결제당 `CHARGE` 멱등 제약(`uk_point_ledger_payment_entry`)과 대사 불일치 UNIQUE를 지켜야 한다. 외부 API(PG 조회)의 처리는 [장애 처리 설계 7장](./billing_장애_처리_설계.md#7-pg_vs_charge-대사391의-외부-api-처리)이 갖는다 |
 
 `PG_VS_CHARGE` 작업은 00:00 묶음이 아니라서 `batch_execution_log` 점유(`claim`)로 배치 서버 두 대가 같은 날을 겹쳐 돌지 않게 한다. 충전 직후 재예약은 시각이 아니라 `PointCharged` 커밋 뒤 리스너가 입구다.
 

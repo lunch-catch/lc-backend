@@ -60,16 +60,19 @@ class DailyReservationServiceTest {
     private DailyReservationRecorder recorder;
     @Mock
     private SpendHashRebuildService hashRebuild;
+    @Mock
+    private DailyReleaseMarker releaseMarker;
 
     private DailyReservationService service;
 
     @BeforeEach
     void setUp() {
         service = new DailyReservationService(campaignQuery, platformSetting, planRepository, ledgerRepository,
-                recorder, hashRebuild);
+                recorder, hashRebuild, releaseMarker);
         // 예약이 끝나면 그날 계획 전부를 읽어 상태를 확인한다. 전일 계획 조회만 스텁한 테스트에서 엄격 스텁이
         // 인자가 다른 호출로 실패하지 않게 기본은 빈 목록으로 둔다
         lenient().when(planRepository.findByBusinessDate(DAY)).thenReturn(List.of());
+        lenient().when(planRepository.findUnreleasedBusinessDatesBefore(DAY)).thenReturn(List.of(PREV));
     }
 
     private static CampaignInfo campaign(long id, long ownerId) {
@@ -134,39 +137,38 @@ class DailyReservationServiceTest {
                 prevPlan(2L, 8L, 1000L),
                 prevPlan(3L, 7L, 1000L),
                 prevPlan(4L, 8L, 1000L)));
-        when(ledgerRepository.findReleasedCampaignIds(Set.of(7L, 8L), PREV)).thenReturn(List.of(2L));
-        when(ledgerRepository.sumDeductForCampaignsOn(List.of(1L, 2L, 3L, 4L), PREV)).thenReturn(List.of(
-                new CampaignSpend(1L, 3000L),
-                new CampaignSpend(3L, 1000L),
-                new CampaignSpend(4L, 1200L)));
         when(campaignQuery.findServableOn(DAY)).thenReturn(List.of());
 
         service.reserve(DAY);
 
         // 1 은 5000 - 3000 = 2000 을 돌려받는다. 2 는 이미 해제됐고 3 은 남은 몫이 없고 4 는 예약을 넘겨 썼다
-        @SuppressWarnings("unchecked")
-        ArgumentCaptor<List<PointLedger>> captor = ArgumentCaptor.forClass(List.class);
-        verify(recorder).releaseForOwner(eq(7L), captor.capture());
-        verify(recorder, never()).releaseForOwner(eq(8L), anyList());
-        assertThat(captor.getValue()).singleElement().satisfies(release -> {
-            assertThat(release.getEntryType()).isEqualTo(EntryType.RELEASE);
-            assertThat(release.getCampaignId()).isEqualTo(1L);
-            assertThat(release.getOwnerId()).isEqualTo(7L);
-            assertThat(release.getBusinessDate()).isEqualTo(PREV);
-            assertThat(release.getAmount()).isEqualTo(2000L);
-        });
+        verify(recorder).releaseForOwner(7L, PREV, List.of(1L, 3L));
+        verify(recorder).releaseForOwner(8L, PREV, List.of(2L, 4L));
+    }
+
+    @Test
+    void 해제를_마친_날짜마다_해제_완료_표시를_남기고_해제가_실패하면_남기지_않는다() {
+        LocalDate older = PREV.minusDays(2);
+        when(platformSetting.getImpressionUnitPrice()).thenReturn(10);
+        when(planRepository.findUnreleasedBusinessDatesBefore(DAY)).thenReturn(List.of(older, PREV));
+        when(planRepository.findByBusinessDate(older)).thenReturn(List.of(prevPlan(1L, 7L, 1000L)));
+        when(planRepository.findByBusinessDate(PREV)).thenReturn(List.of(prevPlan(2L, 7L, 1000L)));
+        lenient().doThrow(new IllegalStateException("해제 실패")).when(recorder).releaseForOwner(7L, PREV, List.of(2L));
+
+        assertThatThrownBy(() -> service.reserve(DAY)).isInstanceOf(IllegalStateException.class);
+
+        verify(releaseMarker).mark(older);
+        verify(releaseMarker, never()).mark(PREV);
     }
 
     @Test
     void 해제할_몫이_없으면_기록하지_않는다() {
         when(platformSetting.getImpressionUnitPrice()).thenReturn(10);
         when(planRepository.findByBusinessDate(PREV)).thenReturn(List.of(prevPlan(1L, 7L, 0L)));
-        when(ledgerRepository.findReleasedCampaignIds(Set.of(7L), PREV)).thenReturn(List.of());
-        when(ledgerRepository.sumDeductForCampaignsOn(List.of(1L), PREV)).thenReturn(List.of());
         when(campaignQuery.findServableOn(DAY)).thenReturn(List.of());
 
         assertThat(service.reserve(DAY)).isZero();
-        verify(recorder, never()).releaseForOwner(any(), anyList());
+        verify(recorder).releaseForOwner(7L, PREV, List.of(1L));
     }
 
     @Test
@@ -174,16 +176,14 @@ class DailyReservationServiceTest {
         when(platformSetting.getImpressionUnitPrice()).thenReturn(10);
         when(planRepository.findByBusinessDate(PREV)).thenReturn(List.of(
                 prevPlan(3L, 9L, 1000L), prevPlan(1L, 7L, 1000L), prevPlan(2L, 7L, 500L)));
-        when(ledgerRepository.findReleasedCampaignIds(Set.of(7L, 9L), PREV)).thenReturn(List.of());
-        when(ledgerRepository.sumDeductForCampaignsOn(List.of(3L, 1L, 2L), PREV)).thenReturn(List.of());
         when(campaignQuery.findServableOn(DAY)).thenReturn(List.of());
 
         service.reserve(DAY);
 
         // 점주마다 계정 행을 잠근 짧은 트랜잭션이라 한 점주의 해제가 다른 점주의 충전과 환불을 붙잡지 않는다
         InOrder order = inOrder(recorder);
-        order.verify(recorder).releaseForOwner(eq(7L), argThat(releases -> releases.size() == 2));
-        order.verify(recorder).releaseForOwner(eq(9L), argThat(releases -> releases.size() == 1));
+        order.verify(recorder).releaseForOwner(7L, PREV, List.of(1L, 2L));
+        order.verify(recorder).releaseForOwner(9L, PREV, List.of(3L));
     }
 
     @Test
@@ -191,18 +191,10 @@ class DailyReservationServiceTest {
         // 13:30 해제(구현 순서 11번)가 00:00 보정과 같은 계산을 그날 영업일로 직접 부르는 자리다
         when(planRepository.findByBusinessDate(DAY))
                 .thenReturn(List.of(BudgetDailyPlan.create(1L, 7L, DAY, 5000L, 10L, false, CHANGED_AT)));
-        when(ledgerRepository.findReleasedCampaignIds(Set.of(7L), DAY)).thenReturn(List.of());
-        when(ledgerRepository.sumDeductForCampaignsOn(List.of(1L), DAY)).thenReturn(List.of(new CampaignSpend(1L, 3000L)));
 
         service.release(DAY);
 
-        @SuppressWarnings("unchecked")
-        ArgumentCaptor<List<PointLedger>> captor = ArgumentCaptor.forClass(List.class);
-        verify(recorder).releaseForOwner(eq(7L), captor.capture());
-        assertThat(captor.getValue()).singleElement().satisfies(release -> {
-            assertThat(release.getBusinessDate()).isEqualTo(DAY);
-            assertThat(release.getAmount()).isEqualTo(2000L);
-        });
+        verify(recorder).releaseForOwner(7L, DAY, List.of(1L));
     }
 
     @Test
@@ -221,9 +213,8 @@ class DailyReservationServiceTest {
     void 보정_해제가_실패하면_예약하지_않는다() {
         when(platformSetting.getImpressionUnitPrice()).thenReturn(10);
         when(planRepository.findByBusinessDate(PREV)).thenReturn(List.of(prevPlan(1L, 7L, 5000L)));
-        when(ledgerRepository.findReleasedCampaignIds(Set.of(7L), PREV)).thenReturn(List.of());
-        when(ledgerRepository.sumDeductForCampaignsOn(List.of(1L), PREV)).thenReturn(List.of());
-        doThrow(new QueryTimeoutException("lock wait")).when(recorder).releaseForOwner(eq(7L), anyList());
+        doThrow(new QueryTimeoutException("lock wait")).when(recorder)
+                .releaseForOwner(eq(7L), eq(PREV), anyList());
 
         assertThatThrownBy(() -> service.reserve(DAY)).isInstanceOf(QueryTimeoutException.class);
         verifyNoInteractions(campaignQuery);

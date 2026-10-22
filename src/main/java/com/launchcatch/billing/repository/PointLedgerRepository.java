@@ -46,6 +46,8 @@ public interface PointLedgerRepository extends JpaRepository<PointLedger, Long>,
     // PG_VS_CHARGE 대사(13번)가 묻는다. 결제당 CHARGE 는 많아야 한 줄이다(uk_point_ledger_payment_entry)
     boolean existsByPaymentIdAndEntryType(Long paymentId, EntryType entryType);
 
+    Optional<PointLedger> findByPaymentIdAndEntryType(Long paymentId, EntryType entryType);
+
     // 영업일로 귀속되는 RESERVE 와 RELEASE 의 합이다
     @Query("""
             select coalesce(sum(l.amount), 0L)
@@ -58,19 +60,19 @@ public interface PointLedgerRepository extends JpaRepository<PointLedger, Long>,
                            @Param("entryType") EntryType entryType,
                            @Param("businessDate") LocalDate businessDate);
 
-    // 기록 시각이 [from, to) 인 행의 합이다. 날짜를 DB 함수로 자르지 않고 범위로 묻는다
     @Query("""
-            select coalesce(sum(l.amount), 0L)
+            select coalesce(sum(case
+                when l.entryType = com.launchcatch.billing.entity.EntryType.RESERVE then -l.amount
+                when l.entryType = com.launchcatch.billing.entity.EntryType.RELEASE then -l.amount
+                when l.entryType = com.launchcatch.billing.entity.EntryType.DEDUCT then l.amount
+                else 0L end), 0L)
               from PointLedger l
              where l.ownerId = :ownerId
-               and l.entryType = :entryType
-               and l.createdAt >= :from
-               and l.createdAt < :to
+               and l.entryType in (com.launchcatch.billing.entity.EntryType.RESERVE,
+                                   com.launchcatch.billing.entity.EntryType.RELEASE,
+                                   com.launchcatch.billing.entity.EntryType.DEDUCT)
             """)
-    long sumByCreatedAt(@Param("ownerId") Long ownerId,
-                        @Param("entryType") EntryType entryType,
-                        @Param("from") LocalDateTime from,
-                        @Param("to") LocalDateTime to);
+    long sumReservedPoint(@Param("ownerId") Long ownerId);
 
     // 기간 시작 전의 잔액이다. 변동 전후 잔액 누적의 출발점이 된다
     @Query("""

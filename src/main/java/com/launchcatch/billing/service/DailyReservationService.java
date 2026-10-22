@@ -50,6 +50,7 @@ public class DailyReservationService {
     private final PointLedgerRepository ledgerRepository;
     private final DailyReservationRecorder recorder;
     private final SpendHashRebuildService hashRebuild;
+    private final DailyReleaseMarker releaseMarker;
 
     /*
      * 그날 예약을 마치고 대상 캠페인 수를 돌려준다.
@@ -60,7 +61,10 @@ public class DailyReservationService {
      */
     public int reserve(LocalDate businessDate) {
         long unitPrice = unitPriceOf(businessDate);
-        release(businessDate.minusDays(1));
+        for (LocalDate unreleasedDate : planRepository.findUnreleasedBusinessDatesBefore(businessDate)) {
+            release(unreleasedDate);
+            releaseMarker.mark(unreleasedDate);
+        }
 
         List<CampaignInfo> campaigns = campaignQuery.findServableOn(businessDate);
         Map<Long, List<CampaignInfo>> byOwner = new TreeMap<>();
@@ -118,33 +122,21 @@ public class DailyReservationService {
         if (plans.isEmpty()) {
             return;
         }
-        List<Long> campaignIds = plans.stream().map(BudgetDailyPlan::getCampaignId).toList();
-        Set<Long> ownerIds = plans.stream().map(BudgetDailyPlan::getOwnerId).collect(Collectors.toSet());
-        Set<Long> released = new HashSet<>(ledgerRepository.findReleasedCampaignIds(ownerIds, businessDate));
-        Map<Long, Long> spends = new HashMap<>();
-        for (CampaignSpend spend : ledgerRepository.sumDeductForCampaignsOn(campaignIds, businessDate)) {
-            spends.put(spend.campaignId(), spend.spend());
-        }
-        // 점주 ID 순으로 점주마다 따로 기록한다. 점주 계정 행을 잠근 짧은 트랜잭션이다
-        Map<Long, List<PointLedger>> releasesByOwner = new TreeMap<>();
+        // 점주 ID 순으로 묶되 해제액은 여기서 계산하지 않는다. 충전 재예약과 경합해도 최신 계획을
+        // 기준으로 계산하려면 계정 행 잠금 뒤에 읽어야 한다.
+        Map<Long, List<Long>> campaignsByOwner = new TreeMap<>();
         for (BudgetDailyPlan plan : plans) {
-            if (released.contains(plan.getCampaignId())) {
-                continue;
-            }
-            long left = plan.getDailyBudget() - spends.getOrDefault(plan.getCampaignId(), 0L);
-            if (left > 0) {
-                releasesByOwner.computeIfAbsent(plan.getOwnerId(), ownerId -> new ArrayList<>())
-                        .add(PointLedger.release(plan.getOwnerId(), plan.getCampaignId(), businessDate, left));
-            }
+            campaignsByOwner.computeIfAbsent(plan.getOwnerId(), ownerId -> new ArrayList<>())
+                    .add(plan.getCampaignId());
         }
         int campaigns = 0;
-        for (Map.Entry<Long, List<PointLedger>> entry : releasesByOwner.entrySet()) {
-            recorder.releaseForOwner(entry.getKey(), entry.getValue());
+        for (Map.Entry<Long, List<Long>> entry : campaignsByOwner.entrySet()) {
+            recorder.releaseForOwner(entry.getKey(), businessDate, entry.getValue());
             campaigns += entry.getValue().size();
         }
         if (campaigns > 0) {
             log.info("event=BILLING_RESERVE_LEFTOVER_RELEASED businessDate={} ownerCount={} campaignCount={}",
-                    businessDate, releasesByOwner.size(), campaigns);
+                    businessDate, campaignsByOwner.size(), campaigns);
         }
     }
 
