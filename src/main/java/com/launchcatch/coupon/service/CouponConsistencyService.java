@@ -57,7 +57,7 @@ public class CouponConsistencyService {
             }
         } while (findings.size() == BATCH_SIZE);
         if (mismatches > 0) {
-            log.error("event=COUPON_CONSISTENCY_SUMMARY businessDate={} mismatchCount={}", date, mismatches);
+            log.error("event=COUPON_CONSISTENCY_DONE businessDate={} mismatchCount={}", date, mismatches);
         }
         return mismatches;
     }

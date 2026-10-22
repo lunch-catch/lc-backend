@@ -233,9 +233,9 @@ class CouponCommandServiceTest {
 
     private void assertDeletionFailure(String reason) {
         assertThat(logs.list).singleElement().satisfies(event -> {
-            assertThat(event.getLevel()).isEqualTo(Level.WARN);
+            assertThat(event.getLevel()).isEqualTo(Level.INFO);
             assertThat(event.getFormattedMessage()).isEqualTo(
-                    "event=COUPON_DELETE_FAILED memberId=17 memberCouponId=1001 reason=" + reason);
+                    "event=COUPON_DELETE_FAILED memberId=17 memberCouponId=1001 errorCode=" + reason);
             assertThat(event.getThrowableProxy()).isNull();
         });
     }
@@ -397,9 +397,9 @@ class CouponCommandServiceTest {
                     .isInstanceOfSatisfying(CouponException.class,
                             exception -> assertThat(exception.getErrorCode()).isEqualTo(error));
             assertThat(logs.list).singleElement().satisfies(event -> {
-                assertThat(event.getLevel()).isEqualTo(Level.WARN);
+                assertThat(event.getLevel()).isEqualTo(Level.INFO);
                 assertThat(event.getFormattedMessage()).isEqualTo(
-                        "event=COUPON_QR_GENERATION_FAILED memberId=17 memberCouponId=1001 reason=" + error.getCode());
+                        "event=COUPON_QR_GENERATION_FAILED memberId=17 memberCouponId=1001 errorCode=" + error.getCode());
                 assertThat(event.getThrowableProxy()).isNull();
             });
         }
