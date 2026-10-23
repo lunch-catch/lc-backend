@@ -12,8 +12,8 @@
 
 | ID | 결함 | 근거 | 영향 | 시연 영향 | 확인 |
 |---|---|---|---|---|---|
-| BE-01 | SCHEDULED -> ACTIVE 전환과 종료일 뒤 ENDED 전환을 부르는 곳이 없다 | `CampaignStatusService.activate` 는 정의만 있고 호출이 없다. 00:00 묶음에도 없다 | 활성화한 캠페인이 계속 대기 중이다. 예산 예약, 후보 적재, 쿠폰 준비도 되지 않는다. 종료일이 지난 ACTIVE 는 ACTIVE 로 남는다 | 있음 | 코드 확인 |
-| BE-02 | `store_campaign_summary` 를 날마다 쓰는 곳이 없다 | `StoreCampaignSummaryUpdaterImpl.updateAll` 호출이 없다. 중단과 재개 때만 쓴다 | 날이 바뀌면 가게 목록과 상세에 캠페인이 보이지 않는다 | 있음 | 코드 확인 |
+| BE-01 | SCHEDULED -> ACTIVE 전환과 종료일 뒤 ENDED 전환을 부르는 곳이 없다 | `CampaignStatusService.activate` 는 정의만 있고 호출이 없다. 00:00 묶음에도 없다 | 활성화한 캠페인이 계속 대기 중이다. 예산 예약, 후보 적재, 쿠폰 준비도 되지 않는다. 종료일이 지난 ACTIVE 는 ACTIVE 로 남는다 | 있음 | 해결(#569). 00:00 묶음 10, 20 단계가 한다(B-157, B-158) |
+| BE-02 | `store_campaign_summary` 를 날마다 쓰는 곳이 없다 | `StoreCampaignSummaryUpdaterImpl.updateAll` 호출이 없다. 중단과 재개 때만 쓴다 | 날이 바뀌면 가게 목록과 상세에 캠페인이 보이지 않는다 | 있음 | 해결(#838). 00:00 묶음 30 단계가 한다(B-413) |
 | BE-03 | 새 캠페인이 등록 2단계(포스터)에서 막힌다 | 화면 순서는 쿠폰 -> 포스터 -> 대상 -> 예산이다(`apps/owner/src/features/campaign/form/campaignSteps.ts`). 서버는 기간이 없으면 포스터를 거절한다(`PosterUploadService.requirePeriod`, POSTER-020). 기간은 4단계에서 저장된다 | 정상 순서로는 새 캠페인을 만들 수 없다. 검사 위치나 단계 순서를 프론트와 함께 정한다 | 있음 | 코드 확인 |
 | BE-04 | 쿠폰 상태 조회가 이벤트 없는 항목(NO_EVENT)을 남은 수량 0 으로 준다 | `POST /v1/coupon-events:getStatus` | 11:00 ~ 14:00 에 찜 목록과 가게 상세에서 수량 소진으로 잘못 보인다. #743 이후 바뀌었는지 다시 본다 | 있음 | 조사 |
 | BE-05 | 카카오 연결 해제 처리 중 예외가 나도 200 을 준다 | `KakaoUnlinkWebhookController` | 카카오가 다시 보내지 않아 해제가 반영되지 않은 채 남는다 | 없음 | 조사 |
@@ -21,8 +21,8 @@
 | BE-07 | 실패한 배치를 자동으로 다시 돌리지 않는다. 쿠폰 만료(5분 작업)는 실패하면 사람이 다시 돌릴 때까지 멈춘다 | `DailyJobScheduler`, `CouponExpirationJob` | 쿠폰이 만료되지 않는다. 재실행 API 는 있으나 화면이 없다 | 낮음 | 조사 |
 | BE-08 | MENU 대상 요약에 `target_menu_id` 가 없거나 VERIFIED 이미지의 `object_key` 가 비면 500 이다 | `GET /v1/stores`, `GET /v1/stores/{storeId}` | 데이터 한 건으로 화면 전체가 깨진다 | 데이터로 피함 | 조사 |
 | BE-09 | 같은 가게에 같은 날 ACTIVE 요약이 둘이면 가게 목록에 두 번 나온다 | `GET /v1/stores` | 목록 중복 | 데이터로 피함 | 조사 |
-| BE-10 | 진행 중 캠페인의 하루 예산 변경(`pending_daily_budget`)을 적용하는 곳이 없다 | `PATCH /v1/owner/campaigns/{campaignId}` | 바꾼 예산이 반영되지 않는다 | 없음 | 조사 |
-| BE-11 | 캠페인 중단, 재개, 종료 때 `target_menu_id` 가 그 가게 메뉴가 아니면 500 이다 | `CampaignStatusService` | 데이터 오류가 500 으로 드러난다 | 데이터로 피함 | 조사 |
+| BE-10 | 진행 중 캠페인의 하루 예산 변경(`pending_daily_budget`)을 적용하는 곳이 없다 | `PATCH /v1/owner/campaigns/{campaignId}` | 바꾼 예산이 반영되지 않는다 | 없음 | 해결(#840). 00:00 묶음 35 단계가 한다(B-417) |
+| BE-11 | 캠페인 중단, 재개, 종료 때 `target_menu_id` 가 그 가게 메뉴가 아니면 500 이다 | `CampaignStatusService` | 데이터 오류가 500 으로 드러난다 | 데이터로 피함 | 조사. 00:00 묶음의 종료와 시작(10, 20)은 그 캠페인만 건너뛰고, 가게 요약(30)은 단계가 실패한다(B-405, B-410, B-415) |
 | BE-12 | 사업자번호 mock 검증 실패(FAILED)를 저장하지 않는다 | `PUT /v1/owner/store/basic` | 화면이 다음 단계로 갔다가 위치 단계에서 가게 정보 단계로 돌아온다(FE-09) | 없음 | 조사 |
 | BE-13 | 대시보드 정지 회원 수가 0 으로 고정이다 | `MemberAnalyticsRepository` | 정지 회원이 있어도 0 이다 | 데이터로 피함 | 조사 |
 
