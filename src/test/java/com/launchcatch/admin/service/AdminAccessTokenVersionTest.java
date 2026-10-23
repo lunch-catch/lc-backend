@@ -86,7 +86,7 @@ class AdminAccessTokenVersionTest {
     private void assertAuthenticated(JwtTokenProvider jwt, String token, boolean expected) throws Exception {
         SecurityContextHolder.clearContext();
         var request = new MockHttpServletRequest("GET", "/v1/admin/test");
-        request.setCookies(new Cookie("accessToken", token));
+        request.setCookies(new Cookie("adminAccessToken", token));
         new JwtAuthenticationFilter(jwt, legacy, java.util.List.of(new AdminAccessTokenVerifier(repository, new AccessTokenCutoffVerifier(legacy), revocations))).doFilter(request, new MockHttpServletResponse(), (req, res) -> {
             assertThat(SecurityContextHolder.getContext().getAuthentication() != null).isEqualTo(expected);
         });

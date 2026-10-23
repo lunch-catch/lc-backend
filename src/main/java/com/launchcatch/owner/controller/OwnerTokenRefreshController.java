@@ -24,7 +24,7 @@ public class OwnerTokenRefreshController {
             @CookieValue(name = "refreshToken", required = false) String refreshToken) {
         OwnerTokenRefreshResult result = service.refresh(refreshToken);
         return ResponseEntity.ok()
-                .header(HttpHeaders.SET_COOKIE, cookieFactory.accessTokenCookie(result.accessToken()).toString())
+                .header(HttpHeaders.SET_COOKIE, cookieFactory.accessTokenCookie(result.accessToken(), Role.OWNER).toString())
                 .header(HttpHeaders.SET_COOKIE,
                         cookieFactory.refreshTokenCookie(result.refreshToken(), Role.OWNER, true).toString())
                 .body(ResponseEnvelope.success(result.response()));

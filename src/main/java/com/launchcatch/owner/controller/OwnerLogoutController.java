@@ -21,7 +21,7 @@ public class OwnerLogoutController {
     public ResponseEntity<Void> logout(@AuthenticationPrincipal CustomUserDetails user) {
         service.logout(user.getId());
         return ResponseEntity.noContent().header(HttpHeaders.SET_COOKIE,
-                cookies.expiredAccessTokenCookie().toString(),
+                cookies.expiredAccessTokenCookie(Role.OWNER).toString(),
                 cookies.expiredRefreshTokenCookie(Role.OWNER).toString()).build();
     }
 }

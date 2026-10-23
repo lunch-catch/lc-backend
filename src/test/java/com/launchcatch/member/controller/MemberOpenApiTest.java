@@ -89,17 +89,17 @@ class MemberOpenApiTest {
 
     @ParameterizedTest
     @CsvSource({
-            "/v1/auth/tokens,delete,memberAccessToken",
-            "/v1/members/me/onboarding,put,memberAccessToken",
-            "/v1/members/me,get,memberAccessToken",
-            "/v1/members/me,patch,memberAccessToken",
-            "/v1/members/me:withdraw,post,memberAccessToken",
-            "/v1/member-profiles/location,put,memberAccessToken",
-            "/v1/member-profiles/location,get,memberAccessToken",
-            "/v1/member-profiles/location,delete,memberAccessToken",
-            "/v1/admin/members,get,adminAccessToken"
+            "/v1/auth/tokens,delete,memberAccessToken,accessToken",
+            "/v1/members/me/onboarding,put,memberAccessToken,accessToken",
+            "/v1/members/me,get,memberAccessToken,accessToken",
+            "/v1/members/me,patch,memberAccessToken,accessToken",
+            "/v1/members/me:withdraw,post,memberAccessToken,accessToken",
+            "/v1/member-profiles/location,put,memberAccessToken,accessToken",
+            "/v1/member-profiles/location,get,memberAccessToken,accessToken",
+            "/v1/member-profiles/location,delete,memberAccessToken,accessToken",
+            "/v1/admin/members,get,adminAccessToken,adminAccessToken"
     })
-    void 보호된_API에는_쿠키_인증과_권한_오류가_표시된다(String path, String method, String scheme) throws Exception {
+    void 보호된_API에는_쿠키_인증과_권한_오류가_표시된다(String path, String method, String scheme, String cookieName) throws Exception {
         String operation = "$.paths['" + path + "']." + method;
 
         mvc.perform(get("/v3/api-docs"))
@@ -108,7 +108,7 @@ class MemberOpenApiTest {
                 .andExpect(jsonPath(operation + ".responses['401'].content['application/json'].schema['$ref']", containsString("ResponseEnvelope")))
                 .andExpect(jsonPath(operation + ".responses['403'].content['application/json'].schema['$ref']", containsString("ResponseEnvelope")))
                 .andExpect(jsonPath("$.components.securitySchemes['" + scheme + "'].in").value("cookie"))
-                .andExpect(jsonPath("$.components.securitySchemes['" + scheme + "'].name").value("accessToken"));
+                .andExpect(jsonPath("$.components.securitySchemes['" + scheme + "'].name").value(cookieName));
     }
 
     @Test

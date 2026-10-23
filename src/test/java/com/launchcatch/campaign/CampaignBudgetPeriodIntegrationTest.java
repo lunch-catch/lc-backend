@@ -240,7 +240,7 @@ class CampaignBudgetPeriodIntegrationTest extends AbstractCampaignIntegrationTes
     }
 
     private Cookie ownerToken(Long ownerId) {
-        return new Cookie("accessToken", jwt.createAccessToken(ownerId, Role.OWNER, Map.of(VERSION_CLAIM, "0")));
+        return new Cookie("ownerAccessToken", jwt.createAccessToken(ownerId, Role.OWNER, Map.of(VERSION_CLAIM, "0")));
     }
 
     private Long createActiveOwner() {

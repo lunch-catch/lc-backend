@@ -158,13 +158,13 @@ class CampaignCouponConditionSecurityIntegrationTest extends AbstractCampaignInt
     }
 
     private Cookie ownerToken(Long ownerId) {
-        return new Cookie("accessToken", jwt.createAccessToken(ownerId, Role.OWNER, Map.of(VERSION_CLAIM, "0")));
+        return new Cookie("ownerAccessToken", jwt.createAccessToken(ownerId, Role.OWNER, Map.of(VERSION_CLAIM, "0")));
     }
 
     // 사용자 역할은 계정 존재를 확인하지 않아 임의의 식별자로 충분하다(owner 도메인과 같은 이유).
     private Cookie nonOwnerToken(Role role) {
         if (role == Role.MEMBER) {
-            return new Cookie("accessToken", jwt.createAccessToken(1L, role));
+            return new Cookie("ownerAccessToken", jwt.createAccessToken(1L, role));
         }
         String loginId = UUID.randomUUID().toString();
         LocalDateTime now = LocalDateTime.now();
@@ -173,7 +173,7 @@ class CampaignCouponConditionSecurityIntegrationTest extends AbstractCampaignInt
                 loginId, "test-hash", "campaign-security-test-admin", role.name(), now, now);
         Long adminId = jdbc.queryForObject("select admin_id from admin where login_id = ?", Long.class, loginId);
         createdAdminIds.add(adminId);
-        return new Cookie("accessToken", jwt.createAccessToken(adminId, role));
+        return new Cookie("ownerAccessToken", jwt.createAccessToken(adminId, role));
     }
 
     private Long createActiveOwner() {

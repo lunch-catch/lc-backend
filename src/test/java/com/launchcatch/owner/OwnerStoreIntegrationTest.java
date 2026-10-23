@@ -58,7 +58,7 @@ class OwnerStoreIntegrationTest extends AbstractOwnerIntegrationTest {
     }
 
     private Cookie token(Long id) {
-        return new Cookie("accessToken", jwt.createAccessToken(id, Role.OWNER, Map.of("issuanceVersion", "0")));
+        return new Cookie("ownerAccessToken", jwt.createAccessToken(id, Role.OWNER, Map.of("issuanceVersion", "0")));
     }
 
     private Long store(Long ownerId, boolean finalized) {
@@ -187,7 +187,7 @@ class OwnerStoreIntegrationTest extends AbstractOwnerIntegrationTest {
 
     @Test
     void 사용자_역할은_403이다() throws Exception {
-        var cookie = new Cookie("accessToken", jwt.createAccessToken(1L, Role.MEMBER));
+        var cookie = new Cookie("ownerAccessToken", jwt.createAccessToken(1L, Role.MEMBER));
         mvc.perform(get(PATH).cookie(cookie)).andExpect(status().isForbidden());
     }
 

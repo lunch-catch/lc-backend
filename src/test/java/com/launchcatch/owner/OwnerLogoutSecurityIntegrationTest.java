@@ -66,7 +66,7 @@ class OwnerLogoutSecurityIntegrationTest extends AbstractOwnerIntegrationTest {
     }
 
     private Cookie ownerToken() {
-        return new Cookie("accessToken", jwt.createAccessToken(ownerId, Role.OWNER));
+        return new Cookie("ownerAccessToken", jwt.createAccessToken(ownerId, Role.OWNER));
     }
 
     /*
@@ -75,7 +75,7 @@ class OwnerLogoutSecurityIntegrationTest extends AbstractOwnerIntegrationTest {
      */
     private Cookie nonOwnerToken(Role role) {
         if (role == Role.MEMBER) {
-            return new Cookie("accessToken", jwt.createAccessToken(1L, role));
+            return new Cookie("ownerAccessToken", jwt.createAccessToken(1L, role));
         }
         String loginId = UUID.randomUUID().toString();
         LocalDateTime now = LocalDateTime.now();
@@ -83,7 +83,7 @@ class OwnerLogoutSecurityIntegrationTest extends AbstractOwnerIntegrationTest {
                         + "values (?, ?, ?, ?, 'ACTIVE', ?, ?)",
                 loginId, passwords.encode("password12"), "owner-logout-test-admin", role.name(), now, now);
         Long adminId = jdbc.queryForObject("select admin_id from admin where login_id = ?", Long.class, loginId);
-        return new Cookie("accessToken", jwt.createAccessToken(adminId, role));
+        return new Cookie("ownerAccessToken", jwt.createAccessToken(adminId, role));
     }
 
     @Test
@@ -96,7 +96,7 @@ class OwnerLogoutSecurityIntegrationTest extends AbstractOwnerIntegrationTest {
 
         verify(logoutService).logout(ownerId);
         assertThat(response.getHeaders("Set-Cookie")).hasSize(2)
-                .anySatisfy(c -> assertThat(c).contains("accessToken=", "Path=/;", "Max-Age=0", "HttpOnly",
+                .anySatisfy(c -> assertThat(c).contains("ownerAccessToken=", "Path=/;", "Max-Age=0", "HttpOnly",
                         "Secure", "SameSite=Strict"))
                 .anySatisfy(c -> assertThat(c).contains("refreshToken=", "Path=/v1/owner/auth/;", "Max-Age=0",
                         "HttpOnly", "Secure", "SameSite=Strict"));
@@ -107,7 +107,7 @@ class OwnerLogoutSecurityIntegrationTest extends AbstractOwnerIntegrationTest {
         mvc.perform(delete(PATH))
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.code").value("AUTH-005"));
-        mvc.perform(delete(PATH).cookie(new Cookie("accessToken", "invalid")))
+        mvc.perform(delete(PATH).cookie(new Cookie("ownerAccessToken", "invalid")))
                 .andExpect(status().isUnauthorized());
 
         verifyNoInteractions(logoutService);

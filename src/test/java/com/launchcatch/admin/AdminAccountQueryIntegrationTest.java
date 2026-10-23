@@ -26,7 +26,7 @@ class AdminAccountQueryIntegrationTest extends AbstractAdminIntegrationTest {
 
     private static final String PATH = "/v1/admin/admins";
     private static final LocalDateTime TIME = LocalDateTime.of(2026, 10, 21, 12, 0);
-    private static final Cookie TOKEN = new Cookie("accessToken", "list-token");
+    private static final Cookie TOKEN = new Cookie("adminAccessToken", "list-token");
 
     @Autowired MockMvc mvc;
     @Autowired JdbcTemplate jdbc;

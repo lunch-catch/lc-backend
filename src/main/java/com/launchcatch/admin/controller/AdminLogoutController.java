@@ -31,7 +31,7 @@ class AdminLogoutController {
     ResponseEntity<Void> logout(@AuthenticationPrincipal CustomUserDetails principal) {
         adminLogoutService.logout(principal.getId(), principal.getRole());
         return ResponseEntity.noContent()
-                .header(HttpHeaders.SET_COOKIE, authCookieFactory.expiredAccessTokenCookie().toString())
+                .header(HttpHeaders.SET_COOKIE, authCookieFactory.expiredAccessTokenCookie(principal.getRole()).toString())
                 .header(HttpHeaders.SET_COOKIE, authCookieFactory.expiredRefreshTokenCookie(principal.getRole()).toString())
                 .build();
     }
