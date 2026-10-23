@@ -48,14 +48,14 @@ coupon/
 ├── entity/        CouponEvent, CouponInventory, CouponDailyLimit,
 │                  MemberCoupon, CouponUsageHistory
 ├── listener/      CampaignEventListener
-├── job/           CouponPreparationJob, CouponIssueOpenJob, CouponIssueCloseJob, CouponExpirationJob, CouponConsistencyJob
+├── job/           CouponPreparationJob, CouponQueuePreparationJob, CouponIssueOpenJob, CouponIssueCloseJob, CouponExpirationJob, CouponConsistencyJob
 ├── repository/    각 엔티티 저장소와 목록용 Querydsl 구현
 ├── service/       CouponCommandService, CouponIssueBatcher, CouponBatchIssuanceService, CouponLookUpService, OwnerCouponService, CouponStatsQueryServiceImpl, CouponEventStateService
 └── exception/     CouponException, CouponErrorCode
 ```
 
 엔티티는 다른 엔티티를 객체 연관으로 쥐지 않고 ID로 참조한다.
-HTTP 요청과 집계 조회 contract, 공개 이벤트와 캠페인 이벤트 수신이 연결되어 있다. `job/`에는 다섯 StandaloneJob을 둔다.
+HTTP 요청과 집계 조회 contract, 공개 이벤트와 캠페인 이벤트 수신이 연결되어 있다. `job/`에는 여섯 StandaloneJob을 둔다.
 
 ### 발급과 예약의 전달값
 
