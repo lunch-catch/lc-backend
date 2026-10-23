@@ -49,7 +49,7 @@ class PointDeductorImplTest {
     private static final LocalDate DAY = LocalDate.of(2026, 10, 14);
     private static final UUID SERVE_ID = UUID.fromString("0192f3a4-7b5c-7d1e-9a2b-3c4d5e6f7a8b");
     private static final Long CAMPAIGN_ID = 7L;
-    private static final PlanSnapshot PLAN = new PlanSnapshot(1L, 3L, 10L);
+    private static final PlanSnapshot PLAN = new PlanSnapshot(3L, 10L);
     private static final Clock CLOCK = Clock.fixed(Instant.parse("2026-10-14T02:30:00Z"), ClockConfig.ZONE);
     private static final LocalDateTime NOW = LocalDateTime.of(2026, 10, 14, 11, 30);
 

@@ -294,9 +294,6 @@
 | B-139 | 충전 시 계획 없음 | 충전 커밋 후 | RechargeReservationService | - | 00:00 예약 전 또는 계획 없는 캠페인 | 건너뜀, 다음 00:00 예약이 충전 잔액으로 배분 | D |
 | B-140 | 같은 결제 이벤트 중복 | 충전 이벤트 재수신 | insertRechargeReserveIfAbsent | - | 같은 paymentId RECHARGE_RESERVE 존재 | 0건 삽입, 잔액 다시 빼지 않음 | D |
 | B-141 | 재예약 실패 | 충전 커밋 후 예외 | PointChargedListener | - | 재예약 중 예외 | 예외 삼키고 BILLING_RECHARGE_RESERVE_FAILED WARN, 충전은 성공 유지, 다음 00:00 예약이 반영 | D |
-| B-142 | 시간대별 목표 생성 | 70 BILLING_HOURLY_TARGET | HourlyTargetPlanner.plan | - | D 계획 paused=false | 0~23시 목표 행 생성(가중치 비율, 나머지는 마지막 가중 시간대), 합=예약액 | D |
-| B-143 | 중단 계획 제외 | 70 단계 | HourlyTargetPlanner | - | 계획 paused=true(NO_POINTS, OWNER) | 목표 없음 | D |
-| B-144 | 목표 재실행 멱등 | 70 단계 재실행 | insertIfAbsent | - | 이미 목표 있는 계획 | 건너뜀, UNIQUE 위반 없음 | 같은 D |
 | B-145 | 후보 적재 SERVABLE | 75 ADSERVING_CANDIDATE_LOAD | CandidateLoadService.load | - | ACTIVE, 가게 좌표 있음 | ad_candidate(D) upsert, state=SERVABLE | D |
 | B-146 | 후보 적재 PAUSED | 75 단계 | CandidateLoadService.load | - | PAUSED(OWNER 또는 NO_POINTS) | state=PAUSED 로 적재(피드 미노출) | D |
 | B-147 | 가게 없음/메뉴명 없음 | 75 단계 | CandidateLoadService.skip | - | 가게 미등록/좌표 없음, 또는 MENU 할인인데 메뉴 없음 | 해당 캠페인만 건너뜀, adserving_candidate_load_skipped_total{reason=store_missing/menu_missing} 증가 | D |

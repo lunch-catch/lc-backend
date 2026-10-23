@@ -1,5 +1,7 @@
 package com.launchcatch.adserving.feed.service;
 
+import com.launchcatch.adserving.config.PacingProperties;
+import com.launchcatch.adserving.engine.BudgetPacing;
 import com.launchcatch.adserving.engine.CampaignPacing;
 import com.launchcatch.adserving.engine.FeedAssembler;
 import com.launchcatch.adserving.engine.FeedAssembler.Placed;
@@ -41,6 +43,7 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.LocalTime;
 import java.time.OffsetDateTime;
 import java.time.ZonedDateTime;
 import java.time.temporal.ChronoUnit;
@@ -80,6 +83,7 @@ public class FeedService {
     private final ServeFrequencyRepository serveFrequencyRepository;
     private final ImpressionCountRepository impressionCountRepository;
     private final BudgetQueryService budgetQueryService;
+    private final PacingProperties pacingProperties;
     private final ServeRecordRepository serveRecordRepository;
     private final ServeLogBuffer serveLogBuffer;
     private final MeterRegistry meterRegistry;
@@ -159,7 +163,7 @@ public class FeedService {
     }
 
     /*
-     * 정산의 진행률과 그날 유효 노출 수를 캠페인별로 묶는다. 정산 결과에 없는 캠페인은 예산 계획이 없어 빠진다.
+     * 정산이 준 예약액과 소진액으로 진행률을 계산하고 그날 유효 노출 수와 캠페인별로 묶는다. 정산 결과에 없는 캠페인은 예산 계획이 없어 빠진다.
      *
      * 정산이 예외를 던지면 null 을 돌려 예산 규칙을 건너뛴다. 장애 처리 가이드의 기본 처리(오류로 올린다)에서 벗어난다.
      * 서빙할 피드가 아예 없을 때만 오류로 답하고 그 밖에는 서빙을 이어 가기로 했다(#307). 차감은 정산이 따로 막아 점주가 더 내지 않는다.
@@ -167,7 +171,7 @@ public class FeedService {
     private Map<Long, CampaignPacing> pacingFor(List<Long> campaignIds, LocalDate businessDate, ZonedDateTime servedAt) {
         List<BudgetProgress> progress;
         try {
-            progress = readProgress(campaignIds, businessDate, servedAt);
+            progress = readProgress(campaignIds, businessDate);
         } catch (RuntimeException e) {
             // 원인이 캠페인이 아니라 정산이라 ID 대신 개수만 남겨 장애 중 로그가 후보 수만큼 길어지지 않게 한다(#778)
             log.warn("event=ADSERVING_FEED_BUDGET_UNAVAILABLE businessDate={} campaignCount={} fallback=SKIP_BUDGET_RULE",
@@ -177,18 +181,21 @@ public class FeedService {
         }
         Map<Long, Long> validCounts = impressionCountRepository.findValidCounts(businessDate,
                 progress.stream().map(BudgetProgress::campaignId).toList());
+        LocalTime at = servedAt.toLocalTime();
         return progress.stream().collect(Collectors.toMap(BudgetProgress::campaignId, p -> new CampaignPacing(
-                p.progressRate(), p.reservedAmount(), p.unitPrice(), validCounts.getOrDefault(p.campaignId(), 0L))));
+                BudgetPacing.progressRate(p.todaySpend(),
+                        BudgetPacing.plannedAmountUntil(p.reservedAmount(), pacingProperties.hourlyWeights(), at)),
+                p.reservedAmount(), p.unitPrice(), validCounts.getOrDefault(p.campaignId(), 0L))));
     }
 
     // 정산은 한 번에 MAX_CAMPAIGN_IDS 개까지 받는다. 그보다 많으면 나눠 부른다.
-    private List<BudgetProgress> readProgress(List<Long> campaignIds, LocalDate businessDate, ZonedDateTime servedAt) {
+    private List<BudgetProgress> readProgress(List<Long> campaignIds, LocalDate businessDate) {
         int chunk = BudgetQueryService.MAX_CAMPAIGN_IDS;
         List<BudgetProgress> all = new ArrayList<>();
         for (int from = 0; from < campaignIds.size(); from += chunk) {
             all.addAll(budgetQueryService.getProgress(
                     campaignIds.subList(from, Math.min(from + chunk, campaignIds.size())),
-                    businessDate, servedAt.toLocalDateTime()));
+                    businessDate));
         }
         return all;
     }

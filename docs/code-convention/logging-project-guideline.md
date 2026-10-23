@@ -165,7 +165,7 @@
 
 | 규칙 | 위치 | 지금 | 고칠 모양 |
 |---|---|---|---|
-| `LOG-6-01` | `billing/service/RechargeReservationService`, `billing/service/HourlyTargetPlanner` | `@Transactional` 안에서 `RECHARGE_RESERVE_DONE`, `HOURLY_TARGET_DONE` 을 바로 남겨 롤백돼도 성공이 찍힌다 | `TransactionLogging.afterCommit` 으로 남긴다 |
+| `LOG-6-01` | `billing/service/RechargeReservationService` | `@Transactional` 안에서 `RECHARGE_RESERVE_DONE` 을 바로 남겨 롤백돼도 성공이 찍힌다 | `TransactionLogging.afterCommit` 으로 남긴다 |
 | `LOG-7-06` | `GlobalExceptionHandler`(잘못된 파라미터, 잘못된 인자), `AuthExceptionHandler` | `detail={}` 에 `e.getMessage()` 를 넣는다 | 메시지를 빼고 `exceptionType`, `errorCode` 를 남긴다 |
 | `LOG-7-06`, `LOG-8-07`, `LOG-6-07` | `ExternalApiLoggingExchangeFilter` | `EXTERNAL_API_CALL_FAILED` 의 `err={}` 에 `ex.toString()` 을 넣어 예외 메시지가 들어간다. 예외 객체도 함께 넘겨 스택을 남기는데, 예외는 호출자에게 전파되어 끝내는 곳에서 한 번 더 남는다. 콜백이 요청 스레드와 다른 스레드에서 실행되면 MDC 가 자동으로 전파되지 않아 `traceId` 가 빠진다 | `exceptionType` 만 남기고 스택은 넘기지 않는다. 호출을 시작할 때 MDC 를 복사해 두고, 콜백은 진입할 때의 MDC 를 보관한 뒤 복사본을 적용하고 `finally` 에서 보관한 MDC 로 되돌린다(`LOG-6-07`). 콜백이 요청 스레드에서 도는 경우에 요청의 MDC 가 지워지지 않는지도 테스트한다. 기존 테스트 `호출이_실패하면_WARN으로_남기고_스택트레이스도_함께_남긴다` 를 새 기준으로 바꾸고, 콜백 로그에 `traceId` 가 있는지 확인하는 테스트를 더한다 |
 | `LOG-7-09` | `HttpBodyLoggingFilter` | 민감 키를 정규식으로 찾는다. 값 안에 이스케이프된 따옴표가 있으면(`"password":"ab\"cd"`) 따옴표 뒤가 남고, 좌표 외의 숫자 값(`"kakaoUserId":123`)은 가려지지 않는다 | JSON 은 파서로 읽어 키마다 값을 가린다. 자료형과 관계없이 가리고, 파싱에 실패하면 바디 전체를 가린다. form 은 디코딩한 뒤 키를 본다 |

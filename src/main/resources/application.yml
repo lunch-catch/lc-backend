@@ -255,16 +255,18 @@ billing:
       claim-lease: 5m
       # 워커 실행 주기다. @Scheduled 가 읽으므로 ISO-8601 로 적는다.
       interval: PT1M
-  # 0~23시 시간대별 가중치(billing.config.BillingScheduleProperties). 광고 서빙은 하루 종일이다.
-  # 개수는 24개여야 하고 어기면 기동이 실패한다. 합은 비율로만 쓴다.
-  # 측정값이 아닌 가정이다. 운영 뒤 시간대별 노출 분포로 고친다. 새벽을 0 으로 두면 노출 몇 건으로 진행률이 1.2 를 넘는다.
-  schedule:
-    hourly-weights: [2, 1, 1, 1, 1, 1, 1, 3, 4, 5, 8, 10, 9, 7, 4, 4, 4, 5, 7, 8, 6, 4, 2, 2]
   # 그날 계획 스냅샷 캐시(billing.config.PlanSnapshotCacheProperties).
   # 근거 없는 임시값이다. 부하 측정 뒤에 조정한다.
   plan-snapshot-cache:
     maximum-size: 100000
     expire-after-write: 24h
+
+adserving:
+  # 진행률을 계산하는 0~23시 시간대별 가중치(adserving.config.PacingProperties). 광고 서빙은 하루 종일이다.
+  # 개수는 24개여야 하고 어기면 기동이 실패한다. 합은 비율로만 쓴다.
+  # 측정값이 아닌 가정이다. 운영 뒤 시간대별 노출 분포로 고친다. 새벽을 0 으로 두면 노출 몇 건으로 진행률이 1.2 를 넘는다.
+  pacing:
+    hourly-weights: [2, 1, 1, 1, 1, 1, 1, 3, 4, 5, 8, 10, 9, 7, 4, 4, 4, 5, 7, 8, 6, 4, 2, 2]
 
 # 카카오 OIDC 외부 API(토큰교환, 로그아웃, 연결 해제) 서킷브레이커.
 # 인스턴스를 API 별로 나눈다. 하나가 막혀도 다른 API 까지 같이 막히지 않는다.
