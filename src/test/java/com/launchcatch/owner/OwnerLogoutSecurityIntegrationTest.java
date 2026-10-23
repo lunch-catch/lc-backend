@@ -96,7 +96,7 @@ class OwnerLogoutSecurityIntegrationTest extends AbstractOwnerIntegrationTest {
 
         verify(logoutService).logout(ownerId);
         assertThat(response.getHeaders("Set-Cookie")).hasSize(2)
-                .anySatisfy(c -> assertThat(c).contains("accessToken=", "Path=/;", "Max-Age=0", "HttpOnly",
+                .anySatisfy(c -> assertThat(c).contains("ownerAccessToken=", "Path=/;", "Max-Age=0", "HttpOnly",
                         "Secure", "SameSite=Strict"))
                 .anySatisfy(c -> assertThat(c).contains("refreshToken=", "Path=/v1/owner/auth/;", "Max-Age=0",
                         "HttpOnly", "Secure", "SameSite=Strict"));

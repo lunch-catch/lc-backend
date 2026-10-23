@@ -61,7 +61,7 @@ class OwnerLoginControllerTest {
         }
         var response = action.andReturn().getResponse();
         assertThat(response.getHeaders("Set-Cookie")).hasSize(2).anySatisfy(cookie ->
-                        assertThat(cookie).contains("accessToken=test-access", "Path=/;", "Max-Age=1800", "HttpOnly", "SameSite=Strict"))
+                        assertThat(cookie).contains("ownerAccessToken=test-access", "Path=/;", "Max-Age=1800", "HttpOnly", "SameSite=Strict"))
                 .anySatisfy(cookie -> assertThat(cookie).contains("refreshToken=test-refresh",
                         "Path=/v1/owner/auth/", "Max-Age=86400", "HttpOnly", "SameSite=Strict"));
         assertThat(response.getContentAsString()).doesNotContain("test-access", "test-refresh", "password12");
