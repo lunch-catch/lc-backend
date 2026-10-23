@@ -32,6 +32,7 @@ import com.launchcatch.owner.contract.OwnerStatusQuery;
 import com.launchcatch.store.contract.StoreCampaignSummaryUpdater;
 import java.lang.reflect.Field;
 import java.time.Clock;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.ZoneId;
@@ -90,7 +91,7 @@ class CampaignActivationServiceTest {
                 campaignRepository, campaignStatusLogRepository, storeCampaignSummaryUpdater, events, FIXED_CLOCK);
         service = new CampaignActivationService(
                 campaignRepository, campaignStatusService, posterModerationService, posterRepository,
-                rateLimiter, ownerStatusQuery);
+                rateLimiter, ownerStatusQuery, FIXED_CLOCK);
     }
 
     private Poster posterUpdatedAt(LocalDateTime updatedAt) {
@@ -131,6 +132,46 @@ class CampaignActivationServiceTest {
         assertThatThrownBy(() -> service.activate(OWNER_ID, CAMPAIGN_ID))
                 .isInstanceOfSatisfying(CampaignException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(CampaignErrorCode.CAMPAIGN_NOT_OWNED));
+    }
+
+    @Test
+    @DisplayName("하루 예산이나 집행 기간이 비어 있으면 CAMPAIGN-015로 거부하고 요청 빈도를 세거나 검수를 부르지 않는다(#875)")
+    void 필수값이_비어_있으면_거부한다() {
+        active();
+        LocalDate today = LocalDate.now(FIXED_CLOCK);
+        Campaign noBudget = draftCampaignWith(null, today.plusDays(1), today.plusDays(4));
+        Campaign noStart = draftCampaignWith(10_000L, null, today.plusDays(4));
+        Campaign noEnd = draftCampaignWith(10_000L, today.plusDays(1), null);
+        when(campaignRepository.findById(CAMPAIGN_ID))
+                .thenReturn(Optional.of(noBudget), Optional.of(noStart), Optional.of(noEnd));
+
+        for (int i = 0; i < 3; i++) {
+            assertThatThrownBy(() -> service.activate(OWNER_ID, CAMPAIGN_ID))
+                    .isInstanceOfSatisfying(CampaignException.class, e -> assertThat(e.getErrorCode())
+                            .isEqualTo(CampaignErrorCode.ACTIVATION_REQUIREMENTS_MISSING));
+        }
+
+        verify(rateLimiter, never()).checkLimit(OWNER_ID);
+        verify(posterModerationService, never()).moderate(CAMPAIGN_ID);
+    }
+
+    @Test
+    @DisplayName("집행 종료일이 오늘이거나 지났으면 CAMPAIGN-016으로 거부하고 요청 빈도를 세거나 검수를 부르지 않는다(#875)")
+    void 종료일이_오늘이거나_지났으면_거부한다() {
+        active();
+        LocalDate today = LocalDate.now(FIXED_CLOCK);
+        Campaign endsToday = draftCampaignWith(10_000L, today.minusDays(3), today);
+        Campaign alreadyEnded = draftCampaignWith(10_000L, today.minusDays(5), today.minusDays(1));
+        when(campaignRepository.findById(CAMPAIGN_ID)).thenReturn(Optional.of(endsToday), Optional.of(alreadyEnded));
+
+        for (int i = 0; i < 2; i++) {
+            assertThatThrownBy(() -> service.activate(OWNER_ID, CAMPAIGN_ID))
+                    .isInstanceOfSatisfying(CampaignException.class, e -> assertThat(e.getErrorCode())
+                            .isEqualTo(CampaignErrorCode.PERIOD_ENDED_BEFORE_START));
+        }
+
+        verify(rateLimiter, never()).checkLimit(OWNER_ID);
+        verify(posterModerationService, never()).moderate(CAMPAIGN_ID);
     }
 
     @Test
@@ -307,6 +348,19 @@ class CampaignActivationServiceTest {
 
     private void active() {
         when(ownerStatusQuery.findCurrentStatus(OWNER_ID)).thenReturn(Optional.of(OwnerAccountStatus.ACTIVE));
+    }
+
+    private Campaign draftCampaignWith(Long dailyBudget, LocalDate startDate, LocalDate endDate) {
+        Campaign campaign = Campaign.create(
+                OWNER_ID, 20L,
+                DiscountTargetType.ALL, DiscountType.AMOUNT, 10, null,
+                50, LocalTime.of(12, 0), LocalTime.of(13, 30),
+                null, null,
+                1000, TargetGender.ALL, List.of(AgeGroup.AGE_20S),
+                dailyBudget, startDate, endDate,
+                LocalDateTime.now(FIXED_CLOCK));
+        setId(campaign, CAMPAIGN_ID);
+        return campaign;
     }
 
     private Campaign draftCampaign(Long ownerId) {

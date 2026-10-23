@@ -14,6 +14,8 @@ import com.launchcatch.campaign.poster.service.PosterModerationService;
 import com.launchcatch.campaign.repository.CampaignRepository;
 import com.launchcatch.owner.contract.OwnerAccountStatus;
 import com.launchcatch.owner.contract.OwnerStatusQuery;
+import java.time.Clock;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -58,10 +60,12 @@ public class CampaignActivationService {
     private final PosterRepository posterRepository;
     private final CampaignActivationRateLimiter rateLimiter;
     private final OwnerStatusQuery ownerStatusQuery;
+    private final Clock clock;
 
     public CampaignActivateResponse activate(Long ownerId, Long campaignId) {
         validateActiveOwner(ownerId);
-        checkDraftOwnedCampaign(ownerId, campaignId);
+        Campaign campaign = checkDraftOwnedCampaign(ownerId, campaignId);
+        requireActivatable(campaign);
         rateLimiter.checkLimit(ownerId);
 
         LocalDateTime posterUpdatedAtAtModeration = posterRepository.findByCampaignId(campaignId)
@@ -94,12 +98,38 @@ public class CampaignActivationService {
      * 걸러 검수를 아예 부르지 않으려는 것뿐이고, 그 사이 상태가 바뀔 가능성까지 막지는 않는다.
      * 최종 확인은 campaignStatusService.schedule()의 잠금과 IllegalStateException이 한다.
      */
-    private void checkDraftOwnedCampaign(Long ownerId, Long campaignId) {
+    private Campaign checkDraftOwnedCampaign(Long ownerId, Long campaignId) {
         Campaign campaign = campaignRepository.findById(campaignId)
                 .filter(found -> found.getOwnerId().equals(ownerId))
                 .orElseThrow(() -> new CampaignException(CampaignErrorCode.CAMPAIGN_NOT_OWNED));
         if (campaign.getStatus() != CampaignStatus.DRAFT) {
             throw new CampaignException(CampaignErrorCode.CAMPAIGN_STATE_NOT_ALLOWED);
+        }
+        return campaign;
+    }
+
+    /*
+     * 검수를 부르기 전에 하루 예산과 집행 기간이 채워졌고 시작할 수 있는 기간인지 확인한다(#875). 캠페인은 단계별로
+     * 저장되는 동안 이 값들이 비어 있는 DRAFT 로 남을 수 있다. 포스터 생성이 집행 기간을 요구하던 때는 기간이 있다는
+     * 것이 우연히 보장됐지만 그 검사가 빠진 뒤로 보장이 없다. 비어 있는 채로 SCHEDULED 가 되면 시작 조회(findToStart)에서
+     * 영영 빠지는 캠페인이 남는다.
+     *
+     * 다음 00:00 의 영업일은 내일이고 시작 조건이 endDate >= 영업일이라, 종료일이 오늘 이전이면 시작할 수 없다. 그런
+     * 캠페인은 SCHEDULED 가 된 뒤 00:00 에 ENDED 로 정리되므로(#902) 점주가 이유를 모르고 끝나지 않게 활성화에서 거절한다.
+     * 이 확인은 잠금 없이 읽은 값으로 하지만, 기간은 DRAFT 일 때만 고칠 수 있고 고칠 때도 같은 규칙으로 검증하므로
+     * 이 확인과 전이 사이에 잘못된 값이 들어올 길이 없다.
+     */
+    private void requireActivatable(Campaign campaign) {
+        if (campaign.getDailyBudget() == null || campaign.getStartDate() == null || campaign.getEndDate() == null) {
+            log.info("event=CAMPAIGN_ACTIVATE_FAILED reason=REQUIRED_FIELDS_MISSING errorCode={} campaignId={} dailyBudget={} startDate={} endDate={}",
+                    CampaignErrorCode.ACTIVATION_REQUIREMENTS_MISSING.getCode(), campaign.getId(),
+                    campaign.getDailyBudget() != null, campaign.getStartDate() != null, campaign.getEndDate() != null);
+            throw new CampaignException(CampaignErrorCode.ACTIVATION_REQUIREMENTS_MISSING);
+        }
+        if (!campaign.getEndDate().isAfter(LocalDate.now(clock))) {
+            log.info("event=CAMPAIGN_ACTIVATE_FAILED reason=PERIOD_ENDED_BEFORE_START errorCode={} campaignId={} endDate={}",
+                    CampaignErrorCode.PERIOD_ENDED_BEFORE_START.getCode(), campaign.getId(), campaign.getEndDate());
+            throw new CampaignException(CampaignErrorCode.PERIOD_ENDED_BEFORE_START);
         }
     }
 

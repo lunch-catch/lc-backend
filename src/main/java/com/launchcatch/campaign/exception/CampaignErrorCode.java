@@ -27,7 +27,11 @@ public enum CampaignErrorCode implements ErrorCode {
     CAMPAIGN_NOT_FOUND(HttpStatus.NOT_FOUND, "CAMPAIGN-012", "캠페인을 찾을 수 없습니다."),
     STORE_NOT_OWNED(HttpStatus.FORBIDDEN, "CAMPAIGN-013", "그 가게에 접근할 권한이 없습니다."),
     TARGET_MENU_INVALID(HttpStatus.UNPROCESSABLE_ENTITY, "CAMPAIGN-014",
-            "할인 대상 메뉴를 사용할 수 없습니다. 이 가게의 메뉴인지와 메뉴 이미지를 확인해 주세요.");
+            "할인 대상 메뉴를 사용할 수 없습니다. 이 가게의 메뉴인지와 메뉴 이미지를 확인해 주세요."),
+    ACTIVATION_REQUIREMENTS_MISSING(HttpStatus.UNPROCESSABLE_ENTITY, "CAMPAIGN-015",
+            "하루 예산과 집행 기간을 모두 설정해야 활성화할 수 있습니다."),
+    PERIOD_ENDED_BEFORE_START(HttpStatus.UNPROCESSABLE_ENTITY, "CAMPAIGN-016",
+            "집행 종료일이 오늘이거나 이미 지나 활성화할 수 없습니다. 집행 기간을 다시 설정해 주세요.");
 
     private final HttpStatus httpStatus;
     private final String code;
