@@ -1,0 +1,25 @@
+package com.launchcatch.campaign.template.dto;
+
+import com.launchcatch.campaign.template.entity.Template;
+import io.swagger.v3.oas.annotations.media.Schema;
+import java.time.LocalDateTime;
+
+public record TemplateRenameResponse(
+        @Schema(description = "템플릿 ID입니다.", example = "1")
+        Long templateId,
+
+        @Schema(description = "바뀐 템플릿 이름입니다.", example = "가을 신메뉴")
+        String name,
+
+        @Schema(description = "마지막으로 수정한 관리자 ID입니다.", example = "1")
+        Long lastModifiedBy,
+
+        @Schema(description = "마지막으로 수정한 시각입니다.")
+        LocalDateTime lastModifiedAt
+) {
+
+    public static TemplateRenameResponse of(Template template) {
+        return new TemplateRenameResponse(
+                template.getId(), template.getName(), template.getLastModifiedBy(), template.getLastModifiedAt());
+    }
+}

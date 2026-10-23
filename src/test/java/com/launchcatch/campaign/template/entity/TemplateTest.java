@@ -136,4 +136,56 @@ class TemplateTest {
         assertThatThrownBy(() -> template.changeActive(true, 7L, NOW))
                 .isInstanceOf(IllegalStateException.class);
     }
+
+    @Test
+    @DisplayName("재게시하면 HTML과 게시 시각, 게시 버전 번호, 수정자가 바뀌고 활성 상태는 그대로다(#880)")
+    void 재게시하면_게시본이_바뀌고_active는_유지된다() {
+        Template template = Template.createDraft("가을 신메뉴");
+        template.publish("<div>확정</div>", NOW, 1);
+        template.changeActive(true, 7L, NOW);
+        LocalDateTime later = NOW.plusDays(1);
+
+        template.republish("<div>새 확정</div>", later, 4, 9L);
+
+        assertThat(template.getHtmlContent()).isEqualTo("<div>새 확정</div>");
+        assertThat(template.getStatus()).isEqualTo(TemplateStatus.PUBLISHED);
+        assertThat(template.getPublishedAt()).isEqualTo(later);
+        assertThat(template.getPublishedVersionNumber()).isEqualTo(4);
+        assertThat(template.getLastModifiedBy()).isEqualTo(9L);
+        assertThat(template.getLastModifiedAt()).isEqualTo(later);
+        assertThat(template.isActive()).isTrue();
+        assertThat(template.getActivatedBy()).isEqualTo(7L);
+    }
+
+    @Test
+    @DisplayName("PUBLISHED가 아니면 재게시할 수 없다(#880)")
+    void published가_아니면_재게시할_수_없다() {
+        Template template = Template.createDraft("가을 신메뉴");
+
+        assertThatThrownBy(() -> template.republish("<div>x</div>", NOW, 2, 9L))
+                .isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    @DisplayName("이름을 바꾸면 수정자와 수정 시각이 바뀌고 상태와 무관하다(#880)")
+    void 이름을_바꾸면_수정자와_시각이_바뀐다() {
+        Template template = Template.createDraft("가을 신메뉴");
+
+        template.rename("겨울 신메뉴", 9L, NOW);
+
+        assertThat(template.getName()).isEqualTo("겨울 신메뉴");
+        assertThat(template.getLastModifiedBy()).isEqualTo(9L);
+        assertThat(template.getLastModifiedAt()).isEqualTo(NOW);
+    }
+
+    @Test
+    @DisplayName("이름이 비었거나 100자를 넘으면 바꿀 수 없다(#880)")
+    void 잘못된_이름으로는_바꿀_수_없다() {
+        Template template = Template.createDraft("가을 신메뉴");
+
+        assertThatThrownBy(() -> template.rename(" ", 9L, NOW)).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> template.rename("가".repeat(101), 9L, NOW))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThat(template.getName()).isEqualTo("가을 신메뉴");
+    }
 }

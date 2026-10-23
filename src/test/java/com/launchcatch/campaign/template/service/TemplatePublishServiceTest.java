@@ -13,6 +13,7 @@ import com.launchcatch.campaign.exception.PosterErrorCode;
 import com.launchcatch.campaign.template.dto.TemplatePublishResponse;
 import com.launchcatch.campaign.template.entity.Template;
 import com.launchcatch.campaign.template.entity.TemplateStatus;
+import com.launchcatch.campaign.template.entity.TemplateVersion;
 import com.launchcatch.campaign.template.repository.TemplateRepository;
 import com.launchcatch.campaign.template.repository.TemplateVersionRepository;
 import com.launchcatch.global.entity.BaseTimeEntity;
@@ -33,6 +34,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 class TemplatePublishServiceTest {
 
     private static final Long TEMPLATE_ID = 1L;
+    private static final Long ADMIN_ID = 7L;
     private static final int VERSION_NUMBER = 1;
     private static final Clock FIXED_CLOCK = Clock.fixed(Instant.parse("2026-10-12T01:00:00Z"), ZoneOffset.UTC);
 
@@ -57,7 +59,7 @@ class TemplatePublishServiceTest {
                 .findByTemplateIdAndVersionNumberAndDeletedAtIsNull(TEMPLATE_ID, VERSION_NUMBER))
                 .thenReturn(Optional.of(template.latestVersion()));
 
-        TemplatePublishResponse response = service.publish(TEMPLATE_ID, VERSION_NUMBER);
+        TemplatePublishResponse response = service.publish(TEMPLATE_ID, VERSION_NUMBER, ADMIN_ID);
 
         assertThat(response.templateId()).isEqualTo(TEMPLATE_ID);
         assertThat(response.status()).isEqualTo(TemplateStatus.PUBLISHED);
@@ -73,7 +75,7 @@ class TemplatePublishServiceTest {
     void 템플릿이_없으면_거부한다() {
         when(templateRepository.findByIdForUpdate(TEMPLATE_ID)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> service.publish(TEMPLATE_ID, VERSION_NUMBER))
+        assertThatThrownBy(() -> service.publish(TEMPLATE_ID, VERSION_NUMBER, ADMIN_ID))
                 .isInstanceOfSatisfying(CampaignException.class, e ->
                         assertThat(e.getErrorCode()).isEqualTo(PosterErrorCode.TEMPLATE_NOT_FOUND));
     }
@@ -85,7 +87,7 @@ class TemplatePublishServiceTest {
         template.publish("<div>other</div>", LocalDateTime.now(FIXED_CLOCK), 2);
         when(templateRepository.findByIdForUpdate(TEMPLATE_ID)).thenReturn(Optional.of(template));
 
-        assertThatThrownBy(() -> service.publish(TEMPLATE_ID, VERSION_NUMBER))
+        assertThatThrownBy(() -> service.publish(TEMPLATE_ID, VERSION_NUMBER, ADMIN_ID))
                 .isInstanceOfSatisfying(CampaignException.class, e ->
                         assertThat(e.getErrorCode()).isEqualTo(PosterErrorCode.TEMPLATE_ALREADY_PUBLISHED));
         verify(templateVersionRepository, never()).softDeleteAllByTemplateId(any(), any());
@@ -98,13 +100,60 @@ class TemplatePublishServiceTest {
         template.publish("<div>1</div>", LocalDateTime.now(FIXED_CLOCK), VERSION_NUMBER);
         when(templateRepository.findByIdForUpdate(TEMPLATE_ID)).thenReturn(Optional.of(template));
 
-        TemplatePublishResponse response = service.publish(TEMPLATE_ID, VERSION_NUMBER);
+        TemplatePublishResponse response = service.publish(TEMPLATE_ID, VERSION_NUMBER, ADMIN_ID);
 
         assertThat(response.templateId()).isEqualTo(TEMPLATE_ID);
         assertThat(response.status()).isEqualTo(TemplateStatus.PUBLISHED);
         assertThat(response.html()).isEqualTo("<div>1</div>");
-        verify(templateVersionRepository, never())
-                .findByTemplateIdAndVersionNumberAndDeletedAtIsNull(any(), anyInt());
+        verify(templateVersionRepository, never()).softDeleteAllByTemplateId(any(), any());
+    }
+
+    @Test
+    @DisplayName("게시된 템플릿에 임시저장이 있으면 그 버전으로 재게시하고 active 는 그대로 둔다(#880)")
+    void 게시된_템플릿을_임시저장_버전으로_재게시한다() throws Exception {
+        Template template = publishedActiveTemplate();
+        TemplateVersion draft = template.addDraftVersion(
+                3L, LocalDateTime.now(FIXED_CLOCK).minusHours(1), "요청", "req-2", "<div>2</div>", 2);
+        when(templateRepository.findByIdForUpdate(TEMPLATE_ID)).thenReturn(Optional.of(template));
+        when(templateVersionRepository.findByTemplateIdAndVersionNumberAndDeletedAtIsNull(TEMPLATE_ID, 2))
+                .thenReturn(Optional.of(draft));
+
+        TemplatePublishResponse response = service.publish(TEMPLATE_ID, 2, ADMIN_ID);
+
+        assertThat(response.html()).isEqualTo("<div>2</div>");
+        assertThat(response.publishedAt()).isEqualTo(LocalDateTime.now(FIXED_CLOCK));
+        assertThat(template.getHtmlContent()).isEqualTo("<div>2</div>");
+        assertThat(template.getPublishedVersionNumber()).isEqualTo(2);
+        assertThat(template.getLastModifiedBy()).isEqualTo(ADMIN_ID);
+        assertThat(template.getLastModifiedAt()).isEqualTo(LocalDateTime.now(FIXED_CLOCK));
+        assertThat(template.isActive()).isTrue();
+        verify(templateVersionRepository)
+                .softDeleteAllByTemplateId(TEMPLATE_ID, LocalDateTime.now(FIXED_CLOCK));
+    }
+
+    @Test
+    @DisplayName("재게시 응답을 못 받아 같은 번호로 다시 요청하면 재시도로 보고 지금 상태를 돌려준다(#880)")
+    void 재게시를_같은_번호로_다시_요청하면_재시도로_처리한다() throws Exception {
+        Template template = publishedActiveTemplate();
+        template.republish("<div>2</div>", LocalDateTime.now(FIXED_CLOCK), 2, ADMIN_ID);
+        when(templateRepository.findByIdForUpdate(TEMPLATE_ID)).thenReturn(Optional.of(template));
+
+        TemplatePublishResponse response = service.publish(TEMPLATE_ID, 2, ADMIN_ID);
+
+        assertThat(response.html()).isEqualTo("<div>2</div>");
+        verify(templateVersionRepository, never()).softDeleteAllByTemplateId(any(), any());
+    }
+
+    @Test
+    @DisplayName("게시된 템플릿에 임시저장은 있는데 고른 번호가 없으면 POSTER-008 이다(#880)")
+    void 재게시할_번호가_임시저장에_없으면_거부한다() throws Exception {
+        Template template = publishedActiveTemplate();
+        when(templateRepository.findByIdForUpdate(TEMPLATE_ID)).thenReturn(Optional.of(template));
+        when(templateVersionRepository.existsByTemplateIdAndDeletedAtIsNull(TEMPLATE_ID)).thenReturn(true);
+
+        assertThatThrownBy(() -> service.publish(TEMPLATE_ID, 99, ADMIN_ID))
+                .isInstanceOfSatisfying(CampaignException.class, e ->
+                        assertThat(e.getErrorCode()).isEqualTo(PosterErrorCode.VERSION_NOT_FOUND));
         verify(templateVersionRepository, never()).softDeleteAllByTemplateId(any(), any());
     }
 
@@ -116,10 +165,17 @@ class TemplatePublishServiceTest {
         when(templateVersionRepository.findByTemplateIdAndVersionNumberAndDeletedAtIsNull(TEMPLATE_ID, 99))
                 .thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> service.publish(TEMPLATE_ID, 99))
+        assertThatThrownBy(() -> service.publish(TEMPLATE_ID, 99, ADMIN_ID))
                 .isInstanceOfSatisfying(CampaignException.class, e ->
                         assertThat(e.getErrorCode()).isEqualTo(PosterErrorCode.VERSION_NOT_FOUND));
         verify(templateVersionRepository, never()).softDeleteAllByTemplateId(any(), any());
+    }
+
+    private Template publishedActiveTemplate() throws Exception {
+        Template template = draftTemplate();
+        template.publish("<div>1</div>", LocalDateTime.now(FIXED_CLOCK).minusDays(1), VERSION_NUMBER);
+        template.changeActive(true, 1L, LocalDateTime.now(FIXED_CLOCK).minusDays(1));
+        return template;
     }
 
     private Template draftTemplate() throws Exception {

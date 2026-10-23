@@ -123,6 +123,29 @@ public class Template extends BaseTimeEntity {
         this.publishedVersionNumber = versionNumber;
     }
 
+    /*
+     * 게시된 템플릿을 임시저장 버전으로 다시 게시한다(#880). 게시본 HTML 과 게시 시각, 게시 버전 번호, 마지막
+     * 수정자를 바꾸고 active 는 건드리지 않는다. status, publishedAt, publishedVersionNumber 를 함께 갱신하는 이유는
+     * publish() 와 같다.
+     */
+    public void republish(String htmlContent, LocalDateTime now, int versionNumber, Long adminId) {
+        if (this.status != TemplateStatus.PUBLISHED) {
+            throw new IllegalStateException("only PUBLISHED template can be republished: " + this.status);
+        }
+        this.htmlContent = htmlContent;
+        this.publishedAt = now;
+        this.publishedVersionNumber = versionNumber;
+        this.lastModifiedBy = adminId;
+        this.lastModifiedAt = now;
+    }
+
+    // 상태와 무관하게 이름을 바꾼다(#880). 이미 만든 포스터의 제목은 만들 때 정해져 바뀌지 않는다.
+    public void rename(String name, Long adminId, LocalDateTime now) {
+        this.name = requiredName(name);
+        this.lastModifiedBy = adminId;
+        this.lastModifiedAt = now;
+    }
+
     public void changeActive(boolean active, Long adminId, LocalDateTime now) {
         if (this.status != TemplateStatus.PUBLISHED) {
             throw new IllegalStateException("only PUBLISHED template can change active: " + this.status);

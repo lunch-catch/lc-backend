@@ -99,7 +99,7 @@ class TemplateReviseServiceTest {
         lenient().when(templateRepository.findById(TEMPLATE_ID)).thenAnswer(invocation -> Optional.of(draftTemplate()));
         lenient().when(templateRepository.findByIdForUpdate(TEMPLATE_ID))
                 .thenAnswer(invocation -> Optional.of(draftTemplate()));
-        lenient().when(templateVersionRepository.findFirstByTemplateIdOrderByVersionNumberDesc(TEMPLATE_ID))
+        lenient().when(templateVersionRepository.findFirstByTemplateIdAndDeletedAtIsNullOrderByVersionNumberDesc(TEMPLATE_ID))
                 .thenAnswer(invocation -> Optional.of(draftTemplate().latestVersion()));
         lenient().when(transactionTemplate.execute(any())).thenAnswer(invocation -> {
             TransactionCallback<?> callback = invocation.getArgument(0);
@@ -248,7 +248,7 @@ class TemplateReviseServiceTest {
     @Test
     @DisplayName("조회 뒤 삭제돼 버전이 하나도 없으면 POSTER-005 로 거부한다")
     void 버전이_없으면_템플릿_없음으로_거부한다() {
-        when(templateVersionRepository.findFirstByTemplateIdOrderByVersionNumberDesc(TEMPLATE_ID))
+        when(templateVersionRepository.findFirstByTemplateIdAndDeletedAtIsNullOrderByVersionNumberDesc(TEMPLATE_ID))
                 .thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.revise(TEMPLATE_ID, "버튼 색 바꿔줘", REQUEST_ID, ADMIN_ID))
@@ -268,30 +268,52 @@ class TemplateReviseServiceTest {
     }
 
     @Test
-    @DisplayName("잠금을 잡고 다시 보니 그 사이 게시돼 있으면 POSTER-006 으로 거부한다")
-    void 저장_시점에_게시돼_있으면_거부한다() throws Exception {
-        Template published = draftTemplate();
-        setStatus(published, TemplateStatus.PUBLISHED);
-        when(templateRepository.findByIdForUpdate(TEMPLATE_ID)).thenReturn(Optional.of(published));
+    @DisplayName("살아 있는 임시저장이 없는 게시된 템플릿의 첫 수정은 게시본 HTML 을 이전 HTML 로 쓴다(#880)")
+    void 게시된_템플릿의_첫_수정은_게시본을_이전_HTML로_쓴다() throws Exception {
+        Template published = publishedTemplate(5);
+        givenPublishedWithoutDraft(published, 3);
         when(templateHtmlGenerator.revise(PREVIOUS_HTML, "버튼 색 바꿔줘")).thenReturn(new GeneratedTemplate(PREVIOUS_HTML, ""));
 
-        assertThatThrownBy(() -> service.revise(TEMPLATE_ID, "버튼 색 바꿔줘", REQUEST_ID, ADMIN_ID))
-                .isInstanceOfSatisfying(CampaignException.class, e ->
-                        assertThat(e.getErrorCode()).isEqualTo(PosterErrorCode.TEMPLATE_NOT_DRAFT));
-        verify(templateVersionRepository, never()).saveAndFlush(any());
+        TemplateCreateResponse response = service.revise(TEMPLATE_ID, "버튼 색 바꿔줘", REQUEST_ID, ADMIN_ID);
+
+        assertThat(response.status()).isEqualTo(TemplateStatus.PUBLISHED);
+        verify(templateHtmlGenerator).revise(PREVIOUS_HTML, "버튼 색 바꿔줘");
+        verify(templateVersionRepository).saveAndFlush(any(TemplateVersion.class));
     }
 
     @Test
-    @DisplayName("게시된 템플릿은 POSTER-006 으로 거부한다")
-    void 게시된_템플릿은_거부한다() throws Exception {
-        Template template = draftTemplate();
-        setStatus(template, TemplateStatus.PUBLISHED);
-        when(templateRepository.findById(TEMPLATE_ID)).thenReturn(Optional.of(template));
+    @DisplayName("게시된 템플릿의 새 버전 번호는 게시 번호와 남은 최대 번호 중 큰 쪽에 1을 더한다(#880)")
+    void 게시된_템플릿의_새_버전_번호는_게시_번호가_바닥이다() throws Exception {
+        Template published = publishedTemplate(5);
+        givenPublishedWithoutDraft(published, 3);
+        when(templateHtmlGenerator.revise(PREVIOUS_HTML, "버튼 색 바꿔줘")).thenReturn(new GeneratedTemplate(PREVIOUS_HTML, ""));
+
+        assertThat(service.revise(TEMPLATE_ID, "버튼 색 바꿔줘", REQUEST_ID, ADMIN_ID).versionNumber()).isEqualTo(6);
+    }
+
+    @Test
+    @DisplayName("소프트삭제된 번호가 게시 번호보다 높게 남아 있으면 그 번호 다음을 매긴다(번호 UNIQUE 충돌 방지, #880)")
+    void 남은_번호가_게시_번호보다_높으면_그_다음을_매긴다() throws Exception {
+        Template published = publishedTemplate(5);
+        givenPublishedWithoutDraft(published, 8);
+        when(templateHtmlGenerator.revise(PREVIOUS_HTML, "버튼 색 바꿔줘")).thenReturn(new GeneratedTemplate(PREVIOUS_HTML, ""));
+
+        assertThat(service.revise(TEMPLATE_ID, "버튼 색 바꿔줘", REQUEST_ID, ADMIN_ID).versionNumber()).isEqualTo(9);
+    }
+
+    @Test
+    @DisplayName("게시본을 기준으로 한 구조 검증을 통과하지 못하면 POSTER-002 이고 저장하지 않는다(#880)")
+    void 게시본과_구조가_다르면_거부한다() throws Exception {
+        Template published = publishedTemplate(5);
+        givenPublishedWithoutDraft(published, 3);
+        String changed = PREVIOUS_HTML.replace("<h1 data-slot=\"eventName\">", "<h2 data-slot=\"eventName\">")
+                .replace("title</h1>", "title</h2>");
+        when(templateHtmlGenerator.revise(PREVIOUS_HTML, "버튼 색 바꿔줘")).thenReturn(new GeneratedTemplate(changed, ""));
 
         assertThatThrownBy(() -> service.revise(TEMPLATE_ID, "버튼 색 바꿔줘", REQUEST_ID, ADMIN_ID))
                 .isInstanceOfSatisfying(CampaignException.class, e ->
-                        assertThat(e.getErrorCode()).isEqualTo(PosterErrorCode.TEMPLATE_NOT_DRAFT));
-        verify(templateHtmlGenerator, never()).revise(any(), any());
+                        assertThat(e.getErrorCode()).isEqualTo(PosterErrorCode.STRUCTURE_CHANGED));
+        verify(templateVersionRepository, never()).saveAndFlush(any());
     }
 
     @Test
@@ -386,6 +408,21 @@ class TemplateReviseServiceTest {
         return template;
     }
 
+    private Template publishedTemplate(int publishedVersionNumber) throws Exception {
+        Template template = draftTemplate();
+        template.publish(PREVIOUS_HTML, LocalDateTime.now(FIXED_CLOCK), publishedVersionNumber);
+        return template;
+    }
+
+    // 임시저장이 모두 소프트삭제된 게시된 템플릿이다. remainingMaxVersionNumber 는 아직 지워지지 않고 남은 행의 최대 번호다.
+    private void givenPublishedWithoutDraft(Template published, int remainingMaxVersionNumber) {
+        when(templateRepository.findById(TEMPLATE_ID)).thenReturn(Optional.of(published));
+        when(templateRepository.findByIdForUpdate(TEMPLATE_ID)).thenReturn(Optional.of(published));
+        when(templateVersionRepository.findFirstByTemplateIdAndDeletedAtIsNullOrderByVersionNumberDesc(TEMPLATE_ID))
+                .thenReturn(Optional.empty());
+        when(templateVersionRepository.findMaxVersionNumber(TEMPLATE_ID)).thenReturn(remainingMaxVersionNumber);
+    }
+
     private TemplateVersion existingVersion() throws Exception {
         Template template = draftTemplate();
         return template.addDraftVersion(
@@ -396,11 +433,5 @@ class TemplateReviseServiceTest {
         Field field = BaseTimeEntity.class.getDeclaredField("id");
         field.setAccessible(true);
         field.set(entity, id);
-    }
-
-    private void setStatus(Template template, TemplateStatus status) throws Exception {
-        Field field = Template.class.getDeclaredField("status");
-        field.setAccessible(true);
-        field.set(template, status);
     }
 }

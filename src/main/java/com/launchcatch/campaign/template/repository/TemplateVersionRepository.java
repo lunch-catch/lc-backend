@@ -28,18 +28,24 @@ public interface TemplateVersionRepository extends JpaRepository<TemplateVersion
     Optional<TemplateVersion> findByRequestId(String requestId);
 
     /*
-     * 템플릿을 수정할 때 LLM 에 넘길 "최신 버전 HTML" 하나만 가볍게 가져온다.
-     * 이 템플릿의 버전 전체(과거 HTML 포함)를 다 불러올 필요가 없다.
-     */
-    Optional<TemplateVersion> findFirstByTemplateIdOrderByVersionNumberDesc(Long templateId);
-
-    /*
-     * 목록·상세 조회의 미리보기 html 용이다. 소프트삭제된 버전은 제외한다.
-     * 지금은 DRAFT 템플릿의 버전이 소프트삭제될 길이 없지만(게시할 때만 전부
-     * 함께 지워지고, 그 순간 상태도 PUBLISHED 로 바뀌어 이 메서드를 안 탄다),
-     * findPage() 와 같은 조건으로 맞춰 둔다.
+     * 템플릿 상세 조회의 미리보기 html 과, 템플릿을 수정할 때 LLM 에 넘길 "최신 버전 HTML" 하나를 가볍게 가져온다.
+     * 이 템플릿의 버전 전체(과거 HTML 포함)를 다 불러올 필요가 없다. 소프트삭제된 버전은 제외한다. 게시된
+     * 템플릿은 게시할 때 버전이 모두 소프트삭제되므로(#880) 임시저장이 없으면 비어 있다.
      */
     Optional<TemplateVersion> findFirstByTemplateIdAndDeletedAtIsNullOrderByVersionNumberDesc(Long templateId);
+
+    // 살아 있는 임시저장 버전이 하나라도 있는지 본다(#880).
+    boolean existsByTemplateIdAndDeletedAtIsNull(Long templateId);
+
+    /*
+     * 템플릿 목록 조회의 hasDraft 용이다(#880). 주어진 템플릿들 중 살아 있는 임시저장 버전이 있는 템플릿의 ID 만
+     * 한 번에 가져온다. 템플릿마다 existsBy...로 따로 조회하면 템플릿 수만큼 쿼리가 나가는 N+1이 된다.
+     */
+    @Query("""
+            select distinct v.template.id from TemplateVersion v
+            where v.template.id in :templateIds and v.deletedAt is null
+            """)
+    List<Long> findTemplateIdsWithAliveVersion(@Param("templateIds") Collection<Long> templateIds);
 
     /*
      * 템플릿 목록 조회의 미리보기 html 용이다(#532). 주어진 템플릿들의 살아있는 최신 버전을 한 번에
@@ -59,7 +65,8 @@ public interface TemplateVersionRepository extends JpaRepository<TemplateVersion
 
     /*
      * 다음 버전 번호를 매길 때 쓴다. HTML 을 전혀 안 가져오고 숫자 하나만 집계하므로
-     * 버전이 많이 쌓인 템플릿이라도 가볍다. 버전이 하나도 없으면 0을 돌려준다.
+     * 버전이 많이 쌓인 템플릿이라도 가볍다. 버전이 하나도 없으면 0을 돌려준다. 소프트삭제된 버전도
+     * 센다. (template_id, version_number) UNIQUE 가 04시 삭제 배치 전까지 그 번호를 쥐고 있어서다.
      */
     @Query("select coalesce(max(v.versionNumber), 0) from TemplateVersion v where v.template.id = :templateId")
     int findMaxVersionNumber(@Param("templateId") Long templateId);

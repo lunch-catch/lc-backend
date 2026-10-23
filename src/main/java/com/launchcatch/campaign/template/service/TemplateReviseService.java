@@ -8,7 +8,6 @@ import com.launchcatch.campaign.template.client.TemplateHtmlGenerator;
 import com.launchcatch.campaign.template.dto.TemplateCreateResponse;
 import com.launchcatch.campaign.template.dto.TemplateSanitizeResult;
 import com.launchcatch.campaign.template.entity.Template;
-import com.launchcatch.campaign.template.entity.TemplateStatus;
 import com.launchcatch.campaign.template.entity.TemplateVersion;
 import com.launchcatch.campaign.template.repository.TemplateRepository;
 import com.launchcatch.campaign.template.repository.TemplateVersionRepository;
@@ -19,6 +18,7 @@ import com.launchcatch.campaign.template.TemplateStructureValidator;
 import java.time.Clock;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Optional;
 import lombok.RequiredArgsConstructor;
 import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
@@ -64,8 +64,8 @@ public class TemplateReviseService {
         }
         templateGenerationRateLimiter.checkLimit(adminId, requestId);
         validatePrompt(requestPrompt, requestId);
-        findDraftTemplate(templateId);
-        String previousHtml = latestVersionHtml(templateId);
+        Template template = findTemplate(templateId);
+        String previousHtml = previousHtml(template);
         Document previousDocument = Jsoup.parseBodyFragment(previousHtml);
         GeneratedTemplate generated = generate(previousHtml, requestPrompt);
         if (generated.chatOnly()) {
@@ -105,23 +105,22 @@ public class TemplateReviseService {
     }
 
     /*
-     * 버전을 전혀 안 가져온다. 존재/상태 확인에는 필요 없다.
+     * 버전을 전혀 안 가져온다. 존재 확인에는 필요 없다. 게시된 템플릿도 수정할 수 있다(#880).
      */
-    private Template findDraftTemplate(Long templateId) {
-        Template template = templateRepository.findById(templateId)
+    private Template findTemplate(Long templateId) {
+        return templateRepository.findById(templateId)
                 .orElseThrow(() -> new CampaignException(PosterErrorCode.TEMPLATE_NOT_FOUND));
-        if (template.getStatus() != TemplateStatus.DRAFT) {
-            throw new CampaignException(PosterErrorCode.TEMPLATE_NOT_DRAFT);
-        }
-        return template;
     }
 
     /*
-     * LLM 에 넘길 최신 버전 HTML 하나만 가져온다. 이 템플릿의 과거 버전들은 안 건든다.
+     * LLM 에 넘길 이전 HTML 이다. 살아 있는 최신 임시저장 버전 하나만 가져오고 과거 버전들은 안 건든다.
+     * 살아 있는 임시저장이 없는 게시된 템플릿의 첫 수정은 게시본 HTML(template.html_content)을 이전 HTML 로 쓴다.
+     * 게시본을 복사한 버전 행은 만들지 않는다. 새 버전의 구조 검증(TemplateStructureValidator)도 이 HTML 이 기준이다.
      */
-    private String latestVersionHtml(Long templateId) {
-        return templateVersionRepository.findFirstByTemplateIdOrderByVersionNumberDesc(templateId)
+    private String previousHtml(Template template) {
+        return templateVersionRepository.findFirstByTemplateIdAndDeletedAtIsNullOrderByVersionNumberDesc(template.getId())
                 .map(TemplateVersion::getHtmlContent)
+                .or(() -> Optional.ofNullable(template.getHtmlContent()))
                 .orElseThrow(() -> new CampaignException(PosterErrorCode.TEMPLATE_NOT_FOUND));
     }
 
@@ -143,16 +142,16 @@ public class TemplateReviseService {
      * 부딪히는 경쟁이 없어진다. 잠금을 잡은 뒤 DRAFT 상태를 다시 확인하는 것도
      * 같은 이유다: LLM 호출(재시도 1회까지 포함해 최대 60초) 동안 다른 트랜잭션이
      * 이 템플릿을 게시해 커밋했을 수 있는데, 잠금을 잡고 나서야 그 최신 상태를 안전하게 본다.
+     *
+     * 게시된 템플릿도 수정할 수 있어(#880) 상태는 더 확인하지 않는다. 그 사이 재게시가 끼면 이 요청의 이전 HTML 이
+     * 옛 게시본일 수 있지만, 슬롯 구조는 모든 버전이 같아 새 버전은 그대로 유효한 임시저장이다.
      */
     private TemplateCreateResponse save(
             Long templateId, String requestPrompt, String requestId, Long adminId, TemplateSanitizeResult sanitized,
             String message, List<String> suggestedPrompts) {
         Template template = templateRepository.findByIdForUpdate(templateId)
                 .orElseThrow(() -> new CampaignException(PosterErrorCode.TEMPLATE_NOT_FOUND));
-        if (template.getStatus() != TemplateStatus.DRAFT) {
-            throw new CampaignException(PosterErrorCode.TEMPLATE_NOT_DRAFT);
-        }
-        int nextVersionNumber = templateVersionRepository.findMaxVersionNumber(templateId) + 1;
+        int nextVersionNumber = nextVersionNumber(template);
         TemplateVersion version = template.addDraftVersion(
                 adminId, LocalDateTime.now(clock), requestPrompt, requestId, sanitized.html(), message,
                 nextVersionNumber);
@@ -168,6 +167,18 @@ public class TemplateReviseService {
         templateVersionRepository.saveAndFlush(version);
         evictVersionsOverCap(templateId, nextVersionNumber);
         return toResponse(version, sanitized.removedElements(), suggestedPrompts);
+    }
+
+    /*
+     * 게시하면 임시저장 버전이 모두 소프트삭제되고 04시 배치가 완전히 지운다. 그 뒤에는 남은 번호가 없어 1부터 다시
+     * 시작할 수 있으므로, 게시된 버전 번호를 바닥값으로 잡는다(#880). 소프트삭제된 행이 남아 있는 동안은
+     * (template_id, version_number) UNIQUE 가 그 번호를 쥐고 있어, 남아 있는 최대 번호도 함께 센다. 배치 전후로
+     * 번호가 달라질 수 있는 때는 게시한 번호보다 높은 임시저장이 있었던 경우뿐이고, 어느 쪽이든 살아 있는 버전의
+     * 번호와 겹치지 않는다.
+     */
+    private int nextVersionNumber(Template template) {
+        int floor = template.getPublishedVersionNumber() == null ? 0 : template.getPublishedVersionNumber();
+        return Math.max(floor, templateVersionRepository.findMaxVersionNumber(template.getId())) + 1;
     }
 
     /*
