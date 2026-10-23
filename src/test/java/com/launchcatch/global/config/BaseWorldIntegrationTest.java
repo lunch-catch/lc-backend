@@ -26,7 +26,7 @@ class BaseWorldIntegrationTest extends IntegrationTestSupport {
     private static final String HASH = "$2a$10$MRk.eo1/rGQNUGClHmwVB.Z5zREkJzDzDfu9M4oJsZ.vd0s3n6tAu";
 
 
-    private static final String[][] CONSISTENCY = {
+    static final String[][] CONSISTENCY = {
             {"캠페인의 가게가 있다", "SELECT COUNT(*) FROM campaign c LEFT JOIN store s ON s.store_id = c.store_id WHERE c.campaign_id >= 10000000 AND s.store_id IS NULL"},
             {"캠페인의 점주가 가게 점주와 같다", "SELECT COUNT(*) FROM campaign c JOIN store s ON s.store_id = c.store_id WHERE c.campaign_id >= 10000000 AND c.owner_id <> s.owner_id"},
             {"캠페인 점주는 ACTIVE 다", "SELECT COUNT(*) FROM campaign c JOIN owner o ON o.owner_id = c.owner_id WHERE c.campaign_id >= 10000000 AND o.status <> 'ACTIVE'"},

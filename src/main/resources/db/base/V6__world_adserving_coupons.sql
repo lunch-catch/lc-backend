@@ -35,12 +35,6 @@ INSERT INTO base_cat VALUES
     (4, 'BUNSIK', '분식'), (5, 'ASIAN', '아시안'), (6, 'FAST_FOOD', '패스트푸드'), (7, 'CAFE_DESSERT', '카페디저트'),
     (8, 'OTHER', '기타');
 
--- 시간대 가중치 (billing.schedule.hourly-weights 기본값, 합 100)
-CREATE TEMPORARY TABLE base_hour_weight (h INT PRIMARY KEY, w INT NOT NULL);
-INSERT INTO base_hour_weight VALUES
-    (0, 2), (1, 1), (2, 1), (3, 1), (4, 1), (5, 1), (6, 1), (7, 3), (8, 4), (9, 5), (10, 8), (11, 10),
-    (12, 9), (13, 7), (14, 4), (15, 4), (16, 4), (17, 5), (18, 7), (19, 8), (20, 6), (21, 4), (22, 2), (23, 2);
-
 /*
  * 캠페인 1 ~ 205 와 242 의 값을 WORLD_SPEC 공식으로 계산한다.
  * 상태: 1 ~ 180, 242, 301 ~ 330 (#858) ACTIVE, 181 ~ 195 PAUSED OWNER, 196 ~ 205 PAUSED NO_POINTS.
@@ -350,23 +344,7 @@ SELECT 10000000 + n * 10 + dn, 10000000 + n, owner_id, bdate, daily_budget, 10, 
   FROM base_plan
     ON DUPLICATE KEY UPDATE budget_daily_plan.budget_daily_plan_id = budget_daily_plan.budget_daily_plan_id;
 
--- 하루 예산별 시간대 목표 합 (남는 금액을 마지막 시간대에 더하려고 먼저 구한다)
-CREATE TEMPORARY TABLE base_hour_assigned (budget BIGINT PRIMARY KEY, assigned BIGINT NOT NULL);
-INSERT INTO base_hour_assigned
-SELECT b.budget, SUM(FLOOR(b.budget * w.w / 100))
-  FROM (SELECT DISTINCT budget FROM base_cmp) b CROSS JOIN base_hour_weight w
- GROUP BY b.budget;
-
--- BIL.HOURLY_TARGET_D: 오늘 중단되지 않은 계획마다 0 ~ 23시 목표, 가중치 비율로 나누고 남는 금액은 23시에 더한다
-INSERT INTO budget_hourly_target (budget_hourly_target_id, budget_daily_plan_id, hour, target_amount, created_at, updated_at)
-SELECT 10000000 + (p.n * 10 + p.dn) * 100 + w.h, 10000000 + p.n * 10 + p.dn, w.h,
-       FLOOR(p.daily_budget * w.w / 100) + IF(w.h = 23, p.daily_budget - r.assigned, 0),
-       p.d0, p.d0
-  FROM base_plan p
-  CROSS JOIN base_hour_weight w
-  JOIN base_hour_assigned r ON r.budget = p.daily_budget
- WHERE p.dn = 8 AND p.paused = 0
-    ON DUPLICATE KEY UPDATE budget_hourly_target.budget_hourly_target_id = budget_hourly_target.budget_hourly_target_id;
+-- 시간대별 목표는 광고 서빙이 그때그때 계산한다. 그 표(budget_hourly_target)는 V8 이 지웠으므로 넣지 않는다 (#829, #858)
 
 /*
  * 원장 RESERVE: 예산이 있는 계획마다 그날 00:00 (B+1000000 + n * 10 + dn).
@@ -571,8 +549,6 @@ DROP TEMPORARY TABLE base_plan;
 DROP TEMPORARY TABLE base_spend;
 DROP TEMPORARY TABLE base_serve;
 DROP TEMPORARY TABLE base_cmp;
-DROP TEMPORARY TABLE base_hour_assigned;
-DROP TEMPORARY TABLE base_hour_weight;
 DROP TEMPORARY TABLE base_cat;
 DROP TEMPORARY TABLE base_day;
 DROP TEMPORARY TABLE base_k;
