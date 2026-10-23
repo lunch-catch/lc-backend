@@ -193,11 +193,14 @@ class OwnerLoginServiceTest {
         ReflectionTestUtils.setField(latest, "refreshTokenIssuanceVersion", 2L);
         when(repository.findByIdForLogin(7L)).thenReturn(Optional.of(owner), Optional.of(latest));
         try (var logs = LogCapture.attach(OwnerLoginService.class)) {
-            assertThat(service.login(request).accessToken()).isEqualTo("test-access");
+            var result = service.login(request);
+            assertThat(result.accessToken()).isEqualTo("test-access");
             var event = logs.only();
             assertThat(event.getLevel()).isEqualTo(Level.INFO);
             assertThat(event.getFormattedMessage()).contains("event=OWNER_LOGIN_REFRESH_CACHE_SKIPPED",
-                    "ownerId=7", "reason=SUPERSEDED");
+                    "ownerId=7", "reason=SUPERSEDED")
+                    .doesNotContain(result.accessToken(), result.refreshToken(), result.response().email(),
+                            request.password(), owner.getPasswordHash(), owner.getRefreshTokenHash());
             assertThat(event.getThrowableProxy()).isNull();
         }
         verify(cache, never()).saveIfNewer(anyString(), anyLong(), any(), anyBoolean(), any(), anyLong());
@@ -207,11 +210,14 @@ class OwnerLoginServiceTest {
     void Redis에_더_최신_게시가_있어도_DB_로그인_결과를_유지한다() {
         when(cache.saveIfNewer(anyString(), anyLong(), any(), anyBoolean(), any(), anyLong())).thenReturn(false);
         try (var logs = LogCapture.attach(OwnerLoginService.class)) {
-            assertThat(service.login(request).accessToken()).isEqualTo("test-access");
+            var result = service.login(request);
+            assertThat(result.accessToken()).isEqualTo("test-access");
             var event = logs.only();
             assertThat(event.getLevel()).isEqualTo(Level.INFO);
             assertThat(event.getFormattedMessage()).contains("event=OWNER_LOGIN_REFRESH_CACHE_SKIPPED",
-                    "ownerId=7", "reason=NEWER_PUBLICATION");
+                    "ownerId=7", "reason=NEWER_PUBLICATION")
+                    .doesNotContain(result.accessToken(), result.refreshToken(), result.response().email(),
+                            request.password(), owner.getPasswordHash(), owner.getRefreshTokenHash());
             assertThat(event.getThrowableProxy()).isNull();
         }
     }

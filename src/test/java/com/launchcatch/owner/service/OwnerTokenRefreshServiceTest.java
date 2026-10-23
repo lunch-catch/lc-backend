@@ -244,7 +244,7 @@ class OwnerTokenRefreshServiceTest {
             assertThat(event.getFormattedMessage()).contains("event=OWNER_REFRESH_CACHE_PUBLISH_FAILED", "ownerId=7",
                     "exceptionType=DataAccessResourceFailureException", "fallback=KEEP_DB_REFRESH")
                     .doesNotContain("sensitive-publish-error", OLD_TOKEN, OLD_HASH, owner.getEmail(),
-                            result.refreshToken(), owner.getRefreshTokenHash(), "stack=");
+                            result.accessToken(), result.refreshToken(), owner.getRefreshTokenHash(), "stack=");
             assertThat(event.getThrowableProxy()).isNull();
         }
     }
@@ -355,7 +355,8 @@ class OwnerTokenRefreshServiceTest {
             assertThat(event.getLevel()).isEqualTo(Level.WARN);
             assertThat(event.getFormattedMessage()).contains("event=OWNER_REFRESH_CONFIRM_FAILED", "ownerId=7",
                     "exceptionType=DataAccessResourceFailureException", "fallback=DB_HASH_CHECK")
-                    .doesNotContain("sensitive-confirm-error", OLD_TOKEN, OLD_HASH, result.refreshToken(), "stack=");
+                    .doesNotContain("sensitive-confirm-error", OLD_TOKEN, OLD_HASH,
+                            result.accessToken(), result.refreshToken(), "stack=");
             assertThat(event.getThrowableProxy()).isNull();
         }
     }
