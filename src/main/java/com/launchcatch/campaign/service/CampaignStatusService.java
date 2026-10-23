@@ -11,6 +11,7 @@ import com.launchcatch.campaign.entity.Campaign;
 import com.launchcatch.campaign.entity.CampaignStatusLog;
 import com.launchcatch.campaign.repository.CampaignRepository;
 import com.launchcatch.campaign.repository.CampaignStatusLogRepository;
+import com.launchcatch.campaign.repository.CampaignSummaryRow;
 import com.launchcatch.store.contract.StoreCampaignStatus;
 import com.launchcatch.store.contract.StoreCampaignSummaryCommand;
 import com.launchcatch.store.contract.StoreCampaignSummaryUpdater;
@@ -244,16 +245,24 @@ public class CampaignStatusService {
     }
 
     private void updateStoreSummary(Campaign campaign, LocalDate businessDate) {
-        StoreCampaignSummaryCommand command = new StoreCampaignSummaryCommand(
+        storeCampaignSummaryUpdater.update(campaign.getStoreId(), campaign.getId(), toSummaryCommand(campaign, businessDate));
+    }
+
+    // 00:00 배치의 일일 요약 준비(#838)도 같은 값을 만들어 쓰도록 패키지 안에 연다.
+    static StoreCampaignSummaryCommand toSummaryCommand(Campaign campaign, LocalDate businessDate) {
+        return toSummaryCommand(CampaignSummaryRow.from(campaign), businessDate);
+    }
+
+    static StoreCampaignSummaryCommand toSummaryCommand(CampaignSummaryRow row, LocalDate businessDate) {
+        return new StoreCampaignSummaryCommand(
                 businessDate,
-                toStoreCampaignStatus(campaign.getStatus()),
-                toStoreDiscountTargetType(campaign.getDiscountTargetType()),
-                toStoreDiscountType(campaign.getDiscountType()),
-                campaign.getDiscountValue(),
-                campaign.getTargetMenuId(),
-                campaign.getUsableStartTime(),
-                campaign.getUsableEndTime());
-        storeCampaignSummaryUpdater.update(campaign.getStoreId(), campaign.getId(), command);
+                toStoreCampaignStatus(row.status()),
+                toStoreDiscountTargetType(row.discountTargetType()),
+                toStoreDiscountType(row.discountType()),
+                row.discountValue(),
+                row.targetMenuId(),
+                row.usableStartTime(),
+                row.usableEndTime());
     }
 
     private static StoreCampaignStatus toStoreCampaignStatus(CampaignStatus status) {

@@ -14,6 +14,7 @@ import static org.mockito.Mockito.when;
 import com.launchcatch.coupon.exception.CouponErrorCode;
 import com.launchcatch.coupon.exception.CouponException;
 import com.launchcatch.coupon.repository.CouponSequenceRepository;
+import com.launchcatch.coupon.model.CouponIssuanceOutcome;
 import com.launchcatch.coupon.model.CouponReservation;
 import com.launchcatch.coupon.model.CouponReservationOutcome;
 import java.time.Duration;
@@ -212,19 +213,74 @@ class CouponSequenceServiceTest {
         verify(repository).blockAll(Set.of(81L, 82L));
     }
 
+    // 이 서버가 차단한 이벤트는 Redis를 부르지 않고 그 이벤트의 요청만 복구 대상으로 돌려줘야 한다.
     @Test
-    void 여러_이벤트를_조회하면_확정_소진만_모은다() {
-        when(repository.availability(anyList())).thenReturn(Map.of(81L, 0, 82L, 1, 83L, 2));
+    void 차단한_이벤트의_예약은_Redis를_부르지_않고_그_이벤트만_복구_대상으로_돌려준다() {
+        service.block(81L, null);
+        when(repository.reserveAll(org.mockito.ArgumentMatchers.anyMap(), eq(30_000L)))
+                .thenReturn(Map.of(82L, List.of(5L)));
 
-        assertThat(service.soldOutEvents(Set.of(81L, 82L, 83L))).containsExactly(81L);
+        Map<Long, List<CouponReservationOutcome>> reserved = service.reserveAll(Map.of(81L, 2, 82L, 1));
+
+        assertThat(reserved.get(81L)).hasSize(2).allSatisfy(outcome -> {
+            assertThat(outcome.reservation()).isNull();
+            assertThat(outcome.recoveryRequired()).isTrue();
+        });
+        assertThat(reserved.get(82L).getFirst().reservation().sequence()).isEqualTo(5);
+        verify(repository).reserveAll(org.mockito.ArgumentMatchers.<Map<Long, List<String>>>argThat(
+                ids -> ids.keySet().equals(Set.of(82L))), eq(30_000L));
+    }
+
+    // 확정 소진인 이벤트만 소진 결과를 받고 재고가 남은 이벤트는 결과 없이 계속 발급해야 한다.
+    @Test
+    void 여러_이벤트를_조회하면_확정_소진만_소진으로_돌려준다() {
+        when(repository.availability(anyList())).thenReturn(Map.of(81L, 0, 82L, 1));
+
+        Map<Long, CouponIssuanceOutcome> unavailable = service.findUnavailableEvents(Set.of(81L, 82L));
+
+        assertThat(unavailable).containsOnlyKeys(81L);
+        assertThat(unavailable.get(81L).rejection()).isEqualTo(CouponErrorCode.INVENTORY_EXHAUSTED);
+        assertThat(unavailable.get(81L).recoveryRequired()).isFalse();
         assertThat(service.needsRecovery(82L)).isFalse();
     }
 
+    // 큐가 준비되지 않은 이벤트가 여럿이면 모두 차단하고 그 이벤트만 복구 대상으로 돌려줘야 한다.
+    @Test
+    void 큐가_준비되지_않은_이벤트를_모두_차단하고_정상_이벤트는_계속_발급한다() {
+        when(repository.availability(anyList())).thenReturn(Map.of(81L, -1, 82L, 1, 83L, -1));
+
+        Map<Long, CouponIssuanceOutcome> unavailable = service.findUnavailableEvents(Set.of(81L, 82L, 83L));
+
+        assertThat(unavailable).containsOnlyKeys(81L, 83L);
+        assertThat(unavailable.values()).allSatisfy(outcome -> {
+            assertThat(outcome.recoveryRequired()).isTrue();
+            assertThat(outcome.rejection()).isEqualTo(CouponErrorCode.ISSUANCE_BUSY);
+        });
+        assertThat(service.needsRecovery(81L)).isTrue();
+        assertThat(service.needsRecovery(82L)).isFalse();
+        assertThat(service.needsRecovery(83L)).isTrue();
+        verify(repository).blockAll(Set.of(81L, 83L));
+    }
+
+    // 이 서버가 이미 차단한 이벤트는 Redis를 조회하지 않고 복구 대상으로 돌려줘야 한다.
+    @Test
+    void 이미_차단한_이벤트는_Redis를_조회하지_않고_복구_대상으로_돌려준다() {
+        service.block(81L, null);
+        when(repository.availability(List.of(82L))).thenReturn(Map.of(82L, 1));
+
+        Map<Long, CouponIssuanceOutcome> unavailable = service.findUnavailableEvents(Set.of(81L, 82L));
+
+        assertThat(unavailable).containsOnlyKeys(81L);
+        assertThat(unavailable.get(81L).recoveryRequired()).isTrue();
+        verify(repository).availability(List.of(82L));
+    }
+
+    // Redis 조회 자체가 실패하면 기존처럼 묶음의 모든 이벤트를 차단하고 실패시켜야 한다.
     @Test
     void 여러_이벤트의_소진_조회가_실패하면_모든_이벤트를_복구_대상으로_남긴다() {
         when(repository.availability(anyList())).thenThrow(new RedisConnectionFailureException("pipeline failed"));
 
-        assertThatThrownBy(() -> service.soldOutEvents(Set.of(81L, 82L))).isInstanceOf(CouponException.class);
+        assertThatThrownBy(() -> service.findUnavailableEvents(Set.of(81L, 82L))).isInstanceOf(CouponException.class);
 
         assertThat(service.needsRecovery(81L)).isTrue();
         assertThat(service.needsRecovery(82L)).isTrue();

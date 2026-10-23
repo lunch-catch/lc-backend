@@ -74,6 +74,7 @@ public class CouponBatchIssuanceService {
      * <p>처리 순서는 아래와 같다.
      * 1. 묶음에 든 이벤트를 ID 순으로 공유 잠금하고 이벤트 상태와 발급 시간을 검사한다.
      * 2. Redis에서 이벤트의 소진 여부를 읽어 소진이면 다른 판정보다 먼저 소진으로 거절한다.
+     *    큐가 준비되지 않은 이벤트는 그 이벤트의 요청만 복구 대상으로 끝내고 다른 이벤트는 계속 처리한다.
      * 3. 회원 상태는 묶음당 한 번, 찜은 캠페인당 한 번 조회해 자격이 없는 요청을 거절한다.
      * 4. 남은 회원의 일일 카운터를 만들고 회원 ID 순으로 잠근 뒤 기존 발급 기록을 읽는다.
      *    이 값으로 요청 순서대로 중복과 일일 한도를 판정하며 같은 묶음 안의 앞 요청도 함께 센다.
@@ -123,11 +124,12 @@ public class CouponBatchIssuanceService {
             }
         }
 
-        // 2. 소진된 이벤트는 회원·중복·한도보다 먼저 소진으로 거절한다.
-        Set<Long> soldOut = sequenceService.soldOutEvents(pendingEvents(requests, outcomes));
+        // 2. 소진된 이벤트는 회원·중복·한도보다 먼저 소진으로 거절하고 큐가 준비되지 않은 이벤트의 요청만 복구로 보낸다.
+        Map<Long, CouponIssuanceOutcome> unavailable =
+                sequenceService.findUnavailableEvents(pendingEvents(requests, outcomes));
         for (int i = 0; i < requests.size(); i++) {
-            if (outcomes[i] == null && soldOut.contains(requests.get(i).eventId())) {
-                outcomes[i] = CouponIssuanceOutcome.rejected(CouponErrorCode.INVENTORY_EXHAUSTED);
+            if (outcomes[i] == null) {
+                outcomes[i] = unavailable.get(requests.get(i).eventId());
             }
         }
 

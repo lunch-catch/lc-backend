@@ -2,6 +2,7 @@ package com.launchcatch.owner.service;
 
 import static org.assertj.core.api.Assertions.*;
 import static org.mockito.Mockito.*;
+import ch.qos.logback.classic.Level;
 import com.launchcatch.owner.repository.OwnerStatusCacheRepository;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -38,10 +39,20 @@ class OwnerStatusCacheInvalidationServiceTest {
     void 커밋_후_캐시_삭제_실패는_전파하지_않는다() {
         TransactionSynchronizationManager.setActualTransactionActive(true);
         TransactionSynchronizationManager.initSynchronization();
-        doThrow(new DataAccessResourceFailureException("offline")).when(cache).delete(7L);
-        service.invalidateAfterCommit(7L);
-        assertThatCode(() -> TransactionSynchronizationManager.getSynchronizations()
-                .forEach(sync -> sync.afterCommit())).doesNotThrowAnyException();
+        var failure = new DataAccessResourceFailureException("delete offline");
+        doThrow(failure).when(cache).delete(7L);
+        try (var logs = LogCapture.attach(OwnerStatusCacheInvalidationService.class)) {
+            service.invalidateAfterCommit(7L);
+            assertThat(logs.events()).isEmpty();
+            assertThatCode(() -> TransactionSynchronizationManager.getSynchronizations()
+                    .forEach(sync -> sync.afterCommit())).doesNotThrowAnyException();
+            var event = logs.only();
+            assertThat(event.getLevel()).isEqualTo(Level.WARN);
+            assertThat(event.getFormattedMessage()).contains("event=OWNER_STATUS_CACHE_INVALIDATION_FAILED", "ownerId=7",
+                    "exceptionType=DataAccessResourceFailureException", "fallback=TTL_EXPIRY");
+            assertThat(((ch.qos.logback.classic.spi.ThrowableProxy) event.getThrowableProxy()).getThrowable()).isSameAs(failure);
+            assertThat(event.getThrowableProxy().getStackTraceElementProxyArray()).isNotEmpty();
+        }
     }
 
     @Test

@@ -29,6 +29,22 @@ public interface CampaignRepository extends JpaRepository<Campaign, Long> {
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     Optional<Campaign> findByStoreIdAndStatus(Long storeId, CampaignStatus status);
 
+    /*
+     * 00:00 배치(#838)가 새 영업일의 가게 요약을 만들 ACTIVE 캠페인을 id 순으로 청크 단위로 읽는다. lastId 보다 큰
+     * 것만 읽어 다음 청크를 이어가고(offset 이 없어 뒤로 갈수록 느려지지 않는다), 엔티티가 아닌 행으로 읽어 영속성
+     * 컨텍스트에 쌓이지 않게 한다. 행 잠금은 걸지 않는다.
+     */
+    @Query("""
+            select new com.launchcatch.campaign.repository.CampaignSummaryRow(
+                c.storeId, c.id, c.status, c.discountTargetType, c.discountType, c.discountValue,
+                c.targetMenuId, c.usableStartTime, c.usableEndTime)
+            from Campaign c
+            where c.status = com.launchcatch.campaign.contract.CampaignStatus.ACTIVE
+            and c.id > :lastId
+            order by c.id
+            """)
+    List<CampaignSummaryRow> findActiveSummaryRowsAfter(@Param("lastId") Long lastId, Pageable pageable);
+
     boolean existsByOwnerIdAndStatusNotIn(Long ownerId, List<CampaignStatus> excludedStatuses);
 
     /*

@@ -1,17 +1,20 @@
 package com.launchcatch.coupon.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.launchcatch.coupon.entity.CouponEvent;
+import com.launchcatch.coupon.entity.CouponEventStatus;
 import com.launchcatch.coupon.entity.CouponInventoryStatus;
 import com.launchcatch.coupon.repository.CouponEventRepository;
 import com.launchcatch.coupon.repository.CouponInventoryRepository;
@@ -25,6 +28,9 @@ import java.util.Optional;
 import java.util.Set;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.BeanUtils;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -128,5 +134,52 @@ class CouponSequenceRecoveryServiceTest {
 
         assertThat(service.recover(81L)).isFalse();
         verifyNoInteractions(sequences, sequenceService);
+    }
+
+    // 큐가 준비되지 않은 ACTIVE와 PAUSED 회차는 DB 기준으로 미리 만들고 차단 상태는 건드리지 않아야 한다.
+    @ParameterizedTest
+    @EnumSource(value = CouponEventStatus.class, names = {"ACTIVE", "PAUSED"})
+    void 오픈_전에_큐가_없는_회차의_큐를_미리_만든다(CouponEventStatus status) {
+        ReflectionTestUtils.setField(events.findForRecovery(81L).orElseThrow(), "status", status);
+        when(sequences.availability(81L)).thenReturn(-1);
+
+        assertThat(service.prepare(81L)).isTrue();
+
+        verify(sequences).rebuild(81L, List.of(2, 3), 1L, Instant.parse("2026-10-21T06:00:00Z").toEpochMilli());
+        verifyNoInteractions(transactions, sequenceService);
+    }
+
+    // 이미 READY나 SOLD_OUT인 큐는 진행 중인 예약을 지우지 않도록 다시 만들지 않아야 한다.
+    @ParameterizedTest
+    @ValueSource(ints = {0, 1})
+    void 이미_준비된_큐는_다시_만들지_않는다(int availability) {
+        ReflectionTestUtils.setField(events.findForRecovery(81L).orElseThrow(), "status", CouponEventStatus.ACTIVE);
+        when(sequences.availability(81L)).thenReturn(availability);
+
+        assertThat(service.prepare(81L)).isFalse();
+
+        verify(sequences, never()).rebuild(eq(81L), anyList(), anyLong(), anyLong());
+    }
+
+    // 종료된 회차는 Redis를 조회하지 않고 큐를 만들지 않아야 한다.
+    @Test
+    void 종료된_회차는_큐를_만들지_않는다() {
+        ReflectionTestUtils.setField(events.findForRecovery(81L).orElseThrow(), "status", CouponEventStatus.ENDED);
+
+        assertThat(service.prepare(81L)).isFalse();
+
+        verifyNoInteractions(sequences);
+    }
+
+    // DB 재고 수가 발급 수량과 다르면 큐를 만들지 않고 실패를 호출자에게 알려야 한다.
+    @Test
+    void 재고_수가_발급_수량과_다르면_큐를_만들지_않는다() {
+        ReflectionTestUtils.setField(events.findForRecovery(81L).orElseThrow(), "status", CouponEventStatus.ACTIVE);
+        when(sequences.availability(81L)).thenReturn(-1);
+        when(inventories.countByCouponEventIdAndStatus(81L, CouponInventoryStatus.ISSUED)).thenReturn(2L);
+
+        assertThatThrownBy(() -> service.prepare(81L)).isInstanceOf(IllegalStateException.class);
+
+        verify(sequences, never()).rebuild(eq(81L), anyList(), anyLong(), anyLong());
     }
 }

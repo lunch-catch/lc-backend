@@ -178,12 +178,44 @@ class CouponBatchIssuanceServiceTest {
 
     @Test
     void 확정_소진은_회원_자격_조회와_DB_쓰기_전에_거절한다() {
-        when(sequences.soldOutEvents(Set.of(81L))).thenReturn(Set.of(81L));
+        when(sequences.findUnavailableEvents(Set.of(81L)))
+                .thenReturn(Map.of(81L, CouponIssuanceOutcome.rejected(CouponErrorCode.INVENTORY_EXHAUSTED)));
 
         CouponIssuanceOutcome result = service.issueBatch(List.of(request(17L))).getFirst();
 
         assertThat(result.rejection()).isEqualTo(CouponErrorCode.INVENTORY_EXHAUSTED);
         verifyNoInteractions(members, wishes, repository, publisher);
+    }
+
+    // 큐가 준비되지 않은 이벤트의 요청만 복구 대상으로 끝내고 같은 묶음의 정상 이벤트는 발급해야 한다.
+    @Test
+    void 큐가_준비되지_않은_이벤트가_섞여도_정상_이벤트는_발급한다() {
+        CouponEvent ready = CouponEvent.prepare(72L, DATE, 10, NOW, NOW.plusHours(2),
+                new CouponEvent.Snapshot(62L, "다른 가게", null, DiscountTargetType.ALL, DiscountType.AMOUNT,
+                        1000, null, null, null, null));
+        ready.initializeCampaignState(true, NOW);
+        ReflectionTestUtils.setField(ready, "id", 82L);
+        CouponEvent notReady = events.findAllForIssue(Set.of(81L)).getFirst();
+        when(events.findAllForIssue(Set.of(81L, 82L))).thenReturn(List.of(notReady, ready));
+        when(sequences.findUnavailableEvents(Set.of(81L, 82L)))
+                .thenReturn(Map.of(81L, CouponIssuanceOutcome.requiringRecovery()));
+        when(members.findCurrentStatuses(Set.of(18L))).thenReturn(Map.of(18L, MemberStatus.ACTIVE));
+        when(wishes.findWishedMemberIds(72L, Set.of(18L))).thenReturn(Set.of(18L));
+        CouponReservation readyReservation = new CouponReservation(82L, 3, "ready");
+        when(sequences.reserveAll(Map.of(82L, 1)))
+                .thenReturn(Map.of(82L, List.of(new CouponReservationOutcome(readyReservation, null, false, false))));
+        when(repository.issueSequences(Map.of(82L, List.of(3)), NOW)).thenReturn(1);
+        when(repository.findCouponCodes(Map.of(82L, List.of(3)))).thenReturn(Map.of(82L, Map.of(3, code)));
+        when(repository.insertCoupons(anyList())).thenReturn(List.of(1002L));
+
+        List<CouponIssuanceOutcome> results = service.issueBatch(List.of(
+                request(17L), new CouponIssuanceRequest(18L, 82L, NOW)));
+
+        assertThat(results.get(0).recoveryRequired()).isTrue();
+        assertThat(results.get(0).reservation()).isNull();
+        assertThat(results.get(1).response().memberCouponId()).isEqualTo(1002L);
+        assertThat(results.get(1).reservation()).isEqualTo(readyReservation);
+        verify(repository).increaseCounters(DATE, Map.of(18L, 1), NOW);
     }
 
     @Test
