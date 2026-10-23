@@ -8,6 +8,7 @@ import static org.hamcrest.Matchers.matchesPattern;
 import static org.hamcrest.Matchers.hasItems;
 
 import com.launchcatch.auth.AuthCookieFactory;
+import com.launchcatch.auth.AuthOpenApiConfig;
 import com.launchcatch.global.config.OpenApiConfig;
 import com.launchcatch.member.contract.MemberQueryService;
 import com.launchcatch.member.oauth.KakaoAuthorizationService;
@@ -43,7 +44,7 @@ import org.springframework.test.web.servlet.MockMvc;
 @AutoConfigureMockMvc(addFilters = false)
 @ContextConfiguration(classes = {MemberAuthController.class, MemberController.class,
         MemberProfileController.class, AdminMemberController.class, KakaoUnlinkWebhookController.class})
-@Import({OpenApiConfig.class, SpringDocConfiguration.class, SpringDocWebMvcConfiguration.class,
+@Import({OpenApiConfig.class, AuthOpenApiConfig.class, SpringDocConfiguration.class, SpringDocWebMvcConfiguration.class,
         SpringDocSpecPropertiesConfiguration.class, SpringDocSecurityConfiguration.class})
 @EnableConfigurationProperties(SpringDocConfigProperties.class)
 class MemberOpenApiTest {
@@ -89,14 +90,14 @@ class MemberOpenApiTest {
 
     @ParameterizedTest
     @CsvSource({
-            "/v1/auth/tokens,delete,memberAccessToken,accessToken",
-            "/v1/members/me/onboarding,put,memberAccessToken,accessToken",
-            "/v1/members/me,get,memberAccessToken,accessToken",
-            "/v1/members/me,patch,memberAccessToken,accessToken",
-            "/v1/members/me:withdraw,post,memberAccessToken,accessToken",
-            "/v1/member-profiles/location,put,memberAccessToken,accessToken",
-            "/v1/member-profiles/location,get,memberAccessToken,accessToken",
-            "/v1/member-profiles/location,delete,memberAccessToken,accessToken",
+            "/v1/auth/tokens,delete,accessToken,accessToken",
+            "/v1/members/me/onboarding,put,accessToken,accessToken",
+            "/v1/members/me,get,accessToken,accessToken",
+            "/v1/members/me,patch,accessToken,accessToken",
+            "/v1/members/me:withdraw,post,accessToken,accessToken",
+            "/v1/member-profiles/location,put,accessToken,accessToken",
+            "/v1/member-profiles/location,get,accessToken,accessToken",
+            "/v1/member-profiles/location,delete,accessToken,accessToken",
             "/v1/admin/members,get,adminAccessToken,adminAccessToken"
     })
     void 보호된_API에는_쿠키_인증과_권한_오류가_표시된다(String path, String method, String scheme, String cookieName) throws Exception {
