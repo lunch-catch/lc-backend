@@ -58,8 +58,9 @@ public class OwnerCouponController {
         return ResponseEnvelope.success(service.summary(owner.getId(), campaignId, from, to));
     }
 
+    // 시연 영상 촬영을 위해 기존 100m 제한을 임시로 30km로 늘렸으며 촬영 후 설명도 100m로 복원한다.
     @PostMapping("/coupon-usages")
-    @Operation(summary = "쿠폰 QR 사용", description = "현재 매장 관리 권한과 100m 거리, 계정·QR·사용 시간을 확인하고 할인액과 사용 이력을 확정한다.")
+    @Operation(summary = "쿠폰 QR 사용", description = "현재 매장 관리 권한과 30km 거리, 계정·QR·사용 시간을 확인하고 할인액과 사용 이력을 확정한다.")
     @ApiResponse(responseCode = "201", description = "쿠폰과 사용 이력을 같은 트랜잭션으로 확정한 결과다.",
             useReturnTypeSchema = true)
     public ResponseEntity<ResponseEnvelope<CouponUseResponse>> redeem(

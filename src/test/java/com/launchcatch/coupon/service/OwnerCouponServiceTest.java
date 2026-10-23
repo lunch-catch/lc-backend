@@ -629,10 +629,25 @@ class OwnerCouponServiceTest {
             assertError(CouponErrorCode.MEMBER_ACCOUNT_NOT_ALLOWED);
         }
 
-        @Test
-        void 매장과_100m를_초과하면_상태와_이력을_바꾸지_않는다() {
+        // 시연 영상 촬영용 30km 제한을 검증하며 촬영 후 기존 100m 기준으로 복원한다.
+        @ParameterizedTest
+        @ValueSource(doubles = {37.501, 37.76, 37.7697})
+        void 매장과_100m를_넘어도_30km_이내이면_사용한다(double latitude) {
             ready();
-            when(stores.findAllById(List.of(10L))).thenReturn(List.of(store(38.0, 127.0)));
+            when(stores.findAllById(List.of(10L))).thenReturn(List.of(store(latitude, 127.0)));
+
+            CouponUseResponse response = service.redeem(9L, request());
+
+            assertThat(response.discountAmount()).isEqualTo(680);
+            assertThat(coupon.getStatus()).isEqualTo(MemberCouponStatus.USED);
+        }
+
+        // 시연 영상 촬영용 30km 제한을 검증하며 촬영 후 기존 100m 기준으로 복원한다.
+        @ParameterizedTest
+        @ValueSource(doubles = {37.7699, 38.0})
+        void 매장과_30km를_초과하면_상태와_이력을_바꾸지_않는다(double latitude) {
+            ready();
+            when(stores.findAllById(List.of(10L))).thenReturn(List.of(store(latitude, 127.0)));
             assertError(CouponErrorCode.LOCATION_NOT_ALLOWED);
             assertThat(coupon.getStatus()).isEqualTo(MemberCouponStatus.ISSUED);
         }
