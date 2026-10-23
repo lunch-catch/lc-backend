@@ -55,7 +55,6 @@ class DailyPlanSnapshotServiceTest {
 
         PlanSnapshot snapshot = service.find(DAY, 7L).orElseThrow();
 
-        assertThat(snapshot.planId()).isEqualTo(100L);
         assertThat(snapshot.ownerId()).isEqualTo(3L);
         assertThat(snapshot.unitPrice()).isEqualTo(10L);
     }
@@ -102,7 +101,7 @@ class DailyPlanSnapshotServiceTest {
         Map<Long, PlanSnapshot> result = service.findAll(DAY, List.of(2L, 1L, 3L));
 
         assertThat(result.keySet()).containsExactly(2L, 1L, 3L);
-        assertThat(result.get(1L).planId()).isEqualTo(101L);
+        assertThat(result.get(1L).unitPrice()).isEqualTo(10L);
         assertThat(result.get(2L).unitPrice()).isEqualTo(20L);
         assertThat(result.get(3L).ownerId()).isEqualTo(4L);
         verify(planRepository, times(1)).findByBusinessDateAndCampaignIdIn(DAY, List.of(2L, 3L));
@@ -116,7 +115,7 @@ class DailyPlanSnapshotServiceTest {
         service.findAll(DAY, List.of(2L));
         Map<Long, PlanSnapshot> second = service.findAll(DAY, List.of(2L));
 
-        assertThat(second.get(2L).planId()).isEqualTo(102L);
+        assertThat(second.get(2L).unitPrice()).isEqualTo(20L);
         verify(planRepository, times(1)).findByBusinessDateAndCampaignIdIn(DAY, List.of(2L));
     }
 

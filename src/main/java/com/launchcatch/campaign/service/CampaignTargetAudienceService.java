@@ -65,7 +65,7 @@ public class CampaignTargetAudienceService {
 
     private void validateActiveOwner(Long ownerId) {
         if (ownerStatusQuery.findCurrentStatus(ownerId).orElse(null) != OwnerAccountStatus.ACTIVE) {
-            log.warn("event=CAMPAIGN_TARGET_AUDIENCE_FAILED reason=OWNER_NOT_ACTIVE code={} ownerId={}",
+            log.info("event=CAMPAIGN_TARGET_AUDIENCE_FAILED reason=OWNER_NOT_ACTIVE errorCode={} ownerId={}",
                     CampaignErrorCode.OWNER_NOT_ACTIVE.getCode(), ownerId);
             throw new CampaignException(CampaignErrorCode.OWNER_NOT_ACTIVE);
         }

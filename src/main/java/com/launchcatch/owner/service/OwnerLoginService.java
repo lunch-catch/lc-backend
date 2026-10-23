@@ -124,8 +124,8 @@ public class OwnerLoginService {
                 log.info("event=OWNER_LOGIN_REFRESH_CACHE_SKIPPED ownerId={} reason=NEWER_PUBLICATION", ownerId);
             }
         } catch (DataAccessException e) {
-            log.warn("event=OWNER_LOGIN_REFRESH_CACHE_FAILED ownerId={} errorType={} stack={} DB 저장을 기준으로 로그인을 유지합니다.",
-                    ownerId, e.getClass().getSimpleName(), java.util.Arrays.toString(e.getStackTrace()));
+            log.warn("event=OWNER_LOGIN_REFRESH_CACHE_FAILED ownerId={} exceptionType={} fallback=KEEP_DB_LOGIN",
+                    ownerId, e.getClass().getSimpleName());
         }
     }
 

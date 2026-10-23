@@ -49,16 +49,16 @@ public class AdminLogoutService {
                     Duration.ofMillis(jwt.getAccessTokenValidityMs()));
         } catch (DataAccessException | TransactionException e) {
             // 저장소 예외 메시지와 cause에 자격증명이 포함될 수 있어 외부 예외를 연결하지 않는다.
-            log.error("event=ADMIN_LOGOUT_FAILED adminId={} role={} errorType={} stack={}",
-                    adminId, role, e.getClass().getSimpleName(), java.util.Arrays.toString(e.getStackTrace()));
+            log.error("event=ADMIN_LOGOUT_FAILED adminId={} role={} exceptionType={}",
+                    adminId, role, e.getClass().getSimpleName());
             throw new AuthException(AuthErrorCode.REFRESH_TOKEN_STORE_UNAVAILABLE);
         }
         try {
             transactions.recordSuccess(adminId);
         } catch (RuntimeException e) {
-            log.error("event=ADMIN_LOGOUT_AUDIT_FAILED adminId={} errorType={} stack={}",
-                    adminId, e.getClass().getSimpleName(), java.util.Arrays.toString(e.getStackTrace()));
+            log.error("event=ADMIN_LOGOUT_AUDIT_FAILED adminId={} exceptionType={}",
+                    adminId, e.getClass().getSimpleName());
         }
-        log.info("event=ADMIN_LOGOUT success=true adminId={} role={}", adminId, role);
+        log.info("event=ADMIN_LOGOUT_SUCCESS adminId={} role={}", adminId, role);
     }
 }

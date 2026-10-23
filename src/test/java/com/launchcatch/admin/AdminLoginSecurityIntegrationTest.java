@@ -100,7 +100,10 @@ class AdminLoginSecurityIntegrationTest extends AbstractAdminIntegrationTest {
 
     @AfterEach
     void tearDown() {
-        created.forEach(id -> jdbc.update("delete from admin where admin_id = ?", id));
+        created.forEach(id -> {
+            jdbc.update("delete from audit_log where admin_id = ?", id);
+            jdbc.update("delete from admin where admin_id = ?", id);
+        });
     }
 
     private Long insertAdmin(String id, String password, Role role) {
@@ -144,15 +147,65 @@ class AdminLoginSecurityIntegrationTest extends AbstractAdminIntegrationTest {
     }
 
     private ListAppender<ILoggingEvent> attach(Class<?> target) {
-        var appender = new ListAppender<ILoggingEvent>();
+        var appender = new ListAppender<ILoggingEvent>() {
+            @Override
+            protected void append(ILoggingEvent event) {
+                event.prepareForDeferredProcessing();
+                super.append(event);
+            }
+        };
         appender.start();
         ((Logger) LoggerFactory.getLogger(target)).addAppender(appender);
         return appender;
     }
 
+    private ListAppender<ILoggingEvent> attachAdmin() {
+        var appender = attach(AdminLoginAuditFilter.class);
+        ((Logger) LoggerFactory.getLogger(AdminLoginAuditFilter.class)).detachAppender(appender);
+        ((Logger) LoggerFactory.getLogger("com.launchcatch.admin")).addAppender(appender);
+        return appender;
+    }
+
+    private void detachAdmin(ListAppender<ILoggingEvent> appender) {
+        ((Logger) LoggerFactory.getLogger("com.launchcatch.admin")).detachAppender(appender);
+        appender.stop();
+    }
+
     private void detach(Class<?> target, ListAppender<ILoggingEvent> appender) {
         ((Logger) LoggerFactory.getLogger(target)).detachAppender(appender);
         appender.stop();
+    }
+
+    @Test
+    void 로그인_성공을_실제_감사_저장소에_한번_기록한다() throws Exception {
+        mvc.perform(login(body)).andExpect(status().isOk());
+        assertThat(jdbc.queryForList("select detail from audit_log where admin_id = ? and action = 'ADMIN_LOGIN'",
+                String.class, adminId)).containsExactly("result=SUCCESS;clientIp=" + clientIp);
+    }
+
+    @Test
+    void 로그인_실패_예외후에도_감사가_커밋된다() throws Exception {
+        mvc.perform(login(requestBody(loginId, "WrongPassword!"))).andExpect(status().isUnauthorized());
+        assertThat(jdbc.queryForList("select detail from audit_log where admin_id = ? and action = 'ADMIN_LOGIN'",
+                String.class, adminId)).containsExactly("result=FAILURE;clientIp=" + clientIp);
+    }
+
+    @Test
+    void 감사_저장_실패가_로그인_성공을_바꾸지_않는다() throws Exception {
+        AuditLogWriter writer = AopTestUtils.getUltimateTargetObject(audit);
+        doThrow(new DataAccessResourceFailureException("SensitivePassword!"))
+                .when(writer).write(eq(adminId), eq("ADMIN_LOGIN"), any(), any());
+        mvc.perform(login(body)).andExpect(status().isOk());
+        assertThat(jdbc.queryForObject("select count(*) from audit_log where admin_id = ? and action = 'ADMIN_LOGIN'",
+                Long.class, adminId)).isZero();
+    }
+
+    @Test
+    void 감사_저장_실패가_로그인_실패를_서버오류로_바꾸지_않는다() throws Exception {
+        AuditLogWriter writer = AopTestUtils.getUltimateTargetObject(audit);
+        doThrow(new DataAccessResourceFailureException("audit down"))
+                .when(writer).write(eq(adminId), eq("ADMIN_LOGIN"), any(), any());
+        mvc.perform(login(requestBody(loginId, "WrongPassword!"))).andExpect(status().isUnauthorized());
     }
 
     @Test
@@ -336,17 +389,42 @@ class AdminLoginSecurityIntegrationTest extends AbstractAdminIntegrationTest {
 
     @Test
     void 로그인_성공과_실패를_본문이나_토큰없이_감사_로그로_남긴다() throws Exception {
-        var appender = attach(AdminLoginAuditFilter.class);
+        var appender = attachAdmin();
         try {
             mvc.perform(login(body)).andExpect(status().isOk());
             mvc.perform(login(requestBody("login.absent", PASSWORD))).andExpect(status().isUnauthorized());
-            assertThat(appender.list).hasSize(2).allSatisfy(event ->
-                    assertThat(event.getFormattedMessage()).contains("event=ADMIN_LOGIN", "occurredAt=",
-                            "clientIp=" + clientIp).doesNotContain(PASSWORD, "password", "refreshToken"));
-            assertThat(appender.list.get(0).getFormattedMessage()).contains("success=true", "status=200");
-            assertThat(appender.list.get(1).getFormattedMessage()).contains("success=false", "status=401");
+            assertThat(appender.list).hasSize(2).allSatisfy(event -> {
+                assertThat(event.getFormattedMessage()).contains("httpStatus=")
+                        .doesNotContain(PASSWORD, "password", "refreshToken", "occurredAt=", "clientIp=", "success=");
+                assertThat(event.getMDCPropertyMap()).containsEntry("clientIp", clientIp);
+                assertThat(event.getMDCPropertyMap().get("traceId")).isNotBlank();
+                assertThat(event.getThrowableProxy()).isNull();
+            });
+            assertThat(appender.list.get(0).getFormattedMessage())
+                    .contains("event=ADMIN_LOGIN_SUCCESS", "httpStatus=200");
+            assertThat(appender.list.get(1).getFormattedMessage())
+                    .contains("event=ADMIN_LOGIN_FAILED", "httpStatus=401");
+            assertThat(appender.list).extracting(ILoggingEvent::getLevel).containsExactly(Level.INFO, Level.INFO);
         } finally {
-            detach(AdminLoginAuditFilter.class, appender);
+            detachAdmin(appender);
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"203.0.113.20", "10.0.0.7"})
+    void 전달_헤더의_마지막_IP를_공유_해석기가_정한_감사_MDC로_사용한다(String forwardedIp) throws Exception {
+        var appender = attachAdmin();
+        try {
+            mvc.perform(login(body).header("X-Forwarded-For", "198.51.100.10, " + forwardedIp))
+                    .andExpect(status().isOk());
+            assertThat(appender.list).singleElement().satisfies(event -> {
+                assertThat(event.getMDCPropertyMap()).containsEntry("clientIp", forwardedIp);
+                assertThat(event.getMDCPropertyMap().get("traceId")).isNotBlank();
+                assertThat(event.getFormattedMessage()).contains("event=ADMIN_LOGIN_SUCCESS", "httpStatus=200")
+                        .doesNotContain("clientIp=", "198.51.100.10", forwardedIp, PASSWORD, "refreshToken");
+            });
+        } finally {
+            detachAdmin(appender);
         }
     }
 

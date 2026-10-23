@@ -63,7 +63,6 @@ public class BedrockTemplateHtmlGenerator implements TemplateHtmlGenerator {
     private static final int MAX_SUGGESTIONS = 3;
     private static final int SUGGESTION_MAX_LENGTH = 30;
     private static final Pattern WHITESPACE = Pattern.compile("\\s+");
-    private static final String AD_LABEL_SLOT = "adLabel";
 
     /** ```html ... ``` 또는 ``` ... ``` 코드펜스 안의 내용을 뽑아낸다. 앞 공백은 소유 수량자로 먹어 내용 쪽과 겹쳐 되짚지 않는다. */
     private static final Pattern CODE_FENCE = Pattern.compile("```(?:html)?\\s*+(.*?)```", Pattern.DOTALL);
@@ -397,7 +396,7 @@ public class BedrockTemplateHtmlGenerator implements TemplateHtmlGenerator {
      * 때문에 모델이 그걸 베껴 돌려줄 수 있다.
      */
     private void removeAdLabel(Document document) {
-        document.select("[data-slot=" + AD_LABEL_SLOT + "]").remove();
+        document.select("[data-slot=" + TemplateSlotValidator.AD_LABEL_SLOT + "]").remove();
     }
 
     private String disallowedElementCorrection(List<String> removedElements) {

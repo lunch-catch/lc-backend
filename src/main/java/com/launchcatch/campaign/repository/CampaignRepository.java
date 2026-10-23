@@ -51,6 +51,43 @@ public interface CampaignRepository extends JpaRepository<Campaign, Long> {
     List<Campaign> findEligibleCampaigns(@Param("today") LocalDate today);
 
     /*
+     * 00:00 배치(#569)가 집행 기간이 끝난 캠페인을 찾는다. 집행 종료일이 영업일보다 앞이면(어제까지가 집행 기간이었으면)
+     * ACTIVE, PAUSED 모두 종료 대상이다. 전이는 캠페인마다 행 잠금 아래 따로 하므로 여기서는 id 만 읽는다.
+     */
+    @Query("""
+            select c.id from Campaign c
+            where c.status in (
+                com.launchcatch.campaign.contract.CampaignStatus.ACTIVE,
+                com.launchcatch.campaign.contract.CampaignStatus.PAUSED
+            )
+            and c.endDate < :businessDate
+            order by c.id
+            """)
+    List<Long> findIdsToEnd(@Param("businessDate") LocalDate businessDate);
+
+    /*
+     * 00:00 배치(#569)가 집행 시작일이 된 SCHEDULED 캠페인을 찾는다. 시작일이 영업일 이하이면 대상이라 배치가 하루
+     * 빠졌어도 다음 실행이 이어서 켠다. 집행 기간이 이미 지난 SCHEDULED 는 켜지 않는다.
+     */
+    @Query("""
+            select c from Campaign c
+            where c.status = com.launchcatch.campaign.contract.CampaignStatus.SCHEDULED
+            and c.startDate <= :businessDate and c.endDate >= :businessDate
+            order by c.id
+            """)
+    List<Campaign> findToStart(@Param("businessDate") LocalDate businessDate);
+
+    // 새 캠페인을 켜기 전에 같은 가게에서 아직 ACTIVE 인 다른 캠페인을 찾는다(#569). 가게에 ACTIVE 가 둘 생기지 않게 한다.
+    @Query("""
+            select c.id from Campaign c
+            where c.storeId = :storeId
+            and c.status = com.launchcatch.campaign.contract.CampaignStatus.ACTIVE
+            and c.id <> :campaignId
+            order by c.id
+            """)
+    List<Long> findOtherActiveIdsByStoreId(@Param("storeId") Long storeId, @Param("campaignId") Long campaignId);
+
+    /*
      * 상태 전이 때 행 잠금을 걸고 조회한다(SELECT ... FOR UPDATE). 같은 캠페인에 동시에
      * 들어오는 전이 요청(관리자 중단과 정산의 포인트 부족 판정 등)이 서로 끼어들지 못하게
      * 한 쪽이 끝날 때까지 다른 쪽을 기다리게 한다. TemplateRepository.findByIdForUpdate와

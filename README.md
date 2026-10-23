@@ -45,7 +45,7 @@
 | `notification`(알림) | 알림 발송 이력, 푸시 등록 정보 | @gyudongjeong |
 | `analytics`(분석) | 전환 퍼널 이벤트 로그, 일별 집계, 캠페인 리포트 | @muzimzz |
 | `auth`(공용 인증) | 토큰 발급과 검증, 회전 정책, 역할 | @muzimzz @gyudongjeong |
-| `ops`(운영) | 플랫폼 설정값, 스케줄러와 실행 이력, 감사 로그 | @yongmaru789 |
+| `ops`(운영) | 플랫폼 설정값, 스케줄러와 실행 이력, 감사 로그 | @yongmaru789 @muzimzz |
 | `global`(기술 공통) | 예외, 응답 포맷, 거리 계산 | @devjohnpark |
 
 ## 문서

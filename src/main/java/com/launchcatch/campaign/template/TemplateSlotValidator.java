@@ -20,6 +20,13 @@ public class TemplateSlotValidator {
     private static final Set<String> TEXT_TAGS = Set.of("div", "span", "p", "h1", "h2", "h3", "strong", "em");
 
     /*
+     * 광고 표시 슬롯 이름이다. 포스터에는 광고 표시를 넣지 않기로 해서(#628) 요구하거나 검사하지 않지만, 옛 템플릿에 든
+     * 이 슬롯을 지우는 템플릿 생성기(BedrockTemplateHtmlGenerator)와 포스터 생성(PosterUploadService)이 같은 이름을
+     * 가리키도록 여기에 한 번만 정의한다(#658).
+     */
+    public static final String AD_LABEL_SLOT = "adLabel";
+
+    /*
      * 패키지 밖에는 안 열지만, 같은 service 패키지의 TemplateStructureValidator 가
      * 슬롯 이름 목록을 그대로 재사용하도록 package-private 으로 둔다.
      */

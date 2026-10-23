@@ -55,7 +55,7 @@ public class PosterImageInspector {
         try {
             size = readSize(objectKey);
         } catch (SdkException e) {
-            log.warn("poster image read failed: key={}", objectKey, e);
+            log.warn("event=POSTER_IMAGE_READ_FAILED objectKey={}", objectKey, e);
             return PosterImageInspection.toolFailure();
         }
         if (size == null) {
@@ -75,7 +75,7 @@ public class PosterImageInspector {
         } catch (InvalidImageFormatException e) {
             return PosterImageInspection.unreadable();
         } catch (SdkException e) {
-            log.warn("poster image text detection failed: key={}", objectKey, e);
+            log.warn("event=POSTER_IMAGE_TEXT_DETECTION_FAILED objectKey={}", objectKey, e);
             return PosterImageInspection.toolFailure();
         }
     }
@@ -107,7 +107,7 @@ public class PosterImageInspector {
                 reader.dispose();
             }
         } catch (IOException e) {
-            log.info("poster image could not be decoded: key={}", objectKey, e);
+            log.info("event=POSTER_IMAGE_DECODE_FAILED reason=UNDECODABLE objectKey={}", objectKey, e);
             return null;
         }
     }

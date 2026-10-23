@@ -17,7 +17,6 @@ import com.launchcatch.owner.repository.OwnerRefreshTokenRepository;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.LocalDateTime;
-import java.util.Arrays;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataAccessException;
 import org.springframework.stereotype.Service;
@@ -88,7 +87,7 @@ public class OwnerTokenRefreshService {
             ownerTokens.confirmConsumed(oldHash);
         } catch (DataAccessException e) {
             // 확정 표시 실패 시에도 DB 해시 검증으로 이전 RT의 재발급을 거부한다.
-            logCacheFailure("OWNER_REFRESH_CONFIRM_FAILED", e);
+            log.warn("event=OWNER_REFRESH_CONFIRM_FAILED ownerId={} exceptionType={} fallback=DB_HASH_CHECK", ownerId, e.getClass().getSimpleName());
         }
         return publication.result();
     }
@@ -102,7 +101,7 @@ public class OwnerTokenRefreshService {
         try {
             outcome = ownerTokens.consumeForRotation(oldToken);
         } catch (DataAccessException e) {
-            logCacheFailure("OWNER_REFRESH_DB_FALLBACK", e);
+            log.warn("event=OWNER_REFRESH_DB_FALLBACK exceptionType={} fallback=DB", e.getClass().getSimpleName());
             return new Candidate(findFallbackOwner(oldHash), true);
         }
         if (outcome.status() == OwnerRefreshTokenRepository.ConsumeOutcome.Status.IN_PROGRESS
@@ -142,7 +141,7 @@ public class OwnerTokenRefreshService {
                     .filter(owner -> isValid(owner, oldHash, now()))
                     .ifPresent(owner -> ownerTokens.restoreConsumed(oldHash)));
         } catch (DataAccessException | TransactionException e) {
-            logCacheFailure("OWNER_REFRESH_RESTORE_FAILED", e);
+            log.warn("event=OWNER_REFRESH_RESTORE_FAILED ownerId={} exceptionType={}", ownerId, e.getClass().getSimpleName());
         }
     }
 
@@ -178,7 +177,7 @@ public class OwnerTokenRefreshService {
                     remaining, publication.version());
         } catch (DataAccessException e) {
             // DB 저장은 이미 완료됐으므로 Redis 게시 장애만으로 재발급 성공을 취소하지 않는다.
-            logCacheFailure("OWNER_REFRESH_CACHE_PUBLISH_FAILED", e);
+            log.warn("event=OWNER_REFRESH_CACHE_PUBLISH_FAILED ownerId={} exceptionType={} fallback=KEEP_DB_REFRESH", ownerId, e.getClass().getSimpleName());
         }
     }
 
@@ -187,7 +186,7 @@ public class OwnerTokenRefreshService {
      * 이전 순번의 지연 게시를 차단하고, 폐기 순번 이하의 AT도 거부하도록 설정한다.
      */
     private void revokeReused(Long ownerId) {
-        log.warn("event=OWNER_REFRESH_REUSE_DETECTED ownerId={}", ownerId);
+        log.warn("event=OWNER_REFRESH_REUSE_SUSPECTED ownerId={}", ownerId);
         try {
             Revocation revocation = transactions.execute(transaction -> owners.findByIdForLogin(ownerId)
                     .map(owner -> {
@@ -203,11 +202,6 @@ public class OwnerTokenRefreshService {
         } catch (DataAccessException | TransactionException e) {
             throw new AuthException(AuthErrorCode.REFRESH_TOKEN_STORE_UNAVAILABLE, e);
         }
-    }
-
-    private void logCacheFailure(String event, RuntimeException e) {
-        // 예외 메시지에 토큰 값이 포함될 가능성을 피하고 예외 종류와 호출 위치만 남긴다.
-        log.warn("event={} errorType={} stack={}", event, e.getClass().getSimpleName(), Arrays.toString(e.getStackTrace()));
     }
 
     private LocalDateTime now() {

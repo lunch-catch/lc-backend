@@ -54,7 +54,7 @@ public class CampaignActivationRateLimiter {
                 throw new CampaignException(CampaignErrorCode.ACTIVATION_RATE_LIMITED);
             }
         } catch (DataAccessException e) {
-            log.warn("event=CAMPAIGN_ACTIVATION_RATE_LIMIT_CHECK_FAILED ownerId={} cause={} 통과시킨다",
+            log.warn("event=CAMPAIGN_ACTIVATION_RATE_LIMIT_CHECK_FAILED ownerId={} reason={} fallback=PASS",
                     ownerId, RedisFailureClassifier.causeLabel(e), e);
         }
     }
