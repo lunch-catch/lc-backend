@@ -84,8 +84,13 @@ class RoleAccessCookieIntegrationTest extends AbstractAuthIntegrationTest {
         Owner owner = owners.saveAndFlush(Owner.create(UUID.randomUUID() + "@example.com", passwords.encode(PASSWORD)));
         ownerIds.add(owner.getId());
         jdbc.update("update owner set status = 'ACTIVE', tutorial_viewed = true where owner_id = ?", owner.getId());
+        // 로그인 경로들이 IP 하나의 요청 제한을 같이 써서 다른 테스트와 겹치지 않는 IP 로 부른다
         return mvc.perform(post("/v1/owner/auth/tokens").contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"email\":\"" + owner.getEmail() + "\",\"password\":\"" + PASSWORD + "\"}"))
+                        .content("{\"email\":\"" + owner.getEmail() + "\",\"password\":\"" + PASSWORD + "\"}")
+                        .with(request -> {
+                            request.setRemoteAddr("203.0.113." + (owner.getId() % 200 + 1));
+                            return request;
+                        }))
                 .andExpect(status().isOk()).andReturn().getResponse().getCookies();
     }
 
