@@ -119,12 +119,14 @@ class StoreDetailIntegrationTest extends AbstractStoreIntegrationTest {
     }
 
     @Test
-    void 다른_가게의_메뉴를_잘못_참조한_요약은_정상_응답으로_숨기지_않는다() throws Exception {
+    void 다른_가게의_메뉴를_참조한_캠페인만_제외하고_상세를_반환한다() throws Exception {
         long id = store(true);
         long otherMenu = menu(store(true), 1);
         summary(id, "ACTIVE", LocalDate.now(clock), otherMenu);
         mvc.perform(get("/v1/stores/{storeId}", id).with(user(new CustomUserDetails(1L, Role.MEMBER))))
-                .andExpect(status().isInternalServerError());
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.storeId").value(id))
+                .andExpect(jsonPath("$.data.activeCampaign").value((Object) null));
     }
 
     @Test
@@ -219,4 +221,43 @@ class StoreDetailIntegrationTest extends AbstractStoreIntegrationTest {
                 values (?, ?, ?, ?, ?, 'AMOUNT', 1000, ?, '12:00', '14:00', ?, ?)
                 """, id, id, date, state, menu == null ? "ALL" : "MENU", menu, now, now);
     }
+
+    @Test
+    void 대상_메뉴_ID가_없으면_캠페인만_제외하고_상세는_유지한다() throws Exception {
+        long id = store(true);
+        summary(id, "ACTIVE", LocalDate.now(clock), null);
+        jdbc.update("update store_campaign_summary set discount_target_type = 'MENU' where store_id = ?", id);
+
+        mvc.perform(get("/v1/stores/{storeId}", id).with(user(new CustomUserDetails(1L, Role.MEMBER))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.storeId").value(id))
+                .andExpect(jsonPath("$.data.businessHours.length()").value(7))
+                .andExpect(jsonPath("$.data.activeCampaign").value((Object) null));
+    }
+
+    @Test
+    void 검증된_이미지_키가_비어도_정상_이미지와_메뉴와_캠페인은_유지한다() throws Exception {
+        long id = store(true);
+        long first = menu(id, 1);
+        long second = menu(id, 2);
+        image(id, "INTERIOR", 1, "VERIFIED");
+        image(id, "INTERIOR", 2, "VERIFIED");
+        summary(id, "ACTIVE", LocalDate.now(clock), first);
+        jdbc.update("update store_image set object_key = '' where store_id = ? and image_type = 'LOGO'", id);
+        jdbc.update("update store_image set object_key = ' ' where store_id = ? and image_type = 'INTERIOR' and sort_order = 1", id);
+        jdbc.update("update store_menu_image set object_key = ? where store_menu_id = ?", "\t", first);
+
+        mvc.perform(get("/v1/stores/{storeId}", id).with(user(new CustomUserDetails(1L, Role.MEMBER))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.storeId").value(id))
+                .andExpect(jsonPath("$.data.logoImage").value((Object) null))
+                .andExpect(jsonPath("$.data.interiorImages.length()").value(1))
+                .andExpect(jsonPath("$.data.interiorImages[0].sortOrder").value(2))
+                .andExpect(jsonPath("$.data.menus.length()").value(2))
+                .andExpect(jsonPath("$.data.menus[0].menuId").value(first))
+                .andExpect(jsonPath("$.data.menus[0].image").value((Object) null))
+                .andExpect(jsonPath("$.data.menus[1].image.url").value("https://cdn.example.com/menus/" + second + ".png"))
+                .andExpect(jsonPath("$.data.activeCampaign.targetMenu.menuId").value(first));
+    }
+
 }
