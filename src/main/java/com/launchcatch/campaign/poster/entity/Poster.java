@@ -17,7 +17,8 @@ import lombok.NoArgsConstructor;
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class Poster extends BaseTimeEntity {
 
-    private static final int TITLE_MAX_LENGTH = 100;
+    // title 컬럼의 한도다. 포스터를 만들 때 제목을 자르는 PosterUploadService 도 이 값을 쓴다(#658).
+    public static final int TITLE_MAX_LENGTH = 100;
 
     @Column(name = "campaign_id", nullable = false, unique = true)
     private Long campaignId;
