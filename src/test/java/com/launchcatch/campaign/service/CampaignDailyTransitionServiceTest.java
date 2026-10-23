@@ -50,6 +50,40 @@ class CampaignDailyTransitionServiceTest {
     }
 
     @Test
+    @DisplayName("예약된 하루 예산이 있는 캠페인마다 적용하고 적용한 개수를 돌려준다(#840)")
+    void 예약된_하루_예산을_캠페인마다_적용한다() {
+        when(campaignRepository.findIdsWithPendingDailyBudget()).thenReturn(List.of(1L, 2L, 3L));
+        when(campaignStatusService.applyPendingDailyBudget(1L)).thenReturn(true);
+        when(campaignStatusService.applyPendingDailyBudget(2L)).thenReturn(false);
+        when(campaignStatusService.applyPendingDailyBudget(3L)).thenReturn(true);
+
+        assertThat(service.applyPendingDailyBudgets(BUSINESS_DATE)).isEqualTo(2);
+    }
+
+    @Test
+    @DisplayName("예약된 하루 예산이 있는 캠페인이 없으면 아무것도 하지 않는다(#840)")
+    void 예약된_하루_예산이_없으면_아무것도_하지_않는다() {
+        when(campaignRepository.findIdsWithPendingDailyBudget()).thenReturn(List.of());
+
+        assertThat(service.applyPendingDailyBudgets(BUSINESS_DATE)).isZero();
+
+        verify(campaignStatusService, never()).applyPendingDailyBudget(anyLong());
+    }
+
+    @Test
+    @DisplayName("한 캠페인의 적용이 실패해도 나머지는 처리하고 마지막에 예외로 단계를 실패시킨다(#840)")
+    void 예산_적용이_하나_실패해도_나머지는_처리하고_단계를_실패시킨다() {
+        when(campaignRepository.findIdsWithPendingDailyBudget()).thenReturn(List.of(1L, 2L));
+        when(campaignStatusService.applyPendingDailyBudget(1L)).thenThrow(new IllegalArgumentException("campaign not found"));
+
+        assertThatThrownBy(() -> service.applyPendingDailyBudgets(BUSINESS_DATE))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("APPLY_PENDING_BUDGET").hasMessageContaining("failedCount=1");
+
+        verify(campaignStatusService).applyPendingDailyBudget(2L);
+    }
+
+    @Test
     @DisplayName("집행 기간이 끝난 캠페인을 SYSTEM 행위자로 하나씩 종료한다")
     void 집행_기간이_끝난_캠페인을_종료한다() {
         when(campaignRepository.findIdsToEnd(BUSINESS_DATE)).thenReturn(List.of(1L, 2L));

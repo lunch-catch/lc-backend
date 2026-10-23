@@ -354,7 +354,7 @@
 |---|---|---|
 | 가게당 DRAFT 1개를 막는 UNIQUE 제약의 정확한 마이그레이션 문구 | `#244` 결정 | `#244`가 `active_store_marker`와 같은 방식으로 추가한다(이 문서 "캠페인 등록" 절 참고) |
 | `Campaign.updateCouponCondition(...)` 메서드 시그니처 | `#244` 결정 | 아직 엔티티에 없다. `#244`가 추가한다 |
-| 00:00 배치가 `pendingDailyBudget`을 `dailyBudget`에 반영하는 호출 지점 | V51 45행, 102행 스케줄러 | `#330`은 컬럼에 쓰기만 한다. "스케줄러 캠페인 담당 스텝" 이슈가 그 반영 호출을 정한다. **그 배치는 반영 직전에 `status == ACTIVE`인지 다시 확인해야 한다.** `pause()`는 `pendingDailyBudget`을 지우지 않으므로(아래 "해소된 항목" 참고), `PAUSED`로 멈춰 있는 캠페인에 그 예약값을 그대로 적용하면 안 된다 |
+| 00:00 배치가 `pendingDailyBudget`을 `dailyBudget`에 반영하는 호출 지점 | V51 45행, 102행 스케줄러 | 해소됨(`#840`). `CampaignPendingBudgetJob`(`@Order(35)`)이 ACTIVE 이고 예약 값이 있는 캠페인마다 행 잠금 아래에서 상태를 다시 확인한 뒤 `dailyBudget`으로 옮기고 예약 값을 비운다. `pause()`는 `pendingDailyBudget`을 지우지 않으므로 `PAUSED`로 멈춰 있는 캠페인에는 적용하지 않고 예약 값을 남긴다. 정산의 일일 예약(50)보다 앞이라 바뀐 예산이 그날 예약에 반영된다 |
 | 예약 값(`pendingDailyBudget`) 자체를 PATCH 응답에 노출할지 | V51 45행 | `#330`은 노출하지 않는다(응답은 늘 `dailyBudget`). 노출이 필요해지면 그때 명세를 바꾼다 |
 | `targetMenuId`가 그 가게(`storeId`) 소유인지 등록 시점(`CampaignCouponConditionService`)에 검증하는 것 | `#468` 자체 리뷰로 찾음(2026-10-18) | 지금은 검증 코드가 없다. `StoreCampaignSummaryUpdater.update()`가 `menuBelongsToStore`로 뒤늦게(중단·재개 시점에) 걸러내지만, 등록 시점에 막는 게 근본 조치다. 담당 이슈 미정 |
 | 00:00 의 `SCHEDULED -> ACTIVE` 배치가 취소된 캠페인을 만났을 때의 처리 | `#597`(2026-10-20) | 취소가 먼저 잠금을 잡으면 배치의 `CampaignStatusService.activate()`가 `DRAFT`를 보고 `IllegalStateException`을 던진다. 그 배치를 만드는 `#569`가 이 예외를 건너뛰기로 받아야 한다. 받지 않으면 단계가 실패해 00:00 묶음이 멈춘다 |

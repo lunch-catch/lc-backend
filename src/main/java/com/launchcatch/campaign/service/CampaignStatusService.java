@@ -222,6 +222,15 @@ public class CampaignStatusService {
         events.publishEvent(new CampaignStatusChangedEvent(campaignId, businessDate, true, now));
     }
 
+    /*
+     * 00:00 배치(#840)가 예약된 하루 예산 변경을 적용한다. 행 잠금을 잡은 뒤 상태를 다시 확인해, 목록을 읽은 뒤 PAUSED 나
+     * ENDED 가 된 캠페인에는 적용하지 않는다. 예약 값이 없으면 아무것도 하지 않아 같은 영업일에 다시 불러도 결과가 같다.
+     */
+    @Transactional
+    public boolean applyPendingDailyBudget(Long campaignId) {
+        return findOrThrow(campaignId).applyPendingDailyBudget();
+    }
+
     private Campaign findOrThrow(Long campaignId) {
         return campaignRepository.findByIdForUpdate(campaignId)
                 .orElseThrow(() -> new IllegalArgumentException("campaign not found: " + campaignId));
