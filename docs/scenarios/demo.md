@@ -95,17 +95,17 @@
 | 계정 | 넣는 것 | 묶음 |
 |---|---|---|
 | `demo-admin`, `superadmin` | 관리자 계정 | `ADM.ADMIN_ACTIVE`, `ADM.SUPER_ADMIN_ACTIVE` |
-| (공통) | 대비용 게시 템플릿 "시연 기본형" 1개(활성). 0막 Bedrock 이 늦거나 실패하면 쓴다 | `TPL.PUBLISHED_ACTIVE` |
-| `demo-owner` | 강남역 1 km 안 확정 가게(로고, 매장 사진 3, 메뉴 3 과 사진, 브레이크 있는 영업시간, 수요일 영업) | `STO.FINALIZED_FULL` |
+| (공통) | 대비용 게시 템플릿은 기본 세계의 게시 활성 템플릿(`R__templates_posters.sql`, 받은 디자인으로 바꾼다)을 쓴다. 0막 Bedrock 이 늦거나 실패하면 쓴다 | `TPL.PUBLISHED_ACTIVE` |
+| `demo-owner` | 강남역 둘레 확정 가게(로고, 매장 사진 3, 메뉴 3 과 사진, 브레이크 있는 영업시간, 수요일 영업) | `STO.FINALIZED_FULL` |
 | | 진행 중 캠페인 1(대상 ALL, 연령 전부, 반경 1000, 전 메뉴 3,000원, 수량 50, 사용 11:30 ~ 15:00, 기간 D-14 ~ D+14)과 검수 통과 포스터 | `CMP.ACTIVE`, `PST.PASSED` |
 | | 끝난 캠페인 3(D-60 ~ D-15)과 리포트. 캠페인 비교에 쓴다 | `CMP.ENDED`, `ANA.REPORT_DAYS` |
 | | 진행 중 캠페인의 리포트 D-14 ~ D-1, 쿠폰 발급과 사용 내역 | `ANA.REPORT_DAYS`, `CPN.COUPON_USED` |
 | | 잔액(충분), 원장 90일(충전, 예약, 해제), 오늘 예약 | `BIL.BALANCE_ENOUGH`, `BIL.LEDGER_SETTLED_DAYS`, `BIL.LEDGER_TODAY_RESERVED` |
-| `demo-owner-new` | 강남역 확정 가게(사진과 메뉴 있음), 잔액 100,000, 캠페인 없음 | `STO.FINALIZED_FULL`, `BIL.BALANCE_ENOUGH` |
-| `demo-owner-scheduled` | 확정 가게, SCHEDULED 캠페인(시작일 = baseDate, 상태 기록 DRAFT -> SCHEDULED), 검수 통과 포스터, 잔액 | `CMP.SCHEDULED_START_REACHED`, `PST.PASSED`, `BIL.BALANCE_ENOUGH` |
-| `demo-owner-soldout` | 강남역 확정 가게, 진행 중 캠페인(수량 3, 그날 2장 발급) | `CMP.ACTIVE`, `CPN.EVENT_LAST_ONE` |
-| `demo-owner-nopoints` | 확정 가게, PAUSED(NO_POINTS) 캠페인과 상태 기록, 잔액 0, 그날 예산 0 | `CMP.PAUSED_NO_POINTS`, `BIL.BALANCE_ZERO`, `ADS.BUDGET_PLAN_TODAY` |
-| 시연 캠페인 전부 | baseDate 당일 행: 예산, 시간대 목표, 후보, 쿠폰 이벤트와 재고, 가게 캠페인 요약. 다음 날부터는 00:00 배치가 만든다 | `BIL.PLAN_D`, `ADS.CANDIDATE_TODAY`, `CPN.EVENT_ACTIVE` |
+| `demo-owner-new` | 역삼역 둘레 확정 가게(사진과 메뉴 있음), 잔액 100,000, 캠페인 없음 | `STO.FINALIZED_FULL`, `BIL.BALANCE_ENOUGH` |
+| `demo-owner-scheduled` | 선릉역 둘레 확정 가게, SCHEDULED 캠페인(시작일 = baseDate, 상태 기록 DRAFT -> SCHEDULED), 검수 통과 포스터, 잔액 | `CMP.SCHEDULED_START_REACHED`, `PST.PASSED`, `BIL.BALANCE_ENOUGH` |
+| `demo-owner-soldout` | 강남역 둘레 확정 가게, 진행 중 캠페인(수량 3, 그날 2장 발급) | `CMP.ACTIVE`, `CPN.EVENT_LAST_ONE` |
+| `demo-owner-nopoints` | 역삼역 둘레 확정 가게, PAUSED(NO_POINTS) 캠페인과 상태 기록, 잔액 0, 그날 예산 0 | `CMP.PAUSED_NO_POINTS`, `BIL.BALANCE_ZERO`, `ADS.BUDGET_PLAN_TODAY` |
+| 시연 캠페인 전부 | baseDate 당일 행: 예산, 후보, 쿠폰 이벤트와 재고, 가게 캠페인 요약. 다음 날부터는 00:00 배치가 만든다 | `BIL.PLAN_D`, `ADS.CANDIDATE_TODAY`, `CPN.EVENT_ACTIVE` |
 
 시연 캠페인의 쿠폰 사용 시간은 모두 11:30 ~ 15:00 안 30분 단위로 둔다. 시연 시각(11:30 ~ 14:00)을 덮어야 QR 장면(16, 17)이 된다.
 
@@ -113,7 +113,7 @@
 
 | 장면 | 묶음 | 조건 |
 |---|---|---|
-| 10, 12, 13 | `STO.MANY_NEARBY`, `CMP.ACTIVE_MANY`, `ADS.CANDIDATES_MANY`, `STO.NO_CAMPAIGN`, `CMP.ACTIVE_MENU` | 강남역 1 km 안 진행 중 캠페인 25 이상, 그중 10 이상은 대상 ALL 과 연령 전부(시연자 성별과 연령에 상관없이 피드 10장). 업종 9가지가 섞여야 필터(12)가 보인다. 캠페인 없는 가게와 메뉴 할인 캠페인도 둔다 |
+| 10, 12, 13 | `STO.MANY_NEARBY`, `CMP.ACTIVE_MANY`, `ADS.CANDIDATES_MANY`, `STO.NO_CAMPAIGN`, `CMP.ACTIVE_MENU` | 강남역, 역삼역, 선릉역 둘레(420 m 안)에 가게 100곳과 진행 중 캠페인 70개씩(#858). 그중 3분의 1 은 대상 ALL 과 연령 전부라 시연자 성별과 연령에 상관없이 피드가 찬다. 업종 9가지가 섞여야 필터(12)가 보인다. 캠페인 없는 가게와 메뉴 할인 캠페인도 둔다 |
 | 13 | `STO.CLOSED_TODAY` 등 영업시간 변형 | 수요일 휴무, 브레이크, 늦게 여는 가게 |
 | 22, 27 | `OPS.AGG_FINAL_D60_D1`, `ANA.DAILY_METRICS_D60_D1` | D-60 ~ D-1 분석과 `DAILY_AGGREGATION` SUCCESS |
 | 23 | `ANA.FRAUD_INVALID_D30`, `ANA.FRAUD_CAMPAIGN_WARNINGS` | D-30 ~ D-1 |
