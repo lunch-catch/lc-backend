@@ -143,7 +143,6 @@ class AdminLoginAuditFilterTest {
             });
         } finally {
             MDC.clear();
-        meters.close();
         }
     }
     @Test
@@ -164,7 +163,6 @@ class AdminLoginAuditFilterTest {
     @Test
     void 체인_예외에도_감사_IP를_기록하고_새_MDC값을_남기지_않는다() {
         MDC.clear();
-        meters.close();
         request.addHeader("X-Forwarded-For", "198.51.100.10, 10.0.0.7");
 
         assertThatThrownBy(() -> filter.doFilter(request, response, (req, res) -> {
