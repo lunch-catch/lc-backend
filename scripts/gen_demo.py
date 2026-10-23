@@ -281,7 +281,7 @@ rows('store_menu_image', ['store_menu_image_id', 'store_menu_id', 'upload_id', '
 w('''
 /*
  * 4. 템플릿은 넣지 않는다.
- * 템플릿과 포스터는 R__templates_posters.sql 이 넣는다 (#858). 시연 포스터는 게시되고 활성인 첫 템플릿으로 만든다.
+ * 템플릿과 포스터는 R__templates_posters.sql 이 넣는다 (#858). 시연 포스터는 업종에 맞는 선착순 쿠폰 전단지로 만든다 (#886).
  */
 ''')
 
@@ -315,33 +315,34 @@ for c in CAMPAIGNS:
         logs.append([str(B + c['id'] * 10 + j), str(cid), q(f), q(t), q(actor), q(reason), at, at])
     name = OWNERS[c['s']][1]
     disc_text = f"전체 메뉴 {c['disc']:,}원 할인"
-    period = '매일 11:30 ~ 15:00'
-    img = f"CONCAT(TRIM(TRAILING '/' FROM '${{baseCdnBaseUrl}}'), '/demo/campaigns/{cid}/poster.jpg')"
+    period = '오늘 11:30 ~ 15:00'
+    img = f"CONCAT(TRIM(TRAILING '/' FROM '${{baseCdnBaseUrl}}'), '/demo/stores/{B + c['s']}/menu-1.jpg')"
+    # 템플릿은 R__templates_posters 와 같은 규칙이다. 업종의 스타일에 전체할인(홀수)을 고른다
+    tid = 10_000_000 + {'KOREAN': 0, 'BUNSIK': 0, 'CHINESE': 2, 'ASIAN': 2, 'JAPANESE': 4, 'WESTERN': 6,
+                        'CAFE_DESSERT': 6}.get(OWNERS[c['s']][2], 8) + 1
     slot = (f"JSON_OBJECT('eventName', JSON_OBJECT('type', 'text', 'value', {q(name)}), "
             f"'discount', JSON_OBJECT('type', 'text', 'value', {q(disc_text)}), "
             f"'period', JSON_OBJECT('type', 'text', 'value', {q(period)}), "
             f"'image', JSON_OBJECT('type', 'image', 'value', {img}))")
     html = (f"REPLACE(REPLACE(REPLACE(REPLACE(t.html_content, '>이벤트명<', {q('>' + name + '<')}), "
             f"'>할인 내용<', {q('>' + disc_text + '<')}), '>기간<', {q('>' + period + '<')}), "
-            f"'alt=\"메뉴 이미지\">', CONCAT('alt=\"메뉴 이미지\" src=\"', {img}, "
-            f"'\" style=\"width:100%;height:100%;min-height:0;object-fit:cover\">'))")
-    posters.append((cid, name, slot, html, ts(created, '10:30:00')))
+            f"'alt=\"메뉴 이미지\"', CONCAT('alt=\"메뉴 이미지\" src=\"', {img}, '\"'))")
+    posters.append((cid, name, slot, html, ts(created, '10:30:00'), tid))
 rows('campaign', ['campaign_id', 'owner_id', 'store_id', 'status', 'status_changed_at', 'paused_reason', 'discount_target_type',
                   'discount_type', 'discount_value', 'target_menu_id', 'issue_quantity', 'usable_start_time', 'usable_end_time',
                   'min_order_amount', 'notice', 'target_radius', 'target_gender', 'target_age_groups', 'daily_budget',
                   'pending_daily_budget', 'start_date', 'end_date', 'created_at', 'updated_at'], camp_rows)
 rows('campaign_status_log', ['campaign_status_log_id', 'campaign_id', 'from_status', 'to_status', 'actor_type', 'reason',
                              'created_at', 'updated_at'], logs)
-w('\n/*\n * 포스터는 게시되고 활성인 첫 템플릿으로 만들고 검수를 통과했다.\n * 템플릿이 아직 없으면(빈 DB 에서 R__templates_posters 보다 먼저 돌 때) 넣지 않는다. 그 파일이 뒤이어 만든다.\n * 사진은 demo/campaigns/<캠페인>/poster.jpg 다.\n */\n')
-for cid, name, slot, html, at in posters:
+w('\n/*\n * 포스터는 가게 업종에 맞는 선착순 쿠폰 전단지(전체할인)로 만들고 검수를 통과했다. image 칸은 첫 메뉴 사진이다.\n * 템플릿이 아직 없으면(빈 DB 에서 R__templates_posters 보다 먼저 돌 때) 넣지 않는다. 그 파일이 뒤이어 만든다.\n * 완성 포스터 사진은 demo/campaigns/<캠페인>/poster.jpg 다.\n */\n')
+for cid, name, slot, html, at, tid in posters:
     w(f'''INSERT INTO poster (poster_id, campaign_id, template_id, title, slot_values, html_content, created_at, updated_at,
                     image_object_key)
 SELECT {cid}, {cid}, t.template_id, LEFT(CONCAT({q(name)}, ' - ', t.name), 100), {slot},
        {html},
        {at}, {at}, 'demo/campaigns/{cid}/poster.jpg'
 FROM template t
-JOIN (SELECT MIN(template_id) AS template_id FROM template WHERE status = 'PUBLISHED' AND active = 1) f
-  ON f.template_id = t.template_id;
+WHERE t.template_id = {tid};
 ''')
 w('''INSERT INTO poster_moderation_result (poster_moderation_result_id, poster_id, result, reason, created_at, updated_at)
 SELECT p.poster_id, p.poster_id, 'PASS', NULL, p.created_at + INTERVAL 10 MINUTE, p.created_at + INTERVAL 10 MINUTE
