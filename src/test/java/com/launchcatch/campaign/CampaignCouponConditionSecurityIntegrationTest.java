@@ -9,7 +9,6 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.launchcatch.auth.Role;
 import com.launchcatch.auth.jwt.JwtTokenProvider;
 import com.launchcatch.campaign.contract.AgeGroup;
-import com.launchcatch.campaign.contract.CampaignStatus;
 import com.launchcatch.campaign.contract.DiscountTargetType;
 import com.launchcatch.campaign.contract.DiscountType;
 import com.launchcatch.campaign.contract.TargetGender;
@@ -159,7 +158,9 @@ class CampaignCouponConditionSecurityIntegrationTest extends AbstractCampaignInt
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.code").value("CAMPAIGN-013"));
 
-        assertThat(campaignRepository.findByStoreIdAndStatus(otherStoreId, CampaignStatus.DRAFT)).isEmpty();
+        // findByStoreIdAndStatus 는 행 잠금 조회라 이 클래스(트랜잭션 없음)에서는 쓸 수 없어 건수만 센다.
+        Integer count = jdbc.queryForObject("select count(*) from campaign where store_id = ?", Integer.class, otherStoreId);
+        assertThat(count).isZero();
     }
 
     @Test
