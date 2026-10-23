@@ -18,6 +18,7 @@ import com.launchcatch.owner.contract.OwnerAccountStatus;
 import com.launchcatch.owner.contract.OwnerStatusQuery;
 import java.util.Map;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
 import org.jsoup.nodes.Element;
@@ -41,6 +42,7 @@ import org.springframework.transaction.annotation.Transactional;
  * 금지 표현은 여기서 검사하지 않는다. 수정한 문구는 slot_values 의 value 에 들어가서 활성화 때 자동 검수가 본다.
  * 할인 추가 텍스트의 % 와 원 경고는 프론트가 하고 서버는 막지 않는다.
  */
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class PosterEditService {
@@ -68,6 +70,8 @@ public class PosterEditService {
                 editDiscount(document, slots, request.discount());
             }
             poster.edit(PosterSlots.write(slots), document.body().html());
+            log.info("event=POSTER_EDITED campaignId={} ownerId={} eventName={} discount={}",
+                    campaignId, ownerId, request.eventName() != null, request.discount() != null);
         }
         return new PosterCreateResponse(
                 poster.getId(), campaignId, poster.getTemplateId(), poster.getTitle(), poster.getHtmlContent(),
@@ -138,6 +142,7 @@ public class PosterEditService {
     private PosterSlotValue requireSlotValue(Map<String, PosterSlotValue> slots, String slot) {
         PosterSlotValue value = slots.get(slot);
         if (value == null) {
+            log.warn("event=POSTER_EDIT_REJECTED reason=SLOT_VALUE_MISSING slot={}", slot);
             throw new CampaignException(PosterErrorCode.SLOT_CONTRACT_VIOLATION);
         }
         return value;
@@ -147,6 +152,7 @@ public class PosterEditService {
     private Element requireEditableSlot(Document document, String slot) {
         Elements found = document.select("[data-slot=" + slot + "]");
         if (found.size() != 1 || !TemplateSlotValidator.isTextOnly(found.first())) {
+            log.warn("event=POSTER_EDIT_REJECTED reason=SLOT_NOT_EDITABLE slot={} slotCount={}", slot, found.size());
             throw new CampaignException(PosterErrorCode.SLOT_CONTRACT_VIOLATION);
         }
         return found.first();
@@ -160,6 +166,7 @@ public class PosterEditService {
         String text = raw.strip();
         int length = text.codePointCount(0, text.length());
         if (length < minLength || length > maxLength || hasForbiddenCharacter(text)) {
+            log.info("event=POSTER_EDIT_REJECTED reason=TEXT_INVALID length={}", length);
             throw new CampaignException(PosterErrorCode.POSTER_TEXT_INVALID);
         }
         return text;
@@ -175,6 +182,7 @@ public class PosterEditService {
 
     private int validateFontSize(int fontSizePx, int min, int max) {
         if (fontSizePx < min || fontSizePx > max) {
+            log.info("event=POSTER_EDIT_REJECTED reason=FONT_SIZE_OUT_OF_RANGE fontSizePx={}", fontSizePx);
             throw new CampaignException(PosterErrorCode.POSTER_FONT_SIZE_OUT_OF_RANGE);
         }
         return fontSizePx;
