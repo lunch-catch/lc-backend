@@ -9,9 +9,18 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeSet;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.mock.web.MockHttpServletRequest;
+import org.springframework.security.authentication.AnonymousAuthenticationToken;
+import org.springframework.security.authorization.AuthorizationResult;
+import org.springframework.security.core.authority.AuthorityUtils;
+import org.springframework.security.web.FilterChainProxy;
+import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.access.intercept.AuthorizationFilter;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.web.context.WebApplicationContext;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
@@ -29,7 +38,12 @@ class OpenApiSecurityIntegrationTest extends AbstractAuthIntegrationTest {
 
     private static final Set<String> METHODS = Set.of("get", "post", "put", "patch", "delete");
 
+    private static final AnonymousAuthenticationToken ANONYMOUS = new AnonymousAuthenticationToken(
+            "api-docs", "anonymousUser", AuthorityUtils.createAuthorityList("ROLE_ANONYMOUS"));
+
     @Autowired MockMvc mockMvc;
+    @Autowired FilterChainProxy proxy;
+    @Autowired WebApplicationContext context;
 
     private JsonNode apiDocs() throws Exception {
         String body = mockMvc.perform(get("/v3/api-docs"))
@@ -80,5 +94,47 @@ class OpenApiSecurityIntegrationTest extends AbstractAuthIntegrationTest {
                 AuthCookieNames.OWNER_ACCESS_TOKEN_COOKIE_NAME, AuthCookieNames.MEMBER_ACCESS_TOKEN_COOKIE_NAME);
         assertThat(declared.keySet()).isEqualTo(cookies);
         declared.forEach((name, cookie) -> assertThat(cookie).isEqualTo(name));
+    }
+
+    /*
+     * 문서가 공개로 적은 작업과 보안 체인이 익명에게 여는 작업이 같은지 본다(#894).
+     * 작업마다 처음 맞는 체인을 고르고 그 체인의 인가 규칙에 익명 인증을 넣어 판정한다. 컨트롤러는 부르지 않는다.
+     */
+    @Test
+    void 문서의_공개_작업과_보안_체인이_익명에게_여는_작업이_같다() throws Exception {
+        Set<String> documented = new TreeSet<>();
+        Set<String> opened = new TreeSet<>();
+        apiDocs().get("paths").properties().forEach(path -> path.getValue().properties().forEach(entry -> {
+            if (!METHODS.contains(entry.getKey())) {
+                return;
+            }
+            String method = entry.getKey().toUpperCase();
+            String operation = method + " " + path.getKey();
+            JsonNode security = entry.getValue().get("security");
+            if (security == null || security.isEmpty()) {
+                documented.add(operation);
+            }
+            if (anonymousAllowed(method, path.getKey())) {
+                opened.add(operation);
+            }
+        }));
+
+        assertThat(documented).isEqualTo(opened);
+    }
+
+    // 경로 변수는 아무 값으로 채운다. 체인은 경로 모양만 보고 값은 보지 않는다
+    private boolean anonymousAllowed(String method, String path) {
+        String uri = path.replaceAll("\\{[^}]+}", "1");
+        MockHttpServletRequest request = new MockHttpServletRequest(context.getServletContext(), method, uri);
+        request.setServletPath(uri);
+        SecurityFilterChain chain = proxy.getFilterChains().stream()
+                .filter(candidate -> candidate.matches(request))
+                .findFirst().orElseThrow();
+        AuthorizationFilter filter = chain.getFilters().stream()
+                .filter(AuthorizationFilter.class::isInstance)
+                .map(AuthorizationFilter.class::cast)
+                .findFirst().orElseThrow();
+        AuthorizationResult result = filter.getAuthorizationManager().authorize(() -> ANONYMOUS, request);
+        return result != null && result.isGranted();
     }
 }
