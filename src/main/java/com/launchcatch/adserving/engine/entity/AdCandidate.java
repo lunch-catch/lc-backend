@@ -103,7 +103,10 @@ public class AdCandidate {
     @Column(name = "sold_out_at")
     private LocalDateTime soldOutAt;
 
-    // 정산의 그날 예약액이다. null 이면 아직 읽지 못했고 0 이면 그날 계획이 없다(#837)
+    /*
+     * 정산의 그날 예약액이다(#837).
+     * null 이면 아직 읽지 못한 것이고 0 이면 그날 계획이 없는 것이다.
+     */
     @Column(name = "reserved_amount")
     private Long reservedAmount;
 

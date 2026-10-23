@@ -5,8 +5,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.doReturn;
-import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -97,7 +95,6 @@ class FeedServiceTest {
                 serveFrequencyRepository, impressionCountRepository, pacingProperties, serveRecordRepository,
                 serveLogBuffer, meterRegistry, clock);
     }
-
 
     private static Instant instant(LocalDateTime time) {
         return time.atZone(ClockConfig.ZONE).toInstant();
@@ -284,7 +281,7 @@ class FeedServiceTest {
             when(exclusionRepository.findCampaignIds(TODAY, MEMBER_ID)).thenReturn(Set.of(1L));
             when(filterCategoryRepository.findCategoryCodes(MEMBER_ID)).thenReturn(List.of("KOREAN"));
             when(serveFrequencyRepository.findHistory(TODAY, MEMBER_ID)).thenReturn(new ServedHistory(Map.of(), Set.of()));
-    
+
             FeedResponse response = serviceAt(SERVING_NOW).getFeed(MEMBER_ID, NO_LOCATION);
 
             assertThat(response.cards()).extracting(FeedCardResponse::campaignId).containsExactly(2L);
@@ -313,7 +310,7 @@ class FeedServiceTest {
             givenCandidates(List.of(
                     candidate(1, SAVED_LAT, SAVED_LNG).set("reservedAmount", 24_000L).build(),
                     candidate(2, SAVED_LAT, SAVED_LNG).set("reservedAmount", 24_000L).build()));
-            // 10:15 의 계획은 10,250 이다. 노출 1,240 x 10원은 진행률 1.21 이고 1,200 x 10원은 1.17 이다
+            // 10:15 의 계획 10,250 에 노출 1,240 x 10원은 진행률 1.21, 1,200 x 10원은 1.17 이다
             when(impressionCountRepository.findValidCounts(eq(TODAY), any())).thenReturn(Map.of(1L, 1_240L, 2L, 1_200L));
 
             FeedResponse response = serviceAt(SERVING_NOW).getFeed(MEMBER_ID, NO_LOCATION);

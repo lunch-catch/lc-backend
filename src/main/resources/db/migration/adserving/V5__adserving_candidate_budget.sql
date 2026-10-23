@@ -6,4 +6,6 @@
 -- ----------------------------------------------------------------------------
 ALTER TABLE ad_candidate
     ADD COLUMN reserved_amount BIGINT COMMENT '정산의 그날 예약액. NULL 이면 아직 읽지 못함, 0 이면 그날 계획 없음' AFTER snapshot_read_at,
-    ADD COLUMN unit_price      BIGINT COMMENT '정산의 그날 노출 단가. reserved_amount 와 함께 쓴다' AFTER reserved_amount;
+    ADD COLUMN unit_price      BIGINT COMMENT '정산의 그날 노출 단가. reserved_amount 와 함께 쓴다' AFTER reserved_amount,
+    -- 두 값은 함께 비거나 함께 차고 음수가 없다
+    ADD CONSTRAINT chk_candidate_budget CHECK ((reserved_amount IS NULL AND unit_price IS NULL) OR (reserved_amount >= 0 AND unit_price >= 0));

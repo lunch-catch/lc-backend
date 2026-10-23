@@ -28,7 +28,7 @@
 | 맡지 않는 것 | 소유 |
 |---|---|
 | 온보딩 완료 여부, 저장 위치, 성별, 연령대 | member. `MemberQueryService` 로 읽는다 |
-| 그날 예약액과 단가 | billing. 00:00 후보 적재 끝과 10분마다 `BudgetQueryService` 로 읽어 그날 후보에 둔다. 진행률은 광고 서빙이 이 값과 자기 유효 노출 수로 계산한다(4장, #837) |
+| 그날 예약액과 단가 | billing. `BudgetQueryService` 로 읽어 그날 후보에 둔다(5장). 진행률은 광고 서빙이 이 값과 자기 유효 노출 수로 계산한다(4장, #837) |
 | 노출 과금 판정(`BILLED`, `NOT_BILLED_BUDGET`) | billing. 상한을 넘겨 나간 노출도 과금은 정산이 막는다 |
 | 잔여 수량 | coupon. 피드와 찜 목록에 싣지 않는다(`feed-api-design.md`) |
 
@@ -152,7 +152,7 @@ impression/
 | 찜 목록 | `uk_wishlist_member_campaign`(`member_id`, `campaign_id`)의 앞 열로 회원의 찜을 읽고 `created_at`, `wishlist_id` 내림차순으로 정렬한다. 표시 값은 그날 후보를 PK(`business_date`, `campaign_id`)의 IN 으로 한 번 더 읽어 붙인다. 후보 행이 있으면 상태와 소진은 보지 않는다(#416) |
 | 필터 업종 | `feed_filter_category` 를 PK(`member_id`, `category_code`)로 읽고 업종 코드 오름차순으로 돌려준다(#405). 순서 컬럼이 없어 고른 순서는 남지 않는다 |
 | 필터 저장 | `feed_filter` 는 `INSERT ... ON DUPLICATE KEY UPDATE` 로 정렬을 넣거나 바꾸고, `feed_filter_category` 는 그 회원의 행을 지우고 다시 넣는다. 같은 업종이 두 번 오면 하나만 넣는다(#411 에서 임시로 정했다) |
-| 다른 도메인 데이터의 사본 | `ad_candidate` 는 00:00 의 캠페인과 가게 사본이다. 그날 안에서는 캠페인과 쿠폰의 통보로만 바뀐다. 정산의 그날 예약액과 단가(`reserved_amount`, `unit_price`, V5)는 적재 끝과 10분마다 덮는다. 둘 다 NULL 이면 아직 읽지 못한 것이고 0 이면 그날 계획이 없다(#837) |
+| 다른 도메인 데이터의 사본 | `ad_candidate` 는 00:00 의 캠페인과 가게 사본이다. 그날 안에서는 캠페인과 쿠폰의 통보로만 바뀐다. 정산의 그날 예약액과 단가(`reserved_amount`, `unit_price`, V5)는 5장의 시점에 덮는다. 둘 다 NULL 이면 아직 읽지 못한 것이고 0 이면 그날 계획이 없다(#837) |
 | 쿠폰의 찜 조회 | `uk_wishlist_member_campaign`(`member_id`, `campaign_id`)으로 단건은 있는지만 보고, 목록은 앞 열로 그 회원의 `campaign_id` 만 읽는다. 캠페인별 회원 일괄 조회는 같은 키로 입력한 회원(500명까지)의 행만 읽는다(#578). 셋 다 `campaign_ended_at IS NULL` 인 행만 유효로 본다. 순서는 정하지 않는다(#163, #553) |
 | 끝난 캠페인의 찜 | 종료 표시는 `idx_wishlist_campaign` 으로 그 캠페인의 행 중 `campaign_ended_at` 이 비어 있는 것만 채운다. 정리는 `idx_wishlist_campaign_ended` 로 기준 시각 전에 끝난 행을 지운다(#553). 종료 이벤트 뒤에 들어온 찜은 찜 요청이 넣은 뒤 캠페인을 읽어 같은 표시를 부른다(#780) |
 | 소진 반영 | `ad_candidate` 의 PK(`business_date`, `campaign_id`)로 `sold_out_at IS NULL` 인 행만 바꾼다. 받은 소진 시각을 그대로 쓰고 부른 시각은 `updated_at` 에만 쓴다. 0행이면 PK 로 후보가 있는지 한 번 더 본다(#163) |
@@ -633,7 +633,7 @@ A 를 고른다. 분석의 결정과 어긋났을 때 B 는 노출 이벤트를 
 
 | 흐름 | 불리하게 남는 경우 | 누구에게 | 막는 방법 |
 |---|---|---|---|
-| 예산을 아직 읽지 못한 피드 | 00:00 적재 때 정산이 멈췄으면 후보의 예약액이 비어 진행률 1.2 초과와 노출 상한 제외가 빠지고 예산을 넘긴 캠페인도 나간다. 낮에 멈추면 마지막으로 읽은 값을 그대로 쓴다 | 공정성(다른 점주) | 차감은 정산이 따로 막아 점주가 더 내지 않는다. 10분 갱신이 다시 채운다. `adserving_budget_unavailable_total` 로 센다(#837) |
+| 예산을 아직 읽지 못한 피드 | 00:00 적재 때 정산이 멈췄으면 후보의 예약액이 빈다. 그 피드는 진행률 1.2 초과와 노출 상한 제외가 빠져 예산을 넘긴 캠페인도 나간다. 낮에 멈추면 마지막으로 읽은 값을 그대로 쓴다 | 공정성(다른 점주) | 차감은 정산이 따로 막아 점주가 더 내지 않는다. 10분 갱신이 다시 채운다. `adserving_budget_unavailable_total` 로 센다(#837) |
 | 노출 수 카운터가 멈춘 동안의 피드 | 0 으로 보고 상한을 넘겨 내보낸다 | 플랫폼 | 넘긴 노출은 과금되지 않는다. `adserving_cache_bypass_total` 로 센다 |
 | serve 기록을 쓰지 못한 피드 | 그 카드의 노출이 무효라 과금되지 않는다 | 플랫폼 | `adserving_cache_bypass_total`(`use=serve_record`) 로 센다 |
 | serve 기록을 읽지 못한 노출 | 유효 노출이 `EXPIRED_OR_UNKNOWN` 으로 저장돼 과금되지 않는다. 다시 보내도 처음 판정이 남는다 | 플랫폼 | `adserving_cache_bypass_total`(`use=serve_record`) 로 센다 |

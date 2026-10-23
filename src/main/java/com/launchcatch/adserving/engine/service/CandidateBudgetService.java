@@ -29,7 +29,7 @@ import org.springframework.stereotype.Service;
 @RequiredArgsConstructor
 public class CandidateBudgetService {
 
-    // 정산에서 예산을 읽지 못한 횟수다. 경보는 이 지표에 건다.
+    // 정산에서 예산을 읽지 못한 횟수이고 경보는 이 지표에 건다
     static final String BUDGET_UNAVAILABLE_METRIC = "adserving_budget_unavailable_total";
 
     private final AdCandidateRepository adCandidateRepository;
@@ -37,7 +37,7 @@ public class CandidateBudgetService {
     private final MeterRegistry meterRegistry;
     private final Clock clock;
 
-    // 갱신한 후보 수를 돌려준다. 정산을 읽지 못하면 0 이다
+    // 갱신한 후보 수를 돌려주고 정산을 읽지 못하면 0 이다
     public int refresh(LocalDate businessDate) {
         List<Long> campaignIds = adCandidateRepository.findCampaignIdsByBusinessDate(businessDate);
         if (campaignIds.isEmpty()) {
@@ -61,7 +61,7 @@ public class CandidateBudgetService {
         return budgets.size();
     }
 
-    // 정산은 한 번에 MAX_CAMPAIGN_IDS 개까지 받는다. 그보다 많으면 나눠 부른다
+    // 정산이 한 번에 받는 MAX_CAMPAIGN_IDS 개보다 많으면 나눠 부른다
     private Map<Long, BudgetProgress> read(List<Long> campaignIds, LocalDate businessDate) {
         int chunk = BudgetQueryService.MAX_CAMPAIGN_IDS;
         Map<Long, BudgetProgress> found = new HashMap<>();

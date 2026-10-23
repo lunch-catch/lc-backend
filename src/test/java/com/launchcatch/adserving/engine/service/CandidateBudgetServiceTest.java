@@ -2,13 +2,10 @@ package com.launchcatch.adserving.engine.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.launchcatch.adserving.engine.repository.AdCandidateRepository;
@@ -20,10 +17,12 @@ import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Clock;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.Collection;
 import java.util.List;
 import java.util.stream.LongStream;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 
 @DisplayName("후보 예산 갱신")
 class CandidateBudgetServiceTest {
@@ -51,22 +50,34 @@ class CandidateBudgetServiceTest {
     }
 
     @Test
-    void 후보가_정산이_한_번에_받는_수보다_많으면_나눠_부른다() {
-        List<Long> many = LongStream.rangeClosed(1, BudgetQueryService.MAX_CAMPAIGN_IDS + 1L).boxed().toList();
+    @SuppressWarnings("unchecked")
+    void 후보가_정산이_한_번에_받는_수보다_많아도_모든_후보의_예산을_덮는다() {
+        long last = BudgetQueryService.MAX_CAMPAIGN_IDS + 1L;
+        List<Long> many = LongStream.rangeClosed(1, last).boxed().toList();
         when(adCandidateRepository.findCampaignIdsByBusinessDate(BUSINESS_DATE)).thenReturn(many);
-        when(budgetQueryService.getProgress(anyCollection(), eq(BUSINESS_DATE))).thenReturn(List.of());
+        // 정산은 한 번에 MAX_CAMPAIGN_IDS 개를 넘게 받으면 거부한다
+        when(budgetQueryService.getProgress(any(), eq(BUSINESS_DATE))).thenAnswer(invocation -> {
+            Collection<Long> ids = invocation.getArgument(0);
+            if (ids.size() > BudgetQueryService.MAX_CAMPAIGN_IDS) {
+                throw new IllegalArgumentException("too many");
+            }
+            return ids.stream().map(id -> new BudgetProgress(id, 24_000, 10, 0)).toList();
+        });
 
         service.refresh(BUSINESS_DATE);
 
-        verify(budgetQueryService, times(2)).getProgress(anyCollection(), eq(BUSINESS_DATE));
+        ArgumentCaptor<List<CandidateBudget>> budgets = ArgumentCaptor.forClass(List.class);
+        verify(adCandidateRepository).updateBudgets(eq(BUSINESS_DATE), budgets.capture(), eq(NOW));
+        assertThat(budgets.getValue()).hasSize(many.size())
+                .last().isEqualTo(new CandidateBudget(last, 24_000, 10));
     }
 
     @Test
-    void 그날_후보가_없으면_정산을_부르지_않는다() {
+    void 그날_후보가_없으면_아무것도_덮지_않는다() {
         when(adCandidateRepository.findCampaignIdsByBusinessDate(BUSINESS_DATE)).thenReturn(List.of());
 
         assertThat(service.refresh(BUSINESS_DATE)).isZero();
-        verifyNoInteractions(budgetQueryService);
+        verify(adCandidateRepository, never()).updateBudgets(any(), any(), any());
     }
 
     @Test
