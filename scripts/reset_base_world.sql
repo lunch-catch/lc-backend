@@ -75,6 +75,17 @@ DELETE FROM wishlist
 WHERE campaign_id IN (SELECT campaign_id FROM reset_campaign) OR member_id IN (SELECT member_id FROM reset_member);
 DELETE FROM serve_log WHERE serve_id IN (SELECT serve_id FROM reset_serve);
 DELETE FROM ad_candidate WHERE campaign_id IN (SELECT campaign_id FROM reset_campaign);
+/*
+ * 시간대별 목표 표는 V8 이 지운다. V8 전의 DB(운영)에는 남아 있고 예산 계획을 외래 키로 가리킨다.
+ * 표가 있을 때만 먼저 지운다. 저장 프로시저 밖이라 IF 대신 준비된 문장으로 고른다.
+ */
+SET @hourly = IF(EXISTS (SELECT 1 FROM information_schema.tables
+                         WHERE table_schema = DATABASE() AND table_name = 'budget_hourly_target'),
+                 'DELETE FROM budget_hourly_target WHERE budget_daily_plan_id IN (SELECT budget_daily_plan_id FROM budget_daily_plan WHERE campaign_id IN (SELECT campaign_id FROM reset_campaign))',
+                 'DO 0');
+PREPARE hourly_stmt FROM @hourly;
+EXECUTE hourly_stmt;
+DEALLOCATE PREPARE hourly_stmt;
 DELETE FROM budget_daily_plan WHERE campaign_id IN (SELECT campaign_id FROM reset_campaign);
 DELETE FROM feed_filter_category WHERE member_id IN (SELECT member_id FROM reset_member);
 DELETE FROM feed_filter WHERE member_id IN (SELECT member_id FROM reset_member);
