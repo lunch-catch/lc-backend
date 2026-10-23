@@ -2,19 +2,20 @@ package com.launchcatch.campaign.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
-import static org.mockito.Mockito.lenient;
-import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.launchcatch.campaign.contract.CampaignStatus;
 import com.launchcatch.campaign.contract.DiscountTargetType;
 import com.launchcatch.campaign.contract.DiscountType;
-import com.launchcatch.campaign.entity.Campaign;
 import com.launchcatch.campaign.repository.CampaignRepository;
+import com.launchcatch.campaign.repository.CampaignSummaryRow;
 import com.launchcatch.store.contract.StoreCampaignStatus;
 import com.launchcatch.store.contract.StoreCampaignSummaryUpdate;
 import com.launchcatch.store.contract.StoreCampaignSummaryUpdater;
@@ -23,6 +24,7 @@ import com.launchcatch.store.contract.StoreDiscountType;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.util.List;
+import java.util.stream.IntStream;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -31,6 +33,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.domain.Pageable;
 
 @ExtendWith(MockitoExtension.class)
 class CampaignStoreSummaryServiceTest {
@@ -51,24 +54,17 @@ class CampaignStoreSummaryServiceTest {
         service = new CampaignStoreSummaryService(campaignRepository, storeCampaignSummaryUpdater);
     }
 
-    private Campaign activeCampaign(Long id, Long storeId) {
-        Campaign campaign = mock(Campaign.class);
-        lenient().when(campaign.getId()).thenReturn(id);
-        lenient().when(campaign.getStoreId()).thenReturn(storeId);
-        lenient().when(campaign.getStatus()).thenReturn(CampaignStatus.ACTIVE);
-        lenient().when(campaign.getDiscountTargetType()).thenReturn(DiscountTargetType.ALL);
-        lenient().when(campaign.getDiscountType()).thenReturn(DiscountType.AMOUNT);
-        lenient().when(campaign.getDiscountValue()).thenReturn(3000);
-        lenient().when(campaign.getUsableStartTime()).thenReturn(LocalTime.of(11, 0));
-        lenient().when(campaign.getUsableEndTime()).thenReturn(LocalTime.of(14, 0));
-        return campaign;
+    private CampaignSummaryRow row(long campaignId, long storeId) {
+        return new CampaignSummaryRow(storeId, campaignId, CampaignStatus.ACTIVE, DiscountTargetType.ALL,
+                DiscountType.AMOUNT, 3000, null, LocalTime.of(11, 0), LocalTime.of(14, 0));
     }
 
     @Test
-    @DisplayName("ACTIVE 캠페인의 요약을 새 영업일 몫으로 한 번에 저장한다")
-    void ACTIVE_캠페인의_요약을_한_번에_저장한다() {
-        when(campaignRepository.findByStatusOrderById(CampaignStatus.ACTIVE))
-                .thenReturn(List.of(activeCampaign(1L, 10L), activeCampaign(2L, 20L)));
+    @DisplayName("ACTIVE 캠페인의 요약을 새 영업일 몫으로 저장한다")
+    void ACTIVE_캠페인의_요약을_저장한다() {
+        when(campaignRepository.findActiveSummaryRowsAfter(eq(0L), any(Pageable.class)))
+                .thenReturn(List.of(row(1L, 10L), row(2L, 20L)));
+        when(campaignRepository.findActiveSummaryRowsAfter(eq(2L), any(Pageable.class))).thenReturn(List.of());
 
         int prepared = service.prepare(BUSINESS_DATE);
 
@@ -87,7 +83,7 @@ class CampaignStoreSummaryServiceTest {
     @Test
     @DisplayName("ACTIVE 캠페인이 없으면 요약 저장을 부르지 않는다")
     void 대상이_없으면_저장을_부르지_않는다() {
-        when(campaignRepository.findByStatusOrderById(CampaignStatus.ACTIVE)).thenReturn(List.of());
+        when(campaignRepository.findActiveSummaryRowsAfter(eq(0L), any(Pageable.class))).thenReturn(List.of());
 
         assertThat(service.prepare(BUSINESS_DATE)).isZero();
 
@@ -95,10 +91,27 @@ class CampaignStoreSummaryServiceTest {
     }
 
     @Test
+    @DisplayName("청크를 넘으면 마지막 id 부터 다음 청크를 읽어 청크마다 저장한다")
+    void 청크를_넘으면_다음_청크를_이어서_저장한다() {
+        List<CampaignSummaryRow> first = IntStream.rangeClosed(1, 500).mapToObj(id -> row(id, id)).toList();
+        when(campaignRepository.findActiveSummaryRowsAfter(eq(0L), any(Pageable.class))).thenReturn(first);
+        when(campaignRepository.findActiveSummaryRowsAfter(eq(500L), any(Pageable.class)))
+                .thenReturn(List.of(row(501L, 501L)));
+        when(campaignRepository.findActiveSummaryRowsAfter(eq(501L), any(Pageable.class))).thenReturn(List.of());
+
+        int prepared = service.prepare(BUSINESS_DATE);
+
+        assertThat(prepared).isEqualTo(501);
+        verify(storeCampaignSummaryUpdater, times(2)).updateAll(updatesCaptor.capture());
+        assertThat(updatesCaptor.getAllValues().get(0)).hasSize(500);
+        assertThat(updatesCaptor.getAllValues().get(1)).hasSize(1);
+    }
+
+    @Test
     @DisplayName("요약 저장이 실패하면 예외를 그대로 올려 단계를 실패시킨다")
     void 저장이_실패하면_예외를_올린다() {
-        when(campaignRepository.findByStatusOrderById(CampaignStatus.ACTIVE))
-                .thenReturn(List.of(activeCampaign(1L, 10L)));
+        when(campaignRepository.findActiveSummaryRowsAfter(eq(0L), any(Pageable.class)))
+                .thenReturn(List.of(row(1L, 10L)));
         doThrow(new IllegalArgumentException("할인 대상 메뉴가 해당 가게에 속하지 않습니다."))
                 .when(storeCampaignSummaryUpdater).updateAll(anyList());
 
