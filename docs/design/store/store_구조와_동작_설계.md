@@ -1,12 +1,12 @@
 # store 구조와 동작 설계
 
-`gyudongjeong`의 입점 등록·조회 기능과 공개 조회 계약을 정리한다. 2026-10-23에 병합한 develop의 코드·테스트와 기능별 구현 이슈를 근거로 작성했다.
-예외로 온보딩 5단계의 로고·내부 이미지와 6단계의 대표 메뉴·메뉴 이미지 등록을 포함한다. 이 업로드·메뉴 기능은 `yongmaru789`가 구현했으며 `gyudongjeong`의 작업으로 분류하지 않는다.
+**gyudongjeong**의 입점 등록·조회 기능과 공개 조회 계약을 정리한다. 2026-10-23에 병합한 develop의 코드·테스트와 기능별 구현 이슈를 근거로 작성했다.
+예외로 온보딩 5단계의 로고·내부 이미지와 6단계의 대표 메뉴·메뉴 이미지 등록을 포함한다. 이 업로드·메뉴 기능의 최초 구현 담당자는 **yongmaru789**다. 최종 등록 판정·조회 정책 보정과 #679의 실패 로그 보완은 **gyudongjeong**의 작업으로 구분한다.
 요청·응답은 [가게 명세](../../api-spec/store-api-spec.md), API별 절차는 [가게 API 설계](store-api-design.md)가 소유한다.
 
 ## 1. 범위
 
-기본 범위는 PR 작성자가 `gyudongjeong`인 develop 반영 기능이다. #534는 문서 정리 작업이며 기능 구현 근거가 아니다.
+기본 범위의 기능 구현 담당자는 **gyudongjeong**이다. 해당 작성자의 develop 반영 기능을 다룬다. #534는 문서 정리 작업이며 기능 구현 근거가 아니다.
 
 | 기능 | 구현·변경 이슈 |
 |---|---|
@@ -19,6 +19,9 @@
 | 쿠폰·광고·분석·점주 목록이 사용하는 가게 조회 계약 | [#297](https://github.com/lunch-catch/lc-backend/issues/297), [#161](https://github.com/lunch-catch/lc-backend/issues/161), [#363](https://github.com/lunch-catch/lc-backend/issues/363), [#365](https://github.com/lunch-catch/lc-backend/issues/365) |
 | 대표 이미지 조회·필수 검증 보정 | [#608](https://github.com/lunch-catch/lc-backend/issues/608), [#627](https://github.com/lunch-catch/lc-backend/issues/627) |
 | 최종 등록·조회에서 내부 이미지를 선택 항목으로 처리 | [#633](https://github.com/lunch-catch/lc-backend/issues/633) |
+| 쿠폰용 로고 임시 허용·이미지 없는 상세 조회 | [#647](https://github.com/lunch-catch/lc-backend/issues/647), [#650](https://github.com/lunch-catch/lc-backend/issues/650) |
+| 목록·상세의 이미지·캠페인 데이터 오류 격리 | [#857](https://github.com/lunch-catch/lc-backend/issues/857) |
+| 최종 등록·업로드 실패 로그 보정 | [#679](https://github.com/lunch-catch/lc-backend/issues/679) |
 | 메뉴 데이터 오류를 정상 메뉴와 분리한 공개 조회 결과 | [#788](https://github.com/lunch-catch/lc-backend/issues/788) |
 
 아래 세 기능만 다른 작성자의 구현을 예외로 포함한다. 정책 결정의 근거는 [가게 API 설계](store-api-design.md)의 이미지·대표 메뉴 절을 따른다.
@@ -143,7 +146,7 @@ store/
 │   ├── StoreRegistrationProgressService.java    진행 버전·단계 저장을 처리한다
 │   ├── StoreRegistrationQueryService.java
 │   ├── StoreStatsQueryServiceImpl.java    StoreStatsQueryService 구현
-│   └── StoreUploadSupport.java    업로드 공통 검증과 사전 서명을 지원한다
+│   └── StoreUploadSupport.java    업로드 공통 검증·사전 서명·S3 확인 실패 기록을 지원한다
 ├── BusinessVerificationStatus.java
 ├── MockBusinessVerifier.java    외부 API 없이 사업자번호 Mock 검증을 수행한다
 ├── StoreBasicInfo.java
@@ -501,6 +504,7 @@ store가 등록한 배치 작업은 없다. 분석 배치는 KST 입점 수 조�
 | 공개 조회의 부재·이미지 누락·DB 실패 | 계약별 부재와 정합성·장애를 구분한다 | `StoreQueryIntegrationTest`, `StoreStatsQueryIntegrationTest` |
 | 사용자 상세의 등록 전 가게·메뉴 없음·이미지 데이터 오류 | 등록 전은 부재, 메뉴 없음은 빈 목록이다. 이미지·캠페인 데이터 오류는 해당 항목만 제외하며 실제 장애는 전파한다 | `StoreDetailIntegrationTest`, `StoreDetailServiceTest` |
 | 정상 메뉴와 이미지 누락·미검증·공백 키 메뉴가 섞여 있다 | `menus`와 `invalidMenuIds`를 함께 반환하고 두 목록은 겹치지 않는다 | `StoreQueryServiceImplTest`, `StoreQueryIntegrationTest` |
+| 최종 등록 커밋·롤백과 S3 확인·보상 실패가 발생한다 | 커밋 여부와 실패 단계별 이벤트를 기록하고 민감정보를 제외한다 | `StoreCompleteServiceTest`, `StoreImageUploadServiceTest`, `StoreMenuUploadServiceTest` |
 | 오류 메뉴 뒤 정상 메뉴의 CDN 설정 오류 또는 SQL 장애가 발생한다 | 결과를 반환하지 않고 실제 장애를 전파한다 | `StoreQueryServiceImplTest` |
 | 오류 메뉴를 광고·쿠폰·포스터가 사용한다 | 광고는 해당 캠페인만 제외하며 쿠폰·포스터는 각 도메인의 실패 정책을 유지한다 | `CandidateLoadServiceTest`와 각 호출자의 단위 테스트 |
 

@@ -5,7 +5,7 @@
 
 ## 1. 범위
 
-범위는 PR 작성자가 `gyudongjeong`인 develop 반영 기능으로 한정한다. 2026-10-21에 확인한 코드·테스트와 연결 이슈를 기준으로 한다. #534는 문서 정리 작업이며 기능 구현 근거가 아니다.
+기능 구현 담당자는 **gyudongjeong**이며 해당 작성자의 develop 반영 기능으로 범위를 한정한다. 2026-10-23에 확인한 코드·테스트와 연결 이슈를 기준으로 한다. #534는 문서 정리 작업이며 기능 구현 근거가 아니다.
 
 | 기능                             | 구현 이슈 |
 |--------------------------------|---|
@@ -14,6 +14,7 @@
 | 최초 튜토리얼 완료·내 정보 조회             | [#137](https://github.com/lunch-catch/lc-backend/issues/137), [#151](https://github.com/lunch-catch/lc-backend/issues/151) |
 | 약관·가게 기본 정보·위치·영업시간의 점주 확인과 조정 | [#147](https://github.com/lunch-catch/lc-backend/issues/147), [#415](https://github.com/lunch-catch/lc-backend/issues/415), [#482](https://github.com/lunch-catch/lc-backend/issues/482), [#489](https://github.com/lunch-catch/lc-backend/issues/489) |
 | 내 가게·진행 상태 조회의 진입점             | [#427](https://github.com/lunch-catch/lc-backend/issues/427), [#453](https://github.com/lunch-catch/lc-backend/issues/453) |
+| 상태 캐시·인증 로그 보정과 검증 | [#678](https://github.com/lunch-catch/lc-backend/issues/678), [#836](https://github.com/lunch-catch/lc-backend/issues/836) |
 | 최종 등록의 `ACTIVE` 전환·커밋 후 캐시 무효화   | [#502](https://github.com/lunch-catch/lc-backend/issues/502) |
 
 [#124](https://github.com/lunch-catch/lc-backend/issues/124)는 상태 캐시 문서 이동이며 상태 조회 기능 전체를 구현한 근거로 사용하지 않는다.

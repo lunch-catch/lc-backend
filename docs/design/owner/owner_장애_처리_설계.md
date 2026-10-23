@@ -3,11 +3,12 @@
 [공통 장애 처리](../장애_처리_설계_가이드.md)의 기본 처리에서 벗어난 곳만 설명한다.
 RT 회전·로그아웃의 상세는 [인증 설계](../auth/auth-api-design.md)의 점주 절 중 `POST /v1/owner/auth/tokens:refresh`·`DELETE /v1/owner/auth/tokens` 항목, 상태 조회는 [상태 캐시 설계](owner-status-cache.md)의 "상태 변경과 접근 제어를 연결할 때의 조건" 절이 소유한다.
 
-기본 범위는 PR 작성자가 `gyudongjeong`인 develop 반영 기능이다. 로그인 저장소 실패는 [#71](https://github.com/lunch-catch/lc-backend/issues/71), 회전·보상은 [#121](https://github.com/lunch-catch/lc-backend/issues/121), 로그아웃 부분 실패는 [#132](https://github.com/lunch-catch/lc-backend/issues/132)를 참조한다.
+기본 범위의 기능 구현 담당자는 **gyudongjeong**이다. 해당 작성자의 develop 반영 기능을 다룬다. 로그인 저장소 실패는 [#71](https://github.com/lunch-catch/lc-backend/issues/71), 회전·보상은 [#121](https://github.com/lunch-catch/lc-backend/issues/121), 로그아웃 부분 실패는 [#132](https://github.com/lunch-catch/lc-backend/issues/132)를 참조한다.
+상태 캐시와 인증 로그 보정은 [#678](https://github.com/lunch-catch/lc-backend/issues/678), 로그 검증은 [#836](https://github.com/lunch-catch/lc-backend/issues/836)을 대조했다.
 DB 현재 상태·롤백은 [#137](https://github.com/lunch-catch/lc-backend/issues/137)과 [#151](https://github.com/lunch-catch/lc-backend/issues/151), 최종 등록·캐시 삭제 실패 허용은 [#502](https://github.com/lunch-catch/lc-backend/issues/502)가 근거다.
 #121의 과거 AT 차단 한계와 현재 DB 우선 검증은 구분한다. 현재 동작은 코드·테스트를 따르며 #534는 문서 작성 이슈다.
 
-2026-10-21에 확인한 develop을 기준으로 하며 다른 작성자의 관리자 점주 목록 기능은 포함하지 않는다. 이미지·메뉴 업로드 장애는 [store 장애 설계](../store/store_장애_처리_설계.md)가 소유한다.
+2026-10-23에 확인한 develop을 기준으로 하며 다른 작성자의 관리자 점주 목록 기능은 포함하지 않는다. 이미지·메뉴 업로드 장애는 [store 장애 설계](../store/store_장애_처리_설계.md)가 소유한다.
 
 ## 이 도메인이 기대는 대상
 
