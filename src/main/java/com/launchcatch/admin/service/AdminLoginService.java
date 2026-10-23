@@ -36,18 +36,20 @@ public class AdminLoginService {
     private final AdminLoginTransactionService loginTransactionService;
     private final RefreshTokenRepository refreshTokenRepository;
     private final Clock clock;
+    private final AdminLoginAuditService loginAudit;
     private final String dummyPasswordHash;
 
     public AdminLoginService(
             AdminRepository adminRepository, PasswordEncoder passwordEncoder, JwtTokenProvider jwtTokenProvider,
             AdminLoginTransactionService loginTransactionService,
-            RefreshTokenRepository refreshTokenRepository, Clock clock) {
+            RefreshTokenRepository refreshTokenRepository, Clock clock, AdminLoginAuditService loginAudit) {
         this.adminRepository = adminRepository;
         this.passwordEncoder = passwordEncoder;
         this.jwtTokenProvider = jwtTokenProvider;
         this.loginTransactionService = loginTransactionService;
         this.refreshTokenRepository = refreshTokenRepository;
         this.clock = clock;
+        this.loginAudit = loginAudit;
         this.dummyPasswordHash = passwordEncoder.encode("dummy-password-for-admin-login");
     }
 
@@ -55,6 +57,23 @@ public class AdminLoginService {
     public AdminLoginResult login(AdminLoginRequest request) {
         Objects.requireNonNull(request, "request");
         Optional<Admin> found = adminRepository.findByLoginId(request.loginId());
+        try {
+            AdminLoginResult result = authenticate(request, found);
+            loginAudit.record(result.response().adminId(), true);
+            return result;
+        } catch (RuntimeException failure) {
+            if (found.isPresent()) {
+                int status = failure instanceof AuthException authFailure
+                        ? authFailure.getErrorCode().getHttpStatus().value() : 500;
+                loginAudit.record(found.get().getId(), false, status);
+            } else {
+                loginAudit.recordUnknownAccount();
+            }
+            throw failure;
+        }
+    }
+
+    private AdminLoginResult authenticate(AdminLoginRequest request, Optional<Admin> found) {
         String hash = found.map(Admin::getPasswordHash).orElse(dummyPasswordHash);
         boolean tooLong = request.password().getBytes(StandardCharsets.UTF_8).length > BCRYPT_MAX_BYTES;
         /*
@@ -115,9 +134,9 @@ public class AdminLoginService {
                         state.adminId());
             }
         } catch (DataAccessException e) {
-            // 예외 메시지와 cause는 토큰을 포함할 수 있어 종류와 스택 프레임만 남긴다.
-            log.warn("event=ADMIN_LOGIN_CACHE_PUBLICATION_FAILED adminId={} errorType={} stack={}",
-                    state.adminId(), e.getClass().getSimpleName(), java.util.Arrays.toString(e.getStackTrace()));
+            // 예외 메시지와 cause는 토큰을 포함할 수 있어 예외 타입만 남긴다.
+            log.warn("event=ADMIN_LOGIN_CACHE_PUBLICATION_FAILED adminId={} exceptionType={}",
+                    state.adminId(), e.getClass().getSimpleName());
         }
     }
 

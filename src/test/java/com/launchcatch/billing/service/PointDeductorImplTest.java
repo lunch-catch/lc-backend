@@ -9,6 +9,7 @@ import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.launchcatch.billing.contract.DeductionStatus;
@@ -18,12 +19,17 @@ import com.launchcatch.billing.cache.InMemoryDailySpendCounter;
 import com.launchcatch.billing.cache.DeductOutcome;
 import com.launchcatch.billing.repository.DeductionResultRepository;
 import com.launchcatch.billing.repository.PointLedgerRepository;
+import com.launchcatch.campaign.contract.CampaignInfo;
+import com.launchcatch.campaign.contract.CampaignQueryService;
+import com.launchcatch.campaign.contract.CampaignStatus;
 import com.launchcatch.global.config.ClockConfig;
+import com.launchcatch.ops.contract.PlatformSettingQueryService;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
@@ -43,7 +49,7 @@ class PointDeductorImplTest {
     private static final LocalDate DAY = LocalDate.of(2026, 10, 14);
     private static final UUID SERVE_ID = UUID.fromString("0192f3a4-7b5c-7d1e-9a2b-3c4d5e6f7a8b");
     private static final Long CAMPAIGN_ID = 7L;
-    private static final PlanSnapshot PLAN = new PlanSnapshot(1L, 3L, 10L);
+    private static final PlanSnapshot PLAN = new PlanSnapshot(3L, 10L);
     private static final Clock CLOCK = Clock.fixed(Instant.parse("2026-10-14T02:30:00Z"), ClockConfig.ZONE);
     private static final LocalDateTime NOW = LocalDateTime.of(2026, 10, 14, 11, 30);
 
@@ -57,6 +63,10 @@ class PointDeductorImplTest {
     private DeductionResultRepository deductionResultRepository;
     @Mock
     private PointLedgerRepository ledgerRepository;
+    @Mock
+    private CampaignQueryService campaignQuery;
+    @Mock
+    private PlatformSettingQueryService platformSetting;
 
     private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
     private PointDeductorImpl deductor;
@@ -66,8 +76,8 @@ class PointDeductorImplTest {
         // 운영에서는 MANDATORY 트랜잭션이 동기화를 켜 둔다. 시험도 같은 상태로 만든다
         TransactionSynchronizationManager.initSynchronization();
         deductor = new PointDeductorImpl(snapshotService, rebuildService, spendCounter,
-                deductionResultRepository, ledgerRepository, CLOCK, meterRegistry);
-        lenient().when(snapshotService.get(DAY, CAMPAIGN_ID)).thenReturn(PLAN);
+                deductionResultRepository, ledgerRepository, campaignQuery, platformSetting, CLOCK, meterRegistry);
+        lenient().when(snapshotService.find(DAY, CAMPAIGN_ID)).thenReturn(Optional.of(PLAN));
         // 기본은 새로 기록된 경우다. 중복은 해당 시험에서 0 을 돌려주게 한다
         lenient().when(deductionResultRepository.insertIfAbsent(any(UUID.class), any(), any(), any(),
                 any(DeductionStatus.class), anyLong(), any())).thenReturn(1);
@@ -83,6 +93,11 @@ class PointDeductorImplTest {
         for (TransactionSynchronization synchronization : TransactionSynchronizationManager.getSynchronizations()) {
             synchronization.afterCompletion(completionStatus);
         }
+    }
+
+    private static CampaignInfo campaign(long campaignId, long ownerId) {
+        return new CampaignInfo(campaignId, ownerId, 100L, CampaignStatus.ENDED, 100, null, null, null, null, null,
+                null, 0, null, 0, null, List.of(), null, null, null, null, 1000L);
     }
 
     private double undoCount(String result) {
@@ -150,6 +165,43 @@ class PointDeductorImplTest {
 
         assertThat(status).isEqualTo(DeductionStatus.NOT_BILLED_BUDGET);
         verify(ledgerRepository, never()).insertDeductIfAbsent(any(), any(), any(UUID.class), anyLong(), any());
+    }
+
+    @Test
+    void 그날_계획이_없으면_캠페인의_점주와_운영_단가로_계획_없음을_기록하고_Valkey와_원장은_건드리지_않는다() {
+        when(snapshotService.find(DAY, CAMPAIGN_ID)).thenReturn(Optional.empty());
+        when(campaignQuery.findAllById(List.of(CAMPAIGN_ID))).thenReturn(List.of(campaign(CAMPAIGN_ID, 5L)));
+        when(platformSetting.getImpressionUnitPrice()).thenReturn(12);
+
+        DeductionStatus status = deductor.deduct(SERVE_ID, CAMPAIGN_ID, DAY);
+
+        assertThat(status).isEqualTo(DeductionStatus.NOT_BILLED_NO_PLAN);
+        verify(deductionResultRepository).insertIfAbsent(SERVE_ID, CAMPAIGN_ID, 5L, DAY, DeductionStatus.NOT_BILLED_NO_PLAN, 12L, NOW);
+        verifyNoInteractions(spendCounter, rebuildService, ledgerRepository);
+        assertThat(meterRegistry.counter(PointDeductorImpl.NO_PLAN_METRIC).count()).isEqualTo(1.0);
+    }
+
+    @Test
+    void 계획_없음을_다시_부르면_첫_판정을_돌려준다() {
+        when(snapshotService.find(DAY, CAMPAIGN_ID)).thenReturn(Optional.empty());
+        when(campaignQuery.findAllById(List.of(CAMPAIGN_ID))).thenReturn(List.of(campaign(CAMPAIGN_ID, 5L)));
+        when(platformSetting.getImpressionUnitPrice()).thenReturn(12);
+        when(deductionResultRepository.insertIfAbsent(SERVE_ID, CAMPAIGN_ID, 5L, DAY, DeductionStatus.NOT_BILLED_NO_PLAN, 12L, NOW))
+                .thenReturn(2);
+        when(deductionResultRepository.findFirstStatus(SERVE_ID)).thenReturn(Optional.of(DeductionStatus.NOT_BILLED_NO_PLAN));
+
+        assertThat(deductor.deduct(SERVE_ID, CAMPAIGN_ID, DAY)).isEqualTo(DeductionStatus.NOT_BILLED_NO_PLAN);
+    }
+
+    @Test
+    void 계획도_캠페인도_없으면_예외다() {
+        when(snapshotService.find(DAY, CAMPAIGN_ID)).thenReturn(Optional.empty());
+        when(campaignQuery.findAllById(List.of(CAMPAIGN_ID))).thenReturn(List.of());
+
+        assertThatThrownBy(() -> deductor.deduct(SERVE_ID, CAMPAIGN_ID, DAY))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("campaignId=7");
+        verify(deductionResultRepository, never()).insertIfAbsent(any(UUID.class), any(), any(), any(), any(DeductionStatus.class), anyLong(), any());
     }
 
     @Test
@@ -274,7 +326,8 @@ class PointDeductorImplTest {
 
     // 아래 시험은 Mockito 대신 Lua 와 같은 규칙의 Fake 를 연결해 판정이 쌓이는 모습을 그대로 본다
     private PointDeductorImpl deductorWith(InMemoryDailySpendCounter fake) {
-        return new PointDeductorImpl(snapshotService, rebuildService, fake, deductionResultRepository, ledgerRepository, CLOCK,
+        return new PointDeductorImpl(snapshotService, rebuildService, fake, deductionResultRepository, ledgerRepository,
+                campaignQuery, platformSetting, CLOCK,
                 meterRegistry);
     }
 

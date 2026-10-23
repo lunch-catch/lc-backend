@@ -50,6 +50,8 @@ class KakaoUnlinkRetrySchedulerObservationTest {
         when(executions.claim(KakaoUnlinkRetryScheduler.JOB_NAME, BUSINESS_DATE)).thenReturn(true);
         AspectJProxyFactory factory = new AspectJProxyFactory(new KakaoUnlinkRetryScheduler(retry, executions));
         factory.addAspect(new SchedulerLoggingAspect(registry, clock));
+        // StandaloneJob 을 구현해 인터페이스 프록시가 기본이 된다. 운영의 Spring Boot 처럼 클래스 프록시로 만든다
+        factory.setProxyTargetClass(true);
         scheduler = factory.getProxy();
     }
 

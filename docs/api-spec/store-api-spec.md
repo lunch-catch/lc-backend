@@ -68,6 +68,7 @@ GET /v1/stores?query=국수&longitude=127.1111967&latitude=37.3947766&filter=KOR
 | `400` | 필수 좌표 또는 필터 누락, 빈 검색어, 빈 필터, 허용하지 않는 카테고리, `ALL`과 개별 카테고리 혼용 또는 좌표, `pageSize`, `pageToken`이 올바르지 않음 |
 | `401` | 유효한 사용자 인증이 없음 |
 | `403` | 인증된 사용자가 `MEMBER` 권한이 아님 |
+| `500` | 이미지가 있는데 CDN URL을 생성할 설정이 누락됨 |
 
 ## 카테고리 필터
 
@@ -121,7 +122,7 @@ OTHER
 - 활성 캠페인 여부와 할인 정보는 당일 활성 캠페인을 기준으로 반환한다.
 - 활성 캠페인 표시는 요청 위치와 관계없이 당일 캠페인 상태를 기준으로 판단한다.
 - 활성 캠페인이 없는 가게는 `hasActiveCampaign=false`, `activeCampaign=null`로 반환한다.
-- `discountTargetType=MENU`이면 `targetMenu`에 할인 대상 메뉴 정보를 반환한다.
+- `discountTargetType=MENU`이면 `targetMenu`에 할인 대상 메뉴 정보를 반환한다. 대상 메뉴가 누락되거나 해당 가게의 메뉴가 아니면 가게는 유지하고 `hasActiveCampaign=false`, `activeCampaign=null`로 반환한다.
 - `discountTargetType=ALL`이면 `targetMenu`는 `null`이다.
 
 ## 응답 `200`
@@ -135,6 +136,7 @@ OTHER
       {
         "storeId": 10,
         "name": "런치식당",
+        "storeImageUrl": "https://cdn.example.com/stores/10/logo.png",
         "businessCategory": "KOREAN",
         "longitude": 127.1135000,
         "latitude": 37.3960000,
@@ -167,6 +169,7 @@ OTHER
 | `nextPageToken` | string | 예 | 다음 페이지 커서를 반환한다. 마지막 페이지면 `null`이다 |
 | `storeId` | integer | 아니오 | 가게 ID를 반환한다 |
 | `name` | string | 아니오 | 가게명을 반환한다 |
+| `storeImageUrl` | string | 예 | 업로드 확인을 마친 대표 이미지(LOGO)의 CDN URL을 반환한다. 이미지가 없거나 업로드 확인 전이거나 객체 키가 비어 있으면 `null`이다 |
 | `businessCategory` | string(enum) | 아니오 | 가게의 업종 코드를 반환한다. [카테고리 필터](#카테고리-필터)에 나열한 코드 중 `ALL`을 제외한 값을 사용한다 |
 | `longitude` | number | 아니오 | 가게 경도를 반환한다 |
 | `latitude` | number | 아니오 | 가게 위도를 반환한다 |
@@ -469,9 +472,9 @@ ACTIVE의 동시 저장은 순서대로 처리되며 마지막으로 처리된 �
 
 ## `POST /v1/owner/store-images:prepareUpload`
 
-점주가 가게 인테리어 이미지를 올릴 presigned PUT URL을 발급받는다. 이미지 한 장당
-호출한다. 로고는 가게 입점 과정에서 이미 등록돼 있다고 보고 이 API로 새로 올리지
-않는다.
+점주가 가게 로고 이미지 또는 인테리어 이미지를 올릴 presigned PUT URL을 발급받는다.
+이미지 한 장당 호출한다. 로고는 가게당 1개이고, 이미 등록된 로고가 있어도 다시
+호출하면 그 로고를 새 이미지로 교체한다.
 
 ### 인증
 
@@ -481,7 +484,8 @@ ACTIVE의 동시 저장은 순서대로 처리되며 마지막으로 처리된 �
 
 ```json
 {
-  "originalFilename": "interior.jpg",
+  "imageType": "LOGO",
+  "originalFilename": "logo.jpg",
   "contentType": "image/jpeg",
   "fileSize": 204800
 }
@@ -489,6 +493,7 @@ ACTIVE의 동시 저장은 순서대로 처리되며 마지막으로 처리된 �
 
 | 필드 | 타입 | 필수 | 조건 |
 |---|---|---|---|
+| imageType | string | 아니요 | `LOGO`, `INTERIOR` 중 하나. 비우면 `INTERIOR`로 본다(이 필드가 생기기 전 클라이언트와의 호환) |
 | originalFilename | string | 예 | |
 | contentType | string | 예 | `image/jpeg`, `image/png` 중 하나 |
 | fileSize | integer | 예 | 1 이상, 10485760(10MB) 이하 |
@@ -513,7 +518,7 @@ ACTIVE의 동시 저장은 순서대로 처리되며 마지막으로 처리된 �
 |---|---|---|
 | uploadId | string | 확인 요청에 그대로 보내는 식별자 |
 | uploadUrl | string | 이 주소로 파일을 직접 PUT 업로드한다. 10분 안에 사용해야 한다 |
-| sortOrder | integer | 이 이미지가 인테리어 이미지 중 몇 번째로 표시되는지(1~3). 서버가 업로드 순서대로 자동으로 매긴다 |
+| sortOrder | integer | `imageType`이 `INTERIOR`일 때 인테리어 이미지 중 몇 번째로 표시되는지(1~3). 서버가 업로드 순서대로 자동으로 매긴다. `imageType`이 `LOGO`면 `null`이다 |
 
 ### 오류
 
@@ -522,9 +527,10 @@ ACTIVE의 동시 저장은 순서대로 처리되며 마지막으로 처리된 �
 | `401` | `AUTH-005` | 유효한 점주 인증이 없음 |
 | `403` | `AUTH-006` | 인증된 역할이 `OWNER`가 아님 |
 | `409` | `STORE-002` | 점주 상태가 `ONBOARDING`이 아님, 또는 기본 정보 단계를 아직 안 마침 |
+| `400` | `COMMON-002` | `imageType`이 `LOGO`, `INTERIOR`가 아님 |
 | `422` | `STORE-005` | `contentType`이 `image/jpeg`, `image/png`가 아님 |
 | `422` | `STORE-006` | `fileSize`가 10MB를 넘음 |
-| `422` | `STORE-007` | 이미 인테리어 이미지가 3개 등록돼 있음 |
+| `422` | `STORE-007` | `imageType`이 `INTERIOR`인데 이미 인테리어 이미지가 3개 등록돼 있음 |
 
 ## `POST /v1/owner/store-images:confirmUpload`
 
@@ -558,7 +564,8 @@ ACTIVE의 동시 저장은 순서대로 처리되며 마지막으로 처리된 �
 
 ## `POST /v1/owner/store-images:complete`
 
-인테리어 이미지(0~3개) 등록을 마치고 `IMAGES` 단계를 완료해 `MENU`로 진행한다.
+로고 이미지(필수 1개)와 인테리어 이미지(0~3개) 등록을 마치고 `IMAGES` 단계를 완료해
+`MENU`로 진행한다.
 
 ### 인증
 
@@ -589,7 +596,7 @@ ACTIVE의 동시 저장은 순서대로 처리되며 마지막으로 처리된 �
 | `403` | `AUTH-006` | 인증된 역할이 `OWNER`가 아님 |
 | `409` | `STORE-001` | `version`이 현재 버전과 다름 |
 | `409` | `STORE-002` | 점주 상태가 `ONBOARDING`이 아님, 또는 현재 재개 단계가 `IMAGES`가 아님 |
-| `409` | `STORE-010` | 로고 이미지가 없음 |
+| `409` | `STORE-010` | 업로드를 마친 로고 이미지가 없음(`prepareUpload`만 하고 `confirmUpload`를 하지 않은 로고도 없는 것으로 본다) |
 
 ## 가게 등록 온보딩 6단계: 대표 메뉴 등록·수정
 
@@ -794,9 +801,11 @@ ACTIVE의 동시 저장은 순서대로 처리되며 마지막으로 처리된 �
 
 - 필수 약관 동의와 기본 정보 5개(상호명·업종·대표자 성명·사업자등록번호·전화번호), 사업자번호 Mock 검증 성공이 저장되어 있어야 한다.
 - 카카오 장소 ID·도로명 주소·위도·경도와 휴무일을 포함한 유효한 7일 영업시간이 필요하다.
-- 업로드 확인된 대표 이미지 1개가 필요하다. 내부 이미지는 0~3개이며 저장된 내부 이미지도 모두 업로드 확인을 마쳐야 한다.
+- 업로드 확인된 대표 이미지 1개가 필요하다. 내부 이미지는 선택이며 미완료 업로드가 있어도 최종 등록을 막지 않는다. 검증된 내부 이미지만 조회에 포함한다.
 - 메뉴는 0~3개다. 메뉴가 있으면 각 메뉴의 이름·가격·업로드 확인된 이미지가 필요하며 설명은 선택이다.
-- 메뉴가 0개이면 메뉴 저장이나 메뉴 단계 완료 API를 호출하지 않아도 된다.
+- 메뉴가 0개이면 메뉴와 메뉴 이미지가 없는 상태로 등록하며 메뉴 저장이나 메뉴 단계 완료 API를 호출하지 않아도 된다. 일부만 작성한 메뉴를 메뉴 없음으로 취급하지 않는다.
+- 이미지 단계 완료 후 로고를 교체했다면 새 로고의 업로드 확인을 마쳐야 한다. 저장된 재개 단계가 MENU이면 이미지 단계 완료 API를 다시 호출할 필요는 없다.
+- 최종 등록 후 남은 미완료 내부 업로드는 공개되지 않으며 온보딩 업로드 확인을 계속할 수 없다.
 - `canComplete`·`canFinalize`는 입력 준비 상태를 알려 준다. 최종 등록 시점에 저장된 조건과 가게 연결·버전을 다시 확인하므로 동시 수정 시 실패할 수 있다.
 
 ### 응답
@@ -980,7 +989,7 @@ HOURS는 [영업시간 저장 규칙](#가게-등록-온보딩-4단계-매장-�
 | STORE_INFO | 상호명·업종·대표자 성명·사업자등록번호·전화번호 저장, 사업자 검증 VERIFIED와 성공 시각 존재 |
 | LOCATION | 카카오 장소 ID·도로명 주소·위도·경도 모두 저장 |
 | HOURS | [영업시간 저장 규칙](#가게-등록-온보딩-4단계-매장-영업시간-등록수정)에 맞는 월~일 7개 요일 모두 저장. 누락한 요일은 저장 시 휴무로 보완 |
-| IMAGES | 검증된 대표 이미지(LOGO) 1개. 내부 이미지는 0~3개이며 저장된 이미지는 모두 객체 확인 VERIFIED 상태와 객체 키 필요 |
+| IMAGES | 검증된 대표 이미지(LOGO) 1개와 객체 키가 필요하다. 내부 이미지는 선택이며 미완료 업로드는 완료 판정에 영향을 주지 않는다 |
 | MENU | 메뉴 1~3개이며 각 메뉴의 이름·0원 이상 가격·검증된 이미지 객체 키 필요. 설명은 선택 |
 
 - 첫 진입은 여섯 단계 completed=false, resumeStep=TERMS, canFinalize=false다.
@@ -1018,8 +1027,8 @@ MEMBER가 최종 등록된 가게의 상세 정보를 조회한다. 활성 캠�
 | roadAddress, phone | string | 불가 | 도로명 주소, 전화번호 |
 | latitude, longitude | number | 불가 | 지도 미리보기용 위도·경도 |
 | businessHours | array | 불가 | 월요일부터 일요일 순으로 반환하는 영업시간 |
-| logoImage | object | 불가 | 업로드 확인된 대표 이미지 1개 |
-| interiorImages | array | 불가 | 업로드 확인된 내부 이미지. 표시 순서대로 최대 3개, 없으면 [] |
+| logoImage | object | 허용 | 업로드 확인된 대표 이미지 1개. 이미지가 없거나 객체 키가 비어 있으면 null |
+| interiorImages | array | 불가 | 업로드 확인된 내부 이미지. 객체 키가 빈 항목은 제외하며 표시 순서대로 최대 3개, 없으면 [] |
 | menus | array | 불가 | 대표 메뉴. 표시 순서대로 0~3개, 없으면 [] |
 | activeCampaign | object | 가능 | 서울 기준 오늘의 활성 캠페인. 없으면 null |
 
@@ -1033,7 +1042,7 @@ MEMBER가 최종 등록된 가게의 상세 정보를 조회한다. 활성 캠�
 PENDING·UPLOADED 이미지는 공개하지 않는다.
 
 메뉴 항목은 `menuId`(integer(int64)), `name`(string), `price`(integer(int64), 원),
-`description`(string 또는 null), `sortOrder`(integer), `image`(이미지 객체, null 불가)를 갖는다.
+`description`(string 또는 null), `sortOrder`(integer), `image`(이미지 객체, 이미지가 없거나 객체 키가 비어 있으면 null)를 갖는다.
 대표자 성명, 사업자등록번호, 사업자 검증 결과와 온보딩 진행 정보는 반환하지 않는다.
 
 ### activeCampaign
@@ -1050,6 +1059,7 @@ PENDING·UPLOADED 이미지는 공개하지 않는다.
 `targetMenu`의 menuId는 integer(int64), name은 string, price는 integer(int64, 할인 전 가격)다.
 다른 날짜이거나 DRAFT·SCHEDULED·PAUSED·ENDED인 캠페인은 활성 정보로 반환하지 않는다.
 캠페인 사용 시간 밖이라는 이유로 활성 정보를 숨기지는 않는다.
+MENU 할인의 대상 메뉴가 누락되거나 해당 가게의 메뉴가 아니면 해당 캠페인만 제외하고 `activeCampaign=null`로 반환한다. 가게와 메뉴 정보는 유지한다.
 
 ### 화면에서 합치는 데이터
 
@@ -1075,7 +1085,7 @@ PENDING·UPLOADED 이미지는 공개하지 않는다.
 | 401 | AUTH-005 | 유효한 인증이 없음 |
 | 403 | AUTH-006 | MEMBER 외 역할 |
 | 404 | STORE-016 | 가게가 없거나 최종 등록되지 않음 |
-| 500 | COMMON-001 | 조회 장애, 필수 이미지·할인 대상 메뉴 누락 또는 이미지 URL 설정 오류 |
+| 500 | COMMON-001 | DB 조회 장애 또는 정상 이미지의 URL 설정 오류 |
 
 없는 가게와 등록 중인 초안은 같은 오류를 반환한다.
-필수 이미지가 누락된 등록 가게를 정상 응답으로 반환하지 않는다.
+이미지 객체 키의 null·빈 문자열·공백은 이미지 누락으로 처리한다. 온보딩의 필수 이미지 등록과 최종 등록 검증은 유지한다.

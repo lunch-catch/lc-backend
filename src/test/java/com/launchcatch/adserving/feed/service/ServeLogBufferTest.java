@@ -3,6 +3,7 @@ package com.launchcatch.adserving.feed.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -22,6 +23,12 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.IntStream;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -154,5 +161,38 @@ class ServeLogBufferTest {
 
         verify(feedVisitRepository).insertAll(anyList());
         assertThat(meterRegistry.counter(ServeLogBuffer.FAILED_METRIC).count()).isEqualTo(3);
+    }
+
+    /*
+     * 쓰는 중인 묶음을 끊지 않는다. 커넥션을 기다리던 묶음이 interrupt 로 실패하면 대기열에서 이미 빠져 마지막 비우기에도 없다.
+     * 그러면 종료 때 남은 것을 모두 쓴다는 약속이 깨진다(#783).
+     */
+    @Test
+    void 멈출_때_쓰는_중인_묶음을_끊지_않는다() throws Exception {
+        CountDownLatch writing = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        AtomicBoolean interrupted = new AtomicBoolean();
+        doAnswer(invocation -> {
+            writing.countDown();
+            try {
+                release.await(5, TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                interrupted.set(true);
+            }
+            return null;
+        }).when(serveLogRepository).insertAll(anyList());
+        buffer.start();
+        buffer.offer(feedWithCards(3001L, 1));
+        assertThat(writing.await(5, TimeUnit.SECONDS)).isTrue();
+
+        try (ExecutorService pool = Executors.newSingleThreadExecutor()) {
+            Future<?> stopping = pool.submit(() -> buffer.stop());
+            Thread.sleep(100);
+            release.countDown();
+            stopping.get(10, TimeUnit.SECONDS);
+        }
+
+        assertThat(interrupted).isFalse();
+        assertThat(meterRegistry.counter(ServeLogBuffer.FAILED_METRIC).count()).isZero();
     }
 }

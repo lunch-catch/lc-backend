@@ -18,6 +18,16 @@ public interface MemberRepository extends JpaRepository<Member, Long>, MemberRep
 
     Optional<Member> findByProviderUserId(String providerUserId);
 
+    @Query("SELECT member.status FROM Member member WHERE member.id = :memberId")
+    Optional<MemberStatus> findStatusById(@Param("memberId") Long memberId);
+
+    @Query("""
+            SELECT new com.launchcatch.member.repository.MemberStatusRow(member.id, member.status)
+              FROM Member member
+             WHERE member.id IN :memberIds
+            """)
+    List<MemberStatusRow> findStatusesByIdIn(@Param("memberIds") Collection<Long> memberIds);
+
     long countByCreatedAtGreaterThanEqualAndCreatedAtLessThan(
             LocalDateTime createdAtFrom, LocalDateTime createdAtBefore);
 

@@ -1,5 +1,8 @@
 package com.launchcatch.billing.service;
 
+import static com.launchcatch.billing.PaymentConstants.FAILED_WITHOUT_REASON;
+import static com.launchcatch.billing.PaymentConstants.PG_TID_UNIQUE;
+
 import com.launchcatch.billing.client.PaymentGateway;
 import com.launchcatch.billing.client.PaymentGatewayApproval;
 import com.launchcatch.billing.client.PaymentGatewayInquiryResult;
@@ -38,9 +41,7 @@ public class PaymentConfirmationService {
 
     static final String CONFIRM_METRIC = "billing.payment.confirm";
 
-    private static final String PG_TID_UNIQUE = "uk_payment_pg_tid";
     private static final String REJECTED_WITHOUT_REASON = "결제대행사가 승인을 거절했습니다.";
-    private static final String FAILED_WITHOUT_REASON = "결제대행사 조회 결과 결제가 실패했습니다.";
 
     private final PaymentRepository paymentRepository;
     private final PaymentResultService resultService;

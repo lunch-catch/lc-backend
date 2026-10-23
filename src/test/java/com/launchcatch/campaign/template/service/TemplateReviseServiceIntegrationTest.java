@@ -23,7 +23,6 @@ class TemplateReviseServiceIntegrationTest extends AbstractCampaignIntegrationTe
 
     private static final Long ADMIN_ID = 1L;
     private static final String HTML = "<div>"
-            + "<span data-slot=\"adLabel\">광고</span>"
             + "<h1 data-slot=\"eventName\">title</h1>"
             + "<p data-slot=\"discount\">할인 내용</p>"
             + "<p data-slot=\"period\">기간</p>"

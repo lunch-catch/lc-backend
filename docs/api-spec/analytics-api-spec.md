@@ -9,11 +9,15 @@
 
 이 문서는 관리자 분석, 회원 사용 통계, 이벤트 수집, 점주 리포트의 HTTP 계약을 소유한다.
 
+**2026-10-20 수정 (실제 변경, #625):** A-14 의 오류 계약을 정했다. `campaignIds` 형식 위반은 `400 COMMON-002`, 기간을 하나만 주거나 역전·92일 초과면 `400 ANALYTICS-001` 이다. 중복 ID 는 오류가 아니라 처음 자리에 한 번만 내려준다. 응답 예시를 공통 봉투로 고쳤다.
+
 **2026-10-18 수정 (실제 변경):** 프론트 처리가 달라지는 것이다.
 
 - A-04(카테고리·지역별 분해)와 A-08(점주별 상위 소진)을 구현하지 않기로 하고 절을 지웠다. 요구사항의 선택 데이터이고, 가게에 지역 값이 없다. 번호는 다시 매기지 않는다.
 - A-03에 사용 수 `redeemCount`를 더했다.
-- A-10의 무효 비율 분모를 `validCount + invalidCount`로 정했다. 세 임계값은 분석 서버의 설정값이다.
+- A-10의 무효 비율 분모를 `validCount`로 정했다(2026-10-19, 요구사항 BR-054와 같다). 비율이 1을 넘을 수 있다. 유효 노출이 0이어도 무효가 100건 이상이면 `invalidRatio`는 `null`인 채로 `invalidRatioWarning`이 `true`다. 무효가 100건 미만이면 비율이 높아도 경고하지 않는다. 임계값은 분석 서버의 설정값이다.
+- A-09, A-10의 `from`, `to`는 필수이고 기간은 최대 31일이다(2026-10-19). 생략하거나 넘으면 `400 ANALYTICS-001`이다.
+- A-10 응답에서 `storeId`를 뺐다(2026-10-19). 분석이 가게를 소유하지 않고 화면이 쓰지 않는다.
 - 점주 리포트의 소유 확인을 바꿨다. 기간에 집계 행이 없으면 본인 캠페인인지와 관계없이 빈 `items`이고, 집계 행이 있는데 소유 점주가 다르면 `403`이다.
 - A-06은 그 영업일에 실행 기록이 없으면 `data`가 `null`이다. `processedCount`는 성공한 실행에서 값이 있다.
 - A-13의 `map_view`, `wishlist_view`를 지금 보낼 수 있다.
@@ -77,7 +81,7 @@
 | A-13 | `POST` | `/v1/events` | MEMBER | 클라이언트 발생 이벤트 수집 |
 | A-14 | `GET` | `/v1/admin/campaign-reports` | ADMIN, SUPER_ADMIN | 캠페인별 소진 포인트와 누적 유효 노출 |
 
-목록에는 후속 계약도 포함돼 있다. 현재 A-01·A-02·A-05·A-06·A-07·A-13은 구현됐고 A-03은 PR #461의 미병합 기능이다. A-09·A-10·A-12·A-14와 아래 상세 캠페인 리포트·변경 이력은 아직 제공하지 않는다. 별도의 점주 일별 리포트와 이벤트 로그 기반 캠페인 성과 조회는 구현돼 있다. 내부 집계 단계의 구현 여부는 [API 설계](../design/analytics/analytics-api-design.md#현재-구현과-후속-설계의-경계)를 따른다.
+목록에는 후속 계약도 포함돼 있다. 어느 API 와 집계 단계가 구현됐는지는 [API 설계의 구현 경계 표](../design/analytics/analytics-api-design.md#현재-구현과-후속-설계의-경계)가 소유한다.
 
 **A-11(`GET /v1/admin/fraud/rate-limit-hits`, 피드 429 집계)은 구현하지 않는다.** 근거는 [설계서](../design/analytics/analytics-api-design.md#1-적용-범위) 1장에 있다.
 
@@ -274,7 +278,7 @@ GET /v1/admin/fraud/invalid-impressions?from=&to=&reasonCode=&campaignId=&member
 
 | 파라미터 | 필수 | 뜻 |
 | --- | --- | --- |
-| `from`, `to` | 아니오 | 기간(최대 31일) |
+| `from`, `to` | 예 | 기간(최대 31일). 생략하거나 범위를 넘으면 `400 ANALYTICS-001` |
 | `reasonCode` | 아니오 | `EXPIRED_OR_UNKNOWN` / `NOT_OWNER` |
 | `campaignId`, `memberId` | 아니오 | 필터 |
 | `page`, `size` | 아니오 | 0부터. `size` 기본 20, 최대 100 |
@@ -306,22 +310,22 @@ GET /v1/admin/fraud/invalid-impressions?from=&to=&reasonCode=&campaignId=&member
 GET /v1/admin/fraud/campaign-warnings?from=&to=&type=INVALID_RATIO|CONCENTRATION&page=0&size=20&sortBy=invalidRatio&sortDir=desc
 ```
 
-한 캠페인 단위로 두 경고를 판정해 내려준다. `type`을 생략하면 둘 중 하나라도 걸린 캠페인을 모두 내려준다. 페이징은 `page`(0부터)·`size`(기본 20, 최대 100), 정렬은 `sortBy`(`invalidRatio` 기본·`topMembersShare`·`campaignId`)·`sortDir`(`desc` 기본)이며 응답은 `items`와 `page`, `size`, `totalElements`를 담는다.
+한 캠페인 단위로 두 경고를 판정해 내려준다. `from`, `to`는 필수이고 기간은 최대 31일이다. `type`을 생략하면 둘 중 하나라도 걸린 캠페인을 모두 내려준다. 페이징은 `page`(0부터)·`size`(기본 20, 최대 100), 정렬은 `sortBy`(`invalidRatio` 기본·`topMembersShare`·`campaignId`)·`sortDir`(`desc` 기본)이며 응답은 `items`와 `page`, `size`, `totalElements`를 담는다.
 
 ```json
 {
-  "campaignId": 12, "storeId": 3,
-  "validCount": 4000, "invalidCount": 1100, "invalidRatio": 0.2157, "invalidRatioWarning": true,
+  "campaignId": 12,
+  "validCount": 4000, "invalidCount": 1100, "invalidRatio": 0.275, "invalidRatioWarning": true,
   "distinctMemberCount": 4, "topMembersShare": 0.92, "concentrationWarning": true
 }
 ```
 
 | 경고 | 판정 |
 | --- | --- |
-| `invalidRatioWarning` | `invalidRatio > 0.20`. 무효 노출 비율 20% 초과. `invalidRatio = invalidCount ÷ (validCount + invalidCount)`이고 둘 다 0이면 `null`, 경고 없음 |
+| `invalidRatioWarning` | `(invalidCount >= 100) AND (validCount == 0 OR invalidRatio > 0.20)`. 무효 노출 비율 20% 초과. `invalidRatio = invalidCount ÷ validCount`이고 `validCount`가 0이면 `null`이다. 유효 노출이 없고 무효가 100건 이상이면 비율 없이 경고한다. 0과 1 사이로 제한되지 않는다 |
 | `concentrationWarning` | `(validCount >= 100) AND (topMembersShare > 0.5)`. 소수 계정 집중 |
 
-`topMembersShare`는 상위 5개 계정의 노출 점유율이다. 세 임계값(상위 계정 수 5, 점유율 0.5, 최소 노출 100)은 **분석 서버의 설정값**이라 배포로 바뀔 수 있다. 판정식은 [설계서](../design/analytics/analytics-api-design.md#7-부정-관리) 7장에 있다.
+`topMembersShare`는 상위 5개 계정의 노출 점유율이다. 임계값(상위 계정 수 5, 점유율 0.5, 최소 노출 100, 비율 경고의 최소 무효 건수 100)은 **분석 서버의 설정값**이라 배포로 바뀔 수 있다. 판정식은 [설계서](../design/analytics/analytics-api-design.md#7-부정-관리) 7장에 있다.
 
 집중 경고는 캠페인·영업일 단위로 판정한다. 기간 조회의 `concentrationWarning`은 기간 중 하루라도 판정된 캠페인이면 `true`다. `topMembersShare`와 `distinctMemberCount`는 그 기간에서 점유율이 가장 높았던 하루의 값이다. `validCount`, `invalidCount`, `invalidRatio`는 기간 합계로 계산한다. 기간 전체의 회원별 노출은 보관하지 않는다. 날짜별로 판정하므로 한 달에 걸쳐 조금씩 나눠 소진시키는 공격은 놓칠 수 있다. 무효 비율 경고와 함께 본다.
 
@@ -339,11 +343,12 @@ GET /v1/admin/campaign-reports?campaignIds=12,15,31&from=2026-09-01&to=2026-09-3
 
 | 파라미터 | 필수 | 뜻 |
 | --- | --- | --- |
-| `campaignIds` | 예 | 최대 100개 |
-| `from`, `to` | 아니오 | 생략하면 각 캠페인의 집계된 전체 기간. 지정하면 최대 92일 |
+| `campaignIds` | 예 | 쉼표로 나눈 양수 ID. 최대 100개. 같은 ID 를 두 번 보내면 처음 자리에 한 번만 내려준다 |
+| `from`, `to` | 아니오 | 둘 다 주거나 둘 다 생략한다. 생략하면 각 캠페인의 집계된 전체 기간. 지정하면 양끝 포함 최대 92일 |
 
 ```json
-{ "items": [ { "campaignId": 12, "spentAmount": 84000, "validImpressionCount": 9100, "todayStatus": "IN_PROGRESS" } ] }
+{ "code": "SUCCESS", "message": "요청이 성공적으로 처리되었습니다.",
+  "data": { "items": [ { "campaignId": 12, "spentAmount": 84000, "validImpressionCount": 9100, "todayStatus": "IN_PROGRESS" } ] } }
 ```
 
 | 필드 | 뜻 |
@@ -352,7 +357,16 @@ GET /v1/admin/campaign-reports?campaignIds=12,15,31&from=2026-09-01&to=2026-09-3
 | `validImpressionCount` | 기간 누적 유효 노출 (미과금 포함) |
 | `todayStatus` | 당일은 집계 전이라 항상 `IN_PROGRESS`. 값은 전일 확정 기준이다(해당 요구사항) |
 
-집계가 없는 캠페인은 두 값이 `0`이다. 응답 순서는 요청한 `campaignIds` 순서다.
+집계가 없는 캠페인은 두 값이 `0`이다. 응답 순서는 요청한 `campaignIds` 순서다. 소진 포인트는 정정이 차감보다 큰 날이 있으면 음수일 수 있다.
+
+### 오류
+
+| 상태 | 코드 | 조건 |
+|---|---|---|
+| `400` | `COMMON-002` | `campaignIds` 가 없거나 비었다. 100개를 넘는다. 양수가 아니거나 숫자가 아닌 ID 가 있다 |
+| `400` | `ANALYTICS-001` | `from`, `to` 중 하나만 보냈다. `from` 이 `to` 보다 늦다. 92일을 넘는다 |
+| `401` | 공통 인증 코드 | 인증 쿠키가 없거나 유효하지 않다 |
+| `403` | 공통 인가 코드 | `ADMIN`, `SUPER_ADMIN` 이 아니다 |
 
 ---
 
@@ -626,7 +640,7 @@ GET /v1/owner/report?from=2026-10-16&to=2026-10-17
 | `refundedAmount` | 과오 차감 정정액. 그 캠페인에 대해 기록된 정정만 센다. 캠페인 없이 기록된 정정은 플랫폼 합계(A-07)에만 들어간다 |
 | `notBilledReasons` | 미과금 사유별 노출 수 |
 | `invalidReasons` | 무효 사유별 노출 수 |
-| `hourlyImpressions` | 10·11·12시의 시간대별 유효 노출 수 |
+| `hourlyImpressions` | 0~23시 중 유효 노출이 있는 시간의 시간대별 유효 노출 수 |
 | `slotImpressions` | `ALLOCATION`, `RELEVANCE` 슬롯별 유효 노출 수 |
 
 나머지 필드는 아래 「일별 응답 필드」에 있다. 각 값을 어디서 읽는지는 [설계서](../design/analytics/analytics-api-design.md#9-캠페인-리포트) 9장에 있다.
@@ -689,13 +703,14 @@ costPerVisit = spentAmount / redeemCount
 | 무효 | `NOT_OWNER` | 유효 노출·과금에서 제외, 사유별 표시 |
 | 미과금 | `NOT_BILLED_BUDGET` | 유효 노출에는 포함, 과금에는 제외 |
 | 미과금 | `NOT_BILLED_PAUSED` | 유효 노출에는 포함, 과금에는 제외 |
+| 미과금 | `NOT_BILLED_NO_PLAN` | 유효 노출에는 포함, 과금에는 제외. 노출을 받은 날에 그 캠페인의 예산 계획이 없었다(00:00 예약 전이거나 전날 집행이 끝난 캠페인). 2026-10-19 추가, #497 |
 | 미과금 | `NOT_BILLED_SOLD_OUT` | 유효 노출에는 포함, 과금에는 제외 |
 
 미과금 노출은 광고 성과에는 포함되지만 점주에게 비용으로 청구되지 않는다.
 
 ### 시간대·슬롯·전환 지표
 
-`hourlyImpressions`는 10시, 11시, 12시의 유효 노출 수를 시간순으로 반환한다. `slotImpressions`는 `ALLOCATION`, `RELEVANCE`의 유효 노출 수를 반환한다. 슬롯 유형 비율은 각 값 ÷ `validImpressionCount`로 화면에서 계산한다. 분모가 0이면 비율은 `null`이다.
+`hourlyImpressions`는 0~23시 중 유효 노출이 저장된 시간의 노출 수를 시간순으로 반환한다. 노출이 없는 시간은 원소가 없고 화면이 0으로 채운다(2026-10-19 수정, #497: 서빙 시간대 10:00~12:59를 없앴다). `slotImpressions`는 `ALLOCATION`, `RELEVANCE`의 유효 노출 수를 반환한다. 슬롯 유형 비율은 각 값 ÷ `validImpressionCount`로 화면에서 계산한다. 분모가 0이면 비율은 `null`이다.
 
 찜·발급·사용 수와 전환율은 광고 성과 지표다. 정산 원장과는 독립이며 점주 리포트 화면에 “전환 지표는 비용 정산에 반영되지 않음”을 표시한다.
 

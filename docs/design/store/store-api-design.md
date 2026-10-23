@@ -37,9 +37,16 @@ Service는 다음 페이지 여부와 커서를 결정하고 응답 DTO의 from 
 현재 활성 캠페인을 가게당 하나로 유지하는 책임은 캠페인 상태 변경을 처리하는 호출자에게 있다.
 요약을 전달할 때 이전 캠페인의 종료와 다음 캠페인의 활성 상태를 같은 트랜잭션에서 반영해야 한다.
 
-최종 등록 가게의 좌표 또는 활성 MENU 캠페인의 메뉴가 누락되면 데이터 정합성 오류를 전파한다.
-누락된 데이터를 0이나 정상적인 캠페인 미보유 상태로 바꾸지 않는다.
-가게 대표 이미지와 메뉴 이미지는 이 목록 응답에 필요하지 않으므로 기존 이미지 검증용 공개 조회 계약을 호출하지 않는다.
+최종 등록 가게의 좌표 누락은 기존처럼 데이터 정합성 오류를 전파하며 0으로 바꾸지 않는다.
+활성 MENU 캠페인의 대상 메뉴 누락과 이미지 객체 키 오류의 응답은 [목록 명세](../../api-spec/store-api-spec.md#get-v1stores)를 따른다.
+오류 항목은 응답 변환 시 제외하므로 가게 정렬, 페이지 크기와 커서는 유지한다.
+제외한 캠페인과 빈 이미지 키는 서비스에서 가게 ID, 가능한 캠페인 ID와 사유를 WARN으로 남긴다.
+대표 이미지는 LOGO이면서 VERIFIED인 행만 LEFT JOIN해 같은 쿼리에서 객체 키를 읽는다.
+가게당 LOGO 한 행 제약으로 이미지 조인이 가게를 중복시키거나 커서 경계를 바꾸지 않는다.
+Service는 기존 StoreImageUrlResolver로 CDN URL을 만들며 S3를 호출하지 않는다.
+이미지 공개 여부와 응답 필드는 [목록 응답 계약](../../api-spec/store-api-spec.md#응답-200)을 따른다.
+이미지가 있는데 CDN 설정이 없으면 설정 오류를 전파한다.
+목록에서 쓰지 않는 메뉴 이미지를 검증하는 공개 조회 계약은 호출하지 않는다.
 
 ## 요약을 저장하는 공개 계약
 
@@ -64,6 +71,10 @@ StoreCampaignSummaryUpdate는 가게 ID, 캠페인 ID와 기존 command를 묶�
 이 이슈는 저장 계약과 구현만 제공하며 캠페인 쪽 호출 지점이나 배치 작업을 수정하지 않는다.
 
 ## 저장 구조와 배포
+
+V6 마이그레이션은 여러 가게가 같은 이미지 객체를 참조하도록 store_image.object_key의 유일성 제약을 제거한다.
+가게당 LOGO 한 개와 인테리어 이미지 표시 순서의 유일성 제약은 유지한다.
+R__20_owner_store 시드는 같은 대표 이미지 객체를 참조하며 이미 등록된 대표 이미지는 유지한다.
 
 V3 마이그레이션은 store_campaign_summary에 nullable인 target_menu_id와 메뉴 FK를 추가한다.
 가게·영업일·상태 결합 조건에는 복합 인덱스를 추가한다.
@@ -209,17 +220,21 @@ JPA 진행 상태 변경과 JDBC 업무 데이터 변경은 같은 데이터소�
 
 develop에 반영된 #482 위치 저장과 연동하며 위치 저장 후 HOURS를 저장하고 진행 상태를 조회하는 흐름을 검증한다.
 
-## 점주 인테리어 이미지 업로드(`#375`)
+## 점주 가게 이미지 업로드(인테리어 `#375`, 로고 `#588`)
 
 **서버가 하는 일**
 
 1. presigned URL 발급(`prepareUpload`): 점주 상태(`ONBOARDING`)와 파일 형식·크기를 검증하고,
-   그 가게의 인테리어 이미지 개수를 세어 `sortOrder`를 매긴 뒤 `store_image` 행을
-   `upload_status=PENDING`으로 먼저 만든다. 그다음 `S3Presigner`로 그 `objectKey`에 대한
-   presigned PUT URL을 발급한다.
+   `imageType`으로 분기한다. `INTERIOR`면 그 가게의 인테리어 이미지 개수를 세어 `sortOrder`를
+   매긴 뒤 `store_image` 행을 새로 만든다. `LOGO`면 그 가게에 이미 `LOGO` 행이 있는지 찾고,
+   있으면 그 행을 덮어써 `PENDING`으로 되돌리고 없으면 새로 만든다. `sortOrder`는 `LOGO`면
+   항상 `null`이다. 그다음 `S3Presigner`로 그 `objectKey`에 대한 presigned PUT URL을
+   발급한다.
 2. 업로드 확인(`confirmUpload`): `uploadId`로 `PENDING` 행을 찾아 본인 가게 소유인지 확인하고,
-   `S3Client.headObject`로 실제 업로드됐는지 확인한 뒤 `VERIFIED`로 바꾼다.
-3. 단계 완료(`complete`): 그 가게에 로고(`LOGO`) 이미지가 있는지 확인한 뒤
+   `S3Client.headObject`로 실제 업로드됐는지 확인한 뒤 `VERIFIED`로 바꾼다. `imageType`을
+   가리지 않는다.
+3. 단계 완료(`complete`): 그 가게에 업로드를 마친(`VERIFIED`) 로고(`LOGO`) 이미지가 있는지 확인한다.
+   `prepareUpload`만 하고 `confirmUpload`를 하지 않은 `PENDING` 로고는 없는 것으로 본다. 그다음
    `StoreRegistrationProgressService.completeStep(ownerId, version, IMAGES, null)`을 불러
    `MENU`로 진행한다.
 
@@ -231,10 +246,21 @@ develop에 반영된 #482 위치 저장과 연동하며 위치 저장 후 HOURS�
 - **인테리어 `sortOrder`는 점주가 지정하지 않고 서버가 업로드 순서대로 자동으로 매긴다(#375 결정).**
   재배치(순서 바꾸기) 기능이 없는 지금 범위에서는 점주 입력을 받을 이유가 없어 더 단순한
   쪽을 택했다. 재배치가 생기면 이 결정을 다시 봐야 한다.
-- **로고는 이 기능으로 새로 올리지 않고 존재만 확인한다(#375 결정).** 로고는 가게 입점
-  과정에서 이미 필수로 등록돼 있다는 전제다. 가게 담당이 "대표 메뉴가 선택으로 바뀌어
-  온보딩이 끝나도 메뉴가 없을 수 있다"고 확인해 줬지만, 그건 메뉴 얘기고 로고(`image_type=LOGO`)는
-  `store_image`의 `uk_store_image_single_logo` 제약과 별개로 여전히 필수 전제다.
+- **로고 업로드를 `prepareUpload`/`confirmUpload`에 `imageType`으로 합친다(`#589` 결정).**
+  명세서 `FR-038`이 "가게 이미지와 메뉴는 `IMAGES`와 `MENU` 단계로 나누어 저장한다"고 적고,
+  대표 이미지(로고)와 인테리어 이미지를 같은 단계의 필수·선택 항목으로 나란히 두고 있다.
+  `#375`가 적었던 "로고는 가게 입점 과정에서 이미 등록돼 있다"는 전제는 그 전제를 채우는
+  단계가 실제로 없어서(`#589`가 찾음) 틀린 전제였다. 별도 엔드포인트로 빼는 대신 같은 단계,
+  같은 presigned 흐름을 그대로 재사용한다
+- **이미 등록된 로고를 다시 올리면 그 행을 덮어써 교체한다(`#589` 결정).** 명세서 `FR-038`의
+  예외사항이 "저장 완료한 가게 이미지 수정 시, 필수 대표 이미지가 사라지는 요청은 거부"라고
+  적어서, 로고를 없애는 것만 막고 바꾸는 것은 허용한다. 새 행을 만들지 않고 기존 행을
+  덮어쓰는 이유는 `store_image`의 `uk_store_image_single_logo` UNIQUE 제약(가게당 `LOGO`
+  1개)이 같은 가게에 `LOGO` 행이 두 개 있는 것을 막기 때문이다. 같은 캠페인 도메인의
+  `Poster.overwrite()`(포스터도 1:1이라 새로 만들지 않고 덮어쓴다, `#376`)와 같은 이유다.
+  덮어쓰는 순간 기존 로고는 `PENDING`으로 되돌아가, 새 업로드가 `confirmUpload`로 끝나기
+  전까지는 조회 쪽(`StoreQueryService` 등)이 `VERIFIED`만 읽어서 로고가 잠깐 `null`로 보일
+  수 있다. 이미 있는 "검증된 것만 읽는다"는 규칙을 그대로 따르는 것이라 새로 처리하지 않는다
 - **`completeStep`에 필요한 `version`을 돌려주는 조회 API(`GET /v1/owner/onboarding`)를
   이 이슈에서 같이 만든다.** 등록 단계 API 전체가 아직 하나도 없어 클라이언트가 현재 버전을
   얻을 곳이 없었다. 이 조회는 저장된 진행 상태를 읽으며 없으면 TERMS와 버전 0을 반환한다.
@@ -292,7 +318,9 @@ OwnerStoreCompleteService가 쓰기 트랜잭션을 열고 점주 행을 잠근 
 store.contract.StoreCompleter를 호출하면 StoreCompleteService가 MANDATORY로 같은 트랜잭션에 참여한다.
 진행 상태 행 잠금 뒤 버전·본인 미확정 가게 연결과 MENU 재개 단계를 확인한다.
 StoreOnboardingQueryRepository·StoreOnboardingReadiness로 실제 저장값을 다시 검증한다.
-내 가게 조회도 같은 판정 결과를 사용하므로 PENDING 내부 이미지가 목록에서 제외되어도 등록 가능으로 표시되지 않는다.
+내 가게 조회와 진행 상태 조회도 같은 판정 결과를 사용하며 이미지 필수 조건은 검증된 로고 1개다.
+선택 항목인 내부 이미지의 미완료 업로드는 최종 등록을 막지 않으며 VERIFIED 이미지만 조회한다.
+최종 등록 뒤 남은 미완료 내부 업로드는 공개하지 않고 기존 초안 검사로 추가 업로드 확인을 거절한다.
 메뉴 0개는 유효하며 MENU 저장 이력이나 새 완료 단계는 만들지 않는다.
 
 가게의 기존 finalized_at 컬럼을 매핑하고 Clock으로 확정 시각을 기록한다.
@@ -378,8 +406,12 @@ MENU 할인은 target_menu_id와 store_id를 함께 조인해 다른 가게의 �
 ALL 할인은 targetMenu=null이다. 활성 요약이 없으면 가게는 유지하고 activeCampaign만 null이다.
 
 이미지는 VERIFIED만 읽고 기존 StoreImageUrlResolver로 CDN URL을 만든다.
-S3를 호출하지 않는다. 필수 대표·메뉴 이미지 누락, 할인 대상 메뉴 누락과 CDN 설정 누락은
-데이터·설정 오류로 전파한다. DB 장애도 가게 없음이나 빈 목록으로 바꾸지 않는다.
+S3를 호출하지 않는다. 이미지와 캠페인 데이터 오류의 응답은 [상세 명세](../../api-spec/store-api-spec.md#get-v1storesstoreid)를 따른다.
+온보딩의 필수 이미지 등록과 최종 등록 검증은 유지한다.
+서비스는 이미지 키를 확인한 뒤 URL을 변환하고 내부 이미지의 null 항목을 제거한다.
+제외한 이미지와 캠페인은 가게 ID, 이미지 종류·정렬 순서 또는 캠페인 ID와 사유를 WARN으로 남긴다.
+CDN 설정 누락은 기존처럼 설정 오류로 전파한다.
+이미지가 전혀 없으면 CDN 설정 없이 조회할 수 있다. DB 장애도 가게 없음이나 빈 목록으로 바꾸지 않는다.
 최종 등록의 STORE-015는 유지하고 상세 조회의 404는 STORE-016을 쓴다.
 
 가게 상세 조회에는 별도 수치 성능 목표가 확정되지 않았다.
@@ -387,7 +419,7 @@ S3를 호출하지 않는다. 필수 대표·메뉴 이미지 누락, 할인 대
 
 ### 검증 범위
 
-StoreDetailServiceTest는 서울 자정 경계, 이미지 URL과 필수 이미지 오류를 확인한다.
+StoreDetailServiceTest는 서울 자정 경계, 이미지 URL, 이미지 키·대상 메뉴 누락 시 부분 응답과 DB·CDN 장애 전파를 확인한다.
 StoreDetailIntegrationTest는 실제 HTTP 보안 체인과 MySQL 쿼리로 메뉴 0개, 초안 비공개, 정렬,
 업로드 상태, 활성 캠페인 날짜·상태와 다른 가게 메뉴 차단을 검증한다.
 StoreCompleteIntegrationTest의 기존 정상 등록 시나리오에서 등록 전 MEMBER 상세 조회의 404와 등록 후 200을 함께 검증한다.

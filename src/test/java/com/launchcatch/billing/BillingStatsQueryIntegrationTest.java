@@ -130,6 +130,7 @@ class BillingStatsQueryIntegrationTest extends AbstractBillingIntegrationTest {
         deduct(OWNER, CAMPAIGN, DAY, "NOT_BILLED_PAUSED", 250L, DAY_NOON);
         deduct(OWNER, CAMPAIGN, DAY, "NOT_BILLED_PAUSED", 250L, DAY_NOON);
         deduct(OWNER2, CAMPAIGN2, DAY, "NOT_BILLED_BUDGET", 100L, DAY_NOON);
+        deduct(OWNER2, CAMPAIGN2, DAY, "NOT_BILLED_NO_PLAN", 100L, DAY_NOON);
         jdbc.update("""
                 insert into budget_daily_plan
                     (campaign_id, owner_id, business_date, daily_budget, unit_price, paused, created_at, updated_at)
@@ -141,10 +142,10 @@ class BillingStatsQueryIntegrationTest extends AbstractBillingIntegrationTest {
         CampaignDailyBudget budget = stats.dailyBudgets(DAY).stream()
                 .filter(b -> b.campaignId().equals(CAMPAIGN)).findFirst().orElseThrow();
 
-        assertThat(count).isEqualTo(new CampaignBillingCount(CAMPAIGN, 4, 1, 2));
+        assertThat(count).isEqualTo(new CampaignBillingCount(CAMPAIGN, 4, 1, 2, 0));
         assertThat(budget).isEqualTo(new CampaignDailyBudget(CAMPAIGN, 5000, 250));
         assertThat(-sumOf(OWNER, CAMPAIGN).deductAmount()).isEqualTo(count.billedCount() * budget.unitPrice());
-        assertThat(stats.billingCounts(DAY)).contains(new CampaignBillingCount(CAMPAIGN2, 0, 1, 0));
+        assertThat(stats.billingCounts(DAY)).contains(new CampaignBillingCount(CAMPAIGN2, 0, 1, 0, 1));
     }
 
     @Test

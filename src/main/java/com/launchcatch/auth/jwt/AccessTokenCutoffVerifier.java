@@ -25,7 +25,7 @@ public class AccessTokenCutoffVerifier {
     public boolean isValidAfter(Role role, Long id, LocalDateTime issuedAt, CutoffPolicy policy) {
         Objects.requireNonNull(policy, "토큰 폐기 기준 검증 정책은 필수입니다.");
         if (issuedAt == null) {
-            log.warn("event=ACCESS_TOKEN_ISSUED_AT_MISSING role={} id={}", role, id);
+            log.warn("event=AUTH_ACCESS_TOKEN_ISSUED_AT_MISSING role={} subjectId={}", role, id);
             return false;
         }
         try {
@@ -34,7 +34,7 @@ public class AccessTokenCutoffVerifier {
             if (policy == CutoffPolicy.REQUIRED) {
                 throw new AuthException(AuthErrorCode.REFRESH_TOKEN_STORE_UNAVAILABLE, e);
             }
-            log.warn("event=ACCESS_TOKEN_VALID_AFTER_CHECK_FAILED role={} id={} cause={} policy={} 통과시킨다",
+            log.warn("event=AUTH_ACCESS_TOKEN_VALID_AFTER_CHECK_FAILED role={} subjectId={} reason={} policy={} fallback=PASS_THROUGH",
                     role, id, RedisFailureClassifier.causeLabel(e), policy, e);
             return true;
         }

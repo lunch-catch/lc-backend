@@ -13,6 +13,9 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import com.launchcatch.billing.cache.WebhookInquiryGuard;
 import com.launchcatch.billing.client.PaymentGateway;
 import com.launchcatch.billing.client.PaymentGatewayInquiryResult;
@@ -34,6 +37,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.test.util.ReflectionTestUtils;
 
@@ -131,6 +135,25 @@ class PaymentWebhookServiceTest {
 
         verifyNoInteractions(paymentGateway, resultService);
         assertThat(counted("ignored")).isEqualTo(1.0);
+    }
+
+    @Test
+    void 모르는_주문이면_접두사가_붙은_이벤트에_대문자_사유를_남긴다() {
+        when(paymentRepository.findByOrderId(ORDER_ID)).thenReturn(Optional.empty());
+        Logger logger = (Logger) LoggerFactory.getLogger(PaymentWebhookService.class);
+        ListAppender<ILoggingEvent> logs = new ListAppender<>();
+        logs.start();
+        logger.addAppender(logs);
+
+        try {
+            service().handle(request());
+        } finally {
+            logger.detachAppender(logs);
+        }
+
+        assertThat(logs.list).singleElement().satisfies(event ->
+                assertThat(event.getFormattedMessage())
+                        .isEqualTo("event=BILLING_PAYMENT_WEBHOOK_SKIPPED reason=UNKNOWN_ORDER orderId=" + ORDER_ID));
     }
 
     @Test

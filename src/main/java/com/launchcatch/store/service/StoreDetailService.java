@@ -17,10 +17,13 @@ import com.launchcatch.store.repository.StoreDetailRepository;
 import java.time.Clock;
 import java.time.LocalDate;
 import java.time.ZoneId;
+import java.util.Objects;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+@Slf4j
 @Service
 @Transactional(readOnly = true)
 public class StoreDetailService {
@@ -43,31 +46,33 @@ public class StoreDetailService {
         }
         var store = stores.findFinalized(storeId)
                 .orElseThrow(() -> new StoreException(StoreErrorCode.STORE_NOT_FOUND));
-        var logo = stores.findImages(storeId, "LOGO").stream().findFirst()
-                .orElseThrow(() -> new IllegalStateException("등록 완료된 가게의 대표 이미지가 누락되었습니다."));
+        var logo = stores.findImages(storeId, "LOGO").stream()
+                .map(row -> image(storeId, "LOGO", row.objectKey(), row.sortOrder()))
+                .filter(Objects::nonNull).findFirst().orElse(null);
         return new StoreDetailResponse(store.storeId(), store.name(), store.businessCategory(), store.roadAddress(),
                 store.phone(), store.latitude(), store.longitude(), details.findBusinessHours(storeId).stream().map(this::businessHour).toList(),
-                image(logo.objectKey(), logo.sortOrder()),
-                stores.findImages(storeId, "INTERIOR").stream().map(row -> image(row.objectKey(), row.sortOrder())).toList(),
-                details.findMenus(storeId).stream().map(this::menu).toList(),
+                logo,
+                stores.findImages(storeId, "INTERIOR").stream()
+                        .map(row -> image(storeId, "INTERIOR", row.objectKey(), row.sortOrder()))
+                        .filter(Objects::nonNull).toList(),
+                details.findMenus(storeId).stream().map(menu -> menu(storeId, menu)).toList(),
                 stores.findActiveCampaign(storeId, LocalDate.now(clock.withZone(ZoneId.of("Asia/Seoul"))))
-                        .map(this::campaign).orElse(null));
+                        .map(campaign -> campaign(storeId, campaign)).orElse(null));
     }
 
-    private Image image(String objectKey, Integer sortOrder) {
+    private Image image(long storeId, String imageType, String objectKey, Integer sortOrder) {
         if (objectKey == null || objectKey.isBlank()) {
-            throw new IllegalStateException("등록 완료된 가게의 검증된 이미지가 누락되었습니다.");
+            log.warn("event=STORE_DETAIL_IMAGE_SKIPPED storeId={} imageType={} sortOrder={} reason=EMPTY_OBJECT_KEY fallback=OMIT_IMAGE",
+                    storeId, imageType, sortOrder);
+            return null;
         }
         return new Image(objectKey, images.resolve(objectKey), sortOrder);
     }
 
-    private Menu menu(OwnerStoreSnapshot.Menu menu) {
+    private Menu menu(long storeId, OwnerStoreSnapshot.Menu menu) {
         var menuImage = menu.image();
-        if (menuImage == null) {
-            throw new IllegalStateException("등록 완료된 가게의 검증된 이미지가 누락되었습니다.");
-        }
         return new Menu(menu.menuId(), menu.name(), menu.price(), menu.description(), menu.sortOrder(),
-                image(menuImage.objectKey(), null));
+                menuImage == null ? null : image(storeId, "MENU", menuImage.objectKey(), null));
     }
 
     private BusinessHour businessHour(OwnerStoreSnapshot.BusinessHour hour) {
@@ -75,11 +80,13 @@ public class StoreDetailService {
                 hour.breakStartTime(), hour.breakEndTime(), hour.lastOrderTime());
     }
 
-    private ActiveCampaign campaign(StoreDetailData.Campaign campaign) {
+    private ActiveCampaign campaign(long storeId, StoreDetailData.Campaign campaign) {
         TargetMenu target = null;
         if (campaign.discountTargetType() == StoreDiscountTargetType.MENU) {
             if (campaign.targetMenuId() == null) {
-                throw new IllegalStateException("활성 캠페인의 할인 대상 메뉴가 누락되었습니다.");
+                log.warn("event=STORE_DETAIL_CAMPAIGN_SKIPPED storeId={} campaignId={} reason=TARGET_MENU_MISSING fallback=OMIT_CAMPAIGN",
+                        storeId, campaign.campaignId());
+                return null;
             }
             target = new TargetMenu(campaign.targetMenuId(), campaign.targetMenuName(), campaign.targetMenuPrice());
         }

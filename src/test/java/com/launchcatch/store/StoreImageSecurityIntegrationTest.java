@@ -85,22 +85,84 @@ class StoreImageSecurityIntegrationTest extends AbstractStoreIntegrationTest {
                 .andReturn().getResponse().getContentAsString();
         long version = ((Number) JsonPath.read(progressBody, "$.data.version")).longValue();
 
-        markLogoRegistered(storeId);
+        when(s3Client.headObject(any(software.amazon.awssdk.services.s3.model.HeadObjectRequest.class)))
+                .thenReturn(HeadObjectResponse.builder().contentLength(1000L).build());
+
+        // 로고가 없으면 IMAGES 단계를 끝낼 수 없다.
+        mvc.perform(post("/v1/owner/store-images:complete")
+                        .cookie(ownerToken(ownerId))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"version\":" + version + "}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("STORE-010"));
+
+        String logoBody = mvc.perform(post("/v1/owner/store-images:prepareUpload")
+                        .cookie(ownerToken(ownerId))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"imageType":"LOGO","originalFilename":"logo.jpg","contentType":"image/jpeg","fileSize":1000}
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.sortOrder").doesNotExist())
+                .andReturn().getResponse().getContentAsString();
+        String logoUploadId = JsonPath.read(logoBody, "$.data.uploadId");
+
+        // 올리기만 하고 확인하지 않은 로고로는 아직 단계를 끝낼 수 없다.
+        mvc.perform(post("/v1/owner/store-images:complete")
+                        .cookie(ownerToken(ownerId))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"version\":" + version + "}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("STORE-010"));
+
+        mvc.perform(post("/v1/owner/store-images:confirmUpload")
+                        .cookie(ownerToken(ownerId))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"uploadId\":\"" + logoUploadId + "\"}"))
+                .andExpect(status().isOk());
+
+        // 로고를 다시 올리면 새 행 없이 교체되고(가게당 1개), 확인하기 전까지는 다시 PENDING 이다.
+        mvc.perform(post("/v1/owner/store-images:prepareUpload")
+                        .cookie(ownerToken(ownerId))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"imageType":"LOGO","originalFilename":"logo2.png","contentType":"image/png","fileSize":1000}
+                                """))
+                .andExpect(status().isOk());
+        Integer logoRows = jdbc.queryForObject(
+                "select count(*) from store_image where store_id = ? and image_type = 'LOGO'", Integer.class, storeId);
+        org.assertj.core.api.Assertions.assertThat(logoRows).isEqualTo(1);
+        String logoStatus = jdbc.queryForObject(
+                "select upload_status from store_image where store_id = ? and image_type = 'LOGO'",
+                String.class, storeId);
+        org.assertj.core.api.Assertions.assertThat(logoStatus).isEqualTo("PENDING");
+
+        String replacedBody = mvc.perform(post("/v1/owner/store-images:prepareUpload")
+                        .cookie(ownerToken(ownerId))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"imageType":"LOGO","originalFilename":"logo3.jpg","contentType":"image/jpeg","fileSize":1000}
+                                """))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        String replacedUploadId = JsonPath.read(replacedBody, "$.data.uploadId");
+        mvc.perform(post("/v1/owner/store-images:confirmUpload")
+                        .cookie(ownerToken(ownerId))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"uploadId\":\"" + replacedUploadId + "\"}"))
+                .andExpect(status().isOk());
 
         String prepareBody = mvc.perform(post("/v1/owner/store-images:prepareUpload")
                         .cookie(ownerToken(ownerId))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
-                                {"originalFilename":"interior.jpg","contentType":"image/jpeg","fileSize":1000}
+                                {"imageType":"INTERIOR","originalFilename":"interior.jpg","contentType":"image/jpeg","fileSize":1000}
                                 """))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.sortOrder").value(1))
                 .andExpect(jsonPath("$.data.uploadUrl").value("https://example.com/presigned"))
                 .andReturn().getResponse().getContentAsString();
         String uploadId = JsonPath.read(prepareBody, "$.data.uploadId");
-
-        when(s3Client.headObject(any(software.amazon.awssdk.services.s3.model.HeadObjectRequest.class)))
-                .thenReturn(HeadObjectResponse.builder().contentLength(1000L).build());
 
         mvc.perform(post("/v1/owner/store-images:confirmUpload")
                         .cookie(ownerToken(ownerId))
@@ -133,12 +195,12 @@ class StoreImageSecurityIntegrationTest extends AbstractStoreIntegrationTest {
     }
 
     private Cookie ownerToken(Long ownerId) {
-        return new Cookie("accessToken", jwt.createAccessToken(ownerId, Role.OWNER, Map.of(VERSION_CLAIM, "0")));
+        return new Cookie("ownerAccessToken", jwt.createAccessToken(ownerId, Role.OWNER, Map.of(VERSION_CLAIM, "0")));
     }
 
     private Cookie nonOwnerToken(Role role) {
         if (role == Role.MEMBER) {
-            return new Cookie("accessToken", jwt.createAccessToken(1L, role));
+            return new Cookie("ownerAccessToken", jwt.createAccessToken(1L, role));
         }
         String loginId = UUID.randomUUID().toString();
         LocalDateTime now = LocalDateTime.now();
@@ -147,7 +209,7 @@ class StoreImageSecurityIntegrationTest extends AbstractStoreIntegrationTest {
                 loginId, "test-hash", "store-image-test-admin", role.name(), now, now);
         Long adminId = jdbc.queryForObject("select admin_id from admin where login_id = ?", Long.class, loginId);
         createdAdminIds.add(adminId);
-        return new Cookie("accessToken", jwt.createAccessToken(adminId, role));
+        return new Cookie("ownerAccessToken", jwt.createAccessToken(adminId, role));
     }
 
     private Long createOnboardingOwner() {
@@ -167,14 +229,6 @@ class StoreImageSecurityIntegrationTest extends AbstractStoreIntegrationTest {
         Long storeId = jdbc.queryForObject("select store_id from store where owner_id = ?", Long.class, ownerId);
         createdStoreIds.add(storeId);
         return storeId;
-    }
-
-    private void markLogoRegistered(Long storeId) {
-        LocalDateTime now = LocalDateTime.now();
-        jdbc.update("insert into store_image (store_id, upload_id, image_type, object_key, upload_status, "
-                        + "verified_at, created_at, updated_at) "
-                        + "values (?, ?, 'LOGO', ?, 'VERIFIED', ?, ?, ?)",
-                storeId, UUID.randomUUID().toString(), "stores/" + storeId + "/logo.jpg", now, now, now);
     }
 
     private void advanceToImagesStep(Long ownerId, Long storeId) {

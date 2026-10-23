@@ -16,7 +16,9 @@ import java.util.Set;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
+import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.reactive.function.client.WebClientResponseException;
@@ -36,6 +38,8 @@ import org.springframework.web.reactive.function.client.WebClientResponseExcepti
  */
 @Slf4j
 @Component
+// 부하 시험(loadtest)에서는 LoadTestPaymentGateway 가 대신한다
+@Profile("!loadtest")
 public class TossPaymentGateway implements PaymentGateway {
 
     private static final String CONFIRM_URI = "/v1/payments/confirm";
@@ -44,6 +48,7 @@ public class TossPaymentGateway implements PaymentGateway {
 
     private static final String STATUS_DONE = "DONE";
     private static final String NOT_FOUND_CODE = "NOT_FOUND_PAYMENT";
+    private static final int MAX_DIAGNOSTIC_VALUE_LENGTH = 512;
 
     // reactor-netty 가 셰이딩한 내부 클래스라 타입 대신 이름으로 본다.
     private static final String POOL_ACQUIRE_TIMEOUT = "PoolAcquireTimeoutException";
@@ -164,22 +169,24 @@ public class TossPaymentGateway implements PaymentGateway {
             String message = masker.mask(error == null ? null : error.message());
             // 거절 코드를 먼저 본다. 토스는 카드사 거절과 FDS 차단도 403 으로 주므로 상태로 인증 거부를 먼저 가르면 안 된다.
             if (code != null && DEFINITE_REJECT_CODES.contains(code)) {
-                log.info("event=TOSS_CONFIRM_REJECTED orderId={} code={}", orderId, code);
+                log.info("event=TOSS_CONFIRM_REJECTED orderId={} externalErrorCode={}", orderId, code);
                 return new PgRejectedException(code, message);
             }
             if (TossErrorCodes.isConfigFailure(http)) {
                 return authFailure("승인", orderId, http, code);
             }
-            log.warn("event=TOSS_CONFIRM_UNKNOWN orderId={} httpStatus={} code={}",
-                    orderId, http.getStatusCode().value(), code);
+            log.warn("event=TOSS_CONFIRM_UNKNOWN orderId={} httpStatus={} externalErrorCode={} pgMessage={} contentType={} responseBodyBytes={}",
+                    orderId, http.getStatusCode().value(), diagnosticValue(code), diagnosticValue(message),
+                    diagnosticValue(http.getHeaders().getFirst(HttpHeaders.CONTENT_TYPE)),
+                    http.getResponseBodyAsByteArray().length);
             return new PgUnknownException("토스 승인 응답을 확정할 수 없다 (httpStatus="
                     + http.getStatusCode().value() + ", code=" + code + ")", e);
         }
         if (isNotSent(e)) {
-            log.warn("event=TOSS_CONFIRM_NOT_SENT orderId={} causeType={}", orderId, rootCauseType(e));
+            log.warn("event=TOSS_CONFIRM_NOT_SENT orderId={} exceptionType={}", orderId, rootCauseType(e));
             return new PgNotSentException("토스에 승인 요청이 나가지 않았다 (" + rootCauseType(e) + ")", e);
         }
-        log.warn("event=TOSS_CONFIRM_UNKNOWN orderId={} causeType={}", orderId, rootCauseType(e));
+        log.warn("event=TOSS_CONFIRM_UNKNOWN orderId={} exceptionType={}", orderId, rootCauseType(e));
         return new PgUnknownException("토스 승인 결과를 알 수 없다 (" + rootCauseType(e) + ")", e);
     }
 
@@ -187,19 +194,23 @@ public class TossPaymentGateway implements PaymentGateway {
     private RuntimeException classifyInquiryFailure(RuntimeException e) {
         WebClientResponseException http = causeOfType(e, WebClientResponseException.class);
         if (http != null) {
+            TossErrorResponse error = readErrorBody(http);
             if (TossErrorCodes.isConfigFailure(http)) {
-                TossErrorResponse error = readErrorBody(http);
                 return authFailure("조회", null, http, error == null ? null : error.code());
             }
-            log.warn("event=TOSS_INQUIRE_UNKNOWN httpStatus={}", http.getStatusCode().value());
+            log.warn("event=TOSS_INQUIRE_UNKNOWN httpStatus={} externalErrorCode={} pgMessage={} contentType={} responseBodyBytes={}",
+                    http.getStatusCode().value(), diagnosticValue(error == null ? null : error.code()),
+                    diagnosticValue(error == null ? null : error.message()),
+                    diagnosticValue(http.getHeaders().getFirst(HttpHeaders.CONTENT_TYPE)),
+                    http.getResponseBodyAsByteArray().length);
             return new PgUnknownException("토스 조회 응답을 처리할 수 없다 (httpStatus="
                     + http.getStatusCode().value() + ")", e);
         }
         if (isNotSent(e)) {
-            log.warn("event=TOSS_INQUIRE_NOT_SENT causeType={}", rootCauseType(e));
+            log.warn("event=TOSS_INQUIRE_NOT_SENT exceptionType={}", rootCauseType(e));
             return new PgNotSentException("토스에 조회 요청이 나가지 않았다 (" + rootCauseType(e) + ")", e);
         }
-        log.warn("event=TOSS_INQUIRE_UNKNOWN causeType={}", rootCauseType(e));
+        log.warn("event=TOSS_INQUIRE_UNKNOWN exceptionType={}", rootCauseType(e));
         return new PgUnknownException("토스 조회 결과를 알 수 없다 (" + rootCauseType(e) + ")", e);
     }
 
@@ -224,7 +235,7 @@ public class TossPaymentGateway implements PaymentGateway {
     private PgNotSentException authFailure(String action, String orderId, WebClientResponseException http,
             String code) {
         int status = http.getStatusCode().value();
-        log.error("event=TOSS_AUTH_FAILED action={} orderId={} httpStatus={} code={}", action, orderId, status, code);
+        log.error("event=TOSS_AUTH_FAILED action={} orderId={} httpStatus={} externalErrorCode={}", action, orderId, status, code);
         return new PgNotSentException("토스가 인증 단계에서 " + action + " 요청을 처리하지 않았다 (httpStatus="
                 + status + ", code=" + code + "). 비밀키 설정을 확인한다", http);
     }
@@ -246,6 +257,16 @@ public class TossPaymentGateway implements PaymentGateway {
             log.warn("event=TOSS_ERROR_BODY_PARSE_FAILED httpStatus={}", e.getStatusCode().value());
             return null;
         }
+    }
+
+    // 외부 문자열은 비밀키를 지우고 제어 문자와 길이를 제한한 뒤 진단 로그에 넣는다.
+    private String diagnosticValue(String value) {
+        String masked = masker.mask(value);
+        if (masked == null) {
+            return null;
+        }
+        String singleLine = masked.replaceAll("\\p{Cntrl}", " ");
+        return singleLine.substring(0, Math.min(singleLine.length(), MAX_DIAGNOSTIC_VALUE_LENGTH));
     }
 
     private static <T extends Throwable> T causeOfType(Throwable throwable, Class<T> type) {

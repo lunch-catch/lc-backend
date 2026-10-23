@@ -17,6 +17,8 @@ import com.launchcatch.ops.entity.BatchStatus;
 import com.launchcatch.ops.exception.OpsErrorCode;
 import com.launchcatch.ops.exception.OpsException;
 import com.launchcatch.ops.repository.BatchExecutionLogRepository;
+import com.launchcatch.ops.scheduler.BatchJobRegistry;
+import com.launchcatch.ops.scheduler.BatchJobRegistry.Kind;
 import java.time.LocalDate;
 import java.util.Optional;
 import java.util.concurrent.Executor;
@@ -40,7 +42,9 @@ class BatchExecutionRetryServiceTest {
     @Mock
     private BatchExecutionService executions;
     @Mock
-    private DailyJobRunner runner;
+    private BatchJobRunner runner;
+    @Mock
+    private BatchJobRegistry registry;
     @Mock
     private AuditLogWriter auditLogWriter;
     @Mock
@@ -49,7 +53,7 @@ class BatchExecutionRetryServiceTest {
     private final Executor direct = Runnable::run;
 
     private BatchExecutionRetryService service(Executor executor) {
-        return new BatchExecutionRetryService(logs, executions, runner, auditLogWriter, transactionManager, executor);
+        return new BatchExecutionRetryService(logs, executions, runner, registry, auditLogWriter, transactionManager, executor);
     }
 
     private static BatchExecutionLog row(BatchStatus status, long id, int attemptNo) {
@@ -62,7 +66,7 @@ class BatchExecutionRetryServiceTest {
 
     @Test
     void 재실행_대상이_아니면_거부한다() {
-        when(runner.isRetryable(JOB)).thenReturn(false);
+        when(registry.classify(JOB)).thenReturn(Kind.UNKNOWN);
 
         assertThatThrownBy(() -> service(direct).retry(ADMIN_ID, JOB, DATE))
                 .isInstanceOfSatisfying(OpsException.class, e ->
@@ -72,7 +76,7 @@ class BatchExecutionRetryServiceTest {
 
     @Test
     void 실행_기록이_없으면_거부한다() {
-        when(runner.isRetryable(JOB)).thenReturn(true);
+        when(registry.classify(JOB)).thenReturn(Kind.BUNDLE);
         when(logs.findByJobNameAndBusinessDate(JOB, DATE)).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> service(direct).retry(ADMIN_ID, JOB, DATE))
@@ -83,7 +87,7 @@ class BatchExecutionRetryServiceTest {
 
     @Test
     void FAILED_상태가_아니면_거부한다() {
-        when(runner.isRetryable(JOB)).thenReturn(true);
+        when(registry.classify(JOB)).thenReturn(Kind.BUNDLE);
         when(logs.findByJobNameAndBusinessDate(JOB, DATE))
                 .thenReturn(Optional.of(row(BatchStatus.RUNNING, 301L, 1)));
 
@@ -99,7 +103,7 @@ class BatchExecutionRetryServiceTest {
      */
     @Test
     void 조건부_갱신이_걸리지_않으면_거부한다() {
-        when(runner.isRetryable(JOB)).thenReturn(true);
+        when(registry.classify(JOB)).thenReturn(Kind.BUNDLE);
         when(logs.findByJobNameAndBusinessDate(JOB, DATE))
                 .thenReturn(Optional.of(row(BatchStatus.FAILED, 301L, 1)));
         when(executions.retry(JOB, DATE)).thenReturn(false);
@@ -112,7 +116,7 @@ class BatchExecutionRetryServiceTest {
 
     @Test
     void 성공하면_감사_로그를_남기고_재개를_시작시키고_실행_ID를_돌려준다() {
-        when(runner.isRetryable(JOB)).thenReturn(true);
+        when(registry.classify(JOB)).thenReturn(Kind.BUNDLE);
         when(logs.findByJobNameAndBusinessDate(JOB, DATE))
                 .thenReturn(Optional.of(row(BatchStatus.FAILED, 301L, 1)))
                 .thenReturn(Optional.of(row(BatchStatus.RUNNING, 301L, 2)));
@@ -127,7 +131,7 @@ class BatchExecutionRetryServiceTest {
 
     @Test
     void 실행기가_가득_차_재개를_시작하지_못하면_실패로_닫고_예외를_올린다() {
-        when(runner.isRetryable(JOB)).thenReturn(true);
+        when(registry.classify(JOB)).thenReturn(Kind.BUNDLE);
         when(logs.findByJobNameAndBusinessDate(JOB, DATE))
                 .thenReturn(Optional.of(row(BatchStatus.FAILED, 301L, 1)))
                 .thenReturn(Optional.of(row(BatchStatus.RUNNING, 301L, 2)));
@@ -143,7 +147,7 @@ class BatchExecutionRetryServiceTest {
 
     @Test
     void 감사_로그를_남기지_못하면_재개하지_않고_실패로_닫고_예외를_올린다() {
-        when(runner.isRetryable(JOB)).thenReturn(true);
+        when(registry.classify(JOB)).thenReturn(Kind.BUNDLE);
         when(logs.findByJobNameAndBusinessDate(JOB, DATE))
                 .thenReturn(Optional.of(row(BatchStatus.FAILED, 301L, 1)))
                 .thenReturn(Optional.of(row(BatchStatus.RUNNING, 301L, 2)));
@@ -159,13 +163,13 @@ class BatchExecutionRetryServiceTest {
 
     @Test
     void 서비스가_직접_만든_실행기에서_다른_스레드로_재개를_돌린다() {
-        when(runner.isRetryable(JOB)).thenReturn(true);
+        when(registry.classify(JOB)).thenReturn(Kind.BUNDLE);
         when(logs.findByJobNameAndBusinessDate(JOB, DATE))
                 .thenReturn(Optional.of(row(BatchStatus.FAILED, 301L, 1)))
                 .thenReturn(Optional.of(row(BatchStatus.RUNNING, 301L, 2)));
         when(executions.retry(JOB, DATE)).thenReturn(true);
         BatchExecutionRetryService owned = new BatchExecutionRetryService(
-                logs, executions, runner, auditLogWriter, transactionManager);
+                logs, executions, runner, registry, auditLogWriter, transactionManager);
 
         long runId = owned.retry(ADMIN_ID, JOB, DATE);
         owned.shutdown();

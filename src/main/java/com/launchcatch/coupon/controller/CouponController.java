@@ -11,6 +11,7 @@ import com.launchcatch.coupon.dto.CouponQrResponse;
 import com.launchcatch.coupon.dto.CouponSummaryResponse;
 import com.launchcatch.coupon.service.CouponCommandService;
 import com.launchcatch.coupon.service.CouponLookUpService;
+import com.launchcatch.global.logging.AccessLogSignal;
 import com.launchcatch.global.response.CursorPageResponse;
 import com.launchcatch.global.response.ResponseEnvelope;
 import io.swagger.v3.oas.annotations.Operation;
@@ -19,10 +20,12 @@ import io.swagger.v3.oas.annotations.media.Content;
 import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.Positive;
+import java.util.concurrent.CompletionException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.CacheControl;
 import org.springframework.http.HttpStatus;
@@ -35,6 +38,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.context.request.async.DeferredResult;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
@@ -59,11 +63,23 @@ public class CouponController {
     @PostMapping("/coupons")
     @Operation(summary = "선착순 쿠폰 발급", description = "발급 가능한 재고와 일일 한도를 확인하고 회원 쿠폰을 발급한다.")
     @ApiResponse(responseCode = "201", description = "발급과 재고 변경, 일일 횟수 반영을 완료한 결과다.", useReturnTypeSchema = true)
-    public ResponseEntity<ResponseEnvelope<CouponIssueResponse>> issueCoupon(
+    public DeferredResult<ResponseEntity<ResponseEnvelope<CouponIssueResponse>>> issueCoupon(
             @Parameter(hidden = true) @AuthenticationPrincipal CustomUserDetails user,
-            @Valid @RequestBody CouponIssueRequest request) {
-        return ResponseEntity.status(HttpStatus.CREATED)
-                .body(ResponseEnvelope.success(couponCommandService.issue(user.getId(), request.eventId())));
+            @Valid @RequestBody CouponIssueRequest request, HttpServletRequest httpRequest) {
+        DeferredResult<ResponseEntity<ResponseEnvelope<CouponIssueResponse>>> result = new DeferredResult<>(0L);
+        couponCommandService.issueAsync(user.getId(), request.eventId()).whenComplete((issued, error) -> {
+            if (error != null) {
+                Throwable cause = error;
+                while (cause instanceof CompletionException && cause.getCause() != null) {
+                    cause = cause.getCause();
+                }
+                result.setErrorResult(cause);
+            } else {
+                AccessLogSignal.markExpected(httpRequest);
+                result.setResult(ResponseEntity.status(HttpStatus.CREATED).body(ResponseEnvelope.success(issued)));
+            }
+        });
+        return result;
     }
 
     // 본인 쿠폰의 QR을 생성하거나 갱신하고 응답 캐시를 금지한다.

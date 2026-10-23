@@ -53,7 +53,7 @@ public class AdminAccessTokenVerifier implements AccessTokenValidationPolicy {
             if (policy == CutoffPolicy.REQUIRED) {
                 throw new AuthException(AuthErrorCode.REFRESH_TOKEN_STORE_UNAVAILABLE);
             }
-            log.warn("event=ADMIN_ACCESS_TOKEN_VERSION_CHECK_FAILED adminId={} role={} errorType={}",
+            log.warn("event=ADMIN_ACCESS_TOKEN_VERSION_CHECK_FAILED adminId={} role={} exceptionType={}",
                     id, role, failure.getClass().getSimpleName());
             return true;
         }
@@ -67,7 +67,7 @@ public class AdminAccessTokenVerifier implements AccessTokenValidationPolicy {
             return state.get().validAfter() == null || !issuedAt.isBefore(state.get().validAfter());
         } catch (DataAccessException | TransactionException failure) {
             // DB 기준을 확인하지 못하면 Redis 장애 허용 정책과 관계없이 관리자 인증을 거부한다.
-            log.warn("event=ADMIN_ACCESS_TOKEN_DB_CHECK_FAILED adminId={} errorType={}",
+            log.warn("event=ADMIN_ACCESS_TOKEN_DB_CHECK_FAILED adminId={} exceptionType={}",
                     id, failure.getClass().getSimpleName());
             if (policy == CutoffPolicy.REQUIRED) {
                 throw new AuthException(AuthErrorCode.REFRESH_TOKEN_STORE_UNAVAILABLE);

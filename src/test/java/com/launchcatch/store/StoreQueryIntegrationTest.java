@@ -1,6 +1,14 @@
 package com.launchcatch.store;
 
 import static org.assertj.core.api.Assertions.*;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
+import com.launchcatch.auth.CustomUserDetails;
+import com.launchcatch.auth.Role;
+import org.springframework.http.MediaType;
 
 import com.launchcatch.store.contract.StoreQueryService;
 import com.launchcatch.store.repository.StoreQueryRepository;
@@ -81,7 +89,7 @@ class StoreQueryIntegrationTest extends AbstractStoreIntegrationTest {
         jdbc.update("update store set business_registration_number = '1234567890' where store_id = ?", storeId);
         assertThat(service.findSummariesByOwnerIds(List.of(ownerId, ownerId + 2, ownerId, Long.MAX_VALUE)))
                 .extracting("ownerId", "storeId", "finalized", "businessRegistrationNumber")
-                .containsExactlyInAnyOrder(tuple(ownerId, storeId, true, "123**67890"),
+                .containsExactlyInAnyOrder(tuple(ownerId, storeId, true, "123-45-*****"),
                         tuple(ownerId + 2, draftStoreId, false, null));
         assertThat(service.findSummariesByOwnerIds(List.of())).isEmpty();
         assertThat(service.findSummariesByOwnerIds(List.of(Long.MAX_VALUE))).isEmpty();
@@ -149,14 +157,17 @@ class StoreQueryIntegrationTest extends AbstractStoreIntegrationTest {
     void 최종_등록된_가게의_메뉴만_조회하고_누락_ID와_중복을_제외한다() {
         var result = service.findMenusByIdIn(List.of(menuId, otherMenuId, draftMenuId, menuId, Long.MAX_VALUE));
 
-        assertThat(result).extracting("menuId").containsExactlyInAnyOrder(menuId, otherMenuId);
-        assertThat(result).filteredOn(menu -> menu.menuId().equals(menuId)).singleElement().satisfies(menu -> {
+        assertThat(result.invalidMenuIds()).isEmpty();
+        assertThat(result.menus()).extracting("menuId").containsExactlyInAnyOrder(menuId, otherMenuId);
+        assertThat(result.menus()).filteredOn(menu -> menu.menuId().equals(menuId)).singleElement().satisfies(menu -> {
             assertThat(menu.storeId()).isEqualTo(storeId);
             assertThat(menu.menuName()).isEqualTo("국밥");
             assertThat(menu.price()).isEqualTo(9000L);
             assertThat(menu.menuImageUrl()).isNotBlank();
         });
-        assertThat(service.findMenusByIdIn(List.of(draftMenuId, Long.MAX_VALUE))).isEmpty();
+        var missing = service.findMenusByIdIn(List.of(draftMenuId, Long.MAX_VALUE));
+        assertThat(missing.menus()).isEmpty();
+        assertThat(missing.invalidMenuIds()).isEmpty();
     }
 
     @Test
@@ -189,40 +200,66 @@ class StoreQueryIntegrationTest extends AbstractStoreIntegrationTest {
     }
 
     @Test
-    void 대표_이미지가_없으면_내부_이미지가_있어도_가게_조회는_실패한다() {
+    void 대표_이미지가_없으면_내부_이미지가_있어도_URL은_null이다() {
         jdbc.update("delete from store_image where store_id = ?", storeId);
         insertStoreImage(storeId, "INTERIOR", "interior/" + storeId + ".png", 1);
 
-        assertThatThrownBy(() -> service.findAllById(List.of(storeId, otherStoreId)))
-                .isInstanceOf(IllegalStateException.class).hasMessageContaining("이미지가 누락");
+        assertThat(service.findAllById(List.of(storeId, otherStoreId))).hasSize(2)
+                .filteredOn(store -> store.storeId().equals(storeId)).singleElement()
+                .satisfies(store -> assertThat(store.storeImageUrl()).isNull());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"", " ", "\t"})
+    void 대표_이미지_키가_공백이면_URL은_null이다(String key) {
+        jdbc.update("update store_image set object_key = ? where store_id = ?", key, storeId);
+
+        assertThat(service.findAllById(List.of(storeId))).singleElement()
+                .satisfies(store -> assertThat(store.storeImageUrl()).isNull());
     }
 
     @Test
-    void 메뉴_이미지가_없으면_메뉴_조회는_실패한다() {
+    void 대표_이미지가_없는_가게의_쿠폰_상태를_실제_조회로_확인한다() throws Exception {
+        jdbc.update("delete from store_image where store_id = ?", storeId);
+
+        mvc.perform(post("/v1/coupon-events:getStatus")
+                        .with(user(new CustomUserDetails(ownerId, Role.MEMBER)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"storeIds\":[" + storeId + "]}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.items[0].storeId").value(storeId));
+    }
+
+    @Test
+    void 메뉴_이미지가_없으면_정상_메뉴와_오류_메뉴_ID를_나누어_반환한다() {
         jdbc.update("delete from store_menu_image where store_menu_id = ?", menuId);
 
-        assertThatThrownBy(() -> service.findMenusByIdIn(List.of(menuId, otherMenuId)))
-                .isInstanceOf(IllegalStateException.class).hasMessageContaining("이미지가 누락");
+        var result = service.findMenusByIdIn(List.of(menuId, otherMenuId, menuId));
+
+        assertThat(result.invalidMenuIds()).containsExactly(menuId);
+        assertThat(result.menus()).extracting("menuId").containsExactly(otherMenuId);
     }
 
     @ParameterizedTest
     @ValueSource(strings = {"PENDING", "UPLOADED"})
-    void 대표_이미지_검증이_완료되지_않았으면_가게_조회는_실패한다(String uploadStatus) {
+    void 대표_이미지_검증이_완료되지_않았으면_URL은_null이다(String uploadStatus) {
         jdbc.update("update store_image set upload_status = ?, verified_at = null where store_id = ?",
                 uploadStatus, storeId);
 
-        assertThatThrownBy(() -> service.findAllById(List.of(storeId)))
-                .isInstanceOf(IllegalStateException.class).hasMessageContaining("이미지가 누락");
+        assertThat(service.findAllById(List.of(storeId))).singleElement()
+                .satisfies(store -> assertThat(store.storeImageUrl()).isNull());
     }
 
     @ParameterizedTest
     @ValueSource(strings = {"PENDING", "UPLOADED"})
-    void 메뉴_이미지_검증이_완료되지_않았으면_메뉴_조회는_실패한다(String uploadStatus) {
+    void 메뉴_이미지_검증이_완료되지_않았으면_오류_메뉴_ID를_반환한다(String uploadStatus) {
         jdbc.update("update store_menu_image set upload_status = ?, verified_at = null where store_menu_id = ?",
                 uploadStatus, menuId);
 
-        assertThatThrownBy(() -> service.findMenusByIdIn(List.of(menuId)))
-                .isInstanceOf(IllegalStateException.class).hasMessageContaining("이미지가 누락");
+        var result = service.findMenusByIdIn(List.of(menuId));
+
+        assertThat(result.menus()).isEmpty();
+        assertThat(result.invalidMenuIds()).containsExactly(menuId);
     }
 
     @Test

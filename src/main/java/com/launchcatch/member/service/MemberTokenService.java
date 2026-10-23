@@ -64,13 +64,13 @@ public class MemberTokenService {
             return tokenPair;
         } catch (AuthException e) {
             if (e.getErrorCode().isExpectedTraffic()) {
-                log.debug("event=MEMBER_TOKEN_REFRESH_FAILED memberId={} reason={}", memberId, e.getErrorCode().getCode());
+                log.debug("event=MEMBER_TOKEN_REFRESH_FAILED memberId={} errorCode={}", memberId, e.getErrorCode().getCode());
             } else if (e.getErrorCode().getHttpStatus().is5xxServerError()) {
-                log.error("event=MEMBER_TOKEN_REFRESH_FAILED memberId={} reason={} details={}", memberId, e.getErrorCode().getCode(), FailureLogDetails.from(e));
+                log.error("event=MEMBER_TOKEN_REFRESH_FAILED memberId={} errorCode={} details={}", memberId, e.getErrorCode().getCode(), FailureLogDetails.from(e));
             }
             throw e;
         } catch (RuntimeException e) {
-            log.error("event=MEMBER_TOKEN_REFRESH_FAILED memberId={} reason=SYSTEM_ERROR causeType={}", memberId, e.getClass().getSimpleName());
+            log.error("event=MEMBER_TOKEN_REFRESH_FAILED memberId={} reason=SYSTEM_ERROR exceptionType={}", memberId, e.getClass().getSimpleName());
             throw e;
         }
     }
@@ -104,10 +104,10 @@ public class MemberTokenService {
             }
             TransactionLogging.afterFailure(() -> log.error("event=MEMBER_LOGOUT_FAILED memberId={} reason=TRANSACTION_COMPLETION_FAILED", memberId));
         } catch (AuthException e) {
-            log.error("event=MEMBER_LOGOUT_FAILED memberId={} reason={} details={}", memberId, e.getErrorCode().getCode(), FailureLogDetails.from(e));
+            log.error("event=MEMBER_LOGOUT_FAILED memberId={} errorCode={} details={}", memberId, e.getErrorCode().getCode(), FailureLogDetails.from(e));
             throw e;
         } catch (RuntimeException e) {
-            log.error("event=MEMBER_LOGOUT_FAILED memberId={} reason=SYSTEM_ERROR causeType={}", memberId, e.getClass().getSimpleName());
+            log.error("event=MEMBER_LOGOUT_FAILED memberId={} reason=SYSTEM_ERROR exceptionType={}", memberId, e.getClass().getSimpleName());
             throw e;
         }
     }

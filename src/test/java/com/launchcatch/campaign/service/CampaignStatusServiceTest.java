@@ -4,7 +4,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -109,6 +111,52 @@ class CampaignStatusServiceTest {
     }
 
     @Test
+    @DisplayName("precondition이 있는 schedule은 잠금을 잡은 뒤 상태를 바꾸기 전에 그것을 실행한다")
+    void precondition이_있는_schedule은_상태를_바꾸기_전에_그것을_실행한다() {
+        Campaign campaign = draftCampaign();
+        when(campaignRepository.findByIdForUpdate(CAMPAIGN_ID)).thenReturn(Optional.of(campaign));
+
+        service.schedule(CAMPAIGN_ID, () ->
+                assertThat(campaign.getStatus()).isEqualTo(CampaignStatus.DRAFT));
+
+        assertThat(campaign.getStatus()).isEqualTo(CampaignStatus.SCHEDULED);
+    }
+
+    @Test
+    @DisplayName("precondition이 실패하면 schedule하지 않고 그 예외를 그대로 올린다")
+    void precondition이_실패하면_schedule하지_않는다() {
+        Campaign campaign = draftCampaign();
+        when(campaignRepository.findByIdForUpdate(CAMPAIGN_ID)).thenReturn(Optional.of(campaign));
+        RuntimeException preconditionFailure = new IllegalArgumentException("precondition failed");
+
+        assertThatThrownBy(() -> service.schedule(CAMPAIGN_ID, () -> {
+            throw preconditionFailure;
+        })).isSameAs(preconditionFailure);
+
+        assertThat(campaign.getStatus()).isEqualTo(CampaignStatus.DRAFT);
+        verify(campaignStatusLogRepository, never()).save(any());
+    }
+
+    /*
+     * precondition이 있는 schedule은 이미 SCHEDULED여도 멱등하게 조용히 성공하지 않고
+     * 거부한다(#576 코드래빗 리뷰로 찾음). 멱등하게 반환하면 그 요청이 precondition을
+     * 건너뛴 채 성공 응답을 받게 된다.
+     */
+    @Test
+    @DisplayName("precondition이 있는 schedule은 이미 SCHEDULED면 거부하고 precondition을 부르지 않는다")
+    void precondition이_있는_schedule은_이미_SCHEDULED면_거부한다() {
+        Campaign campaign = scheduledCampaign();
+        when(campaignRepository.findByIdForUpdate(CAMPAIGN_ID)).thenReturn(Optional.of(campaign));
+        Runnable precondition = mock(Runnable.class);
+
+        assertThatThrownBy(() -> service.schedule(CAMPAIGN_ID, precondition))
+                .isInstanceOf(IllegalStateException.class);
+
+        verify(precondition, never()).run();
+        verify(campaignStatusLogRepository, never()).save(any());
+    }
+
+    @Test
     @DisplayName("SCHEDULED 캠페인을 activate 하면 ACTIVE 로 바뀌고 SYSTEM 행위자로 로그가 남는다")
     void SCHEDULED를_activate하면_ACTIVE로_바뀐다() {
         Campaign campaign = scheduledCampaign();
@@ -122,6 +170,71 @@ class CampaignStatusServiceTest {
         assertThat(log.getToStatus()).isEqualTo(CampaignStatus.ACTIVE);
         assertThat(log.getActorType()).isEqualTo(ActorType.SYSTEM);
         verify(events, never()).publishEvent(any());
+    }
+
+    @Test
+    @DisplayName("ACTIVE 캠페인의 예약된 하루 예산을 dailyBudget 에 옮기고 예약 값을 비운다(#840)")
+    void ACTIVE_캠페인의_예약된_하루_예산을_적용한다() {
+        Campaign campaign = activeCampaign();
+        campaign.reserveDailyBudget(20_000L);
+        when(campaignRepository.findByIdForUpdate(CAMPAIGN_ID)).thenReturn(Optional.of(campaign));
+
+        assertThat(service.applyPendingDailyBudget(CAMPAIGN_ID)).isTrue();
+
+        assertThat(campaign.getDailyBudget()).isEqualTo(20_000L);
+        assertThat(campaign.getPendingDailyBudget()).isNull();
+    }
+
+    @Test
+    @DisplayName("PAUSED 캠페인은 예약된 하루 예산을 적용하지 않고 예약 값을 남긴다(#840)")
+    void PAUSED_캠페인은_예약된_하루_예산을_적용하지_않는다() {
+        Campaign campaign = activeCampaign();
+        campaign.reserveDailyBudget(20_000L);
+        campaign.pause(PauseReason.OWNER, LocalDateTime.now(FIXED_CLOCK));
+        Long dailyBudgetBefore = campaign.getDailyBudget();
+        when(campaignRepository.findByIdForUpdate(CAMPAIGN_ID)).thenReturn(Optional.of(campaign));
+
+        assertThat(service.applyPendingDailyBudget(CAMPAIGN_ID)).isFalse();
+
+        assertThat(campaign.getDailyBudget()).isEqualTo(dailyBudgetBefore);
+        assertThat(campaign.getPendingDailyBudget()).isEqualTo(20_000L);
+    }
+
+    @Test
+    @DisplayName("예약 값이 없으면 아무것도 하지 않아 같은 영업일에 다시 불러도 결과가 같다(#840)")
+    void 예약_값이_없으면_아무것도_하지_않는다() {
+        Campaign campaign = activeCampaign();
+        Long dailyBudgetBefore = campaign.getDailyBudget();
+        when(campaignRepository.findByIdForUpdate(CAMPAIGN_ID)).thenReturn(Optional.of(campaign));
+
+        assertThat(service.applyPendingDailyBudget(CAMPAIGN_ID)).isFalse();
+
+        assertThat(campaign.getDailyBudget()).isEqualTo(dailyBudgetBefore);
+    }
+
+    @Test
+    @DisplayName("영업일을 받는 activate 는 ACTIVE 로 바꾸고 가게 요약도 갱신한다(#569)")
+    void 영업일을_받는_activate_는_가게_요약도_갱신한다() {
+        Campaign campaign = scheduledCampaign();
+        when(campaignRepository.findByIdForUpdate(CAMPAIGN_ID)).thenReturn(Optional.of(campaign));
+
+        service.activate(CAMPAIGN_ID, BUSINESS_DATE);
+
+        assertThat(campaign.getStatus()).isEqualTo(CampaignStatus.ACTIVE);
+        assertThat(captureLog().getActorType()).isEqualTo(ActorType.SYSTEM);
+        verify(storeCampaignSummaryUpdater).update(anyLong(), anyLong(), any());
+    }
+
+    @Test
+    @DisplayName("이미 ACTIVE 면 영업일을 받는 activate 를 다시 불러도 가게 요약을 갱신하지 않는다(멱등)")
+    void 이미_ACTIVE면_영업일을_받는_activate_는_요약을_갱신하지_않는다() {
+        Campaign campaign = activeCampaign();
+        when(campaignRepository.findByIdForUpdate(CAMPAIGN_ID)).thenReturn(Optional.of(campaign));
+
+        service.activate(CAMPAIGN_ID, BUSINESS_DATE);
+
+        verify(storeCampaignSummaryUpdater, never()).update(anyLong(), anyLong(), any());
+        verify(campaignStatusLogRepository, never()).save(any());
     }
 
     @Test
@@ -142,6 +255,50 @@ class CampaignStatusServiceTest {
         service.activate(CAMPAIGN_ID);
 
         assertThat(campaign.getStatus()).isEqualTo(CampaignStatus.ACTIVE);
+        verify(campaignStatusLogRepository, never()).save(any());
+    }
+
+    /*
+     * 점주 취소(#597)다. schedule 과 같이 이벤트를 내지 않고 가게 요약도 갱신하지 않는다.
+     * 다른 도메인은 SCHEDULED 를 그때그때 읽기만 해서 되돌릴 것이 없다.
+     */
+    @Test
+    @DisplayName("SCHEDULED 캠페인을 cancel 하면 DRAFT 로 바뀌고 OWNER 행위자로 로그가 남고 이벤트는 없다")
+    void SCHEDULED를_cancel하면_DRAFT로_바뀐다() {
+        Campaign campaign = scheduledCampaign();
+        when(campaignRepository.findByIdForUpdate(CAMPAIGN_ID)).thenReturn(Optional.of(campaign));
+
+        service.cancel(CAMPAIGN_ID);
+
+        assertThat(campaign.getStatus()).isEqualTo(CampaignStatus.DRAFT);
+        CampaignStatusLog log = captureLog();
+        assertThat(log.getFromStatus()).isEqualTo(CampaignStatus.SCHEDULED);
+        assertThat(log.getToStatus()).isEqualTo(CampaignStatus.DRAFT);
+        assertThat(log.getActorType()).isEqualTo(ActorType.OWNER);
+        verify(events, never()).publishEvent(any());
+        verifyNoInteractions(storeCampaignSummaryUpdater);
+    }
+
+    @Test
+    @DisplayName("이미 DRAFT면 다시 cancel해도 로그 없이 조용히 성공한다(멱등한 재시도)")
+    void 이미_DRAFT면_다시_cancel해도_조용히_성공한다() {
+        Campaign campaign = draftCampaign();
+        when(campaignRepository.findByIdForUpdate(CAMPAIGN_ID)).thenReturn(Optional.of(campaign));
+
+        service.cancel(CAMPAIGN_ID);
+
+        assertThat(campaign.getStatus()).isEqualTo(CampaignStatus.DRAFT);
+        verify(campaignStatusLogRepository, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("집행이 시작됐거나 끝난 캠페인은 cancel을 거부한다")
+    void 집행이_시작됐으면_cancel을_거부한다() {
+        for (Campaign campaign : List.of(activeCampaign(), pausedCampaign(PauseReason.OWNER), endedCampaign())) {
+            when(campaignRepository.findByIdForUpdate(CAMPAIGN_ID)).thenReturn(Optional.of(campaign));
+
+            assertThatThrownBy(() -> service.cancel(CAMPAIGN_ID)).isInstanceOf(IllegalStateException.class);
+        }
         verify(campaignStatusLogRepository, never()).save(any());
     }
 
@@ -293,6 +450,19 @@ class CampaignStatusServiceTest {
         assertThat(captureLog().getActorType()).isEqualTo(ActorType.SYSTEM);
         verify(events).publishEvent(any(CampaignStatusChangedEvent.class));
         verify(events).publishEvent(any(CampaignEndedEvent.class));
+    }
+
+    @Test
+    @DisplayName("점주가 end 하면 행위자는 OWNER로 남고 가게 요약을 ENDED로 갱신한다(#600)")
+    void 점주가_end하면_행위자가_OWNER이고_가게_요약을_갱신한다() {
+        Campaign campaign = activeCampaign();
+        when(campaignRepository.findByIdForUpdate(CAMPAIGN_ID)).thenReturn(Optional.of(campaign));
+
+        service.end(CAMPAIGN_ID, ActorType.OWNER, BUSINESS_DATE);
+
+        assertThat(campaign.getStatus()).isEqualTo(CampaignStatus.ENDED);
+        assertThat(captureLog().getActorType()).isEqualTo(ActorType.OWNER);
+        verify(storeCampaignSummaryUpdater).update(anyLong(), anyLong(), any());
     }
 
     @Test

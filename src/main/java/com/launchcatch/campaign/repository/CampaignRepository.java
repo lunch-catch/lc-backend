@@ -29,6 +29,28 @@ public interface CampaignRepository extends JpaRepository<Campaign, Long> {
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     Optional<Campaign> findByStoreIdAndStatus(Long storeId, CampaignStatus status);
 
+    /*
+     * 00:00 배치(#838)가 새 영업일의 가게 요약을 만들 ACTIVE 캠페인을 id 순으로 청크 단위로 읽는다. lastId 보다 큰
+     * 것만 읽어 다음 청크를 이어가고(offset 이 없어 뒤로 갈수록 느려지지 않는다), 엔티티가 아닌 행으로 읽어 영속성
+     * 컨텍스트에 쌓이지 않게 한다. 행 잠금은 걸지 않는다.
+     *
+     * 집행 종료일이 businessDate 보다 앞선 ACTIVE 는 뺀다(#871). 종료가 데이터 오류로 건너뛰어진 만료 캠페인이 ACTIVE 로
+     * 남아 요약 대상에 들어오면, 같은 데이터 오류로 updateAll 이 실패해 이 단계와 뒤 단계(정산)가 멈춘다. 만료된 ACTIVE 는
+     * 광고와 예약에도 쓰이지 않는다(findEligibleCampaigns 가 endDate >= today 로 거른다).
+     */
+    @Query("""
+            select new com.launchcatch.campaign.repository.CampaignSummaryRow(
+                c.storeId, c.id, c.status, c.discountTargetType, c.discountType, c.discountValue,
+                c.targetMenuId, c.usableStartTime, c.usableEndTime)
+            from Campaign c
+            where c.status = com.launchcatch.campaign.contract.CampaignStatus.ACTIVE
+            and c.endDate >= :businessDate
+            and c.id > :lastId
+            order by c.id
+            """)
+    List<CampaignSummaryRow> findActiveSummaryRowsAfter(
+            @Param("lastId") Long lastId, @Param("businessDate") LocalDate businessDate, Pageable pageable);
+
     boolean existsByOwnerIdAndStatusNotIn(Long ownerId, List<CampaignStatus> excludedStatuses);
 
     /*
@@ -49,6 +71,52 @@ public interface CampaignRepository extends JpaRepository<Campaign, Long> {
             and c.startDate <= :today and c.endDate >= :today
             """)
     List<Campaign> findEligibleCampaigns(@Param("today") LocalDate today);
+
+    /*
+     * 00:00 배치(#569)가 집행 기간이 끝난 캠페인을 찾는다. 집행 종료일이 영업일보다 앞이면(어제까지가 집행 기간이었으면)
+     * ACTIVE, PAUSED 모두 종료 대상이다. 전이는 캠페인마다 행 잠금 아래 따로 하므로 여기서는 id 만 읽는다.
+     */
+    @Query("""
+            select c.id from Campaign c
+            where c.status in (
+                com.launchcatch.campaign.contract.CampaignStatus.ACTIVE,
+                com.launchcatch.campaign.contract.CampaignStatus.PAUSED
+            )
+            and c.endDate < :businessDate
+            order by c.id
+            """)
+    List<Long> findIdsToEnd(@Param("businessDate") LocalDate businessDate);
+
+    /*
+     * 00:00 배치(#569)가 집행 시작일이 된 SCHEDULED 캠페인을 찾는다. 시작일이 영업일 이하이면 대상이라 배치가 하루
+     * 빠졌어도 다음 실행이 이어서 켠다. 집행 기간이 이미 지난 SCHEDULED 는 켜지 않는다.
+     */
+    @Query("""
+            select c from Campaign c
+            where c.status = com.launchcatch.campaign.contract.CampaignStatus.SCHEDULED
+            and c.startDate <= :businessDate and c.endDate >= :businessDate
+            order by c.id
+            """)
+    List<Campaign> findToStart(@Param("businessDate") LocalDate businessDate);
+
+    // 새 캠페인을 켜기 전에 같은 가게에서 아직 ACTIVE 인 다른 캠페인을 찾는다(#569). 가게에 ACTIVE 가 둘 생기지 않게 한다.
+    @Query("""
+            select c.id from Campaign c
+            where c.storeId = :storeId
+            and c.status = com.launchcatch.campaign.contract.CampaignStatus.ACTIVE
+            and c.id <> :campaignId
+            order by c.id
+            """)
+    List<Long> findOtherActiveIdsByStoreId(@Param("storeId") Long storeId, @Param("campaignId") Long campaignId);
+
+    // 00:00 배치(#840)가 하루 예산 변경을 적용할 ACTIVE 캠페인의 id 다. 적용은 캠페인마다 행 잠금 아래에서 다시 확인한다.
+    @Query("""
+            select c.id from Campaign c
+            where c.status = com.launchcatch.campaign.contract.CampaignStatus.ACTIVE
+            and c.pendingDailyBudget is not null
+            order by c.id
+            """)
+    List<Long> findIdsWithPendingDailyBudget();
 
     /*
      * 상태 전이 때 행 잠금을 걸고 조회한다(SELECT ... FOR UPDATE). 같은 캠페인에 동시에
@@ -109,4 +177,22 @@ public interface CampaignRepository extends JpaRepository<Campaign, Long> {
             @Param("ownerId") Long ownerId,
             @Param("cursorId") Long cursorId,
             @Param("limit") int limit);
+
+    /*
+     * 관리자의 전체 캠페인 목록 조회(#603) 커서 페이징이다. 점주 목록과 같은 이유로 campaignId 하나를
+     * 커서로 쓴다. 가게와 상태 필터는 둘 다 선택이라 null이면 조건을 건너뛴다. 전체를 최신순으로
+     * 훑는 조회라 기본키 역순 스캔을 쓰고 FORCE INDEX는 걸지 않는다. limit은 Pageable로 받는다.
+     */
+    @Query("""
+            select c from Campaign c
+            where (:storeId is null or c.storeId = :storeId)
+              and (:status is null or c.status = :status)
+              and (:cursorId is null or c.id < :cursorId)
+            order by c.id desc
+            """)
+    List<Campaign> findAdminPage(
+            @Param("storeId") Long storeId,
+            @Param("status") CampaignStatus status,
+            @Param("cursorId") Long cursorId,
+            Pageable pageable);
 }

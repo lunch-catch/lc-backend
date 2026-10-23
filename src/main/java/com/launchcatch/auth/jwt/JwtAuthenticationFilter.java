@@ -1,5 +1,6 @@
 package com.launchcatch.auth.jwt;
 
+import com.launchcatch.auth.AuthCookieNames;
 import com.launchcatch.auth.CustomUserDetails;
 import com.launchcatch.auth.Role;
 import com.launchcatch.auth.contract.AccessTokenValidationPolicy;
@@ -34,8 +35,6 @@ import org.springframework.web.filter.OncePerRequestFilter;
  */
 @Slf4j
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
-
-    private static final String ACCESS_TOKEN_COOKIE_NAME = "accessToken";
 
     private final JwtTokenProvider jwtTokenProvider;
     private final AccessTokenCutoffVerifier cutoffVerifier;
@@ -100,12 +99,15 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         filterChain.doFilter(request, response);
     }
 
+    // 요청 경로의 역할 쿠키만 읽는다. 다른 역할의 쿠키가 함께 실려도 쓰지 않는다(#841)
     private String resolveToken(HttpServletRequest request) {
         if (request.getCookies() == null) {
             return null;
         }
+        String cookieName = AuthCookieNames.accessTokenCookieNameForPath(
+                request.getRequestURI().substring(request.getContextPath().length()));
         for (Cookie cookie : request.getCookies()) {
-            if (ACCESS_TOKEN_COOKIE_NAME.equals(cookie.getName())) {
+            if (cookieName.equals(cookie.getName())) {
                 return cookie.getValue();
             }
         }

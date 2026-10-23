@@ -33,6 +33,8 @@ campaign/
 │   └── CampaignStatusLogRepository.java
 └── service/
     ├── CampaignStatusService.java        전이 5개 + pauseFromFunding/resumeFromFunding, 로그 기록, 이벤트 발행, pause/resume의 가게 요약 갱신(#468)
+    ├── CampaignDailyTransitionService.java 00:00 배치의 종료(집행 기간 만료)와 집행 시작(SCHEDULED -> ACTIVE) 전환(#569)
+    ├── CampaignStoreSummaryService.java  00:00 배치의 새 영업일 가게 요약 준비(#838)
     ├── CampaignPauseResumeService.java   점주용 중단·재개(#468). 점주 상태·본인 소유를 확인하고 CampaignStatusService에 맡긴다
     ├── CampaignQueryServiceImpl.java     CampaignQueryService 구현
     ├── CampaignFundingUpdaterImpl.java   CampaignFundingUpdater 구현. FundingJudgement를 상태 전이 호출로 옮긴다
@@ -43,7 +45,7 @@ campaign/
 
 `PauseReason`은 처음엔 `campaign.entity`에 뒀다가 `campaign.contract`로 옮겼다(2026-10-12). `CampaignStatus`, `TargetGender`, `DiscountTargetType`, `DiscountType`, `AgeGroup`처럼 캠페인 테이블 CHECK 제약과 1:1로 대응하는 enum은 전부 contract에 두고 엔티티가 그대로 쓰는 게 이미 있는 패턴인데, `PauseReason`만 거기서 벗어나 있었다. 다른 도메인(billing)이 `CampaignInfo.pauseReason` 필드로 이 타입을 그대로 쓰려는 계획이 나오면서, `ArchitectureTest`의 `contract는_entity와_repository를_참조하지_않는다`가 그 자리를 막는다는 게 드러나 옮겼다.
 
-입구 넷 가운데 이 이슈에서 실제로 연결된 것은 "다른 도메인의 호출"(`CampaignQueryService`, `CampaignFundingUpdater`)뿐이었다. `pause`/`resume`은 "캠페인 수동 중단과 재개(점주)" 이슈(`#468`)가 `CampaignController`의 `POST .../{campaignId}:pause`, `:resume`으로 연결했다. `schedule`/`activate`/`end`는 아직 아무도 부르지 않는다. "스케줄러 캠페인 담당 스텝" 이슈가 부를 자리다.
+입구 넷 가운데 이 이슈에서 실제로 연결된 것은 "다른 도메인의 호출"(`CampaignQueryService`, `CampaignFundingUpdater`)뿐이었다. `pause`/`resume`은 "캠페인 수동 중단과 재개(점주)" 이슈(`#468`)가 `CampaignController`의 `POST .../{campaignId}:pause`, `:resume`으로 연결했다. `end`는 점주의 직접 종료(`#600`)가 `POST .../{campaignId}:end`로 연결했고, 집행 기간이 끝난 정기 종료(`end`)와 집행 시작(`activate`)은 00:00 배치(`#569`)가 부른다. `schedule`은 캠페인 활성화(`#561`)가 부른다.
 
 `#198`이 더한 `pauseFromFunding`/`resumeFromFunding`은 billing의 `CampaignFundingUpdaterImpl`이 바로 부른다(간접 전이). `pause`/`resume`과 다른 점 하나는, 지금 상태가 그 판정을 받을 자리가 아니면 `IllegalStateException`이 아니라 조용히 무시한다는 것이다(12장 "정산 확인 질문 5개" 중 질문 4 답변). 정산의 00:00 배치나 재시도가 "그 상태에서는 무시된다"는 것 때문에 멈출 이유가 없다.
 
@@ -71,7 +73,7 @@ campaign/
 | 공개 | analytics | `CampaignStatsQueryService.activeCampaignCount(businessDate)`. `businessDate`가 오늘이거나 미래면 `IllegalArgumentException`(#354 리뷰) | 분석의 일별 집계 배치마다(#354) |
 | 받음(직접 호출) | billing | `CampaignFundingUpdater.applyFundingJudgement` | 정산의 00:00 예산 판정, 충전 직후 재예약 판정 때마다. 이벤트가 아니라 정산의 트랜잭션 안에서 직접 부른다 |
 | 쓰기 | store | `StoreCampaignSummaryUpdater` | `pause`/`resume`은 `#468`이 연결했다. 같은 트랜잭션 안에서 상태 변경, `CampaignStatusLog` 저장 다음에 부른다 |
-| 쓰기(미연결) | store | `StoreCampaignSummaryUpdater` | `activate`/`end`/`pauseFromFunding`/`resumeFromFunding` 때도 호출해야 한다(잔액 부족 중단과 충전 후 재개도 가게 요약에 반영돼야 함, 가게 담당 회신 2026-10-13). 그 네 자리는 각자의 구현 이슈가 이어 붙인다 |
+| 쓰기(`end`는 `#600`, `activate`는 `#569`가 연결) | store | `StoreCampaignSummaryUpdater` | `activate`/`end`/`pauseFromFunding`/`resumeFromFunding` 때도 호출해야 한다(잔액 부족 중단과 충전 후 재개도 가게 요약에 반영돼야 함, 가게 담당 회신 2026-10-13). `pauseFromFunding`/`resumeFromFunding` 두 자리는 각자의 구현 이슈가 이어 붙인다 |
 
 받는 이벤트는 해당 없음.
 
@@ -136,6 +138,7 @@ flowchart LR
 stateDiagram-v2
     [*] --> DRAFT
     DRAFT --> SCHEDULED: 자동 검수 통과 (SYSTEM)
+    SCHEDULED --> DRAFT: 점주 취소 (#597)
     SCHEDULED --> ACTIVE: 00:00 스케줄러 (SYSTEM)
     ACTIVE --> PAUSED: 관리자, 점주, 포인트 부족
     PAUSED --> ACTIVE: 재개
@@ -145,13 +148,39 @@ stateDiagram-v2
 
 | 전이 | 일으키는 쪽 | 나가는 이벤트 | 금지일 때 응답 |
 |---|---|---|---|
-| DRAFT -> SCHEDULED | SYSTEM | 없음(00:00 배치가 같은 흐름에서 다시 조회) | `IllegalStateException` |
-| SCHEDULED -> ACTIVE | SYSTEM | 없음(위와 같음) | `IllegalStateException` |
+| DRAFT -> SCHEDULED | OWNER(활성화 요청, 자동 검수 통과) | 없음 | `CAMPAIGN-006` |
+| SCHEDULED -> DRAFT(`#597`) | OWNER(취소 요청) | 없음(다른 도메인은 SCHEDULED 를 그때그때 읽기만 한다) | `CAMPAIGN-006` |
+| SCHEDULED -> ACTIVE | SYSTEM | 없음(00:00 배치가 같은 흐름에서 다시 조회) | `IllegalStateException` |
 | ACTIVE -> PAUSED | ADMIN, OWNER, SYSTEM(포인트 부족) | `CampaignStatusChangedEvent`(servable=false) | `IllegalStateException` |
 | PAUSED -> ACTIVE | OWNER, SYSTEM(충전 재예약) | `CampaignStatusChangedEvent`(servable=true) | `IllegalStateException` |
 | ACTIVE/PAUSED -> ENDED | SYSTEM | `CampaignStatusChangedEvent`(servable=false), `CampaignEndedEvent` | `IllegalStateException` |
 
-이 이슈엔 HTTP 엔드포인트가 없어 "금지일 때 응답"은 전부 엔티티의 `IllegalStateException`이다. 409로 바꿔 응답하는 일은 이 전이를 실제로 호출하는 컨트롤러가 생기는 이슈(점주 API 등)가 맡는다.
+DRAFT -> SCHEDULED는 점주의 캠페인 활성화 요청(`#561`)이 호출부가 되었다. `CampaignActivationService`가
+`CampaignStatusService.schedule()`을 부르기 전에 캠페인이 DRAFT인지 먼저 확인해서 거부하므로,
+`Campaign.schedule()`의 `IllegalStateException`은 이 경로에서 실제로 던져지지 않는다. 그 대신
+`CampaignActivationService`가 `CAMPAIGN-006`으로 응답한다. 기존의 나머지 전이(SCHEDULED -> ACTIVE 등)는
+아직 HTTP 엔드포인트가 없어 "금지일 때 응답"이 엔티티의 `IllegalStateException` 그대로다.
+
+#### SCHEDULED 캠페인의 취소(`#571`)
+
+점주가 본인 소유 `SCHEDULED` 캠페인을 취소해 같은 캠페인을 `DRAFT`로 되돌리는 전이를 허용한다.
+`SCHEDULED`에서는 포스터와 쿠폰 조건을 고칠 수 없다. 점주가 `ENDED`가 아닌 캠페인을 동시에
+하나만 가질 수 있다는 제한(`#525`)도 있어 새 캠페인을 만들어 잘못 입력한 내용을 고칠 수도 없다.
+취소로 기존 캠페인을 다시 수정하게 해 점주가 집행 전에 잘못된 내용을 스스로 고칠 수 있게 한다.
+
+취소 뒤에는 `DRAFT`의 기존 수정 규칙을 적용한다.
+
+| 대상 | 취소 뒤 수정 범위 |
+|---|---|
+| 포스터 | 포스터를 다시 만들거나 교체할 수 있다. [포스터 생성 설계](./poster-api-design.md#포스터-생성)의 기존 조건을 따른다 |
+| 쿠폰 조건 | 같은 캠페인의 쿠폰 조건을 다시 입력할 수 있다. [캠페인 등록 설계](./campaign-api-design.md#캠페인-등록쿠폰-조건)의 기존 조건을 따른다 |
+| 하루 예산 | `DRAFT`의 하루 예산을 다시 설정할 수 있다. [예산과 집행 기간 설계](./campaign-api-design.md#캠페인-등록노출-대상-하루-예산과-집행-기간)의 기존 조건을 따른다 |
+
+수정한 캠페인을 다시 활성화할 때는 기존 활성화 절차와 자동 검수를 거쳐 `SCHEDULED`로 전환한다.
+실제 취소 기능은 [구현 이슈 #597](https://github.com/lunch-catch/lc-backend/issues/597)이 맡았다.
+이 결정은 취소를 허용할 상태와 취소 뒤 수정 범위를 정한다. 취소 API 의 공개 계약은
+[명세서](../../api-spec/campaign-api-spec.md#캠페인-취소)에, 00:00 전환과의 경합 처리는
+[API 설계](./campaign-api-design.md#캠페인-취소점주)에 있다.
 
 ### 주요 흐름
 
@@ -233,11 +262,30 @@ sequenceDiagram
 |---|---|
 | `FundingJudgement`가 지금 상태와 안 맞을 때(NO_POINTS가 이미 PAUSED(ADMIN/OWNER)에, RESUME이 PAUSED(ADMIN/OWNER)나 ENDED에 온 경우) | 예외 대신 조용히 무시한다. 캠페인 상태는 바뀌지 않고 로그도 남지 않는다. billing의 00:00 배치나 재시도가 이 경로 때문에 멈출 이유가 없다고 판단했다(billing 확인 질문 4 답변, 12장) |
 | 같은 `FundingJudgement`가 두 번 와도(재시도, 재실행) | `pauseFromFunding`/`resumeFromFunding`이 먼저 "이미 그 상태인가"를 보고 멱등하게 반환한다. `pause`/`resume`과 같은 패턴이다 |
+| 00:00 일일 전환(종료, 집행 시작)에서 캠페인 하나의 데이터 오류(예: 할인 대상 메뉴가 그 가게 메뉴가 아니라 가게 요약 갱신이 `IllegalArgumentException`으로 거부됨, `#842`) | 그 캠페인만 건너뛰고 `CAMPAIGN_DAILY_END_SKIPPED` 또는 `CAMPAIGN_DAILY_START_SKIPPED`를 ERROR로 남긴다(`campaignId`, `businessDate`, `detail`). 단계는 실패시키지 않아 정산은 계속 돈다. 전이 트랜잭션이 되돌아가 그 캠페인은 이전 상태로 남고 다음 실행이 다시 시도한다. 그 외 예외(상태 충돌, DB 장애 등)는 끝까지 처리한 뒤 단계를 실패시킨다 |
 | 점주의 직접 재개와 billing의 RESUME 판정이 같은 캠페인에 동시에 옴 | `CampaignRepository.findByIdForUpdate`(비관 잠금)가 순서를 정한다. 늦게 온 쪽은 갱신된 상태를 보고 자기 멱등/무시 조건을 그대로 적용해 추가 코드 없이 풀린다(billing 확인 질문 4 답변) |
 
 ## 10. 배치
 
-해당 없음. 이 이슈는 배치 작업을 등록하지 않는다. `schedule`/`activate`/`end`를 00:00 배치에서 부르는 일은 "스케줄러 캠페인 담당 스텝" 이슈(뒤로 미룸, `project_lunchcatch_issue_roadmap`)가 맡는다.
+00:00 묶음에 캠페인이 맡는 단계 넷을 `ops.scheduler.DailyJob`으로 등록한다(`#569`, `#838`, `#840`, 요구사항명세서 102행). 순서 값은 102행 단계 번호 × 10 이고 정산 단계(40~)보다 앞이다. 앞 단계가 실패하면 뒤 단계(정산)는 돌지 않는다.
+
+| 순서 | 클래스 | 작업 이름 | 하는 일 |
+|---|---|---|---|
+| `@Order(10)` | `CampaignEndJob` | `CAMPAIGN_END_EXPIRED` | 집행 종료일이 영업일보다 앞인 `ACTIVE`, `PAUSED` 캠페인을 `ENDED` 로 바꾼다 |
+| `@Order(20)` | `CampaignStartJob` | `CAMPAIGN_START_SCHEDULED` | 집행 시작일이 영업일 이하인 `SCHEDULED` 캠페인을 `ACTIVE` 로 바꾸고, 같은 가게의 기존 `ACTIVE` 캠페인은 먼저 `ENDED` 로 바꾼다 |
+| `@Order(30)` | `CampaignStoreSummaryJob` | `CAMPAIGN_STORE_SUMMARY` | 그 영업일에 `ACTIVE` 이고 집행 종료일이 영업일 이상인 캠페인의 가게 요약을 `StoreCampaignSummaryUpdater.updateAll` 로 한 번에 만든다 |
+| `@Order(35)` | `CampaignPendingBudgetJob` | `CAMPAIGN_APPLY_PENDING_BUDGET` | `ACTIVE` 이고 `pendingDailyBudget` 이 있는 캠페인의 예약 값을 `dailyBudget` 으로 옮기고 예약 값을 비운다 |
+
+- **캠페인마다 `CampaignStatusService`의 전이를 따로 부른다.** 전이 하나가 자기 트랜잭션과 행 잠금(`findByIdForUpdate`)을 가지고, `CampaignDailyTransitionService`는 트랜잭션을 열지 않는다. 한 캠페인이 실패해도 나머지는 계속 처리하고, 끝에서 실패가 하나라도 있으면 예외를 던져 단계를 실패시킨다. 한 캠페인 때문에 다른 캠페인의 종료가 막히지 않는다
+- **멱등이다.** 대상 조회가 이미 `ENDED`, `ACTIVE` 인 캠페인을 걸러내고 `end`, `activate` 자체도 이미 그 상태면 조용히 성공하므로, 같은 영업일에 두 번 돌아도(이어받기, 수동 재실행) 결과가 같다. 시작일이 영업일 **이하**인 것을 대상으로 해서 배치가 하루 빠졌어도 다음 실행이 이어서 켠다
+- **기존 `ACTIVE` 를 끝내는 것과 새 캠페인을 켜는 것은 서로 다른 트랜잭션이다.** 그 사이에 실패하면 기존 캠페인만 끝난 채로 남고, 단계가 실패로 끝나 다시 돌 때 새 캠페인이 이어서 켜진다. 점주는 `ENDED` 가 아닌 캠페인을 하나만 가질 수 있어(`#525`) 보통 같은 가게에 `ACTIVE` 가 둘 있는 일은 없고 이 종료는 안전장치다
+- **집행 기간이 이미 지난 `SCHEDULED` 는 켜지 않는다.** `ACTIVE` 로 켰다가 바로 끝내는 대신 그대로 둔다. 이런 캠페인은 점주가 직접 처리한다
+- **데이터 오류 캠페인은 건너뛰고 단계는 계속한다(`#842`).** 종료와 집행 시작에서 `IllegalArgumentException` 은 캠페인 하나의 데이터 오류로 본다. 그 캠페인만 건너뛰고 ERROR 로그(`CAMPAIGN_DAILY_END_SKIPPED`, `CAMPAIGN_DAILY_START_SKIPPED`)를 남기며, 나머지 캠페인은 정상 처리하고 단계도 실패시키지 않는다. 한 캠페인의 잘못된 데이터가 정산 전체를 멈추면 다른 점주의 예약까지 막히기 때문이다. 대가로, 종료가 거부된 만료 캠페인은 `ACTIVE` 로 남아 있다가 운영이 데이터를 고칠 때까지 매일 같은 로그가 남는다. 점주 API(`CampaignPauseResumeService`)의 500 응답은 데이터 오류를 드러내려는 의도라 그대로 둔다. 가게 요약 준비(30)는 store 계약이 전체 저장을 한 트랜잭션으로 묶어 요약 한 건의 오류가 전체 롤백이 되므로 이 정책 밖이다. 대신 종료가 건너뛰어져 `ACTIVE` 로 남은 만료 캠페인이 요약 대상에 들어오지 않게 한다(`#871`, 아래 요약 저장 항목)
+- `activate` 는 상태 변경과 로그에 더해 가게 요약(`StoreCampaignSummaryUpdater`)을 `ACTIVE` 로 갱신한다. `end` 는 `#600` 이 이미 갱신한다
+- **가게 요약은 영업일마다 한 행이다(`#838`).** 전환 순간에만 쓰면 하루 넘게 진행하는 캠페인은 다음 날 요약이 없어 가게 목록과 상세에서 사라진다. 30번째 단계가 전환(10, 20) 뒤에 `ACTIVE` 캠페인 전부의 요약을 새 영업일 몫으로 만든다. 방금 켜진 캠페인은 들어가고 방금 끝난 캠페인은 빠진다
+- 요약 저장은 한 트랜잭션 안에서 id 순으로 500건씩 읽어 청크마다 `updateAll` 로 한다(store 계약이 호출자의 쓰기 트랜잭션을 요구한다). 대상은 `ACTIVE` 이면서 집행 종료일이 영업일 이상인 캠페인이다. 두 단계(종료 10, 요약 30)가 같은 캠페인을 공유하므로, 종료가 데이터 오류로 건너뛰어진 만료 캠페인(`ACTIVE` 로 남음)이 요약에 들어오면 같은 데이터 오류로 `updateAll` 이 실패해 정산이 멈춘다. 만료된 `ACTIVE` 는 광고와 예약에 쓰이지 않으므로(`findEligibleCampaigns` 가 `endDate >= today` 로 거른다) 요약에서만 뺀다. 엔티티가 아니라 필요한 컬럼만 읽는 `CampaignSummaryRow` 로 읽고 청크를 저장한 뒤 참조를 버려서, ACTIVE 캠페인 전체를 메모리에 올리지 않는다. 다음 청크는 마지막 id 보다 큰 것부터 읽는다(offset 없음). 어느 청크에서든 실패하면(예: 대상 메뉴가 그 가게 메뉴가 아님) 앞서 저장한 청크까지 전체가 롤백되고 예외가 올라가 단계가 실패한다. 뒤 단계(정산)는 돌지 않는다. (영업일, 캠페인) 기준 upsert 라 같은 영업일에 다시 돌아도 결과가 같다
+- `PAUSED` 캠페인은 새 요약을 만들지 않는다. 점주 중단 때 쓴 요약은 그 영업일에만 남는다
+- **하루 예산 변경 예약은 정산의 일일 예약(50)보다 앞에서 적용한다(`#840`).** 점주가 `ACTIVE` 캠페인의 하루 예산을 바꾸면 `pendingDailyBudget` 에만 저장되고, 다음 영업일 00:00 에 35번째 단계가 `dailyBudget` 으로 옮긴다. 캠페인마다 `CampaignStatusService.applyPendingDailyBudget` 이 자기 트랜잭션과 행 잠금 아래에서 상태를 다시 확인한다. 목록을 읽은 뒤 `PAUSED` 나 `ENDED` 가 된 캠페인에는 적용하지 않고, `PAUSED` 의 예약 값은 재개될 때를 위해 남긴다. 한 캠페인이 실패해도 나머지를 처리하고 끝에서 단계를 실패시킨다. 예약 값이 없으면 아무것도 하지 않아 같은 영업일에 다시 돌아도 결과가 같다. **알려진 한계(`#840`):** 예약 값에는 적용할 영업일이 없다. 단계가 실패해 같은 영업일에 관리자가 다시 돌리는 사이에 점주가 새로 예약하면, 그 예약이 다음 영업일이 아니라 그날 적용될 수 있다. 실패 뒤 수동 재실행과 점주 예약이 같은 시간대에 겹쳐야 해서 드물고 하루 일찍 적용될 뿐이라 두었다. 막으려면 예약 시점에 적용 영업일 컬럼을 저장하고 조회에서 그 영업일 이하만 고르면 된다
 
 ## 11. 성능
 
@@ -247,7 +295,7 @@ sequenceDiagram
 
 | 미정 항목 | 어디까지 정해졌나 | 막는 것 |
 |---|---|---|
-| `StoreCampaignSummaryUpdater` 호출(`activate`/`end`/`pauseFromFunding`/`resumeFromFunding`) | 전달 필드, 트랜잭션 기준, 호출 지점까지 가게 담당과 전부 확정했다(아래 "가게·분석 확정 사항" 참고). `pause`/`resume`은 `#468`이 이어 붙여 해소됐다 | 네 자리는 각자의 구현 이슈(스케줄러 캠페인 담당 스텝 등)가 이어 붙여야 한다 |
+| `StoreCampaignSummaryUpdater` 호출(`pauseFromFunding`/`resumeFromFunding`) | 전달 필드, 트랜잭션 기준, 호출 지점까지 가게 담당과 전부 확정했다(아래 "가게·분석 확정 사항" 참고). `pause`/`resume`은 `#468`, `end`는 `#600`, `activate`는 `#569`가 이어 붙여 해소됐다 | 남은 두 자리는 각자의 구현 이슈가 이어 붙여야 한다 |
 | 사용자(MEMBER)용 저장 포스터 조회 API 구현 | 계약(경로, 권한, 응답, 공개 상태, 오류 처리)을 가게 담당과 전부 확정하고 명세·설계까지 썼다(`poster-api-spec.md`, `poster-api-design.md`) | `Poster` 엔티티·레포지토리·컨트롤러 구현이 아직 없다. 명세가 merge된 뒤 별도 PR로 진행한다 |
 | `newPriorityUntil` | `ad_candidate`에만 컬럼이 있고 `campaign`엔 없다(#156 결정). `CampaignInfo`엔 항상 `null`로 채워 보낸다 | "신규 우선 노출" 계산 규칙 자체가 문서에 없다. campaign에 컬럼을 추가할지부터 정해야 한다 |
 

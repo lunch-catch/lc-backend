@@ -2,6 +2,7 @@ package com.launchcatch.campaign.template.service;
 
 import com.launchcatch.campaign.exception.CampaignException;
 import com.launchcatch.campaign.exception.PosterErrorCode;
+import com.launchcatch.campaign.template.client.GeneratedTemplate;
 import com.launchcatch.campaign.template.client.TemplateGenerationTimeoutException;
 import com.launchcatch.campaign.template.client.TemplateHtmlGenerator;
 import com.launchcatch.campaign.template.dto.TemplateCreateResponse;
@@ -12,6 +13,7 @@ import com.launchcatch.campaign.template.repository.TemplateQuotaRepository;
 import com.launchcatch.campaign.template.repository.TemplateRepository;
 import com.launchcatch.campaign.template.repository.TemplateVersionRepository;
 import com.launchcatch.campaign.template.TemplateHtmlSanitizer;
+import com.launchcatch.campaign.template.TemplatePromptValidator;
 import com.launchcatch.campaign.template.TemplateSlotValidator;
 import java.time.Clock;
 import java.time.LocalDateTime;
@@ -34,6 +36,7 @@ public class TemplateCreateService {
     private final TemplateHtmlGenerator templateHtmlGenerator;
     private final TemplateHtmlSanitizer templateHtmlSanitizer;
     private final TemplateSlotValidator templateSlotValidator;
+    private final TemplatePromptValidator templatePromptValidator;
     private final TemplateGenerationRateLimiter templateGenerationRateLimiter;
     private final TransactionTemplate transactionTemplate;
     private final Clock clock;
@@ -57,25 +60,50 @@ public class TemplateCreateService {
     public TemplateCreateResponse create(String name, String requestPrompt, String requestId, Long adminId) {
         var existing = templateVersionRepository.findByRequestId(requestId);
         if (existing.isPresent()) {
-            return toResponse(existing.get(), List.of());
+            return toResponse(existing.get(), List.of(), List.of());
         }
         templateGenerationRateLimiter.checkLimit(adminId, requestId);
+        validatePrompt(requestPrompt, requestId);
         if (templateRepository.count() >= maxTemplates) {
             throw new CampaignException(PosterErrorCode.TEMPLATE_LIMIT_EXCEEDED);
         }
-        Document document = Jsoup.parseBodyFragment(generate(requestPrompt));
+        GeneratedTemplate generated = generate(requestPrompt);
+        if (generated.chatOnly()) {
+            return chatOnlyResponse(requestId, generated);
+        }
+        Document document = Jsoup.parseBodyFragment(generated.html());
         TemplateSanitizeResult sanitized = templateHtmlSanitizer.sanitize(document);
         templateSlotValidator.validate(document);
         try {
-            return transactionTemplate.execute(status -> save(name, requestPrompt, requestId, adminId, sanitized));
+            return transactionTemplate.execute(status -> save(name, requestPrompt, requestId, adminId, sanitized, generated.message(), generated.suggestedPrompts()));
         } catch (DataIntegrityViolationException e) {
             return templateVersionRepository.findByRequestId(requestId)
-                    .map(found -> toResponse(found, List.<String>of()))
+                    .map(found -> toResponse(found, List.<String>of(), List.<String>of()))
                     .orElseThrow(() -> e);
         }
     }
 
-    private String generate(String requestPrompt) {
+    // 요청 문구를 모델에 보내기 전에 거른다(#428). 거부해도 분당 3회에는 이미 센 상태다.
+    private void validatePrompt(String requestPrompt, String requestId) {
+        try {
+            templatePromptValidator.validate(requestPrompt);
+        } catch (CampaignException e) {
+            templateGenerationRateLimiter.releaseInFlight(requestId);
+            throw e;
+        }
+    }
+
+    /*
+     * 템플릿을 만들거나 고치라는 요청이 아니어서 모델이 자연어로만 답한 경우다(#733). 템플릿, 버전, template_quota 를
+     * 만들지 않고 message 만 돌려준다. 저장된 것이 없어 같은 requestId 재시도는 모델을 다시 부르므로, 처리 중 표식은
+     * 풀어 재시도가 POSTER-004 로 막히지 않게 한다.
+     */
+    private TemplateCreateResponse chatOnlyResponse(String requestId, GeneratedTemplate generated) {
+        templateGenerationRateLimiter.releaseInFlight(requestId);
+        return TemplateCreateResponse.chatOnly(generated.message());
+    }
+
+    private GeneratedTemplate generate(String requestPrompt) {
         try {
             return templateHtmlGenerator.generate(requestPrompt);
         } catch (TemplateGenerationTimeoutException e) {
@@ -97,22 +125,24 @@ public class TemplateCreateService {
      * 가 트랜잭션 밖에서 다시 조회해 먼저 저장된 버전으로 응답한다.
      */
     private TemplateCreateResponse save(
-            String name, String requestPrompt, String requestId, Long adminId, TemplateSanitizeResult sanitized) {
+            String name, String requestPrompt, String requestId, Long adminId, TemplateSanitizeResult sanitized,
+            String message, List<String> suggestedPrompts) {
         if (templateQuotaRepository.tryReserve(maxTemplates) == 0) {
             throw new CampaignException(PosterErrorCode.TEMPLATE_LIMIT_EXCEEDED);
         }
         Template template = Template.createDraft(name);
         TemplateVersion version = template.addDraftVersion(
-                adminId, LocalDateTime.now(clock), requestPrompt, requestId, sanitized.html(), 1);
+                adminId, LocalDateTime.now(clock), requestPrompt, requestId, sanitized.html(), message, 1);
         templateRepository.saveAndFlush(template);
-        return toResponse(version, sanitized.removedElements());
+        return toResponse(version, sanitized.removedElements(), suggestedPrompts);
     }
 
     /*
      * 재시도로 되돌려주는 응답은 removedElements 를 비워 둔다. 그 목록은 저장하지 않아
      * 처음 응답 이후로는 다시 만들어낼 수 없다.
      */
-    private TemplateCreateResponse toResponse(TemplateVersion version, List<String> removedElements) {
+    private TemplateCreateResponse toResponse(
+            TemplateVersion version, List<String> removedElements, List<String> suggestedPrompts) {
         Template template = version.getTemplate();
         return new TemplateCreateResponse(
                 template.getId(),
@@ -120,7 +150,8 @@ public class TemplateCreateService {
                 version.getVersionNumber(),
                 template.getStatus(),
                 version.getHtmlContent(),
+                version.getMessage() == null ? "" : version.getMessage(),
                 removedElements,
-                TemplateCreateResponse.SUGGESTED_PROMPTS);
+                suggestedPrompts);
     }
 }

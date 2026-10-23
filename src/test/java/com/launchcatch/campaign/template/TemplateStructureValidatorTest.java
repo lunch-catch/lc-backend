@@ -12,7 +12,6 @@ import org.junit.jupiter.api.Test;
 class TemplateStructureValidatorTest {
 
     private static final String HTML = "<div>"
-            + "<span data-slot=\"adLabel\">ad</span>"
             + "<h1 data-slot=\"eventName\">title</h1>"
             + "<p data-slot=\"discount\">discount</p>"
             + "<p data-slot=\"period\">period</p>"

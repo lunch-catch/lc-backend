@@ -8,6 +8,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import ch.qos.logback.classic.Level;
@@ -21,6 +22,7 @@ import com.launchcatch.adserving.contract.WishlistQueryService;
 import com.launchcatch.store.contract.StoreQueryService;
 import com.launchcatch.store.contract.StoreInfo;
 import com.launchcatch.coupon.CouponListFilter;
+import com.launchcatch.coupon.contract.CouponExpiredEvent;
 import com.launchcatch.coupon.dto.CouponDetailResponse;
 import com.launchcatch.coupon.dto.CouponEventStatusResponse.CannotIssueReason;
 import com.launchcatch.coupon.dto.CouponEventStatusResponse.EventState;
@@ -39,6 +41,7 @@ import com.launchcatch.coupon.exception.CouponErrorCode;
 import com.launchcatch.coupon.exception.CouponException;
 import com.launchcatch.coupon.repository.CouponDailyLimitRepository;
 import com.launchcatch.coupon.repository.CouponEventRepository;
+import com.launchcatch.coupon.repository.CouponInventoryRepository;
 import com.launchcatch.coupon.repository.CouponUsageHistoryRepository;
 import com.launchcatch.coupon.repository.MemberCouponRepository;
 import com.launchcatch.global.exception.CommonErrorCode;
@@ -72,6 +75,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.BeanUtils;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.test.util.ReflectionTestUtils;
 
@@ -89,6 +93,8 @@ class CouponLookUpServiceTest {
     @Mock WishlistQueryService wishes;
     @Mock CampaignQueryService campaignQueryService;
     @Mock MemberQueryService memberQueryService;
+    @Mock ApplicationEventPublisher publisher;
+    @Mock CouponInventoryRepository inventories;
 
     private CouponLookUpService service;
 
@@ -169,7 +175,7 @@ class CouponLookUpServiceTest {
         void setUp() {
             service = new CouponLookUpService(
                     memberCouponRepository, couponEventRepository, couponUsageHistoryRepository, couponDailyLimitRepository, campaignQueryService, memberQueryService,
-                    Clock.fixed(Instant.parse("2026-10-10T03:00:00Z"), ZoneOffset.UTC), stores, wishes);
+                    Clock.fixed(Instant.parse("2026-10-10T03:00:00Z"), ZoneOffset.UTC), stores, wishes, publisher, mock(CouponInventoryRepository.class));
         }
 
         @ParameterizedTest
@@ -364,6 +370,7 @@ class CouponLookUpServiceTest {
             CouponEvent event = BeanUtils.instantiateClass(CouponEvent.class);
             ReflectionTestUtils.setField(event, "id", 81L);
             ReflectionTestUtils.setField(event, "storeId", 10L);
+            ReflectionTestUtils.setField(event, "campaignId", 91L);
             ReflectionTestUtils.setField(event, "storeName", "런치식당");
             ReflectionTestUtils.setField(event, "storeImageUrl", "https://cdn.example.com/stores/10/logo-v1.jpg");
             ReflectionTestUtils.setField(event, "discountTargetType", DiscountTargetType.MENU);
@@ -528,6 +535,8 @@ class CouponLookUpServiceTest {
             assertThat(coupon.getQrToken()).isEqualTo(QR_TOKEN);
             assertThat(coupon.getQrVersion()).isEqualTo(4);
             assertThat(coupon.getQrExpiresAt()).isEqualTo(USE_TIME);
+            verify(publisher).publishEvent(new CouponExpiredEvent("coupon-expired:" + COUPON_ID, END_TIME,
+                    MEMBER_ID, 91L, 10L, EVENT_ID, COUPON_ID));
         }
 
         @ParameterizedTest
@@ -588,9 +597,9 @@ class CouponLookUpServiceTest {
                         assertThat(exception.getErrorCode().getHttpStatus().value()).isEqualTo(403);
                     });
             assertThat(diagnosticLogs.list).singleElement().satisfies(event -> {
-                assertThat(event.getLevel()).isEqualTo(Level.WARN);
+                assertThat(event.getLevel()).isEqualTo(Level.INFO);
                 assertThat(event.getFormattedMessage()).isEqualTo(
-                        "event=COUPON_DETAIL_FAILED memberId=17 memberCouponId=" + memberCouponId + " reason=COUPON-011");
+                        "event=COUPON_DETAIL_FAILED memberId=17 memberCouponId=" + memberCouponId + " errorCode=COUPON-011");
             });
         }
 
@@ -606,9 +615,9 @@ class CouponLookUpServiceTest {
                         assertThat(exception.getErrorCode().getHttpStatus().value()).isEqualTo(404);
                     });
             assertThat(diagnosticLogs.list).singleElement().satisfies(event -> {
-                assertThat(event.getLevel()).isEqualTo(Level.WARN);
+                assertThat(event.getLevel()).isEqualTo(Level.INFO);
                 assertThat(event.getFormattedMessage()).isEqualTo(
-                        "event=COUPON_DETAIL_FAILED memberId=17 memberCouponId=1001 reason=COUPON-001");
+                        "event=COUPON_DETAIL_FAILED memberId=17 memberCouponId=1001 errorCode=COUPON-001");
             });
         }
 
@@ -629,7 +638,7 @@ class CouponLookUpServiceTest {
             assertThat(diagnosticLogs.list).singleElement().satisfies(event -> {
                 assertThat(event.getLevel()).isEqualTo(Level.ERROR);
                 assertThat(event.getFormattedMessage()).isEqualTo(
-                        "event=COUPON_DATA_INTEGRITY_FAILED reason=EVENT_SNAPSHOT_MISSING code=COMMON-001 memberCouponId=1001 eventId=81");
+                        "event=COUPON_DATA_INTEGRITY_FAILED reason=EVENT_SNAPSHOT_MISSING errorCode=COMMON-001 memberCouponId=1001 couponEventId=81");
                 assertThat(event.getThrowableProxy()).isNull();
             });
         }
@@ -650,7 +659,7 @@ class CouponLookUpServiceTest {
             assertThat(diagnosticLogs.list).singleElement().satisfies(event -> {
                 assertThat(event.getLevel()).isEqualTo(Level.ERROR);
                 assertThat(event.getFormattedMessage()).isEqualTo(
-                        "event=COUPON_DATA_INTEGRITY_FAILED reason=USAGE_HISTORY_MISSING code=COMMON-001 memberCouponId=1001 eventId=81");
+                        "event=COUPON_DATA_INTEGRITY_FAILED reason=USAGE_HISTORY_MISSING errorCode=COMMON-001 memberCouponId=1001 couponEventId=81");
                 assertThat(event.getThrowableProxy()).isNull();
             });
         }
@@ -659,7 +668,7 @@ class CouponLookUpServiceTest {
         private CouponLookUpService serviceAt(Instant instant) {
             CouponLookUpService configured = new CouponLookUpService(
                     memberCouponRepository, couponEventRepository, couponUsageHistoryRepository, couponDailyLimitRepository, campaignQueryService, memberQueryService,
-                    Clock.fixed(instant, ZoneOffset.UTC), stores, wishes);
+                    Clock.fixed(instant, ZoneOffset.UTC), stores, wishes, publisher, mock(CouponInventoryRepository.class));
             return configured;
         }
 
@@ -690,6 +699,7 @@ class CouponLookUpServiceTest {
             CouponEvent event = BeanUtils.instantiateClass(CouponEvent.class);
             ReflectionTestUtils.setField(event, "id", EVENT_ID);
             ReflectionTestUtils.setField(event, "storeId", 10L);
+            ReflectionTestUtils.setField(event, "campaignId", 91L);
             ReflectionTestUtils.setField(event, "storeName", "런치식당");
             ReflectionTestUtils.setField(event, "storeImageUrl", "https://cdn.example.com/stores/10/logo-v1.jpg");
             ReflectionTestUtils.setField(event, "status", CouponEventStatus.ACTIVE);
@@ -720,7 +730,7 @@ class CouponLookUpServiceTest {
 
     // 지정한 시계와 일일 발급 한도를 사용하는 조회 서비스를 구성한다.
     private CouponLookUpService configuredService(Clock clock, int dailyLimit) {
-        CouponLookUpService configured = new CouponLookUpService(memberCouponRepository, couponEventRepository, couponUsageHistoryRepository, repository, campaignQueryService, memberQueryService, clock, stores, wishes);
+        CouponLookUpService configured = new CouponLookUpService(memberCouponRepository, couponEventRepository, couponUsageHistoryRepository, repository, campaignQueryService, memberQueryService, clock, stores, wishes, publisher, inventories);
         ReflectionTestUtils.setField(configured, "dailyLimit", dailyLimit);
         ReflectionTestUtils.setField(configured, "issueStartTime", LocalTime.of(11, 0));
         ReflectionTestUtils.setField(configured, "issueEndTime", LocalTime.of(14, 0));
@@ -928,6 +938,55 @@ class CouponLookUpServiceTest {
             assertThat(service.getEventStatus(17L, List.of(10L)).items().getFirst().eventState()).isEqualTo(expected);
         }
 
+        @ParameterizedTest
+        @CsvSource({
+                "ACTIVE, 2, 12:29:59.999999, OPEN, true",
+                "ACTIVE, 2, 12:30:00, CLOSED, false",
+                "ACTIVE, 2, 13:00:00, CLOSED, false",
+                "ACTIVE, 0, 12:30:00, CLOSED, false",
+                "SCHEDULED, 2, 12:30:00, CLOSED, false"
+        })
+        void 사용_종료_시각부터_운영_상태와_재고에_관계없이_발급을_닫는다(
+                CouponEventStatus status, int quantity, LocalTime now, EventState expected, boolean canIssue) {
+            service = eventServiceAt(TODAY.atTime(now).toInstant(ZoneOffset.ofHours(9)).toString());
+            CouponEvent event = event(501L, 10L, status);
+            ReflectionTestUtils.setField(event, "usableStartAt", TODAY.atTime(11, 30));
+            ReflectionTestUtils.setField(event, "usableEndAt", TODAY.atTime(12, 30));
+            var stock = quantity(501L, quantity);
+            when(couponEventRepository.findByStoreIdInAndBusinessDateAndStatusIn(List.of(10L), TODAY, STATES))
+                    .thenReturn(List.of(event));
+            when(couponEventRepository.findQuantitiesByEventIdsAndStatus(List.of(501L), CouponInventoryStatus.AVAILABLE))
+                    .thenReturn(List.of(stock));
+            when(memberQueryService.findById(17L)).thenReturn(Optional.of(member(MemberStatus.ACTIVE)));
+            when(wishes.findWishedCampaignIds(17L)).thenReturn(List.of(501L));
+
+            Item item = service.getEventStatus(17L, List.of(10L)).items().getFirst();
+
+            assertThat(item.eventState()).isEqualTo(expected);
+            assertThat(item.canIssue()).isEqualTo(canIssue);
+            assertThat(item.cannotIssueReason()).isEqualTo(canIssue ? null : CannotIssueReason.NOT_OPEN);
+            assertThat(item.eventId()).isEqualTo(501L);
+            assertThat(item.remainingQuantity()).isEqualTo(quantity);
+        }
+
+        @Test
+        void 사용_종료_뒤에도_이미_발급한_사유를_시간_사유보다_우선한다() {
+            service = eventServiceAt("2026-10-14T04:00:00Z");
+            CouponEvent event = event(501L, 10L, CouponEventStatus.ACTIVE);
+            ReflectionTestUtils.setField(event, "usableStartAt", TODAY.atTime(11, 30));
+            ReflectionTestUtils.setField(event, "usableEndAt", TODAY.atTime(12, 30));
+            when(couponEventRepository.findByStoreIdInAndBusinessDateAndStatusIn(List.of(10L), TODAY, STATES))
+                    .thenReturn(List.of(event));
+            when(memberQueryService.findById(17L)).thenReturn(Optional.of(member(MemberStatus.ACTIVE)));
+            when(memberCouponRepository.findIssuedEventIds(17L, List.of(501L))).thenReturn(List.of(501L));
+
+            Item item = service.getEventStatus(17L, List.of(10L)).items().getFirst();
+
+            assertThat(item.eventState()).isEqualTo(EventState.CLOSED);
+            assertThat(item.canIssue()).isFalse();
+            assertThat(item.cannotIssueReason()).isEqualTo(CannotIssueReason.ALREADY_ISSUED);
+        }
+
         private void stubSingleEvent() {
             when(couponEventRepository.findByStoreIdInAndBusinessDateAndStatusIn(List.of(10L), TODAY, STATES))
                     .thenReturn(List.of(event(501L, 10L, CouponEventStatus.ACTIVE)));
@@ -964,5 +1023,46 @@ class CouponLookUpServiceTest {
             return quantity;
         }
 
+    }
+
+    @Nested
+    @DisplayName("소진 통보 복구 조회")
+    class SoldOutLookup {
+
+        private CouponEvent event() {
+            CouponEvent event = BeanUtils.instantiateClass(CouponEvent.class);
+            ReflectionTestUtils.setField(event, "id", 81L);
+            ReflectionTestUtils.setField(event, "campaignId", 91L);
+            ReflectionTestUtils.setField(event, "businessDate", TODAY);
+            return event;
+        }
+
+        @Test
+        void 소진_복구는_마지막_발급_시각을_사용한다() {
+            when(couponEventRepository.findById(81L)).thenReturn(java.util.Optional.of(event()));
+            when(memberCouponRepository.findLastIssuedAtByCouponEventId(81L))
+                    .thenReturn(java.util.Optional.of(TODAY.atTime(11, 30)));
+            assertThat(service.findSoldOut(81L))
+                    .contains(new CouponLookUpService.SoldOut(91L, TODAY, TODAY.atTime(11, 30)));
+        }
+
+        @Test
+        void 이벤트가_없으면_복구할_소진도_없다() {
+            assertThat(service.findSoldOut(81L)).isEmpty();
+        }
+
+        @Test
+        void 발급_기록이_없으면_소진_시각을_만들지_않는다() {
+            when(couponEventRepository.findById(81L)).thenReturn(java.util.Optional.of(event()));
+            assertThat(service.findSoldOut(81L)).isEmpty();
+        }
+
+        @Test
+        void 남은_재고가_있으면_소진이_아니다() {
+            when(inventories.existsByCouponEventIdAndStatus(81L, com.launchcatch.coupon.entity.CouponInventoryStatus.AVAILABLE))
+                    .thenReturn(true);
+            assertThat(service.findSoldOut(81L)).isEmpty();
+            verifyNoInteractions(couponEventRepository);
+        }
     }
 }

@@ -6,6 +6,8 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.launchcatch.auth.CustomUserDetails;
+import com.launchcatch.auth.Role;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -30,12 +32,32 @@ class AnalyticsSecurityIntegrationTest extends AbstractAnalyticsIntegrationTest 
 
     @ParameterizedTest
     @ValueSource(strings = {
-            "/v1/admin/sales/top-owners",
-            "/v1/admin/fraud/invalid-impressions",
-            "/v1/admin/campaign-reports"
+            "/v1/admin/sales/top-owners"
     })
     void 관리자_GET_경로는_인증과_관리자_역할을_요구한다(String path) throws Exception {
         assertAdminGet(path);
+    }
+
+    // A-14 는 #625 로 구현돼 관리자가 campaignIds 없이 부르면 404 가 아니라 400 이다
+    @Test
+    void 관리자_캠페인_리포트_경로는_인증과_관리자_역할을_요구한다() throws Exception {
+        String path = "/v1/admin/campaign-reports";
+        mvc.perform(get(path)).andExpect(status().isUnauthorized());
+        mvc.perform(get(path).with(user("member").roles("MEMBER"))).andExpect(status().isForbidden());
+        mvc.perform(get(path).with(user("admin").roles("ADMIN"))).andExpect(status().isBadRequest());
+        mvc.perform(get(path).with(user("super").roles("SUPER_ADMIN"))).andExpect(status().isBadRequest());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+            "/v1/admin/fraud/invalid-impressions",
+            "/v1/admin/fraud/campaign-warnings"
+    })
+    void 부정_관리_경로는_인증과_관리자_역할을_요구한다(String path) throws Exception {
+        mvc.perform(get(path)).andExpect(status().isUnauthorized());
+        mvc.perform(get(path).with(user("member").roles("MEMBER"))).andExpect(status().isForbidden());
+        mvc.perform(get(path).with(user("admin").roles("ADMIN"))).andExpect(status().isBadRequest());
+        mvc.perform(get(path).with(user("super").roles("SUPER_ADMIN"))).andExpect(status().isBadRequest());
     }
 
     @Test
@@ -58,6 +80,17 @@ class AnalyticsSecurityIntegrationTest extends AbstractAnalyticsIntegrationTest 
         mvc.perform(get("/v1/admin/dashboard/members").with(user("admin").roles("ADMIN")))
                 .andExpect(status().isBadRequest());
         mvc.perform(get("/v1/admin/dashboard/members").with(user("super").roles("SUPER_ADMIN")))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void 퍼널_경로는_인증과_관리자_역할을_요구한다() throws Exception {
+        mvc.perform(get("/v1/admin/dashboard/funnel")).andExpect(status().isUnauthorized());
+        mvc.perform(get("/v1/admin/dashboard/funnel").with(user("member").roles("MEMBER")))
+                .andExpect(status().isForbidden());
+        mvc.perform(get("/v1/admin/dashboard/funnel").with(user("admin").roles("ADMIN")))
+                .andExpect(status().isBadRequest());
+        mvc.perform(get("/v1/admin/dashboard/funnel").with(user("super").roles("SUPER_ADMIN")))
                 .andExpect(status().isBadRequest());
     }
 
@@ -100,8 +133,8 @@ class AnalyticsSecurityIntegrationTest extends AbstractAnalyticsIntegrationTest 
                 .andExpect(status().isUnauthorized());
         mvc.perform(get("/v1/members/me/usage-stats").with(user("admin").roles("ADMIN")))
                 .andExpect(status().isForbidden());
-        mvc.perform(get("/v1/members/me/usage-stats").with(user("member").roles("MEMBER")))
-                .andExpect(status().isNotFound());
+        mvc.perform(get("/v1/members/me/usage-stats").with(user(new CustomUserDetails(1L, Role.MEMBER))))
+                .andExpect(status().isOk());
     }
 
     @Test

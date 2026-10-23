@@ -29,7 +29,7 @@ public class PaymentRecheckWorker {
     public void recheckUnknownPayments() {
         int handled = recheckService.recheckDue();
         if (handled > 0) {
-            log.info("event=PAYMENT_RECHECK_RUN handled={}", handled);
+            log.info("event=BILLING_PAYMENT_RECHECK_RUN handledCount={}", handled);
         }
     }
 }

@@ -43,6 +43,48 @@ class StoreListIntegrationTest extends AbstractStoreIntegrationTest {
     @Autowired Clock clock;
 
     @Test
+    void 검증된_대표_이미지_URL을_반환하고_인테리어_이미지로_가게가_중복되지_않는다() throws Exception {
+        long storeId = createStore(KEYWORD, "KOREAN", "37", "127", true);
+        createImage(storeId, "LOGO", null, "VERIFIED");
+        createImage(storeId, "INTERIOR", 1, "VERIFIED");
+        createImage(storeId, "INTERIOR", 2, "VERIFIED");
+
+        String body = mvc.perform(stores().param("query", KEYWORD).param("pageSize", "1"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.items[0].storeImageUrl")
+                        .value("https://cdn.example.com/stores/" + storeId + "/LOGO.png"))
+                .andExpect(jsonPath("$.data.nextPageToken").value((Object) null))
+                .andReturn().getResponse().getContentAsString();
+
+        assertThat(ids(body)).containsExactly(storeId);
+    }
+
+    @Test
+    void 대표_이미지가_없으면_가게를_유지하고_이미지_URL은_null로_반환한다() throws Exception {
+        long storeId = createStore(KEYWORD, "KOREAN", "37", "127", true);
+        createImage(storeId, "INTERIOR", 1, "VERIFIED");
+
+        mvc.perform(stores().param("query", KEYWORD))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.items[0].storeId").value(storeId))
+                .andExpect(jsonPath("$.data.items[0].storeImageUrl").hasJsonPath())
+                .andExpect(jsonPath("$.data.items[0].storeImageUrl").value((Object) null));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"PENDING", "UPLOADED"})
+    void 업로드_확인_전_대표_이미지는_URL을_공개하지_않는다(String state) throws Exception {
+        long storeId = createStore(KEYWORD, "KOREAN", "37", "127", true);
+        createImage(storeId, "LOGO", null, state);
+
+        mvc.perform(stores().param("query", KEYWORD))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.items[0].storeId").value(storeId))
+                .andExpect(jsonPath("$.data.items[0].storeImageUrl").hasJsonPath())
+                .andExpect(jsonPath("$.data.items[0].storeImageUrl").value((Object) null));
+    }
+
+    @Test
     void 검색어가_없어도_현재_위치에서_거리순으로_조회한다() throws Exception {
         long near = createStore(KEYWORD + " 가까운 가게", "KOREAN", "10", "10", true);
         long far = createStore(KEYWORD + " 먼 가게", "JAPANESE", "10.1", "10", true);
@@ -162,12 +204,15 @@ class StoreListIntegrationTest extends AbstractStoreIntegrationTest {
     }
 
     @Test
-    void 활성_MENU_캠페인의_메뉴가_누락되면_정상_응답으로_숨기지_않는다() throws Exception {
+    void 활성_MENU_캠페인의_메뉴가_누락되면_캠페인만_제외한다() throws Exception {
         long storeId = createStore(KEYWORD, "KOREAN", "37", "127", true);
         saveSummary(storeId, LocalDate.now(clock), StoreCampaignStatus.ACTIVE, StoreDiscountTargetType.ALL, null);
         jdbc.update("update store_campaign_summary set discount_target_type = 'MENU' where store_id = ?", storeId);
 
-        mvc.perform(stores().param("query", KEYWORD)).andExpect(status().isInternalServerError());
+        mvc.perform(stores().param("query", KEYWORD)).andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.items[0].storeId").value(storeId))
+                .andExpect(jsonPath("$.data.items[0].hasActiveCampaign").value(false))
+                .andExpect(jsonPath("$.data.items[0].activeCampaign").value((Object) null));
     }
 
     @Test
@@ -415,6 +460,15 @@ class StoreListIntegrationTest extends AbstractStoreIntegrationTest {
         return values.stream().map(Number::longValue).toList();
     }
 
+    private void createImage(long storeId, String type, Integer order, String state) {
+        var now = LocalDateTime.now(clock);
+        jdbc.update("""
+                insert into store_image(store_id, image_type, object_key, sort_order, upload_status,
+                    verified_at, created_at, updated_at) values (?, ?, ?, ?, ?, ?, ?, ?)
+                """, storeId, type, "stores/" + storeId + "/" + type + (order == null ? "" : order) + ".png",
+                order, state, state.equals("VERIFIED") ? now : null, now, now);
+    }
+
     private long createStore(String name, String category, String latitude, String longitude, boolean finalized) {
         long ownerId = OWNER_IDS.incrementAndGet();
         LocalDateTime now = LocalDateTime.now(clock);
@@ -454,4 +508,46 @@ class StoreListIntegrationTest extends AbstractStoreIntegrationTest {
     private long sessionCount(String variable) {
         return Long.parseLong((String) jdbc.queryForMap("show session status like ?", variable).get("Value"));
     }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"", " ", "\t"})
+    void 대표_이미지_키가_비어도_해당_가게와_정상_캠페인과_다른_가게를_유지한다(String key) throws Exception {
+        long id = createStore(KEYWORD, "KOREAN", "37", "127", true);
+        long other = createStore(KEYWORD, "KOREAN", "38", "127", true);
+        createImage(id, "LOGO", null, "VERIFIED");
+        saveSummary(id, LocalDate.now(clock), StoreCampaignStatus.ACTIVE, StoreDiscountTargetType.ALL, null);
+        jdbc.update("update store_image set object_key = ? where store_id = ?", key, id);
+
+        String body = mvc.perform(stores().param("query", KEYWORD))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.items[0].storeImageUrl").value((Object) null))
+                .andExpect(jsonPath("$.data.items[0].hasActiveCampaign").value(true))
+                .andExpect(jsonPath("$.data.items[0].activeCampaign.discountTargetType").value("ALL"))
+                .andReturn().getResponse().getContentAsString();
+
+        assertThat(ids(body)).containsExactly(id, other);
+    }
+
+    @Test
+    void 다른_가게의_메뉴를_참조해도_목록과_커서를_유지한다() throws Exception {
+        long id = createStore(KEYWORD, "KOREAN", "37", "127", true);
+        long other = createStore(KEYWORD, "KOREAN", "38", "127", true);
+        long target = createMenu(other, "다른 가게 메뉴", 1);
+        saveSummary(id, LocalDate.now(clock), StoreCampaignStatus.ACTIVE, StoreDiscountTargetType.ALL, null);
+        jdbc.update("update store_campaign_summary set discount_target_type = 'MENU', target_menu_id = ? where store_id = ?",
+                target, id);
+
+        String firstPage = mvc.perform(stores().param("query", KEYWORD).param("pageSize", "1"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.items[0].storeId").value(id))
+                .andExpect(jsonPath("$.data.items[0].hasActiveCampaign").value(false))
+                .andExpect(jsonPath("$.data.items[0].activeCampaign").value((Object) null))
+                .andReturn().getResponse().getContentAsString();
+        mvc.perform(stores().param("query", KEYWORD).param("pageSize", "1")
+                        .param("pageToken", (String) JsonPath.read(firstPage, "$.data.nextPageToken")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.items[0].storeId").value(other))
+                .andExpect(jsonPath("$.data.nextPageToken").value((Object) null));
+    }
+
 }

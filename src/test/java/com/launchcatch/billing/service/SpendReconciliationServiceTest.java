@@ -1,7 +1,6 @@
 package com.launchcatch.billing.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
@@ -12,7 +11,6 @@ import static org.mockito.Mockito.when;
 
 import com.launchcatch.billing.cache.DailySpend;
 import com.launchcatch.billing.cache.DailySpendCounter;
-import com.launchcatch.billing.config.BillingScheduleProperties;
 import com.launchcatch.billing.dto.CampaignCounterMismatch;
 import com.launchcatch.billing.dto.CampaignOverspend;
 import com.launchcatch.billing.dto.CampaignSpend;
@@ -22,7 +20,6 @@ import com.launchcatch.billing.repository.PointLedgerRepository;
 import com.launchcatch.ops.contract.BatchExecutionQueryService;
 import com.launchcatch.ops.contract.BatchExecutionRecord;
 import java.time.Clock;
-import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -47,9 +44,6 @@ class SpendReconciliationServiceTest {
     private static final Clock CLOCK = Clock.fixed(Instant.parse("2026-10-15T15:00:00Z"), ZoneId.of("Asia/Seoul"));
     private static final LocalDateTime NOW = LocalDateTime.of(2026, 10, 16, 0, 0);
 
-    private static final BillingScheduleProperties SCHEDULE =
-            new BillingScheduleProperties("10:00", "12:59", Duration.ofMinutes(30), List.of(34, 33, 33));
-
     @Mock
     private BudgetDailyPlanRepository planRepository;
     @Mock
@@ -59,8 +53,6 @@ class SpendReconciliationServiceTest {
     @Mock
     private DailySpendCounter spendCounter;
     @Mock
-    private SpendHashRebuildService hashRebuild;
-    @Mock
     private BatchExecutionQueryService batchExecutions;
 
     private SpendReconciliationService service;
@@ -68,7 +60,7 @@ class SpendReconciliationServiceTest {
     @BeforeEach
     void setUp() {
         service = new SpendReconciliationService(planRepository, ledgerRepository, mismatchRecorder,
-                spendCounter, hashRebuild, batchExecutions, SCHEDULE, CLOCK);
+                spendCounter, batchExecutions, CLOCK);
     }
 
     private static BudgetDailyPlan plan(long campaignId) {
@@ -80,7 +72,7 @@ class SpendReconciliationServiceTest {
     }
 
     private static BatchExecutionRecord run(long runId, String jobName) {
-        return new BatchExecutionRecord(runId, jobName, RUN_DATE, "RUNNING", NOW, null, null, "batch-1", 0, null);
+        return new BatchExecutionRecord(runId, jobName, RUN_DATE, "RUNNING", NOW, null, null, "batch-1", 0, null, 1);
     }
 
     @Test
@@ -176,81 +168,41 @@ class SpendReconciliationServiceTest {
     }
 
     @Test
-    void 서빙_시간대나_노출_인정_시간_안이면_당일_대조를_거부한다() {
-        Clock midServing = Clock.fixed(Instant.parse("2026-10-16T02:00:00Z"), ZoneId.of("Asia/Seoul")); // KST 11:00
-        SpendReconciliationService midServingService = new SpendReconciliationService(planRepository, ledgerRepository,
-                mismatchRecorder, spendCounter, hashRebuild, batchExecutions, SCHEDULE, midServing);
-
-        assertThatThrownBy(() -> midServingService.reconcileToday(RUN_DATE, JOB)).isInstanceOf(IllegalStateException.class);
-        verifyNoInteractions(planRepository, ledgerRepository, spendCounter, hashRebuild, mismatchRecorder);
-    }
-
-    @Test
-    void 노출_인정_시간이_끝난_뒤면_당일_대조를_허용한다() {
-        Clock atReleaseTime = Clock.fixed(Instant.parse("2026-10-16T04:30:00Z"), ZoneId.of("Asia/Seoul")); // KST 13:30
-        SpendReconciliationService releaseService = new SpendReconciliationService(planRepository, ledgerRepository,
-                mismatchRecorder, spendCounter, hashRebuild, batchExecutions, SCHEDULE, atReleaseTime);
-        when(planRepository.findByBusinessDate(RUN_DATE)).thenReturn(List.of());
-
-        assertThat(releaseService.reconcileToday(RUN_DATE, JOB)).isZero();
-    }
-
-    @Test
-    void 그날_계획이_없으면_아무것도_읽지_않는다() {
-        when(planRepository.findByBusinessDate(RUN_DATE)).thenReturn(List.of());
-
-        assertThat(service.reconcileToday(RUN_DATE, JOB)).isZero();
-        verifyNoInteractions(spendCounter, ledgerRepository, mismatchRecorder, hashRebuild, batchExecutions);
-    }
-
-    @Test
-    void 카운터가_원장과_다르면_지우고_다시_만들며_CACHE_REBUILD로_기록한다() {
-        when(planRepository.findByBusinessDate(RUN_DATE)).thenReturn(List.of(plan(7L), plan(8L)));
+    void 해제_뒤_소진과_해제의_합이_예약액을_넘는_캠페인을_이틀_뒤에_초과로_기록한다() {
+        LocalDate released = RUN_DATE.minusDays(2);
+        when(planRepository.findByBusinessDate(released)).thenReturn(List.of(
+                BudgetDailyPlan.create(7L, 7L, released, 1000L, 10L, false, null),
+                BudgetDailyPlan.create(8L, 7L, released, 1000L, 10L, false, null),
+                BudgetDailyPlan.create(9L, 7L, released, 1000L, 10L, false, null)));
         when(batchExecutions.findByBusinessDate(RUN_DATE)).thenReturn(List.of(run(42L, JOB)));
-        when(spendCounter.readAll(RUN_DATE, List.of(7L, 8L)))
-                .thenReturn(Map.of(7L, new DailySpend(1000L, 1200L), 8L, new DailySpend(1000L, 400L)));
-        when(ledgerRepository.sumDeductForCampaignsOn(List.of(7L, 8L), RUN_DATE))
-                .thenReturn(List.of(new CampaignSpend(7L, 1000L), new CampaignSpend(8L, 400L)));
+        // 7 은 소진 400 에 해제 600 이 정확히 예약액이다. 8 은 해제 뒤 소진 100 이 더 들어와 1100 이다. 9 는 해제가 없다
+        when(ledgerRepository.sumReleaseForCampaignsOn(List.of(7L, 8L, 9L), released))
+                .thenReturn(List.of(new CampaignSpend(7L, 600L), new CampaignSpend(8L, 600L)));
+        when(ledgerRepository.sumDeductForCampaignsOn(List.of(7L, 8L, 9L), released)).thenReturn(List.of(
+                new CampaignSpend(7L, 400L), new CampaignSpend(8L, 500L), new CampaignSpend(9L, 1200L)));
 
-        assertThat(service.reconcileToday(RUN_DATE, JOB)).isEqualTo(1);
+        assertThat(service.reconcileReleasedDay(RUN_DATE, JOB)).isEqualTo(1);
 
-        // 8 은 카운터와 원장이 같아 손대지 않는다. 7 만 카운터(1200)가 원장(1000)과 달라 다시 만든다
-        verify(spendCounter).evict(RUN_DATE, 7L);
-        verify(hashRebuild).rebuildIfAbsent(RUN_DATE, 7L);
-        verify(spendCounter, never()).evict(RUN_DATE, 8L);
-        verify(hashRebuild, never()).rebuildIfAbsent(RUN_DATE, 8L);
-        verify(mismatchRecorder).recordToday(RUN_DATE, 42L, NOW, List.of(), List.of(new CampaignCounterMismatch(7L, 1000L, 1200L)));
+        // 기대값은 예약액이고 실제값은 소진과 해제의 합이다. 해제 없는 9 는 전일 대사가 본 것이라 여기서 기록하지 않는다
+        verify(mismatchRecorder).record(released, 42L, NOW,
+                List.of(new CampaignOverspend(8L, 1000L, 1100L)), List.of());
     }
 
     @Test
-    void 해시가_없으면_다시_만들지_않고_건너뛴다() {
-        when(planRepository.findByBusinessDate(RUN_DATE)).thenReturn(List.of(plan(7L)));
-        when(batchExecutions.findByBusinessDate(RUN_DATE)).thenReturn(List.of(run(42L, JOB)));
-        when(spendCounter.readAll(RUN_DATE, List.of(7L))).thenReturn(Map.of());
-        when(ledgerRepository.sumDeductForCampaignsOn(List.of(7L), RUN_DATE)).thenReturn(List.of(new CampaignSpend(7L, 500L)));
+    void 이틀_전_계획이_없거나_해제가_없으면_원장_합을_읽지_않는다() {
+        LocalDate released = RUN_DATE.minusDays(2);
+        when(planRepository.findByBusinessDate(released)).thenReturn(List.of());
 
-        assertThat(service.reconcileToday(RUN_DATE, JOB)).isZero();
-        verifyNoInteractions(hashRebuild);
-        verify(spendCounter, never()).evict(any(), any());
+        assertThat(service.reconcileReleasedDay(RUN_DATE, JOB)).isZero();
+        verifyNoInteractions(ledgerRepository, mismatchRecorder);
+
+        when(planRepository.findByBusinessDate(released)).thenReturn(List.of(
+                BudgetDailyPlan.create(7L, 7L, released, 1000L, 10L, false, null)));
+        when(batchExecutions.findByBusinessDate(RUN_DATE)).thenReturn(List.of());
+        when(ledgerRepository.sumReleaseForCampaignsOn(List.of(7L), released)).thenReturn(List.of());
+
+        assertThat(service.reconcileReleasedDay(RUN_DATE, JOB)).isZero();
+        verify(ledgerRepository, never()).sumDeductForCampaignsOn(any(), any());
         verifyNoInteractions(mismatchRecorder);
-    }
-
-    @Test
-    void 원장이_예약액을_넘으면_카운터가_같아도_초과_소진으로_기록하고_다시_만들지_않는다() {
-        when(planRepository.findByBusinessDate(RUN_DATE)).thenReturn(List.of(plan(7L, 1000L)));
-        when(batchExecutions.findByBusinessDate(RUN_DATE)).thenReturn(List.of(run(42L, JOB)));
-        when(spendCounter.readAll(RUN_DATE, List.of(7L))).thenReturn(Map.of(7L, new DailySpend(1000L, 1200L)));
-        when(ledgerRepository.sumDeductForCampaignsOn(List.of(7L), RUN_DATE)).thenReturn(List.of(new CampaignSpend(7L, 1200L)));
-
-        assertThat(service.reconcileToday(RUN_DATE, JOB)).isEqualTo(1);
-
-        verify(mismatchRecorder).recordToday(RUN_DATE, 42L, NOW, List.of(new CampaignOverspend(7L, 1000L, 1200L)), List.of());
-        verifyNoInteractions(hashRebuild);
-    }
-
-    @Test
-    void 당일_대조에도_트랜잭션을_걸지_않는다() throws Exception {
-        assertThat(SpendReconciliationService.class.getMethod("reconcileToday", LocalDate.class, String.class)
-                .isAnnotationPresent(Transactional.class)).isFalse();
     }
 }

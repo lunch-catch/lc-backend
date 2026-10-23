@@ -50,7 +50,7 @@ public class StoreQueryRepository {
                         rs.getString("object_key"), rs.getBigDecimal("latitude"), rs.getBigDecimal("longitude")));
     }
 
-    // 최종 등록된 가게만 조회하며 LEFT JOIN으로 이미지 누락도 서비스에서 오류로 확인할 수 있게 한다.
+    // 최종 등록된 가게만 조회하며 LEFT JOIN으로 대표 이미지가 누락된 가게도 유지한다.
     public List<StoreQueryRow> findAllById(List<Long> storeIds) {
         return jdbc.query("""
                 select s.store_id, s.name, i.object_key, s.latitude, s.longitude

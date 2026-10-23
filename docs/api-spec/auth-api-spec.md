@@ -41,16 +41,18 @@
 
 | 토큰 | 형식 | 유효 기간 | 쿠키 |
 | --- | --- | --- | --- |
-| Access Token | JWT | 30분 | `accessToken`, `HttpOnly`, `SameSite=Strict`, `Path=/`, `Max-Age=1800` |
+| Access Token | JWT | 30분 | 역할별 이름, `HttpOnly`, `SameSite=Strict`, `Path=/`, `Max-Age=1800` |
 | Refresh Token | Opaque(무작위 문자열) | 관리자 1일, 점주 1일, 사용자 14일 | `refreshToken`, `HttpOnly`, `SameSite=Strict`, 역할별 `Path` 와 `Max-Age` |
 
 **Access Token 은 인증이 필요한 모든 요청에 실려야 하므로 `Path=/` 다. Refresh Token 은 재발급과 로그아웃에서만 쓰므로 역할별로 좁힌다.**
 
-| 역할 | `Path` | `Max-Age` |
-| --- | --- | --- |
-| 관리자 | `/v1/admin/auth/` | `86400` (1일) |
-| 점주 | `/v1/owner/auth/` | `86400` (1일) |
-| 사용자 | `/v1/auth/` | `1209600` (14일) |
+**Access Token 쿠키는 역할마다 이름이 다르다(#841).** 같은 브라우저에서 관리자와 점주로 함께 로그인해도 서로의 토큰을 덮어쓰지 않는다. 서버는 요청 경로로 읽을 쿠키를 고른다. `/v1/admin` 아래는 관리자 쿠키를, `/v1/owner` 아래는 점주 쿠키를, 나머지는 사용자 쿠키를 읽고 다른 역할의 쿠키는 함께 실려도 쓰지 않는다.
+
+| 역할 | Access Token 쿠키 | 읽는 경로 | Refresh Token `Path` | Refresh Token `Max-Age` |
+| --- | --- | --- | --- | --- |
+| 관리자 | `adminAccessToken` | `/v1/admin/**` | `/v1/admin/auth/` | `86400` (1일) |
+| 점주 | `ownerAccessToken` | `/v1/owner/**` | `/v1/owner/auth/` | `86400` (1일) |
+| 사용자 | `accessToken` | 그 밖의 경로 | `/v1/auth/` | `1209600` (14일) |
 
 ```
 Set-Cookie: accessToken=<JWT>; HttpOnly; SameSite=Strict; Path=/; Max-Age=1800
@@ -126,13 +128,13 @@ Refresh Token은 영문·숫자·`_`·`-`로 이루어진 43자 문자열이다.
 
 **요청**
 
-- 유효한 `accessToken` 쿠키와 `ADMIN` 또는 `SUPER_ADMIN` 권한이 필요하다.
+- 유효한 `adminAccessToken` 쿠키와 `ADMIN` 또는 `SUPER_ADMIN` 권한이 필요하다.
 - 요청 본문은 없다. 관리자 ID는 인증 정보에서 확인하므로 경로 변수·쿼리로 전달하지 않는다.
 - Refresh Token 쿠키는 필수 입력이 아니다. Access Token만으로 계정의 토큰을 폐기한다.
 
 ```http
 DELETE /v1/admin/auth/tokens
-Cookie: accessToken=<JWT>
+Cookie: adminAccessToken=<JWT>
 ```
 
 **응답** `204 No Content`. 두 인증 쿠키를 `Max-Age=0`으로 삭제한다.
@@ -141,7 +143,7 @@ Cookie: accessToken=<JWT>
 
 ```http
 HTTP/1.1 204 No Content
-Set-Cookie: accessToken=; Path=/; Max-Age=0; HttpOnly; SameSite=Strict
+Set-Cookie: adminAccessToken=; Path=/; Max-Age=0; HttpOnly; SameSite=Strict
 Set-Cookie: refreshToken=; Path=/v1/admin/auth/; Max-Age=0; HttpOnly; SameSite=Strict
 ```
 
@@ -183,7 +185,7 @@ Set-Cookie: refreshToken=; Path=/v1/admin/auth/; Max-Age=0; HttpOnly; SameSite=S
 
 현재 인증된 점주의 토큰을 폐기한다. 유효한 OWNER Access Token이 필요하며 요청 본문과 Refresh Token 쿠키는 필요하지 않다. ONBOARDING 점주도 호출할 수 있다.
 
-성공 시 `204`와 두 인증 쿠키를 삭제하는 `Set-Cookie`를 반환하며 본문은 없다. 삭제 쿠키는 `accessToken`의 `Path=/`, `refreshToken`의 `Path=/v1/owner/auth/`와 공통 보안 속성을 유지하고 `Max-Age=0`으로 보낸다.
+성공 시 `204`와 두 인증 쿠키를 삭제하는 `Set-Cookie`를 반환하며 본문은 없다. 삭제 쿠키는 `ownerAccessToken`의 `Path=/`, `refreshToken`의 `Path=/v1/owner/auth/`와 공통 보안 속성을 유지하고 `Max-Age=0`으로 보낸다.
 
 로그아웃 전에 받은 RT·AT는 사용할 수 없다. 같은 초에 재로그인해도 새로 받은 토큰은 유지된다.
 
@@ -271,7 +273,7 @@ DB·Redis 처리 순서와 자동 복구 한계는 [인증 설계의 점주 로�
 
 1. 회원번호로 사용자를 찾는다. 없으면 가입시킨다. 닉네임과 프로필 이미지는 **최초 가입과 탈퇴 뒤 재가입 때만** 카카오에서 가져온다. 프로필 사진 동의가 없거나 카카오가 값을 주지 않으면 `profileImageUrl`은 `null`이다
 2. 성별과 연령은 카카오에서 받지 않는다(온보딩에서 받는다). 기기 식별자는 수집하지 않는다
-3. **정지 이력이 있는 회원번호의 재가입은 거부한다.** 탈퇴 후 재가입해도 같은 회원번호라 하루 3개 발급 제한과 정지 이력이 이어진다
+3. 재가입은 새 회원 ID를 발급한다. 날짜와 정지 이력, 이전 카카오 연결 해제에 따른 제한은 [member 명세의 재가입 절](./member.md#재가입)을 따른다
 4. 두 토큰을 내려준다
 
 **오류**
@@ -281,6 +283,8 @@ DB·Redis 처리 순서와 자동 복구 한계는 [인증 설계의 점주 로�
 | `400` | `COMMON-002` | 필수 필드 누락 |
 | `401` | `AUTH-007` | state 불일치·만료·재사용, 카카오 인가 코드나 ID 토큰(nonce 포함) 검증 실패 |
 | `403` | `MEMBER-003` | 정지 이력이 있는 탈퇴 회원의 재가입 또는 현재 ACTIVE가 아닌 기존 회원의 로그인. 코드는 `member.md`가 정의한다 |
+| `403` | `MEMBER-004` | 탈퇴한 당일의 재가입. 기준은 `member.md`가 정의한다 |
+| `409` | `MEMBER-005` | 이전 카카오 연결 해제가 끝나지 않아 재가입을 보류함. 기준은 `member.md`가 정의한다 |
 | `429` | 없음 | IP별 인증 요청 제한 초과. 본문 없이 `Retry-After` 제공 |
 | `503` | `AUTH-002` | Refresh Token 저장 실패. 서버 캐시 저장 실패만으로는 오류가 나지 않는다 |
 

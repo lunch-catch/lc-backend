@@ -70,9 +70,9 @@
 /src/main/resources/db/migration/campaign/      @yongmaru789
 /docs/api-spec/campaign-api-spec.md             @yongmaru789
 /docs/api-spec/poster-api-spec.md               @yongmaru789
-/src/main/java/com/launchcatch/ops/             @yongmaru789
-/src/main/resources/db/migration/ops/           @yongmaru789
-/docs/design/ops/                               @yongmaru789
+/src/main/java/com/launchcatch/ops/             @yongmaru789 @muzimzz
+/src/main/resources/db/migration/ops/           @yongmaru789 @muzimzz
+/docs/design/ops/                               @yongmaru789 @muzimzz
 
 # 광고 서빙  박준서
 /src/main/java/com/launchcatch/adserving/       @devjohnpark

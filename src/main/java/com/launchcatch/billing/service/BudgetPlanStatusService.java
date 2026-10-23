@@ -83,7 +83,7 @@ public class BudgetPlanStatusService {
         try {
             spendCounter.evict(confirmed.businessDate(), confirmed.campaignId());
         } catch (DataAccessException e) {
-            log.error("event=BUDGET_STATUS_CONFIRM_EVICT_FAILED campaignId={} businessDate={}",
+            log.error("event=BILLING_BUDGET_STATUS_CONFIRM_EVICT_FAILED campaignId={} businessDate={}",
                     confirmed.campaignId(), confirmed.businessDate(), e);
         }
     }
@@ -99,7 +99,7 @@ public class BudgetPlanStatusService {
             spendCounter.applyStatus(changed.businessDate(), changed.campaignId(),
                     changed.paused(), changed.changedAt());
         } catch (DataAccessException e) {
-            log.warn("event=BUDGET_STATUS_MIRROR_FAILED campaignId={} businessDate={} paused={}",
+            log.warn("event=BILLING_BUDGET_STATUS_MIRROR_FAILED campaignId={} businessDate={} paused={}",
                     changed.campaignId(), changed.businessDate(), changed.paused(), e);
             evict(changed);
         }
@@ -114,7 +114,7 @@ public class BudgetPlanStatusService {
         try {
             spendCounter.increaseReserved(increased.businessDate(), increased.campaignId(), increased.reservedAmount());
         } catch (DataAccessException e) {
-            log.error("event=RECHARGE_RESERVE_MIRROR_FAILED campaignId={} businessDate={} reserved={}",
+            log.warn("event=BILLING_RECHARGE_RESERVE_MIRROR_FAILED campaignId={} businessDate={} reserved={} fallback=NEXT_DAILY_RESERVE",
                     increased.campaignId(), increased.businessDate(), increased.reservedAmount(), e);
         }
     }
@@ -123,7 +123,7 @@ public class BudgetPlanStatusService {
         try {
             spendCounter.evict(changed.businessDate(), changed.campaignId());
         } catch (DataAccessException e) {
-            log.error("event=BUDGET_STATUS_HASH_EVICT_FAILED campaignId={} businessDate={} paused={}",
+            log.error("event=BILLING_BUDGET_STATUS_HASH_EVICT_FAILED campaignId={} businessDate={} paused={}",
                     changed.campaignId(), changed.businessDate(), changed.paused(), e);
         }
     }

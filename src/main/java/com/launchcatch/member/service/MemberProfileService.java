@@ -42,9 +42,12 @@ public class MemberProfileService {
     public MemberResponse completeOnboarding(Long memberId, MemberOnboardingRequest request) {
         try {
             Member member = findMemberForUpdate(memberId);
-            ensureNotWithdrawn(member, "MEMBER_ONBOARDING_FAILED");
+            if (member.getStatus() == MemberStatus.WITHDRAWN) {
+                log.info("event=MEMBER_ONBOARDING_FAILED memberId={} reason=ALREADY_WITHDRAWN", memberId);
+                throw new MemberException(MemberErrorCode.ALREADY_WITHDRAWN);
+            }
             if (member.getProfile() != null && member.getProfile().isOnboardingCompleted()) {
-                log.warn("event=MEMBER_ONBOARDING_FAILED memberId={} reason=ONBOARDING_ALREADY_COMPLETED", memberId);
+                log.info("event=MEMBER_ONBOARDING_FAILED memberId={} reason=ONBOARDING_ALREADY_COMPLETED", memberId);
                 throw new MemberException(MemberErrorCode.ONBOARDING_ALREADY_COMPLETED);
             }
             LocalDateTime now = LocalDateTime.now(clock);
@@ -61,10 +64,10 @@ public class MemberProfileService {
         } catch (MemberException e) {
             throw e;
         } catch (IllegalArgumentException e) {
-            log.warn("event=MEMBER_ONBOARDING_FAILED memberId={} reason=INVALID_INPUT causeType={}", memberId, e.getClass().getSimpleName());
+            log.info("event=MEMBER_ONBOARDING_FAILED memberId={} reason=INVALID_INPUT exceptionType={}", memberId, e.getClass().getSimpleName());
             throw e;
         } catch (RuntimeException e) {
-            log.error("event=MEMBER_ONBOARDING_FAILED memberId={} reason=SYSTEM_ERROR causeType={}", memberId, e.getClass().getSimpleName());
+            log.error("event=MEMBER_ONBOARDING_FAILED memberId={} reason=SYSTEM_ERROR exceptionType={}", memberId, e.getClass().getSimpleName());
             throw e;
         }
     }
@@ -72,12 +75,15 @@ public class MemberProfileService {
     public MemberResponse getMyProfile(Long memberId) {
         try {
             Member member = findMember(memberId);
-            ensureNotWithdrawn(member, "MEMBER_PROFILE_READ_FAILED");
+            if (member.getStatus() == MemberStatus.WITHDRAWN) {
+                log.info("event=MEMBER_PROFILE_READ_FAILED memberId={} reason=ALREADY_WITHDRAWN", memberId);
+                throw new MemberException(MemberErrorCode.ALREADY_WITHDRAWN);
+            }
             return response(member);
         } catch (MemberException e) {
             throw e;
         } catch (RuntimeException e) {
-            log.error("event=MEMBER_PROFILE_READ_FAILED memberId={} reason=SYSTEM_ERROR causeType={}", memberId, e.getClass().getSimpleName());
+            log.error("event=MEMBER_PROFILE_READ_FAILED memberId={} reason=SYSTEM_ERROR exceptionType={}", memberId, e.getClass().getSimpleName());
             throw e;
         }
     }
@@ -85,12 +91,15 @@ public class MemberProfileService {
     @Transactional
     public MemberResponse updateMyProfile(Long memberId, MemberUpdateRequest request) {
         if (!request.hasUpdate()) {
-            log.warn("event=MEMBER_PROFILE_UPDATE_FAILED memberId={} reason=EMPTY_UPDATE", memberId);
+            log.info("event=MEMBER_PROFILE_UPDATE_FAILED memberId={} reason=EMPTY_UPDATE", memberId);
             throw new IllegalArgumentException("수정할 항목을 하나 이상 입력해 주세요.");
         }
         try {
             Member member = findMemberForUpdate(memberId);
-            ensureNotWithdrawn(member, "MEMBER_PROFILE_UPDATE_FAILED");
+            if (member.getStatus() == MemberStatus.WITHDRAWN) {
+                log.info("event=MEMBER_PROFILE_UPDATE_FAILED memberId={} reason=ALREADY_WITHDRAWN", memberId);
+                throw new MemberException(MemberErrorCode.ALREADY_WITHDRAWN);
+            }
             member.updateProfile(request.nickname(), request.notificationOptIn(), request.locationOptIn(), LocalDateTime.now(clock));
             MemberResponse result = response(member);
             TransactionLogging.afterCommit(() -> log.info("event=MEMBER_PROFILE_UPDATE_SUCCESS memberId={}", memberId));
@@ -99,10 +108,10 @@ public class MemberProfileService {
         } catch (MemberException e) {
             throw e;
         } catch (IllegalArgumentException e) {
-            log.warn("event=MEMBER_PROFILE_UPDATE_FAILED memberId={} reason=INVALID_INPUT causeType={}", memberId, e.getClass().getSimpleName());
+            log.info("event=MEMBER_PROFILE_UPDATE_FAILED memberId={} reason=INVALID_INPUT exceptionType={}", memberId, e.getClass().getSimpleName());
             throw e;
         } catch (RuntimeException e) {
-            log.error("event=MEMBER_PROFILE_UPDATE_FAILED memberId={} reason=SYSTEM_ERROR causeType={}", memberId, e.getClass().getSimpleName());
+            log.error("event=MEMBER_PROFILE_UPDATE_FAILED memberId={} reason=SYSTEM_ERROR exceptionType={}", memberId, e.getClass().getSimpleName());
             throw e;
         }
     }
@@ -115,13 +124,6 @@ public class MemberProfileService {
     private Member findMemberForUpdate(Long memberId) {
         return memberRepository.findByIdForUpdate(memberId)
                 .orElseThrow(() -> new IllegalStateException("인증된 회원 정보를 찾을 수 없습니다."));
-    }
-
-    private void ensureNotWithdrawn(Member member, String event) {
-        if (member.getStatus() == MemberStatus.WITHDRAWN) {
-            log.warn("event={} memberId={} reason=ALREADY_WITHDRAWN", event, member.getId());
-            throw new MemberException(MemberErrorCode.ALREADY_WITHDRAWN);
-        }
     }
 
     private MemberResponse response(Member member) {

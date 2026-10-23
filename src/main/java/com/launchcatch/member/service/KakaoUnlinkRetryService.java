@@ -42,11 +42,10 @@ public class KakaoUnlinkRetryService {
     private final TransactionTemplate transactionTemplate;
 
     public void retryPending() {
-        List<PendingUnlink> pending = transactionTemplate.execute(status -> loadPending());
-        if (pending == null) {
-            return;
-        }
-        pending.forEach(this::retryOne);
+        // execute 는 콜백이 null 을 돌려줄 수 있어 @Nullable 이다. 빈 목록으로 바꿔 분기 없이 돈다
+        Optional.ofNullable(transactionTemplate.execute(status -> loadPending()))
+                .orElse(List.of())
+                .forEach(this::retryOne);
     }
 
     /*
@@ -65,7 +64,7 @@ public class KakaoUnlinkRetryService {
      *
      * 한 try 로 묶으면 unlink 는 성공했는데 행 삭제가 실패한 경우가 호출 실패로 집계되어
      * attempt_count 가 오르고, 성공한 해제가 실패로 기록된다. 삭제가 실패해도 카카오 쪽은
-     * 이미 끊겼고 남은 행은 다음 사이클이 다시 호출할 뿐이다(unlink 는 멱등).
+     * 이미 끊겼고 선점이 남은 행은 장애 처리 설계의 운영 복구 절차를 따른다.
      */
     private void retryOne(PendingUnlink pending) {
         Boolean eligible = transactionTemplate.execute(status -> stillNeedsUnlink(pending));
@@ -81,6 +80,7 @@ public class KakaoUnlinkRetryService {
              * 포기 처리될 수 있다. 그대로 두고 다음 사이클에 다시 시도한다.
              */
             log.warn("event=KAKAO_UNLINK_RETRY_SKIPPED failureId={} memberId={} reason=CIRCUIT_OPEN", pending.failureId(), pending.memberId());
+            recordFailure(pending, circuitOpen);
             return;
         } catch (RuntimeException callFailure) {
             recordFailure(pending, callFailure);
@@ -95,17 +95,17 @@ public class KakaoUnlinkRetryService {
     }
 
     /*
-     * 호출 직전에 다시 본다. 후보를 읽은 시점과 호출 시점 사이에 재가입이 일어날 수 있다.
-     * 재가입은 대기 행을 지우지만, 그 사이에 이 서버가 행을 들고 있었다면 여기서 걸러진다.
+     * 후보를 읽은 뒤 최초 호출이나 다른 실행자가 선점했을 수 있어 행을 잠가 다시 확인한다.
+     * 선점 상태는 커밋 뒤 외부 호출이 끝날 때까지 유지한다.
      */
     private boolean stillNeedsUnlink(PendingUnlink pending) {
-        return failureRepository.findById(pending.failureId())
+        return failureRepository.findByIdForUpdate(pending.failureId())
                 .map(failure -> {
                     if (failure.isResolved()) {
                         return false;
                     }
                     if (failure.getMember().getStatus() == MemberStatus.WITHDRAWN) {
-                        return true;
+                        return failure.claim();
                     }
                     failureRepository.delete(failure);
                     TransactionLogging.afterCommit(() -> log.info("event=KAKAO_UNLINK_RETRY_DISCARDED_REACTIVATED failureId={} memberId={}",
@@ -118,21 +118,19 @@ public class KakaoUnlinkRetryService {
     /*
      * 해제에 성공했으니 행을 지운다.
      *
-     * 재확인과 호출 사이의 창은 외부 호출을 트랜잭션 밖에 두는 한 없앨 수 없다. 닫는 대신
-     * 지나간 뒤에 탐지한다. 행이 사라졌거나 회원이 더 이상 WITHDRAWN 이 아니면 호출 중에
-     * 재가입이 끼어든 것이고, 방금 맺은 카카오 연결을 우리가 끊었다는 뜻이다. 사용자에게
-     * 재연동을 안내해야 하므로 경보로 남긴다.
+     * 정상 경로는 작업 행이 있는 동안 재가입을 막고 옛 회원을 재활성화하지 않는다.
+     * 운영 중 행이 사라지거나 옛 계정이 활성화된 경우는 이 규칙을 벗어난 상태이므로 경보로 남긴다.
      */
     private void markSucceeded(PendingUnlink pending) {
         Optional<KakaoUnlinkFailure> row = failureRepository.findById(pending.failureId());
         if (row.isEmpty()) {
-            log.error("event=KAKAO_UNLINK_RACED_REACTIVATION memberId={} cause=QUEUE_ROW_DELETED action=REQUIRES_RELINK",
+            log.error("event=KAKAO_UNLINK_RACED_REACTIVATION memberId={} reason=QUEUE_ROW_DELETED action=REQUIRES_RELINK",
                     pending.memberId());
             return;
         }
         KakaoUnlinkFailure failure = row.get();
         if (failure.getMember().getStatus() != MemberStatus.WITHDRAWN) {
-            log.error("event=KAKAO_UNLINK_RACED_REACTIVATION memberId={} cause=MEMBER_REACTIVATED action=REQUIRES_RELINK",
+            log.error("event=KAKAO_UNLINK_RACED_REACTIVATION memberId={} reason=MEMBER_REACTIVATED action=REQUIRES_RELINK",
                     pending.memberId());
         }
         failureRepository.delete(failure);
@@ -143,13 +141,13 @@ public class KakaoUnlinkRetryService {
     /*
      * 실패를 기록하는 트랜잭션이 DB 오류로 던져도 이 행에서 멈춘다. 밖으로 나가면 forEach 가 끊겨
      * 남은 행이 그날 재시도되지 않고 스케줄러가 작업 전체를 FAILED 로 닫는다. 성공 경로의 정리 실패와 같은 처리다.
-     * 기록이 빠지면 attempt_count 가 오르지 않을 뿐이고, 행은 대기로 남아 다음 사이클이 다시 시도한다.
+     * 기록이 실패해 선점이 남으면 자동 재호출하지 않고 운영 확인 뒤 선점을 해제한다.
      */
     private void recordFailure(PendingUnlink pending, RuntimeException callFailure) {
         try {
             transactionTemplate.executeWithoutResult(status -> markFailed(pending, callFailure));
         } catch (RuntimeException recordFailure) {
-            log.error("event=KAKAO_UNLINK_RETRY_MARK_FAILED_ERROR failureId={} memberId={} callCauseType={}",
+            log.error("event=KAKAO_UNLINK_RETRY_MARK_FAILED failureId={} memberId={} callExceptionType={}",
                     pending.failureId(), pending.memberId(),
                     KakaoUnlinkFailureClassifier.causeType(callFailure), recordFailure);
         }
@@ -157,23 +155,27 @@ public class KakaoUnlinkRetryService {
 
     private void markFailed(PendingUnlink pending, RuntimeException cause) {
         failureRepository.findById(pending.failureId()).ifPresentOrElse(failure -> {
+            failure.release();
+            if (cause instanceof CallNotPermittedException) {
+                return;
+            }
             String causeType = KakaoUnlinkFailureClassifier.causeType(cause);
             Long failureId = failure.getId();
             if (KakaoUnlinkFailureClassifier.isTerminal(cause)) {
                 failure.rejectPermanently();
-                TransactionLogging.afterCommit(() -> log.error("event=KAKAO_UNLINK_RETRY_REJECTED failureId={} memberId={} causeType={}",
+                TransactionLogging.afterCommit(() -> log.error("event=KAKAO_UNLINK_RETRY_REJECTED failureId={} memberId={} exceptionType={}",
                         failureId, pending.memberId(), causeType, cause));
                 return;
             }
             int attempts = failure.recordRetryFailure(MAX_RETRY_ATTEMPTS);
             if (failure.isResolved()) {
-                TransactionLogging.afterCommit(() -> log.error("event=KAKAO_UNLINK_RETRY_EXHAUSTED failureId={} memberId={} attempts={} causeType={}",
+                TransactionLogging.afterCommit(() -> log.error("event=KAKAO_UNLINK_RETRY_EXHAUSTED failureId={} memberId={} attempts={} exceptionType={}",
                         failureId, pending.memberId(), attempts, causeType, cause));
             } else {
-                TransactionLogging.afterCommit(() -> log.warn("event=KAKAO_UNLINK_RETRY_FAILED failureId={} memberId={} attempts={} causeType={}",
+                TransactionLogging.afterCommit(() -> log.warn("event=KAKAO_UNLINK_RETRY_FAILED failureId={} memberId={} attempts={} exceptionType={}",
                         failureId, pending.memberId(), attempts, causeType, cause));
             }
-        }, () -> log.warn("event=KAKAO_UNLINK_RETRY_FAILED failureId={} memberId={} reason=QUEUE_ROW_MISSING causeType={} details={}",
+        }, () -> log.warn("event=KAKAO_UNLINK_RETRY_FAILED failureId={} memberId={} reason=QUEUE_ROW_MISSING exceptionType={} details={}",
                 pending.failureId(), pending.memberId(), KakaoUnlinkFailureClassifier.causeType(cause), FailureLogDetails.from(cause)));
     }
 

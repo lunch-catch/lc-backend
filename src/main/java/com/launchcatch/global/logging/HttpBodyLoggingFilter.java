@@ -1,16 +1,21 @@
 package com.launchcatch.global.logging;
 
 import jakarta.servlet.FilterChain;
+import jakarta.servlet.AsyncEvent;
+import jakarta.servlet.AsyncListener;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.UnaryOperator;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import lombok.extern.slf4j.Slf4j;
+import org.slf4j.MDC;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
@@ -137,20 +142,117 @@ public class HttpBodyLoggingFilter extends OncePerRequestFilter {
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
             throws ServletException, IOException {
 
-        // 이 버전의 스프링은 무제한 캐싱하는 단일 인자 생성자를 없애고 캐시 한도를 강제한다 —
-        // 요청 바디가 얼마나 크든 무제한으로 메모리에 다 올려두는 걸 막기 위한 변경.
-        ContentCachingRequestWrapper wrappedRequest = new ContentCachingRequestWrapper(request, MAX_BODY_CACHE_BYTES);
-        ContentCachingResponseWrapper wrappedResponse = new ContentCachingResponseWrapper(response);
-
-        long start = System.currentTimeMillis();
+        String key = HttpBodyLoggingFilter.class.getName();
+        ContentCachingRequestWrapper wrappedRequest = (ContentCachingRequestWrapper) request.getAttribute(key + ".request");
+        ContentCachingResponseWrapper wrappedResponse = (ContentCachingResponseWrapper) request.getAttribute(key + ".response");
+        if (wrappedRequest == null) {
+            wrappedRequest = new ContentCachingRequestWrapper(request, MAX_BODY_CACHE_BYTES);
+            wrappedResponse = new ContentCachingResponseWrapper(response);
+            request.setAttribute(key + ".request", wrappedRequest);
+            request.setAttribute(key + ".response", wrappedResponse);
+            request.setAttribute(key + ".start", System.currentTimeMillis());
+        }
         try {
             filterChain.doFilter(wrappedRequest, wrappedResponse);
-        } finally {
-            long durationMs = System.currentTimeMillis() - start;
-            logAccess(wrappedRequest, wrappedResponse, durationMs);
+        } catch (IOException | ServletException | RuntimeException | Error error) {
+            try {
+                finishDispatch(request, wrappedRequest, wrappedResponse, key);
+            } catch (IOException | RuntimeException finishError) {
+                if (finishError != error) {
+                    error.addSuppressed(finishError);
+                }
+            }
+            throw error;
+        }
+        finishDispatch(request, wrappedRequest, wrappedResponse, key);
+    }
 
-            // 캐싱 래퍼로 감쌌으니 실제 응답 스트림으로 반드시 다시 흘려보내야 클라이언트가 정상 응답을 받는다
-            wrappedResponse.copyBodyToResponse();
+    private void finishDispatch(HttpServletRequest request, ContentCachingRequestWrapper wrappedRequest,
+            ContentCachingResponseWrapper wrappedResponse, String key) throws IOException {
+        long start = (long) request.getAttribute(key + ".start");
+        AtomicBoolean logged = (AtomicBoolean) request.getAttribute(key + ".logged");
+        if (request.isAsyncStarted() && !isAsyncDispatch(request)) {
+            if (logged == null) {
+                logged = new AtomicBoolean();
+                request.setAttribute(key + ".logged", logged);
+            }
+            AsyncAccessLog listener = new AsyncAccessLog(wrappedResponse, start, logged);
+            try {
+                request.getAsyncContext().addListener(listener);
+            } catch (IllegalStateException alreadyCompleted) {
+                listener.logUnfinished();
+            }
+        } else if (!request.isAsyncStarted() && (logged == null || logged.compareAndSet(false, true))) {
+            logAccess(wrappedRequest, wrappedResponse, System.currentTimeMillis() - start);
+            try {
+                wrappedResponse.copyBodyToResponse();
+            } catch (IOException error) {
+                log.warn("event=HTTP_RESPONSE_WRITE_FAILED durationMs={} exceptionType={}",
+                        System.currentTimeMillis() - start, error.getClass().getSimpleName());
+                throw error;
+            }
+        }
+    }
+
+    @Override
+    protected boolean shouldNotFilterAsyncDispatch() {
+        return false;
+    }
+
+    // 최종 디스패치를 거치지 못한 요청만 본문 없이 기록한다.
+    private static final class AsyncAccessLog implements AsyncListener {
+        private final ContentCachingResponseWrapper response;
+        private final long start;
+        private final AtomicBoolean logged;
+        private final Map<String, String> context = MDC.getCopyOfContextMap();
+        private volatile String reason = "ASYNC_COMPLETED_WITHOUT_DISPATCH";
+
+        private AsyncAccessLog(ContentCachingResponseWrapper response, long start, AtomicBoolean logged) {
+            this.response = response;
+            this.start = start;
+            this.logged = logged;
+        }
+
+        @Override
+        public void onComplete(AsyncEvent event) {
+            logUnfinished();
+        }
+
+        @Override
+        public void onTimeout(AsyncEvent event) {
+            reason = "ASYNC_TIMEOUT";
+        }
+
+        @Override
+        public void onError(AsyncEvent event) {
+            reason = "ASYNC_ERROR";
+        }
+
+        @Override
+        public void onStartAsync(AsyncEvent event) {
+            event.getAsyncContext().addListener(this);
+        }
+
+        private void logUnfinished() {
+            if (!logged.compareAndSet(false, true)) {
+                return;
+            }
+            Map<String, String> previous = MDC.getCopyOfContextMap();
+            try {
+                if (context == null) {
+                    MDC.clear();
+                } else {
+                    MDC.setContextMap(context);
+                }
+                log.warn("event=HTTP_ACCESS httpStatus={} durationMs={} reason={}",
+                        response.getStatus(), System.currentTimeMillis() - start, reason);
+            } finally {
+                if (previous == null) {
+                    MDC.clear();
+                } else {
+                    MDC.setContextMap(previous);
+                }
+            }
         }
     }
 
@@ -180,8 +282,10 @@ public class HttpBodyLoggingFilter extends OncePerRequestFilter {
         String resBody = needsBody ? maskedBody(response.getContentAsByteArray()) : null;
 
         if (expected) {
-            log.debug("event=HTTP_ACCESS status={} durationMs={} reqBody=\"{}\" resBody=\"{}\"",
-                    status, durationMs, reqBody, resBody);
+            if (log.isDebugEnabled()) {
+                log.debug("event=HTTP_ACCESS status={} durationMs={} reqBody=\"{}\" resBody=\"{}\"",
+                        status, durationMs, reqBody, resBody);
+            }
         } else if (status >= 500) {
             log.error("event=HTTP_ACCESS status={} durationMs={} reqBody=\"{}\" resBody=\"{}\"",
                     status, durationMs, reqBody, resBody);

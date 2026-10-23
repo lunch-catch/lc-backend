@@ -11,6 +11,7 @@ import com.launchcatch.campaign.entity.Campaign;
 import com.launchcatch.campaign.entity.CampaignStatusLog;
 import com.launchcatch.campaign.repository.CampaignRepository;
 import com.launchcatch.campaign.repository.CampaignStatusLogRepository;
+import com.launchcatch.campaign.repository.CampaignSummaryRow;
 import com.launchcatch.store.contract.StoreCampaignStatus;
 import com.launchcatch.store.contract.StoreCampaignSummaryCommand;
 import com.launchcatch.store.contract.StoreCampaignSummaryUpdater;
@@ -29,7 +30,7 @@ import org.springframework.transaction.annotation.Transactional;
  * 변경 이벤트를 발행하지 않는다(00:00 배치가 같은 흐름에서 바로 다시 조회하기 때문). pause,
  * resume, end만 낮에 일어나는 전이라 CampaignStatusChangedEvent를 발행한다.
  *
- * 다섯 메서드 모두 이미 목표 상태면 예외 대신 조용히 성공한다(멱등한 재시도). 00:00 묶음의
+ * 여섯 메서드(cancel 포함, #597) 모두 이미 목표 상태면 예외 대신 조용히 성공한다(멱등한 재시도). 00:00 묶음의
  * 이어받기와 자동 재실행, billing의 재시도가 모두 같은 단계를 두 번 실행할 수 있다고 전제하기
  * 때문이다(런치캐치_배치_운영.md). 목표 상태가 아닌데 전이가 안 되는 경우는 엔티티 쪽
  * IllegalStateException이 그대로 막는다.
@@ -58,10 +59,36 @@ public class CampaignStatusService {
 
     @Transactional
     public void schedule(Long campaignId) {
+        schedule(campaignId, () -> { }, true);
+    }
+
+    /*
+     * precondition은 캠페인 잠금을 잡은 뒤, 상태를 바꾸기 전에 실행한다. 호출하는 쪽이 이
+     * 잠금 밑에서 함께 확인하고 싶은 것(예: 캠페인 활성화의 포스터 변경 여부, #561 코드래빗
+     * 리뷰로 찾음)을 넣는다. 이 서비스는 그 확인이 무엇인지 모른다. precondition이 예외를
+     * 던지면 상태를 바꾸지 않고 트랜잭션이 롤백된다.
+     *
+     * 이미 SCHEDULED여도 멱등하게 조용히 성공하지 않고 IllegalStateException을 던진다(#576
+     * 코드래빗 리뷰로 찾음). 멱등하게 반환하면 그 precondition을 건너뛰어서, 사전 확인 뒤
+     * 다른 요청이 먼저 전이를 끝낸 경우 이 요청은 자신의 확인을 거치지 않은 채 성공
+     * 응답(SCHEDULED)을 내보내게 된다. CampaignActivationService가 이 예외를
+     * CAMPAIGN_STATE_NOT_ALLOWED로 바꿔 거부해야, 그 요청이 실제로 전이를 일으켰는지와
+     * 응답이 항상 맞는다.
+     */
+    @Transactional
+    public void schedule(Long campaignId, Runnable precondition) {
+        schedule(campaignId, precondition, false);
+    }
+
+    private void schedule(Long campaignId, Runnable precondition, boolean idempotent) {
         Campaign campaign = findOrThrow(campaignId);
         if (campaign.getStatus() == CampaignStatus.SCHEDULED) {
-            return;
+            if (idempotent) {
+                return;
+            }
+            throw new IllegalStateException("campaign is already SCHEDULED: " + campaignId);
         }
+        precondition.run();
         CampaignStatus from = campaign.getStatus();
         campaign.schedule(LocalDateTime.now(clock));
         log(campaignId, from, campaign.getStatus(), ActorType.SYSTEM, null);
@@ -69,13 +96,49 @@ public class CampaignStatusService {
 
     @Transactional
     public void activate(Long campaignId) {
+        activateCampaign(campaignId);
+    }
+
+    /*
+     * 00:00 배치(#569)가 집행 시작일이 된 캠페인을 켤 때 쓴다. 상태 변경과 로그에 더해 가게 요약을 ACTIVE 로 갱신한다.
+     * 이미 ACTIVE 면 아무것도 하지 않아 같은 영업일에 두 번 불려도 결과가 같다(멱등).
+     */
+    @Transactional
+    public void activate(Long campaignId, LocalDate businessDate) {
+        Campaign campaign = activateCampaign(campaignId);
+        if (campaign != null) {
+            updateStoreSummary(campaign, businessDate);
+        }
+    }
+
+    // 이미 ACTIVE 라 바꿀 것이 없으면 null 을 돌려준다.
+    private Campaign activateCampaign(Long campaignId) {
         Campaign campaign = findOrThrow(campaignId);
         if (campaign.getStatus() == CampaignStatus.ACTIVE) {
-            return;
+            return null;
         }
         CampaignStatus from = campaign.getStatus();
         campaign.activate(LocalDateTime.now(clock));
         log(campaignId, from, campaign.getStatus(), ActorType.SYSTEM, null);
+        return campaign;
+    }
+
+    /*
+     * 점주의 취소다(#597). schedule 처럼 이벤트를 내지 않고 가게 요약도 갱신하지 않는다.
+     * 다른 도메인은 SCHEDULED 를 그때그때 읽기만 해서 되돌릴 것이 없다.
+     *
+     * 00:00 배치의 activate 와 같은 행 잠금으로 줄을 선다. 취소가 먼저면 activate 가 DRAFT 를 보고
+     * IllegalStateException 을 던진다.
+     */
+    @Transactional
+    public void cancel(Long campaignId) {
+        Campaign campaign = findOrThrow(campaignId);
+        if (campaign.getStatus() == CampaignStatus.DRAFT) {
+            return;
+        }
+        CampaignStatus from = campaign.getStatus();
+        campaign.cancel(LocalDateTime.now(clock));
+        log(campaignId, from, campaign.getStatus(), ActorType.OWNER, null);
     }
 
     @Transactional
@@ -108,6 +171,12 @@ public class CampaignStatusService {
 
     @Transactional
     public void end(Long campaignId, LocalDate businessDate) {
+        end(campaignId, ActorType.SYSTEM, businessDate);
+    }
+
+    // 점주가 직접 종료할 때(#600)는 행위자를 OWNER 로 남긴다. 집행 기간이 끝난 정기 종료는 SYSTEM 이다.
+    @Transactional
+    public void end(Long campaignId, ActorType actorType, LocalDate businessDate) {
         Campaign campaign = findOrThrow(campaignId);
         if (campaign.getStatus() == CampaignStatus.ENDED) {
             return;
@@ -115,7 +184,8 @@ public class CampaignStatusService {
         CampaignStatus from = campaign.getStatus();
         LocalDateTime now = LocalDateTime.now(clock);
         campaign.end(now);
-        log(campaignId, from, campaign.getStatus(), ActorType.SYSTEM, null);
+        log(campaignId, from, campaign.getStatus(), actorType, null);
+        updateStoreSummary(campaign, businessDate);
         events.publishEvent(new CampaignStatusChangedEvent(campaignId, businessDate, false, now));
         events.publishEvent(new CampaignEndedEvent(campaignId, now));
     }
@@ -152,6 +222,15 @@ public class CampaignStatusService {
         events.publishEvent(new CampaignStatusChangedEvent(campaignId, businessDate, true, now));
     }
 
+    /*
+     * 00:00 배치(#840)가 예약된 하루 예산 변경을 적용한다. 행 잠금을 잡은 뒤 상태를 다시 확인해, 목록을 읽은 뒤 PAUSED 나
+     * ENDED 가 된 캠페인에는 적용하지 않는다. 예약 값이 없으면 아무것도 하지 않아 같은 영업일에 다시 불러도 결과가 같다.
+     */
+    @Transactional
+    public boolean applyPendingDailyBudget(Long campaignId) {
+        return findOrThrow(campaignId).applyPendingDailyBudget();
+    }
+
     private Campaign findOrThrow(Long campaignId) {
         return campaignRepository.findByIdForUpdate(campaignId)
                 .orElseThrow(() -> new IllegalArgumentException("campaign not found: " + campaignId));
@@ -175,16 +254,24 @@ public class CampaignStatusService {
     }
 
     private void updateStoreSummary(Campaign campaign, LocalDate businessDate) {
-        StoreCampaignSummaryCommand command = new StoreCampaignSummaryCommand(
+        storeCampaignSummaryUpdater.update(campaign.getStoreId(), campaign.getId(), toSummaryCommand(campaign, businessDate));
+    }
+
+    // 00:00 배치의 일일 요약 준비(#838)도 같은 값을 만들어 쓰도록 패키지 안에 연다.
+    static StoreCampaignSummaryCommand toSummaryCommand(Campaign campaign, LocalDate businessDate) {
+        return toSummaryCommand(CampaignSummaryRow.from(campaign), businessDate);
+    }
+
+    static StoreCampaignSummaryCommand toSummaryCommand(CampaignSummaryRow row, LocalDate businessDate) {
+        return new StoreCampaignSummaryCommand(
                 businessDate,
-                toStoreCampaignStatus(campaign.getStatus()),
-                toStoreDiscountTargetType(campaign.getDiscountTargetType()),
-                toStoreDiscountType(campaign.getDiscountType()),
-                campaign.getDiscountValue(),
-                campaign.getTargetMenuId(),
-                campaign.getUsableStartTime(),
-                campaign.getUsableEndTime());
-        storeCampaignSummaryUpdater.update(campaign.getStoreId(), campaign.getId(), command);
+                toStoreCampaignStatus(row.status()),
+                toStoreDiscountTargetType(row.discountTargetType()),
+                toStoreDiscountType(row.discountType()),
+                row.discountValue(),
+                row.targetMenuId(),
+                row.usableStartTime(),
+                row.usableEndTime());
     }
 
     private static StoreCampaignStatus toStoreCampaignStatus(CampaignStatus status) {

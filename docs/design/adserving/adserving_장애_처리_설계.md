@@ -8,30 +8,38 @@
 | 대상 | 쓰는 곳 | 처리 |
 |---|---|---|
 | Valkey | 요청 제한, 당일 이력, 하루와 세션 횟수, 유효 노출 수 읽기, serve 기록 | 기본(통과) |
-| Valkey(커밋 뒤) | 유효 노출 수 카운터 올리기, 당일 이력 넣기(스와이프, 가게 상세 찜) | 벗어났다. 아래 |
+| Valkey(커밋 뒤) | 유효 노출 수 카운터 올리기, 당일 이력 넣기(스와이프, 가게 상세 찜, 찜 삭제) | 벗어났다. 아래 |
 | MySQL 읽기 | 그날 후보(피드, 스와이프, 찜 목록), 필터(피드와 필터 조회), 30일 찜, 찜 목록, 쿠폰의 찜 조회, 노출 중복 확인, 후보 소진, 분석의 집계 조회 | 기본(오류로 올린다). 집계 조회는 분석 배치가 하루 결과를 처음부터 다시 모은다 |
 | MySQL 쓰기(요청 안) | `impression_log`, `wishlist`, `swipe_log`, `feed_filter`, `feed_filter_category`, 쿠폰의 소진 통보로 바꾸는 `ad_candidate.sold_out_at` | 기본(트랜잭션을 되돌린다). 스와이프는 찜과 기록을 따로 커밋하고 순서로 맞춘다(구조와 동작 설계 7장) |
 | MySQL 쓰기 | 응답 뒤의 `serve_log`, `feed_visit_daily` | 벗어났다. 아래 |
 | member 의 `MemberQueryService` | 온보딩, 위치, 노출 대상 판정 | 기본(오류로 올린다). 같은 프로세스 안의 호출이다 |
-| billing 의 `BudgetQueryService` | 진행률, 노출 상한 | 벗어났다. 아래 |
+| billing 의 `BudgetQueryService` | 그날 후보의 예약액과 단가. 부르는 시점은 [구조와 동작 설계](./adserving_구조와_동작_설계.md) 5장이 갖는다 | 벗어났다. 아래 |
 | billing 의 `PointDeductor` | 유효 노출의 차감 | 기본(트랜잭션을 되돌린다). 노출 저장과 같은 트랜잭션이라 실패하면 노출도 남지 않는다 |
 | analytics 의 퍼널 이벤트 수신 | 노출과 스와이프의 퍼널 이벤트 | 벗어났다. 아래 |
+| campaign 의 `CampaignStatusChangedEvent` | 그날 후보의 서빙 상태 | 기본(같은 트랜잭션). 상태 UPDATE 가 실패하면 캠페인의 상태 전이도 되돌아간다 |
+| campaign 의 `CampaignEndedEvent` | 찜의 종료 표시 | 기본(같은 트랜잭션). 표시 UPDATE 가 실패하면 캠페인 종료도 되돌아간다 |
+| campaign 의 `CampaignQueryService.findAllById` | 찜 요청의 종료 확인 | 기본(오류로 올린다). 찜은 이미 커밋돼 남고, 다시 보낸 찜 요청이 이미 있는 찜에도 확인해 표시를 채운다(#780) |
+| 00:00 묶음(`DailyJob`) | 후보 적재(캠페인과 가게 계약 읽기 포함), 끝난 찜 정리, 대상 인원 집계(캠페인 계약에 쓰기 포함) | 기본(실패로 남기고 묶음 규칙대로 다시 실행한다). 다시 불려도 결과가 같다 |
+| 02:00 묶음 밖 작업(`StandaloneJob`) | 보관 기간 삭제(`feed_visit_daily`, `swipe_log`, `serve_log`, `impression_log`) | 기본(실패로 닫고 알린다. 멈추면 다른 서버가 이어받아 다시 돈다). 남은 행만 지워 다시 불려도 결과가 같다 |
 
 ## 벗어난 것
 
 ### 다른 도메인 호출: billing 의 `BudgetQueryService`
 
 **원칙: 서빙할 피드가 아예 없을 때만 오류로 답하고 그 밖에는 서빙을 이어 간다**(#307 에서 정했다).
-그날 후보를 MySQL 에서 읽지 못하면 내보낼 것이 없어 기본대로 오류다. 정산의 진행률은 카드를 고르는 규칙의 일부라
-그것이 없어도 내보낼 카드는 있다.
+그날 후보를 MySQL 에서 읽지 못하면 내보낼 것이 없어 기본대로 오류다. 정산이 주는 예산 값은 카드를 고르는 규칙의 일부라
+그 값이 없어도 내보낼 카드는 있다.
+
+피드 요청은 정산을 부르지 않고 그날 후보에 읽어 둔 예약액과 단가를 쓴다(#837).
+그래서 정산이 낮에 멈추면 피드는 마지막으로 읽은 값으로 예산 규칙을 계속 지킨다. 아래 선택은 한 번도 읽지 못해 값이 빈 후보에 걸린다.
 
 | 선택지 | 장점 | 단점 |
 |---|---|---|
-| A. 기본대로 오류로 올린다 | 예산을 넘긴 캠페인이 나가지 않는다 | 정산 카운터(Valkey)가 멈추면 피드 전체가 멈춘다 |
-| B. 진행률과 노출 상한 제외를 건너뛰고 배분 슬롯도 관련성으로 채운다 | 피드가 계속 나간다 | 그동안 예산을 넘긴 캠페인도 나가 공정성 규칙이 깨진다 |
+| A. 기본대로 오류로 올린다(적재 단계를 실패시킨다) | 예산을 넘긴 캠페인이 나가지 않는다 | 재시도까지 실패하면 그날 후보가 없어 피드가 비고 뒤 단계(80, 90)도 돌지 않는다 |
+| B. 후보는 넣고 예산을 비워 둔다. 빈 후보가 있는 피드는 진행률과 노출 상한 제외를 건너뛰고 배분 슬롯도 관련성으로 채운다 | 피드가 계속 나간다 | 채워질 때까지 예산을 넘긴 캠페인도 나가 공정성 규칙이 깨진다 |
 
-B 를 고른다. 차감은 정산이 따로 막아(`NOT_BILLED_BUDGET`) 점주가 더 내지 않는다.
-건너뛴 횟수는 `adserving_budget_unavailable_total` 이 센다.
+B 를 고른다(#837 에서 정했다). 차감은 정산이 따로 막아(`NOT_BILLED_BUDGET`) 점주가 더 내지 않는다. 빈 값은 10분 갱신이 다시 채운다.
+읽지 못한 횟수는 `adserving_budget_unavailable_total` 이 센다.
 
 조건에 맞는 후보가 0장인 것은 장애가 아니다. 예산 소진으로 0장이어도 명세대로 `200 NO_CANDIDATE` 다(#307).
 
@@ -93,11 +101,11 @@ Valkey 가 멈춰 통과시킨 횟수는 `adserving_cache_bypass_total` 이 센�
 
 | `use` | 로그 `event` | 통과시키면 |
 |---|---|---|
-| `feed_rate_limit` | `FEED_RATE_LIMIT_FAILED` | 요청 제한이 풀리고 `nextFeedAvailableAt` 이 응답 시각이 된다 |
-| `exclusion` | `FEED_EXCLUSION_FAILED`, `FEED_EXCLUSION_WRITE_FAILED` | 넘긴 카드가 다시 보인다 |
-| `serve_frequency` | `FEED_SERVE_FREQUENCY_READ_FAILED`, `FEED_SERVE_FREQUENCY_WRITE_FAILED` | 같은 카드가 하루 2회, 세션 1회를 넘겨 나온다 |
-| `impression_count` | `FEED_IMPRESSION_COUNT_FAILED`, `FEED_IMPRESSION_COUNT_INCREMENT_FAILED` | 읽기는 유효 노출 수를 0 으로 보고 상한을 넘겨 내보낸다. 올리기는 그 노출을 세지 못해 상한이 늦게 걸린다. 넘긴 노출은 과금되지 않아 손해는 플랫폼에 남는다 |
-| `serve_record` | `FEED_SERVE_RECORD_WRITE_FAILED`, `FEED_SERVE_RECORD_READ_FAILED` | 쓰지 못하거나 읽지 못하면 그 카드의 노출이 무효(`EXPIRED_OR_UNKNOWN`)로 저장되어 과금되지 않는다. 다시 보내도 처음 판정이 남는다 |
+| `feed_rate_limit` | `ADSERVING_FEED_RATE_LIMIT_FAILED` | 요청 제한이 풀리고 `nextFeedAvailableAt` 이 응답 시각이 된다 |
+| `exclusion` | `ADSERVING_FEED_EXCLUSION_FAILED`, `ADSERVING_FEED_EXCLUSION_WRITE_FAILED` | 넘긴 카드가 다시 보인다 |
+| `serve_frequency` | `ADSERVING_FEED_SERVE_FREQUENCY_READ_FAILED`, `ADSERVING_FEED_SERVE_FREQUENCY_WRITE_FAILED` | 같은 카드가 하루 2회, 세션 1회를 넘겨 나온다 |
+| `impression_count` | `ADSERVING_FEED_IMPRESSION_COUNT_FAILED`, `ADSERVING_FEED_IMPRESSION_COUNT_INCREMENT_FAILED` | 읽기는 유효 노출 수를 0 으로 보고 상한을 넘겨 내보낸다. 올리기는 그 노출을 세지 못해 상한이 늦게 걸린다. 넘긴 노출은 과금되지 않아 손해는 플랫폼에 남는다 |
+| `serve_record` | `ADSERVING_FEED_SERVE_RECORD_WRITE_FAILED`, `ADSERVING_FEED_SERVE_RECORD_READ_FAILED` | 쓰지 못하거나 읽지 못하면 그 카드의 노출이 무효(`EXPIRED_OR_UNKNOWN`)로 저장되어 과금되지 않는다. 다시 보내도 처음 판정이 남는다 |
 
 ### DB
 
@@ -109,9 +117,9 @@ Valkey 가 멈춰 통과시킨 횟수는 `adserving_cache_bypass_total` 이 센�
 | 다운, 연결 거부(스와이프) | 해당 없음. 기본 처리를 따른다. 찜이 커밋된 뒤 스와이프가 실패하면 찜만 남고, 재시도로 맞춰진다(구조와 동작 설계 6장) |
 | 슬로우 쿼리, 응답 지연 | 아직 훑지 않았다 |
 | 커넥션 풀 고갈 | 아직 훑지 않았다 |
-| 데드락 | 해당 없음. 잠그는 쿼리가 없고 쓰기는 `INSERT IGNORE` 뿐이다 |
+| 데드락 | 요청 경로는 해당 없음. 잠그는 쿼리가 없고 쓰기는 `INSERT IGNORE` 와 키 하나의 UPDATE, DELETE 다. 00:00 후보 적재는 두 서버가 같은 순간 같은 행을 upsert 하면 교착이 날 수 있다. 묶음 규칙이 일시적 오류로 보고 그 단계를 다시 돌리고 적재가 멱등이라 결과가 같다(`런치캐치_배치_운영.md` 2장, #582) |
 | 락 대기 초과 | 해당 없음. 잠그는 쿼리가 없다 |
-| 제약 위반, 데이터 불일치 | 해당 없음. 같은 키는 `INSERT IGNORE` 가 넘긴다. 정산이 예산 계획 없는 캠페인으로 던지는 예외는 재시도하지 않고 올린다 |
+| 제약 위반, 데이터 불일치 | 해당 없음. 같은 키는 `INSERT IGNORE` 가 넘긴다. 정산은 예산 계획 없는 캠페인을 예외 대신 `NOT_BILLED_NO_PLAN` 으로 돌려준다(#497) |
 | Primary 페일오버 | 아직 훑지 않았다 |
 | 복제 지연 | 아직 훑지 않았다 |
 
@@ -126,7 +134,7 @@ Valkey 가 멈춰 통과시킨 횟수는 `adserving_cache_bypass_total` 이 센�
 | 요청이 몰린다 | 해당 없음. 사용자마다 60초 6회로 막는다. 목표 TPS 는 [`feed-api-design.md`](./feed-api-design.md) 에 있다 |
 | 대용량 조회 | `아직 정하지 못한 것` 의 "그날 후보를 읽는 건수의 상한" |
 | 배포로 서버가 내려간다 | `벗어난 것` 의 "DB 쓰기" 절 |
-| 서버가 여러 대다 | 해당 없음. 스케줄러 작업이 없다. serve 기록은 Valkey 에 있어 서버끼리 함께 본다 |
+| 서버가 여러 대다 | 스케줄러 작업(후보 적재, 끝난 찜 정리, 대상 인원 집계)은 00:00 묶음의 점유와 이어받기를 따른다. 02:00 보관 기간 삭제는 묶음 밖 작업(`StandaloneJob`)의 점유와 이어받기를 따른다(#610). 겹쳐 돌아도 결과가 같고, 늦게 커밋된 이전 적재는 원천을 읽은 시각으로 막는다(#582). serve 기록은 Valkey 에 있어 서버끼리 함께 본다 |
 
 ### 롤백 안 되는 효과
 

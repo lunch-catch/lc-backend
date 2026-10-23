@@ -8,8 +8,10 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.launchcatch.ops.entity.BatchExecutionLog;
+import com.launchcatch.ops.scheduler.BatchJobRegistry;
+import com.launchcatch.ops.scheduler.BatchJobRegistry.Kind;
 import com.launchcatch.ops.service.BatchExecutionService;
-import com.launchcatch.ops.service.DailyJobRunner;
+import com.launchcatch.ops.service.BatchJobRunner;
 import java.time.LocalDate;
 import java.util.List;
 import org.junit.jupiter.api.DisplayName;
@@ -20,11 +22,11 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
 
 /*
- * 트리거(스케줄, 이어받기 스캔)가 DailyJobRunner 에 올바르게 위임하는지만 본다.
+ * 트리거(스케줄, 이어받기 스캔)가 BatchJobRunner 에 올바르게 위임하는지만 본다.
  *
  * 묶음을 실제로 도는 로직(순서, 실패 전파, 재실행)과 재개 경로(resume)의 동작 자체는
- * DailyJobRunnerTest 가 본다. 계층 규칙(Service 는 Entry 를 부를 수 없다, 설계 문서 1.5절)
- * 때문에 실행 로직을 DailyJobRunner(Service)로 옮기면서 이 클래스는 얇아졌다(#362).
+ * BatchJobRunnerTest 가 본다. 계층 규칙(Service 는 Entry 를 부를 수 없다, 설계 문서 1.5절)
+ * 때문에 실행 로직을 BatchJobRunner(Service)로 옮기면서 이 클래스는 얇아졌다(#362).
  */
 @ExtendWith(MockitoExtension.class)
 class DailyJobSchedulerTest {
@@ -36,10 +38,13 @@ class DailyJobSchedulerTest {
     private BatchExecutionService executions;
 
     @Mock
-    private DailyJobRunner runner;
+    private BatchJobRunner runner;
+
+    @Mock
+    private BatchJobRegistry registry;
 
     private DailyJobScheduler scheduler() {
-        return new DailyJobScheduler(runner, executions);
+        return new DailyJobScheduler(runner, registry, executions);
     }
 
     private BatchExecutionLog row(String jobName, int attemptNo) {
@@ -52,7 +57,7 @@ class DailyJobSchedulerTest {
     @DisplayName("다른 서버가 묶음을 점유했으면 runner를 건드리지 않는다")
     void 점유에_실패하면_돌지_않는다() {
         when(executions.businessDate()).thenReturn(DATE);
-        when(executions.claim(DailyJobRunner.BUNDLE, DATE)).thenReturn(false);
+        when(executions.claim(BatchJobRegistry.BUNDLE, DATE)).thenReturn(false);
 
         scheduler().runDailyBundle();
 
@@ -63,7 +68,7 @@ class DailyJobSchedulerTest {
     @DisplayName("묶음을 점유하면 runner에게 묶음을 돌리게 한다")
     void 점유하면_runner에게_맡긴다() {
         when(executions.businessDate()).thenReturn(DATE);
-        when(executions.claim(DailyJobRunner.BUNDLE, DATE)).thenReturn(true);
+        when(executions.claim(BatchJobRegistry.BUNDLE, DATE)).thenReturn(true);
 
         scheduler().runDailyBundle();
 
@@ -82,7 +87,7 @@ class DailyJobSchedulerTest {
     @DisplayName("이어받은 행이 묶음의 단계면 따로 손대지 않는다")
     void 단계는_따로_손대지_않는다() {
         when(executions.takeOverStale()).thenReturn(List.of(row(FIRST, 1)));
-        when(runner.isStep(FIRST)).thenReturn(true);
+        when(registry.classify(FIRST)).thenReturn(Kind.STEP);
 
         scheduler().takeOverStale();
 
@@ -93,13 +98,12 @@ class DailyJobSchedulerTest {
     @Test
     @DisplayName("이어받은 행이 다시 실행할 수 있는 작업이면 세대와 함께 재개시킨다")
     void 재개할_수_있으면_resume을_부른다() {
-        when(executions.takeOverStale()).thenReturn(List.of(row(DailyJobRunner.BUNDLE, 2)));
-        when(runner.isStep(DailyJobRunner.BUNDLE)).thenReturn(false);
-        when(runner.isRetryable(DailyJobRunner.BUNDLE)).thenReturn(true);
+        when(executions.takeOverStale()).thenReturn(List.of(row(BatchJobRegistry.BUNDLE, 2)));
+        when(registry.classify(BatchJobRegistry.BUNDLE)).thenReturn(Kind.BUNDLE);
 
         scheduler().takeOverStale();
 
-        verify(runner).resume(DailyJobRunner.BUNDLE, DATE, 2);
+        verify(runner).resume(BatchJobRegistry.BUNDLE, DATE, 2);
     }
 
     @Test
@@ -107,8 +111,7 @@ class DailyJobSchedulerTest {
     void 재개_경로가_없으면_닫는다() {
         BatchExecutionLog orphan = row("EXPIRE_COUPON:42", 1);
         when(executions.takeOverStale()).thenReturn(List.of(orphan));
-        when(runner.isStep("EXPIRE_COUPON:42")).thenReturn(false);
-        when(runner.isRetryable("EXPIRE_COUPON:42")).thenReturn(false);
+        when(registry.classify("EXPIRE_COUPON:42")).thenReturn(Kind.UNKNOWN);
 
         scheduler().takeOverStale();
 

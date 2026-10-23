@@ -1,5 +1,10 @@
 package com.launchcatch.auth.opaque;
 
+import static com.launchcatch.auth.opaque.RefreshTokenFormat.ACTIVE_KEY_PREFIX;
+import static com.launchcatch.auth.opaque.RefreshTokenFormat.ISSUANCE_VERSION_KEY_PREFIX;
+import static com.launchcatch.auth.opaque.RefreshTokenFormat.KEY_PREFIX;
+import static com.launchcatch.auth.opaque.RefreshTokenFormat.REVOKED_SUFFIX;
+
 import com.launchcatch.auth.Role;
 import java.time.Duration;
 import java.util.List;
@@ -39,10 +44,7 @@ import org.springframework.stereotype.Repository;
 @RequiredArgsConstructor
 public class RefreshTokenRepository {
 
-    private static final String KEY_PREFIX = "refreshToken:";
-    private static final String ACTIVE_KEY_PREFIX = "activeRefreshToken:";
     private static final String FIELD_DELIMITER = "\\|";
-    private static final String REVOKED_SUFFIX = "|REVOKED";
 
     private static final RedisScript<Long> REVOKE_BEFORE_VERSION_SCRIPT = loadRevokeBeforeVersionScript();
 
@@ -58,7 +60,7 @@ public class RefreshTokenRepository {
     // DB 폐기 순번을 게시해 이전 로그인이나 회전의 지연된 캐시 저장을 차단한다.
     public void revokeBeforeVersion(Long id, Role role, long version) {
         Long result = redisTemplate.execute(REVOKE_BEFORE_VERSION_SCRIPT,
-                List.of(activeKey(role, id), "refreshTokenIssuanceVersion:" + role.name() + ":" + id),
+                List.of(activeKey(role, id), ISSUANCE_VERSION_KEY_PREFIX + role.name() + ":" + id),
                 String.format(java.util.Locale.ROOT, "%019d", version), KEY_PREFIX);
         if (result == null) {
             throw new org.springframework.dao.DataAccessResourceFailureException("폐기 순번 저장 결과가 없다");
@@ -88,7 +90,7 @@ public class RefreshTokenRepository {
         }
         String hash = TokenHasher.sha256(refreshToken);
         Long saved = redisTemplate.execute(ORDERED_SAVE_SCRIPT,
-                List.of(primaryKey(hash), activeKey(role, id), "refreshTokenIssuanceVersion:" + role.name() + ":" + id),
+                List.of(primaryKey(hash), activeKey(role, id), ISSUANCE_VERSION_KEY_PREFIX + role.name() + ":" + id),
                 serialize(id, role, remember), hash, String.valueOf(ttl.toMillis()),
                 String.format(java.util.Locale.ROOT, "%019d", version));
         if (saved == null) {

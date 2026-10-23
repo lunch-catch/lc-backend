@@ -6,18 +6,61 @@ import com.launchcatch.coupon.entity.CouponInventoryStatus;
 import jakarta.persistence.LockModeType;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
-import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 public interface CouponEventRepository extends JpaRepository<CouponEvent, Long> {
 
+    Optional<CouponEvent> findByCampaignIdAndBusinessDate(long campaignId, LocalDate businessDate);
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT event FROM CouponEvent event WHERE event.id = :id")
+    Optional<CouponEvent> findByIdForUpdate(@Param("id") long id);
+
+    /*
+     * 묶음 발급이 담긴 이벤트를 ID 순으로 한 번에 공유 잠금한다.
+     * 발급 묶음끼리는 함께 진행하고 복구의 배타 잠금이 진행 중인 발급의 커밋과 롤백을 기다리게 한다.
+     */
+    @Lock(LockModeType.PESSIMISTIC_READ)
+    @Query("SELECT event FROM CouponEvent event WHERE event.id IN :eventIds ORDER BY event.id")
+    List<CouponEvent> findAllForIssue(@Param("eventIds") Collection<Long> eventIds);
+
+    // 큐 복구가 이벤트를 배타 잠금해 진행 중인 발급 묶음이 끝나기를 기다리고 복구가 끝날 때까지 새 발급을 막는다.
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT event FROM CouponEvent event WHERE event.id = :eventId")
-    Optional<CouponEvent> findByIdForUpdate(@Param("eventId") Long eventId);
+    Optional<CouponEvent> findForRecovery(@Param("eventId") Long eventId);
+
+    // 회차가 없거나 이미 종료됐거나 같은 시각 이후의 전이를 반영했으면 0을 돌려준다.
+    @Modifying
+    @Query("""
+            UPDATE CouponEvent event
+               SET event.status = :status, event.statusChangedAt = :changedAt, event.updatedAt = :now
+             WHERE event.campaignId = :campaignId AND event.businessDate = :businessDate
+               AND event.status <> com.launchcatch.coupon.entity.CouponEventStatus.ENDED
+               AND (event.statusChangedAt IS NULL OR event.statusChangedAt < :changedAt)
+            """)
+    int updateCampaignStatus(@Param("campaignId") long campaignId, @Param("businessDate") LocalDate businessDate,
+            @Param("status") CouponEventStatus status, @Param("changedAt") LocalDateTime changedAt,
+            @Param("now") LocalDateTime now);
+
+    // 같은 전이의 중단 이벤트가 먼저 반영돼도 종료는 반영하며 이미 종료된 회차는 그대로 둔다.
+    @Modifying
+    @Query("""
+            UPDATE CouponEvent event
+               SET event.status = com.launchcatch.coupon.entity.CouponEventStatus.ENDED,
+                   event.statusChangedAt = :changedAt, event.updatedAt = :now
+             WHERE event.campaignId = :campaignId
+               AND event.status <> com.launchcatch.coupon.entity.CouponEventStatus.ENDED
+               AND (event.statusChangedAt IS NULL OR event.statusChangedAt <= :changedAt)
+            """)
+    int endCampaign(@Param("campaignId") long campaignId, @Param("changedAt") LocalDateTime changedAt,
+            @Param("now") LocalDateTime now);
 
     // 요청한 매장의 오늘 조회 대상 이벤트를 한 번에 읽으며 상태나 재고를 변경하지 않는다.
     List<CouponEvent> findByStoreIdInAndBusinessDateAndStatusIn(

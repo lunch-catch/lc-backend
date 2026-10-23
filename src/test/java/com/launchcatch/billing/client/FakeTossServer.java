@@ -29,6 +29,7 @@ final class FakeTossServer implements AutoCloseable {
 
     private volatile int status = 200;
     private volatile String body = "{}";
+    private volatile String contentType = "application/json";
     private volatile long delayMillis;
 
     private FakeTossServer(HttpServer server) {
@@ -56,10 +57,16 @@ final class FakeTossServer implements AutoCloseable {
         replyAfter(0, status, body);
     }
 
+    void reply(int status, String body, String contentType) {
+        reply(status, body);
+        this.contentType = contentType;
+    }
+
     void replyAfter(long delayMillis, int status, String body) {
         this.delayMillis = delayMillis;
         this.status = status;
         this.body = body;
+        this.contentType = "application/json";
     }
 
     List<Recorded> requests() {
@@ -79,7 +86,7 @@ final class FakeTossServer implements AutoCloseable {
                 Thread.sleep(delayMillis);
             }
             byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
-            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.getResponseHeaders().add("Content-Type", contentType);
             exchange.sendResponseHeaders(status, bytes.length);
             exchange.getResponseBody().write(bytes);
         } catch (InterruptedException e) {

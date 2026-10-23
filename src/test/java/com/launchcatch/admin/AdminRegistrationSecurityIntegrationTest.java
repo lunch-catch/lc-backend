@@ -114,7 +114,7 @@ class AdminRegistrationSecurityIntegrationTest extends AbstractAdminIntegrationT
         appender.start();
         logger.addAppender(appender);
         try {
-            mvc.perform(post(PATH).cookie(new Cookie("accessToken", "token"))
+            mvc.perform(post(PATH).cookie(new Cookie("adminAccessToken", "token"))
                             .contentType(MediaType.APPLICATION_JSON).content(body))
                     .andExpect(status().isServiceUnavailable())
                     .andExpect(jsonPath("$.code").value("AUTH-002"))
@@ -138,7 +138,7 @@ class AdminRegistrationSecurityIntegrationTest extends AbstractAdminIntegrationT
         doReturn(Role.ADMIN).when(jwt).getRole("token");
         doReturn(true).when(versions).isVersionValid(Role.ADMIN, plainAdminId, 1L);
 
-        mvc.perform(post(PATH).cookie(new Cookie("accessToken", "token"))
+        mvc.perform(post(PATH).cookie(new Cookie("adminAccessToken", "token"))
                         .contentType(MediaType.APPLICATION_JSON).content(body))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.code").value("AUTH-006"));
@@ -150,7 +150,7 @@ class AdminRegistrationSecurityIntegrationTest extends AbstractAdminIntegrationT
     void 발급_시각_누락은_401이다() throws Exception {
         doReturn(null).when(jwt).getIssuedAt("token");
 
-        mvc.perform(post(PATH).cookie(new Cookie("accessToken", "token"))
+        mvc.perform(post(PATH).cookie(new Cookie("adminAccessToken", "token"))
                         .contentType(MediaType.APPLICATION_JSON).content(body))
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.code").value("AUTH-005"));
@@ -162,7 +162,7 @@ class AdminRegistrationSecurityIntegrationTest extends AbstractAdminIntegrationT
     void 정상_폐기_확인과_현재_권한_확인_후_201로_발급한다() throws Exception {
         String loginId = readLoginIdFromBody();
 
-        mvc.perform(post(PATH).cookie(new Cookie("accessToken", "token"))
+        mvc.perform(post(PATH).cookie(new Cookie("adminAccessToken", "token"))
                         .contentType(MediaType.APPLICATION_JSON).content(body))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.code").value("SUCCESS"));

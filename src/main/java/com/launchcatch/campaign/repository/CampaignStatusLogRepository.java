@@ -2,11 +2,18 @@ package com.launchcatch.campaign.repository;
 
 import com.launchcatch.campaign.entity.CampaignStatusLog;
 import java.time.LocalDateTime;
+import java.util.List;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 public interface CampaignStatusLogRepository extends JpaRepository<CampaignStatusLog, Long> {
+
+    /*
+     * 관리자 상세 조회(#603)용이다. 캠페인 하나의 전이를 일어난 순서대로 돌려준다. 같은 시각에
+     * 쌓인 행은 기본키 순서가 곧 일어난 순서다.
+     */
+    List<CampaignStatusLog> findByCampaignIdOrderByIdAsc(Long campaignId);
 
     /*
      * endExclusive(다음 날 00:00 KST) 이전 시각 기준 ACTIVE였던 캠페인 수를 센다(#354).

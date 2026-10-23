@@ -79,7 +79,7 @@ class KakaoUnlinkRetryServiceTest {
     @Test
     void 호출_실패_직전에_대기_행이_사라져도_실패_로그를_한_번_남긴다() throws Exception {
         KakaoUnlinkFailure failure = pendingFor(MemberStatus.WITHDRAWN);
-        when(failureRepository.findById(10L)).thenReturn(Optional.of(failure), Optional.empty());
+        when(failureRepository.findById(10L)).thenReturn(Optional.empty());
         doThrow(new RuntimeException("카카오회원번호와응답원문")).when(kakaoUnlinkClient).unlink("kakao-1");
 
         assertThatCode(() -> service.retryPending()).doesNotThrowAnyException();
@@ -231,7 +231,7 @@ class KakaoUnlinkRetryServiceTest {
 
     /*
      * 해제는 성공했는데 행 삭제가 실패한 경우다. 외부 호출 실패와 한 경로로 묶으면 성공한
-     * 해제가 실패로 집계되어 재시도 횟수가 오른다. 남은 행은 다음 사이클이 다시 부를 뿐이다.
+     * 해제가 실패로 집계되어 재시도 횟수가 오른다. 정리가 실패하면 선점을 유지하고 운영 확인 뒤 복구한다.
      */
     @Test
     @DisplayName("해제 성공 뒤 정리가 실패해도 호출 실패로 세지 않는다")
@@ -254,9 +254,9 @@ class KakaoUnlinkRetryServiceTest {
         setId(second, 11L);
         setField(second, "providerUserId", "kakao-2");
         when(failureRepository.findPendingOldestFirst(any(Pageable.class))).thenReturn(List.of(first, second));
-        when(failureRepository.findById(10L))
-                .thenReturn(Optional.of(first))
-                .thenThrow(new RuntimeException("db down"));
+        when(failureRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(first));
+        when(failureRepository.findByIdForUpdate(11L)).thenReturn(Optional.of(second));
+        when(failureRepository.findById(10L)).thenThrow(new RuntimeException("db down"));
         when(failureRepository.findById(11L)).thenReturn(Optional.of(second));
         doThrow(new RuntimeException("kakao 500")).when(kakaoUnlinkClient).unlink("kakao-1");
 
@@ -268,16 +268,16 @@ class KakaoUnlinkRetryServiceTest {
     }
 
     /*
-     * 재확인과 호출 사이에 재가입이 끼어들면 방금 맺은 카카오 연결을 우리가 끊는다. 외부 호출을
-     * 트랜잭션 밖에 두는 한 이 창은 없앨 수 없으므로, 지나간 뒤에 탐지만 한다. 대기 행이
-     * 사라졌다는 것이 그 신호다.
+     * 정상 가입 경로는 작업 행을 지우지 않는다.
+     * 운영 중 행이 외부에서 삭제된 경우에도 나머지 대기 작업은 계속 처리한다.
      */
     @Test
-    @DisplayName("호출 중 재가입이 대기 행을 지웠으면 삭제를 시도하지 않는다")
-    void 호출_중_재가입이_대기_행을_지웠으면_삭제를_시도하지_않는다() throws Exception {
+    @DisplayName("호출 중 작업 행이 외부에서 삭제됐으면 삭제를 시도하지 않는다")
+    void 호출_중_작업_행이_외부에서_삭제됐으면_삭제를_시도하지_않는다() throws Exception {
         KakaoUnlinkFailure failure = failure(MemberStatus.WITHDRAWN);
         when(failureRepository.findPendingOldestFirst(any(Pageable.class))).thenReturn(List.of(failure));
-        when(failureRepository.findById(10L)).thenReturn(Optional.of(failure), Optional.empty());
+        when(failureRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(failure));
+        when(failureRepository.findById(10L)).thenReturn(Optional.empty());
 
         assertThatCode(() -> service.retryPending()).doesNotThrowAnyException();
 
@@ -294,7 +294,8 @@ class KakaoUnlinkRetryServiceTest {
     private KakaoUnlinkFailure pendingFor(MemberStatus status) throws Exception {
         KakaoUnlinkFailure failure = failure(status);
         when(failureRepository.findPendingOldestFirst(any(Pageable.class))).thenReturn(List.of(failure));
-        when(failureRepository.findById(10L)).thenReturn(Optional.of(failure));
+        when(failureRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(failure));
+        org.mockito.Mockito.lenient().when(failureRepository.findById(10L)).thenReturn(Optional.of(failure));
         return failure;
     }
 

@@ -2,7 +2,6 @@ package com.launchcatch.billing.service;
 
 import com.launchcatch.billing.cache.DailySpend;
 import com.launchcatch.billing.cache.DailySpendCounter;
-import com.launchcatch.billing.config.BillingScheduleProperties;
 import com.launchcatch.billing.dto.CampaignCounterMismatch;
 import com.launchcatch.billing.dto.CampaignOverspend;
 import com.launchcatch.billing.dto.CampaignSpend;
@@ -14,7 +13,6 @@ import com.launchcatch.ops.contract.BatchExecutionRecord;
 import java.time.Clock;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -27,9 +25,9 @@ import org.springframework.stereotype.Service;
  * 당일 소진 카운터와 원장 DEDUCT 합을 캠페인마다 견준다(CAMPAIGN_SPEND_VS_LEDGER, 배치 설계 I-05).
  * 원장과 카운터만 본다. 노출 로그와 판정 기록은 읽지 않는다.
  *
- * 00:00 전일 대조(reconcilePreviousDay)는 다르면 불일치를 기록만 한다. 그날 서빙이 끝나 카운터를 고쳐도 쓰일
- * 곳이 없어서 카운터를 다시 만들지 않고 resolution_type 도 비워 둔다. 13:30 당일 대조(reconcileToday, 구현
- * 순서 11번)는 다르면 카운터를 원장 기준으로 다시 만들고 CACHE_REBUILD 로 닫힌 불일치를 남긴다.
+ * 대조는 00:00 전일 대조(reconcilePreviousDay) 하나다. 다르면 불일치를 기록만 한다. 그날이 끝나 카운터를 고쳐도
+ * 쓰일 곳이 없어서 카운터를 다시 만들지 않고 resolution_type 도 비워 둔다. 서빙이 하루 종일이라 당일 대조는 두지 않는다.
+ * 그래서 카운터가 원장보다 큰 차이(알려진 한계 L-1)는 그날 안에 고쳐지지 않는다.
  *
  * 해시가 없는 캠페인은 견줄 값이 없어 건너뛰고 WARN 으로 남긴다. Valkey 재시작이나 만료로 사라진 경우다.
  *
@@ -39,8 +37,9 @@ import org.springframework.stereotype.Service;
  *
  * 트랜잭션을 걸지 않는다. Valkey 카운터를 읽는 동안 DB 연결과 트랜잭션을 쥐고 있지 않게 하기 위해서다. 계획과 원장 합은
  * 저장소 호출마다 짧은 읽기로 읽고, 불일치 기록만 묶음마다 SpendMismatchRecorder 의 트랜잭션 하나로 쓴다. Valkey 는
- * DB 트랜잭션에 묶이지 않으므로 하나로 묶어도 카운터와 원장을 같은 시점에 읽는 효과는 없다. 대상은 서빙과 노출 인정
- * 시간이 끝난 뒤라 읽는 사이에 값이 바뀌지 않는다.
+ * DB 트랜잭션에 묶이지 않으므로 하나로 묶어도 카운터와 원장을 같은 시점에 읽는 효과는 없다. 차감은 노출을 받은 날로
+ * 들어오지만, 자정 직전에 시작한 요청은 00:00 뒤에 커밋될 수 있다. 전일 대사는 해제보다 먼저 돌아 그 차감을 해제 계산에
+ * 넣었는지 알 수 없으므로 해제가 끝난 뒤의 등식은 reconcileReleasedDay 가 이틀 뒤에 따로 본다.
  */
 @Slf4j
 @Service
@@ -54,9 +53,7 @@ public class SpendReconciliationService {
     private final PointLedgerRepository ledgerRepository;
     private final SpendMismatchRecorder mismatchRecorder;
     private final DailySpendCounter spendCounter;
-    private final SpendHashRebuildService hashRebuild;
     private final BatchExecutionQueryService batchExecutions;
-    private final BillingScheduleProperties schedule;
     private final Clock clock;
 
     /*
@@ -89,7 +86,7 @@ public class SpendReconciliationService {
                 long reserved = reservedByCampaign.get(campaignId);
                 if (ledgerSpend > reserved) {
                     overspends.add(new CampaignOverspend(campaignId, reserved, ledgerSpend));
-                    log.warn("event=SPEND_RECON_OVERSPEND businessDate={} campaignId={} reserved={} ledger={}",
+                    log.warn("event=BILLING_SPEND_RECON_OVERSPEND_MISMATCH businessDate={} campaignId={} reserved={} ledger={}",
                             target, campaignId, reserved, ledgerSpend);
                 }
                 DailySpend counter = counters.get(campaignId);
@@ -99,7 +96,7 @@ public class SpendReconciliationService {
                 }
                 if (counter.spend() != ledgerSpend) {
                     counterMismatches.add(new CampaignCounterMismatch(campaignId, ledgerSpend, counter.spend()));
-                    log.warn("event=SPEND_RECON_MISMATCH businessDate={} campaignId={} ledger={} counter={}",
+                    log.warn("event=BILLING_SPEND_RECON_MISMATCH businessDate={} campaignId={} ledger={} counter={}",
                             target, campaignId, ledgerSpend, counter.spend());
                 }
             }
@@ -109,78 +106,74 @@ public class SpendReconciliationService {
             }
         }
         if (missing > 0) {
-            log.warn("event=SPEND_RECON_HASH_MISSING businessDate={} missing={}", target, missing);
+            log.warn("event=BILLING_SPEND_RECON_HASH_MISSING businessDate={} missingCount={}", target, missing);
         }
-        log.info("event=SPEND_RECON_DONE businessDate={} campaigns={} mismatches={}",
-                target, campaignIds.size(), mismatches);
+        if (mismatches > 0) {
+            log.error("event=BILLING_SPEND_RECON_DONE businessDate={} campaignCount={} mismatchCount={}",
+                    target, campaignIds.size(), mismatches);
+        } else {
+            log.info("event=BILLING_SPEND_RECON_DONE businessDate={} campaignCount={} mismatchCount={}",
+                    target, campaignIds.size(), mismatches);
+        }
         return mismatches;
     }
 
     /*
-     * businessDate 를 대조하고 기록한 불일치 수를 돌려준다(13:30 대사, 구현 순서 11번).
+     * runDate 의 이틀 전을 해제가 끝난 뒤의 등식으로 대조하고 기록한 초과 수를 돌려준다(7-1).
      *
-     * 전일 대조와 다른 것은 카운터 불일치를 찾으면 카운터를 원장 기준으로 다시 만드는 것이다(D-3, L-1·L-3 해소).
-     * evict 뒤 rebuildIfAbsent 로 한다. 지우고 나면 "없음" 이라 그 메서드가 원장 정본으로 새로 만든다.
-     * 해시가 아예 없는 캠페인은 전일 대조와 같이 건너뛰고 WARN 으로 남긴다. 다시 만들지 않는다.
-     *
-     * 서빙 시간대와 노출 인정 시간이 끝나기 전에는 거부한다. 그 사이의 소진은 아직 확정되지 않았다.
+     * 캠페인마다 그날 소진과 해제의 합이 예약액을 넘으면 CAMPAIGN_OVERSPEND 로 기록한다. 실제값은 소진과 해제의 합이다.
+     * 자정 직전에 시작한 차감이 00:00 해제보다 늦게 커밋되면 해제가 그 차감을 모르고 계산된 채로 남는다. 그 차감은 소진을
+     * 예약액 아래로 두어 전일 대사(reconcilePreviousDay)가 보지 못하고, 그 대사는 해제보다 먼저 돈다. 그래서 해제가 끝나고
+     * 진행 중이던 요청이 모두 끝난 뒤인 이틀 뒤에 다시 본다. 해제가 없는 캠페인은 전일 대사가 이미 본 것이라 대상이 아니다.
+     * 이미 커밋된 과금이라 되돌리지 않고 기록만 한다. 같은 날을 다시 대조해도 불일치 행은 캠페인마다 하나다.
      */
-    public int reconcileToday(LocalDate businessDate, String jobName) {
-        LocalTime now = LocalTime.now(clock);
-        if (!now.isBefore(schedule.startTime()) && now.isBefore(schedule.releaseTime())) {
-            throw new IllegalStateException(
-                    "서빙 시간대와 노출 인정 시간 안에서는 당일 대조를 할 수 없습니다: " + now);
-        }
+    public int reconcileReleasedDay(LocalDate runDate, String jobName) {
+        LocalDate target = runDate.minusDays(2);
         Map<Long, Long> reservedByCampaign = new HashMap<>();
-        for (BudgetDailyPlan plan : planRepository.findByBusinessDate(businessDate)) {
+        for (BudgetDailyPlan plan : planRepository.findByBusinessDate(target)) {
             reservedByCampaign.put(plan.getCampaignId(), plan.getDailyBudget());
         }
         if (reservedByCampaign.isEmpty()) {
             return 0;
         }
         List<Long> campaignIds = reservedByCampaign.keySet().stream().sorted().toList();
-        Long jobExecutionId = findRunId(businessDate, jobName);
-        LocalDateTime recordedAt = LocalDateTime.now(clock);
-        int mismatches = 0;
-        int missing = 0;
+        Long jobExecutionId = findRunId(runDate, jobName);
+        LocalDateTime now = LocalDateTime.now(clock);
+        int overshoots = 0;
         for (int from = 0; from < campaignIds.size(); from += CHUNK) {
             List<Long> chunk = campaignIds.subList(from, Math.min(from + CHUNK, campaignIds.size()));
-            Map<Long, DailySpend> counters = spendCounter.readAll(businessDate, chunk);
-            Map<Long, Long> ledgerSpends = ledgerSpends(chunk, businessDate);
-            List<CampaignOverspend> overspends = new ArrayList<>();
-            List<CampaignCounterMismatch> rebuiltMismatches = new ArrayList<>();
+            Map<Long, Long> releases = new HashMap<>();
+            for (CampaignSpend release : ledgerRepository.sumReleaseForCampaignsOn(chunk, target)) {
+                releases.put(release.campaignId(), release.spend());
+            }
+            if (releases.isEmpty()) {
+                continue;
+            }
+            Map<Long, Long> ledgerSpends = ledgerSpends(chunk, target);
+            List<CampaignOverspend> overshoot = new ArrayList<>();
             for (Long campaignId : chunk) {
-                long ledgerSpend = ledgerSpends.getOrDefault(campaignId, 0L);
+                long released = releases.getOrDefault(campaignId, 0L);
                 long reserved = reservedByCampaign.get(campaignId);
-                if (ledgerSpend > reserved) {
-                    overspends.add(new CampaignOverspend(campaignId, reserved, ledgerSpend));
-                    log.warn("event=SPEND_RECON_OVERSPEND businessDate={} campaignId={} reserved={} ledger={}",
-                            businessDate, campaignId, reserved, ledgerSpend);
-                }
-                DailySpend counter = counters.get(campaignId);
-                if (counter == null) {
-                    missing++;
-                    continue;
-                }
-                if (counter.spend() != ledgerSpend) {
-                    rebuiltMismatches.add(new CampaignCounterMismatch(campaignId, ledgerSpend, counter.spend()));
-                    spendCounter.evict(businessDate, campaignId);
-                    hashRebuild.rebuildIfAbsent(businessDate, campaignId);
-                    log.warn("event=SPEND_RECON_REBUILT businessDate={} campaignId={} ledger={} counter={}",
-                            businessDate, campaignId, ledgerSpend, counter.spend());
+                long out = ledgerSpends.getOrDefault(campaignId, 0L) + released;
+                if (released > 0 && out > reserved) {
+                    overshoot.add(new CampaignOverspend(campaignId, reserved, out));
+                    log.warn("event=BILLING_SPEND_RECON_RELEASE_OVERSHOOT businessDate={} campaignId={} reserved={} spentAndReleased={}",
+                            target, campaignId, reserved, out);
                 }
             }
-            if (!overspends.isEmpty() || !rebuiltMismatches.isEmpty()) {
-                mismatchRecorder.recordToday(businessDate, jobExecutionId, recordedAt, overspends, rebuiltMismatches);
-                mismatches += overspends.size() + rebuiltMismatches.size();
+            if (!overshoot.isEmpty()) {
+                mismatchRecorder.record(target, jobExecutionId, now, overshoot, List.of());
+                overshoots += overshoot.size();
             }
         }
-        if (missing > 0) {
-            log.warn("event=SPEND_RECON_HASH_MISSING businessDate={} missing={}", businessDate, missing);
+        if (overshoots > 0) {
+            log.error("event=BILLING_SPEND_RECON_RELEASED_DONE businessDate={} campaignCount={} overshootCount={}",
+                    target, campaignIds.size(), overshoots);
+        } else {
+            log.info("event=BILLING_SPEND_RECON_RELEASED_DONE businessDate={} campaignCount={} overshootCount={}",
+                    target, campaignIds.size(), overshoots);
         }
-        log.info("event=SPEND_RECON_TODAY_DONE businessDate={} campaigns={} mismatches={}",
-                businessDate, campaignIds.size(), mismatches);
-        return mismatches;
+        return overshoots;
     }
 
     // 작업 행은 스케줄러가 단계를 시작할 때 먼저 만든다. 찾지 못하면 NULL 로 남긴다(소프트 참조)

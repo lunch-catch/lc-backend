@@ -1,5 +1,8 @@
 package com.launchcatch.billing.service;
 
+import static com.launchcatch.billing.PaymentConstants.FAILED_WITHOUT_REASON;
+import static com.launchcatch.billing.PaymentConstants.PG_TID_UNIQUE;
+
 import com.launchcatch.billing.cache.WebhookInquiryGuard;
 import com.launchcatch.billing.client.PaymentGateway;
 import com.launchcatch.billing.client.PaymentGatewayInquiryResult;
@@ -35,9 +38,6 @@ public class PaymentWebhookService {
 
     static final String WEBHOOK_METRIC = "billing.payment.webhook";
 
-    private static final String PG_TID_UNIQUE = "uk_payment_pg_tid";
-    private static final String FAILED_WITHOUT_REASON = "결제대행사 조회 결과 결제가 실패했습니다.";
-
     private final PaymentRepository paymentRepository;
     private final PaymentResultService resultService;
     private final PaymentGateway paymentGateway;
@@ -51,7 +51,7 @@ public class PaymentWebhookService {
 
     public Result handle(PaymentWebhookRequest request) {
         if (!isUsable(request)) {
-            log.warn("event=PAYMENT_WEBHOOK_IGNORED reason=malformed");
+            log.warn("event=BILLING_PAYMENT_WEBHOOK_SKIPPED reason=MALFORMED");
             count("ignored");
             return Result.HANDLED;
         }
@@ -59,7 +59,7 @@ public class PaymentWebhookService {
         String orderId = request.data().orderId();
         Optional<Payment> found = paymentRepository.findByOrderId(orderId);
         if (found.isEmpty()) {
-            log.warn("event=PAYMENT_WEBHOOK_IGNORED reason=unknown_order orderId={}", orderId);
+            log.warn("event=BILLING_PAYMENT_WEBHOOK_SKIPPED reason=UNKNOWN_ORDER orderId={}", orderId);
             count("ignored");
             return Result.HANDLED;
         }
@@ -74,7 +74,7 @@ public class PaymentWebhookService {
         }
         PaymentGatewayInquiryResult inquiry = paymentGateway.inquireByPaymentKey(paymentKey);
         if (!matches(payment, inquiry)) {
-            log.warn("event=PAYMENT_WEBHOOK_IGNORED reason=mismatch paymentId={} status={}",
+            log.warn("event=BILLING_PAYMENT_WEBHOOK_SKIPPED reason=MISMATCH paymentId={} status={}",
                     payment.getId(), inquiry.status());
             count("ignored");
             return Result.HANDLED;
@@ -124,13 +124,13 @@ public class PaymentWebhookService {
             if (e.getErrorCode() != BillingErrorCode.ORDER_ID_MISMATCH) {
                 throw e;
             }
-            log.warn("event=PAYMENT_WEBHOOK_IGNORED reason=pg_tid_conflict paymentId={}", payment.getId());
+            log.warn("event=BILLING_PAYMENT_WEBHOOK_SKIPPED reason=PG_TID_CONFLICT paymentId={}", payment.getId());
             return false;
         } catch (DataIntegrityViolationException e) {
             if (!ConstraintViolations.isConstraintViolation(e, PG_TID_UNIQUE)) {
                 throw e;
             }
-            log.warn("event=PAYMENT_WEBHOOK_IGNORED reason=pg_tid_already_used paymentId={}", payment.getId());
+            log.warn("event=BILLING_PAYMENT_WEBHOOK_SKIPPED reason=PG_TID_ALREADY_USED paymentId={}", payment.getId());
             return false;
         }
     }

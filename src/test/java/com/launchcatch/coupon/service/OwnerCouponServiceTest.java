@@ -90,6 +90,32 @@ class OwnerCouponServiceTest {
     @InjectMocks OwnerCouponService service;
 
     @Test
+    void 다른_점주의_캠페인_거절은_INFO와_업무_사유로_남긴다() {
+        when(owners.findCurrentStatus(7L)).thenReturn(Optional.of(OwnerAccountStatus.ACTIVE));
+        when(campaigns.findAllById(List.of(501L))).thenReturn(List.of());
+        try (var logs = new CouponLogCapture(OwnerCouponService.class)) {
+            assertThatThrownBy(() -> service.summary(7L, 501L, DAY, DAY)).isInstanceOf(CouponException.class);
+
+            assertThat(logs.events).singleElement().satisfies(event -> {
+                assertThat(event.getLevel()).isEqualTo(ch.qos.logback.classic.Level.INFO);
+                assertThat(event.getFormattedMessage()).contains("reason=CAMPAIGN_ACCESS_DENIED", "errorCode=COUPON-011");
+            });
+        }
+    }
+
+    @Test
+    void 비활성_점주의_조회_거절은_INFO와_오류_코드로_남긴다() {
+        try (var logs = new CouponLogCapture(OwnerCouponService.class)) {
+            assertThatThrownBy(() -> service.summary(7L, 501L, DAY, DAY)).isInstanceOf(CouponException.class);
+
+            assertThat(logs.events).singleElement().satisfies(event -> {
+                assertThat(event.getLevel()).isEqualTo(ch.qos.logback.classic.Level.INFO);
+                assertThat(event.getFormattedMessage()).contains("reason=OWNER_NOT_ACTIVE", "errorCode=AUTH-006");
+            });
+        }
+    }
+
+    @Test
     void 누적_발급_수와_사용_수를_구분해_본인_캠페인_수량을_반환한다() {
         allowOwner();
         var counts = mock(CouponEventRepository.OwnerSummary.class);
@@ -603,10 +629,25 @@ class OwnerCouponServiceTest {
             assertError(CouponErrorCode.MEMBER_ACCOUNT_NOT_ALLOWED);
         }
 
-        @Test
-        void 매장과_100m를_초과하면_상태와_이력을_바꾸지_않는다() {
+        // 시연 영상 촬영용 30km 제한을 검증하며 촬영 후 기존 100m 기준으로 복원한다.
+        @ParameterizedTest
+        @ValueSource(doubles = {37.501, 37.76, 37.7697})
+        void 매장과_100m를_넘어도_30km_이내이면_사용한다(double latitude) {
             ready();
-            when(stores.findAllById(List.of(10L))).thenReturn(List.of(store(38.0, 127.0)));
+            when(stores.findAllById(List.of(10L))).thenReturn(List.of(store(latitude, 127.0)));
+
+            CouponUseResponse response = service.redeem(9L, request());
+
+            assertThat(response.discountAmount()).isEqualTo(680);
+            assertThat(coupon.getStatus()).isEqualTo(MemberCouponStatus.USED);
+        }
+
+        // 시연 영상 촬영용 30km 제한을 검증하며 촬영 후 기존 100m 기준으로 복원한다.
+        @ParameterizedTest
+        @ValueSource(doubles = {37.7699, 38.0})
+        void 매장과_30km를_초과하면_상태와_이력을_바꾸지_않는다(double latitude) {
+            ready();
+            when(stores.findAllById(List.of(10L))).thenReturn(List.of(store(latitude, 127.0)));
             assertError(CouponErrorCode.LOCATION_NOT_ALLOWED);
             assertThat(coupon.getStatus()).isEqualTo(MemberCouponStatus.ISSUED);
         }

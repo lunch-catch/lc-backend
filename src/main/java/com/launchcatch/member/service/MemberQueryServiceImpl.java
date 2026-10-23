@@ -2,11 +2,16 @@ package com.launchcatch.member.service;
 
 import com.launchcatch.member.contract.MemberInfo;
 import com.launchcatch.member.contract.MemberQueryService;
+import com.launchcatch.member.contract.MemberStatus;
 import com.launchcatch.member.entity.Member;
 import com.launchcatch.member.entity.MemberProfile;
 import com.launchcatch.member.repository.MemberRepository;
+import com.launchcatch.member.repository.MemberStatusRow;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
+import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -21,6 +26,24 @@ public class MemberQueryServiceImpl implements MemberQueryService {
     @Override
     public Optional<MemberInfo> findById(Long memberId) {
         return memberRepository.findById(memberId).map(this::toInfo);
+    }
+
+    @Override
+    public Optional<MemberStatus> findCurrentStatus(Long memberId) {
+        return memberRepository.findStatusById(memberId);
+    }
+
+    @Override
+    public Map<Long, MemberStatus> findCurrentStatuses(Set<Long> memberIds) {
+        if (memberIds.size() > MAX_FIND_ALL_SIZE) {
+            throw new IllegalArgumentException(
+                    "memberIds must not exceed " + MAX_FIND_ALL_SIZE + ": " + memberIds.size());
+        }
+        if (memberIds.isEmpty()) {
+            return Map.of();
+        }
+        return memberRepository.findStatusesByIdIn(memberIds).stream()
+                .collect(Collectors.toUnmodifiableMap(MemberStatusRow::memberId, MemberStatusRow::status));
     }
 
     @Override

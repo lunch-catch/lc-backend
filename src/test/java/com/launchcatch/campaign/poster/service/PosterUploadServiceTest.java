@@ -8,6 +8,9 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import com.launchcatch.campaign.contract.CampaignStatus;
 import com.launchcatch.campaign.contract.DiscountTargetType;
 import com.launchcatch.campaign.contract.DiscountType;
@@ -30,6 +33,7 @@ import com.launchcatch.owner.contract.OwnerAccountStatus;
 import com.launchcatch.owner.contract.OwnerStatusQuery;
 import com.launchcatch.store.contract.StoreInfo;
 import com.launchcatch.store.contract.StoreMenuInfo;
+import com.launchcatch.store.contract.StoreMenuQueryResult;
 import com.launchcatch.store.contract.StoreQueryService;
 import java.lang.reflect.Field;
 import java.net.URL;
@@ -39,12 +43,14 @@ import java.time.LocalTime;
 import java.util.List;
 import java.util.Optional;
 import java.util.function.Consumer;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.slf4j.LoggerFactory;
 import org.springframework.transaction.support.TransactionCallback;
 import org.springframework.transaction.support.TransactionTemplate;
 import software.amazon.awssdk.services.s3.S3Client;
@@ -63,6 +69,7 @@ class PosterUploadServiceTest {
     private static final Long CAMPAIGN_ID = 501L;
     private static final Long TEMPLATE_ID = 1L;
     private static final String OBJECT_KEY = "campaigns/501/poster/upload-1.jpg";
+    // 광고 표시(adLabel)가 들어 있는 옛 템플릿이다. 포스터에는 광고 표시를 넣지 않는다(#628).
     private static final String TEMPLATE_HTML = ""
             + "<div data-slot=\"eventName\">old</div>"
             + "<div data-slot=\"discount\">old</div>"
@@ -83,6 +90,23 @@ class PosterUploadServiceTest {
     private PosterUploadService service;
 
     @SuppressWarnings("unchecked")
+    private final List<ListAppender<ILoggingEvent>> attachedAppenders = new java.util.ArrayList<>();
+
+    private ListAppender<ILoggingEvent> attachLogAppender() {
+        ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        appender.start();
+        ((Logger) LoggerFactory.getLogger(PosterUploadService.class)).addAppender(appender);
+        attachedAppenders.add(appender);
+        return appender;
+    }
+
+    @AfterEach
+    void detachLogAppenders() {
+        Logger logger = (Logger) LoggerFactory.getLogger(PosterUploadService.class);
+        attachedAppenders.forEach(logger::detachAppender);
+        attachedAppenders.clear();
+    }
+
     @BeforeEach
     void setUp() {
         service = new PosterUploadService(
@@ -150,13 +174,16 @@ class PosterUploadServiceTest {
     }
 
     @Test
-    @DisplayName("집행 기간이 비어 있으면 업로드 준비를 거부한다")
-    void 집행_기간이_없으면_준비를_거부한다() {
+    @DisplayName("집행 기간이 비어 있어도 업로드 준비가 통과한다(#763, 등록 순서가 포스터 다음에 집행 기간이다)")
+    void 집행_기간이_없어도_준비가_통과한다() throws Exception {
         when(campaignRepository.findById(CAMPAIGN_ID)).thenReturn(Optional.of(draftCampaignWithoutPeriod()));
+        when(s3Presigner.presignPutObject(any(PutObjectPresignRequest.class))).thenReturn(presignedPutObjectRequest);
+        when(presignedPutObjectRequest.url()).thenReturn(new URL("https://example.com/presigned"));
 
-        assertThatThrownBy(() -> service.prepareImageUpload(OWNER_ID, CAMPAIGN_ID, "image/jpeg", 1000L))
-                .isInstanceOfSatisfying(CampaignException.class, e ->
-                        assertThat(e.getErrorCode()).isEqualTo(PosterErrorCode.CAMPAIGN_PERIOD_NOT_SET));
+        PosterImagePrepareUploadResponse response =
+                service.prepareImageUpload(OWNER_ID, CAMPAIGN_ID, "image/jpeg", 1000L);
+
+        assertThat(response.uploadUrl()).isEqualTo("https://example.com/presigned");
     }
 
     @Test
@@ -174,13 +201,15 @@ class PosterUploadServiceTest {
     }
 
     @Test
-    @DisplayName("집행 기간이 비어 있으면 생성을 거부한다")
-    void 집행_기간이_없으면_거부한다() {
-        when(campaignRepository.findById(CAMPAIGN_ID)).thenReturn(Optional.of(draftCampaignWithoutPeriod()));
+    @DisplayName("집행 기간이 비어 있어도 쿠폰 사용 시간으로 기간 문구를 만들어 포스터를 만든다(#763)")
+    void 집행_기간이_없어도_포스터를_만든다() {
+        Campaign campaign = draftCampaignWithoutPeriod();
+        Template template = publishedActiveTemplate();
+        givenHappyPath(campaign, template);
 
-        assertThatThrownBy(() -> service.createOrOverwritePoster(OWNER_ID, CAMPAIGN_ID, TEMPLATE_ID, OBJECT_KEY))
-                .isInstanceOfSatisfying(CampaignException.class, e ->
-                        assertThat(e.getErrorCode()).isEqualTo(PosterErrorCode.CAMPAIGN_PERIOD_NOT_SET));
+        PosterCreateResponse response = service.createOrOverwritePoster(OWNER_ID, CAMPAIGN_ID, TEMPLATE_ID, OBJECT_KEY);
+
+        assertThat(response.html()).contains("매일 12:00 ~ 13:30");
     }
 
     @Test
@@ -293,11 +322,36 @@ class PosterUploadServiceTest {
         when(templateRepository.findById(TEMPLATE_ID)).thenReturn(Optional.of(publishedActiveTemplate()));
         when(storeQueryService.findAllById(List.of(STORE_ID)))
                 .thenReturn(List.of(new StoreInfo(STORE_ID, "분식집", "store.jpg", 37.5, 127.0)));
-        when(storeQueryService.findMenusByIdIn(List.of(42L))).thenReturn(List.of());
+        when(storeQueryService.findMenusByIdIn(List.of(42L))).thenReturn(new StoreMenuQueryResult(List.of(), List.of()));
+        ListAppender<ILoggingEvent> appender = attachLogAppender();
 
         assertThatThrownBy(() -> service.createOrOverwritePoster(OWNER_ID, CAMPAIGN_ID, TEMPLATE_ID, OBJECT_KEY))
                 .isInstanceOfSatisfying(CampaignException.class, e ->
                         assertThat(e.getErrorCode()).isEqualTo(CommonErrorCode.INTERNAL_ERROR));
+
+        assertThat(appender.list).extracting(ILoggingEvent::getFormattedMessage)
+                .anyMatch(message -> message.contains("event=POSTER_MENU_NOT_FOUND"))
+                .noneMatch(message -> message.contains("event=POSTER_MENU_IMAGE_INVALID"));
+    }
+
+    @Test
+    @DisplayName("메뉴의 이미지 데이터 오류는 메뉴 없음과 다른 이벤트로 로그를 남기고 같은 내부 오류로 거부한다(#851)")
+    void 메뉴의_데이터_오류가_있으면_내부_오류로_포스터_생성을_거부한다() {
+        when(campaignRepository.findById(CAMPAIGN_ID)).thenReturn(Optional.of(menuDiscountCampaign()));
+        when(templateRepository.findById(TEMPLATE_ID)).thenReturn(Optional.of(publishedActiveTemplate()));
+        when(storeQueryService.findAllById(List.of(STORE_ID)))
+                .thenReturn(List.of(new StoreInfo(STORE_ID, "분식집", "store.jpg", 37.5, 127.0)));
+        when(storeQueryService.findMenusByIdIn(List.of(42L)))
+                .thenReturn(new StoreMenuQueryResult(List.of(), List.of(42L)));
+        ListAppender<ILoggingEvent> appender = attachLogAppender();
+
+        assertThatThrownBy(() -> service.createOrOverwritePoster(OWNER_ID, CAMPAIGN_ID, TEMPLATE_ID, OBJECT_KEY))
+                .isInstanceOfSatisfying(CampaignException.class, e ->
+                        assertThat(e.getErrorCode()).isEqualTo(CommonErrorCode.INTERNAL_ERROR));
+
+        assertThat(appender.list).extracting(ILoggingEvent::getFormattedMessage)
+                .anyMatch(message -> message.contains("event=POSTER_MENU_IMAGE_INVALID"))
+                .noneMatch(message -> message.contains("event=POSTER_MENU_NOT_FOUND"));
     }
 
     @Test
@@ -328,9 +382,40 @@ class PosterUploadServiceTest {
         assertThat(response.title()).isEqualTo("분식집 - 가을 신메뉴");
         assertThat(response.html()).contains("분식집")
                 .contains("전체 메뉴 10원 할인")
-                .contains("10.01~10.31")
-                .contains("광고")
+                .contains("매일 12:00 ~ 13:30")
+                .doesNotContain("adLabel")
+                .doesNotContain("광고")
                 .contains("https://cdn.example.com/" + OBJECT_KEY);
+    }
+
+    @Test
+    @DisplayName("스타일이 없는 이미지 슬롯에도 크기 보정 스타일을 넣는다(#731)")
+    void 스타일이_없으면_크기_보정_스타일을_넣는다() {
+        Campaign campaign = draftCampaign(CampaignStatus.DRAFT);
+        Template template = publishedActiveTemplate();
+        givenHappyPath(campaign, template);
+
+        PosterCreateResponse response = service.createOrOverwritePoster(OWNER_ID, CAMPAIGN_ID, TEMPLATE_ID, OBJECT_KEY);
+
+        assertThat(imageStyle(response.html()))
+                .contains("width:100%").contains("height:100%").contains("min-height:0").contains("object-fit:cover");
+    }
+
+    @Test
+    @DisplayName("이미지 슬롯의 기존 스타일은 유지하고 같은 속성은 서버 값으로 한 번만 덮어쓴다(#731)")
+    void 기존_스타일은_유지하고_같은_속성은_덮어쓴다() {
+        Campaign campaign = draftCampaign(CampaignStatus.DRAFT);
+        Template template = publishedActiveTemplate(TEMPLATE_HTML.replace(
+                "<img data-slot=\"image\" src=\"old\">",
+                "<img data-slot=\"image\" src=\"old\" style=\"border-radius:16px;WIDTH:50%;box-shadow:0 6px 16px rgba(0,0,0,0.25)\">"));
+        givenHappyPath(campaign, template);
+
+        PosterCreateResponse response = service.createOrOverwritePoster(OWNER_ID, CAMPAIGN_ID, TEMPLATE_ID, OBJECT_KEY);
+
+        String style = imageStyle(response.html());
+        assertThat(style).contains("border-radius:16px").contains("box-shadow:0 6px 16px rgba(0,0,0,0.25)")
+                .contains("width:100%").doesNotContain("50%");
+        assertThat(style.split("width:", -1)).hasSize(2);
     }
 
     @Test
@@ -340,7 +425,7 @@ class PosterUploadServiceTest {
         Template template = publishedActiveTemplate();
         givenHappyPath(campaign, template);
         when(storeQueryService.findMenusByIdIn(List.of(42L)))
-                .thenReturn(List.of(new StoreMenuInfo(42L, STORE_ID, "menu.jpg", "제육볶음", 9000L)));
+                .thenReturn(new StoreMenuQueryResult(List.of(new StoreMenuInfo(42L, STORE_ID, "menu.jpg", "제육볶음", 9000L)), List.of()));
 
         PosterCreateResponse response = service.createOrOverwritePoster(OWNER_ID, CAMPAIGN_ID, TEMPLATE_ID, OBJECT_KEY);
 
@@ -358,7 +443,7 @@ class PosterUploadServiceTest {
         Template template = publishedActiveTemplate();
         givenHappyPath(campaign, template);
         when(storeQueryService.findMenusByIdIn(List.of(42L)))
-                .thenReturn(List.of(new StoreMenuInfo(42L, STORE_ID, "menu.jpg", "제육볶음", 9000L)));
+                .thenReturn(new StoreMenuQueryResult(List.of(new StoreMenuInfo(42L, STORE_ID, "menu.jpg", "제육볶음", 9000L)), List.of()));
 
         PosterCreateResponse response = service.createOrOverwritePoster(OWNER_ID, CAMPAIGN_ID, TEMPLATE_ID, OBJECT_KEY);
 
@@ -395,10 +480,18 @@ class PosterUploadServiceTest {
         lenient().when(posterRepository.save(any(Poster.class))).thenAnswer(invocation -> invocation.getArgument(0));
     }
 
+    private String imageStyle(String html) {
+        return org.jsoup.Jsoup.parseBodyFragment(html).selectFirst("[data-slot=image]").attr("style");
+    }
+
     private Template publishedActiveTemplate() {
+        return publishedActiveTemplate(TEMPLATE_HTML);
+    }
+
+    private Template publishedActiveTemplate(String html) {
         Template template = Template.createDraft("가을 신메뉴");
-        template.addDraftVersion(1L, LocalDateTime.now(), "요청", "req-1", TEMPLATE_HTML, 1);
-        template.publish(TEMPLATE_HTML, LocalDateTime.now(), 1);
+        template.addDraftVersion(1L, LocalDateTime.now(), "요청", "req-1", html, 1);
+        template.publish(html, LocalDateTime.now(), 1);
         template.changeActive(true, 1L, LocalDateTime.now());
         return template;
     }

@@ -3,6 +3,7 @@ package com.launchcatch.billing;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.launchcatch.billing.dto.AdminPointSummaryItem;
+import com.launchcatch.billing.dto.ServeIds;
 import com.launchcatch.billing.dto.SummaryPeriod;
 import com.launchcatch.billing.service.AdminPointSummaryService;
 import java.time.LocalDate;
@@ -28,6 +29,7 @@ class AdminPointSummaryIntegrationTest extends AbstractBillingIntegrationTest {
     @AfterEach
     void clean() {
         jdbc.update("delete from point_ledger where owner_id = ?", OWNER);
+        jdbc.update("delete from deduction_result where owner_id = ?", OWNER);
     }
 
     private void adjust(long amount, Long campaign, LocalDate target, String createdAt) {
@@ -61,5 +63,48 @@ class AdminPointSummaryIntegrationTest extends AbstractBillingIntegrationTest {
                 new AdminPointSummaryItem(DAY.plusDays(1).toString(), 0, 0, 0, 0, 0, -300));
         assertThat(item(DAY.minusDays(1).toString())).isEqualTo(
                 new AdminPointSummaryItem(DAY.minusDays(1).toString(), 0, -70, 0, 0, 0, 70));
+    }
+
+    @Test
+    void 소진은_DEDUCT를_기록한_날이_아니라_서빙_영업일에_들어간다() {
+        // DAY 의 노출이 다음 날 00:30 에 기록됐다. 기록일에는 예약도 해제도 없다
+        byte[] serveId = ServeIds.toBytes(UUID.randomUUID());
+        jdbc.update("""
+                insert into deduction_result
+                    (serve_id, campaign_id, owner_id, business_date, billing_status, unit_price, created_at, updated_at)
+                values (?, 12, ?, ?, 'BILLED', 700, '2032-03-11 00:30:00', '2032-03-11 00:30:00')
+                """, serveId, OWNER, DAY);
+        jdbc.update("""
+                insert into point_ledger (owner_id, campaign_id, serve_id, entry_type, source, amount, created_at, updated_at)
+                values (?, 12, ?, 'DEDUCT', 'REALTIME', -700, '2032-03-11 00:30:00', '2032-03-11 00:30:00')
+                """, OWNER, serveId);
+
+        assertThat(item(DAY.toString())).isEqualTo(new AdminPointSummaryItem(DAY.toString(), 0, 700, 0, 0, 0, 0));
+        assertThat(item(DAY.plusDays(1).toString()))
+                .isEqualTo(new AdminPointSummaryItem(DAY.plusDays(1).toString(), 0, 0, 0, 0, 0, 0));
+    }
+
+    /*
+     * 전날 해제가 아직 없거나 실패한 상태다(7-2). 지난 영업일의 소진을 예약에서 해제를 뺀 값으로 계산하면 예약 전체가
+     * 소진으로 보인다. 소진은 DEDUCT 에서 읽으므로 해제 전에도 실제 소진만 표시한다.
+     */
+    @Test
+    void 해제_전인_지난_영업일도_예약_전체가_아니라_실제_소진만_표시한다() {
+        jdbc.update("""
+                insert into point_ledger (owner_id, campaign_id, business_date, entry_type, source, amount, created_at, updated_at)
+                values (?, 12, ?, 'RESERVE', 'RECONCILIATION', -10000, '2032-03-10 00:00:00', '2032-03-10 00:00:00')
+                """, OWNER, DAY);
+        byte[] serveId = ServeIds.toBytes(UUID.randomUUID());
+        jdbc.update("""
+                insert into deduction_result
+                    (serve_id, campaign_id, owner_id, business_date, billing_status, unit_price, created_at, updated_at)
+                values (?, 12, ?, ?, 'BILLED', 3000, '2032-03-10 12:00:00', '2032-03-10 12:00:00')
+                """, serveId, OWNER, DAY);
+        jdbc.update("""
+                insert into point_ledger (owner_id, campaign_id, serve_id, entry_type, source, amount, created_at, updated_at)
+                values (?, 12, ?, 'DEDUCT', 'REALTIME', -3000, '2032-03-10 12:00:00', '2032-03-10 12:00:00')
+                """, OWNER, serveId);
+
+        assertThat(item(DAY.toString())).isEqualTo(new AdminPointSummaryItem(DAY.toString(), 0, 3000, 10000, 0, 0, 0));
     }
 }

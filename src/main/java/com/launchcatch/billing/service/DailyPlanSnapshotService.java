@@ -12,6 +12,7 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
@@ -21,7 +22,7 @@ import org.springframework.stereotype.Service;
  * 노출마다, 진행률 조회마다 계획 행을 읽으면 핫패스가 DB 에 묶여서 이 값만 메모리에 둔다. 예약액과 중단 여부는
  * 장중에 바뀌므로(D-7) 캐시하지 않고 Valkey 해시가 미러링한다.
  *
- * 계획 행이 없는 경우는 캐시하지 않는다. get 은 예외(E-4)이고 findAll 은 결과에서 뺀다.
+ * 계획 행이 없는 경우는 캐시하지 않는다. find 는 비어 있고 findAll 은 결과에서 뺀다.
  * 행이 생기면 다음 호출이 읽는다.
  */
 @Service
@@ -31,9 +32,9 @@ public class DailyPlanSnapshotService {
     private final BudgetDailyPlanRepository planRepository;
     private final Cache<PlanSnapshotKey, PlanSnapshot> cache;
 
-    // 노출 차감이 쓴다. 계획 행이 없으면 예외다
-    public PlanSnapshot get(LocalDate businessDate, Long campaignId) {
-        return cache.get(new PlanSnapshotKey(businessDate, campaignId), key -> load(key));
+    // 노출 차감이 쓴다. 계획 행이 없으면 비어 있다. Caffeine 은 null 을 돌려준 적재를 캐시하지 않는다
+    public Optional<PlanSnapshot> find(LocalDate businessDate, Long campaignId) {
+        return Optional.ofNullable(cache.get(new PlanSnapshotKey(businessDate, campaignId), key -> load(key)));
     }
 
     /*
@@ -70,11 +71,10 @@ public class DailyPlanSnapshotService {
     private PlanSnapshot load(PlanSnapshotKey key) {
         return planRepository.findByCampaignIdAndBusinessDate(key.campaignId(), key.businessDate())
                 .map(plan -> snapshotOf(plan))
-                .orElseThrow(() -> new IllegalStateException(
-                        "그날 예산 계획이 없습니다. campaignId=" + key.campaignId() + ", businessDate=" + key.businessDate()));
+                .orElse(null);
     }
 
     private static PlanSnapshot snapshotOf(BudgetDailyPlan plan) {
-        return new PlanSnapshot(plan.getId(), plan.getOwnerId(), plan.getUnitPrice());
+        return new PlanSnapshot(plan.getOwnerId(), plan.getUnitPrice());
     }
 }

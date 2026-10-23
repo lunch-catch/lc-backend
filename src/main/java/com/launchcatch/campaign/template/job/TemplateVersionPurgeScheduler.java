@@ -2,6 +2,7 @@ package com.launchcatch.campaign.template.job;
 
 import com.launchcatch.campaign.template.service.TemplateVersionPurgeService;
 import com.launchcatch.global.logging.FailureLogDetails;
+import com.launchcatch.ops.scheduler.StandaloneJob;
 import com.launchcatch.ops.service.BatchExecutionService;
 import java.time.LocalDate;
 import lombok.RequiredArgsConstructor;
@@ -22,13 +23,16 @@ import org.springframework.stereotype.Component;
  * @EnableScheduling 은 SchedulingConfig 에만 있고 launchcatch.scheduler.enabled=true 일 때만
  * 뜬다. 그 값은 application-batch.yml 에만 있어 API 서버에서는 이 메서드가 돌지 않는다.
  *
- * 점유한 행은 반드시 닫는다. RUNNING 으로 남기면 2분 뒤 다른 서버의 takeOverStale 이
- * 가져가 "다시 돌릴 경로가 없다" 로 실패 처리하고 관리자에게 알린다.
+ * 점유한 행은 반드시 닫는다. RUNNING 으로 남기면 2분 뒤 다른 서버가 이어받는다. 그 길이
+ * StandaloneJob 이다(#622). 관리자 수동 재실행도 같은 길로 다시 돈다.
+ *
+ * 같은 영업일로 다시 돌아도 안전하다. 지우는 대상은 이미 소프트삭제된 버전뿐이고 청크마다 따로
+ * 커밋되므로, 멈춘 실행이 지운 만큼은 사라져 있고 다시 돈 실행은 남은 행만 지운다.
  */
 @Slf4j
 @Component
 @RequiredArgsConstructor
-public class TemplateVersionPurgeScheduler {
+public class TemplateVersionPurgeScheduler implements StandaloneJob {
 
     /** 점유 키다. 도메인을 접두어로 붙여 다른 도메인의 작업명과 겹치지 않게 한다. */
     static final String JOB_NAME = "CAMPAIGN_TEMPLATE_VERSION_PURGE";
@@ -60,5 +64,21 @@ public class TemplateVersionPurgeScheduler {
             throw e;
         }
         executions.succeed(JOB_NAME, businessDate, processedCount);
+    }
+
+    @Override
+    public String jobName() {
+        return JOB_NAME;
+    }
+
+    @Override
+    public void run(LocalDate businessDate, int attemptNo) {
+        runCounting(businessDate, attemptNo);
+    }
+
+    // 이어받은 서버와 관리자 수동 재실행이 부른다. 지운 건수로 BatchJobRunner 가 행을 닫으므로 여기서 닫지 않는다.
+    @Override
+    public Integer runCounting(LocalDate businessDate, int attemptNo) {
+        return templateVersionPurgeService.purgeSoftDeleted();
     }
 }

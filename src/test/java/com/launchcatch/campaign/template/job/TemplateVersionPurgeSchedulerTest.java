@@ -1,12 +1,15 @@
 package com.launchcatch.campaign.template.job;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.launchcatch.campaign.template.service.TemplateVersionPurgeService;
@@ -36,7 +39,8 @@ class TemplateVersionPurgeSchedulerTest {
     @BeforeEach
     void setUp() {
         scheduler = new TemplateVersionPurgeScheduler(templateVersionPurgeService, executions);
-        when(executions.businessDate()).thenReturn(BUSINESS_DATE);
+        // 이어받기 경로는 영업일을 넘겨받아 묻지 않는다
+        lenient().when(executions.businessDate()).thenReturn(BUSINESS_DATE);
     }
 
     @Test
@@ -92,5 +96,32 @@ class TemplateVersionPurgeSchedulerTest {
                 .isSameAs(failure).hasSuppressedException(recordFailure);
 
         verify(executions, never()).succeed(anyString(), eq(BUSINESS_DATE), anyInt());
+    }
+
+    /*
+     * 멈춘 실행을 이어받은 서버와 관리자 수동 재실행이 이 길로 다시 돌린다.
+     * 행을 닫는 일은 BatchJobRunner 가 한다. 이 길은 지운 건수를 돌려주기만 한다.
+     */
+    @Test
+    @DisplayName("이어받은 서버가 부르면 지우고 삭제 건수를 돌려주며 행은 직접 닫지 않는다")
+    void 이어받은_서버가_부르면_삭제_건수를_돌려주고_행은_닫지_않는다() {
+        when(templateVersionPurgeService.purgeSoftDeleted()).thenReturn(7);
+
+        Integer deleted = scheduler.runCounting(BUSINESS_DATE, 2);
+
+        assertThat(deleted).isEqualTo(7);
+        verifyNoInteractions(executions);
+        assertThat(scheduler.jobName()).isEqualTo("CAMPAIGN_TEMPLATE_VERSION_PURGE");
+    }
+
+    @Test
+    @DisplayName("run 은 runCounting 과 같이 지우고 행은 직접 닫지 않는다")
+    void run은_지우기만_하고_행은_닫지_않는다() {
+        when(templateVersionPurgeService.purgeSoftDeleted()).thenReturn(7);
+
+        scheduler.run(BUSINESS_DATE, 2);
+
+        verify(templateVersionPurgeService).purgeSoftDeleted();
+        verifyNoInteractions(executions);
     }
 }

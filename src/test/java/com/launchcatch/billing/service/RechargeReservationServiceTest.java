@@ -3,11 +3,12 @@ package com.launchcatch.billing.service;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.inOrder;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
-import com.launchcatch.billing.config.BillingScheduleProperties;
 import com.launchcatch.billing.dto.PointCharged;
 import com.launchcatch.billing.dto.RechargeReserveIncreased;
 import com.launchcatch.billing.entity.BudgetDailyPlan;
@@ -24,7 +25,6 @@ import com.launchcatch.campaign.contract.PauseReason;
 import com.launchcatch.campaign.contract.CampaignQueryService;
 import com.launchcatch.global.config.ClockConfig;
 import java.time.Clock;
-import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
@@ -33,6 +33,7 @@ import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
+import org.mockito.InOrder;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.context.ApplicationEventPublisher;
 
@@ -42,8 +43,6 @@ class RechargeReservationServiceTest {
     private static final LocalDate DAY = LocalDate.of(2026, 10, 16);
     private static final Long OWNER_ID = 7L;
     private static final Long PAYMENT_ID = 42L;
-    private static final BillingScheduleProperties SCHEDULE =
-            new BillingScheduleProperties("10:00", "12:59", Duration.ofMinutes(30), List.of(34, 33, 33));
 
     @Mock
     private CampaignQueryService campaignQuery;
@@ -63,7 +62,7 @@ class RechargeReservationServiceTest {
     }
 
     private RechargeReservationService service(LocalTime now) {
-        return new RechargeReservationService(clockAt(now), SCHEDULE, campaignQuery, fundingUpdater,
+        return new RechargeReservationService(clockAt(now), campaignQuery, fundingUpdater,
                 accountRepository, ledgerRepository, planRepository, eventPublisher);
     }
 
@@ -120,19 +119,25 @@ class RechargeReservationServiceTest {
     }
 
     @Test
-    void 서빙_종료_이후_충전은_아무것도_읽지_않고_재예약하지_않는다() {
-        service(LocalTime.of(13, 0)).reserve(new PointCharged(OWNER_ID, PAYMENT_ID, 10000L));
+    void 서빙이_하루_종일이라_어느_시각의_충전이든_재예약을_시도한다() {
+        when(campaignQuery.findByOwnerIdAndStatusIn(OWNER_ID, List.of(CampaignStatus.PAUSED))).thenReturn(List.of());
 
-        verifyNoInteractions(campaignQuery, accountRepository, ledgerRepository, planRepository, fundingUpdater, eventPublisher);
+        service(LocalTime.of(0, 0)).reserve(new PointCharged(OWNER_ID, PAYMENT_ID, 10000L));
+        service(LocalTime.of(13, 0)).reserve(new PointCharged(OWNER_ID, PAYMENT_ID, 10000L));
+        service(LocalTime.of(23, 59, 59)).reserve(new PointCharged(OWNER_ID, PAYMENT_ID, 10000L));
+
+        verify(campaignQuery, times(3)).findByOwnerIdAndStatusIn(OWNER_ID, List.of(CampaignStatus.PAUSED));
     }
 
     @Test
-    void 서빙_종료_직전_충전은_재예약한다() {
+    void 계정_잠금을_후보_조회보다_먼저_잡아_최신_잔액_스냅샷에서_재예약한다() {
         when(campaignQuery.findByOwnerIdAndStatusIn(OWNER_ID, List.of(CampaignStatus.PAUSED))).thenReturn(List.of());
 
-        service(LocalTime.of(12, 59, 59)).reserve(new PointCharged(OWNER_ID, PAYMENT_ID, 10000L));
+        service(LocalTime.of(12, 0)).reserve(new PointCharged(OWNER_ID, PAYMENT_ID, 10000L));
 
-        verify(campaignQuery).findByOwnerIdAndStatusIn(OWNER_ID, List.of(CampaignStatus.PAUSED));
+        InOrder order = inOrder(accountRepository, campaignQuery);
+        order.verify(accountRepository).lockByOwnerId(OWNER_ID);
+        order.verify(campaignQuery).findByOwnerIdAndStatusIn(OWNER_ID, List.of(CampaignStatus.PAUSED));
     }
 
     @Test
@@ -145,7 +150,8 @@ class RechargeReservationServiceTest {
 
         service(LocalTime.of(12, 0)).reserve(new PointCharged(OWNER_ID, PAYMENT_ID, 10000L));
 
-        verifyNoInteractions(accountRepository, planRepository, ledgerRepository, fundingUpdater, eventPublisher);
+        verify(accountRepository).lockByOwnerId(OWNER_ID);
+        verifyNoInteractions(planRepository, ledgerRepository, fundingUpdater, eventPublisher);
     }
 
     @Test

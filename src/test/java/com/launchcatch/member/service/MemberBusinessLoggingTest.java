@@ -25,12 +25,14 @@ import com.launchcatch.member.contract.AgeGroup;
 import com.launchcatch.member.contract.Gender;
 import com.launchcatch.member.entity.Member;
 import com.launchcatch.member.entity.MemberProfile;
+import com.launchcatch.member.entity.KakaoUnlinkFailure;
 import com.launchcatch.member.exception.MemberException;
 import com.launchcatch.member.oauth.KakaoIdTokenExchanger;
 import com.launchcatch.member.oauth.KakaoIdentity;
 import com.launchcatch.member.repository.KakaoUnlinkFailureRepository;
 import com.launchcatch.member.repository.MemberProfileRepository;
 import com.launchcatch.member.repository.MemberRepository;
+import com.launchcatch.member.repository.MemberWithdrawalHistoryRepository;
 import java.math.BigDecimal;
 import java.sql.SQLException;
 import java.time.Clock;
@@ -66,7 +68,7 @@ class MemberBusinessLoggingTest {
                 assertThat(event.getLevel()).isEqualTo(Level.ERROR);
                 assertThat(event.getFormattedMessage()).isEqualTo("event=" + operation.event()
                         + "_FAILED memberId=" + (mutation == Mutation.TOKEN_REFRESH ? "null" : "42")
-                        + " reason=SYSTEM_ERROR causeType=DataAccessResourceFailureException");
+                        + " reason=SYSTEM_ERROR exceptionType=DataAccessResourceFailureException");
                 assertThat(event.getThrowableProxy()).isNull();
             });
         }
@@ -95,13 +97,19 @@ class MemberBusinessLoggingTest {
     @ValueSource(booleans = {false, true})
     void 탈퇴의_DB_또는_커밋_실패에는_회원_식별자를_기록한다(boolean failCommit) {
         MemberWithdrawalService service = withdrawalService(failCommit);
+        Class<? extends RuntimeException> expectedType = failCommit
+                ? IllegalStateException.class : DataAccessResourceFailureException.class;
         try (Capture capture = new Capture(MemberWithdrawalService.class)) {
-            assertThatThrownBy(() -> service.withdraw(42L, "인가코드원문", "상태검증원문"))
-                    .isInstanceOf(RuntimeException.class);
+            var failure = assertThatThrownBy(() -> service.withdraw(42L, "인가코드원문", "상태검증원문"))
+                    .isInstanceOf(expectedType);
+            if (failCommit) {
+                failure.hasMessage("커밋 실패");
+            }
 
             assertThat(capture.appender.list).singleElement().satisfies(event -> {
                 assertThat(event.getLevel()).isEqualTo(Level.ERROR);
-                assertThat(event.getFormattedMessage()).startsWith("event=MEMBER_WITHDRAWAL_FAILED memberId=42 reason=SYSTEM_ERROR causeType=");
+                assertThat(event.getFormattedMessage()).isEqualTo("event=MEMBER_WITHDRAWAL_FAILED memberId=42 reason=SYSTEM_ERROR exceptionType="
+                        + expectedType.getSimpleName());
                 assertThat(event.getFormattedMessage()).doesNotContain("원문", "SUCCESS");
                 assertThat(event.getThrowableProxy()).isNull();
             });
@@ -119,8 +127,13 @@ class MemberBusinessLoggingTest {
                 .thenReturn(new KakaoIdentity(member.getProviderUserId(), "닉네임원문", null));
         TestTransactionManager manager = new TestTransactionManager();
         manager.failCommit = failCommit;
+        KakaoUnlinkFailureRepository unlinkFailures = mock(KakaoUnlinkFailureRepository.class);
+        if (failCommit) {
+            when(unlinkFailures.save(any(KakaoUnlinkFailure.class)))
+                    .thenAnswer(invocation -> invocation.getArgument(0));
+        }
         return new MemberWithdrawalService(exchanger, members, profiles,
-                mock(KakaoUnlinkFailureRepository.class), mock(MemberTokenService.class), mock(KakaoUnlinkClient.class),
+                unlinkFailures, mock(MemberWithdrawalHistoryRepository.class), mock(MemberTokenService.class), mock(KakaoUnlinkClient.class),
                 new TransactionTemplate(manager), clock);
     }
 
@@ -139,7 +152,7 @@ class MemberBusinessLoggingTest {
             assertThat(capture.appender.list).singleElement().satisfies(event -> {
                 assertThat(event.getLevel()).isEqualTo(Level.ERROR);
                 assertThat(event.getFormattedMessage()).isEqualTo("event=MEMBER_" + (location ? "LOCATION" : "PROFILE")
-                        + "_READ_FAILED memberId=42 reason=SYSTEM_ERROR causeType=DataAccessResourceFailureException");
+                        + "_READ_FAILED memberId=42 reason=SYSTEM_ERROR exceptionType=DataAccessResourceFailureException");
             });
         }
     }
@@ -229,7 +242,7 @@ class MemberBusinessLoggingTest {
             assertThatThrownBy(() -> service.completeOnboarding(42L, onboarding())).isInstanceOf(MemberException.class);
 
             assertThat(capture.appender.list).singleElement().satisfies(event -> {
-                assertThat(event.getLevel()).isEqualTo(Level.WARN);
+                assertThat(event.getLevel()).isEqualTo(Level.INFO);
                 assertThat(event.getFormattedMessage()).isEqualTo("event=MEMBER_ONBOARDING_FAILED memberId=42 reason=ONBOARDING_ALREADY_COMPLETED");
             });
         }
@@ -256,13 +269,13 @@ class MemberBusinessLoggingTest {
         when(exchanger.exchange("인가코드원문", "상태검증원문"))
                 .thenThrow(new AuthException(AuthErrorCode.KAKAO_AUTHENTICATION_FAILED));
         MemberLoginService service = new MemberLoginService(exchanger, members, profiles,
-                mock(KakaoUnlinkFailureRepository.class), mock(MemberTokenService.class), mock(TransactionTemplate.class), clock);
+                mock(KakaoUnlinkFailureRepository.class), mock(MemberWithdrawalHistoryRepository.class), mock(MemberTokenService.class), mock(TransactionTemplate.class), clock);
         try (Capture capture = new Capture(MemberLoginService.class)) {
             assertThatThrownBy(() -> service.login("인가코드원문", "상태검증원문")).isInstanceOf(AuthException.class);
 
             assertThat(capture.appender.list).singleElement().satisfies(event -> {
                 assertThat(event.getLevel()).isEqualTo(Level.WARN);
-                assertThat(event.getFormattedMessage()).isEqualTo("event=MEMBER_LOGIN_FAILED memberId=null reason=AUTH-007");
+                assertThat(event.getFormattedMessage()).isEqualTo("event=MEMBER_LOGIN_FAILED memberId=null errorCode=AUTH-007");
                 assertThat(event.getThrowableProxy()).isNull();
             });
         }
@@ -317,12 +330,12 @@ class MemberBusinessLoggingTest {
         KakaoIdTokenExchanger exchanger = mock(KakaoIdTokenExchanger.class);
         when(exchanger.exchange("인가코드원문", "상태검증원문"))
                 .thenReturn(new KakaoIdentity(member.getProviderUserId(), "닉네임원문", null));
-        when(members.findByProviderUserId(member.getProviderUserId())).thenReturn(Optional.of(member));
+        when(members.findByProviderUserIdForUpdate(member.getProviderUserId())).thenReturn(Optional.of(member));
         MemberTokenService tokens = mock(MemberTokenService.class);
         AuthException failure = storeFailure();
         when(tokens.issue(member)).thenThrow(failure);
         MemberLoginService service = new MemberLoginService(exchanger, members, profiles,
-                mock(KakaoUnlinkFailureRepository.class), tokens, new TransactionTemplate(new TestTransactionManager()), clock);
+                mock(KakaoUnlinkFailureRepository.class), mock(MemberWithdrawalHistoryRepository.class), tokens, new TransactionTemplate(new TestTransactionManager()), clock);
         try (Capture capture = new Capture(MemberLoginService.class)) {
             assertThatThrownBy(() -> service.login("인가코드원문", "상태검증원문")).isSameAs(failure);
 
@@ -356,7 +369,7 @@ class MemberBusinessLoggingTest {
     private void assertStoreFailure(Capture capture, String event) {
         assertThat(capture.appender.list).singleElement().satisfies(log -> {
             assertThat(log.getLevel()).isEqualTo(Level.ERROR);
-            assertThat(log.getFormattedMessage()).contains("event=" + event, "reason=AUTH-002",
+            assertThat(log.getFormattedMessage()).contains("event=" + event, "errorCode=AUTH-002",
                     "DataAccessResourceFailureException", "SQLException", "sqlState=08001", "sqlErrorCode=1045")
                     .doesNotContain("원문");
             assertThat(log.getThrowableProxy()).isNull();
@@ -370,16 +383,16 @@ class MemberBusinessLoggingTest {
         KakaoIdTokenExchanger exchanger = mock(KakaoIdTokenExchanger.class);
         when(exchanger.exchange("인가코드원문", "상태검증원문"))
                 .thenReturn(new KakaoIdentity(member.getProviderUserId(), "닉네임원문", null));
-        when(members.findByProviderUserId(member.getProviderUserId())).thenReturn(Optional.of(member));
+        when(members.findByProviderUserIdForUpdate(member.getProviderUserId())).thenReturn(Optional.of(member));
         MemberLoginService service = new MemberLoginService(exchanger, members, profiles,
-                mock(KakaoUnlinkFailureRepository.class), mock(MemberTokenService.class),
+                mock(KakaoUnlinkFailureRepository.class), mock(MemberWithdrawalHistoryRepository.class), mock(MemberTokenService.class),
                 new TransactionTemplate(new TestTransactionManager()), clock);
         try (Capture capture = new Capture(MemberLoginService.class)) {
             assertThatThrownBy(() -> service.login("인가코드원문", "상태검증원문")).isInstanceOf(MemberException.class);
 
             assertThat(capture.appender.list).singleElement().satisfies(event -> {
                 assertThat(event.getLevel()).isEqualTo(Level.WARN);
-                assertThat(event.getFormattedMessage()).isEqualTo("event=MEMBER_LOGIN_FAILED memberId=42 reason=MEMBER-003");
+                assertThat(event.getFormattedMessage()).isEqualTo("event=MEMBER_LOGIN_FAILED memberId=42 errorCode=MEMBER-003");
             });
         }
     }

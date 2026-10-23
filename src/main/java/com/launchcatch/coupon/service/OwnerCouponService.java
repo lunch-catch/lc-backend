@@ -63,7 +63,8 @@ public class OwnerCouponService {
     private final Clock clock;
     private final ApplicationEventPublisher eventPublisher;
 
-    private static final double MAX_DISTANCE_METERS = 100;
+    // 시연 영상 촬영을 위해 기존 100m 제한을 임시로 30km로 늘렸으며 촬영 후 100m로 복원한다.
+    private static final double MAX_DISTANCE_METERS = 30_000;
     private static final String REDEEMED_EVENT_ID_PREFIX = "coupon-redeemed:";
 
     public OwnerCouponSummaryResponse summary(Long ownerId, long campaignId, LocalDate from, LocalDate to) {
@@ -75,8 +76,8 @@ public class OwnerCouponService {
         boolean owned = campaignQueryService.findAllById(List.of(campaignId)).stream()
                 .anyMatch(campaign -> ownerId.equals(campaign.ownerId()));
         if (!owned) {
-            log.warn("event=OWNER_COUPON_SUMMARY_FAILED reason=CAMPAIGN_ACCESS_DENIED ownerId={} campaignId={}",
-                    ownerId, campaignId);
+            log.info("event=OWNER_COUPON_SUMMARY_FAILED reason=CAMPAIGN_ACCESS_DENIED ownerId={} campaignId={} errorCode={}",
+                    ownerId, campaignId, CouponErrorCode.COUPON_ACCESS_DENIED.getCode());
             throw new CouponException(CouponErrorCode.COUPON_ACCESS_DENIED);
         }
 
@@ -122,7 +123,7 @@ public class OwnerCouponService {
             Long ownerId, Long storeId, LocalDate from, LocalDate to, int pageSize, String pageToken) {
         validateActiveOwner(ownerId);
         if (!storeQueryService.canManageStore(ownerId, storeId)) {
-            log.warn("event=COUPON_USAGE_HISTORY_FAILED ownerId={} storeId={} reason=STORE_NOT_MANAGEABLE code={}",
+            log.info("event=COUPON_USAGE_HISTORY_FAILED ownerId={} storeId={} reason=STORE_NOT_MANAGEABLE errorCode={}",
                     ownerId, storeId, AuthErrorCode.ROLE_NOT_ALLOWED.getCode());
             throw new CouponException(AuthErrorCode.ROLE_NOT_ALLOWED);
         }
@@ -195,9 +196,9 @@ public class OwnerCouponService {
                             .atZone(ClockConfig.ZONE).toOffsetDateTime());
         } catch (CouponException error) {
             if (error.getErrorCode().getHttpStatus().is5xxServerError()) {
-                log.error("event=COUPON_USAGE_DATA_INVALID ownerId={} reason={}", ownerId, error.getErrorCode().getCode());
+                log.error("event=COUPON_USAGE_FAILED reason=DATA_INVALID ownerId={} errorCode={}", ownerId, error.getErrorCode().getCode());
             } else {
-                log.warn("event=COUPON_USAGE_FAILED ownerId={} reason={}", ownerId, error.getErrorCode().getCode());
+                log.info("event=COUPON_USAGE_FAILED ownerId={} errorCode={}", ownerId, error.getErrorCode().getCode());
             }
             throw error;
         }
@@ -230,7 +231,7 @@ public class OwnerCouponService {
 
     private void validateActiveOwner(Long ownerId) {
         if (ownerStatusQuery.findCurrentStatus(ownerId).orElse(null) != OwnerAccountStatus.ACTIVE) {
-            log.warn("event=OWNER_COUPON_QUERY_FAILED reason=OWNER_NOT_ACTIVE code={} ownerId={}",
+            log.info("event=OWNER_COUPON_QUERY_FAILED reason=OWNER_NOT_ACTIVE errorCode={} ownerId={}",
                     AuthErrorCode.ROLE_NOT_ALLOWED.getCode(), ownerId);
             throw new CouponException(AuthErrorCode.ROLE_NOT_ALLOWED);
         }

@@ -52,16 +52,16 @@
 |---|---|---|---|
 | 공개 | 분석 | `BatchRerunner` | 분석이 전날 FAILED로 끝난 집계를 다음 밤 자동으로 재실행할 때 |
 | 공개 | 모든 도메인 | `AuditLogWriter` | 관리자 행위를 기록할 때 |
-| 공개 | 분석, 정산 | `BatchExecutionQueryService` | 배치 실행 기록을 조회할 때 |
+| 공개 | 분석, 정산 | `BatchExecutionQueryService` | 배치 실행 기록을 조회할 때. `BatchExecutionRecord.attemptNo`(#434)로 정상 경로(claim, retry, rerun 직후)도 자기 세대를 읽어 `BatchAttemptGuard.assertCurrentAttempt`에 넘길 수 있다. 전에는 이어받은 경로(`StandaloneJob.run`)만 세대를 받았다 |
 | 공개 | 각 도메인의 결과 공개 코드 | `BatchAttemptGuard` | 결과를 커밋하기 전 자기 소유와 세대를 확인할 때(#360, 실제 호출자는 아직 없다) |
-| 받음 | 각 업무 도메인 | `DailyJob`, `StandaloneJob` | 각 도메인이 00:00 묶음 단계 또는 묶음 밖 작업을 등록할 때 |
+| 받음 | 각 업무 도메인 | `DailyJob`, `StandaloneJob` | 각 도메인이 00:00 묶음 단계 또는 묶음 밖 작업을 등록할 때. 이어받기와 수동 재실행은 `StandaloneJob.runCounting`을 부르고 돌려받은 건수를 `processed_count`에 남긴다(#559) |
 
 - `ops`는 어떤 업무 도메인도 의존하지 않는다(설계 문서 1.1절). 그래서 위 "공개"는 모두
   `ops.contract`의 인터페이스를 다른 도메인이 구현 없이 그대로 호출하는 것이고, "받음"은
   다른 도메인이 `ops.scheduler`의 인터페이스를 구현해 등록하는 것이다. 방향은 항상
   도메인 -> `ops`다.
-- `DailyJobRunner.isRetryable`/`resume`은 `ops` 내부 공개다(#362). 다른 도메인에
-  노출하지 않고 `ops.service.BatchExecutionRetryService`만 부른다. `DailyJobRunner`는
+- `BatchJobRunner.resume`과 `BatchJobRegistry.classify`는 `ops` 내부 공개다(#362, #585). 다른 도메인에
+  노출하지 않고 `ops` 안의 `BatchExecutionRetryService`, `BatchExecutionHistoryService`, `DailyJobScheduler`만 부른다. `BatchJobRunner`는
   `job/`(Entry 계층)이 아니라 `service/`(Service 계층)에 둔다. Entry 는 누구에게도 불리지
   않는다는 계층 규칙(설계 문서 1.5절) 때문에, Service 계층인 `BatchExecutionRetryService`가
   `job/`의 `DailyJobScheduler`를 직접 부를 수 없다.
@@ -85,7 +85,10 @@ flowchart LR
         DJS["job (Entry)<br/>DailyJobScheduler"]
         BRC[BatchExecutionRetryController] --> BRS["BatchExecutionRetryService"]
         BRS --> BES["BatchExecutionService"]
-        BRS --> DJR["DailyJobRunner<br/>isRetryable, resume, runBundle"]
+        BRS --> DJR["BatchJobRunner<br/>resume, runBundle"]
+        BRS --> REG["scheduler<br/>BatchJobRegistry<br/>classify"]
+        DJS --> REG
+        DJR --> REG
         DJS --> BES
         DJS --> DJR
         BES --> BELR[(BatchExecutionLogRepository)]
@@ -98,14 +101,14 @@ flowchart LR
         BRRI --> BES
     end
 
-    DJ[("각 도메인의 DailyJob")] -.등록.-> DJR
-    SJ[("각 도메인의 StandaloneJob")] -.등록.-> DJR
+    DJ[("각 도메인의 DailyJob")] -.등록.-> DJR & REG
+    SJ[("각 도메인의 StandaloneJob")] -.등록.-> REG
 ```
 
 `BatchExecutionRetryService`(Service)가 `DailyJobScheduler`(Entry, `job/`)를 부르지 않고
-`DailyJobRunner`(Service, `service/`)만 쓰는 것은 취향이 아니라 계층 규칙이다. "Entry 는
+`BatchJobRunner`(Service, `service/`)만 쓰는 것은 취향이 아니라 계층 규칙이다. "Entry 는
 누구에게도 불리지 않는다"(설계 문서 1.5절)가 그 방향을 막는다. 그래서 묶음을 실제로 도는
-로직과 재개 경로(`isRetryable`/`resume`)를 Service 계층으로 옮기고, `DailyJobScheduler`에는
+로직과 재개 경로(`resume`)를 Service 계층으로 옮기고, `DailyJobScheduler`에는
 점유 확인과 스케줄 트리거만 남겼다.
 
 ### 상태 변경
@@ -133,10 +136,10 @@ sequenceDiagram
     participant S as BatchExecutionRetryService
     participant E as BatchExecutionService
     participant A as AuditLogWriter
-    participant R as DailyJobRunner
+    participant R as BatchJobRunner
 
     C->>S: retry(adminId, jobName, businessDate)
-    S->>R: isRetryable(jobName) [트랜잭션 밖]
+    S->>S: registry.classify(jobName).isRetryable() [트랜잭션 밖]
     S->>E: findByJobNameAndBusinessDate [조회]
     S->>E: retry(jobName, businessDate) [조건부 UPDATE, 트랜잭션 밖]
     S->>A: write(감사 로그) [트랜잭션 1]
@@ -151,7 +154,7 @@ sequenceDiagram
 |---|---|---|
 | 조건부 UPDATE 뒤, 감사 로그 기록 전 | 행은 RUNNING, 감사 로그 없음 | 서비스가 그 자리에서 잡아 FAILED로 되돌리고 예외를 올린다. 관리자가 다시 누르면 처음부터 다시 간다 |
 | 감사 로그 기록 뒤, 접수(executor.execute) 전 | 행은 RUNNING, 감사 로그는 남음 | 위와 같다. FAILED로 되돌리므로 관리자가 다시 누를 수 있다. 감사 로그는 "시도했다"는 기록으로 남는다 |
-| 접수 뒤, 실제 재개(resume) 전에 프로세스가 죽음 | 행은 RUNNING, 아무도 닫지 않는다 | 되돌릴 방법이 없다. `DailyJobScheduler.takeOverStale`이 2분 뒤 다른 서버에서 이어받아 같은 `DailyJobRunner.resume` 경로로 다시 돈다 |
+| 접수 뒤, 실제 재개(resume) 전에 프로세스가 죽음 | 행은 RUNNING, 아무도 닫지 않는다 | 되돌릴 방법이 없다. `DailyJobScheduler.takeOverStale`이 2분 뒤 다른 서버에서 이어받아 같은 `BatchJobRunner.resume` 경로로 다시 돈다 |
 
 ## 7. 트랜잭션과 동시성
 
@@ -160,7 +163,7 @@ sequenceDiagram
 | 수동 재실행 접수(#362) | 감사 로그 기록 하나 | 상태 조회, 조건부 UPDATE(retry), 실제 재개(resume) |
 | 배치 상태 전환(claim/succeed/fail/renew 등) | 그 UPDATE 또는 INSERT 하나 | 그 전후의 작업 실행 자체 |
 
-- 실제 재개(`DailyJobRunner.resume`)는 트랜잭션 밖, 별도 스레드에서 돈다. 00:00 묶음은
+- 실제 재개(`BatchJobRunner.resume`)는 트랜잭션 밖, 별도 스레드에서 돈다. 00:00 묶음은
   여러 단계가 걸려 오래 걸릴 수 있어 요청 스레드나 DB 트랜잭션을 묶어 두지 않는다.
 - 접수(`executor.execute`)가 실패(대기열 가득 참)하거나 감사 로그 기록이 실패하면 되돌린
   행을 다시 `FAILED`로 닫는다(분석의 A-05, `AggregationRecalculationService`와 같은 처리).
@@ -172,8 +175,10 @@ sequenceDiagram
 | 여러 회원이 같은 자원에 씀 | 수량, 잔액 초과 | 해당 없음 |
 | 이벤트가 늦거나 순서가 바뀜 | 늦은 이벤트가 최신 상태를 덮는지 | 해당 없음. 이 도메인은 이벤트를 받지 않는다 |
 
+묶음 밖 작업의 재개(`BatchJobRunner.resume`)는 생존 확인, 재실행 기록, 닫기의 조건부 UPDATE에 소유자와 함께 넘겨받은 세대를 넣는다(#591). 같은 서버가 새 세대를 잡은 뒤 낡은 시도가 끝나도 새 시도의 행은 바뀌지 않는다. 세대를 받지 않는 기존 메서드는 쿼리에 `null`을 넘겨 소유자만 본다. `null`은 그 메서드만 넘기고, 세대를 받는 메서드는 `int`로 받아 세대 검사가 빠지지 않게 한다.
+
 경쟁 지점은 모두 조건부 UPDATE다. 비관 잠금은 `findByJobNameAndBusinessDateForUpdate`
-(`assertCurrentAttempt`)와 00:00 묶음의 단계 동시성 테스트(`DailyJobRunnerTest`)가 쓴다.
+(`assertCurrentAttempt`)와 00:00 묶음의 단계 동시성 테스트(`BatchJobRunnerTest`)가 쓴다.
 영업일은 Asia/Seoul 00:00 기준이고(`BatchExecutionService.businessDate`), 한 번에 다루는
 건수의 상한은 해당 없음(한 번에 한 (job_name, business_date)만 다룬다).
 
@@ -200,7 +205,7 @@ sequenceDiagram
 
 | 적을 것 | 예 |
 |---|---|
-| 요청 하나의 비용(수동 재실행 접수) | DB 읽기 2(isRetryable은 메모리 조회, 행 조회 1, 재조회 1), DB 쓰기 1(조건부 UPDATE) + 감사 로그 쓰기 1, 트랜잭션 1(감사 로그) |
+| 요청 하나의 비용(수동 재실행 접수) | DB 읽기 2(classify는 메모리 조회, 행 조회 1, 재조회 1), DB 쓰기 1(조건부 UPDATE) + 감사 로그 쓰기 1, 트랜잭션 1(감사 로그) |
 | 처리량 계산 | 관리자가 누르는 수동 동작이라 목표 TPS를 두지 않는다 |
 | 확인 방법 | 해당 없음 |
 
@@ -208,5 +213,4 @@ sequenceDiagram
 
 | 미정 항목 | 어디까지 정해졌나 | 막는 것 |
 |---|---|---|
-| 운영 전역의 배치 실행 기록 조회 API | 아직 없다. 분석의 A-06은 `DAILY_AGGREGATION` 전용이다 | 관리자가 수동 재실행 결과를 화면에서 바로 확인하는 것 |
 | 플랫폼 설정값의 캐시 전략, 조회 API | 아직 훑지 않았다 | 이 PR과 무관하다 |

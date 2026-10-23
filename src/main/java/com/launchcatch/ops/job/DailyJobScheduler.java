@@ -1,8 +1,10 @@
 package com.launchcatch.ops.job;
 
 import com.launchcatch.ops.entity.BatchExecutionLog;
+import com.launchcatch.ops.scheduler.BatchJobRegistry;
+import com.launchcatch.ops.scheduler.BatchJobRegistry.Kind;
 import com.launchcatch.ops.service.BatchExecutionService;
-import com.launchcatch.ops.service.DailyJobRunner;
+import com.launchcatch.ops.service.BatchJobRunner;
 import java.time.LocalDate;
 import java.util.List;
 import lombok.extern.slf4j.Slf4j;
@@ -16,19 +18,21 @@ import org.springframework.stereotype.Component;
  * 점유해서 이긴 서버만 단계를 차례로 돈다. 단계마다 따로 점유하면 앞 단계가 끝나기 전에 다른
  * 서버가 뒤 단계를 시작할 수 있다.
  *
- * 실제로 묶음을 돌리고 재개하는 로직은 DailyJobRunner(Service 계층)가 갖는다. 이 클래스는
+ * 실제로 묶음을 돌리고 재개하는 로직은 BatchJobRunner(Service 계층)가 갖는다. 이 클래스는
  * Entry 계층이라 Service 는 이 클래스를 부를 수 없다(설계 문서 1.5절). 관리자 수동 재실행
- * (BatchExecutionRetryService, #362)이 그 규칙 때문에 DailyJobRunner 를 직접 쓴다.
+ * (BatchExecutionRetryService, #362)이 그 규칙 때문에 BatchJobRunner 를 직접 쓴다.
  */
 @Slf4j
 @Component
 public class DailyJobScheduler {
 
-    private final DailyJobRunner runner;
+    private final BatchJobRunner runner;
+    private final BatchJobRegistry registry;
     private final BatchExecutionService executions;
 
-    public DailyJobScheduler(DailyJobRunner runner, BatchExecutionService executions) {
+    public DailyJobScheduler(BatchJobRunner runner, BatchJobRegistry registry, BatchExecutionService executions) {
         this.runner = runner;
+        this.registry = registry;
         this.executions = executions;
     }
 
@@ -39,8 +43,8 @@ public class DailyJobScheduler {
     @Scheduled(cron = "0 0 0 * * *", zone = "Asia/Seoul")
     public void runDailyBundle() {
         LocalDate businessDate = executions.businessDate();
-        if (!executions.claim(DailyJobRunner.BUNDLE, businessDate)) {
-            log.info("00:00 묶음은 다른 배치 서버가 점유했다. businessDate={}", businessDate);
+        if (!executions.claim(BatchJobRegistry.BUNDLE, businessDate)) {
+            log.info("event=BATCH_BUNDLE_SKIPPED reason=OWNED_BY_OTHER_SERVER businessDate={}", businessDate);
             return;
         }
         runner.runBundle(businessDate);
@@ -59,7 +63,7 @@ public class DailyJobScheduler {
     /*
      * 멈춘 실행을 이어받는다.
      *
-     * 묶음의 단계는 따로 손대지 않는다(runner.isStep). 묶음을 다시 도는 길에서 begin 이 그
+     * 묶음의 단계는 따로 손대지 않는다(Kind.STEP). 묶음을 다시 도는 길에서 begin 이 그
      * 행을 다시 가져간다. 묶음이거나 등록된 묶음 밖 작업(StandaloneJob)이면 runner.resume 이
      * 다시 돈다(#360). 그 둘도 아니면 다시 돌릴 방법이 없다. 소유자만 바꿔 두면 내 생존
      * 신호가 그 행을 영원히 살아 있게 만들어 아무도 멈춘 것을 모른다. 그래서 실패로 닫고 알린다.
@@ -68,9 +72,10 @@ public class DailyJobScheduler {
     public void takeOverStale() {
         List<BatchExecutionLog> taken = executions.takeOverStale();
         for (BatchExecutionLog row : taken) {
-            if (runner.isStep(row.getJobName())) {
+            Kind kind = registry.classify(row.getJobName());
+            if (kind == Kind.STEP) {
                 continue;
-            } else if (runner.isRetryable(row.getJobName())) {
+            } else if (kind.isRetryable()) {
                 runner.resume(row.getJobName(), row.getBusinessDate(), row.getAttemptNo());
             } else {
                 executions.fail(row.getJobName(), row.getBusinessDate(),

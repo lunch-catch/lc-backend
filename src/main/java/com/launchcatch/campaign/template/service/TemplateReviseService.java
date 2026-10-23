@@ -2,6 +2,7 @@ package com.launchcatch.campaign.template.service;
 
 import com.launchcatch.campaign.exception.CampaignException;
 import com.launchcatch.campaign.exception.PosterErrorCode;
+import com.launchcatch.campaign.template.client.GeneratedTemplate;
 import com.launchcatch.campaign.template.client.TemplateGenerationTimeoutException;
 import com.launchcatch.campaign.template.client.TemplateHtmlGenerator;
 import com.launchcatch.campaign.template.dto.TemplateCreateResponse;
@@ -12,6 +13,7 @@ import com.launchcatch.campaign.template.entity.TemplateVersion;
 import com.launchcatch.campaign.template.repository.TemplateRepository;
 import com.launchcatch.campaign.template.repository.TemplateVersionRepository;
 import com.launchcatch.campaign.template.TemplateHtmlSanitizer;
+import com.launchcatch.campaign.template.TemplatePromptValidator;
 import com.launchcatch.campaign.template.TemplateSlotValidator;
 import com.launchcatch.campaign.template.TemplateStructureValidator;
 import java.time.Clock;
@@ -37,6 +39,7 @@ public class TemplateReviseService {
     private final TemplateHtmlSanitizer templateHtmlSanitizer;
     private final TemplateSlotValidator templateSlotValidator;
     private final TemplateStructureValidator templateStructureValidator;
+    private final TemplatePromptValidator templatePromptValidator;
     private final TemplateGenerationRateLimiter templateGenerationRateLimiter;
     private final TransactionTemplate transactionTemplate;
     private final Clock clock;
@@ -60,21 +63,45 @@ public class TemplateReviseService {
             return toResponseForMatchingTemplate(existing.get(), templateId);
         }
         templateGenerationRateLimiter.checkLimit(adminId, requestId);
+        validatePrompt(requestPrompt, requestId);
         findDraftTemplate(templateId);
         String previousHtml = latestVersionHtml(templateId);
         Document previousDocument = Jsoup.parseBodyFragment(previousHtml);
-        Document document = Jsoup.parseBodyFragment(generate(previousHtml, requestPrompt));
+        GeneratedTemplate generated = generate(previousHtml, requestPrompt);
+        if (generated.chatOnly()) {
+            return chatOnlyResponse(requestId, generated);
+        }
+        Document document = Jsoup.parseBodyFragment(generated.html());
         TemplateSanitizeResult sanitized = templateHtmlSanitizer.sanitize(document);
         templateSlotValidator.validate(document);
         templateStructureValidator.validate(document, previousDocument);
         try {
             return transactionTemplate.execute(
-                    status -> save(templateId, requestPrompt, requestId, adminId, sanitized));
+                    status -> save(templateId, requestPrompt, requestId, adminId, sanitized, generated.message(), generated.suggestedPrompts()));
         } catch (DataIntegrityViolationException e) {
             return templateVersionRepository.findByRequestId(requestId)
                     .map(found -> toResponseForMatchingTemplate(found, templateId))
                     .orElseThrow(() -> e);
         }
+    }
+
+    // 요청 문구를 모델에 보내기 전에 거른다(#428). 거부해도 분당 3회에는 이미 센 상태다.
+    private void validatePrompt(String requestPrompt, String requestId) {
+        try {
+            templatePromptValidator.validate(requestPrompt);
+        } catch (CampaignException e) {
+            templateGenerationRateLimiter.releaseInFlight(requestId);
+            throw e;
+        }
+    }
+
+    /*
+     * 수정 요청이 아니라 질문이나 인사여서 모델이 자연어로만 답한 경우다(#733). 새 버전을 저장하지 않으므로 버전 번호와
+     * 20개 보존 상한에 영향이 없다. 같은 requestId 재시도는 모델을 다시 부르므로 처리 중 표식은 푼다.
+     */
+    private TemplateCreateResponse chatOnlyResponse(String requestId, GeneratedTemplate generated) {
+        templateGenerationRateLimiter.releaseInFlight(requestId);
+        return TemplateCreateResponse.chatOnly(generated.message());
     }
 
     /*
@@ -95,10 +122,10 @@ public class TemplateReviseService {
     private String latestVersionHtml(Long templateId) {
         return templateVersionRepository.findFirstByTemplateIdOrderByVersionNumberDesc(templateId)
                 .map(TemplateVersion::getHtmlContent)
-                .orElseThrow(() -> new IllegalStateException("template has no version: id=" + templateId));
+                .orElseThrow(() -> new CampaignException(PosterErrorCode.TEMPLATE_NOT_FOUND));
     }
 
-    private String generate(String previousHtml, String requestPrompt) {
+    private GeneratedTemplate generate(String previousHtml, String requestPrompt) {
         try {
             return templateHtmlGenerator.revise(previousHtml, requestPrompt);
         } catch (TemplateGenerationTimeoutException e) {
@@ -118,7 +145,8 @@ public class TemplateReviseService {
      * 이 템플릿을 게시해 커밋했을 수 있는데, 잠금을 잡고 나서야 그 최신 상태를 안전하게 본다.
      */
     private TemplateCreateResponse save(
-            Long templateId, String requestPrompt, String requestId, Long adminId, TemplateSanitizeResult sanitized) {
+            Long templateId, String requestPrompt, String requestId, Long adminId, TemplateSanitizeResult sanitized,
+            String message, List<String> suggestedPrompts) {
         Template template = templateRepository.findByIdForUpdate(templateId)
                 .orElseThrow(() -> new CampaignException(PosterErrorCode.TEMPLATE_NOT_FOUND));
         if (template.getStatus() != TemplateStatus.DRAFT) {
@@ -126,7 +154,8 @@ public class TemplateReviseService {
         }
         int nextVersionNumber = templateVersionRepository.findMaxVersionNumber(templateId) + 1;
         TemplateVersion version = template.addDraftVersion(
-                adminId, LocalDateTime.now(clock), requestPrompt, requestId, sanitized.html(), nextVersionNumber);
+                adminId, LocalDateTime.now(clock), requestPrompt, requestId, sanitized.html(), message,
+                nextVersionNumber);
         /*
          * template(이미 id가 있는, "새 것"이 아닌 엔티티)을 저장소로 saveAndFlush 하면
          * JpaRepository가 merge()로 보낸다. merge가 versions 컬렉션의 cascade=PERSIST를
@@ -138,7 +167,7 @@ public class TemplateReviseService {
          */
         templateVersionRepository.saveAndFlush(version);
         evictVersionsOverCap(templateId, nextVersionNumber);
-        return toResponse(version, sanitized.removedElements());
+        return toResponse(version, sanitized.removedElements(), suggestedPrompts);
     }
 
     /*
@@ -172,14 +201,15 @@ public class TemplateReviseService {
         if (!version.getTemplate().getId().equals(templateId)) {
             throw new CampaignException(PosterErrorCode.TEMPLATE_NOT_FOUND);
         }
-        return toResponse(version, List.of());
+        return toResponse(version, List.of(), List.of());
     }
 
     /*
      * 재시도로 되돌려주는 응답은 removedElements 를 비워 둔다. 그 목록은 저장하지 않아
      * 처음 응답 이후로는 다시 만들어낼 수 없다.
      */
-    private TemplateCreateResponse toResponse(TemplateVersion version, List<String> removedElements) {
+    private TemplateCreateResponse toResponse(
+            TemplateVersion version, List<String> removedElements, List<String> suggestedPrompts) {
         Template template = version.getTemplate();
         return new TemplateCreateResponse(
                 template.getId(),
@@ -187,7 +217,8 @@ public class TemplateReviseService {
                 version.getVersionNumber(),
                 template.getStatus(),
                 version.getHtmlContent(),
+                version.getMessage() == null ? "" : version.getMessage(),
                 removedElements,
-                TemplateCreateResponse.SUGGESTED_PROMPTS);
+                suggestedPrompts);
     }
 }

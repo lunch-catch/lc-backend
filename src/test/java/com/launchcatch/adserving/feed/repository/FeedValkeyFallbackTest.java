@@ -29,7 +29,7 @@ class FeedValkeyFallbackTest {
     private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
 
     private double bypassCount(String use) {
-        return meterRegistry.counter(FeedRateLimitRepository.BYPASS_METRIC, "use", use).count();
+        return meterRegistry.counter(ExclusionRepository.BYPASS_METRIC, "use", use).count();
     }
 
     @Test
@@ -129,10 +129,7 @@ class FeedValkeyFallbackTest {
     @Test
     @SuppressWarnings("unchecked")
     void 유효_노출_수를_올리지_못해도_예외를_올리지_않고_센다() {
-        org.springframework.data.redis.core.HashOperations<String, Object, Object> hashOps =
-                mock(org.springframework.data.redis.core.HashOperations.class);
-        when(redisTemplate.opsForHash()).thenReturn(hashOps);
-        when(hashOps.increment(anyString(), any(), org.mockito.ArgumentMatchers.anyLong()))
+        when(redisTemplate.execute(any(RedisScript.class), anyList(), any(Object[].class)))
                 .thenThrow(new QueryTimeoutException("timeout"));
 
         new ImpressionCountRepository(redisTemplate, meterRegistry).increment(LocalDate.of(2026, 10, 1), 101L);
@@ -143,9 +140,8 @@ class FeedValkeyFallbackTest {
     @Test
     @SuppressWarnings("unchecked")
     void 당일_이력에_넣지_못해도_예외를_올리지_않고_센다() {
-        SetOperations<String, String> setOps = mock(SetOperations.class);
-        when(redisTemplate.opsForSet()).thenReturn(setOps);
-        when(setOps.add(anyString(), any(String[].class))).thenThrow(new QueryTimeoutException("timeout"));
+        when(redisTemplate.execute(any(RedisScript.class), anyList(), any(Object[].class)))
+                .thenThrow(new QueryTimeoutException("timeout"));
 
         new ExclusionRepository(redisTemplate, meterRegistry).add(LocalDate.of(2026, 10, 1), 3001L, 101L, NOW);
 

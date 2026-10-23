@@ -237,11 +237,33 @@ public class Campaign extends BaseTimeEntity {
         this.pendingDailyBudget = dailyBudget;
     }
 
+    /*
+     * 00:00 배치가 예약해 둔 하루 예산을 dailyBudget 에 옮긴다(#840). ACTIVE 이고 예약 값이 있을 때만 적용하고, 적용했으면
+     * true 를 돌려준다. pause 는 예약 값을 지우지 않으므로 PAUSED 의 예약 값은 그대로 두어야 해서 상태를 다시 확인한다.
+     */
+    public boolean applyPendingDailyBudget() {
+        if (this.status != CampaignStatus.ACTIVE || this.pendingDailyBudget == null) {
+            return false;
+        }
+        this.dailyBudget = this.pendingDailyBudget;
+        this.pendingDailyBudget = null;
+        return true;
+    }
+
     public void schedule(LocalDateTime now) {
         if (this.status != CampaignStatus.DRAFT) {
             throw new IllegalStateException("only DRAFT campaign can be scheduled: " + this.status);
         }
         this.status = CampaignStatus.SCHEDULED;
+        this.statusChangedAt = now;
+    }
+
+    // 점주가 집행 전에 취소해 DRAFT 로 되돌린다(#571, #597). 집행이 시작된 뒤에는 되돌리지 않는다
+    public void cancel(LocalDateTime now) {
+        if (this.status != CampaignStatus.SCHEDULED) {
+            throw new IllegalStateException("only SCHEDULED campaign can be cancelled: " + this.status);
+        }
+        this.status = CampaignStatus.DRAFT;
         this.statusChangedAt = now;
     }
 

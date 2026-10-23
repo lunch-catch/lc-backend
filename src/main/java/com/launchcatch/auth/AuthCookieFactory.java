@@ -21,7 +21,6 @@ import org.springframework.stereotype.Component;
 @RequiredArgsConstructor
 public class AuthCookieFactory {
 
-    private static final String ACCESS_TOKEN_COOKIE_NAME = "accessToken";
     private static final String REFRESH_TOKEN_COOKIE_NAME = "refreshToken";
     private static final String SAME_SITE_STRICT = "Strict";
 
@@ -48,8 +47,8 @@ public class AuthCookieFactory {
     @Value("${jwt.cookie.secure:false}")
     private boolean secure;
 
-    public ResponseCookie accessTokenCookie(String accessToken) {
-        return ResponseCookie.from(ACCESS_TOKEN_COOKIE_NAME, accessToken)
+    public ResponseCookie accessTokenCookie(String accessToken, Role role) {
+        return ResponseCookie.from(AuthCookieNames.accessTokenCookieName(role), accessToken)
                 .httpOnly(true)
                 .secure(secure)
                 .path(ACCESS_TOKEN_COOKIE_PATH)
@@ -58,8 +57,8 @@ public class AuthCookieFactory {
                 .build();
     }
 
-    public ResponseCookie expiredAccessTokenCookie() {
-        return ResponseCookie.from(ACCESS_TOKEN_COOKIE_NAME, "")
+    public ResponseCookie expiredAccessTokenCookie(Role role) {
+        return ResponseCookie.from(AuthCookieNames.accessTokenCookieName(role), "")
                 .httpOnly(true)
                 .secure(secure)
                 .path(ACCESS_TOKEN_COOKIE_PATH)

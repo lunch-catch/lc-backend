@@ -120,7 +120,7 @@ public class OpaqueRefreshTokenLifecycle {
             Duration refreshTokenTtl,
             LocalDateTime now,
             DataAccessException redisFailure) {
-        log.warn("event=REFRESH_REISSUE_DB_FALLBACK role={} cause={}",
+        log.warn("event=REFRESH_REISSUE_DB_FALLBACK role={} reason={}",
                 role, RedisFailureClassifier.causeLabel(redisFailure), redisFailure);
         RefreshTokenBackupStore store = store(role);
         String oldHash = TokenHasher.sha256(oldRefreshToken);

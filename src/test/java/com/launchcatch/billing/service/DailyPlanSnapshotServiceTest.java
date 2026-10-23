@@ -1,7 +1,6 @@
 package com.launchcatch.billing.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -54,9 +53,8 @@ class DailyPlanSnapshotServiceTest {
     void 점주와_단가를_돌려준다() {
         when(planRepository.findByCampaignIdAndBusinessDate(7L, DAY)).thenReturn(Optional.of(plan(3L, 10L)));
 
-        PlanSnapshot snapshot = service.get(DAY, 7L);
+        PlanSnapshot snapshot = service.find(DAY, 7L).orElseThrow();
 
-        assertThat(snapshot.planId()).isEqualTo(100L);
         assertThat(snapshot.ownerId()).isEqualTo(3L);
         assertThat(snapshot.unitPrice()).isEqualTo(10L);
     }
@@ -65,8 +63,8 @@ class DailyPlanSnapshotServiceTest {
     void 같은_키의_두_번째_조회는_저장소를_부르지_않는다() {
         when(planRepository.findByCampaignIdAndBusinessDate(7L, DAY)).thenReturn(Optional.of(plan(3L, 10L)));
 
-        service.get(DAY, 7L);
-        PlanSnapshot second = service.get(DAY, 7L);
+        service.find(DAY, 7L);
+        PlanSnapshot second = service.find(DAY, 7L).orElseThrow();
 
         assertThat(second.ownerId()).isEqualTo(3L);
         verify(planRepository, times(1)).findByCampaignIdAndBusinessDate(7L, DAY);
@@ -78,20 +76,18 @@ class DailyPlanSnapshotServiceTest {
         when(planRepository.findByCampaignIdAndBusinessDate(7L, DAY)).thenReturn(Optional.of(plan(3L, 10L)));
         when(planRepository.findByCampaignIdAndBusinessDate(7L, next)).thenReturn(Optional.of(plan(3L, 20L)));
 
-        assertThat(service.get(DAY, 7L).unitPrice()).isEqualTo(10L);
-        assertThat(service.get(next, 7L).unitPrice()).isEqualTo(20L);
+        assertThat(service.find(DAY, 7L).orElseThrow().unitPrice()).isEqualTo(10L);
+        assertThat(service.find(next, 7L).orElseThrow().unitPrice()).isEqualTo(20L);
     }
 
     @Test
-    void 계획_행이_없으면_예외이고_없는_결과는_캐시하지_않는다() {
+    void 계획_행이_없으면_비어_있고_없는_결과는_캐시하지_않는다() {
         when(planRepository.findByCampaignIdAndBusinessDate(7L, DAY))
                 .thenReturn(Optional.empty(), Optional.of(plan(3L, 10L)));
 
-        assertThatThrownBy(() -> service.get(DAY, 7L))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("campaignId=7");
+        assertThat(service.find(DAY, 7L)).isEmpty();
 
-        assertThat(service.get(DAY, 7L).ownerId()).isEqualTo(3L);
+        assertThat(service.find(DAY, 7L).orElseThrow().ownerId()).isEqualTo(3L);
         verify(planRepository, times(2)).findByCampaignIdAndBusinessDate(7L, DAY);
     }
 
@@ -100,12 +96,12 @@ class DailyPlanSnapshotServiceTest {
         when(planRepository.findByCampaignIdAndBusinessDate(1L, DAY)).thenReturn(Optional.of(plan(101L, 1L, 3L, 10L)));
         when(planRepository.findByBusinessDateAndCampaignIdIn(DAY, List.of(2L, 3L)))
                 .thenReturn(List.of(plan(103L, 3L, 4L, 30L), plan(102L, 2L, 3L, 20L)));
-        service.get(DAY, 1L);
+        service.find(DAY, 1L);
 
         Map<Long, PlanSnapshot> result = service.findAll(DAY, List.of(2L, 1L, 3L));
 
         assertThat(result.keySet()).containsExactly(2L, 1L, 3L);
-        assertThat(result.get(1L).planId()).isEqualTo(101L);
+        assertThat(result.get(1L).unitPrice()).isEqualTo(10L);
         assertThat(result.get(2L).unitPrice()).isEqualTo(20L);
         assertThat(result.get(3L).ownerId()).isEqualTo(4L);
         verify(planRepository, times(1)).findByBusinessDateAndCampaignIdIn(DAY, List.of(2L, 3L));
@@ -119,7 +115,7 @@ class DailyPlanSnapshotServiceTest {
         service.findAll(DAY, List.of(2L));
         Map<Long, PlanSnapshot> second = service.findAll(DAY, List.of(2L));
 
-        assertThat(second.get(2L).planId()).isEqualTo(102L);
+        assertThat(second.get(2L).unitPrice()).isEqualTo(20L);
         verify(planRepository, times(1)).findByBusinessDateAndCampaignIdIn(DAY, List.of(2L));
     }
 

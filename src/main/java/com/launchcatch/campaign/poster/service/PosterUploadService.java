@@ -15,6 +15,7 @@ import com.launchcatch.campaign.poster.dto.PosterImagePrepareUploadResponse;
 import com.launchcatch.campaign.poster.entity.Poster;
 import com.launchcatch.campaign.poster.repository.PosterRepository;
 import com.launchcatch.campaign.repository.CampaignRepository;
+import com.launchcatch.campaign.template.TemplateSlotValidator;
 import com.launchcatch.campaign.template.entity.Template;
 import com.launchcatch.campaign.template.entity.TemplateStatus;
 import com.launchcatch.campaign.template.repository.TemplateRepository;
@@ -23,11 +24,13 @@ import com.launchcatch.owner.contract.OwnerAccountStatus;
 import com.launchcatch.owner.contract.OwnerStatusQuery;
 import com.launchcatch.store.contract.StoreInfo;
 import com.launchcatch.store.contract.StoreMenuInfo;
+import com.launchcatch.store.contract.StoreMenuQueryResult;
 import com.launchcatch.store.contract.StoreQueryService;
 import java.time.Duration;
 import java.time.format.DateTimeFormatter;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
@@ -59,10 +62,9 @@ import software.amazon.awssdk.services.s3.presigner.model.PutObjectPresignReques
 public class PosterUploadService {
 
     private static final long MAX_FILE_SIZE = 10 * 1024 * 1024;
-    private static final int TITLE_MAX_LENGTH = 100;
     private static final Set<String> ALLOWED_CONTENT_TYPES = Set.of("image/jpeg", "image/png");
     private static final Duration PRESIGN_DURATION = Duration.ofMinutes(10);
-    private static final DateTimeFormatter PERIOD_FORMAT = DateTimeFormatter.ofPattern("MM.dd");
+    private static final DateTimeFormatter PERIOD_TIME_FORMAT = DateTimeFormatter.ofPattern("HH:mm");
 
     private final CampaignRepository campaignRepository;
     private final TemplateRepository templateRepository;
@@ -103,7 +105,6 @@ public class PosterUploadService {
         validateFileSize(fileSize);
 
         Campaign campaign = findDraftCampaign(ownerId, campaignId);
-        requirePeriod(campaign);
 
         String objectKey = buildObjectKey(campaignId, contentType);
         String uploadUrl = presign(objectKey, contentType, fileSize);
@@ -115,7 +116,6 @@ public class PosterUploadService {
         validateObjectKey(campaignId, objectKey);
 
         Campaign campaign = findDraftCampaign(ownerId, campaignId);
-        requirePeriod(campaign);
         Template template = findUsableTemplate(templateId);
 
         // 캠페인 잠금과 상관없는 다른 도메인 조회라 잠금을 잡기 전에 끝낸다(셀프 리뷰로 찾음).
@@ -197,14 +197,6 @@ public class PosterUploadService {
         }
     }
 
-    // 캠페인 등록 1단계만 끝낸 DRAFT는 집행 기간이 비어 있을 수 있다(V3__campaign_draft_nullable.sql).
-    // discount/period 문구를 만들기 전에 막아야 널 포인터가 아니라 업무 오류로 알려준다(코드래빗 리뷰로 찾음).
-    private void requirePeriod(Campaign campaign) {
-        if (campaign.getStartDate() == null || campaign.getEndDate() == null) {
-            throw new CampaignException(PosterErrorCode.CAMPAIGN_PERIOD_NOT_SET);
-        }
-    }
-
     private Template findUsableTemplate(Long templateId) {
         Template template = templateRepository.findById(templateId)
                 .orElseThrow(() -> new CampaignException(PosterErrorCode.TEMPLATE_NOT_FOUND));
@@ -233,8 +225,17 @@ public class PosterUploadService {
         return targetText + " " + valueText + " 할인";
     }
 
+    /*
+     * 메뉴는 있는데 검증된 이미지가 없으면 invalidMenuIds 에만 담겨 menus 가 비므로, 이것을 먼저 보고 메뉴가 아예 없는
+     * 경우와 로그를 가른다(#851). 운영자가 이미지 오류를 없는 메뉴로 오해하지 않게 하려는 것이고 실패 응답은 같다.
+     */
     private String findMenuName(Long campaignId, Long menuId) {
-        return storeQueryService.findMenusByIdIn(List.of(menuId)).stream()
+        StoreMenuQueryResult result = storeQueryService.findMenusByIdIn(List.of(menuId));
+        if (!result.invalidMenuIds().isEmpty()) {
+            log.error("event=POSTER_MENU_IMAGE_INVALID campaignId={} menuId={}", campaignId, menuId);
+            throw new CampaignException(CommonErrorCode.INTERNAL_ERROR);
+        }
+        return result.menus().stream()
                 .findFirst()
                 .map(StoreMenuInfo::menuName)
                 .orElseThrow(() -> {
@@ -243,23 +244,39 @@ public class PosterUploadService {
                 });
     }
 
+    /*
+     * 포스터의 기간 문구는 집행 기간(날짜)이 아니라 쿠폰 사용 가능 시간이다(#763). 등록 순서가 쿠폰 조건, 포스터,
+     * 노출 대상, 하루 예산과 집행 기간이라 포스터를 만들 때는 집행 기간이 아직 없을 수 있고, 쿠폰 사용 시간은
+     * 1단계에서 이미 저장된다. 시드 포스터의 기간 문구(매일 11:00 ~ 14:00)와 같은 형식이다.
+     */
     private String formatPeriod(Campaign campaign) {
-        return campaign.getStartDate().format(PERIOD_FORMAT) + "~" + campaign.getEndDate().format(PERIOD_FORMAT);
+        return "매일 " + campaign.getUsableStartTime().format(PERIOD_TIME_FORMAT)
+                + " ~ " + campaign.getUsableEndTime().format(PERIOD_TIME_FORMAT);
     }
 
     private String truncateTitle(String title) {
-        return title.length() > TITLE_MAX_LENGTH ? title.substring(0, TITLE_MAX_LENGTH) : title;
+        return title.length() > Poster.TITLE_MAX_LENGTH ? title.substring(0, Poster.TITLE_MAX_LENGTH) : title;
+    }
+
+    // 이미지 칸 크기 보정 속성이다(#731). withImageFit 주석 참고.
+    private static final Map<String, String> IMAGE_FIT_STYLE = new LinkedHashMap<>();
+
+    static {
+        IMAGE_FIT_STYLE.put("width", "100%");
+        IMAGE_FIT_STYLE.put("height", "100%");
+        IMAGE_FIT_STYLE.put("min-height", "0");
+        IMAGE_FIT_STYLE.put("object-fit", "cover");
     }
 
     private RenderedPoster render(String templateHtml, String eventName, String discount, String period,
             String imageUrl) {
         Document document = Jsoup.parseBodyFragment(templateHtml);
+        // 광고 표시를 넣지 않기로 했다(#628). 광고 표시가 들어 있는 옛 템플릿으로 만든 포스터에서도 뺀다.
+        document.select("[data-slot=" + TemplateSlotValidator.AD_LABEL_SLOT + "]").remove();
         Map<String, PosterSlotValue> slotValues = new LinkedHashMap<>();
         slotValues.put("eventName", fillText(document, "eventName", eventName));
         slotValues.put("discount", fillText(document, "discount", discount));
         slotValues.put("period", fillText(document, "period", period));
-        // adLabel은 템플릿 생성 때 서버가 이미 채워 둔 값이라(BedrockTemplateHtmlGenerator) 그대로 읽기만 한다.
-        slotValues.put("adLabel", readText(document, "adLabel"));
         slotValues.put("image", fillImage(document, imageUrl));
         return new RenderedPoster(document.body().html(), writeSlotValues(slotValues));
     }
@@ -269,13 +286,34 @@ public class PosterUploadService {
         return new PosterSlotValue("text", value);
     }
 
-    private PosterSlotValue readText(Document document, String slot) {
-        return new PosterSlotValue("text", requireSlot(document, slot).text());
+    private PosterSlotValue fillImage(Document document, String imageUrl) {
+        Element image = requireSlot(document, "image");
+        image.attr("src", imageUrl);
+        image.attr("style", withImageFit(image.attr("style")));
+        return new PosterSlotValue("image", imageUrl);
     }
 
-    private PosterSlotValue fillImage(Document document, String imageUrl) {
-        requireSlot(document, "image").attr("src", imageUrl);
-        return new PosterSlotValue("image", imageUrl);
+    /*
+     * 큰 이미지가 이미지 칸을 밀어내 포스터가 깨지지 않게 크기 스타일을 서버가 보정한다(#731). 칸의 크기는
+     * 템플릿(LLM 이 만든 CSS)이 정하고 서버는 업로드 파일의 가로세로 크기를 제한하지 않으므로, 템플릿이
+     * 이 속성을 빠뜨려도 안전하도록 항상 덧씌운다. cover 는 비율을 유지한 채 칸을 채우고 넘치는 부분을
+     * 자른다(왜곡 없음).
+     *
+     * 템플릿이 이미 가진 이미지 스타일(border-radius, box-shadow 등)은 그대로 두고, 보정 속성이 이미
+     * 있으면 서버 값으로 덮어쓴다. 같은 속성이 두 번 들어가지 않는다. 이 메서드는 템플릿 HTML 에서 매번
+     * 새로 렌더링하므로 덮어쓰는 포스터에서도 중복되지 않는다.
+     */
+    private String withImageFit(String existingStyle) {
+        Map<String, String> declarations = new LinkedHashMap<>();
+        for (String declaration : existingStyle.split(";")) {
+            int colon = declaration.indexOf(':');
+            if (colon <= 0) {
+                continue;
+            }
+            declarations.put(declaration.substring(0, colon).trim().toLowerCase(Locale.ROOT), declaration.trim());
+        }
+        IMAGE_FIT_STYLE.forEach((property, value) -> declarations.put(property, property + ":" + value));
+        return String.join(";", declarations.values());
     }
 
     // 템플릿은 게시 전에 이미 슬롯 검증을 거치므로, 여기서 못 찾으면 그 사이 데이터가 깨진 것이다.

@@ -48,7 +48,7 @@ class SettlementConsistencyStepTest {
 
     private void campaign(long billed, Long unitPrice, OwnerCampaignLedgerSum... ledgers) {
         when(billing.ledgerSums(DAY)).thenReturn(List.of(ledgers));
-        when(billing.billingCounts(DAY)).thenReturn(List.of(new CampaignBillingCount(CAMPAIGN, billed, 0, 0)));
+        when(billing.billingCounts(DAY)).thenReturn(List.of(new CampaignBillingCount(CAMPAIGN, billed, 0, 0, 0)));
         when(billing.dailyBudgets(DAY)).thenReturn(unitPrice == null
                 ? List.of() : List.of(new CampaignDailyBudget(CAMPAIGN, 10_000, unitPrice)));
     }

@@ -1,6 +1,6 @@
 package com.launchcatch.global.config;
 
-import com.launchcatch.global.config.DomainFlywayMigrator.SeedSettings;
+import com.launchcatch.global.config.DomainFlywayMigrator.BaseSettings;
 import java.time.Clock;
 import java.time.LocalDate;
 import java.util.Map;
@@ -26,22 +26,54 @@ public class FlywayConfig {
     static final String MIGRATOR_BEAN = "domainFlywayMigrator";
 
     /*
-     * seed.enabled 가 켜지면 스키마 뒤에 시험 데이터(db/seed)를 넣는다. 기본은 꺼짐이다.
-     * seed.password-hash 는 시드 계정(관리자, 점주)의 BCrypt 해시다. 로컬 기본값은 저장소에 공개된 값이라
-     * 개발 서버는 인프라가 다른 값을 넣는다.
-     * seedBusinessDate 는 오늘(Asia/Seoul)이다. 피드는 오늘 날짜의 행만 읽으므로 날짜에 묶인 시드가 이 값을 쓴다.
-     * 값이 바뀌면 그 시드 파일의 체크섬이 바뀌어 하루의 첫 기동에 다시 돈다.
+     * base.enabled 가 켜지면 스키마 뒤에 시나리오 데이터(db/base)를 넣는다. 기본은 꺼짐이다.
+     * baseDate 는 데이터 날짜의 기준일이다. 비우면 오늘(Asia/Seoul)이다. 시연용 운영은 2026-10-28 을 준다.
+     * 계정 비밀번호 해시 넷은 BCrypt 다. 로컬은 local 프로필의 공개 기본값을 쓰고, 개발과 운영은 인프라가 SSM 값을 넣는다.
+     * 켜져 있는데 해시가 비면 기동을 막는다. 공개 비밀번호나 빈 비밀번호로 계정이 생기지 않게 한다.
+     * baseCdnBaseUrl 은 cdn.base-url 이다. 데이터의 이미지 주소 앞에 붙는다.
      */
     @Bean(MIGRATOR_BEAN)
     public DomainFlywayMigrator domainFlywayMigrator(
             DataSource dataSource,
-            @Value("${seed.enabled:false}") boolean seedEnabled,
-            @Value("${seed.password-hash:}") String seedPasswordHash,
+            @Value("${base.enabled:false}") boolean baseEnabled,
+            @Value("${base.date:}") String baseDate,
+            @Value("${account.superadmin-password-hash:}") String superadminHash,
+            @Value("${account.demo-admin-password-hash:}") String demoAdminHash,
+            @Value("${account.demo-owner-password-hash:}") String demoOwnerHash,
+            @Value("${account.scenario-password-hash:}") String scenarioHash,
+            @Value("${cdn.base-url:}") String cdnBaseUrl,
             Clock clock) {
         Map<String, String> placeholders = Map.of(
-                "seedPasswordHash", seedPasswordHash,
-                "seedBusinessDate", LocalDate.now(clock).toString());
-        return new DomainFlywayMigrator(dataSource, new SeedSettings(seedEnabled, placeholders));
+                "baseDate", baseDate.isBlank() ? LocalDate.now(clock).toString() : LocalDate.parse(baseDate).toString(),
+                "superadminPasswordHash", superadminHash,
+                "demoAdminPasswordHash", demoAdminHash,
+                "demoOwnerPasswordHash", demoOwnerHash,
+                "scenarioPasswordHash", scenarioHash,
+                "baseCdnBaseUrl", withoutTrailingSlash(cdnBaseUrl));
+        if (baseEnabled) {
+            requireHashes(placeholders);
+        }
+        return new DomainFlywayMigrator(dataSource, new BaseSettings(baseEnabled, placeholders));
+    }
+
+    static void requireHashes(Map<String, String> placeholders) {
+        placeholders.forEach((name, value) -> {
+            if (name.endsWith("PasswordHash") && value.isBlank()) {
+                throw new IllegalStateException(name + " 가 비어 있다. base.enabled 를 켜면 계정 비밀번호 해시 넷이 모두 있어야 한다");
+            }
+        });
+    }
+
+    /*
+     * 데이터 HTML 이 주소 뒤에 / 를 붙이므로 끝의 / 를 뗀다.
+     * 정규식은 백트래킹이 있어 쓰지 않는다.
+     */
+    static String withoutTrailingSlash(String url) {
+        int end = url.length();
+        while (end > 0 && url.charAt(end - 1) == '/') {
+            end--;
+        }
+        return url.substring(0, end);
     }
 
     /** 엔티티 매니저가 위 빈을 기다리게 한다. */

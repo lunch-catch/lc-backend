@@ -11,6 +11,7 @@ import com.launchcatch.owner.dto.StoreCompleteRequest;
 import com.launchcatch.owner.repository.OwnerStatusCacheRepository;
 import com.launchcatch.owner.service.OwnerStoreCompleteService;
 import com.launchcatch.store.service.StoreMenuUploadService;
+import com.launchcatch.store.service.StoreImageUploadService;
 import java.time.DayOfWeek;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -32,6 +33,7 @@ class StoreCompleteIntegrationTest extends AbstractStoreIntegrationTest {
     @Autowired JdbcTemplate jdbc;
     @Autowired OwnerStoreCompleteService completion;
     @Autowired StoreMenuUploadService menus;
+    @Autowired StoreImageUploadService images;
     @Autowired PlatformTransactionManager transactionManager;
     @Autowired OwnerStatusCacheRepository cache;
     private long ownerId;
@@ -153,7 +155,9 @@ class StoreCompleteIntegrationTest extends AbstractStoreIntegrationTest {
         "update store set business_verification_status='FAILED',business_verified_at=null where owner_id=?",
         "update store set road_address=null where owner_id=?",
         "delete h from store_business_hour h join store s on s.store_id=h.store_id where s.owner_id=? and h.day_of_week='SUNDAY'",
-        "update store_image i join store s on s.store_id=i.store_id set i.upload_status='PENDING',i.verified_at=null where s.owner_id=?"
+        "delete i from store_image i join store s on s.store_id=i.store_id where s.owner_id=? and i.image_type='LOGO'",
+        "update store_image i join store s on s.store_id=i.store_id set i.upload_status='PENDING',i.verified_at=null where s.owner_id=?",
+        "update store_image i join store s on s.store_id=i.store_id set i.upload_status='UPLOADED',i.verified_at=null where s.owner_id=?"
     })
     void 필수_데이터가_없으면_두_조회와_최종_등록이_같이_미완료로_판정한다(String sql) throws Exception {
         jdbc.update(sql, ownerId);
@@ -173,16 +177,53 @@ class StoreCompleteIntegrationTest extends AbstractStoreIntegrationTest {
         assertDraft();
     }
 
-    @Test
-    void 내부_이미지가_PENDING이면_내_가게_조회에서도_완료로_표시하지_않는다() throws Exception {
+    @ParameterizedTest
+    @ValueSource(strings = {"PENDING", "UPLOADED", "VERIFIED"})
+    void 내부_이미지의_업로드_상태와_무관하게_조회와_최종_등록이_같은_조건을_사용한다(String uploadStatus) throws Exception {
         var now = LocalDateTime.now();
         jdbc.update("""
-                insert into store_image (store_id,image_type,object_key,sort_order,upload_status,created_at,updated_at)
+                insert into store_image (store_id,image_type,object_key,sort_order,upload_status,verified_at,created_at,updated_at)
+                values (?,'INTERIOR',?,1,?,?,?,?)
+                """, storeId, "stores/"+storeId+"/interior.jpg", uploadStatus,
+                uploadStatus.equals("VERIFIED") ? now : null, now, now);
+        jdbc.update("update store_registration_progress set resume_step='IMAGES',version=4 where owner_id=?", ownerId);
+        var imageResult = images.completeImagesStep(ownerId, 4L);
+        assertThat(imageResult.resumeStep().name()).isEqualTo("MENU");
+        assertThat(imageResult.version()).isEqualTo(5);
+        mvc.perform(get("/v1/owner/store").with(user(new CustomUserDetails(ownerId, Role.OWNER))))
+                .andExpect(status().isOk()).andExpect(jsonPath("data.onboarding.canComplete").value(true))
+                .andExpect(jsonPath("data.interiorImages.length()").value(uploadStatus.equals("VERIFIED") ? 1 : 0));
+        mvc.perform(get("/v1/owner/onboarding").with(user(new CustomUserDetails(ownerId, Role.OWNER))))
+                .andExpect(status().isOk()).andExpect(jsonPath("data.canFinalize").value(true))
+                .andExpect(jsonPath("data.resumeStep").value("MENU"));
+        mvc.perform(request()).andExpect(status().isOk()).andExpect(jsonPath("data.ownerStatus").value("ACTIVE"));
+        mvc.perform(get("/v1/stores/{storeId}", storeId).with(user(new CustomUserDetails(1L, Role.MEMBER))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("data.interiorImages.length()").value(uploadStatus.equals("VERIFIED") ? 1 : 0));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"missing-image", "pending-image", "blank-name"})
+    void 선택_내부_이미지는_무시해도_미완성_메뉴는_등록할_수_없다(String mode) throws Exception {
+        var now = LocalDateTime.now();
+        jdbc.update("""
+                insert into store_image(store_id,image_type,object_key,sort_order,upload_status,created_at,updated_at)
                 values (?,'INTERIOR',?,1,'PENDING',?,?)
-                """, storeId, "stores/"+storeId+"/interior.jpg", now, now);
+                """, storeId, "stores/"+storeId+"/pending.jpg", now, now);
+        jdbc.update("insert into store_menu(store_id,name,price,sort_order,created_at,updated_at) values (?,?,1000,1,?,?)",
+                storeId, mode.equals("blank-name") ? " " : "메뉴", now, now);
+        if (!mode.equals("missing-image")) {
+            jdbc.update("""
+                    insert into store_menu_image(store_menu_id,object_key,upload_status,verified_at,created_at,updated_at)
+                    select store_menu_id,concat('menus/',store_menu_id,'.jpg'),?,?,?,? from store_menu where store_id=?
+                    """, mode.equals("pending-image") ? "PENDING" : "VERIFIED",
+                    mode.equals("pending-image") ? null : now, now, now, storeId);
+        }
         mvc.perform(get("/v1/owner/store").with(user(new CustomUserDetails(ownerId, Role.OWNER))))
                 .andExpect(status().isOk()).andExpect(jsonPath("data.onboarding.canComplete").value(false));
-        mvc.perform(request()).andExpect(status().isConflict());
+        mvc.perform(get("/v1/owner/onboarding").with(user(new CustomUserDetails(ownerId, Role.OWNER))))
+                .andExpect(status().isOk()).andExpect(jsonPath("data.canFinalize").value(false));
+        mvc.perform(request()).andExpect(status().isConflict()).andExpect(jsonPath("code").value("STORE-015"));
         assertDraft();
     }
 

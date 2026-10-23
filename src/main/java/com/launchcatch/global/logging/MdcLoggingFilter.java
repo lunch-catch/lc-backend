@@ -1,5 +1,6 @@
 package com.launchcatch.global.logging;
 
+import com.launchcatch.global.http.ClientIpResolver;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -38,12 +39,6 @@ public class MdcLoggingFilter extends OncePerRequestFilter {
 
     private static final Pattern SAFE_TRACE_ID = Pattern.compile("^[a-zA-Z0-9\\-_.]{1,64}$");
 
-    // (SEC-3-01) X-Forwarded-For도 X-Trace-Id와 같은 이유로 검증한다 — 클라이언트가 임의 문자열을
-    // 보낼 수 있는 외부 헤더다. IPv4/IPv6에 쓰이는 문자만 허용하고 길이를 IPv6 최대치로 제한한다.
-    // 엄밀한 IP 형식 검사가 목적이 아니라, 로그 인젝션(개행/제어문자 등)과 비정상적으로 긴 값을
-    // 막는 것이 목적이다.
-    private static final Pattern SAFE_IP = Pattern.compile("^[0-9a-fA-F.:]{1,45}$");
-
     @Override
     protected void doFilterInternal(
             HttpServletRequest request,
@@ -51,13 +46,17 @@ public class MdcLoggingFilter extends OncePerRequestFilter {
             FilterChain filterChain
     ) throws ServletException, IOException {
 
-        String traceId = resolveTraceId(request);
+        String traceId = (String) request.getAttribute(TRACE_ID);
+        if (traceId == null) {
+            traceId = resolveTraceId(request);
+            request.setAttribute(TRACE_ID, traceId);
+        }
 
         try {
             MDC.put(TRACE_ID, traceId);
             MDC.put("method", request.getMethod());
             MDC.put("uri", request.getRequestURI());
-            MDC.put("clientIp", resolveClientIp(request));
+            MDC.put("clientIp", ClientIpResolver.resolve(request));
 
             response.setHeader(TRACE_ID_HEADER, traceId);
 
@@ -65,6 +64,11 @@ public class MdcLoggingFilter extends OncePerRequestFilter {
         } finally {
             MDC.clear();
         }
+    }
+
+    @Override
+    protected boolean shouldNotFilterAsyncDispatch() {
+        return false;
     }
 
     // 들어온 요청에 이미 X-Trace-Id가 있으면(예: 우리 스스로가 호출한 다른 내부 서비스로부터
@@ -76,19 +80,5 @@ public class MdcLoggingFilter extends OncePerRequestFilter {
             return incoming;
         }
         return HexFormat.of().toHexDigits(ThreadLocalRandom.current().nextLong());
-    }
-
-    private String resolveClientIp(HttpServletRequest request) {
-        String forwarded = request.getHeader("X-Forwarded-For");
-        if (forwarded != null && !forwarded.isBlank()) {
-            String candidate = forwarded.split(",")[0].trim();
-            if (SAFE_IP.matcher(candidate).matches()) {
-                return candidate;
-            }
-        }
-        // 헤더가 없거나 형식이 이상하면 서블릿 컨테이너가 본 실제 접속 IP로 폴백한다.
-        // 다만 이 값도 프록시 앞단의 주소일 수 있다 — 어느 홉을 신뢰할지는 ALB 구성이 정해지면
-        // 같이 본다(X-Forwarded-For 스푸핑 자체는 형식 검증으로 못 막는다).
-        return request.getRemoteAddr();
     }
 }

@@ -13,6 +13,7 @@ import com.launchcatch.campaign.template.dto.TemplateReviseRequest;
 import com.launchcatch.campaign.template.dto.TemplateVersionItemResponse;
 import com.launchcatch.campaign.template.service.TemplateActivationService;
 import com.launchcatch.campaign.template.service.TemplateCreateService;
+import com.launchcatch.campaign.template.service.TemplateDeleteService;
 import com.launchcatch.campaign.template.service.TemplatePublishService;
 import com.launchcatch.campaign.template.service.TemplateQueryService;
 import com.launchcatch.campaign.template.service.TemplateReviseService;
@@ -29,6 +30,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -49,16 +51,18 @@ public class TemplateController {
     private final TemplatePublishService templatePublishService;
     private final TemplateActivationService templateActivationService;
     private final TemplateQueryService templateQueryService;
+    private final TemplateDeleteService templateDeleteService;
 
     @PostMapping
     @Operation(
             summary = "템플릿 생성",
-            description = "관리자의 요청 문장으로 LLM 이 템플릿 HTML 을 만들고, 정화와 구조 검증을 통과한 결과를 임시저장 버전으로 저장합니다. 전체 템플릿은 10개로 제한됩니다."
+            description = "관리자의 요청 문장으로 LLM 이 템플릿 HTML 을 만들고, 정화와 구조 검증을 통과한 결과를 임시저장 버전으로 저장합니다. 전체 템플릿 개수에는 상한이 있습니다(현재 100개)."
     )
     @ApiResponses({
             @ApiResponse(responseCode = "201", description = "템플릿 생성 성공. DRAFT 템플릿과 1번 버전이 저장됩니다."),
+            @ApiResponse(responseCode = "200", description = "템플릿을 만들거나 고치라는 요청이 아니라 질문이나 인사여서 자연어로만 응답합니다. 템플릿을 만들지 않고 message 만 돌려주며 templateId, versionNumber, html 은 null 입니다."),
             @ApiResponse(responseCode = "400", description = "COMMON-002: 이름이 비었거나 100자를 넘었거나, 요청 문장이 비었거나 500자를 넘었거나, 요청 식별자가 비었거나 64자를 넘었습니다."),
-            @ApiResponse(responseCode = "422", description = "POSTER-001: 슬롯이 빠졌거나 중복됨. POSTER-003: 템플릿이 이미 10개입니다."),
+            @ApiResponse(responseCode = "422", description = "POSTER-001: 슬롯이 빠졌거나 중복됨. POSTER-003: 템플릿 생성 한도에 도달했습니다."),
             @ApiResponse(responseCode = "503", description = "POSTER-004: LLM 응답이 30초를 넘었습니다.")
     })
     public ResponseEntity<ResponseEnvelope<TemplateCreateResponse>> create(
@@ -66,7 +70,12 @@ public class TemplateController {
             @AuthenticationPrincipal CustomUserDetails admin) {
         TemplateCreateResponse response = templateCreateService.create(
                 request.name(), request.requestPrompt(), request.requestId(), admin.getId());
-        return ResponseEntity.status(HttpStatus.CREATED).body(ResponseEnvelope.success(response));
+        return ResponseEntity.status(statusOf(response)).body(ResponseEnvelope.success(response));
+    }
+
+    // 템플릿을 만들거나 고치라는 요청이 아니어서 자연어로만 응답했으면 새로 만든 것이 없어 200 이다(#733).
+    private HttpStatus statusOf(TemplateCreateResponse response) {
+        return response.versionNumber() == null ? HttpStatus.OK : HttpStatus.CREATED;
     }
 
     @PostMapping("/{templateId}/versions")
@@ -76,9 +85,10 @@ public class TemplateController {
     )
     @ApiResponses({
             @ApiResponse(responseCode = "201", description = "템플릿 수정 성공. 새 버전이 저장됩니다."),
+            @ApiResponse(responseCode = "200", description = "수정 요청이 아니라 질문이나 인사여서 자연어로만 응답합니다. 새 버전을 저장하지 않고 message 만 돌려주며 templateId, versionNumber, html 은 null 입니다."),
             @ApiResponse(responseCode = "400", description = "COMMON-002: 요청 문장이 비었거나 500자를 넘었거나, 요청 식별자가 비었거나 64자를 넘었습니다."),
             @ApiResponse(responseCode = "404", description = "POSTER-005: 템플릿을 찾을 수 없습니다."),
-            @ApiResponse(responseCode = "409", description = "POSTER-006: 게시된 템플릿은 수정할 수 없습니다."),
+            @ApiResponse(responseCode = "409", description = "POSTER-006: 게시된 템플릿은 수정하거나 삭제할 수 없습니다."),
             @ApiResponse(responseCode = "422", description = "POSTER-001: 슬롯이 빠졌거나 중복됨. POSTER-002: 슬롯 구조가 이전 버전과 다릅니다."),
             @ApiResponse(responseCode = "503", description = "POSTER-004: LLM 응답이 30초를 넘었습니다.")
     })
@@ -88,7 +98,7 @@ public class TemplateController {
             @AuthenticationPrincipal CustomUserDetails admin) {
         TemplateCreateResponse response = templateReviseService.revise(
                 templateId, request.requestPrompt(), request.requestId(), admin.getId());
-        return ResponseEntity.status(HttpStatus.CREATED).body(ResponseEnvelope.success(response));
+        return ResponseEntity.status(statusOf(response)).body(ResponseEnvelope.success(response));
     }
 
     @PostMapping("/{templateId}/publish")
@@ -129,10 +139,26 @@ public class TemplateController {
         return ResponseEntity.ok(ResponseEnvelope.success(response));
     }
 
+    @DeleteMapping("/{templateId}")
+    @Operation(
+            summary = "템플릿 삭제",
+            description = "게시 전(DRAFT) 템플릿을 완전히 삭제합니다. 템플릿과 그 버전이 모두 지워지고 템플릿 생성 가능 수가 1 늘어납니다."
+    )
+    @ApiResponses({
+            @ApiResponse(responseCode = "204", description = "템플릿 삭제 성공. 본문이 없습니다."),
+            @ApiResponse(responseCode = "404", description = "POSTER-005: 템플릿을 찾을 수 없습니다."),
+            @ApiResponse(responseCode = "409", description = "POSTER-006: 게시된 템플릿은 삭제할 수 없습니다.")
+    })
+    public ResponseEntity<Void> delete(
+            @Parameter(description = "삭제할 템플릿 ID입니다.") @PathVariable Long templateId) {
+        templateDeleteService.delete(templateId);
+        return ResponseEntity.noContent().build();
+    }
+
     @GetMapping
     @Operation(
             summary = "템플릿 목록 조회",
-            description = "전체 템플릿을 생성일 최신순으로 조회합니다. html은 게시된 템플릿이면 게시된 HTML, DRAFT 템플릿이면 최신 버전의 HTML로, 미리보기에 씁니다. 템플릿은 최대 10개까지만 만들 수 있어 페이지네이션은 제공하지 않습니다."
+            description = "전체 템플릿을 생성일 최신순으로 조회합니다. html은 게시된 템플릿이면 게시된 HTML, DRAFT 템플릿이면 최신 버전의 HTML로, 미리보기에 씁니다. 템플릿 개수에 상한(현재 100개)이 있어 페이지네이션은 제공하지 않습니다."
     )
     @ApiResponse(responseCode = "200", description = "템플릿 목록 조회 성공.")
     public ResponseEntity<ResponseEnvelope<List<TemplateListItemResponse>>> list() {

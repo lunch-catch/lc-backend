@@ -89,12 +89,12 @@ class TimeSeriesStatusServiceTest {
     private BatchExecutionRecord success(LocalDate date, LocalDateTime finishedAt) {
         return new BatchExecutionRecord(
                 1L, "DAILY_AGGREGATION", date, "SUCCESS", finishedAt.minusMinutes(5),
-                finishedAt, 1, "batch-1", 0, null);
+                finishedAt, 1, "batch-1", 0, null, 1);
     }
 
     private BatchExecutionRecord running(LocalDate date) {
         return new BatchExecutionRecord(
                 2L, "DAILY_AGGREGATION", date, "RUNNING", date.atStartOfDay(),
-                null, null, "batch-1", 0, null);
+                null, null, "batch-1", 0, null, 1);
     }
 }

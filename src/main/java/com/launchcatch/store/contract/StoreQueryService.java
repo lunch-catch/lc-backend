@@ -34,6 +34,10 @@ public interface StoreQueryService {
     /** 본인 소유이면서 최종 등록된 가게인지 확인한다. 가게 미존재, 다른 점주 소유와 등록 중인 가게는 false다. */
     boolean canManageStore(Long ownerId, Long storeId);
 
-    /** 최종 등록된 가게의 메뉴를 일괄 조회한다. 존재하지 않거나 최종 등록 전 가게에 속한 메뉴 ID는 제외하며 가격은 원 단위 할인 전 가격이다. */
-    List<StoreMenuInfo> findMenusByIdIn(List<Long> menuIds);
+    /**
+     * 정상 메뉴와 필수 이미지의 데이터 오류가 난 메뉴 ID를 반환한다.
+     * 존재하지 않거나 최종 등록 전 가게에 속한 메뉴 ID는 두 목록에서 제외하며 가격은 원 단위 할인 전 가격이다.
+     * CDN 설정 오류와 DB 장애는 데이터 오류 목록으로 바꾸지 않고 전파한다.
+     */
+    StoreMenuQueryResult findMenusByIdIn(List<Long> menuIds);
 }

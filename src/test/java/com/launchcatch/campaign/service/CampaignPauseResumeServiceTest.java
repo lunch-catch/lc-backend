@@ -84,6 +84,43 @@ class CampaignPauseResumeServiceTest {
     }
 
     @Test
+    @DisplayName("ACTIVE가 아닌 점주는 resume도 CAMPAIGN-001로 거부한다")
+    void ACTIVE가_아닌_점주는_resume을_거부한다() {
+        when(ownerStatusQuery.findCurrentStatus(OWNER_ID)).thenReturn(Optional.of(OwnerAccountStatus.ONBOARDING));
+
+        assertThatThrownBy(() -> service.resume(OWNER_ID, CAMPAIGN_ID))
+                .isInstanceOfSatisfying(CampaignException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(CampaignErrorCode.OWNER_NOT_ACTIVE));
+    }
+
+    @Test
+    @DisplayName("ACTIVE가 아닌 점주는 end도 CAMPAIGN-001로 거부한다")
+    void ACTIVE가_아닌_점주는_end를_거부한다() {
+        when(ownerStatusQuery.findCurrentStatus(OWNER_ID)).thenReturn(Optional.of(OwnerAccountStatus.ONBOARDING));
+
+        assertThatThrownBy(() -> service.end(OWNER_ID, CAMPAIGN_ID))
+                .isInstanceOfSatisfying(CampaignException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(CampaignErrorCode.OWNER_NOT_ACTIVE));
+    }
+
+    @Test
+    @DisplayName("재개 때 가게-메뉴 불일치로 IllegalArgumentException이 나면 CampaignException이 아닌 "
+            + "RuntimeException으로 바꿔 던진다(500으로 보내려고)")
+    void 재개_때_가게_메뉴_불일치면_RuntimeException을_던진다() {
+        active();
+        Campaign campaign = pausedCampaign(OWNER_ID);
+        when(campaignRepository.findByIdForUpdate(CAMPAIGN_ID)).thenReturn(Optional.of(campaign));
+        doThrow(new IllegalArgumentException("할인 대상 메뉴가 해당 가게에 속하지 않습니다."))
+                .when(storeCampaignSummaryUpdater).update(anyLong(), anyLong(), any());
+
+        assertThatThrownBy(() -> service.resume(OWNER_ID, CAMPAIGN_ID))
+                .isInstanceOf(RuntimeException.class)
+                .isNotInstanceOf(CampaignException.class)
+                .isNotInstanceOf(IllegalArgumentException.class)
+                .isNotInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
     @DisplayName("캠페인이 없으면 CAMPAIGN-005로 거부한다")
     void 캠페인이_없으면_거부한다() {
         active();
@@ -102,6 +139,68 @@ class CampaignPauseResumeServiceTest {
         when(campaignRepository.findByIdForUpdate(CAMPAIGN_ID)).thenReturn(Optional.of(otherOwnersCampaign));
 
         assertThatThrownBy(() -> service.pause(OWNER_ID, CAMPAIGN_ID))
+                .isInstanceOfSatisfying(CampaignException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(CampaignErrorCode.CAMPAIGN_NOT_OWNED));
+    }
+
+    @Test
+    @DisplayName("PAUSED 캠페인을 종료하면 ENDED를 응답한다(#600)")
+    void PAUSED를_종료하면_ENDED를_응답한다() {
+        active();
+        Campaign campaign = pausedCampaign(OWNER_ID);
+        when(campaignRepository.findByIdForUpdate(CAMPAIGN_ID)).thenReturn(Optional.of(campaign));
+
+        CampaignStatusResponse response = service.end(OWNER_ID, CAMPAIGN_ID);
+
+        assertThat(response.campaignId()).isEqualTo(CAMPAIGN_ID);
+        assertThat(response.status()).isEqualTo(CampaignStatus.ENDED);
+    }
+
+    @Test
+    @DisplayName("ACTIVE 캠페인은 중단하지 않고 바로 종료할 수 없어 CAMPAIGN-006으로 거부한다")
+    void ACTIVE는_바로_종료할_수_없다() {
+        active();
+        Campaign campaign = activeCampaign(OWNER_ID);
+        when(campaignRepository.findByIdForUpdate(CAMPAIGN_ID)).thenReturn(Optional.of(campaign));
+
+        assertThatThrownBy(() -> service.end(OWNER_ID, CAMPAIGN_ID))
+                .isInstanceOfSatisfying(CampaignException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(CampaignErrorCode.CAMPAIGN_STATE_NOT_ALLOWED));
+        assertThat(campaign.getStatus()).isEqualTo(CampaignStatus.ACTIVE);
+    }
+
+    @Test
+    @DisplayName("DRAFT는 종료를 CAMPAIGN-006으로 거부한다")
+    void DRAFT는_종료를_거부한다() {
+        active();
+        Campaign campaign = draftCampaign(OWNER_ID);
+        when(campaignRepository.findByIdForUpdate(CAMPAIGN_ID)).thenReturn(Optional.of(campaign));
+
+        assertThatThrownBy(() -> service.end(OWNER_ID, CAMPAIGN_ID))
+                .isInstanceOfSatisfying(CampaignException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(CampaignErrorCode.CAMPAIGN_STATE_NOT_ALLOWED));
+    }
+
+    @Test
+    @DisplayName("이미 ENDED면 종료를 멱등하게 받지 않고 CAMPAIGN-006으로 거부한다")
+    void 이미_ENDED면_종료를_거부한다() {
+        active();
+        Campaign campaign = activeCampaign(OWNER_ID);
+        campaign.end(LocalDateTime.now(FIXED_CLOCK));
+        when(campaignRepository.findByIdForUpdate(CAMPAIGN_ID)).thenReturn(Optional.of(campaign));
+
+        assertThatThrownBy(() -> service.end(OWNER_ID, CAMPAIGN_ID))
+                .isInstanceOfSatisfying(CampaignException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(CampaignErrorCode.CAMPAIGN_STATE_NOT_ALLOWED));
+    }
+
+    @Test
+    @DisplayName("본인 소유가 아닌 캠페인은 종료를 CAMPAIGN-005로 거부한다")
+    void 본인_소유가_아니면_종료를_거부한다() {
+        active();
+        when(campaignRepository.findByIdForUpdate(CAMPAIGN_ID)).thenReturn(Optional.of(activeCampaign(999L)));
+
+        assertThatThrownBy(() -> service.end(OWNER_ID, CAMPAIGN_ID))
                 .isInstanceOfSatisfying(CampaignException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(CampaignErrorCode.CAMPAIGN_NOT_OWNED));
     }
@@ -154,6 +253,23 @@ class CampaignPauseResumeServiceTest {
                 .when(storeCampaignSummaryUpdater).update(anyLong(), anyLong(), any());
 
         assertThatThrownBy(() -> service.pause(OWNER_ID, CAMPAIGN_ID))
+                .isInstanceOf(RuntimeException.class)
+                .isNotInstanceOf(CampaignException.class)
+                .isNotInstanceOf(IllegalArgumentException.class)
+                .isNotInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    @DisplayName("종료 때 가게-메뉴 불일치로 IllegalArgumentException이 나면 CampaignException이 아닌 "
+            + "RuntimeException으로 바꿔 던진다(500으로 보내려고)")
+    void 종료_때_가게_메뉴_불일치면_RuntimeException을_던진다() {
+        active();
+        Campaign campaign = pausedCampaign(OWNER_ID);
+        when(campaignRepository.findByIdForUpdate(CAMPAIGN_ID)).thenReturn(Optional.of(campaign));
+        doThrow(new IllegalArgumentException("할인 대상 메뉴가 해당 가게에 속하지 않습니다."))
+                .when(storeCampaignSummaryUpdater).update(anyLong(), anyLong(), any());
+
+        assertThatThrownBy(() -> service.end(OWNER_ID, CAMPAIGN_ID))
                 .isInstanceOf(RuntimeException.class)
                 .isNotInstanceOf(CampaignException.class)
                 .isNotInstanceOf(IllegalArgumentException.class)

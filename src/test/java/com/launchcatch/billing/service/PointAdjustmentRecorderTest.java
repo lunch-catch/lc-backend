@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -69,6 +70,7 @@ class PointAdjustmentRecorderTest {
         when(accountRepository.lockByOwnerId(OWNER)).thenReturn(Optional.of(1L));
         when(ledgerRepository.findByOwnerIdAndIdempotencyKey(OWNER, KEY)).thenReturn(Optional.empty());
         when(ledgerRepository.save(any())).thenAnswer(invocation -> persisted(invocation.getArgument(0), 9101L));
+        lenient().when(campaignQueryService.findAllById(List.of(CAMPAIGN))).thenReturn(List.of(campaign(OWNER)));
     }
 
     private static PointLedger persisted(PointLedger ledger, long id) {
@@ -178,6 +180,14 @@ class PointAdjustmentRecorderTest {
         verify(ledgerRepository).save(saved.capture());
         assertThat(saved.getValue().getAdjustTargetDate()).isEqualTo(TARGET);
         assertThat(result.adjustment().targetBusinessDate()).isEqualTo(TARGET);
+    }
+
+    @Test
+    void 일반_조정도_없는_캠페인이나_다른_점주의_캠페인은_거절한다() {
+        when(campaignQueryService.findAllById(List.of(CAMPAIGN))).thenReturn(List.of());
+
+        assertRejected(request(1000L, CAMPAIGN, null), BillingErrorCode.SETTLEMENT_MISMATCH_OWNER_MISMATCH);
+        verify(ledgerRepository, never()).save(any());
     }
 
     @Test

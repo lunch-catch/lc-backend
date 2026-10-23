@@ -1,10 +1,13 @@
 package com.launchcatch.adserving;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.hamcrest.Matchers.nullValue;
 import static org.mockito.Mockito.doReturn;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -25,7 +28,7 @@ import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 
 /*
- * GET, POST /v1/wishlist 를 HTTP 입구부터 MySQL 의 wishlist, ad_candidate 와 Valkey 의 당일 이력까지 본다.
+ * GET, POST, DELETE /v1/wishlist 를 HTTP 입구부터 MySQL 의 wishlist, ad_candidate 와 Valkey 의 당일 이력까지 본다.
  * 권한과 남의 찜을 돌려주지 않는 것이 이 테스트의 축이다. 찜한 시각 순서와 그날 후보 조인, 같은 찜의 두 번째 저장도 실제 DB 로 본다.
  */
 @DisplayName("찜 목록 통합")
@@ -43,7 +46,10 @@ class WishlistIntegrationTest extends AbstractAdservingIntegrationTest {
         doReturn(ClockConfig.ZONE).when(clock).getZone();
         candidate(TODAY, 101, 55, "점심식당", "https://cdn.example.com/stores/55/logo.jpg", "MENU", "AMOUNT", 3000, "갈비살 정식");
         candidate(TODAY, 102, 56, "저녁식당", null, "ALL", "PERCENT", 20, null);
-        // 103 은 어제만 후보였다. 오늘은 노출 후보가 아니다
+        /*
+         * 103 은 어제만 후보였다.
+         * 오늘은 노출 후보가 아니다.
+         */
         candidate(TODAY.minusDays(1), 103, 57, "어제식당", null, "ALL", "PERCENT", 10, null);
     }
 
@@ -97,9 +103,22 @@ class WishlistIntegrationTest extends AbstractAdservingIntegrationTest {
                 .andExpect(jsonPath("$.data.wishlist[0].discount.menuName").value("갈비살 정식"))
                 .andExpect(jsonPath("$.data.wishlist[0].wishedAt").value("2026-10-01T10:15:34.02+09:00"))
                 .andExpect(jsonPath("$.data.wishlist[1].campaignId").value(102))
-                .andExpect(jsonPath("$.data.wishlist[1].storeImageUrl").isEmpty())
+                .andExpect(jsonPath("$.data.wishlist[1].storeImageUrl").value(nullValue()))
                 .andExpect(jsonPath("$.data.wishlist[1].discount.target").value("ALL"))
-                .andExpect(jsonPath("$.data.wishlist[1].discount.menuName").isEmpty());
+                .andExpect(jsonPath("$.data.wishlist[1].discount.menuName").value(nullValue()));
+    }
+
+    /*
+     * created_at 은 DATETIME(6) 이라 서버가 넣은 찜은 마이크로초까지 남는다. 명세 예시(10:15:34.020+09:00)처럼 밀리초까지만 내보낸다.
+     * 예시만 보고 3자리로 파싱하는 클라이언트가 깨지지 않게 한다(#776).
+     */
+    @Test
+    void 찜한_시각은_밀리초까지만_내보낸다() throws Exception {
+        wish(MEMBER_ID, 101, 55, LocalDateTime.of(2026, 10, 1, 10, 15, 34, 123_456_000));
+
+        perform(get("/v1/wishlist"), Role.MEMBER)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.wishlist[0].wishedAt").value("2026-10-01T10:15:34.123+09:00"));
     }
 
     @Test
@@ -111,9 +130,9 @@ class WishlistIntegrationTest extends AbstractAdservingIntegrationTest {
                 .andExpect(jsonPath("$.data.wishlist[0].campaignId").value(103))
                 .andExpect(jsonPath("$.data.wishlist[0].storeId").value(57))
                 .andExpect(jsonPath("$.data.wishlist[0].wishedAt").value("2026-09-30T11:00:00+09:00"))
-                .andExpect(jsonPath("$.data.wishlist[0].storeName").isEmpty())
-                .andExpect(jsonPath("$.data.wishlist[0].storeImageUrl").isEmpty())
-                .andExpect(jsonPath("$.data.wishlist[0].discount").isEmpty());
+                .andExpect(jsonPath("$.data.wishlist[0].storeName").value(nullValue()))
+                .andExpect(jsonPath("$.data.wishlist[0].storeImageUrl").value(nullValue()))
+                .andExpect(jsonPath("$.data.wishlist[0].discount").value(nullValue()));
     }
 
     @Test
@@ -172,12 +191,15 @@ class WishlistIntegrationTest extends AbstractAdservingIntegrationTest {
                 .andExpect(jsonPath("$.data.storeId").value(55))
                 .andExpect(jsonPath("$.data.storeName").value("점심식당"))
                 .andExpect(jsonPath("$.data.discount.menuName").value("갈비살 정식"))
-                .andExpect(jsonPath("$.data.wishedAt").exists());
+                // 201 은 서버가 created_at 을 직접 쓰는 유일한 경로라 시간대가 어긋나면 이 값이 9시간 밀린다(#777)
+                .andExpect(jsonPath("$.data.wishedAt").value("2026-10-01T10:30:00+09:00"));
 
         assertThat(jdbcTemplate.queryForMap("SELECT member_id, campaign_id, store_id, serve_id FROM wishlist"))
                 .containsEntry("member_id", MEMBER_ID).containsEntry("campaign_id", 101L)
                 .containsEntry("store_id", 55L).containsEntry("serve_id", null);
         assertThat(redisTemplate.opsForSet().members(EXCLUSION_KEY)).containsExactly("101");
+        // 넣기와 만료를 한 스크립트로 보내 당일 이력에 만료가 걸려 있다(#783)
+        assertThat(redisTemplate.getExpire(EXCLUSION_KEY)).isPositive();
     }
 
     @Test
@@ -224,5 +246,53 @@ class WishlistIntegrationTest extends AbstractAdservingIntegrationTest {
     void 로그인하지_않으면_찜할_수_없다() throws Exception {
         mockMvc.perform(post("/v1/wishlist").contentType(MediaType.APPLICATION_JSON).content("{\"campaignId\": 101}"))
                 .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void 찜을_지우면_204_이고_내_그_찜만_사라지며_그날_당일_이력에_들어간다() throws Exception {
+        wish(MEMBER_ID, 101, 55, LocalDateTime.of(2026, 9, 30, 11, 0));
+        wish(MEMBER_ID, 102, 56, LocalDateTime.of(2026, 9, 30, 11, 5));
+        wish(OTHER_MEMBER_ID, 101, 55, LocalDateTime.of(2026, 9, 30, 11, 10));
+
+        perform(delete("/v1/wishlist/101"), Role.MEMBER)
+                .andExpect(status().isNoContent())
+                .andExpect(content().string(""));
+
+        assertThat(jdbcTemplate.queryForList("SELECT member_id, campaign_id FROM wishlist ORDER BY member_id, campaign_id"))
+                .extracting(row -> row.get("member_id") + ":" + row.get("campaign_id"))
+                .containsExactly(MEMBER_ID + ":102", OTHER_MEMBER_ID + ":101");
+        assertThat(redisTemplate.opsForSet().members(EXCLUSION_KEY)).containsExactly("101");
+    }
+
+    // 찜 목록에 없어도 204 다(명세). 그날 피드에서는 뺀다(#547)
+    @Test
+    void 찜하지_않은_캠페인을_지워도_204_이고_그날_당일_이력에_들어간다() throws Exception {
+        perform(delete("/v1/wishlist/999"), Role.MEMBER).andExpect(status().isNoContent());
+
+        assertThat(wishCount()).isZero();
+        assertThat(redisTemplate.opsForSet().members(EXCLUSION_KEY)).containsExactly("999");
+    }
+
+    // 공통 처리가 경로 변수의 타입 불일치를 COMMON-003 으로 돌려준다. api-spec.md 의 COMMON-002 행과 다르다(#547)
+    @Test
+    void 경로의_campaignId_가_숫자가_아니면_400_COMMON_003_이다() throws Exception {
+        perform(delete("/v1/wishlist/abc"), Role.MEMBER)
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("COMMON-003"));
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = Role.class, names = "MEMBER", mode = EnumSource.Mode.EXCLUDE)
+    void MEMBER_가_아니면_찜을_지울_수_없다(Role role) throws Exception {
+        wish(MEMBER_ID, 101, 55, LocalDateTime.of(2026, 9, 30, 11, 0));
+
+        perform(delete("/v1/wishlist/101"), role).andExpect(status().isForbidden());
+
+        assertThat(wishCount()).isEqualTo(1);
+    }
+
+    @Test
+    void 로그인하지_않으면_찜을_지울_수_없다() throws Exception {
+        mockMvc.perform(delete("/v1/wishlist/101")).andExpect(status().isUnauthorized());
     }
 }

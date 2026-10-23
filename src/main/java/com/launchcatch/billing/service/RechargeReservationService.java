@@ -1,6 +1,5 @@
 package com.launchcatch.billing.service;
 
-import com.launchcatch.billing.config.BillingScheduleProperties;
 import com.launchcatch.billing.dto.PointCharged;
 import com.launchcatch.billing.dto.RechargeReserveIncreased;
 import com.launchcatch.billing.entity.BudgetDailyPlan;
@@ -16,10 +15,10 @@ import com.launchcatch.campaign.contract.Cause;
 import com.launchcatch.campaign.contract.FundingJudgement;
 import com.launchcatch.campaign.contract.Judgement;
 import com.launchcatch.campaign.contract.PauseReason;
+import com.launchcatch.global.logging.TransactionLogging;
 import java.time.Clock;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.time.LocalTime;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
@@ -27,21 +26,23 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 /*
  * 충전 직후 재예약이다(V52 102행 (5)·51행, 배치 설계 I-03). PointChargedListener 가 커밋 뒤에 자기
  * 트랜잭션으로 부른다.
  *
- * 서빙 종료(BillingScheduleProperties.fixedFrom(), 기본 13:00) 뒤면 아무것도 하지 않는다. 다음 00:00
- * 예약이 반영한다. 대상은 이 점주의 PAUSED(NO_POINTS) 캠페인 중 집행 기간 안이고 그날 계획 행이 있는
- * 것뿐이다. 00:00 예약이 아직 돌지 않아 계획이 없는 캠페인은 건너뛴다.
+ * 서빙이 하루 종일이라 시각 제한이 없다. 대상은 이 점주의 PAUSED(NO_POINTS) 캠페인 중 집행 기간 안이고 그날
+ * 계획 행이 있는 것뿐이다. 00:00 예약이 아직 돌지 않아 계획이 없는 캠페인은 건너뛰고, 그 예약이 충전 뒤 잔액으로
+ * 배분한다. 00:00 예약과 겹쳐도 둘 다 점주 계정 행을 먼저 잠가서 차례로 돈다.
  *
  * 한 트랜잭션이고 점주 계정 행을 먼저 잠근다(D-8). 캠페인 ID 오름차순으로(D-4) 잔액이 남는 대로 채운다.
  *
- * 후보 목록은 계정 행을 잠그기 전에 읽으므로 잠금을 기다리는 동안 낡을 수 있다. 그래서 캠페인마다
- * 원장을 쓰기 직전에 `CampaignQueryService.findByIdForUpdate`로 그 캠페인 하나만 다시 잠그고 최신
- * 상태를 확인한다(#378). 이미 재개됐거나 관리자·점주가 중단했거나 종료됐으면 건너뛴다.
+ * 계정 행을 첫 조회로 잠근 뒤 영업일과 후보를 읽는다. 잠금을 기다리는 동안 만든 REPEATABLE READ 스냅샷을
+ * 재사용하지 않아 최신 잔액과 영업일 안에서만 예약한다. 캠페인마다 원장을 쓰기 직전에
+ * `CampaignQueryService.findByIdForUpdate`로 그 캠페인 하나도 다시 잠그고 최신 상태를 확인한다(#378).
+ * 이미 재개됐거나 관리자·점주가 중단했거나 종료됐으면 건너뛴다.
  */
 @Slf4j
 @Service
@@ -49,7 +50,6 @@ import org.springframework.transaction.annotation.Transactional;
 public class RechargeReservationService {
 
     private final Clock clock;
-    private final BillingScheduleProperties schedule;
     private final CampaignQueryService campaignQuery;
     private final CampaignFundingUpdater fundingUpdater;
     private final PointAccountRepository accountRepository;
@@ -57,11 +57,9 @@ public class RechargeReservationService {
     private final BudgetDailyPlanRepository planRepository;
     private final ApplicationEventPublisher eventPublisher;
 
-    @Transactional
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void reserve(PointCharged charged) {
-        if (!LocalTime.now(clock).isBefore(schedule.fixedFrom())) {
-            return;
-        }
+        accountRepository.lockByOwnerId(charged.ownerId());
         LocalDate businessDate = LocalDate.now(clock);
         List<CampaignInfo> targets = campaignQuery
                 .findByOwnerIdAndStatusIn(charged.ownerId(), List.of(CampaignStatus.PAUSED)).stream()
@@ -72,7 +70,6 @@ public class RechargeReservationService {
         if (targets.isEmpty()) {
             return;
         }
-        accountRepository.lockByOwnerId(charged.ownerId());
         long remaining = balanceOf(charged.ownerId());
         LocalDateTime now = LocalDateTime.now(clock);
         for (CampaignInfo campaign : targets) {
@@ -116,8 +113,9 @@ public class RechargeReservationService {
         if (newReserved >= plan.getUnitPrice()) {
             notifyResume(charged, businessDate, latest, plan, newReserved);
         }
-        log.info("event=RECHARGE_RESERVE_DONE businessDate={} campaignId={} paymentId={} delta={} newReserved={}",
-                businessDate, latest.campaignId(), charged.paymentId(), delta, newReserved);
+        TransactionLogging.afterCommit(() -> log.info(
+                "event=BILLING_RECHARGE_RESERVE_DONE businessDate={} campaignId={} paymentId={} delta={} newReserved={}",
+                businessDate, latest.campaignId(), charged.paymentId(), delta, newReserved));
         return remaining - delta;
     }
 
@@ -145,7 +143,7 @@ public class RechargeReservationService {
     private long balanceOf(Long ownerId) {
         long balance = ledgerRepository.sumBalance(ownerId);
         if (balance < 0) {
-            log.error("event=RECHARGE_RESERVE_NEGATIVE_BALANCE ownerId={} balance={}", ownerId, balance);
+            log.error("event=BILLING_RECHARGE_RESERVE_NEGATIVE_BALANCE ownerId={} balance={}", ownerId, balance);
             return 0L;
         }
         return balance;

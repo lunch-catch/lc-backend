@@ -106,8 +106,27 @@ public interface BudgetDailyPlanRepository extends JpaRepository<BudgetDailyPlan
     // 그 영업일의 계획 전부다. idx_budget_daily_plan_business_date 를 탄다
     List<BudgetDailyPlan> findByBusinessDate(LocalDate businessDate);
 
-    // 그 영업일에 중단되지 않은 계획이다. 시간대별 목표를 만들 대상이다
-    List<BudgetDailyPlan> findByBusinessDateAndPausedFalse(LocalDate businessDate);
+    // RELEASE 가 없고 남은 해제액(하루 예산에서 그날 DEDUCT 합을 뺀 값)이 양수인 계획의 영업일이다. 남은 몫이 0 인 계획은 해제할 것이 없어 처리를 마친 것으로 본다
+    @Query("""
+            select distinct p.businessDate
+              from BudgetDailyPlan p
+             where p.businessDate < :before
+               and not exists (
+                   select l.id from PointLedger l
+                    where l.campaignId = p.campaignId
+                      and l.businessDate = p.businessDate
+                      and l.entryType = com.launchcatch.billing.entity.EntryType.RELEASE
+               )
+               and p.dailyBudget > coalesce((
+                   select -sum(d2.amount) from PointLedger d2, DeductionResult r
+                    where r.serveId = d2.serveId
+                      and d2.entryType = com.launchcatch.billing.entity.EntryType.DEDUCT
+                      and d2.campaignId = p.campaignId
+                      and r.businessDate = p.businessDate
+               ), 0L)
+             order by p.businessDate
+            """)
+    List<LocalDate> findUnreleasedBusinessDatesBefore(@Param("before") LocalDate before);
 
     /*
      * 해시 재구성이 읽는다. SELECT ... FOR SHARE 로 읽어 트랜잭션이 끝날 때까지 행에 공유 잠금을 건다.

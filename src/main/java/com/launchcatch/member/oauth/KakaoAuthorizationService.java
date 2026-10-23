@@ -1,5 +1,7 @@
 package com.launchcatch.member.oauth;
 
+import static com.launchcatch.auth.KakaoOAuth.REGISTRATION_ID;
+
 import java.security.SecureRandom;
 import java.util.Base64;
 import lombok.RequiredArgsConstructor;
@@ -12,7 +14,6 @@ import org.springframework.web.util.UriComponentsBuilder;
 @RequiredArgsConstructor
 public class KakaoAuthorizationService {
 
-    private static final String REGISTRATION_ID = "kakao";
     private static final String SCOPE = "openid profile_nickname profile_image";
     private static final SecureRandom RANDOM = new SecureRandom();
 

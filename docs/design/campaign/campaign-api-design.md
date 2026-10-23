@@ -16,8 +16,10 @@
 |---|---|---|
 | `POST` | `/v1/owner/campaigns` | FR-040 |
 | `PATCH` | `/v1/owner/campaigns/{campaignId}` | FR-041, FR-042 |
+| `POST` | `/v1/owner/campaigns/{campaignId}:activate` | FR-044 |
 | `POST` | `/v1/owner/campaigns/{campaignId}:pause` | FR-092 |
 | `POST` | `/v1/owner/campaigns/{campaignId}:resume` | FR-092 |
+| `POST` | `/v1/owner/campaigns/{campaignId}:cancel` | FR-092(요구사항명세서 상태 시트의 SCHEDULED "취소(DRAFT로)", `#571`) |
 | `GET` | `/v1/owner/campaigns` | 없음(요구사항명세서에 조회 전용 행이 없다. 점주가 등록한 값을 다시 확인하는 화면 전제, `#341`) |
 | `GET` | `/v1/owner/campaigns/{campaignId}` | 없음(위와 같음) |
 
@@ -126,6 +128,104 @@
   `CAMPAIGN-008`이다. 시작일은 "오늘 다음 날 이후"만 허용해 `LocalDate.now(clock).plusDays(1)`보다
   이르면 `CAMPAIGN-009`다(요구사항명세서 [I45] 등록 마감 D-1 23:59와 같은 경계)
 
+## 캠페인 활성화(점주)
+
+- **`DRAFT` → `SCHEDULED` 전이는 기존 `CampaignStatusService.schedule(campaignId)`를 그대로
+  부른다(FR-092).** 이미 구현되어 있고 호출하는 곳이 없었다. `Campaign.schedule()`이
+  `DRAFT`가 아니면 `IllegalStateException`을 던지는 것도 그대로 쓴다
+- **이 흐름 전체를 하나의 트랜잭션으로 묶지 않는다(자체 리뷰로 찾음, `#561`).**
+  `PosterModerationService.moderate()`가 S3·Rekognition을 부르는데, 그 호출을
+  트랜잭션 안에서 하면 그 시간만큼 캠페인 행 잠금과 DB 커넥션을 쥐고 있게 된다.
+  `PosterModerationService`의 클래스 주석이 이미 트랜잭션을 걸지 않는 이유로 든 것과 같은
+  문제라, 세 구간으로 나눈다.
+  1. 잠금 없는 `findById`로 본인 소유(`ownerId` 비교)·점주 계정 상태(`OwnerStatusQuery`)·
+     `DRAFT` 여부를 먼저 거른다. 없거나 다르면 `CAMPAIGN-005`, 점주가 `ACTIVE`가 아니면
+     `CAMPAIGN-001`, `DRAFT`가 아니면 `CAMPAIGN-006`이다. 여기서 걸러지면 검수를 부르지
+     않는다.
+  2. `CampaignActivationRateLimiter`로 점주 1명당 요청 빈도를 센 뒤(아래 항목)
+     `PosterModerationService.moderate()`를 트랜잭션 밖에서 부른다.
+  3. 검수가 `PASS`면 `CampaignStatusService.schedule(campaignId)`를 부른다. 이 메서드는
+     이미 자기 트랜잭션 안에서 `findByIdForUpdate`(비관 잠금)로 다시 잠그고 `DRAFT` 여부를
+     다시 확인한다. 1번과 3번 사이에 다른 요청이 먼저 전이를 끝내면 여기서
+     `IllegalStateException`이 나고, `CAMPAIGN-006`으로 변환해 응답한다
+     (`CampaignPauseResumeService.pause()`/`resume()`과 같은 처리).
+  1번의 확인은 최종 권위가 아니다. 1번을 통과한 두 요청이 거의 동시에 들어오면 둘 다 검수까지
+  진행할 수 있지만, 3번에서 먼저 도착한 쪽만 실제로 `SCHEDULED`가 되고 나머지는 거기서
+  거부된다. 같은 캠페인에 대한 중복 전이는 막되, 그 틈에 생기는 중복 검수 호출(낭비)은
+  감수하는 선택이다. 그 경쟁이 실제로 자주 일어날 일은 아니라서(점주가 같은 캠페인을 거의
+  동시에 두 번 누르는 경우) 더 무거운 해법(짧은 트랜잭션을 더 쪼개거나 `@Version` 낙관적
+  잠금으로 바꾸는 것)까지는 가지 않았다
+- **검수가 끝난 뒤 `schedule()`의 캠페인 잠금을 잡기 전까지 포스터가 바뀔 수 있어, 검수
+  결과가 지금 포스터의 것인지 그 잠금 아래서 다시 확인한다(코드래빗 리뷰로 찾음,
+  `#561`).** 검수(2번 구간)는 트랜잭션 밖에 있어서 포스터 잠금을 쥐지 않는다. 그 사이
+  점주가 `PosterUploadService`로 같은 캠페인의 포스터를 덮어쓸 수 있는데(그 쪽도 캠페인
+  잠금을 거친다), `Poster.overwrite()`는 새 행을 만들지 않고 같은 `posterId`의 내용만
+  바꿔서 포스터 ID만으로는 그 변경을 알 수 없다. 그래서 `CampaignStatusService.schedule()`에
+  `Runnable precondition`을 받는 오버로드를 추가했다. 그 메서드가 캠페인 잠금을 잡은
+  뒤, 상태를 바꾸기 전에 precondition을 실행한다. `CampaignActivationService`는 검수를
+  부르기 전에 포스터의 `updatedAt`을 읽어 두고, 이 precondition으로 캠페인 잠금 아래서
+  (포스터 덮어쓰기도 같은 잠금을 거치므로 그 사이엔 못 바뀐다) 지금 값과 같은지 다시
+  확인한다. 다르면 `CAMPAIGN-006`으로 거부하고 전이하지 않는다. `CampaignStatusService`는
+  이 precondition이 무엇을 확인하는지 모른다. 포스터를 몰라도 되게 하려는 것이다
+- **점주 1명당 캠페인 활성화 요청을 분당 3회로 제한한다(`CampaignActivationRateLimiter`,
+  자체 리뷰로 찾음, `#561`).** 검수가 `FAIL`이어도 점주가 다시 요청하면 매번 새로
+  Rekognition을 부르는데(아래 항목), 반복 요청을 막지 않으면 그 호출 비용과 쿼터를 그대로
+  소모한다. `TemplateGenerationRateLimiter`와 같은 고정 창 카운터(`auth_rate_limit.lua`
+  재사용)를 쓰고, 넘으면 `CAMPAIGN-011`(429)이다. 분당 3회는 근거 없는 예시값이고(`C` 등급),
+  실제 값은 운영 쪽과 정한다("아직 정해지지 않은 것" 참고). Redis 장애 시에는 세지 못하는
+  것뿐이지 막을 이유가 없어 통과시킨다(`장애_처리_설계_가이드.md`, 캐시 기본 처리)
+- **포스터 존재 확인은 `PosterRepository.findByCampaignId`로 하고, 없으면
+  `PosterErrorCode.POSTER_NOT_SAVED`(`POSTER-020`, 404)로 거부한다.**
+  `PosterModerationService.moderate()`가 같은 조회에서 쓰는 코드를 그대로 재사용한다. 새
+  코드를 추가하지 않는다
+- **자동 검수는 `PosterModerationService.moderate(campaignId)`를 그대로 부른다(FR-054,
+  `#535`).** 그 결과(`PosterModerationOutcome`)의 `result`가 `PASS`면 `schedule()`을
+  부르고, `FAIL`이면 `schedule()`을 부르지 않고 그 `reasons`를 응답에 담는다
+- **검수 `FAIL`도 `200 SUCCESS`로 응답한다(채팅으로 확인, 2026-10-19).** 여러 사유를
+  동시에 모두 담아야 하는데(`PosterModerationService`의 "사유는 하나에서 멈추지 않고 모두
+  모은다") 공통 응답 봉투의 오류 경로는 `data`가 항상 `null`이라 담을 수 없다. 쿠폰
+  선착순 소진(`COUPON-003`)처럼 사유가 하나로 좁혀지는 경우와 달리, 이 기능은 사유가
+  복수라 성공 봉투 안의 `reasons` 배열로 간다
+- **`reasons` 배열 값은 `ModerationFailReason` enum 코드 원문이다(채팅으로 확인,
+  2026-10-19).** 그 enum의 클래스 주석이 이미 "화면 문구는 이 코드를 받는 쪽(캠페인
+  활성화)이 붙인다"고 적어 둬서, 서버가 번역하지 않고 그대로 내려주는 쪽이 원래 의도와
+  맞다
+- **엔드포인트 경로는 `api-spec.md`의 커스텀 메서드 컨벤션 예시(`:activate`)를 그대로
+  쓴다.** "캠페인 중단과 재개"와 같은 선택이다
+- **잔액은 확인하지 않는다(FR-044 예외사항).** 캠페인이 정산을 조회하면 정산이 이미
+  캠페인을 조회하고 있어 도메인 간 순환이 생긴다(설계 문서 2.2). 잔액 부족 안내는 프론트가
+  정산 조회를 따로 불러서 화면에 표시한다
+- **`SCHEDULED` → `ACTIVE` 전환과 가게당 동시 1건 제한은 이 엔드포인트가 하지 않는다.**
+  D일 00:00 스케줄러(`SYSTEM`)가 `CampaignStatusService.activate()`를 불러 처리한다
+  (`campaign_구조와_동작_설계.md`). 이 엔드포인트는 `schedule()`만 부른다
+- **`PAUSED`(`ADMIN`) 캠페인의 재개는 이 엔드포인트가 다루지 않는다.** `DRAFT`가 아닌
+  상태에서의 요청은 전부 `CAMPAIGN-006`으로 막히므로 재개 기능과 분리된다
+- **이 설계는 `#535`(PR #552)가 아직 `develop`에 없는 상태에서 썼다.**
+  `PosterModerationService`, `PosterModerationOutcome`, `ModerationFailReason`은
+  `feat/535-poster-moderation` 브랜치 기준이다. 구현(`#561`)은 `#535`가 먼저 병합된 뒤
+  진행한다
+
+## 캠페인 종료(점주)
+
+- **종료도 `CampaignPauseResumeService`가 맡는다(`#600`).** 점주 상태 확인, 본인 소유 확인
+  (`findByIdForUpdate`와 `ownerId` 비교, 실패하면 `CAMPAIGN-005`), 엔티티의
+  `IllegalStateException`을 `CAMPAIGN-006`으로 바꾸는 방식이 중단과 재개와 같다. 실제
+  전이는 `CampaignStatusService.end(campaignId, ActorType.OWNER, businessDate)`에 맡긴다.
+  기존 `end(campaignId, businessDate)`는 정기 종료용으로 `ActorType.SYSTEM`을 넘겨 그대로 둔다
+- **점주는 `PAUSED` 캠페인만 종료할 수 있다.** 진행 중(`ACTIVE`)인 캠페인은 먼저 중단하고 종료하는
+  순서(`ACTIVE` -> `PAUSED` -> `ENDED`)를 지킨다. 실수로 진행 중인 캠페인을 바로 끝내는 일을
+  막고, 중단으로 노출을 멈춘 뒤 종료를 한 번 더 확인하게 하려는 결정이다. 집행 기간이 끝난
+  정기 종료(`#569`)는 `ACTIVE`에서도 종료하므로 엔티티의 `Campaign.end()`는 `ACTIVE`와 `PAUSED`를
+  모두 받는다. 이 순서 제한은 점주용 서비스에만 있다
+- **이미 `ENDED`인 캠페인의 재요청은 멱등하게 받지 않고 `CAMPAIGN-006`으로 거부한다.**
+  종료는 되돌릴 수 없는 전이라, 중단과 재개처럼 "이미 그 상태면 성공"으로 받으면 점주가 실수로
+  두 번 누른 요청과 정말 끝난 캠페인의 구분이 사라진다. `CampaignStatusService.end()` 자체는
+  배치의 재실행을 위해 여전히 멱등하다
+- **종료할 때 가게 요약을 `ENDED`로 갱신한다.** 중단과 재개처럼 `StoreCampaignSummaryUpdater`를
+  같은 트랜잭션에서 부른다. 정기 종료(`#569`)도 같은 `end()`를 부르므로 이 갱신은 한 곳에 있다
+- **종료하면 `CampaignStatusChangedEvent`와 `CampaignEndedEvent`가 발행되어 정산과 광고
+  서빙이 받는다.** 점주 종료와 정기 종료가 같은 이벤트를 쓴다
+
 ## 캠페인 중단과 재개(점주)
 
 - **점주용 전이는 기존 `CampaignStatusService.pause()`/`resume()`을 그대로 부른다(FR-092,
@@ -173,6 +273,33 @@
   상세 조회처럼 `pausedReason`, `statusChangedAt`까지 담을 필요는 없다고 보았다(채팅으로
   확인, 2026-10-18)
 
+## 캠페인 취소(점주)
+
+허용할 상태와 취소 뒤 수정 범위는 `#571`이 정했다([구조와 동작 설계](./campaign_구조와_동작_설계.md#scheduled-캠페인의-취소571)).
+이 절은 그 결정을 HTTP 로 여는 방법을 적는다(`#597`).
+
+- **새 전이 `CampaignStatusService.cancel()`과 엔티티 `Campaign.cancel()`을 더한다.** `cancel()`은
+  `SCHEDULED`만 `DRAFT`로 바꾸고 나머지 상태면 `IllegalStateException`을 던진다. 상태 변경 이력은
+  `ActorType.OWNER`로 남긴다
+- **이미 `DRAFT`면 이력 없이 조용히 성공한다.** 다른 전이(`pause`, `resume`)와 같은 멱등 기준이다.
+  응답을 받지 못하고 다시 보낸 요청이 실제로는 성공한 취소를 오류로 보지 않게 한다. 한 번도 활성화하지
+  않은 `DRAFT`에 보낸 취소도 `200`이 되지만 상태는 같아 해가 없다
+- **이벤트를 발행하지 않고 가게 요약도 갱신하지 않는다.** `DRAFT -> SCHEDULED`(`schedule`)도 둘 다
+  하지 않는다. 다른 도메인은 `SCHEDULED`를 그때그때 읽기만 한다. coupon 의 쿠폰 행사 조회
+  (`CouponLookUpService`)와 billing 의 환불 차단(`hasLiveCampaign`)이 그렇다. 그래서 되돌릴 것이 없다.
+  `CampaignStatusChangedEvent`를 받는 billing, adserving, coupon 의 리스너는 집행 중인 캠페인을 다룬다
+- **본인 소유 확인과 점주 상태 확인은 중단·재개와 같다.** 새 서비스 `CampaignCancelService`가
+  `findByIdForUpdate`로 잠그고 `ownerId`를 비교한다(`CAMPAIGN-005`). 점주가 `ACTIVE`가 아니면
+  `CAMPAIGN-001`이다. 엔티티의 `IllegalStateException`은 `CAMPAIGN-006`으로 바꾼다
+- **00:00 의 `SCHEDULED -> ACTIVE`와는 캠페인 행 잠금으로 줄을 선다.** 취소도 `activate()`도
+  `findByIdForUpdate`로 같은 행을 잠근다. 배치가 먼저면 취소는 `ACTIVE`를 보고 `CAMPAIGN-006`이다.
+  취소가 먼저면 배치는 `DRAFT`를 보고 `Campaign.activate()`가 `IllegalStateException`을 던진다.
+  그 배치를 만드는 쪽(`#569`)이 이 예외를 "취소된 캠페인이라 건너뛴다"로 받아야 한다. 아래
+  "아직 정해지지 않은 것"에 남긴다
+- **응답은 중단·재개와 같은 `CampaignStatusResponse`다.** `campaignId`와 `status`만 담는다
+- **취소에는 요청 빈도 제한을 두지 않는다.** 취소는 외부 호출이 없는 행 하나의 갱신이다. 취소와 재활성화를
+  되풀이해 검수를 여러 번 부르는 것은 활성화 쪽 제한(`CAMPAIGN-011`)이 막는다
+
 ## 캠페인 조회(점주)
 
 - **두 엔드포인트 모두 점주 상태(`OwnerStatusQuery`) 확인을 하지 않는다.** 등록·수정과
@@ -196,6 +323,25 @@
 - **상세 조회는 잠금 없이 `findById`로 조회한다.** 등록 수정과 달리 값을 바꾸지 않아
   `CampaignTargetAudienceService`처럼 `findByIdForUpdate`(비관 잠금)를 쓸 이유가 없다
 
+## 캠페인 조회(관리자)
+
+- **점주용 조회와 소유자 확인만 다르다.** `AdminCampaignQueryService`는 소유자를 가리지 않고
+  전체 캠페인을 조회한다. 목록의 정렬과 커서는 점주용과 같이 `campaignId desc` 하나를 쓴다
+  (`#603`)
+- **필터는 가게 ID와 상태 둘이고 둘 다 선택이다.** 상호 검색은 서버가 하지 않고 클라이언트가
+  가게 ID로 바꿔 보낸다. 전체를 최신순으로 훑는 조회라 점주용처럼 복합 인덱스를 힌트로
+  강제하지 않고 기본키 역순 스캔을 쓴다
+- **가게 상호는 한 페이지의 가게 ID를 모아 `StoreQueryService.findAllById`로 한 번에
+  조회한다.** 캠페인마다 가게를 조회하면 N+1이 된다. 최종 등록 전 가게는 그 조회가
+  제외하므로 상호는 `null`이다
+- **상세는 점주용 상세에 `ownerId`, `storeName`, 상태 이력, 포스터를 더한다.** 상태 이력은
+  `campaign_status_log`를 `id` 오름차순으로 읽고, 포스터는 `campaign_id`로 한 건 조회한다.
+  포스터가 없으면 `poster`는 `null`이다
+- **없는 캠페인은 `CAMPAIGN-012`(404)다.** 점주용은 존재 여부를 숨기려 없음과 타인 소유를
+  `CAMPAIGN-005`로 묶지만, 관리자는 모든 캠페인에 접근할 수 있어 숨길 이유가 없다
+- **소진 포인트와 누적 유효 노출은 담지 않는다.** 점주용 조회와 같은 이유다(`campaign ->
+  billing` 의존은 순환이 생긴다). 클라이언트가 분석의 캠페인 리포트를 따로 불러 합친다
+
 ## 오류 코드를 나눈 기준
 
 요청 형식(필수값, 타입)처럼 판정에 업무 지식이 필요 없는 실패는 `COMMON-002`를 쓴다.
@@ -208,9 +354,11 @@
 |---|---|---|
 | 가게당 DRAFT 1개를 막는 UNIQUE 제약의 정확한 마이그레이션 문구 | `#244` 결정 | `#244`가 `active_store_marker`와 같은 방식으로 추가한다(이 문서 "캠페인 등록" 절 참고) |
 | `Campaign.updateCouponCondition(...)` 메서드 시그니처 | `#244` 결정 | 아직 엔티티에 없다. `#244`가 추가한다 |
-| 00:00 배치가 `pendingDailyBudget`을 `dailyBudget`에 반영하는 호출 지점 | V51 45행, 102행 스케줄러 | `#330`은 컬럼에 쓰기만 한다. "스케줄러 캠페인 담당 스텝" 이슈가 그 반영 호출을 정한다. **그 배치는 반영 직전에 `status == ACTIVE`인지 다시 확인해야 한다.** `pause()`는 `pendingDailyBudget`을 지우지 않으므로(아래 "해소된 항목" 참고), `PAUSED`로 멈춰 있는 캠페인에 그 예약값을 그대로 적용하면 안 된다 |
+| 00:00 배치가 `pendingDailyBudget`을 `dailyBudget`에 반영하는 호출 지점 | V51 45행, 102행 스케줄러 | 해소됨(`#840`). `CampaignPendingBudgetJob`(`@Order(35)`)이 ACTIVE 이고 예약 값이 있는 캠페인마다 행 잠금 아래에서 상태를 다시 확인한 뒤 `dailyBudget`으로 옮기고 예약 값을 비운다. `pause()`는 `pendingDailyBudget`을 지우지 않으므로 `PAUSED`로 멈춰 있는 캠페인에는 적용하지 않고 예약 값을 남긴다. 정산의 일일 예약(50)보다 앞이라 바뀐 예산이 그날 예약에 반영된다 |
 | 예약 값(`pendingDailyBudget`) 자체를 PATCH 응답에 노출할지 | V51 45행 | `#330`은 노출하지 않는다(응답은 늘 `dailyBudget`). 노출이 필요해지면 그때 명세를 바꾼다 |
 | `targetMenuId`가 그 가게(`storeId`) 소유인지 등록 시점(`CampaignCouponConditionService`)에 검증하는 것 | `#468` 자체 리뷰로 찾음(2026-10-18) | 지금은 검증 코드가 없다. `StoreCampaignSummaryUpdater.update()`가 `menuBelongsToStore`로 뒤늦게(중단·재개 시점에) 걸러내지만, 등록 시점에 막는 게 근본 조치다. 담당 이슈 미정 |
+| 00:00 의 `SCHEDULED -> ACTIVE` 배치가 취소된 캠페인을 만났을 때의 처리 | `#597`(2026-10-20) | 취소가 먼저 잠금을 잡으면 배치의 `CampaignStatusService.activate()`가 `DRAFT`를 보고 `IllegalStateException`을 던진다. 그 배치를 만드는 `#569`가 이 예외를 건너뛰기로 받아야 한다. 받지 않으면 단계가 실패해 00:00 묶음이 멈춘다 |
+| 캠페인 활성화 요청 빈도 제한의 정확한 횟수·창 | `#561` 자체 리뷰로 찾음(2026-10-19) | `CampaignActivationRateLimiter`가 지금은 `TemplateGenerationRateLimiter`의 분당 3회를 그대로 가져와 썼다(근거 없는 예시값, `C` 등급). 실제 값은 운영 쪽과 정한다 |
 
 해소된 항목(`#330`): 하루 예산의 "다음 영업일 적용 예약 값" 컬럼은 `Campaign.pendingDailyBudget`(`V13__campaign_pending_daily_budget.sql`, 양수만 허용하는
 `chk_campaign_pending_daily_budget` CHECK 포함)이고, 최소 하루 예산은 `ops.contract.PlatformSettingQueryService.getMinDailyBudget()`(요구사항명세서

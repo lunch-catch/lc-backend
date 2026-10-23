@@ -56,7 +56,7 @@ class MemberControllerTest {
 
     @Test
     void 탈퇴는_명세의_콜론_경로로_호출하고_쿠키를_만료한다() throws Exception {
-        when(cookies.expiredAccessTokenCookie()).thenReturn(ResponseCookie.from("accessToken", "").maxAge(0).build());
+        when(cookies.expiredAccessTokenCookie(Role.MEMBER)).thenReturn(ResponseCookie.from("accessToken", "").maxAge(0).build());
         when(cookies.expiredRefreshTokenCookie(Role.MEMBER)).thenReturn(ResponseCookie.from("refreshToken", "").maxAge(0).build());
 
         var result = mvc.perform(post("/v1/members/me:withdraw").contentType(MediaType.APPLICATION_JSON)

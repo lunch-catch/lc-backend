@@ -208,8 +208,8 @@ public class AdminTokenService {
             transactions.recordFailure(id, reason);
         } catch (RuntimeException failure) {
             // 감사 DB 저장 실패는 관리자 ID와 사유를 운영 로그에 남기며 토큰 원문이나 외부 예외 메시지는 기록하지 않는다.
-            log.warn("event=ADMIN_TOKEN_REISSUE_AUDIT_FAILED adminId={} reason={} errorType={} stack={}",
-                    id, reason, failure.getClass().getSimpleName(), java.util.Arrays.toString(failure.getStackTrace()));
+            log.warn("event=ADMIN_TOKEN_REISSUE_AUDIT_FAILED adminId={} reason={} exceptionType={}",
+                    id, reason, failure.getClass().getSimpleName());
         }
     }
 
@@ -219,10 +219,10 @@ public class AdminTokenService {
                         AdminAccessTokenClaims.forVersion(state.version())), token);
     }
 
-    // 외부 예외 메시지와 cause에 토큰이 포함될 수 있어 종류와 스택 프레임만 기록한다.
+    // 외부 예외 메시지와 cause에 토큰이 포함될 수 있어 예외 타입만 기록한다.
     private void safeLog(String reason, RuntimeException failure) {
-        log.warn("event=ADMIN_TOKEN_REISSUE_FAILURE reason={} errorType={} stack={}", reason,
-                failure.getClass().getSimpleName(), java.util.Arrays.toString(failure.getStackTrace()));
+        log.warn("event=ADMIN_TOKEN_REISSUE_FAILED reason={} exceptionType={}", reason,
+                failure.getClass().getSimpleName());
     }
 
     private AuthException invalid() { return new AuthException(AuthErrorCode.REFRESH_TOKEN_INVALID); }

@@ -13,6 +13,7 @@ import static org.mockito.Mockito.when;
 import com.launchcatch.campaign.exception.CampaignException;
 import com.launchcatch.campaign.exception.PosterErrorCode;
 import com.launchcatch.campaign.template.client.TemplateGenerationTimeoutException;
+import com.launchcatch.campaign.template.client.GeneratedTemplate;
 import com.launchcatch.campaign.template.client.TemplateHtmlGenerator;
 import com.launchcatch.campaign.template.dto.TemplateCreateResponse;
 import com.launchcatch.campaign.template.entity.Template;
@@ -22,6 +23,7 @@ import com.launchcatch.campaign.template.repository.TemplateQuotaRepository;
 import com.launchcatch.campaign.template.repository.TemplateRepository;
 import com.launchcatch.campaign.template.repository.TemplateVersionRepository;
 import com.launchcatch.campaign.template.TemplateHtmlSanitizer;
+import com.launchcatch.campaign.template.TemplatePromptValidator;
 import com.launchcatch.campaign.template.TemplateSlotValidator;
 import com.launchcatch.global.entity.BaseTimeEntity;
 import java.lang.reflect.Field;
@@ -49,7 +51,6 @@ import org.springframework.transaction.support.TransactionTemplate;
 class TemplateCreateServiceTest {
 
     private static final String VALID_HTML = "<div style=\"color:#000000\">"
-            + "<span data-slot=\"adLabel\">ad</span>"
             + "<h1 data-slot=\"eventName\">title</h1>"
             + "<p data-slot=\"discount\">discount</p>"
             + "<p data-slot=\"period\">period</p>"
@@ -59,15 +60,10 @@ class TemplateCreateServiceTest {
     private static final Long ADMIN_ID = 1L;
     private static final String REQUEST_ID = "req-1";
 
-    // 상수를 참조하지 않고 poster-api-design.md 의 문장을 그대로 적어야 목록이 바뀐 것을 잡는다.
-    private static final List<String> EXPECTED_SUGGESTED_PROMPTS = List.of(
-            "배경을 더 밝게 해줘",
-            "행사명 글자를 더 크게 해줘",
-            "할인 문구를 더 진한 강조색으로 바꿔줘",
-            "행사명을 중앙에서 오른쪽으로 1cm 옮겨줘",
-            "이미지 모서리를 더 둥글게 해줘");
+    private static final List<String> GENERATED_SUGGESTIONS =
+            List.of("행사명 글자를 조금 더 크게 해줘", "배경을 조금 더 밝게 해줘");
     private static final Clock FIXED_CLOCK = Clock.fixed(Instant.parse("2026-10-08T01:00:00Z"), ZoneOffset.UTC);
-    // 실제 설계값(V51)이다. application.yml의 campaign.template-max-count는 임시 상향값(#529)이라 이 테스트와 무관하다.
+    // 서비스에 직접 넣는 테스트용 값이다. application.yml의 campaign.template-max-count와는 무관하다.
     private static final int MAX_TEMPLATES = 10;
 
     @Mock
@@ -97,7 +93,8 @@ class TemplateCreateServiceTest {
                 templateHtmlGenerator,
                 new TemplateHtmlSanitizer(),
                 new TemplateSlotValidator(),
-                new TemplateGenerationRateLimiter(redisTemplate),
+                new TemplatePromptValidator(),
+                new TemplateGenerationRateLimiter(redisTemplate, 3),
                 transactionTemplate,
                 FIXED_CLOCK);
         Field maxTemplatesField = TemplateCreateService.class.getDeclaredField("maxTemplates");
@@ -127,7 +124,7 @@ class TemplateCreateServiceTest {
         처음_보는_requestId로_설정한다();
         when(templateRepository.count()).thenReturn(9L);
         when(templateQuotaRepository.tryReserve(MAX_TEMPLATES)).thenReturn(1);
-        when(templateHtmlGenerator.generate("가을 느낌")).thenReturn(VALID_HTML + "<script>alert(1)</script>");
+        when(templateHtmlGenerator.generate("가을 느낌")).thenReturn(new GeneratedTemplate(VALID_HTML + "<script>alert(1)</script>", "", GENERATED_SUGGESTIONS));
         when(templateRepository.saveAndFlush(any(Template.class))).thenAnswer(invocation -> {
             Template saved = invocation.getArgument(0);
             setId(saved, 1L);
@@ -142,7 +139,7 @@ class TemplateCreateServiceTest {
         assertThat(response.status()).isEqualTo(TemplateStatus.DRAFT);
         assertThat(response.html()).isEqualTo(VALID_HTML);
         assertThat(response.removedElements()).containsExactly("script");
-        assertThat(response.suggestedPrompts()).containsExactlyElementsOf(EXPECTED_SUGGESTED_PROMPTS);
+        assertThat(response.suggestedPrompts()).containsExactlyElementsOf(GENERATED_SUGGESTIONS);
         ArgumentCaptor<Template> captor = ArgumentCaptor.forClass(Template.class);
         verify(templateRepository).saveAndFlush(captor.capture());
         assertThat(captor.getValue().isActive()).isFalse();
@@ -163,7 +160,8 @@ class TemplateCreateServiceTest {
         assertThat(response.versionNumber()).isEqualTo(1);
         assertThat(response.html()).isEqualTo(VALID_HTML);
         assertThat(response.removedElements()).isEmpty();
-        assertThat(response.suggestedPrompts()).containsExactlyElementsOf(EXPECTED_SUGGESTED_PROMPTS);
+        // 재시도 응답은 저장된 버전에서 만들어지고 제안은 저장하지 않으므로 비어 있다(#732)
+        assertThat(response.suggestedPrompts()).isEmpty();
         verifyNoInteractions(
                 templateRepository, templateHtmlGenerator, templateQuotaRepository, transactionTemplate,
                 redisTemplate);
@@ -207,7 +205,7 @@ class TemplateCreateServiceTest {
                 .thenReturn(Optional.empty(), Optional.of(existing));
         when(templateRepository.count()).thenReturn(0L);
         when(templateQuotaRepository.tryReserve(MAX_TEMPLATES)).thenReturn(1);
-        when(templateHtmlGenerator.generate("가을 느낌")).thenReturn(VALID_HTML);
+        when(templateHtmlGenerator.generate("가을 느낌")).thenReturn(new GeneratedTemplate(VALID_HTML, ""));
         when(templateRepository.saveAndFlush(any(Template.class)))
                 .thenThrow(new DataIntegrityViolationException("uk_template_version_request_id"));
 
@@ -224,12 +222,45 @@ class TemplateCreateServiceTest {
         처음_보는_requestId로_설정한다();
         when(templateRepository.count()).thenReturn(0L);
         when(templateQuotaRepository.tryReserve(MAX_TEMPLATES)).thenReturn(1);
-        when(templateHtmlGenerator.generate("가을 느낌")).thenReturn(VALID_HTML);
+        when(templateHtmlGenerator.generate("가을 느낌")).thenReturn(new GeneratedTemplate(VALID_HTML, ""));
         DataIntegrityViolationException violation = new DataIntegrityViolationException("다른 제약 위반");
         when(templateRepository.saveAndFlush(any(Template.class))).thenThrow(violation);
 
         assertThatThrownBy(() -> service.create("가을 신메뉴", "가을 느낌", REQUEST_ID, ADMIN_ID))
                 .isSameAs(violation);
+    }
+
+    @Test
+    @DisplayName("요청 문구가 검증에 걸리면 LLM 을 부르지 않고 사유 코드로 거부하며 처리 중 표식을 푼다(#428)")
+    void 요청_문구가_검증에_걸리면_LLM을_부르지_않는다() {
+        처음_보는_requestId로_설정한다();
+
+        assertThatThrownBy(() -> service.create("가을 신메뉴", "ㅁ", REQUEST_ID, ADMIN_ID))
+                .isInstanceOfSatisfying(CampaignException.class, e ->
+                        assertThat(e.getErrorCode()).isEqualTo(PosterErrorCode.PROMPT_TOO_SHORT));
+
+        verifyNoInteractions(templateHtmlGenerator);
+        verify(redisTemplate).delete("templateGenerationInFlight:" + REQUEST_ID);
+    }
+
+    @Test
+    @DisplayName("템플릿 요청이 아니라 대화만 있는 응답이면 템플릿을 만들지 않고 message 만 돌려준다(#733)")
+    void 대화만_있는_응답이면_템플릿을_만들지_않는다() {
+        처음_보는_requestId로_설정한다();
+        when(templateRepository.count()).thenReturn(9L);
+        when(templateHtmlGenerator.generate("이 도구는 뭘 할 수 있어?"))
+                .thenReturn(GeneratedTemplate.chatOnly("템플릿의 색과 배치를 요청하시면 만들어 드려요."));
+
+        TemplateCreateResponse response = service.create("가을 신메뉴", "이 도구는 뭘 할 수 있어?", REQUEST_ID, ADMIN_ID);
+
+        assertThat(response.templateId()).isNull();
+        assertThat(response.versionNumber()).isNull();
+        assertThat(response.html()).isNull();
+        assertThat(response.message()).isEqualTo("템플릿의 색과 배치를 요청하시면 만들어 드려요.");
+        assertThat(response.suggestedPrompts()).isEmpty();
+        verify(templateRepository, never()).saveAndFlush(any());
+        verifyNoInteractions(templateQuotaRepository);
+        verify(redisTemplate).delete("templateGenerationInFlight:" + REQUEST_ID);
     }
 
     @Test
@@ -252,7 +283,7 @@ class TemplateCreateServiceTest {
         처음_보는_requestId로_설정한다();
         when(templateRepository.count()).thenReturn(9L);
         when(templateQuotaRepository.tryReserve(MAX_TEMPLATES)).thenReturn(0);
-        when(templateHtmlGenerator.generate("가을 느낌")).thenReturn(VALID_HTML);
+        when(templateHtmlGenerator.generate("가을 느낌")).thenReturn(new GeneratedTemplate(VALID_HTML, ""));
 
         assertThatThrownBy(() -> service.create("가을 신메뉴", "가을 느낌", REQUEST_ID, ADMIN_ID))
                 .isInstanceOfSatisfying(CampaignException.class, e ->
@@ -281,7 +312,7 @@ class TemplateCreateServiceTest {
     void 슬롯이_빠지면_저장하지_않는다() {
         처음_보는_requestId로_설정한다();
         when(templateRepository.count()).thenReturn(0L);
-        when(templateHtmlGenerator.generate("가을 느낌")).thenReturn("<div data-slot=\"eventName\">title</div>");
+        when(templateHtmlGenerator.generate("가을 느낌")).thenReturn(new GeneratedTemplate("<div data-slot=\"eventName\">title</div>", ""));
 
         assertThatThrownBy(() -> service.create("가을 신메뉴", "가을 느낌", REQUEST_ID, ADMIN_ID))
                 .isInstanceOfSatisfying(CampaignException.class, e ->

@@ -4,6 +4,8 @@
 
 ## 결제 주문과 승인 확정
 
+서비스들이 함께 사용하는 제약 이름과 기본 조회 실패 문구의 소유 위치는 [구조와 동작 설계의 결제 상수 절](./billing_구조와_동작_설계.md#결제-서비스의-공통-상수)을 따른다.
+
 ### `POST /v1/owner/payments`
 
 `PaymentOrderService`가 한 트랜잭션에서 확인 중인 `UNKNOWN` 결제 유무와 현재 충전 정책을 확인한다. `REQUESTED` 주문만 있는 점주는 새 주문을 만들 수 있다. 정책은 서버 시계의 오늘 이하 적용일 중 가장 늦은 행이다.
@@ -28,6 +30,8 @@
 | 승인 응답의 주문 번호나 금액이 다름 | 승인이나 실패로 단정하지 않고 `UNKNOWN`과 아웃박스를 기록한다 |
 
 동기 재조회에서 `APPROVED`는 주문 번호와 금액이 일치해야 승인한다. `FAILED`는 실패로, `EXPIRED`와 `CANCELED`는 충전 없이 취소로 닫는다. `PENDING`, `NOT_FOUND`, 조회 실패와 승인 정보 불일치는 `UNKNOWN`으로 남긴다. `ALREADY_PROCESSED_PAYMENT`도 게이트웨이가 결과 불명으로 분류하므로 동기 재조회가 결과를 정한다.
+
+승인·조회에서 결과를 확정할 수 없는 HTTP 오류는 `TOSS_CONFIRM_UNKNOWN`·`TOSS_INQUIRE_UNKNOWN` 로그에 HTTP 상태, 토스 오류 코드(`code`), 오류 메시지(`pgMessage`), 응답 Content-Type(`contentType`), 수신 본문 바이트 수(`responseBodyBytes`)를 남긴다. 본문이 없는 HTTP 500과 JSON이 아닌 오류 응답을 구분하기 위한 값이다. 외부 문자열은 비밀키 원문과 인코딩을 마스킹하고 제어 문자를 공백으로 바꾼 뒤 512자로 제한한다. 요청 헤더와 응답 본문 전체는 남기지 않는다. 본문이 비어 있으면 세부 오류 사유는 이 로그만으로 알 수 없다.
 
 `PaymentResultService`는 결과를 쓸 때마다 결제 행을 잠그고 상태를 다시 읽는다. 이미 `APPROVED`, `FAILED`, `CANCELLED`이면 덮어쓰지 않는다. 승인 확정·웹훅·재조회 워커·관리자 재조회가 같은 기록 메서드를 사용한다.
 
@@ -96,7 +100,7 @@ PG 서버가 호출한다. `/v1/` 접두사가 없는 것은 서버 대 서버 �
 점주 한 명의 기간별 합계를 원장에서 바로 계산한다.
 
 - **날짜 귀속:** `RESERVE`·`RELEASE`는 `business_date`로, `CHARGE`·`REFUND`는 `created_at`을 서버가 KST 날짜로 바꿔서, `ADJUST`는 `adjust_target_date`(없으면 `created_at`의 KST 날짜)로 구간에 넣는다. DB 날짜 함수는 쓰지 않는다(요구사항 명세서 비기능 시트 42행).
-- **`DEDUCT`는 읽지 않는다.** 노출당 1행이라 기간 합계를 위해 훑을 수 없다. 영업일별로 `RELEASE = RESERVE − DEDUCT`(요구사항 명세서 `비즈니스 규칙` 시트 16행)이므로 지난 영업일의 `|DEDUCT|`는 −(`RESERVE` 합 + `RELEASE` 합)이다. 오늘 영업일은 13:30 해제 전일 수 있어, 그날 `RELEASE`가 아직 없으면 그날의 `DEDUCT` 합을 직접 읽는다(하루치뿐이다).
+- **`DEDUCT`는 읽지 않는다.** 노출당 1행이라 기간 합계를 위해 훑을 수 없다. 영업일별로 `RELEASE = RESERVE − DEDUCT`(요구사항 명세서 `비즈니스 규칙` 시트 16행)이므로 지난 영업일의 `|DEDUCT|`는 −(`RESERVE` 합 + `RELEASE` 합)이다. 오늘 영업일은 다음 날 00:00 해제 전이라, 그날 `RELEASE`가 아직 없으면 그날의 `DEDUCT` 합을 직접 읽는다(하루치뿐이다).
 - 읽는 행은 기간 안의 `CHARGE`·`REFUND`, 정정 대상 영업일이 기간 안인 `ADJUST`(대상이 없는 `ADJUST`는 기록 시각이 기간 안인 것), 기간 영업일의 `RESERVE`·`RELEASE`, 오늘의 `DEDUCT`뿐이다. V2 마이그레이션의 `idx_point_ledger_owner_type_created`와 `idx_point_ledger_owner_business_date`를 쓴다.
 
 ## 관리자 포인트 정책

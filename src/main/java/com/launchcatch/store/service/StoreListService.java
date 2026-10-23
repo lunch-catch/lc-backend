@@ -3,6 +3,7 @@ package com.launchcatch.store.service;
 import com.launchcatch.global.response.CursorPageResponse;
 import com.launchcatch.global.response.PageCursor;
 import com.launchcatch.global.response.PageTokens;
+import com.launchcatch.store.StoreImageUrlResolver;
 import com.launchcatch.store.dto.StoreCategoryFilter;
 import com.launchcatch.store.dto.StoreListItemResponse;
 import com.launchcatch.store.dto.StoreListRequest;
@@ -11,16 +12,24 @@ import com.launchcatch.store.repository.StoreRepository;
 import java.time.Clock;
 import java.time.LocalDate;
 import java.util.List;
-import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+@Slf4j
 @Service
-@RequiredArgsConstructor
 @Transactional(readOnly = true)
 public class StoreListService {
     private final StoreRepository storeRepository;
+    private final StoreImageUrlResolver images;
     private final Clock clock;
+
+    public StoreListService(StoreRepository storeRepository, @Value("${cdn.base-url:}") String baseUrl, Clock clock) {
+        this.storeRepository = storeRepository;
+        this.images = new StoreImageUrlResolver(baseUrl);
+        this.clock = clock;
+    }
 
     public CursorPageResponse<StoreListItemResponse> find(StoreListRequest request) {
         int pageSize = request.pageSize() == null ? 20 : request.pageSize();
@@ -33,9 +42,24 @@ public class StoreListService {
         boolean hasNext = rows.size() > pageSize;
         // 추가로 읽은 행은 응답에서 제외하고 실제 반환한 마지막 가게로 다음 커서를 만든다.
         List<StoreListRow> page = hasNext ? rows.subList(0, pageSize) : rows;
-        List<StoreListItemResponse> items = page.stream().map(StoreListItemResponse::from).toList();
+        List<StoreListItemResponse> items = page.stream().map(this::item).toList();
         String nextPageToken = hasNext ? createPageToken(page.getLast()) : null;
         return CursorPageResponse.of(items, nextPageToken);
+    }
+
+    private StoreListItemResponse item(StoreListRow row) {
+        String key = row.storeImageObjectKey();
+        if (key != null && key.isBlank()) {
+            log.warn("event=STORE_LIST_IMAGE_SKIPPED storeId={} reason=EMPTY_OBJECT_KEY fallback=OMIT_IMAGE",
+                    row.storeId());
+            key = null;
+        }
+        var item = StoreListItemResponse.from(row, images.resolve(key));
+        if (row.campaignId() != null && !item.hasActiveCampaign()) {
+            log.warn("event=STORE_LIST_CAMPAIGN_SKIPPED storeId={} campaignId={} reason=TARGET_MENU_MISSING fallback=OMIT_CAMPAIGN",
+                    row.storeId(), row.campaignId());
+        }
+        return item;
     }
 
     private static String createPageToken(StoreListRow last) {

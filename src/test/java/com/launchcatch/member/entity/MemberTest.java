@@ -39,25 +39,23 @@ class MemberTest {
     }
 
     @Test
-    @DisplayName("정지 이력이 있으면 탈퇴 회원을 재활성화하지 않는다")
-    void 정지_이력이_있으면_재활성화하지_않는다() throws Exception {
+    void 탈퇴해도_정지_이력은_유지한다() throws Exception {
         Member member = Member.create("kakao-123", "점심헌터", null);
-        setField(member, "status", MemberStatus.WITHDRAWN);
-        setField(member, "suspendedAt", LocalDateTime.of(2026, 10, 1, 9, 0));
+        LocalDateTime suspendedAt = LocalDateTime.of(2026, 10, 1, 9, 0);
+        setField(member, "suspendedAt", suspendedAt);
 
-        assertThatThrownBy(() -> member.reactivate("새닉네임", null, LocalDateTime.of(2026, 10, 6, 9, 0)))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessage("정지 이력이 있는 회원은 재가입할 수 없습니다.");
+        member.withdraw(LocalDateTime.of(2026, 10, 6, 9, 0));
+
+        assertThat(member.getSuspendedAt()).isEqualTo(suspendedAt);
     }
-
     @Test
-    @DisplayName("탈퇴해도 제공자 회원번호는 남긴다")
-    void 탈퇴해도_제공자_회원번호는_남긴다() {
+    @DisplayName("탈퇴하면 제공자 회원번호를 비운다")
+    void 탈퇴하면_제공자_회원번호를_비운다() {
         Member member = Member.create("kakao-123", "점심헌터", "https://image");
 
         member.withdraw(LocalDateTime.of(2026, 10, 8, 9, 0));
 
-        assertThat(member.getProviderUserId()).isEqualTo("kakao-123");
+        assertThat(member.getProviderUserId()).isNull();
         assertThat(member.getStatus()).isEqualTo(MemberStatus.WITHDRAWN);
         assertThat(member.getNickname()).isEqualTo("탈퇴한 회원");
         assertThat(member.getProfileImageUrl()).isNull();

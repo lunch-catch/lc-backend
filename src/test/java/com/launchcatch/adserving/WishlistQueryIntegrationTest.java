@@ -3,6 +3,7 @@ package com.launchcatch.adserving;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.launchcatch.adserving.contract.WishlistQueryService;
+import java.util.Set;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -52,6 +53,26 @@ class WishlistQueryIntegrationTest extends AbstractAdservingIntegrationTest {
 
         assertThat(wishlistQueryService.isWished(MEMBER_ID, 101L)).isFalse();
         assertThat(wishlistQueryService.findWishedCampaignIds(MEMBER_ID)).isEmpty();
+    }
+
+    // 쿠폰 묶음 발급이 캠페인당 한 번 부른다. 회원마다 isWished 와 같은 답이어야 한다(#578)
+    @Test
+    void 캠페인을_유효하게_찜한_입력_회원만_돌려주고_회원마다_단건_조회와_같다() {
+        insertWish(MEMBER_ID, 101L);
+        insertWish(OTHER_MEMBER_ID, 101L);
+        jdbcTemplate.update("UPDATE wishlist SET campaign_ended_at = NOW(6) WHERE member_id = ?", OTHER_MEMBER_ID);
+        insertWish(3003L, 102L);
+        insertWish(3004L, 101L);
+        jdbcTemplate.update("DELETE FROM wishlist WHERE member_id = ?", 3004L);
+        insertWish(3009L, 101L);
+        Set<Long> members = Set.of(MEMBER_ID, OTHER_MEMBER_ID, 3003L, 3004L, 3005L);
+
+        Set<Long> wished = wishlistQueryService.findWishedMemberIds(101L, members);
+
+        assertThat(wished).containsExactly(MEMBER_ID);
+        for (Long member : members) {
+            assertThat(wished.contains(member)).isEqualTo(wishlistQueryService.isWished(member, 101L));
+        }
     }
 
     @Test

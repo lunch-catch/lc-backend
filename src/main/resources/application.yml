@@ -61,6 +61,8 @@ spring:
         # 그 왕복이 그대로 병목이 된다. 전용 프로파일에만 넣으면 테스트와 운영이 서로 다른
         # 실패 모양을 보게 되어 그 분기를 검증할 수 없으므로 여기 둔다
         rewriteBatchedStatements: true
+        # 드라이버가 autocommit 과 격리 수준을 기억해 트랜잭션마다 세션 값을 다시 묻는 왕복을 없앤다
+        useLocalSessionState: true
         characterEncoding: UTF-8
         # 드라이버와 DB 세션 시간대를 Asia/Seoul 로 맞춘다.
         # forceConnectionTimeZoneToSession 이 세션 쪽까지 바꾼다
@@ -172,11 +174,29 @@ coupon:
   daily-limit: "${COUPON_DAILY_LIMIT:3}"
   issue-start-time: "${COUPON_ISSUE_START_TIME:11:00}"
   issue-end-time: "${COUPON_ISSUE_END_TIME:14:00}"
+  sequence:
+    # 순번 키는 이벤트 영업일의 발급 종료 시각에 이 여유시간을 더한 시각에 함께 만료한다
+    retention-grace: "${COUPON_SEQUENCE_RETENTION_GRACE:1h}"
+  # 발급 요청을 묶어 한 트랜잭션으로 처리하는 작업자 설정이다
+  issue:
+    batch:
+      # 작업자마다 DB 커넥션을 하나씩 쓰므로 커넥션 풀보다 작게 둔다
+      workers: "${COUPON_ISSUE_BATCH_WORKERS:4}"
+      max-size: "${COUPON_ISSUE_BATCH_MAX_SIZE:500}"
+      queue-capacity: "${COUPON_ISSUE_BATCH_QUEUE_CAPACITY:2000}"
+      wait-timeout: "${COUPON_ISSUE_BATCH_WAIT_TIMEOUT:10s}"
 
-# 실제 설계값은 10이다(V51). 프론트 연동 테스트를 위해 100으로 임시 상향했다(#529,
-# 테스트가 끝나면 10으로 되돌린다).
+# 템플릿 생성 상한이다. 처음 설계값은 10이었으나 프론트 연동 테스트를 위해 100으로 올린 뒤(#529)
+# 팀 논의로 100을 그대로 유지하기로 했다(#532).
 campaign:
   template-max-count: "${CAMPAIGN_TEMPLATE_MAX_COUNT:100}"
+  # 템플릿 생성과 수정을 관리자 1명당 분당 몇 번까지 받을지다(#227). 시연 촬영처럼 연달아 호출하는 환경에서만 올린다(#831).
+  template-generation-rate-limit: "${TEMPLATE_GENERATION_RATE_LIMIT:3}"
+  # 포스터 자동 검수 기준이다(명세서 29행 기본값, #535). 29행의 기준 관리가 생기면 DB 로 옮긴다.
+  moderation:
+    max-text-ratio: "${CAMPAIGN_MODERATION_MAX_TEXT_RATIO:0.5}"
+    min-image-width: "${CAMPAIGN_MODERATION_MIN_IMAGE_WIDTH:200}"
+    min-image-height: "${CAMPAIGN_MODERATION_MIN_IMAGE_HEIGHT:200}"
 
 # 이미지 URL 앞에 붙는 주소다. 운영은 CloudFront 도메인이 들어온다.
 #
@@ -212,13 +232,14 @@ kakao:
   admin-key: "${KAKAO_ADMIN_KEY}"
 
 # 토스페이먼츠 접속 설정(billing.config.TossProperties).
-# secret-key 는 기본값을 두지 않는다. 비어 있으면 기동을 멈춘다. 빈 문자열로 Basic 인증을 보내면
-# 운영에서 모든 승인이 401 로 끝나는데 첫 결제가 들어와야 드러난다.
+# secret-key 는 기본값을 빈 값으로 둔다. 환경변수가 없으면 비어서 @NotBlank 가 기동을 멈춘다.
+# 기본값 없이 ${TOSS_SECRET_KEY} 로 두면 설정 바인딩이 자리표시자 글자를 그대로 넣어 검사를 통과하고,
+# 그 글자로 Basic 인증을 보내면 토스가 본문 없는 500 을 준다. 개발 서버가 그렇게 결제 조회를 전부 실패했다(2026-10-21).
 # 타임아웃은 시작값이다. 실제 지연 분포를 본 뒤 여기서 조정한다.
 billing:
   toss:
     base-url: "${TOSS_API_BASE_URL:https://api.tosspayments.com}"
-    secret-key: "${TOSS_SECRET_KEY}"
+    secret-key: "${TOSS_SECRET_KEY:}"
     connect-timeout: 3s
     read-timeout: 10s
   # 승인 결과를 모르는 결제의 재조회 설정(billing.config.PaymentRecheckProperties).
@@ -236,19 +257,18 @@ billing:
       claim-lease: 5m
       # 워커 실행 주기다. @Scheduled 가 읽으므로 ISO-8601 로 적는다.
       interval: PT1M
-  # 광고 서빙 시각과 시간대별 가중치(billing.config.BillingScheduleProperties).
-  # 시각은 따옴표로 감싼다. 따옴표가 없으면 YAML 이 숫자로 읽는다.
-  # hourly-weights 개수는 서빙 시간대 수(10, 11, 12시)와 같아야 하고 어기면 기동이 실패한다.
-  schedule:
-    serving-start: "10:00"
-    serving-end: "12:59"
-    impression-valid-for: 30m
-    hourly-weights: [34, 33, 33]
   # 그날 계획 스냅샷 캐시(billing.config.PlanSnapshotCacheProperties).
   # 근거 없는 임시값이다. 부하 측정 뒤에 조정한다.
   plan-snapshot-cache:
     maximum-size: 100000
     expire-after-write: 24h
+
+adserving:
+  # 진행률을 계산하는 0~23시 시간대별 가중치(adserving.config.PacingProperties). 광고 서빙은 하루 종일이다.
+  # 개수는 24개여야 하고 어기면 기동이 실패한다. 합은 비율로만 쓴다.
+  # 측정값이 아닌 가정이다. 운영 뒤 시간대별 노출 분포로 고친다. 새벽을 0 으로 두면 노출 몇 건으로 진행률이 1.2 를 넘는다.
+  pacing:
+    hourly-weights: [2, 1, 1, 1, 1, 1, 1, 3, 4, 5, 8, 10, 9, 7, 4, 4, 4, 5, 7, 8, 6, 4, 2, 2]
 
 # 카카오 OIDC 외부 API(토큰교환, 로그아웃, 연결 해제) 서킷브레이커.
 # 인스턴스를 API 별로 나눈다. 하나가 막혀도 다른 API 까지 같이 막히지 않는다.
@@ -328,13 +348,19 @@ resilience4j:
       # 그 문턱은 자기 앱의 지연 분포를 알아야 정할 수 있다.
       # 목표 처리량으로 부하 시험을 돌린 뒤 실측으로 채운다
 
-# 시험 데이터(db/seed). 스키마 마이그레이션 뒤에 넣는다 (db/seed/README.md).
-# 기본은 꺼짐이라 운영에서는 돌지 않는다. 로컬은 아래 local 문서가 켜고, 개발 서버는 인프라가 SEED_ENABLED 로 켠다.
-seed:
-  enabled: "${SEED_ENABLED:false}"
-  # 시드 계정(관리자, 점주)의 BCrypt 해시. 기본값은 lunchcatch1234! 이고 저장소에 공개돼 있다. 점주 비밀번호 규칙(10~20자)에 맞춘 길이다.
-  # 개발 서버는 인프라가 SEED_PASSWORD_HASH 로 다른 값을 넣는다
-  password-hash: "${SEED_PASSWORD_HASH:$2a$10$MRk.eo1/rGQNUGClHmwVB.Z5zREkJzDzDfu9M4oJsZ.vd0s3n6tAu}"
+# 시나리오 데이터(db/base). 스키마 마이그레이션 뒤에 넣는다 (#741, docs/scenarios/data.md).
+# 기본은 꺼짐이다. 로컬은 아래 local 문서가 켜고, 개발과 운영은 인프라가 BASE_ENABLED 와 해시 넷을 넣는다.
+base:
+  enabled: "${BASE_ENABLED:false}"
+  # 데이터 날짜의 기준일(YYYY-MM-DD). 비우면 오늘이다. 시연용 운영은 2026-10-28
+  date: "${BASE_DATE:}"
+
+# 기본 계정 비밀번호의 BCrypt 해시. 켜져 있는데 비면 기동을 막는다
+account:
+  superadmin-password-hash: "${ACCOUNT_SUPERADMIN_PASSWORD_HASH:}"
+  demo-admin-password-hash: "${ACCOUNT_DEMO_ADMIN_PASSWORD_HASH:}"
+  demo-owner-password-hash: "${ACCOUNT_DEMO_OWNER_PASSWORD_HASH:}"
+  scenario-password-hash: "${ACCOUNT_SCENARIO_PASSWORD_HASH:}"
 
 ---
 spring:
@@ -342,5 +368,30 @@ spring:
     activate:
       on-profile: local
 
-seed:
+base:
   enabled: true
+
+# 로컬은 저장소에 공개된 lunchcatch1234! 의 해시를 쓴다. 점주 비밀번호 규칙(10~20자)에 맞춘 길이다
+account:
+  superadmin-password-hash: "${ACCOUNT_SUPERADMIN_PASSWORD_HASH:$2a$10$MRk.eo1/rGQNUGClHmwVB.Z5zREkJzDzDfu9M4oJsZ.vd0s3n6tAu}"
+  demo-admin-password-hash: "${ACCOUNT_DEMO_ADMIN_PASSWORD_HASH:$2a$10$MRk.eo1/rGQNUGClHmwVB.Z5zREkJzDzDfu9M4oJsZ.vd0s3n6tAu}"
+  demo-owner-password-hash: "${ACCOUNT_DEMO_OWNER_PASSWORD_HASH:$2a$10$MRk.eo1/rGQNUGClHmwVB.Z5zREkJzDzDfu9M4oJsZ.vd0s3n6tAu}"
+  scenario-password-hash: "${ACCOUNT_SCENARIO_PASSWORD_HASH:$2a$10$MRk.eo1/rGQNUGClHmwVB.Z5zREkJzDzDfu9M4oJsZ.vd0s3n6tAu}"
+
+# 로컬은 결제를 실제로 쓰지 않아도 뜨게 토스 문서에 공개된 테스트 키를 기본값으로 둔다.
+# 팀 상점으로 시험하려면 TOSS_SECRET_KEY 나 application-local.yml 로 바꾼다.
+billing:
+  toss:
+    secret-key: "${TOSS_SECRET_KEY:test_gsk_docs_OaPz8L5KdmQXkzRz3y47BMw6}"
+
+---
+# 부하 시험 프로필이다 (lc-infra #11). 결제를 토스 대신 LoadTestPaymentGateway 가 받는다.
+spring:
+  config:
+    activate:
+      on-profile: loadtest
+
+loadtest:
+  payment:
+    # 목이 승인 전에 기다리는 시간이다. 토스 승인 응답과 비슷하게 둔다
+    latency: 200ms

@@ -188,7 +188,7 @@ public class PaymentResultService {
         LocalDateTime nextRetryAt = now.plus(
                 recheckProperties.delayAfter(outbox.getAttemptCount() + 1, ThreadLocalRandom.current().nextDouble()));
         if (outbox.recordMiss(now, reason, nextRetryAt)) {
-            log.error("event=PAYMENT_RECHECK_EXHAUSTED paymentId={} attempts={} lastError={}",
+            log.error("event=BILLING_PAYMENT_RECHECK_EXHAUSTED paymentId={} attemptCount={} lastError={}",
                     payment.getId(), outbox.getAttemptCount(), outbox.getLastError());
             meterRegistry.counter(EXHAUSTED_METRIC).increment();
         }

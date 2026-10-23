@@ -1,5 +1,9 @@
 package com.launchcatch.owner.repository;
 
+import static com.launchcatch.auth.opaque.RefreshTokenFormat.ACTIVE_KEY_PREFIX;
+import static com.launchcatch.auth.opaque.RefreshTokenFormat.ISSUANCE_VERSION_KEY_PREFIX;
+import static com.launchcatch.auth.opaque.RefreshTokenFormat.KEY_PREFIX;
+
 import java.util.List;
 import java.util.Locale;
 import lombok.RequiredArgsConstructor;
@@ -22,8 +26,9 @@ public class OwnerLogoutTokenRepository {
             throw new IllegalArgumentException("폐기 순번은 양수여야 한다");
         }
         Long result = redis.execute(REVOKE_SCRIPT,
-                List.of("activeRefreshToken:OWNER:" + ownerId, "refreshTokenIssuanceVersion:OWNER:" + ownerId),
-                String.format(Locale.ROOT, "%019d", version), databaseHash == null ? "" : databaseHash, "refreshToken:");
+                List.of(ACTIVE_KEY_PREFIX + "OWNER:" + ownerId,
+                        ISSUANCE_VERSION_KEY_PREFIX + "OWNER:" + ownerId),
+                String.format(Locale.ROOT, "%019d", version), databaseHash == null ? "" : databaseHash, KEY_PREFIX);
         if (result == null) {
             throw new DataAccessResourceFailureException("토큰 폐기 결과가 없다");
         }

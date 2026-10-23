@@ -15,7 +15,11 @@ public record TemplateVersionItemResponse(
         LocalDateTime createdAt,
 
         @Schema(description = "이 버전의 HTML입니다.")
-        String html
+        String html,
+
+        @Schema(description = "이 버전을 만들 때 LLM이 보낸 설명입니다. 없으면 빈 문자열입니다.",
+                example = "따뜻한 주황 톤의 카드형 템플릿으로 만들었어요.")
+        String message
 ) {
 
     public static TemplateVersionItemResponse from(TemplateVersion version) {
@@ -23,7 +27,8 @@ public record TemplateVersionItemResponse(
                 version.getVersionNumber(),
                 version.getRequestPrompt(),
                 version.getCreatedAt(),
-                version.getHtmlContent()
+                version.getHtmlContent(),
+                version.getMessage() == null ? "" : version.getMessage()
         );
     }
 }

@@ -1,6 +1,8 @@
 package com.launchcatch.adserving.feed.repository;
 
 
+import static com.launchcatch.adserving.exclusion.repository.ExclusionRepository.BYPASS_METRIC;
+
 import com.launchcatch.adserving.engine.SlotType;
 import com.launchcatch.auth.RedisFailureClassifier;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -28,10 +30,11 @@ import org.springframework.stereotype.Repository;
 public class ServeRecordRepository {
 
     static final String KEY_PREFIX = "adserving:serve:";
+    /*
+     * 노출 인정 시간이다. 정산은 이 값을 따로 두지 않아 이 TTL 이 과금을 인정하는 범위를 정한다(#497).
+     * 바꾸면 정산의 계획 없음 판정이 생기는 자정 직후 구간도 함께 바뀐다.
+     */
     static final Duration TTL = Duration.ofMinutes(30);
-
-    // Valkey 가 멈춰 막지 않고 통과시킨 횟수다. 경보는 이 지표에 건다(장애 처리 가이드).
-    static final String BYPASS_METRIC = "adserving_cache_bypass_total";
 
     private final StringRedisTemplate redisTemplate;
     private final MeterRegistry meterRegistry;
@@ -59,8 +62,9 @@ public class ServeRecordRepository {
                 }
             });
         } catch (DataAccessException e) {
-            log.warn("event=FEED_SERVE_RECORD_WRITE_FAILED cards={} cause={} 기록 없이 내보낸다",
-                    records.size(), RedisFailureClassifier.causeLabel(e), e);
+            // 이 피드의 노출은 과금되지 않아 문의가 오면 찾을 수 있게 회원을 남긴다(#778)
+            log.warn("event=ADSERVING_FEED_SERVE_RECORD_WRITE_FAILED memberId={} cardCount={} reason={} fallback=SKIP_WRITE",
+                    records.get(0).memberId(), records.size(), RedisFailureClassifier.causeLabel(e), e);
             meterRegistry.counter(BYPASS_METRIC, "use", "serve_record").increment();
         }
     }
@@ -74,7 +78,7 @@ public class ServeRecordRepository {
             String value = redisTemplate.opsForValue().get(key(serveId));
             return Optional.ofNullable(value).map(v -> decode(serveId, v));
         } catch (DataAccessException e) {
-            log.warn("event=FEED_SERVE_RECORD_READ_FAILED serveId={} cause={} 기록 없음으로 본다",
+            log.warn("event=ADSERVING_FEED_SERVE_RECORD_READ_FAILED serveId={} reason={} fallback=TREAT_AS_MISSING",
                     serveId, RedisFailureClassifier.causeLabel(e), e);
             meterRegistry.counter(BYPASS_METRIC, "use", "serve_record").increment();
             return Optional.empty();

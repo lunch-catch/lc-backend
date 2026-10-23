@@ -29,7 +29,7 @@ public class FeedController {
 
     private final FeedService feedService;
 
-    // 서빙 시간대에 현재 위치 기준 카드 10장을 내려준다.
+    // 현재 위치 기준 카드 10장을 내려준다. 시간대 제한 없이 하루 종일 받는다.
     @GetMapping("/feed")
     @Operation(summary = "스와이프 피드 조회", description = "위도와 경도를 모두 생략하면 저장 위치를 쓴다. 사용자마다 최근 60초 동안 6회까지 받는다.")
     @ApiResponse(responseCode = "200", description = "피드 상태와 카드 목록을 반환한다.", useReturnTypeSchema = true)

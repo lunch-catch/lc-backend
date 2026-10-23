@@ -12,12 +12,14 @@ import com.launchcatch.store.contract.OwnerStoreSnapshot;
 import com.launchcatch.store.contract.StoreAdCandidateInfo;
 import com.launchcatch.store.contract.StoreInfo;
 import com.launchcatch.store.contract.StoreMenuInfo;
+import com.launchcatch.store.contract.StoreMenuQueryResult;
 import com.launchcatch.store.contract.StoreQueryService;
 import com.launchcatch.store.contract.StoreSummary;
 import com.launchcatch.store.entity.StoreRegistrationStep;
 import com.launchcatch.store.repository.OwnerStoreQueryRepository;
 import com.launchcatch.store.repository.StoreQueryRepository;
 import java.math.BigDecimal;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.Objects;
@@ -67,9 +69,11 @@ class StoreQueryServiceImpl implements StoreQueryService {
         if (storeIds.isEmpty()) {
             return List.of();
         }
-        // 조회 대상은 최종 등록된 가게이며 필수 이미지 누락을 정상 응답으로 숨기지 않는다.
+        // TODO(#647): 테스트 이미지의 S3 업로드·검증·DB 등록과 쿠폰 테스트 완료 후 대표 이미지 필수 검증을 복원한다.
         return stores.findAllById(storeIds).stream()
-                .map(row -> new StoreInfo(row.storeId(), row.name(), images.resolve(requireImageKey(row.imageObjectKey())),
+                .map(row -> new StoreInfo(row.storeId(), row.name(),
+                        images.resolve(row.imageObjectKey() == null || row.imageObjectKey().isBlank()
+                                ? null : row.imageObjectKey()),
                         toCoordinate(row.latitude()), toCoordinate(row.longitude())))
                 .toList();
     }
@@ -84,15 +88,22 @@ class StoreQueryServiceImpl implements StoreQueryService {
     }
 
     @Override
-    public List<StoreMenuInfo> findMenusByIdIn(List<Long> menuIds) {
+    public StoreMenuQueryResult findMenusByIdIn(List<Long> menuIds) {
         validateIds(menuIds);
         if (menuIds.isEmpty()) {
-            return List.of();
+            return new StoreMenuQueryResult(List.of(), List.of());
         }
-        return stores.findMenusByIdIn(menuIds).stream()
-                .map(row -> new StoreMenuInfo(row.menuId(), row.storeId(), images.resolve(requireImageKey(row.imageObjectKey())),
-                        row.name(), row.price()))
-                .toList();
+        var menus = new ArrayList<StoreMenuInfo>();
+        var invalidMenuIds = new ArrayList<Long>();
+        for (var row : stores.findMenusByIdIn(menuIds)) {
+            if (row.imageObjectKey() == null || row.imageObjectKey().isBlank()) {
+                invalidMenuIds.add(row.menuId());
+                continue;
+            }
+            menus.add(new StoreMenuInfo(row.menuId(), row.storeId(), images.resolve(row.imageObjectKey()),
+                    row.name(), row.price()));
+        }
+        return new StoreMenuQueryResult(menus, invalidMenuIds);
     }
 
     @Override
@@ -120,22 +131,14 @@ class StoreQueryServiceImpl implements StoreQueryService {
         return stores.findSummariesByOwnerIds(ownerIds).stream()
                 .map(row -> new StoreSummary(row.ownerId(), row.storeId(), row.name(), row.finalized(),
                         row.businessRegistrationNumber() == null ? null
-                                : row.businessRegistrationNumber().substring(0, 3) + "**"
-                                        + row.businessRegistrationNumber().substring(5)))
+                                : row.businessRegistrationNumber().substring(0, 3) + "-"
+                                        + row.businessRegistrationNumber().substring(3, 5) + "-*****"))
                 .toList();
     }
 
     // DB의 DECIMAL 좌표를 공개 계약의 Double로 바꾸되 누락된 좌표는 null로 유지한다.
     private static Double toCoordinate(BigDecimal coordinate) {
         return coordinate == null ? null : coordinate.doubleValue();
-    }
-
-    // 최종 등록 시 필수인 이미지가 없으면 데이터 오류이므로 null이나 기본 이미지로 대신하지 않는다.
-    private static String requireImageKey(String objectKey) {
-        if (objectKey == null || objectKey.isBlank()) {
-            throw new IllegalStateException("최종 등록된 가게 또는 메뉴의 검증된 이미지가 누락되었습니다.");
-        }
-        return objectKey;
     }
 
     private static void validateIds(Collection<Long> ids) {
