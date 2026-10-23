@@ -266,13 +266,14 @@ sequenceDiagram
 
 ## 10. 배치
 
-00:00 묶음에 캠페인이 맡는 단계 셋을 `ops.scheduler.DailyJob`으로 등록한다(`#569`, `#838`, 요구사항명세서 102행). 순서 값은 102행 단계 번호 × 10 이고 정산 단계(40~)보다 앞이다. 앞 단계가 실패하면 뒤 단계(정산)는 돌지 않는다.
+00:00 묶음에 캠페인이 맡는 단계 넷을 `ops.scheduler.DailyJob`으로 등록한다(`#569`, `#838`, `#840`, 요구사항명세서 102행). 순서 값은 102행 단계 번호 × 10 이고 정산 단계(40~)보다 앞이다. 앞 단계가 실패하면 뒤 단계(정산)는 돌지 않는다.
 
 | 순서 | 클래스 | 작업 이름 | 하는 일 |
 |---|---|---|---|
 | `@Order(10)` | `CampaignEndJob` | `CAMPAIGN_END_EXPIRED` | 집행 종료일이 영업일보다 앞인 `ACTIVE`, `PAUSED` 캠페인을 `ENDED` 로 바꾼다 |
 | `@Order(20)` | `CampaignStartJob` | `CAMPAIGN_START_SCHEDULED` | 집행 시작일이 영업일 이하인 `SCHEDULED` 캠페인을 `ACTIVE` 로 바꾸고, 같은 가게의 기존 `ACTIVE` 캠페인은 먼저 `ENDED` 로 바꾼다 |
 | `@Order(30)` | `CampaignStoreSummaryJob` | `CAMPAIGN_STORE_SUMMARY` | 그 영업일에 `ACTIVE` 인 캠페인의 가게 요약을 `StoreCampaignSummaryUpdater.updateAll` 로 한 번에 만든다 |
+| `@Order(35)` | `CampaignPendingBudgetJob` | `CAMPAIGN_APPLY_PENDING_BUDGET` | `ACTIVE` 이고 `pendingDailyBudget` 이 있는 캠페인의 예약 값을 `dailyBudget` 으로 옮기고 예약 값을 비운다 |
 
 - **캠페인마다 `CampaignStatusService`의 전이를 따로 부른다.** 전이 하나가 자기 트랜잭션과 행 잠금(`findByIdForUpdate`)을 가지고, `CampaignDailyTransitionService`는 트랜잭션을 열지 않는다. 한 캠페인이 실패해도 나머지는 계속 처리하고, 끝에서 실패가 하나라도 있으면 예외를 던져 단계를 실패시킨다. 한 캠페인 때문에 다른 캠페인의 종료가 막히지 않는다
 - **멱등이다.** 대상 조회가 이미 `ENDED`, `ACTIVE` 인 캠페인을 걸러내고 `end`, `activate` 자체도 이미 그 상태면 조용히 성공하므로, 같은 영업일에 두 번 돌아도(이어받기, 수동 재실행) 결과가 같다. 시작일이 영업일 **이하**인 것을 대상으로 해서 배치가 하루 빠졌어도 다음 실행이 이어서 켠다
@@ -282,6 +283,7 @@ sequenceDiagram
 - **가게 요약은 영업일마다 한 행이다(`#838`).** 전환 순간에만 쓰면 하루 넘게 진행하는 캠페인은 다음 날 요약이 없어 가게 목록과 상세에서 사라진다. 30번째 단계가 전환(10, 20) 뒤에 `ACTIVE` 캠페인 전부의 요약을 새 영업일 몫으로 만든다. 방금 켜진 캠페인은 들어가고 방금 끝난 캠페인은 빠진다
 - 요약 저장은 한 트랜잭션 안에서 id 순으로 500건씩 읽어 청크마다 `updateAll` 로 한다(store 계약이 호출자의 쓰기 트랜잭션을 요구한다). 엔티티가 아니라 필요한 컬럼만 읽는 `CampaignSummaryRow` 로 읽고 청크를 저장한 뒤 참조를 버려서, ACTIVE 캠페인 전체를 메모리에 올리지 않는다. 다음 청크는 마지막 id 보다 큰 것부터 읽는다(offset 없음). 어느 청크에서든 실패하면(예: 대상 메뉴가 그 가게 메뉴가 아님) 앞서 저장한 청크까지 전체가 롤백되고 예외가 올라가 단계가 실패한다. 뒤 단계(정산)는 돌지 않는다. (영업일, 캠페인) 기준 upsert 라 같은 영업일에 다시 돌아도 결과가 같다
 - `PAUSED` 캠페인은 새 요약을 만들지 않는다. 점주 중단 때 쓴 요약은 그 영업일에만 남는다
+- **하루 예산 변경 예약은 정산의 일일 예약(50)보다 앞에서 적용한다(`#840`).** 점주가 `ACTIVE` 캠페인의 하루 예산을 바꾸면 `pendingDailyBudget` 에만 저장되고, 다음 영업일 00:00 에 35번째 단계가 `dailyBudget` 으로 옮긴다. 캠페인마다 `CampaignStatusService.applyPendingDailyBudget` 이 자기 트랜잭션과 행 잠금 아래에서 상태를 다시 확인한다. 목록을 읽은 뒤 `PAUSED` 나 `ENDED` 가 된 캠페인에는 적용하지 않고, `PAUSED` 의 예약 값은 재개될 때를 위해 남긴다. 한 캠페인이 실패해도 나머지를 처리하고 끝에서 단계를 실패시킨다. 예약 값이 없으면 아무것도 하지 않아 같은 영업일에 다시 돌아도 결과가 같다
 
 ## 11. 성능
 
