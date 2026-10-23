@@ -43,7 +43,8 @@ INSERT INTO base_hour_weight VALUES
 
 /*
  * 캠페인 1 ~ 205 와 242 의 값을 WORLD_SPEC 공식으로 계산한다.
- * 상태: 1 ~ 180, 242 ACTIVE, 181 ~ 195 PAUSED OWNER, 196 ~ 205 PAUSED NO_POINTS.
+ * 상태: 1 ~ 180, 242, 301 ~ 330 (#858) ACTIVE, 181 ~ 195 PAUSED OWNER, 196 ~ 205 PAUSED NO_POINTS.
+ * 가게 좌표는 V3 가 넣은 store 행에서 읽는다 (역 둘레 공식, #858).
  * 기간은 D-14 ~ D+14, 179 는 D 시작, 178 은 D 종료, 242 는 D-1 종료다.
  */
 CREATE TEMPORARY TABLE base_cmp (
@@ -79,12 +80,12 @@ CREATE TEMPORARY TABLE base_cmp (
 );
 INSERT INTO base_cmp
 SELECT x.n, 10000000 + x.n, 10000000 + x.n, 10000000 + x.n,
-       CASE WHEN x.n <= 180 OR x.n = 242 THEN 'ACTIVE' WHEN x.n <= 195 THEN 'PAUSED_OWNER' ELSE 'PAUSED_NO_POINTS' END,
+       CASE WHEN x.n <= 180 OR x.n = 242 OR x.n BETWEEN 301 AND 330 THEN 'ACTIVE' WHEN x.n <= 195 THEN 'PAUSED_OWNER' ELSE 'PAUSED_NO_POINTS' END,
        x.start_date, x.end_date, c.code,
        CONCAT(c.label, ' ', LPAD(x.n, 3, '0'), '호점'),
        CONCAT(TRIM(TRAILING '/' FROM '${baseCdnBaseUrl}'), '/world/stores/', 10000000 + x.n, '/logo.jpg'),
-       ROUND(x.clat + x.r * COS(RADIANS(x.a)) / 111000, 7),
-       ROUND(x.clng + x.r * SIN(RADIANS(x.a)) / 88200, 7),
+       st.latitude,
+       st.longitude,
        IF(x.n % 3 = 0, 1000, ELT(x.n % 4 + 1, 500, 1000, 2000, 3000)),
        IF(x.n % 3 = 0, 'ALL', ELT(x.n % 3 + 1, 'ALL', 'MALE', 'FEMALE')),
        IF(x.n % 3 = 0, 'AGE_20S,AGE_30S,AGE_40S,AGE_50_PLUS',
@@ -102,7 +103,7 @@ SELECT x.n, 10000000 + x.n, 10000000 + x.n, 10000000 + x.n,
        IF(x.n % 17 = 0, 3, ELT(x.n % 5 + 1, 10, 20, 30, 50, 100)),
        ELT(x.n % 4 + 1, 5000, 10000, 20000, 30000),
        TIMESTAMP(DATE_SUB(x.start_date, INTERVAL 1 DAY), '10:00:00'),
-       CASE WHEN x.n <= 180 OR x.n = 242 THEN TIMESTAMP(x.start_date)
+       CASE WHEN x.n <= 180 OR x.n = 242 OR x.n BETWEEN 301 AND 330 THEN TIMESTAMP(x.start_date)
             WHEN x.n <= 195 THEN TIMESTAMP(DATE_SUB('${baseDate}', INTERVAL 3 DAY), '15:00:00')
             ELSE TIMESTAMP('${baseDate}') END
   FROM (
@@ -114,22 +115,18 @@ SELECT x.n, 10000000 + x.n, 10000000 + x.n, 10000000 + x.n,
         SELECT b.n,
                b.n % 4 > 0 AND b.n % 2 = 0 AS is_menu,
                8000 + (b.n * 500 + 1000) % 7000 AS price,
-               (b.n * 137) % 360 AS a,
-               CASE WHEN b.n <= 120 OR b.n >= 211 THEN 100 + (b.n * 7) % 850
-                    WHEN b.n <= 180 THEN 1000 + (b.n * 37) % 1950
-                    ELSE 3000 + (b.n * 53) % 1950 END AS r,
-               CASE WHEN b.n <= 210 THEN 37.4979 WHEN b.n <= 260 THEN 37.5572 ELSE 37.5133 END AS clat,
-               CASE WHEN b.n <= 210 THEN 127.0276 WHEN b.n <= 260 THEN 126.9245 ELSE 127.1001 END AS clng,
                IF(b.n = 179, DATE('${baseDate}'), DATE_SUB('${baseDate}', INTERVAL 14 DAY)) AS start_date,
                CASE WHEN b.n = 178 THEN DATE('${baseDate}') WHEN b.n = 242 THEN DATE_SUB('${baseDate}', INTERVAL 1 DAY)
                     ELSE DATE_ADD('${baseDate}', INTERVAL 14 DAY) END AS end_date
-          FROM base_n b WHERE b.n <= 205 OR b.n = 242
+          FROM base_n b WHERE b.n <= 205 OR b.n = 242 OR b.n BETWEEN 301 AND 330
       ) y
   ) x
-  JOIN base_cat c ON c.k = x.n % 9;
+  JOIN base_cat c ON c.k = x.n % 9
+  JOIN store st ON st.store_id = 10000000 + x.n;
 
 /*
- * 서빙: 날짜마다 회원 m(1 ~ 2850, (m + dn) % 5 = 0)에게 카드 4장, 캠페인 (m * 7 + i * 31 + dn) % 180 + 1.
+ * 서빙: 날짜마다 회원 m(1 ~ 2850, (m + dn) % 5 = 0)에게 카드 4장. 진행 중 캠페인 210개 중 k = (m * 7 + i * 31 + dn) % 210 번째다.
+ * k < 180 이면 캠페인 k + 1, 아니면 k + 121 (301 ~ 330, #858) 이다.
  * 시작 전인 179 는 과거 날짜에서 뺀다. 회원 1 은 사용 내역이 많은 회원이라 아래에서 따로 만든다.
  * s 는 서빙 일련번호 dn * 100000 + m * 10 + i 이고 serve_id, deduction_result_id, DEDUCT 원장 번호의 바탕이다.
  */
@@ -158,7 +155,8 @@ SELECT z.s, z.dn, z.bdate, z.m, z.i, z.n, z.served_at, z.slot, z.valid,
     SELECT y.*, NOT (y.slot = 10 AND (y.m + y.dn) % 2 = 0 AND y.dn < 8) AS valid
       FROM (
         SELECT d.dn * 100000 + mm.n * 10 + ii.n AS s, d.dn, d.bdate, mm.n AS m, ii.n AS i,
-               (mm.n * 7 + ii.n * 31 + d.dn) % 180 + 1 AS n,
+               IF((mm.n * 7 + ii.n * 31 + d.dn) % 210 < 180, (mm.n * 7 + ii.n * 31 + d.dn) % 210 + 1,
+                  (mm.n * 7 + ii.n * 31 + d.dn) % 210 + 121) AS n,
                IF(d.dn < 8,
                   d.d0 + INTERVAL 11 HOUR + INTERVAL ((mm.n * 37 + d.dn * 11) % 140) MINUTE + INTERVAL (ii.n * 20) SECOND,
                   d.d0 + INTERVAL 8 HOUR + INTERVAL ((mm.n * 37 + d.dn * 11) % 170) MINUTE + INTERVAL (ii.n * 20) SECOND) AS served_at,
@@ -191,7 +189,7 @@ SELECT UNHEX(CONCAT('000000000001', '7000', '8', LPAD(HEX(s), 15, '0'))), bdate,
 /*
  * 노출: 유효 노출은 서빙 2초 뒤 표시. 슬롯 10 의 일부(과거 날짜, (m + dn) % 2 = 0)는 INVALID EXPIRED_OR_UNKNOWN 이다.
  * 무효 노출은 서빙 기록을 못 찾은 경우라 store_id 와 슬롯을 비우고 표시 시각을 2시간 뒤로 둔다.
- * 위치는 회원 위치 공식(강남역 둘레 r = (m * 13) % 2500, 각도 (m * 71) % 360)을 소수 3자리로 반올림한다.
+ * 위치는 회원 위치 공식(m % 3 의 역 둘레 r = (m * 13) % 1500, 각도 (m * 71) % 360, V2 와 같음)을 소수 3자리로 반올림한다.
  */
 INSERT INTO impression_log (serve_id, member_id, business_date, campaign_id, store_id, slot_type, slot_position,
                             displayed_at, lat_rounded, lng_rounded, validity, invalid_reason, sold_out, viewed_ms,
@@ -199,8 +197,8 @@ INSERT INTO impression_log (serve_id, member_id, business_date, campaign_id, sto
 SELECT UNHEX(CONCAT('000000000001', '7000', '8', LPAD(HEX(s), 15, '0'))), 10000000 + m, bdate, 10000000 + n,
        IF(valid, 10000000 + n, NULL), IF(valid, IF(slot % 2 = 1, 'ALLOCATION', 'RELEVANCE'), NULL), IF(valid, slot, NULL),
        IF(valid, served_at + INTERVAL 2 SECOND, served_at + INTERVAL 2 HOUR),
-       ROUND(ROUND(37.4979 + ((m * 13) % 2500) * COS(RADIANS((m * 71) % 360)) / 111000, 7), 3),
-       ROUND(ROUND(127.0276 + ((m * 13) % 2500) * SIN(RADIANS((m * 71) % 360)) / 88200, 7), 3),
+       ROUND(ROUND(ELT(m % 3 + 1, 37.4979, 37.5006, 37.5045) + ((m * 13) % 1500) * COS(RADIANS((m * 71) % 360)) / 111000, 7), 3),
+       ROUND(ROUND(ELT(m % 3 + 1, 127.0276, 127.0364, 127.0490) + ((m * 13) % 1500) * SIN(RADIANS((m * 71) % 360)) / 88200, 7), 3),
        IF(valid, 'VALID', 'INVALID'), IF(valid, NULL, 'EXPIRED_OR_UNKNOWN'), 0, IF(valid, 1500 + CRC32(CONCAT('view', s)) % 4000, NULL),
        IF(valid, served_at + INTERVAL 2 SECOND, served_at + INTERVAL 2 HOUR),
        IF(valid, served_at + INTERVAL 2 SECOND, served_at + INTERVAL 2 HOUR)
@@ -287,8 +285,8 @@ SELECT 10000000 + 1100000 + s, 10000000 + n, 10000000 + n, UNHEX(CONCAT('0000000
 -- ADS.FEED_VISIT_7D: 서빙받은 회원의 날짜별 첫 피드 위치
 INSERT INTO feed_visit_daily (business_date, member_id, lat_rounded, lng_rounded, created_at, updated_at)
 SELECT bdate, 10000000 + m,
-       ROUND(ROUND(37.4979 + ((m * 13) % 2500) * COS(RADIANS((m * 71) % 360)) / 111000, 7), 3),
-       ROUND(ROUND(127.0276 + ((m * 13) % 2500) * SIN(RADIANS((m * 71) % 360)) / 88200, 7), 3),
+       ROUND(ROUND(ELT(m % 3 + 1, 37.4979, 37.5006, 37.5045) + ((m * 13) % 1500) * COS(RADIANS((m * 71) % 360)) / 111000, 7), 3),
+       ROUND(ROUND(ELT(m % 3 + 1, 127.0276, 127.0364, 127.0490) + ((m * 13) % 1500) * SIN(RADIANS((m * 71) % 360)) / 88200, 7), 3),
        MIN(served_at), MIN(served_at)
   FROM base_serve
  GROUP BY bdate, m

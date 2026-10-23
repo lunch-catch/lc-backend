@@ -163,15 +163,15 @@ VALUES
     (20000210, 20000210, 'MALE', 'AGE_40S', '회사', '서울 강남구 시연로 10', 37.4999000, 127.0296000, TIMESTAMP(DATE_SUB(@d, INTERVAL 70 DAY), '09:05:00'), TIMESTAMP(DATE_SUB(@d, INTERVAL 70 DAY), '09:05:00'), TIMESTAMP(DATE_SUB(@d, INTERVAL 70 DAY), '09:05:00'));
 
 
--- 3. 가게 (강남역 1 km 안, 확정, 로고와 매장 사진 3, 메뉴 3 과 사진, 월 ~ 토 브레이크 있음, 일요일 휴무)
+-- 3. 가게 (강남역, 역삼역, 선릉역 500 m 안, 확정, 로고와 매장 사진 3, 메뉴 3 과 사진, 월 ~ 토 브레이크 있음, 일요일 휴무)
 
 INSERT INTO store (store_id, owner_id, name, category_code, representative_name, phone, road_address, latitude, longitude, kakao_place_id, business_registration_number, business_verification_status, business_verified_at, finalized, finalized_at, created_at, updated_at)
 VALUES
     (20000011, 20000011, '런치캐치 시연 한식당', 'KOREAN', '시연대표11', '02-555-9011', '서울 강남구 강남대로 401', 37.4989000, 127.0286000, 'demo-11', '9100000011', 'VERIFIED', TIMESTAMP(DATE_SUB(@d, INTERVAL 89 DAY), '11:00:00'), 1, TIMESTAMP(DATE_SUB(@d, INTERVAL 89 DAY), '12:00:00'), TIMESTAMP(DATE_SUB(@d, INTERVAL 89 DAY), '10:00:00'), TIMESTAMP(DATE_SUB(@d, INTERVAL 89 DAY), '12:00:00')),
-    (20000012, 20000012, '런치캐치 시연 분식', 'BUNSIK', '시연대표12', '02-555-9012', '서울 강남구 강남대로 402', 37.4969000, 127.0266000, 'demo-12', '9100000012', 'VERIFIED', TIMESTAMP(DATE_SUB(@d, INTERVAL 89 DAY), '11:00:00'), 1, TIMESTAMP(DATE_SUB(@d, INTERVAL 89 DAY), '12:00:00'), TIMESTAMP(DATE_SUB(@d, INTERVAL 89 DAY), '10:00:00'), TIMESTAMP(DATE_SUB(@d, INTERVAL 89 DAY), '12:00:00')),
-    (20000013, 20000013, '런치캐치 시연 스시', 'JAPANESE', '시연대표13', '02-555-9013', '서울 강남구 강남대로 403', 37.4999000, 127.0296000, 'demo-13', '9100000013', 'VERIFIED', TIMESTAMP(DATE_SUB(@d, INTERVAL 89 DAY), '11:00:00'), 1, TIMESTAMP(DATE_SUB(@d, INTERVAL 89 DAY), '12:00:00'), TIMESTAMP(DATE_SUB(@d, INTERVAL 89 DAY), '10:00:00'), TIMESTAMP(DATE_SUB(@d, INTERVAL 89 DAY), '12:00:00')),
+    (20000012, 20000012, '런치캐치 시연 분식', 'BUNSIK', '시연대표12', '02-555-9012', '서울 강남구 강남대로 402', 37.5010000, 127.0370000, 'demo-12', '9100000012', 'VERIFIED', TIMESTAMP(DATE_SUB(@d, INTERVAL 89 DAY), '11:00:00'), 1, TIMESTAMP(DATE_SUB(@d, INTERVAL 89 DAY), '12:00:00'), TIMESTAMP(DATE_SUB(@d, INTERVAL 89 DAY), '10:00:00'), TIMESTAMP(DATE_SUB(@d, INTERVAL 89 DAY), '12:00:00')),
+    (20000013, 20000013, '런치캐치 시연 스시', 'JAPANESE', '시연대표13', '02-555-9013', '서울 강남구 강남대로 403', 37.5050000, 127.0495000, 'demo-13', '9100000013', 'VERIFIED', TIMESTAMP(DATE_SUB(@d, INTERVAL 89 DAY), '11:00:00'), 1, TIMESTAMP(DATE_SUB(@d, INTERVAL 89 DAY), '12:00:00'), TIMESTAMP(DATE_SUB(@d, INTERVAL 89 DAY), '10:00:00'), TIMESTAMP(DATE_SUB(@d, INTERVAL 89 DAY), '12:00:00')),
     (20000014, 20000014, '런치캐치 시연 버거', 'FAST_FOOD', '시연대표14', '02-555-9014', '서울 강남구 강남대로 404', 37.4959000, 127.0256000, 'demo-14', '9100000014', 'VERIFIED', TIMESTAMP(DATE_SUB(@d, INTERVAL 89 DAY), '11:00:00'), 1, TIMESTAMP(DATE_SUB(@d, INTERVAL 89 DAY), '12:00:00'), TIMESTAMP(DATE_SUB(@d, INTERVAL 89 DAY), '10:00:00'), TIMESTAMP(DATE_SUB(@d, INTERVAL 89 DAY), '12:00:00')),
-    (20000015, 20000015, '런치캐치 시연 카페', 'CAFE_DESSERT', '시연대표15', '02-555-9015', '서울 강남구 강남대로 405', 37.5009000, 127.0306000, 'demo-15', '9100000015', 'VERIFIED', TIMESTAMP(DATE_SUB(@d, INTERVAL 89 DAY), '11:00:00'), 1, TIMESTAMP(DATE_SUB(@d, INTERVAL 89 DAY), '12:00:00'), TIMESTAMP(DATE_SUB(@d, INTERVAL 89 DAY), '10:00:00'), TIMESTAMP(DATE_SUB(@d, INTERVAL 89 DAY), '12:00:00'));
+    (20000015, 20000015, '런치캐치 시연 카페', 'CAFE_DESSERT', '시연대표15', '02-555-9015', '서울 강남구 강남대로 405', 37.5000000, 127.0355000, 'demo-15', '9100000015', 'VERIFIED', TIMESTAMP(DATE_SUB(@d, INTERVAL 89 DAY), '11:00:00'), 1, TIMESTAMP(DATE_SUB(@d, INTERVAL 89 DAY), '12:00:00'), TIMESTAMP(DATE_SUB(@d, INTERVAL 89 DAY), '10:00:00'), TIMESTAMP(DATE_SUB(@d, INTERVAL 89 DAY), '12:00:00'));
 
 INSERT INTO store_business_hour (store_business_hour_id, store_id, day_of_week, open_time, close_time, closed, break_start_time, break_end_time, last_order_time, created_at, updated_at)
 VALUES
@@ -272,31 +272,9 @@ VALUES
 
 
 /*
- * 4. 대비용 템플릿 "시연 기본형".
- * 0막에서 템플릿 생성이 늦거나 실패하면 쓴다.
- * HTML 은 기본 세계 템플릿 1 의 것을 쓰고, 기본 세계가 없으면 같은 모양의 기본 HTML 을 쓴다.
+ * 4. 템플릿은 넣지 않는다.
+ * 템플릿과 포스터는 R__templates_posters.sql 이 넣는다 (#858). 시연 포스터는 게시되고 활성인 첫 템플릿으로 만든다.
  */
-INSERT INTO template (template_id, name, status, html_content, active, published_at, published_version_number,
-                      activated_by, activated_at, last_modified_by, last_modified_at, created_at, updated_at)
-SELECT 20000001, '시연 기본형', 'PUBLISHED',
-       COALESCE((SELECT html_content FROM template WHERE template_id = 10000001),
-                '<div class="poster" style="background-color:#F3E8FF;color:#000000"><h1 data-slot="eventName">이벤트명</h1><p data-slot="discount">할인 내용</p><p data-slot="period">기간</p><img data-slot="image" alt="메뉴 이미지"></div>'),
-       1, TIMESTAMP(DATE_SUB(@d, INTERVAL 3 DAY), '10:00:00'), 1,
-       20000002, TIMESTAMP(DATE_SUB(@d, INTERVAL 3 DAY), '10:05:00'), 20000002, TIMESTAMP(DATE_SUB(@d, INTERVAL 3 DAY), '09:50:00'),
-       TIMESTAMP(DATE_SUB(@d, INTERVAL 3 DAY), '09:30:00'), TIMESTAMP(DATE_SUB(@d, INTERVAL 3 DAY), '10:05:00')
-FROM DUAL
-ON DUPLICATE KEY UPDATE status = 'PUBLISHED', active = 1;
-
-INSERT INTO template_version (template_version_id, template_id, version_number, request_prompt, request_id,
-                              html_content, message, created_at, updated_at, deleted_at)
-SELECT 20000001, 20000001, 1, '따뜻한 색감의 점심 할인 포스터', 'demo-tpl-1', t.html_content,
-       '요청하신 분위기로 템플릿을 만들었어요.', TIMESTAMP(DATE_SUB(@d, INTERVAL 3 DAY), '09:40:00'),
-       TIMESTAMP(DATE_SUB(@d, INTERVAL 3 DAY), '09:40:00'), NULL
-FROM template t
-WHERE t.template_id = 20000001
-ON DUPLICATE KEY UPDATE template_version_id = template_version_id;
-
-UPDATE template_quota SET current_count = (SELECT COUNT(*) FROM template);
 
 
 -- 5. 캠페인 (사용 시간은 모두 11:30 ~ 15:00, 대상 전 메뉴와 전 연령, 반경 1000)
@@ -333,75 +311,78 @@ VALUES
 
 
 /*
- * 포스터는 대비용 템플릿으로 만들고 검수를 통과했다.
+ * 포스터는 게시되고 활성인 첫 템플릿으로 만들고 검수를 통과했다.
+ * 템플릿이 아직 없으면(빈 DB 에서 R__templates_posters 보다 먼저 돌 때) 넣지 않는다. 그 파일이 뒤이어 만든다.
  * 사진은 demo/campaigns/<캠페인>/poster.jpg 다.
  */
 
 INSERT INTO poster (poster_id, campaign_id, template_id, title, slot_values, html_content, created_at, updated_at,
                     image_object_key)
-SELECT 20000101, 20000101, 20000001, '런치캐치 시연 한식당 - 시연 기본형', JSON_OBJECT('eventName', JSON_OBJECT('type', 'text', 'value', '런치캐치 시연 한식당'), 'discount', JSON_OBJECT('type', 'text', 'value', '전체 메뉴 3,000원 할인'), 'period', JSON_OBJECT('type', 'text', 'value', '매일 11:30 ~ 15:00'), 'image', JSON_OBJECT('type', 'image', 'value', CONCAT(TRIM(TRAILING '/' FROM '${baseCdnBaseUrl}'), '/demo/campaigns/20000101/poster.jpg'))),
+SELECT 20000101, 20000101, t.template_id, LEFT(CONCAT('런치캐치 시연 한식당', ' - ', t.name), 100), JSON_OBJECT('eventName', JSON_OBJECT('type', 'text', 'value', '런치캐치 시연 한식당'), 'discount', JSON_OBJECT('type', 'text', 'value', '전체 메뉴 3,000원 할인'), 'period', JSON_OBJECT('type', 'text', 'value', '매일 11:30 ~ 15:00'), 'image', JSON_OBJECT('type', 'image', 'value', CONCAT(TRIM(TRAILING '/' FROM '${baseCdnBaseUrl}'), '/demo/campaigns/20000101/poster.jpg'))),
        REPLACE(REPLACE(REPLACE(REPLACE(t.html_content, '>이벤트명<', '>런치캐치 시연 한식당<'), '>할인 내용<', '>전체 메뉴 3,000원 할인<'), '>기간<', '>매일 11:30 ~ 15:00<'), 'alt="메뉴 이미지">', CONCAT('alt="메뉴 이미지" src="', CONCAT(TRIM(TRAILING '/' FROM '${baseCdnBaseUrl}'), '/demo/campaigns/20000101/poster.jpg'), '" style="width:100%;height:100%;min-height:0;object-fit:cover">')),
        TIMESTAMP(DATE_SUB(@d, INTERVAL 17 DAY), '10:30:00'), TIMESTAMP(DATE_SUB(@d, INTERVAL 17 DAY), '10:30:00'), 'demo/campaigns/20000101/poster.jpg'
 FROM template t
-WHERE t.template_id = 20000001;
+JOIN (SELECT MIN(template_id) AS template_id FROM template WHERE status = 'PUBLISHED' AND active = 1) f
+  ON f.template_id = t.template_id;
 
 INSERT INTO poster (poster_id, campaign_id, template_id, title, slot_values, html_content, created_at, updated_at,
                     image_object_key)
-SELECT 20000111, 20000111, 20000001, '런치캐치 시연 한식당 - 시연 기본형', JSON_OBJECT('eventName', JSON_OBJECT('type', 'text', 'value', '런치캐치 시연 한식당'), 'discount', JSON_OBJECT('type', 'text', 'value', '전체 메뉴 2,000원 할인'), 'period', JSON_OBJECT('type', 'text', 'value', '매일 11:30 ~ 15:00'), 'image', JSON_OBJECT('type', 'image', 'value', CONCAT(TRIM(TRAILING '/' FROM '${baseCdnBaseUrl}'), '/demo/campaigns/20000111/poster.jpg'))),
+SELECT 20000111, 20000111, t.template_id, LEFT(CONCAT('런치캐치 시연 한식당', ' - ', t.name), 100), JSON_OBJECT('eventName', JSON_OBJECT('type', 'text', 'value', '런치캐치 시연 한식당'), 'discount', JSON_OBJECT('type', 'text', 'value', '전체 메뉴 2,000원 할인'), 'period', JSON_OBJECT('type', 'text', 'value', '매일 11:30 ~ 15:00'), 'image', JSON_OBJECT('type', 'image', 'value', CONCAT(TRIM(TRAILING '/' FROM '${baseCdnBaseUrl}'), '/demo/campaigns/20000111/poster.jpg'))),
        REPLACE(REPLACE(REPLACE(REPLACE(t.html_content, '>이벤트명<', '>런치캐치 시연 한식당<'), '>할인 내용<', '>전체 메뉴 2,000원 할인<'), '>기간<', '>매일 11:30 ~ 15:00<'), 'alt="메뉴 이미지">', CONCAT('alt="메뉴 이미지" src="', CONCAT(TRIM(TRAILING '/' FROM '${baseCdnBaseUrl}'), '/demo/campaigns/20000111/poster.jpg'), '" style="width:100%;height:100%;min-height:0;object-fit:cover">')),
        TIMESTAMP(DATE_SUB(@d, INTERVAL 63 DAY), '10:30:00'), TIMESTAMP(DATE_SUB(@d, INTERVAL 63 DAY), '10:30:00'), 'demo/campaigns/20000111/poster.jpg'
 FROM template t
-WHERE t.template_id = 20000001;
+JOIN (SELECT MIN(template_id) AS template_id FROM template WHERE status = 'PUBLISHED' AND active = 1) f
+  ON f.template_id = t.template_id;
 
 INSERT INTO poster (poster_id, campaign_id, template_id, title, slot_values, html_content, created_at, updated_at,
                     image_object_key)
-SELECT 20000112, 20000112, 20000001, '런치캐치 시연 한식당 - 시연 기본형', JSON_OBJECT('eventName', JSON_OBJECT('type', 'text', 'value', '런치캐치 시연 한식당'), 'discount', JSON_OBJECT('type', 'text', 'value', '전체 메뉴 2,500원 할인'), 'period', JSON_OBJECT('type', 'text', 'value', '매일 11:30 ~ 15:00'), 'image', JSON_OBJECT('type', 'image', 'value', CONCAT(TRIM(TRAILING '/' FROM '${baseCdnBaseUrl}'), '/demo/campaigns/20000112/poster.jpg'))),
+SELECT 20000112, 20000112, t.template_id, LEFT(CONCAT('런치캐치 시연 한식당', ' - ', t.name), 100), JSON_OBJECT('eventName', JSON_OBJECT('type', 'text', 'value', '런치캐치 시연 한식당'), 'discount', JSON_OBJECT('type', 'text', 'value', '전체 메뉴 2,500원 할인'), 'period', JSON_OBJECT('type', 'text', 'value', '매일 11:30 ~ 15:00'), 'image', JSON_OBJECT('type', 'image', 'value', CONCAT(TRIM(TRAILING '/' FROM '${baseCdnBaseUrl}'), '/demo/campaigns/20000112/poster.jpg'))),
        REPLACE(REPLACE(REPLACE(REPLACE(t.html_content, '>이벤트명<', '>런치캐치 시연 한식당<'), '>할인 내용<', '>전체 메뉴 2,500원 할인<'), '>기간<', '>매일 11:30 ~ 15:00<'), 'alt="메뉴 이미지">', CONCAT('alt="메뉴 이미지" src="', CONCAT(TRIM(TRAILING '/' FROM '${baseCdnBaseUrl}'), '/demo/campaigns/20000112/poster.jpg'), '" style="width:100%;height:100%;min-height:0;object-fit:cover">')),
        TIMESTAMP(DATE_SUB(@d, INTERVAL 48 DAY), '10:30:00'), TIMESTAMP(DATE_SUB(@d, INTERVAL 48 DAY), '10:30:00'), 'demo/campaigns/20000112/poster.jpg'
 FROM template t
-WHERE t.template_id = 20000001;
+JOIN (SELECT MIN(template_id) AS template_id FROM template WHERE status = 'PUBLISHED' AND active = 1) f
+  ON f.template_id = t.template_id;
 
 INSERT INTO poster (poster_id, campaign_id, template_id, title, slot_values, html_content, created_at, updated_at,
                     image_object_key)
-SELECT 20000113, 20000113, 20000001, '런치캐치 시연 한식당 - 시연 기본형', JSON_OBJECT('eventName', JSON_OBJECT('type', 'text', 'value', '런치캐치 시연 한식당'), 'discount', JSON_OBJECT('type', 'text', 'value', '전체 메뉴 3,000원 할인'), 'period', JSON_OBJECT('type', 'text', 'value', '매일 11:30 ~ 15:00'), 'image', JSON_OBJECT('type', 'image', 'value', CONCAT(TRIM(TRAILING '/' FROM '${baseCdnBaseUrl}'), '/demo/campaigns/20000113/poster.jpg'))),
+SELECT 20000113, 20000113, t.template_id, LEFT(CONCAT('런치캐치 시연 한식당', ' - ', t.name), 100), JSON_OBJECT('eventName', JSON_OBJECT('type', 'text', 'value', '런치캐치 시연 한식당'), 'discount', JSON_OBJECT('type', 'text', 'value', '전체 메뉴 3,000원 할인'), 'period', JSON_OBJECT('type', 'text', 'value', '매일 11:30 ~ 15:00'), 'image', JSON_OBJECT('type', 'image', 'value', CONCAT(TRIM(TRAILING '/' FROM '${baseCdnBaseUrl}'), '/demo/campaigns/20000113/poster.jpg'))),
        REPLACE(REPLACE(REPLACE(REPLACE(t.html_content, '>이벤트명<', '>런치캐치 시연 한식당<'), '>할인 내용<', '>전체 메뉴 3,000원 할인<'), '>기간<', '>매일 11:30 ~ 15:00<'), 'alt="메뉴 이미지">', CONCAT('alt="메뉴 이미지" src="', CONCAT(TRIM(TRAILING '/' FROM '${baseCdnBaseUrl}'), '/demo/campaigns/20000113/poster.jpg'), '" style="width:100%;height:100%;min-height:0;object-fit:cover">')),
        TIMESTAMP(DATE_SUB(@d, INTERVAL 33 DAY), '10:30:00'), TIMESTAMP(DATE_SUB(@d, INTERVAL 33 DAY), '10:30:00'), 'demo/campaigns/20000113/poster.jpg'
 FROM template t
-WHERE t.template_id = 20000001;
+JOIN (SELECT MIN(template_id) AS template_id FROM template WHERE status = 'PUBLISHED' AND active = 1) f
+  ON f.template_id = t.template_id;
 
 INSERT INTO poster (poster_id, campaign_id, template_id, title, slot_values, html_content, created_at, updated_at,
                     image_object_key)
-SELECT 20000301, 20000301, 20000001, '런치캐치 시연 스시 - 시연 기본형', JSON_OBJECT('eventName', JSON_OBJECT('type', 'text', 'value', '런치캐치 시연 스시'), 'discount', JSON_OBJECT('type', 'text', 'value', '전체 메뉴 3,000원 할인'), 'period', JSON_OBJECT('type', 'text', 'value', '매일 11:30 ~ 15:00'), 'image', JSON_OBJECT('type', 'image', 'value', CONCAT(TRIM(TRAILING '/' FROM '${baseCdnBaseUrl}'), '/demo/campaigns/20000301/poster.jpg'))),
+SELECT 20000301, 20000301, t.template_id, LEFT(CONCAT('런치캐치 시연 스시', ' - ', t.name), 100), JSON_OBJECT('eventName', JSON_OBJECT('type', 'text', 'value', '런치캐치 시연 스시'), 'discount', JSON_OBJECT('type', 'text', 'value', '전체 메뉴 3,000원 할인'), 'period', JSON_OBJECT('type', 'text', 'value', '매일 11:30 ~ 15:00'), 'image', JSON_OBJECT('type', 'image', 'value', CONCAT(TRIM(TRAILING '/' FROM '${baseCdnBaseUrl}'), '/demo/campaigns/20000301/poster.jpg'))),
        REPLACE(REPLACE(REPLACE(REPLACE(t.html_content, '>이벤트명<', '>런치캐치 시연 스시<'), '>할인 내용<', '>전체 메뉴 3,000원 할인<'), '>기간<', '>매일 11:30 ~ 15:00<'), 'alt="메뉴 이미지">', CONCAT('alt="메뉴 이미지" src="', CONCAT(TRIM(TRAILING '/' FROM '${baseCdnBaseUrl}'), '/demo/campaigns/20000301/poster.jpg'), '" style="width:100%;height:100%;min-height:0;object-fit:cover">')),
        TIMESTAMP(DATE_SUB(@d, INTERVAL 3 DAY), '10:30:00'), TIMESTAMP(DATE_SUB(@d, INTERVAL 3 DAY), '10:30:00'), 'demo/campaigns/20000301/poster.jpg'
 FROM template t
-WHERE t.template_id = 20000001;
+JOIN (SELECT MIN(template_id) AS template_id FROM template WHERE status = 'PUBLISHED' AND active = 1) f
+  ON f.template_id = t.template_id;
 
 INSERT INTO poster (poster_id, campaign_id, template_id, title, slot_values, html_content, created_at, updated_at,
                     image_object_key)
-SELECT 20000401, 20000401, 20000001, '런치캐치 시연 버거 - 시연 기본형', JSON_OBJECT('eventName', JSON_OBJECT('type', 'text', 'value', '런치캐치 시연 버거'), 'discount', JSON_OBJECT('type', 'text', 'value', '전체 메뉴 3,000원 할인'), 'period', JSON_OBJECT('type', 'text', 'value', '매일 11:30 ~ 15:00'), 'image', JSON_OBJECT('type', 'image', 'value', CONCAT(TRIM(TRAILING '/' FROM '${baseCdnBaseUrl}'), '/demo/campaigns/20000401/poster.jpg'))),
+SELECT 20000401, 20000401, t.template_id, LEFT(CONCAT('런치캐치 시연 버거', ' - ', t.name), 100), JSON_OBJECT('eventName', JSON_OBJECT('type', 'text', 'value', '런치캐치 시연 버거'), 'discount', JSON_OBJECT('type', 'text', 'value', '전체 메뉴 3,000원 할인'), 'period', JSON_OBJECT('type', 'text', 'value', '매일 11:30 ~ 15:00'), 'image', JSON_OBJECT('type', 'image', 'value', CONCAT(TRIM(TRAILING '/' FROM '${baseCdnBaseUrl}'), '/demo/campaigns/20000401/poster.jpg'))),
        REPLACE(REPLACE(REPLACE(REPLACE(t.html_content, '>이벤트명<', '>런치캐치 시연 버거<'), '>할인 내용<', '>전체 메뉴 3,000원 할인<'), '>기간<', '>매일 11:30 ~ 15:00<'), 'alt="메뉴 이미지">', CONCAT('alt="메뉴 이미지" src="', CONCAT(TRIM(TRAILING '/' FROM '${baseCdnBaseUrl}'), '/demo/campaigns/20000401/poster.jpg'), '" style="width:100%;height:100%;min-height:0;object-fit:cover">')),
        TIMESTAMP(DATE_SUB(@d, INTERVAL 10 DAY), '10:30:00'), TIMESTAMP(DATE_SUB(@d, INTERVAL 10 DAY), '10:30:00'), 'demo/campaigns/20000401/poster.jpg'
 FROM template t
-WHERE t.template_id = 20000001;
+JOIN (SELECT MIN(template_id) AS template_id FROM template WHERE status = 'PUBLISHED' AND active = 1) f
+  ON f.template_id = t.template_id;
 
 INSERT INTO poster (poster_id, campaign_id, template_id, title, slot_values, html_content, created_at, updated_at,
                     image_object_key)
-SELECT 20000501, 20000501, 20000001, '런치캐치 시연 카페 - 시연 기본형', JSON_OBJECT('eventName', JSON_OBJECT('type', 'text', 'value', '런치캐치 시연 카페'), 'discount', JSON_OBJECT('type', 'text', 'value', '전체 메뉴 3,000원 할인'), 'period', JSON_OBJECT('type', 'text', 'value', '매일 11:30 ~ 15:00'), 'image', JSON_OBJECT('type', 'image', 'value', CONCAT(TRIM(TRAILING '/' FROM '${baseCdnBaseUrl}'), '/demo/campaigns/20000501/poster.jpg'))),
+SELECT 20000501, 20000501, t.template_id, LEFT(CONCAT('런치캐치 시연 카페', ' - ', t.name), 100), JSON_OBJECT('eventName', JSON_OBJECT('type', 'text', 'value', '런치캐치 시연 카페'), 'discount', JSON_OBJECT('type', 'text', 'value', '전체 메뉴 3,000원 할인'), 'period', JSON_OBJECT('type', 'text', 'value', '매일 11:30 ~ 15:00'), 'image', JSON_OBJECT('type', 'image', 'value', CONCAT(TRIM(TRAILING '/' FROM '${baseCdnBaseUrl}'), '/demo/campaigns/20000501/poster.jpg'))),
        REPLACE(REPLACE(REPLACE(REPLACE(t.html_content, '>이벤트명<', '>런치캐치 시연 카페<'), '>할인 내용<', '>전체 메뉴 3,000원 할인<'), '>기간<', '>매일 11:30 ~ 15:00<'), 'alt="메뉴 이미지">', CONCAT('alt="메뉴 이미지" src="', CONCAT(TRIM(TRAILING '/' FROM '${baseCdnBaseUrl}'), '/demo/campaigns/20000501/poster.jpg'), '" style="width:100%;height:100%;min-height:0;object-fit:cover">')),
        TIMESTAMP(DATE_SUB(@d, INTERVAL 13 DAY), '10:30:00'), TIMESTAMP(DATE_SUB(@d, INTERVAL 13 DAY), '10:30:00'), 'demo/campaigns/20000501/poster.jpg'
 FROM template t
-WHERE t.template_id = 20000001;
+JOIN (SELECT MIN(template_id) AS template_id FROM template WHERE status = 'PUBLISHED' AND active = 1) f
+  ON f.template_id = t.template_id;
 
 INSERT INTO poster_moderation_result (poster_moderation_result_id, poster_id, result, reason, created_at, updated_at)
-VALUES
-    (20000101, 20000101, 'PASS', NULL, TIMESTAMP(DATE_SUB(@d, INTERVAL 17 DAY), '10:40:00'), TIMESTAMP(DATE_SUB(@d, INTERVAL 17 DAY), '10:40:00')),
-    (20000111, 20000111, 'PASS', NULL, TIMESTAMP(DATE_SUB(@d, INTERVAL 63 DAY), '10:40:00'), TIMESTAMP(DATE_SUB(@d, INTERVAL 63 DAY), '10:40:00')),
-    (20000112, 20000112, 'PASS', NULL, TIMESTAMP(DATE_SUB(@d, INTERVAL 48 DAY), '10:40:00'), TIMESTAMP(DATE_SUB(@d, INTERVAL 48 DAY), '10:40:00')),
-    (20000113, 20000113, 'PASS', NULL, TIMESTAMP(DATE_SUB(@d, INTERVAL 33 DAY), '10:40:00'), TIMESTAMP(DATE_SUB(@d, INTERVAL 33 DAY), '10:40:00')),
-    (20000301, 20000301, 'PASS', NULL, TIMESTAMP(DATE_SUB(@d, INTERVAL 3 DAY), '10:40:00'), TIMESTAMP(DATE_SUB(@d, INTERVAL 3 DAY), '10:40:00')),
-    (20000401, 20000401, 'PASS', NULL, TIMESTAMP(DATE_SUB(@d, INTERVAL 10 DAY), '10:40:00'), TIMESTAMP(DATE_SUB(@d, INTERVAL 10 DAY), '10:40:00')),
-    (20000501, 20000501, 'PASS', NULL, TIMESTAMP(DATE_SUB(@d, INTERVAL 13 DAY), '10:40:00'), TIMESTAMP(DATE_SUB(@d, INTERVAL 13 DAY), '10:40:00'));
+SELECT p.poster_id, p.poster_id, 'PASS', NULL, p.created_at + INTERVAL 10 MINUTE, p.created_at + INTERVAL 10 MINUTE
+FROM poster p
+WHERE p.campaign_id BETWEEN 20000101 AND 20000999;
 
 
 -- 6. 정산 (포인트 계정, 승인 결제와 충전, 날마다 예약과 해제, 오늘 예약)

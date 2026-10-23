@@ -71,6 +71,19 @@ class BaseWorldIntegrationTest extends IntegrationTestSupport {
         jdbc = new JdbcTemplate(dataSource);
     }
 
+    // 행마다 가장 가까운 역(0 강남역, 1 역삼역, 2 선릉역)과 그 역까지의 거리(m)를 붙인다
+    private static String nearestStation(String lat, String lng, String table) {
+        String d0 = distance(lat, lng, 37.4979, 127.0276);
+        String d1 = distance(lat, lng, 37.5006, 127.0364);
+        String d2 = distance(lat, lng, 37.5045, 127.0490);
+        return "SELECT CASE WHEN " + d0 + " <= LEAST(" + d1 + ", " + d2 + ") THEN 0 WHEN " + d1 + " <= " + d2 + " THEN 1 ELSE 2 END AS nearest, "
+                + "LEAST(" + d0 + ", " + d1 + ", " + d2 + ") AS dist FROM " + table;
+    }
+
+    private static String distance(String lat, String lng, double stationLat, double stationLng) {
+        return "SQRT(POW((" + lat + " - " + stationLat + ") * 111000, 2) + POW((" + lng + " - " + stationLng + ") * 88200, 2))";
+    }
+
     @Test
     void 기본_세계가_빈_데이터베이스에_끝까지_들어간다() {
         new DomainFlywayMigrator(dataSource).afterPropertiesSet();
@@ -113,6 +126,21 @@ class BaseWorldIntegrationTest extends IntegrationTestSupport {
         // 쓰지 않게 된 시간대별 목표 표는 시드 V8 이 지운다(#829)
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM information_schema.tables "
                 + "WHERE table_schema = DATABASE() AND table_name = 'budget_hourly_target'", Long.class)).isZero();
+
+        // 기본 세계 가게(1,000만 대역)는 가장 가까운 역에서 500 m 안이 역마다 100곳이고, 오늘 피드 후보는 역마다 70개다 (#858)
+        assertThat(jdbc.queryForList("SELECT nearest, COUNT(*) FROM (" + nearestStation("latitude", "longitude", "store")
+                + " WHERE store_id BETWEEN 10000001 AND 19999999 AND latitude IS NOT NULL) x WHERE dist <= 500 GROUP BY nearest ORDER BY nearest"))
+                .extracting(row -> ((Number) row.get("COUNT(*)")).longValue())
+                .containsExactly(100L, 100L, 100L);
+        assertThat(jdbc.queryForList("SELECT nearest, COUNT(*) FROM (" + nearestStation("latitude", "longitude", "ad_candidate")
+                + " WHERE business_date = '2026-10-28' AND campaign_id BETWEEN 10000001 AND 19999999) x GROUP BY nearest ORDER BY nearest"))
+                .extracting(row -> ((Number) row.get("COUNT(*)")).longValue())
+                .containsExactly(70L, 70L, 70L);
+        // 모든 가게가 강남구 안이다 (위도 37.46 ~ 37.535, 경도 127.01 ~ 127.125)
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM store WHERE latitude IS NOT NULL AND (latitude NOT BETWEEN 37.46 AND 37.535 "
+                + "OR longitude NOT BETWEEN 127.01 AND 127.125)", Long.class)).isZero();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM owner WHERE owner_id BETWEEN 10000001 AND 19999999", Long.class))
+                .isEqualTo(500L);
 
         // 메뉴 할인 캠페인에는 정률과 정액이 둘 다 있어야 한다
         assertThat(jdbc.queryForList("SELECT DISTINCT discount_type FROM campaign "

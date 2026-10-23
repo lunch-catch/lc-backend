@@ -1,15 +1,15 @@
 /*
  * 기본 세계의 가게와 가게 등록 진행 상태를 넣는다 (#741, WORLD_SPEC "가게 (V3)" 와 "지역").
  * store_id = B + n 이고 B = 10000000 이며 점주 n 의 가게다.
- * 점주 1 ~ 250, 291 ~ 300 은 확정 가게, 점주 251 ~ 290 은 진행 단계 LOCATION 이상이면 미확정 가게다.
+ * 점주 1 ~ 250, 291 ~ 500 은 확정 가게, 점주 251 ~ 290 은 진행 단계 LOCATION 이상이면 미확정 가게다.
  * 다른 V 파일의 행을 읽지 않는다. store 와 store_registration_progress 는 owner 에 외래 키가 없어 이 파일만 돌려도 들어간다.
  */
 
--- 숫자 표 1 ~ 300 은 숫자 열 교차 조인으로 만든다
+-- 숫자 표 1 ~ 500 은 숫자 열 교차 조인으로 만든다
 CREATE TEMPORARY TABLE base_n (n INT PRIMARY KEY);
 INSERT INTO base_n (n)
 SELECT h.d * 100 + t.d * 10 + o.d + 1
-FROM (SELECT 0 AS d UNION ALL SELECT 1 UNION ALL SELECT 2) h
+FROM (SELECT 0 AS d UNION ALL SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4) h
 CROSS JOIN (SELECT 0 AS d UNION ALL SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4
             UNION ALL SELECT 5 UNION ALL SELECT 6 UNION ALL SELECT 7 UNION ALL SELECT 8 UNION ALL SELECT 9) t
 CROSS JOIN (SELECT 0 AS d UNION ALL SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4
@@ -25,9 +25,43 @@ INSERT INTO base_dow (d, day_name) VALUES
     (1, 'MONDAY'), (2, 'TUESDAY'), (3, 'WEDNESDAY'), (4, 'THURSDAY'), (5, 'FRIDAY'), (6, 'SATURDAY'), (7, 'SUNDAY');
 
 /*
+ * 가게 n 의 위치다 (#858). V3 의 가게와 V6 의 회원 위치가 같은 역 좌표를 쓴다.
+ * 역은 0 강남역, 1 역삼역, 2 선릉역이다. 진행 중 캠페인 가게(1 ~ 180, 301 ~ 330)는 순서대로 역마다 70곳, 그 밖의 확정 가게 90곳(181 ~ 250, 291 ~ 300, 331 ~ 340)은 역마다 30곳이다.
+ * 역 둘레 가게는 역에서 420 m 안이다. 강남역과 역삼역이 850 m 떨어져 있어 그 절반보다 가깝게 두어야 가장 가까운 역이 제 역이 된다.
+ * 나머지 200곳(251 ~ 290, 341 ~ 500)은 강남구의 신사역, 압구정역, 학동역, 삼성역, 대치역, 개포동역, 수서역 둘레 800 m 안이다.
+ */
+CREATE TEMPORARY TABLE base_geo AS
+SELECT g.n, g.st,
+       CASE WHEN g.st IS NULL THEN ELT(g.k % 7 + 1, 37.5163, 37.5271, 37.5143, 37.5089, 37.4946, 37.4892, 37.4873)
+            ELSE ELT(g.st + 1, 37.4979, 37.5006, 37.5045) END AS clat,
+       CASE WHEN g.st IS NULL THEN ELT(g.k % 7 + 1, 127.0203, 127.0284, 127.0317, 127.0631, 127.0635, 127.0662, 127.1017)
+            ELSE ELT(g.st + 1, 127.0276, 127.0364, 127.0490) END AS clng,
+       CASE WHEN g.st IS NULL THEN 100 + (g.k * 53) % 700 ELSE 60 + (g.j * 37) % 360 END AS r,
+       CASE WHEN g.st IS NULL THEN (g.k * 137) % 360 ELSE (g.j * 137 + g.st * 40) % 360 END AS a
+FROM (
+    SELECT x.n,
+           x.i % 3 AS st,
+           CASE WHEN x.grp = 'A' THEN x.i DIV 3 ELSE 70 + x.i DIV 3 END AS j,
+           x.k
+    FROM (
+        SELECT n,
+               CASE WHEN n <= 180 OR n BETWEEN 301 AND 330 THEN 'A'
+                    WHEN n BETWEEN 181 AND 250 OR n BETWEEN 291 AND 300 OR n BETWEEN 331 AND 340 THEN 'T' END AS grp,
+               CASE WHEN n <= 180 THEN n - 1
+                    WHEN n BETWEEN 301 AND 330 THEN n - 121
+                    WHEN n BETWEEN 181 AND 250 THEN n - 181
+                    WHEN n BETWEEN 291 AND 300 THEN n - 221
+                    WHEN n BETWEEN 331 AND 340 THEN n - 251 END AS i,
+               CASE WHEN n BETWEEN 251 AND 290 THEN n - 250 WHEN n >= 341 THEN n - 300 END AS k
+        FROM base_n
+        WHERE n <= 500
+    ) x
+) g;
+
+/*
  * 가게마다 계산값을 한 번 만든다.
  * step 은 확정 가게면 9, 진행 중이면 (n - 251) % 7 (2 LOCATION, 3 HOURS, 4 IMAGES, 5 MENU, 6 MENU 이면서 확정 조건 충족) 이다.
- * 좌표는 지역 표 공식이다. 261 ~ 290 은 지역 표에 없어 잠실역 둘레 1 ~ 120 공식을 쓴다.
+ * 좌표는 base_geo 의 역 둘레 공식이다.
  */
 CREATE TEMPORARY TABLE base_store AS
 SELECT
@@ -43,17 +77,14 @@ SELECT
     TIMESTAMP(DATE_SUB('${baseDate}', INTERVAL 1 DAY), '10:00:00') AS draft_at
 FROM (
     SELECT
-        n,
-        CASE WHEN n BETWEEN 251 AND 290 THEN (n - 251) % 7 ELSE 9 END AS step,
-        (n * 137) % 360 AS a,
-        CASE
-            WHEN n <= 120 OR n >= 211 THEN 100 + (n * 7) % 850
-            WHEN n <= 180 THEN 1000 + (n * 37) % 1950
-            ELSE 3000 + (n * 53) % 1950
-        END AS r,
-        CASE WHEN n <= 210 THEN 37.4979000 WHEN n <= 260 THEN 37.5572000 ELSE 37.5133000 END AS clat,
-        CASE WHEN n <= 210 THEN 127.0276000 WHEN n <= 260 THEN 126.9245000 ELSE 127.1001000 END AS clng
+        base_n.n,
+        CASE WHEN base_n.n BETWEEN 251 AND 290 THEN (base_n.n - 251) % 7 ELSE 9 END AS step,
+        geo.a,
+        geo.r,
+        geo.clat,
+        geo.clng
     FROM base_n
+    JOIN base_geo geo ON geo.n = base_n.n
 ) g
 WHERE g.step >= 2;
 
@@ -231,6 +262,7 @@ WHERE p.s >= 1
 ON DUPLICATE KEY UPDATE store_registration_progress.store_registration_progress_id = store_registration_progress.store_registration_progress_id;
 
 DROP TEMPORARY TABLE base_store;
+DROP TEMPORARY TABLE base_geo;
 DROP TEMPORARY TABLE base_dow;
 DROP TEMPORARY TABLE base_slot;
 DROP TEMPORARY TABLE base_n;

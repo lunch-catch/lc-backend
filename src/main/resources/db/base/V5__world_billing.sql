@@ -21,7 +21,7 @@ CROSS JOIN (SELECT 0 d UNION ALL SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3 
 SET @base_d = CAST('${baseDate}' AS DATE);
 
 /*
- * 포인트 계정 (BIL.BALANCE_ZERO 는 점주 196 ~ 205 의 계정 행만 있고 원장 없음).
+ * 포인트 계정 (BIL.BALANCE_ZERO 는 점주 196 ~ 205 의 계정 행만 있고 원장 없음). 점주 301 ~ 500 (#858) 도 계정이 있다.
  * 만든 시각은 점주 가입일 D-(120 - n % 110) 10:00 에 1분을 더한 값이다.
  */
 INSERT INTO point_account (point_account_id, owner_id, created_at, updated_at)
@@ -29,7 +29,7 @@ SELECT 10000000 + n, 10000000 + n,
        DATE_SUB(@base_d, INTERVAL (120 - n % 110) DAY) + INTERVAL 601 MINUTE,
        DATE_SUB(@base_d, INTERVAL (120 - n % 110) DAY) + INTERVAL 601 MINUTE
 FROM base_n
-WHERE n <= 250
+WHERE n <= 250 OR n BETWEEN 301 AND 500
 ON DUPLICATE KEY UPDATE point_account_id = point_account.point_account_id;
 
 /*
@@ -111,6 +111,26 @@ SELECT 10000400 + (r.n - 1) * 10 + j.n,
        DATE_SUB(@base_d, INTERVAL (80 + j.n) DAY) + INTERVAL (601 + r.n) MINUTE
 FROM base_rest r
 JOIN base_n j ON j.n <= r.cnt_100k + r.cnt_50k + r.cnt_10k
+ON DUPLICATE KEY UPDATE payment_id = payment.payment_id;
+
+/*
+ * BIL.BALANCE_ENOUGH: 진행 중 캠페인을 더한 점주 301 ~ 330 (#858) 은 100,000 승인 결제 3건으로 300,000 이다.
+ * payment_id = B + 3000 + (n - 301) * 3 + j 이고 날짜는 채움 결제와 같은 D-(80 + j) 다.
+ */
+INSERT INTO payment (payment_id, owner_id, order_id, pg_tid, amount, status, failure_reason, pg_cancel_id,
+                     approved_at, canceled_at, created_at, updated_at)
+SELECT 10003000 + (o.n - 301) * 3 + j.n,
+       10000000 + o.n,
+       CONCAT('world-order-y', LPAD(o.n, 3, '0'), '-', j.n),
+       CONCAT('world-tid-y', LPAD(o.n, 3, '0'), '-', j.n),
+       100000, 'APPROVED', NULL, NULL,
+       DATE_SUB(@base_d, INTERVAL (80 + j.n) DAY) + INTERVAL (601 + o.n) MINUTE,
+       NULL,
+       DATE_SUB(@base_d, INTERVAL (80 + j.n) DAY) + INTERVAL (600 + o.n) MINUTE,
+       DATE_SUB(@base_d, INTERVAL (80 + j.n) DAY) + INTERVAL (601 + o.n) MINUTE
+FROM base_n o
+JOIN (SELECT 1 AS n UNION ALL SELECT 2 UNION ALL SELECT 3) j
+WHERE o.n BETWEEN 301 AND 330
 ON DUPLICATE KEY UPDATE payment_id = payment.payment_id;
 
 /*
