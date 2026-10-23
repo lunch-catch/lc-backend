@@ -22,6 +22,9 @@ import com.launchcatch.campaign.repository.CampaignRepository;
 import com.launchcatch.global.entity.BaseTimeEntity;
 import com.launchcatch.owner.contract.OwnerAccountStatus;
 import com.launchcatch.owner.contract.OwnerStatusQuery;
+import com.launchcatch.store.contract.StoreMenuInfo;
+import com.launchcatch.store.contract.StoreMenuQueryResult;
+import com.launchcatch.store.contract.StoreQueryService;
 import java.lang.reflect.Field;
 import java.time.Clock;
 import java.time.Instant;
@@ -55,18 +58,116 @@ class CampaignCouponConditionServiceTest {
     @Mock
     private OwnerStatusQuery ownerStatusQuery;
     @Mock
+    private StoreQueryService storeQueryService;
+    @Mock
     private TransactionTemplate transactionTemplate;
 
     private CampaignCouponConditionService service;
 
     @BeforeEach
     void setUp() {
-        service = new CampaignCouponConditionService(campaignRepository, ownerStatusQuery, transactionTemplate, FIXED_CLOCK);
+        service = new CampaignCouponConditionService(
+                campaignRepository, ownerStatusQuery, storeQueryService, transactionTemplate, FIXED_CLOCK);
         lenient().when(transactionTemplate.execute(any())).thenAnswer(invocation -> {
             TransactionCallback<?> callback = invocation.getArgument(0);
             return callback.doInTransaction(null);
         });
         lenient().when(ownerStatusQuery.findCurrentStatus(OWNER_ID)).thenReturn(Optional.of(OwnerAccountStatus.ACTIVE));
+        lenient().when(storeQueryService.canManageStore(OWNER_ID, STORE_ID)).thenReturn(true);
+        lenient().when(storeQueryService.findMenusByIdIn(List.of(42L)))
+                .thenReturn(new StoreMenuQueryResult(
+                        List.of(new StoreMenuInfo(42L, STORE_ID, "menu.jpg", "제육볶음", 9000L)), List.of()));
+    }
+
+    @Test
+    @DisplayName("로그인한 점주의 가게가 아니면 CAMPAIGN-013으로 거부하고 저장소와 트랜잭션을 건드리지 않는다(#874)")
+    void 본인_가게가_아니면_거부한다() {
+        when(storeQueryService.canManageStore(OWNER_ID, STORE_ID)).thenReturn(false);
+
+        assertThatThrownBy(() -> service.handle(OWNER_ID, request()))
+                .isInstanceOfSatisfying(CampaignException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(CampaignErrorCode.STORE_NOT_OWNED));
+        verifyNoInteractions(campaignRepository, transactionTemplate);
+    }
+
+    @Test
+    @DisplayName("MENU 할인의 메뉴가 그 가게의 메뉴가 아니면 CAMPAIGN-014로 거부한다(#874)")
+    void 다른_가게의_메뉴면_거부한다() {
+        when(storeQueryService.findMenusByIdIn(List.of(42L)))
+                .thenReturn(new StoreMenuQueryResult(
+                        List.of(new StoreMenuInfo(42L, 99L, "menu.jpg", "제육볶음", 9000L)), List.of()));
+
+        assertThatThrownBy(() -> service.handle(OWNER_ID, request(DiscountTargetType.MENU, DiscountType.AMOUNT, 3000, 42L)))
+                .isInstanceOfSatisfying(CampaignException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(CampaignErrorCode.TARGET_MENU_INVALID));
+        verifyNoInteractions(campaignRepository, transactionTemplate);
+    }
+
+    @Test
+    @DisplayName("MENU 할인의 메뉴가 없거나 이미지 데이터 오류면 CAMPAIGN-014로 거부한다(#874)")
+    void 없거나_이미지_오류_메뉴면_거부한다() {
+        when(storeQueryService.findMenusByIdIn(List.of(42L)))
+                .thenReturn(new StoreMenuQueryResult(List.of(), List.of(42L)));
+        CampaignCouponConditionRequest request = request(DiscountTargetType.MENU, DiscountType.AMOUNT, 3000, 42L);
+
+        assertThatThrownBy(() -> service.handle(OWNER_ID, request))
+                .isInstanceOfSatisfying(CampaignException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(CampaignErrorCode.TARGET_MENU_INVALID));
+
+        when(storeQueryService.findMenusByIdIn(List.of(42L)))
+                .thenReturn(new StoreMenuQueryResult(List.of(), List.of()));
+        assertThatThrownBy(() -> service.handle(OWNER_ID, request))
+                .isInstanceOfSatisfying(CampaignException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(CampaignErrorCode.TARGET_MENU_INVALID));
+        verifyNoInteractions(campaignRepository, transactionTemplate);
+    }
+
+    @Test
+    @DisplayName("전체 메뉴(ALL)는 메뉴 조회를 하지 않는다(#874)")
+    void 전체_메뉴는_메뉴를_조회하지_않는다() throws Exception {
+        when(campaignRepository.findByStoreIdAndStatus(STORE_ID, CampaignStatus.DRAFT)).thenReturn(Optional.empty());
+        when(campaignRepository.saveAndFlush(any(Campaign.class))).thenAnswer(invocation -> {
+            Campaign saved = invocation.getArgument(0);
+            setId(saved, 501L);
+            return saved;
+        });
+
+        service.handle(OWNER_ID, request());
+
+        verify(storeQueryService, never()).findMenusByIdIn(any());
+    }
+
+    @Test
+    @DisplayName("그 가게의 DRAFT가 다른 점주의 것이면 덮어쓰지 않고 CAMPAIGN-005로 거부한다(#874)")
+    void 다른_점주의_DRAFT는_덮어쓰지_않는다() throws Exception {
+        Campaign foreignDraft = existingDraft(99L);
+        setId(foreignDraft, 501L);
+        when(campaignRepository.findByStoreIdAndStatus(STORE_ID, CampaignStatus.DRAFT))
+                .thenReturn(Optional.of(foreignDraft));
+
+        assertThatThrownBy(() -> service.handle(OWNER_ID, request()))
+                .isInstanceOfSatisfying(CampaignException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(CampaignErrorCode.CAMPAIGN_NOT_OWNED));
+
+        assertThat(foreignDraft.getDiscountValue()).isEqualTo(10);
+        verify(campaignRepository, never()).saveAndFlush(any());
+    }
+
+    @Test
+    @DisplayName("제약 위반 뒤 재조회한 DRAFT가 다른 점주의 것이어도 덮어쓰지 않는다(#874)")
+    void 제약_위반_뒤에도_다른_점주의_DRAFT는_덮어쓰지_않는다() throws Exception {
+        Campaign foreignDraft = existingDraft(99L);
+        setId(foreignDraft, 501L);
+        when(campaignRepository.findByStoreIdAndStatus(STORE_ID, CampaignStatus.DRAFT))
+                .thenReturn(Optional.empty(), Optional.of(foreignDraft));
+        when(campaignRepository.saveAndFlush(any(Campaign.class)))
+                .thenThrow(new DataIntegrityViolationException("uk_campaign_draft_store"));
+
+        assertThatThrownBy(() -> service.handle(OWNER_ID, request()))
+                .isInstanceOfSatisfying(CampaignException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(CampaignErrorCode.CAMPAIGN_NOT_OWNED));
+
+        assertThat(foreignDraft.getDiscountValue()).isEqualTo(10);
     }
 
     @Test
@@ -320,8 +421,12 @@ class CampaignCouponConditionServiceTest {
     }
 
     private Campaign existingDraft() {
+        return existingDraft(OWNER_ID);
+    }
+
+    private Campaign existingDraft(Long ownerId) {
         return Campaign.create(
-                OWNER_ID, STORE_ID,
+                ownerId, STORE_ID,
                 DiscountTargetType.ALL, DiscountType.AMOUNT, 10, null,
                 50, LocalTime.of(12, 0), LocalTime.of(13, 30),
                 null, null,

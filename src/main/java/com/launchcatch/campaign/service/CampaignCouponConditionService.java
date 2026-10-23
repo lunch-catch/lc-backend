@@ -14,6 +14,7 @@ import com.launchcatch.campaign.repository.CampaignRepository;
 import com.launchcatch.global.exception.ConstraintViolations;
 import com.launchcatch.owner.contract.OwnerAccountStatus;
 import com.launchcatch.owner.contract.OwnerStatusQuery;
+import com.launchcatch.store.contract.StoreQueryService;
 import java.time.Clock;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
@@ -28,6 +29,9 @@ import org.springframework.transaction.support.TransactionTemplate;
 /*
  * 캠페인 등록 1단계(쿠폰 조건). 가게에 작성 중인 DRAFT가 있으면 그 1단계 필드만 덮어쓰고,
  * 없으면 노출 대상 기본값과 예산·기간 null로 새로 만든다(#244, campaign-api-design.md).
+ *
+ * 요청의 storeId와 targetMenuId는 클라이언트가 보낸 값이라 로그인한 점주의 것인지 저장 전에 확인한다(#874).
+ * store 조회는 다른 도메인의 조회이므로 트랜잭션을 열기 전에 끝낸다.
  */
 @Service
 @Slf4j
@@ -47,14 +51,17 @@ public class CampaignCouponConditionService {
 
     private final CampaignRepository campaignRepository;
     private final OwnerStatusQuery ownerStatusQuery;
+    private final StoreQueryService storeQueryService;
     private final TransactionTemplate transactionTemplate;
     private final Clock clock;
 
     public CampaignCouponConditionResult handle(Long ownerId, CampaignCouponConditionRequest request) {
         validateActiveOwner(ownerId);
+        validateStoreOwnership(ownerId, request.storeId());
         validateDiscountValue(request.discountTargetType(), request.discountType(), request.discountValue());
         validateIssueQuantity(request.issueQuantity());
         validateUsableTime(request.usableStartTime(), request.usableEndTime());
+        validateTargetMenu(request);
 
         try {
             return transactionTemplate.execute(status -> save(ownerId, request));
@@ -71,7 +78,7 @@ public class CampaignCouponConditionService {
              * 재조회 후 덮어쓰기는 재시도가 아니라 원래 의도한 "이어 쓰기" 경로로 들어가는
              * 것일 뿐이다(#244, 2026-10-14 확정. campaign_장애_처리_설계.md에도 기록한다).
              */
-            return transactionTemplate.execute(status -> overwriteAfterConflict(request));
+            return transactionTemplate.execute(status -> overwriteAfterConflict(ownerId, request));
         } catch (ConcurrencyFailureException e) {
             /*
              * findByStoreIdAndStatus의 PESSIMISTIC_WRITE는 그 가게에 DRAFT가 하나도 없으면
@@ -83,14 +90,13 @@ public class CampaignCouponConditionService {
              * 이 가게의 DRAFT 한 행뿐이라 조건 확인 없이 바로 재조회해 덮어쓰는 경로로
              * 들어간다(코드래빗 리뷰로 찾음, #244).
              */
-            return transactionTemplate.execute(status -> overwriteAfterConflict(request));
+            return transactionTemplate.execute(status -> overwriteAfterConflict(ownerId, request));
         }
     }
 
     private CampaignCouponConditionResult save(Long ownerId, CampaignCouponConditionRequest request) {
-        // TODO: store 공개 contract가 생기면 request.storeId()가 ownerId의 가게인지 검증을 추가한다.
         return campaignRepository.findByStoreIdAndStatus(request.storeId(), CampaignStatus.DRAFT)
-                .map(existing -> overwrite(existing, request))
+                .map(existing -> overwrite(ownerId, existing, request))
                 .orElseGet(() -> create(ownerId, request));
     }
 
@@ -115,14 +121,26 @@ public class CampaignCouponConditionService {
         return new CampaignCouponConditionResult(toResponse(campaign), true);
     }
 
-    private CampaignCouponConditionResult overwriteAfterConflict(CampaignCouponConditionRequest request) {
+    private CampaignCouponConditionResult overwriteAfterConflict(Long ownerId, CampaignCouponConditionRequest request) {
         Campaign campaign = campaignRepository.findByStoreIdAndStatus(request.storeId(), CampaignStatus.DRAFT)
                 .orElseThrow(() -> new IllegalStateException(
                         "draft not found after unique constraint violation: storeId=" + request.storeId()));
-        return overwrite(campaign, request);
+        return overwrite(ownerId, campaign, request);
     }
 
-    private CampaignCouponConditionResult overwrite(Campaign campaign, CampaignCouponConditionRequest request) {
+    /*
+     * 가게 소유를 이미 확인했으므로 그 가게의 DRAFT는 로그인한 점주의 것이어야 한다. 아니면 소유 확인이 생기기 전에
+     * 만들어진 데이터이므로 덮어쓰지 않고 거절한다. 같은 가게를 가리키는 서로 다른 점주의 DRAFT가 있다는 뜻이라 운영이
+     * 볼 수 있게 WARN 으로 남긴다.
+     */
+    private CampaignCouponConditionResult overwrite(
+            Long ownerId, Campaign campaign, CampaignCouponConditionRequest request) {
+        if (!campaign.getOwnerId().equals(ownerId)) {
+            log.warn("event=CAMPAIGN_COUPON_CONDITION_FAILED reason=DRAFT_OWNER_MISMATCH errorCode={} ownerId={} "
+                            + "campaignId={} draftOwnerId={}",
+                    CampaignErrorCode.CAMPAIGN_NOT_OWNED.getCode(), ownerId, campaign.getId(), campaign.getOwnerId());
+            throw new CampaignException(CampaignErrorCode.CAMPAIGN_NOT_OWNED);
+        }
         campaign.updateCouponCondition(
                 request.discountTargetType(), request.discountType(), request.discountValue(), request.targetMenuId(),
                 request.issueQuantity(), request.usableStartTime(), request.usableEndTime(),
@@ -147,6 +165,37 @@ public class CampaignCouponConditionService {
      * 팀 논의로 바뀐 사양). MENU(특정 메뉴)는 PERCENT/AMOUNT 둘 다 그대로 허용한다. 엔티티의
      * requireDiscountValue(Campaign.create/updateCouponCondition)에도 같은 제약이 있다.
      */
+    /*
+     * 최종 등록된 본인 가게만 통과한다. 가게가 없거나 다른 점주의 것이거나 등록 중이어도 같은 응답이라 존재 여부를
+     * 알려 주지 않는다. 조회 장애는 권한 없음으로 바꾸지 않고 그대로 올라간다.
+     */
+    private void validateStoreOwnership(Long ownerId, Long storeId) {
+        if (!storeQueryService.canManageStore(ownerId, storeId)) {
+            log.info("event=CAMPAIGN_COUPON_CONDITION_FAILED reason=STORE_NOT_OWNED errorCode={} ownerId={} storeId={}",
+                    CampaignErrorCode.STORE_NOT_OWNED.getCode(), ownerId, storeId);
+            throw new CampaignException(CampaignErrorCode.STORE_NOT_OWNED);
+        }
+    }
+
+    /*
+     * MENU 할인이면 targetMenuId 가 그 가게의 메뉴이고 검증된 이미지가 있어야 한다. 없는 메뉴, 다른 가게의 메뉴, 이미지가
+     * 없거나 검증되지 않은 메뉴는 findMenusByIdIn 의 정상 목록에 들어오지 않으므로 한 번에 걸러진다. 이 메뉴는 포스터와
+     * 쿠폰 준비에서도 그 이미지가 필요해 어차피 뒤에서 실패한다. 조합이 틀린 요청(MENU 인데 메뉴 ID 가 없음 등)은 여기서
+     * 판단하지 않고 엔티티 검증에 맡긴다.
+     */
+    private void validateTargetMenu(CampaignCouponConditionRequest request) {
+        if (request.discountTargetType() != DiscountTargetType.MENU || request.targetMenuId() == null) {
+            return;
+        }
+        boolean usable = storeQueryService.findMenusByIdIn(List.of(request.targetMenuId())).menus().stream()
+                .anyMatch(menu -> request.storeId().equals(menu.storeId()));
+        if (!usable) {
+            log.info("event=CAMPAIGN_COUPON_CONDITION_FAILED reason=TARGET_MENU_INVALID errorCode={} storeId={} menuId={}",
+                    CampaignErrorCode.TARGET_MENU_INVALID.getCode(), request.storeId(), request.targetMenuId());
+            throw new CampaignException(CampaignErrorCode.TARGET_MENU_INVALID);
+        }
+    }
+
     private void validateDiscountValue(DiscountTargetType discountTargetType, DiscountType discountType, int discountValue) {
         boolean positive = discountValue > 0;
         boolean withinPercent = discountType != DiscountType.PERCENT || discountValue <= 100;

@@ -114,9 +114,9 @@ public class CampaignPauseResumeService {
 
     /*
      * StoreCampaignSummaryUpdater.update()는 캠페인의 targetMenuId가 그 가게 소유가 아니면
-     * IllegalArgumentException을 던진다. 캠페인 등록 1단계(CampaignCouponConditionService)가
-     * 그 소속을 검증하지 않아(#468 리뷰로 찾음, 근본 조치는 별도 이슈) 생길 수 있는 서버 쪽
-     * 데이터 불일치라 점주의 요청이 잘못된 게 아니다. 그대로 두면
+     * IllegalArgumentException을 던진다. 캠페인 등록 1단계(CampaignCouponConditionService)는 이제
+     * 그 소속을 저장 전에 검증하지만(#874), 그 전에 저장된 캠페인이나 직접 저장한 데이터에는 남아 있을 수 있는
+     * 서버 쪽 데이터 불일치라 점주의 요청이 잘못된 게 아니다. 그대로 두면
      * GlobalExceptionHandler.handleIllegalArgument가 400 COMMON-002로 잘못 답한다.
      * 어느 ErrorCode도 아닌 RuntimeException으로 다시 던져 handleUnexpected의 500
      * COMMON-001로 보낸다.
