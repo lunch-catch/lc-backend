@@ -430,10 +430,11 @@ class TemplateReviseServiceTest {
     // 임시저장이 모두 소프트삭제된 게시된 템플릿이다. remainingMaxVersionNumber 는 아직 지워지지 않고 남은 행의 최대 번호다.
     private void givenPublishedWithoutDraft(Template published, int remainingMaxVersionNumber) {
         when(templateRepository.findById(TEMPLATE_ID)).thenReturn(Optional.of(published));
-        when(templateRepository.findByIdForUpdate(TEMPLATE_ID)).thenReturn(Optional.of(published));
+        // 저장 단계까지 가지 않는 테스트(구조 검증 실패)에서는 아래 두 스텁을 쓰지 않아 lenient 로 둔다.
+        lenient().when(templateRepository.findByIdForUpdate(TEMPLATE_ID)).thenReturn(Optional.of(published));
         when(templateVersionRepository.findFirstByTemplateIdAndDeletedAtIsNullOrderByVersionNumberDesc(TEMPLATE_ID))
                 .thenReturn(Optional.empty());
-        when(templateVersionRepository.findMaxVersionNumber(TEMPLATE_ID)).thenReturn(remainingMaxVersionNumber);
+        lenient().when(templateVersionRepository.findMaxVersionNumber(TEMPLATE_ID)).thenReturn(remainingMaxVersionNumber);
     }
 
     private TemplateVersion existingVersion() throws Exception {
