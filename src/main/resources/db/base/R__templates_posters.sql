@@ -6,10 +6,13 @@
  * 캠페인 값은 campaign, store, store_menu 행을 읽어 만든다. 기본 세계(V4)와 시연 층(R__demo) 뒤에 돈다.
  */
 
--- 1. 지우기: 기본 세계(1,000만)와 시연(2,000만) 캠페인의 포스터와 검수 결과, 예전 시연 템플릿 "시연 기본형"
+/*
+ * 1. 지우기: 기본 세계(1,000만) 캠페인과 시연 캠페인 7개의 포스터와 검수 결과, 예전 시연 템플릿 "시연 기본형".
+ * 시연은 대역이 아니라 R__demo 의 캠페인 번호로 고른다. 실제로 만든 캠페인도 자동 증가로 2,000만 대역 번호를 받기 때문이다.
+ */
 DELETE FROM poster_moderation_result
-WHERE poster_id IN (SELECT poster_id FROM poster WHERE campaign_id BETWEEN 10000000 AND 29999999);
-DELETE FROM poster WHERE campaign_id BETWEEN 10000000 AND 29999999;
+WHERE poster_id IN (SELECT poster_id FROM poster WHERE campaign_id BETWEEN 10000001 AND 19999999 OR campaign_id IN (20000101, 20000111, 20000112, 20000113, 20000301, 20000401, 20000501));
+DELETE FROM poster WHERE campaign_id BETWEEN 10000001 AND 19999999 OR campaign_id IN (20000101, 20000111, 20000112, 20000113, 20000301, 20000401, 20000501);
 DELETE FROM template_version
 WHERE template_id = 20000001 AND NOT EXISTS (SELECT 1 FROM poster p WHERE p.template_id = 20000001);
 DELETE FROM template
@@ -158,7 +161,7 @@ WHERE p.stage IS NULL OR (p.stage = 3 AND p.n <> 241);
 DROP TEMPORARY TABLE tpl_poster;
 
 /*
- * 6. 시연 캠페인의 포스터 (시연 층 R__demo 의 캠페인, 2,000만 대역).
+ * 6. 시연 캠페인의 포스터 (시연 층 R__demo 의 캠페인 7개).
  * 시연 층만 다시 돌 때를 위해 R__demo 도 같은 방식으로 포스터를 만든다. 템플릿은 게시되고 활성인 첫 템플릿이다.
  */
 INSERT INTO poster (poster_id, campaign_id, template_id, title, slot_values, html_content, created_at, updated_at,
@@ -183,11 +186,11 @@ FROM campaign c
 JOIN store st ON st.store_id = c.store_id
 JOIN (SELECT MIN(template_id) AS template_id FROM template WHERE status = 'PUBLISHED' AND active = 1) f
 JOIN template tp ON tp.template_id = f.template_id
-WHERE c.campaign_id BETWEEN 20000101 AND 20000999;
+WHERE c.campaign_id IN (20000101, 20000111, 20000112, 20000113, 20000301, 20000401, 20000501);
 
 INSERT INTO poster_moderation_result (poster_moderation_result_id, poster_id, result, reason, created_at, updated_at)
 SELECT p.poster_id, p.poster_id, 'PASS', NULL, p.created_at + INTERVAL 10 MINUTE, p.created_at + INTERVAL 10 MINUTE
 FROM poster p
-WHERE p.campaign_id BETWEEN 20000101 AND 20000999;
+WHERE p.campaign_id IN (20000101, 20000111, 20000112, 20000113, 20000301, 20000401, 20000501);
 
 DROP TEMPORARY TABLE tpl_html;
