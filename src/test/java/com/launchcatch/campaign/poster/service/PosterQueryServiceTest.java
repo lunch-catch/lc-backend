@@ -155,6 +155,29 @@ class PosterQueryServiceTest {
                         e -> assertThat(e.getErrorCode()).isEqualTo(PosterErrorCode.POSTER_UNAVAILABLE));
     }
 
+    @Test
+    @DisplayName("점주 응답에 슬롯별 현재 값(slots)이 들어간다")
+    void 점주_조회에_슬롯_값이_들어간다() {
+        PosterQueryService service = service(campaignRepository, posterRepository);
+        when(campaignRepository.findById(CAMPAIGN_ID)).thenReturn(Optional.of(campaign(CampaignStatus.DRAFT)));
+        Poster withSlots = Poster.create(CAMPAIGN_ID, TEMPLATE_ID, "분식집 - 가을 신메뉴",
+                "{\"eventName\":{\"type\":\"text\",\"value\":\"분식집\",\"fontSizePx\":30},"
+                        + "\"discount\":{\"type\":\"text\",\"value\":\"1000원 할인 오늘만\",\"baseText\":\"1000원 할인\","
+                        + "\"suffix\":\"오늘만\"},"
+                        + "\"period\":{\"type\":\"text\",\"value\":\"10.1~10.31\"}}",
+                "<p data-slot=\"discount\" style=\"font-size:18px\">1000원 할인 오늘만</p>", "campaigns/501/poster/x.jpg");
+        when(posterRepository.findByCampaignId(CAMPAIGN_ID)).thenReturn(Optional.of(withSlots));
+
+        PosterCreateResponse response = service.findForOwner(OWNER_ID, CAMPAIGN_ID);
+
+        assertThat(response.slots().eventName().text()).isEqualTo("분식집");
+        assertThat(response.slots().eventName().fontSizePx()).isEqualTo(30);
+        assertThat(response.slots().discount().baseText()).isEqualTo("1000원 할인");
+        assertThat(response.slots().discount().suffix()).isEqualTo("오늘만");
+        assertThat(response.slots().discount().fontSizePx()).isEqualTo(18);
+        assertThat(response.slots().period().text()).isEqualTo("10.1~10.31");
+    }
+
     private Campaign campaign(CampaignStatus status) {
         Campaign campaign = Campaign.create(
                 OWNER_ID, STORE_ID,
