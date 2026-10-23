@@ -188,4 +188,26 @@ class TemplateTest {
                 .isInstanceOf(IllegalArgumentException.class);
         assertThat(template.getName()).isEqualTo("가을 신메뉴");
     }
+
+    @Test
+    @DisplayName("이름의 앞뒤 공백은 잘라서 저장한다. 생성과 이름 수정이 같다(#880)")
+    void 이름의_앞뒤_공백은_잘라서_저장한다() {
+        Template template = Template.createDraft("  가을 신메뉴 ");
+
+        assertThat(template.getName()).isEqualTo("가을 신메뉴");
+
+        template.rename("\t겨울 신메뉴  ", 9L, NOW);
+
+        assertThat(template.getName()).isEqualTo("겨울 신메뉴");
+    }
+
+    @Test
+    @DisplayName("공백을 자른 이름이 100자를 넘으면 거부하고 100자면 통과한다(#880)")
+    void 공백을_자른_이름으로_길이를_본다() {
+        Template template = Template.createDraft(" " + "가".repeat(100) + " ");
+
+        assertThat(template.getName()).hasSize(100);
+        assertThatThrownBy(() -> template.rename("가".repeat(101), 9L, NOW))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
 }
