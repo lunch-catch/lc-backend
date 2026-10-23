@@ -6,7 +6,7 @@ import jakarta.validation.constraints.Size;
 
 public record TemplateCreateRequest(
         @Schema(
-                description = "템플릿 이름입니다. 100자 이하입니다.",
+                description = "템플릿 이름입니다. 앞뒤 공백을 자른 뒤 100자 이하입니다.",
                 example = "가을 신메뉴",
                 requiredMode = Schema.RequiredMode.REQUIRED
         )
@@ -26,4 +26,9 @@ public record TemplateCreateRequest(
         )
         @NotBlank @Size(max = 64) String requestId
 ) {
+
+    // 이름은 앞뒤 공백을 먼저 자르고 검증한다(#880). Template 엔티티가 저장할 때 같은 규칙으로 자른다.
+    public TemplateCreateRequest {
+        name = name == null ? null : name.strip();
+    }
 }

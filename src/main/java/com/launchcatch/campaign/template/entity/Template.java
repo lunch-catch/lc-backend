@@ -123,6 +123,29 @@ public class Template extends BaseTimeEntity {
         this.publishedVersionNumber = versionNumber;
     }
 
+    /*
+     * 게시된 템플릿을 임시저장 버전으로 다시 게시한다(#880). 게시본 HTML 과 게시 시각, 게시 버전 번호, 마지막
+     * 수정자를 바꾸고 active 는 건드리지 않는다. status, publishedAt, publishedVersionNumber 를 함께 갱신하는 이유는
+     * publish() 와 같다.
+     */
+    public void republish(String htmlContent, LocalDateTime now, int versionNumber, Long adminId) {
+        if (this.status != TemplateStatus.PUBLISHED) {
+            throw new IllegalStateException("only PUBLISHED template can be republished: " + this.status);
+        }
+        this.htmlContent = htmlContent;
+        this.publishedAt = now;
+        this.publishedVersionNumber = versionNumber;
+        this.lastModifiedBy = adminId;
+        this.lastModifiedAt = now;
+    }
+
+    // 상태와 무관하게 이름을 바꾼다(#880). 이미 만든 포스터의 제목은 만들 때 정해져 바뀌지 않는다.
+    public void rename(String name, Long adminId, LocalDateTime now) {
+        this.name = requiredName(name);
+        this.lastModifiedBy = adminId;
+        this.lastModifiedAt = now;
+    }
+
     public void changeActive(boolean active, Long adminId, LocalDateTime now) {
         if (this.status != TemplateStatus.PUBLISHED) {
             throw new IllegalStateException("only PUBLISHED template can change active: " + this.status);
@@ -132,10 +155,15 @@ public class Template extends BaseTimeEntity {
         this.activatedAt = now;
     }
 
+    /*
+     * 앞뒤 공백을 자른 값을 저장한다(#880). 이름은 포스터 제목 "{가게명} - {템플릿 이름}" 에 그대로 들어가서, 공백이
+     * 섞이면 제목에도 섞인다. 생성과 이름 수정이 이 한 곳을 거치므로 같은 규칙이 적용된다.
+     */
     private static String requiredName(String value) {
-        if (value == null || value.isBlank() || value.length() > NAME_MAX_LENGTH) {
+        String name = value == null ? null : value.strip();
+        if (name == null || name.isEmpty() || name.length() > NAME_MAX_LENGTH) {
             throw new IllegalArgumentException("name must be 1 to " + NAME_MAX_LENGTH + " characters");
         }
-        return value;
+        return name;
     }
 }
