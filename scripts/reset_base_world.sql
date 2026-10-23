@@ -7,6 +7,7 @@
  * 지우는 범위는 번호 대역이 아니라 기본 세계와 시연 층이 넣은 계정에 딸린 행이다.
  * 기본 세계 뒤에 실제로 가입한 회원과 점주는 자동 증가 번호가 시연 대역 위(2,000만 이상)라 대역으로 고르면 함께 지워지기 때문이다.
  * 날짜로만 묶인 전체 분석 표와 배치 실행 기록은 최근 61일을 지운다. 기본 세계가 다시 채운다.
+ * 기본 세계 번호 대역에 남은 실제 행은 5,000만 대역으로 옮긴다.
  */
 
 -- 지울 계정 범위: 기본 세계 회원 1 ~ 3000, 점주 1 ~ 500 과 시연 회원 201 ~ 210, 시연 점주 11 ~ 15
@@ -31,6 +32,30 @@ CREATE TEMPORARY TABLE reset_payment AS
 SELECT payment_id FROM payment WHERE owner_id IN (SELECT owner_id FROM reset_owner);
 CREATE TEMPORARY TABLE reset_report AS
 SELECT campaign_daily_report_id FROM campaign_daily_report WHERE campaign_id IN (SELECT campaign_id FROM reset_campaign);
+
+/*
+ * 옮기지 않는 표에 실제 행이 기본 세계 번호 대역(1,000만)으로 들어와 있으면 아무것도 지우기 전에 멈춘다.
+ * 이 표들은 다른 표가 번호로 많이 가리켜서 이 파일이 옮기지 않는다. 걸리면 그 행을 먼저 따로 옮긴다.
+ * MySQL 은 저장 프로시저 밖에서 SIGNAL 을 쓸 수 없어서, 걸리면 두 행을 돌려주는 하위 쿼리로 오류(1242)를 낸다.
+ */
+SET @real_in_band = (SELECT COUNT(*) FROM campaign WHERE campaign_id BETWEEN 10000001 AND 19999999
+                       AND campaign_id NOT IN (SELECT campaign_id FROM reset_campaign))
+                  + (SELECT COUNT(*) FROM coupon_event WHERE coupon_event_id BETWEEN 10000001 AND 19999999
+                       AND coupon_event_id NOT IN (SELECT coupon_event_id FROM reset_event))
+                  + (SELECT COUNT(*) FROM member_coupon WHERE member_coupon_id BETWEEN 10000001 AND 19999999
+                       AND member_coupon_id NOT IN (SELECT member_coupon_id FROM reset_member_coupon))
+                  + (SELECT COUNT(*) FROM payment WHERE payment_id BETWEEN 10000001 AND 19999999
+                       AND payment_id NOT IN (SELECT payment_id FROM reset_payment))
+                  + (SELECT COUNT(*) FROM campaign_daily_report WHERE campaign_daily_report_id BETWEEN 10000001 AND 19999999
+                       AND campaign_daily_report_id NOT IN (SELECT campaign_daily_report_id FROM reset_report))
+                  + (SELECT COUNT(*) FROM refund_request WHERE refund_request_id BETWEEN 10000001 AND 19999999
+                       AND owner_id NOT IN (SELECT owner_id FROM reset_owner));
+-- 한 문장에서 같은 임시 표를 두 번 열 수 없어서 reset_owner 를 쓰는 둘째 검사는 따로 더한다
+SET @real_in_band = @real_in_band
+                  + (SELECT COUNT(*) FROM point_ledger WHERE point_ledger_id BETWEEN 10000001 AND 19999999
+                       AND owner_id NOT IN (SELECT owner_id FROM reset_owner));
+SELECT CONCAT('real rows in base band (must be 0): ', @real_in_band) AS guard;
+DO (SELECT 1 FROM (SELECT 1 AS k UNION ALL SELECT 2) x WHERE @real_in_band > 0);
 
 -- 쿠폰
 DELETE FROM coupon_usage_history WHERE member_coupon_id IN (SELECT member_coupon_id FROM reset_member_coupon);
@@ -129,6 +154,54 @@ DELETE FROM store WHERE store_id IN (SELECT store_id FROM reset_store);
 
 -- 회원 프로필 (위치가 바뀌었다). 회원 행은 남긴다
 DELETE FROM member_profile WHERE member_id IN (SELECT member_id FROM reset_member);
+
+/*
+ * 여기까지 지우고 기본 세계 번호 대역(1,000만)에 남은 행은 실제 데이터다.
+ * 가게를 500개로 늘리면서 그 사이 실제로 등록된 가게와 메뉴, 이미지, 영업시간이 새 기본 세계가 쓸 번호를 이미 받은 경우가 있다 (개발의 가게 10000301).
+ * 그대로 두면 V3 가 그 번호를 건너뛰어 기본 세계 가게가 빠지고 V6 이 좌표를 읽지 못한다.
+ * 지우지 않고 번호에 4,000만을 더해 5,000만 대역으로 옮긴다. 가리키는 열에도 같은 값을 더하므로 서로 맞는다.
+ * 외래 키는 부모와 자식을 따로 바꾸는 동안만 끈다.
+ */
+SET FOREIGN_KEY_CHECKS = 0;
+UPDATE store SET store_id = store_id + 40000000 WHERE store_id BETWEEN 10000001 AND 19999999;
+UPDATE ad_candidate SET store_id = store_id + 40000000 WHERE store_id BETWEEN 10000001 AND 19999999;
+UPDATE campaign SET store_id = store_id + 40000000 WHERE store_id BETWEEN 10000001 AND 19999999;
+UPDATE campaign_daily_report SET store_id = store_id + 40000000 WHERE store_id BETWEEN 10000001 AND 19999999;
+UPDATE coupon_event SET store_id = store_id + 40000000 WHERE store_id BETWEEN 10000001 AND 19999999;
+UPDATE coupon_usage_history SET store_id = store_id + 40000000 WHERE store_id BETWEEN 10000001 AND 19999999;
+UPDATE event_log SET store_id = store_id + 40000000 WHERE store_id BETWEEN 10000001 AND 19999999;
+UPDATE impression_log SET store_id = store_id + 40000000 WHERE store_id BETWEEN 10000001 AND 19999999;
+UPDATE serve_log SET store_id = store_id + 40000000 WHERE store_id BETWEEN 10000001 AND 19999999;
+UPDATE store_audience SET store_id = store_id + 40000000 WHERE store_id BETWEEN 10000001 AND 19999999;
+UPDATE store_business_hour SET store_id = store_id + 40000000 WHERE store_id BETWEEN 10000001 AND 19999999;
+UPDATE store_campaign_summary SET store_id = store_id + 40000000 WHERE store_id BETWEEN 10000001 AND 19999999;
+UPDATE store_image SET store_id = store_id + 40000000 WHERE store_id BETWEEN 10000001 AND 19999999;
+UPDATE store_menu SET store_id = store_id + 40000000 WHERE store_id BETWEEN 10000001 AND 19999999;
+UPDATE store_registration_progress SET store_id = store_id + 40000000 WHERE store_id BETWEEN 10000001 AND 19999999;
+UPDATE wishlist SET store_id = store_id + 40000000 WHERE store_id BETWEEN 10000001 AND 19999999;
+
+-- 메뉴 번호와 메뉴를 가리키는 열
+UPDATE store_menu SET store_menu_id = store_menu_id + 40000000 WHERE store_menu_id BETWEEN 10000001 AND 19999999;
+UPDATE store_menu_image SET store_menu_id = store_menu_id + 40000000 WHERE store_menu_id BETWEEN 10000001 AND 19999999;
+UPDATE campaign SET target_menu_id = target_menu_id + 40000000 WHERE target_menu_id BETWEEN 10000001 AND 19999999;
+UPDATE coupon_event SET target_menu_id = target_menu_id + 40000000 WHERE target_menu_id BETWEEN 10000001 AND 19999999;
+UPDATE store_campaign_summary SET target_menu_id = target_menu_id + 40000000 WHERE target_menu_id BETWEEN 10000001 AND 19999999;
+
+-- 다른 표가 가리키지 않는 표는 자기 번호만 옮긴다
+UPDATE store_image SET store_image_id = store_image_id + 40000000 WHERE store_image_id BETWEEN 10000001 AND 19999999;
+UPDATE store_business_hour SET store_business_hour_id = store_business_hour_id + 40000000 WHERE store_business_hour_id BETWEEN 10000001 AND 19999999;
+UPDATE store_menu_image SET store_menu_image_id = store_menu_image_id + 40000000 WHERE store_menu_image_id BETWEEN 10000001 AND 19999999;
+UPDATE store_registration_progress SET store_registration_progress_id = store_registration_progress_id + 40000000 WHERE store_registration_progress_id BETWEEN 10000001 AND 19999999;
+UPDATE event_log SET event_log_id = event_log_id + 40000000 WHERE event_log_id BETWEEN 10000001 AND 19999999;
+UPDATE wishlist SET wishlist_id = wishlist_id + 40000000 WHERE wishlist_id BETWEEN 10000001 AND 19999999;
+UPDATE campaign_status_log SET campaign_status_log_id = campaign_status_log_id + 40000000 WHERE campaign_status_log_id BETWEEN 10000001 AND 19999999;
+UPDATE campaign_hourly_report SET campaign_hourly_report_id = campaign_hourly_report_id + 40000000 WHERE campaign_hourly_report_id BETWEEN 10000001 AND 19999999;
+UPDATE campaign_daily_slot_report SET campaign_daily_slot_report_id = campaign_daily_slot_report_id + 40000000 WHERE campaign_daily_slot_report_id BETWEEN 10000001 AND 19999999;
+UPDATE campaign_daily_impression_reason_report SET campaign_daily_impression_reason_report_id = campaign_daily_impression_reason_report_id + 40000000 WHERE campaign_daily_impression_reason_report_id BETWEEN 10000001 AND 19999999;
+UPDATE daily_invalid_analytics SET daily_invalid_analytics_id = daily_invalid_analytics_id + 40000000 WHERE daily_invalid_analytics_id BETWEEN 10000001 AND 19999999;
+UPDATE poster_moderation_result SET poster_moderation_result_id = poster_moderation_result_id + 40000000 WHERE poster_moderation_result_id BETWEEN 10000001 AND 19999999;
+UPDATE payment_reconciliation_outbox SET payment_reconciliation_outbox_id = payment_reconciliation_outbox_id + 40000000 WHERE payment_reconciliation_outbox_id BETWEEN 10000001 AND 19999999;
+SET FOREIGN_KEY_CHECKS = 1;
 
 /*
  * 이력이다. V1 기록은 남긴다.
