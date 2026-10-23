@@ -16,7 +16,7 @@
 | Docker | Docker Desktop 을 켠다 |
 | Node 20 이상 | 프론트의 pnpm 이 Node 18 에서 죽는다. 없으면 화면 시나리오는 막힘이다 |
 | lc-frontend | 클론해 두고 위치를 알려 준다 |
-| Playwright | `scripts/qa/browser-setup.sh` 를 돌린다 |
+| Playwright | `scripts/qa/browser-setup.sh` 를 돌린다. `.qa/tools` 에 받으므로 화면 스크립트는 `NODE_PATH=.qa/tools/node_modules node <스크립트>` 로 돌린다 |
 
 ## 2. 부르기
 
@@ -24,7 +24,7 @@
     QA 돌려라 owner
     O-001~O-026 QA
 
-범위는 `demo`, 문서 이름(`backend`, `owner`, `admin`, `user`), ID 범위 중 하나다. `demo` 97개가 1시간 남짓 걸린다.
+범위는 `demo`, 문서 이름(`backend`, `owner`, `admin`, `user`), ID 범위 중 하나다. `demo` 의 시나리오 ID 97개가 1시간 남짓 걸린다.
 
 앱 시계는 고칠 수 없다. 발급과 사용 시나리오는 11:30 ~ 14:00 에 불러야 돈다.
 
@@ -50,7 +50,7 @@
 |---|---|
 | 관리자 | `POST /v1/admin/auth/tokens`. 쿠키 `adminAccessToken` |
 | 점주 | `POST /v1/owner/auth/tokens`. 쿠키 `ownerAccessToken` |
-| 회원 | `scripts/qa/member-token.sh <memberId>` 의 토큰을 쿠키 `accessToken` 에 넣는다 |
+| 회원 | `scripts/qa/member-token.sh <memberId>` 의 토큰을 쿠키 `accessToken` 에 넣는다. 토큰은 30분이라 묶음마다 새로 만든다 |
 
 기본 계정 비밀번호는 `lunchcatch1234!` 이고 로그인은 IP 하나당 1분에 10번이다.
 
