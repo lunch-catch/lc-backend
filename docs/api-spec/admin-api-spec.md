@@ -29,7 +29,7 @@
 
 ### 인증 및 권한
 
-- 유효한 `accessToken` 쿠키가 필요하며 역할은 `SUPER_ADMIN`이어야 한다.
+- 유효한 `adminAccessToken` 쿠키가 필요하며 역할은 `SUPER_ADMIN`이어야 한다.
 - 서버는 JWT 권한 외에 DB의 발급자 계정이 현재 `ACTIVE`, `SUPER_ADMIN`인지 다시 확인한다.
 - Access Token 폐기 기준 조회는 필수다. 저장소 장애 시 발급을 진행하지 않고 `503 AUTH-002`를 반환한다.
 
@@ -38,7 +38,7 @@
 ```http
 POST /v1/admin/admins
 Content-Type: application/json
-Cookie: accessToken=<JWT>
+Cookie: adminAccessToken=<JWT>
 ```
 
 ```json
@@ -97,7 +97,7 @@ Cookie: accessToken=<JWT>
 
 ```http
 GET /v1/admin/admins?keyword=admin
-Cookie: accessToken=<JWT>
+Cookie: adminAccessToken=<JWT>
 ```
 
 | 쿼리 파라미터 | 타입 | 필수 | 설명 |
@@ -160,7 +160,7 @@ Content-Type: application/json
 ### 응답 `200 OK`
 
 ```http
-Set-Cookie: accessToken=<JWT>; Path=/; Max-Age=1800; HttpOnly; SameSite=Strict
+Set-Cookie: adminAccessToken=<JWT>; Path=/; Max-Age=1800; HttpOnly; SameSite=Strict
 Set-Cookie: refreshToken=<opaque>; Path=/v1/admin/auth/; Max-Age=86400; HttpOnly; SameSite=Strict
 ```
 
@@ -217,13 +217,13 @@ Set-Cookie: refreshToken=<opaque>; Path=/v1/admin/auth/; Max-Age=86400; HttpOnly
 
 ### 인증 및 권한
 
-- 유효한 `accessToken` 쿠키가 필요하며 역할은 `ADMIN` 또는 `SUPER_ADMIN`이어야 한다.
+- 유효한 `adminAccessToken` 쿠키가 필요하며 역할은 `ADMIN` 또는 `SUPER_ADMIN`이어야 한다.
 
 ### 요청
 
 ```http
 POST /v1/admin/batch-executions/DAILY_0000/2026-09-30:retry
-Cookie: accessToken=<JWT>
+Cookie: adminAccessToken=<JWT>
 ```
 
 | 경로 변수 | 타입 | 필수 | 설명 |
@@ -277,13 +277,13 @@ Cookie: accessToken=<JWT>
 
 ### 인증 및 권한
 
-- 유효한 `accessToken` 쿠키가 필요하며 역할은 `ADMIN` 또는 `SUPER_ADMIN`이어야 한다.
+- 유효한 `adminAccessToken` 쿠키가 필요하며 역할은 `ADMIN` 또는 `SUPER_ADMIN`이어야 한다.
 
 ### 요청
 
 ```http
 GET /v1/admin/batch-executions?from=2026-09-24&to=2026-09-30&status=FAILED&pageSize=20
-Cookie: accessToken=<JWT>
+Cookie: adminAccessToken=<JWT>
 ```
 
 | 쿼리 파라미터 | 타입 | 필수 | 설명 |

@@ -76,9 +76,9 @@ class OwnerTokenRefreshSecurityIntegrationTest extends AbstractOwnerIntegrationT
                 .andExpect(jsonPath("$.data.status").value("ACTIVE"))
                 .andReturn().getResponse();
 
-        assertThat(response.getCookie("accessToken").getSecure()).isTrue();
+        assertThat(response.getCookie("ownerAccessToken").getSecure()).isTrue();
         assertThat(response.getCookie("refreshToken").getSecure()).isTrue();
-        assertThat(jwt.getRole(response.getCookie("accessToken").getValue())).isEqualTo(Role.OWNER);
+        assertThat(jwt.getRole(response.getCookie("ownerAccessToken").getValue())).isEqualTo(Role.OWNER);
     }
 
     /*
@@ -92,7 +92,7 @@ class OwnerTokenRefreshSecurityIntegrationTest extends AbstractOwnerIntegrationT
 
         mvc.perform(post(PATH).cookie(
                         new Cookie("refreshToken", "valid-refresh"),
-                        new Cookie("accessToken", expiredJwt.createAccessToken(ownerId, Role.OWNER))))
+                        new Cookie("ownerAccessToken", expiredJwt.createAccessToken(ownerId, Role.OWNER))))
                 .andExpect(status().isOk());
     }
 
@@ -108,7 +108,7 @@ class OwnerTokenRefreshSecurityIntegrationTest extends AbstractOwnerIntegrationT
 
     @Test
     void 재발급_경로는_POST외의_메서드를_허용하지_않는다() throws Exception {
-        mvc.perform(get(PATH).cookie(new Cookie("accessToken", jwt.createAccessToken(ownerId, Role.OWNER))))
+        mvc.perform(get(PATH).cookie(new Cookie("ownerAccessToken", jwt.createAccessToken(ownerId, Role.OWNER))))
                 .andExpect(status().isForbidden());
 
         verifyNoInteractions(refreshService);

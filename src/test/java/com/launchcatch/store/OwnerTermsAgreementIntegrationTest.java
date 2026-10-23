@@ -64,7 +64,7 @@ class OwnerTermsAgreementIntegrationTest extends AbstractStoreIntegrationTest {
             if (role == Role.OWNER) owners.findByIdForLogin(ownerId).orElseThrow();
             return jwt.createAccessToken(ownerId, role);
         });
-        return new Cookie("accessToken", token);
+        return new Cookie("ownerAccessToken", token);
     }
 
     @Test

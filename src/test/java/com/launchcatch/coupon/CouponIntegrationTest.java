@@ -31,6 +31,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.launchcatch.adserving.contract.WishlistQueryService;
 import com.launchcatch.adserving.contract.CandidateStateUpdater;
+import com.launchcatch.auth.AuthCookieNames;
 import com.launchcatch.coupon.job.CouponPreparationJob;
 import com.launchcatch.coupon.job.CouponIssueOpenJob;
 import com.launchcatch.coupon.job.CouponIssueCloseJob;
@@ -4924,7 +4925,9 @@ public class CouponIntegrationTest extends IntegrationTestSupport {
                 .timeout(Duration.ofSeconds(15)).header("Content-Type", "application/json")
                 .method(method, body == null ? HttpRequest.BodyPublishers.noBody() : HttpRequest.BodyPublishers.ofString(body));
         if (token != null) {
-            request.header("Cookie", "accessToken=" + token);
+            // 서버는 요청 경로의 역할 쿠키만 읽어 경로로 이름을 고른다(#841)
+            String cookieName = AuthCookieNames.accessTokenCookieNameForPath(path.split("\\?")[0]);
+            request.header("Cookie", cookieName + "=" + token);
         }
         return request.build();
     }
