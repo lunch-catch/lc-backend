@@ -5,11 +5,13 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import ch.qos.logback.classic.Level;
 import com.launchcatch.store.dto.StoreRegistrationProgressResponse;
 import com.launchcatch.store.dto.StoreRegistrationProgressSnapshot;
 import com.launchcatch.store.entity.StoreMenu;
@@ -27,16 +29,21 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.util.Optional;
+import java.util.stream.Stream;
 import java.util.function.Consumer;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.transaction.support.TransactionCallback;
 import org.springframework.transaction.support.TransactionTemplate;
+import software.amazon.awssdk.core.exception.SdkClientException;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.HeadObjectRequest;
 import software.amazon.awssdk.services.s3.model.HeadObjectResponse;
@@ -320,6 +327,110 @@ class StoreMenuUploadServiceTest {
 
         assertThat(response.resumeStep()).isEqualTo(StoreRegistrationStep.MENU);
         assertThat(response.version()).isEqualTo(6L);
+    }
+
+    @ParameterizedTest
+    @MethodSource("rejectedUploadSizes")
+    void 크기_검증_실패의_원인과_레벨을_구분하고_민감정보를_숨긴다(
+            Long actualSize, Long declaredSize, Level expectedLevel, String reason) {
+        var image = givenPendingImage(declaredSize);
+        when(s3Client.headObject(any(HeadObjectRequest.class)))
+                .thenReturn(HeadObjectResponse.builder().contentLength(actualSize).build());
+
+        try (var logs = StoreUploadLogCapture.attach(StoreUploadSupport.class)) {
+            assertThatThrownBy(() -> service.confirmMenuImageUpload(OWNER_ID, "upload-log"))
+                    .isInstanceOfSatisfying(StoreException.class,
+                            e -> assertThat(e.getErrorCode()).isEqualTo(StoreErrorCode.IMAGE_FILE_TOO_LARGE));
+
+            assertThat(image.getUploadStatus().name()).isEqualTo("PENDING");
+            logs.assertEvent("STORE_UPLOAD_CONFIRM_FAILED", expectedLevel,
+                    "ownerId=7", "uploadId=upload-log", "resourceType=MENU_IMAGE", "reason=" + reason);
+            logs.assertNoSensitiveData("private/key", "private-photo.jpg");
+        }
+    }
+
+    static Stream<Arguments> rejectedUploadSizes() {
+        return Stream.of(
+                Arguments.of(null, 1000L, Level.ERROR, "SIZE_METADATA_MISSING"),
+                Arguments.of(1000L, null, Level.ERROR, "SIZE_METADATA_MISSING"),
+                Arguments.of(1001L, 1000L, Level.INFO, "INVALID_SIZE"),
+                Arguments.of(10_485_761L, 20_000_000L, Level.INFO, "INVALID_SIZE"));
+    }
+
+    @Test
+    void S3_클라이언트_실패는_메시지_없이_ERROR로_기록하고_그대로_전파한다() {
+        var image = givenPendingImage(1000L);
+        var failure = SdkClientException.create("private-cause-message private/key private-photo.jpg");
+        when(s3Client.headObject(any(HeadObjectRequest.class))).thenThrow(failure);
+
+        try (var logs = StoreUploadLogCapture.attach(StoreUploadSupport.class)) {
+            assertThatThrownBy(() -> service.confirmMenuImageUpload(OWNER_ID, "upload-log")).isSameAs(failure);
+
+            assertThat(image.getUploadStatus().name()).isEqualTo("PENDING");
+            logs.assertEvent("STORE_UPLOAD_CONFIRM_FAILED", Level.ERROR,
+                    "ownerId=7", "uploadId=upload-log", "resourceType=MENU_IMAGE", "exceptionType=SdkClientException");
+            logs.assertNoSensitiveData("private-cause-message", "private/key", "private-photo.jpg");
+        }
+    }
+
+    @ParameterizedTest
+    @MethodSource("s3Failures")
+    void S3_미업로드와_시스템_실패의_레벨을_구분한다(
+            int statusCode, Level expectedLevel, String expectedField, Class<? extends RuntimeException> expectedException) {
+        var image = givenPendingImage(1000L);
+        var failure = (S3Exception) S3Exception.builder().statusCode(statusCode)
+                .message("private-cause-message private/key private-photo.jpg").build();
+        when(s3Client.headObject(any(HeadObjectRequest.class))).thenThrow(failure);
+
+        try (var logs = StoreUploadLogCapture.attach(StoreUploadSupport.class)) {
+            assertThatThrownBy(() -> service.confirmMenuImageUpload(OWNER_ID, "upload-log"))
+                    .isInstanceOf(expectedException);
+
+            assertThat(image.getUploadStatus().name()).isEqualTo("PENDING");
+            logs.assertEvent("STORE_UPLOAD_CONFIRM_FAILED", expectedLevel,
+                    "ownerId=7", "uploadId=upload-log", "resourceType=MENU_IMAGE", expectedField);
+            logs.assertNoSensitiveData("private-cause-message", "private/key", "private-photo.jpg");
+        }
+    }
+
+    static Stream<Arguments> s3Failures() {
+        return Stream.of(
+                Arguments.of(404, Level.INFO, "reason=NOT_UPLOADED", StoreException.class),
+                Arguments.of(500, Level.ERROR, "httpStatus=500", S3Exception.class));
+    }
+
+    @Test
+    void 메뉴_예약_보상_실패는_예약_식별자를_남기고_메시지를_숨긴다() {
+        givenOwnerWithStoreForUpdate();
+        when(storeMenuRepository.existsByIdAndStoreId(MENU_ID, STORE_ID)).thenReturn(true);
+        var presignFailure = new IllegalStateException("private-presign-message");
+        var cleanupFailure = new IllegalStateException("private-cleanup-message");
+        when(s3Presigner.presignPutObject(any(PutObjectPresignRequest.class))).thenThrow(presignFailure);
+        doThrow(cleanupFailure).when(storeMenuImageRepository).delete(any(StoreMenuImage.class));
+
+        try (var logs = StoreUploadLogCapture.attach(StoreMenuUploadService.class)) {
+            assertThatThrownBy(() -> service.prepareMenuImageUpload(
+                    OWNER_ID, MENU_ID, "private-photo.jpg", "image/jpeg", 1000L)).isSameAs(cleanupFailure);
+
+            var reservation = ArgumentCaptor.forClass(StoreMenuImage.class);
+            verify(storeMenuImageRepository).delete(reservation.capture());
+            assertThat(reservation.getValue().getUploadId()).isNotBlank();
+            logs.assertEvent("STORE_UPLOAD_PREPARE_FAILED", Level.ERROR,
+                    "ownerId=7", "resourceType=MENU_IMAGE", "exceptionType=IllegalStateException");
+            logs.assertEvent("STORE_UPLOAD_COMPENSATION_FAILED", Level.ERROR,
+                    "ownerId=7", "uploadId=" + reservation.getValue().getUploadId(), "resourceType=MENU_IMAGE");
+            logs.assertNoSensitiveData("private-presign-message", "private-cleanup-message", "private-photo.jpg",
+                    reservation.getValue().getObjectKey());
+        }
+    }
+
+    private StoreMenuImage givenPendingImage(Long declaredSize) {
+        givenOwnerWithStoreForUpdate();
+        StoreMenuImage image = StoreMenuImage.preparePending(
+                MENU_ID, "upload-log", "private/key", "private-photo.jpg", "image/jpeg", declaredSize);
+        when(storeMenuImageRepository.findByUploadId("upload-log")).thenReturn(Optional.of(image));
+        when(storeMenuRepository.existsByIdAndStoreId(MENU_ID, STORE_ID)).thenReturn(true);
+        return image;
     }
 
     private void givenOwnerWithStoreForUpdate() {

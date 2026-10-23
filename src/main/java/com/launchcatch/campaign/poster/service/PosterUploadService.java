@@ -24,6 +24,7 @@ import com.launchcatch.owner.contract.OwnerAccountStatus;
 import com.launchcatch.owner.contract.OwnerStatusQuery;
 import com.launchcatch.store.contract.StoreInfo;
 import com.launchcatch.store.contract.StoreMenuInfo;
+import com.launchcatch.store.contract.StoreMenuQueryResult;
 import com.launchcatch.store.contract.StoreQueryService;
 import java.time.Duration;
 import java.time.format.DateTimeFormatter;
@@ -224,8 +225,17 @@ public class PosterUploadService {
         return targetText + " " + valueText + " 할인";
     }
 
+    /*
+     * 메뉴는 있는데 검증된 이미지가 없으면 invalidMenuIds 에만 담겨 menus 가 비므로, 이것을 먼저 보고 메뉴가 아예 없는
+     * 경우와 로그를 가른다(#851). 운영자가 이미지 오류를 없는 메뉴로 오해하지 않게 하려는 것이고 실패 응답은 같다.
+     */
     private String findMenuName(Long campaignId, Long menuId) {
-        return storeQueryService.findMenusByIdIn(List.of(menuId)).menus().stream()
+        StoreMenuQueryResult result = storeQueryService.findMenusByIdIn(List.of(menuId));
+        if (!result.invalidMenuIds().isEmpty()) {
+            log.error("event=POSTER_MENU_IMAGE_INVALID campaignId={} menuId={}", campaignId, menuId);
+            throw new CampaignException(CommonErrorCode.INTERNAL_ERROR);
+        }
+        return result.menus().stream()
                 .findFirst()
                 .map(StoreMenuInfo::menuName)
                 .orElseThrow(() -> {

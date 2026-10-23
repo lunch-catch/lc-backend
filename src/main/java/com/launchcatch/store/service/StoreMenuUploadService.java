@@ -15,26 +15,24 @@ import java.time.Clock;
 import java.time.LocalDateTime;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 import software.amazon.awssdk.services.s3.S3Client;
-import software.amazon.awssdk.services.s3.model.HeadObjectRequest;
-import software.amazon.awssdk.services.s3.model.HeadObjectResponse;
-import software.amazon.awssdk.services.s3.model.S3Exception;
 
 /*
  * 점주 대표 메뉴와 메뉴 이미지 업로드(#389). store_menu_image.store_menu_id가 NOT NULL FK라
  * 이미지보다 메뉴(이름·가격·설명)를 먼저 저장해야 한다. 그래서 가게 인테리어 이미지(#375)와
  * 달리 등록과 이미지 업로드 사이에 메뉴 저장 단계가 하나 더 있다.
  */
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class StoreMenuUploadService {
 
     private static final int MAX_MENUS = 3;
-    private static final long MAX_FILE_SIZE = 10 * 1024 * 1024;
 
     private final StoreMenuRepository storeMenuRepository;
     private final StoreMenuImageRepository storeMenuImageRepository;
@@ -74,8 +72,16 @@ public class StoreMenuUploadService {
         try {
             uploadUrl = storeUploadSupport.presign(image.getObjectKey(), contentType, fileSize);
         } catch (RuntimeException e) {
+            log.error("event=STORE_UPLOAD_PREPARE_FAILED ownerId={} resourceType=MENU_IMAGE exceptionType={}",
+                    ownerId, e.getClass().getSimpleName());
             // presign은 자격 증명을 원격으로 조회할 수 있어 잠금을 쥔 트랜잭션 밖에서 부른다(#375와 같은 근거).
-            transactionTemplate.executeWithoutResult(status -> storeMenuImageRepository.delete(image));
+            try {
+                transactionTemplate.executeWithoutResult(status -> storeMenuImageRepository.delete(image));
+            } catch (RuntimeException compensationFailure) {
+                log.error("event=STORE_UPLOAD_COMPENSATION_FAILED ownerId={} uploadId={} resourceType=MENU_IMAGE exceptionType={}",
+                        ownerId, image.getUploadId(), compensationFailure.getClass().getSimpleName());
+                throw compensationFailure;
+            }
             throw e;
         }
 
@@ -120,25 +126,9 @@ public class StoreMenuUploadService {
             return;
         }
 
-        HeadObjectResponse headObject;
-        try {
-            // headObject는 응답이 지연될 수 있어 DB 잠금을 쥐지 않은 채로 부른다(코드래빗 리뷰로 찾음).
-            headObject = s3Client.headObject(HeadObjectRequest.builder()
-                    .bucket(mediaBucket)
-                    .key(image.getObjectKey())
-                    .build());
-        } catch (S3Exception e) {
-            if (e.statusCode() != 404) {
-                throw e;
-            }
-            throw new StoreException(StoreErrorCode.IMAGE_NOT_UPLOADED);
-        }
-        if (headObject.contentLength() == null
-                || headObject.contentLength() > MAX_FILE_SIZE
-                || image.getFileSize() == null
-                || headObject.contentLength() > image.getFileSize()) {
-            throw new StoreException(StoreErrorCode.IMAGE_FILE_TOO_LARGE);
-        }
+        // S3 확인은 기존처럼 DB 잠금을 잡지 않은 상태에서 수행한다.
+        storeUploadSupport.verifyUpload(s3Client, mediaBucket, image.getObjectKey(), image.getFileSize(),
+                ownerId, image.getUploadId(), "MENU_IMAGE");
 
         // 호출 사이 다른 요청이 이 PENDING 행을 지우고 다시 만들었을 수 있어, 잠금을 다시 잡고 재조회한다.
         transactionTemplate.executeWithoutResult(status -> {

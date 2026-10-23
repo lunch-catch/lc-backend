@@ -45,12 +45,12 @@ CREATE TEMPORARY TABLE base_cday (
     PRIMARY KEY (c, k)
 );
 
--- CMP.ACTIVE: 캠페인 1 ~ 180 은 기간 D-14 ~ D+14 라 D-14 ~ D-8 이 공식 범위이고 D 에 시작하는 179 는 뺀다
+-- CMP.ACTIVE: 캠페인 1 ~ 180 과 301 ~ 330 (#858) 은 기간 D-14 ~ D+14 라 D-14 ~ D-8 이 공식 범위이고 D 에 시작하는 179 는 뺀다
 INSERT INTO base_cday (c, k, w, h)
 SELECT n.n, dd.k, 14 - dd.k, CRC32(CONCAT('cdr-', n.n, '-', dd.k))
 FROM base_n n
 CROSS JOIN base_day dd
-WHERE n.n BETWEEN 1 AND 180 AND n.n <> 179 AND dd.k BETWEEN 8 AND 14;
+WHERE (n.n BETWEEN 1 AND 180 OR n.n BETWEEN 301 AND 330) AND n.n <> 179 AND dd.k BETWEEN 8 AND 14;
 
 -- CMP.ACTIVE_PAST_END: 캠페인 242 는 D-10 에 시작해 D-10 ~ D-8 이 공식 범위다
 INSERT INTO base_cday (c, k, w, h)
@@ -609,7 +609,7 @@ SELECT DATE_SUB(@d, INTERVAL dd.k DAY),
        IF(dd.k >= 8, 50000000 - (60 - dd.k) * 100000 + CRC32(CONCAT('uns-', dd.k)) % 100000,
           GREATEST(0, (SELECT COALESCE(SUM(pl.amount), 0) FROM point_ledger pl
                        WHERE pl.entry_type IN ('CHARGE', 'REFUND', 'ADJUST', 'DEDUCT')
-                         AND pl.owner_id BETWEEN @b + 1 AND @b + 300
+                         AND pl.owner_id BETWEEN @b + 1 AND @b + 500
                          AND pl.created_at < DATE_SUB(@d, INTERVAL dd.k - 1 DAY)))),
        TIMESTAMP(DATE_SUB(@d, INTERVAL dd.k - 1 DAY), '01:03:00'),
        TIMESTAMP(DATE_SUB(@d, INTERVAL dd.k - 1 DAY), '01:03:00')
@@ -625,7 +625,7 @@ LEFT JOIN (
            SUM(IF(entry_type = 'CHARGE', amount, 0)) AS amount,
            -SUM(IF(entry_type = 'REFUND', amount, 0)) AS refund
     FROM point_ledger
-    WHERE entry_type IN ('CHARGE', 'REFUND') AND owner_id BETWEEN @b + 1 AND @b + 300
+    WHERE entry_type IN ('CHARGE', 'REFUND') AND owner_id BETWEEN @b + 1 AND @b + 500
       AND created_at >= DATE_SUB(@d, INTERVAL 7 DAY) AND created_at < @d
     GROUP BY DATE(created_at)
 ) charged ON charged.business_date = DATE_SUB(@d, INTERVAL dd.k DAY)
@@ -633,7 +633,7 @@ LEFT JOIN (
     SELECT dr.business_date, -SUM(pl.amount) AS amount
     FROM point_ledger pl
     JOIN deduction_result dr ON dr.serve_id = pl.serve_id
-    WHERE pl.entry_type = 'DEDUCT' AND pl.owner_id BETWEEN @b + 1 AND @b + 300
+    WHERE pl.entry_type = 'DEDUCT' AND pl.owner_id BETWEEN @b + 1 AND @b + 500
       AND dr.business_date BETWEEN DATE_SUB(@d, INTERVAL 7 DAY) AND DATE_SUB(@d, INTERVAL 1 DAY)
     GROUP BY dr.business_date
 ) deducted ON deducted.business_date = DATE_SUB(@d, INTERVAL dd.k DAY)
@@ -642,7 +642,7 @@ LEFT JOIN (
            -SUM(IF(entry_type = 'RESERVE', amount, 0)) AS reserve_amount,
            SUM(IF(entry_type = 'RELEASE', amount, 0)) AS release_amount
     FROM point_ledger
-    WHERE entry_type IN ('RESERVE', 'RELEASE') AND owner_id BETWEEN @b + 1 AND @b + 300
+    WHERE entry_type IN ('RESERVE', 'RELEASE') AND owner_id BETWEEN @b + 1 AND @b + 500
       AND business_date BETWEEN DATE_SUB(@d, INTERVAL 7 DAY) AND DATE_SUB(@d, INTERVAL 1 DAY)
     GROUP BY business_date
 ) reserved ON reserved.business_date = DATE_SUB(@d, INTERVAL dd.k DAY)
@@ -651,7 +651,7 @@ LEFT JOIN (
            SUM(amount) AS amount,
            SUM(IF(amount > 0, amount, 0)) AS positive
     FROM point_ledger
-    WHERE entry_type = 'ADJUST' AND owner_id BETWEEN @b + 1 AND @b + 300
+    WHERE entry_type = 'ADJUST' AND owner_id BETWEEN @b + 1 AND @b + 500
     GROUP BY COALESCE(adjust_target_date, DATE(created_at))
 ) adjusted ON adjusted.business_date = DATE_SUB(@d, INTERVAL dd.k DAY)
 WHERE dd.k BETWEEN 1 AND 60
@@ -659,21 +659,21 @@ ON DUPLICATE KEY UPDATE daily_settlement_analytics.business_date = daily_settlem
 
 /*
  * ANA.DAILY_METRICS_D60_D1
- * 가게 지표는 WORLD_SPEC 공식으로 센다 (원천이 V6 가 아니다). 확정 가게(점주 1 ~ 250, 291 ~ 300)는 점주 가입일 D-(120 - n % 110) 에 생긴 것으로 본다.
- * 진행 중 캠페인은 ACTIVE 1 ~ 180 (179 빼고, D-14 부터), 242 (D-10 부터), ENDED 1000 + n 의 7일 기간이다.
+ * 가게 지표는 WORLD_SPEC 공식으로 센다 (원천이 V6 가 아니다). 확정 가게(점주 1 ~ 250, 291 ~ 500)는 점주 가입일 D-(120 - n % 110) 에 생긴 것으로 본다.
+ * 진행 중 캠페인은 ACTIVE 1 ~ 180 (179 빼고, D-14 부터)과 301 ~ 330, 341, 242 (D-10 부터), ENDED 1000 + n 의 7일 기간이다.
  */
 INSERT INTO daily_store_analytics (
     business_date, new_store_count, cumulative_store_count, active_campaign_count, created_at, updated_at)
 SELECT DATE_SUB(@d, INTERVAL dd.k DAY),
-       SUM((n.n <= 250 OR n.n BETWEEN 291 AND 300) AND 120 - n.n % 110 = dd.k),
-       SUM((n.n <= 250 OR n.n BETWEEN 291 AND 300) AND 120 - n.n % 110 >= dd.k),
-       IF(dd.k <= 14, 179, 0) + IF(dd.k <= 10, 1, 0)
+       SUM((n.n <= 250 OR n.n BETWEEN 291 AND 500) AND 120 - n.n % 110 = dd.k),
+       SUM((n.n <= 250 OR n.n BETWEEN 291 AND 500) AND 120 - n.n % 110 >= dd.k),
+       IF(dd.k <= 14, 210, 0) + IF(dd.k <= 10, 1, 0)
            + SUM(n.n <= 300 AND dd.k BETWEEN 14 + n.n % 60 AND 20 + n.n % 60),
        TIMESTAMP(DATE_SUB(@d, INTERVAL dd.k - 1 DAY), '01:03:00'),
        TIMESTAMP(DATE_SUB(@d, INTERVAL dd.k - 1 DAY), '01:03:00')
 FROM base_day dd
 CROSS JOIN base_n n
-WHERE dd.k BETWEEN 1 AND 60 AND n.n <= 300
+WHERE dd.k BETWEEN 1 AND 60 AND n.n <= 500
 GROUP BY dd.k
 ON DUPLICATE KEY UPDATE daily_store_analytics.business_date = daily_store_analytics.business_date;
 
@@ -776,11 +776,8 @@ FROM (
     SELECT k, imp_valid, wish, issued, redeem, charged, refunded,
            ELT(IF(c > 1000, (c - 1001) % 250 + 1, c) % 9 + 1, 'KOREAN', 'CHINESE', 'JAPANESE', 'WESTERN', 'BUNSIK',
                'ASIAN', 'FAST_FOOD', 'CAFE_DESSERT', 'OTHER') AS category_code,
-           CASE
-               WHEN IF(c > 1000, (c - 1001) % 250 + 1, c) BETWEEN 211 AND 260 THEN '서울 마포구'
-               WHEN IF(c > 1000, (c - 1001) % 250 + 1, c) BETWEEN 291 AND 300 THEN '서울 송파구'
-               ELSE '서울 강남구'
-           END AS region
+           -- 모든 가게가 강남구에 있다 (#858)
+           '서울 강남구' AS region
     FROM base_rpt
     WHERE k >= 1
 ) located

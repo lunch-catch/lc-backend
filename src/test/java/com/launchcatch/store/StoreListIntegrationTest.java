@@ -204,12 +204,15 @@ class StoreListIntegrationTest extends AbstractStoreIntegrationTest {
     }
 
     @Test
-    void 활성_MENU_캠페인의_메뉴가_누락되면_정상_응답으로_숨기지_않는다() throws Exception {
+    void 활성_MENU_캠페인의_메뉴가_누락되면_캠페인만_제외한다() throws Exception {
         long storeId = createStore(KEYWORD, "KOREAN", "37", "127", true);
         saveSummary(storeId, LocalDate.now(clock), StoreCampaignStatus.ACTIVE, StoreDiscountTargetType.ALL, null);
         jdbc.update("update store_campaign_summary set discount_target_type = 'MENU' where store_id = ?", storeId);
 
-        mvc.perform(stores().param("query", KEYWORD)).andExpect(status().isInternalServerError());
+        mvc.perform(stores().param("query", KEYWORD)).andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.items[0].storeId").value(storeId))
+                .andExpect(jsonPath("$.data.items[0].hasActiveCampaign").value(false))
+                .andExpect(jsonPath("$.data.items[0].activeCampaign").value((Object) null));
     }
 
     @Test
@@ -505,4 +508,46 @@ class StoreListIntegrationTest extends AbstractStoreIntegrationTest {
     private long sessionCount(String variable) {
         return Long.parseLong((String) jdbc.queryForMap("show session status like ?", variable).get("Value"));
     }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"", " ", "\t"})
+    void 대표_이미지_키가_비어도_해당_가게와_정상_캠페인과_다른_가게를_유지한다(String key) throws Exception {
+        long id = createStore(KEYWORD, "KOREAN", "37", "127", true);
+        long other = createStore(KEYWORD, "KOREAN", "38", "127", true);
+        createImage(id, "LOGO", null, "VERIFIED");
+        saveSummary(id, LocalDate.now(clock), StoreCampaignStatus.ACTIVE, StoreDiscountTargetType.ALL, null);
+        jdbc.update("update store_image set object_key = ? where store_id = ?", key, id);
+
+        String body = mvc.perform(stores().param("query", KEYWORD))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.items[0].storeImageUrl").value((Object) null))
+                .andExpect(jsonPath("$.data.items[0].hasActiveCampaign").value(true))
+                .andExpect(jsonPath("$.data.items[0].activeCampaign.discountTargetType").value("ALL"))
+                .andReturn().getResponse().getContentAsString();
+
+        assertThat(ids(body)).containsExactly(id, other);
+    }
+
+    @Test
+    void 다른_가게의_메뉴를_참조해도_목록과_커서를_유지한다() throws Exception {
+        long id = createStore(KEYWORD, "KOREAN", "37", "127", true);
+        long other = createStore(KEYWORD, "KOREAN", "38", "127", true);
+        long target = createMenu(other, "다른 가게 메뉴", 1);
+        saveSummary(id, LocalDate.now(clock), StoreCampaignStatus.ACTIVE, StoreDiscountTargetType.ALL, null);
+        jdbc.update("update store_campaign_summary set discount_target_type = 'MENU', target_menu_id = ? where store_id = ?",
+                target, id);
+
+        String firstPage = mvc.perform(stores().param("query", KEYWORD).param("pageSize", "1"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.items[0].storeId").value(id))
+                .andExpect(jsonPath("$.data.items[0].hasActiveCampaign").value(false))
+                .andExpect(jsonPath("$.data.items[0].activeCampaign").value((Object) null))
+                .andReturn().getResponse().getContentAsString();
+        mvc.perform(stores().param("query", KEYWORD).param("pageSize", "1")
+                        .param("pageToken", (String) JsonPath.read(firstPage, "$.data.nextPageToken")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.items[0].storeId").value(other))
+                .andExpect(jsonPath("$.data.nextPageToken").value((Object) null));
+    }
+
 }

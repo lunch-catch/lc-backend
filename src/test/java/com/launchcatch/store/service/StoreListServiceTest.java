@@ -9,6 +9,8 @@ import static org.mockito.Mockito.when;
 import com.launchcatch.global.response.CursorPageResponse;
 import com.launchcatch.global.response.PageCursor;
 import com.launchcatch.global.response.PageTokens;
+import com.launchcatch.store.contract.StoreDiscountTargetType;
+import com.launchcatch.store.contract.StoreDiscountType;
 import com.launchcatch.store.dto.StoreCategoryFilter;
 import com.launchcatch.store.dto.StoreListItemResponse;
 import com.launchcatch.store.dto.StoreListRequest;
@@ -27,8 +29,10 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.NullAndEmptySource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.dao.DataAccessResourceFailureException;
 
 @ExtendWith(MockitoExtension.class)
 class StoreListServiceTest {
@@ -151,4 +155,57 @@ class StoreListServiceTest {
         return new StoreListRow(1L, "국수 가게", "KOREAN", BigDecimal.valueOf(127), BigDecimal.valueOf(37),
                 0, null, null, null, null, null, null, null, objectKey);
     }
+
+    @ParameterizedTest
+    @NullAndEmptySource
+    @ValueSource(strings = {" ", "\t"})
+    void 잘못된_이미지와_MENU_요약이_있어도_가게와_페이지_커서를_유지한다(String key) {
+        service = new StoreListService(repository, "", CLOCK);
+        when(repository.findPage(isNull(), eq(BigDecimal.valueOf(127)), eq(BigDecimal.valueOf(37)), eq(List.of()),
+                isNull(), eq(LocalDate.of(2026, 10, 15)), eq(3))).thenReturn(List.of(
+                        new StoreListRow(1L, "오류 가게", "KOREAN", BigDecimal.valueOf(127), BigDecimal.valueOf(37),
+                                0.1, 30L, StoreDiscountTargetType.MENU,
+                                StoreDiscountType.AMOUNT, 1000,
+                                null, null, null, key), row(2, 0.2), row(3, 0.3)));
+        var request = new StoreListRequest(null, BigDecimal.valueOf(127), BigDecimal.valueOf(37),
+                List.of(StoreCategoryFilter.ALL), 2, null);
+
+        var result = service.find(request);
+
+        assertThat(result.items()).extracting(StoreListItemResponse::storeId).containsExactly(1L, 2L);
+        assertThat(result.items().getFirst().storeImageUrl()).isNull();
+        assertThat(result.items().getFirst().hasActiveCampaign()).isFalse();
+        assertThat(result.items().getFirst().activeCampaign()).isNull();
+        assertThat(PageTokens.decode(result.nextPageToken())).isEqualTo(new PageCursor(2L, "0.2"));
+    }
+
+    @Test
+    void 목록_DB_장애는_빈_목록으로_바꾸지_않는다() {
+        var failure = new DataAccessResourceFailureException("DB unavailable");
+        when(repository.findPage(isNull(), eq(BigDecimal.valueOf(127)), eq(BigDecimal.valueOf(37)), eq(List.of()),
+                isNull(), eq(LocalDate.of(2026, 10, 15)), eq(21))).thenThrow(failure);
+        var request = new StoreListRequest(null, BigDecimal.valueOf(127), BigDecimal.valueOf(37),
+                List.of(StoreCategoryFilter.ALL), null, null);
+
+        assertThatThrownBy(() -> service.find(request)).isSameAs(failure);
+    }
+
+    @Test
+    void 이미지_키가_비어도_정상_MENU_할인은_유지한다() {
+        when(repository.findPage(isNull(), eq(BigDecimal.valueOf(127)), eq(BigDecimal.valueOf(37)), eq(List.of()),
+                isNull(), eq(LocalDate.of(2026, 10, 15)), eq(21))).thenReturn(List.of(
+                        new StoreListRow(1L, "식당", "KOREAN", BigDecimal.valueOf(127), BigDecimal.valueOf(37),
+                                0, 30L, StoreDiscountTargetType.MENU, StoreDiscountType.AMOUNT, 1000,
+                                20L, "국수", 9000L, " ")));
+        var request = new StoreListRequest(null, BigDecimal.valueOf(127), BigDecimal.valueOf(37),
+                List.of(StoreCategoryFilter.ALL), null, null);
+
+        var item = service.find(request).items().getFirst();
+
+        assertThat(item.storeImageUrl()).isNull();
+        assertThat(item.hasActiveCampaign()).isTrue();
+        assertThat(item.activeCampaign().targetMenu().menuId()).isEqualTo(20L);
+        assertThat(item.activeCampaign().targetMenu().price()).isEqualTo(9000L);
+    }
+
 }

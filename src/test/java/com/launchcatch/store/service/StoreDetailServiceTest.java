@@ -5,16 +5,22 @@ import static org.mockito.Mockito.*;
 
 import com.launchcatch.store.contract.OwnerStoreSnapshot.Image;
 import com.launchcatch.store.contract.OwnerStoreSnapshot.Menu;
-import com.launchcatch.store.repository.StoreDetailData;
+import com.launchcatch.store.contract.StoreDiscountTargetType;
+import com.launchcatch.store.contract.StoreDiscountType;
 import com.launchcatch.store.exception.StoreErrorCode;
 import com.launchcatch.store.exception.StoreException;
 import com.launchcatch.store.repository.OwnerStoreQueryRepository;
+import com.launchcatch.store.repository.StoreDetailData;
 import com.launchcatch.store.repository.StoreDetailRepository;
 import java.math.BigDecimal;
 import java.time.*;
 import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.NullAndEmptySource;
+import org.junit.jupiter.params.provider.ValueSource;
+import org.springframework.dao.DataAccessResourceFailureException;
 
 class StoreDetailServiceTest {
     private final StoreDetailRepository stores = mock(StoreDetailRepository.class);
@@ -48,8 +54,8 @@ class StoreDetailServiceTest {
     void UTC_자정_전에도_서울의_오늘_캠페인을_조회한다() {
         registered();
         var campaign = new StoreDetailData.Campaign(30L,
-                com.launchcatch.store.contract.StoreDiscountTargetType.ALL,
-                com.launchcatch.store.contract.StoreDiscountType.AMOUNT, 1000, null, null, null,
+                StoreDiscountTargetType.ALL,
+                StoreDiscountType.AMOUNT, 1000, null, null, null,
                 LocalTime.NOON, LocalTime.of(14, 0));
         when(stores.findActiveCampaign(10L, LocalDate.of(2026, 10, 20))).thenReturn(Optional.of(campaign));
         var result = service.find(10L).activeCampaign();
@@ -79,6 +85,86 @@ class StoreDetailServiceTest {
         var menu = service.find(10L).menus().getFirst();
         assertThat(menu.name()).isEqualTo("국수");
         assertThat(menu.image()).isNull();
+    }
+
+
+    @ParameterizedTest
+    @NullAndEmptySource
+    @ValueSource(strings = {" ", "\t"})
+    void 이미지_키가_비어도_가게와_메뉴와_정상_내부_이미지를_유지한다(String key) {
+        registered();
+        when(stores.findImages(10L, "LOGO")).thenReturn(List.of(new StoreDetailData.Image(key, null)));
+        when(stores.findImages(10L, "INTERIOR")).thenReturn(List.of(
+                new StoreDetailData.Image(key, 1), new StoreDetailData.Image("interior.png", 2)));
+        when(details.findMenus(10L)).thenReturn(List.of(new Menu(20L, "국수", 9000, null, 1,
+                new Image(key, null, null))));
+
+        var result = service.find(10L);
+
+        assertThat(result.storeId()).isEqualTo(10L);
+        assertThat(result.logoImage()).isNull();
+        assertThat(result.menus()).singleElement().satisfies(menu -> {
+            assertThat(menu.menuId()).isEqualTo(20L);
+            assertThat(menu.name()).isEqualTo("국수");
+            assertThat(menu.price()).isEqualTo(9000L);
+            assertThat(menu.image()).isNull();
+        });
+        assertThat(result.interiorImages()).singleElement().satisfies(image -> {
+            assertThat(image.sortOrder()).isEqualTo(2);
+            assertThat(image.url()).isEqualTo("https://cdn.example.com/interior.png");
+        });
+    }
+
+    @Test
+    void MENU_대상_메뉴가_없으면_캠페인만_제외하고_가게를_반환한다() {
+        registered();
+        when(stores.findActiveCampaign(10L, LocalDate.of(2026, 10, 20))).thenReturn(Optional.of(
+                new StoreDetailData.Campaign(30L, StoreDiscountTargetType.MENU,
+                        StoreDiscountType.AMOUNT, 1000, null, null, null,
+                        LocalTime.NOON, LocalTime.of(14, 0))));
+
+        var result = service.find(10L);
+
+        assertThat(result.storeId()).isEqualTo(10L);
+        assertThat(result.name()).isEqualTo("식당");
+        assertThat(result.logoImage().url()).isEqualTo("https://cdn.example.com/stores/logo.png");
+        assertThat(result.activeCampaign()).isNull();
+    }
+
+    @Test
+    void 이미지_데이터_오류가_있어도_정상_이미지의_CDN_설정_오류는_전파한다() {
+        registered();
+        when(stores.findImages(10L, "LOGO")).thenReturn(List.of(new StoreDetailData.Image(" ", null)));
+        when(stores.findImages(10L, "INTERIOR")).thenReturn(List.of(new StoreDetailData.Image("ok.png", 1)));
+        var withoutCdn = new StoreDetailService(stores, details, "", clock);
+
+        assertThatThrownBy(() -> withoutCdn.find(10L)).isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("cdn.base-url");
+    }
+
+    @Test
+    void 상세_DB_장애는_가게_없음으로_바꾸지_않는다() {
+        var failure = new DataAccessResourceFailureException("DB unavailable");
+        when(stores.findFinalized(10L)).thenThrow(failure);
+
+        assertThatThrownBy(() -> service.find(10L)).isSameAs(failure);
+    }
+
+    @Test
+    void 정상_MENU_캠페인은_이미지_누락과_관계없이_유지한다() {
+        registered();
+        when(stores.findImages(10L, "LOGO")).thenReturn(List.of(new StoreDetailData.Image(" ", null)));
+        when(stores.findActiveCampaign(10L, LocalDate.of(2026, 10, 20))).thenReturn(Optional.of(
+                new StoreDetailData.Campaign(30L, StoreDiscountTargetType.MENU, StoreDiscountType.AMOUNT,
+                        1000, 20L, "국수", 9000L, LocalTime.NOON, LocalTime.of(14, 0))));
+
+        var result = service.find(10L);
+
+        assertThat(result.logoImage()).isNull();
+        assertThat(result.activeCampaign().campaignId()).isEqualTo(30L);
+        assertThat(result.activeCampaign().targetMenu().menuId()).isEqualTo(20L);
+        assertThat(result.activeCampaign().targetMenu().name()).isEqualTo("국수");
+        assertThat(result.activeCampaign().targetMenu().price()).isEqualTo(9000L);
     }
 
 }

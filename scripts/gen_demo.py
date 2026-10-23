@@ -3,12 +3,12 @@
 import sys
 
 B = 20_000_000
-OWNERS = {  # n: (email, store name, category, category_kr, lat, lng)
+OWNERS = {  # n: (email, store name, category, category_kr, lat, lng). 11, 14 강남역, 12, 15 역삼역, 13 선릉역 (#858)
     11: ('demo-owner@lunchcatch.com', '런치캐치 시연 한식당', 'KOREAN', '한식', 37.4989, 127.0286),
-    12: ('demo-owner-new@lunchcatch.com', '런치캐치 시연 분식', 'BUNSIK', '분식', 37.4969, 127.0266),
-    13: ('demo-owner-scheduled@lunchcatch.com', '런치캐치 시연 스시', 'JAPANESE', '일식', 37.4999, 127.0296),
+    12: ('demo-owner-new@lunchcatch.com', '런치캐치 시연 분식', 'BUNSIK', '분식', 37.5010, 127.0370),
+    13: ('demo-owner-scheduled@lunchcatch.com', '런치캐치 시연 스시', 'JAPANESE', '일식', 37.5050, 127.0495),
     14: ('demo-owner-soldout@lunchcatch.com', '런치캐치 시연 버거', 'FAST_FOOD', '패스트푸드', 37.4959, 127.0256),
-    15: ('demo-owner-nopoints@lunchcatch.com', '런치캐치 시연 카페', 'CAFE_DESSERT', '카페디저트', 37.5009, 127.0306),
+    15: ('demo-owner-nopoints@lunchcatch.com', '런치캐치 시연 카페', 'CAFE_DESSERT', '카페디저트', 37.5000, 127.0355),
 }
 MENUS = {
     11: [('제육 정식', 10000), ('된장찌개 정식', 9000), ('비빔밥', 9500)],
@@ -22,13 +22,13 @@ DEMO_MEMBERS = 10  # B + 201 ~ 210
 
 # 캠페인: id, 가게, 상태, 할인, 수량, 하루 예산, 시작(D 기준 일수), 끝, 사용 시간
 CAMPAIGNS = [
-    dict(id=101, s=11, status='ACTIVE', disc=3000, qty=50, budget=20000, start=-14, end=14),
+    dict(id=101, s=11, status='ACTIVE', disc=3000, qty=50, budget=20000, start=-14, end=28),
     dict(id=111, s=11, status='ENDED', disc=2000, qty=50, budget=20000, start=-60, end=-54),
     dict(id=112, s=11, status='ENDED', disc=2500, qty=50, budget=20000, start=-45, end=-39),
     dict(id=113, s=11, status='ENDED', disc=3000, qty=50, budget=20000, start=-30, end=-24),
     dict(id=301, s=13, status='SCHEDULED', disc=3000, qty=50, budget=10000, start=0, end=14),
-    dict(id=401, s=14, status='ACTIVE', disc=3000, qty=3, budget=20000, start=-7, end=7),
-    dict(id=501, s=15, status='PAUSED', disc=3000, qty=50, budget=10000, start=-10, end=10),
+    dict(id=401, s=14, status='ACTIVE', disc=3000, qty=3, budget=20000, start=-7, end=28),
+    dict(id=501, s=15, status='PAUSED', disc=3000, qty=50, budget=10000, start=-10, end=28),
 ]
 USABLE = ('11:30:00', '15:00:00')
 PAYMENTS = {11: [-80, -60, -40, -20, -5], 12: [-10], 13: [-10], 14: [-10], 15: [-11]}
@@ -133,7 +133,6 @@ DELETE FROM wishlist
 WHERE campaign_id IN (SELECT campaign_id FROM demo_campaign) OR member_id IN (SELECT member_id FROM demo_member);
 DELETE FROM serve_log WHERE serve_id IN (SELECT serve_id FROM demo_serve);
 DELETE FROM ad_candidate WHERE campaign_id IN (SELECT campaign_id FROM demo_campaign);
-DELETE FROM budget_hourly_target WHERE budget_daily_plan_id IN (SELECT budget_daily_plan_id FROM demo_plan);
 DELETE FROM budget_daily_plan WHERE budget_daily_plan_id IN (SELECT budget_daily_plan_id FROM demo_plan);
 DELETE FROM feed_filter_category WHERE member_id IN (SELECT member_id FROM demo_member);
 DELETE FROM feed_filter WHERE member_id IN (SELECT member_id FROM demo_member);
@@ -235,7 +234,7 @@ rows('member_profile', ['member_profile_id', 'member_id', 'gender', 'age_group',
        f'{37.4979 + m * 0.0002:.7f}', f'{127.0276 + m * 0.0002:.7f}', ts(-70, '09:05:00'), ts(-70, '09:05:00'),
        ts(-70, '09:05:00')] for m in range(1, DEMO_MEMBERS + 1)])
 
-w('\n-- 3. 가게 (강남역 1 km 안, 확정, 로고와 매장 사진 3, 메뉴 3 과 사진, 월 ~ 토 브레이크 있음, 일요일 휴무)\n')
+w('\n-- 3. 가게 (강남역, 역삼역, 선릉역 500 m 안, 확정, 로고와 매장 사진 3, 메뉴 3 과 사진, 월 ~ 토 브레이크 있음, 일요일 휴무)\n')
 rows('store', ['store_id', 'owner_id', 'name', 'category_code', 'representative_name', 'phone', 'road_address', 'latitude',
                'longitude', 'kakao_place_id', 'business_registration_number', 'business_verification_status',
                'business_verified_at', 'finalized', 'finalized_at', 'created_at', 'updated_at'],
@@ -281,35 +280,13 @@ rows('store_menu_image', ['store_menu_image_id', 'store_menu_id', 'upload_id', '
 
 w('''
 /*
- * 4. 대비용 템플릿 "시연 기본형".
- * 0막에서 템플릿 생성이 늦거나 실패하면 쓴다.
- * HTML 은 기본 세계 템플릿 1 의 것을 쓰고, 기본 세계가 없으면 같은 모양의 기본 HTML 을 쓴다.
+ * 4. 템플릿은 넣지 않는다.
+ * 템플릿과 포스터는 R__templates_posters.sql 이 넣는다 (#858). 시연 포스터는 게시되고 활성인 첫 템플릿으로 만든다.
  */
-INSERT INTO template (template_id, name, status, html_content, active, published_at, published_version_number,
-                      activated_by, activated_at, last_modified_by, last_modified_at, created_at, updated_at)
-SELECT 20000001, '시연 기본형', 'PUBLISHED',
-       COALESCE((SELECT html_content FROM template WHERE template_id = 10000001),
-                '<div class="poster" style="background-color:#F3E8FF;color:#000000"><h1 data-slot="eventName">이벤트명</h1><p data-slot="discount">할인 내용</p><p data-slot="period">기간</p><img data-slot="image" alt="메뉴 이미지"></div>'),
-       1, TIMESTAMP(DATE_SUB(@d, INTERVAL 3 DAY), '10:00:00'), 1,
-       20000002, TIMESTAMP(DATE_SUB(@d, INTERVAL 3 DAY), '10:05:00'), 20000002, TIMESTAMP(DATE_SUB(@d, INTERVAL 3 DAY), '09:50:00'),
-       TIMESTAMP(DATE_SUB(@d, INTERVAL 3 DAY), '09:30:00'), TIMESTAMP(DATE_SUB(@d, INTERVAL 3 DAY), '10:05:00')
-FROM DUAL
-ON DUPLICATE KEY UPDATE status = 'PUBLISHED', active = 1;
-
-INSERT INTO template_version (template_version_id, template_id, version_number, request_prompt, request_id,
-                              html_content, message, created_at, updated_at, deleted_at)
-SELECT 20000001, 20000001, 1, '따뜻한 색감의 점심 할인 포스터', 'demo-tpl-1', t.html_content,
-       '요청하신 분위기로 템플릿을 만들었어요.', TIMESTAMP(DATE_SUB(@d, INTERVAL 3 DAY), '09:40:00'),
-       TIMESTAMP(DATE_SUB(@d, INTERVAL 3 DAY), '09:40:00'), NULL
-FROM template t
-WHERE t.template_id = 20000001
-ON DUPLICATE KEY UPDATE template_version_id = template_version_id;
-
-UPDATE template_quota SET current_count = (SELECT COUNT(*) FROM template);
 ''')
 
 w('\n-- 5. 캠페인 (사용 시간은 모두 11:30 ~ 15:00, 대상 전 메뉴와 전 연령, 반경 1000)\n')
-camp_rows, logs, posters, moderations = [], [], [], []
+camp_rows, logs, posters = [], [], []
 for c in CAMPAIGNS:
     cid = B + c['id']
     created = c['start'] - 3
@@ -349,25 +326,28 @@ for c in CAMPAIGNS:
             f"'alt=\"메뉴 이미지\">', CONCAT('alt=\"메뉴 이미지\" src=\"', {img}, "
             f"'\" style=\"width:100%;height:100%;min-height:0;object-fit:cover\">'))")
     posters.append((cid, name, slot, html, ts(created, '10:30:00')))
-    moderations.append([str(cid), str(cid), "'PASS'", 'NULL', ts(created, '10:40:00'), ts(created, '10:40:00')])
 rows('campaign', ['campaign_id', 'owner_id', 'store_id', 'status', 'status_changed_at', 'paused_reason', 'discount_target_type',
                   'discount_type', 'discount_value', 'target_menu_id', 'issue_quantity', 'usable_start_time', 'usable_end_time',
                   'min_order_amount', 'notice', 'target_radius', 'target_gender', 'target_age_groups', 'daily_budget',
                   'pending_daily_budget', 'start_date', 'end_date', 'created_at', 'updated_at'], camp_rows)
 rows('campaign_status_log', ['campaign_status_log_id', 'campaign_id', 'from_status', 'to_status', 'actor_type', 'reason',
                              'created_at', 'updated_at'], logs)
-w('\n/*\n * 포스터는 대비용 템플릿으로 만들고 검수를 통과했다.\n * 사진은 demo/campaigns/<캠페인>/poster.jpg 다.\n */\n')
+w('\n/*\n * 포스터는 게시되고 활성인 첫 템플릿으로 만들고 검수를 통과했다.\n * 템플릿이 아직 없으면(빈 DB 에서 R__templates_posters 보다 먼저 돌 때) 넣지 않는다. 그 파일이 뒤이어 만든다.\n * 사진은 demo/campaigns/<캠페인>/poster.jpg 다.\n */\n')
 for cid, name, slot, html, at in posters:
     w(f'''INSERT INTO poster (poster_id, campaign_id, template_id, title, slot_values, html_content, created_at, updated_at,
                     image_object_key)
-SELECT {cid}, {cid}, 20000001, {q(name + ' - 시연 기본형')}, {slot},
+SELECT {cid}, {cid}, t.template_id, LEFT(CONCAT({q(name)}, ' - ', t.name), 100), {slot},
        {html},
        {at}, {at}, 'demo/campaigns/{cid}/poster.jpg'
 FROM template t
-WHERE t.template_id = 20000001;
+JOIN (SELECT MIN(template_id) AS template_id FROM template WHERE status = 'PUBLISHED' AND active = 1) f
+  ON f.template_id = t.template_id;
 ''')
-rows('poster_moderation_result', ['poster_moderation_result_id', 'poster_id', 'result', 'reason', 'created_at', 'updated_at'],
-     moderations)
+w('''INSERT INTO poster_moderation_result (poster_moderation_result_id, poster_id, result, reason, created_at, updated_at)
+SELECT p.poster_id, p.poster_id, 'PASS', NULL, p.created_at + INTERVAL 10 MINUTE, p.created_at + INTERVAL 10 MINUTE
+FROM poster p
+WHERE p.campaign_id IN (''' + ', '.join(str(B + c['id']) for c in CAMPAIGNS) + ''');
+''')
 
 w('\n-- 6. 정산 (포인트 계정, 승인 결제와 충전, 날마다 예약과 해제, 오늘 예약)\n')
 rows('point_account', ['point_account_id', 'owner_id', 'created_at', 'updated_at'],
@@ -386,7 +366,7 @@ rows('payment', ['payment_id', 'owner_id', 'order_id', 'pg_tid', 'amount', 'stat
                  'approved_at', 'canceled_at', 'created_at', 'updated_at'], pays)
 LEDGER_COLS = ['point_ledger_id', 'owner_id', 'campaign_id', 'serve_id', 'payment_id', 'refund_request_id', 'business_date',
                'adjust_target_date', 'entry_type', 'source', 'amount', 'reason', 'idempotency_key', 'created_at', 'updated_at']
-plans, hourly, ledger = [], [], list(charges)
+plans, ledger = [], list(charges)
 for c in CAMPAIGNS:
     cid = B + c['id']
     owner = B + c['s']
@@ -406,15 +386,8 @@ for c in CAMPAIGNS:
         if k < 0 and budget > 0:
             ledger.append([str(pid + 500000), str(owner), str(cid), 'NULL', 'NULL', 'NULL', d(k), 'NULL', "'RELEASE'",
                            "'REALTIME'", str(budget - spend(c, k)), 'NULL', 'NULL', ts(k + 1, '00:00:14'), ts(k + 1, '00:00:14')])
-        if k == 0 and budget > 0:
-            per = budget // 24
-            for h in range(24):
-                hourly.append([str(B + 300000 + c['id'] * 100 + h), str(pid),
-                               str(h), str(per + (budget - per * 24 if h == 23 else 0)), ts(0, '00:00:21'), ts(0, '00:00:21')])
 rows('budget_daily_plan', ['budget_daily_plan_id', 'campaign_id', 'owner_id', 'business_date', 'daily_budget', 'unit_price',
                            'paused', 'created_at', 'updated_at', 'status_changed_at'], plans)
-rows('budget_hourly_target', ['budget_hourly_target_id', 'budget_daily_plan_id', 'hour', 'target_amount', 'created_at',
-                              'updated_at'], hourly)
 rows('point_ledger', LEDGER_COLS, ledger)
 
 w('\n/*\n * 7. 오늘 서빙과 쿠폰 (후보, 쿠폰 회차와 재고, 가게 캠페인 요약).\n * 지난 날 회차는 진행 중 캠페인의 발급과 사용 내역이다.\n */\n')

@@ -78,8 +78,10 @@ class DemoLayerIntegrationTest extends IntegrationTestSupport {
                 .isEqualTo(5);
         assertThat(count("SELECT COUNT(*) FROM store_menu WHERE store_id = ?", OWNER)).isEqualTo(3);
         assertThat(count("SELECT COUNT(*) FROM store_image WHERE store_id = ?", OWNER)).isEqualTo(4);
-        assertThat(count("SELECT COUNT(*) FROM template WHERE name = '시연 기본형' AND status = 'PUBLISHED' AND active = 1"))
-                .isEqualTo(1);
+        // 시연 캠페인 7개 모두 게시된 템플릿으로 만든 포스터와 검수 통과 결과가 있다 (R__templates_posters, #858)
+        assertThat(count("SELECT COUNT(*) FROM poster p JOIN poster_moderation_result r ON r.poster_id = p.poster_id "
+                + "JOIN template t ON t.template_id = p.template_id WHERE p.campaign_id BETWEEN 20000101 AND 20000999 "
+                + "AND r.result = 'PASS' AND t.status = 'PUBLISHED'")).isEqualTo(7);
 
         // demo-owner: 진행 중 1, 끝난 3, 오늘 예약이 있고 잔액이 남는다
         assertThat(count("SELECT COUNT(*) FROM campaign WHERE owner_id = ? AND status = 'ACTIVE'", OWNER)).isEqualTo(1);

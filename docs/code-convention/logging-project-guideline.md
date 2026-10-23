@@ -176,8 +176,7 @@
 
 | 규칙 | 위치 | 지금 | 고칠 모양 |
 |---|---|---|---|
-| `LOG-6-05` | `OwnerLoginService`, `OwnerTokenRefreshService` | `stack=Arrays.toString(e.getStackTrace())` 로 스택을 문자열로 넣는다 | 예외를 마지막 인자로 넘기거나(`LOG-6-02` 에 따라 끝내는 곳일 때) `exceptionType` 만 남긴다 |
-| `LOG-2-03` | `CampaignPauseResumeService`(2곳), `MemberProfileService`, `OwnerTokenRefreshService` | `event={}` 로 이벤트명을 인자로 넘긴다 | 리터럴로 쓴다 |
+| `LOG-2-03` | `CampaignPauseResumeService`(2곳), `MemberProfileService` | `event={}` 로 이벤트명을 인자로 넘긴다 | 리터럴로 쓴다 |
 | `LOG-2-02`, `LOG-2-04` | `ops` 패키지(`LoggingBatchAlert`, `BatchJobRunner`, `BatchExecutionService`, `BatchExecutionRetryService`, `DailyJobScheduler`, `BatchServerId`, `ThreadSleepRetryBackoff`) | 이벤트명이 없는 한국어 문장이고 키가 한글이다(`이전소유자`, `사유`, `상태`, `시도`, `단계`, `멈춘단계`) | `event=BATCH_*` 와 영문 키로 쓴다. 배치 이어받기와 실패는 우선 고친다 |
 | `LOG-2-02` | `GlobalExceptionHandler`, `AuthExceptionHandler`, `PosterImageInspector`, `FunnelEventRecorder`, `BudgetQueryServiceImpl`, `PointDeductorImpl` | 이벤트명이 없다 | 이벤트명을 붙인다 |
 | `LOG-6-04`, `LOG-5-02` | `GlobalExceptionHandler` | 업무 예외를 WARN 이나 ERROR 로 남겨 업무 코드의 로그와 겹친다. 4xx 를 WARN 으로 남긴다 | 업무 예외는 DEBUG 로 남긴다. 처리되지 않은 예외만 스택과 함께 ERROR 로 남긴다 |
@@ -202,12 +201,12 @@
 
 | 규칙 | 위치 | 지금 | 고칠 모양 |
 |---|---|---|---|
-| `LOG-2-01`, `LOG-2-08` | `adserving`(`FeedRateLimitRepository`, `ServeFrequencyRepository`, `ServeRecordRepository`, `ImpressionCountRepository`, `ExclusionRepository`, `FeedService`, `ServeLogBuffer`), `AuthRateLimitFilter`, `AccessTokenCutoffVerifier`, `CampaignActivationRateLimiter`, `TemplateGenerationRateLimiter`, `OwnerStatusService`, `OwnerStatusCacheInvalidationService`, `OwnerLoginService` | 메시지 끝에 폴백 동작을 문장으로 붙인다(`통과시킨다`, `DB에서 점주 상태를 조회합니다.`) | `fallback=` 키로 바꾼다 |
+| `LOG-2-01`, `LOG-2-08` | `adserving`(`FeedRateLimitRepository`, `ServeFrequencyRepository`, `ServeRecordRepository`, `ImpressionCountRepository`, `ExclusionRepository`, `FeedService`, `ServeLogBuffer`), `AuthRateLimitFilter`, `AccessTokenCutoffVerifier`, `CampaignActivationRateLimiter`, `TemplateGenerationRateLimiter` | 메시지 끝에 폴백 동작을 문장으로 붙인다(`통과시킨다`) | `fallback=` 키로 바꾼다 |
 | `LOG-2-05` | `BudgetQueryServiceImpl`, `PointDeductorImpl`(2곳), `GlobalExceptionHandler` | 쌍을 쉼표로 나눈다 | 공백으로 나눈다 |
 | `LOG-2-07` | `PAYMENT_WEBHOOK_IGNORED` (6곳) | `reason=malformed` 처럼 소문자다 | `UPPER_SNAKE` 로 쓴다 |
 | `LOG-2-09` | `DailyAggregationJob` | `DAILY_AGGREGATION_DONE outcomes={}` 에 `Map` 을 통째로 넣는다 | 결과별 개수를 키로 남긴다 |
-| `LOG-3-03` | `DAILY_AGGREGATION_ERROR`, `PG_RECON_ERROR`, `PAYMENT_RECHECK_ERROR`, `KAKAO_UNLINK_RETRY_MARK_FAILED_ERROR`, `OWNER_REFRESH_REUSE_DETECTED`, `SCHEDULER_END`, `SETTLEMENT_CONSISTENCY_VIOLATION`, `PAYMENT_WEBHOOK_IGNORED` | 동의어 접미사를 쓴다 | `_FAILED`, `_SUSPECTED`, `_DONE`, `_MISMATCH`, `_SKIPPED` 로 바꾼다. `DAILY_AGGREGATION_ERROR` 와 `DAILY_AGGREGATION_FAILED` 는 `reason` 으로 나눈다 |
-| `LOG-3-01` | `CANDIDATE_LOADED`, `SPEND_RECON_*`, `RESERVE_*`, `FUNDING_JUDGE_*`, `PG_RECON_*`, `HOURLY_TARGET_DONE`, `RATE_LIMIT_*` 등 | 도메인 접두사가 없다 | 도메인 이름을 앞에 붙인다 |
+| `LOG-3-03` | `DAILY_AGGREGATION_ERROR`, `PG_RECON_ERROR`, `PAYMENT_RECHECK_ERROR`, `KAKAO_UNLINK_RETRY_MARK_FAILED_ERROR`, `SCHEDULER_END`, `SETTLEMENT_CONSISTENCY_VIOLATION`, `PAYMENT_WEBHOOK_IGNORED` | 동의어 접미사를 쓴다 | `_FAILED`, `_SUSPECTED`, `_DONE`, `_MISMATCH`, `_SKIPPED` 로 바꾼다. `DAILY_AGGREGATION_ERROR` 와 `DAILY_AGGREGATION_FAILED` 는 `reason` 으로 나눈다 |
+| `LOG-3-01` | `CANDIDATE_LOADED`, `SPEND_RECON_*`, `RESERVE_*`, `FUNDING_JUDGE_*`, `PG_RECON_*`, `RATE_LIMIT_*` 등 | 도메인 접두사가 없다 | 도메인 이름을 앞에 붙인다 |
 | `LOG-4-01`, `LOG-4-03` | `reason` 에 `getErrorCode().getCode()` 를 넣는 곳(`member/service` 등 약 14곳), `code=` 를 쓰는 곳(`campaign`, `coupon`, 예외 핸들러) | 에러 코드가 `reason` 과 `code` 에 흩어져 있다 | 우리 에러 코드는 `errorCode`, 토스의 코드는 `externalErrorCode` 로 쓴다 |
 | `LOG-4-01` | `causeType`, `errorType`, `err`, `cause`(예외 클래스일 때) | 예외 클래스의 키가 여럿이다 | `exceptionType` 으로 쓴다. `RedisFailureClassifier` 의 라벨을 담은 `cause` 는 `reason` 으로 쓴다 |
 | `LOG-4-04` | `FailureLogDetails` 를 `details=`, `cause=` 에 넣는 곳 | 객체를 통째로 넣는다 | `exceptionType`, `httpStatus`, `sqlState`, `sqlErrorCode`, `origin` 키로 펼친다 |

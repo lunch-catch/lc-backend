@@ -173,6 +173,46 @@ class CampaignStatusServiceTest {
     }
 
     @Test
+    @DisplayName("ACTIVE 캠페인의 예약된 하루 예산을 dailyBudget 에 옮기고 예약 값을 비운다(#840)")
+    void ACTIVE_캠페인의_예약된_하루_예산을_적용한다() {
+        Campaign campaign = activeCampaign();
+        campaign.reserveDailyBudget(20_000L);
+        when(campaignRepository.findByIdForUpdate(CAMPAIGN_ID)).thenReturn(Optional.of(campaign));
+
+        assertThat(service.applyPendingDailyBudget(CAMPAIGN_ID)).isTrue();
+
+        assertThat(campaign.getDailyBudget()).isEqualTo(20_000L);
+        assertThat(campaign.getPendingDailyBudget()).isNull();
+    }
+
+    @Test
+    @DisplayName("PAUSED 캠페인은 예약된 하루 예산을 적용하지 않고 예약 값을 남긴다(#840)")
+    void PAUSED_캠페인은_예약된_하루_예산을_적용하지_않는다() {
+        Campaign campaign = activeCampaign();
+        campaign.reserveDailyBudget(20_000L);
+        campaign.pause(PauseReason.OWNER, LocalDateTime.now(FIXED_CLOCK));
+        Long dailyBudgetBefore = campaign.getDailyBudget();
+        when(campaignRepository.findByIdForUpdate(CAMPAIGN_ID)).thenReturn(Optional.of(campaign));
+
+        assertThat(service.applyPendingDailyBudget(CAMPAIGN_ID)).isFalse();
+
+        assertThat(campaign.getDailyBudget()).isEqualTo(dailyBudgetBefore);
+        assertThat(campaign.getPendingDailyBudget()).isEqualTo(20_000L);
+    }
+
+    @Test
+    @DisplayName("예약 값이 없으면 아무것도 하지 않아 같은 영업일에 다시 불러도 결과가 같다(#840)")
+    void 예약_값이_없으면_아무것도_하지_않는다() {
+        Campaign campaign = activeCampaign();
+        Long dailyBudgetBefore = campaign.getDailyBudget();
+        when(campaignRepository.findByIdForUpdate(CAMPAIGN_ID)).thenReturn(Optional.of(campaign));
+
+        assertThat(service.applyPendingDailyBudget(CAMPAIGN_ID)).isFalse();
+
+        assertThat(campaign.getDailyBudget()).isEqualTo(dailyBudgetBefore);
+    }
+
+    @Test
     @DisplayName("영업일을 받는 activate 는 ACTIVE 로 바꾸고 가게 요약도 갱신한다(#569)")
     void 영업일을_받는_activate_는_가게_요약도_갱신한다() {
         Campaign campaign = scheduledCampaign();
