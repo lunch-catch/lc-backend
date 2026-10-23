@@ -95,7 +95,7 @@ public class TemplateGenerationRateLimiter {
             Boolean firstAttempt = redisTemplate.opsForValue().setIfAbsent(key, "1", IN_FLIGHT_TTL);
             return !Boolean.FALSE.equals(firstAttempt);
         } catch (DataAccessException e) {
-            log.warn("event=TEMPLATE_GENERATION_IN_FLIGHT_CHECK_FAILED requestId={} cause={} 처음_시도로_간주해_센다",
+            log.warn("event=TEMPLATE_GENERATION_IN_FLIGHT_CHECK_FAILED requestId={} reason={} fallback=COUNT_AS_FIRST_ATTEMPT",
                     requestId, RedisFailureClassifier.causeLabel(e), e);
             return true;
         }
@@ -105,7 +105,7 @@ public class TemplateGenerationRateLimiter {
         try {
             redisTemplate.delete(IN_FLIGHT_KEY_PREFIX + requestId);
         } catch (DataAccessException e) {
-            log.warn("event=TEMPLATE_GENERATION_IN_FLIGHT_CLEAR_FAILED requestId={} cause={} TTL_만료까지_남는다",
+            log.warn("event=TEMPLATE_GENERATION_IN_FLIGHT_CLEAR_FAILED requestId={} reason={} fallback=WAIT_FOR_TTL",
                     requestId, RedisFailureClassifier.causeLabel(e), e);
         }
     }
@@ -116,7 +116,7 @@ public class TemplateGenerationRateLimiter {
             Long count = redisTemplate.execute(RATE_LIMIT_SCRIPT, List.of(key), String.valueOf(WINDOW.toMillis()));
             return count != null && count > LIMIT;
         } catch (DataAccessException e) {
-            log.warn("event=TEMPLATE_GENERATION_RATE_LIMIT_CHECK_FAILED adminId={} cause={} 통과시킨다",
+            log.warn("event=TEMPLATE_GENERATION_RATE_LIMIT_CHECK_FAILED adminId={} reason={} fallback=PASS",
                     adminId, RedisFailureClassifier.causeLabel(e), e);
             return false;
         }
