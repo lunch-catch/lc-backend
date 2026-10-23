@@ -30,7 +30,7 @@ public class ThreadSleepRetryBackoff implements RetryBackoff {
     @Override
     public boolean pause(int attempt) {
         Duration wait = waits.get(Math.min(attempt, waits.size()) - 1);
-        log.info("event=BATCH_JOB_RETRY_WAITING waitSeconds={} attempt={}", wait.toSeconds(), attempt);
+        log.info("event=BATCH_JOB_RETRY_WAITING waitSeconds={} retryAttempt={}", wait.toSeconds(), attempt);
         try {
             Thread.sleep(wait.toMillis());
             return true;
