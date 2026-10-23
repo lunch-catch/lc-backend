@@ -21,6 +21,7 @@ import java.time.Clock;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -47,6 +48,7 @@ import org.springframework.transaction.annotation.Transactional;
  * RESUME 판정이 PAUSED(ADMIN/OWNER)나 ENDED에 오면 정산이 모르는 이유로 멈춘 캠페인을
  * 되돌리면 안 된다.
  */
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class CampaignStatusService {
@@ -102,13 +104,25 @@ public class CampaignStatusService {
     /*
      * 00:00 배치(#569)가 집행 시작일이 된 캠페인을 켤 때 쓴다. 상태 변경과 로그에 더해 가게 요약을 ACTIVE 로 갱신한다.
      * 이미 ACTIVE 면 아무것도 하지 않아 같은 영업일에 두 번 불려도 결과가 같다(멱등).
+     *
+     * 배치가 시작 대상 목록을 읽은 뒤 잠금 없이 반복하므로, 그 사이 점주의 취소(#597)가 먼저 잠금을 잡으면 SCHEDULED 가
+     * 아닌 캠페인을 만난다. 행 잠금을 잡은 뒤 상태가 SCHEDULED 도 ACTIVE 도 아니면 예외 없이 건너뛴다. 예외를 던지면 시작
+     * 단계가 실패해 정산이 멈춘다. 한 건 호출 activate(Long)은 이렇게 건너뛰지 않고 SCHEDULED 가 아니면 거부한다.
      */
     @Transactional
     public void activate(Long campaignId, LocalDate businessDate) {
-        Campaign campaign = activateCampaign(campaignId);
-        if (campaign != null) {
-            updateStoreSummary(campaign, businessDate);
+        Campaign campaign = findOrThrow(campaignId);
+        CampaignStatus status = campaign.getStatus();
+        if (status == CampaignStatus.ACTIVE) {
+            return;
         }
+        if (status != CampaignStatus.SCHEDULED) {
+            log.info("event=CAMPAIGN_DAILY_START_SKIPPED reason=NOT_SCHEDULED campaignId={} status={} businessDate={}",
+                    campaignId, status, businessDate);
+            return;
+        }
+        transitionToActive(campaignId, campaign);
+        updateStoreSummary(campaign, businessDate);
     }
 
     // 이미 ACTIVE 라 바꿀 것이 없으면 null 을 돌려준다.
@@ -117,10 +131,14 @@ public class CampaignStatusService {
         if (campaign.getStatus() == CampaignStatus.ACTIVE) {
             return null;
         }
+        transitionToActive(campaignId, campaign);
+        return campaign;
+    }
+
+    private void transitionToActive(Long campaignId, Campaign campaign) {
         CampaignStatus from = campaign.getStatus();
         campaign.activate(LocalDateTime.now(clock));
         log(campaignId, from, campaign.getStatus(), ActorType.SYSTEM, null);
-        return campaign;
     }
 
     /*
