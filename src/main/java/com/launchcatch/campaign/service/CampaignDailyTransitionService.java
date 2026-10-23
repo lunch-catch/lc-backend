@@ -66,6 +66,29 @@ public class CampaignDailyTransitionService {
         return campaigns.size();
     }
 
+    /*
+     * 하루 예산 변경 예약(pendingDailyBudget)이 있는 ACTIVE 캠페인에 그 값을 적용한다(#840). 캠페인마다 자기 트랜잭션과
+     * 행 잠금 아래에서 적용하고, 하나가 실패해도 나머지를 처리한 뒤 단계를 실패시킨다. 적용한 개수를 돌려준다.
+     */
+    public int applyPendingDailyBudgets(LocalDate businessDate) {
+        List<Long> campaignIds = campaignRepository.findIdsWithPendingDailyBudget();
+        List<Long> failed = new ArrayList<>();
+        int applied = 0;
+        for (Long campaignId : campaignIds) {
+            try {
+                if (campaignStatusService.applyPendingDailyBudget(campaignId)) {
+                    applied++;
+                }
+            } catch (RuntimeException e) {
+                failed.add(campaignId);
+                log.error("event=CAMPAIGN_DAILY_BUDGET_APPLY_FAILED campaignId={} businessDate={}",
+                        campaignId, businessDate, e);
+            }
+        }
+        failIfAny("APPLY_PENDING_BUDGET", failed, businessDate);
+        return applied;
+    }
+
     private void failIfAny(String step, List<Long> failed, LocalDate businessDate) {
         if (!failed.isEmpty()) {
             throw new IllegalStateException("campaign daily transition failed: step=" + step

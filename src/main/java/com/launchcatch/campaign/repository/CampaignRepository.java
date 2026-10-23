@@ -103,6 +103,15 @@ public interface CampaignRepository extends JpaRepository<Campaign, Long> {
             """)
     List<Long> findOtherActiveIdsByStoreId(@Param("storeId") Long storeId, @Param("campaignId") Long campaignId);
 
+    // 00:00 배치(#840)가 하루 예산 변경을 적용할 ACTIVE 캠페인의 id 다. 적용은 캠페인마다 행 잠금 아래에서 다시 확인한다.
+    @Query("""
+            select c.id from Campaign c
+            where c.status = com.launchcatch.campaign.contract.CampaignStatus.ACTIVE
+            and c.pendingDailyBudget is not null
+            order by c.id
+            """)
+    List<Long> findIdsWithPendingDailyBudget();
+
     /*
      * 상태 전이 때 행 잠금을 걸고 조회한다(SELECT ... FOR UPDATE). 같은 캠페인에 동시에
      * 들어오는 전이 요청(관리자 중단과 정산의 포인트 부족 판정 등)이 서로 끼어들지 못하게
