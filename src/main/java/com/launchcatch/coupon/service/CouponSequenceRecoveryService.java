@@ -1,6 +1,7 @@
 package com.launchcatch.coupon.service;
 
 import com.launchcatch.coupon.entity.CouponEvent;
+import com.launchcatch.coupon.entity.CouponEventStatus;
 import com.launchcatch.coupon.entity.CouponInventoryStatus;
 import com.launchcatch.coupon.repository.CouponEventRepository;
 import com.launchcatch.coupon.repository.CouponInventoryRepository;
@@ -84,20 +85,15 @@ public class CouponSequenceRecoveryService {
             transaction.setTimeout((int) Math.max(1, TimeUnit.NANOSECONDS.toSeconds(remaining - 1) + 1));
             boolean rebuilt = Boolean.TRUE.equals(transaction.execute(status -> {
                 CouponEvent event = events.findForRecovery(eventId).orElseThrow();
-                long expiresAt = event.getBusinessDate().atTime(issueEndTime).atZone(ClockConfig.ZONE)
-                        .toInstant().plus(retentionGrace).toEpochMilli();
+                long expiresAt = expiresAt(event);
                 if (clock.millis() >= expiresAt || deadlineNanos - System.nanoTime() <= 0) {
                     return false;
                 }
-                List<Integer> available = inventories.findAvailableSequences(eventId);
-                long completed = inventories.countByCouponEventIdAndStatus(eventId, CouponInventoryStatus.ISSUED);
-                if (available.size() + completed != event.getIssueQuantity()) {
-                    throw new IllegalStateException("Coupon inventory count differs from event quantity");
-                }
+                InventorySnapshot inventory = readInventory(eventId, event);
                 if (deadlineNanos - System.nanoTime() <= 0) {
                     throw new IllegalStateException("Coupon recovery deadline expired");
                 }
-                sequences.rebuild(eventId, available, completed, expiresAt);
+                sequences.rebuild(eventId, inventory.available(), inventory.completed(), expiresAt);
                 return true;
             }));
             if (!rebuilt) {
@@ -119,4 +115,42 @@ public class CouponSequenceRecoveryService {
             recovering.remove(eventId);
         }
     }
+
+    /*
+     * 발급 오픈 전 배치가 호출자의 트랜잭션 안에서 회차를 배타 잠금하고 Redis 큐를 DB 기준으로 미리 만든다.
+     * ACTIVE와 PAUSED 회차만 만들며 큐가 이미 READY나 SOLD_OUT이면 진행 중인 발급을 지우지 않도록 그대로 둔다.
+     * 차단은 걸지 않으므로 실패해도 그 회차는 첫 발급 요청의 복구가 다시 만든다.
+     */
+    public boolean prepare(long eventId) {
+        CouponEvent event = events.findForRecovery(eventId).orElseThrow();
+        if (event.getStatus() != CouponEventStatus.ACTIVE && event.getStatus() != CouponEventStatus.PAUSED) {
+            return false;
+        }
+        long expiresAt = expiresAt(event);
+        if (clock.millis() >= expiresAt || sequences.availability(eventId) >= 0) {
+            return false;
+        }
+        InventorySnapshot inventory = readInventory(eventId, event);
+        sequences.rebuild(eventId, inventory.available(), inventory.completed(), expiresAt);
+        return true;
+    }
+
+    // 큐의 키는 영업일의 발급 종료 시각에서 보존 여유만큼 지난 뒤 만료된다.
+    private long expiresAt(CouponEvent event) {
+        return event.getBusinessDate().atTime(issueEndTime).atZone(ClockConfig.ZONE)
+                .toInstant().plus(retentionGrace).toEpochMilli();
+    }
+
+    // DB의 AVAILABLE 순번과 ISSUED 수를 읽고 두 수의 합이 회차의 발급 수량과 다르면 큐를 만들지 않는다.
+    private InventorySnapshot readInventory(long eventId, CouponEvent event) {
+        List<Integer> available = inventories.findAvailableSequences(eventId);
+        long completed = inventories.countByCouponEventIdAndStatus(eventId, CouponInventoryStatus.ISSUED);
+        if (available.size() + completed != event.getIssueQuantity()) {
+            throw new IllegalStateException("Coupon inventory count differs from event quantity");
+        }
+        return new InventorySnapshot(available, completed);
+    }
+
+    // 큐를 다시 만들 때 쓰는 회차의 남은 순번과 발급된 수다.
+    private record InventorySnapshot(List<Integer> available, long completed) { }
 }
