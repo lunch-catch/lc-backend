@@ -207,5 +207,8 @@ class BaseWorldIntegrationTest extends IntegrationTestSupport {
                 + "AND ((JSON_UNQUOTE(JSON_EXTRACT(slot_values, '$.image.value')) NOT LIKE '%/menu-%.jpg' "
                 + "AND JSON_UNQUOTE(JSON_EXTRACT(slot_values, '$.image.value')) NOT LIKE '%/logo.jpg') "
                 + "OR JSON_UNQUOTE(JSON_EXTRACT(slot_values, '$.period.value')) NOT LIKE '오늘 %')", Long.class)).isZero();
+        // 할인 금액은 천 단위 쉼표를 찍는다 (2,000원)
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM poster WHERE campaign_id BETWEEN 10000001 AND 29999999 "
+                + "AND JSON_UNQUOTE(JSON_EXTRACT(slot_values, '$.discount.value')) REGEXP '[0-9]{4}원'", Long.class)).isZero();
     }
 }
