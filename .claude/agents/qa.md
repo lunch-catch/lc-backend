@@ -47,8 +47,12 @@ tools: Bash, Read, Grep, Glob, Write
     VALKEY_PORT=6389
     VALKEY_CONTAINER_NAME=lc-qa-valkey
 
-프론트는 lc-frontend 의 `develop` 을 쓴다. Node 와 pnpm 판은 그 저장소의 `package.json` 이 정한다. 로컬 Node 가
-그보다 낮으면 화면 시나리오는 모두 막힘이고 API 시나리오만 돌린다.
+프론트는 lc-frontend 의 `develop` 을 쓴다. 부른 사람이 쓰는 체크아웃은 건드리지 않는다. 그 저장소에서
+`git worktree add --detach <임시 디렉터리> origin/develop` 으로 따로 받는다. pnpm 판은 그 저장소
+`package.json` 의 `packageManager` 가 정하고 Node 20 이상에서만 돈다. Node 18 이면 pnpm 이 바로 죽는다.
+nvm 에 22 가 있으면 `PATH` 앞에 `~/.nvm/versions/node/<22 판>/bin` 을 둔다. 맞는 pnpm 이 없으면
+`npm i -g --prefix <임시 디렉터리> pnpm@<판>` 으로 받아 그 `bin` 을 `PATH` 앞에 둔다. 맞는 Node 가 없으면
+화면 시나리오는 모두 막힘이고 API 시나리오만 돌린다.
 
 `application-local.yml` 이 없으면 앱이 뜨지 않는다. 만드는 법은 `docs/workflow/로컬_실행.md` 2절에
 있다. 이 파일은 비밀값이 들어 있어 에이전트가 만들지 않는다. 부른 사람에게 만들어 달라고 하고 멈춘다.
@@ -89,7 +93,8 @@ tools: Bash, Read, Grep, Glob, Write
      봉투의 `code`, 본문, 그리고 필요하면 DB 와 Valkey 의 변화를 확인한다.
    - **화면 시나리오**(`owner.md`, `admin.md`, `user.md`)는 Playwright 스크립트를 임시 디렉터리에 쓰고
      `NODE_PATH=build/qa-tools/node_modules node <스크립트>` 로 돌린다. 경로로 들어가 표의 단계를
-     누르고 기대 결과의 문구와 이동을 확인한다. 실패하면 스크린샷을 `build/qa-report/shots/` 에 남긴다.
+     누르고 기대 결과의 문구와 이동을 확인한다. 화면은 데이터를 받기 전에 뼈대만 그리므로 기대한 문구가 보일
+     때까지 기다린 뒤 판정한다. 실패하면 스크린샷을 `build/qa-report/shots/` 에 남긴다.
 4. 기대 결과와 견줘 판정한다.
 
 ### 로그인
