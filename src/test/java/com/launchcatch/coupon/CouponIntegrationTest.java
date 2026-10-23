@@ -4380,6 +4380,23 @@ public class CouponIntegrationTest extends IntegrationTestSupport {
             assertUnchanged();
         }
 
+        // 시연 영상 촬영용 30km 제한을 검증하며 촬영 후 기존 100m 기준으로 복원한다.
+        @ParameterizedTest
+        @CsvSource({"37.501,201", "37.7697,201", "37.7699,403"})
+        void 실제_HTTP로_30km_안팎의_사용_결과와_저장_상태를_확인한다(double latitude, int expectedStatus) throws Exception {
+            when(stores.findAllById(List.of(10L))).thenReturn(List.of(store(latitude)));
+
+            try (HttpClient client = HttpClient.newHttpClient()) {
+                var response = client.send(httpRequest("POST", PATH, body(), accessToken(Role.OWNER, 9L)),
+                        HttpResponse.BodyHandlers.ofString());
+                assertThat(response.statusCode()).isEqualTo(expectedStatus);
+                assertThat(objectMapper.readTree(response.body()).path("code").asText())
+                        .isEqualTo(expectedStatus == 201 ? "SUCCESS" : "COUPON-009");
+            }
+            assertThat(state()).isEqualTo(expectedStatus == 201 ? "USED" : "ISSUED");
+            assertThat(historyCount()).isEqualTo(expectedStatus == 201 ? 1 : 0);
+        }
+
         @ParameterizedTest
         @CsvSource({"inactive,COUPON-013", "permission,COUPON-011", "location,COUPON-009"})
         void 점주_상태와_매장_권한과_위치를_검사한다(String condition, String code) throws Exception {
