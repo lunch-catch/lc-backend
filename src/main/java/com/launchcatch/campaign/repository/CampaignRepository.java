@@ -33,6 +33,10 @@ public interface CampaignRepository extends JpaRepository<Campaign, Long> {
      * 00:00 배치(#838)가 새 영업일의 가게 요약을 만들 ACTIVE 캠페인을 id 순으로 청크 단위로 읽는다. lastId 보다 큰
      * 것만 읽어 다음 청크를 이어가고(offset 이 없어 뒤로 갈수록 느려지지 않는다), 엔티티가 아닌 행으로 읽어 영속성
      * 컨텍스트에 쌓이지 않게 한다. 행 잠금은 걸지 않는다.
+     *
+     * 집행 종료일이 businessDate 보다 앞선 ACTIVE 는 뺀다(#871). 종료가 데이터 오류로 건너뛰어진 만료 캠페인이 ACTIVE 로
+     * 남아 요약 대상에 들어오면, 같은 데이터 오류로 updateAll 이 실패해 이 단계와 뒤 단계(정산)가 멈춘다. 만료된 ACTIVE 는
+     * 광고와 예약에도 쓰이지 않는다(findEligibleCampaigns 가 endDate >= today 로 거른다).
      */
     @Query("""
             select new com.launchcatch.campaign.repository.CampaignSummaryRow(
@@ -40,10 +44,12 @@ public interface CampaignRepository extends JpaRepository<Campaign, Long> {
                 c.targetMenuId, c.usableStartTime, c.usableEndTime)
             from Campaign c
             where c.status = com.launchcatch.campaign.contract.CampaignStatus.ACTIVE
+            and c.endDate >= :businessDate
             and c.id > :lastId
             order by c.id
             """)
-    List<CampaignSummaryRow> findActiveSummaryRowsAfter(@Param("lastId") Long lastId, Pageable pageable);
+    List<CampaignSummaryRow> findActiveSummaryRowsAfter(
+            @Param("lastId") Long lastId, @Param("businessDate") LocalDate businessDate, Pageable pageable);
 
     boolean existsByOwnerIdAndStatusNotIn(Long ownerId, List<CampaignStatus> excludedStatuses);
 

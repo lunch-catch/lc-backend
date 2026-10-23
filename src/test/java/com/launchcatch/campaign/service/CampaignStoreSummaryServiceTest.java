@@ -62,9 +62,9 @@ class CampaignStoreSummaryServiceTest {
     @Test
     @DisplayName("ACTIVE 캠페인의 요약을 새 영업일 몫으로 저장한다")
     void ACTIVE_캠페인의_요약을_저장한다() {
-        when(campaignRepository.findActiveSummaryRowsAfter(eq(0L), any(Pageable.class)))
+        when(campaignRepository.findActiveSummaryRowsAfter(eq(0L), eq(BUSINESS_DATE), any(Pageable.class)))
                 .thenReturn(List.of(row(1L, 10L), row(2L, 20L)));
-        when(campaignRepository.findActiveSummaryRowsAfter(eq(2L), any(Pageable.class))).thenReturn(List.of());
+        when(campaignRepository.findActiveSummaryRowsAfter(eq(2L), eq(BUSINESS_DATE), any(Pageable.class))).thenReturn(List.of());
 
         int prepared = service.prepare(BUSINESS_DATE);
 
@@ -81,9 +81,27 @@ class CampaignStoreSummaryServiceTest {
     }
 
     @Test
+    @DisplayName("대상 조회에 영업일을 넘겨 집행 기간이 끝난 ACTIVE 캠페인을 요약에서 뺀다(#871)")
+    void 조회에_영업일을_넘겨_만료된_캠페인을_뺀다() {
+        LocalDate businessDate = LocalDate.of(2026, 11, 9);
+        when(campaignRepository.findActiveSummaryRowsAfter(eq(0L), eq(businessDate), any(Pageable.class)))
+                .thenReturn(List.of(row(1L, 10L)));
+        when(campaignRepository.findActiveSummaryRowsAfter(eq(1L), eq(businessDate), any(Pageable.class)))
+                .thenReturn(List.of());
+
+        int prepared = service.prepare(businessDate);
+
+        assertThat(prepared).isEqualTo(1);
+        verify(campaignRepository).findActiveSummaryRowsAfter(eq(0L), eq(businessDate), any(Pageable.class));
+        verify(campaignRepository).findActiveSummaryRowsAfter(eq(1L), eq(businessDate), any(Pageable.class));
+        verify(storeCampaignSummaryUpdater).updateAll(updatesCaptor.capture());
+        assertThat(updatesCaptor.getValue().get(0).command().businessDate()).isEqualTo(businessDate);
+    }
+
+    @Test
     @DisplayName("ACTIVE 캠페인이 없으면 요약 저장을 부르지 않는다")
     void 대상이_없으면_저장을_부르지_않는다() {
-        when(campaignRepository.findActiveSummaryRowsAfter(eq(0L), any(Pageable.class))).thenReturn(List.of());
+        when(campaignRepository.findActiveSummaryRowsAfter(eq(0L), eq(BUSINESS_DATE), any(Pageable.class))).thenReturn(List.of());
 
         assertThat(service.prepare(BUSINESS_DATE)).isZero();
 
@@ -94,10 +112,10 @@ class CampaignStoreSummaryServiceTest {
     @DisplayName("청크를 넘으면 마지막 id 부터 다음 청크를 읽어 청크마다 저장한다")
     void 청크를_넘으면_다음_청크를_이어서_저장한다() {
         List<CampaignSummaryRow> first = IntStream.rangeClosed(1, 500).mapToObj(id -> row(id, id)).toList();
-        when(campaignRepository.findActiveSummaryRowsAfter(eq(0L), any(Pageable.class))).thenReturn(first);
-        when(campaignRepository.findActiveSummaryRowsAfter(eq(500L), any(Pageable.class)))
+        when(campaignRepository.findActiveSummaryRowsAfter(eq(0L), eq(BUSINESS_DATE), any(Pageable.class))).thenReturn(first);
+        when(campaignRepository.findActiveSummaryRowsAfter(eq(500L), eq(BUSINESS_DATE), any(Pageable.class)))
                 .thenReturn(List.of(row(501L, 501L)));
-        when(campaignRepository.findActiveSummaryRowsAfter(eq(501L), any(Pageable.class))).thenReturn(List.of());
+        when(campaignRepository.findActiveSummaryRowsAfter(eq(501L), eq(BUSINESS_DATE), any(Pageable.class))).thenReturn(List.of());
 
         int prepared = service.prepare(BUSINESS_DATE);
 
@@ -110,7 +128,7 @@ class CampaignStoreSummaryServiceTest {
     @Test
     @DisplayName("요약 저장이 실패하면 예외를 그대로 올려 단계를 실패시킨다")
     void 저장이_실패하면_예외를_올린다() {
-        when(campaignRepository.findActiveSummaryRowsAfter(eq(0L), any(Pageable.class)))
+        when(campaignRepository.findActiveSummaryRowsAfter(eq(0L), eq(BUSINESS_DATE), any(Pageable.class)))
                 .thenReturn(List.of(row(1L, 10L)));
         doThrow(new IllegalArgumentException("할인 대상 메뉴가 해당 가게에 속하지 않습니다."))
                 .when(storeCampaignSummaryUpdater).updateAll(anyList());
