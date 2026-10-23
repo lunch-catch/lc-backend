@@ -20,9 +20,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 import software.amazon.awssdk.services.s3.S3Client;
-import software.amazon.awssdk.services.s3.model.HeadObjectRequest;
-import software.amazon.awssdk.services.s3.model.HeadObjectResponse;
-import software.amazon.awssdk.services.s3.model.S3Exception;
 
 /*
  * 가게 로고와 인테리어 이미지 업로드(인테리어 #375, 로고 #588). 로고는 가게당 1개이고, 이미
@@ -37,7 +34,6 @@ import software.amazon.awssdk.services.s3.model.S3Exception;
 public class StoreImageUploadService {
 
     private static final int MAX_INTERIOR_IMAGES = 3;
-    private static final long MAX_FILE_SIZE = 10 * 1024 * 1024;
 
     private final StoreImageRepository storeImageRepository;
     private final StoreRegistrationProgressService progressService;
@@ -68,8 +64,8 @@ public class StoreImageUploadService {
             try {
                 transactionTemplate.executeWithoutResult(status -> storeImageRepository.delete(image));
             } catch (RuntimeException compensationFailure) {
-                log.error("event=STORE_UPLOAD_COMPENSATION_FAILED ownerId={} resourceType=IMAGE exceptionType={}",
-                        ownerId, compensationFailure.getClass().getSimpleName());
+                log.error("event=STORE_UPLOAD_COMPENSATION_FAILED ownerId={} uploadId={} resourceType=IMAGE exceptionType={}",
+                        ownerId, image.getUploadId(), compensationFailure.getClass().getSimpleName());
                 throw compensationFailure;
             }
             throw e;
@@ -102,8 +98,8 @@ public class StoreImageUploadService {
                 try {
                     transactionTemplate.executeWithoutResult(status -> storeImageRepository.delete(image));
                 } catch (RuntimeException compensationFailure) {
-                    log.error("event=STORE_UPLOAD_COMPENSATION_FAILED ownerId={} resourceType=IMAGE exceptionType={}",
-                            ownerId, compensationFailure.getClass().getSimpleName());
+                    log.error("event=STORE_UPLOAD_COMPENSATION_FAILED ownerId={} uploadId={} resourceType=IMAGE exceptionType={}",
+                            ownerId, image.getUploadId(), compensationFailure.getClass().getSimpleName());
                     throw compensationFailure;
                 }
             }
@@ -166,34 +162,8 @@ public class StoreImageUploadService {
             return;
         }
 
-        HeadObjectResponse headObject;
-        try {
-            headObject = s3Client.headObject(HeadObjectRequest.builder()
-                    .bucket(mediaBucket)
-                    .key(image.getObjectKey())
-                    .build());
-        } catch (S3Exception e) {
-            if (e.statusCode() != 404) {
-                log.error("event=STORE_UPLOAD_CONFIRM_FAILED ownerId={} resourceType=IMAGE httpStatus={} exceptionType={}",
-                        ownerId, e.statusCode(), e.getClass().getSimpleName());
-                throw e;
-            }
-            log.info("event=STORE_UPLOAD_CONFIRM_FAILED ownerId={} resourceType=IMAGE reason=NOT_UPLOADED",
-                    ownerId);
-            throw new StoreException(StoreErrorCode.IMAGE_NOT_UPLOADED);
-        } catch (RuntimeException e) {
-            log.error("event=STORE_UPLOAD_CONFIRM_FAILED ownerId={} resourceType=IMAGE exceptionType={}",
-                    ownerId, e.getClass().getSimpleName());
-            throw e;
-        }
-        if (headObject.contentLength() == null
-                || headObject.contentLength() > MAX_FILE_SIZE
-                || image.getFileSize() == null
-                || headObject.contentLength() > image.getFileSize()) {
-            log.info("event=STORE_UPLOAD_CONFIRM_FAILED ownerId={} resourceType=IMAGE reason=INVALID_SIZE",
-                    ownerId);
-            throw new StoreException(StoreErrorCode.IMAGE_FILE_TOO_LARGE);
-        }
+        storeUploadSupport.verifyUpload(s3Client, mediaBucket, image.getObjectKey(), image.getFileSize(),
+                ownerId, image.getUploadId(), "IMAGE");
 
         image.verify(LocalDateTime.now(clock));
     }
