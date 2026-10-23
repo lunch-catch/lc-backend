@@ -34,7 +34,7 @@ tools: Bash, Read, Grep, Glob, Write
 
 | 대상 | 띄우는 법 | 확인 |
 |---|---|---|
-| 앱 | 저장소 루트에서 `./gradlew bootRun`. compose 의 MySQL 과 Valkey 가 함께 뜨고 `local` 프로필이 기본 세계(`db/base`)를 넣는다 | `curl -fsS localhost:8081/actuator/health` |
+| 앱 | 저장소 루트에서 `CDN_BASE_URL=http://localhost:5174/qa-cdn ./gradlew bootRun`. compose 의 MySQL 과 Valkey 가 함께 뜨고 `local` 프로필이 기본 세계(`db/base`)를 넣는다 | `curl -fsS localhost:8081/actuator/health` |
 | 프론트 | lc-frontend 저장소에서 `pnpm install` 뒤 `pnpm dev:user`(5173), `pnpm dev:owner`(5174), `pnpm dev:admin`(5175). 위치는 `LC_FRONTEND` 가 있으면 그 값이고 없으면 부른 사람에게 묻는다. `VITE_API_BASE_URL` 은 비워 둔다. Vite 프록시가 `/v1` 을 `localhost:8080` 으로 넘긴다 | 그 포트가 HTML 을 준다 |
 | 브라우저 | `scripts/qa/browser-setup.sh` 를 한 번 돌린다 | `build/qa-tools/node_modules/playwright` 가 있다 |
 
@@ -53,6 +53,23 @@ tools: Bash, Read, Grep, Glob, Write
 nvm 에 22 가 있으면 `PATH` 앞에 `~/.nvm/versions/node/<22 판>/bin` 을 둔다. 맞는 pnpm 이 없으면
 `npm i -g --prefix <임시 디렉터리> pnpm@<판>` 으로 받아 그 `bin` 을 `PATH` 앞에 둔다. 맞는 Node 가 없으면
 화면 시나리오는 모두 막힘이고 API 시나리오만 돌린다.
+
+`CDN_BASE_URL` 은 비워 두면 안 된다. 로컬 기본값이 비어 있어 이미지가 있는 가게의 응답이 500
+(`cdn.base-url 설정이 필요합니다`)이 되고 점주 홈과 캠페인 상세가 깨진다. 주소는 이미지 URL 을 만드는 데만 쓰여
+실제로 응답하지 않아도 된다. 이미지가 깨져 보이는 것은 판정에서 뺀다.
+
+관리자 앱은 Vite 프록시가 없고 `VITE_API_BASE_URL` 이 비면 API 를 부르지 않는다. 백엔드 CORS 는 로컬에서
+5173 만 받는다. 그래서 관리자 앱은 `VITE_API_BASE_URL=http://localhost:5175 pnpm dev:admin` 으로 띄운다.
+그리고 Playwright 가 그 요청을 8080 으로 넘긴다. 넘길 때 Origin 과 Referer 를 지운다.
+
+    await context.route('http://localhost:5175/v1/**', async (route) => {
+      const u = new URL(route.request().url());
+      const headers = { ...route.request().headers() };
+      delete headers.origin;
+      delete headers.referer;
+      const resp = await route.fetch({ url: 'http://localhost:8080' + u.pathname + u.search, headers });
+      await route.fulfill({ response: resp });
+    });
 
 `application-local.yml` 이 없으면 앱이 뜨지 않는다. 만드는 법은 `docs/workflow/로컬_실행.md` 2절에
 있다. 이 파일은 비밀값이 들어 있어 에이전트가 만들지 않는다. 부른 사람에게 만들어 달라고 하고 멈춘다.
