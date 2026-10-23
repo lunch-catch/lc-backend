@@ -41,7 +41,12 @@ public enum PosterErrorCode implements ErrorCode {
     PROMPT_INJECTION_SUSPECTED(HttpStatus.UNPROCESSABLE_ENTITY, "POSTER-024",
             "요청 문구에 템플릿 생성과 관련 없는 지시가 포함되어 있습니다. 만들고 싶은 템플릿의 모양만 적어 주세요."),
     PROMPT_PERSONAL_INFO(HttpStatus.UNPROCESSABLE_ENTITY, "POSTER-025",
-            "요청 문구에 개인정보로 보이는 내용이 포함되어 있습니다. 전화번호, 사업자번호 같은 정보는 빼고 다시 요청해 주세요.");
+            "요청 문구에 개인정보로 보이는 내용이 포함되어 있습니다. 전화번호, 사업자번호 같은 정보는 빼고 다시 요청해 주세요."),
+    // 범위는 poster.PosterEditLimits 가 정한다. 메시지의 숫자도 그 값과 같게 맞춘다.
+    POSTER_TEXT_INVALID(HttpStatus.UNPROCESSABLE_ENTITY, "POSTER-026",
+            "포스터 텍스트는 가게명 1~30자, 할인 추가 텍스트 0~20자로 쓰고 줄바꿈과 제어 문자는 쓸 수 없습니다."),
+    POSTER_FONT_SIZE_OUT_OF_RANGE(HttpStatus.UNPROCESSABLE_ENTITY, "POSTER-027",
+            "글자 크기가 허용 범위를 벗어났습니다. 가게명은 16~48px, 할인은 14~40px입니다.");
 
     private final HttpStatus httpStatus;
     private final String code;

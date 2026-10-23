@@ -1,7 +1,5 @@
 package com.launchcatch.campaign.poster.service;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.launchcatch.campaign.contract.CampaignStatus;
 import com.launchcatch.campaign.contract.DiscountTargetType;
 import com.launchcatch.campaign.contract.DiscountType;
@@ -10,6 +8,8 @@ import com.launchcatch.campaign.exception.CampaignErrorCode;
 import com.launchcatch.campaign.exception.CampaignException;
 import com.launchcatch.campaign.exception.PosterErrorCode;
 import com.launchcatch.campaign.poster.PosterImageUrlResolver;
+import com.launchcatch.campaign.poster.PosterSlotValue;
+import com.launchcatch.campaign.poster.PosterSlots;
 import com.launchcatch.campaign.poster.dto.PosterCreateResponse;
 import com.launchcatch.campaign.poster.dto.PosterImagePrepareUploadResponse;
 import com.launchcatch.campaign.poster.entity.Poster;
@@ -32,6 +32,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import lombok.extern.slf4j.Slf4j;
@@ -73,8 +74,6 @@ public class PosterUploadService {
     private final OwnerStatusQuery ownerStatusQuery;
     private final S3Presigner s3Presigner;
     private final S3Client s3Client;
-    // 이 저장소에는 ObjectMapper 빈이 없어(다른 서비스도 쓰지 않음) 직접 둔다.
-    private final ObjectMapper objectMapper = new ObjectMapper();
     private final TransactionTemplate transactionTemplate;
     private final PosterImageUrlResolver imageUrlResolver;
 
@@ -161,9 +160,18 @@ public class PosterUploadService {
         String imageUrl = imageUrlResolver.resolve(objectKey);
         String title = truncateTitle(eventName + " - " + template.getName());
 
-        RenderedPoster rendered = render(template.getHtmlContent(), eventName, discount, period, imageUrl);
+        Optional<Poster> existingPoster = posterRepository.findByCampaignId(campaignId);
+        /*
+         * 같은 템플릿으로 다시 만들면 점주가 고친 가게명 텍스트, 할인 추가 텍스트, 글자 크기를 유지한다(#884). 다른
+         * 템플릿으로 만들면 레이아웃이 달라 글자 크기가 맞지 않으므로 모두 초기화한다.
+         */
+        PosterSlots.Edits edits = existingPoster
+                .filter(found -> found.getTemplateId().equals(templateId))
+                .map(found -> PosterSlots.editsOf(found.getSlotValues()))
+                .orElse(PosterSlots.Edits.NONE);
+        RenderedPoster rendered = render(template.getHtmlContent(), eventName, discount, period, imageUrl, edits);
 
-        Poster poster = posterRepository.findByCampaignId(campaignId)
+        Poster poster = existingPoster
                 .map(existing -> {
                     existing.overwrite(templateId, title, rendered.slotValuesJson(), rendered.html(), objectKey);
                     return existing;
@@ -172,7 +180,8 @@ public class PosterUploadService {
                         Poster.create(campaignId, templateId, title, rendered.slotValuesJson(),
                                 rendered.html(), objectKey)));
 
-        return new PosterCreateResponse(poster.getId(), campaignId, templateId, title, rendered.html());
+        return new PosterCreateResponse(poster.getId(), campaignId, templateId, title, rendered.html(),
+                PosterSlots.view(rendered.slotValuesJson(), rendered.html()));
     }
 
     private Campaign findDraftCampaign(Long ownerId, Long campaignId) {
@@ -269,28 +278,58 @@ public class PosterUploadService {
     }
 
     private RenderedPoster render(String templateHtml, String eventName, String discount, String period,
-            String imageUrl) {
+            String imageUrl, PosterSlots.Edits edits) {
         Document document = Jsoup.parseBodyFragment(templateHtml);
         // 광고 표시를 넣지 않기로 했다(#628). 광고 표시가 들어 있는 옛 템플릿으로 만든 포스터에서도 뺀다.
         document.select("[data-slot=" + TemplateSlotValidator.AD_LABEL_SLOT + "]").remove();
         Map<String, PosterSlotValue> slotValues = new LinkedHashMap<>();
-        slotValues.put("eventName", fillText(document, "eventName", eventName));
-        slotValues.put("discount", fillText(document, "discount", discount));
-        slotValues.put("period", fillText(document, "period", period));
-        slotValues.put("image", fillImage(document, imageUrl));
-        return new RenderedPoster(document.body().html(), writeSlotValues(slotValues));
+        slotValues.put(TemplateSlotValidator.EVENT_NAME_SLOT, fillEventName(document, eventName, edits));
+        slotValues.put(TemplateSlotValidator.DISCOUNT_SLOT, fillDiscount(document, discount, edits));
+        slotValues.put(TemplateSlotValidator.PERIOD_SLOT,
+                fillText(document, TemplateSlotValidator.PERIOD_SLOT, period));
+        slotValues.put(TemplateSlotValidator.IMAGE_SLOT, fillImage(document, imageUrl));
+        return new RenderedPoster(document.body().html(), PosterSlots.write(slotValues));
+    }
+
+    /*
+     * 가게명 슬롯이다. 점주가 고친 텍스트가 있으면 그것을, 없으면 가게 이름을 쓴다. baseText 에는 항상 지금의 가게
+     * 이름을 남겨 다음 번 다시 만들 때 수정한 텍스트인지 가려낸다.
+     */
+    private PosterSlotValue fillEventName(Document document, String storeName, PosterSlots.Edits edits) {
+        String text = edits.eventNameText() != null ? edits.eventNameText() : storeName;
+        Element slot = requireSlot(document, TemplateSlotValidator.EVENT_NAME_SLOT);
+        slot.text(text);
+        applyFontSize(slot, edits.eventNameFontSizePx());
+        return new PosterSlotValue("text", text, storeName, null, edits.eventNameFontSizePx());
+    }
+
+    // 할인 슬롯이다. 쿠폰 조건으로 만든 기본 문구 뒤에 점주의 추가 텍스트를 공백 하나로 잇는다.
+    private PosterSlotValue fillDiscount(Document document, String baseText, PosterSlots.Edits edits) {
+        String suffix = edits.discountSuffix() == null ? "" : edits.discountSuffix();
+        String text = PosterSlots.joinDiscount(baseText, suffix);
+        Element slot = requireSlot(document, TemplateSlotValidator.DISCOUNT_SLOT);
+        slot.text(text);
+        applyFontSize(slot, edits.discountFontSizePx());
+        return new PosterSlotValue("text", text, baseText, suffix.isEmpty() ? null : suffix,
+                edits.discountFontSizePx());
+    }
+
+    private void applyFontSize(Element slot, Integer fontSizePx) {
+        if (fontSizePx != null) {
+            slot.attr("style", PosterSlots.withFontSize(slot.attr("style"), fontSizePx));
+        }
     }
 
     private PosterSlotValue fillText(Document document, String slot, String value) {
         requireSlot(document, slot).text(value);
-        return new PosterSlotValue("text", value);
+        return PosterSlotValue.of("text", value);
     }
 
     private PosterSlotValue fillImage(Document document, String imageUrl) {
-        Element image = requireSlot(document, "image");
+        Element image = requireSlot(document, TemplateSlotValidator.IMAGE_SLOT);
         image.attr("src", imageUrl);
         image.attr("style", withImageFit(image.attr("style")));
-        return new PosterSlotValue("image", imageUrl);
+        return PosterSlotValue.of("image", imageUrl);
     }
 
     /*
@@ -323,14 +362,6 @@ public class PosterUploadService {
             throw new CampaignException(PosterErrorCode.SLOT_CONTRACT_VIOLATION);
         }
         return found.first();
-    }
-
-    private String writeSlotValues(Map<String, PosterSlotValue> slotValues) {
-        try {
-            return objectMapper.writeValueAsString(slotValues);
-        } catch (JsonProcessingException e) {
-            throw new IllegalStateException("poster slot values를 JSON으로 만들지 못했습니다.", e);
-        }
     }
 
     private String buildObjectKey(Long campaignId, String contentType) {
@@ -382,9 +413,6 @@ public class PosterUploadService {
         if (ownerStatusQuery.findCurrentStatus(ownerId).orElse(null) != OwnerAccountStatus.ACTIVE) {
             throw new CampaignException(CampaignErrorCode.OWNER_NOT_ACTIVE);
         }
-    }
-
-    private record PosterSlotValue(String type, String value) {
     }
 
     private record RenderedPoster(String html, String slotValuesJson) {

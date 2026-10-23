@@ -35,6 +35,10 @@ campaign/template/
 
 `template`은 `contract`를 공개하지 않는다. 다른 도메인이 템플릿을 참조하지 않는다.
 
+슬롯 검증(`TemplateSlotValidator`)은 슬롯 네 개가 하나씩 있는지 보고, `eventName`과 `discount` 슬롯 요소가 자식 요소
+없이 글자만 갖는지도 본다(`#884`). 점주가 포스터에서 이 두 칸의 글자와 크기를 고치기 때문이다. 어긋나면 `POSTER-001`이다.
+템플릿 생성 프롬프트(`BedrockTemplateHtmlGenerator`)에도 같은 규칙이 있고, 교정 재시도 지시가 이 위반을 함께 알린다.
+
 ## 3. 저장
 
 | 적을 것 | 내용 |
