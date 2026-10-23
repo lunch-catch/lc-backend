@@ -632,7 +632,7 @@
 | B-393 | 템플릿 생성 제한 초과 | 관리자 1명이 1분 안 4번째 생성 또는 수정 | POST /v1/admin/templates, POST /v1/admin/templates/{id}/versions | POSTER-014 | templateGenerationRateLimit:{adminId} > 3 (생성과 수정 합산) | 429, Retry-After 1 고정, 처리 중 표식 삭제 | 첫 요청 후 60초 창 |
 | B-394 | 같은 requestId 처리 중 재요청 | 첫 요청 LLM 호출 중 같은 requestId | 템플릿 생성, 수정 | POSTER-004 | templateGenerationInFlight:{requestId} 존재 | 503, 횟수 세지 않음 | 첫 요청 후 60초 안 |
 | B-395 | 제한에 걸린 requestId 재시도 | POSTER-014 받은 같은 requestId | 템플릿 생성, 수정 | POSTER-014 또는 없음 | 표식 삭제됨 | 다시 제한 판정, 창이 지나면 처리 | 창 경과 여부 |
-| B-396 | 문구 검증 거부도 셈 | POSTER-023~026 에 걸린 요청 | 템플릿 생성, 수정 | POSTER-023, 024, 025, 026 | 카운터 증가 | 거부되지만 분당 3회에 포함, 표식은 지움 | 창 안 |
+| B-396 | 문구 검증 거부도 셈 | POSTER-022~025 에 걸린 요청 | 템플릿 생성, 수정 | POSTER-022, 023, 024, 025 | 카운터 증가 | 거부되지만 분당 3회에 포함, 표식은 지움 | 창 안 |
 | B-397 | 템플릿 제한 저장소 장애 | Redis 실패 | 템플릿 생성, 수정 | 없음 | Redis 장애 | 표식 판정 실패는 첫 시도로 보고, 카운트 실패는 통과 | 없음 |
 | B-398 | 쿠폰 일일 발급 한도 | 하루 4번째 발급 | POST /v1/coupons | COUPON-007 | 오늘 발급 3장 (COUPON_DAILY_LIMIT 3) | 409 | 영업일 단위 |
 | B-399 | 쿠폰 발급 대기열 포화 | 대기열 2000 가득 또는 작업자 정지 | POST /v1/coupons | COUPON-008 | 작업자 4, 배치 500, 대기 10초 | 즉시 503, Retry-After 1 | 11:00~14:00 발급 시간 |
@@ -747,13 +747,12 @@
 | POSTER-017 | poster:prepareUpload, 포스터 저장 (형식) | 가능 |
 | POSTER-018 | poster:prepareUpload, 포스터 저장 (10MB 초과) | 가능 |
 | POSTER-019 | 포스터 저장 (다른 캠페인 객체 키) | 가능 |
-| POSTER-020 | 포스터 저장 (기간 미설정) | 가능 |
-| POSTER-021 | 점주 포스터 조회, :activate (포스터 없음), 회원 포스터 조회 | 가능 |
-| POSTER-022 | GET /v1/campaigns/{id}/poster, 점주 포스터 조회 (조회 불가) | 가능 |
+| POSTER-020 | 점주 포스터 조회, :activate (포스터 없음), 회원 포스터 조회 | 가능 |
+| POSTER-021 | GET /v1/campaigns/{id}/poster, 점주 포스터 조회 (조회 불가) | 가능 |
+| POSTER-022 | 템플릿 생성/수정 프롬프트 검사 | 가능 |
 | POSTER-023 | 템플릿 생성/수정 프롬프트 검사 | 가능 |
 | POSTER-024 | 템플릿 생성/수정 프롬프트 검사 | 가능 |
 | POSTER-025 | 템플릿 생성/수정 프롬프트 검사 | 가능 |
-| POSTER-026 | 템플릿 생성/수정 프롬프트 검사 | 가능 |
 | STORE-001 | 가게 등록 단계 저장 (version 충돌) | 가능 |
 | STORE-002 | 가게 등록 단계 저장, 약관, 이미지/메뉴 업로드 (단계 불일치) | 가능 |
 | STORE-003 | 가게 등록 단계 저장, 업로드, :complete (진행 상태 없음) | 가능 |

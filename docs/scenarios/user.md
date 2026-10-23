@@ -44,7 +44,7 @@
 | U-028 | 약관 내용 보기 | 항목 오른쪽 버튼 | /onboarding/consent | - | - | mock 약관(mocks/terms) | 바텀시트에 버전과 섹션 표시, 내용만 스크롤 | - |
 | U-029 | 약관 동의 후 계속 | 필수 체크 후 버튼 | /onboarding/consent | - | - | 필수 동의 완료 | /onboarding/personalization 이동(약관 동의 내역은 서버에 저장하지 않음) | - |
 | U-030 | 맞춤 정보 미선택 | 화면 진입 | /onboarding/personalization | - | - | 성별 또는 연령대 미선택 | 버튼 비활성 "성별, 연령대를 선택해 주세요" | - |
-| U-031 | 온보딩 저장 성공 | 성별/연령 선택 후 "계속하기" | /onboarding/personalization | PUT /v1/members/me/onboarding | - | 미완료 ACTIVE 회원 | locationOptIn=약관 위치 동의값, notificationOptIn=false 저장, /onboarding/location 으로 replace | - |
+| U-031 | 온보딩 성별, 연령 선택 | 성별/연령 선택 후 "계속하기" | /onboarding/personalization | - | - | 미완료 ACTIVE 회원 | 서버 호출 없이 /onboarding/location 으로 replace. 저장은 튜토리얼 단계(U-037)의 PUT /v1/members/me/onboarding 이 한다 | - |
 | U-032 | 온보딩 이미 완료 | 재전송 또는 뒤로 와서 다시 저장 | /onboarding/personalization | PUT /v1/members/me/onboarding | MEMBER-002 | 서버에 이미 완료 | 성공으로 보고 /onboarding/location 이동 | - |
 | U-033 | 온보딩 저장 실패 | "계속하기" | /onboarding/personalization | PUT /v1/members/me/onboarding | MEMBER-001, COMMON-002, COMMON-001 | 탈퇴 회원, 검증 실패, 서버 오류, 네트워크 | 오류 토스트 "저장하지 못했어요" 2.5초, 버튼 다시 활성 | - |
 | U-034 | 맞춤 정보 화면 직접 진입/새로고침 | 주소로 바로 열거나 새로고침 후 저장 | /onboarding/personalization | PUT /v1/members/me/onboarding | - | OnboardingProvider 상태 초기화(동의 모두 false) | 필수 약관 미동의로도 진행 가능, 위치 동의는 false 로 저장됨 | - |
@@ -87,7 +87,7 @@
 | U-061 | 하단 탭 이동 | 탭바 누름 | /swipe, /explore, /coupons, /my | - | - | 회원 | 오늘 점심/탐색/쿠폰함/마이 이동, 하위 경로에서도 해당 탭 선택 | - |
 | U-062 | 피드 첫 진입 | /swipe 진입 | /swipe | GET /v1/feed, GET /v1/feed-filter, GET /v1/wishlist, GET /v1/member-profiles/location | - | 저장 위치 있음, 후보 있음 | 포스터 회색 틀 후 카드 3장 미리 그림, 받은 순서 유지 | - |
 | U-063 | 포스터 표시 | 카드 표시 | /swipe | GET /v1/campaigns/{campaignId}/poster | - | 공개 캠페인, 포스터 있음 | sandbox iframe 에 360px 기준으로 축소해 그림, 같은 주소는 캐시 | - |
-| U-064 | 포스터 실패 | 카드 표시 | /swipe | GET /v1/campaigns/{campaignId}/poster | POSTER-022, COMMON-001 | 비공개/없는 캠페인/포스터 없음, 빈 HTML | 대체 포스터(업종, 가게명, 할인 문구), 실패 결과는 캐시하지 않음 | - |
+| U-064 | 포스터 실패 | 카드 표시 | /swipe | GET /v1/campaigns/{campaignId}/poster | POSTER-021, COMMON-001 | 비공개/없는 캠페인/포스터 없음, 빈 HTML | 대체 포스터(업종, 가게명, 할인 문구), 실패 결과는 캐시하지 않음 | - |
 | U-065 | 노출 기록 | 맨 위 카드가 바뀜 | /swipe | POST /v1/impressions | - | 저장 위치 좌표 받음, 탭이 보임 | serveId 당 1회 전송(sessionStorage 50개 기억), 실패 시 1회 재전송 후 포기, 화면 변화 없음 | 서버 30분 노출 인정 |
 | U-066 | 노출 지연 | 앱이 백그라운드 | /swipe | POST /v1/impressions | - | visibilityState hidden | 다시 보일 때 전송 | - |
 | U-067 | 저장 위치 조회 실패 시 노출 | 카드 표시 | /swipe | GET /v1/member-profiles/location, POST /v1/impressions | COMMON-001 | 피드는 받았으나 위치 조회 실패 | 위도/경도가 없어 노출을 보내지 않음 | - |
@@ -165,7 +165,7 @@
 | U-134 | 진행 쿠폰 없는 가게 | 진입 | /stores/:storeId | GET /v1/stores/{storeId} | - | activeCampaign null | "지금 진행 중인 쿠폰이 없어요", 하트와 하단 버튼 없음 | - |
 | U-135 | 쿠폰 정보 실패 | 진입 | /stores/:storeId | GET /v1/wishlist, POST /v1/coupon-events:getStatus, GET /v1/coupons/issuance-limit | COMMON-001 | 셋 중 하나 실패 또는 상태 응답에 그 가게 없음 | 할인 요약 "오늘 ... 쿠폰이 있어요" + "쿠폰 정보를 불러오지 못했어요" + 다시 시도, 하트/하단 버튼 없음 | - |
 | U-136 | 가게 포스터 있음 | 진입 | /stores/:storeId | GET /v1/campaigns/{campaignId}/poster | - | 공개 캠페인 포스터 | "오늘의 쿠폰" 아래 A4 포스터 | - |
-| U-137 | 가게 포스터 없음 | 진입 | /stores/:storeId | GET /v1/campaigns/{campaignId}/poster | POSTER-022, COMMON-001 | 포스터 없음/실패 | 포스터 자리 없이 표시 | - |
+| U-137 | 가게 포스터 없음 | 진입 | /stores/:storeId | GET /v1/campaigns/{campaignId}/poster | POSTER-021, COMMON-001 | 포스터 없음/실패 | 포스터 자리 없이 표시 | - |
 | U-138 | 대표 메뉴 | 진입 | /stores/:storeId | GET /v1/stores/{storeId} | - | 메뉴 1개 이상 | 받은 순서대로, 할인 대상 메뉴에 "쿠폰 20%" 또는 "쿠폰 3,000원" 표시, 사진 실패 시 아이콘 | - |
 | U-139 | 영업 상태(영업 중) | 진입 | /stores/:storeId | GET /v1/stores/{storeId} | - | 오늘 영업, 영업시간 안 | "영업 중" | 영업시간 안 |
 | U-140 | 영업 상태(브레이크) | 진입 | /stores/:storeId | GET /v1/stores/{storeId} | - | 브레이크 시간 등록 | "브레이크타임" | 브레이크 시간 |
@@ -434,7 +434,7 @@
 - `COUPON-011` COUPON_ACCESS_DENIED (FORBIDDEN): U-226, U-234, U-242
 - `COUPON-012` COUPON_ALREADY_USED (CONFLICT): U-227, U-241
 - `STORE-016` STORE_NOT_FOUND (NOT_FOUND): U-132
-- `POSTER-022` POSTER_UNAVAILABLE (NOT_FOUND): U-064, U-137
+- `POSTER-021` POSTER_UNAVAILABLE (NOT_FOUND): U-064, U-137
 - `COMMON-001` INTERNAL_ERROR (INTERNAL_SERVER_ERROR): U-008, U-025, U-033, U-039, U-053, U-056, U-064, U-067, U-073, U-082, U-084, U-093, U-100, U-105, U-113, U-114, U-122, U-133, U-135, U-137, U-153, U-155, U-174, U-176, U-180, U-182, U-183, U-189, U-197, U-206, U-207, U-218, U-226, U-234, U-242, U-247, U-253, U-255, U-257, U-258, U-262, U-264, U-266, U-270, U-273, U-278, U-287
 - `COMMON-002` INVALID_INPUT (BAD_REQUEST): U-021, U-033, U-053, U-073, U-100, U-113, U-122, U-155, U-197, U-218, U-253, U-255, U-262, U-266, U-278
 - `COMMON-003` MALFORMED_REQUEST (BAD_REQUEST): U-021, U-113, U-133
@@ -445,7 +445,7 @@
 - `MEMBER-004` SAME_DAY_REJOIN_NOT_ALLOWED: 서버 `MemberLoginService.validateRegistration` 의 검사 코드가 주석 처리돼 도달하지 않는다. 당일 재가입이 되는 쪽으로 U-013 에 넣었다.
 - `COUPON-009`, `COUPON-010`, `COUPON-013`: 점주 쿠폰 사용 처리(`POST /v1/owner/coupon-usages`)에서만 나와 사용자 앱 엔드포인트로는 도달하지 않는다. 사용자 쪽 결과는 사용 완료 반영(U-232)으로만 보인다.
 - `COMMON-004`~`COMMON-007`: 앱이 고정 경로와 메서드, JSON 본문만 보내 정상 사용으로는 나오지 않는다. 피드 posterUrl 도 서버가 `/v1/campaigns/{id}/poster` 로 만들어 준다.
-- 그 밖의 오류 코드(ADMIN, ANALYTICS, BILLING, CAMPAIGN, OPS, OWNER, POSTER-001~021, POSTER-023~026, STORE-001~015, TERMS-001, AUTH-001): 사용자 앱이 부르는 엔드포인트에서 나오지 않는다.
+- 그 밖의 오류 코드(ADMIN, ANALYTICS, BILLING, CAMPAIGN, OPS, OWNER, POSTER-001~020, POSTER-022~025, STORE-001~015, TERMS-001, AUTH-001): 사용자 앱이 부르는 엔드포인트에서 나오지 않는다.
 - 사용자 앱이 부르지 않는 회원용 엔드포인트: `POST /v1/events`(분석 이벤트 수집), `GET /v1/members/me/usage-stats`. 앱 코드에 호출이 없다. 관리자, 점주, 결제 웹훅 엔드포인트는 사용자 앱 범위 밖이다.
 - `api/mocks/*` 의 mock 경로(fetchMockFeed, getMockCoupons, mock 찜/가게/포스터, `?mockDailyLimit`, `?mockIssueSoldOut`, `?mockCouponsEmpty`, `?mockStoresEmpty`, `?mockWishlistEmpty`): `USE_FEED_API`, `USE_COUPON_*`, `USE_WISHLIST_API`, `USE_STORE_*`, `USE_POSTER_API`, `USE_FEED_FILTER_API` 가 모두 true 라 실행되지 않는 죽은 코드다. 단 `mocks/terms`(약관 본문)는 실제로 화면에 쓰여 U-028 에 반영했다.
 - `?mockTime=HH:MM:SS` 시계 조작(`api/clock.ts`): 운영 빌드에도 남은 테스트 훅이라 시나리오로 만들지 않았다. 카운트다운, 발급 단계, QR 만료는 이 값을 따르지만 피드 세션과 대기 시간은 `Date.now()` 를 써서 서로 어긋날 수 있다.

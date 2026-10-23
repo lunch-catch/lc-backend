@@ -36,7 +36,7 @@
 | U-028 | 약관 내용 보기 | `NONE:입력` |
 | U-029 | 약관 동의 후 계속 | `NONE:입력` |
 | U-030 | 맞춤 정보 미선택 | `NONE:입력` |
-| U-031 | 온보딩 저장 성공 | `MEM.NOT_ONBOARDED` |
+| U-031 | 온보딩 성별, 연령 선택 | `MEM.NOT_ONBOARDED` |
 | U-032 | 온보딩 이미 완료 | `MEM.ONBOARDED` |
 | U-033 | 온보딩 저장 실패 | `NONE:장애` |
 | U-034 | 맞춤 정보 화면 직접 진입/새로고침 | `NONE:입력` |
@@ -389,7 +389,7 @@
 | O-087 | 캠페인 제목 규칙 | `OWN.ACTIVE`, `STO.FINALIZED`, `CMP.DRAFT_STEP1`, `CMP.ENDED` |
 | O-088 | 홈 잔액에서 충전 | `OWN.ACTIVE`, `STO.FINALIZED`, `BIL.BALANCE_ENOUGH` |
 | O-089 | 홈 QR 사용 처리 진입 | `OWN.ACTIVE`, `STO.FINALIZED` |
-| O-090 | 홈 쿠폰 사용 추이 (mock) | `OWN.ACTIVE`, `STO.FINALIZED` |
+| O-090 | 홈 쿠폰 사용 추이 | `OWN.ACTIVE`, `STO.FINALIZED` |
 | O-091 | 첫 방문 튜토리얼 완료 | `OWN.ACTIVE_TUTORIAL_UNSEEN`, `STO.FINALIZED` |
 | O-092 | 튜토리얼 건너뛰기 또는 닫기 | `OWN.ACTIVE_TUTORIAL_UNSEEN`, `STO.FINALIZED` |
 | O-093 | 튜토리얼 저장 실패 | `NONE:장애` |
@@ -401,7 +401,7 @@
 | O-099 | 가게 관리에서 충전 | `OWN.ACTIVE`, `STO.FINALIZED` |
 | O-100 | 영업시간 수정 화면 불러오기 | `OWN.ACTIVE`, `STO.FINALIZED` |
 | O-101 | 영업시간 수정 검증 | `OWN.ACTIVE`, `STO.FINALIZED` |
-| O-102 | 영업시간 수정 저장 (mock) | `OWN.ACTIVE`, `STO.FINALIZED` |
+| O-102 | 영업시간 수정 저장 | `OWN.ACTIVE`, `STO.FINALIZED` |
 | O-103 | 영업시간 바꾼 채 나가기 | `NONE:입력` |
 | O-104 | 매장 사진 보기 | `OWN.ACTIVE`, `STO.FINALIZED`, `STO.FINALIZED_BARE`, `STO.FINALIZED_FULL` |
 | O-105 | 대표 메뉴 보기 | `OWN.ACTIVE`, `STO.FINALIZED`, `STO.FINALIZED_BARE`, `STO.FINALIZED_FULL` |
