@@ -130,7 +130,7 @@ class AdminLoginSecurityIntegrationTest extends AbstractAdminIntegrationTest {
 
     // 발급 순번을 넣은 관리자 AT 다. 로그인과 재발급 서비스만 이 클레임을 넣는다.
     private Cookie accessToken(Long id, Role role) {
-        return new Cookie("accessToken", jwt.createAccessToken(id, role, AdminAccessTokenClaims.forVersion(1L)));
+        return new Cookie("adminAccessToken", jwt.createAccessToken(id, role, AdminAccessTokenClaims.forVersion(1L)));
     }
 
     /*
@@ -171,7 +171,7 @@ class AdminLoginSecurityIntegrationTest extends AbstractAdminIntegrationTest {
                 .andExpect(jsonPath("$.data.accessToken").doesNotExist())
                 .andExpect(jsonPath("$.data.refreshToken").doesNotExist())
                 .andReturn();
-        Cookie access = result.getResponse().getCookie("accessToken");
+        Cookie access = result.getResponse().getCookie("adminAccessToken");
         Cookie refresh = result.getResponse().getCookie("refreshToken");
         assertThat(access.isHttpOnly()).isTrue();
         assertThat(access.getSecure()).isTrue();
@@ -263,7 +263,7 @@ class AdminLoginSecurityIntegrationTest extends AbstractAdminIntegrationTest {
         var result = mvc.perform(delete(LOGIN_PATH).cookie(accessToken(logoutId, role)))
                 .andExpect(status().isNoContent()).andReturn();
         assertThat(result.getResponse().getContentAsString()).isEmpty();
-        assertThat(result.getResponse().getCookie("accessToken").getMaxAge()).isZero();
+        assertThat(result.getResponse().getCookie("adminAccessToken").getMaxAge()).isZero();
         assertThat(result.getResponse().getCookie("refreshToken").getPath()).isEqualTo("/v1/admin/auth/");
         verify(audit).write(logoutId, "ADMIN_LOGOUT", String.valueOf(logoutId), "result=SUCCESS");
     }
@@ -291,7 +291,7 @@ class AdminLoginSecurityIntegrationTest extends AbstractAdminIntegrationTest {
     @EnumSource(value = Role.class, names = {"MEMBER", "OWNER"})
     void 관리자_외_역할은_로그아웃할_수_없다(Role role) throws Exception {
         Long id = role == Role.OWNER ? insertOwner() : 1L;
-        mvc.perform(delete(LOGIN_PATH).cookie(new Cookie("accessToken", jwt.createAccessToken(id, role))))
+        mvc.perform(delete(LOGIN_PATH).cookie(new Cookie("adminAccessToken", jwt.createAccessToken(id, role))))
                 .andExpect(status().isForbidden()).andExpect(jsonPath("$.code").value("AUTH-006"));
     }
 
@@ -482,13 +482,13 @@ class AdminLoginSecurityIntegrationTest extends AbstractAdminIntegrationTest {
         backUpRefreshToken(adminId);
         tokens.saveIfNewer(REFRESH_TOKEN, adminId, Role.SUPER_ADMIN, true, Duration.ofDays(1), 1L);
         var response = mvc.perform(refresh().cookie(
-                        new Cookie("refreshToken", REFRESH_TOKEN), new Cookie("accessToken", "expired")))
+                        new Cookie("refreshToken", REFRESH_TOKEN), new Cookie("adminAccessToken", "expired")))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.data.adminId").value(adminId.intValue()))
                 .andExpect(jsonPath("$.data.role").value("SUPER_ADMIN"))
                 .andExpect(jsonPath("$.data.refreshToken").doesNotExist()).andReturn().getResponse();
         assertThat(response.getCookie("refreshToken").getPath()).isEqualTo("/v1/admin/auth/");
         assertThat(response.getCookie("refreshToken").getMaxAge()).isEqualTo(86400);
-        assertThat(response.getCookie("accessToken").getMaxAge()).isEqualTo(1800);
+        assertThat(response.getCookie("adminAccessToken").getMaxAge()).isEqualTo(1800);
     }
 
     @Test

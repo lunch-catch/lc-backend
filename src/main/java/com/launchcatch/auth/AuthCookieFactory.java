@@ -1,7 +1,5 @@
 package com.launchcatch.auth;
 
-import static com.launchcatch.auth.AuthCookieNames.ACCESS_TOKEN_COOKIE_NAME;
-
 import com.launchcatch.auth.jwt.JwtTokenProvider;
 import java.time.Duration;
 import lombok.RequiredArgsConstructor;
@@ -49,8 +47,8 @@ public class AuthCookieFactory {
     @Value("${jwt.cookie.secure:false}")
     private boolean secure;
 
-    public ResponseCookie accessTokenCookie(String accessToken) {
-        return ResponseCookie.from(ACCESS_TOKEN_COOKIE_NAME, accessToken)
+    public ResponseCookie accessTokenCookie(String accessToken, Role role) {
+        return ResponseCookie.from(AuthCookieNames.accessTokenCookieName(role), accessToken)
                 .httpOnly(true)
                 .secure(secure)
                 .path(ACCESS_TOKEN_COOKIE_PATH)
@@ -59,8 +57,8 @@ public class AuthCookieFactory {
                 .build();
     }
 
-    public ResponseCookie expiredAccessTokenCookie() {
-        return ResponseCookie.from(ACCESS_TOKEN_COOKIE_NAME, "")
+    public ResponseCookie expiredAccessTokenCookie(Role role) {
+        return ResponseCookie.from(AuthCookieNames.accessTokenCookieName(role), "")
                 .httpOnly(true)
                 .secure(secure)
                 .path(ACCESS_TOKEN_COOKIE_PATH)

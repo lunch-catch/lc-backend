@@ -31,7 +31,7 @@ class AdminTokenController {
             @CookieValue(name = "refreshToken", required = false) String refreshToken) {
         AdminLoginResult result = tokens.reissue(refreshToken);
         return ResponseEntity.ok()
-                .header(HttpHeaders.SET_COOKIE, cookies.accessTokenCookie(result.accessToken()).toString())
+                .header(HttpHeaders.SET_COOKIE, cookies.accessTokenCookie(result.accessToken(), result.response().role()).toString())
                 .header(HttpHeaders.SET_COOKIE, cookies.refreshTokenCookie(
                         result.refreshToken(), result.response().role(), true).toString())
                 .body(ResponseEnvelope.success(result.response()));

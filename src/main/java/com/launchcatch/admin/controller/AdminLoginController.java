@@ -36,7 +36,7 @@ class AdminLoginController {
     ResponseEntity<ResponseEnvelope<AdminLoginResponse>> login(@Valid @RequestBody AdminLoginRequest request) {
         AdminLoginResult result = adminLoginService.login(request);
         return ResponseEntity.ok()
-                .header(HttpHeaders.SET_COOKIE, authCookieFactory.accessTokenCookie(result.accessToken()).toString())
+                .header(HttpHeaders.SET_COOKIE, authCookieFactory.accessTokenCookie(result.accessToken(), result.response().role()).toString())
                 .header(HttpHeaders.SET_COOKIE, authCookieFactory.refreshTokenCookie(
                         result.refreshToken(), result.response().role(), true).toString())
                 .body(ResponseEnvelope.success(result.response()));

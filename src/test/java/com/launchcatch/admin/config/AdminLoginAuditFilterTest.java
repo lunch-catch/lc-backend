@@ -46,7 +46,7 @@ class AdminLoginAuditFilterTest {
         logger.addAppender(logs);
         request.setRemoteAddr("192.0.2.1");
         request.setContent("{\"password\":\"SensitivePassword!\"}".getBytes(StandardCharsets.UTF_8));
-        request.setCookies(new Cookie("accessToken", "SensitiveAccessToken"),
+        request.setCookies(new Cookie("adminAccessToken", "SensitiveAccessToken"),
                 new Cookie("refreshToken", "SensitiveRefreshToken"));
     }
 

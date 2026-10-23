@@ -76,7 +76,7 @@ class OwnerProfileSecurityIntegrationTest extends AbstractOwnerIntegrationTest {
         String value = new TransactionTemplate(manager).execute(tx -> role == Role.OWNER
                 ? jwt.createAccessToken(id, role, Map.of(VERSION_CLAIM, Long.toString(issuanceVersion(id))))
                 : jwt.createAccessToken(id, role));
-        return new Cookie("accessToken", value);
+        return new Cookie("ownerAccessToken", value);
     }
 
     // 계정이 없는 식별자로도 토큰을 만들어야 해서 행이 없으면 0 으로 본다.
@@ -131,7 +131,7 @@ class OwnerProfileSecurityIntegrationTest extends AbstractOwnerIntegrationTest {
 
     @Test
     void 잘못된_쿠키는_401이다() throws Exception {
-        mvc.perform(get(PATH).cookie(new Cookie("accessToken", "invalid-token")))
+        mvc.perform(get(PATH).cookie(new Cookie("ownerAccessToken", "invalid-token")))
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.code").value("AUTH-005"));
     }
@@ -147,7 +147,7 @@ class OwnerProfileSecurityIntegrationTest extends AbstractOwnerIntegrationTest {
                 accessTokenValidityMs, accessTokenValidityMs, accessTokenValidityMs,
                 Clock.offset(Clock.systemUTC(), Duration.ofMillis(-accessTokenValidityMs * 2)));
 
-        mvc.perform(get(PATH).cookie(new Cookie("accessToken",
+        mvc.perform(get(PATH).cookie(new Cookie("ownerAccessToken",
                         expired.createAccessToken(owner.getId(), Role.OWNER))))
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.code").value("AUTH-005"));
