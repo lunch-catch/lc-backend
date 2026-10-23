@@ -40,6 +40,7 @@
 
 ```json
 {
+  "storeId": 20,
   "discountTargetType": "MENU",
   "discountType": "PERCENT",
   "discountValue": 15,
@@ -54,10 +55,11 @@
 
 | 필드 | 타입 | 필수 | null 허용 | 조건 |
 |---|---|---|---|---|
+| storeId | integer | 예 | 아니요 | 로그인한 점주의 가게 ID. 점주 본인의 최종 등록된 가게여야 한다 |
 | discountTargetType | string | 예 | 아니요 | `ALL`, `MENU` 중 하나 |
 | discountType | string | 예 | 아니요 | `PERCENT`, `AMOUNT` 중 하나. `discountTargetType`이 `ALL`이면 `AMOUNT`만 허용 |
 | discountValue | integer | 예 | 아니요 | 양수. `discountType`이 `PERCENT`면 100 이하 |
-| targetMenuId | integer | `discountTargetType`이 `MENU`면 예 | `discountTargetType`이 `ALL`이면 예, `MENU`면 아니요 | |
+| targetMenuId | integer | `discountTargetType`이 `MENU`면 예 | `discountTargetType`이 `ALL`이면 예, `MENU`면 아니요 | 그 가게의 메뉴이고 검증된 이미지가 있어야 한다 |
 | issueQuantity | integer | 예 | 아니요 | 1 이상 |
 | usableStartTime | string | 예 | 아니요 | `HH:mm`, 11:30~15:00 안, 30분 단위 |
 | usableEndTime | string | 예 | 아니요 | `HH:mm`, 11:30~15:00 안, 30분 단위, `usableStartTime`보다 최소 1시간 뒤 |
@@ -91,9 +93,11 @@
 |---|---|---|
 | 400 | COMMON-002 | 필수값 누락, `discountTargetType`/`discountType`이 허용값 밖, `usableStartTime`/`usableEndTime` 형식 불일치 등 |
 | 403 | CAMPAIGN-001 | 점주 상태가 ACTIVE가 아님 |
+| 403 | CAMPAIGN-013 | `storeId`가 없거나 점주 본인의 최종 등록된 가게가 아님(존재 여부를 알려주지 않으려고 같은 응답) |
 | 422 | CAMPAIGN-002 | `discountType`이 `PERCENT`이고 `discountValue`가 100 초과, 또는 `discountTargetType`이 `ALL`인데 `discountType`이 `PERCENT` |
 | 422 | CAMPAIGN-003 | `issueQuantity`가 0 이하 |
 | 422 | CAMPAIGN-004 | `usableStartTime`~`usableEndTime`이 11:30~15:00 밖이거나 30분 단위가 아니거나 1시간 미만 |
+| 422 | CAMPAIGN-014 | `discountTargetType`이 `MENU`인데 `targetMenuId`가 없는 메뉴이거나 그 가게의 메뉴가 아니거나 검증된 이미지가 없음 |
 | 409 | CAMPAIGN-010 | 그 가게에 작성 중인 캠페인이 없는데(새로 만드는 경우), 이 점주의 다른 캠페인이 이미 `ENDED`가 아닌 상태로 남아 있음 |
 | 500 | COMMON-001 | 처리하지 못한 서버 오류 |
 
