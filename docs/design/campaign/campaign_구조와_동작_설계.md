@@ -34,6 +34,7 @@ campaign/
 └── service/
     ├── CampaignStatusService.java        전이 5개 + pauseFromFunding/resumeFromFunding, 로그 기록, 이벤트 발행, pause/resume의 가게 요약 갱신(#468)
     ├── CampaignDailyTransitionService.java 00:00 배치의 종료(집행 기간 만료)와 집행 시작(SCHEDULED -> ACTIVE) 전환(#569)
+    ├── CampaignStoreSummaryService.java  00:00 배치의 새 영업일 가게 요약 준비(#838)
     ├── CampaignPauseResumeService.java   점주용 중단·재개(#468). 점주 상태·본인 소유를 확인하고 CampaignStatusService에 맡긴다
     ├── CampaignQueryServiceImpl.java     CampaignQueryService 구현
     ├── CampaignFundingUpdaterImpl.java   CampaignFundingUpdater 구현. FundingJudgement를 상태 전이 호출로 옮긴다
@@ -265,18 +266,22 @@ sequenceDiagram
 
 ## 10. 배치
 
-00:00 묶음에 캠페인이 맡는 단계 둘을 `ops.scheduler.DailyJob`으로 등록한다(`#569`, 요구사항명세서 102행 (1), (2)). 순서 값은 102행 단계 번호 × 10 이고 정산 단계(40~70)보다 앞이다. 앞 단계가 실패하면 뒤 단계(정산)는 돌지 않는다.
+00:00 묶음에 캠페인이 맡는 단계 셋을 `ops.scheduler.DailyJob`으로 등록한다(`#569`, `#838`, 요구사항명세서 102행). 순서 값은 102행 단계 번호 × 10 이고 정산 단계(40~)보다 앞이다. 앞 단계가 실패하면 뒤 단계(정산)는 돌지 않는다.
 
 | 순서 | 클래스 | 작업 이름 | 하는 일 |
 |---|---|---|---|
 | `@Order(10)` | `CampaignEndJob` | `CAMPAIGN_END_EXPIRED` | 집행 종료일이 영업일보다 앞인 `ACTIVE`, `PAUSED` 캠페인을 `ENDED` 로 바꾼다 |
 | `@Order(20)` | `CampaignStartJob` | `CAMPAIGN_START_SCHEDULED` | 집행 시작일이 영업일 이하인 `SCHEDULED` 캠페인을 `ACTIVE` 로 바꾸고, 같은 가게의 기존 `ACTIVE` 캠페인은 먼저 `ENDED` 로 바꾼다 |
+| `@Order(30)` | `CampaignStoreSummaryJob` | `CAMPAIGN_STORE_SUMMARY` | 그 영업일에 `ACTIVE` 인 캠페인의 가게 요약을 `StoreCampaignSummaryUpdater.updateAll` 로 한 번에 만든다 |
 
 - **캠페인마다 `CampaignStatusService`의 전이를 따로 부른다.** 전이 하나가 자기 트랜잭션과 행 잠금(`findByIdForUpdate`)을 가지고, `CampaignDailyTransitionService`는 트랜잭션을 열지 않는다. 한 캠페인이 실패해도 나머지는 계속 처리하고, 끝에서 실패가 하나라도 있으면 예외를 던져 단계를 실패시킨다. 한 캠페인 때문에 다른 캠페인의 종료가 막히지 않는다
 - **멱등이다.** 대상 조회가 이미 `ENDED`, `ACTIVE` 인 캠페인을 걸러내고 `end`, `activate` 자체도 이미 그 상태면 조용히 성공하므로, 같은 영업일에 두 번 돌아도(이어받기, 수동 재실행) 결과가 같다. 시작일이 영업일 **이하**인 것을 대상으로 해서 배치가 하루 빠졌어도 다음 실행이 이어서 켠다
 - **기존 `ACTIVE` 를 끝내는 것과 새 캠페인을 켜는 것은 서로 다른 트랜잭션이다.** 그 사이에 실패하면 기존 캠페인만 끝난 채로 남고, 단계가 실패로 끝나 다시 돌 때 새 캠페인이 이어서 켜진다. 점주는 `ENDED` 가 아닌 캠페인을 하나만 가질 수 있어(`#525`) 보통 같은 가게에 `ACTIVE` 가 둘 있는 일은 없고 이 종료는 안전장치다
 - **집행 기간이 이미 지난 `SCHEDULED` 는 켜지 않는다.** `ACTIVE` 로 켰다가 바로 끝내는 대신 그대로 둔다. 이런 캠페인은 점주가 직접 처리한다
 - `activate` 는 상태 변경과 로그에 더해 가게 요약(`StoreCampaignSummaryUpdater`)을 `ACTIVE` 로 갱신한다. `end` 는 `#600` 이 이미 갱신한다
+- **가게 요약은 영업일마다 한 행이다(`#838`).** 전환 순간에만 쓰면 하루 넘게 진행하는 캠페인은 다음 날 요약이 없어 가게 목록과 상세에서 사라진다. 30번째 단계가 전환(10, 20) 뒤에 `ACTIVE` 캠페인 전부의 요약을 새 영업일 몫으로 만든다. 방금 켜진 캠페인은 들어가고 방금 끝난 캠페인은 빠진다
+- 요약 저장은 한 트랜잭션에서 `updateAll` 로 한다(store 계약이 호출자의 쓰기 트랜잭션을 요구한다). 한 건이라도 실패하면(예: 대상 메뉴가 그 가게 메뉴가 아님) 전체가 롤백되고 예외가 올라가 단계가 실패한다. 뒤 단계(정산)는 돌지 않는다. (영업일, 캠페인) 기준 upsert 라 같은 영업일에 다시 돌아도 결과가 같다
+- `PAUSED` 캠페인은 새 요약을 만들지 않는다. 점주 중단 때 쓴 요약은 그 영업일에만 남는다
 
 ## 11. 성능
 
