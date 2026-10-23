@@ -263,8 +263,9 @@ class CampaignStatusServiceTest {
         Campaign campaign = scheduledCampaign();
         when(campaignRepository.findByIdForUpdate(CAMPAIGN_ID)).thenReturn(Optional.of(campaign));
 
-        service.endExpiredScheduled(CAMPAIGN_ID, LocalDate.of(2026, 11, 1));
+        boolean ended = service.endExpiredScheduled(CAMPAIGN_ID, LocalDate.of(2026, 11, 1));
 
+        assertThat(ended).isTrue();
         assertThat(campaign.getStatus()).isEqualTo(CampaignStatus.ENDED);
         CampaignStatusLog saved = captureLog();
         assertThat(saved.getActorType()).isEqualTo(ActorType.SYSTEM);
@@ -280,8 +281,9 @@ class CampaignStatusServiceTest {
         campaign.endBeforeStart(LocalDateTime.now(FIXED_CLOCK));
         when(campaignRepository.findByIdForUpdate(CAMPAIGN_ID)).thenReturn(Optional.of(campaign));
 
-        service.endExpiredScheduled(CAMPAIGN_ID, LocalDate.of(2026, 11, 1));
+        boolean ended = service.endExpiredScheduled(CAMPAIGN_ID, LocalDate.of(2026, 11, 1));
 
+        assertThat(ended).isFalse();
         verify(campaignStatusLogRepository, never()).save(any());
     }
 
@@ -295,9 +297,9 @@ class CampaignStatusServiceTest {
                 .thenReturn(Optional.of(cancelled), Optional.of(active), Optional.of(rescheduled));
 
         // 점주가 취소해 DRAFT 가 된 캠페인, 이미 ACTIVE 인 캠페인, 취소 뒤 기간을 고쳐 다시 예약한 캠페인(종료일 10/31)
-        service.endExpiredScheduled(CAMPAIGN_ID, LocalDate.of(2026, 10, 31));
-        service.endExpiredScheduled(CAMPAIGN_ID, LocalDate.of(2026, 11, 1));
-        service.endExpiredScheduled(CAMPAIGN_ID, LocalDate.of(2026, 10, 31));
+        assertThat(service.endExpiredScheduled(CAMPAIGN_ID, LocalDate.of(2026, 10, 31))).isFalse();
+        assertThat(service.endExpiredScheduled(CAMPAIGN_ID, LocalDate.of(2026, 11, 1))).isFalse();
+        assertThat(service.endExpiredScheduled(CAMPAIGN_ID, LocalDate.of(2026, 10, 31))).isFalse();
 
         assertThat(cancelled.getStatus()).isEqualTo(CampaignStatus.DRAFT);
         assertThat(active.getStatus()).isEqualTo(CampaignStatus.ACTIVE);

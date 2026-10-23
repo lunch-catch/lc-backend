@@ -34,7 +34,7 @@ public class CampaignDailyTransitionService {
     /*
      * 집행 기간이 끝난 ACTIVE, PAUSED 캠페인과 시작 전에 기간이 지나 버린 SCHEDULED 캠페인(#902)을 ENDED 로 바꾼다. 종료한
      * 개수를 돌려준다(데이터 오류로 건너뛴 것은 뺀다). SCHEDULED 는 시작 대상에도 종료 대상에도 들지 못해 남는 일이 없게 같은
-     * 단계에서 함께 처리한다.
+     * 단계에서 함께 처리한다. 목록을 읽은 뒤 취소되거나 다시 예약돼 실제로 바뀌지 않은 SCHEDULED 는 개수에 세지 않는다.
      */
     public int endExpired(LocalDate businessDate) {
         List<Long> failed = new ArrayList<>();
@@ -53,8 +53,9 @@ public class CampaignDailyTransitionService {
         }
         for (Long campaignId : campaignRepository.findScheduledIdsToEnd(businessDate)) {
             try {
-                campaignStatusService.endExpiredScheduled(campaignId, businessDate);
-                ended++;
+                if (campaignStatusService.endExpiredScheduled(campaignId, businessDate)) {
+                    ended++;
+                }
             } catch (IllegalArgumentException e) {
                 log.error("event=CAMPAIGN_DAILY_END_SKIPPED reason=DATA_ERROR campaignId={} businessDate={} detail={}",
                         campaignId, businessDate, e.getMessage());

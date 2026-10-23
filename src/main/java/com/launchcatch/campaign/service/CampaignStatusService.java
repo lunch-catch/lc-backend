@@ -217,22 +217,26 @@ public class CampaignStatusService {
      * 목록을 읽은 뒤 행 잠금을 잡기 전에 점주가 취소해 DRAFT 가 되거나, 취소 뒤 기간을 고쳐 다시 예약했을 수 있다. 잠금을
      * 잡은 뒤 SCHEDULED 이고 종료일이 영업일보다 앞인지 다시 확인하고, 아니면 예외 없이 건너뛴다. 이미 ENDED 면 아무것도
      * 하지 않아 같은 영업일에 다시 불려도 결과가 같다(멱등).
+     *
+     * 이 호출이 실제로 ENDED 로 바꿨으면 true 를 돌려준다. 건너뛰었거나 이미 ENDED 라 바꿀 것이 없었으면 false 라서,
+     * 호출하는 쪽이 종료한 개수를 정확히 센다.
      */
     @Transactional
-    public void endExpiredScheduled(Long campaignId, LocalDate businessDate) {
+    public boolean endExpiredScheduled(Long campaignId, LocalDate businessDate) {
         Campaign campaign = findOrThrow(campaignId);
         CampaignStatus status = campaign.getStatus();
         if (status == CampaignStatus.ENDED) {
-            return;
+            return false;
         }
         if (status != CampaignStatus.SCHEDULED
                 || campaign.getEndDate() == null || !campaign.getEndDate().isBefore(businessDate)) {
             log.info("event=CAMPAIGN_DAILY_END_SKIPPED reason=NOT_EXPIRED_SCHEDULED campaignId={} status={} endDate={} businessDate={}",
                     campaignId, status, campaign.getEndDate(), businessDate);
-            return;
+            return false;
         }
         campaign.endBeforeStart(LocalDateTime.now(clock));
         log(campaignId, status, campaign.getStatus(), ActorType.SYSTEM, EXPIRED_BEFORE_START_REASON);
+        return true;
     }
 
     @Transactional

@@ -99,7 +99,11 @@ class CampaignDailyTransitionServiceTest {
     @DisplayName("시작 전에 기간이 지난 SCHEDULED 도 같은 단계에서 하나씩 종료하고 개수에 센다(#902)")
     void 기간이_지난_SCHEDULED도_종료한다() {
         when(campaignRepository.findIdsToEnd(BUSINESS_DATE)).thenReturn(List.of(1L));
-        when(campaignRepository.findScheduledIdsToEnd(BUSINESS_DATE)).thenReturn(List.of(5L, 6L));
+        when(campaignRepository.findScheduledIdsToEnd(BUSINESS_DATE)).thenReturn(List.of(5L, 6L, 7L));
+        when(campaignStatusService.endExpiredScheduled(5L, BUSINESS_DATE)).thenReturn(true);
+        when(campaignStatusService.endExpiredScheduled(6L, BUSINESS_DATE)).thenReturn(true);
+        // 목록을 읽은 뒤 점주가 취소해 실제로는 바뀌지 않은 캠페인이다.
+        when(campaignStatusService.endExpiredScheduled(7L, BUSINESS_DATE)).thenReturn(false);
 
         int ended = service.endExpired(BUSINESS_DATE);
 
@@ -107,6 +111,7 @@ class CampaignDailyTransitionServiceTest {
         verify(campaignStatusService).end(1L, ActorType.SYSTEM, BUSINESS_DATE);
         verify(campaignStatusService).endExpiredScheduled(5L, BUSINESS_DATE);
         verify(campaignStatusService).endExpiredScheduled(6L, BUSINESS_DATE);
+        verify(campaignStatusService).endExpiredScheduled(7L, BUSINESS_DATE);
     }
 
     @Test
