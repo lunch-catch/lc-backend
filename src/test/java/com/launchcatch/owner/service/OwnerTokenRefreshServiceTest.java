@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
+import ch.qos.logback.classic.Level;
 import com.launchcatch.auth.Role;
 import com.launchcatch.auth.exception.AuthException;
 import com.launchcatch.owner.repository.OwnerAccessTokenVersionRepository;
@@ -214,15 +215,38 @@ class OwnerTokenRefreshServiceTest {
 
     @Test
     void 복구_확인이_실패하면_토큰을_되살리지_않는다() {
-        when(owners.findByIdForLogin(7L)).thenThrow(failure());
-        assertCode(() -> service.refresh(OLD_TOKEN), "AUTH-002");
+        when(owners.findByIdForLogin(7L))
+                .thenThrow(new DataAccessResourceFailureException("sensitive-restore-error " + OLD_TOKEN + " " + OLD_HASH));
+        try (var logs = LogCapture.attach(OwnerTokenRefreshService.class)) {
+            assertCode(() -> service.refresh(OLD_TOKEN), "AUTH-002");
+            var event = logs.only();
+            assertThat(event.getLevel()).isEqualTo(Level.WARN);
+            assertThat(event.getFormattedMessage()).contains("event=OWNER_REFRESH_RESTORE_FAILED", "ownerId=7",
+                    "exceptionType=DataAccessResourceFailureException")
+                    .doesNotContain("sensitive-restore-error", OLD_TOKEN, OLD_HASH, "stack=");
+            assertThat(event.getThrowableProxy()).isNull();
+        }
         verify(ownerTokens, never()).restoreConsumed(anyString());
     }
 
     @Test
     void Redis_게시만_실패하면_DB_성공을_유지한다() {
-        when(tokens.saveIfNewer(anyString(), anyLong(), any(), anyBoolean(), any(), anyLong())).thenThrow(failure());
-        assertThat(service.refresh(OLD_TOKEN).accessToken()).isEqualTo("new-access");
+        when(tokens.saveIfNewer(anyString(), anyLong(), any(), anyBoolean(), any(), anyLong()))
+                .thenAnswer(call -> {
+                    throw new DataAccessResourceFailureException("sensitive-publish-error " + call.getArgument(0)
+                            + " " + owner.getRefreshTokenHash() + " " + owner.getEmail());
+                });
+        try (var logs = LogCapture.attach(OwnerTokenRefreshService.class)) {
+            var result = service.refresh(OLD_TOKEN);
+            assertThat(result.accessToken()).isEqualTo("new-access");
+            var event = logs.only();
+            assertThat(event.getLevel()).isEqualTo(Level.WARN);
+            assertThat(event.getFormattedMessage()).contains("event=OWNER_REFRESH_CACHE_PUBLISH_FAILED", "ownerId=7",
+                    "exceptionType=DataAccessResourceFailureException", "fallback=KEEP_DB_REFRESH")
+                    .doesNotContain("sensitive-publish-error", OLD_TOKEN, OLD_HASH, owner.getEmail(),
+                            result.refreshToken(), owner.getRefreshTokenHash(), "stack=");
+            assertThat(event.getThrowableProxy()).isNull();
+        }
     }
 
     @Test
@@ -260,7 +284,14 @@ class OwnerTokenRefreshServiceTest {
     void RT_재사용은_계정_RT를_폐기하고_AT_컷오프를_설정한다() {
         when(ownerTokens.consumeForRotation(OLD_TOKEN)).thenReturn(OwnerRefreshTokenRepository.ConsumeOutcome.reuseDetected(
                 new RefreshTokenRepository.RefreshTokenData(7L, Role.OWNER, true)));
-        assertCode(() -> service.refresh(OLD_TOKEN), "AUTH-004");
+        try (var logs = LogCapture.attach(OwnerTokenRefreshService.class)) {
+            assertCode(() -> service.refresh(OLD_TOKEN), "AUTH-004");
+            var event = logs.only();
+            assertThat(event.getLevel()).isEqualTo(Level.WARN);
+            assertThat(event.getFormattedMessage()).contains("event=OWNER_REFRESH_REUSE_SUSPECTED", "ownerId=7")
+                    .doesNotContain("OWNER_REFRESH_REUSE_DETECTED", OLD_TOKEN, OLD_HASH, owner.getEmail());
+            assertThat(event.getThrowableProxy()).isNull();
+        }
         assertThat(owner.getRefreshTokenHash()).isNull();
         assertThat(owner.getRefreshTokenExpiresAt()).isNull();
         assertThat(owner.getRefreshTokenIssuanceVersion()).isEqualTo(2L);
@@ -288,21 +319,19 @@ class OwnerTokenRefreshServiceTest {
 
     @Test
     void Redis_장애_로그에_예외메시지의_RT를_노출하지_않는다() {
-        var logger = (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger(OwnerTokenRefreshService.class);
-        var appender = new ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent>();
-        appender.start();
-        logger.addAppender(appender);
         when(ownerTokens.consumeForRotation(OLD_TOKEN))
-                .thenThrow(new DataAccessResourceFailureException("sensitive-refresh-token"));
-        try {
+                .thenThrow(new DataAccessResourceFailureException("sensitive-refresh-token " + OLD_TOKEN
+                        + " " + OLD_HASH + " " + owner.getEmail())).thenReturn(success());
+        try (var logs = LogCapture.attach(OwnerTokenRefreshService.class)) {
             var result = service.refresh(OLD_TOKEN);
-            assertThat(appender.list).isNotEmpty().allSatisfy(event -> {
-                assertThat(event.getFormattedMessage()).doesNotContain("sensitive-refresh-token", OLD_TOKEN, result.refreshToken());
-                assertThat(event.getThrowableProxy()).isNull();
-            });
-        } finally {
-            logger.detachAppender(appender);
-            appender.stop();
+            assertThat(result.accessToken()).isEqualTo("new-access");
+            var event = logs.only();
+            assertThat(event.getLevel()).isEqualTo(Level.WARN);
+            assertThat(event.getFormattedMessage()).contains("event=OWNER_REFRESH_DB_FALLBACK",
+                    "exceptionType=DataAccessResourceFailureException", "fallback=DB")
+                    .doesNotContain("sensitive-refresh-token", OLD_TOKEN, OLD_HASH, owner.getEmail(),
+                            result.accessToken(), result.refreshToken(), owner.getRefreshTokenHash(), "stack=", "errorType=");
+            assertThat(event.getThrowableProxy()).isNull();
         }
     }
 
@@ -317,8 +346,18 @@ class OwnerTokenRefreshServiceTest {
 
     @Test
     void 확정표시_장애만으로_DB_성공을_취소하지_않는다() {
-        doThrow(failure()).when(ownerTokens).confirmConsumed(OLD_HASH);
-        assertThat(service.refresh(OLD_TOKEN).accessToken()).isEqualTo("new-access");
+        doThrow(new DataAccessResourceFailureException("sensitive-confirm-error " + OLD_TOKEN + " " + OLD_HASH))
+                .when(ownerTokens).confirmConsumed(OLD_HASH);
+        try (var logs = LogCapture.attach(OwnerTokenRefreshService.class)) {
+            var result = service.refresh(OLD_TOKEN);
+            assertThat(result.accessToken()).isEqualTo("new-access");
+            var event = logs.only();
+            assertThat(event.getLevel()).isEqualTo(Level.WARN);
+            assertThat(event.getFormattedMessage()).contains("event=OWNER_REFRESH_CONFIRM_FAILED", "ownerId=7",
+                    "exceptionType=DataAccessResourceFailureException", "fallback=DB_HASH_CHECK")
+                    .doesNotContain("sensitive-confirm-error", OLD_TOKEN, OLD_HASH, result.refreshToken(), "stack=");
+            assertThat(event.getThrowableProxy()).isNull();
+        }
     }
 
     private DataAccessResourceFailureException failure() {
