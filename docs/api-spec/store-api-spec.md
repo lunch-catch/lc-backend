@@ -122,7 +122,7 @@ OTHER
 - 활성 캠페인 여부와 할인 정보는 당일 활성 캠페인을 기준으로 반환한다.
 - 활성 캠페인 표시는 요청 위치와 관계없이 당일 캠페인 상태를 기준으로 판단한다.
 - 활성 캠페인이 없는 가게는 `hasActiveCampaign=false`, `activeCampaign=null`로 반환한다.
-- `discountTargetType=MENU`이면 `targetMenu`에 할인 대상 메뉴 정보를 반환한다.
+- `discountTargetType=MENU`이면 `targetMenu`에 할인 대상 메뉴 정보를 반환한다. 대상 메뉴가 누락되거나 해당 가게의 메뉴가 아니면 가게는 유지하고 `hasActiveCampaign=false`, `activeCampaign=null`로 반환한다.
 - `discountTargetType=ALL`이면 `targetMenu`는 `null`이다.
 
 ## 응답 `200`
@@ -169,7 +169,7 @@ OTHER
 | `nextPageToken` | string | 예 | 다음 페이지 커서를 반환한다. 마지막 페이지면 `null`이다 |
 | `storeId` | integer | 아니오 | 가게 ID를 반환한다 |
 | `name` | string | 아니오 | 가게명을 반환한다 |
-| `storeImageUrl` | string | 예 | 업로드 확인을 마친 대표 이미지(LOGO)의 CDN URL을 반환한다. 이미지가 없거나 업로드 확인 전이면 `null`이다 |
+| `storeImageUrl` | string | 예 | 업로드 확인을 마친 대표 이미지(LOGO)의 CDN URL을 반환한다. 이미지가 없거나 업로드 확인 전이거나 객체 키가 비어 있으면 `null`이다 |
 | `businessCategory` | string(enum) | 아니오 | 가게의 업종 코드를 반환한다. [카테고리 필터](#카테고리-필터)에 나열한 코드 중 `ALL`을 제외한 값을 사용한다 |
 | `longitude` | number | 아니오 | 가게 경도를 반환한다 |
 | `latitude` | number | 아니오 | 가게 위도를 반환한다 |
@@ -1027,8 +1027,8 @@ MEMBER가 최종 등록된 가게의 상세 정보를 조회한다. 활성 캠�
 | roadAddress, phone | string | 불가 | 도로명 주소, 전화번호 |
 | latitude, longitude | number | 불가 | 지도 미리보기용 위도·경도 |
 | businessHours | array | 불가 | 월요일부터 일요일 순으로 반환하는 영업시간 |
-| logoImage | object | 허용 | 업로드 확인된 대표 이미지 1개. S3 준비 전 임시로 이미지가 없으면 null |
-| interiorImages | array | 불가 | 업로드 확인된 내부 이미지. 표시 순서대로 최대 3개, 없으면 [] |
+| logoImage | object | 허용 | 업로드 확인된 대표 이미지 1개. 이미지가 없거나 객체 키가 비어 있으면 null |
+| interiorImages | array | 불가 | 업로드 확인된 내부 이미지. 객체 키가 빈 항목은 제외하며 표시 순서대로 최대 3개, 없으면 [] |
 | menus | array | 불가 | 대표 메뉴. 표시 순서대로 0~3개, 없으면 [] |
 | activeCampaign | object | 가능 | 서울 기준 오늘의 활성 캠페인. 없으면 null |
 
@@ -1042,7 +1042,7 @@ MEMBER가 최종 등록된 가게의 상세 정보를 조회한다. 활성 캠�
 PENDING·UPLOADED 이미지는 공개하지 않는다.
 
 메뉴 항목은 `menuId`(integer(int64)), `name`(string), `price`(integer(int64), 원),
-`description`(string 또는 null), `sortOrder`(integer), `image`(이미지 객체, S3 준비 전 임시로 null 허용)를 갖는다.
+`description`(string 또는 null), `sortOrder`(integer), `image`(이미지 객체, 이미지가 없거나 객체 키가 비어 있으면 null)를 갖는다.
 대표자 성명, 사업자등록번호, 사업자 검증 결과와 온보딩 진행 정보는 반환하지 않는다.
 
 ### activeCampaign
@@ -1059,6 +1059,7 @@ PENDING·UPLOADED 이미지는 공개하지 않는다.
 `targetMenu`의 menuId는 integer(int64), name은 string, price는 integer(int64, 할인 전 가격)다.
 다른 날짜이거나 DRAFT·SCHEDULED·PAUSED·ENDED인 캠페인은 활성 정보로 반환하지 않는다.
 캠페인 사용 시간 밖이라는 이유로 활성 정보를 숨기지는 않는다.
+MENU 할인의 대상 메뉴가 누락되거나 해당 가게의 메뉴가 아니면 해당 캠페인만 제외하고 `activeCampaign=null`로 반환한다. 가게와 메뉴 정보는 유지한다.
 
 ### 화면에서 합치는 데이터
 
@@ -1084,7 +1085,7 @@ PENDING·UPLOADED 이미지는 공개하지 않는다.
 | 401 | AUTH-005 | 유효한 인증이 없음 |
 | 403 | AUTH-006 | MEMBER 외 역할 |
 | 404 | STORE-016 | 가게가 없거나 최종 등록되지 않음 |
-| 500 | COMMON-001 | 조회 장애, 저장된 이미지 객체 키·할인 대상 메뉴 오류 또는 이미지 URL 설정 오류 |
+| 500 | COMMON-001 | DB 조회 장애 또는 정상 이미지의 URL 설정 오류 |
 
 없는 가게와 등록 중인 초안은 같은 오류를 반환한다.
-필수 이미지가 누락된 등록 가게를 정상 응답으로 반환하지 않는다.
+이미지 객체 키의 null·빈 문자열·공백은 이미지 누락으로 처리한다. 온보딩의 필수 이미지 등록과 최종 등록 검증은 유지한다.
