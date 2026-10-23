@@ -15,17 +15,20 @@ import com.launchcatch.campaign.template.TemplateHtmlSanitizer;
 import com.launchcatch.campaign.template.TemplatePromptValidator;
 import com.launchcatch.campaign.template.TemplateSlotValidator;
 import com.launchcatch.campaign.template.TemplateStructureValidator;
+import com.launchcatch.global.exception.CommonErrorCode;
 import java.time.Clock;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class TemplateReviseService {
@@ -62,6 +65,7 @@ public class TemplateReviseService {
         if (existing.isPresent()) {
             return toResponseForMatchingTemplate(existing.get(), templateId);
         }
+        rejectDiscardedRequestId(requestId, templateId);
         templateGenerationRateLimiter.checkLimit(adminId, requestId);
         validatePrompt(requestPrompt, requestId);
         Template template = findTemplate(templateId);
@@ -82,6 +86,19 @@ public class TemplateReviseService {
             return templateVersionRepository.findByRequestId(requestId)
                     .map(found -> toResponseForMatchingTemplate(found, templateId))
                     .orElseThrow(() -> e);
+        }
+    }
+
+    /*
+     * 재게시나 버전 상한으로 소프트삭제된 버전의 requestId 로 다시 요청이 오면 재시도로 볼 수 없고(findByRequestId 는
+     * 삭제된 버전을 제외한다) 새 요청으로 처리하면 저장에서 request_id UNIQUE 에 걸려 500 이 된다(#880). LLM 을 부르고
+     * 속도 제한을 세기 전에 400 으로 거절해, 클라이언트가 새 requestId 로 다시 보내게 한다.
+     */
+    private void rejectDiscardedRequestId(String requestId, Long templateId) {
+        if (templateVersionRepository.existsByRequestIdAndDeletedAtIsNotNull(requestId)) {
+            log.info("event=TEMPLATE_REVISE_REJECTED reason=REQUEST_ID_DISCARDED templateId={} requestId={}",
+                    templateId, requestId);
+            throw new CampaignException(CommonErrorCode.INVALID_INPUT);
         }
     }
 

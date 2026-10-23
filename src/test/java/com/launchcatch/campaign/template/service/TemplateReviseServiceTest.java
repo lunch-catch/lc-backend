@@ -11,6 +11,7 @@ import static org.mockito.Mockito.when;
 
 import com.launchcatch.campaign.exception.CampaignException;
 import com.launchcatch.campaign.exception.PosterErrorCode;
+import com.launchcatch.global.exception.CommonErrorCode;
 import com.launchcatch.campaign.template.client.TemplateGenerationTimeoutException;
 import com.launchcatch.campaign.template.client.GeneratedTemplate;
 import com.launchcatch.campaign.template.client.TemplateHtmlGenerator;
@@ -122,6 +123,18 @@ class TemplateReviseServiceTest {
         assertThat(response.removedElements()).containsExactly("script");
         assertThat(response.suggestedPrompts()).containsExactlyElementsOf(GENERATED_SUGGESTIONS);
         verify(templateVersionRepository).saveAndFlush(any(TemplateVersion.class));
+    }
+
+    @Test
+    @DisplayName("재게시나 상한으로 소프트삭제된 버전의 requestId 로 요청하면 LLM 을 부르지 않고 COMMON-002 로 거부한다(#880)")
+    void 소프트삭제된_버전의_requestId_는_LLM을_부르기_전에_거부한다() {
+        when(templateVersionRepository.existsByRequestIdAndDeletedAtIsNotNull(REQUEST_ID)).thenReturn(true);
+
+        assertThatThrownBy(() -> service.revise(TEMPLATE_ID, "버튼 색 바꿔줘", REQUEST_ID, ADMIN_ID))
+                .isInstanceOfSatisfying(CampaignException.class, e ->
+                        assertThat(e.getErrorCode()).isEqualTo(CommonErrorCode.INVALID_INPUT));
+        verify(templateHtmlGenerator, never()).revise(any(), any());
+        verify(templateVersionRepository, never()).saveAndFlush(any());
     }
 
     @Test

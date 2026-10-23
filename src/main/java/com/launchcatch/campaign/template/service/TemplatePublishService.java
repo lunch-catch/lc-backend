@@ -12,9 +12,11 @@ import java.time.Clock;
 import java.time.LocalDateTime;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class TemplatePublishService {
@@ -64,6 +66,8 @@ public class TemplatePublishService {
             LocalDateTime now = LocalDateTime.now(clock);
             template.republish(draft.get().getHtmlContent(), now, versionNumber, adminId);
             templateVersionRepository.softDeleteAllByTemplateId(templateId, now);
+            log.info("event=TEMPLATE_REPUBLISHED templateId={} adminId={} versionNumber={} active={}",
+                    templateId, adminId, versionNumber, template.isActive());
             return toResponse(template);
         }
         if (Integer.valueOf(versionNumber).equals(template.getPublishedVersionNumber())) {

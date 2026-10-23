@@ -8,6 +8,7 @@ import com.launchcatch.campaign.template.repository.TemplateRepository;
 import java.time.Clock;
 import java.time.LocalDateTime;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -18,6 +19,7 @@ import org.springframework.transaction.annotation.Transactional;
  * 수정, 게시, 삭제와 같은 행 잠금(findByIdForUpdate)을 쓴다. 이름 변경이 게시나 수정과 겹쳐도
  * lastModified 갱신이 서로 덮어쓰이지 않고 순서가 정해진다.
  */
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class TemplateRenameService {
@@ -30,6 +32,7 @@ public class TemplateRenameService {
         Template template = templateRepository.findByIdForUpdate(templateId)
                 .orElseThrow(() -> new CampaignException(PosterErrorCode.TEMPLATE_NOT_FOUND));
         template.rename(name, adminId, LocalDateTime.now(clock));
+        log.info("event=TEMPLATE_RENAMED templateId={} adminId={}", templateId, adminId);
         return TemplateRenameResponse.of(template);
     }
 }

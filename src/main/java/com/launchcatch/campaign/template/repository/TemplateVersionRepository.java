@@ -28,6 +28,13 @@ public interface TemplateVersionRepository extends JpaRepository<TemplateVersion
     Optional<TemplateVersion> findByRequestId(String requestId);
 
     /*
+     * 소프트삭제된 버전이 이 requestId 를 쥐고 있는지 본다(#880). 소프트삭제된 행은 04시 삭제 배치 전까지 request_id
+     * UNIQUE 를 쥐고 있어서, 재게시나 상한으로 지워진 버전의 requestId 로 다시 요청이 오면 LLM 을 부른 뒤 저장에서
+     * 충돌한다. 호출하기 전에 이 조회로 먼저 거른다.
+     */
+    boolean existsByRequestIdAndDeletedAtIsNotNull(String requestId);
+
+    /*
      * 템플릿 상세 조회의 미리보기 html 과, 템플릿을 수정할 때 LLM 에 넘길 "최신 버전 HTML" 하나를 가볍게 가져온다.
      * 이 템플릿의 버전 전체(과거 HTML 포함)를 다 불러올 필요가 없다. 소프트삭제된 버전은 제외한다. 게시된
      * 템플릿은 게시할 때 버전이 모두 소프트삭제되므로(#880) 임시저장이 없으면 비어 있다.
