@@ -190,6 +190,8 @@ coupon:
 # 팀 논의로 100을 그대로 유지하기로 했다(#532).
 campaign:
   template-max-count: "${CAMPAIGN_TEMPLATE_MAX_COUNT:100}"
+  # 템플릿 생성과 수정을 관리자 1명당 분당 몇 번까지 받을지다(#227). 시연 촬영처럼 연달아 호출하는 환경에서만 올린다(#831).
+  template-generation-rate-limit: "${TEMPLATE_GENERATION_RATE_LIMIT:3}"
   # 포스터 자동 검수 기준이다(명세서 29행 기본값, #535). 29행의 기준 관리가 생기면 DB 로 옮긴다.
   moderation:
     max-text-ratio: "${CAMPAIGN_MODERATION_MAX_TEXT_RATIO:0.5}"
