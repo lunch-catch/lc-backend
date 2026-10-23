@@ -5,16 +5,13 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.ArgumentMatchers.anyCollection;
-import static org.mockito.Mockito.doReturn;
-import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import com.launchcatch.adserving.config.PacingProperties;
 import com.launchcatch.adserving.engine.entity.AdCandidate;
 import com.launchcatch.adserving.engine.entity.DiscountTarget;
 import com.launchcatch.adserving.engine.entity.DiscountType;
@@ -38,8 +35,6 @@ import com.launchcatch.adserving.feed.repository.ServeRecordRepository;
 import com.launchcatch.adserving.feed.repository.SwipeLogRepository;
 import com.launchcatch.adserving.engine.SlotType;
 import org.mockito.ArgumentCaptor;
-import com.launchcatch.billing.contract.BudgetProgress;
-import com.launchcatch.billing.contract.BudgetQueryService;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import com.launchcatch.adserving.feed.repository.FeedRateLimitRepository;
 import com.launchcatch.adserving.feed.repository.FeedRateLimitRepository.Admission;
@@ -57,7 +52,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.OffsetDateTime;
-import java.util.Collection;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -87,7 +82,8 @@ class FeedServiceTest {
     private final SwipeLogRepository swipeLogRepository = mock(SwipeLogRepository.class);
     private final ServeFrequencyRepository serveFrequencyRepository = mock(ServeFrequencyRepository.class);
     private final ImpressionCountRepository impressionCountRepository = mock(ImpressionCountRepository.class);
-    private final BudgetQueryService budgetQueryService = mock(BudgetQueryService.class);
+    // 24시간 균등 가중치다. 예약액 24,000 이면 시간대마다 1,000 이다
+    private final PacingProperties pacingProperties = new PacingProperties(Collections.nCopies(24, 1));
     private final ServeRecordRepository serveRecordRepository = mock(ServeRecordRepository.class);
     private final ServeLogBuffer serveLogBuffer = mock(ServeLogBuffer.class);
     private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
@@ -96,17 +92,8 @@ class FeedServiceTest {
         Clock clock = Clock.fixed(now.atZone(ClockConfig.ZONE).toInstant(), ClockConfig.ZONE);
         return new FeedService(memberQueryService, rateLimitRepository, adCandidateRepository,
                 exclusionRepository, filterCategoryRepository, feedFilterRepository, swipeLogRepository,
-                serveFrequencyRepository, impressionCountRepository, budgetQueryService, serveRecordRepository,
+                serveFrequencyRepository, impressionCountRepository, pacingProperties, serveRecordRepository,
                 serveLogBuffer, meterRegistry, clock);
-    }
-
-    // 넘겨받은 캠페인마다 진행률 0.5, 예약액 10만 원, 단가 10원으로 답한다. 상한은 10,500 회다.
-    @SuppressWarnings("unchecked")
-    private void givenBudgetForAll() {
-        when(budgetQueryService.getProgress(any(), any(), any())).thenAnswer(invocation ->
-                ((Collection<Long>) invocation.getArgument(0)).stream()
-                        .map(id -> new BudgetProgress(id, 100_000, 10, 50_000, 100_000, 0.5))
-                        .toList());
     }
 
     private static Instant instant(LocalDateTime time) {
@@ -136,7 +123,6 @@ class FeedServiceTest {
         when(exclusionRepository.findCampaignIds(TODAY, MEMBER_ID)).thenReturn(Set.of());
         when(filterCategoryRepository.findCategoryCodes(MEMBER_ID)).thenReturn(List.of());
         when(serveFrequencyRepository.findHistory(TODAY, MEMBER_ID)).thenReturn(new ServedHistory(Map.of(), Set.of()));
-        givenBudgetForAll();
     }
 
     private static final FeedRequest NO_LOCATION = new FeedRequest(null, null);
@@ -295,7 +281,6 @@ class FeedServiceTest {
             when(exclusionRepository.findCampaignIds(TODAY, MEMBER_ID)).thenReturn(Set.of(1L));
             when(filterCategoryRepository.findCategoryCodes(MEMBER_ID)).thenReturn(List.of("KOREAN"));
             when(serveFrequencyRepository.findHistory(TODAY, MEMBER_ID)).thenReturn(new ServedHistory(Map.of(), Set.of()));
-            givenBudgetForAll();
 
             FeedResponse response = serviceAt(SERVING_NOW).getFeed(MEMBER_ID, NO_LOCATION);
 
@@ -319,36 +304,14 @@ class FeedServiceTest {
     class Inputs {
 
         @Test
-        void 정산에_그날_영업일과_지금_시각을_넘겨_진행률을_읽는다() {
+        void 진행률은_후보의_예약액을_가중치로_나눈_계획과_유효_노출_수_x_단가로_계산해_1_2를_넘으면_내려주지_않는다() {
             givenOnboardedMemberWithSavedLocation();
             givenAdmitted(SERVING_NOW);
-            givenCandidates(List.of(candidate(1, SAVED_LAT, SAVED_LNG).build()));
-
-            serviceAt(SERVING_NOW).getFeed(MEMBER_ID, NO_LOCATION);
-
-            verify(budgetQueryService).getProgress(List.of(1L), TODAY, SERVING_NOW);
-        }
-
-        @Test
-        void 후보가_정산이_한_번에_받는_수보다_많으면_나눠_부른다() {
-            givenOnboardedMemberWithSavedLocation();
-            givenAdmitted(SERVING_NOW);
-            List<AdCandidate> many = java.util.stream.LongStream.rangeClosed(1, BudgetQueryService.MAX_CAMPAIGN_IDS + 1L)
-                    .mapToObj(id -> candidate(id, SAVED_LAT, SAVED_LNG).build()).toList();
-            givenCandidates(many);
-
-            serviceAt(SERVING_NOW).getFeed(MEMBER_ID, NO_LOCATION);
-
-            verify(budgetQueryService, times(2)).getProgress(anyCollection(), eq(TODAY), eq(SERVING_NOW));
-        }
-
-        @Test
-        void 정산에_그날_예산_계획이_없는_캠페인은_내려주지_않는다() {
-            givenOnboardedMemberWithSavedLocation();
-            givenAdmitted(SERVING_NOW);
-            givenCandidates(List.of(candidate(1, SAVED_LAT, SAVED_LNG).build(), candidate(2, SAVED_LAT, SAVED_LNG).build()));
-            doReturn(List.of(new BudgetProgress(2L, 100_000, 10, 0, 100_000, 0.0)))
-                    .when(budgetQueryService).getProgress(any(), any(), any());
+            givenCandidates(List.of(
+                    candidate(1, SAVED_LAT, SAVED_LNG).set("reservedAmount", 24_000L).build(),
+                    candidate(2, SAVED_LAT, SAVED_LNG).set("reservedAmount", 24_000L).build()));
+            // 10:15 의 계획 10,250 에 노출 1,240 x 10원은 진행률 1.21, 1,200 x 10원은 1.17 이다
+            when(impressionCountRepository.findValidCounts(eq(TODAY), any())).thenReturn(Map.of(1L, 1_240L, 2L, 1_200L));
 
             FeedResponse response = serviceAt(SERVING_NOW).getFeed(MEMBER_ID, NO_LOCATION);
 
@@ -356,28 +319,45 @@ class FeedServiceTest {
         }
 
         @Test
-        void 정산이_예외를_던지면_예산_규칙을_건너뛰고_서빙을_이어가며_센다() {
+        void 그날_계획이_없는_후보는_내려주지_않는다() {
             givenOnboardedMemberWithSavedLocation();
             givenAdmitted(SERVING_NOW);
-            givenCandidates(List.of(candidate(1, SAVED_LAT, SAVED_LNG).build()));
-            doThrow(new IllegalStateException("카운터 장애")).when(budgetQueryService).getProgress(any(), any(), any());
+            givenCandidates(List.of(
+                    candidate(1, SAVED_LAT, SAVED_LNG).set("reservedAmount", 0L).set("unitPrice", 0L).build(),
+                    candidate(2, SAVED_LAT, SAVED_LNG).build()));
+
+            FeedResponse response = serviceAt(SERVING_NOW).getFeed(MEMBER_ID, NO_LOCATION);
+
+            assertThat(response.cards()).extracting(FeedCardResponse::campaignId).containsExactly(2L);
+        }
+
+        @Test
+        void 예약액을_아직_읽지_못한_후보가_있으면_예산_규칙을_건너뛰고_서빙을_이어간다() {
+            givenOnboardedMemberWithSavedLocation();
+            givenAdmitted(SERVING_NOW);
+            givenCandidates(List.of(
+                    candidate(1, SAVED_LAT, SAVED_LNG).build(),
+                    candidate(2, SAVED_LAT, SAVED_LNG).set("reservedAmount", null).set("unitPrice", null).build()));
+            // 1 은 노출 상한(10,500 회)을 넘었지만 예산 규칙을 건너뛰어 나간다
+            when(impressionCountRepository.findValidCounts(eq(TODAY), any())).thenReturn(Map.of(1L, 20_000L));
 
             FeedResponse response = serviceAt(SERVING_NOW).getFeed(MEMBER_ID, NO_LOCATION);
 
             assertThat(response.status()).isEqualTo(FeedStatus.SERVING);
-            assertThat(response.cards()).extracting(FeedCardResponse::campaignId).containsExactly(1L);
-            assertThat(meterRegistry.counter(FeedService.BUDGET_UNAVAILABLE_METRIC).count()).isEqualTo(1);
+            assertThat(response.cards()).extracting(FeedCardResponse::campaignId).containsExactlyInAnyOrder(1L, 2L);
         }
 
         @Test
         void 노출_상한에_닿은_캠페인은_내려주지_않는다() {
             givenOnboardedMemberWithSavedLocation();
-            givenAdmitted(SERVING_NOW);
+            // 하루 끝 직전이라 계획이 예약액에 가까워 진행률(약 1.05)이 아니라 노출 상한으로 가른다
+            LocalDateTime lateNight = LocalDateTime.of(TODAY, LocalTime.of(23, 59));
+            givenAdmitted(lateNight);
             givenCandidates(List.of(candidate(1, SAVED_LAT, SAVED_LNG).build(), candidate(2, SAVED_LAT, SAVED_LNG).build()));
             // 예약액 10만 원 / 단가 10원 x 1.05 = 10,500 회
             when(impressionCountRepository.findValidCounts(eq(TODAY), any())).thenReturn(Map.of(1L, 10_500L, 2L, 10_499L));
 
-            FeedResponse response = serviceAt(SERVING_NOW).getFeed(MEMBER_ID, NO_LOCATION);
+            FeedResponse response = serviceAt(lateNight).getFeed(MEMBER_ID, NO_LOCATION);
 
             assertThat(response.cards()).extracting(FeedCardResponse::campaignId).containsExactly(2L);
         }

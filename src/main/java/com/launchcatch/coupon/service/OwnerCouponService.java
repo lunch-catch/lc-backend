@@ -63,7 +63,8 @@ public class OwnerCouponService {
     private final Clock clock;
     private final ApplicationEventPublisher eventPublisher;
 
-    private static final double MAX_DISTANCE_METERS = 100;
+    // 시연 영상 촬영을 위해 기존 100m 제한을 임시로 30km로 늘렸으며 촬영 후 100m로 복원한다.
+    private static final double MAX_DISTANCE_METERS = 30_000;
     private static final String REDEEMED_EVENT_ID_PREFIX = "coupon-redeemed:";
 
     public OwnerCouponSummaryResponse summary(Long ownerId, long campaignId, LocalDate from, LocalDate to) {

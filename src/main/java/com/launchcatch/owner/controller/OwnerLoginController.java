@@ -26,7 +26,7 @@ public class OwnerLoginController {
         var result = ownerLoginService.login(request);
         return ResponseEntity.ok()
                 .header(HttpHeaders.SET_COOKIE,
-                        authCookieFactory.accessTokenCookie(result.accessToken()).toString(),
+                        authCookieFactory.accessTokenCookie(result.accessToken(), Role.OWNER).toString(),
                         authCookieFactory.refreshTokenCookie(result.refreshToken(), Role.OWNER, true).toString())
                 .body(ResponseEnvelope.success(result.response()));
     }

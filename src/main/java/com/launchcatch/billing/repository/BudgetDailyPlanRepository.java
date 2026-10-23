@@ -128,9 +128,6 @@ public interface BudgetDailyPlanRepository extends JpaRepository<BudgetDailyPlan
             """)
     List<LocalDate> findUnreleasedBusinessDatesBefore(@Param("before") LocalDate before);
 
-    // 그 영업일에 중단되지 않은 계획이다. 시간대별 목표를 만들 대상이다
-    List<BudgetDailyPlan> findByBusinessDateAndPausedFalse(LocalDate businessDate);
-
     /*
      * 해시 재구성이 읽는다. SELECT ... FOR SHARE 로 읽어 트랜잭션이 끝날 때까지 행에 공유 잠금을 건다.
      *

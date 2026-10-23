@@ -270,6 +270,39 @@ class CouponIssueBatcherTest {
     }
 
     @Test
+    void 비동기_대기열에서_기한이_끝난_요청은_발급하지_않는다() throws Exception {
+        ReflectionTestUtils.setField(batcher, "maxSize", 1);
+        CountDownLatch started = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        when(batchService.issueBatch(anyList(), any())).thenAnswer(invocation -> {
+            started.countDown();
+            assertThat(release.await(5, TimeUnit.SECONDS)).isTrue();
+            return List.of(issued);
+        });
+        var first = new com.launchcatch.coupon.model.CouponIssuanceRequest(17L, 81L,
+                java.time.LocalDateTime.now(clock));
+        var waiting = new com.launchcatch.coupon.model.CouponIssuanceRequest(18L, 81L,
+                java.time.LocalDateTime.now(clock));
+        try {
+            var firstResult = batcher.submit(first, System.nanoTime() + Duration.ofSeconds(5).toNanos());
+            assertThat(started.await(2, TimeUnit.SECONDS)).isTrue();
+
+            var expired = batcher.submit(waiting, System.nanoTime() + Duration.ofMillis(200).toNanos());
+
+            assertThatThrownBy(() -> expired.get(2, TimeUnit.SECONDS))
+                    .hasCauseInstanceOf(CouponException.class)
+                    .satisfies(error -> assertThat(((CouponException) error.getCause()).getErrorCode())
+                            .isEqualTo(CouponErrorCode.ISSUANCE_BUSY));
+            release.countDown();
+            assertThat(firstResult.get(2, TimeUnit.SECONDS).response()).isEqualTo(response);
+            verify(batchService).issueBatch(org.mockito.ArgumentMatchers.eq(List.of(first)), any());
+            org.mockito.Mockito.verifyNoMoreInteractions(batchService);
+        } finally {
+            release.countDown();
+        }
+    }
+
+    @Test
     void 커밋_전_실행_기한이_끝나면_요청을_취소하고_발급을_막는다() throws Exception {
         ReflectionTestUtils.setField(batcher, "waitTimeout", Duration.ofMillis(200));
         CountDownLatch started = new CountDownLatch(1);

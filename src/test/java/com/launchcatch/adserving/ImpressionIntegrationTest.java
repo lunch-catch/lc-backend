@@ -22,7 +22,6 @@ import com.launchcatch.adserving.feed.repository.ServeRecord;
 import com.launchcatch.adserving.feed.repository.ServeRecordRepository;
 import com.launchcatch.auth.CustomUserDetails;
 import com.launchcatch.auth.Role;
-import com.launchcatch.billing.contract.BudgetProgress;
 import com.launchcatch.billing.contract.DeductionStatus;
 import com.launchcatch.global.config.ClockConfig;
 import com.launchcatch.member.contract.AgeGroup;
@@ -291,20 +290,20 @@ class ImpressionIntegrationTest extends AbstractAdservingIntegrationTest {
 
     @Test
     void 노출이_쌓여_노출_상한에_닿은_캠페인은_피드에서_빠진다() throws Exception {
+        // 하루 끝 직전이라 진행률(약 1.05)이 아니라 노출 상한으로 가른다
+        doReturn(LocalDateTime.of(2026, 10, 1, 23, 59).atZone(ClockConfig.ZONE).toInstant()).when(clock).instant();
         jdbcTemplate.update("""
                 INSERT INTO ad_candidate (business_date, campaign_id, store_id, store_name, category_code,
                     latitude, longitude, target_radius, target_gender, target_age_groups,
                     discount_target_type, discount_type, discount_value, usable_start_time, usable_end_time,
-                    issue_quantity, campaign_created_at, campaign_state, created_at, updated_at)
+                    issue_quantity, campaign_created_at, campaign_state, reserved_amount, unit_price, created_at, updated_at)
                 VALUES (?, 101, 55, '점심식당', 'KOREAN', 37.4979, 127.0276, 1000, 'ALL', 'AGE_20S,AGE_30S',
-                    'ALL', 'PERCENT', 20, '12:00', '14:00', 30, NOW(6), 'SERVABLE', NOW(6), NOW(6))
+                    'ALL', 'PERCENT', 20, '12:00', '14:00', 30, NOW(6), 'SERVABLE', 100000, 10, NOW(6), NOW(6))
                 """, TODAY);
         when(memberQueryService.findById(MEMBER_ID)).thenReturn(Optional.of(new MemberInfo(MEMBER_ID, "점심러",
                 MemberStatus.ACTIVE, true, true, true, BigDecimal.valueOf(37.4979), BigDecimal.valueOf(127.0276),
                 Gender.FEMALE, AgeGroup.AGE_30S)));
         // 예약액 10만 원, 단가 10원이라 노출 상한은 10,500 회다. 한 건 모자란 데까지 채워 둔다
-        when(budgetQueryService.getProgress(any(), any(), any()))
-                .thenReturn(List.of(new BudgetProgress(101L, 100_000, 10, 10_000, 50_000, 0.2)));
         redisTemplate.opsForHash().put(COUNTER_KEY, "101", "10499");
         mockMvc.perform(get("/v1/feed").with(user(new CustomUserDetails(MEMBER_ID, Role.MEMBER))))
                 .andExpect(jsonPath("$.data.cards[0].campaignId").value(101));

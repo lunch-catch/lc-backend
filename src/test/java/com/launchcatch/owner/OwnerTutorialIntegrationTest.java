@@ -47,7 +47,7 @@ class OwnerTutorialIntegrationTest extends AbstractOwnerIntegrationTest {
     }
 
     private Cookie token(Long id, Role role) {
-        return new Cookie("accessToken", new TransactionTemplate(manager).execute(tx -> jwt.createAccessToken(id, role)));
+        return new Cookie("ownerAccessToken", new TransactionTemplate(manager).execute(tx -> jwt.createAccessToken(id, role)));
     }
 
     private Cookie nonOwnerToken(Role role) {
@@ -106,7 +106,7 @@ class OwnerTutorialIntegrationTest extends AbstractOwnerIntegrationTest {
 
     @Test
     void 잘못된_토큰은_401이다() throws Exception {
-        mvc.perform(patch(PATH).cookie(new Cookie("accessToken", "invalid")))
+        mvc.perform(patch(PATH).cookie(new Cookie("ownerAccessToken", "invalid")))
                 .andExpect(status().isUnauthorized()).andExpect(jsonPath("$.code").value("AUTH-005"));
     }
 
@@ -114,7 +114,7 @@ class OwnerTutorialIntegrationTest extends AbstractOwnerIntegrationTest {
     void 만료된_토큰은_401이다() throws Exception {
         var expired = new JwtTokenProvider("test-only-signing-secret-with-at-least-32-bytes", -1000,
                 86400000, 1209600000, 1209600000, java.time.Clock.systemUTC());
-        mvc.perform(patch(PATH).cookie(new Cookie("accessToken", expired.createAccessToken(1L, Role.OWNER))))
+        mvc.perform(patch(PATH).cookie(new Cookie("ownerAccessToken", expired.createAccessToken(1L, Role.OWNER))))
                 .andExpect(status().isUnauthorized()).andExpect(jsonPath("$.code").value("AUTH-005"));
     }
 
@@ -130,7 +130,7 @@ class OwnerTutorialIntegrationTest extends AbstractOwnerIntegrationTest {
     void 계정이_없으면_401이다() throws Exception {
         var legacy = new JwtTokenProvider("test-only-signing-secret-with-at-least-32-bytes", 1800000,
                 86400000, 1209600000, 1209600000, java.time.Clock.systemUTC());
-        mvc.perform(patch(PATH).cookie(new Cookie("accessToken", legacy.createAccessToken(Long.MAX_VALUE, Role.OWNER))))
+        mvc.perform(patch(PATH).cookie(new Cookie("ownerAccessToken", legacy.createAccessToken(Long.MAX_VALUE, Role.OWNER))))
                 .andExpect(status().isUnauthorized()).andExpect(jsonPath("$.code").value("AUTH-005"));
     }
 

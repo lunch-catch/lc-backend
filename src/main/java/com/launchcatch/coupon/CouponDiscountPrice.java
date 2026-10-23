@@ -17,6 +17,9 @@ public final class CouponDiscountPrice {
         BigDecimal discount = type == DiscountType.PERCENT
                 ? BigDecimal.valueOf(original).multiply(BigDecimal.valueOf(value)).movePointLeft(2)
                 : BigDecimal.valueOf(value);
+        if (discount.compareTo(BigDecimal.valueOf(original)) >= 0) {
+            return 0;
+        }
         BigDecimal rounded = discount.divide(BigDecimal.TEN, 0, RoundingMode.HALF_UP).multiply(BigDecimal.TEN);
         return original - rounded.min(BigDecimal.valueOf(original)).longValueExact();
     }

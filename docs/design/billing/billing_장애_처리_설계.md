@@ -12,11 +12,11 @@
 
 | 대상 | 용도 | 기본 처리와의 관계 |
 |---|---|---|
-| MySQL 계획·목표 읽기 | 그날 단가·점주·예약액·상태를 읽는다 | 기본대로 오류를 전파한다. 목표 행 없음의 대체 계산은 구조 설계 4장을 따른다 |
+| MySQL 계획 읽기 | 그날 단가·점주·예약액·상태를 읽는다 | 기본대로 오류를 전파한다 |
 | MySQL 판정·원장 쓰기 | 과금을 확정한다 | 기본대로 호출자의 DB 트랜잭션을 롤백한다. Redis 효과는 2장 보상이 필요하다 |
 | MySQL 집계 읽기(`BillingStatsQueryService`) | 분석의 일별 배치가 원장·판정·계획을 날짜로 묶어 읽는다 | 기본대로 오류를 전파한다. 대체값 없이 호출한 배치가 실패하고 분석이 재집계한다 |
 | Valkey 소진 해시·처리 표시 | 과금 여부를 판정한다 | 일반 캐시와 달리 장애 때 통과시키지 않는다. 대체값 없이 실패한다 |
-| Caffeine 계획·목표 캐시 | DB 읽기를 줄인다 | 캐시 미스는 DB에서 읽는다. 임의의 금액을 만들지 않는다 |
+| Caffeine 계획 캐시 | DB 읽기를 줄인다 | 캐시 미스는 DB에서 읽는다. 임의의 금액을 만들지 않는다 |
 | 상태 미러의 커밋 뒤 리스너 | 커밋된 중단 여부를 Valkey에 반영한다 | 커밋 뒤 실패는 이미 확정된 캠페인 상태를 되돌릴 수 없다. 3장을 따른다 |
 | 재예약 예약액 미러의 커밋 뒤 리스너 | 충전 직후 늘어난 예약액을 Valkey에 반영한다 | **벗어난다.** 실패해도 해시를 지우지 않고 ERROR로만 남긴다. 3장을 따른다 |
 | 충전 직후 재예약 리스너(`PointChargedListener`) | 커밋된 충전을 받아 재예약을 새 트랜잭션으로 연다 | **벗어난다.** 실패를 전파하지 않고 ERROR로만 남긴다. 충전은 이미 커밋돼 있어 올리면 승인 확정 API가 성공한 충전에 실패를 돌려준다 |
@@ -342,7 +342,6 @@ A의 보상이 처리 표시를 지우고 spend를 10 내림
 | `billing_deduct_undo_total{result="failed"}` | 보상 호출에서 예외가 났다. 프로세스가 콜백 전에 종료된 건은 이 지표에 남지 않는다 |
 | `billing_deduct_undo_total{result="ok"}` | 보상 호출이 예외 없이 반환했다. 구현은 `undo`의 boolean을 확인하지 않으므로 실제 소진 감소 건수와 같다고 볼 수 없다 |
 | `billing_spend_hash_rebuild_total` | 새 해시를 생성했다. 복구 중 진행 중인 과금까지 모두 포함했다는 증거는 아니다 |
-| `billing_hourly_target_fallback_total` | 목표 행 없이 설정 가중치로 계산했다 |
 | `BUDGET_STATUS_MIRROR_FAILED`, `BUDGET_STATUS_HASH_EVICT_FAILED` | 커밋 뒤 상태 반영과 삭제의 실패를 기록한다 |
 
 검증의 기준은 [통합 테스트](https://github.com/lunch-catch/lc-backend/blob/b7f9a104ba302888b4821f62b7080cbbcbc4b883/src/test/java/com/launchcatch/billing/ImpressionDeductionIntegrationTest.java)와 관련 단위 테스트다. 테스트의 정상 중복·예산 제한·롤백 보상·재구성 결과를 이 문서에 다시 나열하지 않는다. Lua 응답 유실, DB 커밋 불명, L-2·L-4와 프로세스 강제 종료를 모두 검증했다는 결과는 없다.

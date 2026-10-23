@@ -157,7 +157,7 @@ public class MemberAuthController {
     public ResponseEntity<Void> logout(@Parameter(hidden = true) @AuthenticationPrincipal CustomUserDetails user) {
         memberTokenService.logout(user.getId());
         return ResponseEntity.noContent()
-                .header(HttpHeaders.SET_COOKIE, authCookieFactory.expiredAccessTokenCookie().toString())
+                .header(HttpHeaders.SET_COOKIE, authCookieFactory.expiredAccessTokenCookie(Role.MEMBER).toString())
                 .header(HttpHeaders.SET_COOKIE, authCookieFactory.expiredRefreshTokenCookie(Role.MEMBER).toString())
                 .build();
     }
@@ -165,7 +165,7 @@ public class MemberAuthController {
     private <T> ResponseEntity<ResponseEnvelope<T>> tokenResponse(
             MemberTokenService.TokenPair tokenPair, T response) {
         return ResponseEntity.ok()
-                .header(HttpHeaders.SET_COOKIE, authCookieFactory.accessTokenCookie(tokenPair.accessToken()).toString())
+                .header(HttpHeaders.SET_COOKIE, authCookieFactory.accessTokenCookie(tokenPair.accessToken(), Role.MEMBER).toString())
                 .header(HttpHeaders.SET_COOKIE,
                         authCookieFactory.refreshTokenCookie(tokenPair.refreshToken(), Role.MEMBER, true).toString())
                 .body(ResponseEnvelope.success(response));

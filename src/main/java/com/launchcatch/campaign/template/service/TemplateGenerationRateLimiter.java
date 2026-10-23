@@ -5,8 +5,8 @@ import com.launchcatch.campaign.exception.CampaignException;
 import com.launchcatch.campaign.exception.PosterErrorCode;
 import java.time.Duration;
 import java.util.List;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.dao.DataAccessException;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -15,7 +15,7 @@ import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.stereotype.Component;
 
 /*
- * 관리자 1명당 템플릿 생성/수정 요청을 분당 3회로 제한한다(#227). requestId 멱등성은 같은
+ * 관리자 1명당 템플릿 생성/수정 요청을 분당 3회(기본값, campaign.template-generation-rate-limit)로 제한한다(#227, #831). requestId 멱등성은 같은
  * 요청의 네트워크 재시도만 막고, 관리자가 매번 새 requestId로 "다시 생성"을 반복 누르는 건
  * 못 막는다. Bedrock 호출은 실제 과금되고 재시도까지 포함해 최대 60초가 걸릴 수 있어
  * 별도로 막는다.
@@ -50,17 +50,27 @@ import org.springframework.stereotype.Component;
  */
 @Slf4j
 @Component
-@RequiredArgsConstructor
 public class TemplateGenerationRateLimiter {
 
     private static final String KEY_PREFIX = "templateGenerationRateLimit:";
     private static final String IN_FLIGHT_KEY_PREFIX = "templateGenerationInFlight:";
-    private static final int LIMIT = 3;
     private static final Duration WINDOW = Duration.ofMinutes(1);
     private static final Duration IN_FLIGHT_TTL = Duration.ofSeconds(60);
     private static final RedisScript<Long> RATE_LIMIT_SCRIPT = loadRateLimitScript();
 
     private final StringRedisTemplate redisTemplate;
+    private final int limit;
+
+    public TemplateGenerationRateLimiter(
+            StringRedisTemplate redisTemplate,
+            @Value("${campaign.template-generation-rate-limit}") int limit) {
+        // 0 이하면 첫 요청부터 거부되어 모든 템플릿 생성과 수정이 막힌다. 잘못된 설정으로는 기동하지 않게 한다(#831).
+        if (limit <= 0) {
+            throw new IllegalArgumentException("campaign.template-generation-rate-limit must be positive: " + limit);
+        }
+        this.redisTemplate = redisTemplate;
+        this.limit = limit;
+    }
 
     private static RedisScript<Long> loadRateLimitScript() {
         DefaultRedisScript<Long> script = new DefaultRedisScript<>();
@@ -95,7 +105,7 @@ public class TemplateGenerationRateLimiter {
             Boolean firstAttempt = redisTemplate.opsForValue().setIfAbsent(key, "1", IN_FLIGHT_TTL);
             return !Boolean.FALSE.equals(firstAttempt);
         } catch (DataAccessException e) {
-            log.warn("event=TEMPLATE_GENERATION_IN_FLIGHT_CHECK_FAILED requestId={} cause={} 처음_시도로_간주해_센다",
+            log.warn("event=TEMPLATE_GENERATION_IN_FLIGHT_CHECK_FAILED requestId={} reason={} fallback=COUNT_AS_FIRST_ATTEMPT",
                     requestId, RedisFailureClassifier.causeLabel(e), e);
             return true;
         }
@@ -105,7 +115,7 @@ public class TemplateGenerationRateLimiter {
         try {
             redisTemplate.delete(IN_FLIGHT_KEY_PREFIX + requestId);
         } catch (DataAccessException e) {
-            log.warn("event=TEMPLATE_GENERATION_IN_FLIGHT_CLEAR_FAILED requestId={} cause={} TTL_만료까지_남는다",
+            log.warn("event=TEMPLATE_GENERATION_IN_FLIGHT_CLEAR_FAILED requestId={} reason={} fallback=WAIT_FOR_TTL",
                     requestId, RedisFailureClassifier.causeLabel(e), e);
         }
     }
@@ -114,9 +124,9 @@ public class TemplateGenerationRateLimiter {
         String key = KEY_PREFIX + adminId;
         try {
             Long count = redisTemplate.execute(RATE_LIMIT_SCRIPT, List.of(key), String.valueOf(WINDOW.toMillis()));
-            return count != null && count > LIMIT;
+            return count != null && count > limit;
         } catch (DataAccessException e) {
-            log.warn("event=TEMPLATE_GENERATION_RATE_LIMIT_CHECK_FAILED adminId={} cause={} 통과시킨다",
+            log.warn("event=TEMPLATE_GENERATION_RATE_LIMIT_CHECK_FAILED adminId={} reason={} fallback=PASS",
                     adminId, RedisFailureClassifier.causeLabel(e), e);
             return false;
         }

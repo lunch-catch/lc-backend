@@ -30,7 +30,7 @@
 | 기술 로그 | `ExternalApiLoggingExchangeFilter` | `WebClientConfig` 의 `WebClientCustomizer` 가 모든 `WebClient.Builder` 에 붙인다. 쿼리 문자열을 뺀 경로만 남긴다. 지금은 실패할 때 스택과 `ex.toString()` 을 함께 남긴다. 콜백이 요청 스레드와 다른 스레드에서 실행되면 MDC 가 자동으로 전파되지 않아 `traceId` 가 빠진다(7.1) | `EXTERNAL_API_CALL`, `EXTERNAL_API_CALL_FAILED` |
 | 기술 로그 | `TraceIdExchangeFilter` | 나가는 호출에 `X-Trace-Id` 헤더를 싣는다. 지금은 받는 쪽이 이 헤더를 쓰지 않아 효과가 없다 | 없음 |
 | 기술 로그 | `SchedulerLoggingAspect` | `@Scheduled` 메서드마다 시작, 끝, 실패를 남긴다. 마지막 성공 시각을 게이지 `batch.job.last.success.timestamp`(태그 `scheduler`)로 내보낸다. 지금은 실패할 때 스택을 남기고 다시 던져 Spring 의 기본 오류 처리기가 스택을 한 번 더 남긴다(7.2). 고친 뒤에는 실행의 MDC 를 스케줄러의 `TaskDecorator` 가 넣고(실행의 시작점), 애스펙트는 `SCHEDULER_FAILED` 에 `exceptionType` 만 남기고 다시 던진다. 스택은 Spring 의 기본 오류 처리기가 한 번 남기고, 알림은 `SCHEDULER_FAILED` 에 건다 | `SCHEDULER_START`, `SCHEDULER_END`, `SCHEDULER_FAILED` |
-| 기술 로그 | `AdminLoginAuditFilter`(`admin/config`) | 관리자 로그인은 바디 로깅에서 빠지므로 시각, IP, 성공 여부만 따로 남긴다. 지금은 애플리케이션 로그로만 남고 감사 저장소(`ops` 의 `AuditLogWriter`)에는 쓰지 않는다. 고친 뒤에는 성공과 존재하는 계정의 실패를 감사 저장소에도 쓴다(7.2) | `ADMIN_LOGIN` |
+| 기술 로그 | `AdminLoginService`·`AdminLoginAuditFilter`(`admin`) | 관리자 로그인 감사의 기록 대상과 처리 방식은 [관리자 API 설계의 로그인 절](../design/admin/admin-api-design.md#로그인)을 따른다 | `ADMIN_LOGIN_SUCCESS`, `ADMIN_LOGIN_FAILED`, `ADMIN_LOGIN_AUDIT_FAILED` |
 | 이벤트 로그 | `GlobalExceptionHandler`(`global/exception`), `AuthExceptionHandler`(`auth/exception`) | 전역 예외 핸들러다 | 이벤트명 없음(7장) |
 
 ## 2. 업무 코드가 쓰는 도구
@@ -165,7 +165,7 @@
 
 | 규칙 | 위치 | 지금 | 고칠 모양 |
 |---|---|---|---|
-| `LOG-6-01` | `billing/service/RechargeReservationService`, `billing/service/HourlyTargetPlanner` | `@Transactional` 안에서 `RECHARGE_RESERVE_DONE`, `HOURLY_TARGET_DONE` 을 바로 남겨 롤백돼도 성공이 찍힌다 | `TransactionLogging.afterCommit` 으로 남긴다 |
+| `LOG-6-01` | `billing/service/RechargeReservationService` | `@Transactional` 안에서 `RECHARGE_RESERVE_DONE` 을 바로 남겨 롤백돼도 성공이 찍힌다 | `TransactionLogging.afterCommit` 으로 남긴다 |
 | `LOG-7-06` | `GlobalExceptionHandler`(잘못된 파라미터, 잘못된 인자), `AuthExceptionHandler` | `detail={}` 에 `e.getMessage()` 를 넣는다 | 메시지를 빼고 `exceptionType`, `errorCode` 를 남긴다 |
 | `LOG-7-06`, `LOG-8-07`, `LOG-6-07` | `ExternalApiLoggingExchangeFilter` | `EXTERNAL_API_CALL_FAILED` 의 `err={}` 에 `ex.toString()` 을 넣어 예외 메시지가 들어간다. 예외 객체도 함께 넘겨 스택을 남기는데, 예외는 호출자에게 전파되어 끝내는 곳에서 한 번 더 남는다. 콜백이 요청 스레드와 다른 스레드에서 실행되면 MDC 가 자동으로 전파되지 않아 `traceId` 가 빠진다 | `exceptionType` 만 남기고 스택은 넘기지 않는다. 호출을 시작할 때 MDC 를 복사해 두고, 콜백은 진입할 때의 MDC 를 보관한 뒤 복사본을 적용하고 `finally` 에서 보관한 MDC 로 되돌린다(`LOG-6-07`). 콜백이 요청 스레드에서 도는 경우에 요청의 MDC 가 지워지지 않는지도 테스트한다. 기존 테스트 `호출이_실패하면_WARN으로_남기고_스택트레이스도_함께_남긴다` 를 새 기준으로 바꾸고, 콜백 로그에 `traceId` 가 있는지 확인하는 테스트를 더한다 |
 | `LOG-7-09` | `HttpBodyLoggingFilter` | 민감 키를 정규식으로 찾는다. 값 안에 이스케이프된 따옴표가 있으면(`"password":"ab\"cd"`) 따옴표 뒤가 남고, 좌표 외의 숫자 값(`"kakaoUserId":123`)은 가려지지 않는다 | JSON 은 파서로 읽어 키마다 값을 가린다. 자료형과 관계없이 가리고, 파싱에 실패하면 바디 전체를 가린다. form 은 디코딩한 뒤 키를 본다 |
@@ -176,7 +176,7 @@
 
 | 규칙 | 위치 | 지금 | 고칠 모양 |
 |---|---|---|---|
-| `LOG-6-05` | `AdminLoginService`, `AdminLogoutService`(2곳), `AdminTokenService`(2곳), `OwnerLoginService`, `OwnerTokenRefreshService` | `stack=Arrays.toString(e.getStackTrace())` 로 스택을 문자열로 넣는다 | 예외를 마지막 인자로 넘기거나(`LOG-6-02` 에 따라 끝내는 곳일 때) `exceptionType` 만 남긴다 |
+| `LOG-6-05` | `OwnerLoginService`, `OwnerTokenRefreshService` | `stack=Arrays.toString(e.getStackTrace())` 로 스택을 문자열로 넣는다 | 예외를 마지막 인자로 넘기거나(`LOG-6-02` 에 따라 끝내는 곳일 때) `exceptionType` 만 남긴다 |
 | `LOG-2-03` | `CampaignPauseResumeService`(2곳), `MemberProfileService`, `OwnerTokenRefreshService` | `event={}` 로 이벤트명을 인자로 넘긴다 | 리터럴로 쓴다 |
 | `LOG-2-02`, `LOG-2-04` | `ops` 패키지(`LoggingBatchAlert`, `BatchJobRunner`, `BatchExecutionService`, `BatchExecutionRetryService`, `DailyJobScheduler`, `BatchServerId`, `ThreadSleepRetryBackoff`) | 이벤트명이 없는 한국어 문장이고 키가 한글이다(`이전소유자`, `사유`, `상태`, `시도`, `단계`, `멈춘단계`) | `event=BATCH_*` 와 영문 키로 쓴다. 배치 이어받기와 실패는 우선 고친다 |
 | `LOG-2-02` | `GlobalExceptionHandler`, `AuthExceptionHandler`, `PosterImageInspector`, `FunnelEventRecorder`, `BudgetQueryServiceImpl`, `PointDeductorImpl` | 이벤트명이 없다 | 이벤트명을 붙인다 |
@@ -196,7 +196,6 @@
 | `LOG-8-08`, `LOG-6-02` | `SchedulerLoggingAspect` | `SCHEDULER_FAILED` 에 예외 객체를 넘겨 스택을 남기고 다시 던진다. Spring 의 기본 오류 처리기가 `Unexpected error occurred in scheduled task` 로 스택을 한 번 더 남긴다 | 애스펙트는 `exceptionType` 만 남기고 스택은 프레임워크 오류 처리기에 맡긴다 |
 | `LOG-8-08` | 경보 설정(`lc-infra`) | 마지막 성공 시각 게이지는 작업이 처음 실행될 때 생긴다. 재기동 뒤 한 번도 돌지 않으면 시계열이 없어 낡은 값을 보는 알림이 울리지 않는다 | `absent()` 조건을 함께 둔다. 실제 선택자가 배치 서버 시계열만 고르는지는 `lc-infra` 에서 확인한다 |
 | `LOG-6-07` | `CouponIssueBatcher`(`coupon-batch-*` 스레드), `FunnelEventRecorder`, `BatchExecutionRetryService` 의 실행기 | 직접 만든 스레드에서 남기는 로그에 MDC 가 없다 | 작업을 넘길 때 MDC 를 복사해 넘긴다. 받는 쪽은 진입할 때의 MDC 를 보관하고 복사본을 적용한 뒤 `finally` 에서 되돌린다(`LOG-6-07`) |
-| `LOG-8-11` | `AdminLoginAuditFilter` | 관리자 로그인 시도가 애플리케이션 로그로만 남아 큐가 차면 버려질 수 있다 | 성공과 존재하는 계정의 실패는 `AuditLogWriter` 로 감사 저장소에도 쓴다. 없는 계정과 시도 횟수 제한으로 거절된 요청은 애플리케이션 로그와 메트릭으로만 남긴다. `audit_log.admin_id` 가 NOT NULL 이라 없는 계정은 저장할 수 없다. 결과와 `adminId` 를 아는 `AdminLoginService` 로 기록 위치를 옮기고, 필터는 없는 계정과 거절 요청의 로그만 남긴다. IP 는 칸이 없어 `detail` 에 `clientIp=…` 로 담는다. `AdminLoginService.login` 은 `@Transactional(NEVER)` 이고 `AuditLogWriterImpl` 은 `MANDATORY` 라서, 기록은 `AdminLoginTransactionService` 처럼 별도 트랜잭션으로 커밋한 뒤 실패 예외를 던진다. 시도 횟수 제한(`AuthRateLimitFilter`)은 IP 별 1분 10회뿐이라 분산 시도의 쓰기량 상한이 아니다. 대신 계정별 로그인 실패 건수 메트릭을 두고 알림을 건다. 계정별 잠금은 로깅 범위 밖이라 별도 이슈로 다룬다. 이 변경은 admin 서비스 코드를 고치므로 로깅 이슈가 아니라 admin 담당자와 합의해 별도 이슈로 처리한다(`LOG-5-08` 과 같은 방식). 합의 전에는 지금처럼 애플리케이션 로그로만 남는다 |
 | `LOG-8-02` | `logback-spring.xml` | `maxFlushTime` 을 지정하지 않아 종료 때 1초 안에 내보내지 못한 로그가 버려진다 | 큐 크기 8192 와 graceful shutdown(30초)에 맞춰 값을 정한다 |
 
 ### 7.3 우선순위 3
@@ -207,15 +206,14 @@
 | `LOG-2-05` | `BudgetQueryServiceImpl`, `PointDeductorImpl`(2곳), `GlobalExceptionHandler` | 쌍을 쉼표로 나눈다 | 공백으로 나눈다 |
 | `LOG-2-07` | `PAYMENT_WEBHOOK_IGNORED` (6곳) | `reason=malformed` 처럼 소문자다 | `UPPER_SNAKE` 로 쓴다 |
 | `LOG-2-09` | `DailyAggregationJob` | `DAILY_AGGREGATION_DONE outcomes={}` 에 `Map` 을 통째로 넣는다 | 결과별 개수를 키로 남긴다 |
-| `LOG-3-02` | `AdminLoginAuditFilter`, `AdminLogoutService` | `ADMIN_LOGIN success=`, `ADMIN_LOGOUT success=true` 로 결과를 키에 둔다 | `ADMIN_LOGIN_SUCCESS`, `ADMIN_LOGIN_FAILED` 처럼 접미사로 쓴다 |
-| `LOG-3-03` | `ADMIN_TOKEN_REISSUE_FAILURE`, `DAILY_AGGREGATION_ERROR`, `PG_RECON_ERROR`, `PAYMENT_RECHECK_ERROR`, `KAKAO_UNLINK_RETRY_MARK_FAILED_ERROR`, `OWNER_REFRESH_REUSE_DETECTED`, `SCHEDULER_END`, `SETTLEMENT_CONSISTENCY_VIOLATION`, `PAYMENT_WEBHOOK_IGNORED` | 동의어 접미사를 쓴다 | `_FAILED`, `_SUSPECTED`, `_DONE`, `_MISMATCH`, `_SKIPPED` 로 바꾼다. `DAILY_AGGREGATION_ERROR` 와 `DAILY_AGGREGATION_FAILED` 는 `reason` 으로 나눈다 |
+| `LOG-3-03` | `DAILY_AGGREGATION_ERROR`, `PG_RECON_ERROR`, `PAYMENT_RECHECK_ERROR`, `KAKAO_UNLINK_RETRY_MARK_FAILED_ERROR`, `OWNER_REFRESH_REUSE_DETECTED`, `SCHEDULER_END`, `SETTLEMENT_CONSISTENCY_VIOLATION`, `PAYMENT_WEBHOOK_IGNORED` | 동의어 접미사를 쓴다 | `_FAILED`, `_SUSPECTED`, `_DONE`, `_MISMATCH`, `_SKIPPED` 로 바꾼다. `DAILY_AGGREGATION_ERROR` 와 `DAILY_AGGREGATION_FAILED` 는 `reason` 으로 나눈다 |
 | `LOG-3-01` | `CANDIDATE_LOADED`, `SPEND_RECON_*`, `RESERVE_*`, `FUNDING_JUDGE_*`, `PG_RECON_*`, `HOURLY_TARGET_DONE`, `RATE_LIMIT_*` 등 | 도메인 접두사가 없다 | 도메인 이름을 앞에 붙인다 |
 | `LOG-4-01`, `LOG-4-03` | `reason` 에 `getErrorCode().getCode()` 를 넣는 곳(`member/service` 등 약 14곳), `code=` 를 쓰는 곳(`campaign`, `coupon`, 예외 핸들러) | 에러 코드가 `reason` 과 `code` 에 흩어져 있다 | 우리 에러 코드는 `errorCode`, 토스의 코드는 `externalErrorCode` 로 쓴다 |
 | `LOG-4-01` | `causeType`, `errorType`, `err`, `cause`(예외 클래스일 때) | 예외 클래스의 키가 여럿이다 | `exceptionType` 으로 쓴다. `RedisFailureClassifier` 의 라벨을 담은 `cause` 는 `reason` 으로 쓴다 |
 | `LOG-4-04` | `FailureLogDetails` 를 `details=`, `cause=` 에 넣는 곳 | 객체를 통째로 넣는다 | `exceptionType`, `httpStatus`, `sqlState`, `sqlErrorCode`, `origin` 키로 펼친다 |
 | `LOG-4-01` | `HTTP_ACCESS`, `EXTERNAL_API_CALL`, `TOSS_*` 의 `status`, `RATE_LIMIT_*` 의 `ip`, `id`, `subjectId` | 사전과 다른 키다 | `httpStatus`, `clientIp`(또는 MDC 에 맡기고 뺀다), `<엔티티>Id` 로 쓴다 |
 | `LOG-4-01` | `campaigns=`, `rows=`, `visits=` 등 복수 명사로 개수를 담는 곳 | 개수의 키가 복수 명사다 | `<대상>Count` 로 쓴다 |
-| `LOG-4-05` | `GlobalExceptionHandler` 의 `method`, `uri`, `AdminLoginAuditFilter` 의 `clientIp`, `occurredAt` | MDC 와 타임스탬프에 있는 값을 다시 쓴다 | 뺀다 |
+| `LOG-4-05` | `GlobalExceptionHandler` 의 `method`, `uri` | MDC 와 타임스탬프에 있는 값을 다시 쓴다 | 뺀다 |
 | `LOG-4-01` | `MdcLoggingFilter`, `logback-spring.xml` | MDC 키가 `uri` 다 | `path` 로 바꾸고 Loki 쿼리를 함께 고친다 |
 | `LOG-8-09` | `member` 외 도메인 | 로그 테스트가 일부 도메인에만 있다 | 보안, 돈, 정합성 이벤트부터 `LogCapture` 로 테스트를 더한다 |
 | 없음 | `application.yml` | `management.tracing.sampling.probability` 가 있지만 추적 라이브러리 의존성이 없어 효과가 없다 | 설정을 지운다. 추적이 필요해지면 의존성과 추적 백엔드를 함께 들인다(근거 문서 4장) |

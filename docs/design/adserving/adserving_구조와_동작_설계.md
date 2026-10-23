@@ -28,7 +28,7 @@
 | 맡지 않는 것 | 소유 |
 |---|---|
 | 온보딩 완료 여부, 저장 위치, 성별, 연령대 | member. `MemberQueryService` 로 읽는다 |
-| 예산 소진 진행률, 그날 예약액과 단가 | billing. `BudgetQueryService` 로 읽는다 |
+| 그날 예약액과 단가 | billing. `BudgetQueryService` 로 읽어 그날 후보에 둔다(5장). 진행률은 광고 서빙이 이 값과 자기 유효 노출 수로 계산한다(4장, #837) |
 | 노출 과금 판정(`BILLED`, `NOT_BILLED_BUDGET`) | billing. 상한을 넘겨 나간 노출도 과금은 정산이 막는다 |
 | 잔여 수량 | coupon. 피드와 찜 목록에 싣지 않는다(`feed-api-design.md`) |
 
@@ -44,6 +44,7 @@
 ```
 adserving/
 ├── config/AdservingSecurityConfig.java
+├── config/PacingProperties.java      진행률의 시간대별 가중치 24개(`adserving.pacing.hourly-weights`)
 ├── contract/
 │   ├── WishlistQueryService.java     쿠폰이 부르는 찜 조회
 │   ├── CandidateStateUpdater.java    쿠폰이 부르는 소진 반영
@@ -55,13 +56,16 @@ adserving/
 │   ├── FeedAssembler.java        카드 고르기와 슬롯 배치. 계층 밖의 순수 계산
 │   ├── FeedCandidate.java        계산이 받는 후보 record
 │   ├── FeedContext.java          계산이 받는 사용자와 예산 record
+│   ├── BudgetPacing.java         예약액과 가중치로 시각까지의 계획 소진액과 진행률 계산
 │   ├── CampaignPacing.java       진행률과 노출 상한 판정
 │   ├── entity/AdCandidate.java
 │   ├── exception/CandidateErrorCode.java   그날 후보가 아니다(ADSERVING-004)
 │   ├── service/CandidateStateUpdaterImpl.java   CandidateStateUpdater 구현
 │   ├── service/CandidateStatusService.java      캠페인 상태 변경을 그날 후보의 서빙 상태에 반영한다
 │   ├── service/CandidateLoadService.java        00:00 에 그날 후보를 적재하고 적재 중의 상태 전이를 다시 읽어 반영한다
-│   ├── job/LoadDailyCandidateJob.java           00:00 묶음 75. 적재와 재조회를 두 트랜잭션으로 부른다
+│   ├── service/CandidateBudgetService.java      그날 후보의 예약액과 단가를 정산에서 읽어 둔다(#837)
+│   ├── job/LoadDailyCandidateJob.java           00:00 묶음 75. 적재와 재조회를 두 트랜잭션으로 부르고 끝에 예산을 읽는다
+│   ├── job/CandidateBudgetRefreshJob.java       10분마다 그날 후보의 예산을 다시 읽는다(#837)
 │   ├── repository/AdCandidateLoadImpl.java      적재의 upsert. 소진 시각을 덮지 않고 상태는 늦을 때만 바꾼다
 │   ├── listener/CandidateStatusChangedListener.java  CampaignStatusChangedEvent 를 받는다
 │   └── repository/AdCandidateRepository.java
@@ -120,6 +124,7 @@ impression/
 |---|---|
 | 엔티티 하나의 상태로 판정되는 규칙 | 무효 노출은 사유가 있고 유효 노출은 없다. `ImpressionLog` 의 정적 팩터리 셋(`valid`, `notOwner`, `unknown`)이 지킨다. 스키마가 CHECK 로 막지 않는다 |
 | 후보 조건, 하루 2회와 세션 1회, 탐색 반경, 배분과 관련성 슬롯, 관련성 점수 | `FeedAssembler`(순수 계산) |
+| 진행률 계산 | `BudgetPacing`(순수 계산) |
 | 진행률 1.2 초과와 노출 상한 판정 | `CampaignPacing.blocked()`(순수 계산) |
 | 온보딩, 위치, 요청 제한의 순서, 입력을 모으는 순서, 기록을 남기는 시점 | `FeedService` |
 | 서빙 로그를 묶어 쓰고 차면 버리는 규칙 | `ServeLogBuffer` |
@@ -147,7 +152,7 @@ impression/
 | 찜 목록 | `uk_wishlist_member_campaign`(`member_id`, `campaign_id`)의 앞 열로 회원의 찜을 읽고 `created_at`, `wishlist_id` 내림차순으로 정렬한다. 표시 값은 그날 후보를 PK(`business_date`, `campaign_id`)의 IN 으로 한 번 더 읽어 붙인다. 후보 행이 있으면 상태와 소진은 보지 않는다(#416) |
 | 필터 업종 | `feed_filter_category` 를 PK(`member_id`, `category_code`)로 읽고 업종 코드 오름차순으로 돌려준다(#405). 순서 컬럼이 없어 고른 순서는 남지 않는다 |
 | 필터 저장 | `feed_filter` 는 `INSERT ... ON DUPLICATE KEY UPDATE` 로 정렬을 넣거나 바꾸고, `feed_filter_category` 는 그 회원의 행을 지우고 다시 넣는다. 같은 업종이 두 번 오면 하나만 넣는다(#411 에서 임시로 정했다) |
-| 다른 도메인 데이터의 사본 | `ad_candidate` 는 00:00 의 캠페인과 가게 사본이다. 그날 안에서는 캠페인과 쿠폰의 통보로만 바뀐다 |
+| 다른 도메인 데이터의 사본 | `ad_candidate` 는 00:00 의 캠페인과 가게 사본이다. 그날 안에서는 캠페인과 쿠폰의 통보로만 바뀐다. 정산의 그날 예약액과 단가(`reserved_amount`, `unit_price`, V5)는 5장의 시점에 덮는다. 둘 다 NULL 이면 아직 읽지 못한 것이고 0 이면 그날 계획이 없다(#837) |
 | 쿠폰의 찜 조회 | `uk_wishlist_member_campaign`(`member_id`, `campaign_id`)으로 단건은 있는지만 보고, 목록은 앞 열로 그 회원의 `campaign_id` 만 읽는다. 캠페인별 회원 일괄 조회는 같은 키로 입력한 회원(500명까지)의 행만 읽는다(#578). 셋 다 `campaign_ended_at IS NULL` 인 행만 유효로 본다. 순서는 정하지 않는다(#163, #553) |
 | 끝난 캠페인의 찜 | 종료 표시는 `idx_wishlist_campaign` 으로 그 캠페인의 행 중 `campaign_ended_at` 이 비어 있는 것만 채운다. 정리는 `idx_wishlist_campaign_ended` 로 기준 시각 전에 끝난 행을 지운다(#553). 종료 이벤트 뒤에 들어온 찜은 찜 요청이 넣은 뒤 캠페인을 읽어 같은 표시를 부른다(#780) |
 | 소진 반영 | `ad_candidate` 의 PK(`business_date`, `campaign_id`)로 `sold_out_at IS NULL` 인 행만 바꾼다. 받은 소진 시각을 그대로 쓰고 부른 시각은 `updated_at` 에만 쓴다. 0행이면 PK 로 후보가 있는지 한 번 더 본다(#163) |
@@ -239,7 +244,7 @@ A 를 고른다. 가게 상세 찜을 리포트에 넣어야 하면 그 찜을 �
 `FeedAssembler.assemble` 이 카드를 고른다. 현재 시각, 위치, 예산은 `FeedService` 가 구해 `FeedContext` 로 넘긴다.
 
 1. 거른다. 당일 이력, 필터 업종, 노출 대상 성별과 연령대, 캠페인 노출 반경(`target_radius`), 하루 2회, 이번 세션
-2. 예산을 읽었으면 더 거른다. 그날 예산 계획이 없거나, 진행률이 1.2 를 넘거나, 유효 노출 수가 노출 상한(예약액 / 단가 x 1.05)에 닿은 캠페인이다
+2. 후보의 예산을 모두 읽었으면 더 거른다. 그날 예산 계획이 없거나(예약액 0), 진행률이 1.2 를 넘거나, 유효 노출 수가 노출 상한(예약액 / 단가 x 1.05)에 닿은 캠페인이다
 3. 탐색 반경 1000, 2000, 3000, 5000 가운데 10장이 모이는 가장 좁은 반경을 고른다. 5000 에서도 모자라면 있는 만큼이다.
    **임시**: 명세의 "후보가 모자라면" 을 10장 미만으로 읽었다(#236)
 4. 배분 3장: 진행률 오름차순, 같으면 `campaign_created_at`, 그다음 `campaignId` 오름차순이다
@@ -256,6 +261,24 @@ A 를 고른다. 가게 상세 찜을 리포트에 넣어야 하면 그 찜을 �
 | 할인 | 0.20 | 이번 후보 가운데 같은 종류(PERCENT 끼리, AMOUNT 끼리)의 최댓값으로 나눈 값. 메뉴 가격이 없어 두 종류를 직접 비교할 수 없다 |
 
 예산을 읽지 못했으면 2 와 4 를 건너뛰고 10장 모두 관련성이다(9장).
+
+### 예산 소진 진행률
+
+`BudgetPacing` 이 계산한다. 후보에 둔 그날 예약액과 단가, 그날 유효 노출 수, 그리고 서빙 시각을 받는 순수 계산이다(#828, #837).
+
+```text
+계획 소진액 = 지난 시간대의 목표 합 + 지금 시간대 목표 x 경과 분 / 60
+소진액 = 그날 유효 노출 수 x 단가
+진행률 = 소진액 / 계획 소진액
+계획 소진액이 0 이면 진행률은 0
+```
+
+- 시간대는 0~23시 24개다. 시간대 목표는 예약액을 가중치 24개(`adserving.pacing.hourly-weights`)의 비율로 나눈 값이다. 나누어떨어지지 않는 몫은 내림하고 남는 금액은 마지막으로 가중치가 있는 시간대에 더해 합이 예약액과 같다.
+- 분 단위 소수는 내린다. 계획을 예약액 전체로 고정하는 시각은 없고 하루가 끝나야 예약액 전체가 된다. 진행률은 1.0 으로 자르지 않는다.
+- 예를 들어 예약액 24,000 을 24시간 균등 가중치로 나누면 시간대마다 1,000 이다. 11:30 의 계획은 11,500 이고 23:59 는 23,983 이다.
+- 기본 가중치는 `[2, 1, 1, 1, 1, 1, 1, 3, 4, 5, 8, 10, 9, 7, 4, 4, 4, 5, 7, 8, 6, 4, 2, 2]`(합 100)다. 측정값이 아닌 가정이라 운영 뒤 시간대별 노출 분포로 고친다. 새벽을 0 으로 두면 노출 몇 건으로 진행률이 1.2 를 넘어 배분에서 빠진다.
+- 소진액을 정산에서 읽지 않고 자기 유효 노출 수로 센다. 피드 요청마다 정산을 부르지 않으려는 것이다(#837). 과금하지 않은 유효 노출(예산 초과, 그날 계획 없음)도 섞여 정산의 소진액보다 클 수 있다. 대부분 상한 근처와 자정 직후 30분에만 생긴다.
+- 목표를 저장하지 않고 조회할 때마다 후보의 예약액으로 다시 나눈다. 충전 재예약으로 예약액이 장중에 늘면 다음 10분 갱신 뒤 지난 시간대 목표도 새 예약액으로 커진다. 지난 시간대를 그대로 두는 재계산은 저장과 예약액 변경 통보가 따로 필요해 두지 않았다(#828 에서 정했다).
 
 ### 가게별 대상 인원
 
@@ -276,7 +299,7 @@ A 를 고른다. 가게 상세 찜을 리포트에 넣어야 하면 그 찜을 �
 | 읽기 | campaign | `CampaignQueryService.findServableOn`, `findAllById` | 00:00 후보 적재에 1번씩. 적재 대상과 적재 직후 재조회다(#582). 재조회는 이번 적재가 넣은 캠페인과 그날 후보에 이미 있는 캠페인을 함께 읽는다(#782) |
 | 읽기 | campaign | `CampaignQueryService.findAllById` | 찜 요청(가게 상세 찜, 스와이프 WISH)마다 1번. 찜을 넣은 뒤 캠페인이 `ENDED` 면 그 캠페인의 끝나지 않은 찜을 `statusChangedAt` 으로 종료 표시한다. 종료 이벤트는 다시 오지 않아서다(#780) |
 | 읽기 | store | `StoreQueryService.findAdCandidatesByStoreIds`, `findMenusByIdIn` | 00:00 후보 적재에서. 가게는 계약 상수 `MAX_AD_CANDIDATE_STORE_IDS` 단위로 나눠 부른다(#582) |
-| 읽기 | billing | `BudgetQueryService.getProgress` | 피드 요청마다 1번. 후보가 5000개를 넘으면 나눠 부른다 |
+| 읽기 | billing | `BudgetQueryService.getProgress` | 00:00 후보 적재 끝과 10분마다 그날 후보 전부로 1번. 5000개를 넘으면 나눠 부른다. 피드 요청은 부르지 않는다(#837) |
 | 쓰기 | campaign | `StoreAudienceUpdater.overwrite` | 00:00 묶음 90 에서 계약의 `MAX_CELLS`(1,000칸) 안에서 가게 단위로(960칸씩). 가게 하나의 칸이 두 호출로 갈리지 않아 실패하면 가게 단위로 오늘 값과 전날 값이 갈린다(#774). 호출마다 캠페인의 트랜잭션이다. 캠페인이 광고 서빙을 조회하면 순환이 생겨 광고 서빙이 넣어 준다(FR-042, #592) |
 | 읽기 | member | `MemberQueryService.findAllById` | 00:00 대상 인원 집계에서 최근 7일 접속 회원을 1,000명씩. 성별과 연령대만 쓴다(#592) |
 | 쓰기 | billing | `PointDeductor.deduct` | 처음 저장된 유효 노출마다 1번. 노출 저장과 같은 트랜잭션이다. 쿠폰 소진 뒤의 노출은 부르지 않는다 |
@@ -284,11 +307,11 @@ A 를 고른다. 가게 상세 찜을 리포트에 넣어야 하면 그 찜을 �
 | 받기 | campaign | `CampaignEndedEvent` | 캠페인이 끝날 때 1번. 발행자와 같은 트랜잭션에서 그 캠페인의 찜을 종료로 표시한다(아키텍처 설계 2.4, #553) |
 | 공개 | analytics 가 부른다 | `AdservingStatsQueryService` | 분석의 일별 집계 배치가 영업일마다 부른다. 읽기 전용 트랜잭션에서 묶은 건수만 돌려준다. 귀속은 3장 "집계 조회의 귀속" 을 따른다 |
 
-- `getProgress` 에는 그날 사각 범위의 후보 전부를 넘긴다. 그 계약은 당일 카운터만 읽어 서빙 경로에서 불러도 된다고 적었다.
+- `getProgress` 에는 그날 후보 전부를 넘긴다. 돌려준 예약액과 단가만 쓰고 소진액은 쓰지 않는다. 결과에 없는 캠페인은 그날 계획이 없어 0 으로 둔다.
 - `deduct` 에 넘기는 영업일은 노출을 받은 날이다(그 계약, #497). 판정, 차감, 소진 확인, 카운터가 같은 날을 보도록 `ImpressionService` 가 받은 날을 한 번만 구한다. 내려준 날로 넘기면 23:59 에 내려준 카드의 00:10 노출이 00:00 에 해제가 끝난 전날 예산에 과금된다.
 - 그날 예산 계획이 없는 캠페인의 노출은 정산이 `NOT_BILLED_NO_PLAN` 으로 돌려준다. 00:00 묶음이 계획을 만들기 전이거나 전날 집행이 끝난 캠페인이고, serve 기록 TTL 때문에 자정 직후 30분 안에서만 생긴다.
 - **후보 적재는 정산의 예약(`DailyReservationJob`, 00:00 묶음 50) 뒤에 돌아야 한다.** 먼저 돌면 계획이 없는 캠페인을 내려주고 그 노출은 모두 `NOT_BILLED_NO_PLAN` 으로 과금되지 않는다. 후보 적재는 00:00 묶음 75 다(10장, #582).
-- 읽기 두 호출 모두 캐시를 두지 않는다. 회원 조회는 정지와 온보딩처럼 바로 반영돼야 하는 값이다. 진행률은 노출마다 바뀌어 캐시하면 1.2 초과 판정이 늦는다.
+- 회원 조회는 캐시를 두지 않는다. 정지와 온보딩처럼 바로 반영돼야 하는 값이다. 예약액은 00:00 예약과 충전 재예약 때만 바뀌어 10분 늦게 반영해도 된다. 늦는 동안 재개된 캠페인은 노출 상한에 걸려 나오지 않는다(#837 에서 정했다).
 - 메뉴 조회는 [store 조회 계약](../store/store-query-contract.md#메뉴-조회-결과-788)의 정상 메뉴 목록으로 메뉴명을 연결한다(#788). 데이터 오류 메뉴(`invalidMenuIds`)의 캠페인만 제외하며 메뉴가 없는 것과 가르도록 `menu_invalid` 로 세고 `ADSERVING_CANDIDATE_MENU_INVALID` 로 캠페인과 메뉴 ID 를 남긴다(#779). CDN 설정 오류와 DB 장애는 후보 제외로 바꾸지 않고 적재를 실패시킨다.
 
 ## 6. 구조와 동작 그림
@@ -366,7 +389,7 @@ flowchart LR
     CP([coupon]) --> WS
     CP --> CSU
     FS --> MQ["member.contract<br/>MemberQueryService"]
-    FS --> BQ["billing.contract<br/>BudgetQueryService"]
+    CBS[CandidateBudgetService] --> BQ["billing.contract<br/>BudgetQueryService"]
     IMS --> PD["billing.contract<br/>PointDeductor"]
 
     classDef out fill:#f5f5f5,stroke:#999,stroke-dasharray:4 3
@@ -400,7 +423,6 @@ sequenceDiagram
     participant C as FeedController
     participant S as FeedService
     participant M as MemberQueryService
-    participant B as BudgetQueryService
     participant V as Valkey
     participant DB as MySQL
     participant W as ServeLogBuffer
@@ -412,7 +434,7 @@ sequenceDiagram
     S->>DB: 3. 그날 SERVABLE 후보(사각 범위) [읽기]
     S->>V: 4. 하루 횟수, 세션, 당일 이력
     S->>DB: 5. 필터, 30일 찜 [읽기]
-    S->>B: 6. 진행률 [트랜잭션 밖]
+    Note over S: 6. 후보의 예약액과 단가로 계획 소진액 계산(정산을 부르지 않는다)
     S->>V: 7. 유효 노출 수
     Note over S: FeedAssembler 로 10장
     S->>V: 8. 내려준 캠페인 올리기(Lua)
@@ -426,7 +448,7 @@ sequenceDiagram
 |---|---|---|
 | 1, 3, 5 | 아무것도 남지 않는다. `500` 이다. 2 를 지났으면 요청 횟수에는 들어갔다 | 새로 처리한다 |
 | 2, 4, 7 | Valkey 가 멈추면 그 규칙만 빼고 계속한다. 남는 것이 없다 | 새로 처리한다 |
-| 6 | 예산 규칙 없이 계속한다(9장) | 새로 처리한다 |
+| 6 | 실패하지 않는다. 예약액이 빈 후보가 있으면 예산 규칙 없이 계속한다(9장) | 새로 처리한다 |
 | 8 | 내려준 횟수가 오르지 않아 다음 요청에서 같은 카드가 더 나올 수 있다 | 새 카드가 나간다 |
 | 9 | 응답은 나가지만 그 카드의 노출이 무효다 | 새 serveId 로 새 기록이 남는다 |
 | 10 | 대기열이 차면 그 피드의 서빙 로그와 접속 위치가 빠진다 | 새 피드는 새로 넣는다 |
@@ -522,7 +544,7 @@ sequenceDiagram
 
 | 흐름 | 한 트랜잭션에 묶는 것 | 트랜잭션 밖 |
 |---|---|---|
-| 피드 조회 | 없다. DB 읽기가 각자 끝난다 | Valkey 호출, 정산 조회, 서빙 로그와 접속 위치 쓰기 |
+| 피드 조회 | 없다. DB 읽기가 각자 끝난다 | Valkey 호출, 서빙 로그와 접속 위치 쓰기 |
 | 노출 수집 | `impression_log` 저장, 정산의 판정 기록과 원장(`PointDeductor`, `MANDATORY`) | serve 기록 읽기, 커밋 뒤의 유효 노출 수 카운터, 커밋 뒤에 분석이 받는 노출 이벤트 |
 | 스와이프 | 없다. 찜과 스와이프 기록이 각자 커밋된다 | 당일 이력(Valkey), 기록이 커밋된 뒤에 분석이 받는 스와이프 이벤트 |
 | 필터 조회 | 없다. 읽기 둘이 각자 끝난다 | 없음 |
@@ -611,7 +633,7 @@ A 를 고른다. 분석의 결정과 어긋났을 때 B 는 노출 이벤트를 
 
 | 흐름 | 불리하게 남는 경우 | 누구에게 | 막는 방법 |
 |---|---|---|---|
-| 정산이 멈춘 동안의 피드 | 진행률 1.2 초과와 노출 상한 제외가 빠져 예산을 넘긴 캠페인도 나간다 | 공정성(다른 점주) | 차감은 정산이 따로 막아 점주가 더 내지 않는다. `adserving_budget_unavailable_total` 로 센다 |
+| 예산을 아직 읽지 못한 피드 | 00:00 적재 때 정산이 멈췄으면 후보의 예약액이 빈다. 그 피드는 진행률 1.2 초과와 노출 상한 제외가 빠져 예산을 넘긴 캠페인도 나간다. 낮에 멈추면 마지막으로 읽은 값을 그대로 쓴다 | 공정성(다른 점주) | 차감은 정산이 따로 막아 점주가 더 내지 않는다. 10분 갱신이 다시 채운다. `adserving_budget_unavailable_total` 로 센다(#837) |
 | 노출 수 카운터가 멈춘 동안의 피드 | 0 으로 보고 상한을 넘겨 내보낸다 | 플랫폼 | 넘긴 노출은 과금되지 않는다. `adserving_cache_bypass_total` 로 센다 |
 | serve 기록을 쓰지 못한 피드 | 그 카드의 노출이 무효라 과금되지 않는다 | 플랫폼 | `adserving_cache_bypass_total`(`use=serve_record`) 로 센다 |
 | serve 기록을 읽지 못한 노출 | 유효 노출이 `EXPIRED_OR_UNKNOWN` 으로 저장돼 과금되지 않는다. 다시 보내도 처음 판정이 남는다 | 플랫폼 | `adserving_cache_bypass_total`(`use=serve_record`) 로 센다 |
@@ -635,13 +657,14 @@ A 를 고른다. 분석의 결정과 어긋났을 때 B 는 노출 이벤트를 
 
 | 작업 | 순서 | 하는 일 | 다시 불리면 |
 |---|---|---|---|
-| `ADSERVING_CANDIDATE_LOAD` | 00:00 묶음 75 | 그날 서빙 대상 캠페인(`findServableOn`)과 가게를 읽어 그날 후보를 넣는다. ACTIVE 는 `SERVABLE`, 예약이 있는 PAUSED 는 `PAUSED` 다. 7일 지난 영업일의 행을 지운다. 커밋 뒤 캠페인을 다시 읽어 적재 중의 상태 전이를 반영한다(#582) | 행이 늘지 않고 소진 시각을 덮지 않으며 상태는 늦을 때만 바꾼다 |
+| `ADSERVING_CANDIDATE_LOAD` | 00:00 묶음 75 | 그날 서빙 대상 캠페인(`findServableOn`)과 가게를 읽어 그날 후보를 넣는다. ACTIVE 는 `SERVABLE`, 예약이 있는 PAUSED 는 `PAUSED` 다. 7일 지난 영업일의 행을 지운다. 커밋 뒤 캠페인을 다시 읽어 적재 중의 상태 전이를 반영한다(#582). 끝으로 그날 예약액과 단가를 정산에서 읽어 둔다. 읽지 못해도 단계는 성공이다(#837) | 행이 늘지 않고 소진 시각을 덮지 않으며 상태는 늦을 때만 바꾼다 |
+| 후보 예산 갱신 | 10분마다, 묶음 밖. `batch_execution_log` 로 점유하지 않는다 | 그날 후보 전부의 예약액과 단가를 정산에서 읽어 덮는다. 충전 재예약으로 늘어난 예약액이 여기서 반영된다(#837) | 같은 값을 덮어 결과가 같다. 배치 서버 두 대가 함께 돌아도 된다 |
 | `ADSERVING_ENDED_WISHLIST_CLEANUP` | 00:00 묶음 80 | 영업일 D 에 D-3 00:00 전에 끝난 캠페인의 찜을 지운다. 끝난 날을 빼고 3일 동안 보이게 하려는 것이다(#548) | 지울 행이 없어 결과가 같다 |
 | `ADSERVING_LOG_RETENTION` | 매일 02:00, 묶음 밖(`StandaloneJob`) | 영업일 D 에 `feed_visit_daily` 는 D-7 앞(8일, LR-001), `swipe_log` 는 D-30 앞(31일), `serve_log` 와 `impression_log` 는 D 의 13개월 전 같은 날 앞의 영업일을 1,000행씩 지운다(#610) | 지울 행이 없어 결과가 같다 |
 | `ADSERVING_STORE_AUDIENCE` | 00:00 묶음 90 | 그날 서빙 대상 캠페인(`findServableOn`)의 가게마다 최근 7일(D-7 ~ D-1) 접속 회원을 점주 반경 500/1000/2000/3000 m x 성별(`MALE`, `FEMALE`, `ALL`) x 연령대 칸으로 세어 캠페인에 넘긴다(FR-099 (10), FR-042, #592) | 덮어쓰기라 결과가 같다 |
 
-- 정리는 다른 단계의 결과를 읽지도 바꾸지도 않아 정산 단계(40~70) 뒤에 둔다. 앞 단계가 실패하면 정리가 하루 미뤄질 뿐이다(#553).
-- 적재는 정산의 예약(50)과 시간대별 목표(70) 뒤, 끝난 찜 정리(80) 앞이다. FR-099 의 (8) 적재가 (11) 찜 정리보다 앞인 순서다(#582).
+- 정리는 다른 단계의 결과를 읽지도 바꾸지도 않아 정산 단계(40~60) 뒤에 둔다. 앞 단계가 실패하면 정리가 하루 미뤄질 뿐이다(#553).
+- 적재는 정산의 예약(50)과 잔액 부족 판정(60) 뒤, 끝난 찜 정리(80) 앞이다. FR-099 의 (8) 적재가 (11) 찜 정리보다 앞인 순서다(#582).
 - 이어받기가 같은 단계를 겹쳐 돌릴 수 있다(`런치캐치_배치_운영.md` 2장). 적재는 멱등 upsert 라 다시 돌아도 같다. 두 서버가 같은 순간 같은 행을 upsert 하면 교착이 날 수 있고, 묶음 규칙이 일시적 오류로 보고 다시 돌린다.
 - 실행 세대 확인(`BatchAttemptGuard`)은 쓰지 않는다. `DailyJob.run` 이 세대를 받지 않는다. 대신 적재가 원천을 읽은 시각(`snapshot_read_at`, V4)을 행에 남기고 그보다 늦게 읽은 적재만 스냅샷 값을 바꾼다. 늦게 깨어난 서버가 먼저 읽은 값으로 새 값을 되돌리지 않는다(#582 에서 정했다).
 - 지난 후보는 7일 보관한다. 지금 그날 행만 읽는다(#582 에서 정했다).
@@ -656,7 +679,7 @@ A 를 고른다. 분석의 결정과 어긋났을 때 B 는 노출 이벤트를 
 
 | 적을 것 | 피드 조회 |
 |---|---|
-| 요청 하나의 비용 | DB 읽기 4(후보, 필터, 필터 업종, 30일 찜), 다른 도메인 호출 2(회원, 정산), Valkey 호출 7(serve 기록 10건은 파이프라인 한 번). 응답 뒤 DB 쓰기는 요청이 아니라 묶음 단위다 |
+| 요청 하나의 비용 | DB 읽기 4(후보, 필터, 필터 업종, 30일 찜), 다른 도메인 호출 1(회원), Valkey 호출 7(serve 기록 10건은 파이프라인 한 번). 응답 뒤 DB 쓰기는 요청이 아니라 묶음 단위다 |
 | 처리량 계산 | 목표 500 TPS x DB 읽기 4 = 초당 2,000 읽기, 회원 조회를 더하면 2,500. 응답 뒤 쓰기는 초당 `serve_log` 5,000행과 `feed_visit_daily` 500행을 50건 묶음으로 서버마다 나눠 쓴다 |
 | 확인 방법 | 아직 없다. k6 시나리오(피크 10:50~11:05)로 대기열 크기와 묶음 수도 함께 잰다 |
 
@@ -698,7 +721,8 @@ A 를 고른다. 분석의 결정과 어긋났을 때 B 는 노출 이벤트를 
 | 같은 카드가 다시 나옴 | 같은 캠페인을 이번 세션에 한 번, 오늘 두 번 내려줬다 | 같은 세션과 새 세션에서 피드를 요청한다 | 두 경우 모두 그 캠페인이 나오지 않는다 | `FeedIntegrationTest.같은_캠페인은_한_세션에_한_번_하루에_두_번까지만_내려준다` |
 | 같은 날 다시 접속함 | 오늘 한 번 피드를 받았다 | 다른 위치에서 다시 받는다 | `feed_visit_daily` 에는 첫 위치만 남는다 | `FeedIntegrationTest.그날_두_번째_요청의_위치는_남기지_않는다` |
 | 여러 피드가 한 캠페인을 내려줌 | 그날 유효 노출 수가 노출 상한에 닿았다 | 피드를 요청한다 | 그 캠페인이 나오지 않는다 | `FeedIntegrationTest.그날_유효_노출_수가_노출_상한에_닿은_캠페인은_내려주지_않는다` |
-| 정산이 멈춤(6) | `BudgetQueryService` 가 예외를 던진다 | 피드를 요청한다 | 예산 규칙 없이 `200 SERVING` 이다 | `FeedIntegrationTest.정산이_멈춰도_예산_규칙_없이_서빙을_이어간다` |
+| 예산을 못 읽음 | 00:00 적재 때 `BudgetQueryService` 가 예외를 던진다 | 적재가 돈다 | 후보는 들어가고 예약액은 비어 있다 | `CandidateLoadIntegrationTest.정산을_읽지_못해도_적재는_끝나고_예산은_비어_있다` |
+| 예산이 빈 후보 | 후보의 예약액이 비어 있다 | 피드를 요청한다 | 예산 규칙 없이 `200 SERVING` 이고 정산을 부르지 않는다 | `FeedIntegrationTest.예약액을_아직_읽지_못한_후보가_있으면_예산_규칙_없이_서빙을_이어가고_정산을_부르지_않는다` |
 | serve 기록을 못 씀(9) | Valkey 쓰기가 실패한다 | 피드를 요청한다 | 응답은 나가고 `use=serve_record` 로 센다 | `FeedValkeyFallbackTest.serve_기록을_쓰지_못해도_예외를_올리지_않고_센다` |
 | 대기열이 참(10) | 대기열에 5,000건이 있다 | 피드를 하나 더 넣는다 | 버리고 그 카드 수만큼 센다 | `ServeLogBufferTest.대기열이_차면_버리고_그_피드의_카드_수만큼_센다` |
 | 묶음 쓰기가 실패함(11) | DB 쓰기가 한 번 실패한다 | 묶음 둘을 쓴다 | 첫 묶음을 버리고 세며 둘째는 쓴다 | `ServeLogBufferTest.쓰기가_실패하면_그_묶음을_버리고_세며_다음_묶음은_쓴다` |

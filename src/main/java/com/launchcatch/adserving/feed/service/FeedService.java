@@ -1,5 +1,7 @@
 package com.launchcatch.adserving.feed.service;
 
+import com.launchcatch.adserving.config.PacingProperties;
+import com.launchcatch.adserving.engine.BudgetPacing;
 import com.launchcatch.adserving.engine.CampaignPacing;
 import com.launchcatch.adserving.engine.FeedAssembler;
 import com.launchcatch.adserving.engine.FeedAssembler.Placed;
@@ -30,8 +32,6 @@ import com.launchcatch.adserving.feed.repository.ServeRecordRepository;
 import com.launchcatch.adserving.feed.repository.ServeFrequencyRepository.ServedHistory;
 import com.launchcatch.adserving.feed.repository.SwipeLogRepository;
 import com.launchcatch.adserving.id.UuidV7;
-import com.launchcatch.billing.contract.BudgetProgress;
-import com.launchcatch.billing.contract.BudgetQueryService;
 import com.launchcatch.global.config.ClockConfig;
 import com.launchcatch.global.geo.BoundingBox;
 import com.launchcatch.member.contract.MemberInfo;
@@ -41,31 +41,25 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.LocalTime;
 import java.time.OffsetDateTime;
 import java.time.ZonedDateTime;
 import java.time.temporal.ChronoUnit;
-import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.IntStream;
-import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
-@Slf4j
 @Service
 @RequiredArgsConstructor
 public class FeedService {
 
     // 업종 선호도를 세는 기간이다. 오늘을 넣어 30일이다(#307).
     private static final int PREFERENCE_DAYS = 30;
-
-    // 정산에서 예산을 읽지 못해 예산 규칙 없이 내보낸 횟수다. 경보는 이 지표에 건다.
-    static final String BUDGET_UNAVAILABLE_METRIC = "adserving_budget_unavailable_total";
 
     // 응답으로 내려준 카드 수다. serve_log 건수와 대조해 서빙 로그 유실률을 잰다(feed-api-design.md 유실 목표).
     static final String SERVED_CARDS_METRIC = "adserving_served_cards_total";
@@ -79,7 +73,7 @@ public class FeedService {
     private final SwipeLogRepository swipeLogRepository;
     private final ServeFrequencyRepository serveFrequencyRepository;
     private final ImpressionCountRepository impressionCountRepository;
-    private final BudgetQueryService budgetQueryService;
+    private final PacingProperties pacingProperties;
     private final ServeRecordRepository serveRecordRepository;
     private final ServeLogBuffer serveLogBuffer;
     private final MeterRegistry meterRegistry;
@@ -101,11 +95,11 @@ public class FeedService {
 
         ZonedDateTime servedAt = now.atZone(ClockConfig.ZONE);
         LocalDate businessDate = servedAt.toLocalDate();
-        List<FeedCandidate> candidates = adCandidateRepository.findServableWithin(businessDate,
-                        BoundingBox.around(viewer.latitude(), viewer.longitude(), FeedAssembler.MAX_RADIUS_M))
-                .stream().map(AdCandidate::toFeedCandidate).toList();
+        List<AdCandidate> rows = adCandidateRepository.findServableWithin(businessDate,
+                BoundingBox.around(viewer.latitude(), viewer.longitude(), FeedAssembler.MAX_RADIUS_M));
+        List<FeedCandidate> candidates = rows.stream().map(AdCandidate::toFeedCandidate).toList();
         Selection selection = FeedAssembler.assemble(candidates,
-                contextFor(memberId, viewer, businessDate, servedAt, candidates));
+                contextFor(memberId, viewer, businessDate, servedAt, rows));
         // 카드가 없는 요청도 활동이라 세션을 늘리려고 빈 목록으로도 부른다
         serveFrequencyRepository.recordServed(businessDate, memberId,
                 selection.cards().stream().map(p -> p.candidate().campaignId()).toList(), now);
@@ -142,7 +136,7 @@ public class FeedService {
     }
 
     private FeedContext contextFor(Long memberId, Viewer viewer, LocalDate businessDate, ZonedDateTime servedAt,
-                                   List<FeedCandidate> candidates) {
+                                   List<AdCandidate> rows) {
         ServedHistory history = serveFrequencyRepository.findHistory(businessDate, memberId);
         FeedSort sort = feedFilterRepository.findById(memberId).map(FeedFilter::getSortType).orElse(FeedSort.DISTANCE);
         List<CategoryWishCount> wishes = swipeLogRepository.countWishesByCategory(
@@ -155,42 +149,29 @@ public class FeedService {
                 categoryPreference(wishes),
                 history.dailyCounts(),
                 history.sessionCampaignIds(),
-                pacingFor(candidates.stream().map(FeedCandidate::campaignId).toList(), businessDate, servedAt));
+                pacingFor(rows, businessDate, servedAt));
     }
 
     /*
-     * 정산의 진행률과 그날 유효 노출 수를 캠페인별로 묶는다. 정산 결과에 없는 캠페인은 예산 계획이 없어 빠진다.
-     *
-     * 정산이 예외를 던지면 null 을 돌려 예산 규칙을 건너뛴다. 장애 처리 가이드의 기본 처리(오류로 올린다)에서 벗어난다.
-     * 서빙할 피드가 아예 없을 때만 오류로 답하고 그 밖에는 서빙을 이어 가기로 했다(#307). 차감은 정산이 따로 막아 점주가 더 내지 않는다.
+     * 후보에 적재된 예약액과 단가, 그리고 그날 유효 노출 수로 진행률을 계산해 캠페인별로 묶는다. 요청마다 정산을 부르지 않는다(#837).
+     * 소진액은 유효 노출 수 x 단가로 본다. 과금하지 않은 유효 노출(예산 초과, 그날 계획 없음)도 섞이지만 대부분 상한 근처와 자정 직후에만 생긴다.
+     * 예약액을 아직 읽지 못한 후보가 있으면 null 을 돌려 예산 규칙을 건너뛴다(#307). 읽지 못한 횟수는 CandidateBudgetService 가 센다.
      */
-    private Map<Long, CampaignPacing> pacingFor(List<Long> campaignIds, LocalDate businessDate, ZonedDateTime servedAt) {
-        List<BudgetProgress> progress;
-        try {
-            progress = readProgress(campaignIds, businessDate, servedAt);
-        } catch (RuntimeException e) {
-            // 원인이 캠페인이 아니라 정산이라 ID 대신 개수만 남겨 장애 중 로그가 후보 수만큼 길어지지 않게 한다(#778)
-            log.warn("event=ADSERVING_FEED_BUDGET_UNAVAILABLE businessDate={} campaignCount={} fallback=SKIP_BUDGET_RULE",
-                    businessDate, campaignIds.size(), e);
-            meterRegistry.counter(BUDGET_UNAVAILABLE_METRIC).increment();
+    private Map<Long, CampaignPacing> pacingFor(List<AdCandidate> rows, LocalDate businessDate, ZonedDateTime servedAt) {
+        if (rows.stream().anyMatch(row -> row.getReservedAmount() == null)) {
             return null;
         }
         Map<Long, Long> validCounts = impressionCountRepository.findValidCounts(businessDate,
-                progress.stream().map(BudgetProgress::campaignId).toList());
-        return progress.stream().collect(Collectors.toMap(BudgetProgress::campaignId, p -> new CampaignPacing(
-                p.progressRate(), p.reservedAmount(), p.unitPrice(), validCounts.getOrDefault(p.campaignId(), 0L))));
-    }
-
-    // 정산은 한 번에 MAX_CAMPAIGN_IDS 개까지 받는다. 그보다 많으면 나눠 부른다.
-    private List<BudgetProgress> readProgress(List<Long> campaignIds, LocalDate businessDate, ZonedDateTime servedAt) {
-        int chunk = BudgetQueryService.MAX_CAMPAIGN_IDS;
-        List<BudgetProgress> all = new ArrayList<>();
-        for (int from = 0; from < campaignIds.size(); from += chunk) {
-            all.addAll(budgetQueryService.getProgress(
-                    campaignIds.subList(from, Math.min(from + chunk, campaignIds.size())),
-                    businessDate, servedAt.toLocalDateTime()));
+                rows.stream().map(AdCandidate::getCampaignId).toList());
+        LocalTime at = servedAt.toLocalTime();
+        Map<Long, CampaignPacing> pacing = new HashMap<>();
+        for (AdCandidate row : rows) {
+            long valid = validCounts.getOrDefault(row.getCampaignId(), 0L);
+            long planned = BudgetPacing.plannedAmountUntil(row.getReservedAmount(), pacingProperties.hourlyWeights(), at);
+            pacing.put(row.getCampaignId(), new CampaignPacing(BudgetPacing.progressRate(valid * row.getUnitPrice(), planned),
+                    row.getReservedAmount(), row.getUnitPrice(), valid));
         }
-        return all;
+        return pacing;
     }
 
     // 업종 선호도는 기간 안의 찜 가운데 그 업종이 차지하는 비율이다. 찜이 없으면 비어 모든 업종이 0 이다.

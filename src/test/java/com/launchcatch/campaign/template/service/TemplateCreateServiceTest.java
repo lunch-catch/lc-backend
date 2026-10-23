@@ -94,7 +94,7 @@ class TemplateCreateServiceTest {
                 new TemplateHtmlSanitizer(),
                 new TemplateSlotValidator(),
                 new TemplatePromptValidator(),
-                new TemplateGenerationRateLimiter(redisTemplate),
+                new TemplateGenerationRateLimiter(redisTemplate, 3),
                 transactionTemplate,
                 FIXED_CLOCK);
         Field maxTemplatesField = TemplateCreateService.class.getDeclaredField("maxTemplates");

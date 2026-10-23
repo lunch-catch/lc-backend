@@ -8,7 +8,6 @@ import com.launchcatch.billing.exception.BillingErrorCode;
 import com.launchcatch.billing.exception.BillingException;
 import com.launchcatch.billing.job.DailyReservationJob;
 import com.launchcatch.billing.job.FundingJudgementJob;
-import com.launchcatch.billing.job.HourlyTargetJob;
 import com.launchcatch.billing.repository.BudgetDailyPlanRepository;
 import com.launchcatch.billing.service.DailyReservationRecorder;
 import com.launchcatch.billing.service.PaymentResultService;
@@ -56,7 +55,6 @@ class DailyReservationIntegrationTest extends AbstractBillingIntegrationTest {
 
     @Autowired DailyReservationJob reservationJob;
     @Autowired FundingJudgementJob judgementJob;
-    @Autowired HourlyTargetJob hourlyTargetJob;
     @Autowired BudgetDailyPlanRepository planRepository;
     @Autowired SpendReconciliationService spendReconciliation;
     @Autowired JdbcTemplate jdbc;
@@ -72,7 +70,6 @@ class DailyReservationIntegrationTest extends AbstractBillingIntegrationTest {
     @AfterEach
     void clean() {
         jdbc.update("delete from settlement_mismatch where check_type = 'CAMPAIGN_OVERSPEND' and target_id >= ?", BASE_ID);
-        jdbc.update("delete from budget_hourly_target");
         jdbc.update("delete from budget_daily_plan");
         jdbc.update("delete from point_ledger");
         jdbc.update("delete from refund_request where owner_id >= ?", BASE_ID);
@@ -124,7 +121,6 @@ class DailyReservationIntegrationTest extends AbstractBillingIntegrationTest {
     private void runAllSteps() {
         reservationJob.run(DAY);
         judgementJob.run(DAY);
-        hourlyTargetJob.run(DAY);
     }
 
     private List<Long> reserves(long campaignId) {
@@ -139,15 +135,6 @@ class DailyReservationIntegrationTest extends AbstractBillingIntegrationTest {
                 campaignId, DAY);
     }
 
-    private List<Long> hourlyTargets(long campaignId) {
-        return jdbc.queryForList("""
-                select t.target_amount from budget_hourly_target t
-                  join budget_daily_plan p on p.budget_daily_plan_id = t.budget_daily_plan_id
-                 where p.campaign_id = ? and p.business_date = ?
-                 order by t.hour
-                """, Long.class, campaignId, DAY);
-    }
-
     private long balance(long ownerId) {
         return jdbc.queryForObject(
                 "select coalesce(sum(amount), 0) from point_ledger where owner_id = ? and entry_type <> 'DEDUCT'",
@@ -155,7 +142,7 @@ class DailyReservationIntegrationTest extends AbstractBillingIntegrationTest {
     }
 
     @Test
-    void 예약_판정_목표가_함께_남고_다시_돌려도_중복되지_않는다() {
+    void 예약과_판정이_함께_남고_다시_돌려도_중복되지_않는다() {
         long ownerA = BASE_ID + 1;
         long ownerB = BASE_ID + 2;
         charge(ownerA, 15000L);
@@ -182,14 +169,6 @@ class DailyReservationIntegrationTest extends AbstractBillingIntegrationTest {
                 .containsEntry("status", "PAUSED").containsEntry("paused_reason", "NO_POINTS");
         assertThat(jdbc.queryForObject("select status from campaign where campaign_id = ?", String.class, a1))
                 .isEqualTo("ACTIVE");
-
-        // 0~23시 24개 목표이고 합은 예약액과 같다(기본 가중치의 합이 100)
-        assertThat(hourlyTargets(a1)).containsExactly(200L, 100L, 100L, 100L, 100L, 100L, 100L, 300L, 400L, 500L,
-                800L, 1000L, 900L, 700L, 400L, 400L, 400L, 500L, 700L, 800L, 600L, 400L, 200L, 200L);
-        assertThat(hourlyTargets(a2)).hasSize(24).startsWith(100L, 50L).endsWith(100L, 100L);
-        assertThat(hourlyTargets(a2).stream().mapToLong(Long::longValue).sum()).isEqualTo(5000L);
-        assertThat(hourlyTargets(a3)).isEmpty();
-        assertThat(hourlyTargets(b1)).isEmpty();
 
         assertThat(redis.opsForHash().get("billing:day:" + DAY + ":" + a1, "reserved")).isEqualTo("10000");
     }

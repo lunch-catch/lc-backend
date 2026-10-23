@@ -157,7 +157,7 @@ class StoreOnboardingStatusIntegrationTest extends AbstractStoreIntegrationTest 
         mvc.perform(get("/v1/owner/onboarding").cookie(token(ownerId)))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.data.storeId").value(storeId));
         mvc.perform(get("/v1/owner/onboarding")).andExpect(status().isUnauthorized());
-        mvc.perform(get("/v1/owner/onboarding").cookie(new Cookie("accessToken",
+        mvc.perform(get("/v1/owner/onboarding").cookie(new Cookie("ownerAccessToken",
                         jwt.createAccessToken(999L, Role.MEMBER, Map.of("issuanceVersion", "0")))))
                 .andExpect(status().isForbidden());
         prepareOwner();
@@ -167,7 +167,7 @@ class StoreOnboardingStatusIntegrationTest extends AbstractStoreIntegrationTest 
     }
 
     private Cookie token(Long id) {
-        return new Cookie("accessToken", jwt.createAccessToken(id, Role.OWNER, Map.of("issuanceVersion", "0")));
+        return new Cookie("ownerAccessToken", jwt.createAccessToken(id, Role.OWNER, Map.of("issuanceVersion", "0")));
     }
 
     private Long ready() {

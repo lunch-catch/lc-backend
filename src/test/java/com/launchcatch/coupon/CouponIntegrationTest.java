@@ -19,6 +19,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.asyncDispatch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -26,9 +27,11 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.request;
 
 import com.launchcatch.adserving.contract.WishlistQueryService;
 import com.launchcatch.adserving.contract.CandidateStateUpdater;
+import com.launchcatch.auth.AuthCookieNames;
 import com.launchcatch.coupon.job.CouponPreparationJob;
 import com.launchcatch.coupon.job.CouponIssueOpenJob;
 import com.launchcatch.coupon.job.CouponIssueCloseJob;
@@ -163,6 +166,8 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.ResultActions;
+import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 import org.springframework.transaction.IllegalTransactionStateException;
@@ -238,6 +243,15 @@ public class CouponIntegrationTest extends IntegrationTestSupport {
                 .thenReturn(Clock.fixed(Instant.parse("2026-10-10T03:00:00Z"), ClockConfig.ZONE));
         when(clock.getZone()).thenReturn(ClockConfig.ZONE);
         when(clock.instant()).thenReturn(Instant.parse("2026-10-10T03:00:00Z"));
+    }
+
+    // MockMvc는 실제 서버와 달리 비동기 응답의 재디스패치를 테스트가 직접 수행해야 한다.
+    private ResultActions performIssue(MockHttpServletRequestBuilder requestBuilder) throws Exception {
+        var pending = mockMvc.perform(requestBuilder)
+                .andExpect(request().asyncStarted())
+                .andReturn();
+        pending.getAsyncResult(15_000L);
+        return mockMvc.perform(asyncDispatch(pending));
     }
 
     private void stubActiveMembers() {
@@ -658,7 +672,7 @@ public class CouponIntegrationTest extends IntegrationTestSupport {
             publish(new CampaignStatusChangedEvent(91, TODAY, false, CHANGED_AT));
 
             assertThat(states()).containsExactly("PAUSED", "ACTIVE", "SCHEDULED", "ACTIVE");
-            mockMvc.perform(post("/v1/coupons").with(user(MEMBER)).contentType(MediaType.APPLICATION_JSON)
+            performIssue(post("/v1/coupons").with(user(MEMBER)).contentType(MediaType.APPLICATION_JSON)
                             .content("{\"eventId\":81}"))
                     .andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("COUPON-002"));
             assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM member_coupon", Integer.class)).isZero();
@@ -685,7 +699,7 @@ public class CouponIntegrationTest extends IntegrationTestSupport {
             publish(new CampaignEndedEvent(91, CHANGED_AT));
 
             assertThat(states()).containsExactly("ENDED", "ENDED", "ENDED", "ACTIVE");
-            mockMvc.perform(post("/v1/coupons").with(user(MEMBER)).contentType(MediaType.APPLICATION_JSON)
+            performIssue(post("/v1/coupons").with(user(MEMBER)).contentType(MediaType.APPLICATION_JSON)
                             .content("{\"eventId\":81}"))
                     .andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("COUPON-002"));
         }
@@ -1073,13 +1087,13 @@ public class CouponIntegrationTest extends IntegrationTestSupport {
         void 마지막_발급과_후속_소진_거절은_통보를_접수하고_HTTP_결과를_유지한다() throws Exception {
             couponCommandService.issue(17L, 81L);
             couponCommandService.issue(18L, 81L);
-            mockMvc.perform(post("/v1/coupons").with(user(new CustomUserDetails(19L, Role.MEMBER)))
+            performIssue(post("/v1/coupons").with(user(new CustomUserDetails(19L, Role.MEMBER)))
                             .contentType(MediaType.APPLICATION_JSON).content("{\"eventId\":81}"))
                     .andExpect(status().isCreated());
             assertConsistent(3);
             time.set(Instant.parse("2026-10-10T03:05:00Z"));
 
-            mockMvc.perform(post("/v1/coupons").with(user(new CustomUserDetails(20L, Role.MEMBER)))
+            performIssue(post("/v1/coupons").with(user(new CustomUserDetails(20L, Role.MEMBER)))
                             .contentType(MediaType.APPLICATION_JSON).content("{\"eventId\":81}"))
                     .andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("COUPON-006"));
 
@@ -1093,7 +1107,7 @@ public class CouponIntegrationTest extends IntegrationTestSupport {
         @Test
         void 찜하지_않은_회원은_HTTP_403이며_발급_상태를_변경하지_않는다() throws Exception {
             when(wishes.findWishedMemberIds(81L, Set.of(17L))).thenReturn(Set.of());
-            mockMvc.perform(post("/v1/coupons").with(user(MEMBER))
+            performIssue(post("/v1/coupons").with(user(MEMBER))
                             .contentType(MediaType.APPLICATION_JSON).content("{\"eventId\":81}"))
                     .andExpect(status().isForbidden()).andExpect(jsonPath("$.code").value("COUPON-004"));
             assertConsistent(0);
@@ -1104,7 +1118,7 @@ public class CouponIntegrationTest extends IntegrationTestSupport {
         void 찜_조회_장애는_HTTP_500이며_발급을_롤백한다() throws Exception {
             when(wishes.findWishedMemberIds(81L, Set.of(17L)))
                     .thenThrow(new DataAccessResourceFailureException("wishlist unavailable"));
-            mockMvc.perform(post("/v1/coupons").with(user(MEMBER))
+            performIssue(post("/v1/coupons").with(user(MEMBER))
                             .contentType(MediaType.APPLICATION_JSON).content("{\"eventId\":81}"))
                     .andExpect(status().isInternalServerError()).andExpect(jsonPath("$.code").value("COMMON-001"));
             assertConsistent(0);
@@ -1145,7 +1159,7 @@ public class CouponIntegrationTest extends IntegrationTestSupport {
 
         @Test
         void HTTP_발급은_201과_저장된_한국_시각을_반환한다() throws Exception {
-            mockMvc.perform(post("/v1/coupons").with(user(new CustomUserDetails(17L, Role.MEMBER)))
+            performIssue(post("/v1/coupons").with(user(new CustomUserDetails(17L, Role.MEMBER)))
                             .contentType("application/json").content("{\"eventId\":81}"))
                     .andExpect(status().isCreated())
                     .andExpect(jsonPath("$.data.memberCouponId").isNumber())
@@ -1174,7 +1188,7 @@ public class CouponIntegrationTest extends IntegrationTestSupport {
 
         @Test
         void HTTP로_발급한_쿠폰의_사용_이벤트는_같은_회원_쿠폰_ID를_싣는다() throws Exception {
-            mockMvc.perform(post("/v1/coupons").with(user(MEMBER)).contentType("application/json")
+            performIssue(post("/v1/coupons").with(user(MEMBER)).contentType("application/json")
                     .content("{\"eventId\":81}")).andExpect(status().isCreated());
             CouponIssuedEvent issued = (CouponIssuedEvent) funnel.received.getFirst();
             long couponId = issued.memberCouponId();
@@ -1396,13 +1410,33 @@ public class CouponIntegrationTest extends IntegrationTestSupport {
         @Test
         void DB_조회가_실패하면_공통_서버_오류를_반환하고_롤백한다() throws Exception {
             doThrow(new QueryTimeoutException("DB 조회 실패")).when(events).findAllForIssue(anyCollection());
-            mockMvc.perform(post("/v1/coupons").with(user(new CustomUserDetails(17L, Role.MEMBER)))
+            performIssue(post("/v1/coupons").with(user(new CustomUserDetails(17L, Role.MEMBER)))
                             .contentType("application/json").content("{\"eventId\":81}"))
                     .andExpect(status().isInternalServerError())
                     .andExpect(jsonPath("$.code").value("COMMON-001"))
                     .andExpect(header().doesNotExist("Retry-After"));
             assertConsistent(0);
             assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM coupon_daily_limit", Integer.class)).isZero();
+        }
+
+        @ParameterizedTest
+        @ValueSource(strings = {"2026-10-10T03:30:00Z", "2026-10-10T04:00:00Z"})
+        void 사용_종료_시각부터_HTTP_발급을_거절하고_재고와_한도를_보존한다(Instant now) throws Exception {
+            jdbcTemplate.update("UPDATE coupon_event SET usable_end_at=? WHERE coupon_event_id=81", TODAY.atTime(12, 30));
+            jdbcTemplate.update("UPDATE coupon_inventory SET usable_end_at=? WHERE coupon_event_id=81", TODAY.atTime(12, 30));
+            var inventoryBefore = jdbcTemplate.queryForList("SELECT * FROM coupon_inventory ORDER BY sequence_no");
+            time.set(now);
+
+            performIssue(post("/v1/coupons").with(user(new CustomUserDetails(17L, Role.MEMBER)))
+                            .contentType("application/json").content("{\"eventId\":81}"))
+                    .andExpect(status().isConflict())
+                    .andExpect(jsonPath("$.code").value("COUPON-002"));
+
+            assertConsistent(0);
+            assertThat(jdbcTemplate.queryForList("SELECT * FROM coupon_inventory ORDER BY sequence_no"))
+                    .usingRecursiveComparison().isEqualTo(inventoryBefore);
+            assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM coupon_daily_limit", Integer.class)).isZero();
+            assertThat(funnel.received).isEmpty();
         }
 
         @Test
@@ -4367,6 +4401,23 @@ public class CouponIntegrationTest extends IntegrationTestSupport {
             assertUnchanged();
         }
 
+        // 시연 영상 촬영용 30km 제한을 검증하며 촬영 후 기존 100m 기준으로 복원한다.
+        @ParameterizedTest
+        @CsvSource({"37.501,201", "37.7697,201", "37.7699,403"})
+        void 실제_HTTP로_30km_안팎의_사용_결과와_저장_상태를_확인한다(double latitude, int expectedStatus) throws Exception {
+            when(stores.findAllById(List.of(10L))).thenReturn(List.of(store(latitude)));
+
+            try (HttpClient client = HttpClient.newHttpClient()) {
+                var response = client.send(httpRequest("POST", PATH, body(), accessToken(Role.OWNER, 9L)),
+                        HttpResponse.BodyHandlers.ofString());
+                assertThat(response.statusCode()).isEqualTo(expectedStatus);
+                assertThat(objectMapper.readTree(response.body()).path("code").asText())
+                        .isEqualTo(expectedStatus == 201 ? "SUCCESS" : "COUPON-009");
+            }
+            assertThat(state()).isEqualTo(expectedStatus == 201 ? "USED" : "ISSUED");
+            assertThat(historyCount()).isEqualTo(expectedStatus == 201 ? 1 : 0);
+        }
+
         @ParameterizedTest
         @CsvSource({"inactive,COUPON-013", "permission,COUPON-011", "location,COUPON-009"})
         void 점주_상태와_매장_권한과_위치를_검사한다(String condition, String code) throws Exception {
@@ -4894,7 +4945,9 @@ public class CouponIntegrationTest extends IntegrationTestSupport {
                 .timeout(Duration.ofSeconds(15)).header("Content-Type", "application/json")
                 .method(method, body == null ? HttpRequest.BodyPublishers.noBody() : HttpRequest.BodyPublishers.ofString(body));
         if (token != null) {
-            request.header("Cookie", "accessToken=" + token);
+            // 서버는 요청 경로의 역할 쿠키만 읽어 경로로 이름을 고른다(#841)
+            String cookieName = AuthCookieNames.accessTokenCookieNameForPath(path.split("\\?")[0]);
+            request.header("Cookie", cookieName + "=" + token);
         }
         return request.build();
     }

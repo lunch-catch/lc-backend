@@ -133,7 +133,7 @@ Set-Cookie: refreshToken=<token>; HttpOnly; SameSite=Strict; Path=/v1/auth/
 
 **Access Token 은 `Path=/` 이고 Refresh Token 은 역할별로 좁다.** Refresh 는 재발급과
 로그아웃에서만 쓰므로 그 경로에만 실린다. 위 예시는 사용자 것이고 역할별 `Path` 와
-`Max-Age` 는 [auth-api-spec.md](./auth-api-spec.md) 의 공통 토큰 정책에 있다. 값을 여기 옮겨 적지 않는다.
+`Max-Age` 와 역할별 Access Token 쿠키 이름은 [auth-api-spec.md](./auth-api-spec.md) 의 공통 토큰 정책에 있다. 값을 여기 옮겨 적지 않는다.
 
 - **쿠키를 함께 보내야 한다.** 브라우저 `fetch` 는 `credentials: 'include'`, axios는 `withCredentials: true` 로 호출한다
 - **Access Token이 만료되면 재발급 후 다시 부른다.** `401` 에 `AUTH-005` 이 오면 역할에 맞는 재발급 API를 한 번 부르고 원래 요청을 다시 보낸다. 재발급도 `401` 이면 로그인 화면으로 보낸다. 재발급 API는 `auth-api-spec.md`에 있다

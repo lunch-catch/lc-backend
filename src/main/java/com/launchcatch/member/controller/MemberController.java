@@ -96,7 +96,7 @@ public class MemberController {
                                          @Valid @RequestBody MemberWithdrawalRequest request) {
         memberWithdrawalService.withdraw(user.getId(), request.authorizationCode(), request.state());
         return ResponseEntity.noContent()
-                .header(HttpHeaders.SET_COOKIE, authCookieFactory.expiredAccessTokenCookie().toString())
+                .header(HttpHeaders.SET_COOKIE, authCookieFactory.expiredAccessTokenCookie(Role.MEMBER).toString())
                 .header(HttpHeaders.SET_COOKIE, authCookieFactory.expiredRefreshTokenCookie(Role.MEMBER).toString())
                 .build();
     }

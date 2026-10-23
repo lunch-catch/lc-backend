@@ -19,7 +19,7 @@ import org.springframework.context.annotation.Configuration;
         name = "adminAccessToken",
         type = SecuritySchemeType.APIKEY,
         in = SecuritySchemeIn.COOKIE,
-        paramName = "accessToken",
+        paramName = "adminAccessToken",
         description = "관리자 로그인 성공 응답이 설정하는 HttpOnly Access Token 쿠키입니다. 관리자 또는 최고 관리자 권한이 필요합니다."
 )
 @SecurityScheme(

@@ -35,7 +35,7 @@ public class CampaignPauseResumeService {
 
     @Transactional
     public CampaignStatusResponse pause(Long ownerId, Long campaignId) {
-        validateActiveOwner(ownerId, "CAMPAIGN_PAUSE_FAILED");
+        validateActiveOwner(ownerId, Action.PAUSE);
         Campaign campaign = findOwnedCampaign(ownerId, campaignId);
         LocalDate businessDate = LocalDate.now(clock);
         try {
@@ -43,14 +43,14 @@ public class CampaignPauseResumeService {
         } catch (IllegalStateException e) {
             throw new CampaignException(CampaignErrorCode.CAMPAIGN_STATE_NOT_ALLOWED, e);
         } catch (IllegalArgumentException e) {
-            throw storeSummaryMismatch("CAMPAIGN_PAUSE_FAILED", campaignId, e);
+            throw storeSummaryMismatch(Action.PAUSE, campaignId, e);
         }
         return toResponse(campaign);
     }
 
     @Transactional
     public CampaignStatusResponse resume(Long ownerId, Long campaignId) {
-        validateActiveOwner(ownerId, "CAMPAIGN_RESUME_FAILED");
+        validateActiveOwner(ownerId, Action.RESUME);
         Campaign campaign = findOwnedCampaign(ownerId, campaignId);
         LocalDate businessDate = LocalDate.now(clock);
         try {
@@ -58,7 +58,7 @@ public class CampaignPauseResumeService {
         } catch (IllegalStateException e) {
             throw new CampaignException(CampaignErrorCode.CAMPAIGN_STATE_NOT_ALLOWED, e);
         } catch (IllegalArgumentException e) {
-            throw storeSummaryMismatch("CAMPAIGN_RESUME_FAILED", campaignId, e);
+            throw storeSummaryMismatch(Action.RESUME, campaignId, e);
         }
         return toResponse(campaign);
     }
@@ -71,7 +71,7 @@ public class CampaignPauseResumeService {
      */
     @Transactional
     public CampaignStatusResponse end(Long ownerId, Long campaignId) {
-        validateActiveOwner(ownerId, "CAMPAIGN_END_FAILED");
+        validateActiveOwner(ownerId, Action.END);
         Campaign campaign = findOwnedCampaign(ownerId, campaignId);
         if (campaign.getStatus() != CampaignStatus.PAUSED) {
             throw new CampaignException(CampaignErrorCode.CAMPAIGN_STATE_NOT_ALLOWED);
@@ -80,15 +80,28 @@ public class CampaignPauseResumeService {
         try {
             campaignStatusService.end(campaignId, ActorType.OWNER, businessDate);
         } catch (IllegalArgumentException e) {
-            throw storeSummaryMismatch("CAMPAIGN_END_FAILED", campaignId, e);
+            throw storeSummaryMismatch(Action.END, campaignId, e);
         }
         return toResponse(campaign);
     }
 
-    private void validateActiveOwner(Long ownerId, String event) {
+    // 로그의 이벤트명을 리터럴로 쓰려고 동작을 구분한다(LOG-2-03).
+    private enum Action {
+        PAUSE, RESUME, END
+    }
+
+    private void validateActiveOwner(Long ownerId, Action action) {
         if (ownerStatusQuery.findCurrentStatus(ownerId).orElse(null) != OwnerAccountStatus.ACTIVE) {
-            log.warn("event={} reason=OWNER_NOT_ACTIVE code={} ownerId={}",
-                    event, CampaignErrorCode.OWNER_NOT_ACTIVE.getCode(), ownerId);
+            // 점주 상태가 맞지 않아 거절하는 것은 예상된 클라이언트 쪽 거절이라 INFO 다(LOG-5-02).
+            String errorCode = CampaignErrorCode.OWNER_NOT_ACTIVE.getCode();
+            switch (action) {
+                case PAUSE -> log.info("event=CAMPAIGN_PAUSE_FAILED reason=OWNER_NOT_ACTIVE errorCode={} ownerId={}",
+                        errorCode, ownerId);
+                case RESUME -> log.info("event=CAMPAIGN_RESUME_FAILED reason=OWNER_NOT_ACTIVE errorCode={} ownerId={}",
+                        errorCode, ownerId);
+                case END -> log.info("event=CAMPAIGN_END_FAILED reason=OWNER_NOT_ACTIVE errorCode={} ownerId={}",
+                        errorCode, ownerId);
+            }
             throw new CampaignException(CampaignErrorCode.OWNER_NOT_ACTIVE);
         }
     }
@@ -108,9 +121,15 @@ public class CampaignPauseResumeService {
      * 어느 ErrorCode도 아닌 RuntimeException으로 다시 던져 handleUnexpected의 500
      * COMMON-001로 보낸다.
      */
-    private RuntimeException storeSummaryMismatch(String event, Long campaignId, IllegalArgumentException e) {
-        log.error("event={} reason=STORE_SUMMARY_MISMATCH campaignId={} detail={}",
-                event, campaignId, e.getMessage());
+    private RuntimeException storeSummaryMismatch(Action action, Long campaignId, IllegalArgumentException e) {
+        switch (action) {
+            case PAUSE -> log.error("event=CAMPAIGN_PAUSE_FAILED reason=STORE_SUMMARY_MISMATCH campaignId={} detail={}",
+                    campaignId, e.getMessage());
+            case RESUME -> log.error("event=CAMPAIGN_RESUME_FAILED reason=STORE_SUMMARY_MISMATCH campaignId={} detail={}",
+                    campaignId, e.getMessage());
+            case END -> log.error("event=CAMPAIGN_END_FAILED reason=STORE_SUMMARY_MISMATCH campaignId={} detail={}",
+                    campaignId, e.getMessage());
+        }
         return new RuntimeException("store campaign summary update failed: campaignId=" + campaignId, e);
     }
 

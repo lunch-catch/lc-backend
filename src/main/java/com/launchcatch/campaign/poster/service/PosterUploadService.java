@@ -15,6 +15,7 @@ import com.launchcatch.campaign.poster.dto.PosterImagePrepareUploadResponse;
 import com.launchcatch.campaign.poster.entity.Poster;
 import com.launchcatch.campaign.poster.repository.PosterRepository;
 import com.launchcatch.campaign.repository.CampaignRepository;
+import com.launchcatch.campaign.template.TemplateSlotValidator;
 import com.launchcatch.campaign.template.entity.Template;
 import com.launchcatch.campaign.template.entity.TemplateStatus;
 import com.launchcatch.campaign.template.repository.TemplateRepository;
@@ -60,7 +61,6 @@ import software.amazon.awssdk.services.s3.presigner.model.PutObjectPresignReques
 public class PosterUploadService {
 
     private static final long MAX_FILE_SIZE = 10 * 1024 * 1024;
-    private static final int TITLE_MAX_LENGTH = 100;
     private static final Set<String> ALLOWED_CONTENT_TYPES = Set.of("image/jpeg", "image/png");
     private static final Duration PRESIGN_DURATION = Duration.ofMinutes(10);
     private static final DateTimeFormatter PERIOD_TIME_FORMAT = DateTimeFormatter.ofPattern("HH:mm");
@@ -245,7 +245,7 @@ public class PosterUploadService {
     }
 
     private String truncateTitle(String title) {
-        return title.length() > TITLE_MAX_LENGTH ? title.substring(0, TITLE_MAX_LENGTH) : title;
+        return title.length() > Poster.TITLE_MAX_LENGTH ? title.substring(0, Poster.TITLE_MAX_LENGTH) : title;
     }
 
     // 이미지 칸 크기 보정 속성이다(#731). withImageFit 주석 참고.
@@ -262,7 +262,7 @@ public class PosterUploadService {
             String imageUrl) {
         Document document = Jsoup.parseBodyFragment(templateHtml);
         // 광고 표시를 넣지 않기로 했다(#628). 광고 표시가 들어 있는 옛 템플릿으로 만든 포스터에서도 뺀다.
-        document.select("[data-slot=adLabel]").remove();
+        document.select("[data-slot=" + TemplateSlotValidator.AD_LABEL_SLOT + "]").remove();
         Map<String, PosterSlotValue> slotValues = new LinkedHashMap<>();
         slotValues.put("eventName", fillText(document, "eventName", eventName));
         slotValues.put("discount", fillText(document, "discount", discount));

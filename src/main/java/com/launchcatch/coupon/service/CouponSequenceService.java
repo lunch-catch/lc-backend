@@ -3,10 +3,12 @@ package com.launchcatch.coupon.service;
 import com.launchcatch.coupon.exception.CouponErrorCode;
 import com.launchcatch.coupon.exception.CouponException;
 import com.launchcatch.coupon.repository.CouponSequenceRepository;
+import com.launchcatch.coupon.model.CouponIssuanceOutcome;
 import com.launchcatch.coupon.model.CouponReservation;
 import com.launchcatch.coupon.model.CouponReservationOutcome;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.LinkedHashMap;
@@ -69,20 +71,32 @@ public class CouponSequenceService {
         return reservationOutcomes(eventId, ids, results);
     }
 
-    // 모든 응답을 확인하기 전 오류가 나면 일부 예약이 실행됐을 수 있으므로 묶음의 이벤트를 모두 차단한다.
+    /*
+     * 소진 조회 뒤 이 서버가 차단한 이벤트는 Redis를 부르지 않고 그 이벤트의 요청만 복구 대상으로 돌려준다.
+     * 모든 응답을 확인하기 전 오류가 나면 일부 예약이 실행됐을 수 있으므로 예약을 요청한 이벤트를 모두 차단한다.
+     */
     public Map<Long, List<CouponReservationOutcome>> reserveAll(Map<Long, Integer> counts) {
-        counts.keySet().forEach(this::checkAdmission);
+        Map<Long, List<CouponReservationOutcome>> reserved = new LinkedHashMap<>();
         Map<Long, List<String>> ids = new LinkedHashMap<>();
-        counts.forEach((eventId, count) -> ids.put(eventId,
-                java.util.stream.IntStream.range(0, count).mapToObj(index -> UUID.randomUUID().toString()).toList()));
+        counts.forEach((eventId, count) -> {
+            if (blockedEvents.contains(eventId)) {
+                reserved.put(eventId, java.util.Collections.nCopies(count,
+                        new CouponReservationOutcome(null, CouponErrorCode.ISSUANCE_BUSY, true, false)));
+            } else {
+                ids.put(eventId, java.util.stream.IntStream.range(0, count)
+                        .mapToObj(index -> UUID.randomUUID().toString()).toList());
+            }
+        });
+        if (ids.isEmpty()) {
+            return reserved;
+        }
         Map<Long, List<Long>> results;
         try {
             results = sequences.reserveAll(ids, staleAfter.toMillis());
         } catch (RuntimeException error) {
-            blockAll(counts.keySet(), error);
-            throw rejectForRecovery(counts.keySet().iterator().next());
+            blockAll(ids.keySet(), error);
+            throw rejectForRecovery(ids.keySet().iterator().next());
         }
-        Map<Long, List<CouponReservationOutcome>> reserved = new LinkedHashMap<>();
         ids.forEach((eventId, pending) -> reserved.put(eventId,
                 reservationOutcomes(eventId, pending, results.get(eventId))));
         return reserved;
@@ -137,29 +151,44 @@ public class CouponSequenceService {
         return availability == 0;
     }
 
-    public Set<Long> soldOutEvents(Set<Long> eventIds) {
-        if (eventIds.isEmpty()) {
-            return Set.of();
+    /*
+     * 묶음에 든 이벤트마다 확정 소진과 복구 필요를 따로 판정해 해당 이벤트의 요청에 줄 결과를 돌려준다.
+     * 이 서버가 이미 차단했거나 Redis 큐가 준비되지 않은 이벤트만 복구 대상으로 남기고 나머지 이벤트는 계속 발급한다.
+     * Redis 호출 자체가 실패하면 어느 이벤트의 상태도 알 수 없으므로 모두 차단하고 묶음을 실패시킨다.
+     */
+    public Map<Long, CouponIssuanceOutcome> findUnavailableEvents(Set<Long> eventIds) {
+        Map<Long, CouponIssuanceOutcome> unavailable = new HashMap<>();
+        List<Long> readable = new ArrayList<>();
+        for (long eventId : eventIds) {
+            if (blockedEvents.contains(eventId)) {
+                unavailable.put(eventId, CouponIssuanceOutcome.requiringRecovery());
+            } else {
+                readable.add(eventId);
+            }
         }
-        eventIds.forEach(this::checkAdmission);
+        if (readable.isEmpty()) {
+            return unavailable;
+        }
         Map<Long, Integer> availability;
         try {
-            availability = sequences.availability(new ArrayList<>(eventIds));
+            availability = sequences.availability(readable);
         } catch (RuntimeException error) {
             blockAll(eventIds, error);
             throw rejectForRecovery(eventIds.iterator().next());
         }
-        Set<Long> soldOut = new HashSet<>();
+        Set<Long> notReady = new HashSet<>();
         availability.forEach((eventId, value) -> {
             if (value < 0) {
-                block(eventId, null);
-                throw rejectForRecovery(eventId);
-            }
-            if (value == 0) {
-                soldOut.add(eventId);
+                notReady.add(eventId);
+                unavailable.put(eventId, CouponIssuanceOutcome.requiringRecovery());
+            } else if (value == 0) {
+                unavailable.put(eventId, CouponIssuanceOutcome.rejected(CouponErrorCode.INVENTORY_EXHAUSTED));
             }
         });
-        return soldOut;
+        if (!notReady.isEmpty()) {
+            blockAll(notReady, null);
+        }
+        return unavailable;
     }
 
     // Redis 조회 장애를 소진으로 바꾸지 않고 해당 이벤트를 차단해 복구하도록 한다.

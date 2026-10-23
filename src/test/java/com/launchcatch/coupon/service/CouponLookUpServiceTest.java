@@ -938,6 +938,55 @@ class CouponLookUpServiceTest {
             assertThat(service.getEventStatus(17L, List.of(10L)).items().getFirst().eventState()).isEqualTo(expected);
         }
 
+        @ParameterizedTest
+        @CsvSource({
+                "ACTIVE, 2, 12:29:59.999999, OPEN, true",
+                "ACTIVE, 2, 12:30:00, CLOSED, false",
+                "ACTIVE, 2, 13:00:00, CLOSED, false",
+                "ACTIVE, 0, 12:30:00, CLOSED, false",
+                "SCHEDULED, 2, 12:30:00, CLOSED, false"
+        })
+        void 사용_종료_시각부터_운영_상태와_재고에_관계없이_발급을_닫는다(
+                CouponEventStatus status, int quantity, LocalTime now, EventState expected, boolean canIssue) {
+            service = eventServiceAt(TODAY.atTime(now).toInstant(ZoneOffset.ofHours(9)).toString());
+            CouponEvent event = event(501L, 10L, status);
+            ReflectionTestUtils.setField(event, "usableStartAt", TODAY.atTime(11, 30));
+            ReflectionTestUtils.setField(event, "usableEndAt", TODAY.atTime(12, 30));
+            var stock = quantity(501L, quantity);
+            when(couponEventRepository.findByStoreIdInAndBusinessDateAndStatusIn(List.of(10L), TODAY, STATES))
+                    .thenReturn(List.of(event));
+            when(couponEventRepository.findQuantitiesByEventIdsAndStatus(List.of(501L), CouponInventoryStatus.AVAILABLE))
+                    .thenReturn(List.of(stock));
+            when(memberQueryService.findById(17L)).thenReturn(Optional.of(member(MemberStatus.ACTIVE)));
+            when(wishes.findWishedCampaignIds(17L)).thenReturn(List.of(501L));
+
+            Item item = service.getEventStatus(17L, List.of(10L)).items().getFirst();
+
+            assertThat(item.eventState()).isEqualTo(expected);
+            assertThat(item.canIssue()).isEqualTo(canIssue);
+            assertThat(item.cannotIssueReason()).isEqualTo(canIssue ? null : CannotIssueReason.NOT_OPEN);
+            assertThat(item.eventId()).isEqualTo(501L);
+            assertThat(item.remainingQuantity()).isEqualTo(quantity);
+        }
+
+        @Test
+        void 사용_종료_뒤에도_이미_발급한_사유를_시간_사유보다_우선한다() {
+            service = eventServiceAt("2026-10-14T04:00:00Z");
+            CouponEvent event = event(501L, 10L, CouponEventStatus.ACTIVE);
+            ReflectionTestUtils.setField(event, "usableStartAt", TODAY.atTime(11, 30));
+            ReflectionTestUtils.setField(event, "usableEndAt", TODAY.atTime(12, 30));
+            when(couponEventRepository.findByStoreIdInAndBusinessDateAndStatusIn(List.of(10L), TODAY, STATES))
+                    .thenReturn(List.of(event));
+            when(memberQueryService.findById(17L)).thenReturn(Optional.of(member(MemberStatus.ACTIVE)));
+            when(memberCouponRepository.findIssuedEventIds(17L, List.of(501L))).thenReturn(List.of(501L));
+
+            Item item = service.getEventStatus(17L, List.of(10L)).items().getFirst();
+
+            assertThat(item.eventState()).isEqualTo(EventState.CLOSED);
+            assertThat(item.canIssue()).isFalse();
+            assertThat(item.cannotIssueReason()).isEqualTo(CannotIssueReason.ALREADY_ISSUED);
+        }
+
         private void stubSingleEvent() {
             when(couponEventRepository.findByStoreIdInAndBusinessDateAndStatusIn(List.of(10L), TODAY, STATES))
                     .thenReturn(List.of(event(501L, 10L, CouponEventStatus.ACTIVE)));
