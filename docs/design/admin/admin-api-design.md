@@ -47,7 +47,13 @@ HTTP 요청·응답은 [관리자 명세](../../api-spec/admin-api-spec.md)와 [
 
 DB는 관리자별 현재 Refresh Token 해시 하나를 보관한다. 새 로그인으로 이전 Refresh Token은 대체되지만, 로그인 자체가 이전 Access Token을 모두 폐기하는 것은 아니다. 계정별 로그인 실패 횟수 잠금은 이 구현에 포함하지 않는다.
 
-로그인 감사는 `AdminLoginAuditFilter`가 `ADMIN_LOGIN` 이벤트로 시각·IP·성공 여부·HTTP 상태·소요 시간을 운영 로그에 기록한다. `audit_log` 테이블에는 저장하지 않으며 비밀번호와 토큰 원문도 기록하지 않는다.
+식별 가능한 계정의 로그인은 서비스가 결과에 따라 `ADMIN_LOGIN_SUCCESS` 또는 `ADMIN_LOGIN_FAILED`를 기록한다. 성공과 일반 거절은 INFO, HTTP 5xx에 해당하는 실패는 ERROR로 기록한다. 메시지 필드는 `adminId`, `httpStatus`이고 시각은 로깅 프레임워크가 기록한다. 없는 계정과 서비스 진입 전 거절은 `AdminLoginAuditFilter`가 최종 HTTP 상태와 `durationMs`를 기록한다.
+
+클라이언트 IP는 `ClientIpResolver.resolve(request)`로 정해 로그인 요청을 처리하는 동안 MDC의 `clientIp`에 넣는다. 기록 후 기존 값을 복원하고 기존 값이 없으면 제거한다. `traceId`는 변경하지 않는다. 본문과 쿠키를 읽지 않으며 비밀번호, 토큰 원문과 예외 메시지도 감사 로그에 담지 않는다.
+
+로그인 서비스는 성공과 식별 가능한 계정의 실패를 `AuditLogWriter`로 별도 트랜잭션에 저장한다. `action=ADMIN_LOGIN`, `target`은 관리자 ID 문자열이며 `detail`은 `result=SUCCESS` 또는 `result=FAILURE`와 MDC의 `clientIp`를 담는다. 감사 저장 실패는 원래 로그인 결과를 바꾸지 않으며 `ADMIN_LOGIN_AUDIT_FAILED` ERROR와 `admin.login.audit.failed` 메트릭을 남긴다.
+
+계정별 실패는 `admin.login.failed`의 `adminId` 태그로 센다. 없는 계정과 횟수 제한 거절은 DB에 저장하지 않고 `admin.login.rejected`의 `reason=UNKNOWN_ACCOUNT`, `reason=RATE_LIMIT`로 센다. 로그인 ID, IP와 자격증명은 메트릭 태그에 넣지 않는다. 이번 후속 작업은 로그와 메트릭까지 제공하며 운영 알림 연결과 임계치 설정은 합의에 따라 범위에서 제외한다. 서비스가 식별 가능한 계정의 결과를 기록하면 필터는 같은 요청을 중복 기록하지 않는다. 처리 표시는 요청 종료 시 제거해 다음 요청으로 넘어가지 않게 한다.
 
 ## 토큰 재발급
 
