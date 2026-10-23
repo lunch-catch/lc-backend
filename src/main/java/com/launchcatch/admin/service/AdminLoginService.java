@@ -115,9 +115,9 @@ public class AdminLoginService {
                         state.adminId());
             }
         } catch (DataAccessException e) {
-            // 예외 메시지와 cause는 토큰을 포함할 수 있어 종류와 스택 프레임만 남긴다.
-            log.warn("event=ADMIN_LOGIN_CACHE_PUBLICATION_FAILED adminId={} errorType={} stack={}",
-                    state.adminId(), e.getClass().getSimpleName(), java.util.Arrays.toString(e.getStackTrace()));
+            // 예외 메시지와 cause는 토큰을 포함할 수 있어 예외 타입만 남긴다.
+            log.warn("event=ADMIN_LOGIN_CACHE_PUBLICATION_FAILED adminId={} exceptionType={}",
+                    state.adminId(), e.getClass().getSimpleName());
         }
     }
 
