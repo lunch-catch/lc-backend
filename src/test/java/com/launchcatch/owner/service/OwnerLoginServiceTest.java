@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
+import ch.qos.logback.classic.Level;
 import com.launchcatch.auth.Role;
 import com.launchcatch.auth.exception.AuthException;
 import com.launchcatch.auth.jwt.JwtTokenProvider;
@@ -149,9 +150,21 @@ class OwnerLoginServiceTest {
 
     @Test
     void 캐시_장애는_DB_저장이_성공하면_허용한다() {
-        doThrow(new DataAccessResourceFailureException("cache unavailable"))
-                .when(cache).saveIfNewer(anyString(), eq(7L), eq(Role.OWNER), eq(true), any(Duration.class), anyLong());
-        assertThat(service.login(request).accessToken()).isEqualTo("test-access");
+        doAnswer(call -> {
+            throw new DataAccessResourceFailureException("sensitive-cache-error " + request.email()
+                    + " " + call.getArgument(0) + " " + owner.getRefreshTokenHash());
+        }).when(cache).saveIfNewer(anyString(), eq(7L), eq(Role.OWNER), eq(true), any(Duration.class), anyLong());
+        try (var logs = LogCapture.attach(OwnerLoginService.class)) {
+            var result = service.login(request);
+            assertThat(result.accessToken()).isEqualTo("test-access");
+            var event = logs.only();
+            assertThat(event.getLevel()).isEqualTo(Level.WARN);
+            assertThat(event.getFormattedMessage()).contains("event=OWNER_LOGIN_REFRESH_CACHE_FAILED", "ownerId=7",
+                    "exceptionType=DataAccessResourceFailureException", "fallback=KEEP_DB_LOGIN")
+                    .doesNotContain("stack=", "errorType=", "sensitive-cache-error", request.email(), request.password(),
+                            result.accessToken(), result.refreshToken(), owner.getRefreshTokenHash());
+            assertThat(event.getThrowableProxy()).isNull();
+        }
         verify(manager, times(2)).commit(any());
     }
 
@@ -179,14 +192,34 @@ class OwnerLoginServiceTest {
         Owner latest = Owner.create(request.email(), owner.getPasswordHash());
         ReflectionTestUtils.setField(latest, "refreshTokenIssuanceVersion", 2L);
         when(repository.findByIdForLogin(7L)).thenReturn(Optional.of(owner), Optional.of(latest));
-        assertThat(service.login(request).accessToken()).isEqualTo("test-access");
+        try (var logs = LogCapture.attach(OwnerLoginService.class)) {
+            var result = service.login(request);
+            assertThat(result.accessToken()).isEqualTo("test-access");
+            var event = logs.only();
+            assertThat(event.getLevel()).isEqualTo(Level.INFO);
+            assertThat(event.getFormattedMessage()).contains("event=OWNER_LOGIN_REFRESH_CACHE_SKIPPED",
+                    "ownerId=7", "reason=SUPERSEDED")
+                    .doesNotContain(result.accessToken(), result.refreshToken(), result.response().email(),
+                            request.password(), owner.getPasswordHash(), owner.getRefreshTokenHash());
+            assertThat(event.getThrowableProxy()).isNull();
+        }
         verify(cache, never()).saveIfNewer(anyString(), anyLong(), any(), anyBoolean(), any(), anyLong());
     }
 
     @Test
     void Redis에_더_최신_게시가_있어도_DB_로그인_결과를_유지한다() {
         when(cache.saveIfNewer(anyString(), anyLong(), any(), anyBoolean(), any(), anyLong())).thenReturn(false);
-        assertThat(service.login(request).accessToken()).isEqualTo("test-access");
+        try (var logs = LogCapture.attach(OwnerLoginService.class)) {
+            var result = service.login(request);
+            assertThat(result.accessToken()).isEqualTo("test-access");
+            var event = logs.only();
+            assertThat(event.getLevel()).isEqualTo(Level.INFO);
+            assertThat(event.getFormattedMessage()).contains("event=OWNER_LOGIN_REFRESH_CACHE_SKIPPED",
+                    "ownerId=7", "reason=NEWER_PUBLICATION")
+                    .doesNotContain(result.accessToken(), result.refreshToken(), result.response().email(),
+                            request.password(), owner.getPasswordHash(), owner.getRefreshTokenHash());
+            assertThat(event.getThrowableProxy()).isNull();
+        }
     }
 
     @Test

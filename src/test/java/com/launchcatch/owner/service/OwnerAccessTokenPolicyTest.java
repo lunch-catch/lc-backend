@@ -3,6 +3,7 @@ package com.launchcatch.owner.service;
 import static org.assertj.core.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
+import ch.qos.logback.classic.Level;
 import com.launchcatch.auth.Role;
 import com.launchcatch.auth.exception.AuthException;
 import com.launchcatch.auth.jwt.CutoffPolicy;
@@ -77,12 +78,23 @@ class OwnerAccessTokenPolicyTest {
 
     @Test
     void Redis_조회_장애는_LENIENT에서_허용하고_REQUIRED에서_거부한다() {
-        when(versions.isValid(7L, 1L)).thenThrow(new DataAccessResourceFailureException("Redis"));
+        when(versions.isValid(7L, 1L)).thenThrow(new DataAccessResourceFailureException("sensitive-token owner@example.com"));
         var claims = OwnerAccessTokenPolicy.additionalClaims(1L);
-        assertThat(valid(claims)).isTrue();
-        assertThatThrownBy(() -> policy.isValid(Role.OWNER, 7L, ISSUED_AT, claims, CutoffPolicy.REQUIRED))
-                .isInstanceOfSatisfying(AuthException.class,
-                        e -> assertThat(e.getErrorCode().getCode()).isEqualTo("AUTH-002"));
+        try (var logs = LogCapture.attach(OwnerAccessTokenPolicy.class)) {
+            assertThat(valid(claims)).isTrue();
+            var event = logs.only();
+            assertThat(event.getLevel()).isEqualTo(Level.WARN);
+            assertThat(event.getFormattedMessage()).contains("event=OWNER_ACCESS_TOKEN_VERSION_CHECK_FAILED",
+                    "ownerId=7", "policy=LENIENT", "exceptionType=DataAccessResourceFailureException", "fallback=ALLOW")
+                    .doesNotContain("sensitive-token", "owner@example.com", "errorType=", "stack=");
+            assertThat(event.getThrowableProxy()).isNull();
+        }
+        try (var logs = LogCapture.attach(OwnerAccessTokenPolicy.class)) {
+            assertThatThrownBy(() -> policy.isValid(Role.OWNER, 7L, ISSUED_AT, claims, CutoffPolicy.REQUIRED))
+                    .isInstanceOfSatisfying(AuthException.class,
+                            e -> assertThat(e.getErrorCode().getCode()).isEqualTo("AUTH-002"));
+            assertThat(logs.events()).isEmpty();
+        }
     }
 
     @Test
@@ -110,22 +122,30 @@ class OwnerAccessTokenPolicyTest {
 
     @Test
     void DB_조회_장애는_LENIENT도_거부한다() {
-        when(revocations.findRevokedVersion(7L)).thenThrow(new DataAccessResourceFailureException("DB"));
-        assertDatabaseFailure();
+        when(revocations.findRevokedVersion(7L)).thenThrow(new DataAccessResourceFailureException("sensitive-db-error owner@example.com"));
+        assertDatabaseFailure("DataAccessResourceFailureException");
     }
 
     @Test
     void DB_트랜잭션_장애도_인증을_거부한다() {
         when(revocations.findRevokedVersion(7L)).thenThrow(new CannotCreateTransactionException("DB"));
-        assertDatabaseFailure();
+        assertDatabaseFailure("CannotCreateTransactionException");
     }
 
-    private void assertDatabaseFailure() {
+    private void assertDatabaseFailure(String exceptionType) {
         var claims = OwnerAccessTokenPolicy.additionalClaims(1L);
-        assertThat(valid(claims)).isFalse();
-        assertThatThrownBy(() -> policy.isValid(Role.OWNER, 7L, ISSUED_AT, claims, CutoffPolicy.REQUIRED))
-                .isInstanceOfSatisfying(AuthException.class,
-                        e -> assertThat(e.getErrorCode().getCode()).isEqualTo("AUTH-002"));
+        try (var logs = LogCapture.attach(OwnerAccessTokenPolicy.class)) {
+            assertThat(valid(claims)).isFalse();
+            assertThatThrownBy(() -> policy.isValid(Role.OWNER, 7L, ISSUED_AT, claims, CutoffPolicy.REQUIRED))
+                    .isInstanceOfSatisfying(AuthException.class,
+                            e -> assertThat(e.getErrorCode().getCode()).isEqualTo("AUTH-002"));
+            assertThat(logs.events()).hasSize(2).allSatisfy(event -> {
+                assertThat(event.getLevel()).isEqualTo(Level.WARN);
+                assertThat(event.getFormattedMessage()).contains("event=OWNER_ACCESS_TOKEN_DB_CHECK_FAILED", "ownerId=7",
+                        "exceptionType=" + exceptionType).doesNotContain("sensitive-db-error", "owner@example.com", "errorType=", "stack=");
+                assertThat(event.getThrowableProxy()).isNull();
+            });
+        }
         verifyNoInteractions(versions);
     }
 
