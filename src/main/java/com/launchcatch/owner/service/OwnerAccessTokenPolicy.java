@@ -47,7 +47,7 @@ public class OwnerAccessTokenPolicy implements AccessTokenValidationPolicy {
                 return false;
             }
         } catch (DataAccessException | TransactionException e) {
-            log.warn("event=OWNER_ACCESS_TOKEN_DB_CHECK_FAILED ownerId={} errorType={}", subjectId, e.getClass().getSimpleName());
+            log.warn("event=OWNER_ACCESS_TOKEN_DB_CHECK_FAILED ownerId={} exceptionType={}", subjectId, e.getClass().getSimpleName());
             if (policy == CutoffPolicy.REQUIRED) {
                 throw new AuthException(AuthErrorCode.REFRESH_TOKEN_STORE_UNAVAILABLE);
             }
@@ -60,7 +60,7 @@ public class OwnerAccessTokenPolicy implements AccessTokenValidationPolicy {
                 throw new AuthException(AuthErrorCode.REFRESH_TOKEN_STORE_UNAVAILABLE, e);
             }
             // DB에서 폐기되지 않은 AT만 일반 인증의 Redis 조회 장애를 허용한다.
-            log.warn("event=OWNER_ACCESS_TOKEN_VERSION_CHECK_FAILED ownerId={} policy=LENIENT", subjectId);
+            log.warn("event=OWNER_ACCESS_TOKEN_VERSION_CHECK_FAILED ownerId={} policy=LENIENT exceptionType={} fallback=ALLOW", subjectId, e.getClass().getSimpleName());
             return true;
         }
     }
