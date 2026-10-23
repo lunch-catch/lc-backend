@@ -8,6 +8,7 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -26,7 +27,7 @@ class BaseWorldIntegrationTest extends IntegrationTestSupport {
     private static final String HASH = "$2a$10$MRk.eo1/rGQNUGClHmwVB.Z5zREkJzDzDfu9M4oJsZ.vd0s3n6tAu";
 
 
-    private static final String[][] CONSISTENCY = {
+    static final String[][] CONSISTENCY = {
             {"캠페인의 가게가 있다", "SELECT COUNT(*) FROM campaign c LEFT JOIN store s ON s.store_id = c.store_id WHERE c.campaign_id >= 10000000 AND s.store_id IS NULL"},
             {"캠페인의 점주가 가게 점주와 같다", "SELECT COUNT(*) FROM campaign c JOIN store s ON s.store_id = c.store_id WHERE c.campaign_id >= 10000000 AND c.owner_id <> s.owner_id"},
             {"캠페인 점주는 ACTIVE 다", "SELECT COUNT(*) FROM campaign c JOIN owner o ON o.owner_id = c.owner_id WHERE c.campaign_id >= 10000000 AND o.status <> 'ACTIVE'"},
@@ -71,6 +72,40 @@ class BaseWorldIntegrationTest extends IntegrationTestSupport {
         jdbc = new JdbcTemplate(dataSource);
     }
 
+    /*
+     * 0 이 아닌 일관성 검사를 "이름=어긋난 행 수" 로 모은다.
+     * 기본 세계를 넣은 뒤 검사하는 테스트가 같이 쓴다.
+     */
+    static List<String> consistencyViolations(JdbcTemplate jdbc) {
+        return Arrays.stream(CONSISTENCY)
+                .map(check -> check[0] + "=" + jdbc.queryForObject(check[1], Long.class))
+                .filter(result -> !result.endsWith("=0"))
+                .toList();
+    }
+
+    // 0 ~ 14 일 (기준일부터 2주)
+    private static final String FOURTEEN_DAYS = "SELECT a.d + b.d * 5 AS day_offset FROM "
+            + "(SELECT 0 d UNION ALL SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4) a CROSS JOIN "
+            + "(SELECT 0 d UNION ALL SELECT 1 UNION ALL SELECT 2) b";
+
+    // 행마다 가장 가까운 역(0 강남역, 1 역삼역, 2 선릉역)과 그 역까지의 거리(m)를 붙인다
+    private static String nearestStation(String lat, String lng, String table) {
+        return nearestStation(lat, lng, "", table);
+    }
+
+    // columns 는 역과 거리 앞에 함께 고를 열이다 (끝에 쉼표)
+    private static String nearestStation(String lat, String lng, String columns, String table) {
+        String d0 = distance(lat, lng, 37.4979, 127.0276);
+        String d1 = distance(lat, lng, 37.5006, 127.0364);
+        String d2 = distance(lat, lng, 37.5045, 127.0490);
+        return "SELECT " + columns + "CASE WHEN " + d0 + " <= LEAST(" + d1 + ", " + d2 + ") THEN 0 WHEN " + d1 + " <= " + d2 + " THEN 1 ELSE 2 END AS nearest, "
+                + "LEAST(" + d0 + ", " + d1 + ", " + d2 + ") AS dist FROM " + table;
+    }
+
+    private static String distance(String lat, String lng, double stationLat, double stationLng) {
+        return "SQRT(POW((" + lat + " - " + stationLat + ") * 111000, 2) + POW((" + lng + " - " + stationLng + ") * 88200, 2))";
+    }
+
     @Test
     void 기본_세계가_빈_데이터베이스에_끝까지_들어간다() {
         new DomainFlywayMigrator(dataSource).afterPropertiesSet();
@@ -100,19 +135,37 @@ class BaseWorldIntegrationTest extends IntegrationTestSupport {
          * 파일끼리 같은 공식으로 계산한 값이 서로 맞는지 본다.
          * 어긋난 행 수를 모두 남기고 한 번에 판정한다.
          */
-        StringBuilder mismatches = new StringBuilder();
-        for (String[] check : CONSISTENCY) {
-            long bad = jdbc.queryForObject(check[1], Long.class);
-            System.out.println("[base-world] check " + check[0] + " = " + bad);
-            if (bad > 0) {
-                mismatches.append(check[0]).append('=').append(bad).append("; ");
-            }
-        }
-        assertThat(mismatches.toString()).isEmpty();
+        assertThat(consistencyViolations(jdbc)).isEmpty();
 
         // 쓰지 않게 된 시간대별 목표 표는 시드 V8 이 지운다(#829)
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM information_schema.tables "
                 + "WHERE table_schema = DATABASE() AND table_name = 'budget_hourly_target'", Long.class)).isZero();
+
+        // 기본 세계 가게(1,000만 대역)는 가장 가까운 역에서 500 m 안이 역마다 100곳이고, 오늘 피드 후보는 역마다 70개다 (#858)
+        assertThat(jdbc.queryForList("SELECT nearest, COUNT(*) FROM (" + nearestStation("latitude", "longitude", "store")
+                + " WHERE store_id BETWEEN 10000001 AND 19999999 AND latitude IS NOT NULL) x WHERE dist <= 500 GROUP BY nearest ORDER BY nearest"))
+                .extracting(row -> ((Number) row.get("COUNT(*)")).longValue())
+                .containsExactly(100L, 100L, 100L);
+        assertThat(jdbc.queryForList("SELECT nearest, COUNT(*) FROM (" + nearestStation("latitude", "longitude", "ad_candidate")
+                + " WHERE business_date = '2026-10-28' AND campaign_id BETWEEN 10000001 AND 19999999) x WHERE dist <= 500 GROUP BY nearest ORDER BY nearest"))
+                .extracting(row -> ((Number) row.get("COUNT(*)")).longValue())
+                .containsExactly(70L, 70L, 70L);
+        /*
+         * 기준일부터 14일 동안 날마다 역별 진행 중 캠페인이 70개다.
+         * 피드 후보와 쿠폰은 00:00 배치가 이 캠페인으로 만든다.
+         */
+        assertThat(jdbc.queryForList("SELECT day_offset, nearest, COUNT(*) cnt FROM (" + nearestStation("s.latitude", "s.longitude",
+                "dd.day_offset, ", "campaign c JOIN store s ON s.store_id = c.store_id JOIN (" + FOURTEEN_DAYS + ") dd "
+                + "ON DATE_ADD('2026-10-28', INTERVAL dd.day_offset DAY) BETWEEN c.start_date AND c.end_date")
+                + " WHERE c.campaign_id BETWEEN 10000001 AND 19999999 AND c.status = 'ACTIVE') x "
+                + "WHERE dist <= 500 GROUP BY day_offset, nearest"))
+                .hasSize(45)
+                .allSatisfy(row -> assertThat(((Number) row.get("cnt")).longValue()).as(row.toString()).isEqualTo(70L));
+        // 모든 가게가 강남구 안이다 (위도 37.46 ~ 37.535, 경도 127.01 ~ 127.125)
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM store WHERE latitude IS NOT NULL AND (latitude NOT BETWEEN 37.46 AND 37.535 "
+                + "OR longitude NOT BETWEEN 127.01 AND 127.125)", Long.class)).isZero();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM owner WHERE owner_id BETWEEN 10000001 AND 19999999", Long.class))
+                .isEqualTo(500L);
 
         // 메뉴 할인 캠페인에는 정률과 정액이 둘 다 있어야 한다
         assertThat(jdbc.queryForList("SELECT DISTINCT discount_type FROM campaign "

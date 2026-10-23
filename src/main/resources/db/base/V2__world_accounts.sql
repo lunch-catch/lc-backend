@@ -94,6 +94,25 @@ FROM base_n
 WHERE n BETWEEN 1 AND 300
 ON DUPLICATE KEY UPDATE owner_id = owner_id;
 
+-- OWN.ACTIVE: 301 ~ 500 은 강남구에 더한 점주다 (#858). 모두 ACTIVE 이고 튜토리얼을 봤다
+INSERT INTO owner (owner_id, email, password_hash, role, status, tutorial_viewed, suspended_at, suspension_reason,
+                   withdrawn_at, last_login_at, created_at, updated_at)
+SELECT 10000000 + n,
+       CONCAT('world-owner-', LPAD(n, 3, '0'), '@world.lunchcatch.com'),
+       '${scenarioPasswordHash}',
+       'OWNER',
+       'ACTIVE',
+       1,
+       NULL,
+       NULL,
+       NULL,
+       TIMESTAMP(DATE_SUB('${baseDate}', INTERVAL 1 DAY), '09:00:00') + INTERVAL n % 9 HOUR,
+       TIMESTAMP(DATE_SUB('${baseDate}', INTERVAL 120 - n % 110 DAY), '10:00:00'),
+       TIMESTAMP(DATE_SUB('${baseDate}', INTERVAL 120 - n % 110 DAY), '10:00:00')
+FROM base_n
+WHERE n BETWEEN 301 AND 500
+ON DUPLICATE KEY UPDATE owner_id = owner_id;
+
 -- 입점 진행(store_registration_progress)은 모든 단계를 V3 이 넣는다
 
 -- 회원
@@ -142,7 +161,7 @@ ON DUPLICATE KEY UPDATE member_id = member_id;
 
 /*
  * MEM.ONBOARDED, MEM.LOCATION_SET: 1 ~ 2850 과 정지 회원 2951 ~ 2980 은 온보딩을 마친 프로필이다.
- * 위치는 강남역 둘레 r = (n * 13) % 2500 m, 각도 (n * 71) % 360 도다.
+ * 위치는 n % 3 에 따라 강남역, 역삼역, 선릉역 둘레 r = (n * 13) % 1500 m, 각도 (n * 71) % 360 도다 (#858).
  * 별칭과 도로명은 n % 10 = 1 이면 별칭만 비우고 n % 10 = 2 이면 둘 다 비워 좌표만 남긴다.
  */
 INSERT INTO member_profile (member_profile_id, member_id, gender, age_group, location_nickname, road_address, latitude,
@@ -153,8 +172,8 @@ SELECT 10000000 + n,
        ELT(n % 4 + 1, 'AGE_20S', 'AGE_30S', 'AGE_40S', 'AGE_50_PLUS'),
        IF(n % 10 IN (1, 2), NULL, ELT(n % 2 + 1, '회사', '집')),
        IF(n % 10 = 2, NULL, CONCAT('서울 강남구 회원로 ', n)),
-       ROUND(37.4979000 + ((n * 13) % 2500) * COS(RADIANS((n * 71) % 360)) / 111000, 7),
-       ROUND(127.0276000 + ((n * 13) % 2500) * SIN(RADIANS((n * 71) % 360)) / 88200, 7),
+       ROUND(ELT(n % 3 + 1, 37.4979000, 37.5006000, 37.5045000) + ((n * 13) % 1500) * COS(RADIANS((n * 71) % 360)) / 111000, 7),
+       ROUND(ELT(n % 3 + 1, 127.0276000, 127.0364000, 127.0490000) + ((n * 13) % 1500) * SIN(RADIANS((n * 71) % 360)) / 88200, 7),
        TIMESTAMP(DATE_SUB('${baseDate}', INTERVAL 1 + n % 60 DAY), '09:00:00') + INTERVAL n % 480 + 10 MINUTE,
        TIMESTAMP(DATE_SUB('${baseDate}', INTERVAL 1 + n % 60 DAY), '09:00:00') + INTERVAL n % 480 + 10 MINUTE,
        TIMESTAMP(DATE_SUB('${baseDate}', INTERVAL 1 + n % 60 DAY), '09:00:00') + INTERVAL n % 480 + 10 MINUTE
@@ -171,8 +190,8 @@ SELECT 10000000 + n,
        NULL,
        NULL,
        CONCAT('서울 강남구 회원로 ', n),
-       ROUND(37.4979000 + ((n * 13) % 2500) * COS(RADIANS((n * 71) % 360)) / 111000, 7),
-       ROUND(127.0276000 + ((n * 13) % 2500) * SIN(RADIANS((n * 71) % 360)) / 88200, 7),
+       ROUND(ELT(n % 3 + 1, 37.4979000, 37.5006000, 37.5045000) + ((n * 13) % 1500) * COS(RADIANS((n * 71) % 360)) / 111000, 7),
+       ROUND(ELT(n % 3 + 1, 127.0276000, 127.0364000, 127.0490000) + ((n * 13) % 1500) * SIN(RADIANS((n * 71) % 360)) / 88200, 7),
        NULL,
        TIMESTAMP(DATE_SUB('${baseDate}', INTERVAL 1 + n % 60 DAY), '09:00:00') + INTERVAL n % 480 + 5 MINUTE,
        TIMESTAMP(DATE_SUB('${baseDate}', INTERVAL 1 + n % 60 DAY), '09:00:00') + INTERVAL n % 480 + 5 MINUTE
