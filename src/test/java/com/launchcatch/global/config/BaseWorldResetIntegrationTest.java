@@ -93,6 +93,18 @@ class BaseWorldResetIntegrationTest extends IntegrationTestSupport {
         jdbc.update("UPDATE store SET owner_id = ?, name = '번호 겹친 실제 가게' WHERE store_id = ?", BAND_OWNER, BAND_STORE);
     }
 
+    /*
+     * V8 전의 DB(운영)에는 시간대별 목표 표가 남아 있고 예산 계획을 외래 키로 가리킨다.
+     * 그 표를 다시 만들어 기본 세계 예산 계획을 가리키게 한다.
+     */
+    private void addHourlyTarget() {
+        jdbc.execute("CREATE TABLE budget_hourly_target (budget_hourly_target_id BIGINT PRIMARY KEY, "
+                + "budget_daily_plan_id BIGINT NOT NULL, CONSTRAINT fk_budget_hourly_target_daily_plan "
+                + "FOREIGN KEY (budget_daily_plan_id) REFERENCES budget_daily_plan (budget_daily_plan_id))");
+        jdbc.update("INSERT INTO budget_hourly_target SELECT budget_daily_plan_id, budget_daily_plan_id FROM budget_daily_plan "
+                + "WHERE campaign_id = 10000001");
+    }
+
     private List<Map<String, Object>> accounts() {
         return jdbc.queryForList("SELECT 'admin' k, admin_id id, login_id v, password_hash h FROM admin "
                 + "UNION ALL SELECT 'owner', owner_id, email, password_hash FROM owner "
@@ -103,6 +115,7 @@ class BaseWorldResetIntegrationTest extends IntegrationTestSupport {
     void 정리하고_다른_기준일로_다시_넣어도_계정과_실제_데이터는_남는다() {
         migrate("2026-10-20");
         addRealData();
+        addHourlyTarget();
         List<Map<String, Object>> before = accounts();
 
         ResourceDatabasePopulator reset = new ResourceDatabasePopulator(new FileSystemResource(Path.of("scripts/reset_base_world.sql")));
