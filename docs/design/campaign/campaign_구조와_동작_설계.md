@@ -271,7 +271,7 @@ sequenceDiagram
 
 | 순서 | 클래스 | 작업 이름 | 하는 일 |
 |---|---|---|---|
-| `@Order(10)` | `CampaignEndJob` | `CAMPAIGN_END_EXPIRED` | 집행 종료일이 영업일보다 앞인 `ACTIVE`, `PAUSED` 캠페인을 `ENDED` 로 바꾼다 |
+| `@Order(10)` | `CampaignEndJob` | `CAMPAIGN_END_EXPIRED` | 집행 종료일이 영업일보다 앞인 `ACTIVE`, `PAUSED` 캠페인과, 시작되기 전에 집행 종료일이 지난 `SCHEDULED` 캠페인을 `ENDED` 로 바꾼다 |
 | `@Order(20)` | `CampaignStartJob` | `CAMPAIGN_START_SCHEDULED` | 집행 시작일이 영업일 이하인 `SCHEDULED` 캠페인을 `ACTIVE` 로 바꾸고, 같은 가게의 기존 `ACTIVE` 캠페인은 먼저 `ENDED` 로 바꾼다 |
 | `@Order(30)` | `CampaignStoreSummaryJob` | `CAMPAIGN_STORE_SUMMARY` | 그 영업일에 `ACTIVE` 이고 집행 종료일이 영업일 이상인 캠페인의 가게 요약을 `StoreCampaignSummaryUpdater.updateAll` 로 한 번에 만든다 |
 | `@Order(35)` | `CampaignPendingBudgetJob` | `CAMPAIGN_APPLY_PENDING_BUDGET` | `ACTIVE` 이고 `pendingDailyBudget` 이 있는 캠페인의 예약 값을 `dailyBudget` 으로 옮기고 예약 값을 비운다 |
@@ -280,7 +280,7 @@ sequenceDiagram
 - **멱등이다.** 대상 조회가 이미 `ENDED`, `ACTIVE` 인 캠페인을 걸러내고 `end`, `activate` 자체도 이미 그 상태면 조용히 성공하므로, 같은 영업일에 두 번 돌아도(이어받기, 수동 재실행) 결과가 같다. 시작일이 영업일 **이하**인 것을 대상으로 해서 배치가 하루 빠졌어도 다음 실행이 이어서 켠다
 - **기존 `ACTIVE` 를 끝내는 것과 새 캠페인을 켜는 것은 서로 다른 트랜잭션이다.** 그 사이에 실패하면 기존 캠페인만 끝난 채로 남고, 단계가 실패로 끝나 다시 돌 때 새 캠페인이 이어서 켜진다. 점주는 `ENDED` 가 아닌 캠페인을 하나만 가질 수 있어(`#525`) 보통 같은 가게에 `ACTIVE` 가 둘 있는 일은 없고 이 종료는 안전장치다
 - **켤 때 `SCHEDULED` 도 `ACTIVE` 도 아니면 건너뛴다(`#872`).** 시작 대상 목록을 읽은 뒤 잠금 없이 반복하므로, 그 사이 점주가 취소(`#597`)해 `DRAFT` 가 된 캠페인을 만날 수 있다. `activate(id, businessDate)` 는 행 잠금을 잡은 뒤 상태를 보고 예외 없이 건너뛰며 `CAMPAIGN_DAILY_START_SKIPPED reason=NOT_SCHEDULED` 를 INFO 로 남긴다. 가게 요약도 갱신하지 않는다. 한 건 호출 `activate(id)` 는 `SCHEDULED` 가 아니면 거부한다
-- **집행 기간이 이미 지난 `SCHEDULED` 는 켜지 않는다.** `ACTIVE` 로 켰다가 바로 끝내는 대신 그대로 둔다. 이런 캠페인은 점주가 직접 처리한다
+- **집행 기간이 이미 지난 `SCHEDULED` 는 켜지 않고 종료 단계가 `ENDED` 로 바꾼다.** `ACTIVE` 로 켰다가 바로 끝내지 않는다. 시작 대상(`findToStart`)은 기간 안의 `SCHEDULED` 만 고르고 종료 대상(`findIdsToEnd`)은 `ACTIVE`, `PAUSED` 만 고르므로 따로 `findScheduledIdsToEnd` 로 찾는다. 이런 캠페인을 그대로 두면 `SCHEDULED` 로 계속 남아, 점주당 `ENDED` 가 아닌 캠페인을 하나만 허용하는 규칙(`#525`) 때문에 점주의 새 캠페인을 막는다. 캠페인마다 행 잠금 아래에서 `CampaignStatusService.endExpiredScheduled` 가 상태가 `SCHEDULED` 이고 종료일이 영업일보다 앞인지 다시 확인한 뒤 바꾸고, 아니면(그 사이 점주가 취소했거나 취소 뒤 기간을 고쳐 다시 예약했으면) 예외 없이 건너뛴다. 상태 로그(SYSTEM)만 남기고 이벤트와 가게 요약은 건드리지 않는다. 다른 도메인은 `SCHEDULED` 를 그때그때 읽기만 했고 `ACTIVE` 가 된 적이 없어 되돌릴 것이 없다. 이미 `ENDED` 면 무변경이라 같은 영업일에 다시 돌아도 결과가 같다
 - **데이터 오류 캠페인은 건너뛰고 단계는 계속한다(`#842`).** 종료와 집행 시작에서 `IllegalArgumentException` 은 캠페인 하나의 데이터 오류로 본다. 그 캠페인만 건너뛰고 ERROR 로그(`CAMPAIGN_DAILY_END_SKIPPED`, `CAMPAIGN_DAILY_START_SKIPPED`)를 남기며, 나머지 캠페인은 정상 처리하고 단계도 실패시키지 않는다. 한 캠페인의 잘못된 데이터가 정산 전체를 멈추면 다른 점주의 예약까지 막히기 때문이다. 대가로, 종료가 거부된 만료 캠페인은 `ACTIVE` 로 남아 있다가 운영이 데이터를 고칠 때까지 매일 같은 로그가 남는다. 점주 API(`CampaignPauseResumeService`)의 500 응답은 데이터 오류를 드러내려는 의도라 그대로 둔다. 가게 요약 준비(30)는 store 계약이 전체 저장을 한 트랜잭션으로 묶어 요약 한 건의 오류가 전체 롤백이 되므로 이 정책 밖이다. 대신 종료가 건너뛰어져 `ACTIVE` 로 남은 만료 캠페인이 요약 대상에 들어오지 않게 한다(`#871`, 아래 요약 저장 항목)
 - `activate` 는 상태 변경과 로그에 더해 가게 요약(`StoreCampaignSummaryUpdater`)을 `ACTIVE` 로 갱신한다. `end` 는 `#600` 이 이미 갱신한다
 - **가게 요약은 영업일마다 한 행이다(`#838`).** 전환 순간에만 쓰면 하루 넘게 진행하는 캠페인은 다음 날 요약이 없어 가게 목록과 상세에서 사라진다. 30번째 단계가 전환(10, 20) 뒤에 `ACTIVE` 캠페인 전부의 요약을 새 영업일 몫으로 만든다. 방금 켜진 캠페인은 들어가고 방금 끝난 캠페인은 빠진다
