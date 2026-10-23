@@ -1418,6 +1418,26 @@ public class CouponIntegrationTest extends IntegrationTestSupport {
             assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM coupon_daily_limit", Integer.class)).isZero();
         }
 
+        @ParameterizedTest
+        @ValueSource(strings = {"2026-10-10T03:30:00Z", "2026-10-10T04:00:00Z"})
+        void 사용_종료_시각부터_HTTP_발급을_거절하고_재고와_한도를_보존한다(Instant now) throws Exception {
+            jdbcTemplate.update("UPDATE coupon_event SET usable_end_at=? WHERE coupon_event_id=81", TODAY.atTime(12, 30));
+            jdbcTemplate.update("UPDATE coupon_inventory SET usable_end_at=? WHERE coupon_event_id=81", TODAY.atTime(12, 30));
+            var inventoryBefore = jdbcTemplate.queryForList("SELECT * FROM coupon_inventory ORDER BY sequence_no");
+            time.set(now);
+
+            performIssue(post("/v1/coupons").with(user(new CustomUserDetails(17L, Role.MEMBER)))
+                            .contentType("application/json").content("{\"eventId\":81}"))
+                    .andExpect(status().isConflict())
+                    .andExpect(jsonPath("$.code").value("COUPON-002"));
+
+            assertConsistent(0);
+            assertThat(jdbcTemplate.queryForList("SELECT * FROM coupon_inventory ORDER BY sequence_no"))
+                    .usingRecursiveComparison().isEqualTo(inventoryBefore);
+            assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM coupon_daily_limit", Integer.class)).isZero();
+            assertThat(funnel.received).isEmpty();
+        }
+
         @Test
         void 재고_잠금_대기_중_발급_시간이_끝나도_발급한다() throws Exception {
             CountDownLatch locked = new CountDownLatch(1);

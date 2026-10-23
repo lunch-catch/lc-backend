@@ -39,6 +39,8 @@ import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -193,6 +195,75 @@ class CouponBatchIssuanceServiceTest {
                 .isInstanceOfSatisfying(CouponException.class,
                         error -> assertThat(error.getErrorCode()).isEqualTo(CouponErrorCode.ISSUANCE_BUSY));
         verifyNoInteractions(events, repository, sequences, members, wishes, publisher);
+    }
+
+    @ParameterizedTest
+    @CsvSource({
+            "11:59:59.999999, 11:59:00",
+            "12:00:00, 12:00:00",
+            "12:00:00, 11:59:59.999999"
+    })
+    void 사용_종료_시각에_도달하면_요청_시각과_관계없이_쓰기_전에_거절한다(
+            LocalTime usableEnd, LocalTime requestTime) {
+        CouponEvent event = events.findAllForIssue(Set.of(81L)).getFirst();
+        ReflectionTestUtils.setField(event, "usableStartAt", DATE.atTime(11, 30));
+        ReflectionTestUtils.setField(event, "usableEndAt", DATE.atTime(usableEnd));
+        when(repository.issueSequences(Map.of(81L, List.of(1)), NOW)).thenReturn(1);
+        when(repository.findCouponCodes(Map.of(81L, List.of(1)))).thenReturn(Map.of(81L, Map.of(1, code)));
+        when(repository.insertCoupons(anyList())).thenReturn(List.of(1001L));
+
+        CouponIssuanceOutcome result = service.issueBatch(List.of(
+                new CouponIssuanceRequest(17L, 81L, DATE.atTime(requestTime)))).getFirst();
+
+        assertThat(result.rejection()).isEqualTo(CouponErrorCode.COUPON_NOT_AVAILABLE);
+        assertThat(result.response()).isNull();
+        assertThat(result.reservation()).isNull();
+        verifyNoInteractions(members, wishes, repository, publisher);
+        verify(sequences, org.mockito.Mockito.never()).reserveAll(org.mockito.ArgumentMatchers.anyMap());
+    }
+
+    @ParameterizedTest
+    @CsvSource({
+            "11:30:00, 12:00:00.000001",
+            "12:30:00, 15:00:00"
+    })
+    void 사용_종료_직전과_사용_시작_전에는_발급한다(LocalTime usableStart, LocalTime usableEnd) {
+        CouponEvent event = events.findAllForIssue(Set.of(81L)).getFirst();
+        ReflectionTestUtils.setField(event, "usableStartAt", DATE.atTime(usableStart));
+        ReflectionTestUtils.setField(event, "usableEndAt", DATE.atTime(usableEnd));
+        when(repository.issueSequences(Map.of(81L, List.of(1)), NOW)).thenReturn(1);
+        when(repository.findCouponCodes(Map.of(81L, List.of(1)))).thenReturn(Map.of(81L, Map.of(1, code)));
+        when(repository.insertCoupons(anyList())).thenReturn(List.of(1001L));
+
+        CouponIssuanceOutcome result = service.issueBatch(List.of(request(17L))).getFirst();
+
+        assertThat(result.rejection()).isNull();
+        assertThat(result.response().memberCouponId()).isEqualTo(1001L);
+        verify(repository).increaseCounters(DATE, Map.of(17L, 1), NOW);
+        verify(repository).insertCoupons(List.of(new NewCoupon(81L, 17L, code,
+                DATE.atTime(usableStart), DATE.atTime(usableEnd), NOW)));
+    }
+
+    @Test
+    void 사용_종료된_이벤트와_같은_묶음의_유효한_이벤트는_발급한다() {
+        CouponEvent valid = events.findAllForIssue(Set.of(81L)).getFirst();
+        CouponEvent expired = CouponEvent.prepare(72L, DATE, 10, DATE.atTime(11, 0), NOW,
+                new CouponEvent.Snapshot(62L, "종료된 가게", null, DiscountTargetType.ALL, DiscountType.AMOUNT,
+                        1000, null, null, null, null));
+        expired.initializeCampaignState(true, NOW);
+        ReflectionTestUtils.setField(expired, "id", 82L);
+        when(events.findAllForIssue(Set.of(81L, 82L))).thenReturn(List.of(valid, expired));
+        when(repository.issueSequences(Map.of(81L, List.of(1)), NOW)).thenReturn(1);
+        when(repository.findCouponCodes(Map.of(81L, List.of(1)))).thenReturn(Map.of(81L, Map.of(1, code)));
+        when(repository.insertCoupons(anyList())).thenReturn(List.of(1001L));
+
+        List<CouponIssuanceOutcome> results = service.issueBatch(List.of(
+                new CouponIssuanceRequest(18L, 82L, NOW.minusSeconds(1)), request(17L)));
+
+        assertThat(results.getFirst().rejection()).isEqualTo(CouponErrorCode.COUPON_NOT_AVAILABLE);
+        assertThat(results.getLast().response().memberCouponId()).isEqualTo(1001L);
+        verify(sequences).reserveAll(Map.of(81L, 1));
+        verify(repository).increaseCounters(DATE, Map.of(17L, 1), NOW);
     }
 
     private CouponIssuanceRequest request(long memberId) {
