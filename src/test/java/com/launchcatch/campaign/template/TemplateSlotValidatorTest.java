@@ -66,6 +66,30 @@ class TemplateSlotValidatorTest {
         assertViolation(wrongTag);
     }
 
+    @Test
+    @DisplayName("가게명 슬롯 안에 자식 요소가 있으면 POSTER-001 이다(#884)")
+    void 가게명_슬롯에_자식_요소가_있으면_실패한다() {
+        String withChild = VALID.replace("title", "<span>ti</span>tle");
+
+        assertViolation(withChild);
+    }
+
+    @Test
+    @DisplayName("할인 슬롯 안에 자식 요소가 있으면 POSTER-001 이다(#884)")
+    void 할인_슬롯에_자식_요소가_있으면_실패한다() {
+        String withChild = VALID.replace(">discount<", "><br>discount<");
+
+        assertViolation(withChild);
+    }
+
+    @Test
+    @DisplayName("기간 슬롯은 자식 요소가 있어도 통과한다(점주가 고치지 않는다)")
+    void 기간_슬롯은_자식_요소를_허용한다() {
+        String withChild = VALID.replace(">period<", "><b>period</b><");
+
+        assertThatCode(() -> validator.validate(withChild)).doesNotThrowAnyException();
+    }
+
     private void assertViolation(String html) {
         assertThatThrownBy(() -> validator.validate(html))
                 .isInstanceOfSatisfying(CampaignException.class, e ->
