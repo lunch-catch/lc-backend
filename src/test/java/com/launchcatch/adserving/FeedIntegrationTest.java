@@ -1,8 +1,8 @@
 package com.launchcatch.adserving;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -16,7 +16,6 @@ import com.launchcatch.auth.Role;
 import com.launchcatch.adserving.engine.SlotType;
 import com.launchcatch.adserving.feed.repository.ServeRecord;
 import com.launchcatch.adserving.feed.repository.ServeRecordRepository;
-import com.launchcatch.billing.contract.BudgetProgress;
 import com.launchcatch.global.config.ClockConfig;
 import com.launchcatch.member.contract.AgeGroup;
 import com.launchcatch.member.contract.Gender;
@@ -60,11 +59,6 @@ class FeedIntegrationTest extends AbstractAdservingIntegrationTest {
         when(memberQueryService.findById(MEMBER_ID)).thenReturn(Optional.of(new MemberInfo(
                 MEMBER_ID, "점심러", MemberStatus.ACTIVE, true, true, true,
                 BigDecimal.valueOf(LAT), BigDecimal.valueOf(LNG), Gender.FEMALE, AgeGroup.AGE_30S)));
-        // 예약액 10만 원, 단가 10원이라 노출 상한은 10,500 회다
-        when(budgetQueryService.getProgress(any(), any())).thenReturn(List.of(
-                new BudgetProgress(101L, 100_000, 10, 10_000),
-                new BudgetProgress(102L, 100_000, 10, 10_000),
-                new BudgetProgress(103L, 100_000, 10, 10_000)));
         insertCandidate(101L, "SERVABLE", null);
         insertCandidate(102L, "PAUSED", null);
         insertCandidate(103L, "SERVABLE", LocalDateTime.of(2026, 10, 1, 9, 0));
@@ -95,9 +89,10 @@ class FeedIntegrationTest extends AbstractAdservingIntegrationTest {
                 INSERT INTO ad_candidate (business_date, campaign_id, store_id, store_name, category_code,
                     latitude, longitude, target_radius, target_gender, target_age_groups,
                     discount_target_type, discount_type, discount_value, usable_start_time, usable_end_time,
-                    issue_quantity, campaign_created_at, campaign_state, sold_out_at, created_at, updated_at)
+                    issue_quantity, campaign_created_at, campaign_state, sold_out_at, reserved_amount, unit_price,
+                    created_at, updated_at)
                 VALUES (?, ?, 55, '점심식당', 'KOREAN', ?, ?, 1000, 'ALL', 'AGE_20S,AGE_30S',
-                    'ALL', 'PERCENT', 20, '12:00', '14:00', 30, NOW(6), ?, ?, NOW(6), NOW(6))
+                    'ALL', 'PERCENT', 20, '12:00', '14:00', 30, NOW(6), ?, ?, 100000, 10, NOW(6), NOW(6))
                 """, TODAY, campaignId, LAT, LNG, state, soldOutAt);
     }
 
@@ -197,6 +192,8 @@ class FeedIntegrationTest extends AbstractAdservingIntegrationTest {
 
     @Test
     void 그날_유효_노출_수가_노출_상한에_닿은_캠페인은_내려주지_않는다() throws Exception {
+        // 하루 끝 직전이라 진행률(약 1.05)이 아니라 노출 상한으로 가른다
+        at(LocalDateTime.of(2026, 10, 1, 23, 59));
         redisTemplate.opsForHash().put("adserving:validImpressions:" + TODAY, "101", "10500");
 
         mockMvc.perform(get("/v1/feed").with(user(as(Role.MEMBER))))
@@ -206,6 +203,7 @@ class FeedIntegrationTest extends AbstractAdservingIntegrationTest {
 
     @Test
     void 상한_바로_아래면_내려준다() throws Exception {
+        at(LocalDateTime.of(2026, 10, 1, 23, 59));
         redisTemplate.opsForHash().put("adserving:validImpressions:" + TODAY, "101", "10499");
 
         mockMvc.perform(get("/v1/feed").with(user(as(Role.MEMBER))))
@@ -237,13 +235,15 @@ class FeedIntegrationTest extends AbstractAdservingIntegrationTest {
     }
 
     @Test
-    void 정산이_멈춰도_예산_규칙_없이_서빙을_이어간다() throws Exception {
-        when(budgetQueryService.getProgress(any(), any())).thenThrow(new IllegalStateException("카운터 장애"));
+    void 예약액을_아직_읽지_못한_후보가_있으면_예산_규칙_없이_서빙을_이어가고_정산을_부르지_않는다() throws Exception {
+        jdbcTemplate.update("UPDATE ad_candidate SET reserved_amount = NULL, unit_price = NULL WHERE campaign_id = 101");
+        redisTemplate.opsForHash().put("adserving:validImpressions:" + TODAY, "101", "20000");
 
         mockMvc.perform(get("/v1/feed").with(user(as(Role.MEMBER))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.status").value("SERVING"))
                 .andExpect(jsonPath("$.data.cards[0].campaignId").value(101));
+        verifyNoInteractions(budgetQueryService);
     }
 
     // 서빙 로그는 응답 뒤 대기열이 쓴다. 쓰일 때까지 잠깐 기다린다
