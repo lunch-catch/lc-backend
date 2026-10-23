@@ -13,7 +13,7 @@
 | MySQL 쓰기(요청 안) | `impression_log`, `wishlist`, `swipe_log`, `feed_filter`, `feed_filter_category`, 쿠폰의 소진 통보로 바꾸는 `ad_candidate.sold_out_at` | 기본(트랜잭션을 되돌린다). 스와이프는 찜과 기록을 따로 커밋하고 순서로 맞춘다(구조와 동작 설계 7장) |
 | MySQL 쓰기 | 응답 뒤의 `serve_log`, `feed_visit_daily` | 벗어났다. 아래 |
 | member 의 `MemberQueryService` | 온보딩, 위치, 노출 대상 판정 | 기본(오류로 올린다). 같은 프로세스 안의 호출이다 |
-| billing 의 `BudgetQueryService` | 진행률, 노출 상한 | 벗어났다. 아래 |
+| billing 의 `BudgetQueryService` | 진행률의 입력(예약액, 소진액), 노출 상한 | 벗어났다. 아래 |
 | billing 의 `PointDeductor` | 유효 노출의 차감 | 기본(트랜잭션을 되돌린다). 노출 저장과 같은 트랜잭션이라 실패하면 노출도 남지 않는다 |
 | analytics 의 퍼널 이벤트 수신 | 노출과 스와이프의 퍼널 이벤트 | 벗어났다. 아래 |
 | campaign 의 `CampaignStatusChangedEvent` | 그날 후보의 서빙 상태 | 기본(같은 트랜잭션). 상태 UPDATE 가 실패하면 캠페인의 상태 전이도 되돌아간다 |
@@ -27,8 +27,8 @@
 ### 다른 도메인 호출: billing 의 `BudgetQueryService`
 
 **원칙: 서빙할 피드가 아예 없을 때만 오류로 답하고 그 밖에는 서빙을 이어 간다**(#307 에서 정했다).
-그날 후보를 MySQL 에서 읽지 못하면 내보낼 것이 없어 기본대로 오류다. 정산의 진행률은 카드를 고르는 규칙의 일부라
-그것이 없어도 내보낼 카드는 있다.
+그날 후보를 MySQL 에서 읽지 못하면 내보낼 것이 없어 기본대로 오류다. 정산이 주는 예산 값은 카드를 고르는 규칙의 일부라
+그 값이 없어도 내보낼 카드는 있다.
 
 | 선택지 | 장점 | 단점 |
 |---|---|---|

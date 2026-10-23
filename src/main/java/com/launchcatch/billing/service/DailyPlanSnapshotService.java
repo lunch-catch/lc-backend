@@ -75,6 +75,6 @@ public class DailyPlanSnapshotService {
     }
 
     private static PlanSnapshot snapshotOf(BudgetDailyPlan plan) {
-        return new PlanSnapshot(plan.getId(), plan.getOwnerId(), plan.getUnitPrice());
+        return new PlanSnapshot(plan.getOwnerId(), plan.getUnitPrice());
     }
 }

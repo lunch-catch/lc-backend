@@ -15,6 +15,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import com.launchcatch.adserving.config.PacingProperties;
 import com.launchcatch.adserving.engine.entity.AdCandidate;
 import com.launchcatch.adserving.engine.entity.DiscountTarget;
 import com.launchcatch.adserving.engine.entity.DiscountType;
@@ -58,6 +59,7 @@ import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.OffsetDateTime;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -88,6 +90,8 @@ class FeedServiceTest {
     private final ServeFrequencyRepository serveFrequencyRepository = mock(ServeFrequencyRepository.class);
     private final ImpressionCountRepository impressionCountRepository = mock(ImpressionCountRepository.class);
     private final BudgetQueryService budgetQueryService = mock(BudgetQueryService.class);
+    // 24시간 균등 가중치다. 예약액 24,000 이면 시간대마다 1,000 이다
+    private final PacingProperties pacingProperties = new PacingProperties(Collections.nCopies(24, 1));
     private final ServeRecordRepository serveRecordRepository = mock(ServeRecordRepository.class);
     private final ServeLogBuffer serveLogBuffer = mock(ServeLogBuffer.class);
     private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
@@ -96,16 +100,16 @@ class FeedServiceTest {
         Clock clock = Clock.fixed(now.atZone(ClockConfig.ZONE).toInstant(), ClockConfig.ZONE);
         return new FeedService(memberQueryService, rateLimitRepository, adCandidateRepository,
                 exclusionRepository, filterCategoryRepository, feedFilterRepository, swipeLogRepository,
-                serveFrequencyRepository, impressionCountRepository, budgetQueryService, serveRecordRepository,
+                serveFrequencyRepository, impressionCountRepository, budgetQueryService, pacingProperties, serveRecordRepository,
                 serveLogBuffer, meterRegistry, clock);
     }
 
-    // 넘겨받은 캠페인마다 진행률 0.5, 예약액 10만 원, 단가 10원으로 답한다. 상한은 10,500 회다.
+    // 넘겨받은 캠페인마다 예약액 10만 원, 단가 10원, 소진 0원으로 답한다. 진행률은 언제나 0 이고 상한은 10,500 회다.
     @SuppressWarnings("unchecked")
     private void givenBudgetForAll() {
-        when(budgetQueryService.getProgress(any(), any(), any())).thenAnswer(invocation ->
+        when(budgetQueryService.getProgress(any(), any())).thenAnswer(invocation ->
                 ((Collection<Long>) invocation.getArgument(0)).stream()
-                        .map(id -> new BudgetProgress(id, 100_000, 10, 50_000, 100_000, 0.5))
+                        .map(id -> new BudgetProgress(id, 100_000, 10, 0))
                         .toList());
     }
 
@@ -319,14 +323,14 @@ class FeedServiceTest {
     class Inputs {
 
         @Test
-        void 정산에_그날_영업일과_지금_시각을_넘겨_진행률을_읽는다() {
+        void 정산에_그날_영업일을_넘겨_예약액과_소진액을_읽는다() {
             givenOnboardedMemberWithSavedLocation();
             givenAdmitted(SERVING_NOW);
             givenCandidates(List.of(candidate(1, SAVED_LAT, SAVED_LNG).build()));
 
             serviceAt(SERVING_NOW).getFeed(MEMBER_ID, NO_LOCATION);
 
-            verify(budgetQueryService).getProgress(List.of(1L), TODAY, SERVING_NOW);
+            verify(budgetQueryService).getProgress(List.of(1L), TODAY);
         }
 
         @Test
@@ -339,7 +343,22 @@ class FeedServiceTest {
 
             serviceAt(SERVING_NOW).getFeed(MEMBER_ID, NO_LOCATION);
 
-            verify(budgetQueryService, times(2)).getProgress(anyCollection(), eq(TODAY), eq(SERVING_NOW));
+            verify(budgetQueryService, times(2)).getProgress(anyCollection(), eq(TODAY));
+        }
+
+        @Test
+        void 진행률은_예약액을_가중치로_나눈_계획과_소진으로_계산해_1_2를_넘으면_내려주지_않는다() {
+            givenOnboardedMemberWithSavedLocation();
+            givenAdmitted(SERVING_NOW);
+            givenCandidates(List.of(candidate(1, SAVED_LAT, SAVED_LNG).build(), candidate(2, SAVED_LAT, SAVED_LNG).build()));
+            // 10:15 의 계획은 10,250 이다. 12,400 은 진행률 1.21 이고 12,000 은 1.17 이다
+            doReturn(List.of(new BudgetProgress(1L, 24_000, 10, 12_400),
+                    new BudgetProgress(2L, 24_000, 10, 12_000)))
+                    .when(budgetQueryService).getProgress(any(), any());
+
+            FeedResponse response = serviceAt(SERVING_NOW).getFeed(MEMBER_ID, NO_LOCATION);
+
+            assertThat(response.cards()).extracting(FeedCardResponse::campaignId).containsExactly(2L);
         }
 
         @Test
@@ -347,8 +366,8 @@ class FeedServiceTest {
             givenOnboardedMemberWithSavedLocation();
             givenAdmitted(SERVING_NOW);
             givenCandidates(List.of(candidate(1, SAVED_LAT, SAVED_LNG).build(), candidate(2, SAVED_LAT, SAVED_LNG).build()));
-            doReturn(List.of(new BudgetProgress(2L, 100_000, 10, 0, 100_000, 0.0)))
-                    .when(budgetQueryService).getProgress(any(), any(), any());
+            doReturn(List.of(new BudgetProgress(2L, 100_000, 10, 0)))
+                    .when(budgetQueryService).getProgress(any(), any());
 
             FeedResponse response = serviceAt(SERVING_NOW).getFeed(MEMBER_ID, NO_LOCATION);
 
@@ -360,7 +379,7 @@ class FeedServiceTest {
             givenOnboardedMemberWithSavedLocation();
             givenAdmitted(SERVING_NOW);
             givenCandidates(List.of(candidate(1, SAVED_LAT, SAVED_LNG).build()));
-            doThrow(new IllegalStateException("카운터 장애")).when(budgetQueryService).getProgress(any(), any(), any());
+            doThrow(new IllegalStateException("카운터 장애")).when(budgetQueryService).getProgress(any(), any());
 
             FeedResponse response = serviceAt(SERVING_NOW).getFeed(MEMBER_ID, NO_LOCATION);
 

@@ -198,7 +198,7 @@ class ImpressionDeductionIntegrationTest extends AbstractBillingIntegrationTest 
         double rebuildBefore = meterRegistry.counter("billing_spend_hash_rebuild_total").count();
 
         List<BudgetProgress> progress = budgetQuery.getProgress(
-                List.of(first, second, third), DAY, LocalDateTime.of(2026, 10, 14, 11, 30));
+                List.of(first, second, third), DAY);
 
         assertThat(progress).extracting(BudgetProgress::todaySpend).containsExactly(3 * UNIT, 5 * UNIT, 0L);
         assertThat(meterRegistry.counter("billing_spend_hash_rebuild_total").count() - rebuildBefore).isEqualTo(3.0);
