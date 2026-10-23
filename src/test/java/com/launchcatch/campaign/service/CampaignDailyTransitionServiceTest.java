@@ -75,13 +75,26 @@ class CampaignDailyTransitionServiceTest {
     @DisplayName("한 캠페인의 종료가 실패해도 나머지는 처리하고 마지막에 예외로 단계를 실패시킨다")
     void 종료가_하나_실패해도_나머지는_처리하고_단계를_실패시킨다() {
         when(campaignRepository.findIdsToEnd(BUSINESS_DATE)).thenReturn(List.of(1L, 2L));
-        doThrow(new IllegalArgumentException("메뉴가 가게 소속이 아니다"))
+        doThrow(new IllegalStateException("only ACTIVE or PAUSED campaign can end"))
                 .when(campaignStatusService).end(1L, ActorType.SYSTEM, BUSINESS_DATE);
 
         assertThatThrownBy(() -> service.endExpired(BUSINESS_DATE))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("END_EXPIRED").hasMessageContaining("failedCount=1");
 
+        verify(campaignStatusService).end(2L, ActorType.SYSTEM, BUSINESS_DATE);
+    }
+
+    @Test
+    @DisplayName("데이터 오류로 종료가 거부된 캠페인은 건너뛰고 나머지를 종료하며 단계는 실패시키지 않는다(#842)")
+    void 종료가_데이터_오류면_건너뛰고_나머지를_종료한다() {
+        when(campaignRepository.findIdsToEnd(BUSINESS_DATE)).thenReturn(List.of(1L, 2L));
+        doThrow(new IllegalArgumentException("할인 대상 메뉴가 해당 가게에 속하지 않습니다."))
+                .when(campaignStatusService).end(1L, ActorType.SYSTEM, BUSINESS_DATE);
+
+        int ended = service.endExpired(BUSINESS_DATE);
+
+        assertThat(ended).isEqualTo(1);
         verify(campaignStatusService).end(2L, ActorType.SYSTEM, BUSINESS_DATE);
     }
 
@@ -111,6 +124,22 @@ class CampaignDailyTransitionServiceTest {
 
         verify(campaignStatusService, never()).end(anyLong(), eq(ActorType.SYSTEM), eq(BUSINESS_DATE));
         verify(campaignStatusService).activate(10L, BUSINESS_DATE);
+    }
+
+    @Test
+    @DisplayName("데이터 오류로 켜기가 거부된 캠페인은 건너뛰고 나머지를 켜며 단계는 실패시키지 않는다(#842)")
+    void 켜기가_데이터_오류면_건너뛰고_나머지를_켠다() {
+        Campaign first = campaign(10L, 20L);
+        Campaign second = campaign(11L, 21L);
+        when(campaignRepository.findToStart(BUSINESS_DATE)).thenReturn(List.of(first, second));
+        when(campaignRepository.findOtherActiveIdsByStoreId(anyLong(), anyLong())).thenReturn(List.of());
+        doThrow(new IllegalArgumentException("할인 대상 메뉴가 해당 가게에 속하지 않습니다."))
+                .when(campaignStatusService).activate(10L, BUSINESS_DATE);
+
+        int started = service.startScheduled(BUSINESS_DATE);
+
+        assertThat(started).isEqualTo(1);
+        verify(campaignStatusService).activate(11L, BUSINESS_DATE);
     }
 
     @Test
