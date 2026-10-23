@@ -17,6 +17,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.data.redis.RedisConnectionFailureException;
@@ -41,7 +43,7 @@ class TemplateGenerationRateLimiterTest {
     @SuppressWarnings("unchecked")
     @BeforeEach
     void setUp() {
-        rateLimiter = new TemplateGenerationRateLimiter(redisTemplate);
+        rateLimiter = new TemplateGenerationRateLimiter(redisTemplate, 3);
     }
 
     private void 처음_보는_requestId로_설정한다() {
@@ -58,6 +60,29 @@ class TemplateGenerationRateLimiterTest {
         assertThatCode(() -> rateLimiter.checkLimit(1L, REQUEST_ID)).doesNotThrowAnyException();
 
         verify(redisTemplate, never()).delete(anyString());
+    }
+
+    @Test
+    @DisplayName("상한을 올리면 그 횟수까지 거부하지 않고 다음부터 거부한다(#831)")
+    void 상한을_올리면_그_횟수까지_통과한다() {
+        TemplateGenerationRateLimiter raised = new TemplateGenerationRateLimiter(redisTemplate, 20);
+        처음_보는_requestId로_설정한다();
+        when(redisTemplate.execute(any(RedisScript.class), anyList(), anyString())).thenReturn(20L, 21L);
+
+        // 같은 requestId 면 실제 Redis 에서는 진행 중 표식 때문에 횟수 검사 전에 거부되므로 다른 requestId 로 부른다.
+        assertThatCode(() -> raised.checkLimit(1L, REQUEST_ID)).doesNotThrowAnyException();
+        assertThatThrownBy(() -> raised.checkLimit(1L, "req-2"))
+                .isInstanceOf(CampaignException.class)
+                .extracting(e -> ((CampaignException) e).getErrorCode())
+                .isEqualTo(PosterErrorCode.GENERATION_RATE_LIMITED);
+    }
+
+    @ParameterizedTest
+    @ValueSource(ints = {0, -1})
+    @DisplayName("상한이 0 이하이면 기동하지 못하게 거부한다(#831)")
+    void 상한이_0_이하면_생성을_거부한다(int limit) {
+        assertThatThrownBy(() -> new TemplateGenerationRateLimiter(redisTemplate, limit))
+                .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test
