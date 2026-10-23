@@ -50,7 +50,7 @@
 |---|---|
 | 관리자 | `POST /v1/admin/auth/tokens`. 쿠키 `adminAccessToken` |
 | 점주 | `POST /v1/owner/auth/tokens`. 쿠키 `ownerAccessToken` |
-| 회원 | `scripts/qa/member-token.sh <memberId>` 의 토큰을 쿠키 `accessToken` 에 넣는다. 토큰은 30분이라 묶음마다 새로 만든다 |
+| 회원 | `scripts/qa/member-token.sh <memberId>` 의 토큰을 쿠키 `accessToken` 에 넣는다. 토큰은 30분이라 묶음마다, 그리고 묶음이 30분을 넘으면 그 전에 새로 만든다 |
 
 기본 계정 비밀번호는 `lunchcatch1234!` 이고 로그인은 IP 하나당 1분에 10번이다.
 
