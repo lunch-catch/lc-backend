@@ -124,7 +124,7 @@ public class CouponLookUpService {
         Set<Long> wishedCampaignIds = Set.copyOf(wishlistQueryService.findWishedCampaignIds(memberId));
 
         List<Item> items = new ArrayList<>(visibleStoreIds.size());
-        LocalTime now = serverTime.toLocalTime();
+        LocalDateTime now = serverTime.toLocalDateTime();
         for (Long storeId : visibleStoreIds) {
             items.add(createEventStatusItem(
                     storeId,
@@ -226,13 +226,13 @@ public class CouponLookUpService {
     private Item createEventStatusItem(
             Long storeId, CouponEvent event, boolean hasCampaign, Map<Long, Integer> quantities,
             Set<Long> issuedEventIds, Set<Long> wishedCampaignIds,
-            boolean accountEligible, boolean dailyLimitReached, LocalTime now) {
+            boolean accountEligible, boolean dailyLimitReached, LocalDateTime now) {
         if (event == null) {
             return createNoEventItem(storeId, hasCampaign);
         }
 
         int quantity = quantities.getOrDefault(event.getId(), 0);
-        EventState state = resolveEventState(event.getStatus(), quantity, now);
+        EventState state = resolveEventState(event, quantity, now);
         boolean issued = issuedEventIds.contains(event.getId());
         boolean wished = wishedCampaignIds.contains(event.getCampaignId());
         CannotIssueReason reason = resolveCannotIssueReason(state, accountEligible, issued, dailyLimitReached, wished);
@@ -270,12 +270,12 @@ public class CouponLookUpService {
                         quantity -> Math.toIntExact(quantity.getQuantity())));
     }
 
-    // 발급 시간 경계를 재고보다 먼저 판단하며 쿠폰의 사용 가능 시간은 발급 판정에 쓰지 않는다.
-    private EventState resolveEventState(CouponEventStatus status, int remainingQuantity, LocalTime now) {
-        if (!now.isBefore(issueEndTime)) {
+    // 시스템 발급 종료와 쿠폰 사용 종료를 운영 상태와 재고보다 먼저 판단한다.
+    private EventState resolveEventState(CouponEvent event, int remainingQuantity, LocalDateTime now) {
+        if (!now.toLocalTime().isBefore(issueEndTime) || !now.isBefore(event.getUsableEndAt())) {
             return EventState.CLOSED;
         }
-        if (now.isBefore(issueStartTime) || status == CouponEventStatus.SCHEDULED) {
+        if (now.toLocalTime().isBefore(issueStartTime) || event.getStatus() == CouponEventStatus.SCHEDULED) {
             return EventState.SCHEDULED;
         }
         return remainingQuantity == 0 ? EventState.SOLD_OUT : EventState.OPEN;

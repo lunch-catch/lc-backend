@@ -293,15 +293,16 @@ public class CouponBatchIssuanceService {
     }
 
     /*
-     * 이벤트가 ACTIVE이고 오늘 회차이며 요청 시각이 발급 시간 안이면 true를 돌려준다.
-     * 단건 경로의 checkEvent와 같은 조건을 쓰며 예외 대신 판정 결과를 돌려준다.
+     * 이벤트가 ACTIVE이고 오늘 회차이며 요청 시각이 시스템 발급 시간 안이면 발급 후보로 본다.
+     * 이벤트 잠금을 확보한 뒤의 현재 시각이 사용 종료 시각 전이어야 발급할 수 있다.
      */
     private boolean isIssuable(CouponEvent event, LocalDateTime requestTime, LocalDateTime now) {
         return event.getStatus() == CouponEventStatus.ACTIVE
                 && event.getBusinessDate().equals(now.toLocalDate())
                 && requestTime.toLocalDate().equals(now.toLocalDate())
                 && !requestTime.toLocalTime().isBefore(issueStartTime)
-                && requestTime.toLocalTime().isBefore(issueEndTime);
+                && requestTime.toLocalTime().isBefore(issueEndTime)
+                && now.isBefore(event.getUsableEndAt());
     }
 
     // 아직 판정이 끝나지 않은 요청의 이벤트 ID를 오름차순으로 모은다.
