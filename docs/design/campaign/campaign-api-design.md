@@ -294,9 +294,9 @@
   `CAMPAIGN-001`이다. 엔티티의 `IllegalStateException`은 `CAMPAIGN-006`으로 바꾼다
 - **00:00 의 `SCHEDULED -> ACTIVE`와는 캠페인 행 잠금으로 줄을 선다.** 취소도 `activate()`도
   `findByIdForUpdate`로 같은 행을 잠근다. 배치가 먼저면 취소는 `ACTIVE`를 보고 `CAMPAIGN-006`이다.
-  취소가 먼저면 배치는 `DRAFT`를 보고 `Campaign.activate()`가 `IllegalStateException`을 던진다.
-  그 배치를 만드는 쪽(`#569`)이 이 예외를 "취소된 캠페인이라 건너뛴다"로 받아야 한다. 아래
-  "아직 정해지지 않은 것"에 남긴다
+  취소가 먼저면 배치의 `activate(id, businessDate)`는 `DRAFT`를 보고 예외 없이 건너뛰고
+  `event=CAMPAIGN_DAILY_START_SKIPPED reason=NOT_SCHEDULED` 로그만 남긴다(`#872`). 한 건 호출
+  `activate(id)`는 `SCHEDULED`가 아니면 지금처럼 거부한다
 - **응답은 중단·재개와 같은 `CampaignStatusResponse`다.** `campaignId`와 `status`만 담는다
 - **취소에는 요청 빈도 제한을 두지 않는다.** 취소는 외부 호출이 없는 행 하나의 갱신이다. 취소와 재활성화를
   되풀이해 검수를 여러 번 부르는 것은 활성화 쪽 제한(`CAMPAIGN-011`)이 막는다
@@ -358,7 +358,7 @@
 | 00:00 배치가 `pendingDailyBudget`을 `dailyBudget`에 반영하는 호출 지점 | V51 45행, 102행 스케줄러 | 해소됨(`#840`). `CampaignPendingBudgetJob`(`@Order(35)`)이 ACTIVE 이고 예약 값이 있는 캠페인마다 행 잠금 아래에서 상태를 다시 확인한 뒤 `dailyBudget`으로 옮기고 예약 값을 비운다. `pause()`는 `pendingDailyBudget`을 지우지 않으므로 `PAUSED`로 멈춰 있는 캠페인에는 적용하지 않고 예약 값을 남긴다. 정산의 일일 예약(50)보다 앞이라 바뀐 예산이 그날 예약에 반영된다 |
 | 예약 값(`pendingDailyBudget`) 자체를 PATCH 응답에 노출할지 | V51 45행 | `#330`은 노출하지 않는다(응답은 늘 `dailyBudget`). 노출이 필요해지면 그때 명세를 바꾼다 |
 | `targetMenuId`가 그 가게(`storeId`) 소유인지 등록 시점(`CampaignCouponConditionService`)에 검증하는 것 | `#468` 자체 리뷰로 찾음(2026-10-18) | 해소됨(`#874`). 등록 시점에 `findMenusByIdIn`으로 `targetMenuId`가 그 가게의 메뉴이고 검증된 이미지가 있는지 확인하고 아니면 `CAMPAIGN-014`로 거절한다. 같은 변경이 `storeId`가 로그인한 점주의 가게인지도 `canManageStore`로 확인한다(`CAMPAIGN-013`) |
-| 00:00 의 `SCHEDULED -> ACTIVE` 배치가 취소된 캠페인을 만났을 때의 처리 | `#597`(2026-10-20) | 취소가 먼저 잠금을 잡으면 배치의 `CampaignStatusService.activate()`가 `DRAFT`를 보고 `IllegalStateException`을 던진다. 그 배치를 만드는 `#569`가 이 예외를 건너뛰기로 받아야 한다. 받지 않으면 단계가 실패해 00:00 묶음이 멈춘다 |
+| 00:00 의 `SCHEDULED -> ACTIVE` 배치가 취소된 캠페인을 만났을 때의 처리 | `#597`(2026-10-20) | 해소됨(`#872`). 취소가 먼저 잠금을 잡으면 배치의 `activate(id, businessDate)`가 행 잠금을 잡은 뒤 상태가 `SCHEDULED`도 `ACTIVE`도 아니면 예외 없이 건너뛰고 INFO 로그를 남긴다. 단계는 실패하지 않는다 |
 | 캠페인 활성화 요청 빈도 제한의 정확한 횟수·창 | `#561` 자체 리뷰로 찾음(2026-10-19) | `CampaignActivationRateLimiter`가 지금은 `TemplateGenerationRateLimiter`의 분당 3회를 그대로 가져와 썼다(근거 없는 예시값, `C` 등급). 실제 값은 운영 쪽과 정한다 |
 
 해소된 항목(`#330`): 하루 예산의 "다음 영업일 적용 예약 값" 컬럼은 `Campaign.pendingDailyBudget`(`V13__campaign_pending_daily_budget.sql`, 양수만 허용하는

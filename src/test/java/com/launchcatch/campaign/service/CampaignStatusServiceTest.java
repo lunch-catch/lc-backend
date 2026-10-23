@@ -42,6 +42,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -235,6 +237,24 @@ class CampaignStatusServiceTest {
 
         verify(storeCampaignSummaryUpdater, never()).update(anyLong(), anyLong(), any());
         verify(campaignStatusLogRepository, never()).save(any());
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = CampaignStatus.class, names = {"DRAFT", "PAUSED", "ENDED"})
+    @DisplayName("영업일을 받는 activate 는 SCHEDULED 도 ACTIVE 도 아니면 예외 없이 건너뛴다(#872)")
+    void 영업일을_받는_activate_는_SCHEDULED가_아니면_건너뛴다(CampaignStatus status) {
+        Campaign campaign = switch (status) {
+            case DRAFT -> draftCampaign();
+            case PAUSED -> pausedCampaign(PauseReason.OWNER);
+            default -> endedCampaign();
+        };
+        when(campaignRepository.findByIdForUpdate(CAMPAIGN_ID)).thenReturn(Optional.of(campaign));
+
+        service.activate(CAMPAIGN_ID, BUSINESS_DATE);
+
+        assertThat(campaign.getStatus()).isEqualTo(status);
+        verify(campaignStatusLogRepository, never()).save(any());
+        verify(storeCampaignSummaryUpdater, never()).update(anyLong(), anyLong(), any());
     }
 
     @Test

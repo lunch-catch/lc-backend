@@ -72,8 +72,8 @@ class TemplateDeleteServiceIntegrationTest extends AbstractCampaignIntegrationTe
         entityManager.clear();
 
         assertThat(templateRepository.findById(templateId)).isEmpty();
-        assertThat(templateVersionRepository.findFirstByTemplateIdOrderByVersionNumberDesc(templateId))
-                .isEmpty();
+        // 버전이 소프트삭제 행까지 하나도 남지 않았는지 본다(남은 최대 번호가 0이면 행이 없다).
+        assertThat(templateVersionRepository.findMaxVersionNumber(templateId)).isZero();
         assertThat(currentCount()).isEqualTo(countBeforeDelete - 1);
     }
 

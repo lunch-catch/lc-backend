@@ -14,8 +14,10 @@ import com.launchcatch.campaign.template.repository.TemplateVersionRepository;
 import com.launchcatch.global.response.CursorPageResponse;
 import com.launchcatch.global.response.PageCursor;
 import com.launchcatch.global.response.PageTokens;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.PageRequest;
@@ -46,14 +48,35 @@ public class TemplateQueryService {
                 .filter(template -> template.getStatus() != TemplateStatus.PUBLISHED)
                 .map(Template::getId)
                 .toList();
+        Set<Long> publishedWithDraftIds = publishedIdsWithDraft(templates);
         Map<Long, String> latestHtml = draftIds.isEmpty()
                 ? Map.of()
                 : templateVersionRepository.findLatestAliveByTemplateIds(draftIds).stream()
                         .collect(Collectors.toMap(
                                 version -> version.getTemplate().getId(), TemplateVersion::getHtmlContent));
         return templates.stream()
-                .map(template -> TemplateListItemResponse.of(template, previewHtml(template, latestHtml)))
+                .map(template -> TemplateListItemResponse.of(
+                        template, previewHtml(template, latestHtml), hasDraft(template, publishedWithDraftIds)))
                 .toList();
+    }
+
+    /*
+     * 게시된 템플릿 중 살아 있는 임시저장이 있는 것의 ID 를 한 번에 구한다(#880). DRAFT 템플릿은 버전이 항상 있어
+     * 조회하지 않는다.
+     */
+    private Set<Long> publishedIdsWithDraft(List<Template> templates) {
+        List<Long> publishedIds = templates.stream()
+                .filter(template -> template.getStatus() == TemplateStatus.PUBLISHED)
+                .map(Template::getId)
+                .toList();
+        if (publishedIds.isEmpty()) {
+            return Set.of();
+        }
+        return new HashSet<>(templateVersionRepository.findTemplateIdsWithAliveVersion(publishedIds));
+    }
+
+    private boolean hasDraft(Template template, Set<Long> publishedWithDraftIds) {
+        return template.getStatus() != TemplateStatus.PUBLISHED || publishedWithDraftIds.contains(template.getId());
     }
 
     private String previewHtml(Template template, Map<Long, String> latestHtml) {
@@ -80,7 +103,9 @@ public class TemplateQueryService {
     public TemplateDetailResponse detail(Long templateId) {
         Template template = templateRepository.findById(templateId)
                 .orElseThrow(() -> new CampaignException(PosterErrorCode.TEMPLATE_NOT_FOUND));
-        return TemplateDetailResponse.of(template, htmlOf(template));
+        boolean hasDraft = template.getStatus() != TemplateStatus.PUBLISHED
+                || templateVersionRepository.existsByTemplateIdAndDeletedAtIsNull(templateId);
+        return TemplateDetailResponse.of(template, htmlOf(template), hasDraft);
     }
 
     public CursorPageResponse<TemplateVersionItemResponse> versions(Long templateId, String pageToken, int pageSize) {

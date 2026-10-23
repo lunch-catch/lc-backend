@@ -207,8 +207,45 @@ class BaseWorldIntegrationTest extends IntegrationTestSupport {
                 + "AND ((JSON_UNQUOTE(JSON_EXTRACT(slot_values, '$.image.value')) NOT LIKE '%/menu-%.jpg' "
                 + "AND JSON_UNQUOTE(JSON_EXTRACT(slot_values, '$.image.value')) NOT LIKE '%/logo.jpg') "
                 + "OR JSON_UNQUOTE(JSON_EXTRACT(slot_values, '$.period.value')) NOT LIKE '오늘 %')", Long.class)).isZero();
+        // 팀원이 개발에서 만든 템플릿 19개와 버전 128개가 들어가고, 없는 관리자는 superadmin 으로 바뀐다 (#930)
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM template WHERE template_id NOT BETWEEN 10000001 AND 10000014", Long.class))
+                .isEqualTo(19L);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM template_version WHERE template_id NOT BETWEEN 10000001 AND 10000014",
+                Long.class)).isEqualTo(128L);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM template t LEFT JOIN admin a ON a.admin_id = t.last_modified_by "
+                + "WHERE t.last_modified_by IS NOT NULL AND a.admin_id IS NULL", Long.class)).isZero();
+        assertThat(jdbc.queryForObject("SELECT current_count FROM template_quota", Long.class))
+                .isEqualTo(jdbc.queryForObject("SELECT COUNT(*) FROM template", Long.class));
         // 할인 금액은 천 단위 쉼표를 찍는다 (2,000원)
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM poster WHERE campaign_id BETWEEN 10000001 AND 29999999 "
                 + "AND JSON_UNQUOTE(JSON_EXTRACT(slot_values, '$.discount.value')) REGEXP '[0-9]{4}원'", Long.class)).isZero();
+    }
+
+    /*
+     * 운영처럼 팀원 템플릿 번호(20000002)를 다른 템플릿과 버전이 이미 쓰는 DB 다 (#930).
+     * 그 행은 그대로 두고 팀원 템플릿과 버전은 번호에 100,000 을 더해 들어간다.
+     */
+    @Test
+    void 팀원_템플릿은_번호가_겹치면_옮겨_들어간다() {
+        new DomainFlywayMigrator(dataSource).afterPropertiesSet();
+        jdbc.update("INSERT INTO template (template_id, name, status, active, created_at, updated_at) "
+                + "VALUES (20000002, '운영에서 만든 템플릿', 'DRAFT', 0, '2026-10-01 10:00:00', '2026-10-01 10:00:00')");
+        jdbc.update("INSERT INTO template_version (template_version_id, template_id, version_number, request_prompt, request_id, "
+                + "html_content, message, created_at, updated_at) VALUES (20000002, 20000002, 1, 'p', 'prod-1', '<div></div>', 'm', "
+                + "'2026-10-01 10:00:00', '2026-10-01 10:00:00')");
+        Map<String, String> placeholders = Map.of("baseDate", "2026-10-28", "superadminPasswordHash", HASH,
+                "demoAdminPasswordHash", HASH, "demoOwnerPasswordHash", HASH, "scenarioPasswordHash", HASH,
+                "baseCdnBaseUrl", "https://cdn.example.com");
+        new DomainFlywayMigrator(dataSource, new BaseSettings(true, placeholders)).afterPropertiesSet();
+
+        assertThat(jdbc.queryForObject("SELECT name FROM template WHERE template_id = 20000002", String.class))
+                .isEqualTo("운영에서 만든 템플릿");
+        assertThat(jdbc.queryForObject("SELECT name FROM template WHERE template_id = 20100002", String.class))
+                .isEqualTo("새 템플릿1");
+        assertThat(jdbc.queryForObject("SELECT template_id FROM template_version WHERE template_version_id = 20100002", Long.class))
+                .isNotNull();
+        // 옮긴 템플릿의 버전은 옮긴 번호를 가리킨다
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM template_version WHERE template_id = 20100002", Long.class))
+                .isEqualTo(9L);
     }
 }

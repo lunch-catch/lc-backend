@@ -75,6 +75,24 @@ class TemplateQueryServiceTest {
     }
 
     @Test
+    @DisplayName("목록의 hasDraft 는 DRAFT 는 항상 true, 게시된 템플릿은 살아 있는 임시저장이 있을 때만 true 이고 미리보기는 게시본을 유지한다(#880)")
+    void 목록은_게시된_템플릿의_임시저장_여부를_한번에_조회한다() throws Exception {
+        Template draft = draftTemplate(1L, "가을 신메뉴");
+        Template editing = publishedTemplate(2L);
+        Template plain = publishedTemplate(3L);
+        when(templateRepository.findAllByOrderByCreatedAtDesc()).thenReturn(List.of(plain, editing, draft));
+        when(templateVersionRepository.findLatestAliveByTemplateIds(List.of(1L)))
+                .thenReturn(List.of(draft.latestVersion()));
+        when(templateVersionRepository.findTemplateIdsWithAliveVersion(List.of(3L, 2L))).thenReturn(List.of(2L));
+
+        List<TemplateListItemResponse> responses = service.list();
+
+        assertThat(responses).extracting(TemplateListItemResponse::hasDraft).containsExactly(false, true, true);
+        assertThat(responses.get(1).html()).isEqualTo(PUBLISHED_HTML);
+        verify(templateVersionRepository, times(1)).findTemplateIdsWithAliveVersion(any());
+    }
+
+    @Test
     @DisplayName("목록은 DRAFT 템플릿이 여럿이어도 최신 버전을 한 번에 조회한다(N+1 방지, #532)")
     void 목록은_최신_버전을_한번에_조회한다() throws Exception {
         Template first = draftTemplate(1L, "가을 신메뉴");
@@ -100,6 +118,7 @@ class TemplateQueryServiceTest {
         List<TemplateListItemResponse> responses = service.list();
 
         assertThat(responses.get(0).html()).isEqualTo(PUBLISHED_HTML);
+        assertThat(responses.get(0).hasDraft()).isFalse();
         verify(templateVersionRepository, never()).findLatestAliveByTemplateIds(any());
     }
 
@@ -151,6 +170,7 @@ class TemplateQueryServiceTest {
         TemplateDetailResponse response = service.detail(TEMPLATE_ID);
 
         assertThat(response.html()).isEqualTo(template.latestVersion().getHtmlContent());
+        assertThat(response.hasDraft()).isTrue();
     }
 
     @Test
@@ -161,6 +181,20 @@ class TemplateQueryServiceTest {
 
         TemplateDetailResponse response = service.detail(TEMPLATE_ID);
 
+        assertThat(response.html()).isEqualTo(PUBLISHED_HTML);
+        assertThat(response.hasDraft()).isFalse();
+    }
+
+    @Test
+    @DisplayName("게시된 템플릿을 수정하는 중이면 상세의 hasDraft 가 true 이고 html 은 게시본이다(#880)")
+    void 게시된_템플릿을_수정_중이면_상세의_hasDraft가_true다() throws Exception {
+        Template template = publishedTemplate(TEMPLATE_ID);
+        when(templateRepository.findById(TEMPLATE_ID)).thenReturn(Optional.of(template));
+        when(templateVersionRepository.existsByTemplateIdAndDeletedAtIsNull(TEMPLATE_ID)).thenReturn(true);
+
+        TemplateDetailResponse response = service.detail(TEMPLATE_ID);
+
+        assertThat(response.hasDraft()).isTrue();
         assertThat(response.html()).isEqualTo(PUBLISHED_HTML);
     }
 

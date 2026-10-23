@@ -33,6 +33,9 @@ public record TemplateDetailResponse(
         @Schema(description = "마지막으로 임시저장한 시각입니다.")
         LocalDateTime lastModifiedAt,
 
+        @Schema(description = "살아 있는 임시저장 버전이 있는지 여부입니다. 게시된 템플릿을 수정하는 중이면 true입니다.", example = "false")
+        boolean hasDraft,
+
         @Schema(description = "게시된 템플릿은 게시된 HTML, DRAFT 템플릿은 최신 버전의 HTML입니다.")
         String html
 ) {
@@ -41,7 +44,7 @@ public record TemplateDetailResponse(
      * html 은 상태에 따라 가져오는 곳이 다르므로(게시된 템플릿은 Template.htmlContent,
      * DRAFT 는 최신 버전) 호출하는 쪽에서 미리 가려 넘긴다.
      */
-    public static TemplateDetailResponse of(Template template, String html) {
+    public static TemplateDetailResponse of(Template template, String html, boolean hasDraft) {
         return new TemplateDetailResponse(
                 template.getId(),
                 template.getName(),
@@ -52,6 +55,7 @@ public record TemplateDetailResponse(
                 template.getActivatedAt(),
                 template.getLastModifiedBy(),
                 template.getLastModifiedAt(),
+                hasDraft,
                 html
         );
     }
