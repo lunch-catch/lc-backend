@@ -110,6 +110,10 @@ class BaseWorldIntegrationTest extends IntegrationTestSupport {
         }
         assertThat(mismatches.toString()).isEmpty();
 
+        // 쓰지 않게 된 시간대별 목표 표는 시드 V8 이 지운다(#829)
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM information_schema.tables "
+                + "WHERE table_schema = DATABASE() AND table_name = 'budget_hourly_target'", Long.class)).isZero();
+
         // 메뉴 할인 캠페인에는 정률과 정액이 둘 다 있어야 한다
         assertThat(jdbc.queryForList("SELECT DISTINCT discount_type FROM campaign "
                 + "WHERE campaign_id >= 10000000 AND discount_target_type = 'MENU'", String.class))

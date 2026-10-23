@@ -133,7 +133,6 @@ DELETE FROM wishlist
 WHERE campaign_id IN (SELECT campaign_id FROM demo_campaign) OR member_id IN (SELECT member_id FROM demo_member);
 DELETE FROM serve_log WHERE serve_id IN (SELECT serve_id FROM demo_serve);
 DELETE FROM ad_candidate WHERE campaign_id IN (SELECT campaign_id FROM demo_campaign);
-DELETE FROM budget_hourly_target WHERE budget_daily_plan_id IN (SELECT budget_daily_plan_id FROM demo_plan);
 DELETE FROM budget_daily_plan WHERE budget_daily_plan_id IN (SELECT budget_daily_plan_id FROM demo_plan);
 DELETE FROM feed_filter_category WHERE member_id IN (SELECT member_id FROM demo_member);
 DELETE FROM feed_filter WHERE member_id IN (SELECT member_id FROM demo_member);
@@ -386,7 +385,7 @@ rows('payment', ['payment_id', 'owner_id', 'order_id', 'pg_tid', 'amount', 'stat
                  'approved_at', 'canceled_at', 'created_at', 'updated_at'], pays)
 LEDGER_COLS = ['point_ledger_id', 'owner_id', 'campaign_id', 'serve_id', 'payment_id', 'refund_request_id', 'business_date',
                'adjust_target_date', 'entry_type', 'source', 'amount', 'reason', 'idempotency_key', 'created_at', 'updated_at']
-plans, hourly, ledger = [], [], list(charges)
+plans, ledger = [], list(charges)
 for c in CAMPAIGNS:
     cid = B + c['id']
     owner = B + c['s']
@@ -406,15 +405,8 @@ for c in CAMPAIGNS:
         if k < 0 and budget > 0:
             ledger.append([str(pid + 500000), str(owner), str(cid), 'NULL', 'NULL', 'NULL', d(k), 'NULL', "'RELEASE'",
                            "'REALTIME'", str(budget - spend(c, k)), 'NULL', 'NULL', ts(k + 1, '00:00:14'), ts(k + 1, '00:00:14')])
-        if k == 0 and budget > 0:
-            per = budget // 24
-            for h in range(24):
-                hourly.append([str(B + 300000 + c['id'] * 100 + h), str(pid),
-                               str(h), str(per + (budget - per * 24 if h == 23 else 0)), ts(0, '00:00:21'), ts(0, '00:00:21')])
 rows('budget_daily_plan', ['budget_daily_plan_id', 'campaign_id', 'owner_id', 'business_date', 'daily_budget', 'unit_price',
                            'paused', 'created_at', 'updated_at', 'status_changed_at'], plans)
-rows('budget_hourly_target', ['budget_hourly_target_id', 'budget_daily_plan_id', 'hour', 'target_amount', 'created_at',
-                              'updated_at'], hourly)
 rows('point_ledger', LEDGER_COLS, ledger)
 
 w('\n/*\n * 7. 오늘 서빙과 쿠폰 (후보, 쿠폰 회차와 재고, 가게 캠페인 요약).\n * 지난 날 회차는 진행 중 캠페인의 발급과 사용 내역이다.\n */\n')
