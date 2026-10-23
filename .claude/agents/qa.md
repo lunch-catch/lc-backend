@@ -24,7 +24,7 @@ tools: Bash, Read, Grep, Glob, Write
 - **로컬만 부른다.** 요청 주소는 `localhost` 뿐이다. `lunchcatch.com` 이 들어간 주소는 개발이든
   운영이든 부르지 않는다. 시나리오가 외부 서비스(카카오, 토스, S3, Bedrock)를 실제로 불러야 결과가
   나오면 막힘으로 적는다.
-- **저장소 파일을 고치지 않는다.** 쓰는 곳은 `build/qa-*` 와 임시 디렉터리뿐이다.
+- **저장소 파일을 고치지 않는다.** 쓰는 곳은 `.qa/` 와 임시 디렉터리뿐이다.
 - **기대 결과는 시나리오 표가 기준이다.** 표와 다르게 동작하면 실패로 적고 근거를 남긴다. 어느 쪽이
   맞는지는 판정하지 않는다. 표는 `docs/scenarios/README.md` 의 기준 커밋에서 뽑았으므로 그 뒤
   바뀐 코드 때문일 수 있다는 점도 함께 적는다.
@@ -36,7 +36,7 @@ tools: Bash, Read, Grep, Glob, Write
 |---|---|---|
 | 앱 | 저장소 루트에서 `CDN_BASE_URL=http://localhost:5174/qa-cdn ./gradlew bootRun`. compose 의 MySQL 과 Valkey 가 함께 뜨고 `local` 프로필이 기본 세계(`db/base`)를 넣는다 | `curl -fsS localhost:8081/actuator/health` |
 | 프론트 | lc-frontend 저장소에서 `pnpm install` 뒤 `pnpm dev:user`(5173), `pnpm dev:owner`(5174), `pnpm dev:admin`(5175). 위치는 `LC_FRONTEND` 가 있으면 그 값이고 없으면 부른 사람에게 묻는다. `VITE_API_BASE_URL` 은 비워 둔다. Vite 프록시가 `/v1` 을 `localhost:8080` 으로 넘긴다 | 그 포트가 HTML 을 준다 |
-| 브라우저 | `scripts/qa/browser-setup.sh` 를 한 번 돌린다 | `build/qa-tools/node_modules/playwright` 가 있다 |
+| 브라우저 | `scripts/qa/browser-setup.sh` 를 한 번 돌린다 | `.qa/tools/node_modules/playwright` 가 있다 |
 
 컨테이너 이름과 포트는 저장소 루트의 `.env` 로 QA 전용 값을 준다. 다른 체크아웃의 `launchcatch-mysql` 이
 이미 있으면 이름이 부딪혀 앱이 뜨지 않는다. 그 컨테이너에는 그 사람의 로컬 데이터가 있어 지우거나 덮지 않는다.
@@ -109,9 +109,9 @@ nvm 에 22 가 있으면 `PATH` 앞에 `~/.nvm/versions/node/<22 판>/bin` 을 �
    - **API 시나리오**(`backend.md`, 그리고 화면 없이 확인할 수 있는 분기)는 curl 로 부른다. 상태 코드,
      봉투의 `code`, 본문, 그리고 필요하면 DB 와 Valkey 의 변화를 확인한다.
    - **화면 시나리오**(`owner.md`, `admin.md`, `user.md`)는 Playwright 스크립트를 임시 디렉터리에 쓰고
-     `NODE_PATH=build/qa-tools/node_modules node <스크립트>` 로 돌린다. 경로로 들어가 표의 단계를
+     `NODE_PATH=.qa/tools/node_modules node <스크립트>` 로 돌린다. 경로로 들어가 표의 단계를
      누르고 기대 결과의 문구와 이동을 확인한다. 화면은 데이터를 받기 전에 뼈대만 그리므로 기대한 문구가 보일
-     때까지 기다린 뒤 판정한다. 실패하면 스크린샷을 `build/qa-report/shots/` 에 남긴다.
+     때까지 기다린 뒤 판정한다. 실패하면 스크린샷을 `.qa/report/shots/` 에 남긴다.
 4. 기대 결과와 견줘 판정한다.
 
 ### 로그인
@@ -135,7 +135,7 @@ API 가 있으면 그것으로 돌리고, 없으면 막힘이다.
 
 ## 4. 보고한다
 
-`build/qa-report/<범위>-<YYYYMMDD-HHMM>.md` 에 쓰고 부른 사람에게는 요약과 그 파일의 경로를 준다.
+`.qa/report/<범위>-<YYYYMMDD-HHMM>.md` 에 쓰고 부른 사람에게는 요약과 그 파일의 경로를 준다.
 
     | ID | 판정 | 근거 |
     |---|---|---|

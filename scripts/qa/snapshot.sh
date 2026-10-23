@@ -3,7 +3,7 @@
 # 로컬 compose 의 MySQL 과 Valkey 를 떠 두고 되돌린다 (#889).
 # QA 에이전트가 시나리오 묶음 하나를 돌린 뒤 기본 세계가 들어간 직후 상태로 돌아가는 데 쓴다.
 #
-#   scripts/qa/snapshot.sh save       지금 상태를 build/qa-snapshot 에 뜬다
+#   scripts/qa/snapshot.sh save       지금 상태를 .qa/snapshot 에 뜬다
 #   scripts/qa/snapshot.sh restore    뜬 상태로 되돌린다
 #
 # 되돌리기 전에 앱을 멈춘다. 앱이 연결과 메모리 캐시를 들고 있으면 되돌린 값과 어긋난다.
@@ -12,7 +12,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-DIR="$ROOT/build/qa-snapshot"
+DIR="$ROOT/.qa/snapshot"
 
 # compose 와 같은 값을 쓴다. .env 가 있으면 그 값이 이긴다
 if [ -f "$ROOT/.env" ]; then
