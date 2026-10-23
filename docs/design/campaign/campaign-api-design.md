@@ -41,7 +41,7 @@
   동시에 들어온 두 생성 요청 중 하나가 DB 제약으로 걸려 애플리케이션 레벨의 조회만으로는
   못 막는 경쟁을 막을 수 있다. 이 마이그레이션은 `#244`가 추가한다(명세 단계는 스키마를
   바꾸지 않는다)
-- **요청의 `storeId`와 `targetMenuId`가 로그인한 점주의 것인지 저장 전에 확인한다(`#874`).** `storeId`는 클라이언트가 보낸 값이라 `StoreQueryService.canManageStore(ownerId, storeId)`로 본인의 최종 등록된 가게인지 본다. 없는 가게, 남의 가게, 등록 중인 가게는 같은 `CAMPAIGN-013`(403)이라 존재 여부를 알려주지 않는다. `MENU` 할인이면 `findMenusByIdIn`의 정상 목록에 `targetMenuId`가 있고 그 메뉴의 `storeId`가 요청의 `storeId`와 같은지 본다. 없는 메뉴, 다른 가게의 메뉴, 이미지가 없거나 검증되지 않은 메뉴는 정상 목록에 들어오지 않으므로 한 번에 `CAMPAIGN-014`(422)로 거절한다. 두 확인은 다른 도메인의 조회라 트랜잭션 밖에서 끝낸다. 같은 가게의 기존 `DRAFT`를 덮어쓸 때도 그 `DRAFT`의 `ownerId`가 로그인한 점주인지 확인한다. 다르면 소유 확인이 생기기 전에 만들어진 데이터라 덮어쓰지 않고 `CAMPAIGN-005`로 거절하며 WARN 로그를 남긴다
+- **요청의 `storeId`와 `targetMenuId`가 로그인한 점주의 것인지 저장 전에 확인한다(`#874`).** `storeId`는 클라이언트가 보낸 값이라 `StoreQueryService.canManageStore(ownerId, storeId)`로 본인의 최종 등록된 가게인지 본다. 없는 가게, 남의 가게, 등록 중인 가게는 같은 `CAMPAIGN-013`(403)이라 존재 여부를 알려주지 않는다. `MENU` 할인이면 `findMenusByIdIn`의 정상 목록에 `targetMenuId`가 있고 그 메뉴의 `storeId`가 요청의 `storeId`와 같은지 본다. 없는 메뉴, 다른 가게의 메뉴, 이미지가 없거나 검증되지 않은 메뉴는 정상 목록에 들어오지 않으므로 한 번에 `CAMPAIGN-014`(422)로 거절한다. `MENU`인데 `targetMenuId`를 아예 보내지 않은 것은 필수값 누락이라 이 확인을 하지 않고, 엔티티 검증이 `COMMON-002`(400)로 거절한다(이 변경 전과 같다). 두 확인은 다른 도메인의 조회라 트랜잭션 밖에서 끝낸다. 같은 가게의 기존 `DRAFT`를 덮어쓸 때도 그 `DRAFT`의 `ownerId`가 로그인한 점주인지 확인한다. 다르면 소유 확인이 생기기 전에 만들어진 데이터라 덮어쓰지 않고 `CAMPAIGN-005`로 거절하며 WARN 로그를 남긴다
 - **점주는 `ENDED`가 아닌 캠페인을 동시에 하나만 가질 수 있다(`#525`, 피드백 리뷰로
   나온 요구사항).** 새로 만드는 경로(`create()`)에서만
   `CampaignRepository.existsByOwnerIdAndStatusNotIn(ownerId, List.of(ENDED))`로 확인한다.

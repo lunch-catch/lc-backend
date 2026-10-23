@@ -91,13 +91,13 @@
 
 | HTTP | 코드 | 조건 |
 |---|---|---|
-| 400 | COMMON-002 | 필수값 누락, `discountTargetType`/`discountType`이 허용값 밖, `usableStartTime`/`usableEndTime` 형식 불일치 등 |
+| 400 | COMMON-002 | 필수값 누락(`storeId`, `discountTargetType`이 `MENU`일 때의 `targetMenuId` 포함), `discountTargetType`/`discountType`이 허용값 밖, `usableStartTime`/`usableEndTime` 형식 불일치 등 |
 | 403 | CAMPAIGN-001 | 점주 상태가 ACTIVE가 아님 |
-| 403 | CAMPAIGN-013 | `storeId`가 없거나 점주 본인의 최종 등록된 가게가 아님(존재 여부를 알려주지 않으려고 같은 응답) |
+| 403 | CAMPAIGN-013 | `storeId`를 보냈지만 그 가게가 존재하지 않거나 점주 본인의 최종 등록된 가게가 아님(존재 여부를 알려주지 않으려고 같은 응답) |
 | 422 | CAMPAIGN-002 | `discountType`이 `PERCENT`이고 `discountValue`가 100 초과, 또는 `discountTargetType`이 `ALL`인데 `discountType`이 `PERCENT` |
 | 422 | CAMPAIGN-003 | `issueQuantity`가 0 이하 |
 | 422 | CAMPAIGN-004 | `usableStartTime`~`usableEndTime`이 11:30~15:00 밖이거나 30분 단위가 아니거나 1시간 미만 |
-| 422 | CAMPAIGN-014 | `discountTargetType`이 `MENU`인데 `targetMenuId`가 없는 메뉴이거나 그 가게의 메뉴가 아니거나 검증된 이미지가 없음 |
+| 422 | CAMPAIGN-014 | `discountTargetType`이 `MENU`이고 `targetMenuId`를 보냈지만 그 ID의 메뉴가 없거나 그 가게의 메뉴가 아니거나 검증된 이미지가 없음 |
 | 409 | CAMPAIGN-010 | 그 가게에 작성 중인 캠페인이 없는데(새로 만드는 경우), 이 점주의 다른 캠페인이 이미 `ENDED`가 아닌 상태로 남아 있음 |
 | 500 | COMMON-001 | 처리하지 못한 서버 오류 |
 
