@@ -58,7 +58,7 @@ class CampaignCouponConditionConcurrencyIntegrationTest extends AbstractCampaign
     @BeforeEach
     void setUp() {
         ownerId = createActiveOwner();
-        storeId = System.nanoTime();
+        storeId = createFinalizedStore(ownerId);
         Campaign existing = Campaign.create(
                 ownerId, storeId,
                 DiscountTargetType.ALL, DiscountType.AMOUNT, 10, null,
@@ -77,7 +77,22 @@ class CampaignCouponConditionConcurrencyIntegrationTest extends AbstractCampaign
                     .ifPresent(campaign -> campaignRepository.deleteById(campaign.getId()));
             return null;
         });
+        jdbc.update("delete from store where store_id = ?", storeId);
         jdbc.update("delete from owner where owner_id = ?", ownerId);
+    }
+
+    /*
+     * 점주의 최종 등록된 가게 행을 만든다. 서비스가 canManageStore 로 소유를 확인하므로(#874) 임의의 storeId로는
+     * 등록이 거절된다. 최종 등록 제약(chk_store_finalized)이 사업자 검증과 좌표를 요구해 함께 채운다.
+     */
+    private Long createFinalizedStore(Long ownerId) {
+        LocalDateTime now = LocalDateTime.now();
+        jdbc.update("insert into store (owner_id, name, category_code, representative_name, "
+                        + "business_verification_status, business_verified_at, latitude, longitude, finalized, "
+                        + "finalized_at, created_at, updated_at) "
+                        + "values (?, ?, 'KOREAN', ?, 'VERIFIED', ?, 37.5, 127.0, true, ?, ?, ?)",
+                ownerId, "campaign-concurrency-test-store-" + System.nanoTime(), "대표자", now, now, now, now);
+        return jdbc.queryForObject("select store_id from store where owner_id = ?", Long.class, ownerId);
     }
 
     /** owner 도메인 내부를 직접 참조하지 않고, 점주 AT 검증이 보는 행만 그대로 준비한다. */
