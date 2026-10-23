@@ -1,12 +1,15 @@
 package com.launchcatch.adserving;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.when;
 
 import com.launchcatch.adserving.engine.job.LoadDailyCandidateJob;
 import com.launchcatch.adserving.engine.service.CandidateLoadService;
+import com.launchcatch.billing.contract.BudgetProgress;
 import com.launchcatch.campaign.contract.AgeGroup;
 import com.launchcatch.campaign.contract.CampaignInfo;
 import com.launchcatch.campaign.contract.CampaignStatus;
@@ -98,6 +101,39 @@ class CandidateLoadIntegrationTest extends AbstractAdservingIntegrationTest {
                 SELECT campaign_id FROM ad_candidate
                 WHERE business_date = ? AND campaign_state = 'SERVABLE' AND sold_out_at IS NULL
                 """, Long.class, TODAY)).containsExactly(101L);
+    }
+
+    @Test
+    void 적재_끝에_정산의_예약액과_단가를_후보에_두고_그날_계획이_없으면_0으로_둔다() {
+        when(campaignQueryService.findServableOn(TODAY)).thenReturn(List.of(
+                campaign(101, 55, CampaignStatus.ACTIVE, null, DiscountTargetType.ALL, null, CHANGED_AT),
+                campaign(102, 56, CampaignStatus.ACTIVE, null, DiscountTargetType.MENU, 7001L, CHANGED_AT)));
+        when(campaignQueryService.findAllById(anyList())).thenReturn(List.of());
+        when(budgetQueryService.getProgress(anyCollection(), eq(TODAY)))
+                .thenReturn(List.of(new BudgetProgress(101L, 24_000, 10, 0)));
+
+        job.run(TODAY);
+
+        assertThat(budget(101)).containsEntry("reserved_amount", 24_000L).containsEntry("unit_price", 10L);
+        assertThat(budget(102)).containsEntry("reserved_amount", 0L).containsEntry("unit_price", 0L);
+    }
+
+    @Test
+    void 정산을_읽지_못해도_적재는_끝나고_예산은_비어_있다() {
+        when(campaignQueryService.findServableOn(TODAY)).thenReturn(List.of(
+                campaign(101, 55, CampaignStatus.ACTIVE, null, DiscountTargetType.ALL, null, CHANGED_AT)));
+        when(campaignQueryService.findAllById(anyList())).thenReturn(List.of());
+        when(budgetQueryService.getProgress(anyCollection(), eq(TODAY))).thenThrow(new IllegalStateException("카운터 장애"));
+
+        job.run(TODAY);
+
+        assertThat(rows()).isEqualTo(1);
+        assertThat(budget(101)).containsEntry("reserved_amount", null).containsEntry("unit_price", null);
+    }
+
+    private Map<String, Object> budget(long campaignId) {
+        return jdbcTemplate.queryForMap("SELECT reserved_amount, unit_price FROM ad_candidate WHERE business_date = ? AND campaign_id = ?",
+                TODAY, campaignId);
     }
 
     // 이어받기와 수동 재실행이 같은 영업일로 다시 돌린다(런치캐치_배치_운영.md 2장)

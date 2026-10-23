@@ -14,7 +14,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 
 /*
  * 후보 스냅샷은 00:00 배치가 만들고 엔티티에 생성 경로가 아직 없다.
- * 테스트는 리플렉션으로 채운다. 기본값은 전체 성별, 전 연령대, 노출 반경 3000m 다.
+ * 테스트는 리플렉션으로 채운다. 기본값은 전체 성별, 전 연령대, 노출 반경 3000m, 예약액 10만 원, 단가 10원이다.
  */
 public final class AdCandidateFixture {
 
@@ -43,6 +43,8 @@ public final class AdCandidateFixture {
         set("issueQuantity", 30);
         set("campaignCreatedAt", java.time.LocalDateTime.of(2026, 9, 1, 0, 0));
         set("campaignState", CandidateCampaignState.SERVABLE);
+        set("reservedAmount", 100_000L);
+        set("unitPrice", 10L);
     }
 
     public static AdCandidateFixture candidate(long campaignId, double latitude, double longitude) {

@@ -3,6 +3,7 @@ package com.launchcatch.adserving.engine.repository;
 import java.sql.Date;
 import java.sql.Time;
 import java.sql.Timestamp;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
@@ -69,6 +70,12 @@ class AdCandidateLoadImpl implements AdCandidateLoad {
                 updated_at = n.updated_at
             """;
 
+    private static final String UPDATE_BUDGET = """
+            UPDATE ad_candidate
+               SET reserved_amount = ?, unit_price = ?, updated_at = ?
+             WHERE business_date = ? AND campaign_id = ?
+            """;
+
     private final JdbcTemplate jdbcTemplate;
 
     @Override
@@ -104,6 +111,22 @@ class AdCandidateLoadImpl implements AdCandidateLoad {
             ps.setTimestamp(23, read);
             ps.setTimestamp(24, at);
             ps.setTimestamp(25, at);
+        });
+    }
+
+    @Override
+    public void updateBudgets(LocalDate businessDate, List<CandidateBudget> budgets, LocalDateTime now) {
+        if (budgets.isEmpty()) {
+            return;
+        }
+        Timestamp at = Timestamp.valueOf(now);
+        Date date = Date.valueOf(businessDate);
+        jdbcTemplate.batchUpdate(UPDATE_BUDGET, budgets, 500, (ps, b) -> {
+            ps.setLong(1, b.reservedAmount());
+            ps.setLong(2, b.unitPrice());
+            ps.setTimestamp(3, at);
+            ps.setDate(4, date);
+            ps.setLong(5, b.campaignId());
         });
     }
 }
