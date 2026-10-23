@@ -45,12 +45,34 @@ class AdminLoginServiceTest {
     private final com.launchcatch.auth.opaque.RefreshTokenRepository cache = mock(com.launchcatch.auth.opaque.RefreshTokenRepository.class);
     private final Clock clock = Clock.fixed(Instant.parse("2026-10-08T03:00:00Z"), ZoneId.of("Asia/Seoul"));
     private final AdminLoginRequest request = new AdminLoginRequest("admin01", "Freshman!2026");
+    private final AdminLoginAuditService loginAudit = mock(AdminLoginAuditService.class);
     private AdminLoginService service;
 
     @BeforeEach
     void setUp() {
         when(encoder.encode(any())).thenReturn("dummy-hash");
-        service = new AdminLoginService(admins, encoder, jwt, transactions, cache, clock);
+        service = new AdminLoginService(admins, encoder, jwt, transactions, cache, clock, loginAudit);
+    }
+
+    @Test
+    void 로그인_성공을_감사에_전달한다() {
+        prepare(Role.ADMIN);
+        service.login(request);
+        verify(loginAudit).record(1L, true);
+    }
+
+    @Test
+    void 존재하는_계정의_로그인_실패를_감사에_전달한다() {
+        when(admins.findByLoginId("admin01")).thenReturn(Optional.of(admin(Role.ADMIN)));
+        assertFailure(AuthErrorCode.LOGIN_FAILED);
+        verify(loginAudit).record(1L, false, 401);
+    }
+
+    @Test
+    void 없는_계정은_감사_저장소에_쓰지_않는다() {
+        when(admins.findByLoginId("admin01")).thenReturn(Optional.empty());
+        assertFailure(AuthErrorCode.LOGIN_FAILED);
+        verify(loginAudit).recordUnknownAccount();
     }
 
     @ParameterizedTest
