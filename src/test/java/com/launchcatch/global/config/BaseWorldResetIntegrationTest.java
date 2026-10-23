@@ -31,6 +31,8 @@ class BaseWorldResetIntegrationTest extends IntegrationTestSupport {
     private static final long REAL_MEMBER = 20_000_300L;
     private static final long REAL_OWNER = 20_000_030L;
     private static final long OLD_MEMBER = 3L;
+    private static final long BAND_OWNER = 20_000_031L;
+    private static final long BAND_STORE = 10_000_301L;
 
     private DataSource dataSource;
     private JdbcTemplate jdbc;
@@ -78,6 +80,17 @@ class BaseWorldResetIntegrationTest extends IntegrationTestSupport {
                 + "discount_type, discount_value, issue_quantity, usable_start_time, usable_end_time, target_radius, target_gender, "
                 + "target_age_groups, created_at, updated_at) VALUES (?, ?, ?, 'DRAFT', NOW(6), 'ALL', 'AMOUNT', 1000, 10, "
                 + "'11:30:00', '13:30:00', 1000, 'ALL', 'AGE_20S', NOW(6), NOW(6))", 20_000_600L, REAL_OWNER, REAL_OWNER);
+        // 실제 캠페인도 2,000만 대역 번호를 받는다. 그 포스터는 시연 포스터로 바뀌지 않는다
+        jdbc.update("INSERT INTO poster (poster_id, campaign_id, template_id, title, slot_values, html_content, created_at, updated_at, "
+                + "image_object_key) VALUES (?, ?, 10000001, '실제 포스터', JSON_OBJECT(), '<div>실제</div>', NOW(6), NOW(6), "
+                + "'posters/real.jpg')", 20_000_600L, 20_000_600L);
+        /*
+         * 기본 세계 번호를 이미 받은 실제 가게다 (개발의 가게 10000301).
+         * 기본 세계 가게 301 과 그 메뉴, 이미지, 영업시간을 실제 점주의 가게로 바꿔 흉내 낸다.
+         */
+        jdbc.update("INSERT INTO owner (owner_id, email, password_hash, role, status, tutorial_viewed, created_at, updated_at) "
+                + "VALUES (?, 'real-owner-2@example.com', ?, 'OWNER', 'ACTIVE', 1, NOW(6), NOW(6))", BAND_OWNER, HASH);
+        jdbc.update("UPDATE store SET owner_id = ?, name = '번호 겹친 실제 가게' WHERE store_id = ?", BAND_OWNER, BAND_STORE);
     }
 
     private List<Map<String, Object>> accounts() {
@@ -105,6 +118,19 @@ class BaseWorldResetIntegrationTest extends IntegrationTestSupport {
         assertThat(count("SELECT COUNT(*) FROM member_profile WHERE member_id = ?", REAL_MEMBER)).isEqualTo(1);
         assertThat(count("SELECT COUNT(*) FROM store WHERE store_id = ?", REAL_OWNER)).isEqualTo(1);
         assertThat(count("SELECT COUNT(*) FROM campaign WHERE campaign_id = 20000600")).isEqualTo(1);
+        assertThat(count("SELECT COUNT(*) FROM poster WHERE campaign_id = 20000600 AND title = '실제 포스터' "
+                + "AND image_object_key = 'posters/real.jpg'")).isEqualTo(1);
+        assertThat(count("SELECT COUNT(*) FROM poster_moderation_result WHERE poster_id = 20000600")).isZero();
+        // 번호가 겹친 실제 가게는 메뉴, 이미지, 영업시간과 함께 4,000만을 더한 번호로 옮겨졌다
+        assertThat(count("SELECT COUNT(*) FROM store WHERE store_id = ? AND owner_id = ?", BAND_STORE + 40_000_000L, BAND_OWNER))
+                .isEqualTo(1);
+        assertThat(count("SELECT COUNT(*) FROM store_menu WHERE store_id = ? AND store_menu_id > 50000000", BAND_STORE + 40_000_000L))
+                .isPositive();
+        assertThat(count("SELECT COUNT(*) FROM store_business_hour WHERE store_id = ? AND store_business_hour_id > 50000000",
+                BAND_STORE + 40_000_000L)).isEqualTo(7);
+        // 그 자리에는 기본 세계 가게 301 이 좌표와 함께 다시 들어갔다
+        assertThat(count("SELECT COUNT(*) FROM store WHERE store_id = ? AND owner_id = ? AND latitude IS NOT NULL",
+                BAND_STORE, BAND_STORE)).isEqualTo(1);
         /*
          * 기본 세계는 새 기준일로 다시 들어갔다.
          * 오늘 후보는 역 캠페인 210개와 오늘 끝나는 역 밖 캠페인 341 이다.

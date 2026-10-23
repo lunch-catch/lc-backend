@@ -346,7 +346,7 @@ JOIN (SELECT MIN(template_id) AS template_id FROM template WHERE status = 'PUBLI
 w('''INSERT INTO poster_moderation_result (poster_moderation_result_id, poster_id, result, reason, created_at, updated_at)
 SELECT p.poster_id, p.poster_id, 'PASS', NULL, p.created_at + INTERVAL 10 MINUTE, p.created_at + INTERVAL 10 MINUTE
 FROM poster p
-WHERE p.campaign_id BETWEEN 20000101 AND 20000999;
+WHERE p.campaign_id IN (''' + ', '.join(str(B + c['id']) for c in CAMPAIGNS) + ''');
 ''')
 
 w('\n-- 6. 정산 (포인트 계정, 승인 결제와 충전, 날마다 예약과 해제, 오늘 예약)\n')
