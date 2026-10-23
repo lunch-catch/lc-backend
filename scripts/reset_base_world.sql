@@ -92,7 +92,10 @@ DELETE FROM daily_store_analytics WHERE business_date >= CURDATE() - INTERVAL 61
 DELETE FROM daily_member_analytics WHERE business_date >= CURDATE() - INTERVAL 61 DAY;
 DELETE FROM daily_segment_analytics WHERE business_date >= CURDATE() - INTERVAL 61 DAY;
 
--- 배치 실행 기록. 기본 세계가 최근 60일의 SUCCESS 를 다시 넣는다. 그 사이 실제로 돈 기록이 남으면 기본 세계 행이 건너뛰어진다
+/*
+ * 배치 실행 기록이다. 기본 세계가 최근 60일의 SUCCESS 를 다시 넣는다.
+ * 그 사이 실제로 돈 기록이 남으면 기본 세계 행이 건너뛰어진다.
+ */
 DELETE FROM batch_execution_log
 WHERE batch_execution_log_id BETWEEN 10000001 AND 10099999 OR business_date >= CURDATE() - INTERVAL 61 DAY;
 
@@ -127,7 +130,10 @@ DELETE FROM store WHERE store_id IN (SELECT store_id FROM reset_store);
 -- 회원 프로필 (위치가 바뀌었다). 회원 행은 남긴다
 DELETE FROM member_profile WHERE member_id IN (SELECT member_id FROM reset_member);
 
--- 이력. V1 기록은 남긴다. V2 ~ V8 은 버전이 낮은 순서로 다시 돌아야 해서 모두 지운다
+/*
+ * 이력이다. V1 기록은 남긴다.
+ * V2 ~ V8 은 버전이 낮은 순서로 다시 돌아야 해서 모두 지운다.
+ */
 DELETE FROM flyway_history_base WHERE version IN ('2', '3', '4', '5', '6', '7', '8') OR (version IS NULL AND type = 'SQL');
 
 DROP TEMPORARY TABLE reset_report;

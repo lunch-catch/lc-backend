@@ -609,7 +609,7 @@ SELECT DATE_SUB(@d, INTERVAL dd.k DAY),
        IF(dd.k >= 8, 50000000 - (60 - dd.k) * 100000 + CRC32(CONCAT('uns-', dd.k)) % 100000,
           GREATEST(0, (SELECT COALESCE(SUM(pl.amount), 0) FROM point_ledger pl
                        WHERE pl.entry_type IN ('CHARGE', 'REFUND', 'ADJUST', 'DEDUCT')
-                         AND pl.owner_id BETWEEN @b + 1 AND @b + 300
+                         AND pl.owner_id BETWEEN @b + 1 AND @b + 500
                          AND pl.created_at < DATE_SUB(@d, INTERVAL dd.k - 1 DAY)))),
        TIMESTAMP(DATE_SUB(@d, INTERVAL dd.k - 1 DAY), '01:03:00'),
        TIMESTAMP(DATE_SUB(@d, INTERVAL dd.k - 1 DAY), '01:03:00')
@@ -625,7 +625,7 @@ LEFT JOIN (
            SUM(IF(entry_type = 'CHARGE', amount, 0)) AS amount,
            -SUM(IF(entry_type = 'REFUND', amount, 0)) AS refund
     FROM point_ledger
-    WHERE entry_type IN ('CHARGE', 'REFUND') AND owner_id BETWEEN @b + 1 AND @b + 300
+    WHERE entry_type IN ('CHARGE', 'REFUND') AND owner_id BETWEEN @b + 1 AND @b + 500
       AND created_at >= DATE_SUB(@d, INTERVAL 7 DAY) AND created_at < @d
     GROUP BY DATE(created_at)
 ) charged ON charged.business_date = DATE_SUB(@d, INTERVAL dd.k DAY)
@@ -633,7 +633,7 @@ LEFT JOIN (
     SELECT dr.business_date, -SUM(pl.amount) AS amount
     FROM point_ledger pl
     JOIN deduction_result dr ON dr.serve_id = pl.serve_id
-    WHERE pl.entry_type = 'DEDUCT' AND pl.owner_id BETWEEN @b + 1 AND @b + 300
+    WHERE pl.entry_type = 'DEDUCT' AND pl.owner_id BETWEEN @b + 1 AND @b + 500
       AND dr.business_date BETWEEN DATE_SUB(@d, INTERVAL 7 DAY) AND DATE_SUB(@d, INTERVAL 1 DAY)
     GROUP BY dr.business_date
 ) deducted ON deducted.business_date = DATE_SUB(@d, INTERVAL dd.k DAY)
@@ -642,7 +642,7 @@ LEFT JOIN (
            -SUM(IF(entry_type = 'RESERVE', amount, 0)) AS reserve_amount,
            SUM(IF(entry_type = 'RELEASE', amount, 0)) AS release_amount
     FROM point_ledger
-    WHERE entry_type IN ('RESERVE', 'RELEASE') AND owner_id BETWEEN @b + 1 AND @b + 300
+    WHERE entry_type IN ('RESERVE', 'RELEASE') AND owner_id BETWEEN @b + 1 AND @b + 500
       AND business_date BETWEEN DATE_SUB(@d, INTERVAL 7 DAY) AND DATE_SUB(@d, INTERVAL 1 DAY)
     GROUP BY business_date
 ) reserved ON reserved.business_date = DATE_SUB(@d, INTERVAL dd.k DAY)
@@ -651,7 +651,7 @@ LEFT JOIN (
            SUM(amount) AS amount,
            SUM(IF(amount > 0, amount, 0)) AS positive
     FROM point_ledger
-    WHERE entry_type = 'ADJUST' AND owner_id BETWEEN @b + 1 AND @b + 300
+    WHERE entry_type = 'ADJUST' AND owner_id BETWEEN @b + 1 AND @b + 500
     GROUP BY COALESCE(adjust_target_date, DATE(created_at))
 ) adjusted ON adjusted.business_date = DATE_SUB(@d, INTERVAL dd.k DAY)
 WHERE dd.k BETWEEN 1 AND 60

@@ -105,19 +105,18 @@ class BaseWorldResetIntegrationTest extends IntegrationTestSupport {
         assertThat(count("SELECT COUNT(*) FROM member_profile WHERE member_id = ?", REAL_MEMBER)).isEqualTo(1);
         assertThat(count("SELECT COUNT(*) FROM store WHERE store_id = ?", REAL_OWNER)).isEqualTo(1);
         assertThat(count("SELECT COUNT(*) FROM campaign WHERE campaign_id = 20000600")).isEqualTo(1);
-        // 기본 세계는 새 기준일로 다시 들어갔다. 오늘 후보는 역 캠페인 210개와 오늘 끝나는 역 밖 캠페인 341 이다
+        /*
+         * 기본 세계는 새 기준일로 다시 들어갔다.
+         * 오늘 후보는 역 캠페인 210개와 오늘 끝나는 역 밖 캠페인 341 이다.
+         */
         assertThat(count("SELECT COUNT(*) FROM ad_candidate WHERE business_date = '2026-10-28' AND campaign_id BETWEEN 10000001 AND 19999999"))
                 .isEqualTo(211);
-        // 예전 기준일(10-20)의 오늘 후보는 남지 않는다. 캠페인 1 의 D-8 후보(ADS.CANDIDATE_OLD)는 새 기준일에서도 10-20 이다
+        /*
+         * 예전 기준일(10-20)의 오늘 후보는 남지 않는다.
+         * 캠페인 1 의 D-8 후보(ADS.CANDIDATE_OLD)는 새 기준일에서도 10-20 이다.
+         */
         assertThat(count("SELECT COUNT(*) FROM ad_candidate WHERE business_date = '2026-10-20' AND campaign_id <> 10000001")).isZero();
         assertThat(count("SELECT COUNT(*) FROM flyway_history_base WHERE success = 0")).isZero();
-        StringBuilder mismatches = new StringBuilder();
-        for (String[] check : BaseWorldIntegrationTest.CONSISTENCY) {
-            long bad = jdbc.queryForObject(check[1], Long.class);
-            if (bad > 0) {
-                mismatches.append(check[0]).append('=').append(bad).append("; ");
-            }
-        }
-        assertThat(mismatches.toString()).isEmpty();
+        assertThat(BaseWorldIntegrationTest.consistencyViolations(jdbc)).isEmpty();
     }
 }

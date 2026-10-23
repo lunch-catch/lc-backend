@@ -344,7 +344,10 @@ SELECT 10000000 + n * 10 + dn, 10000000 + n, owner_id, bdate, daily_budget, 10, 
   FROM base_plan
     ON DUPLICATE KEY UPDATE budget_daily_plan.budget_daily_plan_id = budget_daily_plan.budget_daily_plan_id;
 
--- 시간대별 목표는 광고 서빙이 그때그때 계산한다. 그 표(budget_hourly_target)는 V8 이 지웠으므로 넣지 않는다 (#829, #858)
+/*
+ * 시간대별 목표는 광고 서빙이 그때그때 계산한다.
+ * 그 표(budget_hourly_target)는 V8 이 지웠으므로 넣지 않는다 (#829, #858).
+ */
 
 /*
  * 원장 RESERVE: 예산이 있는 계획마다 그날 00:00 (B+1000000 + n * 10 + dn).
