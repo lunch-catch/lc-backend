@@ -207,7 +207,7 @@
 | `LOG-2-07` | `PAYMENT_WEBHOOK_IGNORED` (6곳) | `reason=malformed` 처럼 소문자다 | `UPPER_SNAKE` 로 쓴다 |
 | `LOG-2-09` | `DailyAggregationJob` | `DAILY_AGGREGATION_DONE outcomes={}` 에 `Map` 을 통째로 넣는다 | 결과별 개수를 키로 남긴다 |
 | `LOG-3-03` | `DAILY_AGGREGATION_ERROR`, `PG_RECON_ERROR`, `PAYMENT_RECHECK_ERROR`, `KAKAO_UNLINK_RETRY_MARK_FAILED_ERROR`, `OWNER_REFRESH_REUSE_DETECTED`, `SCHEDULER_END`, `SETTLEMENT_CONSISTENCY_VIOLATION`, `PAYMENT_WEBHOOK_IGNORED` | 동의어 접미사를 쓴다 | `_FAILED`, `_SUSPECTED`, `_DONE`, `_MISMATCH`, `_SKIPPED` 로 바꾼다. `DAILY_AGGREGATION_ERROR` 와 `DAILY_AGGREGATION_FAILED` 는 `reason` 으로 나눈다 |
-| `LOG-3-01` | `CANDIDATE_LOADED`, `SPEND_RECON_*`, `RESERVE_*`, `FUNDING_JUDGE_*`, `PG_RECON_*`, `HOURLY_TARGET_DONE`, `RATE_LIMIT_*` 등 | 도메인 접두사가 없다 | 도메인 이름을 앞에 붙인다 |
+| `LOG-3-01` | `CANDIDATE_LOADED`, `SPEND_RECON_*`, `RESERVE_*`, `FUNDING_JUDGE_*`, `PG_RECON_*`, `RATE_LIMIT_*` 등 | 도메인 접두사가 없다 | 도메인 이름을 앞에 붙인다 |
 | `LOG-4-01`, `LOG-4-03` | `reason` 에 `getErrorCode().getCode()` 를 넣는 곳(`member/service` 등 약 14곳), `code=` 를 쓰는 곳(`campaign`, `coupon`, 예외 핸들러) | 에러 코드가 `reason` 과 `code` 에 흩어져 있다 | 우리 에러 코드는 `errorCode`, 토스의 코드는 `externalErrorCode` 로 쓴다 |
 | `LOG-4-01` | `causeType`, `errorType`, `err`, `cause`(예외 클래스일 때) | 예외 클래스의 키가 여럿이다 | `exceptionType` 으로 쓴다. `RedisFailureClassifier` 의 라벨을 담은 `cause` 는 `reason` 으로 쓴다 |
 | `LOG-4-04` | `FailureLogDetails` 를 `details=`, `cause=` 에 넣는 곳 | 객체를 통째로 넣는다 | `exceptionType`, `httpStatus`, `sqlState`, `sqlErrorCode`, `origin` 키로 펼친다 |
