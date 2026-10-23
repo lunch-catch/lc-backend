@@ -12,7 +12,6 @@ import io.swagger.v3.oas.annotations.media.Content;
 import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
-import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import java.time.LocalDate;
 import lombok.RequiredArgsConstructor;
@@ -26,7 +25,6 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/v1/admin/owners")
 @RequiredArgsConstructor
 @Tag(name = "관리자 점주 조회", description = "관리자와 최고 관리자의 점주 목록 조회·검색 API입니다.")
-@SecurityRequirement(name = "adminAccessToken")
 public class AdminOwnerController {
 
     private final AdminOwnerService service;

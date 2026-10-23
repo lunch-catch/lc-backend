@@ -11,7 +11,6 @@ import io.swagger.v3.oas.annotations.media.Content;
 import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
-import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -28,7 +27,6 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/v1/member-profiles/location")
 @RequiredArgsConstructor
 @Tag(name = "회원 저장 위치", description = "회원당 대표 저장 위치 한 개를 설정·조회·삭제합니다.")
-@SecurityRequirement(name = "memberAccessToken")
 public class MemberProfileController {
 
     private final MemberLocationService memberLocationService;
