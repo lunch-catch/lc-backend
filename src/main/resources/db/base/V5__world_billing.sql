@@ -114,7 +114,7 @@ JOIN base_n j ON j.n <= r.cnt_100k + r.cnt_50k + r.cnt_10k
 ON DUPLICATE KEY UPDATE payment_id = payment.payment_id;
 
 /*
- * BIL.BALANCE_ENOUGH: 진행 중 캠페인을 더한 점주 301 ~ 330 (#858) 은 100,000 승인 결제 3건으로 300,000 이다.
+ * BIL.BALANCE_ENOUGH: 진행 중 캠페인을 더한 점주 301 ~ 330 과 341 (#858) 은 100,000 승인 결제 3건으로 300,000 이다.
  * payment_id = B + 3000 + (n - 301) * 3 + j 이고 날짜는 채움 결제와 같은 D-(80 + j) 다.
  */
 INSERT INTO payment (payment_id, owner_id, order_id, pg_tid, amount, status, failure_reason, pg_cancel_id,
@@ -130,7 +130,7 @@ SELECT 10003000 + (o.n - 301) * 3 + j.n,
        DATE_SUB(@base_d, INTERVAL (80 + j.n) DAY) + INTERVAL (601 + o.n) MINUTE
 FROM base_n o
 JOIN (SELECT 1 AS n UNION ALL SELECT 2 UNION ALL SELECT 3) j
-WHERE o.n BETWEEN 301 AND 330
+WHERE o.n BETWEEN 301 AND 330 OR o.n = 341
 ON DUPLICATE KEY UPDATE payment_id = payment.payment_id;
 
 /*

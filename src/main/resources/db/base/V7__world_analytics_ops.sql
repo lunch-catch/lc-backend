@@ -660,14 +660,14 @@ ON DUPLICATE KEY UPDATE daily_settlement_analytics.business_date = daily_settlem
 /*
  * ANA.DAILY_METRICS_D60_D1
  * 가게 지표는 WORLD_SPEC 공식으로 센다 (원천이 V6 가 아니다). 확정 가게(점주 1 ~ 250, 291 ~ 500)는 점주 가입일 D-(120 - n % 110) 에 생긴 것으로 본다.
- * 진행 중 캠페인은 ACTIVE 1 ~ 180 (179 빼고, D-14 부터)과 301 ~ 330, 242 (D-10 부터), ENDED 1000 + n 의 7일 기간이다.
+ * 진행 중 캠페인은 ACTIVE 1 ~ 180 (179 빼고, D-14 부터)과 301 ~ 330, 341, 242 (D-10 부터), ENDED 1000 + n 의 7일 기간이다.
  */
 INSERT INTO daily_store_analytics (
     business_date, new_store_count, cumulative_store_count, active_campaign_count, created_at, updated_at)
 SELECT DATE_SUB(@d, INTERVAL dd.k DAY),
        SUM((n.n <= 250 OR n.n BETWEEN 291 AND 500) AND 120 - n.n % 110 = dd.k),
        SUM((n.n <= 250 OR n.n BETWEEN 291 AND 500) AND 120 - n.n % 110 >= dd.k),
-       IF(dd.k <= 14, 209, 0) + IF(dd.k <= 10, 1, 0)
+       IF(dd.k <= 14, 210, 0) + IF(dd.k <= 10, 1, 0)
            + SUM(n.n <= 300 AND dd.k BETWEEN 14 + n.n % 60 AND 20 + n.n % 60),
        TIMESTAMP(DATE_SUB(@d, INTERVAL dd.k - 1 DAY), '01:03:00'),
        TIMESTAMP(DATE_SUB(@d, INTERVAL dd.k - 1 DAY), '01:03:00')

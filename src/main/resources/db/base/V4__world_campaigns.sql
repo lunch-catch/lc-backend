@@ -49,26 +49,26 @@ CREATE TEMPORARY TABLE base_cmp (
 ) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 /*
- * CMP.ACTIVE, CMP.ACTIVE_MANY, CMP.ACTIVE_MENU: 1 ~ 180 과 301 ~ 330 (#858) 은 D-14 ~ D+14. 세 역에 70개씩이다.
+ * CMP.ACTIVE, CMP.ACTIVE_MANY, CMP.ACTIVE_MENU: 1 ~ 180 과 301 ~ 330 (#858) 은 D-14 ~ D+28. 세 역에 70개씩이고 4주 동안 그대로다.
  * CMP.ACTIVE_FIRST_DAY: 179 는 D 에 시작한다.
- * CMP.ENDS_TODAY: 178 은 D 에 끝난다.
+ * CMP.ENDS_TODAY: 341 (역 밖 가게) 은 D 에 끝난다. 역 캠페인 수가 다음 날 줄지 않게 역 밖에 둔다.
  * CMP.ACTIVE_PAST_END: 242 는 D-1 에 끝났는데 ACTIVE 로 남았다.
  */
 INSERT INTO base_cmp (n, s, status, start_date, end_date, status_changed_at, created_at)
 SELECT n, n, 'ACTIVE',
        CASE WHEN n = 179 THEN DATE('${baseDate}') ELSE DATE_SUB(DATE('${baseDate}'), INTERVAL 14 DAY) END,
-       CASE WHEN n = 178 THEN DATE('${baseDate}') WHEN n = 242 THEN DATE_SUB(DATE('${baseDate}'), INTERVAL 1 DAY)
-            ELSE DATE_ADD(DATE('${baseDate}'), INTERVAL 14 DAY) END,
+       CASE WHEN n = 341 THEN DATE('${baseDate}') WHEN n = 242 THEN DATE_SUB(DATE('${baseDate}'), INTERVAL 1 DAY)
+            ELSE DATE_ADD(DATE('${baseDate}'), INTERVAL 28 DAY) END,
        TIMESTAMP(CASE WHEN n = 179 THEN DATE('${baseDate}') ELSE DATE_SUB(DATE('${baseDate}'), INTERVAL 14 DAY) END, '00:00:00'),
        TIMESTAMP(CASE WHEN n = 179 THEN DATE_SUB(DATE('${baseDate}'), INTERVAL 3 DAY) ELSE DATE_SUB(DATE('${baseDate}'), INTERVAL 17 DAY) END, '10:00:00')
 FROM base_n
-WHERE n <= 180 OR n = 242 OR n BETWEEN 301 AND 330;
+WHERE n <= 180 OR n = 242 OR n BETWEEN 301 AND 330 OR n = 341;
 
 -- CMP.PAUSED_OWNER (181 ~ 195), CMP.PAUSED_NO_POINTS (196 ~ 205), CMP.PAUSED_ADMIN (206 ~ 210)
 INSERT INTO base_cmp (n, s, status, paused_reason, start_date, end_date, status_changed_at, created_at)
 SELECT n, n, 'PAUSED',
        CASE WHEN n <= 195 THEN 'OWNER' WHEN n <= 205 THEN 'NO_POINTS' ELSE 'ADMIN' END,
-       DATE_SUB(DATE('${baseDate}'), INTERVAL 14 DAY), DATE_ADD(DATE('${baseDate}'), INTERVAL 14 DAY),
+       DATE_SUB(DATE('${baseDate}'), INTERVAL 14 DAY), DATE_ADD(DATE('${baseDate}'), INTERVAL 28 DAY),
        CASE WHEN n <= 195 THEN TIMESTAMP(DATE_SUB(DATE('${baseDate}'), INTERVAL 8 DAY), '14:00:00')
             WHEN n <= 205 THEN TIMESTAMP(DATE('${baseDate}'), '00:00:00')
             ELSE TIMESTAMP(DATE_SUB(DATE('${baseDate}'), INTERVAL 8 DAY), '10:00:00') END,
@@ -135,7 +135,7 @@ WHERE n <= 25;
 
 -- CMP.MULTI_PER_OWNER: 가게 177 (ACTIVE 177) 에 PAUSED OWNER 캠페인 하나를 더한다 (B+2101)
 INSERT INTO base_cmp (n, s, status, paused_reason, start_date, end_date, status_changed_at, created_at)
-VALUES (2101, 177, 'PAUSED', 'OWNER', DATE_SUB(DATE('${baseDate}'), INTERVAL 14 DAY), DATE_ADD(DATE('${baseDate}'), INTERVAL 14 DAY),
+VALUES (2101, 177, 'PAUSED', 'OWNER', DATE_SUB(DATE('${baseDate}'), INTERVAL 14 DAY), DATE_ADD(DATE('${baseDate}'), INTERVAL 28 DAY),
         TIMESTAMP(DATE_SUB(DATE('${baseDate}'), INTERVAL 8 DAY), '14:00:00'), TIMESTAMP(DATE_SUB(DATE('${baseDate}'), INTERVAL 17 DAY), '10:00:00'));
 
 /*

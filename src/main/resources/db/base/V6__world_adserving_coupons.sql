@@ -39,7 +39,7 @@ INSERT INTO base_cat VALUES
  * 캠페인 1 ~ 205 와 242 의 값을 WORLD_SPEC 공식으로 계산한다.
  * 상태: 1 ~ 180, 242, 301 ~ 330 (#858) ACTIVE, 181 ~ 195 PAUSED OWNER, 196 ~ 205 PAUSED NO_POINTS.
  * 가게 좌표는 V3 가 넣은 store 행에서 읽는다 (역 둘레 공식, #858).
- * 기간은 D-14 ~ D+14, 179 는 D 시작, 178 은 D 종료, 242 는 D-1 종료다.
+ * 기간은 D-14 ~ D+28, 179 는 D 시작, 341 은 D 종료(역 밖), 242 는 D-1 종료다.
  */
 CREATE TEMPORARY TABLE base_cmp (
     n INT PRIMARY KEY,
@@ -74,7 +74,7 @@ CREATE TEMPORARY TABLE base_cmp (
 );
 INSERT INTO base_cmp
 SELECT x.n, 10000000 + x.n, 10000000 + x.n, 10000000 + x.n,
-       CASE WHEN x.n <= 180 OR x.n = 242 OR x.n BETWEEN 301 AND 330 THEN 'ACTIVE' WHEN x.n <= 195 THEN 'PAUSED_OWNER' ELSE 'PAUSED_NO_POINTS' END,
+       CASE WHEN x.n <= 180 OR x.n = 242 OR x.n BETWEEN 301 AND 330 OR x.n = 341 THEN 'ACTIVE' WHEN x.n <= 195 THEN 'PAUSED_OWNER' ELSE 'PAUSED_NO_POINTS' END,
        x.start_date, x.end_date, c.code,
        CONCAT(c.label, ' ', LPAD(x.n, 3, '0'), '호점'),
        CONCAT(TRIM(TRAILING '/' FROM '${baseCdnBaseUrl}'), '/world/stores/', 10000000 + x.n, '/logo.jpg'),
@@ -97,7 +97,7 @@ SELECT x.n, 10000000 + x.n, 10000000 + x.n, 10000000 + x.n,
        IF(x.n % 17 = 0, 3, ELT(x.n % 5 + 1, 10, 20, 30, 50, 100)),
        ELT(x.n % 4 + 1, 5000, 10000, 20000, 30000),
        TIMESTAMP(DATE_SUB(x.start_date, INTERVAL 1 DAY), '10:00:00'),
-       CASE WHEN x.n <= 180 OR x.n = 242 OR x.n BETWEEN 301 AND 330 THEN TIMESTAMP(x.start_date)
+       CASE WHEN x.n <= 180 OR x.n = 242 OR x.n BETWEEN 301 AND 330 OR x.n = 341 THEN TIMESTAMP(x.start_date)
             WHEN x.n <= 195 THEN TIMESTAMP(DATE_SUB('${baseDate}', INTERVAL 3 DAY), '15:00:00')
             ELSE TIMESTAMP('${baseDate}') END
   FROM (
@@ -110,9 +110,9 @@ SELECT x.n, 10000000 + x.n, 10000000 + x.n, 10000000 + x.n,
                b.n % 4 > 0 AND b.n % 2 = 0 AS is_menu,
                8000 + (b.n * 500 + 1000) % 7000 AS price,
                IF(b.n = 179, DATE('${baseDate}'), DATE_SUB('${baseDate}', INTERVAL 14 DAY)) AS start_date,
-               CASE WHEN b.n = 178 THEN DATE('${baseDate}') WHEN b.n = 242 THEN DATE_SUB('${baseDate}', INTERVAL 1 DAY)
-                    ELSE DATE_ADD('${baseDate}', INTERVAL 14 DAY) END AS end_date
-          FROM base_n b WHERE b.n <= 205 OR b.n = 242 OR b.n BETWEEN 301 AND 330
+               CASE WHEN b.n = 341 THEN DATE('${baseDate}') WHEN b.n = 242 THEN DATE_SUB('${baseDate}', INTERVAL 1 DAY)
+                    ELSE DATE_ADD('${baseDate}', INTERVAL 28 DAY) END AS end_date
+          FROM base_n b WHERE b.n <= 205 OR b.n = 242 OR b.n BETWEEN 301 AND 330 OR b.n = 341
       ) y
   ) x
   JOIN base_cat c ON c.k = x.n % 9

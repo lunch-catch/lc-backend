@@ -133,9 +133,19 @@ class BaseWorldIntegrationTest extends IntegrationTestSupport {
                 .extracting(row -> ((Number) row.get("COUNT(*)")).longValue())
                 .containsExactly(100L, 100L, 100L);
         assertThat(jdbc.queryForList("SELECT nearest, COUNT(*) FROM (" + nearestStation("latitude", "longitude", "ad_candidate")
-                + " WHERE business_date = '2026-10-28' AND campaign_id BETWEEN 10000001 AND 19999999) x GROUP BY nearest ORDER BY nearest"))
+                + " WHERE business_date = '2026-10-28' AND campaign_id BETWEEN 10000001 AND 19999999) x WHERE dist <= 500 GROUP BY nearest ORDER BY nearest"))
                 .extracting(row -> ((Number) row.get("COUNT(*)")).longValue())
                 .containsExactly(70L, 70L, 70L);
+        // 기준일부터 14일 동안 날마다 역별 진행 중 캠페인이 70개다. 피드 후보와 쿠폰은 00:00 배치가 이 캠페인으로 만든다
+        for (int day = 0; day <= 14; day++) {
+            assertThat(jdbc.queryForList("SELECT nearest, COUNT(*) FROM (" + nearestStation("s.latitude", "s.longitude",
+                    "campaign c JOIN store s ON s.store_id = c.store_id") + " WHERE c.campaign_id BETWEEN 10000001 AND 19999999 "
+                    + "AND c.status = 'ACTIVE' AND DATE_ADD('2026-10-28', INTERVAL " + day + " DAY) BETWEEN c.start_date AND c.end_date) x "
+                    + "WHERE dist <= 500 GROUP BY nearest ORDER BY nearest"))
+                    .as("D+" + day)
+                    .extracting(row -> ((Number) row.get("COUNT(*)")).longValue())
+                    .containsExactly(70L, 70L, 70L);
+        }
         // 모든 가게가 강남구 안이다 (위도 37.46 ~ 37.535, 경도 127.01 ~ 127.125)
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM store WHERE latitude IS NOT NULL AND (latitude NOT BETWEEN 37.46 AND 37.535 "
                 + "OR longitude NOT BETWEEN 127.01 AND 127.125)", Long.class)).isZero();

@@ -22,13 +22,13 @@ DEMO_MEMBERS = 10  # B + 201 ~ 210
 
 # 캠페인: id, 가게, 상태, 할인, 수량, 하루 예산, 시작(D 기준 일수), 끝, 사용 시간
 CAMPAIGNS = [
-    dict(id=101, s=11, status='ACTIVE', disc=3000, qty=50, budget=20000, start=-14, end=14),
+    dict(id=101, s=11, status='ACTIVE', disc=3000, qty=50, budget=20000, start=-14, end=28),
     dict(id=111, s=11, status='ENDED', disc=2000, qty=50, budget=20000, start=-60, end=-54),
     dict(id=112, s=11, status='ENDED', disc=2500, qty=50, budget=20000, start=-45, end=-39),
     dict(id=113, s=11, status='ENDED', disc=3000, qty=50, budget=20000, start=-30, end=-24),
     dict(id=301, s=13, status='SCHEDULED', disc=3000, qty=50, budget=10000, start=0, end=14),
-    dict(id=401, s=14, status='ACTIVE', disc=3000, qty=3, budget=20000, start=-7, end=7),
-    dict(id=501, s=15, status='PAUSED', disc=3000, qty=50, budget=10000, start=-10, end=10),
+    dict(id=401, s=14, status='ACTIVE', disc=3000, qty=3, budget=20000, start=-7, end=28),
+    dict(id=501, s=15, status='PAUSED', disc=3000, qty=50, budget=10000, start=-10, end=28),
 ]
 USABLE = ('11:30:00', '15:00:00')
 PAYMENTS = {11: [-80, -60, -40, -20, -5], 12: [-10], 13: [-10], 14: [-10], 15: [-11]}
