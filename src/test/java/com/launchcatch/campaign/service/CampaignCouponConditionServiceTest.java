@@ -138,6 +138,18 @@ class CampaignCouponConditionServiceTest {
     }
 
     @Test
+    @DisplayName("MENU 할인인데 targetMenuId가 없으면 메뉴를 조회하지 않고 필수값 누락으로 거절한다(#874)")
+    void MENU_할인에_메뉴_ID가_없으면_메뉴를_조회하지_않는다() {
+        when(campaignRepository.findByStoreIdAndStatus(STORE_ID, CampaignStatus.DRAFT)).thenReturn(Optional.empty());
+        CampaignCouponConditionRequest request = request(DiscountTargetType.MENU, DiscountType.AMOUNT, 3000, null);
+
+        assertThatThrownBy(() -> service.handle(OWNER_ID, request)).isInstanceOf(IllegalArgumentException.class);
+
+        verify(storeQueryService, never()).findMenusByIdIn(any());
+        verify(campaignRepository, never()).saveAndFlush(any());
+    }
+
+    @Test
     @DisplayName("그 가게의 DRAFT가 다른 점주의 것이면 덮어쓰지 않고 CAMPAIGN-005로 거부한다(#874)")
     void 다른_점주의_DRAFT는_덮어쓰지_않는다() throws Exception {
         Campaign foreignDraft = existingDraft(99L);

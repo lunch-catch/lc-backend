@@ -161,11 +161,6 @@ public class CampaignCouponConditionService {
     }
 
     /*
-     * discountTargetType이 ALL(전체 메뉴)이면 discountType은 AMOUNT(정액)만 허용한다(#431,
-     * 팀 논의로 바뀐 사양). MENU(특정 메뉴)는 PERCENT/AMOUNT 둘 다 그대로 허용한다. 엔티티의
-     * requireDiscountValue(Campaign.create/updateCouponCondition)에도 같은 제약이 있다.
-     */
-    /*
      * 최종 등록된 본인 가게만 통과한다. 가게가 없거나 다른 점주의 것이거나 등록 중이어도 같은 응답이라 존재 여부를
      * 알려 주지 않는다. 조회 장애는 권한 없음으로 바꾸지 않고 그대로 올라간다.
      */
@@ -180,8 +175,8 @@ public class CampaignCouponConditionService {
     /*
      * MENU 할인이면 targetMenuId 가 그 가게의 메뉴이고 검증된 이미지가 있어야 한다. 없는 메뉴, 다른 가게의 메뉴, 이미지가
      * 없거나 검증되지 않은 메뉴는 findMenusByIdIn 의 정상 목록에 들어오지 않으므로 한 번에 걸러진다. 이 메뉴는 포스터와
-     * 쿠폰 준비에서도 그 이미지가 필요해 어차피 뒤에서 실패한다. 조합이 틀린 요청(MENU 인데 메뉴 ID 가 없음 등)은 여기서
-     * 판단하지 않고 엔티티 검증에 맡긴다.
+     * 쿠폰 준비에서도 그 이미지가 필요해 어차피 뒤에서 실패한다. MENU 인데 메뉴 ID 를 보내지 않은 것은 필수값 누락이라
+     * 여기서 판단하지 않는다. 엔티티 검증(IllegalArgumentException)이 400 COMMON-002 로 거절하고, 이는 #874 이전과 같다.
      */
     private void validateTargetMenu(CampaignCouponConditionRequest request) {
         if (request.discountTargetType() != DiscountTargetType.MENU || request.targetMenuId() == null) {
@@ -196,6 +191,11 @@ public class CampaignCouponConditionService {
         }
     }
 
+    /*
+     * discountTargetType이 ALL(전체 메뉴)이면 discountType은 AMOUNT(정액)만 허용한다(#431,
+     * 팀 논의로 바뀐 사양). MENU(특정 메뉴)는 PERCENT/AMOUNT 둘 다 그대로 허용한다. 엔티티의
+     * requireDiscountValue(Campaign.create/updateCouponCondition)에도 같은 제약이 있다.
+     */
     private void validateDiscountValue(DiscountTargetType discountTargetType, DiscountType discountType, int discountValue) {
         boolean positive = discountValue > 0;
         boolean withinPercent = discountType != DiscountType.PERCENT || discountValue <= 100;
