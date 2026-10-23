@@ -268,6 +268,27 @@ class CampaignRepositoryIntegrationTest extends com.launchcatch.campaign.Abstrac
         assertThat(ownerIdsPlan).contains("idx_campaign_owner_id");
     }
 
+    @Test
+    void 시작_전에_기간이_지난_SCHEDULED만_종료_대상으로_고른다() {
+        LocalDate businessDate = LocalDate.of(2026, 10, 20);
+        Campaign expired = scheduled(draftWithPeriod(9201L, LocalDate.of(2026, 10, 1), LocalDate.of(2026, 10, 19)));
+        Campaign endsToday = scheduled(draftWithPeriod(9202L, LocalDate.of(2026, 10, 1), LocalDate.of(2026, 10, 20)));
+        Campaign notYet = scheduled(draftWithPeriod(9203L, LocalDate.of(2026, 10, 25), LocalDate.of(2026, 10, 31)));
+        Campaign expiredDraft = save(draftWithPeriod(9204L, LocalDate.of(2026, 10, 1), LocalDate.of(2026, 10, 19)));
+        entityManager.flush();
+        entityManager.clear();
+
+        List<Long> ids = campaignRepository.findScheduledIdsToEnd(businessDate);
+
+        assertThat(ids).contains(expired.getId())
+                .doesNotContain(endsToday.getId(), notYet.getId(), expiredDraft.getId());
+    }
+
+    private Campaign scheduled(Campaign campaign) {
+        campaign.schedule(now());
+        return save(campaign);
+    }
+
     private String explainJson(String sql) {
         return (String) entityManager.createNativeQuery("EXPLAIN FORMAT=JSON " + sql).getSingleResult();
     }

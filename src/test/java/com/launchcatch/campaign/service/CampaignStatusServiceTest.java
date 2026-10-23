@@ -258,6 +258,54 @@ class CampaignStatusServiceTest {
     }
 
     @Test
+    @DisplayName("기간이 시작 전에 지난 SCHEDULED 는 ENDED 로 바꾸고 SYSTEM 로그만 남긴다. 이벤트와 가게 요약은 건드리지 않는다(#902)")
+    void 기간이_지난_SCHEDULED는_ENDED로_바꾼다() {
+        Campaign campaign = scheduledCampaign();
+        when(campaignRepository.findByIdForUpdate(CAMPAIGN_ID)).thenReturn(Optional.of(campaign));
+
+        service.endExpiredScheduled(CAMPAIGN_ID, LocalDate.of(2026, 11, 1));
+
+        assertThat(campaign.getStatus()).isEqualTo(CampaignStatus.ENDED);
+        CampaignStatusLog saved = captureLog();
+        assertThat(saved.getActorType()).isEqualTo(ActorType.SYSTEM);
+        assertThat(saved.getReason()).isNotBlank();
+        verifyNoInteractions(events);
+        verify(storeCampaignSummaryUpdater, never()).update(anyLong(), anyLong(), any());
+    }
+
+    @Test
+    @DisplayName("이미 ENDED 면 기간이 지난 SCHEDULED 종료를 다시 불러도 아무것도 하지 않는다(멱등, #902)")
+    void 이미_ENDED면_기간이_지난_SCHEDULED_종료는_무변경이다() {
+        Campaign campaign = scheduledCampaign();
+        campaign.endBeforeStart(LocalDateTime.now(FIXED_CLOCK));
+        when(campaignRepository.findByIdForUpdate(CAMPAIGN_ID)).thenReturn(Optional.of(campaign));
+
+        service.endExpiredScheduled(CAMPAIGN_ID, LocalDate.of(2026, 11, 1));
+
+        verify(campaignStatusLogRepository, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("잠금을 잡고 보니 SCHEDULED 가 아니거나 기간이 아직 지나지 않았으면 예외 없이 건너뛴다(#902)")
+    void 기간이_지난_SCHEDULED_종료는_상태와_기간을_다시_확인한다() {
+        Campaign cancelled = draftCampaign();
+        Campaign active = activeCampaign();
+        Campaign rescheduled = scheduledCampaign();
+        when(campaignRepository.findByIdForUpdate(CAMPAIGN_ID))
+                .thenReturn(Optional.of(cancelled), Optional.of(active), Optional.of(rescheduled));
+
+        // 점주가 취소해 DRAFT 가 된 캠페인, 이미 ACTIVE 인 캠페인, 취소 뒤 기간을 고쳐 다시 예약한 캠페인(종료일 10/31)
+        service.endExpiredScheduled(CAMPAIGN_ID, LocalDate.of(2026, 10, 31));
+        service.endExpiredScheduled(CAMPAIGN_ID, LocalDate.of(2026, 11, 1));
+        service.endExpiredScheduled(CAMPAIGN_ID, LocalDate.of(2026, 10, 31));
+
+        assertThat(cancelled.getStatus()).isEqualTo(CampaignStatus.DRAFT);
+        assertThat(active.getStatus()).isEqualTo(CampaignStatus.ACTIVE);
+        assertThat(rescheduled.getStatus()).isEqualTo(CampaignStatus.SCHEDULED);
+        verify(campaignStatusLogRepository, never()).save(any());
+    }
+
+    @Test
     @DisplayName("SCHEDULED가 아니면 activate를 거부한다")
     void SCHEDULED가_아니면_activate를_거부한다() {
         Campaign campaign = draftCampaign();

@@ -316,6 +316,18 @@ public class Campaign extends BaseTimeEntity {
         this.statusChangedAt = now;
     }
 
+    /*
+     * 집행이 시작되기 전에 기간이 지난 SCHEDULED 를 끝낸다(#902). 한 번도 ACTIVE 가 되지 않았으므로 end() 가 지우는 중단
+     * 사유와 예약 예산은 애초에 없다.
+     */
+    public void endBeforeStart(LocalDateTime now) {
+        if (this.status != CampaignStatus.SCHEDULED) {
+            throw new IllegalStateException("only SCHEDULED campaign can end before start: " + this.status);
+        }
+        this.status = CampaignStatus.ENDED;
+        this.statusChangedAt = now;
+    }
+
     private static void requireDiscountTarget(DiscountTargetType discountTargetType, Long targetMenuId) {
         boolean all = discountTargetType == DiscountTargetType.ALL && targetMenuId == null;
         boolean menu = discountTargetType == DiscountTargetType.MENU && targetMenuId != null;

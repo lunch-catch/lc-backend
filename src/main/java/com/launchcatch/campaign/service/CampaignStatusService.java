@@ -53,6 +53,8 @@ import org.springframework.transaction.annotation.Transactional;
 @RequiredArgsConstructor
 public class CampaignStatusService {
 
+    private static final String EXPIRED_BEFORE_START_REASON = "집행 시작 전에 집행 기간이 지남";
+
     private final CampaignRepository campaignRepository;
     private final CampaignStatusLogRepository campaignStatusLogRepository;
     private final StoreCampaignSummaryUpdater storeCampaignSummaryUpdater;
@@ -206,6 +208,31 @@ public class CampaignStatusService {
         updateStoreSummary(campaign, businessDate);
         events.publishEvent(new CampaignStatusChangedEvent(campaignId, businessDate, false, now));
         events.publishEvent(new CampaignEndedEvent(campaignId, now));
+    }
+
+    /*
+     * 00:00 배치(#902)가 집행이 시작되기 전에 기간이 지난 SCHEDULED 를 ENDED 로 바꾼다. cancel 과 같이 이벤트를 내지 않고
+     * 가게 요약도 갱신하지 않는다. 다른 도메인은 SCHEDULED 를 그때그때 읽기만 했고 ACTIVE 가 된 적이 없어 되돌릴 것이 없다.
+     *
+     * 목록을 읽은 뒤 행 잠금을 잡기 전에 점주가 취소해 DRAFT 가 되거나, 취소 뒤 기간을 고쳐 다시 예약했을 수 있다. 잠금을
+     * 잡은 뒤 SCHEDULED 이고 종료일이 영업일보다 앞인지 다시 확인하고, 아니면 예외 없이 건너뛴다. 이미 ENDED 면 아무것도
+     * 하지 않아 같은 영업일에 다시 불려도 결과가 같다(멱등).
+     */
+    @Transactional
+    public void endExpiredScheduled(Long campaignId, LocalDate businessDate) {
+        Campaign campaign = findOrThrow(campaignId);
+        CampaignStatus status = campaign.getStatus();
+        if (status == CampaignStatus.ENDED) {
+            return;
+        }
+        if (status != CampaignStatus.SCHEDULED
+                || campaign.getEndDate() == null || !campaign.getEndDate().isBefore(businessDate)) {
+            log.info("event=CAMPAIGN_DAILY_END_SKIPPED reason=NOT_EXPIRED_SCHEDULED campaignId={} status={} endDate={} businessDate={}",
+                    campaignId, status, campaign.getEndDate(), businessDate);
+            return;
+        }
+        campaign.endBeforeStart(LocalDateTime.now(clock));
+        log(campaignId, status, campaign.getStatus(), ActorType.SYSTEM, EXPIRED_BEFORE_START_REASON);
     }
 
     @Transactional

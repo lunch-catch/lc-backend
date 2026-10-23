@@ -88,6 +88,19 @@ public interface CampaignRepository extends JpaRepository<Campaign, Long> {
     List<Long> findIdsToEnd(@Param("businessDate") LocalDate businessDate);
 
     /*
+     * 00:00 배치가 집행 기간이 시작 전에 지나 버린 SCHEDULED 캠페인을 찾는다(#902). 시작 대상(findToStart)은 기간 안의
+     * SCHEDULED 만 고르고 종료 대상(findIdsToEnd)은 ACTIVE, PAUSED 만 고르므로, 이 조회가 없으면 이런 캠페인은 SCHEDULED
+     * 로 계속 남아 점주의 새 캠페인을 막는다. 전이는 캠페인마다 행 잠금 아래 따로 하므로 여기서는 id 만 읽는다.
+     */
+    @Query("""
+            select c.id from Campaign c
+            where c.status = com.launchcatch.campaign.contract.CampaignStatus.SCHEDULED
+            and c.endDate < :businessDate
+            order by c.id
+            """)
+    List<Long> findScheduledIdsToEnd(@Param("businessDate") LocalDate businessDate);
+
+    /*
      * 00:00 배치(#569)가 집행 시작일이 된 SCHEDULED 캠페인을 찾는다. 시작일이 영업일 이하이면 대상이라 배치가 하루
      * 빠졌어도 다음 실행이 이어서 켠다. 집행 기간이 이미 지난 SCHEDULED 는 켜지 않는다.
      */
