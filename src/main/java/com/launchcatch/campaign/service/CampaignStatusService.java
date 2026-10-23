@@ -244,7 +244,12 @@ public class CampaignStatusService {
     }
 
     private void updateStoreSummary(Campaign campaign, LocalDate businessDate) {
-        StoreCampaignSummaryCommand command = new StoreCampaignSummaryCommand(
+        storeCampaignSummaryUpdater.update(campaign.getStoreId(), campaign.getId(), toSummaryCommand(campaign, businessDate));
+    }
+
+    // 00:00 배치의 일일 요약 준비(#838)도 같은 값을 만들어 쓰도록 패키지 안에 연다.
+    static StoreCampaignSummaryCommand toSummaryCommand(Campaign campaign, LocalDate businessDate) {
+        return new StoreCampaignSummaryCommand(
                 businessDate,
                 toStoreCampaignStatus(campaign.getStatus()),
                 toStoreDiscountTargetType(campaign.getDiscountTargetType()),
@@ -253,7 +258,6 @@ public class CampaignStatusService {
                 campaign.getTargetMenuId(),
                 campaign.getUsableStartTime(),
                 campaign.getUsableEndTime());
-        storeCampaignSummaryUpdater.update(campaign.getStoreId(), campaign.getId(), command);
     }
 
     private static StoreCampaignStatus toStoreCampaignStatus(CampaignStatus status) {

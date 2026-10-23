@@ -29,6 +29,9 @@ public interface CampaignRepository extends JpaRepository<Campaign, Long> {
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     Optional<Campaign> findByStoreIdAndStatus(Long storeId, CampaignStatus status);
 
+    // 00:00 배치(#838)가 새 영업일의 가게 요약을 만들 대상이다. 행 잠금 없이 읽는다.
+    List<Campaign> findByStatusOrderById(CampaignStatus status);
+
     boolean existsByOwnerIdAndStatusNotIn(Long ownerId, List<CampaignStatus> excludedStatuses);
 
     /*
