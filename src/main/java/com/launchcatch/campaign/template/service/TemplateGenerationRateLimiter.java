@@ -64,6 +64,10 @@ public class TemplateGenerationRateLimiter {
     public TemplateGenerationRateLimiter(
             StringRedisTemplate redisTemplate,
             @Value("${campaign.template-generation-rate-limit}") int limit) {
+        // 0 이하면 첫 요청부터 거부되어 모든 템플릿 생성과 수정이 막힌다. 잘못된 설정으로는 기동하지 않게 한다(#831).
+        if (limit <= 0) {
+            throw new IllegalArgumentException("campaign.template-generation-rate-limit must be positive: " + limit);
+        }
         this.redisTemplate = redisTemplate;
         this.limit = limit;
     }
