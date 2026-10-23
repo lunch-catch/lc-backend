@@ -61,10 +61,10 @@ class FeedIntegrationTest extends AbstractAdservingIntegrationTest {
                 MEMBER_ID, "점심러", MemberStatus.ACTIVE, true, true, true,
                 BigDecimal.valueOf(LAT), BigDecimal.valueOf(LNG), Gender.FEMALE, AgeGroup.AGE_30S)));
         // 예약액 10만 원, 단가 10원이라 노출 상한은 10,500 회다
-        when(budgetQueryService.getProgress(any(), any(), any())).thenReturn(List.of(
-                new BudgetProgress(101L, 100_000, 10, 10_000, 50_000, 0.2),
-                new BudgetProgress(102L, 100_000, 10, 10_000, 50_000, 0.2),
-                new BudgetProgress(103L, 100_000, 10, 10_000, 50_000, 0.2)));
+        when(budgetQueryService.getProgress(any(), any())).thenReturn(List.of(
+                new BudgetProgress(101L, 100_000, 10, 10_000),
+                new BudgetProgress(102L, 100_000, 10, 10_000),
+                new BudgetProgress(103L, 100_000, 10, 10_000)));
         insertCandidate(101L, "SERVABLE", null);
         insertCandidate(102L, "PAUSED", null);
         insertCandidate(103L, "SERVABLE", LocalDateTime.of(2026, 10, 1, 9, 0));
@@ -238,7 +238,7 @@ class FeedIntegrationTest extends AbstractAdservingIntegrationTest {
 
     @Test
     void 정산이_멈춰도_예산_규칙_없이_서빙을_이어간다() throws Exception {
-        when(budgetQueryService.getProgress(any(), any(), any())).thenThrow(new IllegalStateException("카운터 장애"));
+        when(budgetQueryService.getProgress(any(), any())).thenThrow(new IllegalStateException("카운터 장애"));
 
         mockMvc.perform(get("/v1/feed").with(user(as(Role.MEMBER))))
                 .andExpect(status().isOk())

@@ -303,8 +303,8 @@ class ImpressionIntegrationTest extends AbstractAdservingIntegrationTest {
                 MemberStatus.ACTIVE, true, true, true, BigDecimal.valueOf(37.4979), BigDecimal.valueOf(127.0276),
                 Gender.FEMALE, AgeGroup.AGE_30S)));
         // 예약액 10만 원, 단가 10원이라 노출 상한은 10,500 회다. 한 건 모자란 데까지 채워 둔다
-        when(budgetQueryService.getProgress(any(), any(), any()))
-                .thenReturn(List.of(new BudgetProgress(101L, 100_000, 10, 10_000, 50_000, 0.2)));
+        when(budgetQueryService.getProgress(any(), any()))
+                .thenReturn(List.of(new BudgetProgress(101L, 100_000, 10, 10_000)));
         redisTemplate.opsForHash().put(COUNTER_KEY, "101", "10499");
         mockMvc.perform(get("/v1/feed").with(user(new CustomUserDetails(MEMBER_ID, Role.MEMBER))))
                 .andExpect(jsonPath("$.data.cards[0].campaignId").value(101));

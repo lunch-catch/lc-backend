@@ -178,8 +178,8 @@ class SwipeIntegrationTest extends AbstractAdservingIntegrationTest {
         when(memberQueryService.findById(MEMBER_ID)).thenReturn(Optional.of(new MemberInfo(MEMBER_ID, "점심러",
                 MemberStatus.ACTIVE, true, true, true, BigDecimal.valueOf(37.4979), BigDecimal.valueOf(127.0276),
                 Gender.FEMALE, AgeGroup.AGE_30S)));
-        when(budgetQueryService.getProgress(any(), any(), any()))
-                .thenReturn(List.of(new BudgetProgress(101L, 100_000, 10, 10_000, 50_000, 0.2)));
+        when(budgetQueryService.getProgress(any(), any()))
+                .thenReturn(List.of(new BudgetProgress(101L, 100_000, 10, 10_000)));
 
         send(body(101, "PASS"), Role.MEMBER).andExpect(jsonPath("$.data.applied").value(true));
 

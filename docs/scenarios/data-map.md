@@ -983,9 +983,6 @@
 | B-139 | 충전 시 계획 없음 | `CMP.PAUSED_NO_POINTS` |
 | B-140 | 같은 결제 이벤트 중복 | `BIL.RECHARGE_RESERVE_EXISTS` |
 | B-141 | 재예약 실패 | `NONE:장애` |
-| B-142 | 시간대별 목표 생성 | `BIL.PLAN_D` |
-| B-143 | 중단 계획 제외 | `BIL.PLAN_D_PAUSED` |
-| B-144 | 목표 재실행 멱등 | `BIL.PLAN_D`, `BIL.HOURLY_TARGET_D` |
 | B-145 | 후보 적재 SERVABLE | `CMP.ACTIVE`, `STO.FINALIZED` |
 | B-146 | 후보 적재 PAUSED | `CMP.PAUSED_OWNER`, `CMP.PAUSED_NO_POINTS` |
 | B-147 | 가게 없음/메뉴명 없음 | `CMP.STORE_MISSING`, `CMP.MENU_MISSING` |

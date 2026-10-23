@@ -89,7 +89,7 @@ class TemplateReviseServiceTest {
                 new TemplateSlotValidator(),
                 new TemplateStructureValidator(),
                 new TemplatePromptValidator(),
-                new TemplateGenerationRateLimiter(redisTemplate),
+                new TemplateGenerationRateLimiter(redisTemplate, 3),
                 transactionTemplate,
                 FIXED_CLOCK);
         lenient().when(templateVersionRepository.findByRequestId(REQUEST_ID)).thenReturn(Optional.empty());

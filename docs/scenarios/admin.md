@@ -487,7 +487,7 @@
 | MismatchResolutionType CACHE_REBUILD | 라벨 "캐시 재집계"는 있으나 운영 코드에서 이 값을 쓰는 곳이 없다(시드 데이터에만 있음). 전일 소진 대사는 resolution_type 을 비워 둔다 |
 | RefundStatus APPROVED | 승인하면 바로 COMPLETED 로 바뀌어 APPROVED 가 저장되지 않는다. 필터 결과가 항상 비는 것만 A-176 에 남겼다 |
 | 템플릿 POSTER-015~POSTER-022 | 점주 포스터 API 전용이라 관리자 엔드포인트에서 나오지 않는다 |
-| 00:00 묶음의 BILLING_RESERVE, BILLING_DAILY_RELEASE, BILLING_FUNDING_JUDGE, BILLING_HOURLY_TARGET, ADSERVING_*, 02:00~03:00 쿠폰과 로그 작업, 11:00, 14:00 쿠폰 작업, 5분 쿠폰 만료 | 관리자 화면에 직접 드러나는 상태 전이가 없다. 결과는 원장(A-191)이나 캠페인 상태(A-093)로 간접 노출될 뿐 관리자 목표가 아니다 |
+| 00:00 묶음의 BILLING_RESERVE, BILLING_DAILY_RELEASE, BILLING_FUNDING_JUDGE, ADSERVING_*, 02:00~03:00 쿠폰과 로그 작업, 11:00, 14:00 쿠폰 작업, 5분 쿠폰 만료 | 관리자 화면에 직접 드러나는 상태 전이가 없다. 결과는 원장(A-191)이나 캠페인 상태(A-093)로 간접 노출될 뿐 관리자 목표가 아니다 |
 | 04:00 EVENT_LOG_RETENTION, 02:00 ADSERVING_LOG_RETENTION | 원본 로그 삭제이며 관리자 화면은 집계 테이블만 읽는다 |
 | 배치 heartbeat 와 takeover | 서버 내부 동작이다 |
 | 캠페인 관리자 중단(pausedReason ADMIN) | 상태 표시만 있고 관리자 앱에 캠페인 상태를 바꾸는 API 호출이 없다 |
