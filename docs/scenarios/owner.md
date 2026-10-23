@@ -103,14 +103,14 @@
 | O-080 | 홈 현재 캠페인 없음 | 끝나지 않은 캠페인 없음 | /home -> /campaigns/new | - | - | 캠페인 없음 또는 모두 ENDED | "운영 중인 캠페인이 없어요" + 캠페인 만들기 | - |
 | O-081 | 홈 작성 중 캠페인 | DRAFT 카드 + 이어서 작성 | /home -> /campaigns/:id/edit | - | - | DRAFT 1건 | 배지 "작성 중", "M.D 등록", 기간 미정이면 "기간 미정", 이어서 작성 링크 | - |
 | O-082 | 홈 대기 중 캠페인 | SCHEDULED 카드 | /home -> /campaigns/:id | - | - | SCHEDULED | 배지 "대기 중", 시작일이 미래면 "M.D 시작, N일 뒤", 시작일 도래 후엔 "M.D 시작" | 시작일 기준 |
-| O-083 | 홈 진행 중 캠페인 | ACTIVE 카드 | /home -> /campaigns/:id | - | - | ACTIVE | 배지 "진행 중", 종료일까지 "N일 남음", 당일 이후 "오늘 종료", 오늘 실적 블록은 표시 안 됨(성과 값 항상 null) | 종료일 기준 |
+| O-083 | 홈 진행 중 캠페인 | ACTIVE 카드 | /home -> /campaigns/:id | GET /v1/owner/campaigns/{campaignId}/coupons/summary, GET /v1/owner/points/spend-summary | - | ACTIVE | 배지 "진행 중", 종료일까지 "N일 남음", 당일 이후 "오늘 종료", 오늘 실적(오늘 쿠폰 전체, 발급, 사용, 남은 쿠폰, 오늘 남은 예산) 표시 | 종료일 기준 |
 | O-084 | 홈 직접 일시중지 캠페인 | PAUSED OWNER | /home | - | - | PAUSED, pausedReason OWNER | 배지 "일시중지"(경고색) + "직접 일시중지한 캠페인이에요. 언제든 다시 시작할 수 있어요." | - |
 | O-085 | 홈 잔액 부족 중단 캠페인 | PAUSED NO_POINTS | /home | GET /v1/owner/point-policy | - | PAUSED, pausedReason NO_POINTS | 배지 "잔액 부족"(위험색), 상단 "포인트가 부족해 캠페인이 멈췄어요" + 충전 -> 충전 시트 | 00:00 판정 결과 |
 | O-086 | 홈 관리자 중단 캠페인 | PAUSED ADMIN | /home | - | - | PAUSED, pausedReason ADMIN | 배지 "관리자 중단" + "운영 정책에 따라 관리자가 노출을 중단했어요." | - |
 | O-087 | 캠페인 제목 규칙 | 쿠폰 조건으로 제목 생성 | /home, /campaigns, /campaigns/:id, /store/analytics | GET /v1/owner/store | - | 할인값 유무, 대상 | "전 메뉴 N원 할인", "메뉴명 N% 할인", 메뉴 못 찾으면 "특정 메뉴", 할인값 없으면 "새 캠페인" | - |
 | O-088 | 홈 잔액에서 충전 | 잔액 버튼 -> 충전 시트 | /home -> /points/charge | GET /v1/owner/point-policy | BILLING-023 | ACTIVE | 포인트 충전 시트 (O-160 이후 흐름), 결제 뒤 /home 으로 복귀 | - |
 | O-089 | 홈 QR 사용 처리 진입 | QR 링크 | /home -> /qr-scan | - | - | ACTIVE | QR 스캔 화면 | - |
-| O-090 | 홈 쿠폰 사용 추이 (mock) | 최근 집행일 5회 막대 | /home -> /store/analytics | - (mock) | - | 항상 mock 5건 | 오늘 막대는 점선 + "집계 중", 분석 링크, 빈 목록 안내 분기는 mock 상 도달 안 함 | 오늘은 미확정 |
+| O-090 | 홈 쿠폰 사용 추이 | 최근 집행일 5회 막대 | /home -> /store/analytics | GET /v1/owner/stores/{storeId}/coupon-usages/daily | - | 최근 집행일 사용 기록 | 날짜별 실제 사용 수로 막대, 오늘 막대는 점선 + "집계 중", 분석 링크 | 오늘은 미확정 |
 | O-091 | 첫 방문 튜토리얼 완료 | 4단계 시트, 다음/이전, 마지막 시작하기 | /home | PATCH /v1/owner/me/tutorial | - | ACTIVE, tutorialViewed false | 저장 성공 후 tutorialViewed true, 시트 닫힘, 새로고침해도 다시 안 뜸 | 시간표 10:00/11:00/12:59 안내 |
 | O-092 | 튜토리얼 건너뛰기 또는 닫기 | 건너뛰기, Esc, 아래로 끌기 (배경 탭 무시) | /home | PATCH /v1/owner/me/tutorial | - | tutorialViewed false | 완료로 저장 후 닫힘 | - |
 | O-093 | 튜토리얼 저장 실패 | PATCH 실패 | /home | PATCH /v1/owner/me/tutorial | COMMON-001, 응답 없음 | 서버 장애 | 시트 유지 "완료를 저장하지 못했어요. 잠시 후 다시 시도해 주세요." + 다시 시도 | - |
@@ -127,7 +127,7 @@
 | O-099 | 가게 관리에서 충전 | 충전 버튼 -> 시트 | /store -> /points/charge | GET /v1/owner/point-policy | - | ACTIVE | 충전 시트, 결제 뒤 /store 로 복귀 | - |
 | O-100 | 영업시간 수정 화면 불러오기 | 가게 조회 | /store/hours | GET /v1/owner/store | OWNER-002, 응답 없음 | ACTIVE | 로딩 스켈레톤, 실패 시 "가게 정보를 불러오지 못했어요" + 다시 시도 | - |
 | O-101 | 영업시간 수정 검증 | 값 변경 | /store/hours | - | - | 불러온 영업시간 | 변경 없으면 저장 비활성, 요일 0개면 "영업 요일을 하루 이상 골라 주세요", 시각 역전 오류, "고르지 않은 요일은 휴무로 저장돼요." | - |
-| O-102 | 영업시간 수정 저장 (mock) | 저장 -> 600ms 지연 -> 성공 -> 뒤로 | /store/hours -> /store | - (mock, 서버 PUT 호출 없음) | - | 유효한 변경 | 가게 관리로 돌아가지만 서버 값은 그대로라 다시 불러오면 이전 영업시간 | - |
+| O-102 | 영업시간 수정 저장 | 저장 -> 성공 -> 뒤로 | /store/hours -> /store | PUT /v1/owner/store/hours | - | 유효한 변경 | 가게 관리로 돌아가고 다시 불러와도 바뀐 영업시간. 화면에 브레이크와 라스트오더 입력이 없어 그 값은 지워진다(lc-frontend #328) | - |
 | O-103 | 영업시간 바꾼 채 나가기 | 상단 뒤로 또는 브라우저 뒤로 | /store/hours | - | - | 변경 있음, 미저장 | "저장하지 않고 나갈까요?" 계속 수정 / 나가기 | - |
 | O-104 | 매장 사진 보기 | 보기 전용 | /store/images | GET /v1/owner/store | OWNER-002, 응답 없음 | 로고와 매장 사진 0~3장 | 대표 이미지, "n/3", 없으면 "등록한 대표 이미지가 없어요", "등록한 매장 이미지가 없어요", 실패 시 다시 시도 | - |
 | O-105 | 대표 메뉴 보기 | 보기 전용 | /store/menus | GET /v1/owner/store | OWNER-002, 응답 없음 | 메뉴 0~3개 | 이름, 가격, 설명, 사진 없으면 아이콘, 없으면 "등록한 대표 메뉴가 없어요" | - |
@@ -182,15 +182,15 @@
 | O-144 | 템플릿 선택과 문구 | 선택 -> 기본 슬롯(할인 내용=제목 20자, 이벤트 문구 기본값, 기간=사용 시간) | /campaigns/:id/edit/poster | - | - | 템플릿 있음 | 미리보기, 할인 내용 필수(20자), 이벤트 문구 선택(30자), 기간 고정 표시, 광고 라벨 제거 | - |
 | O-145 | 포스터 기간 동기화 | 1단계 사용 시간 변경 후 2단계 | /campaigns/:id/edit/poster | - | - | 저장된 포스터 있음 | 기간 슬롯을 현재 사용 시간으로 갱신 | - |
 | O-146 | 포스터 이미지 업로드 성공 | 고르면 바로 발급 -> S3 PUT -> 미리보기 | /campaigns/:id/edit/poster | POST /v1/owner/campaigns/{campaignId}/poster:prepareUpload | - | DRAFT, 집행 기간이 이미 저장됨 | objectKey 보관, "포스터를 모두 채웠어요", 다음 가능 | 주소 10분 유효 |
-| O-147 | 기간 미설정 상태 포스터 이미지 업로드 | 정상 순서(1->2단계) 새 캠페인 | /campaigns/:id/edit/poster | POST /v1/owner/campaigns/{campaignId}/poster:prepareUpload | POSTER-020 | DRAFT, startDate/endDate null | 업로드 실패, 다시 시도해도 같음, 포스터 미완성으로 다음 막힘 (예산 단계를 주소로 먼저 저장해야 진행 가능) | - |
+| O-147 | 기간 미설정 상태 포스터 이미지 업로드 | 정상 순서(1->2단계) 새 캠페인 | /campaigns/:id/edit/poster | POST /v1/owner/campaigns/{campaignId}/poster:prepareUpload | - | DRAFT, startDate/endDate null | 기간 검사 없이 업로드 주소 발급, 포스터를 저장하고 다음 단계로 진행 | - |
 | O-148 | 포스터 이미지 업로드 거절 | 형식/크기/상태/소유 | /campaigns/:id/edit/poster | POST /v1/owner/campaigns/{campaignId}/poster:prepareUpload | POSTER-017, POSTER-018, CAMPAIGN-005, CAMPAIGN-006, CAMPAIGN-001 | - | "업로드 실패" + 다시 시도, 올리는 동안 이전 키는 비움 | - |
 | O-149 | 포스터 저장 성공 | 다음 -> 템플릿 ID 와 objectKey 로 생성 또는 덮어쓰기 | /campaigns/:id/edit/poster -> /campaigns/:id/edit/target | POST /v1/owner/campaigns/{campaignId}/poster | - | 기간 설정, 이미지 업로드됨, 템플릿 사용 가능 | 서버가 가게명, 할인, 기간(MM.dd~MM.dd)으로 슬롯을 채워 저장 | - |
-| O-150 | 포스터 저장 거절 (서버 문구) | 이미지/키/기간/템플릿/슬롯 | /campaigns/:id/edit/poster | POST /v1/owner/campaigns/{campaignId}/poster | POSTER-016, POSTER-017, POSTER-018, POSTER-019, POSTER-020, POSTER-005, POSTER-015, POSTER-001 | 미업로드, 다른 캠페인 키, 템플릿 내림 등 | 토스트 "저장하지 못했습니다" + 서버 문구 | - |
+| O-150 | 포스터 저장 거절 (서버 문구) | 이미지/키/템플릿/슬롯 | /campaigns/:id/edit/poster | POST /v1/owner/campaigns/{campaignId}/poster | POSTER-016, POSTER-017, POSTER-018, POSTER-019, POSTER-005, POSTER-015, POSTER-001 | 미업로드, 다른 캠페인 키, 템플릿 내림 등 | 토스트 "저장하지 못했습니다" + 서버 문구 | - |
 | O-151 | 포스터 저장 거절 (매핑 문구) | 상태/소유/점주 | /campaigns/:id/edit/poster | POST /v1/owner/campaigns/{campaignId}/poster | CAMPAIGN-001, CAMPAIGN-005, CAMPAIGN-006 | - | "입점을 마친 점주만...", "캠페인을 찾을 수 없습니다.", "작성 중인 캠페인만 수정할 수 있습니다." | - |
 | O-152 | 포스터 저장 서버 오류 | 가게/메뉴 조회 실패 등 | /campaigns/:id/edit/poster | POST /v1/owner/campaigns/{campaignId}/poster | COMMON-001, 응답 없음 | - | "잠시 후 다시 시도해 주세요." | - |
 | O-153 | 확인 단계 포스터 글 불일치 | 서버 완성 HTML 표시 | /campaigns/:id/edit/review | GET /v1/owner/campaigns/{campaignId}/poster | - | 포스터 저장됨 | 2단계에서 고친 할인 내용/이벤트 문구 대신 서버가 채운 글이 보임 | - |
 | O-154 | 자동 검수 불통과 | 활성화 -> 검수 FAIL(금칙어, 이미지 판독 불가, 해상도 미달, 글자 비율 초과, 검수 도구 실패) -> 200 DRAFT | /campaigns/:id/edit/review | POST /v1/owner/campaigns/{campaignId}:activate | - | 검수 기준 미달 포스터 | "활성화를 요청하지 못했습니다 / 잠시 후 다시 시도해 주세요." 사유는 표시 안 됨, DRAFT 유지 | - |
-| O-155 | 활성화 시 포스터 없음 | 404 | /campaigns/:id/edit/review -> /campaigns/:id/edit/poster | POST /v1/owner/campaigns/{campaignId}:activate | POSTER-021 | 포스터 미저장 | 포스터 단계로 이동 + "포스터를 먼저 만들어 주세요." | - |
+| O-155 | 활성화 시 포스터 없음 | 404 | /campaigns/:id/edit/review -> /campaigns/:id/edit/poster | POST /v1/owner/campaigns/{campaignId}:activate | POSTER-020 | 포스터 미저장 | 포스터 단계로 이동 + "포스터를 먼저 만들어 주세요." | - |
 | O-156 | 활성화 시 상태 변경 | 409 또는 403 -> 닫으면 다시 불러옴 | /campaigns/:id/edit/review -> /campaigns/:id | POST /v1/owner/campaigns/{campaignId}:activate, GET /v1/owner/campaigns/{campaignId} | CAMPAIGN-006, CAMPAIGN-005 | 이미 SCHEDULED, 검수 중 포스터 변경, 남의 캠페인 | 상태 변경 안내, 닫으면 재조회해 DRAFT 아니면 상세로 | - |
 | O-157 | 활성화 요청 제한 | 429 (본문 무시) | /campaigns/:id/edit/review | POST /v1/owner/campaigns/{campaignId}:activate | CAMPAIGN-011 | 점주별 고정 창 한도 초과 | "활성화를 요청하지 못했습니다 / 잠시 후 다시 시도해 주세요." | 고정 창 |
 | O-158 | 활성화 기타 실패 | ACTIVE 아님, 서버 오류 | /campaigns/:id/edit/review | POST /v1/owner/campaigns/{campaignId}:activate | CAMPAIGN-001, COMMON-001, 응답 없음 | - | "입점을 마친 점주만 캠페인을 관리할 수 있습니다." 또는 기본 | - |
@@ -214,9 +214,9 @@
 | O-171 | 처리 기타 실패 | ACTIVE 아님, 서버 오류 | /campaigns | 위 네 API | CAMPAIGN-001, COMMON-001, 응답 없음 | - | "입점을 마친 점주만 캠페인을 관리할 수 있습니다." 또는 "처리하지 못했어요. 잠시 후 다시 시도해 주세요." 시트 유지 | - |
 | O-172 | 같은 처리 반복 (멱등) | 이미 같은 결과 상태로 다시 요청 | /campaigns | POST /v1/owner/campaigns/{campaignId}:cancel, POST /v1/owner/campaigns/{campaignId}:pause, POST /v1/owner/campaigns/{campaignId}:resume | - | 이미 DRAFT, 이미 PAUSED(OWNER), 이미 ACTIVE | 서버가 성공으로 응답, 목록 재조회 | - |
 | O-173 | 처리 확인 시트 닫기 | 닫기, 처리 중 닫기 막힘 | /campaigns | - | - | - | 시트 닫힘 | - |
-| O-174 | 캠페인 상세 보기 | 상세 + 메뉴 + 포스터 | /campaigns/:id | GET /v1/owner/campaigns/{campaignId}, GET /v1/owner/store, GET /v1/owner/campaigns/{campaignId}/poster | - | 내 캠페인 | 배지, "M.D 등록", 제목, 상태 안내, 포스터, 쿠폰 조건, 노출 대상, 예산과 기간(총 필요 포인트), 오늘/누적 실적은 표시 안 됨, 처리 버튼 없음 | - |
+| O-174 | 캠페인 상세 보기 | 상세 + 메뉴 + 포스터 + 실적 | /campaigns/:id | GET /v1/owner/campaigns/{campaignId}, GET /v1/owner/store, GET /v1/owner/campaigns/{campaignId}/poster, GET /v1/owner/campaigns/{campaignId}/coupons/summary, GET /v1/owner/points/spend-summary, GET /v1/owner/campaigns/{campaignId}/analytics/funnel | - | 내 캠페인 | 배지, "M.D 등록", 제목, 상태 안내, 포스터, 쿠폰 조건, 노출 대상, 예산과 기간(총 필요 포인트), 오늘 실적(발급, 소진), 누적 실적(발급, 사용과 비율, 소진), 처리 버튼 없음 | - |
 | O-175 | 상세 상태별 안내 | DRAFT/SCHEDULED/PAUSED 사유 | /campaigns/:id | GET /v1/owner/campaigns/{campaignId} | - | 각 상태 | DRAFT: 활성화 안내, SCHEDULED: "M.D 00:00부터 피드에 노출돼요.", PAUSED: 사유별 문구, ACTIVE/ENDED: 없음 | - |
-| O-176 | 상세 포스터 상태 | 포스터 있음/없음/실패 | /campaigns/:id | GET /v1/owner/campaigns/{campaignId}/poster | POSTER-021 | - | 완성 포스터, "아직 포스터를 만들지 않았어요", "포스터를 불러오지 못했어요" (메뉴/포스터 실패는 상세를 막지 않음) | - |
+| O-176 | 상세 포스터 상태 | 포스터 있음/없음/실패 | /campaigns/:id | GET /v1/owner/campaigns/{campaignId}/poster | POSTER-020 | - | 완성 포스터, "아직 포스터를 만들지 않았어요", "포스터를 불러오지 못했어요" (메뉴/포스터 실패는 상세를 막지 않음) | - |
 | O-177 | 상세 불러오기 실패 | 상세 실패 | /campaigns/:id | GET /v1/owner/campaigns/{campaignId} | CAMPAIGN-005, COMMON-003, 응답 없음 | 없는/남의 캠페인, 숫자 아닌 id | "캠페인을 불러오지 못했어요" + "캠페인을 찾을 수 없습니다." 또는 기본 + 다시 시도/목록으로 | - |
 | O-178 | 상세 뒤로 가기 | backTo, 이력, 직접 진입 | /campaigns/:id | - | - | 완료 화면에서 온 경우 backTo /campaigns | backTo 우선, 직접 진입이면 /campaigns, 진입 시 항상 맨 위 스크롤 | - |
 | O-179 | 00:00 하루 예산 예약 | 전날 남은 예약 해제 -> ACTIVE 와 PAUSED(OWNER, NO_POINTS) 캠페인 예약 | 영향: /home, /points/history | - (BILLING_RESERVE, BILLING_DAILY_RELEASE) | - | 집행 기간 안 ACTIVE 캠페인 | 잔액에서 min(하루 예산, 잔액) 예약, 내역에 예약/해제 원장 | 매일 00:00 |
@@ -278,7 +278,7 @@
 | O-220 | 기간 필터 | 최근 7일/30일/3개월 | /points/history | GET /v1/owner/points/ledger, GET /v1/owner/points/spend-summary | - | - | 목록 비우고 새로 조회, 같은 값 다시 고르면 무시 | 오늘 포함 7일/30일/3개월 |
 | O-221 | 캠페인 필터 | 진행 중/일시중지/종료 캠페인 선택 | /points/history | GET /v1/owner/campaigns, GET /v1/owner/store, GET /v1/owner/points/ledger, GET /v1/owner/points/spend-summary | - | 집행된 캠페인 있음 | 선택지에 제목과 기간, 그 캠페인 내역만, 캠페인 이름 조회 실패면 이름 자리에 "캠페인" | - |
 | O-222 | 예약 해제 끝난 집행일 | 예약 + 해제 -> 소진 한 줄 | /points/history | GET /v1/owner/points/ledger | - | 같은 날 같은 캠페인 RESERVE 와 RELEASE | 소진(-) 한 줄 + "예약 NP, 예약 해제 NP" 보조 줄 | 다음 날 00:00 해제 |
-| O-223 | 오늘 해제 전 집행일 | 예약만 -> 예약 한 줄 + 오늘 소진 집계 | /points/history | GET /v1/owner/points/ledger, GET /v1/owner/points/spend-summary | - | 오늘 RESERVE, 소진 집계 성공 | "지금까지 소진 NP, 남은 예약은 13:30에 해제돼요" (실제 해제는 다음 날 00:00) | 오늘 |
+| O-223 | 오늘 해제 전 집행일 | 예약만 -> 예약 한 줄 + 오늘 소진 집계 | /points/history | GET /v1/owner/points/ledger, GET /v1/owner/points/spend-summary | - | 오늘 RESERVE, 소진 집계 성공 | "지금까지 소진 NP · 남은 예약은 내일 00:00에 해제돼요" | 오늘 |
 | O-224 | 오늘 소진 집계 실패 | spend-summary 실패 | /points/history | GET /v1/owner/points/spend-summary | BILLING-023, COMMON-002, 응답 없음 | - | 내역은 표시, 보조 줄 "남은 예약은 13:30에 해제돼요"만 | 오늘 |
 | O-225 | 지난날 해제 안 된 예약 | 지난날 RESERVE 만 | /points/history | GET /v1/owner/points/ledger | - | 전날 해제 실패 | 예약 한 줄, 보조 줄 없음 | 지난날 |
 | O-226 | 예약 없는 해제 등 단독 원장 | 묶을 예약 없음, 충전/환불/조정 | /points/history | GET /v1/owner/points/ledger | - | 해당 원장 | 한 줄씩, 충전/해제는 +, 예약/소진/환불은 -, 조정은 받은 부호, 캠페인 없는 줄은 시각 표시 | - |
@@ -470,8 +470,7 @@
 | POSTER-017 | poster:prepareUpload, poster | O-148, O-150 |
 | POSTER-018 | poster:prepareUpload, poster | O-148, O-150 |
 | POSTER-019 | POST /v1/owner/campaigns/{campaignId}/poster | O-150 |
-| POSTER-020 | poster:prepareUpload, poster | O-147, O-150 |
-| POSTER-021 | GET /v1/owner/campaigns/{campaignId}/poster, :activate | O-155, O-176 |
+| POSTER-020 | GET /v1/owner/campaigns/{campaignId}/poster, :activate | O-155, O-176 |
 | BILLING-001 | POST /v1/owner/payments | O-203 |
 | BILLING-002 | POST /v1/owner/payments | O-203 |
 | BILLING-003 | POST /v1/owner/payments/{paymentId}:confirm | O-210 |
@@ -508,5 +507,5 @@
 | :end 를 ADMIN 중단 캠페인에 호출 | 서버는 PAUSED 면 허용하나 화면에 버튼 없음 |
 | 플랫폼 설정 조회 (노출 단가, 최소 하루 예산) | api/platform.ts 가 mock 고정값, 서버 호출 없음 (영향은 O-129, O-134) |
 | 약관 본문과 버전 | mocks/terms.ts 고정 문구, 서버 조회 없음 (O-032) |
-| errors.txt 의 나머지 코드 (ADMIN-*, ADSERVING-*, ANALYTICS-002~005, AUTH-007, BILLING-005, 010~016, 018~022, CAMPAIGN-012, COUPON-*, MEMBER-*, OPS-*, POSTER-002~004, 006~014, 022~026, STORE-016) | 점주 앱이 부르는 endpoint 의 서비스 경로에서 던지지 않음 |
+| errors.txt 의 나머지 코드 (ADMIN-*, ADSERVING-*, ANALYTICS-002~005, AUTH-007, BILLING-005, 010~016, 018~022, CAMPAIGN-012, COUPON-*, MEMBER-*, OPS-*, POSTER-002~004, 006~014, 021~025, STORE-016) | 점주 앱이 부르는 endpoint 의 서비스 경로에서 던지지 않음 |
 | 01:30 PG 대사, 02:00/04:00 보존 정리, 03:00/11:00/14:00/5분 쿠폰 작업, 03:00 카카오 해제 재시도, 04:00 템플릿 버전 정리, 결제 재조회 워커 | 점주 화면 상태를 직접 바꾸지 않음 (재조회 워커 결과는 O-208, O-209 폴링으로만 관찰) |

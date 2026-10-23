@@ -30,17 +30,18 @@ public class CampaignStoreSummaryService {
     private final CampaignRepository campaignRepository;
     private final StoreCampaignSummaryUpdater storeCampaignSummaryUpdater;
 
-    // ACTIVE 캠페인의 요약을 businessDate 몫으로 만든다. 만든 개수를 돌려준다.
+    // 집행 기간이 끝나지 않은 ACTIVE 캠페인의 요약을 businessDate 몫으로 만든다. 만든 개수를 돌려준다.
     @Transactional
     public int prepare(LocalDate businessDate) {
         int prepared = 0;
         long lastId = 0L;
-        List<CampaignSummaryRow> rows = campaignRepository.findActiveSummaryRowsAfter(lastId, PageRequest.ofSize(CHUNK_SIZE));
+        List<CampaignSummaryRow> rows =
+                campaignRepository.findActiveSummaryRowsAfter(lastId, businessDate, PageRequest.ofSize(CHUNK_SIZE));
         while (!rows.isEmpty()) {
             storeCampaignSummaryUpdater.updateAll(toUpdates(rows, businessDate));
             prepared += rows.size();
             lastId = rows.get(rows.size() - 1).campaignId();
-            rows = campaignRepository.findActiveSummaryRowsAfter(lastId, PageRequest.ofSize(CHUNK_SIZE));
+            rows = campaignRepository.findActiveSummaryRowsAfter(lastId, businessDate, PageRequest.ofSize(CHUNK_SIZE));
         }
         return prepared;
     }

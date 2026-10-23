@@ -1,5 +1,6 @@
 package com.launchcatch.campaign;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -63,6 +64,18 @@ class CampaignCouponConditionSecurityIntegrationTest extends AbstractCampaignInt
               "usableEndTime": "13:00"
             }
             """;
+    private static final String MENU_BODY = """
+            {
+              "storeId": %d,
+              "discountTargetType": "MENU",
+              "discountType": "AMOUNT",
+              "discountValue": 1500,
+              "targetMenuId": %d,
+              "issueQuantity": 100,
+              "usableStartTime": "11:30",
+              "usableEndTime": "13:00"
+            }
+            """;
     private static final String MISSING_DISCOUNT_VALUE_BODY = """
             {
               "storeId": 17,
@@ -89,15 +102,19 @@ class CampaignCouponConditionSecurityIntegrationTest extends AbstractCampaignInt
      */
     @AfterEach
     void tearDown() {
-        createdStoreIds.forEach(storeId -> jdbc.update("delete from campaign where store_id = ?", storeId));
+        createdStoreIds.forEach(storeId -> {
+            jdbc.update("delete from campaign where store_id = ?", storeId);
+            jdbc.update("delete from store_menu where store_id = ?", storeId);
+            jdbc.update("delete from store where store_id = ?", storeId);
+        });
         createdOwnerIds.forEach(ownerId -> jdbc.update("delete from owner where owner_id = ?", ownerId));
         createdAdminIds.forEach(adminId -> jdbc.update("delete from admin where admin_id = ?", adminId));
     }
 
     @Test
     void 가게에_DRAFT가_없으면_201을_반환한다() throws Exception {
-        long storeId = registerStoreId(System.nanoTime());
         Long ownerId = createActiveOwner();
+        long storeId = createFinalizedStore(ownerId);
 
         mvc.perform(post(PATH)
                         .cookie(ownerToken(ownerId))
@@ -111,8 +128,8 @@ class CampaignCouponConditionSecurityIntegrationTest extends AbstractCampaignInt
 
     @Test
     void 가게에_DRAFT가_있으면_200을_반환한다() throws Exception {
-        long storeId = registerStoreId(System.nanoTime());
         Long ownerId = createActiveOwner();
+        long storeId = createFinalizedStore(ownerId);
         Long existingId = campaignRepository.saveAndFlush(draft(ownerId, storeId)).getId();
 
         mvc.perform(post(PATH)
@@ -122,6 +139,89 @@ class CampaignCouponConditionSecurityIntegrationTest extends AbstractCampaignInt
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value("SUCCESS"))
                 .andExpect(jsonPath("$.data.campaignId").value(existingId.intValue()));
+    }
+
+    /*
+     * 요청의 storeId가 로그인한 점주의 가게인지 실제 store 행으로 확인한다(#874). 다른 점주의 가게로는
+     * 캠페인이 만들어지지 않고 그 가게의 DRAFT도 바뀌지 않아야 한다.
+     */
+    @Test
+    void 다른_점주의_가게로는_403이고_캠페인을_만들지_않는다() throws Exception {
+        Long ownerId = createActiveOwner();
+        Long otherOwnerId = createActiveOwner();
+        long otherStoreId = createFinalizedStore(otherOwnerId);
+
+        mvc.perform(post(PATH)
+                        .cookie(ownerToken(ownerId))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(VALID_BODY.formatted(otherStoreId)))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("CAMPAIGN-013"));
+
+        // findByStoreIdAndStatus 는 행 잠금 조회라 이 클래스(트랜잭션 없음)에서는 쓸 수 없어 건수만 센다.
+        Integer count = jdbc.queryForObject("select count(*) from campaign where store_id = ?", Integer.class, otherStoreId);
+        assertThat(count).isZero();
+    }
+
+    @Test
+    void 다른_점주의_가게에_DRAFT가_있어도_덮어쓰지_않는다() throws Exception {
+        Long ownerId = createActiveOwner();
+        Long otherOwnerId = createActiveOwner();
+        long otherStoreId = createFinalizedStore(otherOwnerId);
+        Long otherDraftId = campaignRepository.saveAndFlush(draft(otherOwnerId, otherStoreId)).getId();
+
+        mvc.perform(post(PATH)
+                        .cookie(ownerToken(ownerId))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(VALID_BODY.formatted(otherStoreId)))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("CAMPAIGN-013"));
+
+        Campaign unchanged = campaignRepository.findById(otherDraftId).orElseThrow();
+        assertThat(unchanged.getOwnerId()).isEqualTo(otherOwnerId);
+        assertThat(unchanged.getDiscountValue()).isEqualTo(10);
+    }
+
+    @Test
+    void 존재하지_않는_가게도_같은_403이다() throws Exception {
+        Long ownerId = createActiveOwner();
+
+        mvc.perform(post(PATH)
+                        .cookie(ownerToken(ownerId))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(VALID_BODY.formatted(System.nanoTime())))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("CAMPAIGN-013"));
+    }
+
+    @Test
+    void 이미지가_검증되지_않은_메뉴는_422로_거부한다() throws Exception {
+        Long ownerId = createActiveOwner();
+        long storeId = createFinalizedStore(ownerId);
+        long menuId = createMenuWithoutImage(storeId);
+
+        mvc.perform(post(PATH)
+                        .cookie(ownerToken(ownerId))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(MENU_BODY.formatted(storeId, menuId)))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.code").value("CAMPAIGN-014"));
+    }
+
+    @Test
+    void 다른_점주_가게의_메뉴는_422로_거부한다() throws Exception {
+        Long ownerId = createActiveOwner();
+        long storeId = createFinalizedStore(ownerId);
+        Long otherOwnerId = createActiveOwner();
+        long otherStoreId = createFinalizedStore(otherOwnerId);
+        long otherMenuId = createMenuWithoutImage(otherStoreId);
+
+        mvc.perform(post(PATH)
+                        .cookie(ownerToken(ownerId))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(MENU_BODY.formatted(storeId, otherMenuId)))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.code").value("CAMPAIGN-014"));
     }
 
     @Test
@@ -186,9 +286,27 @@ class CampaignCouponConditionSecurityIntegrationTest extends AbstractCampaignInt
         return ownerId;
     }
 
-    private long registerStoreId(long storeId) {
+    /*
+     * 점주 한 명의 최종 등록된 가게 행을 만든다. 최종 등록 제약(chk_store_finalized)이 사업자 검증과 좌표를
+     * 요구하므로 함께 채운다. store 도메인 내부를 직접 참조하지 않고 canManageStore 가 보는 행만 준비한다.
+     */
+    private long createFinalizedStore(Long ownerId) {
+        LocalDateTime now = LocalDateTime.now();
+        jdbc.update("insert into store (owner_id, name, category_code, representative_name, "
+                        + "business_verification_status, business_verified_at, latitude, longitude, finalized, "
+                        + "finalized_at, created_at, updated_at) "
+                        + "values (?, ?, 'KOREAN', ?, 'VERIFIED', ?, 37.5, 127.0, true, ?, ?, ?)",
+                ownerId, "campaign-security-test-store-" + System.nanoTime(), "대표자", now, now, now, now);
+        Long storeId = jdbc.queryForObject("select store_id from store where owner_id = ?", Long.class, ownerId);
         createdStoreIds.add(storeId);
         return storeId;
+    }
+
+    private long createMenuWithoutImage(long storeId) {
+        LocalDateTime now = LocalDateTime.now();
+        jdbc.update("insert into store_menu (store_id, name, price, sort_order, created_at, updated_at) "
+                + "values (?, ?, 8000, 1, ?, ?)", storeId, "campaign-security-test-menu-" + System.nanoTime(), now, now);
+        return jdbc.queryForObject("select store_menu_id from store_menu where store_id = ?", Long.class, storeId);
     }
 
     private Campaign draft(Long ownerId, long storeId) {

@@ -16,7 +16,6 @@ import io.swagger.v3.oas.annotations.media.Content;
 import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
-import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -35,7 +34,6 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/v1/members")
 @RequiredArgsConstructor
 @Tag(name = "회원 정보", description = "내 정보 조회·수정, 온보딩, 카카오 재인증 후 탈퇴 API입니다.")
-@SecurityRequirement(name = "memberAccessToken")
 public class MemberController {
 
     private final MemberProfileService memberProfileService;

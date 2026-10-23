@@ -16,6 +16,9 @@ public record PosterCreateResponse(
         String title,
 
         @Schema(description = "5개 슬롯이 전부 채워진 완성 HTML입니다.")
-        String html
+        String html,
+
+        @Schema(description = "슬롯별 현재 값입니다. 편집 화면이 HTML 을 파싱하지 않고 입력칸을 채우는 데 씁니다.")
+        PosterSlotsResponse slots
 ) {
 }

@@ -3,6 +3,8 @@ package com.launchcatch.global.config;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.launchcatch.IntegrationTestSupport;
+import com.launchcatch.campaign.template.TemplateHtmlSanitizer;
+import com.launchcatch.campaign.template.TemplateSlotValidator;
 import com.launchcatch.global.config.DomainFlywayMigrator.BaseSettings;
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -171,5 +173,42 @@ class BaseWorldIntegrationTest extends IntegrationTestSupport {
         assertThat(jdbc.queryForList("SELECT DISTINCT discount_type FROM campaign "
                 + "WHERE campaign_id >= 10000000 AND discount_target_type = 'MENU'", String.class))
                 .containsExactlyInAnyOrder("PERCENT", "AMOUNT");
+
+        // 선착순 쿠폰 전단지 10종은 게시되고 활성이며 앱의 템플릿 규칙(허용 태그, 슬롯 넷)을 지킨다 (#886)
+        assertThat(jdbc.queryForList("SELECT html_content FROM template WHERE template_id BETWEEN 10000001 AND 10000010 "
+                + "AND status = 'PUBLISHED' AND active = 1", String.class))
+                .hasSize(10)
+                .allSatisfy(html -> {
+                    assertThat(new TemplateHtmlSanitizer().sanitize(html).removedElements()).isEmpty();
+                    new TemplateSlotValidator().validate(html);
+                });
+        // 포스터는 가게 업종의 스타일과 할인 대상(전체할인 홀수, 메뉴할인 짝수)으로 템플릿을 고른다
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM poster p JOIN campaign c ON c.campaign_id = p.campaign_id "
+                + "JOIN store s ON s.store_id = c.store_id WHERE p.campaign_id BETWEEN 10000001 AND 29999999 AND p.template_id <> 10000000 "
+                + "+ CASE s.category_code WHEN 'KOREAN' THEN 0 WHEN 'BUNSIK' THEN 0 WHEN 'CHINESE' THEN 2 WHEN 'ASIAN' THEN 2 "
+                + "WHEN 'JAPANESE' THEN 4 WHEN 'WESTERN' THEN 6 WHEN 'CAFE_DESSERT' THEN 6 ELSE 8 END "
+                + "+ IF(c.discount_target_type = 'MENU', 2, 1)", Long.class)).isZero();
+        // 기본 세계 가게와 메뉴는 "중식 001호점", "중식 메뉴 1" 같은 자리 이름이 아니라 실제 이름처럼 보이고 가게 이름은 겹치지 않는다
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM store WHERE store_id BETWEEN 10000001 AND 10000500 "
+                + "AND name LIKE '%호점'", Long.class)).isZero();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) - COUNT(DISTINCT name) FROM store WHERE store_id BETWEEN 10000001 AND 10000500",
+                Long.class)).isZero();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM store_menu WHERE store_id BETWEEN 10000001 AND 10000500 "
+                + "AND name LIKE '% 메뉴 _'", Long.class)).isZero();
+        // 쿠폰 회차와 피드 후보에 복사된 가게 이름이 가게와 같다
+        assertThat(jdbc.queryForObject("SELECT (SELECT COUNT(*) FROM coupon_event e JOIN store s ON s.store_id = e.store_id "
+                + "WHERE e.store_name <> s.name) + (SELECT COUNT(*) FROM ad_candidate a JOIN store s ON s.store_id = a.store_id "
+                + "WHERE a.store_name <> s.name)", Long.class)).isZero();
+        /*
+         * 포스터의 image 칸은 메뉴 사진이고, 메뉴가 없는 가게는 로고다.
+         * 사용 시간은 "오늘" 로 시작한다.
+         */
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM poster WHERE campaign_id BETWEEN 10000001 AND 29999999 "
+                + "AND ((JSON_UNQUOTE(JSON_EXTRACT(slot_values, '$.image.value')) NOT LIKE '%/menu-%.jpg' "
+                + "AND JSON_UNQUOTE(JSON_EXTRACT(slot_values, '$.image.value')) NOT LIKE '%/logo.jpg') "
+                + "OR JSON_UNQUOTE(JSON_EXTRACT(slot_values, '$.period.value')) NOT LIKE '오늘 %')", Long.class)).isZero();
+        // 할인 금액은 천 단위 쉼표를 찍는다 (2,000원)
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM poster WHERE campaign_id BETWEEN 10000001 AND 29999999 "
+                + "AND JSON_UNQUOTE(JSON_EXTRACT(slot_values, '$.discount.value')) REGEXP '[0-9]{4}원'", Long.class)).isZero();
     }
 }

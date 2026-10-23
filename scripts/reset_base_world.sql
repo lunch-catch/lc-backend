@@ -75,6 +75,17 @@ DELETE FROM wishlist
 WHERE campaign_id IN (SELECT campaign_id FROM reset_campaign) OR member_id IN (SELECT member_id FROM reset_member);
 DELETE FROM serve_log WHERE serve_id IN (SELECT serve_id FROM reset_serve);
 DELETE FROM ad_candidate WHERE campaign_id IN (SELECT campaign_id FROM reset_campaign);
+/*
+ * 시간대별 목표 표는 V8 이 지운다. V8 전의 DB(운영)에는 남아 있고 예산 계획을 외래 키로 가리킨다.
+ * 표가 있을 때만 먼저 지운다. 저장 프로시저 밖이라 IF 대신 준비된 문장으로 고른다.
+ */
+SET @hourly = IF(EXISTS (SELECT 1 FROM information_schema.tables
+                         WHERE table_schema = DATABASE() AND table_name = 'budget_hourly_target'),
+                 'DELETE FROM budget_hourly_target WHERE budget_daily_plan_id IN (SELECT budget_daily_plan_id FROM budget_daily_plan WHERE campaign_id IN (SELECT campaign_id FROM reset_campaign))',
+                 'DO 0');
+PREPARE hourly_stmt FROM @hourly;
+EXECUTE hourly_stmt;
+DEALLOCATE PREPARE hourly_stmt;
 DELETE FROM budget_daily_plan WHERE campaign_id IN (SELECT campaign_id FROM reset_campaign);
 DELETE FROM feed_filter_category WHERE member_id IN (SELECT member_id FROM reset_member);
 DELETE FROM feed_filter WHERE member_id IN (SELECT member_id FROM reset_member);
@@ -133,12 +144,12 @@ WHERE campaign_id IN (SELECT campaign_id FROM reset_campaign) OR store_id IN (SE
 DELETE FROM campaign_status_log WHERE campaign_id IN (SELECT campaign_id FROM reset_campaign);
 DELETE FROM campaign WHERE campaign_id IN (SELECT campaign_id FROM reset_campaign);
 
--- 템플릿은 기본 세계(B + 1 ~ 12)와 예전 시연 템플릿(2,000만 + 1) 중 남은 포스터가 쓰지 않는 것만 지운다
+-- 템플릿은 기본 세계(B + 1 ~ 14)와 예전 시연 템플릿(2,000만 + 1) 중 남은 포스터가 쓰지 않는 것만 지운다
 DELETE FROM template_version
-WHERE (template_id BETWEEN 10000001 AND 10000012 OR template_id = 20000001)
+WHERE (template_id BETWEEN 10000001 AND 10000014 OR template_id = 20000001)
   AND template_id NOT IN (SELECT template_id FROM poster);
 DELETE FROM template
-WHERE (template_id BETWEEN 10000001 AND 10000012 OR template_id = 20000001)
+WHERE (template_id BETWEEN 10000001 AND 10000014 OR template_id = 20000001)
   AND template_id NOT IN (SELECT template_id FROM poster);
 UPDATE template_quota SET current_count = (SELECT COUNT(*) FROM template);
 

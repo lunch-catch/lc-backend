@@ -63,6 +63,8 @@ public abstract class IntegrationTestSupport {
         registry.add("spring.data.redis.timeout", () -> "3s");
         registry.add("jwt.secret", () -> "test-only-secret-not-used-anywhere-else-0123456789abcdef");
         registry.add("jwt.cookie.secure", () -> "true");
+        // 프로필별 로컬 설정보다 우선해 테스트의 이미지 URL 기준을 고정한다.
+        registry.add("cdn.base-url", () -> "https://cdn.example.com");
         registry.add("launchcatch.batch.owner-id", () -> BATCH_OWNER);
         /*
          * 테스트도 기본 프로필이 local 이라 시나리오 데이터(db/base)가 켜진다.

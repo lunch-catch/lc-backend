@@ -152,12 +152,7 @@ public class BatchExecutionRetryService {
         }
     }
 
-    /*
-     * 별도 스레드에서 도는 재개다. runner.resume 이 던지는 예외는 ThreadPoolExecutor 작업
-     * 스레드에서 잡히지 않으면 JVM 기본 핸들러가 System.err 로만 남겨 구조화 로그를 거치지
-     * 않는다. 그 사이 행은 이 서버 소유의 RUNNING 으로 남아 생존 신호가 계속 갱신하므로
-     * 이어받기도 가져가지 않는다. 운영자가 원인을 찾을 단서가 이 로그뿐이라 여기서 남긴다.
-     */
+    // 실행기 스레드에는 요청의 MDC 가 없어, 넘겨받은 값을 심고 resume 을 부른 뒤 원래 MDC 로 되돌린다.
     private void resumeWithMdc(Map<String, String> mdc, String jobName, LocalDate businessDate, int attemptNo) {
         Map<String, String> previous = MDC.getCopyOfContextMap();
         try {
@@ -177,6 +172,12 @@ public class BatchExecutionRetryService {
         }
     }
 
+    /*
+     * 별도 스레드에서 도는 재개다. runner.resume 이 던지는 예외는 ThreadPoolExecutor 작업
+     * 스레드에서 잡히지 않으면 JVM 기본 핸들러가 System.err 로만 남겨 구조화 로그를 거치지
+     * 않는다. 그 사이 행은 이 서버 소유의 RUNNING 으로 남아 생존 신호가 계속 갱신하므로
+     * 이어받기도 가져가지 않는다. 운영자가 원인을 찾을 단서가 이 로그뿐이라 여기서 남긴다.
+     */
     private void resume(String jobName, LocalDate businessDate, int attemptNo) {
         try {
             runner.resume(jobName, businessDate, attemptNo);

@@ -5,6 +5,7 @@ import com.launchcatch.campaign.entity.Campaign;
 import com.launchcatch.campaign.exception.CampaignErrorCode;
 import com.launchcatch.campaign.exception.CampaignException;
 import com.launchcatch.campaign.exception.PosterErrorCode;
+import com.launchcatch.campaign.poster.PosterSlots;
 import com.launchcatch.campaign.poster.dto.PosterCreateResponse;
 import com.launchcatch.campaign.poster.dto.PosterResponse;
 import com.launchcatch.campaign.poster.entity.Poster;
@@ -40,7 +41,8 @@ public class PosterQueryService {
         Poster poster = posterRepository.findByCampaignId(campaignId)
                 .orElseThrow(() -> new CampaignException(PosterErrorCode.POSTER_NOT_SAVED));
         return new PosterCreateResponse(
-                poster.getId(), campaignId, poster.getTemplateId(), poster.getTitle(), poster.getHtmlContent());
+                poster.getId(), campaignId, poster.getTemplateId(), poster.getTitle(), poster.getHtmlContent(),
+                PosterSlots.view(poster.getSlotValues(), poster.getHtmlContent()));
     }
 
     /*

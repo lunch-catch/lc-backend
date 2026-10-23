@@ -22,7 +22,6 @@ import io.swagger.v3.oas.annotations.media.ExampleObject;
 import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
-import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -147,7 +146,6 @@ public class MemberAuthController {
             summary = "회원 로그아웃",
             description = "현재 회원의 갱신 토큰을 폐기하고 기존 접근 토큰을 무효화합니다. 응답은 accessToken과 refreshToken 쿠키를 만료시킵니다. DB 커밋 후 카카오 로그아웃도 요청하며 외부 요청의 실패는 회원 로그아웃을 되돌리지 않습니다."
     )
-    @SecurityRequirement(name = "memberAccessToken")
     @ApiResponses({
             @ApiResponse(responseCode = "204", description = "로그아웃 성공. accessToken과 refreshToken 쿠키가 만료됩니다.", content = @Content),
             @ApiResponse(responseCode = "401", description = "AUTH-005: 회원 인증이 없거나 유효하지 않습니다.", content = @Content(mediaType = "application/json", schema = @Schema(implementation = ResponseEnvelope.class))),
