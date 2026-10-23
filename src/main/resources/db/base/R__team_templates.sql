@@ -211,6 +211,12 @@ JOIN team_template_map tm ON tm.orig = v.template_id
 WHERE vm.action <> 'skip'
 ON DUPLICATE KEY UPDATE template_version.template_version_id = template_version.template_version_id;
 
+/*
+ * 템플릿 수 한도의 현재 수를 실제 템플릿 수로 맞춘다.
+ * R__templates_posters 도 맞추지만 그 파일이 다시 돌지 않는 배포(운영 #935)에서는 이 파일이 새로 넣은 수가 빠진다.
+ */
+UPDATE template_quota SET current_count = (SELECT COUNT(*) FROM template);
+
 DROP TEMPORARY TABLE team_version_map;
 DROP TEMPORARY TABLE team_template_map;
 DROP TEMPORARY TABLE team_template_version;
