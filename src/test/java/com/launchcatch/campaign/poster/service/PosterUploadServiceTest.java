@@ -8,6 +8,9 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import com.launchcatch.campaign.contract.CampaignStatus;
 import com.launchcatch.campaign.contract.DiscountTargetType;
 import com.launchcatch.campaign.contract.DiscountType;
@@ -40,12 +43,14 @@ import java.time.LocalTime;
 import java.util.List;
 import java.util.Optional;
 import java.util.function.Consumer;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.slf4j.LoggerFactory;
 import org.springframework.transaction.support.TransactionCallback;
 import org.springframework.transaction.support.TransactionTemplate;
 import software.amazon.awssdk.services.s3.S3Client;
@@ -85,6 +90,23 @@ class PosterUploadServiceTest {
     private PosterUploadService service;
 
     @SuppressWarnings("unchecked")
+    private final List<ListAppender<ILoggingEvent>> attachedAppenders = new java.util.ArrayList<>();
+
+    private ListAppender<ILoggingEvent> attachLogAppender() {
+        ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        appender.start();
+        ((Logger) LoggerFactory.getLogger(PosterUploadService.class)).addAppender(appender);
+        attachedAppenders.add(appender);
+        return appender;
+    }
+
+    @AfterEach
+    void detachLogAppenders() {
+        Logger logger = (Logger) LoggerFactory.getLogger(PosterUploadService.class);
+        attachedAppenders.forEach(logger::detachAppender);
+        attachedAppenders.clear();
+    }
+
     @BeforeEach
     void setUp() {
         service = new PosterUploadService(
@@ -301,13 +323,19 @@ class PosterUploadServiceTest {
         when(storeQueryService.findAllById(List.of(STORE_ID)))
                 .thenReturn(List.of(new StoreInfo(STORE_ID, "분식집", "store.jpg", 37.5, 127.0)));
         when(storeQueryService.findMenusByIdIn(List.of(42L))).thenReturn(new StoreMenuQueryResult(List.of(), List.of()));
+        ListAppender<ILoggingEvent> appender = attachLogAppender();
 
         assertThatThrownBy(() -> service.createOrOverwritePoster(OWNER_ID, CAMPAIGN_ID, TEMPLATE_ID, OBJECT_KEY))
                 .isInstanceOfSatisfying(CampaignException.class, e ->
                         assertThat(e.getErrorCode()).isEqualTo(CommonErrorCode.INTERNAL_ERROR));
+
+        assertThat(appender.list).extracting(ILoggingEvent::getFormattedMessage)
+                .anyMatch(message -> message.contains("event=POSTER_MENU_NOT_FOUND"))
+                .noneMatch(message -> message.contains("event=POSTER_MENU_IMAGE_INVALID"));
     }
 
     @Test
+    @DisplayName("메뉴의 이미지 데이터 오류는 메뉴 없음과 다른 이벤트로 로그를 남기고 같은 내부 오류로 거부한다(#851)")
     void 메뉴의_데이터_오류가_있으면_내부_오류로_포스터_생성을_거부한다() {
         when(campaignRepository.findById(CAMPAIGN_ID)).thenReturn(Optional.of(menuDiscountCampaign()));
         when(templateRepository.findById(TEMPLATE_ID)).thenReturn(Optional.of(publishedActiveTemplate()));
@@ -315,10 +343,15 @@ class PosterUploadServiceTest {
                 .thenReturn(List.of(new StoreInfo(STORE_ID, "분식집", "store.jpg", 37.5, 127.0)));
         when(storeQueryService.findMenusByIdIn(List.of(42L)))
                 .thenReturn(new StoreMenuQueryResult(List.of(), List.of(42L)));
+        ListAppender<ILoggingEvent> appender = attachLogAppender();
 
         assertThatThrownBy(() -> service.createOrOverwritePoster(OWNER_ID, CAMPAIGN_ID, TEMPLATE_ID, OBJECT_KEY))
                 .isInstanceOfSatisfying(CampaignException.class, e ->
                         assertThat(e.getErrorCode()).isEqualTo(CommonErrorCode.INTERNAL_ERROR));
+
+        assertThat(appender.list).extracting(ILoggingEvent::getFormattedMessage)
+                .anyMatch(message -> message.contains("event=POSTER_MENU_IMAGE_INVALID"))
+                .noneMatch(message -> message.contains("event=POSTER_MENU_NOT_FOUND"));
     }
 
     @Test
