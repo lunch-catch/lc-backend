@@ -7,12 +7,10 @@ import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.Cookie;
 import java.nio.charset.StandardCharsets;
-import java.time.Clock;
-import java.time.Instant;
-import java.time.ZoneId;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -24,8 +22,8 @@ import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
 
 class AdminLoginAuditFilterTest {
-    private final Clock clock = Clock.fixed(Instant.parse("2026-10-08T03:00:00Z"), ZoneId.of("Asia/Seoul"));
-    private final AdminLoginAuditFilter filter = new AdminLoginAuditFilter(clock);
+    private final SimpleMeterRegistry meters = new SimpleMeterRegistry();
+    private final AdminLoginAuditFilter filter = new AdminLoginAuditFilter(meters);
     private final MockHttpServletRequest request = new MockHttpServletRequest("POST", "/v1/admin/auth/tokens");
     private final MockHttpServletResponse response = new MockHttpServletResponse();
     private final Logger logger = (Logger) LoggerFactory.getLogger(AdminLoginAuditFilter.class);
@@ -56,6 +54,23 @@ class AdminLoginAuditFilterTest {
         logger.setLevel(originalLevel);
         logs.stop();
         MDC.clear();
+        meters.close();
+    }
+
+    @Test
+    void 서비스가_기록한_요청은_중복_기록하지_않는다() throws Exception {
+        filter.doFilter(request, response, (req, res) ->
+                com.launchcatch.admin.AdminLoginAuditContext.markHandled());
+        assertThat(logs.list).isEmpty();
+        filter.doFilter(request, response, (req, res) -> { });
+        assertThat(logs.list).hasSize(1);
+    }
+
+    @Test
+    void 횟수_제한_거절은_메트릭으로_센다() throws Exception {
+        filter.doFilter(request, response, (req, res) -> response.setStatus(429));
+        assertThat(meters.get("admin.login.rejected").tag("reason", "RATE_LIMIT").counter().count())
+                .isEqualTo(1);
     }
 
     @ParameterizedTest
