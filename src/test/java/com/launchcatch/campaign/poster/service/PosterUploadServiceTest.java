@@ -468,6 +468,66 @@ class PosterUploadServiceTest {
         verify(posterRepository, never()).save(any(Poster.class));
     }
 
+    private static final String EDITED_SLOT_VALUES =
+            "{\"eventName\":{\"type\":\"text\",\"value\":\"새 이름\",\"baseText\":\"옛이름\",\"fontSizePx\":40},"
+                    + "\"discount\":{\"type\":\"text\",\"value\":\"옛 문구 오늘만\",\"baseText\":\"옛 문구\","
+                    + "\"suffix\":\"오늘만\",\"fontSizePx\":20}}";
+
+    @Test
+    @DisplayName("같은 템플릿으로 다시 만들면 점주가 고친 가게명과 할인 추가 텍스트, 글자 크기를 유지한다(#884)")
+    void 같은_템플릿으로_다시_만들면_수정을_유지한다() throws Exception {
+        givenHappyPath(draftCampaign(CampaignStatus.DRAFT), publishedActiveTemplate());
+        Poster existing = Poster.create(CAMPAIGN_ID, TEMPLATE_ID, "old title", EDITED_SLOT_VALUES, "old html", "old-key");
+        setId(existing, 10L);
+        when(posterRepository.findByCampaignId(CAMPAIGN_ID)).thenReturn(Optional.of(existing));
+
+        PosterCreateResponse response = service.createOrOverwritePoster(OWNER_ID, CAMPAIGN_ID, TEMPLATE_ID, OBJECT_KEY);
+
+        org.jsoup.nodes.Document document = org.jsoup.Jsoup.parseBodyFragment(response.html());
+        org.jsoup.nodes.Element eventName = document.selectFirst("[data-slot=eventName]");
+        org.jsoup.nodes.Element discount = document.selectFirst("[data-slot=discount]");
+        assertThat(eventName.text()).isEqualTo("새 이름");
+        assertThat(eventName.attr("style")).isEqualTo("font-size:40px");
+        assertThat(discount.text()).endsWith(" 오늘만");
+        assertThat(discount.attr("style")).isEqualTo("font-size:20px");
+        assertThat(response.slots().eventName().text()).isEqualTo("새 이름");
+        assertThat(response.slots().eventName().fontSizePx()).isEqualTo(40);
+        assertThat(response.slots().discount().suffix()).isEqualTo("오늘만");
+        assertThat(response.slots().discount().baseText()).doesNotContain("오늘만");
+        assertThat(existing.getSlotValues()).contains("\"baseText\":\"분식집\"");
+    }
+
+    @Test
+    @DisplayName("다른 템플릿으로 다시 만들면 수정을 모두 초기화한다(#884)")
+    void 다른_템플릿으로_다시_만들면_수정을_초기화한다() throws Exception {
+        givenHappyPath(draftCampaign(CampaignStatus.DRAFT), publishedActiveTemplate());
+        Poster existing = Poster.create(CAMPAIGN_ID, 999L, "old title", EDITED_SLOT_VALUES, "old html", "old-key");
+        setId(existing, 10L);
+        when(posterRepository.findByCampaignId(CAMPAIGN_ID)).thenReturn(Optional.of(existing));
+
+        PosterCreateResponse response = service.createOrOverwritePoster(OWNER_ID, CAMPAIGN_ID, TEMPLATE_ID, OBJECT_KEY);
+
+        org.jsoup.nodes.Document document = org.jsoup.Jsoup.parseBodyFragment(response.html());
+        assertThat(document.selectFirst("[data-slot=eventName]").text()).isEqualTo("분식집");
+        assertThat(document.selectFirst("[data-slot=eventName]").attr("style")).isEmpty();
+        assertThat(document.selectFirst("[data-slot=discount]").text()).doesNotContain("오늘만");
+        assertThat(response.slots().discount().suffix()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("수정하지 않은 가게명은 다시 만들 때 지금의 가게 이름을 따른다(#884)")
+    void 수정하지_않은_가게명은_가게_이름을_따른다() throws Exception {
+        givenHappyPath(draftCampaign(CampaignStatus.DRAFT), publishedActiveTemplate());
+        String untouched = "{\"eventName\":{\"type\":\"text\",\"value\":\"옛이름\",\"baseText\":\"옛이름\"}}";
+        Poster existing = Poster.create(CAMPAIGN_ID, TEMPLATE_ID, "old title", untouched, "old html", "old-key");
+        setId(existing, 10L);
+        when(posterRepository.findByCampaignId(CAMPAIGN_ID)).thenReturn(Optional.of(existing));
+
+        PosterCreateResponse response = service.createOrOverwritePoster(OWNER_ID, CAMPAIGN_ID, TEMPLATE_ID, OBJECT_KEY);
+
+        assertThat(response.slots().eventName().text()).isEqualTo("분식집");
+    }
+
     private void givenHappyPath(Campaign campaign, Template template) {
         when(campaignRepository.findById(CAMPAIGN_ID)).thenReturn(Optional.of(campaign));
         when(campaignRepository.findByIdForUpdate(CAMPAIGN_ID)).thenReturn(Optional.of(campaign));

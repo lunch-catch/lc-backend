@@ -105,7 +105,7 @@ public class CampaignActivationService {
 
     /*
      * campaignStatusService.schedule()이 캠페인 잠금을 잡은 뒤 호출한다(그 메서드의
-     * precondition). 포스터 덮어쓰기(PosterUploadService)도 활성화 전에 같은 잠금을 거치므로,
+     * precondition). 포스터 덮어쓰기(PosterUploadService)와 텍스트 수정(PosterEditService)도 같은 잠금을 거치므로,
      * 이 확인과 schedule()의 실제 전이 사이에는 포스터가 바뀔 수 없다.
      */
     private void verifyPosterUnchanged(Long campaignId, LocalDateTime posterUpdatedAtAtModeration) {

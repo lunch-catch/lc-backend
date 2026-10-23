@@ -41,6 +41,7 @@
   동시에 들어온 두 생성 요청 중 하나가 DB 제약으로 걸려 애플리케이션 레벨의 조회만으로는
   못 막는 경쟁을 막을 수 있다. 이 마이그레이션은 `#244`가 추가한다(명세 단계는 스키마를
   바꾸지 않는다)
+- **요청의 `storeId`와 `targetMenuId`가 로그인한 점주의 것인지 저장 전에 확인한다(`#874`).** `storeId`는 클라이언트가 보낸 값이라 `StoreQueryService.canManageStore(ownerId, storeId)`로 본인의 최종 등록된 가게인지 본다. 없는 가게, 남의 가게, 등록 중인 가게는 같은 `CAMPAIGN-013`(403)이라 존재 여부를 알려주지 않는다. `MENU` 할인이면 `findMenusByIdIn`의 정상 목록에 `targetMenuId`가 있고 그 메뉴의 `storeId`가 요청의 `storeId`와 같은지 본다. 없는 메뉴, 다른 가게의 메뉴, 이미지가 없거나 검증되지 않은 메뉴는 정상 목록에 들어오지 않으므로 한 번에 `CAMPAIGN-014`(422)로 거절한다. `MENU`인데 `targetMenuId`를 아예 보내지 않은 것은 필수값 누락이라 이 확인을 하지 않고, 엔티티 검증이 `COMMON-002`(400)로 거절한다(이 변경 전과 같다). 두 확인은 다른 도메인의 조회라 트랜잭션 밖에서 끝낸다. 같은 가게의 기존 `DRAFT`를 덮어쓸 때도 그 `DRAFT`의 `ownerId`가 로그인한 점주인지 확인한다. 다르면 소유 확인이 생기기 전에 만들어진 데이터라 덮어쓰지 않고 `CAMPAIGN-005`로 거절하며 WARN 로그를 남긴다
 - **점주는 `ENDED`가 아닌 캠페인을 동시에 하나만 가질 수 있다(`#525`, 피드백 리뷰로
   나온 요구사항).** 새로 만드는 경로(`create()`)에서만
   `CampaignRepository.existsByOwnerIdAndStatusNotIn(ownerId, List.of(ENDED))`로 확인한다.
@@ -244,14 +245,14 @@
   던진다. 새 서비스가 `CampaignStatusService` 호출을 `try-catch`로 감싸 변환한다
 - **`StoreCampaignSummaryUpdater.update()`가 던지는 `IllegalArgumentException`(가게-메뉴
   불일치)은 그대로 두지 않고 `RuntimeException`으로 다시 던진다(자체 리뷰로 찾음,
-  2026-10-18).** 캠페인 등록 1단계(`CampaignCouponConditionService`)가 `targetMenuId`가
-  그 가게 소유인지 검증하지 않아서(해당 파일의 TODO), MENU 할인 캠페인의 `targetMenuId`가
-  실제로는 다른 가게 메뉴일 수 있다. 이 불일치는 점주의 요청이 잘못된 게 아니라 서버 쪽
+  2026-10-18).** 캠페인 등록 1단계(`CampaignCouponConditionService`)는 이제 `targetMenuId`의
+  가게 소속을 저장 전에 검증하지만(`#874`), 그 전에 저장됐거나 직접 저장한 데이터에는
+  MENU 할인 캠페인의 `targetMenuId`가 실제로는 다른 가게 메뉴인 것이 남아 있을 수 있어
+  이 변환은 그대로 둔다. 이 불일치는 점주의 요청이 잘못된 게 아니라 서버 쪽
   데이터 문제라서, 그대로 두면 `GlobalExceptionHandler.handleIllegalArgument`가
   `COMMON-002`(400, "입력값이 올바르지 않습니다")로 잘못 답한다. `CampaignException`도
   `IllegalStateException`도 아닌 `RuntimeException`으로 다시 던져
-  `handleUnexpected`의 `COMMON-001`(500)로 보낸다. 근본 조치(등록 시점 검증)는 이 PR
-  범위 밖이라 아래 "아직 정해지지 않은 것"으로 넘긴다
+  `handleUnexpected`의 `COMMON-001`(500)로 보낸다
 - **`store.contract.StoreCampaignSummaryUpdater.update()` 호출을
   `CampaignStatusService.pause()`/`resume()` 안에 추가한다(설계 문서 2.4, `#468`).** 호출자가
   누구든(점주, 나중에 추가될 관리자) 같은 트랜잭션 안에서 가게 요약이 함께 갱신되게
@@ -356,7 +357,7 @@
 | `Campaign.updateCouponCondition(...)` 메서드 시그니처 | `#244` 결정 | 아직 엔티티에 없다. `#244`가 추가한다 |
 | 00:00 배치가 `pendingDailyBudget`을 `dailyBudget`에 반영하는 호출 지점 | V51 45행, 102행 스케줄러 | 해소됨(`#840`). `CampaignPendingBudgetJob`(`@Order(35)`)이 ACTIVE 이고 예약 값이 있는 캠페인마다 행 잠금 아래에서 상태를 다시 확인한 뒤 `dailyBudget`으로 옮기고 예약 값을 비운다. `pause()`는 `pendingDailyBudget`을 지우지 않으므로 `PAUSED`로 멈춰 있는 캠페인에는 적용하지 않고 예약 값을 남긴다. 정산의 일일 예약(50)보다 앞이라 바뀐 예산이 그날 예약에 반영된다 |
 | 예약 값(`pendingDailyBudget`) 자체를 PATCH 응답에 노출할지 | V51 45행 | `#330`은 노출하지 않는다(응답은 늘 `dailyBudget`). 노출이 필요해지면 그때 명세를 바꾼다 |
-| `targetMenuId`가 그 가게(`storeId`) 소유인지 등록 시점(`CampaignCouponConditionService`)에 검증하는 것 | `#468` 자체 리뷰로 찾음(2026-10-18) | 지금은 검증 코드가 없다. `StoreCampaignSummaryUpdater.update()`가 `menuBelongsToStore`로 뒤늦게(중단·재개 시점에) 걸러내지만, 등록 시점에 막는 게 근본 조치다. 담당 이슈 미정 |
+| `targetMenuId`가 그 가게(`storeId`) 소유인지 등록 시점(`CampaignCouponConditionService`)에 검증하는 것 | `#468` 자체 리뷰로 찾음(2026-10-18) | 해소됨(`#874`). 등록 시점에 `findMenusByIdIn`으로 `targetMenuId`가 그 가게의 메뉴이고 검증된 이미지가 있는지 확인하고 아니면 `CAMPAIGN-014`로 거절한다. 같은 변경이 `storeId`가 로그인한 점주의 가게인지도 `canManageStore`로 확인한다(`CAMPAIGN-013`) |
 | 00:00 의 `SCHEDULED -> ACTIVE` 배치가 취소된 캠페인을 만났을 때의 처리 | `#597`(2026-10-20) | 취소가 먼저 잠금을 잡으면 배치의 `CampaignStatusService.activate()`가 `DRAFT`를 보고 `IllegalStateException`을 던진다. 그 배치를 만드는 `#569`가 이 예외를 건너뛰기로 받아야 한다. 받지 않으면 단계가 실패해 00:00 묶음이 멈춘다 |
 | 캠페인 활성화 요청 빈도 제한의 정확한 횟수·창 | `#561` 자체 리뷰로 찾음(2026-10-19) | `CampaignActivationRateLimiter`가 지금은 `TemplateGenerationRateLimiter`의 분당 3회를 그대로 가져와 썼다(근거 없는 예시값, `C` 등급). 실제 값은 운영 쪽과 정한다 |
 

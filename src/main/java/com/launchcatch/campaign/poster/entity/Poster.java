@@ -29,7 +29,7 @@ public class Poster extends BaseTimeEntity {
     @Column(nullable = false, length = TITLE_MAX_LENGTH)
     private String title;
 
-    // {슬롯키: {type, value}} 형태의 JSON 문자열이다. PosterUploadService가 ObjectMapper로 만든다.
+    // {슬롯키: {type, value, ...}} 형태의 JSON 문자열이다. PosterSlots 가 읽고 쓴다. value 는 화면에 나가는 최종 문구다.
     @Column(name = "slot_values", columnDefinition = "json", nullable = false)
     private String slotValues;
 
@@ -64,6 +64,12 @@ public class Poster extends BaseTimeEntity {
         this.slotValues = Objects.requireNonNull(slotValues, "slotValues");
         this.htmlContent = Objects.requireNonNull(htmlContent, "htmlContent");
         this.imageObjectKey = Objects.requireNonNull(imageObjectKey, "imageObjectKey");
+    }
+
+    // 점주가 가게명과 할인 문구, 글자 크기를 고친 결과다(#884). 템플릿과 이미지는 그대로다.
+    public void edit(String slotValues, String htmlContent) {
+        this.slotValues = Objects.requireNonNull(slotValues, "slotValues");
+        this.htmlContent = Objects.requireNonNull(htmlContent, "htmlContent");
     }
 
     private static String requiredTitle(String value) {

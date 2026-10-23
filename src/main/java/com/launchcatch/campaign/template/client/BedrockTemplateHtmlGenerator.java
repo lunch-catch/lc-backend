@@ -82,7 +82,8 @@ public class BedrockTemplateHtmlGenerator implements TemplateHtmlGenerator {
 
     private static final String SLOT_CORRECTION =
             "방금 만든 HTML에 eventName, discount, period, image 슬롯 중 하나가 없거나 2개 이상 있었다. "
-                    + "4개의 data-slot을 각각 정확히 하나씩 포함해서 다시 만들어라.";
+                    + "또는 eventName이나 discount 태그 안에 span, br 같은 자식 태그가 있었다. "
+                    + "4개의 data-slot을 각각 정확히 하나씩 포함하고, eventName과 discount 태그 안에는 글자만 넣어서 다시 만들어라.";
 
     private static final String STRUCTURE_CORRECTION =
             "방금 만든 HTML에서 슬롯 태그가 이전 버전과 달라졌다. "
@@ -105,6 +106,8 @@ public class BedrockTemplateHtmlGenerator implements TemplateHtmlGenerator {
             - 다음 4개의 data-slot을 각각 정확히 하나씩 포함한다: eventName, discount, period, image
               (그 밖의 data-slot은 쓰지 않는다)
             - eventName, discount, period는 div, span, p, h1, h2, h3, strong, em 중 하나의 태그에 올려라
+            - eventName과 discount 태그 안에는 글자만 쓴다. span, br 같은 자식 태그를 넣지 않는다.
+              강조나 꾸밈은 그 태그의 style이나 바깥 요소로 한다(점주가 이 두 칸의 글자와 크기를 고치기 때문이다)
             - image는 반드시 img 태그에 올려라. src는 쓰지 않는다. alt는 "메뉴 이미지"로 둔다
             - 전체 태그는 div, span, p, h1, h2, h3, strong, em, br, img 만 쓴다.
               a, table, ul, li, button, script, style 같은 태그는 절대 쓰지 않는다

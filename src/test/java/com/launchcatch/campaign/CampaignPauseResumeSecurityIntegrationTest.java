@@ -182,9 +182,9 @@ class CampaignPauseResumeSecurityIntegrationTest extends AbstractCampaignIntegra
     }
 
     /*
-     * 캠페인 등록 1단계(CampaignCouponConditionService)가 targetMenuId의 가게 소속을 검증하지
-     * 않아(#468 자체 리뷰로 찾음), MENU 할인 캠페인이 다른 가게의 메뉴를 참조한 채로 존재할 수
-     * 있다. 그 불일치가 StoreCampaignSummaryUpdater.update()에서 처음 걸러지는데, 500으로
+     * 캠페인 등록 1단계(CampaignCouponConditionService)는 이제 targetMenuId의 가게 소속을 저장 전에
+     * 검증하지만(#874), 그 전에 저장됐거나 직접 저장한 MENU 할인 캠페인이 다른 가게의 메뉴를 참조한 채로
+     * 존재할 수 있다. 그 불일치가 StoreCampaignSummaryUpdater.update()에서 처음 걸러지는데, 500으로
      * 답하고 캠페인 상태는 그대로(트랜잭션 롤백) 남아야 한다.
      */
     @Test

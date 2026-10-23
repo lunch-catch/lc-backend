@@ -1,6 +1,7 @@
 package com.launchcatch.campaign;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -194,6 +195,104 @@ class OwnerPosterSecurityIntegrationTest extends AbstractCampaignIntegrationTest
     @EnumSource(value = Role.class, names = {"MEMBER", "ADMIN", "SUPER_ADMIN"})
     void GET_점주가_아닌_토큰은_403이다(Role role) throws Exception {
         mvc.perform(get(getPath(1L)).cookie(nonOwnerToken(role)))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("AUTH-006"));
+    }
+
+    private static final String EDIT_HTML = "<div><h1 data-slot=\"eventName\" style=\"font-size:20px\">분식집</h1>"
+            + "<p data-slot=\"discount\">1000원 할인</p><p data-slot=\"period\">p</p>"
+            + "<img data-slot=\"image\" src=\"x\"></div>";
+    private static final String EDIT_SLOTS = "{\"eventName\":{\"type\":\"text\",\"value\":\"분식집\"},"
+            + "\"discount\":{\"type\":\"text\",\"value\":\"1000원 할인\"},"
+            + "\"period\":{\"type\":\"text\",\"value\":\"p\"},\"image\":{\"type\":\"image\",\"value\":\"x\"}}";
+    private static final String EDIT_BODY = """
+            {
+              "eventName": {"text": "점심 특가", "fontSizePx": 32},
+              "discount": {"suffix": "오늘만", "fontSizePx": 26}
+            }
+            """;
+
+    @Test
+    void PATCH_본인_DRAFT_캠페인의_포스터를_고친다() throws Exception {
+        Long ownerId = createActiveOwner();
+        Campaign campaign = campaignRepository.saveAndFlush(draft(ownerId));
+        posterRepository.saveAndFlush(Poster.create(campaign.getId(), persistTemplate(), "분식집 - 가을 신메뉴",
+                EDIT_SLOTS, EDIT_HTML, "campaigns/" + campaign.getId() + "/poster/a.jpg"));
+
+        mvc.perform(patch(getPath(campaign.getId())).cookie(ownerToken(ownerId))
+                        .contentType(MediaType.APPLICATION_JSON).content(EDIT_BODY))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.slots.eventName.text").value("점심 특가"))
+                .andExpect(jsonPath("$.data.slots.eventName.fontSizePx").value(32))
+                .andExpect(jsonPath("$.data.slots.discount.baseText").value("1000원 할인"))
+                .andExpect(jsonPath("$.data.slots.discount.suffix").value("오늘만"))
+                .andExpect(jsonPath("$.data.slots.discount.fontSizePx").value(26));
+        mvc.perform(get(getPath(campaign.getId())).cookie(ownerToken(ownerId)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.slots.eventName.text").value("점심 특가"));
+    }
+
+    @Test
+    void PATCH_범위를_벗어난_글자_크기는_422다() throws Exception {
+        Long ownerId = createActiveOwner();
+        Campaign campaign = campaignRepository.saveAndFlush(draft(ownerId));
+        posterRepository.saveAndFlush(Poster.create(campaign.getId(), persistTemplate(), "분식집 - 가을 신메뉴",
+                EDIT_SLOTS, EDIT_HTML, "campaigns/" + campaign.getId() + "/poster/a.jpg"));
+
+        mvc.perform(patch(getPath(campaign.getId())).cookie(ownerToken(ownerId))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"eventName\": {\"fontSizePx\": 99}}"))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.code").value("POSTER-027"));
+    }
+
+    @Test
+    void PATCH_포스터가_없으면_404다() throws Exception {
+        Long ownerId = createActiveOwner();
+        Campaign campaign = campaignRepository.saveAndFlush(draft(ownerId));
+
+        mvc.perform(patch(getPath(campaign.getId())).cookie(ownerToken(ownerId))
+                        .contentType(MediaType.APPLICATION_JSON).content(EDIT_BODY))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("POSTER-020"));
+    }
+
+    @Test
+    void PATCH_본인_캠페인이_아니면_403이다() throws Exception {
+        Long ownerId = createActiveOwner();
+        Long otherOwnerId = createActiveOwner();
+        Campaign campaign = campaignRepository.saveAndFlush(draft(otherOwnerId));
+
+        mvc.perform(patch(getPath(campaign.getId())).cookie(ownerToken(ownerId))
+                        .contentType(MediaType.APPLICATION_JSON).content(EDIT_BODY))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("CAMPAIGN-005"));
+    }
+
+    @Test
+    void PATCH_DRAFT가_아니면_409이다() throws Exception {
+        Long ownerId = createActiveOwner();
+        Campaign campaign = campaignRepository.saveAndFlush(draft(ownerId));
+        campaign.schedule(LocalDateTime.now());
+        campaignRepository.saveAndFlush(campaign);
+
+        mvc.perform(patch(getPath(campaign.getId())).cookie(ownerToken(ownerId))
+                        .contentType(MediaType.APPLICATION_JSON).content(EDIT_BODY))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("CAMPAIGN-006"));
+    }
+
+    @Test
+    void PATCH_토큰이_없으면_401이다() throws Exception {
+        mvc.perform(patch(getPath(1L)).contentType(MediaType.APPLICATION_JSON).content(EDIT_BODY))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("AUTH-005"));
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = Role.class, names = {"MEMBER", "ADMIN", "SUPER_ADMIN"})
+    void PATCH_점주가_아닌_토큰은_403이다(Role role) throws Exception {
+        mvc.perform(patch(getPath(1L)).cookie(nonOwnerToken(role))
+                        .contentType(MediaType.APPLICATION_JSON).content(EDIT_BODY))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.code").value("AUTH-006"));
     }
