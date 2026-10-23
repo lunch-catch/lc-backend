@@ -36,7 +36,7 @@
 | U-028 | 약관 내용 보기 | `NONE:입력` |
 | U-029 | 약관 동의 후 계속 | `NONE:입력` |
 | U-030 | 맞춤 정보 미선택 | `NONE:입력` |
-| U-031 | 온보딩 저장 성공 | `MEM.NOT_ONBOARDED` |
+| U-031 | 온보딩 성별, 연령 선택 | `MEM.NOT_ONBOARDED` |
 | U-032 | 온보딩 이미 완료 | `MEM.ONBOARDED` |
 | U-033 | 온보딩 저장 실패 | `NONE:장애` |
 | U-034 | 맞춤 정보 화면 직접 진입/새로고침 | `NONE:입력` |
@@ -389,7 +389,7 @@
 | O-087 | 캠페인 제목 규칙 | `OWN.ACTIVE`, `STO.FINALIZED`, `CMP.DRAFT_STEP1`, `CMP.ENDED` |
 | O-088 | 홈 잔액에서 충전 | `OWN.ACTIVE`, `STO.FINALIZED`, `BIL.BALANCE_ENOUGH` |
 | O-089 | 홈 QR 사용 처리 진입 | `OWN.ACTIVE`, `STO.FINALIZED` |
-| O-090 | 홈 쿠폰 사용 추이 (mock) | `OWN.ACTIVE`, `STO.FINALIZED` |
+| O-090 | 홈 쿠폰 사용 추이 | `OWN.ACTIVE`, `STO.FINALIZED` |
 | O-091 | 첫 방문 튜토리얼 완료 | `OWN.ACTIVE_TUTORIAL_UNSEEN`, `STO.FINALIZED` |
 | O-092 | 튜토리얼 건너뛰기 또는 닫기 | `OWN.ACTIVE_TUTORIAL_UNSEEN`, `STO.FINALIZED` |
 | O-093 | 튜토리얼 저장 실패 | `NONE:장애` |
@@ -401,7 +401,7 @@
 | O-099 | 가게 관리에서 충전 | `OWN.ACTIVE`, `STO.FINALIZED` |
 | O-100 | 영업시간 수정 화면 불러오기 | `OWN.ACTIVE`, `STO.FINALIZED` |
 | O-101 | 영업시간 수정 검증 | `OWN.ACTIVE`, `STO.FINALIZED` |
-| O-102 | 영업시간 수정 저장 (mock) | `OWN.ACTIVE`, `STO.FINALIZED` |
+| O-102 | 영업시간 수정 저장 | `OWN.ACTIVE`, `STO.FINALIZED` |
 | O-103 | 영업시간 바꾼 채 나가기 | `NONE:입력` |
 | O-104 | 매장 사진 보기 | `OWN.ACTIVE`, `STO.FINALIZED`, `STO.FINALIZED_BARE`, `STO.FINALIZED_FULL` |
 | O-105 | 대표 메뉴 보기 | `OWN.ACTIVE`, `STO.FINALIZED`, `STO.FINALIZED_BARE`, `STO.FINALIZED_FULL` |
@@ -838,7 +838,7 @@
 | A-265 | 테이블 개인 설정 | `ADM.ADMIN_ACTIVE` |
 | A-266 | 테마 전환 | `NONE:입력` |
 
-## 화면 없는 백엔드 (401)
+## 화면 없는 백엔드 (431)
 
 | 시나리오 | 이름 | 묶음 |
 |---|---|---|
@@ -995,8 +995,8 @@
 | B-154 | 대상 가게 없음 | `NONE:없음` |
 | B-155 | 프로필 없는 회원 제외 | `ADS.FEED_VISIT_7D`, `MEM.PROFILE_NO_DEMOGRAPHIC` |
 | B-156 | 대상 인원 중간 실패 | `NONE:장애` |
-| B-157 | SCHEDULED 캠페인 자동 시작 없음 | `CMP.SCHEDULED_START_REACHED` |
-| B-158 | 기간 끝난 캠페인 자동 종료 없음 | `CMP.ACTIVE_PAST_END` |
+| B-157 | SCHEDULED 캠페인 자동 시작 | `CMP.SCHEDULED_START_REACHED` |
+| B-158 | 기간 끝난 캠페인 자동 종료 | `CMP.ACTIVE_PAST_END` |
 | B-159 | 정기 집계 정상 | `OPS.BILLING_RELEASE_SUCCESS_D1`, `ANA.SOURCE_D1` |
 | B-160 | 대상 날짜 구성 | `OPS.BILLING_RELEASE_SUCCESS_D1`, `ANA.PENDING_OLD_DATES` |
 | B-161 | 보존 기간 밖 pending 삭제 | `ANA.PENDING_OLD_DATES` |
@@ -1240,3 +1240,33 @@
 | B-399 | 쿠폰 발급 대기열 포화 | `NONE:장애` |
 | B-400 | 카카오 로그아웃, 연결 해제 서킷 | `NONE:장애` |
 | B-401 | 포인트 조정 멱등 키 충돌 | `ADM.ADMIN_ACTIVE`, `BIL.ADJUST_IDEM_KEY` |
+| B-402 | 중단 캠페인도 기간 끝나면 종료 | `CMP.PAUSED_PAST_END` |
+| B-403 | 캠페인 단계 할 일 없음 | `CMP.ENDS_TODAY` |
+| B-404 | 종료 연쇄 반영 | `CMP.ACTIVE_PAST_END`, `CPN.EVENT_ACTIVE`, `ADS.WISHLIST` |
+| B-405 | 종료 데이터 오류 건너뜀 | `CMP.MENU_MISMATCH_PAST_END` |
+| B-406 | 종료 개별 실패 | `CMP.ACTIVE_PAST_END`, `NONE:장애` |
+| B-407 | 종료 재실행 멱등 | `CMP.ACTIVE_PAST_END`, `OPS.BATCH_BUNDLE_FAILED` |
+| B-408 | 시작 시 같은 가게 기존 ACTIVE 종료 | `CMP.ACTIVE`, `CMP.SCHEDULED_START_REACHED` |
+| B-409 | 기간 지난 SCHEDULED 미시작 | `CMP.SCHEDULED_PERIOD_PASSED` |
+| B-410 | 시작 데이터 오류 건너뜀 | `CMP.SCHEDULED_MENU_MISMATCH` |
+| B-411 | 시작 개별 실패 | `CMP.SCHEDULED_START_REACHED`, `NONE:장애` |
+| B-412 | 시작 재실행 멱등 | `CMP.SCHEDULED_START_REACHED`, `OPS.BATCH_BUNDLE_FAILED` |
+| B-413 | 가게 요약 새 영업일 생성 | `CMP.ACTIVE_MANY` |
+| B-414 | 중단 캠페인 요약 미생성 | `CMP.PAUSED_OWNER`, `CMP.PAUSED_NO_POINTS` |
+| B-415 | 요약 데이터 오류로 단계 실패 | `CMP.MENU_MISSING` |
+| B-416 | 요약 재실행 멱등 | `CMP.ACTIVE_MANY` |
+| B-417 | 하루 예산 변경 적용 | `CMP.ACTIVE_PENDING_BUDGET` |
+| B-418 | 중단 캠페인 예약값 유지 | `CMP.PAUSED_PENDING_BUDGET` |
+| B-419 | 예산 적용 개별 실패 | `CMP.ACTIVE_PENDING_BUDGET`, `NONE:장애` |
+| B-420 | 예산 적용 재실행 멱등 | `CMP.ACTIVE_PENDING_BUDGET`, `OPS.BATCH_BUNDLE_FAILED` |
+| B-421 | 후보 적재 끝 예산 반영 | `CMP.ACTIVE`, `BIL.PLAN_D` |
+| B-422 | 발급 큐 미리 준비 | `CPN.EVENT_ACTIVE`, `CPN.EVENT_D_PAUSED` |
+| B-423 | 큐 준비 건너뜀 | `CACHE.COUPON_QUEUE_READY`, `CPN.EVENT_SOLD_OUT` |
+| B-424 | 큐 준비 회차 실패 | `CPN.EVENT_D_INVENTORY_SHORT` |
+| B-425 | 큐 준비 대상 없음 | `NONE:없음` |
+| B-426 | 큐 준비 세대 불일치 | `NONE:장애` |
+| B-427 | 후보 예산 10분 갱신 | `ADS.CANDIDATE_TODAY`, `BIL.PLAN_D`, `BIL.RECHARGE_RESERVE_EXISTS` |
+| B-428 | 갱신할 후보 없음 | `NONE:없음` |
+| B-429 | 계획 없는 후보 | `ADS.CANDIDATE_TODAY` |
+| B-430 | 정산 조회 실패 | `ADS.CANDIDATE_TODAY`, `NONE:장애` |
+| B-431 | 두 서버 동시 갱신 | `ADS.CANDIDATE_TODAY`, `BIL.PLAN_D` |

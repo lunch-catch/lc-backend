@@ -57,5 +57,8 @@ application-local.properties
 # .claude/commands 와 settings.json 은 팀 규약이라 커밋한다. 개인 설정만 무시한다.
 .claude/settings.local.json
 
+# QA 에이전트의 스냅샷, 보고서, Playwright 다(#889). gradle clean 에 지워지지 않게 build 밖에 둔다.
+.qa/
+
 # 옵시디언 볼트 설정. 제외 목록과 테마와 플러그인이 사람마다 다르다.
 .obsidian/

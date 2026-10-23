@@ -89,7 +89,6 @@ class PosterUploadServiceTest {
 
     private PosterUploadService service;
 
-    @SuppressWarnings("unchecked")
     private final List<ListAppender<ILoggingEvent>> attachedAppenders = new java.util.ArrayList<>();
 
     private ListAppender<ILoggingEvent> attachLogAppender() {
@@ -107,6 +106,7 @@ class PosterUploadServiceTest {
         attachedAppenders.clear();
     }
 
+    @SuppressWarnings("unchecked")
     @BeforeEach
     void setUp() {
         service = new PosterUploadService(

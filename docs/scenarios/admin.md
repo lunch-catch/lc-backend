@@ -165,10 +165,10 @@
 | A-114 | 첫 요청으로 생성 | 요청 입력 -> 전송 | /templates/new -> /templates/drafts/:id/edit | POST /v1/admin/templates | - | 한도 미만, 분당 3회 미만 | 201, 버전 1 미리보기와 HTML, 설명 말풍선, 추천 수정 요청, 주소 교체(대화 유지) | - |
 | A-115 | 안전하지 않은 요소 제거 | 생성 또는 수정 | 편집 화면 | POST /v1/admin/templates | - | sanitizer 가 요소 제거(removedElements 있음) | "안전하지 않은 태그와 속성은 제거했습니다." 말풍선 | - |
 | A-116 | 생성 경쟁으로 한도 초과 | 전송 | 편집 화면 | POST /v1/admin/templates | POSTER-003 | 그사이 100개 도달 | "템플릿은 최대 100개까지 등록할 수 있습니다." 입력 복구 | - |
-| A-117 | 요청 문구 너무 짧음 | 의미 문자 2자 미만 전송 | 편집 화면 | POST /v1/admin/templates, POST /v1/admin/templates/{templateId}/versions | POSTER-023 | - | 422. 매핑 없어 "요청을 처리하지 못했습니다. 잠시 후 다시 시도해 주세요." 표시(서버 안내문 미노출), 입력 복구 | - |
-| A-118 | 사용할 수 없는 문자 | 금지 문자 포함 전송 | 편집 화면 | POST /v1/admin/templates, POST /v1/admin/templates/{templateId}/versions | POSTER-024 | - | A-117 과 같은 일반 문구 | - |
-| A-119 | 지시 주입 의심 | 템플릿과 무관한 지시 전송 | 편집 화면 | POST /v1/admin/templates, POST /v1/admin/templates/{templateId}/versions | POSTER-025 | - | A-117 과 같은 일반 문구 | - |
-| A-120 | 개인정보 포함 | 전화번호, 사업자번호 포함 전송 | 편집 화면 | POST /v1/admin/templates, POST /v1/admin/templates/{templateId}/versions | POSTER-026 | - | A-117 과 같은 일반 문구 | - |
+| A-117 | 요청 문구 너무 짧음 | 의미 문자 2자 미만 전송 | 편집 화면 | POST /v1/admin/templates, POST /v1/admin/templates/{templateId}/versions | POSTER-022 | - | 422. 서버 안내문("요청 문구가 너무 짧습니다. ...") 표시, 입력 복구 | - |
+| A-118 | 사용할 수 없는 문자 | 금지 문자 포함 전송 | 편집 화면 | POST /v1/admin/templates, POST /v1/admin/templates/{templateId}/versions | POSTER-023 | - | A-117 과 같은 일반 문구 | - |
+| A-119 | 지시 주입 의심 | 템플릿과 무관한 지시 전송 | 편집 화면 | POST /v1/admin/templates, POST /v1/admin/templates/{templateId}/versions | POSTER-024 | - | A-117 과 같은 일반 문구 | - |
+| A-120 | 개인정보 포함 | 전화번호, 사업자번호 포함 전송 | 편집 화면 | POST /v1/admin/templates, POST /v1/admin/templates/{templateId}/versions | POSTER-025 | - | A-117 과 같은 일반 문구 | - |
 | A-121 | 분당 3회 초과 | 1분 안에 4번째 전송 | 편집 화면 | POST /v1/admin/templates, POST /v1/admin/templates/{templateId}/versions | POSTER-014 | 관리자 ID 기준 고정 창 | "관리자당 1분에 3회까지..." 문구. 대기 카운트다운 없음 | 1분 창 |
 | A-122 | 생성 지연, 같은 요청 처리 중 | 전송 -> 503 | 편집 화면 | POST /v1/admin/templates, POST /v1/admin/templates/{templateId}/versions | POSTER-004 | LLM 시간 초과 또는 같은 requestId 처리 중 | 지연 문구 + "1초 후 같은 요청을 다시 보낼 수 있습니다", 입력 잠금. 같은 문구 재전송은 같은 requestId | Retry-After 1초 |
 | A-123 | 생성 요청 몰림 | 전송 | 편집 화면 | POST /v1/admin/templates, POST /v1/admin/templates/{templateId}/versions | POSTER-012 | Bedrock throttling | "생성 요청이 몰리고 있습니다..." 대기 표시 없음 | - |
@@ -469,10 +469,10 @@
 | POSTER-012 | POST templates, POST versions | A-123 |
 | POSTER-013 | POST templates, POST versions | A-124 |
 | POSTER-014 | POST templates, POST versions | A-121 |
-| POSTER-023 | POST templates, POST versions | A-117 |
-| POSTER-024 | POST templates, POST versions | A-118 |
-| POSTER-025 | POST templates, POST versions | A-119 |
-| POSTER-026 | POST templates, POST versions | A-120 |
+| POSTER-022 | POST templates, POST versions | A-117 |
+| POSTER-023 | POST templates, POST versions | A-118 |
+| POSTER-024 | POST templates, POST versions | A-119 |
+| POSTER-025 | POST templates, POST versions | A-120 |
 | COMMON-001 | 전체 | A-035, A-047, A-258 외 실패 행 |
 | COMMON-002 | 목록 파라미터 검증, owners 상호 1만 건, admins 와 정책, 조정 DTO 검증 | A-044, A-084, A-213, A-241, A-259 |
 | COMMON-003 | 경로 변수와 enum 형식 오류 | A-148, A-259 |
@@ -486,7 +486,7 @@
 | COMMON-004, COMMON-005, COMMON-006, COMMON-007 | 앱이 고정 경로, 고정 메서드, JSON 본문만 보내고 업로드가 없다 |
 | MismatchResolutionType CACHE_REBUILD | 라벨 "캐시 재집계"는 있으나 운영 코드에서 이 값을 쓰는 곳이 없다(시드 데이터에만 있음). 전일 소진 대사는 resolution_type 을 비워 둔다 |
 | RefundStatus APPROVED | 승인하면 바로 COMPLETED 로 바뀌어 APPROVED 가 저장되지 않는다. 필터 결과가 항상 비는 것만 A-176 에 남겼다 |
-| 템플릿 POSTER-015~POSTER-022 | 점주 포스터 API 전용이라 관리자 엔드포인트에서 나오지 않는다 |
+| 템플릿 POSTER-015~POSTER-021 | 점주 포스터 API 전용이라 관리자 엔드포인트에서 나오지 않는다 |
 | 00:00 묶음의 BILLING_RESERVE, BILLING_DAILY_RELEASE, BILLING_FUNDING_JUDGE, ADSERVING_*, 02:00~03:00 쿠폰과 로그 작업, 11:00, 14:00 쿠폰 작업, 5분 쿠폰 만료 | 관리자 화면에 직접 드러나는 상태 전이가 없다. 결과는 원장(A-191)이나 캠페인 상태(A-093)로 간접 노출될 뿐 관리자 목표가 아니다 |
 | 04:00 EVENT_LOG_RETENTION, 02:00 ADSERVING_LOG_RETENTION | 원본 로그 삭제이며 관리자 화면은 집계 테이블만 읽는다 |
 | 배치 heartbeat 와 takeover | 서버 내부 동작이다 |

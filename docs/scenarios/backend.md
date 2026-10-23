@@ -1,6 +1,6 @@
 # 화면 없는 백엔드 시나리오
 
-범위: 화면이 부르지 않는 API, 웹훅, 배치, 인증과 토큰, 속도 제한. 시나리오 401개 (B-001 ~ B-401).
+범위: 화면이 부르지 않는 API, 웹훅, 배치, 인증과 토큰, 속도 제한. 시나리오 431개 (B-001 ~ B-431).
 
 기준 코드: lc-backend develop `9f4ab523`, lc-frontend `3f3e056` (2026-10-22). 개요와 갱신 방법은 [README](README.md)에 있다.
 
@@ -252,7 +252,7 @@
 
 | ID | 시나리오 | 단계/트리거 | API 또는 작업 | 오류 코드 | 필요한 데이터 상태 | 기대 결과 | 시각 조건 |
 |---|---|---|---|---|---|---|---|
-| B-100 | 묶음 정상 실행 | cron 0 0 0 (Asia/Seoul) -> claim(DAILY_0000, D) 성공 -> @Order 40,50,60,70,75,80,90 순서 실행 | DailyJobScheduler.runDailyBundle -> BatchJobRunner.runBundle | - | batch_execution_log 에 (DAILY_0000, D) 없음, 배치 서버(launchcatch.scheduler.enabled=true) | 단계 행 7개와 (BILLING_DAILY_RELEASE, D-1) 가 SUCCESS, 마지막에 (DAILY_0000, D) SUCCESS | D 00:00 KST, businessDate=D |
+| B-100 | 묶음 정상 실행 | cron 0 0 0 (Asia/Seoul) -> claim(DAILY_0000, D) 성공 -> @Order 10,20,30,35,40,50,60,75,80,90 순서 실행 | DailyJobScheduler.runDailyBundle -> BatchJobRunner.runBundle | - | batch_execution_log 에 (DAILY_0000, D) 없음, 배치 서버(launchcatch.scheduler.enabled=true) | 단계 행 10개와 (BILLING_DAILY_RELEASE, D-1) 가 SUCCESS, 마지막에 (DAILY_0000, D) SUCCESS | D 00:00 KST, businessDate=D |
 | B-101 | 배치 서버 두 대 동시 시도 | 두 서버가 같은 시각 upsertClaim | DailyJobScheduler.runDailyBundle | - | 두 서버 모두 스케줄러 켜짐 | owner_id 가 자기인 서버만 RUNNING 으로 점유해 실행, 다른 서버는 "다른 배치 서버가 점유" 로그 후 종료 | D 00:00 |
 | B-102 | 앱 인스턴스에서는 돌지 않음 | 스케줄러 설정 꺼짐 | SchedulingConfig(@ConditionalOnProperty) | - | launchcatch.scheduler.enabled 미설정 또는 false | @Scheduled 작업 전부 미기동 | 상시 |
 | B-103 | 단계 사이 묶음 점유 상실 | 각 단계 전 renew(DAILY_0000) 0건 | BatchJobRunner.runBundle | - | 다른 서버가 묶음 행을 이어받음 | 다음 단계로 가지 않고 중단, 묶음 행은 이어받은 서버가 판정 | 실행 중 |
@@ -299,15 +299,35 @@
 | B-147 | 가게 없음/메뉴명 없음 | 75 단계 | CandidateLoadService.skip | - | 가게 미등록/좌표 없음, 또는 MENU 할인인데 메뉴 없음 | 해당 캠페인만 건너뜀, adserving_candidate_load_skipped_total{reason=store_missing/menu_missing} 증가 | D |
 | B-148 | 적재 중 상태 전이 반영 | 75 단계 reconcile | CandidateLoadService.reconcile | - | 적재 후 statusChangedAt 이 더 늦은 캠페인 | 별도 트랜잭션에서 상태를 SERVABLE/PAUSED 로 갱신 | D |
 | B-149 | 7일 지난 후보 삭제 | 75 단계 | deleteByBusinessDateBefore | - | business_date < D-7 후보 | 삭제 | D |
-| B-150 | 후보 적재 미실행 영향 | 40~70 중 실패 | BatchJobRunner | FAILED | 앞 단계 FAILED | D 후보 없음 -> 그날 피드 후보 없음, 쿠폰 준비도 영향 | D |
+| B-150 | 후보 적재 미실행 영향 | 10~60 중 실패 | BatchJobRunner | FAILED | 앞 단계 FAILED | D 후보 없음 -> 그날 피드 후보 없음, 10분 예산 갱신도 할 일 없음, 쿠폰 준비도 영향 | D |
 | B-151 | 끝난 찜 정리 | 80 ADSERVING_ENDED_WISHLIST_CLEANUP | WishlistService.deleteExpiredEndedWishes | - | campaign_ended_at < (D-3) 00:00 | 해당 찜 삭제, 그 이후 끝난 찜은 유지 | D, 예: 10/5 실행 -> 10/1 까지 끝난 찜 삭제 |
 | B-152 | 찜 정리 재실행 | 80 단계 재실행 | WishlistService | - | 이미 정리됨 | 지울 행 없음, 결과 동일 | 같은 D |
 | B-153 | 가게 반경 대상 인원 | 90 ADSERVING_STORE_AUDIENCE | StoreAudienceService.aggregate | - | 서빙 대상 캠페인의 가게, D-7~D-1 feed_visit 위치, 회원 성별/연령대 | 칸 계산 후 StoreAudienceUpdater.overwrite 로 덮어쓰기 | 접속 D-7~D-1 |
 | B-154 | 대상 가게 없음 | 90 단계 | StoreAudienceService | - | 서빙 대상 0건 | 0 반환, SUCCESS | D |
 | B-155 | 프로필 없는 회원 제외 | 90 단계 | StoreAudienceService.readProfiles | - | gender 또는 ageGroup null | 세지 않음 | D |
 | B-156 | 대상 인원 중간 실패 | 90 단계 예외 | StoreAudienceUpdater | FAILED | 일부 가게만 덮어씀 | 앞 가게만 오늘 값, 나머지는 전날 값, 단계 FAILED 후 재실행으로 덮어쓰기 | D |
-| B-157 | SCHEDULED 캠페인 자동 시작 없음 | 00:00 묶음 | CampaignStatusService.activate(호출처 없음) | - | 점주가 활성화해 SCHEDULED, startDate 도래 | 코드상 SCHEDULED -> ACTIVE 전이를 부르는 곳이 없어 findServableOn(ACTIVE/PAUSED 만)에 잡히지 않음 | startDate=D |
-| B-158 | 기간 끝난 캠페인 자동 종료 없음 | 00:00 묶음 | findServableOn | - | endDate < D 인 ACTIVE | 서빙 대상에서만 빠지고 상태는 ACTIVE 유지(ENDED 는 점주 :end 로만) | endDate < D |
+| B-157 | SCHEDULED 캠페인 자동 시작 | 20 CAMPAIGN_START_SCHEDULED | CampaignDailyTransitionService.startScheduled -> CampaignStatusService.activate(id, D) | - | SCHEDULED, startDate <= D <= endDate(전날 묶음이 빠져 startDate < D 인 것도 포함) | 캠페인마다 행 잠금 트랜잭션: ACTIVE, status_log(SCHEDULED -> ACTIVE, SYSTEM), store_campaign_summary(D, ACTIVE) upsert. CampaignStatusChangedEvent 는 내지 않음. 같은 묶음 50 예약, 75 적재, 03:00 COUPON_PREPARE 대상이 됨 | startDate<=D |
+| B-158 | 기간 끝난 캠페인 자동 종료 | 10 CAMPAIGN_END_EXPIRED | CampaignDailyTransitionService.endExpired -> CampaignStatusService.end(id, SYSTEM, D) | - | ACTIVE, endDate < D | 캠페인마다 행 잠금 트랜잭션: ENDED, paused_reason/pending_daily_budget 비움, status_log(SYSTEM), store_campaign_summary(D, ENDED) upsert, CampaignStatusChangedEvent(servable=false) + CampaignEndedEvent 발행 | endDate < D |
+| B-402 | 중단 캠페인도 기간 끝나면 종료 | 10 단계 | CampaignRepository.findIdsToEnd | - | PAUSED(OWNER/ADMIN/NO_POINTS), endDate < D | ACTIVE 와 같이 ENDED, paused_reason 비움 | endDate < D |
+| B-403 | 캠페인 단계 할 일 없음 | 10/20/35 단계 | endExpired, startScheduled, applyPendingDailyBudgets | - | 기간 끝난 ACTIVE/PAUSED, 시작일 된 SCHEDULED, 예약값 있는 ACTIVE 모두 없음(endDate=D 인 마지막 날 캠페인은 종료 대상 아님) | 0 반환, 단계 SUCCESS, 다음 단계 진행 | D |
+| B-404 | 종료 연쇄 반영 | 10 단계 end 의 동기 리스너(같은 트랜잭션) | CampaignEventListener, CampaignEndedListener, CandidateStatusChangedListener, CampaignStatusChangedListener | - | 끝나는 캠페인의 지난 coupon_event, 찜 | 그 캠페인 coupon_event 전부 ENDED, wishlist campaign_ended_at=종료 시각(80 단계는 3일 지난 것만 삭제), D 후보와 D 계획이 아직 없어 adserving_status_candidate_missing_total 증가, 계획 무변경 | D 00:00 |
+| B-405 | 종료 데이터 오류 건너뜀 | 10 단계 | CampaignDailyTransitionService.endExpired | CAMPAIGN_DAILY_END_SKIPPED 로그 | MENU 할인인데 target_menu_id 가 그 가게 메뉴 아님(요약 갱신이 IllegalArgumentException), 또는 캠페인 행 없음 | 그 캠페인 트랜잭션 롤백, ACTIVE/PAUSED 로 남음, ERROR 로그 reason=DATA_ERROR, 단계 SUCCESS, 다음 00:00 에 다시 시도 | D |
+| B-406 | 종료 개별 실패 | 10 단계 | CampaignDailyTransitionService.failIfAny | FAILED | 한 캠페인 전이 중 RuntimeException(DB 오류 등) | CAMPAIGN_DAILY_END_FAILED ERROR, 나머지 캠페인은 처리, 끝에 IllegalStateException "campaign daily transition failed: step=END_EXPIRED ..." 으로 단계 FAILED. 원인 없는 IllegalStateException 이라 자동 재실행 안 함, 묶음 FAILED, 20 이후 미실행 | D |
+| B-407 | 종료 재실행 멱등 | 10 단계 재실행(:retry, 이어받기) | findIdsToEnd, CampaignStatusService.end | - | 앞 실행이 일부 캠페인을 ENDED 로 바꿈 | ENDED 는 조회에서 빠지고 end 도 ENDED 면 무변경, 남은 캠페인만 종료 | 같은 D |
+| B-408 | 시작 시 같은 가게 기존 ACTIVE 종료 | 20 단계 | CampaignRepository.findOtherActiveIdsByStoreId -> end(SYSTEM) -> activate | - | 같은 가게에 다른 ACTIVE 캠페인 + 시작일 된 SCHEDULED | 기존 ACTIVE 를 먼저 ENDED(B-158 과 같은 연쇄), 그 뒤 새 캠페인 ACTIVE. 두 전이는 다른 트랜잭션. 같은 가게 PAUSED 캠페인은 끝내지 않음 | startDate<=D |
+| B-409 | 기간 지난 SCHEDULED 미시작 | 10/20 단계 | findToStart, findIdsToEnd | - | SCHEDULED, endDate < D | 시작 대상(endDate >= D 조건)도 종료 대상(ACTIVE/PAUSED 만)도 아니어서 SCHEDULED 로 계속 남음 | endDate < D |
+| B-410 | 시작 데이터 오류 건너뜀 | 20 단계 | CampaignDailyTransitionService.startScheduled | CAMPAIGN_DAILY_START_SKIPPED 로그 | MENU 할인 메뉴가 그 가게 메뉴 아님 | activate 트랜잭션 롤백, SCHEDULED 유지, ERROR reason=DATA_ERROR, 단계 SUCCESS. 앞서 끝낸 같은 가게 ACTIVE 는 ENDED 로 남아 그 가게 진행 캠페인 없음, 다음 00:00 에 다시 시도 | D |
+| B-411 | 시작 개별 실패 | 20 단계 | CampaignDailyTransitionService.failIfAny | FAILED | 전이 중 DB 오류, 또는 조회 뒤 점주 취소가 먼저 커밋돼 activate 가 DRAFT 를 보고 IllegalStateException | CAMPAIGN_DAILY_START_FAILED ERROR, 나머지 처리 후 IllegalStateException step=START_SCHEDULED 로 단계 FAILED, 묶음 FAILED, 30 이후 미실행. 기존 ACTIVE 만 끝난 채로 남을 수 있음 | D |
+| B-412 | 시작 재실행 멱등 | 20 단계 재실행 | findToStart, CampaignStatusService.activate | - | 앞 실행이 일부를 ACTIVE 로 바꿈, 또는 기존 ACTIVE 만 끝나고 실패 | 이미 ACTIVE 는 조회에서 빠지고 activate 도 null 반환(로그 없음), 남은 SCHEDULED 만 시작, 취소돼 DRAFT 가 된 것은 대상 아님 | 같은 D |
+| B-413 | 가게 요약 새 영업일 생성 | 30 CAMPAIGN_STORE_SUMMARY | CampaignStoreSummaryService.prepare -> StoreCampaignSummaryUpdater.updateAll | - | ACTIVE, endDate >= D(10, 20 단계 반영 뒤) | 한 트랜잭션에서 id 순 500건씩 store_campaign_summary(D, 캠페인) upsert, 방금 시작한 캠페인 포함, 방금 끝난 캠페인 제외 | D 00:00 |
+| B-414 | 중단 캠페인 요약 미생성 | 30 단계 | CampaignRepository.findActiveSummaryRowsAfter | - | PAUSED(OWNER/ADMIN/NO_POINTS) | D 요약 행 만들지 않음(전날 행만 남음), 재개 때 CampaignStatusService.resume 이 그날 요약을 씀 | D |
+| B-415 | 요약 데이터 오류로 단계 실패 | 30 단계 | StoreCampaignSummaryUpdaterImpl.updateAll | FAILED | ACTIVE 캠페인 1건이 MENU 할인 메뉴 불일치 또는 할인 값/사용 시간 검증 실패 | IllegalArgumentException, 앞 청크까지 전부 롤백, 단계 FAILED, 묶음 FAILED, 35 이후(정산, 후보 적재) 미실행. 10, 20 단계와 달리 한 건만 건너뛰지 않음 | D |
+| B-416 | 요약 재실행 멱등 | 30 단계 재실행 | store_campaign_summary upsert | - | 같은 D 요약이 이미 있음 | (영업일, 캠페인) 기준 덮어쓰기, 중복 행 없음 | 같은 D |
+| B-417 | 하루 예산 변경 적용 | 35 CAMPAIGN_APPLY_PENDING_BUDGET | CampaignDailyTransitionService.applyPendingDailyBudgets -> CampaignStatusService.applyPendingDailyBudget | - | ACTIVE, pending_daily_budget 있음(PATCH /v1/owner/campaigns/{campaignId} 로 예약) | 행 잠금 후 daily_budget=예약값, pending_daily_budget 비움, 같은 묶음 50 단계가 새 하루 예산으로 RESERVE | D 00:00 |
+| B-418 | 중단 캠페인 예약값 유지 | 35 단계 | findIdsWithPendingDailyBudget, Campaign.applyPendingDailyBudget | - | PAUSED 이고 pending_daily_budget 있음(목록 조회 뒤 PAUSED/ENDED 로 바뀐 것 포함) | 적용 안 함, 예약값 유지, 재개 뒤 다음 00:00 에 적용(ENDED 는 종료 때 예약값 삭제) | D |
+| B-419 | 예산 적용 개별 실패 | 35 단계 | CampaignDailyTransitionService.failIfAny | FAILED | 적용 중 RuntimeException(캠페인 행 없음 포함, 이 단계는 데이터 오류도 건너뛰지 않음) | CAMPAIGN_DAILY_BUDGET_APPLY_FAILED ERROR, 나머지 적용 후 IllegalStateException step=APPLY_PENDING_BUDGET 으로 단계 FAILED, 묶음 FAILED, 40 이후 미실행 | D |
+| B-420 | 예산 적용 재실행 멱등 | 35 단계 재실행 | Campaign.applyPendingDailyBudget | - | 앞 실행이 일부 적용함 | 적용된 캠페인은 예약값이 없어 조회에서 빠짐, 남은 것만 적용 | 같은 D |
+| B-421 | 후보 적재 끝 예산 반영 | 75 단계 마지막 | LoadDailyCandidateJob.run -> CandidateBudgetService.refresh(D) | - | D 후보 적재됨, D 계획 있음 | ad_candidate reserved_amount, unit_price 를 정산 값으로 채움, 계획 없는 후보는 0. 정산 조회 실패면 ADSERVING_BUDGET_REFRESH_FAILED WARN, adserving_budget_unavailable_total 증가, 값 유지, 단계 SUCCESS(10분 작업이 다시 채움) | D 00:00 |
 
 ### 01:00 집계
 
@@ -436,9 +456,14 @@
 | B-254 | 만료 잠금 후 상태 변경 | 사용 확정과 경합 | COUPON_EXPIRE | - | 잠근 뒤 USED/REMOVED 이거나 종료 전 | 0, 변경 없음 | 5분마다 |
 | B-255 | 만료 RUNNING 행 | 같은 cron | COUPON_EXPIRE | - | 그 영업일 행 RUNNING | 건너뜀, 공통 이어받기에 맡김 | 5분마다 |
 | B-256 | 만료 FAILED 행 | 같은 cron | COUPON_EXPIRE | - | 그 영업일 행 FAILED | 자동 재점유 안 함, 수동 :retry 필요(그동안 그 날 쿠폰 ISSUED 유지) | 5분마다 |
-| B-257 | 쿠폰 작업 공통 재시도 | 스케줄러 경로 예외 | COUPON_PREPARE/OPEN/CLOSE/EXPIRE/VERIFY | retry_count, FAILED | 모든 RuntimeException | 같은 attempt 로 30초, 1분 대기 후 최대 2회, DB retry_count 상한 공유, 대기 중 임대 잃으면 중단, 소진 시 failAttempt, 예외 삼킴 | 각 시각 |
-| B-258 | 쿠폰 작업 같은 날 재실행 | 같은 D cron | COUPON_PREPARE/OPEN/CLOSE/VERIFY | - | 행 존재(SUCCESS/FAILED/남의 RUNNING) | claim false -> 아무것도 안 함 | 각 시각 |
+| B-257 | 쿠폰 작업 공통 재시도 | 스케줄러 경로 예외 | COUPON_PREPARE/QUEUE_PREPARE/OPEN/CLOSE/EXPIRE/VERIFY | retry_count, FAILED | 모든 RuntimeException | 같은 attempt 로 30초, 1분 대기 후 최대 2회, DB retry_count 상한 공유, 대기 중 임대 잃으면 중단, 소진 시 failAttempt, 예외 삼킴 | 각 시각 |
+| B-258 | 쿠폰 작업 같은 날 재실행 | 같은 D cron | COUPON_PREPARE/QUEUE_PREPARE/OPEN/CLOSE/VERIFY | - | 행 존재(SUCCESS/FAILED/남의 RUNNING) | claim false -> 아무것도 안 함 | 각 시각 |
 | B-259 | 쿠폰 작업 이어받기 | 2분 넘게 갱신 없는 RUNNING | COUPON_* | - | 남의 RUNNING 행 | takeOver(attempt_no+1) 후 runCounting -> 내부 재시도(모든 오류)와 실행기 재시도(일시 오류) 같은 상한 | 1분 스캔 |
+| B-422 | 발급 큐 미리 준비 | cron 0 55 10 (Asia/Seoul), claim(COUPON_QUEUE_PREPARE, D) | COUPON_QUEUE_PREPARE -> CouponQueuePreparationService.prepare | - | coupon_event(D) ACTIVE 또는 PAUSED, AVAILABLE + ISSUED 수 = issue_quantity, Valkey 큐 없음 | 회차 id 1,000건씩, 회차마다 트랜잭션: assertCurrentAttempt, 회차 잠금, AVAILABLE 순번과 ISSUED 수로 큐 생성(state READY, expiresAt=D 14:00+1h), processed_count=만든 회차 수. 11:00 첫 발급 요청이 복구를 기다리지 않음 | 10:55 |
+| B-423 | 큐 준비 건너뜀 | 같은 실행 | CouponSequenceRecoveryService.prepare | - | 회차 SCHEDULED/ENDED, 또는 큐가 이미 READY/SOLD_OUT, 또는 expiresAt 지남(늦은 재실행) | 0 가산, 진행 중인 큐 덮어쓰지 않음 | 10:55 |
+| B-424 | 큐 준비 회차 실패 | 같은 실행 | CouponQueuePreparationService.prepare | COUPON_QUEUE_PREPARE_FAILED 로그 | 재고 수가 issue_quantity 와 다름(IllegalStateException) 또는 Valkey 오류 | 그 회차 롤백, WARN, 0 가산, 다음 회차 계속, 작업 SUCCESS. 차단은 걸지 않아 첫 발급 요청의 recover 가 다시 만듦 | 10:55 |
+| B-425 | 큐 준비 대상 없음 | 같은 실행 | COUPON_QUEUE_PREPARE | - | coupon_event(D) 0건 | SUCCESS processed_count=0 | 10:55 |
+| B-426 | 큐 준비 세대 불일치 | 다른 서버가 이어받은 뒤 낡은 시도 | BatchAttemptGuard.assertCurrentAttempt | attempt no longer current | owner 또는 attempt_no 변경 | 회차 catch 밖의 예외라 남은 회차 처리 중단, 낡은 시도는 행을 닫지 못함 | 10:55 |
 
 ### 재조회 워커
 
@@ -454,6 +479,18 @@
 | B-267 | 다른 경로가 먼저 확정 | 웹훅이나 관리자 재조회 | PaymentRecheckWorker | - | payment APPROVED/FAILED/CANCELLED | PG 호출 없이 현재 상태 반환, 결과 기록 메서드도 잠금 후 확정이면 무변경 | 1분 주기 |
 | B-268 | 두 서버 동시 선점 | 두 배치 서버 | PaymentRecheckWorker | - | PENDING 다수 | FOR UPDATE SKIP LOCKED, 최대 20건, next_retry_at 을 now+5분으로 미뤄 중복 조회 없음. batch_execution_log 미사용 | 1분 주기 |
 | B-269 | 처리 중 예외 | 결과 기록 중 예외 또는 결제 행 없음 | PaymentRecheckWorker | BILLING-004 등 | 선점됨 | 그 건만 error 지표, 다음 건 계속, 5분 선점 만료 후 재대상 | 1분 주기 |
+
+### 후보 예산 갱신
+
+10분마다 도는 작업이고 batch_execution_log 를 쓰지 않는다.
+
+| ID | 시나리오 | 단계/트리거 | API 또는 작업 | 오류 코드 | 필요한 데이터 상태 | 기대 결과 | 시각 조건 |
+|---|---|---|---|---|---|---|---|
+| B-427 | 후보 예산 10분 갱신 | cron 0 */10 * * * * (Asia/Seoul), 배치 서버만 | CandidateBudgetRefreshJob.refresh -> CandidateBudgetService.refresh(오늘) | - | ad_candidate(D), D 계획 있음, 장중 충전 재예약(B-137)으로 예약액 증가 | 후보 campaign_id 를 5,000건씩 BudgetQueryService.getProgress 로 읽어 reserved_amount, unit_price 를 500건씩 덮어씀, 늘어난 예약액이 피드 예산 규칙에 반영. batch_execution_log 미사용 | 10분마다 |
+| B-428 | 갱신할 후보 없음 | 같은 cron | CandidateBudgetService.refresh | - | ad_candidate(D) 0건(00:00 적재 전, 또는 묶음 실패) | 0 반환, 정산 호출 없음 | 10분마다 |
+| B-429 | 계획 없는 후보 | 같은 cron | CandidateBudgetService.refresh | - | 후보는 있으나 D budget_daily_plan 없음 | reserved_amount=0, unit_price=0 으로 덮어씀, 노출 상한에 걸려 피드에서 빠짐 | 10분마다 |
+| B-430 | 정산 조회 실패 | 같은 cron | CandidateBudgetService.refresh | ADSERVING_BUDGET_REFRESH_FAILED 로그 | getProgress 예외 | WARN(fallback=KEEP_PREVIOUS, campaignCount), adserving_budget_unavailable_total 증가, 기존 값 유지, 예외 안 올림, 다음 10분에 다시 시도 | 10분마다 |
+| B-431 | 두 서버 동시 갱신 | 두 배치 서버 같은 cron | CandidateBudgetRefreshJob | - | 스케줄러 켜진 서버 2대 | 점유 없이 둘 다 실행, 같은 값 덮어써 결과 같음 | 10분마다 |
 
 ### 배치 공통(멱등/인계/재시도)
 
@@ -595,7 +632,7 @@
 | B-393 | 템플릿 생성 제한 초과 | 관리자 1명이 1분 안 4번째 생성 또는 수정 | POST /v1/admin/templates, POST /v1/admin/templates/{id}/versions | POSTER-014 | templateGenerationRateLimit:{adminId} > 3 (생성과 수정 합산) | 429, Retry-After 1 고정, 처리 중 표식 삭제 | 첫 요청 후 60초 창 |
 | B-394 | 같은 requestId 처리 중 재요청 | 첫 요청 LLM 호출 중 같은 requestId | 템플릿 생성, 수정 | POSTER-004 | templateGenerationInFlight:{requestId} 존재 | 503, 횟수 세지 않음 | 첫 요청 후 60초 안 |
 | B-395 | 제한에 걸린 requestId 재시도 | POSTER-014 받은 같은 requestId | 템플릿 생성, 수정 | POSTER-014 또는 없음 | 표식 삭제됨 | 다시 제한 판정, 창이 지나면 처리 | 창 경과 여부 |
-| B-396 | 문구 검증 거부도 셈 | POSTER-023~026 에 걸린 요청 | 템플릿 생성, 수정 | POSTER-023, 024, 025, 026 | 카운터 증가 | 거부되지만 분당 3회에 포함, 표식은 지움 | 창 안 |
+| B-396 | 문구 검증 거부도 셈 | POSTER-022~025 에 걸린 요청 | 템플릿 생성, 수정 | POSTER-022, 023, 024, 025 | 카운터 증가 | 거부되지만 분당 3회에 포함, 표식은 지움 | 창 안 |
 | B-397 | 템플릿 제한 저장소 장애 | Redis 실패 | 템플릿 생성, 수정 | 없음 | Redis 장애 | 표식 판정 실패는 첫 시도로 보고, 카운트 실패는 통과 | 없음 |
 | B-398 | 쿠폰 일일 발급 한도 | 하루 4번째 발급 | POST /v1/coupons | COUPON-007 | 오늘 발급 3장 (COUPON_DAILY_LIMIT 3) | 409 | 영업일 단위 |
 | B-399 | 쿠폰 발급 대기열 포화 | 대기열 2000 가득 또는 작업자 정지 | POST /v1/coupons | COUPON-008 | 작업자 4, 배치 500, 대기 10초 | 즉시 503, Retry-After 1 | 11:00~14:00 발급 시간 |
@@ -710,13 +747,12 @@
 | POSTER-017 | poster:prepareUpload, 포스터 저장 (형식) | 가능 |
 | POSTER-018 | poster:prepareUpload, 포스터 저장 (10MB 초과) | 가능 |
 | POSTER-019 | 포스터 저장 (다른 캠페인 객체 키) | 가능 |
-| POSTER-020 | 포스터 저장 (기간 미설정) | 가능 |
-| POSTER-021 | 점주 포스터 조회, :activate (포스터 없음), 회원 포스터 조회 | 가능 |
-| POSTER-022 | GET /v1/campaigns/{id}/poster, 점주 포스터 조회 (조회 불가) | 가능 |
+| POSTER-020 | 점주 포스터 조회, :activate (포스터 없음), 회원 포스터 조회 | 가능 |
+| POSTER-021 | GET /v1/campaigns/{id}/poster, 점주 포스터 조회 (조회 불가) | 가능 |
+| POSTER-022 | 템플릿 생성/수정 프롬프트 검사 | 가능 |
 | POSTER-023 | 템플릿 생성/수정 프롬프트 검사 | 가능 |
 | POSTER-024 | 템플릿 생성/수정 프롬프트 검사 | 가능 |
 | POSTER-025 | 템플릿 생성/수정 프롬프트 검사 | 가능 |
-| POSTER-026 | 템플릿 생성/수정 프롬프트 검사 | 가능 |
 | STORE-001 | 가게 등록 단계 저장 (version 충돌) | 가능 |
 | STORE-002 | 가게 등록 단계 저장, 약관, 이미지/메뉴 업로드 (단계 불일치) | 가능 |
 | STORE-003 | 가게 등록 단계 저장, 업로드, :complete (진행 상태 없음) | 가능 |

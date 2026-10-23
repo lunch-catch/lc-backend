@@ -273,7 +273,7 @@ VALUES
 
 /*
  * 4. 템플릿은 넣지 않는다.
- * 템플릿과 포스터는 R__templates_posters.sql 이 넣는다 (#858). 시연 포스터는 게시되고 활성인 첫 템플릿으로 만든다.
+ * 템플릿과 포스터는 R__templates_posters.sql 이 넣는다 (#858). 시연 포스터는 업종에 맞는 선착순 쿠폰 전단지로 만든다 (#886).
  */
 
 
@@ -311,73 +311,66 @@ VALUES
 
 
 /*
- * 포스터는 게시되고 활성인 첫 템플릿으로 만들고 검수를 통과했다.
+ * 포스터는 가게 업종에 맞는 선착순 쿠폰 전단지(전체할인)로 만들고 검수를 통과했다. image 칸은 첫 메뉴 사진이다.
  * 템플릿이 아직 없으면(빈 DB 에서 R__templates_posters 보다 먼저 돌 때) 넣지 않는다. 그 파일이 뒤이어 만든다.
- * 사진은 demo/campaigns/<캠페인>/poster.jpg 다.
+ * 완성 포스터 사진은 demo/campaigns/<캠페인>/poster.jpg 다.
  */
 
 INSERT INTO poster (poster_id, campaign_id, template_id, title, slot_values, html_content, created_at, updated_at,
                     image_object_key)
-SELECT 20000101, 20000101, t.template_id, LEFT(CONCAT('런치캐치 시연 한식당', ' - ', t.name), 100), JSON_OBJECT('eventName', JSON_OBJECT('type', 'text', 'value', '런치캐치 시연 한식당'), 'discount', JSON_OBJECT('type', 'text', 'value', '전체 메뉴 3,000원 할인'), 'period', JSON_OBJECT('type', 'text', 'value', '매일 11:30 ~ 15:00'), 'image', JSON_OBJECT('type', 'image', 'value', CONCAT(TRIM(TRAILING '/' FROM '${baseCdnBaseUrl}'), '/demo/campaigns/20000101/poster.jpg'))),
-       REPLACE(REPLACE(REPLACE(REPLACE(t.html_content, '>이벤트명<', '>런치캐치 시연 한식당<'), '>할인 내용<', '>전체 메뉴 3,000원 할인<'), '>기간<', '>매일 11:30 ~ 15:00<'), 'alt="메뉴 이미지">', CONCAT('alt="메뉴 이미지" src="', CONCAT(TRIM(TRAILING '/' FROM '${baseCdnBaseUrl}'), '/demo/campaigns/20000101/poster.jpg'), '" style="width:100%;height:100%;min-height:0;object-fit:cover">')),
+SELECT 20000101, 20000101, t.template_id, LEFT(CONCAT('런치캐치 시연 한식당', ' - ', t.name), 100), JSON_OBJECT('eventName', JSON_OBJECT('type', 'text', 'value', '런치캐치 시연 한식당'), 'discount', JSON_OBJECT('type', 'text', 'value', '전체 메뉴 3,000원 할인'), 'period', JSON_OBJECT('type', 'text', 'value', '오늘 11:30 ~ 15:00'), 'image', JSON_OBJECT('type', 'image', 'value', CONCAT(TRIM(TRAILING '/' FROM '${baseCdnBaseUrl}'), '/demo/stores/20000011/menu-1.jpg'))),
+       REPLACE(REPLACE(REPLACE(REPLACE(t.html_content, '>이벤트명<', '>런치캐치 시연 한식당<'), '>할인 내용<', '>전체 메뉴 3,000원 할인<'), '>기간<', '>오늘 11:30 ~ 15:00<'), 'alt="메뉴 이미지"', CONCAT('alt="메뉴 이미지" src="', CONCAT(TRIM(TRAILING '/' FROM '${baseCdnBaseUrl}'), '/demo/stores/20000011/menu-1.jpg'), '"')),
        TIMESTAMP(DATE_SUB(@d, INTERVAL 17 DAY), '10:30:00'), TIMESTAMP(DATE_SUB(@d, INTERVAL 17 DAY), '10:30:00'), 'demo/campaigns/20000101/poster.jpg'
 FROM template t
-JOIN (SELECT MIN(template_id) AS template_id FROM template WHERE status = 'PUBLISHED' AND active = 1) f
-  ON f.template_id = t.template_id;
+WHERE t.template_id = 10000001;
 
 INSERT INTO poster (poster_id, campaign_id, template_id, title, slot_values, html_content, created_at, updated_at,
                     image_object_key)
-SELECT 20000111, 20000111, t.template_id, LEFT(CONCAT('런치캐치 시연 한식당', ' - ', t.name), 100), JSON_OBJECT('eventName', JSON_OBJECT('type', 'text', 'value', '런치캐치 시연 한식당'), 'discount', JSON_OBJECT('type', 'text', 'value', '전체 메뉴 2,000원 할인'), 'period', JSON_OBJECT('type', 'text', 'value', '매일 11:30 ~ 15:00'), 'image', JSON_OBJECT('type', 'image', 'value', CONCAT(TRIM(TRAILING '/' FROM '${baseCdnBaseUrl}'), '/demo/campaigns/20000111/poster.jpg'))),
-       REPLACE(REPLACE(REPLACE(REPLACE(t.html_content, '>이벤트명<', '>런치캐치 시연 한식당<'), '>할인 내용<', '>전체 메뉴 2,000원 할인<'), '>기간<', '>매일 11:30 ~ 15:00<'), 'alt="메뉴 이미지">', CONCAT('alt="메뉴 이미지" src="', CONCAT(TRIM(TRAILING '/' FROM '${baseCdnBaseUrl}'), '/demo/campaigns/20000111/poster.jpg'), '" style="width:100%;height:100%;min-height:0;object-fit:cover">')),
+SELECT 20000111, 20000111, t.template_id, LEFT(CONCAT('런치캐치 시연 한식당', ' - ', t.name), 100), JSON_OBJECT('eventName', JSON_OBJECT('type', 'text', 'value', '런치캐치 시연 한식당'), 'discount', JSON_OBJECT('type', 'text', 'value', '전체 메뉴 2,000원 할인'), 'period', JSON_OBJECT('type', 'text', 'value', '오늘 11:30 ~ 15:00'), 'image', JSON_OBJECT('type', 'image', 'value', CONCAT(TRIM(TRAILING '/' FROM '${baseCdnBaseUrl}'), '/demo/stores/20000011/menu-1.jpg'))),
+       REPLACE(REPLACE(REPLACE(REPLACE(t.html_content, '>이벤트명<', '>런치캐치 시연 한식당<'), '>할인 내용<', '>전체 메뉴 2,000원 할인<'), '>기간<', '>오늘 11:30 ~ 15:00<'), 'alt="메뉴 이미지"', CONCAT('alt="메뉴 이미지" src="', CONCAT(TRIM(TRAILING '/' FROM '${baseCdnBaseUrl}'), '/demo/stores/20000011/menu-1.jpg'), '"')),
        TIMESTAMP(DATE_SUB(@d, INTERVAL 63 DAY), '10:30:00'), TIMESTAMP(DATE_SUB(@d, INTERVAL 63 DAY), '10:30:00'), 'demo/campaigns/20000111/poster.jpg'
 FROM template t
-JOIN (SELECT MIN(template_id) AS template_id FROM template WHERE status = 'PUBLISHED' AND active = 1) f
-  ON f.template_id = t.template_id;
+WHERE t.template_id = 10000001;
 
 INSERT INTO poster (poster_id, campaign_id, template_id, title, slot_values, html_content, created_at, updated_at,
                     image_object_key)
-SELECT 20000112, 20000112, t.template_id, LEFT(CONCAT('런치캐치 시연 한식당', ' - ', t.name), 100), JSON_OBJECT('eventName', JSON_OBJECT('type', 'text', 'value', '런치캐치 시연 한식당'), 'discount', JSON_OBJECT('type', 'text', 'value', '전체 메뉴 2,500원 할인'), 'period', JSON_OBJECT('type', 'text', 'value', '매일 11:30 ~ 15:00'), 'image', JSON_OBJECT('type', 'image', 'value', CONCAT(TRIM(TRAILING '/' FROM '${baseCdnBaseUrl}'), '/demo/campaigns/20000112/poster.jpg'))),
-       REPLACE(REPLACE(REPLACE(REPLACE(t.html_content, '>이벤트명<', '>런치캐치 시연 한식당<'), '>할인 내용<', '>전체 메뉴 2,500원 할인<'), '>기간<', '>매일 11:30 ~ 15:00<'), 'alt="메뉴 이미지">', CONCAT('alt="메뉴 이미지" src="', CONCAT(TRIM(TRAILING '/' FROM '${baseCdnBaseUrl}'), '/demo/campaigns/20000112/poster.jpg'), '" style="width:100%;height:100%;min-height:0;object-fit:cover">')),
+SELECT 20000112, 20000112, t.template_id, LEFT(CONCAT('런치캐치 시연 한식당', ' - ', t.name), 100), JSON_OBJECT('eventName', JSON_OBJECT('type', 'text', 'value', '런치캐치 시연 한식당'), 'discount', JSON_OBJECT('type', 'text', 'value', '전체 메뉴 2,500원 할인'), 'period', JSON_OBJECT('type', 'text', 'value', '오늘 11:30 ~ 15:00'), 'image', JSON_OBJECT('type', 'image', 'value', CONCAT(TRIM(TRAILING '/' FROM '${baseCdnBaseUrl}'), '/demo/stores/20000011/menu-1.jpg'))),
+       REPLACE(REPLACE(REPLACE(REPLACE(t.html_content, '>이벤트명<', '>런치캐치 시연 한식당<'), '>할인 내용<', '>전체 메뉴 2,500원 할인<'), '>기간<', '>오늘 11:30 ~ 15:00<'), 'alt="메뉴 이미지"', CONCAT('alt="메뉴 이미지" src="', CONCAT(TRIM(TRAILING '/' FROM '${baseCdnBaseUrl}'), '/demo/stores/20000011/menu-1.jpg'), '"')),
        TIMESTAMP(DATE_SUB(@d, INTERVAL 48 DAY), '10:30:00'), TIMESTAMP(DATE_SUB(@d, INTERVAL 48 DAY), '10:30:00'), 'demo/campaigns/20000112/poster.jpg'
 FROM template t
-JOIN (SELECT MIN(template_id) AS template_id FROM template WHERE status = 'PUBLISHED' AND active = 1) f
-  ON f.template_id = t.template_id;
+WHERE t.template_id = 10000001;
 
 INSERT INTO poster (poster_id, campaign_id, template_id, title, slot_values, html_content, created_at, updated_at,
                     image_object_key)
-SELECT 20000113, 20000113, t.template_id, LEFT(CONCAT('런치캐치 시연 한식당', ' - ', t.name), 100), JSON_OBJECT('eventName', JSON_OBJECT('type', 'text', 'value', '런치캐치 시연 한식당'), 'discount', JSON_OBJECT('type', 'text', 'value', '전체 메뉴 3,000원 할인'), 'period', JSON_OBJECT('type', 'text', 'value', '매일 11:30 ~ 15:00'), 'image', JSON_OBJECT('type', 'image', 'value', CONCAT(TRIM(TRAILING '/' FROM '${baseCdnBaseUrl}'), '/demo/campaigns/20000113/poster.jpg'))),
-       REPLACE(REPLACE(REPLACE(REPLACE(t.html_content, '>이벤트명<', '>런치캐치 시연 한식당<'), '>할인 내용<', '>전체 메뉴 3,000원 할인<'), '>기간<', '>매일 11:30 ~ 15:00<'), 'alt="메뉴 이미지">', CONCAT('alt="메뉴 이미지" src="', CONCAT(TRIM(TRAILING '/' FROM '${baseCdnBaseUrl}'), '/demo/campaigns/20000113/poster.jpg'), '" style="width:100%;height:100%;min-height:0;object-fit:cover">')),
+SELECT 20000113, 20000113, t.template_id, LEFT(CONCAT('런치캐치 시연 한식당', ' - ', t.name), 100), JSON_OBJECT('eventName', JSON_OBJECT('type', 'text', 'value', '런치캐치 시연 한식당'), 'discount', JSON_OBJECT('type', 'text', 'value', '전체 메뉴 3,000원 할인'), 'period', JSON_OBJECT('type', 'text', 'value', '오늘 11:30 ~ 15:00'), 'image', JSON_OBJECT('type', 'image', 'value', CONCAT(TRIM(TRAILING '/' FROM '${baseCdnBaseUrl}'), '/demo/stores/20000011/menu-1.jpg'))),
+       REPLACE(REPLACE(REPLACE(REPLACE(t.html_content, '>이벤트명<', '>런치캐치 시연 한식당<'), '>할인 내용<', '>전체 메뉴 3,000원 할인<'), '>기간<', '>오늘 11:30 ~ 15:00<'), 'alt="메뉴 이미지"', CONCAT('alt="메뉴 이미지" src="', CONCAT(TRIM(TRAILING '/' FROM '${baseCdnBaseUrl}'), '/demo/stores/20000011/menu-1.jpg'), '"')),
        TIMESTAMP(DATE_SUB(@d, INTERVAL 33 DAY), '10:30:00'), TIMESTAMP(DATE_SUB(@d, INTERVAL 33 DAY), '10:30:00'), 'demo/campaigns/20000113/poster.jpg'
 FROM template t
-JOIN (SELECT MIN(template_id) AS template_id FROM template WHERE status = 'PUBLISHED' AND active = 1) f
-  ON f.template_id = t.template_id;
+WHERE t.template_id = 10000001;
 
 INSERT INTO poster (poster_id, campaign_id, template_id, title, slot_values, html_content, created_at, updated_at,
                     image_object_key)
-SELECT 20000301, 20000301, t.template_id, LEFT(CONCAT('런치캐치 시연 스시', ' - ', t.name), 100), JSON_OBJECT('eventName', JSON_OBJECT('type', 'text', 'value', '런치캐치 시연 스시'), 'discount', JSON_OBJECT('type', 'text', 'value', '전체 메뉴 3,000원 할인'), 'period', JSON_OBJECT('type', 'text', 'value', '매일 11:30 ~ 15:00'), 'image', JSON_OBJECT('type', 'image', 'value', CONCAT(TRIM(TRAILING '/' FROM '${baseCdnBaseUrl}'), '/demo/campaigns/20000301/poster.jpg'))),
-       REPLACE(REPLACE(REPLACE(REPLACE(t.html_content, '>이벤트명<', '>런치캐치 시연 스시<'), '>할인 내용<', '>전체 메뉴 3,000원 할인<'), '>기간<', '>매일 11:30 ~ 15:00<'), 'alt="메뉴 이미지">', CONCAT('alt="메뉴 이미지" src="', CONCAT(TRIM(TRAILING '/' FROM '${baseCdnBaseUrl}'), '/demo/campaigns/20000301/poster.jpg'), '" style="width:100%;height:100%;min-height:0;object-fit:cover">')),
+SELECT 20000301, 20000301, t.template_id, LEFT(CONCAT('런치캐치 시연 스시', ' - ', t.name), 100), JSON_OBJECT('eventName', JSON_OBJECT('type', 'text', 'value', '런치캐치 시연 스시'), 'discount', JSON_OBJECT('type', 'text', 'value', '전체 메뉴 3,000원 할인'), 'period', JSON_OBJECT('type', 'text', 'value', '오늘 11:30 ~ 15:00'), 'image', JSON_OBJECT('type', 'image', 'value', CONCAT(TRIM(TRAILING '/' FROM '${baseCdnBaseUrl}'), '/demo/stores/20000013/menu-1.jpg'))),
+       REPLACE(REPLACE(REPLACE(REPLACE(t.html_content, '>이벤트명<', '>런치캐치 시연 스시<'), '>할인 내용<', '>전체 메뉴 3,000원 할인<'), '>기간<', '>오늘 11:30 ~ 15:00<'), 'alt="메뉴 이미지"', CONCAT('alt="메뉴 이미지" src="', CONCAT(TRIM(TRAILING '/' FROM '${baseCdnBaseUrl}'), '/demo/stores/20000013/menu-1.jpg'), '"')),
        TIMESTAMP(DATE_SUB(@d, INTERVAL 3 DAY), '10:30:00'), TIMESTAMP(DATE_SUB(@d, INTERVAL 3 DAY), '10:30:00'), 'demo/campaigns/20000301/poster.jpg'
 FROM template t
-JOIN (SELECT MIN(template_id) AS template_id FROM template WHERE status = 'PUBLISHED' AND active = 1) f
-  ON f.template_id = t.template_id;
+WHERE t.template_id = 10000005;
 
 INSERT INTO poster (poster_id, campaign_id, template_id, title, slot_values, html_content, created_at, updated_at,
                     image_object_key)
-SELECT 20000401, 20000401, t.template_id, LEFT(CONCAT('런치캐치 시연 버거', ' - ', t.name), 100), JSON_OBJECT('eventName', JSON_OBJECT('type', 'text', 'value', '런치캐치 시연 버거'), 'discount', JSON_OBJECT('type', 'text', 'value', '전체 메뉴 3,000원 할인'), 'period', JSON_OBJECT('type', 'text', 'value', '매일 11:30 ~ 15:00'), 'image', JSON_OBJECT('type', 'image', 'value', CONCAT(TRIM(TRAILING '/' FROM '${baseCdnBaseUrl}'), '/demo/campaigns/20000401/poster.jpg'))),
-       REPLACE(REPLACE(REPLACE(REPLACE(t.html_content, '>이벤트명<', '>런치캐치 시연 버거<'), '>할인 내용<', '>전체 메뉴 3,000원 할인<'), '>기간<', '>매일 11:30 ~ 15:00<'), 'alt="메뉴 이미지">', CONCAT('alt="메뉴 이미지" src="', CONCAT(TRIM(TRAILING '/' FROM '${baseCdnBaseUrl}'), '/demo/campaigns/20000401/poster.jpg'), '" style="width:100%;height:100%;min-height:0;object-fit:cover">')),
+SELECT 20000401, 20000401, t.template_id, LEFT(CONCAT('런치캐치 시연 버거', ' - ', t.name), 100), JSON_OBJECT('eventName', JSON_OBJECT('type', 'text', 'value', '런치캐치 시연 버거'), 'discount', JSON_OBJECT('type', 'text', 'value', '전체 메뉴 3,000원 할인'), 'period', JSON_OBJECT('type', 'text', 'value', '오늘 11:30 ~ 15:00'), 'image', JSON_OBJECT('type', 'image', 'value', CONCAT(TRIM(TRAILING '/' FROM '${baseCdnBaseUrl}'), '/demo/stores/20000014/menu-1.jpg'))),
+       REPLACE(REPLACE(REPLACE(REPLACE(t.html_content, '>이벤트명<', '>런치캐치 시연 버거<'), '>할인 내용<', '>전체 메뉴 3,000원 할인<'), '>기간<', '>오늘 11:30 ~ 15:00<'), 'alt="메뉴 이미지"', CONCAT('alt="메뉴 이미지" src="', CONCAT(TRIM(TRAILING '/' FROM '${baseCdnBaseUrl}'), '/demo/stores/20000014/menu-1.jpg'), '"')),
        TIMESTAMP(DATE_SUB(@d, INTERVAL 10 DAY), '10:30:00'), TIMESTAMP(DATE_SUB(@d, INTERVAL 10 DAY), '10:30:00'), 'demo/campaigns/20000401/poster.jpg'
 FROM template t
-JOIN (SELECT MIN(template_id) AS template_id FROM template WHERE status = 'PUBLISHED' AND active = 1) f
-  ON f.template_id = t.template_id;
+WHERE t.template_id = 10000009;
 
 INSERT INTO poster (poster_id, campaign_id, template_id, title, slot_values, html_content, created_at, updated_at,
                     image_object_key)
-SELECT 20000501, 20000501, t.template_id, LEFT(CONCAT('런치캐치 시연 카페', ' - ', t.name), 100), JSON_OBJECT('eventName', JSON_OBJECT('type', 'text', 'value', '런치캐치 시연 카페'), 'discount', JSON_OBJECT('type', 'text', 'value', '전체 메뉴 3,000원 할인'), 'period', JSON_OBJECT('type', 'text', 'value', '매일 11:30 ~ 15:00'), 'image', JSON_OBJECT('type', 'image', 'value', CONCAT(TRIM(TRAILING '/' FROM '${baseCdnBaseUrl}'), '/demo/campaigns/20000501/poster.jpg'))),
-       REPLACE(REPLACE(REPLACE(REPLACE(t.html_content, '>이벤트명<', '>런치캐치 시연 카페<'), '>할인 내용<', '>전체 메뉴 3,000원 할인<'), '>기간<', '>매일 11:30 ~ 15:00<'), 'alt="메뉴 이미지">', CONCAT('alt="메뉴 이미지" src="', CONCAT(TRIM(TRAILING '/' FROM '${baseCdnBaseUrl}'), '/demo/campaigns/20000501/poster.jpg'), '" style="width:100%;height:100%;min-height:0;object-fit:cover">')),
+SELECT 20000501, 20000501, t.template_id, LEFT(CONCAT('런치캐치 시연 카페', ' - ', t.name), 100), JSON_OBJECT('eventName', JSON_OBJECT('type', 'text', 'value', '런치캐치 시연 카페'), 'discount', JSON_OBJECT('type', 'text', 'value', '전체 메뉴 3,000원 할인'), 'period', JSON_OBJECT('type', 'text', 'value', '오늘 11:30 ~ 15:00'), 'image', JSON_OBJECT('type', 'image', 'value', CONCAT(TRIM(TRAILING '/' FROM '${baseCdnBaseUrl}'), '/demo/stores/20000015/menu-1.jpg'))),
+       REPLACE(REPLACE(REPLACE(REPLACE(t.html_content, '>이벤트명<', '>런치캐치 시연 카페<'), '>할인 내용<', '>전체 메뉴 3,000원 할인<'), '>기간<', '>오늘 11:30 ~ 15:00<'), 'alt="메뉴 이미지"', CONCAT('alt="메뉴 이미지" src="', CONCAT(TRIM(TRAILING '/' FROM '${baseCdnBaseUrl}'), '/demo/stores/20000015/menu-1.jpg'), '"')),
        TIMESTAMP(DATE_SUB(@d, INTERVAL 13 DAY), '10:30:00'), TIMESTAMP(DATE_SUB(@d, INTERVAL 13 DAY), '10:30:00'), 'demo/campaigns/20000501/poster.jpg'
 FROM template t
-JOIN (SELECT MIN(template_id) AS template_id FROM template WHERE status = 'PUBLISHED' AND active = 1) f
-  ON f.template_id = t.template_id;
+WHERE t.template_id = 10000007;
 
 INSERT INTO poster_moderation_result (poster_moderation_result_id, poster_id, result, reason, created_at, updated_at)
 SELECT p.poster_id, p.poster_id, 'PASS', NULL, p.created_at + INTERVAL 10 MINUTE, p.created_at + INTERVAL 10 MINUTE
