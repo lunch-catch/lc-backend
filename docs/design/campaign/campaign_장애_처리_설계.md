@@ -8,7 +8,9 @@
 | 유형 | 대상 |
 |---|---|
 | DB | MySQL(JPA), `campaign`/`template`/`store_audience`/`poster` 등. `ops.contract.PlatformSettingQueryService.getMinDailyBudget()`(같은 트랜잭션 안의 도메인 간 직접 호출, 외부 API 아님)도 DB 읽기와 같은 처리를 받는다(`#330`). `store.contract.StoreQueryService`(가게명·메뉴명 조회, 포스터 생성, `#376`)도 같은 처리다 |
-| 외부 API | Bedrock LLM(템플릿 생성·수정, `template/client/BedrockTemplateHtmlGenerator`). S3(`S3Presigner`, `S3Client`. presigned URL 발급과 `headObject` 확인, 포스터 이미지 업로드, `#376`. 포스터 자동 검수의 `GetObject`, `#535`). Rekognition(`DetectText`, 포스터 자동 검수, `poster/client/PosterImageInspector`, `#535`) |
+| 외부 API | Bedrock LLM(템플릿 생성·수정, `template/client/BedrockTemplateHtmlGenerator`) |
+| 외부 API | S3(`S3Presigner`, `S3Client`. presigned URL 발급과 `headObject` 확인, 포스터 이미지 업로드, `#376`. 포스터 자동 검수의 `GetObject`, `#535`) |
+| 외부 API | Rekognition(`DetectText`, 포스터 자동 검수, `poster/client/PosterImageInspector`, `#535`) |
 | 캐시 | 해당 없음(이 도메인은 캐시에 기대지 않는다. `owner.contract.OwnerStatusQuery`가 캐시를 쓰지만 그건 owner 도메인이 소유한다) |
 | 애플리케이션 | 대용량 조회만 훑음(`#341`). 나머지(요청 폭주, graceful shutdown, 다중 서버)는 아직 훑지 않음 |
 | 롤백 안 되는 효과 | 해당 없음(아직 훑지 않음) |
@@ -35,14 +37,14 @@
 이 제약은 데이터가 어긋나서 나는 게 아니라 "가게당 DRAFT 1개"를 두 요청이 동시에 쫓다가
 늦게 온 쪽이 걸리는 경쟁의 흔적이다. 늦은 쪽이 받아야 할 결과(그 가게의 DRAFT에 자기 쿠폰
 조건을 덮어쓰는 것)는 먼저 조회했을 때 DRAFT가 있었다면 탔을 경로와 같다. 그래서 재조회
-후 덮어쓰기는 재시도가 아니라 원래 의도한 "이어 쓰기" 경로로 들어가는 것일 뿐이다
-(2026-10-14 확정). 다른 제약 위반은 기본 처리대로 그대로 올린다.
+후 덮어쓰기는 재시도가 아니라 원래 의도한 "이어 쓰기" 경로로 들어가는 것일 뿐이다.
+다른 제약 위반은 기본 처리대로 그대로 올린다.
 
 같은 자리에서 제약 위반 대신 교착 상태로 나타나는 경우도 있다. `findByStoreIdAndStatus`의
 `PESSIMISTIC_WRITE`는 그 가게에 DRAFT가 하나도 없으면 갭 락이 되는데, 같은 가게로 동시에
 들어온 두 생성 요청이 이 갭을 같이 잠근 뒤 각자 INSERT하면 상대의 갭 락에 막혀 MySQL이
 교착 상태로 판정해 한쪽을 롤백시킨다. 롤백된 쪽이 받아야 할 결과는 위 제약 위반과 똑같이
-"재조회해 덮어쓰기"라 같은 경로로 묶는다(코드래빗 리뷰로 찾음, 2026-10-15 확정).
+"재조회해 덮어쓰기"라 같은 경로로 묶는다.
 
 ### 외부 API: Bedrock LLM
 
