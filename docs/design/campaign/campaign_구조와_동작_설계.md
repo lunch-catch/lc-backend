@@ -43,7 +43,7 @@ campaign/
 
 `CampaignStatusLog`는 `Campaign`을 `@ManyToOne` 연관관계가 아니라 `campaignId`(원시 `Long`)로만 참조한다. `Campaign`이 자기 로그 목록을 조회할 기능이 이 이슈에 없어서, `ops.AuditLog`가 쓰는 방식을 그대로 따랐다(제가 정한 것).
 
-`PauseReason`은 처음엔 `campaign.entity`에 뒀다가 `campaign.contract`로 옮겼다(2026-10-12). `CampaignStatus`, `TargetGender`, `DiscountTargetType`, `DiscountType`, `AgeGroup`처럼 캠페인 테이블 CHECK 제약과 1:1로 대응하는 enum은 전부 contract에 두고 엔티티가 그대로 쓰는 게 이미 있는 패턴인데, `PauseReason`만 거기서 벗어나 있었다. 다른 도메인(billing)이 `CampaignInfo.pauseReason` 필드로 이 타입을 그대로 쓰려는 계획이 나오면서, `ArchitectureTest`의 `contract는_entity와_repository를_참조하지_않는다`가 그 자리를 막는다는 게 드러나 옮겼다.
+`PauseReason`은 `campaign.contract`에 둔다. `CampaignStatus`, `TargetGender`, `DiscountTargetType`, `DiscountType`, `AgeGroup`처럼 캠페인 테이블 CHECK 제약과 1:1로 대응하는 enum은 전부 contract에 두고 엔티티가 그대로 쓰는 패턴이다. 다른 도메인(billing)이 `CampaignInfo.pauseReason` 필드로 이 타입을 그대로 쓰는데, `ArchitectureTest`의 `contract는_entity와_repository를_참조하지_않는다`가 contract 가 entity 패키지의 타입을 참조하는 것을 막기 때문에 entity 에 둘 수 없다.
 
 입구 넷 가운데 이 이슈에서 실제로 연결된 것은 "다른 도메인의 호출"(`CampaignQueryService`, `CampaignFundingUpdater`)뿐이었다. `pause`/`resume`은 "캠페인 수동 중단과 재개(점주)" 이슈(`#468`)가 `CampaignController`의 `POST .../{campaignId}:pause`, `:resume`으로 연결했다. `end`는 점주의 직접 종료(`#600`)가 `POST .../{campaignId}:end`로 연결했고, 집행 기간이 끝난 정기 종료(`end`)와 집행 시작(`activate`)은 00:00 배치(`#569`)가 부른다. `schedule`은 캠페인 활성화(`#561`)가 부른다.
 
