@@ -3,9 +3,9 @@ package com.launchcatch.campaign.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
@@ -27,6 +27,7 @@ import java.time.LocalDate;
 import java.time.LocalTime;
 import java.util.List;
 import java.util.function.Consumer;
+import java.util.function.Predicate;
 import java.util.stream.IntStream;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -64,6 +65,20 @@ class CampaignStoreSummaryServiceTest {
             callback.accept(null);
             return null;
         }).when(transactionTemplate).executeWithoutResult(any());
+    }
+
+    /*
+     * 인자에 따라 실패하는 스텁을 하나로 만든다. 조건별로 doThrow 스텁을 여러 개 두면 엄격 모드가 "다른 인자로 불렸다"며
+     * PotentialStubbingProblem 을 던지므로, 어떤 인자에도 맞는 스텁 안에서 조건을 판단한다.
+     */
+    private void failWhen(Predicate<List<StoreCampaignSummaryUpdate>> condition) {
+        doAnswer(invocation -> {
+            List<StoreCampaignSummaryUpdate> updates = invocation.getArgument(0);
+            if (condition.test(updates)) {
+                throw new IllegalArgumentException("할인 대상 메뉴가 해당 가게에 속하지 않습니다.");
+            }
+            return null;
+        }).when(storeCampaignSummaryUpdater).updateAll(anyList());
     }
 
     private CampaignSummaryRow row(long campaignId, long storeId) {
@@ -144,11 +159,7 @@ class CampaignStoreSummaryServiceTest {
                 .thenReturn(List.of(row(1L, 10L), row(2L, 20L), row(3L, 30L)));
         when(campaignRepository.findActiveSummaryRowsAfter(eq(3L), eq(BUSINESS_DATE), any(Pageable.class))).thenReturn(List.of());
         // 세 건을 한 번에 저장하면 실패하고, 한 건씩 저장하면 2번 캠페인만 실패한다.
-        doThrow(new IllegalArgumentException("할인 대상 메뉴가 해당 가게에 속하지 않습니다."))
-                .when(storeCampaignSummaryUpdater).updateAll(argThat(updates -> updates.size() == 3));
-        doThrow(new IllegalArgumentException("할인 대상 메뉴가 해당 가게에 속하지 않습니다."))
-                .when(storeCampaignSummaryUpdater).updateAll(argThat(updates -> updates.size() == 1
-                        && updates.get(0).campaignId() == 2L));
+        failWhen(updates -> updates.size() == 3 || (updates.size() == 1 && updates.get(0).campaignId() == 2L));
 
         int prepared = service.prepare(BUSINESS_DATE);
 
@@ -168,10 +179,7 @@ class CampaignStoreSummaryServiceTest {
         when(campaignRepository.findActiveSummaryRowsAfter(eq(500L), eq(BUSINESS_DATE), any(Pageable.class)))
                 .thenReturn(List.of(row(501L, 501L)));
         when(campaignRepository.findActiveSummaryRowsAfter(eq(501L), eq(BUSINESS_DATE), any(Pageable.class))).thenReturn(List.of());
-        doThrow(new IllegalArgumentException("데이터 오류")).when(storeCampaignSummaryUpdater)
-                .updateAll(argThat(updates -> updates.size() == 500));
-        doThrow(new IllegalArgumentException("데이터 오류")).when(storeCampaignSummaryUpdater)
-                .updateAll(argThat(updates -> updates.size() == 1 && updates.get(0).campaignId() == 7L));
+        failWhen(updates -> updates.size() == 500 || (updates.size() == 1 && updates.get(0).campaignId() == 7L));
 
         int prepared = service.prepare(BUSINESS_DATE);
 
