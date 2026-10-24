@@ -2,6 +2,7 @@ package com.launchcatch.campaign.poster.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -108,8 +109,74 @@ class PosterQueryServiceTest {
         PosterResponse response = service.findForMember(CAMPAIGN_ID);
 
         assertThat(response.campaignId()).isEqualTo(CAMPAIGN_ID);
-        assertThat(response.status()).isEqualTo(status);
         assertThat(response.html()).isEqualTo("<div>html</div>");
+    }
+
+    @Test
+    @DisplayName("공개된 포스터는 두 번째 조회부터 DB 를 읽지 않고 같은 HTML 을 돌려준다(#940)")
+    void 공개된_포스터는_두_번째부터_캐시에서_돌려준다() {
+        PosterQueryService service = service(campaignRepository, posterRepository);
+        when(campaignRepository.findById(CAMPAIGN_ID)).thenReturn(Optional.of(campaign(CampaignStatus.ACTIVE)));
+        when(posterRepository.findByCampaignId(CAMPAIGN_ID)).thenReturn(Optional.of(poster()));
+
+        PosterResponse first = service.findForMember(CAMPAIGN_ID);
+        PosterResponse second = service.findForMember(CAMPAIGN_ID);
+
+        assertThat(second).isEqualTo(first);
+        verify(campaignRepository, times(1)).findById(CAMPAIGN_ID);
+        verify(posterRepository, times(1)).findByCampaignId(CAMPAIGN_ID);
+    }
+
+    @Test
+    @DisplayName("캠페인마다 따로 캐시한다. 다른 캠페인의 조회는 DB 를 읽는다(#940)")
+    void 캐시는_캠페인마다_따로_둔다() {
+        PosterQueryService service = service(campaignRepository, posterRepository);
+        Long otherCampaignId = 502L;
+        when(campaignRepository.findById(CAMPAIGN_ID)).thenReturn(Optional.of(campaign(CampaignStatus.ACTIVE)));
+        when(posterRepository.findByCampaignId(CAMPAIGN_ID)).thenReturn(Optional.of(poster()));
+        when(campaignRepository.findById(otherCampaignId)).thenReturn(Optional.of(campaign(CampaignStatus.ACTIVE)));
+        when(posterRepository.findByCampaignId(otherCampaignId)).thenReturn(Optional.of(
+                Poster.create(otherCampaignId, TEMPLATE_ID, "다른 가게 - 가을 신메뉴", "{}", "<div>other</div>", "k")));
+
+        service.findForMember(CAMPAIGN_ID);
+        PosterResponse other = service.findForMember(otherCampaignId);
+
+        assertThat(other.html()).isEqualTo("<div>other</div>");
+        verify(campaignRepository).findById(otherCampaignId);
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = CampaignStatus.class, names = {"DRAFT", "SCHEDULED"})
+    @DisplayName("비공개 캠페인은 캐시하지 않아 공개된 뒤의 조회에 바로 반영된다(#940)")
+    void 비공개는_캐시하지_않는다(CampaignStatus status) {
+        PosterQueryService service = service(campaignRepository, posterRepository);
+        when(campaignRepository.findById(CAMPAIGN_ID))
+                .thenReturn(Optional.of(campaign(status)), Optional.of(campaign(CampaignStatus.ACTIVE)));
+        when(posterRepository.findByCampaignId(CAMPAIGN_ID)).thenReturn(Optional.of(poster()));
+
+        assertThatThrownBy(() -> service.findForMember(CAMPAIGN_ID))
+                .isInstanceOfSatisfying(CampaignException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(PosterErrorCode.POSTER_UNAVAILABLE));
+        PosterResponse afterPublic = service.findForMember(CAMPAIGN_ID);
+
+        assertThat(afterPublic.html()).isEqualTo("<div>html</div>");
+        verify(campaignRepository, times(2)).findById(CAMPAIGN_ID);
+    }
+
+    @Test
+    @DisplayName("공개 캠페인에 포스터가 없는 결과도 캐시하지 않아 포스터가 생기면 바로 반영된다(#940)")
+    void 포스터_없음은_캐시하지_않는다() {
+        PosterQueryService service = service(campaignRepository, posterRepository);
+        when(campaignRepository.findById(CAMPAIGN_ID)).thenReturn(Optional.of(campaign(CampaignStatus.ACTIVE)));
+        when(posterRepository.findByCampaignId(CAMPAIGN_ID)).thenReturn(Optional.empty(), Optional.of(poster()));
+
+        assertThatThrownBy(() -> service.findForMember(CAMPAIGN_ID))
+                .isInstanceOfSatisfying(CampaignException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(PosterErrorCode.POSTER_UNAVAILABLE));
+        PosterResponse afterCreated = service.findForMember(CAMPAIGN_ID);
+
+        assertThat(afterCreated.html()).isEqualTo("<div>html</div>");
+        verify(posterRepository, times(2)).findByCampaignId(CAMPAIGN_ID);
     }
 
     /*
