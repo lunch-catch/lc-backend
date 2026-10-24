@@ -137,7 +137,7 @@ SET current_count = (SELECT COUNT(*) FROM template),
  * 템플릿은 가게 업종의 스타일과 캠페인의 할인 대상(ALL, MENU)으로 고른다.
  * 한식, 분식 -> 한상(1, 2), 중식, 아시안 -> 홍등(3, 4), 일식 -> 와(5, 6), 양식, 카페디저트 -> 비스트로(7, 8), 패스트푸드, 기타 -> 팝(9, 10).
  * 전체할인이 홀수, 메뉴할인이 짝수다.
- * image 칸은 할인 대상 메뉴의 사진이고 전체 메뉴 할인이면 첫 메뉴 사진이다. 완성 포스터 사진은 world/campaigns/<캠페인>/poster.jpg 다.
+ * image 칸은 할인 대상 메뉴의 사진이고 전체 메뉴 할인이면 첫 메뉴 사진이다. 피드 가게는 모두 메뉴가 있어 로고가 들어가지 않는다 (#941). 완성 포스터 사진은 world/campaigns/<캠페인>/poster.jpg 다.
  * DRAFT 단계 3 중 241 은 검수 전, 나머지는 금지 표현 "최저가 보장" 이 들어가 검수 FAIL 이다.
  */
 CREATE TEMPORARY TABLE tpl_poster AS
