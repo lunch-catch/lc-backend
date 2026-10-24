@@ -158,6 +158,20 @@ class CampaignTest {
         assertThatThrownBy(() -> campaign.cancel(NOW.plusHours(4))).isInstanceOf(IllegalStateException.class);
     }
 
+    @Test
+    @DisplayName("SCHEDULED만 시작 전에 끝낼 수 있고 ENDED로 바뀌며 상태 변경 시각을 남긴다(#902)")
+    void SCHEDULED만_시작_전에_끝낸다() {
+        Campaign campaign = campaign(10_000L, LocalDate.of(2026, 10, 14), LocalDate.of(2026, 10, 31));
+        assertThatThrownBy(() -> campaign.endBeforeStart(NOW)).isInstanceOf(IllegalStateException.class);
+
+        campaign.schedule(NOW);
+        campaign.endBeforeStart(NOW.plusHours(1));
+
+        assertThat(campaign.getStatus()).isEqualTo(CampaignStatus.ENDED);
+        assertThat(campaign.getStatusChangedAt()).isEqualTo(NOW.plusHours(1));
+        assertThatThrownBy(() -> campaign.endBeforeStart(NOW.plusHours(2))).isInstanceOf(IllegalStateException.class);
+    }
+
     private Campaign campaign(Long dailyBudget, LocalDate startDate, LocalDate endDate) {
         return Campaign.create(
                 10L, 20L,

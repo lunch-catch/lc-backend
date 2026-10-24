@@ -12,6 +12,7 @@ import com.launchcatch.campaign.template.entity.Template;
 import com.launchcatch.campaign.template.repository.TemplateQuotaRepository;
 import com.launchcatch.campaign.template.repository.TemplateRepository;
 import com.launchcatch.campaign.template.repository.TemplateVersionRepository;
+import com.launchcatch.ops.contract.AuditLogWriter;
 import com.launchcatch.global.entity.BaseTimeEntity;
 import java.lang.reflect.Field;
 import java.time.LocalDateTime;
@@ -27,6 +28,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 class TemplateDeleteServiceTest {
 
     private static final Long TEMPLATE_ID = 1L;
+    private static final Long ADMIN_ID = 7L;
 
     @Mock
     private TemplateRepository templateRepository;
@@ -34,12 +36,15 @@ class TemplateDeleteServiceTest {
     private TemplateVersionRepository templateVersionRepository;
     @Mock
     private TemplateQuotaRepository templateQuotaRepository;
+    @Mock
+    private AuditLogWriter auditLogWriter;
 
     private TemplateDeleteService service;
 
     @BeforeEach
     void setUp() {
-        service = new TemplateDeleteService(templateRepository, templateVersionRepository, templateQuotaRepository);
+        service = new TemplateDeleteService(
+                templateRepository, templateVersionRepository, templateQuotaRepository, auditLogWriter);
     }
 
     @Test
@@ -48,7 +53,7 @@ class TemplateDeleteServiceTest {
         Template template = draftTemplate();
         when(templateRepository.findByIdForUpdate(TEMPLATE_ID)).thenReturn(Optional.of(template));
 
-        service.delete(TEMPLATE_ID);
+        service.delete(ADMIN_ID, TEMPLATE_ID);
 
         verify(templateVersionRepository).deleteAllByTemplateId(TEMPLATE_ID);
         verify(templateRepository).delete(template);
@@ -56,11 +61,22 @@ class TemplateDeleteServiceTest {
     }
 
     @Test
+    @DisplayName("삭제하면 누가 어느 템플릿을 지웠는지 감사 로그에 남긴다(#877)")
+    void 삭제하면_감사_로그를_남긴다() throws Exception {
+        Template template = draftTemplate();
+        when(templateRepository.findByIdForUpdate(TEMPLATE_ID)).thenReturn(Optional.of(template));
+
+        service.delete(ADMIN_ID, TEMPLATE_ID);
+
+        verify(auditLogWriter).write(ADMIN_ID, "TEMPLATE_DELETE", "1", "name=가을 신메뉴");
+    }
+
+    @Test
     @DisplayName("템플릿이 없으면 POSTER-005로 거부한다")
     void 템플릿이_없으면_거부한다() {
         when(templateRepository.findByIdForUpdate(TEMPLATE_ID)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> service.delete(TEMPLATE_ID))
+        assertThatThrownBy(() -> service.delete(ADMIN_ID, TEMPLATE_ID))
                 .isInstanceOfSatisfying(CampaignException.class, e ->
                         assertThat(e.getErrorCode()).isEqualTo(PosterErrorCode.TEMPLATE_NOT_FOUND));
         verify(templateVersionRepository, never()).deleteAllByTemplateId(TEMPLATE_ID);
@@ -74,7 +90,7 @@ class TemplateDeleteServiceTest {
         template.publish("<div>1</div>", LocalDateTime.now(), 1);
         when(templateRepository.findByIdForUpdate(TEMPLATE_ID)).thenReturn(Optional.of(template));
 
-        assertThatThrownBy(() -> service.delete(TEMPLATE_ID))
+        assertThatThrownBy(() -> service.delete(ADMIN_ID, TEMPLATE_ID))
                 .isInstanceOfSatisfying(CampaignException.class, e ->
                         assertThat(e.getErrorCode()).isEqualTo(PosterErrorCode.TEMPLATE_NOT_DRAFT));
         verify(templateVersionRepository, never()).deleteAllByTemplateId(TEMPLATE_ID);
@@ -92,7 +108,7 @@ class TemplateDeleteServiceTest {
         Template template = draftTemplate();
         when(templateRepository.findByIdForUpdate(TEMPLATE_ID)).thenReturn(Optional.of(template));
 
-        service.delete(TEMPLATE_ID);
+        service.delete(ADMIN_ID, TEMPLATE_ID);
 
         verify(templateRepository).findByIdForUpdate(TEMPLATE_ID);
     }

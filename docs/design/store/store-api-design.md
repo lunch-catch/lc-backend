@@ -232,7 +232,12 @@ develop에 반영된 #482 위치 저장과 연동하며 위치 저장 후 HOURS�
    발급한다.
 2. 업로드 확인(`confirmUpload`): `uploadId`로 `PENDING` 행을 찾아 본인 가게 소유인지 확인하고,
    `S3Client.headObject`로 실제 업로드됐는지 확인한 뒤 `VERIFIED`로 바꾼다. `imageType`을
-   가리지 않는다.
+   가리지 않는다. `headObject`는 외부 호출이라 DB 트랜잭션 밖에서 부른다(`#876`). 진행 상태
+   행 잠금 아래에서 읽고, 잠금을 놓은 채 S3를 확인한 뒤, 잠금을 다시 잡고 소유자와 상태를
+   재확인해서 `PENDING`일 때만 `VERIFIED`로 바꾼다. 포스터와 대표 메뉴 이미지의 확인과 같은
+   구조다. 그 사이 로고가 새 업로드로 덮어써지면(`uploadId`가 바뀐다) 처음 `uploadId`로 찾지
+   못해 `STORE-008`(403)로 거절하고, 옛 업로드의 확인 결과로 새 업로드를 `VERIFIED`로
+   만들지 않는다. 다시 잠그는 구간이 `prepareUpload`와 같은 잠금이라 둘은 직렬화된다.
 3. 단계 완료(`complete`): 그 가게에 업로드를 마친(`VERIFIED`) 로고(`LOGO`) 이미지가 있는지 확인한다.
    `prepareUpload`만 하고 `confirmUpload`를 하지 않은 `PENDING` 로고는 없는 것으로 본다. 그다음
    `StoreRegistrationProgressService.completeStep(ownerId, version, IMAGES, null)`을 불러

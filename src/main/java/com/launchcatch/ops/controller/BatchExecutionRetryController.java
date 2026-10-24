@@ -39,7 +39,8 @@ public class BatchExecutionRetryController {
             @ApiResponse(responseCode = "202", description = "접수 성공"),
             @ApiResponse(responseCode = "404", description = "OPS-002: 그 작업의 실행 기록이 없습니다."),
             @ApiResponse(responseCode = "409", description = "OPS-003: FAILED 상태가 아니면 재실행할 수 없습니다."),
-            @ApiResponse(responseCode = "422", description = "OPS-001: 다시 실행할 수 없는 작업입니다.")
+            @ApiResponse(responseCode = "422", description = "OPS-001: 다시 실행할 수 없는 작업입니다."),
+            @ApiResponse(responseCode = "503", description = "OPS-005: 재실행 요청이 몰려 지금은 받을 수 없습니다. 잠시 후 다시 시도해 주세요.")
     })
     public ResponseEnvelope<BatchExecutionRetryResponse> retry(
             @AuthenticationPrincipal CustomUserDetails admin,
