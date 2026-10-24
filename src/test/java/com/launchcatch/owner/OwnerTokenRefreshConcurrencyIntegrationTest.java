@@ -51,6 +51,23 @@ class OwnerTokenRefreshConcurrencyIntegrationTest extends AbstractOwnerIntegrati
         ownerId = owners.saveAndFlush(Owner.create(request.email(), encoder.encode(request.password()))).getId();
     }
 
+    @org.junit.jupiter.api.AfterEach
+    void cleanup() {
+        jdbc.update("delete from owner_session where owner_id = ?", ownerId);
+        owners.deleteById(ownerId);
+    }
+
+    @Test
+    void 세션_외래_키는_없는_점주와_세션이_남은_점주의_삭제를_거부한다() {
+        var issued = login.login(request);
+        assertThatThrownBy(() -> jdbc.update("delete from owner where owner_id = ?", ownerId))
+                .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
+        assertThatThrownBy(() -> jdbc.update(
+                "update owner_session set owner_id = ? where session_key = ?", -1L, key(issued.accessToken())))
+                .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
+        assertThat(valid(issued.accessToken())).isTrue();
+    }
+
     @Test
     void 두_기기의_동시_로그인과_갱신이_서로의_세션을_유지한다() throws Exception {
         try (var executor = Executors.newFixedThreadPool(2)) {
@@ -119,16 +136,17 @@ class OwnerTokenRefreshConcurrencyIntegrationTest extends AbstractOwnerIntegrati
     }
 
     @Test
-    void Redis_장애는_기기별_로그인과_갱신과_로그아웃을_막지_않는다() {
-        doThrow(new DataAccessResourceFailureException("Redis")).when(tokens)
-                .saveIfNewer(anyString(), anyLong(), any(), anyBoolean(), any(), anyLong());
-        doThrow(new DataAccessResourceFailureException("Redis")).when(ownerTokens).consumeForRotation(anyString());
+    void Redis_장애는_세션별_로그인과_갱신을_막지_않는다() {
+        doThrow(new DataAccessResourceFailureException("Redis")).when(sessionTokens)
+                .publish(anyString(), anyLong(), anyString(), anyLong(), any());
+        doThrow(new DataAccessResourceFailureException("Redis")).when(sessionTokens).consume(anyString());
         var a = login.login(request);
         var b = login.login(request);
         var renewed = refresh.refresh(a.refreshToken());
-        sessionService.logout(ownerId, key(a.accessToken()));
-        assertThat(valid(renewed.accessToken())).isFalse();
+        assertThat(valid(renewed.accessToken())).isTrue();
         assertThat(valid(b.accessToken())).isTrue();
+        verify(sessionTokens, times(3)).publish(anyString(), anyLong(), anyString(), anyLong(), any());
+        verify(sessionTokens).consume(a.refreshToken());
     }
 
     @Test
@@ -252,9 +270,14 @@ class OwnerTokenRefreshConcurrencyIntegrationTest extends AbstractOwnerIntegrati
     @Test
     void Redis_폐기_실패여도_DB가_로그아웃한_세션을_다시_허용하지_않는다() {
         var issued = login.login(request);
+        var other = login.login(request);
         doThrow(new DataAccessResourceFailureException("Redis")).when(sessionTokens).revoke(anyString(), anyString(), anyLong(), any());
-        assertThatThrownBy(() -> sessionService.logout(ownerId, key(issued.accessToken()))).isInstanceOf(AuthException.class);
+        assertThatThrownBy(() -> sessionService.logout(ownerId, key(issued.accessToken())))
+                .isInstanceOfSatisfying(AuthException.class,
+                        e -> assertThat(e.getErrorCode().getCode()).isEqualTo("AUTH-002"));
         reset(sessionTokens);
+        assertThat(valid(other.accessToken())).isTrue();
+        assertThat(refresh.refresh(other.refreshToken()).accessToken()).isNotBlank();
         assertThat(valid(issued.accessToken())).isFalse();
         assertThatThrownBy(() -> refresh.refresh(issued.refreshToken())).isInstanceOf(AuthException.class);
     }
