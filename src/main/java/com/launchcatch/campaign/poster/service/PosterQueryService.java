@@ -33,10 +33,12 @@ public class PosterQueryService {
             Set.of(CampaignStatus.ACTIVE, CampaignStatus.PAUSED, CampaignStatus.ENDED);
 
     /*
-     * 공개된 포스터 HTML 의 캐시 항목 수 상한이다. HTML 하나는 수 KB 라 이 수만큼 메모리를 쓴다. 넘으면 오래 쓰지 않은
-     * 항목부터 밀려나고, 밀려난 포스터는 다음 조회에서 DB 에서 다시 읽는다.
+     * 공개된 포스터 HTML 캐시가 쓰는 메모리의 상한이다. 항목 수가 아니라 HTML 글자 수의 합으로 건다. 포스터 HTML 은 TEXT
+     * 컬럼이라 크기가 제각각이어서, 항목 수로만 걸면 큰 포스터가 몰릴 때 메모리를 얼마나 쓸지 알 수 없다. 글자는 한글이
+     * 있으면 2바이트로 잡혀 이 값은 최대 20MB 안팎이다. 넘으면 오래 쓰지 않은 항목부터 밀려나고, 밀려난 포스터는 다음
+     * 조회에서 DB 에서 다시 읽는다. 상한보다 큰 포스터 하나는 담지 않고 매번 DB 에서 읽는다.
      */
-    private static final long PUBLIC_POSTER_CACHE_MAX_SIZE = 500;
+    private static final long PUBLIC_POSTER_CACHE_MAX_CHARS = 10_000_000L;
 
     private final CampaignRepository campaignRepository;
     private final PosterRepository posterRepository;
@@ -53,7 +55,8 @@ public class PosterQueryService {
      * 어긋날 일이 없다.
      */
     private final Cache<Long, String> publicPosterHtml = Caffeine.newBuilder()
-            .maximumSize(PUBLIC_POSTER_CACHE_MAX_SIZE)
+            .maximumWeight(PUBLIC_POSTER_CACHE_MAX_CHARS)
+            .weigher((Long campaignId, String html) -> html.length())
             .build();
 
     /** 캠페인 상태와 무관하게, 본인 소유 캠페인의 포스터를 돌려준다. */
