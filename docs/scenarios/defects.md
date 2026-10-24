@@ -22,7 +22,7 @@
 | BE-08 | MENU 대상 요약에 `target_menu_id` 가 없거나 VERIFIED 이미지의 `object_key` 가 비면 500 이다 | `GET /v1/stores`, `GET /v1/stores/{storeId}` | 데이터 한 건으로 화면 전체가 깨진다 | 데이터로 피함 | 조사 |
 | BE-09 | 같은 가게에 같은 날 ACTIVE 요약이 둘이면 가게 목록에 두 번 나온다 | `GET /v1/stores` | 목록 중복 | 데이터로 피함 | 조사 |
 | BE-10 | 진행 중 캠페인의 하루 예산 변경(`pending_daily_budget`)을 적용하는 곳이 없다 | `PATCH /v1/owner/campaigns/{campaignId}` | 바꾼 예산이 반영되지 않는다 | 없음 | 해결(#840). 00:00 묶음 35 단계가 한다(B-417) |
-| BE-11 | 캠페인 중단, 재개, 종료 때 `target_menu_id` 가 그 가게 메뉴가 아니면 500 이다 | `CampaignStatusService` | 데이터 오류가 500 으로 드러난다 | 데이터로 피함 | 조사. 00:00 묶음의 종료와 시작(10, 20)은 그 캠페인만 건너뛰고, 가게 요약(30)은 단계가 실패한다(B-405, B-410, B-415) |
+| BE-11 | 캠페인 중단, 재개, 종료 때 `target_menu_id` 가 그 가게 메뉴가 아니면 500 이다 | `CampaignStatusService` | 데이터 오류가 500 으로 드러난다 | 데이터로 피함 | 조사. 00:00 묶음의 종료와 시작(10, 20)은 그 캠페인만 건너뛰고, 가게 요약(30)도 같다(B-405, B-410, B-415) |
 | BE-12 | 사업자번호 mock 검증 실패(FAILED)를 저장하지 않는다 | `PUT /v1/owner/store/basic` | 화면이 다음 단계로 갔다가 위치 단계에서 가게 정보 단계로 돌아온다(FE-09) | 없음 | 조사 |
 | BE-13 | 대시보드 정지 회원 수가 0 으로 고정이다 | `MemberAnalyticsRepository` | 정지 회원이 있어도 0 이다 | 데이터로 피함 | 조사 |
 
