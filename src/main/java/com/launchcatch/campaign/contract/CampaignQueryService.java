@@ -50,7 +50,7 @@ public interface CampaignQueryService {
      * 그 캠페인 행을 잠그고(SELECT ... FOR UPDATE) 최신 상태로 조회한다(#378). 호출자가 이
      * 결과를 읽은 뒤 그 캠페인에 쓰기를 하는 동안 다른 트랜잭션이 같은 캠페인을 바꾸지 못하게
      * 막는다. 호출자의 쓰기 트랜잭션 안에서 불러야 잠금이 그 트랜잭션이 끝날 때까지 유지된다.
-     * 없는 캠페인 ID면 빈 값이다.
+     * 트랜잭션 없이 부르면 구현이 거부한다(MANDATORY, #876). 없는 캠페인 ID면 빈 값이다.
      */
     Optional<CampaignInfo> findByIdForUpdate(Long campaignId);
 }

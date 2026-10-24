@@ -16,6 +16,8 @@ import java.util.Set;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 
 @Service
 @RequiredArgsConstructor
@@ -89,8 +91,14 @@ public class CampaignQueryServiceImpl implements CampaignQueryService {
      * Hibernate가 이미 관리 중인 엔티티를 그대로 돌려줘 최신 컬럼 값으로 덮어쓰지 않는다.
      * refresh(PESSIMISTIC_WRITE)로 강제로 다시 읽어야 "잠그고 최신 상태를 읽는다"는 이
      * 메서드의 계약이 실제로 지켜진다(코드래빗 리뷰로 찾음, #378).
+     *
+     * 행 잠금은 트랜잭션이 끝날 때 풀린다. 트랜잭션 없이 부르면 잠금이 이 호출 안에서 바로 풀려 잠갔다는 보장이 없으므로
+     * MANDATORY 로 거부한다(#876). store 의 StoreCampaignSummaryUpdaterImpl 이 같은 계약을 같은 방식으로 강제한다. 지금
+     * 부르는 곳은 billing 의 RechargeReservationService.reserve(REQUIRES_NEW)와 coupon 의 CouponPreparationService.prepareOne
+     * (TransactionTemplate)이고 둘 다 쓰기 트랜잭션 안이다.
      */
     @Override
+    @Transactional(propagation = Propagation.MANDATORY)
     public Optional<CampaignInfo> findByIdForUpdate(Long campaignId) {
         return campaignRepository.findByIdForUpdate(campaignId).map(campaign -> {
             entityManager.refresh(campaign, LockModeType.PESSIMISTIC_WRITE);
