@@ -30,6 +30,8 @@ import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 public abstract class AbstractOwnerIntegrationTest extends IntegrationTestSupport {
 
     @MockitoSpyBean protected OwnerRepository owners;
+    @MockitoSpyBean protected com.launchcatch.owner.repository.OwnerSessionRepository sessions;
+    @MockitoSpyBean protected com.launchcatch.owner.repository.OwnerSessionTokenRepository sessionTokens;
     @MockitoSpyBean protected RefreshTokenRepository tokens;
     @MockitoSpyBean protected OwnerRefreshTokenRepository ownerTokens;
     @MockitoSpyBean protected OwnerAccessTokenVersionRepository versions;

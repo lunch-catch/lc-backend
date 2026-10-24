@@ -19,15 +19,12 @@
 
 1. 요청을 검증하고 이메일로 계정을 조회한다. 계정이 없어도 Dummy BCrypt Hash와 비교하며, BCrypt 연산은 저장 트랜잭션 밖에서 수행한다.
 2. 계정 없음·비밀번호 불일치·SUSPENDED·WITHDRAWN은 모두 AUTH-001로 처리한다.
-3. 새 Opaque RT를 생성하고, 독립된 트랜잭션에서 `findByIdForLogin`으로 점주 행을 잠근다. 상태와 비밀번호 해시를 다시 확인한다.
-4. RT의 SHA-256 해시·만료 시각·최근 로그인 시각을 저장하고 점주별 발급 순번을 증가시킨다. 같은 트랜잭션에서 확보한 발급 순번을 `issuanceVersion` 클레임에 넣어 공통 `JwtTokenProvider`로 AT를 생성한다.
-5. DB 커밋 후 별도의 짧은 트랜잭션에서 현재 상태·RT 해시·발급 순번을 재확인한다. 다른 요청이 교체한 RT라면 Redis 게시를 생략한다.
-6. DB 연결·잠금을 반환한 뒤 `RefreshTokenRepository.saveIfNewer`로 RT를 게시한다. TTL은 DB 만료 시각까지 남은 시간으로 계산한다.
-7. 공통 `AuthCookieFactory`로 토큰 쿠키를 만들고 응답을 반환한다. ACTIVE인 경우에만 DB의 `tutorialViewed`를 포함한다.
+3. 독립된 트랜잭션에서 `findByIdForLogin`으로 점주 행을 잠근다. 상태와 비밀번호 해시를 다시 확인한다.
+4. `OwnerSessionService.issue`로 별도 세션을 저장하고 최근 로그인 시각을 갱신한다. 기존 기기의 세션은 유지한다.
+5. DB 커밋 후 공통 `AuthCookieFactory`로 토큰 쿠키를 만들고 응답한다. ACTIVE인 경우에만 `tutorialViewed`를 포함한다.
 
-저장·커밋과 게시 전 DB 확인의 `DataAccessException`·`TransactionException`은 AUTH-002로 처리한다. DB 저장 성공 후 Redis 저장 장애만 발생하면 로그인은 유지한다. 최초 계정 조회는 이 변환 범위 밖이므로 실패 시 기존 공통 서버 오류를 따른다.
-
-발급 순번은 같은 점주의 RT 게시 순서를 비교하는 값이다. Redis가 최신 순번을 먼저 저장했다면 늦게 도착한 이전 게시를 거절한다. DB와 Redis의 원자적 저장이나 Redis 유실 복구까지 보장하지 않으며, 재발급 시 DB 검증은 공통 인증 설계와 재발급 구현을 따른다.
+기기별 세션의 저장 구조·갱신·폐기와 기존 토큰의 호환은 [점주 세션 설계](owner-sessions.md)를 따른다.
+저장·커밋과 Redis 게시 전 DB 확인 실패는 `AUTH-002`다. DB 저장 후 Redis 게시만 실패하면 DB 백업으로 로그인을 유지한다. 최초 계정 조회 실패는 기존 공통 서버 오류를 따른다.
 
 점주 상태는 JWT나 공통 인증 객체에 넣지 않는다. 로그인은 DB로 허용 여부를 판단하며, 일반 상태 조회·캐시 무효화 조건은 [점주 상태 조회 설계](owner-status-cache.md)를 따른다. 비밀번호·토큰 원문·해시는 응답이나 로그에 노출하지 않는다.
 

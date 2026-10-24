@@ -28,6 +28,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 @Slf4j
 @Service
 public class OwnerTokenRefreshService {
+    private final OwnerSessionService sessions;
     private final OwnerRepository owners;
     private final RefreshTokenRepository tokens;
     private final OwnerRefreshTokenRepository ownerTokens;
@@ -38,7 +39,8 @@ public class OwnerTokenRefreshService {
 
     public OwnerTokenRefreshService(OwnerRepository owners, RefreshTokenRepository tokens, OwnerRefreshTokenRepository ownerTokens,
                                    JwtTokenProvider jwt, OwnerAccessTokenVersionRepository accessTokenVersions,
-                                   Clock clock, PlatformTransactionManager transactionManager) {
+                                   Clock clock, PlatformTransactionManager transactionManager, OwnerSessionService sessions) {
+        this.sessions = sessions;
         this.owners = owners;
         this.tokens = tokens;
         this.ownerTokens = ownerTokens;
@@ -52,6 +54,10 @@ public class OwnerTokenRefreshService {
     }
 
     public OwnerTokenRefreshResult refresh(String oldToken) {
+        var sessionResult = sessions.refreshIfPresent(oldToken);
+        if (sessionResult.isPresent()) {
+            return sessionResult.orElseThrow();
+        }
         if (oldToken == null || oldToken.isBlank()) {
             throw invalid();
         }
@@ -191,7 +197,7 @@ public class OwnerTokenRefreshService {
             Revocation revocation = transactions.execute(transaction -> owners.findByIdForLogin(ownerId)
                     .map(owner -> {
                         String hash = owner.getRefreshTokenHash();
-                        owner.clearRefreshToken();
+                        owner.clearLegacyRefreshToken();
                         owners.saveAndFlush(owner);
                         return new Revocation(hash, owner.getRefreshTokenIssuanceVersion());
                     }).orElse(null));
