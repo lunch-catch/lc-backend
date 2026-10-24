@@ -20,6 +20,7 @@ import org.springframework.transaction.TransactionException;
 @RequiredArgsConstructor
 public class OwnerAccessTokenPolicy implements AccessTokenValidationPolicy {
     private static final String VERSION_CLAIM = "issuanceVersion";
+    private final OwnerSessionService sessions;
     private final OwnerAccessTokenVersionRepository versions;
     private final OwnerAccessTokenRevocationRepository revocations;
 
@@ -37,6 +38,17 @@ public class OwnerAccessTokenPolicy implements AccessTokenValidationPolicy {
     @Override
     public boolean isValid(Role role, Long subjectId, LocalDateTime issuedAt, Map<String, Object> claims, CutoffPolicy policy) {
         if (!supports(role) || subjectId == null || issuedAt == null) { return false; }
+        if (claims.containsKey(OwnerSessionService.SESSION_CLAIM)) {
+            try {
+                return sessions.isValid(subjectId, claims.get(OwnerSessionService.SESSION_CLAIM), policy);
+            } catch (DataAccessException | TransactionException e) {
+                log.warn("event=OWNER_SESSION_ACCESS_CHECK_FAILED ownerId={} exceptionType={}", subjectId, e.getClass().getSimpleName());
+                if (policy == CutoffPolicy.REQUIRED) {
+                    throw new AuthException(AuthErrorCode.REFRESH_TOKEN_STORE_UNAVAILABLE, e);
+                }
+                return false;
+            }
+        }
         long version = issuanceVersion(claims.get(VERSION_CLAIM));
         if (version < 0) {
             return false;
