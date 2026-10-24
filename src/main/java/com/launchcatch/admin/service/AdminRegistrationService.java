@@ -37,6 +37,7 @@ public class AdminRegistrationService {
     private final PasswordEncoder passwordEncoder;
     private final PlatformTransactionManager transactionManager;
     private final AdminAccessTokenVerifier cutoffVerifier;
+    private final AdminSessionService sessions;
 
     /*
      * BCrypt 해시는 DB 트랜잭션 밖에서 계산한다.
@@ -102,6 +103,9 @@ public class AdminRegistrationService {
                 ? issuanceVersion <= issuer.getAccessTokenRevokedVersion()
                 : issuedAt == null || (issuer.getAccessTokenValidAfter() != null
                         && issuedAt.isBefore(issuer.getAccessTokenValidAfter()));
+        if (issuanceVersion != null && !sessions.isValid(issuerAdminId, issuer.getRole(), issuanceVersion).orElse(true)) {
+            revoked = true;
+        }
         if (revoked) {
             throw new AuthException(AuthErrorCode.LOGIN_REQUIRED);
         }

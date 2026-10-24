@@ -91,7 +91,7 @@ class AdminLoginSecurityIntegrationTest extends AbstractAdminIntegrationTest {
 
     @BeforeEach
     void setUp() {
-        reset(admins, tokens, transactions, versions, legacyCutoff, revocations, audit, encoder, jwt);
+        reset(admins, tokens, sessionTokens, transactions, versions, legacyCutoff, revocations, audit, encoder, jwt);
         clientIp = "192.0.2." + (CLIENTS.incrementAndGet() % 200 + 1);
         loginId = "login." + UUID.randomUUID().toString().substring(0, 8);
         adminId = insertAdmin(loginId, PASSWORD, Role.SUPER_ADMIN);
@@ -101,6 +101,7 @@ class AdminLoginSecurityIntegrationTest extends AbstractAdminIntegrationTest {
     @AfterEach
     void tearDown() {
         created.forEach(id -> {
+            jdbc.update("delete from admin_login_session where admin_id = ?", id);
             jdbc.update("delete from audit_log where admin_id = ?", id);
             jdbc.update("delete from admin where admin_id = ?", id);
         });
@@ -245,7 +246,7 @@ class AdminLoginSecurityIntegrationTest extends AbstractAdminIntegrationTest {
         mvc.perform(login(requestBody(loginId, password)))
                 .andExpect(status().isUnauthorized()).andExpect(jsonPath("$.code").value("AUTH-001"))
                 .andExpect(header().doesNotExist(HttpHeaders.SET_COOKIE));
-        verifyNoInteractions(tokens);
+        verifyNoInteractions(tokens, sessionTokens);
         assertThat(admins.findByLoginId(loginId).orElseThrow().getRefreshTokenHash()).isNull();
     }
 
@@ -290,9 +291,12 @@ class AdminLoginSecurityIntegrationTest extends AbstractAdminIntegrationTest {
     @Test
     void Redis_저장_장애시_DB_백업후_로그인_성공을_유지한다() throws Exception {
         doThrow(new DataAccessResourceFailureException("Redis unavailable"))
-                .when(tokens).saveIfNewer(any(), eq(adminId), eq(Role.SUPER_ADMIN), eq(true), any(), anyLong());
+                .when(sessionTokens).saveIfNewer(any(), anyLong(), eq(Role.SUPER_ADMIN), any(), anyLong());
         mvc.perform(login(body))
                 .andExpect(status().isOk()).andExpect(header().exists(HttpHeaders.SET_COOKIE));
+        verify(sessionTokens).saveIfNewer(any(), anyLong(), eq(Role.SUPER_ADMIN), any(), anyLong());
+        assertThat(jdbc.queryForObject("select count(*) from admin_login_session "
+                + "where admin_id = ? and refresh_token_hash is not null", Long.class, adminId)).isEqualTo(1L);
     }
 
     @ParameterizedTest
@@ -428,100 +432,42 @@ class AdminLoginSecurityIntegrationTest extends AbstractAdminIntegrationTest {
         }
     }
 
-    /*
-     * DB 백업을 커밋한 뒤 최종 검사 전에 계정이 바뀌는 창을 만든다. 그 두 조회 사이에서 앱이
-     * 부르는 것이 JWT 생성이라 그 자리에 계정 변경을 끼운다. 목으로 두 번째 조회의 응답을
-     * 꾸미던 전과 달리 실제 행을 바꾼다.
-     */
     @ParameterizedTest
     @EnumSource(AccountChange.class)
-    void DB_백업후_계정이_사용불가이면_AUTH001이며_쿠키를_발급하지_않는다(AccountChange change) throws Exception {
+    void 비밀번호_비교후_계정이_사용불가이면_AUTH001이며_쿠키를_발급하지_않는다(AccountChange change) throws Exception {
         doAnswer(call -> {
+            boolean matches = (boolean) call.callRealMethod();
             changeAccount(change);
-            return call.callRealMethod();
-        }).when(jwt).createAccessToken(eq(adminId), any(Role.class), anyMap());
+            return matches;
+        }).when(encoder).matches(eq(PASSWORD), any());
         mvc.perform(login(body))
                 .andExpect(status().isUnauthorized()).andExpect(jsonPath("$.code").value("AUTH-001"))
                 .andExpect(header().doesNotExist(HttpHeaders.SET_COOKIE));
-        verifyNoInteractions(tokens);
-        verify(admins).clearRefreshTokenIfMatches(eq(adminId), any(), any());
+        verifyNoInteractions(tokens, sessionTokens);
     }
 
-    enum AccountChange { MISSING, INACTIVE, ROLE_CHANGED }
+    enum AccountChange { MISSING, INACTIVE, PASSWORD_CHANGED }
 
-    /*
-     * DELETED 는 deleted_at 과 토큰 해시까지 함께 맞춰야 한다. admin 의 CHECK 제약이 그 셋을
-     * 한 묶음으로 본다.
-     */
     private void changeAccount(AccountChange change) {
         switch (change) {
             case MISSING -> jdbc.update("delete from admin where admin_id = ?", adminId);
             case INACTIVE -> jdbc.update(
                     "update admin set status = 'DELETED', deleted_at = ?, refresh_token_hash = null, "
                             + "refresh_token_expires_at = null where admin_id = ?", LocalDateTime.now(), adminId);
-            case ROLE_CHANGED -> jdbc.update("update admin set role = 'ADMIN' where admin_id = ?", adminId);
+            case PASSWORD_CHANGED -> jdbc.update("update admin set password_hash = ? where admin_id = ?",
+                    encoder.encode("Changed!2026"), adminId);
         }
     }
 
-    @ParameterizedTest
-    @EnumSource(FinalCheckFailure.class)
-    void 최종_DB_검사_장애는_AUTH002이며_쿠키를_발급하지_않는다(FinalCheckFailure failure) throws Exception {
-        doAnswer(call -> {
-            breakFinalCheck(failure);
-            return call.callRealMethod();
-        }).when(jwt).createAccessToken(eq(adminId), any(Role.class), anyMap());
-        var appender = attach(GlobalExceptionHandler.class);
-        try {
-            mvc.perform(login(body))
-                    .andExpect(status().isServiceUnavailable()).andExpect(jsonPath("$.code").value("AUTH-002"))
-                    .andExpect(header().string(HttpHeaders.RETRY_AFTER, "1"))
-                    .andExpect(header().doesNotExist(HttpHeaders.SET_COOKIE));
-            verify(admins).clearRefreshTokenIfMatches(eq(adminId), any(), any());
-            assertThat(appender.list).anySatisfy(event -> {
-                assertThat(event.getLevel()).isEqualTo(Level.ERROR);
-                assertThat(event.getFormattedMessage()).contains("AUTH-002");
-            });
-            if (failure.tokensUntouched) {
-                verifyNoInteractions(tokens);
-            }
-        } finally {
-            detach(GlobalExceptionHandler.class, appender);
-        }
-    }
-
-    /*
-     * 보상 트랜잭션은 성공해야 한다. 한 번만 던지고 다음 호출부터 실제 매니저에 위임한다.
-     * 전에는 목에 성공 응답을 여럿 줄 세워 같은 일을 했다.
-     *
-     * 커밋은 실제로 끝낸 다음 던진다. 커밋 자체를 가로채 버리면 트랜잭션이 스레드에 묶인 채
-     * 남아서, 같은 스레드로 이어 도는 테스트가 전부 트랜잭션 시간 초과로 떨어진다. 앱이 보는
-     * 것도 "커밋은 됐는데 응답이 실패로 왔다" 쪽이라 이 모양이 실제에 가깝다.
-     */
-    /*
-     * 커밋이 실패하는 경우만 캐시 게시가 이미 지나 있다. 그 기대를 enum 값이 들고 있어서
-     * 검증 단계에 장애 종류를 다시 묻는 분기를 두지 않는다(UT-3-04).
-     */
-    enum FinalCheckFailure {
-        DB_READ(true), TRANSACTION_BEGIN(true), TRANSACTION_COMMIT(false);
-
-        private final boolean tokensUntouched;
-
-        FinalCheckFailure(boolean tokensUntouched) {
-            this.tokensUntouched = tokensUntouched;
-        }
-    }
-
-    private void breakFinalCheck(FinalCheckFailure failure) {
-        switch (failure) {
-            case DB_READ -> doThrow(new DataAccessResourceFailureException("final DB read failed"))
-                    .when(admins).findByIdForUpdate(adminId);
-            case TRANSACTION_BEGIN -> doThrow(new CannotCreateTransactionException("final transaction failed"))
-                    .doCallRealMethod().when(transactions).getTransaction(any());
-            case TRANSACTION_COMMIT -> doAnswer(call -> {
-                call.callRealMethod();
-                throw new TransactionSystemException("final commit failed");
-            }).doCallRealMethod().when(transactions).commit(any());
-        }
+    @Test
+    void JWT_생성_실패는_새_세션과_순번을_롤백하고_쿠키를_발급하지_않는다() throws Exception {
+        doThrow(new DataAccessResourceFailureException("signing failed"))
+                .when(jwt).createAccessToken(eq(adminId), any(Role.class), anyMap());
+        mvc.perform(login(body))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(header().doesNotExist(HttpHeaders.SET_COOKIE));
+        assertThat(jdbc.queryForObject("select count(*) from admin_login_session where admin_id = ?", Long.class, adminId)).isZero();
+        assertThat(admins.findById(adminId).orElseThrow().getRefreshTokenIssuanceVersion()).isZero();
     }
 
     @Test

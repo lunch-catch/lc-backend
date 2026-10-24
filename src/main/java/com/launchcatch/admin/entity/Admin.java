@@ -55,8 +55,8 @@ public class Admin extends BaseTimeEntity {
     private AdminStatus status;
 
     /*
-     * 기기 한 대분만 저장한다.
-     * 로그인마다 현재 Refresh Token의 해시와 만료 시각을 함께 갱신한다.
+     * 배포 전 단일 기기 RT의 호환용 백업이다.
+     * 신규 로그인은 AdminLoginSession에 기기별 RT를 저장한다.
      */
     @Column(name = "refresh_token_hash", length = 64)
     private String refreshTokenHash;
@@ -107,6 +107,13 @@ public class Admin extends BaseTimeEntity {
 
     public boolean isActive() {
         return status == AdminStatus.ACTIVE;
+    }
+
+    // 새 세션은 기존 기기의 RT를 바꾸지 않고 계정 잠금 아래 고유 순번만 받는다.
+    public long nextSessionVersion() {
+        if (!isActive()) { throw new IllegalStateException("비활성 관리자는 로그인할 수 없다"); }
+        refreshTokenIssuanceVersion = Math.incrementExact(refreshTokenIssuanceVersion);
+        return refreshTokenIssuanceVersion;
     }
 
     public void issueRefreshToken(String tokenHash, LocalDateTime expiresAt) {
