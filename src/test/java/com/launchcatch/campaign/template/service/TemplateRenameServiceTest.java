@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.when;
 
+import com.launchcatch.admin.contract.AdminNameQuery;
 import com.launchcatch.campaign.exception.CampaignException;
 import com.launchcatch.campaign.exception.PosterErrorCode;
 import com.launchcatch.campaign.template.dto.TemplateRenameResponse;
@@ -13,6 +14,8 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
+import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -30,12 +33,14 @@ class TemplateRenameServiceTest {
 
     @Mock
     private TemplateRepository templateRepository;
+    @Mock
+    private AdminNameQuery adminNameQuery;
 
     private TemplateRenameService service;
 
     @BeforeEach
     void setUp() {
-        service = new TemplateRenameService(templateRepository, FIXED_CLOCK);
+        service = new TemplateRenameService(templateRepository, adminNameQuery, FIXED_CLOCK);
     }
 
     @Test
@@ -43,11 +48,13 @@ class TemplateRenameServiceTest {
     void 이름을_바꾼다() {
         Template template = Template.createDraft("가을 신메뉴");
         when(templateRepository.findByIdForUpdate(TEMPLATE_ID)).thenReturn(Optional.of(template));
+        when(adminNameQuery.findNamesByIds(List.of(ADMIN_ID))).thenReturn(Map.of(ADMIN_ID, "홍길동"));
 
         TemplateRenameResponse response = service.rename(TEMPLATE_ID, "겨울 신메뉴", ADMIN_ID);
 
         assertThat(response.name()).isEqualTo("겨울 신메뉴");
         assertThat(response.lastModifiedBy()).isEqualTo(ADMIN_ID);
+        assertThat(response.lastModifiedByName()).isEqualTo("홍길동");
         assertThat(response.lastModifiedAt()).isEqualTo(LocalDateTime.now(FIXED_CLOCK));
         assertThat(template.getName()).isEqualTo("겨울 신메뉴");
     }

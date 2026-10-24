@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.when;
 
+import com.launchcatch.admin.contract.AdminNameQuery;
 import com.launchcatch.campaign.exception.CampaignException;
 import com.launchcatch.campaign.exception.PosterErrorCode;
 import com.launchcatch.campaign.template.dto.TemplateActiveUpdateResponse;
@@ -15,6 +16,8 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
+import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -32,12 +35,14 @@ class TemplateActivationServiceTest {
 
     @Mock
     private TemplateRepository templateRepository;
+    @Mock
+    private AdminNameQuery adminNameQuery;
 
     private TemplateActivationService service;
 
     @BeforeEach
     void setUp() {
-        service = new TemplateActivationService(templateRepository, FIXED_CLOCK);
+        service = new TemplateActivationService(templateRepository, adminNameQuery, FIXED_CLOCK);
     }
 
     @Test
@@ -45,12 +50,14 @@ class TemplateActivationServiceTest {
     void 활성화하면_변경자와_시각이_함께_갱신된다() throws Exception {
         Template template = publishedTemplate();
         when(templateRepository.findById(TEMPLATE_ID)).thenReturn(Optional.of(template));
+        when(adminNameQuery.findNamesByIds(List.of(ADMIN_ID))).thenReturn(Map.of(ADMIN_ID, "홍길동"));
 
         TemplateActiveUpdateResponse response = service.changeActive(TEMPLATE_ID, true, ADMIN_ID);
 
         assertThat(response.templateId()).isEqualTo(TEMPLATE_ID);
         assertThat(response.active()).isTrue();
         assertThat(response.activatedBy()).isEqualTo(ADMIN_ID);
+        assertThat(response.activatedByName()).isEqualTo("홍길동");
         assertThat(response.activatedAt()).isEqualTo(LocalDateTime.now(FIXED_CLOCK));
     }
 

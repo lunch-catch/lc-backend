@@ -4,6 +4,7 @@ import com.launchcatch.campaign.template.entity.Template;
 import com.launchcatch.campaign.template.entity.TemplateStatus;
 import io.swagger.v3.oas.annotations.media.Schema;
 import java.time.LocalDateTime;
+import java.util.Map;
 
 public record TemplateListItemResponse(
         @Schema(description = "템플릿 ID입니다.", example = "1")
@@ -24,11 +25,17 @@ public record TemplateListItemResponse(
         @Schema(description = "활성 여부를 마지막으로 바꾼 관리자 ID입니다. 바꾼 적이 없으면 null입니다.", example = "1")
         Long activatedBy,
 
+        @Schema(description = "활성 여부를 마지막으로 바꾼 관리자 이름입니다. 바꾼 적이 없거나 관리자를 찾을 수 없으면 null입니다.", example = "홍길동")
+        String activatedByName,
+
         @Schema(description = "활성 여부를 마지막으로 바꾼 시각입니다. 바꾼 적이 없으면 null입니다.")
         LocalDateTime activatedAt,
 
         @Schema(description = "마지막으로 임시저장한 관리자 ID입니다.", example = "1")
         Long lastModifiedBy,
+
+        @Schema(description = "마지막으로 임시저장한 관리자 이름입니다. 관리자를 찾을 수 없으면 null입니다.", example = "홍길동")
+        String lastModifiedByName,
 
         @Schema(description = "마지막으로 임시저장한 시각입니다.")
         LocalDateTime lastModifiedAt,
@@ -44,7 +51,7 @@ public record TemplateListItemResponse(
      * html 은 상태에 따라 가져오는 곳이 다르므로(게시된 템플릿은 Template.htmlContent,
      * DRAFT 는 최신 버전) 호출하는 쪽에서 미리 가려 넘긴다.
      */
-    public static TemplateListItemResponse of(Template template, String html, boolean hasDraft) {
+    public static TemplateListItemResponse of(Template template, String html, boolean hasDraft, Map<Long, String> adminNames) {
         return new TemplateListItemResponse(
                 template.getId(),
                 template.getName(),
@@ -52,11 +59,17 @@ public record TemplateListItemResponse(
                 template.isActive(),
                 template.getCreatedAt(),
                 template.getActivatedBy(),
+                nameOf(adminNames, template.getActivatedBy()),
                 template.getActivatedAt(),
                 template.getLastModifiedBy(),
+                nameOf(adminNames, template.getLastModifiedBy()),
                 template.getLastModifiedAt(),
                 hasDraft,
                 html
         );
+    }
+
+    private static String nameOf(Map<Long, String> adminNames, Long adminId) {
+        return adminId == null ? null : adminNames.get(adminId);
     }
 }

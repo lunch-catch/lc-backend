@@ -13,6 +13,9 @@ public record TemplateActiveUpdateResponse(
         @Schema(description = "변경한 관리자 ID입니다.", example = "7")
         Long activatedBy,
 
+        @Schema(description = "변경한 관리자 이름입니다. 관리자를 찾을 수 없으면 null입니다.", example = "홍길동")
+        String activatedByName,
+
         @Schema(description = "변경 시각입니다.")
         LocalDateTime activatedAt
 ) {

@@ -1,5 +1,6 @@
 package com.launchcatch.campaign.template.service;
 
+import com.launchcatch.admin.contract.AdminNameQuery;
 import com.launchcatch.campaign.exception.CampaignException;
 import com.launchcatch.campaign.exception.PosterErrorCode;
 import com.launchcatch.campaign.template.dto.OwnerTemplateListItemResponse;
@@ -17,8 +18,10 @@ import com.launchcatch.global.response.PageTokens;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -35,6 +38,7 @@ public class TemplateQueryService {
 
     private final TemplateRepository templateRepository;
     private final TemplateVersionRepository templateVersionRepository;
+    private final AdminNameQuery adminNameQuery;
 
     /*
      * DRAFT 템플릿의 미리보기 html 은 최신 버전들을 한 번에 조회해(findLatestAliveByTemplateIds)
@@ -54,10 +58,25 @@ public class TemplateQueryService {
                 : templateVersionRepository.findLatestAliveByTemplateIds(draftIds).stream()
                         .collect(Collectors.toMap(
                                 version -> version.getTemplate().getId(), TemplateVersion::getHtmlContent));
+        Map<Long, String> adminNames = adminNamesOf(templates);
         return templates.stream()
                 .map(template -> TemplateListItemResponse.of(
-                        template, previewHtml(template, latestHtml), hasDraft(template, publishedWithDraftIds)))
+                        template, previewHtml(template, latestHtml), hasDraft(template, publishedWithDraftIds),
+                        adminNames))
                 .toList();
+    }
+
+    /*
+     * 수정자와 활성 변경자의 관리자 이름을 한 번에 구한다(#949). 템플릿마다 조회하면 템플릿 수만큼 쿼리가 나가는 N+1이라
+     * 관리자 ID 를 모아 admin 의 공개 계약으로 한 번만 부른다. 이름은 템플릿에 복사해 두지 않고 조회할 때마다 읽는다.
+     */
+    private Map<Long, String> adminNamesOf(List<Template> templates) {
+        List<Long> adminIds = templates.stream()
+                .flatMap(template -> Stream.of(template.getLastModifiedBy(), template.getActivatedBy()))
+                .filter(Objects::nonNull)
+                .distinct()
+                .toList();
+        return adminIds.isEmpty() ? Map.of() : adminNameQuery.findNamesByIds(adminIds);
     }
 
     /*
@@ -105,7 +124,7 @@ public class TemplateQueryService {
                 .orElseThrow(() -> new CampaignException(PosterErrorCode.TEMPLATE_NOT_FOUND));
         boolean hasDraft = template.getStatus() != TemplateStatus.PUBLISHED
                 || templateVersionRepository.existsByTemplateIdAndDeletedAtIsNull(templateId);
-        return TemplateDetailResponse.of(template, htmlOf(template), hasDraft);
+        return TemplateDetailResponse.of(template, htmlOf(template), hasDraft, adminNamesOf(List.of(template)));
     }
 
     public CursorPageResponse<TemplateVersionItemResponse> versions(Long templateId, String pageToken, int pageSize) {

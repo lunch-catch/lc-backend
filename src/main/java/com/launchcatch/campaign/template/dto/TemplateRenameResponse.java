@@ -14,12 +14,16 @@ public record TemplateRenameResponse(
         @Schema(description = "마지막으로 수정한 관리자 ID입니다.", example = "1")
         Long lastModifiedBy,
 
+        @Schema(description = "마지막으로 수정한 관리자 이름입니다. 관리자를 찾을 수 없으면 null입니다.", example = "홍길동")
+        String lastModifiedByName,
+
         @Schema(description = "마지막으로 수정한 시각입니다.")
         LocalDateTime lastModifiedAt
 ) {
 
-    public static TemplateRenameResponse of(Template template) {
+    public static TemplateRenameResponse of(Template template, String lastModifiedByName) {
         return new TemplateRenameResponse(
-                template.getId(), template.getName(), template.getLastModifiedBy(), template.getLastModifiedAt());
+                template.getId(), template.getName(), template.getLastModifiedBy(), lastModifiedByName,
+                template.getLastModifiedAt());
     }
 }

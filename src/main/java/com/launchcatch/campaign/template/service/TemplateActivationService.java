@@ -1,5 +1,6 @@
 package com.launchcatch.campaign.template.service;
 
+import com.launchcatch.admin.contract.AdminNameQuery;
 import com.launchcatch.campaign.exception.CampaignException;
 import com.launchcatch.campaign.exception.PosterErrorCode;
 import com.launchcatch.campaign.template.dto.TemplateActiveUpdateResponse;
@@ -8,6 +9,7 @@ import com.launchcatch.campaign.template.entity.TemplateStatus;
 import com.launchcatch.campaign.template.repository.TemplateRepository;
 import java.time.Clock;
 import java.time.LocalDateTime;
+import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -17,6 +19,7 @@ import org.springframework.transaction.annotation.Transactional;
 public class TemplateActivationService {
 
     private final TemplateRepository templateRepository;
+    private final AdminNameQuery adminNameQuery;
     private final Clock clock;
 
     @Transactional
@@ -27,14 +30,15 @@ public class TemplateActivationService {
             throw new CampaignException(PosterErrorCode.TEMPLATE_NOT_PUBLISHED);
         }
         template.changeActive(active, adminId, LocalDateTime.now(clock));
-        return toResponse(template);
+        return toResponse(template, adminNameQuery.findNamesByIds(List.of(adminId)).get(adminId));
     }
 
-    private TemplateActiveUpdateResponse toResponse(Template template) {
+    private TemplateActiveUpdateResponse toResponse(Template template, String activatedByName) {
         return new TemplateActiveUpdateResponse(
                 template.getId(),
                 template.isActive(),
                 template.getActivatedBy(),
+                activatedByName,
                 template.getActivatedAt());
     }
 }
