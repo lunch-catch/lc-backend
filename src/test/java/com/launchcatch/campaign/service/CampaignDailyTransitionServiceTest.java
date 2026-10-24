@@ -96,6 +96,41 @@ class CampaignDailyTransitionServiceTest {
     }
 
     @Test
+    @DisplayName("시작 전에 기간이 지난 SCHEDULED 도 같은 단계에서 하나씩 종료하고 개수에 센다(#902)")
+    void 기간이_지난_SCHEDULED도_종료한다() {
+        when(campaignRepository.findIdsToEnd(BUSINESS_DATE)).thenReturn(List.of(1L));
+        when(campaignRepository.findScheduledIdsToEnd(BUSINESS_DATE)).thenReturn(List.of(5L, 6L, 7L));
+        when(campaignStatusService.endExpiredScheduled(5L, BUSINESS_DATE)).thenReturn(true);
+        when(campaignStatusService.endExpiredScheduled(6L, BUSINESS_DATE)).thenReturn(true);
+        // 목록을 읽은 뒤 점주가 취소해 실제로는 바뀌지 않은 캠페인이다.
+        when(campaignStatusService.endExpiredScheduled(7L, BUSINESS_DATE)).thenReturn(false);
+
+        int ended = service.endExpired(BUSINESS_DATE);
+
+        assertThat(ended).isEqualTo(3);
+        verify(campaignStatusService).end(1L, ActorType.SYSTEM, BUSINESS_DATE);
+        verify(campaignStatusService).endExpiredScheduled(5L, BUSINESS_DATE);
+        verify(campaignStatusService).endExpiredScheduled(6L, BUSINESS_DATE);
+        verify(campaignStatusService).endExpiredScheduled(7L, BUSINESS_DATE);
+    }
+
+    @Test
+    @DisplayName("기간이 지난 SCHEDULED 하나가 실패해도 나머지는 처리하고 데이터 오류는 건너뛰며 마지막에 단계를 실패시킨다(#902)")
+    void 기간이_지난_SCHEDULED가_실패해도_나머지는_처리한다() {
+        when(campaignRepository.findScheduledIdsToEnd(BUSINESS_DATE)).thenReturn(List.of(5L, 6L, 7L));
+        doThrow(new IllegalArgumentException("campaign not found: 5"))
+                .when(campaignStatusService).endExpiredScheduled(5L, BUSINESS_DATE);
+        doThrow(new IllegalStateException("db down"))
+                .when(campaignStatusService).endExpiredScheduled(6L, BUSINESS_DATE);
+
+        assertThatThrownBy(() -> service.endExpired(BUSINESS_DATE))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("END_EXPIRED").hasMessageContaining("failedCount=1");
+
+        verify(campaignStatusService).endExpiredScheduled(7L, BUSINESS_DATE);
+    }
+
+    @Test
     @DisplayName("종료 대상이 없으면 아무것도 하지 않는다(같은 영업일에 다시 돌아도 결과가 같다)")
     void 종료_대상이_없으면_아무것도_하지_않는다() {
         when(campaignRepository.findIdsToEnd(BUSINESS_DATE)).thenReturn(List.of());
