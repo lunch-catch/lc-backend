@@ -200,4 +200,50 @@ class RefreshTokenRepositoryTest {
     private ArgumentCaptor<List<String>> listCaptor() {
         return (ArgumentCaptor<List<String>>) (ArgumentCaptor<?>) ArgumentCaptor.forClass(List.class);
     }
+
+    @Test
+    void 처리_중인_동시_회전은_재사용으로_판정하지_않는다() {
+        when(redisTemplate.execute(any(RedisScript.class), anyList(), any(Object[].class)))
+                .thenReturn("ROTATION_IN_PROGRESS");
+        RefreshTokenRepository repository = new RefreshTokenRepository(redisTemplate);
+
+        RefreshTokenRepository.RotateOutcome result = repository.compareAndRotate(
+                "old", "other-tab", Duration.ofDays(14));
+
+        assertThat(result.isSuccess()).isFalse();
+        assertThat(result.isReuseDetected()).isFalse();
+    }
+
+    @Test
+    void 회전이_확정된_옛_토큰은_재사용으로_판정한다() {
+        when(redisTemplate.execute(any(RedisScript.class), anyList(), any(Object[].class)))
+                .thenReturn("1|MEMBER|true|REVOKED");
+        RefreshTokenRepository repository = new RefreshTokenRepository(redisTemplate);
+
+        assertThat(repository.compareAndRotate("old", "another", Duration.ofDays(14)))
+                .isEqualTo(RefreshTokenRepository.RotateOutcome.reuseDetected(
+                        new RefreshTokenRepository.RefreshTokenData(1L, Role.MEMBER, true)));
+    }
+
+    @Test
+    void 회전_확정은_옛_토큰과_이번_요청의_새_해시를_대조한다() {
+        when(redisTemplate.execute(any(RedisScript.class), anyList(), any(Object[].class))).thenReturn(1L);
+        RefreshTokenRepository repository = new RefreshTokenRepository(redisTemplate);
+
+        repository.completeRotation("old-hash", "new-hash");
+
+        ArgumentCaptor<List<String>> keys = listCaptor();
+        ArgumentCaptor<Object[]> arguments = ArgumentCaptor.forClass(Object[].class);
+        verify(redisTemplate).execute(any(RedisScript.class), keys.capture(), arguments.capture());
+        assertThat(keys.getValue()).containsExactly("refreshToken:old-hash");
+        assertThat(arguments.getValue()).containsExactly("new-hash");
+    }
+
+    @Test
+    void 회전_확정의_응답이_없으면_저장소_장애다() {
+        RefreshTokenRepository repository = new RefreshTokenRepository(redisTemplate);
+
+        assertThatThrownBy(() -> repository.completeRotation("old-hash", "new-hash"))
+                .isInstanceOf(org.springframework.dao.DataAccessResourceFailureException.class);
+    }
 }
