@@ -89,7 +89,8 @@ public class PaymentRecheckService {
 
     /*
      * 저장한 결제 키로 결제대행사에 묻고 판정한다. 결제를 바꾸지 않는다. 관리자 재조회도 같은 판정을 쓴다.
-     * 승인 뒤 결제대행사에서 취소된 결제(CANCELED)도 우리 쪽은 승인한 적이 없으므로 충전 없이 취소로 닫는다.
+     * 종료 결과는 주문 번호와 금액이 저장값과 일치할 때만 판정한다. 승인 뒤 결제대행사에서 취소된 결제(CANCELED)도
+     * 우리 쪽은 승인한 적이 없으므로 충전 없이 취소로 닫는다.
      */
     public PaymentRecheckVerdict judge(Payment payment) {
         PaymentGatewayInquiryResult inquiry;
@@ -99,8 +100,15 @@ public class PaymentRecheckService {
             log.warn("event=PAYMENT_RECHECK_INQUIRY_FAILED paymentId={}", payment.getId(), e);
             return PaymentRecheckVerdict.miss(INQUIRY_FAILED_REASON);
         }
+        if (inquiry.status() != PaymentGatewayInquiryResult.Status.PENDING
+                && inquiry.status() != PaymentGatewayInquiryResult.Status.NOT_FOUND
+                && !matches(payment, inquiry.orderId(), inquiry.amount())) {
+            log.error("event=PAYMENT_INQUIRY_MISMATCH paymentId={} inquiredAmount={} storedAmount={}",
+                    payment.getId(), inquiry.amount(), payment.getAmount());
+            return PaymentRecheckVerdict.miss(MISMATCH_REASON);
+        }
         return switch (inquiry.status()) {
-            case APPROVED -> approveIfMatches(payment, inquiry);
+            case APPROVED -> PaymentRecheckVerdict.approve(inquiry.approvedAt());
             case FAILED -> PaymentRecheckVerdict.fail(failureReason(inquiry));
             case EXPIRED, CANCELED -> PaymentRecheckVerdict.cancel();
             case PENDING -> PaymentRecheckVerdict.miss(PENDING_REASON);
@@ -108,13 +116,8 @@ public class PaymentRecheckService {
         };
     }
 
-    private PaymentRecheckVerdict approveIfMatches(Payment payment, PaymentGatewayInquiryResult inquiry) {
-        if (!payment.getOrderId().equals(inquiry.orderId()) || payment.getAmount() != inquiry.amount()) {
-            log.error("event=PAYMENT_INQUIRY_MISMATCH paymentId={} inquiredAmount={} storedAmount={}",
-                    payment.getId(), inquiry.amount(), payment.getAmount());
-            return PaymentRecheckVerdict.miss(MISMATCH_REASON);
-        }
-        return PaymentRecheckVerdict.approve(inquiry.approvedAt());
+    private boolean matches(Payment payment, String orderId, long amount) {
+        return payment.getOrderId().equals(orderId) && payment.getAmount() == amount;
     }
 
     private String failureReason(PaymentGatewayInquiryResult inquiry) {

@@ -113,7 +113,8 @@ public class PaymentConfirmationService {
 
     /*
      * 응답이 불명일 때 저장한 결제 키로 한 번만 다시 조회한다. 그 이상은 재조회 워커의 몫이다.
-     * 승인 뒤 결제대행사에서 취소된 결제(CANCELED)도 우리 쪽은 승인한 적이 없으므로 충전 없이 취소로 닫는다.
+     * 종료 결과는 주문 번호와 금액이 저장값과 일치할 때만 기록한다. 승인 뒤 결제대행사에서 취소된 결제(CANCELED)도
+     * 우리 쪽은 승인한 적이 없으므로 충전 없이 취소로 닫는다.
      */
     private Payment recheck(Payment payment) {
         PaymentGatewayInquiryResult inquiry;
@@ -123,21 +124,19 @@ public class PaymentConfirmationService {
             log.warn("event=PAYMENT_CONFIRM_RECHECK_FAILED paymentId={}", payment.getId(), e);
             return resultService.markUnknown(payment.getId());
         }
-        return switch (inquiry.status()) {
-            case APPROVED -> approveIfMatches(payment, inquiry);
-            case FAILED -> resultService.fail(payment.getId(), inquiryFailureReason(inquiry));
-            case EXPIRED, CANCELED -> resultService.cancel(payment.getId());
-            case PENDING, NOT_FOUND -> resultService.markUnknown(payment.getId());
-        };
-    }
-
-    private Payment approveIfMatches(Payment payment, PaymentGatewayInquiryResult inquiry) {
-        if (!matches(payment, inquiry.orderId(), inquiry.amount())) {
+        if (inquiry.status() != PaymentGatewayInquiryResult.Status.PENDING
+                && inquiry.status() != PaymentGatewayInquiryResult.Status.NOT_FOUND
+                && !matches(payment, inquiry.orderId(), inquiry.amount())) {
             log.error("event=PAYMENT_INQUIRY_MISMATCH paymentId={} inquiredAmount={} storedAmount={}",
                     payment.getId(), inquiry.amount(), payment.getAmount());
             return resultService.markUnknown(payment.getId());
         }
-        return resultService.approve(payment.getId(), inquiry.approvedAt());
+        return switch (inquiry.status()) {
+            case APPROVED -> resultService.approve(payment.getId(), inquiry.approvedAt());
+            case FAILED -> resultService.fail(payment.getId(), inquiryFailureReason(inquiry));
+            case EXPIRED, CANCELED -> resultService.cancel(payment.getId());
+            case PENDING, NOT_FOUND -> resultService.markUnknown(payment.getId());
+        };
     }
 
     private boolean matches(Payment payment, String orderId, long amount) {

@@ -31,6 +31,8 @@ import java.time.LocalDateTime;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -335,6 +337,32 @@ class PaymentConfirmationServiceTest {
 
         assertThat(confirm().status()).isEqualTo(PaymentStatus.UNKNOWN);
         verify(resultService, never()).approve(anyLong(), any());
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = Status.class, names = {"FAILED", "EXPIRED", "CANCELED"})
+    void 다른_주문의_종료_결과는_확인_중으로_둔다(Status status) {
+        readyToCall();
+        pgUnknown();
+        when(paymentGateway.inquireByPaymentKey(PG_TID)).thenReturn(inquiry(status, "ord_other", AMOUNT));
+        when(resultService.markUnknown(PAYMENT_ID)).thenReturn(unknown());
+
+        assertThat(confirm().status()).isEqualTo(PaymentStatus.UNKNOWN);
+        verify(resultService, never()).fail(anyLong(), anyString());
+        verify(resultService, never()).cancel(anyLong());
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = Status.class, names = {"FAILED", "EXPIRED", "CANCELED"})
+    void 금액이_다른_종료_결과는_확인_중으로_둔다(Status status) {
+        readyToCall();
+        pgUnknown();
+        when(paymentGateway.inquireByPaymentKey(PG_TID)).thenReturn(inquiry(status, ORDER_ID, AMOUNT + 1));
+        when(resultService.markUnknown(PAYMENT_ID)).thenReturn(unknown());
+
+        assertThat(confirm().status()).isEqualTo(PaymentStatus.UNKNOWN);
+        verify(resultService, never()).fail(anyLong(), anyString());
+        verify(resultService, never()).cancel(anyLong());
     }
 
     @Test
