@@ -207,7 +207,7 @@ Set-Cookie: refreshToken=<opaque>; Path=/v1/admin/auth/; Max-Age=86400; HttpOnly
 
 ## 관련 인증 계약
 
-두 토큰은 응답 본문이 아닌 HttpOnly 쿠키로 전달한다. 로그인 응답과 재발급 응답의 `data`는 동일하다. 쿠키 경로·기본 수명·Secure 설정과 로그인·재발급 요청 제한, `AUTH-*` 오류 메시지는 [인증 명세](./auth-api-spec.md)에 있다. 새 로그인은 기존 Refresh Token을 대체하지만 기존 Access Token을 모두 폐기하지는 않는다.
+두 토큰은 응답 본문이 아닌 HttpOnly 쿠키로 전달한다. 로그인 응답과 재발급 응답의 `data`는 동일하다. 쿠키 경로·기본 수명·Secure 설정과 로그인·재발급 요청 제한, `AUTH-*` 오류 메시지는 [인증 명세](./auth-api-spec.md)에 있다. 새 로그인은 별도 세션을 추가하며 다른 세션의 Refresh Token과 Access Token을 폐기하지 않는다.
 
 ## 배치 작업 수동 재실행
 

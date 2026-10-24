@@ -91,7 +91,7 @@ class AdminLoginSecurityIntegrationTest extends AbstractAdminIntegrationTest {
 
     @BeforeEach
     void setUp() {
-        reset(admins, tokens, transactions, versions, legacyCutoff, revocations, audit, encoder, jwt);
+        reset(admins, tokens, sessionTokens, transactions, versions, legacyCutoff, revocations, audit, encoder, jwt);
         clientIp = "192.0.2." + (CLIENTS.incrementAndGet() % 200 + 1);
         loginId = "login." + UUID.randomUUID().toString().substring(0, 8);
         adminId = insertAdmin(loginId, PASSWORD, Role.SUPER_ADMIN);
@@ -246,7 +246,7 @@ class AdminLoginSecurityIntegrationTest extends AbstractAdminIntegrationTest {
         mvc.perform(login(requestBody(loginId, password)))
                 .andExpect(status().isUnauthorized()).andExpect(jsonPath("$.code").value("AUTH-001"))
                 .andExpect(header().doesNotExist(HttpHeaders.SET_COOKIE));
-        verifyNoInteractions(tokens);
+        verifyNoInteractions(tokens, sessionTokens);
         assertThat(admins.findByLoginId(loginId).orElseThrow().getRefreshTokenHash()).isNull();
     }
 
@@ -291,9 +291,12 @@ class AdminLoginSecurityIntegrationTest extends AbstractAdminIntegrationTest {
     @Test
     void Redis_저장_장애시_DB_백업후_로그인_성공을_유지한다() throws Exception {
         doThrow(new DataAccessResourceFailureException("Redis unavailable"))
-                .when(tokens).saveIfNewer(any(), eq(adminId), eq(Role.SUPER_ADMIN), eq(true), any(), anyLong());
+                .when(sessionTokens).saveIfNewer(any(), anyLong(), eq(Role.SUPER_ADMIN), any(), anyLong());
         mvc.perform(login(body))
                 .andExpect(status().isOk()).andExpect(header().exists(HttpHeaders.SET_COOKIE));
+        verify(sessionTokens).saveIfNewer(any(), anyLong(), eq(Role.SUPER_ADMIN), any(), anyLong());
+        assertThat(jdbc.queryForObject("select count(*) from admin_login_session "
+                + "where admin_id = ? and refresh_token_hash is not null", Long.class, adminId)).isEqualTo(1L);
     }
 
     @ParameterizedTest
@@ -440,7 +443,7 @@ class AdminLoginSecurityIntegrationTest extends AbstractAdminIntegrationTest {
         mvc.perform(login(body))
                 .andExpect(status().isUnauthorized()).andExpect(jsonPath("$.code").value("AUTH-001"))
                 .andExpect(header().doesNotExist(HttpHeaders.SET_COOKIE));
-        verifyNoInteractions(tokens);
+        verifyNoInteractions(tokens, sessionTokens);
     }
 
     enum AccountChange { MISSING, INACTIVE, PASSWORD_CHANGED }

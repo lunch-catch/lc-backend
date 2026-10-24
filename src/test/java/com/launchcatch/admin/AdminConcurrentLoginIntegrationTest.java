@@ -51,6 +51,16 @@ class AdminConcurrentLoginIntegrationTest extends AbstractAdminIntegrationTest {
     }
 
     @Test
+    void 세션이_있는_관리자의_직접_삭제는_DB가_거부한다() throws Exception {
+        var browser = login();
+
+        assertThatThrownBy(() -> jdbc.update("delete from admin where admin_id = ?", adminId))
+                .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
+
+        assertAuthorized(browser);
+    }
+
+    @Test
     void 두_기기의_로그인과_한쪽의_갱신이_다른쪽_토큰을_폐기하지_않는다() throws Exception {
         var first = login();
         var second = login();
