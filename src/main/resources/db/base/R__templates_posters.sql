@@ -139,7 +139,8 @@ SET current_count = (SELECT COUNT(*) FROM template),
  * 템플릿은 가게 업종의 스타일과 캠페인의 할인 대상(ALL, MENU)으로 고른다.
  * 한식, 분식 -> 한상(1, 2), 중식, 아시안 -> 홍등(3, 4), 일식 -> 와(5, 6), 양식, 카페디저트 -> 비스트로(7, 8), 패스트푸드, 기타 -> 팝(9, 10).
  * 전체할인이 홀수, 메뉴할인이 짝수다.
- * image 칸은 할인 대상 메뉴의 사진이고 전체 메뉴 할인이면 첫 메뉴 사진이다. 피드 가게는 모두 메뉴가 있어 로고가 들어가지 않는다 (#941). 완성 포스터 사진은 world/campaigns/<캠페인>/poster.jpg 다.
+ * image 칸은 할인 대상 메뉴의 사진이고 전체 메뉴 할인이면 첫 메뉴 사진, 메뉴가 없으면 로고, 로고도 없으면 포스터 사진(poster.jpg)이다.
+ * 포스터 사진(image_object_key)은 앱에서 점주가 올리는 이미지 칸 사진이라 같은 사진을 그 키에 둔다 (#905). 피드 가게는 모두 메뉴가 있어 로고가 들어가지 않는다 (#941). 포스터 사진 키는 world/campaigns/<캠페인>/poster.jpg 다.
  * DRAFT 단계 3 중 241 은 검수 전, 나머지는 금지 표현 "최저가 보장" 이 들어가 검수 FAIL 이다.
  */
 CREATE TEMPORARY TABLE tpl_poster AS
@@ -154,7 +155,7 @@ SELECT c.campaign_id AS id,
               IF(c.discount_type = 'PERCENT', CONCAT(c.discount_value, '%'), CONCAT(FORMAT(c.discount_value, 0), '원')), ' 할인') AS discount_text,
        CONCAT('오늘 ', TIME_FORMAT(c.usable_start_time, '%H:%i'), ' ~ ', TIME_FORMAT(c.usable_end_time, '%H:%i')) AS period_text,
        CONCAT(TRIM(TRAILING '/' FROM '${baseCdnBaseUrl}'), '/',
-              COALESCE(ti.object_key, fi.object_key, CONCAT('world/stores/', st.store_id, '/logo.jpg'))) AS image_url,
+              COALESCE(ti.object_key, fi.object_key, li.object_key, CONCAT('world/campaigns/', c.campaign_id, '/poster.jpg'))) AS image_url,
        c.created_at + INTERVAL 30 MINUTE AS created_at
 FROM campaign c
 JOIN store st ON st.store_id = c.store_id
@@ -162,6 +163,7 @@ LEFT JOIN store_menu m ON m.store_menu_id = c.target_menu_id
 LEFT JOIN store_menu_image ti ON ti.store_menu_id = c.target_menu_id
 LEFT JOIN store_menu fm ON fm.store_id = st.store_id AND fm.sort_order = 1
 LEFT JOIN store_menu_image fi ON fi.store_menu_id = fm.store_menu_id
+LEFT JOIN store_image li ON li.store_id = st.store_id AND li.image_type = 'LOGO'
 JOIN template tp ON tp.template_id = 10000000 + CASE st.category_code WHEN 'KOREAN' THEN 0 WHEN 'BUNSIK' THEN 0 WHEN 'CHINESE' THEN 2 WHEN 'ASIAN' THEN 2
                             WHEN 'JAPANESE' THEN 4 WHEN 'WESTERN' THEN 6 WHEN 'CAFE_DESSERT' THEN 6 ELSE 8 END
                  + IF(c.discount_target_type = 'MENU', 2, 1)
