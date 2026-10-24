@@ -14,7 +14,6 @@ import com.launchcatch.auth.opaque.RefreshTokenRepository.RotateOutcome;
 import com.launchcatch.auth.opaque.TokenHasher;
 import java.time.Clock;
 import java.time.Duration;
-import java.time.LocalDateTime;
 import java.util.Optional;
 import java.util.function.Supplier;
 import lombok.RequiredArgsConstructor;
@@ -141,7 +140,7 @@ public class AdminSessionService {
     }
 
     private void publish(SessionState state) {
-        Duration remaining = Duration.between(LocalDateTime.now(clock), state.expiresAt());
+        Duration remaining = Duration.between(clock.instant(), state.expiresAt().atZone(clock.getZone()).toInstant());
         if (remaining.toMillis() <= 0) { return; }
         try {
             tokens.saveIfNewer(state.result().refreshToken(), state.sessionId(), state.result().response().role(),

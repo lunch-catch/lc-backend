@@ -45,7 +45,19 @@ class AdminSessionServiceTest {
     void DB_발급_후_세션별_캐시에_게시한다() {
         when(transactions.issue(1L, "password")).thenReturn(state);
         assertThat(service.issue(1L, "password")).isSameAs(result);
-        verify(tokens).saveIfNewer(eq("refresh"), eq(10L), eq(Role.ADMIN), any(), eq(2L));
+        verify(tokens).saveIfNewer("refresh", 10L, Role.ADMIN, Duration.ofDays(1), 2L);
+    }
+
+    @Test
+    void 서머타임_전환을_지나는_캐시_TTL은_실제_남은_시간으로_계산한다() {
+        Clock transitionClock = Clock.fixed(Instant.parse("2026-03-08T06:30:00Z"), ZoneId.of("America/New_York"));
+        var transitionService = new AdminSessionService(transactions, tokens, logoutAudit, tokenAudit, jwt, transitionClock);
+        var transitionState = new SessionState(result, 10L, 2L, LocalDateTime.of(2026, 3, 8, 3, 30));
+        when(transactions.issue(1L, "password")).thenReturn(transitionState);
+
+        assertThat(transitionService.issue(1L, "password")).isSameAs(result);
+
+        verify(tokens).saveIfNewer("refresh", 10L, Role.ADMIN, Duration.ofHours(1), 2L);
     }
 
     @Test
