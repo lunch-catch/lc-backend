@@ -1,6 +1,6 @@
 package com.launchcatch.campaign.template.service;
 
-import com.launchcatch.admin.contract.AdminNameQuery;
+import com.launchcatch.admin.contract.AdminSummaryQuery;
 import com.launchcatch.campaign.exception.CampaignException;
 import com.launchcatch.campaign.exception.PosterErrorCode;
 import com.launchcatch.campaign.template.dto.TemplateRenameResponse;
@@ -27,7 +27,7 @@ import org.springframework.transaction.annotation.Transactional;
 public class TemplateRenameService {
 
     private final TemplateRepository templateRepository;
-    private final AdminNameQuery adminNameQuery;
+    private final AdminSummaryQuery adminSummaryQuery;
     private final Clock clock;
 
     @Transactional
@@ -36,6 +36,6 @@ public class TemplateRenameService {
                 .orElseThrow(() -> new CampaignException(PosterErrorCode.TEMPLATE_NOT_FOUND));
         template.rename(name, adminId, LocalDateTime.now(clock));
         log.info("event=TEMPLATE_RENAMED templateId={} adminId={}", templateId, adminId);
-        return TemplateRenameResponse.of(template, adminNameQuery.findNamesByIds(Collections.singleton(adminId)).get(adminId));
+        return TemplateRenameResponse.of(template, adminSummaryQuery.findSummariesByIds(Collections.singleton(adminId)).get(adminId));
     }
 }

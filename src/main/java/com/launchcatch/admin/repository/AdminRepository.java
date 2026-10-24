@@ -3,7 +3,7 @@ package com.launchcatch.admin.repository;
 import com.launchcatch.admin.entity.Admin;
 import com.launchcatch.admin.entity.AdminStatus;
 import com.launchcatch.admin.dto.AdminAccountResponse;
-import com.launchcatch.admin.dto.AdminIdName;
+import com.launchcatch.admin.dto.AdminIdSummary;
 import com.launchcatch.auth.Role;
 import java.util.Collection;
 import java.util.List;
@@ -32,9 +32,9 @@ public interface AdminRepository extends JpaRepository<Admin, Long> {
             @Param("roles") List<Role> roles,
             @Param("pattern") String pattern);
 
-    // 다른 도메인이 관리자 ID 를 이름으로 바꾸는 조회(AdminNameQuery)다. 삭제 표시된 관리자도 이름은 남아 있어 상태로 거르지 않는다.
-    @Query("select new com.launchcatch.admin.dto.AdminIdName(a.id, a.name) from Admin a where a.id in :ids")
-    List<AdminIdName> findNamesByIdIn(@Param("ids") Collection<Long> ids);
+    // 다른 도메인이 관리자 ID 를 이름과 로그인 ID 로 바꾸는 조회(AdminSummaryQuery)다. 삭제 표시된 관리자도 남아 있어 상태로 거르지 않는다.
+    @Query("select new com.launchcatch.admin.dto.AdminIdSummary(a.id, a.name, a.loginId) from Admin a where a.id in :ids")
+    List<AdminIdSummary> findSummariesByIdIn(@Param("ids") Collection<Long> ids);
 
     // 캐시가 없거나 장애가 났을 때, Refresh Token 해시로 관리자 ID를 조회함.
     @Query("select a.id from Admin a where a.refreshTokenHash = :hash")

@@ -1,6 +1,7 @@
 package com.launchcatch.campaign.template.service;
 
-import com.launchcatch.admin.contract.AdminNameQuery;
+import com.launchcatch.admin.contract.AdminSummary;
+import com.launchcatch.admin.contract.AdminSummaryQuery;
 import com.launchcatch.campaign.exception.CampaignException;
 import com.launchcatch.campaign.exception.PosterErrorCode;
 import com.launchcatch.campaign.template.dto.TemplateActiveUpdateResponse;
@@ -19,7 +20,7 @@ import org.springframework.transaction.annotation.Transactional;
 public class TemplateActivationService {
 
     private final TemplateRepository templateRepository;
-    private final AdminNameQuery adminNameQuery;
+    private final AdminSummaryQuery adminSummaryQuery;
     private final Clock clock;
 
     @Transactional
@@ -30,15 +31,17 @@ public class TemplateActivationService {
             throw new CampaignException(PosterErrorCode.TEMPLATE_NOT_PUBLISHED);
         }
         template.changeActive(active, adminId, LocalDateTime.now(clock));
-        return toResponse(template, adminNameQuery.findNamesByIds(Collections.singleton(adminId)).get(adminId));
+        return toResponse(template, adminSummaryQuery.findSummariesByIds(Collections.singleton(adminId)).get(adminId));
     }
 
-    private TemplateActiveUpdateResponse toResponse(Template template, String activatedByName) {
+    // activatedBy 의 관리자를 찾을 수 없으면 admin 은 null 이고 이름과 로그인 ID 는 null 로 내려간다.
+    private TemplateActiveUpdateResponse toResponse(Template template, AdminSummary admin) {
         return new TemplateActiveUpdateResponse(
                 template.getId(),
                 template.isActive(),
                 template.getActivatedBy(),
-                activatedByName,
+                admin == null ? null : admin.name(),
+                admin == null ? null : admin.loginId(),
                 template.getActivatedAt());
     }
 }

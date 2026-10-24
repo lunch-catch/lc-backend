@@ -1,5 +1,6 @@
 package com.launchcatch.campaign.template.dto;
 
+import com.launchcatch.admin.contract.AdminSummary;
 import com.launchcatch.campaign.template.entity.Template;
 import com.launchcatch.campaign.template.entity.TemplateStatus;
 import io.swagger.v3.oas.annotations.media.Schema;
@@ -28,6 +29,9 @@ public record TemplateListItemResponse(
         @Schema(description = "활성 여부를 마지막으로 바꾼 관리자 이름입니다. 바꾼 적이 없거나 관리자를 찾을 수 없으면 null입니다.", example = "홍길동")
         String activatedByName,
 
+        @Schema(description = "활성 여부를 마지막으로 바꾼 관리자의 로그인 ID입니다. 이름이 같은 관리자를 구분할 때 씁니다. 바꾼 적이 없거나 관리자를 찾을 수 없으면 null입니다.", example = "admin01")
+        String activatedByLoginId,
+
         @Schema(description = "활성 여부를 마지막으로 바꾼 시각입니다. 바꾼 적이 없으면 null입니다.")
         LocalDateTime activatedAt,
 
@@ -36,6 +40,9 @@ public record TemplateListItemResponse(
 
         @Schema(description = "마지막으로 임시저장한 관리자 이름입니다. 관리자를 찾을 수 없으면 null입니다.", example = "홍길동")
         String lastModifiedByName,
+
+        @Schema(description = "마지막으로 임시저장한 관리자의 로그인 ID입니다. 이름이 같은 관리자를 구분할 때 씁니다. 관리자를 찾을 수 없으면 null입니다.", example = "admin01")
+        String lastModifiedByLoginId,
 
         @Schema(description = "마지막으로 임시저장한 시각입니다.")
         LocalDateTime lastModifiedAt,
@@ -51,7 +58,7 @@ public record TemplateListItemResponse(
      * html 은 상태에 따라 가져오는 곳이 다르므로(게시된 템플릿은 Template.htmlContent,
      * DRAFT 는 최신 버전) 호출하는 쪽에서 미리 가려 넘긴다.
      */
-    public static TemplateListItemResponse of(Template template, String html, boolean hasDraft, Map<Long, String> adminNames) {
+    public static TemplateListItemResponse of(Template template, String html, boolean hasDraft, Map<Long, AdminSummary> admins) {
         return new TemplateListItemResponse(
                 template.getId(),
                 template.getName(),
@@ -59,17 +66,25 @@ public record TemplateListItemResponse(
                 template.isActive(),
                 template.getCreatedAt(),
                 template.getActivatedBy(),
-                nameOf(adminNames, template.getActivatedBy()),
+                nameOf(admins, template.getActivatedBy()),
+                loginIdOf(admins, template.getActivatedBy()),
                 template.getActivatedAt(),
                 template.getLastModifiedBy(),
-                nameOf(adminNames, template.getLastModifiedBy()),
+                nameOf(admins, template.getLastModifiedBy()),
+                loginIdOf(admins, template.getLastModifiedBy()),
                 template.getLastModifiedAt(),
                 hasDraft,
                 html
         );
     }
 
-    private static String nameOf(Map<Long, String> adminNames, Long adminId) {
-        return adminId == null ? null : adminNames.get(adminId);
+    private static String nameOf(Map<Long, AdminSummary> admins, Long adminId) {
+        AdminSummary summary = adminId == null ? null : admins.get(adminId);
+        return summary == null ? null : summary.name();
+    }
+
+    private static String loginIdOf(Map<Long, AdminSummary> admins, Long adminId) {
+        AdminSummary summary = adminId == null ? null : admins.get(adminId);
+        return summary == null ? null : summary.loginId();
     }
 }

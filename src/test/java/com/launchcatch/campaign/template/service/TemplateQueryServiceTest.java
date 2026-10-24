@@ -11,7 +11,8 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import com.launchcatch.admin.contract.AdminNameQuery;
+import com.launchcatch.admin.contract.AdminSummary;
+import com.launchcatch.admin.contract.AdminSummaryQuery;
 import com.launchcatch.campaign.exception.CampaignException;
 import com.launchcatch.campaign.exception.PosterErrorCode;
 import com.launchcatch.campaign.template.dto.OwnerTemplateListItemResponse;
@@ -55,7 +56,7 @@ class TemplateQueryServiceTest {
     @Mock
     private TemplateVersionRepository templateVersionRepository;
     @Mock
-    private AdminNameQuery adminNameQuery;
+    private AdminSummaryQuery adminSummaryQuery;
 
     @Captor
     private ArgumentCaptor<Collection<Long>> adminIdsCaptor;
@@ -64,7 +65,7 @@ class TemplateQueryServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new TemplateQueryService(templateRepository, templateVersionRepository, adminNameQuery);
+        service = new TemplateQueryService(templateRepository, templateVersionRepository, adminSummaryQuery);
     }
 
     @Test
@@ -76,18 +77,22 @@ class TemplateQueryServiceTest {
         when(templateRepository.findAllByOrderByCreatedAtDesc()).thenReturn(List.of(published, draft));
         when(templateVersionRepository.findLatestAliveByTemplateIds(List.of(1L)))
                 .thenReturn(List.of(draft.latestVersion()));
-        when(adminNameQuery.findNamesByIds(anyCollection())).thenReturn(Map.of(1L, "홍길동", 7L, "김관리"));
+        when(adminSummaryQuery.findSummariesByIds(anyCollection())).thenReturn(Map.of(1L, new AdminSummary("홍길동", "admin01"), 7L, new AdminSummary("김관리", "admin07")));
 
         List<TemplateListItemResponse> responses = service.list();
 
         assertThat(responses.get(0).lastModifiedBy()).isEqualTo(ADMIN_ID);
         assertThat(responses.get(0).lastModifiedByName()).isEqualTo("홍길동");
+        assertThat(responses.get(0).lastModifiedByLoginId()).isEqualTo("admin01");
         assertThat(responses.get(0).activatedBy()).isEqualTo(7L);
         assertThat(responses.get(0).activatedByName()).isEqualTo("김관리");
+        assertThat(responses.get(0).activatedByLoginId()).isEqualTo("admin07");
         assertThat(responses.get(1).lastModifiedByName()).isEqualTo("홍길동");
+        assertThat(responses.get(1).lastModifiedByLoginId()).isEqualTo("admin01");
         assertThat(responses.get(1).activatedBy()).isNull();
         assertThat(responses.get(1).activatedByName()).isNull();
-        verify(adminNameQuery, times(1)).findNamesByIds(adminIdsCaptor.capture());
+        assertThat(responses.get(1).activatedByLoginId()).isNull();
+        verify(adminSummaryQuery, times(1)).findSummariesByIds(adminIdsCaptor.capture());
         assertThat(adminIdsCaptor.getValue()).containsExactlyInAnyOrder(1L, 7L);
     }
 
@@ -98,12 +103,13 @@ class TemplateQueryServiceTest {
         when(templateRepository.findAllByOrderByCreatedAtDesc()).thenReturn(List.of(draft));
         when(templateVersionRepository.findLatestAliveByTemplateIds(List.of(1L)))
                 .thenReturn(List.of(draft.latestVersion()));
-        when(adminNameQuery.findNamesByIds(anyCollection())).thenReturn(Map.of());
+        when(adminSummaryQuery.findSummariesByIds(anyCollection())).thenReturn(Map.of());
 
         TemplateListItemResponse response = service.list().get(0);
 
         assertThat(response.lastModifiedBy()).isEqualTo(ADMIN_ID);
         assertThat(response.lastModifiedByName()).isNull();
+        assertThat(response.lastModifiedByLoginId()).isNull();
     }
 
     @Test
@@ -118,8 +124,10 @@ class TemplateQueryServiceTest {
         TemplateListItemResponse response = service.list().get(0);
 
         assertThat(response.lastModifiedByName()).isNull();
+        assertThat(response.lastModifiedByLoginId()).isNull();
         assertThat(response.activatedByName()).isNull();
-        verify(adminNameQuery, never()).findNamesByIds(anyCollection());
+        assertThat(response.activatedByLoginId()).isNull();
+        verify(adminSummaryQuery, never()).findSummariesByIds(anyCollection());
     }
 
     @Test
@@ -128,12 +136,14 @@ class TemplateQueryServiceTest {
         Template template = publishedTemplate(TEMPLATE_ID);
         template.changeActive(true, 7L, LocalDateTime.now());
         when(templateRepository.findById(TEMPLATE_ID)).thenReturn(Optional.of(template));
-        when(adminNameQuery.findNamesByIds(anyCollection())).thenReturn(Map.of(1L, "홍길동", 7L, "김관리"));
+        when(adminSummaryQuery.findSummariesByIds(anyCollection())).thenReturn(Map.of(1L, new AdminSummary("홍길동", "admin01"), 7L, new AdminSummary("김관리", "admin07")));
 
         TemplateDetailResponse response = service.detail(TEMPLATE_ID);
 
         assertThat(response.lastModifiedByName()).isEqualTo("홍길동");
+        assertThat(response.lastModifiedByLoginId()).isEqualTo("admin01");
         assertThat(response.activatedByName()).isEqualTo("김관리");
+        assertThat(response.activatedByLoginId()).isEqualTo("admin07");
     }
 
     @Test
