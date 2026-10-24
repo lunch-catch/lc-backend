@@ -181,6 +181,10 @@ class BaseWorldIntegrationTest extends IntegrationTestSupport {
                 .allSatisfy(html -> {
                     assertThat(new TemplateHtmlSanitizer().sanitize(html).removedElements()).isEmpty();
                     new TemplateSlotValidator().validate(html);
+                    // 생성기 지침: 슬롯 넷 말고 글자를 넣지 않고, 글꼴은 sans-serif 나 serif 기본값만 쓴다
+                    assertThat(html.replaceAll("<[^>]+>", "").replace("이벤트명", "").replace("할인 내용", "").replace("기간", ""))
+                            .isBlank();
+                    assertThat(html).doesNotContainPattern("font-family:(?!sans-serif|serif)");
                 });
         // 포스터는 가게 업종의 스타일과 할인 대상(전체할인 홀수, 메뉴할인 짝수)으로 템플릿을 고른다
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM poster p JOIN campaign c ON c.campaign_id = p.campaign_id "
