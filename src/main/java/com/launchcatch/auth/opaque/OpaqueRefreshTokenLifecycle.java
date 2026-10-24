@@ -99,6 +99,15 @@ public class OpaqueRefreshTokenLifecycle {
                 throw new AuthException(AuthErrorCode.REFRESH_TOKEN_STORE_UNAVAILABLE, dbFailure);
             }
         }
+        /*
+         * 회원 DB 백업이 확정되기 전의 중복 요청은 처리 중으로 거부한다.
+         * 확정 표시만 실패하면 DB의 새 토큰을 유지하고 성공시킨다. 재사용으로 오인해 세션을 폐기하는 것보다 안전하다.
+         */
+        try {
+            refreshTokenRepository.completeRotation(oldHash, newHash);
+        } catch (DataAccessException completionFailure) {
+            log.warn("event=REFRESH_ROTATION_COMPLETION_FAILED role={} subjectId={}", role, outcome.data().id(), completionFailure);
+        }
         return new ReissueResult(outcome.data().id(), newRefreshToken);
     }
 
