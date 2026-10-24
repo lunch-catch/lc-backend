@@ -1,5 +1,7 @@
 package com.launchcatch.campaign.poster.service;
 
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
 import com.launchcatch.campaign.contract.CampaignStatus;
 import com.launchcatch.campaign.entity.Campaign;
 import com.launchcatch.campaign.exception.CampaignErrorCode;
@@ -30,8 +32,29 @@ public class PosterQueryService {
     private static final Set<CampaignStatus> PUBLIC_STATUSES =
             Set.of(CampaignStatus.ACTIVE, CampaignStatus.PAUSED, CampaignStatus.ENDED);
 
+    /*
+     * 공개된 포스터 HTML 의 캐시 항목 수 상한이다. HTML 하나는 수 KB 라 이 수만큼 메모리를 쓴다. 넘으면 오래 쓰지 않은
+     * 항목부터 밀려나고, 밀려난 포스터는 다음 조회에서 DB 에서 다시 읽는다.
+     */
+    private static final long PUBLIC_POSTER_CACHE_MAX_SIZE = 500;
+
     private final CampaignRepository campaignRepository;
     private final PosterRepository posterRepository;
+
+    /*
+     * 공개로 확인된 포스터의 HTML 만 campaignId 를 키로 서버 메모리(Caffeine)에 둔다(#940). 비공개, 없는 캠페인, 포스터
+     * 없음은 담지 않아 나중에 공개되거나 포스터가 생기면 그대로 반영된다.
+     *
+     * 지우거나 만료시키지 않는 근거: 공개된 캠페인(ACTIVE, PAUSED, ENDED)의 포스터는 바뀌지 않는다. 포스터를 쓰는 곳은
+     * 생성, 덮어쓰기, 텍스트 수정(PosterUploadService, PosterEditService)뿐이고 모두 캠페인이 DRAFT 일 때만 동작한다.
+     * 공개 상태는 DRAFT 로 돌아가지 않고, DRAFT 로 돌아가는 길인 취소(Campaign.cancel)는 아직 비공개인 SCHEDULED 에서만
+     * 된다. 그래서 한 번 공개로 확인한 포스터는 다시 바뀌거나 비공개가 되지 않는다. 공개된 포스터를 고치는 기능이나
+     * 공개를 거두는 기능이 생기면 이 캐시를 함께 무효화해야 한다. 서버마다 따로 갖지만 내용이 변하지 않아 서버끼리
+     * 어긋날 일이 없다.
+     */
+    private final Cache<Long, String> publicPosterHtml = Caffeine.newBuilder()
+            .maximumSize(PUBLIC_POSTER_CACHE_MAX_SIZE)
+            .build();
 
     /** 캠페인 상태와 무관하게, 본인 소유 캠페인의 포스터를 돌려준다. */
     public PosterCreateResponse findForOwner(Long ownerId, Long campaignId) {
@@ -56,12 +79,18 @@ public class PosterQueryService {
      * 있다(#495 자체 리뷰로 찾음). 실패 원인과 무관하게 항상 같은 쿼리 횟수를 치르게 한다.
      */
     public PosterResponse findForMember(Long campaignId) {
+        String cached = publicPosterHtml.getIfPresent(campaignId);
+        if (cached != null) {
+            return new PosterResponse(campaignId, cached);
+        }
         Optional<Campaign> campaign = campaignRepository.findById(campaignId);
         Optional<Poster> poster = posterRepository.findByCampaignId(campaignId);
         boolean visible = campaign.map(found -> PUBLIC_STATUSES.contains(found.getStatus())).orElse(false);
         if (!visible || poster.isEmpty()) {
             throw new CampaignException(PosterErrorCode.POSTER_UNAVAILABLE);
         }
-        return new PosterResponse(campaignId, campaign.get().getStatus(), poster.get().getHtmlContent());
+        String html = poster.get().getHtmlContent();
+        publicPosterHtml.put(campaignId, html);
+        return new PosterResponse(campaignId, html);
     }
 }
