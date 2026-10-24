@@ -16,6 +16,12 @@ import org.testcontainers.utility.DockerImageName;
  *
  * 정리는 Ryuk 에 맡긴다. stop 을 부르지 않아도 JVM 이 끝나면 Testcontainers 가 치운다.
  *
+ * withReuse 는 그 정리를 건너뛰고 다음 실행이 같은 컨테이너에 붙게 한다(#929). 맥의 Docker 는
+ * VM 을 거쳐 쓰기가 호스트의 8분의 1 속도라, 실행마다 MySQL 을 새로 띄우고 마이그레이션 2,501줄을
+ * 다시 적용하는 비용이 크다. 재사용은 ~/.testcontainers.properties 에 reuse.enable=true 가 있는
+ * 환경에서만 켜진다. CI 에는 그 파일이 없어 전과 같이 매번 새로 띄운다.
+ * 스키마를 바꾼 뒤에는 남은 컨테이너를 지워야 한다. 로컬 실행 문서에 그 방법을 적었다.
+ *
  * 이미지는 compose.yaml 과 인프라에 맞춘다. 운영 ElastiCache 가 Valkey 9.0 이라 9.0-alpine 으로
  * 고정한다. 떠다니는 valkey:9 로 두면 지금 9.1 을 받아서 테스트가 운영보다 앞선 서버로 돈다.
  *
@@ -29,11 +35,21 @@ public abstract class IntegrationTestSupport {
     // 배치 점유자 이름이다. 점유와 이어받기를 보는 테스트가 이 값을 자기 이름으로 쓴다.
     public static final String BATCH_OWNER = "batch-1";
 
+    /*
+     * 테스트의 MySQL 은 내구성을 낮춘다. 맥의 Docker 는 VM 을 거쳐 쓰기가 호스트의 8분의 1 속도라
+     * 커밋마다 로그를 디스크에 밀어 넣는 비용이 크다. 컨테이너가 죽으면 데이터를 버리고 다시 띄우면 되므로
+     * 테스트에서 내구성은 지킬 대상이 아니다. 운영 설정은 lc-infra 가 갖고 이 값과 무관하다(#929).
+     */
     protected static final MySQLContainer MYSQL =
-            new MySQLContainer(DockerImageName.parse("mysql:8.4"));
+            new MySQLContainer(DockerImageName.parse("mysql:8.4"))
+                    .withCommand("--innodb-flush-log-at-trx-commit=0", "--innodb-doublewrite=0",
+                            "--skip-log-bin", "--performance-schema=OFF")
+                    .withReuse(true);
 
     protected static final GenericContainer<?> VALKEY =
-            new GenericContainer<>(DockerImageName.parse("valkey/valkey:9.0-alpine")).withExposedPorts(6379);
+            new GenericContainer<>(DockerImageName.parse("valkey/valkey:9.0-alpine"))
+                    .withExposedPorts(6379)
+                    .withReuse(true);
 
     static {
         MYSQL.start();
