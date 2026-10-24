@@ -216,6 +216,16 @@ class BaseWorldIntegrationTest extends IntegrationTestSupport {
                 + "WHERE t.last_modified_by IS NOT NULL AND a.admin_id IS NULL", Long.class)).isZero();
         assertThat(jdbc.queryForObject("SELECT current_count FROM template_quota", Long.class))
                 .isEqualTo(jdbc.queryForObject("SELECT COUNT(*) FROM template", Long.class));
+        // 피드 가게(진행 중 캠페인 1 ~ 180, 301 ~ 330 의 가게)는 모두 메뉴와 사진이 있어 포스터 이미지 칸이 로고가 아니다 (#941)
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM store s WHERE (s.store_id BETWEEN 10000001 AND 10000180 "
+                + "OR s.store_id BETWEEN 10000301 AND 10000330) AND NOT EXISTS (SELECT 1 FROM store_menu m JOIN store_menu_image i "
+                + "ON i.store_menu_id = m.store_menu_id WHERE m.store_id = s.store_id)", Long.class)).isZero();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM poster WHERE (campaign_id BETWEEN 10000001 AND 10000180 "
+                + "OR campaign_id BETWEEN 10000301 AND 10000330) "
+                + "AND JSON_UNQUOTE(JSON_EXTRACT(slot_values, '$.image.value')) NOT LIKE '%/menu-%.jpg'", Long.class)).isZero();
+        // 메뉴 0개 확정 가게 시나리오는 피드 밖 가게에 남는다
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM store s WHERE s.store_id BETWEEN 10000001 AND 10000500 AND s.finalized = 1 "
+                + "AND NOT EXISTS (SELECT 1 FROM store_menu m WHERE m.store_id = s.store_id)", Long.class)).isPositive();
         // 할인 금액은 천 단위 쉼표를 찍는다 (2,000원)
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM poster WHERE campaign_id BETWEEN 10000001 AND 29999999 "
                 + "AND JSON_UNQUOTE(JSON_EXTRACT(slot_values, '$.discount.value')) REGEXP '[0-9]{4}원'", Long.class)).isZero();
