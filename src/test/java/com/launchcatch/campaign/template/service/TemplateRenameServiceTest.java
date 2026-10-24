@@ -14,9 +14,9 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
-import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -48,7 +48,7 @@ class TemplateRenameServiceTest {
     void 이름을_바꾼다() {
         Template template = Template.createDraft("가을 신메뉴");
         when(templateRepository.findByIdForUpdate(TEMPLATE_ID)).thenReturn(Optional.of(template));
-        when(adminNameQuery.findNamesByIds(List.of(ADMIN_ID))).thenReturn(Map.of(ADMIN_ID, "홍길동"));
+        when(adminNameQuery.findNamesByIds(Set.of(ADMIN_ID))).thenReturn(Map.of(ADMIN_ID, "홍길동"));
 
         TemplateRenameResponse response = service.rename(TEMPLATE_ID, "겨울 신메뉴", ADMIN_ID);
 

@@ -16,9 +16,9 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
-import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -50,7 +50,7 @@ class TemplateActivationServiceTest {
     void 활성화하면_변경자와_시각이_함께_갱신된다() throws Exception {
         Template template = publishedTemplate();
         when(templateRepository.findById(TEMPLATE_ID)).thenReturn(Optional.of(template));
-        when(adminNameQuery.findNamesByIds(List.of(ADMIN_ID))).thenReturn(Map.of(ADMIN_ID, "홍길동"));
+        when(adminNameQuery.findNamesByIds(Set.of(ADMIN_ID))).thenReturn(Map.of(ADMIN_ID, "홍길동"));
 
         TemplateActiveUpdateResponse response = service.changeActive(TEMPLATE_ID, true, ADMIN_ID);
 

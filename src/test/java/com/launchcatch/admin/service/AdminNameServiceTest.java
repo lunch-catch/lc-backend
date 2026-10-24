@@ -68,6 +68,8 @@ class AdminNameServiceTest {
         assertThat(service.findNamesByIds(null)).isEmpty();
         assertThat(service.findNamesByIds(List.of())).isEmpty();
         assertThat(service.findNamesByIds(Arrays.asList((Long) null))).isEmpty();
+        // 호출하는 쪽이 null ID 로 이름을 꺼내도 예외가 나지 않는다.
+        assertThat(service.findNamesByIds(Arrays.asList((Long) null)).get(null)).isNull();
 
         verify(adminRepository, never()).findNamesByIdIn(anyCollection());
     }

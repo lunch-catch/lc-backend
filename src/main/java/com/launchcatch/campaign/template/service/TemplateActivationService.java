@@ -9,7 +9,7 @@ import com.launchcatch.campaign.template.entity.TemplateStatus;
 import com.launchcatch.campaign.template.repository.TemplateRepository;
 import java.time.Clock;
 import java.time.LocalDateTime;
-import java.util.List;
+import java.util.Collections;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -30,7 +30,7 @@ public class TemplateActivationService {
             throw new CampaignException(PosterErrorCode.TEMPLATE_NOT_PUBLISHED);
         }
         template.changeActive(active, adminId, LocalDateTime.now(clock));
-        return toResponse(template, adminNameQuery.findNamesByIds(List.of(adminId)).get(adminId));
+        return toResponse(template, adminNameQuery.findNamesByIds(Collections.singleton(adminId)).get(adminId));
     }
 
     private TemplateActiveUpdateResponse toResponse(Template template, String activatedByName) {
