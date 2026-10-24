@@ -290,6 +290,78 @@ class StoreImageUploadServiceTest {
     }
 
     @Test
+    @DisplayName("S3 확인(headObject)은 트랜잭션 밖에서 부르고, 읽기와 verify 는 각자 트랜잭션에서 한다(#876)")
+    void S3_확인은_트랜잭션_밖에서_부른다() {
+        givenOwnerWithStoreForUpdate();
+        StoreImage image = pendingInterior();
+        when(storeImageRepository.findByUploadId("upload-1")).thenReturn(Optional.of(image));
+        boolean[] inTransaction = {false};
+        when(transactionTemplate.execute(any())).thenAnswer(invocation -> {
+            inTransaction[0] = true;
+            try {
+                TransactionCallback<?> callback = invocation.getArgument(0);
+                return callback.doInTransaction(null);
+            } finally {
+                inTransaction[0] = false;
+            }
+        });
+        doAnswer(invocation -> {
+            inTransaction[0] = true;
+            try {
+                Consumer<Object> callback = invocation.getArgument(0);
+                callback.accept(null);
+            } finally {
+                inTransaction[0] = false;
+            }
+            return null;
+        }).when(transactionTemplate).executeWithoutResult(any());
+        when(s3Client.headObject(any(HeadObjectRequest.class))).thenAnswer(invocation -> {
+            assertThat(inTransaction[0]).isFalse();
+            return HeadObjectResponse.builder().contentLength(1000L).build();
+        });
+
+        service.confirmUpload(OWNER_ID, "upload-1");
+
+        assertThat(image.getUploadStatus()).isEqualTo(StoreImageUploadStatus.VERIFIED);
+        verify(transactionTemplate).execute(any());
+        verify(transactionTemplate).executeWithoutResult(any());
+    }
+
+    @Test
+    @DisplayName("S3 확인 사이에 로고가 새 업로드로 덮어써지면 처음 uploadId 를 찾지 못해 거부하고 새 업로드를 VERIFIED 로 만들지 않는다(#876)")
+    void S3_확인_사이에_덮어쓰이면_확인하지_않는다() {
+        givenOwnerWithStoreForUpdate();
+        StoreImage image = StoreImage.preparePending(
+                STORE_ID, "upload-1", StoreImageType.LOGO, "stores/20/logo/upload-1.jpg",
+                "logo.jpg", "image/jpeg", 1000L, null);
+        // 처음에는 upload-1 로 찾고, S3 확인 뒤 다시 잠그고 찾을 때는 이미 새 업로드로 바뀌어 찾지 못한다.
+        when(storeImageRepository.findByUploadId("upload-1")).thenReturn(Optional.of(image), Optional.empty());
+        when(s3Client.headObject(any(HeadObjectRequest.class)))
+                .thenReturn(HeadObjectResponse.builder().contentLength(1000L).build());
+
+        assertThatThrownBy(() -> service.confirmUpload(OWNER_ID, "upload-1"))
+                .isInstanceOfSatisfying(StoreException.class, e ->
+                        assertThat(e.getErrorCode()).isEqualTo(StoreErrorCode.IMAGE_UPLOAD_NOT_FOUND));
+        assertThat(image.getUploadStatus()).isEqualTo(StoreImageUploadStatus.PENDING);
+    }
+
+    @Test
+    @DisplayName("S3 확인 사이에 같은 요청이 먼저 VERIFIED 로 만들었으면 다시 verify 하지 않고 성공한다(#876)")
+    void S3_확인_사이에_이미_확인됐으면_다시_확인하지_않는다() {
+        givenOwnerWithStoreForUpdate();
+        StoreImage pending = pendingInterior();
+        StoreImage alreadyVerified = pendingInterior();
+        alreadyVerified.verify(java.time.LocalDateTime.now(FIXED_CLOCK));
+        when(storeImageRepository.findByUploadId("upload-1")).thenReturn(Optional.of(pending), Optional.of(alreadyVerified));
+        when(s3Client.headObject(any(HeadObjectRequest.class)))
+                .thenReturn(HeadObjectResponse.builder().contentLength(1000L).build());
+
+        service.confirmUpload(OWNER_ID, "upload-1");
+
+        assertThat(alreadyVerified.getUploadStatus()).isEqualTo(StoreImageUploadStatus.VERIFIED);
+    }
+
+    @Test
     @DisplayName("이미 VERIFIED인 업로드를 다시 확인해도 headObject를 부르지 않고 그대로 성공한다(응답을 못 받은 재시도)")
     void 이미_확인된_업로드는_재시도해도_성공한다() {
         givenOwnerWithStoreForUpdate();
@@ -505,6 +577,12 @@ class StoreImageUploadServiceTest {
                 "private-photo.jpg", "image/jpeg", declaredSize, 1);
         when(storeImageRepository.findByUploadId("upload-log")).thenReturn(Optional.of(image));
         return image;
+    }
+
+    private StoreImage pendingInterior() {
+        return StoreImage.preparePending(
+                STORE_ID, "upload-1", StoreImageType.INTERIOR, "stores/20/interior/upload-1.jpg",
+                "photo.jpg", "image/jpeg", 1000L, 1);
     }
 
     private void givenOwnerWithStoreForUpdate() {

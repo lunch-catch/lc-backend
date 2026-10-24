@@ -148,24 +148,43 @@ public class StoreImageUploadService {
         return image;
     }
 
-    @Transactional
+    /*
+     * 읽기, S3 확인, 다시 잠그고 재확인한 뒤 verify 하는 세 구간으로 나눈다(#876). headObject 는 외부 호출이라 응답이 느리면
+     * 그만큼 진행 상태 행 잠금과 DB 커넥션을 쥐게 된다. 포스터(PosterUploadService)와 메뉴 이미지
+     * (StoreMenuUploadService.confirmMenuImageUpload)가 이미 트랜잭션 밖에서 부르는 것과 같은 구조다.
+     *
+     * 로고를 덮어쓰는 prepareLogoUpload 는 같은 행을 새 uploadId 와 objectKey 로 PENDING 으로 되돌린다. S3 확인 사이에
+     * 그런 덮어쓰기가 끼면 다시 잠근 뒤 처음 uploadId 로 찾지 못해 IMAGE_UPLOAD_NOT_FOUND 가 되므로, 옛 업로드를 확인한
+     * 결과로 새 업로드를 VERIFIED 로 만들지 않는다. 다시 잠그는 구간도 prepareUpload 와 같은 진행 상태 행 잠금
+     * (findStoreIdForUpdate)이라 서로 직렬화된다.
+     */
     public void confirmUpload(Long ownerId, String uploadId) {
-        // 같은 로고 행을 덮어쓰는 prepareUpload 와 겹쳐 옛 값으로 행을 다시 쓰지 않도록 같은 잠금을 쓴다.
-        Long storeId = storeUploadSupport.findStoreIdForUpdate(ownerId);
-
-        StoreImage image = storeImageRepository.findByUploadId(uploadId)
-                .filter(found -> found.getStoreId().equals(storeId))
-                .orElseThrow(() -> new StoreException(StoreErrorCode.IMAGE_UPLOAD_NOT_FOUND));
+        StoreImage image = transactionTemplate.execute(status -> findOwnedImage(ownerId, uploadId));
 
         // 응답을 못 받은 클라이언트의 재시도는 같은 결과를 성공으로 돌려준다(api-spec.md 멱등성, 코드래빗 리뷰 전 자체 검토로 찾음).
         if (image.getUploadStatus() == StoreImageUploadStatus.VERIFIED) {
             return;
         }
 
+        // S3 확인은 DB 잠금과 커넥션을 쥐지 않은 상태에서 한다.
         storeUploadSupport.verifyUpload(s3Client, mediaBucket, image.getObjectKey(), image.getFileSize(),
                 ownerId, image.getUploadId(), "IMAGE");
 
-        image.verify(LocalDateTime.now(clock));
+        // 그 사이 같은 요청이 먼저 VERIFIED 로 만들었으면 다시 verify 하지 않고 성공으로 끝낸다.
+        transactionTemplate.executeWithoutResult(status -> {
+            StoreImage current = findOwnedImage(ownerId, uploadId);
+            if (current.getUploadStatus() == StoreImageUploadStatus.PENDING) {
+                current.verify(LocalDateTime.now(clock));
+            }
+        });
+    }
+
+    // 로고 덮어쓰기와 겹치지 않도록 prepareUpload 와 같은 진행 상태 행 잠금을 잡고 소유자를 확인한다.
+    private StoreImage findOwnedImage(Long ownerId, String uploadId) {
+        Long storeId = storeUploadSupport.findStoreIdForUpdate(ownerId);
+        return storeImageRepository.findByUploadId(uploadId)
+                .filter(found -> found.getStoreId().equals(storeId))
+                .orElseThrow(() -> new StoreException(StoreErrorCode.IMAGE_UPLOAD_NOT_FOUND));
     }
 
     @Transactional
