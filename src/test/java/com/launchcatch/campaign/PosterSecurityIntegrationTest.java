@@ -75,9 +75,9 @@ class PosterSecurityIntegrationTest extends AbstractCampaignIntegrationTest {
         mvc.perform(get(path(campaign.getId())).cookie(memberToken()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.campaignId").value(campaign.getId()))
-                .andExpect(jsonPath("$.data.status").value("ACTIVE"))
+                .andExpect(jsonPath("$.data.status").doesNotExist())
                 .andExpect(jsonPath("$.data.html").value("<div>html</div>"))
-                .andExpect(header().string("Cache-Control", "max-age=60, public"));
+                .andExpect(header().string("Cache-Control", "max-age=86400, private, immutable"));
     }
 
     /*
