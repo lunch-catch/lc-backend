@@ -195,7 +195,7 @@ state는 callback과 서버가 시작한 인가 시도를 묶고, 프론트의 `
 | 흐름 | 실제 처리와 한계 |
 |---|---|
 | 발급 | DB 해시 저장이 먼저다. Redis 저장만 실패하면 로그를 남기고 발급은 성공한다 |
-| 정상 재발급 | Redis에서 원자적으로 회전한 뒤 `MemberRefreshTokenBackupStore.rotateIfMatches`가 별도 트랜잭션으로 이전 해시를 비교해 DB를 갱신한다 |
+| 정상 재발급 | Redis에서 원자적으로 회전한 뒤 `MemberRefreshTokenBackupStore.rotateIfMatches`가 별도 트랜잭션으로 이전 해시를 비교해 DB를 갱신한다. 처리 중 중복과 확정 후 재사용은 [회원 RT 회전 상태](./auth_구조와_동작_설계.md#회원-rt-회전-상태)로 구분한다 |
 | Redis 장애 | `DataAccessException`일 때만 DB 현재 해시·만료·ACTIVE 상태를 확인하고 CAS로 회전한다. Redis가 정상적으로 무효·만료를 판정한 경우에는 DB를 우회하지 않는다 |
 | DB 회전 실패 | 현재 해시를 다시 확인한다. 새 해시가 있으면 성공으로 보고, 이전 해시가 있으면 이번 Redis 회전을 되돌린다. 다른 값이거나 확인 불가이면 새 캐시 토큰 폐기를 시도하고 저장소 오류를 반환한다 |
 | 재사용 감지 | 현재 RT를 폐기하고 AT valid-after도 갱신한 뒤 재사용 오류를 반환한다. DB 폴백 중에는 과거 RT의 Redis 재사용 흔적을 복원할 수 없다 |

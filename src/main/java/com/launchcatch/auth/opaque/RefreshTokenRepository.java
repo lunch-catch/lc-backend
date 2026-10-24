@@ -51,6 +51,7 @@ public class RefreshTokenRepository {
     private static final RedisScript<Long> SAVE_SCRIPT = loadSaveScript();
     private static final RedisScript<Long> ORDERED_SAVE_SCRIPT = loadOrderedSaveScript();
     private static final RedisScript<String> ROTATE_SCRIPT = loadRotateScript();
+    private static final RedisScript<Long> COMPLETE_ROTATION_SCRIPT = loadCompleteRotationScript();
     private static final RedisScript<Long> ROLLBACK_ROTATION_SCRIPT = loadRollbackRotationScript();
     private static final RedisScript<Long> REVOKE_SCRIPT = loadRevokeScript();
     private static final RedisScript<Long> DELETE_ACTIVE_KEY_IF_MATCHES_SCRIPT = loadDeleteActiveKeyIfMatchesScript();
@@ -106,8 +107,8 @@ public class RefreshTokenRepository {
     }
 
     /*
-     * 원자적 회전. 옛 토큰 자리의 레코드를 새 토큰 자리로 옮기고 옛 자리는 tombstone 으로 남긴다.
-     * 기본 레코드의 이동, tombstone 처리, 보조 인덱스 갱신을 하나의 Lua 실행으로 처리한다.
+     * 원자적 회전. 옛 토큰 자리의 레코드를 새 토큰 자리로 옮기고 옛 자리와 보조 인덱스를 한 번에 갱신한다.
+     * 회원은 DB 반영 전까지 처리 중으로 남기고 completeRotation으로 재사용 감지 대상을 확정한다.
      */
     public RotateOutcome compareAndRotate(String oldRefreshToken, String newRefreshToken, Duration ttl) {
         String oldHash = TokenHasher.sha256(oldRefreshToken);
@@ -120,7 +121,7 @@ public class RefreshTokenRepository {
                 ACTIVE_KEY_PREFIX,
                 newHash
         );
-        if (value == null) {
+        if (value == null || "ROTATION_IN_PROGRESS".equals(value)) {
             return RotateOutcome.notFound();
         }
         if (value.endsWith(REVOKED_SUFFIX)) {
@@ -130,6 +131,15 @@ public class RefreshTokenRepository {
 
         RefreshTokenData data = parse(value);
         return RotateOutcome.success(data);
+    }
+
+    // DB 반영을 마친 요청만 자신의 처리 중 표시를 재사용 감지 대상으로 바꾼다.
+    public void completeRotation(String oldHash, String newHash) {
+        Long completed = redisTemplate.execute(
+                COMPLETE_ROTATION_SCRIPT, List.of(primaryKey(oldHash)), newHash);
+        if (completed == null) {
+            throw new org.springframework.dao.DataAccessResourceFailureException("토큰 회전 확정 결과가 없다");
+        }
     }
 
     /** DB 회전 실패가 확인됐을 때 Redis 회전을 이전 토큰 상태로 원자 복구한다. */
@@ -244,6 +254,13 @@ public class RefreshTokenRepository {
     private static RedisScript<Long> loadRollbackRotationScript() {
         DefaultRedisScript<Long> script = new DefaultRedisScript<>();
         script.setLocation(new ClassPathResource("scripts/refresh_token_rollback_rotation.lua"));
+        script.setResultType(Long.class);
+        return script;
+    }
+
+    private static RedisScript<Long> loadCompleteRotationScript() {
+        DefaultRedisScript<Long> script = new DefaultRedisScript<>();
+        script.setLocation(new ClassPathResource("scripts/refresh_token_complete_rotation.lua"));
         script.setResultType(Long.class);
         return script;
     }
