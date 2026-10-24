@@ -181,6 +181,10 @@ class BaseWorldIntegrationTest extends IntegrationTestSupport {
                 .allSatisfy(html -> {
                     assertThat(new TemplateHtmlSanitizer().sanitize(html).removedElements()).isEmpty();
                     new TemplateSlotValidator().validate(html);
+                    // 생성기 지침: 슬롯 넷 말고 글자를 넣지 않고, 글꼴은 sans-serif 나 serif 기본값만 쓴다
+                    assertThat(html.replaceAll("<[^>]+>", "").replace("이벤트명", "").replace("할인 내용", "").replace("기간", ""))
+                            .isBlank();
+                    assertThat(html).doesNotContainPattern("font-family:(?!sans-serif|serif)");
                 });
         // 포스터는 가게 업종의 스타일과 할인 대상(전체할인 홀수, 메뉴할인 짝수)으로 템플릿을 고른다
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM poster p JOIN campaign c ON c.campaign_id = p.campaign_id "
@@ -205,7 +209,8 @@ class BaseWorldIntegrationTest extends IntegrationTestSupport {
          */
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM poster WHERE campaign_id BETWEEN 10000001 AND 29999999 "
                 + "AND ((JSON_UNQUOTE(JSON_EXTRACT(slot_values, '$.image.value')) NOT LIKE '%/menu-%.jpg' "
-                + "AND JSON_UNQUOTE(JSON_EXTRACT(slot_values, '$.image.value')) NOT LIKE '%/logo.jpg') "
+                + "AND JSON_UNQUOTE(JSON_EXTRACT(slot_values, '$.image.value')) NOT LIKE '%/logo%.jpg' "
+                + "AND JSON_UNQUOTE(JSON_EXTRACT(slot_values, '$.image.value')) NOT LIKE '%/poster.jpg') "
                 + "OR JSON_UNQUOTE(JSON_EXTRACT(slot_values, '$.period.value')) NOT LIKE '오늘 %')", Long.class)).isZero();
         // 팀원이 개발에서 만든 템플릿 19개와 버전 128개가 들어가고, 없는 관리자는 superadmin 으로 바뀐다 (#930)
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM template WHERE template_id NOT BETWEEN 10000001 AND 10000014", Long.class))
@@ -226,6 +231,11 @@ class BaseWorldIntegrationTest extends IntegrationTestSupport {
         // 메뉴 0개 확정 가게 시나리오는 피드 밖 가게에 남는다
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM store s WHERE s.store_id BETWEEN 10000001 AND 10000500 AND s.finalized = 1 "
                 + "AND NOT EXISTS (SELECT 1 FROM store_menu m WHERE m.store_id = s.store_id)", Long.class)).isPositive();
+        // 이미지 칸이 로고를 쓰면 그 가게에 실제로 있는 로고다
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM poster p WHERE p.campaign_id BETWEEN 10000001 AND 19999999 "
+                + "AND JSON_UNQUOTE(JSON_EXTRACT(p.slot_values, '$.image.value')) LIKE '%/logo%' AND NOT EXISTS (SELECT 1 FROM store_image i "
+                + "WHERE i.image_type = 'LOGO' AND JSON_UNQUOTE(JSON_EXTRACT(p.slot_values, '$.image.value')) LIKE CONCAT('%/', i.object_key))",
+                Long.class)).isZero();
         // 할인 금액은 천 단위 쉼표를 찍는다 (2,000원)
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM poster WHERE campaign_id BETWEEN 10000001 AND 29999999 "
                 + "AND JSON_UNQUOTE(JSON_EXTRACT(slot_values, '$.discount.value')) REGEXP '[0-9]{4}원'", Long.class)).isZero();
