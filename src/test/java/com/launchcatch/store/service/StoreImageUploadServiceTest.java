@@ -296,7 +296,8 @@ class StoreImageUploadServiceTest {
         StoreImage image = pendingInterior();
         when(storeImageRepository.findByUploadId("upload-1")).thenReturn(Optional.of(image));
         boolean[] inTransaction = {false};
-        when(transactionTemplate.execute(any())).thenAnswer(invocation -> {
+        // 이미 setUp 에서 같은 호출을 스텁했으므로 when() 으로 다시 스텁하면 옛 스텁이 null 인자로 먼저 실행된다. doAnswer 를 쓴다.
+        doAnswer(invocation -> {
             inTransaction[0] = true;
             try {
                 TransactionCallback<?> callback = invocation.getArgument(0);
@@ -304,7 +305,7 @@ class StoreImageUploadServiceTest {
             } finally {
                 inTransaction[0] = false;
             }
-        });
+        }).when(transactionTemplate).execute(any());
         doAnswer(invocation -> {
             inTransaction[0] = true;
             try {
