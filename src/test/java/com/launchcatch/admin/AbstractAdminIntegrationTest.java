@@ -33,6 +33,7 @@ public abstract class AbstractAdminIntegrationTest extends IntegrationTestSuppor
 
     @MockitoSpyBean protected JwtTokenProvider jwt;
     @MockitoSpyBean protected RefreshTokenRepository tokens;
+    @MockitoSpyBean protected com.launchcatch.admin.repository.AdminSessionRefreshTokenRepository sessionTokens;
     @MockitoSpyBean protected PasswordEncoder encoder;
     @MockitoSpyBean protected AuditLogWriter audit;
     @MockitoSpyBean protected AdminRepository admins;

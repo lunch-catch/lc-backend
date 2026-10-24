@@ -21,7 +21,7 @@ HTTP 계약과 엔드포인트별 절차는 [관리자 API 설계](admin-api-des
 
 | 맡는 것 | 맡지 않는 것 |
 |---|---|
-| 관리자 계정, 현재 Refresh Token 해시, 발급·폐기 순번을 관리한다 | JWT 서명·쿠키와 공통 요청 제한은 auth가 관리한다 |
+| 관리자 계정, 로그인 세션과 현재 RT, 발급·폐기 순번을 관리한다 | JWT 서명·쿠키와 공통 요청 제한은 auth가 관리한다 |
 | SUPER_ADMIN의 계정 발급·목록 조회와 관리자 인증을 처리한다 | 점주·회원·결제의 관리자 화면은 해당 데이터를 소유한 도메인이 처리한다 |
 | ops의 공개 계약으로 감사 기록을 요청한다 | 감사 테이블과 저장 구현은 ops가 소유한다 |
 
@@ -31,14 +31,13 @@ HTTP 계약과 엔드포인트별 절차는 [관리자 API 설계](admin-api-des
 
 ## 2. 애그리거트와 패키지
 
-`Admin`이 계정과 현재 토큰 상태를 함께 소유한다. 현재 구현은 로그아웃과 발급의 순서를 같은 관리자 행 잠금으로 확정한다.
+`Admin`은 계정과 전체 폐기 기준을 소유한다. `AdminLoginSession`은 로그인별 현재 RT와 게시 순번·폐기를 소유한다. 과거 RT 재사용은 기존 Redis tombstone으로 탐지한다. 같은 계정으로 여러 기기를 쓰더라도 각 세션의 토큰은 독립적이다.
 
-| 애그리거트 | 테이블 | 지키는 규칙 | 경계의 근거 |
-|---|---|---|---|
-| 관리자 계정 | `admin` | 현재 RT와 발급·폐기 순번을 같은 계정 행 아래 갱신한다 | [관리자 API 설계](admin-api-design.md) |
+| 묶음 | 테이블 | 지키는 규칙 |
+|---|---|---|
+| 관리자 계정과 로그인 세션 | `admin`, `admin_login_session` | 계정의 현재 상태·전체 폐기와 세션 회전·로그아웃의 순서를 관리자 행 잠금으로 확정한다 |
 
-계정과 RT를 함께 두면 폐기 순서를 한 행에서 확정할 수 있지만 인증 경합이 같은 행에 모인다. 토큰을 분리하면 쓰기 부하를 나눌 수 있지만 계정·토큰 사이의 원자적 검사가 추가된다.
-현재 단일 계정당 RT 하나라는 계약을 따른다. 별도 토큰 애그리거트로 나누지 않은 역사적 결정 이유는 기존 설계에서 확인되지 않아 12장에 남긴다.
+계정 상태 변경과 세션 검사를 원자적으로 처리하기 위해 관리자 도메인에 함께 둔다. 계정 -> 세션 순서로 잠가 교착 순서를 피하지만 같은 계정 요청은 직렬화되는 비용이 있다. 비밀번호 비교와 Redis I/O는 이 잠금 밖이다.
 
 ```text
 admin/
@@ -56,6 +55,7 @@ admin/
 │   └── AdminAccountResponse.java    로그인 ID·이름·역할만 조회한다
 ├── entity/
 │   ├── Admin.java
+│   ├── AdminLoginSession.java
 │   └── AdminStatus.java
 ├── exception/
 │   ├── AdminErrorCode.java
@@ -63,14 +63,17 @@ admin/
 ├── repository/
 │   ├── AdminAccessTokenRevocationRepository.java    MySQL의 AT 폐기 기준을 조회한다
 │   ├── AdminAccessTokenVersionRepository.java    Valkey의 AT 폐기 순번을 관리한다
-│   └── AdminRepository.java
+│   ├── AdminLoginSessionRepository.java
+│   ├── AdminRepository.java
+│   └── AdminSessionRefreshTokenRepository.java
 ├── service/
 │   ├── AdminAccountQueryService.java    활성 계정 목록을 읽고 검색한다
 │   ├── AdminLoginAuditService.java    로그인 결과와 감사 실패 지표를 기록한다
 │   ├── AdminLoginAuditTransactionService.java    별도 TX로 로그인 감사를 저장한다
 │   ├── AdminAccessTokenVerifier.java    auth의 AccessTokenValidationPolicy를 구현한다
 │   ├── AdminLoginService.java
-│   ├── AdminLoginTransactionService.java    행 잠금 아래 RT 해시와 발급 순번을 저장한다
+│   ├── AdminSessionService.java    세션 결과와 감사 장애를 처리한다
+│   ├── AdminSessionTransactionService.java    세션 발급·회전·폐기를 처리한다
 │   ├── AdminLogoutService.java
 │   ├── AdminLogoutTransactionService.java    DB 토큰 폐기와 별도 성공 감사를 처리한다
 │   ├── AdminRegistrationService.java    계정 발급과 성공 감사 기록을 조정한다
@@ -89,6 +92,7 @@ admin/
 | 규칙 | 두는 곳 |
 |---|---|
 | ACTIVE 계정 생성, 발급 순번 증가, RT 제거와 AT 폐기 기준 갱신 | `Admin` |
+| 세션별 RT 해시·게시 순번·RT 폐기·로그아웃 상태 | `AdminLoginSession` |
 | 비밀번호 비교·현재 계정 재검사·회전·복구 순서 | 각 service와 DB 전용 transaction service |
 | SUPER_ADMIN 계정 발급·목록 조회, ADMIN·SUPER_ADMIN 로그아웃 | 두 security config. 서비스에서도 현재 DB 역할을 재확인한다 |
 | 로그인 결과·감사 기록 | 식별 가능한 계정은 `AdminLoginAuditService`, 나머지 요청은 `AdminLoginAuditFilter`가 기록한다. 감사 저장은 별도 TX다 |
@@ -96,7 +100,7 @@ admin/
 ## 3. 저장
 
 MySQL `admin`의 `login_id` UNIQUE가 동시 중복 발급을 막는다. 비밀번호는 BCrypt, RT는 SHA-256 해시로 저장한다.
-현재 RT는 계정당 하나다. 새 로그인은 이전 RT를 교체하지만 기존 AT 전체를 폐기하지는 않는다.
+신규 RT는 세션별로 저장하며 새 로그인은 이전 세션을 교체하지 않는다. 세션의 열·제약·보존 한계는 [관리자 API 설계](admin-api-design.md#저장-구조와-감사-로그)를 따른다. 아래 Valkey 표는 배포 전 계정 단위 키다. 신규 세션 키는 관리자 API 설계에 있다. 회전·DB 복구·복원 한계는 두 경로가 공유한다.
 `refresh_token_issuance_version`, `access_token_revoked_version`, `access_token_valid_after`의 의미와 DB 제약은 [관리자 API 설계](admin-api-design.md)의 "저장 구조와 감사 로그" 절을 따른다.
 
 | 데이터 | 키 | 만료 | 원본 | 읽는 곳 |
@@ -139,83 +143,21 @@ RT 원문도 DB 해시에서 복원할 수 없다. DB 폴백은 요청으로 받
 
 ```mermaid
 flowchart LR
-    HTTP[HTTP 요청] --> C
-    subgraph admin[admin 모듈 / 도메인 루트]
-        subgraph cfg[config]
-            SEC[보안 체인·로그인 감사 필터]
-        end
-        subgraph ctl[controller]
-            C["AdminRegistrationController<br/>AdminAccountQueryController<br/>AdminLoginController<br/>AdminTokenController<br/>AdminLogoutController"]
-        end
-        subgraph svc[service]
-            QUERY[AdminAccountQueryService]
-            LA[AdminLoginAuditService]
-            LATX[AdminLoginAuditTransactionService]
-            REG[AdminRegistrationService]
-            LOGIN[AdminLoginService]
-            TOKEN[AdminTokenService]
-            LOGOUT[AdminLogoutService]
-            LTX[AdminLoginTransactionService]
-            TTX[AdminTokenTransactionService]
-            OTX[AdminLogoutTransactionService]
-            P[AdminAccessTokenVerifier]
-        end
-        subgraph ent[entity]
-            A[Admin / 계정·토큰 상태]
-        end
-        subgraph repo[repository]
-            DB[(AdminRepository / MySQL)]
-            REV[(AdminAccessTokenRevocationRepository / MySQL)]
-            V[(AdminAccessTokenVersionRepository / Valkey)]
-        end
-        C --> QUERY
-        QUERY --> P
-        QUERY --> DB
-        LOGIN --> LA
-        LA --> LATX
-        LATX --> AUDIT
-        C --> REG
-        C --> LOGIN
-        C --> TOKEN
-        C --> LOGOUT
-        REG --> DB
-        REG --> A
-        REG --> AUDIT
-        REG --> P
-        LOGIN --> DB
-        LOGIN --> LTX
-        TOKEN --> TTX
-        LOGOUT --> OTX
-        LTX --> A
-        LTX --> DB
-        TTX --> A
-        TTX --> DB
-        TTX --> AUDIT
-        OTX --> A
-        OTX --> DB
-        OTX --> AUDIT
-        P --> REV
-        P --> V
-        P --> LEGACY
-        LOGIN --> RT
-        TOKEN --> RT
-        LOGOUT --> RT
-        LOGOUT --> V
-        LOGOUT --> CUT
-    end
-    POLICY["auth.contract.AccessTokenValidationPolicy<br/>공통 인증 필터가 호출한다"] -.-> P
-    AUDIT[ops.contract.AuditLogWriter]
-    RT[(auth RefreshTokenRepository / Valkey)]
-    LEGACY[auth AccessTokenCutoffVerifier]
-    CUT[(auth AccessTokenValidAfterRepository / Valkey)]
-    JWT[auth JwtTokenProvider]
-    LOGIN --> JWT
-    TOKEN --> JWT
-    LOGOUT --> JWT
-    SEC -.-> C
-    classDef external fill:#f5f5f5,stroke:#999,stroke-dasharray:4 3
-    class POLICY,AUDIT,RT,CUT,LEGACY,JWT external
+    HTTP[관리자 인증 Controller] --> LOGIN[AdminLoginService]
+    HTTP --> TOKEN[AdminTokenService]
+    HTTP --> LOGOUT[AdminLogoutService]
+    LOGIN --> SESSION[AdminSessionService]
+    TOKEN --> SESSION
+    LOGOUT --> SESSION
+    SESSION --> TX[AdminSessionTransactionService]
+    TX --> DB[(관리자·세션)]
+    SESSION --> REDIS[세션별 Redis 회전·게시·폐기]
+    FILTER[공통 JWT 필터] --> VERIFY[AdminAccessTokenVerifier]
+    VERIFY --> SESSION
+    TX --> JWT[auth JWT 서명]
 ```
+
+세션이 없는 배포 전 토큰만 기존 Redis·DB 호환 경로로 처리한다. 감사는 ops의 공개 계약을 호출한다.
 
 ### 상태 변경
 
@@ -272,118 +214,25 @@ sequenceDiagram
 | 1~3. 발급자 검증·중복 확인·해싱·잠금 후 재검사 | 새 계정을 저장하지 않는다 | 현재 권한·토큰·loginId로 다시 검사한다 |
 | 4~5. 새 계정 또는 성공 감사 저장 | 같은 쓰기 트랜잭션의 계정·감사를 함께 롤백한다 | 커밋 결과가 불명이면 계정 생성 여부부터 확인한다. 이미 생성된 loginId는 중복으로 거절한다 |
 
-**관리자 로그인.** DB 저장과 게시 전 재검사를 각각 커밋한 뒤 RT를 Valkey에 게시한다.
-
-```mermaid
-sequenceDiagram
-    participant HTTP as Controller
-    participant LOGIN as AdminLoginService
-    participant LOGIN_TX as AdminLogin<br/>TransactionService
-    participant DB as MySQL
-    participant RT as Valkey RT
-    participant LA as AdminLoginAuditService
-
-    rect rgb(245, 255, 240)
-        Note over HTTP,RT: 관리자 로그인
-        HTTP->>LOGIN: 로그인 요청
-        LOGIN->>DB: 1. loginId 조회
-        LOGIN->>LOGIN: BCrypt 비교 / 트랜잭션 밖
-        LOGIN->>LOGIN_TX: RT 해시 저장 요청
-        LOGIN_TX->>DB: 2. 행 잠금 / TX1<br/>계정·비밀번호 해시 재검사<br/>RT 해시·만료 시각·순번 저장
-        LOGIN_TX-->>LOGIN: 커밋된 계정·순번
-        LOGIN->>LOGIN: 3. 확정된 순번으로 AT 생성
-        LOGIN->>LOGIN_TX: 현재 RT 재검사
-        LOGIN_TX->>DB: 4. 행 잠금·현재 RT 확인 / TX2
-        LOGIN_TX-->>LOGIN: 현재 토큰 여부
-        alt 현재 RT
-            LOGIN->>RT: 5. TX2 커밋 뒤 saveIfNewer<br/>DB 트랜잭션 밖
-        else 다른 로그인에 의해 대체됨
-            Note over LOGIN,RT: 오래된 RT를 Valkey에 게시하지 않는다
-        end
-        LOGIN->>LA: 6. 성공 감사 / 별도 TX3
-        Note over LOGIN,LA: 식별 가능한 계정의 실패도 별도 감사<br/>감사 실패는 원래 인증 결과를 유지한다
-        LOGIN-->>HTTP: 토큰·관리자 정보 응답
-        Note over LOGIN,RT: 게시 실패는 로그를 남기고<br/>로그인 성공을 유지한다
-    end
-```
-
-| 실패 지점 | 남는 상태 | 다시 요청하면 |
-|---|---|---|
-| 1~2. 계정·비밀번호 확인 또는 DB 저장 | 검증 실패는 토큰을 바꾸지 않는다. 저장 실패는 TX1을 롤백하며 커밋 결과 불명은 성공으로 단정하지 않는다 | 새 로그인으로 현재 계정을 다시 확인하고 RT를 교체한다 |
-| 3~4. AT 생성 또는 게시 전 DB 확인 | TX1은 이미 커밋됐다. 실패한 이번 RT 해시와 일치할 때만 별도 TX로 제거를 시도한다. 정리도 실패하면 DB 해시가 남을 수 있다 | 새 로그인으로 RT를 교체한다. 다른 로그인에서 저장한 RT는 정리 대상이 아니다 |
-| 5. Valkey 게시 | DB 현재 RT는 유지하고 로그인은 성공으로 응답한다 | 이후 토큰 재발급은 [인증 설계](../auth/auth-api-design.md)의 DB 복구 조건을 따른다 |
-| 6. 로그인 감사 저장 | 감사 TX만 롤백하고 원래 로그인 결과를 유지한다 | 자동 재처리하지 않고 ERROR 로그와 실패 지표를 남긴다 |
-
-계정 부재나 서비스 진입 전 거절은 감사 DB에 쓰지 않고 필터 로그·메트릭으로 기록한다. 처리 조건은 [로그인 감사 설계](admin-api-design.md#로그인-감사)를 따른다.
-
-**관리자 로그아웃.** DB 폐기를 커밋한 뒤 Valkey에 반영하고 성공 감사를 별도로 저장한다.
-
-```mermaid
-sequenceDiagram
-    participant HTTP as Controller
-    participant LOGOUT as AdminLogoutService
-    participant LOGOUT_TX as AdminLogout<br/>TransactionService
-    participant DB as MySQL
-    participant RT as Valkey RT
-    participant AV as Valkey<br/>AT 폐기 순번
-    participant CUT as Valkey<br/>기존 JWT 폐기 시각
-    participant AUDIT as ops AuditLogWriter
-
-    rect rgb(255, 245, 245)
-        Note over HTTP,AUDIT: 관리자 로그아웃
-        HTTP->>LOGOUT: 로그아웃 요청
-        LOGOUT->>LOGOUT_TX: DB 폐기 요청
-        LOGOUT_TX->>DB: 1. 행 잠금 / TX1<br/>계정·역할 재검사<br/>RT 폐기·AT 폐기 기준 갱신
-        LOGOUT_TX-->>LOGOUT: 폐기 순번·시각
-        LOGOUT->>RT: 2. RT 발급 순번·현재 해시 정리<br/>TX1 커밋 뒤
-        LOGOUT->>AV: 3. AT 폐기 순번 반영 / TX 밖
-        LOGOUT->>CUT: 4. 기존 JWT 폐기 시각 반영 / TX 밖
-        alt Valkey 폐기 반영 성공
-            LOGOUT->>LOGOUT_TX: 성공 감사 요청
-            LOGOUT_TX->>AUDIT: 5. 성공 감사 / 별도 TX
-            LOGOUT-->>HTTP: 성공 응답
-            Note over LOGOUT,AUDIT: 감사 저장 실패는 운영 로그를 남기고<br/>로그아웃 성공을 유지한다
-        else Valkey 폐기 반영 실패
-            LOGOUT-->>HTTP: 폐기 처리 오류<br/>DB 폐기는 유지, 성공 감사는 생략
-        end
-    end
-```
-
-| 실패 지점 | 남는 상태 | 다시 요청하면 |
-|---|---|---|
-| 1. DB 폐기·커밋 | 롤백되면 기존 토큰 상태를 유지한다. 커밋 결과가 불명이면 폐기 여부를 단정하지 않는다. Redis 정리는 진행하지 않는다 | 현재 인증 상태를 다시 확인한다 |
-| 2~4. Redis 정리 | DB의 RT·AT 폐기는 유지한다. 오류를 응답하고 성공 감사는 생략한다 | 이전 AT는 DB 기준으로 이미 무효다. 이전 AT를 이용한 HTTP 재시도로 Redis를 정리한다고 가정하지 않는다 |
-| 5. 성공 감사 저장 | 토큰 폐기는 유지하고 감사 TX만 롤백한다. 운영 로그를 남기고 성공 응답을 유지한다 | 감사 저장을 자동 재시도하지 않는다 |
+**관리자 로그인·재발급·로그아웃.** 신규 로그인은 세션을 추가하고 재발급은 해당 세션의 RT만 바꾼다. 로그아웃은 해당 세션만 폐기한다. 처리 순서와 실패 뒤 남는 상태는 [관리자 API 설계](admin-api-design.md)의 각 절을 따른다.
 
 ## 7. 트랜잭션과 동시성
 
 | 흐름 | DB에서 함께 묶는 것 | 트랜잭션 밖 |
 |---|---|---|
-| 계정 발급 | 발급자 행 잠금, 상태·역할·폐기 재검사, 새 계정과 감사 저장 | BCrypt 해싱 |
-| 계정 목록 조회 | 읽기 전용 TX에서 요청자 현재 상태·역할을 확인하고 목록을 읽는다. 행 잠금·쓰기·감사는 없다 | AT 폐기 검증은 별도 읽기 TX와 Redis 추가 검사를 사용한다 |
-| 로그인 | TX1에서 계정 행 잠금·재검사와 RT 해시·만료·발급 순번을 저장한다. TX2에서 행 잠금 아래 현재 상태·해시를 다시 확인한다 | 최초 계정 조회·BCrypt·AT 생성·Redis 게시. 실패한 RT 정리와 로그인 감사는 각각 별도 TX다 |
-| 토큰 재발급 | 행 잠금 아래 상태·역할·이전 해시·만료를 확인하고 새 해시·만료·순번과 성공 감사를 함께 저장한다 | Redis 회전·게시·보상. DB 결과 확인·재사용 폐기·실패 감사는 각각 별도 TX다 |
-| 로그아웃 | TX1에서 행 잠금·계정 재검사, RT 제거·순번 증가·AT 폐기 기준을 저장한다 | Redis 정리 후 별도 TX로 성공 감사를 저장한다 |
+| 계정 발급 | 발급자 잠금·현재 권한과 세션 재검사·새 계정·성공 감사 | BCrypt 해싱 |
+| 목록 조회 | 현재 계정 확인·목록 조회 | AT 검증은 별도 읽기 트랜잭션 |
+| 신규 로그인 | 관리자 잠금·비밀번호 해시 재검사·세션 순번 할당·세션 RT 백업·JWT 서명 | 최초 계정 조회·BCrypt·Redis 게시·로그인 감사 |
+| 세션 재발급 | 관리자 -> 세션 잠금·현재 해시 확인·새 해시·RT 게시 순번·성공 감사·JWT 서명 | Redis 선행 회전·게시·조건부 복구·재사용 폐기 후 실패 감사 |
+| 세션 로그아웃 | 관리자 -> 세션 잠금·계정과 세션 확인·세션 폐기 | 커밋 후 Redis 폐기·성공 감사·삭제 쿠키 응답 |
 
-로그인·토큰 재발급·로그아웃은 같은 계정 행 잠금으로 직렬화한다. 발급과 로그아웃도 발급자 행으로 순서를 정한다.
-동일 loginId의 다른 발급자는 UNIQUE로 경합한다. 지연된 Redis 작업은 순번 비교로 최신 상태를 덮지 못하게 한다.
-재사용 RT를 다시 회전시키는 멱등 성공은 제공하지 않는다. 회전 타임아웃·보상은 [인증 설계](../auth/auth-api-design.md)를 따른다.
+새 로그인과 다른 세션의 회전·로그아웃은 서로의 토큰을 지우지 않는다. 동일 RT는 한 번만 회전한다. 재사용이면 해당 세션 RT 폐기를 커밋한 후 오류를 던진다. 기존 관리자 정책대로 AT는 로그아웃 또는 만료까지 유지한다. 같은 브라우저의 탭 간 갱신 직렬화는 프론트 연계 조건이다.
 
-**결정: DB 확정 후 Redis에 게시한다.** DB와 Redis의 원자적 커밋은 제공하지 않는다. 같은 트랜잭션에서 Redis를 호출하면 잠금을 오래 잡으면서도 원자성을 얻지 못한다.
-현재 방식은 DB 연결을 먼저 반환하지만 게시 실패와 프로세스 중단이 남는다. DB 해시·순번 검증으로 보완하며 영속 게시 큐는 없다. 로그인·토큰 재발급의 캐시 게시는 비동기 작업으로 넘기지 않고 요청 스레드에서 커밋 후 직접 호출한다. 정상 토큰 재발급의 최초 Redis 회전은 DB 갱신보다 먼저이며 회전 실패·복구 절차는 [인증 설계](../auth/auth-api-design.md)가 소유한다. 근거는 [관리자 API 설계](admin-api-design.md)의 "로그인" 절이다.
+발급도 같은 관리자 행을 잠그므로 로그아웃이 먼저 커밋되면 세션 재검사로 발급을 거부한다. 전체 폐기 순번은 모든 세션에 적용된다. 서로 다른 발급자가 같은 loginId를 만들면 UNIQUE로 하나만 저장한다.
 
-로그인 감사는 인증 TX와 분리해 성공과 식별 가능한 실패를 남긴다. 감사 저장 장애는 인증 결과를 바꾸지 않는다. 영속 큐 없이 요청 스레드에서 별도 TX로 직접 저장하므로 중단 시 유실될 수 있다. 근거는 [로그인 감사 설계](admin-api-design.md#로그인-감사)다.
+JWT 서명은 네트워크 호출이 없는 메모리 연산이므로 세션 트랜잭션 안에서 처리한다. DB 커밋 결과가 불명이면 성공으로 단정하지 않고 새 쿠키를 발급하지 않는다. 재로그인으로 새 세션을 받는다. 영속 감사 큐는 없으며 커밋과 별도 감사 사이의 프로세스 중단은 감사 유실 가능성이 있다.
 
-로그아웃 감사는 폐기와 같은 트랜잭션에 묶으면 감사 장애가 필수 폐기를 막는다. 커밋 후 별도 TX로 직접 호출하면 폐기는 유지되지만 감사 저장 전 프로세스 중단 시 기록이 빠질 수 있다. 영속 큐로 보장하는 대안은 현재 구현하지 않았으며, 실패 시 운영 로그를 남기는 선택의 근거는 [관리자 API 설계](admin-api-design.md)의 "로그아웃" 절이다.
-
-| 주요 흐름 | 같은 요청이 다시 옴 | 같은 계정의 동시 요청 | 여러 계정이 같은 자원에 씀 | 이벤트 지연·순서 역전 |
-|---|---|---|---|---|
-| 계정 목록 조회 | 읽기만 하며 요청마다 현재 권한을 확인한다 | 행 잠금을 사용하지 않는다. 조회와 동시에 생성된 계정의 즉시 반영은 보장하지 않는다 | 공유 쓰기는 없다 | 해당 없음. 이벤트를 사용하지 않는다 |
-| 계정 발급 | 요청 ID 기반 멱등 저장은 없다. 같은 loginId는 UNIQUE로 거절한다 | 발급자 행을 비관 잠근다 | 다른 발급자의 같은 loginId는 UNIQUE로 하나만 반영한다 | 해당 없음. 도메인 이벤트를 발행하지 않는다 |
-| 로그인·토큰 재발급·로그아웃 | 새 로그인은 RT를 교체한다. 이미 사용한 RT는 거부한다. 재사용이 감지되면 DB의 현재 RT를 폐기하고 발급 순번을 증가시킨다. AT 폐기 기준은 바꾸지 않는다 | 같은 관리자 행의 비관 잠금과 이전 해시 비교를 사용한다 | 계정별 토큰·순번을 분리한다. 공유 수량은 없다 | 이벤트는 없다. 지연된 Redis 게시·폐기는 단조 순번으로 판정한다 |
-
-행 잠금을 쓰면 기존 계정 검증과 토큰 변경을 한 번에 직렬화하지만 같은 계정의 대기가 늘어난다. CAS만 쓰면 대기를 줄일 수 있지만 상태·역할·감사와의 재검증이 복잡해진다.
-현재 잠금은 [관리자 API 설계](admin-api-design.md)가 정한다. 영업일 계산·일괄 처리 상한은 해당 없음이며 계정 단건을 처리한다.
+배포 전 단일 기기 토큰의 Redis 회전·복구·폐기는 [인증 설계](../auth/auth-api-design.md#배포-전-단일-기기-토큰)를 따른다.
 
 ## 8. 외부 API
 
@@ -399,23 +248,11 @@ sequenceDiagram
 
 ## 11. 성능
 
-정상 서비스 경로의 비용을 아래와 같이 계산한다. 공통 보안 필터의 처리와 오류 복구는 제외하며 SQL 수는 실측 전 예상치다. DB 쓰기는 감사 저장을 포함한다.
+신규 세션의 AT 검증은 별도 읽기 트랜잭션에서 세션과 현재 관리자 조회가 필요하다. 인증 요청마다 DB 부하가 생긴다. RT는 Redis 회전과 DB 백업을 함께 사용하며 세션별 키로 기기 간 캐시 충돌을 막는다. DB 장애 시 인증을 거부한다.
 
-| 흐름 | DB 읽기 / 쓰기 | DB 트랜잭션 | Valkey 호출 |
-|---|---|---|---|
-| 계정 목록 조회 | 폐기 기준·요청자·목록 조회 3회 / 쓰기 없음 | 읽기 TX와 별도 폐기 기준 조회 TX | AT 추가 검사 1회 |
-| 계정 발급 | 폐기 기준·loginId·발급자 조회 3회 / 계정·감사 저장 2회 | 폐기 기준 읽기 1회, 계정·감사 쓰기 1회 | AT 추가 검사 1회 |
-| 로그인 | 최초 계정 조회 1회·잠금 조회 2회 / RT 갱신·감사 저장 2회 | 저장·게시 전 확인·감사 3회 | RT 게시 1회 |
-| 정상 토큰 재발급 | 계정 잠금 조회 1회 / RT·감사 저장 2회 | 회전·감사 1회 | RT 조회·회전·게시 3회 |
-| 로그아웃 | 계정 잠금 조회 1회 / RT·AT 폐기 갱신·감사 저장 2회 | 폐기·성공 감사 2회 | RT 해시 유무에 따라 3~4회 |
+신규 로그인은 세션 한 행을 추가하고 갱신은 같은 행의 현재 RT와 게시 순번을 바꾼다. Redis의 RT·tombstone은 RT 수명을 따르고 게시 순번에는 TTL을 두지 않는다. DB 세션과 Redis 순번의 자동 정리는 없으며 저장량을 모니터링한다.
 
-공통 인증에서 관리자 AT를 검증할 때마다 폐기 기준 조회 1회와 별도 읽기 트랜잭션이 추가된다. DB 검증을 통과하면 Valkey를 1회 더 읽는다.
-따라서 관리자 AT 검증 TPS가 T이면 폐기 확인만 초당 T회의 DB 읽기가 필요하다. 로그인 TPS가 L이면 서비스 경로에서 초당 약 3L회의 DB 읽기와 L회의 RT 갱신과 L회의 감사 저장이 추가된다. BCrypt 비용과 경합 계정의 행 잠금 대기가 별도 병목이다.
-
-계정 목록은 전체 결과를 메모리에 담으므로 계정 수 증가에 따른 응답 크기를 측정해야 한다. 현재 페이지 크기 상한은 없다.
-
-확인 방법은 정상·DB 지연·Valkey 장애의 세 조건에서 서로 다른 계정과 단일 계정 집중 요청을 나누어 부하를 가하는 것이다. BCrypt 시간, 행 잠금 대기, SQL 수, 풀 대기와 p95를 함께 측정한다.
-[인증 API 설계](../auth/auth-api-design.md)는 관리자 로그인·토큰 재발급·로그아웃의 오류율을 0.1% 미만으로 두고 인증 API의 TPS·응답 지연 목표는 두지 않는다. 이 문서에서 별도 목표를 만들지 않으며, 예상 트래픽에 대한 비용 모델과 풀 용량의 적합성 검증을 12장의 미정 사항으로 남긴다.
+로그인·갱신·로그아웃은 계정 행을 잠그므로 같은 계정에 집중한 요청의 대기가 발생한다. 검증 환경에서 여러 계정과 단일 계정을 나누어 BCrypt 시간, SQL 수, 잠금 대기, DB 풀 대기와 p95를 측정해야 한다. 인증 API의 별도 TPS·지연 목표는 정하지 않았다.
 
 ## 12. 테스트와 미정 사항
 
@@ -426,15 +263,15 @@ sequenceDiagram
 | 최고 관리자가 계정 목록을 검색한다 | 활성 관리자만 최신순으로 반환하며 검색 특수문자를 문자 그대로 처리한다. 일반 관리자는 거부한다 | `AdminAccountQueryIntegrationTest`, `AdminAccountQueryServiceTest` |
 | 로그인 성공·식별 가능한 실패의 감사 저장이 실패한다 | 인증 결과를 유지하고 감사 실패 로그·메트릭을 남긴다 | `AdminLoginAuditServiceTest`, `AdminLoginSecurityIntegrationTest` |
 | SUPER_ADMIN이 발급하고 감사 저장이 실패한다 | 새 계정도 롤백한다 | `AdminRegistrationServiceTest`, `AdminRegistrationSecurityIntegrationTest` |
-| 같은 계정에 로그인·로그아웃·발급이 경합한다 | 행 잠금으로 순서를 확정하고 지연 게시를 차단한다 | `AdminLoginConcurrencyIntegrationTest`, `AdminLogoutConcurrencyIntegrationTest`, `AdminRegistrationLogoutConcurrencyIntegrationTest` |
+| 같은 계정에 로그인·로그아웃·발급이 경합한다 | 행 잠금으로 순서를 확정하고 각 세션의 토큰과 폐기를 분리한다 | `AdminConcurrentLoginIntegrationTest`, `AdminRegistrationLogoutConcurrencyIntegrationTest` |
 | RT가 동시에 재사용되거나 회전 결과가 불명이다 | 이중 정상 회전을 막고 확인·보상 조건을 지킨다 | `AdminTokenConcurrencyIntegrationTest`, `AdminTokenServiceTest` |
 | DB 폐기 또는 Redis 장애 상황에서 AT를 검증한다 | DB 폐기를 우회하지 않고 정책별로 거부·오류 처리한다 | `AdminAccessTokenVerifierTest`, `AdminAccessTokenVersionRedisIntegrationTest` |
-| DB 저장 뒤 AT 생성 또는 게시 전 재검사가 실패한다 | 이번 RT 해시에 한해서 정리를 시도하고 오류를 반환한다 | `AdminLoginServiceTest` |
-| DB 폐기 뒤 Redis 정리 또는 성공 감사가 실패한다 | DB 폐기는 유지한다. Redis 실패는 오류를 반환하고 감사 실패만으로는 성공을 취소하지 않는다 | `AdminLogoutServiceTest`, `AdminLogoutConcurrencyIntegrationTest` |
+| 세션 저장 뒤 JWT 서명이 실패한다 | 세션·순번을 같은 트랜잭션에서 롤백하고 쿠키를 발급하지 않는다 | `AdminLoginSecurityIntegrationTest`, `AdminSessionTransactionServiceTest` |
+| DB 폐기 뒤 Redis 정리 또는 성공 감사가 실패한다 | DB 폐기는 유지한다. Redis 실패는 오류를 반환하고 감사 실패만으로는 성공을 취소하지 않는다 | `AdminLogoutServiceTest`, `AdminConcurrentLoginIntegrationTest` |
 
 | 추가 Given·When | Then | 근거 테스트 |
 |---|---|---|
-| ACTIVE 계정·유효한 비밀번호로 로그인한다 | 계정 상태는 유지하고 RT와 순번을 갱신한다 | `AdminLoginServiceTest`, `AdminLoginSecurityIntegrationTest` |
+| ACTIVE 계정·유효한 비밀번호로 로그인한다 | 계정 상태는 유지하고 새 세션과 RT 백업을 추가한다 | `AdminLoginServiceTest`, `AdminLoginSecurityIntegrationTest` |
 | 두 발급자가 같은 loginId로 동시에 발급한다 | UNIQUE로 계정 하나만 남겨야 한다 | `AdminRegistrationServiceTest`는 중복 변환 근거다. 서로 다른 발급자의 실제 동시 중복 생성 시험은 미검증이다 |
 | 오래된 Redis 게시가 더 최신 순번 뒤 도착한다 | 최신 토큰 상태를 유지한다 | `AdminTokenConcurrencyIntegrationTest`, `AdminAccessTokenVersionRedisIntegrationTest` |
 
@@ -447,6 +284,6 @@ sequenceDiagram
 
 | 추가 미정 항목 | 어디까지 정해졌나 | 막는 것 |
 |---|---|---|
-| RT 상태의 애그리거트 경계·복원 불가 회전 이력 | 계정 행에 현재 해시·순번을 두며 Redis 과거 기록 유실은 복원하지 못한다. 기존 API 설계에 동작은 있으나 별도 경계를 배제한 결정 이유는 없다 | admin·auth 담당자의 저장 경계 및 복원 정책 확정이 필요하다 |
+| 세션·Redis 순번 보존과 정리 | 자동 삭제는 없다. 세션 행 삭제는 기존 AT 호환 판정에 영향을 준다 | 만료·폐기 데이터의 안전한 정리 정책이 필요하다 |
 | 예상 트래픽과 부하 검증 | 11장에 비용 모델과 측정 방법을 적었다. 인증 API는 별도 TPS·지연 목표를 두지 않는다 | 예상 동시 요청량과 실제 풀 용량을 대조한 부하 검증 전에는 운영 용량을 판단하지 못한다 |
 | 동시 중복 발급 시험 | DB UNIQUE와 중복 변환은 확인했으나 서로 다른 발급자의 동시 생성 시험은 미검증이다 | 7장의 공유 loginId 경합 검증 완료로 표시할 수 없다 |

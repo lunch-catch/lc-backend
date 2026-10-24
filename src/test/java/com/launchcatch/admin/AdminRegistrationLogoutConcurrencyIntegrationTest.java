@@ -35,6 +35,8 @@ class AdminRegistrationLogoutConcurrencyIntegrationTest extends AbstractAdminInt
     @Autowired private AdminRepository admins;
     @Autowired private AdminRegistrationService registration;
     @Autowired private AdminLogoutService logout;
+    @Autowired private com.launchcatch.admin.service.AdminSessionService sessions;
+    @Autowired private org.springframework.jdbc.core.JdbcTemplate jdbc;
     private Long issuerId;
     private LocalDateTime issuedAt;
 
@@ -49,6 +51,7 @@ class AdminRegistrationLogoutConcurrencyIntegrationTest extends AbstractAdminInt
     @AfterEach
     void tearDown() {
         admins.findByLoginId("concurrent.created").ifPresent(admin -> admins.deleteById(admin.getId()));
+        jdbc.update("delete from admin_login_session where admin_id = ?", issuerId);
         admins.deleteById(issuerId);
     }
 
@@ -56,6 +59,17 @@ class AdminRegistrationLogoutConcurrencyIntegrationTest extends AbstractAdminInt
     @NullSource
     @ValueSource(longs = 1L)
     void 사전검증_후_로그아웃이_커밋되면_계정과_성공감사를_생성하지_않는다(Long version) throws Exception {
+        assertRejectedAfterLogout(version, () -> logout.logout(issuerId, Role.SUPER_ADMIN));
+    }
+
+    @org.junit.jupiter.api.Test
+    void 세션_로그아웃이_해싱_중_커밋되면_발급을_거부한다() throws Exception {
+        var session = sessions.issue(issuerId, "password-hash");
+        Long version = AdminAccessTokenClaims.issuanceVersion(jwt.getAdditionalClaims(session.accessToken()));
+        assertRejectedAfterLogout(version, () -> logout.logout(issuerId, Role.SUPER_ADMIN, version));
+    }
+
+    private void assertRejectedAfterLogout(Long version, Runnable logoutRequest) throws Exception {
         var hashing = new CountDownLatch(1);
         var resume = new CountDownLatch(1);
         doAnswer(call -> {
@@ -72,7 +86,7 @@ class AdminRegistrationLogoutConcurrencyIntegrationTest extends AbstractAdminInt
                             new AdminRegistrationRequest("concurrent.created", "Initial123!", "관리자", "ADMIN"))));
             try {
                 assertThat(hashing.await(30, TimeUnit.SECONDS)).isTrue();
-                logout.logout(issuerId, Role.SUPER_ADMIN);
+                logoutRequest.run();
             } finally {
                 resume.countDown();
             }

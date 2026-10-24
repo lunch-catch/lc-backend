@@ -19,7 +19,7 @@ class AdminAccessTokenVerifierTest {
     private final com.launchcatch.admin.repository.AdminAccessTokenRevocationRepository revocations = mock(com.launchcatch.admin.repository.AdminAccessTokenRevocationRepository.class);
     private final AdminAccessTokenVersionRepository versions = mock(AdminAccessTokenVersionRepository.class);
     private final AccessTokenCutoffVerifier legacy = mock(AccessTokenCutoffVerifier.class);
-    private final AdminAccessTokenVerifier verifier = new AdminAccessTokenVerifier(versions, legacy, revocations);
+    private final AdminAccessTokenVerifier verifier = new AdminAccessTokenVerifier(versions, legacy, revocations, org.mockito.Mockito.mock(com.launchcatch.admin.service.AdminSessionService.class));
     private final LocalDateTime issuedAt = LocalDateTime.of(2026, 10, 12, 12, 0);
 
     @ParameterizedTest

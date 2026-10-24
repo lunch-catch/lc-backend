@@ -25,6 +25,7 @@ public class AdminAccessTokenVerifier implements AccessTokenValidationPolicy {
     private final AdminAccessTokenVersionRepository versions;
     private final AccessTokenCutoffVerifier legacyCutoff;
     private final AdminAccessTokenRevocationRepository revocations;
+    private final AdminSessionService sessions;
 
     @Override
     public boolean supports(Role role) { return role != null && role.isAdmin(); }
@@ -44,6 +45,15 @@ public class AdminAccessTokenVerifier implements AccessTokenValidationPolicy {
         Objects.requireNonNull(policy, "policy");
         if (!supports(role) || issuedAt == null) { return false; }
         if (id == null || (version != null && version <= 0)) { return false; }
+        if (version != null) {
+            try {
+                var session = sessions.isValid(id, role, version);
+                if (session.isPresent()) { return session.get(); }
+            } catch (AuthException unavailable) {
+                if (policy == CutoffPolicy.REQUIRED) { throw unavailable; }
+                return false;
+            }
+        }
         if (!isValidInDatabase(id, issuedAt, version, policy)) { return false; }
         // Redis는 이전 배포와의 호환을 위한 추가 검사이며 DB에서 폐기된 토큰을 허용하지 못한다.
         if (version == null) { return legacyCutoff.isValidAfter(role, id, issuedAt, policy); }

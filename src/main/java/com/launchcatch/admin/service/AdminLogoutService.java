@@ -26,6 +26,17 @@ public class AdminLogoutService {
     private final AccessTokenValidAfterRepository accessTokens;
     private final JwtTokenProvider jwt;
     private final AdminAccessTokenVersionRepository accessTokenVersions;
+    private final AdminSessionService sessions;
+
+    @Transactional(propagation = Propagation.NEVER)
+    public void logout(Long adminId, Role role, Long version) {
+        Objects.requireNonNull(adminId, "adminId");
+        Objects.requireNonNull(role, "role");
+        if (!role.isAdmin()) { throw new AuthException(AuthErrorCode.ROLE_NOT_ALLOWED); }
+        if (version != null && sessions.logout(adminId, role, version)) { return; }
+        // 세션이 없는 배포 전 토큰은 기존 전체 폐기 정책을 적용한다.
+        logout(adminId, role);
+    }
 
     @Transactional(propagation = Propagation.NEVER)
     public void logout(Long adminId, Role role) {

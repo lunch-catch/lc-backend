@@ -61,11 +61,11 @@ public enum AuthErrorCode implements ErrorCode {
     },
 
     /*
-     * 이미 교체된 Refresh Token 이 다시 온 경우다. 탈취로 보고 그 계정의 Refresh Token 을 모두 폐기한다.
+     * 이미 교체된 Refresh Token 이 다시 온 경우다. 폐기 범위는 각 도메인의 계정·세션 정책을 따른다.
      * 드물고 심각하므로 로그를 남긴다.
      */
     REFRESH_TOKEN_REUSED(HttpStatus.UNAUTHORIZED, "AUTH-004",
-            "보안을 위해 모든 기기에서 로그아웃되었습니다. 다시 로그인해 주세요."),
+            "보안을 위해 로그아웃되었습니다. 다시 로그인해 주세요."),
 
     /*
      * Access Token 이 없거나 유효하지 않거나 로그아웃 전에 발급된 경우다.
