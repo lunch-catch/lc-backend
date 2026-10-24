@@ -130,7 +130,7 @@ class BatchExecutionRetryServiceTest {
     }
 
     @Test
-    void 실행기가_가득_차_재개를_시작하지_못하면_실패로_닫고_예외를_올린다() {
+    void 실행기가_가득_차_재개를_시작하지_못하면_실패로_닫고_OPS_005를_올린다() {
         when(registry.classify(JOB)).thenReturn(Kind.BUNDLE);
         when(logs.findByJobNameAndBusinessDate(JOB, DATE))
                 .thenReturn(Optional.of(row(BatchStatus.FAILED, 301L, 1)))
@@ -141,7 +141,8 @@ class BatchExecutionRetryServiceTest {
         };
 
         assertThatThrownBy(() -> service(full).retry(ADMIN_ID, JOB, DATE))
-                .isInstanceOf(RejectedExecutionException.class);
+                .isInstanceOfSatisfying(OpsException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(OpsErrorCode.RETRY_QUEUE_FULL));
         verify(executions).fail(JOB, DATE, "수동 재실행을 시작하지 못했다");
     }
 

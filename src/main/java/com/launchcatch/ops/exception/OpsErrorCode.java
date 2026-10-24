@@ -16,7 +16,9 @@ public enum OpsErrorCode implements ErrorCode {
     EXECUTION_NOT_FAILED(HttpStatus.CONFLICT, "OPS-003",
             "FAILED 상태가 아니면 재실행할 수 없습니다."),
     INVALID_PERIOD(HttpStatus.BAD_REQUEST, "OPS-004",
-            "조회 기간이 올바르지 않습니다.");
+            "조회 기간이 올바르지 않습니다."),
+    RETRY_QUEUE_FULL(HttpStatus.SERVICE_UNAVAILABLE, "OPS-005",
+            "재실행 요청이 몰려 지금은 받을 수 없습니다. 잠시 후 다시 시도해 주세요.");
 
     private final HttpStatus httpStatus;
     private final String code;
