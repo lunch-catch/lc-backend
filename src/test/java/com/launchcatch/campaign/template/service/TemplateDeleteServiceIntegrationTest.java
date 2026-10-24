@@ -11,6 +11,7 @@ import jakarta.persistence.EntityManager;
 import java.time.LocalDateTime;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.jdbc.core.JdbcTemplate;
 
 /*
  * 단위 테스트(TemplateDeleteServiceTest)는 저장소를 목으로 둬서 실제 하드삭제 쿼리와
@@ -21,6 +22,9 @@ import org.springframework.beans.factory.annotation.Autowired;
 class TemplateDeleteServiceIntegrationTest extends AbstractCampaignIntegrationTest {
 
     private static final Long ADMIN_ID = 1L;
+
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
 
     @Autowired
     private TemplateDeleteService templateDeleteService;
@@ -65,7 +69,7 @@ class TemplateDeleteServiceIntegrationTest extends AbstractCampaignIntegrationTe
         Long templateId = template.getId();
         int countBeforeDelete = currentCount();
 
-        templateDeleteService.delete(templateId);
+        templateDeleteService.delete(ADMIN_ID, templateId);
         // 템플릿 삭제는 아직 flush 전이라 먼저 내보낸다. 그냥 비우면 예약된 삭제가 버려진다.
         // release()는 벌크 UPDATE 라 컨텍스트에 남은 template_quota 를 갱신하지 않으므로 비워서 DB 값을 다시 읽는다.
         entityManager.flush();
@@ -75,6 +79,9 @@ class TemplateDeleteServiceIntegrationTest extends AbstractCampaignIntegrationTe
         // 버전이 소프트삭제 행까지 하나도 남지 않았는지 본다(남은 최대 번호가 0이면 행이 없다).
         assertThat(templateVersionRepository.findMaxVersionNumber(templateId)).isZero();
         assertThat(currentCount()).isEqualTo(countBeforeDelete - 1);
+        // 감사 로그가 삭제와 같은 트랜잭션에서 남았는지 본다(#877).
+        assertThat(jdbcTemplate.queryForObject("select count(*) from audit_log where action = ? and target = ? and admin_id = ?",
+                Integer.class, "TEMPLATE_DELETE", String.valueOf(templateId), ADMIN_ID)).isEqualTo(1);
     }
 
     @Test
@@ -86,7 +93,7 @@ class TemplateDeleteServiceIntegrationTest extends AbstractCampaignIntegrationTe
         int full = currentCount();
         assertThat(templateQuotaRepository.tryReserve(full)).isZero();
 
-        templateDeleteService.delete(templateId);
+        templateDeleteService.delete(ADMIN_ID, templateId);
 
         assertThat(templateQuotaRepository.tryReserve(full)).isEqualTo(1);
     }

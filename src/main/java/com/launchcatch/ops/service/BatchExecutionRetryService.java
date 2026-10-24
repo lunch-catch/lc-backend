@@ -12,6 +12,7 @@ import java.time.LocalDate;
 import java.util.Map;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.Executor;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import lombok.extern.slf4j.Slf4j;
@@ -135,6 +136,10 @@ public class BatchExecutionRetryService {
      * 감사 로그를 남기고 재개를 시작시킨다. 둘 중 하나라도 실패하면 되돌린 행을 다시 실패로
      * 닫는다. 그러지 않으면 아무도 돌리지 않는 RUNNING 행이 영원히 남는다.
      *
+     * 실행기 큐가 가득 차 접수하지 못하면(RejectedExecutionException) 행을 같은 방식으로 닫은 뒤 일반 500 이 아니라
+     * 503 OPS-005 로 돌려준다(#877). 일시적으로 몰린 것이라 관리자가 잠시 뒤 다시 누르면 된다. 감사 로그는 이미
+     * 요청 트랜잭션에 남았으므로 접수하지 못한 시도도 기록으로 남는다.
+     *
      * 감사 로그 기록(AuditLogWriter)은 호출자의 트랜잭션에 반드시 참여해야 한다(MANDATORY).
      * retry 의 조건부 UPDATE 는 트랜잭션 밖에서 돌아야 해서 요청 전체를 트랜잭션으로 묶지
      * 않고, 기록 한 번만 따로 트랜잭션에 넣는다.
@@ -146,6 +151,10 @@ public class BatchExecutionRetryService {
             // 직접 만든 실행기의 스레드에는 요청의 MDC(traceId 등)가 없으므로 복사해 넘긴다(LOG-6-07).
             Map<String, String> mdc = MDC.getCopyOfContextMap();
             executor.execute(() -> resumeWithMdc(mdc, jobName, businessDate, attemptNo));
+        } catch (RejectedExecutionException full) {
+            executions.fail(jobName, businessDate, "수동 재실행을 시작하지 못했다");
+            log.warn("event=BATCH_MANUAL_RETRY_REJECTED job={} businessDate={} reason=QUEUE_FULL", jobName, businessDate);
+            throw new OpsException(OpsErrorCode.RETRY_QUEUE_FULL, full);
         } catch (RuntimeException failed) {
             executions.fail(jobName, businessDate, "수동 재실행을 시작하지 못했다");
             throw failed;
