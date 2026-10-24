@@ -95,6 +95,7 @@
 - **버전을 템플릿보다 먼저 지운다.** `template_version.template_id` 가 FK 로 `template` 을 가리켜서, 순서를 바꾸면 템플릿 행이 먼저 없어진 뒤 그 FK를 못 지운다
 - **`template_quota.current_count` 를 줄이는 조건부 `UPDATE`(`release()`)를 새로 둔다.** 지금까지 이 카운터는 늘어나기만 했다(`TemplateQuotaRepository.tryReserve`). 삭제로 줄이지 않으면 실제 템플릿 개수가 상한 미만으로 내려가도 생성이 영구히 거부된다. `tryReserve` 와 같은 조건부 `UPDATE` 모양으로 둬, 읽어서 빼고 저장하는 방식의 레이스를 피한다
 - **삭제 도중이나 삭제 뒤에 들어온 수정 요청은 따로 처리하지 않는다.** `TemplateReviseService.save()` 가 LLM 호출을 끝내고 저장 단계에서 같은 잠금(`findByIdForUpdate`)을 기다렸다가 들어오면, 그 시점엔 템플릿이 이미 없어 `findByIdForUpdate` 가 빈 값을 돌려주고 그대로 `POSTER-005`(`TEMPLATE_NOT_FOUND`)로 끝난다. 삭제 쪽이 수정 쪽의 존재를 알거나 막을 필요가 없다
+- **삭제를 감사 로그에 남긴다(`#877`).** 템플릿 영구 삭제는 되돌릴 수 없는 관리자 쓰기 작업이다. 다른 관리자 쓰기 작업과 같이 `ops.contract.AuditLogWriter`를 쓴다(ops는 모든 도메인이 쓰는 하위 모듈이라 campaign이 이 계약을 쓸 수 있다). 기록은 삭제와 같은 트랜잭션에 참여해서(`MANDATORY`) 삭제가 롤백되면 기록도 남지 않고 기록이 실패하면 삭제도 되돌아간다. 행동은 `TEMPLATE_DELETE`, 대상은 템플릿 ID, 상세는 `name=템플릿 이름`이다. 삭제하면 이름을 다시 읽을 수 없어 상세에 남긴다. HTML이나 버전 내용은 남기지 않는다
 - **`POSTER-006` 메시지는 "게시된 템플릿은 삭제할 수 없습니다"다(`#880`).** 수정이 게시된 템플릿을 받게 되어 삭제만 이 코드를 쓴다. 게시된 템플릿의 삭제는 `fk_poster_template` 으로 포스터가 템플릿을 참조하고 있어 이번 범위에 넣지 않았다
 - **동시성 테스트는 실제 스레드 경쟁을 만들지 않고, `findByIdForUpdate` 호출 여부(`verify`)까지만 확인한다.** 게시·활성화와 같은 기존 테스트 관례다
 

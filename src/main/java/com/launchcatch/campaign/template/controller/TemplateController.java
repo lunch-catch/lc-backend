@@ -173,8 +173,9 @@ public class TemplateController {
             @ApiResponse(responseCode = "409", description = "POSTER-006: 게시된 템플릿은 삭제할 수 없습니다.")
     })
     public ResponseEntity<Void> delete(
-            @Parameter(description = "삭제할 템플릿 ID입니다.") @PathVariable Long templateId) {
-        templateDeleteService.delete(templateId);
+            @Parameter(description = "삭제할 템플릿 ID입니다.") @PathVariable Long templateId,
+            @AuthenticationPrincipal CustomUserDetails admin) {
+        templateDeleteService.delete(admin.getId(), templateId);
         return ResponseEntity.noContent().build();
     }
 
