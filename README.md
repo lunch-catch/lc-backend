@@ -1,5 +1,7 @@
 # lc-backend
 
+## 프로젝트 개요
+
 런치캐치는 점심시간의 직장인에게 주변 가게의 선착순 할인 쿠폰을 광고로 띄우고, 점주는 그 광고가 노출된 만큼 포인트를 내는 광고 플랫폼이다. 
 
 | 구분     | 주소                                                                                                                                                                    |
@@ -9,14 +11,14 @@
 | API 문서 | [개발 서버 Swagger UI](https://api.dev.lunchcatch.com/swagger-ui.html)                                                                                                    |
 | 다른 저장소 | [lc-frontend](https://github.com/lunch-catch/lc-frontend) (앱 3개), [lc-infra](https://github.com/lunch-catch/lc-infra) (AWS 와 배포)                                       |
 
-## 서비스 소개
+### 서비스 소개
 
 | 사용자 | 하는 일                                                             |
 | --- | ---------------------------------------------------------------- |
 | 회원  | 지금 위치 주변의 쿠폰 광고를 피드로 받고, 마음에 드는 가게를 찜하고, 선착순 쿠폰을 받아 가게에서 QR 로 쓴다 |
 | 점주  | 가게를 등록하고 쿠폰 캠페인을 만들고, 포인트를 충전해 광고를 집행하고, 노출과 발급 실적을 본다           |
 | 관리자 | 점주의 입점과 사업자 정보를 검수하고, 쿠폰 전단지 템플릿을 만들고, 포인트 정책과 환불을 다룬다           |
-## 기술 스택
+### 기술 스택
 
 | 분류 | 쓰는 것 |
 |---|---|
@@ -27,7 +29,7 @@
 | 복원력과 관측 | resilience4j 2.4.0, Micrometer Prometheus, logstash-logback-encoder 8.0 |
 | 품질 | JUnit 5, Testcontainers, ArchUnit 1.4.1, JaCoCo 0.8.15, SonarQube |
 
-## 규모
+### 규모
 
 | 항목 | 값 |
 |---|---|
@@ -37,7 +39,7 @@
 | HTTP API | 경로 105개, 작업 127개 |
 | 테스트 | 클래스 453개, 테스트 3,957개 |
 
-## 문서
+### 문서
 
 코드 작업하기전 프로젝트의 이해도가 없다면 문서를 읽는다.
 
@@ -66,63 +68,45 @@
 ### 서버와 저장소
 
 ```mermaid
-flowchart LR
+flowchart TB
     subgraph CLIENT["브라우저"]
-        USER["사용자 앱"]
-        OWNER["점주 앱"]
-        ADMIN["관리자 앱"]
+        APPS["사용자 앱, 점주 앱, 관리자 앱"]
     end
+
     subgraph VPC["VPC"]
-        ALB["ALB 443"]
-        APP["앱 서버 2~3대<br/>8080, 8081"]
+        ALB["ALB<br/>443"]
+        API["API 서버 2~3대<br/>8080, 8081"]
         BATCH["배치 서버 2대<br/>인바운드 없음"]
         MON["모니터링 1대<br/>Prometheus, Loki, Grafana"]
         RDS[("RDS MySQL 8.4<br/>다중 AZ")]
         CACHE[("ElastiCache Valkey 9.0<br/>노드 2개")]
+        ALB -->|8080| API
+        API -->|3306| RDS
+        API -->|6379| CACHE
+        BATCH -->|3306| RDS
+        BATCH -->|6379| CACHE
+        MON -.->|8081| API
+        MON -.->|8081| BATCH
     end
-
-    CF["CloudFront"]
 
     subgraph ALERTS["운영 알림"]
-        SLACK["Slack"]
-        MAIL["이메일"]
+        NOTIFY["Slack, 이메일"]
     end
 
-    subgraph CALLS["앱이 부르는 것"]
-        S3[("S3")]
-        BEDROCK["Bedrock"]
-        REKOG["Rekognition"]
-        EXT["토스페이먼츠, 카카오"]
+    subgraph CALLS["외부 API 연동"]
+        AWSSVC["S3, Bedrock, Rekognition<br/>IAM 역할"]
+        EXTAPI["토스페이먼츠, 카카오<br/>키"]
     end
 
-    USER --> ALB
-    OWNER --> ALB
-    ADMIN --> ALB
-    USER -.->|이미지| CF
-    CF --> S3
-    ALB -->|8080| APP
-    APP -->|3306| RDS
-    APP -->|6379| CACHE
-    BATCH -->|3306| RDS
-    BATCH -->|6379| CACHE
-    MON -.->|8081| APP
-    MON -.->|8081| BATCH
-    APP --> S3
-    APP --> BEDROCK
-    APP --> REKOG
-    APP --> EXT
-    MON -.-> SLACK
-    ALB -.-> MAIL
+    CLIENT -->|443| VPC
+    VPC --> CALLS
+    VPC -.-> ALERTS
 ```
 
-- 앱과 배치는 같은 jar 다. 프로필로 갈린다(`prod` 와 `prod,batch`). 스케줄러는 켠 쪽에서만 돈다
-- 배치는 인바운드가 없다. 두 대가 함께 떠서 한 대만 점유하고, 멈추면 다른 대가 이어받는다
-- 8081 은 액추에이터 전용이다. ALB 와 모니터링에게만 연다
-- 앱이 부르는 것은 인증이 둘로 갈린다. S3 와 Bedrock, Rekognition 은 **IAM 역할**이고 토스페이먼츠와 카카오는 **키**다
-- Bedrock 은 전단지 템플릿을 만들고 Rekognition 은 포스터를 검수한다
-- 이미지는 브라우저가 CloudFront 에서 직접 받는다. 앱 서버를 거치지 않는다. 업로드만 앱이 S3 에 쓴다
-- 경보 경로가 둘이다. 지표와 로그는 Alertmanager 가 Slack 으로, AWS 자원은 CloudWatch 경보 5개가 SNS 로 이메일을 보낸다
-- 늘 울리는 watchdog 경보 하나로 감시 자체의 생존을 본다
+- 요청은 ALB 를 거쳐 API 서버로 가고, API 서버는 RDS 와 ElastiCache 를 읽고 쓴다
+- API 서버와 배치 서버는 같은 jar 다. 프로필로 갈려 스케줄러는 배치에서만 돈다. 배치는 인바운드가 없고 두 대 가운데 한 대만 작업을 점유한다
+- API 서버는 S3 와 Bedrock, Rekognition, 토스페이먼츠, 카카오를 부른다. 이미지는 브라우저가 CloudFront 에서 직접 받아 API 서버를 거치지 않는다
+- 모니터링은 8081 로 지표를 긁고 경보를 Slack 과 이메일로 보낸다
 - 구성은 `lc-infra` 가 Terraform 으로 소유한다. 자세한 그림은 [AWS 아키텍처](./docs/architecture/런치캐치_AWS_아키텍처.md)에 있다
 
 ### 도메인 사이의 의존 방향
@@ -207,6 +191,85 @@ src/main/java/com/launchcatch/
 
 테이블 74개를 도메인이 나눠 맡는다. 스키마는 ORM 이 아니라 Flyway SQL 이 갖고, 도메인마다 폴더와 이력 테이블이 따로다. 규칙은 [마이그레이션 규약](./src/main/resources/db/migration/migration.md)에 있다.
 
+돈과 발급이 흐르는 핵심 테이블만 그리면 이렇다.
+
+```mermaid
+erDiagram
+    OWNER {
+        bigint owner_id PK
+        varchar status
+    }
+    STORE {
+        bigint store_id PK
+        bigint owner_id FK
+        varchar business_verification_status
+    }
+    CAMPAIGN {
+        bigint campaign_id PK
+        bigint owner_id FK
+        bigint store_id FK
+        varchar status
+        int discount_value
+    }
+    COUPON_EVENT {
+        bigint coupon_event_id PK
+        bigint campaign_id
+        varchar status
+        int issue_quantity
+    }
+    MEMBER_COUPON {
+        bigint member_coupon_id PK
+        bigint coupon_event_id FK
+        bigint member_id
+        varchar status
+    }
+    MEMBER {
+        bigint member_id PK
+        varchar provider_user_id
+        varchar status
+    }
+    AD_CANDIDATE {
+        date business_date PK
+        bigint campaign_id PK
+        bigint store_id
+        bigint reserved_amount
+    }
+    IMPRESSION_LOG {
+        binary serve_id PK
+        bigint member_id
+        bigint campaign_id
+        enum validity
+    }
+    PAYMENT {
+        bigint payment_id PK
+        bigint owner_id FK
+        bigint amount
+        varchar status
+    }
+    POINT_LEDGER {
+        bigint point_ledger_id PK
+        bigint owner_id FK
+        bigint campaign_id
+        bigint payment_id
+        varchar entry_type
+        bigint amount
+    }
+
+    OWNER ||--o{ STORE : "가게를 낸다"
+    OWNER ||--o{ CAMPAIGN : "집행한다"
+    STORE ||--o{ CAMPAIGN : "대상이다"
+    OWNER ||--o{ PAYMENT : "충전한다"
+    OWNER ||--o{ POINT_LEDGER : "잔액을 갖는다"
+    CAMPAIGN ||--o| COUPON_EVENT : "회차를 연다"
+    CAMPAIGN ||--o{ AD_CANDIDATE : "그날 후보가 된다"
+    COUPON_EVENT ||--o{ MEMBER_COUPON : "수량을 나눈다"
+    MEMBER ||--o{ MEMBER_COUPON : "발급받는다"
+    MEMBER ||--o{ IMPRESSION_LOG : "본다"
+    AD_CANDIDATE ||--o{ IMPRESSION_LOG : "노출로 남는다"
+    IMPRESSION_LOG ||--o| POINT_LEDGER : "차감을 만든다"
+    PAYMENT ||--o{ POINT_LEDGER : "적립을 만든다"
+```
+
 | 폴더 | 테이블 | 폴더 | 테이블 |
 |---|---|---|---|
 | `analytics` | 17 | `coupon` | 5 |
@@ -216,8 +279,7 @@ src/main/java/com/launchcatch/
 | `store` | 8 | `admin` | 2 |
 | `owner` | 2 | 합계 | 74 |
 
-도메인 경계를 넘는 참조에 FK 를 걸지 않는다. 그래서 테이블만 보고는 경계를 알 수 없고, 각 도메인의 설계서가 자기 테이블과 그 이유를 갖는다. 정산을 예로 들면 [정산 구조와 동작 설계](./docs/design/billing/billing_구조와_동작_설계.md)다.
-
+**도메인 경계를 넘는 선에는 FK 가 없다.** 위에서 `FK` 로 적은 것은 같은 도메인 안이고, 캠페인과 피드 후보처럼 경계를 넘는 것은 ID 값만 넘긴다. 그래서 테이블만 보고는 경계를 알 수 없고, 각 도메인의 설계서가 자기 테이블과 그 이유를 갖는다.
 
 ## 기술적 의사결정
 
@@ -284,4 +346,4 @@ PR 은 게이트를 통과해야 병합된다. 빌드와 테스트(G-BUILD), Son
 
 취약점을 찾으면 공개 이슈로 올리지 말고 저장소 관리자([@devjohnpark](https://github.com/devjohnpark))에게 비공개로 알려 달라. 설정 예시 파일(`application-local.yml.example`, `.env.example`)에는 실제 키를 넣지 않는다.
 
-학습 목적으로 만든 팀 프로젝트이고 별도 라이선스를 두지 않았다. 코드 재사용이 필요하면 위 관리자에게 문의하면 된다.
+이 저장소의 코드와 문서는 런치캐치 팀이 저작권을 갖는다. 서비스 출시를 준비하는 코드라 복제와 수정, 배포, 상업적 사용을 허용하지 않는다. 읽고 참고하는 것은 자유다. 재사용이 필요하면 위 관리자에게 문의하면 된다. 전문은 [LICENSE](./LICENSE)에 있다.
