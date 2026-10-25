@@ -286,6 +286,27 @@ class FeedAssemblerTest {
         }
 
         @Test
+        void 카드마다_배정_때의_진행률과_관련성_점수를_싣는다() {
+            Builder b = new Builder(twelve);
+            b.pacing = progress(Map.of(12L, 0.1));
+
+            List<Placed> cards = FeedAssembler.assemble(twelve, b.build()).cards();
+
+            Placed first = cards.getFirst();
+            assertThat(first.candidate().campaignId()).isEqualTo(12L);
+            assertThat(first.progressRate()).isEqualTo(0.1);
+            assertThat(cards).allSatisfy(p -> assertThat(p.relevanceScore()).isBetween(0.0, 1.0).isPositive());
+        }
+
+        @Test
+        void 예산을_읽지_못했으면_진행률을_비워_싣는다() {
+            Builder b = new Builder(twelve);
+            b.pacing = null;
+
+            assertThat(FeedAssembler.assemble(twelve, b.build()).cards()).allSatisfy(p -> assertThat(p.progressRate()).isNull());
+        }
+
+        @Test
         void 정산을_읽지_못했으면_예산_규칙_없이_모두_관련성_슬롯이다() {
             Builder b = new Builder(twelve);
             b.pacing = null;

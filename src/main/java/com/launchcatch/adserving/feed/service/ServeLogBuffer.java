@@ -74,7 +74,8 @@ public class ServeLogBuffer implements SmartLifecycle {
      */
     private void write(List<ServedFeed> batch) {
         List<Row> rows = batch.stream()
-                .flatMap(f -> f.cards().stream().map(c -> new Row(f.businessDate(), f.feedId(), c)))
+                .flatMap(f -> f.cards().stream().map(c -> new Row(f.businessDate(), f.feedId(), c.record(), c.progressRate(),
+                        c.relevanceScore(), f.engineVersion())))
                 .toList();
         if (!rows.isEmpty()) {
             try {

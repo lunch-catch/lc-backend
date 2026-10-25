@@ -52,6 +52,9 @@ public final class FeedAssembler {
     private static final List<RelevanceSignal> SIGNALS = List.of(new DistanceSignal(), new CategorySignal(),
             new DiscountSignal());
 
+    // 배정 규칙의 버전이다. 거르기, 점수, 순서, 자리 배치를 바꾸는 PR 이 올린다(#977)
+    public static final String ENGINE_VERSION = "2";
+
     private static final Comparator<Placed> NEAREST_FIRST =
             Comparator.comparingDouble(Placed::exactDistanceM).thenComparing(p -> p.candidate().campaignId());
 
@@ -119,7 +122,16 @@ public final class FeedAssembler {
                 cards.add(allocationIt.next());
             }
         }
-        return cards;
+        return cards.stream().map(p -> withReasons(p, context, radius, maxDiscount)).toList();
+    }
+
+    // 신규 우선 보정 전 진행률(예산을 읽지 못했으면 비움)과 관련성 점수를 배정 근거로 붙인다
+    private static Placed withReasons(Placed p, FeedContext context, int radius, Map<DiscountType, Integer> maxDiscount) {
+        Double progress = context.pacingAvailable()
+                ? context.pacing().get(p.candidate().campaignId()).progressRate()
+                : null;
+        return new Placed(p.candidate(), p.exactDistanceM(), p.slotType(), progress,
+                relevanceScore(p, context, radius, maxDiscount));
     }
 
     // 관련성 점수는 항목마다 0~1 의 값에 가중치를 곱해 더한 값이다
@@ -159,14 +171,24 @@ public final class FeedAssembler {
     public record Selection(int radiusM, List<Placed> cards) {
     }
 
-    public record Placed(FeedCandidate candidate, double exactDistanceM, String slotType) {
+    /*
+     * 고른 카드 한 장이다. progressRate 와 relevanceScore 는 배정 근거라 serve_log 에 남긴다(#977).
+     * progressRate 는 신규 우선 보정 전 진행률이고 예산을 읽지 못했으면 null 이다.
+     */
+    public record Placed(FeedCandidate candidate, double exactDistanceM, String slotType, Double progressRate,
+                         double relevanceScore) {
+
+        // 아직 근거를 붙이지 않은 후보다
+        public Placed(FeedCandidate candidate, double exactDistanceM, String slotType) {
+            this(candidate, exactDistanceM, slotType, null, 0);
+        }
 
         public int distanceM() {
             return (int) Math.round(exactDistanceM);
         }
 
         Placed in(String slot) {
-            return new Placed(candidate, exactDistanceM, slot);
+            return new Placed(candidate, exactDistanceM, slot, progressRate, relevanceScore);
         }
     }
 }

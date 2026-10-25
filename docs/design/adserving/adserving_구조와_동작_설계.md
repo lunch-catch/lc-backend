@@ -170,6 +170,7 @@ impression/
 | 필터 저장 | `feed_filter` 는 `INSERT ... ON DUPLICATE KEY UPDATE` 로 정렬을 넣거나 바꾸고, `feed_filter_category` 는 그 회원의 행을 지우고 다시 넣는다. 같은 업종이 두 번 오면 하나만 넣는다(#411 에서 임시로 정했다) |
 | 다른 도메인 데이터의 사본 | `ad_candidate` 는 00:00 의 캠페인과 가게 사본이다. 그날 안에서는 캠페인과 쿠폰의 통보로만 바뀐다. 정산의 그날 예약액과 단가(`reserved_amount`, `unit_price`, V5)는 5장의 시점에 덮는다. 둘 다 NULL 이면 아직 읽지 못한 것이고 0 이면 그날 계획이 없다(#837) |
 | 슬롯 이름표 | `serve_log`, `impression_log` 의 `slot_type` 은 닫힌 목록이 아니라 엔진이 붙인 이름표다(V6). CHECK 는 모양(대문자로 시작하고 대문자, 숫자, 밑줄)만 막는다. serve 기록이 콜론으로 값을 이어 이름표에 콜론이 들어가면 안 된다. 자리(`slot_position`)는 1 이상만 막고 상한은 피드 크기를 따른다 |
+| 배정 근거 | `serve_log` 가 카드마다 배정 때의 진행률(`progress_rate`, 신규 우선 보정 전, 예산을 읽지 못했으면 NULL), 관련성 점수(`relevance_score`), 엔진 버전(`engine_version`)을 남긴다(V7). 판정과 과금에는 쓰지 않고 배정 진단(FR-027)과 규칙 변경의 효과 비교에 쓴다. 엔진 버전은 `FeedAssembler.ENGINE_VERSION` 이고 배정 규칙을 바꾸는 PR 이 올린다. 열은 테이블을 복사하지 않고(INSTANT) 더했다 |
 | 쿠폰의 찜 조회 | `uk_wishlist_member_campaign`(`member_id`, `campaign_id`)으로 단건은 있는지만 보고, 목록은 앞 열로 그 회원의 `campaign_id` 만 읽는다. 캠페인별 회원 일괄 조회는 같은 키로 입력한 회원(500명까지)의 행만 읽는다(#578). 셋 다 `campaign_ended_at IS NULL` 인 행만 유효로 본다. 순서는 정하지 않는다(#163, #553) |
 | 끝난 캠페인의 찜 | 종료 표시는 `idx_wishlist_campaign` 으로 그 캠페인의 행 중 `campaign_ended_at` 이 비어 있는 것만 채운다. 정리는 `idx_wishlist_campaign_ended` 로 기준 시각 전에 끝난 행을 지운다(#553). 종료 이벤트 뒤에 들어온 찜은 찜 요청이 넣은 뒤 캠페인을 읽어 같은 표시를 부른다(#780) |
 | 소진 반영 | `ad_candidate` 의 PK(`business_date`, `campaign_id`)로 `sold_out_at IS NULL` 인 행만 바꾼다. 받은 소진 시각을 그대로 쓰고 부른 시각은 `updated_at` 에만 쓴다. 0행이면 PK 로 후보가 있는지 한 번 더 본다(#163) |
