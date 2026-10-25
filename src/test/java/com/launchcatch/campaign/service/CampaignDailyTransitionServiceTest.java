@@ -49,6 +49,10 @@ class CampaignDailyTransitionServiceTest {
         return campaign;
     }
 
+    private StoreSummaryRejectedException rejected() {
+        return new StoreSummaryRejectedException(new IllegalArgumentException("할인 대상 메뉴가 해당 가게에 속하지 않습니다."));
+    }
+
     @Test
     @DisplayName("예약된 하루 예산이 있는 캠페인마다 적용하고 적용한 개수를 돌려준다(#840)")
     void 예약된_하루_예산을_캠페인마다_적용한다() {
@@ -118,7 +122,7 @@ class CampaignDailyTransitionServiceTest {
     @DisplayName("기간이 지난 SCHEDULED 하나가 실패해도 나머지는 처리하고 데이터 오류는 건너뛰며 마지막에 단계를 실패시킨다(#902)")
     void 기간이_지난_SCHEDULED가_실패해도_나머지는_처리한다() {
         when(campaignRepository.findScheduledIdsToEnd(BUSINESS_DATE)).thenReturn(List.of(5L, 6L, 7L));
-        doThrow(new IllegalArgumentException("campaign not found: 5"))
+        doThrow(rejected())
                 .when(campaignStatusService).endExpiredScheduled(5L, BUSINESS_DATE);
         doThrow(new IllegalStateException("db down"))
                 .when(campaignStatusService).endExpiredScheduled(6L, BUSINESS_DATE);
@@ -158,7 +162,7 @@ class CampaignDailyTransitionServiceTest {
     @DisplayName("데이터 오류로 종료가 거부된 캠페인은 건너뛰고 나머지를 종료하며 단계는 실패시키지 않는다(#842)")
     void 종료가_데이터_오류면_건너뛰고_나머지를_종료한다() {
         when(campaignRepository.findIdsToEnd(BUSINESS_DATE)).thenReturn(List.of(1L, 2L));
-        doThrow(new IllegalArgumentException("할인 대상 메뉴가 해당 가게에 속하지 않습니다."))
+        doThrow(rejected())
                 .when(campaignStatusService).end(1L, ActorType.SYSTEM, BUSINESS_DATE);
 
         int ended = service.endExpired(BUSINESS_DATE);
@@ -202,7 +206,7 @@ class CampaignDailyTransitionServiceTest {
         Campaign second = campaign(11L, 21L);
         when(campaignRepository.findToStart(BUSINESS_DATE)).thenReturn(List.of(first, second));
         when(campaignRepository.findOtherActiveIdsByStoreId(anyLong(), anyLong())).thenReturn(List.of());
-        doThrow(new IllegalArgumentException("할인 대상 메뉴가 해당 가게에 속하지 않습니다."))
+        doThrow(rejected())
                 .when(campaignStatusService).activate(10L, BUSINESS_DATE);
 
         int started = service.startScheduled(BUSINESS_DATE);
@@ -219,6 +223,37 @@ class CampaignDailyTransitionServiceTest {
         when(campaignRepository.findToStart(BUSINESS_DATE)).thenReturn(List.of(first, second));
         when(campaignRepository.findOtherActiveIdsByStoreId(anyLong(), anyLong())).thenReturn(List.of());
         doThrow(new IllegalStateException("only SCHEDULED campaign can be activated"))
+                .when(campaignStatusService).activate(10L, BUSINESS_DATE);
+
+        assertThatThrownBy(() -> service.startScheduled(BUSINESS_DATE))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("START_SCHEDULED").hasMessageContaining("failedCount=1");
+
+        verify(campaignStatusService).activate(11L, BUSINESS_DATE);
+    }
+
+    @Test
+    @DisplayName("데이터 오류가 아닌 IllegalArgumentException 으로 종료가 실패하면 건너뛰지 않고 단계를 실패시킨다(#989)")
+    void 종료가_일반_IllegalArgumentException이면_단계를_실패시킨다() {
+        when(campaignRepository.findIdsToEnd(BUSINESS_DATE)).thenReturn(List.of(1L, 2L));
+        doThrow(new IllegalArgumentException("campaign not found: 1"))
+                .when(campaignStatusService).end(1L, ActorType.SYSTEM, BUSINESS_DATE);
+
+        assertThatThrownBy(() -> service.endExpired(BUSINESS_DATE))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("END_EXPIRED").hasMessageContaining("failedCount=1");
+
+        verify(campaignStatusService).end(2L, ActorType.SYSTEM, BUSINESS_DATE);
+    }
+
+    @Test
+    @DisplayName("데이터 오류가 아닌 IllegalArgumentException 으로 켜기가 실패하면 건너뛰지 않고 단계를 실패시킨다(#989)")
+    void 켜기가_일반_IllegalArgumentException이면_단계를_실패시킨다() {
+        Campaign first = campaign(10L, 20L);
+        Campaign second = campaign(11L, 21L);
+        when(campaignRepository.findToStart(BUSINESS_DATE)).thenReturn(List.of(first, second));
+        when(campaignRepository.findOtherActiveIdsByStoreId(anyLong(), anyLong())).thenReturn(List.of());
+        doThrow(new IllegalArgumentException("campaign not found: 10"))
                 .when(campaignStatusService).activate(10L, BUSINESS_DATE);
 
         assertThatThrownBy(() -> service.startScheduled(BUSINESS_DATE))
