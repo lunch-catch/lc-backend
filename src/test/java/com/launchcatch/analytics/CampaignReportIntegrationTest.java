@@ -177,6 +177,28 @@ class CampaignReportIntegrationTest extends AbstractAnalyticsIntegrationTest {
         job.run();
     }
 
+    // 집계 중(AGGREGATING) 행은 확정 전 값이라 A-14 의 소진액과 유효 노출에 넣지 않는다(#895)
+    @Test
+    void A_14_는_집계_중인_날의_리포트를_합하지_않는다() throws Exception {
+        billedDeduct(yesterday.atTime(12, 0).toString());
+        job.run();
+        jdbc.update("""
+                INSERT INTO campaign_daily_report
+                    (campaign_id, owner_id, store_id, business_date, daily_budget, charged_amount, spent_amount,
+                     valid_impression_count, billable_impression_count, report_status, finalized_at, created_at, updated_at)
+                VALUES (?, ?, ?, ?, 10000, 500, 500, 250, 250, 'AGGREGATING', NULL, NOW(6), NOW(6))
+                """, CAMPAIGN, OWNER, STORE, Date.valueOf(today));
+
+        mvc.perform(get("/v1/admin/campaign-reports")
+                        .param("campaignIds", String.valueOf(CAMPAIGN))
+                        .param("from", yesterday.toString())
+                        .param("to", today.toString())
+                        .with(user(new CustomUserDetails(1L, Role.ADMIN))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.items[0].spentAmount").value(UNIT_PRICE))
+                .andExpect(jsonPath("$.data.items[0].validImpressionCount").value(1));
+    }
+
     private Map<String, Object> report(LocalDate date) {
         return jdbc.queryForMap("SELECT * FROM campaign_daily_report WHERE campaign_id = ? AND business_date = ?",
                 CAMPAIGN, Date.valueOf(date));
