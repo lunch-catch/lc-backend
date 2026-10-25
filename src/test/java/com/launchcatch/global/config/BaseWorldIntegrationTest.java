@@ -147,6 +147,11 @@ class BaseWorldIntegrationTest extends IntegrationTestSupport {
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM refund_request "
                 + "WHERE refund_request_id BETWEEN 10000001 AND 10000008 AND fee = 0", Long.class)).isEqualTo(8L);
 
+        // 일별 회원 지표의 정지 수는 정지 회원 30명이 정지된 D-1 에만 30 이고 다른 날은 0 이다(#867)
+        assertThat(jdbc.queryForList("SELECT CONCAT(business_date, '=', suspended_count) FROM daily_member_analytics "
+                + "WHERE suspended_count > 0", String.class))
+                .containsExactly("2026-10-27=30");
+
         // 앱은 당일을 집계하지 않아 기본 세계와 시연 층에도 집계 중(AGGREGATING) 리포트가 없다(#895)
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM campaign_daily_report WHERE report_status = 'AGGREGATING'",
                 Long.class)).isZero();
