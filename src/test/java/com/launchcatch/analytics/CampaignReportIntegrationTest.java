@@ -76,7 +76,7 @@ class CampaignReportIntegrationTest extends AbstractAnalyticsIntegrationTest {
         jdbc.update("DELETE FROM payment WHERE owner_id = ?", OWNER);
         jdbc.update("DELETE FROM event_log WHERE campaign_id = ?", CAMPAIGN);
         for (String child : new String[] {"campaign_daily_impression_reason_report", "campaign_hourly_report",
-                "campaign_daily_slot_report"}) {
+                "campaign_daily_slot_report", "campaign_daily_report_history"}) {
             jdbc.update("DELETE FROM " + child + " WHERE campaign_daily_report_id IN "
                     + "(SELECT campaign_daily_report_id FROM campaign_daily_report WHERE campaign_id = ?)", CAMPAIGN);
         }
@@ -136,6 +136,45 @@ class CampaignReportIntegrationTest extends AbstractAnalyticsIntegrationTest {
         assertThat(second.get("campaign_daily_report_id")).isEqualTo(first.get("campaign_daily_report_id"));
         assertThat(second.get("finalized_at")).isEqualTo(first.get("finalized_at"));
         assertThat(children(second)).isEqualTo(firstChildren);
+    }
+
+    /*
+     * 확정된 리포트가 늦게 도착한 차감으로 바뀌면 변경 전후를 이력으로 남긴다(#632).
+     * 점주에게 보이는 소진액이 덮이는 경로라 직접 쓴 JSON_OBJECT 와 차수 조회 SQL 을 실제로 돌린다.
+     * 값이 그대로인 재집계는 차수를 올리지 않는다.
+     */
+    @Test
+    void 확정된_리포트가_늦게_도착한_차감으로_바뀌면_변경_전후를_이력으로_남긴다() {
+        billedDeduct(yesterday.atTime(12, 0).toString());
+        job.run();
+        Map<String, Object> first = report(yesterday);
+
+        billedDeduct(yesterday.atTime(12, 30).toString());
+        rerun();
+        rerun();
+
+        Map<String, Object> history = jdbc.queryForMap("""
+                SELECT revision_no, change_reason,
+                       JSON_EXTRACT(before_data, '$.chargedAmount') AS before_charged,
+                       JSON_EXTRACT(after_data, '$.chargedAmount') AS after_charged,
+                       JSON_EXTRACT(after_data, '$.billableImpressionCount') AS after_billable,
+                       JSON_LENGTH(after_data) AS keys_count
+                  FROM campaign_daily_report_history WHERE campaign_daily_report_id = ?
+                """, first.get("campaign_daily_report_id"));
+        assertThat(((Number) history.get("revision_no")).intValue()).isEqualTo(1);
+        assertThat(history.get("change_reason")).isEqualTo("LATE_EVENT");
+        assertThat(history.get("before_charged").toString()).isEqualTo(String.valueOf(UNIT_PRICE));
+        assertThat(history.get("after_charged").toString()).isEqualTo(String.valueOf(2 * UNIT_PRICE));
+        assertThat(history.get("after_billable").toString()).isEqualTo("2");
+        assertThat(((Number) history.get("keys_count")).intValue()).isEqualTo(13);
+    }
+
+    // 성공한 집계 기록을 지워 같은 날짜를 다시 집계하게 한다
+    private void rerun() {
+        jdbc.update("DELETE FROM batch_execution_log");
+        sourceDone(yesterday);
+        sourceDone(twoDaysAgo);
+        job.run();
     }
 
     private Map<String, Object> report(LocalDate date) {

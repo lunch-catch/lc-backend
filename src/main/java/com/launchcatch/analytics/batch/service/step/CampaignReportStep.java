@@ -152,10 +152,39 @@ public class CampaignReportStep implements AggregationStep<CampaignReport> {
         return new CampaignReport(rows);
     }
 
+    /*
+     * 덮어쓰기 전에 이미 확정된 행을 읽어 두고, 공개 지표가 바뀐 행만 변경 이력으로 남긴다(#632).
+     * 공개 트랜잭션 안이라 읽기와 교체와 이력이 함께 커밋된다. 같은 날짜는 실행 행을 잡은 시도 하나만 공개한다.
+     */
     @Override
     public int publish(LocalDate businessDate, CampaignReport collected) {
-        repository.replace(businessDate, collected.rows(), LocalDateTime.now(clock));
+        LocalDateTime now = LocalDateTime.now(clock);
+        Map<Long, CampaignReport.Finalized> finalized = repository.findFinalized(businessDate);
+        repository.replace(businessDate, collected.rows(), now);
+        List<CampaignReport.Revision> revisions = revisions(finalized, collected.rows());
+        if (!revisions.isEmpty()) {
+            repository.insertRevisions(revisions, now);
+        }
         return collected.rows().size();
+    }
+
+    // 정정액이 바뀌었으면 과오 차감 정정이고, 그 밖의 변경은 늦게 확정된 원천이 반영된 것이다
+    private List<CampaignReport.Revision> revisions(Map<Long, CampaignReport.Finalized> finalized,
+            List<CampaignReport.Row> rows) {
+        List<CampaignReport.Revision> revisions = new ArrayList<>();
+        for (CampaignReport.Row row : rows) {
+            CampaignReport.Finalized saved = finalized.get(row.campaignId());
+            CampaignReport.Metrics after = row.metrics();
+            if (saved == null || saved.metrics().equals(after)) {
+                continue;
+            }
+            CampaignReport.ChangeReason reason = saved.metrics().refundedAmount() != after.refundedAmount()
+                    ? CampaignReport.ChangeReason.OVERCHARGE_REVERSAL
+                    : CampaignReport.ChangeReason.LATE_EVENT;
+            revisions.add(new CampaignReport.Revision(saved.reportId(), saved.lastRevision() + 1, reason,
+                    saved.metrics(), after));
+        }
+        return revisions;
     }
 
     /*
