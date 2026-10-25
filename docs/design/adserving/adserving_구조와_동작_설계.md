@@ -53,11 +53,24 @@ adserving/
 │   ├── MemberInvalidImpressionCount.java
 │   └── CampaignMemberConcentration.java
 ├── engine/
-│   ├── FeedAssembler.java        카드 고르기와 슬롯 배치. 계층 밖의 순수 계산
-│   ├── FeedCandidate.java        계산이 받는 후보 record
-│   ├── FeedContext.java          계산이 받는 사용자와 예산 record
+│   ├── AllocationOrder.java      배분 슬롯의 순서. 진행률 순과 신규 우선 노출 보정
 │   ├── BudgetPacing.java         예약액과 가중치로 시각까지의 계획 소진액과 진행률 계산
 │   ├── CampaignPacing.java       진행률과 노출 상한 판정
+│   ├── FeedAssembler.java        피드 배정의 진입점. 거르기, 반경 확장, 배분과 관련성 고르기, 자리 배치를 차례로 부른다
+│   ├── FeedCandidate.java        계산이 받는 후보 record
+│   ├── FeedContext.java          계산이 받는 영업일, 사용자, 예산 record
+│   ├── SlotLabels.java           지금 엔진이 붙이는 슬롯 이름표(ALLOCATION, RELEVANCE)
+│   ├── filter/AudienceFilter.java     노출 대상 성별과 연령대
+│   ├── filter/BudgetFilter.java       진행률 1.2 초과와 노출 상한
+│   ├── filter/CandidateFilter.java    거르기 조건 하나의 모양
+│   ├── filter/CategoryFilter.java     피드 필터 업종
+│   ├── filter/ExclusionFilter.java    그날 찜하거나 패스한 캠페인
+│   ├── filter/FrequencyFilter.java    하루 2회와 세션 1회
+│   ├── score/CategorySignal.java      카테고리 선호도 x 0.35
+│   ├── score/DiscountSignal.java      할인 x 0.20
+│   ├── score/DistanceSignal.java      거리 x 0.45
+│   ├── score/RelevanceSignal.java     관련성 점수 항목 하나의 모양
+│   ├── score/ScoringPool.java         점수에 쓰는 묶음 값(탐색 반경, 할인 종류별 최댓값)
 │   ├── entity/AdCandidate.java
 │   ├── exception/CandidateErrorCode.java   그날 후보가 아니다(ADSERVING-004)
 │   ├── service/CandidateStateUpdaterImpl.java   CandidateStateUpdater 구현
@@ -123,7 +136,10 @@ impression/
 | 규칙 | 두는 곳 |
 |---|---|
 | 엔티티 하나의 상태로 판정되는 규칙 | 무효 노출은 사유가 있고 유효 노출은 없다. `ImpressionLog` 의 정적 팩터리 셋(`valid`, `notOwner`, `unknown`)이 지킨다. 스키마가 CHECK 로 막지 않는다 |
-| 후보 조건, 하루 2회와 세션 1회, 탐색 반경, 배분과 관련성 슬롯, 관련성 점수 | `FeedAssembler`(순수 계산) |
+| 후보 조건과 하루 2회, 세션 1회 | `filter/` 의 `CandidateFilter` 구현마다 하나(순수 계산) |
+| 관련성 점수 항목과 가중치 | `score/` 의 `RelevanceSignal` 구현마다 하나(순수 계산) |
+| 배분 슬롯의 순서와 신규 우선 노출 보정 | `AllocationOrder`(순수 계산) |
+| 탐색 반경, 자리 배치, 슬롯 이름표 | `FeedAssembler`(순수 계산) |
 | 진행률 계산 | `BudgetPacing`(순수 계산) |
 | 진행률 1.2 초과와 노출 상한 판정 | `CampaignPacing.blocked()`(순수 계산) |
 | 온보딩, 위치, 요청 제한의 순서, 입력을 모으는 순서, 기록을 남기는 시점 | `FeedService` |
@@ -153,6 +169,7 @@ impression/
 | 필터 업종 | `feed_filter_category` 를 PK(`member_id`, `category_code`)로 읽고 업종 코드 오름차순으로 돌려준다(#405). 순서 컬럼이 없어 고른 순서는 남지 않는다 |
 | 필터 저장 | `feed_filter` 는 `INSERT ... ON DUPLICATE KEY UPDATE` 로 정렬을 넣거나 바꾸고, `feed_filter_category` 는 그 회원의 행을 지우고 다시 넣는다. 같은 업종이 두 번 오면 하나만 넣는다(#411 에서 임시로 정했다) |
 | 다른 도메인 데이터의 사본 | `ad_candidate` 는 00:00 의 캠페인과 가게 사본이다. 그날 안에서는 캠페인과 쿠폰의 통보로만 바뀐다. 정산의 그날 예약액과 단가(`reserved_amount`, `unit_price`, V5)는 5장의 시점에 덮는다. 둘 다 NULL 이면 아직 읽지 못한 것이고 0 이면 그날 계획이 없다(#837) |
+| 슬롯 이름표 | `serve_log`, `impression_log` 의 `slot_type` 은 닫힌 목록이 아니라 엔진이 붙인 이름표다(V6). CHECK 는 모양(대문자로 시작하고 대문자, 숫자, 밑줄)만 막는다. serve 기록이 콜론으로 값을 이어 이름표에 콜론이 들어가면 안 된다. 자리(`slot_position`)는 1 이상만 막고 상한은 피드 크기를 따른다 |
 | 쿠폰의 찜 조회 | `uk_wishlist_member_campaign`(`member_id`, `campaign_id`)으로 단건은 있는지만 보고, 목록은 앞 열로 그 회원의 `campaign_id` 만 읽는다. 캠페인별 회원 일괄 조회는 같은 키로 입력한 회원(500명까지)의 행만 읽는다(#578). 셋 다 `campaign_ended_at IS NULL` 인 행만 유효로 본다. 순서는 정하지 않는다(#163, #553) |
 | 끝난 캠페인의 찜 | 종료 표시는 `idx_wishlist_campaign` 으로 그 캠페인의 행 중 `campaign_ended_at` 이 비어 있는 것만 채운다. 정리는 `idx_wishlist_campaign_ended` 로 기준 시각 전에 끝난 행을 지운다(#553). 종료 이벤트 뒤에 들어온 찜은 찜 요청이 넣은 뒤 캠페인을 읽어 같은 표시를 부른다(#780) |
 | 소진 반영 | `ad_candidate` 의 PK(`business_date`, `campaign_id`)로 `sold_out_at IS NULL` 인 행만 바꾼다. 받은 소진 시각을 그대로 쓰고 부른 시각은 `updated_at` 에만 쓴다. 0행이면 PK 로 후보가 있는지 한 번 더 본다(#163) |
@@ -216,7 +233,7 @@ B 를 고른다. 응답 전에 피드 1회의 카드를 파이프라인 한 번�
 | 유효 노출 | `validity = 'VALID'`. 쿠폰 소진 뒤 노출(`sold_out`)을 포함한다. 그래서 정산의 `BILLED + NOT_BILLED_BUDGET + NOT_BILLED_PAUSED + NOT_BILLED_NO_PLAN` 에 소진 뒤 노출을 더한 값과 같다 |
 | 무효 노출 | `invalid_reason` 의 두 값. `EXPIRED_OR_UNKNOWN` 의 캠페인은 요청이 보낸 값이라 없는 캠페인 ID 일 수 있다 |
 | 시간대 | 받은 시각(`created_at`)의 시(0~23)를 그대로 센다. 내려준 시각이 저장되지 않아서다(#350 에서 정했다). 서빙 시간대가 없어져 10시와 12시에 붙이던 규칙을 지웠다(#498) |
-| 슬롯 유형 | 유효 노출의 `slot_type`. 유효 노출은 serve 기록이 있어 비지 않는다 |
+| 슬롯 | 유효 노출의 `slot_type` 이름표별로 센다. 이름표 목록을 알지 않아 엔진이 새 이름표를 붙여도 쿼리와 계약을 바꾸지 않는다. 유효 노출은 serve 기록이 있어 비지 않는다 |
 | 찜 | `swipe_log` 의 `WISH`. 가게 상세 찜은 들어가지 않는다. 31일이 지난 날은 보관 기간이 지나 0 이다(#350 에서 정했다) |
 | 회원 축 | 무효 노출은 (캠페인, 회원)마다 상한 없이 전부 내준다. A-09 가 기간 합계와 전체 건수를 내야 해서다. 유효 노출은 회원 수와 상위 N명의 합만 내준다 |
 
@@ -241,18 +258,19 @@ A 를 고른다. 가게 상세 찜을 리포트에 넣어야 하면 그 찜을 �
 
 ## 4. 계산 로직
 
-`FeedAssembler.assemble` 이 카드를 고른다. 현재 시각, 위치, 예산은 `FeedService` 가 구해 `FeedContext` 로 넘긴다.
+`FeedAssembler.assemble` 이 카드를 고른다. 영업일, 현재 시각, 위치, 예산은 `FeedService` 가 구해 `FeedContext` 로 넘긴다.
+피드 배정의 진입점은 이 호출 하나다. 다른 엔진으로 바꿀 때는 이 호출을 인터페이스로 바꾸고 구현을 더한다. 두 번째 엔진이 생기기 전에는 인터페이스를 두지 않는다.
 
-1. 거른다. 당일 이력, 필터 업종, 노출 대상 성별과 연령대, 캠페인 노출 반경(`target_radius`), 하루 2회, 이번 세션
-2. 후보의 예산을 모두 읽었으면 더 거른다. 그날 예산 계획이 없거나(예약액 0), 진행률이 1.2 를 넘거나, 유효 노출 수가 노출 상한(예약액 / 단가 x 1.05)에 닿은 캠페인이다
+1. 거른다. `CandidateFilter` 구현을 차례로 적용하고 모두 통과한 후보만 남긴다. 당일 이력, 필터 업종, 노출 대상 성별과 연령대, 하루 2회와 이번 세션, 예산이다. 캠페인 노출 반경(`target_radius`)은 거리를 잰 뒤 거른다
+2. 예산 조건은 후보의 예산을 모두 읽었을 때만 건다. 그날 예산 계획이 없거나(예약액 0), 진행률이 1.2 를 넘거나, 유효 노출 수가 노출 상한(예약액 / 단가 x 1.05)에 닿은 캠페인을 뺀다
 3. 탐색 반경 1000, 2000, 3000, 5000 가운데 10장이 모이는 가장 좁은 반경을 고른다. 5000 에서도 모자라면 있는 만큼이다.
    **임시**: 명세의 "후보가 모자라면" 을 10장 미만으로 읽었다(#236)
-4. 배분 3장: 진행률 오름차순, 같으면 `campaign_created_at`, 그다음 `campaignId` 오름차순이다
+4. 배분 3장: 진행률 오름차순, 같으면 `campaign_created_at`, 그다음 `campaignId` 오름차순이다. 신규 우선 노출 기간(`new_priority_until` 이 영업일 이후)의 캠페인은 진행률에 0.8 을 곱해 줄 세운다(BR-035). 이 보정은 순서에만 쓰고 1.2 초과 제외에는 쓰지 않는다
 5. 관련성: 남은 후보를 점수 내림차순으로 `10 - 배분 장수` 만큼 고르고, 피드 필터 정렬로 줄 세운다.
    DISTANCE 면 거리 오름차순, DISCOUNT_RATE 면 할인 점수 내림차순이다
 6. 배분을 1, 4, 7번에 두고 나머지 자리를 관련성으로 채운다. 전체가 10장보다 적으면 빈 자리 없이 앞으로 당긴다
 
-관련성 점수는 아래다(#307 에서 정했다). 세 항목 모두 0~1 이다.
+관련성 점수는 `RelevanceSignal` 구현마다 0~1 의 값에 가중치를 곱해 더한다(#307 에서 정했다). 항목을 더하려면 구현을 하나 더한다.
 
 | 항목 | 가중치 | 식 |
 |---|---|---|
@@ -801,5 +819,4 @@ A 를 고른다. 분석의 결정과 어긋났을 때 B 는 노출 이벤트를 
 | 퍼널 이벤트의 수신자 | 분석 리스너가 아직 없다 | 수신자가 `fallbackExecution` 을 빠뜨리면 스와이프 이벤트가 오류 없이 사라진다. 조건은 `feed-api-design.md` 에 있다 |
 | 고를 수 있는 업종 코드 | store 의 CHECK 와 같은 목록을 광고 서빙 요청 타입에 따로 둔다(#411 에서 임시로 정했다) | 업종이 늘면 두 곳을 고쳐야 한다. store 가 업종 목록을 `contract` 로 공개하면 그것으로 검사한다 |
 | 필터가 없는 회원의 기본값 | `FeedFilterService` 와 `FeedService` 가 따로 정한다(#411 에서 임시로 정했다) | 없다. 기본값이 바뀌면 두 곳을 고친다 |
-| 신규 우선 노출(`new_priority_until`) | 계산 규칙이 문서에 없다 | 배분 슬롯에 넣을 자리가 정해지지 않았다 |
 | 31일이 지난 날의 찜 수 | 집계 조회는 0 을 돌려준다(#350) | 분석은 이 값을 쓰지 않고 자기 `event_log` 의 `wish` 로 센다(AD-31, #460). 재집계가 저장된 찜 수를 0 으로 덮지 않는다 |

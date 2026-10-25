@@ -38,7 +38,7 @@ public class ServeLogRepository {
             ps.setLong(4, r.memberId());
             ps.setLong(5, r.campaignId());
             ps.setLong(6, r.storeId());
-            ps.setString(7, r.slotType().name());
+            ps.setString(7, r.slotType());
             ps.setInt(8, r.slotPosition());
             ps.setTimestamp(9, servedAt);
             ps.setTimestamp(10, servedAt);

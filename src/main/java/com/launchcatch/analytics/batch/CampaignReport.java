@@ -31,7 +31,8 @@ public record CampaignReport(List<Row> rows) {
             Map<NotBilledReason, Long> notBilledReasons,
             Map<InvalidReasonCode, Long> invalidReasons,
             Map<Integer, Long> hourlyCounts,
-            Map<SlotType, Long> slotCounts
+            // 이름표 목록을 알지 않고 광고 서빙이 붙인 슬롯 이름표별로 센 노출 수다(#978)
+            Map<String, Long> slotCounts
     ) {
         public Row {
             notBilledReasons = Map.copyOf(notBilledReasons);
@@ -85,11 +86,5 @@ public record CampaignReport(List<Row> rows) {
     public enum ChangeReason {
         LATE_EVENT,
         OVERCHARGE_REVERSAL
-    }
-
-    // campaign_daily_slot_report.slot_type 에 같은 이름으로 남는다
-    public enum SlotType {
-        ALLOCATION,
-        RELEVANCE
     }
 }

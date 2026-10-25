@@ -29,7 +29,7 @@ class ImpressionLogInsertImpl implements ImpressionLogInsert {
         Timestamp now = Timestamp.valueOf(receivedAt);
         return jdbcTemplate.update(INSERT, bytes(log.getId().getServeId()), log.getId().getMemberId(),
                 log.getBusinessDate(), log.getCampaignId(), log.getStoreId(),
-                log.getSlotType() == null ? null : log.getSlotType().name(), log.getSlotPosition(),
+                log.getSlotType(), log.getSlotPosition(),
                 Timestamp.valueOf(log.getDisplayedAt()), log.getLatRounded(), log.getLngRounded(),
                 log.getValidity().name(), log.getInvalidReason() == null ? null : log.getInvalidReason().name(),
                 log.isSoldOut(), log.getViewedMs(), now, now) == 1;

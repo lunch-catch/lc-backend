@@ -33,7 +33,7 @@ import com.launchcatch.adserving.feed.repository.ServeFrequencyRepository.Served
 import com.launchcatch.adserving.feed.repository.ServeRecord;
 import com.launchcatch.adserving.feed.repository.ServeRecordRepository;
 import com.launchcatch.adserving.feed.repository.SwipeLogRepository;
-import com.launchcatch.adserving.engine.SlotType;
+import com.launchcatch.adserving.engine.SlotLabels;
 import org.mockito.ArgumentCaptor;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import com.launchcatch.adserving.feed.repository.FeedRateLimitRepository;
@@ -459,7 +459,7 @@ class FeedServiceTest {
             });
             assertThat(records.getFirst().campaignId()).isEqualTo(response.cards().getFirst().campaignId());
             assertThat(records.getFirst().storeId()).isEqualTo(response.cards().getFirst().storeId());
-            assertThat(records.getFirst().slotType()).isEqualTo(SlotType.ALLOCATION);
+            assertThat(records.getFirst().slotType()).isEqualTo(SlotLabels.ALLOCATION);
         }
 
         @Test

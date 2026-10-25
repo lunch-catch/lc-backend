@@ -10,7 +10,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
-import com.launchcatch.adserving.engine.SlotType;
+import com.launchcatch.adserving.engine.SlotLabels;
 import com.launchcatch.adserving.feed.repository.FeedVisitRepository;
 import com.launchcatch.adserving.feed.repository.FeedVisitRepository.Visit;
 import com.launchcatch.adserving.feed.repository.ServeLogRepository;
@@ -49,7 +49,7 @@ class ServeLogBufferTest {
 
     private static ServedFeed feedWithCards(long memberId, int cards) {
         List<ServeRecord> records = IntStream.rangeClosed(1, cards)
-                .mapToObj(i -> new ServeRecord(UUID.randomUUID(), memberId, 100L + i, 55L, SlotType.RELEVANCE, i, NOW))
+                .mapToObj(i -> new ServeRecord(UUID.randomUUID(), memberId, 100L + i, 55L, SlotLabels.RELEVANCE, i, NOW))
                 .toList();
         return new ServedFeed(TODAY, memberId, cards == 0 ? null : UUID.randomUUID(), 37.5, 127.0, records, REQUESTED_AT);
     }

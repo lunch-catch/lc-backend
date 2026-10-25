@@ -15,6 +15,7 @@ import java.sql.Date;
 import java.sql.Timestamp;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
@@ -75,6 +76,7 @@ class CampaignReportIntegrationTest extends AbstractAnalyticsIntegrationTest {
         jdbc.update("DELETE FROM deduction_result WHERE owner_id = ?", OWNER);
         jdbc.update("DELETE FROM payment WHERE owner_id = ?", OWNER);
         jdbc.update("DELETE FROM event_log WHERE campaign_id = ?", CAMPAIGN);
+        jdbc.update("DELETE FROM impression_log WHERE campaign_id = ?", CAMPAIGN);
         for (String child : new String[] {"campaign_daily_impression_reason_report", "campaign_hourly_report",
                 "campaign_daily_slot_report", "campaign_daily_report_history"}) {
             jdbc.update("DELETE FROM " + child + " WHERE campaign_daily_report_id IN "
@@ -116,6 +118,25 @@ class CampaignReportIntegrationTest extends AbstractAnalyticsIntegrationTest {
                 .andExpect(jsonPath("$.data.items[0].todayStatus").value("IN_PROGRESS"))
                 .andExpect(jsonPath("$.data.items[1].campaignId").value(973_199))
                 .andExpect(jsonPath("$.data.items[1].spentAmount").value(0));
+    }
+
+    @Test
+    void 광고_서빙이_새로_붙인_슬롯_이름표도_분석_코드_수정_없이_이름표별로_남긴다() {
+        String at = yesterday.atTime(12, 0).toString();
+        billedDeduct(at);
+        billedDeduct(at);
+        impression("ALLOCATION", yesterday.atTime(12, 0));
+        impression("NEW_STORE", yesterday.atTime(12, 1));
+
+        job.run();
+
+        Object reportId = report(yesterday).get("campaign_daily_report_id");
+        Map<String, Long> slots = new HashMap<>();
+        jdbc.query("SELECT slot_type, impression_count FROM campaign_daily_slot_report WHERE campaign_daily_report_id = ?",
+                rs -> {
+                    slots.put(rs.getString("slot_type"), rs.getLong("impression_count"));
+                }, reportId);
+        assertThat(slots).containsExactlyInAnyOrderEntriesOf(Map.of("ALLOCATION", 1L, "NEW_STORE", 1L));
     }
 
     @Test
@@ -247,6 +268,17 @@ class CampaignReportIntegrationTest extends AbstractAnalyticsIntegrationTest {
                                           source, amount, reason, idempotency_key, created_at, updated_at)
                 VALUES (?, NULL, ?, NULL, NULL, 'CHARGE', 'RECONCILIATION', 10000, NULL, NULL, ?, ?)
                 """, OWNER, paymentId, at, at);
+    }
+
+    // 슬롯 이름표만 바꿔 넣는 광고 서빙의 유효 노출 한 건이다
+    private void impression(String slotType, LocalDateTime receivedAt) {
+        Timestamp received = Timestamp.valueOf(receivedAt);
+        jdbc.update("""
+                INSERT INTO impression_log (serve_id, member_id, business_date, campaign_id, store_id, slot_type,
+                    slot_position, displayed_at, lat_rounded, lng_rounded, validity, invalid_reason, sold_out,
+                    created_at, updated_at)
+                VALUES (UUID_TO_BIN(UUID()), 3001, ?, ?, ?, ?, 1, ?, 37.498, 127.028, 'VALID', NULL, FALSE, ?, ?)
+                """, Date.valueOf(receivedAt.toLocalDate()), CAMPAIGN, STORE, slotType, received, received, received);
     }
 
     private void billedDeduct(String at) {

@@ -107,7 +107,7 @@ class FeedValkeyFallbackTest {
                 .thenThrow(new QueryTimeoutException("timeout"));
 
         new ServeRecordRepository(redisTemplate, meterRegistry).saveAll(java.util.List.of(new ServeRecord(
-                java.util.UUID.randomUUID(), 3001L, 101L, 55L, com.launchcatch.adserving.engine.SlotType.RELEVANCE, 1, NOW)));
+                java.util.UUID.randomUUID(), 3001L, 101L, 55L, com.launchcatch.adserving.engine.SlotLabels.RELEVANCE, 1, NOW)));
 
         assertThat(bypassCount("serve_record")).isEqualTo(1);
     }

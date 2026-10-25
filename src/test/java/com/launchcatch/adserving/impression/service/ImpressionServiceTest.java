@@ -9,7 +9,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.launchcatch.adserving.contract.ImpressionServedEvent;
-import com.launchcatch.adserving.engine.SlotType;
+import com.launchcatch.adserving.engine.SlotLabels;
 import com.launchcatch.adserving.engine.repository.AdCandidateRepository;
 import com.launchcatch.adserving.feed.repository.ImpressionCountRepository;
 import com.launchcatch.adserving.feed.repository.ServeRecord;
@@ -56,7 +56,7 @@ class ImpressionServiceTest {
     private static final Instant AFTER_MIDNIGHT = LocalDateTime.of(2026, 10, 2, 0, 10).atZone(ClockConfig.ZONE).toInstant();
     private static final Instant SERVED_AT = LocalDateTime.of(2026, 10, 1, 10, 15, 30).atZone(ClockConfig.ZONE).toInstant();
     private static final Instant NOW = LocalDateTime.of(2026, 10, 1, 10, 15, 32).atZone(ClockConfig.ZONE).toInstant();
-    private static final ServeRecord RECORD = new ServeRecord(SERVE_ID, MEMBER_ID, 101L, 55L, SlotType.ALLOCATION, 1, SERVED_AT);
+    private static final ServeRecord RECORD = new ServeRecord(SERVE_ID, MEMBER_ID, 101L, 55L, SlotLabels.ALLOCATION, 1, SERVED_AT);
 
     private final ServeRecordRepository serveRecordRepository = mock(ServeRecordRepository.class);
     private final ImpressionLogRepository impressionLogRepository = mock(ImpressionLogRepository.class);
@@ -75,7 +75,7 @@ class ImpressionServiceTest {
 
     private void givenLateRecord() {
         when(serveRecordRepository.findById(SERVE_ID)).thenReturn(Optional.of(
-                new ServeRecord(SERVE_ID, MEMBER_ID, 101L, 55L, SlotType.ALLOCATION, 1, LATE_SERVED_AT)));
+                new ServeRecord(SERVE_ID, MEMBER_ID, 101L, 55L, SlotLabels.ALLOCATION, 1, LATE_SERVED_AT)));
     }
 
     private static ImpressionRequest request(Long campaignId) {
@@ -150,7 +150,7 @@ class ImpressionServiceTest {
             ImpressionLog log = saved();
             assertThat(log.getCampaignId()).isEqualTo(101L);
             assertThat(log.getStoreId()).isEqualTo(55L);
-            assertThat(log.getSlotType()).isEqualTo(SlotType.ALLOCATION);
+            assertThat(log.getSlotType()).isEqualTo(SlotLabels.ALLOCATION);
             assertThat(log.getSlotPosition()).isEqualTo(1);
             assertThat(log.isSoldOut()).isFalse();
             verify(pointDeductor).deduct(SERVE_ID, 101L, SERVED_DATE);
@@ -176,7 +176,7 @@ class ImpressionServiceTest {
             when(impressionLogRepository.insertIgnore(any(), any())).thenReturn(false);
             when(impressionLogRepository.findByIdForShare(ImpressionLogId.of(SERVE_ID, MEMBER_ID)))
                     .thenReturn(Optional.of(ImpressionLog.valid(SERVE_ID, MEMBER_ID, SERVED_DATE,
-                            new ImpressionLog.Placement(101L, 55L, SlotType.ALLOCATION, 1),
+                            new ImpressionLog.Placement(101L, 55L, SlotLabels.ALLOCATION, 1),
                             new ImpressionLog.Sighting(LocalDateTime.of(2026, 10, 1, 10, 15), 37.5, 127.0, null), false)));
 
             service.record(MEMBER_ID, request(999L));
@@ -298,7 +298,7 @@ class ImpressionServiceTest {
             when(serveRecordRepository.findById(SERVE_ID)).thenReturn(Optional.of(RECORD));
             when(impressionLogRepository.insertIgnore(any(), any())).thenReturn(false);
             ImpressionLog winner = ImpressionLog.valid(SERVE_ID, MEMBER_ID, SERVED_DATE,
-                    new ImpressionLog.Placement(101L, 55L, SlotType.ALLOCATION, 1),
+                    new ImpressionLog.Placement(101L, 55L, SlotLabels.ALLOCATION, 1),
                     new ImpressionLog.Sighting(LocalDateTime.of(2026, 10, 1, 10, 15), 37.5, 127.0, null), false);
             when(impressionLogRepository.findById(ImpressionLogId.of(SERVE_ID, MEMBER_ID))).thenReturn(Optional.empty());
             // 먼저 넣은 쪽은 이 트랜잭션의 스냅샷 뒤에 커밋돼 잠금 읽기로만 보인다(#781)
@@ -408,7 +408,7 @@ class ImpressionServiceTest {
         @Test
         void 이미_저장된_키면_발행하지_않는다() {
             ImpressionLog first = ImpressionLog.valid(SERVE_ID, MEMBER_ID, SERVED_DATE,
-                    new ImpressionLog.Placement(101L, 55L, SlotType.ALLOCATION, 1),
+                    new ImpressionLog.Placement(101L, 55L, SlotLabels.ALLOCATION, 1),
                     new ImpressionLog.Sighting(LocalDateTime.of(2026, 10, 1, 10, 15), 37.5, 127.0, null), false);
             when(impressionLogRepository.findById(ImpressionLogId.of(SERVE_ID, MEMBER_ID))).thenReturn(Optional.of(first));
 
@@ -424,7 +424,7 @@ class ImpressionServiceTest {
             when(impressionLogRepository.findById(ImpressionLogId.of(SERVE_ID, MEMBER_ID))).thenReturn(Optional.empty());
             when(impressionLogRepository.findByIdForShare(ImpressionLogId.of(SERVE_ID, MEMBER_ID)))
                     .thenReturn(Optional.of(ImpressionLog.valid(SERVE_ID, MEMBER_ID, SERVED_DATE,
-                            new ImpressionLog.Placement(101L, 55L, SlotType.ALLOCATION, 1),
+                            new ImpressionLog.Placement(101L, 55L, SlotLabels.ALLOCATION, 1),
                             new ImpressionLog.Sighting(LocalDateTime.of(2026, 10, 1, 10, 15), 37.5, 127.0, null), false)));
 
             service.record(MEMBER_ID, request(101L));
