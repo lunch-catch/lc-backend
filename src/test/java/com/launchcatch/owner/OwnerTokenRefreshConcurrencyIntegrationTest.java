@@ -250,7 +250,11 @@ class OwnerTokenRefreshConcurrencyIntegrationTest extends AbstractOwnerIntegrati
     @Test
     void 캐시_전체_유실도_DB의_현재_세션을_검증한_뒤_복구한다() {
         var issued = login.login(request);
-        redis.delete("ownerSessionToken:" + com.launchcatch.auth.opaque.TokenHasher.sha256(issued.refreshToken()));
+        var sessionKey = key(issued.accessToken());
+        redis.delete(List.of(
+                "ownerSessionToken:" + com.launchcatch.auth.opaque.TokenHasher.sha256(issued.refreshToken()),
+                "ownerSessionActive:" + sessionKey,
+                "ownerSessionVersion:" + sessionKey));
         var renewed = refresh.refresh(issued.refreshToken());
         assertThat(sessionTokens.consume(renewed.refreshToken())).isPresent();
         assertThat(valid(renewed.accessToken())).isTrue();
