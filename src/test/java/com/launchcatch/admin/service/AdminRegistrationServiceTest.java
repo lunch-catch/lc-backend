@@ -41,7 +41,7 @@ class AdminRegistrationServiceTest {
     private static final LocalDateTime ISSUED_AT = LocalDateTime.of(2026, 10, 8, 10, 0);
     private final AdminAccessTokenVersionRepository cutoff = mock(AdminAccessTokenVersionRepository.class);
     private final AdminRegistrationService service =
-            new AdminRegistrationService(repository, audit, encoder, transactions, new AdminAccessTokenVerifier(cutoff, mock(AccessTokenCutoffVerifier.class), revocations));
+            new AdminRegistrationService(repository, audit, encoder, transactions, new AdminAccessTokenVerifier(cutoff, mock(AccessTokenCutoffVerifier.class), revocations, org.mockito.Mockito.mock(com.launchcatch.admin.service.AdminSessionService.class)), org.mockito.Mockito.mock(com.launchcatch.admin.service.AdminSessionService.class));
 
     @BeforeEach
     void setUp() {
@@ -231,7 +231,7 @@ class AdminRegistrationServiceTest {
         var precheck = mock(AdminAccessTokenVerifier.class);
         when(precheck.isValidAfter(Role.SUPER_ADMIN, 1L, ISSUED_AT, version,
                 com.launchcatch.auth.jwt.CutoffPolicy.REQUIRED)).thenReturn(true);
-        var registering = new AdminRegistrationService(repository, audit, encoder, transactions, precheck);
+        var registering = new AdminRegistrationService(repository, audit, encoder, transactions, precheck, org.mockito.Mockito.mock(com.launchcatch.admin.service.AdminSessionService.class));
         doAnswer(call -> {
             issuer.logoutAt(ISSUED_AT.plusSeconds(1));
             return call.callRealMethod();
