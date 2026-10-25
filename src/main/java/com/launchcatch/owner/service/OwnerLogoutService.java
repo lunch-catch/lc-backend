@@ -39,7 +39,7 @@ public class OwnerLogoutService {
                         .orElseThrow(() -> new AuthException(AuthErrorCode.LOGIN_REQUIRED));
                 // DB에서 지우기 전에 Redis에서도 삭제할 기존 RT 해시를 보관한다.
                 String hash = owner.getRefreshTokenHash();
-                owner.clearRefreshToken();
+                owner.clearLegacyRefreshToken();
                 owners.saveAndFlush(owner);
                 return new Revocation(hash, owner.getRefreshTokenIssuanceVersion());
             });

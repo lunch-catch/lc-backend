@@ -65,6 +65,17 @@ public class Owner extends BaseTimeEntity {
     @Column(name = "access_token_revoked_version", nullable = false)
     private long accessTokenRevokedVersion = -1L;
 
+    @Column(name = "session_generation", nullable = false)
+    private long sessionGeneration;
+
+    // 점주 행 잠금 아래 새 기기의 로그인 시각만 기록한다.
+    public void recordSessionLogin(LocalDateTime now) {
+        if (!canLogin() || now == null) {
+            throw new IllegalStateException("로그인 가능한 점주와 시각이 필요합니다.");
+        }
+        this.lastLoginAt = now;
+    }
+
     private Owner(String email, String passwordHash) {
         if (email == null || email.isBlank() || email.length() > 255) {
             throw new IllegalArgumentException("점주 이메일은 필수이며, 255자 이하여야 합니다.");
@@ -122,6 +133,12 @@ public class Owner extends BaseTimeEntity {
 
     // 폐기 순번도 증가시켜 이미 진행 중인 이전 토큰 게시를 차단한다.
     public void clearRefreshToken() {
+        sessionGeneration = Math.incrementExact(sessionGeneration);
+        clearLegacyRefreshToken();
+    }
+
+    // 이전 단일 토큰의 로그아웃·재사용 처리는 새 기기별 세션을 폐기하지 않는다.
+    public void clearLegacyRefreshToken() {
         this.refreshTokenIssuanceVersion = Math.incrementExact(refreshTokenIssuanceVersion);
         this.refreshTokenHash = null;
         this.refreshTokenExpiresAt = null;
