@@ -422,8 +422,8 @@ Retry-After: 37
 | `memberId` | integer | 가능 | `found` 가 `false` 면 `null` |
 | `servedAt` | string (시각) | 가능 | 피드를 내려준 시각. `found` 가 `false` 면 `null` |
 | `cards` | array | 아니오 | 카드 구성. `found` 가 `false` 면 빈 배열 |
-| `cards[].slotPosition` | integer | 아니오 | 카드 위치. 1 ~ 10 |
-| `cards[].slotType` | string | 아니오 | `ALLOCATION`(배분 슬롯), `RELEVANCE`(관련성 슬롯) |
+| `cards[].slotPosition` | integer | 아니오 | 카드 위치. 1 부터 센다. 상한은 그 피드의 카드 수다 |
+| `cards[].slotType` | string | 아니오 | 카드를 고른 슬롯의 이름표. 피드 엔진이 정하며 고정된 목록이 아니다. 지금은 `ALLOCATION`(배분 슬롯), `RELEVANCE`(관련성 슬롯) 둘이다. 화면은 모르는 이름표를 받으면 이름표 문자열을 그대로 보인다 |
 | `cards[].campaignId` | integer | 아니오 | 캠페인 ID |
 | `cards[].storeId` | integer | 아니오 | 가게 ID |
 | `cards[].serveId` | string (UUID) | 아니오 | 카드 식별자 |

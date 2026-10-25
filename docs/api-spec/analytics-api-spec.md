@@ -641,7 +641,7 @@ GET /v1/owner/report?from=2026-10-16&to=2026-10-17
 | `notBilledReasons` | 미과금 사유별 노출 수 |
 | `invalidReasons` | 무효 사유별 노출 수 |
 | `hourlyImpressions` | 0~23시 중 유효 노출이 있는 시간의 시간대별 유효 노출 수 |
-| `slotImpressions` | `ALLOCATION`, `RELEVANCE` 슬롯별 유효 노출 수 |
+| `slotImpressions` | 슬롯 이름표별 유효 노출 수. 키는 피드 엔진이 붙인 이름표이고 고정된 목록이 아니다. 0건인 이름표는 키가 없다 |
 
 나머지 필드는 아래 「일별 응답 필드」에 있다. 각 값을 어디서 읽는지는 [설계서](../design/analytics/analytics-api-design.md#9-캠페인-리포트) 9장에 있다.
 
@@ -710,7 +710,7 @@ costPerVisit = spentAmount / redeemCount
 
 ### 시간대·슬롯·전환 지표
 
-`hourlyImpressions`는 0~23시 중 유효 노출이 저장된 시간의 노출 수를 시간순으로 반환한다. 노출이 없는 시간은 원소가 없고 화면이 0으로 채운다(2026-10-19 수정, #497: 서빙 시간대 10:00~12:59를 없앴다). `slotImpressions`는 `ALLOCATION`, `RELEVANCE`의 유효 노출 수를 반환한다. 슬롯 유형 비율은 각 값 ÷ `validImpressionCount`로 화면에서 계산한다. 분모가 0이면 비율은 `null`이다.
+`hourlyImpressions`는 0~23시 중 유효 노출이 저장된 시간의 노출 수를 시간순으로 반환한다. 노출이 없는 시간은 원소가 없고 화면이 0으로 채운다(2026-10-19 수정, #497: 서빙 시간대 10:00~12:59를 없앴다). `slotImpressions`는 그날 노출에 붙은 슬롯 이름표마다 유효 노출 수를 반환한다. 지금 엔진의 이름표는 `ALLOCATION`, `RELEVANCE` 둘이고, 피드 구성이 바뀌면 다른 이름표가 올 수 있다. 화면은 키를 고정 목록으로 가정하지 않는다. 슬롯 유형 비율은 각 값 ÷ `validImpressionCount`로 화면에서 계산한다. 분모가 0이면 비율은 `null`이다.
 
 찜·발급·사용 수와 전환율은 광고 성과 지표다. 정산 원장과는 독립이며 점주 리포트 화면에 “전환 지표는 비용 정산에 반영되지 않음”을 표시한다.
 
