@@ -43,7 +43,10 @@ class RoleAccessCookieIntegrationTest extends AbstractAuthIntegrationTest {
 
     @AfterEach
     void tearDown() {
-        adminIds.forEach(id -> jdbc.update("delete from admin where admin_id = ?", id));
+        adminIds.forEach(id -> {
+            jdbc.update("delete from admin_login_session where admin_id = ?", id);
+            jdbc.update("delete from admin where admin_id = ?", id);
+        });
         ownerIds.forEach(id -> {
             jdbc.update("delete from owner_session where owner_id = ?", id);
             jdbc.update("delete from owner where owner_id = ?", id);

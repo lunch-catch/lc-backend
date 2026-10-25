@@ -87,7 +87,7 @@ class AdminAccessTokenVersionTest {
         SecurityContextHolder.clearContext();
         var request = new MockHttpServletRequest("GET", "/v1/admin/test");
         request.setCookies(new Cookie("adminAccessToken", token));
-        new JwtAuthenticationFilter(jwt, legacy, java.util.List.of(new AdminAccessTokenVerifier(repository, new AccessTokenCutoffVerifier(legacy), revocations))).doFilter(request, new MockHttpServletResponse(), (req, res) -> {
+        new JwtAuthenticationFilter(jwt, legacy, java.util.List.of(new AdminAccessTokenVerifier(repository, new AccessTokenCutoffVerifier(legacy), revocations, org.mockito.Mockito.mock(com.launchcatch.admin.service.AdminSessionService.class)))).doFilter(request, new MockHttpServletResponse(), (req, res) -> {
             assertThat(SecurityContextHolder.getContext().getAuthentication() != null).isEqualTo(expected);
         });
     }

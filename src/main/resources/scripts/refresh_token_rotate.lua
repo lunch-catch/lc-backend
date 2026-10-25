@@ -24,14 +24,21 @@
 -- 동시에 둘 들어와도 하나만 정상 회전에 성공한다. 기본 레코드 회전과 활성 포인터 갱신도 같은
 -- 실행에 넣어 둘 중 하나만 새 토큰을 가리키는 상태를 만들지 않는다.
 --
--- 반환값 셋
+-- 반환값
 --   false                        : 이 키가 원래 없었거나 tombstone 까지 자연 만료됐다
 --   "id|role|remember"           : 정상 회전 성공(최초 사용)
 --   "id|role|remember|REVOKED"   : 재사용 탐지. 소유자 정보를 담아 돌려주고 회전은 실패로 둔다
+--   "ROTATION_IN_PROGRESS"       : 회원 DB 반영 중이라 중복 요청만 거부한다
+-- 회원의 옛 키는 DB 반영 전까지 |ROTATING:{새 해시}로 남기고 반영 뒤 별도 스크립트로 확정한다.
 
 local value = redis.call('GET', KEYS[1])
 if not value then
     return false
+end
+
+-- DB 반영 중인 회원의 중복 요청은 새 토큰이나 계정 폐기를 만들지 않는다.
+if string.find(value, '|ROTATING:', 1, true) then
+    return 'ROTATION_IN_PROGRESS'
 end
 
 if string.sub(value, -8) == '|REVOKED' then
@@ -47,7 +54,11 @@ end
 
 redis.call('SET', KEYS[2], value, 'PX', ARGV[1])
 if remainingTtl > 0 then
-    redis.call('SET', KEYS[1], value .. '|REVOKED', 'PX', remainingTtl)
+    local marker = '|REVOKED'
+    if role == 'MEMBER' then
+        marker = '|ROTATING:' .. ARGV[3]
+    end
+    redis.call('SET', KEYS[1], value .. marker, 'PX', remainingTtl)
 else
     -- PTTL 이 0 이나 음수로 나오는 것은 이론상 거의 없다. 방금 GET 으로 값을 읽었으니 그 순간엔
     -- 살아 있었다는 뜻이라 TTL 도 양수였어야 한다. 그래도 방어적으로, TTL 을 못 구하면

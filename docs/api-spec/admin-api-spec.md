@@ -134,7 +134,9 @@ Cookie: adminAccessToken=<JWT>
 
 ### `POST /v1/admin/auth/tokens`
 
-관리자 ID와 비밀번호를 검증하고 토큰을 발급한다. 기존 Access Token은 필요하지 않다. 계정은 `ACTIVE`이며 관리자 역할이어야 한다.
+관리자 ID와 비밀번호를 검증하고 로그인마다 별도 세션을 발급한다. 기존 Access Token은 필요하지 않다. 계정은 `ACTIVE`이며 관리자 역할이어야 한다.
+
+같은 계정으로 여러 기기에서 동시에 사용할 수 있다. 새 로그인이나 토큰 갱신은 다른 기기의 세션을 폐기하지 않는다. 같은 브라우저의 탭들은 인증 쿠키를 공유하므로 새 탭에서도 쿠키로 인증한다. 탭마다 별도 토큰을 저장하거나 로그인 여부를 서버 세션과 다르게 판단하지 않는다. 갱신 요청의 탭 간 직렬화는 [인증 명세](./auth-api-spec.md#관리자)를 따른다.
 
 ### 요청
 
@@ -205,7 +207,7 @@ Set-Cookie: refreshToken=<opaque>; Path=/v1/admin/auth/; Max-Age=86400; HttpOnly
 
 ## 관련 인증 계약
 
-두 토큰은 응답 본문이 아닌 HttpOnly 쿠키로 전달한다. 로그인 응답과 재발급 응답의 `data`는 동일하다. 쿠키 경로·기본 수명·Secure 설정과 로그인·재발급 요청 제한, `AUTH-*` 오류 메시지는 [인증 명세](./auth-api-spec.md)에 있다. 새 로그인은 기존 Refresh Token을 대체하지만 기존 Access Token을 모두 폐기하지는 않는다.
+두 토큰은 응답 본문이 아닌 HttpOnly 쿠키로 전달한다. 로그인 응답과 재발급 응답의 `data`는 동일하다. 쿠키 경로·기본 수명·Secure 설정과 로그인·재발급 요청 제한, `AUTH-*` 오류 메시지는 [인증 명세](./auth-api-spec.md)에 있다. 새 로그인은 별도 세션을 추가하며 다른 세션의 Refresh Token과 Access Token을 폐기하지 않는다.
 
 ## 배치 작업 수동 재실행
 

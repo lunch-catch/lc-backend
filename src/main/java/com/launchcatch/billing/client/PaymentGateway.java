@@ -33,7 +33,7 @@ public interface PaymentGateway {
     PaymentGatewayApproval confirm(String paymentKey, String orderId, long amount);
 
     /**
-     * 주문 번호로 결제를 조회한다. 승인 결과를 못 받은 결제를 다시 확인할 때 쓴다.
+     * 주문 번호로 결제를 조회한다.
      * PG에 해당 결제가 없으면 예외가 아니라 {@code NOT_FOUND} 결과를 돌려준다.
      *
      * @throws PgNotSentException 요청이 처리되지 않았다
@@ -42,7 +42,7 @@ public interface PaymentGateway {
     PaymentGatewayInquiryResult inquireByOrderId(String orderId);
 
     /**
-     * 결제 키로 결제를 조회한다. 웹훅 본문을 믿지 않고 PG에 다시 물어 확정할 때 쓴다.
+     * 결제 키로 결제를 조회한다. 승인 결과 복구와 웹훅 검증, 대사에 쓴다.
      * 예외 규칙은 {@link #inquireByOrderId(String)}와 같다.
      */
     PaymentGatewayInquiryResult inquireByPaymentKey(String paymentKey);

@@ -15,11 +15,15 @@ if not oldValue or not newValue or activeHash ~= ARGV[2] then
     return 0
 end
 
-if string.sub(oldValue, -8) ~= '|REVOKED' then
+local pendingSuffix = '|ROTATING:' .. ARGV[2]
+local restoredValue
+if string.sub(oldValue, -#pendingSuffix) == pendingSuffix then
+    restoredValue = string.sub(oldValue, 1, -#pendingSuffix - 1)
+elseif string.sub(oldValue, -8) == '|REVOKED' then
+    restoredValue = string.sub(oldValue, 1, -9)
+else
     return 0
 end
-
-local restoredValue = string.sub(oldValue, 1, -9)
 if restoredValue ~= newValue then
     return 0
 end

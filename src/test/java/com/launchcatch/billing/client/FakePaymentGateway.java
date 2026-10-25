@@ -50,6 +50,12 @@ public class FakePaymentGateway implements PaymentGateway {
         return List.copyOf(confirmCalls);
     }
 
+    // 주문 번호로는 찾을 수 없고 결제 키로만 찾을 수 있는 결제를 등록한다.
+    public FakePaymentGateway givenPaymentKeyOnly(PaymentGatewayInquiryResult result) {
+        byPaymentKey.put(result.paymentKey(), result);
+        return this;
+    }
+
     @Override
     public PaymentGatewayApproval confirm(String paymentKey, String orderId, long amount) {
         confirmCalls.add(new ConfirmCall(paymentKey, orderId, amount));

@@ -261,6 +261,42 @@ class OpaqueRefreshTokenLifecycleTest {
                 "old", "new", Role.MEMBER, Duration.ofDays(14), Duration.ofMinutes(5), LocalDateTime.now());
     }
 
+    @Test
+    void 첫_요청이_DB에_반영되는_동안_중복_요청은_새_세션을_폐기하지_않는다() {
+        OpaqueRefreshTokenLifecycle lifecycle = lifecycle();
+        when(refreshTokenRepository.compareAndRotate(any(), any(), any()))
+                .thenReturn(RefreshTokenRepository.RotateOutcome.success(
+                                new RefreshTokenRepository.RefreshTokenData(1L, Role.MEMBER, true)),
+                        RefreshTokenRepository.RotateOutcome.notFound());
+        when(backupStore.rotateIfMatches(any(), any(), any(), any(), any())).thenAnswer(invocation -> {
+            assertThatThrownBy(() -> reissue(lifecycle))
+                    .isInstanceOfSatisfying(com.launchcatch.auth.exception.AuthException.class,
+                            e -> assertThat(e.getErrorCode())
+                                    .isEqualTo(com.launchcatch.auth.exception.AuthErrorCode.REFRESH_TOKEN_INVALID));
+            return true;
+        });
+
+        assertThat(reissue(lifecycle)).isEqualTo(new OpaqueRefreshTokenLifecycle.ReissueResult(1L, "new"));
+
+        verify(backupStore, never()).clearIfMatches(any(), any(), any());
+        verify(accessTokenValidAfterRepository, never()).invalidateBefore(any(), any(), any(), any());
+        verify(refreshTokenRepository).completeRotation(TokenHasher.sha256("old"), TokenHasher.sha256("new"));
+    }
+
+    @Test
+    void DB_반영_뒤_재사용_확정_표시만_실패하면_새_토큰_발급은_성공한다() {
+        stubSuccessfulRedisRotation();
+        when(backupStore.rotateIfMatches(any(), any(), any(), any(), any())).thenReturn(true);
+        doThrow(new QueryTimeoutException("redis down"))
+                .when(refreshTokenRepository).completeRotation(any(), any());
+        OpaqueRefreshTokenLifecycle lifecycle = lifecycle();
+
+        assertThat(reissue(lifecycle)).isEqualTo(new OpaqueRefreshTokenLifecycle.ReissueResult(1L, "new"));
+
+        verify(refreshTokenRepository, never()).rollbackRotation(any(), any(), any(), any());
+        verify(accessTokenValidAfterRepository, never()).invalidateBefore(any(), any(), any(), any());
+    }
+
     private OpaqueRefreshTokenLifecycle.ReissueResult fallbackReissue(
             OpaqueRefreshTokenLifecycle lifecycle, LocalDateTime now) {
         return lifecycle.reissue("old", "new", Role.MEMBER, Duration.ofDays(14), Duration.ofMinutes(5), now);

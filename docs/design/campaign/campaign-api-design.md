@@ -93,8 +93,11 @@
   않는다, `#312` 결정). V51 45행이 "집행 기간은 활성화 이후 바꿀 수 없다"로 명확히
   규정하고 있어, 의도치 않은 변경 시도를 프론트가 바로 알 수 있게 한다
 - **`ACTIVE`에서 바꾼 하루 예산은 다음 영업일 00:00부터 적용된다(V51 45행, 102행
-  스케줄러).** 그 값을 어느 컬럼에 어떻게 들고 있다가 스케줄러가 읽는지는 스키마 변경이라
-  이 명세 단계에서 정하지 않는다("아직 정해지지 않은 것" 참고)
+  스케줄러).** 바뀐 값은 `Campaign.pendingDailyBudget`에 두고, 00:00 `CampaignPendingBudgetJob`
+  (`@Order(35)`)이 ACTIVE 이고 예약 값이 있는 캠페인마다 행 잠금 아래에서 상태를 다시 확인한 뒤
+  `dailyBudget`으로 옮기고 예약 값을 비운다. `pause()`는 `pendingDailyBudget`을 지우지 않으므로
+  `PAUSED`로 멈춰 있는 캠페인에는 적용하지 않고 예약 값을 남긴다. 정산의 일일 예약(50)보다 앞이라
+  바뀐 예산이 그날 예약에 반영된다(`campaign_구조와_동작_설계.md` 10장)
 - **"추천 하루 예산"과 "예상 노출 범위"(V51 45행 H45)는 이 API의 범위 밖이다.** 광고
   서빙이 매일 00:00 배치로 집계해 넘기는 값이 있어야 계산할 수 있어, 저장·검증만 하는 이
   API와는 다른 기능이다
@@ -121,7 +124,7 @@
 - **`ACTIVE`에서 바꾼 하루 예산은 `Campaign.pendingDailyBudget`(V13 마이그레이션)에만 쓰고
   `dailyBudget`은 그대로 둔다.** 응답은 항상 `dailyBudget`(바뀌기 전 값)을 돌려주고
   `pendingDailyBudget`은 노출하지 않는다("아직 정해지지 않은 것"에서 정함). 00:00 배치가
-  이 값을 `dailyBudget`에 반영하는 쪽은 "스케줄러 캠페인 담당 스텝" 이슈 몫이다
+  이 값을 `dailyBudget`에 반영하는 방식은 바로 위 항목에 있다
 - **최소 하루 예산은 요구사항명세서 [H27]의 1,000포인트를 그대로 쓴다.**
   `ops.contract.PlatformSettingQueryService.getMinDailyBudget()`을 새로 추가해
   `getImpressionUnitPrice()`와 같은 패턴(파싱 실패·0 이하 거부)으로 구현한다
@@ -213,10 +216,6 @@
   (`campaign_구조와_동작_설계.md`). 이 엔드포인트는 `schedule()`만 부른다
 - **`PAUSED`(`ADMIN`) 캠페인의 재개는 이 엔드포인트가 다루지 않는다.** `DRAFT`가 아닌
   상태에서의 요청은 전부 `CAMPAIGN-006`으로 막히므로 재개 기능과 분리된다
-- **이 설계는 `#535`(PR #552)가 아직 `develop`에 없는 상태에서 썼다.**
-  `PosterModerationService`, `PosterModerationOutcome`, `ModerationFailReason`은
-  `feat/535-poster-moderation` 브랜치 기준이다. 구현(`#561`)은 `#535`가 먼저 병합된 뒤
-  진행한다
 
 ## 캠페인 종료(점주)
 
@@ -367,11 +366,8 @@
 |---|---|---|
 | 가게당 DRAFT 1개를 막는 UNIQUE 제약의 정확한 마이그레이션 문구 | `#244` 결정 | `#244`가 `active_store_marker`와 같은 방식으로 추가한다(이 문서 "캠페인 등록" 절 참고) |
 | `Campaign.updateCouponCondition(...)` 메서드 시그니처 | `#244` 결정 | 아직 엔티티에 없다. `#244`가 추가한다 |
-| 00:00 배치가 `pendingDailyBudget`을 `dailyBudget`에 반영하는 호출 지점 | V51 45행, 102행 스케줄러 | 해소됨(`#840`). `CampaignPendingBudgetJob`(`@Order(35)`)이 ACTIVE 이고 예약 값이 있는 캠페인마다 행 잠금 아래에서 상태를 다시 확인한 뒤 `dailyBudget`으로 옮기고 예약 값을 비운다. `pause()`는 `pendingDailyBudget`을 지우지 않으므로 `PAUSED`로 멈춰 있는 캠페인에는 적용하지 않고 예약 값을 남긴다. 정산의 일일 예약(50)보다 앞이라 바뀐 예산이 그날 예약에 반영된다 |
 | 예약 값(`pendingDailyBudget`) 자체를 PATCH 응답에 노출할지 | V51 45행 | `#330`은 노출하지 않는다(응답은 늘 `dailyBudget`). 노출이 필요해지면 그때 명세를 바꾼다 |
-| `targetMenuId`가 그 가게(`storeId`) 소유인지 등록 시점(`CampaignCouponConditionService`)에 검증하는 것 | `#468` 자체 리뷰로 찾음(2026-10-18) | 해소됨(`#874`). 등록 시점에 `findMenusByIdIn`으로 `targetMenuId`가 그 가게의 메뉴이고 검증된 이미지가 있는지 확인하고 아니면 `CAMPAIGN-014`로 거절한다. 같은 변경이 `storeId`가 로그인한 점주의 가게인지도 `canManageStore`로 확인한다(`CAMPAIGN-013`) |
-| 00:00 의 `SCHEDULED -> ACTIVE` 배치가 취소된 캠페인을 만났을 때의 처리 | `#597`(2026-10-20) | 해소됨(`#872`). 취소가 먼저 잠금을 잡으면 배치의 `activate(id, businessDate)`가 행 잠금을 잡은 뒤 상태가 `SCHEDULED`도 `ACTIVE`도 아니면 예외 없이 건너뛰고 INFO 로그를 남긴다. 단계는 실패하지 않는다 |
-| 캠페인 활성화 요청 빈도 제한의 정확한 횟수·창 | `#561` 자체 리뷰로 찾음(2026-10-19) | `CampaignActivationRateLimiter`가 지금은 `TemplateGenerationRateLimiter`의 분당 3회를 그대로 가져와 썼다(근거 없는 예시값, `C` 등급). 실제 값은 운영 쪽과 정한다 |
+| 캠페인 활성화 요청 빈도 제한의 정확한 횟수·창 | `#561` 자체 리뷰로 찾음 | `CampaignActivationRateLimiter`가 지금은 `TemplateGenerationRateLimiter`의 분당 3회를 그대로 가져와 썼다(근거 없는 예시값, `C` 등급). 실제 값은 운영 쪽과 정한다 |
 
 해소된 항목(`#330`): 하루 예산의 "다음 영업일 적용 예약 값" 컬럼은 `Campaign.pendingDailyBudget`(`V13__campaign_pending_daily_budget.sql`, 양수만 허용하는
 `chk_campaign_pending_daily_budget` CHECK 포함)이고, 최소 하루 예산은 `ops.contract.PlatformSettingQueryService.getMinDailyBudget()`(요구사항명세서
