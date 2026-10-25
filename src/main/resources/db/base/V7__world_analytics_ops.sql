@@ -680,7 +680,8 @@ ON DUPLICATE KEY UPDATE daily_store_analytics.business_date = daily_store_analyt
 /*
  * ANA.DAILY_METRICS_D60_D1
  * 신규, 누적, 탈퇴는 WORLD_SPEC 회원 공식(가입일 D-(1 + n % 60), 2981 ~ 3000 은 D-2 탈퇴)으로 센다.
- * 활성 회원은 D-60 ~ D-8 은 공식이고 D-7 ~ D-1 은 그날 event_log 에 기록된 회원 수다. 정지 수는 집계 작업이 쓰지 않아 0 이다.
+ * 활성 회원은 D-60 ~ D-8 은 공식이고 D-7 ~ D-1 은 그날 event_log 에 기록된 회원 수다.
+ * 정지 수는 집계 작업처럼 그날 말까지 정지된 SUSPENDED 회원(2951 ~ 2980, 정지일 D-1)을 센다.
  */
 INSERT INTO daily_member_analytics (
     business_date, new_member_count, cumulative_member_count, active_member_count, withdrawn_count,
@@ -694,7 +695,7 @@ SELECT DATE_SUB(@d, INTERVAL dd.k DAY),
              AND el.occurred_at >= DATE_SUB(@d, INTERVAL dd.k DAY)
              AND el.occurred_at < DATE_SUB(@d, INTERVAL dd.k - 1 DAY))),
        SUM(n.n >= 2981 AND dd.k = 2),
-       0,
+       SUM(n.n BETWEEN 2951 AND 2980 AND dd.k = 1),
        TIMESTAMP(DATE_SUB(@d, INTERVAL dd.k - 1 DAY), '01:03:00'),
        TIMESTAMP(DATE_SUB(@d, INTERVAL dd.k - 1 DAY), '01:03:00')
 FROM base_day dd
