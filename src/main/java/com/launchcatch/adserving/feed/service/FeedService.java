@@ -118,8 +118,11 @@ public class FeedService {
         serveRecordRepository.saveAll(records);
         meterRegistry.counter(SERVED_CARDS_METRIC).increment(records.size());
         UUID feedId = UuidV7.at(now);
-        serveLogBuffer.offer(new ServedFeed(businessDate, memberId, feedId, viewer.latitude(), viewer.longitude(), records,
-                servedAt.toLocalDateTime()));
+        List<ServedCard> servedCards = IntStream.range(0, placed.size())
+                .mapToObj(i -> new ServedCard(records.get(i), placed.get(i).progressRate(), placed.get(i).relevanceScore()))
+                .toList();
+        serveLogBuffer.offer(new ServedFeed(businessDate, memberId, feedId, viewer.latitude(), viewer.longitude(),
+                servedCards, FeedAssembler.ENGINE_VERSION, servedAt.toLocalDateTime()));
 
         OffsetDateTime servedAtOffset = servedInstant.atZone(ClockConfig.ZONE).toOffsetDateTime();
         List<FeedCardResponse> cards = IntStream.range(0, placed.size())
@@ -132,7 +135,7 @@ public class FeedService {
     // 카드가 없는 요청도 그날 첫 접속 위치는 남긴다(feed_visit_daily).
     private void recordVisit(LocalDate businessDate, Long memberId, Viewer viewer, ZonedDateTime requestedAt) {
         serveLogBuffer.offer(new ServedFeed(businessDate, memberId, null, viewer.latitude(), viewer.longitude(), List.of(),
-                requestedAt.toLocalDateTime()));
+                FeedAssembler.ENGINE_VERSION, requestedAt.toLocalDateTime()));
     }
 
     private FeedContext contextFor(Long memberId, Viewer viewer, LocalDate businessDate, ZonedDateTime servedAt,

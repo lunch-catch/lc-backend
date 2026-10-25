@@ -12,6 +12,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.launchcatch.adserving.config.PacingProperties;
+import com.launchcatch.adserving.engine.FeedAssembler;
 import com.launchcatch.adserving.engine.entity.AdCandidate;
 import com.launchcatch.adserving.engine.entity.DiscountTarget;
 import com.launchcatch.adserving.engine.entity.DiscountType;
@@ -476,7 +477,13 @@ class FeedServiceTest {
             assertThat(feed.memberId()).isEqualTo(MEMBER_ID);
             assertThat(feed.latitude()).isEqualTo(SAVED_LAT);
             assertThat(feed.longitude()).isEqualTo(SAVED_LNG);
-            assertThat(feed.cards()).isEqualTo(savedRecords());
+            assertThat(feed.cards()).extracting(ServedCard::record).isEqualTo(savedRecords());
+            // 배정 근거도 함께 넘긴다. 노출이 없어 진행률은 0 이다
+            assertThat(feed.cards()).allSatisfy(c -> {
+                assertThat(c.progressRate()).isZero();
+                assertThat(c.relevanceScore()).isBetween(0.0, 1.0);
+            });
+            assertThat(feed.engineVersion()).isEqualTo(FeedAssembler.ENGINE_VERSION);
             assertThat(meterRegistry.counter(FeedService.SERVED_CARDS_METRIC).count()).isEqualTo(2);
         }
 
