@@ -36,7 +36,7 @@ public record MemberMetricsResponse(
             Long avgDailyActiveMembers,
             @Schema(description = "누적 탈퇴자 수입니다. 구간 마지막 날 값입니다. 집계 중이면 null입니다.", example = "48")
             Long withdrawnCount,
-            @Schema(description = "정지 회원 수입니다. 정지 기능이 구현 제외라 항상 0입니다. 집계 중이면 null입니다.", example = "0")
+            @Schema(description = "정지 회원 수입니다. 구간 마지막 날 값입니다. 집계 중이면 null입니다.", example = "3")
             Long suspendedCount
     ) {
 

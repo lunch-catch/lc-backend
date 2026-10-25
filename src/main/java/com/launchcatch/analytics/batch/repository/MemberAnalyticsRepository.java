@@ -12,7 +12,7 @@ import org.springframework.stereotype.Repository;
  * 일별 회원 지표(daily_member_analytics)를 쓴다.
  *
  * 그날 행은 한 문장으로 교체한다(INSERT ... ON DUPLICATE KEY UPDATE). created_at 은 처음 만든 시각으로
- * 두고 갱신하지 않는다. suspended_count 는 정지 기능이 구현 제외라 항상 0 이다.
+ * 두고 갱신하지 않는다.
  */
 @Repository
 public class MemberAnalyticsRepository {
@@ -21,7 +21,7 @@ public class MemberAnalyticsRepository {
             INSERT INTO daily_member_analytics (
                 business_date, new_member_count, cumulative_member_count, active_member_count,
                 withdrawn_count, suspended_count, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, 0, ?, ?) AS incoming
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?) AS incoming
             ON DUPLICATE KEY UPDATE
                 new_member_count = incoming.new_member_count,
                 cumulative_member_count = incoming.cumulative_member_count,
@@ -40,6 +40,7 @@ public class MemberAnalyticsRepository {
     public void replace(LocalDate businessDate, MemberMetrics metrics, LocalDateTime now) {
         Timestamp at = Timestamp.valueOf(now);
         jdbc.update(UPSERT, Date.valueOf(businessDate), metrics.newMemberCount(),
-                metrics.cumulativeMemberCount(), metrics.activeMemberCount(), metrics.withdrawnCount(), at, at);
+                metrics.cumulativeMemberCount(), metrics.activeMemberCount(), metrics.withdrawnCount(),
+                metrics.suspendedCount(), at, at);
     }
 }
