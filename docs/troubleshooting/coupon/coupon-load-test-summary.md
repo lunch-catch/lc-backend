@@ -62,8 +62,6 @@ p95와 p99는 회차별 발급 성공 응답의 백분위수를 산술평균했�
 | v2 | DB 연결 대기와 통계 작업 거절이 발생했다. |
 | v3 | 이번 부하에서 포화 병목을 확인하지 못했다. HTTP 오류와 통계 유실은 없었다. |
 
-v3 첫 회 p99는 1,112.6ms로 측정 스크립트의 1,000ms 기준을 초과했다. 평균값과 함께 해당 지연을 원본에 남겼다.
-
 모든 회차에서 HTTP 발급 성공 2,000건과 DB 발급 2,000건이 일치했다. 쿼리별 실행 통계가 제공되지 않아 DB 내부의 특정 쿼리를 병목 원인으로 확정하지 않았다. 측정 대상은 기존 AWS 비교에 사용했던 백엔드 이미지이며 현재 체크아웃 코드의 결과로 해석하지 않는다.
 
-[3회 평균 집계](/Users/choiminhyeok/.codex/visualizations/2026/10/25/01a17356-7ffa-7203-8298-a1a9ed48d775/coupon-performance-20261026/원본/3회_평균.json), [시나리오](/Users/choiminhyeok/.codex/visualizations/2026/10/25/01a17356-7ffa-7203-8298-a1a9ed48d775/coupon-performance-20261026/원본/scenario.json), [회차별 원본](/Users/choiminhyeok/.codex/visualizations/2026/10/25/01a17356-7ffa-7203-8298-a1a9ed48d775/coupon-performance-20261026/원본)에서 계산 근거와 1초 기록을 확인할 수 있다.
+
