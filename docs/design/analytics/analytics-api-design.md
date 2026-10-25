@@ -32,7 +32,7 @@ A-04 카테고리·지역별 분해와 A-08 점주별 상위 소진도 구현하
 | A-09, A-10 | `InvalidMetricsStep`, `NotBilledMetricsStep`, `FraudMetricsStep`과 조회가 구현돼 있다 |
 | A-12 | `MemberUsageStep`과 `MemberUsageStatsQueryService`가 구현돼 있다 |
 | A-14 | `CampaignReportStep`과 `CampaignReportQueryService`가 구현돼 있다 |
-| 상세 캠페인 리포트와 변경 이력 | 저장 구조와 설계는 있으나 조회와 변경 이력 기록은 없다(#632) |
+| 상세 캠페인 리포트와 변경 이력 | 변경 이력은 일별 집계가 남긴다. 상세 리포트와 변경 내역 조회는 없다 |
 | 이벤트 로그 13개월 삭제 | `EventLogRetentionJob`이 매일 04:00에 삭제한다 |
 
 ## 2. 공통 원칙
@@ -187,13 +187,19 @@ A-12(`MemberUsageStatsQueryService`)는 본인의 `daily_member_usage` 전체 �
 
 리포트 행은 지우지 않고 `(campaign_id, business_date)`로 갱신해 ID를 유지한다. 자식 표는 그날 리포트에 딸린 행을 지우고 다시 넣는다. 집계가 끝나면 리포트는 `FINALIZED`다. `finalized_at`은 처음 확정한 시각으로 두고 다시 집계해도 바꾸지 않는다. 당일은 집계하지 않으므로 행이 없다.
 
-확정 뒤 공개 지표가 바뀌면 변경 전후 JSON과 사유를 `campaign_daily_report_history`에 남기는 것이 목표 설계다. #625는 이력을 쓰지 않고 값만 덮는다. 이력 기록과 사유 판정은 #632가 맡는다. 그 전에 다시 집계된 날짜는 변경 전 값이 남지 않는다.
+확정 뒤 공개 지표가 바뀌면 `CampaignReportStep`이 변경 전후 JSON과 사유를 `campaign_daily_report_history`에 남긴다(#632). 공개 트랜잭션 안에서 덮어쓰기 전의 확정 행을 읽어 새 값과 비교한다.
+
+* 공개 지표는 리포트 본문의 13개다. 하루 예산, 단가, 과금액, 정정액, 소진액, 소진율, 유효, 과금, 미과금, 무효 노출, 찜, 발급, 사용이다. 사유별, 시간대, 슬롯 건수는 비교하지 않는다. 점주에게 보이지 않는 시간대 변화만으로 차수가 오르지 않게 한다.
+* 변경 전후 JSON은 13개를 모두 담고 키는 일별 응답 필드 이름이다. 한 차수만 읽어도 그때의 상태 전체를 복원할 수 있다. 소진율은 저장된 값 그대로라 하루 예산이 0이면 `0`이다.
+* 차수는 그 리포트의 마지막 차수에 1을 더한 값이다. 같은 날짜는 실행 행을 잡은 시도 하나만 공개하므로 차수가 겹치지 않는다.
+* 처음 확정하는 행과 값이 같은 재집계는 이력을 남기지 않는다. #632 이전에 다시 집계된 날짜는 변경 전 값이 남지 않는다.
+* 사유는 실행 사유가 아니라 바뀐 값으로 가른다. 실행 사유를 넘기려면 `AggregationStep`과 실행기를 바꿔야 하고, ops 관리자 재실행과 이어받기가 같은 `DailyAggregationJob.run`으로 들어와 수동 실행을 다 가르지도 못한다. 명세의 `reason`은 값 목록이 없는 자유 문자열이다.
 
 | 사유 | 언제 |
 |---|---|
-| `LATE_EVENT` | 정기 재집계에서 늦게 확정된 원천이 반영됨 |
-| `OVERCHARGE_REVERSAL` | 과거 과금의 양수 ADJUST가 반영됨 |
-| `MANUAL_RECALCULATION` | 관리자가 수동 재집계를 실행함 |
+| `LATE_EVENT` | 정정액 밖의 공개 지표만 바뀌었다. 늦게 확정된 원천이 반영된 것이다 |
+| `OVERCHARGE_REVERSAL` | 정정액(`refunded_amount`)이 바뀌었다. 과거 과금의 양수 ADJUST가 반영된 것이다 |
+| `MANUAL_RECALCULATION` | 남기지 않는다. 수동 재집계로 바뀐 값도 위 둘 중 하나로 남는다 |
 
 리포트의 연결 정보를 위한 새 집계 contract는 만들지 않는다. 연결 정보는 집계 수치가 아니라 리포트 행에 저장할 값이라 `CampaignStatsQueryService`에 메서드를 더하지 않는다(#426). 배치가 집계 조회가 아닌 `CampaignQueryService`를 부르는 예외는 [아키텍처 설계 2.1 규칙 4](../../architecture/런치캐치_도메인_구조와_의존성_설계.md#21-의존-규칙)가 소유한다.
 
@@ -205,7 +211,7 @@ A-12(`MemberUsageStatsQueryService`)는 본인의 `daily_member_usage` 전체 �
 
 ### 상세 캠페인 리포트
 
-아직 구현하지 않았다(#632). 목표 계약은 리포트 행의 `owner_id`로 소유를 확인하는 것이다(#394). 기간에 집계 행이 있고 소유 점주가 다르면 `403`, 집계 행이 없으면 빈 `items`다. 이미 구현된 점주 일별 리포트는 요청에 캠페인 ID를 받지 않고 로그인한 점주의 모든 행만 읽는다. 이벤트 로그 기반 캠페인 성과는 별도 API이며 캠페인 contract로 소유권을 확인한다.
+아직 구현하지 않았다. 목표 계약은 리포트 행의 `owner_id`로 소유를 확인하는 것이다(#394). 기간에 집계 행이 있고 소유 점주가 다르면 `403`, 집계 행이 없으면 빈 `items`다. 이미 구현된 점주 일별 리포트는 요청에 캠페인 ID를 받지 않고 로그인한 점주의 모든 행만 읽는다. 이벤트 로그 기반 캠페인 성과는 별도 API이며 캠페인 contract로 소유권을 확인한다.
 
 주와 월 응답은 건수와 금액을 합산한다. `budgetSpendRate`와 `costPerVisit`은 합산 값으로 다시 계산한다. `impressionUnitCost`는 주와 월 응답에서 `null`이다. 기간 안 마지막 확정 시각을 사용하고 하루라도 변경 이력이 있으면 변경됨으로 표시한다.
 
@@ -252,5 +258,5 @@ V2는 `campaign_daily_report.owner_id`와 `store_id`를 nullable로 추가했다
 |---|---|---|
 | 회원 사용 통계의 보존·탈퇴 처리 | 일별 집계안으로 구현했다. 삭제하지 않는다. 팀장·FE 확인(R-18, R-25)이 달라지면 `MemberUsageStep`의 원천과 A-12의 응답 의미를 고친다 | 없음 |
 | 집중 경고의 기간 의미 | 하루라도 경고이고 최고 하루 점유율을 반환한다. 화면 확인이 남았다 | 화면 계약 확정 |
-| 원래 영업일의 정정 반영 | `SettlementMetricsStep`이 정정 대상 날짜를 미처리 목록에 남기고, 다음 실행에서 `CampaignReportStep`이 그 날짜의 리포트 값을 다시 쓴다. 변경 이력과 사유는 아직 남기지 않는다 | #632 |
+| 원래 영업일의 정정 반영 | `SettlementMetricsStep`이 정정 대상 날짜를 미처리 목록에 남기고, 다음 실행에서 `CampaignReportStep`이 그 날짜의 리포트 값을 다시 쓰고 정정액이 바뀌었으면 `OVERCHARGE_REVERSAL` 이력을 남긴다 | 없음 |
 `CampaignStatsQueryService.activeCampaignCount`와 A-02의 `StoreMetricsStep`은 구현돼 있으므로 과거의 #354 대기 항목은 남기지 않는다. A-06의 시각은 #490이 KST 오프셋을 붙이도록 고쳤다.
