@@ -103,7 +103,7 @@ GET /v1/feed?latitude=37.4979&longitude=127.0276
 - 피드에서는 찜과 패스만 할 수 있다. 발급 버튼을 두지 않는다
 - `NO_CANDIDATE` 면 빈 피드 안내를 보인다
 - 마지막 카드에 닿았을 때 지금 시각이 `nextFeedAvailableAt` 이후면 바로 다음 피드를 요청한다. 아직 전이면 "N초 후 새 카드"를 보여 주고, 그 시각에 한 번 요청한다
-- 포스터는 `posterUrl` 을 불러 받은 `data.html` 을 `<iframe sandbox srcdoc=...>` 에 그린다. 점주가 만든 HTML이라 앱 화면과 격리한다. 같은 주소는 항상 같은 포스터라 브라우저 캐시를 그대로 쓴다
+- 포스터는 `posterUrl` 을 불러 받은 `data.html` 을 `<iframe sandbox srcdoc=...>` 에 그린다. 점주가 만든 HTML이라 앱 화면과 격리한다. 같은 주소는 항상 같은 포스터다. 포스터 응답이 `Cache-Control: max-age=86400, private, immutable`이라 브라우저가 하루 동안 다시 받지 않으므로 브라우저 캐시를 그대로 쓴다
 
 **요청 제한**
 
