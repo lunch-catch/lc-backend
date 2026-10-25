@@ -716,7 +716,6 @@
   "message": "요청이 성공적으로 처리되었습니다.",
   "data": {
     "campaignId": 1,
-    "status": "ACTIVE",
     "html": "<div>...</div>"
   }
 }
@@ -725,8 +724,9 @@
 | 필드 | 타입 | null | 설명 |
 |---|---|---|---|
 | `campaignId` | integer | 아니오 | 캠페인 ID |
-| `status` | string | 아니오 | `ACTIVE`, `PAUSED`, `ENDED` 중 하나 |
 | `html` | string | 아니오 | 저장된 포스터 HTML |
+
+**캐시.** 성공 응답은 `Cache-Control: max-age=86400, private, immutable`이다. 공개된 캠페인의 포스터는 바뀌지 않아 같은 주소의 응답은 항상 같다. 브라우저는 하루 동안 다시 받지 않는다. 이 API는 MEMBER 인증을 요구하므로 공유 캐시에 남지 않도록 `private`이다. `404` 응답에는 이 헤더가 붙지 않는다.
 
 **오류**
 

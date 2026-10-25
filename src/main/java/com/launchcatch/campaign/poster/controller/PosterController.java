@@ -21,10 +21,12 @@ import org.springframework.web.bind.annotation.RestController;
 public class PosterController {
 
     /*
-     * 점주가 다시 만들기 전까지 바뀌지 않는 공개 데이터라 짧게라도 캐시한다. 가게 상세
-     * 화면이 부르는 조회라 트래픽이 점주용 API보다 높을 수 있다(#495 자체 리뷰로 찾음).
+     * 공개된 캠페인(ACTIVE, PAUSED, ENDED)의 포스터는 바뀌지 않는다. 포스터는 DRAFT 일 때만 고칠 수 있고, DRAFT 로
+     * 돌아가는 길은 아직 비공개인 SCHEDULED 의 취소뿐이다. 그래서 같은 주소의 응답은 항상 같고, 브라우저가 하루 동안
+     * 다시 받지 않게 한다(#940). 이 API 는 MEMBER 인증을 요구하므로 공유 캐시에 남지 않게 private 으로 둔다.
+     * 실패 응답에는 이 헤더가 붙지 않는다.
      */
-    private static final Duration CACHE_MAX_AGE = Duration.ofSeconds(60);
+    private static final Duration CACHE_MAX_AGE = Duration.ofDays(1);
 
     private final PosterQueryService posterQueryService;
 
@@ -36,7 +38,7 @@ public class PosterController {
     public ResponseEntity<ResponseEnvelope<PosterResponse>> get(@PathVariable Long campaignId) {
         PosterResponse response = posterQueryService.findForMember(campaignId);
         return ResponseEntity.ok()
-                .cacheControl(CacheControl.maxAge(CACHE_MAX_AGE).cachePublic())
+                .cacheControl(CacheControl.maxAge(CACHE_MAX_AGE).cachePrivate().immutable())
                 .body(ResponseEnvelope.success(response));
     }
 }
