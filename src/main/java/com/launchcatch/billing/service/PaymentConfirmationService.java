@@ -30,7 +30,7 @@ import org.springframework.stereotype.Service;
  * 커밋한다. 마지막으로 결제대행사를 부르고 그 결과를 짧은 트랜잭션으로 기록한다. 기록은 결과 기록
  * 서비스가 결제 행을 잠그고 한다.
  *
- * 결제대행사 응답이 불명이면 주문 번호로 한 번만 다시 조회한다. 그래도 정하지 못하면 UNKNOWN 으로 두고
+ * 결제대행사 응답이 불명이면 저장한 결제 키로 한 번만 다시 조회한다. 그래도 정하지 못하면 UNKNOWN 으로 두고
  * 재조회 워커에 넘긴다. 토스가 이미 처리된 결제라고 답하는 경우(ALREADY_PROCESSED_PAYMENT)도 게이트웨이가
  * 불명으로 분류하므로 이 조회가 결과를 정한다.
  */
@@ -112,32 +112,31 @@ public class PaymentConfirmationService {
     }
 
     /*
-     * 응답이 불명일 때 주문 번호로 한 번만 다시 조회한다. 그 이상은 재조회 워커의 몫이다.
-     * 승인 뒤 결제대행사에서 취소된 결제(CANCELED)도 우리 쪽은 승인한 적이 없으므로 충전 없이 취소로 닫는다.
+     * 응답이 불명일 때 저장한 결제 키로 한 번만 다시 조회한다. 그 이상은 재조회 워커의 몫이다.
+     * 종료 결과는 주문 번호와 금액이 저장값과 일치할 때만 기록한다. 승인 뒤 결제대행사에서 취소된 결제(CANCELED)도
+     * 우리 쪽은 승인한 적이 없으므로 충전 없이 취소로 닫는다.
      */
     private Payment recheck(Payment payment) {
         PaymentGatewayInquiryResult inquiry;
         try {
-            inquiry = paymentGateway.inquireByOrderId(payment.getOrderId());
+            inquiry = paymentGateway.inquireByPaymentKey(payment.getPgTid());
         } catch (PgNotSentException | PgUnknownException e) {
             log.warn("event=PAYMENT_CONFIRM_RECHECK_FAILED paymentId={}", payment.getId(), e);
             return resultService.markUnknown(payment.getId());
         }
-        return switch (inquiry.status()) {
-            case APPROVED -> approveIfMatches(payment, inquiry);
-            case FAILED -> resultService.fail(payment.getId(), inquiryFailureReason(inquiry));
-            case EXPIRED, CANCELED -> resultService.cancel(payment.getId());
-            case PENDING, NOT_FOUND -> resultService.markUnknown(payment.getId());
-        };
-    }
-
-    private Payment approveIfMatches(Payment payment, PaymentGatewayInquiryResult inquiry) {
-        if (!matches(payment, inquiry.orderId(), inquiry.amount())) {
+        if (inquiry.status() != PaymentGatewayInquiryResult.Status.PENDING
+                && inquiry.status() != PaymentGatewayInquiryResult.Status.NOT_FOUND
+                && !matches(payment, inquiry.orderId(), inquiry.amount())) {
             log.error("event=PAYMENT_INQUIRY_MISMATCH paymentId={} inquiredAmount={} storedAmount={}",
                     payment.getId(), inquiry.amount(), payment.getAmount());
             return resultService.markUnknown(payment.getId());
         }
-        return resultService.approve(payment.getId(), inquiry.approvedAt());
+        return switch (inquiry.status()) {
+            case APPROVED -> resultService.approve(payment.getId(), inquiry.approvedAt());
+            case FAILED -> resultService.fail(payment.getId(), inquiryFailureReason(inquiry));
+            case EXPIRED, CANCELED -> resultService.cancel(payment.getId());
+            case PENDING, NOT_FOUND -> resultService.markUnknown(payment.getId());
+        };
     }
 
     private boolean matches(Payment payment, String orderId, long amount) {

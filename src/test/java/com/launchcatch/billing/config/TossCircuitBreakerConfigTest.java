@@ -43,7 +43,8 @@ class TossCircuitBreakerConfigTest {
     @CsvSource({
             "403, FORBIDDEN_REQUEST",
             "403, INCORRECT_BASIC_AUTH_FORMAT",
-            "400, INVALID_API_KEY"
+            "400, INVALID_API_KEY",
+            "404, NOT_FOUND_MERCHANT"
     })
     void 키_설정_오류_코드는_상태와_무관하게_실패로_센다(int status, String code) {
         assertThat(TossCircuitBreakerConfig.isCircuitFailure(responseOf(status, code))).isTrue();

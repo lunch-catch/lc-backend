@@ -26,7 +26,7 @@
 | 승인 응답의 주문 번호와 금액이 일치함 | `APPROVED`와 `CHARGE`를 함께 기록한다 |
 | 명확한 거절 | 실패 사유와 `FAILED`를 기록한다 |
 | 미전송이 확실함(`PgNotSentException`) | `REQUESTED`를 유지한다. 재조회 아웃박스를 만들지 않는다 |
-| 결과 불명(`PgUnknownException`) | 주문 번호로 동기 재조회를 한 번 한다 |
+| 결과 불명(`PgUnknownException`) | 저장한 결제 키로 동기 재조회를 한 번 한다 |
 | 승인 응답의 주문 번호나 금액이 다름 | 승인이나 실패로 단정하지 않고 `UNKNOWN`과 아웃박스를 기록한다 |
 
 동기 재조회에서 `APPROVED`는 주문 번호와 금액이 일치해야 승인한다. `FAILED`는 실패로, `EXPIRED`와 `CANCELED`는 충전 없이 취소로 닫는다. `PENDING`, `NOT_FOUND`, 조회 실패와 승인 정보 불일치는 `UNKNOWN`으로 남긴다. `ALREADY_PROCESSED_PAYMENT`도 게이트웨이가 결과 불명으로 분류하므로 동기 재조회가 결과를 정한다.
