@@ -1,8 +1,8 @@
 # billing 구조와 동작 설계
 
-[구조와 동작 설계 가이드](../구조와_동작_설계_가이드.md)의 목차를 따른다. 2026-10-14에 확인한 노출 차감과 진행률 경로를 설명한다. 정산 전체의 결제·환불·관리자 설계는 이번 범위에서 검토하지 않았다.
+[구조와 동작 설계 가이드](../구조와_동작_설계_가이드.md)의 목차를 따른다. 노출 차감과 진행률 경로를 설명한다. 정산 전체의 결제·환불·관리자 설계는 이번 범위에서 검토하지 않았다.
 
-2026-10-16에 `develop` 코드와 맞춰 예약·해제·대사 작업, 충전 직후 재예약, `PG_VS_CHARGE` 대사, 분석 집계 조회(`BillingStatsQueryService`), 스키마 V3~V7의 서술을 고쳤다. 이 갱신은 그 부분의 구현 사실만 반영한 것이고 결제·환불·관리자 기능의 설계 검토를 뜻하지 않는다.
+예약·해제·대사 작업, 충전 직후 재예약, `PG_VS_CHARGE` 대사, 분석 집계 조회(`BillingStatsQueryService`), 스키마 V3~V7의 서술은 코드와 맞춘 사실이다. 결제·환불·관리자 기능의 설계 검토를 뜻하지 않는다.
 
 커밋 뒤 작업의 설명은 `origin/develop`의 `e25cb2a`에 반영된 가이드 7장을 적용해 보완했다. 실행을 미루는 시점과 실제 실행 수단을 구분하며, 비동기 방식의 선택도 트레이드오프에 포함한다.
 
@@ -59,25 +59,61 @@
 
 ```text
 billing/
-├── contract/  PointDeductor, DeductionStatus, BudgetQueryService, BudgetProgress,
-│              BillingStatsQueryService, OwnerCampaignLedgerSum, CampaignBillingCount,
-│              CampaignDailyBudget, DailyLedgerTotals
-├── cache/     DailySpendCounter, ValkeyDailySpendCounter, DeductOutcome, DailySpend
-├── service/   PointDeductorImpl, DailyPlanSnapshotService, SpendHashRebuildService,
-│              BudgetQueryServiceImpl, BudgetPlanStatusService,
-│              BillingStatsQueryServiceImpl,
-│              DailyReservationService, DailyReleaseMarker, SpendReconciliationService,
-│              FundingJudgementService, RechargeReservationService,
-│              PgChargeReconciliationService
-├── job/       PreviousDaySpendReconciliationJob, DailyReservationJob, FundingJudgementJob (00:00 묶음의 DailyJob),
-│              PgChargeReconciliationScheduler (01:30),
-│              PaymentRecheckWorker
-├── listener/  CampaignStatusChangedListener, BudgetPlanStatusMirrorListener, PointChargedListener
-├── repository/ BudgetDailyPlanRepository,
-│               DeductionResultRepository, PointLedgerRepository, SettlementMismatchRepository
-├── entity/    BudgetDailyPlan, DeductionResult, PointLedger, SettlementMismatch
-├── dto/       PlanSnapshot, PlanSnapshotKey, CampaignSpend, BudgetPlanStatusChanged
-└── config/    PlanSnapshotCacheProperties
+├── contract/
+│   ├── BillingStatsQueryService
+│   ├── BudgetProgress
+│   ├── BudgetQueryService
+│   ├── CampaignBillingCount
+│   ├── CampaignDailyBudget
+│   ├── DailyLedgerTotals
+│   ├── DeductionStatus
+│   ├── OwnerCampaignLedgerSum
+│   └── PointDeductor
+├── cache/
+│   ├── DailySpend
+│   ├── DailySpendCounter
+│   ├── DeductOutcome
+│   └── ValkeyDailySpendCounter
+├── service/
+│   ├── BillingStatsQueryServiceImpl
+│   ├── BudgetPlanStatusService
+│   ├── BudgetQueryServiceImpl
+│   ├── DailyPlanSnapshotService
+│   ├── DailyReleaseMarker
+│   ├── DailyReservationService
+│   ├── FundingJudgementService
+│   ├── PgChargeReconciliationService
+│   ├── PointDeductorImpl
+│   ├── RechargeReservationService
+│   ├── SpendHashRebuildService
+│   └── SpendReconciliationService
+├── job/
+│   ├── DailyReservationJob (00:00 묶음의 DailyJob)
+│   ├── FundingJudgementJob (00:00 묶음의 DailyJob)
+│   ├── PaymentRecheckWorker
+│   ├── PgChargeReconciliationScheduler (01:30)
+│   └── PreviousDaySpendReconciliationJob (00:00 묶음의 DailyJob)
+├── listener/
+│   ├── BudgetPlanStatusMirrorListener
+│   ├── CampaignStatusChangedListener
+│   └── PointChargedListener
+├── repository/
+│   ├── BudgetDailyPlanRepository
+│   ├── DeductionResultRepository
+│   ├── PointLedgerRepository
+│   └── SettlementMismatchRepository
+├── entity/
+│   ├── BudgetDailyPlan
+│   ├── DeductionResult
+│   ├── PointLedger
+│   └── SettlementMismatch
+├── dto/
+│   ├── BudgetPlanStatusChanged
+│   ├── CampaignSpend
+│   ├── PlanSnapshot
+│   └── PlanSnapshotKey
+└── config/
+    └── PlanSnapshotCacheProperties
 ```
 
 위 나무는 노출 차감부터 대사까지의 클래스만 적었다. `client/`(Toss), `controller/`(점주·관리자·웹훅), 결제·환불 서비스와 엔티티는 이 문서의 범위 밖이라 적지 않았다.
@@ -193,7 +229,7 @@ Lua의 예산 비교는 원자적 갱신이 필요한 저장소 연산이다. �
 | `RESERVE`, `RELEASE` | 원장의 `business_date` | 확정 |
 | `DEDUCT` | `deduction_result`의 `business_date`(`serve_id`로 맞춘다) | 확정 |
 | `CHARGE`, `REFUND` | 기록 시각의 KST 날짜 | 확정 |
-| `ADJUST` | `point_ledger.adjust_target_date`. 값이 없는 행(캠페인 없는 조정과 컬럼을 두기 전 행)은 기록 시각의 KST 날짜 | 확정. 이슈 #402 |
+| `ADJUST` | `point_ledger.adjust_target_date`. 값이 없는 행(캠페인 없는 조정과 컬럼을 두기 전 행)은 기록 시각의 KST 날짜 | 확정 |
 | 미소진 잔액 | 영업일 다음 날 00:00 이전에 기록된 `CHARGE`, `REFUND`, `ADJUST`, `DEDUCT` 의 누적 합. 점주 잔액에 예약 중 포인트를 더한 값과 같다 | 확정. analytics 의 `unspent_balance` 정의를 따른다 |
 | 원장 대조용 합계 | 그 영업일의 기록 시각에 기록된 같은 네 유형의 합. 전날 말 미소진 잔액에 더하면 그날 말 값이 된다 | **임시.** 이슈 #352 |
 | 원장 불일치 건수 | `settlement_mismatch.business_date`가 그날인 행 수. 해결 여부는 가리지 않는다 | **임시.** 이슈 #352 |
@@ -474,7 +510,7 @@ Lua는 당일 해시와 처리 표시 두 키를 사용한다. 현재 구현은 
 
 ## 10. 배치
 
-배치 정책은 [정산 배치 설계](./billing-batch-design.md)가 소유한다. 작업 상태는 해당 이슈(#193, #306, #317, #391)가 갖는다. 아래 작업은 #497(2026-10-19) 기준이다. 자정을 지나는 전체 정상 흐름을 연결해 돌린 검증은 없다.
+배치 정책은 [정산 배치 설계](./billing-batch-design.md)가 소유한다. 작업 상태는 해당 이슈(#193, #306, #317, #391)가 갖는다. 자정을 지나는 전체 정상 흐름을 연결해 돌린 검증은 없다.
 
 | 작업 | 작업명과 실행 | 하는 일 | 같은 날 다시 돌 때 필요한 조건 |
 |---|---|---|---|
@@ -510,7 +546,7 @@ Lua는 당일 해시와 처리 표시 두 키를 사용한다. 현재 구현은 
 |---|---|
 | 광고 서빙 수집 연동 | 같은 트랜잭션 호출, serve 검증 근거의 수명, 저장된 첫 유효성 반환 순서를 확인해야 한다 |
 | 장애 후 복구 | 장애 설계의 미정 사항을 닫아야 한다. 이미 표시된 광고와 확정 과금의 차이를 줄이는 정책이 필요하다 |
-| 예약·대사 | 작업은 구현돼 있다. 자정 직전 서빙, 00:00 묶음의 해제와 예약, 자정 직후 노출까지 전체 정상 흐름을 연결해 검증해야 한다 |
+| 예약·대사 | 자정 직전 서빙, 00:00 묶음의 해제와 예약, 자정 직후 노출까지 전체 정상 흐름을 연결해 검증해야 한다 |
 | 성능 | 목표 부하와 해시 복구 구간을 실제 환경에서 측정해야 한다 |
 | 집계 조회의 쿼리 비용 | 기록 시각 범위와 영업일만의 집계는 날짜가 선두인 인덱스가 없다. 지금은 두지 않았고 선택지와 순서는 [성능 개선](./billing_성능_개선.md) 3장이 소유한다 |
 
