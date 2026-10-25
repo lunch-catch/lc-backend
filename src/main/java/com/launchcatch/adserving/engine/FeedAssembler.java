@@ -125,7 +125,7 @@ public final class FeedAssembler {
         return cards.stream().map(p -> withReasons(p, context, radius, maxDiscount)).toList();
     }
 
-    // 배정 근거를 붙인다. 진행률은 신규 우선 보정 전 값이고 예산을 읽지 못했으면 비운다
+    // 신규 우선 보정 전 진행률(예산을 읽지 못했으면 비움)과 관련성 점수를 배정 근거로 붙인다
     private static Placed withReasons(Placed p, FeedContext context, int radius, Map<DiscountType, Integer> maxDiscount) {
         Double progress = context.pacingAvailable()
                 ? context.pacing().get(p.candidate().campaignId()).progressRate()

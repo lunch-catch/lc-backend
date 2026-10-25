@@ -290,7 +290,7 @@ class FeedIntegrationTest extends AbstractAdservingIntegrationTest {
                 """)).containsEntry("serve_id", serveId).containsEntry("feed_id", feedId)
                 .containsEntry("member_id", MEMBER_ID).containsEntry("campaign_id", 101L)
                 .containsEntry("store_id", 55L).containsEntry("slot_type", "ALLOCATION");
-        // 배정 근거도 남는다. 노출이 없어 진행률은 0 이다
+        // 노출이 없어 진행률이 0 인 배정 근거도 남는다
         Map<String, Object> reasons = jdbcTemplate.queryForMap(
                 "SELECT progress_rate, relevance_score, engine_version FROM serve_log");
         assertThat((BigDecimal) reasons.get("progress_rate")).isEqualByComparingTo("0");

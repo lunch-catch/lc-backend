@@ -478,7 +478,7 @@ class FeedServiceTest {
             assertThat(feed.latitude()).isEqualTo(SAVED_LAT);
             assertThat(feed.longitude()).isEqualTo(SAVED_LNG);
             assertThat(feed.cards()).extracting(ServedCard::record).isEqualTo(savedRecords());
-            // 배정 근거도 함께 넘긴다. 노출이 없어 진행률은 0 이다
+            // 노출이 없어 진행률이 0 인 배정 근거도 함께 넘긴다
             assertThat(feed.cards()).allSatisfy(c -> {
                 assertThat(c.progressRate()).isZero();
                 assertThat(c.relevanceScore()).isBetween(0.0, 1.0);
