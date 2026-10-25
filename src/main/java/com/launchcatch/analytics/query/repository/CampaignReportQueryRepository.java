@@ -21,6 +21,7 @@ public class CampaignReportQueryRepository {
     /*
      * 캠페인마다 기간의 소진액과 유효 노출을 합한다. 기간이 null 이면 그 캠페인의 모든 행을 합한다.
      * 행이 없는 캠페인은 결과에 없다. 0 으로 채우는 일은 서비스가 한다.
+     * 확정된 행만 합한다. 집계 중(AGGREGATING) 행은 확정 전 값이라 소진액에 넣지 않는다(#895).
      */
     public List<CampaignReportTotal> sumByCampaign(List<Long> campaignIds, LocalDate from, LocalDate to) {
         String placeholders = String.join(", ", Collections.nCopies(campaignIds.size(), "?"));
@@ -28,7 +29,7 @@ public class CampaignReportQueryRepository {
                 SELECT campaign_id, SUM(spent_amount) AS spent_amount,
                        SUM(valid_impression_count) AS valid_impression_count
                 FROM campaign_daily_report
-                WHERE campaign_id IN (""").append(placeholders).append(")");
+                WHERE campaign_id IN (""").append(placeholders).append(") AND report_status = 'FINALIZED'");
         List<Object> args = new ArrayList<>(campaignIds);
         if (from != null) {
             sql.append(" AND business_date BETWEEN ? AND ?");
