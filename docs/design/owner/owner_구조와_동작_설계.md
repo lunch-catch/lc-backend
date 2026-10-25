@@ -30,12 +30,13 @@ owner는 계정·상태·튜토리얼·현재 토큰 상태를 소유한다. 가
 
 ## 2. 애그리거트와 패키지
 
-`Owner`가 계정, 상태와 토큰 발급·폐기 순번을 한 행에 둔다. 가게는 ID로만 연결한다.
+`Owner`가 계정, 상태와 계정 전체 세션 폐기 세대를 관리한다. `OwnerSession`은 로그인마다 RT와 만료·폐기를 별도 행에 둔다.
+기기별 세션과 기존 단일 토큰의 호환은 [점주 세션 설계](owner-sessions.md)가 소유한다. 가게는 ID로만 연결한다.
 계정 상태와 입점 데이터는 변경 주기가 달라 도메인을 나누되 최종 등록은 동기 이벤트로 같은 트랜잭션에 연결한다.
 
 | 애그리거트 | 테이블 | 지키는 규칙 | 경계의 근거 |
 |---|---|---|---|
-| 점주 계정 | `owner` | 계정 상태·튜토리얼·현재 토큰을 점주 행 잠금 아래 갱신한다 | [점주 API 설계](owner-api-design.md), [인증 설계](../auth/auth-api-design.md) |
+| 점주 계정과 세션 | `owner`, `owner_session` | 계정 상태·튜토리얼·기기별 세션을 점주 행 잠금 아래 갱신한다 | [점주 API 설계](owner-api-design.md), [인증 설계](../auth/auth-api-design.md) |
 
 계정과 가게를 합치면 등록 데이터와 상태를 직접 갱신할 수 있지만 입점 기능이 계정 내부에 결합된다. 분리하면 계정 정책과 입점 데이터의 소유가 명확해지는 대신 최종 등록을 공개 계약과 이벤트로 연결해야 한다.
 분리 근거는 [아키텍처](../../architecture/런치캐치_도메인_구조와_의존성_설계.md) 1.2와 2.4다.
@@ -64,6 +65,7 @@ owner/
 │   └── OwnerTutorialController.java
 ├── entity/
 │   ├── Owner.java
+│   ├── OwnerSession.java
 │   └── OwnerStatus.java
 ├── exception/
 │   ├── OwnerErrorCode.java
@@ -76,6 +78,8 @@ owner/
 │   ├── OwnerLogoutTokenRepository.java    Valkey. 점주 RT 폐기를 처리한다
 │   ├── OwnerRefreshTokenRepository.java    Valkey. 점주 RT의 소비·재사용 표시를 관리한다
 │   ├── OwnerRepository.java
+│   ├── OwnerSessionRepository.java    MySQL. 기기별 세션을 관리한다
+│   ├── OwnerSessionTokenRepository.java    Valkey. 세션별 RT·AT 회전·폐기를 처리한다
 │   └── OwnerStatusCacheRepository.java    Valkey. 점주 상태 조회 캐시를 관리한다
 └── service/
     ├── OwnerAccessTokenPolicy.java    auth의 AccessTokenValidationPolicy를 구현한다
@@ -83,6 +87,7 @@ owner/
     ├── OwnerLoginService.java
     ├── OwnerLogoutService.java
     ├── OwnerProfileService.java
+    ├── OwnerSessionService.java    기기별 세션을 발급·갱신·폐기·검증한다
     ├── OwnerSignupService.java
     ├── OwnerStatusCacheInvalidationService.java    커밋 후 상태 캐시를 삭제한다
     ├── OwnerStatusService.java    OwnerStatusQuery 구현. 일반 조회는 캐시를 사용한다
@@ -112,15 +117,16 @@ owner/
 
 ## 3. 저장
 
-MySQL `owner`가 원본이다. 이메일 UNIQUE가 동시 가입 중복을 막는다. BCrypt 해시, RT 해시·만료, 로그인 시각, 발급 순번과 AT 폐기 순번을 보관한다.
+MySQL `owner`가 계정의 원본이다. 이메일 UNIQUE가 동시 가입 중복을 막는다. BCrypt 해시, 로그인 시각과 전체 세션 폐기 세대를 보관한다. 기존 단일 토큰의 해시·만료·순번도 호환을 위해 유지한다.
+기기별 RT·발급 순번·만료·폐기는 `owner_session`이 보관하며 Redis 키와 복구 정책은 [점주 세션 설계](owner-sessions.md)를 따른다.
 튜토리얼은 기존 `tutorial_viewed`를 `false`에서 `true`로 바꾼다. 가게 정보를 owner에 복사하지 않는다.
 
 | 데이터 | 키 | 만료 | 원본 | 읽는 곳 |
 |---|---|---|---|---|
 | 점주 상태 | `ownerStatus:{ownerId}` | 설정 기본 30초 | `owner.status` | `OwnerStatusService.findStatus` |
-| RT·현재 해시 | `refreshToken:{hash}`, `activeRefreshToken:OWNER:{id}` | DB 만료까지 남은 시간 | `owner`의 현재 RT 해시·만료 | 점주 로그인·토큰 재발급 서비스 |
-| RT 게시 순번 | `refreshTokenIssuanceVersion:OWNER:{id}` | TTL을 두지 않는다 | `owner.refresh_token_issuance_version` | RT 게시·폐기 Lua |
-| AT 폐기 순번 | `accessTokenRevokedThroughVersion:OWNER:{id}` | TTL을 두지 않는다 | `owner.access_token_revoked_version` | `OwnerAccessTokenPolicy` |
+| 기존 단일 RT·현재 해시 | `refreshToken:{hash}`, `activeRefreshToken:OWNER:{id}` | DB 만료까지 남은 시간 | `owner`의 현재 RT 해시·만료 | 점주 로그인·토큰 재발급 서비스 |
+| 기존 단일 RT 게시 순번 | `refreshTokenIssuanceVersion:OWNER:{id}` | TTL을 두지 않는다 | `owner.refresh_token_issuance_version` | RT 게시·폐기 Lua |
+| 기존 단일 AT 폐기 순번 | `accessTokenRevokedThroughVersion:OWNER:{id}` | TTL을 두지 않는다 | `owner.access_token_revoked_version` | `OwnerAccessTokenPolicy` |
 
 상태·튜토리얼은 현재 값만 보관하며 별도 전이 이력 테이블과 도메인 집계는 없다. RT 소비·재사용 표시는 DB 현재 해시만으로 재구성되지 않는다. 이 한계는 [인증 설계](../auth/auth-api-design.md)의 점주 절 중 `POST /v1/owner/auth/tokens:refresh` 항목에 따라 유지하며 완전 복구 방식은 12장에 남긴다.
 
@@ -178,10 +184,11 @@ flowchart LR
             P[OwnerAccessTokenPolicy]
         end
         subgraph ent[entity]
-            ENTITY[Owner / 계정·상태·토큰]
+            ENTITY[Owner / 계정·상태·전체 폐기 세대]
         end
         subgraph repo[repository]
             DB[(OwnerRepository / MySQL)]
+            SESSION[(OwnerSessionRepository / MySQL)]
             CACHE[(OwnerStatusCacheRepository / Valkey)]
             TOKENS[(점주 RT·AT repository / Valkey)]
             REV[(OwnerAccessTokenRevocationRepository / MySQL)]
@@ -191,6 +198,7 @@ flowchart LR
         S --> DB
         S --> ENTITY
         S --> TOKENS
+        S --> SESSION
         O --> DB
         CT -.-> Q
         Q --> DB
@@ -201,6 +209,8 @@ flowchart LR
         A --> INV
         INV --> CACHE
         P --> REV
+        P --> SESSION
+        P --> DB
         P --> TOKENS
     end
     POLICY["auth.contract.AccessTokenValidationPolicy<br/>공통 인증 필터가 호출한다"] -.-> P
@@ -264,8 +274,8 @@ sequenceDiagram
 | 흐름          | 한 DB 트랜잭션에 묶는 것 | 트랜잭션 밖·별도 처리 |
 |-------------|---|---|
 | 회원가입        | 계정 저장 | 사전 중복 조회·BCrypt |
-| 로그인·토큰 재발급  | 행 잠금·상태 재검사·RT 해시·순번 저장 | 비밀번호 비교, 커밋 후 별도 현재 상태 확인, Redis 게시·소비 표시 |
-| 로그아웃        | RT 제거·발급 순번 증가·AT 폐기 기준 저장 | Redis RT 폐기·AT 순번 반영 |
+| 로그인·토큰 재발급 | 점주 행 잠금·상태 재검사·세션 생성 또는 RT 회전 | 비밀번호 비교, 커밋 후 현재 상태 확인과 세션별 Redis 게시·소비 표시 |
+| 로그아웃 | 현재 세션의 폐기 시각 저장 | 커밋 후 해당 세션의 Redis RT·AT 폐기 |
 | 튜토리얼 완료     | 행 잠금·`ACTIVE` 확인·`tutorialViewed` 저장 | 외부 효과 없음 |
 | 단계 저장·최종 등록 | 점주 상태 확인과 store 계약의 업무 저장·진행 갱신, 최종 등록의 `ACTIVE` 전환 | 커밋 후 상태 캐시 삭제 |
 
@@ -286,12 +296,12 @@ sequenceDiagram
 
 B를 따른다. 콜백은 같은 요청 스레드에서 실행하며 영속 큐는 없다. 캐시 재저장과의 경합은 DB 직접 조회로 중요한 판정을 보호한다.
 근거는 [아키텍처](../../architecture/런치캐치_도메인_구조와_의존성_설계.md) 2.4와 [상태 조회 설계](owner-status-cache.md)의 "상태 변경과 접근 제어를 연결할 때의 조건" 절이다.
-토큰 DB·Redis 분할과 회전 보상은 [인증 설계](../auth/auth-api-design.md)의 점주 절 중 `POST /v1/owner/auth/tokens:refresh` 항목을 따른다.
+기기별 세션은 [점주 세션 설계](owner-sessions.md)를 따른다. 기존 단일 토큰의 DB·Redis 분할과 회전 보상은 [인증 설계](../auth/auth-api-design.md)의 점주 절 중 `POST /v1/owner/auth/tokens:refresh` 항목을 따른다.
 
 | 흐름 | 같은 요청이 다시 옴 | 같은 점주의 동시 요청 | 여러 점주가 같은 자원에 씀 | 이벤트 지연·순서 역전 |
 |---|---|---|---|---|
 | 가입 | 같은 이메일은 중복 거절한다 | 사전 조회만으로 막지 않고 UNIQUE로 최종 판정한다 | 이메일 UNIQUE로 보호한다 | 해당 없음 |
-| 로그인·토큰 재발급·로그아웃 | 회전된 RT의 재사용을 정상 성공으로 바꾸지 않는다 | 점주 행을 비관 잠근다 | 점주별 토큰·순번을 분리한다 | 이벤트 대신 지연 Redis 작업을 순번으로 보호한다 |
+| 로그인·토큰 재발급·로그아웃 | 같은 세션의 정상 중복 갱신은 짧은 유예를 적용한다 | 점주 행을 비관 잠근다 | 기기별 세션을 분리한다 | 기존 단일 토큰의 지연 Redis 작업은 순번으로 보호한다 |
 | 튜토리얼 완료 | `true` 상태로 수렴한다 | 상태 확인과 저장에 같은 비관 잠금을 쓴다 | 점주별 행이 다르며 공유 수량은 없다 | 해당 없음 |
 | 단계 저장·최종 등록 조정 | 버전·현재 상태로 반복 요청을 판정한다 | 점주 → 진행 상태 → 업무 데이터 순서다 | 가게 소유·UNIQUE 연결로 다른 점주 접근을 막는다 | 최종 등록 이벤트는 동기이며 별도 지연 큐가 없다 |
 

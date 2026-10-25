@@ -23,7 +23,8 @@ class OwnerAccessTokenPolicyTest {
     private static final LocalDateTime ISSUED_AT = LocalDateTime.of(2026, 10, 13, 12, 0);
     private final OwnerAccessTokenVersionRepository versions = mock(OwnerAccessTokenVersionRepository.class);
     private final OwnerAccessTokenRevocationRepository revocations = mock(OwnerAccessTokenRevocationRepository.class);
-    private final OwnerAccessTokenPolicy policy = new OwnerAccessTokenPolicy(versions, revocations);
+    private final OwnerSessionService sessions = mock(OwnerSessionService.class);
+    private final OwnerAccessTokenPolicy policy = new OwnerAccessTokenPolicy(sessions, versions, revocations);
 
     @BeforeEach
     void setUp() {
@@ -152,4 +153,24 @@ class OwnerAccessTokenPolicyTest {
     private boolean valid(Map<String, Object> claims) {
         return policy.isValid(Role.OWNER, 7L, ISSUED_AT, claims, CutoffPolicy.LENIENT);
     }
+
+    @Test
+    void 세션_AT는_해당_세션의_DB_검증을_따른다() {
+        when(sessions.isValid(eq(7L), eq("key"), any())).thenReturn(true);
+        assertThat(valid(Map.of(OwnerSessionService.SESSION_CLAIM, "key"))).isTrue();
+        when(sessions.isValid(eq(7L), eq("key"), any())).thenReturn(false);
+        assertThat(valid(Map.of(OwnerSessionService.SESSION_CLAIM, "key"))).isFalse();
+        verifyNoInteractions(versions, revocations);
+    }
+
+    @Test
+    void 세션_DB_조회_장애는_일반_인증도_통과시키지_않는다() {
+        when(sessions.isValid(eq(7L), eq("key"), any())).thenThrow(new DataAccessResourceFailureException("DB"));
+        var claims = Map.<String, Object>of(OwnerSessionService.SESSION_CLAIM, "key");
+        assertThat(valid(claims)).isFalse();
+        assertThatThrownBy(() -> policy.isValid(Role.OWNER, 7L, ISSUED_AT, claims, CutoffPolicy.REQUIRED))
+                .isInstanceOfSatisfying(AuthException.class,
+                        e -> assertThat(e.getErrorCode().getCode()).isEqualTo("AUTH-002"));
+    }
+
 }

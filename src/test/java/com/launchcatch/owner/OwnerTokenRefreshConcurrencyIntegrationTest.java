@@ -3,294 +3,287 @@ package com.launchcatch.owner;
 import static org.assertj.core.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 import com.launchcatch.auth.Role;
 import com.launchcatch.auth.exception.AuthException;
 import com.launchcatch.auth.jwt.JwtTokenProvider;
-import jakarta.persistence.EntityManager;
-import jakarta.persistence.LockModeType;
-import java.util.Optional;
-import java.time.Instant;
-import java.time.temporal.ChronoUnit;
-import java.util.concurrent.atomic.AtomicReference;
-import com.launchcatch.auth.opaque.TokenHasher;
 import com.launchcatch.owner.dto.OwnerLoginRequest;
 import com.launchcatch.owner.entity.Owner;
-import com.launchcatch.owner.repository.OwnerRefreshTokenRepository;
-import com.launchcatch.owner.service.OwnerLoginService;
-import com.launchcatch.owner.service.OwnerTokenRefreshService;
+import com.launchcatch.owner.entity.OwnerSession;
+import com.launchcatch.owner.service.*;
+import jakarta.servlet.http.Cookie;
+import java.time.Duration;
+import java.util.List;
+import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
-import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DataAccessResourceFailureException;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
-import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.transaction.PlatformTransactionManager;
 
-// DB 행 잠금, 롤백 복구 및 로그인과 재발급의 게시 순서를 실제 저장소로 확인한다.
 class OwnerTokenRefreshConcurrencyIntegrationTest extends AbstractOwnerIntegrationTest {
-
-    @Autowired private OwnerLoginService login;
-    @Autowired private OwnerTokenRefreshService refresh;
-    @Autowired private com.launchcatch.owner.service.OwnerLogoutService logout;
-    @Autowired private com.launchcatch.owner.service.OwnerAccessTokenPolicy accessTokenPolicy;
-    @Autowired private PasswordEncoder encoder;
-    @Autowired private org.springframework.data.redis.core.StringRedisTemplate redis;
-    @Autowired private JwtTokenProvider jwt;
-    @Autowired private EntityManager entityManager;
+    @Autowired OwnerLoginService login;
+    @Autowired OwnerTokenRefreshService refresh;
+    @Autowired OwnerSessionService sessionService;
+    @Autowired OwnerAccessTokenPolicy policy;
+    @Autowired PasswordEncoder encoder;
+    @Autowired JwtTokenProvider jwt;
+    @Autowired MockMvc mvc;
+    @Autowired org.springframework.data.redis.core.StringRedisTemplate redis;
+    @Autowired JdbcTemplate jdbc;
+    @Autowired PlatformTransactionManager manager;
     private Long ownerId;
-    private String oldToken;
-    private final OwnerLoginRequest request = new OwnerLoginRequest("refresh@example.com", "password12");
+    private OwnerLoginRequest request;
 
     @BeforeEach
     void setUp() {
+        reset(sessions, owners, clock, sessionTokens);
+        request = new OwnerLoginRequest(UUID.randomUUID() + "@example.com", "password12");
         ownerId = owners.saveAndFlush(Owner.create(request.email(), encoder.encode(request.password()))).getId();
-        oldToken = login.login(request).refreshToken();
     }
 
-    @AfterEach
-    void tearDown() {
+    @org.junit.jupiter.api.AfterEach
+    void cleanup() {
+        jdbc.update("delete from owner_session where owner_id = ?", ownerId);
         owners.deleteById(ownerId);
     }
 
     @Test
-    void DB와_Redis의_RT를_함께_회전하고_재사용은_현재_RT를_폐기한다() {
-        var result = refresh.refresh(oldToken);
-        assertThat(owners.findById(ownerId).orElseThrow().getRefreshTokenHash()).isEqualTo(TokenHasher.sha256(result.refreshToken()));
-        assertThat(tokens.findActiveHash(Role.OWNER, ownerId)).contains(TokenHasher.sha256(result.refreshToken()));
-
-        assertThatThrownBy(() -> refresh.refresh(oldToken)).isInstanceOfSatisfying(AuthException.class,
-                e -> assertThat(e.getErrorCode().getCode()).isEqualTo("AUTH-004"));
-        assertThat(owners.findById(ownerId).orElseThrow().getRefreshTokenHash()).isNull();
-        assertThat(tokens.findActiveHash(Role.OWNER, ownerId)).isEmpty();
-        assertThat(tokens.find(result.refreshToken())).isEmpty();
-        assertThat(versions.isValid(ownerId, Long.parseLong((String) jwt.getAdditionalClaims(result.accessToken()).get("issuanceVersion")))).isFalse();
+    void 세션_외래_키는_없는_점주와_세션이_남은_점주의_삭제를_거부한다() {
+        var issued = login.login(request);
+        assertThatThrownBy(() -> jdbc.update("delete from owner where owner_id = ?", ownerId))
+                .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
+        assertThatThrownBy(() -> jdbc.update(
+                "update owner_session set owner_id = ? where session_key = ?", -1L, key(issued.accessToken())))
+                .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
+        assertThat(valid(issued.accessToken())).isTrue();
     }
 
     @Test
-    void Redis_소비후_DB잠금전_중복요청은_첫_재발급을_폐기하지_않는다() throws Exception {
-        CountDownLatch consumed = new CountDownLatch(1);
-        CountDownLatch release = new CountDownLatch(1);
-        doAnswer(call -> {
-            var result = (OwnerRefreshTokenRepository.ConsumeOutcome) call.callRealMethod();
-            if (result.isSuccess()) {
-                consumed.countDown();
-                assertThat(release.await(15, TimeUnit.SECONDS)).isTrue();
-            }
-            return result;
-        }).when(ownerTokens).consumeForRotation(oldToken);
-        try (var executor = Executors.newSingleThreadExecutor()) {
-            var first = executor.submit(() -> refresh.refresh(oldToken));
-            try {
-                assertThat(consumed.await(15, TimeUnit.SECONDS)).isTrue();
-                assertThatThrownBy(() -> refresh.refresh(oldToken)).isInstanceOfSatisfying(AuthException.class,
-                        e -> assertThat(e.getErrorCode().getCode()).isEqualTo("AUTH-003"));
-                assertThat(owners.findById(ownerId).orElseThrow().getRefreshTokenHash()).isEqualTo(TokenHasher.sha256(oldToken));
-            } finally {
-                release.countDown();
-            }
-            var winner = first.get(15, TimeUnit.SECONDS);
-            assertThat(owners.findById(ownerId).orElseThrow().getRefreshTokenHash()).isEqualTo(TokenHasher.sha256(winner.refreshToken()));
-            assertThat(tokens.findActiveHash(Role.OWNER, ownerId)).contains(TokenHasher.sha256(winner.refreshToken()));
+    void 두_기기의_동시_로그인과_갱신이_서로의_세션을_유지한다() throws Exception {
+        try (var executor = Executors.newFixedThreadPool(2)) {
+            var first = executor.submit(() -> login.login(request));
+            var second = executor.submit(() -> login.login(request));
+            var a = first.get(20, TimeUnit.SECONDS);
+            var b = second.get(20, TimeUnit.SECONDS);
+            assertThat(a.refreshToken()).isNotEqualTo(b.refreshToken());
+            assertThat(valid(a.accessToken())).isTrue();
+            assertThat(valid(b.accessToken())).isTrue();
+            var renewed = refresh.refresh(a.refreshToken());
+            assertThat(valid(renewed.accessToken())).isTrue();
+            assertThat(valid(b.accessToken())).isTrue();
+            assertThat(refresh.refresh(b.refreshToken()).refreshToken()).isNotBlank();
         }
     }
 
     @Test
-    void Redis_장애중_동일_RT의_DB_회전은_하나만_성공한다() throws Exception {
-        doThrow(new DataAccessResourceFailureException("Redis unavailable"))
-                .when(ownerTokens).consumeForRotation(anyString());
+    void 두_탭의_동시_재발급은_모두_성공하고_RT_쿠키는_한번만_교체한다() throws Exception {
+        var issued = login.login(request);
+        CountDownLatch start = new CountDownLatch(1);
         try (var executor = Executors.newFixedThreadPool(2)) {
-            CountDownLatch start = new CountDownLatch(1);
-            java.util.concurrent.Callable<String> task = () -> {
-                assertThat(start.await(10, TimeUnit.SECONDS)).isTrue();
-                try {
-                    return refresh.refresh(oldToken).refreshToken();
-                } catch (AuthException e) {
-                    assertThat(e.getErrorCode().getCode()).isEqualTo("AUTH-003");
-                    return "rejected";
-                }
+            java.util.concurrent.Callable<org.springframework.mock.web.MockHttpServletResponse> task = () -> {
+                assertThat(start.await(5, TimeUnit.SECONDS)).isTrue();
+                return mvc.perform(post("/v1/owner/auth/tokens:refresh")
+                                .cookie(new Cookie("refreshToken", issued.refreshToken())))
+                        .andExpect(status().isOk()).andReturn().getResponse();
             };
             var first = executor.submit(task);
             var second = executor.submit(task);
             start.countDown();
-            var results = java.util.List.of(first.get(20, TimeUnit.SECONDS), second.get(20, TimeUnit.SECONDS));
-            assertThat(results).filteredOn("rejected"::equals).hasSize(1);
-            String winner = results.stream().filter(value -> !value.equals("rejected")).findFirst().orElseThrow();
-            assertThat(owners.findById(ownerId).orElseThrow().getRefreshTokenHash()).isEqualTo(TokenHasher.sha256(winner));
+            var responses = List.of(first.get(20, TimeUnit.SECONDS), second.get(20, TimeUnit.SECONDS));
+            assertThat(responses).filteredOn(response -> response.getCookie("refreshToken") != null).hasSize(1);
+            var winner = responses.stream().filter(response -> response.getCookie("refreshToken") != null).findFirst().orElseThrow();
+            assertThat(valid(winner.getCookie("ownerAccessToken").getValue())).isTrue();
+            assertThat(refresh.refresh(winner.getCookie("refreshToken").getValue()).accessToken()).isNotBlank();
         }
     }
 
     @Test
-    void 늦어진_재발급_게시는_더_최신_로그인을_덮어쓰지_않는다() throws Exception {
-        CountDownLatch publicationReached = new CountDownLatch(1);
-        CountDownLatch release = new CountDownLatch(1);
-        doAnswer(call -> {
-            assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-            publicationReached.countDown();
-            assertThat(release.await(15, TimeUnit.SECONDS)).isTrue();
-            return call.callRealMethod();
-        }).when(tokens).saveIfNewer(anyString(), eq(ownerId), eq(Role.OWNER), eq(true), any(), eq(2L));
-        try (var executor = Executors.newSingleThreadExecutor()) {
-            var pending = executor.submit(() -> refresh.refresh(oldToken));
-            try {
-                assertThat(publicationReached.await(15, TimeUnit.SECONDS)).isTrue();
-                var latest = login.login(request);
-                release.countDown();
-                var earlier = pending.get(15, TimeUnit.SECONDS);
-                assertThat(earlier.refreshToken()).isNotEqualTo(latest.refreshToken());
-                assertThat(owners.findById(ownerId).orElseThrow().getRefreshTokenHash()).isEqualTo(TokenHasher.sha256(latest.refreshToken()));
-                assertThat(tokens.findActiveHash(Role.OWNER, ownerId)).contains(TokenHasher.sha256(latest.refreshToken()));
-                assertThat(tokens.find(earlier.refreshToken())).isEmpty();
-            } finally {
-                release.countDown();
-            }
-        }
+    void 한_기기의_로그아웃은_다른_기기의_AT와_RT를_유지한다() throws Exception {
+        var a = login.login(request);
+        var b = login.login(request);
+        mvc.perform(delete("/v1/owner/auth/tokens").cookie(new Cookie("ownerAccessToken", a.accessToken())))
+                .andExpect(status().isNoContent()).andExpect(cookie().maxAge("ownerAccessToken", 0))
+                .andExpect(cookie().maxAge("refreshToken", 0));
+        assertThat(valid(a.accessToken())).isFalse();
+        assertThatThrownBy(() -> refresh.refresh(a.refreshToken())).isInstanceOf(AuthException.class);
+        assertThat(valid(b.accessToken())).isTrue();
+        assertThat(refresh.refresh(b.refreshToken()).accessToken()).isNotBlank();
     }
 
     @Test
-    void 이전_RT_재사용의_잠금_대기중_발급된_AT도_폐기한다() throws Exception {
-        Instant startedAt = Instant.now().truncatedTo(ChronoUnit.SECONDS);
-        doReturn(startedAt).when(clock).instant();
-        // 설정에서 발급한 RT와 같은 시계를 사용하도록 다시 로그인한다.
-        String reusedToken = login.login(request).refreshToken();
-        String currentToken = refresh.refresh(reusedToken).refreshToken();
-        CountDownLatch revocationWaiting = new CountDownLatch(1);
-        CountDownLatch releaseRevocation = new CountDownLatch(1);
-        AtomicReference<Thread> revokingThread = new AtomicReference<>();
-        doAnswer(call -> {
-            if (Thread.currentThread() == revokingThread.get()) {
-                revocationWaiting.countDown();
-                assertThat(releaseRevocation.await(15, TimeUnit.SECONDS)).isTrue();
-            }
-            return Optional.ofNullable(entityManager.find(Owner.class, ownerId, LockModeType.PESSIMISTIC_WRITE));
-        }).when(owners).findByIdForLogin(ownerId);
-        try (var executor = Executors.newSingleThreadExecutor()) {
-            var revocation = executor.submit(() -> {
-                revokingThread.set(Thread.currentThread());
-                assertThatThrownBy(() -> refresh.refresh(reusedToken)).isInstanceOfSatisfying(AuthException.class,
-                        e -> assertThat(e.getErrorCode().getCode()).isEqualTo("AUTH-004"));
-            });
-            try {
-                assertThat(revocationWaiting.await(15, TimeUnit.SECONDS)).isTrue();
-                // 초 경계에 고정해 AT 발급과 폐기 시각이 같아도 차단되는지 확인한다.
-                doReturn(startedAt.plusSeconds(2)).when(clock).instant();
-                var issuedWhileWaiting = refresh.refresh(currentToken);
-                releaseRevocation.countDown();
-                revocation.get(15, TimeUnit.SECONDS);
-                assertThat(owners.findById(ownerId).orElseThrow().getRefreshTokenHash()).isNull();
-                assertThat(tokens.findActiveHash(Role.OWNER, ownerId)).isEmpty();
-                assertThat(versions.isValid(ownerId, Long.parseLong((String) jwt.getAdditionalClaims(issuedWhileWaiting.accessToken()).get("issuanceVersion")))).isFalse();
-            } finally {
-                releaseRevocation.countDown();
-            }
-        }
+    void 유예_후_재사용은_해당_세션만_차단한다() {
+        var instant = clock.instant().truncatedTo(java.time.temporal.ChronoUnit.MICROS);
+        doReturn(instant).when(clock).instant();
+        var a = login.login(request);
+        var b = login.login(request);
+        var renewed = refresh.refresh(a.refreshToken());
+        doReturn(instant.plusSeconds(10)).when(clock).instant();
+        assertThatThrownBy(() -> refresh.refresh(a.refreshToken())).isInstanceOfSatisfying(AuthException.class,
+                e -> assertThat(e.getErrorCode().getCode()).isEqualTo("AUTH-004"));
+        assertThat(valid(renewed.accessToken())).isFalse();
+        assertThat(valid(b.accessToken())).isTrue();
+        assertThat(refresh.refresh(b.refreshToken()).accessToken()).isNotBlank();
     }
 
     @Test
-    void 로그아웃은_재발급한_AT와_RT를_폐기하고_새_로그인의_재발급은_허용한다() {
-        var issued = refresh.refresh(oldToken);
-        assertThat(authenticated(issued.accessToken())).isTrue();
-        logout.logout(ownerId);
-        assertThat(authenticated(issued.accessToken())).isFalse();
-        assertThat(tokens.find(issued.refreshToken())).isEmpty();
-        assertThatThrownBy(() -> refresh.refresh(issued.refreshToken())).isInstanceOf(AuthException.class);
-        var loggedInAgain = login.login(request);
-        assertThat(authenticated(loggedInAgain.accessToken())).isTrue();
-        var refreshedAgain = refresh.refresh(loggedInAgain.refreshToken());
-        assertThat(authenticated(refreshedAgain.accessToken())).isTrue();
-        assertThat(authenticated(issued.accessToken())).isFalse();
+    void Redis_장애는_세션별_로그인과_갱신을_막지_않는다() {
+        doThrow(new DataAccessResourceFailureException("Redis")).when(sessionTokens)
+                .publish(anyString(), anyLong(), anyString(), anyLong(), any());
+        doThrow(new DataAccessResourceFailureException("Redis")).when(sessionTokens).consume(anyString());
+        var a = login.login(request);
+        var b = login.login(request);
+        var renewed = refresh.refresh(a.refreshToken());
+        assertThat(valid(renewed.accessToken())).isTrue();
+        assertThat(valid(b.accessToken())).isTrue();
+        verify(sessionTokens, times(3)).publish(anyString(), anyLong(), anyString(), anyLong(), any());
+        verify(sessionTokens).consume(a.refreshToken());
     }
 
     @Test
-    void Redis_폐기가_실패해도_DB에_확정된_로그아웃은_AT와_RT를_차단한다() {
-        var issued = refresh.refresh(oldToken);
-        doThrow(new DataAccessResourceFailureException("RT Redis")).when(logoutTokens)
-                .revokeThroughVersion(anyLong(), anyString(), anyLong());
-        doThrow(new DataAccessResourceFailureException("AT Redis")).when(versions)
-                .invalidateThroughVersion(anyLong(), anyLong());
-        assertThatThrownBy(() -> logout.logout(ownerId)).isInstanceOf(AuthException.class);
-        var owner = owners.findById(ownerId).orElseThrow();
-        assertThat(owner.getRefreshTokenHash()).isNull();
-        assertThat(owner.getAccessTokenRevokedVersion()).isEqualTo(owner.getRefreshTokenIssuanceVersion());
-        doThrow(new DataAccessResourceFailureException("Redis lookup")).when(versions).isValid(anyLong(), anyLong());
-        assertThat(authenticated(issued.accessToken())).isFalse();
-        doThrow(new DataAccessResourceFailureException("Redis consume")).when(ownerTokens).consumeForRotation(anyString());
-        assertThatThrownBy(() -> refresh.refresh(issued.refreshToken())).isInstanceOf(AuthException.class);
+    void 갱신_DB_롤백은_기존_RT를_유지한다() {
+        var issued = login.login(request);
+        doThrow(new DataAccessResourceFailureException("DB")).when(sessions).saveAndFlush(any(OwnerSession.class));
+        assertThatThrownBy(() -> refresh.refresh(issued.refreshToken())).isInstanceOfSatisfying(AuthException.class,
+                e -> assertThat(e.getErrorCode().getCode()).isEqualTo("AUTH-002"));
+        reset(sessions);
+        assertThat(valid(issued.accessToken())).isTrue();
+        assertThat(refresh.refresh(issued.refreshToken()).refreshToken()).isNotBlank();
     }
 
     @Test
-    void Redis_차단_키가_유실되어도_DB가_재사용으로_폐기한_AT를_거부한다() {
-        var issued = refresh.refresh(oldToken);
-        assertThatThrownBy(() -> refresh.refresh(oldToken)).isInstanceOf(AuthException.class);
-        redis.delete("accessTokenRevokedThroughVersion:OWNER:" + ownerId);
-        assertThat(authenticated(issued.accessToken())).isFalse();
-        var loggedInAgain = login.login(request);
-        assertThat(authenticated(loggedInAgain.accessToken())).isTrue();
+    void 로그아웃_DB_롤백은_현재_AT와_RT를_유지한다() {
+        var issued = login.login(request);
+        doThrow(new DataAccessResourceFailureException("DB")).when(sessions).saveAndFlush(any(OwnerSession.class));
+        assertThatThrownBy(() -> sessionService.logout(ownerId, key(issued.accessToken()))).isInstanceOf(AuthException.class);
+        reset(sessions);
+        assertThat(valid(issued.accessToken())).isTrue();
+        assertThat(refresh.refresh(issued.refreshToken()).accessToken()).isNotBlank();
     }
 
     @Test
-    void 로그아웃_DB_롤백시_현재_AT와_RT는_유효하다() {
-        var issued = refresh.refresh(oldToken);
-        doThrow(new DataAccessResourceFailureException("DB save")).when(owners).saveAndFlush(any(Owner.class));
-        assertThatThrownBy(() -> logout.logout(ownerId)).isInstanceOf(AuthException.class);
-        var owner = owners.findById(ownerId).orElseThrow();
-        assertThat(owner.getAccessTokenRevokedVersion()).isEqualTo(-1L);
-        assertThat(owner.getRefreshTokenHash()).isEqualTo(TokenHasher.sha256(issued.refreshToken()));
-        assertThat(authenticated(issued.accessToken())).isTrue();
-        assertThat(tokens.find(issued.refreshToken())).isPresent();
+    void 계정_전체_폐기는_모든_기기의_토큰을_차단한다() {
+        var a = login.login(request);
+        var b = login.login(request);
+        new TransactionTemplate(manager).executeWithoutResult(tx -> {
+            var owner = owners.findByIdForLogin(ownerId).orElseThrow();
+            owner.clearRefreshToken();
+            owners.saveAndFlush(owner);
+        });
+        assertThat(valid(a.accessToken())).isFalse();
+        assertThat(valid(b.accessToken())).isFalse();
+        assertThatThrownBy(() -> refresh.refresh(a.refreshToken())).isInstanceOf(AuthException.class);
+        assertThatThrownBy(() -> refresh.refresh(b.refreshToken())).isInstanceOf(AuthException.class);
+        assertThat(valid(login.login(request).accessToken())).isTrue();
     }
 
     @Test
-    void 재발급_RT는_재발급_시점부터_1일_유효하다() {
-        assertThat(jwt.refreshTokenValidityMs(Role.OWNER)).isEqualTo(java.time.Duration.ofDays(1).toMillis());
-        var before = java.time.LocalDateTime.ofInstant(clock.instant(), com.launchcatch.global.config.ClockConfig.ZONE);
-        var issued = refresh.refresh(oldToken);
-        var after = java.time.LocalDateTime.ofInstant(clock.instant(), com.launchcatch.global.config.ClockConfig.ZONE);
-        var owner = owners.findById(ownerId).orElseThrow();
-        assertThat(owner.getRefreshTokenExpiresAt()).isBetween(before.plusDays(1), after.plusDays(1));
-        assertThat(tokens.find(issued.refreshToken())).isPresent();
+    void 정지와_탈퇴는_갱신을_막고_기존_내정보_조회와_로그아웃은_유지한다() throws Exception {
+        var a = login.login(request);
+        jdbc.update("update owner set status='SUSPENDED', suspended_at=? where owner_id=?",
+                java.time.LocalDateTime.now(), ownerId);
+        assertThatThrownBy(() -> refresh.refresh(a.refreshToken())).isInstanceOf(AuthException.class);
+        mvc.perform(get("/v1/owner/me").cookie(new Cookie("ownerAccessToken", a.accessToken())))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.status").value("SUSPENDED"));
+        jdbc.update("update owner set status='WITHDRAWN', withdrawn_at=? where owner_id=?",
+                java.time.LocalDateTime.now(), ownerId);
+        assertThatThrownBy(() -> refresh.refresh(a.refreshToken())).isInstanceOf(AuthException.class);
+        mvc.perform(get("/v1/owner/me").cookie(new Cookie("ownerAccessToken", a.accessToken())))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.status").value("WITHDRAWN"));
+        mvc.perform(delete("/v1/owner/auth/tokens").cookie(new Cookie("ownerAccessToken", a.accessToken())))
+                .andExpect(status().isNoContent());
+        assertThat(valid(a.accessToken())).isFalse();
     }
 
     @Test
-    void 기존_계정_마이그레이션은_현재_RT를_보존하고_이전_AT를_차단한다() throws Exception {
-        try (var connection = java.sql.DriverManager.getConnection(MYSQL.getJdbcUrl(), MYSQL.getUsername(), MYSQL.getPassword());
-                var statement = connection.createStatement()) {
-            statement.execute("CREATE TEMPORARY TABLE owner (owner_id BIGINT PRIMARY KEY, refresh_token_hash VARCHAR(64), refresh_token_issuance_version BIGINT NOT NULL DEFAULT 0)");
-            statement.execute("INSERT INTO owner VALUES (1, NULL, 0), (2, 'active', 5), (3, NULL, 6)");
-            var resource = new org.springframework.core.io.ClassPathResource("db/migration/owner/V4__owner_access_token_revoked_version.sql");
-            String migration;
-            try (var input = resource.getInputStream()) {
-                // MySQL은 임시 테이블의 CHECK 이름도 스키마 안에서 고유해야 한다.
-                migration = new String(input.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8)
-                        .replace("chk_owner_access_token_revoked_version", "chk_owner_migration_test_revoked_version");
-            }
-            org.springframework.jdbc.datasource.init.ScriptUtils.executeSqlScript(connection,
-                    new org.springframework.core.io.ByteArrayResource(migration.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
-            try (var rows = statement.executeQuery("SELECT access_token_revoked_version FROM owner ORDER BY owner_id")) {
-                assertThat(rows.next()).isTrue();
-                assertThat(rows.getLong(1)).isEqualTo(-1L);
-                assertThat(rows.next()).isTrue();
-                assertThat(rows.getLong(1)).isEqualTo(4L);
-                assertThat(rows.next()).isTrue();
-                assertThat(rows.getLong(1)).isEqualTo(6L);
-                assertThat(rows.next()).isFalse();
-            }
-        }
+    void 이전_단일_토큰의_로그아웃은_새_기기별_세션을_유지한다() {
+        var now = java.time.LocalDateTime.ofInstant(clock.instant(), com.launchcatch.global.config.ClockConfig.ZONE);
+        new TransactionTemplate(manager).executeWithoutResult(tx -> {
+            var owner = owners.findByIdForLogin(ownerId).orElseThrow();
+            owner.recordLogin(com.launchcatch.auth.opaque.TokenHasher.sha256("legacy-" + ownerId), now.plusDays(1), now);
+            owners.saveAndFlush(owner);
+        });
+        var a = login.login(request);
+        tokens.saveIfNewer("legacy-" + ownerId, ownerId, Role.OWNER, true, Duration.ofDays(1), 1L);
+        var legacy = refresh.refresh("legacy-" + ownerId);
+        assertThat(valid(legacy.accessToken())).isTrue();
+        mvcLegacyLogout();
+        assertThat(valid(legacy.accessToken())).isFalse();
+        assertThat(valid(a.accessToken())).isTrue();
     }
 
-    private boolean authenticated(String token) {
-        return accessTokenPolicy.isValid(Role.OWNER, ownerId, jwt.getIssuedAt(token), jwt.getAdditionalClaims(token),
+    @Autowired OwnerLogoutService legacyLogout;
+
+    private void mvcLegacyLogout() {
+        legacyLogout.logout(ownerId);
+    }
+
+    private String key(String token) {
+        return (String) jwt.getAdditionalClaims(token).get(OwnerSessionService.SESSION_CLAIM);
+    }
+
+    private boolean valid(String token) {
+        return policy.isValid(Role.OWNER, ownerId, jwt.getIssuedAt(token), jwt.getAdditionalClaims(token),
                 com.launchcatch.auth.jwt.CutoffPolicy.REQUIRED);
     }
+
     @Test
-    void 실제_DB_롤백시_기존_토큰의_소비표시를_복구한다() {
-        doThrow(new DataAccessResourceFailureException("DB save unavailable")).when(owners).saveAndFlush(any(Owner.class));
-        assertThatThrownBy(() -> refresh.refresh(oldToken)).isInstanceOfSatisfying(AuthException.class,
-                e -> assertThat(e.getErrorCode().getCode()).isEqualTo("AUTH-002"));
-        assertThat(owners.findById(ownerId).orElseThrow().getRefreshTokenHash()).isEqualTo(TokenHasher.sha256(oldToken));
-        assertThat(ownerTokens.consumeForRotation(oldToken).isSuccess()).isTrue();
+    void Redis_장애중에도_DB_백업으로_회전하고_복구후_새_RT를_사용한다() {
+        var issued = login.login(request);
+        doThrow(new DataAccessResourceFailureException("Redis")).when(sessionTokens).consume(anyString());
+        doThrow(new DataAccessResourceFailureException("Redis")).when(sessionTokens).publish(anyString(), anyLong(), anyString(), anyLong(), any());
+        var renewed = refresh.refresh(issued.refreshToken());
+        assertThat(valid(renewed.accessToken())).isTrue();
+        reset(sessionTokens);
+        assertThat(refresh.refresh(renewed.refreshToken()).accessToken()).isNotBlank();
     }
+
+    @Test
+    void 캐시_전체_유실도_DB의_현재_세션을_검증한_뒤_복구한다() {
+        var issued = login.login(request);
+        var sessionKey = key(issued.accessToken());
+        redis.delete(List.of(
+                "ownerSessionToken:" + com.launchcatch.auth.opaque.TokenHasher.sha256(issued.refreshToken()),
+                "ownerSessionActive:" + sessionKey,
+                "ownerSessionVersion:" + sessionKey));
+        var renewed = refresh.refresh(issued.refreshToken());
+        assertThat(sessionTokens.consume(renewed.refreshToken())).isPresent();
+        assertThat(valid(renewed.accessToken())).isTrue();
+    }
+
+    @Test
+    void 세션_DB_롤백후_Redis_소비표시를_복구한다() {
+        var issued = login.login(request);
+        doThrow(new DataAccessResourceFailureException("DB")).when(sessions).saveAndFlush(any(OwnerSession.class));
+        assertThatThrownBy(() -> refresh.refresh(issued.refreshToken())).isInstanceOf(AuthException.class);
+        reset(sessions);
+        assertThat(redis.opsForValue().get("ownerSessionToken:" + com.launchcatch.auth.opaque.TokenHasher.sha256(issued.refreshToken())))
+                .doesNotContain("PENDING");
+        assertThat(refresh.refresh(issued.refreshToken()).refreshToken()).isNotBlank();
+    }
+
+    @Test
+    void Redis_폐기_실패여도_DB가_로그아웃한_세션을_다시_허용하지_않는다() {
+        var issued = login.login(request);
+        var other = login.login(request);
+        doThrow(new DataAccessResourceFailureException("Redis")).when(sessionTokens).revoke(anyString(), anyString(), anyLong(), any());
+        assertThatThrownBy(() -> sessionService.logout(ownerId, key(issued.accessToken())))
+                .isInstanceOfSatisfying(AuthException.class,
+                        e -> assertThat(e.getErrorCode().getCode()).isEqualTo("AUTH-002"));
+        reset(sessionTokens);
+        assertThat(valid(other.accessToken())).isTrue();
+        assertThat(refresh.refresh(other.refreshToken()).accessToken()).isNotBlank();
+        assertThat(valid(issued.accessToken())).isFalse();
+        assertThatThrownBy(() -> refresh.refresh(issued.refreshToken())).isInstanceOf(AuthException.class);
+    }
+
 }
