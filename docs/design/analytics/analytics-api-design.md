@@ -207,7 +207,7 @@ A-12(`MemberUsageStatsQueryService`)는 본인의 `daily_member_usage` 전체 �
 
 ### A-14 관리자 캠페인 리포트
 
-`CampaignReportQueryService`가 `campaign_daily_report`를 캠페인마다 `SUM(spent_amount)`, `SUM(valid_impression_count)`로 합한다. 기간이 없으면 그 캠페인의 모든 행을 합한다. `(campaign_id, business_date)` 유일 키가 조건을 받는다. 결과를 요청 순서로 다시 늘어놓고 행이 없는 캠페인은 0으로 채운다. `todayStatus`는 당일을 집계하지 않으므로 늘 `IN_PROGRESS`다. 다른 도메인은 부르지 않는다.
+`CampaignReportQueryService`가 `campaign_daily_report`의 확정(`FINALIZED`)된 행을 캠페인마다 `SUM(spent_amount)`, `SUM(valid_impression_count)`로 합한다. 집계 중인 행은 확정 전 값이라 합하지 않는다(#895). 기간이 없으면 그 캠페인의 모든 행을 합한다. `(campaign_id, business_date)` 유일 키가 조건을 받는다. 결과를 요청 순서로 다시 늘어놓고 행이 없는 캠페인은 0으로 채운다. `todayStatus`는 당일을 집계하지 않으므로 늘 `IN_PROGRESS`다. 다른 도메인은 부르지 않는다.
 
 `campaignIds`는 문자열로 받아 서비스가 나누고 검사한다. 스프링이 목록 변환에 실패하거나 필수 파라미터가 빠지면 전역 처리기가 `COMMON-003`으로 답하는데 명세는 `COMMON-002`로 정했기 때문이다.
 
