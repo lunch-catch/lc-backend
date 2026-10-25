@@ -31,6 +31,8 @@ import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -75,7 +77,7 @@ class PaymentRecheckServiceTest {
     }
 
     private void inquiryReturns(Status status, String orderId, long amount) {
-        when(paymentGateway.inquireByOrderId(ORDER_ID)).thenReturn(
+        when(paymentGateway.inquireByPaymentKey(PG_TID)).thenReturn(
                 new PaymentGatewayInquiryResult(status, PG_TID, orderId, amount, APPROVED_AT, null, null));
     }
 
@@ -97,7 +99,7 @@ class PaymentRecheckServiceTest {
     @Test
     void 실패가_확인되면_사유와_함께_실패로_닫는다() {
         unknown();
-        when(paymentGateway.inquireByOrderId(ORDER_ID)).thenReturn(new PaymentGatewayInquiryResult(
+        when(paymentGateway.inquireByPaymentKey(PG_TID)).thenReturn(new PaymentGatewayInquiryResult(
                 Status.FAILED, PG_TID, ORDER_ID, AMOUNT, null, "REJECT_CARD_COMPANY", "카드사 거절"));
 
         service().recheck(PAYMENT_ID);
@@ -109,7 +111,7 @@ class PaymentRecheckServiceTest {
     @Test
     void 실패_사유가_비어_있으면_기본_문구로_닫는다() {
         unknown();
-        when(paymentGateway.inquireByOrderId(ORDER_ID)).thenReturn(new PaymentGatewayInquiryResult(
+        when(paymentGateway.inquireByPaymentKey(PG_TID)).thenReturn(new PaymentGatewayInquiryResult(
                 Status.FAILED, PG_TID, ORDER_ID, AMOUNT, null, null, " "));
 
         service().recheck(PAYMENT_ID);
@@ -158,10 +160,10 @@ class PaymentRecheckServiceTest {
     void 조회가_실패하면_닫지_않고_시도만_기록한다() {
         unknown();
         doThrow(new PgUnknownException("read timeout", new RuntimeException()))
-                .when(paymentGateway).inquireByOrderId(ORDER_ID);
+                .when(paymentGateway).inquireByPaymentKey(PG_TID);
         service().recheck(PAYMENT_ID);
         doThrow(new PgNotSentException("connect", new RuntimeException()))
-                .when(paymentGateway).inquireByOrderId(ORDER_ID);
+                .when(paymentGateway).inquireByPaymentKey(PG_TID);
         service().recheck(PAYMENT_ID);
 
         verify(resultService, times(2))
@@ -179,6 +181,32 @@ class PaymentRecheckServiceTest {
         verify(resultService, never()).approve(anyLong(), any());
         verify(resultService, times(2))
                 .recordRecheckMiss(PAYMENT_ID, "조회 결과의 주문 번호나 금액이 저장값과 다릅니다.");
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = Status.class, names = {"FAILED", "EXPIRED", "CANCELED"})
+    void 다른_주문의_종료_결과는_확정하지_않고_시도만_기록한다(Status status) {
+        unknown();
+        inquiryReturns(status, "ord_other", AMOUNT);
+
+        service().recheck(PAYMENT_ID);
+
+        verify(resultService).recordRecheckMiss(PAYMENT_ID, "조회 결과의 주문 번호나 금액이 저장값과 다릅니다.");
+        verify(resultService, never()).fail(anyLong(), anyString());
+        verify(resultService, never()).cancel(anyLong());
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = Status.class, names = {"FAILED", "EXPIRED", "CANCELED"})
+    void 금액이_다른_종료_결과는_확정하지_않고_시도만_기록한다(Status status) {
+        unknown();
+        inquiryReturns(status, ORDER_ID, AMOUNT + 1);
+
+        service().recheck(PAYMENT_ID);
+
+        verify(resultService).recordRecheckMiss(PAYMENT_ID, "조회 결과의 주문 번호나 금액이 저장값과 다릅니다.");
+        verify(resultService, never()).fail(anyLong(), anyString());
+        verify(resultService, never()).cancel(anyLong());
     }
 
     @Test

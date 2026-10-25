@@ -34,12 +34,16 @@ public class AdminTokenService {
     private final AdminTokenTransactionService transactions;
     private final JwtTokenProvider jwt;
     private final Clock clock;
+    private final AdminSessionService sessions;
 
     @Transactional(propagation = Propagation.NEVER)
     public AdminLoginResult reissue(String oldToken) {
         if (oldToken == null || !TOKEN_PATTERN.matcher(oldToken).matches()) {
             throw invalid();
         }
+        var sessionResult = sessions.reissue(oldToken);
+        if (sessionResult.isPresent()) { return sessionResult.get(); }
+        // 배포 전에 발급된 단일 기기 RT만 기존 Redis·DB 복구 경로로 처리한다.
         String newToken = OpaqueTokenGenerator.generate();
         String oldHash = TokenHasher.sha256(oldToken);
         String newHash = TokenHasher.sha256(newToken);

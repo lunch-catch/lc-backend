@@ -31,6 +31,8 @@ import java.time.LocalDateTime;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -317,10 +319,10 @@ class PaymentConfirmationServiceTest {
     // --- 응답이 불명일 때의 동기 재조회 ------------------------------------------------------
 
     @Test
-    void 응답이_불명이면_주문_번호로_다시_조회해_승인이면_승인을_기록한다() {
+    void 응답이_불명이면_저장한_결제_키로_다시_조회해_승인이면_승인을_기록한다() {
         readyToCall();
         pgUnknown();
-        when(paymentGateway.inquireByOrderId(ORDER_ID)).thenReturn(inquiry(Status.APPROVED, ORDER_ID, AMOUNT));
+        when(paymentGateway.inquireByPaymentKey(PG_TID)).thenReturn(inquiry(Status.APPROVED, ORDER_ID, AMOUNT));
         when(resultService.approve(PAYMENT_ID, APPROVED_AT)).thenReturn(approved());
 
         assertThat(confirm().status()).isEqualTo(PaymentStatus.APPROVED);
@@ -330,18 +332,44 @@ class PaymentConfirmationServiceTest {
     void 재조회_결과가_승인이어도_금액이_다르면_확인_중으로_둔다() {
         readyToCall();
         pgUnknown();
-        when(paymentGateway.inquireByOrderId(ORDER_ID)).thenReturn(inquiry(Status.APPROVED, ORDER_ID, 100L));
+        when(paymentGateway.inquireByPaymentKey(PG_TID)).thenReturn(inquiry(Status.APPROVED, ORDER_ID, 100L));
         when(resultService.markUnknown(PAYMENT_ID)).thenReturn(unknown());
 
         assertThat(confirm().status()).isEqualTo(PaymentStatus.UNKNOWN);
         verify(resultService, never()).approve(anyLong(), any());
     }
 
+    @ParameterizedTest
+    @EnumSource(value = Status.class, names = {"FAILED", "EXPIRED", "CANCELED"})
+    void 다른_주문의_종료_결과는_확인_중으로_둔다(Status status) {
+        readyToCall();
+        pgUnknown();
+        when(paymentGateway.inquireByPaymentKey(PG_TID)).thenReturn(inquiry(status, "ord_other", AMOUNT));
+        when(resultService.markUnknown(PAYMENT_ID)).thenReturn(unknown());
+
+        assertThat(confirm().status()).isEqualTo(PaymentStatus.UNKNOWN);
+        verify(resultService, never()).fail(anyLong(), anyString());
+        verify(resultService, never()).cancel(anyLong());
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = Status.class, names = {"FAILED", "EXPIRED", "CANCELED"})
+    void 금액이_다른_종료_결과는_확인_중으로_둔다(Status status) {
+        readyToCall();
+        pgUnknown();
+        when(paymentGateway.inquireByPaymentKey(PG_TID)).thenReturn(inquiry(status, ORDER_ID, AMOUNT + 1));
+        when(resultService.markUnknown(PAYMENT_ID)).thenReturn(unknown());
+
+        assertThat(confirm().status()).isEqualTo(PaymentStatus.UNKNOWN);
+        verify(resultService, never()).fail(anyLong(), anyString());
+        verify(resultService, never()).cancel(anyLong());
+    }
+
     @Test
     void 재조회_결과가_실패면_코드와_사유로_실패를_기록하고_BILLING_003이다() {
         readyToCall();
         pgUnknown();
-        when(paymentGateway.inquireByOrderId(ORDER_ID)).thenReturn(new PaymentGatewayInquiryResult(
+        when(paymentGateway.inquireByPaymentKey(PG_TID)).thenReturn(new PaymentGatewayInquiryResult(
                 Status.FAILED, PG_TID, ORDER_ID, AMOUNT, null, "PAY_PROCESS_ABORTED", "결제가 중단되었습니다"));
         when(resultService.fail(PAYMENT_ID, "PAY_PROCESS_ABORTED: 결제가 중단되었습니다")).thenReturn(failed());
 
@@ -353,7 +381,7 @@ class PaymentConfirmationServiceTest {
     void 재조회_실패_사유가_없으면_정해_둔_문구로_실패를_기록한다() {
         readyToCall();
         pgUnknown();
-        when(paymentGateway.inquireByOrderId(ORDER_ID)).thenReturn(new PaymentGatewayInquiryResult(
+        when(paymentGateway.inquireByPaymentKey(PG_TID)).thenReturn(new PaymentGatewayInquiryResult(
                 Status.FAILED, PG_TID, ORDER_ID, AMOUNT, null, null, null));
         when(resultService.fail(PAYMENT_ID, "결제대행사 조회 결과 결제가 실패했습니다.")).thenReturn(failed());
 
@@ -365,7 +393,7 @@ class PaymentConfirmationServiceTest {
     void 재조회로_만료가_확인되면_취소로_닫고_BILLING_003이다() {
         readyToCall();
         pgUnknown();
-        when(paymentGateway.inquireByOrderId(ORDER_ID)).thenReturn(inquiry(Status.EXPIRED, ORDER_ID, AMOUNT));
+        when(paymentGateway.inquireByPaymentKey(PG_TID)).thenReturn(inquiry(Status.EXPIRED, ORDER_ID, AMOUNT));
         when(resultService.cancel(PAYMENT_ID)).thenReturn(cancelled());
 
         assertThatThrownBy(this::confirm).isInstanceOfSatisfying(BillingException.class,
@@ -377,7 +405,7 @@ class PaymentConfirmationServiceTest {
     void 재조회로_결제대행사_쪽_취소가_확인되면_충전_없이_취소로_닫는다() {
         readyToCall();
         pgUnknown();
-        when(paymentGateway.inquireByOrderId(ORDER_ID)).thenReturn(inquiry(Status.CANCELED, ORDER_ID, AMOUNT));
+        when(paymentGateway.inquireByPaymentKey(PG_TID)).thenReturn(inquiry(Status.CANCELED, ORDER_ID, AMOUNT));
         when(resultService.cancel(PAYMENT_ID)).thenReturn(cancelled());
 
         assertThatThrownBy(this::confirm).isInstanceOfSatisfying(BillingException.class,
@@ -389,7 +417,7 @@ class PaymentConfirmationServiceTest {
     void 재조회로도_정하지_못하면_확인_중으로_두고_202_응답감을_돌려준다() {
         readyToCall();
         pgUnknown();
-        when(paymentGateway.inquireByOrderId(ORDER_ID)).thenReturn(inquiry(Status.PENDING, ORDER_ID, AMOUNT));
+        when(paymentGateway.inquireByPaymentKey(PG_TID)).thenReturn(inquiry(Status.PENDING, ORDER_ID, AMOUNT));
         when(resultService.markUnknown(PAYMENT_ID)).thenReturn(unknown());
 
         PaymentConfirmResponse response = confirm();
@@ -404,7 +432,7 @@ class PaymentConfirmationServiceTest {
     void 재조회에서_결제가_없다고_해도_확인_중으로_둔다() {
         readyToCall();
         pgUnknown();
-        when(paymentGateway.inquireByOrderId(ORDER_ID)).thenReturn(PaymentGatewayInquiryResult.notFound());
+        when(paymentGateway.inquireByPaymentKey(PG_TID)).thenReturn(PaymentGatewayInquiryResult.notFound());
         when(resultService.markUnknown(PAYMENT_ID)).thenReturn(unknown());
 
         assertThat(confirm().status()).isEqualTo(PaymentStatus.UNKNOWN);
@@ -414,7 +442,7 @@ class PaymentConfirmationServiceTest {
     void 재조회_자체가_실패하면_확인_중으로_둔다() {
         readyToCall();
         pgUnknown();
-        when(paymentGateway.inquireByOrderId(ORDER_ID))
+        when(paymentGateway.inquireByPaymentKey(PG_TID))
                 .thenThrow(new PgUnknownException("timeout", new RuntimeException()));
         when(resultService.markUnknown(PAYMENT_ID)).thenReturn(unknown());
 

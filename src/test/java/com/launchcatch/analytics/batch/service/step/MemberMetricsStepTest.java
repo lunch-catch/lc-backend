@@ -44,18 +44,26 @@ class MemberMetricsStepTest {
     }
 
     @Test
-    void 회원_집계_조회의_신규_누적_탈퇴와_이벤트_로그의_활성_회원을_합친다() {
-        when(members.dailyStats(DAY)).thenReturn(new MemberDailyStats(120, 5430, 48));
+    void 회원_집계_조회의_신규_누적_탈퇴_정지와_이벤트_로그의_활성_회원을_합친다() {
+        when(members.dailyStats(DAY)).thenReturn(new MemberDailyStats(120, 5430, 48, 3));
         when(eventLog.countDistinctMembers(DAY)).thenReturn(910L);
 
         MemberMetrics metrics = step().collect(DAY);
 
-        assertThat(metrics).isEqualTo(new MemberMetrics(120, 5430, 48, 910));
+        assertThat(metrics).isEqualTo(new MemberMetrics(120, 5430, 48, 910, 3));
+    }
+
+    @Test
+    void 정지_회원이_있으면_정지_회원_수를_0으로_고정하지_않는다() {
+        when(members.dailyStats(DAY)).thenReturn(new MemberDailyStats(0, 100, 0, 30));
+        when(eventLog.countDistinctMembers(DAY)).thenReturn(0L);
+
+        assertThat(step().collect(DAY).suspendedCount()).isEqualTo(30);
     }
 
     @Test
     void 이벤트가_없는_날은_활성_회원_0으로_모은다() {
-        when(members.dailyStats(DAY)).thenReturn(new MemberDailyStats(0, 10, 0));
+        when(members.dailyStats(DAY)).thenReturn(new MemberDailyStats(0, 10, 0, 0));
         when(eventLog.countDistinctMembers(DAY)).thenReturn(0L);
 
         assertThat(step().collect(DAY).activeMemberCount()).isZero();
@@ -63,7 +71,7 @@ class MemberMetricsStepTest {
 
     @Test
     void 모으기는_자기_표를_쓰지_않는다() {
-        when(members.dailyStats(DAY)).thenReturn(new MemberDailyStats(1, 2, 0));
+        when(members.dailyStats(DAY)).thenReturn(new MemberDailyStats(1, 2, 0, 0));
         when(eventLog.countDistinctMembers(DAY)).thenReturn(1L);
 
         step().collect(DAY);
@@ -73,7 +81,7 @@ class MemberMetricsStepTest {
 
     @Test
     void 공개는_그날_행을_교체하고_쓴_행_수_1을_돌려준다() {
-        MemberMetrics collected = new MemberMetrics(120, 5430, 48, 910);
+        MemberMetrics collected = new MemberMetrics(120, 5430, 48, 910, 3);
 
         int written = step().publish(DAY, collected);
 

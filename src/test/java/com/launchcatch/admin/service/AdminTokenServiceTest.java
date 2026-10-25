@@ -30,7 +30,7 @@ class AdminTokenServiceTest {
     private final AdminTokenTransactionService db = mock(AdminTokenTransactionService.class);
     private final JwtTokenProvider jwt = mock(JwtTokenProvider.class);
     private final Clock clock = Clock.fixed(Instant.parse("2026-10-09T03:00:00Z"), ZoneId.of("Asia/Seoul"));
-    private final AdminTokenService service = new AdminTokenService(cache, db, jwt, clock);
+    private final AdminTokenService service = new AdminTokenService(cache, db, jwt, clock, org.mockito.Mockito.mock(com.launchcatch.admin.service.AdminSessionService.class));
     private final String old = "a".repeat(43);
     private final RefreshTokenData owner = new RefreshTokenData(1L, Role.ADMIN, true);
     private final AdminTokenTransactionService.RotationState state = new AdminTokenTransactionService.RotationState(

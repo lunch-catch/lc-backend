@@ -4,6 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.launchcatch.billing.client.CommitCheckingGateway;
+import com.launchcatch.billing.client.PaymentGatewayInquiryResult;
+import com.launchcatch.billing.client.PaymentGatewayInquiryResult.Status;
 import com.launchcatch.billing.client.PgNotSentException;
 import com.launchcatch.billing.client.PgUnknownException;
 import com.launchcatch.billing.dto.PaymentConfirmResponse;
@@ -12,6 +14,7 @@ import com.launchcatch.billing.exception.BillingErrorCode;
 import com.launchcatch.billing.exception.BillingException;
 import com.launchcatch.billing.service.PaymentConfirmationService;
 import com.launchcatch.billing.service.PaymentOrderService;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -199,6 +202,24 @@ class PaymentConfirmationIntegrationTest extends AbstractBillingIntegrationTest 
         assertThat(((Number) outbox.get("attempt_count")).intValue()).isZero();
         assertThat(((Number) outbox.get("max_retry")).intValue()).isEqualTo(5);
         assertThat(outbox.get("next_retry_at")).isNotNull();
+    }
+
+    @Test
+    void 승인_응답이_불명이어도_결제_키로_승인을_찾으면_한_번만_충전한다() {
+        Order order = order(OWNER);
+        String paymentKey = "tgen_key_only_669";
+        gateway.failConfirmWith(new PgUnknownException("read timeout", new RuntimeException()));
+        gateway.givenPaymentKeyOnly(new PaymentGatewayInquiryResult(
+                Status.APPROVED, paymentKey, order.orderId(), AMOUNT,
+                LocalDateTime.of(2026, 10, 25, 10, 0), null, null));
+
+        assertThat(confirm(order, paymentKey).status()).isEqualTo(PaymentStatus.APPROVED);
+        assertThat(confirm(order, paymentKey).status()).isEqualTo(PaymentStatus.APPROVED);
+
+        assertThat(status(order.paymentId())).isEqualTo("APPROVED");
+        assertThat(charges(order.paymentId())).isEqualTo(1);
+        assertThat(jdbc.queryForObject("select count(*) from payment_reconciliation_outbox where payment_id = ?",
+                Integer.class, order.paymentId())).isZero();
     }
 
     @Test

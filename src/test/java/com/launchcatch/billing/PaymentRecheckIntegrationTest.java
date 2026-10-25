@@ -1,14 +1,17 @@
 package com.launchcatch.billing;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
+import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 
+import com.launchcatch.auth.CustomUserDetails;
+import com.launchcatch.auth.Role;
 import com.launchcatch.billing.client.FakePaymentGateway;
 import com.launchcatch.billing.client.PaymentGatewayInquiryResult;
 import com.launchcatch.billing.client.PaymentGatewayInquiryResult.Status;
 import com.launchcatch.billing.client.PgUnknownException;
-import com.launchcatch.billing.dto.AdminPaymentItem;
 import com.launchcatch.billing.dto.PaymentWebhookRequest;
-import com.launchcatch.billing.entity.PaymentStatus;
 import com.launchcatch.billing.exception.BillingErrorCode;
 import com.launchcatch.billing.exception.BillingException;
 import com.launchcatch.billing.service.AdminPaymentRecheckService;
@@ -30,6 +33,8 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+import org.springframework.web.context.WebApplicationContext;
 
 /*
  * 웹훅, 재조회 워커, 관리자 재조회가 확인 중인 결제를 확정하는 경로를 실제 MySQL 8.4 로 검증한다.
@@ -48,6 +53,7 @@ class PaymentRecheckIntegrationTest extends AbstractBillingIntegrationTest {
 
 
     @Autowired PaymentOrderService orderService;
+    @Autowired WebApplicationContext webContext;
     @Autowired PaymentConfirmationService confirmationService;
     @Autowired PaymentRecheckService recheckService;
     @Autowired PaymentWebhookService webhookService;
@@ -77,7 +83,7 @@ class PaymentRecheckIntegrationTest extends AbstractBillingIntegrationTest {
     }
 
     private void pgSays(Order order, Status status) {
-        gateway.givenPayment(new PaymentGatewayInquiryResult(
+        gateway.givenPaymentKeyOnly(new PaymentGatewayInquiryResult(
                 status, order.paymentKey(), order.orderId(), AMOUNT, APPROVED_AT, null, null));
     }
 
@@ -142,14 +148,30 @@ class PaymentRecheckIntegrationTest extends AbstractBillingIntegrationTest {
     }
 
     @Test
-    void 확인_중인_결제를_관리자가_재조회하면_승인되고_감사_로그가_함께_남는다() {
+    void 워커가_결제_키로만_조회되는_결제를_승인하고_아웃박스를_닫는다() {
+        Order order = unknownOrder(OWNER, "tgen_worker_key_only_669");
+        pgSays(order, Status.APPROVED);
+        makeDue(order.paymentId());
+
+        assertThat(recheckService.recheckDue()).isEqualTo(1);
+
+        assertThat(status(order.paymentId())).isEqualTo("APPROVED");
+        assertThat(charges(order.paymentId())).isEqualTo(1);
+        assertThat(outboxStatus(order.paymentId())).isEqualTo("RESOLVED");
+    }
+
+    @Test
+    void 확인_중인_결제를_관리자가_결제_키로_재조회하면_승인되고_감사_로그가_함께_남는다() throws Exception {
         Order order = unknownOrder(OWNER, "tgen_admin_1");
         pgSays(order, Status.APPROVED);
 
-        AdminPaymentItem item = adminRecheckService.recheck(ADMIN, order.paymentId());
+        var mvc = MockMvcBuilders.webAppContextSetup(webContext).apply(springSecurity()).build();
+        mvc.perform(post("/v1/admin/payments/{paymentId}:recheck", order.paymentId())
+                        .with(user(new CustomUserDetails(ADMIN, Role.ADMIN))))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk());
 
-        assertThat(item.status()).isEqualTo(PaymentStatus.APPROVED);
-        assertThat(item.reconciliation().status().name()).isEqualTo("RESOLVED");
+        assertThat(status(order.paymentId())).isEqualTo("APPROVED");
+        assertThat(outboxStatus(order.paymentId())).isEqualTo("RESOLVED");
         assertThat(charges(order.paymentId())).isEqualTo(1);
         assertThat(jdbc.queryForObject("select count(*) from audit_log where action = 'PAYMENT_RECHECK' "
                 + "and target = ?", Integer.class, String.valueOf(order.paymentId()))).isEqualTo(1);

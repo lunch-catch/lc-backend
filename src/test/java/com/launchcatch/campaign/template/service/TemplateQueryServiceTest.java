@@ -3,6 +3,7 @@ package com.launchcatch.campaign.template.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.never;
@@ -10,6 +11,8 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.launchcatch.admin.contract.AdminSummary;
+import com.launchcatch.admin.contract.AdminSummaryQuery;
 import com.launchcatch.campaign.exception.CampaignException;
 import com.launchcatch.campaign.exception.PosterErrorCode;
 import com.launchcatch.campaign.template.dto.OwnerTemplateListItemResponse;
@@ -27,13 +30,16 @@ import com.launchcatch.global.response.PageCursor;
 import com.launchcatch.global.response.PageTokens;
 import java.lang.reflect.Field;
 import java.time.LocalDateTime;
+import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.Captor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.data.domain.Pageable;
@@ -49,12 +55,95 @@ class TemplateQueryServiceTest {
     private TemplateRepository templateRepository;
     @Mock
     private TemplateVersionRepository templateVersionRepository;
+    @Mock
+    private AdminSummaryQuery adminSummaryQuery;
+
+    @Captor
+    private ArgumentCaptor<Collection<Long>> adminIdsCaptor;
 
     private TemplateQueryService service;
 
     @BeforeEach
     void setUp() {
-        service = new TemplateQueryService(templateRepository, templateVersionRepository);
+        service = new TemplateQueryService(templateRepository, templateVersionRepository, adminSummaryQuery);
+    }
+
+    @Test
+    @DisplayName("목록은 수정자와 활성 변경자의 관리자 이름을 관리자 ID 를 모아 한 번만 조회해 채운다(#949)")
+    void 목록은_관리자_이름을_한번에_조회해_채운다() throws Exception {
+        Template draft = draftTemplate(1L, "가을 신메뉴");
+        Template published = publishedTemplate(2L);
+        published.changeActive(true, 7L, LocalDateTime.now());
+        when(templateRepository.findAllByOrderByCreatedAtDesc()).thenReturn(List.of(published, draft));
+        when(templateVersionRepository.findLatestAliveByTemplateIds(List.of(1L)))
+                .thenReturn(List.of(draft.latestVersion()));
+        when(adminSummaryQuery.findSummariesByIds(anyCollection())).thenReturn(Map.of(1L, new AdminSummary("홍길동", "admin01"), 7L, new AdminSummary("김관리", "admin07")));
+
+        List<TemplateListItemResponse> responses = service.list();
+
+        assertThat(responses.get(0).lastModifiedBy()).isEqualTo(ADMIN_ID);
+        assertThat(responses.get(0).lastModifiedByName()).isEqualTo("홍길동");
+        assertThat(responses.get(0).lastModifiedByLoginId()).isEqualTo("admin01");
+        assertThat(responses.get(0).activatedBy()).isEqualTo(7L);
+        assertThat(responses.get(0).activatedByName()).isEqualTo("김관리");
+        assertThat(responses.get(0).activatedByLoginId()).isEqualTo("admin07");
+        assertThat(responses.get(1).lastModifiedByName()).isEqualTo("홍길동");
+        assertThat(responses.get(1).lastModifiedByLoginId()).isEqualTo("admin01");
+        assertThat(responses.get(1).activatedBy()).isNull();
+        assertThat(responses.get(1).activatedByName()).isNull();
+        assertThat(responses.get(1).activatedByLoginId()).isNull();
+        verify(adminSummaryQuery, times(1)).findSummariesByIds(adminIdsCaptor.capture());
+        assertThat(adminIdsCaptor.getValue()).containsExactlyInAnyOrder(1L, 7L);
+    }
+
+    @Test
+    @DisplayName("관리자를 찾을 수 없으면 이름은 null 이고 ID 는 그대로 내려간다(#949)")
+    void 관리자를_찾을_수_없으면_이름은_null이다() throws Exception {
+        Template draft = draftTemplate(1L, "가을 신메뉴");
+        when(templateRepository.findAllByOrderByCreatedAtDesc()).thenReturn(List.of(draft));
+        when(templateVersionRepository.findLatestAliveByTemplateIds(List.of(1L)))
+                .thenReturn(List.of(draft.latestVersion()));
+        when(adminSummaryQuery.findSummariesByIds(anyCollection())).thenReturn(Map.of());
+
+        TemplateListItemResponse response = service.list().get(0);
+
+        assertThat(response.lastModifiedBy()).isEqualTo(ADMIN_ID);
+        assertThat(response.lastModifiedByName()).isNull();
+        assertThat(response.lastModifiedByLoginId()).isNull();
+    }
+
+    @Test
+    @DisplayName("수정자와 활성 변경자가 모두 없으면 관리자 이름을 조회하지 않는다(#949)")
+    void 관리자_ID가_없으면_이름을_조회하지_않는다() throws Exception {
+        Template noAdmin = Template.createDraft("관리자 없는 템플릿");
+        setId(noAdmin, 5L);
+        setStatus(noAdmin, TemplateStatus.PUBLISHED);
+        setHtmlContent(noAdmin, PUBLISHED_HTML);
+        when(templateRepository.findAllByOrderByCreatedAtDesc()).thenReturn(List.of(noAdmin));
+
+        TemplateListItemResponse response = service.list().get(0);
+
+        assertThat(response.lastModifiedByName()).isNull();
+        assertThat(response.lastModifiedByLoginId()).isNull();
+        assertThat(response.activatedByName()).isNull();
+        assertThat(response.activatedByLoginId()).isNull();
+        verify(adminSummaryQuery, never()).findSummariesByIds(anyCollection());
+    }
+
+    @Test
+    @DisplayName("상세도 수정자와 활성 변경자의 관리자 이름을 채운다(#949)")
+    void 상세도_관리자_이름을_채운다() throws Exception {
+        Template template = publishedTemplate(TEMPLATE_ID);
+        template.changeActive(true, 7L, LocalDateTime.now());
+        when(templateRepository.findById(TEMPLATE_ID)).thenReturn(Optional.of(template));
+        when(adminSummaryQuery.findSummariesByIds(anyCollection())).thenReturn(Map.of(1L, new AdminSummary("홍길동", "admin01"), 7L, new AdminSummary("김관리", "admin07")));
+
+        TemplateDetailResponse response = service.detail(TEMPLATE_ID);
+
+        assertThat(response.lastModifiedByName()).isEqualTo("홍길동");
+        assertThat(response.lastModifiedByLoginId()).isEqualTo("admin01");
+        assertThat(response.activatedByName()).isEqualTo("김관리");
+        assertThat(response.activatedByLoginId()).isEqualTo("admin07");
     }
 
     @Test

@@ -252,6 +252,8 @@ PointCharged { ownerId, paymentId, amount }
 
 `payment_reconciliation_outbox`는 PG 응답이 불명확한 결제(`UNKNOWN`)를 확정하기 위한 재시도 큐다.
 
+워커와 관리자 재조회가 사용하는 조회 식별자는 [결제 승인 결과의 재조회](./billing_구조와_동작_설계.md#결제-승인-결과의-재조회)를 따른다.
+
 - **적재**: 승인 확정에서 결제를 `UNKNOWN`으로 만들 때 *(2026-10-08 수정: 웹훅은 UNKNOWN을 만들지 않는다. [billing API 설계](./billing-api-design.md)의 웹훅 절 참고)* 같은 트랜잭션에서 `status=PENDING`, `attempt_count=0`, `max_retry`, `next_retry_at`을 채워 넣는다. 결제당 1행(`UNIQUE(payment_id)`).
 - **처리**: 주기 스케줄러가 `status=PENDING AND next_retry_at ≤ now`인 건을 `(status, next_retry_at)` 인덱스로 가져와 PG 조회 API를 호출한다. 여러 인스턴스가 같은 건을 집지 않도록 행 잠금(`SKIP LOCKED`)을 쓴다.
 

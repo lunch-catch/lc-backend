@@ -309,6 +309,25 @@ class TossPaymentGatewayTest {
     }
 
     @Test
+    void 상점_정보가_없으면_승인을_처리하지_않은_오류다() {
+        server.reply(404, """
+                {"code":"NOT_FOUND_MERCHANT","message":"상점 정보가 없습니다."}""");
+
+        assertThatThrownBy(() -> gateway.confirm(PAYMENT_KEY, ORDER_ID, AMOUNT))
+                .isInstanceOf(PgNotSentException.class)
+                .hasMessageContaining("NOT_FOUND_MERCHANT");
+    }
+
+    @Test
+    void 결제_키_조회에서_상점_정보가_없으면_결제_없음으로_보지_않는다() {
+        server.reply(404, """
+                {"code":"NOT_FOUND_MERCHANT","message":"상점 정보가 없습니다."}""");
+
+        assertThatThrownBy(() -> gateway.inquireByPaymentKey(PAYMENT_KEY))
+                .isInstanceOf(PgNotSentException.class);
+    }
+
+    @Test
     void 조회가_인증_거부되면_PgNotSentException_이다() {
         server.reply(403, """
                 {"code":"FORBIDDEN_REQUEST","message":"허용되지 않은 요청입니다."}""");

@@ -321,7 +321,7 @@
 | B-412 | 시작 재실행 멱등 | 20 단계 재실행 | findToStart, CampaignStatusService.activate | - | 앞 실행이 일부를 ACTIVE 로 바꿈, 또는 기존 ACTIVE 만 끝나고 실패 | 이미 ACTIVE 는 조회에서 빠지고 activate 도 null 반환(로그 없음), 남은 SCHEDULED 만 시작, 취소돼 DRAFT 가 된 것은 대상 아님 | 같은 D |
 | B-413 | 가게 요약 새 영업일 생성 | 30 CAMPAIGN_STORE_SUMMARY | CampaignStoreSummaryService.prepare -> StoreCampaignSummaryUpdater.updateAll | - | ACTIVE, endDate >= D(10, 20 단계 반영 뒤) | 한 트랜잭션에서 id 순 500건씩 store_campaign_summary(D, 캠페인) upsert, 방금 시작한 캠페인 포함, 방금 끝난 캠페인 제외 | D 00:00 |
 | B-414 | 중단 캠페인 요약 미생성 | 30 단계 | CampaignRepository.findActiveSummaryRowsAfter | - | PAUSED(OWNER/ADMIN/NO_POINTS) | D 요약 행 만들지 않음(전날 행만 남음), 재개 때 CampaignStatusService.resume 이 그날 요약을 씀 | D |
-| B-415 | 요약 데이터 오류로 단계 실패 | 30 단계 | StoreCampaignSummaryUpdaterImpl.updateAll | FAILED | ACTIVE 캠페인 1건이 MENU 할인 메뉴 불일치 또는 할인 값/사용 시간 검증 실패 | IllegalArgumentException, 앞 청크까지 전부 롤백, 단계 FAILED, 묶음 FAILED, 35 이후(정산, 후보 적재) 미실행. 10, 20 단계와 달리 한 건만 건너뛰지 않음 | D |
+| B-415 | 요약 데이터 오류 건너뜀 | 30 단계 | CampaignStoreSummaryService.prepare, StoreCampaignSummaryUpdaterImpl.updateAll | CAMPAIGN_DAILY_SUMMARY_SKIPPED 로그 | ACTIVE 캠페인 1건이 MENU 할인 메뉴 불일치 또는 할인 값/사용 시간 검증 실패 | 그 청크가 IllegalArgumentException 으로 되돌아간 뒤 캠페인 한 건씩 다시 저장. 오류 난 캠페인만 ERROR 로그 reason=DATA_ERROR 를 남기고 요약 없이 건너뜀, 나머지 캠페인 요약은 저장, 단계 SUCCESS, 35 이후(정산, 후보 적재) 정상 실행. 10, 20 단계와 같은 규칙 | D |
 | B-416 | 요약 재실행 멱등 | 30 단계 재실행 | store_campaign_summary upsert | - | 같은 D 요약이 이미 있음 | (영업일, 캠페인) 기준 덮어쓰기, 중복 행 없음 | 같은 D |
 | B-417 | 하루 예산 변경 적용 | 35 CAMPAIGN_APPLY_PENDING_BUDGET | CampaignDailyTransitionService.applyPendingDailyBudgets -> CampaignStatusService.applyPendingDailyBudget | - | ACTIVE, pending_daily_budget 있음(PATCH /v1/owner/campaigns/{campaignId} 로 예약) | 행 잠금 후 daily_budget=예약값, pending_daily_budget 비움, 같은 묶음 50 단계가 새 하루 예산으로 RESERVE | D 00:00 |
 | B-418 | 중단 캠페인 예약값 유지 | 35 단계 | findIdsWithPendingDailyBudget, Campaign.applyPendingDailyBudget | - | PAUSED 이고 pending_daily_budget 있음(목록 조회 뒤 PAUSED/ENDED 로 바뀐 것 포함) | 적용 안 함, 예약값 유지, 재개 뒤 다음 00:00 에 적용(ENDED 는 종료 때 예약값 삭제) | D |
@@ -603,13 +603,13 @@
 | B-369 | 관리자 로그인 실패 | 없는 ID, 틀린 비밀번호, 비활성, 72바이트 초과 비밀번호 | POST /v1/admin/auth/tokens | AUTH-001 | 상태별 | 모두 같은 401, 더미 BCrypt 비교 | 없음 |
 | B-370 | 관리자 로그인 DB 실패 | 트랜잭션 실패 | POST /v1/admin/auth/tokens | AUTH-002 | DB 장애 | 503 | 없음 |
 | B-371 | 관리자 RT 형식 불량 | 43자 base64url 이 아닌 쿠키 | POST /v1/admin/auth/tokens:refresh | AUTH-003 | 없음 | 저장소 조회 없이 401 | 없음 |
-| B-372 | 관리자 재발급 정상 | 유효 RT | POST /v1/admin/auth/tokens:refresh | 없음 | Redis 레코드, DB 해시 일치 | 회전, 감사 ADMIN_TOKEN_REISSUE | RT 1일 안 |
-| B-373 | 관리자 Redis 에 RT 없음 | 캐시 유실 | POST /v1/admin/auth/tokens:refresh | 없음 또는 AUTH-003 | DB 해시 존재 | 회원과 달리 NOT_FOUND 도 DB 폴백, DB 일치하면 성공 | 없음 |
-| B-374 | 관리자 RT 재사용 | tombstone RT 재제출 | POST /v1/admin/auth/tokens:refresh | AUTH-004 | tombstone | DB RT 폐기와 순번 증가, 감사 REUSE_DETECTED. AT 폐기 순번은 갱신하지 않아 기존 AT 는 만료까지 유효 | 옛 RT 남은 수명 안 |
-| B-375 | 관리자 다른 기기 로그인 뒤 이전 RT | B 로그인 후 A 재발급 | POST /v1/admin/auth/tokens:refresh | AUTH-003 -> 재시도 시 AUTH-004 | DB 해시 = B | Redis 회전 후 DB 실패 -> 401. A 키가 tombstone 이 되어 재시도하면 B 세션 폐기 (코드 경로 추론) | 없음 |
-| B-376 | 관리자 회전 Redis 타임아웃 | 회전 결과 모름 | POST /v1/admin/auth/tokens:refresh | AUTH-002 | Redis 타임아웃, 새 키 확인 실패 | 503, 감사 ROTATION_RESULT_UNKNOWN | 없음 |
-| B-377 | 관리자 로그아웃 | 유효 ADMIN AT | DELETE /v1/admin/auth/tokens | 없음 또는 AUTH-002, AUTH-005 | ACTIVE 관리자 | DB RT 폐기, AT 폐기 순번과 validAfter 기록, Redis 반영, 감사. 저장소 실패 503, 비활성이거나 역할 변경이면 401 | 없음 |
-| B-378 | 관리자 AT 검증 DB 장애 | 폐기 상태 조회 실패 | 관리자 API | AUTH-005 | DB 장애 | fail-closed 로 401. Redis 버전 조회 실패만 통과 | 없음 |
+| B-372 | 관리자 재발급 정상 | 유효 RT | POST /v1/admin/auth/tokens:refresh | 없음 | 세션 Redis 레코드와 DB 현재 해시 일치 | Redis 원자 회전, DB 해시·게시 순번·감사 확정, 커밋 후 게시 | RT 1일 안 |
+| B-373 | 관리자 Redis 유실·장애 | 캐시 조회 실패·부재 | POST /v1/admin/auth/tokens:refresh | 없음 또는 AUTH-003 | 세션 DB 현재 해시 존재 | 기존 정책대로 현재 해시·만료·계정을 검증하고 회전·재게시 | RT 만료 전 |
+| B-374 | 관리자 RT 재사용 | tombstone RT 재제출 | POST /v1/admin/auth/tokens:refresh | AUTH-004 | Redis 재사용 기록 | 해당 세션 RT만 폐기하고 감사 REUSE_DETECTED. 기존 AT와 다른 기기 토큰 유지 | 옛 RT 남은 수명 안 |
+| B-375 | 관리자 다른 기기 로그인 뒤 이전 RT | B 로그인 후 A 재발급 | POST /v1/admin/auth/tokens:refresh | 없음 | A·B의 활성 세션 | A 갱신 성공, B의 AT·RT도 유지 | RT 만료 전 |
+| B-376 | 관리자 RT의 Redis 타임아웃 | 회전 결과 모름 | POST /v1/admin/auth/tokens:refresh | AUTH-002 | Redis 타임아웃과 새 키 확인 실패 | 기존 정책대로 503, 새 쿠키 없음, 자동 반복 재시도하지 않음 | 없음 |
+| B-377 | 관리자 로그아웃 | 유효 ADMIN AT | DELETE /v1/admin/auth/tokens | 없음 또는 AUTH-002, AUTH-005 | ACTIVE 관리자와 활성 세션 | 해당 세션만 폐기, 쿠키 삭제와 감사. 다른 기기는 유지. 배포 전 AT는 기존 전체 폐기 | 없음 |
+| B-378 | 관리자 AT 검증 DB 장애 | 세션 또는 폐기 상태 조회 실패 | 관리자 API | AUTH-005 또는 AUTH-002 | DB 장애 | 인증을 거부한다. 필터 LENIENT는 401, 서비스 REQUIRED는 503 | 없음 |
 | B-379 | 웹훅 경로 인증 | 토스, 카카오 서버 호출 | POST /webhook/payments, GET/POST /webhook/kakao/unlink | 없음 | 없음 | 쿠키 없이 permitAll. 결제 웹훅 체인은 JWT 필터와 속도 제한 필터도 없음 | 없음 |
 
 ### 속도 제한

@@ -1253,7 +1253,7 @@
 | B-412 | 시작 재실행 멱등 | `CMP.SCHEDULED_START_REACHED`, `OPS.BATCH_BUNDLE_FAILED` |
 | B-413 | 가게 요약 새 영업일 생성 | `CMP.ACTIVE_MANY` |
 | B-414 | 중단 캠페인 요약 미생성 | `CMP.PAUSED_OWNER`, `CMP.PAUSED_NO_POINTS` |
-| B-415 | 요약 데이터 오류로 단계 실패 | `CMP.MENU_MISSING` |
+| B-415 | 요약 데이터 오류 건너뜀 | `CMP.MENU_MISSING` |
 | B-416 | 요약 재실행 멱등 | `CMP.ACTIVE_MANY` |
 | B-417 | 하루 예산 변경 적용 | `CMP.ACTIVE_PENDING_BUDGET` |
 | B-418 | 중단 캠페인 예약값 유지 | `CMP.PAUSED_PENDING_BUDGET` |

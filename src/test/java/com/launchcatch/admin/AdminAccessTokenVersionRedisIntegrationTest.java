@@ -49,7 +49,7 @@ class AdminAccessTokenVersionRedisIntegrationTest extends IntegrationTestSupport
             org.mockito.Mockito.when(database.findRevocation(2L)).thenReturn(java.util.Optional.of(
                     new AdminAccessTokenRevocation(11L, cutoff)));
             var verifier = new AdminAccessTokenVerifier(versions,
-                    new AccessTokenCutoffVerifier(new AccessTokenValidAfterRepository(redis)), database);
+                    new AccessTokenCutoffVerifier(new AccessTokenValidAfterRepository(redis)), database, org.mockito.Mockito.mock(com.launchcatch.admin.service.AdminSessionService.class));
             versions.invalidateThroughVersion(Role.ADMIN, 2L, 11L);
             redis.delete(java.util.List.of("accessTokenRevokedVersion:ADMIN:2", "accessTokenValidAfter:ADMIN:2"));
             assertThat(versions.isVersionValid(Role.ADMIN, 2L, 10L)).isTrue();

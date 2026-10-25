@@ -169,6 +169,8 @@
     "templateId": 1,
     "name": "겨울 신메뉴",
     "lastModifiedBy": 1,
+    "lastModifiedByName": "홍길동",
+    "lastModifiedByLoginId": "admin01",
     "lastModifiedAt": "2026-10-24T10:00:00+09:00"
   }
 }
@@ -179,6 +181,8 @@
 | `templateId` | integer | 아니오 | 템플릿 ID |
 | `name` | string | 아니오 | 바뀐 템플릿 이름 |
 | `lastModifiedBy` | integer | 아니오 | 마지막으로 수정한 관리자 ID |
+| `lastModifiedByName` | string | 가능 | 그 관리자의 이름. 관리자를 찾을 수 없으면 `null` |
+| `lastModifiedByLoginId` | string | 가능 | 그 관리자의 로그인 ID. 이름이 같은 관리자를 구분할 때 쓴다. 관리자를 찾을 수 없으면 `null` |
 | `lastModifiedAt` | string (시각) | 아니오 | 마지막으로 수정한 시각 |
 
 **오류**
@@ -226,8 +230,12 @@
       "active": false,
       "createdAt": "2026-10-01T11:00:00+09:00",
       "activatedBy": null,
+      "activatedByName": null,
+      "activatedByLoginId": null,
       "activatedAt": null,
       "lastModifiedBy": 1,
+      "lastModifiedByName": "홍길동",
+      "lastModifiedByLoginId": "admin01",
       "lastModifiedAt": "2026-10-05T09:30:00+09:00",
       "hasDraft": true,
       "html": "<div>...</div>"
@@ -244,8 +252,12 @@
 | `active` | boolean | 아니오 | 점주에게 노출되는 활성 상태인지 |
 | `createdAt` | string (시각) | 아니오 | 템플릿 생성 시각 |
 | `activatedBy` | integer | 가능 | 활성 여부를 마지막으로 바꾼 관리자 ID. 바꾼 적이 없으면 `null` |
+| `activatedByName` | string | 가능 | 그 관리자의 이름. 바꾼 적이 없거나 관리자를 찾을 수 없으면 `null` |
+| `activatedByLoginId` | string | 가능 | 그 관리자의 로그인 ID. 이름이 같은 관리자를 구분할 때 쓴다. 바꾼 적이 없거나 관리자를 찾을 수 없으면 `null` |
 | `activatedAt` | string (시각) | 가능 | 활성 여부를 마지막으로 바꾼 시각. 바꾼 적이 없으면 `null` |
 | `lastModifiedBy` | integer | 아니오 | 마지막으로 임시저장한 관리자 ID |
+| `lastModifiedByName` | string | 가능 | 그 관리자의 이름. 관리자를 찾을 수 없으면 `null` |
+| `lastModifiedByLoginId` | string | 가능 | 그 관리자의 로그인 ID. 이름이 같은 관리자를 구분할 때 쓴다. 관리자를 찾을 수 없으면 `null` |
 | `lastModifiedAt` | string (시각) | 아니오 | 마지막으로 임시저장한 시각 |
 | `hasDraft` | boolean | 아니오 | 살아 있는 임시저장 버전이 있는지. `DRAFT` 템플릿은 항상 `true`이고, 게시된 템플릿은 수정하는 중이면 `true`다 |
 | `html` | string | 아니오 | 미리보기 HTML. `status` 가 `PUBLISHED` 면 게시된 HTML, `DRAFT` 면 최신 임시저장 버전의 HTML |
@@ -399,6 +411,8 @@
     "templateId": 1,
     "active": true,
     "activatedBy": 7,
+    "activatedByName": "김관리",
+    "activatedByLoginId": "admin07",
     "activatedAt": "2026-10-12T10:05:00+09:00"
   }
 }
@@ -409,6 +423,8 @@
 | `templateId` | integer | 아니오 | 템플릿 ID |
 | `active` | boolean | 아니오 | 변경된 활성 여부 |
 | `activatedBy` | integer | 아니오 | 변경한 관리자 ID |
+| `activatedByName` | string | 가능 | 변경한 관리자 이름. 관리자를 찾을 수 없으면 `null` |
+| `activatedByLoginId` | string | 가능 | 변경한 관리자 로그인 ID. 이름이 같은 관리자를 구분할 때 쓴다. 관리자를 찾을 수 없으면 `null` |
 | `activatedAt` | string (시각) | 아니오 | 변경 시각 |
 
 **오류**
