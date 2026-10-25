@@ -1,8 +1,8 @@
 /*
- * 기본 세계(db/base V2 ~ V9)와 시연 층을 다시 넣기 전에 한 번 돌린다 (#858).
+ * 기본 세계(db/base V2 ~ V10)와 시연 층을 다시 넣기 전에 한 번 돌린다 (#858).
  * 이미 기본 세계가 들어간 개발과 운영에서 V2 ~ V7 을 고친 코드로 올리면 체크섬이 어긋나 앱이 뜨지 않는다.
- * 이 파일은 계정은 남기고 날짜와 위치에 묶인 행만 지운 뒤 V2 ~ V9 과 반복 마이그레이션의 이력을 지운다.
- * 그다음 새 코드로 기동하면 V2 ~ V9, R__demo, R__templates_posters 가 그날 기준으로 다시 돈다.
+ * 이 파일은 계정은 남기고 날짜와 위치에 묶인 행만 지운 뒤 V2 ~ V10 과 반복 마이그레이션의 이력을 지운다.
+ * 그다음 새 코드로 기동하면 V2 ~ V10, R__demo, R__templates_posters 가 그날 기준으로 다시 돈다.
  * 남기는 것은 admin, owner, member 와 탈퇴 이력, 카카오 연결 해제 실패 행이다. 실제 가입자, 기본 세계, 시연 계정 모두 남는다.
  * 지우는 범위는 번호 대역이 아니라 기본 세계와 시연 층이 넣은 계정에 딸린 행이다.
  * 기본 세계 뒤에 실제로 가입한 회원과 점주는 자동 증가 번호가 시연 대역 위(2,000만 이상)라 대역으로 고르면 함께 지워지기 때문이다.
@@ -216,9 +216,9 @@ SET FOREIGN_KEY_CHECKS = 1;
 
 /*
  * 이력이다. V1 기록은 남긴다.
- * V2 ~ V9 은 버전이 낮은 순서로 다시 돌아야 해서 모두 지운다.
+ * V2 ~ V10 은 버전이 낮은 순서로 다시 돌아야 해서 모두 지운다.
  */
-DELETE FROM flyway_history_base WHERE version IN ('2', '3', '4', '5', '6', '7', '8', '9') OR (version IS NULL AND type = 'SQL');
+DELETE FROM flyway_history_base WHERE version IN ('2', '3', '4', '5', '6', '7', '8', '9', '10') OR (version IS NULL AND type = 'SQL');
 
 DROP TEMPORARY TABLE reset_report;
 DROP TEMPORARY TABLE reset_payment;
