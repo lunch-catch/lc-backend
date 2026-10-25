@@ -146,7 +146,7 @@ analytics 엔티티에는 요청으로 전이하는 업무 상태가 없다. 캠
 stateDiagram-v2
     [*] --> AGGREGATING: 당일 조회
     AGGREGATING --> FINALIZED: 첫 일별 집계 성공
-    FINALIZED --> FINALIZED: 재집계와 변경 이력 추가(이력은 #632)
+    FINALIZED --> FINALIZED: 재집계로 공개 지표가 바뀌면 변경 이력 추가
 ```
 
 ### 주요 흐름
@@ -185,7 +185,7 @@ sequenceDiagram
 |---|---|---|
 | 이벤트 기록 | HTTP 요청은 최대 50건을 함께 저장하고 내부 이벤트는 한 건을 저장 | 원천 도메인의 업무 트랜잭션 |
 | 일별 집계 | 실행 세대 확인, 하루 결과 교체, 검증, 성공 기록, 미처리 날짜 삭제 | 집계 조회 호출, 결과 계산, 재시도 대기 |
-| 리포트 재집계 | 본문 갱신, 자식 교체. 일별 집계의 공개 트랜잭션에 함께 묶인다. 변경 이력 추가는 #632 | 원천 조회와 결과 계산 |
+| 리포트 재집계 | 확정 행 읽기, 본문 갱신, 자식 교체, 변경 이력 추가. 일별 집계의 공개 트랜잭션에 함께 묶인다 | 원천 조회와 결과 계산 |
 
 같은 날짜의 정기 실행과 수동 재집계는 ops 실행 기록으로 하나만 점유한다. 같은 이벤트가 다시 오면 `event_id` UNIQUE로 한 건만 남긴다. 영업일은 `Asia/Seoul`로 계산한다.
 
@@ -253,7 +253,7 @@ sequenceDiagram
 
 **정산 지표 단계 (2026-10-17, #443).** `SettlementMetricsStep`(`@Order(100)`)이 `BillingStatsQueryService`의 점주와 캠페인별 합계를 더해 `daily_settlement_analytics`의 그날 한 행을 교체한다. 표의 CHECK가 금액을 0 이상으로 묶어 RESERVE, DEDUCT, REFUND는 절댓값으로 저장하고 조정액만 부호를 둔다. 정정이 가리키는 원래 영업일은 공개 때 `ADJUSTED`로 미처리 날짜에 남긴다. `SettlementConsistencyStep`(`@Order(900)`)은 같은 공개 트랜잭션에서 방금 쓴 행을 읽어 V-1, V-2, V-3, V-7을 확인하고 어긋나도 집계를 실패시키지 않으며 지표 `analytics_consistency_violations{check}`와 로그로 알린다. 점주 잔액 >= 0(V-4)은 점주별 잔액을 주는 집계 조회가 없어 하지 않는다. 소진액 계산은 `SpendFormula` 한 곳에 둔다. 매출 조회(A-07)는 집계가 끝나지 않은 구간의 금액을 `null`로 내린다.
 
-**회원 지표 단계 (2026-10-17, #450).** `MemberMetricsStep`(`@Order(200)`)이 `MemberStatsQueryService.dailyStats`의 신규, 누적, 탈퇴 수와 자기 `event_log`의 활성 회원 수를 합쳐 `daily_member_analytics`의 그날 한 행으로 교체한다. 활성 회원은 영업일 하루(KST 자정 이상, 다음 자정 미만)에 `member_id`가 있는 이벤트를 남긴 회원을 중복 없이 센다. 모든 이벤트 유형을 센다. `issue_open`은 회원이 없어 빠진다. 정지 회원은 정지 기능이 구현 제외라 0을 쓴다. 회원 지표 조회(A-01)는 신규를 합계로, 누적과 탈퇴와 정지를 구간 마지막 날 값으로 내리고 활성 회원은 구간 안 합을 구간의 일수로 나눠 반올림한 정수로 내린다. 구간 마지막 날 행이 없으면 스냅샷 지표는 `null`이고 행이 빠진 날은 활성 0으로 센다. 집계가 끝나지 않은 구간의 수치는 `null`이다.
+**회원 지표 단계 (2026-10-17, #450).** `MemberMetricsStep`(`@Order(200)`)이 `MemberStatsQueryService.dailyStats`의 신규, 누적, 탈퇴, 정지 수와 자기 `event_log`의 활성 회원 수를 합쳐 `daily_member_analytics`의 그날 한 행으로 교체한다. 활성 회원은 영업일 하루(KST 자정 이상, 다음 자정 미만)에 `member_id`가 있는 이벤트를 남긴 회원을 중복 없이 센다. 모든 이벤트 유형을 센다. `issue_open`은 회원이 없어 빠진다. 회원 지표 조회(A-01)는 신규를 합계로, 누적과 탈퇴와 정지를 구간 마지막 날 값으로 내리고 활성 회원은 구간 안 합을 구간의 일수로 나눠 반올림한 정수로 내린다. 구간 마지막 날 행이 없으면 스냅샷 지표는 `null`이고 행이 빠진 날은 활성 0으로 센다. 집계가 끝나지 않은 구간의 수치는 `null`이다.
 
 **가게 지표 단계 (2026-10-17, #452).** `StoreMetricsStep`(`@Order(300)`)이 `StoreStatsQueryService.finalizedStoreCounts`의 신규와 누적 입점 수, `CampaignStatsQueryService.activeCampaignCount`의 그날 말 집행 중 캠페인 수를 `daily_store_analytics`의 그날 한 행으로 교체한다. 누적 입점은 그날 말까지 최종 등록한 가게 수이고 점주 상태와 무관하다. 가게 지표 조회(A-02)는 신규를 합계로, 누적 입점과 집행 중 캠페인을 구간 마지막 날 값으로 내린다. 구간 마지막 날 행이 없으면 스냅샷 지표는 `null`이고 집계가 끝나지 않은 구간의 수치도 `null`이다. 캠페인 집계 조회는 오늘이나 미래 날짜를 받으면 예외를 던지는데 일별 집계는 전일 이전만 부르므로 걸리지 않는다.
 

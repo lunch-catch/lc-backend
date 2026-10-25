@@ -9,6 +9,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
@@ -18,6 +19,7 @@ import org.springframework.stereotype.Repository;
  * 리포트 행은 지우지 않고 (campaign_id, business_date) 로 갱신해 ID 를 유지한다. 변경 이력(#632)이 그 ID 를 가리키기
  * 때문이다. finalized_at 은 처음 확정한 시각으로 두고 다시 집계해도 바꾸지 않는다. created_at 도 같다.
  * 자식 표는 그날 리포트에 딸린 행을 지우고 다시 넣는다.
+ * 교체 전에 확정된 행을 읽고 공개 지표가 바뀐 행의 변경 이력을 campaign_daily_report_history 에 쓴다.
  */
 @Repository
 public class CampaignReportRepository {
@@ -80,6 +82,33 @@ public class CampaignReportRepository {
             ) VALUES (?, ?, ?, ?, ?)
             """;
 
+    private static final String FIND_FINALIZED = """
+            SELECT r.campaign_daily_report_id, r.campaign_id, r.daily_budget, r.impression_unit_cost, r.charged_amount,
+                   r.refunded_amount, r.spent_amount, r.budget_spend_rate, r.valid_impression_count,
+                   r.billable_impression_count, r.not_billed_impression_count, r.invalid_impression_count,
+                   r.wish_count, r.issued_count, r.redeem_count,
+                   (SELECT COALESCE(MAX(h.revision_no), 0) FROM campaign_daily_report_history h
+                     WHERE h.campaign_daily_report_id = r.campaign_daily_report_id) AS last_revision
+              FROM campaign_daily_report r
+             WHERE r.business_date = ? AND r.report_status = 'FINALIZED'
+            """;
+
+    // 변경 전후 JSON 의 키는 명세의 일별 응답 필드 이름이고 값은 metricValues 가 같은 순서로 채운다
+    private static final List<String> METRIC_KEYS = List.of(
+            "dailyBudget", "impressionUnitCost", "chargedAmount", "refundedAmount", "spentAmount",
+            "budgetSpendRate", "validImpressionCount", "billableImpressionCount", "notBilledImpressionCount",
+            "invalidImpressionCount", "wishCount", "issuedCount", "redeemCount");
+
+    private static final String METRICS_JSON = METRIC_KEYS.stream()
+            .map(key -> "'" + key + "', ?")
+            .collect(Collectors.joining(", ", "JSON_OBJECT(", ")"));
+
+    private static final String INSERT_REVISION = """
+            INSERT INTO campaign_daily_report_history (
+                campaign_daily_report_id, revision_no, change_reason, before_data, after_data, created_at, updated_at
+            ) VALUES (?, ?, ?, %s, %s, ?, ?)
+            """.formatted(METRICS_JSON, METRICS_JSON);
+
     private final JdbcTemplate jdbc;
 
     public CampaignReportRepository(JdbcTemplate jdbc) {
@@ -136,5 +165,43 @@ public class CampaignReportRepository {
         jdbc.batchUpdate(INSERT_REASON, reasons);
         jdbc.batchUpdate(INSERT_HOURLY, hourly);
         jdbc.batchUpdate(INSERT_SLOT, slots);
+    }
+
+    // 그날 확정된 리포트를 캠페인 ID 로 돌려준다
+    public Map<Long, CampaignReport.Finalized> findFinalized(LocalDate businessDate) {
+        Map<Long, CampaignReport.Finalized> finalized = new HashMap<>();
+        jdbc.query(FIND_FINALIZED, rs -> {
+            CampaignReport.Metrics metrics = new CampaignReport.Metrics(
+                    rs.getLong("daily_budget"), rs.getLong("impression_unit_cost"), rs.getLong("charged_amount"),
+                    rs.getLong("refunded_amount"), rs.getLong("spent_amount"), rs.getBigDecimal("budget_spend_rate"),
+                    rs.getLong("valid_impression_count"), rs.getLong("billable_impression_count"),
+                    rs.getLong("not_billed_impression_count"), rs.getLong("invalid_impression_count"),
+                    rs.getLong("wish_count"), rs.getLong("issued_count"), rs.getLong("redeem_count"));
+            finalized.put(rs.getLong("campaign_id"), new CampaignReport.Finalized(
+                    rs.getLong("campaign_daily_report_id"), rs.getInt("last_revision"), metrics));
+        }, Date.valueOf(businessDate));
+        return finalized;
+    }
+
+    public void insertRevisions(List<CampaignReport.Revision> revisions, LocalDateTime now) {
+        Timestamp at = Timestamp.valueOf(now);
+        List<Object[]> rows = new ArrayList<>();
+        for (CampaignReport.Revision revision : revisions) {
+            List<Object> values = new ArrayList<>(List.of(
+                    revision.reportId(), revision.revisionNo(), revision.reason().name()));
+            values.addAll(metricValues(revision.before()));
+            values.addAll(metricValues(revision.after()));
+            values.add(at);
+            values.add(at);
+            rows.add(values.toArray());
+        }
+        jdbc.batchUpdate(INSERT_REVISION, rows);
+    }
+
+    private static List<Object> metricValues(CampaignReport.Metrics metrics) {
+        return List.of(metrics.dailyBudget(), metrics.unitPrice(), metrics.chargedAmount(), metrics.refundedAmount(),
+                metrics.spentAmount(), metrics.budgetSpendRate(), metrics.validCount(), metrics.billableCount(),
+                metrics.notBilledCount(), metrics.invalidCount(), metrics.wishCount(), metrics.issuedCount(),
+                metrics.redeemCount());
     }
 }

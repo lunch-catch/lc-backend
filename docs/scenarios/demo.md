@@ -154,7 +154,7 @@
 | BE-02 가게 캠페인 요약을 날마다 쓰지 않음 (해결, #838) | 13 | lc-backend |
 | BE-03 새 캠페인이 포스터 단계에서 막힘 | 5 | lc-backend, 화면 단계 순서는 lc-frontend 와 함께 |
 | BE-04 이벤트 없는 찜이 수량 소진으로 보임 | 14 | lc-backend (#743 뒤 다시 확인) |
-| BE-13 정지 회원 수 0 고정 | 22 | lc-backend |
+| BE-13 정지 회원 수 0 고정 (해결, #867) | 22 | lc-backend |
 | FE-01 QR 사용 처리 목업 | 17, 18 | lc-frontend |
 | FE-02 점주 목업(실적, 사용 추이, 영업시간 수정, 비교 화면) | 2, 8, 19 | lc-frontend, 실적은 lc-backend 와 함께 |
 | FE-03 하루짜리 기간 허용, 최소 예산 목업 | 5 | lc-frontend |

@@ -7,7 +7,7 @@
 | 구분 | 내용과 근거 |
 |---|---|
 | 맡는 기능 | 회원 가입·탈퇴와 재가입 제한을 판단하고 계정 수를 영업일별로 집계한다. #357과 #615가 근거다 |
-| 맡지 않는 기능 | 활성 회원 수는 analytics가 `event_log`로 계산한다. 정지 회원 수는 정지 기능의 이력과 해제 기준이 정해질 때까지 analytics가 0으로 둔다 |
+| 맡지 않는 기능 | 활성 회원 수는 analytics가 `event_log`로 계산한다 |
 
 ## 2. 애그리거트와 패키지
 
@@ -36,7 +36,7 @@
 
 `member_withdrawal_history`는 `member_id`, `provider_user_id`, `withdrawn_at`, `suspended_at`을 보존한다. `member_id`에는 UNIQUE와 같은 도메인 FK를 두고 카카오 번호와 탈퇴 시각에는 복합 인덱스를 둔다. 닉네임·사진·위치·탈퇴 사유는 복사하지 않는다. 공통 생성·수정 시각을 갖는다.
 
-집계는 계속 `member`의 COUNT 세 개를 사용한다. 재가입은 새 행이므로 신규·누적 계정 수에 포함되고 옛 행의 탈퇴는 그대로 남는다. 회원 수는 사람 수를 중복 제거한 지표가 아니라 생성한 계정 수다.
+집계는 `member`의 COUNT 네 개를 사용한다. 재가입은 새 행이므로 신규·누적 계정 수에 포함되고 옛 행의 탈퇴는 그대로 남는다. 회원 수는 사람 수를 중복 제거한 지표가 아니라 생성한 계정 수다.
 
 ### 기존 데이터와 배포
 
@@ -80,7 +80,8 @@ public interface MemberStatsQueryService {
 public record MemberDailyStats(
         long newMemberCount,
         long cumulativeMemberCount,
-        long withdrawnCount
+        long withdrawnCount,
+        long suspendedCount
 ) {
 }
 ```
@@ -102,7 +103,7 @@ flowchart LR
 
 ### 상태 변경
 
-이번 조회는 상태를 바꾸지 않는다. 탈퇴 수에 영향을 주는 기존 전이만 표시한다.
+이번 조회는 상태를 바꾸지 않는다. 탈퇴 수와 정지 수에 영향을 주는 기존 전이만 표시한다.
 
 ```mermaid
 stateDiagram-v2
@@ -114,10 +115,10 @@ stateDiagram-v2
 
 | 전이 | 일으키는 쪽 | 집계에 미치는 영향 |
 |---|---|---|
-| ACTIVE 또는 SUSPENDED에서 WITHDRAWN | 회원 탈퇴 | 탈퇴 시각 이후 날짜의 탈퇴 수에 들어간다 |
+| ACTIVE 또는 SUSPENDED에서 WITHDRAWN | 회원 탈퇴 | 탈퇴 시각 이후 날짜의 탈퇴 수에 들어간다. SUSPENDED 였으면 과거 날짜를 다시 셀 때 정지 수에서 빠진다 |
 | 새 ACTIVE 행 생성 | 재가입 제한을 통과한 회원 | 신규·누적 계정 수에 한 건이 추가되고 옛 탈퇴는 유지된다 |
 
-`SUSPENDED`로 가는 전이는 지금 일어나지 않는다. 정지 기능(FR-009)이 구현 제외라 `member` 테이블에 `suspended_at`, `suspended_until`, `suspension_reason` 컬럼만 있고 정지·해제를 수행하는 메서드와 API가 없다. `suspended_at`은 재가입 차단 판정에만 읽는다. 정지 기능을 다시 채택할 때 정할 것은 [member API 설계 5장](./member-api-design.md#5-구현-제외-기능을-다시-채택할-때-정할-것)에 있다.
+`SUSPENDED`로 가는 전이는 지금 일어나지 않는다. 정지 기능(FR-009)이 구현 제외라 `member` 테이블에 `suspended_at`, `suspended_until`, `suspension_reason` 컬럼만 있고 정지·해제를 수행하는 메서드와 API가 없다. `suspended_at`은 재가입 차단 판정과 정지 수 집계에 읽는다. 정지 수는 지금 `SUSPENDED`이고 `suspended_at`이 다음 날 시작보다 이른 회원을 센다. 정지 상태는 데이터로만 들어온다. 정지 기능을 다시 채택할 때 정할 것은 [member API 설계 5장](./member-api-design.md#5-구현-제외-기능을-다시-채택할-때-정할-것)에 있다.
 
 ### 주요 흐름
 
@@ -130,6 +131,7 @@ sequenceDiagram
     S->>R: 신규 COUNT [읽기 전용 트랜잭션]
     S->>R: 누적 COUNT [읽기 전용 트랜잭션]
     S->>R: 현재 탈퇴 COUNT [읽기 전용 트랜잭션]
+    S->>R: 현재 정지 COUNT [읽기 전용 트랜잭션]
     S-->>A: MemberDailyStats
 ```
 
@@ -162,7 +164,7 @@ sequenceDiagram
 
 | 흐름 | 한 트랜잭션에 묶는 것 | 트랜잭션 밖 |
 |---|---|---|
-| 회원 일별 지표 조회 | 신규, 누적, 탈퇴 COUNT 세 개를 읽기 전용 트랜잭션에서 조회한다 | 해당 없음 |
+| 회원 일별 지표 조회 | 신규, 누적, 탈퇴, 정지 COUNT 네 개를 읽기 전용 트랜잭션에서 조회한다 | 해당 없음 |
 | 가입 판정 | 현재 회원·최신 이력 잠금, 전체 정지 이력과 남은 작업 검사, 새 회원 저장 | 카카오 인증과 토큰 발급 |
 | 탈퇴 | 회원 잠금, 이력·해제 작업 저장, 번호·상태·프로필 변경 | 카카오 재인증과 연결 해제 |
 | 연결 해제 재시도 | 작업 선점과 결과 반영을 별도 트랜잭션으로 수행한다 | 카카오 호출 |
@@ -201,7 +203,7 @@ analytics의 일별 집계가 `MemberStatsQueryService`를 호출한다. member�
 
 | Given | When | Then |
 |---|---|---|
-| 영업일과 저장소의 신규, 누적, 탈퇴 수가 있다 | `dailyStats`를 부른다 | KST 시작과 다음 날 시작을 저장소에 넘기고 세 값을 그대로 반환한다 |
+| 영업일과 저장소의 신규, 누적, 탈퇴, 정지 수가 있다 | `dailyStats`를 부른다 | KST 시작과 다음 날 시작을 저장소에 넘기고 네 값을 그대로 반환한다 |
 | 다음 날 00:00에 가입한 회원이 있다 | 영업일 신규와 누적을 센다 | 미만 조건이라 그 회원은 들어가지 않는다 |
 | 탈퇴 뒤 재가입한 회원이 있다 | 과거 영업일을 다시 센다 | 옛 행이 WITHDRAWN으로 남으므로 과거 탈퇴 수가 줄지 않는다 |
 | 탈퇴가 어제이고 해제 작업이 없다 | 로그인 HTTP 요청을 보낸다 | 새 ID와 미완료 온보딩을 반환한다 |
@@ -212,5 +214,5 @@ analytics의 일별 집계가 `MemberStatsQueryService`를 호출한다. member�
 
 | 미정 항목 | 어디까지 정해졌나 | 막는 것 |
 |---|---|---|
-| 회원 수 증가에 따른 인덱스 | 현재는 COUNT 세 번으로 정했다 | 운영 데이터에서 목표 시간을 넘기면 정한다 |
+| 회원 수 증가에 따른 인덱스 | 현재는 COUNT 네 번으로 정했다 | 운영 데이터에서 목표 시간을 넘기면 정한다 |
 | 탈퇴 이력 보존 기간 | 수치와 삭제 정책을 정하지 않았다 | 정지 이력 보존과 식별자 삭제를 함께 정해야 한다 |

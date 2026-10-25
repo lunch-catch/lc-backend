@@ -1,6 +1,7 @@
 package com.launchcatch.analytics.batch.service.step;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -277,5 +278,66 @@ class CampaignReportStepTest {
 
         assertThat(written).isEqualTo(1);
         verify(repository).replace(DAY, List.of(row), LocalDateTime.now(CLOCK));
+    }
+
+    /*
+     * 확정 뒤 다시 집계돼 공개 지표가 바뀌면 변경 전 값을 이력으로 남긴다(#632).
+     * 남기지 않으면 덮어쓴 값은 복원할 수 없다.
+     */
+    @Test
+    void 확정된_리포트의_공개_지표가_바뀌면_변경_전후와_다음_차수를_이력으로_남긴다() {
+        CampaignReport.Row before = reportRow(4, 0, 2);
+        CampaignReport.Row after = reportRow(6, 0, 3);
+        when(repository.findFinalized(DAY)).thenReturn(Map.of(CAMPAIGN,
+                new CampaignReport.Finalized(55L, 2, before.metrics())));
+
+        step().publish(DAY, new CampaignReport(List.of(after)));
+
+        verify(repository).insertRevisions(List.of(new CampaignReport.Revision(55L, 3,
+                CampaignReport.ChangeReason.LATE_EVENT, before.metrics(), after.metrics())), LocalDateTime.now(CLOCK));
+    }
+
+    @Test
+    void 정정액이_바뀌면_사유는_과오_차감_정정이다() {
+        CampaignReport.Row before = reportRow(4, 0, 2);
+        CampaignReport.Row after = reportRow(4, 2, 2);
+        when(repository.findFinalized(DAY)).thenReturn(Map.of(CAMPAIGN,
+                new CampaignReport.Finalized(55L, 0, before.metrics())));
+
+        step().publish(DAY, new CampaignReport(List.of(after)));
+
+        verify(repository).insertRevisions(List.of(new CampaignReport.Revision(55L, 1,
+                CampaignReport.ChangeReason.OVERCHARGE_REVERSAL, before.metrics(), after.metrics())),
+                LocalDateTime.now(CLOCK));
+    }
+
+    // 소진율은 저장된 값과 계산한 값의 자릿수가 달라도 같은 값이면 바뀐 것으로 보지 않는다
+    @Test
+    void 공개_지표가_같으면_이력을_남기지_않는다() {
+        CampaignReport.Row row = reportRow(4, 0, 2);
+        CampaignReport.Metrics stored = new CampaignReport.Row(CAMPAIGN, OWNER, STORE, 1_000, 2, 4, 0, 4,
+                new BigDecimal("0.004"), 2, 2, 0, 0, 0, 0, 0, Map.of(), Map.of(), Map.of(), Map.of()).metrics();
+        when(repository.findFinalized(DAY)).thenReturn(Map.of(CAMPAIGN, new CampaignReport.Finalized(55L, 1, stored)));
+
+        step().publish(DAY, new CampaignReport(List.of(row)));
+
+        verify(repository, never()).insertRevisions(anyList(), any());
+    }
+
+    @Test
+    void 처음_확정하는_리포트는_이력을_남기지_않는다() {
+        when(repository.findFinalized(DAY)).thenReturn(Map.of());
+
+        step().publish(DAY, new CampaignReport(List.of(reportRow(4, 0, 2))));
+
+        verify(repository, never()).insertRevisions(anyList(), any());
+    }
+
+    // 하루 예산 1,000, 단가 2 인 캠페인의 과금액, 정정액, 과금 노출이 다른 행이다
+    private static CampaignReport.Row reportRow(long charged, long refunded, long billable) {
+        long spent = charged - refunded;
+        return new CampaignReport.Row(CAMPAIGN, OWNER, STORE, 1_000, 2, charged, refunded, spent,
+                BigDecimal.valueOf(spent).divide(BigDecimal.valueOf(1_000)).setScale(6), billable, billable, 0, 0, 0,
+                0, 0, Map.of(), Map.of(), Map.of(), Map.of());
     }
 }
