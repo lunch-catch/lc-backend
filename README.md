@@ -51,7 +51,7 @@
 
 | 문서 | 내용 |
 |---|---|
-| [AWS 아키텍처](./docs/architecture/런치캐치_AWS_아키텍처.md) | 운영과 개발 서버의 AWS 구성 그림. 원본은 lc-infra 에 있다 |
+| [AWS 아키텍처](./docs/architecture/런치캐치_AWS_아키텍처.md) | 운영과 개발 서버의 AWS 구성 그림 (원본 lc-infra) |
 | [도메인 구조와 의존성 설계](./docs/architecture/런치캐치_도메인_구조와_의존성_설계.md) | 계층, 도메인 경계, 의존 방향 |
 | [API 명세](./docs/api-spec/api-spec.md) | 공통 규약과 도메인별 명세 |
 | [마이그레이션 규약](./src/main/resources/db/migration/migration.md) | 스키마를 소유하는 SQL 의 배치와 규칙 |
