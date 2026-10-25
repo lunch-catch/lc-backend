@@ -71,7 +71,7 @@ class FeedAssemblerTest {
         }
 
         FeedContext build() {
-            return new FeedContext(viewer, excluded, categories, sort, preference, daily, session, pacing);
+            return new FeedContext(AdCandidateFixture.BUSINESS_DATE, viewer, excluded, categories, sort, preference, daily, session, pacing);
         }
     }
 
@@ -238,9 +238,9 @@ class FeedAssemblerTest {
             assertThat(cards).hasSize(10);
             assertThat(List.of(cards.get(0), cards.get(3), cards.get(6)))
                     .extracting(p -> p.candidate().campaignId()).containsExactly(12L, 11L, 10L);
-            assertThat(cards).filteredOn(p -> p.slotType() == SlotType.ALLOCATION).hasSize(3);
+            assertThat(cards).filteredOn(p -> SlotLabels.ALLOCATION.equals(p.slotType())).hasSize(3);
             assertThat(List.of(cards.get(0), cards.get(3), cards.get(6)))
-                    .allMatch(p -> p.slotType() == SlotType.ALLOCATION);
+                    .allMatch(p -> SlotLabels.ALLOCATION.equals(p.slotType()));
             assertThat(cards).extracting(p -> p.candidate().campaignId()).doesNotHaveDuplicates();
         }
 
@@ -257,13 +257,42 @@ class FeedAssemblerTest {
         }
 
         @Test
+        void 신규_우선_노출_기간의_캠페인은_진행률에_0_8을_곱해_배분에_앞선다() {
+            // 1 은 진행률 0.5 지만 신규 우선이라 0.4 로 보고, 0.45 인 2 보다 앞선다
+            FeedCandidate fresh = candidate(1, LAT, LNG)
+                    .set("newPriorityUntil", AdCandidateFixture.BUSINESS_DATE).build().toFeedCandidate();
+            FeedCandidate plain = candidate(2, LAT, LNG).build().toFeedCandidate();
+            List<FeedCandidate> candidates = List.of(plain, fresh);
+            Builder b = new Builder(candidates);
+            b.pacing = Map.of(1L, new CampaignPacing(0.5, 100_000, 10, 0), 2L, new CampaignPacing(0.45, 100_000, 10, 0));
+
+            List<Placed> cards = FeedAssembler.assemble(candidates, b.build()).cards();
+
+            assertThat(cards.getFirst().candidate().campaignId()).isEqualTo(1L);
+        }
+
+        @Test
+        void 신규_우선_노출_기간이_지나면_진행률을_그대로_쓴다() {
+            FeedCandidate expired = candidate(1, LAT, LNG)
+                    .set("newPriorityUntil", AdCandidateFixture.BUSINESS_DATE.minusDays(1)).build().toFeedCandidate();
+            FeedCandidate plain = candidate(2, LAT, LNG).build().toFeedCandidate();
+            List<FeedCandidate> candidates = List.of(expired, plain);
+            Builder b = new Builder(candidates);
+            b.pacing = Map.of(1L, new CampaignPacing(0.5, 100_000, 10, 0), 2L, new CampaignPacing(0.45, 100_000, 10, 0));
+
+            List<Placed> cards = FeedAssembler.assemble(candidates, b.build()).cards();
+
+            assertThat(cards.getFirst().candidate().campaignId()).isEqualTo(2L);
+        }
+
+        @Test
         void 정산을_읽지_못했으면_예산_규칙_없이_모두_관련성_슬롯이다() {
             Builder b = new Builder(twelve);
             b.pacing = null;
 
             List<Placed> cards = FeedAssembler.assemble(twelve, b.build()).cards();
 
-            assertThat(cards).hasSize(10).allMatch(p -> p.slotType() == SlotType.RELEVANCE);
+            assertThat(cards).hasSize(10).allMatch(p -> SlotLabels.RELEVANCE.equals(p.slotType()));
         }
 
         @Test
@@ -273,7 +302,7 @@ class FeedAssemblerTest {
             List<Placed> cards = assemble(two).cards();
 
             assertThat(cards).hasSize(2);
-            assertThat(cards).extracting(Placed::slotType).containsExactly(SlotType.ALLOCATION, SlotType.ALLOCATION);
+            assertThat(cards).extracting(Placed::slotType).containsExactly(SlotLabels.ALLOCATION, SlotLabels.ALLOCATION);
         }
 
         @Test
@@ -283,7 +312,7 @@ class FeedAssemblerTest {
             List<Placed> cards = assemble(five).cards();
 
             assertThat(cards).extracting(Placed::slotType).containsExactly(
-                    SlotType.ALLOCATION, SlotType.RELEVANCE, SlotType.RELEVANCE, SlotType.ALLOCATION, SlotType.ALLOCATION);
+                    SlotLabels.ALLOCATION, SlotLabels.RELEVANCE, SlotLabels.RELEVANCE, SlotLabels.ALLOCATION, SlotLabels.ALLOCATION);
         }
     }
 
@@ -294,7 +323,7 @@ class FeedAssemblerTest {
         @Test
         void 점수는_거리_45_카테고리_35_할인_20_이다() {
             FeedCandidate c = northBy(1, 500);
-            Placed p = new Placed(c, 500, SlotType.RELEVANCE);
+            Placed p = new Placed(c, 500, SlotLabels.RELEVANCE);
             Builder b = new Builder(List.of(c));
             b.preference = Map.of("KOREAN", 0.5);
 

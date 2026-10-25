@@ -13,7 +13,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.launchcatch.auth.CustomUserDetails;
 import com.launchcatch.auth.Role;
-import com.launchcatch.adserving.engine.SlotType;
+import com.launchcatch.adserving.engine.SlotLabels;
 import com.launchcatch.adserving.feed.repository.ServeRecord;
 import com.launchcatch.adserving.feed.repository.ServeRecordRepository;
 import com.launchcatch.global.config.ClockConfig;
@@ -268,7 +268,7 @@ class FeedIntegrationTest extends AbstractAdservingIntegrationTest {
                 com.jayway.jsonpath.JsonPath.read(body, "$.data.cards[0].serveId"));
 
         assertThat(serveRecordRepository.findById(serveId)).contains(new ServeRecord(
-                serveId, MEMBER_ID, 101L, 55L, SlotType.ALLOCATION, 1, SERVING_NOW));
+                serveId, MEMBER_ID, 101L, 55L, SlotLabels.ALLOCATION, 1, SERVING_NOW));
         assertThat(redisTemplate.getExpire("adserving:serve:" + serveId)).isBetween(1L, 1800L);
     }
 

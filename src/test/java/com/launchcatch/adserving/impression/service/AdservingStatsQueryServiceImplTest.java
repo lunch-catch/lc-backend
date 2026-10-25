@@ -14,11 +14,13 @@ import com.launchcatch.adserving.feed.repository.SwipeLogRepository;
 import com.launchcatch.adserving.impression.repository.ImpressionLogRepository;
 import com.launchcatch.adserving.impression.repository.ImpressionLogRepository.CampaignCounts;
 import com.launchcatch.adserving.impression.repository.ImpressionLogRepository.HourlyCounts;
+import com.launchcatch.adserving.impression.repository.ImpressionLogRepository.SlotCounts;
 import com.launchcatch.adserving.impression.repository.ImpressionLogRepository.MemberConcentration;
 import com.launchcatch.adserving.impression.repository.ImpressionLogRepository.MemberInvalidCounts;
 import java.time.LocalDate;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -35,8 +37,10 @@ class AdservingStatsQueryServiceImplTest {
     @Test
     void 노출과_찜을_캠페인_ID로_합치고_한쪽만_있는_캠페인은_다른_쪽을_0으로_채운다() {
         when(impressionLogRepository.countByCampaignOn(DATE)).thenReturn(List.of(
-                counts(101L, 9, 1, 2, 3, 4, 5),
-                counts(103L, 1, 0, 0, 0, 0, 1)));
+                counts(101L, 9, 1, 2, 3),
+                counts(103L, 1, 0, 0, 0)));
+        when(impressionLogRepository.countValidByCampaignAndSlotOn(DATE)).thenReturn(List.of(
+                slot(101L, "ALLOCATION", 4), slot(101L, "RELEVANCE", 5), slot(103L, "RELEVANCE", 1)));
         when(impressionLogRepository.countValidByCampaignAndHourOn(DATE)).thenReturn(List.of(
                 hourly(101L, 0, 1), hourly(101L, 11, 5), hourly(101L, 23, 3), hourly(103L, 10, 1)));
         when(swipeLogRepository.countWishesByCampaign(DATE)).thenReturn(List.of(
@@ -46,14 +50,14 @@ class AdservingStatsQueryServiceImplTest {
         List<CampaignImpressionStats> result = service.campaignStats(DATE);
 
         assertThat(result).containsExactly(
-                new CampaignImpressionStats(101L, 9, 1, 2, 3, hours(0, 1, 11, 5, 23, 3), 4, 5, 2),
-                new CampaignImpressionStats(102L, 0, 0, 0, 0, hours(), 0, 0, 4),
-                new CampaignImpressionStats(103L, 1, 0, 0, 0, hours(10, 1), 0, 1, 0));
+                new CampaignImpressionStats(101L, 9, 1, 2, 3, hours(0, 1, 11, 5, 23, 3), Map.of("ALLOCATION", 4L, "RELEVANCE", 5L), 2),
+                new CampaignImpressionStats(102L, 0, 0, 0, 0, hours(), Map.of(), 4),
+                new CampaignImpressionStats(103L, 1, 0, 0, 0, hours(10, 1), Map.of("RELEVANCE", 1L), 0));
     }
 
     @Test
     void 시간대는_노출이_없는_시도_0으로_채워_항상_24칸이다() {
-        when(impressionLogRepository.countByCampaignOn(DATE)).thenReturn(List.of(counts(101L, 2, 0, 0, 0, 2, 0)));
+        when(impressionLogRepository.countByCampaignOn(DATE)).thenReturn(List.of(counts(101L, 2, 0, 0, 0)));
         when(impressionLogRepository.countValidByCampaignAndHourOn(DATE)).thenReturn(List.of(hourly(101L, 3, 2)));
         when(swipeLogRepository.countWishesByCampaign(DATE)).thenReturn(List.of());
 
@@ -118,15 +122,21 @@ class AdservingStatsQueryServiceImplTest {
     }
 
     private static CampaignCounts counts(long campaignId, long valid, long soldOut, long expiredOrUnknown,
-                                         long notOwner, long allocation, long relevance) {
+                                         long notOwner) {
         return new CampaignCounts() {
             public long getCampaignId() { return campaignId; }
             public long getValidCount() { return valid; }
             public long getSoldOutCount() { return soldOut; }
             public long getExpiredOrUnknownCount() { return expiredOrUnknown; }
             public long getNotOwnerCount() { return notOwner; }
-            public long getAllocationCount() { return allocation; }
-            public long getRelevanceCount() { return relevance; }
+        };
+    }
+
+    private static SlotCounts slot(long campaignId, String slotType, long valid) {
+        return new SlotCounts() {
+            public long getCampaignId() { return campaignId; }
+            public String getSlotType() { return slotType; }
+            public long getValidCount() { return valid; }
         };
     }
 

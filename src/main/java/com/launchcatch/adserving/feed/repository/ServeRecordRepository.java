@@ -3,7 +3,6 @@ package com.launchcatch.adserving.feed.repository;
 
 import static com.launchcatch.adserving.exclusion.repository.ExclusionRepository.BYPASS_METRIC;
 
-import com.launchcatch.adserving.engine.SlotType;
 import com.launchcatch.auth.RedisFailureClassifier;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.time.Duration;
@@ -87,13 +86,13 @@ public class ServeRecordRepository {
 
     static String encode(ServeRecord r) {
         return String.join(":", String.valueOf(r.memberId()), String.valueOf(r.campaignId()),
-                String.valueOf(r.storeId()), r.slotType().name(), String.valueOf(r.slotPosition()),
+                String.valueOf(r.storeId()), r.slotType(), String.valueOf(r.slotPosition()),
                 String.valueOf(r.servedAt().toEpochMilli()));
     }
 
     static ServeRecord decode(UUID serveId, String value) {
         String[] parts = value.split(":");
         return new ServeRecord(serveId, Long.valueOf(parts[0]), Long.valueOf(parts[1]), Long.valueOf(parts[2]),
-                SlotType.valueOf(parts[3]), Integer.parseInt(parts[4]), Instant.ofEpochMilli(Long.parseLong(parts[5])));
+                parts[3], Integer.parseInt(parts[4]), Instant.ofEpochMilli(Long.parseLong(parts[5])));
     }
 }

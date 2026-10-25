@@ -1,7 +1,17 @@
 package com.launchcatch.adserving.engine;
 
 import com.launchcatch.adserving.engine.entity.DiscountType;
-import com.launchcatch.adserving.engine.entity.TargetGender;
+import com.launchcatch.adserving.engine.filter.AudienceFilter;
+import com.launchcatch.adserving.engine.filter.BudgetFilter;
+import com.launchcatch.adserving.engine.filter.CandidateFilter;
+import com.launchcatch.adserving.engine.filter.CategoryFilter;
+import com.launchcatch.adserving.engine.filter.ExclusionFilter;
+import com.launchcatch.adserving.engine.filter.FrequencyFilter;
+import com.launchcatch.adserving.engine.score.CategorySignal;
+import com.launchcatch.adserving.engine.score.DiscountSignal;
+import com.launchcatch.adserving.engine.score.DistanceSignal;
+import com.launchcatch.adserving.engine.score.RelevanceSignal;
+import com.launchcatch.adserving.engine.score.ScoringPool;
 import com.launchcatch.global.geo.GeoDistance;
 import com.launchcatch.member.contract.AgeGroup;
 import com.launchcatch.member.contract.Gender;
@@ -18,6 +28,9 @@ import java.util.stream.Collectors;
  * 그날 후보에서 한 사용자에게 내려줄 카드 10장을 고른다. DB 와 HTTP 를 모르는 계산이라 계층 밖에 둔다.
  * 배분 3장(1, 4, 7번)은 예산 소진 진행률 오름차순, 나머지는 관련성 점수 순이다(FR-093, FR-094, FR-096).
  * 점수 식과 빈 자리 처리는 #307 에서 정했고 설계서 4장에 있다.
+ *
+ * 피드 배정의 진입점은 assemble 하나다. 거르기 조건은 FILTERS, 관련성 점수 항목은 SIGNALS, 배분 순서는 AllocationOrder 가 갖는다.
+ * 규칙을 더하려면 그 목록에 구현을 하나 더한다. 엔진을 통째로 바꿀 때는 FeedService 가 부르는 이 호출 하나를 인터페이스로 바꾼다(#978).
  */
 public final class FeedAssembler {
 
@@ -31,11 +44,13 @@ public final class FeedAssembler {
     // 배분 슬롯의 자리다. 1부터 센다.
     static final Set<Integer> ALLOCATION_POSITIONS = Set.of(1, 4, 7);
 
-    static final int DAILY_SERVE_LIMIT = 2;
+    // 후보 하나를 이 사용자에게 내보내려면 모두 통과해야 하는 조건들이다
+    private static final List<CandidateFilter> FILTERS = List.of(new ExclusionFilter(), new CategoryFilter(),
+            new AudienceFilter(), new FrequencyFilter(), new BudgetFilter());
 
-    static final double DISTANCE_WEIGHT = 0.45;
-    static final double CATEGORY_WEIGHT = 0.35;
-    static final double DISCOUNT_WEIGHT = 0.20;
+    // 관련성 점수 = 거리 0.45 + 카테고리 선호도 0.35 + 할인 0.20 이다
+    private static final List<RelevanceSignal> SIGNALS = List.of(new DistanceSignal(), new CategorySignal(),
+            new DiscountSignal());
 
     private static final Comparator<Placed> NEAREST_FIRST =
             Comparator.comparingDouble(Placed::exactDistanceM).thenComparing(p -> p.candidate().campaignId());
@@ -49,8 +64,8 @@ public final class FeedAssembler {
      */
     public static Selection assemble(List<FeedCandidate> candidates, FeedContext context) {
         List<Placed> eligible = candidates.stream()
-                .filter(c -> isEligible(c, context))
-                .map(c -> new Placed(c, distanceM(c, context.viewer()), SlotType.RELEVANCE))
+                .filter(c -> FILTERS.stream().allMatch(filter -> filter.accepts(c, context)))
+                .map(c -> new Placed(c, distanceM(c, context.viewer()), SlotLabels.RELEVANCE))
                 .filter(p -> p.exactDistanceM() <= p.candidate().targetRadiusM())
                 .sorted(NEAREST_FIRST)
                 .toList();
@@ -67,27 +82,6 @@ public final class FeedAssembler {
         return new Selection(radius, layout(pool, context, radius));
     }
 
-    private static boolean isEligible(FeedCandidate c, FeedContext context) {
-        Viewer viewer = context.viewer();
-        if (context.excludedCampaignIds().contains(c.campaignId())
-                || !(context.categories().isEmpty() || context.categories().contains(c.categoryCode()))
-                || !targetsGender(c.targetGender(), viewer.gender())
-                || viewer.ageGroup() == null || !c.targetAgeGroups().contains(viewer.ageGroup().name())) {
-            return false;
-        }
-        // 같은 캠페인은 하루 2회, 한 세션 1회까지다(비즈니스 규칙)
-        if (context.dailyServedCounts().getOrDefault(c.campaignId(), 0) >= DAILY_SERVE_LIMIT
-                || context.sessionServedCampaignIds().contains(c.campaignId())) {
-            return false;
-        }
-        if (!context.pacingAvailable()) {
-            return true;
-        }
-        // 그날 예산 계획이 없는 캠페인은 정산 결과에 없다. 예약이 없어 후보가 아니다
-        CampaignPacing pacing = context.pacing().get(c.campaignId());
-        return pacing != null && !pacing.blocked();
-    }
-
     /*
      * 배분 후보가 3장보다 적으면 빈 자리를 관련성으로 채우고, 전체가 10장보다 적으면 빈 자리 없이 앞으로 당긴다.
      * 정산에서 예산을 읽지 못했으면 진행률이 없어 10장 모두 관련성이다.
@@ -95,11 +89,9 @@ public final class FeedAssembler {
     private static List<Placed> layout(List<Placed> pool, FeedContext context, int radius) {
         List<Placed> allocation = context.pacingAvailable()
                 ? pool.stream()
-                        .sorted(Comparator.<Placed>comparingDouble(p -> context.pacing().get(p.candidate().campaignId()).progressRate())
-                                .thenComparing(p -> p.candidate().campaignCreatedAt())
-                                .thenComparing(p -> p.candidate().campaignId()))
+                        .sorted(AllocationOrder.of(context))
                         .limit(ALLOCATION_POSITIONS.size())
-                        .map(p -> p.in(SlotType.ALLOCATION))
+                        .map(p -> p.in(SlotLabels.ALLOCATION))
                         .toList()
                 : List.of();
         Set<Long> allocated = allocation.stream().map(p -> p.candidate().campaignId()).collect(Collectors.toSet());
@@ -130,17 +122,14 @@ public final class FeedAssembler {
         return cards;
     }
 
-    // 관련성 점수 = 거리 0.45 + 카테고리 선호도 0.35 + 할인 0.20. 세 항목은 모두 0~1 이다.
+    // 관련성 점수는 항목마다 0~1 의 값에 가중치를 곱해 더한 값이다
     static double relevanceScore(Placed p, FeedContext context, int radius, Map<DiscountType, Integer> maxDiscount) {
-        double distance = 1 - p.exactDistanceM() / radius;
-        double category = context.categoryPreference().getOrDefault(p.candidate().categoryCode(), 0.0);
-        return DISTANCE_WEIGHT * distance + CATEGORY_WEIGHT * category
-                + DISCOUNT_WEIGHT * discountScore(p.candidate(), maxDiscount);
+        ScoringPool pool = new ScoringPool(radius, maxDiscount);
+        return SIGNALS.stream().mapToDouble(signal -> signal.weight() * signal.score(p, context, pool)).sum();
     }
 
-    // 메뉴 가격이 없어 PERCENT 와 AMOUNT 를 직접 비교할 수 없다. 같은 종류의 최댓값으로 나눈다.
     static double discountScore(FeedCandidate c, Map<DiscountType, Integer> maxDiscount) {
-        return (double) c.discountValue() / maxDiscount.get(c.discountType());
+        return DiscountSignal.of(c, maxDiscount);
     }
 
     private static Map<DiscountType, Integer> maxDiscountByType(List<Placed> pool) {
@@ -158,10 +147,6 @@ public final class FeedAssembler {
         return NEAREST_FIRST;
     }
 
-    private static boolean targetsGender(TargetGender target, Gender gender) {
-        return target == TargetGender.ALL || (gender != null && target.name().equals(gender.name()));
-    }
-
     private static double distanceM(FeedCandidate candidate, Viewer viewer) {
         return GeoDistance.meters(viewer.latitude(), viewer.longitude(),
                 candidate.latitude(), candidate.longitude());
@@ -174,13 +159,13 @@ public final class FeedAssembler {
     public record Selection(int radiusM, List<Placed> cards) {
     }
 
-    public record Placed(FeedCandidate candidate, double exactDistanceM, SlotType slotType) {
+    public record Placed(FeedCandidate candidate, double exactDistanceM, String slotType) {
 
         public int distanceM() {
             return (int) Math.round(exactDistanceM);
         }
 
-        Placed in(SlotType slot) {
+        Placed in(String slot) {
             return new Placed(candidate, exactDistanceM, slot);
         }
     }

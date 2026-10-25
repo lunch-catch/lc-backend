@@ -186,6 +186,7 @@ A-12(`MemberUsageStatsQueryService`)는 본인의 `daily_member_usage` 전체 �
 * **유효 노출은 과금 노출과 미과금 노출의 합으로 저장한다.** 미과금은 정산의 세 사유와 쿠폰 소진 뒤 노출이다. 표의 CHECK가 `유효 = 과금 + 미과금`을 요구해서, 광고 서빙의 `validCount`를 그대로 넣으면 원천끼리 어긋난 날 공개가 거부되고 그날 집계 전체가 실패한다. 어긋난 캠페인 수는 `analytics_consistency_violations{check="CAMPAIGN_REPORT_VALID_IMPRESSION"}`과 `CAMPAIGN_REPORT_VALID_IMPRESSION_MISMATCH` 로그로 남기고 값을 고치지 않는다. 시간대와 슬롯은 광고 서빙 값 그대로라 그날은 합이 유효 노출과 다를 수 있다.
 * `budget_spend_rate`는 `소진액 ÷ 하루 예산`을 소수점 여섯 자리로 반올림한다. 하루 예산이 0이면 0으로 저장하고 조회가 `null`로 내린다.
 * 사유, 시간대, 슬롯은 건수가 0이면 행이 없다.
+* 슬롯은 광고 서빙이 붙인 이름표를 그대로 받아 이름표마다 한 행으로 남긴다. 이름표 목록을 알지 않아 피드 구성이 바뀌어도 집계 코드와 표를 바꾸지 않는다. 표의 CHECK 는 이름표의 모양만 막는다(V7).
 
 리포트 행은 지우지 않고 `(campaign_id, business_date)`로 갱신해 ID를 유지한다. 자식 표는 그날 리포트에 딸린 행을 지우고 다시 넣는다. 집계가 끝나면 리포트는 `FINALIZED`다. `finalized_at`은 처음 확정한 시각으로 두고 다시 집계해도 바꾸지 않는다. 당일은 집계하지 않으므로 행이 없다.
 

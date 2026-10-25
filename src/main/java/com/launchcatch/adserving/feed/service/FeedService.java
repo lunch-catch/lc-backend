@@ -142,6 +142,7 @@ public class FeedService {
         List<CategoryWishCount> wishes = swipeLogRepository.countWishesByCategory(
                 memberId, businessDate.minusDays(PREFERENCE_DAYS - 1), businessDate);
         return new FeedContext(
+                businessDate,
                 viewer,
                 exclusionRepository.findCampaignIds(businessDate, memberId),
                 Set.copyOf(feedFilterCategoryRepository.findCategoryCodes(memberId)),

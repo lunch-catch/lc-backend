@@ -21,6 +21,7 @@ import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
@@ -50,7 +51,7 @@ class FunnelMetricsStepTest {
             long wishFromContract) {
         List<Long> hourlyCounts = new ArrayList<>(Collections.nCopies(24, 0L));
         hourlyCounts.set(10, valid);
-        return new CampaignImpressionStats(campaignId, valid, 0, expired, notOwner, hourlyCounts, valid, 0,
+        return new CampaignImpressionStats(campaignId, valid, 0, expired, notOwner, hourlyCounts, Map.of("ALLOCATION", (long) valid),
                 wishFromContract);
     }
 
