@@ -18,10 +18,11 @@ import org.springframework.stereotype.Service;
  * 실패시킨다. 그러면 뒤 단계(정산)가 돌지 않고, 이어받기나 수동 재실행이 같은 영업일로 다시 돌 때 이미 끝난 캠페인은
  * 대상에서 빠져 결과가 같다(멱등).
  *
- * 다만 IllegalArgumentException 은 캠페인 하나의 데이터 오류로 보고(예: 할인 대상 메뉴가 그 가게 메뉴가 아니라 가게 요약
- * 갱신이 거부됨, #842) 그 캠페인만 건너뛰고 ERROR 로그를 남긴다. 단계는 실패시키지 않는다. 캠페인 하나의 데이터 때문에
- * 전체 정산이 멈추면 다른 점주의 예약과 차감까지 막히기 때문이다. 건너뛴 캠페인은 전이 트랜잭션이 되돌아가 이전 상태로
- * 남고, 다음 실행이 다시 시도한다. 운영이 데이터를 고칠 때까지 같은 로그가 매일 남는다.
+ * 다만 StoreSummaryRejectedException 은 캠페인 하나의 데이터 오류로 보고(예: 할인 대상 메뉴가 그 가게 메뉴가 아니라 가게
+ * 요약 갱신이 거부됨, #842) 그 캠페인만 건너뛰고 ERROR 로그를 남긴다. 단계는 실패시키지 않는다. 캠페인 하나의 데이터
+ * 때문에 전체 정산이 멈추면 다른 점주의 예약과 차감까지 막히기 때문이다. 건너뛴 캠페인은 전이 트랜잭션이 되돌아가 이전
+ * 상태로 남고, 다음 실행이 다시 시도한다. 운영이 데이터를 고칠 때까지 같은 로그가 매일 남는다. 그 밖의 예외는 일반
+ * IllegalArgumentException 도 코드 버그일 수 있어 건너뛰지 않고 실패로 모아 단계를 실패시킨다(#989).
  */
 @Service
 @Slf4j
@@ -43,7 +44,7 @@ public class CampaignDailyTransitionService {
             try {
                 campaignStatusService.end(campaignId, ActorType.SYSTEM, businessDate);
                 ended++;
-            } catch (IllegalArgumentException e) {
+            } catch (StoreSummaryRejectedException e) {
                 log.error("event=CAMPAIGN_DAILY_END_SKIPPED reason=DATA_ERROR campaignId={} businessDate={} detail={}",
                         campaignId, businessDate, e.getMessage());
             } catch (RuntimeException e) {
@@ -56,7 +57,7 @@ public class CampaignDailyTransitionService {
                 if (campaignStatusService.endExpiredScheduled(campaignId, businessDate)) {
                     ended++;
                 }
-            } catch (IllegalArgumentException e) {
+            } catch (StoreSummaryRejectedException e) {
                 log.error("event=CAMPAIGN_DAILY_END_SKIPPED reason=DATA_ERROR campaignId={} businessDate={} detail={}",
                         campaignId, businessDate, e.getMessage());
             } catch (RuntimeException e) {
@@ -84,7 +85,7 @@ public class CampaignDailyTransitionService {
                 }
                 campaignStatusService.activate(campaign.getId(), businessDate);
                 started++;
-            } catch (IllegalArgumentException e) {
+            } catch (StoreSummaryRejectedException e) {
                 log.error("event=CAMPAIGN_DAILY_START_SKIPPED reason=DATA_ERROR campaignId={} businessDate={} detail={}",
                         campaign.getId(), businessDate, e.getMessage());
             } catch (RuntimeException e) {

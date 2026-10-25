@@ -11,7 +11,6 @@ import static org.mockito.Mockito.when;
 import com.launchcatch.adserving.contract.AdservingStatsQueryService;
 import com.launchcatch.adserving.contract.CampaignImpressionStats;
 import com.launchcatch.analytics.batch.CampaignReport;
-import com.launchcatch.analytics.batch.CampaignReport.SlotType;
 import com.launchcatch.analytics.batch.InvalidReasonCode;
 import com.launchcatch.analytics.batch.NotBilledReason;
 import com.launchcatch.analytics.batch.repository.CampaignReportRepository;
@@ -119,7 +118,7 @@ class CampaignReportStepTest {
         when(billing.ledgerSums(DAY)).thenReturn(List.of(ledger(CAMPAIGN, -8_400, 600)));
         when(billing.billingCounts(DAY)).thenReturn(List.of(new CampaignBillingCount(CAMPAIGN, 4_200, 180, 80, 10)));
         when(adserving.campaignStats(DAY)).thenReturn(List.of(new CampaignImpressionStats(
-                CAMPAIGN, 4_510, 40, 12, 8, hourly(Map.of(10, 1_500L, 23, 3_010L)), 1_350, 3_160, 999)));
+                CAMPAIGN, 4_510, 40, 12, 8, hourly(Map.of(10, 1_500L, 23, 3_010L)), Map.of("ALLOCATION", 1_350L, "RELEVANCE", 3_160L), 999)));
         when(coupons.dailyCampaignStats(DAY)).thenReturn(List.of(new DailyCampaignCouponStats(CAMPAIGN, 0, 190, 76, 0)));
         when(eventLog.countWishesByCampaign(DAY)).thenReturn(Map.of(CAMPAIGN, 380L));
         List<CampaignInfo> infos = List.of(campaign(CAMPAIGN, OWNER, STORE));
@@ -150,7 +149,7 @@ class CampaignReportStepTest {
                 InvalidReasonCode.EXPIRED_OR_UNKNOWN, 12L, InvalidReasonCode.NOT_OWNER, 8L));
         assertThat(row.hourlyCounts()).containsExactlyInAnyOrderEntriesOf(Map.of(10, 1_500L, 23, 3_010L));
         assertThat(row.slotCounts()).containsExactlyInAnyOrderEntriesOf(Map.of(
-                SlotType.ALLOCATION, 1_350L, SlotType.RELEVANCE, 3_160L));
+                "ALLOCATION", 1_350L, "RELEVANCE", 3_160L));
     }
 
     /*
@@ -161,7 +160,7 @@ class CampaignReportStepTest {
     void 찜_수는_계약의_wishCount_가_아니라_event_log_의_wish_로_센다() {
         noSources();
         when(adserving.campaignStats(DAY)).thenReturn(List.of(new CampaignImpressionStats(
-                CAMPAIGN, 0, 0, 0, 0, hourly(Map.of()), 0, 0, 999)));
+                CAMPAIGN, 0, 0, 0, 0, hourly(Map.of()), Map.of(), 999)));
         List<CampaignInfo> infos = List.of(campaign(CAMPAIGN, OWNER, STORE));
         when(campaigns.findAllById(List.of(CAMPAIGN))).thenReturn(infos);
 
@@ -193,8 +192,8 @@ class CampaignReportStepTest {
     void 캠페인_연결_정보를_찾지_못한_캠페인은_행을_만들지_않는다() {
         noSources();
         when(adserving.campaignStats(DAY)).thenReturn(List.of(
-                new CampaignImpressionStats(CAMPAIGN, 0, 0, 1, 0, hourly(Map.of()), 0, 0, 0),
-                new CampaignImpressionStats(99L, 0, 0, 5, 0, hourly(Map.of()), 0, 0, 0)));
+                new CampaignImpressionStats(CAMPAIGN, 0, 0, 1, 0, hourly(Map.of()), Map.of(), 0),
+                new CampaignImpressionStats(99L, 0, 0, 5, 0, hourly(Map.of()), Map.of(), 0)));
         List<CampaignInfo> infos = List.of(campaign(CAMPAIGN, OWNER, STORE));
         when(campaigns.findAllById(List.of(CAMPAIGN, 99L))).thenReturn(infos);
 
@@ -244,7 +243,7 @@ class CampaignReportStepTest {
         noSources();
         when(billing.billingCounts(DAY)).thenReturn(List.of(new CampaignBillingCount(CAMPAIGN, 100, 0, 0, 0)));
         when(adserving.campaignStats(DAY)).thenReturn(List.of(new CampaignImpressionStats(
-                CAMPAIGN, 103, 2, 0, 0, hourly(Map.of(12, 103L)), 103, 0, 0)));
+                CAMPAIGN, 103, 2, 0, 0, hourly(Map.of(12, 103L)), Map.of("ALLOCATION", 103L), 0)));
         List<CampaignInfo> infos = List.of(campaign(CAMPAIGN, OWNER, STORE));
         when(campaigns.findAllById(List.of(CAMPAIGN))).thenReturn(infos);
 
@@ -260,7 +259,7 @@ class CampaignReportStepTest {
         noSources();
         when(billing.billingCounts(DAY)).thenReturn(List.of(new CampaignBillingCount(CAMPAIGN, 100, 0, 0, 0)));
         when(adserving.campaignStats(DAY)).thenReturn(List.of(new CampaignImpressionStats(
-                CAMPAIGN, 102, 2, 0, 0, hourly(Map.of(12, 102L)), 102, 0, 0)));
+                CAMPAIGN, 102, 2, 0, 0, hourly(Map.of(12, 102L)), Map.of("ALLOCATION", 102L), 0)));
         List<CampaignInfo> infos = List.of(campaign(CAMPAIGN, OWNER, STORE));
         when(campaigns.findAllById(List.of(CAMPAIGN))).thenReturn(infos);
 

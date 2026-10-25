@@ -1,6 +1,5 @@
 package com.launchcatch.adserving.impression.entity;
 
-import com.launchcatch.adserving.engine.SlotType;
 import jakarta.persistence.Column;
 import jakarta.persistence.EmbeddedId;
 import jakarta.persistence.Entity;
@@ -43,9 +42,9 @@ public class ImpressionLog {
     @Column(name = "store_id")
     private Long storeId;
 
-    @Enumerated(EnumType.STRING)
+    // 피드 엔진이 붙인 슬롯 이름표이고 serve 기록이 있을 때만 있다(#978)
     @Column(name = "slot_type")
-    private SlotType slotType;
+    private String slotType;
 
     @JdbcTypeCode(SqlTypes.TINYINT)
     @Column(name = "slot_position")
@@ -129,7 +128,7 @@ public class ImpressionLog {
      * 서버가 그 카드를 어느 캠페인, 어느 가게, 어느 자리로 내려줬는지다. serve 기록에서 꺼낸다.
      * 같은 타입 인자가 이어지면 순서를 바꿔 넘기기 쉬워 하나로 묶는다.
      */
-    public record Placement(Long campaignId, Long storeId, SlotType slotType, int slotPosition) {
+    public record Placement(Long campaignId, Long storeId, String slotType, int slotPosition) {
     }
 
     // 카드가 보인 순간의 정보다. 클라이언트가 보낸 값이다.

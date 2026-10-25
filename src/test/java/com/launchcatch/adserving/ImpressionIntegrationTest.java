@@ -17,7 +17,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.launchcatch.adserving.contract.ImpressionServedEvent;
-import com.launchcatch.adserving.engine.SlotType;
+import com.launchcatch.adserving.engine.SlotLabels;
 import com.launchcatch.adserving.feed.repository.ServeRecord;
 import com.launchcatch.adserving.feed.repository.ServeRecordRepository;
 import com.launchcatch.auth.CustomUserDetails;
@@ -80,7 +80,7 @@ class ImpressionIntegrationTest extends AbstractAdservingIntegrationTest {
             deductedInTransaction.set(TransactionSynchronizationManager.isActualTransactionActive());
             return DeductionStatus.BILLED;
         }).when(pointDeductor).deduct(any(), any(), any());
-        serveRecordRepository.saveAll(List.of(new ServeRecord(serveId, MEMBER_ID, 101L, 55L, SlotType.ALLOCATION, 1, SERVED_AT)));
+        serveRecordRepository.saveAll(List.of(new ServeRecord(serveId, MEMBER_ID, 101L, 55L, SlotLabels.ALLOCATION, 1, SERVED_AT)));
     }
 
     @AfterEach
@@ -141,7 +141,7 @@ class ImpressionIntegrationTest extends AbstractAdservingIntegrationTest {
         LocalDate nextDay = TODAY.plusDays(1);
         String nextCounterKey = "adserving:validImpressions:" + nextDay;
         UUID lateServeId = UUID.randomUUID();
-        serveRecordRepository.saveAll(List.of(new ServeRecord(lateServeId, MEMBER_ID, 101L, 55L, SlotType.ALLOCATION, 1,
+        serveRecordRepository.saveAll(List.of(new ServeRecord(lateServeId, MEMBER_ID, 101L, 55L, SlotLabels.ALLOCATION, 1,
                 LocalDateTime.of(2026, 10, 1, 23, 50).atZone(ClockConfig.ZONE).toInstant())));
         doReturn(LocalDateTime.of(2026, 10, 2, 0, 10).atZone(ClockConfig.ZONE).toInstant()).when(clock).instant();
         try {

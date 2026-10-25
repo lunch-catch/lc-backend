@@ -1,6 +1,7 @@
 package com.launchcatch.adserving.engine;
 
 import com.launchcatch.adserving.engine.FeedAssembler.Viewer;
+import java.time.LocalDate;
 import java.util.Map;
 import java.util.Set;
 
@@ -9,6 +10,7 @@ import java.util.Set;
  * pacing 이 null 이면 정산에서 예산을 읽지 못한 것이다. 그때는 예산 규칙을 건너뛰고 배분 슬롯도 관련성으로 채운다(#307).
  */
 public record FeedContext(
+        LocalDate businessDate,
         Viewer viewer,
         Set<Long> excludedCampaignIds,
         Set<String> categories,

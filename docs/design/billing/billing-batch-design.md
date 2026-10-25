@@ -1,7 +1,5 @@
 # 결제·포인트·정산 (billing) 배치와 내부 흐름 설계
 
-**2026-10-12 분리:** 정산의 배치와 내부 흐름 설계를 이 문서로 나눴다.
-
 이 문서에서 "NN행"은 요구사항 명세서(`V51_런치캐치_요구사항명세서.xlsx`) 기능 명세서 시트의 행 번호다. 다른 문서가 쓰는 FR 번호는 이 행 번호에서 3을 뺀 값이다(98행 = FR-095). 비기능, 비즈니스 규칙, 도메인 정의처럼 다른 시트의 행은 시트 이름을 함께 적었다.
 
 HTTP가 아니라 **모듈 간 호출·이벤트·배치**다. 점주·관리자 API는 `billing-api-spec.md`에서 다룬다.
@@ -24,13 +22,13 @@ HTTP가 아니라 **모듈 간 호출·이벤트·배치**다. 점주·관리자
 | # | 이름 | 행 | 성격 |
 | --- | --- | --- | --- |
 | I-01 | 노출 차감 → 판정 기록·원장 기록 | 103 (참조 99·100) | 광고서빙이 `billing.contract.PointDeductor` 직접 호출 |
-| I-02 | 00:00 예약·해제 작업 | 98, 102 (3)(4)(5), 51 | 운영 스케줄러에 등록하는 배치 *(2026-10-19 수정, #497: 서빙이 하루 종일이 되어 13:30 해제를 없앴다. 해제는 00:00 예약 단계가 전날 몫을 정식으로 한다)* |
-| I-03 | 충전 직후 재예약 | 48, 49, 51 | billing 내부 `PointCharged` 핸들러 (2026-10-12 수정: 이름에서 `Event`를 뺐다) |
+| I-02 | 00:00 예약·해제 작업 | 98, 102 (3)(4)(5), 51 | 운영 스케줄러에 등록하는 배치 |
+| I-03 | 충전 직후 재예약 | 48, 49, 51 | billing 내부 `PointCharged` 핸들러 |
 | I-04 | 결제 재조회 워커(아웃박스) | 22, 49 | 주기 스케줄러 |
 | I-05 | 정산 대사 배치 2종 | 102, 103 | 배치 |
 | I-06 | 예산 소진 진행률 조회 | 98 | 광고서빙이 `billing.contract.BudgetQueryService` 호출 |
 | I-07 | 캠페인 상태 변경 수신 | 51, 103 | `campaign.contract.CampaignStatusChangedEvent` 리스너 |
-| I-08 | 분석 집계 조회 | analytics 설계 | 분석의 일별 집계 배치가 `billing.contract.BillingStatsQueryService` 호출 *(2026-10-16 추가, #352, #402)* |
+| I-08 | 분석 집계 조회 | analytics 설계 | 분석의 일별 집계 배치가 `billing.contract.BillingStatsQueryService` 호출 |
 
 ### 정산이 쓰는 다른 도메인의 공개 기능
 
@@ -38,16 +36,16 @@ HTTP가 아니라 **모듈 간 호출·이벤트·배치**다. 점주·관리자
 | --- | --- | --- |
 | billing → campaign | `campaign.contract.CampaignQueryService` | 00:00 예약 대상과 다음 영업일 적용 하루 예산, 충전 재예약 대상(`PAUSED(NO_POINTS)` 캠페인), 환불 거부 조건의 집행 중 캠페인 |
 | billing → campaign | `campaign.contract.CampaignFundingUpdater` | 예약 결과와 판정 반영. 잔액 부족이면 `PAUSED(NO_POINTS)`, 재개 판정이면 `ACTIVE`로 **상태만** 바꾼다 |
-| billing → campaign | `campaign.contract.CampaignQueryService.findAllById` | **2026-10-14:** 포인트 조정이 닫으려는 `CAMPAIGN_SPEND_VS_LEDGER` 대사 건의 캠페인 점주 확인(`billing-api-design.md` 「포인트 조정」) |
-| billing → campaign | `campaign.contract.CampaignQueryService.findByIdForUpdate` | **2026-10-16(#378):** 충전 직후 재예약(I-03)이 캠페인마다 원장을 쓰기 전에 그 캠페인을 다시 잠그고 최신 상태를 확인한다. 기존 간선이라 CODEOWNERS는 바뀌지 않는다 |
-| billing → owner | `owner.contract.OwnerStatusQuery.findStatus` | **2026-10-14:** 포인트 조정 대상 점주가 있는지 확인. 새 간선이라 [도메인 구조와 의존성 설계](../../architecture/런치캐치_도메인_구조와_의존성_설계.md) 2.2절과 CODEOWNERS를 같은 PR에서 고친다 |
+| billing → campaign | `campaign.contract.CampaignQueryService.findAllById` | 포인트 조정이 닫으려는 `CAMPAIGN_SPEND_VS_LEDGER` 대사 건의 캠페인 점주 확인(`billing-api-design.md` 「포인트 조정」) |
+| billing → campaign | `campaign.contract.CampaignQueryService.findByIdForUpdate` | 충전 직후 재예약(I-03)이 캠페인마다 원장을 쓰기 전에 그 캠페인을 다시 잠그고 최신 상태를 확인한다 |
+| billing → owner | `owner.contract.OwnerStatusQuery.findStatus` | 포인트 조정 대상 점주가 있는지 확인 |
 | billing → ops | 운영의 설정값 조회 기능 | 노출 단가(아래 I-02 참고) |
 | adserving → billing | `billing.contract.PointDeductor` | I-01 |
 | adserving → billing | `billing.contract.BudgetQueryService` | I-06 |
 | analytics → billing | `billing.contract.BillingStatsQueryService` | I-08 |
 | campaign → billing | `CampaignStatusChangedEvent` | I-07 |
 
-**정산은 도메인 간 이벤트를 발행하지 않는다.** `PointCharged`(I-03)는 billing 내부 통보다. **2026-10-12 수정:** 저장소 아키텍처 테스트가 `Event`로 끝나는 타입을 발행 도메인의 `contract`에 두라고 요구하므로 공개하지 않는 이 통보는 이름에서 `Event`를 뺐다.
+**정산은 도메인 간 이벤트를 발행하지 않는다.** `PointCharged`(I-03)는 billing 내부 통보다. 저장소 아키텍처 테스트가 `Event`로 끝나는 타입을 발행 도메인의 `contract`에 두라고 요구하므로 공개하지 않는 이 통보는 이름이 `Event`로 끝나지 않는다.
 
 현재 구현이 사용하는 공개 계약은 다음과 같다. 메서드 시그니처의 기준은 각 도메인의 `contract`다.
 
@@ -99,7 +97,7 @@ HTTP가 아니라 **모듈 간 호출·이벤트·배치**다. 점주·관리자
 | `BILLED` | 당일 소진 + 단가 ≤ 그날 예약액 | I-01 |
 | `NOT_BILLED_BUDGET` | 그날 예약액에 도달 | I-01 |
 | `NOT_BILLED_PAUSED` | 캠페인이 중단된 뒤 도착 | I-01, I-07의 중단 표시를 본다 |
-| `NOT_BILLED_NO_PLAN` | 노출을 받은 날에 그 캠페인의 계획이 없음 *(2026-10-19 추가, #497)* | I-01 |
+| `NOT_BILLED_NO_PLAN` | 노출을 받은 날에 그 캠페인의 계획이 없음 | I-01 |
 | `NOT_BILLED_SOLD_OUT` | 품절 상태에서 난 노출 | **정산이 쓰지 않는다.** 차감을 부르지 않으므로 광고서빙이 `impression_log.sold_out`에 남기고 리포트가 `serve_id`로 조인한다 |
 
 ## 두 판정이 집계에서 만나는 규칙
@@ -122,7 +120,7 @@ PointDeductor.deduct(serveId, campaignId, businessDate)
   — owner_id 와 단가는 budget_daily_plan 에서 읽는다
 ```
 
-*(2026-10-19 수정, #497)* `businessDate`는 **노출 요청을 서버가 받은 날(KST)**이다. 카드를 내려준 날이 아니다. 전날 예산은 다음 날 00:00에 해제되므로(I-02 「해제」) 00:00 뒤에 전날로 차감하면 돌려준 예산에서 빠진다. 호출하는 광고 서빙의 변경은 #498이 한다.
+`businessDate`는 **노출 요청을 서버가 받은 날(KST)**이다. 카드를 내려준 날이 아니다. 전날 예산은 다음 날 00:00에 해제되므로(I-02 「해제」) 00:00 뒤에 전날로 차감하면 돌려준 예산에서 빠진다.
 
 1. 원자 연산으로 `당일 소진 + 단가 ≤ 그날 적용 하루 예산(예약액)`을 검사한다. 검사와 차감은 나눌 수 없는 하나의 동작이다.
 2. 판정을 `deduction_result`(`UNIQUE(serve_id)`)에 기록한다.
@@ -132,18 +130,18 @@ PointDeductor.deduct(serveId, campaignId, businessDate)
 | `BILLED` | 검사 통과 |
 | `NOT_BILLED_BUDGET` | 그날 예약액에 도달 |
 | `NOT_BILLED_PAUSED` | 캠페인이 중단된 뒤 도착 (I-07의 중단 표시를 본다) |
-| `NOT_BILLED_NO_PLAN` | 노출을 받은 날에 그 캠페인의 계획 행이 없음. 00:00 예약이 그 캠페인의 계획을 만들기 전이거나 전날 집행이 끝난 캠페인이다. serve TTL이 30분이라 자정 직후 30분 안에서만 생긴다 *(2026-10-19 추가, #497, billing V8)* |
+| `NOT_BILLED_NO_PLAN` | 노출을 받은 날에 그 캠페인의 계획 행이 없음. 00:00 예약이 그 캠페인의 계획을 만들기 전이거나 전날 집행이 끝난 캠페인이다. serve TTL이 30분이라 자정 직후 30분 안에서만 생긴다 |
 
 `NOT_BILLED_NO_PLAN`은 계획이 없으니 `owner_id`를 캠페인(`CampaignQueryService.findAllById`)에서, 단가를 운영 단가(`PlatformSettingQueryService.getImpressionUnitPrice`)에서 읽어 판정 행에 남긴다. 과금하지 않아 카운터와 원장은 건드리지 않는다. 행을 남겨야 광고 서빙의 유효 노출 수가 판정 합에 품절 뒤 노출을 더한 값과 같다. 캠페인 자체가 없으면 예외다.
 
-**조건 (2026-10-19, #497, #498):** 노출 인정 시간은 광고 서빙의 serve 기록 TTL(1800초)이 정한다. 정산에는 이 값이 없다(`impression-valid-for`를 지웠다). 그래서 `NOT_BILLED_NO_PLAN`이 생기는 범위(자정 직후 TTL 만큼)와 장중 중단 뒤 미과금이 생기는 범위(I-07)는 이 TTL에 기댄다. TTL을 바꾸면 이 범위도 함께 바뀐다. 광고 서빙은 같은 조건을 `adserving_구조와_동작_설계.md`에 적는다(#498).
+**조건:** 노출 인정 시간은 광고 서빙의 serve 기록 TTL(1800초)이 정한다. 정산에는 이 값이 없다. 그래서 `NOT_BILLED_NO_PLAN`이 생기는 범위(자정 직후 TTL 만큼)와 장중 중단 뒤 미과금이 생기는 범위(I-07)는 이 TTL에 기댄다. TTL을 바꾸면 이 범위도 함께 바뀐다. 광고 서빙은 같은 조건을 `adserving_구조와_동작_설계.md`에 적는다.
 
 `NOT_BILLED_SOLD_OUT`은 차감을 부르지 않으므로 여기 없다. 광고서빙이 `impression_log.sold_out`에 기록하고 리포트가 `serve_id`로 조인한다.
 
 3. `BILLED`이면 `point_ledger`에 `DEDUCT(amount = -unit_price, serve_id, campaign_id, owner_id, source=REALTIME)`를 기록한다. `owner_id`는 `budget_daily_plan.owner_id`다.
 4. 멱등: `UNIQUE(serve_id)`와 `UNIQUE(serve_id, entry_type)` 위반은 **이미 처리된 건으로 보고 성공 처리**하며, 판정 기록 1건과 카운터 증가 1회만 남는다.
 5. 예약액에 도달하면 **차감만 중단한다.** 노출은 노출 상한(예약액 ÷ 단가 × 1.05, 광고서빙 99행)까지 계속되고 캠페인 상태는 바뀌지 않는다.
-6. DB 쓰기가 실패하면 예외로 트랜잭션 전체를 롤백한다(노출 저장도 롤백). 별도 `ledger_outbox`는 두지 않는다. 롤백되면 정산이 곧바로 카운터의 처리 표시와 소진을 되돌린다(2026-10-14, 구현 순서 F-6). 되돌리기가 실패해 카운터만 증가한 채 남은 경우는 그날 안에 고쳐지지 않고 다음 날 00:00 카운터 대조(I-05)가 불일치로 기록한다(2026-10-19 수정, #497).
+6. DB 쓰기가 실패하면 예외로 트랜잭션 전체를 롤백한다(노출 저장도 롤백). 별도 `ledger_outbox`는 두지 않는다. 롤백되면 정산이 곧바로 카운터의 처리 표시와 소진을 되돌린다. 되돌리기가 실패해 카운터만 증가한 채 남은 경우는 그날 안에 고쳐지지 않고 다음 날 00:00 카운터 대조(I-05)가 불일치로 기록한다.
 7. **이 경로는 잔액을 읽지 않는다.** 그날 예약액이 이미 잔액에서 빠져 있어 잔액은 음수가 될 수 없다.
 
 성능 목표는 초당 10,000건이다(비기능 17행).
@@ -152,9 +150,9 @@ PointDeductor.deduct(serveId, campaignId, businessDate)
 
 # I-02. 00:00 예약·해제 작업
 
-운영 도메인 스케줄러(102행)에 등록하는 작업이다. 단계 `@Order`는 102행 단계 번호 × 10이다. *(2026-10-19 수정, #497: 서빙 시간대(10:00~12:59)를 없애 광고 서빙이 하루 종일 카드를 내려준다. 서빙이 끝난 뒤 돌던 13:30 해제 작업은 없앴고 해제는 다음 날 00:00 예약 단계가 맡는다)* 실행 이력은 운영의 `batch_execution_log`에 `UNIQUE(job_name, business_date)`로 남는다.
+운영 도메인 스케줄러(102행)에 등록하는 작업이다. 단계 `@Order`는 102행 단계 번호 × 10이다. 해제는 다음 날 00:00 예약 단계가 맡는다. 실행 이력은 운영의 `batch_execution_log`에 `UNIQUE(job_name, business_date)`로 남는다.
 
-00:00 작업은 순서 의존이 있어 **앞 단계가 실패하면 뒤 단계를 실행하지 않고 중단**하며, 실패한 작업명과 사유를 기록해 관리자에게 알리고 **실패한 단계만 수동으로 재실행**할 수 있다. 배치 서버는 2대이고, 실행 중인 서버의 생존 신호(`updated_at`, 30초 주기)가 2분 넘게 끊기면 다른 서버가 이어받아 **끝나지 않은 단계부터** 다시 실행한다(`owner_id`가 이어받은 서버로 바뀐다). 일시적 오류(교착, 락 대기 초과, 연결 오류, Valkey 시간 초과)는 30초·1분 간격으로 최대 2회 자동 재실행한다(`retry_count`).
+00:00 작업은 순서 의존이 있어 **앞 단계가 실패하면 뒤 단계를 실행하지 않고 중단**하며, 실패한 작업명과 사유를 기록해 관리자에게 알리고 **실패한 단계만 수동으로 재실행**할 수 있다. 배치 서버는 2대이고, 실행 중인 서버의 생존 신호(`updated_at`, 30초 주기)가 2분 넘게 끊기면 다른 서버가 이어받아 **끝나지 않은 단계부터** 다시 실행한다(`owner_id`가 이어받은 서버로 바뀐다). 일시적 오류(교착, 락 대기 초과, 연결 오류, Valkey 시간 초과)는 30초·1분 간격으로 최대 2회 자동 재실행한다(`retry_count`). 00:00 `RELEASE`도 이 재실행에 맡기고, 그래도 실패하면 `FAILED`, 알림, 대사 불일치 기록으로 끝낸다.
 
 ## 00:00 작업
 
@@ -164,11 +162,11 @@ PointDeductor.deduct(serveId, campaignId, businessDate)
 | --- | --- | --- |
 | (3) | 예산 초기화 | 당일 소진 카운터·예약액 키 초기화. 점주가 바꿔 둔 하루 예산 설정값이 있으면 이때 적용한다(98행, 45행) |
 | (4) | 전일 카운터↔원장 대조 | `CAMPAIGN_SPEND_VS_LEDGER`(I-05) |
-| (5) | 예약 | ① 전날 남은 예약을 `RELEASE`(2026-10-19 수정, #497: 전날의 정식 해제다. 아래 「해제」) ② 집행 기간 안의 `ACTIVE`·`PAUSED(OWNER)`·`PAUSED(NO_POINTS)` 캠페인마다 `min(설정 하루 예산, 잔액)`을 `RESERVE(−)`로 기록하고 `budget_daily_plan`(`owner_id`, `unit_price`, `daily_budget` = 그날 예약액)을 만든 뒤 예약액 카운터를 세팅. **2026-10-12 수정: 잔액이 모든 캠페인 합보다 작으면 캠페인 ID 오름차순으로 앞에서부터 채운다**(V51 34행의 동률 기준과 같은 순서). 잔액이 0이 된 뒤의 캠페인은 예약액 0으로 계획 행만 만들고 (6)에서 `NO_POINTS`로 판정된다 |
+| (5) | 예약 | ① 전날 남은 예약을 `RELEASE`(전날의 정식 해제다. 아래 「해제」) ② 집행 기간 안의 `ACTIVE`·`PAUSED(OWNER)`·`PAUSED(NO_POINTS)` 캠페인마다 `min(설정 하루 예산, 잔액)`을 `RESERVE(−)`로 기록하고 `budget_daily_plan`(`owner_id`, `unit_price`, `daily_budget` = 그날 예약액)을 만든 뒤 예약액 카운터를 세팅. **잔액이 모든 캠페인 합보다 작으면 캠페인 ID 오름차순으로 앞에서부터 채운다**(V51 34행의 동률 기준과 같은 순서). 잔액이 0이 된 뒤의 캠페인은 예약액 0으로 계획 행만 만들고 (6)에서 `NO_POINTS`로 판정된다 |
 | (6) | 잔액 부족 판정 | 예약액 < 단가이면 `NO_POINTS`. **대상은 `ACTIVE`와 `PAUSED(NO_POINTS)`만이다** — `PAUSED(OWNER)`는 점주의 재개 요청 때 48행 규칙으로 판단한다 |
-| (7) | 시간대별 목표 계산 | *(2026-10-23 수정, #828)* 정산 단계가 아니다. 광고서빙이 진행률을 조회할 때마다 그날 예약액을 가중치로 나눠 계산한다(I-06) |
+| (7) | 시간대별 목표 계산 | 정산 단계가 아니다. 광고서빙이 진행률을 조회할 때마다 그날 예약액을 가중치로 나눠 계산한다(I-06) |
 
-**2026-10-16 구현 상태:** 00:00 묶음의 세 단계는 운영의 `DailyJob`으로 구현돼 있다. (3) 예산 초기화는 전용 작업이 없고 (5) 예약이 해시를 준비한다.
+00:00 묶음의 세 단계는 운영의 `DailyJob`으로 돈다. (3) 예산 초기화는 전용 작업이 없고 (5) 예약이 해시를 준비한다.
 
 | 단계 | 작업명 | `@Order` | 구현 |
 | --- | --- | --- | --- |
@@ -178,7 +176,7 @@ PointDeductor.deduct(serveId, campaignId, businessDate)
 
 ## 해제
 
-*(2026-10-19 수정, #497)* 13:30 작업(`DailyReleaseScheduler`, 당일 대조와 해제)을 없앴다. 서빙이 하루 종일이라 13:30에도 차감이 들어와, 그 시각에 해제하면 이미 돌려준 예산에서 차감된다.
+장중에 해제하는 작업은 두지 않는다. 서빙이 하루 종일이라 장중에도 차감이 들어와, 그때 해제하면 이미 돌려준 예산에서 차감된다.
 
 해제는 다음 날 00:00 묶음이 한다. (4) 전일 대조가 먼저 돌고 (5) 예약이 전날 캠페인별 (그날 `RESERVE` 합 − 그날 `DEDUCT` 합)이 양수이면 `RELEASE(+)`를 기록한 뒤 오늘 예약을 한다. 이 순서가 맞으려면 00:00 뒤에 전날로 들어오는 차감이 없어야 한다. 그래서 노출 차감의 영업일을 **노출 요청을 서버가 받은 날**로 정했다(`PointDeductor` 계약, I-01). 23:59에 내려준 카드의 노출이 00:10에 오면 새 날 예산에서 차감된다. 다만 23:59:59에 받은 요청의 차감 트랜잭션은 00:00 뒤에 커밋될 수 있다. 해제는 점주 계정 행을 잠그고 그 시점에 커밋된 차감만 보고 계산하므로, 늦게 커밋된 전날 차감은 해제에 반영되지 않는다. 차감 쪽에는 잠금을 더하지 않고(노출 차감 핫패스의 지연을 늘리지 않는다), 이틀 뒤 00:00 전일 대사 단계가 소진과 해제의 합이 예약액을 넘은 캠페인을 `CAMPAIGN_OVERSPEND`로 기록해 사람이 조정하게 한다.
 
@@ -198,7 +196,7 @@ CampaignFundingUpdater: { campaignId, ownerId, businessDate,
 
 ## 단가와 하루 예산 하한의 출처
 
-(5)에서 `budget_daily_plan.unit_price`에 찍을 값은 **운영 도메인의 `platform_setting`에서 읽는다.** `point_policy`는 2026-10-05에 이 값들을 지우고 운영으로 넘겼다(V51 `도메인 정의` 14행이 "플랫폼 설정값(노출 단가, 최소와 부트스트랩 하루 예산 포함)"을 운영 소유로 둔다). 운영은 모든 도메인이 읽는 하위 계층이라 의존 간선이 늘지 않는다(도메인 규칙 5).
+(5)에서 `budget_daily_plan.unit_price`에 찍을 값은 **운영 도메인의 `platform_setting`에서 읽는다.** `point_policy`는 이 값들을 갖지 않는다(V51 `도메인 정의` 14행이 "플랫폼 설정값(노출 단가, 최소와 부트스트랩 하루 예산 포함)"을 운영 소유로 둔다). 운영은 모든 도메인이 읽는 하위 계층이라 의존 간선이 늘지 않는다(도메인 규칙 5).
 
 | `setting_key` | 값 | 출처 |
 | --- | --- | --- |
@@ -226,16 +224,16 @@ CampaignFundingUpdater: { campaignId, ownerId, businessDate,
 
 승인 확정, 웹훅, 재조회 워커 어디서든 `CHARGE`가 확정되면 커밋 후 발행하는 billing 내부 이벤트다.
 
-**2026-10-09 수정:** `CHARGE` 행이 **새로 만들어진** 커밋 뒤에는 경로와 관계없이 발행한다. 승인 확정(`POST /v1/owner/payments/{paymentId}:confirm`), 웹훅, 재조회 워커가 승인 확정 로직을 하나의 서비스 메서드로 공유하고 그 안에서 발행한다. 이미 `APPROVED`라 `(payment_id, CHARGE)` UNIQUE에 걸려 새 행이 없으면 발행하지 않는다. **`LEDGER_CORRECTION`이 만든 `CHARGE` 보정은 과거 영업일 값을 고치는 것이므로 발행하지 않는다.**
+`CHARGE` 행이 **새로 만들어진** 커밋 뒤에는 경로와 관계없이 발행한다. 승인 확정(`POST /v1/owner/payments/{paymentId}:confirm`), 웹훅, 재조회 워커가 승인 확정 로직을 하나의 서비스 메서드로 공유하고 그 안에서 발행한다. 이미 `APPROVED`라 `(payment_id, CHARGE)` UNIQUE에 걸려 새 행이 없으면 발행하지 않는다. **`LEDGER_CORRECTION`이 만든 `CHARGE` 보정은 과거 영업일 값을 고치는 것이므로 발행하지 않는다.**
 
 ```
 PointCharged { ownerId, paymentId, amount }
 ```
 
-**2026-10-16 수정(#319):** 아래 1~7을 실제 구현에 맞춰 다시 적었다. 캠페인 하나가 아니라 여럿을 캠페인 ID 오름차순으로 채우고, 각 캠페인은 원장을 쓰기 전에 다시 잠근다.
+캠페인 여럿을 캠페인 ID 오름차순으로 채우고, 각 캠페인은 원장을 쓰기 전에 다시 잠근다.
 
 1. `CampaignQueryService.findByOwnerIdAndStatusIn`로 이 점주의 `PAUSED(NO_POINTS)` 캠페인 중 집행 기간 안인 것을 캠페인 ID 오름차순으로 읽는다. 없으면 끝.
-2. *(2026-10-19 수정, #497: 서빙이 하루 종일이라 시각 제한을 없앴다. 00:00 예약 전이라 그날 계획이 없는 캠페인은 건너뛰고 그 예약이 충전 뒤 잔액으로 배분한다. 00:00 예약과 겹쳐도 둘 다 점주 계정 행을 먼저 잠가 차례로 돈다)*
+2. 서빙이 하루 종일이라 시각 제한은 없다. 00:00 예약 전이라 그날 계획이 없는 캠페인은 건너뛰고 그 예약이 충전 뒤 잔액으로 배분한다. 00:00 예약과 겹쳐도 둘 다 점주 계정 행을 먼저 잠가 차례로 돈다.
 3. 점주 계정 행을 잠그고 잔액을 읽는다.
 4. **캠페인마다, 원장을 쓰기 전에 그 캠페인을 `CampaignQueryService.findByIdForUpdate`(#378)로 다시 잠그고 최신 상태를 확인한다.** `PAUSED(NO_POINTS)`가 아니면(1에서 읽은 뒤 다른 트랜잭션이 이미 재개했거나 관리자·점주가 중단했거나 종료됐으면) 건너뛰고 남은 잔액을 다음 캠페인에 넘긴다. `CampaignStatusService.resumeFromFunding`도 같은 방식으로 잠그고 재확인하지만 그건 캠페인 자신의 상태 전이만 지켜줄 뿐, billing이 그보다 먼저 쓰는 아래 6의 원장과 `daily_budget` 증가는 지켜주지 못해 이 확인이 따로 필요했다(리뷰로 발견).
 5. `새 예약액 = min(설정 하루 예산, 기존 예약액 + 남은 잔액)`. 기존 예약액은 그 계획 행의 `daily_budget`에서 읽는다.
@@ -254,7 +252,7 @@ PointCharged { ownerId, paymentId, amount }
 
 워커와 관리자 재조회가 사용하는 조회 식별자는 [결제 승인 결과의 재조회](./billing_구조와_동작_설계.md#결제-승인-결과의-재조회)를 따른다.
 
-- **적재**: 승인 확정에서 결제를 `UNKNOWN`으로 만들 때 *(2026-10-08 수정: 웹훅은 UNKNOWN을 만들지 않는다. [billing API 설계](./billing-api-design.md)의 웹훅 절 참고)* 같은 트랜잭션에서 `status=PENDING`, `attempt_count=0`, `max_retry`, `next_retry_at`을 채워 넣는다. 결제당 1행(`UNIQUE(payment_id)`).
+- **적재**: 승인 확정에서 결제를 `UNKNOWN`으로 만들 때 (웹훅은 `UNKNOWN`을 만들지 않는다. [billing API 설계](./billing-api-design.md)의 웹훅 절 참고) 같은 트랜잭션에서 `status=PENDING`, `attempt_count=0`, `max_retry`, `next_retry_at`을 채워 넣는다. 결제당 1행(`UNIQUE(payment_id)`).
 - **처리**: 주기 스케줄러가 `status=PENDING AND next_retry_at ≤ now`인 건을 `(status, next_retry_at)` 인덱스로 가져와 PG 조회 API를 호출한다. 여러 인스턴스가 같은 건을 집지 않도록 행 잠금(`SKIP LOCKED`)을 쓴다.
 
 | PG 조회 결과 | 처리 |
@@ -266,7 +264,7 @@ PointCharged { ownerId, paymentId, amount }
 
 PG 호출에는 타임아웃과 서킷브레이커를 적용한다. 시작값은 연결 3초, 읽기 10초, 최근 10건 중 50% 실패면 열림, 30초 뒤 반개방이다. 워커의 기본 주기는 1분이고 최초 조회 지연은 1분, 이후 간격은 2·5·10·30분이며 ±10% 지터를 준다. 기본 `max_retry`는 5다. 설정 키는 `billing.toss.*`, `resilience4j.circuitbreaker.instances.tossPayment`, `billing.payment.recheck.*`다.
 
-**2026-10-14 구현 세부:** 워커는 `FOR UPDATE SKIP LOCKED`로 처리할 행을 잡고 `next_retry_at`을 선점 시간(5분) 뒤로 민 채 바로 커밋한다. PG 호출은 트랜잭션 밖에서 하고 결과는 별도 트랜잭션으로 기록한다. 한 건이 실패해도 나머지 건은 계속 처리한다. 백오프는 첫 간격 1분 뒤 2·5·10·30분이고 ±10% 지터를 준다. 결과 매핑은 `APPROVED`(주문·금액 일치) 승인, `FAILED` 실패, `EXPIRED`/`CANCELED` 취소이며 `PENDING`, `NOT_FOUND`, 조회 실패, 불일치는 미확정으로 다음 시각으로 미룬다. 관리자 `:recheck`로 미확정이면 아웃박스의 `last_checked_at`과 `last_error`만 갱신하고 시도 횟수는 올리지 않는다. 메트릭은 `billing.payment.recheck{result=approve|fail|cancel|miss|error}`다. 실행은 `launchcatch.scheduler.enabled`일 때만 한다(배치 프로필).
+워커는 `FOR UPDATE SKIP LOCKED`로 처리할 행을 잡고 `next_retry_at`을 선점 시간(5분) 뒤로 민 채 바로 커밋한다. PG 호출은 트랜잭션 밖에서 하고 결과는 별도 트랜잭션으로 기록한다. 한 건이 실패해도 나머지 건은 계속 처리한다. 백오프는 첫 간격 1분 뒤 2·5·10·30분이고 ±10% 지터를 준다. 결과 매핑은 `APPROVED`(주문·금액 일치) 승인, `FAILED` 실패, `EXPIRED`/`CANCELED` 취소이며 `PENDING`, `NOT_FOUND`, 조회 실패, 불일치는 미확정으로 다음 시각으로 미룬다. 관리자 `:recheck`로 미확정이면 아웃박스의 `last_checked_at`과 `last_error`만 갱신하고 시도 횟수는 올리지 않는다. 메트릭은 `billing.payment.recheck{result=approve|fail|cancel|miss|error}`다. 실행은 `launchcatch.scheduler.enabled`일 때만 한다(배치 프로필).
 
 조회 결과는 `PaymentGatewayInquiryResult.Status`의 `APPROVED`, `FAILED`, `EXPIRED`, `CANCELED`, `PENDING`, `NOT_FOUND`다. 만료와 실패는 서로 다른 값이다. 연결 실패나 서킷 오픈의 `PgNotSentException`, 그 밖의 조회 실패인 `PgUnknownException`은 미확정으로 처리한다.
 
@@ -274,15 +272,15 @@ PG 호출에는 타임아웃과 서킷브레이커를 적용한다. 시작값은
 
 # I-05. 정산 대사 배치 2종
 
-**2026-10-09 수정:** `PG_VS_CHARGE`는 **01:30(전일분) 1회**만 실행한다(13:00 실행은 뺐다. 2026-10-22 수정, #724: 워터마크 5분 때문에 00:00 에 돌면 전일 마지막 5분 결제가 빠지고 00:00 묶음과 부하가 겹쳐서 01:30 으로 옮겼다). 이 대사는 V51 102·103행에 없는 **설계상 추가 대사**다. `CAMPAIGN_SPEND_VS_LEDGER`는 **00:00(전일분)** 한 번 실행한다 *(2026-10-19 수정, #497: 13:30 당일 대조를 없앴다. 서빙이 하루 종일이라 장중에 카운터를 다시 만들지 않는다. 전일 대조는 서빙 중에 돌지만 대상인 전날에는 00:00 뒤에 차감이 없다)*. `SPEND_VS_IMPRESSION`은 폐기했다. 노출 로그와는 대조하지 않는다.
+`PG_VS_CHARGE`는 **01:30(전일분) 1회**만 실행한다. 00:00 에 돌면 워터마크 5분 때문에 전일 마지막 5분 결제가 빠지고 00:00 묶음과 부하가 겹친다. 이 대사는 V51 102·103행에 없는 **설계상 추가 대사**다. `CAMPAIGN_SPEND_VS_LEDGER`는 **00:00(전일분)** 한 번 실행하고 당일 대조는 없다. 서빙이 하루 종일이라 장중에 카운터를 다시 만들지 않는다. 전일 대조는 서빙 중에 돌지만 대상인 전날에는 00:00 뒤에 차감이 없다. `SPEND_VS_IMPRESSION`은 폐기했다. 노출 로그와는 대조하지 않는다.
 
 | `check_type` | 비교 | 자동 복구 |
 | --- | --- | --- |
-| `PG_VS_CHARGE` | PG 조회 결과(건별) ↔ `payment`(`APPROVED`) + 원장 `CHARGE` (`pg_tid` 기준 1:1). 대상은 전일 생성분 **(2026-10-09 수정)** | 승인인데 `CHARGE`가 없으면 `CHARGE` 보정 기록(`LEDGER_CORRECTION`, `source=RECONCILIATION`) |
-| `CAMPAIGN_SPEND_VS_LEDGER` | 당일 소진 카운터 ↔ 원장의 그 캠페인·영업일 `DEDUCT` 합 (원장과 카운터만 비교) | 없음. 그날이 끝나 카운터를 고쳐도 쓰일 곳이 없어 기록만 한다 *(2026-10-19 수정, #497: 13:30 당일 대조의 `CACHE_REBUILD`가 없어졌다)* |
-| `CAMPAIGN_OVERSPEND` | 그날 예약액(`budget_daily_plan.daily_budget`) ↔ 원장의 그 캠페인·영업일 `DEDUCT` 합. 합이 예약액을 넘으면 기록한다. 해제가 끝난 날은 `DEDUCT` 합과 `RELEASE` 합의 합이 예약액을 넘으면 기록하며, 이 대조는 이틀 뒤 00:00 전일 대사 단계가 한다(자정 직전 시작한 차감이 해제 뒤에 커밋된 경우) *(2026-10-15 추가, #306, V5)* | 없음. 카운터 재구성으로는 보이지 않는 초과 소진(장애 설계 L-2, L-4)이라 사람이 본다 |
+| `PG_VS_CHARGE` | PG 조회 결과(건별) ↔ `payment`(`APPROVED`) + 원장 `CHARGE` (`pg_tid` 기준 1:1). 대상은 전일 생성분 | 승인인데 `CHARGE`가 없으면 `CHARGE` 보정 기록(`LEDGER_CORRECTION`, `source=RECONCILIATION`) |
+| `CAMPAIGN_SPEND_VS_LEDGER` | 당일 소진 카운터 ↔ 원장의 그 캠페인·영업일 `DEDUCT` 합 (원장과 카운터만 비교) | 없음. 그날이 끝나 카운터를 고쳐도 쓰일 곳이 없어 기록만 한다 |
+| `CAMPAIGN_OVERSPEND` | 그날 예약액(`budget_daily_plan.daily_budget`) ↔ 원장의 그 캠페인·영업일 `DEDUCT` 합. 합이 예약액을 넘으면 기록한다. 해제가 끝난 날은 `DEDUCT` 합과 `RELEASE` 합의 합이 예약액을 넘으면 기록하며, 이 대조는 이틀 뒤 00:00 전일 대사 단계가 한다(자정 직전 시작한 차감이 해제 뒤에 커밋된 경우) | 없음. 카운터 재구성으로는 보이지 않는 초과 소진(장애 설계 L-2, L-4)이라 사람이 본다 |
 
-**2026-10-16 구현 상태:** `CAMPAIGN_OVERSPEND`는 위 "2종"에 없던 세 번째 `check_type`이다. `CAMPAIGN_SPEND_VS_LEDGER`는 해시를 원장으로 다시 만들면 두 값이 같아져 초과 소진이 보이지 않아서, 한 종류에 두 의미를 담지 않으려고 따로 뒀다. `PG_VS_CHARGE`는 `PgChargeReconciliationScheduler`(작업명 `BILLING_PG_VS_CHARGE_RECON`)가 01:30(Asia/Seoul)에 독립 `@Scheduled`로 돌리며 00:00 묶음에 들어 있지 않다. 비교 규칙은 아래와 같다(#391).
+`CAMPAIGN_OVERSPEND`는 위 "2종"에 더한 세 번째 `check_type`이다. `CAMPAIGN_SPEND_VS_LEDGER`는 해시를 원장으로 다시 만들면 두 값이 같아져 초과 소진이 보이지 않아서, 한 종류에 두 의미를 담지 않으려고 따로 뒀다. `PG_VS_CHARGE`는 `PgChargeReconciliationScheduler`(작업명 `BILLING_PG_VS_CHARGE_RECON`)가 01:30(Asia/Seoul)에 독립 `@Scheduled`로 돌리며 00:00 묶음에 들어 있지 않다. 비교 규칙은 아래와 같다(#391).
 
 - 우리 쪽 주장은 `payment.status`가 `APPROVED`일 때만 그 금액이고 PG 쪽 주장은 PG 상태가 `APPROVED`일 때만 PG 응답 금액이다. 둘이 같고 0보다 크고 원장에 `CHARGE`가 없으면 `LEDGER_CORRECTION`으로 빠진 `CHARGE`를 기록하고 닫힌 채 남긴다.
 - 둘이 다르면(금액이 다르거나 한쪽만 승인으로 보면) 자동 복구 없이 미해결 불일치만 남긴다. 둘이 같아도 원장 `CHARGE`의 금액이나 점주가 결제와 다르면 같은 방식으로 불일치를 남긴다.
@@ -291,7 +289,7 @@ PG 호출에는 타임아웃과 서킷브레이커를 적용한다. 시작값은
 - 대상은 [전날 00:00, 실행일 00:00)에 생성된 결제와 재검증 대기 행의 결제다. 시각 직전 결제는 따로 빼지 않는다. 그 결제의 PG 상태가 확정 전이면 위 `PENDING` 처리로 다음 실행에 다시 본다.
 
 - 신뢰 순서는 **PG > 과금 판정 > 원장 > 캐시**다. 어긋나면 위쪽 기준으로 아래쪽을 맞춘다.
-- **2026-10-09 확정:** `PG_VS_CHARGE`는 PG의 거래 목록 API를 쓰지 않고, **전일(KST) 생성된 `payment` 중 `pg_tid`가 있는 건을 PG 결제 조회 API로 하나씩 조회**해 PG 상태 ↔ `payment.status` ↔ 원장 `CHARGE`를 비교한다. 그래서 **PG에는 있는데 우리 `payment`에 행이 없는 승인은 탐지하지 못한다.** 승인 시도 전에 `pg_tid`를 먼저 커밋하므로(`billing-api-spec.md` 승인 확정 3단계) 정상 흐름에서는 행이 남는다. 그런 승인까지 잡아야 하면 그때 PG 거래 목록 조회를 추가한다.
+- `PG_VS_CHARGE`는 PG의 거래 목록 API를 쓰지 않고, **전일(KST) 생성된 `payment` 중 `pg_tid`가 있는 건을 PG 결제 조회 API로 하나씩 조회**해 PG 상태 ↔ `payment.status` ↔ 원장 `CHARGE`를 비교한다. 그래서 **PG에는 있는데 우리 `payment`에 행이 없는 승인은 탐지하지 못한다.** 승인 시도 전에 `pg_tid`를 먼저 커밋하므로(`billing-api-spec.md` 승인 확정 3단계) 정상 흐름에서는 행이 남는다. 그런 승인까지 잡아야 하면 그때 PG 거래 목록 조회를 추가한다.
 - 시각 직전에 생성된 결제를 워터마크로 빼지 않는다. PG 상태가 확정 전인 결제는 재검증 대기 행으로 남겨 다음 실행에 다시 본다.
 - 결과는 `settlement_mismatch`에 쌓이고 `job_execution_id`가 운영의 `batch_execution_log.id`를 가리킨다.
 - **과과금은 자동 복구하지 않는다.** 관리자가 양수 `ADJUST`(`OVERCHARGE_REVERSAL`)로 정정한다. 서로 다른 `serve_id`가 같은 노출을 중복 과금한 건도 자동 탐지되지 않으며 같은 방식으로 정정한다.
@@ -318,7 +316,7 @@ billing.contract.BudgetQueryService
 | `reservedAmount` | 그날 예약액 = `budget_daily_plan.daily_budget` (= 그 캠페인·영업일 `RESERVE` 합) |
 | `todaySpend` | 당일 소진 카운터. **`BILLED`만 센다.** 원본은 원장 `DEDUCT` 합 |
 
-*(2026-10-23 수정, #828)* 시간대별 목표와 진행률은 광고서빙이 이 값으로 계산한다. 가중치, 분 단위 비례, 계획이 0일 때의 값은 [adserving 구조와 동작 설계](../adserving/adserving_구조와_동작_설계.md) 4장 "예산 소진 진행률"이 갖는다. 페이싱 가중치는 배정 알고리즘과 함께 바뀌고 결제나 환불 규정과는 함께 바뀌지 않아 광고서빙으로 옮겼다. `budget_hourly_target` 테이블은 시드 base V8 이 지웠다(#829).
+시간대별 목표와 진행률은 광고서빙이 이 값으로 계산한다. 가중치, 분 단위 비례, 계획이 0일 때의 값은 [adserving 구조와 동작 설계](../adserving/adserving_구조와_동작_설계.md) 4장 "예산 소진 진행률"이 갖는다. 페이싱 가중치는 배정 알고리즘과 함께 바뀌고 결제나 환불 규정과는 함께 바뀌지 않아 광고서빙이 갖는다.
 
 - 소비 기준(1.0 미만 우선, 1.2 초과 시 배분 슬롯 제외, 신규 캠페인 ×0.8)은 광고서빙이 갖는다. 정산은 숫자만 준다(`비즈니스 규칙` 30·34·35행).
 - 원장 `SUM`이 아니라 카운터만 읽는다. 광고서빙이 부르는 시점은 [adserving 구조와 동작 설계](../adserving/adserving_구조와_동작_설계.md) 5장이 갖는다.
@@ -336,7 +334,7 @@ billing.contract.BudgetQueryService
 
 1. `changedAt`이 저장된 값보다 **늦을 때만** 반영한다. 2.4의 "수신은 중복과 순서에 상관없이 같은 결과가 나오게 작성한다" 규칙이고, 같은 문단이 "**정산은 중단 표시와 함께 시각을 저장**"이라고 요구한다.
 2. 중단으로 바뀌면 그날 차감 경로가 `NOT_BILLED_PAUSED`를 판정한다(103행 "중단 이후 도착"). 이미 내려간 카드의 노출이 serve 기록 TTL 30분 동안 들어오므로 **장중 전이 뒤 최대 30분간 미과금 노출이 발생한다.** 이 노출은 점주에게 과금하지 않는다.
-3. 재개로 바뀌어도 시간대별 목표를 다시 계산하지 않는다. *(2026-10-23 수정, #828)* 목표는 광고서빙이 조회할 때마다 그날 예약액으로 계산한다(I-06). 48행의 "지난 시간대는 그대로 두고 남은 시간대만 새 예약액 기준으로"와 달리 지난 시간대도 새 예약액으로 나뉜다.
+3. 재개로 바뀌어도 시간대별 목표를 다시 계산하지 않는다. 목표는 광고서빙이 조회할 때마다 그날 예약액으로 계산한다(I-06). 48행의 "지난 시간대는 그대로 두고 남은 시간대만 새 예약액 기준으로"와 달리 지난 시간대도 새 예약액으로 나뉜다.
 
 ## 중단 상태의 저장과 구현 범위
 
@@ -355,7 +353,7 @@ billing.contract.BudgetQueryService
 
 # I-08. 분석 집계 조회
 
-*(2026-10-16 추가, #352, #402)* 분석의 일별 집계 배치가 영업일마다 부르는 읽기 전용 조회다. HTTP가 아니라 모듈 조회이고 집계 SQL은 정산이 소유한다. 분석은 합계와 건수만 받고 소진액(`DEDUCT` 합 − 양수 `ADJUST` 합)은 분석이 계산한다. 영업일에 귀속하는 기준과 정정 대상 영업일의 규칙은 [구조와 동작 설계 5장](./billing_구조와_동작_설계.md#집계-조회의-영업일-귀속)이 갖는다.
+분석의 일별 집계 배치가 영업일마다 부르는 읽기 전용 조회다. HTTP가 아니라 모듈 조회이고 집계 SQL은 정산이 소유한다. 분석은 합계와 건수만 받고 소진액(`DEDUCT` 합 − 양수 `ADJUST` 합)은 분석이 계산한다. 영업일에 귀속하는 기준과 정정 대상 영업일의 규칙은 [구조와 동작 설계 5장](./billing_구조와_동작_설계.md#집계-조회의-영업일-귀속)이 갖는다.
 
 ```
 billing.contract.BillingStatsQueryService
@@ -399,8 +397,5 @@ billing.contract.BillingStatsQueryService
 
 | 항목 | 현재 기준 |
 | --- | --- |
-| ~~서빙 시간대 종료 시각~~ | *(2026-10-19 닫음, #497)* 서빙 시간대를 없애 `미결정 사항` #23(종료 시각)과 #22(노출 인정 시간)가 이 설계에서 쓰이지 않는다. 해제는 다음 날 00:00이고 노출 인정 30분은 광고 서빙의 serve TTL이 지킨다 |
 | **카운터 수동 재구성 경로** | 98행 예외가 "장애 직후에는 수동으로 실행한다"고 요구하는데 경로가 없다. 운영의 실패 작업 수동 재실행(102행)으로 처리할지, 정산이 관리자 API를 둘지 |
-| ~~재충전 재예약 시 목표 재계산~~ | *(2026-10-23 닫음, #828)* 목표를 저장하지 않는다. 광고서빙이 조회할 때마다 지금 예약액으로 나누어 재개와 재충전 모두 늘어난 예약액이 바로 반영된다 |
-| 00:00 `RELEASE`의 재시도 정책 | *(2026-10-19 수정, #497: 00:00 해제가 전날의 정식 해제가 되었다)* 전날 해제를 00:00이 시도하는데, 이마저 실패할 경우의 재시도 횟수·알림 정책이 없다 **2026-10-12 수정: 정했다.** 운영 스케줄러의 일시 오류 자동 재실행(최대 2회)에 맡기고, 그래도 실패하면 `FAILED`, 알림, 대사 불일치 기록으로 끝낸다. |
 | 102행 (5) 문구 | "예약해 **캠페인에 넘긴다**"가 51행·98행("정산이 가진다, 캠페인은 보관하지 않는다")과 충돌한다. 명세 정정 요청 필요 |

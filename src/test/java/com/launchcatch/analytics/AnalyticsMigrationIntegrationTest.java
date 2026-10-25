@@ -31,13 +31,13 @@ class AnalyticsMigrationIntegrationTest extends AbstractAnalyticsIntegrationTest
     private JdbcTemplate jdbc;
 
     @Test
-    void analytics_V1부터_V6까지_적용되고_새_테이블과_컬럼이_생긴다() {
+    void analytics_V1부터_V7까지_적용되고_새_테이블과_컬럼이_생긴다() {
         List<String> versions = jdbc.queryForList(
                 "SELECT version FROM flyway_history_analytics WHERE success = 1 ORDER BY installed_rank",
                 String.class);
 
         // V4 는 비어 있다. 퍼널이 V5 보다 늦게 병합되어 V6 으로 옮겼다
-        assertThat(versions).endsWith("1", "2", "3", "5", "6");
+        assertThat(versions).endsWith("1", "2", "3", "5", "6", "7");
         assertThat(columnsOf("event_log"))
                 .contains("issue_id", "coupon_event_id", "member_coupon_id");
         assertThat(columnsOf("daily_settlement_analytics")).contains("positive_adjust_amount");

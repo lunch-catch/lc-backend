@@ -2,6 +2,8 @@ package com.launchcatch.adserving.feed.repository;
 
 
 import com.launchcatch.global.config.ClockConfig;
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.nio.ByteBuffer;
 import java.sql.Timestamp;
 import java.time.LocalDate;
@@ -22,8 +24,8 @@ public class ServeLogRepository {
 
     private static final String INSERT = """
             INSERT IGNORE INTO serve_log (serve_id, business_date, feed_id, member_id, campaign_id, store_id,
-                slot_type, slot_position, served_at, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                slot_type, slot_position, progress_rate, relevance_score, engine_version, served_at, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """;
 
     private final JdbcTemplate jdbcTemplate;
@@ -38,11 +40,14 @@ public class ServeLogRepository {
             ps.setLong(4, r.memberId());
             ps.setLong(5, r.campaignId());
             ps.setLong(6, r.storeId());
-            ps.setString(7, r.slotType().name());
+            ps.setString(7, r.slotType());
             ps.setInt(8, r.slotPosition());
-            ps.setTimestamp(9, servedAt);
-            ps.setTimestamp(10, servedAt);
-            ps.setTimestamp(11, servedAt);
+            ps.setObject(9, row.progressRate() == null ? null : BigDecimal.valueOf(row.progressRate()).setScale(4, RoundingMode.HALF_UP));
+            ps.setBigDecimal(10, BigDecimal.valueOf(row.relevanceScore()).setScale(4, RoundingMode.HALF_UP));
+            ps.setString(11, row.engineVersion());
+            ps.setTimestamp(12, servedAt);
+            ps.setTimestamp(13, servedAt);
+            ps.setTimestamp(14, servedAt);
         });
     }
 
@@ -58,7 +63,11 @@ public class ServeLogRepository {
         return ByteBuffer.allocate(16).putLong(uuid.getMostSignificantBits()).putLong(uuid.getLeastSignificantBits()).array();
     }
 
-    // serve_log 한 행이다. 영업일과 묶음 ID 는 카드마다 같아 피드 단위로 붙인다.
-    public record Row(LocalDate businessDate, UUID feedId, ServeRecord record) {
+    /*
+     * serve_log 한 행이다. 영업일, 묶음 ID, 엔진 버전은 카드마다 같아 피드 단위로 붙인다.
+     * progressRate 와 relevanceScore 는 배정 근거이고 넷째 자리에서 반올림해 남긴다(#977).
+     */
+    public record Row(LocalDate businessDate, UUID feedId, ServeRecord record, Double progressRate, double relevanceScore,
+                      String engineVersion) {
     }
 }

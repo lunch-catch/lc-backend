@@ -9,7 +9,6 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.stream.Collectors;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
@@ -93,21 +92,26 @@ public class CampaignReportRepository {
              WHERE r.business_date = ? AND r.report_status = 'FINALIZED'
             """;
 
-    // 변경 전후 JSON 의 키는 명세의 일별 응답 필드 이름이고 값은 metricValues 가 같은 순서로 채운다
-    private static final List<String> METRIC_KEYS = List.of(
-            "dailyBudget", "impressionUnitCost", "chargedAmount", "refundedAmount", "spentAmount",
-            "budgetSpendRate", "validImpressionCount", "billableImpressionCount", "notBilledImpressionCount",
-            "invalidImpressionCount", "wishCount", "issuedCount", "redeemCount");
-
-    private static final String METRICS_JSON = METRIC_KEYS.stream()
-            .map(key -> "'" + key + "', ?")
-            .collect(Collectors.joining(", ", "JSON_OBJECT(", ")"));
-
+    /*
+     * 변경 전후 JSON 의 키는 명세의 일별 응답 필드 이름이고 값은 metricValues 가 같은 순서로 채운다.
+     * SQL 을 조립하지 않고 그대로 적는다. 문자열을 끼워 만들면 정적 분석이 SQL 주입 의심으로 막는다.
+     */
     private static final String INSERT_REVISION = """
             INSERT INTO campaign_daily_report_history (
                 campaign_daily_report_id, revision_no, change_reason, before_data, after_data, created_at, updated_at
-            ) VALUES (?, ?, ?, %s, %s, ?, ?)
-            """.formatted(METRICS_JSON, METRICS_JSON);
+            ) VALUES (?, ?, ?,
+                JSON_OBJECT(
+                    'dailyBudget', ?, 'impressionUnitCost', ?, 'chargedAmount', ?, 'refundedAmount', ?,
+                    'spentAmount', ?, 'budgetSpendRate', ?, 'validImpressionCount', ?, 'billableImpressionCount', ?,
+                    'notBilledImpressionCount', ?, 'invalidImpressionCount', ?, 'wishCount', ?, 'issuedCount', ?,
+                    'redeemCount', ?),
+                JSON_OBJECT(
+                    'dailyBudget', ?, 'impressionUnitCost', ?, 'chargedAmount', ?, 'refundedAmount', ?,
+                    'spentAmount', ?, 'budgetSpendRate', ?, 'validImpressionCount', ?, 'billableImpressionCount', ?,
+                    'notBilledImpressionCount', ?, 'invalidImpressionCount', ?, 'wishCount', ?, 'issuedCount', ?,
+                    'redeemCount', ?),
+                ?, ?)
+            """;
 
     private final JdbcTemplate jdbc;
 
@@ -160,7 +164,7 @@ public class CampaignReportRepository {
             row.invalidReasons().forEach((reason, count) ->
                     reasons.add(new Object[] {reportId, "INVALID", reason.name(), count, at, at}));
             row.hourlyCounts().forEach((hour, count) -> hourly.add(new Object[] {reportId, hour, count, at, at}));
-            row.slotCounts().forEach((slot, count) -> slots.add(new Object[] {reportId, slot.name(), count, at, at}));
+            row.slotCounts().forEach((slot, count) -> slots.add(new Object[] {reportId, slot, count, at, at}));
         }
         jdbc.batchUpdate(INSERT_REASON, reasons);
         jdbc.batchUpdate(INSERT_HOURLY, hourly);

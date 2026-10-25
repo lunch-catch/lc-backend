@@ -3,7 +3,6 @@ package com.launchcatch.analytics.batch.service.step;
 import com.launchcatch.adserving.contract.AdservingStatsQueryService;
 import com.launchcatch.adserving.contract.CampaignImpressionStats;
 import com.launchcatch.analytics.batch.CampaignReport;
-import com.launchcatch.analytics.batch.CampaignReport.SlotType;
 import com.launchcatch.analytics.batch.InvalidReasonCode;
 import com.launchcatch.analytics.batch.NotBilledReason;
 import com.launchcatch.analytics.batch.repository.CampaignReportRepository;
@@ -207,7 +206,7 @@ public class CampaignReportStep implements AggregationStep<CampaignReport> {
         }
         Map<InvalidReasonCode, Long> invalid = new EnumMap<>(InvalidReasonCode.class);
         Map<Integer, Long> hourly = new TreeMap<>();
-        Map<SlotType, Long> slots = new EnumMap<>(SlotType.class);
+        Map<String, Long> slots = new TreeMap<>();
         if (served != null) {
             putPositive(notBilled, NotBilledReason.NOT_BILLED_SOLD_OUT, served.soldOutCount());
             putPositive(invalid, InvalidReasonCode.EXPIRED_OR_UNKNOWN, served.expiredOrUnknownCount());
@@ -215,8 +214,7 @@ public class CampaignReportStep implements AggregationStep<CampaignReport> {
             for (int hour = 0; hour < served.hourlyCounts().size(); hour++) {
                 putPositive(hourly, hour, served.hourlyCounts().get(hour));
             }
-            putPositive(slots, SlotType.ALLOCATION, served.allocationCount());
-            putPositive(slots, SlotType.RELEVANCE, served.relevanceCount());
+            served.slotCounts().forEach((slot, slotCount) -> putPositive(slots, slot, slotCount));
         }
         long billable = count == null ? 0 : count.billedCount();
         long notBilledCount = notBilled.values().stream().mapToLong(Long::longValue).sum();

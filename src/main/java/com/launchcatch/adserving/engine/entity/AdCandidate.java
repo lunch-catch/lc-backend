@@ -8,6 +8,7 @@ import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
 import jakarta.persistence.Table;
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.List;
@@ -103,6 +104,10 @@ public class AdCandidate {
     @Column(name = "sold_out_at")
     private LocalDateTime soldOutAt;
 
+    // 신규 우선 노출의 마지막 날이고 null 이면 대상이 아니다(FR-093)
+    @Column(name = "new_priority_until")
+    private LocalDate newPriorityUntil;
+
     /*
      * 정산의 그날 예약액이다(#837).
      * null 이면 아직 읽지 못한 것이고 0 이면 그날 계획이 없는 것이다.
@@ -121,6 +126,6 @@ public class AdCandidate {
         return new FeedCandidate(getCampaignId(), storeId, storeName, categoryCode,
                 latitude.doubleValue(), longitude.doubleValue(), targetRadius, targetGender,
                 Set.copyOf(List.of(targetAgeGroups.split(","))), discountTarget, discountType, discountValue,
-                usableStartTime, usableEndTime, issueQuantity, campaignCreatedAt);
+                usableStartTime, usableEndTime, issueQuantity, campaignCreatedAt, newPriorityUntil);
     }
 }

@@ -9,7 +9,7 @@ v2는 요청마다 다른 재고 순번을 Redis에서 예약하고 MySQL에서 
 
 [v1 설계도](./coupon-issuance-v1-design.md)에서 재고 선택의 책임을 분리했다.
 여러 요청을 한 번에 커밋하는 구조는 [v3 설계도](./coupon-issuance-v3-design.md)다.
-대표 부하 측정 결과는 [쿠폰 v3 부하 시험 결과](../../troubleshooting/coupon/coupon-load-test-results.md)에 있다. v2의 측정 결과와는 조건이 다르다.
+AWS에서 세 번 측정한 결과는 [쿠폰 v2 부하 시험 결과](../../troubleshooting/coupon/coupon-v2-load-test-results.md)에 있다.
 
 ## 1. 구성 요소와 데이터의 책임
 
@@ -506,10 +506,12 @@ DB에 저장된 발급 상태로 세 키를 다시 만들면 응답 유실 전�
 | [CouponSequenceRecoveryService](../../../src/main/java/com/launchcatch/coupon/service/CouponSequenceRecoveryService.java) | DB 배타 잠금, 수량 검증, 복구 시도 조정과 재개를 구현한다. |
 | [CouponSequenceServiceTest](../../../src/test/java/com/launchcatch/coupon/service/CouponSequenceServiceTest.java) | 롤백 확정·결과 불명·예약 응답 유실·반납 실패의 분기를 검증한다. |
 | [CouponIntegrationTest의 SequenceRecovery](../../../src/test/java/com/launchcatch/coupon/CouponIntegrationTest.java) | 늦은 반납과 재구축 전 예약, 완료 응답 유실과 오래된 pending, 키 유실, 진행 중 DB 작업을 기다리는 복구를 다룬다. |
+| [장애 시험 결과](../../troubleshooting/coupon/coupon-fault-test-results.md) | 로컬 전용 프록시 테스트로 확인한 연결 끊김·응답 지연과 과거 서버 종료 시험의 결과를 기록한다. 시험 코드는 저장소에 포함하지 않는다. |
 
 현재 통합 테스트는 v3 묶음 경로에서 공통 순번·복구 코드를 호출한다.
 이 테스트가 과거 v2 단건 경로를 그대로 실행한다는 뜻은 아니다.
-실제 Redis 재시작·페일오버·네트워크 분리와 여러 애플리케이션 프로세스의 동시 복구는 별도 검증이 필요하다.
+현재 복구에서 남은 문제는 [장애 시험 결과](../../troubleshooting/coupon/coupon-fault-test-results.md#아직-남은-문제)에 모았다.
+Redis 재시작으로 인한 데이터 유실·페일오버와 여러 애플리케이션 프로세스의 동시 복구는 별도 검증이 필요하다.
 키에 해시 태그를 넣은 설계만으로 클러스터에서의 장애 복구 검증이 끝난 것으로 판단하지 않는다.
 복구 후 같은 요청의 발급 재개와 TTL은 단위 테스트와 실제 Redis·MySQL 통합 테스트로 검증한다.
 요청당 한 번의 재접수, 최초 기한·요청 시각 유지, 복구 실패·건너뛰기, 롤백·커밋 결과 불명의 구분을 검사한다.

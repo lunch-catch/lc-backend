@@ -13,6 +13,7 @@ import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
@@ -53,11 +54,22 @@ class AdservingStatsQueryIntegrationTest extends AbstractAdservingIntegrationTes
         List<CampaignImpressionStats> result = adservingStatsQueryService.campaignStats(DATE);
 
         assertThat(result).containsExactly(
-                new CampaignImpressionStats(CAMPAIGN, 3, 1, 2, 1, hours(10, 1, 11, 1, 12, 1), 1, 2, 0),
-                new CampaignImpressionStats(OTHER_CAMPAIGN, 1, 0, 0, 0, hours(10, 1), 1, 0, 0));
+                new CampaignImpressionStats(CAMPAIGN, 3, 1, 2, 1, hours(10, 1, 11, 1, 12, 1), Map.of("ALLOCATION", 1L, "RELEVANCE", 2L), 0),
+                new CampaignImpressionStats(OTHER_CAMPAIGN, 1, 0, 0, 0, hours(10, 1), Map.of("ALLOCATION", 1L), 0));
         CampaignImpressionStats stats = result.getFirst();
         assertThat(stats.hourlyCounts().stream().mapToLong(Long::longValue).sum()).isEqualTo(stats.validCount());
-        assertThat(stats.allocationCount() + stats.relevanceCount()).isEqualTo(stats.validCount());
+        assertThat(stats.slotCounts().values().stream().mapToLong(Long::longValue).sum()).isEqualTo(stats.validCount());
+    }
+
+    @Test
+    void 엔진이_새로_붙인_슬롯_이름표도_마이그레이션_없이_저장되고_그_이름표로_센다() {
+        valid(CAMPAIGN, 3001L, "ALLOCATION", false, LocalTime.of(10, 5));
+        valid(CAMPAIGN, 3002L, "NEW_STORE", false, LocalTime.of(10, 6));
+        valid(CAMPAIGN, 3003L, "NEW_STORE", false, LocalTime.of(10, 7));
+
+        CampaignImpressionStats stats = adservingStatsQueryService.campaignStats(DATE).getFirst();
+
+        assertThat(stats.slotCounts()).containsExactlyInAnyOrderEntriesOf(Map.of("ALLOCATION", 1L, "NEW_STORE", 2L));
     }
 
     // 서빙 시간대가 없어 0시부터 23시까지 받은 시각의 시로 센다(#498)
@@ -69,7 +81,7 @@ class AdservingStatsQueryIntegrationTest extends AbstractAdservingIntegrationTes
         valid(CAMPAIGN, 3004L, "ALLOCATION", false, LocalTime.of(23, 59));
 
         assertThat(adservingStatsQueryService.campaignStats(DATE)).containsExactly(
-                new CampaignImpressionStats(CAMPAIGN, 4, 0, 0, 0, hours(0, 1, 9, 1, 13, 1, 23, 1), 4, 0, 0));
+                new CampaignImpressionStats(CAMPAIGN, 4, 0, 0, 0, hours(0, 1, 9, 1, 13, 1, 23, 1), Map.of("ALLOCATION", 4L), 0));
     }
 
     @Test
@@ -82,8 +94,8 @@ class AdservingStatsQueryIntegrationTest extends AbstractAdservingIntegrationTes
         swipe(OTHER_CAMPAIGN, 3001L, DATE, "WISH");
 
         assertThat(adservingStatsQueryService.campaignStats(DATE)).containsExactly(
-                new CampaignImpressionStats(CAMPAIGN, 1, 0, 0, 0, hours(10, 1), 1, 0, 2),
-                new CampaignImpressionStats(OTHER_CAMPAIGN, 0, 0, 0, 0, hours(), 0, 0, 1));
+                new CampaignImpressionStats(CAMPAIGN, 1, 0, 0, 0, hours(10, 1), Map.of("ALLOCATION", 1L), 2),
+                new CampaignImpressionStats(OTHER_CAMPAIGN, 0, 0, 0, 0, hours(), Map.of(), 1));
     }
 
     @Test

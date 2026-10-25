@@ -47,6 +47,7 @@ class OwnerTokenRefreshServiceTest {
     private final LocalDateTime now = LocalDateTime.ofInstant(clock.instant(), ClockConfig.ZONE);
     private Owner owner;
     private OwnerTokenRefreshService service;
+    private final OwnerSessionService sessions = mock(OwnerSessionService.class);
 
     @BeforeEach
     void setUp() {
@@ -59,7 +60,7 @@ class OwnerTokenRefreshServiceTest {
         when(jwt.createAccessToken(eq(7L), eq(Role.OWNER), anyMap())).thenReturn("new-access");
         when(manager.getTransaction(any(TransactionDefinition.class))).thenReturn(new SimpleTransactionStatus());
         when(tokens.saveIfNewer(anyString(), eq(7L), eq(Role.OWNER), eq(true), any(), anyLong())).thenReturn(true);
-        service = new OwnerTokenRefreshService(owners, tokens, ownerTokens, jwt, cutoff, clock, manager);
+        service = new OwnerTokenRefreshService(owners, tokens, ownerTokens, jwt, cutoff, clock, manager, sessions);
     }
 
     private Owner ownerWithToken() {
@@ -276,7 +277,7 @@ class OwnerTokenRefreshServiceTest {
     void 게시_직전_RT가_만료되면_거절한다() {
         Clock movingClock = mock(Clock.class);
         when(movingClock.instant()).thenReturn(clock.instant(), clock.instant().plus(Duration.ofDays(1)));
-        service = new OwnerTokenRefreshService(owners, tokens, ownerTokens, jwt, cutoff, movingClock, manager);
+        service = new OwnerTokenRefreshService(owners, tokens, ownerTokens, jwt, cutoff, movingClock, manager, sessions);
         assertCode(() -> service.refresh(OLD_TOKEN), "AUTH-003");
     }
 
@@ -369,4 +370,15 @@ class OwnerTokenRefreshServiceTest {
         assertThatThrownBy(action).isInstanceOfSatisfying(AuthException.class,
                 e -> assertThat(e.getErrorCode().getCode()).isEqualTo(code));
     }
+
+    @Test
+    void 새_세션_RT는_기존_단일_토큰_저장소를_변경하지_않는다() {
+        var result = new OwnerTokenRefreshResult(
+                new com.launchcatch.owner.dto.OwnerLoginResponse("owner@example.com", Role.OWNER, OwnerStatus.ONBOARDING, null),
+                "session-access", "session-refresh");
+        when(sessions.refreshIfPresent("session-old")).thenReturn(Optional.of(result));
+        assertThat(service.refresh("session-old")).isSameAs(result);
+        verifyNoInteractions(tokens, ownerTokens, cutoff);
+    }
+
 }

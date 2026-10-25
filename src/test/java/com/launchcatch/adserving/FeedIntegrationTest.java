@@ -13,7 +13,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.launchcatch.auth.CustomUserDetails;
 import com.launchcatch.auth.Role;
-import com.launchcatch.adserving.engine.SlotType;
+import com.launchcatch.adserving.engine.FeedAssembler;
+import com.launchcatch.adserving.engine.SlotLabels;
 import com.launchcatch.adserving.feed.repository.ServeRecord;
 import com.launchcatch.adserving.feed.repository.ServeRecordRepository;
 import com.launchcatch.global.config.ClockConfig;
@@ -26,6 +27,7 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -268,7 +270,7 @@ class FeedIntegrationTest extends AbstractAdservingIntegrationTest {
                 com.jayway.jsonpath.JsonPath.read(body, "$.data.cards[0].serveId"));
 
         assertThat(serveRecordRepository.findById(serveId)).contains(new ServeRecord(
-                serveId, MEMBER_ID, 101L, 55L, SlotType.ALLOCATION, 1, SERVING_NOW));
+                serveId, MEMBER_ID, 101L, 55L, SlotLabels.ALLOCATION, 1, SERVING_NOW));
         assertThat(redisTemplate.getExpire("adserving:serve:" + serveId)).isBetween(1L, 1800L);
     }
 
@@ -288,6 +290,12 @@ class FeedIntegrationTest extends AbstractAdservingIntegrationTest {
                 """)).containsEntry("serve_id", serveId).containsEntry("feed_id", feedId)
                 .containsEntry("member_id", MEMBER_ID).containsEntry("campaign_id", 101L)
                 .containsEntry("store_id", 55L).containsEntry("slot_type", "ALLOCATION");
+        // 노출이 없어 진행률이 0 인 배정 근거도 남는다
+        Map<String, Object> reasons = jdbcTemplate.queryForMap(
+                "SELECT progress_rate, relevance_score, engine_version FROM serve_log");
+        assertThat((BigDecimal) reasons.get("progress_rate")).isEqualByComparingTo("0");
+        assertThat((BigDecimal) reasons.get("relevance_score")).isBetween(BigDecimal.ZERO, BigDecimal.ONE);
+        assertThat(reasons).containsEntry("engine_version", FeedAssembler.ENGINE_VERSION);
         assertThat(countEventually("SELECT COUNT(*) FROM feed_visit_daily", 1)).isEqualTo(1);
         assertThat(jdbcTemplate.queryForMap("SELECT member_id, lat_rounded, lng_rounded FROM feed_visit_daily"))
                 .containsEntry("lat_rounded", new BigDecimal("37.498"))
