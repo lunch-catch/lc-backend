@@ -92,6 +92,25 @@ class OwnerReportIntegrationTest extends AbstractAnalyticsIntegrationTest {
                 .andExpect(jsonPath("$.data.items[1].campaignId").value(492802));
     }
 
+    // 명세는 아직 집계되지 않은 날의 항목을 만들지 않는다. 0 으로 내리면 화면이 오늘을 "집계 중" 이 아니라 0 으로 그린다(#895)
+    @Test
+    void 집계_중인_날의_행은_항목으로_돌려주지_않는다() throws Exception {
+        insert(CAMPAIGN_ID, OWNER_ID, FROM, 7000, 4000, 100);
+        jdbc.update("""
+                INSERT INTO campaign_daily_report
+                    (campaign_id, owner_id, business_date, daily_budget, impression_unit_cost, report_status,
+                     finalized_at, created_at, updated_at)
+                VALUES (?, ?, ?, 7000, 2, 'AGGREGATING', NULL, NOW(6), NOW(6))
+                """, CAMPAIGN_ID, OWNER_ID, TO);
+
+        mvc.perform(get("/v1/owner/report").with(user(OWNER))
+                        .param("from", FROM.toString()).param("to", TO.toString()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.totalSpentAmount").value(3900))
+                .andExpect(jsonPath("$.data.items.length()").value(1))
+                .andExpect(jsonPath("$.data.items[0].businessDate").value(FROM.toString()));
+    }
+
     @Test
     void 본인의_집계가_없으면_다른_점주의_집계가_있어도_빈_결과다() throws Exception {
         insert(492802, OTHER_OWNER_ID, FROM, 7000, 9999, 0);
