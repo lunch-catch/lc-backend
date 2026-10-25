@@ -26,7 +26,7 @@ class AdminLogoutServiceTest {
     private final AccessTokenValidAfterRepository access = mock(AccessTokenValidAfterRepository.class);
     private final JwtTokenProvider jwt = mock(JwtTokenProvider.class);
     private final AdminAccessTokenVersionRepository versions = mock(AdminAccessTokenVersionRepository.class);
-    private final AdminLogoutService service = new AdminLogoutService(transactions, refresh, access, jwt, versions);
+    private final AdminLogoutService service = new AdminLogoutService(transactions, refresh, access, jwt, versions, org.mockito.Mockito.mock(com.launchcatch.admin.service.AdminSessionService.class));
     private final LocalDateTime now = LocalDateTime.of(2026, 10, 9, 12, 0, 0, 123000000);
     private final String hash = "a".repeat(64);
 
@@ -139,7 +139,7 @@ class AdminLogoutServiceTest {
                 new com.launchcatch.admin.AdminAccessTokenRevocation(
                         admin.getAccessTokenRevokedVersion(), admin.getAccessTokenValidAfter())));
         var verifier = new AdminAccessTokenVerifier(versions,
-                new com.launchcatch.auth.jwt.AccessTokenCutoffVerifier(access), database);
+                new com.launchcatch.auth.jwt.AccessTokenCutoffVerifier(access), database, org.mockito.Mockito.mock(com.launchcatch.admin.service.AdminSessionService.class));
         assertThat(verifier.isValidAfter(role, 1L, now, issuedVersion,
                 com.launchcatch.auth.jwt.CutoffPolicy.LENIENT)).isFalse();
         assertThat(verifier.isValidAfter(role, 1L, now, null,
