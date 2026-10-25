@@ -151,6 +151,12 @@ class BaseWorldIntegrationTest extends IntegrationTestSupport {
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM campaign_daily_report WHERE report_status = 'AGGREGATING'",
                 Long.class)).isZero();
 
+        // 일별 회원 지표의 정지 수는 그날 말까지 정지된 회원 수라 정지일(D-1)인 2026-10-27 만 30 이다(#966)
+        assertThat(jdbc.queryForList("SELECT business_date, suspended_count FROM daily_member_analytics "
+                + "WHERE suspended_count <> 0"))
+                .extracting(row -> row.get("business_date").toString() + "=" + row.get("suspended_count"))
+                .containsExactly("2026-10-27=30");
+
         // 기본 세계 가게(1,000만 대역)는 가장 가까운 역에서 500 m 안이 역마다 100곳이고, 오늘 피드 후보는 역마다 70개다 (#858)
         assertThat(jdbc.queryForList("SELECT nearest, COUNT(*) FROM (" + nearestStation("latitude", "longitude", "store")
                 + " WHERE store_id BETWEEN 10000001 AND 19999999 AND latitude IS NOT NULL) x WHERE dist <= 500 GROUP BY nearest ORDER BY nearest"))
