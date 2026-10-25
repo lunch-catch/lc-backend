@@ -463,30 +463,27 @@ rows('store_campaign_summary', ['store_campaign_summary_id', 'store_id', 'campai
                                 'discount_target_type', 'discount_type', 'discount_value', 'target_menu_id', 'usable_start_time',
                                 'usable_end_time', 'created_at', 'updated_at'], summaries)
 
-w('\n/*\n * 8. 캠페인 일 리포트.\n * 지난 날은 FINALIZED, 오늘은 AGGREGATING 이다.\n * 소진은 원장의 예약 - 해제와 같다.\n */\n')
+w('\n/*\n * 8. 캠페인 일 리포트.\n * 지난 날만 FINALIZED 로 넣는다. 앱은 당일을 집계하지 않아 오늘 행이 없다(#895).\n * 소진은 원장의 예약 - 해제와 같다.\n */\n')
 reports = []
 for c in CAMPAIGNS:
     if c['status'] == 'SCHEDULED':
         continue
     cid = B + c['id']
-    for k in range(c['start'], min(c['end'], 0) + 1):
-        paused = c['status'] == 'PAUSED' and k == 0
-        budget = 0 if paused else c['budget']
-        sp = spend(c, k) if k < 0 else 0
+    for k in range(c['start'], min(c['end'], -1) + 1):
+        budget = c['budget']
+        sp = spend(c, k)
         valid = sp // 10
         if c['status'] == 'ENDED':
             issued, redeem = 3 + abs(k) % 3, 2
         else:
-            n_issued = issued_on(c, k) if k < 0 else 0
+            n_issued = issued_on(c, k)
             issued = n_issued
             redeem = max(1, round(n_issued * 0.7)) if n_issued else 0
         rate = f'{sp / budget:.6f}' if budget else '0'
         reports.append([str(B + 900000 + c['id'] * 1000 + k + 100),
                         str(cid), str(B + c['s']), str(B + c['s']), d(k), str(budget), str(sp), '0', str(sp), rate, '10',
                         str(valid), str(valid), '0', '0', str(round(valid * 0.05)), str(issued), str(redeem),
-                        "'AGGREGATING'" if k == 0 else "'FINALIZED'", 'NULL' if k == 0 else ts(k + 1, '01:05:00'),
-                        ts(0, '00:10:00') if k == 0 else ts(k + 1, '01:03:00'),
-                        ts(0, '00:10:00') if k == 0 else ts(k + 1, '01:05:00')])
+                        "'FINALIZED'", ts(k + 1, '01:05:00'), ts(k + 1, '01:03:00'), ts(k + 1, '01:05:00')])
 rows('campaign_daily_report', ['campaign_daily_report_id', 'campaign_id', 'owner_id', 'store_id', 'business_date', 'daily_budget',
                                'charged_amount', 'refunded_amount', 'spent_amount', 'budget_spend_rate', 'impression_unit_cost',
                                'valid_impression_count', 'billable_impression_count', 'not_billed_impression_count',

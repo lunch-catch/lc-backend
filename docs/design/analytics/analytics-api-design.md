@@ -90,6 +90,8 @@ A-04 카테고리·지역별 분해와 A-08 점주별 상위 소진도 구현하
 
 조회는 저장된 일별 지표를 그대로 반환하고 응답 항목의 소진액을 합산한다. 요청마다 집계하거나 원천 데이터로 보완하지 않는다.
 
+확정(`FINALIZED`)된 행만 반환한다(#895). 명세는 아직 집계되지 않은 날의 항목을 만들지 않는다고 정했고, 화면은 항목이 없는 오늘을 "집계 중" 으로 그린다. 앱은 당일을 집계하지 않아 `AGGREGATING` 행을 쓰지 않지만, 데이터나 다른 기능이 그 행을 넣어도 0 으로 나가지 않게 조회에서 거른다.
+
 이슈 #492는 조회 API만 구현했다. 그 행은 #625의 `CampaignReportStep`이 채운다(9장).
 
 ### 회원 지표
@@ -205,7 +207,7 @@ A-12(`MemberUsageStatsQueryService`)는 본인의 `daily_member_usage` 전체 �
 
 ### A-14 관리자 캠페인 리포트
 
-`CampaignReportQueryService`가 `campaign_daily_report`를 캠페인마다 `SUM(spent_amount)`, `SUM(valid_impression_count)`로 합한다. 기간이 없으면 그 캠페인의 모든 행을 합한다. `(campaign_id, business_date)` 유일 키가 조건을 받는다. 결과를 요청 순서로 다시 늘어놓고 행이 없는 캠페인은 0으로 채운다. `todayStatus`는 당일을 집계하지 않으므로 늘 `IN_PROGRESS`다. 다른 도메인은 부르지 않는다.
+`CampaignReportQueryService`가 `campaign_daily_report`의 확정(`FINALIZED`)된 행을 캠페인마다 `SUM(spent_amount)`, `SUM(valid_impression_count)`로 합한다. 집계 중인 행은 확정 전 값이라 합하지 않는다(#895). 기간이 없으면 그 캠페인의 모든 행을 합한다. `(campaign_id, business_date)` 유일 키가 조건을 받는다. 결과를 요청 순서로 다시 늘어놓고 행이 없는 캠페인은 0으로 채운다. `todayStatus`는 당일을 집계하지 않으므로 늘 `IN_PROGRESS`다. 다른 도메인은 부르지 않는다.
 
 `campaignIds`는 문자열로 받아 서비스가 나누고 검사한다. 스프링이 목록 변환에 실패하거나 필수 파라미터가 빠지면 전역 처리기가 `COMMON-003`으로 답하는데 명세는 `COMMON-002`로 정했기 때문이다.
 

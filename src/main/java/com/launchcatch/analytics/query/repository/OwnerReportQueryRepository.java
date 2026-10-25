@@ -14,7 +14,7 @@ public class OwnerReportQueryRepository {
                    valid_impression_count, invalid_impression_count, wish_count,
                    issued_count, redeem_count, charged_amount, refunded_amount, spent_amount
             FROM campaign_daily_report
-            WHERE owner_id = ? AND business_date BETWEEN ? AND ?
+            WHERE owner_id = ? AND business_date BETWEEN ? AND ? AND report_status = 'FINALIZED'
             ORDER BY business_date, campaign_id
             """;
 
@@ -27,6 +27,7 @@ public class OwnerReportQueryRepository {
     /*
      * 리포트에 저장된 점주 ID로 소유 범위를 제한하고 시작일과 종료일을 포함해 조회한다.
      * 결과는 영업일과 캠페인 ID 오름차순이며 집계가 없는 날짜의 행은 만들지 않는다.
+     * 확정된 행만 돌려준다. 집계 중(AGGREGATING) 행이 0 으로 나가면 화면이 오늘을 "집계 중" 이 아니라 0 으로 그린다(#895).
      */
     public List<OwnerReportDailyRow> findBetween(long ownerId, LocalDate from, LocalDate to) {
         return jdbc.query(SELECT,
