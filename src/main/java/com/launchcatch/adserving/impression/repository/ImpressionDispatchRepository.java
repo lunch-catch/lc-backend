@@ -27,6 +27,7 @@ public class ImpressionDispatchRepository {
               FROM impression_log
              WHERE dispatched_at IS NULL
                AND created_at >= ?
+               AND (next_dispatch_at IS NULL OR next_dispatch_at <= ?)
                AND dispatch_attempts < ?
                AND validity = 'VALID'
                AND sold_out = FALSE
@@ -34,18 +35,24 @@ public class ImpressionDispatchRepository {
              LIMIT ?
             """;
 
+    /*
+     * 실패한 노출의 다시 넘길 시각을 random(0, min(5분, 1초 x 2^시도 횟수)) 뒤로 미룬다(Full Jitter, REL-2-06).
+     * MySQL 은 SET 을 왼쪽부터 적용하므로 미룰 시간은 올리기 전의 시도 횟수로 센다. 첫 실패는 1초 안이다.
+     */
+    private static final String BACKOFF_MICROS = "FLOOR(RAND() * LEAST(300000000, 1000000 * POW(2, dispatch_attempts)))";
+
     private static final String COUNT_PENDING = """
             SELECT COUNT(*) FROM impression_log WHERE dispatched_at IS NULL AND created_at >= ?
             """;
 
     private final JdbcTemplate jdbcTemplate;
 
-    // idx_imp_dispatch(dispatched_at, created_at) 로 비어 있는 행만 받은 순서대로 읽는다.
-    public List<PendingImpression> findPending(LocalDateTime from, int maxAttempts, int limit) {
+    // idx_imp_dispatch(dispatched_at, created_at) 로 비어 있는 행만 받은 순서대로 읽는다. 실패해 미뤄진 행은 다시 넘길 시각이 지나야 읽는다.
+    public List<PendingImpression> findPending(LocalDateTime from, LocalDateTime now, int maxAttempts, int limit) {
         return jdbcTemplate.query(FIND_PENDING, (rs, row) -> new PendingImpression(
                         uuid(rs.getBytes("serve_id")), rs.getLong("member_id"), rs.getLong("campaign_id"),
                         rs.getObject("business_date", LocalDate.class)),
-                Timestamp.valueOf(from), maxAttempts, limit);
+                Timestamp.valueOf(from), Timestamp.valueOf(now), maxAttempts, limit);
     }
 
     // 정산이 판정을 커밋한 노출에 넘긴 시각을 적는다.
@@ -60,14 +67,16 @@ public class ImpressionDispatchRepository {
                 + placeholders(impressions.size()) + ")", args.toArray());
     }
 
-    // 정산이 실패로 돌려준 노출의 시도 횟수를 올린다. 상한에 닿으면 findPending 이 더는 읽지 않는다.
+    // 정산이 실패로 돌려준 노출의 시도 횟수를 올리고 다시 넘길 시각을 미룬다. 상한에 닿으면 findPending 이 더는 읽지 않는다.
     public void markFailed(Collection<PendingImpression> impressions, LocalDateTime at) {
         if (impressions.isEmpty()) {
             return;
         }
-        List<Object> args = new ArrayList<>(List.of(Timestamp.valueOf(at)));
+        Timestamp now = Timestamp.valueOf(at);
+        List<Object> args = new ArrayList<>(List.of(now, now));
         args.addAll(keys(impressions));
-        jdbcTemplate.update("UPDATE impression_log SET dispatch_attempts = dispatch_attempts + 1, updated_at = ?"
+        jdbcTemplate.update("UPDATE impression_log SET next_dispatch_at = ? + INTERVAL " + BACKOFF_MICROS + " MICROSECOND,"
+                + " dispatch_attempts = dispatch_attempts + 1, updated_at = ?"
                 + " WHERE (serve_id, member_id) IN (" + placeholders(impressions.size()) + ")", args.toArray());
     }
 

@@ -88,9 +88,13 @@ public class ImpressionDispatchService {
         }
     }
 
-    // 한 묶음을 넘기고 결과를 적는다. 묶음이 가득 차 더 남았을 수 있으면 true 다.
+    /*
+     * 한 묶음을 넘기고 결과를 적는다. 묶음이 가득 찼고 실패가 없어 더 남았을 수 있으면 true 다.
+     * 실패한 노출은 다시 넘길 시각을 미뤘으므로 같은 회차에 이어서 넘기지 않는다. 실패가 몰릴 때 정산을 거듭 부르지 않는다(REL-2-06).
+     */
     private boolean dispatchBatch(LocalDateTime from) {
-        List<PendingImpression> batch = impressions.findPending(from, MAX_ATTEMPTS, PointDeductor.MAX_BATCH_SIZE);
+        List<PendingImpression> batch = impressions.findPending(from, LocalDateTime.now(clock), MAX_ATTEMPTS,
+                PointDeductor.MAX_BATCH_SIZE);
         if (batch.isEmpty()) {
             return false;
         }
@@ -114,7 +118,7 @@ public class ImpressionDispatchService {
         });
         meterRegistry.counter(DISPATCHED_METRIC).increment(dispatched.size());
         meterRegistry.counter(FAILED_METRIC).increment(failed.size());
-        return batch.size() == PointDeductor.MAX_BATCH_SIZE;
+        return failed.isEmpty() && batch.size() == PointDeductor.MAX_BATCH_SIZE;
     }
 
     private boolean acquire() {

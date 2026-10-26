@@ -69,13 +69,13 @@ class ImpressionDispatchServiceTest {
     }
 
     @Test
-    void 어제_00시_이후의_시도_횟수_상한_아래인_노출을_1000건까지_읽는다() {
+    void 어제_00시_이후의_다시_넘길_시각이_지난_시도_횟수_상한_아래인_노출을_1000건까지_읽는다() {
         when(lease.acquire(Duration.ofSeconds(30))).thenReturn(true);
-        when(impressions.findPending(any(), anyInt(), anyInt())).thenReturn(List.of());
+        when(impressions.findPending(any(), any(), anyInt(), anyInt())).thenReturn(List.of());
 
         service.dispatchPending();
 
-        verify(impressions).findPending(TODAY.minusDays(1).atStartOfDay(), 10, PointDeductor.MAX_BATCH_SIZE);
+        verify(impressions).findPending(TODAY.minusDays(1).atStartOfDay(), NOW, 10, PointDeductor.MAX_BATCH_SIZE);
         verifyNoInteractions(pointDeductor);
         verify(lease).release();
     }
@@ -85,7 +85,7 @@ class ImpressionDispatchServiceTest {
         PendingImpression billed = pending(1);
         PendingImpression failed = pending(2);
         when(lease.acquire(any())).thenReturn(true);
-        when(impressions.findPending(any(), anyInt(), anyInt())).thenReturn(List.of(billed, failed));
+        when(impressions.findPending(any(), any(), anyInt(), anyInt())).thenReturn(List.of(billed, failed));
         when(pointDeductor.deductAll(anyList())).thenReturn(List.of(
                 DeductionOutcome.judged(billed.serveId(), DeductionStatus.BILLED),
                 DeductionOutcome.failed(failed.serveId())));
@@ -103,7 +103,7 @@ class ImpressionDispatchServiceTest {
     @Test
     void 정산이_예외를_던지면_아무것도_적지_않고_다음_주기에_같은_묶음을_다시_넘긴다() {
         when(lease.acquire(any())).thenReturn(true);
-        when(impressions.findPending(any(), anyInt(), anyInt())).thenReturn(List.of(pending(1)));
+        when(impressions.findPending(any(), any(), anyInt(), anyInt())).thenReturn(List.of(pending(1)));
         when(pointDeductor.deductAll(anyList())).thenThrow(new QueryTimeoutException("정산의 Valkey 가 늦다"));
 
         assertThatCode(service::dispatchPending).doesNotThrowAnyException();
@@ -120,7 +120,7 @@ class ImpressionDispatchServiceTest {
         List<PendingImpression> rest = List.of(pending(5_000));
         when(lease.acquire(any())).thenReturn(true);
         when(lease.renew(Duration.ofSeconds(30))).thenReturn(true);
-        when(impressions.findPending(any(), anyInt(), anyInt())).thenReturn(full, rest);
+        when(impressions.findPending(any(), any(), anyInt(), anyInt())).thenReturn(full, rest);
         when(pointDeductor.deductAll(anyList())).thenAnswer(invocation -> judgedAll(invocation.getArgument(0)));
 
         service.dispatchPending();
@@ -131,12 +131,30 @@ class ImpressionDispatchServiceTest {
                 .isEqualTo(PointDeductor.MAX_BATCH_SIZE + 1);
     }
 
+    // 실패한 노출은 다시 넘길 시각이 미뤄지므로 같은 회차에 바로 다시 넘기지 않는다(REL-2-06)
+    @Test
+    void 가득_찬_묶음에_실패가_있으면_같은_회차에_이어서_넘기지_않는다() {
+        List<PendingImpression> full = IntStream.rangeClosed(1, PointDeductor.MAX_BATCH_SIZE).mapToObj(this::pending).toList();
+        when(lease.acquire(any())).thenReturn(true);
+        when(lease.renew(any())).thenReturn(true);
+        when(impressions.findPending(any(), any(), anyInt(), anyInt())).thenReturn(full);
+        when(pointDeductor.deductAll(anyList())).thenAnswer(invocation -> {
+            List<DeductionRequest> requests = invocation.getArgument(0);
+            return requests.stream().map(request -> DeductionOutcome.failed(request.serveId())).toList();
+        });
+
+        service.dispatchPending();
+
+        verify(pointDeductor, times(1)).deductAll(anyList());
+        verify(lease, never()).renew(any());
+    }
+
     @Test
     void 점유를_연장하지_못하면_그_회차를_끝낸다() {
         List<PendingImpression> full = IntStream.rangeClosed(1, PointDeductor.MAX_BATCH_SIZE).mapToObj(this::pending).toList();
         when(lease.acquire(any())).thenReturn(true);
         when(lease.renew(any())).thenReturn(false);
-        when(impressions.findPending(any(), anyInt(), anyInt())).thenReturn(full);
+        when(impressions.findPending(any(), any(), anyInt(), anyInt())).thenReturn(full);
         when(pointDeductor.deductAll(anyList())).thenAnswer(invocation -> judgedAll(invocation.getArgument(0)));
 
         service.dispatchPending();
@@ -147,7 +165,7 @@ class ImpressionDispatchServiceTest {
     @Test
     void 밀린_노출_수를_지표로_낸다() {
         when(lease.acquire(any())).thenReturn(true);
-        when(impressions.findPending(any(), anyInt(), anyInt())).thenReturn(List.of());
+        when(impressions.findPending(any(), any(), anyInt(), anyInt())).thenReturn(List.of());
         when(impressions.countPending(TODAY.minusDays(1).atStartOfDay())).thenReturn(7L);
 
         service.dispatchPending();

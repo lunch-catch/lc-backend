@@ -167,6 +167,10 @@ class ImpressionIntegrationTest extends AbstractAdservingIntegrationTest {
         dispatch.dispatchPending();
 
         assertThat(dispatchState()).containsEntry("dispatched_at", null).containsEntry("dispatch_attempts", 1);
+        // 첫 실패는 random(0, 1초) 뒤로 미룬다(Full Jitter)
+        LocalDateTime now = LocalDateTime.ofInstant(NOW, ClockConfig.ZONE);
+        LocalDateTime next = jdbcTemplate.queryForObject("SELECT next_dispatch_at FROM impression_log", LocalDateTime.class);
+        assertThat(next).isBetween(now, now.plusSeconds(1));
     }
 
     @Test

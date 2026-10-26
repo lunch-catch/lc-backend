@@ -7,6 +7,7 @@
 ALTER TABLE impression_log
     ADD COLUMN dispatched_at     DATETIME(6) COMMENT '정산에 넘겨 판정이 커밋된 시각. 넘길 필요가 없는 노출은 받은 시각. NULL 이면 넘겨야 할 유효 노출',
     ADD COLUMN dispatch_attempts TINYINT NOT NULL DEFAULT 0 COMMENT '정산에 넘겼다가 실패한 횟수. 10에 닿으면 릴레이가 건너뛴다',
+    ADD COLUMN next_dispatch_at  DATETIME(6) COMMENT '실패한 노출을 다시 넘길 수 있는 시각. 지수 백오프와 Full Jitter 로 미룬다. NULL 이면 바로 넘긴다',
     ALGORITHM = INSTANT;
 
 ALTER TABLE impression_log
