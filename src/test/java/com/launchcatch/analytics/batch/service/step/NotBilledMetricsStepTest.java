@@ -69,6 +69,16 @@ class NotBilledMetricsStepTest {
     }
 
     @Test
+    void 영업일_마감_뒤에_판정된_미과금도_사유별로_담는다() {
+        when(billing.billingCounts(DAY)).thenReturn(List.of(
+                new CampaignBillingCount(12L, 90, 0, 0, 0, 7)));
+        when(adserving.campaignStats(DAY)).thenReturn(List.of());
+
+        assertThat(step().collect(DAY).rows()).containsExactly(
+                new NotBilledMetrics.Row(12L, NotBilledReason.NOT_BILLED_CLOSED, 7));
+    }
+
+    @Test
     void 건수가_0인_사유는_행이_없고_과금된_노출은_세지_않는다() {
         when(billing.billingCounts(DAY)).thenReturn(List.of(
                 new CampaignBillingCount(12L, 90, 0, 0, 0)));

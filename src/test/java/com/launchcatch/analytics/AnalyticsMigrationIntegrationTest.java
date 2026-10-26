@@ -31,13 +31,13 @@ class AnalyticsMigrationIntegrationTest extends AbstractAnalyticsIntegrationTest
     private JdbcTemplate jdbc;
 
     @Test
-    void analytics_V1부터_V7까지_적용되고_새_테이블과_컬럼이_생긴다() {
+    void analytics_V1부터_V8까지_적용되고_새_테이블과_컬럼이_생긴다() {
         List<String> versions = jdbc.queryForList(
                 "SELECT version FROM flyway_history_analytics WHERE success = 1 ORDER BY installed_rank",
                 String.class);
 
         // V4 는 비어 있다. 퍼널이 V5 보다 늦게 병합되어 V6 으로 옮겼다
-        assertThat(versions).endsWith("1", "2", "3", "5", "6", "7");
+        assertThat(versions).endsWith("1", "2", "3", "5", "6", "7", "8");
         assertThat(columnsOf("event_log"))
                 .contains("issue_id", "coupon_event_id", "member_coupon_id");
         assertThat(columnsOf("daily_settlement_analytics")).contains("positive_adjust_amount");
@@ -74,6 +74,24 @@ class AnalyticsMigrationIntegrationTest extends AbstractAnalyticsIntegrationTest
                 INSERT INTO campaign_daily_impression_reason_report
                     (campaign_daily_report_id, impression_type, reason_code, impression_count, created_at, updated_at)
                 VALUES (?, 'UNBILLED', 'NOT_BILLED_NO_PLAN', 1, ?, ?)
+                """, reportId, OCCURRED_AT, OCCURRED_AT)).doesNotThrowAnyException();
+    }
+
+    // 정산이 영업일 마감 뒤에 처리한 노출을 NOT_BILLED_CLOSED 로 남긴다(billing V10, analytics V8, #1014)
+    @Test
+    void 미과금_사유는_영업일_마감을_받는다() {
+        long campaignId = Math.abs(UUID.randomUUID().getMostSignificantBits() % 1_000_000_000L);
+
+        assertThatCode(() -> jdbc.update("""
+                INSERT INTO daily_campaign_not_billed_analytics
+                    (business_date, campaign_id, not_billed_reason, not_billed_count, created_at, updated_at)
+                VALUES (?, ?, 'NOT_BILLED_CLOSED', 1, ?, ?)
+                """, BUSINESS_DATE, campaignId, OCCURRED_AT, OCCURRED_AT)).doesNotThrowAnyException();
+        long reportId = dailyReport();
+        assertThatCode(() -> jdbc.update("""
+                INSERT INTO campaign_daily_impression_reason_report
+                    (campaign_daily_report_id, impression_type, reason_code, impression_count, created_at, updated_at)
+                VALUES (?, 'UNBILLED', 'NOT_BILLED_CLOSED', 1, ?, ?)
                 """, reportId, OCCURRED_AT, OCCURRED_AT)).doesNotThrowAnyException();
     }
 
