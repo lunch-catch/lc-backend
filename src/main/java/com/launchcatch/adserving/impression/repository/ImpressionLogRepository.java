@@ -2,26 +2,15 @@ package com.launchcatch.adserving.impression.repository;
 
 import com.launchcatch.adserving.impression.entity.ImpressionLog;
 import com.launchcatch.adserving.impression.entity.ImpressionLogId;
-import jakarta.persistence.LockModeType;
 import java.time.LocalDate;
 import java.util.List;
-import java.util.Optional;
 import org.springframework.data.jpa.repository.JpaRepository;
-import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.transaction.annotation.Transactional;
 
 public interface ImpressionLogRepository extends JpaRepository<ImpressionLog, ImpressionLogId>, ImpressionLogInsert {
-
-    /*
-     * 잠금 읽기(FOR SHARE)로 읽는다. 트랜잭션의 스냅샷이 아니라 최신 커밋을 본다.
-     * 같은 노출이 동시에 와서 INSERT IGNORE 가 0행일 때, 스냅샷을 잡은 뒤 커밋된 먼저 넣은 쪽의 행을 읽으려는 것이다(#781).
-     */
-    @Lock(LockModeType.PESSIMISTIC_READ)
-    @Query("select l from ImpressionLog l where l.id = :id")
-    Optional<ImpressionLog> findByIdForShare(@Param("id") ImpressionLogId id);
 
     /*
      * 하루 노출을 캠페인별로 한 번 훑어 판정과 사유를 함께 센다. 같은 행들에서 세어 축끼리의 합이 맞는다.

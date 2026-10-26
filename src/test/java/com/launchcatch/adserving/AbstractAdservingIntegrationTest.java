@@ -65,8 +65,8 @@ abstract class AbstractAdservingIntegrationTest extends IntegrationTestSupport {
         };
 
         /*
-         * 노출 서비스는 트랜잭션 안에서 이벤트를 발행한다. 이 수신자는 그 자리에서 돌아 노출 저장 트랜잭션을 붙잡거나 실패시킨다.
-         * 같은 노출이 동시에 오는 경합(#781)과 저장이 롤백되는 경우를 재현하려는 것이다.
+         * 노출 저장 큐는 묶음 트랜잭션 안에서 이벤트를 발행한다. 이 수신자는 그 자리에서 돌아 묶음 저장 트랜잭션을 실패시킨다.
+         * 묶음 저장이 롤백되는 경우를 재현하려는 것이다.
          */
         @EventListener
         void during(ImpressionServedEvent event) {

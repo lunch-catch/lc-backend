@@ -3,15 +3,13 @@ package com.launchcatch.adserving.impression.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
-import com.launchcatch.adserving.contract.ImpressionServedEvent;
 import com.launchcatch.adserving.engine.SlotLabels;
 import com.launchcatch.adserving.engine.repository.AdCandidateRepository;
-import com.launchcatch.adserving.feed.repository.ImpressionCountRepository;
 import com.launchcatch.adserving.feed.repository.ServeRecord;
 import com.launchcatch.adserving.feed.repository.ServeRecordRepository;
 import com.launchcatch.adserving.impression.dto.ImpressionRequest;
@@ -22,7 +20,6 @@ import com.launchcatch.adserving.impression.entity.ImpressionValidity;
 import com.launchcatch.adserving.impression.entity.InvalidReason;
 import com.launchcatch.adserving.impression.repository.ImpressionLogRepository;
 import com.launchcatch.global.config.ClockConfig;
-import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.math.BigDecimal;
 import java.time.Clock;
 import java.time.Instant;
@@ -32,15 +29,11 @@ import java.time.ZoneId;
 import java.time.OffsetDateTime;
 import java.util.Optional;
 import java.util.UUID;
-import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
-import org.springframework.context.ApplicationEventPublisher;
-import org.springframework.transaction.support.TransactionSynchronization;
-import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 @DisplayName("노출 수집 서비스")
 class ImpressionServiceTest {
@@ -60,16 +53,12 @@ class ImpressionServiceTest {
     private final ServeRecordRepository serveRecordRepository = mock(ServeRecordRepository.class);
     private final ImpressionLogRepository impressionLogRepository = mock(ImpressionLogRepository.class);
     private final AdCandidateRepository adCandidateRepository = mock(AdCandidateRepository.class);
-    private final ImpressionCountRepository impressionCountRepository = mock(ImpressionCountRepository.class);
-    private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
-    private final ApplicationEventPublisher eventPublisher = mock(ApplicationEventPublisher.class);
+    private final ImpressionWriteBuffer writeBuffer = mock(ImpressionWriteBuffer.class);
     private final ImpressionService service = new ImpressionService(serveRecordRepository, impressionLogRepository,
-            adCandidateRepository, impressionCountRepository, meterRegistry, eventPublisher,
-            Clock.fixed(NOW, ClockConfig.ZONE));
+            adCandidateRepository, writeBuffer, Clock.fixed(NOW, ClockConfig.ZONE));
 
     private final ImpressionService afterMidnight = new ImpressionService(serveRecordRepository, impressionLogRepository,
-            adCandidateRepository, impressionCountRepository, meterRegistry, eventPublisher,
-            Clock.fixed(AFTER_MIDNIGHT, ClockConfig.ZONE));
+            adCandidateRepository, writeBuffer, Clock.fixed(AFTER_MIDNIGHT, ClockConfig.ZONE));
 
     private void givenLateRecord() {
         when(serveRecordRepository.findById(SERVE_ID)).thenReturn(Optional.of(
@@ -81,32 +70,19 @@ class ImpressionServiceTest {
                 OffsetDateTime.parse("2026-10-01T10:15:31.880+09:00"), 37.49794, 127.02765, 2140);
     }
 
-    // 커밋 뒤 동작을 보려고 트랜잭션 동기화를 켠다. 실제 트랜잭션은 통합 테스트가 본다
     @BeforeEach
-    void startSynchronization() {
-        TransactionSynchronizationManager.initSynchronization();
+    void noStoredImpression() {
         when(impressionLogRepository.findById(any())).thenReturn(Optional.empty());
-        when(impressionLogRepository.insertIgnore(any(), any())).thenReturn(true);
     }
 
-    @AfterEach
-    void clearSynchronization() {
-        TransactionSynchronizationManager.clearSynchronization();
-    }
-
-    private static void commit() {
-        TransactionSynchronizationManager.getSynchronizations().forEach(TransactionSynchronization::afterCommit);
-    }
-
-    private static void rollback() {
-        TransactionSynchronizationManager.getSynchronizations()
-                .forEach(s -> s.afterCompletion(TransactionSynchronization.STATUS_ROLLED_BACK));
+    private QueuedImpression queued() {
+        ArgumentCaptor<QueuedImpression> captor = ArgumentCaptor.forClass(QueuedImpression.class);
+        verify(writeBuffer).offer(captor.capture());
+        return captor.getValue();
     }
 
     private ImpressionLog saved() {
-        ArgumentCaptor<ImpressionLog> captor = ArgumentCaptor.forClass(ImpressionLog.class);
-        verify(impressionLogRepository).insertIgnore(captor.capture(), any());
-        return captor.getValue();
+        return queued().log();
     }
 
     @Nested
@@ -114,7 +90,7 @@ class ImpressionServiceTest {
     class Judgement {
 
         @Test
-        void serve_기록이_없으면_요청의_캠페인으로_EXPIRED_OR_UNKNOWN_을_저장하고_차감하지_않는다() {
+        void serve_기록이_없으면_요청의_캠페인으로_EXPIRED_OR_UNKNOWN_을_큐에_넣는다() {
             when(serveRecordRepository.findById(SERVE_ID)).thenReturn(Optional.empty());
 
             ImpressionResponse response = service.record(MEMBER_ID, request(101L));
@@ -124,20 +100,23 @@ class ImpressionServiceTest {
             assertThat(log.getCampaignId()).isEqualTo(101L);
             assertThat(log.getStoreId()).isNull();
             assertThat(log.getSlotType()).isNull();
-                    }
+            assertThat(queued().campaignMismatch()).isFalse();
+        }
 
         @Test
-        void 다른_사용자가_받은_카드면_NOT_OWNER_를_저장하고_차감하지_않는다() {
+        void 다른_사용자가_받은_카드면_NOT_OWNER_를_큐에_넣는다() {
             when(serveRecordRepository.findById(SERVE_ID)).thenReturn(Optional.of(RECORD));
 
-            ImpressionResponse response = service.record(OTHER_MEMBER, request(101L));
+            ImpressionResponse response = service.record(OTHER_MEMBER, request(999L));
 
             assertThat(response).isEqualTo(new ImpressionResponse(ImpressionValidity.INVALID, InvalidReason.NOT_OWNER));
             assertThat(saved().getId()).isEqualTo(ImpressionLogId.of(SERVE_ID, OTHER_MEMBER));
-                    }
+            // 불일치는 유효 노출에서만 센다
+            assertThat(queued().campaignMismatch()).isFalse();
+        }
 
         @Test
-        void 유효하면_serve_기록의_캠페인과_받은_영업일로_저장하고_정산은_부르지_않는다() {
+        void 유효하면_serve_기록의_캠페인과_받은_영업일로_큐에_넣는다() {
             when(serveRecordRepository.findById(SERVE_ID)).thenReturn(Optional.of(RECORD));
 
             ImpressionResponse response = service.record(MEMBER_ID, request(101L));
@@ -150,34 +129,17 @@ class ImpressionServiceTest {
             assertThat(log.getSlotPosition()).isEqualTo(1);
             assertThat(log.isSoldOut()).isFalse();
             assertThat(log.needsDispatch()).isTrue();
-                    }
+            assertThat(queued().campaignMismatch()).isFalse();
+        }
 
         @Test
-        void 요청의_캠페인이_serve_기록과_다르면_serve_기록의_캠페인으로_판정하고_센다() {
+        void 요청의_캠페인이_serve_기록과_다르면_serve_기록의_캠페인으로_판정하고_불일치를_표시한다() {
             when(serveRecordRepository.findById(SERVE_ID)).thenReturn(Optional.of(RECORD));
 
             service.record(MEMBER_ID, request(999L));
 
             assertThat(saved().getCampaignId()).isEqualTo(101L);
-                        // 처음 저장된 노출이 커밋된 뒤에만 센다. 롤백되거나 다시 온 요청은 세지 않는다(#783)
-            assertThat(meterRegistry.counter(ImpressionService.CAMPAIGN_MISMATCH_METRIC).count()).isZero();
-            commit();
-            assertThat(meterRegistry.counter(ImpressionService.CAMPAIGN_MISMATCH_METRIC).count()).isEqualTo(1);
-        }
-
-        @Test
-        void 동시에_와서_먼저_넣은_쪽이_있으면_캠페인이_달라도_세지_않는다() {
-            when(serveRecordRepository.findById(SERVE_ID)).thenReturn(Optional.of(RECORD));
-            when(impressionLogRepository.insertIgnore(any(), any())).thenReturn(false);
-            when(impressionLogRepository.findByIdForShare(ImpressionLogId.of(SERVE_ID, MEMBER_ID)))
-                    .thenReturn(Optional.of(ImpressionLog.valid(SERVE_ID, MEMBER_ID, SERVED_DATE,
-                            new ImpressionLog.Placement(101L, 55L, SlotLabels.ALLOCATION, 1),
-                            new ImpressionLog.Sighting(LocalDateTime.of(2026, 10, 1, 10, 15), 37.5, 127.0, null), false)));
-
-            service.record(MEMBER_ID, request(999L));
-            commit();
-
-            assertThat(meterRegistry.counter(ImpressionService.CAMPAIGN_MISMATCH_METRIC).count()).isZero();
+            assertThat(queued().campaignMismatch()).isTrue();
         }
 
         /*
@@ -208,20 +170,30 @@ class ImpressionServiceTest {
                 }
             };
             ImpressionService atMidnight = new ImpressionService(serveRecordRepository, impressionLogRepository,
-                    adCandidateRepository, impressionCountRepository, meterRegistry, eventPublisher, ticking);
+                    adCandidateRepository, writeBuffer, ticking);
             when(serveRecordRepository.findById(SERVE_ID)).thenReturn(Optional.of(RECORD));
 
             atMidnight.record(MEMBER_ID, request(101L));
 
-            ArgumentCaptor<ImpressionLog> log = ArgumentCaptor.forClass(ImpressionLog.class);
-            ArgumentCaptor<LocalDateTime> receivedAt = ArgumentCaptor.forClass(LocalDateTime.class);
-            verify(impressionLogRepository).insertIgnore(log.capture(), receivedAt.capture());
-            assertThat(receivedAt.getValue()).isEqualTo(LocalDateTime.of(2026, 10, 1, 23, 59, 59, 999_000_000));
-            assertThat(log.getValue().getBusinessDate()).isEqualTo(LocalDate.of(2026, 10, 1));
+            assertThat(queued().receivedAt()).isEqualTo(LocalDateTime.of(2026, 10, 1, 23, 59, 59, 999_000_000));
+            assertThat(saved().getBusinessDate()).isEqualTo(LocalDate.of(2026, 10, 1));
+        }
+
+        // 저장 시각은 DATETIME(6) 이라 마이크로초로 자른다. 자르지 않으면 묶음 저장이 새로 넣은 행을 가리지 못한다
+        @Test
+        void 받은_시각을_마이크로초로_자른다() {
+            Instant withNanos = NOW.plusNanos(123_456_789);
+            ImpressionService nanos = new ImpressionService(serveRecordRepository, impressionLogRepository,
+                    adCandidateRepository, writeBuffer, Clock.fixed(withNanos, ClockConfig.ZONE));
+            when(serveRecordRepository.findById(SERVE_ID)).thenReturn(Optional.of(RECORD));
+
+            nanos.record(MEMBER_ID, request(101L));
+
+            assertThat(queued().receivedAt()).isEqualTo(LocalDateTime.of(2026, 10, 1, 10, 15, 32, 123_456_000));
         }
 
         @Test
-        void 쿠폰이_소진된_뒤의_유효_노출은_sold_out_으로_저장하고_차감하지_않는다() {
+        void 쿠폰이_소진된_뒤의_유효_노출은_sold_out_으로_큐에_넣는다() {
             when(serveRecordRepository.findById(SERVE_ID)).thenReturn(Optional.of(RECORD));
             when(adCandidateRepository.existsByIdBusinessDateAndIdCampaignIdAndSoldOutAtIsNotNull(SERVED_DATE, 101L))
                     .thenReturn(true);
@@ -230,17 +202,17 @@ class ImpressionServiceTest {
 
             assertThat(response.validity()).isEqualTo(ImpressionValidity.VALID);
             assertThat(saved().isSoldOut()).isTrue();
-                    }
+        }
 
         // 정산이 받은 날로 차감한다(#497). 전날 예산은 00:00 에 해제가 끝났다
         @Test
-        void 자정을_넘겨_받은_노출은_받은_날로_저장한다() {
+        void 자정을_넘겨_받은_노출은_받은_날로_큐에_넣는다() {
             givenLateRecord();
 
             afterMidnight.record(MEMBER_ID, request(101L));
 
             assertThat(saved().getBusinessDate()).isEqualTo(RECEIVED_DATE);
-                    }
+        }
 
         @Test
         void 자정을_넘겨_받은_노출의_쿠폰_소진은_받은_날의_후보로_본다() {
@@ -252,10 +224,10 @@ class ImpressionServiceTest {
 
             assertThat(saved().isSoldOut()).isTrue();
             assertThat(saved().needsDispatch()).isFalse();
-                    }
+        }
 
         @Test
-        void 받은_영업일과_좌표_3자리_반올림과_한국_시각의_표시_시각으로_저장한다() {
+        void 받은_영업일과_좌표_3자리_반올림과_한국_시각의_표시_시각으로_큐에_넣는다() {
             when(serveRecordRepository.findById(SERVE_ID)).thenReturn(Optional.of(RECORD));
 
             service.record(MEMBER_ID, request(101L));
@@ -274,7 +246,7 @@ class ImpressionServiceTest {
     class Duplicate {
 
         @Test
-        void 이미_저장된_키면_처음_판정을_돌려주고_저장도_차감도_하지_않는다() {
+        void 이미_저장된_키면_처음_판정을_돌려주고_큐에_넣지_않는다() {
             ImpressionLog first = ImpressionLog.unknown(SERVE_ID, MEMBER_ID, SERVED_DATE, 101L,
                     new ImpressionLog.Sighting(LocalDateTime.of(2026, 10, 1, 10, 0), 37.5, 127.0, null));
             when(impressionLogRepository.findById(ImpressionLogId.of(SERVE_ID, MEMBER_ID))).thenReturn(Optional.of(first));
@@ -282,146 +254,19 @@ class ImpressionServiceTest {
             ImpressionResponse response = service.record(MEMBER_ID, request(101L));
 
             assertThat(response).isEqualTo(new ImpressionResponse(ImpressionValidity.INVALID, InvalidReason.EXPIRED_OR_UNKNOWN));
-            verify(impressionLogRepository, never()).insertIgnore(any(), any());
-            verifyNoInteractions(serveRecordRepository);
+            verifyNoInteractions(writeBuffer, serveRecordRepository);
         }
 
+        // 처음 것이 아직 큐에 있으면 저장된 행이 없어 다시 판정한다. 저장은 INSERT IGNORE 라 처음 것만 남는다
         @Test
-        void 동시에_와서_먼저_넣은_쪽이_있으면_그_판정을_돌려주고_차감하지_않는다() {
-            when(serveRecordRepository.findById(SERVE_ID)).thenReturn(Optional.of(RECORD));
-            when(impressionLogRepository.insertIgnore(any(), any())).thenReturn(false);
-            ImpressionLog winner = ImpressionLog.valid(SERVE_ID, MEMBER_ID, SERVED_DATE,
-                    new ImpressionLog.Placement(101L, 55L, SlotLabels.ALLOCATION, 1),
-                    new ImpressionLog.Sighting(LocalDateTime.of(2026, 10, 1, 10, 15), 37.5, 127.0, null), false);
-            when(impressionLogRepository.findById(ImpressionLogId.of(SERVE_ID, MEMBER_ID))).thenReturn(Optional.empty());
-            // 먼저 넣은 쪽은 이 트랜잭션의 스냅샷 뒤에 커밋돼 잠금 읽기로만 보인다(#781)
-            when(impressionLogRepository.findByIdForShare(ImpressionLogId.of(SERVE_ID, MEMBER_ID))).thenReturn(Optional.of(winner));
-
-            ImpressionResponse response = service.record(MEMBER_ID, request(101L));
-
-            assertThat(response).isEqualTo(new ImpressionResponse(ImpressionValidity.VALID, null));
-                        commit();
-            verifyNoInteractions(impressionCountRepository);
-        }
-    }
-
-    @Nested
-    @DisplayName("유효 노출 수 카운터")
-    class Counter {
-
-        @Test
-        void 처음_저장된_유효_노출은_커밋된_뒤에_받은_영업일의_카운터를_올린다() {
+        void 아직_저장되지_않았으면_다시_판정해_큐에_넣는다() {
             when(serveRecordRepository.findById(SERVE_ID)).thenReturn(Optional.of(RECORD));
 
             service.record(MEMBER_ID, request(101L));
+            ImpressionResponse again = service.record(MEMBER_ID, request(101L));
 
-            verifyNoInteractions(impressionCountRepository);
-            commit();
-            verify(impressionCountRepository).increment(SERVED_DATE, 101L);
-        }
-
-        @Test
-        void 자정을_넘겨_받은_노출은_받은_날의_카운터를_올린다() {
-            givenLateRecord();
-
-            afterMidnight.record(MEMBER_ID, request(101L));
-            commit();
-
-            verify(impressionCountRepository).increment(RECEIVED_DATE, 101L);
-        }
-
-        @Test
-        void 롤백되면_올리지_않는다() {
-            when(serveRecordRepository.findById(SERVE_ID)).thenReturn(Optional.of(RECORD));
-
-            service.record(MEMBER_ID, request(101L));
-            rollback();
-
-            verifyNoInteractions(impressionCountRepository);
-        }
-
-        @Test
-        void 쿠폰이_소진된_뒤의_유효_노출도_센다() {
-            when(serveRecordRepository.findById(SERVE_ID)).thenReturn(Optional.of(RECORD));
-            when(adCandidateRepository.existsByIdBusinessDateAndIdCampaignIdAndSoldOutAtIsNotNull(SERVED_DATE, 101L))
-                    .thenReturn(true);
-
-            service.record(MEMBER_ID, request(101L));
-            commit();
-
-            verify(impressionCountRepository).increment(SERVED_DATE, 101L);
-        }
-
-        @Test
-        void 무효_노출은_세지_않는다() {
-            when(serveRecordRepository.findById(SERVE_ID)).thenReturn(Optional.of(RECORD));
-
-            service.record(OTHER_MEMBER, request(101L));
-            commit();
-
-            verifyNoInteractions(impressionCountRepository);
-        }
-    }
-
-    @Nested
-    @DisplayName("분석 이벤트")
-    class FunnelEvent {
-
-        @Test
-        void 처음_저장된_유효_노출은_serve_기록의_캠페인과_가게와_한국_시각의_표시_시각으로_한_번_발행한다() {
-            when(serveRecordRepository.findById(SERVE_ID)).thenReturn(Optional.of(RECORD));
-
-            service.record(MEMBER_ID, request(999L));
-
-            verify(eventPublisher).publishEvent(new ImpressionServedEvent("impression:" + SERVE_ID,
-                    LocalDateTime.of(2026, 10, 1, 10, 15, 31, 880_000_000), MEMBER_ID, 101L, 55L, SERVE_ID));
-        }
-
-        @Test
-        void 쿠폰이_소진된_뒤의_유효_노출도_발행한다() {
-            when(serveRecordRepository.findById(SERVE_ID)).thenReturn(Optional.of(RECORD));
-            when(adCandidateRepository.existsByIdBusinessDateAndIdCampaignIdAndSoldOutAtIsNotNull(SERVED_DATE, 101L))
-                    .thenReturn(true);
-
-            service.record(MEMBER_ID, request(101L));
-
-            verify(eventPublisher).publishEvent(any(ImpressionServedEvent.class));
-        }
-
-        @Test
-        void 무효_노출은_발행하지_않는다() {
-            when(serveRecordRepository.findById(SERVE_ID)).thenReturn(Optional.of(RECORD));
-
-            service.record(OTHER_MEMBER, request(101L));
-
-            verifyNoInteractions(eventPublisher);
-        }
-
-        @Test
-        void 이미_저장된_키면_발행하지_않는다() {
-            ImpressionLog first = ImpressionLog.valid(SERVE_ID, MEMBER_ID, SERVED_DATE,
-                    new ImpressionLog.Placement(101L, 55L, SlotLabels.ALLOCATION, 1),
-                    new ImpressionLog.Sighting(LocalDateTime.of(2026, 10, 1, 10, 15), 37.5, 127.0, null), false);
-            when(impressionLogRepository.findById(ImpressionLogId.of(SERVE_ID, MEMBER_ID))).thenReturn(Optional.of(first));
-
-            service.record(MEMBER_ID, request(101L));
-
-            verifyNoInteractions(eventPublisher);
-        }
-
-        @Test
-        void 동시에_와서_먼저_넣은_쪽이_있으면_발행하지_않는다() {
-            when(serveRecordRepository.findById(SERVE_ID)).thenReturn(Optional.of(RECORD));
-            when(impressionLogRepository.insertIgnore(any(), any())).thenReturn(false);
-            when(impressionLogRepository.findById(ImpressionLogId.of(SERVE_ID, MEMBER_ID))).thenReturn(Optional.empty());
-            when(impressionLogRepository.findByIdForShare(ImpressionLogId.of(SERVE_ID, MEMBER_ID)))
-                    .thenReturn(Optional.of(ImpressionLog.valid(SERVE_ID, MEMBER_ID, SERVED_DATE,
-                            new ImpressionLog.Placement(101L, 55L, SlotLabels.ALLOCATION, 1),
-                            new ImpressionLog.Sighting(LocalDateTime.of(2026, 10, 1, 10, 15), 37.5, 127.0, null), false)));
-
-            service.record(MEMBER_ID, request(101L));
-
-            verifyNoInteractions(eventPublisher);
+            assertThat(again).isEqualTo(new ImpressionResponse(ImpressionValidity.VALID, null));
+            verify(writeBuffer, times(2)).offer(any());
         }
     }
 }

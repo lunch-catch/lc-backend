@@ -1,7 +1,6 @@
 package com.launchcatch.adserving;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.times;
@@ -19,7 +18,10 @@ import com.launchcatch.adserving.contract.ImpressionServedEvent;
 import com.launchcatch.adserving.engine.SlotLabels;
 import com.launchcatch.adserving.feed.repository.ServeRecord;
 import com.launchcatch.adserving.feed.repository.ServeRecordRepository;
+import com.launchcatch.adserving.impression.entity.ImpressionLog;
 import com.launchcatch.adserving.impression.service.ImpressionDispatchService;
+import com.launchcatch.adserving.impression.service.ImpressionWriteBuffer;
+import com.launchcatch.adserving.impression.service.QueuedImpression;
 import com.launchcatch.auth.CustomUserDetails;
 import com.launchcatch.auth.Role;
 import com.launchcatch.billing.contract.DeductionOutcome;
@@ -38,12 +40,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -53,12 +49,13 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
-import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /*
  * POST /v1/impressions 를 HTTP 입구부터 MySQL 의 impression_log 와 Valkey 의 카운터까지 본다.
  * 돈이 걸린 경로라 통합 테스트로 둔다. 노출 요청은 정산을 부르지 않고, 릴레이가 커밋된 유효 노출을 트랜잭션 밖에서 넘기는지 본다(#1010).
+ * 노출은 응답 뒤에 큐에서 묶어 저장한다(#1038). 저장을 보는 테스트는 큐를 비운 뒤 본다.
+ * 작업자 스레드는 멈춰 둔다. 작업자가 실패한 묶음을 쥐고 다시 쓰면 비우기와 경합한다. 다시 쓰기는 ImpressionWriteBufferTest 가 본다.
  * 정산의 판정 자체는 정산의 테스트가 본다. 여기서는 contract 를 목으로 두고 무엇을 어떻게 넘겼는지만 본다.
  */
 @DisplayName("노출 수집 통합")
@@ -72,12 +69,14 @@ class ImpressionIntegrationTest extends AbstractAdservingIntegrationTest {
 
     @Autowired ServeRecordRepository serveRecordRepository;
     @Autowired ImpressionDispatchService dispatch;
+    @Autowired ImpressionWriteBuffer writeBuffer;
 
     private final UUID serveId = UUID.randomUUID();
     private final AtomicBoolean dispatchedInTransaction = new AtomicBoolean(true);
 
     @BeforeEach
     void setUp() {
+        writeBuffer.stop();
         doReturn(NOW).when(clock).instant();
         doReturn(ClockConfig.ZONE).when(clock).getZone();
         doAnswer(invocation -> {
@@ -90,12 +89,14 @@ class ImpressionIntegrationTest extends AbstractAdservingIntegrationTest {
 
     @AfterEach
     void tearDown() {
+        writeBuffer.flush();
         jdbcTemplate.update("DELETE FROM impression_log");
         jdbcTemplate.update("DELETE FROM ad_candidate");
         jdbcTemplate.update("DELETE FROM serve_log");
         jdbcTemplate.update("DELETE FROM feed_visit_daily");
         redisTemplate.delete(List.of(COUNTER_KEY, "adserving:serve:" + serveId, "adserving:feedRequests:" + MEMBER_ID,
                 "adserving:servedDaily:" + TODAY + ":" + MEMBER_ID, "adserving:servedSession:" + MEMBER_ID));
+        writeBuffer.start();
     }
 
     private String body(UUID id, long campaignId) {
@@ -123,12 +124,13 @@ class ImpressionIntegrationTest extends AbstractAdservingIntegrationTest {
     }
 
     @Test
-    void 유효_노출은_202_로_받고_정산을_부르지_않으며_커밋_뒤_카운터를_올린다() throws Exception {
+    void 유효_노출은_202_로_받고_정산을_부르지_않으며_묶음_커밋_뒤_카운터를_올린다() throws Exception {
         send(body(serveId, 101L), Role.MEMBER)
                 .andExpect(status().isAccepted())
                 .andExpect(jsonPath("$.code").value("SUCCESS"))
                 .andExpect(jsonPath("$.data.validity").value("VALID"))
                 .andExpect(jsonPath("$.data.invalidReason").isEmpty());
+        writeBuffer.flush();
 
         assertThat(jdbcTemplate.queryForMap("""
                 SELECT BIN_TO_UUID(serve_id) AS serve_id, member_id, business_date, campaign_id, store_id, slot_type,
@@ -147,6 +149,7 @@ class ImpressionIntegrationTest extends AbstractAdservingIntegrationTest {
     @Test
     void 릴레이가_커밋된_유효_노출을_트랜잭션_밖에서_정산에_넘기고_넘긴_시각을_적는다() throws Exception {
         send(body(serveId, 101L), Role.MEMBER).andExpect(status().isAccepted());
+        writeBuffer.flush();
 
         dispatch.dispatchPending();
         dispatch.dispatchPending();
@@ -163,6 +166,7 @@ class ImpressionIntegrationTest extends AbstractAdservingIntegrationTest {
             return requests.stream().map(request -> DeductionOutcome.failed(request.serveId())).toList();
         }).when(pointDeductor).deductAll(anyList());
         send(body(serveId, 101L), Role.MEMBER).andExpect(status().isAccepted());
+        writeBuffer.flush();
 
         dispatch.dispatchPending();
 
@@ -176,6 +180,7 @@ class ImpressionIntegrationTest extends AbstractAdservingIntegrationTest {
     @Test
     void 무효_노출은_저장할_때_넘긴_것으로_적고_정산에_넘기지_않는다() throws Exception {
         send(body(UUID.randomUUID(), 101L), Role.MEMBER).andExpect(status().isAccepted());
+        writeBuffer.flush();
 
         dispatch.dispatchPending();
 
@@ -195,6 +200,7 @@ class ImpressionIntegrationTest extends AbstractAdservingIntegrationTest {
         try {
             send(body(lateServeId, 101L), Role.MEMBER).andExpect(status().isAccepted())
                     .andExpect(jsonPath("$.data.validity").value("VALID"));
+            writeBuffer.flush();
 
             assertThat(jdbcTemplate.queryForObject("SELECT business_date FROM impression_log", LocalDate.class))
                     .isEqualTo(nextDay);
@@ -208,8 +214,9 @@ class ImpressionIntegrationTest extends AbstractAdservingIntegrationTest {
     }
 
     @Test
-    void 같은_사용자가_같은_카드를_다시_보내면_처음_판정을_돌려주고_한_번만_넘기고_센다() throws Exception {
+    void 저장된_뒤_같은_사용자가_같은_카드를_다시_보내면_처음_판정을_돌려주고_한_번만_넘기고_센다() throws Exception {
         send(body(serveId, 101L), Role.MEMBER).andExpect(status().isAccepted());
+        writeBuffer.flush();
 
         send(body(serveId, 101L), Role.MEMBER)
                 .andExpect(status().isAccepted())
@@ -224,44 +231,42 @@ class ImpressionIntegrationTest extends AbstractAdservingIntegrationTest {
         assertThat(redisTemplate.getExpire(COUNTER_KEY)).isPositive();
     }
 
+    // 처음 것이 아직 큐에 있어 다시 판정한다. 같은 묶음에 둘이 들어가도 하나만 저장하고 한 번만 센다
+    @Test
+    void 저장되기_전에_다시_보내면_다시_판정하고_한_번만_저장하고_센다() throws Exception {
+        send(body(serveId, 101L), Role.MEMBER).andExpect(status().isAccepted());
+        send(body(serveId, 101L), Role.MEMBER)
+                .andExpect(status().isAccepted())
+                .andExpect(jsonPath("$.data.validity").value("VALID"));
+        writeBuffer.flush();
+
+        assertThat(rows()).isEqualTo(1);
+        assertThat(counter()).isEqualTo("1");
+        assertThat(funnelEvents.received(ImpressionServedEvent.class)).hasSize(1);
+    }
+
     /*
-     * 먼저 온 요청이 넣고 커밋하기 전일 때 늦은 요청이 중복 확인을 지나 넣기에서 기다린다. 늦은 요청의 스냅샷에는 먼저 넣은 행이 없다.
-     * 먼저 온 요청이 커밋한 뒤 늦은 요청도 그 판정을 돌려주고 행이 하나만 남는지 본다(#781).
+     * 다른 서버의 묶음이 같은 노출을 먼저 저장했다. 이 묶음의 INSERT IGNORE 는 넘어가고 행의 받은 시각이 달라 새로 들어간 것으로 보지 않는다.
+     * 카운터와 이벤트를 다시 내지 않는지 본다.
      */
     @Test
-    void 같은_노출이_동시에_오면_늦은_요청도_먼저_저장된_판정을_돌려주고_한_번만_저장한다() throws Exception {
-        CountDownLatch deducting = new CountDownLatch(1);
-        CountDownLatch release = new CountDownLatch(1);
-        funnelEvents.whileImpressionPublishing(() -> {
-            deducting.countDown();
-            try {
-                if (!release.await(10, TimeUnit.SECONDS)) {
-                    throw new IllegalStateException("timeout");
-                }
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                throw new IllegalStateException(e);
-            }
-        });
+    void 다른_묶음이_먼저_저장한_노출은_세지_않고_이벤트도_내지_않는다() {
+        LocalDateTime first = LocalDateTime.ofInstant(NOW, ClockConfig.ZONE).minusNanos(1_000);
+        jdbcTemplate.update("""
+                INSERT INTO impression_log (serve_id, member_id, business_date, campaign_id, store_id, slot_type, slot_position,
+                    displayed_at, lat_rounded, lng_rounded, validity, sold_out, created_at, updated_at)
+                VALUES (UUID_TO_BIN(?), ?, ?, 101, 55, 'ALLOCATION', 1, ?, 37.498, 127.028, 'VALID', FALSE, ?, ?)
+                """, serveId.toString(), MEMBER_ID, TODAY, first, first, first);
+        ImpressionLog again = ImpressionLog.valid(serveId, MEMBER_ID, TODAY,
+                new ImpressionLog.Placement(101L, 55L, SlotLabels.ALLOCATION, 1),
+                new ImpressionLog.Sighting(first, 37.4979, 127.0276, null), false);
 
-        try (ExecutorService pool = Executors.newFixedThreadPool(2)) {
-            Future<MvcResult> first = pool.submit(() -> send(body(serveId, 101L), Role.MEMBER).andReturn());
-            try {
-                assertThat(deducting.await(10, TimeUnit.SECONDS)).isTrue();
-                Future<MvcResult> late = pool.submit(() -> send(body(serveId, 101L), Role.MEMBER).andReturn());
-                // 늦은 요청은 먼저 넣은 행의 잠금에 걸려 끝나지 않는다. 중복 확인은 이미 지났다
-                assertThatThrownBy(() -> late.get(500, TimeUnit.MILLISECONDS)).isInstanceOf(TimeoutException.class);
-                release.countDown();
+        writeBuffer.offer(new QueuedImpression(again, LocalDateTime.ofInstant(NOW, ClockConfig.ZONE), true));
+        writeBuffer.flush();
 
-                assertThat(first.get(10, TimeUnit.SECONDS).getResponse().getStatus()).isEqualTo(202);
-                MvcResult lateResult = late.get(10, TimeUnit.SECONDS);
-                assertThat(lateResult.getResponse().getStatus()).isEqualTo(202);
-                assertThat(lateResult.getResponse().getContentAsString()).contains("\"validity\":\"VALID\"");
-            } finally {
-                release.countDown();
-            }
-        }
         assertThat(rows()).isEqualTo(1);
+        assertThat(counter()).isNull();
+        assertThat(funnelEvents.received(ImpressionServedEvent.class)).isEmpty();
     }
 
     @Test
@@ -270,6 +275,7 @@ class ImpressionIntegrationTest extends AbstractAdservingIntegrationTest {
                 .andExpect(status().isAccepted())
                 .andExpect(jsonPath("$.data.validity").value("INVALID"))
                 .andExpect(jsonPath("$.data.invalidReason").value("EXPIRED_OR_UNKNOWN"));
+        writeBuffer.flush();
 
         assertThat(rows()).isEqualTo(1);
         verifyNoInteractions(pointDeductor);
@@ -277,21 +283,25 @@ class ImpressionIntegrationTest extends AbstractAdservingIntegrationTest {
     }
 
     @Test
-    void 노출_저장이_롤백되면_카운터도_오르지_않는다() throws Exception {
+    void 묶음_저장이_롤백되면_응답은_202_이고_행도_카운터도_이벤트도_남지_않는다() throws Exception {
         funnelEvents.whileImpressionPublishing(() -> {
             throw new IllegalStateException("저장 중 실패");
         });
 
-        send(body(serveId, 101L), Role.MEMBER).andExpect(status().isInternalServerError());
+        send(body(serveId, 101L), Role.MEMBER).andExpect(status().isAccepted());
+        writeBuffer.flush();
 
         assertThat(rows()).isZero();
         assertThat(counter()).isNull();
+        assertThat(funnelEvents.received(ImpressionServedEvent.class)).isEmpty();
     }
 
     @Test
     void 유효_노출을_처음_저장하면_커밋_뒤_노출_이벤트가_한_번_넘어가고_다시_보내면_넘어가지_않는다() throws Exception {
         send(body(serveId, 101L), Role.MEMBER).andExpect(status().isAccepted());
+        writeBuffer.flush();
         send(body(serveId, 101L), Role.MEMBER).andExpect(status().isAccepted());
+        writeBuffer.flush();
 
         assertThat(funnelEvents.received(ImpressionServedEvent.class)).containsExactly(new ImpressionServedEvent(
                 "impression:" + serveId, LocalDateTime.of(2026, 10, 1, 10, 15, 31, 880_000_000), MEMBER_ID, 101L, 55L,
@@ -301,17 +311,7 @@ class ImpressionIntegrationTest extends AbstractAdservingIntegrationTest {
     @Test
     void 무효_노출은_이벤트가_넘어가지_않는다() throws Exception {
         send(body(UUID.randomUUID(), 101L), Role.MEMBER).andExpect(status().isAccepted());
-
-        assertThat(funnelEvents.received(ImpressionServedEvent.class)).isEmpty();
-    }
-
-    @Test
-    void 노출_저장이_롤백되면_이벤트가_넘어가지_않는다() throws Exception {
-        funnelEvents.whileImpressionPublishing(() -> {
-            throw new IllegalStateException("저장 중 실패");
-        });
-
-        send(body(serveId, 101L), Role.MEMBER).andExpect(status().isInternalServerError());
+        writeBuffer.flush();
 
         assertThat(funnelEvents.received(ImpressionServedEvent.class)).isEmpty();
     }
@@ -320,6 +320,7 @@ class ImpressionIntegrationTest extends AbstractAdservingIntegrationTest {
     @EnumSource(value = Role.class, names = "MEMBER", mode = EnumSource.Mode.EXCLUDE)
     void MEMBER_가_아니면_403_이고_저장하지_않는다(Role role) throws Exception {
         send(body(serveId, 101L), role).andExpect(status().isForbidden());
+        writeBuffer.flush();
 
         assertThat(rows()).isZero();
     }
@@ -342,6 +343,7 @@ class ImpressionIntegrationTest extends AbstractAdservingIntegrationTest {
         send(body(serveId, 101L).replace("127.0276", "180.1"), Role.MEMBER)
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("COMMON-002"));
+        writeBuffer.flush();
 
         assertThat(rows()).isZero();
     }
@@ -367,6 +369,7 @@ class ImpressionIntegrationTest extends AbstractAdservingIntegrationTest {
                 .andExpect(jsonPath("$.data.cards[0].campaignId").value(101));
 
         send(body(serveId, 101L), Role.MEMBER).andExpect(status().isAccepted());
+        writeBuffer.flush();
 
         redisTemplate.delete("adserving:servedSession:" + MEMBER_ID);
         mockMvc.perform(get("/v1/feed").with(user(new CustomUserDetails(MEMBER_ID, Role.MEMBER))))
