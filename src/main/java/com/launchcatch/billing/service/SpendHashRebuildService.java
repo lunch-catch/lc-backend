@@ -6,6 +6,7 @@ import com.launchcatch.billing.cache.DailySpendCounter;
 import com.launchcatch.billing.repository.PointLedgerRepository;
 import io.micrometer.core.instrument.MeterRegistry;
 import com.launchcatch.billing.dto.CampaignSpend;
+import jakarta.annotation.PostConstruct;
 import java.time.LocalDate;
 import java.util.Collection;
 import java.util.HashMap;
@@ -36,6 +37,12 @@ public class SpendHashRebuildService {
     private final PointLedgerRepository ledgerRepository;
     private final DailySpendCounter spendCounter;
     private final MeterRegistry meterRegistry;
+
+    // 첫 사건 전에도 시리즈가 있어야 increase() 가 첫 증가를 센다
+    @PostConstruct
+    void registerCounters() {
+        meterRegistry.counter(REBUILD_METRIC);
+    }
 
     // 해시를 만들었으면 true, 이미 있어서 그대로 두었으면 false 다. 계획 행이 없으면 예외다
     @Transactional

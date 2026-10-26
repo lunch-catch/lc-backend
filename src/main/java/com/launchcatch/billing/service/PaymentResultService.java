@@ -15,6 +15,7 @@ import com.launchcatch.billing.repository.PaymentRepository;
 import com.launchcatch.billing.repository.PointAccountRepository;
 import com.launchcatch.billing.repository.PointLedgerRepository;
 import io.micrometer.core.instrument.MeterRegistry;
+import jakarta.annotation.PostConstruct;
 import java.time.Clock;
 import java.time.LocalDateTime;
 import java.util.concurrent.ThreadLocalRandom;
@@ -50,6 +51,12 @@ public class PaymentResultService {
     private final ApplicationEventPublisher eventPublisher;
     private final MeterRegistry meterRegistry;
     private final Clock clock;
+
+    // 첫 사건 전에도 시리즈가 있어야 increase() 가 첫 증가를 센다
+    @PostConstruct
+    void registerCounters() {
+        meterRegistry.counter(EXHAUSTED_METRIC);
+    }
 
     /*
      * 승인을 시도하기 직전에 결제 식별자를 적는다. 결제대행사를 부르기 전에 이 트랜잭션만 먼저 커밋한다.

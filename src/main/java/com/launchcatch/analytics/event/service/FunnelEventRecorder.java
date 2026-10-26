@@ -4,6 +4,7 @@ import com.launchcatch.analytics.event.EventRecord;
 import com.launchcatch.analytics.event.EventWriteResult;
 import io.micrometer.core.instrument.MeterRegistry;
 import jakarta.annotation.PreDestroy;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.Executor;
@@ -51,6 +52,7 @@ public class FunnelEventRecorder {
                 daemonThreads(),
                 new ThreadPoolExecutor.AbortPolicy());
         this.executor = ownedExecutor;
+        registerCounters();
     }
 
     // 테스트가 기록을 호출 스레드에서 바로 돌리거나 대기열을 작게 줄이려고 쓴다.
@@ -59,6 +61,14 @@ public class FunnelEventRecorder {
         this.registry = registry;
         this.ownedExecutor = null;
         this.executor = executor;
+        registerCounters();
+    }
+
+    // 첫 사건 전에도 시리즈가 있어야 increase() 가 첫 증가를 센다
+    private void registerCounters() {
+        for (String result : List.of("recorded", "duplicate", "rejected", "failed")) {
+            registry.counter(METRIC, "result", result);
+        }
     }
 
     public void record(EventRecord record) {
