@@ -176,6 +176,9 @@ Q = {
     'impression_dropped_inc': f'sum(increase(adserving_impression_dropped_total[{w}]))',
     'impression_write_failed_inc': f'sum(increase(adserving_impression_write_failed_total[{w}]))',
     'impression_write_lost_inc': f'sum(increase(adserving_impression_write_lost_total[{w}]))',
+    # 릴레이가 정산 한 번에 걸린 시간의 평균과 초당 넘긴 건수다. 릴레이 처리량의 상한을 가른다
+    'relay_deduct_avg_s': f'sum(increase(adserving_impression_dispatch_deduct_seconds_sum[{w}]))/sum(increase(adserving_impression_dispatch_deduct_seconds_count[{w}]))',
+    'relay_deduct_rows_per_s': f'sum(rate(adserving_impression_dispatch_deduct_batch_sum[{w}]))',
     'http_5xx_inc': f'sum by (uri, status) (increase(http_server_requests_seconds_count{{status=~\"5..\"}}[{w}]))',
 }
 for k, v in Q.items():
