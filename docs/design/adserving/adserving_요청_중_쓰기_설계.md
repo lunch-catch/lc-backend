@@ -91,7 +91,7 @@
 | 주기와 묶음 | 1초마다(`fixedDelay`) 돌고 1,000건(`MAX_BATCH_SIZE`)씩 넘긴다. 1,000건이었으면 이어서 다음 묶음을 넘긴다 | 한 번에 1,000건만 넘기면 초당 1,000건이 상한이 돼 밀리면 따라잡지 못한다 |
 | 배치 서버 자원 | 스케줄러 스레드 5, DB 풀 6(`application-batch.yml`). 정상 실행 로그는 DEBUG 다(`@QuietSchedulerLog`) | 그대로 두면 00:00 묶음, 생존 신호, 이어받기와 자리를 다툰다. 실행 로그를 INFO 로 두면 하루 약 34만 줄이 쌓인다 |
 
-지표는 넘긴 수(`adserving_impression_dispatched_total`), 실패로 돌아온 수(`adserving_impression_dispatch_failed_total`), 회차를 끝낸 예외 수(`adserving_impression_dispatch_error_total`), 밀린 노출 수(`adserving_impression_dispatch_backlog`)다.
+지표는 넘긴 수(`adserving_impression_dispatched_total`), 실패로 돌아온 수(`adserving_impression_dispatch_failed_total`), 회차를 끝낸 예외 수(`adserving_impression_dispatch_error_total`), 밀린 노출 수(`adserving_impression_dispatch_backlog`)다. 정산 한 번에 걸린 시간(`adserving_impression_dispatch_deduct_seconds`)과 넘긴 건수(`adserving_impression_dispatch_deduct_batch`)로 릴레이의 처리량을 가른다. 부하 시험에서 릴레이가 초당 약 20건에 머물렀다(#997).
 
 ### 대가
 

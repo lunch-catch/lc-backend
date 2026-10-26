@@ -7,6 +7,7 @@ import com.launchcatch.billing.contract.DeductionOutcome;
 import com.launchcatch.billing.contract.DeductionRequest;
 import com.launchcatch.billing.contract.PointDeductor;
 import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.LocalDate;
@@ -39,6 +40,8 @@ public class ImpressionDispatchService {
     static final String FAILED_METRIC = "adserving_impression_dispatch_failed_total";
     static final String ERROR_METRIC = "adserving_impression_dispatch_error_total";
     static final String BACKLOG_METRIC = "adserving_impression_dispatch_backlog";
+    static final String DEDUCT_DURATION_METRIC = "adserving_impression_dispatch_deduct_seconds";
+    static final String DEDUCT_BATCH_METRIC = "adserving_impression_dispatch_deduct_batch";
 
     // 1초 주기라 약 10초 동안 다시 해 본다. 닿으면 읽지 않고 밀린 수로만 보인다
     static final int MAX_ATTEMPTS = 10;
@@ -98,9 +101,20 @@ public class ImpressionDispatchService {
         if (batch.isEmpty()) {
             return false;
         }
-        List<DeductionOutcome> outcomes = pointDeductor.deductAll(batch.stream()
-                .map(impression -> new DeductionRequest(impression.serveId(), impression.campaignId(), impression.businessDate()))
-                .toList());
+        /*
+         * 정산 한 번에 걸린 시간과 넘긴 건수로 릴레이의 처리량을 가른다(#997).
+         * 정산이 예외를 던져도 걸린 시간은 남긴다.
+         */
+        meterRegistry.summary(DEDUCT_BATCH_METRIC).record(batch.size());
+        Timer.Sample sample = Timer.start(meterRegistry);
+        List<DeductionOutcome> outcomes;
+        try {
+            outcomes = pointDeductor.deductAll(batch.stream()
+                    .map(impression -> new DeductionRequest(impression.serveId(), impression.campaignId(), impression.businessDate()))
+                    .toList());
+        } finally {
+            sample.stop(meterRegistry.timer(DEDUCT_DURATION_METRIC));
+        }
         Map<UUID, PendingImpression> byServeId = batch.stream()
                 .collect(Collectors.toMap(PendingImpression::serveId, Function.identity()));
         List<PendingImpression> dispatched = new ArrayList<>();

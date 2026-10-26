@@ -100,6 +100,21 @@ class ImpressionDispatchServiceTest {
         verify(lease).release();
     }
 
+    // 정산 한 번에 걸린 시간과 넘긴 건수로 릴레이의 처리량을 가른다(#997 부하 시험에서 릴레이가 초당 약 20건에 머물렀다)
+    @Test
+    void 정산에_한_번_넘길_때마다_걸린_시간과_넘긴_건수를_지표로_낸다() {
+        PendingImpression first = pending(1);
+        PendingImpression second = pending(2);
+        when(lease.acquire(any())).thenReturn(true);
+        when(impressions.findPending(any(), any(), anyInt(), anyInt())).thenReturn(List.of(first, second));
+        when(pointDeductor.deductAll(anyList())).thenAnswer(invocation -> judgedAll(invocation.getArgument(0)));
+
+        service.dispatchPending();
+
+        assertThat(meterRegistry.get(ImpressionDispatchService.DEDUCT_DURATION_METRIC).timer().count()).isEqualTo(1);
+        assertThat(meterRegistry.get(ImpressionDispatchService.DEDUCT_BATCH_METRIC).summary().totalAmount()).isEqualTo(2);
+    }
+
     @Test
     void 정산이_예외를_던지면_아무것도_적지_않고_다음_주기에_같은_묶음을_다시_넘긴다() {
         when(lease.acquire(any())).thenReturn(true);
