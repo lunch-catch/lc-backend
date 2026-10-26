@@ -133,6 +133,8 @@ PG 서버가 호출한다. `/v1/` 접두사가 없는 것은 서버 대 서버 �
 
 `SettlementMismatchQueryService`는 대사 대상 영업일과 유형·해결 여부로 조회한다. 정렬은 `createdAt` 또는 `businessDate`에 ID를 보조 키로 붙인다. 전체 건수를 제공하는 페이지 번호 방식을 유지한다. 실제 체크 유형은 V5가 추가한 `CAMPAIGN_OVERSPEND`까지 세 종류다.
 
+`ownerId`는 테이블에 두지 않고 조회할 때 채운다. 한 페이지의 결제 ID는 `payment`에서, 캠페인 ID는 `CampaignQueryService.findAllById`로 각각 한 번에 읽는다. 포인트 수동 조정이 대사 건의 점주를 확인할 때와 같은 출처라서 목록이 보여 준 점주로 정정하면 BILLING-022가 나지 않는다.
+
 ## 오류 코드 번호
 
 명세의 `BILLING-030`·`031`·`032`를 `016`·`017`·`018`로 당긴 것은 저장소의 `ErrorCodeCatalogTest`가 접두어마다 번호가 1부터 끊기지 않기를 요구하기 때문이다. 016~029를 비워 둘 수 없다.

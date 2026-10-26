@@ -786,7 +786,7 @@ GET /v1/admin/settlement-mismatches?checkType=&resolved=false&from=&to=&page=0&s
 
 ```json
 {
-  "mismatchId": 55, "checkType": "CAMPAIGN_SPEND_VS_LEDGER", "targetId": 12,
+  "mismatchId": 55, "checkType": "CAMPAIGN_SPEND_VS_LEDGER", "targetId": 12, "ownerId": 7,
   "businessDate": "2026-10-01", "expectedValue": 9800, "actualValue": 9790, "diff": -10,
   "resolutionType": null, "createdAt": "2026-10-01T13:35:00+09:00", "jobExecutionId": 301,
   "resolvedAt": null, "resolvedBy": null
@@ -795,6 +795,7 @@ GET /v1/admin/settlement-mismatches?checkType=&resolved=false&from=&to=&page=0&s
 
 - `checkType`은 `PG_VS_CHARGE` / `CAMPAIGN_SPEND_VS_LEDGER` / `CAMPAIGN_OVERSPEND` 3종이다. `CAMPAIGN_OVERSPEND`는 캠페인의 그날 원장 `DEDUCT` 합이 그날 예약액을 넘은 건이고 `targetId`는 캠페인 ID, `expectedValue`는 예약액, `actualValue`는 `DEDUCT` 합이다. V5. 해제가 끝난 날은 `DEDUCT` 합과 `RELEASE` 합의 합이다.
 - `targetId`는 `checkType`에 따라 결제 ID 또는 캠페인 ID다. `diff`는 `actualValue - expectedValue`로 계산한다.
+- `ownerId`는 `targetId`가 가리키는 결제나 캠페인의 점주 ID다. 포인트 수동 조정으로 그 건을 닫을 때 `ownerId`에 그대로 넣는다. 대상을 찾지 못하면 `null`이다.
 - `resolved=false`는 `resolution_type`이 `NULL`인 미해결 건이다. `resolutionType`은 `CACHE_REBUILD` / `LEDGER_CORRECTION` / `OVERCHARGE_REVERSAL`이다.
 - 자동 복구(`CACHE_REBUILD`, `LEDGER_CORRECTION`)는 배치가 처리하므로 별도 해결 API를 두지 않는다. 사람이 처리하는 `OVERCHARGE_REVERSAL`은 포인트 수동 조정의 `mismatchId`로 닫는다.
 
