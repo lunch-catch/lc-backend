@@ -128,6 +128,12 @@ Q = {
     'served_cards_inc': f'sum(increase(adserving_served_cards_total[{w}]))',
     'serve_log_failed_inc': f'sum(increase(adserving_serve_log_failed_total[{w}]))',
     'serve_log_dropped_inc': f'sum(increase(adserving_serve_log_dropped_total[{w}]))',
+    # 노출 수집 v2 부터의 릴레이와 v3 부터의 저장 큐다. 그 전 버전에는 지표가 없어 비어 나온다
+    'impression_dispatch_backlog_max': f'max_over_time(sum(adserving_impression_dispatch_backlog)[{w}:5s])',
+    'impression_queue_max': f'max_over_time(sum(adserving_impression_queue_size)[{w}:5s])',
+    'impression_dropped_inc': f'sum(increase(adserving_impression_dropped_total[{w}]))',
+    'impression_write_failed_inc': f'sum(increase(adserving_impression_write_failed_total[{w}]))',
+    'impression_write_lost_inc': f'sum(increase(adserving_impression_write_lost_total[{w}]))',
     'http_5xx_inc': f'sum by (uri, status) (increase(http_server_requests_seconds_count{{status=~\"5..\"}}[{w}]))',
 }
 for k, v in Q.items():

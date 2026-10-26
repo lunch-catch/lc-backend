@@ -80,6 +80,14 @@ aws autoscaling update-auto-scaling-group --auto-scaling-group-name lunchcatch-a
 
 ## 5. 회차
 
+**버전마다 환경을 새로 띄운다.** 한 환경에서 이미지만 바꾸면 앞 버전이 쌓은 `impression_log`, `serve_log`, 원장, Valkey 의 노출 횟수가 다음 버전에 남는다. 뒤 버전일수록 테이블이 커져 불리하고, 회원 대역도 버전마다 새로 필요하다. 환경은 띄운 지 4시간 뒤 자동으로 지워지는데 한 버전은 약 1시간 20분이라 그 안에 끝난다.
+
+| 버전 | 이미지 |
+|---|---|
+| 노출 수집 v1 | `67f46b2e` |
+| 노출 수집 v2 | `9aa6bae9` |
+| 노출 수집 v3 | #1041 이 병합된 커밋 |
+
 버전마다 워밍업 1회와 측정 3회를 돌린다. 회차 사이에 JVM 을 다시 띄우지 않는다.
 
 | 회차 | 램프업 | 유지 | 회원 대역 | 결과 |
@@ -95,6 +103,8 @@ aws autoscaling update-auto-scaling-group --auto-scaling-group-name lunchcatch-a
 
 `loadtest/aws/adserving.sh` 가 인스턴스에 SSM 으로 스크립트를 보내 돌린다. `AWS_PROFILE` 은 `member-env.sh up` 을 돌린 계정의 프로필이다. `LOADTEST_REF` 로 부하 생성기가 받을 lc-backend 브랜치를 고른다.
 
+버전마다 1~5를 처음부터 다시 한다(5장).
+
 ```bash
 # 1. 환경을 띄우고 앱을 3대로 고정한다(2장)
 AWS_PROFILE=<프로필> ./scripts/member-env.sh up --sha <이미지>     # lc-infra 에서
@@ -109,7 +119,7 @@ AWS_PROFILE=<프로필> loadtest/aws/adserving.sh run v1-run1 30000001
 AWS_PROFILE=<프로필> loadtest/aws/adserving.sh run v1-run2 30010001
 AWS_PROFILE=<프로필> loadtest/aws/adserving.sh run v1-run3 30020001
 
-# 4. 회차마다 출력된 구간으로 서버 지표를 모으고 행 수를 맞대 본다
+# 4. 회차마다 출력된 구간으로 서버 지표를 모은다. 행 수는 마지막 회차가 끝나고 10초 뒤에 맞대 본다
 AWS_PROFILE=<프로필> loadtest/aws/adserving.sh metrics <시작 ms> <끝 ms>
 AWS_PROFILE=<프로필> loadtest/aws/adserving.sh rows
 
@@ -119,6 +129,7 @@ AWS_PROFILE=<프로필> ./scripts/member-env.sh down
 ```
 
 - 생성기는 그날 배치 기록을 지우므로 시험하는 날에 넣는다. 앱이 판단하는 영업일(Asia/Seoul)과 같아야 한다.
+- 행 수를 회차 직후에 세면 아직 쓰이지 않은 행이 빠진다. 노출 수집 v3 는 응답 뒤 최대 200ms 에 저장하고 v2 부터는 릴레이가 1초마다 정산에 넘긴다.
 - 앱에 `CDN_BASE_URL` 이 비어 있으면 그날 후보 적재가 실패한다. 부하 시험 환경은 lc-infra 가 채운다. 로컬에서는 아무 값이나 준다.
 
 ## 7. 모으는 지표
@@ -131,6 +142,7 @@ AWS_PROFILE=<프로필> ./scripts/member-env.sh down
 | 앱 | Hikari 대기 최대, 사용 최대, 시간 초과 수, 커넥션 획득 평균 시간, 커넥션을 쥔 평균 시간, CPU 평균과 최대, 5xx 수 | 커넥션 풀이 병목인지 |
 | DB | 초당 커밋과 INSERT, 돌고 있는 스레드 최대, RDS CPU 최대와 CPU 크레딧 잔량 | DB 서버가 병목인지. t4g 는 크레딧이 바닥나면 기본 성능으로 떨어진다 |
 | 쓰기 | `serve_log` 쓰기 실패와 버린 수, 내려준 카드 수, 노출과 `serve_log` 와 차감과 원장의 행 수 대조(`rows`) | 유실과 쓰기가 맞는지 |
+| 노출 저장과 릴레이 | 릴레이의 밀린 노출 최대(v2 부터), 노출 저장 큐의 최대, 큐가 차서 버린 수, 실패한 묶음 수, 쓰지 못하고 버린 행 수(v3 부터) | 응답 뒤 저장이 따라가는지. 버린 노출은 유실률에 들어간다 |
 | 부하 생성기 | 1분 평균 CPU 의 최대 | 생성기가 병목이 아닌지. 유지 구간에서 80% 를 넘으면 그 회차는 무효로 보고 다시 잰다 |
 
 대시보드는 회차가 끝난 직후, 환경을 내리기 전에 05 부하 시험(`fm-loadtest`)과 06 광고 서빙(`fm-adserving`)을 lc-infra 의 `loadtest-snapshot.sh` 로 남긴다. 환경을 내리면 Prometheus 의 기록도 함께 사라진다.
