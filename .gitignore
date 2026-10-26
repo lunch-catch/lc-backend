@@ -60,7 +60,7 @@ application-local.properties
 # QA 에이전트의 스냅샷, 보고서, Playwright 다(#889). gradle clean 에 지워지지 않게 build 밖에 둔다.
 .qa/
 
-# 발표용 GIF 스킬(.claude/skills/slide-gif)이 만드는 장면과 GIF 다. gradle clean 에 지워지지 않게 build 밖에 둔다.
+# 발표용 GIF 스킬(.agents/skills/slide-gif)이 만드는 장면과 GIF 다. gradle clean 에 지워지지 않게 build 밖에 둔다.
 .slides/
 
 # 옵시디언 볼트 설정. 제외 목록과 테마와 플러그인이 사람마다 다르다.

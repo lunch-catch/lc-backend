@@ -3,32 +3,41 @@
 lc-backend 와 lc-infra 의 코드를 읽고 발표용 애니메이션 슬라이드를 GIF 와 MP4 로 만든다.
 그림에 들어가는 이름, 숫자, 순서는 모두 코드에서 가져오고 근거 파일을 함께 남긴다.
 
-이 문서는 팀원이 스킬을 쓰는 방법을 담는다. Claude 가 따르는 작업 순서는 [`SKILL.md`](SKILL.md) 가 갖는다.
+이 문서는 팀원이 스킬을 쓰는 방법을 담는다. 에이전트가 따르는 작업 순서는 [`SKILL.md`](SKILL.md) 가 갖는다.
+
+스킬의 원본은 이 폴더 하나다. Codex 는 `.agents/skills/` 를 바로 읽는다. Claude Code 는 `.claude/skills/slide-gif/SKILL.md` 를 읽고 그 파일이 이 폴더를 가리킨다.
 
 ## 처음 한 번 설치한다
 
 Node 18 이상이 있어야 한다.
 
 ```bash
-cd .claude/skills/slide-gif/engine
+cd .agents/skills/slide-gif/engine
 npm install
 npx playwright install chromium
 ```
 
 ffmpeg 는 `npm install` 이 함께 받는다.
 
-## Claude Code 에서 부른다
+## 부른다
 
-저장소 루트에서 Claude Code 를 열고 분류와 주제를 넣는다.
+저장소 루트에서 에이전트를 열고 분류와 주제를 넣는다. 도구마다 부르는 기호가 다르다.
+
+| 도구 | 부르는 법 |
+|---|---|
+| Claude Code | `/slide-gif 워커 11시 선착순 쿠폰 발급` |
+| Codex | `$slide-gif 워커 11시 선착순 쿠폰 발급` |
+
+주제 예시는 아래와 같다.
 
 ```
-/slide-gif 워커 11시 선착순 쿠폰 발급
-/slide-gif 오토스케일링 배포 중 서버 교체
-/slide-gif 워크플로우 캠페인 상태 전이
-/slide-gif 설계 billing 도메인 내부
+워커 11시 선착순 쿠폰 발급
+오토스케일링 배포 중 서버 교체
+워크플로우 캠페인 상태 전이
+설계 billing 도메인 내부
 ```
 
-Claude 는 코드를 읽은 뒤 제목, 등장하는 상자, 움직임의 순서, 근거 파일을 먼저 보여 준다.
+에이전트는 코드를 읽은 뒤 제목, 등장하는 상자, 움직임의 순서, 근거 파일을 먼저 보여 준다.
 고칠 점을 말하거나 진행하라고 답하면 장면을 그리고 녹화한다.
 
 ## 분류를 고른다
