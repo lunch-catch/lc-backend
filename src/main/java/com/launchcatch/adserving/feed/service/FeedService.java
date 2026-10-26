@@ -12,7 +12,6 @@ import com.launchcatch.adserving.engine.FeedContext;
 import com.launchcatch.adserving.engine.FeedSort;
 import com.launchcatch.adserving.engine.entity.AdCandidate;
 import com.launchcatch.adserving.engine.service.CandidateCache;
-import com.launchcatch.adserving.exclusion.repository.ExclusionRepository;
 import com.launchcatch.adserving.feed.dto.FeedCardResponse;
 import com.launchcatch.adserving.feed.dto.FeedRequest;
 import com.launchcatch.adserving.feed.dto.FeedResponse;
@@ -25,11 +24,12 @@ import com.launchcatch.adserving.feed.repository.FeedFilterCategoryRepository;
 import com.launchcatch.adserving.feed.repository.FeedFilterRepository;
 import com.launchcatch.adserving.feed.repository.FeedRateLimitRepository;
 import com.launchcatch.adserving.feed.repository.FeedRateLimitRepository.Admission;
-import com.launchcatch.adserving.feed.repository.ImpressionCountRepository;
+import com.launchcatch.adserving.feed.repository.FeedStateRepository;
+import com.launchcatch.adserving.feed.repository.FeedStateRepository.CachedFilter;
+import com.launchcatch.adserving.feed.repository.FeedStateRepository.FeedState;
 import com.launchcatch.adserving.feed.repository.ServeFrequencyRepository;
 import com.launchcatch.adserving.feed.repository.ServeRecord;
 import com.launchcatch.adserving.feed.repository.ServeRecordRepository;
-import com.launchcatch.adserving.feed.repository.ServeFrequencyRepository.ServedHistory;
 import com.launchcatch.adserving.feed.repository.SwipeLogRepository;
 import com.launchcatch.adserving.id.UuidV7;
 import com.launchcatch.global.config.ClockConfig;
@@ -66,12 +66,11 @@ public class FeedService {
     private final MemberInfoCache memberInfoCache;
     private final FeedRateLimitRepository feedRateLimitRepository;
     private final CandidateCache candidateCache;
-    private final ExclusionRepository exclusionRepository;
+    private final FeedStateRepository feedStateRepository;
     private final FeedFilterCategoryRepository feedFilterCategoryRepository;
     private final FeedFilterRepository feedFilterRepository;
     private final SwipeLogRepository swipeLogRepository;
     private final ServeFrequencyRepository serveFrequencyRepository;
-    private final ImpressionCountRepository impressionCountRepository;
     private final PacingProperties pacingProperties;
     private final ServeRecordRepository serveRecordRepository;
     private final ServeLogBuffer serveLogBuffer;
@@ -137,22 +136,41 @@ public class FeedService {
                 FeedAssembler.ENGINE_VERSION, requestedAt.toLocalDateTime()));
     }
 
+    /*
+     * 하루와 세션 횟수, 당일 이력, 유효 노출 수, 필터, 30일 찜을 Valkey 에서 한 번에 읽는다(#1042 결정 5).
+     * 필터와 30일 찜은 캐시라 없으면 DB 에서 읽어 채운다(#1042 결정 4).
+     */
     private FeedContext contextFor(Long memberId, Viewer viewer, LocalDate businessDate, ZonedDateTime servedAt,
                                    List<AdCandidate> rows) {
-        ServedHistory history = serveFrequencyRepository.findHistory(businessDate, memberId);
-        FeedSort sort = feedFilterRepository.findById(memberId).map(FeedFilter::getSortType).orElse(FeedSort.DISTANCE);
-        List<CategoryWishCount> wishes = swipeLogRepository.countWishesByCategory(
-                memberId, businessDate.minusDays(PREFERENCE_DAYS - 1), businessDate);
+        FeedState state = feedStateRepository.read(businessDate, memberId,
+                rows.stream().map(AdCandidate::getCampaignId).toList());
+        CachedFilter filter = state.filter() != null ? state.filter() : loadFilter(memberId);
+        List<CategoryWishCount> wishes = state.wishes() != null ? state.wishes() : loadWishes(businessDate, memberId);
         return new FeedContext(
                 businessDate,
                 viewer,
-                exclusionRepository.findCampaignIds(businessDate, memberId),
-                Set.copyOf(feedFilterCategoryRepository.findCategoryCodes(memberId)),
-                sort,
+                state.excludedCampaignIds(),
+                filter.categoryCodes(),
+                filter.sort(),
                 categoryPreference(wishes),
-                history.dailyCounts(),
-                history.sessionCampaignIds(),
-                pacingFor(rows, businessDate, servedAt));
+                state.history().dailyCounts(),
+                state.history().sessionCampaignIds(),
+                pacingFor(rows, state.validCounts(), servedAt));
+    }
+
+    private CachedFilter loadFilter(Long memberId) {
+        CachedFilter filter = new CachedFilter(
+                feedFilterRepository.findById(memberId).map(FeedFilter::getSortType).orElse(FeedSort.DISTANCE),
+                Set.copyOf(feedFilterCategoryRepository.findCategoryCodes(memberId)));
+        feedStateRepository.cacheFilter(memberId, filter);
+        return filter;
+    }
+
+    private List<CategoryWishCount> loadWishes(LocalDate businessDate, Long memberId) {
+        List<CategoryWishCount> wishes = swipeLogRepository.countWishesByCategory(
+                memberId, businessDate.minusDays(PREFERENCE_DAYS - 1), businessDate);
+        feedStateRepository.cacheWishes(businessDate, memberId, wishes);
+        return wishes;
     }
 
     /*
@@ -160,12 +178,10 @@ public class FeedService {
      * 소진액은 유효 노출 수 x 단가로 본다. 과금하지 않은 유효 노출(예산 초과, 그날 계획 없음)도 섞이지만 대부분 상한 근처와 자정 직후에만 생긴다.
      * 예약액을 아직 읽지 못한 후보가 있으면 null 을 돌려 예산 규칙을 건너뛴다(#307). 읽지 못한 횟수는 CandidateBudgetService 가 센다.
      */
-    private Map<Long, CampaignPacing> pacingFor(List<AdCandidate> rows, LocalDate businessDate, ZonedDateTime servedAt) {
+    private Map<Long, CampaignPacing> pacingFor(List<AdCandidate> rows, Map<Long, Long> validCounts, ZonedDateTime servedAt) {
         if (rows.stream().anyMatch(row -> row.getReservedAmount() == null)) {
             return null;
         }
-        Map<Long, Long> validCounts = impressionCountRepository.findValidCounts(businessDate,
-                rows.stream().map(AdCandidate::getCampaignId).toList());
         LocalTime at = servedAt.toLocalTime();
         Map<Long, CampaignPacing> pacing = new HashMap<>();
         for (AdCandidate row : rows) {

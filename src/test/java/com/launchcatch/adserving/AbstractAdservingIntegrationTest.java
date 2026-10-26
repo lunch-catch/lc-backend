@@ -14,6 +14,7 @@ import com.launchcatch.store.contract.StoreQueryService;
 import java.time.Clock;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -70,6 +71,13 @@ abstract class AbstractAdservingIntegrationTest extends IntegrationTestSupport {
     void clearMemoryCaches() {
         ReflectionTestUtils.setField(candidateCache, "snapshot", null);
         ((Map<?, ?>) ReflectionTestUtils.getField(memberInfoCache, "entries")).clear();
+        // 필터와 30일 찜의 캐시도 비운다. 테스트가 DB 에 바로 넣은 필터와 스와이프를 피드가 읽게 한다
+        for (String pattern : List.of("adserving:feedFilter:*", "adserving:feedWishes:*")) {
+            Set<String> cached = redisTemplate.keys(pattern);
+            if (cached != null && !cached.isEmpty()) {
+                redisTemplate.delete(cached);
+            }
+        }
     }
 
     /*

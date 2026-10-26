@@ -13,7 +13,6 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.io.ClassPathResource;
@@ -55,24 +54,6 @@ public class ServeFrequencyRepository {
 
     static String sessionKey(Long memberId) {
         return SESSION_KEY_PREFIX + memberId;
-    }
-
-    // Valkey 가 멈추면 빈 이력으로 통과시킨다. 같은 카드가 더 나올 뿐 과금과 권한은 바뀌지 않는다.
-    public ServedHistory findHistory(LocalDate businessDate, Long memberId) {
-        try {
-            Map<Object, Object> daily = redisTemplate.opsForHash().entries(dailyKey(businessDate, memberId));
-            Set<String> session = redisTemplate.opsForSet().members(sessionKey(memberId));
-            return new ServedHistory(
-                    daily.entrySet().stream().collect(Collectors.toUnmodifiableMap(
-                            e -> Long.valueOf((String) e.getKey()), e -> Integer.valueOf((String) e.getValue()))),
-                    session == null ? Set.of()
-                            : session.stream().map(Long::valueOf).collect(Collectors.toUnmodifiableSet()));
-        } catch (DataAccessException e) {
-            log.warn("event=ADSERVING_FEED_SERVE_FREQUENCY_READ_FAILED memberId={} reason={} fallback=EMPTY_HISTORY",
-                    memberId, RedisFailureClassifier.causeLabel(e), e);
-            meterRegistry.counter(BYPASS_METRIC, "use", "serve_frequency").increment();
-            return new ServedHistory(Map.of(), Set.of());
-        }
     }
 
     // 응답할 카드의 캠페인을 올리고 세션을 늘린다. 실패해도 피드는 나간다. 다음 요청에서 같은 카드가 더 나올 수 있다.

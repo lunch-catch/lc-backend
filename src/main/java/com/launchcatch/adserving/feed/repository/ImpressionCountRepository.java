@@ -6,9 +6,7 @@ import com.launchcatch.auth.RedisFailureClassifier;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.time.Duration;
 import java.time.LocalDate;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.io.ClassPathResource;
@@ -40,33 +38,6 @@ public class ImpressionCountRepository {
 
     static String key(LocalDate businessDate) {
         return KEY_PREFIX + businessDate;
-    }
-
-    /*
-     * 넘긴 캠페인의 그날 유효 노출 수를 한 번에 읽는다. 기록이 없는 캠페인은 결과에서 빠지고 0 으로 본다.
-     * Valkey 가 멈추면 모두 0 으로 보고 통과시킨다. 상한을 넘긴 노출은 과금되지 않아 손해는 플랫폼에 남는다.
-     */
-    public Map<Long, Long> findValidCounts(LocalDate businessDate, List<Long> campaignIds) {
-        if (campaignIds.isEmpty()) {
-            return Map.of();
-        }
-        try {
-            List<Object> values = redisTemplate.opsForHash()
-                    .multiGet(key(businessDate), campaignIds.stream().<Object>map(String::valueOf).toList());
-            Map<Long, Long> counts = new HashMap<>();
-            for (int i = 0; i < campaignIds.size(); i++) {
-                if (values.get(i) != null) {
-                    counts.put(campaignIds.get(i), Long.valueOf((String) values.get(i)));
-                }
-            }
-            return counts;
-        } catch (DataAccessException e) {
-            // 원인이 캠페인이 아니라 Valkey 라 ID 대신 개수만 남겨 장애 중 로그가 후보 수만큼 길어지지 않게 한다(#778)
-            log.warn("event=ADSERVING_FEED_IMPRESSION_COUNT_FAILED businessDate={} campaignCount={} reason={} fallback=ZERO_COUNT",
-                    businessDate, campaignIds.size(), RedisFailureClassifier.causeLabel(e), e);
-            meterRegistry.counter(BYPASS_METRIC, "use", "impression_count").increment();
-            return Map.of();
-        }
     }
 
     /*
