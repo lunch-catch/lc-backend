@@ -63,16 +63,17 @@ public class BillingStatsQueryServiceImpl implements BillingStatsQueryService {
     public List<CampaignBillingCount> billingCounts(LocalDate businessDate) {
         Map<Long, long[]> counts = new LinkedHashMap<>();
         for (DeductionCountRow row : deductionResultRepository.countByStatusOn(businessDate)) {
-            long[] byStatus = counts.computeIfAbsent(row.campaignId(), id -> new long[4]);
+            long[] byStatus = counts.computeIfAbsent(row.campaignId(), id -> new long[5]);
             switch (row.status()) {
                 case BILLED -> byStatus[0] += row.count();
                 case NOT_BILLED_BUDGET -> byStatus[1] += row.count();
                 case NOT_BILLED_PAUSED -> byStatus[2] += row.count();
                 case NOT_BILLED_NO_PLAN -> byStatus[3] += row.count();
+                case NOT_BILLED_CLOSED -> byStatus[4] += row.count();
             }
         }
         List<CampaignBillingCount> result = new ArrayList<>(counts.size());
-        counts.forEach((campaignId, c) -> result.add(new CampaignBillingCount(campaignId, c[0], c[1], c[2], c[3])));
+        counts.forEach((campaignId, c) -> result.add(new CampaignBillingCount(campaignId, c[0], c[1], c[2], c[3], c[4])));
         return result;
     }
 

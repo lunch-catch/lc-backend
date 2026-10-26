@@ -10,6 +10,7 @@ import com.launchcatch.analytics.event.EventType;
 import com.launchcatch.analytics.event.EventWriteResult;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Instant;
+import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.CountDownLatch;
@@ -39,6 +40,16 @@ class FunnelEventRecorderTest {
 
     private double count(String result) {
         return registry.counter("analytics_funnel_event_total", "result", result).count();
+    }
+
+    @Test
+    void 기록_전에도_결과_라벨마다_카운터가_0으로_있다() {
+        new FunnelEventRecorder(writer, registry, CALLER);
+
+        for (String result : List.of("recorded", "duplicate", "rejected", "failed")) {
+            assertThat(registry.get("analytics_funnel_event_total").tag("result", result).counter().count())
+                    .isZero();
+        }
     }
 
     @Test

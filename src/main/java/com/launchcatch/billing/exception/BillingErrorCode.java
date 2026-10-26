@@ -6,7 +6,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 
 /*
- * 정산 도메인의 오류 코드다. api 명세서의 billing.md 가 이 목록을 소유한다.
+ * 정산 도메인의 오류 코드다. docs/api-spec/billing-api-spec.md 가 이 목록을 소유한다.
  *
  * 번호는 1부터 끊기지 않아야 한다. ErrorCodeCatalogTest 의 번호_연속 이 접두어마다 그것을
  * 검사하므로, 중간을 비우고 뒤 번호를 먼저 쓰면 빌드가 떨어진다.

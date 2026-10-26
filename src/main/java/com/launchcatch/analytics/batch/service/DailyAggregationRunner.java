@@ -102,6 +102,7 @@ public class DailyAggregationRunner {
      * 01:00 작업이 부른다. 날짜마다 따로 돌고 한 날짜의 실패가 다른 날짜를 멈추지 않는다.
      */
     public Map<LocalDate, AggregationOutcome> runAll() {
+        metrics.resetViolations();
         Map<LocalDate, AggregationOutcome> outcomes = new LinkedHashMap<>();
         for (LocalDate date : targetDates(LocalDate.now(clock))) {
             outcomes.put(date, runGuarded(date));
@@ -154,7 +155,7 @@ public class DailyAggregationRunner {
             metrics.countResult("busy");
             return AggregationOutcome.BUSY;
         }
-        return aggregate(date, acquired.get().attemptNo());
+        return aggregateDate(date, acquired.get().attemptNo());
     }
 
     /*
@@ -189,10 +190,19 @@ public class DailyAggregationRunner {
     }
 
     /*
-     * 잡은 날짜를 그 시도의 세대로 집계한다. 일시적 오류만 다시 하고 그 밖의 오류는 바로 FAILED 로
-     * 닫는다. 수동 재계산과 이어받기(DailyAggregationJob.run)도 이 메서드를 부른다.
+     * 수동 재계산과 이어받기(DailyAggregationJob.run)가 날짜 하나만 집계할 때 부른다.
+     * 그 날짜 하나가 한 실행이라 정합성 위반 수를 먼저 0 으로 되돌린다.
      */
     public AggregationOutcome aggregate(LocalDate date, int attemptNo) {
+        metrics.resetViolations();
+        return aggregateDate(date, attemptNo);
+    }
+
+    /*
+     * 잡은 날짜를 그 시도의 세대로 집계한다. 일시적 오류만 다시 하고 그 밖의 오류는 바로 FAILED 로
+     * 닫는다.
+     */
+    private AggregationOutcome aggregateDate(LocalDate date, int attemptNo) {
         try {
             for (int attempt = 1; ; attempt++) {
                 try {

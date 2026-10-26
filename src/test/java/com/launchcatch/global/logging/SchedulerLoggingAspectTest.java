@@ -72,6 +72,14 @@ class SchedulerLoggingAspectTest {
 
         public void unscheduled() {
         }
+
+        @QuietSchedulerLog
+        @Scheduled(fixedDelay = 1000)
+        public void quiet() {
+            if (failure != null) {
+                throw failure;
+            }
+        }
     }
 
     private final SimpleMeterRegistry registry = new SimpleMeterRegistry();
@@ -160,6 +168,31 @@ class SchedulerLoggingAspectTest {
 
         // then
         assertThat(messages().get(1)).contains("durationMs=3000");
+    }
+
+    @Test
+    void 조용한_작업은_시작과_종료를_DEBUG로_남긴다() {
+        // given
+        logs.level(Level.DEBUG);
+
+        // when
+        job.quiet();
+
+        // then
+        assertThat(logs.events()).extracting(ILoggingEvent::getLevel).containsExactly(Level.DEBUG, Level.DEBUG);
+        assertThat(messages().get(0)).startsWith("event=SCHEDULER_START job=").contains("quiet()");
+    }
+
+    @Test
+    void 조용한_작업도_실패는_ERROR로_남긴다() {
+        // given
+        target.failure = new IllegalStateException("boom");
+
+        // when
+        assertThatThrownBy(() -> job.quiet()).isInstanceOf(IllegalStateException.class);
+
+        // then
+        assertThat(logs.events()).extracting(ILoggingEvent::getLevel).containsExactly(Level.ERROR);
     }
 
     @Test

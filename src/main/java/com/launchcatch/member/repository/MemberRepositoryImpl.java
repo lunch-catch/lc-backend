@@ -89,7 +89,6 @@ class MemberRepositoryImpl implements MemberRepositoryCustom {
         return condition.createdBefore() == null ? null : member.createdAt.lt(condition.createdBefore());
     }
 
-    // TODO: 완전 부분 검색 구현을 위해 Full-Text, ngram, 검색 엔진 등 대체 방법을 검토한다.
     private BooleanExpression nicknameStartsWith(MemberSearchCondition condition) {
         if (condition.nicknamePrefix() == null) {
             return null;

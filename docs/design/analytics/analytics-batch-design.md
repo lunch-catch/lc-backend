@@ -50,9 +50,8 @@ Spring Batch는 사용하지 않는다. 각 단계는 평범한 서비스이고 
 
 `DailyAggregationJob`은 `StandaloneJob`으로도 등록한다. ops의 이어받기와 관리자 수동 재실행(`POST /v1/admin/batch-executions/DAILY_AGGREGATION/{영업일}:retry`)이 넘겨준 날짜와 세대로 그 날짜만 `aggregate`한다. 날짜를 다시 잡지 않고 01:00 전체 실행(`runAll`)도 부르지 않는다. 원천 해제 성공 확인은 수동 재집계와 같이 거치지 않는다.
 
-* 집계가 실행 행을 처리 건수와 함께 먼저 닫는다. 이어서 ops가 부르는 건수 없는 `succeed`는 행이 이미 `RUNNING`이 아니라서 무시된다. 이벤트 로그 보존 삭제와 같은 임시 처리이고 `#559`, `#560`이 정리한다.
-* 실행권을 잃어도 `run`은 예외를 던지지 않는다. 던지면 ops가 소유자 조건만으로 `fail`을 불러 같은 서버가 잡은 새 세대의 행을 실패로 닫는다.
-* 던지지 않아도 이어지는 ops의 `succeed`가 같은 서버의 새 세대 행을 닫는 틈은 남는다. ops가 세대로 닫아야 막히고 `#591`이 맡는다.
+* 집계가 실행 행을 처리 건수와 함께 먼저 닫는다. 이어서 ops가 부르는 건수 없는 `succeed`는 행이 이미 `RUNNING`이 아니라서 무시된다.
+* 실행권을 잃어도 `run`은 예외를 던지지 않는다. ops는 넘겨준 실행 세대(`attemptNo`)를 조건으로 행을 닫으므로 같은 서버가 잡은 새 세대의 행은 바뀌지 않는다(#591).
 
 ### 단계 구성
 
@@ -107,7 +106,7 @@ billing은 `BillingStatsQueryService`를 공개했고 `SettlementMetricsStep`과
 | `ledgerSums(영업일)` | 점주와 캠페인별 `CHARGE`, `RESERVE`, `DEDUCT`, `RELEASE`, `REFUND`와 양수·음수 `ADJUST` 합 | `CampaignReportStep` |
 | | | `SettlementConsistencyStep` |
 | | | `SettlementMetricsStep` |
-| `billingCounts(영업일)` | 캠페인별 `BILLED`, `NOT_BILLED_BUDGET`, `NOT_BILLED_PAUSED`, `NOT_BILLED_NO_PLAN` 건수 | `CampaignReportStep` |
+| `billingCounts(영업일)` | 캠페인별 `BILLED`, `NOT_BILLED_BUDGET`, `NOT_BILLED_PAUSED`, `NOT_BILLED_NO_PLAN`, `NOT_BILLED_CLOSED` 건수 | `CampaignReportStep` |
 | | | `NotBilledMetricsStep` |
 | `dailyBudgets(영업일)` | 캠페인별 그날 적용 하루 예산과 단가 | `CampaignReportStep` |
 | `dailyTotals(영업일)` | 그날 말 미소진 잔액, 원장 대조용 합계, 원장 불일치 건수 | `SettlementMetricsStep`은 미소진 잔액을 쓴다. 나머지 필드는 현재 단계에서 검증에 사용하지 않으며 A-07 응답에도 없다 |
@@ -117,6 +116,18 @@ billing은 `BillingStatsQueryService`를 공개했고 `SettlementMetricsStep`과
 - `correctionTargetDates`는 그날 집계 뒤에 과거 영업일을 다시 집계할 날짜를 찾는 입력이다. 반환된 날짜를 `aggregation_pending_date`에 `ADJUSTED`로 남겨 다음 실행이 다시 집계하게 한다. 기록 영업일과 같은 날짜가 섞여 올 수 있어 같은 날은 거른다.
 - 정정은 영업일 합계에서는 정정 대상 영업일에, 미소진 잔액과 `dailyTotals.ledgerSum`에서는 기록한 날에 들어간다. 그래서 기록한 날의 `ledgerSum`과 대상 영업일의 `ledgerSums`는 서로 다른 몫이다.
 - 끝나지 않은 영업일을 넘겨도 billing은 막지 않고 그 시점까지 기록된 값을 돌려준다.
+
+### 늦게 기록된 마감 미과금
+
+정산은 노출 영업일 D 의 다음 날 00:00 뒤에 처음 처리하는 노출을 `NOT_BILLED_CLOSED`로 남긴다. 그래서 D 의 마감 미과금은 D+1 01:00 집계가 끝난 뒤에도 늘 수 있다. 정산의 예약 해제를 릴레이가 끝날 때까지 미루지 않는다(#1014).
+
+| 기록된 때 | 반영 |
+|---|---|
+| D+1 01:00 전 | D+1 01:00 의 전일 집계가 담는다 |
+| D+1 01:00 ~ D+2 01:00 | D+2 01:00 의 전전일 재집계가 담는다. 확정된 리포트의 유효, 미과금 노출이 바뀌어 `LATE_EVENT` 변경 이력이 남는다 |
+| D+2 01:00 뒤 | 정기 실행은 다시 보지 않는다. 관리자 수동 재집계(A-05)나 ops 재실행으로 반영한다 |
+
+마감 미과금은 과금하지 않으므로 과금 노출과 소진액은 바뀌지 않는다. 바뀌는 것은 유효 노출과 미과금 노출, 사유별 건수다.
 
 ### 공개 규칙
 

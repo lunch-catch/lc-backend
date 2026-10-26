@@ -19,7 +19,7 @@ import org.springframework.stereotype.Component;
  * 회원 사용 통계(A-12)의 일별 값을 모아 daily_member_usage 의 그날 행으로 교체한다.
  *
  * 사용 수와 할인액은 쿠폰의 확정 기록(dailyMemberStats)에서 오고 redeem 이벤트로 세지 않는다. 찜 수는
- * 쿠폰 계약의 값을 쓰지 않고 분석 자기 event_log 의 wish 행을 센다(AD-31). 두 원천을 member_id 로 합쳐
+ * 쿠폰 계약의 값을 쓰지 않고 분석 자기 event_log 의 wish 행을 센다. 두 원천을 member_id 로 합쳐
  * 사용도 찜도 없는 회원은 행을 쓰지 않는다.
  */
 @Component

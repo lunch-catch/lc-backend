@@ -1,6 +1,7 @@
 package com.launchcatch.billing.repository;
 
 import com.launchcatch.billing.entity.MismatchCheckType;
+import com.launchcatch.billing.entity.MismatchResolutionType;
 import com.launchcatch.billing.entity.SettlementMismatch;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -61,26 +62,26 @@ public interface SettlementMismatchRepository extends JpaRepository<SettlementMi
                                        Pageable pageable);
 
     /*
-     * 아직 열린 건을 관리자의 과과금 정정으로 닫는다. 영향 행 수를 돌려준다.
-     * 0 이면 그사이 다른 경로(대사 배치나 다른 조정)가 먼저 닫은 것이다.
+     * 아직 열린 건을 관리자가 고른 방법으로 닫는다. 영향 행 수를 돌려준다.
+     * 0 이면 건이 없거나 그사이 다른 경로(대사 배치, 다른 조정, 조정 없는 종결)가 먼저 닫은 것이다.
      */
     @Modifying
     @Query("""
             update SettlementMismatch m
-               set m.resolutionType = com.launchcatch.billing.entity.MismatchResolutionType.OVERCHARGE_REVERSAL,
+               set m.resolutionType = :type,
                    m.resolvedAt = :now,
                    m.resolvedBy = :adminId,
                    m.updatedAt = :now
              where m.id = :id
                and m.resolutionType is null
             """)
-    int resolveAsOverchargeReversal(@Param("id") Long id, @Param("adminId") Long adminId,
-                                    @Param("now") LocalDateTime now);
+    int resolveByAdmin(@Param("id") Long id, @Param("type") MismatchResolutionType type,
+                       @Param("adminId") Long adminId, @Param("now") LocalDateTime now);
 
     /*
      * 캠페인 소진 대사의 불일치 한 건을 기록한다. 같은 (check_type, target_id, business_date) 가 이미 있으면 그대로 둔다.
      * 같은 날을 다시 대조해도 행은 하나로 남는다(uk_settlement_mismatch_check_target_date).
-     * INSERT IGNORE 는 쓰지 않는다. CHECK 위반까지 경고로 낮추고 행을 조용히 버린다(구현 계획 D-5).
+     * INSERT IGNORE 는 쓰지 않는다. CHECK 위반까지 경고로 낮추고 행을 조용히 버린다.
      */
     @Modifying
     @Query(value = """
@@ -123,9 +124,9 @@ public interface SettlementMismatchRepository extends JpaRepository<SettlementMi
     // 영업일이 그날인 불일치 건수다. 해결 여부는 가리지 않는다
     long countByBusinessDate(LocalDate businessDate);
     /*
-     * PG_VS_CHARGE 대사(13번)의 미해결 불일치 한 건을 기록한다. 대상 ID 는 결제 ID 다.
+     * PG_VS_CHARGE 대사의 미해결 불일치 한 건을 기록한다. 대상 ID 는 결제 ID 다.
      * 같은 (check_type, target_id, business_date) 가 이미 있으면 그대로 둔다. INSERT IGNORE 는
-     * 쓰지 않는다. CHECK 위반까지 경고로 낮추고 행을 조용히 버린다(구현 계획 D-5).
+     * 쓰지 않는다. CHECK 위반까지 경고로 낮추고 행을 조용히 버린다.
      */
     @Modifying
     @Query(value = """
@@ -146,7 +147,7 @@ public interface SettlementMismatchRepository extends JpaRepository<SettlementMi
 
     /*
      * PG_VS_CHARGE 대사가 빠진 CHARGE 를 보정한 뒤, 그 불일치를 LEDGER_CORRECTION 으로 닫힌 채
-     * 기록한다. 해결자는 NULL 이다(배치가 자동으로 닫은 건, D-3). 같은 (check_type, target_id,
+     * 기록한다. 해결자는 NULL 이다(배치가 자동으로 닫은 건). 같은 (check_type, target_id,
      * business_date) 가 이미 있으면 그대로 둔다.
      */
     @Modifying

@@ -23,7 +23,7 @@ import org.springframework.transaction.annotation.Transactional;
  * 관리자의 포인트 정책 조회와 저장이다.
  *
  * 정책은 적용일이 UNIQUE 인 이력형이고 저장은 항상 내일 적용분이다. 오늘과 내일은 서버 시계(Asia/Seoul)로 정한다.
- * 같은 날 다시 저장하면 내일 행을 덮어쓴다. 지우고 넣지 않고 한 문장 upsert 로 쓴다(구현 계획 G-7).
+ * 같은 날 다시 저장하면 내일 행을 덮어쓴다. 지우고 넣지 않고 한 문장 upsert 로 쓴다.
  * 변경 전 값은 잠그지 않고 읽는다. 내일 행이 없을 때 FOR UPDATE 로 읽으면 동시 저장 둘이 간격 잠금을 함께 잡고 교착한다.
  */
 @Service
@@ -49,7 +49,7 @@ public class AdminPointPolicyService {
         return new AdminPointPolicyResponse(current, next);
     }
 
-    // 관리자 표 목록이라 페이지 번호 방식이고 적용일 내림차순으로 고정한다(구현 계획 G-1)
+    // 관리자 표 목록이라 페이지 번호 방식이고 적용일 내림차순으로 고정한다
     public PageResponse<AdminPointPolicyItem> history(int page, int size) {
         if (page < 0) {
             throw new BillingException(CommonErrorCode.INVALID_INPUT);

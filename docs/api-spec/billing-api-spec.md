@@ -47,10 +47,11 @@
 | `PUT` | `/v1/admin/point-policy/next` | 내일 00:00 적용 정책 저장 | FR-018 |
 | `POST` | `/v1/admin/point-adjustments` | 포인트 수동 조정 | FR-101 |
 | `GET` | `/v1/admin/settlement-mismatches` | 정산 대사 불일치 조회 | FR-019, FR-021 |
+| `POST` | `/v1/admin/settlement-mismatches/{mismatchId}:closeWithoutAdjustment` | 정산 대사 불일치 조정 없이 종결 | FR-019, FR-021 |
 
 관리자 API의 처리자는 요청 본문이 아니라 **토큰의 주체**에서 가져오고, 모두 운영 도메인의 감사 로그에 남는다.
 
-`POST /v1/admin/point-adjustments`와 `GET /v1/admin/settlement-mismatches`는 명세에 전용 행이 없다. 전자는 FR-101(감사 로그)이 "포인트 조정"을 기록 대상으로 적고 `ADJUST`가 과오 차감 정정의 유일한 경로여서 두고, 후자는 FR-019, FR-021이 "불일치를 검출해 기록하고 매출 현황에 반영"을 요구해 **개별 건을 보는 화면**으로 둔다.
+`POST /v1/admin/point-adjustments`와 `GET /v1/admin/settlement-mismatches`, 조정 없는 종결은 명세에 전용 행이 없다. 첫째는 FR-101(감사 로그)이 "포인트 조정"을 기록 대상으로 적고 `ADJUST`가 과오 차감 정정의 유일한 경로여서 둔다. 둘째는 FR-019, FR-021이 "불일치를 검출해 기록하고 매출 현황에 반영"을 요구해 **개별 건을 보는 화면**으로 둔다. 셋째는 금액을 바로잡을 필요가 없는 건을 그 화면에서 닫으려고 둔다.
 
 ---
 
@@ -359,7 +360,7 @@ GET /v1/owner/points/spend-summary?groupBy=DAY&from=2026-09-24&to=2026-09-30&cam
 
 `spentPoint`는 그 캠페인·영업일의 `DEDUCT` 합 절댓값, `reservedPoint`는 같은 날 `RESERVE` 합이다. 집계 테이블이 아니라 원장에서 계산하므로 `from`~`to`는 **최대 31일**로 제한한다.
 
-`spentPoint`는 그날 예산에서 집행된 금액이고 과오 차감 정정(양수 `ADJUST`)을 빼지 않는다. 정정은 그날 예산이 아니라 점주 잔액으로 돌아가기 때문이다. 정정을 뺀 광고 비용은 `analytics-api-spec.md` 캠페인 리포트의 `spentAmount`(= `chargedAmount − refundedAmount`)다. 그래서 같은 캠페인·날짜라도 정정이 있으면 두 값이 정정액만큼 다르다. 화면은 이 값을 "집행액", 리포트 값을 "광고 비용"처럼 다른 이름으로 보여 준다. 두 값을 한 화면에서 함께 보여 줘야 하면 이 응답에 정정액 필드를 더하는 것을 별도 이슈로 다룬다(구현 계획 G-8).
+`spentPoint`는 그날 예산에서 집행된 금액이고 과오 차감 정정(양수 `ADJUST`)을 빼지 않는다. 정정은 그날 예산이 아니라 점주 잔액으로 돌아가기 때문이다. 정정을 뺀 광고 비용은 `analytics-api-spec.md` 캠페인 리포트의 `spentAmount`(= `chargedAmount − refundedAmount`)다. 그래서 같은 캠페인·날짜라도 정정이 있으면 두 값이 정정액만큼 다르다. 화면은 이 값을 "집행액", 리포트 값을 "광고 비용"처럼 다른 이름으로 보여 준다.
 
 ---
 
@@ -716,6 +717,16 @@ GET /v1/admin/point-policy/history?page=0&size=20
 
 그래서 양수 조정은 모두 과오 차감 정정으로 보고 소진액에서 뺀다(점주별 합계의 `spentAmount`, `analytics-api-spec.md` A-07). 보상 지급처럼 정정이 아닌 양수 조정은 지원하지 않는다. 그런 용도가 생기면 원장에 조정 종류를 저장하는 변경이 먼저 필요하다.
 
+대사 불일치 건의 금액을 바로잡을 때도 이 경로를 쓴다. 그 건을 `mismatchId`로 넘기면 조정과 함께 그 건이 `MANUAL_ADJUSTMENT`로 닫힌다. 받는 조정액은 건의 종류마다 다르다.
+
+| 대사 건 | 받는 조정액 |
+| --- | --- |
+| `PG_VS_CHARGE` | `expectedValue`(PG가 승인한 금액)에서 그 결제가 `ownerId`에게 남긴 `CHARGE` 금액(없으면 0)을 뺀 값과 같아야 한다. 승인되지 않은 결제의 `CHARGE`는 음수로 회수한다. 캠페인과 무관한 돈이라 `campaignId`를 보낼 수 없다 |
+| `CAMPAIGN_OVERSPEND` | 0보다 크고 그 건의 초과액(`actualValue - expectedValue`) 이하여야 한다. 초과액을 전부 돌려줄지는 정책이라 일치를 요구하지 않는다. 덜 걷은 광고비는 회수하지 않아 음수는 받지 않는다 |
+| `CAMPAIGN_SPEND_VS_LEDGER` | 받지 않는다. 원장과 카운터의 차이는 어느 방향이든 정정액이 아니다. [조정 없는 종결](#post-v1adminsettlement-mismatchesmismatchidclosewithoutadjustment)로 닫는다 |
+
+`diff`는 조정액이 아니다. 화면은 `diff`를 금액 칸에 미리 채우지 않는다.
+
 ### 요청
 
 ```json
@@ -732,9 +743,9 @@ GET /v1/admin/point-policy/history?page=0&size=20
 | `ownerId` | 예 | 점주. 없는 점주면 `404 BILLING-019`다. 점주 도메인의 상태 조회로 확인한다 | `point_ledger.owner_id` |
 | `amount` | 예 | 0이 아닌 정수. 양수면 잔액 증가 | `point_ledger.amount` |
 | `reason` | 예 | 사유. 비어 있으면 `400`(DB CHECK로도 막는다) | `point_ledger.reason` |
-| `campaignId` | 아니오 | 어느 캠페인의 정정인지 남긴다. 정산 안의 계산(00:00 해제, 대사, 진행률, 점주 소진 요약)에는 넣지 않고, `analytics-api-spec.md` 캠페인 리포트의 `refundedAmount`에는 들어간다. `mismatchId`가 캠페인 대상 건(`CAMPAIGN_SPEND_VS_LEDGER`, `CAMPAIGN_OVERSPEND`)이면 **필수**이고 그 건의 대상 캠페인과 같아야 한다. `PG_VS_CHARGE` 건이거나 `mismatchId`가 없으면 선택이다. 보내면 `targetBusinessDate`도 보내야 한다 | `point_ledger.campaign_id` |
+| `campaignId` | 아니오 | 어느 캠페인의 정정인지 남긴다. 정산 안의 계산(00:00 해제, 대사, 진행률, 점주 소진 요약)에는 넣지 않고, `analytics-api-spec.md` 캠페인 리포트의 `refundedAmount`에는 들어간다. `mismatchId`가 `CAMPAIGN_OVERSPEND` 건이면 **필수**이고 그 건의 대상 캠페인과 같아야 한다. `PG_VS_CHARGE` 건이면 보낼 수 없고 `mismatchId`가 없으면 선택이다. 보내면 `targetBusinessDate`도 보내야 한다 | `point_ledger.campaign_id` |
 | `targetBusinessDate` | 조건부 | 정정이 가리키는 원래 영업일(`YYYY-MM-DD`). `campaignId`를 보내면 **필수**이고 보내지 않으면 보낼 수 없다. 오늘(KST) 이후면 `400`. 캠페인 대상 대사 건을 닫을 때는 그 건의 `businessDate`와 같아야 한다. 분석의 소진액(`DEDUCT` 합 − 양수 `ADJUST` 합)에서 이 정정은 기록한 날이 아니라 이 영업일에 붙는다. 과거 하한과 그 영업일의 예산 계획 존재는 검사하지 않는다 | `point_ledger.adjust_target_date` |
-| `mismatchId` | 아니오 | 대사 불일치 건. 있으면 그 건의 `resolution_type`을 `OVERCHARGE_REVERSAL`로 닫는다. 그 건이 `ownerId`의 것인지 확인한다. `PG_VS_CHARGE`는 대상 결제의 점주, `CAMPAIGN_SPEND_VS_LEDGER`는 대상 캠페인의 점주와 견준다. 없으면 `404 BILLING-020`, 이미 해결됐으면 `409 BILLING-021`, 다른 점주의 건이면 `409 BILLING-022`다 | 원장에 저장하지 않는다. 감사 로그에 남긴다 |
+| `mismatchId` | 아니오 | 대사 불일치 건. 있으면 그 건의 `resolution_type`을 `MANUAL_ADJUSTMENT`로 닫는다. 그 건이 `ownerId`의 것인지 확인한다. `PG_VS_CHARGE`는 대상 결제의 점주, 캠페인 대상 건은 대상 캠페인의 점주와 견준다. 조정액은 위 표를 따라야 한다. 없으면 `404 BILLING-020`, 이미 해결됐으면 `409 BILLING-021`, 다른 점주의 건이면 `409 BILLING-022`다 | 원장에 저장하지 않는다. 감사 로그에 남긴다 |
 
 ### 멱등
 
@@ -759,7 +770,7 @@ GET /v1/admin/point-policy/history?page=0&size=20
 
 | 응답 | 코드 | 언제 |
 | --- | --- | --- |
-| `400` | `COMMON-002` | `requestId`·`ownerId`·`amount`·`reason`이 없거나, `amount`가 0이거나, `reason`이 255자를 넘거나, `mismatchId`가 있는데 `amount`가 음수임(과오 차감 정정은 양수다), 또는 캠페인 대상 대사 건(`CAMPAIGN_SPEND_VS_LEDGER`, `CAMPAIGN_OVERSPEND`)인데 `campaignId`가 없거나 대상 캠페인과 다름, `campaignId`와 `targetBusinessDate`의 짝이 맞지 않음, `targetBusinessDate`가 오늘(KST) 이후임, 캠페인 대사 건인데 `targetBusinessDate`가 그 건의 `businessDate`와 다름 |
+| `400` | `COMMON-002` | `requestId`·`ownerId`·`amount`·`reason`이 없거나, `amount`가 0이거나, `reason`이 255자를 넘거나, `amount`가 그 대사 건이 받는 조정액이 아님, `CAMPAIGN_SPEND_VS_LEDGER` 건에 조정을 연결함, `PG_VS_CHARGE` 건인데 `campaignId`가 있음, 또는 `CAMPAIGN_OVERSPEND` 건인데 `campaignId`가 없거나 대상 캠페인과 다름, `campaignId`와 `targetBusinessDate`의 짝이 맞지 않음, `targetBusinessDate`가 오늘(KST) 이후임, 캠페인 대사 건인데 `targetBusinessDate`가 그 건의 `businessDate`와 다름 |
 | `404` | `BILLING-019` | 점주를 찾을 수 없음 |
 | `404` | `BILLING-020` | 대사 불일치 건을 찾을 수 없음 |
 | `409` | `BILLING-016` | 조정 후 잔액이 음수가 됨 |
@@ -786,7 +797,7 @@ GET /v1/admin/settlement-mismatches?checkType=&resolved=false&from=&to=&page=0&s
 
 ```json
 {
-  "mismatchId": 55, "checkType": "CAMPAIGN_SPEND_VS_LEDGER", "targetId": 12,
+  "mismatchId": 55, "checkType": "CAMPAIGN_SPEND_VS_LEDGER", "targetId": 12, "ownerId": 7,
   "businessDate": "2026-10-01", "expectedValue": 9800, "actualValue": 9790, "diff": -10,
   "resolutionType": null, "createdAt": "2026-10-01T13:35:00+09:00", "jobExecutionId": 301,
   "resolvedAt": null, "resolvedBy": null
@@ -795,10 +806,53 @@ GET /v1/admin/settlement-mismatches?checkType=&resolved=false&from=&to=&page=0&s
 
 - `checkType`은 `PG_VS_CHARGE` / `CAMPAIGN_SPEND_VS_LEDGER` / `CAMPAIGN_OVERSPEND` 3종이다. `CAMPAIGN_OVERSPEND`는 캠페인의 그날 원장 `DEDUCT` 합이 그날 예약액을 넘은 건이고 `targetId`는 캠페인 ID, `expectedValue`는 예약액, `actualValue`는 `DEDUCT` 합이다. V5. 해제가 끝난 날은 `DEDUCT` 합과 `RELEASE` 합의 합이다.
 - `targetId`는 `checkType`에 따라 결제 ID 또는 캠페인 ID다. `diff`는 `actualValue - expectedValue`로 계산한다.
-- `resolved=false`는 `resolution_type`이 `NULL`인 미해결 건이다. `resolutionType`은 `CACHE_REBUILD` / `LEDGER_CORRECTION` / `OVERCHARGE_REVERSAL`이다.
-- 자동 복구(`CACHE_REBUILD`, `LEDGER_CORRECTION`)는 배치가 처리하므로 별도 해결 API를 두지 않는다. 사람이 처리하는 `OVERCHARGE_REVERSAL`은 포인트 수동 조정의 `mismatchId`로 닫는다.
+- `ownerId`는 `targetId`가 가리키는 결제나 캠페인의 점주 ID다. 포인트 수동 조정으로 그 건을 닫을 때 `ownerId`에 그대로 넣는다. 대상을 찾지 못하면 `null`이다.
+- `resolved=false`는 `resolution_type`이 `NULL`인 미해결 건이다. `resolutionType`은 아래 넷 중 하나다.
+
+| `resolutionType` | 닫은 주체 | 뜻 | `resolvedBy` |
+| --- | --- | --- | --- |
+| `CACHE_REBUILD` | 배치 | 카운터를 원장 기준으로 다시 만들었다 | `null` |
+| `LEDGER_CORRECTION` | 배치 | 빠진 `CHARGE`를 보정 기록했다 | `null` |
+| `MANUAL_ADJUSTMENT` | 관리자 | 포인트 수동 조정(양수나 음수)으로 금액을 바로잡았다. 포인트 수동 조정의 `mismatchId`로 닫는다 | 관리자 ID |
+| `NO_ADJUSTMENT_REQUIRED` | 관리자 | 원장을 바꾸지 않고 닫았다. 아래 조정 없는 종결로 닫는다 | 관리자 ID |
+
+- 예전 값 `OVERCHARGE_REVERSAL`은 내리지 않는다. 그 값으로 닫힌 건은 모두 양수 조정이라 `MANUAL_ADJUSTMENT`로 바꿔 내린다.
 
 관리자 화면이 매출 현황(`analytics-api-spec.md` A-07)과 함께 쓸 때, **불일치 건수는 이 API의 `totalElements`로 센다.** 분석 조회 API는 정산 테이블을 읽지 못하기 때문이다([도메인 구조와 의존성 설계](../architecture/런치캐치_도메인_구조와_의존성_설계.md)의 규칙 4).
+
+---
+
+## `POST /v1/admin/settlement-mismatches/{mismatchId}:closeWithoutAdjustment`
+
+금액을 바로잡을 필요가 없는 대사 불일치 건을 원장을 바꾸지 않고 `NO_ADJUSTMENT_REQUIRED`로 닫는다. 요청 본문은 없다. 사유는 받지 않고 처리한 관리자와 시각만 남긴다. 감사 로그에는 `SETTLEMENT_MISMATCH_CLOSE`로 남는다.
+
+| 대사 건 | 이 경로로 닫는 때 |
+| --- | --- |
+| `PG_VS_CHARGE` | 결제와 충전 원장을 확인해 잔액에 문제가 없거나 다른 조정으로 이미 바로잡았을 때 |
+| `CAMPAIGN_OVERSPEND` | 초과 차감이 정당한 과금으로 확인됐을 때 |
+| `CAMPAIGN_SPEND_VS_LEDGER` | 항상 이 경로로 닫는다. 카운터가 크면 원장은 정확하고 서빙이 일찍 멈춘 것이다. 원장이 크면 과금은 실제로 있었고, 예약액을 넘긴 몫은 같은 날의 `CAMPAIGN_OVERSPEND` 건으로 정정한다. 해제가 끝난 날의 초과 소진은 이틀 뒤 00:00 에 기록되므로 그 건을 확인한 뒤 닫는다 |
+
+같은 건을 포인트 수동 조정과 함께 닫으려 하면 먼저 처리된 쪽만 닫는다. 성공한 요청을 다시 보내면 `409 BILLING-021`이다.
+
+### 응답 `200`
+
+닫힌 건을 [목록의 항목](#get-v1adminsettlement-mismatches)과 같은 모양으로 돌려준다.
+
+```json
+{
+  "mismatchId": 55, "checkType": "CAMPAIGN_SPEND_VS_LEDGER", "targetId": 12, "ownerId": 7,
+  "businessDate": "2026-10-01", "expectedValue": 9800, "actualValue": 9790, "diff": -10,
+  "resolutionType": "NO_ADJUSTMENT_REQUIRED", "createdAt": "2026-10-02T00:05:00+09:00", "jobExecutionId": 301,
+  "resolvedAt": "2026-10-02T10:00:00+09:00", "resolvedBy": 2
+}
+```
+
+### 오류
+
+| 응답 | 코드 | 언제 |
+| --- | --- | --- |
+| `404` | `BILLING-020` | 대사 불일치 건을 찾을 수 없음 |
+| `409` | `BILLING-021` | 이미 해결된 대사 불일치 건 |
 
 ---
 

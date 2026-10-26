@@ -3,6 +3,7 @@ package com.launchcatch.analytics.batch.service;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Tags;
 import java.time.Duration;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
@@ -24,6 +25,10 @@ public class AggregationMetrics {
     public AggregationMetrics(MeterRegistry registry) {
         this.registry = registry;
         registry.gauge("analytics_aggregation_pending_dates", pendingDates);
+        // 첫 사건 전에도 시리즈가 있어야 increase() 가 첫 증가를 센다
+        for (String result : List.of("success", "failed", "busy", "lease_lost", "source_not_ready")) {
+            registry.counter("analytics_aggregation_total", "result", result);
+        }
     }
 
     public void recordStep(String step, Duration elapsed) {
@@ -42,8 +47,20 @@ public class AggregationMetrics {
         pendingDates.set(count);
     }
 
+    /*
+     * 한 실행 안에서는 날짜마다 찾은 위반 수 중 가장 큰 값을 남긴다.
+     * 덮어쓰면 앞 날짜의 위반이 뒤 날짜의 0 에 지워지고, 더하면 같은 날짜를 다시 시도할 때 두 번 센다.
+     */
     public void recordViolations(String check, long count) {
-        gauge(violations, "analytics_consistency_violations", "check", check).set(count);
+        gauge(violations, "analytics_consistency_violations", "check", check).accumulateAndGet(count, Math::max);
+    }
+
+    /*
+     * 집계 실행을 시작할 때 모든 검사의 위반 수를 0 으로 되돌린다.
+     * 되돌리지 않으면 위반을 찾은 서버에 다음 실행까지 지난 값이 남는다.
+     */
+    public void resetViolations() {
+        violations.values().forEach(holder -> holder.set(0));
     }
 
     private AtomicLong gauge(Map<String, AtomicLong> holders, String name, String tagKey, String tagValue) {

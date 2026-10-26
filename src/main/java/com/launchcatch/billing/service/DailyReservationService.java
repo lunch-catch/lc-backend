@@ -168,7 +168,7 @@ public class DailyReservationService {
 
     /*
      * 커밋된 그날 계획으로 당일 소진 해시를 만든다. 이미 있는 해시는 덮어쓰지 않는다.
-     * 실패해도 단계는 성공으로 둔다. 노출 차감과 진행률 조회가 해시가 없으면 계획 행으로 다시 만들기 때문이다(E-6).
+     * 실패해도 단계는 성공으로 둔다. 노출 차감과 진행률 조회가 해시가 없으면 계획 행으로 다시 만들기 때문이다.
      */
     private void mirror(LocalDate businessDate, List<Long> campaignIds) {
         for (int from = 0; from < campaignIds.size(); from += MIRROR_CHUNK) {

@@ -20,6 +20,7 @@ import com.launchcatch.member.repository.KakaoUnlinkFailureRepository;
 import com.launchcatch.member.repository.MemberProfileRepository;
 import com.launchcatch.member.repository.MemberRepository;
 import com.launchcatch.member.repository.MemberWithdrawalHistoryRepository;
+import jakarta.annotation.PostConstruct;
 import java.time.Clock;
 import java.time.LocalDateTime;
 import java.util.NoSuchElementException;
@@ -41,6 +42,12 @@ public class MemberWithdrawalService {
     private final KakaoUnlinkClient kakaoUnlinkClient;
     private final TransactionTemplate transactionTemplate;
     private final Clock clock;
+
+    // 첫 사건 전에도 시리즈가 있어야 increase() 가 첫 증가를 센다
+    @PostConstruct
+    void registerCounters() {
+        Metrics.counter("member.unlink.webhook.ambiguous");
+    }
 
     /*
      * 탈퇴하고 카카오 연결을 해제한다.

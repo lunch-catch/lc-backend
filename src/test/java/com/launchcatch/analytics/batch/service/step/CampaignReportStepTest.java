@@ -154,7 +154,7 @@ class CampaignReportStepTest {
 
     /*
      * 계약의 wishCount 는 31일만 보관하는 swipe_log 가 원천이라 31일이 지난 날짜를 다시 집계하면 0 이다.
-     * event_log 로 세야 재집계가 저장된 찜 수를 0 으로 덮지 않는다(AD-31).
+     * event_log 로 세야 재집계가 저장된 찜 수를 0 으로 덮지 않는다.
      */
     @Test
     void 찜_수는_계약의_wishCount_가_아니라_event_log_의_wish_로_센다() {
@@ -252,6 +252,59 @@ class CampaignReportStepTest {
         assertThat(row.validCount()).isEqualTo(102);
         assertThat(row.billableCount() + row.notBilledCount()).isEqualTo(row.validCount());
         verify(metrics).recordViolations("CAMPAIGN_REPORT_VALID_IMPRESSION", 1);
+    }
+
+    /*
+     * 마감 미과금은 영업일의 다음 날 00:00 뒤에 정산이 처리해 과금하지 않은 유효 노출이다.
+     * 광고 서빙의 유효 노출에는 들어 있으므로 미과금에 넣어야 유효 = 과금 + 미과금이 맞는다.
+     */
+    @Test
+    void 마감_미과금은_유효_노출과_미과금에_넣고_과금_노출과_소진액에는_넣지_않는다() {
+        noSources();
+        when(billing.ledgerSums(DAY)).thenReturn(List.of(ledger(CAMPAIGN, -200, 0)));
+        when(billing.billingCounts(DAY)).thenReturn(List.of(new CampaignBillingCount(CAMPAIGN, 100, 0, 0, 0, 5)));
+        when(adserving.campaignStats(DAY)).thenReturn(List.of(new CampaignImpressionStats(
+                CAMPAIGN, 105, 0, 0, 0, hourly(Map.of(23, 105L)), Map.of("ALLOCATION", 105L), 0)));
+        List<CampaignInfo> infos = List.of(campaign(CAMPAIGN, OWNER, STORE));
+        when(campaigns.findAllById(List.of(CAMPAIGN))).thenReturn(infos);
+
+        CampaignReport.Row row = only(step().collect(DAY));
+
+        assertThat(row.validCount()).isEqualTo(105);
+        assertThat(row.billableCount()).isEqualTo(100);
+        assertThat(row.notBilledCount()).isEqualTo(5);
+        assertThat(row.notBilledReasons()).containsExactlyInAnyOrderEntriesOf(Map.of(
+                NotBilledReason.NOT_BILLED_CLOSED, 5L));
+        assertThat(row.chargedAmount()).isEqualTo(200);
+        assertThat(row.spentAmount()).isEqualTo(200);
+        verify(metrics).recordViolations("CAMPAIGN_REPORT_VALID_IMPRESSION", 0);
+    }
+
+    /*
+     * 마감 미과금은 영업일 D 의 다음 날 00:00 뒤에 기록되므로 D+1 01:00 집계가 끝난 뒤에도 늘 수 있다.
+     * D+2 01:00 의 전전일 재집계가 늘어난 건수를 다시 모으고, 확정된 리포트와 달라진 값을 늦은 원천으로 이력에 남긴다.
+     */
+    @Test
+    void 확정_뒤에_늦게_기록된_마감_미과금은_재집계에서_늦은_원천_이력으로_남는다() {
+        noSources();
+        when(billing.ledgerSums(DAY)).thenReturn(List.of(ledger(CAMPAIGN, -200, 0)));
+        when(billing.billingCounts(DAY)).thenReturn(List.of(new CampaignBillingCount(CAMPAIGN, 100, 0, 0, 0, 3)));
+        when(adserving.campaignStats(DAY)).thenReturn(List.of(new CampaignImpressionStats(
+                CAMPAIGN, 103, 0, 0, 0, hourly(Map.of(23, 103L)), Map.of("ALLOCATION", 103L), 0)));
+        List<CampaignInfo> infos = List.of(campaign(CAMPAIGN, OWNER, STORE));
+        when(campaigns.findAllById(List.of(CAMPAIGN))).thenReturn(infos);
+        CampaignReport.Metrics firstRun = new CampaignReport.Row(CAMPAIGN, OWNER, STORE, 0, 0, 200, 0, 200,
+                BigDecimal.ZERO, 100, 100, 0, 0, 0, 0, 0, Map.of(), Map.of(), Map.of(), Map.of()).metrics();
+        when(repository.findFinalized(DAY)).thenReturn(Map.of(CAMPAIGN, new CampaignReport.Finalized(55L, 0, firstRun)));
+
+        CampaignReport rerun = step().collect(DAY);
+        step().publish(DAY, rerun);
+
+        CampaignReport.Metrics after = only(rerun).metrics();
+        assertThat(after.validCount()).isEqualTo(103);
+        assertThat(after.notBilledCount()).isEqualTo(3);
+        verify(repository).insertRevisions(List.of(new CampaignReport.Revision(55L, 1,
+                CampaignReport.ChangeReason.LATE_EVENT, firstRun, after)), LocalDateTime.now(CLOCK));
     }
 
     @Test

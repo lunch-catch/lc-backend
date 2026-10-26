@@ -7,12 +7,14 @@ import com.launchcatch.billing.client.PaymentGatewayInquiryResult;
 import com.launchcatch.billing.client.PgNotSentException;
 import com.launchcatch.billing.client.PgUnknownException;
 import com.launchcatch.billing.dto.PaymentRecheckVerdict;
+import com.launchcatch.billing.dto.PaymentRecheckVerdict.Decision;
 import com.launchcatch.billing.entity.Payment;
 import com.launchcatch.billing.entity.PaymentStatus;
 import com.launchcatch.billing.exception.BillingErrorCode;
 import com.launchcatch.billing.exception.BillingException;
 import com.launchcatch.billing.repository.PaymentRepository;
 import io.micrometer.core.instrument.MeterRegistry;
+import jakarta.annotation.PostConstruct;
 import java.util.List;
 import java.util.Locale;
 import lombok.RequiredArgsConstructor;
@@ -45,6 +47,15 @@ public class PaymentRecheckService {
     private final PaymentResultService resultService;
     private final PaymentGateway paymentGateway;
     private final MeterRegistry meterRegistry;
+
+    // 첫 사건 전에도 시리즈가 있어야 increase() 가 첫 증가를 센다
+    @PostConstruct
+    void registerCounters() {
+        for (Decision decision : Decision.values()) {
+            meterRegistry.counter(RECHECK_METRIC, "result", decision.name().toLowerCase(Locale.ROOT));
+        }
+        meterRegistry.counter(RECHECK_METRIC, "result", "error");
+    }
 
     /*
      * 재조회할 행을 선점하고 하나씩 처리한다. 한 건이 실패해도 다음 건을 계속한다.
