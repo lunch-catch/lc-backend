@@ -25,6 +25,8 @@ die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 
 instance() {
   local id
+  # 정해 둔 인스턴스가 있으면 그것을 쓴다. 새 이미지가 뜨지 못한 서버를 피할 때 쓴다
+  if [ "$1" = app ] && [ -n "${LT_APP:-}" ]; then echo "$LT_APP"; return; fi
   id=$(aws ec2 describe-instances --filters "Name=tag:Project,Values=$PROJECT" "Name=tag:Role,Values=$1" \
     "Name=instance-state-name,Values=running" --query 'Reservations[0].Instances[0].InstanceId' --output text)
   [ "$id" != "None" ] || die "떠 있는 $1 인스턴스가 없다. member-env.sh status 로 환경을 확인한다"
@@ -98,7 +100,9 @@ case "${1:-}" in
   switch)
     sha="${2:?이미지 커밋을 준다}"
     aws ssm put-parameter --name "/$PROJECT/current-sha" --type String --overwrite --value "$sha" > /dev/null
-    # 앱과 배치를 모두 새 이미지로 다시 띄운다. 마이그레이션은 Flyway 가 먼저 뜬 쪽에서 한 번 돈다
+    # 앱과 배치를 모두 새 이미지로 함께 다시 띄운다. 마이그레이션은 Flyway 가 먼저 뜬 쪽에서 한 번 돈다
+    # 다시 뜨는 동안 헬스체크가 실패해 오토스케일링 그룹이 서버를 바꾸지 않게 교체를 멈춰 둔다
+    aws autoscaling suspend-processes --auto-scaling-group-name "$PROJECT-app" --scaling-processes ReplaceUnhealthy
     for id in $(instances app) $(instances batch); do
       echo "restart $id"
       remote "$id" 600 "set -euo pipefail
@@ -108,8 +112,10 @@ for i in \$(seq 1 60); do
   curl -fs localhost:8081/actuator/health/readiness > /dev/null && break; sleep 5
 done
 docker inspect $PROJECT --format '{{.Config.Image}}'
-curl -fs localhost:8081/actuator/health/readiness"
+curl -fs localhost:8081/actuator/health/readiness" &
     done
+    wait
+    aws autoscaling resume-processes --auto-scaling-group-name "$PROJECT-app" --scaling-processes ReplaceUnhealthy
     ;;
   reset)
     # 버전 사이에 앞 버전이 쌓은 것을 지운다(부하 시험 문서 5장). 시드가 시험 데이터와 그날 배치 기록을 지우고 다시 넣는다
