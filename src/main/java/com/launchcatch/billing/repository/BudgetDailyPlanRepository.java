@@ -160,4 +160,31 @@ public interface BudgetDailyPlanRepository extends JpaRepository<BudgetDailyPlan
             """)
     List<BudgetDailyPlan> findAllForShare(@Param("businessDate") LocalDate businessDate,
                                           @Param("campaignIds") Collection<Long> campaignIds);
+
+    /*
+     * 해제가 읽는다. 캠페인 ID 순으로 배타 잠금(FOR UPDATE)을 걸어, 해제 전에 계획 행을 공유 잠금한 차감이 끝난 뒤
+     * 소진을 세게 한다(#1049). 차감도 같은 순서로 잠가 서로를 기다리는 일이 없다.
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("""
+            select p from BudgetDailyPlan p
+             where p.businessDate = :businessDate
+               and p.campaignId in :campaignIds
+             order by p.campaignId
+            """)
+    List<BudgetDailyPlan> findAllForUpdate(@Param("businessDate") LocalDate businessDate,
+                                           @Param("campaignIds") Collection<Long> campaignIds);
+
+    // 그 계획들의 예약을 해제했다고 적는다. 남은 금액과 관계없이 적는다. 이미 적힌 계획은 처음 시각을 남긴다
+    @Modifying
+    @Query(value = """
+            UPDATE budget_daily_plan
+               SET released_at = :releasedAt, updated_at = :releasedAt
+             WHERE business_date = :businessDate
+               AND campaign_id IN (:campaignIds)
+               AND released_at IS NULL
+            """, nativeQuery = true)
+    int markReleased(@Param("businessDate") LocalDate businessDate,
+                     @Param("campaignIds") Collection<Long> campaignIds,
+                     @Param("releasedAt") LocalDateTime releasedAt);
 }
