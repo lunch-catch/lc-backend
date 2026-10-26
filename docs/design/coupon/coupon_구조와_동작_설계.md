@@ -48,9 +48,22 @@ coupon/
 ├── entity/        CouponEvent, CouponInventory, CouponDailyLimit,
 │                  MemberCoupon, CouponUsageHistory
 ├── listener/      CampaignEventListener
-├── job/           CouponPreparationJob, CouponQueuePreparationJob, CouponIssueOpenJob, CouponIssueCloseJob, CouponExpirationJob, CouponConsistencyJob
+├── job/
+│   ├── CouponConsistencyJob
+│   ├── CouponExpirationJob
+│   ├── CouponIssueCloseJob
+│   ├── CouponIssueOpenJob
+│   ├── CouponPreparationJob
+│   └── CouponQueuePreparationJob
 ├── repository/    각 엔티티 저장소와 목록용 Querydsl 구현
-├── service/       CouponCommandService, CouponIssueBatcher, CouponBatchIssuanceService, CouponLookUpService, OwnerCouponService, CouponStatsQueryServiceImpl, CouponEventStateService
+├── service/
+│   ├── CouponBatchIssuanceService
+│   ├── CouponCommandService
+│   ├── CouponEventStateService
+│   ├── CouponIssueBatcher
+│   ├── CouponLookUpService
+│   ├── CouponStatsQueryServiceImpl
+│   └── OwnerCouponService
 └── exception/     CouponException, CouponErrorCode
 ```
 
