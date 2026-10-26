@@ -4,13 +4,13 @@ import java.nio.ByteBuffer;
 import java.sql.Timestamp;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.util.ArrayList;
 import java.util.Collection;
-import java.util.Collections;
 import java.util.List;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
+import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.stereotype.Repository;
 
 /*
@@ -35,17 +35,31 @@ public class ImpressionDispatchRepository {
              LIMIT ?
             """;
 
+    // 키 목록(:keys)은 NamedParameterJdbcTemplate 이 ((?, ?), (?, ?), ...) 로 펼친다. SQL 문자열은 상수로 둔다.
+    private static final String MARK_DISPATCHED = """
+            UPDATE impression_log
+               SET dispatched_at = :at, updated_at = :at
+             WHERE (serve_id, member_id) IN (:keys)
+            """;
+
     /*
      * 실패한 노출의 다시 넘길 시각을 random(0, min(5분, 1초 x 2^시도 횟수)) 뒤로 미룬다(Full Jitter, REL-2-06).
      * MySQL 은 SET 을 왼쪽부터 적용하므로 미룰 시간은 올리기 전의 시도 횟수로 센다. 첫 실패는 1초 안이다.
      */
-    private static final String BACKOFF_MICROS = "FLOOR(RAND() * LEAST(300000000, 1000000 * POW(2, dispatch_attempts)))";
+    private static final String MARK_FAILED = """
+            UPDATE impression_log
+               SET next_dispatch_at = :at + INTERVAL FLOOR(RAND() * LEAST(300000000, 1000000 * POW(2, dispatch_attempts))) MICROSECOND,
+                   dispatch_attempts = dispatch_attempts + 1,
+                   updated_at = :at
+             WHERE (serve_id, member_id) IN (:keys)
+            """;
 
     private static final String COUNT_PENDING = """
             SELECT COUNT(*) FROM impression_log WHERE dispatched_at IS NULL AND created_at >= ?
             """;
 
     private final JdbcTemplate jdbcTemplate;
+    private final NamedParameterJdbcTemplate namedJdbcTemplate;
 
     // idx_imp_dispatch(dispatched_at, created_at) 로 비어 있는 행만 받은 순서대로 읽는다. 실패해 미뤄진 행은 다시 넘길 시각이 지나야 읽는다.
     public List<PendingImpression> findPending(LocalDateTime from, LocalDateTime now, int maxAttempts, int limit) {
@@ -60,11 +74,7 @@ public class ImpressionDispatchRepository {
         if (impressions.isEmpty()) {
             return;
         }
-        Timestamp now = Timestamp.valueOf(at);
-        List<Object> args = new ArrayList<>(List.of(now, now));
-        args.addAll(keys(impressions));
-        jdbcTemplate.update("UPDATE impression_log SET dispatched_at = ?, updated_at = ? WHERE (serve_id, member_id) IN ("
-                + placeholders(impressions.size()) + ")", args.toArray());
+        namedJdbcTemplate.update(MARK_DISPATCHED, params(impressions, at));
     }
 
     // 정산이 실패로 돌려준 노출의 시도 횟수를 올리고 다시 넘길 시각을 미룬다. 상한에 닿으면 findPending 이 더는 읽지 않는다.
@@ -72,12 +82,7 @@ public class ImpressionDispatchRepository {
         if (impressions.isEmpty()) {
             return;
         }
-        Timestamp now = Timestamp.valueOf(at);
-        List<Object> args = new ArrayList<>(List.of(now, now));
-        args.addAll(keys(impressions));
-        jdbcTemplate.update("UPDATE impression_log SET next_dispatch_at = ? + INTERVAL " + BACKOFF_MICROS + " MICROSECOND,"
-                + " dispatch_attempts = dispatch_attempts + 1, updated_at = ?"
-                + " WHERE (serve_id, member_id) IN (" + placeholders(impressions.size()) + ")", args.toArray());
+        namedJdbcTemplate.update(MARK_FAILED, params(impressions, at));
     }
 
     // 넘기지 못하고 밀린 노출 수다. 상한에 닿아 건너뛴 행도 센다. 인덱스만 읽는다.
@@ -86,17 +91,11 @@ public class ImpressionDispatchRepository {
         return count == null ? 0 : count;
     }
 
-    private static List<Object> keys(Collection<PendingImpression> impressions) {
-        List<Object> keys = new ArrayList<>(impressions.size() * 2);
-        for (PendingImpression impression : impressions) {
-            keys.add(bytes(impression.serveId()));
-            keys.add(impression.memberId());
-        }
-        return keys;
-    }
-
-    private static String placeholders(int count) {
-        return String.join(", ", Collections.nCopies(count, "(?, ?)"));
+    private static MapSqlParameterSource params(Collection<PendingImpression> impressions, LocalDateTime at) {
+        List<Object[]> keys = impressions.stream()
+                .map(impression -> new Object[] {bytes(impression.serveId()), impression.memberId()})
+                .toList();
+        return new MapSqlParameterSource().addValue("at", Timestamp.valueOf(at)).addValue("keys", keys);
     }
 
     private static byte[] bytes(UUID uuid) {
