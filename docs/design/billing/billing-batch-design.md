@@ -118,7 +118,7 @@ HTTP가 아니라 **모듈 간 호출·이벤트·배치**다. 점주·관리자
 ```
 PointDeductor.deduct(serveId, campaignId, businessDate)
 PointDeductor.deductAll(List<DeductionRequest(serveId, campaignId, businessDate)>)
-  → List<DeductionOutcome(serveId, status)>
+  → List<DeductionOutcome(serveId, status, failed)>   한 번에 MAX_BATCH_SIZE(1,000)건까지
   owner_id 와 단가는 budget_daily_plan 에서 읽는다
 ```
 
@@ -127,9 +127,11 @@ PointDeductor.deductAll(List<DeductionRequest(serveId, campaignId, businessDate)
 | 정한 것 | 이유 |
 |---|---|
 | 점주를 계획의 점주로, 계획이 없으면 캠페인의 점주로 정한다 | 단건 차감이 원장과 판정에 적는 점주와 같은 출처다. 트랜잭션 하나가 계정 공유 잠금 하나만 잡아 묶음끼리 잠금 순서가 엇갈리지 않는다 |
-| 한 점주 묶음이 실패하면 그 묶음만 롤백하고 결과에서 뺀다. 예외를 올리지 않는다 | 다른 점주의 과금까지 되돌리지 않는다. 빠진 노출은 릴레이가 다음 주기에 다시 넘기고 `serveId` 멱등이 중복 과금을 막는다. 롤백된 묶음의 소진은 6 의 되돌리기가 노출마다 되돌린다 |
-| 캠페인 자체가 없는 노출은 묶음에 넣지 않고 결과에서 뺀다 | 단건 차감이라면 예외를 던질 노출이다. 묶음에 넣으면 같은 점주의 다른 노출까지 함께 실패한다 |
-| 돌려주는 목록에는 판정이 커밋된 노출만 담고 순서를 보장하지 않는다 | 릴레이는 결과에 있는 `serveId`만 넘김 완료로 표시하면 된다. 실패 원인은 정산의 `billing_deduct_batch_failed_total`(`reason`)과 WARN 로그로 본다 |
+| 한 점주 묶음이 실패하면 그 묶음만 롤백하고 그 노출들을 실패로 돌려준다. 예외를 올리지 않는다 | 다른 점주의 과금까지 되돌리지 않는다. 실패한 노출은 릴레이가 다음 주기에 다시 넘기고 `serveId` 멱등이 중복 과금을 막는다. 롤백된 묶음의 소진은 6 의 되돌리기가 노출마다 되돌린다 |
+| 정산의 DB 나 Valkey 에 닿지 못하면(`DataAccessResourceFailureException`, `QueryTimeoutException`) 예외를 올린다 | 모든 묶음이 같은 이유로 실패할 장애라 묶음별 실패로 돌려주면 릴레이의 재시도 표만 커진다. 릴레이는 아무것도 표시하지 않고 같은 묶음을 다시 넘긴다. 예외 전에 커밋된 묶음은 다시 받을 때 첫 판정을 돌려준다. 계정 잠금 대기 초과는 그 점주의 잠금을 다툰 것이라 묶음 실패로 둔다 |
+| 캠페인 자체가 없는 노출은 묶음에 넣지 않고 그 노출만 실패로 돌려준다 | 단건 차감이라면 예외를 던질 노출이다. 묶음에 넣으면 같은 점주의 다른 노출까지 함께 실패한다 |
+| 돌려주는 목록에는 넘긴 노출마다 결과가 하나씩 있고 순서는 보장하지 않는다. 판정이 커밋된 노출은 `status`, 실패한 노출은 `failed` 다 | 릴레이가 보낸 목록과 결과를 대조하지 않아도 되고, 결과가 빠진 것이 실패인지 결함인지 가르지 않아도 된다. 실패를 `DeductionStatus`에 섞지 않는 이유는 그 값이 `deduction_result`의 판정과 같아서다. 실패 원인은 정산의 `billing_deduct_batch_failed_total`(`reason`)과 WARN 로그로 본다 |
+| 한 번에 1,000건까지 받고 넘으면 `IllegalArgumentException`을 던진다 | 노출 목표가 초당 1,000건이라 1초 묶음이 이 크기다. 상한이 없으면 릴레이가 밀렸다 풀릴 때 수만 건이 한 호출로 온다. 릴레이가 나눠 부른다 |
 | 트랜잭션 안에서 부르면 `IllegalStateException`을 던진다 | 점주별 트랜잭션이 호출자 트랜잭션에 참여하면 한 묶음의 실패가 전체를 되돌린다 |
 
 `businessDate`는 **노출 요청을 서버가 받은 날(KST)**이다. 카드 서빙일이나 릴레이 처리일로 바꾸지 않는다. 정산은 점주 계정 행에 공유 잠금(`FOR SHARE`)을 얻은 뒤 KST 날짜로 과금을 승인한다. 영업일의 다음 날 00:00부터 처음 처리하는 전날 노출은 `NOT_BILLED_CLOSED`로 기록한다. 오늘 예산으로 옮기거나 이미 해제한 예약액에서 차감하지 않는다. 23:59에 받은 노출을 00:01에 처리하면 전날의 마감 미과금이고, 00:01에 받은 노출은 오늘 예산으로 판정한다.
