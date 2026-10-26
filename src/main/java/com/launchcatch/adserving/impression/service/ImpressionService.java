@@ -12,7 +12,6 @@ import com.launchcatch.adserving.impression.entity.ImpressionLog.Placement;
 import com.launchcatch.adserving.impression.entity.ImpressionLog.Sighting;
 import com.launchcatch.adserving.impression.entity.ImpressionLogId;
 import com.launchcatch.adserving.impression.repository.ImpressionLogRepository;
-import com.launchcatch.billing.contract.PointDeductor;
 import com.launchcatch.global.config.ClockConfig;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.time.Clock;
@@ -29,7 +28,7 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 
 /*
  * 카드가 보인 순간 1건을 받아 유효와 무효를 가르고 저장한다(FR-066, FR-097).
- * 유효 노출의 저장, 정산의 판정, 원장은 한 트랜잭션이다. 함께 커밋되고 함께 롤백된다(FR-100).
+ * 정산을 부르지 않는다. 커밋된 유효 노출은 ImpressionDispatchService 가 모아 정산에 넘긴다(노출 수집 v2, #1010).
  */
 @Service
 @RequiredArgsConstructor
@@ -48,7 +47,6 @@ public class ImpressionService {
     private final ImpressionLogRepository impressionLogRepository;
     private final AdCandidateRepository adCandidateRepository;
     private final ImpressionCountRepository impressionCountRepository;
-    private final PointDeductor pointDeductor;
     private final MeterRegistry meterRegistry;
     private final ApplicationEventPublisher eventPublisher;
     private final Clock clock;
@@ -67,7 +65,7 @@ public class ImpressionService {
         }
 
         /*
-         * 판정, 차감, 소진 확인, 카운터가 같은 날을 보게 받은 시각을 한 번만 읽는다. 정산도 받은 날로 차감한다(PointDeductor 계약).
+         * 판정, 소진 확인, 카운터가 같은 날을 보게 받은 시각을 한 번만 읽는다. 릴레이도 이 날로 정산에 넘긴다(PointDeductor 계약).
          * 저장 시각(created_at)도 이 값이다. 따로 읽으면 자정 직전 노출이 전날의 0시 구간으로 집계된다(#783).
          */
         LocalDateTime receivedAt = LocalDateTime.now(clock);
@@ -83,9 +81,6 @@ public class ImpressionService {
         }
         if (log.isValid()) {
             ServeRecord record = found.orElseThrow();
-            if (!log.isSoldOut()) {
-                pointDeductor.deduct(serveId, record.campaignId(), receivedDate);
-            }
             countAfterCommit(receivedDate, record.campaignId(), !record.campaignId().equals(request.campaignId()));
             /*
              * 분석에 넘길 일을 커밋 전에 기록해 두지 않는다(장애 처리 가이드 "롤백 안 되는 효과"의 기본을 벗어난다).

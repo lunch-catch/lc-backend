@@ -13,6 +13,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.aspectj.lang.ProceedingJoinPoint;
 import org.aspectj.lang.annotation.Around;
 import org.aspectj.lang.annotation.Aspect;
+import org.aspectj.lang.reflect.MethodSignature;
+import org.springframework.core.annotation.AnnotationUtils;
 import org.springframework.stereotype.Component;
 
 /**
@@ -37,20 +39,35 @@ public class SchedulerLoggingAspect {
     @Around("@annotation(org.springframework.scheduling.annotation.Scheduled)")
     public Object logScheduledExecution(ProceedingJoinPoint joinPoint) throws Throwable {
         String job = joinPoint.getSignature().toShortString();
+        boolean quiet = isQuiet(joinPoint);
         Instant start = clock.instant();
-        log.info("event=SCHEDULER_START job={}", job);
+        logStep(quiet, "event=SCHEDULER_START job={}", job);
         AtomicLong lastSuccess = lastSuccessGauge(job, start);
 
         try {
             Object result = joinPoint.proceed();
             lastSuccess.set(clock.instant().getEpochSecond());
-            log.info("event=SCHEDULER_END job={} durationMs={}",
+            logStep(quiet, "event=SCHEDULER_END job={} durationMs={}",
                     job, Duration.between(start, clock.instant()).toMillis());
             return result;
         } catch (Throwable ex) {
             log.error("event=SCHEDULER_FAILED job={} durationMs={}",
                     job, Duration.between(start, clock.instant()).toMillis(), ex);
             throw ex;
+        }
+    }
+
+    // @QuietSchedulerLog 가 붙은 짧은 주기 작업은 정상 실행을 DEBUG 로 내린다. 실패는 언제나 ERROR 다
+    private static boolean isQuiet(ProceedingJoinPoint joinPoint) {
+        return joinPoint.getSignature() instanceof MethodSignature signature
+                && AnnotationUtils.findAnnotation(signature.getMethod(), QuietSchedulerLog.class) != null;
+    }
+
+    private static void logStep(boolean quiet, String format, Object... args) {
+        if (quiet) {
+            log.debug(format, args);
+        } else {
+            log.info(format, args);
         }
     }
 

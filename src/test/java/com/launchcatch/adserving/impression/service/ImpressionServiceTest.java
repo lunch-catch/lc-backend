@@ -21,7 +21,6 @@ import com.launchcatch.adserving.impression.entity.ImpressionLogId;
 import com.launchcatch.adserving.impression.entity.ImpressionValidity;
 import com.launchcatch.adserving.impression.entity.InvalidReason;
 import com.launchcatch.adserving.impression.repository.ImpressionLogRepository;
-import com.launchcatch.billing.contract.PointDeductor;
 import com.launchcatch.global.config.ClockConfig;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.math.BigDecimal;
@@ -62,15 +61,14 @@ class ImpressionServiceTest {
     private final ImpressionLogRepository impressionLogRepository = mock(ImpressionLogRepository.class);
     private final AdCandidateRepository adCandidateRepository = mock(AdCandidateRepository.class);
     private final ImpressionCountRepository impressionCountRepository = mock(ImpressionCountRepository.class);
-    private final PointDeductor pointDeductor = mock(PointDeductor.class);
     private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
     private final ApplicationEventPublisher eventPublisher = mock(ApplicationEventPublisher.class);
     private final ImpressionService service = new ImpressionService(serveRecordRepository, impressionLogRepository,
-            adCandidateRepository, impressionCountRepository, pointDeductor, meterRegistry, eventPublisher,
+            adCandidateRepository, impressionCountRepository, meterRegistry, eventPublisher,
             Clock.fixed(NOW, ClockConfig.ZONE));
 
     private final ImpressionService afterMidnight = new ImpressionService(serveRecordRepository, impressionLogRepository,
-            adCandidateRepository, impressionCountRepository, pointDeductor, meterRegistry, eventPublisher,
+            adCandidateRepository, impressionCountRepository, meterRegistry, eventPublisher,
             Clock.fixed(AFTER_MIDNIGHT, ClockConfig.ZONE));
 
     private void givenLateRecord() {
@@ -126,8 +124,7 @@ class ImpressionServiceTest {
             assertThat(log.getCampaignId()).isEqualTo(101L);
             assertThat(log.getStoreId()).isNull();
             assertThat(log.getSlotType()).isNull();
-            verifyNoInteractions(pointDeductor);
-        }
+                    }
 
         @Test
         void 다른_사용자가_받은_카드면_NOT_OWNER_를_저장하고_차감하지_않는다() {
@@ -137,11 +134,10 @@ class ImpressionServiceTest {
 
             assertThat(response).isEqualTo(new ImpressionResponse(ImpressionValidity.INVALID, InvalidReason.NOT_OWNER));
             assertThat(saved().getId()).isEqualTo(ImpressionLogId.of(SERVE_ID, OTHER_MEMBER));
-            verifyNoInteractions(pointDeductor);
-        }
+                    }
 
         @Test
-        void 유효하면_serve_기록의_캠페인과_받은_영업일로_차감한다() {
+        void 유효하면_serve_기록의_캠페인과_받은_영업일로_저장하고_정산은_부르지_않는다() {
             when(serveRecordRepository.findById(SERVE_ID)).thenReturn(Optional.of(RECORD));
 
             ImpressionResponse response = service.record(MEMBER_ID, request(101L));
@@ -153,8 +149,8 @@ class ImpressionServiceTest {
             assertThat(log.getSlotType()).isEqualTo(SlotLabels.ALLOCATION);
             assertThat(log.getSlotPosition()).isEqualTo(1);
             assertThat(log.isSoldOut()).isFalse();
-            verify(pointDeductor).deduct(SERVE_ID, 101L, SERVED_DATE);
-        }
+            assertThat(log.needsDispatch()).isTrue();
+                    }
 
         @Test
         void 요청의_캠페인이_serve_기록과_다르면_serve_기록의_캠페인으로_판정하고_센다() {
@@ -163,8 +159,7 @@ class ImpressionServiceTest {
             service.record(MEMBER_ID, request(999L));
 
             assertThat(saved().getCampaignId()).isEqualTo(101L);
-            verify(pointDeductor).deduct(SERVE_ID, 101L, SERVED_DATE);
-            // 처음 저장된 노출이 커밋된 뒤에만 센다. 롤백되거나 다시 온 요청은 세지 않는다(#783)
+                        // 처음 저장된 노출이 커밋된 뒤에만 센다. 롤백되거나 다시 온 요청은 세지 않는다(#783)
             assertThat(meterRegistry.counter(ImpressionService.CAMPAIGN_MISMATCH_METRIC).count()).isZero();
             commit();
             assertThat(meterRegistry.counter(ImpressionService.CAMPAIGN_MISMATCH_METRIC).count()).isEqualTo(1);
@@ -213,7 +208,7 @@ class ImpressionServiceTest {
                 }
             };
             ImpressionService atMidnight = new ImpressionService(serveRecordRepository, impressionLogRepository,
-                    adCandidateRepository, impressionCountRepository, pointDeductor, meterRegistry, eventPublisher, ticking);
+                    adCandidateRepository, impressionCountRepository, meterRegistry, eventPublisher, ticking);
             when(serveRecordRepository.findById(SERVE_ID)).thenReturn(Optional.of(RECORD));
 
             atMidnight.record(MEMBER_ID, request(101L));
@@ -235,19 +230,17 @@ class ImpressionServiceTest {
 
             assertThat(response.validity()).isEqualTo(ImpressionValidity.VALID);
             assertThat(saved().isSoldOut()).isTrue();
-            verifyNoInteractions(pointDeductor);
-        }
+                    }
 
         // 정산이 받은 날로 차감한다(#497). 전날 예산은 00:00 에 해제가 끝났다
         @Test
-        void 자정을_넘겨_받은_노출은_받은_날로_판정하고_차감한다() {
+        void 자정을_넘겨_받은_노출은_받은_날로_저장한다() {
             givenLateRecord();
 
             afterMidnight.record(MEMBER_ID, request(101L));
 
             assertThat(saved().getBusinessDate()).isEqualTo(RECEIVED_DATE);
-            verify(pointDeductor).deduct(SERVE_ID, 101L, RECEIVED_DATE);
-        }
+                    }
 
         @Test
         void 자정을_넘겨_받은_노출의_쿠폰_소진은_받은_날의_후보로_본다() {
@@ -258,8 +251,8 @@ class ImpressionServiceTest {
             afterMidnight.record(MEMBER_ID, request(101L));
 
             assertThat(saved().isSoldOut()).isTrue();
-            verifyNoInteractions(pointDeductor);
-        }
+            assertThat(saved().needsDispatch()).isFalse();
+                    }
 
         @Test
         void 받은_영업일과_좌표_3자리_반올림과_한국_시각의_표시_시각으로_저장한다() {
@@ -290,7 +283,7 @@ class ImpressionServiceTest {
 
             assertThat(response).isEqualTo(new ImpressionResponse(ImpressionValidity.INVALID, InvalidReason.EXPIRED_OR_UNKNOWN));
             verify(impressionLogRepository, never()).insertIgnore(any(), any());
-            verifyNoInteractions(pointDeductor, serveRecordRepository);
+            verifyNoInteractions(serveRecordRepository);
         }
 
         @Test
@@ -307,8 +300,7 @@ class ImpressionServiceTest {
             ImpressionResponse response = service.record(MEMBER_ID, request(101L));
 
             assertThat(response).isEqualTo(new ImpressionResponse(ImpressionValidity.VALID, null));
-            verifyNoInteractions(pointDeductor);
-            commit();
+                        commit();
             verifyNoInteractions(impressionCountRepository);
         }
     }
