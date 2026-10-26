@@ -243,6 +243,27 @@ class BaseWorldIntegrationTest extends IntegrationTestSupport {
         // 메뉴 0개 확정 가게 시나리오는 피드 밖 가게에 남는다
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM store s WHERE s.store_id BETWEEN 10000001 AND 10000500 AND s.finalized = 1 "
                 + "AND NOT EXISTS (SELECT 1 FROM store_menu m WHERE m.store_id = s.store_id)", Long.class)).isPositive();
+        /*
+         * 대시보드 일별 지표가 실제 서비스처럼 움직인다 (V12).
+         * 평일 유효 노출이 주말의 두 배를 넘고, D-14 ~ D-8 과 D-7 ~ D-1 사이에 앞뒤 구간이 끊기지 않는다.
+         * 회원과 가게의 누적은 줄지 않고 신규는 음수가 아니며, 미소진 잔액은 음수가 아니다.
+         */
+        assertThat(jdbc.queryForObject("SELECT AVG(IF(DAYOFWEEK(business_date) IN (1, 7), NULL, valid_impression_count)) "
+                + "/ AVG(IF(DAYOFWEEK(business_date) IN (1, 7), valid_impression_count, NULL)) FROM daily_funnel_analytics "
+                + "WHERE business_date BETWEEN '2026-08-29' AND '2026-10-27'", Double.class)).isGreaterThan(2.0);
+        assertThat(jdbc.queryForObject("SELECT SUM(IF(business_date >= '2026-10-21', valid_impression_count, 0)) "
+                + "/ SUM(IF(business_date < '2026-10-21', valid_impression_count, 0)) FROM daily_funnel_analytics "
+                + "WHERE business_date BETWEEN '2026-10-14' AND '2026-10-27'", Double.class)).isBetween(0.7, 1.5);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM daily_member_analytics a JOIN daily_member_analytics b "
+                + "ON b.business_date = a.business_date + INTERVAL 1 DAY WHERE a.business_date BETWEEN '2026-08-29' AND '2026-10-26' "
+                + "AND (b.cumulative_member_count < a.cumulative_member_count - b.withdrawn_count OR b.new_member_count < 0)",
+                Long.class)).isZero();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM daily_store_analytics a JOIN daily_store_analytics b "
+                + "ON b.business_date = a.business_date + INTERVAL 1 DAY WHERE a.business_date BETWEEN '2026-08-29' AND '2026-10-26' "
+                + "AND b.cumulative_store_count < a.cumulative_store_count", Long.class)).isZero();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM daily_settlement_analytics "
+                + "WHERE business_date BETWEEN '2026-08-29' AND '2026-10-27' AND (unspent_balance < 0 OR released_amount < 0)",
+                Long.class)).isZero();
         // 할인 금액은 천 단위 쉼표를 찍는다 (2,000원)
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM poster WHERE campaign_id BETWEEN 10000001 AND 29999999 "
                 + "AND JSON_UNQUOTE(JSON_EXTRACT(slot_values, '$.discount.value')) REGEXP '[0-9]{4}원'", Long.class)).isZero();
