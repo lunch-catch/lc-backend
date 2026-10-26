@@ -25,6 +25,7 @@ public interface DeductionResultRepository extends JpaRepository<DeductionResult
      *
      * 중복 분기가 updated_at 을 바꾸는 이유: 값을 바꾸지 않는 갱신(serve_id = serve_id)은 Connector/J 의 기본 설정
      * (CLIENT_FOUND_ROWS)에서 새로 만든 경우와 같은 1 을 돌려줘 둘을 구분할 수 없다. 바뀐 행은 2 를 돌려준다.
+     * 같은 마이크로초에 다시 부르거나 시계가 고정돼 있어도 중복 갱신이 생기도록 기존 시각보다 최소 1마이크로초 늘린다.
      *
      * 영향받은 행 수는 새로 만들면 1, 이미 있으면 2 다. 호출하는 쪽은 1 이 아니면 중복으로 본다.
      */
@@ -34,7 +35,7 @@ public interface DeductionResultRepository extends JpaRepository<DeductionResult
                 (serve_id, campaign_id, owner_id, business_date, billing_status, unit_price, created_at, updated_at)
             VALUES
                 (:serveId, :campaignId, :ownerId, :businessDate, :billingStatus, :unitPrice, :now, :now)
-            ON DUPLICATE KEY UPDATE updated_at = :now
+            ON DUPLICATE KEY UPDATE updated_at = GREATEST(:now, updated_at + INTERVAL 1 MICROSECOND)
             """, nativeQuery = true)
     int insertIfAbsent(@Param("serveId") byte[] serveId,
                        @Param("campaignId") Long campaignId,
