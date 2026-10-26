@@ -216,7 +216,7 @@ CampaignFundingUpdater: { campaignId, ownerId, businessDate,
 - `RESERVE` 계산의 잔액은 전날 `RELEASE`(00:00 보정분 포함) 이후 원장에서 계산한 잔액(`DEDUCT` 제외)이다. **이월은 없다.**
 - 예약액이 `0`이면 원장에 기록하지 않고(`RESERVE`는 음수만 허용) `budget_daily_plan.daily_budget = 0`으로 두고 판정만 통보한다. V2의 CHECK는 `daily_budget >= 0`이다.
 - `RESERVE`·`RELEASE`는 `source=RECONCILIATION`으로 기록한다(배치 컨텍스트).
-- 당일 소진 카운터에 장애가 나면 원장으로 재구성한다. 재구성은 대조 작업이 계산해 정산이 자기 카운터에 직접 반영하고, 장애 직후에는 **수동으로 실행**한다(98행 예외) — 경로는 아래 "아직 정해지지 않은 것" 참고.
+- 당일 소진 카운터에 장애가 나면 원장으로 재구성한다. 재구성은 대조 작업이 계산해 정산이 자기 카운터에 직접 반영한다. 장애 직후 당일 카운터를 수동으로 다시 만드는 경로는 없다.
 
 ---
 
@@ -262,7 +262,7 @@ PointCharged { ownerId, paymentId, amount }
 | 여전히 불명 | `attempt_count + 1`, `next_retry_at`을 지수 백오프로 미룸, `last_checked_at`·`last_error` 갱신 |
 | `attempt_count ≥ max_retry` | `FAILED_PERMANENT`. ERROR 로그(`event=PAYMENT_RECHECK_EXHAUSTED`)와 메트릭 `billing.payment.recheck.exhausted`로 알린다. 관리자 재조회 API로 사람이 재확정 |
 
-PG 호출에는 타임아웃과 서킷브레이커를 적용한다. 시작값은 연결 3초, 읽기 10초, 최근 10건 중 50% 실패면 열림, 30초 뒤 반개방이다. 워커의 기본 주기는 1분이고 최초 조회 지연은 1분, 이후 간격은 2·5·10·30분이며 ±10% 지터를 준다. 기본 `max_retry`는 5다. 설정 키는 `billing.toss.*`, `resilience4j.circuitbreaker.instances.tossPayment`, `billing.payment.recheck.*`다.
+PG 호출에는 타임아웃과 서킷브레이커를 적용한다. 시작값은 연결 3초, 읽기 10초, 최근 10건 중 50% 실패면 열림, 30초 뒤 반개방이다. 워커의 기본 주기는 1분이고 최초 조회 지연은 1분, 이후 간격은 2·5·10·30분이며 ±10% 지터를 준다. 기본 `max_retry`는 5다. 설정 키는 `billing.toss.*`, `resilience4j.circuitbreaker.instances.tossPayment`, `billing.payment.recheck.*`다. 결제는 호출 수가 적어 시간 창으로 두면 최소 호출 수를 못 채워 서킷이 열리지 않으므로 건수 창을 쓴다. 읽기 타임아웃을 짧게 두면 결과를 모르는 `UNKNOWN` 결제가 늘어난다.
 
 워커는 `FOR UPDATE SKIP LOCKED`로 처리할 행을 잡고 `next_retry_at`을 선점 시간(5분) 뒤로 민 채 바로 커밋한다. PG 호출은 트랜잭션 밖에서 하고 결과는 별도 트랜잭션으로 기록한다. 한 건이 실패해도 나머지 건은 계속 처리한다. 백오프는 첫 간격 1분 뒤 2·5·10·30분이고 ±10% 지터를 준다. 결과 매핑은 `APPROVED`(주문·금액 일치) 승인, `FAILED` 실패, `EXPIRED`/`CANCELED` 취소이며 `PENDING`, `NOT_FOUND`, 조회 실패, 불일치는 미확정으로 다음 시각으로 미룬다. 관리자 `:recheck`로 미확정이면 아웃박스의 `last_checked_at`과 `last_error`만 갱신하고 시도 횟수는 올리지 않는다. 메트릭은 `billing.payment.recheck{result=approve|fail|cancel|miss|error}`다. 실행은 `launchcatch.scheduler.enabled`일 때만 한다(배치 프로필).
 
@@ -374,7 +374,7 @@ billing.contract.BillingStatsQueryService
 
 - 미소진 잔액은 `CHARGE + REFUND + ADJUST + DEDUCT`의 누적 합이다. 점주 잔액에 예약 중 포인트를 더한 값과 같다. 원장 대조용 합계는 그날 기록된 같은 네 유형의 합이라 전날 말 값에 더하면 그날 말 값이 된다.
 - 과금 정합성 검증식(`검증 기준`의 첫 행)은 이 조회의 `ledgerSums`와 `billingCounts`, `dailyBudgets`로 확인한다. 캠페인별 `DEDUCT` 합 = `BILLED` 수 × 그날 단가다.
-- 쿼리 비용과 인덱스 후보는 [성능 개선 3장](./billing_성능_개선.md)이 갖는다.
+- 쿼리 비용은 [구조와 동작 설계 11장](./billing_구조와_동작_설계.md#11-성능)이 갖는다.
 
 ---
 
@@ -395,7 +395,4 @@ billing.contract.BillingStatsQueryService
 
 # 아직 정해지지 않은 것
 
-| 항목 | 현재 기준 |
-| --- | --- |
-| **카운터 수동 재구성 경로** | 98행 예외가 "장애 직후에는 수동으로 실행한다"고 요구하는데 경로가 없다. 운영의 실패 작업 수동 재실행(102행)으로 처리할지, 정산이 관리자 API를 둘지 |
-| 102행 (5) 문구 | "예약해 **캠페인에 넘긴다**"가 51행·98행("정산이 가진다, 캠페인은 보관하지 않는다")과 충돌한다. 명세 정정 요청 필요 |
+없다.

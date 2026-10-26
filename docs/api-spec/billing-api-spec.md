@@ -359,7 +359,7 @@ GET /v1/owner/points/spend-summary?groupBy=DAY&from=2026-09-24&to=2026-09-30&cam
 
 `spentPoint`는 그 캠페인·영업일의 `DEDUCT` 합 절댓값, `reservedPoint`는 같은 날 `RESERVE` 합이다. 집계 테이블이 아니라 원장에서 계산하므로 `from`~`to`는 **최대 31일**로 제한한다.
 
-`spentPoint`는 그날 예산에서 집행된 금액이고 과오 차감 정정(양수 `ADJUST`)을 빼지 않는다. 정정은 그날 예산이 아니라 점주 잔액으로 돌아가기 때문이다. 정정을 뺀 광고 비용은 `analytics-api-spec.md` 캠페인 리포트의 `spentAmount`(= `chargedAmount − refundedAmount`)다. 그래서 같은 캠페인·날짜라도 정정이 있으면 두 값이 정정액만큼 다르다. 화면은 이 값을 "집행액", 리포트 값을 "광고 비용"처럼 다른 이름으로 보여 준다. 두 값을 한 화면에서 함께 보여 줘야 하면 이 응답에 정정액 필드를 더하는 것을 별도 이슈로 다룬다(구현 계획 G-8).
+`spentPoint`는 그날 예산에서 집행된 금액이고 과오 차감 정정(양수 `ADJUST`)을 빼지 않는다. 정정은 그날 예산이 아니라 점주 잔액으로 돌아가기 때문이다. 정정을 뺀 광고 비용은 `analytics-api-spec.md` 캠페인 리포트의 `spentAmount`(= `chargedAmount − refundedAmount`)다. 그래서 같은 캠페인·날짜라도 정정이 있으면 두 값이 정정액만큼 다르다. 화면은 이 값을 "집행액", 리포트 값을 "광고 비용"처럼 다른 이름으로 보여 준다.
 
 ---
 
