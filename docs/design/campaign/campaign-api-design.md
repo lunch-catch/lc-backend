@@ -1,12 +1,13 @@
 # 캠페인 (campaign) API 설계
 
-점주의 캠페인 등록 API를 서버가 어떻게 처리하는지와 그렇게 정한 이유를 적는다. 요청,
-응답, 오류는 명세서 `campaign-api-spec.md`에 있고 여기서는 반복하지 않는다.
+점주의 캠페인 등록, 활성화, 중단·재개·종료·취소, 조회 API와 관리자의 캠페인 조회 API를 서버가 어떻게
+처리하는지와 그렇게 정한 이유를 적는다. 요청, 응답, 오류는 명세서 `campaign-api-spec.md`에 있고
+여기서는 반복하지 않는다.
 
 | 근거 | 기준 |
 |---|---|
 | 요구사항(캠페인 등록 1단계, 쿠폰 조건) | 명세서 기능 FR-040 |
-| 저장 구조 | `db/migration/campaign/V1__campaign_init.sql`의 `campaign` 테이블, `V3__campaign_draft_nullable.sql` |
+| 저장 구조 | `db/migration/campaign/V1__campaign_init.sql`의 `campaign` 테이블, `V3__campaign_draft_nullable.sql`, `V12__campaign_draft_store_unique.sql`, `V13__campaign_pending_daily_budget.sql` |
 | 결정 | `#244`(캠페인 생성, 쿠폰 조건 입력) 이슈에서 정한 것 |
 | 설계 | `campaign_구조와_동작_설계.md`("맡지 않는 것: 등록 화면 API 1단계") |
 
@@ -19,9 +20,12 @@
 | `POST` | `/v1/owner/campaigns/{campaignId}:activate` | FR-044 |
 | `POST` | `/v1/owner/campaigns/{campaignId}:pause` | FR-092 |
 | `POST` | `/v1/owner/campaigns/{campaignId}:resume` | FR-092 |
+| `POST` | `/v1/owner/campaigns/{campaignId}:end` | FR-092(`#600`) |
 | `POST` | `/v1/owner/campaigns/{campaignId}:cancel` | FR-092(요구사항명세서 상태 시트의 SCHEDULED "취소(DRAFT로)", `#571`) |
 | `GET` | `/v1/owner/campaigns` | 없음(요구사항명세서에 조회 전용 행이 없다. 점주가 등록한 값을 다시 확인하는 화면 전제, `#341`) |
 | `GET` | `/v1/owner/campaigns/{campaignId}` | 없음(위와 같음) |
+| `GET` | `/v1/admin/campaigns` | 없음(관리자의 전체 캠페인 목록, `#603`) |
+| `GET` | `/v1/admin/campaigns/{campaignId}` | 없음(위와 같음) |
 
 ## 캠페인 등록(쿠폰 조건)
 
@@ -37,13 +41,11 @@
 - **가게당 DRAFT 1개 제한을 DB 제약으로도 건다.** `campaign` 테이블은 이미 `status='ACTIVE'`인
   행에만 `store_id`를 채우는 생성 컬럼(`active_store_marker`)과 그 위의
   `uk_campaign_active_store` UNIQUE로 "가게당 ACTIVE 1건"을 보장한다(FR-044). 같은 방식으로
-  `status='DRAFT'`일 때만 `store_id`를 채우는 생성 컬럼을 하나 더 두고 UNIQUE를 걸면,
-  동시에 들어온 두 생성 요청 중 하나가 DB 제약으로 걸려 애플리케이션 레벨의 조회만으로는
-  못 막는 경쟁을 막을 수 있다. 이 마이그레이션은 `#244`가 추가한다(명세 단계는 스키마를
-  바꾸지 않는다)
+  `status='DRAFT'`일 때만 `store_id`를 채우는 생성 컬럼(`draft_store_marker`)을 하나 더 두고 UNIQUE
+  (`uk_campaign_draft_store`)를 건다. 동시에 들어온 두 생성 요청 중 하나가 DB 제약으로 걸려
+  애플리케이션 레벨의 조회만으로는 못 막는 경쟁을 막는다(`V12__campaign_draft_store_unique.sql`)
 - **요청의 `storeId`와 `targetMenuId`가 로그인한 점주의 것인지 저장 전에 확인한다(`#874`).** `storeId`는 클라이언트가 보낸 값이라 `StoreQueryService.canManageStore(ownerId, storeId)`로 본인의 최종 등록된 가게인지 본다. 없는 가게, 남의 가게, 등록 중인 가게는 같은 `CAMPAIGN-013`(403)이라 존재 여부를 알려주지 않는다. `MENU` 할인이면 `findMenusByIdIn`의 정상 목록에 `targetMenuId`가 있고 그 메뉴의 `storeId`가 요청의 `storeId`와 같은지 본다. 없는 메뉴, 다른 가게의 메뉴, 이미지가 없거나 검증되지 않은 메뉴는 정상 목록에 들어오지 않으므로 한 번에 `CAMPAIGN-014`(422)로 거절한다. `MENU`인데 `targetMenuId`를 아예 보내지 않은 것은 필수값 누락이라 이 확인을 하지 않고, 엔티티 검증이 `COMMON-002`(400)로 거절한다(이 변경 전과 같다). 두 확인은 다른 도메인의 조회라 트랜잭션 밖에서 끝낸다. 같은 가게의 기존 `DRAFT`를 덮어쓸 때도 그 `DRAFT`의 `ownerId`가 로그인한 점주인지 확인한다. 다르면 소유 확인이 생기기 전에 만들어진 데이터라 덮어쓰지 않고 `CAMPAIGN-005`로 거절하며 WARN 로그를 남긴다
-- **점주는 `ENDED`가 아닌 캠페인을 동시에 하나만 가질 수 있다(`#525`, 피드백 리뷰로
-  나온 요구사항).** 새로 만드는 경로(`create()`)에서만
+- **점주는 `ENDED`가 아닌 캠페인을 동시에 하나만 가질 수 있다(`#525`).** 새로 만드는 경로(`create()`)에서만
   `CampaignRepository.existsByOwnerIdAndStatusNotIn(ownerId, List.of(ENDED))`로 확인한다.
   같은 가게의 `DRAFT`를 다시 저장하는 덮어쓰기 경로는 새 캠페인을 만드는 게 아니라서 이
   확인을 타지 않는다
@@ -64,9 +66,9 @@
   적용되지 않는다. `Campaign.create()`를 호출하는 쪽(이 API)이 이 세 값을 직접 채워
   넘긴다
 - **예산·기간(4단계)은 `null`로 둔다.** `daily_budget`/`start_date`/`end_date`는 이미
-  nullable이고(`V3__campaign_draft_nullable.sql`), `Campaign.activate()`가 이 둘의
-  null을 따로 확인한다(캠페인 엔티티와 상태 전이, `#176`). 활성화 이전에 반드시 채워야
-  한다는 제약은 그 전이 쪽이 갖고, 이 API는 신경 쓰지 않는다
+  nullable이다(`V3__campaign_draft_nullable.sql`). 활성화 이전에 채워야 한다는 제약은 활성화 요청이
+  갖는다(`CAMPAIGN-015`, 아래 "캠페인 활성화" 절). `Campaign.activate()`도 시작일과 종료일이 없으면
+  거부한다. 이 API는 이 값을 채우지 않는다
 - **새로 만들면 `201`, 덮어쓰면 `200`을 응답한다.** 공통 규약(`api-spec.md`)이
   `200`은 수정 성공, `201`은 생성 성공으로 구분해 둔 것을 그대로 따른다. `CampaignRepository.findDraftByStoreId(storeId)`의
   존재 여부로 컨트롤러가 상태 코드를 가른다
@@ -85,42 +87,38 @@
   손대지 않는다
 - **점주 상태(`ACTIVE`)는 `#244`와 같은 방식(`OwnerStatusQuery`)으로 확인한다.** 이
   엔드포인트에도 같은 이유(도메인 경계)가 적용된다
-- **본인 소유 확인은 `Campaign.ownerId`와 로그인한 점주 id를 비교한다.** store 공개
-  contract가 없어도 가능하다(`#244`의 TODO와는 별개 확인). 없거나 다르면 둘 다 같은
-  403으로 묶는다(`api-spec.md` "권한이 없으면 존재 여부와 상관없이 403")
-- **노출 대상은 `DRAFT`에서만, 하루 예산은 `DRAFT`·`ACTIVE` 둘 다, 집행 기간은 `DRAFT`에서만
-  바꿀 수 있다.** `ACTIVE`에서 집행 기간 필드가 오면 값이 같아도 거부한다(조용히 무시하지
-  않는다, `#312` 결정). V51 45행이 "집행 기간은 활성화 이후 바꿀 수 없다"로 명확히
-  규정하고 있어, 의도치 않은 변경 시도를 프론트가 바로 알 수 있게 한다
 - **`ACTIVE`에서 바꾼 하루 예산은 다음 영업일 00:00부터 적용된다(V51 45행, 102행
   스케줄러).** 바뀐 값은 `Campaign.pendingDailyBudget`에 두고, 00:00 `CampaignPendingBudgetJob`
   (`@Order(35)`)이 ACTIVE 이고 예약 값이 있는 캠페인마다 행 잠금 아래에서 상태를 다시 확인한 뒤
   `dailyBudget`으로 옮기고 예약 값을 비운다. `pause()`는 `pendingDailyBudget`을 지우지 않으므로
   `PAUSED`로 멈춰 있는 캠페인에는 적용하지 않고 예약 값을 남긴다. 정산의 일일 예약(50)보다 앞이라
-  바뀐 예산이 그날 예약에 반영된다(`campaign_구조와_동작_설계.md` 10장)
+  바뀐 예산이 그날 예약에 반영된다(`campaign_구조와_동작_설계.md` 10장). 응답은 항상 `dailyBudget`(바뀌기
+  전 값)을 돌려주고 `pendingDailyBudget`은 노출하지 않는다. 예약 값 컬럼은 양수만 허용하는
+  `chk_campaign_pending_daily_budget` CHECK 를 갖는다(`V13__campaign_pending_daily_budget.sql`)
+- **`pendingDailyBudget`은 `pause()`에서 지우지 않고 `end()`에서만 지운다.** 중단은 "끝"이 아니라
+  "잠깐 멈춤"이라 그 사이 재개되면(NO_POINTS 충전 재개 등, V51 51·49행) 점주가 걸어 둔 예약 값이 남아
+  있어야 한다. `end()`는 되돌릴 수 없는 종료라 더 쓸 일이 없는 값을 지운다(`Campaign`의 `pause`/`end`
+  블록 주석 참고)
 - **"추천 하루 예산"과 "예상 노출 범위"(V51 45행 H45)는 이 API의 범위 밖이다.** 광고
   서빙이 매일 00:00 배치로 집계해 넘기는 값이 있어야 계산할 수 있어, 저장·검증만 하는 이
   API와는 다른 기능이다
 - **본인 소유 확인은 `campaignRepository.findByIdForUpdate(campaignId)`(비관 잠금)로
-  조회한 뒤 `Campaign.ownerId`를 비교한다.** 처음에는 단순 필드 갱신이라 잠금 없는
-  `findById`로 충분하다고 봤는데, 같은 캠페인에 거의 동시에 들어온 두 PATCH가 서로의
-  변경을 조용히 지우는 lost update와, 00:00 스케줄러의 상태 전이와 경쟁하며 낡은
+  조회한 뒤 `Campaign.ownerId`를 비교한다.** 없거나 다르면 둘 다 같은 403으로 묶는다(`api-spec.md`
+  "권한이 없으면 존재 여부와 상관없이 403"). 잠금 없는 `findById`로는 같은 캠페인에 거의 동시에 들어온 두
+  PATCH가 서로의 변경을 조용히 지우는 lost update와, 00:00 스케줄러의 상태 전이와 경쟁하며 낡은
   스냅샷으로 "DRAFT가 아닌데 DRAFT로 착각"하는 경우가 둘 다 가능해 `CampaignStatusService.findOrThrow`와
-  같은 이유로 비관 잠금으로 바꿨다(`#253`)
-- **`#330`이 하루 예산과 집행 기간(4단계)을 구현한다.** 노출 대상(3단계)과 같은 트랜잭션,
-  같은 비관 잠금을 그대로 쓴다. 노출 대상과 예산·기간 두 묶음을 한 요청에 같이 보내도
-  각자의 상태 조건을 독립적으로 검사한 뒤 둘 다 적용한다
-- **노출 대상은 `DRAFT`에서만, 하루 예산은 `DRAFT`·`ACTIVE` 둘 다, 집행 기간은 `DRAFT`에서만
-  바꿀 수 있다는 규칙을 "두 필드 묶음이 왔는지"와 "지금 상태가 그 묶음을 허용하는지"로
-  나눠 검사한다.** 묶음 안의 필드가 일부만 오면 `COMMON-002`(형식 문제), 묶음은 다 왔지만
-  지금 상태가 그 묶음을 허용하지 않으면 `CAMPAIGN-006`(업무 규칙)이다. `ACTIVE`에서
-  `startDate`/`endDate` 중 하나라도 오면 값이 같아도 `CAMPAIGN-006`이고, `DRAFT`도
-  `ACTIVE`도 아닌 상태(`SCHEDULED`/`PAUSED`/`ENDED`)에서 예산·기간 필드가 오면 역시
-  `CAMPAIGN-006`이다
-- **`ACTIVE`에서 바꾼 하루 예산은 `Campaign.pendingDailyBudget`(V13 마이그레이션)에만 쓰고
-  `dailyBudget`은 그대로 둔다.** 응답은 항상 `dailyBudget`(바뀌기 전 값)을 돌려주고
-  `pendingDailyBudget`은 노출하지 않는다("아직 정해지지 않은 것"에서 정함). 00:00 배치가
-  이 값을 `dailyBudget`에 반영하는 방식은 바로 위 항목에 있다
+  같은 이유로 비관 잠금을 쓴다(`#253`)
+- **하루 예산과 집행 기간(4단계)도 노출 대상(3단계)과 같은 트랜잭션, 같은 비관 잠금을 쓴다(`#330`).**
+  노출 대상과 예산·기간 두 묶음을 한 요청에 같이 보내도 각자의 상태 조건을 독립적으로 검사한 뒤 둘 다
+  적용한다
+- **노출 대상은 `DRAFT`에서만, 하루 예산은 `DRAFT`·`ACTIVE` 둘 다, 집행 기간은 `DRAFT`에서만 바꿀 수
+  있다는 규칙을 "두 필드 묶음이 왔는지"와 "지금 상태가 그 묶음을 허용하는지"로 나눠 검사한다.**
+  묶음 안의 필드가 일부만 오면 `COMMON-002`(형식 문제), 묶음은 다 왔지만 지금 상태가 그 묶음을 허용하지
+  않으면 `CAMPAIGN-006`(업무 규칙)이다. `ACTIVE`에서 `startDate`/`endDate` 중 하나라도 오면 값이
+  같아도 `CAMPAIGN-006`이고, `DRAFT`도 `ACTIVE`도 아닌 상태(`SCHEDULED`/`PAUSED`/`ENDED`)에서
+  예산·기간 필드가 오면 역시 `CAMPAIGN-006`이다. 집행 기간 필드를 `ACTIVE`에서 조용히 무시하지 않고
+  거부하는 것은 V51 45행이 "집행 기간은 활성화 이후 바꿀 수 없다"고 규정하기 때문이며, 의도치 않은
+  변경 시도를 프론트가 바로 알 수 있게 한다(`#312`)
 - **최소 하루 예산은 요구사항명세서 [H27]의 1,000포인트를 그대로 쓴다.**
   `ops.contract.PlatformSettingQueryService.getMinDailyBudget()`을 새로 추가해
   `getImpressionUnitPrice()`와 같은 패턴(파싱 실패·0 이하 거부)으로 구현한다
@@ -242,8 +240,7 @@
   서비스(`CampaignPauseResumeService`)가 하고, `CampaignStatusService.pause()`/`resume()`은
   여전히 `ownerId`를 모른다
 - **점주 상태(`ACTIVE`)도 등록·수정 엔드포인트와 같은 방식(`OwnerStatusQuery`)으로
-  확인한다.** 이슈 본문은 이 확인을 언급하지 않았지만, 다른 캠페인 쓰기 엔드포인트와
-  보안 수준을 맞추기로 했다
+  확인한다.** 다른 캠페인 쓰기 엔드포인트와 보안 수준을 맞추려는 것이다
 - **엔티티가 던지는 `IllegalStateException`(상태가 안 맞음)을 `CAMPAIGN-006`으로
   변환한다.** `Campaign.pause()`/`resume()`은 각각 `ACTIVE`/`PAUSED`가 아니면 이 예외를
   던진다. 새 서비스가 `CampaignStatusService` 호출을 `try-catch`로 감싸 변환한다
@@ -258,7 +255,7 @@
   `handleUnexpected`의 `COMMON-001`(500)로 보낸다
 - **`store.contract.StoreCampaignSummaryUpdater.update()` 호출을
   `CampaignStatusService.pause()`/`resume()` 안에 추가한다(설계 문서 2.4, `#468`).** 호출자가
-  누구든(점주, 나중에 추가될 관리자) 같은 트랜잭션 안에서 가게 요약이 함께 갱신되게
+  누구든(점주, 관리자) 같은 트랜잭션 안에서 가게 요약이 함께 갱신되게
   하려고 호출 지점을 전이 메서드 내부에 둔다. `Campaign`의 `discountTargetType`,
   `discountType`, `discountValue`, `targetMenuId`, `usableStartTime`, `usableEndTime`과
   바뀐 `CampaignStatus`를 `StoreCampaignStatus`로 매핑해 `StoreCampaignSummaryCommand`를
@@ -353,15 +350,4 @@
 
 | 항목 | 요구사항 | 현재 스키마 또는 명세 |
 |---|---|---|
-| 가게당 DRAFT 1개를 막는 UNIQUE 제약의 정확한 마이그레이션 문구 | `#244` 결정 | `#244`가 `active_store_marker`와 같은 방식으로 추가한다(이 문서 "캠페인 등록" 절 참고) |
-| `Campaign.updateCouponCondition(...)` 메서드 시그니처 | `#244` 결정 | 아직 엔티티에 없다. `#244`가 추가한다 |
-| 예약 값(`pendingDailyBudget`) 자체를 PATCH 응답에 노출할지 | V51 45행 | `#330`은 노출하지 않는다(응답은 늘 `dailyBudget`). 노출이 필요해지면 그때 명세를 바꾼다 |
 | 캠페인 활성화 요청 빈도 제한의 정확한 횟수·창 | `#561` | `CampaignActivationRateLimiter`가 지금은 `TemplateGenerationRateLimiter`의 분당 3회를 그대로 가져와 썼다(근거 없는 예시값, `C` 등급). 실제 값은 운영 쪽과 정한다 |
-
-해소된 항목(`#330`): 하루 예산의 "다음 영업일 적용 예약 값" 컬럼은 `Campaign.pendingDailyBudget`(`V13__campaign_pending_daily_budget.sql`, 양수만 허용하는
-`chk_campaign_pending_daily_budget` CHECK 포함)이고, 최소 하루 예산은 `ops.contract.PlatformSettingQueryService.getMinDailyBudget()`(요구사항명세서
-[H27] 1,000포인트, `V4__ops_min_daily_budget.sql` 시드)이다.
-
-**`pendingDailyBudget`을 상태 전이에서 지우는 기준도 이 PR의 자체 리뷰로 정했다.** `pause()`는 지우지 않고 `end()`만 지운다. 중단은
-"끝"이 아니라 "잠깐 멈춤"이라 그 사이 재개되면(NO_POINTS 충전 재개 등, V51 51·49행) 점주가 걸어 둔 예약값이 남아 있어야 하고, `end()`는
-되돌릴 수 없는 종료라 더 쓸 일이 없는 값을 지운다(`Campaign.java`의 `pause`/`end` 블록 주석 참고).

@@ -6,9 +6,8 @@
 | 명세서 | [admin-api-spec.md](../../api-spec/admin-api-spec.md#배치-작업-수동-재실행) |
 | 관련 문서 | [런치캐치_배치_운영.md](./런치캐치_배치_운영.md) 2장, 3장(수동 재실행 행) |
 
-`런치캐치_배치_운영.md`의 "아직 비어 있는 것"에 있던 "관리자 수동 재실행"(화면에서 누르는 HTTP 경로)을 연다.
-`BatchExecutionService.retry`는 이미 있었지만 상태만 되돌리고 실제로 작업을 다시 돌리지는 않았다. 이 PR이
-그 둘을 잇는다.
+관리자가 화면에서 누르는 HTTP 경로로 실패한 작업을 수동 재실행한다. `BatchExecutionService.retry`는 상태만
+되돌리고 실제로 작업을 다시 돌리지는 않으므로, 이 API가 실제 재개를 접수해 둘을 잇는다.
 
 ## 서버가 하는 일
 
@@ -22,6 +21,9 @@
 6. 재개를 별도 스레드에 접수시키고 `202`를 돌려준다. 실제 재개는 `BatchJobRunner.resume`이
    한다. 실행기 대기열(4건)이 가득 차 접수하지 못하면(`RejectedExecutionException`) 되돌린 행을
    `FAILED`로 다시 닫고 `503 OPS-005`를 돌려준다.
+
+재개 결과(성공/실패)는 배치 실행 이력 조회(`GET /v1/admin/batch-executions`)로 확인한다. 그 설계는
+[batch-execution-history-api-design.md](./batch-execution-history-api-design.md)가 갖는다.
 
 ## 정한 이유
 
@@ -47,7 +49,7 @@ A를 고른다. B는 이슈의 완료 조건("FAILED 행에 부르면 그 작업
 건너뛰고 첫 `FAILED` 단계부터 이어가므로, "실패한 단계부터 다시 돈다"는 개별 단계를 따로
 겨냥하지 않고도 B의 결과를 얻는다.
 
-## 다시 쓴 기존 코드
+## 재개 코드를 Service 계층에 둔 이유
 
 `DailyJobScheduler.takeOverStale`(이어받기)과 이 API(수동 재실행)는 "묶음이면 `runBundle`, 등록된
 `StandaloneJob`이면 `run`을 다시 부른다"는 같은 분기를 쓴다. 중복을 피하려고 그 분기를
@@ -56,14 +58,12 @@ A를 고른다. B는 이슈의 완료 조건("FAILED 행에 부르면 그 작업
 그 둘을 어디에 둘지는 계층 규칙(설계 문서 1.5절, Service 는 Controller 와 Entry 에게만 불린다)이
 정했다. `DailyJobScheduler`는 `job/`(Entry 계층)이라 Service 계층인 이 API의
 `BatchExecutionRetryService`가 직접 부를 수 없다. 그래서 묶음을 실제로 도는 로직(`runBundle`,
-`runStep`, `attempt`, `retryOrFail`)과 새 `isRetryable`/`resume`을 묶어 `ops.service.BatchJobRunner`
-(Service 계층)로 옮겼다. `DailyJobScheduler`는 점유 확인(`claim`)과 스케줄 트리거만 남고
-`BatchJobRunner`에 위임한다. 동작은 바뀌지 않았다. 기존 `DailyJobSchedulerTest`의 실행 로직
-검증은 새 `BatchJobRunnerTest`로 옮기고, `DailyJobSchedulerTest`는 트리거가 `BatchJobRunner`에
-올바르게 위임하는지만 보도록 줄였다. 둘 다 통과하는 것으로 확인했다.
+`runStep`, `attempt`, `retryOrFail`)과 `isRetryable`/`resume`은 `ops.service.BatchJobRunner`
+(Service 계층)가 갖는다. `DailyJobScheduler`는 점유 확인(`claim`)과 스케줄 트리거만 하고
+`BatchJobRunner`에 위임한다.
 
-#585 가 이름 분류(`isStep`/`isRetryable`)를 `ops.scheduler.BatchJobRegistry.classify` 로 떼어내고
-실행 클래스 이름도 `BatchJobRunner` 로 바꿨다. 묶음만 돌리지 않고 묶음 밖 작업의 재개도 맡기 때문이다.
+이름 분류(`isStep`/`isRetryable`)는 `ops.scheduler.BatchJobRegistry.classify` 가 맡는다(#585). 실행 클래스를
+`BatchJobRunner` 라 부르는 것은 묶음만이 아니라 묶음 밖 작업의 재개도 맡기 때문이다.
 
 ## 동시성
 
@@ -95,8 +95,5 @@ A를 고른다. B는 이슈의 완료 조건("FAILED 행에 부르면 그 작업
 
 ## 아직 정해지지 않은 것
 
-- 재개 결과(성공/실패)는 배치 실행 이력 조회(`GET /v1/admin/batch-executions`)로 확인한다.
-  명세와 설계는 #570이 정했고([batch-execution-history-api-design.md](./batch-execution-history-api-design.md))
-  구현은 #575가 했다.
 - V52 요구사항명세서 102행의 정확한 기능 ID(FR 번호)를 확인하지 못했다. `api-spec.md`의
   "도메인과 문서" 표에 임시로 비워 두었다.
