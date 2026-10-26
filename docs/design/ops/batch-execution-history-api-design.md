@@ -7,7 +7,7 @@
 | 저장 구조 | `batch_execution_log`([ops V1](../../../src/main/resources/db/migration/ops/V1__ops_init.sql), V2 `retry_count`, V5 `attempt_no`). 유일 키 `(job_name, business_date)` |
 | 관련 문서 | [batch-execution-retry-api-design.md](./batch-execution-retry-api-design.md), [런치캐치_배치_운영.md](./런치캐치_배치_운영.md) 3장 |
 
-배치 수동 재실행(#362)은 접수만 하고 결과를 돌려주지 않는다. 관리자가 그 결과와 실패한 작업을 화면에서 확인할 길이 없었다. 분석의 A-06(`GET /v1/admin/aggregation-runs`)은 `DAILY_AGGREGATION` 하나만 보여 준다. 이 API 가 운영 전역의 실행 기록을 연다.
+배치 수동 재실행(#362)은 접수만 하고 결과를 돌려주지 않는다. 그 결과와 실패한 작업은 이 API 로 확인한다. 분석의 A-06(`GET /v1/admin/aggregation-runs`)은 `DAILY_AGGREGATION` 하나만 보여 주고, 이 API 는 운영 전역의 실행 기록을 보여 준다.
 
 ## 서버가 하는 일
 
