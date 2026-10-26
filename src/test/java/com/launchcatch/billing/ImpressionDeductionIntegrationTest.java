@@ -309,7 +309,7 @@ class ImpressionDeductionIntegrationTest extends AbstractBillingIntegrationTest 
         assertThat(spendInValkey(campaignId)).isEqualTo(3 * UNIT);
     }
 
-    // 계정 행이 없는 점주의 묶음은 공유 잠금에서 실패한다. 그 묶음만 빠지고 다른 점주의 과금은 커밋된다
+    // 계정 행이 없는 점주의 묶음은 공유 잠금에서 실패한다. 그 묶음만 실패로 돌아오고 다른 점주의 과금은 커밋된다
     @Test
     void 묶음_차감에서_한_점주_묶음이_실패해도_다른_점주_묶음은_커밋된다() {
         long healthy = plan(30, false);
@@ -320,12 +320,15 @@ class ImpressionDeductionIntegrationTest extends AbstractBillingIntegrationTest 
                 values (?, ?, ?, ?, ?, false, now(6), now(6))
                 """, broken, 970_002L, DAY, 30 * UNIT, UNIT);
         UUID healthyServe = UUID.randomUUID();
+        UUID brokenServe = UUID.randomUUID();
 
         List<DeductionOutcome> outcomes = deductor.deductAll(List.of(
-                new DeductionRequest(UUID.randomUUID(), broken, DAY),
+                new DeductionRequest(brokenServe, broken, DAY),
                 new DeductionRequest(healthyServe, healthy, DAY)));
 
-        assertThat(outcomes).containsExactly(new DeductionOutcome(healthyServe, DeductionStatus.BILLED));
+        assertThat(outcomes).containsExactlyInAnyOrder(
+                DeductionOutcome.failed(brokenServe),
+                DeductionOutcome.judged(healthyServe, DeductionStatus.BILLED));
         assertThat(ledgerDeductSum(healthy)).isEqualTo(-UNIT);
         assertThat(rows("deduction_result", broken)).isZero();
         assertThat(rows("point_ledger", broken)).isZero();

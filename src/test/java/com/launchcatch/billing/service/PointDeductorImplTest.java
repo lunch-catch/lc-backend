@@ -16,6 +16,7 @@ import static org.mockito.Mockito.when;
 import com.launchcatch.billing.contract.DeductionOutcome;
 import com.launchcatch.billing.contract.DeductionRequest;
 import com.launchcatch.billing.contract.DeductionStatus;
+import com.launchcatch.billing.contract.PointDeductor;
 import com.launchcatch.billing.dto.PlanSnapshot;
 import com.launchcatch.billing.cache.DailySpendCounter;
 import com.launchcatch.billing.cache.InMemoryDailySpendCounter;
@@ -44,6 +45,9 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.dao.CannotAcquireLockException;
+import org.springframework.dao.QueryTimeoutException;
+import org.springframework.data.redis.RedisConnectionFailureException;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -535,16 +539,16 @@ class PointDeductorImplTest {
                 new DeductionRequest(third, CAMPAIGN_ID, DAY)));
 
         assertThat(outcomes).containsExactlyInAnyOrder(
-                new DeductionOutcome(first, DeductionStatus.BILLED),
-                new DeductionOutcome(second, DeductionStatus.BILLED),
-                new DeductionOutcome(third, DeductionStatus.BILLED));
+                DeductionOutcome.judged(first, DeductionStatus.BILLED),
+                DeductionOutcome.judged(second, DeductionStatus.BILLED),
+                DeductionOutcome.judged(third, DeductionStatus.BILLED));
         assertThat(finishedTransactions).containsExactly("commit", "commit");
         verify(accountRepository, times(2)).lockForShareByOwnerId(3L);
         verify(accountRepository).lockForShareByOwnerId(4L);
     }
 
     @Test
-    void 한_점주_묶음이_실패하면_그_묶음만_결과에서_빠지고_소진을_되돌리며_다른_점주_묶음은_커밋된다() {
+    void 한_점주_묶음이_실패하면_그_묶음만_실패로_돌려주고_소진을_되돌리며_다른_점주_묶음은_커밋된다() {
         outsideTransaction();
         otherOwnerCampaignBills();
         UUID first = UUID.randomUUID();
@@ -558,7 +562,10 @@ class PointDeductorImplTest {
                 new DeductionRequest(second, OTHER_CAMPAIGN_ID, DAY),
                 new DeductionRequest(third, CAMPAIGN_ID, DAY)));
 
-        assertThat(outcomes).containsExactly(new DeductionOutcome(second, DeductionStatus.BILLED));
+        assertThat(outcomes).containsExactlyInAnyOrder(
+                DeductionOutcome.failed(first),
+                DeductionOutcome.judged(second, DeductionStatus.BILLED),
+                DeductionOutcome.failed(third));
         assertThat(finishedTransactions).containsExactlyInAnyOrder("rollback", "commit");
         verify(spendCounter).undo(DAY, CAMPAIGN_ID, first, 10L);
         verify(spendCounter).undo(DAY, CAMPAIGN_ID, third, 10L);
@@ -581,8 +588,8 @@ class PointDeductorImplTest {
                 new DeductionRequest(late, CAMPAIGN_ID, yesterday)));
 
         assertThat(outcomes).containsExactlyInAnyOrder(
-                new DeductionOutcome(today, DeductionStatus.BILLED),
-                new DeductionOutcome(late, DeductionStatus.NOT_BILLED_CLOSED));
+                DeductionOutcome.judged(today, DeductionStatus.BILLED),
+                DeductionOutcome.judged(late, DeductionStatus.NOT_BILLED_CLOSED));
         assertThat(finishedTransactions).containsExactly("commit");
         verify(spendCounter, never()).deduct(yesterday, CAMPAIGN_ID, late, 10L);
     }
@@ -598,12 +605,12 @@ class PointDeductorImplTest {
 
         List<DeductionOutcome> outcomes = deductor.deductAll(List.of(new DeductionRequest(replayed, CAMPAIGN_ID, DAY)));
 
-        assertThat(outcomes).containsExactly(new DeductionOutcome(replayed, DeductionStatus.NOT_BILLED_BUDGET));
+        assertThat(outcomes).containsExactly(DeductionOutcome.judged(replayed, DeductionStatus.NOT_BILLED_BUDGET));
         verify(ledgerRepository, never()).insertDeductIfAbsent(any(), any(), any(UUID.class), anyLong(), any());
     }
 
     @Test
-    void 계획도_캠페인도_없는_노출은_결과에서_빠지고_나머지는_처리한다() {
+    void 계획도_캠페인도_없는_노출은_그_노출만_실패로_돌려주고_나머지는_처리한다() {
         outsideTransaction();
         otherOwnerCampaignBills();
         Long missingCampaign = 99L;
@@ -616,9 +623,75 @@ class PointDeductorImplTest {
                 new DeductionRequest(unknown, missingCampaign, DAY),
                 new DeductionRequest(known, CAMPAIGN_ID, DAY)));
 
-        assertThat(outcomes).containsExactly(new DeductionOutcome(known, DeductionStatus.BILLED));
+        assertThat(outcomes).containsExactlyInAnyOrder(
+                DeductionOutcome.failed(unknown),
+                DeductionOutcome.judged(known, DeductionStatus.BILLED));
         assertThat(meterRegistry.counter(PointDeductorImpl.BATCH_FAILED_METRIC, "reason", "unknown_campaign").count())
                 .isEqualTo(1);
+    }
+
+    /*
+     * 정산의 Valkey 나 DB 에 닿지 못하면 모든 점주 묶음이 같은 이유로 실패한다. 점주별 실패로 돌려주면 릴레이의 재시도 표만 커지므로
+     * 예외로 올려 릴레이가 같은 묶음을 다음 주기에 다시 넘기게 한다.
+     */
+    @Test
+    void 정산이_Valkey에_닿지_못하면_묶음별_실패가_아니라_예외를_올린다() {
+        outsideTransaction();
+        otherOwnerCampaignBills();
+        when(spendCounter.deduct(any(), any(), any(UUID.class), anyLong()))
+                .thenThrow(new RedisConnectionFailureException("Valkey 연결 실패"));
+
+        assertThatThrownBy(() -> deductor.deductAll(List.of(
+                new DeductionRequest(UUID.randomUUID(), CAMPAIGN_ID, DAY),
+                new DeductionRequest(UUID.randomUUID(), OTHER_CAMPAIGN_ID, DAY))))
+                .isInstanceOf(RedisConnectionFailureException.class);
+        assertThat(finishedTransactions).containsExactly("rollback");
+    }
+
+    @Test
+    void 정산의_명령이_시간을_넘기면_예외를_올린다() {
+        outsideTransaction();
+        otherOwnerCampaignBills();
+        when(spendCounter.deduct(any(), any(), any(UUID.class), anyLong()))
+                .thenThrow(new QueryTimeoutException("Valkey 명령 시간 초과"));
+
+        assertThatThrownBy(() -> deductor.deductAll(List.of(new DeductionRequest(UUID.randomUUID(), CAMPAIGN_ID, DAY))))
+                .isInstanceOf(QueryTimeoutException.class);
+    }
+
+    // 계정 잠금 대기 초과는 그 점주의 잠금을 다투는 해제나 환불 때문이라 그 점주 묶음만 실패한다
+    @Test
+    void 한_점주의_잠금_대기가_넘치면_그_점주_묶음만_실패한다() {
+        outsideTransaction();
+        otherOwnerCampaignBills();
+        when(accountRepository.lockForShareByOwnerId(3L)).thenThrow(new CannotAcquireLockException("잠금 대기 초과"));
+        UUID blocked = UUID.randomUUID();
+        UUID other = UUID.randomUUID();
+
+        List<DeductionOutcome> outcomes = deductor.deductAll(List.of(
+                new DeductionRequest(blocked, CAMPAIGN_ID, DAY),
+                new DeductionRequest(other, OTHER_CAMPAIGN_ID, DAY)));
+
+        assertThat(outcomes).containsExactlyInAnyOrder(
+                DeductionOutcome.failed(blocked),
+                DeductionOutcome.judged(other, DeductionStatus.BILLED));
+    }
+
+    @Test
+    void 묶음_차감은_상한까지_받고_넘으면_아무것도_하지_않고_거절한다() {
+        outsideTransaction();
+        otherOwnerCampaignBills();
+        List<DeductionRequest> atLimit = new ArrayList<>();
+        for (int i = 0; i < PointDeductor.MAX_BATCH_SIZE; i++) {
+            atLimit.add(new DeductionRequest(UUID.randomUUID(), CAMPAIGN_ID, DAY));
+        }
+
+        assertThat(deductor.deductAll(atLimit)).hasSize(PointDeductor.MAX_BATCH_SIZE);
+
+        List<DeductionRequest> overLimit = new ArrayList<>(atLimit);
+        overLimit.add(new DeductionRequest(UUID.randomUUID(), CAMPAIGN_ID, DAY));
+        assertThatThrownBy(() -> deductor.deductAll(overLimit)).isInstanceOf(IllegalArgumentException.class);
+        assertThat(finishedTransactions).containsExactly("commit");
     }
 
     @Test
@@ -632,7 +705,7 @@ class PointDeductorImplTest {
 
         List<DeductionOutcome> outcomes = deductor.deductAll(List.of(new DeductionRequest(serveId, noPlanCampaign, DAY)));
 
-        assertThat(outcomes).containsExactly(new DeductionOutcome(serveId, DeductionStatus.NOT_BILLED_NO_PLAN));
+        assertThat(outcomes).containsExactly(DeductionOutcome.judged(serveId, DeductionStatus.NOT_BILLED_NO_PLAN));
         verify(deductionResultRepository).insertIfAbsent(serveId, noPlanCampaign, 5L, DAY,
                 DeductionStatus.NOT_BILLED_NO_PLAN, 10L, NOW);
     }
