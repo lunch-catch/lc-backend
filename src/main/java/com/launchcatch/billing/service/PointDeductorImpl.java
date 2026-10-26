@@ -7,6 +7,7 @@ import com.launchcatch.billing.cache.DailySpendCounter;
 import com.launchcatch.billing.cache.DeductOutcome;
 import com.launchcatch.billing.repository.DeductionResultRepository;
 import com.launchcatch.billing.repository.PointLedgerRepository;
+import com.launchcatch.billing.repository.PointAccountRepository;
 import com.launchcatch.campaign.contract.CampaignInfo;
 import com.launchcatch.campaign.contract.CampaignQueryService;
 import com.launchcatch.ops.contract.PlatformSettingQueryService;
@@ -38,8 +39,9 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
  * 그래서 이번 호출이 새로 판정했으면 롤백 직후 그 판정을 되돌린다(처리 표시 삭제, BILLED 였으면 소진 감소).
  * 되돌리기가 실패하거나 프로세스가 죽으면 소진이 원장보다 큰 채로 그날 끝까지 남고, 다음 날 00:00 대사가 기록한다.
  *
- * 노출을 저장하는 트랜잭션 안에서만 부른다. 밖에서 부르면 Spring 이 바로 예외를 낸다.
- * 금전 값이라 대체값을 돌려주지 않는다. 실패는 예외이고 노출 저장까지 롤백된다.
+ * 호출자 트랜잭션이 있으면 참여하고 없으면 정산 트랜잭션을 시작한다.
+ * 계정 공유 잠금 뒤 마감을 검사하고 커밋까지 잠금을 유지해, 해제가 진행 중인 차감을 빠뜨리지 않게 한다.
+ * 마감이 지난 영업일은 미과금으로 기록하고, 금전 처리의 실패는 대체값 없이 예외로 올린다.
  */
 @Slf4j
 @Service
@@ -55,18 +57,31 @@ public class PointDeductorImpl implements PointDeductor {
     private final PlatformSettingQueryService platformSetting;
     private final Clock clock;
     private final MeterRegistry meterRegistry;
+    private final PointAccountRepository accountRepository;
 
     static final String UNDO_METRIC = "billing_deduct_undo_total";
     static final String NO_PLAN_METRIC = "billing_deduct_no_plan_total";
 
     @Override
-    @Transactional(propagation = Propagation.MANDATORY)
+    @Transactional(propagation = Propagation.REQUIRED)
     public DeductionStatus deduct(UUID serveId, Long campaignId, LocalDate businessDate) {
         Optional<PlanSnapshot> found = snapshotService.find(businessDate, campaignId);
         if (found.isEmpty()) {
-            return recordNoPlan(serveId, campaignId, businessDate);
+            return recordWithoutPlan(serveId, campaignId, businessDate,
+                    businessDate.isBefore(LocalDate.now(clock))
+                            ? DeductionStatus.NOT_BILLED_CLOSED : DeductionStatus.NOT_BILLED_NO_PLAN);
         }
         PlanSnapshot plan = found.get();
+
+        accountRepository.lockForShareByOwnerId(plan.ownerId())
+                .orElseThrow(() -> new IllegalStateException("예산 계획의 점주 계정이 없습니다. ownerId=" + plan.ownerId()));
+        LocalDateTime now = LocalDateTime.now(clock);
+        if (businessDate.isBefore(now.toLocalDate())) {
+            int inserted = deductionResultRepository.insertIfAbsent(serveId, campaignId, plan.ownerId(), businessDate,
+                    DeductionStatus.NOT_BILLED_CLOSED, plan.unitPrice(), now);
+            return inserted == 1 ? DeductionStatus.NOT_BILLED_CLOSED
+                    : firstStatus(serveId, DeductionStatus.NOT_BILLED_CLOSED);
+        }
 
         DeductOutcome outcome = spendCounter.deduct(businessDate, campaignId, serveId, plan.unitPrice());
         if (outcome.isHashMissing()) {
@@ -81,8 +96,6 @@ public class PointDeductorImpl implements PointDeductor {
         if (!outcome.replayed()) {
             undoOnRollback(businessDate, campaignId, serveId, plan.unitPrice());
         }
-        LocalDateTime now = LocalDateTime.now(clock);
-
         int inserted = deductionResultRepository.insertIfAbsent(
                 serveId, campaignId, plan.ownerId(), businessDate, status, plan.unitPrice(), now);
         if (inserted != 1) {
@@ -96,24 +109,27 @@ public class PointDeductorImpl implements PointDeductor {
     }
 
     /*
-     * 그날 계획이 없는 캠페인의 노출을 NOT_BILLED_NO_PLAN 으로 남긴다. 00:00 예약이 그 캠페인의 계획을 만들기 전이거나
-     * 전날 집행이 끝난 캠페인이다. 행을 남겨야 광고 서빙의 유효 노출 수가 판정 합과 맞는다.
+     * 계획이 없으면 마감 여부에 따라 NOT_BILLED_CLOSED 또는 NOT_BILLED_NO_PLAN 을 기록한다.
+     * 행을 남겨야 광고 서빙의 유효 노출 수가 판정 합과 맞는다.
      * 계획이 없으니 점주는 캠페인에서, 단가는 운영 설정에서 읽는다. 과금하지 않으므로 Valkey 와 원장은 건드리지 않는다.
      */
-    private DeductionStatus recordNoPlan(UUID serveId, Long campaignId, LocalDate businessDate) {
+    private DeductionStatus recordWithoutPlan(UUID serveId, Long campaignId, LocalDate businessDate,
+                                              DeductionStatus status) {
         Long ownerId = campaignQuery.findAllById(List.of(campaignId)).stream()
                 .findFirst()
                 .map(CampaignInfo::ownerId)
                 .orElseThrow(() -> new IllegalStateException("노출한 캠페인이 없습니다. campaignId=" + campaignId));
         long unitPrice = platformSetting.getImpressionUnitPrice();
-        meterRegistry.counter(NO_PLAN_METRIC).increment();
-        log.debug("event=BILLING_DEDUCT_NO_PLAN campaignId={} businessDate={}", campaignId, businessDate);
-        int inserted = deductionResultRepository.insertIfAbsent(serveId, campaignId, ownerId, businessDate,
-                DeductionStatus.NOT_BILLED_NO_PLAN, unitPrice, LocalDateTime.now(clock));
-        if (inserted != 1) {
-            return firstStatus(serveId, DeductionStatus.NOT_BILLED_NO_PLAN);
+        if (status == DeductionStatus.NOT_BILLED_NO_PLAN) {
+            meterRegistry.counter(NO_PLAN_METRIC).increment();
+            log.debug("event=BILLING_DEDUCT_NO_PLAN campaignId={} businessDate={}", campaignId, businessDate);
         }
-        return DeductionStatus.NOT_BILLED_NO_PLAN;
+        int inserted = deductionResultRepository.insertIfAbsent(serveId, campaignId, ownerId, businessDate,
+                status, unitPrice, LocalDateTime.now(clock));
+        if (inserted != 1) {
+            return firstStatus(serveId, status);
+        }
+        return status;
     }
 
     /*
@@ -149,7 +165,7 @@ public class PointDeductorImpl implements PointDeductor {
     private DeductionStatus firstStatus(UUID serveId, DeductionStatus judged) {
         DeductionStatus first = deductionResultRepository.findFirstStatus(serveId)
                 .orElseThrow(() -> new IllegalStateException("판정 행이 있다고 했는데 읽을 수 없습니다. serveId=" + serveId));
-        if (first != judged) {
+        if (first != judged && judged != DeductionStatus.NOT_BILLED_CLOSED) {
             log.warn("event=BILLING_DEDUCT_REJUDGE_MISMATCH serveId={} first={} rejudged={} fallback=KEEP_FIRST",
                     serveId, first, judged);
         }

@@ -46,4 +46,17 @@ public interface PointAccountRepository extends JpaRepository<PointAccount, Long
                FOR UPDATE
             """, nativeQuery = true)
     Optional<Long> lockByOwnerId(@Param("ownerId") Long ownerId);
+
+    /*
+     * 차감이 해제와 같은 계정 행에 공유 잠금을 잡는다.
+     * 차감끼리는 함께 진행하고, 해제는 진행 중인 차감의 커밋이나 롤백을 기다린 뒤 소진을 읽는다.
+     * 잠금을 얻은 뒤 영업일을 검사해야 자정 동안 기다린 전날 노출을 새로 과금하지 않는다.
+     */
+    @Query(value = """
+            SELECT /*+ SET_VAR(innodb_lock_wait_timeout=5) */ point_account_id
+              FROM point_account
+             WHERE owner_id = :ownerId
+               FOR SHARE
+            """, nativeQuery = true)
+    Optional<Long> lockForShareByOwnerId(@Param("ownerId") Long ownerId);
 }
