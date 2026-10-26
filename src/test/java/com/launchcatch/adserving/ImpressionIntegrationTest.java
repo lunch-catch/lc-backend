@@ -111,6 +111,14 @@ class ImpressionIntegrationTest extends AbstractAdservingIntegrationTest {
                 .with(user(new CustomUserDetails(MEMBER_ID, role))));
     }
 
+    /*
+     * 다시 보낸 요청은 저장된 노출을 확인하지 않고 묶음 저장이 created_at 으로 처음 저장을 가린다(#1044).
+     * 실제로는 두 요청의 받은 시각이 다르다. 테스트는 시계를 멈춰 두므로 다시 보내기 전에 1ms 옮긴다.
+     */
+    private void resendLater() {
+        doReturn(NOW.plusMillis(1)).when(clock).instant();
+    }
+
     private long rows() {
         return jdbcTemplate.queryForObject("SELECT COUNT(*) FROM impression_log", Long.class);
     }
@@ -217,10 +225,12 @@ class ImpressionIntegrationTest extends AbstractAdservingIntegrationTest {
     void 저장된_뒤_같은_사용자가_같은_카드를_다시_보내면_다시_판정하고_한_번만_넘기고_센다() throws Exception {
         send(body(serveId, 101L), Role.MEMBER).andExpect(status().isAccepted());
         writeBuffer.flush();
+        resendLater();
 
         send(body(serveId, 101L), Role.MEMBER)
                 .andExpect(status().isAccepted())
                 .andExpect(jsonPath("$.data.validity").value("VALID"));
+        writeBuffer.flush();
 
         dispatch.dispatchPending();
 
@@ -300,6 +310,7 @@ class ImpressionIntegrationTest extends AbstractAdservingIntegrationTest {
     void 유효_노출을_처음_저장하면_커밋_뒤_노출_이벤트가_한_번_넘어가고_다시_보내면_넘어가지_않는다() throws Exception {
         send(body(serveId, 101L), Role.MEMBER).andExpect(status().isAccepted());
         writeBuffer.flush();
+        resendLater();
         send(body(serveId, 101L), Role.MEMBER).andExpect(status().isAccepted());
         writeBuffer.flush();
 
