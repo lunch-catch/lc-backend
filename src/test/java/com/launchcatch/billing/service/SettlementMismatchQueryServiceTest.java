@@ -13,9 +13,13 @@ import static org.mockito.Mockito.when;
 import com.launchcatch.billing.dto.SettlementMismatchItem;
 import com.launchcatch.billing.entity.MismatchCheckType;
 import com.launchcatch.billing.entity.MismatchResolutionType;
+import com.launchcatch.billing.entity.Payment;
 import com.launchcatch.billing.exception.BillingException;
+import com.launchcatch.billing.repository.PaymentRepository;
 import com.launchcatch.billing.repository.SettlementMismatchRepository;
 import com.launchcatch.billing.repository.SettlementMismatchRow;
+import com.launchcatch.campaign.contract.CampaignInfo;
+import com.launchcatch.campaign.contract.CampaignQueryService;
 import com.launchcatch.global.exception.CommonErrorCode;
 import com.launchcatch.global.response.PageResponse;
 import java.time.LocalDate;
@@ -34,12 +38,43 @@ class SettlementMismatchQueryServiceTest {
     private static final LocalDate TO = LocalDate.of(2026, 10, 13);
 
     private final SettlementMismatchRepository repository = mock(SettlementMismatchRepository.class);
-    private final SettlementMismatchQueryService service = new SettlementMismatchQueryService(repository);
+    private final PaymentRepository paymentRepository = mock(PaymentRepository.class);
+    private final CampaignQueryService campaignQueryService = mock(CampaignQueryService.class);
+    private final SettlementMismatchQueryService service =
+            new SettlementMismatchQueryService(repository, paymentRepository, campaignQueryService);
 
     @BeforeEach
     void 저장소는_받은_페이지_요청으로_빈_결과를_돌려준다() {
         when(repository.search(any(), anyBoolean(), anyBoolean(), any(), any(), any()))
                 .thenAnswer(invocation -> new PageImpl<>(List.of(), invocation.getArgument(5), 0));
+    }
+
+    private void returnRows(SettlementMismatchRow... rows) {
+        /*
+         * BeforeEach 의 스텁을 덮어쓴다.
+         * when(...) 으로 다시 걸면 그 안의 호출이 앞의 스텁을 null 페이지 요청으로 실행해 실패하므로 doAnswer 로 건다.
+         */
+        doAnswer(invocation -> new PageImpl<>(List.of(rows), invocation.getArgument(5), 42))
+                .when(repository).search(any(), anyBoolean(), anyBoolean(), any(), any(), any());
+    }
+
+    private static SettlementMismatchRow row(long id, MismatchCheckType checkType, long targetId) {
+        return new SettlementMismatchRow(id, checkType, targetId, LocalDate.of(2026, 10, 22), 1000L, 1100L, null,
+                null, LocalDateTime.of(2026, 10, 23, 0, 5), null, null);
+    }
+
+    private static Payment payment(long id, long ownerId) {
+        Payment payment = mock(Payment.class);
+        when(payment.getId()).thenReturn(id);
+        when(payment.getOwnerId()).thenReturn(ownerId);
+        return payment;
+    }
+
+    private static CampaignInfo campaign(long id, long ownerId) {
+        CampaignInfo campaign = mock(CampaignInfo.class);
+        when(campaign.campaignId()).thenReturn(id);
+        when(campaign.ownerId()).thenReturn(ownerId);
+        return campaign;
     }
 
     private Pageable capturePageable() {
@@ -62,12 +97,7 @@ class SettlementMismatchQueryServiceTest {
         SettlementMismatchRow closed = new SettlementMismatchRow(56L, MismatchCheckType.PG_VS_CHARGE, 101L,
                 LocalDate.of(2026, 10, 2), 30000L, 0L, MismatchResolutionType.OVERCHARGE_REVERSAL, 302L,
                 LocalDateTime.of(2026, 10, 3, 0, 5), LocalDateTime.of(2026, 10, 3, 9, 0), 2L);
-        /*
-         * BeforeEach 의 스텁을 덮어쓴다.
-         * when(...) 으로 다시 걸면 그 안의 호출이 앞의 스텁을 null 페이지 요청으로 실행해 실패하므로 doAnswer 로 건다.
-         */
-        doAnswer(invocation -> new PageImpl<>(List.of(open, closed), invocation.getArgument(5), 42))
-                .when(repository).search(any(), anyBoolean(), anyBoolean(), any(), any(), any());
+        returnRows(open, closed);
 
         PageResponse<SettlementMismatchItem> response = service.search(null, null, null, null, 0, 20, null, null);
 
@@ -81,6 +111,35 @@ class SettlementMismatchQueryServiceTest {
         assertThat(second.resolvedAt().toString()).isEqualTo("2026-10-03T09:00+09:00");
         assertThat(second.resolvedBy()).isEqualTo(2L);
         assertThat(response.totalElements()).isEqualTo(42);
+    }
+
+    @Test
+    void 점주_ID는_결제_대상이면_결제에서_캠페인_대상이면_캠페인에서_한_번에_모아_채운다() {
+        returnRows(row(1L, MismatchCheckType.PG_VS_CHARGE, 270L),
+                row(4L, MismatchCheckType.CAMPAIGN_SPEND_VS_LEDGER, 12L),
+                row(7L, MismatchCheckType.CAMPAIGN_OVERSPEND, 12L));
+        Payment payment = payment(270L, 3L);
+        CampaignInfo campaign = campaign(12L, 5L);
+        when(paymentRepository.findAllById(List.of(270L))).thenReturn(List.of(payment));
+        when(campaignQueryService.findAllById(List.of(12L))).thenReturn(List.of(campaign));
+
+        PageResponse<SettlementMismatchItem> response = service.search(null, null, null, null, 0, 20, null, null);
+
+        assertThat(response.items()).extracting(SettlementMismatchItem::ownerId).containsExactly(3L, 5L, 5L);
+        verify(paymentRepository).findAllById(List.of(270L));
+        verify(campaignQueryService).findAllById(List.of(12L));
+    }
+
+    @Test
+    void 대상을_찾지_못하면_점주_ID는_null이다() {
+        returnRows(row(1L, MismatchCheckType.PG_VS_CHARGE, 270L),
+                row(4L, MismatchCheckType.CAMPAIGN_OVERSPEND, 12L));
+        when(paymentRepository.findAllById(any())).thenReturn(List.of());
+        when(campaignQueryService.findAllById(any())).thenReturn(List.of());
+
+        PageResponse<SettlementMismatchItem> response = service.search(null, null, null, null, 0, 20, null, null);
+
+        assertThat(response.items()).extracting(SettlementMismatchItem::ownerId).containsExactly(null, null);
     }
 
     @Test
