@@ -217,14 +217,16 @@ class BaseWorldIntegrationTest extends IntegrationTestSupport {
                 + "WHERE e.store_name <> s.name) + (SELECT COUNT(*) FROM ad_candidate a JOIN store s ON s.store_id = a.store_id "
                 + "WHERE a.store_name <> s.name)", Long.class)).isZero();
         /*
-         * 포스터의 image 칸은 메뉴 사진이고, 메뉴가 없는 가게는 로고다.
+         * 포스터의 image 칸은 그 캠페인의 포스터 사진(image_object_key)이고 HTML 의 사진도 같은 주소다.
+         * 받은 이미지를 그 키에 덮어쓰면 피드에 바로 보이게 하려는 것이다 (#886).
          * 사용 시간은 "오늘" 로 시작한다.
          */
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM poster WHERE campaign_id BETWEEN 10000001 AND 29999999 "
-                + "AND ((JSON_UNQUOTE(JSON_EXTRACT(slot_values, '$.image.value')) NOT LIKE '%/menu-%.jpg' "
-                + "AND JSON_UNQUOTE(JSON_EXTRACT(slot_values, '$.image.value')) NOT LIKE '%/logo%.jpg' "
-                + "AND JSON_UNQUOTE(JSON_EXTRACT(slot_values, '$.image.value')) NOT LIKE '%/poster.jpg') "
+                + "AND (JSON_UNQUOTE(JSON_EXTRACT(slot_values, '$.image.value')) <> CONCAT('https://cdn.example.com/', image_object_key) "
+                + "OR html_content NOT LIKE CONCAT('%src=\"https://cdn.example.com/', image_object_key, '\"%') "
                 + "OR JSON_UNQUOTE(JSON_EXTRACT(slot_values, '$.period.value')) NOT LIKE '오늘 %')", Long.class)).isZero();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM poster WHERE campaign_id IN "
+                + "(20000101, 20000111, 20000112, 20000113, 20000301, 20000401, 20000501)", Long.class)).isEqualTo(7L);
         // 팀원이 개발에서 만든 템플릿 19개와 버전 128개가 들어가고, 없는 관리자는 superadmin 으로 바뀐다 (#930)
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM template WHERE template_id NOT BETWEEN 10000001 AND 10000014", Long.class))
                 .isEqualTo(19L);
@@ -234,21 +236,13 @@ class BaseWorldIntegrationTest extends IntegrationTestSupport {
                 + "WHERE t.last_modified_by IS NOT NULL AND a.admin_id IS NULL", Long.class)).isZero();
         assertThat(jdbc.queryForObject("SELECT current_count FROM template_quota", Long.class))
                 .isEqualTo(jdbc.queryForObject("SELECT COUNT(*) FROM template", Long.class));
-        // 피드 가게(진행 중 캠페인 1 ~ 180, 301 ~ 330 의 가게)는 모두 메뉴와 사진이 있어 포스터 이미지 칸이 로고가 아니다 (#941)
+        // 피드 가게(진행 중 캠페인 1 ~ 180, 301 ~ 330 의 가게)는 모두 메뉴와 사진이 있다 (#941)
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM store s WHERE (s.store_id BETWEEN 10000001 AND 10000180 "
                 + "OR s.store_id BETWEEN 10000301 AND 10000330) AND NOT EXISTS (SELECT 1 FROM store_menu m JOIN store_menu_image i "
                 + "ON i.store_menu_id = m.store_menu_id WHERE m.store_id = s.store_id)", Long.class)).isZero();
-        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM poster WHERE (campaign_id BETWEEN 10000001 AND 10000180 "
-                + "OR campaign_id BETWEEN 10000301 AND 10000330) "
-                + "AND JSON_UNQUOTE(JSON_EXTRACT(slot_values, '$.image.value')) NOT LIKE '%/menu-%.jpg'", Long.class)).isZero();
         // 메뉴 0개 확정 가게 시나리오는 피드 밖 가게에 남는다
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM store s WHERE s.store_id BETWEEN 10000001 AND 10000500 AND s.finalized = 1 "
                 + "AND NOT EXISTS (SELECT 1 FROM store_menu m WHERE m.store_id = s.store_id)", Long.class)).isPositive();
-        // 이미지 칸이 로고를 쓰면 그 가게에 실제로 있는 로고다
-        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM poster p WHERE p.campaign_id BETWEEN 10000001 AND 19999999 "
-                + "AND JSON_UNQUOTE(JSON_EXTRACT(p.slot_values, '$.image.value')) LIKE '%/logo%' AND NOT EXISTS (SELECT 1 FROM store_image i "
-                + "WHERE i.image_type = 'LOGO' AND JSON_UNQUOTE(JSON_EXTRACT(p.slot_values, '$.image.value')) LIKE CONCAT('%/', i.object_key))",
-                Long.class)).isZero();
         // 할인 금액은 천 단위 쉼표를 찍는다 (2,000원)
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM poster WHERE campaign_id BETWEEN 10000001 AND 29999999 "
                 + "AND JSON_UNQUOTE(JSON_EXTRACT(slot_values, '$.discount.value')) REGEXP '[0-9]{4}원'", Long.class)).isZero();
