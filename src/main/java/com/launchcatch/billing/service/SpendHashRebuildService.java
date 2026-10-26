@@ -6,6 +6,7 @@ import com.launchcatch.billing.cache.DailySpendCounter;
 import com.launchcatch.billing.repository.PointLedgerRepository;
 import io.micrometer.core.instrument.MeterRegistry;
 import com.launchcatch.billing.dto.CampaignSpend;
+import jakarta.annotation.PostConstruct;
 import java.time.LocalDate;
 import java.util.Collection;
 import java.util.HashMap;
@@ -18,7 +19,7 @@ import org.springframework.transaction.annotation.Transactional;
  * 당일 소진 해시가 없을 때 DB 정본으로 다시 만든다. 노출 차감과 진행률 조회가 같은 재구성을 쓴다.
  *
  * 예약액, 중단 여부, 상태 변경 시각은 그날 계획 행에서, 소진은 원장의 그날 DEDUCT 합에서 읽는다.
- * 해시가 이미 있으면 덮어쓰지 않는다. 있는 해시는 그 뒤의 차감이 늘린 소진을 담고 있을 수 있다(E-6).
+ * 해시가 이미 있으면 덮어쓰지 않는다. 있는 해시는 그 뒤의 차감이 늘린 소진을 담고 있을 수 있다.
  *
  * 해시를 지우는 사건(Valkey 재시작, 만료, 수동 삭제)이 있었다는 신호이므로 만들 때마다 지표를 올린다.
  *
@@ -37,7 +38,13 @@ public class SpendHashRebuildService {
     private final DailySpendCounter spendCounter;
     private final MeterRegistry meterRegistry;
 
-    // 해시를 만들었으면 true, 이미 있어서 그대로 두었으면 false 다. 계획 행이 없으면 예외다(E-4)
+    // 첫 사건 전에도 시리즈가 있어야 increase() 가 첫 증가를 센다
+    @PostConstruct
+    void registerCounters() {
+        meterRegistry.counter(REBUILD_METRIC);
+    }
+
+    // 해시를 만들었으면 true, 이미 있어서 그대로 두었으면 false 다. 계획 행이 없으면 예외다
     @Transactional
     public boolean rebuildIfAbsent(LocalDate businessDate, Long campaignId) {
         BudgetDailyPlan plan = planRepository.findForShare(campaignId, businessDate)
@@ -55,7 +62,7 @@ public class SpendHashRebuildService {
     /*
      * 캠페인 여러 개를 한 번에 재구성한다. 계획 행은 한 번의 IN 조회로, 원장 합은 한 번의 그룹 조회로 읽는다.
      * 해시를 쓰는 Valkey 호출만 캠페인마다 나간다. 만든 해시 수를 돌려준다.
-     * 계획 행이 없는 캠페인이 하나라도 있으면 예외다(E-4). 쓰기 전에 확인해서 일부만 만들어지지 않는다.
+     * 계획 행이 없는 캠페인이 하나라도 있으면 예외다. 쓰기 전에 확인해서 일부만 만들어지지 않는다.
      * 계획 행은 캠페인 ID 순으로 한 번에 잠가서 읽는다.
      */
     @Transactional

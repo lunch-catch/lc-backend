@@ -32,7 +32,7 @@ public record PaymentGatewayInquiryResult(
         FAILED,
         /*
          * 승인 유효시간이 지나 PG가 결제를 만료시켰다.
-         * 실패와 따로 둔다. 명세는 만료를 실패가 아니라 취소로 닫는다(billing.md 웹훅 상태 표).
+         * 실패와 따로 둔다. 명세는 만료를 실패가 아니라 취소로 닫는다(billing-api-spec.md 웹훅 상태 표).
          */
         EXPIRED,
         /** 아직 결론이 나지 않았다. 처음 보는 PG 상태도 여기로 모은다. */

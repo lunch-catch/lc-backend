@@ -7,30 +7,53 @@
 | 맡는 기능과 근거 | 포스터 자동 검수(명세서 57행, `#535`). 캠페인 ID 로 포스터를 검사해 `PASS`/`FAIL` 과 사유를 돌려주고 `poster_moderation_result` 에 남긴다 |
 | 맡지 않는 것과 그 소유 | 검수를 부르고 캠페인을 `DRAFT` 에서 `SCHEDULED` 로 바꾸는 일은 캠페인 활성화(47행)가 한다. 포스터 생성과 조회 API 는 [`poster-api-design.md`](./poster-api-design.md) 가 가진다. 검수 기준을 바꾸는 관리(29행)는 범위 밖이다 |
 
-이 문서는 지금 검수만 다룬다. 포스터 생성과 조회의 구조는 아직 이 문서에 옮기지 않았다. 점주가 포스터의 가게명과 할인 문구
-뒤 텍스트, 글자 크기를 고치는 기능(`#884`)의 구조는 `poster-api-design.md`의 "포스터 텍스트 수정"이 갖는다. 코드는
+이 문서는 검수와 포스터 저장 구조를 다룬다. 포스터 생성, 조회, 점주의 텍스트 수정(`#884`)의 처리 순서와 그렇게 정한
+이유는 `poster-api-design.md`가 갖는다. 코드는 `PosterUploadService`(생성), `PosterQueryService`(조회),
 `PosterEditService`(수정), `PosterSlots`(`slot_values` JSON과 인라인 스타일 처리), `PosterEditLimits`(범위)에 있다.
 
 ## 2. 애그리거트와 패키지
 
 | 애그리거트 | 테이블 | 지키는 규칙 |
 |---|---|---|
-| `poster` | `poster`, `poster_moderation_result` | 캠페인당 포스터 1건. 검수는 할 때마다 결과 한 행을 쌓고 고치지 않는다 |
+| `poster` | `poster`, `poster_moderation_result` | 캠페인당 포스터 1건(`uk_poster_campaign_id`). 공개된 캠페인의 포스터는 바뀌지 않는다. 검수는 할 때마다 결과 한 행을 쌓고 고치지 않는다 |
 
 ```
 campaign/poster/
 ├── ForbiddenExpressionDictionary.java   금지 표현 사전. 리소스 파일을 서버가 뜰 때 한 번 읽는다
+├── PosterEditLimits.java                점주가 고치는 텍스트와 글자 크기의 허용 범위
+├── PosterImageUrlResolver.java          objectKey 를 URL 로 바꾼다
+├── PosterSlotValue.java                 slot_values JSON 의 슬롯 하나
+├── PosterSlots.java                     slot_values JSON 과 슬롯 인라인 스타일을 다루는 함수 모음
 ├── client/
-│   ├── PosterImageInspector.java        S3 에서 이미지 크기를 읽고 Rekognition DetectText 로 글자를 찾는다
-│   └── PosterImageInspection.java       그 결과(READ, UNREADABLE, TOOL_FAILURE)
-├── config/RekognitionConfig.java        RekognitionClient 빈. 리전은 s3.region 과 같다
-├── dto/PosterModerationOutcome.java     검수 결과와 사유 목록
+│   ├── PosterImageInspection.java       그 결과(READ, UNREADABLE, TOOL_FAILURE)
+│   └── PosterImageInspector.java        S3 에서 이미지 크기를 읽고 Rekognition DetectText 로 글자를 찾는다
+├── config/
+│   └── RekognitionConfig.java           RekognitionClient 빈. 리전은 s3.region 과 같다
+├── controller/
+│   ├── OwnerPosterController.java
+│   └── PosterController.java
+├── dto/
+│   ├── PosterCreateRequest.java
+│   ├── PosterCreateResponse.java
+│   ├── PosterImagePrepareUploadRequest.java
+│   ├── PosterImagePrepareUploadResponse.java
+│   ├── PosterModerationOutcome.java     검수 결과와 사유 목록
+│   ├── PosterResponse.java
+│   ├── PosterSlotsResponse.java
+│   └── PosterUpdateRequest.java
 ├── entity/
-│   ├── PosterModerationResult.java      검수 결과 한 행
+│   ├── ModerationFailReason.java        FAIL 사유 코드 5개
 │   ├── ModerationResult.java            PASS, FAIL
-│   └── ModerationFailReason.java        FAIL 사유 코드 6개
-├── repository/PosterModerationResultRepository.java
-└── service/PosterModerationService.java 검수의 입구
+│   ├── Poster.java
+│   └── PosterModerationResult.java      검수 결과 한 행
+├── repository/
+│   ├── PosterModerationResultRepository.java
+│   └── PosterRepository.java
+└── service/
+    ├── PosterEditService.java
+    ├── PosterModerationService.java     검수의 입구
+    ├── PosterQueryService.java
+    └── PosterUploadService.java
 ```
 
 `PosterModerationResult` 는 `Poster` 를 연관관계가 아니라 `posterId` 로만 참조한다. 포스터가 자기
@@ -62,14 +85,14 @@ campaign/poster/
 
 ### 따로 검사하지 않는 것
 
-- **제목 길이(29행의 카드 제목 20자)**: 포스터 `title` 은 서버가 `가게 이름 - 템플릿 이름` 으로 만들고 점주가 고칠 수 없다. 검사하면 점주가 고칠 방법이 없는 FAIL 이 생겨서 뺐다(2026-10-19 확정).
+- **제목 길이(29행의 카드 제목 20자)**: 포스터 `title` 은 서버가 `가게 이름 - 템플릿 이름` 으로 만들고 점주가 고칠 수 없다. 검사하면 점주가 고칠 방법이 없는 FAIL 이 생겨서 뺐다.
 - **전후 비교 이미지**: `TemplateSlotValidator` 가 `image` 슬롯을 템플릿마다 정확히 하나로 강제한다. 이미지 두 장을 나란히 두는 포스터가 만들어지지 않는다.
 
 ## 5. 모듈 연결
 
 | 입구 | 부르는 쪽 |
 |---|---|
-| `PosterModerationService.moderate(campaignId)` | 캠페인 활성화(47행, 아직 없음) |
+| `PosterModerationService.moderate(campaignId)` | 캠페인 활성화(47행, `CampaignActivationService`) |
 
 ## 6. 주요 흐름
 

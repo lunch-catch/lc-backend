@@ -5,12 +5,17 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.launchcatch.billing.contract.BudgetProgress;
 import com.launchcatch.billing.contract.BudgetQueryService;
+import com.launchcatch.billing.contract.DeductionOutcome;
+import com.launchcatch.billing.contract.DeductionRequest;
 import com.launchcatch.billing.contract.DeductionStatus;
 import com.launchcatch.billing.contract.PointDeductor;
 import com.launchcatch.billing.repository.BudgetDailyPlanRepository;
+import com.launchcatch.global.config.ClockConfig;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.Clock;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -24,10 +29,13 @@ import java.util.concurrent.atomic.AtomicLong;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Import;
+import org.springframework.context.annotation.Primary;
 import org.springframework.data.redis.core.RedisCallback;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.transaction.IllegalTransactionStateException;
 import org.springframework.transaction.support.TransactionTemplate;
 
 /*
@@ -40,6 +48,7 @@ import org.springframework.transaction.support.TransactionTemplate;
  * 커밋을 봐야 하므로 테스트 트랜잭션을 걸지 않고 TransactionTemplate 으로 부른다. 매번 행과 키를 지운다.
  * 그날 계획의 캐시가 테스트 사이에 남으므로 테스트마다 다른 캠페인 ID 를 쓴다.
  */
+@Import(ImpressionDeductionIntegrationTest.TimeConfig.class)
 class ImpressionDeductionIntegrationTest extends AbstractBillingIntegrationTest {
 
     private static final LocalDate DAY = LocalDate.of(2026, 10, 14);
@@ -61,6 +70,7 @@ class ImpressionDeductionIntegrationTest extends AbstractBillingIntegrationTest 
         jdbc.update("delete from point_ledger");
         jdbc.update("delete from deduction_result");
         jdbc.update("delete from budget_daily_plan");
+        jdbc.update("delete from point_account where owner_id = ?", OWNER);
         jdbc.update("delete from campaign where store_id = ?", NO_PLAN_STORE);
         redis.execute((RedisCallback<Object>) connection -> {
             connection.serverCommands().flushAll();
@@ -70,6 +80,11 @@ class ImpressionDeductionIntegrationTest extends AbstractBillingIntegrationTest 
 
     private long plan(long unitsOfBudget, boolean paused) {
         long campaignId = CAMPAIGN_SEQ.incrementAndGet();
+        jdbc.update("""
+                insert into point_account (owner_id, created_at, updated_at)
+                values (?, now(6), now(6))
+                on duplicate key update owner_id = owner_id
+                """, OWNER);
         jdbc.update("""
                 insert into budget_daily_plan
                     (campaign_id, owner_id, business_date, daily_budget, unit_price, paused, created_at, updated_at)
@@ -270,11 +285,63 @@ class ImpressionDeductionIntegrationTest extends AbstractBillingIntegrationTest 
     }
 
     @Test
-    void 트랜잭션_밖에서_부르면_예외다() {
+    void 트랜잭션_밖에서_부르면_정산이_트랜잭션을_시작해_과금을_커밋한다() {
         long campaignId = plan(30, false);
 
-        assertThatThrownBy(() -> deductor.deduct(UUID.randomUUID(), campaignId, DAY))
-                .isInstanceOf(IllegalTransactionStateException.class);
+        assertThat(deductor.deduct(UUID.randomUUID(), campaignId, DAY)).isEqualTo(DeductionStatus.BILLED);
+        assertThat(ledgerDeductSum(campaignId)).isEqualTo(-UNIT);
+        assertThat(rows("deduction_result", campaignId)).isEqualTo(1);
+    }
+
+    @Test
+    void 묶음_차감은_목록을_한_번에_판정하고_예약액을_넘기지_않는다() {
+        long campaignId = plan(3, false);
+        List<UUID> ids = serveIds(5);
+
+        List<DeductionOutcome> outcomes = deductor.deductAll(
+                ids.stream().map(id -> new DeductionRequest(id, campaignId, DAY)).toList());
+
+        assertThat(outcomes).extracting(DeductionOutcome::serveId).containsExactlyInAnyOrderElementsOf(ids);
+        assertThat(outcomes).filteredOn(outcome -> outcome.status() == DeductionStatus.BILLED).hasSize(3);
+        assertThat(outcomes).filteredOn(outcome -> outcome.status() == DeductionStatus.NOT_BILLED_BUDGET).hasSize(2);
+        assertThat(ledgerDeductSum(campaignId)).isEqualTo(-3 * UNIT);
+        assertThat(rows("deduction_result", campaignId)).isEqualTo(5);
+        assertThat(spendInValkey(campaignId)).isEqualTo(3 * UNIT);
+    }
+
+    // 계정 행이 없는 점주의 묶음은 공유 잠금에서 실패한다. 그 묶음만 실패로 돌아오고 다른 점주의 과금은 커밋된다
+    @Test
+    void 묶음_차감에서_한_점주_묶음이_실패해도_다른_점주_묶음은_커밋된다() {
+        long healthy = plan(30, false);
+        long broken = CAMPAIGN_SEQ.incrementAndGet();
+        jdbc.update("""
+                insert into budget_daily_plan
+                    (campaign_id, owner_id, business_date, daily_budget, unit_price, paused, created_at, updated_at)
+                values (?, ?, ?, ?, ?, false, now(6), now(6))
+                """, broken, 970_002L, DAY, 30 * UNIT, UNIT);
+        UUID healthyServe = UUID.randomUUID();
+        UUID brokenServe = UUID.randomUUID();
+
+        List<DeductionOutcome> outcomes = deductor.deductAll(List.of(
+                new DeductionRequest(brokenServe, broken, DAY),
+                new DeductionRequest(healthyServe, healthy, DAY)));
+
+        assertThat(outcomes).containsExactlyInAnyOrder(
+                DeductionOutcome.failed(brokenServe),
+                DeductionOutcome.judged(healthyServe, DeductionStatus.BILLED));
+        assertThat(ledgerDeductSum(healthy)).isEqualTo(-UNIT);
+        assertThat(rows("deduction_result", broken)).isZero();
+        assertThat(rows("point_ledger", broken)).isZero();
+    }
+
+    @Test
+    void 묶음_차감을_트랜잭션_안에서_부르면_거절하고_아무것도_남기지_않는다() {
+        long campaignId = plan(30, false);
+
+        assertThatThrownBy(() -> tx.execute(status ->
+                deductor.deductAll(List.of(new DeductionRequest(UUID.randomUUID(), campaignId, DAY)))))
+                .isInstanceOf(IllegalStateException.class);
+        assertThat(rows("deduction_result", campaignId)).isZero();
     }
 
     @Test
@@ -370,6 +437,15 @@ class ImpressionDeductionIntegrationTest extends AbstractBillingIntegrationTest 
         } finally {
             release.countDown();
             pool.shutdownNow();
+        }
+    }
+    @TestConfiguration
+    static class TimeConfig {
+
+        @Bean
+        @Primary
+        Clock deductionTestClock() {
+            return Clock.fixed(Instant.parse("2026-10-14T02:30:00Z"), ClockConfig.ZONE);
         }
     }
 }

@@ -7,10 +7,9 @@
 | 맡는 기능과 근거 | 배치 실행의 점유·생존·이어받기·수동 재실행(`batch_execution_log`), 감사 로그(`audit_log`), 플랫폼 설정값(`platform_setting`). 설계 문서 1.2절 |
 | 맡지 않는 것과 그 소유 도메인 | 각 배치 단계가 실제로 하는 일은 그 단계를 등록한 업무 도메인(`DailyJob`/`StandaloneJob` 구현). ops는 순서와 중복 실행 방지, 재개 경로만 책임진다(설계 문서 1.1절, 런치캐치_배치_운영.md 3장) |
 
-이 문서는 #362(배치 작업 수동 재실행)를 계기로 처음 쓴다. 배치 실행 점유·이어받기 규칙 자체는
-이미 [런치캐치_배치_운영.md](./런치캐치_배치_운영.md) 2장, 3장이 갖고 있어 그 문서를 가리키고
-다시 쓰지 않는다. 플랫폼 설정값(`PlatformSetting`)의 세부 동작은 이 PR이 건드리지 않아
-아직 훑지 않았다.
+이 문서는 배치 실행의 틀과 그 위의 운영 API(실행 이력 조회, 수동 재실행), 플랫폼 설정값 읽기를 다룬다.
+배치 실행 점유·이어받기 규칙 자체는 [런치캐치_배치_운영.md](./런치캐치_배치_운영.md) 2장, 3장이 갖고 있어
+그 문서를 가리키고 다시 쓰지 않는다.
 
 ## 2. 애그리거트와 패키지
 
@@ -18,21 +17,19 @@
 |---|---|---|---|
 | 배치 실행(`BatchExecutionLog`) | `batch_execution_log` | (job_name, business_date) 유일, 조건부 UPDATE로만 상태를 바꾼다 | 두 배치 서버가 같은 작업을 동시에 시도해도 하나만 이기게 하는 규칙이 이 테이블 하나에 걸린다 |
 | 감사 로그(`AuditLog`) | `audit_log` | 관리자 행위마다 한 건, 호출자 트랜잭션에 반드시 참여한다(MANDATORY) | 다른 도메인의 관리 행위 트랜잭션에 얹혀야 해서 자기 트랜잭션을 갖지 않는다 |
-| 플랫폼 설정값(`PlatformSetting`) | `platform_setting` | 아직 훑지 않았다 | 아직 훑지 않았다 |
+| 플랫폼 설정값(`PlatformSetting`) | `platform_setting` | 키(`setting_key`) 하나에 값 한 행이고 읽기만 한다. 값이 없거나 정수가 아니거나 0 이하면 `IllegalStateException`이다 | 배치 실행과 무관하게 정산과 캠페인이 읽는 값이다. 같은 패키지에 두지만 독립이다 |
 
 - 세 애그리거트는 서로 ID로도 참조하지 않는다. 같은 패키지 안이지만 독립이다.
-- `ops`는 작은 도메인이라 하위 패키지 없이 계층 구조만 둔다(설계 문서 1.3절). `contract/`,
-  `entity/`, `job/`, `repository/`, `scheduler/`, `service/`, `exception/`(#362에서 추가),
-  `controller/`(#362에서 추가), `config/`(#362에서 추가)다.
-- 입구: 요청(이번 PR의 수동 재실행 HTTP만 있다. 설정값·감사 로그는 아직 자기 HTTP 입구가
+- `ops`는 작은 도메인이라 하위 패키지 없이 계층 구조만 둔다(설계 문서 1.3절). `config/`, `contract/`,
+  `controller/`, `dto/`, `entity/`, `exception/`, `job/`, `repository/`, `scheduler/`, `service/`다.
+- 입구: 요청(실행 이력 조회와 수동 재실행 HTTP뿐이다. 설정값·감사 로그는 자기 HTTP 입구가
   없다), 스케줄(`DailyJobScheduler`의 `@Scheduled` 셋), 이벤트(없다), 다른 도메인의 호출
-  (`AuditLogWriter`, `BatchExecutionQueryService`, `BatchRerunner`, `BatchAttemptGuard`를
-  다른 도메인이 부른다).
+  (`AuditLogWriter`, `BatchExecutionQueryService`, `BatchRerunner`, `BatchAttemptGuard`,
+  `PlatformSettingQueryService`를 다른 도메인이 부른다).
 
 ## 3. 저장
 
-원본은 MySQL이다. `ops`는 인메모리 저장소를 직접 쓰지 않는다(플랫폼 설정값이 Caffeine을
-쓰는지는 아직 훑지 않았다).
+원본은 MySQL이다. `ops`는 인메모리 저장소를 직접 쓰지 않는다. 플랫폼 설정값도 캐시 없이 읽을 때마다 DB를 읽는다.
 
 | 적을 것 | 예 |
 |---|---|
@@ -53,7 +50,8 @@
 | 공개 | 분석 | `BatchRerunner` | 분석이 전날 FAILED로 끝난 집계를 다음 밤 자동으로 재실행할 때 |
 | 공개 | 모든 도메인 | `AuditLogWriter` | 관리자 행위를 기록할 때 |
 | 공개 | 분석, 정산 | `BatchExecutionQueryService` | 배치 실행 기록을 조회할 때. `BatchExecutionRecord.attemptNo`(#434)로 정상 경로(claim, retry, rerun 직후)도 자기 세대를 읽어 `BatchAttemptGuard.assertCurrentAttempt`에 넘길 수 있다. 전에는 이어받은 경로(`StandaloneJob.run`)만 세대를 받았다 |
-| 공개 | 각 도메인의 결과 공개 코드 | `BatchAttemptGuard` | 결과를 커밋하기 전 자기 소유와 세대를 확인할 때(#360, 실제 호출자는 아직 없다) |
+| 공개 | 분석, 쿠폰 | `BatchAttemptGuard` | 결과를 커밋하기 전 자기 소유와 세대를 확인할 때(#360). 분석의 일별 집계와 쿠폰의 배치 서비스가 부른다 |
+| 공개 | 정산, 캠페인 | `PlatformSettingQueryService` | 정산이 노출 단가(`getImpressionUnitPrice`)를, 캠페인이 최소 하루 예산(`getMinDailyBudget`)을 읽을 때 |
 | 받음 | 각 업무 도메인 | `DailyJob`, `StandaloneJob` | 각 도메인이 00:00 묶음 단계 또는 묶음 밖 작업을 등록할 때. 이어받기와 수동 재실행은 `StandaloneJob.runCounting`을 부르고 돌려받은 건수를 `processed_count`에 남긴다(#559) |
 
 - `ops`는 어떤 업무 도메인도 의존하지 않는다(설계 문서 1.1절). 그래서 위 "공개"는 모두
@@ -73,6 +71,7 @@
 ```mermaid
 flowchart LR
     REQ([요청: 관리자 수동 재실행]) --> BRC
+    REQH([요청: 관리자 실행 이력 조회]) --> BHC
     SCH([스케줄: 00:00, 생존신호, 이어받기 스캔]) --> DJS
     CALL([다른 도메인의 호출]) --> ALW & BEQ & BRR
 
@@ -99,6 +98,9 @@ flowchart LR
         BRR -.-> BRRI[BatchRerunnerImpl]
         BEQI --> BELR
         BRRI --> BES
+        BHC[BatchExecutionHistoryController] --> BHS[BatchExecutionHistoryService]
+        BHS --> BELR
+        BHS --> REG
     end
 
     DJ[("각 도메인의 DailyJob")] -.등록.-> DJR & REG
@@ -213,4 +215,5 @@ sequenceDiagram
 
 | 미정 항목 | 어디까지 정해졌나 | 막는 것 |
 |---|---|---|
-| 플랫폼 설정값의 캐시 전략, 조회 API | 아직 훑지 않았다 | 이 PR과 무관하다 |
+| 플랫폼 설정값의 쓰기 경로(갱신, 이력) | 읽기만 있고 쓰기는 없다. `updated_by` 컬럼만 있다 | 관리자 화면이 정해져야 한다 |
+| 플랫폼 설정값의 캐시 | 캐시 없이 읽을 때마다 DB를 읽는다. 영업일 경계 작업이 캐시된 값을 보지 않는 효과가 있다 | 읽는 횟수가 늘어 DB 부담이 커지면 정해야 한다 |

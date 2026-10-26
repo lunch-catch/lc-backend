@@ -15,6 +15,7 @@ import com.launchcatch.billing.repository.PgChargeReconciliationPendingRepositor
 import com.launchcatch.ops.contract.BatchExecutionQueryService;
 import com.launchcatch.ops.contract.BatchExecutionRecord;
 import io.micrometer.core.instrument.MeterRegistry;
+import jakarta.annotation.PostConstruct;
 import java.time.Clock;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -27,7 +28,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 /*
- * 전일 생성된 결제를 PG 결제 조회로 대사한다(PG_VS_CHARGE, 배치 설계 I-05, 구현 순서 13번).
+ * 전일 생성된 결제를 PG 결제 조회로 대사한다(PG_VS_CHARGE, 배치 설계 I-05).
  * 01:30 전일분 1회만 실행하고, pg_tid 가 있는 결제를 건별로 조회한다. PG 거래 목록 API 는
  * 쓰지 않는다.
  *
@@ -61,6 +62,14 @@ public class PgChargeReconciliationService {
     private final BatchExecutionQueryService batchExecutions;
     private final MeterRegistry meterRegistry;
     private final Clock clock;
+
+    // 첫 사건 전에도 시리즈가 있어야 increase() 가 첫 증가를 센다
+    @PostConstruct
+    void registerCounters() {
+        for (String result : List.of("mismatch", "recovered", "inquiry_failed", "error")) {
+            meterRegistry.counter(RECON_METRIC, "result", result);
+        }
+    }
 
     // runDate 의 전날을 대사하고 기록한 불일치(보정 포함) 수를 돌려준다
     public int reconcilePreviousDay(LocalDate runDate, String jobName) {

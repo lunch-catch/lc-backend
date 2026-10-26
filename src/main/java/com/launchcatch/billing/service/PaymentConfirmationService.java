@@ -17,6 +17,8 @@ import com.launchcatch.billing.exception.BillingException;
 import com.launchcatch.billing.repository.PaymentRepository;
 import com.launchcatch.global.exception.ConstraintViolations;
 import io.micrometer.core.instrument.MeterRegistry;
+import jakarta.annotation.PostConstruct;
+import java.util.List;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -47,6 +49,14 @@ public class PaymentConfirmationService {
     private final PaymentResultService resultService;
     private final PaymentGateway paymentGateway;
     private final MeterRegistry meterRegistry;
+
+    // 첫 사건 전에도 시리즈가 있어야 increase() 가 첫 증가를 센다
+    @PostConstruct
+    void registerCounters() {
+        for (String result : List.of("approved", "unknown", "failed", "not_sent")) {
+            meterRegistry.counter(CONFIRM_METRIC, "result", result);
+        }
+    }
 
     /*
      * 본인 결제가 아니거나 주문 번호가 다르면 결제대행사를 부르지 않는다.

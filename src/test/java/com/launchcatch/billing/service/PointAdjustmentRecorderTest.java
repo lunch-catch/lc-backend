@@ -71,6 +71,9 @@ class PointAdjustmentRecorderTest {
         when(ledgerRepository.findByOwnerIdAndIdempotencyKey(OWNER, KEY)).thenReturn(Optional.empty());
         when(ledgerRepository.save(any())).thenAnswer(invocation -> persisted(invocation.getArgument(0), 9101L));
         lenient().when(campaignQueryService.findAllById(List.of(CAMPAIGN))).thenReturn(List.of(campaign(OWNER)));
+        lenient().when(ledgerRepository.findByPaymentIdAndEntryType(PAYMENT, EntryType.CHARGE))
+                .thenReturn(Optional.empty());
+        lenient().when(ledgerRepository.sumBalance(OWNER)).thenReturn(1_000_000L);
     }
 
     private static PointLedger persisted(PointLedger ledger, long id) {
@@ -85,8 +88,31 @@ class PointAdjustmentRecorderTest {
 
     private static SettlementMismatchRow mismatch(MismatchCheckType type, Long targetId,
                                                   MismatchResolutionType resolution) {
-        return new SettlementMismatchRow(MISMATCH, type, targetId, TARGET, 9800L, 9790L,
+        return mismatch(type, targetId, 9800L, 9790L, resolution);
+    }
+
+    private static SettlementMismatchRow mismatch(MismatchCheckType type, Long targetId, long expected, long actual,
+                                                  MismatchResolutionType resolution) {
+        return new SettlementMismatchRow(MISMATCH, type, targetId, TARGET, expected, actual,
                 resolution, 301L, NOW.minusDays(1), null, null);
+    }
+
+    // 예약액 1000 에 원장 소진 1300 이라 초과액은 300 이다
+    private void openOverspend() {
+        when(mismatchRepository.findRowById(MISMATCH)).thenReturn(Optional.of(
+                mismatch(MismatchCheckType.CAMPAIGN_OVERSPEND, CAMPAIGN, 1000L, 1300L, null)));
+    }
+
+    // PG 가 승인한 금액이 pgApproved 인 결제 대상 건이다
+    private void openPgMismatch(long pgApproved) {
+        when(mismatchRepository.findRowById(MISMATCH)).thenReturn(Optional.of(
+                mismatch(MismatchCheckType.PG_VS_CHARGE, PAYMENT, pgApproved, 10000L, null)));
+        paymentOwnedBy(OWNER);
+    }
+
+    private void chargeOf(long amount, Long ownerId) {
+        when(ledgerRepository.findByPaymentIdAndEntryType(PAYMENT, EntryType.CHARGE))
+                .thenReturn(Optional.of(PointLedger.charge(ownerId, PAYMENT, amount, LedgerSource.REALTIME)));
     }
 
     private static CampaignInfo campaign(Long ownerId) {
@@ -104,6 +130,12 @@ class PointAdjustmentRecorderTest {
         assertThatThrownBy(() -> recorder.record(ADMIN, request))
                 .isInstanceOfSatisfying(BillingException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(expected));
+    }
+
+    private void assertNothingRecorded() {
+        verify(ledgerRepository, never()).save(any());
+        verify(mismatchRepository, never()).resolveByAdmin(any(), any(), any(), any());
+        verify(auditLogWriter, never()).write(any(), any(), any(), any());
     }
 
     @Test
@@ -156,9 +188,7 @@ class PointAdjustmentRecorderTest {
 
         assertThat(result.created()).isFalse();
         assertThat(result.adjustment().ledgerId()).isEqualTo(9001L);
-        verify(ledgerRepository, never()).save(any());
-        verify(mismatchRepository, never()).resolveAsOverchargeReversal(any(), any(), any());
-        verify(auditLogWriter, never()).write(any(), any(), any(), any());
+        assertNothingRecorded();
     }
 
     @Test
@@ -197,17 +227,6 @@ class PointAdjustmentRecorderTest {
 
         assertRejected(new PointAdjustmentRequest(KEY, OWNER, 1000L, REASON, CAMPAIGN, TARGET.minusDays(1), null),
                 BillingErrorCode.IDEMPOTENCY_KEY_CONFLICT);
-    }
-
-    @Test
-    void 캠페인_대상_대사_건을_닫을_때_정정_대상_영업일이_대사_건의_영업일과_다르면_거절한다() {
-        when(mismatchRepository.findRowById(MISMATCH)).thenReturn(Optional.of(
-                mismatch(MismatchCheckType.CAMPAIGN_SPEND_VS_LEDGER, CAMPAIGN, null)));
-        when(campaignQueryService.findAllById(List.of(CAMPAIGN))).thenReturn(List.of(campaign(OWNER)));
-
-        assertRejected(new PointAdjustmentRequest(KEY, OWNER, 1000L, REASON, CAMPAIGN, TARGET.minusDays(1), MISMATCH),
-                CommonErrorCode.INVALID_INPUT);
-        verify(ledgerRepository, never()).save(any());
     }
 
     @Test
@@ -260,81 +279,162 @@ class PointAdjustmentRecorderTest {
     }
 
     @Test
-    void 결제_대상_대사_건은_캠페인_없이_닫는다() {
-        when(mismatchRepository.findRowById(MISMATCH))
-                .thenReturn(Optional.of(mismatch(MismatchCheckType.PG_VS_CHARGE, PAYMENT, null)));
-        paymentOwnedBy(OWNER);
-        when(mismatchRepository.resolveAsOverchargeReversal(MISMATCH, ADMIN, NOW)).thenReturn(1);
+    void 결제_대상_대사_건은_CHARGE가_없으면_PG_승인_금액만큼_양수로_닫는다() {
+        openPgMismatch(50000L);
+        when(mismatchRepository.resolveByAdmin(MISMATCH, MismatchResolutionType.MANUAL_ADJUSTMENT, ADMIN, NOW))
+                .thenReturn(1);
 
-        PointAdjustmentResult result = recorder.record(ADMIN, request(1000L, null, MISMATCH));
+        PointAdjustmentResult result = recorder.record(ADMIN, request(50000L, null, MISMATCH));
 
         assertThat(result.created()).isTrue();
-        verify(mismatchRepository).resolveAsOverchargeReversal(MISMATCH, ADMIN, NOW);
+        verify(mismatchRepository).resolveByAdmin(MISMATCH, MismatchResolutionType.MANUAL_ADJUSTMENT, ADMIN, NOW);
+    }
+
+    @Test
+    void 결제_대상_대사_건은_승인되지_않은_결제의_CHARGE를_음수로_회수하며_닫는다() {
+        openPgMismatch(0L);
+        chargeOf(10000L, OWNER);
+        when(mismatchRepository.resolveByAdmin(MISMATCH, MismatchResolutionType.MANUAL_ADJUSTMENT, ADMIN, NOW))
+                .thenReturn(1);
+
+        PointAdjustmentResult result = recorder.record(ADMIN, request(-10000L, null, MISMATCH));
+
+        assertThat(result.created()).isTrue();
+        assertThat(result.adjustment().amount()).isEqualTo(-10000L);
+        verify(mismatchRepository).resolveByAdmin(MISMATCH, MismatchResolutionType.MANUAL_ADJUSTMENT, ADMIN, NOW);
+        verify(auditLogWriter).write(ADMIN, PointAdjustmentRecorder.AUDIT_ACTION, "7",
+                "ledgerId=9101;amount=-10000;campaignId=null;mismatchId=55;requestId=req-1");
+    }
+
+    @Test
+    void 결제_대상_대사_건의_음수_조정은_잔액이_부족하면_원장도_대사_건도_기록하지_않는다() {
+        openPgMismatch(0L);
+        chargeOf(10000L, OWNER);
+        when(ledgerRepository.sumBalance(OWNER)).thenReturn(9999L);
+
+        assertRejected(request(-10000L, null, MISMATCH), BillingErrorCode.ADJUSTMENT_MAKES_BALANCE_NEGATIVE);
+
+        assertNothingRecorded();
+    }
+
+    @Test
+    void 결제_대상_대사_건의_조정액이_PG_승인_금액에서_CHARGE를_뺀_값과_다르면_거절한다() {
+        // 정정액은 9900 - 10000 = -100 이다
+        openPgMismatch(9900L);
+        chargeOf(10000L, OWNER);
+
+        assertRejected(request(-500L, null, MISMATCH), CommonErrorCode.INVALID_INPUT);
+        assertRejected(request(100L, null, MISMATCH), CommonErrorCode.INVALID_INPUT);
+
+        assertNothingRecorded();
+    }
+
+    @Test
+    void 결제_대상_대사_건은_다른_점주에게_들어간_CHARGE를_요청한_점주의_충전으로_보지_않는다() {
+        openPgMismatch(10000L);
+        chargeOf(10000L, OTHER_OWNER);
+        when(mismatchRepository.resolveByAdmin(MISMATCH, MismatchResolutionType.MANUAL_ADJUSTMENT, ADMIN, NOW))
+                .thenReturn(1);
+
+        assertThat(recorder.record(ADMIN, request(10000L, null, MISMATCH)).created()).isTrue();
+    }
+
+    @Test
+    void 결제_대상_대사_건은_캠페인을_붙여_조정할_수_없다() {
+        openPgMismatch(50000L);
+
+        assertRejected(request(50000L, CAMPAIGN, MISMATCH), CommonErrorCode.INVALID_INPUT);
+
+        assertNothingRecorded();
+    }
+
+    @Test
+    void 캠페인_대상_대사_건을_닫을_때_정정_대상_영업일이_대사_건의_영업일과_다르면_거절한다() {
+        openOverspend();
+
+        assertRejected(new PointAdjustmentRequest(KEY, OWNER, 300L, REASON, CAMPAIGN, TARGET.minusDays(1), MISMATCH),
+                CommonErrorCode.INVALID_INPUT);
+        verify(ledgerRepository, never()).save(any());
     }
 
     @Test
     void 캠페인_대상_대사_건이_다른_점주의_캠페인이면_거절한다() {
-        when(mismatchRepository.findRowById(MISMATCH)).thenReturn(Optional.of(
-                mismatch(MismatchCheckType.CAMPAIGN_SPEND_VS_LEDGER, CAMPAIGN, null)));
-        when(campaignQueryService.findAllById(List.of(CAMPAIGN))).thenReturn(List.of(campaign(OTHER_OWNER)));
-
-        assertRejected(request(1000L, CAMPAIGN, MISMATCH), BillingErrorCode.SETTLEMENT_MISMATCH_OWNER_MISMATCH);
-    }
-
-    @Test
-    void 초과_소진_대사_건도_캠페인의_점주로_확인한다() {
-        when(mismatchRepository.findRowById(MISMATCH)).thenReturn(Optional.of(
-                mismatch(MismatchCheckType.CAMPAIGN_OVERSPEND, CAMPAIGN, null)));
+        openOverspend();
         when(campaignQueryService.findAllById(List.of(CAMPAIGN))).thenReturn(List.of(campaign(OTHER_OWNER)));
 
         // 결제로 보고 찾으면 대상 ID 가 캠페인 ID 라 엉뚱한 결제의 점주와 견주게 된다
-        assertRejected(request(1000L, CAMPAIGN, MISMATCH), BillingErrorCode.SETTLEMENT_MISMATCH_OWNER_MISMATCH);
+        assertRejected(request(300L, CAMPAIGN, MISMATCH), BillingErrorCode.SETTLEMENT_MISMATCH_OWNER_MISMATCH);
         verify(paymentRepository, never()).findById(any());
     }
 
     @Test
     void 캠페인_대상_대사_건의_캠페인이_없으면_거절한다() {
-        when(mismatchRepository.findRowById(MISMATCH)).thenReturn(Optional.of(
-                mismatch(MismatchCheckType.CAMPAIGN_SPEND_VS_LEDGER, CAMPAIGN, null)));
+        openOverspend();
         when(campaignQueryService.findAllById(List.of(CAMPAIGN))).thenReturn(List.of());
 
-        assertRejected(request(1000L, CAMPAIGN, MISMATCH), BillingErrorCode.SETTLEMENT_MISMATCH_OWNER_MISMATCH);
+        assertRejected(request(300L, CAMPAIGN, MISMATCH), BillingErrorCode.SETTLEMENT_MISMATCH_OWNER_MISMATCH);
     }
 
     @Test
     void 캠페인_대상_대사_건을_닫을_때_campaignId가_없거나_다르면_거절한다() {
-        when(mismatchRepository.findRowById(MISMATCH)).thenReturn(Optional.of(
-                mismatch(MismatchCheckType.CAMPAIGN_SPEND_VS_LEDGER, CAMPAIGN, null)));
-        when(campaignQueryService.findAllById(List.of(CAMPAIGN))).thenReturn(List.of(campaign(OWNER)));
+        openOverspend();
 
-        assertRejected(request(1000L, null, MISMATCH), CommonErrorCode.INVALID_INPUT);
-        assertRejected(request(1000L, 99L, MISMATCH), CommonErrorCode.INVALID_INPUT);
+        assertRejected(request(300L, null, MISMATCH), CommonErrorCode.INVALID_INPUT);
+        assertRejected(request(300L, 99L, MISMATCH), CommonErrorCode.INVALID_INPUT);
         verify(ledgerRepository, never()).save(any());
     }
 
     @Test
-    void 캠페인_대상_대사_건을_과과금_정정으로_닫고_감사_로그에_대사_건을_남긴다() {
-        when(mismatchRepository.findRowById(MISMATCH)).thenReturn(Optional.of(
-                mismatch(MismatchCheckType.CAMPAIGN_SPEND_VS_LEDGER, CAMPAIGN, null)));
-        when(campaignQueryService.findAllById(List.of(CAMPAIGN))).thenReturn(List.of(campaign(OWNER)));
-        when(mismatchRepository.resolveAsOverchargeReversal(MISMATCH, ADMIN, NOW)).thenReturn(1);
+    void 초과_소진_대사_건을_초과액_이하의_양수로_닫고_감사_로그에_대사_건을_남긴다() {
+        openOverspend();
+        when(mismatchRepository.resolveByAdmin(MISMATCH, MismatchResolutionType.MANUAL_ADJUSTMENT, ADMIN, NOW))
+                .thenReturn(1);
 
-        PointAdjustmentResult result = recorder.record(ADMIN, request(1000L, CAMPAIGN, MISMATCH));
+        PointAdjustmentResult result = recorder.record(ADMIN, request(300L, CAMPAIGN, MISMATCH));
 
         assertThat(result.created()).isTrue();
-        verify(mismatchRepository).resolveAsOverchargeReversal(MISMATCH, ADMIN, NOW);
+        verify(mismatchRepository).resolveByAdmin(MISMATCH, MismatchResolutionType.MANUAL_ADJUSTMENT, ADMIN, NOW);
         verify(auditLogWriter).write(ADMIN, PointAdjustmentRecorder.AUDIT_ACTION, "7",
-                "ledgerId=9101;amount=1000;campaignId=12;mismatchId=55;requestId=req-1");
+                "ledgerId=9101;amount=300;campaignId=12;mismatchId=55;requestId=req-1");
+    }
+
+    @Test
+    void 초과_소진_대사_건은_초과액보다_적게_돌려줘도_닫는다() {
+        openOverspend();
+        when(mismatchRepository.resolveByAdmin(MISMATCH, MismatchResolutionType.MANUAL_ADJUSTMENT, ADMIN, NOW))
+                .thenReturn(1);
+
+        assertThat(recorder.record(ADMIN, request(100L, CAMPAIGN, MISMATCH)).created()).isTrue();
+    }
+
+    @Test
+    void 초과_소진_대사_건에_초과액을_넘는_양수나_음수를_연결하면_거절한다() {
+        openOverspend();
+
+        assertRejected(request(301L, CAMPAIGN, MISMATCH), CommonErrorCode.INVALID_INPUT);
+        assertRejected(request(-100L, CAMPAIGN, MISMATCH), CommonErrorCode.INVALID_INPUT);
+
+        assertNothingRecorded();
+    }
+
+    @Test
+    void 카운터_대_원장_대사_건에는_어느_방향이든_조정을_연결할_수_없다() {
+        when(mismatchRepository.findRowById(MISMATCH)).thenReturn(Optional.of(
+                mismatch(MismatchCheckType.CAMPAIGN_SPEND_VS_LEDGER, CAMPAIGN, 1000L, 1100L, null)));
+
+        assertRejected(request(100L, CAMPAIGN, MISMATCH), CommonErrorCode.INVALID_INPUT);
+        assertRejected(request(-100L, CAMPAIGN, MISMATCH), CommonErrorCode.INVALID_INPUT);
+
+        assertNothingRecorded();
     }
 
     @Test
     void 대사_건을_읽은_뒤_다른_경로가_먼저_닫았으면_거절해_원장_기록까지_롤백하게_한다() {
-        when(mismatchRepository.findRowById(MISMATCH))
-                .thenReturn(Optional.of(mismatch(MismatchCheckType.PG_VS_CHARGE, PAYMENT, null)));
-        paymentOwnedBy(OWNER);
-        when(mismatchRepository.resolveAsOverchargeReversal(MISMATCH, ADMIN, NOW)).thenReturn(0);
+        openPgMismatch(50000L);
+        when(mismatchRepository.resolveByAdmin(MISMATCH, MismatchResolutionType.MANUAL_ADJUSTMENT, ADMIN, NOW))
+                .thenReturn(0);
 
-        assertRejected(request(1000L, null, MISMATCH), BillingErrorCode.SETTLEMENT_MISMATCH_ALREADY_RESOLVED);
+        assertRejected(request(50000L, null, MISMATCH), BillingErrorCode.SETTLEMENT_MISMATCH_ALREADY_RESOLVED);
 
         verify(auditLogWriter, never()).write(any(), any(), any(), any());
     }

@@ -316,7 +316,7 @@ for c in CAMPAIGNS:
     name = OWNERS[c['s']][1]
     disc_text = f"전체 메뉴 {c['disc']:,}원 할인"
     period = '오늘 11:30 ~ 15:00'
-    img = f"CONCAT(TRIM(TRAILING '/' FROM '${{baseCdnBaseUrl}}'), '/demo/stores/{B + c['s']}/menu-1.jpg')"
+    img = f"CONCAT(TRIM(TRAILING '/' FROM '${{baseCdnBaseUrl}}'), '/demo/campaigns/{cid}/poster.jpg')"
     # 템플릿은 R__templates_posters 와 같은 규칙이다. 업종의 스타일에 전체할인(홀수)을 고른다
     tid = 10_000_000 + {'KOREAN': 0, 'BUNSIK': 0, 'CHINESE': 2, 'ASIAN': 2, 'JAPANESE': 4, 'WESTERN': 6,
                         'CAFE_DESSERT': 6}.get(OWNERS[c['s']][2], 8) + 1
@@ -334,7 +334,7 @@ rows('campaign', ['campaign_id', 'owner_id', 'store_id', 'status', 'status_chang
                   'pending_daily_budget', 'start_date', 'end_date', 'created_at', 'updated_at'], camp_rows)
 rows('campaign_status_log', ['campaign_status_log_id', 'campaign_id', 'from_status', 'to_status', 'actor_type', 'reason',
                              'created_at', 'updated_at'], logs)
-w('\n/*\n * 포스터는 가게 업종에 맞는 선착순 쿠폰 전단지(전체할인)로 만들고 검수를 통과했다. image 칸은 첫 메뉴 사진이다.\n * 템플릿이 아직 없으면(빈 DB 에서 R__templates_posters 보다 먼저 돌 때) 넣지 않는다. 그 파일이 뒤이어 만든다.\n * 완성 포스터 사진은 demo/campaigns/<캠페인>/poster.jpg 다.\n */\n')
+w('\n/*\n * 포스터는 가게 업종에 맞는 선착순 쿠폰 전단지(전체할인)로 만들고 검수를 통과했다. image 칸은 그 캠페인의 포스터 사진(poster.jpg)이다.\n * 템플릿이 아직 없으면(빈 DB 에서 R__templates_posters 보다 먼저 돌 때) 넣지 않는다. 그 파일이 뒤이어 만든다.\n */\n')
 for cid, name, slot, html, at, tid in posters:
     w(f'''INSERT INTO poster (poster_id, campaign_id, template_id, title, slot_values, html_content, created_at, updated_at,
                     image_object_key)

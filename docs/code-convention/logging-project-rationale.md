@@ -229,7 +229,7 @@ member, billing, analytics 의 레벨은 공통 규칙 `LOG-5-08` 에 따라 세
 판단은 하나의 질문으로 했다. 이 로그를 본 사람이 무엇을 해야 하는가, 그리고 하지 않으면 저절로 고쳐지는가.
 
 **대사와 정합성 검사의 불일치** 소진 대사와 PG 대사가 찾은 불일치는 `settlement_mismatch` 에 미해결로
-쌓인다. 관리자가 `/v1/admin/settlement-mismatches` 에서 보고 `OVERCHARGE_REVERSAL` 같은 처리로 닫는다.
+쌓인다. 관리자가 `/v1/admin/settlement-mismatches` 에서 보고 `MANUAL_ADJUSTMENT` 같은 처리로 닫는다.
 사람이 처리하는 문제지만 00:00 배치라 당장 처리할 필요는 없다. 그래서 공통 규칙 `LOG-6-10` 의 모양을
 따른다. 건마다 WARN 으로 남기고, 실행 요약(`*_DONE`)이 불일치를 하나라도 찾으면 ERROR 가 되어 알림을
 한 번 울린다. 정합성 검사(`SETTLEMENT_CONSISTENCY_VIOLATION`)는 검사마다 위반 수만 남기는 한 줄이라 그

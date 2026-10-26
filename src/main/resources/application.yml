@@ -243,7 +243,7 @@ billing:
     connect-timeout: 3s
     read-timeout: 10s
   # 승인 결과를 모르는 결제의 재조회 설정(billing.config.PaymentRecheckProperties).
-  # 값은 구현 계획 D-10 의 시작값이다. 운영하며 여기서 조정한다.
+  # 값을 정한 이유는 docs/design/billing/billing-batch-design.md 의 I-04 가 갖는다.
   payment:
     recheck:
       # 시도 횟수가 이 값에 닿으면 FAILED_PERMANENT 로 두고 관리자가 확정한다. 기본 간격이면 총 약 48분이다.

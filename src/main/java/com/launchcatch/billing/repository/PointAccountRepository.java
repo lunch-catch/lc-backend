@@ -20,7 +20,7 @@ public interface PointAccountRepository extends JpaRepository<PointAccount, Long
      *
      * 중복은 값을 바꾸지 않는 갱신(ON DUPLICATE KEY UPDATE owner_id = owner_id)으로 흡수한다. 예외가 나지 않으므로
      * 부른 트랜잭션이 롤백 표시가 되지 않는다. INSERT IGNORE 는 쓰지 않는다. 중복뿐 아니라 CHECK 와 NOT NULL
-     * 위반까지 경고로 낮추고 행을 조용히 버린다(구현 계획 D-5).
+     * 위반까지 경고로 낮추고 행을 조용히 버린다.
      *
      * 영향받은 행 수는 새로 만들면 1, 이미 있으면 0 이다.
      */
@@ -46,4 +46,17 @@ public interface PointAccountRepository extends JpaRepository<PointAccount, Long
                FOR UPDATE
             """, nativeQuery = true)
     Optional<Long> lockByOwnerId(@Param("ownerId") Long ownerId);
+
+    /*
+     * 차감이 해제와 같은 계정 행에 공유 잠금을 잡는다.
+     * 차감끼리는 함께 진행하고, 해제는 진행 중인 차감의 커밋이나 롤백을 기다린 뒤 소진을 읽는다.
+     * 잠금을 얻은 뒤 영업일을 검사해야 자정 동안 기다린 전날 노출을 새로 과금하지 않는다.
+     */
+    @Query(value = """
+            SELECT /*+ SET_VAR(innodb_lock_wait_timeout=5) */ point_account_id
+              FROM point_account
+             WHERE owner_id = :ownerId
+               FOR SHARE
+            """, nativeQuery = true)
+    Optional<Long> lockForShareByOwnerId(@Param("ownerId") Long ownerId);
 }

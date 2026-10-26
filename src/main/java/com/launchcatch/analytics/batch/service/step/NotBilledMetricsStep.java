@@ -21,7 +21,7 @@ import org.springframework.stereotype.Component;
 /*
  * 미과금 노출의 일별 값을 모아 daily_campaign_not_billed_analytics 의 그날 행으로 교체한다.
  *
- * 예산, 중단, 예산 계획 없음은 BillingStatsQueryService 가 과금 판정으로 센다. 쿠폰 소진 뒤 노출은 정산의
+ * 예산, 중단, 예산 계획 없음, 영업일 마감은 BillingStatsQueryService 가 과금 판정으로 센다. 쿠폰 소진 뒤 노출은 정산의
  * 판정을 받지 않으므로 AdservingStatsQueryService 가 센다. 둘을 캠페인마다 사유별로 합친다.
  */
 @Component
@@ -56,6 +56,7 @@ public class NotBilledMetricsStep implements AggregationStep<NotBilledMetrics> {
             add(byCampaign, count.campaignId(), NotBilledReason.NOT_BILLED_BUDGET, count.notBilledBudgetCount());
             add(byCampaign, count.campaignId(), NotBilledReason.NOT_BILLED_PAUSED, count.notBilledPausedCount());
             add(byCampaign, count.campaignId(), NotBilledReason.NOT_BILLED_NO_PLAN, count.notBilledNoPlanCount());
+            add(byCampaign, count.campaignId(), NotBilledReason.NOT_BILLED_CLOSED, count.notBilledClosedCount());
         }
         for (CampaignImpressionStats stats : adserving.campaignStats(businessDate)) {
             add(byCampaign, stats.campaignId(), NotBilledReason.NOT_BILLED_SOLD_OUT, stats.soldOutCount());

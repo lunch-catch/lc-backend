@@ -9,6 +9,9 @@ public enum MismatchResolutionType {
     /** 배치가 빠진 원장 줄을 보정 기록했다. 해결자는 NULL 이다. */
     LEDGER_CORRECTION,
 
-    /** 관리자가 양수 조정으로 과과금을 돌려주었다. 해결자가 필수다(chk_settlement_mismatch_resolved_by). */
-    OVERCHARGE_REVERSAL
+    /** 관리자가 양수나 음수 조정으로 금액을 바로잡았다. 해결자가 필수다(chk_settlement_mismatch_resolved_by). */
+    MANUAL_ADJUSTMENT,
+
+    /** 관리자가 원장을 바꾸지 않고 닫았다. 해결자가 필수다(chk_settlement_mismatch_resolved_by). */
+    NO_ADJUSTMENT_REQUIRED
 }

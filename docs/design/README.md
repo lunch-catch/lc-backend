@@ -20,7 +20,7 @@
 | 도메인 | 구조와 동작 | 장애 처리 | API 설계 | 그 밖 |
 |---|---|---|---|---|
 | adserving | [구조와 동작](./adserving/adserving_구조와_동작_설계.md) | [장애 처리](./adserving/adserving_장애_처리_설계.md) | [feed](./adserving/feed-api-design.md) | - |
-| billing | [구조와 동작](./billing/billing_구조와_동작_설계.md) | [장애 처리](./billing/billing_장애_처리_설계.md) | [billing](./billing/billing-api-design.md) | [배치](./billing/billing-batch-design.md), [성능 개선](./billing/billing_성능_개선.md) |
+| billing | [구조와 동작](./billing/billing_구조와_동작_설계.md) | [장애 처리](./billing/billing_장애_처리_설계.md) | [billing](./billing/billing-api-design.md) | [배치](./billing/billing-batch-design.md) |
 | coupon | [구조와 동작](./coupon/coupon_구조와_동작_설계.md) | [장애 처리](./coupon/coupon_장애_처리_설계.md) | [coupon](./coupon/coupon-api-design.md) | 발급 [v1](./coupon/coupon-issuance-v1-design.md) [v2](./coupon/coupon-issuance-v2-design.md) [v3](./coupon/coupon-issuance-v3-design.md), [배치](./coupon/coupon-batch-design.md), [통계 조회 계약](./coupon/coupon-stats-query-contract.md) |
 | campaign | [구조와 동작](./campaign/campaign_구조와_동작_설계.md) | [장애 처리](./campaign/campaign_장애_처리_설계.md) | [campaign](./campaign/campaign-api-design.md) | 포스터 [설계](./campaign/poster_구조와_동작_설계.md) [API](./campaign/poster-api-design.md), [템플릿](./campaign/template_구조와_동작_설계.md) |
 | store | [구조와 동작](./store/store_구조와_동작_설계.md) | [장애 처리](./store/store_장애_처리_설계.md) | [store](./store/store-api-design.md) | [조회 계약](./store/store-query-contract.md), [입점 진행](./store/store-registration-progress.md) |

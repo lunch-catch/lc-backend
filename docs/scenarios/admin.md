@@ -299,7 +299,7 @@
 | A-223 | 불일치 필터와 정렬 | 검증 종류, 해결 여부, 대상 영업일, 발견 시각 또는 영업일 정렬 | /settlements?tab=mismatches (mismatches.*) | GET /v1/admin/settlement-mismatches | - | - | 필터 결과. 역전 기간은 표 오류로 미호출 | - |
 | A-224 | 해결된 불일치 상세 | 행 클릭 | 정산 불일치 상세 드로어 | - | - | resolutionType 있음 | 해결 방식(원장 보정, 과과금 정정), 해결 시각, 처리자, 정정 버튼 없음 | - |
 | A-225 | 미해결 불일치 상세 | 행 클릭 | 정산 불일치 상세 드로어 | - | - | resolutionType null | "포인트 조정으로 정정" 버튼, 대상 ID 라벨(결제 ID 또는 캠페인 ID), 배치 실행 ID | - |
-| A-226 | 결제 불일치 정정 | 정정 -> 점주 ID 직접 입력 -> 양수 -> 확정 | 정산 불일치 정정 모달 | POST /v1/admin/point-adjustments, GET /v1/admin/settlement-mismatches | - | PG_VS_CHARGE 미해결, 결제 점주와 입력 점주 같음 | 원장 생성, 불일치 OVERCHARGE_REVERSAL 로 해결, "정정을 완료했습니다. (원장 ID: N)" 1페이지 갱신 | - |
+| A-226 | 결제 불일치 정정 | 정정 -> 점주 ID 직접 입력 -> 양수 -> 확정 | 정산 불일치 정정 모달 | POST /v1/admin/point-adjustments, GET /v1/admin/settlement-mismatches | - | PG_VS_CHARGE 미해결, 결제 점주와 입력 점주 같음 | 원장 생성, 불일치 MANUAL_ADJUSTMENT 로 해결, "정정을 완료했습니다. (원장 ID: N)" 1페이지 갱신 | - |
 | A-227 | 캠페인 불일치 정정 | 정정 -> 점주 입력 -> 양수 -> 확정 | 정산 불일치 정정 모달 | POST /v1/admin/point-adjustments | - | CAMPAIGN_SPEND_VS_LEDGER 또는 CAMPAIGN_OVERSPEND 미해결 | 캠페인 ID와 영업일이 불일치 값으로 고정 입력, 해결 처리 | - |
 | A-228 | 정정 음수 차단 | 음수 입력 | 정산 불일치 정정 모달 | - | - | - | "정산 불일치 정정은 포인트를 돌려주는 양수 조정만 가능합니다." | - |
 | A-229 | 정정 점주 불일치 | 다른 점주 ID 로 확정 | 정산 불일치 정정 모달 | POST /v1/admin/point-adjustments | BILLING-022 | 대상 결제나 캠페인의 점주와 다름 | "정산 불일치 건이 입력한 점주의 내역이 아닙니다." | - |

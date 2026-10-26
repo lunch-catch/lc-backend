@@ -44,9 +44,9 @@ import org.springframework.stereotype.Component;
  * AdservingStatsQueryService, 발급과 사용은 CouponStatsQueryService 가 캠페인별로 세어 준다. 분석이 캠페인 ID 로 합친다.
  * 소진액은 매출(A-07)과 같은 SpendFormula 로 계산한다.
  *
- * 찜은 계약의 wishCount 가 아니라 event_log 의 wish 로 센다. 퍼널과 같은 이유다(AD-31).
+ * 찜은 계약의 wishCount 가 아니라 event_log 의 wish 로 센다. 퍼널과 같은 이유다.
  *
- * 점주와 가게는 CampaignQueryService.findAllById 로 읽어 행에 저장한다(#426, AD-28). 조회가 다른 도메인을 부르지 않고
+ * 점주와 가게는 CampaignQueryService.findAllById 로 읽어 행에 저장한다(#426). 조회가 다른 도메인을 부르지 않고
  * 이 값으로 소유를 확인하기 때문이다. 찾지 못한 캠페인 ID 는 행을 만들지 않는다. 무효 노출은 요청이 보낸 캠페인 ID 라
  * 없는 캠페인일 수 있다.
  */
@@ -203,6 +203,7 @@ public class CampaignReportStep implements AggregationStep<CampaignReport> {
             putPositive(notBilled, NotBilledReason.NOT_BILLED_BUDGET, count.notBilledBudgetCount());
             putPositive(notBilled, NotBilledReason.NOT_BILLED_PAUSED, count.notBilledPausedCount());
             putPositive(notBilled, NotBilledReason.NOT_BILLED_NO_PLAN, count.notBilledNoPlanCount());
+            putPositive(notBilled, NotBilledReason.NOT_BILLED_CLOSED, count.notBilledClosedCount());
         }
         Map<InvalidReasonCode, Long> invalid = new EnumMap<>(InvalidReasonCode.class);
         Map<Integer, Long> hourly = new TreeMap<>();

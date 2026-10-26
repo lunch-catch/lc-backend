@@ -210,7 +210,7 @@ class DailyReservationServiceTest {
 
     @Test
     void release는_그날_계획의_남은_몫을_해제한다() {
-        // 13:30 해제(구현 순서 11번)가 00:00 보정과 같은 계산을 그날 영업일로 직접 부르는 자리다
+        // 00:00 예약이 해제하지 않은 날짜마다 부르는 해제를 그 영업일로 직접 부른다
         when(planRepository.findByBusinessDate(DAY))
                 .thenReturn(List.of(BudgetDailyPlan.create(1L, 7L, DAY, 5000L, 10L, false, CHANGED_AT)));
 

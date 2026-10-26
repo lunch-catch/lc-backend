@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Duration;
+import java.util.List;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -61,11 +62,33 @@ class AggregationMetricsTest {
     }
 
     @Test
-    void 정합성_위반_수는_check_라벨별로_덮어쓴다() {
+    void 결과_라벨마다_카운터를_0으로_만들어_둔다() {
+        for (String result : List.of("success", "failed", "busy", "lease_lost", "source_not_ready")) {
+            assertThat(registry.get("analytics_aggregation_total").tag("result", result)
+                    .counter().count()).isZero();
+        }
+    }
+
+    @Test
+    void 한_실행_안의_정합성_위반_수는_check_라벨별로_가장_큰_값을_남긴다() {
         metrics.recordViolations("V-1", 5);
         metrics.recordViolations("V-1", 0);
+        metrics.recordViolations("V-1", 3);
 
         assertThat(registry.get("analytics_consistency_violations").tag("check", "V-1")
-                .gauge().value()).isEqualTo(0.0);
+                .gauge().value()).isEqualTo(5.0);
+    }
+
+    @Test
+    void 실행을_다시_시작하면_정합성_위반_수를_0으로_되돌린다() {
+        metrics.recordViolations("V-1", 5);
+        metrics.recordViolations("V-7", 1);
+
+        metrics.resetViolations();
+
+        assertThat(registry.get("analytics_consistency_violations").tag("check", "V-1")
+                .gauge().value()).isZero();
+        assertThat(registry.get("analytics_consistency_violations").tag("check", "V-7")
+                .gauge().value()).isZero();
     }
 }

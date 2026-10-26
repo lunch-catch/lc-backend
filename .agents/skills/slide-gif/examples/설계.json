@@ -1,0 +1,1032 @@
+{
+ "name": "adserving 설계",
+ "title": "광고 서빙은 계산, 판정, 기록을 나눠 둡니다.",
+ "logo": "LUNCHCATCH",
+ "category": "설계",
+ "speed": 0.45,
+ "loop": 20000,
+ "elements": [
+  {
+   "type": "box",
+   "id": "s1",
+   "x": 70,
+   "y": 176,
+   "w": 290,
+   "h": 66,
+   "title": "사용자 웹",
+   "sub": "lunchcatch.com",
+   "size": "s",
+   "align": "center"
+  },
+  {
+   "type": "box",
+   "id": "s2",
+   "x": 70,
+   "y": 260,
+   "w": 290,
+   "h": 66,
+   "title": "ALB",
+   "sub": "Route53 -> ALB",
+   "size": "s",
+   "align": "center"
+  },
+  {
+   "type": "box",
+   "id": "s3",
+   "x": 70,
+   "y": 344,
+   "w": 290,
+   "h": 66,
+   "title": "API 서버",
+   "sub": "Spring Boot 4.0.5, Java 21",
+   "size": "s",
+   "align": "center"
+  },
+  {
+   "type": "box",
+   "id": "s4",
+   "x": 70,
+   "y": 428,
+   "w": 290,
+   "h": 66,
+   "title": "adserving",
+   "sub": "광고 서빙",
+   "size": "s",
+   "align": "center",
+   "tone": "accent"
+  },
+  {
+   "type": "box",
+   "id": "s5",
+   "x": 70,
+   "y": 512,
+   "w": 290,
+   "h": 66,
+   "title": "campaign, billing",
+   "sub": "contract 로만 부른다",
+   "size": "s",
+   "align": "center"
+  },
+  {
+   "type": "box",
+   "id": "s6",
+   "x": 70,
+   "y": 596,
+   "w": 290,
+   "h": 66,
+   "title": "Valkey 9.0",
+   "sub": "serve 기록, 빈도, 속도 제한",
+   "size": "s",
+   "align": "center"
+  },
+  {
+   "type": "box",
+   "id": "s7",
+   "x": 70,
+   "y": 680,
+   "w": 290,
+   "h": 66,
+   "title": "MySQL 8.4",
+   "sub": "후보 스냅샷, 서빙 로그",
+   "size": "s",
+   "align": "center"
+  },
+  {
+   "type": "box",
+   "id": "s8",
+   "x": 70,
+   "y": 764,
+   "w": 290,
+   "h": 66,
+   "title": "관측",
+   "sub": "Prometheus, Loki, Grafana",
+   "size": "s",
+   "align": "center"
+  },
+  {
+   "type": "panel",
+   "id": "detail",
+   "x": 420,
+   "y": 166,
+   "w": 1110,
+   "h": 680,
+   "title": "adserving",
+   "sub": "광고 서빙 도메인. 배정 알고리즘과 공정성을 소유한다",
+   "tone": "accent"
+  },
+  {
+   "type": "label",
+   "x": 1250,
+   "y": 190,
+   "text": "com.launchcatch.adserving",
+   "color": "dim",
+   "size": "xs",
+   "mono": true
+  },
+  {
+   "type": "panel",
+   "id": "main",
+   "x": 444,
+   "y": 244,
+   "w": 1062,
+   "h": 78
+  },
+  {
+   "type": "box",
+   "id": "f1",
+   "x": 470,
+   "y": 259,
+   "w": 290,
+   "h": 48,
+   "title": "FeedController, 요청 수신",
+   "size": "s",
+   "align": "center",
+   "tone": "dim"
+  },
+  {
+   "type": "box",
+   "id": "f2",
+   "x": 830,
+   "y": 259,
+   "w": 300,
+   "h": 48,
+   "title": "FeedService, 후보 조회와 배정",
+   "size": "s",
+   "align": "center",
+   "tone": "dim"
+  },
+  {
+   "type": "box",
+   "id": "f3",
+   "x": 1200,
+   "y": 259,
+   "w": 280,
+   "h": 48,
+   "title": "카드 10장 응답",
+   "size": "s",
+   "align": "center",
+   "tone": "dim"
+  },
+  {
+   "type": "panel",
+   "id": "p_engine",
+   "x": 444,
+   "y": 360,
+   "w": 338,
+   "h": 462,
+   "title": "engine",
+   "sub": "FeedAssembler. DB 와 HTTP 를 모르는 계산"
+  },
+  {
+   "type": "panel",
+   "id": "p_impression",
+   "x": 806,
+   "y": 360,
+   "w": 338,
+   "h": 462,
+   "title": "impression",
+   "sub": "노출 1건을 유효와 무효로 가른다"
+  },
+  {
+   "type": "panel",
+   "id": "p_feed",
+   "x": 1168,
+   "y": 360,
+   "w": 338,
+   "h": 462,
+   "title": "feed",
+   "sub": "응답 뒤에 남기는 기록"
+  },
+  {
+   "type": "box",
+   "id": "e1",
+   "x": 460,
+   "y": 440,
+   "w": 306,
+   "h": 86,
+   "title": "거르기 5개",
+   "size": "s"
+  },
+  {
+   "type": "chips",
+   "id": "ch1",
+   "x": 474,
+   "y": 482,
+   "items": [
+    "제외",
+    "카테고리",
+    "대상",
+    "빈도",
+    "예산"
+   ]
+  },
+  {
+   "type": "box",
+   "id": "e2",
+   "x": 460,
+   "y": 540,
+   "w": 306,
+   "h": 86,
+   "title": "관련성 점수",
+   "size": "s"
+  },
+  {
+   "type": "chips",
+   "id": "ch2",
+   "x": 474,
+   "y": 582,
+   "items": [
+    "거리 0.45",
+    "카테고리 0.35",
+    "할인 0.20"
+   ]
+  },
+  {
+   "type": "box",
+   "id": "e3",
+   "x": 460,
+   "y": 640,
+   "w": 306,
+   "h": 64,
+   "title": "배분 순서",
+   "value": "진행률 오름차순, 신규 x0.8",
+   "size": "s"
+  },
+  {
+   "type": "label",
+   "x": 460,
+   "y": 722,
+   "text": "카드 10장 (1, 4, 7번이 배분 자리)",
+   "color": "dim",
+   "size": "xs"
+  },
+  {
+   "type": "cells",
+   "id": "cards",
+   "x": 460,
+   "y": 746,
+   "n": 10,
+   "size": 24,
+   "gap": 7
+  },
+  {
+   "type": "box",
+   "id": "i1",
+   "x": 822,
+   "y": 440,
+   "w": 306,
+   "h": 86,
+   "title": "검증",
+   "size": "s"
+  },
+  {
+   "type": "chips",
+   "id": "ch3",
+   "x": 836,
+   "y": 482,
+   "items": [
+    "기록 있음",
+    "내 것",
+    "serve_id 선점"
+   ]
+  },
+  {
+   "type": "box",
+   "id": "i2",
+   "x": 822,
+   "y": 540,
+   "w": 306,
+   "h": 86,
+   "title": "정산 판정과 원장",
+   "sub": "유효 노출 저장, 판정, 원장이 한 트랜잭션",
+   "size": "s"
+  },
+  {
+   "type": "box",
+   "id": "i3",
+   "x": 822,
+   "y": 640,
+   "w": 306,
+   "h": 64,
+   "title": "무효면 사유만 남김",
+   "value": "EXPIRED_OR_UNKNOWN, NOT_OWNER",
+   "size": "s",
+   "tone": "ghost"
+  },
+  {
+   "type": "label",
+   "x": 822,
+   "y": 722,
+   "text": "유효 노출",
+   "color": "dim",
+   "size": "xs"
+  },
+  {
+   "type": "cells",
+   "id": "valid",
+   "x": 822,
+   "y": 746,
+   "n": 10,
+   "size": 24,
+   "gap": 7
+  },
+  {
+   "type": "box",
+   "id": "d1",
+   "x": 1184,
+   "y": 440,
+   "w": 306,
+   "h": 86,
+   "title": "serve 기록",
+   "sub": "Valkey, TTL 30분. 노출 인정 시간이다",
+   "size": "s"
+  },
+  {
+   "type": "box",
+   "id": "d2",
+   "x": 1184,
+   "y": 540,
+   "w": 306,
+   "h": 86,
+   "title": "ServeLogBuffer",
+   "sub": "차면 버리고 센다. 응답을 기다리게 하지 않는다",
+   "size": "s"
+  },
+  {
+   "type": "box",
+   "id": "d3",
+   "x": 1184,
+   "y": 640,
+   "w": 306,
+   "h": 64,
+   "title": "서빙 로그",
+   "value": "MySQL, 묶어서 비동기 쓰기",
+   "size": "s"
+  },
+  {
+   "type": "label",
+   "x": 1184,
+   "y": 722,
+   "text": "대기열",
+   "color": "dim",
+   "size": "xs"
+  },
+  {
+   "type": "cells",
+   "id": "buf",
+   "x": 1184,
+   "y": 746,
+   "n": 10,
+   "size": 24,
+   "gap": 7
+  }
+ ],
+ "wires": [
+  {
+   "points": [
+    "s1.b",
+    "s2.t"
+   ]
+  },
+  {
+   "points": [
+    "s2.b",
+    "s3.t"
+   ]
+  },
+  {
+   "points": [
+    "s3.b",
+    "s4.t"
+   ]
+  },
+  {
+   "points": [
+    "s4.b",
+    "s5.t"
+   ]
+  },
+  {
+   "points": [
+    "s5.b",
+    "s6.t"
+   ]
+  },
+  {
+   "points": [
+    "s6.b",
+    "s7.t"
+   ]
+  },
+  {
+   "points": [
+    "s7.b",
+    "s8.t"
+   ]
+  },
+  {
+   "points": [
+    "s4.tr",
+    "detail.tl"
+   ],
+   "dash": true,
+   "elbow": "none",
+   "tone": "accent"
+  },
+  {
+   "points": [
+    "s4.br",
+    "detail.bl"
+   ],
+   "dash": true,
+   "elbow": "none",
+   "tone": "accent"
+  },
+  {
+   "id": "m1",
+   "points": [
+    "f1.r",
+    "f2.l"
+   ],
+   "arrow": true
+  },
+  {
+   "id": "m2",
+   "points": [
+    "f2.r",
+    "f3.l"
+   ],
+   "arrow": true
+  },
+  {
+   "id": "v1",
+   "points": [
+    "f2.b",
+    [
+     980,
+     344
+    ],
+    [
+     613,
+     344
+    ],
+    "p_engine.t"
+   ],
+   "elbow": "none"
+  },
+  {
+   "id": "v2",
+   "points": [
+    "f3.b",
+    [
+     1340,
+     344
+    ],
+    [
+     975,
+     344
+    ],
+    "p_impression.t"
+   ],
+   "elbow": "none",
+   "dash": true,
+   "label": {
+    "text": "노출 이벤트",
+    "at": [
+     1158,
+     344
+    ],
+    "dy": -6
+   }
+  },
+  {
+   "id": "v3",
+   "points": [
+    "f3.b",
+    "p_feed.t"
+   ],
+   "elbow": "vhv"
+  },
+  {
+   "points": [
+    "e1.b",
+    "e2.t"
+   ]
+  },
+  {
+   "points": [
+    "e2.b",
+    "e3.t"
+   ]
+  },
+  {
+   "points": [
+    "i1.b",
+    "i2.t"
+   ]
+  },
+  {
+   "points": [
+    "d1.b",
+    "d2.t"
+   ]
+  },
+  {
+   "points": [
+    "d2.b",
+    "d3.t"
+   ]
+  },
+  {
+   "points": [
+    "i1.r",
+    [
+     1138,
+     483
+    ],
+    [
+     1138,
+     672
+    ],
+    "i3.r"
+   ],
+   "dash": true,
+   "elbow": "none",
+   "id": "inv"
+  }
+ ],
+ "timeline": [
+  {
+   "at": 0,
+   "steps": [
+    {
+     "dot": [
+      "f1.c",
+      {
+       "wire": "m1"
+      },
+      "f2.c"
+     ],
+     "color": "fg"
+    },
+    {
+     "active": "f2"
+    },
+    {
+     "dot": [
+      "f2.c",
+      {
+       "wire": "v1"
+      },
+      "p_engine.t"
+     ]
+    },
+    {
+     "par": [
+      {
+       "seq": [
+        {
+         "chip": "ch1",
+         "index": 0
+        },
+        {
+         "wait": 450
+        },
+        {
+         "chip": "ch1",
+         "index": 1
+        },
+        {
+         "wait": 450
+        },
+        {
+         "chip": "ch1",
+         "index": 2
+        },
+        {
+         "wait": 450
+        },
+        {
+         "chip": "ch1",
+         "index": 3
+        },
+        {
+         "wait": 450
+        },
+        {
+         "chip": "ch1",
+         "index": 4
+        },
+        {
+         "wait": 450
+        },
+        {
+         "chip": "ch1",
+         "index": -1
+        }
+       ]
+      },
+      {
+       "seq": [
+        {
+         "wait": 2250
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "seq": [
+      {
+       "chip": "ch2",
+       "index": 0
+      },
+      {
+       "wait": 500
+      },
+      {
+       "chip": "ch2",
+       "index": 1
+      },
+      {
+       "wait": 500
+      },
+      {
+       "chip": "ch2",
+       "index": 2
+      },
+      {
+       "wait": 500
+      },
+      {
+       "chip": "ch2",
+       "index": -1
+      }
+     ]
+    },
+    {
+     "hl": "e3",
+     "ms": 700,
+     "hold": true
+    },
+    {
+     "seq": [
+      {
+       "cells": "cards",
+       "paint": 0,
+       "color": "a"
+      },
+      {
+       "wait": 220
+      },
+      {
+       "cells": "cards",
+       "paint": 1,
+       "color": "b"
+      },
+      {
+       "wait": 220
+      },
+      {
+       "cells": "cards",
+       "paint": 2,
+       "color": "b"
+      },
+      {
+       "wait": 220
+      },
+      {
+       "cells": "cards",
+       "paint": 3,
+       "color": "a"
+      },
+      {
+       "wait": 220
+      },
+      {
+       "cells": "cards",
+       "paint": 4,
+       "color": "b"
+      },
+      {
+       "wait": 220
+      },
+      {
+       "cells": "cards",
+       "paint": 5,
+       "color": "b"
+      },
+      {
+       "wait": 220
+      },
+      {
+       "cells": "cards",
+       "paint": 6,
+       "color": "a"
+      },
+      {
+       "wait": 220
+      },
+      {
+       "cells": "cards",
+       "paint": 7,
+       "color": "b"
+      },
+      {
+       "wait": 220
+      },
+      {
+       "cells": "cards",
+       "paint": 8,
+       "color": "b"
+      },
+      {
+       "wait": 220
+      },
+      {
+       "cells": "cards",
+       "paint": 9,
+       "color": "b"
+      },
+      {
+       "wait": 220
+      }
+     ]
+    },
+    {
+     "active": "f2",
+     "on": false
+    },
+    {
+     "dot": [
+      "f2.c",
+      {
+       "wire": "m2"
+      },
+      "f3.c"
+     ],
+     "color": "fg"
+    },
+    {
+     "active": "f3"
+    },
+    {
+     "par": [
+      {
+       "seq": [
+        {
+         "dot": [
+          "f3.c",
+          {
+           "wire": "v3"
+          },
+          "p_feed.t"
+         ],
+         "color": "c"
+        },
+        {
+         "hl": "d1",
+         "ms": 600,
+         "hold": true
+        },
+        {
+         "seq": [
+          {
+           "cells": "buf",
+           "push": "c"
+          },
+          {
+           "wait": 160
+          },
+          {
+           "cells": "buf",
+           "push": "c"
+          },
+          {
+           "wait": 160
+          },
+          {
+           "cells": "buf",
+           "push": "c"
+          },
+          {
+           "wait": 160
+          },
+          {
+           "cells": "buf",
+           "push": "c"
+          },
+          {
+           "wait": 160
+          },
+          {
+           "cells": "buf",
+           "push": "c"
+          },
+          {
+           "wait": 160
+          },
+          {
+           "cells": "buf",
+           "push": "c"
+          },
+          {
+           "wait": 160
+          }
+         ]
+        },
+        {
+         "hl": "d2",
+         "ms": 500
+        }
+       ]
+      },
+      {
+       "seq": [
+        {
+         "wait": 900
+        },
+        {
+         "active": "f3",
+         "on": false
+        },
+        {
+         "dot": [
+          "f3.c",
+          {
+           "wire": "v2"
+          },
+          "p_impression.t"
+         ],
+         "color": "accent"
+        },
+        {
+         "seq": [
+          {
+           "chip": "ch3",
+           "index": 0
+          },
+          {
+           "wait": 520
+          },
+          {
+           "chip": "ch3",
+           "index": 1
+          },
+          {
+           "wait": 520
+          },
+          {
+           "chip": "ch3",
+           "index": 2
+          },
+          {
+           "wait": 520
+          },
+          {
+           "chip": "ch3",
+           "index": -1
+          }
+         ]
+        },
+        {
+         "hl": "i2",
+         "ms": 700,
+         "hold": true
+        },
+        {
+         "seq": [
+          {
+           "cells": "valid",
+           "push": "accent"
+          },
+          {
+           "wait": 250
+          },
+          {
+           "cells": "valid",
+           "push": "accent"
+          },
+          {
+           "wait": 250
+          },
+          {
+           "cells": "valid",
+           "push": "accent"
+          },
+          {
+           "wait": 250
+          },
+          {
+           "cells": "valid",
+           "push": "accent"
+          },
+          {
+           "wait": 250
+          }
+         ]
+        },
+        {
+         "dot": [
+          "i1.c",
+          {
+           "wire": "inv"
+          },
+          "i3.c"
+         ],
+         "color": "fg"
+        },
+        {
+         "hl": "i3",
+         "ms": 700
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "wait": 400
+    },
+    {
+     "seq": [
+      {
+       "cells": "buf",
+       "pop": true
+      },
+      {
+       "hl": "d3",
+       "ms": 300
+      },
+      {
+       "wait": 260
+      },
+      {
+       "cells": "buf",
+       "pop": true
+      },
+      {
+       "hl": "d3",
+       "ms": 300
+      },
+      {
+       "wait": 260
+      },
+      {
+       "cells": "buf",
+       "pop": true
+      },
+      {
+       "hl": "d3",
+       "ms": 300
+      },
+      {
+       "wait": 260
+      },
+      {
+       "cells": "buf",
+       "pop": true
+      },
+      {
+       "hl": "d3",
+       "ms": 300
+      },
+      {
+       "wait": 260
+      },
+      {
+       "cells": "buf",
+       "pop": true
+      },
+      {
+       "hl": "d3",
+       "ms": 300
+      },
+      {
+       "wait": 260
+      },
+      {
+       "cells": "buf",
+       "pop": true
+      },
+      {
+       "hl": "d3",
+       "ms": 300
+      },
+      {
+       "wait": 260
+      }
+     ]
+    },
+    {
+     "wait": 1600
+    }
+   ]
+  }
+ ],
+ "sources": [
+  "lc-backend: docs/architecture/런치캐치_도메인_구조와_의존성_설계.md 1.1~1.2",
+  "lc-backend: adserving/engine/FeedAssembler.java",
+  "lc-backend: adserving/impression/service/ImpressionService.java",
+  "lc-backend: adserving/feed/service/ServeLogBuffer.java, feed/repository/ServeRecordRepository.java"
+ ]
+}

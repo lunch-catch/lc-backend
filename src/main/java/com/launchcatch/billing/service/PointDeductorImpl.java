@@ -1,5 +1,7 @@
 package com.launchcatch.billing.service;
 
+import com.launchcatch.billing.contract.DeductionOutcome;
+import com.launchcatch.billing.contract.DeductionRequest;
 import com.launchcatch.billing.contract.DeductionStatus;
 import com.launchcatch.billing.contract.PointDeductor;
 import com.launchcatch.billing.dto.PlanSnapshot;
@@ -7,26 +9,36 @@ import com.launchcatch.billing.cache.DailySpendCounter;
 import com.launchcatch.billing.cache.DeductOutcome;
 import com.launchcatch.billing.repository.DeductionResultRepository;
 import com.launchcatch.billing.repository.PointLedgerRepository;
+import com.launchcatch.billing.repository.PointAccountRepository;
 import com.launchcatch.campaign.contract.CampaignInfo;
 import com.launchcatch.campaign.contract.CampaignQueryService;
 import com.launchcatch.ops.contract.PlatformSettingQueryService;
 import io.micrometer.core.instrument.MeterRegistry;
+import jakarta.annotation.PostConstruct;
 import java.time.Clock;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.TreeMap;
 import java.util.UUID;
+import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DataAccessResourceFailureException;
+import org.springframework.dao.QueryTimeoutException;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.CannotCreateTransactionException;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 /*
- * 유효 노출 1건의 과금을 판정하고 기록한다(I-01).
+ * 유효 노출의 과금을 판정하고 기록한다(I-01). 1건은 deduct, 여러 건은 deductAll 이 받는다.
  *
  * 순서는 ① 그날 계획의 점주와 단가 ② 당일 소진 해시에서 판정 ③ 판정 기록 ④ BILLED 면 원장 DEDUCT 다.
  * 그날 계획이 없으면 NOT_BILLED_NO_PLAN 판정만 남긴다.
@@ -38,18 +50,9 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
  * 그래서 이번 호출이 새로 판정했으면 롤백 직후 그 판정을 되돌린다(처리 표시 삭제, BILLED 였으면 소진 감소).
  * 되돌리기가 실패하거나 프로세스가 죽으면 소진이 원장보다 큰 채로 그날 끝까지 남고, 다음 날 00:00 대사가 기록한다.
  *
- * 노출을 저장하는 트랜잭션 안에서만 부른다. 밖에서 부르면 Spring 이 바로 예외를 낸다(E-5).
- * 금전 값이라 대체값을 돌려주지 않는다. 실패는 예외이고 노출 저장까지 롤백된다.
- */
-/*
- * TODO(부하 테스트 실행): 측정 도구(v1 하네스, v2 k6)는 아직 없고 측정도 하지 않았다. 프로젝트가 어느 정도 완성된 뒤
- *   별도 작업으로 도구를 만들고 "노출 차감 부하 테스트.md" 순서대로 실행해 결과를 문서에 남긴다
- *   (billing-구현-계획.md 5.2의 Todo, 이슈 #193 작업 8). 그 전까지 아래 TODO(성능 측정)의 값과 개선 후보는 가정이다.
- *
- * TODO(성능 측정): 이 클래스가 노출 차감 부하 테스트의 측정 대상이다. 초당 1만 건(NFR-014)에 못 미치면
- *   "노출 차감 성능 개선 선택지.md" 4장 순서대로 이 클래스와 아래 저장소, 스크립트, 스키마를 바꾸고
- *   ./gradlew perfTest 로 전후를 비교한다. 하네스는 PointDeductor 만 부르므로 바꾸지 않는다.
- *   하네스를 같이 고쳐야 하는 경우(0단계 구간 분해, 명세를 바꾸는 4단계)는 "노출 차감 부하 테스트.md" 2.4절.
+ * 호출자 트랜잭션이 있으면 참여하고 없으면 정산 트랜잭션을 시작한다.
+ * 계정 공유 잠금 뒤 마감을 검사하고 커밋까지 잠금을 유지해, 해제가 진행 중인 차감을 빠뜨리지 않게 한다.
+ * 마감이 지난 영업일은 미과금으로 기록하고, 금전 처리의 실패는 대체값 없이 예외로 올린다.
  */
 @Slf4j
 @Service
@@ -65,23 +68,116 @@ public class PointDeductorImpl implements PointDeductor {
     private final PlatformSettingQueryService platformSetting;
     private final Clock clock;
     private final MeterRegistry meterRegistry;
+    private final PointAccountRepository accountRepository;
+    private final TransactionTemplate transactions;
 
     static final String UNDO_METRIC = "billing_deduct_undo_total";
     static final String NO_PLAN_METRIC = "billing_deduct_no_plan_total";
+    static final String BATCH_FAILED_METRIC = "billing_deduct_batch_failed_total";
+
+    // 첫 사건 전에도 시리즈가 있어야 increase() 가 첫 증가를 센다
+    @PostConstruct
+    void registerCounters() {
+        meterRegistry.counter(UNDO_METRIC, "result", "ok");
+        meterRegistry.counter(UNDO_METRIC, "result", "failed");
+        meterRegistry.counter(NO_PLAN_METRIC);
+        meterRegistry.counter(BATCH_FAILED_METRIC, "reason", "owner_group");
+        meterRegistry.counter(BATCH_FAILED_METRIC, "reason", "unknown_campaign");
+    }
+
+    /*
+     * 점주 묶음마다 자기 트랜잭션에서 deduct 를 차례로 부른다. 묶음 안의 deduct 는 그 트랜잭션에 참여하므로
+     * 한 노출이 실패하면 묶음 전체가 롤백되고, 새로 판정한 노출의 소진은 기존 롤백 되돌리기가 되돌린다.
+     * 묶음마다 점주 하나라 트랜잭션 하나가 잡는 계정 잠금도 하나다. 묶음끼리 잠금 순서가 엇갈리지 않는다.
+     * 실패한 묶음은 예외를 올리지 않고 그 노출들을 실패로 돌려준다. 릴레이가 다음 주기에 다시 넘기고 serveId 멱등이 중복 과금을 막는다.
+     * 정산의 DB 나 Valkey 에 닿지 못하는 장애는 예외로 올린다. 트랜잭션을 열지 못하는 것(커넥션 풀 고갈)도 같다. 모든 묶음이 같은 이유로 실패할 것이라
+     * 묶음별 실패로 돌려주면 점주마다 커넥션 대기를 되풀이하고 릴레이가 노출마다 시도 횟수를 올려 상한에 금방 닿는다.
+     * 그 전에 커밋된 묶음은 다시 넘겨받으면 첫 판정을 돌려준다.
+     */
+    @Override
+    public List<DeductionOutcome> deductAll(List<DeductionRequest> requests) {
+        if (TransactionSynchronizationManager.isActualTransactionActive()) {
+            throw new IllegalStateException("묶음 차감은 트랜잭션 밖에서 부릅니다. 점주별 트랜잭션이 호출자 트랜잭션에 섞입니다");
+        }
+        if (requests.size() > MAX_BATCH_SIZE) {
+            throw new IllegalArgumentException(
+                    "묶음 차감은 한 번에 " + MAX_BATCH_SIZE + "건까지 받습니다. requestCount=" + requests.size());
+        }
+        List<DeductionOutcome> outcomes = new ArrayList<>();
+        byOwner(requests, outcomes).forEach((ownerId, group) -> {
+            try {
+                outcomes.addAll(transactions.execute(status -> group.stream()
+                        .map(request -> DeductionOutcome.judged(request.serveId(),
+                                deduct(request.serveId(), request.campaignId(), request.businessDate())))
+                        .toList()));
+            } catch (DataAccessResourceFailureException | QueryTimeoutException | CannotCreateTransactionException e) {
+                throw e;
+            } catch (RuntimeException e) {
+                meterRegistry.counter(BATCH_FAILED_METRIC, "reason", "owner_group").increment(group.size());
+                log.warn("event=BILLING_DEDUCT_BATCH_GROUP_FAILED ownerId={} requestCount={} fallback=RETRY_NEXT_RELAY",
+                        ownerId, group.size(), e);
+                group.forEach(request -> outcomes.add(DeductionOutcome.failed(request.serveId())));
+            }
+        });
+        return outcomes;
+    }
+
+    /*
+     * 노출을 점주별로 묶는다. 계획이 있으면 계획의 점주, 없으면 캠페인의 점주다. deduct 가 쓰는 점주와 같은 출처다.
+     * 캠페인 자체가 없으면 deduct 가 예외를 던질 노출이라 묶음에 넣지 않고 바로 실패로 담는다. 넣으면 같은 점주의 다른 노출까지 함께 실패한다.
+     */
+    private Map<Long, List<DeductionRequest>> byOwner(List<DeductionRequest> requests, List<DeductionOutcome> outcomes) {
+        Map<Long, List<DeductionRequest>> groups = new TreeMap<>();
+        List<DeductionRequest> withoutPlan = new ArrayList<>();
+        for (DeductionRequest request : requests) {
+            Optional<PlanSnapshot> plan = snapshotService.find(request.businessDate(), request.campaignId());
+            if (plan.isPresent()) {
+                groups.computeIfAbsent(plan.get().ownerId(), id -> new ArrayList<>()).add(request);
+            } else {
+                withoutPlan.add(request);
+            }
+        }
+        if (withoutPlan.isEmpty()) {
+            return groups;
+        }
+        Map<Long, Long> campaignOwners = campaignQuery.findAllById(
+                        withoutPlan.stream().map(DeductionRequest::campaignId).distinct().toList()).stream()
+                .collect(Collectors.toMap(CampaignInfo::campaignId, CampaignInfo::ownerId));
+        for (DeductionRequest request : withoutPlan) {
+            Long ownerId = campaignOwners.get(request.campaignId());
+            if (ownerId == null) {
+                meterRegistry.counter(BATCH_FAILED_METRIC, "reason", "unknown_campaign").increment();
+                log.warn("event=BILLING_DEDUCT_BATCH_UNKNOWN_CAMPAIGN serveId={} campaignId={} fallback=RETRY_NEXT_RELAY",
+                        request.serveId(), request.campaignId());
+                outcomes.add(DeductionOutcome.failed(request.serveId()));
+                continue;
+            }
+            groups.computeIfAbsent(ownerId, id -> new ArrayList<>()).add(request);
+        }
+        return groups;
+    }
 
     @Override
-    @Transactional(propagation = Propagation.MANDATORY)
+    @Transactional(propagation = Propagation.REQUIRED)
     public DeductionStatus deduct(UUID serveId, Long campaignId, LocalDate businessDate) {
         Optional<PlanSnapshot> found = snapshotService.find(businessDate, campaignId);
         if (found.isEmpty()) {
-            return recordNoPlan(serveId, campaignId, businessDate);
+            return recordWithoutPlan(serveId, campaignId, businessDate,
+                    businessDate.isBefore(LocalDate.now(clock))
+                            ? DeductionStatus.NOT_BILLED_CLOSED : DeductionStatus.NOT_BILLED_NO_PLAN);
         }
         PlanSnapshot plan = found.get();
 
-        /*
-         * TODO(성능 측정): Valkey 왕복 1회(측정 0-a). 0-a 만으로 1만 건이 안 나오면 DB 개선은 소용없다.
-         * Lua 내용과 커넥션 설정을 먼저 본다.
-         */
+        accountRepository.lockForShareByOwnerId(plan.ownerId())
+                .orElseThrow(() -> new IllegalStateException("예산 계획의 점주 계정이 없습니다. ownerId=" + plan.ownerId()));
+        LocalDateTime now = LocalDateTime.now(clock);
+        if (businessDate.isBefore(now.toLocalDate())) {
+            int inserted = deductionResultRepository.insertIfAbsent(serveId, campaignId, plan.ownerId(), businessDate,
+                    DeductionStatus.NOT_BILLED_CLOSED, plan.unitPrice(), now);
+            return inserted == 1 ? DeductionStatus.NOT_BILLED_CLOSED
+                    : firstStatus(serveId, DeductionStatus.NOT_BILLED_CLOSED);
+        }
+
         DeductOutcome outcome = spendCounter.deduct(businessDate, campaignId, serveId, plan.unitPrice());
         if (outcome.isHashMissing()) {
             rebuildService.rebuildIfAbsent(businessDate, campaignId);
@@ -95,14 +191,6 @@ public class PointDeductorImpl implements PointDeductor {
         if (!outcome.replayed()) {
             undoOnRollback(businessDate, campaignId, serveId, plan.unitPrice());
         }
-        LocalDateTime now = LocalDateTime.now(clock);
-
-        // TODO: 노출당 INSERT 2건(deduction_result, point_ledger)이 초당 1만 건을 못 버티면 "노출 차감 성능 개선 선택지.md"를 보고 개선한다
-        /*
-         * TODO(성능 측정): INSERT 1/2(측정 0-b, 0-b'). 바꿀 후보: A serveId v7(광고 서빙 발급),
-         * C-1 기본 키를 serve_id 로(마이그레이션), B-1 두 INSERT 를 한 요청으로(차감 전용 데이터소스),
-         * B-2 BILLED 면 이 INSERT 생략(명세 변경, 4단계)
-         */
         int inserted = deductionResultRepository.insertIfAbsent(
                 serveId, campaignId, plan.ownerId(), businessDate, status, plan.unitPrice(), now);
         if (inserted != 1) {
@@ -110,35 +198,33 @@ public class PointDeductorImpl implements PointDeductor {
         }
 
         if (status == DeductionStatus.BILLED) {
-            /*
-             * TODO(성능 측정): INSERT 2/2. 바꿀 후보: C-2 DEDUCT 가 쓰지 않는 원장 조회 인덱스 점검(마이그레이션),
-             * B-1 위와 같음, F 분 단위 묶음 행(명세 변경, 4단계).
-             * 커밋 비용(fsync)이 병목이면 이 자리가 아니라 E-1 커넥션 풀 설정을 본다
-             */
             ledgerRepository.insertDeductIfAbsent(plan.ownerId(), campaignId, serveId, -plan.unitPrice(), now);
         }
         return status;
     }
 
     /*
-     * 그날 계획이 없는 캠페인의 노출을 NOT_BILLED_NO_PLAN 으로 남긴다. 00:00 예약이 그 캠페인의 계획을 만들기 전이거나
-     * 전날 집행이 끝난 캠페인이다. 행을 남겨야 광고 서빙의 유효 노출 수가 판정 합과 맞는다.
+     * 계획이 없으면 마감 여부에 따라 NOT_BILLED_CLOSED 또는 NOT_BILLED_NO_PLAN 을 기록한다.
+     * 행을 남겨야 광고 서빙의 유효 노출 수가 판정 합과 맞는다.
      * 계획이 없으니 점주는 캠페인에서, 단가는 운영 설정에서 읽는다. 과금하지 않으므로 Valkey 와 원장은 건드리지 않는다.
      */
-    private DeductionStatus recordNoPlan(UUID serveId, Long campaignId, LocalDate businessDate) {
+    private DeductionStatus recordWithoutPlan(UUID serveId, Long campaignId, LocalDate businessDate,
+                                              DeductionStatus status) {
         Long ownerId = campaignQuery.findAllById(List.of(campaignId)).stream()
                 .findFirst()
                 .map(CampaignInfo::ownerId)
                 .orElseThrow(() -> new IllegalStateException("노출한 캠페인이 없습니다. campaignId=" + campaignId));
         long unitPrice = platformSetting.getImpressionUnitPrice();
-        meterRegistry.counter(NO_PLAN_METRIC).increment();
-        log.debug("event=BILLING_DEDUCT_NO_PLAN campaignId={} businessDate={}", campaignId, businessDate);
-        int inserted = deductionResultRepository.insertIfAbsent(serveId, campaignId, ownerId, businessDate,
-                DeductionStatus.NOT_BILLED_NO_PLAN, unitPrice, LocalDateTime.now(clock));
-        if (inserted != 1) {
-            return firstStatus(serveId, DeductionStatus.NOT_BILLED_NO_PLAN);
+        if (status == DeductionStatus.NOT_BILLED_NO_PLAN) {
+            meterRegistry.counter(NO_PLAN_METRIC).increment();
+            log.debug("event=BILLING_DEDUCT_NO_PLAN campaignId={} businessDate={}", campaignId, businessDate);
         }
-        return DeductionStatus.NOT_BILLED_NO_PLAN;
+        int inserted = deductionResultRepository.insertIfAbsent(serveId, campaignId, ownerId, businessDate,
+                status, unitPrice, LocalDateTime.now(clock));
+        if (inserted != 1) {
+            return firstStatus(serveId, status);
+        }
+        return status;
     }
 
     /*
@@ -174,7 +260,7 @@ public class PointDeductorImpl implements PointDeductor {
     private DeductionStatus firstStatus(UUID serveId, DeductionStatus judged) {
         DeductionStatus first = deductionResultRepository.findFirstStatus(serveId)
                 .orElseThrow(() -> new IllegalStateException("판정 행이 있다고 했는데 읽을 수 없습니다. serveId=" + serveId));
-        if (first != judged) {
+        if (first != judged && judged != DeductionStatus.NOT_BILLED_CLOSED) {
             log.warn("event=BILLING_DEDUCT_REJUDGE_MISMATCH serveId={} first={} rejudged={} fallback=KEEP_FIRST",
                     serveId, first, judged);
         }

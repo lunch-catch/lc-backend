@@ -13,5 +13,8 @@ public enum DeductionStatus {
     NOT_BILLED_PAUSED,
 
     // 노출을 받은 날에 그 캠페인의 예산 계획이 없어 과금하지 않았다. 00:00 예약 전이거나 전날 집행이 끝난 캠페인이다
-    NOT_BILLED_NO_PLAN
+    NOT_BILLED_NO_PLAN,
+
+    // 정산이 차감을 승인할 때 노출 영업일의 자정 마감이 지나 과금하지 않았다
+    NOT_BILLED_CLOSED
 }

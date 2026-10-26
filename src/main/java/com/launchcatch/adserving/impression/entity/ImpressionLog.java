@@ -21,7 +21,7 @@ import org.hibernate.type.SqlTypes;
 /*
  * 노출 이벤트 1건이다. 무효 노출도 사유와 함께 남는다.
  * 무효면 사유가 반드시 있고 유효면 없다. 스키마가 CHECK 로 막지 않아 이 생성 지점에서 지킨다(V1 의 impression_log 주석).
- * 같은 키의 두 번째 저장은 INSERT IGNORE 로 넘겨야 해서 저장은 저장소의 insertIgnore 가 하고 이 엔티티는 읽을 때도 쓴다.
+ * 같은 키의 두 번째 저장은 INSERT IGNORE 로 넘겨야 해서 저장은 저장소의 insertAllIgnore 가 하고 이 엔티티는 읽을 때도 쓴다.
  */
 @Entity
 @Table(name = "impression_log")
@@ -117,6 +117,11 @@ public class ImpressionLog {
 
     public boolean isValid() {
         return validity == ImpressionValidity.VALID;
+    }
+
+    // 정산에 넘길 노출이다. 무효 노출과 쿠폰이 소진된 뒤의 노출은 과금 판정을 받지 않는다(FR-066).
+    public boolean needsDispatch() {
+        return isValid() && !soldOut;
     }
 
     // 좌표는 소수점 3자리(약 100m)로 반올림해 남긴다(api-spec.md 개인정보).
