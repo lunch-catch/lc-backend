@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockingDetails;
 import static org.mockito.Mockito.times;
@@ -212,6 +213,45 @@ class ImpressionWriteBufferTest {
 
             verify(impressions, times(2)).insertAllIgnore(List.of(new Row(impression.log(), RECEIVED_AT)));
             verify(counts).increment(TODAY, 101L);
+        }
+
+        // 늘 실패하는 묶음이 작업자를 붙잡아 다른 노출까지 막지 않게 한다(REL-2-07)
+        @Test
+        void 상한까지_실패한_묶음은_버리고_세고_다음_묶음을_쓴다() throws InterruptedException {
+            buffer.pause = millis -> {
+            };
+            QueuedImpression poison = valid(1, false);
+            QueuedImpression next = valid(2, false);
+            when(impressions.insertAllIgnore(anyList())).thenAnswer(invocation -> {
+                List<Row> rows = invocation.getArgument(0);
+                if (rows.getFirst().log() == poison.log()) {
+                    throw new IllegalStateException("늘 실패하는 행");
+                }
+                return Set.of(next.log().getId());
+            });
+            buffer.offer(poison);
+            buffer.start();
+
+            waitUntil(() -> meterRegistry.counter(ImpressionWriteBuffer.LOST_METRIC).count() == 1);
+            buffer.offer(next);
+            waitUntil(() -> mockingDetailsCalls() == ImpressionWriteBuffer.MAX_ATTEMPTS + 2);
+
+            assertThat(meterRegistry.counter(ImpressionWriteBuffer.WRITE_FAILED_METRIC).count())
+                    .isEqualTo(ImpressionWriteBuffer.MAX_ATTEMPTS + 1);
+            verify(counts).increment(TODAY, 101L);
+        }
+
+        @Test
+        void 커밋_뒤_예상_밖_예외가_나도_작업자가_살아_다음_묶음을_쓴다() throws InterruptedException {
+            insertAll();
+            doThrow(new IllegalStateException("직렬화 실패")).doNothing().when(counts).increment(any(), any());
+            buffer.start();
+            buffer.offer(valid(1, false));
+            waitUntil(() -> mockingDetailsCalls() == 1);
+
+            buffer.offer(valid(2, false));
+
+            waitUntil(() -> mockingDetailsCalls() == 2);
         }
 
         @Test

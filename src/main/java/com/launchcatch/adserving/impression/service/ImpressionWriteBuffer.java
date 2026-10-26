@@ -30,7 +30,8 @@ import org.springframework.transaction.support.TransactionTemplate;
  *
  * 큐가 차면 요청이 100ms 까지 기다리고 그래도 차 있으면 버리고 센다. 상한 없이 기다리면 DB 가 멈춘 동안
  * 노출 요청이 웹 서버의 스레드를 모두 잡아 같은 서버의 다른 API 도 멈춘다(장애 처리 설계 "DB 쓰기: 응답 뒤의 impression_log").
- * 묶음 쓰기가 실패하면 같은 묶음을 지수 백오프와 Full Jitter 로 다시 쓴다(REL-2-06). INSERT IGNORE 라 두 번 들어가지 않는다.
+ * 묶음 쓰기가 실패하면 같은 묶음을 지수 백오프와 Full Jitter 로 10번까지 다시 쓴다(REL-2-06, REL-2-07). INSERT IGNORE 라 두 번 들어가지 않는다.
+ * 그래도 실패하면 버리고 센다. 늘 실패하는 묶음이 작업자를 붙잡으면 큐가 차 모든 노출을 버리게 된다.
  * 서빙 로그 큐(ServeLogBuffer)는 실패한 묶음을 버리지만 노출은 과금 근거라 다시 쓴다.
  *
  * 작업자 스레드 하나가 500건이 차거나 첫 건부터 200ms 가 지나면 쓴다. 쓰는 동안 잠금을 쥐어 flush 가 쓰던 묶음을 기다리게 한다.
@@ -48,6 +49,7 @@ public class ImpressionWriteBuffer implements SmartLifecycle {
     static final Duration FIRST_BACKOFF = Duration.ofMillis(200);
     // 큐가 넘치기 전에 다시 쓰도록 큐 분량(10초)보다 짧게 둔다.
     static final Duration MAX_BACKOFF = Duration.ofSeconds(5);
+    static final int MAX_ATTEMPTS = 10;
 
     static final String QUEUE_METRIC = "adserving_impression_queue_size";
     static final String DROPPED_METRIC = "adserving_impression_dropped_total";
@@ -69,6 +71,9 @@ public class ImpressionWriteBuffer implements SmartLifecycle {
     private final ApplicationEventPublisher publisher;
     private final TransactionTemplate transactions;
     private final MeterRegistry meterRegistry;
+
+    // 테스트가 쉬지 않게 바꾼다.
+    Pause pause = Thread::sleep;
 
     private volatile boolean running;
     private Thread worker;
@@ -165,7 +170,8 @@ public class ImpressionWriteBuffer implements SmartLifecycle {
 
     /*
      * 첫 건을 기다렸다가 500건이 차거나 200ms 가 지날 때까지 모아 쓴다.
-     * 실패하면 같은 묶음을 쉬었다가 다시 쓴다. 서버가 내려가는 중이면 그 묶음은 쓰지 못한 행으로 센다.
+     * 실패하면 같은 묶음을 쉬었다가 다시 쓴다. 서버가 내려가는 중이거나 상한에 닿으면 그 묶음은 쓰지 못한 행으로 센다.
+     * 예상 밖의 예외도 잡는다. 작업자가 죽으면 큐가 차 모든 노출을 버리게 된다.
      */
     private void runWorker() {
         while (running) {
@@ -178,6 +184,8 @@ public class ImpressionWriteBuffer implements SmartLifecycle {
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 return;
+            } catch (RuntimeException e) {
+                log.error("event=ADSERVING_IMPRESSION_WORKER_FAILED fallback=CONTINUE", e);
             } finally {
                 writing.unlock();
             }
@@ -210,12 +218,12 @@ public class ImpressionWriteBuffer implements SmartLifecycle {
     private void writeUntilDone(List<QueuedImpression> batch) throws InterruptedException {
         int attempt = 0;
         while (!write(batch)) {
-            if (!running) {
+            if (!running || attempt >= MAX_ATTEMPTS) {
                 meterRegistry.counter(LOST_METRIC).increment(batch.size());
                 return;
             }
             attempt++;
-            Thread.sleep(backoff(attempt, ThreadLocalRandom.current().nextDouble()).toMillis());
+            pause.sleep(backoff(attempt, ThreadLocalRandom.current().nextDouble()).toMillis());
         }
     }
 
@@ -252,5 +260,10 @@ public class ImpressionWriteBuffer implements SmartLifecycle {
     @Override
     public int getPhase() {
         return 0;
+    }
+
+    @FunctionalInterface
+    interface Pause {
+        void sleep(long millis) throws InterruptedException;
     }
 }
