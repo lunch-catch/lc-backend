@@ -41,11 +41,11 @@ campaign/
     └── CampaignStatsQueryServiceImpl.java  CampaignStatsQueryService 구현
 ```
 
-`CampaignStatusLog`는 `Campaign`을 `@ManyToOne` 연관관계가 아니라 `campaignId`(원시 `Long`)로만 참조한다. `Campaign`이 자기 로그 목록을 조회할 기능이 이 이슈에 없어서, `ops.AuditLog`가 쓰는 방식을 그대로 따랐다(제가 정한 것).
+`CampaignStatusLog`는 `Campaign`을 `@ManyToOne` 연관관계가 아니라 `campaignId`(원시 `Long`)로만 참조한다. `Campaign`이 자기 로그 목록을 조회할 일이 없어서, `ops.AuditLog`가 쓰는 방식을 그대로 따랐다.
 
 `PauseReason`은 `campaign.contract`에 둔다. `CampaignStatus`, `TargetGender`, `DiscountTargetType`, `DiscountType`, `AgeGroup`처럼 캠페인 테이블 CHECK 제약과 1:1로 대응하는 enum은 전부 contract에 두고 엔티티가 그대로 쓰는 패턴이다. 다른 도메인(billing)이 `CampaignInfo.pauseReason` 필드로 이 타입을 그대로 쓰는데, `ArchitectureTest`의 `contract는_entity와_repository를_참조하지_않는다`가 contract 가 entity 패키지의 타입을 참조하는 것을 막기 때문에 entity 에 둘 수 없다.
 
-입구 넷 가운데 이 이슈에서 실제로 연결된 것은 "다른 도메인의 호출"(`CampaignQueryService`, `CampaignFundingUpdater`)뿐이었다. `pause`/`resume`은 "캠페인 수동 중단과 재개(점주)" 이슈(`#468`)가 `CampaignController`의 `POST .../{campaignId}:pause`, `:resume`으로 연결했다. `end`는 점주의 직접 종료(`#600`)가 `POST .../{campaignId}:end`로 연결했고, 집행 기간이 끝난 정기 종료(`end`)와 집행 시작(`activate`)은 00:00 배치(`#569`)가 부른다. `schedule`은 캠페인 활성화(`#561`)가 부른다.
+상태 전이를 부르는 곳은 셋이다. 다른 도메인의 호출은 정산의 `CampaignFundingUpdater` 가 `pauseFromFunding`/`resumeFromFunding` 을 부르는 것이다. 점주의 요청은 `CampaignController` 를 거치며 `pause`/`resume` 은 `POST .../{campaignId}:pause`, `:resume`(`#468`), `end` 는 `:end`(`#600`), `schedule` 은 캠페인 활성화(`#561`), `cancel` 은 취소(`#597`)가 부른다. 집행 기간이 끝난 정기 종료(`end`)와 집행 시작(`activate`)은 00:00 배치(`#569`)가 부른다.
 
 `#198`이 더한 `pauseFromFunding`/`resumeFromFunding`은 billing의 `CampaignFundingUpdaterImpl`이 바로 부른다(간접 전이). `pause`/`resume`과 다른 점 하나는, 지금 상태가 그 판정을 받을 자리가 아니면 `IllegalStateException`이 아니라 조용히 무시한다는 것이다(12장 "정산 확인 질문 5개" 중 질문 4 답변). 정산의 00:00 배치나 재시도가 "그 상태에서는 무시된다"는 것 때문에 멈출 이유가 없다.
 
@@ -56,14 +56,14 @@ campaign/
 | DB 제약으로 막을 것과 코드로 막을 것 | 마이그레이션의 CHECK 8개(`chk_campaign_discount_target`, `_discount_value`, `_paused_reason`, `_period`, `_quantity_budget`, `_usable_time`, `_target_age_groups`, `_pending_daily_budget`)를 `Campaign.create()`와 전이 메서드가 Java 레벨에서 그대로 한 번 더 검사한다([`entity-creation-guideline.md`](../../code-convention/entity-creation-guideline.md) R4-1) |
 | 다른 도메인 데이터의 사본 | 해당 없음 |
 | 이력 | 상태 변경마다 `CampaignStatusLog` 한 행. 현재 상태는 `campaign.status`가 그대로 가진다 |
-| 복잡한 조회 | `findServableOn`은 `campaign` 테이블 하나만 조회한다. billing의 "예약" 데이터(`budget_daily_plan`)는 `campaign -> billing` 간선이 없어 조인할 수 없다([설계 문서](../../architecture/런치캐치_도메인_구조와_의존성_설계.md) 2.2, 역방향은 순환). FR-092의 전이 규칙상 `PAUSED(OWNER, NO_POINTS)`는 그날 `ACTIVE`였다가 멈춘 것만 존재하므로 campaign 자신의 컬럼(`status`, `paused_reason`, `start_date`, `end_date`)만으로 조건이 성립한다고 보았다(제가 추론한 것, 문서에 명시돼 있지 않음) |
+| 복잡한 조회 | `findServableOn`은 `campaign` 테이블 하나만 조회한다. billing의 "예약" 데이터(`budget_daily_plan`)는 `campaign -> billing` 간선이 없어 조인할 수 없다([설계 문서](../../architecture/런치캐치_도메인_구조와_의존성_설계.md) 2.2, 역방향은 순환). FR-092의 전이 규칙상 `PAUSED(OWNER, NO_POINTS)`는 그날 `ACTIVE`였다가 멈춘 것만 존재하므로 campaign 자신의 컬럼(`status`, `paused_reason`, `start_date`, `end_date`)만으로 조건이 성립한다고 보았다(문서에 명시된 규칙이 아니라 전이 규칙에서 추론한 것이다) |
 | `findServableOn`과 billing의 00:00 예약 조회 공유(#198) | billing이 요청한 `findForReservation(businessDate)`의 조건이 `findServableOn`과 같다(위 행). 메서드를 따로 두면 "예약이 있는 PAUSED"의 해석이 두 곳에 흩어져 한쪽만 바뀌면 어긋난다. 그래서 새 메서드를 만들지 않고 billing이 `findServableOn`을 그대로 부르기로 했다 |
 | 특정 시각의 상태 재구성(#354) | `CampaignStatusLog.countActiveAsOf`는 `campaign` 테이블의 현재 `status`를 보지 않는다. `campaign_status_log`에서 캠페인마다 그 시각 이전 마지막 전이 행의 `to_status`를 윈도 함수(`row_number() over (partition by campaign_id order by created_at desc)`)로 구해 `ACTIVE`인 것만 센다. 그래서 지금 상태가 `ENDED`인 캠페인도 과거 영업일에는 그때의 상태로 집계된다. `idx_campaign_status_log_campaign_created(campaign_id, created_at)`(`V15`)가 없으면 이 윈도 함수가 테이블 전체를 풀스캔한다 |
 | 이 집계가 기대는 전제(#354 리뷰) | `campaign_status_log`에만 기대므로, `CampaignStatusService`를 거치지 않고 `campaign` 테이블에 직접 쓰는 경로(`R__30_template_campaign.sql`, `R__50_daily.sql` 시드 등)는 이 집계에 전혀 보이지 않는다. 운영 코드의 모든 전이가 그 서비스를 거친다는 전제가 깨지면 이 집계는 조용히 실제와 어긋난다. 아직 그걸 맞대보는 자동 검증은 없다 |
 
 ## 4. 계산 로직
 
-해당 없음. 이 이슈는 조건으로 거르는 조회와 상태 전이뿐이라, 뺄 순수 계산 공식이 없다.
+해당 없음. 이 도메인은 조건으로 거르는 조회와 상태 전이뿐이라, 뺄 순수 계산 공식이 없다.
 
 ## 5. 모듈 연결
 
@@ -73,7 +73,7 @@ campaign/
 | 공개 | analytics | `CampaignStatsQueryService.activeCampaignCount(businessDate)`. `businessDate`가 오늘이거나 미래면 `IllegalArgumentException`(#354 리뷰) | 분석의 일별 집계 배치마다(#354) |
 | 받음(직접 호출) | billing | `CampaignFundingUpdater.applyFundingJudgement` | 정산의 00:00 예산 판정, 충전 직후 재예약 판정 때마다. 이벤트가 아니라 정산의 트랜잭션 안에서 직접 부른다 |
 | 쓰기 | store | `StoreCampaignSummaryUpdater` | `pause`/`resume`은 `#468`이 연결했다. 같은 트랜잭션 안에서 상태 변경, `CampaignStatusLog` 저장 다음에 부른다 |
-| 쓰기(`end`는 `#600`, `activate`는 `#569`가 연결) | store | `StoreCampaignSummaryUpdater` | `activate`/`end`/`pauseFromFunding`/`resumeFromFunding` 때도 호출해야 한다(잔액 부족 중단과 충전 후 재개도 가게 요약에 반영돼야 함, 가게 담당 회신 2026-10-13). `pauseFromFunding`/`resumeFromFunding` 두 자리는 각자의 구현 이슈가 이어 붙인다 |
+| 쓰기(`end`는 `#600`, `activate`는 `#569`가 연결) | store | `StoreCampaignSummaryUpdater` | `activate`/`end`/`pauseFromFunding`/`resumeFromFunding` 때도 호출해야 한다(잔액 부족 중단과 충전 후 재개도 가게 요약에 반영돼야 함, 가게 담당 회신). `pauseFromFunding`/`resumeFromFunding` 두 자리는 각자의 구현 이슈가 이어 붙인다 |
 
 받는 이벤트는 해당 없음.
 
@@ -119,13 +119,8 @@ flowchart LR
     class OWN,OPS out
 ```
 
-입구는 둘만 실제로 연결돼 있다. HTTP 요청(`CampaignController`, `#244`/`#253`/`#330`)과 다른
-도메인의 호출(`CampaignQueryService`, `CampaignFundingUpdater`, `CampaignStatsQueryService`,
-`#354`)이다. 스케줄과 이벤트 수신은
-아직 없다(`CampaignStatusService`의 `schedule`/`activate`/`end`를 부를 배치가 아직 없다,
-2장). `CampaignController`와 `CampaignCouponConditionService`/`CampaignTargetAudienceService`의
-업무 규칙은 이 문서가 아니라 [`campaign-api-design.md`](./campaign-api-design.md)가 가진다
-(1장). 여기서는 구조만 보인다.
+입구는 셋이다. HTTP 요청(`CampaignController`), 다른 도메인의 호출(`CampaignQueryService`, `CampaignFundingUpdater`, `CampaignStatsQueryService`), 00:00 묶음이 부르는 배치 단계(`CampaignEndJob` 등, 10장)다. 이벤트를 받는 입구는 없다. 그림에는 배치 단계를 그리지 않았고 10장이 갖는다.
+`CampaignController`와 `CampaignCouponConditionService`/`CampaignTargetAudienceService`의 업무 규칙은 이 문서가 아니라 [`campaign-api-design.md`](./campaign-api-design.md)가 가진다(1장). 여기서는 구조만 보인다.
 
 `owner.contract.OwnerStatusQuery`(점주 상태 확인)와 `ops.contract.PlatformSettingQueryService`(최소
 하루 예산, `#330`)는 등록 화면 API 두 서비스가 부르는 바깥 도메인이다. `CampaignStatusService`와
@@ -155,11 +150,7 @@ stateDiagram-v2
 | PAUSED -> ACTIVE | OWNER, SYSTEM(충전 재예약) | `CampaignStatusChangedEvent`(servable=true) | `IllegalStateException` |
 | ACTIVE/PAUSED -> ENDED | SYSTEM | `CampaignStatusChangedEvent`(servable=false), `CampaignEndedEvent` | `IllegalStateException` |
 
-DRAFT -> SCHEDULED는 점주의 캠페인 활성화 요청(`#561`)이 호출부가 되었다. `CampaignActivationService`가
-`CampaignStatusService.schedule()`을 부르기 전에 캠페인이 DRAFT인지 먼저 확인해서 거부하므로,
-`Campaign.schedule()`의 `IllegalStateException`은 이 경로에서 실제로 던져지지 않는다. 그 대신
-`CampaignActivationService`가 `CAMPAIGN-006`으로 응답한다. 기존의 나머지 전이(SCHEDULED -> ACTIVE 등)는
-아직 HTTP 엔드포인트가 없어 "금지일 때 응답"이 엔티티의 `IllegalStateException` 그대로다.
+DRAFT -> SCHEDULED는 점주의 캠페인 활성화 요청(`#561`)이 부른다. `CampaignActivationService`가 `CampaignStatusService.schedule()`을 부르기 전에 캠페인이 DRAFT인지 먼저 확인해서 거부하므로, `Campaign.schedule()`의 `IllegalStateException`은 이 경로에서 실제로 던져지지 않고 `CAMPAIGN-006`으로 응답한다. 점주의 중단·재개·종료도 `CampaignPauseResumeService`가 엔티티의 `IllegalStateException`을 `CAMPAIGN-006`으로 바꿔 응답한다([`campaign-api-design.md`](./campaign-api-design.md)). SCHEDULED -> ACTIVE와 정기 종료는 00:00 배치가 부르는 전이라 HTTP 응답이 없다. 엔티티의 `IllegalStateException`이 그대로 나오고, 배치는 그것을 단계 실패로 모은다(10장).
 
 #### SCHEDULED 캠페인의 취소(`#571`)
 
@@ -243,7 +234,7 @@ sequenceDiagram
 |---|---|---|
 | 전이 5개 | `Campaign` 상태 변경, `CampaignStatusLog` 저장, 이벤트 발행 | 없음(외부 API 호출 없음) |
 
-| 상황 | 확인할 것 | 이 이슈의 처리 |
+| 상황 | 확인할 것 | 처리 |
 |---|---|---|
 | 같은 캠페인에 동시 전이 요청 | 비관 잠금 여부 | `CampaignRepository.findByIdForUpdate`(`PESSIMISTIC_WRITE`)로 행 잠금을 건다. `CampaignStatusService.findOrThrow`가 이걸 쓴다. `TemplateRepository.findByIdForUpdate`와 같은 이유다 |
 | 늦은 이벤트가 최신 상태를 덮는지 | `changedAt` 비교 | `CampaignStatusChangedEvent.changedAt`을 받는 쪽(광고 서빙 등)이 자기보다 늦은 것만 반영하기로 이미 계약에 적혀 있다(`CampaignStatusChangedEvent` Javadoc) |
@@ -290,19 +281,18 @@ sequenceDiagram
 
 ## 11. 성능
 
-해당 없음. 이 이슈엔 HTTP 엔드포인트가 없어 응답 시간 목표를 세울 자리가 없다.
+해당 없음. 이 문서가 다루는 상태 전이는 캠페인 한 건의 행 잠금 아래 짧은 트랜잭션이라 따로 세운 목표가 없다. 00:00 배치의 처리량은 10장이 청크 단위로 다룬다.
 
 ## 12. 테스트와 미정 사항
 
 | 미정 항목 | 어디까지 정해졌나 | 막는 것 |
 |---|---|---|
-| `StoreCampaignSummaryUpdater` 호출(`pauseFromFunding`/`resumeFromFunding`) | 전달 필드, 트랜잭션 기준, 호출 지점까지 가게 담당과 전부 확정했다(아래 "가게·분석 확정 사항" 참고). `pause`/`resume`은 `#468`, `end`는 `#600`, `activate`는 `#569`가 이어 붙여 해소됐다 | 남은 두 자리는 각자의 구현 이슈가 이어 붙여야 한다 |
-| 사용자(MEMBER)용 저장 포스터 조회 API 구현 | 계약(경로, 권한, 응답, 공개 상태, 오류 처리)을 가게 담당과 전부 확정하고 명세·설계까지 썼다(`poster-api-spec.md`, `poster-api-design.md`) | `Poster` 엔티티·레포지토리·컨트롤러 구현이 아직 없다. 명세가 merge된 뒤 별도 PR로 진행한다 |
+| `StoreCampaignSummaryUpdater` 호출(`pauseFromFunding`/`resumeFromFunding`) | 전달 필드, 트랜잭션 기준, 호출 지점까지 가게 담당과 확정했다(아래 "가게·분석 확정 사항" 참고). `activate`, `pause`, `resume`, `end` 는 이미 부르고 이 두 자리는 부르지 않는다 | 정산의 잔액 부족 중단과 충전 후 재개를 가게 요약에 반영하려면 이 두 자리에서 부르도록 이어 붙여야 한다 |
 | `newPriorityUntil` | `ad_candidate`에만 컬럼이 있고 `campaign`엔 없다(#156 결정). `CampaignInfo`엔 항상 `null`로 채워 보낸다 | "신규 우선 노출" 계산 규칙 자체가 문서에 없다. campaign에 컬럼을 추가할지부터 정해야 한다 |
 
 **"예약이 있는 PAUSED"의 정확한 의미는 `#198`에서 풀렸다.** billing이 `findServableOn`을 그대로 재사용하기로 해서(3장), 그 의미를 두 곳에서 따로 정의할 일이 없어졌다.
 
-### 가게·분석 확정 사항 (`#198`, 가게·분석 담당 회신 2026-10-13)
+### 가게·분석 확정 사항 (`#198`)
 
 | 항목 | 확정 내용 |
 |---|---|

@@ -61,13 +61,13 @@
   1km)와 `target_gender`(`ALL`)는 `V1__campaign_init.sql`에 이미 DB `DEFAULT`로 있다.
   `target_age_groups`(전체 4개)도 `V3__campaign_draft_nullable.sql`에서 DB `DEFAULT`를
   추가했다. 다만 JPA는 매핑된 컬럼을 항상 명시해서 INSERT 하므로 DB `DEFAULT`는 실제로
-  적용되지 않는다 — `Campaign.create()`를 호출하는 쪽(이 API)이 이 세 값을 직접 채워
+  적용되지 않는다. `Campaign.create()`를 호출하는 쪽(이 API)이 이 세 값을 직접 채워
   넘긴다
 - **예산·기간(4단계)은 `null`로 둔다.** `daily_budget`/`start_date`/`end_date`는 이미
   nullable이고(`V3__campaign_draft_nullable.sql`), `Campaign.activate()`가 이 둘의
   null을 따로 확인한다(캠페인 엔티티와 상태 전이, `#176`). 활성화 이전에 반드시 채워야
   한다는 제약은 그 전이 쪽이 갖고, 이 API는 신경 쓰지 않는다
-- **새로 만들면 `201`, 덮어쓰면 `200`을 응답한다(코드래빗 리뷰로 찾음).** 공통 규약(`api-spec.md`)이
+- **새로 만들면 `201`, 덮어쓰면 `200`을 응답한다.** 공통 규약(`api-spec.md`)이
   `200`은 수정 성공, `201`은 생성 성공으로 구분해 둔 것을 그대로 따른다. `CampaignRepository.findDraftByStoreId(storeId)`의
   존재 여부로 컨트롤러가 상태 코드를 가른다
 - **usableTime 검증(11:30~15:00, 30분 단위, 최소 1시간)은 서비스 레이어에 둔다.**
@@ -101,16 +101,12 @@
 - **"추천 하루 예산"과 "예상 노출 범위"(V51 45행 H45)는 이 API의 범위 밖이다.** 광고
   서빙이 매일 00:00 배치로 집계해 넘기는 값이 있어야 계산할 수 있어, 저장·검증만 하는 이
   API와는 다른 기능이다
-- **`#253`은 노출 대상(3단계)만 구현한다.** 하루 예산과 집행 기간(4단계)은 아직 구현
-  이슈가 없어서, 요청에 `dailyBudget`/`startDate`/`endDate` 중 하나라도 오면
-  `IllegalArgumentException`(`COMMON-002`)으로 거부한다(`CampaignTargetAudienceService.validateNoBudgetPeriodFields`,
-  임시 결정). 4단계 구현 이슈가 생기면 이 검증을 그 기능으로 바꾼다
 - **본인 소유 확인은 `campaignRepository.findByIdForUpdate(campaignId)`(비관 잠금)로
   조회한 뒤 `Campaign.ownerId`를 비교한다.** 처음에는 단순 필드 갱신이라 잠금 없는
   `findById`로 충분하다고 봤는데, 같은 캠페인에 거의 동시에 들어온 두 PATCH가 서로의
   변경을 조용히 지우는 lost update와, 00:00 스케줄러의 상태 전이와 경쟁하며 낡은
   스냅샷으로 "DRAFT가 아닌데 DRAFT로 착각"하는 경우가 둘 다 가능해 `CampaignStatusService.findOrThrow`와
-  같은 이유로 비관 잠금으로 바꿨다(`#253` 자체 리뷰로 찾음)
+  같은 이유로 비관 잠금으로 바꿨다(`#253`)
 - **`#330`이 하루 예산과 집행 기간(4단계)을 구현한다.** 노출 대상(3단계)과 같은 트랜잭션,
   같은 비관 잠금을 그대로 쓴다. 노출 대상과 예산·기간 두 묶음을 한 요청에 같이 보내도
   각자의 상태 조건을 독립적으로 검사한 뒤 둘 다 적용한다
@@ -137,7 +133,7 @@
 - **`DRAFT` → `SCHEDULED` 전이는 기존 `CampaignStatusService.schedule(campaignId)`를 그대로
   부른다(FR-092).** 이미 구현되어 있고 호출하는 곳이 없었다. `Campaign.schedule()`이
   `DRAFT`가 아니면 `IllegalStateException`을 던지는 것도 그대로 쓴다
-- **이 흐름 전체를 하나의 트랜잭션으로 묶지 않는다(자체 리뷰로 찾음, `#561`).**
+- **이 흐름 전체를 하나의 트랜잭션으로 묶지 않는다(`#561`).**
   `PosterModerationService.moderate()`가 S3·Rekognition을 부르는데, 그 호출을
   트랜잭션 안에서 하면 그 시간만큼 캠페인 행 잠금과 DB 커넥션을 쥐고 있게 된다.
   `PosterModerationService`의 클래스 주석이 이미 트랜잭션을 걸지 않는 이유로 든 것과 같은
@@ -172,8 +168,7 @@
   때도 같은 규칙으로 검증하므로 이 확인과 전이 사이에 잘못된 값이 들어올 길이 없다. 두 오류
   모두 외부 호출 전의 거절이라 요청 빈도 제한에 세지 않는다
 - **검수가 끝난 뒤 `schedule()`의 캠페인 잠금을 잡기 전까지 포스터가 바뀔 수 있어, 검수
-  결과가 지금 포스터의 것인지 그 잠금 아래서 다시 확인한다(코드래빗 리뷰로 찾음,
-  `#561`).** 검수(2번 구간)는 트랜잭션 밖에 있어서 포스터 잠금을 쥐지 않는다. 그 사이
+  결과가 지금 포스터의 것인지 그 잠금 아래서 다시 확인한다(`#561`).** 검수(2번 구간)는 트랜잭션 밖에 있어서 포스터 잠금을 쥐지 않는다. 그 사이
   점주가 `PosterUploadService`로 같은 캠페인의 포스터를 덮어쓸 수 있는데(그 쪽도 캠페인
   잠금을 거친다), `Poster.overwrite()`는 새 행을 만들지 않고 같은 `posterId`의 내용만
   바꿔서 포스터 ID만으로는 그 변경을 알 수 없다. 그래서 `CampaignStatusService.schedule()`에
@@ -183,8 +178,7 @@
   (포스터 덮어쓰기도 같은 잠금을 거치므로 그 사이엔 못 바뀐다) 지금 값과 같은지 다시
   확인한다. 다르면 `CAMPAIGN-006`으로 거부하고 전이하지 않는다. `CampaignStatusService`는
   이 precondition이 무엇을 확인하는지 모른다. 포스터를 몰라도 되게 하려는 것이다
-- **점주 1명당 캠페인 활성화 요청을 분당 3회로 제한한다(`CampaignActivationRateLimiter`,
-  자체 리뷰로 찾음, `#561`).** 검수가 `FAIL`이어도 점주가 다시 요청하면 매번 새로
+- **점주 1명당 캠페인 활성화 요청을 분당 3회로 제한한다(`CampaignActivationRateLimiter`, `#561`).** 검수가 `FAIL`이어도 점주가 다시 요청하면 매번 새로
   Rekognition을 부르는데(아래 항목), 반복 요청을 막지 않으면 그 호출 비용과 쿼터를 그대로
   소모한다. `TemplateGenerationRateLimiter`와 같은 고정 창 카운터(`auth_rate_limit.lua`
   재사용)를 쓰고, 넘으면 `CAMPAIGN-011`(429)이다. 분당 3회는 근거 없는 예시값이고(`C` 등급),
@@ -197,13 +191,12 @@
 - **자동 검수는 `PosterModerationService.moderate(campaignId)`를 그대로 부른다(FR-054,
   `#535`).** 그 결과(`PosterModerationOutcome`)의 `result`가 `PASS`면 `schedule()`을
   부르고, `FAIL`이면 `schedule()`을 부르지 않고 그 `reasons`를 응답에 담는다
-- **검수 `FAIL`도 `200 SUCCESS`로 응답한다(채팅으로 확인, 2026-10-19).** 여러 사유를
+- **검수 `FAIL`도 `200 SUCCESS`로 응답한다.** 여러 사유를
   동시에 모두 담아야 하는데(`PosterModerationService`의 "사유는 하나에서 멈추지 않고 모두
   모은다") 공통 응답 봉투의 오류 경로는 `data`가 항상 `null`이라 담을 수 없다. 쿠폰
   선착순 소진(`COUPON-003`)처럼 사유가 하나로 좁혀지는 경우와 달리, 이 기능은 사유가
   복수라 성공 봉투 안의 `reasons` 배열로 간다
-- **`reasons` 배열 값은 `ModerationFailReason` enum 코드 원문이다(채팅으로 확인,
-  2026-10-19).** 그 enum의 클래스 주석이 이미 "화면 문구는 이 코드를 받는 쪽(캠페인
+- **`reasons` 배열 값은 `ModerationFailReason` enum 코드 원문이다.** 그 enum의 클래스 주석이 이미 "화면 문구는 이 코드를 받는 쪽(캠페인
   활성화)이 붙인다"고 적어 둬서, 서버가 번역하지 않고 그대로 내려주는 쪽이 원래 의도와
   맞다
 - **엔드포인트 경로는 `api-spec.md`의 커스텀 메서드 컨벤션 예시(`:activate`)를 그대로
@@ -250,13 +243,12 @@
   여전히 `ownerId`를 모른다
 - **점주 상태(`ACTIVE`)도 등록·수정 엔드포인트와 같은 방식(`OwnerStatusQuery`)으로
   확인한다.** 이슈 본문은 이 확인을 언급하지 않았지만, 다른 캠페인 쓰기 엔드포인트와
-  보안 수준을 맞추기로 했다(채팅으로 확인, 2026-10-18)
+  보안 수준을 맞추기로 했다
 - **엔티티가 던지는 `IllegalStateException`(상태가 안 맞음)을 `CAMPAIGN-006`으로
   변환한다.** `Campaign.pause()`/`resume()`은 각각 `ACTIVE`/`PAUSED`가 아니면 이 예외를
   던진다. 새 서비스가 `CampaignStatusService` 호출을 `try-catch`로 감싸 변환한다
 - **`StoreCampaignSummaryUpdater.update()`가 던지는 `IllegalArgumentException`(가게-메뉴
-  불일치)은 그대로 두지 않고 `RuntimeException`으로 다시 던진다(자체 리뷰로 찾음,
-  2026-10-18).** 캠페인 등록 1단계(`CampaignCouponConditionService`)는 이제 `targetMenuId`의
+  불일치)은 그대로 두지 않고 `RuntimeException`으로 다시 던진다.** 캠페인 등록 1단계(`CampaignCouponConditionService`)는 이제 `targetMenuId`의
   가게 소속을 저장 전에 검증하지만(`#874`), 그 전에 저장됐거나 직접 저장한 데이터에는
   MENU 할인 캠페인의 `targetMenuId`가 실제로는 다른 가게 메뉴인 것이 남아 있을 수 있어
   이 변환은 그대로 둔다. 이 불일치는 점주의 요청이 잘못된 게 아니라 서버 쪽
@@ -274,16 +266,13 @@
 - **멱등하게 조용히 반환하는 자리(이미 목표 상태)에서는 가게 요약 갱신도 건너뛴다.**
   `CampaignStatusLog` 저장과 이벤트 발행이 이미 그 자리를 건너뛰고 있어 같은 기준을
   따른다. 실제로 상태가 바뀌지 않았으니 가게 요약도 바뀔 이유가 없다
-- **`schedule`/`activate`/`end`/`pauseFromFunding`/`resumeFromFunding`은 이번 이슈에서
-  연동하지 않는다.** 가게 호출 지점은 다섯 곳 모두 필요하다고 이미 확정했지만(설계 문서
-  2.4, 가게 담당 회신 2026-10-13), 이번 이슈는 점주의 수동 중단·재개만 다룬다. 나머지는
-  각자의 구현 이슈가 이어 붙인다
+- **`pauseFromFunding`/`resumeFromFunding`은 가게 요약을 갱신하지 않는다.** 정산의 잔액 부족 중단과 충전 후 재개도 가게 요약에 반영해야 한다고 가게 담당과 확정했다(설계 문서 2.4, 가게 담당 회신).
+  점주의 중단·재개(`pause`/`resume`), 종료(`end`), 활성화(`activate`)는 갱신한다. 정산이 부르는 두 전이는 [`campaign_구조와_동작_설계.md`](./campaign_구조와_동작_설계.md) 12장의 미정 항목으로 남아 있다
 - **엔드포인트 경로는 `api-spec.md`의 커스텀 메서드 컨벤션 예시를 그대로 쓴다.**
   `POST /v1/owner/campaigns/{campaignId}:pause`, `:resume`이다. 대체할 다른 패턴이
   저장소에 없어 그 예시를 확정 계약으로 채택했다
 - **응답은 등록 1단계(`POST`)와 같은 최소 모양이다.** `campaignId`와 `status`만 담는다.
-  상세 조회처럼 `pausedReason`, `statusChangedAt`까지 담을 필요는 없다고 보았다(채팅으로
-  확인, 2026-10-18)
+  상세 조회처럼 `pausedReason`, `statusChangedAt`까지 담을 필요는 없다고 보았다
 
 ## 캠페인 취소(점주)
 
@@ -367,7 +356,7 @@
 | 가게당 DRAFT 1개를 막는 UNIQUE 제약의 정확한 마이그레이션 문구 | `#244` 결정 | `#244`가 `active_store_marker`와 같은 방식으로 추가한다(이 문서 "캠페인 등록" 절 참고) |
 | `Campaign.updateCouponCondition(...)` 메서드 시그니처 | `#244` 결정 | 아직 엔티티에 없다. `#244`가 추가한다 |
 | 예약 값(`pendingDailyBudget`) 자체를 PATCH 응답에 노출할지 | V51 45행 | `#330`은 노출하지 않는다(응답은 늘 `dailyBudget`). 노출이 필요해지면 그때 명세를 바꾼다 |
-| 캠페인 활성화 요청 빈도 제한의 정확한 횟수·창 | `#561` 자체 리뷰로 찾음 | `CampaignActivationRateLimiter`가 지금은 `TemplateGenerationRateLimiter`의 분당 3회를 그대로 가져와 썼다(근거 없는 예시값, `C` 등급). 실제 값은 운영 쪽과 정한다 |
+| 캠페인 활성화 요청 빈도 제한의 정확한 횟수·창 | `#561` | `CampaignActivationRateLimiter`가 지금은 `TemplateGenerationRateLimiter`의 분당 3회를 그대로 가져와 썼다(근거 없는 예시값, `C` 등급). 실제 값은 운영 쪽과 정한다 |
 
 해소된 항목(`#330`): 하루 예산의 "다음 영업일 적용 예약 값" 컬럼은 `Campaign.pendingDailyBudget`(`V13__campaign_pending_daily_budget.sql`, 양수만 허용하는
 `chk_campaign_pending_daily_budget` CHECK 포함)이고, 최소 하루 예산은 `ops.contract.PlatformSettingQueryService.getMinDailyBudget()`(요구사항명세서
