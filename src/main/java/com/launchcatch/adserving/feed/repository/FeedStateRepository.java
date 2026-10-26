@@ -18,8 +18,8 @@ import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataAccessException;
-import org.springframework.data.redis.connection.StringRedisConnection;
-import org.springframework.data.redis.core.RedisCallback;
+import org.springframework.data.redis.core.RedisOperations;
+import org.springframework.data.redis.core.SessionCallback;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Repository;
 
@@ -51,27 +51,29 @@ public class FeedStateRepository {
         return WISH_KEY_PREFIX + businessDate + ":" + memberId;
     }
 
-    @SuppressWarnings("unchecked")
+    @SuppressWarnings({"unchecked", "rawtypes"})
     public FeedState read(LocalDate businessDate, Long memberId, List<Long> campaignIds) {
-        String[] fields = campaignIds.stream().map(String::valueOf).toArray(String[]::new);
+        List<Object> fields = campaignIds.stream().<Object>map(String::valueOf).toList();
         try {
-            List<Object> results = redisTemplate.executePipelined((RedisCallback<Object>) connection -> {
-                StringRedisConnection c = (StringRedisConnection) connection;
-                c.hGetAll(ServeFrequencyRepository.dailyKey(businessDate, memberId));
-                c.sMembers(ServeFrequencyRepository.sessionKey(memberId));
-                c.sMembers(ExclusionRepository.key(businessDate, memberId));
-                if (fields.length > 0) {
-                    c.hMGet(ImpressionCountRepository.key(businessDate), fields);
+            List<Object> results = redisTemplate.executePipelined(new SessionCallback<Object>() {
+                @Override
+                public Object execute(RedisOperations operations) {
+                    operations.opsForHash().entries(ServeFrequencyRepository.dailyKey(businessDate, memberId));
+                    operations.opsForSet().members(ServeFrequencyRepository.sessionKey(memberId));
+                    operations.opsForSet().members(ExclusionRepository.key(businessDate, memberId));
+                    if (!fields.isEmpty()) {
+                        operations.opsForHash().multiGet(ImpressionCountRepository.key(businessDate), fields);
+                    }
+                    operations.opsForValue().get(filterKey(memberId));
+                    operations.opsForValue().get(wishKey(businessDate, memberId));
+                    return null;
                 }
-                c.get(filterKey(memberId));
-                c.get(wishKey(businessDate, memberId));
-                return null;
             });
             int i = 0;
-            Map<String, String> daily = (Map<String, String>) results.get(i++);
+            Map<Object, Object> daily = (Map<Object, Object>) results.get(i++);
             Set<String> session = (Set<String>) results.get(i++);
             Set<String> excluded = (Set<String>) results.get(i++);
-            List<String> counts = fields.length > 0 ? (List<String>) results.get(i++) : List.of();
+            List<Object> counts = fields.isEmpty() ? List.of() : (List<Object>) results.get(i++);
             String filter = (String) results.get(i++);
             String wishes = (String) results.get(i);
             return new FeedState(history(daily, session), ids(excluded), validCounts(campaignIds, counts),
@@ -126,10 +128,10 @@ public class FeedStateRepository {
         }
     }
 
-    private static ServedHistory history(Map<String, String> daily, Set<String> session) {
+    private static ServedHistory history(Map<Object, Object> daily, Set<String> session) {
         return new ServedHistory(
                 daily == null ? Map.of() : daily.entrySet().stream().collect(Collectors.toUnmodifiableMap(
-                        e -> Long.valueOf(e.getKey()), e -> Integer.valueOf(e.getValue()))),
+                        e -> Long.valueOf((String) e.getKey()), e -> Integer.valueOf((String) e.getValue()))),
                 ids(session));
     }
 
@@ -137,11 +139,11 @@ public class FeedStateRepository {
         return members == null ? Set.of() : members.stream().map(Long::valueOf).collect(Collectors.toUnmodifiableSet());
     }
 
-    private static Map<Long, Long> validCounts(List<Long> campaignIds, List<String> values) {
+    private static Map<Long, Long> validCounts(List<Long> campaignIds, List<Object> values) {
         Map<Long, Long> counts = new HashMap<>();
         for (int i = 0; i < values.size(); i++) {
             if (values.get(i) != null) {
-                counts.put(campaignIds.get(i), Long.valueOf(values.get(i)));
+                counts.put(campaignIds.get(i), Long.valueOf((String) values.get(i)));
             }
         }
         return counts;

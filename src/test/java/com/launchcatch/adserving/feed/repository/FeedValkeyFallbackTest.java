@@ -59,7 +59,7 @@ class FeedValkeyFallbackTest {
     @Test
     @SuppressWarnings("unchecked")
     void 피드_상태를_읽지_못하면_다섯_모두_우회하고_쓰임새마다_센다() {
-        when(redisTemplate.executePipelined(any(org.springframework.data.redis.core.RedisCallback.class)))
+        when(redisTemplate.executePipelined(any(org.springframework.data.redis.core.SessionCallback.class)))
                 .thenThrow(new QueryTimeoutException("timeout"));
 
         var state = new FeedStateRepository(redisTemplate, meterRegistry)
