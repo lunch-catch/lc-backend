@@ -285,7 +285,8 @@
     }
     if (s.row) {
       var rr = reg[s.row].parts.items;
-      if (s.index != null && s.focus !== false) rr.forEach(function (p, i) { p.el.classList.toggle('on', i === s.index); });
+      if (s.on != null && rr[s.index]) rr[s.index].el.classList.toggle('on', !!s.on);
+      else if (s.index != null && s.focus !== false) rr.forEach(function (p, i) { p.el.classList.toggle('on', i === s.index); });
       var p = rr[s.index];
       if (p && s.bar != null && p.fill) p.fill.style.width = s.bar * 100 + '%';
       if (p && s.meta != null && p.meta) p.meta.textContent = s.meta;
