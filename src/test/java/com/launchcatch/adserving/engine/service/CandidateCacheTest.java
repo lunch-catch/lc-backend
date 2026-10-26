@@ -8,6 +8,7 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.launchcatch.adserving.engine.CandidateChange;
 import com.launchcatch.adserving.engine.entity.AdCandidate;
 import com.launchcatch.adserving.engine.entity.CandidateCampaignState;
 import com.launchcatch.adserving.engine.repository.AdCandidateRepository;
@@ -137,6 +138,19 @@ class CandidateCacheTest {
             cache.findServableWithin(BUSINESS_DATE, AROUND);
 
             verify(repository, times(2)).findByIdBusinessDate(BUSINESS_DATE);
+        }
+
+        @Test
+        void 받은_알림이_후보_하나면_그_후보를_그날_전체면_통째로_다시_읽는다() {
+            when(repository.findByIdBusinessDate(BUSINESS_DATE)).thenReturn(List.of(near), List.of(near, soldOut));
+            cache.findServableWithin(BUSINESS_DATE, AROUND);
+            when(repository.findByIdBusinessDateAndIdCampaignId(BUSINESS_DATE, 101L)).thenReturn(Optional.empty());
+
+            cache.apply(CandidateChange.one(BUSINESS_DATE, 101L));
+            assertThat(cache.findServableWithin(BUSINESS_DATE, AROUND)).isEmpty();
+
+            cache.apply(CandidateChange.wholeDay(BUSINESS_DATE));
+            assertThat(cache.isSoldOut(BUSINESS_DATE, 103L)).isTrue();
         }
 
         // 아직 읽지 않은 날의 알림은 할 일이 없다. 다음 읽기가 어차피 DB 에서 읽는다
