@@ -1,6 +1,7 @@
 package com.launchcatch.billing.repository;
 
 import com.launchcatch.billing.entity.MismatchCheckType;
+import com.launchcatch.billing.entity.MismatchResolutionType;
 import com.launchcatch.billing.entity.SettlementMismatch;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -61,21 +62,21 @@ public interface SettlementMismatchRepository extends JpaRepository<SettlementMi
                                        Pageable pageable);
 
     /*
-     * 아직 열린 건을 관리자의 과과금 정정으로 닫는다. 영향 행 수를 돌려준다.
-     * 0 이면 그사이 다른 경로(대사 배치나 다른 조정)가 먼저 닫은 것이다.
+     * 아직 열린 건을 관리자가 고른 방법으로 닫는다. 영향 행 수를 돌려준다.
+     * 0 이면 건이 없거나 그사이 다른 경로(대사 배치, 다른 조정, 조정 없는 종결)가 먼저 닫은 것이다.
      */
     @Modifying
     @Query("""
             update SettlementMismatch m
-               set m.resolutionType = com.launchcatch.billing.entity.MismatchResolutionType.OVERCHARGE_REVERSAL,
+               set m.resolutionType = :type,
                    m.resolvedAt = :now,
                    m.resolvedBy = :adminId,
                    m.updatedAt = :now
              where m.id = :id
                and m.resolutionType is null
             """)
-    int resolveAsOverchargeReversal(@Param("id") Long id, @Param("adminId") Long adminId,
-                                    @Param("now") LocalDateTime now);
+    int resolveByAdmin(@Param("id") Long id, @Param("type") MismatchResolutionType type,
+                       @Param("adminId") Long adminId, @Param("now") LocalDateTime now);
 
     /*
      * 캠페인 소진 대사의 불일치 한 건을 기록한다. 같은 (check_type, target_id, business_date) 가 이미 있으면 그대로 둔다.

@@ -38,7 +38,7 @@ public class BillingSecurityConfig {
             "/v1/owner/refund-requests/**"
     };
 
-    /** 관리자의 결제, 원장, 환불 처리, 정책, 조정, 대사 조회 경로다. */
+    /** 관리자의 결제, 원장, 환불 처리, 정책, 조정, 대사 조회와 종결 경로다. */
     private static final String[] ADMIN_PATHS = {
             "/v1/admin/payments",
             "/v1/admin/payments/**",
@@ -49,7 +49,8 @@ public class BillingSecurityConfig {
             "/v1/admin/point-adjustments",
             "/v1/admin/refund-requests",
             "/v1/admin/refund-requests/**",
-            "/v1/admin/settlement-mismatches"
+            "/v1/admin/settlement-mismatches",
+            "/v1/admin/settlement-mismatches/**"
     };
 
     private static final String WEBHOOK_PATH = "/webhook/payments";

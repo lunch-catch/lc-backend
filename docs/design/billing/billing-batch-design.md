@@ -36,7 +36,7 @@ HTTP가 아니라 **모듈 간 호출·이벤트·배치**다. 점주·관리자
 | --- | --- | --- |
 | billing → campaign | `campaign.contract.CampaignQueryService` | 00:00 예약 대상과 다음 영업일 적용 하루 예산, 충전 재예약 대상(`PAUSED(NO_POINTS)` 캠페인), 환불 거부 조건의 집행 중 캠페인 |
 | billing → campaign | `campaign.contract.CampaignFundingUpdater` | 예약 결과와 판정 반영. 잔액 부족이면 `PAUSED(NO_POINTS)`, 재개 판정이면 `ACTIVE`로 **상태만** 바꾼다 |
-| billing → campaign | `campaign.contract.CampaignQueryService.findAllById` | 포인트 조정이 닫으려는 `CAMPAIGN_SPEND_VS_LEDGER` 대사 건의 캠페인 점주 확인(`billing-api-design.md` 「포인트 조정」) |
+| billing → campaign | `campaign.contract.CampaignQueryService.findAllById` | 포인트 조정이 닫으려는 캠페인 대상 대사 건의 캠페인 점주 확인(`billing-api-design.md` 「포인트 조정」) |
 | billing → campaign | `campaign.contract.CampaignQueryService.findByIdForUpdate` | 충전 직후 재예약(I-03)이 캠페인마다 원장을 쓰기 전에 그 캠페인을 다시 잠그고 최신 상태를 확인한다 |
 | billing → owner | `owner.contract.OwnerStatusQuery.findStatus` | 포인트 조정 대상 점주가 있는지 확인 |
 | billing → ops | 운영의 설정값 조회 기능 | 노출 단가(아래 I-02 참고) |
@@ -295,7 +295,7 @@ PG 호출에는 타임아웃과 서킷브레이커를 적용한다. 시작값은
 - `PG_VS_CHARGE`는 PG의 거래 목록 API를 쓰지 않고, **전일(KST) 생성된 `payment` 중 `pg_tid`가 있는 건을 PG 결제 조회 API로 하나씩 조회**해 PG 상태 ↔ `payment.status` ↔ 원장 `CHARGE`를 비교한다. 그래서 **PG에는 있는데 우리 `payment`에 행이 없는 승인은 탐지하지 못한다.** 승인 시도 전에 `pg_tid`를 먼저 커밋하므로(`billing-api-spec.md` 승인 확정 3단계) 정상 흐름에서는 행이 남는다. 그런 승인까지 잡아야 하면 그때 PG 거래 목록 조회를 추가한다.
 - 시각 직전에 생성된 결제를 워터마크로 빼지 않는다. PG 상태가 확정 전인 결제는 재검증 대기 행으로 남겨 다음 실행에 다시 본다.
 - 결과는 `settlement_mismatch`에 쌓이고 `job_execution_id`가 운영의 `batch_execution_log.id`를 가리킨다.
-- **과과금은 자동 복구하지 않는다.** 관리자가 양수 `ADJUST`(`OVERCHARGE_REVERSAL`)로 정정한다. 서로 다른 `serve_id`가 같은 노출을 중복 과금한 건도 자동 탐지되지 않으며 같은 방식으로 정정한다.
+- **과과금은 자동 복구하지 않는다.** 관리자가 `ADJUST`로 정정하고 그 건을 `MANUAL_ADJUSTMENT`로 닫는다. 금액을 바로잡을 필요가 없으면 `NO_ADJUSTMENT_REQUIRED`로 닫는다. 건마다 받는 조정액은 `billing-api-design.md` 「포인트 조정」이 갖는다. 서로 다른 `serve_id`가 같은 노출을 중복 과금한 건도 자동 탐지되지 않으며 같은 방식으로 정정한다.
 - 같은 `(check_type, target_id, business_date)`는 1건만 기록한다. V2의 UNIQUE를 기준으로 upsert하여 재실행·재탐지로 중복되지 않게 한다.
 
 판정 기록 `BILLED`와 원장 `DEDUCT`는 한 트랜잭션으로 기록하므로 "판정은 과금인데 원장에 차감이 없는" 경우는 생기지 않는다. 그래서 대조는 노출 로그와 판정 기록을 읽지 않고 원장과 카운터만 본다(103행 예외).

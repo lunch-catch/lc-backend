@@ -18,7 +18,7 @@ import lombok.NoArgsConstructor;
  *
  * 같은 (check_type, target_id, business_date) 는 한 행이다(uk_settlement_mismatch_check_target_date).
  * 행은 대사 배치가 저장소의 네이티브 upsert 로 만든다. 같은 날의 재실행이 예외 없이 흡수되어야 해서 엔티티 생성 경로를 두지 않는다.
- * 관리자 조회와, 포인트 조정이 OVERCHARGE_REVERSAL 로 닫는 조건부 갱신도 이 테이블을 쓴다.
+ * 관리자 조회와, 관리자가 MANUAL_ADJUSTMENT 나 NO_ADJUSTMENT_REQUIRED 로 닫는 조건부 갱신도 이 테이블을 쓴다.
  */
 @Entity
 @Table(name = "settlement_mismatch")

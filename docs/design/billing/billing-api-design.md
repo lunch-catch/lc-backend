@@ -113,15 +113,23 @@ PG 서버가 호출한다. `/v1/` 접두사가 없는 것은 서버 대 서버 �
 
 ## 포인트 조정
 
-`PointAdjustmentService`는 트랜잭션 밖에서 입력과 `OwnerStatusQuery.findStatus`의 존재 여부를 검사한다. 점주 상태 자체로 제한하지 않으므로 정지·탈퇴 점주의 과오 차감도 정정할 수 있다. `campaignId`와 `targetBusinessDate`는 함께 있어야 하며 미래 영업일은 받지 않는다.
+`PointAdjustmentService`는 트랜잭션 밖에서 입력과 `OwnerStatusQuery.findStatus`의 존재 여부를 검사한다. 점주 상태 자체로 제한하지 않으므로 정지·탈퇴 점주의 과오 차감도 정정할 수 있다. `campaignId`와 `targetBusinessDate`는 함께 있어야 하며 미래 영업일은 받지 않는다. 대사 건을 닫는 조정의 부호와 금액은 건의 종류에 달려 있어 여기서 보지 않고 대사 건을 읽는 `PointAdjustmentRecorder`가 본다.
 
 `PointAdjustmentRecorder`가 수행하는 순서는 다음과 같다.
 
 1. 점주 계정 행을 먼저 잠근다. 행이 없으면 생성한다. 양수 조정도 같은 잠금을 사용한다.
 2. 같은 `(owner_id, idempotency_key)`를 찾는다. 금액·캠페인·정정 대상 영업일·사유가 같으면 기존 결과를 돌려준다. `mismatchId`는 원장에 저장하지 않아 재요청 비교에서 제외한다.
-3. 새 요청에 `mismatchId`가 있으면 미해결 여부와 점주 소유를 확인한다. 사람이 돈을 움직이는 경로라 잘못 닫힌 대사 건을 되돌릴 방법이 없기 때문이다. 캠페인 대상 대사 건은 캠페인 ID와 영업일도 요청과 같아야 한다. 결제 대상은 `payment`를 잠그지 않고 읽는다.
+3. 새 요청에 `mismatchId`가 있으면 미해결 여부와 점주 소유를 확인한다. 사람이 돈을 움직이는 경로라 잘못 닫힌 대사 건을 되돌릴 방법이 없기 때문이다. 캠페인 대상 대사 건은 캠페인 ID와 영업일도 요청과 같아야 한다. 결제 대상은 `payment`를 잠그지 않고 읽는다. 그다음 조정액이 그 건을 닫을 수 있는 값인지 본다. 기준은 아래 표다.
 4. 음수 조정은 잔액이 음수가 되지 않는지 확인한다. `ADJUST`를 `MANUAL`로 기록한다.
-5. 대사 건을 닫는 경우 `resolution_type IS NULL` 조건으로 갱신한다. 영향 행이 없으면 원장까지 롤백한다. `POINT_ADJUST` 감사 로그도 같은 트랜잭션에 쓴다.
+5. 대사 건을 닫는 경우 `resolution_type IS NULL` 조건으로 `MANUAL_ADJUSTMENT`로 갱신한다. 영향 행이 없으면 원장까지 롤백한다. `POINT_ADJUST` 감사 로그도 같은 트랜잭션에 쓴다.
+
+| 대사 건 | 받는 조정액 | 그렇게 정한 이유 |
+|---|---|---|
+| `PG_VS_CHARGE` | `expected_value`(PG 승인 금액) − 그 결제가 요청한 점주에게 남긴 `CHARGE` 금액과 같아야 한다. `campaignId`는 받지 않는다 | 두 값이 모두 원장과 대사 건에 있어 서버가 정정액을 정확히 셀 수 있다. 정정액이 −100 인데 −500 을 넣는 오입력을 막는다. 캠페인을 붙이면 분석이 그 금액을 캠페인 소진의 정정으로 센다 |
+| `CAMPAIGN_OVERSPEND` | 0 < 조정액 ≤ `actual_value − expected_value` | 초과액은 셀 수 있지만 그중 얼마를 돌려줄지는 정책이라 상한만 둔다. 덜 걷은 광고비는 회수하지 않는다 |
+| `CAMPAIGN_SPEND_VS_LEDGER` | 받지 않는다 | 원장과 카운터의 차이는 잔액의 오차가 아니다. 카운터가 크면 원장은 정확하고(장애 설계 L-1, L-3), 원장이 크면 예약액을 넘긴 몫은 `CAMPAIGN_OVERSPEND`가 따로 기록한다(L-2, L-4) |
+
+`CHARGE` 금액은 계정 잠금 뒤의 일반 읽기로 읽는다. 그사이 커밋된 보정 `CHARGE`도 보인다. `CHARGE`가 다른 점주에게 들어간 건은 요청한 점주의 충전을 0 으로 본다. 그 점주의 잔액 회수는 `mismatchId` 없는 일반 조정으로 한다.
 
 잠금·기록 순서는 `point_account`, `point_ledger`, `settlement_mismatch`다. 충전 승인이 `payment` 뒤 `point_account`를 잡으므로 조정에서는 `payment`를 잠그지 않는다. 양수도 잠가 같은 키 재요청과 대사 건 닫기, 감사 로그를 한 트랜잭션으로 유지한다.
 
@@ -134,6 +142,15 @@ PG 서버가 호출한다. `/v1/` 접두사가 없는 것은 서버 대 서버 �
 `SettlementMismatchQueryService`는 대사 대상 영업일과 유형·해결 여부로 조회한다. 정렬은 `createdAt` 또는 `businessDate`에 ID를 보조 키로 붙인다. 전체 건수를 제공하는 페이지 번호 방식을 유지한다. 관리자 표 목록이고, 전체 건수(`totalElements`)를 매출 현황의 불일치 건수로 쓰기 때문이다. 정책 이력도 관리자 표 목록이라 페이지 번호 방식이다. 실제 체크 유형은 V5가 추가한 `CAMPAIGN_OVERSPEND`까지 세 종류다.
 
 `ownerId`는 테이블에 두지 않고 조회할 때 채운다. 한 페이지의 결제 ID는 `payment`에서, 캠페인 ID는 `CampaignQueryService.findAllById`로 각각 한 번에 읽는다. 포인트 수동 조정이 대사 건의 점주를 확인할 때와 같은 출처라서 목록이 보여 준 점주로 정정하면 BILLING-022가 나지 않는다.
+
+## `POST /v1/admin/settlement-mismatches/{mismatchId}:closeWithoutAdjustment`
+
+`SettlementMismatchResolutionService`가 한 트랜잭션에서 `resolution_type IS NULL` 조건으로 `NO_ADJUSTMENT_REQUIRED`와 처리자, 시각을 쓰고 `SETTLEMENT_MISMATCH_CLOSE` 감사 로그를 남긴다. 영향 행이 0 이면 건을 다시 읽어 없으면 `BILLING-020`, 있으면 `BILLING-021`로 거절한다. 응답은 `SettlementMismatchQueryService.get`이 목록과 같은 모양으로 만든다.
+
+- **사유를 받지 않는다.** 프론트와의 계약을 `resolutionType` 값 말고는 바꾸지 않기로 해서 사유를 둘 자리가 없다(#1013).
+- **점주 계정 행을 잠그지 않는다.** 원장을 쓰지 않아 잔액과 겨룰 것이 없다. 대사 건 행 하나만 잠그므로 포인트 조정의 잠금 순서(`point_account`, `point_ledger`, `settlement_mismatch`)와 엇갈리지 않는다.
+- **같은 건을 포인트 조정과 함께 닫으려 하면** 둘 다 같은 조건부 갱신을 쓰므로 먼저 커밋한 쪽만 닫는다. 늦은 조정은 원장 줄까지 롤백된다.
+- **성공한 요청의 재시도는 `409 BILLING-021`이다.** 원장 줄이 없어 `requestId` 같은 멱등 키를 둘 자리가 없다. 화면은 그 응답을 받으면 목록을 다시 읽는다.
 
 ## 오류 코드 번호
 
@@ -159,6 +176,8 @@ PG 서버가 호출한다. `/v1/` 접두사가 없는 것은 서버 대 서버 �
 | | `AdminPointSummaryService` |
 | | `PointAdjustmentRecorder` |
 | | `PointAdjustmentService` |
+| 대사 불일치 | `SettlementMismatchQueryService` |
+| | `SettlementMismatchResolutionService` |
 | 저장 제약 | billing의 V1~V6 마이그레이션 |
 | | `PointAccountRepository` |
 | | `PointLedgerRepository` |

@@ -60,10 +60,13 @@ class PointAdjustmentServiceTest {
     }
 
     @Test
-    void 대사_건을_닫는_조정이_음수면_거절한다() {
-        assertRejected(() -> service.adjust(ADMIN, request(-1000L, 55L)), CommonErrorCode.INVALID_INPUT);
+    void 대사_건을_닫는_음수_조정도_허용_여부는_대사_건을_읽는_기록기에_맡긴다() {
+        PointAdjustmentRequest request = request(-1000L, 55L);
+        when(ownerStatusQuery.findStatus(OWNER)).thenReturn(Optional.of(OwnerAccountStatus.ACTIVE));
 
-        verify(recorder, never()).record(any(), any());
+        service.adjust(ADMIN, request);
+
+        verify(recorder).record(ADMIN, request);
     }
 
     @Test

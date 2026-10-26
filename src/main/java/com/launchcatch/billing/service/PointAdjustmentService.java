@@ -12,7 +12,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
 /*
- * 관리자의 포인트 수동 조정이다. 사후에 확인된 과오 차감을 양수로 돌려주는 것이 주 용도다.
+ * 관리자의 포인트 수동 조정이다. 사후에 확인된 과오 차감을 양수로 돌려주거나 대사 불일치의 금액을 바로잡는 것이 주 용도다.
  *
  * 이 클래스는 트랜잭션 밖에서 입력을 검사한다. 원장 기록은 PointAdjustmentRecorder 가 한 트랜잭션에서 한다.
  * 점주 확인을 트랜잭션 밖에 두는 이유는 점주 계정 행의 잠금을 다른 도메인 조회 동안 잡고 있지 않기 위해서다.
@@ -26,8 +26,8 @@ public class PointAdjustmentService {
     private final Clock clock;
 
     public PointAdjustmentResult adjust(Long adminId, PointAdjustmentRequest request) {
-        // 대사 건을 닫는 조정은 과오 차감 정정이라 양수만 받는다
-        if (request.amount() == 0 || (request.mismatchId() != null && request.amount() < 0)) {
+        // 대사 건을 닫는 조정의 부호와 금액은 그 건의 종류에 달려 있어 대사 건을 읽는 기록기가 본다
+        if (request.amount() == 0) {
             throw new BillingException(CommonErrorCode.INVALID_INPUT);
         }
         checkTargetBusinessDate(request);
