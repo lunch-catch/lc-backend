@@ -14,6 +14,8 @@ import com.launchcatch.billing.exception.BillingException;
 import com.launchcatch.billing.repository.PaymentRepository;
 import com.launchcatch.global.exception.ConstraintViolations;
 import io.micrometer.core.instrument.MeterRegistry;
+import jakarta.annotation.PostConstruct;
+import java.util.List;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -43,6 +45,14 @@ public class PaymentWebhookService {
     private final PaymentGateway paymentGateway;
     private final WebhookInquiryGuard inquiryGuard;
     private final MeterRegistry meterRegistry;
+
+    // 첫 사건 전에도 시리즈가 있어야 increase() 가 첫 증가를 센다
+    @PostConstruct
+    void registerCounters() {
+        for (String result : List.of("approved", "cancelled", "ignored", "throttled", "failed")) {
+            meterRegistry.counter(WEBHOOK_METRIC, "result", result);
+        }
+    }
 
     // 결제대행사 조회를 막은 요청은 THROTTLED 로 알려 재전송을 받게 한다. 나머지는 처리했거나 무시한 것이다
     public enum Result {

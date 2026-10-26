@@ -14,6 +14,7 @@ import com.launchcatch.campaign.contract.CampaignInfo;
 import com.launchcatch.campaign.contract.CampaignQueryService;
 import com.launchcatch.ops.contract.PlatformSettingQueryService;
 import io.micrometer.core.instrument.MeterRegistry;
+import jakarta.annotation.PostConstruct;
 import java.time.Clock;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -73,6 +74,16 @@ public class PointDeductorImpl implements PointDeductor {
     static final String UNDO_METRIC = "billing_deduct_undo_total";
     static final String NO_PLAN_METRIC = "billing_deduct_no_plan_total";
     static final String BATCH_FAILED_METRIC = "billing_deduct_batch_failed_total";
+
+    // 첫 사건 전에도 시리즈가 있어야 increase() 가 첫 증가를 센다
+    @PostConstruct
+    void registerCounters() {
+        meterRegistry.counter(UNDO_METRIC, "result", "ok");
+        meterRegistry.counter(UNDO_METRIC, "result", "failed");
+        meterRegistry.counter(NO_PLAN_METRIC);
+        meterRegistry.counter(BATCH_FAILED_METRIC, "reason", "owner_group");
+        meterRegistry.counter(BATCH_FAILED_METRIC, "reason", "unknown_campaign");
+    }
 
     /*
      * 점주 묶음마다 자기 트랜잭션에서 deduct 를 차례로 부른다. 묶음 안의 deduct 는 그 트랜잭션에 참여하므로

@@ -15,6 +15,7 @@ import com.launchcatch.billing.repository.PgChargeReconciliationPendingRepositor
 import com.launchcatch.ops.contract.BatchExecutionQueryService;
 import com.launchcatch.ops.contract.BatchExecutionRecord;
 import io.micrometer.core.instrument.MeterRegistry;
+import jakarta.annotation.PostConstruct;
 import java.time.Clock;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -61,6 +62,14 @@ public class PgChargeReconciliationService {
     private final BatchExecutionQueryService batchExecutions;
     private final MeterRegistry meterRegistry;
     private final Clock clock;
+
+    // 첫 사건 전에도 시리즈가 있어야 increase() 가 첫 증가를 센다
+    @PostConstruct
+    void registerCounters() {
+        for (String result : List.of("mismatch", "recovered", "inquiry_failed", "error")) {
+            meterRegistry.counter(RECON_METRIC, "result", result);
+        }
+    }
 
     // runDate 의 전날을 대사하고 기록한 불일치(보정 포함) 수를 돌려준다
     public int reconcilePreviousDay(LocalDate runDate, String jobName) {
