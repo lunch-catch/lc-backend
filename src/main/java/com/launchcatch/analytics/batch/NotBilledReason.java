@@ -8,5 +8,6 @@ public enum NotBilledReason {
     NOT_BILLED_BUDGET,
     NOT_BILLED_PAUSED,
     NOT_BILLED_NO_PLAN,
+    NOT_BILLED_CLOSED,
     NOT_BILLED_SOLD_OUT
 }

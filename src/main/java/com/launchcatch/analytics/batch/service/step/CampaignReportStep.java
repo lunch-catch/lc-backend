@@ -203,6 +203,7 @@ public class CampaignReportStep implements AggregationStep<CampaignReport> {
             putPositive(notBilled, NotBilledReason.NOT_BILLED_BUDGET, count.notBilledBudgetCount());
             putPositive(notBilled, NotBilledReason.NOT_BILLED_PAUSED, count.notBilledPausedCount());
             putPositive(notBilled, NotBilledReason.NOT_BILLED_NO_PLAN, count.notBilledNoPlanCount());
+            putPositive(notBilled, NotBilledReason.NOT_BILLED_CLOSED, count.notBilledClosedCount());
         }
         Map<InvalidReasonCode, Long> invalid = new EnumMap<>(InvalidReasonCode.class);
         Map<Integer, Long> hourly = new TreeMap<>();
