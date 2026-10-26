@@ -11,11 +11,11 @@
 
 ## 광고 서빙 시험 돌리기
 
-앱은 `loadtest` 프로필로 띄운다. 결제가 토스 대신 목을 쓴다.
+앱은 `loadtest` 프로필로 띄운다. 결제가 토스 대신 목을 쓴다. `CDN_BASE_URL` 이 비어 있으면 그날 후보 적재가 실패한다. 로컬에서는 아무 값이나 준다.
 
 ```bash
 D=2026-10-27
-python3 loadtest/data/gen_adserving.py --date $D --members 6000 --stores 200 > build/loadtest-adserving.sql
+python3 loadtest/data/gen_adserving.py --date $D --members 30000 --stores 200 > build/loadtest-adserving.sql
 mysql -h <DB 호스트> -u <사용자> -p <스키마> < build/loadtest-adserving.sql
 
 k6 run -e BASE_URL=<앱 주소> -e JWT_SECRET=<앱과 같은 값> -e BUSINESS_DATE=$D loadtest/adserving/prepare.js
@@ -25,14 +25,16 @@ k6 run -e BASE_URL=<앱 주소> -e JWT_SECRET=<앱과 같은 값> -e FEED_RATE=5
 
 - 생성기는 3,000만 대역의 행과 그날 배치 기록을 지우고 다시 넣는다. 부하 시험 DB 와 로컬에만 넣는다.
 - 그날 배치 기록을 지우므로 `--date` 는 시험하는 날이다. 앱이 판단하는 영업일(Asia/Seoul)과 같아야 한다.
-- 한 회원은 60초에 피드를 6번까지 받는다. `--members` 와 `MEMBERS` 는 `FEED_RATE` x 10 보다 크게 둔다.
+- 한 회원은 60초에 피드를 6번까지 받는다. `MEMBERS` 는 `FEED_RATE` x 10 보다 크게 둔다.
+- 같은 캠페인은 한 세션에 한 번만 나온다. 가게 200개면 회원 한 명이 카드 10장을 받는 피드는 20번이다. 5분 동안 초당 500건이면 피드 15만 건이라 `MEMBERS` 는 7,500 보다 커야 끝까지 카드 10장을 받는다.
+- 노출 횟수는 그날 내내 남는다. 같은 날 회차를 거듭하면 `MEMBER_BASE` 를 `MEMBERS` 만큼 옮겨 처음 보는 회원을 쓴다. 회원 3만 명이면 1만 명씩 세 회차다.
 - 노출 요청 수는 피드 요청 수 x 카드 수(최대 10)다.
 
 | 변수 | 기본값 | 뜻 |
 |---|---|---|
 | `FEED_RATE` | 500 | 초당 피드 요청 수 |
 | `DURATION` | 5m | 피드 요청을 보내는 시간 |
-| `MEMBERS` | 6000 | 돌려 쓰는 회원 수. 생성기의 `--members` 와 같게 둔다 |
+| `MEMBERS` | 10000 | 한 회차가 돌려 쓰는 회원 수 |
 | `MEMBER_BASE` | 30000001 | 첫 회원 번호 |
 
 ## 결과를 남기는 곳

@@ -10,12 +10,14 @@ import { memberCookie } from '../lib/token.js';
  *
  * 피드는 FEED_RATE 건/초로 고르게 들어온다. 회원은 반복 번호로 돌려 쓴다.
  * 한 회원은 60초에 6번까지 피드를 받으므로 MEMBERS 가 FEED_RATE x 10 보다 커야 429 가 나지 않는다.
+ * 같은 캠페인은 한 세션에 한 번만 나와 회원 한 명이 카드 10장을 받는 피드는 캠페인 수 / 10 번뿐이다.
+ * 노출 횟수는 그날 내내 남으므로 같은 날 회차를 거듭하면 MEMBER_BASE 를 옮겨 처음 보는 회원을 쓴다.
  */
 const BASE_URL = __ENV.BASE_URL;
 const SECRET = __ENV.JWT_SECRET;
 const FEED_RATE = Number(__ENV.FEED_RATE || 500);
 const DURATION = __ENV.DURATION || '5m';
-const MEMBERS = Number(__ENV.MEMBERS || 6000);
+const MEMBERS = Number(__ENV.MEMBERS || 10000);
 const MEMBER_BASE = Number(__ENV.MEMBER_BASE || 30000001);
 // gen_adserving.py 의 CENTER 와 같다
 const CENTER = [37.5563, 126.9220];
