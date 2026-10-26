@@ -1,13 +1,15 @@
 package com.launchcatch.billing.contract;
 
 import java.time.LocalDate;
+import java.util.List;
 import java.util.UUID;
 
 /*
- * 광고 서빙이 유효 노출 1건의 과금을 정산에 맡기는 계약이다(I-01).
+ * 광고 서빙이 유효 노출의 과금을 정산에 맡기는 계약이다(I-01).
  *
- * 호출자 트랜잭션이 있으면 참여하고 없으면 새 정산 트랜잭션을 시작한다(Propagation.REQUIRED).
- * 릴레이는 노출 저장을 커밋한 뒤 트랜잭션 없이 단건 호출한다. 판정과 원장은 정산 트랜잭션에서 함께 커밋된다.
+ * deduct 는 1건, deductAll 은 여러 건을 받는다. 릴레이는 노출 저장을 커밋한 뒤 밀린 노출을 모아 트랜잭션 없이 deductAll 을 부른다.
+ * deduct 는 호출자 트랜잭션이 있으면 참여하고 없으면 새 정산 트랜잭션을 시작한다(Propagation.REQUIRED).
+ * 판정과 원장은 정산 트랜잭션에서 함께 커밋된다.
  * 1단계 판정이 VALID 인 노출만 넘긴다. 무효 노출과 품절 노출은 부르지 않는다.
  */
 public interface PointDeductor {
@@ -30,4 +32,15 @@ public interface PointDeductor {
      * 호출자가 트랜잭션을 열어 참여시켰다면 그 트랜잭션도 함께 롤백된다.
      */
     DeductionStatus deduct(UUID serveId, Long campaignId, LocalDate businessDate);
+
+    /*
+     * 유효 노출 여러 건을 한 번에 판정하고 기록한다. 광고 서빙의 릴레이가 밀린 노출을 모아 부른다.
+     *
+     * 노출마다의 판정, 영업일, 마감, 멱등은 deduct 와 같다. 목록 안에 영업일이 섞여도 된다.
+     * 정산은 노출을 점주별로 묶어 점주마다 한 트랜잭션으로 처리한다. 한 점주 묶음이 실패하면 그 묶음만 롤백되고 다른 묶음은 커밋된다.
+     * 돌려주는 목록에는 판정이 커밋된 노출만 담는다. 빠진 노출은 실패한 것이라 다음 주기에 다시 넘긴다. 다시 넘겨도 한 번만 과금된다.
+     * 결과의 순서는 요청과 같다고 보장하지 않는다. serveId 로 맞춘다.
+     * 점주별 트랜잭션이 호출자 트랜잭션에 섞이면 묶음 하나의 실패가 전체를 되돌리므로, 트랜잭션 안에서 부르면 IllegalStateException 을 던진다.
+     */
+    List<DeductionOutcome> deductAll(List<DeductionRequest> requests);
 }

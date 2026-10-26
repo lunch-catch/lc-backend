@@ -1,5 +1,7 @@
 package com.launchcatch.billing.service;
 
+import com.launchcatch.billing.contract.DeductionOutcome;
+import com.launchcatch.billing.contract.DeductionRequest;
 import com.launchcatch.billing.contract.DeductionStatus;
 import com.launchcatch.billing.contract.PointDeductor;
 import com.launchcatch.billing.dto.PlanSnapshot;
@@ -15,9 +17,13 @@ import io.micrometer.core.instrument.MeterRegistry;
 import java.time.Clock;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.TreeMap;
 import java.util.UUID;
+import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -25,9 +31,10 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 /*
- * 유효 노출 1건의 과금을 판정하고 기록한다(I-01).
+ * 유효 노출의 과금을 판정하고 기록한다(I-01). 1건은 deduct, 여러 건은 deductAll 이 받는다.
  *
  * 순서는 ① 그날 계획의 점주와 단가 ② 당일 소진 해시에서 판정 ③ 판정 기록 ④ BILLED 면 원장 DEDUCT 다.
  * 그날 계획이 없으면 NOT_BILLED_NO_PLAN 판정만 남긴다.
@@ -58,9 +65,72 @@ public class PointDeductorImpl implements PointDeductor {
     private final Clock clock;
     private final MeterRegistry meterRegistry;
     private final PointAccountRepository accountRepository;
+    private final TransactionTemplate transactions;
 
     static final String UNDO_METRIC = "billing_deduct_undo_total";
     static final String NO_PLAN_METRIC = "billing_deduct_no_plan_total";
+    static final String BATCH_FAILED_METRIC = "billing_deduct_batch_failed_total";
+
+    /*
+     * 점주 묶음마다 자기 트랜잭션에서 deduct 를 차례로 부른다. 묶음 안의 deduct 는 그 트랜잭션에 참여하므로
+     * 한 노출이 실패하면 묶음 전체가 롤백되고, 새로 판정한 노출의 소진은 기존 롤백 되돌리기가 되돌린다.
+     * 묶음마다 점주 하나라 트랜잭션 하나가 잡는 계정 잠금도 하나다. 묶음끼리 잠금 순서가 엇갈리지 않는다.
+     * 실패한 묶음은 예외를 올리지 않고 결과에서 뺀다. 릴레이가 다음 주기에 다시 넘기고 serveId 멱등이 중복 과금을 막는다.
+     */
+    @Override
+    public List<DeductionOutcome> deductAll(List<DeductionRequest> requests) {
+        if (TransactionSynchronizationManager.isActualTransactionActive()) {
+            throw new IllegalStateException("묶음 차감은 트랜잭션 밖에서 부릅니다. 점주별 트랜잭션이 호출자 트랜잭션에 섞입니다");
+        }
+        List<DeductionOutcome> outcomes = new ArrayList<>();
+        byOwner(requests).forEach((ownerId, group) -> {
+            try {
+                outcomes.addAll(transactions.execute(status -> group.stream()
+                        .map(request -> new DeductionOutcome(request.serveId(),
+                                deduct(request.serveId(), request.campaignId(), request.businessDate())))
+                        .toList()));
+            } catch (RuntimeException e) {
+                meterRegistry.counter(BATCH_FAILED_METRIC, "reason", "owner_group").increment(group.size());
+                log.warn("event=BILLING_DEDUCT_BATCH_GROUP_FAILED ownerId={} requestCount={} fallback=RETRY_NEXT_RELAY",
+                        ownerId, group.size(), e);
+            }
+        });
+        return outcomes;
+    }
+
+    /*
+     * 노출을 점주별로 묶는다. 계획이 있으면 계획의 점주, 없으면 캠페인의 점주다. deduct 가 쓰는 점주와 같은 출처다.
+     * 캠페인 자체가 없으면 deduct 가 예외를 던질 노출이라 묶음에 넣지 않고 뺀다. 넣으면 같은 점주의 다른 노출까지 함께 실패한다.
+     */
+    private Map<Long, List<DeductionRequest>> byOwner(List<DeductionRequest> requests) {
+        Map<Long, List<DeductionRequest>> groups = new TreeMap<>();
+        List<DeductionRequest> withoutPlan = new ArrayList<>();
+        for (DeductionRequest request : requests) {
+            Optional<PlanSnapshot> plan = snapshotService.find(request.businessDate(), request.campaignId());
+            if (plan.isPresent()) {
+                groups.computeIfAbsent(plan.get().ownerId(), id -> new ArrayList<>()).add(request);
+            } else {
+                withoutPlan.add(request);
+            }
+        }
+        if (withoutPlan.isEmpty()) {
+            return groups;
+        }
+        Map<Long, Long> campaignOwners = campaignQuery.findAllById(
+                        withoutPlan.stream().map(DeductionRequest::campaignId).distinct().toList()).stream()
+                .collect(Collectors.toMap(CampaignInfo::campaignId, CampaignInfo::ownerId));
+        for (DeductionRequest request : withoutPlan) {
+            Long ownerId = campaignOwners.get(request.campaignId());
+            if (ownerId == null) {
+                meterRegistry.counter(BATCH_FAILED_METRIC, "reason", "unknown_campaign").increment();
+                log.warn("event=BILLING_DEDUCT_BATCH_UNKNOWN_CAMPAIGN serveId={} campaignId={} fallback=RETRY_NEXT_RELAY",
+                        request.serveId(), request.campaignId());
+                continue;
+            }
+            groups.computeIfAbsent(ownerId, id -> new ArrayList<>()).add(request);
+        }
+        return groups;
+    }
 
     @Override
     @Transactional(propagation = Propagation.REQUIRED)
