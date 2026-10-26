@@ -10,8 +10,8 @@
 | Valkey | 요청 제한, 당일 이력, 하루와 세션 횟수, 유효 노출 수 읽기, serve 기록 | 기본(통과) |
 | Valkey(커밋 뒤) | 유효 노출 수 카운터 올리기, 당일 이력 넣기(스와이프, 가게 상세 찜, 찜 삭제) | 벗어났다. 아래 |
 | MySQL 읽기 | 그날 후보(피드, 스와이프, 찜 목록), 필터(피드와 필터 조회), 30일 찜, 찜 목록, 쿠폰의 찜 조회, 노출 중복 확인, 후보 소진, 분석의 집계 조회 | 기본(오류로 올린다). 집계 조회는 분석 배치가 하루 결과를 처음부터 다시 모은다 |
-| MySQL 쓰기(요청 안) | `impression_log`, `wishlist`, `swipe_log`, `feed_filter`, `feed_filter_category`, 쿠폰의 소진 통보로 바꾸는 `ad_candidate.sold_out_at` | 기본(트랜잭션을 되돌린다). 스와이프는 찜과 기록을 따로 커밋하고 순서로 맞춘다(구조와 동작 설계 7장) |
-| MySQL 쓰기 | 응답 뒤의 `serve_log`, `feed_visit_daily` | 벗어났다. 아래 |
+| MySQL 쓰기(요청 안) | `wishlist`, `swipe_log`, `feed_filter`, `feed_filter_category`, 쿠폰의 소진 통보로 바꾸는 `ad_candidate.sold_out_at` | 기본(트랜잭션을 되돌린다). 스와이프는 찜과 기록을 따로 커밋하고 순서로 맞춘다(구조와 동작 설계 7장) |
+| MySQL 쓰기 | 응답 뒤의 `impression_log`, `serve_log`, `feed_visit_daily` | 벗어났다. 아래 |
 | member 의 `MemberQueryService` | 온보딩, 위치, 노출 대상 판정 | 기본(오류로 올린다). 같은 프로세스 안의 호출이다 |
 | billing 의 `BudgetQueryService` | 그날 후보의 예약액과 단가. 부르는 시점은 [구조와 동작 설계](./adserving_구조와_동작_설계.md) 5장이 갖는다 | 벗어났다. 아래 |
 | billing 의 `PointDeductor` | 릴레이가 커밋된 유효 노출을 넘기는 `deductAll` | 벗어났다. 아래 |
@@ -81,6 +81,25 @@ B 를 고른다(#315). 서빙 로그는 유실을 0.1% 미만까지 허용한다
 | `adserving_serve_log_failed_total` | `serve_log` 쓰기가 실패해 버린 카드 수 |
 | `adserving_feed_visit_failed_total` | `feed_visit_daily` 쓰기가 실패해 버린 접속 위치 수 |
 | `adserving_served_cards_total` | 응답으로 내려준 카드 수. `serve_log` 건수와 대조해 유실률을 잰다 |
+
+### DB 쓰기: 응답 뒤의 `impression_log`
+
+노출은 판정한 뒤 응답하고 인메모리 큐에서 묶어 저장한다([요청 중 쓰기 설계](./adserving_요청_중_쓰기_설계.md) 4장). 서빙 로그와 달리 과금 근거라 빠지는 몫을 줄이는 쪽을 고른다.
+
+| 선택지 | 장점 | 단점 |
+|---|---|---|
+| A. 큐가 차면 요청이 기다리고, 묶음 쓰기가 실패하면 같은 묶음을 다시 쓴다 | 응답한 노출이 DB 장애로 빠지지 않는다 | DB 가 멈추면 큐가 차고 노출 요청이 기다린다. 기다리는 요청이 웹 서버의 스레드를 잡아 같은 서버의 다른 API 도 느려질 수 있다 |
+| B. 큐가 차면 버리고, 묶음 쓰기가 실패하면 그 묶음을 버린다 | 노출 요청이 DB 에 묶이지 않는다 | DB 가 멈춘 시간만큼 노출이 빠져 유실 목표(0.1%)를 넘길 수 있다 |
+
+A 를 고른다(#1039). 같은 묶음을 다시 써도 `INSERT IGNORE` 라 행이 두 번 들어가지 않는다.
+배포로 서버가 내려갈 때는 웹 서버가 요청을 다 받은 뒤 큐를 끝까지 비운다. 비우는 사이에 DB 가 멈춰 있으면 남은 묶음은 빠진다. 프로세스가 강제로 죽으면 큐에 있던 행이 빠진다.
+
+| 지표 | 세는 것 |
+|---|---|
+| `adserving_impression_queue_size` | 큐에 남은 행 수 |
+| `adserving_impression_queue_wait_total` | 큐가 차서 요청이 기다린 횟수 |
+| `adserving_impression_write_failed_total` | 실패해 다시 쓴 묶음 수 |
+| `adserving_impression_write_lost_total` | 서버가 내려가며 끝내 쓰지 못한 행 수 |
 
 ### 롤백 안 되는 효과: 커밋 뒤의 유효 노출 수 카운터와 당일 이력
 
