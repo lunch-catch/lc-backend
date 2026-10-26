@@ -214,7 +214,7 @@ Lua의 예산 비교는 원자적 갱신이 필요한 저장소 연산이다. �
 
 | 방향 | 접점 | 시점과 호출 비용 |
 |---|---|---|
-| adserving이 호출한다 | `PointDeductor` | 처음 저장한 유효 노출마다 부른다. 반환과 입력은 [계약](../../../src/main/java/com/launchcatch/billing/contract/PointDeductor.java)이 소유한다 |
+| adserving이 호출한다 | `PointDeductor` | v1 은 처음 저장한 유효 노출마다 `deduct`를, v2 릴레이는 밀린 노출을 모아 `deductAll`을 부른다. 반환과 입력은 [계약](../../../src/main/java/com/launchcatch/billing/contract/PointDeductor.java)이 소유한다 |
 | adserving이 조회한다 | `BudgetQueryService` | 캠페인 목록으로 한 번에 조회한다. 부르는 시점은 [adserving 구조와 동작 설계](../adserving/adserving_구조와_동작_설계.md) 5장이 갖는다. 캐시가 데워진 뒤 원장 합계를 읽지 않는다 |
 | analytics가 조회한다 | `BillingStatsQueryService` | 분석의 일별 집계 배치가 영업일마다 부른다. 읽기 전용 트랜잭션에서 원장과 판정을 날짜로 묶어 읽는다. 아래 "집계 조회의 영업일 귀속"을 따른다 |
 | owner의 점주 상태를 조회한다 | `OwnerStatusQuery.findCurrentStatus` | 점주 결제·포인트·환불 API 요청마다 한 번 부른다. 캐시를 우회한 DB 조회 한 번이다. `ACTIVE`가 아니거나 점주를 찾지 못하면 `BILLING-023`(`403`)으로 끝낸다. 검사는 서비스가 아니라 `OwnerActiveInterceptor`가 맡고, 경로는 `BillingSecurityConfig.OWNER_PATHS`를 그대로 쓴다. 서비스마다 흩어 넣으면 서비스 일곱 곳과 그 테스트를 함께 고쳐야 하고 새 점주 경로에서 빠뜨리기 쉽다(#485) |
@@ -319,7 +319,7 @@ stateDiagram-v2
 
 ### 주요 흐름 1. 실제 표시부터 확정 과금까지
 
-아래 그림은 노출 수집 v1이 호출자 트랜잭션에 참여하는 경로다. v2는 노출 저장과 응답을 먼저 끝내고 릴레이가 트랜잭션 없이 같은 계약을 부른다. 정산은 `REQUIRED`로 새 트랜잭션을 시작한다. 마감 판정과 해제 잠금의 기준은 [정산 배치 설계 I-01](./billing-batch-design.md#i-01-노출-차감--판정-기록원장-기록)이 소유한다.
+아래 그림은 노출 수집 v1이 호출자 트랜잭션에 참여하는 경로다. v2는 노출 저장과 응답을 먼저 끝내고 릴레이가 트랜잭션 없이 `deductAll`을 부른다. 정산은 점주 묶음마다 새 트랜잭션을 시작해 그 안에서 노출마다 아래 순서를 밟는다. 마감 판정과 해제 잠금의 기준은 [정산 배치 설계 I-01](./billing-batch-design.md#i-01-노출-차감--판정-기록원장-기록)이 소유한다.
 
 ```mermaid
 sequenceDiagram
@@ -368,7 +368,7 @@ sequenceDiagram
 7. 반환된 상태로 DB 판정 INSERT를 시도한다. Redis에서 첫 결과를 재사용했어도 DB 처리는 이어진다.
 8. INSERT 영향 행 수가 1이 아니면 DB의 첫 판정을 `FOR SHARE`로 읽어 반환한다. 원장은 추가하지 않는다.
 9. DB 판정 행을 처음 넣었고 상태가 `BILLED`이면 원장에 `source=REALTIME`, `amount=-unitPrice`를 기록한다.
-10. v2의 단건 호출은 정산이 DB 트랜잭션을 커밋한 뒤 반환한다. 호출자 트랜잭션에 참여한 경우에는 호출자가 커밋한다. Redis 표시의 존재만으로 확정 과금이 되지는 않는다.
+10. 묶음 차감은 점주 묶음마다 DB 트랜잭션을 커밋한 뒤 다음 묶음으로 넘어가고, 모든 묶음이 끝나면 노출마다 판정이나 실패를 돌려준다. 단건 호출이 호출자 트랜잭션에 참여한 경우에는 호출자가 커밋한다. Redis 표시의 존재만으로 확정 과금이 되지는 않는다.
 
 ### 처리 표시의 저장값과 Lua 반환값
 
@@ -501,7 +501,8 @@ Lua는 당일 해시와 처리 표시 두 키를 사용한다. 현재 구현은 
 | 계정 행은 첫 충전 승인이나 예약 직전에 무변경 upsert 로 만든다 | 잠그는 쪽마다 행이 없을 때의 처리를 두지 않는다 |
 | 잔액이 모자라면 캠페인 ID 오름차순으로 앞에서부터 채운다 | 결정적이고 테스트하기 쉽다. 비율로 나누면 최소 하루 예산 아래인 캠페인이 생긴다 |
 | 노출 경로는 예약액과 중단 여부를 DB 정본에서 커밋 뒤 미러한 Valkey 해시로 읽는다. 바뀌지 않는 단가와 점주만 Caffeine 계획 스냅샷에 둔다 | 인스턴스 로컬 캐시는 중단 반영이 늦어 중단 뒤에도 과금한다. 노출마다 계획 행을 읽으면 노출 경로가 DB 에 묶인다 |
-| `PointDeductor.deduct` 는 `Propagation.REQUIRED` 다 | 릴레이의 단건 호출은 새 정산 트랜잭션을 시작하고, 기존 트랜잭션에서 부르면 참여한다 |
+| `PointDeductor.deduct` 는 `Propagation.REQUIRED` 다 | 노출 수집 v1 의 요청 트랜잭션에서 부르면 참여하고, 트랜잭션 없이 부르면 새 정산 트랜잭션을 시작한다 |
+| `PointDeductor.deductAll` 은 트랜잭션 밖에서만 받고 점주 묶음마다 `TransactionTemplate` 으로 트랜잭션을 연다 | 묶음마다 커밋해야 한 점주의 실패가 다른 점주의 과금을 되돌리지 않는다. 묶음 안의 `deduct` 는 그 트랜잭션에 참여한다. 기준은 [정산 배치 설계 I-01](./billing-batch-design.md#i-01-노출-차감--판정-기록원장-기록)이 갖는다 |
 | 해시가 없으면 DB 정본으로 "없을 때만 만드는" Lua 를 부르고 판정을 한 번 다시 부른다. 재구성 중에는 잠그지 않는다 | 동시 재구성끼리 덮어쓰지 않고, 이미 있는 해시가 담은 그 뒤의 소진을 지우지 않는다. 노출 경로가 멈추지 않는다 |
 | 배치가 자동으로 닫은 대사 건은 해결자를 NULL 로 둔다. 관리자가 닫은 건(`MANUAL_ADJUSTMENT`, `NO_ADJUSTMENT_REQUIRED`)만 해결자를 필수로 둔다 | 없는 관리자 ID 를 적으면 기록이 거짓이 된다 |
 | V11 은 `OVERCHARGE_REVERSAL`을 CHECK 의 허용 목록에 남긴다 | 빈 DB 에서는 기본 데이터 V5 가 V11 뒤에 그 값을 넣고 기본 데이터 V13 이 바꾼다. 롤링 배포 중의 옛 인스턴스도 그 값을 쓴다 |

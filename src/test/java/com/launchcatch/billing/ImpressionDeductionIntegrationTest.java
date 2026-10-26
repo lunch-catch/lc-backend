@@ -5,6 +5,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.launchcatch.billing.contract.BudgetProgress;
 import com.launchcatch.billing.contract.BudgetQueryService;
+import com.launchcatch.billing.contract.DeductionOutcome;
+import com.launchcatch.billing.contract.DeductionRequest;
 import com.launchcatch.billing.contract.DeductionStatus;
 import com.launchcatch.billing.contract.PointDeductor;
 import com.launchcatch.billing.repository.BudgetDailyPlanRepository;
@@ -289,6 +291,57 @@ class ImpressionDeductionIntegrationTest extends AbstractBillingIntegrationTest 
         assertThat(deductor.deduct(UUID.randomUUID(), campaignId, DAY)).isEqualTo(DeductionStatus.BILLED);
         assertThat(ledgerDeductSum(campaignId)).isEqualTo(-UNIT);
         assertThat(rows("deduction_result", campaignId)).isEqualTo(1);
+    }
+
+    @Test
+    void 묶음_차감은_목록을_한_번에_판정하고_예약액을_넘기지_않는다() {
+        long campaignId = plan(3, false);
+        List<UUID> ids = serveIds(5);
+
+        List<DeductionOutcome> outcomes = deductor.deductAll(
+                ids.stream().map(id -> new DeductionRequest(id, campaignId, DAY)).toList());
+
+        assertThat(outcomes).extracting(DeductionOutcome::serveId).containsExactlyInAnyOrderElementsOf(ids);
+        assertThat(outcomes).filteredOn(outcome -> outcome.status() == DeductionStatus.BILLED).hasSize(3);
+        assertThat(outcomes).filteredOn(outcome -> outcome.status() == DeductionStatus.NOT_BILLED_BUDGET).hasSize(2);
+        assertThat(ledgerDeductSum(campaignId)).isEqualTo(-3 * UNIT);
+        assertThat(rows("deduction_result", campaignId)).isEqualTo(5);
+        assertThat(spendInValkey(campaignId)).isEqualTo(3 * UNIT);
+    }
+
+    // 계정 행이 없는 점주의 묶음은 공유 잠금에서 실패한다. 그 묶음만 실패로 돌아오고 다른 점주의 과금은 커밋된다
+    @Test
+    void 묶음_차감에서_한_점주_묶음이_실패해도_다른_점주_묶음은_커밋된다() {
+        long healthy = plan(30, false);
+        long broken = CAMPAIGN_SEQ.incrementAndGet();
+        jdbc.update("""
+                insert into budget_daily_plan
+                    (campaign_id, owner_id, business_date, daily_budget, unit_price, paused, created_at, updated_at)
+                values (?, ?, ?, ?, ?, false, now(6), now(6))
+                """, broken, 970_002L, DAY, 30 * UNIT, UNIT);
+        UUID healthyServe = UUID.randomUUID();
+        UUID brokenServe = UUID.randomUUID();
+
+        List<DeductionOutcome> outcomes = deductor.deductAll(List.of(
+                new DeductionRequest(brokenServe, broken, DAY),
+                new DeductionRequest(healthyServe, healthy, DAY)));
+
+        assertThat(outcomes).containsExactlyInAnyOrder(
+                DeductionOutcome.failed(brokenServe),
+                DeductionOutcome.judged(healthyServe, DeductionStatus.BILLED));
+        assertThat(ledgerDeductSum(healthy)).isEqualTo(-UNIT);
+        assertThat(rows("deduction_result", broken)).isZero();
+        assertThat(rows("point_ledger", broken)).isZero();
+    }
+
+    @Test
+    void 묶음_차감을_트랜잭션_안에서_부르면_거절하고_아무것도_남기지_않는다() {
+        long campaignId = plan(30, false);
+
+        assertThatThrownBy(() -> tx.execute(status ->
+                deductor.deductAll(List.of(new DeductionRequest(UUID.randomUUID(), campaignId, DAY)))))
+                .isInstanceOf(IllegalStateException.class);
+        assertThat(rows("deduction_result", campaignId)).isZero();
     }
 
     @Test
