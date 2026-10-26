@@ -10,8 +10,8 @@
 | Valkey | 요청 제한, 당일 이력, 하루와 세션 횟수, 유효 노출 수 읽기, serve 기록 | 기본(통과) |
 | Valkey(커밋 뒤) | 유효 노출 수 카운터 올리기, 당일 이력 넣기(스와이프, 가게 상세 찜, 찜 삭제) | 벗어났다. 아래 |
 | MySQL 읽기 | 그날 후보(피드, 스와이프, 찜 목록), 필터(피드와 필터 조회), 30일 찜, 찜 목록, 쿠폰의 찜 조회, 노출 중복 확인, 후보 소진, 분석의 집계 조회 | 기본(오류로 올린다). 집계 조회는 분석 배치가 하루 결과를 처음부터 다시 모은다 |
-| MySQL 쓰기(요청 안) | `impression_log`, `wishlist`, `swipe_log`, `feed_filter`, `feed_filter_category`, 쿠폰의 소진 통보로 바꾸는 `ad_candidate.sold_out_at` | 기본(트랜잭션을 되돌린다). 스와이프는 찜과 기록을 따로 커밋하고 순서로 맞춘다(구조와 동작 설계 7장) |
-| MySQL 쓰기 | 응답 뒤의 `serve_log`, `feed_visit_daily` | 벗어났다. 아래 |
+| MySQL 쓰기(요청 안) | `wishlist`, `swipe_log`, `feed_filter`, `feed_filter_category`, 쿠폰의 소진 통보로 바꾸는 `ad_candidate.sold_out_at` | 기본(트랜잭션을 되돌린다). 스와이프는 찜과 기록을 따로 커밋하고 순서로 맞춘다(구조와 동작 설계 7장) |
+| MySQL 쓰기 | 응답 뒤의 `impression_log`, `serve_log`, `feed_visit_daily` | 벗어났다. 아래 |
 | member 의 `MemberQueryService` | 온보딩, 위치, 노출 대상 판정 | 기본(오류로 올린다). 같은 프로세스 안의 호출이다 |
 | billing 의 `BudgetQueryService` | 그날 후보의 예약액과 단가. 부르는 시점은 [구조와 동작 설계](./adserving_구조와_동작_설계.md) 5장이 갖는다 | 벗어났다. 아래 |
 | billing 의 `PointDeductor` | 릴레이가 커밋된 유효 노출을 넘기는 `deductAll` | 벗어났다. 아래 |
@@ -81,6 +81,27 @@ B 를 고른다(#315). 서빙 로그는 유실을 0.1% 미만까지 허용한다
 | `adserving_serve_log_failed_total` | `serve_log` 쓰기가 실패해 버린 카드 수 |
 | `adserving_feed_visit_failed_total` | `feed_visit_daily` 쓰기가 실패해 버린 접속 위치 수 |
 | `adserving_served_cards_total` | 응답으로 내려준 카드 수. `serve_log` 건수와 대조해 유실률을 잰다 |
+
+### DB 쓰기: 응답 뒤의 `impression_log`
+
+노출은 판정한 뒤 응답하고 인메모리 큐에서 묶어 저장한다([요청 중 쓰기 설계](./adserving_요청_중_쓰기_설계.md) 4장). 서빙 로그와 달리 과금 근거라 빠지는 몫을 줄이되 다른 API 를 함께 멈추지 않는 선에서 줄인다.
+
+| 선택지 | 장점 | 단점 |
+|---|---|---|
+| A. 큐가 차면 자리가 날 때까지 기다린다 | 응답한 노출이 빠지지 않는다 | DB 가 멈추면 노출 요청이 웹 서버의 스레드를 모두 잡아 같은 서버의 피드, 스와이프, 찜도 멈춘다 |
+| B. 큐가 차면 최대 100ms 기다린 뒤 버리고 센다 | 노출 요청이 스레드를 쥐는 시간이 100ms 로 묶인다. 10초 안의 지연은 큐가 받아 버리지 않는다 | DB 가 오래 멈추면 큐가 찬 뒤의 노출이 빠진다 |
+| C. B 와 같되 버릴 때 `503` 을 돌려준다 | 클라이언트가 실패를 안다 | 클라이언트는 응답을 쓰지 않고 다시 보내지도 않아 결과는 B 와 같고 에러율(NFR-010)만 오른다 |
+
+B 를 고른다(#1039). DB 가 멈추면 피드도 그날 후보를 읽지 못해 새 카드가 나가지 않는다. 그래서 버리는 노출은 이미 받은 카드의 노출에 그친다.
+묶음 쓰기가 실패하면 같은 묶음을 다시 쓴다. `INSERT IGNORE` 라 행이 두 번 들어가지 않는다. 다시 쓰는 동안 큐가 차면 새로 오는 노출부터 버린다.
+배포로 서버가 내려갈 때는 웹 서버가 요청을 다 받은 뒤 큐를 끝까지 비운다. 비우는 사이에 DB 가 멈춰 있으면 남은 묶음은 빠진다. 프로세스가 강제로 죽으면 큐에 있던 행이 빠진다.
+
+| 지표 | 세는 것 |
+|---|---|
+| `adserving_impression_queue_size` | 큐에 남은 행 수 |
+| `adserving_impression_dropped_total` | 큐가 차서 버린 노출 수 |
+| `adserving_impression_write_failed_total` | 실패해 다시 쓴 묶음 수 |
+| `adserving_impression_write_lost_total` | 서버가 내려가며 끝내 쓰지 못한 행 수 |
 
 ### 롤백 안 되는 효과: 커밋 뒤의 유효 노출 수 카운터와 당일 이력
 
