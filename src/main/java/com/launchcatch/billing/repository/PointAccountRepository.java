@@ -20,7 +20,7 @@ public interface PointAccountRepository extends JpaRepository<PointAccount, Long
      *
      * 중복은 값을 바꾸지 않는 갱신(ON DUPLICATE KEY UPDATE owner_id = owner_id)으로 흡수한다. 예외가 나지 않으므로
      * 부른 트랜잭션이 롤백 표시가 되지 않는다. INSERT IGNORE 는 쓰지 않는다. 중복뿐 아니라 CHECK 와 NOT NULL
-     * 위반까지 경고로 낮추고 행을 조용히 버린다(구현 계획 D-5).
+     * 위반까지 경고로 낮추고 행을 조용히 버린다.
      *
      * 영향받은 행 수는 새로 만들면 1, 이미 있으면 0 이다.
      */

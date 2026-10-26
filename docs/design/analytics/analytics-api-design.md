@@ -145,11 +145,11 @@ A-09와 A-10의 `from`, `to`는 필수이고 기간은 최대 31일이다. A-10�
 
 `daily_member_usage`는 영업일과 회원별 찜 수, 사용 수, 확정 할인액을 저장한다. 사용 수와 확정 할인액은 유실 가능한 퍼널 이벤트가 아니라 `CouponStatsQueryService`가 반환한 쿠폰 확정 기록으로 계산한다. 찜 수는 analytics의 `event_log`에서 계산한다.
 
-A-12 설계는 회원의 모든 일별 행을 합산한다. `daily_member_usage`는 13개월 삭제 대상에서 제외하고 탈퇴 회원 행도 유지한다. 탈퇴 회원의 행은 지우지 않는다(AD-21 폐기). 회원 도메인이 탈퇴 회원 ID 목록을 내주지 않고 요구사항에 삭제 규칙이 없으며, 탈퇴 회원은 로그인하지 못해 A-12를 볼 수 없다.
+A-12 설계는 회원의 모든 일별 행을 합산한다. `daily_member_usage`는 13개월 삭제 대상에서 제외하고 탈퇴 회원 행도 유지한다. 탈퇴 회원의 행은 지우지 않는다. 회원 도메인이 탈퇴 회원 ID 목록을 내주지 않고 요구사항에 삭제 규칙이 없으며, 탈퇴 회원은 로그인하지 못해 A-12를 볼 수 없다.
 
 `MemberUsageStep`(`@Order(700)`)이 `CouponStatsQueryService.dailyMemberStats`의 `usedCount`와 `discountAmount`, `event_log`의 그날 `wish` 행 수를 `member_id`로 합쳐 `daily_member_usage`에 회원마다 한 행을 쓴다. 사용도 찜도 없는 회원은 행이 없다. 다시 집계하면 그날 행을 지우고 넣는다.
 
-A-12(`MemberUsageStatsQueryService`)는 본인의 `daily_member_usage` 전체 행을 날짜 범위 없이 합산하고 행이 없으면 세 값을 `0`으로 내린다. 자기 집계 표만 읽고 다른 도메인을 부르지 않는다. 가게 상세에서 한 찜은 `event_log`에 들어가지 않아 피드 카드의 찜만 센다(AD-31).
+A-12(`MemberUsageStatsQueryService`)는 본인의 `daily_member_usage` 전체 행을 날짜 범위 없이 합산하고 행이 없으면 세 값을 `0`으로 내린다. 자기 집계 표만 읽고 다른 도메인을 부르지 않는다. 가게 상세에서 한 찜은 `event_log`에 들어가지 않아 피드 카드의 찜만 센다.
 
 ## 9. 캠페인 리포트
 
@@ -161,9 +161,9 @@ A-12(`MemberUsageStatsQueryService`)는 본인의 `daily_member_usage` 전체 �
 | 과금액, 정정액, 소진액 | `BillingStatsQueryService.ledgerSums`의 캠페인별 `DEDUCT` 합(부호를 뒤집는다)과 양수 `ADJUST` 합. 소진액은 `SpendFormula`로 계산하고 음수를 허용한다 |
 | 과금 노출, 미과금 사유 셋 | `BillingStatsQueryService.billingCounts`(`BILLED`, `NOT_BILLED_BUDGET`, `NOT_BILLED_PAUSED`, `NOT_BILLED_NO_PLAN`) |
 | 쿠폰 소진 뒤 노출, 무효 사유, 시간대, 슬롯 | `AdservingStatsQueryService.campaignStats` |
-| 찜 | analytics 자기 `event_log`의 그날 `wish` 행 수. 계약의 `wishCount`는 31일이 지나면 0이라 쓰지 않는다(AD-31, 퍼널과 같다) |
+| 찜 | analytics 자기 `event_log`의 그날 `wish` 행 수. 계약의 `wishCount`는 31일이 지나면 0이라 쓰지 않는다(퍼널과 같다) |
 | 발급, 사용 | `CouponStatsQueryService.dailyCampaignStats` |
-| 점주와 가게 | `CampaignQueryService.findAllById`로 읽어 행에 저장한다(#426, AD-28). 조회는 이 값으로 소유를 확인한다 |
+| 점주와 가게 | `CampaignQueryService.findAllById`로 읽어 행에 저장한다(#426). 조회는 이 값으로 소유를 확인한다 |
 
 * 대상 캠페인은 위 원천 중 하나라도 그날 값이 있는 캠페인이다. 없는 원천은 0으로 채운다.
 * `findAllById`가 돌려주지 않은 캠페인 ID는 행을 만들지 않는다. 무효 노출(`EXPIRED_OR_UNKNOWN`)은 요청이 보낸 캠페인 ID라 없는 캠페인일 수 있고, 점주를 모르는 행은 어느 점주에게도 보이지 않는다.
@@ -200,6 +200,8 @@ A-12(`MemberUsageStatsQueryService`)는 본인의 `daily_member_usage` 전체 �
 
 리포트 행의 `owner_id`로 소유를 확인한다(#394). 기간에 집계 행이 있고 소유 점주가 다르면 `403`, 집계 행이 없으면 빈 `items`다. 점주 일별 리포트는 요청에 캠페인 ID를 받지 않고 로그인한 점주의 모든 행만 읽는다. 이벤트 로그 기반 캠페인 성과는 별도 API이며 캠페인 contract로 소유권을 확인한다.
 
+정정이 가리키는 원래 영업일은 `SettlementMetricsStep`이 미처리 목록에 남긴다. 다음 실행에서 `CampaignReportStep`이 그 날짜의 리포트 값을 다시 쓰고, 정정액이 바뀌었으면 `OVERCHARGE_REVERSAL` 이력을 남긴다.
+
 주와 월 응답은 건수와 금액을 합산한다. `budgetSpendRate`와 `costPerVisit`은 합산 값으로 다시 계산한다. `impressionUnitCost`는 주와 월 응답에서 `null`이다. 기간 안 마지막 확정 시각을 사용하고 하루라도 변경 이력이 있으면 변경됨으로 표시한다.
 
 ## 10. V2 저장 구조
@@ -218,7 +220,7 @@ A-12(`MemberUsageStatsQueryService`)는 본인의 `daily_member_usage` 전체 �
 
 `aggregation_pending_date.reason`은 `FAILED`, `SOURCE_NOT_READY`, `RERUN_UNAVAILABLE`, `ADJUSTED`만 허용한다.
 
-`issue_id`는 새 쿠폰 식별자의 양쪽 쓰기와 읽기 전환이 끝날 때까지 유지한다. 기존 V1 행과 새 식별자를 사용하는 행을 함께 허용하고 후속 마이그레이션에서 제거한다.
+`issue_id`는 새 쿠폰 식별자의 양쪽 쓰기와 읽기 전환이 끝날 때까지 유지한다. 기존 V1 행과 새 식별자를 사용하는 행을 함께 허용한다.
 
 V2는 `campaign_daily_report.owner_id`와 `store_id`를 nullable로 추가했다. 기존 행은 `owner_id`가 비어 있을 수 있다. 점주 일별 조회는 로그인한 점주의 `owner_id`로 거르므로 소유 점주가 없는 행을 반환하지 않는다.
 
@@ -241,8 +243,4 @@ V2는 `campaign_daily_report.owner_id`와 `store_id`를 nullable로 추가했다
 
 ## 12. 아직 정하지 못한 것
 
-| 항목 | 현재 기준 | 막는 작업 |
-|---|---|---|
-| 회원 사용 통계의 보존·탈퇴 처리 | 일별 집계안을 쓴다. 삭제하지 않는다. 팀장·FE 확인(R-18, R-25)이 달라지면 `MemberUsageStep`의 원천과 A-12의 응답 의미를 고친다 | 없음 |
-| 집중 경고의 기간 의미 | 하루라도 경고이고 최고 하루 점유율을 반환한다. 화면 확인이 남았다 | 화면 계약 확정 |
-| 원래 영업일의 정정 반영 | `SettlementMetricsStep`이 정정 대상 날짜를 미처리 목록에 남기고, 다음 실행에서 `CampaignReportStep`이 그 날짜의 리포트 값을 다시 쓰고 정정액이 바뀌었으면 `OVERCHARGE_REVERSAL` 이력을 남긴다 | 없음 |
+없다.

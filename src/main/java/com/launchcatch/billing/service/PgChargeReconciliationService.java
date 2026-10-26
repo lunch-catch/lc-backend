@@ -27,7 +27,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 /*
- * 전일 생성된 결제를 PG 결제 조회로 대사한다(PG_VS_CHARGE, 배치 설계 I-05, 구현 순서 13번).
+ * 전일 생성된 결제를 PG 결제 조회로 대사한다(PG_VS_CHARGE, 배치 설계 I-05).
  * 01:30 전일분 1회만 실행하고, pg_tid 가 있는 결제를 건별로 조회한다. PG 거래 목록 API 는
  * 쓰지 않는다.
  *

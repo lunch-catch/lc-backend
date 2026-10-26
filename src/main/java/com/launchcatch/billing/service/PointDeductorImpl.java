@@ -38,18 +38,8 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
  * 그래서 이번 호출이 새로 판정했으면 롤백 직후 그 판정을 되돌린다(처리 표시 삭제, BILLED 였으면 소진 감소).
  * 되돌리기가 실패하거나 프로세스가 죽으면 소진이 원장보다 큰 채로 그날 끝까지 남고, 다음 날 00:00 대사가 기록한다.
  *
- * 노출을 저장하는 트랜잭션 안에서만 부른다. 밖에서 부르면 Spring 이 바로 예외를 낸다(E-5).
+ * 노출을 저장하는 트랜잭션 안에서만 부른다. 밖에서 부르면 Spring 이 바로 예외를 낸다.
  * 금전 값이라 대체값을 돌려주지 않는다. 실패는 예외이고 노출 저장까지 롤백된다.
- */
-/*
- * TODO(부하 테스트 실행): 측정 도구(v1 하네스, v2 k6)는 아직 없고 측정도 하지 않았다. 프로젝트가 어느 정도 완성된 뒤
- *   별도 작업으로 도구를 만들고 "노출 차감 부하 테스트.md" 순서대로 실행해 결과를 문서에 남긴다
- *   (billing-구현-계획.md 5.2의 Todo, 이슈 #193 작업 8). 그 전까지 아래 TODO(성능 측정)의 값과 개선 후보는 가정이다.
- *
- * TODO(성능 측정): 이 클래스가 노출 차감 부하 테스트의 측정 대상이다. 초당 1만 건(NFR-014)에 못 미치면
- *   "노출 차감 성능 개선 선택지.md" 4장 순서대로 이 클래스와 아래 저장소, 스크립트, 스키마를 바꾸고
- *   ./gradlew perfTest 로 전후를 비교한다. 하네스는 PointDeductor 만 부르므로 바꾸지 않는다.
- *   하네스를 같이 고쳐야 하는 경우(0단계 구간 분해, 명세를 바꾸는 4단계)는 "노출 차감 부하 테스트.md" 2.4절.
  */
 @Slf4j
 @Service
@@ -78,10 +68,6 @@ public class PointDeductorImpl implements PointDeductor {
         }
         PlanSnapshot plan = found.get();
 
-        /*
-         * TODO(성능 측정): Valkey 왕복 1회(측정 0-a). 0-a 만으로 1만 건이 안 나오면 DB 개선은 소용없다.
-         * Lua 내용과 커넥션 설정을 먼저 본다.
-         */
         DeductOutcome outcome = spendCounter.deduct(businessDate, campaignId, serveId, plan.unitPrice());
         if (outcome.isHashMissing()) {
             rebuildService.rebuildIfAbsent(businessDate, campaignId);
@@ -97,12 +83,6 @@ public class PointDeductorImpl implements PointDeductor {
         }
         LocalDateTime now = LocalDateTime.now(clock);
 
-        // TODO: 노출당 INSERT 2건(deduction_result, point_ledger)이 초당 1만 건을 못 버티면 "노출 차감 성능 개선 선택지.md"를 보고 개선한다
-        /*
-         * TODO(성능 측정): INSERT 1/2(측정 0-b, 0-b'). 바꿀 후보: A serveId v7(광고 서빙 발급),
-         * C-1 기본 키를 serve_id 로(마이그레이션), B-1 두 INSERT 를 한 요청으로(차감 전용 데이터소스),
-         * B-2 BILLED 면 이 INSERT 생략(명세 변경, 4단계)
-         */
         int inserted = deductionResultRepository.insertIfAbsent(
                 serveId, campaignId, plan.ownerId(), businessDate, status, plan.unitPrice(), now);
         if (inserted != 1) {
@@ -110,11 +90,6 @@ public class PointDeductorImpl implements PointDeductor {
         }
 
         if (status == DeductionStatus.BILLED) {
-            /*
-             * TODO(성능 측정): INSERT 2/2. 바꿀 후보: C-2 DEDUCT 가 쓰지 않는 원장 조회 인덱스 점검(마이그레이션),
-             * B-1 위와 같음, F 분 단위 묶음 행(명세 변경, 4단계).
-             * 커밋 비용(fsync)이 병목이면 이 자리가 아니라 E-1 커넥션 풀 설정을 본다
-             */
             ledgerRepository.insertDeductIfAbsent(plan.ownerId(), campaignId, serveId, -plan.unitPrice(), now);
         }
         return status;

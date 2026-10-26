@@ -119,7 +119,7 @@ PG 서버가 호출한다. `/v1/` 접두사가 없는 것은 서버 대 서버 �
 
 1. 점주 계정 행을 먼저 잠근다. 행이 없으면 생성한다. 양수 조정도 같은 잠금을 사용한다.
 2. 같은 `(owner_id, idempotency_key)`를 찾는다. 금액·캠페인·정정 대상 영업일·사유가 같으면 기존 결과를 돌려준다. `mismatchId`는 원장에 저장하지 않아 재요청 비교에서 제외한다.
-3. 새 요청에 `mismatchId`가 있으면 미해결 여부와 점주 소유를 확인한다. 캠페인 대상 대사 건은 캠페인 ID와 영업일도 요청과 같아야 한다. 결제 대상은 `payment`를 잠그지 않고 읽는다.
+3. 새 요청에 `mismatchId`가 있으면 미해결 여부와 점주 소유를 확인한다. 사람이 돈을 움직이는 경로라 잘못 닫힌 대사 건을 되돌릴 방법이 없기 때문이다. 캠페인 대상 대사 건은 캠페인 ID와 영업일도 요청과 같아야 한다. 결제 대상은 `payment`를 잠그지 않고 읽는다.
 4. 음수 조정은 잔액이 음수가 되지 않는지 확인한다. `ADJUST`를 `MANUAL`로 기록한다.
 5. 대사 건을 닫는 경우 `resolution_type IS NULL` 조건으로 갱신한다. 영향 행이 없으면 원장까지 롤백한다. `POINT_ADJUST` 감사 로그도 같은 트랜잭션에 쓴다.
 
@@ -131,7 +131,7 @@ PG 서버가 호출한다. `/v1/` 접두사가 없는 것은 서버 대 서버 �
 
 같은 `(checkType, targetId, businessDate)`를 다시 탐지하면 새 행을 만들지 않고 기존 행을 갱신한다. `UNIQUE(check_type, target_id, business_date)` 때문에 upsert로 구현한다. `businessDate`와 이 UNIQUE는 `V2__billing_pause_mismatch_date_and_indexes.sql`로 들어갔다.
 
-`SettlementMismatchQueryService`는 대사 대상 영업일과 유형·해결 여부로 조회한다. 정렬은 `createdAt` 또는 `businessDate`에 ID를 보조 키로 붙인다. 전체 건수를 제공하는 페이지 번호 방식을 유지한다. 실제 체크 유형은 V5가 추가한 `CAMPAIGN_OVERSPEND`까지 세 종류다.
+`SettlementMismatchQueryService`는 대사 대상 영업일과 유형·해결 여부로 조회한다. 정렬은 `createdAt` 또는 `businessDate`에 ID를 보조 키로 붙인다. 전체 건수를 제공하는 페이지 번호 방식을 유지한다. 관리자 표 목록이고, 전체 건수(`totalElements`)를 매출 현황의 불일치 건수로 쓰기 때문이다. 정책 이력도 관리자 표 목록이라 페이지 번호 방식이다. 실제 체크 유형은 V5가 추가한 `CAMPAIGN_OVERSPEND`까지 세 종류다.
 
 `ownerId`는 테이블에 두지 않고 조회할 때 채운다. 한 페이지의 결제 ID는 `payment`에서, 캠페인 ID는 `CampaignQueryService.findAllById`로 각각 한 번에 읽는다. 포인트 수동 조정이 대사 건의 점주를 확인할 때와 같은 출처라서 목록이 보여 준 점주로 정정하면 BILLING-022가 나지 않는다.
 
@@ -139,7 +139,7 @@ PG 서버가 호출한다. `/v1/` 접두사가 없는 것은 서버 대 서버 �
 
 명세의 `BILLING-030`·`031`·`032`를 `016`·`017`·`018`로 당긴 것은 저장소의 `ErrorCodeCatalogTest`가 접두어마다 번호가 1부터 끊기지 않기를 요구하기 때문이다. 016~029를 비워 둘 수 없다.
 
-## 구현 확인 근거와 남은 확인
+## 구현 확인 근거
 
 | 흐름 | 확인한 구현 |
 |---|---|
@@ -164,4 +164,4 @@ PG 서버가 호출한다. `/v1/` 접두사가 없는 것은 서버 대 서버 �
 | | `PointLedgerRepository` |
 | | `PointPolicyRepository` |
 
-처리 순서와 저장 제약은 코드로 대조했다. PG 승인 유효시간과 멱등 헤더의 제공자 보장, 잠금 힌트의 운영 DB 적용 여부, 부하 목표 달성은 이 대조만으로 확인되지 않는다. 점주 API의 ACTIVE 검사는 별도 PR #488의 범위다.
+처리 순서와 저장 제약은 코드로 대조했다. 점주 API의 ACTIVE 검사는 별도 PR #488의 범위다.

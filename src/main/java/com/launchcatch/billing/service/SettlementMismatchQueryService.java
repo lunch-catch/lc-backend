@@ -29,7 +29,7 @@ import org.springframework.transaction.annotation.Transactional;
  * 관리자의 대사 불일치 목록이다.
  *
  * 관리자 표 목록이라 페이지 번호 방식이다. 전체 건수(totalElements)를 매출 현황의 불일치 건수로 쓰므로
- * 전체 건수를 주지 않는 커서 방식으로 바꿀 수 없다(구현 계획 G-1).
+ * 전체 건수를 주지 않는 커서 방식으로 바꿀 수 없다.
  * 기간은 대사 대상 영업일(KST 날짜) 기준이고 양 끝을 포함한다.
  */
 @Service

@@ -8,7 +8,7 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
 /**
  * 그날 계획 스냅샷 캐시 설정. 키는 {@code billing.plan-snapshot-cache.*} 이다.
  *
- * 값은 근거 없는 임시값이라 보수적으로 두었다. 부하 측정 뒤에 조정한다.
+ * 값은 측정하지 않고 보수적으로 두었다.
  *
  * @param maximumSize      최대 항목 수. 하루에 도는 캠페인 수보다 넉넉하게 둔다
  * @param expireAfterWrite 적재 뒤 만료. 영업일이 키에 들어 있어 하루 안팎이면 충분하다
