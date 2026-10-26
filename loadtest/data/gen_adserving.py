@@ -19,7 +19,7 @@ CHUNK = 1000
 p = argparse.ArgumentParser()
 p.add_argument('--date', required=True, help='측정하는 영업일(YYYY-MM-DD)')
 p.add_argument('--members', type=int, default=5000)
-p.add_argument('--stores', type=int, default=200)
+p.add_argument('--stores', type=int, default=1000)
 p.add_argument('--daily-budget', type=int, default=1_000_000, help='캠페인 하루 예산(포인트). 시험 중 예약액에 닿지 않게 크게 둔다')
 p.add_argument('--seed', type=int, default=997)
 args = p.parse_args()

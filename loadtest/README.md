@@ -1,43 +1,24 @@
 # 부하 시험
 
-부하 생성기가 받아 쓰는 시나리오와 데이터 생성기를 둔다. 부하 생성기를 띄우고 내리는 일은 lc-infra 의 `scripts/loadtest-box.sh` 가 한다.
+부하 생성기가 받아 쓰는 시나리오, 토큰 서명, 데이터 생성기를 둔다. 도메인마다 무엇을 어떤 조건으로 재는지는 그 도메인의 부하 시험 문서가 갖는다.
+
+| 도메인 | 문서 |
+|---|---|
+| 광고 서빙 | [`docs/design/adserving/loadtest/adserving_부하_시험.md`](../docs/design/adserving/loadtest/adserving_부하_시험.md) |
+
+부하 시험 환경을 띄우고 내리는 일은 lc-infra 가 갖는다(`docs/wiki/팀원-부하시험-환경.md`, `scripts/member-env.sh`).
+
+## 디렉터리
 
 | 경로 | 하는 일 |
 |---|---|
-| `lib/token.js` | 회원과 관리자의 Access Token 을 `JWT_SECRET` 으로 서명한다 |
-| `data/gen_adserving.py` | 광고 서빙 시험의 원천 데이터 SQL 을 만든다. 회원, 점주, 가게, 캠페인, 충전과 그날 실패로 둔 00:00 묶음이다 |
-| `adserving/prepare.js` | 관리자 재실행 API 로 그날 00:00 묶음을 다시 돌려 예약과 그날 후보를 만든다 |
-| `adserving/feed_impression.js` | 피드를 받고 받은 카드마다 노출을 보낸다 |
+| `lib/` | 여러 도메인이 함께 쓰는 것. `token.js` 가 회원과 관리자의 Access Token 을 `JWT_SECRET` 으로 서명한다 |
+| `data/` | 도메인마다 시험 데이터 SQL 을 만드는 생성기 |
+| `{도메인}/` | 그 도메인의 k6 시나리오 |
+| `aws/` | lc-infra 로 띄운 환경에서 데이터 넣기, 회차 실행, 지표 모으기를 돌리는 스크립트 |
 
-## 광고 서빙 시험 돌리기
+## 공통 규칙
 
-앱은 `loadtest` 프로필로 띄운다. 결제가 토스 대신 목을 쓴다. `CDN_BASE_URL` 이 비어 있으면 그날 후보 적재가 실패한다. 로컬에서는 아무 값이나 준다.
-
-```bash
-D=2026-10-27
-python3 loadtest/data/gen_adserving.py --date $D --members 30000 --stores 200 > build/loadtest-adserving.sql
-mysql -h <DB 호스트> -u <사용자> -p <스키마> < build/loadtest-adserving.sql
-
-k6 run -e BASE_URL=<앱 주소> -e JWT_SECRET=<앱과 같은 값> -e BUSINESS_DATE=$D loadtest/adserving/prepare.js
-k6 run -e BASE_URL=<앱 주소> -e JWT_SECRET=<앱과 같은 값> -e FEED_RATE=500 -e DURATION=5m \
-       --summary-export build/loadtest-summary.json loadtest/adserving/feed_impression.js
-```
-
-- 생성기는 3,000만 대역의 행과 그날 배치 기록을 지우고 다시 넣는다. 부하 시험 DB 와 로컬에만 넣는다.
-- 그날 배치 기록을 지우므로 `--date` 는 시험하는 날이다. 앱이 판단하는 영업일(Asia/Seoul)과 같아야 한다.
-- 한 회원은 60초에 피드를 6번까지 받는다. `MEMBERS` 는 `FEED_RATE` x 10 보다 크게 둔다.
-- 같은 캠페인은 한 세션에 한 번만 나온다. 가게 200개면 회원 한 명이 카드 10장을 받는 피드는 20번이다. 램프업 1분과 유지 5분이면 피드 약 16.5만 건이라 `MEMBERS` 는 7,500 보다 커야 끝까지 카드 10장을 받는다.
-- 노출 횟수는 그날 내내 남는다. 같은 날 회차를 거듭하면 `MEMBER_BASE` 를 `MEMBERS` 만큼 옮겨 처음 보는 회원을 쓴다. 회원 3만 명이면 1만 명씩 세 회차다.
-- 노출 요청 수는 피드 요청 수 x 카드 수(최대 10)다.
-
-| 변수 | 기본값 | 뜻 |
-|---|---|---|
-| `FEED_RATE` | 500 | 초당 피드 요청 수 |
-| `RAMP_UP_SECONDS` | 60 | 초당 0건에서 `FEED_RATE` 까지 올리는 시간. 이 구간은 결과에서 뺀다 |
-| `DURATION` | 5m | `FEED_RATE` 를 유지하는 시간. 결과는 이 구간(`phase:hold`)만 센다 |
-| `MEMBERS` | 10000 | 한 회차가 돌려 쓰는 회원 수 |
-| `MEMBER_BASE` | 30000001 | 첫 회원 번호 |
-
-## 결과를 남기는 곳
-
-버전을 비교하려면 측정한 커밋과 조건을 함께 남긴다. 결과는 `docs/troubleshooting/{도메인}/` 에 버전마다 두고, 비교할 지표는 그 도메인의 설계서가 갖는다. 광고 서빙은 [요청 중 쓰기 설계](../docs/design/adserving/adserving_요청_중_쓰기_설계.md)의 "버전을 비교하는 지표" 다.
+- 앱은 `loadtest` 프로필로 띄운다. 결제가 토스 대신 목을 쓴다.
+- 생성기의 SQL 은 부하 시험 DB 와 로컬에만 넣는다. 정해진 번호 대역의 행과 그날 배치 기록을 지우고 다시 넣는다.
+- 버전을 비교하려면 측정한 커밋과 조건을 함께 남긴다. 결과는 `docs/troubleshooting/{도메인}/` 에 버전마다 둔다.

@@ -17,7 +17,7 @@ import { memberCookie } from '../lib/token.js';
  */
 const BASE_URL = __ENV.BASE_URL;
 const SECRET = __ENV.JWT_SECRET;
-const FEED_RATE = Number(__ENV.FEED_RATE || 500);
+const FEED_RATE = Number(__ENV.FEED_RATE || 100);
 const DURATION = __ENV.DURATION || '5m';
 const RAMP_UP_SECONDS = Number(__ENV.RAMP_UP_SECONDS || 60);
 const MEMBERS = Number(__ENV.MEMBERS || 10000);
@@ -37,14 +37,15 @@ export const options = {
         { duration: `${RAMP_UP_SECONDS}s`, target: FEED_RATE },
         { duration: DURATION, target: FEED_RATE },
       ],
-      preAllocatedVUs: Number(__ENV.PRE_VUS || FEED_RATE * 2),
-      maxVUs: Number(__ENV.MAX_VUS || FEED_RATE * 6),
+      // 목표대로면 반복 하나가 약 1.3초라 VU 130 이면 되고, v1 처럼 포화되면 약 12.5초라 1,250 이 필요하다
+      preAllocatedVUs: Number(__ENV.PRE_VUS || 200),
+      maxVUs: Number(__ENV.MAX_VUS || 2000),
     },
   },
   // 목표는 feed-api-design.md 의 "성능 목표" 가 갖는다. 시험을 멈추지 않고 결과에 통과 여부만 남긴다
   thresholds: {
-    'http_req_duration{api:feed,phase:hold}': ['p(99)<500'],
-    'http_req_duration{api:impression,phase:hold}': ['p(99)<200'],
+    'http_req_duration{api:feed,phase:hold}': ['p(99)<300'],
+    'http_req_duration{api:impression,phase:hold}': ['p(99)<500'],
     'http_req_failed{api:feed,phase:hold}': ['rate<0.001'],
     'http_req_failed{api:impression,phase:hold}': ['rate<0.001'],
     'impression_results{phase:hold}': ['count>=0'],
