@@ -56,18 +56,18 @@ Spring Batch는 사용하지 않는다. 각 단계는 평범한 서비스이고 
 
 ### 단계 구성
 
-| 단계 | 산출 테이블 | 원천 | 현재 구현 |
+| 단계 | 산출 테이블 | 원천 | 순서 |
 |---|---|---|---|
-| `SettlementMetricsStep` | `daily_settlement_analytics` | `BillingStatsQueryService` | 구현됨, 순서 100 |
-| `MemberMetricsStep` | `daily_member_analytics` | `MemberStatsQueryService`, `event_log` | 구현됨, 순서 200 |
-| `StoreMetricsStep` | `daily_store_analytics` | `StoreStatsQueryService`, `CampaignStatsQueryService` | 구현됨, 순서 300 |
-| `FunnelMetricsStep` | `daily_funnel_analytics` | 광고 서빙·쿠폰 집계 조회, `event_log` | 구현됨, 순서 400 |
-| `InvalidMetricsStep` | `daily_invalid_analytics` | `AdservingStatsQueryService` | 구현됨, 순서 500 |
-| `NotBilledMetricsStep` | `daily_campaign_not_billed_analytics` | 정산·광고 서빙 집계 조회 | 구현됨, 순서 510 |
-| `FraudMetricsStep` | `daily_campaign_fraud_analytics` | `AdservingStatsQueryService` | 구현됨, 순서 520 |
-| `CampaignReportStep` | `campaign_daily_report`, 사유·시간대·슬롯, `campaign_daily_report_history` | 정산·광고 서빙·쿠폰 집계 조회, `event_log`, `CampaignQueryService.findAllById` | 구현됨, 순서 600 |
-| `MemberUsageStep` | `daily_member_usage` | `CouponStatsQueryService.dailyMemberStats`, `event_log` | 구현됨, 순서 700 |
-| `SettlementConsistencyStep` | 지표와 구조화 로그 | 정산 집계 조회와 공개한 매출 행 | 구현됨, 순서 900 |
+| `SettlementMetricsStep` | `daily_settlement_analytics` | `BillingStatsQueryService` | 100 |
+| `MemberMetricsStep` | `daily_member_analytics` | `MemberStatsQueryService`, `event_log` | 200 |
+| `StoreMetricsStep` | `daily_store_analytics` | `StoreStatsQueryService`, `CampaignStatsQueryService` | 300 |
+| `FunnelMetricsStep` | `daily_funnel_analytics` | 광고 서빙·쿠폰 집계 조회, `event_log` | 400 |
+| `InvalidMetricsStep` | `daily_invalid_analytics` | `AdservingStatsQueryService` | 500 |
+| `NotBilledMetricsStep` | `daily_campaign_not_billed_analytics` | 정산·광고 서빙 집계 조회 | 510 |
+| `FraudMetricsStep` | `daily_campaign_fraud_analytics` | `AdservingStatsQueryService` | 520 |
+| `CampaignReportStep` | `campaign_daily_report`, 사유·시간대·슬롯, `campaign_daily_report_history` | 정산·광고 서빙·쿠폰 집계 조회, `event_log`, `CampaignQueryService.findAllById` | 600 |
+| `MemberUsageStep` | `daily_member_usage` | `CouponStatsQueryService.dailyMemberStats`, `event_log` | 700 |
+| `SettlementConsistencyStep` | 지표와 구조화 로그 | 정산 집계 조회와 공개한 매출 행 | 900 |
 
 A-04와 A-08을 구현하지 않으므로 `daily_segment_analytics`와 `daily_owner_spend`를 채우는 단계는 두지 않는다. 두 테이블은 폐기하지 않고 남긴다. A-03의 전용 테이블과 퍼널 단계의 기준은 [API 설계의 퍼널 절](./analytics-api-design.md#퍼널)을 따른다. 캠페인 연결 정보의 원본 설계는 `CampaignQueryService.findAllById`이며 없는 집계 조회 메서드를 전제로 만들지 않는다.
 
@@ -100,12 +100,15 @@ A-04와 A-08을 구현하지 않으므로 `daily_segment_analytics`와 `daily_ow
 
 ### billing 집계 조회의 메서드
 
-billing은 `BillingStatsQueryService`를 공개했고 `SettlementMetricsStep`과 `SettlementConsistencyStep`이 사용한다. 아래 표의 후속 단계는 위 구현 상태를 함께 본다. 귀속 기준과 합계의 정의는 [billing 구조와 동작 설계](../billing/billing_구조와_동작_설계.md#집계-조회의-영업일-귀속)가 소유한다.
+billing은 `BillingStatsQueryService`를 공개했고 `SettlementMetricsStep`과 `SettlementConsistencyStep`이 사용한다. 귀속 기준과 합계의 정의는 [billing 구조와 동작 설계](../billing/billing_구조와_동작_설계.md#집계-조회의-영업일-귀속)가 소유한다.
 
 | 메서드 | 돌려주는 것 | 쓰는 단계 |
 |---|---|---|
-| `ledgerSums(영업일)` | 점주와 캠페인별 `CHARGE`, `RESERVE`, `DEDUCT`, `RELEASE`, `REFUND`와 양수·음수 `ADJUST` 합 | `SettlementMetricsStep`, `SettlementConsistencyStep`, `CampaignReportStep` |
-| `billingCounts(영업일)` | 캠페인별 `BILLED`, `NOT_BILLED_BUDGET`, `NOT_BILLED_PAUSED`, `NOT_BILLED_NO_PLAN` 건수 | `NotBilledMetricsStep`, `CampaignReportStep` |
+| `ledgerSums(영업일)` | 점주와 캠페인별 `CHARGE`, `RESERVE`, `DEDUCT`, `RELEASE`, `REFUND`와 양수·음수 `ADJUST` 합 | `CampaignReportStep` |
+| | | `SettlementConsistencyStep` |
+| | | `SettlementMetricsStep` |
+| `billingCounts(영업일)` | 캠페인별 `BILLED`, `NOT_BILLED_BUDGET`, `NOT_BILLED_PAUSED`, `NOT_BILLED_NO_PLAN` 건수 | `CampaignReportStep` |
+| | | `NotBilledMetricsStep` |
 | `dailyBudgets(영업일)` | 캠페인별 그날 적용 하루 예산과 단가 | `CampaignReportStep` |
 | `dailyTotals(영업일)` | 그날 말 미소진 잔액, 원장 대조용 합계, 원장 불일치 건수 | `SettlementMetricsStep`은 미소진 잔액을 쓴다. 나머지 필드는 현재 단계에서 검증에 사용하지 않으며 A-07 응답에도 없다 |
 | `correctionTargetDates(기록 영업일)` | 그날 기록된 양수 `ADJUST`가 가리키는 정정 대상 영업일 | 재집계 대상 찾기 |

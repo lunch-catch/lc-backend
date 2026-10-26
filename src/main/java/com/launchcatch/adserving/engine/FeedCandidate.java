@@ -3,6 +3,7 @@ package com.launchcatch.adserving.engine;
 import com.launchcatch.adserving.engine.entity.DiscountTarget;
 import com.launchcatch.adserving.engine.entity.DiscountType;
 import com.launchcatch.adserving.engine.entity.TargetGender;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.Set;
@@ -24,6 +25,8 @@ public record FeedCandidate(
         LocalTime usableStartTime,
         LocalTime usableEndTime,
         int issueQuantity,
-        LocalDateTime campaignCreatedAt
+        LocalDateTime campaignCreatedAt,
+        // 신규 우선 노출의 마지막 날이고 null 이면 대상이 아니다(FR-093)
+        LocalDate newPriorityUntil
 ) {
 }

@@ -24,8 +24,9 @@ public interface ImpressionLogRepository extends JpaRepository<ImpressionLog, Im
     Optional<ImpressionLog> findByIdForShare(@Param("id") ImpressionLogId id);
 
     /*
-     * 하루 노출을 캠페인별로 한 번 훑어 판정, 사유, 슬롯을 함께 센다. 같은 행들에서 세어 축끼리의 합이 맞는다.
-     * 시간대는 24칸이라 countValidByCampaignAndHourOn 이 따로 센다. 집계 조회가 한 읽기 전용 트랜잭션에서 둘을 불러 같은 스냅샷을 본다.
+     * 하루 노출을 캠페인별로 한 번 훑어 판정과 사유를 함께 센다. 같은 행들에서 세어 축끼리의 합이 맞는다.
+     * 시간대(24칸)는 countValidByCampaignAndHourOn 이, 수가 정해지지 않은 슬롯 이름표는 countValidByCampaignAndSlotOn 이 따로 센다.
+     * 집계 조회가 한 읽기 전용 트랜잭션에서 셋을 불러 같은 스냅샷을 본다.
      * idx_imp_date_reason 의 앞 열로 그날 행만 읽는다.
      */
     @Query(value = """
@@ -33,15 +34,28 @@ public interface ImpressionLogRepository extends JpaRepository<ImpressionLog, Im
                    SUM(CASE WHEN validity = 'VALID' THEN 1 ELSE 0 END) AS validCount,
                    SUM(CASE WHEN validity = 'VALID' AND sold_out THEN 1 ELSE 0 END) AS soldOutCount,
                    SUM(CASE WHEN invalid_reason = 'EXPIRED_OR_UNKNOWN' THEN 1 ELSE 0 END) AS expiredOrUnknownCount,
-                   SUM(CASE WHEN invalid_reason = 'NOT_OWNER' THEN 1 ELSE 0 END) AS notOwnerCount,
-                   SUM(CASE WHEN validity = 'VALID' AND slot_type = 'ALLOCATION' THEN 1 ELSE 0 END) AS allocationCount,
-                   SUM(CASE WHEN validity = 'VALID' AND slot_type = 'RELEVANCE' THEN 1 ELSE 0 END) AS relevanceCount
+                   SUM(CASE WHEN invalid_reason = 'NOT_OWNER' THEN 1 ELSE 0 END) AS notOwnerCount
               FROM impression_log
              WHERE business_date = :businessDate
              GROUP BY campaign_id
              ORDER BY campaign_id
             """, nativeQuery = true)
     List<CampaignCounts> countByCampaignOn(@Param("businessDate") LocalDate businessDate);
+
+    /*
+     * 그날 유효 노출을 캠페인과 슬롯 이름표로 묶어 센다. 이름표를 알지 않고 남은 값 그대로 센다(#978).
+     * 유효 노출은 serve 기록에서 슬롯을 옮겨 적어 이름표가 비지 않는다.
+     */
+    @Query(value = """
+            SELECT campaign_id AS campaignId,
+                   slot_type AS slotType,
+                   COUNT(*) AS validCount
+              FROM impression_log
+             WHERE business_date = :businessDate
+               AND validity = 'VALID'
+             GROUP BY campaign_id, slot_type
+            """, nativeQuery = true)
+    List<SlotCounts> countValidByCampaignAndSlotOn(@Param("businessDate") LocalDate businessDate);
 
     /*
      * 그날 유효 노출을 캠페인과 받은 시각(created_at)의 시로 묶어 센다. 노출이 없는 시는 행이 없다.
@@ -101,8 +115,12 @@ public interface ImpressionLogRepository extends JpaRepository<ImpressionLog, Im
         long getSoldOutCount();
         long getExpiredOrUnknownCount();
         long getNotOwnerCount();
-        long getAllocationCount();
-        long getRelevanceCount();
+    }
+
+    interface SlotCounts {
+        long getCampaignId();
+        String getSlotType();
+        long getValidCount();
     }
 
     interface HourlyCounts {

@@ -9,6 +9,7 @@ import com.launchcatch.adserving.feed.repository.SwipeLogRepository;
 import com.launchcatch.adserving.impression.repository.ImpressionLogRepository;
 import com.launchcatch.adserving.impression.repository.ImpressionLogRepository.CampaignCounts;
 import com.launchcatch.adserving.impression.repository.ImpressionLogRepository.HourlyCounts;
+import com.launchcatch.adserving.impression.repository.ImpressionLogRepository.SlotCounts;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -42,6 +43,10 @@ public class AdservingStatsQueryServiceImpl implements AdservingStatsQueryServic
         for (HourlyCounts h : impressionLogRepository.countValidByCampaignAndHourOn(businessDate)) {
             hourly.computeIfAbsent(h.getCampaignId(), id -> emptyHours())[h.getHour()] = h.getValidCount();
         }
+        Map<Long, Map<String, Long>> slots = new HashMap<>();
+        for (SlotCounts s : impressionLogRepository.countValidByCampaignAndSlotOn(businessDate)) {
+            slots.computeIfAbsent(s.getCampaignId(), id -> new HashMap<>()).put(s.getSlotType(), s.getValidCount());
+        }
         Map<Long, Long> wishes = swipeLogRepository.countWishesByCampaign(businessDate).stream()
                 .collect(Collectors.toMap(CampaignWishCount::campaignId, CampaignWishCount::count));
 
@@ -53,10 +58,10 @@ public class AdservingStatsQueryServiceImpl implements AdservingStatsQueryServic
             CampaignCounts c = impressions.get(campaignId);
             List<Long> hourlyCounts = List.of(hourly.getOrDefault(campaignId, emptyHours()));
             result.add(c == null
-                    ? new CampaignImpressionStats(campaignId, 0, 0, 0, 0, hourlyCounts, 0, 0, wishCount)
+                    ? new CampaignImpressionStats(campaignId, 0, 0, 0, 0, hourlyCounts, Map.of(), wishCount)
                     : new CampaignImpressionStats(campaignId, c.getValidCount(), c.getSoldOutCount(),
                             c.getExpiredOrUnknownCount(), c.getNotOwnerCount(), hourlyCounts,
-                            c.getAllocationCount(), c.getRelevanceCount(), wishCount));
+                            slots.getOrDefault(campaignId, Map.of()), wishCount));
         }
         return result;
     }

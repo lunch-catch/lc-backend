@@ -10,7 +10,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
-import com.launchcatch.adserving.engine.SlotType;
+import com.launchcatch.adserving.engine.SlotLabels;
 import com.launchcatch.adserving.feed.repository.FeedVisitRepository;
 import com.launchcatch.adserving.feed.repository.FeedVisitRepository.Visit;
 import com.launchcatch.adserving.feed.repository.ServeLogRepository;
@@ -49,9 +49,10 @@ class ServeLogBufferTest {
 
     private static ServedFeed feedWithCards(long memberId, int cards) {
         List<ServeRecord> records = IntStream.rangeClosed(1, cards)
-                .mapToObj(i -> new ServeRecord(UUID.randomUUID(), memberId, 100L + i, 55L, SlotType.RELEVANCE, i, NOW))
+                .mapToObj(i -> new ServeRecord(UUID.randomUUID(), memberId, 100L + i, 55L, SlotLabels.RELEVANCE, i, NOW))
                 .toList();
-        return new ServedFeed(TODAY, memberId, cards == 0 ? null : UUID.randomUUID(), 37.5, 127.0, records, REQUESTED_AT);
+        List<ServedCard> served = records.stream().map(r -> new ServedCard(r, 0.5, 0.7)).toList();
+        return new ServedFeed(TODAY, memberId, cards == 0 ? null : UUID.randomUUID(), 37.5, 127.0, served, "2", REQUESTED_AT);
     }
 
     @SuppressWarnings("unchecked")
@@ -68,10 +69,14 @@ class ServeLogBufferTest {
 
         assertThat(buffer.flushOnce()).isTrue();
 
-        assertThat(writtenRows()).extracting(Row::record).containsExactlyElementsOf(feed.cards());
+        assertThat(writtenRows()).extracting(Row::record)
+                .containsExactlyElementsOf(feed.cards().stream().map(ServedCard::record).toList());
         assertThat(writtenRows()).allSatisfy(r -> {
             assertThat(r.feedId()).isEqualTo(feed.feedId());
             assertThat(r.businessDate()).isEqualTo(TODAY);
+            assertThat(r.progressRate()).isEqualTo(0.5);
+            assertThat(r.relevanceScore()).isEqualTo(0.7);
+            assertThat(r.engineVersion()).isEqualTo("2");
         });
         verify(feedVisitRepository).insertAll(List.of(new Visit(TODAY, 3001L, 37.5, 127.0, REQUESTED_AT)));
     }

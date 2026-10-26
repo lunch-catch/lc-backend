@@ -302,8 +302,14 @@ public class CampaignStatusService {
         };
     }
 
+    // store 가 캠페인의 데이터를 거부하면 00:00 전이가 그 캠페인만 건너뛸 수 있게 StoreSummaryRejectedException 으로 감싼다(#989).
     private void updateStoreSummary(Campaign campaign, LocalDate businessDate) {
-        storeCampaignSummaryUpdater.update(campaign.getStoreId(), campaign.getId(), toSummaryCommand(campaign, businessDate));
+        try {
+            storeCampaignSummaryUpdater.update(
+                    campaign.getStoreId(), campaign.getId(), toSummaryCommand(campaign, businessDate));
+        } catch (IllegalArgumentException e) {
+            throw new StoreSummaryRejectedException(e);
+        }
     }
 
     // 00:00 배치의 일일 요약 준비(#838)도 같은 값을 만들어 쓰도록 패키지 안에 연다.

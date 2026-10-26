@@ -12,6 +12,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.launchcatch.adserving.config.PacingProperties;
+import com.launchcatch.adserving.engine.FeedAssembler;
 import com.launchcatch.adserving.engine.entity.AdCandidate;
 import com.launchcatch.adserving.engine.entity.DiscountTarget;
 import com.launchcatch.adserving.engine.entity.DiscountType;
@@ -33,7 +34,7 @@ import com.launchcatch.adserving.feed.repository.ServeFrequencyRepository.Served
 import com.launchcatch.adserving.feed.repository.ServeRecord;
 import com.launchcatch.adserving.feed.repository.ServeRecordRepository;
 import com.launchcatch.adserving.feed.repository.SwipeLogRepository;
-import com.launchcatch.adserving.engine.SlotType;
+import com.launchcatch.adserving.engine.SlotLabels;
 import org.mockito.ArgumentCaptor;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import com.launchcatch.adserving.feed.repository.FeedRateLimitRepository;
@@ -459,7 +460,7 @@ class FeedServiceTest {
             });
             assertThat(records.getFirst().campaignId()).isEqualTo(response.cards().getFirst().campaignId());
             assertThat(records.getFirst().storeId()).isEqualTo(response.cards().getFirst().storeId());
-            assertThat(records.getFirst().slotType()).isEqualTo(SlotType.ALLOCATION);
+            assertThat(records.getFirst().slotType()).isEqualTo(SlotLabels.ALLOCATION);
         }
 
         @Test
@@ -476,7 +477,13 @@ class FeedServiceTest {
             assertThat(feed.memberId()).isEqualTo(MEMBER_ID);
             assertThat(feed.latitude()).isEqualTo(SAVED_LAT);
             assertThat(feed.longitude()).isEqualTo(SAVED_LNG);
-            assertThat(feed.cards()).isEqualTo(savedRecords());
+            assertThat(feed.cards()).extracting(ServedCard::record).isEqualTo(savedRecords());
+            // 노출이 없어 진행률이 0 인 배정 근거도 함께 넘긴다
+            assertThat(feed.cards()).allSatisfy(c -> {
+                assertThat(c.progressRate()).isZero();
+                assertThat(c.relevanceScore()).isBetween(0.0, 1.0);
+            });
+            assertThat(feed.engineVersion()).isEqualTo(FeedAssembler.ENGINE_VERSION);
             assertThat(meterRegistry.counter(FeedService.SERVED_CARDS_METRIC).count()).isEqualTo(2);
         }
 

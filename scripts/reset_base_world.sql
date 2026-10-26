@@ -218,7 +218,7 @@ SET FOREIGN_KEY_CHECKS = 1;
  * 이력이다. V1 기록은 남긴다.
  * V2 ~ V10 은 버전이 낮은 순서로 다시 돌아야 해서 모두 지운다.
  */
-DELETE FROM flyway_history_base WHERE version IN ('2', '3', '4', '5', '6', '7', '8', '9', '10', '11') OR (version IS NULL AND type = 'SQL');
+DELETE FROM flyway_history_base WHERE version IN ('2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12') OR (version IS NULL AND type = 'SQL');
 
 DROP TEMPORARY TABLE reset_report;
 DROP TEMPORARY TABLE reset_payment;

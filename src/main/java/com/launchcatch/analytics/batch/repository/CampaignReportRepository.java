@@ -164,7 +164,7 @@ public class CampaignReportRepository {
             row.invalidReasons().forEach((reason, count) ->
                     reasons.add(new Object[] {reportId, "INVALID", reason.name(), count, at, at}));
             row.hourlyCounts().forEach((hour, count) -> hourly.add(new Object[] {reportId, hour, count, at, at}));
-            row.slotCounts().forEach((slot, count) -> slots.add(new Object[] {reportId, slot.name(), count, at, at}));
+            row.slotCounts().forEach((slot, count) -> slots.add(new Object[] {reportId, slot, count, at, at}));
         }
         jdbc.batchUpdate(INSERT_REASON, reasons);
         jdbc.batchUpdate(INSERT_HOURLY, hourly);

@@ -103,7 +103,7 @@ GET /v1/feed?latitude=37.4979&longitude=127.0276
 - 피드에서는 찜과 패스만 할 수 있다. 발급 버튼을 두지 않는다
 - `NO_CANDIDATE` 면 빈 피드 안내를 보인다
 - 마지막 카드에 닿았을 때 지금 시각이 `nextFeedAvailableAt` 이후면 바로 다음 피드를 요청한다. 아직 전이면 "N초 후 새 카드"를 보여 주고, 그 시각에 한 번 요청한다
-- 포스터는 `posterUrl` 을 불러 받은 `data.html` 을 `<iframe sandbox srcdoc=...>` 에 그린다. 점주가 만든 HTML이라 앱 화면과 격리한다. 같은 주소는 항상 같은 포스터라 브라우저 캐시를 그대로 쓴다
+- 포스터는 `posterUrl` 을 불러 받은 `data.html` 을 `<iframe sandbox srcdoc=...>` 에 그린다. 점주가 만든 HTML이라 앱 화면과 격리한다. 같은 주소는 항상 같은 포스터다. 포스터 응답이 `Cache-Control: max-age=86400, private, immutable`이라 브라우저가 하루 동안 다시 받지 않으므로 브라우저 캐시를 그대로 쓴다
 
 **요청 제한**
 
@@ -422,8 +422,8 @@ Retry-After: 37
 | `memberId` | integer | 가능 | `found` 가 `false` 면 `null` |
 | `servedAt` | string (시각) | 가능 | 피드를 내려준 시각. `found` 가 `false` 면 `null` |
 | `cards` | array | 아니오 | 카드 구성. `found` 가 `false` 면 빈 배열 |
-| `cards[].slotPosition` | integer | 아니오 | 카드 위치. 1 ~ 10 |
-| `cards[].slotType` | string | 아니오 | `ALLOCATION`(배분 슬롯), `RELEVANCE`(관련성 슬롯) |
+| `cards[].slotPosition` | integer | 아니오 | 카드 위치. 1 부터 센다. 상한은 그 피드의 카드 수다 |
+| `cards[].slotType` | string | 아니오 | 카드를 고른 슬롯의 이름표. 피드 엔진이 정하며 고정된 목록이 아니다. 지금은 `ALLOCATION`(배분 슬롯), `RELEVANCE`(관련성 슬롯) 둘이다. 화면은 모르는 이름표를 받으면 이름표 문자열을 그대로 보인다 |
 | `cards[].campaignId` | integer | 아니오 | 캠페인 ID |
 | `cards[].storeId` | integer | 아니오 | 가게 ID |
 | `cards[].serveId` | string (UUID) | 아니오 | 카드 식별자 |

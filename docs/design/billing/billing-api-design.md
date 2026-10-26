@@ -52,7 +52,7 @@ PG 서버가 호출한다. `/v1/` 접두사가 없는 것은 서버 대 서버 �
 - 처리할 수 없는 요청(모르는 `orderId`, 금액 불일치, 형식 오류)은 다시 보내도 소용없으므로 로그만 남기고 `200`을 돌려준다.
 - PG 조회가 일시적으로 실패했거나 서버 오류가 난 경우에는 `5xx`로 응답해 PG의 재전송에 맡긴다.
 - 확인한 Toss 가이드 기준으로 PG는 10초 안에 `200`을 받아야 하고, 아니면 최대 7회 재전송한다(1·4·16·64·256·1024·4096분 간격). 그래서 PG 조회 호출에는 짧은 타임아웃을 둔다.
-- **2026-10-14:** 같은 `orderId`의 PG 조회가 10초 안에 반복되면 PG를 부르지 않고 `429`를 돌려준다(`WebhookInquiryGuard`). 정상 재전송은 최소 1분 간격이라 걸리지 않는다.
+- 같은 `orderId`의 PG 조회가 10초 안에 반복되면 PG를 부르지 않고 `429`를 돌려준다(`WebhookInquiryGuard`). 정상 재전송은 최소 1분 간격이라 걸리지 않는다.
 - 이미 확정된 결제는 PG를 조회하지 않고 `200`이다.
 
 서버는 알려진 주문의 미확정 결제에 대해서만 PG 조회를 한다. 조회한 주문 번호와 금액이 저장값과 같아야 결과를 적용한다. 요청 본문의 상태는 판정에 사용하지 않는다.
@@ -141,10 +141,25 @@ PG 서버가 호출한다. `/v1/` 접두사가 없는 것은 서버 대 서버 �
 
 | 흐름 | 확인한 구현 |
 |---|---|
-| 주문·승인·상태 기록 | `PaymentOrderService`, `PaymentConfirmationService`, `PaymentResultService`, `TossPaymentGateway` |
-| 웹훅 | `PaymentWebhookService`, `PaymentWebhookController`, `WebhookInquiryGuard` |
-| 환불 | `OwnerRefundService`, `AdminRefundProcessService`, `RefundApprovalRecorder`, `RefundRequestRepository` |
-| 원장·정책·조정 | `AdminPointLedgerService`, `AdminPointSummaryService`, `AdminPointPolicyService`, `PointAdjustmentService`, `PointAdjustmentRecorder` |
-| 저장 제약 | billing의 V1~V6 마이그레이션과 `PointAccountRepository`, `PointLedgerRepository`, `PointPolicyRepository` |
+| 주문·승인·상태 기록 | `PaymentConfirmationService` |
+| | `PaymentOrderService` |
+| | `PaymentResultService` |
+| | `TossPaymentGateway` |
+| 웹훅 | `PaymentWebhookController` |
+| | `PaymentWebhookService` |
+| | `WebhookInquiryGuard` |
+| 환불 | `AdminRefundProcessService` |
+| | `OwnerRefundService` |
+| | `RefundApprovalRecorder` |
+| | `RefundRequestRepository` |
+| 원장·정책·조정 | `AdminPointLedgerService` |
+| | `AdminPointPolicyService` |
+| | `AdminPointSummaryService` |
+| | `PointAdjustmentRecorder` |
+| | `PointAdjustmentService` |
+| 저장 제약 | billing의 V1~V6 마이그레이션 |
+| | `PointAccountRepository` |
+| | `PointLedgerRepository` |
+| | `PointPolicyRepository` |
 
 처리 순서와 저장 제약은 코드로 대조했다. PG 승인 유효시간과 멱등 헤더의 제공자 보장, 잠금 힌트의 운영 DB 적용 여부, 부하 목표 달성은 이 대조만으로 확인되지 않는다. 점주 API의 ACTIVE 검사는 별도 PR #488의 범위다.
