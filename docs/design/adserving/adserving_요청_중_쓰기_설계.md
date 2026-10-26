@@ -157,7 +157,20 @@ v2 에서 노출 요청 하나는 INSERT 1건과 커밋 1번이다. MySQL 은 �
 | 유효 노출 수 카운터 | 빠져도 상한이 늦게 걸릴 뿐이고 `impression_log` 로 다시 센다(#323) |
 | 퍼널 이벤트 | 퍼널은 유실을 허용하고 노출 수는 `impression_log` 로 센다(#349) |
 
-## 7. 아직 정하지 못한 것
+## 7. 버전을 비교하는 지표
+
+버전을 올리기 전에 지금 버전을 재고 올린 뒤에 같은 조건으로 다시 잰다. 시나리오와 데이터는 [`loadtest/`](../../../loadtest/README.md) 의 광고 서빙 시험이 갖는다.
+
+- 측정한 커밋에 `adserving-{쓰기}-v{버전}` 태그를 붙인다. 예를 들어 `adserving-impression-v1`, `adserving-serve-log-v1` 이다. 태그가 있어야 나중에 이전 버전을 다시 띄워 나란히 잴 수 있다.
+- 결과는 `docs/troubleshooting/adserving/` 에 버전마다 둔다. 이 문서는 결과를 담지 않는다.
+- 응답 시간만 비교하지 않는다. 버전을 올린 이유를 확인하는 지표를 함께 본다.
+
+| 쓰기 | 공통 지표 | 버전을 올린 이유를 확인하는 지표 |
+|---|---|---|
+| 노출 수집 | `http_req_duration{api:impression}` 의 p95, p99, 초당 요청 수, 5xx 수 | `hikaricp_connections_pending` 과 `hikaricp_connections_active` 의 최대, MySQL 의 초당 커밋 수(`Com_commit`), 정산이 실패할 때 남은 노출 수. v2 부터는 릴레이의 밀린 행 수와 원장이 노출보다 늦게 남은 시간 |
+| 서빙 로그 | `http_req_duration{api:feed}` 의 p95, p99, 초당 요청 수, 5xx 수 | `adserving_served_cards_total` 과 `serve_log` 건수로 잰 유실률, `adserving_serve_log_dropped_total`, 비정상 종료 때 잃은 행 수 |
+
+## 8. 아직 정하지 못한 것
 
 | 항목 | 정할 때 |
 |---|---|
