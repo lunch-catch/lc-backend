@@ -8,9 +8,12 @@ import com.launchcatch.billing.contract.BudgetQueryService;
 import com.launchcatch.billing.contract.DeductionStatus;
 import com.launchcatch.billing.contract.PointDeductor;
 import com.launchcatch.billing.repository.BudgetDailyPlanRepository;
+import com.launchcatch.global.config.ClockConfig;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.Clock;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -24,10 +27,13 @@ import java.util.concurrent.atomic.AtomicLong;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Import;
+import org.springframework.context.annotation.Primary;
 import org.springframework.data.redis.core.RedisCallback;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.transaction.IllegalTransactionStateException;
 import org.springframework.transaction.support.TransactionTemplate;
 
 /*
@@ -40,6 +46,7 @@ import org.springframework.transaction.support.TransactionTemplate;
  * 커밋을 봐야 하므로 테스트 트랜잭션을 걸지 않고 TransactionTemplate 으로 부른다. 매번 행과 키를 지운다.
  * 그날 계획의 캐시가 테스트 사이에 남으므로 테스트마다 다른 캠페인 ID 를 쓴다.
  */
+@Import(ImpressionDeductionIntegrationTest.TimeConfig.class)
 class ImpressionDeductionIntegrationTest extends AbstractBillingIntegrationTest {
 
     private static final LocalDate DAY = LocalDate.of(2026, 10, 14);
@@ -61,6 +68,7 @@ class ImpressionDeductionIntegrationTest extends AbstractBillingIntegrationTest 
         jdbc.update("delete from point_ledger");
         jdbc.update("delete from deduction_result");
         jdbc.update("delete from budget_daily_plan");
+        jdbc.update("delete from point_account where owner_id = ?", OWNER);
         jdbc.update("delete from campaign where store_id = ?", NO_PLAN_STORE);
         redis.execute((RedisCallback<Object>) connection -> {
             connection.serverCommands().flushAll();
@@ -70,6 +78,11 @@ class ImpressionDeductionIntegrationTest extends AbstractBillingIntegrationTest 
 
     private long plan(long unitsOfBudget, boolean paused) {
         long campaignId = CAMPAIGN_SEQ.incrementAndGet();
+        jdbc.update("""
+                insert into point_account (owner_id, created_at, updated_at)
+                values (?, now(6), now(6))
+                on duplicate key update owner_id = owner_id
+                """, OWNER);
         jdbc.update("""
                 insert into budget_daily_plan
                     (campaign_id, owner_id, business_date, daily_budget, unit_price, paused, created_at, updated_at)
@@ -270,11 +283,12 @@ class ImpressionDeductionIntegrationTest extends AbstractBillingIntegrationTest 
     }
 
     @Test
-    void 트랜잭션_밖에서_부르면_예외다() {
+    void 트랜잭션_밖에서_부르면_정산이_트랜잭션을_시작해_과금을_커밋한다() {
         long campaignId = plan(30, false);
 
-        assertThatThrownBy(() -> deductor.deduct(UUID.randomUUID(), campaignId, DAY))
-                .isInstanceOf(IllegalTransactionStateException.class);
+        assertThat(deductor.deduct(UUID.randomUUID(), campaignId, DAY)).isEqualTo(DeductionStatus.BILLED);
+        assertThat(ledgerDeductSum(campaignId)).isEqualTo(-UNIT);
+        assertThat(rows("deduction_result", campaignId)).isEqualTo(1);
     }
 
     @Test
@@ -370,6 +384,15 @@ class ImpressionDeductionIntegrationTest extends AbstractBillingIntegrationTest 
         } finally {
             release.countDown();
             pool.shutdownNow();
+        }
+    }
+    @TestConfiguration
+    static class TimeConfig {
+
+        @Bean
+        @Primary
+        Clock deductionTestClock() {
+            return Clock.fixed(Instant.parse("2026-10-14T02:30:00Z"), ClockConfig.ZONE);
         }
     }
 }

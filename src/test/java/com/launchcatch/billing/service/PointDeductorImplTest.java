@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -19,6 +20,7 @@ import com.launchcatch.billing.cache.InMemoryDailySpendCounter;
 import com.launchcatch.billing.cache.DeductOutcome;
 import com.launchcatch.billing.repository.DeductionResultRepository;
 import com.launchcatch.billing.repository.PointLedgerRepository;
+import com.launchcatch.billing.repository.PointAccountRepository;
 import com.launchcatch.campaign.contract.CampaignInfo;
 import com.launchcatch.campaign.contract.CampaignQueryService;
 import com.launchcatch.campaign.contract.CampaignStatus;
@@ -32,6 +34,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -67,17 +70,21 @@ class PointDeductorImplTest {
     private CampaignQueryService campaignQuery;
     @Mock
     private PlatformSettingQueryService platformSetting;
+    @Mock
+    private PointAccountRepository accountRepository;
 
     private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
     private PointDeductorImpl deductor;
 
     @BeforeEach
     void setUp() {
-        // 운영에서는 MANDATORY 트랜잭션이 동기화를 켜 둔다. 시험도 같은 상태로 만든다
+        // 운영에서는 REQUIRED 트랜잭션이 동기화를 켜 둔다. 시험도 같은 상태로 만든다
         TransactionSynchronizationManager.initSynchronization();
         deductor = new PointDeductorImpl(snapshotService, rebuildService, spendCounter,
-                deductionResultRepository, ledgerRepository, campaignQuery, platformSetting, CLOCK, meterRegistry);
+                deductionResultRepository, ledgerRepository, campaignQuery, platformSetting, CLOCK, meterRegistry,
+                accountRepository);
         lenient().when(snapshotService.find(DAY, CAMPAIGN_ID)).thenReturn(Optional.of(PLAN));
+        lenient().when(accountRepository.lockForShareByOwnerId(3L)).thenReturn(Optional.of(1L));
         // 기본은 새로 기록된 경우다. 중복은 해당 시험에서 0 을 돌려주게 한다
         lenient().when(deductionResultRepository.insertIfAbsent(any(UUID.class), any(), any(), any(),
                 any(DeductionStatus.class), anyLong(), any())).thenReturn(1);
@@ -240,12 +247,103 @@ class PointDeductorImplTest {
     }
 
     @Test
-    void 트랜잭션_안에서만_부를_수_있다() throws NoSuchMethodException {
+    void 트랜잭션이_없으면_새로_시작하고_있으면_참여한다() throws NoSuchMethodException {
         Transactional transactional = PointDeductorImpl.class
                 .getMethod("deduct", UUID.class, Long.class, LocalDate.class)
                 .getAnnotation(Transactional.class);
 
-        assertThat(transactional.propagation()).isEqualTo(Propagation.MANDATORY);
+        assertThat(transactional.propagation()).isEqualTo(Propagation.REQUIRED);
+    }
+
+    @Test
+    void 자정이_지난_전날_노출은_미과금으로_남기고_카운터와_원장은_건드리지_않는다() {
+        LocalDate yesterday = DAY.minusDays(1);
+        when(snapshotService.find(yesterday, CAMPAIGN_ID)).thenReturn(Optional.of(PLAN));
+        lenient().when(spendCounter.deduct(yesterday, CAMPAIGN_ID, SERVE_ID, 10L))
+                .thenReturn(DeductOutcome.of(DeductionStatus.BILLED));
+
+        DeductionStatus status = deductor.deduct(SERVE_ID, CAMPAIGN_ID, yesterday);
+
+        assertThat(status.name()).isEqualTo("NOT_BILLED_CLOSED");
+        verifyNoInteractions(spendCounter, rebuildService, ledgerRepository);
+    }
+
+    @Test
+    void KST_자정_정각부터_전날_노출을_과금하지_않는다() {
+        Clock midnight = Clock.fixed(Instant.parse("2026-10-14T15:00:00Z"), ClockConfig.ZONE);
+
+        DeductionStatus status = deductorAt(midnight).deduct(SERVE_ID, CAMPAIGN_ID, DAY);
+
+        assertThat(status).isEqualTo(DeductionStatus.NOT_BILLED_CLOSED);
+        verify(deductionResultRepository).insertIfAbsent(SERVE_ID, CAMPAIGN_ID, 3L, DAY,
+                DeductionStatus.NOT_BILLED_CLOSED, 10L, DAY.plusDays(1).atStartOfDay());
+        verifyNoInteractions(spendCounter, rebuildService, ledgerRepository);
+    }
+
+    @Test
+    void KST_자정_직전에는_그날_예산으로_과금한다() {
+        Clock beforeMidnight = Clock.fixed(Instant.parse("2026-10-14T14:59:59.999999Z"), ClockConfig.ZONE);
+        when(spendCounter.deduct(DAY, CAMPAIGN_ID, SERVE_ID, 10L))
+                .thenReturn(DeductOutcome.of(DeductionStatus.BILLED));
+
+        assertThat(deductorAt(beforeMidnight).deduct(SERVE_ID, CAMPAIGN_ID, DAY))
+                .isEqualTo(DeductionStatus.BILLED);
+    }
+
+    @Test
+    void 계정_잠금을_기다리는_동안_자정이_지나면_전날_노출을_과금하지_않는다() {
+        AtomicReference<Instant> instant = new AtomicReference<>(Instant.parse("2026-10-14T14:59:59Z"));
+        Clock changingClock = mock(Clock.class);
+        when(changingClock.getZone()).thenReturn(ClockConfig.ZONE);
+        when(changingClock.instant()).thenAnswer(invocation -> instant.get());
+        when(accountRepository.lockForShareByOwnerId(3L)).thenAnswer(invocation -> {
+            instant.set(Instant.parse("2026-10-14T15:00:00Z"));
+            return Optional.of(1L);
+        });
+
+        DeductionStatus status = deductorAt(changingClock).deduct(SERVE_ID, CAMPAIGN_ID, DAY);
+
+        assertThat(status).isEqualTo(DeductionStatus.NOT_BILLED_CLOSED);
+        verifyNoInteractions(spendCounter, rebuildService, ledgerRepository);
+    }
+
+    @Test
+    void 마감_뒤_재호출은_이미_커밋된_과금_판정을_그대로_돌려준다() {
+        LocalDate yesterday = DAY.minusDays(1);
+        when(snapshotService.find(yesterday, CAMPAIGN_ID)).thenReturn(Optional.of(PLAN));
+        when(deductionResultRepository.insertIfAbsent(SERVE_ID, CAMPAIGN_ID, 3L, yesterday,
+                DeductionStatus.NOT_BILLED_CLOSED, 10L, NOW)).thenReturn(2);
+        when(deductionResultRepository.findFirstStatus(SERVE_ID)).thenReturn(Optional.of(DeductionStatus.BILLED));
+
+        assertThat(deductor.deduct(SERVE_ID, CAMPAIGN_ID, yesterday)).isEqualTo(DeductionStatus.BILLED);
+        verifyNoInteractions(spendCounter, rebuildService, ledgerRepository);
+    }
+
+    @Test
+    void 마감된_날의_계획이_없어도_원래_영업일로_마감_미과금을_남긴다() {
+        LocalDate yesterday = DAY.minusDays(1);
+        when(snapshotService.find(yesterday, CAMPAIGN_ID)).thenReturn(Optional.empty());
+        when(campaignQuery.findAllById(List.of(CAMPAIGN_ID))).thenReturn(List.of(campaign(CAMPAIGN_ID, 5L)));
+        when(platformSetting.getImpressionUnitPrice()).thenReturn(12);
+
+        assertThat(deductor.deduct(SERVE_ID, CAMPAIGN_ID, yesterday)).isEqualTo(DeductionStatus.NOT_BILLED_CLOSED);
+        verify(deductionResultRepository).insertIfAbsent(SERVE_ID, CAMPAIGN_ID, 5L, yesterday,
+                DeductionStatus.NOT_BILLED_CLOSED, 12L, NOW);
+        verifyNoInteractions(spendCounter, rebuildService, ledgerRepository);
+    }
+
+    @Test
+    void 계획의_점주_계정이_없으면_과금하지_않고_실패한다() {
+        when(accountRepository.lockForShareByOwnerId(3L)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> deductor.deduct(SERVE_ID, CAMPAIGN_ID, DAY))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("ownerId=3");
+        verifyNoInteractions(spendCounter, rebuildService, ledgerRepository, deductionResultRepository);
+    }
+
+    private PointDeductorImpl deductorAt(Clock time) {
+        return new PointDeductorImpl(snapshotService, rebuildService, spendCounter, deductionResultRepository,
+                ledgerRepository, campaignQuery, platformSetting, time, meterRegistry, accountRepository);
     }
 
     @Test
@@ -328,7 +426,7 @@ class PointDeductorImplTest {
     private PointDeductorImpl deductorWith(InMemoryDailySpendCounter fake) {
         return new PointDeductorImpl(snapshotService, rebuildService, fake, deductionResultRepository, ledgerRepository,
                 campaignQuery, platformSetting, CLOCK,
-                meterRegistry);
+                meterRegistry, accountRepository);
     }
 
     @Test
