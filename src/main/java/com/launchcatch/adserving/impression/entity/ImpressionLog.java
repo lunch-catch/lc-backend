@@ -119,6 +119,11 @@ public class ImpressionLog {
         return validity == ImpressionValidity.VALID;
     }
 
+    // 정산에 넘길 노출이다. 무효 노출과 쿠폰이 소진된 뒤의 노출은 과금 판정을 받지 않는다(FR-066).
+    public boolean needsDispatch() {
+        return isValid() && !soldOut;
+    }
+
     // 좌표는 소수점 3자리(약 100m)로 반올림해 남긴다(api-spec.md 개인정보).
     static BigDecimal round(double coordinate) {
         return BigDecimal.valueOf(coordinate).setScale(3, RoundingMode.HALF_UP);

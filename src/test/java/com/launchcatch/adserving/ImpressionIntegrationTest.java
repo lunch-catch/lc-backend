@@ -2,12 +2,11 @@ package com.launchcatch.adserving;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.Mockito.doAnswer;
-import static org.mockito.Mockito.doThrow;
-import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
@@ -20,8 +19,11 @@ import com.launchcatch.adserving.contract.ImpressionServedEvent;
 import com.launchcatch.adserving.engine.SlotLabels;
 import com.launchcatch.adserving.feed.repository.ServeRecord;
 import com.launchcatch.adserving.feed.repository.ServeRecordRepository;
+import com.launchcatch.adserving.impression.service.ImpressionDispatchService;
 import com.launchcatch.auth.CustomUserDetails;
 import com.launchcatch.auth.Role;
+import com.launchcatch.billing.contract.DeductionOutcome;
+import com.launchcatch.billing.contract.DeductionRequest;
 import com.launchcatch.billing.contract.DeductionStatus;
 import com.launchcatch.global.config.ClockConfig;
 import com.launchcatch.member.contract.AgeGroup;
@@ -33,6 +35,7 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
@@ -55,8 +58,8 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 
 /*
  * POST /v1/impressions 를 HTTP 입구부터 MySQL 의 impression_log 와 Valkey 의 카운터까지 본다.
- * 돈이 걸린 경로라 통합 테스트로 둔다. 노출 저장과 정산의 차감이 한 트랜잭션인지, 차감이 실패하면 노출도 되돌아가는지 본다.
- * 정산의 판정 자체는 정산의 테스트가 본다. 여기서는 contract 를 목으로 두고 트랜잭션 안에서 불렸는지만 본다.
+ * 돈이 걸린 경로라 통합 테스트로 둔다. 노출 요청은 정산을 부르지 않고, 릴레이가 커밋된 유효 노출을 트랜잭션 밖에서 넘기는지 본다(#1010).
+ * 정산의 판정 자체는 정산의 테스트가 본다. 여기서는 contract 를 목으로 두고 무엇을 어떻게 넘겼는지만 본다.
  */
 @DisplayName("노출 수집 통합")
 class ImpressionIntegrationTest extends AbstractAdservingIntegrationTest {
@@ -68,18 +71,20 @@ class ImpressionIntegrationTest extends AbstractAdservingIntegrationTest {
     private static final String COUNTER_KEY = "adserving:validImpressions:" + TODAY;
 
     @Autowired ServeRecordRepository serveRecordRepository;
+    @Autowired ImpressionDispatchService dispatch;
 
     private final UUID serveId = UUID.randomUUID();
-    private final AtomicBoolean deductedInTransaction = new AtomicBoolean();
+    private final AtomicBoolean dispatchedInTransaction = new AtomicBoolean(true);
 
     @BeforeEach
     void setUp() {
         doReturn(NOW).when(clock).instant();
         doReturn(ClockConfig.ZONE).when(clock).getZone();
         doAnswer(invocation -> {
-            deductedInTransaction.set(TransactionSynchronizationManager.isActualTransactionActive());
-            return DeductionStatus.BILLED;
-        }).when(pointDeductor).deduct(any(), any(), any());
+            dispatchedInTransaction.set(TransactionSynchronizationManager.isActualTransactionActive());
+            List<DeductionRequest> requests = invocation.getArgument(0);
+            return requests.stream().map(request -> DeductionOutcome.judged(request.serveId(), DeductionStatus.BILLED)).toList();
+        }).when(pointDeductor).deductAll(anyList());
         serveRecordRepository.saveAll(List.of(new ServeRecord(serveId, MEMBER_ID, 101L, 55L, SlotLabels.ALLOCATION, 1, SERVED_AT)));
     }
 
@@ -113,8 +118,12 @@ class ImpressionIntegrationTest extends AbstractAdservingIntegrationTest {
         return redisTemplate.opsForHash().get(COUNTER_KEY, "101");
     }
 
+    private Map<String, Object> dispatchState() {
+        return jdbcTemplate.queryForMap("SELECT dispatched_at, dispatch_attempts FROM impression_log");
+    }
+
     @Test
-    void 유효_노출은_202_로_받고_한_트랜잭션_안에서_차감을_부르며_커밋_뒤_카운터를_올린다() throws Exception {
+    void 유효_노출은_202_로_받고_정산을_부르지_않으며_커밋_뒤_카운터를_올린다() throws Exception {
         send(body(serveId, 101L), Role.MEMBER)
                 .andExpect(status().isAccepted())
                 .andExpect(jsonPath("$.code").value("SUCCESS"))
@@ -130,14 +139,53 @@ class ImpressionIntegrationTest extends AbstractAdservingIntegrationTest {
                 .containsEntry("slot_type", "ALLOCATION").containsEntry("validity", "VALID")
                 .containsEntry("invalid_reason", null).containsEntry("lat_rounded", new BigDecimal("37.498"))
                 .containsEntry("viewed_ms", 2140);
-        verify(pointDeductor).deduct(serveId, 101L, TODAY);
-        assertThat(deductedInTransaction).isTrue();
+        verifyNoInteractions(pointDeductor);
+        assertThat(dispatchState()).containsEntry("dispatched_at", null).containsEntry("dispatch_attempts", 0);
         assertThat(counter()).isEqualTo("1");
     }
 
-    // 정산이 받은 날로 차감하고 전날 예산은 00:00 에 해제가 끝난다(#497). 그래서 판정, 차감, 카운터가 모두 받은 날이다
     @Test
-    void 자정을_넘겨_받은_노출은_받은_날로_저장하고_차감하며_그날_카운터를_올린다() throws Exception {
+    void 릴레이가_커밋된_유효_노출을_트랜잭션_밖에서_정산에_넘기고_넘긴_시각을_적는다() throws Exception {
+        send(body(serveId, 101L), Role.MEMBER).andExpect(status().isAccepted());
+
+        dispatch.dispatchPending();
+        dispatch.dispatchPending();
+
+        verify(pointDeductor, times(1)).deductAll(List.of(new DeductionRequest(serveId, 101L, TODAY)));
+        assertThat(dispatchedInTransaction).isFalse();
+        assertThat(dispatchState().get("dispatched_at")).isNotNull();
+    }
+
+    @Test
+    void 정산이_실패로_돌려준_노출은_넘긴_것으로_적지_않고_시도_횟수만_올린다() throws Exception {
+        doAnswer(invocation -> {
+            List<DeductionRequest> requests = invocation.getArgument(0);
+            return requests.stream().map(request -> DeductionOutcome.failed(request.serveId())).toList();
+        }).when(pointDeductor).deductAll(anyList());
+        send(body(serveId, 101L), Role.MEMBER).andExpect(status().isAccepted());
+
+        dispatch.dispatchPending();
+
+        assertThat(dispatchState()).containsEntry("dispatched_at", null).containsEntry("dispatch_attempts", 1);
+        // 첫 실패는 random(0, 1초) 뒤로 미룬다(Full Jitter)
+        LocalDateTime now = LocalDateTime.ofInstant(NOW, ClockConfig.ZONE);
+        LocalDateTime next = jdbcTemplate.queryForObject("SELECT next_dispatch_at FROM impression_log", LocalDateTime.class);
+        assertThat(next).isBetween(now, now.plusSeconds(1));
+    }
+
+    @Test
+    void 무효_노출은_저장할_때_넘긴_것으로_적고_정산에_넘기지_않는다() throws Exception {
+        send(body(UUID.randomUUID(), 101L), Role.MEMBER).andExpect(status().isAccepted());
+
+        dispatch.dispatchPending();
+
+        assertThat(dispatchState().get("dispatched_at")).isNotNull();
+        verifyNoInteractions(pointDeductor);
+    }
+
+    // 정산이 받은 날로 차감하고 전날 예산은 00:00 에 해제가 끝난다(#497). 그래서 판정, 릴레이가 넘기는 날, 카운터가 모두 받은 날이다
+    @Test
+    void 자정을_넘겨_받은_노출은_받은_날로_저장하고_넘기며_그날_카운터를_올린다() throws Exception {
         LocalDate nextDay = TODAY.plusDays(1);
         String nextCounterKey = "adserving:validImpressions:" + nextDay;
         UUID lateServeId = UUID.randomUUID();
@@ -150,7 +198,8 @@ class ImpressionIntegrationTest extends AbstractAdservingIntegrationTest {
 
             assertThat(jdbcTemplate.queryForObject("SELECT business_date FROM impression_log", LocalDate.class))
                     .isEqualTo(nextDay);
-            verify(pointDeductor).deduct(lateServeId, 101L, nextDay);
+            dispatch.dispatchPending();
+            verify(pointDeductor).deductAll(List.of(new DeductionRequest(lateServeId, 101L, nextDay)));
             assertThat(redisTemplate.opsForHash().get(nextCounterKey, "101")).isEqualTo("1");
             assertThat(counter()).isNull();
         } finally {
@@ -159,35 +208,41 @@ class ImpressionIntegrationTest extends AbstractAdservingIntegrationTest {
     }
 
     @Test
-    void 같은_사용자가_같은_카드를_다시_보내면_처음_판정을_돌려주고_한_번만_차감하고_센다() throws Exception {
+    void 같은_사용자가_같은_카드를_다시_보내면_처음_판정을_돌려주고_한_번만_넘기고_센다() throws Exception {
         send(body(serveId, 101L), Role.MEMBER).andExpect(status().isAccepted());
 
         send(body(serveId, 101L), Role.MEMBER)
                 .andExpect(status().isAccepted())
                 .andExpect(jsonPath("$.data.validity").value("VALID"));
 
+        dispatch.dispatchPending();
+
         assertThat(rows()).isEqualTo(1);
-        verify(pointDeductor, times(1)).deduct(any(), any(), any());
+        verify(pointDeductor, times(1)).deductAll(List.of(new DeductionRequest(serveId, 101L, TODAY)));
         assertThat(counter()).isEqualTo("1");
         // 올리기와 만료를 한 스크립트로 보내 카운터에 만료가 걸려 있다(#783)
         assertThat(redisTemplate.getExpire(COUNTER_KEY)).isPositive();
     }
 
     /*
-     * 먼저 온 요청이 넣고 차감 중일 때 늦은 요청이 중복 확인을 지나 넣기에서 기다린다. 늦은 요청의 스냅샷에는 먼저 넣은 행이 없다.
-     * 먼저 온 요청이 커밋한 뒤 늦은 요청도 그 판정을 돌려주고 차감하지 않는지 본다(#781).
+     * 먼저 온 요청이 넣고 커밋하기 전일 때 늦은 요청이 중복 확인을 지나 넣기에서 기다린다. 늦은 요청의 스냅샷에는 먼저 넣은 행이 없다.
+     * 먼저 온 요청이 커밋한 뒤 늦은 요청도 그 판정을 돌려주고 행이 하나만 남는지 본다(#781).
      */
     @Test
-    void 같은_노출이_동시에_오면_늦은_요청도_먼저_저장된_판정을_돌려주고_한_번만_차감한다() throws Exception {
+    void 같은_노출이_동시에_오면_늦은_요청도_먼저_저장된_판정을_돌려주고_한_번만_저장한다() throws Exception {
         CountDownLatch deducting = new CountDownLatch(1);
         CountDownLatch release = new CountDownLatch(1);
-        doAnswer(invocation -> {
+        funnelEvents.whileImpressionPublishing(() -> {
             deducting.countDown();
-            if (!release.await(10, TimeUnit.SECONDS)) {
-                throw new IllegalStateException("timeout");
+            try {
+                if (!release.await(10, TimeUnit.SECONDS)) {
+                    throw new IllegalStateException("timeout");
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException(e);
             }
-            return DeductionStatus.BILLED;
-        }).when(pointDeductor).deduct(any(), any(), any());
+        });
 
         try (ExecutorService pool = Executors.newFixedThreadPool(2)) {
             Future<MvcResult> first = pool.submit(() -> send(body(serveId, 101L), Role.MEMBER).andReturn());
@@ -207,7 +262,6 @@ class ImpressionIntegrationTest extends AbstractAdservingIntegrationTest {
             }
         }
         assertThat(rows()).isEqualTo(1);
-        verify(pointDeductor, times(1)).deduct(any(), any(), any());
     }
 
     @Test
@@ -218,13 +272,15 @@ class ImpressionIntegrationTest extends AbstractAdservingIntegrationTest {
                 .andExpect(jsonPath("$.data.invalidReason").value("EXPIRED_OR_UNKNOWN"));
 
         assertThat(rows()).isEqualTo(1);
-        verify(pointDeductor, never()).deduct(any(), any(), any());
+        verifyNoInteractions(pointDeductor);
         assertThat(counter()).isNull();
     }
 
     @Test
-    void 차감이_실패하면_노출도_저장되지_않고_카운터도_오르지_않는다() throws Exception {
-        doThrow(new IllegalStateException("그날 예산 계획이 없다")).when(pointDeductor).deduct(any(), any(), any());
+    void 노출_저장이_롤백되면_카운터도_오르지_않는다() throws Exception {
+        funnelEvents.whileImpressionPublishing(() -> {
+            throw new IllegalStateException("저장 중 실패");
+        });
 
         send(body(serveId, 101L), Role.MEMBER).andExpect(status().isInternalServerError());
 
@@ -251,7 +307,9 @@ class ImpressionIntegrationTest extends AbstractAdservingIntegrationTest {
 
     @Test
     void 노출_저장이_롤백되면_이벤트가_넘어가지_않는다() throws Exception {
-        doThrow(new IllegalStateException("그날 예산 계획이 없다")).when(pointDeductor).deduct(any(), any(), any());
+        funnelEvents.whileImpressionPublishing(() -> {
+            throw new IllegalStateException("저장 중 실패");
+        });
 
         send(body(serveId, 101L), Role.MEMBER).andExpect(status().isInternalServerError());
 

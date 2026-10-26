@@ -17,6 +17,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.context.annotation.Import;
+import org.springframework.context.event.EventListener;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
@@ -60,6 +61,21 @@ abstract class AbstractAdservingIntegrationTest extends IntegrationTestSupport {
     static class FunnelEventRecorder {
 
         private final List<Object> events = new CopyOnWriteArrayList<>();
+        private volatile Runnable duringImpressionPublish = () -> {
+        };
+
+        /*
+         * 노출 서비스는 트랜잭션 안에서 이벤트를 발행한다. 이 수신자는 그 자리에서 돌아 노출 저장 트랜잭션을 붙잡거나 실패시킨다.
+         * 같은 노출이 동시에 오는 경합(#781)과 저장이 롤백되는 경우를 재현하려는 것이다.
+         */
+        @EventListener
+        void during(ImpressionServedEvent event) {
+            duringImpressionPublish.run();
+        }
+
+        void whileImpressionPublishing(Runnable action) {
+            duringImpressionPublish = action;
+        }
 
         @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
         void on(ImpressionServedEvent event) {
@@ -77,6 +93,8 @@ abstract class AbstractAdservingIntegrationTest extends IntegrationTestSupport {
 
         void clear() {
             events.clear();
+            duringImpressionPublish = () -> {
+            };
         }
     }
 }
