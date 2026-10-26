@@ -55,6 +55,7 @@
 - `ThrottlingException`/`ServiceUnavailableException`/`ModelTimeoutException` 등 일시적
   실패는 재시도하지 않고 즉시 503(`POSTER-012`)으로 끝낸다.
 - 가드레일(콘텐츠 검증) 위반은 교정 지시를 덧붙여 **1회만** 재시도한다(`POSTER-013`).
+  출력 검증 실패(허용 안 된 태그, 슬롯 누락, 구조 불일치)와 토큰 잘림도 같은 방식으로 1회만 재시도한다.
 - 호출 빈도 제한(관리자 1명당 분당 3회, `#227`)은 멱등성·재시도와는 다른 축이라 이 절이
   다루는 범위가 아니다(`TemplateGenerationRateLimiter`).
 
