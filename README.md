@@ -53,7 +53,7 @@
 | [AWS 아키텍처](./docs/architecture/런치캐치_AWS_아키텍처.md)             | 운영과 개발 서버의 AWS 구성 (원본은 lc-infra)      |
 | [작업 규칙](./AGENTS.md)                                         | 이슈와 PR, 커밋, 문서와 주석, 문장 규칙. 규칙의 단일 출처다 |
 | [작업 플로우](./docs/workflow/README.md)                          | 명세에서 구현과 배포까지의 순서, 로컬과 QA 실행, 팀 알림    |
-| [발표용 GIF 스킬](./.claude/skills/slide-gif/README.md)            | 코드를 읽어 발표용 구조도와 흐름도를 GIF 와 MP4 로 만드는 방법 |
+| [발표용 GIF 스킬](./.claude/skills/slide-gif/README.md)            | 코드를 읽어 발표용 구조도와 흐름도를 GIF 로 만드는 방법 |
 
 나머지는 PR 작업 후 LLM 코드 리뷰로 받아 고친다.
 

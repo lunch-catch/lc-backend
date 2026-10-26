@@ -1,12 +1,13 @@
 #!/usr/bin/env node
 /*
- * build.js 가 만든 HTML 을 프레임 단위로 찍어 GIF 와 MP4 로 만든다.
+ * build.js 가 만든 HTML 을 프레임 단위로 찍어 GIF 로 만든다.
+ * 프레임은 먼저 화질 손실이 적은 임시 영상으로 모은 뒤 GIF 로 바꾸고, 임시 영상은 지운다.
  * 브라우저 시계를 멈춘 채 한 프레임씩 넘기므로 컴퓨터 속도와 무관하게 끊김 없이 나온다.
  *
  * 사용법:
- *   node record.js <slide.html> <출력 이름>                 GIF 와 MP4 를 함께 만든다
+ *   node record.js <slide.html> <출력 이름>                 GIF 를 만든다
  *   node record.js <slide.html> <출력 이름> --still 3000    3초 시점의 정지 화면 PNG 하나만 만든다
- * 선택: --loops 2 (반복 횟수, 기본 1), --fps 25, --gif-width 1280, --no-mp4, --no-gif
+ * 선택: --loops 2 (반복 횟수, 기본 1), --fps 25, --gif-width 1280
  */
 const fs = require('fs');
 const path = require('path');
@@ -16,7 +17,6 @@ const { chromium } = require('playwright');
 const args = process.argv.slice(2);
 const [htmlPath, outBase] = args;
 const opt = (name, def) => { const i = args.indexOf('--' + name); return i < 0 ? def : args[i + 1]; };
-const flag = (name) => args.includes('--' + name);
 if (!htmlPath || !outBase) {
   console.error('사용법: node record.js <slide.html> <출력 이름> [--still ms] [--loops n] [--fps 25] [--gif-width 1280]');
   process.exit(1);
@@ -80,7 +80,7 @@ function localFonts() {
 
   const ff = ffmpegPath();
   const total = Math.round((state.loop / 1000) * LOOPS * FPS);
-  const mp4 = outBase + '.mp4';
+  const mp4 = `${outBase}.rec-${process.pid}.mp4`;
   const enc = spawn(ff, ['-y', '-loglevel', 'error', '-f', 'image2pipe', '-framerate', String(FPS), '-i', '-',
     '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-crf', '18', '-preset', 'medium', '-movflags', '+faststart', mp4],
   { stdio: ['pipe', 'ignore', 'inherit'] });
@@ -94,12 +94,12 @@ function localFonts() {
   await browser.close(); fs.unlinkSync(tmp);
   process.stdout.write('\r녹화 100%\n');
 
-  if (!flag('no-gif')) {
+  {
     const gif = outBase + '.gif';
     const vf = `fps=${FPS},scale=${GIF_W}:-1:flags=lanczos,split[a][b];[a]palettegen=max_colors=128:stats_mode=diff[p];[b][p]paletteuse=dither=bayer:bayer_scale=5:diff_mode=rectangle`;
     const r = spawnSync(ff, ['-y', '-loglevel', 'error', '-i', mp4, '-vf', vf, '-loop', '0', gif], { stdio: 'inherit' });
     if (r.status !== 0) process.exit(r.status);
     console.log(`만듦: ${gif} (${(fs.statSync(gif).size / 1048576).toFixed(1)}MB)`);
   }
-  if (flag('no-mp4')) fs.unlinkSync(mp4); else console.log('만듦: ' + mp4);
+  fs.unlinkSync(mp4);
 })();
