@@ -48,6 +48,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.CannotAcquireLockException;
 import org.springframework.dao.QueryTimeoutException;
 import org.springframework.data.redis.RedisConnectionFailureException;
+import org.springframework.transaction.CannotCreateTransactionException;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -646,6 +647,47 @@ class PointDeductorImplTest {
                 new DeductionRequest(UUID.randomUUID(), OTHER_CAMPAIGN_ID, DAY))))
                 .isInstanceOf(RedisConnectionFailureException.class);
         assertThat(finishedTransactions).containsExactly("rollback");
+    }
+
+    /*
+     * DB 가 멈췄거나 커넥션 풀이 마르면 점주 묶음의 트랜잭션을 여는 순간 실패한다.
+     * 묶음 실패로 넘기면 점주마다 커넥션 대기(3초)를 되풀이하므로 첫 묶음에서 바로 예외를 올린다.
+     */
+    @Test
+    void 트랜잭션을_열지_못하면_다음_점주로_넘어가지_않고_예외를_올린다() {
+        outsideTransaction();
+        otherOwnerCampaignBills();
+        List<String> begins = new ArrayList<>();
+        TransactionTemplate noConnection = new TransactionTemplate(new AbstractPlatformTransactionManager() {
+            @Override
+            protected Object doGetTransaction() {
+                return new Object();
+            }
+
+            @Override
+            protected void doBegin(Object transaction, TransactionDefinition definition) {
+                begins.add("begin");
+                throw new CannotCreateTransactionException("커넥션을 얻지 못했습니다");
+            }
+
+            @Override
+            protected void doCommit(DefaultTransactionStatus status) {
+            }
+
+            @Override
+            protected void doRollback(DefaultTransactionStatus status) {
+            }
+        });
+        PointDeductorImpl withoutDb = new PointDeductorImpl(snapshotService, rebuildService, spendCounter,
+                deductionResultRepository, ledgerRepository, campaignQuery, platformSetting, CLOCK, meterRegistry,
+                accountRepository, noConnection);
+
+        assertThatThrownBy(() -> withoutDb.deductAll(List.of(
+                new DeductionRequest(UUID.randomUUID(), CAMPAIGN_ID, DAY),
+                new DeductionRequest(UUID.randomUUID(), OTHER_CAMPAIGN_ID, DAY))))
+                .isInstanceOf(CannotCreateTransactionException.class);
+        assertThat(begins).hasSize(1);
+        verifyNoInteractions(spendCounter);
     }
 
     @Test

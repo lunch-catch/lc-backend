@@ -29,6 +29,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.dao.QueryTimeoutException;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.CannotCreateTransactionException;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
@@ -78,8 +79,9 @@ public class PointDeductorImpl implements PointDeductor {
      * 한 노출이 실패하면 묶음 전체가 롤백되고, 새로 판정한 노출의 소진은 기존 롤백 되돌리기가 되돌린다.
      * 묶음마다 점주 하나라 트랜잭션 하나가 잡는 계정 잠금도 하나다. 묶음끼리 잠금 순서가 엇갈리지 않는다.
      * 실패한 묶음은 예외를 올리지 않고 그 노출들을 실패로 돌려준다. 릴레이가 다음 주기에 다시 넘기고 serveId 멱등이 중복 과금을 막는다.
-     * 정산의 DB 나 Valkey 에 닿지 못하는 장애는 예외로 올린다. 모든 묶음이 같은 이유로 실패할 것이라 묶음별 실패로 돌려주면
-     * 릴레이의 재시도 표만 커진다. 그 전에 커밋된 묶음은 다시 넘겨받으면 첫 판정을 돌려준다.
+     * 정산의 DB 나 Valkey 에 닿지 못하는 장애는 예외로 올린다. 트랜잭션을 열지 못하는 것(커넥션 풀 고갈)도 같다. 모든 묶음이 같은 이유로 실패할 것이라
+     * 묶음별 실패로 돌려주면 점주마다 커넥션 대기를 되풀이하고 릴레이가 노출마다 시도 횟수를 올려 상한에 금방 닿는다.
+     * 그 전에 커밋된 묶음은 다시 넘겨받으면 첫 판정을 돌려준다.
      */
     @Override
     public List<DeductionOutcome> deductAll(List<DeductionRequest> requests) {
@@ -97,7 +99,7 @@ public class PointDeductorImpl implements PointDeductor {
                         .map(request -> DeductionOutcome.judged(request.serveId(),
                                 deduct(request.serveId(), request.campaignId(), request.businessDate())))
                         .toList()));
-            } catch (DataAccessResourceFailureException | QueryTimeoutException e) {
+            } catch (DataAccessResourceFailureException | QueryTimeoutException | CannotCreateTransactionException e) {
                 throw e;
             } catch (RuntimeException e) {
                 meterRegistry.counter(BATCH_FAILED_METRIC, "reason", "owner_group").increment(group.size());
