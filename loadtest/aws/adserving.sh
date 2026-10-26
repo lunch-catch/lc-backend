@@ -8,6 +8,8 @@
 #   AWS_PROFILE=<프로필> loadtest/aws/adserving.sh run <이름> <회원 시작 번호> [초당 피드] [유지 시간]
 #   AWS_PROFILE=<프로필> loadtest/aws/adserving.sh metrics <시작 ms> <끝 ms>  그 구간의 서버 지표
 #   AWS_PROFILE=<프로필> loadtest/aws/adserving.sh rows                    시험 데이터의 행 수
+#   AWS_PROFILE=<프로필> loadtest/aws/adserving.sh switch <sha>            앱과 배치를 그 커밋 이미지로 다시 띄운다
+#   AWS_PROFILE=<프로필> loadtest/aws/adserving.sh reset [회원 수]         Valkey 를 비우고 시험 데이터를 다시 넣는다
 #
 # LOADTEST_REF 로 부하 생성기가 받을 lc-backend 의 브랜치를 고른다. 기본은 develop 이다.
 set -euo pipefail
@@ -27,6 +29,11 @@ instance() {
     "Name=instance-state-name,Values=running" --query 'Reservations[0].Instances[0].InstanceId' --output text)
   [ "$id" != "None" ] || die "떠 있는 $1 인스턴스가 없다. member-env.sh status 로 환경을 확인한다"
   echo "$id"
+}
+
+instances() {
+  aws ec2 describe-instances --filters "Name=tag:Project,Values=$PROJECT" "Name=tag:Role,Values=$1" \
+    "Name=instance-state-name,Values=running" --query 'Reservations[].Instances[].InstanceId' --output text
 }
 
 # 스크립트를 base64 로 실어 bash 로 돌린다. AWS-RunShellScript 는 sh 로 돌고 따옴표가 섞이면 깨진다
@@ -72,10 +79,8 @@ cd \"\$DIR\"
 JWT=\$(aws ssm get-parameter --name /$PROJECT/jwt-signing-key --with-decryption --region $REGION --query Parameter.Value --output text)
 "
 
-case "${1:-}" in
-  seed)
-    members="${2:-40000}"
-    remote "$(instance app)" 900 "set -euo pipefail
+seed() {
+  remote "$(instance app)" 900 "set -euo pipefail
 $DB_ENV
 rm -rf /tmp/lt && mkdir -p /tmp/lt && cd /tmp/lt
 curl -fsSL https://raw.githubusercontent.com/lunch-catch/lc-backend/$REF/loadtest/data/gen_adserving.py -o gen.py
@@ -83,6 +88,37 @@ docker run --rm -v /tmp/lt:/w python:3.12-slim python /w/gen.py --date \"\$D\" -
 mysql < seed.sql
 mysql -N -e \"select 'member', count(*) from member where member_id >= 30000001;
 select 'batch', status from batch_execution_log where business_date = '\$D' and job_name = 'DAILY_0000';\""
+}
+
+case "${1:-}" in
+  seed)
+    members="${2:-40000}"
+    seed
+    ;;
+  switch)
+    sha="${2:?이미지 커밋을 준다}"
+    aws ssm put-parameter --name "/$PROJECT/current-sha" --type String --overwrite --value "$sha" > /dev/null
+    # 앱과 배치를 모두 새 이미지로 다시 띄운다. 마이그레이션은 Flyway 가 먼저 뜬 쪽에서 한 번 돈다
+    for id in $(instances app) $(instances batch); do
+      echo "restart $id"
+      remote "$id" 600 "set -euo pipefail
+/usr/local/bin/$PROJECT-refresh-env
+systemctl restart $PROJECT
+for i in \$(seq 1 60); do
+  curl -fs localhost:8081/actuator/health/readiness > /dev/null && break; sleep 5
+done
+docker inspect $PROJECT --format '{{.Config.Image}}'
+curl -fs localhost:8081/actuator/health/readiness"
+    done
+    ;;
+  reset)
+    # 버전 사이에 앞 버전이 쌓은 것을 지운다(부하 시험 문서 5장). 시드가 시험 데이터와 그날 배치 기록을 지우고 다시 넣는다
+    members="${2:-40000}"
+    remote "$(instance app)" 300 "set -euo pipefail
+CACHE=\$(docker inspect $PROJECT --format '{{range .Config.Env}}{{println .}}{{end}}' | grep '^VALKEY_HOST=' | cut -d= -f2-)
+docker run --rm valkey/valkey:9.0-alpine valkey-cli -h \"\$CACHE\" FLUSHALL
+docker run --rm valkey/valkey:9.0-alpine valkey-cli -h \"\$CACHE\" DBSIZE"
+    seed
     ;;
   prepare)
     remote "$(instance load-test)" 1200 "set -euo pipefail
@@ -146,6 +182,17 @@ PY"
         --dimensions Name=DBInstanceIdentifier,Value="$PROJECT-db" --period 60 --statistics "${m##*:}" \
         --start-time "$(date -u -r $((start / 1000)) +%FT%TZ)" --end-time "$(date -u -r $((end / 1000)) +%FT%TZ)" \
         --query "sort_by(Datapoints,&Timestamp)[].${m##*:}" --output text
+    done
+    # ElastiCache 의 t4g 는 Unlimited 가 없어 CPU 크레딧이나 네트워크 버스트가 바닥나면 기준 성능으로 떨어진다
+    for node in $(aws elasticache describe-replication-groups --replication-group-id "$PROJECT-cache" \
+        --query 'ReplicationGroups[0].MemberClusters' --output text); do
+      for m in EngineCPUUtilization:Maximum CPUCreditBalance:Minimum NetworkBandwidthInAllowanceExceeded:Sum NetworkBandwidthOutAllowanceExceeded:Sum; do
+        printf 'valkey_%s_%s ' "$node" "${m%%:*}"
+        aws cloudwatch get-metric-statistics --namespace AWS/ElastiCache --metric-name "${m%%:*}" \
+          --dimensions Name=CacheClusterId,Value="$node" --period 60 --statistics "${m##*:}" \
+          --start-time "$(date -u -r $((start / 1000)) +%FT%TZ)" --end-time "$(date -u -r $((end / 1000)) +%FT%TZ)" \
+          --query "sort_by(Datapoints,&Timestamp)[].${m##*:}" --output text
+      done
     done
     ;;
   rows)

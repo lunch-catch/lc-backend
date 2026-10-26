@@ -80,7 +80,12 @@ aws autoscaling update-auto-scaling-group --auto-scaling-group-name lunchcatch-a
 
 ## 5. 회차
 
-**버전마다 환경을 새로 띄운다.** 한 환경에서 이미지만 바꾸면 앞 버전이 쌓은 `impression_log`, `serve_log`, 원장, Valkey 의 노출 횟수가 다음 버전에 남는다. 뒤 버전일수록 테이블이 커져 불리하고, 회원 대역도 버전마다 새로 필요하다. 환경은 띄운 지 4시간 뒤 자동으로 지워지는데 한 버전은 약 1시간 20분이라 그 안에 끝난다.
+**환경은 한 번 띄우고 버전 사이에 비운다.** 이미지만 바꾸면 앞 버전이 쌓은 `impression_log`, `serve_log`, 원장, Valkey 의 노출 횟수가 다음 버전에 남아 뒤 버전이 불리하다. 그래서 버전을 바꿀 때 Valkey 를 비우고 시드를 다시 넣는다(`reset`). 시드는 시험 데이터와 그날 배치 기록을 지우고 다시 넣는다. 회원 대역도 버전마다 처음부터 다시 쓴다. 버전마다 환경을 새로 띄우면 버전마다 약 30분이 더 들어 고르지 않았다.
+
+- RDS(T4g)는 Unlimited 라 CPU 크레딧이 바닥나도 느려지지 않는다. 버전 사이에 이어져도 된다.
+- ElastiCache(t4g)는 Unlimited 가 없어 CPU 크레딧이나 네트워크 버스트가 바닥나면 기준 성능으로 떨어진다. 회차마다 `metrics` 로 보고 바닥났거나 네트워크 초과가 생긴 회차는 무효로 본다.
+- DB 의 버퍼 캐시는 데워진 채로 다음 버전에 넘어간다. 버전마다 워밍업 회차가 있어 영향이 작다고 본다.
+- 환경은 띄운 지 4시간 뒤 자동으로 지워진다. 두 버전은 약 2시간이라 그 안에 끝난다. 세 버전을 이어서 잴 때는 `MEMBER_HOURS` 를 늘린다.
 
 | 버전 | 이미지 |
 |---|---|
@@ -103,7 +108,7 @@ aws autoscaling update-auto-scaling-group --auto-scaling-group-name lunchcatch-a
 
 `loadtest/aws/adserving.sh` 가 인스턴스에 SSM 으로 스크립트를 보내 돌린다. `AWS_PROFILE` 은 `member-env.sh up` 을 돌린 계정의 프로필이다. `LOADTEST_REF` 로 부하 생성기가 받을 lc-backend 브랜치를 고른다.
 
-버전마다 1~5를 처음부터 다시 한다(5장).
+환경은 한 번만 띄운다. 첫 버전 뒤로는 버전마다 `switch` 와 `reset` 으로 바꾸고 2~4를 다시 한다(5장). 시드 생성기는 `LOADTEST_REF` 의 브랜치에서 받는다.
 
 ```bash
 # 1. 환경을 띄우고 앱을 3대로 고정한다(2장)
@@ -123,6 +128,10 @@ AWS_PROFILE=<프로필> loadtest/aws/adserving.sh run v1-run3 30020001
 AWS_PROFILE=<프로필> loadtest/aws/adserving.sh metrics <시작 ms> <끝 ms>
 AWS_PROFILE=<프로필> loadtest/aws/adserving.sh rows
 
+# 다음 버전: 앱과 배치를 그 이미지로 다시 띄우고 비운 뒤 2~4를 다시 한다. 앱이 3대인지 먼저 확인한다
+AWS_PROFILE=<프로필> loadtest/aws/adserving.sh switch <다음 이미지>
+AWS_PROFILE=<프로필> loadtest/aws/adserving.sh reset
+
 # 5. 대시보드를 남기고 환경을 내린다(lc-infra 에서)
 ./scripts/loadtest-snapshot.sh --label adserving-v1-run1 --from <시작 ms> --to <끝 ms> --dash fm-loadtest --dash fm-adserving
 AWS_PROFILE=<프로필> ./scripts/member-env.sh down
@@ -140,7 +149,8 @@ AWS_PROFILE=<프로필> ./scripts/member-env.sh down
 |---|---|---|
 | k6(유지 구간) | API 별 초당 요청 수, p50, p95, p99, 오류 수, 버린 반복(`dropped_iterations`), 노출 판정(유효, 무효) | 목표를 지켰는지. 노출이 실제로 초당 몇 건이었는지 |
 | 앱 | Hikari 대기 최대, 사용 최대, 시간 초과 수, 커넥션 획득 평균 시간, 커넥션을 쥔 평균 시간, CPU 평균과 최대, 5xx 수 | 커넥션 풀이 병목인지 |
-| DB | 초당 커밋과 INSERT, 돌고 있는 스레드 최대, RDS CPU 최대와 CPU 크레딧 잔량 | DB 서버가 병목인지. t4g 는 크레딧이 바닥나면 기본 성능으로 떨어진다 |
+| DB | 초당 커밋과 INSERT, 돌고 있는 스레드 최대, RDS CPU 최대와 CPU 크레딧 잔량 | DB 서버가 병목인지. RDS 의 t4g 는 Unlimited 라 크레딧이 바닥나도 느려지지 않는다 |
+| 캐시 | 노드마다 엔진 CPU 최대, CPU 크레딧 잔량 최소, 네트워크 허용량을 넘긴 패킷 수 | Valkey 가 병목인지. ElastiCache 의 t4g 는 크레딧이나 네트워크 버스트가 바닥나면 느려진다 |
 | 쓰기 | `serve_log` 쓰기 실패와 버린 수, 내려준 카드 수, 노출과 `serve_log` 와 차감과 원장의 행 수 대조(`rows`) | 유실과 쓰기가 맞는지 |
 | 노출 저장과 릴레이 | 릴레이의 밀린 노출 최대(v2 부터), 노출 저장 큐의 최대, 큐가 차서 버린 수, 실패한 묶음 수, 쓰지 못하고 버린 행 수(v3 부터) | 응답 뒤 저장이 따라가는지. 버린 노출은 유실률에 들어간다 |
 | 부하 생성기 | 1분 평균 CPU 의 최대 | 생성기가 병목이 아닌지. 유지 구간에서 80% 를 넘으면 그 회차는 무효로 보고 다시 잰다 |
