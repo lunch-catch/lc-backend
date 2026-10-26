@@ -1,6 +1,6 @@
 package com.launchcatch.adserving.impression.service;
 
-import com.launchcatch.adserving.engine.repository.AdCandidateRepository;
+import com.launchcatch.adserving.engine.service.CandidateCache;
 import com.launchcatch.adserving.feed.repository.ServeRecord;
 import com.launchcatch.adserving.feed.repository.ServeRecordRepository;
 import com.launchcatch.adserving.impression.dto.ImpressionRequest;
@@ -31,7 +31,7 @@ public class ImpressionService {
 
     private final ServeRecordRepository serveRecordRepository;
     private final ImpressionLogRepository impressionLogRepository;
-    private final AdCandidateRepository adCandidateRepository;
+    private final CandidateCache candidateCache;
     private final ImpressionWriteBuffer writeBuffer;
     private final Clock clock;
 
@@ -73,8 +73,7 @@ public class ImpressionService {
         if (!record.memberId().equals(memberId)) {
             return ImpressionLog.notOwner(serveId, memberId, receivedDate, placement, sighting);
         }
-        boolean soldOut = adCandidateRepository.existsByIdBusinessDateAndIdCampaignIdAndSoldOutAtIsNotNull(
-                receivedDate, record.campaignId());
+        boolean soldOut = candidateCache.isSoldOut(receivedDate, record.campaignId());
         return ImpressionLog.valid(serveId, memberId, receivedDate, placement, sighting, soldOut);
     }
 }

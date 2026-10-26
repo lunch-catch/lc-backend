@@ -1,6 +1,7 @@
 package com.launchcatch.adserving.engine.service;
 
 import com.launchcatch.adserving.engine.repository.AdCandidateRepository;
+import com.launchcatch.adserving.engine.repository.CandidateChangeNotifier;
 import com.launchcatch.adserving.engine.repository.CandidateBudget;
 import com.launchcatch.billing.contract.BudgetProgress;
 import com.launchcatch.billing.contract.BudgetQueryService;
@@ -33,6 +34,7 @@ public class CandidateBudgetService {
     static final String BUDGET_UNAVAILABLE_METRIC = "adserving_budget_unavailable_total";
 
     private final AdCandidateRepository adCandidateRepository;
+    private final CandidateChangeNotifier candidateChangeNotifier;
     private final BudgetQueryService budgetQueryService;
     private final MeterRegistry meterRegistry;
     private final Clock clock;
@@ -58,6 +60,7 @@ public class CandidateBudgetService {
             return p == null ? new CandidateBudget(id, 0L, 0L) : new CandidateBudget(id, p.reservedAmount(), p.unitPrice());
         }).toList();
         adCandidateRepository.updateBudgets(businessDate, budgets, LocalDateTime.now(clock));
+        candidateChangeNotifier.reloaded(businessDate);
         return budgets.size();
     }
 

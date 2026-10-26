@@ -9,7 +9,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.launchcatch.adserving.engine.SlotLabels;
-import com.launchcatch.adserving.engine.repository.AdCandidateRepository;
+import com.launchcatch.adserving.engine.service.CandidateCache;
 import com.launchcatch.adserving.feed.repository.ServeRecord;
 import com.launchcatch.adserving.feed.repository.ServeRecordRepository;
 import com.launchcatch.adserving.impression.dto.ImpressionRequest;
@@ -52,13 +52,13 @@ class ImpressionServiceTest {
 
     private final ServeRecordRepository serveRecordRepository = mock(ServeRecordRepository.class);
     private final ImpressionLogRepository impressionLogRepository = mock(ImpressionLogRepository.class);
-    private final AdCandidateRepository adCandidateRepository = mock(AdCandidateRepository.class);
+    private final CandidateCache candidateCache = mock(CandidateCache.class);
     private final ImpressionWriteBuffer writeBuffer = mock(ImpressionWriteBuffer.class);
     private final ImpressionService service = new ImpressionService(serveRecordRepository, impressionLogRepository,
-            adCandidateRepository, writeBuffer, Clock.fixed(NOW, ClockConfig.ZONE));
+            candidateCache, writeBuffer, Clock.fixed(NOW, ClockConfig.ZONE));
 
     private final ImpressionService afterMidnight = new ImpressionService(serveRecordRepository, impressionLogRepository,
-            adCandidateRepository, writeBuffer, Clock.fixed(AFTER_MIDNIGHT, ClockConfig.ZONE));
+            candidateCache, writeBuffer, Clock.fixed(AFTER_MIDNIGHT, ClockConfig.ZONE));
 
     private void givenLateRecord() {
         when(serveRecordRepository.findById(SERVE_ID)).thenReturn(Optional.of(
@@ -170,7 +170,7 @@ class ImpressionServiceTest {
                 }
             };
             ImpressionService atMidnight = new ImpressionService(serveRecordRepository, impressionLogRepository,
-                    adCandidateRepository, writeBuffer, ticking);
+                    candidateCache, writeBuffer, ticking);
             when(serveRecordRepository.findById(SERVE_ID)).thenReturn(Optional.of(RECORD));
 
             atMidnight.record(MEMBER_ID, request(101L));
@@ -184,7 +184,7 @@ class ImpressionServiceTest {
         void 받은_시각을_마이크로초로_자른다() {
             Instant withNanos = NOW.plusNanos(123_456_789);
             ImpressionService nanos = new ImpressionService(serveRecordRepository, impressionLogRepository,
-                    adCandidateRepository, writeBuffer, Clock.fixed(withNanos, ClockConfig.ZONE));
+                    candidateCache, writeBuffer, Clock.fixed(withNanos, ClockConfig.ZONE));
             when(serveRecordRepository.findById(SERVE_ID)).thenReturn(Optional.of(RECORD));
 
             nanos.record(MEMBER_ID, request(101L));
@@ -195,7 +195,7 @@ class ImpressionServiceTest {
         @Test
         void 쿠폰이_소진된_뒤의_유효_노출은_sold_out_으로_큐에_넣는다() {
             when(serveRecordRepository.findById(SERVE_ID)).thenReturn(Optional.of(RECORD));
-            when(adCandidateRepository.existsByIdBusinessDateAndIdCampaignIdAndSoldOutAtIsNotNull(SERVED_DATE, 101L))
+            when(candidateCache.isSoldOut(SERVED_DATE, 101L))
                     .thenReturn(true);
 
             ImpressionResponse response = service.record(MEMBER_ID, request(101L));
@@ -217,7 +217,7 @@ class ImpressionServiceTest {
         @Test
         void 자정을_넘겨_받은_노출의_쿠폰_소진은_받은_날의_후보로_본다() {
             givenLateRecord();
-            when(adCandidateRepository.existsByIdBusinessDateAndIdCampaignIdAndSoldOutAtIsNotNull(RECEIVED_DATE, 101L))
+            when(candidateCache.isSoldOut(RECEIVED_DATE, 101L))
                     .thenReturn(true);
 
             afterMidnight.record(MEMBER_ID, request(101L));

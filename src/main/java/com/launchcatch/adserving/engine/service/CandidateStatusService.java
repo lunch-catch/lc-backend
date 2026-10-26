@@ -2,6 +2,7 @@ package com.launchcatch.adserving.engine.service;
 
 import com.launchcatch.adserving.engine.entity.CandidateCampaignState;
 import com.launchcatch.adserving.engine.repository.AdCandidateRepository;
+import com.launchcatch.adserving.engine.repository.CandidateChangeNotifier;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.time.Clock;
 import java.time.LocalDate;
@@ -25,6 +26,7 @@ public class CandidateStatusService {
     static final String CANDIDATE_MISSING_METRIC = "adserving_status_candidate_missing_total";
 
     private final AdCandidateRepository adCandidateRepository;
+    private final CandidateChangeNotifier candidateChangeNotifier;
     private final MeterRegistry meterRegistry;
     private final Clock clock;
 
@@ -37,6 +39,9 @@ public class CandidateStatusService {
         CandidateCampaignState state = servable ? CandidateCampaignState.SERVABLE : CandidateCampaignState.PAUSED;
         int updated = adCandidateRepository.changeState(businessDate, campaignId, state.name(), changedAt,
                 LocalDateTime.now(clock));
+        if (updated > 0) {
+            candidateChangeNotifier.changed(businessDate, campaignId);
+        }
         if (updated == 0 && !adCandidateRepository.existsByIdBusinessDateAndIdCampaignId(businessDate, campaignId)) {
             meterRegistry.counter(CANDIDATE_MISSING_METRIC).increment();
         }

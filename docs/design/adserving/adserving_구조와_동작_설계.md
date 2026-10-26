@@ -54,6 +54,7 @@ adserving/
 │   └── CampaignMemberConcentration.java
 ├── engine/
 │   ├── AllocationOrder.java      배분 슬롯의 순서. 진행률 순과 신규 우선 노출 보정
+│   ├── CandidateChange.java      그날 후보가 바뀌었다는 서버 사이 알림의 채널과 메시지 형식
 │   ├── BudgetPacing.java         예약액과 가중치로 시각까지의 계획 소진액과 진행률 계산
 │   ├── CampaignPacing.java       진행률과 노출 상한 판정
 │   ├── FeedAssembler.java        피드 배정의 진입점. 거르기, 반경 확장, 배분과 관련성 고르기, 자리 배치를 차례로 부른다
@@ -77,10 +78,13 @@ adserving/
 │   ├── service/CandidateStatusService.java      캠페인 상태 변경을 그날 후보의 서빙 상태에 반영한다
 │   ├── service/CandidateLoadService.java        00:00 에 그날 후보를 적재하고 적재 중의 상태 전이를 다시 읽어 반영한다
 │   ├── service/CandidateBudgetService.java      그날 후보의 예약액과 단가를 정산에서 읽어 둔다(#837)
+│   ├── service/CandidateCache.java              그날 후보를 서버 메모리에 두고 피드와 노출이 읽는다. 5초가 지나면 다시 읽는다(#1042)
 │   ├── job/LoadDailyCandidateJob.java           00:00 묶음 75. 적재와 재조회를 두 트랜잭션으로 부르고 끝에 예산을 읽는다
 │   ├── job/CandidateBudgetRefreshJob.java       10분마다 그날 후보의 예산을 다시 읽는다(#837)
 │   ├── repository/AdCandidateLoadImpl.java      적재의 upsert. 소진 시각을 덮지 않고 상태는 늦을 때만 바꾼다
+│   ├── listener/CandidateChangeSubscriber.java  다른 서버가 바꾼 그날 후보의 Valkey 알림을 받아 메모리에 반영한다
 │   ├── listener/CandidateStatusChangedListener.java  CampaignStatusChangedEvent 를 받는다
+│   ├── repository/CandidateChangeNotifier.java  그날 후보를 바꾼 뒤 커밋되면 Valkey 로 모든 서버에 알린다
 │   └── repository/AdCandidateRepository.java
 ├── exclusion/
 │   └── repository/ExclusionRepository.java  Valkey. 스와이프와 가게 상세 찜, 찜 삭제가 쓰고 피드가 읽는다. 광고 서빙의 Valkey 저장소가 함께 쓰는 캐시 우회 지표 이름(`BYPASS_METRIC`)도 갖는다(#654)
@@ -189,6 +193,7 @@ impression/
 | 당일 이력 | `adserving:exclusion:{영업일}:{memberId}` 집합. 원소가 `campaignId` | 다음 영업일 00:00 까지 남은 시간. 넣기와 만료를 `feed_exclusion_add.lua` 한 번으로 보낸다(#783) | 없다. 잃으면 그날 넘긴 카드가 다시 보인다 | `ExclusionRepository`. 쓰는 쪽은 `SwipeService` 와 `WishlistService` 의 가게 상세 찜과 찜 삭제다 |
 | 하루 내려준 횟수 | `adserving:servedDaily:{영업일}:{memberId}` 해시. 필드 `campaignId`, 값 횟수 | 다음 영업일 00:00 까지 남은 시간 | 없다. 잃으면 그날 같은 카드가 더 나온다 | `ServeFrequencyRepository` |
 | 세션에 내려준 캠페인 | `adserving:servedSession:{memberId}` 집합 | 피드 요청마다 30분을 다시 건다 | 없다. 키가 사라지면 새 세션이다 | `ServeFrequencyRepository` |
+| 그날 후보 변경 알림 | `adserving:candidate:changed` pub/sub 채널. 메시지는 `영업일:campaignId`, 그날 전체는 `영업일:*` | 저장하지 않는다. 받는 쪽이 그 순간 붙어 있지 않으면 사라진다 | `ad_candidate`. 놓친 알림은 서버 메모리가 5초 안에 다시 읽어 메운다 | 보내는 쪽 `CandidateChangeNotifier`, 받는 쪽 `CandidateChangeSubscriber` |
 | 그날 유효 노출 수 | `adserving:validImpressions:{영업일}` 해시. 필드 `campaignId`, 값 건수. 영업일은 노출을 받은 날이다(#498). 정산이 차감하는 영업일과 같아 노출 상한과 그날 예약액이 같은 날을 본다 | 올릴 때마다 이틀. 올리기와 만료를 `feed_impression_count_increment.lua` 한 번으로 보낸다(#783) | `impression_log` 의 유효 노출 | `ImpressionCountRepository`. 올리는 쪽은 `ImpressionWriteBuffer` 다 |
 | serve 기록 | `adserving:serve:{serveId}` 문자열. 회원:캠페인:가게:슬롯:자리:내려준 시각(ms) | 30분. 노출 인정 시간이고 정산은 이 값을 따로 두지 않아 과금을 인정하는 범위가 된다(#497, #498) | 없다. `serve_log` 는 판정에 쓰지 않는다. 잃으면 그동안의 노출이 무효다 | `ServeRecordRepository`, `ImpressionService` |
 
@@ -378,6 +383,9 @@ flowchart LR
 
         subgraph engine["engine/ (후보 스냅샷)"]
             AR[(AdCandidateRepository)]
+            CC[CandidateCache] --> AR
+            CN[("CandidateChangeNotifier<br/>Valkey pub/sub")]
+            CSB[CandidateChangeSubscriber] --> CC
             FA["FeedAssembler<br/>CampaignPacing<br/>순수 계산"]
         end
 
@@ -389,7 +397,9 @@ flowchart LR
         end
 
         CSU[CandidateStateUpdaterImpl] --> AR
+        CSU --> CN
         CSL[CandidateStatusChangedListener] --> CSS[CandidateStatusService] --> AR
+        CSS --> CN
 
         subgraph impression["impression/ (노출 로그)"]
             IMC[ImpressionController] --> IMS[ImpressionService]
@@ -398,12 +408,12 @@ flowchart LR
             LRJ[LogRetentionJob] --> LRS[LogRetentionService] --> IML
         end
 
-        FS --> AR
+        FS --> CC
         FS --> DE
         FS --> FA
         IMS --> SR
         IMW --> IC
-        IMS --> AR
+        IMS --> CC
         SWS --> WR
         SWS --> AR
         WS --> AR
@@ -630,6 +640,19 @@ B 를 고른다. 서빙 로그는 판정과 과금에 쓰이지 않고 유실을
 차면 기다리지 않고 버린다. 두 값은 근거 없는 값(C)이라 부하 시험에서 바꾼다.
 종료할 때는 웹 서버가 요청을 다 받은 뒤(`SmartLifecycle` 단계 0) 멈추고 남은 것을 비운다. 작업 스레드를 interrupt 하지 않는다. 쓰던 묶음이 커넥션을 기다리다 실패하면 대기열에서 이미 빠져 비우기에도 없기 때문이다. 작업 스레드는 대기(200ms)가 끝나면 쓰던 묶음을 마치고 나온다(#783).
 
+**결정: 그날 후보를 어디서 읽나** (#1042)
+
+부하 시험(노출 수집 v1)에서 피드 초당 약 30건에 DB 커넥션 풀이 바닥났다(대기 최대 약 420, RDS CPU 약 70%). 피드는 요청마다 그날 후보를 범위 조회로 읽고 노출은 요청마다 쿠폰 소진을 읽었다.
+
+| 선택지 | 장점 | 단점 |
+|---|---|---|
+| A. 서버 메모리에 두고 5초마다 통째로 다시 읽는다 | 코드가 가장 적다 | 바뀐 것이 늘 최대 5초 늦다. 쿠폰 소진 뒤 5초 동안 받은 노출이 과금될 수 있다 |
+| B. A 에 더해 바꾼 서버만 바로 반영한다 | 바꾼 서버는 바로 맞다 | 나머지 서버는 여전히 최대 5초 늦다 |
+| C. 바꾼 서버가 커밋 뒤 Valkey 로 알리고 모든 서버가 그 후보를 다시 읽는다. A 를 안전망으로 둔다 | 보통 수 ms 안에 모든 서버가 맞다 | 알림 보내기와 받기가 는다. 알림은 받는 쪽이 붙어 있지 않으면 사라져 A 가 메운다 |
+
+C 를 고른다. 노출의 쿠폰 소진도 메모리에서 읽는다. 알림을 놓친 드문 경우에만 소진 뒤 최대 5초 동안의 노출이 과금될 수 있고, 그 노출도 실제로 보인 카드의 노출이다.
+알리는 곳은 소진 반영, 상태 반영(후보 하나), 적재와 재조회, 예산 갱신(그날 전체)이다. 앱 서버는 스케줄러를 켜지 않아 5초 안전망은 주기 작업 대신 읽을 때 다시 읽는다.
+
 **결정: 유효 노출 수 카운터를 언제 올리나** (#323)
 
 | 선택지 | 장점 | 단점 |
@@ -735,13 +758,13 @@ A 를 고른다. 분석의 결정과 어긋났을 때 B 는 노출 이벤트를 
 
 | 적을 것 | 피드 조회 |
 |---|---|
-| 요청 하나의 비용 | DB 읽기 4(후보, 필터, 필터 업종, 30일 찜), 다른 도메인 호출 1(회원), Valkey 호출 7(serve 기록 10건은 파이프라인 한 번). 응답 뒤 DB 쓰기는 요청이 아니라 묶음 단위다 |
+| 요청 하나의 비용 | DB 읽기 3(필터, 필터 업종, 30일 찜), 다른 도메인 호출 1(회원), Valkey 호출 7(serve 기록 10건은 파이프라인 한 번). 그날 후보는 서버 메모리에서 읽고 서버마다 5초에 한 번 DB 에서 통째로 다시 읽는다(#1042). 응답 뒤 DB 쓰기는 요청이 아니라 묶음 단위다 |
 | 처리량 계산 | 목표 500 TPS x DB 읽기 4 = 초당 2,000 읽기, 회원 조회를 더하면 2,500. 응답 뒤 쓰기는 초당 `serve_log` 5,000행과 `feed_visit_daily` 500행을 50건 묶음으로 서버마다 나눠 쓴다 |
 | 확인 방법 | 아직 없다. k6 시나리오(피크 10:50~11:05)로 대기열 크기와 묶음 수도 함께 잰다 |
 
 | 적을 것 | 노출 수집 |
 |---|---|
-| 요청 하나의 비용 | DB 읽기 2(중복 확인, 후보 소진), Valkey 호출 1(serve 기록 읽기). 쓰기는 응답 뒤의 묶음 단위다. 묶음 하나는 INSERT 1문장, 가리기 SELECT 1문장, 커밋 1, 새로 들어간 유효 노출마다 Valkey 호출 1(카운터)이다. 분석 이벤트는 분석의 실행기가 따로 쓴다. 정산의 판정과 원장 쓰기는 릴레이로 옮겼다 |
+| 요청 하나의 비용 | DB 읽기 1(중복 확인), Valkey 호출 1(serve 기록 읽기). 후보 소진은 서버 메모리에서 읽는다(#1042). 쓰기는 응답 뒤의 묶음 단위다. 묶음 하나는 INSERT 1문장, 가리기 SELECT 1문장, 커밋 1, 새로 들어간 유효 노출마다 Valkey 호출 1(카운터)이다. 분석 이벤트는 분석의 실행기가 따로 쓴다. 정산의 판정과 원장 쓰기는 릴레이로 옮겼다 |
 | 처리량 계산 | 목표 10,000 TPS(NFR-010)의 쓰기가 서버마다 200ms 에 한 묶음씩 커밋된다. 서버 3대면 초당 약 15 트랜잭션이다. 릴레이가 넘긴 노출마다 정산의 쓰기 2건과 넘긴 표시 UPDATE 1건이 따로 든다. 표시는 묶음마다 한 문장이다. 지금 구성으로 되는지는 재지 않았다 |
 | 확인 방법 | 아직 없다. 피드와 같은 k6 시나리오에 노출 요청을 섞는다 |
 
@@ -850,6 +873,10 @@ A 를 고른다. 분석의 결정과 어긋났을 때 B 는 노출 이벤트를 
 | 상태 통보가 온 날 후보가 없음 | 후보가 없다 | 멈춤을 통보한다 | 예외 없이 넘어가고 센다 | `CandidateStatusChangedIntegrationTest.그날_후보가_없어도_예외_없이_넘어간다`, `CandidateStatusServiceTest.그_영업일의_후보가_없으면_예외_없이_넘어가고_센다` |
 | 소진 통보 | 같은 캠페인의 오늘과 내일 후보, 다른 캠페인의 오늘 후보가 있다 | 오늘로 소진을 통보한다 | 오늘 그 캠페인 후보에만 받은 시각이 들어간다 | `CandidateSoldOutIntegrationTest.받은_영업일의_그_캠페인_후보에만_받은_소진_시각을_쓴다` |
 | 같은 소진 통보가 다시 옴 | 이미 소진됐다 | 더 늦은 시각으로 다시 통보한다 | 처음 소진 시각이 남는다 | `CandidateSoldOutIntegrationTest.다시_불러도_처음_소진_시각이_남는다` |
+| 소진이 다른 서버에 감 | 서버 메모리에 그날 후보가 있고 시계가 멈춰 있다 | 소진을 통보한다 | Valkey 알림으로 메모리의 그 후보가 소진이 된다 | `CandidateSoldOutIntegrationTest.소진을_쓰면_Valkey_알림으로_서버_메모리의_후보도_소진이_된다` |
+| 알림을 놓침 | 메모리에 그날 후보가 있다 | 5초가 지나 다시 읽는다 | 통째로 다시 읽어 소진이 보인다 | `CandidateCacheTest.오초가_지나면_통째로_다시_읽는다` |
+| 다시 읽기가 실패함 | 메모리에 그날 후보가 있다 | DB 가 시간 초과한다 | 이전 후보를 쓰고 센다 | `CandidateCacheTest.다시_읽기가_실패하면_이전_후보를_쓰고_센다` |
+| 알림을 보내지 못함 | Valkey 가 멈췄다 | 후보를 바꾼다 | 예외 없이 센다 | `CandidateChangeNotifierTest.Valkey_가_멈추면_알리지_못한_것을_세고_예외를_올리지_않는다` |
 | 그날 후보가 없음 | 다른 영업일의 후보만 있다 | 소진을 통보한다 | 예외 없이 아무것도 바꾸지 않고 센다 | `CandidateSoldOutIntegrationTest.그_영업일의_후보가_없으면_예외_없이_아무것도_바꾸지_않는다`, `CandidateStateUpdaterImplTest.그_영업일의_후보가_없으면_예외_없이_넘어가고_센다` |
 | 분석이 하루 노출을 셈 | 유효, 소진 뒤, 무효 두 사유의 노출이 여러 시간대와 슬롯에 있다 | `campaignStats` 를 부른다 | 시간대 합과 슬롯 합이 유효 노출과 같고 다른 날은 세지 않는다 | `AdservingStatsQueryIntegrationTest.판정_사유_시간대_슬롯을_캠페인별로_세고_시간대_합과_슬롯_합이_유효_노출과_같다` |
 | 하루 종일 받은 노출 | 00:05, 09:30, 13:20, 23:59 에 받은 유효 노출이 있다 | `campaignStats` 를 부른다 | 각 시의 칸에 하나씩 센다 | `AdservingStatsQueryIntegrationTest.받은_시각의_시를_0시부터_23시까지_그대로_센다` |
