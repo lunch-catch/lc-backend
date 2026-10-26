@@ -13,7 +13,7 @@
 
 | 애그리거트 | 테이블 | 지키는 규칙 | 나눈 근거 |
 |---|---|---|---|
-| `template` | `template`, `template_version`, `template_quota` | 게시 전에는 HTML 을 `template_version` 이 갖고, 게시하면 고른 버전의 HTML 이 `template.html_content` 로 복사된다. `status`, `published_at`, `published_version_number` 는 항상 함께 바꾼다. 버전 번호는 템플릿 안에서 유일하고 지워진 번호도 다시 쓰지 않는다 | 도메인 이름과 다른 애그리거트라 하위 패키지로 나눈다 |
+| `template` | `template`, `template_version`, `template_quota` | 게시 전에는 HTML 을 `template_version` 이 갖고, 게시하면 고른 버전의 HTML 이 `template.html_content` 로 복사된다. `status`, `published_at`, `published_version_number` 는 항상 함께 바꾼다. 버전 번호는 템플릿 안에서 유일하고 계속 증가한다. 게시한 번호보다 높은 임시저장이 소프트삭제됐다가 04시 배치로 지워지면, 그 번호가 다시 쓰일 수 있다 | 도메인 이름과 다른 애그리거트라 하위 패키지로 나눈다 |
 
 ```
 campaign/template/
@@ -80,7 +80,7 @@ campaign/template/
 |---|---|
 | 새 버전 번호 | `max(published_version_number, 남아 있는 최대 번호) + 1`. 게시하면 임시저장이 모두 소프트삭제되고 04시 배치가 지우므로, `max(version_number) + 1` 로만 매기면 번호가 1부터 다시 시작한다. 소프트삭제된 행이 남아 있는 동안은 UNIQUE 가 그 번호를 쥐고 있어 남아 있는 최대 번호도 함께 센다 |
 | 버전 상한 | 템플릿당 20개다. 넘기면 번호가 (최신 번호 - 20) 이하인 살아 있는 버전을 모두 소프트삭제한다. 번호는 바꾸지 않는다 |
-| 처리 중 표시의 TTL | 60초. Bedrock 호출 한 번이 최대 30초이고 교정 재시도까지 두 번 부를 수 있다 |
+| 처리 중 표시의 TTL | 60초. Bedrock 호출 한 번이 최대 30초이고 교정 재시도까지 두 번 부를 수 있다. 정화, 검증, 저장은 이 계산에 넣지 않아, 처리가 TTL 안에 끝나지 않으면 같은 `requestId` 가 다시 통과해 모델을 한 번 더 부를 수 있다 |
 
 ## 5. 모듈 연결
 
