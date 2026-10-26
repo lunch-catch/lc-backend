@@ -114,8 +114,10 @@ wishlist/
 impression/
     ├── controller/ImpressionController.java
     ├── service/ImpressionService.java
+    ├── service/ImpressionWriteBuffer.java           노출 저장 큐와 작업자. 응답 뒤 묶어 저장한다
+    ├── service/QueuedImpression.java                판정을 마치고 저장을 기다리는 노출 1건
     ├── service/AdservingStatsQueryServiceImpl.java  집계 조회 구현. 찜은 feed 의 SwipeLogRepository 로 센다
-    ├── repository/ImpressionLogRepository.java      읽기는 JPA, 쓰기는 INSERT IGNORE, 집계는 네이티브 쿼리
+    ├── repository/ImpressionLogRepository.java      읽기는 JPA, 쓰기는 묶음 INSERT IGNORE, 집계는 네이티브 쿼리
     ├── job/LogRetentionJob.java                     매일 02:00. 묶음 밖 작업(StandaloneJob)으로 보관 기간이 지난 행을 지운다
     ├── service/LogRetentionService.java             접속 위치, 스와이프, 서빙, 노출 로그를 1,000행씩 지운다. feed 의 저장소를 쓴다
     └── entity/ImpressionLog.java
@@ -144,7 +146,8 @@ impression/
 | 진행률 1.2 초과와 노출 상한 판정 | `CampaignPacing.blocked()`(순수 계산) |
 | 온보딩, 위치, 요청 제한의 순서, 입력을 모으는 순서, 기록을 남기는 시점 | `FeedService` |
 | 서빙 로그를 묶어 쓰고 차면 버리는 규칙 | `ServeLogBuffer` |
-| 노출의 유효 판정, 같은 노출이 다시 올 때의 처리, 카운터의 시점과 영업일 | `ImpressionService` |
+| 노출의 유효 판정, 같은 노출이 다시 올 때의 처리, 영업일 | `ImpressionService` |
+| 노출을 묶어 저장하고 큐가 차면 100ms 뒤 버리는 규칙, 실패한 묶음을 다시 쓰는 간격, 새로 들어간 노출만 카운터와 이벤트를 내는 규칙 | `ImpressionWriteBuffer` |
 | 커밋된 유효 노출을 정산에 넘기는 묶음, 점유, 실패한 노출의 시도 횟수 | `ImpressionDispatchService` |
 | 집계 조회의 시간대(0~23시), 판정과 사유를 세는 기준, 상위 회원을 고르는 순서 | `ImpressionLogRepository` 의 집계 쿼리 |
 | 노출과 찜을 캠페인 ID 로 합치는 규칙, 시간대를 24칸으로 채우는 규칙 | `AdservingStatsQueryServiceImpl` |
@@ -158,7 +161,7 @@ impression/
 | 찜 목록의 표시 값을 그날 후보 행 유무로 채우고 없으면 `null` 로 두는 규칙 | `WishlistService`, `WishlistItemResponse` |
 | 가게 상세 찜이 받는 캠페인(그날 후보 행), 처음 찜과 다시 찜의 구분, 찜과 당일 이력을 쓰는 순서, 찜 삭제가 당일 이력에 넣는 조건 | `WishlistService` |
 
-`ServeLogBuffer` 를 `FeedService` 와 나눈 것은 입구가 달라서다. 앞은 요청 스레드가, 뒤는 작업자 스레드가 부른다.
+`ServeLogBuffer` 를 `FeedService` 와 나눈 것은 입구가 달라서다. 앞은 요청 스레드가, 뒤는 작업자 스레드가 부른다. `ImpressionWriteBuffer` 를 `ImpressionService` 와 나눈 것도 같은 이유다.
 
 ## 3. 저장
 
@@ -177,7 +180,7 @@ impression/
 | 소진 반영 | `ad_candidate` 의 PK(`business_date`, `campaign_id`)로 `sold_out_at IS NULL` 인 행만 바꾼다. 받은 소진 시각을 그대로 쓰고 부른 시각은 `updated_at` 에만 쓴다. 0행이면 PK 로 후보가 있는지 한 번 더 본다(#163) |
 | 집계를 세는 방식 | 그날 유효 노출 수는 `impression_log` 를 세지 않고 카운터를 읽는다. 틀리면 `impression_log` 에서 다시 센다. 분석의 집계 조회는 카운터를 읽지 않고 아래 "집계 조회의 귀속" 대로 원본을 센다 |
 | 집계 조회 | 노출은 `idx_imp_date_reason` 의 앞 열로 그날 행만 읽어 캠페인별로 한 번 훑는다. 판정, 사유, 슬롯을 같은 행들에서 세어 축끼리의 합이 맞는다. 시간대는 24칸이라 캠페인과 시로 묶는 쿼리를 따로 두고, 한 읽기 전용 트랜잭션에서 불러 같은 스냅샷을 본다(#498). 회원별 무효 노출은 그 인덱스의 두 열을 탄다. 찜은 `idx_swipe_date` 로 그날 `WISH` 만 센다. 두 테이블을 조인하지 않고 서비스가 캠페인 ID 로 합친다 |
-| DB 제약으로 막을 것과 코드로 막을 것 | 같은 카드가 `serve_log` 에 두 번 들어가는 것은 PK(`serve_id`)와 `INSERT IGNORE` 로, 같은 날 두 번째 접속 위치는 PK(`business_date`, `member_id`)와 `INSERT IGNORE` 로 막는다. 같은 노출의 두 번째 저장은 `impression_log` 의 PK(`serve_id`, `member_id`)와 `INSERT IGNORE` 로, 같은 카드의 두 번째 스와이프는 `swipe_log` 의 같은 PK 로, 같은 캠페인의 두 번째 찜은 `uk_wishlist_member_campaign` 으로 막는다. 노출은 넣은 행 수로 처음 저장인지 가른다. 먼저 읽어 보는 것은 다시 온 요청을 빨리 돌려보내려는 것이고 동시 요청은 PK 가 막는다 |
+| DB 제약으로 막을 것과 코드로 막을 것 | 같은 카드가 `serve_log` 에 두 번 들어가는 것은 PK(`serve_id`)와 `INSERT IGNORE` 로, 같은 날 두 번째 접속 위치는 PK(`business_date`, `member_id`)와 `INSERT IGNORE` 로 막는다. 같은 노출의 두 번째 저장은 `impression_log` 의 PK(`serve_id`, `member_id`)와 `INSERT IGNORE` 로, 같은 카드의 두 번째 스와이프는 `swipe_log` 의 같은 PK 로, 같은 캠페인의 두 번째 찜은 `uk_wishlist_member_campaign` 으로 막는다. 노출은 묶음을 넣은 뒤 같은 트랜잭션에서 그 키들의 `created_at` 을 읽어 그 노출을 받은 시각과 같은 행을 처음 저장으로 가른다. 배치 INSERT 가 행마다의 결과를 돌려주지 않아서다. 먼저 읽어 보는 것은 저장된 노출의 처음 판정을 돌려주려는 것이고 아직 큐에 있는 같은 노출은 PK 가 막는다 |
 | 이력 | 해당 없음. 그날 후보의 `sold_out_at` 은 한 번만 채워지고 다시 바뀌지 않는다. `serve_log`, `feed_visit_daily`, `impression_log`, `swipe_log` 는 쌓기만 하고 고치지 않는다. `wishlist` 는 지울 때 행을 지우고, 캠페인이 끝나면 `campaign_ended_at` 을 한 번만 채운 뒤 3일 뒤 지운다 |
 
 | 데이터 | 키 | 만료 | 원본 | 읽는 곳 |
@@ -186,7 +189,7 @@ impression/
 | 당일 이력 | `adserving:exclusion:{영업일}:{memberId}` 집합. 원소가 `campaignId` | 다음 영업일 00:00 까지 남은 시간. 넣기와 만료를 `feed_exclusion_add.lua` 한 번으로 보낸다(#783) | 없다. 잃으면 그날 넘긴 카드가 다시 보인다 | `ExclusionRepository`. 쓰는 쪽은 `SwipeService` 와 `WishlistService` 의 가게 상세 찜과 찜 삭제다 |
 | 하루 내려준 횟수 | `adserving:servedDaily:{영업일}:{memberId}` 해시. 필드 `campaignId`, 값 횟수 | 다음 영업일 00:00 까지 남은 시간 | 없다. 잃으면 그날 같은 카드가 더 나온다 | `ServeFrequencyRepository` |
 | 세션에 내려준 캠페인 | `adserving:servedSession:{memberId}` 집합 | 피드 요청마다 30분을 다시 건다 | 없다. 키가 사라지면 새 세션이다 | `ServeFrequencyRepository` |
-| 그날 유효 노출 수 | `adserving:validImpressions:{영업일}` 해시. 필드 `campaignId`, 값 건수. 영업일은 노출을 받은 날이다(#498). 정산이 차감하는 영업일과 같아 노출 상한과 그날 예약액이 같은 날을 본다 | 올릴 때마다 이틀. 올리기와 만료를 `feed_impression_count_increment.lua` 한 번으로 보낸다(#783) | `impression_log` 의 유효 노출 | `ImpressionCountRepository`. 올리는 쪽은 `ImpressionService` 다 |
+| 그날 유효 노출 수 | `adserving:validImpressions:{영업일}` 해시. 필드 `campaignId`, 값 건수. 영업일은 노출을 받은 날이다(#498). 정산이 차감하는 영업일과 같아 노출 상한과 그날 예약액이 같은 날을 본다 | 올릴 때마다 이틀. 올리기와 만료를 `feed_impression_count_increment.lua` 한 번으로 보낸다(#783) | `impression_log` 의 유효 노출 | `ImpressionCountRepository`. 올리는 쪽은 `ImpressionWriteBuffer` 다 |
 | serve 기록 | `adserving:serve:{serveId}` 문자열. 회원:캠페인:가게:슬롯:자리:내려준 시각(ms) | 30분. 노출 인정 시간이고 정산은 이 값을 따로 두지 않아 과금을 인정하는 범위가 된다(#497, #498) | 없다. `serve_log` 는 판정에 쓰지 않는다. 잃으면 그동안의 노출이 무효다 | `ServeRecordRepository`, `ImpressionService` |
 
 **결정: 당일 이력을 어디에 두나** (#236 에서 정했다)
@@ -391,6 +394,7 @@ flowchart LR
         subgraph impression["impression/ (노출 로그)"]
             IMC[ImpressionController] --> IMS[ImpressionService]
             IMS --> IML[(ImpressionLogRepository)]
+            IMS --> IMW[ImpressionWriteBuffer] --> IML
             LRJ[LogRetentionJob] --> LRS[LogRetentionService] --> IML
         end
 
@@ -398,7 +402,7 @@ flowchart LR
         FS --> DE
         FS --> FA
         IMS --> SR
-        IMS --> IC
+        IMW --> IC
         IMS --> AR
         SWS --> WR
         SWS --> AR
@@ -474,35 +478,40 @@ sequenceDiagram
 | 10 | 대기열이 차면 그 피드의 서빙 로그와 접속 위치가 빠진다 | 새 피드는 새로 넣는다 |
 | 11 | 그 묶음의 서빙 로그와 접속 위치가 빠진다 | 해당 없음. 응답 뒤라 클라이언트는 모른다 |
 
-**노출 수집.** 돈이 걸린 흐름이다. 요청은 노출만 저장하고 정산을 부르지 않는다. 커밋된 유효 노출은 아래 릴레이가 정산에 넘긴다.
+**노출 수집.** 돈이 걸린 흐름이다. 요청은 판정만 하고 응답한다. 저장은 응답 뒤에 큐가 묶어서 한다(노출 수집 v3, [요청 중 쓰기 설계](./adserving_요청_중_쓰기_설계.md) 4장). 정산은 부르지 않는다. 커밋된 유효 노출은 아래 릴레이가 정산에 넘긴다.
 
 ```mermaid
 sequenceDiagram
     participant C as ImpressionController
     participant S as ImpressionService
+    participant Q as ImpressionWriteBuffer
     participant DB as MySQL
     participant V as Valkey
     C->>S: record(memberId, 요청)
-    Note over S,DB: 트랜잭션 시작
-    S->>DB: 1. 같은 (serveId, 사용자) 가 있나
+    S->>DB: 1. 같은 (serveId, 사용자) 가 저장돼 있나
     Note over S: 있으면 처음 판정을 돌려준다
     S->>V: 2. serve 기록 읽기
     Note over S: 없으면 EXPIRED_OR_UNKNOWN, 다른 사용자면 NOT_OWNER
     S->>DB: 3. 그날 후보의 쿠폰 소진 여부
-    S->>DB: 4. INSERT IGNORE. 넘길 유효 노출만 dispatched_at 을 비운다
-    Note over S: 0행이면 잠금 읽기로 먼저 넣은 쪽의 판정을 돌려준다
-    Note over S,DB: 커밋
-    S->>V: 5. 유효면 카운터 올리기 [커밋 뒤]
-    Note over S: 6. 유효면 분석이 노출 이벤트를 받는다 [커밋 뒤]
+    S->>Q: 4. 큐에 넣는다. 차 있으면 100ms 기다린 뒤 버리고 센다
     S-->>C: 202
+    Note over Q: 500건이 차거나 200ms 가 지나면
+    Note over Q,DB: 트랜잭션 시작
+    Q->>DB: 5. INSERT IGNORE 묶음. 넘길 유효 노출만 dispatched_at 을 비운다
+    Q->>DB: 6. 그 키들의 created_at 으로 새로 들어간 행을 가린다
+    Note over Q: 7. 새로 들어간 유효 노출이면 분석이 노출 이벤트를 받는다 [커밋 뒤]
+    Note over Q,DB: 커밋
+    Q->>V: 8. 새로 들어간 유효 노출이면 카운터 올리기 [커밋 뒤]
 ```
 
 | 실패 지점 | 남는 상태 | 다시 요청하면 |
 |---|---|---|
-| 1, 3, 4 | 롤백된다. 아무것도 남지 않는다. `500` 이다 | 클라이언트가 1회 재시도하면 새로 처리한다 |
-| 2 | Valkey 가 멈추면 기록 없음으로 보고 `EXPIRED_OR_UNKNOWN` 으로 저장한다 | 이미 저장돼 처음 판정(무효)을 돌려준다. Valkey 가 돌아와도 유효로 바뀌지 않는다 |
-| 5 | 노출은 커밋됐고 카운터만 오르지 않는다. 상한이 그만큼 늦게 걸린다 | 이미 저장돼 처음 판정을 돌려주고 카운터는 다시 올리지 않는다 |
-| 6 | 노출과 카운터는 남고 분석의 퍼널에서만 그 노출이 빠진다 | 이미 저장돼 처음 판정을 돌려주고 이벤트는 다시 발행하지 않는다 |
+| 1, 3 | 아무것도 남지 않는다. `500` 이다 | 클라이언트가 1회 재시도하면 새로 처리한다 |
+| 2 | Valkey 가 멈추면 기록 없음으로 보고 `EXPIRED_OR_UNKNOWN` 으로 저장한다 | 저장됐으면 처음 판정(무효)을 돌려준다. Valkey 가 돌아와도 유효로 바뀌지 않는다 |
+| 4 | 큐가 100ms 넘게 차 있으면 버린다. 응답은 `202` 다 | 클라이언트는 응답을 쓰지 않아 다시 보내지 않는다 |
+| 5, 6, 7 | 묶음이 롤백된다. 같은 묶음을 지수 백오프와 Full Jitter 로 다시 쓴다. 서버가 내려가는 중이면 쓰지 못한 행으로 센다 | 저장 전이면 다시 판정해 큐에 넣는다. 같은 키는 하나만 저장된다 |
+| 8 | 노출은 커밋됐고 카운터만 오르지 않는다. 상한이 그만큼 늦게 걸린다 | 저장됐으면 처음 판정을 돌려주고 카운터는 다시 올리지 않는다 |
+| 응답 뒤 서버가 강제로 죽음 | 큐에 있던 노출이 빠진다. 유실 목표 0.1% 안에 둔다 | 클라이언트는 다시 보내지 않는다 |
 
 **노출 릴레이.** 배치 서버에서 1초마다 돈다. 정산은 트랜잭션 안에서 부르면 거절하므로 점유와 결과 적기 사이에서 트랜잭션 밖으로 부른다.
 
@@ -589,7 +598,8 @@ sequenceDiagram
 | 흐름 | 한 트랜잭션에 묶는 것 | 트랜잭션 밖 |
 |---|---|---|
 | 피드 조회 | 없다. DB 읽기가 각자 끝난다 | Valkey 호출, 서빙 로그와 접속 위치 쓰기 |
-| 노출 수집 | `impression_log` 저장 | serve 기록 읽기, 커밋 뒤의 유효 노출 수 카운터, 커밋 뒤에 분석이 받는 노출 이벤트, 정산 차감(릴레이) |
+| 노출 수집 | 없다. 요청은 읽기만 한다 | serve 기록 읽기, 큐에 넣기 |
+| 노출 묶음 저장 | 묶음의 `impression_log` 저장, 새로 들어간 행 가리기, 노출 이벤트 발행 | 커밋 뒤의 유효 노출 수 카운터, 커밋 뒤에 분석이 받는 노출 이벤트, 정산 차감(릴레이) |
 | 노출 릴레이 | 결과 적기(넘긴 시각, 시도 횟수) | Valkey 점유, 넘길 노출 읽기, `deductAll`(점주마다 정산의 트랜잭션) |
 | 스와이프 | 없다. 찜과 스와이프 기록이 각자 커밋된다 | 당일 이력(Valkey), 기록이 커밋된 뒤에 분석이 받는 스와이프 이벤트 |
 | 필터 조회 | 없다. 읽기 둘이 각자 끝난다 | 없음 |
@@ -731,8 +741,8 @@ A 를 고른다. 분석의 결정과 어긋났을 때 B 는 노출 이벤트를 
 
 | 적을 것 | 노출 수집 |
 |---|---|
-| 요청 하나의 비용 | DB 읽기 2(중복 확인, 후보 소진), DB 쓰기 1(`impression_log`), 트랜잭션 1, Valkey 호출 2(serve 기록 읽기, 커밋 뒤 카운터). 분석 이벤트는 분석의 실행기가 따로 쓴다. 정산의 판정과 원장 쓰기는 릴레이로 옮겼다 |
-| 처리량 계산 | 목표 10,000 TPS(NFR-010) x 쓰기 트랜잭션 1 = 초당 10,000 트랜잭션. 릴레이가 넘긴 노출마다 정산의 쓰기 2건과 넘긴 표시 UPDATE 1건이 따로 든다. 표시는 묶음마다 한 문장이다. 지금 구성으로 되는지는 재지 않았다 |
+| 요청 하나의 비용 | DB 읽기 2(중복 확인, 후보 소진), Valkey 호출 1(serve 기록 읽기). 쓰기는 응답 뒤의 묶음 단위다. 묶음 하나는 INSERT 1문장, 가리기 SELECT 1문장, 커밋 1, 새로 들어간 유효 노출마다 Valkey 호출 1(카운터)이다. 분석 이벤트는 분석의 실행기가 따로 쓴다. 정산의 판정과 원장 쓰기는 릴레이로 옮겼다 |
+| 처리량 계산 | 목표 10,000 TPS(NFR-010)의 쓰기가 서버마다 200ms 에 한 묶음씩 커밋된다. 서버 3대면 초당 약 15 트랜잭션이다. 릴레이가 넘긴 노출마다 정산의 쓰기 2건과 넘긴 표시 UPDATE 1건이 따로 든다. 표시는 묶음마다 한 문장이다. 지금 구성으로 되는지는 재지 않았다 |
 | 확인 방법 | 아직 없다. 피드와 같은 k6 시나리오에 노출 요청을 섞는다 |
 
 | 적을 것 | 스와이프 |
@@ -774,18 +784,21 @@ A 를 고른다. 분석의 결정과 어긋났을 때 B 는 노출 이벤트를 
 | 묶음 쓰기가 실패함(11) | DB 쓰기가 한 번 실패한다 | 묶음 둘을 쓴다 | 첫 묶음을 버리고 세며 둘째는 쓴다 | `ServeLogBufferTest.쓰기가_실패하면_그_묶음을_버리고_세며_다음_묶음은_쓴다` |
 | 서버가 내려감 | 대기열에 2건이 남았다 | 대기열을 멈춘다 | 남은 것을 모두 쓴다 | `ServeLogBufferTest.멈출_때_남은_것을_모두_쓴다` |
 | 쓰는 중에 서버가 내려감 | 작업 스레드가 묶음을 쓰는 중이다 | 대기열을 멈춘다 | 쓰던 묶음을 끊지 않고 마친다 | `ServeLogBufferTest.멈출_때_쓰는_중인_묶음을_끊지_않는다` |
-| 같은 노출이 다시 옴 | 유효 노출 1건이 저장됐다 | 같은 사용자가 같은 serveId 를 다시 보낸다 | 처음 판정을 돌려주고 행, 넘기기, 카운터가 한 번뿐이다 | `ImpressionIntegrationTest.같은_사용자가_같은_카드를_다시_보내면_처음_판정을_돌려주고_한_번만_넘기고_센다` |
-| 같은 노출이 동시에 옴 | 먼저 온 요청이 넣고 커밋하기 전이다 | 늦은 요청이 중복 확인을 지나 넣기에서 기다린다 | 둘 다 `202` 이고 늦은 요청도 먼저 저장된 판정(VALID)을 돌려주며 행은 하나다 | `ImpressionIntegrationTest.같은_노출이_동시에_오면_늦은_요청도_먼저_저장된_판정을_돌려주고_한_번만_저장한다` |
-| 같은 노출이 동시에 옴 | 다른 요청이 먼저 넣었다 | `INSERT IGNORE` 가 0행이다 | 먼저 넣은 쪽의 판정을 돌려주고 차감하지 않는다 | `ImpressionServiceTest.동시에_와서_먼저_넣은_쪽이_있으면_그_판정을_돌려주고_차감하지_않는다` |
-| 저장이 롤백됨 | 트랜잭션 안에서 실패한다 | 유효 노출을 보낸다 | `500` 이고 노출도 카운터도 남지 않는다 | `ImpressionIntegrationTest.노출_저장이_롤백되면_카운터도_오르지_않는다` |
+| 같은 노출이 다시 옴 | 유효 노출 1건이 저장됐다 | 같은 사용자가 같은 serveId 를 다시 보낸다 | 처음 판정을 돌려주고 행, 넘기기, 카운터가 한 번뿐이다 | `ImpressionIntegrationTest.저장된_뒤_같은_사용자가_같은_카드를_다시_보내면_처음_판정을_돌려주고_한_번만_넘기고_센다` |
+| 저장되기 전에 다시 옴 | 처음 노출이 아직 큐에 있다 | 같은 노출을 다시 보낸다 | 다시 판정해 `202` 이고 행, 카운터, 이벤트가 한 번뿐이다 | `ImpressionIntegrationTest.저장되기_전에_다시_보내면_다시_판정하고_한_번만_저장하고_센다` |
+| 다른 묶음이 먼저 저장함 | 다른 서버의 묶음이 같은 노출을 먼저 저장했다 | 이 묶음을 쓴다 | 행은 하나이고 카운터와 이벤트를 다시 내지 않는다 | `ImpressionIntegrationTest.다른_묶음이_먼저_저장한_노출은_세지_않고_이벤트도_내지_않는다` |
+| 같은 묶음에 같은 노출이 둘 | 한 묶음에 같은 키가 둘 있다 | 묶음을 쓴다 | 이벤트와 카운터가 한 번이다 | `ImpressionWriteBufferTest.같은_묶음에_같은_노출이_둘이면_한_번만_이벤트를_내고_센다` |
+| 큐가 참(4) | 큐에 10,000건이 있다 | 노출을 하나 더 넣는다 | 100ms 기다린 뒤 버리고 센다 | `ImpressionWriteBufferTest.큐가_차면_100ms_기다린_뒤_버리고_센다` |
+| 묶음 쓰기가 실패함(5) | DB 쓰기가 한 번 실패한다 | 작업자가 묶음을 쓴다 | 같은 묶음을 다시 써 저장하고 카운터를 올린다 | `ImpressionWriteBufferTest.실패한_묶음을_같은_묶음으로_다시_쓴다` |
+| 노출 큐를 멈춤 | 큐에 1,200건이 남았다 | 큐를 멈춘다 | 남은 것을 모두 쓴다 | `ImpressionWriteBufferTest.내려갈_때_남은_것을_모두_쓴다` |
+| 묶음 저장이 롤백됨(7) | 묶음 트랜잭션 안에서 실패한다 | 유효 노출을 보낸다 | 응답은 `202` 이고 노출도 카운터도 이벤트도 남지 않는다 | `ImpressionIntegrationTest.묶음_저장이_롤백되면_응답은_202_이고_행도_카운터도_이벤트도_남지_않는다` |
 | 릴레이가 넘김 | 유효 노출이 커밋됐다 | 릴레이를 두 번 돌린다 | 트랜잭션 밖에서 한 번만 넘기고 넘긴 시각을 적는다 | `ImpressionIntegrationTest.릴레이가_커밋된_유효_노출을_트랜잭션_밖에서_정산에_넘기고_넘긴_시각을_적는다` |
 | 무효 노출은 넘기지 않음 | 기록이 없는 카드를 보냈다 | 릴레이를 돌린다 | 저장할 때 넘긴 것으로 적고 정산을 부르지 않는다 | `ImpressionIntegrationTest.무효_노출은_저장할_때_넘긴_것으로_적고_정산에_넘기지_않는다` |
 | 정산이 실패로 돌려줌 | 유효 노출이 커밋됐다 | 정산이 실패로 돌려준다 | 넘긴 시각을 적지 않고 시도 횟수만 올린다 | `ImpressionIntegrationTest.정산이_실패로_돌려준_노출은_넘긴_것으로_적지_않고_시도_횟수만_올린다` |
 | 정산이 예외를 던짐(릴레이 3) | 넘길 노출이 있다 | 정산이 예외를 던진다 | 아무것도 적지 않고 다음 주기에 다시 넘긴다 | `ImpressionDispatchServiceTest.정산이_예외를_던지면_아무것도_적지_않고_다음_주기에_같은_묶음을_다시_넘긴다` |
 | 다른 서버가 도는 중(릴레이 1) | 점유가 있다 | 릴레이를 돌린다 | 읽지도 넘기지도 않는다 | `ImpressionDispatchServiceTest.다른_서버가_점유_중이면_넘기지_않는다` |
-| 롤백됨(5) | 트랜잭션이 롤백된다 | 유효 노출을 보낸다 | 카운터를 올리지 않는다 | `ImpressionServiceTest.롤백되면_올리지_않는다` |
-| 노출이 분석에 감(6) | 유효 노출을 처음 저장했다 | 같은 노출을 다시 보낸다 | 노출 이벤트가 커밋 뒤에 한 번만 넘어간다 | `ImpressionIntegrationTest.유효_노출을_처음_저장하면_커밋_뒤_노출_이벤트가_한_번_넘어가고_다시_보내면_넘어가지_않는다` |
-| 롤백된 노출(6) | 트랜잭션 안에서 실패한다 | 유효 노출을 보낸다 | 노출 이벤트가 넘어가지 않는다 | `ImpressionIntegrationTest.노출_저장이_롤백되면_이벤트가_넘어가지_않는다` |
+| 묶음 저장이 실패함(8) | 묶음 쓰기가 실패한다 | 큐를 비운다 | 이벤트도 카운터도 내지 않고 쓰지 못한 행으로 센다 | `ImpressionWriteBufferTest.저장이_실패하면_이벤트도_카운터도_내지_않고_서버가_내려가며_쓰지_못한_행으로_센다` |
+| 노출이 분석에 감(7) | 유효 노출을 처음 저장했다 | 같은 노출을 다시 보낸다 | 노출 이벤트가 커밋 뒤에 한 번만 넘어간다 | `ImpressionIntegrationTest.유효_노출을_처음_저장하면_커밋_뒤_노출_이벤트가_한_번_넘어가고_다시_보내면_넘어가지_않는다` |
 | 상한에 닿음 | 카운터가 상한보다 1 작다 | 유효 노출 1건 뒤 피드를 요청한다 | 그 캠페인이 피드에서 빠진다 | `ImpressionIntegrationTest.노출이_쌓여_노출_상한에_닿은_캠페인은_피드에서_빠진다` |
 | 같은 카드를 다시 넘김 | 그 카드를 패스했다 | 같은 카드를 찜으로 보낸다 | `applied: false` 이고 스와이프도 찜도 늘지 않는다 | `SwipeIntegrationTest.같은_카드를_다시_넘기면_applied_false_이고_기록이_늘지_않는다` |
 | 같은 카드에 WISH 와 PASS 가 함께 옴 | PASS 가 기록을 먼저 넣었다 | WISH 가 찜을 새로 넣고 기록 넣기에서 진다 | 그 찜을 지우고 `applied: false` 다 | `SwipeServiceTest.기록_넣기에서_진_찜은_이_요청이_새로_넣은_찜을_지운다` |
@@ -847,6 +860,7 @@ A 를 고른다. 분석의 결정과 어긋났을 때 B 는 노출 이벤트를 
 |---|---|---|
 | 탐색 반경을 넓히는 기준 | 10장 미만으로 임시로 정했다 | 없다. 기준이 정해지면 `FeedAssembler` 한 곳을 바꾼다 |
 | 서빙 로그 대기열의 크기와 묶음 수 | 5,000건과 50건으로 임시로 정했다 | 없다. 부하 시험 뒤 `ServeLogBuffer` 의 두 값을 바꾼다 |
+| 노출 저장 큐의 크기, 묶음 수, 대기 상한 | 10,000건, 500건, 200ms 로 정했다(#1038) | 없다. 부하 시험 뒤 `ImpressionWriteBuffer` 의 값을 바꾼다 |
 | 세션을 늘리는 활동 | 피드 요청으로만 임시로 정했다 | 스와이프와 노출 요청도 세션을 늘릴지 정해야 한다. 두 API 모두 아직 늘리지 않는다 |
 | 가게 상세 찜의 퍼널 기록 | 스와이프 찜만 `SwipedEvent` 로 분석에 간다(#349 에서 정했다) | 가게 상세에서 찜한 것은 퍼널의 `wish` 에 잡히지 않는다. 분석이 원하면 이벤트를 더한다 |
 | 퍼널 이벤트의 수신자 | 분석 리스너가 아직 없다 | 수신자가 `fallbackExecution` 을 빠뜨리면 스와이프 이벤트가 오류 없이 사라진다. 조건은 `feed-api-design.md` 에 있다 |
