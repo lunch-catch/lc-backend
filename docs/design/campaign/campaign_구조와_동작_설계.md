@@ -134,7 +134,7 @@ stateDiagram-v2
     [*] --> DRAFT
     DRAFT --> SCHEDULED: 자동 검수 통과 (SYSTEM)
     SCHEDULED --> DRAFT: 점주 취소 (#597)
-    SCHEDULED --> ACTIVE: 00:00 스케줄러 (SYSTEM)
+    SCHEDULED --> ACTIVE: 자정 스케줄러 (SYSTEM)
     ACTIVE --> PAUSED: 관리자, 점주, 포인트 부족
     PAUSED --> ACTIVE: 재개
     ACTIVE --> ENDED: 집행 기간 종료 (SYSTEM)
