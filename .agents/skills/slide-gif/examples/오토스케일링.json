@@ -1,0 +1,623 @@
+{
+ "name": "API 서버 오토스케일링",
+ "title": "요청이 몰리면 ASG 가 세 번째 서버를 띄웁니다.",
+ "logo": "LUNCHCATCH",
+ "category": "오토스케일링",
+ "speed": 0.5,
+ "loop": 24000,
+ "elements": [
+  {
+   "type": "box",
+   "id": "sig",
+   "x": 70,
+   "y": 160,
+   "w": 420,
+   "h": 112,
+   "title": "부하 신호",
+   "sub": "ALBRequestCountPerTarget, 대상당 분당 요청 수",
+   "value": "4,200 / 6,000",
+   "progress": 0.4,
+   "size": "s"
+  },
+  {
+   "type": "box",
+   "id": "plan",
+   "x": 590,
+   "y": 160,
+   "w": 420,
+   "h": 112,
+   "title": "Target Tracking",
+   "sub": "대상당 분당 6,000 을 맞추도록 대수를 계산한다",
+   "value": "유지",
+   "size": "s"
+  },
+  {
+   "type": "box",
+   "id": "asg",
+   "x": 1110,
+   "y": 160,
+   "w": 420,
+   "h": 112,
+   "title": "Auto Scaling Group",
+   "sub": "min 2, max 3, 두 AZ 에 나눠 띄운다",
+   "value": "desired 2",
+   "size": "s"
+  },
+  {
+   "type": "panel",
+   "id": "zone",
+   "x": 70,
+   "y": 292,
+   "w": 1460,
+   "h": 350,
+   "dashed": true
+  },
+  {
+   "type": "label",
+   "x": 540,
+   "y": 304,
+   "text": "API 서버 (t3.small)",
+   "color": "dim",
+   "size": "xs",
+   "mono": true
+  },
+  {
+   "type": "label",
+   "x": 1130,
+   "y": 304,
+   "text": "데이터",
+   "color": "dim",
+   "size": "xs",
+   "mono": true
+  },
+  {
+   "type": "box",
+   "id": "alb",
+   "x": 100,
+   "y": 418,
+   "w": 260,
+   "h": 92,
+   "title": "ALB",
+   "sub": "Route53 -> ALB, 헬스체크 10초 간격",
+   "size": "m"
+  },
+  {
+   "type": "box",
+   "id": "app1",
+   "x": 540,
+   "y": 330,
+   "w": 300,
+   "h": 74,
+   "title": "App 1",
+   "sub": "ap-northeast-2a",
+   "size": "s"
+  },
+  {
+   "type": "box",
+   "id": "app2",
+   "x": 540,
+   "y": 428,
+   "w": 300,
+   "h": 74,
+   "title": "App 2",
+   "sub": "ap-northeast-2c",
+   "size": "s"
+  },
+  {
+   "type": "box",
+   "id": "app3",
+   "x": 540,
+   "y": 526,
+   "w": 300,
+   "h": 74,
+   "title": "App 3",
+   "sub": "대기",
+   "size": "s",
+   "tone": "ghost"
+  },
+  {
+   "type": "box",
+   "id": "rds",
+   "x": 1130,
+   "y": 330,
+   "w": 380,
+   "h": 86,
+   "title": "RDS MySQL 8.4",
+   "sub": "Multi-AZ",
+   "size": "m"
+  },
+  {
+   "type": "box",
+   "id": "cache",
+   "x": 1130,
+   "y": 432,
+   "w": 380,
+   "h": 86,
+   "title": "ElastiCache Valkey 9.0",
+   "sub": "Primary, Replica",
+   "size": "m"
+  },
+  {
+   "type": "box",
+   "id": "batch",
+   "x": 1130,
+   "y": 534,
+   "w": 380,
+   "h": 76,
+   "title": "배치 서버 2대",
+   "sub": "두 대 모두 스케줄러를 켠 액티브-액티브",
+   "size": "s",
+   "tone": "dim"
+  },
+  {
+   "type": "box",
+   "id": "b1",
+   "x": 70,
+   "y": 676,
+   "w": 350,
+   "h": 118,
+   "title": "인스턴스 시작 -> 컨테이너",
+   "sub": "부팅, Docker 설치, 이미지 pull",
+   "value": "약 95초",
+   "progress": 0,
+   "size": "s"
+  },
+  {
+   "type": "box",
+   "id": "b2",
+   "x": 440,
+   "y": 676,
+   "w": 350,
+   "h": 118,
+   "title": "컨테이너 -> 앱 기동",
+   "sub": "JVM 기동과 Flyway",
+   "value": "약 40초",
+   "progress": 0,
+   "size": "s"
+  },
+  {
+   "type": "box",
+   "id": "b3",
+   "x": 810,
+   "y": 676,
+   "w": 350,
+   "h": 118,
+   "title": "앱 기동 -> ALB healthy",
+   "sub": "헬스체크 2회 연속 통과",
+   "value": "약 22초",
+   "progress": 0,
+   "size": "s"
+  },
+  {
+   "type": "box",
+   "id": "b4",
+   "x": 1180,
+   "y": 676,
+   "w": 350,
+   "h": 118,
+   "title": "warmup 180초",
+   "sub": "그 전에는 대수 계산에서 뺀다",
+   "value": "실측 160초 + 여유 20초",
+   "progress": 0,
+   "size": "s"
+  },
+  {
+   "type": "label",
+   "x": 70,
+   "y": 812,
+   "text": "새 서버가 요청을 받기까지 약 160초(실측). warmup 이 없으면 부팅 중인 대수를 빼고 같은 부하를 두 번 세어 한 대를 더 띄운다.",
+   "color": "mid",
+   "size": "s"
+  }
+ ],
+ "wires": [
+  {
+   "points": [
+    "sig.r",
+    "plan.l"
+   ],
+   "arrow": true
+  },
+  {
+   "points": [
+    "plan.r",
+    "asg.l"
+   ],
+   "arrow": true
+  },
+  {
+   "id": "wm",
+   "points": [
+    "alb.t",
+    "sig.b"
+   ],
+   "dash": true,
+   "arrow": true,
+   "elbow": "vhv",
+   "label": {
+    "text": "지표",
+    "at": [
+     230,
+     340
+    ],
+    "dx": 20,
+    "align": "start"
+   }
+  },
+  {
+   "id": "wa1",
+   "points": [
+    "alb.r",
+    "app1.l"
+   ]
+  },
+  {
+   "id": "wa2",
+   "points": [
+    "alb.r",
+    "app2.l"
+   ]
+  },
+  {
+   "id": "wa3",
+   "points": [
+    "alb.r",
+    "app3.l"
+   ],
+   "dash": true
+  },
+  {
+   "id": "r1",
+   "points": [
+    "app1.r",
+    "rds.l"
+   ]
+  },
+  {
+   "id": "c1",
+   "points": [
+    "app1.r",
+    "cache.l"
+   ]
+  },
+  {
+   "id": "r2",
+   "points": [
+    "app2.r",
+    "rds.l"
+   ]
+  },
+  {
+   "id": "c2",
+   "points": [
+    "app2.r",
+    "cache.l"
+   ]
+  },
+  {
+   "id": "r3",
+   "points": [
+    "app3.r",
+    "rds.l"
+   ],
+   "dash": true
+  },
+  {
+   "id": "c3",
+   "points": [
+    "app3.r",
+    "cache.l"
+   ],
+   "dash": true
+  },
+  {
+   "id": "scale",
+   "points": [
+    "asg.b",
+    [
+     1320,
+     284
+    ],
+    [
+     880,
+     284
+    ],
+    [
+     880,
+     563
+    ],
+    "app3.r"
+   ],
+   "dash": true,
+   "arrow": true,
+   "elbow": "none",
+   "tone": "accent"
+  },
+  {
+   "points": [
+    "app3.b",
+    [
+     690,
+     640
+    ],
+    [
+     245,
+     640
+    ],
+    "b1.t"
+   ],
+   "dash": true,
+   "elbow": "none"
+  }
+ ],
+ "timeline": [
+  {
+   "at": 200,
+   "steps": [
+    {
+     "progress": "sig",
+     "to": 0.7,
+     "ms": 2600
+    },
+    {
+     "text": "sig",
+     "value": "6,400 / 6,000"
+    },
+    {
+     "progress": "sig",
+     "to": 1,
+     "ms": 1400
+    },
+    {
+     "text": "sig",
+     "value": "7,900 / 6,000"
+    },
+    {
+     "hl": "sig",
+     "ms": 900
+    },
+    {
+     "dot": [
+      "sig.c",
+      "plan.c"
+     ],
+     "color": "accent"
+    },
+    {
+     "text": "plan",
+     "value": "ceil(2 x 7,900 / 6,000) = 3"
+    },
+    {
+     "hl": "plan",
+     "ms": 1200,
+     "hold": true
+    },
+    {
+     "dot": [
+      "plan.c",
+      "asg.c"
+     ],
+     "color": "accent"
+    },
+    {
+     "text": "asg",
+     "value": "desired 2 -> 3"
+    },
+    {
+     "hl": "asg",
+     "ms": 900
+    },
+    {
+     "dot": [
+      "asg.c",
+      {
+       "wire": "scale"
+      },
+      "app3.c"
+     ],
+     "color": "accent"
+    },
+    {
+     "active": "app3"
+    },
+    {
+     "text": "app3",
+     "field": "sub",
+     "value": "ap-northeast-2a, 부팅 중"
+    },
+    {
+     "active": "b1"
+    },
+    {
+     "progress": "b1",
+     "to": 1,
+     "ms": 2300
+    },
+    {
+     "active": "b1",
+     "on": false
+    },
+    {
+     "active": "b2"
+    },
+    {
+     "progress": "b2",
+     "to": 1,
+     "ms": 1100
+    },
+    {
+     "active": "b2",
+     "on": false
+    },
+    {
+     "active": "b3"
+    },
+    {
+     "progress": "b3",
+     "to": 1,
+     "ms": 700
+    },
+    {
+     "active": "b3",
+     "on": false
+    },
+    {
+     "text": "app3",
+     "field": "sub",
+     "value": "ap-northeast-2a, 요청 받는 중"
+    },
+    {
+     "par": [
+      {
+       "seq": [
+        {
+         "active": "b4"
+        },
+        {
+         "progress": "b4",
+         "to": 1,
+         "ms": 2400
+        },
+        {
+         "active": "b4",
+         "on": false
+        }
+       ]
+      },
+      {
+       "seq": [
+        {
+         "text": "sig",
+         "value": "5,300 / 6,000"
+        },
+        {
+         "progress": "sig",
+         "to": 0.88,
+         "ms": 1500
+        },
+        {
+         "text": "plan",
+         "value": "유지"
+        },
+        {
+         "text": "asg",
+         "value": "desired 3"
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "wait": 2500
+    }
+   ]
+  },
+  {
+   "at": 0,
+   "every": 1400,
+   "steps": [
+    {
+     "dot": [
+      "alb.c",
+      {
+       "wire": "wa1"
+      },
+      "app1.c"
+     ],
+     "color": "fg"
+    },
+    {
+     "hl": "app1",
+     "ms": 300
+    }
+   ]
+  },
+  {
+   "at": 700,
+   "every": 1400,
+   "steps": [
+    {
+     "dot": [
+      "alb.c",
+      {
+       "wire": "wa2"
+      },
+      "app2.c"
+     ],
+     "color": "fg"
+    },
+    {
+     "hl": "app2",
+     "ms": 300
+    }
+   ]
+  },
+  {
+   "at": 300,
+   "every": 2800,
+   "steps": [
+    {
+     "dot": [
+      "app1.c",
+      {
+       "wire": "r1"
+      },
+      "rds.c"
+     ],
+     "color": "a"
+    }
+   ]
+  },
+  {
+   "at": 1700,
+   "every": 2800,
+   "steps": [
+    {
+     "dot": [
+      "app2.c",
+      {
+       "wire": "c2"
+      },
+      "cache.c"
+     ],
+     "color": "b"
+    }
+   ]
+  },
+  {
+   "at": 15600,
+   "every": 1400,
+   "steps": [
+    {
+     "dot": [
+      "alb.c",
+      {
+       "wire": "wa3"
+      },
+      "app3.c"
+     ],
+     "color": "fg"
+    },
+    {
+     "hl": "app3",
+     "ms": 300
+    },
+    {
+     "dot": [
+      "app3.c",
+      {
+       "wire": "c3"
+      },
+      "cache.c"
+     ],
+     "color": "b"
+    }
+   ]
+  }
+ ],
+ "sources": [
+  "lc-infra: terraform/compute.tf (aws_autoscaling_group.app, aws_autoscaling_policy.app_requests)",
+  "lc-infra: terraform/variables.tf (app_target_requests_per_instance)",
+  "lc-infra: README.md 한눈에 보기"
+ ]
+}

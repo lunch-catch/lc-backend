@@ -1,0 +1,676 @@
+{
+ "name": "피드 슬롯 배정",
+ "title": "덜 노출된 가게를 챙기되, 피드는 사용자에게 맞춥니다.",
+ "logo": "LUNCHCATCH",
+ "category": "워커",
+ "speed": 0.45,
+ "loop": 24000,
+ "elements": [
+  {
+   "type": "panel",
+   "id": "main",
+   "x": 70,
+   "y": 180,
+   "w": 1460,
+   "h": 430
+  },
+  {
+   "type": "box",
+   "id": "req",
+   "x": 110,
+   "y": 359,
+   "w": 190,
+   "h": 84,
+   "title": "피드 요청",
+   "sub": "후보 스냅샷 1회 조회",
+   "size": "m"
+  },
+  {
+   "type": "box",
+   "id": "router",
+   "x": 400,
+   "y": 242,
+   "w": 380,
+   "h": 318,
+   "title": "FeedAssembler",
+   "sub": "거르기 5개 -> 배분 3장 -> 관련성 7장",
+   "size": "m"
+  },
+  {
+   "type": "label",
+   "x": 424,
+   "y": 322,
+   "text": "후보",
+   "color": "dim",
+   "size": "xs"
+  },
+  {
+   "type": "label",
+   "x": 560,
+   "y": 322,
+   "text": "예산 소진 진행률",
+   "color": "dim",
+   "size": "xs"
+  },
+  {
+   "type": "label",
+   "x": 690,
+   "y": 322,
+   "text": "판정",
+   "color": "dim",
+   "size": "xs"
+  },
+  {
+   "type": "rows",
+   "id": "cand",
+   "x": 418,
+   "y": 344,
+   "w": 344,
+   "rowH": 32,
+   "gap": 7,
+   "items": [
+    {
+     "label": "캠페인 214",
+     "bar": 0.18,
+     "meta": "대기"
+    },
+    {
+     "label": "캠페인 087",
+     "bar": 0.92,
+     "meta": "대기"
+    },
+    {
+     "label": "캠페인 133",
+     "bar": 0.35,
+     "meta": "대기"
+    },
+    {
+     "label": "캠페인 301",
+     "bar": 0.5,
+     "meta": "대기"
+    },
+    {
+     "label": "캠페인 058",
+     "bar": 0.4,
+     "meta": "대기"
+    }
+   ]
+  },
+  {
+   "type": "box",
+   "id": "lane1",
+   "x": 880,
+   "y": 204,
+   "w": 620,
+   "h": 118,
+   "title": "배분 슬롯",
+   "sub": "1, 4, 7번 자리. 진행률 오름차순"
+  },
+  {
+   "type": "box",
+   "id": "lane2",
+   "x": 880,
+   "y": 336,
+   "w": 620,
+   "h": 118,
+   "title": "관련성 슬롯",
+   "sub": "나머지 7자리. 관련성 점수 순"
+  },
+  {
+   "type": "box",
+   "id": "lane3",
+   "x": 880,
+   "y": 468,
+   "w": 620,
+   "h": 118,
+   "title": "피드 제외",
+   "sub": "반경, 대상, 노출 상한, 예산 소진에서 걸림",
+   "tone": "ghost"
+  },
+  {
+   "type": "label",
+   "x": 1180,
+   "y": 224,
+   "text": "slot_type = ALLOCATION",
+   "color": "dim",
+   "size": "xs",
+   "mono": true
+  },
+  {
+   "type": "label",
+   "x": 1180,
+   "y": 356,
+   "text": "slot_type = RELEVANCE",
+   "color": "dim",
+   "size": "xs",
+   "mono": true
+  },
+  {
+   "type": "cells",
+   "id": "q1",
+   "x": 1180,
+   "y": 262,
+   "n": 3,
+   "size": 24,
+   "gap": 8
+  },
+  {
+   "type": "cells",
+   "id": "q2",
+   "x": 1180,
+   "y": 394,
+   "n": 7,
+   "size": 24,
+   "gap": 8
+  },
+  {
+   "type": "cells",
+   "id": "q3",
+   "x": 1180,
+   "y": 526,
+   "n": 7,
+   "size": 24,
+   "gap": 8
+  },
+  {
+   "type": "panel",
+   "id": "f1",
+   "x": 70,
+   "y": 634,
+   "w": 715,
+   "h": 206,
+   "title": "덜 노출된 캠페인이 배분 자리를 먼저 받습니다."
+  },
+  {
+   "type": "formula",
+   "x": 110,
+   "y": 706,
+   "html": "O<sub>i</sub> = <span class=\"frac\"><span>누적 소진<sub>i</sub></span><span>누적 목표<sub>i</sub></span></span> × N<sub>i</sub>",
+   "size": "l"
+  },
+  {
+   "type": "label",
+   "x": 94,
+   "y": 790,
+   "text": "N: 신규 우선 노출 기간이면 0.8, 아니면 1. 진행률이 1.2 를 넘으면 배분 후보에서 뺀다",
+   "color": "dim",
+   "size": "xs"
+  },
+  {
+   "type": "panel",
+   "id": "f2",
+   "x": 815,
+   "y": 634,
+   "w": 715,
+   "h": 206,
+   "title": "나머지 자리는 사용자에게 맞는 순서로 채웁니다."
+  },
+  {
+   "type": "formula",
+   "x": 855,
+   "y": 706,
+   "html": "S<sub>i</sub> = 0.45 D<sub>i</sub> + 0.35 C<sub>i</sub> + 0.20 R<sub>i</sub>",
+   "size": "l"
+  },
+  {
+   "type": "label",
+   "x": 839,
+   "y": 790,
+   "text": "D: 거리 점수   C: 카테고리 선호도   R: 할인 매력도  (각 0~1)",
+   "color": "dim",
+   "size": "xs"
+  }
+ ],
+ "wires": [
+  {
+   "id": "w0",
+   "points": [
+    "req.r",
+    "router.l"
+   ]
+  },
+  {
+   "id": "w1",
+   "points": [
+    "router.r",
+    "lane1.l"
+   ],
+   "elbow": "hvh"
+  },
+  {
+   "id": "w2",
+   "points": [
+    "router.r",
+    "lane2.l"
+   ]
+  },
+  {
+   "id": "w3",
+   "points": [
+    "router.r",
+    "lane3.l"
+   ],
+   "elbow": "hvh",
+   "dash": true
+  }
+ ],
+ "timeline": [
+  {
+   "at": 400,
+   "steps": [
+    {
+     "dot": [
+      "req.c",
+      {
+       "wire": "w0"
+      },
+      "router.c"
+     ],
+     "color": "fg"
+    },
+    {
+     "row": "cand",
+     "index": 0
+    },
+    {
+     "wait": 350
+    },
+    {
+     "row": "cand",
+     "index": 0,
+     "meta": "배분",
+     "tone": "a"
+    },
+    {
+     "dot": [
+      "router.c",
+      {
+       "wire": "w1"
+      },
+      "lane1.c"
+     ],
+     "color": "a"
+    },
+    {
+     "cells": "q1",
+     "push": "a"
+    },
+    {
+     "hl": "lane1",
+     "ms": 700
+    },
+    {
+     "dot": [
+      "req.c",
+      {
+       "wire": "w0"
+      },
+      "router.c"
+     ],
+     "color": "fg"
+    },
+    {
+     "row": "cand",
+     "index": 1
+    },
+    {
+     "wait": 350
+    },
+    {
+     "row": "cand",
+     "index": 1,
+     "meta": "관련성",
+     "tone": "b"
+    },
+    {
+     "dot": [
+      "router.c",
+      {
+       "wire": "w2"
+      },
+      "lane2.c"
+     ],
+     "color": "b"
+    },
+    {
+     "cells": "q2",
+     "push": "b"
+    },
+    {
+     "hl": "lane2",
+     "ms": 700
+    },
+    {
+     "dot": [
+      "req.c",
+      {
+       "wire": "w0"
+      },
+      "router.c"
+     ],
+     "color": "fg"
+    },
+    {
+     "row": "cand",
+     "index": 2
+    },
+    {
+     "wait": 350
+    },
+    {
+     "row": "cand",
+     "index": 2,
+     "meta": "배분 x0.8",
+     "tone": "a"
+    },
+    {
+     "dot": [
+      "router.c",
+      {
+       "wire": "w1"
+      },
+      "lane1.c"
+     ],
+     "color": "a"
+    },
+    {
+     "cells": "q1",
+     "push": "a"
+    },
+    {
+     "hl": "lane1",
+     "ms": 700
+    },
+    {
+     "dot": [
+      "req.c",
+      {
+       "wire": "w0"
+      },
+      "router.c"
+     ],
+     "color": "fg"
+    },
+    {
+     "row": "cand",
+     "index": 3
+    },
+    {
+     "wait": 350
+    },
+    {
+     "row": "cand",
+     "index": 3,
+     "meta": "반경 밖",
+     "tone": "warn"
+    },
+    {
+     "dot": [
+      "router.c",
+      {
+       "wire": "w3"
+      },
+      "lane3.c"
+     ],
+     "color": "warn"
+    },
+    {
+     "cells": "q3",
+     "push": "warn"
+    },
+    {
+     "hl": "lane3",
+     "ms": 700
+    },
+    {
+     "dot": [
+      "req.c",
+      {
+       "wire": "w0"
+      },
+      "router.c"
+     ],
+     "color": "fg"
+    },
+    {
+     "row": "cand",
+     "index": 4
+    },
+    {
+     "wait": 350
+    },
+    {
+     "row": "cand",
+     "index": 4,
+     "meta": "배분",
+     "tone": "a"
+    },
+    {
+     "dot": [
+      "router.c",
+      {
+       "wire": "w1"
+      },
+      "lane1.c"
+     ],
+     "color": "a"
+    },
+    {
+     "cells": "q1",
+     "push": "a"
+    },
+    {
+     "hl": "lane1",
+     "ms": 700
+    },
+    {
+     "row": "cand",
+     "index": -1
+    },
+    {
+     "par": [
+      {
+       "seq": [
+        {
+         "dot": [
+          "req.c",
+          {
+           "wire": "w0"
+          },
+          "router.c"
+         ],
+         "color": "fg"
+        },
+        {
+         "dot": [
+          "router.c",
+          {
+           "wire": "w2"
+          },
+          "lane2.c"
+         ],
+         "color": "b"
+        },
+        {
+         "cells": "q2",
+         "push": "b"
+        }
+       ]
+      },
+      {
+       "seq": [
+        {
+         "wait": 500
+        },
+        {
+         "dot": [
+          "req.c",
+          {
+           "wire": "w0"
+          },
+          "router.c"
+         ],
+         "color": "fg"
+        },
+        {
+         "dot": [
+          "router.c",
+          {
+           "wire": "w2"
+          },
+          "lane2.c"
+         ],
+         "color": "b"
+        },
+        {
+         "cells": "q2",
+         "push": "b"
+        }
+       ]
+      },
+      {
+       "seq": [
+        {
+         "wait": 1000
+        },
+        {
+         "dot": [
+          "req.c",
+          {
+           "wire": "w0"
+          },
+          "router.c"
+         ],
+         "color": "fg"
+        },
+        {
+         "dot": [
+          "router.c",
+          {
+           "wire": "w2"
+          },
+          "lane2.c"
+         ],
+         "color": "b"
+        },
+        {
+         "cells": "q2",
+         "push": "b"
+        }
+       ]
+      },
+      {
+       "seq": [
+        {
+         "wait": 1500
+        },
+        {
+         "dot": [
+          "req.c",
+          {
+           "wire": "w0"
+          },
+          "router.c"
+         ],
+         "color": "fg"
+        },
+        {
+         "dot": [
+          "router.c",
+          {
+           "wire": "w2"
+          },
+          "lane2.c"
+         ],
+         "color": "b"
+        },
+        {
+         "cells": "q2",
+         "push": "b"
+        }
+       ]
+      },
+      {
+       "seq": [
+        {
+         "wait": 2000
+        },
+        {
+         "dot": [
+          "req.c",
+          {
+           "wire": "w0"
+          },
+          "router.c"
+         ],
+         "color": "fg"
+        },
+        {
+         "dot": [
+          "router.c",
+          {
+           "wire": "w2"
+          },
+          "lane2.c"
+         ],
+         "color": "b"
+        },
+        {
+         "cells": "q2",
+         "push": "b"
+        }
+       ]
+      },
+      {
+       "seq": [
+        {
+         "wait": 2500
+        },
+        {
+         "dot": [
+          "req.c",
+          {
+           "wire": "w0"
+          },
+          "router.c"
+         ],
+         "color": "fg"
+        },
+        {
+         "dot": [
+          "router.c",
+          {
+           "wire": "w2"
+          },
+          "lane2.c"
+         ],
+         "color": "b"
+        },
+        {
+         "cells": "q2",
+         "push": "b"
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "hl": "lane1",
+     "ms": 1600
+    },
+    {
+     "hl": "lane2",
+     "ms": 1600
+    },
+    {
+     "wait": 2200
+    }
+   ]
+  }
+ ],
+ "sources": [
+  "lc-backend: adserving/engine/FeedAssembler.java",
+  "lc-backend: adserving/engine/AllocationOrder.java",
+  "lc-backend: adserving/engine/filter/*, score/*"
+ ]
+}
