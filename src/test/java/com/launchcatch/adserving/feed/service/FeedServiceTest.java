@@ -91,7 +91,7 @@ class FeedServiceTest {
 
     private FeedService serviceAt(LocalDateTime now) {
         Clock clock = Clock.fixed(now.atZone(ClockConfig.ZONE).toInstant(), ClockConfig.ZONE);
-        return new FeedService(memberQueryService, rateLimitRepository, candidateCache,
+        return new FeedService(new MemberInfoCache(memberQueryService, clock), rateLimitRepository, candidateCache,
                 exclusionRepository, filterCategoryRepository, feedFilterRepository, swipeLogRepository,
                 serveFrequencyRepository, impressionCountRepository, pacingProperties, serveRecordRepository,
                 serveLogBuffer, meterRegistry, clock);

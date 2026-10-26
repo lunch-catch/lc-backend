@@ -35,7 +35,6 @@ import com.launchcatch.adserving.id.UuidV7;
 import com.launchcatch.global.config.ClockConfig;
 import com.launchcatch.global.geo.BoundingBox;
 import com.launchcatch.member.contract.MemberInfo;
-import com.launchcatch.member.contract.MemberQueryService;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.time.Clock;
 import java.time.Duration;
@@ -64,7 +63,7 @@ public class FeedService {
     // 응답으로 내려준 카드 수다. serve_log 건수와 대조해 서빙 로그 유실률을 잰다(feed-api-design.md 유실 목표).
     static final String SERVED_CARDS_METRIC = "adserving_served_cards_total";
 
-    private final MemberQueryService memberQueryService;
+    private final MemberInfoCache memberInfoCache;
     private final FeedRateLimitRepository feedRateLimitRepository;
     private final CandidateCache candidateCache;
     private final ExclusionRepository exclusionRepository;
@@ -81,7 +80,7 @@ public class FeedService {
 
     // 요청 제한은 온보딩과 위치를 확인한 뒤에 센다. 200 으로 끝나는 요청만 횟수에 들어가야 해서 403 과 422 는 세기 전에 거른다.
     public FeedResponse getFeed(Long memberId, FeedRequest request) {
-        MemberInfo member = memberQueryService.findById(memberId)
+        MemberInfo member = memberInfoCache.find(memberId)
                 .filter(MemberInfo::onboardingCompleted)
                 .orElseThrow(() -> new FeedException(FeedErrorCode.ONBOARDING_REQUIRED));
         Viewer viewer = viewerAt(member, request);
