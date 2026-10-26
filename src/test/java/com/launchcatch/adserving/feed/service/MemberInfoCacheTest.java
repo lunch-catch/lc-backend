@@ -68,6 +68,24 @@ class MemberInfoCacheTest {
         verify(memberQueryService, times(3)).findById(MEMBER_ID);
     }
 
+    // 오래 쌓이지 않게 넣을 때 만료된 항목을 치운다. 만료된 회원은 다시 넣어지고 살아 있는 회원은 남는다
+    @Test
+    void 항목이_정리_문턱에_닿으면_만료된_항목을_치운다() {
+        when(memberQueryService.findById(org.mockito.ArgumentMatchers.anyLong())).thenAnswer(invocation ->
+                Optional.of(new MemberInfo(invocation.getArgument(0), "점심러", MemberStatus.ACTIVE, true, true, true,
+                        BigDecimal.valueOf(37.5), BigDecimal.valueOf(127.0), null, null)));
+        for (long id = 1; id < MemberInfoCache.SWEEP_THRESHOLD; id++) {
+            cache.find(id);
+        }
+        clock.advance(Duration.ofSeconds(31));
+
+        cache.find(MEMBER_ID);
+        cache.find(1L);
+
+        // 정리로 비워져 1번 회원도 다시 묻는다
+        verify(memberQueryService, times(2)).findById(1L);
+    }
+
     private static final class MovingClock extends Clock {
         private Instant now;
 
