@@ -3,6 +3,7 @@ package com.launchcatch.billing.service;
 import com.launchcatch.billing.dto.SettlementMismatchItem;
 import com.launchcatch.billing.entity.MismatchCheckType;
 import com.launchcatch.billing.entity.Payment;
+import com.launchcatch.billing.exception.BillingErrorCode;
 import com.launchcatch.billing.exception.BillingException;
 import com.launchcatch.billing.repository.PaymentRepository;
 import com.launchcatch.billing.repository.SettlementMismatchRepository;
@@ -26,7 +27,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /*
- * 관리자의 대사 불일치 목록이다.
+ * 관리자의 대사 불일치 목록과 한 건 조회다.
  *
  * 관리자 표 목록이라 페이지 번호 방식이다. 전체 건수(totalElements)를 매출 현황의 불일치 건수로 쓰므로
  * 전체 건수를 주지 않는 커서 방식으로 바꿀 수 없다.
@@ -62,6 +63,16 @@ public class SettlementMismatchQueryService {
         Map<Long, Long> campaignOwners = campaignOwners(targetIds(rows, true));
         return PageResponse.from(rows.map(row -> toItem(row,
                 (row.checkType().targetsCampaign() ? campaignOwners : paymentOwners).get(row.targetId()))));
+    }
+
+    // 한 건을 목록과 같은 모양으로 읽는다. 관리자가 건을 닫은 뒤 응답으로 쓴다
+    public SettlementMismatchItem get(Long mismatchId) {
+        SettlementMismatchRow row = settlementMismatchRepository.findRowById(mismatchId)
+                .orElseThrow(() -> new BillingException(BillingErrorCode.SETTLEMENT_MISMATCH_NOT_FOUND));
+        Map<Long, Long> owners = row.checkType().targetsCampaign()
+                ? campaignOwners(List.of(row.targetId()))
+                : paymentOwners(List.of(row.targetId()));
+        return toItem(row, owners.get(row.targetId()));
     }
 
     private static List<Long> targetIds(Page<SettlementMismatchRow> rows, boolean campaign) {

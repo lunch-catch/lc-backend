@@ -14,6 +14,7 @@ import com.launchcatch.billing.dto.SettlementMismatchItem;
 import com.launchcatch.billing.entity.MismatchCheckType;
 import com.launchcatch.billing.entity.MismatchResolutionType;
 import com.launchcatch.billing.entity.Payment;
+import com.launchcatch.billing.exception.BillingErrorCode;
 import com.launchcatch.billing.exception.BillingException;
 import com.launchcatch.billing.repository.PaymentRepository;
 import com.launchcatch.billing.repository.SettlementMismatchRepository;
@@ -25,6 +26,7 @@ import com.launchcatch.global.response.PageResponse;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -95,7 +97,7 @@ class SettlementMismatchQueryServiceTest {
                 LocalDate.of(2026, 10, 1), 9800L, 9790L, null, 301L,
                 LocalDateTime.of(2026, 10, 1, 13, 35), null, null);
         SettlementMismatchRow closed = new SettlementMismatchRow(56L, MismatchCheckType.PG_VS_CHARGE, 101L,
-                LocalDate.of(2026, 10, 2), 30000L, 0L, MismatchResolutionType.OVERCHARGE_REVERSAL, 302L,
+                LocalDate.of(2026, 10, 2), 30000L, 0L, MismatchResolutionType.MANUAL_ADJUSTMENT, 302L,
                 LocalDateTime.of(2026, 10, 3, 0, 5), LocalDateTime.of(2026, 10, 3, 9, 0), 2L);
         returnRows(open, closed);
 
@@ -107,7 +109,7 @@ class SettlementMismatchQueryServiceTest {
         assertThat(first.resolvedAt()).isNull();
         assertThat(first.jobExecutionId()).isEqualTo(301L);
         SettlementMismatchItem second = response.items().get(1);
-        assertThat(second.resolutionType()).isEqualTo(MismatchResolutionType.OVERCHARGE_REVERSAL);
+        assertThat(second.resolutionType()).isEqualTo(MismatchResolutionType.MANUAL_ADJUSTMENT);
         assertThat(second.resolvedAt().toString()).isEqualTo("2026-10-03T09:00+09:00");
         assertThat(second.resolvedBy()).isEqualTo(2L);
         assertThat(response.totalElements()).isEqualTo(42);
@@ -197,5 +199,27 @@ class SettlementMismatchQueryServiceTest {
     void 허용하지_않는_정렬_값은_거절한다() {
         assertInvalid(() -> service.search(null, null, null, null, 0, 20, "amount", null));
         assertInvalid(() -> service.search(null, null, null, null, 0, 20, null, "up"));
+    }
+
+    @Test
+    void 한_건을_목록과_같은_모양으로_대상의_점주와_함께_읽는다() {
+        when(repository.findRowById(4L)).thenReturn(Optional.of(row(4L, MismatchCheckType.CAMPAIGN_OVERSPEND, 12L)));
+        CampaignInfo campaign = campaign(12L, 5L);
+        when(campaignQueryService.findAllById(List.of(12L))).thenReturn(List.of(campaign));
+
+        SettlementMismatchItem item = service.get(4L);
+
+        assertThat(item.mismatchId()).isEqualTo(4L);
+        assertThat(item.ownerId()).isEqualTo(5L);
+        assertThat(item.diff()).isEqualTo(100L);
+    }
+
+    @Test
+    void 없는_건을_한_건으로_읽으면_거절한다() {
+        when(repository.findRowById(4L)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.get(4L))
+                .isInstanceOfSatisfying(BillingException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(BillingErrorCode.SETTLEMENT_MISMATCH_NOT_FOUND));
     }
 }

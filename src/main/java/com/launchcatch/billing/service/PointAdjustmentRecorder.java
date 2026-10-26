@@ -3,6 +3,8 @@ package com.launchcatch.billing.service;
 import com.launchcatch.billing.dto.PointAdjustmentRequest;
 import com.launchcatch.billing.dto.PointAdjustmentResponse;
 import com.launchcatch.billing.dto.PointAdjustmentResult;
+import com.launchcatch.billing.entity.EntryType;
+import com.launchcatch.billing.entity.MismatchResolutionType;
 import com.launchcatch.billing.entity.Payment;
 import com.launchcatch.billing.entity.PointLedger;
 import com.launchcatch.billing.exception.BillingErrorCode;
@@ -71,8 +73,8 @@ public class PointAdjustmentRecorder {
         PointLedger ledger = pointLedgerRepository.save(PointLedger.adjust(request.ownerId(), request.amount(),
                 request.reason(), request.campaignId(), request.targetBusinessDate(), request.requestId()));
         // 영향 행이 0 이면 대사 건을 읽은 뒤 다른 경로가 먼저 닫은 것이므로 원장 줄까지 함께 롤백한다
-        if (request.mismatchId() != null
-                && settlementMismatchRepository.resolveAsOverchargeReversal(request.mismatchId(), adminId, now) == 0) {
+        if (request.mismatchId() != null && settlementMismatchRepository.resolveByAdmin(request.mismatchId(),
+                MismatchResolutionType.MANUAL_ADJUSTMENT, adminId, now) == 0) {
             throw new BillingException(BillingErrorCode.SETTLEMENT_MISMATCH_ALREADY_RESOLVED);
         }
         auditLogWriter.write(adminId, AUDIT_ACTION, String.valueOf(request.ownerId()),
@@ -111,7 +113,7 @@ public class PointAdjustmentRecorder {
     }
 
     /*
-     * 닫으려는 대사 건이 열려 있고 이 점주의 것인지 본다.
+     * 닫으려는 대사 건이 열려 있고 이 점주의 것이며 조정액이 그 건을 닫을 수 있는 값인지 본다.
      * 캠페인 대상 건은 조정의 campaignId 가 대상 캠페인과 같아야 한다. 서버가 채우지 않는 이유는
      * 채우면 같은 키 재요청에서 저장값과 요청값이 달라 보여 BILLING-018 을 잘못 내기 때문이다.
      */
@@ -133,6 +135,34 @@ public class PointAdjustmentRecorder {
         if (campaignTarget && !mismatch.businessDate().equals(request.targetBusinessDate())) {
             throw new BillingException(CommonErrorCode.INVALID_INPUT);
         }
+        if (!amountFits(mismatch, request)) {
+            throw new BillingException(CommonErrorCode.INVALID_INPUT);
+        }
+    }
+
+    /*
+     * 대사 건의 종류마다 그 건을 닫을 수 있는 조정액인지 본다.
+     * PG_VS_CHARGE 는 PG 가 승인한 금액(expectedValue)에서 그 결제가 이 점주에게 남긴 CHARGE 를 뺀 값이 정정액이라 같아야 한다.
+     * 캠페인과 무관한 돈이라 캠페인을 붙이지 않는다. 붙이면 분석이 그 금액을 캠페인 소진의 정정으로 센다.
+     * CAMPAIGN_OVERSPEND 는 기록된 초과액까지만 돌려준다. 얼마를 돌려줄지는 정책이라 일치는 요구하지 않고, 덜 걷은 광고비는 걷지 않아 음수는 받지 않는다.
+     * CAMPAIGN_SPEND_VS_LEDGER 는 원장과 카운터의 차이라 어느 방향이든 정정액이 아니다. 조정 없이 닫는다.
+     */
+    private boolean amountFits(SettlementMismatchRow mismatch, PointAdjustmentRequest request) {
+        return switch (mismatch.checkType()) {
+            case PG_VS_CHARGE -> request.campaignId() == null
+                    && request.amount() == mismatch.expectedValue() - chargedTo(request.ownerId(), mismatch.targetId());
+            case CAMPAIGN_OVERSPEND -> request.amount() > 0
+                    && request.amount() <= mismatch.actualValue() - mismatch.expectedValue();
+            case CAMPAIGN_SPEND_VS_LEDGER -> false;
+        };
+    }
+
+    // 계정 잠금 뒤의 일반 읽기라 그사이 커밋된 보정 CHARGE 도 보인다. 다른 점주에게 들어간 CHARGE 는 이 점주의 충전이 아니다
+    private long chargedTo(Long ownerId, Long paymentId) {
+        return pointLedgerRepository.findByPaymentIdAndEntryType(paymentId, EntryType.CHARGE)
+                .filter(charge -> ownerId.equals(charge.getOwnerId()))
+                .map(PointLedger::getAmount)
+                .orElse(0L);
     }
 
     // 일반 조정도 캠페인을 가리키면 대사 건이 없어도 존재와 점주 소유를 확인한다

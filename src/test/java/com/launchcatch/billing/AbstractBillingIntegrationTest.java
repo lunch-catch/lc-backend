@@ -5,6 +5,7 @@ import com.launchcatch.billing.client.CommitCheckingGateway;
 import org.junit.jupiter.api.BeforeEach;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Primary;
@@ -26,6 +27,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
  * 것이 테스트 설정뿐이라 스프링 부트는 @SpringBootApplication 도 함께 찾아 담는다.
  */
 @SpringBootTest(classes = AbstractBillingIntegrationTest.GatewayConfig.class)
+@AutoConfigureMockMvc
 abstract class AbstractBillingIntegrationTest extends IntegrationTestSupport {
 
     @Autowired private CommitCheckingGateway gateway;
