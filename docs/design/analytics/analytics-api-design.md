@@ -159,7 +159,7 @@ A-12(`MemberUsageStatsQueryService`)는 본인의 `daily_member_usage` 전체 �
 |---|---|
 | 하루 예산, 단가 | `BillingStatsQueryService.dailyBudgets` |
 | 과금액, 정정액, 소진액 | `BillingStatsQueryService.ledgerSums`의 캠페인별 `DEDUCT` 합(부호를 뒤집는다)과 양수 `ADJUST` 합. 소진액은 `SpendFormula`로 계산하고 음수를 허용한다 |
-| 과금 노출, 미과금 사유 셋 | `BillingStatsQueryService.billingCounts`(`BILLED`, `NOT_BILLED_BUDGET`, `NOT_BILLED_PAUSED`, `NOT_BILLED_NO_PLAN`) |
+| 과금 노출, 미과금 사유 넷 | `BillingStatsQueryService.billingCounts`(`BILLED`, `NOT_BILLED_BUDGET`, `NOT_BILLED_PAUSED`, `NOT_BILLED_NO_PLAN`, `NOT_BILLED_CLOSED`) |
 | 쿠폰 소진 뒤 노출, 무효 사유, 시간대, 슬롯 | `AdservingStatsQueryService.campaignStats` |
 | 찜 | analytics 자기 `event_log`의 그날 `wish` 행 수. 계약의 `wishCount`는 31일이 지나면 0이라 쓰지 않는다(퍼널과 같다) |
 | 발급, 사용 | `CouponStatsQueryService.dailyCampaignStats` |
@@ -167,7 +167,7 @@ A-12(`MemberUsageStatsQueryService`)는 본인의 `daily_member_usage` 전체 �
 
 * 대상 캠페인은 위 원천 중 하나라도 그날 값이 있는 캠페인이다. 없는 원천은 0으로 채운다.
 * `findAllById`가 돌려주지 않은 캠페인 ID는 행을 만들지 않는다. 무효 노출(`EXPIRED_OR_UNKNOWN`)은 요청이 보낸 캠페인 ID라 없는 캠페인일 수 있고, 점주를 모르는 행은 어느 점주에게도 보이지 않는다.
-* **유효 노출은 과금 노출과 미과금 노출의 합으로 저장한다.** 미과금은 정산의 세 사유와 쿠폰 소진 뒤 노출이다. 표의 CHECK가 `유효 = 과금 + 미과금`을 요구해서, 광고 서빙의 `validCount`를 그대로 넣으면 원천끼리 어긋난 날 공개가 거부되고 그날 집계 전체가 실패한다. 어긋난 캠페인 수는 `analytics_consistency_violations{check="CAMPAIGN_REPORT_VALID_IMPRESSION"}`과 `CAMPAIGN_REPORT_VALID_IMPRESSION_MISMATCH` 로그로 남기고 값을 고치지 않는다. 시간대와 슬롯은 광고 서빙 값 그대로라 그날은 합이 유효 노출과 다를 수 있다.
+* **유효 노출은 과금 노출과 미과금 노출의 합으로 저장한다.** 미과금은 정산의 네 사유와 쿠폰 소진 뒤 노출이다. 영업일 마감 뒤 판정(`NOT_BILLED_CLOSED`)은 과금 노출과 소진액에는 넣지 않는다. 표의 CHECK가 `유효 = 과금 + 미과금`을 요구해서, 광고 서빙의 `validCount`를 그대로 넣으면 원천끼리 어긋난 날 공개가 거부되고 그날 집계 전체가 실패한다. 어긋난 캠페인 수는 `analytics_consistency_violations{check="CAMPAIGN_REPORT_VALID_IMPRESSION"}`과 `CAMPAIGN_REPORT_VALID_IMPRESSION_MISMATCH` 로그로 남기고 값을 고치지 않는다. 시간대와 슬롯은 광고 서빙 값 그대로라 그날은 합이 유효 노출과 다를 수 있다.
 * `budget_spend_rate`는 `소진액 ÷ 하루 예산`을 소수점 여섯 자리로 반올림한다. 하루 예산이 0이면 0으로 저장하고 조회가 `null`로 내린다.
 * 사유, 시간대, 슬롯은 건수가 0이면 행이 없다.
 * 슬롯은 광고 서빙이 붙인 이름표를 그대로 받아 이름표마다 한 행으로 남긴다. 이름표 목록을 알지 않아 피드 구성이 바뀌어도 집계 코드와 표를 바꾸지 않는다. 표의 CHECK 는 이름표의 모양만 막는다(V7).
@@ -184,7 +184,7 @@ A-12(`MemberUsageStatsQueryService`)는 본인의 `daily_member_usage` 전체 �
 
 | 사유 | 언제 |
 |---|---|
-| `LATE_EVENT` | 정정액 밖의 공개 지표만 바뀌었다. 늦게 확정된 원천이 반영된 것이다 |
+| `LATE_EVENT` | 정정액 밖의 공개 지표만 바뀌었다. 늦게 확정된 원천이 반영된 것이다. 집계 뒤에 기록된 마감 미과금이 전전일 재집계로 들어온 경우가 그 예다 |
 | `OVERCHARGE_REVERSAL` | 정정액(`refunded_amount`)이 바뀌었다. 과거 과금의 양수 ADJUST가 반영된 것이다 |
 | `MANUAL_RECALCULATION` | 남기지 않는다. 수동 재집계로 바뀐 값도 위 둘 중 하나로 남는다 |
 
