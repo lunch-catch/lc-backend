@@ -9,7 +9,7 @@
 |---|---|---|
 | Valkey | 요청 제한, 당일 이력, 하루와 세션 횟수, 유효 노출 수 읽기, serve 기록 | 기본(통과) |
 | Valkey(커밋 뒤) | 유효 노출 수 카운터 올리기, 당일 이력 넣기(스와이프, 가게 상세 찜, 찜 삭제) | 벗어났다. 아래 |
-| MySQL 읽기 | 그날 후보(스와이프, 찜 목록), 필터(피드와 필터 조회), 30일 찜, 찜 목록, 쿠폰의 찜 조회, 노출 중복 확인, 분석의 집계 조회 | 기본(오류로 올린다). 집계 조회는 분석 배치가 하루 결과를 처음부터 다시 모은다 |
+| MySQL 읽기 | 그날 후보(스와이프, 찜 목록), 필터(피드와 필터 조회), 30일 찜, 찜 목록, 쿠폰의 찜 조회, 분석의 집계 조회 | 기본(오류로 올린다). 집계 조회는 분석 배치가 하루 결과를 처음부터 다시 모은다 |
 | MySQL 읽기(서버 메모리) | 피드의 그날 후보와 노출의 후보 소진. 서버 메모리가 5초마다 다시 읽는다 | 벗어났다. 아래 |
 | Valkey(후보 변경 알림) | 그날 후보를 바꾼 서버가 다른 서버에 알리는 pub/sub | 벗어났다. 아래 |
 | MySQL 쓰기(요청 안) | `wishlist`, `swipe_log`, `feed_filter`, `feed_filter_category`, 쿠폰의 소진 통보로 바꾸는 `ad_candidate.sold_out_at` | 기본(트랜잭션을 되돌린다). 스와이프는 찜과 기록을 따로 커밋하고 순서로 맞춘다(구조와 동작 설계 7장) |
@@ -165,7 +165,7 @@ Valkey 가 멈춰 통과시킨 횟수는 `adserving_cache_bypass_total` 이 센�
 | `exclusion` | `ADSERVING_FEED_EXCLUSION_FAILED`, `ADSERVING_FEED_EXCLUSION_WRITE_FAILED` | 넘긴 카드가 다시 보인다 |
 | `serve_frequency` | `ADSERVING_FEED_SERVE_FREQUENCY_READ_FAILED`, `ADSERVING_FEED_SERVE_FREQUENCY_WRITE_FAILED` | 같은 카드가 하루 2회, 세션 1회를 넘겨 나온다 |
 | `impression_count` | `ADSERVING_FEED_IMPRESSION_COUNT_FAILED`, `ADSERVING_FEED_IMPRESSION_COUNT_INCREMENT_FAILED` | 읽기는 유효 노출 수를 0 으로 보고 상한을 넘겨 내보낸다. 올리기는 그 노출을 세지 못해 상한이 늦게 걸린다. 넘긴 노출은 과금되지 않아 손해는 플랫폼에 남는다 |
-| `serve_record` | `ADSERVING_FEED_SERVE_RECORD_WRITE_FAILED`, `ADSERVING_FEED_SERVE_RECORD_READ_FAILED` | 쓰지 못하거나 읽지 못하면 그 카드의 노출이 무효(`EXPIRED_OR_UNKNOWN`)로 저장되어 과금되지 않는다. 다시 보내도 처음 판정이 남는다 |
+| `serve_record` | `ADSERVING_FEED_SERVE_RECORD_WRITE_FAILED`, `ADSERVING_FEED_SERVE_RECORD_READ_FAILED` | 쓰지 못하거나 읽지 못하면 그 카드의 노출이 무효(`EXPIRED_OR_UNKNOWN`)로 저장되어 과금되지 않는다. 다시 보내면 다시 판정하지만 저장된 행은 처음 판정으로 남는다 |
 
 ### DB
 

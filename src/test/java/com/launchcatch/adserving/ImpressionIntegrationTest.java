@@ -214,7 +214,7 @@ class ImpressionIntegrationTest extends AbstractAdservingIntegrationTest {
     }
 
     @Test
-    void 저장된_뒤_같은_사용자가_같은_카드를_다시_보내면_처음_판정을_돌려주고_한_번만_넘기고_센다() throws Exception {
+    void 저장된_뒤_같은_사용자가_같은_카드를_다시_보내면_다시_판정하고_한_번만_넘기고_센다() throws Exception {
         send(body(serveId, 101L), Role.MEMBER).andExpect(status().isAccepted());
         writeBuffer.flush();
 
