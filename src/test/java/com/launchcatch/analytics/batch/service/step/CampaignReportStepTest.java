@@ -154,7 +154,7 @@ class CampaignReportStepTest {
 
     /*
      * 계약의 wishCount 는 31일만 보관하는 swipe_log 가 원천이라 31일이 지난 날짜를 다시 집계하면 0 이다.
-     * event_log 로 세야 재집계가 저장된 찜 수를 0 으로 덮지 않는다(AD-31).
+     * event_log 로 세야 재집계가 저장된 찜 수를 0 으로 덮지 않는다.
      */
     @Test
     void 찜_수는_계약의_wishCount_가_아니라_event_log_의_wish_로_센다() {

@@ -30,7 +30,7 @@ public interface PointPolicyRepository extends JpaRepository<PointPolicy, Long> 
      * 그 날짜의 정책 행을 넣고, 이미 있으면 값을 덮어쓴다. 같은 날 다시 저장하면 마지막 값이 남는다.
      *
      * 지우고 넣으면 두 관리자가 동시에 처음 저장할 때 둘 다 행이 없다고 보고 넣다가 UNIQUE 위반이 난다.
-     * 그래서 엔티티를 거치지 않고 한 문장으로 끝낸다(구현 계획 G-7). 생성 시각은 처음 넣은 값을 그대로 둔다.
+     * 그래서 엔티티를 거치지 않고 한 문장으로 끝낸다. 생성 시각은 처음 넣은 값을 그대로 둔다.
      * 문장이 끝나면 영속성 컨텍스트를 비워, 같은 트랜잭션에서 다시 읽을 때 덮어쓴 값을 보게 한다.
      */
     @Modifying(flushAutomatically = true, clearAutomatically = true)

@@ -21,7 +21,7 @@ public interface DeductionResultRepository extends JpaRepository<DeductionResult
      *
      * 중복은 ON DUPLICATE KEY UPDATE 로 흡수한다. 예외가 나지 않으므로 부른 트랜잭션이 롤백 표시가 되지 않는다.
      * INSERT IGNORE 는 쓰지 않는다. 중복뿐 아니라 CHECK 와 NOT NULL 위반까지 경고로 낮추고 행을 조용히 버린다.
-     * 선조회와 REQUIRES_NEW 도 쓰지 않는다(구현 계획 D-5).
+     * 선조회와 REQUIRES_NEW 도 쓰지 않는다.
      *
      * 중복 분기가 updated_at 을 바꾸는 이유: 값을 바꾸지 않는 갱신(serve_id = serve_id)은 Connector/J 의 기본 설정
      * (CLIENT_FOUND_ROWS)에서 새로 만든 경우와 같은 1 을 돌려줘 둘을 구분할 수 없다. 바뀐 행은 2 를 돌려준다.

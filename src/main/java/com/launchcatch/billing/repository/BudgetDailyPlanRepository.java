@@ -68,7 +68,7 @@ public interface BudgetDailyPlanRepository extends JpaRepository<BudgetDailyPlan
 
     /*
      * 그날 계획 한 행을 없을 때만 넣는다. 같은 캠페인과 영업일의 계획이 이미 있으면 그대로 둔다
-     * (uk_budget_daily_plan_campaign_date). 중복은 값을 바꾸지 않는 갱신으로 흡수하고 INSERT IGNORE 는 쓰지 않는다(D-5).
+     * (uk_budget_daily_plan_campaign_date). 중복은 값을 바꾸지 않는 갱신으로 흡수하고 INSERT IGNORE 는 쓰지 않는다.
      */
     @Modifying
     @Query(value = """

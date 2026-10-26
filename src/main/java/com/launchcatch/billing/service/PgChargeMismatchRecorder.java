@@ -30,7 +30,7 @@ public class PgChargeMismatchRecorder {
 
     /*
      * PG와 payment 양쪽이 같은 금액을 승인으로 보는데 원장에 CHARGE가 없을 때 보정한다.
-     * CHARGE를 기록하고 그 불일치를 LEDGER_CORRECTION으로 닫힌 채 남긴다(resolved_by NULL, D-3).
+     * CHARGE를 기록하고 그 불일치를 LEDGER_CORRECTION으로 닫힌 채 남긴다(resolved_by NULL).
      * PointCharged는 발행하지 않는다 — 이 메서드는 그 이벤트의 퍼블리셔를 아예 모른다.
      * 재검증 대기도 같은 트랜잭션에서 지운다.
      */

@@ -28,7 +28,7 @@ import org.springframework.transaction.annotation.Transactional;
 /*
  * 포인트 조정을 한 트랜잭션에서 기록한다. 원장 줄, 대사 건 닫기, 감사 로그가 함께 커밋되거나 함께 롤백된다.
  *
- * 양수 조정도 점주 계정 행을 잠근다(구현 계획 G-6). 같은 키의 동시 요청이 줄을 서므로 키를 먼저 읽어 판정해도 정확하다.
+ * 양수 조정도 점주 계정 행을 잠근다. 같은 키의 동시 요청이 줄을 서므로 키를 먼저 읽어 판정해도 정확하다.
  * 잠금 순서는 point_account, point_ledger, settlement_mismatch 로 고정한다. payment 는 잠그지 않는다.
  * 충전 승인이 payment 다음에 point_account 를 잠그므로, 여기서 payment 를 잠그면 순서가 엇갈려 교착할 수 있다.
  *
@@ -97,7 +97,7 @@ public class PointAdjustmentRecorder {
 
     /*
      * 같은 점주가 같은 키로 다시 보낸 요청이다. 내용이 같으면 처음 기록을 돌려주고, 다르면 거절한다.
-     * mismatchId 는 원장에 저장하지 않아 비교하지 않는다(구현 계획 G-5). 대사 건도 다시 검사하지 않는다.
+     * mismatchId 는 원장에 저장하지 않아 비교하지 않는다. 대사 건도 다시 검사하지 않는다.
      */
     private PointAdjustmentResult replay(PointLedger existing, PointAdjustmentRequest request) {
         boolean same = existing.getAmount() == request.amount()
@@ -111,7 +111,7 @@ public class PointAdjustmentRecorder {
     }
 
     /*
-     * 닫으려는 대사 건이 열려 있고 이 점주의 것인지 본다(구현 계획 G-4).
+     * 닫으려는 대사 건이 열려 있고 이 점주의 것인지 본다.
      * 캠페인 대상 건은 조정의 campaignId 가 대상 캠페인과 같아야 한다. 서버가 채우지 않는 이유는
      * 채우면 같은 키 재요청에서 저장값과 요청값이 달라 보여 BILLING-018 을 잘못 내기 때문이다.
      */

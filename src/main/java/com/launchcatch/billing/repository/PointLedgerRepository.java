@@ -92,7 +92,7 @@ public interface PointLedgerRepository extends JpaRepository<PointLedger, Long>,
      * 영업일은 deduction_result 가 갖는다.
      *
      * 중복은 값을 바꾸지 않는 갱신(ON DUPLICATE KEY UPDATE serve_id = serve_id)으로 흡수한다.
-     * INSERT IGNORE 는 쓰지 않는다. CHECK 위반까지 경고로 낮추고 행을 조용히 버린다(구현 계획 D-5).
+     * INSERT IGNORE 는 쓰지 않는다. CHECK 위반까지 경고로 낮추고 행을 조용히 버린다.
      *
      * 영향받은 행 수는 새로 만들면 1, 이미 있으면 0 이다.
      */
@@ -274,7 +274,7 @@ public interface PointLedgerRepository extends JpaRepository<PointLedger, Long>,
     /*
      * 캠페인 하나의 그 영업일 RESERVE 를 없을 때만 넣는다. 같은 캠페인과 영업일의 RESERVE 가 이미 있으면 그대로 둔다
      * (day_reserve_dedup_key UNIQUE). 00:00 예약은 점주 계정 행을 잠근 뒤 계획이 없는 캠페인만 쓰지만, 잠금 밖에서 같은 행을
-     * 쓰는 경로가 생겨도 UNIQUE 위반으로 단계가 멈추지 않게 중복을 값을 바꾸지 않는 갱신으로 흡수한다(구현 계획 D-5).
+     * 쓰는 경로가 생겨도 UNIQUE 위반으로 단계가 멈추지 않게 중복을 값을 바꾸지 않는 갱신으로 흡수한다.
      * 금액은 음수로 받는다(chk_point_ledger_amount_sign). 배치가 쓰므로 source 는 RECONCILIATION 이다.
      */
     @Modifying
@@ -294,7 +294,7 @@ public interface PointLedgerRepository extends JpaRepository<PointLedger, Long>,
     /*
      * 캠페인 하나의 그 영업일 RELEASE 를 없을 때만 넣는다. 같은 캠페인과 영업일의 RELEASE 가 이미 있으면 그대로 둔다
      * (day_reserve_dedup_key UNIQUE). 이어받기로 두 실행이 겹쳐도 한쪽이 UNIQUE 위반으로 실패하지 않는다.
-     * 중복은 값을 바꾸지 않는 갱신으로 흡수하고 INSERT IGNORE 는 쓰지 않는다(구현 계획 D-5).
+     * 중복은 값을 바꾸지 않는 갱신으로 흡수하고 INSERT IGNORE 는 쓰지 않는다.
      * 금액은 양수다(chk_point_ledger_amount_sign). 배치가 쓰므로 source 는 RECONCILIATION 이다.
      */
     @Modifying
@@ -314,7 +314,7 @@ public interface PointLedgerRepository extends JpaRepository<PointLedger, Long>,
     /*
      * 충전 직후 재예약 한 건을 없을 때만 넣는다(I-03). 같은 결제와 캠페인의 재예약이 이미 있으면 그대로 둔다
      * (uk_point_ledger_recharge_reserve_dedup). 중복은 값을 바꾸지 않는 갱신으로 흡수하고 INSERT IGNORE 는
-     * 쓰지 않는다(구현 계획 D-5). 금액은 음수로 받는다(chk_point_ledger_amount_sign).
+     * 쓰지 않는다. 금액은 음수로 받는다(chk_point_ledger_amount_sign).
      */
     @Modifying
     @Query(value = """
