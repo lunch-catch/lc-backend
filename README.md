@@ -201,7 +201,7 @@ erDiagram
     }
     STORE {
         bigint store_id PK
-        bigint owner_id FK
+        bigint owner_id UK
         varchar business_verification_status
     }
     CAMPAIGN {
@@ -209,23 +209,23 @@ erDiagram
         bigint owner_id FK
         bigint store_id FK
         varchar status
-        int discount_value
+        bigint active_store_marker UK
     }
     COUPON_EVENT {
         bigint coupon_event_id PK
-        bigint campaign_id
-        varchar status
+        bigint campaign_id UK
+        date business_date UK
         int issue_quantity
     }
     MEMBER_COUPON {
         bigint member_coupon_id PK
         bigint coupon_event_id FK
-        bigint member_id
+        bigint member_id UK
         varchar status
     }
     MEMBER {
         bigint member_id PK
-        varchar provider_user_id
+        varchar provider_user_id UK
         varchar status
     }
     AD_CANDIDATE {
@@ -236,8 +236,9 @@ erDiagram
     }
     IMPRESSION_LOG {
         binary serve_id PK
-        bigint member_id
+        bigint member_id PK
         bigint campaign_id
+        date business_date
         enum validity
     }
     PAYMENT {
@@ -248,27 +249,40 @@ erDiagram
     }
     POINT_LEDGER {
         bigint point_ledger_id PK
-        bigint owner_id FK
+        bigint owner_id
         bigint campaign_id
-        bigint payment_id
-        varchar entry_type
+        binary serve_id UK
+        bigint payment_id UK
+        varchar entry_type UK
         bigint amount
     }
 
-    OWNER ||--o{ STORE : "가게를 낸다"
+    OWNER ||--o| STORE : "가게 하나를 낸다"
     OWNER ||--o{ CAMPAIGN : "집행한다"
     STORE ||--o{ CAMPAIGN : "대상이다"
     OWNER ||--o{ PAYMENT : "충전한다"
     OWNER ||--o{ POINT_LEDGER : "잔액을 갖는다"
-    CAMPAIGN ||--o| COUPON_EVENT : "회차를 연다"
-    CAMPAIGN ||--o{ AD_CANDIDATE : "그날 후보가 된다"
+    CAMPAIGN ||--o{ COUPON_EVENT : "날마다 회차를 연다"
+    CAMPAIGN ||--o{ AD_CANDIDATE : "날마다 후보가 된다"
     COUPON_EVENT ||--o{ MEMBER_COUPON : "수량을 나눈다"
-    MEMBER ||--o{ MEMBER_COUPON : "발급받는다"
+    MEMBER ||--o{ MEMBER_COUPON : "회차마다 한 장 받는다"
     MEMBER ||--o{ IMPRESSION_LOG : "본다"
     AD_CANDIDATE ||--o{ IMPRESSION_LOG : "노출로 남는다"
-    IMPRESSION_LOG ||--o| POINT_LEDGER : "차감을 만든다"
-    PAYMENT ||--o{ POINT_LEDGER : "적립을 만든다"
+    IMPRESSION_LOG ||--o| POINT_LEDGER : "차감 한 건을 만든다"
+    PAYMENT ||--o| POINT_LEDGER : "적립 한 건을 만든다"
 ```
+
+관계마다 제약이 걸려 있다.
+
+| 제약 | 뜻 |
+|---|---|
+| `uk_store_owner (owner_id)` | 점주는 가게를 하나만 갖는다 |
+| `uk_campaign_active_store (active_store_marker)` | 가게당 집행 중인 캠페인은 하나다. 생성 열로 ACTIVE 일 때만 `store_id` 를 담아 유일성을 건다 |
+| `uk_coupon_event_campaign_date (campaign_id, business_date)` | 캠페인은 영업일마다 회차 하나를 연다 |
+| `uk_member_coupon_event_member (coupon_event_id, member_id)` | 한 회차에서 회원은 한 장만 받는다 |
+| `PRIMARY KEY (business_date, campaign_id)` | 피드 후보는 영업일과 캠페인의 짝으로 하나다 |
+| `uk_point_ledger_serve_entry (serve_id, entry_type)` | 한 노출에 같은 종류의 원장 항목이 두 번 쌓이지 않는다 |
+| `uk_point_ledger_payment_entry (payment_id, entry_type)` | 한 결제에 적립이 두 번 쌓이지 않는다 |
 
 | 폴더 | 테이블 | 폴더 | 테이블 |
 |---|---|---|---|
