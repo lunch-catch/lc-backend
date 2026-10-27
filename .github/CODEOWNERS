@@ -18,8 +18,8 @@
 *                                               @devjohnpark
 
 # --- 공용 모듈과 빌드. 바꾸면 전 도메인이 영향을 받는다 ----------------------
-/src/main/java/com/launchcatch/auth/            @muzimzz @gyudongjeong
-/src/main/java/com/launchcatch/global/          @devjohnpark
+/src/main/java/com/lunchcatch/auth/             @muzimzz @gyudongjeong
+/src/main/java/com/lunchcatch/global/           @devjohnpark
 /docs/api-spec/auth-api-spec.md                 @muzimzz @gyudongjeong
 /docs/api-spec/auth-api-design.md               @muzimzz @gyudongjeong
 /docs/troubleshooting/auth/                     @muzimzz @gyudongjeong
@@ -38,50 +38,50 @@
 # 담당은 각 도메인 V1 마이그레이션 머리 주석이 원본이다.
 
 # 관리자, 점주, 가게, 알림  정규동
-/src/main/java/com/launchcatch/admin/           @gyudongjeong
+/src/main/java/com/lunchcatch/admin/            @gyudongjeong
 /src/main/resources/db/migration/admin/         @gyudongjeong
 /docs/api-spec/admin-api-spec.md                @gyudongjeong
-/src/main/java/com/launchcatch/owner/           @gyudongjeong
+/src/main/java/com/lunchcatch/owner/            @gyudongjeong
 /src/main/resources/db/migration/owner/         @gyudongjeong
 /docs/api-spec/owner-api-spec.md                @gyudongjeong
 /docs/design/owner/                             @gyudongjeong
 /docs/troubleshooting/admin/                    @gyudongjeong
-/src/main/java/com/launchcatch/store/           @gyudongjeong
+/src/main/java/com/lunchcatch/store/            @gyudongjeong
 /src/main/resources/db/migration/store/         @gyudongjeong
 /docs/api-spec/store-api-spec.md                @gyudongjeong
-/src/main/java/com/launchcatch/notification/    @gyudongjeong
+/src/main/java/com/lunchcatch/notification/     @gyudongjeong
 /src/main/resources/db/migration/notification/  @gyudongjeong
 /docs/api-spec/notification-api-spec.md         @gyudongjeong
 
 # 사용자, 정산, 분석  김현우
-/src/main/java/com/launchcatch/member/          @muzimzz
+/src/main/java/com/lunchcatch/member/           @muzimzz
 /src/main/resources/db/migration/member/        @muzimzz
 /docs/api-spec/member.md                        @muzimzz
-/src/main/java/com/launchcatch/billing/         @muzimzz
+/src/main/java/com/lunchcatch/billing/          @muzimzz
 /src/main/resources/db/migration/billing/       @muzimzz
 /docs/api-spec/billing-api-spec.md              @muzimzz
 /docs/design/billing/                           @muzimzz
-/src/main/java/com/launchcatch/analytics/       @muzimzz
+/src/main/java/com/lunchcatch/analytics/        @muzimzz
 /src/main/resources/db/migration/analytics/     @muzimzz
 /docs/api-spec/analytics-api-spec.md            @muzimzz
 
 # 캠페인, 운영  최재웅
-/src/main/java/com/launchcatch/campaign/        @yongmaru789
+/src/main/java/com/lunchcatch/campaign/         @yongmaru789
 /src/main/resources/db/migration/campaign/      @yongmaru789
 /docs/api-spec/campaign-api-spec.md             @yongmaru789
 /docs/api-spec/poster-api-spec.md               @yongmaru789
-/src/main/java/com/launchcatch/ops/             @yongmaru789 @muzimzz
+/src/main/java/com/lunchcatch/ops/              @yongmaru789 @muzimzz
 /src/main/resources/db/migration/ops/           @yongmaru789 @muzimzz
 /docs/design/ops/                               @yongmaru789 @muzimzz
 
 # 광고 서빙  박준서
-/src/main/java/com/launchcatch/adserving/       @devjohnpark
+/src/main/java/com/lunchcatch/adserving/        @devjohnpark
 /src/main/resources/db/migration/adserving/     @devjohnpark
 /docs/api-spec/feed-api-spec.md                 @devjohnpark
 /docs/design/adserving/                         @devjohnpark
 
 # 쿠폰  최민혁
-/src/main/java/com/launchcatch/coupon/          @MinhyeokChoi99
+/src/main/java/com/lunchcatch/coupon/           @MinhyeokChoi99
 /src/main/resources/db/migration/coupon/        @MinhyeokChoi99
 /docs/api-spec/coupon-api-spec.md               @MinhyeokChoi99
 /docs/design/coupon/                            @MinhyeokChoi99
@@ -95,10 +95,10 @@
 #
 # contract 밖의 내부 패키지는 다른 도메인이 볼 수 없으니 소유자만 본다. 그래서 위의
 # 도메인 규칙보다 아래에 둔다. 마지막에 맞는 줄이 이긴다.
-/src/main/java/com/launchcatch/campaign/contract/ @yongmaru789 @devjohnpark @muzimzz @MinhyeokChoi99
-/src/main/java/com/launchcatch/member/contract/ @muzimzz @devjohnpark @MinhyeokChoi99 @gyudongjeong
-/src/main/java/com/launchcatch/store/contract/  @gyudongjeong @devjohnpark @yongmaru789
-/src/main/java/com/launchcatch/adserving/contract/ @devjohnpark @MinhyeokChoi99 @gyudongjeong
-/src/main/java/com/launchcatch/billing/contract/ @muzimzz @devjohnpark
-/src/main/java/com/launchcatch/owner/contract/  @gyudongjeong @muzimzz
-/src/main/java/com/launchcatch/coupon/contract/ @MinhyeokChoi99 @muzimzz
+/src/main/java/com/lunchcatch/campaign/contract/ @yongmaru789 @devjohnpark @muzimzz @MinhyeokChoi99
+/src/main/java/com/lunchcatch/member/contract/ @muzimzz @devjohnpark @MinhyeokChoi99 @gyudongjeong
+/src/main/java/com/lunchcatch/store/contract/   @gyudongjeong @devjohnpark @yongmaru789
+/src/main/java/com/lunchcatch/adserving/contract/ @devjohnpark @MinhyeokChoi99 @gyudongjeong
+/src/main/java/com/lunchcatch/billing/contract/ @muzimzz @devjohnpark
+/src/main/java/com/lunchcatch/owner/contract/   @gyudongjeong @muzimzz
+/src/main/java/com/lunchcatch/coupon/contract/ @MinhyeokChoi99 @muzimzz

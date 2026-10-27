@@ -1,0 +1,339 @@
+package com.lunchcatch.auth.opaque;
+
+import static com.lunchcatch.auth.opaque.RefreshTokenFormat.ACTIVE_KEY_PREFIX;
+import static com.lunchcatch.auth.opaque.RefreshTokenFormat.ISSUANCE_VERSION_KEY_PREFIX;
+import static com.lunchcatch.auth.opaque.RefreshTokenFormat.KEY_PREFIX;
+import static com.lunchcatch.auth.opaque.RefreshTokenFormat.REVOKED_SUFFIX;
+
+import com.lunchcatch.auth.Role;
+import java.time.Duration;
+import java.util.List;
+import java.util.Optional;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.core.io.ClassPathResource;
+import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.script.DefaultRedisScript;
+import org.springframework.data.redis.core.script.RedisScript;
+import org.springframework.stereotype.Repository;
+
+/*
+ * Refresh Token 저장소. 인메모리 캐시만 다루고 업무 도메인을 전혀 모른다.
+ * 캐시 장애 시 DataAccessException 을 그대로 던지며, 관계형 DB 백업과 폴백은 호출자 책임이다.
+ *
+ * 인증 정책은 SHA-256 해시를 관계형 DB 에 백업한다. 최초 발급은 캐시 저장이 실패해도 DB 백업으로
+ * 로그인을 유지하고, 재발급은 캐시 장애 시 DB 해시로 폴백한다. 폴백 중에는 재사용을 탐지하지 못하지만,
+ * 캐시가 정상적으로 만료, 폐기, 재사용을 판정한 토큰에는 폴백하지 않는다.
+ *
+ * 이 클래스는 캐시만 책임진다. 폐기는 각 역할의 DB 백업 해시와 이 저장소를 함께 사용한다. 캐시와 DB 를 한
+ * 클래스가 함께 다루면 캐시 장애 때 어느 쪽이 기준인지가 이 안에서 갈려 읽기 어려워진다.
+ *
+ * Opaque 토큰이라 키 설계가 둘이다. 토큰만 봐서는 누구 것인지 알 수 없으므로 조회와 회전은
+ * "토큰 해시 -> 소유자 정보" 인 기본 레코드로 한다. 그런데 로그아웃과 재사용 의심 처리에서는
+ * "이 계정의 현재 토큰을 찾아 지운다" 라는 반대 방향도 필요해서, 기본 레코드와 별개로
+ * "역할:id -> 현재 토큰 해시" 를 가리키는 보조 인덱스를 하나 더 둔다. 보조 인덱스는 원자적
+ * CAS 의 대상이 아니라 조회 편의를 위한 포인터일 뿐이고, 회전의 원자성은 기본 레코드에 대한
+ * Lua 스크립트가 보장한다.
+ *
+ * 회전에 성공했을 때 옛 레코드를 곧바로 지우지 않고 tombstone 으로 남긴다. 죽은 토큰이 나중에
+ * 재생되면 재사용 탐지는 되지만, 지워 버렸다면 그것이 누구 것이었는지 알 수 없어 그 계정의
+ * 다른 Refresh Token 을 폐기하는 조치를 할 수 없다. 폐기된 Refresh 를 다시 쓰면 그 계정의
+ * Refresh Token 을 모두 폐기해야 하므로 소유자 정보가 남아 있어야 한다. 그래서 compareAndRotate 의 결과가
+ * Optional 하나가 아니라 SUCCESS, NOT_FOUND, REUSE_DETECTED 셋을 가르는 RotateOutcome 이다.
+ */
+@Repository
+public class RefreshTokenRepository {
+
+    private static final String FIELD_DELIMITER = "\\|";
+
+    private static final RedisScript<Long> REVOKE_BEFORE_VERSION_SCRIPT = loadRevokeBeforeVersionScript();
+
+    private static final RedisScript<Long> SAVE_SCRIPT = loadSaveScript();
+    private static final RedisScript<Long> ORDERED_SAVE_SCRIPT = loadOrderedSaveScript();
+    private static final RedisScript<String> ROTATE_SCRIPT = loadRotateScript();
+    private static final RedisScript<Long> COMPLETE_ROTATION_SCRIPT = loadCompleteRotationScript();
+    private static final RedisScript<Long> ROLLBACK_ROTATION_SCRIPT = loadRollbackRotationScript();
+    private static final RedisScript<Long> REVOKE_SCRIPT = loadRevokeScript();
+    private static final RedisScript<Long> DELETE_ACTIVE_KEY_IF_MATCHES_SCRIPT = loadDeleteActiveKeyIfMatchesScript();
+
+    private final StringRedisTemplate redisTemplate;
+    private final String tokenPrefix;
+    private final String activePrefix;
+    private final String versionPrefix;
+
+    @Autowired
+    public RefreshTokenRepository(StringRedisTemplate redisTemplate) {
+        this(redisTemplate, KEY_PREFIX, ACTIVE_KEY_PREFIX, ISSUANCE_VERSION_KEY_PREFIX);
+    }
+
+    private RefreshTokenRepository(StringRedisTemplate redisTemplate, String tokenPrefix,
+            String activePrefix, String versionPrefix) {
+        this.redisTemplate = redisTemplate;
+        this.tokenPrefix = tokenPrefix;
+        this.activePrefix = activePrefix;
+        this.versionPrefix = versionPrefix;
+    }
+
+    // 도메인은 별도 키 공간에서 같은 회전·복구 Lua를 재사용할 수 있다.
+    public static RefreshTokenRepository scoped(StringRedisTemplate redisTemplate, String namespace) {
+        if (namespace == null || !namespace.matches("[A-Za-z][A-Za-z0-9]*")) {
+            throw new IllegalArgumentException("키 공간은 영문·숫자로 지정해야 한다");
+        }
+        return new RefreshTokenRepository(redisTemplate, namespace + ":" + KEY_PREFIX,
+                namespace + ":" + ACTIVE_KEY_PREFIX, namespace + ":" + ISSUANCE_VERSION_KEY_PREFIX);
+    }
+
+    // DB 폐기 순번을 게시해 이전 로그인이나 회전의 지연된 캐시 저장을 차단한다.
+    public void revokeBeforeVersion(Long id, Role role, long version) {
+        Long result = redisTemplate.execute(REVOKE_BEFORE_VERSION_SCRIPT,
+                List.of(activeKey(role, id), versionPrefix + role.name() + ":" + id),
+                String.format(java.util.Locale.ROOT, "%019d", version), tokenPrefix);
+        if (result == null) {
+            throw new org.springframework.dao.DataAccessResourceFailureException("폐기 순번 저장 결과가 없다");
+        }
+    }
+
+    /** 로그인과 온보딩 발급 시 새 Refresh Token 을 저장한다. */
+    public void save(String refreshToken, Long id, Role role, boolean remember, Duration ttl) {
+        String hash = TokenHasher.sha256(refreshToken);
+        redisTemplate.execute(
+                SAVE_SCRIPT,
+                List.of(primaryKey(hash), activeKey(role, id)),
+                serialize(id, role, remember),
+                hash,
+                String.valueOf(ttl.toMillis())
+        );
+    }
+
+    /*
+     * DB에서 확정한 발급 순번보다 큰 게시가 이미 있으면 이전 토큰을 저장하지 않는다.
+     * 순번 키는 토큰 만료와 함께 지우지 않아 지연된 요청이 만료 후 최신 포인터를 되살리지 못한다.
+     * 캐시 유실 시 DB가 권위 저장소이며 후속 재발급은 DB 해시와 상태를 반드시 확인해야 한다.
+     */
+    public boolean saveIfNewer(String refreshToken, Long id, Role role, boolean remember, Duration ttl, long version) {
+        if (version <= 0 || ttl.isNegative() || ttl.isZero() || ttl.toMillis() <= 0) {
+            throw new IllegalArgumentException("발급 순번과 유효기간은 양수여야 합니다.");
+        }
+        String hash = TokenHasher.sha256(refreshToken);
+        Long saved = redisTemplate.execute(ORDERED_SAVE_SCRIPT,
+                List.of(primaryKey(hash), activeKey(role, id), versionPrefix + role.name() + ":" + id),
+                serialize(id, role, remember), hash, String.valueOf(ttl.toMillis()),
+                String.format(java.util.Locale.ROOT, "%019d", version));
+        if (saved == null) {
+            throw new org.springframework.dao.DataAccessResourceFailureException("발급 순번 저장 결과가 없다");
+        }
+        return saved == 1L;
+    }
+
+    /** @return 저장된 값이 있으면 그 소유자 정보. 없거나 만료됐으면 empty. */
+    public Optional<RefreshTokenData> find(String refreshToken) {
+        String value = redisTemplate.opsForValue().get(primaryKey(TokenHasher.sha256(refreshToken)));
+        return value == null ? Optional.empty() : Optional.of(parse(value));
+    }
+
+    /*
+     * 원자적 회전. 옛 토큰 자리의 레코드를 새 토큰 자리로 옮기고 옛 자리와 보조 인덱스를 한 번에 갱신한다.
+     * 회원은 DB 반영 전까지 처리 중으로 남기고 completeRotation으로 재사용 감지 대상을 확정한다.
+     */
+    public RotateOutcome compareAndRotate(String oldRefreshToken, String newRefreshToken, Duration ttl) {
+        String oldHash = TokenHasher.sha256(oldRefreshToken);
+        String newHash = TokenHasher.sha256(newRefreshToken);
+
+        String value = redisTemplate.execute(
+                ROTATE_SCRIPT,
+                List.of(primaryKey(oldHash), primaryKey(newHash)),
+                String.valueOf(ttl.toMillis()),
+                activePrefix,
+                newHash
+        );
+        if (value == null || "ROTATION_IN_PROGRESS".equals(value)) {
+            return RotateOutcome.notFound();
+        }
+        if (value.endsWith(REVOKED_SUFFIX)) {
+            RefreshTokenData data = parse(value.substring(0, value.length() - REVOKED_SUFFIX.length()));
+            return RotateOutcome.reuseDetected(data);
+        }
+
+        RefreshTokenData data = parse(value);
+        return RotateOutcome.success(data);
+    }
+
+    // DB 반영을 마친 요청만 자신의 처리 중 표시를 재사용 감지 대상으로 바꾼다.
+    public void completeRotation(String oldHash, String newHash) {
+        Long completed = redisTemplate.execute(
+                COMPLETE_ROTATION_SCRIPT, List.of(primaryKey(oldHash)), newHash);
+        if (completed == null) {
+            throw new org.springframework.dao.DataAccessResourceFailureException("토큰 회전 확정 결과가 없다");
+        }
+    }
+
+    /** DB 회전 실패가 확인됐을 때 Redis 회전을 이전 토큰 상태로 원자 복구한다. */
+    public boolean rollbackRotation(String oldHash, String newHash, Role role, Long id) {
+        Long rolledBack = redisTemplate.execute(
+                ROLLBACK_ROTATION_SCRIPT,
+                List.of(primaryKey(oldHash), primaryKey(newHash), activeKey(role, id)),
+                oldHash,
+                newHash
+        );
+        return rolledBack != null && rolledBack == 1L;
+    }
+
+    /*
+     * 이 계정의 현재 Refresh Token 해시다. 보조 인덱스 기준이다.
+     * 로그아웃과 탈퇴, 재사용 탐지 뒤 전체 폐기에서 "무엇을 지워야 하는지" 를 알아내는 데 쓴다.
+     * 보조 인덱스가 캐시 축출이나 재시작으로 유실되면 empty 다. 그때는 호출부가 DB 백업으로 폴백한다.
+     */
+    public Optional<String> findActiveHash(Role role, Long id) {
+        return Optional.ofNullable(redisTemplate.opsForValue().get(activeKey(role, id)));
+    }
+
+    /*
+     * 기본 레코드는 항상 지우고, 보조 인덱스는 지금도 이 해시를 가리킬 때만 함께 지운다.
+     * 실패한 옛 폐기를 나중에 재시도하는 사이 새 로그인이나 재발급으로 보조 인덱스가 다른 해시를
+     * 가리킬 수 있으므로, 두 삭제를 Lua 로 원자 처리해 새 Refresh Token 의 포인터를 지우지 않는다.
+     */
+    public void revokeIfActiveHashMatches(String tokenHash, Role role, Long id) {
+        redisTemplate.execute(REVOKE_SCRIPT, List.of(primaryKey(tokenHash), activeKey(role, id)), tokenHash);
+    }
+
+    /** 삭제 타임아웃 뒤 실제 기본 레코드가 남았는지 후속 확인할 때 쓴다. */
+    public boolean existsByHash(String tokenHash) {
+        return Boolean.TRUE.equals(redisTemplate.hasKey(primaryKey(tokenHash)));
+    }
+
+    /** 해시를 이미 알 때 그 레코드를 지운다. 보조 인덱스에서 구했든 DB 백업에서 구했든 같다. */
+    public void deleteByHash(String tokenHash) {
+        redisTemplate.delete(primaryKey(tokenHash));
+    }
+
+    /** 보조 인덱스 자체를 지운다. */
+    public void deleteActiveKey(Role role, Long id) {
+        redisTemplate.delete(activeKey(role, id));
+    }
+
+    /*
+     * 보조 인덱스가 아직 expectedHash 를 가리키고 있을 때만 지운다.
+     * 회전 뒤 DB 확정에 실패했을 때 보상 처리로 쓴다. 그 사이 다른 로그인이나 재발급으로
+     * 더 최신 해시를 가리키게 됐다면 지우지 않는다.
+     *
+     * @return 실제로 지웠으면 true
+     */
+    public boolean deleteActiveKeyIfMatches(Role role, Long id, String expectedHash) {
+        Long deleted = redisTemplate.execute(
+                DELETE_ACTIVE_KEY_IF_MATCHES_SCRIPT, List.of(activeKey(role, id)), expectedHash);
+        return deleted != null && deleted == 1L;
+    }
+
+    private String primaryKey(String tokenHash) {
+        return tokenPrefix + tokenHash;
+    }
+
+    private String activeKey(Role role, Long id) {
+        return activePrefix + role.name() + ":" + id;
+    }
+
+    /*
+     * 필드가 셋이다. 옮겨온 쪽은 역할과 트랙(TokenType)을 따로 실어 넷이었다.
+     * 역할이 단일 축이 되면서 트랙 필드가 사라졌다.
+     */
+    private String serialize(Long id, Role role, boolean remember) {
+        return id + "|" + role.name() + "|" + remember;
+    }
+
+    private RefreshTokenData parse(String raw) {
+        String[] parts = raw.split(FIELD_DELIMITER, 3);
+        return new RefreshTokenData(Long.valueOf(parts[0]), Role.valueOf(parts[1]), Boolean.parseBoolean(parts[2]));
+    }
+
+    public record RefreshTokenData(Long id, Role role, boolean remember) {
+    }
+
+    private static RedisScript<Long> loadRevokeBeforeVersionScript() {
+        DefaultRedisScript<Long> script = new DefaultRedisScript<>();
+        script.setLocation(new ClassPathResource("scripts/refresh_token_revoke_before_version.lua"));
+        script.setResultType(Long.class);
+        return script;
+    }
+
+    private static RedisScript<Long> loadOrderedSaveScript() {
+        DefaultRedisScript<Long> script = new DefaultRedisScript<>();
+        script.setLocation(new ClassPathResource("scripts/refresh_token_save_if_newer.lua"));
+        script.setResultType(Long.class);
+        return script;
+    }
+
+    private static RedisScript<Long> loadSaveScript() {
+        DefaultRedisScript<Long> script = new DefaultRedisScript<>();
+        script.setLocation(new ClassPathResource("scripts/refresh_token_save.lua"));
+        script.setResultType(Long.class);
+        return script;
+    }
+
+    private static RedisScript<String> loadRotateScript() {
+        DefaultRedisScript<String> script = new DefaultRedisScript<>();
+        script.setLocation(new ClassPathResource("scripts/refresh_token_rotate.lua"));
+        script.setResultType(String.class);
+        return script;
+    }
+
+    private static RedisScript<Long> loadRollbackRotationScript() {
+        DefaultRedisScript<Long> script = new DefaultRedisScript<>();
+        script.setLocation(new ClassPathResource("scripts/refresh_token_rollback_rotation.lua"));
+        script.setResultType(Long.class);
+        return script;
+    }
+
+    private static RedisScript<Long> loadCompleteRotationScript() {
+        DefaultRedisScript<Long> script = new DefaultRedisScript<>();
+        script.setLocation(new ClassPathResource("scripts/refresh_token_complete_rotation.lua"));
+        script.setResultType(Long.class);
+        return script;
+    }
+
+    private static RedisScript<Long> loadRevokeScript() {
+        DefaultRedisScript<Long> script = new DefaultRedisScript<>();
+        script.setLocation(new ClassPathResource("scripts/refresh_token_revoke.lua"));
+        script.setResultType(Long.class);
+        return script;
+    }
+
+    private static RedisScript<Long> loadDeleteActiveKeyIfMatchesScript() {
+        DefaultRedisScript<Long> script = new DefaultRedisScript<>();
+        script.setScriptText("""
+            local current = redis.call('GET', KEYS[1])
+
+            if current == ARGV[1] then
+                return redis.call('DEL', KEYS[1])
+            end
+
+            return 0
+            """);
+        script.setResultType(Long.class);
+        return script;
+    }
+
+    /** 회전 결과 셋. Optional 하나로는 "없음" 과 "재사용 의심(소유자는 안다)" 을 가를 수 없다. */
+    public record RotateOutcome(Status status, RefreshTokenData data) {
+
+        public enum Status { SUCCESS, NOT_FOUND, REUSE_DETECTED }
+
+        public static RotateOutcome success(RefreshTokenData data) {
+            return new RotateOutcome(Status.SUCCESS, data);
+        }
+
+        public static RotateOutcome notFound() {
+            return new RotateOutcome(Status.NOT_FOUND, null);
+        }
+
+        public static RotateOutcome reuseDetected(RefreshTokenData data) {
+            return new RotateOutcome(Status.REUSE_DETECTED, data);
+        }
+
+        public boolean isSuccess() {
+            return status == Status.SUCCESS;
+        }
+
+        public boolean isReuseDetected() {
+            return status == Status.REUSE_DETECTED;
+        }
+    }
+}

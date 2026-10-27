@@ -4,7 +4,7 @@
 
 기준 코드: lc-backend develop `9f4ab523`, lc-frontend `3f3e056` (2026-10-22). 개요와 갱신 방법은 [README](README.md)에 있다.
 
-근거: 프론트 `lc-frontend/apps/owner/src` (router.tsx, api/*, features/*), 백엔드 `wt-loadtest-pg` develop (`com.launchcatch`), 인벤토리 endpoints.txt, errors.txt, jobs.txt.
+근거: 프론트 `lc-frontend/apps/owner/src` (router.tsx, api/*, features/*), 백엔드 `wt-loadtest-pg` develop (`com.lunchcatch`), 인벤토리 endpoints.txt, errors.txt, jobs.txt.
 표기: "mock" 은 서버를 부르지 않는 프론트 내부 처리다. 오류 코드 열의 "429" 는 본문 없이 처리되는 요청 제한(클라이언트가 code 를 읽지 않음)이다. "응답 없음" 은 네트워크 끊김, 10초 타임아웃, 프록시 502 처럼 code 가 없는 실패다.
 
 ### 가입/로그인

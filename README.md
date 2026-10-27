@@ -136,14 +136,14 @@ flowchart LR
 2. **경계를 넘는 참조는 FK 가 아니라 ID 값이다.** 테이블을 옮기거나 도메인을 떼어낼 때 다른 도메인이 깨지지 않는다.
 3. **이벤트는 발행하는 도메인의 `contract` 에 둔다.** 받는 쪽이 발행 도메인의 내부를 알지 않아도 된다.
 
-3개 모두 사람이 아니라 [`ArchitectureTest`](./src/test/java/com/launchcatch/ArchitectureTest.java)가 빌드에서 막는다. 규칙 16개가 돌고, 다른 도메인의 내부를 참조하거나 순환이 생기면 테스트가 깨진다. 경계를 어디에 긋고 왜 그렇게 정했는지는 [도메인 구조와 의존성 설계](./docs/architecture/런치캐치_도메인_구조와_의존성_설계.md)가 갖는다.
+3개 모두 사람이 아니라 [`ArchitectureTest`](./src/test/java/com/lunchcatch/ArchitectureTest.java)가 빌드에서 막는다. 규칙 16개가 돌고, 다른 도메인의 내부를 참조하거나 순환이 생기면 테스트가 깨진다. 경계를 어디에 긋고 왜 그렇게 정했는지는 [도메인 구조와 의존성 설계](./docs/architecture/런치캐치_도메인_구조와_의존성_설계.md)가 갖는다.
 
 ### 패키지 구조
 
 단일 모듈이고 패키지가 경계다. 업무 도메인 9개 아래에 계층을 두고, 다른 도메인에 공개하는 것만 `contract/` 에 둔다.
 
 ```
-src/main/java/com/launchcatch/
+src/main/java/com/lunchcatch/
 ├── adserving/     광고 피드와 노출, 찜 (121파일)
 │   ├── contract/      다른 도메인에 공개하는 인터페이스와 record
 │   ├── engine/        그날 후보 적재와 선정

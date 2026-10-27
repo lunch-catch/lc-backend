@@ -499,13 +499,13 @@ DB에 저장된 발급 상태로 세 키를 다시 만들면 응답 유실 전�
 
 | 근거 | 확인할 내용 |
 |---|---|
-| [CouponSequenceRepository](../../../src/main/java/com/launchcatch/coupon/repository/CouponSequenceRepository.java) | 키 이름과 순서, StringRedisTemplate 사용, meta 조회와 BLOCKED 기록, 재구축 적재를 구현한다. |
+| [CouponSequenceRepository](../../../src/main/java/com/lunchcatch/coupon/repository/CouponSequenceRepository.java) | 키 이름과 순서, StringRedisTemplate 사용, meta 조회와 BLOCKED 기록, 재구축 적재를 구현한다. |
 | [reserve_many.lua](../../../src/main/resources/scripts/coupon/reserve_many.lua) | READY·오래된 예약·수량 검사와 순번 예약, 요청별 결과 코드를 구현한다. |
 | [complete.lua](../../../src/main/resources/scripts/coupon/complete.lua), [release.lua](../../../src/main/resources/scripts/coupon/release.lua) | 예약 ID를 확인한 완료와 반납을 구현한다. |
-| [CouponSequenceService](../../../src/main/java/com/launchcatch/coupon/service/CouponSequenceService.java) | 로컬 차단과 트랜잭션 종료 결과별 반납·차단을 구현한다. |
-| [CouponSequenceRecoveryService](../../../src/main/java/com/launchcatch/coupon/service/CouponSequenceRecoveryService.java) | DB 배타 잠금, 수량 검증, 복구 시도 조정과 재개를 구현한다. |
-| [CouponSequenceServiceTest](../../../src/test/java/com/launchcatch/coupon/service/CouponSequenceServiceTest.java) | 롤백 확정·결과 불명·예약 응답 유실·반납 실패의 분기를 검증한다. |
-| [CouponIntegrationTest의 SequenceRecovery](../../../src/test/java/com/launchcatch/coupon/CouponIntegrationTest.java) | 늦은 반납과 재구축 전 예약, 완료 응답 유실과 오래된 pending, 키 유실, 진행 중 DB 작업을 기다리는 복구를 다룬다. |
+| [CouponSequenceService](../../../src/main/java/com/lunchcatch/coupon/service/CouponSequenceService.java) | 로컬 차단과 트랜잭션 종료 결과별 반납·차단을 구현한다. |
+| [CouponSequenceRecoveryService](../../../src/main/java/com/lunchcatch/coupon/service/CouponSequenceRecoveryService.java) | DB 배타 잠금, 수량 검증, 복구 시도 조정과 재개를 구현한다. |
+| [CouponSequenceServiceTest](../../../src/test/java/com/lunchcatch/coupon/service/CouponSequenceServiceTest.java) | 롤백 확정·결과 불명·예약 응답 유실·반납 실패의 분기를 검증한다. |
+| [CouponIntegrationTest의 SequenceRecovery](../../../src/test/java/com/lunchcatch/coupon/CouponIntegrationTest.java) | 늦은 반납과 재구축 전 예약, 완료 응답 유실과 오래된 pending, 키 유실, 진행 중 DB 작업을 기다리는 복구를 다룬다. |
 | [장애 시험 결과](../../troubleshooting/coupon/coupon-fault-test-results.md) | 로컬 전용 프록시 테스트로 확인한 연결 끊김·응답 지연과 과거 서버 종료 시험의 결과를 기록한다. 시험 코드는 저장소에 포함하지 않는다. |
 
 현재 통합 테스트는 v3 묶음 경로에서 공통 순번·복구 코드를 호출한다.

@@ -63,10 +63,10 @@
 |---|---|---|
 | `local` (기본 프로필) | 출력 | 콘솔 텍스트. 패턴에 MDC 값과 `%F:%line` 을 넣는다 |
 | `local` | 루트 레벨 | DEBUG |
-| `prod` | 인코더 | `LogstashEncoder`. MDC 키 `traceId`, `method`, `uri`, `clientIp` 를 필드로 넣고 `service=launchcatch` 를 더한다 |
+| `prod` | 인코더 | `LogstashEncoder`. MDC 키 `traceId`, `method`, `uri`, `clientIp` 를 필드로 넣고 `service=lunchcatch` 를 더한다 |
 | `prod` | 스택 | `ShortenedThrowableConverter`. 예외당 30 프레임, 최대 8192자, 원인 먼저, 프레임워크 패키지 일부 제외 |
 | `prod` | appender | `AsyncAppender`. `queueSize=8192`, `discardingThreshold=0`, `neverBlock=true`, `includeCallerData=false`. `maxFlushTime` 은 지정하지 않아 기본 1초다 |
-| `prod` | 운영 필드 | `service=launchcatch` |
+| `prod` | 운영 필드 | `service=lunchcatch` |
 | `prod` | 루트 레벨 | INFO |
 
 로거 레벨을 런타임에 바꾸는 수단(`LOG-5-07`)은 액추에이터의 `loggers` 엔드포인트다. 액추에이터는
@@ -103,7 +103,7 @@
 
 새 민감 필드를 요청이나 응답에 넣으면 접미사 규칙에 걸리는지 먼저 본다. 걸리지 않으면 위 표와 `extra` 설정에 키를 더한다.
 빠뜨리면
-[`HttpBodyLoggingFilterTest`](../../src/test/java/com/launchcatch/global/logging/HttpBodyLoggingFilterTest.java) 의 민감 필드 검사 테스트가 실패한다.
+[`HttpBodyLoggingFilterTest`](../../src/test/java/com/lunchcatch/global/logging/HttpBodyLoggingFilterTest.java) 의 민감 필드 검사 테스트가 실패한다.
 
 ### 5.1 스택 대신 원인 정보로 남기는 외부 예외
 
@@ -124,22 +124,22 @@
 
 ## 6. Loki 쿼리
 
-스트림 선택자는 수집 설정(`lc-infra`)이 정한 라벨로 바꿔 쓴다. 아래 예의 `{app="launchcatch"}` 는
+스트림 선택자는 수집 설정(`lc-infra`)이 정한 라벨로 바꿔 쓴다. 아래 예의 `{app="lunchcatch"}` 는
 자리표시다. `json` 뒤의 예시는 수집한 JSON 에 `message` 필드가 있고 그 값이 logfmt 모양이라는 전제다.
 
 ```logql
 # 이벤트 하나 고르기
-{app="launchcatch"} |= "event=MEMBER_LOGIN_FAILED"
+{app="lunchcatch"} |= "event=MEMBER_LOGIN_FAILED"
 
 # 키로 거르기
-{app="launchcatch"} | json | line_format "{{.message}}" | logfmt | event="MEMBER_LOGIN_FAILED" | reason="SYSTEM_ERROR"
+{app="lunchcatch"} | json | line_format "{{.message}}" | logfmt | event="MEMBER_LOGIN_FAILED" | reason="SYSTEM_ERROR"
 
 # 요청 한 건의 모든 로그
-{app="launchcatch"} | json | traceId="a1b2c3d4e5f60718"
+{app="lunchcatch"} | json | traceId="a1b2c3d4e5f60718"
 
 # 폴백이 일어난 곳 모아 보기
-{app="launchcatch"} | json | line_format "{{.message}}" | logfmt | fallback!=""
+{app="lunchcatch"} | json | line_format "{{.message}}" | logfmt | fallback!=""
 
 # 도메인 하나의 실패
-{app="launchcatch"} |~ "event=BILLING_[A-Z_]+_FAILED"
+{app="lunchcatch"} |~ "event=BILLING_[A-Z_]+_FAILED"
 ```

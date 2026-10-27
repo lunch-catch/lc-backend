@@ -1,0 +1,514 @@
+package com.lunchcatch.admin;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyMap;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.reset;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
+import com.lunchcatch.admin.config.AdminLoginAuditFilter;
+import com.lunchcatch.admin.entity.Admin;
+import com.lunchcatch.auth.Role;
+import com.lunchcatch.auth.opaque.RefreshTokenRepository;
+import com.lunchcatch.auth.opaque.TokenHasher;
+import com.lunchcatch.global.exception.GlobalExceptionHandler;
+import com.lunchcatch.ops.contract.AuditLogWriter;
+import jakarta.servlet.http.Cookie;
+import java.time.Duration;
+import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Optional;
+import java.util.UUID;
+import java.util.concurrent.atomic.AtomicInteger;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.EnumSource;
+import org.junit.jupiter.params.provider.ValueSource;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.DataAccessResourceFailureException;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.test.util.AopTestUtils;
+import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
+import org.springframework.transaction.CannotCreateTransactionException;
+import org.springframework.transaction.TransactionSystemException;
+
+/*
+ * 관리자 로그인과 로그아웃과 재발급의 보안 체인을 실제 입구부터 확인한다.
+ *
+ * 전에는 @SpringBootTest(classes = ...) 에 @ComponentScan 정규식 필터까지 써서 컨트롤러와 서비스만
+ * 골라 담고 저장소와 트랜잭션 매니저를 전부 목으로 바꾼 슬라이스였다. 그 모양은 통합 테스트가
+ * 아니고(구현 플로우 5단계) 컨텍스트를 하나 더 띄웠다(#278).
+ *
+ * 계정은 실제 행으로 둔다. 목을 쓰던 때는 그 계정으로 로그인이 끝까지 가는지를 목의 응답으로
+ * 꾸며 보고 있었다. 장애를 만들어야 하는 자리만 기반 클래스의 스파이로 스텁한다. 스파이에는
+ * when(...) 이 실제 메서드를 먼저 부르므로 doReturn 과 doThrow 와 doAnswer 로 스텁한다.
+ */
+class AdminLoginSecurityIntegrationTest extends AbstractAdminIntegrationTest {
+
+    private static final String LOGIN_PATH = "/v1/admin/auth/tokens";
+    private static final String REFRESH_PATH = "/v1/admin/auth/tokens:refresh";
+    private static final String PASSWORD = "Freshman!2026";
+    private static final String REFRESH_TOKEN = "a".repeat(43);
+
+    /*
+     * 로그인과 재발급 경로는 IP 당 분당 10회로 막혀 있다(AuthRateLimitFilter). 보안 설정만 담던
+     * 슬라이스에는 그 필터가 없었는데 전체를 띄우면 체인에 들어온다. 한 클래스의 요청이 같은 IP
+     * 로 쌓이면 뒤에 도는 테스트가 429 를 받으므로 테스트마다 다른 IP 로 보낸다.
+     */
+    private static final AtomicInteger CLIENTS = new AtomicInteger();
+
+    @Autowired private MockMvc mvc;
+    @Autowired private JdbcTemplate jdbc;
+
+    private final List<Long> created = new ArrayList<>();
+    private String clientIp;
+    private String loginId;
+    private Long adminId;
+    private String body;
+
+    @BeforeEach
+    void setUp() {
+        reset(admins, tokens, sessionTokens, transactions, versions, legacyCutoff, revocations, audit, encoder, jwt);
+        clientIp = "192.0.2." + (CLIENTS.incrementAndGet() % 200 + 1);
+        loginId = "login." + UUID.randomUUID().toString().substring(0, 8);
+        adminId = insertAdmin(loginId, PASSWORD, Role.SUPER_ADMIN);
+        body = requestBody(loginId, PASSWORD);
+    }
+
+    @AfterEach
+    void tearDown() {
+        created.forEach(id -> {
+            jdbc.update("delete from admin_login_session where admin_id = ?", id);
+            jdbc.update("delete from audit_log where admin_id = ?", id);
+            jdbc.update("delete from admin where admin_id = ?", id);
+        });
+    }
+
+    private Long insertAdmin(String id, String password, Role role) {
+        Admin admin = admins.saveAndFlush(Admin.register(id, encoder.encode(password), "관리자", role));
+        created.add(admin.getId());
+        return admin.getId();
+    }
+
+    private String requestBody(String id, String password) {
+        return "{\"loginId\":\"" + id + "\",\"password\":\"" + password + "\"}";
+    }
+
+    private MockHttpServletRequestBuilder login(String json) {
+        return post(LOGIN_PATH).contentType(MediaType.APPLICATION_JSON).content(json).with(fromClient());
+    }
+
+    private MockHttpServletRequestBuilder refresh() {
+        return post(REFRESH_PATH).with(fromClient());
+    }
+
+    private org.springframework.test.web.servlet.request.RequestPostProcessor fromClient() {
+        return request -> {
+            request.setRemoteAddr(clientIp);
+            return request;
+        };
+    }
+
+    // 발급 순번을 넣은 관리자 AT 다. 로그인과 재발급 서비스만 이 클레임을 넣는다.
+    private Cookie accessToken(Long id, Role role) {
+        return new Cookie("adminAccessToken", jwt.createAccessToken(id, role, AdminAccessTokenClaims.forVersion(1L)));
+    }
+
+    /*
+     * DB 백업만 있는 상태를 만든다. 발급 순번을 1 로 올려 두어야 로그아웃 폐기 상한이 0 인
+     * 계정과 구별되고, admin 의 CHECK 제약도 지켜진다.
+     */
+    private void backUpRefreshToken(Long id) {
+        jdbc.update("update admin set refresh_token_hash = ?, refresh_token_expires_at = ?, "
+                        + "refresh_token_issuance_version = 1 where admin_id = ?",
+                TokenHasher.sha256(REFRESH_TOKEN), LocalDateTime.now().plusDays(1), id);
+    }
+
+    private ListAppender<ILoggingEvent> attach(Class<?> target) {
+        var appender = new ListAppender<ILoggingEvent>() {
+            @Override
+            protected void append(ILoggingEvent event) {
+                event.prepareForDeferredProcessing();
+                super.append(event);
+            }
+        };
+        appender.start();
+        ((Logger) LoggerFactory.getLogger(target)).addAppender(appender);
+        return appender;
+    }
+
+    private ListAppender<ILoggingEvent> attachAdmin() {
+        var appender = attach(AdminLoginAuditFilter.class);
+        ((Logger) LoggerFactory.getLogger(AdminLoginAuditFilter.class)).detachAppender(appender);
+        ((Logger) LoggerFactory.getLogger("com.lunchcatch.admin")).addAppender(appender);
+        return appender;
+    }
+
+    private void detachAdmin(ListAppender<ILoggingEvent> appender) {
+        ((Logger) LoggerFactory.getLogger("com.lunchcatch.admin")).detachAppender(appender);
+        appender.stop();
+    }
+
+    private void detach(Class<?> target, ListAppender<ILoggingEvent> appender) {
+        ((Logger) LoggerFactory.getLogger(target)).detachAppender(appender);
+        appender.stop();
+    }
+
+    @Test
+    void 로그인_성공을_실제_감사_저장소에_한번_기록한다() throws Exception {
+        mvc.perform(login(body)).andExpect(status().isOk());
+        assertThat(jdbc.queryForList("select detail from audit_log where admin_id = ? and action = 'ADMIN_LOGIN'",
+                String.class, adminId)).containsExactly("result=SUCCESS;clientIp=" + clientIp);
+    }
+
+    @Test
+    void 로그인_실패_예외후에도_감사가_커밋된다() throws Exception {
+        mvc.perform(login(requestBody(loginId, "WrongPassword!"))).andExpect(status().isUnauthorized());
+        assertThat(jdbc.queryForList("select detail from audit_log where admin_id = ? and action = 'ADMIN_LOGIN'",
+                String.class, adminId)).containsExactly("result=FAILURE;clientIp=" + clientIp);
+    }
+
+    @Test
+    void 감사_저장_실패가_로그인_성공을_바꾸지_않는다() throws Exception {
+        AuditLogWriter writer = AopTestUtils.getUltimateTargetObject(audit);
+        doThrow(new DataAccessResourceFailureException("SensitivePassword!"))
+                .when(writer).write(eq(adminId), eq("ADMIN_LOGIN"), any(), any());
+        mvc.perform(login(body)).andExpect(status().isOk());
+        assertThat(jdbc.queryForObject("select count(*) from audit_log where admin_id = ? and action = 'ADMIN_LOGIN'",
+                Long.class, adminId)).isZero();
+    }
+
+    @Test
+    void 감사_저장_실패가_로그인_실패를_서버오류로_바꾸지_않는다() throws Exception {
+        AuditLogWriter writer = AopTestUtils.getUltimateTargetObject(audit);
+        doThrow(new DataAccessResourceFailureException("audit down"))
+                .when(writer).write(eq(adminId), eq("ADMIN_LOGIN"), any(), any());
+        mvc.perform(login(requestBody(loginId, "WrongPassword!"))).andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void 인증없이_로그인하고_실제_JWT와_명세의_응답을_받는다() throws Exception {
+        var result = mvc.perform(login(body))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value("SUCCESS"))
+                .andExpect(jsonPath("$.data.adminId").value(adminId.intValue()))
+                .andExpect(jsonPath("$.data.role").value("SUPER_ADMIN"))
+                .andExpect(jsonPath("$.data.accessToken").doesNotExist())
+                .andExpect(jsonPath("$.data.refreshToken").doesNotExist())
+                .andReturn();
+        Cookie access = result.getResponse().getCookie("adminAccessToken");
+        Cookie refresh = result.getResponse().getCookie("refreshToken");
+        assertThat(access.isHttpOnly()).isTrue();
+        assertThat(access.getSecure()).isTrue();
+        assertThat(access.getMaxAge()).isEqualTo(1800);
+        assertThat(jwt.validateToken(access.getValue())).isTrue();
+        assertThat(jwt.getRole(access.getValue())).isEqualTo(Role.SUPER_ADMIN);
+        assertThat(jwt.getIssuedAt(access.getValue())).isNotNull();
+        assertThat(refresh.getPath()).isEqualTo("/v1/admin/auth/");
+        assertThat(refresh.getMaxAge()).isEqualTo(86400);
+    }
+
+    @Test
+    void 없는_계정은_AUTH001이며_쿠키를_발급하지_않는다() throws Exception {
+        mvc.perform(login(requestBody("login.absent", PASSWORD)))
+                .andExpect(status().isUnauthorized()).andExpect(jsonPath("$.code").value("AUTH-001"))
+                .andExpect(header().doesNotExist(HttpHeaders.SET_COOKIE));
+    }
+
+    @ParameterizedTest
+    @CsvSource({"73, 0", "1, 24", "0, 25"})
+    void UTF8_72바이트_초과_비밀번호는_401_AUTH001이며_쿠키를_발급하지_않는다(
+            int asciiLength, int koreanLength) throws Exception {
+        String password = "a".repeat(asciiLength) + "가".repeat(koreanLength);
+        mvc.perform(login(requestBody(loginId, password)))
+                .andExpect(status().isUnauthorized()).andExpect(jsonPath("$.code").value("AUTH-001"))
+                .andExpect(header().doesNotExist(HttpHeaders.SET_COOKIE));
+        verifyNoInteractions(tokens, sessionTokens);
+        assertThat(admins.findByLoginId(loginId).orElseThrow().getRefreshTokenHash()).isNull();
+    }
+
+    @ParameterizedTest
+    @CsvSource({"72, 0", "0, 24"})
+    void UTF8_72바이트_비밀번호는_일치하면_로그인할_수_있다(
+            int asciiLength, int koreanLength) throws Exception {
+        String password = "a".repeat(asciiLength) + "가".repeat(koreanLength);
+        String id = "login." + UUID.randomUUID().toString().substring(0, 8);
+        insertAdmin(id, password, Role.SUPER_ADMIN);
+        mvc.perform(login(requestBody(id, password)))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.code").value("SUCCESS"))
+                .andExpect(header().exists(HttpHeaders.SET_COOKIE));
+    }
+
+    @Test
+    void 필수_값이_없으면_400이며_쿠키를_발급하지_않는다() throws Exception {
+        mvc.perform(login("{}"))
+                .andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("COMMON-002"))
+                .andExpect(header().doesNotExist(HttpHeaders.SET_COOKIE));
+    }
+
+    @Test
+    void DB_백업_장애는_503_AUTH002_RetryAfter_ERROR이며_쿠키를_발급하지_않는다() throws Exception {
+        doThrow(new DataAccessResourceFailureException("DB unavailable"))
+                .when(admins).findByIdForUpdate(adminId);
+        var appender = attach(GlobalExceptionHandler.class);
+        try {
+            mvc.perform(login(body))
+                    .andExpect(status().isServiceUnavailable()).andExpect(jsonPath("$.code").value("AUTH-002"))
+                    .andExpect(header().string(HttpHeaders.RETRY_AFTER, "1"))
+                    .andExpect(header().doesNotExist(HttpHeaders.SET_COOKIE));
+            assertThat(appender.list).anySatisfy(event -> {
+                assertThat(event.getLevel()).isEqualTo(Level.ERROR);
+                assertThat(event.getFormattedMessage()).contains("AUTH-002");
+            });
+        } finally {
+            detach(GlobalExceptionHandler.class, appender);
+        }
+    }
+
+    @Test
+    void Redis_저장_장애시_DB_백업후_로그인_성공을_유지한다() throws Exception {
+        doThrow(new DataAccessResourceFailureException("Redis unavailable"))
+                .when(sessionTokens).saveIfNewer(any(), anyLong(), eq(Role.SUPER_ADMIN), any(), anyLong());
+        mvc.perform(login(body))
+                .andExpect(status().isOk()).andExpect(header().exists(HttpHeaders.SET_COOKIE));
+        verify(sessionTokens).saveIfNewer(any(), anyLong(), eq(Role.SUPER_ADMIN), any(), anyLong());
+        assertThat(jdbc.queryForObject("select count(*) from admin_login_session "
+                + "where admin_id = ? and refresh_token_hash is not null", Long.class, adminId)).isEqualTo(1L);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"/v1/admin/auth/unknown"})
+    void 아직_구현하지_않은_인증_경로는_유효한_토큰으로도_접근할_수_없다(String path) throws Exception {
+        mvc.perform(post(path).cookie(accessToken(adminId, Role.SUPER_ADMIN)))
+                .andExpect(status().isForbidden());
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = Role.class, names = {"ADMIN", "SUPER_ADMIN"})
+    void 유효한_관리자는_Refresh쿠키_없이_로그아웃한다(Role role) throws Exception {
+        String id = "login." + UUID.randomUUID().toString().substring(0, 8);
+        Long logoutId = insertAdmin(id, PASSWORD, role);
+        var result = mvc.perform(delete(LOGIN_PATH).cookie(accessToken(logoutId, role)))
+                .andExpect(status().isNoContent()).andReturn();
+        assertThat(result.getResponse().getContentAsString()).isEmpty();
+        assertThat(result.getResponse().getCookie("adminAccessToken").getMaxAge()).isZero();
+        assertThat(result.getResponse().getCookie("refreshToken").getPath()).isEqualTo("/v1/admin/auth/");
+        verify(audit).write(logoutId, "ADMIN_LOGOUT", String.valueOf(logoutId), "result=SUCCESS");
+    }
+
+    @Test
+    void 로그아웃_인증누락은_AUTH005다() throws Exception {
+        mvc.perform(delete(LOGIN_PATH))
+                .andExpect(status().isUnauthorized()).andExpect(jsonPath("$.code").value("AUTH-005"))
+                .andExpect(header().doesNotExist(HttpHeaders.SET_COOKIE));
+    }
+
+    @Test
+    void 폐기된_Access_Token은_로그아웃에_재사용할_수_없다() throws Exception {
+        doReturn(false).when(versions).isVersionValid(Role.SUPER_ADMIN, adminId, 1L);
+        mvc.perform(delete(LOGIN_PATH).cookie(accessToken(adminId, Role.SUPER_ADMIN)))
+                .andExpect(status().isUnauthorized()).andExpect(jsonPath("$.code").value("AUTH-005"));
+    }
+
+    /*
+     * 사용자 토큰은 역할을 담당하는 정책이 없어 발급 시각 기준으로만 검증한다. 점주 토큰은
+     * 점주 정책이 계정 행의 폐기 순번을 읽으므로 그 계정을 실제로 만들어 둔다. 둘 다 인증은
+     * 통과하고 관리자 체인의 권한에서 막히는 것을 본다.
+     */
+    @ParameterizedTest
+    @EnumSource(value = Role.class, names = {"MEMBER", "OWNER"})
+    void 관리자_외_역할은_로그아웃할_수_없다(Role role) throws Exception {
+        Long id = role == Role.OWNER ? insertOwner() : 1L;
+        mvc.perform(delete(LOGIN_PATH).cookie(new Cookie("adminAccessToken", jwt.createAccessToken(id, role))))
+                .andExpect(status().isForbidden()).andExpect(jsonPath("$.code").value("AUTH-006"));
+    }
+
+    private Long insertOwner() {
+        String email = UUID.randomUUID() + "@example.com";
+        LocalDateTime now = LocalDateTime.now();
+        jdbc.update("insert into owner (email, password_hash, created_at, updated_at) values (?, ?, ?, ?)",
+                email, encoder.encode(PASSWORD), now, now);
+        return jdbc.queryForObject("select owner_id from owner where email = ?", Long.class, email);
+    }
+
+    @Test
+    void 로그아웃_저장소_장애는_503이며_쿠키를_삭제하지_않는다() throws Exception {
+        doThrow(new DataAccessResourceFailureException("token-must-not-leak"))
+                .when(tokens).revokeBeforeVersion(eq(adminId), any(), anyLong());
+        mvc.perform(delete(LOGIN_PATH).cookie(accessToken(adminId, Role.SUPER_ADMIN)))
+                .andExpect(status().isServiceUnavailable()).andExpect(jsonPath("$.code").value("AUTH-002"))
+                .andExpect(header().exists("Retry-After"))
+                .andExpect(header().doesNotExist(HttpHeaders.SET_COOKIE));
+    }
+
+    /*
+     * 감사 기록은 트랜잭션 프록시 뒤에 있다. 프록시를 거쳐 스텁하면 적어 둔 매처가 그 프록시가
+     * 먼저 부르는 트랜잭션 매니저 스파이의 호출에 먹혀서 인수 수가 어긋난다. 프록시 안의
+     * 스파이에 직접 건다.
+     */
+    @Test
+    void 로그아웃_감사저장_실패는_204를_유지한다() throws Exception {
+        AuditLogWriter writer = AopTestUtils.getUltimateTargetObject(audit);
+        doThrow(new DataAccessResourceFailureException("audit down"))
+                .when(writer).write(eq(adminId), any(), any(), any());
+        mvc.perform(delete(LOGIN_PATH).cookie(accessToken(adminId, Role.SUPER_ADMIN)))
+                .andExpect(status().isNoContent());
+    }
+
+    @Test
+    void 깨진_JSON의_비밀번호가_예외_로그에_남지_않는다() throws Exception {
+        var appender = attach(GlobalExceptionHandler.class);
+        try {
+            mvc.perform(login("{\"loginId\":\"" + loginId + "\",\"password\":\"SensitivePassword!\" BROKEN}"))
+                    .andExpect(status().isBadRequest());
+            assertThat(appender.list).isNotEmpty().allSatisfy(event ->
+                    assertThat(event.getFormattedMessage()).doesNotContain("SensitivePassword!"));
+        } finally {
+            detach(GlobalExceptionHandler.class, appender);
+        }
+    }
+
+    @Test
+    void 로그인_성공과_실패를_본문이나_토큰없이_감사_로그로_남긴다() throws Exception {
+        var appender = attachAdmin();
+        try {
+            mvc.perform(login(body)).andExpect(status().isOk());
+            mvc.perform(login(requestBody("login.absent", PASSWORD))).andExpect(status().isUnauthorized());
+            assertThat(appender.list).hasSize(2).allSatisfy(event -> {
+                assertThat(event.getFormattedMessage()).contains("httpStatus=")
+                        .doesNotContain(PASSWORD, "password", "refreshToken", "occurredAt=", "clientIp=", "success=");
+                assertThat(event.getMDCPropertyMap()).containsEntry("clientIp", clientIp);
+                assertThat(event.getMDCPropertyMap().get("traceId")).isNotBlank();
+                assertThat(event.getThrowableProxy()).isNull();
+            });
+            assertThat(appender.list.get(0).getFormattedMessage())
+                    .contains("event=ADMIN_LOGIN_SUCCESS", "httpStatus=200");
+            assertThat(appender.list.get(1).getFormattedMessage())
+                    .contains("event=ADMIN_LOGIN_FAILED", "httpStatus=401");
+            assertThat(appender.list).extracting(ILoggingEvent::getLevel).containsExactly(Level.INFO, Level.INFO);
+        } finally {
+            detachAdmin(appender);
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"203.0.113.20", "10.0.0.7"})
+    void 전달_헤더의_마지막_IP를_공유_해석기가_정한_감사_MDC로_사용한다(String forwardedIp) throws Exception {
+        var appender = attachAdmin();
+        try {
+            mvc.perform(login(body).header("X-Forwarded-For", "198.51.100.10, " + forwardedIp))
+                    .andExpect(status().isOk());
+            assertThat(appender.list).singleElement().satisfies(event -> {
+                assertThat(event.getMDCPropertyMap()).containsEntry("clientIp", forwardedIp);
+                assertThat(event.getMDCPropertyMap().get("traceId")).isNotBlank();
+                assertThat(event.getFormattedMessage()).contains("event=ADMIN_LOGIN_SUCCESS", "httpStatus=200")
+                        .doesNotContain("clientIp=", "198.51.100.10", forwardedIp, PASSWORD, "refreshToken");
+            });
+        } finally {
+            detachAdmin(appender);
+        }
+    }
+
+    @ParameterizedTest
+    @EnumSource(AccountChange.class)
+    void 비밀번호_비교후_계정이_사용불가이면_AUTH001이며_쿠키를_발급하지_않는다(AccountChange change) throws Exception {
+        doAnswer(call -> {
+            boolean matches = (boolean) call.callRealMethod();
+            changeAccount(change);
+            return matches;
+        }).when(encoder).matches(eq(PASSWORD), any());
+        mvc.perform(login(body))
+                .andExpect(status().isUnauthorized()).andExpect(jsonPath("$.code").value("AUTH-001"))
+                .andExpect(header().doesNotExist(HttpHeaders.SET_COOKIE));
+        verifyNoInteractions(tokens, sessionTokens);
+    }
+
+    enum AccountChange { MISSING, INACTIVE, PASSWORD_CHANGED }
+
+    private void changeAccount(AccountChange change) {
+        switch (change) {
+            case MISSING -> jdbc.update("delete from admin where admin_id = ?", adminId);
+            case INACTIVE -> jdbc.update(
+                    "update admin set status = 'DELETED', deleted_at = ?, refresh_token_hash = null, "
+                            + "refresh_token_expires_at = null where admin_id = ?", LocalDateTime.now(), adminId);
+            case PASSWORD_CHANGED -> jdbc.update("update admin set password_hash = ? where admin_id = ?",
+                    encoder.encode("Changed!2026"), adminId);
+        }
+    }
+
+    @Test
+    void JWT_생성_실패는_새_세션과_순번을_롤백하고_쿠키를_발급하지_않는다() throws Exception {
+        doThrow(new DataAccessResourceFailureException("signing failed"))
+                .when(jwt).createAccessToken(eq(adminId), any(Role.class), anyMap());
+        mvc.perform(login(body))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(header().doesNotExist(HttpHeaders.SET_COOKIE));
+        assertThat(jdbc.queryForObject("select count(*) from admin_login_session where admin_id = ?", Long.class, adminId)).isZero();
+        assertThat(admins.findById(adminId).orElseThrow().getRefreshTokenIssuanceVersion()).isZero();
+    }
+
+    @Test
+    void 재발급은_만료된_Access없이도_새_쿠키와_관리자정보를_반환한다() throws Exception {
+        backUpRefreshToken(adminId);
+        tokens.saveIfNewer(REFRESH_TOKEN, adminId, Role.SUPER_ADMIN, true, Duration.ofDays(1), 1L);
+        var response = mvc.perform(refresh().cookie(
+                        new Cookie("refreshToken", REFRESH_TOKEN), new Cookie("adminAccessToken", "expired")))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.adminId").value(adminId.intValue()))
+                .andExpect(jsonPath("$.data.role").value("SUPER_ADMIN"))
+                .andExpect(jsonPath("$.data.refreshToken").doesNotExist()).andReturn().getResponse();
+        assertThat(response.getCookie("refreshToken").getPath()).isEqualTo("/v1/admin/auth/");
+        assertThat(response.getCookie("refreshToken").getMaxAge()).isEqualTo(86400);
+        assertThat(response.getCookie("adminAccessToken").getMaxAge()).isEqualTo(1800);
+    }
+
+    @Test
+    void 재발급_쿠키_누락은_AUTH003이며_새_쿠키가_없다() throws Exception {
+        mvc.perform(refresh())
+                .andExpect(status().isUnauthorized()).andExpect(jsonPath("$.code").value("AUTH-003"))
+                .andExpect(header().doesNotExist(HttpHeaders.SET_COOKIE));
+    }
+
+    @Test
+    void 재발급_DB장애는_AUTH002이며_새_쿠키를_발급하지_않는다() throws Exception {
+        doThrow(new DataAccessResourceFailureException("DB failed"))
+                .when(admins).findIdByRefreshTokenHash(any());
+        mvc.perform(refresh().cookie(new Cookie("refreshToken", REFRESH_TOKEN)))
+                .andExpect(status().isServiceUnavailable()).andExpect(jsonPath("$.code").value("AUTH-002"))
+                .andExpect(header().string(HttpHeaders.RETRY_AFTER, "1"))
+                .andExpect(header().doesNotExist(HttpHeaders.SET_COOKIE));
+    }
+
+    @Test
+    void 토큰_재사용은_AUTH004이며_새_쿠키를_발급하지_않는다() throws Exception {
+        var owner = new RefreshTokenRepository.RefreshTokenData(adminId, Role.SUPER_ADMIN, true);
+        doReturn(Optional.of(owner)).when(tokens).find(REFRESH_TOKEN);
+        doReturn(RefreshTokenRepository.RotateOutcome.reuseDetected(owner))
+                .when(tokens).compareAndRotate(eq(REFRESH_TOKEN), any(), any());
+        mvc.perform(refresh().cookie(new Cookie("refreshToken", REFRESH_TOKEN)))
+                .andExpect(status().isUnauthorized()).andExpect(jsonPath("$.code").value("AUTH-004"))
+                .andExpect(header().doesNotExist(HttpHeaders.SET_COOKIE));
+    }
+}

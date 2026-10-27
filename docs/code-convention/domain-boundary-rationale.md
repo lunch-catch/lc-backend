@@ -24,8 +24,8 @@
 
 ```
 coupon 가 campaign 의 내부를 직접 참조한다: Constructor
-<com.launchcatch.coupon.service.CouponIssueService.<init>(
- com.launchcatch.campaign.repository.CampaignRepository)>
+<com.lunchcatch.coupon.service.CouponIssueService.<init>(
+ com.lunchcatch.campaign.repository.CampaignRepository)>
 ```
 
 사실은 정확하지만 다음 행동이 적혀 있지 않다. 항목 번호가 있으면 `DPB-2-01` 하나로
@@ -120,7 +120,7 @@ public final class CampaignBudgetFormatter {
 
 ```java
 // 걸린다
-package com.launchcatch.coupon.service;
+package com.lunchcatch.coupon.service;
 public record CouponIssuedEvent(...) { }
 ```
 
@@ -207,5 +207,5 @@ Service 가 Service 를 부르는 것으로 보이기 때문이다. 막히는 �
 
 * 점검 항목: [domain-boundary-guideline.md](./domain-boundary-guideline.md)
 * 규칙의 내용과 근거: [런치캐치_도메인_구조와_의존성_설계.md](../architecture/런치캐치_도메인_구조와_의존성_설계.md) 1장과 2장
-* 강제 수단: `src/test/java/com/launchcatch/ArchitectureTest.java`
+* 강제 수단: `src/test/java/com/lunchcatch/ArchitectureTest.java`
 * 연관 매핑: [jpa-association-guideline.md](./jpa-association-guideline.md) (`AGG-`)

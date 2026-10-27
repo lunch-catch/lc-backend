@@ -54,7 +54,7 @@
 
 DB 원장 합을 읽고 단가를 비교하는 것만으로 대체하면 동시 요청이 같은 잔여 예산을 함께 쓸 수 있다. DB 대체 판정에는 캠페인·영업일 단위의 원자적 갱신 또는 공통 잠금이 필요하다. Redis 정상 처리와 DB 대체 처리의 전환도 함께 설계해야 한다. 그래서 이 대안은 택하지 않았다.
 
-차감의 Redis 예외를 HTTP 경계까지 그대로 전파하면 [전역 예외 처리기](../../../src/main/java/com/launchcatch/global/exception/GlobalExceptionHandler.java)가 `500 / COMMON-001`로 바꾼다. 메시지는 `서버 오류가 발생했습니다.`다. 이 차감 경로에는 해당 예외를 `503`으로 변환하는 처리가 없다. 응답 유실이나 게이트웨이 시간 초과까지 모두 이 HTTP 응답이 전달된다는 뜻은 아니다.
+차감의 Redis 예외를 HTTP 경계까지 그대로 전파하면 [전역 예외 처리기](../../../src/main/java/com/lunchcatch/global/exception/GlobalExceptionHandler.java)가 `500 / COMMON-001`로 바꾼다. 메시지는 `서버 오류가 발생했습니다.`다. 이 차감 경로에는 해당 예외를 `503`으로 변환하는 처리가 없다. 응답 유실이나 게이트웨이 시간 초과까지 모두 이 HTTP 응답이 전달된다는 뜻은 아니다.
 
 | 상황 | 현재 동작과 남는 상태 | 다시 처리할 때 |
 |---|---|---|
@@ -63,7 +63,7 @@ DB 원장 합을 읽고 단가를 비교하는 것만으로 대체하면 동시 
 | 재구성 뒤에도 해시가 없음 | `IllegalStateException`을 던진다 | 정상 미과금으로 숨기지 않는다. 계획·해시 생성 실패를 확인해야 한다 |
 | Lua가 실행됐을 수 있으나 응답을 받지 못함 | DB는 롤백될 수 있다. Redis 표시와 소진은 남았을 수 있다 | 같은 노출의 처리 표시를 재사용할 수 있으나 항상 한 번 과금됐다고 결론낼 수 없다 |
 
-마지막 행은 코드 순서에서 확인되는 위험이다. [차감 서비스](https://github.com/lunch-catch/lc-backend/blob/b7f9a104ba302888b4821f62b7080cbbcbc4b883/src/main/java/com/launchcatch/billing/service/PointDeductorImpl.java#L72)는 Lua 결과를 받은 뒤 보상 콜백을 등록한다. `deduct`가 그 전에 예외를 던지면 해당 호출에는 보상 콜백이 없다. 호출 시간 초과를 Redis 미실행으로 단정하면 안 된다.
+마지막 행은 코드 순서에서 확인되는 위험이다. [차감 서비스](https://github.com/lunch-catch/lc-backend/blob/b7f9a104ba302888b4821f62b7080cbbcbc4b883/src/main/java/com/lunchcatch/billing/service/PointDeductorImpl.java#L72)는 Lua 결과를 받은 뒤 보상 콜백을 등록한다. `deduct`가 그 전에 예외를 던지면 해당 호출에는 보상 콜백이 없다. 호출 시간 초과를 Redis 미실행으로 단정하면 안 된다.
 
 두 키를 읽고 쓰는 Lua는 비클러스터 Valkey를 전제한다. 클러스터 전환 때 생기는 슬롯 오류를 연결 장애의 대체값으로 숨기지 않는다.
 
@@ -131,7 +131,7 @@ DB 커밋은 성공했지만 응답만 유실된 경우에는 같은 노출의 �
 
 ### 중단 통보를 커밋한 뒤 해시 갱신에 실패함
 
-[상태 서비스](../../../src/main/java/com/launchcatch/billing/service/BudgetPlanStatusService.java)는 DB 상태를 먼저 확정하고 커밋 뒤 Redis에 반영한다. 미러의 `DataAccessException`을 받으면 해시를 삭제한다. 다음 호출이 DB 정본으로 다시 만들게 하려는 것이다. 실행 수단과 대안의 비용은 [구조 설계 7장](./billing_구조와_동작_설계.md#트랜잭션-종료-뒤-실행하는-수단)이 소유한다.
+[상태 서비스](../../../src/main/java/com/lunchcatch/billing/service/BudgetPlanStatusService.java)는 DB 상태를 먼저 확정하고 커밋 뒤 Redis에 반영한다. 미러의 `DataAccessException`을 받으면 해시를 삭제한다. 다음 호출이 DB 정본으로 다시 만들게 하려는 것이다. 실행 수단과 대안의 비용은 [구조 설계 7장](./billing_구조와_동작_설계.md#트랜잭션-종료-뒤-실행하는-수단)이 소유한다.
 
 해시 삭제마저 실패하면 `BUDGET_STATUS_HASH_EVICT_FAILED` ERROR를 남긴다. 낡은 `paused` 값이 남을 수 있다. 미러 이벤트를 내구성 있게 다시 실행하는 작업자는 없다. 상태 커밋과 미러 실행 사이의 짧은 구간도 남으므로 중단 커밋 즉시 모든 과금이 차단된다는 보장은 아니다.
 
@@ -367,7 +367,7 @@ A의 보상이 처리 표시를 지우고 spend를 10 내림
 | `billing_spend_hash_rebuild_total` | 새 해시를 생성했다. 복구 중 진행 중인 과금까지 모두 포함했다는 증거는 아니다 |
 | `BUDGET_STATUS_MIRROR_FAILED`, `BUDGET_STATUS_HASH_EVICT_FAILED` | 커밋 뒤 상태 반영과 삭제의 실패를 기록한다 |
 
-검증의 기준은 [통합 테스트](https://github.com/lunch-catch/lc-backend/blob/b7f9a104ba302888b4821f62b7080cbbcbc4b883/src/test/java/com/launchcatch/billing/ImpressionDeductionIntegrationTest.java)와 관련 단위 테스트다. 테스트의 정상 중복·예산 제한·롤백 보상·재구성 결과를 이 문서에 다시 나열하지 않는다.
+검증의 기준은 [통합 테스트](https://github.com/lunch-catch/lc-backend/blob/b7f9a104ba302888b4821f62b7080cbbcbc4b883/src/test/java/com/lunchcatch/billing/ImpressionDeductionIntegrationTest.java)와 관련 단위 테스트다. 테스트의 정상 중복·예산 제한·롤백 보상·재구성 결과를 이 문서에 다시 나열하지 않는다.
 
 ## 아직 정하지 못한 것
 

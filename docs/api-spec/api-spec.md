@@ -142,7 +142,7 @@ Set-Cookie: refreshToken=<token>; HttpOnly; SameSite=Strict; Path=/v1/auth/
 - **권한은 역할로 판정한다.** 역할이 맞지 않으면 `403` 이다. 로그인 없이 부를 수 있는 경로는 로그인, 토큰 재발급, 점주 회원가입, 카카오 로그인뿐이다
 - **점주는 업무별로 현재 상태를 확인한다.** 내 정보 조회는 `ONBOARDING` 점주도 허용하고, 최초 튜토리얼 완료는 `ACTIVE` 점주만 허용한다. 입점 등록과 나머지 업무 API의 상태 제한은 각 도메인 계약을 따르며 현재 구현 범위는 `auth-api-spec.md`의 접근 제어 절을 참고한다
 - **관리자·점주의 비밀번호 로그인 실패는 사유를 구분하지 않는다.** 사용자 카카오 로그인과 재가입의 상태 오류는 [auth-api-spec.md](./auth-api-spec.md)의 계약을 따른다
-- **프론트 화면과 API 서버의 주소(출처: 프로토콜, 호스트, 포트)가 다르면** 서버는 CORS 응답에 `Access-Control-Expose-Headers: Retry-After` 를 넣는다. 예: 화면은 `app.launchcatch.com`, API는 `api.launchcatch.com`. 넣지 않으면 브라우저가 이 헤더를 자바스크립트에 보여 주지 않는다
+- **프론트 화면과 API 서버의 주소(출처: 프로토콜, 호스트, 포트)가 다르면** 서버는 CORS 응답에 `Access-Control-Expose-Headers: Retry-After` 를 넣는다. 예: 화면은 `app.lunchcatch.com`, API는 `api.lunchcatch.com`. 넣지 않으면 브라우저가 이 헤더를 자바스크립트에 보여 주지 않는다
 
 ### 응답 봉투
 

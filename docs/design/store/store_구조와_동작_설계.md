@@ -232,7 +232,7 @@ HTTP로 노출되는 단계 저장·화면 조회 계약의 시그니처와 reco
 | `findOwnerIdsByNameContaining(String keyword, int limit)` | `List<Long>` |
 | `finalizedStoreCounts(LocalDate businessDate)` | `FinalizedStoreCounts(long newCount, long cumulativeCount)` |
 
-가게·메뉴 record의 필드와 `null`·누락 정책은 [공개 조회 계약](store-query-contract.md)의 "반환 정책"과 "이미지 URL" 절이 소유한다. [StoreQueryService](../../../src/main/java/com/launchcatch/store/contract/StoreQueryService.java)의 반환 타입을 사용하며 HTTP DTO를 받지 않는다.
+가게·메뉴 record의 필드와 `null`·누락 정책은 [공개 조회 계약](store-query-contract.md)의 "반환 정책"과 "이미지 URL" 절이 소유한다. [StoreQueryService](../../../src/main/java/com/lunchcatch/store/contract/StoreQueryService.java)의 반환 타입을 사용하며 HTTP DTO를 받지 않는다.
 `StoreRegistrationQuery.findResumeStep(Long ownerId)`는 `String`, `StoreOnboardingQuery.getProgress(Long ownerId)`는 `StoreOnboardingStatus`를 반환한다. 후자는 가게 ID·재개 단계·버전·확정 여부·최종 등록 가능 여부와 `Step(step, required, completed)` 목록을 갖는다.
 메뉴 조회(#788)는 정상 메뉴를 `menus`에, 필수 이미지 누락·미검증·공백 키의 메뉴 ID를 `invalidMenuIds`에 담는다. 두 목록을 방어적으로 복사하고 존재하지 않거나 최종 등록 전인 메뉴는 두 목록 모두에서 제외한다. 광고·쿠폰·포스터 호출자는 자기 정책에 따라 오류 ID를 처리하며 상세는 [메뉴 조회 결과](store-query-contract.md#메뉴-조회-결과-788)가 소유한다.
 일반 조회는 타 업무 도메인을 호출하거나 결과 캐시를 두지 않는다. 최종 등록은 이벤트를 1회 발행하며 owner의 내부 구현을 직접 호출하지 않는다.

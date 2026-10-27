@@ -133,7 +133,7 @@ RT 원문도 DB 해시에서 복원할 수 없다. DB 폴백은 요청으로 받
 | 쓰기 | ops의 `AuditLogWriter` | 계정 발급·토큰 재발급 성공은 업무 DB 변경과 함께, 로그아웃 성공과 식별 가능한 계정의 로그인 결과는 각각 별도 트랜잭션으로 기록한다 |
 | 공개 | campaign이 읽는 `AdminSummaryQuery` | 템플릿 조회와 변경 응답에 마지막 수정자와 활성 변경자의 이름과 로그인 ID를 붙일 때 관리자 ID 여러 개를 한 번의 조회로 요약(`AdminSummary`)으로 바꾼다 |
 
-공개 업무 조회 contract는 `AdminSummaryQuery` 하나다. 관리자 ID 여러 개를 받아 `ID -> AdminSummary(이름, 로그인 ID)` 맵만 돌려주고 권한과 상태는 내주지 않는다. 이름은 유일하지 않아 동명의 관리자를 구분하도록 유일한 로그인 ID를 함께 준다. 삭제 표시된 관리자도 요약이 남아 있어 상태로 거르지 않고, 행이 없는 ID는 결과에서 빠진다. 정책 인터페이스의 시그니처는 [AccessTokenValidationPolicy](../../../src/main/java/com/launchcatch/auth/contract/AccessTokenValidationPolicy.java)가 소유한다.
+공개 업무 조회 contract는 `AdminSummaryQuery` 하나다. 관리자 ID 여러 개를 받아 `ID -> AdminSummary(이름, 로그인 ID)` 맵만 돌려주고 권한과 상태는 내주지 않는다. 이름은 유일하지 않아 동명의 관리자를 구분하도록 유일한 로그인 ID를 함께 준다. 삭제 표시된 관리자도 요약이 남아 있어 상태로 거르지 않고, 행이 없는 ID는 결과에서 빠진다. 정책 인터페이스의 시그니처는 [AccessTokenValidationPolicy](../../../src/main/java/com/lunchcatch/auth/contract/AccessTokenValidationPolicy.java)가 소유한다.
 
 정책 구현은 `boolean supports(Role role)`와 `boolean isValid(Role role, Long id, LocalDateTime issuedAt, Map<String, Object> additionalClaims, CutoffPolicy policy)`를 제공한다. 반환 record는 없다.
 성공한 계정 발급·로그인·토큰 재발급·로그아웃 감사는 각 1회의 `AuditLogWriter` 호출이다. 실패 감사는 식별 가능한 실패 경로에서 별도로 호출하며 조회 캐시를 두지 않는다. 호출 조건은 [관리자 API 설계](admin-api-design.md)의 "저장 구조와 감사 로그" 절에 있는 `audit_log` 표에 정리되어 있다.

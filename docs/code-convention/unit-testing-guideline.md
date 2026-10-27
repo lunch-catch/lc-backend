@@ -112,11 +112,11 @@ assertThat(order.getMemberId()).isEqualTo(1L);
 통합 테스트는 계층을 가로지르므로 대상이 한 패키지로 좁혀지지 않는다.
 
 ```
-src/main/java/com/launchcatch/campaign/contract/CampaignQueryService.java     테스트 없음
-src/main/java/com/launchcatch/campaign/service/CampaignStatusService.java
+src/main/java/com/lunchcatch/campaign/contract/CampaignQueryService.java     테스트 없음
+src/main/java/com/lunchcatch/campaign/service/CampaignStatusService.java
 
-src/test/java/com/launchcatch/campaign/service/CampaignStatusServiceTest.java 같은 패키지
-src/test/java/com/launchcatch/campaign/CampaignIntegrationTest.java           도메인 바로 아래
+src/test/java/com/lunchcatch/campaign/service/CampaignStatusServiceTest.java 같은 패키지
+src/test/java/com/lunchcatch/campaign/CampaignIntegrationTest.java           도메인 바로 아래
 ```
 
 같은 패키지여야 package-private 클래스와 메서드에 닿는다.

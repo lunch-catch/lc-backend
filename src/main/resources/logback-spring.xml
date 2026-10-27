@@ -60,7 +60,7 @@
                     <exclude>^org\.springframework\.web\.filter\..*</exclude>
                     <exclude>^jakarta\.servlet\..*</exclude>
                 </throwableConverter>
-                <customFields>{"service":"launchcatch"}</customFields>
+                <customFields>{"service":"lunchcatch"}</customFields>
             </encoder>
         </appender>
 
