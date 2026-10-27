@@ -1,0 +1,3156 @@
+{
+ "name": "쿠폰 묶음 발급",
+ "title": "쿠폰 발급은 요청을 묶어 트랜잭션 수를 줄입니다.",
+ "logo": "LUNCHCATCH",
+ "category": "동작",
+ "speed": 0.45,
+ "loop": 17000,
+ "elements": [
+  {
+   "type": "panel",
+   "id": "left",
+   "x": 70,
+   "y": 180,
+   "w": 470,
+   "h": 600,
+   "title": "01  트랜잭션을 묶음 하나로 줄입니다."
+  },
+  {
+   "type": "label",
+   "x": 94,
+   "y": 244,
+   "text": "Before  v1",
+   "color": "dim",
+   "size": "xs"
+  },
+  {
+   "type": "label",
+   "x": 330,
+   "y": 244,
+   "w": 186,
+   "align": "right",
+   "text": "요청마다 트랜잭션",
+   "color": "dim",
+   "size": "xs"
+  },
+  {
+   "type": "panel",
+   "id": "bwrap",
+   "x": 94,
+   "y": 268,
+   "w": 422,
+   "h": 150,
+   "dashed": true
+  },
+  {
+   "type": "box",
+   "id": "bReq",
+   "x": 118,
+   "y": 296,
+   "w": 150,
+   "h": 52,
+   "title": "요청 1건",
+   "size": "s",
+   "align": "center",
+   "tone": "dim"
+  },
+  {
+   "type": "box",
+   "id": "bTx",
+   "x": 342,
+   "y": 296,
+   "w": 150,
+   "h": 52,
+   "title": "트랜잭션 1개",
+   "size": "s",
+   "align": "center",
+   "tone": "dim"
+  },
+  {
+   "type": "label",
+   "id": "loopN",
+   "x": 236,
+   "y": 366,
+   "w": 140,
+   "align": "center",
+   "text": "트랜잭션 0 / N",
+   "color": "dim",
+   "size": "xs",
+   "mono": true
+  },
+  {
+   "type": "label",
+   "x": 94,
+   "y": 448,
+   "text": "After  v3",
+   "color": "dim",
+   "size": "xs"
+  },
+  {
+   "type": "box",
+   "id": "aCol",
+   "x": 94,
+   "y": 476,
+   "w": 200,
+   "h": 52,
+   "title": "20ms 동안 모음",
+   "size": "s",
+   "align": "center",
+   "tone": "dim"
+  },
+  {
+   "type": "box",
+   "id": "aTx",
+   "x": 94,
+   "y": 560,
+   "w": 422,
+   "h": 150,
+   "title": "트랜잭션 1개, 묶음 최대 500건",
+   "sub": "IN 절과 다건 INSERT 로 한 번에 쓴다",
+   "size": "s"
+  },
+  {
+   "type": "cells",
+   "id": "bat",
+   "x": 118,
+   "y": 652,
+   "n": 12,
+   "size": 24,
+   "gap": 8
+  },
+  {
+   "type": "panel",
+   "id": "right",
+   "x": 570,
+   "y": 180,
+   "w": 960,
+   "h": 600,
+   "title": "02  작업자 4개가 묶음을 동시에 처리합니다."
+  },
+  {
+   "type": "label",
+   "x": 600,
+   "y": 250,
+   "text": "새 요청",
+   "color": "dim",
+   "size": "xs"
+  },
+  {
+   "type": "box",
+   "id": "q",
+   "x": 600,
+   "y": 288,
+   "w": 260,
+   "h": 420,
+   "title": "발급 대기열",
+   "sub": "최대 2,000건, 차면 ISSUANCE_BUSY",
+   "size": "m"
+  },
+  {
+   "type": "rows",
+   "id": "qr",
+   "x": 616,
+   "y": 364,
+   "w": 228,
+   "rowH": 30,
+   "gap": 8,
+   "items": [
+    {
+     "label": "요청 A",
+     "meta": ""
+    },
+    {
+     "label": "요청 B",
+     "meta": ""
+    },
+    {
+     "label": "요청 C",
+     "meta": ""
+    },
+    {
+     "label": "요청 D",
+     "meta": ""
+    },
+    {
+     "label": "요청 E",
+     "meta": ""
+    },
+    {
+     "label": "요청 F",
+     "meta": ""
+    },
+    {
+     "label": "요청 G",
+     "meta": ""
+    },
+    {
+     "label": "요청 H",
+     "meta": ""
+    }
+   ]
+  },
+  {
+   "type": "panel",
+   "id": "wp",
+   "x": 900,
+   "y": 240,
+   "w": 610,
+   "h": 456,
+   "title": "작업자 스레드",
+   "sub": "workers 4. 작업자마다 DB 커넥션 하나",
+   "dashed": true
+  },
+  {
+   "type": "box",
+   "id": "w1",
+   "x": 920,
+   "y": 316,
+   "w": 436,
+   "h": 82,
+   "title": "작업자 1",
+   "value": "쉬는 중",
+   "progress": 0,
+   "size": "s"
+  },
+  {
+   "type": "chips",
+   "id": "c1",
+   "x": 1090,
+   "y": 332,
+   "items": [
+    "자격 조회",
+    "순번 예약",
+    "저장",
+    "커밋"
+   ]
+  },
+  {
+   "type": "box",
+   "id": "w2",
+   "x": 920,
+   "y": 410,
+   "w": 436,
+   "h": 82,
+   "title": "작업자 2",
+   "value": "쉬는 중",
+   "progress": 0,
+   "size": "s"
+  },
+  {
+   "type": "chips",
+   "id": "c2",
+   "x": 1090,
+   "y": 426,
+   "items": [
+    "자격 조회",
+    "순번 예약",
+    "저장",
+    "커밋"
+   ]
+  },
+  {
+   "type": "box",
+   "id": "w3",
+   "x": 920,
+   "y": 504,
+   "w": 436,
+   "h": 82,
+   "title": "작업자 3",
+   "value": "쉬는 중",
+   "progress": 0,
+   "size": "s"
+  },
+  {
+   "type": "chips",
+   "id": "c3",
+   "x": 1090,
+   "y": 520,
+   "items": [
+    "자격 조회",
+    "순번 예약",
+    "저장",
+    "커밋"
+   ]
+  },
+  {
+   "type": "box",
+   "id": "w4",
+   "x": 920,
+   "y": 598,
+   "w": 436,
+   "h": 82,
+   "title": "작업자 4",
+   "value": "쉬는 중",
+   "progress": 0,
+   "size": "s"
+  },
+  {
+   "type": "chips",
+   "id": "c4",
+   "x": 1090,
+   "y": 614,
+   "items": [
+    "자격 조회",
+    "순번 예약",
+    "저장",
+    "커밋"
+   ]
+  },
+  {
+   "type": "box",
+   "id": "db",
+   "x": 1384,
+   "y": 316,
+   "w": 112,
+   "h": 110,
+   "title": "MySQL 8.4",
+   "sub": "묶음 1개를 커밋 1번으로",
+   "size": "s"
+  },
+  {
+   "type": "box",
+   "id": "rd",
+   "x": 1384,
+   "y": 570,
+   "w": 112,
+   "h": 110,
+   "title": "Valkey",
+   "sub": "커밋 뒤 순번 예약 완료",
+   "size": "s"
+  }
+ ],
+ "wires": [
+  {
+   "id": "bfw",
+   "points": [
+    "bReq.r",
+    "bTx.l"
+   ],
+   "arrow": true
+  },
+  {
+   "id": "bback",
+   "points": [
+    "bTx.b",
+    [
+     417,
+     396
+    ],
+    [
+     193,
+     396
+    ],
+    "bReq.b"
+   ],
+   "elbow": "none",
+   "arrow": true
+  },
+  {
+   "id": "af",
+   "points": [
+    "aCol.r",
+    [
+     330,
+     502
+    ],
+    [
+     330,
+     560
+    ]
+   ],
+   "elbow": "none",
+   "arrow": true
+  },
+  {
+   "id": "in",
+   "points": [
+    [
+     660,
+     258
+    ],
+    [
+     730,
+     258
+    ],
+    "q.t"
+   ],
+   "elbow": "none",
+   "arrow": true
+  },
+  {
+   "id": "qw1",
+   "points": [
+    "q.r",
+    "w1.l"
+   ]
+  },
+  {
+   "id": "wd1",
+   "points": [
+    "w1.r",
+    "db.l"
+   ]
+  },
+  {
+   "id": "qw2",
+   "points": [
+    "q.r",
+    "w2.l"
+   ]
+  },
+  {
+   "id": "wd2",
+   "points": [
+    "w2.r",
+    "db.l"
+   ]
+  },
+  {
+   "id": "qw3",
+   "points": [
+    "q.r",
+    "w3.l"
+   ]
+  },
+  {
+   "id": "wd3",
+   "points": [
+    "w3.r",
+    "db.l"
+   ]
+  },
+  {
+   "id": "qw4",
+   "points": [
+    "q.r",
+    "w4.l"
+   ]
+  },
+  {
+   "id": "wd4",
+   "points": [
+    "w4.r",
+    "db.l"
+   ]
+  },
+  {
+   "id": "dr",
+   "points": [
+    "db.b",
+    "rd.t"
+   ],
+   "arrow": true
+  },
+  {
+   "id": "back",
+   "points": [
+    "rd.b",
+    [
+     1440,
+     740
+    ],
+    [
+     730,
+     740
+    ],
+    "q.b"
+   ],
+   "elbow": "none",
+   "arrow": true,
+   "dash": true,
+   "label": {
+    "text": "요청마다 자기 결과를 받는다",
+    "at": [
+     1080,
+     740
+    ],
+    "dy": -8
+   }
+  }
+ ],
+ "timeline": [
+  {
+   "at": 200,
+   "steps": [
+    {
+     "dot": [
+      "bReq.c",
+      {
+       "wire": "bfw"
+      },
+      "bTx.c"
+     ],
+     "speed": 0.55
+    },
+    {
+     "hl": "bTx",
+     "ms": 300
+    },
+    {
+     "text": "loopN",
+     "value": "트랜잭션 1 / N"
+    },
+    {
+     "dot": [
+      "bTx.c",
+      {
+       "wire": "bback"
+      },
+      "bReq.c"
+     ],
+     "speed": 0.8
+    },
+    {
+     "dot": [
+      "bReq.c",
+      {
+       "wire": "bfw"
+      },
+      "bTx.c"
+     ],
+     "speed": 0.55
+    },
+    {
+     "hl": "bTx",
+     "ms": 300
+    },
+    {
+     "text": "loopN",
+     "value": "트랜잭션 2 / N"
+    },
+    {
+     "dot": [
+      "bTx.c",
+      {
+       "wire": "bback"
+      },
+      "bReq.c"
+     ],
+     "speed": 0.8
+    },
+    {
+     "dot": [
+      "bReq.c",
+      {
+       "wire": "bfw"
+      },
+      "bTx.c"
+     ],
+     "speed": 0.55
+    },
+    {
+     "hl": "bTx",
+     "ms": 300
+    },
+    {
+     "text": "loopN",
+     "value": "트랜잭션 3 / N"
+    },
+    {
+     "dot": [
+      "bTx.c",
+      {
+       "wire": "bback"
+      },
+      "bReq.c"
+     ],
+     "speed": 0.8
+    },
+    {
+     "dot": [
+      "bReq.c",
+      {
+       "wire": "bfw"
+      },
+      "bTx.c"
+     ],
+     "speed": 0.55
+    },
+    {
+     "hl": "bTx",
+     "ms": 300
+    },
+    {
+     "text": "loopN",
+     "value": "트랜잭션 4 / N"
+    },
+    {
+     "dot": [
+      "bTx.c",
+      {
+       "wire": "bback"
+      },
+      "bReq.c"
+     ],
+     "speed": 0.8
+    },
+    {
+     "dot": [
+      "bReq.c",
+      {
+       "wire": "bfw"
+      },
+      "bTx.c"
+     ],
+     "speed": 0.55
+    },
+    {
+     "hl": "bTx",
+     "ms": 300
+    },
+    {
+     "text": "loopN",
+     "value": "트랜잭션 5 / N"
+    },
+    {
+     "dot": [
+      "bTx.c",
+      {
+       "wire": "bback"
+      },
+      "bReq.c"
+     ],
+     "speed": 0.8
+    },
+    {
+     "dot": [
+      "bReq.c",
+      {
+       "wire": "bfw"
+      },
+      "bTx.c"
+     ],
+     "speed": 0.55
+    },
+    {
+     "hl": "bTx",
+     "ms": 300
+    },
+    {
+     "text": "loopN",
+     "value": "트랜잭션 6 / N"
+    },
+    {
+     "dot": [
+      "bTx.c",
+      {
+       "wire": "bback"
+      },
+      "bReq.c"
+     ],
+     "speed": 0.8
+    },
+    {
+     "dot": [
+      "bReq.c",
+      {
+       "wire": "bfw"
+      },
+      "bTx.c"
+     ],
+     "speed": 0.55
+    },
+    {
+     "hl": "bTx",
+     "ms": 300
+    },
+    {
+     "text": "loopN",
+     "value": "트랜잭션 7 / N"
+    },
+    {
+     "dot": [
+      "bTx.c",
+      {
+       "wire": "bback"
+      },
+      "bReq.c"
+     ],
+     "speed": 0.8
+    },
+    {
+     "dot": [
+      "bReq.c",
+      {
+       "wire": "bfw"
+      },
+      "bTx.c"
+     ],
+     "speed": 0.55
+    },
+    {
+     "hl": "bTx",
+     "ms": 300
+    },
+    {
+     "text": "loopN",
+     "value": "트랜잭션 8 / N"
+    },
+    {
+     "dot": [
+      "bTx.c",
+      {
+       "wire": "bback"
+      },
+      "bReq.c"
+     ],
+     "speed": 0.8
+    },
+    {
+     "dot": [
+      "bReq.c",
+      {
+       "wire": "bfw"
+      },
+      "bTx.c"
+     ],
+     "speed": 0.55
+    },
+    {
+     "hl": "bTx",
+     "ms": 300
+    },
+    {
+     "text": "loopN",
+     "value": "트랜잭션 9 / N"
+    },
+    {
+     "dot": [
+      "bTx.c",
+      {
+       "wire": "bback"
+      },
+      "bReq.c"
+     ],
+     "speed": 0.8
+    }
+   ]
+  },
+  {
+   "at": 400,
+   "steps": [
+    {
+     "active": "aCol"
+    },
+    {
+     "seq": [
+      {
+       "cells": "bat",
+       "push": "c"
+      },
+      {
+       "wait": 110
+      }
+     ]
+    },
+    {
+     "seq": [
+      {
+       "cells": "bat",
+       "push": "c"
+      },
+      {
+       "wait": 110
+      }
+     ]
+    },
+    {
+     "seq": [
+      {
+       "cells": "bat",
+       "push": "c"
+      },
+      {
+       "wait": 110
+      }
+     ]
+    },
+    {
+     "seq": [
+      {
+       "cells": "bat",
+       "push": "c"
+      },
+      {
+       "wait": 110
+      }
+     ]
+    },
+    {
+     "seq": [
+      {
+       "cells": "bat",
+       "push": "c"
+      },
+      {
+       "wait": 110
+      }
+     ]
+    },
+    {
+     "seq": [
+      {
+       "cells": "bat",
+       "push": "c"
+      },
+      {
+       "wait": 110
+      }
+     ]
+    },
+    {
+     "seq": [
+      {
+       "cells": "bat",
+       "push": "c"
+      },
+      {
+       "wait": 110
+      }
+     ]
+    },
+    {
+     "seq": [
+      {
+       "cells": "bat",
+       "push": "c"
+      },
+      {
+       "wait": 110
+      }
+     ]
+    },
+    {
+     "seq": [
+      {
+       "cells": "bat",
+       "push": "c"
+      },
+      {
+       "wait": 110
+      }
+     ]
+    },
+    {
+     "seq": [
+      {
+       "cells": "bat",
+       "push": "c"
+      },
+      {
+       "wait": 110
+      }
+     ]
+    },
+    {
+     "seq": [
+      {
+       "cells": "bat",
+       "push": "c"
+      },
+      {
+       "wait": 110
+      }
+     ]
+    },
+    {
+     "seq": [
+      {
+       "cells": "bat",
+       "push": "c"
+      },
+      {
+       "wait": 110
+      }
+     ]
+    },
+    {
+     "active": "aCol",
+     "on": false
+    },
+    {
+     "dot": [
+      "aCol.c",
+      {
+       "wire": "af"
+      },
+      "aTx.c"
+     ],
+     "color": "accent",
+     "speed": 0.5
+    },
+    {
+     "active": "aTx"
+    },
+    {
+     "cells": "bat",
+     "set": [
+      "accent",
+      "accent",
+      "accent",
+      "accent",
+      "accent",
+      "accent",
+      "accent",
+      "accent",
+      "accent",
+      "accent",
+      "accent",
+      "accent"
+     ]
+    },
+    {
+     "wait": 700
+    },
+    {
+     "active": "aTx",
+     "on": false
+    },
+    {
+     "cells": "bat",
+     "set": []
+    },
+    {
+     "wait": 500
+    },
+    {
+     "active": "aCol"
+    },
+    {
+     "seq": [
+      {
+       "cells": "bat",
+       "push": "c"
+      },
+      {
+       "wait": 110
+      }
+     ]
+    },
+    {
+     "seq": [
+      {
+       "cells": "bat",
+       "push": "c"
+      },
+      {
+       "wait": 110
+      }
+     ]
+    },
+    {
+     "seq": [
+      {
+       "cells": "bat",
+       "push": "c"
+      },
+      {
+       "wait": 110
+      }
+     ]
+    },
+    {
+     "seq": [
+      {
+       "cells": "bat",
+       "push": "c"
+      },
+      {
+       "wait": 110
+      }
+     ]
+    },
+    {
+     "seq": [
+      {
+       "cells": "bat",
+       "push": "c"
+      },
+      {
+       "wait": 110
+      }
+     ]
+    },
+    {
+     "seq": [
+      {
+       "cells": "bat",
+       "push": "c"
+      },
+      {
+       "wait": 110
+      }
+     ]
+    },
+    {
+     "seq": [
+      {
+       "cells": "bat",
+       "push": "c"
+      },
+      {
+       "wait": 110
+      }
+     ]
+    },
+    {
+     "seq": [
+      {
+       "cells": "bat",
+       "push": "c"
+      },
+      {
+       "wait": 110
+      }
+     ]
+    },
+    {
+     "seq": [
+      {
+       "cells": "bat",
+       "push": "c"
+      },
+      {
+       "wait": 110
+      }
+     ]
+    },
+    {
+     "seq": [
+      {
+       "cells": "bat",
+       "push": "c"
+      },
+      {
+       "wait": 110
+      }
+     ]
+    },
+    {
+     "seq": [
+      {
+       "cells": "bat",
+       "push": "c"
+      },
+      {
+       "wait": 110
+      }
+     ]
+    },
+    {
+     "seq": [
+      {
+       "cells": "bat",
+       "push": "c"
+      },
+      {
+       "wait": 110
+      }
+     ]
+    },
+    {
+     "active": "aCol",
+     "on": false
+    },
+    {
+     "dot": [
+      "aCol.c",
+      {
+       "wire": "af"
+      },
+      "aTx.c"
+     ],
+     "color": "accent",
+     "speed": 0.5
+    },
+    {
+     "active": "aTx"
+    },
+    {
+     "cells": "bat",
+     "set": [
+      "accent",
+      "accent",
+      "accent",
+      "accent",
+      "accent",
+      "accent",
+      "accent",
+      "accent",
+      "accent",
+      "accent",
+      "accent",
+      "accent"
+     ]
+    },
+    {
+     "wait": 700
+    },
+    {
+     "active": "aTx",
+     "on": false
+    },
+    {
+     "cells": "bat",
+     "set": []
+    },
+    {
+     "wait": 500
+    },
+    {
+     "active": "aCol"
+    },
+    {
+     "seq": [
+      {
+       "cells": "bat",
+       "push": "c"
+      },
+      {
+       "wait": 110
+      }
+     ]
+    },
+    {
+     "seq": [
+      {
+       "cells": "bat",
+       "push": "c"
+      },
+      {
+       "wait": 110
+      }
+     ]
+    },
+    {
+     "seq": [
+      {
+       "cells": "bat",
+       "push": "c"
+      },
+      {
+       "wait": 110
+      }
+     ]
+    },
+    {
+     "seq": [
+      {
+       "cells": "bat",
+       "push": "c"
+      },
+      {
+       "wait": 110
+      }
+     ]
+    },
+    {
+     "seq": [
+      {
+       "cells": "bat",
+       "push": "c"
+      },
+      {
+       "wait": 110
+      }
+     ]
+    },
+    {
+     "seq": [
+      {
+       "cells": "bat",
+       "push": "c"
+      },
+      {
+       "wait": 110
+      }
+     ]
+    },
+    {
+     "seq": [
+      {
+       "cells": "bat",
+       "push": "c"
+      },
+      {
+       "wait": 110
+      }
+     ]
+    },
+    {
+     "seq": [
+      {
+       "cells": "bat",
+       "push": "c"
+      },
+      {
+       "wait": 110
+      }
+     ]
+    },
+    {
+     "seq": [
+      {
+       "cells": "bat",
+       "push": "c"
+      },
+      {
+       "wait": 110
+      }
+     ]
+    },
+    {
+     "seq": [
+      {
+       "cells": "bat",
+       "push": "c"
+      },
+      {
+       "wait": 110
+      }
+     ]
+    },
+    {
+     "seq": [
+      {
+       "cells": "bat",
+       "push": "c"
+      },
+      {
+       "wait": 110
+      }
+     ]
+    },
+    {
+     "seq": [
+      {
+       "cells": "bat",
+       "push": "c"
+      },
+      {
+       "wait": 110
+      }
+     ]
+    },
+    {
+     "active": "aCol",
+     "on": false
+    },
+    {
+     "dot": [
+      "aCol.c",
+      {
+       "wire": "af"
+      },
+      "aTx.c"
+     ],
+     "color": "accent",
+     "speed": 0.5
+    },
+    {
+     "active": "aTx"
+    },
+    {
+     "cells": "bat",
+     "set": [
+      "accent",
+      "accent",
+      "accent",
+      "accent",
+      "accent",
+      "accent",
+      "accent",
+      "accent",
+      "accent",
+      "accent",
+      "accent",
+      "accent"
+     ]
+    },
+    {
+     "wait": 700
+    },
+    {
+     "active": "aTx",
+     "on": false
+    },
+    {
+     "cells": "bat",
+     "set": []
+    },
+    {
+     "wait": 500
+    },
+    {
+     "active": "aCol"
+    },
+    {
+     "seq": [
+      {
+       "cells": "bat",
+       "push": "c"
+      },
+      {
+       "wait": 110
+      }
+     ]
+    },
+    {
+     "seq": [
+      {
+       "cells": "bat",
+       "push": "c"
+      },
+      {
+       "wait": 110
+      }
+     ]
+    },
+    {
+     "seq": [
+      {
+       "cells": "bat",
+       "push": "c"
+      },
+      {
+       "wait": 110
+      }
+     ]
+    },
+    {
+     "seq": [
+      {
+       "cells": "bat",
+       "push": "c"
+      },
+      {
+       "wait": 110
+      }
+     ]
+    },
+    {
+     "seq": [
+      {
+       "cells": "bat",
+       "push": "c"
+      },
+      {
+       "wait": 110
+      }
+     ]
+    },
+    {
+     "seq": [
+      {
+       "cells": "bat",
+       "push": "c"
+      },
+      {
+       "wait": 110
+      }
+     ]
+    },
+    {
+     "seq": [
+      {
+       "cells": "bat",
+       "push": "c"
+      },
+      {
+       "wait": 110
+      }
+     ]
+    },
+    {
+     "seq": [
+      {
+       "cells": "bat",
+       "push": "c"
+      },
+      {
+       "wait": 110
+      }
+     ]
+    },
+    {
+     "seq": [
+      {
+       "cells": "bat",
+       "push": "c"
+      },
+      {
+       "wait": 110
+      }
+     ]
+    },
+    {
+     "seq": [
+      {
+       "cells": "bat",
+       "push": "c"
+      },
+      {
+       "wait": 110
+      }
+     ]
+    },
+    {
+     "seq": [
+      {
+       "cells": "bat",
+       "push": "c"
+      },
+      {
+       "wait": 110
+      }
+     ]
+    },
+    {
+     "seq": [
+      {
+       "cells": "bat",
+       "push": "c"
+      },
+      {
+       "wait": 110
+      }
+     ]
+    },
+    {
+     "active": "aCol",
+     "on": false
+    },
+    {
+     "dot": [
+      "aCol.c",
+      {
+       "wire": "af"
+      },
+      "aTx.c"
+     ],
+     "color": "accent",
+     "speed": 0.5
+    },
+    {
+     "active": "aTx"
+    },
+    {
+     "cells": "bat",
+     "set": [
+      "accent",
+      "accent",
+      "accent",
+      "accent",
+      "accent",
+      "accent",
+      "accent",
+      "accent",
+      "accent",
+      "accent",
+      "accent",
+      "accent"
+     ]
+    },
+    {
+     "wait": 700
+    },
+    {
+     "active": "aTx",
+     "on": false
+    },
+    {
+     "cells": "bat",
+     "set": []
+    },
+    {
+     "wait": 500
+    }
+   ]
+  },
+  {
+   "at": 300,
+   "steps": [
+    {
+     "par": [
+      {
+       "seq": [
+        {
+         "wait": 0
+        },
+        {
+         "dot": [
+          [
+           660,
+           258
+          ],
+          {
+           "wire": "in"
+          },
+          "q.c"
+         ],
+         "speed": 0.5
+        },
+        {
+         "row": "qr",
+         "index": 0,
+         "on": true,
+         "meta": "대기"
+        }
+       ]
+      },
+      {
+       "seq": [
+        {
+         "wait": 250
+        },
+        {
+         "dot": [
+          [
+           660,
+           258
+          ],
+          {
+           "wire": "in"
+          },
+          "q.c"
+         ],
+         "speed": 0.5
+        },
+        {
+         "row": "qr",
+         "index": 1,
+         "on": true,
+         "meta": "대기"
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "wait": 300
+    },
+    {
+     "row": "qr",
+     "index": 0,
+     "on": true,
+     "meta": "작업자 1",
+     "tone": "b"
+    },
+    {
+     "row": "qr",
+     "index": 1,
+     "on": true,
+     "meta": "작업자 1",
+     "tone": "b"
+    },
+    {
+     "dot": [
+      "q.c",
+      {
+       "wire": "qw1"
+      },
+      "w1.c"
+     ],
+     "color": "b",
+     "speed": 0.5
+    },
+    {
+     "row": "qr",
+     "index": 0,
+     "on": false,
+     "meta": "",
+     "tone": null
+    },
+    {
+     "row": "qr",
+     "index": 1,
+     "on": false,
+     "meta": "",
+     "tone": null
+    },
+    {
+     "active": "w1"
+    },
+    {
+     "text": "w1",
+     "value": "묶음 2건"
+    },
+    {
+     "par": [
+      {
+       "seq": [
+        {
+         "chip": "c1",
+         "index": 0
+        },
+        {
+         "wait": 380
+        },
+        {
+         "chip": "c1",
+         "index": 1
+        },
+        {
+         "wait": 380
+        },
+        {
+         "chip": "c1",
+         "index": 2
+        },
+        {
+         "wait": 380
+        },
+        {
+         "chip": "c1",
+         "index": 3
+        },
+        {
+         "wait": 380
+        }
+       ]
+      },
+      {
+       "progress": "w1",
+       "to": 1,
+       "ms": 1500
+      }
+     ]
+    },
+    {
+     "dot": [
+      "w1.c",
+      {
+       "wire": "wd1"
+      },
+      "db.c"
+     ],
+     "color": "accent",
+     "speed": 0.5
+    },
+    {
+     "hl": "db",
+     "ms": 500
+    },
+    {
+     "active": "w1",
+     "on": false
+    },
+    {
+     "chip": "c1",
+     "index": -1
+    },
+    {
+     "text": "w1",
+     "value": "쉬는 중"
+    },
+    {
+     "progress": "w1",
+     "to": 0,
+     "ms": 300,
+     "async": true
+    },
+    {
+     "dot": [
+      "db.c",
+      {
+       "wire": "dr"
+      },
+      "rd.c"
+     ],
+     "color": "accent",
+     "speed": 0.5
+    },
+    {
+     "hl": "rd",
+     "ms": 400
+    },
+    {
+     "dot": [
+      "rd.c",
+      {
+       "wire": "back"
+      },
+      "q.c"
+     ],
+     "color": "a",
+     "speed": 0.9
+    }
+   ]
+  },
+  {
+   "at": 1100,
+   "steps": [
+    {
+     "par": [
+      {
+       "seq": [
+        {
+         "wait": 0
+        },
+        {
+         "dot": [
+          [
+           660,
+           258
+          ],
+          {
+           "wire": "in"
+          },
+          "q.c"
+         ],
+         "speed": 0.5
+        },
+        {
+         "row": "qr",
+         "index": 2,
+         "on": true,
+         "meta": "대기"
+        }
+       ]
+      },
+      {
+       "seq": [
+        {
+         "wait": 250
+        },
+        {
+         "dot": [
+          [
+           660,
+           258
+          ],
+          {
+           "wire": "in"
+          },
+          "q.c"
+         ],
+         "speed": 0.5
+        },
+        {
+         "row": "qr",
+         "index": 3,
+         "on": true,
+         "meta": "대기"
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "wait": 300
+    },
+    {
+     "row": "qr",
+     "index": 2,
+     "on": true,
+     "meta": "작업자 2",
+     "tone": "b"
+    },
+    {
+     "row": "qr",
+     "index": 3,
+     "on": true,
+     "meta": "작업자 2",
+     "tone": "b"
+    },
+    {
+     "dot": [
+      "q.c",
+      {
+       "wire": "qw2"
+      },
+      "w2.c"
+     ],
+     "color": "b",
+     "speed": 0.5
+    },
+    {
+     "row": "qr",
+     "index": 2,
+     "on": false,
+     "meta": "",
+     "tone": null
+    },
+    {
+     "row": "qr",
+     "index": 3,
+     "on": false,
+     "meta": "",
+     "tone": null
+    },
+    {
+     "active": "w2"
+    },
+    {
+     "text": "w2",
+     "value": "묶음 2건"
+    },
+    {
+     "par": [
+      {
+       "seq": [
+        {
+         "chip": "c2",
+         "index": 0
+        },
+        {
+         "wait": 380
+        },
+        {
+         "chip": "c2",
+         "index": 1
+        },
+        {
+         "wait": 380
+        },
+        {
+         "chip": "c2",
+         "index": 2
+        },
+        {
+         "wait": 380
+        },
+        {
+         "chip": "c2",
+         "index": 3
+        },
+        {
+         "wait": 380
+        }
+       ]
+      },
+      {
+       "progress": "w2",
+       "to": 1,
+       "ms": 1500
+      }
+     ]
+    },
+    {
+     "dot": [
+      "w2.c",
+      {
+       "wire": "wd2"
+      },
+      "db.c"
+     ],
+     "color": "accent",
+     "speed": 0.5
+    },
+    {
+     "hl": "db",
+     "ms": 500
+    },
+    {
+     "active": "w2",
+     "on": false
+    },
+    {
+     "chip": "c2",
+     "index": -1
+    },
+    {
+     "text": "w2",
+     "value": "쉬는 중"
+    },
+    {
+     "progress": "w2",
+     "to": 0,
+     "ms": 300,
+     "async": true
+    },
+    {
+     "dot": [
+      "db.c",
+      {
+       "wire": "dr"
+      },
+      "rd.c"
+     ],
+     "color": "accent",
+     "speed": 0.5
+    },
+    {
+     "hl": "rd",
+     "ms": 400
+    },
+    {
+     "dot": [
+      "rd.c",
+      {
+       "wire": "back"
+      },
+      "q.c"
+     ],
+     "color": "a",
+     "speed": 0.9
+    }
+   ]
+  },
+  {
+   "at": 1900,
+   "steps": [
+    {
+     "par": [
+      {
+       "seq": [
+        {
+         "wait": 0
+        },
+        {
+         "dot": [
+          [
+           660,
+           258
+          ],
+          {
+           "wire": "in"
+          },
+          "q.c"
+         ],
+         "speed": 0.5
+        },
+        {
+         "row": "qr",
+         "index": 4,
+         "on": true,
+         "meta": "대기"
+        }
+       ]
+      },
+      {
+       "seq": [
+        {
+         "wait": 250
+        },
+        {
+         "dot": [
+          [
+           660,
+           258
+          ],
+          {
+           "wire": "in"
+          },
+          "q.c"
+         ],
+         "speed": 0.5
+        },
+        {
+         "row": "qr",
+         "index": 5,
+         "on": true,
+         "meta": "대기"
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "wait": 300
+    },
+    {
+     "row": "qr",
+     "index": 4,
+     "on": true,
+     "meta": "작업자 3",
+     "tone": "b"
+    },
+    {
+     "row": "qr",
+     "index": 5,
+     "on": true,
+     "meta": "작업자 3",
+     "tone": "b"
+    },
+    {
+     "dot": [
+      "q.c",
+      {
+       "wire": "qw3"
+      },
+      "w3.c"
+     ],
+     "color": "b",
+     "speed": 0.5
+    },
+    {
+     "row": "qr",
+     "index": 4,
+     "on": false,
+     "meta": "",
+     "tone": null
+    },
+    {
+     "row": "qr",
+     "index": 5,
+     "on": false,
+     "meta": "",
+     "tone": null
+    },
+    {
+     "active": "w3"
+    },
+    {
+     "text": "w3",
+     "value": "묶음 2건"
+    },
+    {
+     "par": [
+      {
+       "seq": [
+        {
+         "chip": "c3",
+         "index": 0
+        },
+        {
+         "wait": 380
+        },
+        {
+         "chip": "c3",
+         "index": 1
+        },
+        {
+         "wait": 380
+        },
+        {
+         "chip": "c3",
+         "index": 2
+        },
+        {
+         "wait": 380
+        },
+        {
+         "chip": "c3",
+         "index": 3
+        },
+        {
+         "wait": 380
+        }
+       ]
+      },
+      {
+       "progress": "w3",
+       "to": 1,
+       "ms": 1500
+      }
+     ]
+    },
+    {
+     "dot": [
+      "w3.c",
+      {
+       "wire": "wd3"
+      },
+      "db.c"
+     ],
+     "color": "accent",
+     "speed": 0.5
+    },
+    {
+     "hl": "db",
+     "ms": 500
+    },
+    {
+     "active": "w3",
+     "on": false
+    },
+    {
+     "chip": "c3",
+     "index": -1
+    },
+    {
+     "text": "w3",
+     "value": "쉬는 중"
+    },
+    {
+     "progress": "w3",
+     "to": 0,
+     "ms": 300,
+     "async": true
+    },
+    {
+     "dot": [
+      "db.c",
+      {
+       "wire": "dr"
+      },
+      "rd.c"
+     ],
+     "color": "accent",
+     "speed": 0.5
+    },
+    {
+     "hl": "rd",
+     "ms": 400
+    },
+    {
+     "dot": [
+      "rd.c",
+      {
+       "wire": "back"
+      },
+      "q.c"
+     ],
+     "color": "a",
+     "speed": 0.9
+    }
+   ]
+  },
+  {
+   "at": 2700,
+   "steps": [
+    {
+     "par": [
+      {
+       "seq": [
+        {
+         "wait": 0
+        },
+        {
+         "dot": [
+          [
+           660,
+           258
+          ],
+          {
+           "wire": "in"
+          },
+          "q.c"
+         ],
+         "speed": 0.5
+        },
+        {
+         "row": "qr",
+         "index": 6,
+         "on": true,
+         "meta": "대기"
+        }
+       ]
+      },
+      {
+       "seq": [
+        {
+         "wait": 250
+        },
+        {
+         "dot": [
+          [
+           660,
+           258
+          ],
+          {
+           "wire": "in"
+          },
+          "q.c"
+         ],
+         "speed": 0.5
+        },
+        {
+         "row": "qr",
+         "index": 7,
+         "on": true,
+         "meta": "대기"
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "wait": 300
+    },
+    {
+     "row": "qr",
+     "index": 6,
+     "on": true,
+     "meta": "작업자 4",
+     "tone": "b"
+    },
+    {
+     "row": "qr",
+     "index": 7,
+     "on": true,
+     "meta": "작업자 4",
+     "tone": "b"
+    },
+    {
+     "dot": [
+      "q.c",
+      {
+       "wire": "qw4"
+      },
+      "w4.c"
+     ],
+     "color": "b",
+     "speed": 0.5
+    },
+    {
+     "row": "qr",
+     "index": 6,
+     "on": false,
+     "meta": "",
+     "tone": null
+    },
+    {
+     "row": "qr",
+     "index": 7,
+     "on": false,
+     "meta": "",
+     "tone": null
+    },
+    {
+     "active": "w4"
+    },
+    {
+     "text": "w4",
+     "value": "묶음 2건"
+    },
+    {
+     "par": [
+      {
+       "seq": [
+        {
+         "chip": "c4",
+         "index": 0
+        },
+        {
+         "wait": 380
+        },
+        {
+         "chip": "c4",
+         "index": 1
+        },
+        {
+         "wait": 380
+        },
+        {
+         "chip": "c4",
+         "index": 2
+        },
+        {
+         "wait": 380
+        },
+        {
+         "chip": "c4",
+         "index": 3
+        },
+        {
+         "wait": 380
+        }
+       ]
+      },
+      {
+       "progress": "w4",
+       "to": 1,
+       "ms": 1500
+      }
+     ]
+    },
+    {
+     "dot": [
+      "w4.c",
+      {
+       "wire": "wd4"
+      },
+      "db.c"
+     ],
+     "color": "accent",
+     "speed": 0.5
+    },
+    {
+     "hl": "db",
+     "ms": 500
+    },
+    {
+     "active": "w4",
+     "on": false
+    },
+    {
+     "chip": "c4",
+     "index": -1
+    },
+    {
+     "text": "w4",
+     "value": "쉬는 중"
+    },
+    {
+     "progress": "w4",
+     "to": 0,
+     "ms": 300,
+     "async": true
+    },
+    {
+     "dot": [
+      "db.c",
+      {
+       "wire": "dr"
+      },
+      "rd.c"
+     ],
+     "color": "accent",
+     "speed": 0.5
+    },
+    {
+     "hl": "rd",
+     "ms": 400
+    },
+    {
+     "dot": [
+      "rd.c",
+      {
+       "wire": "back"
+      },
+      "q.c"
+     ],
+     "color": "a",
+     "speed": 0.9
+    }
+   ]
+  },
+  {
+   "at": 7500,
+   "steps": [
+    {
+     "par": [
+      {
+       "seq": [
+        {
+         "wait": 0
+        },
+        {
+         "dot": [
+          [
+           660,
+           258
+          ],
+          {
+           "wire": "in"
+          },
+          "q.c"
+         ],
+         "speed": 0.5
+        },
+        {
+         "row": "qr",
+         "index": 0,
+         "on": true,
+         "meta": "대기"
+        }
+       ]
+      },
+      {
+       "seq": [
+        {
+         "wait": 250
+        },
+        {
+         "dot": [
+          [
+           660,
+           258
+          ],
+          {
+           "wire": "in"
+          },
+          "q.c"
+         ],
+         "speed": 0.5
+        },
+        {
+         "row": "qr",
+         "index": 1,
+         "on": true,
+         "meta": "대기"
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "wait": 300
+    },
+    {
+     "row": "qr",
+     "index": 0,
+     "on": true,
+     "meta": "작업자 1",
+     "tone": "b"
+    },
+    {
+     "row": "qr",
+     "index": 1,
+     "on": true,
+     "meta": "작업자 1",
+     "tone": "b"
+    },
+    {
+     "dot": [
+      "q.c",
+      {
+       "wire": "qw1"
+      },
+      "w1.c"
+     ],
+     "color": "b",
+     "speed": 0.5
+    },
+    {
+     "row": "qr",
+     "index": 0,
+     "on": false,
+     "meta": "",
+     "tone": null
+    },
+    {
+     "row": "qr",
+     "index": 1,
+     "on": false,
+     "meta": "",
+     "tone": null
+    },
+    {
+     "active": "w1"
+    },
+    {
+     "text": "w1",
+     "value": "묶음 2건"
+    },
+    {
+     "par": [
+      {
+       "seq": [
+        {
+         "chip": "c1",
+         "index": 0
+        },
+        {
+         "wait": 380
+        },
+        {
+         "chip": "c1",
+         "index": 1
+        },
+        {
+         "wait": 380
+        },
+        {
+         "chip": "c1",
+         "index": 2
+        },
+        {
+         "wait": 380
+        },
+        {
+         "chip": "c1",
+         "index": 3
+        },
+        {
+         "wait": 380
+        }
+       ]
+      },
+      {
+       "progress": "w1",
+       "to": 1,
+       "ms": 1500
+      }
+     ]
+    },
+    {
+     "dot": [
+      "w1.c",
+      {
+       "wire": "wd1"
+      },
+      "db.c"
+     ],
+     "color": "accent",
+     "speed": 0.5
+    },
+    {
+     "hl": "db",
+     "ms": 500
+    },
+    {
+     "active": "w1",
+     "on": false
+    },
+    {
+     "chip": "c1",
+     "index": -1
+    },
+    {
+     "text": "w1",
+     "value": "쉬는 중"
+    },
+    {
+     "progress": "w1",
+     "to": 0,
+     "ms": 300,
+     "async": true
+    },
+    {
+     "dot": [
+      "db.c",
+      {
+       "wire": "dr"
+      },
+      "rd.c"
+     ],
+     "color": "accent",
+     "speed": 0.5
+    },
+    {
+     "hl": "rd",
+     "ms": 400
+    },
+    {
+     "dot": [
+      "rd.c",
+      {
+       "wire": "back"
+      },
+      "q.c"
+     ],
+     "color": "a",
+     "speed": 0.9
+    }
+   ]
+  },
+  {
+   "at": 8300,
+   "steps": [
+    {
+     "par": [
+      {
+       "seq": [
+        {
+         "wait": 0
+        },
+        {
+         "dot": [
+          [
+           660,
+           258
+          ],
+          {
+           "wire": "in"
+          },
+          "q.c"
+         ],
+         "speed": 0.5
+        },
+        {
+         "row": "qr",
+         "index": 2,
+         "on": true,
+         "meta": "대기"
+        }
+       ]
+      },
+      {
+       "seq": [
+        {
+         "wait": 250
+        },
+        {
+         "dot": [
+          [
+           660,
+           258
+          ],
+          {
+           "wire": "in"
+          },
+          "q.c"
+         ],
+         "speed": 0.5
+        },
+        {
+         "row": "qr",
+         "index": 3,
+         "on": true,
+         "meta": "대기"
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "wait": 300
+    },
+    {
+     "row": "qr",
+     "index": 2,
+     "on": true,
+     "meta": "작업자 2",
+     "tone": "b"
+    },
+    {
+     "row": "qr",
+     "index": 3,
+     "on": true,
+     "meta": "작업자 2",
+     "tone": "b"
+    },
+    {
+     "dot": [
+      "q.c",
+      {
+       "wire": "qw2"
+      },
+      "w2.c"
+     ],
+     "color": "b",
+     "speed": 0.5
+    },
+    {
+     "row": "qr",
+     "index": 2,
+     "on": false,
+     "meta": "",
+     "tone": null
+    },
+    {
+     "row": "qr",
+     "index": 3,
+     "on": false,
+     "meta": "",
+     "tone": null
+    },
+    {
+     "active": "w2"
+    },
+    {
+     "text": "w2",
+     "value": "묶음 2건"
+    },
+    {
+     "par": [
+      {
+       "seq": [
+        {
+         "chip": "c2",
+         "index": 0
+        },
+        {
+         "wait": 380
+        },
+        {
+         "chip": "c2",
+         "index": 1
+        },
+        {
+         "wait": 380
+        },
+        {
+         "chip": "c2",
+         "index": 2
+        },
+        {
+         "wait": 380
+        },
+        {
+         "chip": "c2",
+         "index": 3
+        },
+        {
+         "wait": 380
+        }
+       ]
+      },
+      {
+       "progress": "w2",
+       "to": 1,
+       "ms": 1500
+      }
+     ]
+    },
+    {
+     "dot": [
+      "w2.c",
+      {
+       "wire": "wd2"
+      },
+      "db.c"
+     ],
+     "color": "accent",
+     "speed": 0.5
+    },
+    {
+     "hl": "db",
+     "ms": 500
+    },
+    {
+     "active": "w2",
+     "on": false
+    },
+    {
+     "chip": "c2",
+     "index": -1
+    },
+    {
+     "text": "w2",
+     "value": "쉬는 중"
+    },
+    {
+     "progress": "w2",
+     "to": 0,
+     "ms": 300,
+     "async": true
+    },
+    {
+     "dot": [
+      "db.c",
+      {
+       "wire": "dr"
+      },
+      "rd.c"
+     ],
+     "color": "accent",
+     "speed": 0.5
+    },
+    {
+     "hl": "rd",
+     "ms": 400
+    },
+    {
+     "dot": [
+      "rd.c",
+      {
+       "wire": "back"
+      },
+      "q.c"
+     ],
+     "color": "a",
+     "speed": 0.9
+    }
+   ]
+  },
+  {
+   "at": 9100,
+   "steps": [
+    {
+     "par": [
+      {
+       "seq": [
+        {
+         "wait": 0
+        },
+        {
+         "dot": [
+          [
+           660,
+           258
+          ],
+          {
+           "wire": "in"
+          },
+          "q.c"
+         ],
+         "speed": 0.5
+        },
+        {
+         "row": "qr",
+         "index": 4,
+         "on": true,
+         "meta": "대기"
+        }
+       ]
+      },
+      {
+       "seq": [
+        {
+         "wait": 250
+        },
+        {
+         "dot": [
+          [
+           660,
+           258
+          ],
+          {
+           "wire": "in"
+          },
+          "q.c"
+         ],
+         "speed": 0.5
+        },
+        {
+         "row": "qr",
+         "index": 5,
+         "on": true,
+         "meta": "대기"
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "wait": 300
+    },
+    {
+     "row": "qr",
+     "index": 4,
+     "on": true,
+     "meta": "작업자 3",
+     "tone": "b"
+    },
+    {
+     "row": "qr",
+     "index": 5,
+     "on": true,
+     "meta": "작업자 3",
+     "tone": "b"
+    },
+    {
+     "dot": [
+      "q.c",
+      {
+       "wire": "qw3"
+      },
+      "w3.c"
+     ],
+     "color": "b",
+     "speed": 0.5
+    },
+    {
+     "row": "qr",
+     "index": 4,
+     "on": false,
+     "meta": "",
+     "tone": null
+    },
+    {
+     "row": "qr",
+     "index": 5,
+     "on": false,
+     "meta": "",
+     "tone": null
+    },
+    {
+     "active": "w3"
+    },
+    {
+     "text": "w3",
+     "value": "묶음 2건"
+    },
+    {
+     "par": [
+      {
+       "seq": [
+        {
+         "chip": "c3",
+         "index": 0
+        },
+        {
+         "wait": 380
+        },
+        {
+         "chip": "c3",
+         "index": 1
+        },
+        {
+         "wait": 380
+        },
+        {
+         "chip": "c3",
+         "index": 2
+        },
+        {
+         "wait": 380
+        },
+        {
+         "chip": "c3",
+         "index": 3
+        },
+        {
+         "wait": 380
+        }
+       ]
+      },
+      {
+       "progress": "w3",
+       "to": 1,
+       "ms": 1500
+      }
+     ]
+    },
+    {
+     "dot": [
+      "w3.c",
+      {
+       "wire": "wd3"
+      },
+      "db.c"
+     ],
+     "color": "accent",
+     "speed": 0.5
+    },
+    {
+     "hl": "db",
+     "ms": 500
+    },
+    {
+     "active": "w3",
+     "on": false
+    },
+    {
+     "chip": "c3",
+     "index": -1
+    },
+    {
+     "text": "w3",
+     "value": "쉬는 중"
+    },
+    {
+     "progress": "w3",
+     "to": 0,
+     "ms": 300,
+     "async": true
+    },
+    {
+     "dot": [
+      "db.c",
+      {
+       "wire": "dr"
+      },
+      "rd.c"
+     ],
+     "color": "accent",
+     "speed": 0.5
+    },
+    {
+     "hl": "rd",
+     "ms": 400
+    },
+    {
+     "dot": [
+      "rd.c",
+      {
+       "wire": "back"
+      },
+      "q.c"
+     ],
+     "color": "a",
+     "speed": 0.9
+    }
+   ]
+  },
+  {
+   "at": 9900,
+   "steps": [
+    {
+     "par": [
+      {
+       "seq": [
+        {
+         "wait": 0
+        },
+        {
+         "dot": [
+          [
+           660,
+           258
+          ],
+          {
+           "wire": "in"
+          },
+          "q.c"
+         ],
+         "speed": 0.5
+        },
+        {
+         "row": "qr",
+         "index": 6,
+         "on": true,
+         "meta": "대기"
+        }
+       ]
+      },
+      {
+       "seq": [
+        {
+         "wait": 250
+        },
+        {
+         "dot": [
+          [
+           660,
+           258
+          ],
+          {
+           "wire": "in"
+          },
+          "q.c"
+         ],
+         "speed": 0.5
+        },
+        {
+         "row": "qr",
+         "index": 7,
+         "on": true,
+         "meta": "대기"
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "wait": 300
+    },
+    {
+     "row": "qr",
+     "index": 6,
+     "on": true,
+     "meta": "작업자 4",
+     "tone": "b"
+    },
+    {
+     "row": "qr",
+     "index": 7,
+     "on": true,
+     "meta": "작업자 4",
+     "tone": "b"
+    },
+    {
+     "dot": [
+      "q.c",
+      {
+       "wire": "qw4"
+      },
+      "w4.c"
+     ],
+     "color": "b",
+     "speed": 0.5
+    },
+    {
+     "row": "qr",
+     "index": 6,
+     "on": false,
+     "meta": "",
+     "tone": null
+    },
+    {
+     "row": "qr",
+     "index": 7,
+     "on": false,
+     "meta": "",
+     "tone": null
+    },
+    {
+     "active": "w4"
+    },
+    {
+     "text": "w4",
+     "value": "묶음 2건"
+    },
+    {
+     "par": [
+      {
+       "seq": [
+        {
+         "chip": "c4",
+         "index": 0
+        },
+        {
+         "wait": 380
+        },
+        {
+         "chip": "c4",
+         "index": 1
+        },
+        {
+         "wait": 380
+        },
+        {
+         "chip": "c4",
+         "index": 2
+        },
+        {
+         "wait": 380
+        },
+        {
+         "chip": "c4",
+         "index": 3
+        },
+        {
+         "wait": 380
+        }
+       ]
+      },
+      {
+       "progress": "w4",
+       "to": 1,
+       "ms": 1500
+      }
+     ]
+    },
+    {
+     "dot": [
+      "w4.c",
+      {
+       "wire": "wd4"
+      },
+      "db.c"
+     ],
+     "color": "accent",
+     "speed": 0.5
+    },
+    {
+     "hl": "db",
+     "ms": 500
+    },
+    {
+     "active": "w4",
+     "on": false
+    },
+    {
+     "chip": "c4",
+     "index": -1
+    },
+    {
+     "text": "w4",
+     "value": "쉬는 중"
+    },
+    {
+     "progress": "w4",
+     "to": 0,
+     "ms": 300,
+     "async": true
+    },
+    {
+     "dot": [
+      "db.c",
+      {
+       "wire": "dr"
+      },
+      "rd.c"
+     ],
+     "color": "accent",
+     "speed": 0.5
+    },
+    {
+     "hl": "rd",
+     "ms": 400
+    },
+    {
+     "dot": [
+      "rd.c",
+      {
+       "wire": "back"
+      },
+      "q.c"
+     ],
+     "color": "a",
+     "speed": 0.9
+    }
+   ]
+  }
+ ],
+ "sources": [
+  "lc-backend: coupon/service/CouponIssueBatcher.java",
+  "lc-backend: src/main/resources/application.yml 의 coupon.issue.batch",
+  "lc-backend: docs/design/coupon/coupon-issuance-v1-design.md, coupon-issuance-v3-design.md"
+ ]
+}
