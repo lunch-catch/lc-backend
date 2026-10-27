@@ -14,6 +14,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -77,7 +78,8 @@ public class FeedStateRepository {
             String filter = (String) results.get(i++);
             String wishes = (String) results.get(i);
             return new FeedState(history(daily, session), ids(excluded), validCounts(campaignIds, counts),
-                    filter == null ? null : CachedFilter.parse(filter), wishes == null ? null : parseWishes(wishes));
+                    parseOrMiss(filter, CachedFilter::parse, memberId, "feed_filter"),
+                    parseOrMiss(wishes, FeedStateRepository::parseWishes, memberId, "feed_wishes"));
         } catch (DataAccessException e) {
             log.warn("event=ADSERVING_FEED_STATE_READ_FAILED memberId={} reason={} fallback=EMPTY_STATE",
                     memberId, RedisFailureClassifier.causeLabel(e), e);
@@ -85,6 +87,23 @@ public class FeedStateRepository {
                 meterRegistry.counter(BYPASS_METRIC, "use", use).increment();
             }
             return new FeedState(new ServedHistory(Map.of(), Set.of()), Set.of(), Map.of(), null, null);
+        }
+    }
+
+    /*
+     * 캐시 값을 해석하지 못하면 캐시 없음으로 본다. 값의 모양을 바꾼 배포가 섞이는 동안 생길 수 있다.
+     * 원본은 DB 라서 부르는 쪽이 DB 에서 읽어 그 키를 덮어쓰므로 다음 요청부터 맞춰진다.
+     */
+    private <T> T parseOrMiss(String value, Function<String, T> parser, Long memberId, String use) {
+        if (value == null) {
+            return null;
+        }
+        try {
+            return parser.apply(value);
+        } catch (RuntimeException e) {
+            log.warn("event=ADSERVING_FEED_STATE_PARSE_FAILED memberId={} use={} fallback=TREAT_AS_MISS", memberId, use, e);
+            meterRegistry.counter(BYPASS_METRIC, "use", use).increment();
+            return null;
         }
     }
 

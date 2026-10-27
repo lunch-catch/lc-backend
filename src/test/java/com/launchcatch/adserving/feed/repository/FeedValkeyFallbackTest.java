@@ -76,6 +76,23 @@ class FeedValkeyFallbackTest {
         }
     }
 
+    // 원본은 DB 라서 읽을 수 없는 캐시 값은 캐시 없음으로 본다. 부르는 쪽이 DB 에서 읽어 그 키를 덮어쓴다
+    @Test
+    @SuppressWarnings("unchecked")
+    void 필터와_찜의_캐시_값을_해석하지_못하면_캐시_없음으로_보고_센다() {
+        when(redisTemplate.executePipelined(any(org.springframework.data.redis.core.SessionCallback.class)))
+                .thenReturn(java.util.List.of(java.util.Map.of(), java.util.Set.of(), java.util.Set.of(),
+                        java.util.Arrays.asList((Object) null), "UNKNOWN_SORT|KOREAN", "KOREAN:many"));
+
+        var state = new FeedStateRepository(redisTemplate, meterRegistry)
+                .read(LocalDate.of(2026, 10, 1), 3001L, java.util.List.of(101L));
+
+        assertThat(state.filter()).isNull();
+        assertThat(state.wishes()).isNull();
+        assertThat(bypassCount("feed_filter")).isEqualTo(1);
+        assertThat(bypassCount("feed_wishes")).isEqualTo(1);
+    }
+
     @Test
     void serve_기록을_쓰지_못해도_예외를_올리지_않고_센다() {
         when(redisTemplate.executePipelined(any(org.springframework.data.redis.core.SessionCallback.class)))
