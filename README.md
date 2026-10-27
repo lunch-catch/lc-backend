@@ -272,18 +272,6 @@ erDiagram
     PAYMENT ||--o| POINT_LEDGER : "적립 한 건을 만든다"
 ```
 
-관계마다 제약이 걸려 있다.
-
-| 제약 | 뜻 |
-|---|---|
-| `uk_store_owner (owner_id)` | 점주는 가게를 하나만 갖는다 |
-| `uk_campaign_active_store (active_store_marker)` | 가게당 집행 중인 캠페인은 하나다. 생성 열로 ACTIVE 일 때만 `store_id` 를 담아 유일성을 건다 |
-| `uk_coupon_event_campaign_date (campaign_id, business_date)` | 캠페인은 영업일마다 회차 하나를 연다 |
-| `uk_member_coupon_event_member (coupon_event_id, member_id)` | 한 회차에서 회원은 한 장만 받는다 |
-| `PRIMARY KEY (business_date, campaign_id)` | 피드 후보는 영업일과 캠페인의 짝으로 하나다 |
-| `uk_point_ledger_serve_entry (serve_id, entry_type)` | 한 노출에 같은 종류의 원장 항목이 두 번 쌓이지 않는다 |
-| `uk_point_ledger_payment_entry (payment_id, entry_type)` | 한 결제에 적립이 두 번 쌓이지 않는다 |
-
 | 폴더 | 테이블 | 폴더 | 테이블 |
 |---|---|---|---|
 | `analytics` | 17 | `coupon` | 5 |
