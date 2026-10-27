@@ -162,6 +162,20 @@ public interface BudgetDailyPlanRepository extends JpaRepository<BudgetDailyPlan
                                           @Param("campaignIds") Collection<Long> campaignIds);
 
     /*
+     * 묶음 차감이 마감을 확인하려고 읽는다(#1049). 묶음에 영업일이 둘(어제와 오늘) 섞일 수 있어 날짜도 목록으로 받는다.
+     * 고유 키(캠페인, 영업일) 순으로 공유 잠금을 걸어 해제의 배타 잠금과 순서가 엇갈리지 않는다. 행이 없는 쌍은 결과에 없다.
+     */
+    @Lock(LockModeType.PESSIMISTIC_READ)
+    @Query("""
+            select p from BudgetDailyPlan p
+             where p.businessDate in :businessDates
+               and p.campaignId in :campaignIds
+             order by p.campaignId, p.businessDate
+            """)
+    List<BudgetDailyPlan> findAllForShareIn(@Param("businessDates") Collection<LocalDate> businessDates,
+                                            @Param("campaignIds") Collection<Long> campaignIds);
+
+    /*
      * 해제가 읽는다. 캠페인 ID 순으로 배타 잠금(FOR UPDATE)을 걸어, 해제 전에 계획 행을 공유 잠금한 차감이 끝난 뒤
      * 소진을 세게 한다(#1049). 차감도 같은 순서로 잠가 서로를 기다리는 일이 없다.
      */

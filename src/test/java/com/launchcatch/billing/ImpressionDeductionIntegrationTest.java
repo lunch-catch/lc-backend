@@ -10,6 +10,9 @@ import com.launchcatch.billing.contract.DeductionRequest;
 import com.launchcatch.billing.contract.DeductionStatus;
 import com.launchcatch.billing.contract.PointDeductor;
 import com.launchcatch.billing.repository.BudgetDailyPlanRepository;
+import com.launchcatch.billing.cache.DailySpendCounter;
+import com.launchcatch.billing.cache.DeductOutcome;
+import com.launchcatch.billing.cache.SpendDeduction;
 import com.launchcatch.billing.service.DailyPlanSnapshotService;
 import com.launchcatch.global.config.ClockConfig;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -62,6 +65,7 @@ class ImpressionDeductionIntegrationTest extends AbstractBillingIntegrationTest 
     @Autowired BudgetQueryService budgetQuery;
     @Autowired BudgetDailyPlanRepository planRepository;
     @Autowired DailyPlanSnapshotService snapshotService;
+    @Autowired DailySpendCounter spendCounter;
     @Autowired TransactionTemplate tx;
     @Autowired JdbcTemplate jdbc;
     @Autowired StringRedisTemplate redis;
@@ -336,6 +340,29 @@ class ImpressionDeductionIntegrationTest extends AbstractBillingIntegrationTest 
         assertThat(ledgerDeductSum(healthy)).isEqualTo(-UNIT);
         assertThat(rows("deduction_result", broken)).isZero();
         assertThat(rows("point_ledger", broken)).isZero();
+    }
+
+    // 묶음 판정은 스크립트를 먼저 올리고 해시로 부른다. Valkey 가 재시작해 스크립트 캐시가 비어도 판정한다
+    @Test
+    void 묶음_판정은_스크립트_캐시가_비어도_판정하고_묶음_되돌리기는_소진과_처리_표시를_되돌린다() {
+        long campaignId = plan(30, false);
+        deductInTx(UUID.randomUUID(), campaignId);
+        redis.execute((RedisCallback<Object>) connection -> {
+            connection.scriptingCommands().scriptFlush();
+            return null;
+        });
+        List<SpendDeduction> deductions = List.of(
+                new SpendDeduction(DAY, campaignId, UUID.randomUUID(), UNIT),
+                new SpendDeduction(DAY, campaignId, UUID.randomUUID(), UNIT));
+
+        assertThat(spendCounter.deductAll(deductions)).extracting(DeductOutcome::status)
+                .containsExactly(DeductionStatus.BILLED, DeductionStatus.BILLED);
+        assertThat(spendInValkey(campaignId)).isEqualTo(3 * UNIT);
+
+        spendCounter.undoAll(deductions);
+
+        assertThat(spendInValkey(campaignId)).isEqualTo(UNIT);
+        assertThat(spendCounter.deductAll(deductions)).extracting(DeductOutcome::replayed).containsExactly(false, false);
     }
 
     @Test
