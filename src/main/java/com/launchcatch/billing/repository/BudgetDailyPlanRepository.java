@@ -136,7 +136,7 @@ public interface BudgetDailyPlanRepository extends JpaRepository<BudgetDailyPlan
      * 이 읽기가 그 값을 보고, 재구성이 먼저였으면 중단은 해시가 만들어진 뒤에 반영된다.
      * 잠금 읽기는 REPEATABLE READ 에서도 스냅샷이 아니라 최신 커밋을 본다.
      *
-     * 노출 차감 핫패스는 이 메서드를 부르지 않는다. 해시가 없을 때만 재구성이 부른다.
+     * 노출 차감도 이 메서드로 그날 계획을 잠가 해제 시각을 읽는다(#1049). 해제의 배타 잠금이 차감의 커밋을 기다린다.
      */
     @Lock(LockModeType.PESSIMISTIC_READ)
     @Query("""

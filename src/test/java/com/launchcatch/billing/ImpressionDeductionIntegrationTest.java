@@ -10,6 +10,7 @@ import com.launchcatch.billing.contract.DeductionRequest;
 import com.launchcatch.billing.contract.DeductionStatus;
 import com.launchcatch.billing.contract.PointDeductor;
 import com.launchcatch.billing.repository.BudgetDailyPlanRepository;
+import com.launchcatch.billing.service.DailyPlanSnapshotService;
 import com.launchcatch.global.config.ClockConfig;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.time.LocalDate;
@@ -60,6 +61,7 @@ class ImpressionDeductionIntegrationTest extends AbstractBillingIntegrationTest 
     @Autowired PointDeductor deductor;
     @Autowired BudgetQueryService budgetQuery;
     @Autowired BudgetDailyPlanRepository planRepository;
+    @Autowired DailyPlanSnapshotService snapshotService;
     @Autowired TransactionTemplate tx;
     @Autowired JdbcTemplate jdbc;
     @Autowired StringRedisTemplate redis;
@@ -309,7 +311,7 @@ class ImpressionDeductionIntegrationTest extends AbstractBillingIntegrationTest 
         assertThat(spendInValkey(campaignId)).isEqualTo(3 * UNIT);
     }
 
-    // 계정 행이 없는 점주의 묶음은 공유 잠금에서 실패한다. 그 묶음만 실패로 돌아오고 다른 점주의 과금은 커밋된다
+    // 스냅샷은 남았는데 계획 행이 사라진 점주의 묶음은 계획 잠금에서 실패한다. 그 묶음만 실패로 돌아오고 다른 점주의 과금은 커밋된다
     @Test
     void 묶음_차감에서_한_점주_묶음이_실패해도_다른_점주_묶음은_커밋된다() {
         long healthy = plan(30, false);
@@ -319,6 +321,8 @@ class ImpressionDeductionIntegrationTest extends AbstractBillingIntegrationTest 
                     (campaign_id, owner_id, business_date, daily_budget, unit_price, paused, created_at, updated_at)
                 values (?, ?, ?, ?, ?, false, now(6), now(6))
                 """, broken, 970_002L, DAY, 30 * UNIT, UNIT);
+        snapshotService.find(DAY, broken);
+        jdbc.update("delete from budget_daily_plan where campaign_id = ?", broken);
         UUID healthyServe = UUID.randomUUID();
         UUID brokenServe = UUID.randomUUID();
 

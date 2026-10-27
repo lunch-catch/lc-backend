@@ -7,9 +7,10 @@ import com.launchcatch.billing.contract.PointDeductor;
 import com.launchcatch.billing.dto.PlanSnapshot;
 import com.launchcatch.billing.cache.DailySpendCounter;
 import com.launchcatch.billing.cache.DeductOutcome;
+import com.launchcatch.billing.entity.BudgetDailyPlan;
+import com.launchcatch.billing.repository.BudgetDailyPlanRepository;
 import com.launchcatch.billing.repository.DeductionResultRepository;
 import com.launchcatch.billing.repository.PointLedgerRepository;
-import com.launchcatch.billing.repository.PointAccountRepository;
 import com.launchcatch.campaign.contract.CampaignInfo;
 import com.launchcatch.campaign.contract.CampaignQueryService;
 import com.launchcatch.ops.contract.PlatformSettingQueryService;
@@ -51,8 +52,10 @@ import org.springframework.transaction.support.TransactionTemplate;
  * 되돌리기가 실패하거나 프로세스가 죽으면 소진이 원장보다 큰 채로 그날 끝까지 남고, 다음 날 00:00 대사가 기록한다.
  *
  * 호출자 트랜잭션이 있으면 참여하고 없으면 정산 트랜잭션을 시작한다.
- * 계정 공유 잠금 뒤 마감을 검사하고 커밋까지 잠금을 유지해, 해제가 진행 중인 차감을 빠뜨리지 않게 한다.
- * 마감이 지난 영업일은 미과금으로 기록하고, 금전 처리의 실패는 대체값 없이 예외로 올린다.
+ * 마감은 날짜가 아니라 그 계획의 해제 여부로 본다(#1049). 그날 계획 행을 공유 잠금으로 읽어 해제 시각을 검사하고
+ * 커밋까지 잠금을 유지한다. 해제는 같은 행을 배타 잠금하므로 해제 전에 승인한 차감을 빠뜨리지 않는다.
+ * 해제가 끝난 계획은 미과금으로 기록하고, 금전 처리의 실패는 대체값 없이 예외로 올린다.
+ * 점주 계정 행은 잠그지 않는다. 사용 가능한 잔액은 DEDUCT 를 세지 않아 충전, 조정, 환불과 순서를 맞출 필요가 없다.
  */
 @Slf4j
 @Service
@@ -68,7 +71,7 @@ public class PointDeductorImpl implements PointDeductor {
     private final PlatformSettingQueryService platformSetting;
     private final Clock clock;
     private final MeterRegistry meterRegistry;
-    private final PointAccountRepository accountRepository;
+    private final BudgetDailyPlanRepository planRepository;
     private final TransactionTemplate transactions;
 
     static final String UNDO_METRIC = "billing_deduct_undo_total";
@@ -168,10 +171,8 @@ public class PointDeductorImpl implements PointDeductor {
         }
         PlanSnapshot plan = found.get();
 
-        accountRepository.lockForShareByOwnerId(plan.ownerId())
-                .orElseThrow(() -> new IllegalStateException("예산 계획의 점주 계정이 없습니다. ownerId=" + plan.ownerId()));
         LocalDateTime now = LocalDateTime.now(clock);
-        if (businessDate.isBefore(now.toLocalDate())) {
+        if (isClosed(campaignId, businessDate, now.toLocalDate())) {
             int inserted = deductionResultRepository.insertIfAbsent(serveId, campaignId, plan.ownerId(), businessDate,
                     DeductionStatus.NOT_BILLED_CLOSED, plan.unitPrice(), now);
             return inserted == 1 ? DeductionStatus.NOT_BILLED_CLOSED
@@ -201,6 +202,20 @@ public class PointDeductorImpl implements PointDeductor {
             ledgerRepository.insertDeductIfAbsent(plan.ownerId(), campaignId, serveId, -plan.unitPrice(), now);
         }
         return status;
+    }
+
+    /*
+     * 그 계획의 예약이 해제됐으면 마감이다. 계획 행을 공유 잠금으로 읽어 커밋까지 해제를 기다리게 한다.
+     * 어제보다 앞선 영업일은 계획을 잠그지 않고 마감으로 본다. 해제는 다음 날 00:00 에 끝나고 릴레이는 어제 이후 노출만 넘긴다.
+     */
+    private boolean isClosed(Long campaignId, LocalDate businessDate, LocalDate today) {
+        if (businessDate.isBefore(today.minusDays(1))) {
+            return true;
+        }
+        BudgetDailyPlan plan = planRepository.findForShare(campaignId, businessDate)
+                .orElseThrow(() -> new IllegalStateException(
+                        "계획 스냅샷은 있는데 계획 행이 없습니다. campaignId=" + campaignId + ", businessDate=" + businessDate));
+        return plan.getReleasedAt() != null;
     }
 
     /*
