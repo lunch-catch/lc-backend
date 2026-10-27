@@ -33,7 +33,7 @@ public class ImpressionController {
      */
     @PostMapping("/impressions")
     @ResponseStatus(HttpStatus.ACCEPTED)
-    @Operation(summary = "카드 표시 이벤트 수집", description = "같은 사용자가 같은 serveId 를 다시 보내면 새로 기록하지 않고 처음 판정을 돌려준다. 무효 노출도 오류가 아니라 202 다.")
+    @Operation(summary = "카드 표시 이벤트 수집", description = "같은 사용자가 같은 serveId 를 다시 보내면 새로 기록하지 않고 다시 판정한 결과를 돌려준다. 처음과 다를 수 있다. 무효 노출도 오류가 아니라 202 다.")
     @ApiResponse(responseCode = "202", description = "노출의 유효 여부와 무효 사유를 반환한다.", useReturnTypeSchema = true)
     public ResponseEnvelope<ImpressionResponse> record(
             @Parameter(hidden = true) @AuthenticationPrincipal CustomUserDetails user,
