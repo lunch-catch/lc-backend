@@ -8,9 +8,14 @@ ALTER TABLE budget_daily_plan
     ADD COLUMN released_at DATETIME(6) COMMENT '그 계획의 예약을 해제한 시각. NULL 이면 해제 전이라 노출을 과금한다',
     ALGORITHM = INSTANT;
 
--- 어제 계획은 00:00 해제가 끝난 것으로 채운다. 어제보다 앞선 계획은 차감이 날짜로 마감을 보므로 채우지 않는다
--- 행 수는 하루 계획 수(캠페인 수)라 짧게 끝난다. 배포가 그날 해제보다 먼저면 그 사이 어제 노출은 마감 미과금이 된다
-UPDATE budget_daily_plan
-   SET released_at = CURRENT_TIMESTAMP(6)
- WHERE business_date = CURRENT_DATE - INTERVAL 1 DAY
-   AND released_at IS NULL;
+-- 해제가 이미 끝난 계획만 그 해제의 시각으로 채운다. RELEASE 원장이 있으면 해제가 끝난 것이다
+--   해제 전이거나 해제가 실패한 계획은 비워 둔다. 채우면 릴레이가 그 뒤 넘기는 노출이 마감 미과금이 된다
+--   남은 금액이 0 이라 RELEASE 가 없는 계획도 비워 둔다. 예약을 다 써서 더 오는 노출은 예산 미과금이다
+--   어제보다 앞선 계획도 채워지지만 차감은 그 날을 날짜로 마감으로 본다. 날짜 함수를 쓰지 않으려고 날짜로 거르지 않는다
+UPDATE budget_daily_plan p
+  JOIN point_ledger l
+    ON l.campaign_id = p.campaign_id
+   AND l.business_date = p.business_date
+   AND l.entry_type = 'RELEASE'
+   SET p.released_at = l.created_at
+ WHERE p.released_at IS NULL;

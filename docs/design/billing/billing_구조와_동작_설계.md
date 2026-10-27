@@ -135,7 +135,7 @@ billing/
 | V7 | `point_ledger.adjust_target_date`와 CHECK |
 | V9 | PG 대사 재검증 대기 행과 `payment` FK |
 | V11 | 대사 해결 유형 `MANUAL_ADJUSTMENT`, `NO_ADJUSTMENT_REQUIRED`와 그 둘의 해결자 필수, 기존 `OVERCHARGE_REVERSAL` 행의 전환 |
-| V12 | 계획의 해제 시각 `released_at`. 이미 해제가 끝난 어제 계획만 채운다(#1049) |
+| V12 | 계획의 해제 시각 `released_at`. `RELEASE` 원장이 있는 계획만 그 원장의 시각으로 채운다(#1049) |
 
 | 데이터 | 원본과 의미 | 중복 또는 범위 제약 |
 |---|---|---|
