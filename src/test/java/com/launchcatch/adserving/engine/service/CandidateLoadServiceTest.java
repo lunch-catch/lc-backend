@@ -1,5 +1,6 @@
 package com.launchcatch.adserving.engine.service;
 
+import com.launchcatch.adserving.engine.repository.CandidateChangeNotifier;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.tuple;
@@ -53,8 +54,9 @@ class CandidateLoadServiceTest {
     private final StoreQueryService storeQueryService = mock(StoreQueryService.class);
     private final AdCandidateRepository adCandidateRepository = mock(AdCandidateRepository.class);
     private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+    private final CandidateChangeNotifier notifier = org.mockito.Mockito.mock(CandidateChangeNotifier.class);
     private final CandidateLoadService service = new CandidateLoadService(campaignQueryService, storeQueryService,
-            adCandidateRepository, meterRegistry, Clock.fixed(NOW.atZone(ClockConfig.ZONE).toInstant(), ClockConfig.ZONE));
+            adCandidateRepository, notifier, meterRegistry, Clock.fixed(NOW.atZone(ClockConfig.ZONE).toInstant(), ClockConfig.ZONE));
 
     private static CampaignInfo campaign(long id, long storeId, CampaignStatus status, PauseReason reason,
                                          DiscountTargetType target, Long menuId) {
@@ -78,6 +80,7 @@ class CandidateLoadServiceTest {
     private List<CandidateRow> upserted() {
         ArgumentCaptor<List<CandidateRow>> captor = ArgumentCaptor.forClass(List.class);
         verify(adCandidateRepository).upsertAll(captor.capture(), eq(NOW), eq(NOW));
+        verify(notifier).reloaded(TODAY);
         return captor.getValue();
     }
 

@@ -16,7 +16,7 @@ import com.launchcatch.adserving.engine.FeedAssembler;
 import com.launchcatch.adserving.engine.entity.AdCandidate;
 import com.launchcatch.adserving.engine.entity.DiscountTarget;
 import com.launchcatch.adserving.engine.entity.DiscountType;
-import com.launchcatch.adserving.engine.repository.AdCandidateRepository;
+import com.launchcatch.adserving.engine.service.CandidateCache;
 import com.launchcatch.adserving.exclusion.repository.ExclusionRepository;
 import com.launchcatch.adserving.feed.dto.FeedCardResponse;
 import com.launchcatch.adserving.feed.dto.FeedRequest;
@@ -75,7 +75,7 @@ class FeedServiceTest {
 
     private final MemberQueryService memberQueryService = mock(MemberQueryService.class);
     private final FeedRateLimitRepository rateLimitRepository = mock(FeedRateLimitRepository.class);
-    private final AdCandidateRepository adCandidateRepository = mock(AdCandidateRepository.class);
+    private final CandidateCache candidateCache = mock(CandidateCache.class);
     private final ExclusionRepository exclusionRepository = mock(ExclusionRepository.class);
     private final FeedFilterCategoryRepository filterCategoryRepository =
             mock(FeedFilterCategoryRepository.class);
@@ -91,7 +91,7 @@ class FeedServiceTest {
 
     private FeedService serviceAt(LocalDateTime now) {
         Clock clock = Clock.fixed(now.atZone(ClockConfig.ZONE).toInstant(), ClockConfig.ZONE);
-        return new FeedService(memberQueryService, rateLimitRepository, adCandidateRepository,
+        return new FeedService(memberQueryService, rateLimitRepository, candidateCache,
                 exclusionRepository, filterCategoryRepository, feedFilterRepository, swipeLogRepository,
                 serveFrequencyRepository, impressionCountRepository, pacingProperties, serveRecordRepository,
                 serveLogBuffer, meterRegistry, clock);
@@ -120,7 +120,7 @@ class FeedServiceTest {
     }
 
     private void givenCandidates(List<AdCandidate> candidates) {
-        when(adCandidateRepository.findServableWithin(eq(TODAY), any(BoundingBox.class))).thenReturn(candidates);
+        when(candidateCache.findServableWithin(eq(TODAY), any(BoundingBox.class))).thenReturn(candidates);
         when(exclusionRepository.findCampaignIds(TODAY, MEMBER_ID)).thenReturn(Set.of());
         when(filterCategoryRepository.findCategoryCodes(MEMBER_ID)).thenReturn(List.of());
         when(serveFrequencyRepository.findHistory(TODAY, MEMBER_ID)).thenReturn(new ServedHistory(Map.of(), Set.of()));
@@ -188,7 +188,7 @@ class FeedServiceTest {
                         assertThat(limited.getErrorCode()).isEqualTo(FeedErrorCode.RATE_LIMITED);
                         assertThat(limited.getRetryAfterSeconds()).isEqualTo(37);
                     });
-            verifyNoInteractions(adCandidateRepository);
+            verifyNoInteractions(candidateCache);
         }
 
         @Test
@@ -275,7 +275,7 @@ class FeedServiceTest {
         void 당일_이력과_필터_업종을_후보에서_거른다() {
             givenOnboardedMemberWithSavedLocation();
             givenAdmitted(SERVING_NOW);
-            when(adCandidateRepository.findServableWithin(eq(TODAY), any(BoundingBox.class))).thenReturn(List.of(
+            when(candidateCache.findServableWithin(eq(TODAY), any(BoundingBox.class))).thenReturn(List.of(
                     candidate(1, SAVED_LAT, SAVED_LNG).build(),
                     candidate(2, SAVED_LAT, SAVED_LNG).build(),
                     candidate(3, SAVED_LAT, SAVED_LNG).set("categoryCode", "JAPANESE").build()));
@@ -296,7 +296,7 @@ class FeedServiceTest {
 
             serviceAt(SERVING_NOW).getFeed(MEMBER_ID, NO_LOCATION);
 
-            verify(adCandidateRepository).findServableWithin(TODAY, BoundingBox.around(SAVED_LAT, SAVED_LNG, 5000));
+            verify(candidateCache).findServableWithin(TODAY, BoundingBox.around(SAVED_LAT, SAVED_LNG, 5000));
         }
     }
 

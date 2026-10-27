@@ -11,7 +11,7 @@ import com.launchcatch.adserving.engine.FeedCandidate;
 import com.launchcatch.adserving.engine.FeedContext;
 import com.launchcatch.adserving.engine.FeedSort;
 import com.launchcatch.adserving.engine.entity.AdCandidate;
-import com.launchcatch.adserving.engine.repository.AdCandidateRepository;
+import com.launchcatch.adserving.engine.service.CandidateCache;
 import com.launchcatch.adserving.exclusion.repository.ExclusionRepository;
 import com.launchcatch.adserving.feed.dto.FeedCardResponse;
 import com.launchcatch.adserving.feed.dto.FeedRequest;
@@ -66,7 +66,7 @@ public class FeedService {
 
     private final MemberQueryService memberQueryService;
     private final FeedRateLimitRepository feedRateLimitRepository;
-    private final AdCandidateRepository adCandidateRepository;
+    private final CandidateCache candidateCache;
     private final ExclusionRepository exclusionRepository;
     private final FeedFilterCategoryRepository feedFilterCategoryRepository;
     private final FeedFilterRepository feedFilterRepository;
@@ -95,7 +95,7 @@ public class FeedService {
 
         ZonedDateTime servedAt = now.atZone(ClockConfig.ZONE);
         LocalDate businessDate = servedAt.toLocalDate();
-        List<AdCandidate> rows = adCandidateRepository.findServableWithin(businessDate,
+        List<AdCandidate> rows = candidateCache.findServableWithin(businessDate,
                 BoundingBox.around(viewer.latitude(), viewer.longitude(), FeedAssembler.MAX_RADIUS_M));
         List<FeedCandidate> candidates = rows.stream().map(AdCandidate::toFeedCandidate).toList();
         Selection selection = FeedAssembler.assemble(candidates,
