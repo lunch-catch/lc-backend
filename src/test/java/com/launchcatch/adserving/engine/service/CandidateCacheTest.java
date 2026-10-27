@@ -22,6 +22,7 @@ import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.CountDownLatch;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -138,6 +139,34 @@ class CandidateCacheTest {
             cache.findServableWithin(BUSINESS_DATE, AROUND);
 
             verify(repository, times(2)).findByIdBusinessDate(BUSINESS_DATE);
+        }
+
+        // 다시 읽기가 알림 전의 값을 읽는 중이면, 알림은 그 다시 읽기가 끝난 뒤 걸려 다음 읽기가 다시 읽는다
+        @Test
+        void 다시_읽는_중에_온_그날_전체의_알림이_덮이지_않는다() throws Exception {
+            CountDownLatch reading = new CountDownLatch(1);
+            CountDownLatch committed = new CountDownLatch(1);
+            when(repository.findByIdBusinessDate(BUSINESS_DATE)).thenReturn(List.of(near)).thenAnswer(invocation -> {
+                reading.countDown();
+                committed.await();
+                return List.of(near);
+            }).thenReturn(List.of(near, soldOut));
+            cache.findServableWithin(BUSINESS_DATE, AROUND);
+            clock.advance(Duration.ofSeconds(5));
+            Thread reloader = new Thread(() -> cache.findServableWithin(BUSINESS_DATE, AROUND));
+            reloader.start();
+            reading.await();
+
+            Thread notifier = new Thread(() -> cache.expire(BUSINESS_DATE));
+            notifier.start();
+            while (notifier.getState() != Thread.State.WAITING && notifier.isAlive()) {
+                Thread.onSpinWait();
+            }
+            committed.countDown();
+            reloader.join();
+            notifier.join();
+
+            assertThat(cache.isSoldOut(BUSINESS_DATE, 103L)).isTrue();
         }
 
         @Test
