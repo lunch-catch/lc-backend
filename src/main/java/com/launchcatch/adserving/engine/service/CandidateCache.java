@@ -90,11 +90,19 @@ public class CandidateCache {
         }
     }
 
-    // 그날 후보가 통째로 바뀌었다는 알림(적재, 예산)을 받아 다음 읽기가 다시 읽게 한다.
+    /*
+     * 그날 후보가 통째로 바뀌었다는 알림(적재, 예산)을 받아 다음 읽기가 다시 읽게 한다.
+     * 다시 읽기와 같은 잠금 안에서 한다. 알림 전의 값을 읽던 다시 읽기가 끝나며 이 표시를 덮어쓰지 않게 한다.
+     */
     public void expire(LocalDate businessDate) {
-        Snapshot current = snapshot;
-        if (current != null && current.businessDate().equals(businessDate)) {
-            snapshot = new Snapshot(businessDate, current.byCampaign(), Instant.EPOCH);
+        loading.lock();
+        try {
+            Snapshot current = snapshot;
+            if (current != null && current.businessDate().equals(businessDate)) {
+                snapshot = new Snapshot(businessDate, current.byCampaign(), Instant.EPOCH);
+            }
+        } finally {
+            loading.unlock();
         }
     }
 
