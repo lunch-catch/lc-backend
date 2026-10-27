@@ -13,6 +13,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.launchcatch.coupon.CouponBatchTask;
+import com.launchcatch.coupon.CouponTestProperties;
 import com.launchcatch.ops.contract.BatchExecutionQueryService;
 import com.launchcatch.ops.contract.BatchExecutionRecord;
 import com.launchcatch.ops.scheduler.RetryBackoff;
@@ -30,7 +31,19 @@ class CouponBatchExecutionServiceTest {
     private final BatchExecutionQueryService query = mock(BatchExecutionQueryService.class);
     private final RetryBackoff backoff = mock(RetryBackoff.class);
     private final IntSupplier operation = mock(IntSupplier.class);
-    private final CouponBatchExecutionService service = new CouponBatchExecutionService(executions, query, backoff);
+    private final CouponBatchExecutionService service = new CouponBatchExecutionService(CouponTestProperties.defaults(), executions, query, backoff);
+
+    @Test
+    void 재시도를_영으로_설정하면_실패한_업무를_다시_실행하지_않는다() {
+        var configured = new CouponBatchExecutionService(
+                CouponTestProperties.with(java.util.Map.of("coupon.batch.max-retries", 0)), executions, query, backoff);
+        when(operation.getAsInt()).thenThrow(new IllegalStateException("failed"));
+
+        assertThatThrownBy(() -> configured.retry(TASK, DATE, 3, operation)).hasMessage("failed");
+
+        verify(operation).getAsInt();
+        verifyNoInteractions(executions, backoff);
+    }
 
     @Test
     void 점유한_실행_세대와_처리_건수로_성공을_기록한다() {

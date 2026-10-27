@@ -9,6 +9,7 @@ import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
 import jakarta.persistence.Table;
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.Objects;
 import java.util.UUID;
@@ -24,6 +25,8 @@ import org.hibernate.type.SqlTypes;
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class MemberCoupon extends BaseTimeEntity {
+
+    public static final Duration QR_VALIDITY = Duration.ofSeconds(60);
 
     @Column(name = "coupon_event_id", nullable = false, updatable = false)
     private Long couponEventId;
@@ -95,7 +98,7 @@ public class MemberCoupon extends BaseTimeEntity {
         }
         qrToken = token;
         qrVersion++;
-        qrExpiresAt = now.plusSeconds(60);
+        qrExpiresAt = now.plus(QR_VALIDITY);
     }
 
     // 호출자는 행 잠금 아래 최신 QR과 사용 시간을 확인하고 마지막 토큰을 보존한다.
@@ -112,7 +115,7 @@ public class MemberCoupon extends BaseTimeEntity {
         }
         validateQrToken(token, version);
         if (qrExpiresAt == null
-                || now.isBefore(qrExpiresAt.minusSeconds(60)) || !now.isBefore(qrExpiresAt)) {
+                || now.isBefore(qrExpiresAt.minus(QR_VALIDITY)) || !now.isBefore(qrExpiresAt)) {
             throw new CouponException(CouponErrorCode.QR_NOT_VALID);
         }
         status = MemberCouponStatus.USED;

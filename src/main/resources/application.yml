@@ -175,16 +175,45 @@ coupon:
   issue-start-time: "${COUPON_ISSUE_START_TIME:11:00}"
   issue-end-time: "${COUPON_ISSUE_END_TIME:14:00}"
   sequence:
-    # 순번 키는 이벤트 영업일의 발급 종료 시각에 이 여유시간을 더한 시각에 함께 만료한다
+    # 순번 키는 이벤트 영업일의 발급 종료 시각에 이 여유시간을 더한 시각에 함께 만료한다.
     retention-grace: "${COUPON_SEQUENCE_RETENTION_GRACE:1h}"
-  # 발급 요청을 묶어 한 트랜잭션으로 처리하는 작업자 설정이다
+    stale-after: "${COUPON_SEQUENCE_STALE_AFTER:30s}"
+    retry-delay: "${COUPON_SEQUENCE_RETRY_DELAY:1s}"
+    rebuild-batch-size: "${COUPON_SEQUENCE_REBUILD_BATCH_SIZE:500}"
   issue:
     batch:
-      # 작업자마다 DB 커넥션을 하나씩 쓰므로 커넥션 풀보다 작게 둔다
+      # 작업자마다 DB 커넥션을 하나씩 쓰므로 커넥션 풀보다 작게 둔다.
       workers: "${COUPON_ISSUE_BATCH_WORKERS:4}"
       max-size: "${COUPON_ISSUE_BATCH_MAX_SIZE:500}"
       queue-capacity: "${COUPON_ISSUE_BATCH_QUEUE_CAPACITY:2000}"
       wait-timeout: "${COUPON_ISSUE_BATCH_WAIT_TIMEOUT:10s}"
+      collection-window: "${COUPON_ISSUE_BATCH_COLLECTION_WINDOW:20ms}"
+      idle-poll-interval: "${COUPON_ISSUE_BATCH_IDLE_POLL_INTERVAL:200ms}"
+      reservation-poll-interval: "${COUPON_ISSUE_BATCH_RESERVATION_POLL_INTERVAL:10ms}"
+    recovery:
+      # 복구 대기열은 발급 접수와 같은 queue-capacity를 쓴다.
+      workers: "${COUPON_ISSUE_RECOVERY_WORKERS:1}"
+    shutdown:
+      grace: "${COUPON_ISSUE_SHUTDOWN_GRACE:12s}"
+      cleanup-timeout: "${COUPON_ISSUE_SHUTDOWN_CLEANUP_TIMEOUT:5s}"
+  batch:
+    page-size: "${COUPON_BATCH_PAGE_SIZE:1000}"
+    max-retries: "${COUPON_BATCH_MAX_RETRIES:2}"
+    preparation-cron: "${COUPON_BATCH_PREPARATION_CRON:0 0 3 * * *}"
+    consistency-cron: "${COUPON_BATCH_CONSISTENCY_CRON:0 0 2 * * *}"
+    expiration-cron: "${COUPON_BATCH_EXPIRATION_CRON:0 */5 * * * *}"
+    # 발급 오픈과 종료는 위 발급 시간을 따르며 큐는 오픈보다 이 시간만큼 먼저 준비한다.
+    queue-preparation-lead: "${COUPON_BATCH_QUEUE_PREPARATION_LEAD:5m}"
+  sold-out:
+    max-pending: "${COUPON_SOLD_OUT_MAX_PENDING:2000}"
+    retry-interval: "${COUPON_SOLD_OUT_RETRY_INTERVAL:5s}"
+    retry-window: "${COUPON_SOLD_OUT_RETRY_WINDOW:1h}"
+    completed-cache-size: "${COUPON_SOLD_OUT_COMPLETED_CACHE_SIZE:10000}"
+    completed-cache-ttl: "${COUPON_SOLD_OUT_COMPLETED_CACHE_TTL:1d}"
+    poll-interval: "${COUPON_SOLD_OUT_POLL_INTERVAL:1s}"
+    shutdown-timeout: "${COUPON_SOLD_OUT_SHUTDOWN_TIMEOUT:5s}"
+  qr:
+    image-size: "${COUPON_QR_IMAGE_SIZE:300}"
 
 # 템플릿 생성 상한이다. 처음 설계값은 10이었으나 프론트 연동 테스트를 위해 100으로 올린 뒤(#529)
 # 팀 논의로 100을 그대로 유지하기로 했다(#532).

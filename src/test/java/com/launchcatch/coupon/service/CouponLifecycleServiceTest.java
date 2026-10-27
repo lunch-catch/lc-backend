@@ -9,6 +9,7 @@ import static org.mockito.Mockito.when;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 
+import com.launchcatch.coupon.CouponTestProperties;
 import com.launchcatch.coupon.contract.CouponIssueOpenedEvent;
 import com.launchcatch.coupon.entity.CouponEvent;
 import com.launchcatch.coupon.repository.CouponBatchRepository;
@@ -16,7 +17,6 @@ import com.launchcatch.coupon.repository.CouponEventRepository;
 import com.launchcatch.ops.contract.BatchAttemptGuard;
 import java.time.Clock;
 import java.time.LocalDateTime;
-import java.time.LocalTime;
 import java.time.ZoneId;
 import java.util.List;
 import java.util.Optional;
@@ -100,6 +100,6 @@ class CouponLifecycleServiceTest {
         when(events.findByIdForUpdate(1L)).thenReturn(Optional.of(event));
         ZoneId zone = ZoneId.of("Asia/Seoul");
         return new CouponLifecycleService(batches, events, guard, publisher,
-                Clock.fixed(now.atZone(zone).toInstant(), zone), manager, LocalTime.of(11, 0), LocalTime.of(14, 0));
+                Clock.fixed(now.atZone(zone).toInstant(), zone), manager, CouponTestProperties.defaults());
     }
 }

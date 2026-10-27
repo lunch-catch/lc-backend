@@ -9,6 +9,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.lenient;
 
+import com.launchcatch.coupon.CouponTestProperties;
 import com.launchcatch.coupon.contract.CouponExpiredEvent;
 import com.launchcatch.coupon.entity.MemberCoupon;
 import com.launchcatch.coupon.entity.MemberCouponStatus;
@@ -34,6 +35,16 @@ class CouponExpirationServiceTest {
     private final MemberCoupon coupon = CouponBatchFixture.coupon();
 
     @Test
+    void 현재_시각에_만료_대상이_있는_영업일을_조회한다() {
+        when(batches.expiringDates(DATE.atTime(16, 0))).thenReturn(List.of(DATE.minusDays(1), DATE));
+
+        assertThat(service().expiringDates()).containsExactly(DATE.minusDays(1), DATE);
+
+        verify(batches).expiringDates(DATE.atTime(16, 0));
+        verifyNoInteractions(publisher);
+    }
+
+    @Test
     void 만료_전이와_이벤트를_함께_반영하고_이벤트는_사용_종료_시각을_갖는다() {
         assertThat(service().expire(DATE, 1)).isEqualTo(1);
         assertThat(coupon.getStatus()).isEqualTo(MemberCouponStatus.EXPIRED);
@@ -57,7 +68,7 @@ class CouponExpirationServiceTest {
         when(coupons.findByIdForUpdate(2L)).thenReturn(Optional.of(coupon));
         lenient().when(events.findById(1L)).thenReturn(Optional.of(CouponBatchFixture.event()));
         ZoneId zone = ZoneId.of("Asia/Seoul");
-        return new CouponExpirationService(batches, events, coupons, mock(BatchAttemptGuard.class), publisher,
+        return new CouponExpirationService(CouponTestProperties.defaults(), batches, events, coupons, mock(BatchAttemptGuard.class), publisher,
                 Clock.fixed(DATE.atTime(16, 0).atZone(zone).toInstant(), zone), manager);
     }
 }

@@ -1,8 +1,7 @@
 package com.launchcatch.coupon.repository;
 
-import static com.launchcatch.coupon.CouponBatchTask.BATCH_SIZE;
-
 import com.launchcatch.coupon.CouponConsistencyFinding;
+import com.launchcatch.coupon.config.CouponProperties;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -13,6 +12,8 @@ import org.springframework.stereotype.Repository;
 @Repository
 @RequiredArgsConstructor
 public class CouponConsistencyRepository {
+
+    private final CouponProperties properties;
 
     private final JdbcTemplate jdbc;
 
@@ -101,7 +102,7 @@ public class CouponConsistencyRepository {
                 """, (row, index) -> new CouponConsistencyFinding(row.getString(1), row.getLong(2),
                         row.getLong(3), row.getLong(4)),
                 date, date.atStartOfDay(), date.plusDays(1).atStartOfDay(), date, date,
-                checkedAt, checkedAt, afterType, afterType, afterId, BATCH_SIZE);
+                checkedAt, checkedAt, afterType, afterType, afterId, properties.batch().pageSize());
     }
 
 }

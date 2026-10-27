@@ -1,8 +1,7 @@
 package com.launchcatch.coupon.service;
 
-import static com.launchcatch.coupon.CouponBatchTask.BATCH_SIZE;
-
 import com.launchcatch.coupon.CouponBatchTask;
+import com.launchcatch.coupon.config.CouponProperties;
 import com.launchcatch.coupon.contract.CouponExpiredEvent;
 import com.launchcatch.coupon.entity.CouponEvent;
 import com.launchcatch.coupon.entity.MemberCoupon;
@@ -24,6 +23,8 @@ import org.springframework.transaction.support.TransactionTemplate;
 @Service
 public class CouponExpirationService {
 
+    private final CouponProperties properties;
+
     private final CouponBatchRepository batches;
     private final CouponEventRepository events;
     private final MemberCouponRepository coupons;
@@ -32,9 +33,10 @@ public class CouponExpirationService {
     private final Clock clock;
     private final TransactionTemplate transactions;
 
-    public CouponExpirationService(CouponBatchRepository batches, CouponEventRepository events,
+    public CouponExpirationService(CouponProperties properties, CouponBatchRepository batches, CouponEventRepository events,
             MemberCouponRepository coupons, BatchAttemptGuard guard, ApplicationEventPublisher publisher,
             Clock clock, PlatformTransactionManager manager) {
+        this.properties = properties;
         this.batches = batches;
         this.events = events;
         this.coupons = coupons;
@@ -49,7 +51,7 @@ public class CouponExpirationService {
     }
 
     /*
-     * 실행 시작 시각을 조회 기준으로 고정하고 ID를 1,000건씩 읽는다.
+     * 실행 시작 시각을 조회 기준으로 고정하고 ID를 설정된 크기로 나누어 읽는다.
      * 쿠폰 한 건마다 커밋해 API가 쓰는 쿠폰 행 잠금을 오래 잡지 않는다.
      * 중간 실패 후 재시도하면 이미 EXPIRED인 쿠폰은 조회에서 빠져 남은 쿠폰만 처리한다.
      */
@@ -64,7 +66,7 @@ public class CouponExpirationService {
                 count += Objects.requireNonNull(transactions.execute(status -> expireOne(date, attemptNo, id)));
                 cursor = id;
             }
-        } while (ids.size() == BATCH_SIZE);
+        } while (ids.size() == properties.batch().pageSize());
         return count;
     }
 

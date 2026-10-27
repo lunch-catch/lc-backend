@@ -7,23 +7,25 @@ import com.google.zxing.client.j2se.MatrixToImageWriter;
 import com.google.zxing.common.BitMatrix;
 import com.google.zxing.qrcode.QRCodeWriter;
 import com.google.zxing.qrcode.decoder.ErrorCorrectionLevel;
+import com.launchcatch.coupon.config.CouponProperties;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.util.Base64;
 import java.util.Map;
 import java.util.UUID;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 @Component
+@RequiredArgsConstructor
 public class CouponQrImageEncoder {
 
-    // Todo: qr코드 사이즈 협의
-    private static final int IMAGE_SIZE = 300;
+    private final CouponProperties properties;
 
     public String encode(UUID qrToken) {
         try (ByteArrayOutputStream output = new ByteArrayOutputStream()) {
             BitMatrix matrix = new QRCodeWriter().encode(
-                    qrToken.toString(), BarcodeFormat.QR_CODE, IMAGE_SIZE, IMAGE_SIZE,
+                    qrToken.toString(), BarcodeFormat.QR_CODE, properties.qr().imageSize(), properties.qr().imageSize(),
                     Map.of(EncodeHintType.ERROR_CORRECTION, ErrorCorrectionLevel.M));
             MatrixToImageWriter.writeToStream(matrix, "PNG", output);
             return Base64.getEncoder().encodeToString(output.toByteArray());

@@ -18,8 +18,8 @@ public class CouponQueuePreparationJob implements StandaloneJob {
     private final BatchExecutionService executions;
     private final CouponBatchExecutionService batchExecution;
 
-    // 11:00 발급 오픈에 첫 요청이 큐 복구를 기다리지 않도록 5분 전에 오늘 회차의 Redis 큐를 만든다.
-    @Scheduled(cron = "0 55 10 * * *", zone = "Asia/Seoul")
+    // 발급 오픈에 첫 요청이 큐 복구를 기다리지 않도록 설정된 여유시간 전에 오늘 회차의 Redis 큐를 만든다.
+    @Scheduled(cron = "#{@couponSchedule.queuePreparationCron()}", zone = "#{@couponSchedule.zone()}")
     public void prepareQueues() {
         LocalDate businessDate = executions.businessDate();
         if (executions.claim(jobName(), businessDate)) {

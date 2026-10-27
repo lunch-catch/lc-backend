@@ -1,5 +1,7 @@
 package com.launchcatch.coupon.service;
 
+import com.launchcatch.coupon.CouponSequenceCode;
+import com.launchcatch.coupon.config.CouponProperties;
 import com.launchcatch.coupon.exception.CouponErrorCode;
 import com.launchcatch.coupon.exception.CouponException;
 import com.launchcatch.coupon.model.CouponIssuanceOutcome;
@@ -7,7 +9,6 @@ import com.launchcatch.coupon.model.CouponIssuanceRequest;
 import com.launchcatch.coupon.model.CouponIssuanceResult;
 import com.launchcatch.global.config.ClockConfig;
 import java.time.Clock;
-import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
@@ -27,7 +28,6 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.SmartLifecycle;
 import org.springframework.stereotype.Component;
 
@@ -35,7 +35,7 @@ import org.springframework.stereotype.Component;
  * 발급 요청을 대기열에 모아 작업자 스레드가 묶음으로 처리하게 한다.
  * 요청 스레드는 DB 커넥션을 잡지 않고 대기열에 요청을 넣은 뒤 자기 결과만 기다린다.
  * 작업자는 한 건을 꺼낸 뒤 그동안 쌓인 요청을 최대 묶음 크기까지 바로 함께 꺼낸다.
- * 최대 20ms만 추가 요청을 모으며 요청 기한이나 묶음 상한에 닿으면 먼저 처리한다.
+ * 설정된 수집 시간 동안 추가 요청을 모으며 요청 기한이나 묶음 상한에 닿으면 먼저 처리한다.
  * 몰릴 때는 앞 묶음을 처리하는 동안 요청이 쌓여 묶음이 저절로 커진다.
  */
 @Component
@@ -43,8 +43,9 @@ import org.springframework.stereotype.Component;
 @RequiredArgsConstructor
 public class CouponIssueBatcher implements SmartLifecycle {
 
-    private static final long MAX_COLLECTION_NANOS = TimeUnit.MILLISECONDS.toNanos(20);
+    private static final int SHUTDOWN_PHASE_OFFSET = 2048;
 
+    private final CouponProperties properties;
     private final CouponBatchIssuanceService batchService;
     private final CouponSequenceService sequenceService;
     private final CouponSoldOutNotificationService soldOutNotifications;
@@ -62,22 +63,6 @@ public class CouponIssueBatcher implements SmartLifecycle {
     // 작업자 반복과 새 요청 접수를 함께 멈추는 표시다.
     private volatile boolean running;
 
-    // 작업자 수만큼 DB 커넥션을 동시에 쓰므로 커넥션 풀 크기보다 작게 둔다.
-    @Value("${coupon.issue.batch.workers:4}")
-    private int workerCount;
-
-    // 한 트랜잭션에서 처리할 최대 요청 수이며 IN 절과 다건 INSERT의 길이도 이 값을 넘지 않는다.
-    @Value("${coupon.issue.batch.max-size:500}")
-    private int maxSize;
-
-    // 대기열이 이 수만큼 차면 새 요청을 기다리게 하지 않고 바로 ISSUANCE_BUSY로 거절한다.
-    @Value("${coupon.issue.batch.queue-capacity:2000}")
-    private int queueCapacity;
-
-    // 커밋 전까지 결과를 기다리는 기한이며 만료되면 취소를 요청한다.
-    @Value("${coupon.issue.batch.wait-timeout:10s}")
-    private Duration waitTimeout;
-
     /**
      * 발급 요청 한 건을 대기열에 넣고 작업자가 묶음으로 처리한 결과를 기다려 돌려준다.
      * 요청 시각은 대기열에 넣는 순간으로 정해 대기열에서 기다린 시간이 발급 시간 판정에 들어가지 않게 한다.
@@ -93,7 +78,7 @@ public class CouponIssueBatcher implements SmartLifecycle {
      */
     public CouponIssuanceResult submitAndAwait(long memberId, long eventId) {
         return submitAndAwait(new CouponIssuanceRequest(memberId, eventId,
-                LocalDateTime.now(clock.withZone(ClockConfig.ZONE))), System.nanoTime() + waitTimeout.toNanos());
+                LocalDateTime.now(clock.withZone(ClockConfig.ZONE))), System.nanoTime() + properties.issue().batch().waitTimeout().toNanos());
     }
 
     // 복구 전의 요청 시각과 처리 기한을 유지해 재접수한 요청도 남은 시간만 기다린다.
@@ -186,7 +171,7 @@ public class CouponIssueBatcher implements SmartLifecycle {
 
     /*
      * 작업자 스레드의 반복이다.
-     * 첫 요청이 올 때까지 최대 200ms씩 기다리며 그 사이 멈춤 표시를 확인한다.
+     * 첫 요청이 올 때까지 설정된 주기로 기다리며 그 사이 멈춤 표시를 확인한다.
      * 첫 요청을 받으면 이미 쌓인 요청을 묶음 크기까지 함께 꺼내 한 번에 처리한다.
      * 처리 중 어떤 오류가 나도 묶음의 요청이 결과 없이 남지 않게 모두 실패로 끝내고 다음 묶음으로 넘어간다.
      */
@@ -194,7 +179,7 @@ public class CouponIssueBatcher implements SmartLifecycle {
         while (running) {
             Pending first;
             try {
-                first = queue.poll(200, TimeUnit.MILLISECONDS);
+                first = queue.poll(properties.issue().batch().idlePollInterval().toNanos(), TimeUnit.NANOSECONDS);
             } catch (InterruptedException error) {
                 Thread.currentThread().interrupt();
                 return;
@@ -202,7 +187,7 @@ public class CouponIssueBatcher implements SmartLifecycle {
             if (first == null) {
                 continue;
             }
-            List<Pending> batch = new ArrayList<>(maxSize);
+            List<Pending> batch = new ArrayList<>(properties.issue().batch().maxSize());
             batch.add(first);
             try {
                 collectMoreRequests(first, batch);
@@ -232,9 +217,9 @@ public class CouponIssueBatcher implements SmartLifecycle {
     }
 
     private void collectMoreRequests(Pending first, List<Pending> batch) throws InterruptedException {
-        queue.drainTo(batch, maxSize - 1);
-        long collectUntil = Math.min(first.deadlineNanos(), System.nanoTime() + MAX_COLLECTION_NANOS);
-        while (batch.size() < maxSize) {
+        queue.drainTo(batch, properties.issue().batch().maxSize() - 1);
+        long collectUntil = Math.min(first.deadlineNanos(), System.nanoTime() + properties.issue().batch().collectionWindow().toNanos());
+        while (batch.size() < properties.issue().batch().maxSize()) {
             long remaining = collectUntil - System.nanoTime();
             if (remaining <= 0) {
                 break;
@@ -244,7 +229,7 @@ public class CouponIssueBatcher implements SmartLifecycle {
                 break;
             }
             batch.add(next);
-            queue.drainTo(batch, maxSize - batch.size());
+            queue.drainTo(batch, properties.issue().batch().maxSize() - batch.size());
         }
     }
 
@@ -379,11 +364,11 @@ public class CouponIssueBatcher implements SmartLifecycle {
     private void resolveEvent(long eventId, List<Pending> requests) {
         try {
             int availability = sequenceService.retryAvailability(eventId);
-            if (availability == 0) {
+            if (availability == CouponSequenceCode.SOLD_OUT.code()) {
                 soldOutNotifications.request(eventId);
                 requests.forEach(pending -> pending.future().completeExceptionally(
                         new CouponException(CouponErrorCode.INVENTORY_EXHAUSTED)));
-            } else if (availability == 1) {
+            } else if (availability == CouponSequenceCode.AVAILABLE.code()) {
                 for (Pending pending : requests) {
                     if (!expireBeforeStart(pending) && (!running || !queue.offer(pending))) {
                         pending.future().completeExceptionally(new CouponException(CouponErrorCode.ISSUANCE_BUSY));
@@ -402,18 +387,19 @@ public class CouponIssueBatcher implements SmartLifecycle {
     // 스프링이 시작할 때 대기열을 만들고 작업자 스레드를 띄운다.
     @Override
     public void start() {
-        queue = new ArrayBlockingQueue<>(queueCapacity);
-        awaitingReservations = new ArrayBlockingQueue<>(queueCapacity);
-        admission = new Semaphore(queueCapacity);
+        queue = new ArrayBlockingQueue<>(properties.issue().batch().queueCapacity());
+        awaitingReservations = new ArrayBlockingQueue<>(properties.issue().batch().queueCapacity());
+        admission = new Semaphore(properties.issue().batch().queueCapacity());
         eventTasks = Executors.newThreadPerTaskExecutor(Thread.ofVirtual().name("coupon-event-", 0).factory());
         running = true;
         reservationWaiter = Executors.newSingleThreadScheduledExecutor(
                 Thread.ofPlatform().name("coupon-reservation-waiter").daemon(true).factory());
-        reservationWaiter.scheduleWithFixedDelay(this::resolveReservations, 10, 10, TimeUnit.MILLISECONDS);
-        for (int i = 0; i < workerCount; i++) {
+        reservationWaiter.scheduleWithFixedDelay(this::resolveReservations, properties.issue().batch().reservationPollInterval().toNanos(),
+                properties.issue().batch().reservationPollInterval().toNanos(), TimeUnit.NANOSECONDS);
+        for (int i = 0; i < properties.issue().batch().workers(); i++) {
             workers.add(Thread.ofPlatform().name("coupon-batch-" + i).daemon(true).start(this::runWorker));
         }
-        log.info("event=COUPON_BATCH_START_DONE workerCount={} maxSize={} queueCapacity={}", workerCount, maxSize, queueCapacity);
+        log.info("event=COUPON_BATCH_START_DONE workerCount={} maxSize={} queueCapacity={}", properties.issue().batch().workers(), properties.issue().batch().maxSize(), properties.issue().batch().queueCapacity());
     }
 
     /*
@@ -425,11 +411,11 @@ public class CouponIssueBatcher implements SmartLifecycle {
     public void stop() {
         running = false;
         active.forEach(Pending::cancel);
-        long stopDeadline = System.nanoTime() + waitTimeout.plusSeconds(12).toNanos();
+        long stopDeadline = System.nanoTime() + properties.issue().batch().waitTimeout().plus(properties.issue().shutdown().grace()).toNanos();
         if (reservationWaiter != null) {
             reservationWaiter.shutdown();
             try {
-                reservationWaiter.awaitTermination(5, TimeUnit.SECONDS);
+                reservationWaiter.awaitTermination(properties.issue().shutdown().cleanupTimeout().toNanos(), TimeUnit.NANOSECONDS);
             } catch (InterruptedException error) {
                 Thread.currentThread().interrupt();
             }
@@ -448,7 +434,7 @@ public class CouponIssueBatcher implements SmartLifecycle {
         if (eventTasks != null) {
             eventTasks.shutdown();
             try {
-                eventTasks.awaitTermination(5, TimeUnit.SECONDS);
+                eventTasks.awaitTermination(properties.issue().shutdown().cleanupTimeout().toNanos(), TimeUnit.NANOSECONDS);
             } catch (InterruptedException error) {
                 Thread.currentThread().interrupt();
             }
@@ -469,7 +455,7 @@ public class CouponIssueBatcher implements SmartLifecycle {
     // HTTP의 graceful 종료 단계보다 뒤에 멈추고 DB·Redis 연결보다 먼저 정리한다.
     @Override
     public int getPhase() {
-        return SmartLifecycle.DEFAULT_PHASE - 2048;
+        return SmartLifecycle.DEFAULT_PHASE - SHUTDOWN_PHASE_OFFSET;
     }
 
     // 작업자가 요청을 받고 있으면 true를 돌려주며 스프링이 종료 순서를 정할 때 쓴다.

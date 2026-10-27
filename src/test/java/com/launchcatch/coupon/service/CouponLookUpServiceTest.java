@@ -19,6 +19,7 @@ import com.launchcatch.campaign.contract.CampaignInfo;
 import com.launchcatch.campaign.contract.CampaignQueryService;
 import com.launchcatch.campaign.contract.CampaignStatus;
 import com.launchcatch.adserving.contract.WishlistQueryService;
+import com.launchcatch.coupon.CouponTestProperties;
 import com.launchcatch.store.contract.StoreQueryService;
 import com.launchcatch.store.contract.StoreInfo;
 import com.launchcatch.coupon.CouponListFilter;
@@ -174,7 +175,7 @@ class CouponLookUpServiceTest {
         @BeforeEach
         void setUp() {
             service = new CouponLookUpService(
-                    memberCouponRepository, couponEventRepository, couponUsageHistoryRepository, couponDailyLimitRepository, campaignQueryService, memberQueryService,
+                    CouponTestProperties.defaults(), memberCouponRepository, couponEventRepository, couponUsageHistoryRepository, couponDailyLimitRepository, campaignQueryService, memberQueryService,
                     Clock.fixed(Instant.parse("2026-10-10T03:00:00Z"), ZoneOffset.UTC), stores, wishes, publisher, mock(CouponInventoryRepository.class));
         }
 
@@ -667,7 +668,7 @@ class CouponLookUpServiceTest {
         // 지정한 시각을 사용하는 상세 조회 서비스를 구성한다.
         private CouponLookUpService serviceAt(Instant instant) {
             CouponLookUpService configured = new CouponLookUpService(
-                    memberCouponRepository, couponEventRepository, couponUsageHistoryRepository, couponDailyLimitRepository, campaignQueryService, memberQueryService,
+                    CouponTestProperties.defaults(), memberCouponRepository, couponEventRepository, couponUsageHistoryRepository, couponDailyLimitRepository, campaignQueryService, memberQueryService,
                     Clock.fixed(instant, ZoneOffset.UTC), stores, wishes, publisher, mock(CouponInventoryRepository.class));
             return configured;
         }
@@ -730,10 +731,8 @@ class CouponLookUpServiceTest {
 
     // 지정한 시계와 일일 발급 한도를 사용하는 조회 서비스를 구성한다.
     private CouponLookUpService configuredService(Clock clock, int dailyLimit) {
-        CouponLookUpService configured = new CouponLookUpService(memberCouponRepository, couponEventRepository, couponUsageHistoryRepository, repository, campaignQueryService, memberQueryService, clock, stores, wishes, publisher, inventories);
-        ReflectionTestUtils.setField(configured, "dailyLimit", dailyLimit);
-        ReflectionTestUtils.setField(configured, "issueStartTime", LocalTime.of(11, 0));
-        ReflectionTestUtils.setField(configured, "issueEndTime", LocalTime.of(14, 0));
+        CouponLookUpService configured = new CouponLookUpService(CouponTestProperties.defaults(), memberCouponRepository, couponEventRepository, couponUsageHistoryRepository, repository, campaignQueryService, memberQueryService, clock, stores, wishes, publisher, inventories);
+        ReflectionTestUtils.setField(configured, "properties", CouponTestProperties.with(java.util.Map.of("coupon.daily-limit", dailyLimit, "coupon.issue-start-time", LocalTime.of(11, 0), "coupon.issue-end-time", LocalTime.of(14, 0))));
         return configured;
     }
 

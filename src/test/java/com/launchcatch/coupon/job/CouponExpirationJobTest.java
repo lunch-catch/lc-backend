@@ -9,6 +9,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import com.launchcatch.coupon.CouponTestProperties;
 import com.launchcatch.coupon.service.CouponExpirationService;
 import com.launchcatch.coupon.service.CouponBatchExecutionService;
 import com.launchcatch.ops.contract.BatchExecutionQueryService;
@@ -26,7 +27,7 @@ class CouponExpirationJobTest {
     private final BatchExecutionService executions = mock(BatchExecutionService.class);
     private final BatchExecutionQueryService query = mock(BatchExecutionQueryService.class);
     private final CouponBatchExecutionService batchExecution = new CouponBatchExecutionService(
-            executions, query, mock(RetryBackoff.class));
+            CouponTestProperties.defaults(), executions, query, mock(RetryBackoff.class));
     private final CouponExpirationJob job = new CouponExpirationJob(expiration, executions, query, batchExecution);
 
     @Test
