@@ -3,6 +3,7 @@ package com.launchcatch.billing.cache;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.Collection;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -32,6 +33,15 @@ public interface DailySpendCounter {
      * 해시가 없으면 아무것도 쓰지 않고 해시 없음을 돌려준다. 재구성은 부른 쪽이 정한다.
      */
     DeductOutcome deduct(LocalDate businessDate, Long campaignId, UUID serveId, long unitPrice);
+
+    /*
+     * 여러 노출을 한 번에 판정한다(#1049). 결과는 받은 순서와 같고 노출마다 deduct 와 같은 규칙이다.
+     * 노출마다 나눠 부르지 않는다.
+     */
+    List<DeductOutcome> deductAll(List<SpendDeduction> deductions);
+
+    // 여러 노출의 판정을 한 번에 되돌린다. 노출마다 undo 와 같은 규칙이다
+    void undoAll(List<SpendDeduction> deductions);
 
     /*
      * 이번 호출이 새로 남긴 판정을 되돌린다. 노출 저장 트랜잭션이 롤백됐을 때 부른다.

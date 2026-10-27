@@ -5,6 +5,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -97,6 +98,18 @@ public class InMemoryDailySpendCounter implements DailySpendCounter {
         }
         served.put(serveId, status);
         return DeductOutcome.of(status);
+    }
+
+    @Override
+    public synchronized List<DeductOutcome> deductAll(List<SpendDeduction> deductions) {
+        return deductions.stream()
+                .map(d -> deduct(d.businessDate(), d.campaignId(), d.serveId(), d.unitPrice()))
+                .toList();
+    }
+
+    @Override
+    public synchronized void undoAll(List<SpendDeduction> deductions) {
+        deductions.forEach(d -> undo(d.businessDate(), d.campaignId(), d.serveId(), d.unitPrice()));
     }
 
     @Override

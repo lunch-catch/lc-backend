@@ -2,19 +2,24 @@ package com.launchcatch.billing.cache;
 
 import com.launchcatch.billing.contract.DeductionStatus;
 import com.launchcatch.global.config.ClockConfig;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.function.Function;
 import lombok.RequiredArgsConstructor;
 import org.springframework.core.io.ClassPathResource;
+import org.springframework.data.redis.connection.ReturnType;
 import org.springframework.data.redis.core.HashOperations;
+import org.springframework.data.redis.core.RedisCallback;
 import org.springframework.data.redis.core.RedisOperations;
 import org.springframework.data.redis.core.SessionCallback;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -95,6 +100,51 @@ public class ValkeyDailySpendCounter implements DailySpendCounter {
                 List.of(key(businessDate, campaignId), servedKey(serveId)),
                 String.valueOf(unitPrice),
                 String.valueOf(SERVED_TTL_SECONDS));
+        return outcome(reply);
+    }
+
+    /*
+     * 판정 스크립트를 파이프라인 한 번으로 보낸다(#1049). 스크립트를 먼저 올려 두고 해시로 부른다.
+     * 파이프라인 안에서는 스크립트가 없다는 오류를 받아 본문으로 다시 보낼 수 없어서다.
+     */
+    @Override
+    public List<DeductOutcome> deductAll(List<SpendDeduction> deductions) {
+        String ttl = String.valueOf(SERVED_TTL_SECONDS);
+        return evalAll(DEDUCT_SCRIPT, deductions, d -> List.of(String.valueOf(d.unitPrice()), ttl)).stream()
+                .map(reply -> outcome((String) reply))
+                .toList();
+    }
+
+    @Override
+    public void undoAll(List<SpendDeduction> deductions) {
+        evalAll(UNDO_SCRIPT, deductions, d -> List.of(String.valueOf(d.unitPrice())));
+    }
+
+    private List<Object> evalAll(RedisScript<?> script, List<SpendDeduction> deductions,
+                                 Function<SpendDeduction, List<String>> args) {
+        if (deductions.isEmpty()) {
+            return List.of();
+        }
+        byte[] body = script.getScriptAsString().getBytes(StandardCharsets.UTF_8);
+        String sha = redisTemplate.execute((RedisCallback<String>) connection -> connection.scriptingCommands().scriptLoad(body));
+        return redisTemplate.executePipelined((RedisCallback<Object>) connection -> {
+            for (SpendDeduction d : deductions) {
+                List<byte[]> keysAndArgs = new ArrayList<>();
+                keysAndArgs.add(bytes(key(d.businessDate(), d.campaignId())));
+                keysAndArgs.add(bytes(servedKey(d.serveId())));
+                args.apply(d).forEach(arg -> keysAndArgs.add(bytes(arg)));
+                connection.scriptingCommands().evalSha(sha, ReturnType.fromJavaType(script.getResultType()), 2,
+                        keysAndArgs.toArray(byte[][]::new));
+            }
+            return null;
+        });
+    }
+
+    private static byte[] bytes(String value) {
+        return value.getBytes(StandardCharsets.UTF_8);
+    }
+
+    private static DeductOutcome outcome(String reply) {
         if (reply == null) {
             throw new IllegalStateException("판정 스크립트가 응답하지 않았습니다.");
         }

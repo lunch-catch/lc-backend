@@ -156,13 +156,15 @@ public class DailyReservationRecorder {
     /*
      * 잠금 뒤에 최신 계획과 소진을 다시 읽어 남은 예약만 해제한다. 충전 재예약이 계획을 늘린 뒤에도
      * 이전 계획으로 부족하게 해제하지 않도록 계산과 기록을 같은 점주 트랜잭션에 둔다.
+     * 계획 행을 캠페인 ID 순으로 배타 잠금해 해제 전에 승인한 차감이 끝난 뒤 소진을 센다.
+     * 남은 금액과 관계없이 모든 계획에 해제 시각을 적는다. 차감은 이 값을 보고 마감 미과금으로 판정한다(#1049).
      */
     @Transactional
     public void releaseForOwner(Long ownerId, LocalDate businessDate, List<Long> campaignIds) {
         LocalDateTime now = LocalDateTime.now(clock);
         accountRepository.createIfAbsent(ownerId, now);
         accountRepository.lockByOwnerId(ownerId);
-        List<BudgetDailyPlan> plans = planRepository.findByBusinessDateAndCampaignIdIn(businessDate, campaignIds);
+        List<BudgetDailyPlan> plans = planRepository.findAllForUpdate(businessDate, campaignIds);
         Set<Long> released = ledgerRepository.findReleasedCampaignIds(Set.of(ownerId), businessDate).stream()
                 .collect(Collectors.toSet());
         Map<Long, Long> spends = ledgerRepository.sumDeductForCampaignsOn(campaignIds, businessDate).stream()
@@ -176,6 +178,7 @@ public class DailyReservationRecorder {
                 ledgerRepository.insertReleaseIfAbsent(ownerId, plan.getCampaignId(), businessDate, left, now);
             }
         }
+        planRepository.markReleased(businessDate, campaignIds, now);
     }
 
     /*

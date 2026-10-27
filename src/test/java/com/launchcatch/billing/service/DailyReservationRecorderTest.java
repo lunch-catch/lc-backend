@@ -234,9 +234,13 @@ class DailyReservationRecorderTest {
         verify(ledgerRepository, never()).saveAll(any());
     }
 
+    /*
+     * 계획 행을 배타 잠금으로 읽어 해제 전에 승인한 차감이 끝난 뒤 소진을 센다(#1049).
+     * 남은 금액과 관계없이 모든 계획에 해제 시각을 적는다. 차감은 이 값으로 마감을 본다.
+     */
     @Test
-    void 잠근_뒤_최신_계획과_소진을_읽어_남은_예약만_해제한다() {
-        when(planRepository.findByBusinessDateAndCampaignIdIn(DAY, List.of(1L, 2L))).thenReturn(List.of(
+    void 잠근_뒤_최신_계획과_소진을_읽어_남은_예약만_해제하고_모든_계획에_해제_시각을_적는다() {
+        when(planRepository.findAllForUpdate(DAY, List.of(1L, 2L))).thenReturn(List.of(
                 BudgetDailyPlan.create(1L, OWNER, DAY, 5000L, UNIT, false, CHANGED_AT),
                 BudgetDailyPlan.create(2L, OWNER, DAY, 1000L, UNIT, false, CHANGED_AT)));
         when(ledgerRepository.findReleasedCampaignIds(Set.of(OWNER), DAY)).thenReturn(List.of(2L));
@@ -247,8 +251,9 @@ class DailyReservationRecorderTest {
 
         InOrder order = inOrder(accountRepository, planRepository, ledgerRepository);
         order.verify(accountRepository).lockByOwnerId(OWNER);
-        order.verify(planRepository).findByBusinessDateAndCampaignIdIn(DAY, List.of(1L, 2L));
+        order.verify(planRepository).findAllForUpdate(DAY, List.of(1L, 2L));
         order.verify(ledgerRepository).insertReleaseIfAbsent(OWNER, 1L, DAY, 2000L, LocalDateTime.now(CLOCK));
+        order.verify(planRepository).markReleased(DAY, List.of(1L, 2L), LocalDateTime.now(CLOCK));
         verify(ledgerRepository, never()).insertReleaseIfAbsent(OWNER, 2L, DAY, 1000L, LocalDateTime.now(CLOCK));
     }
 
