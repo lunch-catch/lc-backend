@@ -16,7 +16,6 @@ import java.time.LocalDate;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.dao.QueryTimeoutException;
-import org.springframework.data.redis.core.SetOperations;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.RedisScript;
 
@@ -46,36 +45,6 @@ class FeedValkeyFallbackTest {
 
     @Test
     @SuppressWarnings("unchecked")
-    void 당일_이력을_읽지_못하면_빈_이력으로_통과시키고_센다() {
-        SetOperations<String, String> setOps = mock(SetOperations.class);
-        when(redisTemplate.opsForSet()).thenReturn(setOps);
-        when(setOps.members(anyString())).thenThrow(new QueryTimeoutException("timeout"));
-
-        var ids = new ExclusionRepository(redisTemplate, meterRegistry)
-                .findCampaignIds(LocalDate.of(2026, 10, 1), 3001L);
-
-        assertThat(ids).isEmpty();
-        assertThat(bypassCount("exclusion")).isEqualTo(1);
-    }
-
-    @Test
-    @SuppressWarnings("unchecked")
-    void 내려준_횟수를_읽지_못하면_빈_이력으로_통과시키고_센다() {
-        org.springframework.data.redis.core.HashOperations<String, Object, Object> hashOps =
-                mock(org.springframework.data.redis.core.HashOperations.class);
-        when(redisTemplate.opsForHash()).thenReturn(hashOps);
-        when(hashOps.entries(anyString())).thenThrow(new QueryTimeoutException("timeout"));
-
-        var history = new ServeFrequencyRepository(redisTemplate, meterRegistry)
-                .findHistory(LocalDate.of(2026, 10, 1), 3001L);
-
-        assertThat(history.dailyCounts()).isEmpty();
-        assertThat(history.sessionCampaignIds()).isEmpty();
-        assertThat(bypassCount("serve_frequency")).isEqualTo(1);
-    }
-
-    @Test
-    @SuppressWarnings("unchecked")
     void 내려준_횟수를_올리지_못해도_예외를_올리지_않고_센다() {
         when(redisTemplate.execute(any(RedisScript.class), anyList(), any(Object[].class)))
                 .thenThrow(new QueryTimeoutException("timeout"));
@@ -86,19 +55,42 @@ class FeedValkeyFallbackTest {
         assertThat(bypassCount("serve_frequency")).isEqualTo(1);
     }
 
+    // 하루와 세션 횟수, 당일 이력, 유효 노출 수를 비우고 필터와 30일 찜은 캐시 없음으로 두어 DB 에서 읽게 한다(#1042 결정 5)
     @Test
     @SuppressWarnings("unchecked")
-    void 유효_노출_수를_읽지_못하면_0_으로_보고_센다() {
-        org.springframework.data.redis.core.HashOperations<String, Object, Object> hashOps =
-                mock(org.springframework.data.redis.core.HashOperations.class);
-        when(redisTemplate.opsForHash()).thenReturn(hashOps);
-        when(hashOps.multiGet(anyString(), any())).thenThrow(new QueryTimeoutException("timeout"));
+    void 피드_상태를_읽지_못하면_다섯_모두_우회하고_쓰임새마다_센다() {
+        when(redisTemplate.executePipelined(any(org.springframework.data.redis.core.SessionCallback.class)))
+                .thenThrow(new QueryTimeoutException("timeout"));
 
-        var counts = new ImpressionCountRepository(redisTemplate, meterRegistry)
-                .findValidCounts(LocalDate.of(2026, 10, 1), java.util.List.of(101L));
+        var state = new FeedStateRepository(redisTemplate, meterRegistry)
+                .read(LocalDate.of(2026, 10, 1), 3001L, java.util.List.of(101L));
 
-        assertThat(counts).isEmpty();
-        assertThat(bypassCount("impression_count")).isEqualTo(1);
+        assertThat(state.history().dailyCounts()).isEmpty();
+        assertThat(state.history().sessionCampaignIds()).isEmpty();
+        assertThat(state.excludedCampaignIds()).isEmpty();
+        assertThat(state.validCounts()).isEmpty();
+        assertThat(state.filter()).isNull();
+        assertThat(state.wishes()).isNull();
+        for (String use : java.util.List.of("serve_frequency", "exclusion", "impression_count", "feed_filter", "feed_wishes")) {
+            assertThat(bypassCount(use)).isEqualTo(1);
+        }
+    }
+
+    // 원본은 DB 라서 읽을 수 없는 캐시 값은 캐시 없음으로 본다. 부르는 쪽이 DB 에서 읽어 그 키를 덮어쓴다
+    @Test
+    @SuppressWarnings("unchecked")
+    void 필터와_찜의_캐시_값을_해석하지_못하면_캐시_없음으로_보고_센다() {
+        when(redisTemplate.executePipelined(any(org.springframework.data.redis.core.SessionCallback.class)))
+                .thenReturn(java.util.List.of(java.util.Map.of(), java.util.Set.of(), java.util.Set.of(),
+                        java.util.Arrays.asList((Object) null), "UNKNOWN_SORT|KOREAN", "KOREAN:many"));
+
+        var state = new FeedStateRepository(redisTemplate, meterRegistry)
+                .read(LocalDate.of(2026, 10, 1), 3001L, java.util.List.of(101L));
+
+        assertThat(state.filter()).isNull();
+        assertThat(state.wishes()).isNull();
+        assertThat(bypassCount("feed_filter")).isEqualTo(1);
+        assertThat(bypassCount("feed_wishes")).isEqualTo(1);
     }
 
     @Test

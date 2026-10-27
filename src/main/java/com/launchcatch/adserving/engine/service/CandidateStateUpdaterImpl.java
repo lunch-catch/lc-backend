@@ -2,6 +2,7 @@ package com.launchcatch.adserving.engine.service;
 
 import com.launchcatch.adserving.contract.CandidateStateUpdater;
 import com.launchcatch.adserving.engine.repository.AdCandidateRepository;
+import com.launchcatch.adserving.engine.repository.CandidateChangeNotifier;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.time.Clock;
 import java.time.LocalDate;
@@ -17,6 +18,7 @@ public class CandidateStateUpdaterImpl implements CandidateStateUpdater {
     static final String CANDIDATE_MISSING_METRIC = "adserving_sold_out_candidate_missing_total";
 
     private final AdCandidateRepository adCandidateRepository;
+    private final CandidateChangeNotifier candidateChangeNotifier;
     private final MeterRegistry meterRegistry;
     private final Clock clock;
 
@@ -28,6 +30,9 @@ public class CandidateStateUpdaterImpl implements CandidateStateUpdater {
     @Transactional
     public void markSoldOut(Long campaignId, LocalDate businessDate, LocalDateTime soldOutAt) {
         int updated = adCandidateRepository.markSoldOut(businessDate, campaignId, soldOutAt, LocalDateTime.now(clock));
+        if (updated > 0) {
+            candidateChangeNotifier.changed(businessDate, campaignId);
+        }
         if (updated == 0 && !adCandidateRepository.existsByIdBusinessDateAndIdCampaignId(businessDate, campaignId)) {
             meterRegistry.counter(CANDIDATE_MISSING_METRIC).increment();
         }

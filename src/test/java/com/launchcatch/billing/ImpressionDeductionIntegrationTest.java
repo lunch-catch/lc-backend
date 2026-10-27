@@ -10,6 +10,10 @@ import com.launchcatch.billing.contract.DeductionRequest;
 import com.launchcatch.billing.contract.DeductionStatus;
 import com.launchcatch.billing.contract.PointDeductor;
 import com.launchcatch.billing.repository.BudgetDailyPlanRepository;
+import com.launchcatch.billing.cache.DailySpendCounter;
+import com.launchcatch.billing.cache.DeductOutcome;
+import com.launchcatch.billing.cache.SpendDeduction;
+import com.launchcatch.billing.service.DailyPlanSnapshotService;
 import com.launchcatch.global.config.ClockConfig;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.time.LocalDate;
@@ -60,6 +64,8 @@ class ImpressionDeductionIntegrationTest extends AbstractBillingIntegrationTest 
     @Autowired PointDeductor deductor;
     @Autowired BudgetQueryService budgetQuery;
     @Autowired BudgetDailyPlanRepository planRepository;
+    @Autowired DailyPlanSnapshotService snapshotService;
+    @Autowired DailySpendCounter spendCounter;
     @Autowired TransactionTemplate tx;
     @Autowired JdbcTemplate jdbc;
     @Autowired StringRedisTemplate redis;
@@ -309,7 +315,7 @@ class ImpressionDeductionIntegrationTest extends AbstractBillingIntegrationTest 
         assertThat(spendInValkey(campaignId)).isEqualTo(3 * UNIT);
     }
 
-    // 계정 행이 없는 점주의 묶음은 공유 잠금에서 실패한다. 그 묶음만 실패로 돌아오고 다른 점주의 과금은 커밋된다
+    // 스냅샷은 남았는데 계획 행이 사라진 점주의 묶음은 계획 잠금에서 실패한다. 그 묶음만 실패로 돌아오고 다른 점주의 과금은 커밋된다
     @Test
     void 묶음_차감에서_한_점주_묶음이_실패해도_다른_점주_묶음은_커밋된다() {
         long healthy = plan(30, false);
@@ -319,6 +325,8 @@ class ImpressionDeductionIntegrationTest extends AbstractBillingIntegrationTest 
                     (campaign_id, owner_id, business_date, daily_budget, unit_price, paused, created_at, updated_at)
                 values (?, ?, ?, ?, ?, false, now(6), now(6))
                 """, broken, 970_002L, DAY, 30 * UNIT, UNIT);
+        snapshotService.find(DAY, broken);
+        jdbc.update("delete from budget_daily_plan where campaign_id = ?", broken);
         UUID healthyServe = UUID.randomUUID();
         UUID brokenServe = UUID.randomUUID();
 
@@ -332,6 +340,29 @@ class ImpressionDeductionIntegrationTest extends AbstractBillingIntegrationTest 
         assertThat(ledgerDeductSum(healthy)).isEqualTo(-UNIT);
         assertThat(rows("deduction_result", broken)).isZero();
         assertThat(rows("point_ledger", broken)).isZero();
+    }
+
+    // 묶음 판정은 스크립트를 먼저 올리고 해시로 부른다. Valkey 가 재시작해 스크립트 캐시가 비어도 판정한다
+    @Test
+    void 묶음_판정은_스크립트_캐시가_비어도_판정하고_묶음_되돌리기는_소진과_처리_표시를_되돌린다() {
+        long campaignId = plan(30, false);
+        deductInTx(UUID.randomUUID(), campaignId);
+        redis.execute((RedisCallback<Object>) connection -> {
+            connection.scriptingCommands().scriptFlush();
+            return null;
+        });
+        List<SpendDeduction> deductions = List.of(
+                new SpendDeduction(DAY, campaignId, UUID.randomUUID(), UNIT),
+                new SpendDeduction(DAY, campaignId, UUID.randomUUID(), UNIT));
+
+        assertThat(spendCounter.deductAll(deductions)).extracting(DeductOutcome::status)
+                .containsExactly(DeductionStatus.BILLED, DeductionStatus.BILLED);
+        assertThat(spendInValkey(campaignId)).isEqualTo(3 * UNIT);
+
+        spendCounter.undoAll(deductions);
+
+        assertThat(spendInValkey(campaignId)).isEqualTo(UNIT);
+        assertThat(spendCounter.deductAll(deductions)).extracting(DeductOutcome::replayed).containsExactly(false, false);
     }
 
     @Test

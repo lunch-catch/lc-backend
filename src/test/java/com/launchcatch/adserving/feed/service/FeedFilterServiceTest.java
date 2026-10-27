@@ -17,6 +17,9 @@ import com.launchcatch.adserving.feed.dto.FeedFilterSaveRequest;
 import com.launchcatch.adserving.feed.entity.FeedFilter;
 import com.launchcatch.adserving.feed.repository.FeedFilterCategoryRepository;
 import com.launchcatch.adserving.feed.repository.FeedFilterRepository;
+import com.launchcatch.adserving.feed.repository.FeedStateRepository;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDateTime;
@@ -39,8 +42,9 @@ class FeedFilterServiceTest {
 
     private final FeedFilterRepository feedFilterRepository = mock(FeedFilterRepository.class);
     private final FeedFilterCategoryRepository feedFilterCategoryRepository = mock(FeedFilterCategoryRepository.class);
+    private final FeedStateRepository feedStateRepository = mock(FeedStateRepository.class);
     private final FeedFilterService service = new FeedFilterService(
-            feedFilterRepository, feedFilterCategoryRepository, Clock.fixed(NOW, ZONE));
+            feedFilterRepository, feedFilterCategoryRepository, feedStateRepository, Clock.fixed(NOW, ZONE));
 
     // 필터는 저장 API 가 만들고 엔티티에 생성 경로가 아직 없어 리플렉션으로 채운다
     private static FeedFilter filter(FeedSort sort) {
@@ -76,6 +80,21 @@ class FeedFilterServiceTest {
         when(feedFilterCategoryRepository.findCategoryCodes(MEMBER_ID)).thenReturn(List.of());
 
         assertThat(service.getFilter(MEMBER_ID).categories()).isEmpty();
+    }
+
+    // 커밋 전에 지우면 그사이 피드가 바뀌기 전 값을 다시 캐시에 둔다(#1042 결정 4)
+    @Test
+    void 저장하면_커밋된_뒤에_필터_캐시를_지운다() {
+        TransactionSynchronizationManager.initSynchronization();
+        try {
+            service.saveFilter(MEMBER_ID, new FeedFilterSaveRequest(List.of("KOREAN"), "DISTANCE"));
+
+            verify(feedStateRepository, never()).evictFilter(MEMBER_ID);
+            TransactionSynchronizationManager.getSynchronizations().forEach(TransactionSynchronization::afterCommit);
+            verify(feedStateRepository).evictFilter(MEMBER_ID);
+        } finally {
+            TransactionSynchronizationManager.clearSynchronization();
+        }
     }
 
     @Test

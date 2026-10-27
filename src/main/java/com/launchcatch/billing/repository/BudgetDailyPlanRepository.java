@@ -136,7 +136,7 @@ public interface BudgetDailyPlanRepository extends JpaRepository<BudgetDailyPlan
      * 이 읽기가 그 값을 보고, 재구성이 먼저였으면 중단은 해시가 만들어진 뒤에 반영된다.
      * 잠금 읽기는 REPEATABLE READ 에서도 스냅샷이 아니라 최신 커밋을 본다.
      *
-     * 노출 차감 핫패스는 이 메서드를 부르지 않는다. 해시가 없을 때만 재구성이 부른다.
+     * 노출 차감도 이 메서드로 그날 계획을 잠가 해제 시각을 읽는다(#1049). 해제의 배타 잠금이 차감의 커밋을 기다린다.
      */
     @Lock(LockModeType.PESSIMISTIC_READ)
     @Query("""
@@ -160,4 +160,45 @@ public interface BudgetDailyPlanRepository extends JpaRepository<BudgetDailyPlan
             """)
     List<BudgetDailyPlan> findAllForShare(@Param("businessDate") LocalDate businessDate,
                                           @Param("campaignIds") Collection<Long> campaignIds);
+
+    /*
+     * 묶음 차감이 마감을 확인하려고 읽는다(#1049). 묶음에 영업일이 둘(어제와 오늘) 섞일 수 있어 날짜도 목록으로 받는다.
+     * 고유 키(캠페인, 영업일) 순으로 공유 잠금을 걸어 해제의 배타 잠금과 순서가 엇갈리지 않는다. 행이 없는 쌍은 결과에 없다.
+     */
+    @Lock(LockModeType.PESSIMISTIC_READ)
+    @Query("""
+            select p from BudgetDailyPlan p
+             where p.businessDate in :businessDates
+               and p.campaignId in :campaignIds
+             order by p.campaignId, p.businessDate
+            """)
+    List<BudgetDailyPlan> findAllForShareIn(@Param("businessDates") Collection<LocalDate> businessDates,
+                                            @Param("campaignIds") Collection<Long> campaignIds);
+
+    /*
+     * 해제가 읽는다. 캠페인 ID 순으로 배타 잠금(FOR UPDATE)을 걸어, 해제 전에 계획 행을 공유 잠금한 차감이 끝난 뒤
+     * 소진을 세게 한다(#1049). 차감도 같은 순서로 잠가 서로를 기다리는 일이 없다.
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("""
+            select p from BudgetDailyPlan p
+             where p.businessDate = :businessDate
+               and p.campaignId in :campaignIds
+             order by p.campaignId
+            """)
+    List<BudgetDailyPlan> findAllForUpdate(@Param("businessDate") LocalDate businessDate,
+                                           @Param("campaignIds") Collection<Long> campaignIds);
+
+    // 그 계획들의 예약을 해제했다고 적는다. 남은 금액과 관계없이 적는다. 이미 적힌 계획은 처음 시각을 남긴다
+    @Modifying
+    @Query(value = """
+            UPDATE budget_daily_plan
+               SET released_at = :releasedAt, updated_at = :releasedAt
+             WHERE business_date = :businessDate
+               AND campaign_id IN (:campaignIds)
+               AND released_at IS NULL
+            """, nativeQuery = true)
+    int markReleased(@Param("businessDate") LocalDate businessDate,
+                     @Param("campaignIds") Collection<Long> campaignIds,
+                     @Param("releasedAt") LocalDateTime releasedAt);
 }

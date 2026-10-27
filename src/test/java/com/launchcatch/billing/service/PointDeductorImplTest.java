@@ -23,7 +23,9 @@ import com.launchcatch.billing.cache.InMemoryDailySpendCounter;
 import com.launchcatch.billing.cache.DeductOutcome;
 import com.launchcatch.billing.repository.DeductionResultRepository;
 import com.launchcatch.billing.repository.PointLedgerRepository;
-import com.launchcatch.billing.repository.PointAccountRepository;
+import com.launchcatch.billing.entity.BudgetDailyPlan;
+import com.launchcatch.billing.repository.BudgetDailyPlanRepository;
+import com.launchcatch.billing.repository.DeductionBatchRepository;
 import com.launchcatch.campaign.contract.CampaignInfo;
 import com.launchcatch.campaign.contract.CampaignQueryService;
 import com.launchcatch.campaign.contract.CampaignStatus;
@@ -49,6 +51,7 @@ import org.springframework.dao.CannotAcquireLockException;
 import org.springframework.dao.QueryTimeoutException;
 import org.springframework.data.redis.RedisConnectionFailureException;
 import org.springframework.transaction.CannotCreateTransactionException;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -83,7 +86,9 @@ class PointDeductorImplTest {
     @Mock
     private PlatformSettingQueryService platformSetting;
     @Mock
-    private PointAccountRepository accountRepository;
+    private BudgetDailyPlanRepository planRepository;
+    @Mock
+    private DeductionBatchRepository batchRepository;
 
     private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
     private final List<String> finishedTransactions = new ArrayList<>();
@@ -119,9 +124,11 @@ class PointDeductorImplTest {
         TransactionSynchronizationManager.initSynchronization();
         deductor = new PointDeductorImpl(snapshotService, rebuildService, spendCounter,
                 deductionResultRepository, ledgerRepository, campaignQuery, platformSetting, CLOCK, meterRegistry,
-                accountRepository, transactions);
+                planRepository, batchRepository, transactions);
         lenient().when(snapshotService.find(DAY, CAMPAIGN_ID)).thenReturn(Optional.of(PLAN));
-        lenient().when(accountRepository.lockForShareByOwnerId(3L)).thenReturn(Optional.of(1L));
+        lenient().when(planRepository.findForShare(CAMPAIGN_ID, DAY)).thenReturn(Optional.of(plan(DAY, null)));
+        lenient().when(planRepository.findForShare(CAMPAIGN_ID, DAY.minusDays(1)))
+                .thenReturn(Optional.of(plan(DAY.minusDays(1), null)));
         // 기본은 새로 기록된 경우다. 중복은 해당 시험에서 0 을 돌려주게 한다
         lenient().when(deductionResultRepository.insertIfAbsent(any(UUID.class), any(), any(), any(),
                 any(DeductionStatus.class), anyLong(), any())).thenReturn(1);
@@ -145,6 +152,13 @@ class PointDeductorImplTest {
     private static CampaignInfo campaign(long campaignId, long ownerId) {
         return new CampaignInfo(campaignId, ownerId, 100L, CampaignStatus.ENDED, 100, null, null, null, null, null,
                 null, 0, null, 0, null, List.of(), null, null, null, null, 1000L);
+    }
+
+    // 그날 계획 행이다. releasedAt 이 있으면 해제가 끝난 계획이다(#1049)
+    private static BudgetDailyPlan plan(LocalDate businessDate, LocalDateTime releasedAt) {
+        BudgetDailyPlan plan = BudgetDailyPlan.create(CAMPAIGN_ID, 3L, businessDate, 1000L, 10L, false, null);
+        ReflectionTestUtils.setField(plan, "releasedAt", releasedAt);
+        return plan;
     }
 
     private double undoCount(String result) {
@@ -295,55 +309,57 @@ class PointDeductorImplTest {
         assertThat(transactional.propagation()).isEqualTo(Propagation.REQUIRED);
     }
 
+    // 마감은 날짜가 아니라 그 계획의 해제 여부로 본다(#1049)
     @Test
-    void 자정이_지난_전날_노출은_미과금으로_남기고_카운터와_원장은_건드리지_않는다() {
+    void 해제가_끝난_계획의_노출은_미과금으로_남기고_카운터와_원장은_건드리지_않는다() {
         LocalDate yesterday = DAY.minusDays(1);
         when(snapshotService.find(yesterday, CAMPAIGN_ID)).thenReturn(Optional.of(PLAN));
-        lenient().when(spendCounter.deduct(yesterday, CAMPAIGN_ID, SERVE_ID, 10L))
-                .thenReturn(DeductOutcome.of(DeductionStatus.BILLED));
+        when(planRepository.findForShare(CAMPAIGN_ID, yesterday)).thenReturn(Optional.of(plan(yesterday, NOW.minusHours(11))));
 
         DeductionStatus status = deductor.deduct(SERVE_ID, CAMPAIGN_ID, yesterday);
 
-        assertThat(status.name()).isEqualTo("NOT_BILLED_CLOSED");
-        verifyNoInteractions(spendCounter, rebuildService, ledgerRepository);
-    }
-
-    @Test
-    void KST_자정_정각부터_전날_노출을_과금하지_않는다() {
-        Clock midnight = Clock.fixed(Instant.parse("2026-10-14T15:00:00Z"), ClockConfig.ZONE);
-
-        DeductionStatus status = deductorAt(midnight).deduct(SERVE_ID, CAMPAIGN_ID, DAY);
-
         assertThat(status).isEqualTo(DeductionStatus.NOT_BILLED_CLOSED);
-        verify(deductionResultRepository).insertIfAbsent(SERVE_ID, CAMPAIGN_ID, 3L, DAY,
-                DeductionStatus.NOT_BILLED_CLOSED, 10L, DAY.plusDays(1).atStartOfDay());
+        verify(deductionResultRepository).insertIfAbsent(SERVE_ID, CAMPAIGN_ID, 3L, yesterday,
+                DeductionStatus.NOT_BILLED_CLOSED, 10L, NOW);
+        verifyNoInteractions(spendCounter, rebuildService, ledgerRepository);
+    }
+
+    // 자정 직전에 받은 노출을 릴레이가 자정 뒤에 넘겨도 해제 전이면 그날 예산으로 과금한다
+    @Test
+    void 해제_전이면_자정이_지나도_전날_노출을_그날_예산으로_과금한다() {
+        LocalDate yesterday = DAY.minusDays(1);
+        when(snapshotService.find(yesterday, CAMPAIGN_ID)).thenReturn(Optional.of(PLAN));
+        when(spendCounter.deduct(yesterday, CAMPAIGN_ID, SERVE_ID, 10L)).thenReturn(DeductOutcome.of(DeductionStatus.BILLED));
+
+        assertThat(deductor.deduct(SERVE_ID, CAMPAIGN_ID, yesterday)).isEqualTo(DeductionStatus.BILLED);
+        verify(ledgerRepository).insertDeductIfAbsent(3L, CAMPAIGN_ID, SERVE_ID, -10L, NOW);
+    }
+
+    // 해제는 다음 날 00:00 에 끝나고 릴레이는 어제 이후 노출만 넘긴다. 그보다 앞선 영업일은 계획을 잠그지 않고 마감으로 본다
+    @Test
+    void 어제보다_앞선_영업일은_계획을_잠그지_않고_마감으로_본다() {
+        LocalDate twoDaysAgo = DAY.minusDays(2);
+        when(snapshotService.find(twoDaysAgo, CAMPAIGN_ID)).thenReturn(Optional.of(PLAN));
+
+        assertThat(deductor.deduct(SERVE_ID, CAMPAIGN_ID, twoDaysAgo)).isEqualTo(DeductionStatus.NOT_BILLED_CLOSED);
+        verify(planRepository, never()).findForShare(CAMPAIGN_ID, twoDaysAgo);
         verifyNoInteractions(spendCounter, rebuildService, ledgerRepository);
     }
 
     @Test
-    void KST_자정_직전에는_그날_예산으로_과금한다() {
-        Clock beforeMidnight = Clock.fixed(Instant.parse("2026-10-14T14:59:59.999999Z"), ClockConfig.ZONE);
+    void 해제_전이면_그날_예산으로_과금한다() {
         when(spendCounter.deduct(DAY, CAMPAIGN_ID, SERVE_ID, 10L))
                 .thenReturn(DeductOutcome.of(DeductionStatus.BILLED));
 
-        assertThat(deductorAt(beforeMidnight).deduct(SERVE_ID, CAMPAIGN_ID, DAY))
-                .isEqualTo(DeductionStatus.BILLED);
+        assertThat(deductor.deduct(SERVE_ID, CAMPAIGN_ID, DAY)).isEqualTo(DeductionStatus.BILLED);
     }
 
+    // 계획 행을 잠가 읽으므로 해제가 커밋되기를 기다린 뒤 해제 시각을 본다
     @Test
-    void 계정_잠금을_기다리는_동안_자정이_지나면_전날_노출을_과금하지_않는다() {
-        AtomicReference<Instant> instant = new AtomicReference<>(Instant.parse("2026-10-14T14:59:59Z"));
-        Clock changingClock = mock(Clock.class);
-        when(changingClock.getZone()).thenReturn(ClockConfig.ZONE);
-        when(changingClock.instant()).thenAnswer(invocation -> instant.get());
-        when(accountRepository.lockForShareByOwnerId(3L)).thenAnswer(invocation -> {
-            instant.set(Instant.parse("2026-10-14T15:00:00Z"));
-            return Optional.of(1L);
-        });
+    void 계획_잠금을_기다리는_동안_해제가_끝나면_과금하지_않는다() {
+        when(planRepository.findForShare(CAMPAIGN_ID, DAY)).thenReturn(Optional.of(plan(DAY, NOW)));
 
-        DeductionStatus status = deductorAt(changingClock).deduct(SERVE_ID, CAMPAIGN_ID, DAY);
-
-        assertThat(status).isEqualTo(DeductionStatus.NOT_BILLED_CLOSED);
+        assertThat(deductor.deduct(SERVE_ID, CAMPAIGN_ID, DAY)).isEqualTo(DeductionStatus.NOT_BILLED_CLOSED);
         verifyNoInteractions(spendCounter, rebuildService, ledgerRepository);
     }
 
@@ -351,6 +367,7 @@ class PointDeductorImplTest {
     void 마감_뒤_재호출은_이미_커밋된_과금_판정을_그대로_돌려준다() {
         LocalDate yesterday = DAY.minusDays(1);
         when(snapshotService.find(yesterday, CAMPAIGN_ID)).thenReturn(Optional.of(PLAN));
+        when(planRepository.findForShare(CAMPAIGN_ID, yesterday)).thenReturn(Optional.of(plan(yesterday, NOW.minusHours(11))));
         when(deductionResultRepository.insertIfAbsent(SERVE_ID, CAMPAIGN_ID, 3L, yesterday,
                 DeductionStatus.NOT_BILLED_CLOSED, 10L, NOW)).thenReturn(2);
         when(deductionResultRepository.findFirstStatus(SERVE_ID)).thenReturn(Optional.of(DeductionStatus.BILLED));
@@ -373,17 +390,17 @@ class PointDeductorImplTest {
     }
 
     @Test
-    void 계획의_점주_계정이_없으면_과금하지_않고_실패한다() {
-        when(accountRepository.lockForShareByOwnerId(3L)).thenReturn(Optional.empty());
+    void 계획_스냅샷은_있는데_계획_행을_잠가_읽지_못하면_과금하지_않고_실패한다() {
+        when(planRepository.findForShare(CAMPAIGN_ID, DAY)).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> deductor.deduct(SERVE_ID, CAMPAIGN_ID, DAY))
-                .isInstanceOf(IllegalStateException.class).hasMessageContaining("ownerId=3");
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("campaignId=7");
         verifyNoInteractions(spendCounter, rebuildService, ledgerRepository, deductionResultRepository);
     }
 
     private PointDeductorImpl deductorAt(Clock time) {
         return new PointDeductorImpl(snapshotService, rebuildService, spendCounter, deductionResultRepository,
-                ledgerRepository, campaignQuery, platformSetting, time, meterRegistry, accountRepository, transactions);
+                ledgerRepository, campaignQuery, platformSetting, time, meterRegistry, planRepository, batchRepository, transactions);
     }
 
     @Test
@@ -466,7 +483,7 @@ class PointDeductorImplTest {
     private PointDeductorImpl deductorWith(InMemoryDailySpendCounter fake) {
         return new PointDeductorImpl(snapshotService, rebuildService, fake, deductionResultRepository, ledgerRepository,
                 campaignQuery, platformSetting, CLOCK,
-                meterRegistry, accountRepository, transactions);
+                meterRegistry, planRepository, batchRepository, transactions);
     }
 
     @Test
@@ -514,27 +531,89 @@ class PointDeductorImplTest {
     private static final Long OTHER_CAMPAIGN_ID = 8L;
     private static final PlanSnapshot OTHER_OWNER_PLAN = new PlanSnapshot(4L, 10L);
 
-    // 묶음 차감은 트랜잭션 밖에서 부르므로 setUp 이 켠 동기화를 끄고 시작한다
-    private void outsideTransaction() {
-        TransactionSynchronizationManager.clearSynchronization();
+    /*
+     * 묶음 차감 시험은 소진 해시를 인메모리 Fake 로, 판정과 원장 저장을 트랜잭션을 따르는 맵으로 둔다.
+     * 롤백되면 그 트랜잭션이 넣은 판정과 원장이 사라진다. 점주별로 다시 처리할 때 새 판정으로 보여야 해서다.
+     */
+    private final InMemoryDailySpendCounter counter = new InMemoryDailySpendCounter();
+    private final java.util.Map<UUID, DeductionStatus> storedResults = new java.util.HashMap<>();
+    private final List<DeductionBatchRepository.DeductRow> storedDeducts = new ArrayList<>();
+    private final java.util.Set<String> missingPlans = new java.util.HashSet<>();
+    private final java.util.Map<String, LocalDateTime> releasedPlans = new java.util.HashMap<>();
+
+    private PointDeductorImpl batchDeductor() {
+        return new PointDeductorImpl(snapshotService, rebuildService, counter, deductionResultRepository,
+                ledgerRepository, campaignQuery, platformSetting, CLOCK, meterRegistry, planRepository, batchRepository,
+                transactions);
     }
 
-    private void otherOwnerCampaignBills() {
+    // 묶음 차감은 트랜잭션 밖에서 부르므로 setUp 이 켠 동기화를 끄고, 두 점주의 계획과 소진 해시를 둔다
+    private void outsideTransaction() {
+        TransactionSynchronizationManager.clearSynchronization();
         lenient().when(snapshotService.find(DAY, OTHER_CAMPAIGN_ID)).thenReturn(Optional.of(OTHER_OWNER_PLAN));
-        lenient().when(accountRepository.lockForShareByOwnerId(4L)).thenReturn(Optional.of(2L));
-        lenient().when(spendCounter.deduct(any(), any(), any(UUID.class), anyLong()))
-                .thenReturn(DeductOutcome.of(DeductionStatus.BILLED));
+        counter.rebuildIfAbsent(DAY, CAMPAIGN_ID, 1000L, 0L, false, null);
+        counter.rebuildIfAbsent(DAY, OTHER_CAMPAIGN_ID, 1000L, 0L, false, null);
+        lenient().when(planRepository.findAllForShareIn(any(), any())).thenAnswer(invocation -> {
+            java.util.Collection<LocalDate> dates = invocation.getArgument(0);
+            java.util.Collection<Long> campaignIds = invocation.getArgument(1);
+            List<BudgetDailyPlan> plans = new ArrayList<>();
+            for (Long campaignId : campaignIds) {
+                for (LocalDate date : dates) {
+                    if (!missingPlans.contains(campaignId + ":" + date)) {
+                        BudgetDailyPlan plan = BudgetDailyPlan.create(campaignId, 3L, date, 1000L, 10L, false, null);
+                        ReflectionTestUtils.setField(plan, "releasedAt", releasedPlans.get(campaignId + ":" + date));
+                        plans.add(plan);
+                    }
+                }
+            }
+            return plans;
+        });
+        lenient().when(batchRepository.insertResults(any(), any())).thenAnswer(invocation -> {
+            List<DeductionBatchRepository.ResultRow> rows = invocation.getArgument(0);
+            java.util.Map<UUID, DeductionBatchRepository.StoredResult> stored = new java.util.HashMap<>();
+            List<UUID> inserted = new ArrayList<>();
+            for (DeductionBatchRepository.ResultRow row : rows) {
+                DeductionStatus first = storedResults.putIfAbsent(row.serveId(), row.status());
+                if (first == null) {
+                    inserted.add(row.serveId());
+                }
+                stored.put(row.serveId(), new DeductionBatchRepository.StoredResult(
+                        first == null ? row.status() : first, first == null));
+            }
+            onRollback(() -> inserted.forEach(storedResults::remove));
+            return stored;
+        });
+        lenient().doAnswer(invocation -> {
+            List<DeductionBatchRepository.DeductRow> rows = invocation.getArgument(0);
+            storedDeducts.addAll(rows);
+            onRollback(() -> storedDeducts.removeAll(rows));
+            return null;
+        }).when(batchRepository).insertDeducts(any(), any());
+    }
+
+    private static void onRollback(Runnable undo) {
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCompletion(int status) {
+                if (status == STATUS_ROLLED_BACK) {
+                    undo.run();
+                }
+            }
+        });
+    }
+
+    private long spend(Long campaignId) {
+        return counter.readAll(DAY, List.of(campaignId)).get(campaignId).spend();
     }
 
     @Test
-    void 묶음_차감은_점주별로_묶어_점주마다_한_트랜잭션으로_처리하고_노출마다_판정을_돌려준다() {
+    void 묶음_전체를_한_트랜잭션에서_한_번씩_쓰고_노출마다_판정을_돌려준다() {
         outsideTransaction();
-        otherOwnerCampaignBills();
         UUID first = UUID.randomUUID();
         UUID second = UUID.randomUUID();
         UUID third = UUID.randomUUID();
 
-        List<DeductionOutcome> outcomes = deductor.deductAll(List.of(
+        List<DeductionOutcome> outcomes = batchDeductor().deductAll(List.of(
                 new DeductionRequest(first, CAMPAIGN_ID, DAY),
                 new DeductionRequest(second, OTHER_CAMPAIGN_ID, DAY),
                 new DeductionRequest(third, CAMPAIGN_ID, DAY)));
@@ -543,22 +622,25 @@ class PointDeductorImplTest {
                 DeductionOutcome.judged(first, DeductionStatus.BILLED),
                 DeductionOutcome.judged(second, DeductionStatus.BILLED),
                 DeductionOutcome.judged(third, DeductionStatus.BILLED));
-        assertThat(finishedTransactions).containsExactly("commit", "commit");
-        verify(accountRepository, times(2)).lockForShareByOwnerId(3L);
-        verify(accountRepository).lockForShareByOwnerId(4L);
+        assertThat(finishedTransactions).containsExactly("commit");
+        verify(planRepository).findAllForShareIn(any(), any());
+        verify(batchRepository).insertResults(any(), any());
+        verify(batchRepository).insertDeducts(any(), any());
+        assertThat(storedDeducts).extracting(DeductionBatchRepository.DeductRow::serveId)
+                .containsExactlyInAnyOrder(first, second, third);
+        assertThat(spend(CAMPAIGN_ID)).isEqualTo(20L);
     }
 
     @Test
-    void 한_점주_묶음이_실패하면_그_묶음만_실패로_돌려주고_소진을_되돌리며_다른_점주_묶음은_커밋된다() {
+    void 한_트랜잭션이_실패하면_소진을_되돌리고_점주별로_다시_처리해_실패한_점주만_실패로_돌려준다() {
         outsideTransaction();
-        otherOwnerCampaignBills();
         UUID first = UUID.randomUUID();
         UUID second = UUID.randomUUID();
         UUID third = UUID.randomUUID();
-        lenient().doThrow(new IllegalStateException("원장 쓰기 실패"))
-                .when(ledgerRepository).insertDeductIfAbsent(3L, CAMPAIGN_ID, third, -10L, NOW);
+        doThrow(new IllegalStateException("원장 쓰기 실패")).when(batchRepository).insertDeducts(
+                org.mockito.ArgumentMatchers.argThat(rows -> rows.stream().anyMatch(row -> row.ownerId() == 3L)), any());
 
-        List<DeductionOutcome> outcomes = deductor.deductAll(List.of(
+        List<DeductionOutcome> outcomes = batchDeductor().deductAll(List.of(
                 new DeductionRequest(first, CAMPAIGN_ID, DAY),
                 new DeductionRequest(second, OTHER_CAMPAIGN_ID, DAY),
                 new DeductionRequest(third, CAMPAIGN_ID, DAY)));
@@ -567,24 +649,27 @@ class PointDeductorImplTest {
                 DeductionOutcome.failed(first),
                 DeductionOutcome.judged(second, DeductionStatus.BILLED),
                 DeductionOutcome.failed(third));
-        assertThat(finishedTransactions).containsExactlyInAnyOrder("rollback", "commit");
-        verify(spendCounter).undo(DAY, CAMPAIGN_ID, first, 10L);
-        verify(spendCounter).undo(DAY, CAMPAIGN_ID, third, 10L);
-        verify(spendCounter, never()).undo(DAY, OTHER_CAMPAIGN_ID, second, 10L);
+        assertThat(finishedTransactions).containsExactly("rollback", "rollback", "commit");
+        assertThat(spend(CAMPAIGN_ID)).isZero();
+        assertThat(spend(OTHER_CAMPAIGN_ID)).isEqualTo(10L);
+        assertThat(storedResults).containsOnlyKeys(second);
+        assertThat(meterRegistry.counter(PointDeductorImpl.BATCH_FALLBACK_METRIC).count()).isEqualTo(1);
         assertThat(meterRegistry.counter(PointDeductorImpl.BATCH_FAILED_METRIC, "reason", "owner_group").count())
                 .isEqualTo(2);
+        // 묶음 트랜잭션에서 셋, 점주 3 의 다시 처리에서 둘을 되돌린다
+        assertThat(undoCount("ok")).isEqualTo(5);
     }
 
     @Test
-    void 묶음_안의_영업일이_달라도_노출마다_받은_날로_마감을_판정한다() {
+    void 묶음_안의_영업일이_달라도_노출마다_그_계획의_해제로_마감을_판정한다() {
         outsideTransaction();
-        otherOwnerCampaignBills();
         LocalDate yesterday = DAY.minusDays(1);
         when(snapshotService.find(yesterday, CAMPAIGN_ID)).thenReturn(Optional.of(PLAN));
+        releasedPlans.put(CAMPAIGN_ID + ":" + yesterday, NOW.minusHours(11));
         UUID today = UUID.randomUUID();
         UUID late = UUID.randomUUID();
 
-        List<DeductionOutcome> outcomes = deductor.deductAll(List.of(
+        List<DeductionOutcome> outcomes = batchDeductor().deductAll(List.of(
                 new DeductionRequest(today, CAMPAIGN_ID, DAY),
                 new DeductionRequest(late, CAMPAIGN_ID, yesterday)));
 
@@ -592,35 +677,140 @@ class PointDeductorImplTest {
                 DeductionOutcome.judged(today, DeductionStatus.BILLED),
                 DeductionOutcome.judged(late, DeductionStatus.NOT_BILLED_CLOSED));
         assertThat(finishedTransactions).containsExactly("commit");
-        verify(spendCounter, never()).deduct(yesterday, CAMPAIGN_ID, late, 10L);
+        assertThat(counter.readAll(yesterday, List.of(CAMPAIGN_ID))).isEmpty();
+    }
+
+    // 해제 전이면 자정이 지나도 전날 예산으로 과금하고, 어제보다 앞선 날은 계획을 잠그지 않고 마감으로 본다
+    @Test
+    void 해제_전의_전날_노출은_과금하고_어제보다_앞선_날은_잠그지_않고_마감으로_본다() {
+        outsideTransaction();
+        LocalDate yesterday = DAY.minusDays(1);
+        LocalDate twoDaysAgo = DAY.minusDays(2);
+        when(snapshotService.find(yesterday, CAMPAIGN_ID)).thenReturn(Optional.of(PLAN));
+        when(snapshotService.find(twoDaysAgo, CAMPAIGN_ID)).thenReturn(Optional.of(PLAN));
+        counter.rebuildIfAbsent(yesterday, CAMPAIGN_ID, 1000L, 0L, false, null);
+        UUID late = UUID.randomUUID();
+        UUID old = UUID.randomUUID();
+
+        List<DeductionOutcome> outcomes = batchDeductor().deductAll(List.of(
+                new DeductionRequest(late, CAMPAIGN_ID, yesterday),
+                new DeductionRequest(old, CAMPAIGN_ID, twoDaysAgo)));
+
+        assertThat(outcomes).containsExactlyInAnyOrder(
+                DeductionOutcome.judged(late, DeductionStatus.BILLED),
+                DeductionOutcome.judged(old, DeductionStatus.NOT_BILLED_CLOSED));
+        verify(planRepository).findAllForShareIn(java.util.Set.of(yesterday), java.util.Set.of(CAMPAIGN_ID));
     }
 
     @Test
-    void 이미_판정된_노출을_다시_넘기면_첫_판정을_돌려준다() {
+    void 이미_판정된_노출을_다시_넘기면_첫_판정을_돌려주고_원장은_쓰지_않는다() {
         outsideTransaction();
-        otherOwnerCampaignBills();
         UUID replayed = UUID.randomUUID();
-        when(deductionResultRepository.insertIfAbsent(any(UUID.class), any(), any(), any(),
-                any(DeductionStatus.class), anyLong(), any())).thenReturn(0);
-        when(deductionResultRepository.findFirstStatus(replayed)).thenReturn(Optional.of(DeductionStatus.NOT_BILLED_BUDGET));
+        storedResults.put(replayed, DeductionStatus.NOT_BILLED_BUDGET);
 
-        List<DeductionOutcome> outcomes = deductor.deductAll(List.of(new DeductionRequest(replayed, CAMPAIGN_ID, DAY)));
+        List<DeductionOutcome> outcomes = batchDeductor().deductAll(List.of(new DeductionRequest(replayed, CAMPAIGN_ID, DAY)));
 
         assertThat(outcomes).containsExactly(DeductionOutcome.judged(replayed, DeductionStatus.NOT_BILLED_BUDGET));
-        verify(ledgerRepository, never()).insertDeductIfAbsent(any(), any(), any(UUID.class), anyLong(), any());
+        verify(batchRepository, never()).insertDeducts(any(), any());
+    }
+
+    @Test
+    void 같은_노출이_묶음에_둘이면_한_번만_판정하고_같은_결과를_돌려준다() {
+        outsideTransaction();
+        UUID twice = UUID.randomUUID();
+
+        List<DeductionOutcome> outcomes = batchDeductor().deductAll(List.of(
+                new DeductionRequest(twice, CAMPAIGN_ID, DAY),
+                new DeductionRequest(twice, CAMPAIGN_ID, DAY)));
+
+        assertThat(outcomes).containsExactly(
+                DeductionOutcome.judged(twice, DeductionStatus.BILLED),
+                DeductionOutcome.judged(twice, DeductionStatus.BILLED));
+        assertThat(spend(CAMPAIGN_ID)).isEqualTo(10L);
+        assertThat(storedDeducts).hasSize(1);
+    }
+
+    @Test
+    void 해시가_없는_캠페인은_다시_만든_뒤_그_노출만_다시_판정한다() {
+        outsideTransaction();
+        counter.evict(DAY, CAMPAIGN_ID);
+        org.mockito.Mockito.doAnswer(invocation -> counter.rebuildIfAbsent(DAY, CAMPAIGN_ID, 1000L, 50L, false, null))
+                .when(rebuildService).rebuildIfAbsent(DAY, CAMPAIGN_ID);
+        UUID missing = UUID.randomUUID();
+        UUID present = UUID.randomUUID();
+
+        List<DeductionOutcome> outcomes = batchDeductor().deductAll(List.of(
+                new DeductionRequest(missing, CAMPAIGN_ID, DAY),
+                new DeductionRequest(present, OTHER_CAMPAIGN_ID, DAY)));
+
+        assertThat(outcomes).containsExactlyInAnyOrder(
+                DeductionOutcome.judged(missing, DeductionStatus.BILLED),
+                DeductionOutcome.judged(present, DeductionStatus.BILLED));
+        assertThat(spend(CAMPAIGN_ID)).isEqualTo(60L);
+        assertThat(spend(OTHER_CAMPAIGN_ID)).isEqualTo(10L);
+    }
+
+    @Test
+    void 다시_만들어도_해시가_없으면_그_점주_묶음만_실패한다() {
+        outsideTransaction();
+        counter.evict(DAY, CAMPAIGN_ID);
+        UUID missing = UUID.randomUUID();
+        UUID present = UUID.randomUUID();
+
+        List<DeductionOutcome> outcomes = batchDeductor().deductAll(List.of(
+                new DeductionRequest(missing, CAMPAIGN_ID, DAY),
+                new DeductionRequest(present, OTHER_CAMPAIGN_ID, DAY)));
+
+        assertThat(outcomes).containsExactlyInAnyOrder(
+                DeductionOutcome.failed(missing),
+                DeductionOutcome.judged(present, DeductionStatus.BILLED));
+        assertThat(spend(OTHER_CAMPAIGN_ID)).isEqualTo(10L);
+    }
+
+    @Test
+    void 계획_스냅샷은_있는데_계획_행이_없으면_그_점주_묶음만_실패한다() {
+        outsideTransaction();
+        missingPlans.add(CAMPAIGN_ID + ":" + DAY);
+        UUID broken = UUID.randomUUID();
+        UUID other = UUID.randomUUID();
+
+        List<DeductionOutcome> outcomes = batchDeductor().deductAll(List.of(
+                new DeductionRequest(broken, CAMPAIGN_ID, DAY),
+                new DeductionRequest(other, OTHER_CAMPAIGN_ID, DAY)));
+
+        assertThat(outcomes).containsExactlyInAnyOrder(
+                DeductionOutcome.failed(broken),
+                DeductionOutcome.judged(other, DeductionStatus.BILLED));
+    }
+
+    // 계획 잠금 대기 초과는 그 계획을 다투는 해제 때문이라 그 점주 묶음만 실패한다
+    @Test
+    void 한_점주의_계획_잠금_대기가_넘치면_그_점주_묶음만_실패한다() {
+        outsideTransaction();
+        doThrow(new CannotAcquireLockException("잠금 대기 초과")).when(planRepository)
+                .findAllForShareIn(any(), org.mockito.ArgumentMatchers.argThat(ids -> ids.contains(CAMPAIGN_ID)));
+        UUID blocked = UUID.randomUUID();
+        UUID other = UUID.randomUUID();
+
+        List<DeductionOutcome> outcomes = batchDeductor().deductAll(List.of(
+                new DeductionRequest(blocked, CAMPAIGN_ID, DAY),
+                new DeductionRequest(other, OTHER_CAMPAIGN_ID, DAY)));
+
+        assertThat(outcomes).containsExactlyInAnyOrder(
+                DeductionOutcome.failed(blocked),
+                DeductionOutcome.judged(other, DeductionStatus.BILLED));
     }
 
     @Test
     void 계획도_캠페인도_없는_노출은_그_노출만_실패로_돌려주고_나머지는_처리한다() {
         outsideTransaction();
-        otherOwnerCampaignBills();
         Long missingCampaign = 99L;
         when(snapshotService.find(DAY, missingCampaign)).thenReturn(Optional.empty());
         when(campaignQuery.findAllById(List.of(missingCampaign))).thenReturn(List.of());
         UUID unknown = UUID.randomUUID();
         UUID known = UUID.randomUUID();
 
-        List<DeductionOutcome> outcomes = deductor.deductAll(List.of(
+        List<DeductionOutcome> outcomes = batchDeductor().deductAll(List.of(
                 new DeductionRequest(unknown, missingCampaign, DAY),
                 new DeductionRequest(known, CAMPAIGN_ID, DAY)));
 
@@ -631,16 +821,41 @@ class PointDeductorImplTest {
                 .isEqualTo(1);
     }
 
+    @Test
+    void 계획이_없는_캠페인의_노출은_캠페인의_점주로_계획_없음을_기록하고_지난_날은_마감으로_기록한다() {
+        outsideTransaction();
+        Long noPlanCampaign = 50L;
+        LocalDate yesterday = DAY.minusDays(1);
+        when(snapshotService.find(DAY, noPlanCampaign)).thenReturn(Optional.empty());
+        when(snapshotService.find(yesterday, noPlanCampaign)).thenReturn(Optional.empty());
+        when(campaignQuery.findAllById(List.of(noPlanCampaign))).thenReturn(List.of(campaign(noPlanCampaign, 5L)));
+        when(platformSetting.getImpressionUnitPrice()).thenReturn(12);
+        UUID today = UUID.randomUUID();
+        UUID late = UUID.randomUUID();
+
+        List<DeductionOutcome> outcomes = batchDeductor().deductAll(List.of(
+                new DeductionRequest(today, noPlanCampaign, DAY),
+                new DeductionRequest(late, noPlanCampaign, yesterday)));
+
+        assertThat(outcomes).containsExactlyInAnyOrder(
+                DeductionOutcome.judged(today, DeductionStatus.NOT_BILLED_NO_PLAN),
+                DeductionOutcome.judged(late, DeductionStatus.NOT_BILLED_CLOSED));
+        verify(batchRepository).insertResults(List.of(
+                new DeductionBatchRepository.ResultRow(today, noPlanCampaign, 5L, DAY, DeductionStatus.NOT_BILLED_NO_PLAN, 12L),
+                new DeductionBatchRepository.ResultRow(late, noPlanCampaign, 5L, yesterday, DeductionStatus.NOT_BILLED_CLOSED, 12L)),
+                NOW);
+        verify(planRepository, never()).findAllForShareIn(any(), any());
+        assertThat(meterRegistry.counter(PointDeductorImpl.NO_PLAN_METRIC).count()).isEqualTo(1);
+    }
+
     /*
-     * 정산의 Valkey 나 DB 에 닿지 못하면 모든 점주 묶음이 같은 이유로 실패한다. 점주별 실패로 돌려주면 릴레이의 재시도 표만 커지므로
+     * 정산의 Valkey 나 DB 에 닿지 못하면 모든 점주 묶음이 같은 이유로 실패한다. 점주별로 다시 처리하면 릴레이의 재시도 표만 커지므로
      * 예외로 올려 릴레이가 같은 묶음을 다음 주기에 다시 넘기게 한다.
      */
     @Test
-    void 정산이_Valkey에_닿지_못하면_묶음별_실패가_아니라_예외를_올린다() {
+    void 정산이_Valkey에_닿지_못하면_점주별로_다시_처리하지_않고_예외를_올린다() {
         outsideTransaction();
-        otherOwnerCampaignBills();
-        when(spendCounter.deduct(any(), any(), any(UUID.class), anyLong()))
-                .thenThrow(new RedisConnectionFailureException("Valkey 연결 실패"));
+        when(spendCounter.deductAll(any())).thenThrow(new RedisConnectionFailureException("Valkey 연결 실패"));
 
         assertThatThrownBy(() -> deductor.deductAll(List.of(
                 new DeductionRequest(UUID.randomUUID(), CAMPAIGN_ID, DAY),
@@ -649,14 +864,52 @@ class PointDeductorImplTest {
         assertThat(finishedTransactions).containsExactly("rollback");
     }
 
+    @Test
+    void 정산의_명령이_시간을_넘기면_예외를_올린다() {
+        outsideTransaction();
+        when(spendCounter.deductAll(any())).thenThrow(new QueryTimeoutException("Valkey 명령 시간 초과"));
+
+        assertThatThrownBy(() -> deductor.deductAll(List.of(new DeductionRequest(UUID.randomUUID(), CAMPAIGN_ID, DAY))))
+                .isInstanceOf(QueryTimeoutException.class);
+    }
+
+    @Test
+    void 점주별로_다시_처리하다_DB에_닿지_못하면_예외를_올린다() {
+        outsideTransaction();
+        doThrow(new CannotAcquireLockException("잠금 대기 초과"), new QueryTimeoutException("DB 응답 없음"))
+                .when(planRepository).findAllForShareIn(any(), any());
+
+        assertThatThrownBy(() -> batchDeductor().deductAll(List.of(
+                new DeductionRequest(UUID.randomUUID(), CAMPAIGN_ID, DAY),
+                new DeductionRequest(UUID.randomUUID(), OTHER_CAMPAIGN_ID, DAY))))
+                .isInstanceOf(QueryTimeoutException.class);
+        assertThat(finishedTransactions).containsExactly("rollback", "rollback");
+    }
+
+    @Test
+    void 롤백된_판정을_되돌리지_못해도_점주별로_다시_처리하고_실패를_센다() {
+        outsideTransaction();
+        PointDeductorImpl withBrokenUndo = new PointDeductorImpl(snapshotService, rebuildService, spendCounter,
+                deductionResultRepository, ledgerRepository, campaignQuery, platformSetting, CLOCK, meterRegistry,
+                planRepository, batchRepository, transactions);
+        when(spendCounter.deductAll(any())).thenAnswer(invocation -> counter.deductAll(invocation.getArgument(0)));
+        doThrow(new IllegalStateException("되돌리기 실패")).when(spendCounter).undoAll(any());
+        doThrow(new IllegalStateException("원장 쓰기 실패")).when(batchRepository).insertDeducts(any(), any());
+        UUID serveId = UUID.randomUUID();
+
+        List<DeductionOutcome> outcomes = withBrokenUndo.deductAll(List.of(new DeductionRequest(serveId, CAMPAIGN_ID, DAY)));
+
+        assertThat(outcomes).containsExactly(DeductionOutcome.failed(serveId));
+        assertThat(undoCount("failed")).isEqualTo(1);
+    }
+
     /*
-     * DB 가 멈췄거나 커넥션 풀이 마르면 점주 묶음의 트랜잭션을 여는 순간 실패한다.
-     * 묶음 실패로 넘기면 점주마다 커넥션 대기(3초)를 되풀이하므로 첫 묶음에서 바로 예외를 올린다.
+     * DB 가 멈췄거나 커넥션 풀이 마르면 트랜잭션을 여는 순간 실패한다.
+     * 점주별로 다시 처리하면 점주마다 커넥션 대기(3초)를 되풀이하므로 바로 예외를 올린다.
      */
     @Test
-    void 트랜잭션을_열지_못하면_다음_점주로_넘어가지_않고_예외를_올린다() {
+    void 트랜잭션을_열지_못하면_점주별로_다시_처리하지_않고_예외를_올린다() {
         outsideTransaction();
-        otherOwnerCampaignBills();
         List<String> begins = new ArrayList<>();
         TransactionTemplate noConnection = new TransactionTemplate(new AbstractPlatformTransactionManager() {
             @Override
@@ -678,78 +931,32 @@ class PointDeductorImplTest {
             protected void doRollback(DefaultTransactionStatus status) {
             }
         });
-        PointDeductorImpl withoutDb = new PointDeductorImpl(snapshotService, rebuildService, spendCounter,
+        PointDeductorImpl withoutDb = new PointDeductorImpl(snapshotService, rebuildService, counter,
                 deductionResultRepository, ledgerRepository, campaignQuery, platformSetting, CLOCK, meterRegistry,
-                accountRepository, noConnection);
+                planRepository, batchRepository, noConnection);
 
         assertThatThrownBy(() -> withoutDb.deductAll(List.of(
                 new DeductionRequest(UUID.randomUUID(), CAMPAIGN_ID, DAY),
                 new DeductionRequest(UUID.randomUUID(), OTHER_CAMPAIGN_ID, DAY))))
                 .isInstanceOf(CannotCreateTransactionException.class);
         assertThat(begins).hasSize(1);
-        verifyNoInteractions(spendCounter);
-    }
-
-    @Test
-    void 정산의_명령이_시간을_넘기면_예외를_올린다() {
-        outsideTransaction();
-        otherOwnerCampaignBills();
-        when(spendCounter.deduct(any(), any(), any(UUID.class), anyLong()))
-                .thenThrow(new QueryTimeoutException("Valkey 명령 시간 초과"));
-
-        assertThatThrownBy(() -> deductor.deductAll(List.of(new DeductionRequest(UUID.randomUUID(), CAMPAIGN_ID, DAY))))
-                .isInstanceOf(QueryTimeoutException.class);
-    }
-
-    // 계정 잠금 대기 초과는 그 점주의 잠금을 다투는 해제나 환불 때문이라 그 점주 묶음만 실패한다
-    @Test
-    void 한_점주의_잠금_대기가_넘치면_그_점주_묶음만_실패한다() {
-        outsideTransaction();
-        otherOwnerCampaignBills();
-        when(accountRepository.lockForShareByOwnerId(3L)).thenThrow(new CannotAcquireLockException("잠금 대기 초과"));
-        UUID blocked = UUID.randomUUID();
-        UUID other = UUID.randomUUID();
-
-        List<DeductionOutcome> outcomes = deductor.deductAll(List.of(
-                new DeductionRequest(blocked, CAMPAIGN_ID, DAY),
-                new DeductionRequest(other, OTHER_CAMPAIGN_ID, DAY)));
-
-        assertThat(outcomes).containsExactlyInAnyOrder(
-                DeductionOutcome.failed(blocked),
-                DeductionOutcome.judged(other, DeductionStatus.BILLED));
+        assertThat(spend(CAMPAIGN_ID)).isZero();
     }
 
     @Test
     void 묶음_차감은_상한까지_받고_넘으면_아무것도_하지_않고_거절한다() {
         outsideTransaction();
-        otherOwnerCampaignBills();
         List<DeductionRequest> atLimit = new ArrayList<>();
         for (int i = 0; i < PointDeductor.MAX_BATCH_SIZE; i++) {
             atLimit.add(new DeductionRequest(UUID.randomUUID(), CAMPAIGN_ID, DAY));
         }
 
-        assertThat(deductor.deductAll(atLimit)).hasSize(PointDeductor.MAX_BATCH_SIZE);
+        assertThat(batchDeductor().deductAll(atLimit)).hasSize(PointDeductor.MAX_BATCH_SIZE);
 
         List<DeductionRequest> overLimit = new ArrayList<>(atLimit);
         overLimit.add(new DeductionRequest(UUID.randomUUID(), CAMPAIGN_ID, DAY));
-        assertThatThrownBy(() -> deductor.deductAll(overLimit)).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> batchDeductor().deductAll(overLimit)).isInstanceOf(IllegalArgumentException.class);
         assertThat(finishedTransactions).containsExactly("commit");
-    }
-
-    @Test
-    void 계획이_없는_캠페인의_노출은_캠페인의_점주로_묶어_계획_없음으로_기록한다() {
-        outsideTransaction();
-        Long noPlanCampaign = 50L;
-        when(snapshotService.find(DAY, noPlanCampaign)).thenReturn(Optional.empty());
-        when(campaignQuery.findAllById(List.of(noPlanCampaign))).thenReturn(List.of(campaign(noPlanCampaign, 5L)));
-        when(platformSetting.getImpressionUnitPrice()).thenReturn(10);
-        UUID serveId = UUID.randomUUID();
-
-        List<DeductionOutcome> outcomes = deductor.deductAll(List.of(new DeductionRequest(serveId, noPlanCampaign, DAY)));
-
-        assertThat(outcomes).containsExactly(DeductionOutcome.judged(serveId, DeductionStatus.NOT_BILLED_NO_PLAN));
-        verify(deductionResultRepository).insertIfAbsent(serveId, noPlanCampaign, 5L, DAY,
-                DeductionStatus.NOT_BILLED_NO_PLAN, 10L, NOW);
     }
 
     @Test

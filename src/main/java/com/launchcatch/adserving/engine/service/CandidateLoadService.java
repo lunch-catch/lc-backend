@@ -2,6 +2,7 @@ package com.launchcatch.adserving.engine.service;
 
 import com.launchcatch.adserving.engine.entity.CandidateCampaignState;
 import com.launchcatch.adserving.engine.repository.AdCandidateRepository;
+import com.launchcatch.adserving.engine.repository.CandidateChangeNotifier;
 import com.launchcatch.adserving.engine.repository.CandidateRow;
 import com.launchcatch.campaign.contract.AgeGroup;
 import com.launchcatch.campaign.contract.CampaignInfo;
@@ -50,6 +51,7 @@ public class CandidateLoadService {
     private final CampaignQueryService campaignQueryService;
     private final StoreQueryService storeQueryService;
     private final AdCandidateRepository adCandidateRepository;
+    private final CandidateChangeNotifier candidateChangeNotifier;
     private final MeterRegistry meterRegistry;
     private final Clock clock;
 
@@ -101,6 +103,7 @@ public class CandidateLoadService {
         }
         adCandidateRepository.upsertAll(rows, readAt, LocalDateTime.now(clock));
         adCandidateRepository.deleteByBusinessDateBefore(businessDate.minusDays(RETENTION_DAYS));
+        candidateChangeNotifier.reloaded(businessDate);
         log.info("event=ADSERVING_CANDIDATE_LOADED businessDate={} campaignCount={} loadedCount={}", businessDate, campaigns.size(), rows.size());
         return loaded;
     }
@@ -128,6 +131,7 @@ public class CandidateLoadService {
                 adCandidateRepository.changeState(businessDate, campaign.campaignId(), stateOf(campaign).name(), changedAt, now);
             }
         }
+        candidateChangeNotifier.reloaded(businessDate);
     }
 
     // 가게 계약의 상한 단위로 나눠 읽는다. 등록 전이거나 좌표가 없는 가게는 결과에 없다

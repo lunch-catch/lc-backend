@@ -1,5 +1,6 @@
 package com.launchcatch.adserving.engine.service;
 
+import com.launchcatch.adserving.engine.repository.CandidateChangeNotifier;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
@@ -33,7 +34,8 @@ class CandidateBudgetServiceTest {
     private final AdCandidateRepository adCandidateRepository = mock(AdCandidateRepository.class);
     private final BudgetQueryService budgetQueryService = mock(BudgetQueryService.class);
     private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
-    private final CandidateBudgetService service = new CandidateBudgetService(adCandidateRepository, budgetQueryService,
+    private final CandidateChangeNotifier notifier = org.mockito.Mockito.mock(CandidateChangeNotifier.class);
+    private final CandidateBudgetService service = new CandidateBudgetService(adCandidateRepository, notifier, budgetQueryService,
             meterRegistry, Clock.fixed(NOW.atZone(ClockConfig.ZONE).toInstant(), ClockConfig.ZONE));
 
     @Test
@@ -47,6 +49,8 @@ class CandidateBudgetServiceTest {
         assertThat(updated).isEqualTo(2);
         verify(adCandidateRepository).updateBudgets(BUSINESS_DATE,
                 List.of(new CandidateBudget(1L, 24_000, 10), new CandidateBudget(2L, 0, 0)), NOW);
+        // 서버마다 메모리의 그날 후보를 다시 읽게 한다(#1042)
+        verify(notifier).reloaded(BUSINESS_DATE);
     }
 
     @Test
