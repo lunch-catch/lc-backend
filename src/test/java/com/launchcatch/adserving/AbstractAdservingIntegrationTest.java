@@ -4,6 +4,7 @@ import com.launchcatch.IntegrationTestSupport;
 import com.launchcatch.adserving.contract.ImpressionServedEvent;
 import com.launchcatch.adserving.contract.SwipedEvent;
 import com.launchcatch.adserving.engine.service.CandidateCache;
+import com.launchcatch.adserving.feed.service.MemberInfoCache;
 import com.launchcatch.billing.contract.BudgetQueryService;
 import com.launchcatch.billing.contract.PointDeductor;
 import com.launchcatch.campaign.contract.CampaignQueryService;
@@ -12,6 +13,8 @@ import com.launchcatch.member.contract.MemberQueryService;
 import com.launchcatch.store.contract.StoreQueryService;
 import java.time.Clock;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -53,16 +56,28 @@ abstract class AbstractAdservingIntegrationTest extends IntegrationTestSupport {
     @Autowired protected FunnelEventRecorder funnelEvents;
 
     @Autowired private CandidateCache candidateCache;
+    @Autowired private MemberInfoCache memberInfoCache;
 
     @AfterEach
     void clearFunnelEvents() {
         funnelEvents.clear();
     }
 
-    // 테스트는 그날 후보를 DB 에 바로 넣어 변경 알림이 없다. 앞 테스트가 메모리에 둔 후보를 비워 처음부터 읽게 한다
+    /*
+     * 테스트는 그날 후보를 DB 에 바로 넣어 변경 알림이 없고 회원 조회를 테스트마다 다르게 꾸민다.
+     * 앞 테스트가 메모리에 둔 후보와 회원을 비워 처음부터 읽게 한다.
+     */
     @BeforeEach
-    void clearCandidateCache() {
+    void clearMemoryCaches() {
         ReflectionTestUtils.setField(candidateCache, "snapshot", null);
+        ((Map<?, ?>) ReflectionTestUtils.getField(memberInfoCache, "entries")).clear();
+        // 필터와 30일 찜의 캐시도 비운다. 테스트가 DB 에 바로 넣은 필터와 스와이프를 피드가 읽게 한다
+        for (String pattern : List.of("adserving:feedFilter:*", "adserving:feedWishes:*")) {
+            Set<String> cached = redisTemplate.keys(pattern);
+            if (cached != null && !cached.isEmpty()) {
+                redisTemplate.delete(cached);
+            }
+        }
     }
 
     /*

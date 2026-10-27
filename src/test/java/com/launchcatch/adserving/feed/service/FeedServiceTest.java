@@ -6,7 +6,6 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -17,7 +16,6 @@ import com.launchcatch.adserving.engine.entity.AdCandidate;
 import com.launchcatch.adserving.engine.entity.DiscountTarget;
 import com.launchcatch.adserving.engine.entity.DiscountType;
 import com.launchcatch.adserving.engine.service.CandidateCache;
-import com.launchcatch.adserving.exclusion.repository.ExclusionRepository;
 import com.launchcatch.adserving.feed.dto.FeedCardResponse;
 import com.launchcatch.adserving.feed.dto.FeedRequest;
 import com.launchcatch.adserving.feed.dto.FeedResponse;
@@ -28,7 +26,6 @@ import com.launchcatch.adserving.feed.exception.FeedRateLimitedException;
 import com.launchcatch.adserving.feed.repository.CategoryWishCount;
 import com.launchcatch.adserving.feed.repository.FeedFilterCategoryRepository;
 import com.launchcatch.adserving.feed.repository.FeedFilterRepository;
-import com.launchcatch.adserving.feed.repository.ImpressionCountRepository;
 import com.launchcatch.adserving.feed.repository.ServeFrequencyRepository;
 import com.launchcatch.adserving.feed.repository.ServeFrequencyRepository.ServedHistory;
 import com.launchcatch.adserving.feed.repository.ServeRecord;
@@ -38,6 +35,10 @@ import com.launchcatch.adserving.engine.SlotLabels;
 import org.mockito.ArgumentCaptor;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import com.launchcatch.adserving.feed.repository.FeedRateLimitRepository;
+import com.launchcatch.adserving.engine.FeedSort;
+import com.launchcatch.adserving.feed.repository.FeedStateRepository;
+import com.launchcatch.adserving.feed.repository.FeedStateRepository.CachedFilter;
+import com.launchcatch.adserving.feed.repository.FeedStateRepository.FeedState;
 import com.launchcatch.adserving.feed.repository.FeedRateLimitRepository.Admission;
 import com.launchcatch.global.config.ClockConfig;
 import com.launchcatch.global.geo.BoundingBox;
@@ -58,6 +59,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -76,13 +78,18 @@ class FeedServiceTest {
     private final MemberQueryService memberQueryService = mock(MemberQueryService.class);
     private final FeedRateLimitRepository rateLimitRepository = mock(FeedRateLimitRepository.class);
     private final CandidateCache candidateCache = mock(CandidateCache.class);
-    private final ExclusionRepository exclusionRepository = mock(ExclusionRepository.class);
+    private final FeedStateRepository feedStateRepository = mock(FeedStateRepository.class);
     private final FeedFilterCategoryRepository filterCategoryRepository =
             mock(FeedFilterCategoryRepository.class);
     private final FeedFilterRepository feedFilterRepository = mock(FeedFilterRepository.class);
     private final SwipeLogRepository swipeLogRepository = mock(SwipeLogRepository.class);
     private final ServeFrequencyRepository serveFrequencyRepository = mock(ServeFrequencyRepository.class);
-    private final ImpressionCountRepository impressionCountRepository = mock(ImpressionCountRepository.class);
+    // 파이프라인으로 읽는 회원의 상태다. 테스트마다 바꾸고 read 가 이 값들로 돌려준다
+    private ServedHistory history = new ServedHistory(Map.of(), Set.of());
+    private Set<Long> excluded = Set.of();
+    private Map<Long, Long> validCounts = Map.of();
+    private CachedFilter cachedFilter;
+    private List<CategoryWishCount> cachedWishes;
     // 24시간 균등 가중치다. 예약액 24,000 이면 시간대마다 1,000 이다
     private final PacingProperties pacingProperties = new PacingProperties(Collections.nCopies(24, 1));
     private final ServeRecordRepository serveRecordRepository = mock(ServeRecordRepository.class);
@@ -91,9 +98,9 @@ class FeedServiceTest {
 
     private FeedService serviceAt(LocalDateTime now) {
         Clock clock = Clock.fixed(now.atZone(ClockConfig.ZONE).toInstant(), ClockConfig.ZONE);
-        return new FeedService(memberQueryService, rateLimitRepository, candidateCache,
-                exclusionRepository, filterCategoryRepository, feedFilterRepository, swipeLogRepository,
-                serveFrequencyRepository, impressionCountRepository, pacingProperties, serveRecordRepository,
+        return new FeedService(new MemberInfoCache(memberQueryService, clock), rateLimitRepository, candidateCache,
+                feedStateRepository, filterCategoryRepository, feedFilterRepository, swipeLogRepository,
+                serveFrequencyRepository, pacingProperties, serveRecordRepository,
                 serveLogBuffer, meterRegistry, clock);
     }
 
@@ -121,9 +128,13 @@ class FeedServiceTest {
 
     private void givenCandidates(List<AdCandidate> candidates) {
         when(candidateCache.findServableWithin(eq(TODAY), any(BoundingBox.class))).thenReturn(candidates);
-        when(exclusionRepository.findCampaignIds(TODAY, MEMBER_ID)).thenReturn(Set.of());
         when(filterCategoryRepository.findCategoryCodes(MEMBER_ID)).thenReturn(List.of());
-        when(serveFrequencyRepository.findHistory(TODAY, MEMBER_ID)).thenReturn(new ServedHistory(Map.of(), Set.of()));
+    }
+
+    @BeforeEach
+    void stubState() {
+        when(feedStateRepository.read(eq(TODAY), eq(MEMBER_ID), any())).thenAnswer(invocation ->
+                new FeedState(history, excluded, validCounts, cachedFilter, cachedWishes));
     }
 
     private static final FeedRequest NO_LOCATION = new FeedRequest(null, null);
@@ -279,9 +290,8 @@ class FeedServiceTest {
                     candidate(1, SAVED_LAT, SAVED_LNG).build(),
                     candidate(2, SAVED_LAT, SAVED_LNG).build(),
                     candidate(3, SAVED_LAT, SAVED_LNG).set("categoryCode", "JAPANESE").build()));
-            when(exclusionRepository.findCampaignIds(TODAY, MEMBER_ID)).thenReturn(Set.of(1L));
+            excluded = Set.of(1L);
             when(filterCategoryRepository.findCategoryCodes(MEMBER_ID)).thenReturn(List.of("KOREAN"));
-            when(serveFrequencyRepository.findHistory(TODAY, MEMBER_ID)).thenReturn(new ServedHistory(Map.of(), Set.of()));
 
             FeedResponse response = serviceAt(SERVING_NOW).getFeed(MEMBER_ID, NO_LOCATION);
 
@@ -312,7 +322,7 @@ class FeedServiceTest {
                     candidate(1, SAVED_LAT, SAVED_LNG).set("reservedAmount", 24_000L).build(),
                     candidate(2, SAVED_LAT, SAVED_LNG).set("reservedAmount", 24_000L).build()));
             // 10:15 의 계획 10,250 에 노출 1,240 x 10원은 진행률 1.21, 1,200 x 10원은 1.17 이다
-            when(impressionCountRepository.findValidCounts(eq(TODAY), any())).thenReturn(Map.of(1L, 1_240L, 2L, 1_200L));
+            validCounts = Map.of(1L, 1_240L, 2L, 1_200L);
 
             FeedResponse response = serviceAt(SERVING_NOW).getFeed(MEMBER_ID, NO_LOCATION);
 
@@ -340,7 +350,7 @@ class FeedServiceTest {
                     candidate(1, SAVED_LAT, SAVED_LNG).build(),
                     candidate(2, SAVED_LAT, SAVED_LNG).set("reservedAmount", null).set("unitPrice", null).build()));
             // 1 은 노출 상한(10,500 회)을 넘었지만 예산 규칙을 건너뛰어 나간다
-            when(impressionCountRepository.findValidCounts(eq(TODAY), any())).thenReturn(Map.of(1L, 20_000L));
+            validCounts = Map.of(1L, 20_000L);
 
             FeedResponse response = serviceAt(SERVING_NOW).getFeed(MEMBER_ID, NO_LOCATION);
 
@@ -356,7 +366,7 @@ class FeedServiceTest {
             givenAdmitted(lateNight);
             givenCandidates(List.of(candidate(1, SAVED_LAT, SAVED_LNG).build(), candidate(2, SAVED_LAT, SAVED_LNG).build()));
             // 예약액 10만 원 / 단가 10원 x 1.05 = 10,500 회
-            when(impressionCountRepository.findValidCounts(eq(TODAY), any())).thenReturn(Map.of(1L, 10_500L, 2L, 10_499L));
+            validCounts = Map.of(1L, 10_500L, 2L, 10_499L);
 
             FeedResponse response = serviceAt(lateNight).getFeed(MEMBER_ID, NO_LOCATION);
 
@@ -369,8 +379,7 @@ class FeedServiceTest {
             givenAdmitted(SERVING_NOW);
             givenCandidates(List.of(candidate(1, SAVED_LAT, SAVED_LNG).build(),
                     candidate(2, SAVED_LAT, SAVED_LNG).build(), candidate(3, SAVED_LAT, SAVED_LNG).build()));
-            when(serveFrequencyRepository.findHistory(TODAY, MEMBER_ID))
-                    .thenReturn(new ServedHistory(Map.of(1L, 2, 2L, 1), Set.of(3L)));
+            history = new ServedHistory(Map.of(1L, 2, 2L, 1), Set.of(3L));
 
             FeedResponse response = serviceAt(SERVING_NOW).getFeed(MEMBER_ID, NO_LOCATION);
 
@@ -511,6 +520,75 @@ class FeedServiceTest {
             assertThatThrownBy(() -> serviceAt(SERVING_NOW).getFeed(MEMBER_ID, NO_LOCATION))
                     .isInstanceOf(FeedRateLimitedException.class);
             verifyNoInteractions(serveLogBuffer, serveRecordRepository);
+        }
+    }
+
+    @Nested
+    @DisplayName("필터와 30일 찜의 캐시")
+    class StateCache {
+
+        // 캐시가 있으면 DB 를 읽지 않는다(#1042 결정 4)
+        @Test
+        void 필터_캐시가_있으면_DB_를_읽지_않고_그_필터로_거른다() {
+            givenOnboardedMemberWithSavedLocation();
+            givenAdmitted(SERVING_NOW);
+            givenCandidates(List.of(candidate(1, SAVED_LAT, SAVED_LNG).set("categoryCode", "KOREAN").build(),
+                    candidate(2, SAVED_LAT, SAVED_LNG).set("categoryCode", "JAPANESE").build()));
+            cachedFilter = new CachedFilter(FeedSort.DISTANCE, Set.of("JAPANESE"));
+
+            FeedResponse response = serviceAt(SERVING_NOW).getFeed(MEMBER_ID, NO_LOCATION);
+
+            assertThat(response.cards()).extracting(FeedCardResponse::campaignId).containsExactly(2L);
+            verifyNoInteractions(feedFilterRepository, filterCategoryRepository);
+        }
+
+        @Test
+        void 필터_캐시가_없으면_DB_에서_읽어_캐시에_둔다() {
+            givenOnboardedMemberWithSavedLocation();
+            givenAdmitted(SERVING_NOW);
+            givenCandidates(List.of());
+            when(filterCategoryRepository.findCategoryCodes(MEMBER_ID)).thenReturn(List.of("KOREAN"));
+
+            serviceAt(SERVING_NOW).getFeed(MEMBER_ID, NO_LOCATION);
+
+            verify(feedStateRepository).cacheFilter(MEMBER_ID, new CachedFilter(FeedSort.DISTANCE, Set.of("KOREAN")));
+        }
+
+        @Test
+        void 찜_캐시가_있으면_DB_에서_세지_않는다() {
+            givenOnboardedMemberWithSavedLocation();
+            givenAdmitted(SERVING_NOW);
+            givenCandidates(List.of());
+            cachedWishes = List.of(new CategoryWishCount("KOREAN", 2));
+
+            serviceAt(SERVING_NOW).getFeed(MEMBER_ID, NO_LOCATION);
+
+            verifyNoInteractions(swipeLogRepository);
+        }
+
+        @Test
+        void 찜_캐시가_없으면_DB_에서_세어_그날_캐시에_둔다() {
+            givenOnboardedMemberWithSavedLocation();
+            givenAdmitted(SERVING_NOW);
+            givenCandidates(List.of());
+            List<CategoryWishCount> wishes = List.of(new CategoryWishCount("KOREAN", 2));
+            when(swipeLogRepository.countWishesByCategory(MEMBER_ID, TODAY.minusDays(29), TODAY)).thenReturn(wishes);
+
+            serviceAt(SERVING_NOW).getFeed(MEMBER_ID, NO_LOCATION);
+
+            verify(feedStateRepository).cacheWishes(TODAY, MEMBER_ID, wishes);
+        }
+
+        // 하루와 세션 횟수, 당일 이력, 유효 노출 수, 필터, 찜을 한 번에 읽는다(#1042 결정 5)
+        @Test
+        void 그날_후보의_유효_노출_수와_회원의_상태를_한_번에_읽는다() {
+            givenOnboardedMemberWithSavedLocation();
+            givenAdmitted(SERVING_NOW);
+            givenCandidates(List.of(candidate(1, SAVED_LAT, SAVED_LNG).build(), candidate(2, SAVED_LAT, SAVED_LNG).build()));
+
+            serviceAt(SERVING_NOW).getFeed(MEMBER_ID, NO_LOCATION);
+
+            verify(feedStateRepository).read(TODAY, MEMBER_ID, List.of(1L, 2L));
         }
     }
 }

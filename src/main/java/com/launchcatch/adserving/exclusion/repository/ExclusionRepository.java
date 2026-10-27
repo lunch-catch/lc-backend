@@ -7,8 +7,6 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
-import java.util.Set;
-import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.io.ClassPathResource;
@@ -41,24 +39,8 @@ public class ExclusionRepository {
     private final StringRedisTemplate redisTemplate;
     private final MeterRegistry meterRegistry;
 
-    static String key(LocalDate businessDate, Long memberId) {
+    public static String key(LocalDate businessDate, Long memberId) {
         return KEY_PREFIX + businessDate + ":" + memberId;
-    }
-
-    // Valkey 가 멈추면 빈 집합으로 통과시킨다. 이미 넘긴 카드가 다시 보일 뿐 틀린 과금이나 권한으로 이어지지 않는다.
-    public Set<Long> findCampaignIds(LocalDate businessDate, Long memberId) {
-        try {
-            Set<String> members = redisTemplate.opsForSet().members(key(businessDate, memberId));
-            if (members == null) {
-                return Set.of();
-            }
-            return members.stream().map(Long::valueOf).collect(Collectors.toUnmodifiableSet());
-        } catch (DataAccessException e) {
-            log.warn("event=ADSERVING_FEED_EXCLUSION_FAILED memberId={} reason={} fallback=EMPTY_HISTORY",
-                    memberId, RedisFailureClassifier.causeLabel(e), e);
-            meterRegistry.counter(BYPASS_METRIC, "use", "exclusion").increment();
-            return Set.of();
-        }
     }
 
     /*
