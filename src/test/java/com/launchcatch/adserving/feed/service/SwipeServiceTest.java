@@ -21,6 +21,7 @@ import com.launchcatch.adserving.feed.dto.SwipeRequest;
 import com.launchcatch.adserving.feed.dto.SwipeResponse;
 import com.launchcatch.adserving.feed.entity.SwipeLog;
 import com.launchcatch.adserving.feed.entity.SwipeLogId;
+import com.launchcatch.adserving.feed.repository.FeedStateRepository;
 import com.launchcatch.adserving.feed.repository.SwipeLogRepository;
 import com.launchcatch.adserving.wishlist.entity.Wishlist;
 import com.launchcatch.adserving.wishlist.repository.WishlistRepository;
@@ -55,8 +56,9 @@ class SwipeServiceTest {
     private final ExclusionRepository exclusionRepository = mock(ExclusionRepository.class);
     private final ApplicationEventPublisher eventPublisher = mock(ApplicationEventPublisher.class);
     private final WishlistService wishlistService = mock(WishlistService.class);
+    private final FeedStateRepository feedStateRepository = mock(FeedStateRepository.class);
     private final SwipeService service = new SwipeService(swipeLogRepository, wishlistRepository, wishlistService,
-            adCandidateRepository, exclusionRepository, eventPublisher, Clock.fixed(NOW, ClockConfig.ZONE));
+            adCandidateRepository, exclusionRepository, feedStateRepository, eventPublisher, Clock.fixed(NOW, ClockConfig.ZONE));
 
     private static SwipeRequest request(SwipeAction action) {
         return new SwipeRequest(SERVE_ID.toString(), 101L, action.name(), OffsetDateTime.parse("2026-10-01T10:15:34.020+09:00"));
@@ -94,6 +96,8 @@ class SwipeServiceTest {
         assertThat(wish.getValue().getCampaignId()).isEqualTo(101L);
         assertThat(wish.getValue().getStoreId()).isEqualTo(1101L);
         assertThat(wish.getValue().getServeId()).isEqualTo(SERVE_ID);
+        // 30일 찜이 바뀌어 피드가 다음에 DB 에서 다시 세게 한다(#1042 결정 4)
+        verify(feedStateRepository).evictWishes(TODAY, MEMBER_ID);
     }
 
     @Test
@@ -117,6 +121,7 @@ class SwipeServiceTest {
         verify(wishlistRepository, never()).insertIgnore(any());
         assertThat(savedSwipe().getAction()).isEqualTo(SwipeAction.PASS);
         verify(exclusionRepository).add(TODAY, MEMBER_ID, 101L, NOW);
+        verify(feedStateRepository, never()).evictWishes(any(), any());
     }
 
     @Test

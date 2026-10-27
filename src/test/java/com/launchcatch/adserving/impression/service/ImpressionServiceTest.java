@@ -9,7 +9,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.launchcatch.adserving.engine.SlotLabels;
-import com.launchcatch.adserving.engine.repository.AdCandidateRepository;
+import com.launchcatch.adserving.engine.service.CandidateCache;
 import com.launchcatch.adserving.feed.repository.ServeRecord;
 import com.launchcatch.adserving.feed.repository.ServeRecordRepository;
 import com.launchcatch.adserving.impression.dto.ImpressionRequest;
@@ -18,7 +18,6 @@ import com.launchcatch.adserving.impression.entity.ImpressionLog;
 import com.launchcatch.adserving.impression.entity.ImpressionLogId;
 import com.launchcatch.adserving.impression.entity.ImpressionValidity;
 import com.launchcatch.adserving.impression.entity.InvalidReason;
-import com.launchcatch.adserving.impression.repository.ImpressionLogRepository;
 import com.launchcatch.global.config.ClockConfig;
 import java.math.BigDecimal;
 import java.time.Clock;
@@ -29,7 +28,6 @@ import java.time.ZoneId;
 import java.time.OffsetDateTime;
 import java.util.Optional;
 import java.util.UUID;
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -51,14 +49,13 @@ class ImpressionServiceTest {
     private static final ServeRecord RECORD = new ServeRecord(SERVE_ID, MEMBER_ID, 101L, 55L, SlotLabels.ALLOCATION, 1, SERVED_AT);
 
     private final ServeRecordRepository serveRecordRepository = mock(ServeRecordRepository.class);
-    private final ImpressionLogRepository impressionLogRepository = mock(ImpressionLogRepository.class);
-    private final AdCandidateRepository adCandidateRepository = mock(AdCandidateRepository.class);
+    private final CandidateCache candidateCache = mock(CandidateCache.class);
     private final ImpressionWriteBuffer writeBuffer = mock(ImpressionWriteBuffer.class);
-    private final ImpressionService service = new ImpressionService(serveRecordRepository, impressionLogRepository,
-            adCandidateRepository, writeBuffer, Clock.fixed(NOW, ClockConfig.ZONE));
+    private final ImpressionService service = new ImpressionService(serveRecordRepository,
+            candidateCache, writeBuffer, Clock.fixed(NOW, ClockConfig.ZONE));
 
-    private final ImpressionService afterMidnight = new ImpressionService(serveRecordRepository, impressionLogRepository,
-            adCandidateRepository, writeBuffer, Clock.fixed(AFTER_MIDNIGHT, ClockConfig.ZONE));
+    private final ImpressionService afterMidnight = new ImpressionService(serveRecordRepository,
+            candidateCache, writeBuffer, Clock.fixed(AFTER_MIDNIGHT, ClockConfig.ZONE));
 
     private void givenLateRecord() {
         when(serveRecordRepository.findById(SERVE_ID)).thenReturn(Optional.of(
@@ -68,11 +65,6 @@ class ImpressionServiceTest {
     private static ImpressionRequest request(Long campaignId) {
         return new ImpressionRequest(SERVE_ID.toString(), campaignId,
                 OffsetDateTime.parse("2026-10-01T10:15:31.880+09:00"), 37.49794, 127.02765, 2140);
-    }
-
-    @BeforeEach
-    void noStoredImpression() {
-        when(impressionLogRepository.findById(any())).thenReturn(Optional.empty());
     }
 
     private QueuedImpression queued() {
@@ -169,8 +161,8 @@ class ImpressionServiceTest {
                     return now;
                 }
             };
-            ImpressionService atMidnight = new ImpressionService(serveRecordRepository, impressionLogRepository,
-                    adCandidateRepository, writeBuffer, ticking);
+            ImpressionService atMidnight = new ImpressionService(serveRecordRepository,
+                    candidateCache, writeBuffer, ticking);
             when(serveRecordRepository.findById(SERVE_ID)).thenReturn(Optional.of(RECORD));
 
             atMidnight.record(MEMBER_ID, request(101L));
@@ -183,8 +175,8 @@ class ImpressionServiceTest {
         @Test
         void 받은_시각을_마이크로초로_자른다() {
             Instant withNanos = NOW.plusNanos(123_456_789);
-            ImpressionService nanos = new ImpressionService(serveRecordRepository, impressionLogRepository,
-                    adCandidateRepository, writeBuffer, Clock.fixed(withNanos, ClockConfig.ZONE));
+            ImpressionService nanos = new ImpressionService(serveRecordRepository,
+                    candidateCache, writeBuffer, Clock.fixed(withNanos, ClockConfig.ZONE));
             when(serveRecordRepository.findById(SERVE_ID)).thenReturn(Optional.of(RECORD));
 
             nanos.record(MEMBER_ID, request(101L));
@@ -195,7 +187,7 @@ class ImpressionServiceTest {
         @Test
         void 쿠폰이_소진된_뒤의_유효_노출은_sold_out_으로_큐에_넣는다() {
             when(serveRecordRepository.findById(SERVE_ID)).thenReturn(Optional.of(RECORD));
-            when(adCandidateRepository.existsByIdBusinessDateAndIdCampaignIdAndSoldOutAtIsNotNull(SERVED_DATE, 101L))
+            when(candidateCache.isSoldOut(SERVED_DATE, 101L))
                     .thenReturn(true);
 
             ImpressionResponse response = service.record(MEMBER_ID, request(101L));
@@ -217,7 +209,7 @@ class ImpressionServiceTest {
         @Test
         void 자정을_넘겨_받은_노출의_쿠폰_소진은_받은_날의_후보로_본다() {
             givenLateRecord();
-            when(adCandidateRepository.existsByIdBusinessDateAndIdCampaignIdAndSoldOutAtIsNotNull(RECEIVED_DATE, 101L))
+            when(candidateCache.isSoldOut(RECEIVED_DATE, 101L))
                     .thenReturn(true);
 
             afterMidnight.record(MEMBER_ID, request(101L));
@@ -245,21 +237,12 @@ class ImpressionServiceTest {
     @DisplayName("같은 노출이 다시 올 때")
     class Duplicate {
 
+        /*
+         * 저장된 노출을 DB 에서 확인하지 않고 늘 다시 판정해 큐에 넣는다(#1044). 클라이언트는 응답을 쓰지 않는다.
+         * 저장은 INSERT IGNORE 라 처음 것만 남고 카운터와 이벤트도 처음 저장에서만 나간다.
+         */
         @Test
-        void 이미_저장된_키면_처음_판정을_돌려주고_큐에_넣지_않는다() {
-            ImpressionLog first = ImpressionLog.unknown(SERVE_ID, MEMBER_ID, SERVED_DATE, 101L,
-                    new ImpressionLog.Sighting(LocalDateTime.of(2026, 10, 1, 10, 0), 37.5, 127.0, null));
-            when(impressionLogRepository.findById(ImpressionLogId.of(SERVE_ID, MEMBER_ID))).thenReturn(Optional.of(first));
-
-            ImpressionResponse response = service.record(MEMBER_ID, request(101L));
-
-            assertThat(response).isEqualTo(new ImpressionResponse(ImpressionValidity.INVALID, InvalidReason.EXPIRED_OR_UNKNOWN));
-            verifyNoInteractions(writeBuffer, serveRecordRepository);
-        }
-
-        // 처음 것이 아직 큐에 있으면 저장된 행이 없어 다시 판정한다. 저장은 INSERT IGNORE 라 처음 것만 남는다
-        @Test
-        void 아직_저장되지_않았으면_다시_판정해_큐에_넣는다() {
+        void 다시_보내면_DB_를_읽지_않고_다시_판정해_큐에_넣는다() {
             when(serveRecordRepository.findById(SERVE_ID)).thenReturn(Optional.of(RECORD));
 
             service.record(MEMBER_ID, request(101L));

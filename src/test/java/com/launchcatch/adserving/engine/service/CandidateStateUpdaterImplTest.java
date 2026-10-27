@@ -1,5 +1,6 @@
 package com.launchcatch.adserving.engine.service;
 
+import com.launchcatch.adserving.engine.repository.CandidateChangeNotifier;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
@@ -27,7 +28,8 @@ class CandidateStateUpdaterImplTest {
 
     private final AdCandidateRepository adCandidateRepository = mock(AdCandidateRepository.class);
     private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
-    private final CandidateStateUpdaterImpl updater = new CandidateStateUpdaterImpl(adCandidateRepository, meterRegistry,
+    private final CandidateChangeNotifier notifier = org.mockito.Mockito.mock(CandidateChangeNotifier.class);
+    private final CandidateStateUpdaterImpl updater = new CandidateStateUpdaterImpl(adCandidateRepository, notifier, meterRegistry,
             Clock.fixed(NOW.atZone(ClockConfig.ZONE).toInstant(), ClockConfig.ZONE));
 
     private double missingCount() {
@@ -41,13 +43,16 @@ class CandidateStateUpdaterImplTest {
         updater.markSoldOut(CAMPAIGN_ID, BUSINESS_DATE, SOLD_OUT_AT);
 
         verify(adCandidateRepository).markSoldOut(BUSINESS_DATE, CAMPAIGN_ID, SOLD_OUT_AT, NOW);
+        // 다른 서버의 메모리 후보도 소진을 알게 한다(#1042)
+        verify(notifier).changed(BUSINESS_DATE, CAMPAIGN_ID);
         verify(adCandidateRepository, never()).existsByIdBusinessDateAndIdCampaignId(any(), any());
         assertThat(missingCount()).isZero();
     }
 
     @Test
-    void 이미_소진된_후보면_예외_없이_넘어가고_세지_않는다() {
+    void 이미_소진된_후보면_예외_없이_넘어가고_세지도_알리지도_않는다() {
         when(adCandidateRepository.markSoldOut(BUSINESS_DATE, CAMPAIGN_ID, SOLD_OUT_AT, NOW)).thenReturn(0);
+        org.mockito.Mockito.doThrow(new AssertionError("바뀐 행이 없는데 알렸다")).when(notifier).changed(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
         when(adCandidateRepository.existsByIdBusinessDateAndIdCampaignId(BUSINESS_DATE, CAMPAIGN_ID)).thenReturn(true);
 
         updater.markSoldOut(CAMPAIGN_ID, BUSINESS_DATE, SOLD_OUT_AT);

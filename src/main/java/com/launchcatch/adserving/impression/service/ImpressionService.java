@@ -1,6 +1,6 @@
 package com.launchcatch.adserving.impression.service;
 
-import com.launchcatch.adserving.engine.repository.AdCandidateRepository;
+import com.launchcatch.adserving.engine.service.CandidateCache;
 import com.launchcatch.adserving.feed.repository.ServeRecord;
 import com.launchcatch.adserving.feed.repository.ServeRecordRepository;
 import com.launchcatch.adserving.impression.dto.ImpressionRequest;
@@ -8,8 +8,6 @@ import com.launchcatch.adserving.impression.dto.ImpressionResponse;
 import com.launchcatch.adserving.impression.entity.ImpressionLog;
 import com.launchcatch.adserving.impression.entity.ImpressionLog.Placement;
 import com.launchcatch.adserving.impression.entity.ImpressionLog.Sighting;
-import com.launchcatch.adserving.impression.entity.ImpressionLogId;
-import com.launchcatch.adserving.impression.repository.ImpressionLogRepository;
 import com.launchcatch.global.config.ClockConfig;
 import java.time.Clock;
 import java.time.LocalDate;
@@ -30,22 +28,17 @@ import org.springframework.stereotype.Service;
 public class ImpressionService {
 
     private final ServeRecordRepository serveRecordRepository;
-    private final ImpressionLogRepository impressionLogRepository;
-    private final AdCandidateRepository adCandidateRepository;
+    private final CandidateCache candidateCache;
     private final ImpressionWriteBuffer writeBuffer;
     private final Clock clock;
 
     /*
-     * 같은 사용자가 같은 카드를 다시 보내면 저장된 처음 판정을 돌려준다.
-     * 처음 것이 아직 큐에 있으면 다시 판정해 돌려준다. 저장은 INSERT IGNORE 라 처음 것만 남고 카운터와 이벤트도 한 번이다.
-     * 트랜잭션을 열지 않는다. 읽기만 하고 큐가 차 기다리는 동안 커넥션을 쥐지 않게 한다.
+     * 같은 사용자가 같은 카드를 다시 보내도 저장된 노출을 확인하지 않고 다시 판정해 돌려준다(#1044).
+     * 클라이언트는 응답을 쓰지 않는다. 저장은 INSERT IGNORE 라 처음 것만 남고 카운터와 이벤트도 처음 저장에서만 나간다.
+     * DB 를 쓰지 않는다. 그날 후보와 소진은 서버 메모리에서, serve 기록은 Valkey 에서 읽는다.
      */
     public ImpressionResponse record(Long memberId, ImpressionRequest request) {
         UUID serveId = UUID.fromString(request.serveId());
-        Optional<ImpressionLog> existing = impressionLogRepository.findById(ImpressionLogId.of(serveId, memberId));
-        if (existing.isPresent()) {
-            return ImpressionResponse.of(existing.get());
-        }
 
         /*
          * 판정, 소진 확인, 카운터가 같은 날을 보게 받은 시각을 한 번만 읽는다. 릴레이도 이 날로 정산에 넘긴다(PointDeductor 계약).
@@ -73,8 +66,7 @@ public class ImpressionService {
         if (!record.memberId().equals(memberId)) {
             return ImpressionLog.notOwner(serveId, memberId, receivedDate, placement, sighting);
         }
-        boolean soldOut = adCandidateRepository.existsByIdBusinessDateAndIdCampaignIdAndSoldOutAtIsNotNull(
-                receivedDate, record.campaignId());
+        boolean soldOut = candidateCache.isSoldOut(receivedDate, record.campaignId());
         return ImpressionLog.valid(serveId, memberId, receivedDate, placement, sighting, soldOut);
     }
 }

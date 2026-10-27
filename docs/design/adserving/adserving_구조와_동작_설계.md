@@ -54,6 +54,7 @@ adserving/
 │   └── CampaignMemberConcentration.java
 ├── engine/
 │   ├── AllocationOrder.java      배분 슬롯의 순서. 진행률 순과 신규 우선 노출 보정
+│   ├── CandidateChange.java      그날 후보가 바뀌었다는 서버 사이 알림의 채널과 메시지 형식
 │   ├── BudgetPacing.java         예약액과 가중치로 시각까지의 계획 소진액과 진행률 계산
 │   ├── CampaignPacing.java       진행률과 노출 상한 판정
 │   ├── FeedAssembler.java        피드 배정의 진입점. 거르기, 반경 확장, 배분과 관련성 고르기, 자리 배치를 차례로 부른다
@@ -77,10 +78,13 @@ adserving/
 │   ├── service/CandidateStatusService.java      캠페인 상태 변경을 그날 후보의 서빙 상태에 반영한다
 │   ├── service/CandidateLoadService.java        00:00 에 그날 후보를 적재하고 적재 중의 상태 전이를 다시 읽어 반영한다
 │   ├── service/CandidateBudgetService.java      그날 후보의 예약액과 단가를 정산에서 읽어 둔다(#837)
+│   ├── service/CandidateCache.java              그날 후보를 서버 메모리에 두고 피드와 노출이 읽는다. 5초가 지나면 다시 읽는다(#1042)
 │   ├── job/LoadDailyCandidateJob.java           00:00 묶음 75. 적재와 재조회를 두 트랜잭션으로 부르고 끝에 예산을 읽는다
 │   ├── job/CandidateBudgetRefreshJob.java       10분마다 그날 후보의 예산을 다시 읽는다(#837)
 │   ├── repository/AdCandidateLoadImpl.java      적재의 upsert. 소진 시각을 덮지 않고 상태는 늦을 때만 바꾼다
+│   ├── listener/CandidateChangeSubscriber.java  다른 서버가 바꾼 그날 후보의 Valkey 알림을 받아 메모리에 반영한다
 │   ├── listener/CandidateStatusChangedListener.java  CampaignStatusChangedEvent 를 받는다
+│   ├── repository/CandidateChangeNotifier.java  그날 후보를 바꾼 뒤 커밋되면 Valkey 로 모든 서버에 알린다
 │   └── repository/AdCandidateRepository.java
 ├── exclusion/
 │   └── repository/ExclusionRepository.java  Valkey. 스와이프와 가게 상세 찜, 찜 삭제가 쓰고 피드가 읽는다. 광고 서빙의 Valkey 저장소가 함께 쓰는 캐시 우회 지표 이름(`BYPASS_METRIC`)도 갖는다(#654)
@@ -94,8 +98,10 @@ adserving/
     ├── service/FeedService.java
     ├── service/SwipeService.java
     ├── service/FeedFilterService.java
+    ├── service/MemberInfoCache.java                 피드의 회원 조회를 서버 메모리에 30초 둔다. 온보딩 미완료는 두지 않는다
     ├── service/ServeLogBuffer.java                  서빙 로그 대기열과 작업자
     ├── repository/FeedRateLimitRepository.java      Valkey
+    ├── repository/FeedStateRepository.java          Valkey. 배정 전 다섯(하루와 세션 횟수, 당일 이력, 유효 노출 수, 필터, 30일 찜)을 파이프라인 하나로 읽는다
     ├── repository/ServeFrequencyRepository.java     Valkey
     ├── repository/ImpressionCountRepository.java    Valkey
     ├── repository/ServeRecordRepository.java        Valkey
@@ -180,7 +186,7 @@ impression/
 | 소진 반영 | `ad_candidate` 의 PK(`business_date`, `campaign_id`)로 `sold_out_at IS NULL` 인 행만 바꾼다. 받은 소진 시각을 그대로 쓰고 부른 시각은 `updated_at` 에만 쓴다. 0행이면 PK 로 후보가 있는지 한 번 더 본다(#163) |
 | 집계를 세는 방식 | 그날 유효 노출 수는 `impression_log` 를 세지 않고 카운터를 읽는다. 틀리면 `impression_log` 에서 다시 센다. 분석의 집계 조회는 카운터를 읽지 않고 아래 "집계 조회의 귀속" 대로 원본을 센다 |
 | 집계 조회 | 노출은 `idx_imp_date_reason` 의 앞 열로 그날 행만 읽어 캠페인별로 한 번 훑는다. 판정, 사유, 슬롯을 같은 행들에서 세어 축끼리의 합이 맞는다. 시간대는 24칸이라 캠페인과 시로 묶는 쿼리를 따로 두고, 한 읽기 전용 트랜잭션에서 불러 같은 스냅샷을 본다(#498). 회원별 무효 노출은 그 인덱스의 두 열을 탄다. 찜은 `idx_swipe_date` 로 그날 `WISH` 만 센다. 두 테이블을 조인하지 않고 서비스가 캠페인 ID 로 합친다 |
-| DB 제약으로 막을 것과 코드로 막을 것 | 같은 카드가 `serve_log` 에 두 번 들어가는 것은 PK(`serve_id`)와 `INSERT IGNORE` 로, 같은 날 두 번째 접속 위치는 PK(`business_date`, `member_id`)와 `INSERT IGNORE` 로 막는다. 같은 노출의 두 번째 저장은 `impression_log` 의 PK(`serve_id`, `member_id`)와 `INSERT IGNORE` 로, 같은 카드의 두 번째 스와이프는 `swipe_log` 의 같은 PK 로, 같은 캠페인의 두 번째 찜은 `uk_wishlist_member_campaign` 으로 막는다. 노출은 묶음을 넣은 뒤 같은 트랜잭션에서 그 키들의 `created_at` 을 읽어 그 노출을 받은 시각과 같은 행을 처음 저장으로 가른다. 배치 INSERT 가 행마다의 결과를 돌려주지 않아서다. 먼저 읽어 보는 것은 저장된 노출의 처음 판정을 돌려주려는 것이고 아직 큐에 있는 같은 노출은 PK 가 막는다 |
+| DB 제약으로 막을 것과 코드로 막을 것 | 같은 카드가 `serve_log` 에 두 번 들어가는 것은 PK(`serve_id`)와 `INSERT IGNORE` 로, 같은 날 두 번째 접속 위치는 PK(`business_date`, `member_id`)와 `INSERT IGNORE` 로 막는다. 같은 노출의 두 번째 저장은 `impression_log` 의 PK(`serve_id`, `member_id`)와 `INSERT IGNORE` 로, 같은 카드의 두 번째 스와이프는 `swipe_log` 의 같은 PK 로, 같은 캠페인의 두 번째 찜은 `uk_wishlist_member_campaign` 으로 막는다. 노출은 묶음을 넣은 뒤 같은 트랜잭션에서 그 키들의 `created_at` 을 읽어 그 노출을 받은 시각과 같은 행을 처음 저장으로 가른다. 배치 INSERT 가 행마다의 결과를 돌려주지 않아서다. 요청은 저장된 노출을 미리 읽지 않고(#1044) 같은 노출의 두 번째 저장은 PK 가 막는다 |
 | 이력 | 해당 없음. 그날 후보의 `sold_out_at` 은 한 번만 채워지고 다시 바뀌지 않는다. `serve_log`, `feed_visit_daily`, `impression_log`, `swipe_log` 는 쌓기만 하고 고치지 않는다. `wishlist` 는 지울 때 행을 지우고, 캠페인이 끝나면 `campaign_ended_at` 을 한 번만 채운 뒤 3일 뒤 지운다 |
 
 | 데이터 | 키 | 만료 | 원본 | 읽는 곳 |
@@ -189,6 +195,9 @@ impression/
 | 당일 이력 | `adserving:exclusion:{영업일}:{memberId}` 집합. 원소가 `campaignId` | 다음 영업일 00:00 까지 남은 시간. 넣기와 만료를 `feed_exclusion_add.lua` 한 번으로 보낸다(#783) | 없다. 잃으면 그날 넘긴 카드가 다시 보인다 | `ExclusionRepository`. 쓰는 쪽은 `SwipeService` 와 `WishlistService` 의 가게 상세 찜과 찜 삭제다 |
 | 하루 내려준 횟수 | `adserving:servedDaily:{영업일}:{memberId}` 해시. 필드 `campaignId`, 값 횟수 | 다음 영업일 00:00 까지 남은 시간 | 없다. 잃으면 그날 같은 카드가 더 나온다 | `ServeFrequencyRepository` |
 | 세션에 내려준 캠페인 | `adserving:servedSession:{memberId}` 집합 | 피드 요청마다 30분을 다시 건다 | 없다. 키가 사라지면 새 세션이다 | `ServeFrequencyRepository` |
+| 필터 캐시 | `adserving:feedFilter:{memberId}` 문자열. `정렬|업종,업종` | 하루. 필터를 저장하면 커밋 뒤 지운다 | `feed_filter`, `feed_filter_category` | `FeedStateRepository`. 지우는 쪽은 `FeedFilterService` 다 |
+| 30일 찜 캐시 | `adserving:feedWishes:{영업일}:{memberId}` 문자열. `업종:건수,업종:건수`, 찜이 없으면 빈 문자열 | 하루. 찜 스와이프가 기록되면 지운다 | `swipe_log` 의 찜 | `FeedStateRepository`. 지우는 쪽은 `SwipeService` 다 |
+| 그날 후보 변경 알림 | `adserving:candidate:changed` pub/sub 채널. 메시지는 `영업일:campaignId`, 그날 전체는 `영업일:*` | 저장하지 않는다. 받는 쪽이 그 순간 붙어 있지 않으면 사라진다 | `ad_candidate`. 놓친 알림은 서버 메모리가 5초 안에 다시 읽어 메운다 | 보내는 쪽 `CandidateChangeNotifier`, 받는 쪽 `CandidateChangeSubscriber` |
 | 그날 유효 노출 수 | `adserving:validImpressions:{영업일}` 해시. 필드 `campaignId`, 값 건수. 영업일은 노출을 받은 날이다(#498). 정산이 차감하는 영업일과 같아 노출 상한과 그날 예약액이 같은 날을 본다 | 올릴 때마다 이틀. 올리기와 만료를 `feed_impression_count_increment.lua` 한 번으로 보낸다(#783) | `impression_log` 의 유효 노출 | `ImpressionCountRepository`. 올리는 쪽은 `ImpressionWriteBuffer` 다 |
 | serve 기록 | `adserving:serve:{serveId}` 문자열. 회원:캠페인:가게:슬롯:자리:내려준 시각(ms) | 30분. 노출 인정 시간이고 정산은 이 값을 따로 두지 않아 과금을 인정하는 범위가 된다(#497, #498) | 없다. `serve_log` 는 판정에 쓰지 않는다. 잃으면 그동안의 노출이 무효다 | `ServeRecordRepository`, `ImpressionService` |
 
@@ -378,6 +387,9 @@ flowchart LR
 
         subgraph engine["engine/ (후보 스냅샷)"]
             AR[(AdCandidateRepository)]
+            CC[CandidateCache] --> AR
+            CN[("CandidateChangeNotifier<br/>Valkey pub/sub")]
+            CSB[CandidateChangeSubscriber] --> CC
             FA["FeedAssembler<br/>CampaignPacing<br/>순수 계산"]
         end
 
@@ -389,7 +401,9 @@ flowchart LR
         end
 
         CSU[CandidateStateUpdaterImpl] --> AR
+        CSU --> CN
         CSL[CandidateStatusChangedListener] --> CSS[CandidateStatusService] --> AR
+        CSS --> CN
 
         subgraph impression["impression/ (노출 로그)"]
             IMC[ImpressionController] --> IMS[ImpressionService]
@@ -398,12 +412,12 @@ flowchart LR
             LRJ[LogRetentionJob] --> LRS[LogRetentionService] --> IML
         end
 
-        FS --> AR
+        FS --> CC
         FS --> DE
         FS --> FA
         IMS --> SR
         IMW --> IC
-        IMS --> AR
+        IMS --> CC
         SWS --> WR
         SWS --> AR
         WS --> AR
@@ -412,7 +426,7 @@ flowchart LR
 
     CP([coupon]) --> WS
     CP --> CSU
-    FS --> MQ["member.contract<br/>MemberQueryService"]
+    FS --> MIC[MemberInfoCache] --> MQ["member.contract<br/>MemberQueryService"]
     CBS[CandidateBudgetService] --> BQ["billing.contract<br/>BudgetQueryService"]
     IDS[ImpressionDispatchService] --> PD["billing.contract<br/>PointDeductor"]
 
@@ -488,11 +502,9 @@ sequenceDiagram
     participant DB as MySQL
     participant V as Valkey
     C->>S: record(memberId, 요청)
-    S->>DB: 1. 같은 (serveId, 사용자) 가 저장돼 있나
-    Note over S: 있으면 처음 판정을 돌려준다
     S->>V: 2. serve 기록 읽기
     Note over S: 없으면 EXPIRED_OR_UNKNOWN, 다른 사용자면 NOT_OWNER
-    S->>DB: 3. 그날 후보의 쿠폰 소진 여부
+    Note over S: 3. 그날 후보의 쿠폰 소진 여부(서버 메모리, #1042)
     S->>Q: 4. 큐에 넣는다. 차 있으면 100ms 기다린 뒤 버리고 센다
     S-->>C: 202
     Note over Q: 500건이 차거나 200ms 가 지나면
@@ -506,11 +518,11 @@ sequenceDiagram
 
 | 실패 지점 | 남는 상태 | 다시 요청하면 |
 |---|---|---|
-| 1, 3 | 아무것도 남지 않는다. `500` 이다 | 클라이언트가 1회 재시도하면 새로 처리한다 |
-| 2 | Valkey 가 멈추면 기록 없음으로 보고 `EXPIRED_OR_UNKNOWN` 으로 저장한다 | 저장됐으면 처음 판정(무효)을 돌려준다. Valkey 가 돌아와도 유효로 바뀌지 않는다 |
+| 3 | 아무것도 남지 않는다. `500` 이다. 서버 메모리가 그날 후보를 처음 읽다 DB 가 멈춘 때만 실패한다 | 클라이언트가 1회 재시도하면 새로 처리한다 |
+| 2 | Valkey 가 멈추면 기록 없음으로 보고 `EXPIRED_OR_UNKNOWN` 으로 저장한다 | 다시 판정해 돌려준다. 저장된 행은 처음 판정(무효)으로 남아 Valkey 가 돌아와도 유효로 바뀌지 않는다 |
 | 4 | 큐가 100ms 넘게 차 있으면 버린다. 응답은 `202` 다 | 클라이언트는 응답을 쓰지 않아 다시 보내지 않는다 |
 | 5, 6, 7 | 묶음이 롤백된다. 같은 묶음을 지수 백오프와 Full Jitter 로 10번까지 다시 쓴다. 그래도 실패하거나 서버가 내려가는 중이면 버리고 쓰지 못한 행으로 센다 | 저장 전이면 다시 판정해 큐에 넣는다. 같은 키는 하나만 저장된다 |
-| 8 | 노출은 커밋됐고 카운터만 오르지 않는다. 상한이 그만큼 늦게 걸린다 | 저장됐으면 처음 판정을 돌려주고 카운터는 다시 올리지 않는다 |
+| 8 | 노출은 커밋됐고 카운터만 오르지 않는다. 상한이 그만큼 늦게 걸린다 | 다시 판정해 돌려주고 새로 들어간 행이 아니라 카운터는 다시 올리지 않는다 |
 | 응답 뒤 서버가 강제로 죽음 | 큐에 있던 노출이 빠진다. 유실 목표 0.1% 안에 둔다 | 클라이언트는 다시 보내지 않는다 |
 
 **노출 릴레이.** 배치 서버에서 1초마다 돈다. 정산은 트랜잭션 안에서 부르면 거절하므로 점유와 결과 적기 사이에서 트랜잭션 밖으로 부른다.
@@ -630,6 +642,31 @@ B 를 고른다. 서빙 로그는 판정과 과금에 쓰이지 않고 유실을
 차면 기다리지 않고 버린다. 두 값은 근거 없는 값(C)이라 부하 시험에서 바꾼다.
 종료할 때는 웹 서버가 요청을 다 받은 뒤(`SmartLifecycle` 단계 0) 멈추고 남은 것을 비운다. 작업 스레드를 interrupt 하지 않는다. 쓰던 묶음이 커넥션을 기다리다 실패하면 대기열에서 이미 빠져 비우기에도 없기 때문이다. 작업 스레드는 대기(200ms)가 끝나면 쓰던 묶음을 마치고 나온다(#783).
 
+**결정: 그날 후보를 어디서 읽나** (#1042)
+
+부하 시험(노출 수집 v1)에서 피드 초당 약 30건에 DB 커넥션 풀이 바닥났다(대기 최대 약 420, RDS CPU 약 70%). 피드는 요청마다 그날 후보를 범위 조회로 읽고 노출은 요청마다 쿠폰 소진을 읽었다.
+
+| 선택지 | 장점 | 단점 |
+|---|---|---|
+| A. 서버 메모리에 두고 5초마다 통째로 다시 읽는다 | 코드가 가장 적다 | 바뀐 것이 늘 최대 5초 늦다. 쿠폰 소진 뒤 5초 동안 받은 노출이 과금될 수 있다 |
+| B. A 에 더해 바꾼 서버만 바로 반영한다 | 바꾼 서버는 바로 맞다 | 나머지 서버는 여전히 최대 5초 늦다 |
+| C. 바꾼 서버가 커밋 뒤 Valkey 로 알리고 모든 서버가 그 후보를 다시 읽는다. A 를 안전망으로 둔다 | 보통 수 ms 안에 모든 서버가 맞다 | 알림 보내기와 받기가 는다. 알림은 받는 쪽이 붙어 있지 않으면 사라져 A 가 메운다 |
+
+C 를 고른다. 노출의 쿠폰 소진도 메모리에서 읽는다. 알림을 놓친 드문 경우에만 소진 뒤 최대 5초 동안의 노출이 과금될 수 있고, 그 노출도 실제로 보인 카드의 노출이다.
+알리는 곳은 소진 반영, 상태 반영(후보 하나), 적재와 재조회, 예산 갱신(그날 전체)이다. 앱 서버는 스케줄러를 켜지 않아 5초 안전망은 주기 작업 대신 읽을 때 다시 읽는다.
+
+**결정: 피드의 나머지 읽기를 어디서 하나** (#1042)
+
+그날 후보를 메모리로 옮긴 뒤에도 피드는 요청마다 DB 를 4번(필터, 필터 업종, 30일 찜, 회원) 읽고 Valkey 를 따로 7번 불렀다.
+
+| 읽기 | 고른 것 | 잃는 것 |
+|---|---|---|
+| 회원 조회 | 서버 메모리에 30초 둔다. 온보딩 미완료와 없는 회원은 두지 않는다 | 위치와 노출 대상의 변경이 최대 30초 늦다. 피드는 보통 현재 좌표를 함께 보낸다 |
+| 필터와 30일 찜 | 읽은 결과를 Valkey 에 캐시하고 바뀌면 지운다. 원본은 DB 다 | 첫 피드는 DB 를 읽는다. 지우지 못하면(Valkey 장애) 만료까지 낡을 수 있다. 30일 찜은 업종 선호도에만 쓰여 낡아도 카드 순서가 조금 바뀔 뿐이다 |
+| 배정 전 Valkey 읽기 다섯 | 파이프라인 하나로 묶는다. 실패하면 다섯 모두 우회값을 쓴다 | 한 명령만 실패해도 다섯이 함께 우회한다. Valkey 실패는 대개 연결 단위라 달라지는 일이 드물다 |
+
+Valkey 를 원본처럼 쓰는 안(필터 저장과 찜 때 Valkey 도 쓰고 30일 찜을 날짜별 카운터로 센다)은 DB 를 전혀 읽지 않지만 두 곳이 어긋날 수 있고 비었을 때 다시 채우는 길이 따로 필요해 고르지 않았다.
+
 **결정: 유효 노출 수 카운터를 언제 올리나** (#323)
 
 | 선택지 | 장점 | 단점 |
@@ -667,7 +704,7 @@ A 를 고른다. 분석의 결정과 어긋났을 때 B 는 노출 이벤트를 
 | 상황 | 확인한 것 |
 |---|---|
 | 같은 회원의 요청이 동시에 옴 | 요청 제한은 한 Lua 스크립트로 세고 넣어 함께 들어오지 않는다. 하루 횟수는 읽고 고른 뒤 올려서, 동시에 온 두 요청이 같은 캠페인을 함께 내려줄 수 있다. 같은 사용자의 동시 요청은 60초 6회 제한 안에서만 생겨 받아들였다 |
-| 같은 노출이 다시 옴 | (serveId, 사용자) 가 멱등 키다. 요청이 먼저 읽어 저장돼 있으면 처음 판정을 돌려준다. 아직 큐에 있어 저장 전이면 다시 판정해 큐에 넣는다. 묶음 저장은 `INSERT IGNORE` 로 한 건만 넣고, 넣은 뒤 같은 트랜잭션에서 `created_at` 이 그 노출을 받은 시각과 같은 행만 새로 들어간 것으로 가린다. 같은 묶음에 같은 키가 둘이면 처음 것만 센다. 카운터와 이벤트는 새로 들어간 노출에서만 한 번 돈다. 정산도 같은 serveId 의 두 번째 차감을 첫 판정으로 돌려준다 |
+| 같은 노출이 다시 옴 | (serveId, 사용자) 가 멱등 키다. 요청은 저장된 노출을 확인하지 않고 늘 다시 판정해 큐에 넣는다(#1044). 묶음 저장은 `INSERT IGNORE` 로 한 건만 넣고, 넣은 뒤 같은 트랜잭션에서 `created_at` 이 그 노출을 받은 시각과 같은 행만 새로 들어간 것으로 가린다. 같은 묶음에 같은 키가 둘이면 처음 것만 센다. 카운터와 이벤트는 새로 들어간 노출에서만 한 번 돈다. 정산도 같은 serveId 의 두 번째 차감을 첫 판정으로 돌려준다 |
 | 같은 카드를 다시 넘김 | (serveId, 사용자) 가 멱등 키다. 먼저 읽어 있으면 `applied: false` 다. 동시에 두 건이 오면 `INSERT IGNORE` 가 한 건만 넣고 늦은 쪽은 `applied: false` 로 당일 이력에 다시 넣지 않는다. 찜은 같은 캠페인에 한 건뿐이라 둘이 함께 넣어도 하나만 남는다. WISH 와 PASS 가 함께 와 기록 넣기에서 진 WISH 는 자기가 새로 넣은 찜을 지운다. 그대로 두면 패스한 카드가 찜에 남는다(#783). 찜을 넣은 뒤 같은 사용자의 찜 삭제가 먼저 커밋되면 찜 id 없이 이어 간다 |
 | 같은 캠페인을 가게 상세에서 다시 찜함 | (사용자, 캠페인) 이 멱등 키다(`uk_wishlist_member_campaign`). 동시에 두 건이 오면 `INSERT IGNORE` 가 한 건만 넣어 한쪽은 `201`, 다른 쪽은 `200` 이다. 두 요청 모두 당일 이력에 넣지만 집합이라 하나다. 둘 다 같은 행을 다시 읽어 처음 찜한 시각을 돌려준다. 넣은 뒤 같은 사용자의 찜 삭제가 먼저 커밋돼 읽을 행이 없으면 넣은 값과 지금 시각으로 답한다. 찜하고 지운 순서대로 끝난 것이라 `500` 으로 답하지 않는다(#783) |
 | 같은 회원의 필터 저장이 동시에 옴 | 먼저 도는 `INSERT ... ON DUPLICATE KEY UPDATE` 가 그 회원의 `feed_filter` 행을 잠가, 뒤의 요청은 앞의 커밋까지 기다린 뒤 업종을 지우고 넣는다. 처음 저장이 둘 와도 PK 충돌 없이 한쪽이 넣고 다른 쪽이 바꾼다. 늦게 커밋한 쪽의 필터가 남는다 |
@@ -691,7 +728,7 @@ A 를 고른다. 분석의 결정과 어긋났을 때 B 는 노출 이벤트를 
 | 예산을 아직 읽지 못한 피드 | 00:00 적재 때 정산이 멈췄으면 후보의 예약액이 빈다. 그 피드는 진행률 1.2 초과와 노출 상한 제외가 빠져 예산을 넘긴 캠페인도 나간다. 낮에 멈추면 마지막으로 읽은 값을 그대로 쓴다 | 공정성(다른 점주) | 차감은 정산이 따로 막아 점주가 더 내지 않는다. 10분 갱신이 다시 채운다. `adserving_budget_unavailable_total` 로 센다(#837) |
 | 노출 수 카운터가 멈춘 동안의 피드 | 0 으로 보고 상한을 넘겨 내보낸다 | 플랫폼 | 넘긴 노출은 과금되지 않는다. `adserving_cache_bypass_total` 로 센다 |
 | serve 기록을 쓰지 못한 피드 | 그 카드의 노출이 무효라 과금되지 않는다 | 플랫폼 | `adserving_cache_bypass_total`(`use=serve_record`) 로 센다 |
-| serve 기록을 읽지 못한 노출 | 유효 노출이 `EXPIRED_OR_UNKNOWN` 으로 저장돼 과금되지 않는다. 다시 보내도 처음 판정이 남는다 | 플랫폼 | `adserving_cache_bypass_total`(`use=serve_record`) 로 센다 |
+| serve 기록을 읽지 못한 노출 | 유효 노출이 `EXPIRED_OR_UNKNOWN` 으로 저장돼 과금되지 않는다. 다시 보내도 저장된 행은 처음 판정으로 남는다 | 플랫폼 | `adserving_cache_bypass_total`(`use=serve_record`) 로 센다 |
 | 차감이 실패한 노출 | 노출은 남고 릴레이가 다시 넘긴다. 10회 실패하면 넘기지 않고 밀린 수로 남는다 | 플랫폼 | 정산이 serveId 로 한 번만 과금해 점주에게 불리하게 남는 것은 없다. `adserving_impression_dispatch_backlog` 로 본다 |
 | 카운터를 올리지 못한 노출 | 상한이 늦게 걸려 미과금 노출이 더 나간다 | 플랫폼 | `adserving_cache_bypass_total`(`use=impression_count`) 로 센다 |
 | 스와이프 기록이 끝내 실패한 찜 | 찜은 남고 스와이프 기록이 없다. 30일 업종 선호도에 그 찜이 빠진다 | 사용자 | 돈이 걸리지 않는다. 클라이언트가 다시 보내면 맞춰진다 |
@@ -735,13 +772,13 @@ A 를 고른다. 분석의 결정과 어긋났을 때 B 는 노출 이벤트를 
 
 | 적을 것 | 피드 조회 |
 |---|---|
-| 요청 하나의 비용 | DB 읽기 4(후보, 필터, 필터 업종, 30일 찜), 다른 도메인 호출 1(회원), Valkey 호출 7(serve 기록 10건은 파이프라인 한 번). 응답 뒤 DB 쓰기는 요청이 아니라 묶음 단위다 |
+| 요청 하나의 비용 | DB 읽기 0~3(필터, 필터 업종, 30일 찜은 Valkey 캐시가 없을 때만), 다른 도메인 호출 0~1(회원은 서버 메모리에 30초), Valkey 왕복 4(요청 제한, 배정 전 읽기 다섯을 묶은 파이프라인 1, 내려준 기록, serve 기록 파이프라인). 그날 후보는 서버 메모리에서 읽는다(#1042). 응답 뒤 DB 쓰기는 요청이 아니라 묶음 단위다 |
 | 처리량 계산 | 목표 500 TPS x DB 읽기 4 = 초당 2,000 읽기, 회원 조회를 더하면 2,500. 응답 뒤 쓰기는 초당 `serve_log` 5,000행과 `feed_visit_daily` 500행을 50건 묶음으로 서버마다 나눠 쓴다 |
 | 확인 방법 | 아직 없다. k6 시나리오(피크 10:50~11:05)로 대기열 크기와 묶음 수도 함께 잰다 |
 
 | 적을 것 | 노출 수집 |
 |---|---|
-| 요청 하나의 비용 | DB 읽기 2(중복 확인, 후보 소진), Valkey 호출 1(serve 기록 읽기). 쓰기는 응답 뒤의 묶음 단위다. 묶음 하나는 INSERT 1문장, 가리기 SELECT 1문장, 커밋 1, 새로 들어간 유효 노출마다 Valkey 호출 1(카운터)이다. 분석 이벤트는 분석의 실행기가 따로 쓴다. 정산의 판정과 원장 쓰기는 릴레이로 옮겼다 |
+| 요청 하나의 비용 | DB 읽기 0, Valkey 호출 1(serve 기록 읽기). 후보 소진은 서버 메모리에서 읽고(#1042) 저장된 노출은 확인하지 않는다(#1044). 쓰기는 응답 뒤의 묶음 단위다. 묶음 하나는 INSERT 1문장, 가리기 SELECT 1문장, 커밋 1, 새로 들어간 유효 노출마다 Valkey 호출 1(카운터)이다. 분석 이벤트는 분석의 실행기가 따로 쓴다. 정산의 판정과 원장 쓰기는 릴레이로 옮겼다 |
 | 처리량 계산 | 목표 10,000 TPS(NFR-010)의 쓰기가 서버마다 200ms 에 한 묶음씩 커밋된다. 서버 3대면 초당 약 15 트랜잭션이다. 릴레이가 넘긴 노출마다 정산의 쓰기 2건과 넘긴 표시 UPDATE 1건이 따로 든다. 표시는 묶음마다 한 문장이다. 지금 구성으로 되는지는 재지 않았다 |
 | 확인 방법 | 아직 없다. 피드와 같은 k6 시나리오에 노출 요청을 섞는다 |
 
@@ -784,7 +821,7 @@ A 를 고른다. 분석의 결정과 어긋났을 때 B 는 노출 이벤트를 
 | 묶음 쓰기가 실패함(11) | DB 쓰기가 한 번 실패한다 | 묶음 둘을 쓴다 | 첫 묶음을 버리고 세며 둘째는 쓴다 | `ServeLogBufferTest.쓰기가_실패하면_그_묶음을_버리고_세며_다음_묶음은_쓴다` |
 | 서버가 내려감 | 대기열에 2건이 남았다 | 대기열을 멈춘다 | 남은 것을 모두 쓴다 | `ServeLogBufferTest.멈출_때_남은_것을_모두_쓴다` |
 | 쓰는 중에 서버가 내려감 | 작업 스레드가 묶음을 쓰는 중이다 | 대기열을 멈춘다 | 쓰던 묶음을 끊지 않고 마친다 | `ServeLogBufferTest.멈출_때_쓰는_중인_묶음을_끊지_않는다` |
-| 같은 노출이 다시 옴 | 유효 노출 1건이 저장됐다 | 같은 사용자가 같은 serveId 를 다시 보낸다 | 처음 판정을 돌려주고 행, 넘기기, 카운터가 한 번뿐이다 | `ImpressionIntegrationTest.저장된_뒤_같은_사용자가_같은_카드를_다시_보내면_처음_판정을_돌려주고_한_번만_넘기고_센다` |
+| 같은 노출이 다시 옴 | 유효 노출 1건이 저장됐다 | 같은 사용자가 같은 serveId 를 다시 보낸다 | 다시 판정해 돌려주고 행, 넘기기, 카운터가 한 번뿐이다 | `ImpressionIntegrationTest.저장된_뒤_같은_사용자가_같은_카드를_다시_보내면_다시_판정하고_한_번만_넘기고_센다` |
 | 저장되기 전에 다시 옴 | 처음 노출이 아직 큐에 있다 | 같은 노출을 다시 보낸다 | 다시 판정해 `202` 이고 행, 카운터, 이벤트가 한 번뿐이다 | `ImpressionIntegrationTest.저장되기_전에_다시_보내면_다시_판정하고_한_번만_저장하고_센다` |
 | 다른 묶음이 먼저 저장함 | 다른 서버의 묶음이 같은 노출을 먼저 저장했다 | 이 묶음을 쓴다 | 행은 하나이고 카운터와 이벤트를 다시 내지 않는다 | `ImpressionIntegrationTest.다른_묶음이_먼저_저장한_노출은_세지_않고_이벤트도_내지_않는다` |
 | 같은 묶음에 같은 노출이 둘 | 한 묶음에 같은 키가 둘 있다 | 묶음을 쓴다 | 이벤트와 카운터가 한 번이다 | `ImpressionWriteBufferTest.같은_묶음에_같은_노출이_둘이면_한_번만_이벤트를_내고_센다` |
@@ -850,6 +887,15 @@ A 를 고른다. 분석의 결정과 어긋났을 때 B 는 노출 이벤트를 
 | 상태 통보가 온 날 후보가 없음 | 후보가 없다 | 멈춤을 통보한다 | 예외 없이 넘어가고 센다 | `CandidateStatusChangedIntegrationTest.그날_후보가_없어도_예외_없이_넘어간다`, `CandidateStatusServiceTest.그_영업일의_후보가_없으면_예외_없이_넘어가고_센다` |
 | 소진 통보 | 같은 캠페인의 오늘과 내일 후보, 다른 캠페인의 오늘 후보가 있다 | 오늘로 소진을 통보한다 | 오늘 그 캠페인 후보에만 받은 시각이 들어간다 | `CandidateSoldOutIntegrationTest.받은_영업일의_그_캠페인_후보에만_받은_소진_시각을_쓴다` |
 | 같은 소진 통보가 다시 옴 | 이미 소진됐다 | 더 늦은 시각으로 다시 통보한다 | 처음 소진 시각이 남는다 | `CandidateSoldOutIntegrationTest.다시_불러도_처음_소진_시각이_남는다` |
+| 소진이 다른 서버에 감 | 서버 메모리에 그날 후보가 있고 시계가 멈춰 있다 | 소진을 통보한다 | Valkey 알림으로 메모리의 그 후보가 소진이 된다 | `CandidateSoldOutIntegrationTest.소진을_쓰면_Valkey_알림으로_서버_메모리의_후보도_소진이_된다` |
+| 알림을 놓침 | 메모리에 그날 후보가 있다 | 5초가 지나 다시 읽는다 | 통째로 다시 읽어 소진이 보인다 | `CandidateCacheTest.오초가_지나면_통째로_다시_읽는다` |
+| 회원 캐시 | 온보딩을 마친 회원을 읽었다 | 29초와 30초 뒤 다시 읽는다 | 29초 뒤는 회원 도메인을 부르지 않고 30초 뒤는 부른다. 온보딩 미완료는 캐시하지 않는다 | `MemberInfoCacheTest.온보딩_미완료와_없는_회원은_캐시하지_않는다` |
+| 필터 캐시가 있음 | Valkey 에 필터가 있다 | 피드를 요청한다 | DB 를 읽지 않고 그 필터로 거른다 | `FeedServiceTest.필터_캐시가_있으면_DB_를_읽지_않고_그_필터로_거른다` |
+| 필터를 저장함 | 필터를 저장한다 | 커밋된다 | 커밋 뒤 필터 캐시를 지운다 | `FeedFilterServiceTest.저장하면_커밋된_뒤에_필터_캐시를_지운다` |
+| 찜 스와이프 | 찜으로 넘긴다 | 기록이 커밋된다 | 그날 30일 찜 캐시를 지운다 | `SwipeServiceTest.찜하면_찜을_먼저_넣고_스와이프를_남기고_그날_당일_이력에_넣는다` |
+| 피드 상태를 못 읽음(9) | Valkey 파이프라인이 실패한다 | 피드를 요청한다 | 다섯 모두 우회하고 쓰임새마다 센다 | `FeedValkeyFallbackTest.피드_상태를_읽지_못하면_다섯_모두_우회하고_쓰임새마다_센다` |
+| 다시 읽기가 실패함 | 메모리에 그날 후보가 있다 | DB 가 시간 초과한다 | 이전 후보를 쓰고 센다 | `CandidateCacheTest.다시_읽기가_실패하면_이전_후보를_쓰고_센다` |
+| 알림을 보내지 못함 | Valkey 가 멈췄다 | 후보를 바꾼다 | 예외 없이 센다 | `CandidateChangeNotifierTest.Valkey_가_멈추면_알리지_못한_것을_세고_예외를_올리지_않는다` |
 | 그날 후보가 없음 | 다른 영업일의 후보만 있다 | 소진을 통보한다 | 예외 없이 아무것도 바꾸지 않고 센다 | `CandidateSoldOutIntegrationTest.그_영업일의_후보가_없으면_예외_없이_아무것도_바꾸지_않는다`, `CandidateStateUpdaterImplTest.그_영업일의_후보가_없으면_예외_없이_넘어가고_센다` |
 | 분석이 하루 노출을 셈 | 유효, 소진 뒤, 무효 두 사유의 노출이 여러 시간대와 슬롯에 있다 | `campaignStats` 를 부른다 | 시간대 합과 슬롯 합이 유효 노출과 같고 다른 날은 세지 않는다 | `AdservingStatsQueryIntegrationTest.판정_사유_시간대_슬롯을_캠페인별로_세고_시간대_합과_슬롯_합이_유효_노출과_같다` |
 | 하루 종일 받은 노출 | 00:05, 09:30, 13:20, 23:59 에 받은 유효 노출이 있다 | `campaignStats` 를 부른다 | 각 시의 칸에 하나씩 센다 | `AdservingStatsQueryIntegrationTest.받은_시각의_시를_0시부터_23시까지_그대로_센다` |

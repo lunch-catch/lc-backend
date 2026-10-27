@@ -11,6 +11,7 @@ import com.launchcatch.adserving.feed.dto.SwipeRequest;
 import com.launchcatch.adserving.feed.dto.SwipeResponse;
 import com.launchcatch.adserving.feed.entity.SwipeLog;
 import com.launchcatch.adserving.feed.entity.SwipeLogId;
+import com.launchcatch.adserving.feed.repository.FeedStateRepository;
 import com.launchcatch.adserving.feed.repository.SwipeLogRepository;
 import com.launchcatch.adserving.wishlist.entity.Wishlist;
 import com.launchcatch.adserving.wishlist.repository.WishlistRepository;
@@ -41,6 +42,7 @@ public class SwipeService {
     private final WishlistService wishlistService;
     private final AdCandidateRepository adCandidateRepository;
     private final ExclusionRepository exclusionRepository;
+    private final FeedStateRepository feedStateRepository;
     private final ApplicationEventPublisher eventPublisher;
     private final Clock clock;
 
@@ -84,6 +86,10 @@ public class SwipeService {
         }
         // 기록이 커밋된 뒤에 넣는다. Valkey 는 되돌릴 수 없어 기록보다 먼저 넣으면 실패한 스와이프도 피드에서 빠진다
         exclusionRepository.add(today, memberId, candidate.getCampaignId(), now);
+        // 30일 찜이 바뀌었다. 피드의 업종 선호도 캐시를 지워 다음 피드가 DB 에서 다시 세게 한다(#1042 결정 4)
+        if (request.swipeAction() == SwipeAction.WISH) {
+            feedStateRepository.evictWishes(today, memberId);
+        }
         /*
          * 분석에 넘길 일을 커밋 전에 기록해 두지 않는다(장애 처리 가이드 "롤백 안 되는 효과"의 기본을 벗어난다).
          * 퍼널은 유실을 허용하고 스와이프 수는 swipe_log 로 다시 센다(아키텍처 설계 2.4).

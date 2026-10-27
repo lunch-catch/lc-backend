@@ -1,5 +1,6 @@
 package com.launchcatch.adserving.engine.service;
 
+import com.launchcatch.adserving.engine.repository.CandidateChangeNotifier;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
@@ -29,7 +30,8 @@ class CandidateStatusServiceTest {
 
     private final AdCandidateRepository adCandidateRepository = mock(AdCandidateRepository.class);
     private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
-    private final CandidateStatusService service = new CandidateStatusService(adCandidateRepository, meterRegistry,
+    private final CandidateChangeNotifier notifier = org.mockito.Mockito.mock(CandidateChangeNotifier.class);
+    private final CandidateStatusService service = new CandidateStatusService(adCandidateRepository, notifier, meterRegistry,
             Clock.fixed(NOW.atZone(ClockConfig.ZONE).toInstant(), ClockConfig.ZONE));
 
     private double missingCount() {
@@ -44,6 +46,7 @@ class CandidateStatusServiceTest {
         service.changeServable(CAMPAIGN_ID, BUSINESS_DATE, false, CHANGED_AT);
 
         verify(adCandidateRepository).changeState(BUSINESS_DATE, CAMPAIGN_ID, CandidateCampaignState.PAUSED.name(), CHANGED_AT, NOW);
+        verify(notifier).changed(BUSINESS_DATE, CAMPAIGN_ID);
         assertThat(missingCount()).isZero();
     }
 
@@ -62,7 +65,8 @@ class CandidateStatusServiceTest {
      * 순서가 바뀌어 온 이벤트라 세지 않는다.
      */
     @Test
-    void 이미_더_늦은_전이가_반영됐으면_넘어가고_세지_않는다() {
+    void 이미_더_늦은_전이가_반영됐으면_넘어가고_세지도_알리지도_않는다() {
+        org.mockito.Mockito.doThrow(new AssertionError("바뀐 행이 없는데 알렸다")).when(notifier).changed(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
         when(adCandidateRepository.changeState(BUSINESS_DATE, CAMPAIGN_ID, CandidateCampaignState.PAUSED.name(), CHANGED_AT, NOW))
                 .thenReturn(0);
         when(adCandidateRepository.existsByIdBusinessDateAndIdCampaignId(BUSINESS_DATE, CAMPAIGN_ID)).thenReturn(true);

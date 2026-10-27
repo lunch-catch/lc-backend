@@ -51,6 +51,10 @@ public class BudgetDailyPlan extends BaseTimeEntity {
     @Column(name = "status_changed_at")
     private LocalDateTime statusChangedAt;
 
+    // 그 계획의 예약을 해제한 시각이다. 차감이 마감을 판정한다(#1049). 해제가 저장소의 일괄 갱신으로 적는다
+    @Column(name = "released_at", insertable = false, updatable = false)
+    private LocalDateTime releasedAt;
+
     private BudgetDailyPlan(Long campaignId, Long ownerId, LocalDate businessDate, long dailyBudget,
                             long unitPrice, boolean paused, LocalDateTime statusChangedAt) {
         if (campaignId == null || ownerId == null || businessDate == null) {
