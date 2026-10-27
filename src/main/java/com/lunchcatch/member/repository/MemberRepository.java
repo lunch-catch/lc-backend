@@ -1,0 +1,112 @@
+package com.lunchcatch.member.repository;
+
+import com.lunchcatch.member.contract.MemberStatus;
+import com.lunchcatch.member.entity.Member;
+import java.time.LocalDateTime;
+import java.util.Collection;
+import java.util.List;
+import java.util.Optional;
+import org.springframework.data.jpa.repository.Modifying;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
+import org.springframework.transaction.annotation.Transactional;
+import jakarta.persistence.LockModeType;
+
+public interface MemberRepository extends JpaRepository<Member, Long>, MemberRepositoryCustom {
+
+    Optional<Member> findByProviderUserId(String providerUserId);
+
+    @Query("SELECT member.status FROM Member member WHERE member.id = :memberId")
+    Optional<MemberStatus> findStatusById(@Param("memberId") Long memberId);
+
+    @Query("""
+            SELECT new com.lunchcatch.member.repository.MemberStatusRow(member.id, member.status)
+              FROM Member member
+             WHERE member.id IN :memberIds
+            """)
+    List<MemberStatusRow> findStatusesByIdIn(@Param("memberIds") Collection<Long> memberIds);
+
+    long countByCreatedAtGreaterThanEqualAndCreatedAtLessThan(
+            LocalDateTime createdAtFrom, LocalDateTime createdAtBefore);
+
+    long countByCreatedAtLessThan(LocalDateTime createdAtBefore);
+
+    long countByStatusAndWithdrawnAtLessThan(MemberStatus status, LocalDateTime withdrawnAtBefore);
+
+    long countByStatusAndSuspendedAtLessThan(MemberStatus status, LocalDateTime suspendedAtBefore);
+
+    @Query("""
+            SELECT member FROM Member member
+              LEFT JOIN FETCH member.profile
+             WHERE member.id IN :memberIds
+            """)
+    List<Member> findAllWithProfileByIdIn(@Param("memberIds") Collection<Long> memberIds);
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT member FROM Member member WHERE member.id = :memberId")
+    Optional<Member> findByIdForUpdate(@Param("memberId") Long memberId);
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT member FROM Member member WHERE member.providerUserId = :providerUserId")
+    Optional<Member> findByProviderUserIdForUpdate(@Param("providerUserId") String providerUserId);
+
+    Optional<Member> findByRefreshTokenHash(String refreshTokenHash);
+
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Transactional
+    @Query("""
+            UPDATE Member member
+               SET member.refreshTokenHash = :refreshTokenHash,
+                   member.refreshTokenExpiresAt = :refreshTokenExpiresAt,
+                   member.updatedAt = :updatedAt
+             WHERE member.id = :memberId
+               AND member.status = :activeStatus
+            """)
+    int updateRefreshTokenBackup(
+            @Param("memberId") Long memberId,
+            @Param("refreshTokenHash") String refreshTokenHash,
+            @Param("refreshTokenExpiresAt") LocalDateTime refreshTokenExpiresAt,
+            @Param("updatedAt") LocalDateTime updatedAt,
+            @Param("activeStatus") MemberStatus activeStatus
+    );
+
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Transactional
+    @Query("""
+            UPDATE Member member
+               SET member.refreshTokenHash = NULL,
+                   member.refreshTokenExpiresAt = NULL,
+                   member.updatedAt = :updatedAt
+             WHERE member.id = :memberId
+               AND member.refreshTokenHash = :refreshTokenHash
+            """)
+    int clearRefreshTokenBackupIfHashMatches(
+            @Param("memberId") Long memberId,
+            @Param("refreshTokenHash") String refreshTokenHash,
+            @Param("updatedAt") LocalDateTime updatedAt
+    );
+
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Transactional
+    @Query("""
+            UPDATE Member member
+               SET member.refreshTokenHash = :newRefreshTokenHash,
+                   member.refreshTokenExpiresAt = :newRefreshTokenExpiresAt,
+                   member.updatedAt = :updatedAt
+             WHERE member.id = :memberId
+               AND member.refreshTokenHash = :oldRefreshTokenHash
+               AND member.refreshTokenExpiresAt > :now
+               AND member.status = :activeStatus
+            """)
+    int rotateRefreshTokenBackupIfMatches(
+            @Param("memberId") Long memberId,
+            @Param("oldRefreshTokenHash") String oldRefreshTokenHash,
+            @Param("newRefreshTokenHash") String newRefreshTokenHash,
+            @Param("newRefreshTokenExpiresAt") LocalDateTime newRefreshTokenExpiresAt,
+            @Param("now") LocalDateTime now,
+            @Param("updatedAt") LocalDateTime updatedAt,
+            @Param("activeStatus") MemberStatus activeStatus
+    );
+}

@@ -6,7 +6,7 @@ plugins {
     id 'org.sonarqube' version '7.5.0.8588'
 }
 
-group = 'com.launchcatch'
+group = 'com.lunchcatch'
 version = '0.0.1-SNAPSHOT'
 
 java {
@@ -294,7 +294,7 @@ tasks.named('jacocoTestCoverageVerification') {
              * 함께 걸린다.
              */
             element = 'CLASS'
-            includes = ['com.launchcatch.*.service.*']
+            includes = ['com.lunchcatch.*.service.*']
             limit {
                 counter = 'METHOD'
                 value = 'COVEREDRATIO'

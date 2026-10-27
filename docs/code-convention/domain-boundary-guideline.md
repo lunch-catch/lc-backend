@@ -103,5 +103,5 @@
 
 * 설계 근거: [domain-boundary-rationale.md](./domain-boundary-rationale.md)
 * 규칙의 내용과 예시: [런치캐치_도메인_구조와_의존성_설계.md](../architecture/런치캐치_도메인_구조와_의존성_설계.md)
-* 강제 수단: `src/test/java/com/launchcatch/ArchitectureTest.java` 의 규칙 12개
+* 강제 수단: `src/test/java/com/lunchcatch/ArchitectureTest.java` 의 규칙 12개
 * 애그리거트 경계의 연관 매핑: [jpa-association-guideline.md](./jpa-association-guideline.md) (`AGG-`)

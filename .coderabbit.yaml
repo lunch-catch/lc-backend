@@ -564,7 +564,7 @@ reviews:
     - path: "build.gradle"
       instructions: |
         build-gate-guideline.md(BLD-)를 적용한다. 커버리지 대상이
-        com.launchcatch.*.service.* 로 좁혀져 있는지, check 가
+        com.lunchcatch.*.service.* 로 좁혀져 있는지, check 가
         jacocoTestCoverageVerification 과 coverageDataCheck 를 부르는지 본다.
         시험 JVM 시간대는 Asia/Seoul 고정이다. UTC 로 바꾸면 지적한다.
 
@@ -574,7 +574,7 @@ reviews:
 
         근거 [build-gate-guideline.md](https://github.com/lunch-catch/lc-backend/blob/main/docs/code-convention/build-gate-guideline.md)
 
-        - `BLD-1-01` JaCoCo 대상이 `com.launchcatch.*.service.*`로 좁혀져 있는가
+        - `BLD-1-01` JaCoCo 대상이 `com.lunchcatch.*.service.*`로 좁혀져 있는가
         - `BLD-1-02` 판정 단위가 클래스별(`element = 'CLASS'`), 카운터가 메서드(`counter = 'METHOD'`)인가
         - `BLD-1-03` 기준이 `minimum = 1.00`인가
         - `BLD-1-04` 통합 테스트로 커버리지를 채우지 않는가

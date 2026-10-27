@@ -294,7 +294,7 @@ PointCharged { ownerId, paymentId, amount }
 
 PG 호출에는 타임아웃과 서킷브레이커를 적용한다. 시작값은 연결 3초, 읽기 10초, 최근 10건 중 50% 실패면 열림, 30초 뒤 반개방이다. 워커의 기본 주기는 1분이고 최초 조회 지연은 1분, 이후 간격은 2·5·10·30분이며 ±10% 지터를 준다. 기본 `max_retry`는 5다. 설정 키는 `billing.toss.*`, `resilience4j.circuitbreaker.instances.tossPayment`, `billing.payment.recheck.*`다. 결제는 호출 수가 적어 시간 창으로 두면 최소 호출 수를 못 채워 서킷이 열리지 않으므로 건수 창을 쓴다. 읽기 타임아웃을 짧게 두면 결과를 모르는 `UNKNOWN` 결제가 늘어난다.
 
-워커는 `FOR UPDATE SKIP LOCKED`로 처리할 행을 잡고 `next_retry_at`을 선점 시간(5분) 뒤로 민 채 바로 커밋한다. PG 호출은 트랜잭션 밖에서 하고 결과는 별도 트랜잭션으로 기록한다. 한 건이 실패해도 나머지 건은 계속 처리한다. 백오프는 첫 간격 1분 뒤 2·5·10·30분이고 ±10% 지터를 준다. 결과 매핑은 `APPROVED`(주문·금액 일치) 승인, `FAILED` 실패, `EXPIRED`/`CANCELED` 취소이며 `PENDING`, `NOT_FOUND`, 조회 실패, 불일치는 미확정으로 다음 시각으로 미룬다. 관리자 `:recheck`로 미확정이면 아웃박스의 `last_checked_at`과 `last_error`만 갱신하고 시도 횟수는 올리지 않는다. 메트릭은 `billing.payment.recheck{result=approve|fail|cancel|miss|error}`다. 실행은 `launchcatch.scheduler.enabled`일 때만 한다(배치 프로필).
+워커는 `FOR UPDATE SKIP LOCKED`로 처리할 행을 잡고 `next_retry_at`을 선점 시간(5분) 뒤로 민 채 바로 커밋한다. PG 호출은 트랜잭션 밖에서 하고 결과는 별도 트랜잭션으로 기록한다. 한 건이 실패해도 나머지 건은 계속 처리한다. 백오프는 첫 간격 1분 뒤 2·5·10·30분이고 ±10% 지터를 준다. 결과 매핑은 `APPROVED`(주문·금액 일치) 승인, `FAILED` 실패, `EXPIRED`/`CANCELED` 취소이며 `PENDING`, `NOT_FOUND`, 조회 실패, 불일치는 미확정으로 다음 시각으로 미룬다. 관리자 `:recheck`로 미확정이면 아웃박스의 `last_checked_at`과 `last_error`만 갱신하고 시도 횟수는 올리지 않는다. 메트릭은 `billing.payment.recheck{result=approve|fail|cancel|miss|error}`다. 실행은 `lunchcatch.scheduler.enabled`일 때만 한다(배치 프로필).
 
 조회 결과는 `PaymentGatewayInquiryResult.Status`의 `APPROVED`, `FAILED`, `EXPIRED`, `CANCELED`, `PENDING`, `NOT_FOUND`다. 만료와 실패는 서로 다른 값이다. 연결 실패나 서킷 오픈의 `PgNotSentException`, 그 밖의 조회 실패인 `PgUnknownException`은 미확정으로 처리한다.
 

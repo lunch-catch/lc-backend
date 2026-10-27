@@ -126,7 +126,7 @@ jobs:
         uses: gradle/actions/setup-gradle@748248ddd2a24f49513d8f472f81c3a07d4d50e1 # v4.4.4
 
       # check 는 test, jacocoTestCoverageVerification, coverageDataCheck 를 부른다.
-      # 커버리지 기준은 com.launchcatch.*.service.* 의 메서드 100% 다.
+      # 커버리지 기준은 com.lunchcatch.*.service.* 의 메서드 100% 다.
       # 통합 테스트를 쓰면 Testcontainers 가 MySQL 8.4 와 Valkey 9 를 띄우므로 러너의 도커가 필요하다.
       - name: 테스트와 커버리지
         if: steps.scope.outputs.docs_only != 'true'

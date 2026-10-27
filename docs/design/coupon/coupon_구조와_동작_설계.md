@@ -103,13 +103,13 @@ HTTP 요청·응답은 `dto/`에 두며 취소와 커밋 시작을 조정하는 
 
 | 대상 | DB가 막는 것 | 코드가 담당하는 것 |
 |---|---|---|
-| 일일 카운터 | 회원·영업일 UNIQUE와 0~3 CHECK를 둔다 | 행 잠금 아래 설정된 일일 한도와 증감을 검사한다 |
+| 일일 카운터 | 회원·영업일 UNIQUE와 음수 방지 CHECK를 둔다 | 행 잠금 아래 설정된 일일 한도와 증감을 검사한다 |
 | 이벤트 | 캠페인·영업일 UNIQUE, 할인 조합과 메뉴 스냅샷 CHECK를 둔다 | 조회 대상 매장·영업일에 이벤트가 둘이면 대표를 고르지 않고 정합성 오류를 낸다 |
 | 재고 | 이벤트·순번 UNIQUE와 쿠폰 코드 UNIQUE를 둔다 | Redis가 배정한 순번의 AVAILABLE만 조건부 UPDATE로 ISSUED로 바꾼다 |
 | 회원 쿠폰 | 이벤트·회원 UNIQUE와 쿠폰 코드 UNIQUE를 둔다 | 삭제한 쿠폰도 재발급을 막고 행 잠금으로 상태 전이를 조정한다 |
 | 사용 이력 | 회원 쿠폰에 대한 FK를 둔다. 현재 회원 쿠폰 ID 인덱스는 UNIQUE가 아니다 | 사용 확정은 회원 쿠폰 행 잠금 아래 이력을 한 번만 저장한다 |
 
-설정만으로 일일 한도를 3보다 크게 올릴 수 없다. 카운터 CHECK도 함께 바꿔야 한다.
+일일 한도는 `coupon.daily-limit`에서 읽으며 카운터의 DB 제약은 음수만 막는다.
 현재 coupon은 Valkey와 별도 인메모리 원본·캐시를 쓰지 않는다.
 
 ### 이벤트 스냅샷
@@ -171,7 +171,7 @@ V7은 전체 메뉴 정률 조합을 CHECK에서 제외한다. 지원하지 않�
 | 연결됨 | 읽기, member | `MemberQueryService.findCurrentStatuses(Set<Long>)`, `findById(Long)` | 발급은 묶음의 현재 회원 상태를 한 번에 읽고 QR 생성·이벤트 상태·새 사용 확정은 기존 회원 정보를 읽는다 |
 | 연결됨 | 읽기, owner | `OwnerStatusQuery.findCurrentStatus(Long)` | 점주 수량·매장 사용 이력·사용 확정 요청마다 한 번 호출하며 캐시를 우회한다 |
 | 연결됨 | 읽기, campaign | `CampaignQueryService.findByStoreIdIn(List<Long>)` | 이벤트 상태 요청마다 한 번 일괄 호출한다 |
-| 연결됨 | 읽기, store | `StoreQueryService.canManageStore(Long, Long)`, `findAllById(List<Long>)` | QR 사용은 관리 권한과 좌표를 조회한다. 이력 조회는 현재 관리 권한, 이벤트 조회는 최종 등록 매장을 확인한다 |
+| 연결됨 | 읽기, store | `StoreQueryService.canManageStore(Long, Long)`, `findAllById(List<Long>)` | QR 사용은 현재 관리 권한을 확인한다. 이력 조회는 현재 관리 권한, 이벤트 조회는 최종 등록 매장을 확인한다 |
 | 연결됨 | 읽기·쓰기, adserving | `WishlistQueryService`, `CandidateStateUpdater` | 발급·이벤트 조회에서 찜을 읽는다. 소진 통보의 실행 위치와 재시도는 [API 설계](./coupon-api-design.md#찜과-소진-contract-연결)를 따른다 |
 | 연결됨 | 받음, campaign | `CampaignStatusChangedEvent`, `CampaignEndedEvent` | 발행자와 같은 트랜잭션에서 회차 상태를 바꾼다. 전이 기준은 6장의 캠페인 이벤트 반영 절을 따른다 |
 | 연결됨 | 공개, analytics | `CouponIssuedEvent`, `CouponRedeemedEvent` | 발급·사용 트랜잭션 안에서 발행하며 분석은 커밋 후 비동기로 수신한다 |
@@ -183,7 +183,7 @@ store 메서드의 반환 정책은 [공개 계약 문서](../store/store-query-
 회차 준비의 메뉴 조회도 [메뉴 조회 결과 계약](../store/store-query-contract.md#메뉴-조회-결과-788)을 사용한다(#788). 데이터 오류 메뉴를 받으면 해당 회차의 트랜잭션을 실패시키며 회차와 재고를 생성하지 않는다.
 쿠폰 집계 조회의 날짜·상태·반환·실패 정책은 [집계 조회 계약](./coupon-stats-query-contract.md)이 갖는다.
 현재 coupon은 공개 조회 계약 위에 자체 캐시를 추가하지 않는다.
-공개 이벤트의 필드는 [contract 디렉터리](../../../src/main/java/com/launchcatch/coupon/contract/)가 갖는다.
+공개 이벤트의 필드는 [contract 디렉터리](../../../src/main/java/com/lunchcatch/coupon/contract/)가 갖는다.
 분석 수신자가 비동기 리스너와 저장을 소유하며 coupon은 분석 내부를 호출하지 않는다.
 
 ## 6. 구조와 동작 그림
@@ -500,8 +500,8 @@ QR 사용의 응답 시간·동시 요청 목표와 부하 검증은 아직 없�
 | 회차 갱신이 실패한다 | 같은 트랜잭션의 쿠폰 DB 쓰기가 실패한다 | 발행자의 변경도 롤백하며 재시도하면 함께 반영한다 | `회차_상태_저장이_실패하면_발행자_변경도_되돌리고_재시도하면_반영한다`, `회차_종료_저장이_실패하면_발행자_변경도_되돌리고_재시도하면_반영한다` |
 | 이미 발급한 쿠폰이 있다 | 캠페인이 중단·종료된다 | 기존 쿠폰·재고·한도를 보존하며 원래 사용 시간 안에서 QR 갱신과 사용을 허용한다 | `캠페인_중단과_종료는_새_발급만_막고_기존_쿠폰과_재고와_한도를_보존한다`, `캠페인이_중단되거나_끝나도_기존_쿠폰의_QR을_갱신하고_사용한다` |
 
-모든 행의 테스트는 [CouponIntegrationTest](../../../src/test/java/com/launchcatch/coupon/CouponIntegrationTest.java)에 있다.
-엔티티의 입력·상태 규칙과 서비스 분기는 [쿠폰 테스트 디렉터리](../../../src/test/java/com/launchcatch/coupon/)의 단위 테스트가 보완한다.
+모든 행의 테스트는 [CouponIntegrationTest](../../../src/test/java/com/lunchcatch/coupon/CouponIntegrationTest.java)에 있다.
+엔티티의 입력·상태 규칙과 서비스 분기는 [쿠폰 테스트 디렉터리](../../../src/test/java/com/lunchcatch/coupon/)의 단위 테스트가 보완한다.
 `CouponEventStateServiceTest`는 수신한 영업일·전이 시각의 보존과 상태 선택, 갱신 결과와 저장 실패 전파를 단위 테스트로 검증한다.
 기간 만료 시각과 삭제 날짜 경계, 목록·삭제 경합은 기존 통합 테스트에 있다.
 USED 전이와 사용 시각·할인 계산, 실제 사용 요청의 동시 재시도는 CouponIntegrationTest의 Redeem와 단위 테스트가 검증한다.
@@ -522,6 +522,6 @@ USED 전이와 사용 시각·할인 계산, 실제 사용 요청의 동시 재�
 | 멱등성과 재시도 | 만료_QR은_거절하고_사용한_QR의_재요청은_만료_후에도_구분한다 |
 | 시각 경계 | 같은 중첩 HTTP 테스트와 MemberCouponRedemptionTest가 만료 경계와 판정·저장 시각의 일치를 검증한다 |
 
-QR 사용 테스트는 [CouponIntegrationTest](../../../src/test/java/com/launchcatch/coupon/CouponIntegrationTest.java)의 Redeem에 있다.
+QR 사용 테스트는 [CouponIntegrationTest](../../../src/test/java/com/lunchcatch/coupon/CouponIntegrationTest.java)의 Redeem에 있다.
 MockMvc와 서버 포트로 보내는 실제 HTTP 요청에서 핵심 시나리오를 검증한다.
 owner·store의 공개 조회와 점주 AT 폐기 검증은 대역으로 제공하므로 이 검증을 제공자 내부 DB 조회 검증으로 해석하지 않는다.

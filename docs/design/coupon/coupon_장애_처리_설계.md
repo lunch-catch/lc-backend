@@ -15,7 +15,7 @@ QR 사용 확정도 같은 기본 처리를 따르며 상태·사용 이력의 �
 | owner의 OwnerStatusQuery | 사용 이력 조회·사용 확정에서 현재 ACTIVE 상태를 확인한다 | 기본(조회 장애를 전파한다). findCurrentStatus로 상태 캐시를 우회한다 |
 | campaign의 CampaignQueryService | 이벤트 상태 조회에서 매장별 캠페인을 확인한다 | 기본(조회 장애를 전파한다) |
 | campaign의 CampaignStatusChangedEvent, CampaignEndedEvent | 쿠폰 회차의 발급 상태를 바꾼다 | 기본(발행자와 같은 트랜잭션). 회차 갱신이 실패하면 예외를 전파하며 캠페인 변경도 되돌린다 |
-| store의 StoreQueryService | 이벤트 조회의 매장 존재와 이력·QR 사용의 현재 관리 권한, QR 사용 좌표를 확인한다 | 기본(조회 장애와 내부 데이터 누락을 오류로 올린다) |
+| store의 StoreQueryService | 이벤트 조회의 매장 존재와 이력·QR 사용의 현재 관리 권한을 확인한다 | 기본(조회 장애와 내부 데이터 누락을 오류로 올린다) |
 | adserving의 WishlistQueryService | 발급 자격과 이벤트 조회의 찜 여부를 확인한다 | 기본(조회 장애를 전파하고 발급은 롤백한다) |
 | adserving의 CandidateStateUpdater | 발급 커밋 후 소진을 알린다 | 발급은 유지하고 소진 반영만 실패한다. 아래 절을 따른다 |
 | 프로세스 내부 QR 인코더 | 토큰의 PNG 이미지를 만든다 | 기본(예외를 전파하고 QR 변경 트랜잭션을 되돌린다) |
@@ -106,8 +106,8 @@ Redis 예약의 반납과 차단은 [트랜잭션 종료 상태](./coupon-issuan
 
 현재 설정은 `server.shutdown=graceful`과 `spring.lifecycle.timeout-per-shutdown-phase=30s`를 사용한다.
 `CouponIssueBatcher`는 HTTP graceful 종료보다 낮은 phase에서 멈춘다. DB·Redis 클라이언트보다 먼저 작업을 정리한다.
-접수를 멈추고 미커밋 요청을 취소한다. 작업자 전체가 공유하는 `wait-timeout + 12초` 기한 안에서 트랜잭션 종료를 기다린다.
-Redis 후처리 실행기는 이어서 최대 5초 기다린다. 기본 설정의 합산 대기는 최대 27초다.
+접수를 멈추고 미커밋 요청을 취소한다. 작업자 전체가 공유하는 `wait-timeout + coupon.issue.shutdown.grace` 기한 안에서 트랜잭션 종료를 기다린다.
+Redis 후처리 실행기는 이어서 `coupon.issue.shutdown.cleanup-timeout` 동안 기다린다. 기본 설정의 합산 대기는 최대 27초다.
 이 대기는 강제 종료를 뜻하지 않는다. 기한 뒤에도 살아 있는 I/O가 있으면 결과 불명 시의 차단·DB 복구 원칙을 적용한다.
 
 현재 종료 순서는 아래와 같다. 프로세스 강제 종료와 여러 인스턴스의 동시 배포는 이번 로컬 검증 범위에 포함하지 않는다.
@@ -120,7 +120,7 @@ Redis 후처리 실행기는 이어서 최대 5초 기다린다. 기본 설정�
 6. 작업자 종료 뒤 DB 커넥션 풀과 Redis 클라이언트를 종료한다.
 
 Spring lifecycle의 종료 phase는 HTTP 종료, 배처 종료, 의존 연결 종료 순서로 배치한다.
-배처는 여러 작업자를 순서대로 각각 5초씩 기다리지 않는다. 배처 전체에 하나의 종료 기한을 두고 남은 시간만 기다린다.
+배처는 여러 작업자를 순서대로 각각 전체 종료 기한만큼 기다리지 않는다. 배처 전체에 하나의 종료 기한을 두고 남은 시간만 기다린다.
 현재 30초 설정은 phase별 제한이며 프로세스 전체 종료 시간을 뜻하지 않는다.
 배포 환경의 강제 종료 유예 시간은 HTTP graceful 대기와 배처 정리의 phase별 예산을 모두 포함해야 한다.
 

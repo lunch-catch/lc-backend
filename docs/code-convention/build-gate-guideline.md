@@ -7,14 +7,14 @@
 
 | 게이트 | 판정 주체 | 조건 | 동작 |
 |--------|-----------|------|------|
-| 커버리지 | Gradle `jacocoTestCoverageVerification` | `com.launchcatch.*.service.*` 메서드 100% | **병합 차단** |
+| 커버리지 | Gradle `jacocoTestCoverageVerification` | `com.lunchcatch.*.service.*` 메서드 100% | **병합 차단** |
 | 정적 분석 | SonarQube Quality Gate | **신규 Blocker 이슈 0건** | **병합 차단** |
 | 브랜치 전략 | `G-BUILD` 첫 스텝 | `main` 의 PR 출처가 `develop`, `release/*`, `hotfix/*` | **병합 차단** |
 
 ## 1. 커버리지
 
 점검 항목
-* `BLD-1-01` JaCoCo 대상이 `com.launchcatch.*.service.*`로 좁혀져 있는가
+* `BLD-1-01` JaCoCo 대상이 `com.lunchcatch.*.service.*`로 좁혀져 있는가
   `includes`로 좁히므로 팀에게 exclude 목록이 필요 없다. config, dto, entity, Q클래스가 자동으로 빠진다. 패턴이 클래스 이름이 아니라 패키지 전체를 가리키므로 `service` 안에 무엇을 두어도 대상에서 빠지지 않는다.
 * `BLD-1-02` 판정 단위가 클래스별(`element = 'CLASS'`), 카운터가 메서드(`counter = 'METHOD'`)인가
 * `BLD-1-03` 기준이 `minimum = 1.00`인가
@@ -78,7 +78,7 @@ jacocoTestCoverageVerification {
     violationRules {
         rule {
             element = 'CLASS'
-            includes = ['com.launchcatch.*.service.*']
+            includes = ['com.lunchcatch.*.service.*']
             limit {
                 counter = 'METHOD'
                 value = 'COVEREDRATIO'
@@ -105,7 +105,7 @@ new_duplicated_lines_density    OK
 new_security_hotspots_reviewed  OK
 ```
 
-커버리지 게이트가 `com.launchcatch.*.service.*` 만 보도록 좁혀져 있으므로, 문서나 설정,
+커버리지 게이트가 `com.lunchcatch.*.service.*` 만 보도록 좁혀져 있으므로, 문서나 설정,
 베이스 엔티티처럼 **그 범위 밖을 고치는 PR 은 거의 항상 이 검사가 빨강이다.** 설계대로다.
 
 **고치려 들지 않는다.** 손댈 자리가 셋 있는데 둘은 틀린 선택이다.

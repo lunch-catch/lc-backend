@@ -6,7 +6,7 @@
 
 근거 코드
 - 프론트: `lc-frontend/apps/admin/src` (router.tsx, pages, features, api)
-- 백엔드: `wt-loadtest-pg/src/main/java/com/launchcatch` (develop)
+- 백엔드: `wt-loadtest-pg/src/main/java/com/lunchcatch` (develop)
 - 인벤토리: `scn/endpoints.txt`, `scn/errors.txt`, `scn/jobs.txt`
 
 공통 전제

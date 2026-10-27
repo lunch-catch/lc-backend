@@ -4,15 +4,15 @@ services:
   mysql:
     # 통합 테스트를 쓸 때의 Testcontainers 와 같은 태그를 쓴다. 로컬과 CI 가 어긋나면 검증이 의미를 잃는다
     image: mysql:8.4
-    container_name: ${MYSQL_CONTAINER_NAME:-launchcatch-mysql}
+    container_name: ${MYSQL_CONTAINER_NAME:-lunchcatch-mysql}
     ports:
       # 왼쪽만 바꾼다. 컨테이너 안은 3306 으로 고정이고 호스트 포트만 사람마다 갈린다
       - "${MYSQL_PORT:-3306}:3306"
     environment:
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root}
-      MYSQL_DATABASE: ${MYSQL_DATABASE:-launchcatch}
-      MYSQL_USER: ${MYSQL_USER:-launchcatch}
-      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-launchcatch}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-lunchcatch}
+      MYSQL_USER: ${MYSQL_USER:-lunchcatch}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-lunchcatch}
     command:
       - --character-set-server=utf8mb4
       - --collation-server=utf8mb4_0900_ai_ci
@@ -30,7 +30,7 @@ services:
   # 마이너 번호까지 적는다. 9-alpine 으로 적으면 그 안의 최신 마이너가 뜬다
   valkey:
     image: valkey/valkey:9.0-alpine
-    container_name: ${VALKEY_CONTAINER_NAME:-launchcatch-valkey}
+    container_name: ${VALKEY_CONTAINER_NAME:-lunchcatch-valkey}
     ports:
       - "${VALKEY_PORT:-6379}:6379"
     labels:

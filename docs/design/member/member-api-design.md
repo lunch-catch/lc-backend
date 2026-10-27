@@ -108,7 +108,7 @@ PATCH는 DTO의 null을 미수정으로 취급한다. 동의는 값이 바뀔 �
 
 ## 7. 다른 도메인에 공개하는 회원 조회
 
-`MemberQueryService`는 단건 `findById(Long memberId)`와 일괄 `findAllById(List<Long> memberIds)`를 제공한다. 상태만 필요한 호출자를 위한 `findCurrentStatus`와 `findCurrentStatuses`는 아래에 따로 적는다. [MemberInfo](../../../src/main/java/com/launchcatch/member/contract/MemberInfo.java)는 상태·온보딩·동의, 저장 좌표, 성별·연령대와 닉네임을 반환한다. HTTP 내 정보 DTO와는 별개의 계약이다.
+`MemberQueryService`는 단건 `findById(Long memberId)`와 일괄 `findAllById(List<Long> memberIds)`를 제공한다. 상태만 필요한 호출자를 위한 `findCurrentStatus`와 `findCurrentStatuses`는 아래에 따로 적는다. [MemberInfo](../../../src/main/java/com/lunchcatch/member/contract/MemberInfo.java)는 상태·온보딩·동의, 저장 좌표, 성별·연령대와 닉네임을 반환한다. HTTP 내 정보 DTO와는 별개의 계약이다.
 
 `findCurrentStatus(Long memberId)`는 프로필을 조회하지 않고 현재 회원 상태만 `Optional<MemberStatus>`로 반환한다. 없는 회원은 빈 결과를 반환하며 조회 장애는 호출자에게 그대로 전달한다. 쿠폰 발급은 이 계약으로 현재 ACTIVE 회원인지 확인한다.
 

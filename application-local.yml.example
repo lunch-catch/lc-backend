@@ -17,7 +17,7 @@ spring:
   # 로컬 MySQL 이 이미 3306 을 쓰고 있어서 도커 컨테이너를 다른 포트로 띄운 경우에만 채운다.
   # .env 의 MYSQL_PORT 를 바꿨다면 여기 포트 번호도 맞춰야 한다.
   # datasource:
-  #   url: "jdbc:mysql://localhost:3307/launchcatch?connectionTimeZone=Asia/Seoul&forceConnectionTimeZoneToSession=true&characterEncoding=UTF-8"
+  #   url: "jdbc:mysql://localhost:3307/lunchcatch?connectionTimeZone=Asia/Seoul&forceConnectionTimeZoneToSession=true&characterEncoding=UTF-8"
 
   security:
     oauth2:

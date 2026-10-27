@@ -30,6 +30,10 @@ HTTP 경로의 버전과 발급 구조의 버전은 별개다.
 묶음을 모으는 시간과 기한 판정은 [v3 설계](./coupon-issuance-v3-design.md#여러-이벤트의-redis-왕복을-함께-기다린다)를 따른다.
 작업자마다 DB 커넥션을 하나씩 쓰므로 작업자 수는 커넥션 풀보다 작게 둔다.
 설정은 `coupon.issue.batch` 아래에 두며 기본값은 아래와 같다.
+기본값의 기준은 `application.yml`의 `coupon` 절이며 `CouponProperties`가 설정을 검증한다.
+요청 수집·작업자 대기·예약 확인 주기와 복구·종료 설정도 같은 절에서 읽는다.
+소진 통보의 접수 상한과 재시도·완료 캐시·실행 주기는 `coupon.sold-out`에서 읽는다.
+QR 이미지 크기는 `coupon.qr.image-size`에서 읽으며 토큰 유효기간은 공개 계약으로 유지한다.
 
 | 설정 | 기본값 | 넘었을 때 동작 |
 |---|---:|---|
@@ -80,12 +84,12 @@ completed가 total에 도달하면 HTTP 대기 종료 여부와 관계없이 `Co
 삭제된 쿠폰도 포함한 마지막 createdAt과 이벤트의 캠페인·영업일을 그대로 전달한다.
 이벤트나 발급 기록이 없으면 소진 시각을 임의로 만들지 않고 실패한 작업으로 남긴다.
 서비스는 조회 트랜잭션이 끝난 뒤 `CandidateStateUpdater.markSoldOut`을 부른다.
-성공한 이벤트는 최대 10,000개를 하루 동안 기억하며 서버가 여러 대면 각 서버가 한 번씩 통보할 수 있다.
+성공한 이벤트의 보관 수와 기간은 `coupon.sold-out.completed-cache-size`, `completed-cache-ttl`에서 읽는다. 서버가 여러 대면 각 서버가 한 번씩 통보할 수 있다.
 반복 통보는 [소진 반영 계약](../adserving/feed-api-design.md#candidatestateupdater)의 멱등성으로 처리한다.
 
-대기 작업은 최대 2,000개이며 작업자는 1초마다 처리할 작업을 확인한다.
-조회나 통보가 실패하면 새 HTTP 요청 없이 5초 간격으로 재시도한다.
-접수한 뒤 한 시간이 지나면 작업을 만료시키고 ERROR 로그를 남긴다.
+대기 작업의 상한과 작업자 확인 주기는 `coupon.sold-out.max-pending`, `poll-interval`에서 읽는다.
+조회나 통보가 실패하면 새 HTTP 요청 없이 `coupon.sold-out.retry-interval` 간격으로 재시도한다.
+접수한 뒤 `coupon.sold-out.retry-window`가 지나면 작업을 만료시키고 ERROR 로그를 남긴다.
 접수 거절, 재시도 실패와 종료 때 남은 작업도 ERROR 로그로 남기며 원래 HTTP 결과는 유지한다.
 대기 작업과 성공 표시는 서버 메모리에 있으므로 재시작 뒤에는 남지 않는다.
 서버 재시작이나 대기열 포화로 접수를 잃으면 후속 소진 거절이 다시 접수한다.
@@ -156,7 +160,7 @@ QR 업무 거절은 `COUPON_QR_GENERATION_FAILED` 이벤트로 WARN 로그를 �
 ### 설정과 저장 제약
 
 일일 한도는 `coupon.daily-limit`에서 읽는다. 환경 변수는 `COUPON_DAILY_LIMIT`이고 기본값은 3이다.
-V1 마이그레이션은 `issued_count`를 0부터 3까지로 제한한다. 한도를 3보다 크게 바꾸려면 DB 제약과 실제 발급 처리도 함께 변경해야 한다.
+V9 마이그레이션은 `issued_count`의 고정 상한을 제거하고 음수만 막는다. 발급 처리는 같은 설정의 일일 한도로 카운터 증가를 제한한다.
 회원과 영업일의 유일성은 기존 `uk_coupon_daily_limit_member_date`가 보장하며 이 API를 위한 새 마이그레이션은 추가하지 않는다.
 
 조회 실패를 발급 기록 없음으로 바꾸지 않는다. DB 조회 예외는 기존 공통 예외 처리로 전달한다.
@@ -428,7 +432,6 @@ OwnerCouponService.redeem(ownerId, request)는 [HTTP 명세의 QR 사용](../../
 | 항목 | 정책 |
 |---|---|
 | 요청과 결과 | 입력 필드·필수값과 201 응답은 [QR 사용 명세](../../api-spec/coupon-api-spec.md#qr-사용)를 따른다 |
-| 위치 검사 | 허용 거리와 오류는 같은 명세를 따른다. 거리 계산 방법과 좌표 조회는 아래에서 정한다 |
 | 할인 계산 | 지원하는 세 할인 조합과 메뉴 단건 적용, 반올림은 같은 명세의 할인 계산 규칙을 따른다 |
 | 점주 상태 | owner의 공개 상태 조회를 사용하며 상태 거절은 명세의 COUPON-013을 반환한다. owner 내부 exception을 참조하지 않는다 |
 | 사용한 QR | 사용 완료에도 member_coupon.qr_token의 마지막 토큰을 지우거나 교체하지 않는다. 현재 점주 인증·매장 관리 권한과 마지막 토큰의 일치를 확인한 뒤 USED를 QR 만료보다 먼저 검사한다 |
@@ -436,10 +439,8 @@ OwnerCouponService.redeem(ownerId, request)는 [HTTP 명세의 QR 사용](../../
 메뉴의 할인 후 가격은 이벤트 생성 때 확정해 저장한다. QR 사용 때는 스냅샷의 할인 전·후 가격 차액을 사용하며 다시 반올림하지 않는다.
 전체 메뉴 정액 할인은 스냅샷 할인값으로 계산한다. 확정한 할인액을 사용 이력에 기록한다.
 
-거리 계산은 기존 `global.geo.GeoDistance.meters`의 하버사인 계산을 사용한다.
-매장 좌표는 이벤트 스냅샷의 storeId로 store의 공개 조회 계약에서 읽으며 스캔 위치는 요청 값을 사용한다.
-회원의 위치와 매장 사이 거리를 검사하지 않는다. 매장 관리 권한 확인을 거리 검사로 대신하지 않는다.
-store 좌표가 누락되면 검사를 통과시키지 않고 내부 데이터 누락인 COMMON-001로 처리한다. 공개 조회 장애도 공통 서버 오류로 전파한다.
+거리와 선택 좌표의 계약은 [QR 사용 명세](../../api-spec/coupon-api-spec.md#qr-사용)를 따른다.
+QR 사용은 매장 관리 권한을 확인하며 매장 좌표 조회를 호출하지 않는다.
 
 사용 확정도 [구조와 동작 설계 7장](./coupon_구조와_동작_설계.md#7-트랜잭션과-동시성)의 쿠폰 잠금에 참여해야 한다.
 잠금을 얻은 뒤 한 번 읽은 시각으로 QR·쿠폰의 유효 시간을 판정한다. useTime은 저장된 사용 이력의 createdAt을 반환한다.
@@ -449,12 +450,12 @@ CouponUsageHistory도 BaseTimeEntity를 상속하며 ID·생성·수정 시각�
 
 ### 서버가 하는 일
 
-1. CouponSecurityConfig는 POST /v1/owner/coupon-usages에 OWNER 역할을 요구한다. OwnerCouponController는 QR 토큰과 위치의 필수값·좌표 범위를 검증한다.
+1. CouponSecurityConfig는 POST /v1/owner/coupon-usages에 OWNER 역할을 요구한다. OwnerCouponController는 QR 토큰의 필수값과 전달된 선택 좌표의 범위를 검증한다.
 2. OwnerCouponService는 READ_COMMITTED 트랜잭션에서 OwnerStatusQuery.findCurrentStatus로 점주 상태를 확인한다. 점주가 없거나 비활성이면 COUPON-013으로 거절한다.
 3. MemberCouponRepository.findQrReference는 토큰의 쿠폰 ID와 QR 버전만 읽는다. 엔티티를 미리 적재하지 않아 잠금 뒤 최신 상태 조회를 가리지 않는다.
 4. findByIdForUpdate로 회원 쿠폰을 잠그고 이벤트 스냅샷을 읽는다. StoreQueryService.canManageStore로 현재 관리 권한을 확인한다. USED 상태라면 마지막 토큰·버전을 확인하여 교체된 QR과 실제 사용한 QR의 재요청을 구분한다.
-5. MemberQueryService로 쿠폰 소유 회원의 현재 상태를 확인하고 StoreQueryService.findAllById로 현재 매장 좌표를 읽는다. 정상적인 부재와 조회 장애를 구분한다.
-6. 잠금을 얻은 뒤 Clock으로 판정 시각을 한 번 읽고 거리와 스냅샷 할인액을 계산한다. MemberCoupon.redeem은 최신 상태·토큰·버전·유효 시간을 검증한 뒤 USED로 바꾸며 마지막 QR 토큰을 유지한다.
+5. MemberQueryService로 쿠폰 소유 회원의 현재 상태를 확인한다. 정상적인 부재와 조회 장애를 구분한다.
+6. 잠금을 얻은 뒤 Clock으로 판정 시각을 한 번 읽고 스냅샷 할인액을 계산한다. MemberCoupon.redeem은 최신 상태·토큰·버전·유효 시간을 검증한 뒤 USED로 바꾸며 마지막 QR 토큰을 유지한다.
 7. CouponUsageHistoryRepository.saveAndFlush는 확정 할인액을 가진 이력을 JPA로 저장하고 생성된 ID와 auditing 시각을 반환한다. 쿠폰 상태는 JPA 변경 감지로 저장한다.
 8. 두 저장이 커밋된 뒤 기존 201 응답을 반환한다. 하나라도 실패하면 상태·사용 이력을 함께 되돌린다.
 
@@ -483,7 +484,7 @@ CouponIntegrationTest 하나가 서버 설정과 빈 대역을 소유하고 QR �
 | 항목 | 정책 |
 | --- | --- |
 | 할인 조합과 계산 | [QR 사용의 확정 사항](#qr-사용-구현-전-확정-사항)을 따른다 |
-| QR 사용 요청과 거리 | [확정 사항](#qr-사용-구현-전-확정-사항)을 따른다 |
+| QR 사용 요청 | [확정 사항](#qr-사용-구현-전-확정-사항)을 따른다 |
 | 발급 시간 | [쿠폰 발급 명세](../../api-spec/coupon-api-spec.md#쿠폰-발급)의 시스템 발급 시간과 쿠폰 사용 종료 기준을 따른다 |
 | 사용 이력 조회 | 조회 기간의 길이에 상한을 두지 않고 커서 페이지네이션 적용 |
 | 점주 인증과 매장 검증 | 사용 이력 조회의 상태 판정과 매장 검증 범위는 [HTTP 연결과 인가](#http-연결과-인가)를 따른다. QR 사용의 점주 상태 정책은 해당 API에 유지한다 |

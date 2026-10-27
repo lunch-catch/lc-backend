@@ -1,0 +1,72 @@
+package com.lunchcatch.auth;
+
+import java.time.LocalDateTime;
+import java.util.Collection;
+import java.util.List;
+import java.util.Map;
+import org.springframework.security.core.GrantedAuthority;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.security.core.userdetails.UserDetails;
+
+/*
+ * 역할 넷이 공용으로 쓴다.
+ *
+ * 옮겨온 쪽은 ROLE_ 권한과 TYPE_ 권한을 둘 다 내보내 회원 토큰이 관리자 API 에 닿는 것을
+ * TYPE_ 으로 막았다. 런치캐치는 역할이 단일 축이라 그 구분이 필요 없다. 관리자 경로는
+ * ROLE_ADMIN 과 ROLE_SUPER_ADMIN 만 통과시키면 되고, 사용자 토큰에는 그 권한이 애초에 없다.
+ */
+public class CustomUserDetails implements UserDetails {
+
+    private final Long id;
+    private final Role role;
+    private final LocalDateTime issuedAt;
+    // JWT의 추가 정보를 도메인에 전달하며 정보의 의미는 해당 도메인이 해석한다.
+    private final Map<String, Object> additionalClaims;
+
+    public CustomUserDetails(Long id, Role role) {
+        this(id, role, null);
+    }
+
+    // 추가 정보가 없는 기존 호출은 빈 Map으로 처리한다.
+    public CustomUserDetails(Long id, Role role, LocalDateTime issuedAt) {
+        this(id, role, issuedAt, Map.of());
+    }
+
+    public CustomUserDetails(Long id, Role role, LocalDateTime issuedAt, Map<String, Object> additionalClaims) {
+        // 인증 후 다른 코드가 클레임 항목을 추가하거나 바꾸지 못하도록 복사한다.
+        this.additionalClaims = Map.copyOf(additionalClaims);
+        this.id = id;
+        this.role = role;
+        this.issuedAt = issuedAt;
+    }
+
+    public LocalDateTime getIssuedAt() {
+        return issuedAt;
+    }
+
+    public Map<String, Object> getAdditionalClaims() { return additionalClaims; }
+
+    public Long getId() {
+        return id;
+    }
+
+    public Role getRole() {
+        return role;
+    }
+  
+    @Override
+    public Collection<? extends GrantedAuthority> getAuthorities() {
+        return List.of(new SimpleGrantedAuthority(role.toAuthority()));
+    }
+
+    /** 비밀번호는 인증이 끝난 뒤에 쓸 일이 없어 담지 않는다. */
+    @Override
+    public String getPassword() {
+        return null;
+    }
+
+    @Override
+    public String getUsername() {
+        return String.valueOf(id);
+    }
+}

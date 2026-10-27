@@ -1,6 +1,6 @@
 ---
 name: slide-gif
-description: lc-backend 와 lc-infra 의 코드를 읽고 발표용 애니메이션 슬라이드를 GIF 와 MP4 로 만든다. 분류(설계, 워커, 오토스케일링, 워크플로우)와 주제를 받아 쓴다.
+description: lc-backend 와 lc-infra 의 코드를 읽고 발표용 애니메이션 슬라이드를 GIF 와 MP4 로 만든다. 분류(설계, 워커, 오토스케일링, 워크플로우, 동작)와 주제를 받아 쓴다.
 argument-hint: [분류] [주제]
 ---
 

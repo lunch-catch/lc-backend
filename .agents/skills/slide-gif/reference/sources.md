@@ -18,7 +18,7 @@ git clone --depth 1 https://github.com/lunch-catch/lc-infra .slides/lc-infra
 | 주제 | lc-backend 에서 먼저 읽는 곳 | lc-infra 에서 먼저 읽는 곳 |
 |---|---|---|
 | 도메인 경계와 계층 | `docs/architecture/런치캐치_도메인_구조와_의존성_설계.md` 1장 | |
-| 한 도메인의 내부 | `docs/design/{도메인}/` 의 구조와 동작 설계서, `src/main/java/com/launchcatch/{도메인}/` 의 패키지 | |
+| 한 도메인의 내부 | `docs/design/{도메인}/` 의 구조와 동작 설계서, `src/main/java/com/lunchcatch/{도메인}/` 의 패키지 | |
 | 피드 배정 | `adserving/engine/FeedAssembler.java`, `AllocationOrder.java`, `engine/filter/`, `engine/score/` | |
 | 노출 검증과 과금 | `adserving/impression/service/ImpressionService.java`, `adserving/feed/repository/ServeRecordRepository.java`, `billing/` 의 차감 서비스 | |
 | 선착순 쿠폰 발급 | `docs/design/coupon/` 의 발급 설계서 중 번호가 가장 큰 것(지금은 `coupon-issuance-v3-design.md`), `coupon/service/CouponIssueBatcher.java`, `CouponCommandService.java`, `CouponSequenceService.java`, `application.yml` 의 `coupon.issue` | |

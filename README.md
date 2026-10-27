@@ -136,14 +136,14 @@ flowchart LR
 2. **경계를 넘는 참조는 FK 가 아니라 ID 값이다.** 테이블을 옮기거나 도메인을 떼어낼 때 다른 도메인이 깨지지 않는다.
 3. **이벤트는 발행하는 도메인의 `contract` 에 둔다.** 받는 쪽이 발행 도메인의 내부를 알지 않아도 된다.
 
-3개 모두 사람이 아니라 [`ArchitectureTest`](./src/test/java/com/launchcatch/ArchitectureTest.java)가 빌드에서 막는다. 규칙 16개가 돌고, 다른 도메인의 내부를 참조하거나 순환이 생기면 테스트가 깨진다. 경계를 어디에 긋고 왜 그렇게 정했는지는 [도메인 구조와 의존성 설계](./docs/architecture/런치캐치_도메인_구조와_의존성_설계.md)가 갖는다.
+3개 모두 사람이 아니라 [`ArchitectureTest`](./src/test/java/com/lunchcatch/ArchitectureTest.java)가 빌드에서 막는다. 규칙 16개가 돌고, 다른 도메인의 내부를 참조하거나 순환이 생기면 테스트가 깨진다. 경계를 어디에 긋고 왜 그렇게 정했는지는 [도메인 구조와 의존성 설계](./docs/architecture/런치캐치_도메인_구조와_의존성_설계.md)가 갖는다.
 
 ### 패키지 구조
 
 단일 모듈이고 패키지가 경계다. 업무 도메인 9개 아래에 계층을 두고, 다른 도메인에 공개하는 것만 `contract/` 에 둔다.
 
 ```
-src/main/java/com/launchcatch/
+src/main/java/com/lunchcatch/
 ├── adserving/     광고 피드와 노출, 찜 (121파일)
 │   ├── contract/      다른 도메인에 공개하는 인터페이스와 record
 │   ├── engine/        그날 후보 적재와 선정
@@ -201,7 +201,7 @@ erDiagram
     }
     STORE {
         bigint store_id PK
-        bigint owner_id FK
+        bigint owner_id UK
         varchar business_verification_status
     }
     CAMPAIGN {
@@ -209,23 +209,23 @@ erDiagram
         bigint owner_id FK
         bigint store_id FK
         varchar status
-        int discount_value
+        bigint active_store_marker UK
     }
     COUPON_EVENT {
         bigint coupon_event_id PK
-        bigint campaign_id
-        varchar status
+        bigint campaign_id UK
+        date business_date UK
         int issue_quantity
     }
     MEMBER_COUPON {
         bigint member_coupon_id PK
         bigint coupon_event_id FK
-        bigint member_id
+        bigint member_id UK
         varchar status
     }
     MEMBER {
         bigint member_id PK
-        varchar provider_user_id
+        varchar provider_user_id UK
         varchar status
     }
     AD_CANDIDATE {
@@ -236,8 +236,9 @@ erDiagram
     }
     IMPRESSION_LOG {
         binary serve_id PK
-        bigint member_id
+        bigint member_id PK
         bigint campaign_id
+        date business_date
         enum validity
     }
     PAYMENT {
@@ -248,26 +249,27 @@ erDiagram
     }
     POINT_LEDGER {
         bigint point_ledger_id PK
-        bigint owner_id FK
+        bigint owner_id
         bigint campaign_id
-        bigint payment_id
-        varchar entry_type
+        binary serve_id UK
+        bigint payment_id UK
+        varchar entry_type UK
         bigint amount
     }
 
-    OWNER ||--o{ STORE : "가게를 낸다"
+    OWNER ||--o| STORE : "가게 하나를 낸다"
     OWNER ||--o{ CAMPAIGN : "집행한다"
     STORE ||--o{ CAMPAIGN : "대상이다"
     OWNER ||--o{ PAYMENT : "충전한다"
     OWNER ||--o{ POINT_LEDGER : "잔액을 갖는다"
-    CAMPAIGN ||--o| COUPON_EVENT : "회차를 연다"
-    CAMPAIGN ||--o{ AD_CANDIDATE : "그날 후보가 된다"
+    CAMPAIGN ||--o{ COUPON_EVENT : "날마다 회차를 연다"
+    CAMPAIGN ||--o{ AD_CANDIDATE : "날마다 후보가 된다"
     COUPON_EVENT ||--o{ MEMBER_COUPON : "수량을 나눈다"
-    MEMBER ||--o{ MEMBER_COUPON : "발급받는다"
+    MEMBER ||--o{ MEMBER_COUPON : "회차마다 한 장 받는다"
     MEMBER ||--o{ IMPRESSION_LOG : "본다"
     AD_CANDIDATE ||--o{ IMPRESSION_LOG : "노출로 남는다"
-    IMPRESSION_LOG ||--o| POINT_LEDGER : "차감을 만든다"
-    PAYMENT ||--o{ POINT_LEDGER : "적립을 만든다"
+    IMPRESSION_LOG ||--o| POINT_LEDGER : "차감 한 건을 만든다"
+    PAYMENT ||--o| POINT_LEDGER : "적립 한 건을 만든다"
 ```
 
 | 폴더 | 테이블 | 폴더 | 테이블 |

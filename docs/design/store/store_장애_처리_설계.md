@@ -31,7 +31,7 @@
 
 ### 외부 API: S3 업로드 예약·서명·확인
 
-아래 업로드·메뉴 구현자는 `yongmaru789`다. 시간 제한은 공통 [S3Config](../../../src/main/java/com/launchcatch/global/config/S3Config.java)를 따른다.
+아래 업로드·메뉴 구현자는 `yongmaru789`다. 시간 제한은 공통 [S3Config](../../../src/main/java/com/lunchcatch/global/config/S3Config.java)를 따른다.
 서비스의 별도 재시도 반복문·회로 차단기는 없으며 SDK 재시도 정책을 재정의하지 않는다. 이를 “타임아웃·재시도가 전혀 없다”라고 설명하지 않는다.
 
 **결정: 예약을 커밋한 뒤 서명한다.**

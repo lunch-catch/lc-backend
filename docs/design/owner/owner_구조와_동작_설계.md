@@ -149,7 +149,7 @@ MySQL `owner`가 계정의 원본이다. 이메일 UNIQUE가 동시 가입 중�
 | 쓰기 | store `OwnerTermsAgreementRecorder`, `StoreInfoSaver`, `StoreLocationSaver`, `StoreHoursSaver`, `StoreCompleter` | 점주 행 잠금·상태 확인 후 같은 쓰기 트랜잭션에서 호출한다 |
 | 받음 | `StoreFinalizedEvent(ownerId, storeId)` | 동기 리스너가 `ACTIVE`로 전환하고 커밋 후 캐시 삭제를 예약한다 |
 
-공개 타입은 [OwnerStatusQuery](../../../src/main/java/com/launchcatch/owner/contract/OwnerStatusQuery.java)가 소유한다.
+공개 타입은 [OwnerStatusQuery](../../../src/main/java/com/lunchcatch/owner/contract/OwnerStatusQuery.java)가 소유한다.
 store 계약의 반환 record와 조건은 [가게 조회 계약](../store/store-query-contract.md), [가게 API 설계](../store/store-api-design.md)를 따른다.
 
 `OwnerStatusQuery`의 두 메서드는 모두 `Optional<OwnerAccountStatus>`를 반환한다. 반환 enum은 `ONBOARDING`, `ACTIVE`, `SUSPENDED`, `WITHDRAWN`이며 별도 record는 없다.
