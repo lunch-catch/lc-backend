@@ -32,11 +32,12 @@ CHECK를 두지 않는 자리도 있다. 값이 자주 늘어나는 열에 CHECK
 
 ## 적용 방식
 
-폴더마다 Flyway 를 따로 돌린다. `global.config.FlywayConfig` 와 `DomainFlywayMigrator` 가 이것을 한다. 왜 도메인별로 나누는지는 설계 문서 1.3절에 있다. 돌려 보고 확인한 함정이 셋이다.
+폴더마다 Flyway 를 따로 돌린다. `global.config.FlywayConfig` 와 `DomainFlywayMigrator` 가 이것을 한다. 왜 도메인별로 나누는지는 설계 문서 1.3절에 있다. 돌려 보고 확인한 함정이 넷이다.
 
 * **`baselineOnMigrate` 가 필요하다.** 두 번째 도메인부터는 앞 도메인이 만든 테이블 때문에 스키마가 비어 있지 않다. 그 상태에서 자기 이력 테이블이 없으면 Flyway 가 기동을 거부한다
 * **`baselineVersion` 을 0 으로 내려야 한다.** 기본값이 1 이라 그냥 켜면 각 도메인의 `V1` 이 이미 적용된 것으로 간주되어 건너뛰어진다. 실제로 11개 중 1개만 적용되고 앱은 아무 오류 없이 떴다
 * **`ApplicationRunner` 로 두면 늦다.** 그것은 컨텍스트가 다 뜬 뒤에 돌아서 Hibernate 의 `ddl-auto: validate` 보다 뒤다. 빈 DB 의 첫 기동이 테이블이 없다는 이유로 깨진다. Spring Boot 가 자기 Flyway 에 쓰는 것과 같은 후처리기로 엔티티 매니저가 마이그레이션을 기다리게 한다
+* **마이그레이션은 앱 연결의 시간 제한에 걸리면 안 된다.** 앱 연결은 `socketTimeout` 10초다. 큰 테이블의 DDL 이나 UPDATE 가 그보다 길면 클라이언트만 포기하고 서버의 문장은 끝나, 스키마는 바뀌었는데 Flyway 는 실패로 남는다. MySQL 은 DDL 을 되돌리지 못해 다음 기동마다 이미 생긴 열에 걸려 멈춘다(#1010). 그래서 Flyway 는 `socketTimeout` 30분의 따로 만든 연결로 돈다(`FlywayConfig.migrationDataSource`). 기존 행을 채워야 하는 열은 UPDATE 대신 기본값을 둔 `INSTANT` 추가로 채운다. 기존 행은 더할 때의 기본값을 읽고, 그 뒤 기본값을 바꿔도 기존 행은 그대로다(V8 의 `impression_log.dispatched_at`)
 
 ```java
 @Configuration(proxyBeanMethods = false)
