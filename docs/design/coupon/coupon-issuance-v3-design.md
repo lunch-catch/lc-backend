@@ -249,9 +249,9 @@ HTTP 대기 종료 뒤에도 완료·반납이 수행되는지와 커밋 결과 
 
 ## 7. 구현과 설계도의 대응
 
-- [CouponIssueBatcher](../../../src/main/java/com/launchcatch/coupon/service/CouponIssueBatcher.java)는 접수·묶음 구성·예약 완료·결과 전달을 구현한다.
-- [CouponBatchIssuanceService](../../../src/main/java/com/launchcatch/coupon/service/CouponBatchIssuanceService.java)는 묶음의 판정 순서와 DB 트랜잭션을 구현한다.
-- [CouponBatchIssueRepository](../../../src/main/java/com/launchcatch/coupon/repository/CouponBatchIssueRepository.java)는 잠금 조회와 다건 쓰기를 구현한다.
+- [CouponIssueBatcher](../../../src/main/java/com/lunchcatch/coupon/service/CouponIssueBatcher.java)는 접수·묶음 구성·예약 완료·결과 전달을 구현한다.
+- [CouponBatchIssuanceService](../../../src/main/java/com/lunchcatch/coupon/service/CouponBatchIssuanceService.java)는 묶음의 판정 순서와 DB 트랜잭션을 구현한다.
+- [CouponBatchIssueRepository](../../../src/main/java/com/lunchcatch/coupon/repository/CouponBatchIssueRepository.java)는 잠금 조회와 다건 쓰기를 구현한다.
 - [발급 전달값](./coupon_구조와_동작_설계.md#발급과-예약의-전달값)은 요청·예약·판정·최종 결과의 데이터 구조를 정의한다.
 
 ## 8. 후속 검토 항목

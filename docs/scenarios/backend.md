@@ -4,7 +4,7 @@
 
 기준 코드: lc-backend develop `9f4ab523`, lc-frontend `3f3e056` (2026-10-22). 개요와 갱신 방법은 [README](README.md)에 있다.
 
-기준 코드: wt-loadtest-pg (src/main/java/com/launchcatch), 프론트: lc-frontend apps/user, owner, admin. 시각은 모두 KST 다.
+기준 코드: wt-loadtest-pg (src/main/java/com/lunchcatch), 프론트: lc-frontend apps/user, owner, admin. 시각은 모두 KST 다.
 
 ## 엔드포인트 호출 대조
 
@@ -252,9 +252,9 @@
 
 | ID | 시나리오 | 단계/트리거 | API 또는 작업 | 오류 코드 | 필요한 데이터 상태 | 기대 결과 | 시각 조건 |
 |---|---|---|---|---|---|---|---|
-| B-100 | 묶음 정상 실행 | cron 0 0 0 (Asia/Seoul) -> claim(DAILY_0000, D) 성공 -> @Order 10,20,30,35,40,50,60,75,80,90 순서 실행 | DailyJobScheduler.runDailyBundle -> BatchJobRunner.runBundle | - | batch_execution_log 에 (DAILY_0000, D) 없음, 배치 서버(launchcatch.scheduler.enabled=true) | 단계 행 10개와 (BILLING_DAILY_RELEASE, D-1) 가 SUCCESS, 마지막에 (DAILY_0000, D) SUCCESS | D 00:00 KST, businessDate=D |
+| B-100 | 묶음 정상 실행 | cron 0 0 0 (Asia/Seoul) -> claim(DAILY_0000, D) 성공 -> @Order 10,20,30,35,40,50,60,75,80,90 순서 실행 | DailyJobScheduler.runDailyBundle -> BatchJobRunner.runBundle | - | batch_execution_log 에 (DAILY_0000, D) 없음, 배치 서버(lunchcatch.scheduler.enabled=true) | 단계 행 10개와 (BILLING_DAILY_RELEASE, D-1) 가 SUCCESS, 마지막에 (DAILY_0000, D) SUCCESS | D 00:00 KST, businessDate=D |
 | B-101 | 배치 서버 두 대 동시 시도 | 두 서버가 같은 시각 upsertClaim | DailyJobScheduler.runDailyBundle | - | 두 서버 모두 스케줄러 켜짐 | owner_id 가 자기인 서버만 RUNNING 으로 점유해 실행, 다른 서버는 "다른 배치 서버가 점유" 로그 후 종료 | D 00:00 |
-| B-102 | 앱 인스턴스에서는 돌지 않음 | 스케줄러 설정 꺼짐 | SchedulingConfig(@ConditionalOnProperty) | - | launchcatch.scheduler.enabled 미설정 또는 false | @Scheduled 작업 전부 미기동 | 상시 |
+| B-102 | 앱 인스턴스에서는 돌지 않음 | 스케줄러 설정 꺼짐 | SchedulingConfig(@ConditionalOnProperty) | - | lunchcatch.scheduler.enabled 미설정 또는 false | @Scheduled 작업 전부 미기동 | 상시 |
 | B-103 | 단계 사이 묶음 점유 상실 | 각 단계 전 renew(DAILY_0000) 0건 | BatchJobRunner.runBundle | - | 다른 서버가 묶음 행을 이어받음 | 다음 단계로 가지 않고 중단, 묶음 행은 이어받은 서버가 판정 | 실행 중 |
 | B-104 | 앞 단계 실패 시 뒤 단계 미실행 | 단계 예외(비일시적) | BatchJobRunner.runStep | FAILED | 예: 40 단계 실패 | 그 단계 행 FAILED, (DAILY_0000, D) FAILED 사유 "<단계> 단계가 실패했다", 50 이후 단계 행 없음 | D 00:00 |
 | B-105 | 전일 소진 대사 일치 | 40 BILLING_SPEND_RECON_PREV | SpendReconciliationService.reconcilePreviousDay | - | D-1 budget_daily_plan 존재, Valkey 카운터 = 원장 DEDUCT 합, DEDUCT 합 <= daily_budget | settlement_mismatch 기록 없음, 단계 SUCCESS | 대상일 D-1 |

@@ -1,9 +1,0 @@
-package com.launchcatch.member.contract;
-
-public enum AgeGroup {
-
-    AGE_20S,
-    AGE_30S,
-    AGE_40S,
-    AGE_50_PLUS
-}

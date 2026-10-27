@@ -25,9 +25,9 @@
 
 | 맡는 기능 | 근거 |
 |---|---|
-| 유효 노출의 과금 여부를 판정하고 원장에 기록한다 | [PointDeductor 계약](../../../src/main/java/com/launchcatch/billing/contract/PointDeductor.java), `deduction_result`, `point_ledger` |
-| 광고 서빙이 진행률을 계산할 예약액·단가·당일 소진액을 돌려준다 | [BudgetQueryService 계약](../../../src/main/java/com/launchcatch/billing/contract/BudgetQueryService.java) |
-| 영업일별 원장 합계와 과금 상태 수, 그날 예산과 단가, 미소진 잔액을 분석에 집계해 준다 | [BillingStatsQueryService 계약](../../../src/main/java/com/launchcatch/billing/contract/BillingStatsQueryService.java) |
+| 유효 노출의 과금 여부를 판정하고 원장에 기록한다 | [PointDeductor 계약](../../../src/main/java/com/lunchcatch/billing/contract/PointDeductor.java), `deduction_result`, `point_ledger` |
+| 광고 서빙이 진행률을 계산할 예약액·단가·당일 소진액을 돌려준다 | [BudgetQueryService 계약](../../../src/main/java/com/lunchcatch/billing/contract/BudgetQueryService.java) |
+| 영업일별 원장 합계와 과금 상태 수, 그날 예산과 단가, 미소진 잔액을 분석에 집계해 준다 | [BillingStatsQueryService 계약](../../../src/main/java/com/lunchcatch/billing/contract/BillingStatsQueryService.java) |
 | 캠페인의 중단 여부를 그날 계획과 Valkey에 반영한다 | 아키텍처 2.4와 `CampaignStatusChangedEvent`, `BudgetPlanStatusService` |
 | 해시가 사라지면 DB 정본으로 재구성한다 | #193의 `SpendHashRebuildService` |
 
@@ -181,7 +181,7 @@ billing/
 정상 해시에서 새 과금 판정: spend + unitPrice <= reserved
 ```
 
-점주의 사용 가능한 잔액은 부호 있는 원장 금액을 더하되 `DEDUCT`를 제외한다. 예약할 때 이미 사용 가능한 잔액에서 빠졌으므로 노출별 차감을 다시 빼면 같은 비용을 두 번 뺀다. [잔액 합계 쿼리](../../../src/main/java/com/launchcatch/billing/repository/PointLedgerRepository.java)가 이 규칙을 갖는다.
+점주의 사용 가능한 잔액은 부호 있는 원장 금액을 더하되 `DEDUCT`를 제외한다. 예약할 때 이미 사용 가능한 잔액에서 빠졌으므로 노출별 차감을 다시 빼면 같은 비용을 두 번 뺀다. [잔액 합계 쿼리](../../../src/main/java/com/lunchcatch/billing/repository/PointLedgerRepository.java)가 이 규칙을 갖는다.
 
 아래는 하루 동안 원장에 쌓이는 금액의 예다. 예약은 그날 00:00, 해제는 다음 날 00:00 예약 단계가 기록한다.
 
@@ -215,7 +215,7 @@ Lua의 예산 비교는 원자적 갱신이 필요한 저장소 연산이다. �
 
 | 방향 | 접점 | 시점과 호출 비용 |
 |---|---|---|
-| adserving이 호출한다 | `PointDeductor` | v1 은 처음 저장한 유효 노출마다 `deduct`를, v2 릴레이는 밀린 노출을 모아 `deductAll`을 부른다. 반환과 입력은 [계약](../../../src/main/java/com/launchcatch/billing/contract/PointDeductor.java)이 소유한다 |
+| adserving이 호출한다 | `PointDeductor` | v1 은 처음 저장한 유효 노출마다 `deduct`를, v2 릴레이는 밀린 노출을 모아 `deductAll`을 부른다. 반환과 입력은 [계약](../../../src/main/java/com/lunchcatch/billing/contract/PointDeductor.java)이 소유한다 |
 | adserving이 조회한다 | `BudgetQueryService` | 캠페인 목록으로 한 번에 조회한다. 부르는 시점은 [adserving 구조와 동작 설계](../adserving/adserving_구조와_동작_설계.md) 5장이 갖는다. 캐시가 데워진 뒤 원장 합계를 읽지 않는다 |
 | analytics가 조회한다 | `BillingStatsQueryService` | 분석의 일별 집계 배치가 영업일마다 부른다. 읽기 전용 트랜잭션에서 원장과 판정을 날짜로 묶어 읽는다. 아래 "집계 조회의 영업일 귀속"을 따른다 |
 | owner의 점주 상태를 조회한다 | `OwnerStatusQuery.findCurrentStatus` | 점주 결제·포인트·환불 API 요청마다 한 번 부른다. 캐시를 우회한 DB 조회 한 번이다. `ACTIVE`가 아니거나 점주를 찾지 못하면 `BILLING-023`(`403`)으로 끝낸다. 검사는 서비스가 아니라 `OwnerActiveInterceptor`가 맡고, 경로는 `BillingSecurityConfig.OWNER_PATHS`를 그대로 쓴다. 서비스마다 흩어 넣으면 서비스 일곱 곳과 그 테스트를 함께 고쳐야 하고 새 점주 경로에서 빠뜨리기 쉽다(#485) |
@@ -358,7 +358,7 @@ sequenceDiagram
 
 무효 노출과 품절 노출은 정산 호출 전 광고 서빙에서 처리한다. 그 조건과 응답은 피드 설계가 소유한다.
 
-실제 차감 호출의 순서는 다음과 같다. [구현](https://github.com/lunch-catch/lc-backend/blob/b7f9a104ba302888b4821f62b7080cbbcbc4b883/src/main/java/com/launchcatch/billing/service/PointDeductorImpl.java#L63)을 기준으로 적었다.
+실제 차감 호출의 순서는 다음과 같다. [구현](https://github.com/lunch-catch/lc-backend/blob/b7f9a104ba302888b4821f62b7080cbbcbc4b883/src/main/java/com/lunchcatch/billing/service/PointDeductorImpl.java#L63)을 기준으로 적었다.
 
 1. 계획 캐시에서 점주와 단가를 구한다. 영업일은 노출 요청을 서버가 받은 날이다. 계획이 있으면 그날 계획 행을 공유 잠금으로 읽어 해제 시각(`released_at`)으로 마감을 검사한다. 해제가 끝났으면 `NOT_BILLED_CLOSED`를 기록하고 아래 단계는 돌지 않는다. 계획이 없으면 캠페인의 점주와 운영 단가를 읽어 마감 여부에 따라 `NOT_BILLED_CLOSED` 또는 `NOT_BILLED_NO_PLAN`을 기록한다. 미과금 기록의 중복도 DB의 첫 판정을 돌려준다.
 2. Lua가 `GET billing:served:{serveId}`를 먼저 실행한다. 값이 있으면 `REPLAY:<첫 판정>`을 반환한다. 예산 재판정과 소진 증가는 하지 않는다.
@@ -468,7 +468,7 @@ sequenceDiagram
 | 리스너에 `@Async`를 붙여 실행기에 넘긴다 | 상태 미러의 외부 호출을 요청 스레드에서 뺀다 | 대기열 지연과 거절 정책을 새로 정해야 한다. 작업 순서와 유실 문제는 남는다 |
 | 상태 미러 작업을 DB 아웃박스에 기록하고 별도 작업자가 실행한다 | 커밋된 미러 작업을 프로세스 종료 뒤에도 다시 읽을 수 있다 | 같은 트랜잭션의 추가 쓰기와 작업자·멱등·재시도 설계가 필요하다. 워커 처리 지연은 남는다 |
 
-현재 구현은 첫 선택지다. [상태 리스너](https://github.com/lunch-catch/lc-backend/blob/b7f9a104ba302888b4821f62b7080cbbcbc4b883/src/main/java/com/launchcatch/billing/listener/BudgetPlanStatusMirrorListener.java)가 그 수단을 명시한다. 두 번째와 세 번째 선택지는 비용을 비교하기 위한 대안이며 구현 변경을 결정한 것은 아니다.
+현재 구현은 첫 선택지다. [상태 리스너](https://github.com/lunch-catch/lc-backend/blob/b7f9a104ba302888b4821f62b7080cbbcbc4b883/src/main/java/com/lunchcatch/billing/listener/BudgetPlanStatusMirrorListener.java)가 그 수단을 명시한다. 두 번째와 세 번째 선택지는 비용을 비교하기 위한 대안이며 구현 변경을 결정한 것은 아니다.
 
 롤백 보상을 `@Async`나 실행기로 넘기면 실패한 과금이 예산을 점유하는 시간이 늘 수 있다. 실행기 거절과 재실행도 새로 정해야 한다. 현재 구현은 종료 콜백에서 직접 보상하며, 그 수단의 유실과 재호출 경합은 장애 설계 2·4장이 소유한다.
 
@@ -564,7 +564,7 @@ Lua는 당일 해시와 처리 표시 두 키를 사용한다. 현재 구현은 
 
 ## 12. 테스트와 미정 사항
 
-테스트 내용을 이 문서에 복제하지 않는다. [차감 통합 테스트](https://github.com/lunch-catch/lc-backend/blob/b7f9a104ba302888b4821f62b7080cbbcbc4b883/src/test/java/com/launchcatch/billing/ImpressionDeductionIntegrationTest.java)와 [차감 단위 테스트](https://github.com/lunch-catch/lc-backend/blob/b7f9a104ba302888b4821f62b7080cbbcbc4b883/src/test/java/com/launchcatch/billing/service/PointDeductorImplTest.java)가 정상 과금·미과금, 중복, 롤백, 재구성과 잠금의 검증 근거다.
+테스트 내용을 이 문서에 복제하지 않는다. [차감 통합 테스트](https://github.com/lunch-catch/lc-backend/blob/b7f9a104ba302888b4821f62b7080cbbcbc4b883/src/test/java/com/lunchcatch/billing/ImpressionDeductionIntegrationTest.java)와 [차감 단위 테스트](https://github.com/lunch-catch/lc-backend/blob/b7f9a104ba302888b4821f62b7080cbbcbc4b883/src/test/java/com/lunchcatch/billing/service/PointDeductorImplTest.java)가 정상 과금·미과금, 중복, 롤백, 재구성과 잠금의 검증 근거다.
 
 미정 항목은 없다.
 

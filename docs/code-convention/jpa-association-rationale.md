@@ -19,7 +19,7 @@
 다른 도메인 엔티티에는 `@ManyToOne` 같은 연관을 걸지 않고 ID 값만 필드로 둔다. ArchUnit `엔티티는_다른_도메인_엔티티를_참조하지_않는다`가 검사한다.
 
 ```java
-package com.launchcatch.coupon.entity;
+package com.lunchcatch.coupon.entity;
 
 @Entity
 public class Coupon {
@@ -35,7 +35,7 @@ public class Coupon {
 다른 도메인 데이터가 필요하면 그 도메인 `contract`의 조회 인터페이스로 record를 받는다. 여러 건이면 ID 목록으로 한 번에 받는 메서드를 두어 N+1을 피한다.
 
 ```java
-package com.launchcatch.campaign.contract;
+package com.lunchcatch.campaign.contract;
 
 public interface CampaignQueryService {
     List<CampaignSummary> findSummaries(Collection<Long> campaignIds);

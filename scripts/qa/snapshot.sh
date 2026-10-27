@@ -18,9 +18,9 @@ DIR="$ROOT/.qa/snapshot"
 if [ -f "$ROOT/.env" ]; then
   set -a; . "$ROOT/.env"; set +a
 fi
-MYSQL="${MYSQL_CONTAINER_NAME:-launchcatch-mysql}"
-VALKEY="${VALKEY_CONTAINER_NAME:-launchcatch-valkey}"
-DB="${MYSQL_DATABASE:-launchcatch}"
+MYSQL="${MYSQL_CONTAINER_NAME:-lunchcatch-mysql}"
+VALKEY="${VALKEY_CONTAINER_NAME:-lunchcatch-valkey}"
+DB="${MYSQL_DATABASE:-lunchcatch}"
 PW="${MYSQL_ROOT_PASSWORD:-root}"
 
 log() { printf '[%s] %s\n' "$(date +%H:%M:%S)" "$*"; }

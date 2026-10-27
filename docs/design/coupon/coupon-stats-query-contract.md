@@ -2,7 +2,7 @@
 
 `coupon.contract.CouponStatsQueryService`는 분석에 쿠폰의 집계 결과를 공개한다.
 SQL과 원천 데이터는 coupon이 소유하며 다른 도메인의 테이블은 읽지 않는다.
-호출자는 [공개 인터페이스](../../../src/main/java/com/launchcatch/coupon/contract/CouponStatsQueryService.java)의 record만 받는다.
+호출자는 [공개 인터페이스](../../../src/main/java/com/lunchcatch/coupon/contract/CouponStatsQueryService.java)의 record만 받는다.
 
 ## 캠페인별 일일 집계
 

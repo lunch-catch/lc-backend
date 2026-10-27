@@ -1,0 +1,98 @@
+package com.lunchcatch.campaign.template;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+import com.lunchcatch.campaign.exception.CampaignException;
+import com.lunchcatch.campaign.exception.PosterErrorCode;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+
+class TemplateSlotValidatorTest {
+
+    private static final String VALID = "<div>"
+            + "<h1 data-slot=\"eventName\">title</h1>"
+            + "<p data-slot=\"discount\">discount</p>"
+            + "<p data-slot=\"period\">period</p>"
+            + "<img data-slot=\"image\" alt=\"menu\">"
+            + "</div>";
+
+    private final TemplateSlotValidator validator = new TemplateSlotValidator();
+
+    @Test
+    @DisplayName("슬롯 네 개가 각각 하나씩 허용된 태그에 있으면 통과한다")
+    void 슬롯이_모두_있으면_통과한다() {
+        assertThatCode(() -> validator.validate(VALID)).doesNotThrowAnyException();
+    }
+
+    @Test
+    @DisplayName("광고 표시(adLabel)가 있어도 없어도 통과한다(옛 템플릿 호환, #628)")
+    void adLabel은_요구하지도_막지도_않는다() {
+        String legacy = VALID.replace("<h1", "<span data-slot=\"adLabel\">ad</span><h1");
+
+        assertThatCode(() -> validator.validate(legacy)).doesNotThrowAnyException();
+    }
+
+    @Test
+    @DisplayName("슬롯이 하나라도 빠지면 POSTER-001 이다")
+    void 슬롯이_빠지면_실패한다() {
+        String missing = VALID.replace("<p data-slot=\"period\">period</p>", "");
+
+        assertViolation(missing);
+    }
+
+    @Test
+    @DisplayName("같은 슬롯이 두 번 있으면 POSTER-001 이다")
+    void 슬롯이_중복되면_실패한다() {
+        String duplicated = VALID.replace("</div>", "<p data-slot=\"discount\">again</p></div>");
+
+        assertViolation(duplicated);
+    }
+
+    @Test
+    @DisplayName("이미지 슬롯이 img 태그가 아니면 POSTER-001 이다")
+    void 이미지_슬롯의_태그가_틀리면_실패한다() {
+        String wrongTag = VALID.replace("<img data-slot=\"image\" alt=\"menu\">", "<div data-slot=\"image\"></div>");
+
+        assertViolation(wrongTag);
+    }
+
+    @Test
+    @DisplayName("글 슬롯이 허용되지 않은 태그에 있으면 POSTER-001 이다")
+    void 글_슬롯의_태그가_틀리면_실패한다() {
+        String wrongTag = VALID.replace("<h1 data-slot=\"eventName\">title</h1>", "<img data-slot=\"eventName\">");
+
+        assertViolation(wrongTag);
+    }
+
+    @Test
+    @DisplayName("가게명 슬롯 안에 자식 요소가 있으면 POSTER-001 이다(#884)")
+    void 가게명_슬롯에_자식_요소가_있으면_실패한다() {
+        String withChild = VALID.replace("title", "<span>ti</span>tle");
+
+        assertViolation(withChild);
+    }
+
+    @Test
+    @DisplayName("할인 슬롯 안에 자식 요소가 있으면 POSTER-001 이다(#884)")
+    void 할인_슬롯에_자식_요소가_있으면_실패한다() {
+        String withChild = VALID.replace(">discount<", "><br>discount<");
+
+        assertViolation(withChild);
+    }
+
+    @Test
+    @DisplayName("기간 슬롯은 자식 요소가 있어도 통과한다(점주가 고치지 않는다)")
+    void 기간_슬롯은_자식_요소를_허용한다() {
+        String withChild = VALID.replace(">period<", "><b>period</b><");
+
+        assertThatCode(() -> validator.validate(withChild)).doesNotThrowAnyException();
+    }
+
+    private void assertViolation(String html) {
+        assertThatThrownBy(() -> validator.validate(html))
+                .isInstanceOfSatisfying(CampaignException.class, e ->
+                        assertThat(e.getErrorCode()).isEqualTo(PosterErrorCode.SLOT_CONTRACT_VIOLATION));
+    }
+}

@@ -39,7 +39,7 @@
 
 2. **환경을 띄운다.**
    - 앱: `CDN_BASE_URL=http://localhost:5174/qa-cdn ./gradlew bootRun`. 이 값이 비면 이미지가 있는 가게 응답이 500 이다.
-   - 컨테이너: 다른 체크아웃의 `launchcatch-mysql` 과 이름이 부딪히면 `.env` 에 QA 전용 이름(`lc-qa-mysql`, `lc-qa-valkey`)과 포트(3316, 6389)를 준다.
+   - 컨테이너: 다른 체크아웃의 `lunchcatch-mysql` 과 이름이 부딪히면 `.env` 에 QA 전용 이름(`lc-qa-mysql`, `lc-qa-valkey`)과 포트(3316, 6389)를 준다.
    - 프론트: lc-frontend `develop` 을 별도 worktree 로 받아 `pnpm dev:user`(5173), `dev:owner`(5174), `dev:admin`(5175)으로 띄운다. 쓰던 체크아웃은 건드리지 않는다.
    - 관리자 앱: 프록시가 없어 `VITE_API_BASE_URL=http://localhost:5175` 로 띄우고, Playwright `context.route` 로 그 요청을 8080 에 넘기면서 Origin 과 Referer 를 지운다.
 3. **스냅샷을 뜬다.** `scripts/qa/snapshot.sh save`. 날이 바뀌면 기본 세계 기준일이 지나 `docker compose down -v` 뒤 새로 띄워 다시 뜬다.
