@@ -103,13 +103,13 @@ HTTP 요청·응답은 `dto/`에 두며 취소와 커밋 시작을 조정하는 
 
 | 대상 | DB가 막는 것 | 코드가 담당하는 것 |
 |---|---|---|
-| 일일 카운터 | 회원·영업일 UNIQUE와 0~3 CHECK를 둔다 | 행 잠금 아래 설정된 일일 한도와 증감을 검사한다 |
+| 일일 카운터 | 회원·영업일 UNIQUE와 음수 방지 CHECK를 둔다 | 행 잠금 아래 설정된 일일 한도와 증감을 검사한다 |
 | 이벤트 | 캠페인·영업일 UNIQUE, 할인 조합과 메뉴 스냅샷 CHECK를 둔다 | 조회 대상 매장·영업일에 이벤트가 둘이면 대표를 고르지 않고 정합성 오류를 낸다 |
 | 재고 | 이벤트·순번 UNIQUE와 쿠폰 코드 UNIQUE를 둔다 | Redis가 배정한 순번의 AVAILABLE만 조건부 UPDATE로 ISSUED로 바꾼다 |
 | 회원 쿠폰 | 이벤트·회원 UNIQUE와 쿠폰 코드 UNIQUE를 둔다 | 삭제한 쿠폰도 재발급을 막고 행 잠금으로 상태 전이를 조정한다 |
 | 사용 이력 | 회원 쿠폰에 대한 FK를 둔다. 현재 회원 쿠폰 ID 인덱스는 UNIQUE가 아니다 | 사용 확정은 회원 쿠폰 행 잠금 아래 이력을 한 번만 저장한다 |
 
-설정만으로 일일 한도를 3보다 크게 올릴 수 없다. 카운터 CHECK도 함께 바꿔야 한다.
+일일 한도는 `coupon.daily-limit`에서 읽으며 카운터의 DB 제약은 음수만 막는다.
 현재 coupon은 Valkey와 별도 인메모리 원본·캐시를 쓰지 않는다.
 
 ### 이벤트 스냅샷
@@ -171,7 +171,7 @@ V7은 전체 메뉴 정률 조합을 CHECK에서 제외한다. 지원하지 않�
 | 연결됨 | 읽기, member | `MemberQueryService.findCurrentStatuses(Set<Long>)`, `findById(Long)` | 발급은 묶음의 현재 회원 상태를 한 번에 읽고 QR 생성·이벤트 상태·새 사용 확정은 기존 회원 정보를 읽는다 |
 | 연결됨 | 읽기, owner | `OwnerStatusQuery.findCurrentStatus(Long)` | 점주 수량·매장 사용 이력·사용 확정 요청마다 한 번 호출하며 캐시를 우회한다 |
 | 연결됨 | 읽기, campaign | `CampaignQueryService.findByStoreIdIn(List<Long>)` | 이벤트 상태 요청마다 한 번 일괄 호출한다 |
-| 연결됨 | 읽기, store | `StoreQueryService.canManageStore(Long, Long)`, `findAllById(List<Long>)` | QR 사용은 관리 권한과 좌표를 조회한다. 이력 조회는 현재 관리 권한, 이벤트 조회는 최종 등록 매장을 확인한다 |
+| 연결됨 | 읽기, store | `StoreQueryService.canManageStore(Long, Long)`, `findAllById(List<Long>)` | QR 사용은 현재 관리 권한을 확인한다. 이력 조회는 현재 관리 권한, 이벤트 조회는 최종 등록 매장을 확인한다 |
 | 연결됨 | 읽기·쓰기, adserving | `WishlistQueryService`, `CandidateStateUpdater` | 발급·이벤트 조회에서 찜을 읽는다. 소진 통보의 실행 위치와 재시도는 [API 설계](./coupon-api-design.md#찜과-소진-contract-연결)를 따른다 |
 | 연결됨 | 받음, campaign | `CampaignStatusChangedEvent`, `CampaignEndedEvent` | 발행자와 같은 트랜잭션에서 회차 상태를 바꾼다. 전이 기준은 6장의 캠페인 이벤트 반영 절을 따른다 |
 | 연결됨 | 공개, analytics | `CouponIssuedEvent`, `CouponRedeemedEvent` | 발급·사용 트랜잭션 안에서 발행하며 분석은 커밋 후 비동기로 수신한다 |

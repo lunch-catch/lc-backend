@@ -18,7 +18,7 @@ public class CouponIssueOpenJob implements StandaloneJob {
     private final BatchExecutionService executions;
     private final CouponBatchExecutionService batchExecution;
 
-    @Scheduled(cron = "0 0 11 * * *", zone = "Asia/Seoul")
+    @Scheduled(cron = "#{@couponSchedule.openCron()}", zone = "#{@couponSchedule.zone()}")
     public void openCoupons() {
         LocalDate businessDate = executions.businessDate();
         if (executions.claim(jobName(), businessDate)) {

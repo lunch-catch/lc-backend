@@ -2,6 +2,7 @@ package com.launchcatch.coupon.service;
 
 import com.launchcatch.auth.exception.AuthErrorCode;
 import com.launchcatch.campaign.contract.CampaignQueryService;
+import com.launchcatch.coupon.CouponQueryLimits;
 import com.launchcatch.coupon.contract.CouponRedeemedEvent;
 import com.launchcatch.coupon.dto.CouponUsageHistoryResponse;
 import com.launchcatch.coupon.dto.CouponUseRequest;
@@ -20,7 +21,6 @@ import com.launchcatch.coupon.repository.MemberCouponRepository.QrReference;
 import com.launchcatch.coupon.repository.MemberCouponRepository;
 import com.launchcatch.global.config.ClockConfig;
 import com.launchcatch.global.exception.CommonErrorCode;
-import com.launchcatch.global.geo.GeoDistance;
 import com.launchcatch.global.response.CursorPageResponse;
 import com.launchcatch.global.response.PageCursor;
 import com.launchcatch.global.response.PageTokens;
@@ -29,7 +29,6 @@ import com.launchcatch.member.contract.MemberQueryService;
 import com.launchcatch.member.contract.MemberStatus;
 import com.launchcatch.owner.contract.OwnerAccountStatus;
 import com.launchcatch.owner.contract.OwnerStatusQuery;
-import com.launchcatch.store.contract.StoreInfo;
 import com.launchcatch.store.contract.StoreQueryService;
 import java.time.Clock;
 import java.time.DateTimeException;
@@ -51,7 +50,7 @@ import org.springframework.transaction.annotation.Transactional;
 @Transactional(readOnly = true)
 public class OwnerCouponService {
 
-    private static final int MAX_DAYS = 31;
+    private static final int HALF_MICROSECOND_NANOS = 500;
 
     private final OwnerStatusQuery ownerStatusQuery;
     private final CampaignQueryService campaignQueryService;
@@ -63,14 +62,13 @@ public class OwnerCouponService {
     private final Clock clock;
     private final ApplicationEventPublisher eventPublisher;
 
-    // 시연 영상 촬영을 위해 기존 100m 제한을 임시로 30km로 늘렸으며 촬영 후 100m로 복원한다.
-    private static final double MAX_DISTANCE_METERS = 30_000;
     private static final String REDEEMED_EVENT_ID_PREFIX = "coupon-redeemed:";
 
     public OwnerCouponSummaryResponse summary(Long ownerId, long campaignId, LocalDate from, LocalDate to) {
         if (campaignId <= 0 || from == null || to == null || from.isAfter(to)
-                || ChronoUnit.DAYS.between(from, to) >= MAX_DAYS || to.equals(LocalDate.MAX)) {
-            throw new IllegalArgumentException("campaignId must be positive and the inclusive date range must be 1 to 31 days");
+                || ChronoUnit.DAYS.between(from, to) >= CouponQueryLimits.MAX_SUMMARY_DAYS || to.equals(LocalDate.MAX)) {
+            throw new IllegalArgumentException("campaignId must be positive and the inclusive date range must be 1 to "
+                    + CouponQueryLimits.MAX_SUMMARY_DAYS + " days");
         }
         validateActiveOwner(ownerId);
         boolean owned = campaignQueryService.findAllById(List.of(campaignId)).stream()
@@ -89,8 +87,9 @@ public class OwnerCouponService {
     // 매장 관리 권한을 확인한 뒤 실제 사용일의 건수를 조회하고 사용이 없는 날짜를 채운다.
     public OwnerCouponDailyUsageResponse getDailyUsages(Long ownerId, long storeId, LocalDate from, LocalDate to) {
         if (storeId <= 0 || from == null || to == null || from.isAfter(to)
-                || ChronoUnit.DAYS.between(from, to) >= MAX_DAYS || to.equals(LocalDate.MAX)) {
-            throw new IllegalArgumentException("storeId must be positive and the inclusive date range must be 1 to 31 days");
+                || ChronoUnit.DAYS.between(from, to) >= CouponQueryLimits.MAX_SUMMARY_DAYS || to.equals(LocalDate.MAX)) {
+            throw new IllegalArgumentException("storeId must be positive and the inclusive date range must be 1 to "
+                    + CouponQueryLimits.MAX_SUMMARY_DAYS + " days");
         }
         validateActiveOwner(ownerId);
         if (!storeQueryService.canManageStore(ownerId, storeId)) {
@@ -169,13 +168,8 @@ public class OwnerCouponService {
                 throw new CouponException(CouponErrorCode.COUPON_ALREADY_USED);
             }
             checkMemberStatusActive(coupon);
-            StoreInfo store = findStore(event.getStoreId());
             // 4. 잠금 대기 후 현재 시각으로 유효 시간을 판정한다.
             LocalDateTime now = LocalDateTime.now(clock.withZone(ClockConfig.ZONE)).truncatedTo(ChronoUnit.MICROS);
-            if (GeoDistance.meters(request.latitude(), request.longitude(), store.latitude(), store.longitude())
-                    > MAX_DISTANCE_METERS) {
-                throw new CouponException(CouponErrorCode.LOCATION_NOT_ALLOWED);
-            }
             // 5. 쿠폰 스냅샷으로 메뉴 한 개의 할인액을 계산하고 쿠폰을 사용 처리한다.
             int discount = event.calculateDiscount();
             coupon.redeem(request.qrToken(), reference.getQrVersion(), now);
@@ -192,7 +186,7 @@ public class OwnerCouponService {
                     coupon.getId()));
             // MySQL DATETIME(6)과 같은 정밀도로 auditing 시각을 반올림한다.
             return new CouponUseResponse(coupon.getId(), history.getId(), discount,
-                    history.getCreatedAt().plusNanos(500).truncatedTo(ChronoUnit.MICROS)
+                    history.getCreatedAt().plusNanos(HALF_MICROSECOND_NANOS).truncatedTo(ChronoUnit.MICROS)
                             .atZone(ClockConfig.ZONE).toOffsetDateTime());
         } catch (CouponException error) {
             if (error.getErrorCode().getHttpStatus().is5xxServerError()) {
@@ -208,16 +202,6 @@ public class OwnerCouponService {
         if (ownerStatusQuery.findCurrentStatus(ownerId).orElse(null) != OwnerAccountStatus.ACTIVE) {
             throw new CouponException(CouponErrorCode.OWNER_ACCOUNT_NOT_ALLOWED);
         }
-    }
-
-    private StoreInfo findStore(Long storeId) {
-        StoreInfo store = storeQueryService.findAllById(List.of(storeId)).stream()
-                .findFirst()
-                .orElseThrow(() -> new CouponException(CommonErrorCode.INTERNAL_ERROR));
-        if (store.latitude() == null || store.longitude() == null) {
-            throw new CouponException(CommonErrorCode.INTERNAL_ERROR);
-        }
-        return store;
     }
 
     private void checkMemberStatusActive(MemberCoupon coupon) {

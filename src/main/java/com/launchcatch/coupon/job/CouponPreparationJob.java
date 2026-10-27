@@ -18,7 +18,7 @@ public class CouponPreparationJob implements StandaloneJob {
     private final BatchExecutionService executions;
     private final CouponBatchExecutionService batchExecution;
 
-    @Scheduled(cron = "0 0 3 * * *", zone = "Asia/Seoul")
+    @Scheduled(cron = "${coupon.batch.preparation-cron}", zone = "#{@couponSchedule.zone()}")
     public void prepareCoupons() {
         LocalDate businessDate = executions.businessDate();
         if (executions.claim(jobName(), businessDate)) {

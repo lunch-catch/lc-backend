@@ -9,6 +9,7 @@ import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
 import com.launchcatch.coupon.CouponConsistencyFinding;
+import com.launchcatch.coupon.CouponTestProperties;
 import com.launchcatch.coupon.repository.CouponConsistencyRepository;
 import com.launchcatch.ops.contract.BatchAttemptGuard;
 import java.time.Clock;
@@ -46,9 +47,22 @@ class CouponConsistencyServiceTest {
         assertThat(service().verify(DATE, 1)).isZero();
     }
 
+    @Test
+    void 설정된_페이지가_가득_차면_다음_커서로_계속_조회한다() {
+        var first = new CouponConsistencyFinding("DAILY_COUNTER", 17L, 1, 0);
+        when(repository.findings(DATE, "", 0, now)).thenReturn(List.of(first));
+        when(repository.findings(DATE, "DAILY_COUNTER", 17L, now)).thenReturn(List.of());
+        var configured = new CouponConsistencyService(
+                CouponTestProperties.with(java.util.Map.of("coupon.batch.page-size", 1)), repository,
+                mock(BatchAttemptGuard.class), Clock.fixed(now.atZone(ZoneId.of("Asia/Seoul")).toInstant(), ZoneId.of("Asia/Seoul")));
+
+        assertThat(configured.verify(DATE, 1)).isEqualTo(1);
+        org.mockito.Mockito.verify(repository).findings(DATE, "DAILY_COUNTER", 17L, now);
+    }
+
     private CouponConsistencyService service() {
         ZoneId zone = ZoneId.of("Asia/Seoul");
-        return new CouponConsistencyService(repository, mock(BatchAttemptGuard.class),
+        return new CouponConsistencyService(CouponTestProperties.defaults(), repository, mock(BatchAttemptGuard.class),
                 Clock.fixed(now.atZone(zone).toInstant(), zone));
     }
 }

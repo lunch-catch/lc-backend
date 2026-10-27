@@ -13,6 +13,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import com.launchcatch.coupon.CouponTestProperties;
 import com.launchcatch.coupon.entity.CouponEvent;
 import com.launchcatch.coupon.entity.CouponEventStatus;
 import com.launchcatch.coupon.entity.CouponInventoryStatus;
@@ -45,7 +46,7 @@ class CouponSequenceRecoveryServiceTest {
     private final PlatformTransactionManager transactions = mock(PlatformTransactionManager.class);
     private final Clock clock = Clock.fixed(Instant.parse("2026-10-21T03:00:00Z"), ZoneOffset.UTC);
     private final CouponSequenceRecoveryService service = new CouponSequenceRecoveryService(
-            events, inventories, sequences, sequenceService, transactions, clock);
+            CouponTestProperties.defaults(), events, inventories, sequences, sequenceService, transactions, clock);
 
     @BeforeEach
     void prepare() {

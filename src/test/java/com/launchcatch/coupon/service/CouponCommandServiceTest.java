@@ -21,6 +21,8 @@ import com.google.zxing.DecodeHintType;
 import com.google.zxing.client.j2se.BufferedImageLuminanceSource;
 import com.google.zxing.common.HybridBinarizer;
 import com.google.zxing.qrcode.QRCodeReader;
+import com.launchcatch.coupon.CouponTestProperties;
+import com.launchcatch.coupon.config.CouponProperties;
 import com.launchcatch.coupon.dto.CouponIssueResponse;
 import com.launchcatch.coupon.CouponQrImageEncoder;
 import com.launchcatch.coupon.config.CouponIssuanceMetrics;
@@ -66,6 +68,7 @@ import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
@@ -96,6 +99,7 @@ class CouponCommandServiceTest {
     @Mock CouponSequenceRecoveryService sequenceRecoveryService;
     @Mock CouponIssueBatcher batcher;
     @Mock CouponIssuanceMetrics issuanceMetrics;
+    @Spy CouponProperties properties = CouponTestProperties.defaults();
     @InjectMocks CouponCommandService service;
 
     private Logger logger;
@@ -122,7 +126,7 @@ class CouponCommandServiceTest {
 
     @Test
     void 비동기_접수_상한을_넘으면_즉시_혼잡으로_거절하고_집계한다() {
-        ReflectionTestUtils.setField(service, "requestCapacity", 0);
+        ReflectionTestUtils.setField(service, "properties", CouponTestProperties.with(java.util.Map.of("coupon.issue.batch.queue-capacity", 0)));
 
         assertThatThrownBy(() -> service.issueAsync(MEMBER_ID, 81L))
                 .isInstanceOfSatisfying(CouponException.class, error -> {
@@ -135,7 +139,7 @@ class CouponCommandServiceTest {
 
     @Test
     void 비동기_접수_상한을_넘어도_확정_소진을_우선_응답한다() {
-        ReflectionTestUtils.setField(service, "requestCapacity", 0);
+        ReflectionTestUtils.setField(service, "properties", CouponTestProperties.with(java.util.Map.of("coupon.issue.batch.queue-capacity", 0)));
         when(sequenceService.isConfirmedSoldOut(81L)).thenReturn(true);
 
         assertThatThrownBy(() -> service.issueAsync(MEMBER_ID, 81L))
@@ -432,8 +436,8 @@ class CouponCommandServiceTest {
 
         @BeforeEach
         void setUp() {
-            service = new CouponCommandService(repository, couponDailyLimitRepository, memberQuery,
-                    new CouponQrImageEncoder(),
+            service = new CouponCommandService(CouponTestProperties.defaults(), repository, couponDailyLimitRepository, memberQuery,
+                    new CouponQrImageEncoder(CouponTestProperties.defaults()),
                     Clock.fixed(Instant.parse("2026-10-10T03:00:00Z"), ZoneOffset.UTC), mock(CouponSoldOutNotificationService.class), mock(CouponSequenceService.class), mock(CouponSequenceRecoveryService.class),
                     mock(CouponIssueBatcher.class), mock(CouponIssuanceMetrics.class));
         }
@@ -448,7 +452,7 @@ class CouponCommandServiceTest {
         })
         void 위치_표시와_비슷한_무늬의_QR도_원래_토큰으로_읽는다(String tokenValue) throws Exception {
             UUID token = UUID.fromString(tokenValue);
-            CouponQrResponse response = new CouponQrResponse(new CouponQrImageEncoder().encode(token),
+            CouponQrResponse response = new CouponQrResponse(new CouponQrImageEncoder(CouponTestProperties.defaults()).encode(token),
                     OffsetDateTime.parse("2026-10-10T12:01:00+09:00"));
 
             assertThat(decode(response)).isEqualTo(tokenValue);
@@ -604,7 +608,7 @@ class CouponCommandServiceTest {
 
     @Test
     void 접수_상한에_닿아도_확정_소진을_먼저_반환한다() {
-        ReflectionTestUtils.setField(service, "requestCapacity", 0);
+        ReflectionTestUtils.setField(service, "properties", CouponTestProperties.with(java.util.Map.of("coupon.issue.batch.queue-capacity", 0)));
         when(sequenceService.isConfirmedSoldOut(81L)).thenReturn(true);
 
         assertThatThrownBy(() -> service.issue(MEMBER_ID, 81L)).isInstanceOfSatisfying(CouponException.class,
@@ -616,7 +620,7 @@ class CouponCommandServiceTest {
 
     @Test
     void 접수_상한에_닿고_소진이_아니면_혼잡으로_거절한다() {
-        ReflectionTestUtils.setField(service, "requestCapacity", 0);
+        ReflectionTestUtils.setField(service, "properties", CouponTestProperties.with(java.util.Map.of("coupon.issue.batch.queue-capacity", 0)));
 
         assertThatThrownBy(() -> service.issue(MEMBER_ID, 81L)).isInstanceOfSatisfying(CouponException.class,
                 error -> assertThat(error.getErrorCode()).isEqualTo(CouponErrorCode.ISSUANCE_BUSY));
@@ -626,7 +630,7 @@ class CouponCommandServiceTest {
 
     @Test
     void 접수_상한에서_Redis_복구가_필요해도_요청_스레드는_복구를_시작하지_않는다() {
-        ReflectionTestUtils.setField(service, "requestCapacity", 0);
+        ReflectionTestUtils.setField(service, "properties", CouponTestProperties.with(java.util.Map.of("coupon.issue.batch.queue-capacity", 0)));
         when(sequenceService.isConfirmedSoldOut(81L)).thenThrow(CouponException.recoveryRequired(81L));
 
         assertThatThrownBy(() -> service.issue(MEMBER_ID, 81L)).isInstanceOfSatisfying(CouponException.class,
@@ -783,7 +787,7 @@ class CouponCommandServiceTest {
                     .until(() -> deadline - System.nanoTime() <= 0);
             return true;
         });
-        ReflectionTestUtils.setField(service, "waitTimeout", java.time.Duration.ofMillis(20));
+        ReflectionTestUtils.setField(service, "properties", CouponTestProperties.with(java.util.Map.of("coupon.issue.batch.wait-timeout", java.time.Duration.ofMillis(20))));
         when(batcher.submitAndAwait(any(CouponIssuanceRequest.class), anyLong())).thenThrow(failure);
 
         assertThatThrownBy(() -> service.issue(MEMBER_ID, 81L)).isSameAs(failure);

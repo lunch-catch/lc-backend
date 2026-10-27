@@ -9,6 +9,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.launchcatch.coupon.CouponTestProperties;
 import com.launchcatch.coupon.dto.CouponIssueResponse;
 import com.launchcatch.coupon.exception.CouponErrorCode;
 import com.launchcatch.coupon.exception.CouponException;
@@ -39,7 +40,7 @@ class CouponIssueBatcherTest {
     private final CouponSequenceService sequenceService = mock(CouponSequenceService.class);
     private final CouponSoldOutNotificationService soldOutNotifications = mock(CouponSoldOutNotificationService.class);
     private final Clock clock = Clock.fixed(Instant.parse("2026-10-20T03:00:00Z"), ZoneOffset.ofHours(9));
-    private final CouponIssueBatcher batcher = new CouponIssueBatcher(batchService, sequenceService, soldOutNotifications, clock);
+    private final CouponIssueBatcher batcher = new CouponIssueBatcher(CouponTestProperties.defaults(), batchService, sequenceService, soldOutNotifications, clock);
     private final CouponReservation reservation =
             new CouponReservation(81L, 1, "reservation");
     private final CouponIssueResponse response = new CouponIssueResponse(1001L, OffsetDateTime.now(clock));
@@ -47,10 +48,7 @@ class CouponIssueBatcherTest {
 
     @BeforeEach
     void startWorker() {
-        ReflectionTestUtils.setField(batcher, "workerCount", 1);
-        ReflectionTestUtils.setField(batcher, "maxSize", 8);
-        ReflectionTestUtils.setField(batcher, "queueCapacity", 10);
-        ReflectionTestUtils.setField(batcher, "waitTimeout", Duration.ofSeconds(5));
+        ReflectionTestUtils.setField(batcher, "properties", CouponTestProperties.with(java.util.Map.of("coupon.issue.batch.workers", 1, "coupon.issue.batch.max-size", 8, "coupon.issue.batch.queue-capacity", 10, "coupon.issue.batch.wait-timeout", Duration.ofSeconds(5))));
         batcher.start();
     }
 
@@ -240,13 +238,17 @@ class CouponIssueBatcherTest {
         CountDownLatch collecting = new CountDownLatch(1);
         CountDownLatch finishCollecting = new CountDownLatch(1);
         BlockingQueue<Object> queue = new ArrayBlockingQueue<>(10) {
+            private boolean firstRequestTaken;
+
             @Override
             public Object poll(long timeout, TimeUnit unit) throws InterruptedException {
-                if (unit == TimeUnit.NANOSECONDS) {
+                if (firstRequestTaken) {
                     collecting.countDown();
                     finishCollecting.await();
                 }
-                return super.poll(timeout, unit);
+                Object request = super.poll(timeout, unit);
+                firstRequestTaken |= request != null;
+                return request;
             }
         };
         ReflectionTestUtils.setField(batcher, "queue", queue);
@@ -257,6 +259,7 @@ class CouponIssueBatcherTest {
             try {
                 var result = caller.submit(() -> batcher.submitAndAwait(17L, 81L));
                 assertThat(collecting.await(5, TimeUnit.SECONDS)).isTrue();
+                assertThat(queue).isEmpty();
                 workers.getFirst().interrupt();
 
                 assertThatThrownBy(() -> result.get(5, TimeUnit.SECONDS)).satisfies(error ->
@@ -271,7 +274,7 @@ class CouponIssueBatcherTest {
 
     @Test
     void 비동기_대기열에서_기한이_끝난_요청은_발급하지_않는다() throws Exception {
-        ReflectionTestUtils.setField(batcher, "maxSize", 1);
+        ReflectionTestUtils.setField(batcher, "properties", CouponTestProperties.with(java.util.Map.of("coupon.issue.batch.max-size", 1)));
         CountDownLatch started = new CountDownLatch(1);
         CountDownLatch release = new CountDownLatch(1);
         when(batchService.issueBatch(anyList(), any())).thenAnswer(invocation -> {
@@ -304,7 +307,7 @@ class CouponIssueBatcherTest {
 
     @Test
     void 커밋_전_실행_기한이_끝나면_요청을_취소하고_발급을_막는다() throws Exception {
-        ReflectionTestUtils.setField(batcher, "waitTimeout", Duration.ofMillis(200));
+        ReflectionTestUtils.setField(batcher, "properties", CouponTestProperties.with(java.util.Map.of("coupon.issue.batch.wait-timeout", Duration.ofMillis(200))));
         CountDownLatch started = new CountDownLatch(1);
         CountDownLatch finish = new CountDownLatch(1);
         when(batchService.issueBatch(anyList(), any())).thenAnswer(invocation -> {
@@ -492,7 +495,7 @@ class CouponIssueBatcherTest {
 
     @Test
     void 커밋이_시작된_요청은_기한이_지나도_실제_완료를_기다린다() throws Exception {
-        ReflectionTestUtils.setField(batcher, "waitTimeout", Duration.ofMillis(100));
+        ReflectionTestUtils.setField(batcher, "properties", CouponTestProperties.with(java.util.Map.of("coupon.issue.batch.wait-timeout", Duration.ofMillis(100))));
         CountDownLatch started = new CountDownLatch(1);
         CountDownLatch returnResult = new CountDownLatch(1);
         when(batchService.issueBatch(anyList(), any())).thenAnswer(invocation -> {

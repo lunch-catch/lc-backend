@@ -7,6 +7,8 @@ import java.util.Objects;
 
 public final class CouponDiscountPrice {
 
+    public static final int ROUNDING_UNIT = 10;
+
     private CouponDiscountPrice() { }
 
     public static long calculate(long original, DiscountType type, int value) {
@@ -20,7 +22,8 @@ public final class CouponDiscountPrice {
         if (discount.compareTo(BigDecimal.valueOf(original)) >= 0) {
             return 0;
         }
-        BigDecimal rounded = discount.divide(BigDecimal.TEN, 0, RoundingMode.HALF_UP).multiply(BigDecimal.TEN);
+        BigDecimal rounded = discount.divide(BigDecimal.valueOf(ROUNDING_UNIT), 0, RoundingMode.HALF_UP)
+                .multiply(BigDecimal.valueOf(ROUNDING_UNIT));
         return original - rounded.min(BigDecimal.valueOf(original)).longValueExact();
     }
 }

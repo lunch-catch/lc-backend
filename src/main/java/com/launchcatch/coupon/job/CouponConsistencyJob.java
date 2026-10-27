@@ -18,7 +18,7 @@ public class CouponConsistencyJob implements StandaloneJob {
     private final BatchExecutionService executions;
     private final CouponBatchExecutionService batchExecution;
 
-    @Scheduled(cron = "0 0 2 * * *", zone = "Asia/Seoul")
+    @Scheduled(cron = "${coupon.batch.consistency-cron}", zone = "#{@couponSchedule.zone()}")
     public void verifyCoupons() {
         LocalDate businessDate = executions.businessDate().minusDays(1);
         if (executions.claim(jobName(), businessDate)) {

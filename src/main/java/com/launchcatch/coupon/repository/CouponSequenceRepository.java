@@ -1,5 +1,7 @@
 package com.launchcatch.coupon.repository;
 
+import com.launchcatch.coupon.CouponSequenceCode;
+import com.launchcatch.coupon.config.CouponProperties;
 import java.util.List;
 import java.util.ArrayList;
 import java.util.Map;
@@ -31,8 +33,7 @@ public class CouponSequenceRepository {
     private static final DefaultRedisScript<Long> RETRY_AVAILABILITY = script("retry_availability");
     private static final DefaultRedisScript<Long> BLOCK = script("block");
     private static final DefaultRedisScript<Long> REBUILD = script("rebuild");
-    // 큐를 다시 만들 때 순번을 RPUSH 한 번에 넣는 최대 개수다.
-    private static final int REBUILD_BATCH_SIZE = 500;
+    private final CouponProperties properties;
     private final StringRedisTemplate redis;
 
     /*
@@ -114,7 +115,7 @@ public class CouponSequenceRepository {
     // 예약 대기 요청만 사용하는 조회이며 2는 예약이 끝날 때까지 기다려야 한다는 뜻이다.
     public int retryAvailability(long eventId, long staleAfterMillis) {
         Long result = redis.execute(RETRY_AVAILABILITY, keys(eventId), Long.toString(staleAfterMillis));
-        return result == null ? -1 : Math.toIntExact(result);
+        return result == null ? CouponSequenceCode.BLOCKED.code() : Math.toIntExact(result);
     }
 
     // 큐를 BLOCKED로 바꿔 모든 서버의 새 예약을 막는다.
@@ -167,13 +168,13 @@ public class CouponSequenceRepository {
         Object state = values.get(0);
         if ((!"READY".equals(state) && !"SOLD_OUT".equals(state))
                 || values.get(1) == null || values.get(2) == null || values.get(3) == null) {
-            return -1;
+            return CouponSequenceCode.BLOCKED.code();
         }
         boolean soldOut = values.get(1).equals(values.get(2));
         if ("SOLD_OUT".equals(state) && !soldOut) {
-            return -1;
+            return CouponSequenceCode.BLOCKED.code();
         }
-        return soldOut ? 0 : 1;
+        return soldOut ? CouponSequenceCode.SOLD_OUT.code() : CouponSequenceCode.AVAILABLE.code();
     }
 
     /*
@@ -188,8 +189,8 @@ public class CouponSequenceRepository {
                 Long.toString(sequences.size() + completed), Long.toString(completed)))) {
             throw new IllegalStateException("Coupon sequence retention expired");
         }
-        for (int offset = 0; offset < sequences.size(); offset += REBUILD_BATCH_SIZE) {
-            List<Integer> batch = sequences.subList(offset, Math.min(offset + REBUILD_BATCH_SIZE, sequences.size()));
+        for (int offset = 0; offset < sequences.size(); offset += properties.sequence().rebuildBatchSize()) {
+            List<Integer> batch = sequences.subList(offset, Math.min(offset + properties.sequence().rebuildBatchSize(), sequences.size()));
             String[] args = new String[batch.size() + 2];
             args[0] = "append";
             args[1] = expiry;

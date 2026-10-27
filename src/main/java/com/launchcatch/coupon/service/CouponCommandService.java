@@ -2,6 +2,7 @@ package com.launchcatch.coupon.service;
 
 import com.launchcatch.coupon.CouponQrImageEncoder;
 import com.launchcatch.coupon.config.CouponIssuanceMetrics;
+import com.launchcatch.coupon.config.CouponProperties;
 import com.launchcatch.coupon.dto.CouponIssueResponse;
 import com.launchcatch.coupon.dto.CouponQrResponse;
 import com.launchcatch.coupon.entity.MemberCoupon;
@@ -17,7 +18,6 @@ import com.launchcatch.member.contract.MemberQueryService;
 import com.launchcatch.member.contract.MemberStatus;
 import jakarta.annotation.PreDestroy;
 import java.time.Clock;
-import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.UUID;
@@ -27,18 +27,17 @@ import java.util.concurrent.CompletionException;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
 @Slf4j
-@RequiredArgsConstructor
 @Transactional
 public class CouponCommandService {
+
+    private final CouponProperties properties;
 
     private final MemberCouponRepository memberCouponRepository;
     private final CouponDailyLimitRepository couponDailyLimitRepository;
@@ -54,14 +53,29 @@ public class CouponCommandService {
     private final AtomicInteger activeIssueRequests = new AtomicInteger();
 
     // 복구가 필요한 오류만 처리하며 정상 발급 결과를 기다리는 요청별 스레드는 만들지 않는다.
-    private final ThreadPoolExecutor issuanceRecovery = new ThreadPoolExecutor(1, 1, 0, TimeUnit.SECONDS,
-            new ArrayBlockingQueue<>(2000), Thread.ofPlatform().name("coupon-http-recovery-", 0).factory());
+    private final ThreadPoolExecutor issuanceRecovery;
 
-    @Value("${coupon.issue.batch.queue-capacity:2000}")
-    private int requestCapacity = 2000;
-
-    @Value("${coupon.issue.batch.wait-timeout:10s}")
-    private Duration waitTimeout = Duration.ofSeconds(10);
+    public CouponCommandService(CouponProperties properties, MemberCouponRepository memberCouponRepository,
+            CouponDailyLimitRepository couponDailyLimitRepository, MemberQueryService memberQueryService,
+            CouponQrImageEncoder imageEncoder, Clock clock, CouponSoldOutNotificationService soldOutNotifications,
+            CouponSequenceService sequenceService, CouponSequenceRecoveryService sequenceRecoveryService,
+            CouponIssueBatcher batcher, CouponIssuanceMetrics issuanceMetrics) {
+        this.properties = properties;
+        this.memberCouponRepository = memberCouponRepository;
+        this.couponDailyLimitRepository = couponDailyLimitRepository;
+        this.memberQueryService = memberQueryService;
+        this.imageEncoder = imageEncoder;
+        this.clock = clock;
+        this.soldOutNotifications = soldOutNotifications;
+        this.sequenceService = sequenceService;
+        this.sequenceRecoveryService = sequenceRecoveryService;
+        this.batcher = batcher;
+        this.issuanceMetrics = issuanceMetrics;
+        issuanceRecovery = new ThreadPoolExecutor(properties.issue().recovery().workers(),
+                properties.issue().recovery().workers(), 0, TimeUnit.SECONDS,
+                new ArrayBlockingQueue<>(properties.issue().batch().queueCapacity()),
+                Thread.ofPlatform().name("coupon-http-recovery-", 0).factory());
+    }
 
     /*
      * 소진 결과는 DB 재확인 없이 반환하며 누락 통보의 접수만 수행한다.
@@ -70,12 +84,12 @@ public class CouponCommandService {
     @Transactional(propagation = Propagation.NEVER)
     public CouponIssueResponse issue(Long memberId, Long eventId) {
         return issue(new CouponIssuanceRequest(memberId, eventId,
-                LocalDateTime.now(clock.withZone(ClockConfig.ZONE))), System.nanoTime() + waitTimeout.toNanos());
+                LocalDateTime.now(clock.withZone(ClockConfig.ZONE))), System.nanoTime() + properties.issue().batch().waitTimeout().toNanos());
     }
 
     @Transactional(propagation = Propagation.NEVER)
     public CouponIssueResponse issue(CouponIssuanceRequest request, long deadlineNanos) {
-        if (activeIssueRequests.incrementAndGet() > requestCapacity) {
+        if (activeIssueRequests.incrementAndGet() > properties.issue().batch().queueCapacity()) {
             activeIssueRequests.decrementAndGet();
             rejectIfConfirmedSoldOut(request.eventId());
             throw new CouponException(CouponErrorCode.ISSUANCE_BUSY);
@@ -89,10 +103,10 @@ public class CouponCommandService {
 
     @Transactional(propagation = Propagation.NEVER)
     public CompletableFuture<CouponIssueResponse> issueAsync(long memberId, long eventId) {
-        long deadline = System.nanoTime() + waitTimeout.toNanos();
+        long deadline = System.nanoTime() + properties.issue().batch().waitTimeout().toNanos();
         CouponIssuanceRequest request = new CouponIssuanceRequest(memberId, eventId,
                 LocalDateTime.now(clock.withZone(ClockConfig.ZONE)));
-        if (activeIssueRequests.incrementAndGet() > requestCapacity) {
+        if (activeIssueRequests.incrementAndGet() > properties.issue().batch().queueCapacity()) {
             activeIssueRequests.decrementAndGet();
             try {
                 rejectIfConfirmedSoldOut(eventId);
@@ -167,7 +181,7 @@ public class CouponCommandService {
     void stopIssuanceRecovery() {
         issuanceRecovery.shutdown();
         try {
-            if (issuanceRecovery.awaitTermination(waitTimeout.plusSeconds(12).toMillis(), TimeUnit.MILLISECONDS)) {
+            if (issuanceRecovery.awaitTermination(properties.issue().batch().waitTimeout().plus(properties.issue().shutdown().grace()).toMillis(), TimeUnit.MILLISECONDS)) {
                 return;
             }
         } catch (InterruptedException error) {
@@ -177,7 +191,7 @@ public class CouponCommandService {
         boolean interrupted = Thread.interrupted();
         try {
             cancelRecoveryRequests();
-            if (!issuanceRecovery.awaitTermination(5, TimeUnit.SECONDS)) {
+            if (!issuanceRecovery.awaitTermination(properties.issue().shutdown().cleanupTimeout().toNanos(), TimeUnit.NANOSECONDS)) {
                 log.error("event=COUPON_ISSUANCE_RECOVERY_STOP_FAILED reason=TERMINATION_TIMEOUT");
             }
         } catch (InterruptedException error) {

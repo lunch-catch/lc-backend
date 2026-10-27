@@ -5,6 +5,7 @@ import com.launchcatch.campaign.contract.CampaignInfo;
 import com.launchcatch.campaign.contract.CampaignQueryService;
 import com.launchcatch.campaign.contract.CampaignStatus;
 import com.launchcatch.coupon.CouponListFilter;
+import com.launchcatch.coupon.config.CouponProperties;
 import com.launchcatch.coupon.contract.CouponExpiredEvent;
 import com.launchcatch.coupon.dto.CouponDetailResponse;
 import com.launchcatch.coupon.dto.CouponEventStatusResponse.CannotIssueReason;
@@ -40,7 +41,6 @@ import java.time.Clock;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.Optional;
-import java.time.LocalTime;
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
@@ -52,7 +52,6 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -62,6 +61,8 @@ import org.springframework.transaction.annotation.Transactional;
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
 public class CouponLookUpService {
+
+    private final CouponProperties properties;
 
     private final MemberCouponRepository memberCouponRepository;
     private final CouponEventRepository couponEventRepository;
@@ -74,15 +75,6 @@ public class CouponLookUpService {
     private final WishlistQueryService wishlistQueryService;
     private final ApplicationEventPublisher eventPublisher;
     private final CouponInventoryRepository couponInventoryRepository;
-
-    @Value("${coupon.daily-limit}")
-    private int dailyLimit;
-
-    @Value("${coupon.issue-start-time}")
-    private LocalTime issueStartTime;
-
-    @Value("${coupon.issue-end-time}")
-    private LocalTime issueEndTime;
 
     /**
      * 매장별 오늘 이벤트와 조회 시점의 발급 가능 상태를 입력 순서로 반환한다.
@@ -119,7 +111,7 @@ public class CouponLookUpService {
         boolean accountEligible = memberQueryService.findById(memberId).map(MemberInfo::status)
                 .filter(status -> status == MemberStatus.ACTIVE).isPresent();
 
-        boolean dailyLimitReached = findIssuedCount(memberId, businessDate) >= dailyLimit;
+        boolean dailyLimitReached = findIssuedCount(memberId, businessDate) >= properties.dailyLimit();
 
         Set<Long> wishedCampaignIds = Set.copyOf(wishlistQueryService.findWishedCampaignIds(memberId));
 
@@ -185,7 +177,7 @@ public class CouponLookUpService {
         LocalDate businessDate = LocalDate.now(clock.withZone(ClockConfig.ZONE));
         int issuedCount = findIssuedCount(memberId, businessDate);
         return new CouponIssuanceLimitResponse(
-                businessDate, issuedCount, dailyLimit, issuedCount >= dailyLimit);
+                businessDate, issuedCount, properties.dailyLimit(), issuedCount >= properties.dailyLimit());
     }
 
     /**
@@ -272,10 +264,10 @@ public class CouponLookUpService {
 
     // 시스템 발급 종료와 쿠폰 사용 종료를 운영 상태와 재고보다 먼저 판단한다.
     private EventState resolveEventState(CouponEvent event, int remainingQuantity, LocalDateTime now) {
-        if (!now.toLocalTime().isBefore(issueEndTime) || !now.isBefore(event.getUsableEndAt())) {
+        if (!now.toLocalTime().isBefore(properties.issueEndTime()) || !now.isBefore(event.getUsableEndAt())) {
             return EventState.CLOSED;
         }
-        if (now.toLocalTime().isBefore(issueStartTime) || event.getStatus() == CouponEventStatus.SCHEDULED) {
+        if (now.toLocalTime().isBefore(properties.issueStartTime()) || event.getStatus() == CouponEventStatus.SCHEDULED) {
             return EventState.SCHEDULED;
         }
         return remainingQuantity == 0 ? EventState.SOLD_OUT : EventState.OPEN;

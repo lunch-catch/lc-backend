@@ -1,6 +1,7 @@
 package com.launchcatch.coupon.service;
 
 import com.launchcatch.coupon.CouponBatchTask;
+import com.launchcatch.coupon.config.CouponProperties;
 import com.launchcatch.ops.contract.BatchExecutionQueryService;
 import com.launchcatch.ops.scheduler.RetryBackoff;
 import com.launchcatch.ops.service.BatchExecutionService;
@@ -16,7 +17,7 @@ import org.springframework.stereotype.Service;
 @RequiredArgsConstructor
 public class CouponBatchExecutionService {
 
-    private static final int MAX_RETRIES = 2;
+    private final CouponProperties properties;
 
     private final BatchExecutionService executions;
     private final BatchExecutionQueryService executionQuery;
@@ -56,7 +57,7 @@ public class CouponBatchExecutionService {
     }
 
     /*
-     * 최초 실행과 StandaloneJob의 복구 실행 모두 쿠폰의 모든 실행 오류를 추가 두 번까지 재시도한다.
+     * 최초 실행과 StandaloneJob의 복구 실행 모두 쿠폰의 모든 실행 오류를 설정된 상한까지 재시도한다.
      * 로컬 상한과 기존 DB의 retry_count를 함께 검사해 서버가 바뀌어도 재시도 횟수를 초과하지 않는다.
      * 복구를 호출한 공통 실행기도 같은 DB 상한을 사용하므로 쿠폰의 재시도가 소진되면 더 실행하지 않는다.
      * 대기 중 실행권을 잃거나 스레드가 중단되면 마지막 오류를 전달하고 추가 처리를 멈춘다.
@@ -66,7 +67,7 @@ public class CouponBatchExecutionService {
             try {
                 return operation.getAsInt();
             } catch (RuntimeException failure) {
-                if (retryNo == MAX_RETRIES
+                if (retryNo >= properties.batch().maxRetries()
                         || !executions.recordRetryAttempt(task.jobName(), date, attemptNo, describe(failure))
                         || !backoff.pause(retryNo + 1)
                         || !executions.renewAttempt(task.jobName(), date, attemptNo)) {

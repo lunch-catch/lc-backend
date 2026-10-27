@@ -1,6 +1,7 @@
 package com.launchcatch.coupon.controller;
 
 import com.launchcatch.auth.CustomUserDetails;
+import com.launchcatch.coupon.CouponQueryLimits;
 import com.launchcatch.coupon.dto.CouponDetailResponse;
 import com.launchcatch.coupon.dto.CouponEventStatusRequest;
 import com.launchcatch.coupon.dto.CouponEventStatusResponse;
@@ -107,8 +108,8 @@ public class CouponController {
                     schema = @Schema(allowableValues = {"usable = true", "state = \"ISSUED\"", "state = \"USED\"", "state = \"EXPIRED\""}))
             @RequestParam(required = false) String filter,
             @Parameter(description = "한 페이지에 조회할 쿠폰 수다.",
-                    schema = @Schema(type = "integer", format = "int32", defaultValue = "20", minimum = "1", maximum = "100"))
-            @RequestParam(defaultValue = "20") @Min(1) @Max(100) int pageSize,
+                    schema = @Schema(type = "integer", format = "int32", defaultValue = "" + CouponQueryLimits.DEFAULT_PAGE_SIZE, minimum = "1", maximum = "" + CouponQueryLimits.MAX_PAGE_SIZE))
+            @RequestParam(defaultValue = "" + CouponQueryLimits.DEFAULT_PAGE_SIZE) @Min(1) @Max(CouponQueryLimits.MAX_PAGE_SIZE) int pageSize,
             @Parameter(description = "이전 응답의 nextPageToken이다. 첫 조회나 필터 변경 시 생략한다.")
             @RequestParam(required = false) String pageToken) {
         return ResponseEnvelope.success(couponLookUpService.getCoupons(user.getId(), filter, pageSize, pageToken));

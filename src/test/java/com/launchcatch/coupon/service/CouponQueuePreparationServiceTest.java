@@ -10,6 +10,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import com.launchcatch.coupon.CouponTestProperties;
 import com.launchcatch.coupon.repository.CouponBatchRepository;
 import com.launchcatch.ops.contract.BatchAttemptGuard;
 import java.util.ArrayList;
@@ -28,7 +29,7 @@ class CouponQueuePreparationServiceTest {
     private final BatchAttemptGuard guard = mock(BatchAttemptGuard.class);
     private final PlatformTransactionManager manager = mock(PlatformTransactionManager.class);
     private final CouponQueuePreparationService service =
-            new CouponQueuePreparationService(batches, recovery, guard, manager);
+            new CouponQueuePreparationService(CouponTestProperties.defaults(), batches, recovery, guard, manager);
     private final List<SimpleTransactionStatus> statuses = new ArrayList<>();
 
     // 오늘 회차 세 건을 돌려주고 트랜잭션 관리자가 회차마다 새 트랜잭션 상태를 주게 고정한다.

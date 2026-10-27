@@ -11,6 +11,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.launchcatch.adserving.contract.CandidateStateUpdater;
+import com.launchcatch.coupon.CouponTestProperties;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -32,7 +33,7 @@ class CouponSoldOutNotificationServiceTest {
     private final CouponLookUpService lookUp = mock(CouponLookUpService.class);
     private final CandidateStateUpdater candidates = mock(CandidateStateUpdater.class);
     private final Clock clock = mock(Clock.class);
-    private final CouponSoldOutNotificationService service = new CouponSoldOutNotificationService(lookUp, candidates, clock);
+    private final CouponSoldOutNotificationService service = new CouponSoldOutNotificationService(CouponTestProperties.defaults(), lookUp, candidates, clock);
     private final CouponLookUpService.SoldOut soldOut = new CouponLookUpService.SoldOut(91L, DATE, DATE.atTime(12, 0));
 
     @BeforeEach

@@ -1,5 +1,6 @@
 package com.launchcatch.coupon.dto;
 
+import com.launchcatch.coupon.CouponQueryLimits;
 import io.swagger.v3.oas.annotations.media.ArraySchema;
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.NotEmpty;
@@ -13,8 +14,8 @@ import org.hibernate.validator.constraints.UniqueElements;
 public record CouponEventStatusRequest(
         @ArraySchema(arraySchema = @Schema(description = "입력 순서대로 조회할 매장 ID다.", example = "[10, 20, 30]"),
                 schema = @Schema(type = "integer", format = "int64", minimum = "1"),
-                minItems = 1, maxItems = 100, uniqueItems = true)
-        @NotEmpty @Size(min = 1, max = 100) @UniqueElements
+                minItems = 1, maxItems = CouponQueryLimits.MAX_STORE_IDS, uniqueItems = true)
+        @NotEmpty @Size(min = 1, max = CouponQueryLimits.MAX_STORE_IDS) @UniqueElements
         List<@NotNull @Positive Long> storeIds
 ) {
 }

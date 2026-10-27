@@ -1,12 +1,13 @@
 package com.launchcatch.coupon.service;
 
+import com.launchcatch.coupon.CouponSequenceCode;
+import com.launchcatch.coupon.config.CouponProperties;
 import com.launchcatch.coupon.exception.CouponErrorCode;
 import com.launchcatch.coupon.exception.CouponException;
 import com.launchcatch.coupon.repository.CouponSequenceRepository;
 import com.launchcatch.coupon.model.CouponIssuanceOutcome;
 import com.launchcatch.coupon.model.CouponReservation;
 import com.launchcatch.coupon.model.CouponReservationOutcome;
-import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -18,7 +19,6 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -34,13 +34,11 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 @RequiredArgsConstructor
 public class CouponSequenceService {
 
+    private final CouponProperties properties;
+
     private final CouponSequenceRepository sequences;
     // 이 서버에서 차단한 이벤트 ID이며 Redis가 응답하지 않아도 새 발급을 막는다.
     private final Set<Long> blockedEvents = ConcurrentHashMap.newKeySet();
-
-    // 예약한 뒤 이 시간이 지나도 완료나 반납이 없으면 응답을 잃은 예약으로 보고 큐를 차단한다.
-    @Value("${coupon.sequence.stale-after:30s}")
-    private Duration staleAfter;
 
     // 이 서버가 차단한 이벤트면 Redis를 부르지 않고 바로 ISSUANCE_BUSY로 거절한다.
     public void checkAdmission(long eventId) {
@@ -63,7 +61,7 @@ public class CouponSequenceService {
         }
         List<Long> results;
         try {
-            results = sequences.reserveAll(eventId, ids, staleAfter.toMillis());
+            results = sequences.reserveAll(eventId, ids, properties.sequence().staleAfter().toMillis());
         } catch (RuntimeException error) {
             block(eventId, error);
             throw rejectForRecovery(eventId);
@@ -92,7 +90,7 @@ public class CouponSequenceService {
         }
         Map<Long, List<Long>> results;
         try {
-            results = sequences.reserveAll(ids, staleAfter.toMillis());
+            results = sequences.reserveAll(ids, properties.sequence().staleAfter().toMillis());
         } catch (RuntimeException error) {
             blockAll(ids.keySet(), error);
             throw rejectForRecovery(ids.keySet().iterator().next());
@@ -112,11 +110,11 @@ public class CouponSequenceService {
                 taken.add(reservation);
                 reserved.add(new CouponReservationOutcome(reservation, null, false, false));
             } else {
-                if (sequence == -1) {
+                if (sequence == CouponSequenceCode.BLOCKED.code()) {
                     block(eventId, null);
                 }
-                reserved.add(new CouponReservationOutcome(null, sequence == 0
-                        ? CouponErrorCode.INVENTORY_EXHAUSTED : CouponErrorCode.ISSUANCE_BUSY, sequence == -1, sequence == -2));
+                reserved.add(new CouponReservationOutcome(null, sequence == CouponSequenceCode.SOLD_OUT.code()
+                        ? CouponErrorCode.INVENTORY_EXHAUSTED : CouponErrorCode.ISSUANCE_BUSY, sequence == CouponSequenceCode.BLOCKED.code(), sequence == CouponSequenceCode.NO_AVAILABLE_SEQUENCE.code()));
             }
         }
         // 트랜잭션이 끝난 결과를 보고 롤백이면 받은 순번을 돌려놓고 결과를 모르면 이벤트를 차단한다.
@@ -138,7 +136,7 @@ public class CouponSequenceService {
      * 큐가 없거나 준비 중이면 false를 반환해 이벤트 존재와 상태 검사 및 기존 복구로 넘긴다.
      */
     public boolean isConfirmedSoldOut(long eventId) {
-        return readAvailability(eventId) == 0;
+        return readAvailability(eventId) == CouponSequenceCode.SOLD_OUT.code();
     }
 
     // 묶음 발급은 이벤트를 확인한 뒤 큐가 준비되지 않았으면 차단하고 DB 기준 복구를 요청한다.
@@ -148,7 +146,7 @@ public class CouponSequenceService {
             block(eventId, null);
             throw rejectForRecovery(eventId);
         }
-        return availability == 0;
+        return availability == CouponSequenceCode.SOLD_OUT.code();
     }
 
     /*
@@ -206,7 +204,7 @@ public class CouponSequenceService {
         checkAdmission(eventId);
         int availability;
         try {
-            availability = sequences.retryAvailability(eventId, staleAfter.toMillis());
+            availability = sequences.retryAvailability(eventId, properties.sequence().staleAfter().toMillis());
         } catch (RuntimeException error) {
             block(eventId, error);
             throw rejectForRecovery(eventId);

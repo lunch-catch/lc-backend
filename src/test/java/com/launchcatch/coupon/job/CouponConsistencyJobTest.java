@@ -10,6 +10,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import com.launchcatch.coupon.CouponTestProperties;
 import com.launchcatch.coupon.service.CouponConsistencyService;
 import com.launchcatch.coupon.service.CouponBatchExecutionService;
 import com.launchcatch.ops.contract.BatchExecutionQueryService;
@@ -30,7 +31,7 @@ class CouponConsistencyJobTest {
     private final BatchExecutionQueryService query = mock(BatchExecutionQueryService.class);
     private final RetryBackoff backoff = mock(RetryBackoff.class);
     private final CouponConsistencyJob job = new CouponConsistencyJob(consistency, executions,
-            new CouponBatchExecutionService(executions, query, backoff));
+            new CouponBatchExecutionService(CouponTestProperties.defaults(), executions, query, backoff));
 
     @BeforeEach
     void setUp() {

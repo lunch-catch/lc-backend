@@ -43,7 +43,6 @@ import com.launchcatch.member.contract.MemberQueryService;
 import com.launchcatch.member.contract.MemberStatus;
 import com.launchcatch.owner.contract.OwnerAccountStatus;
 import com.launchcatch.owner.contract.OwnerStatusQuery;
-import com.launchcatch.store.contract.StoreInfo;
 import com.launchcatch.store.contract.StoreQueryService;
 import java.time.Clock;
 import java.time.LocalDate;
@@ -629,40 +628,32 @@ class OwnerCouponServiceTest {
             assertError(CouponErrorCode.MEMBER_ACCOUNT_NOT_ALLOWED);
         }
 
-        // 시연 영상 촬영용 30km 제한을 검증하며 촬영 후 기존 100m 기준으로 복원한다.
         @ParameterizedTest
-        @ValueSource(doubles = {37.501, 37.76, 37.7697})
-        void 매장과_100m를_넘어도_30km_이내이면_사용한다(double latitude) {
+        @ValueSource(doubles = {37.501, 38.0, -80.0})
+        void 매장에서_멀리_떨어져_있어도_사용한다(double latitude) {
             ready();
-            when(stores.findAllById(List.of(10L))).thenReturn(List.of(store(latitude, 127.0)));
 
-            CouponUseResponse response = service.redeem(9L, request());
+            CouponUseResponse response = service.redeem(9L, new CouponUseRequest(127.0, latitude, TOKEN));
 
             assertThat(response.discountAmount()).isEqualTo(680);
             assertThat(coupon.getStatus()).isEqualTo(MemberCouponStatus.USED);
-        }
-
-        // 시연 영상 촬영용 30km 제한을 검증하며 촬영 후 기존 100m 기준으로 복원한다.
-        @ParameterizedTest
-        @ValueSource(doubles = {37.7699, 38.0})
-        void 매장과_30km를_초과하면_상태와_이력을_바꾸지_않는다(double latitude) {
-            ready();
-            when(stores.findAllById(List.of(10L))).thenReturn(List.of(store(latitude, 127.0)));
-            assertError(CouponErrorCode.LOCATION_NOT_ALLOWED);
-            assertThat(coupon.getStatus()).isEqualTo(MemberCouponStatus.ISSUED);
+            verify(stores, never()).findAllById(any());
         }
 
         @Test
-        void 스냅샷과_매장과_좌표_누락은_서버_정합성_오류다() {
+        void 위치가_없어도_사용한다() {
+            ready();
+
+            service.redeem(9L, new CouponUseRequest(null, null, TOKEN));
+
+            assertThat(coupon.getStatus()).isEqualTo(MemberCouponStatus.USED);
+            verify(stores, never()).findAllById(any());
+        }
+
+        @Test
+        void 스냅샷_누락은_서버_정합성_오류다() {
             ready();
             when(events.findById(21L)).thenReturn(Optional.empty());
-            assertError(CommonErrorCode.INTERNAL_ERROR);
-            when(events.findById(21L)).thenReturn(Optional.of(event));
-            when(stores.findAllById(List.of(10L))).thenReturn(List.of());
-            assertError(CommonErrorCode.INTERNAL_ERROR);
-            when(stores.findAllById(List.of(10L))).thenReturn(List.of(store(null, 127.0)));
-            assertError(CommonErrorCode.INTERNAL_ERROR);
-            when(stores.findAllById(List.of(10L))).thenReturn(List.of(store(37.5, null)));
             assertError(CommonErrorCode.INTERNAL_ERROR);
         }
 
@@ -689,7 +680,6 @@ class OwnerCouponServiceTest {
             ReflectionTestUtils.setField(event, "targetMenuPrice", 4500L);
             ReflectionTestUtils.setField(event, "targetMenuDiscountedPrice", 3820L);
             when(stores.canManageStore(9L, 10L)).thenReturn(true);
-            when(stores.findAllById(List.of(10L))).thenReturn(List.of(store(37.5, 127.0)));
             when(members.findById(17L)).thenReturn(Optional.of(member(MemberStatus.ACTIVE)));
             when(histories.saveAndFlush(any())).thenAnswer(invocation -> {
                 CouponUsageHistory history = invocation.getArgument(0);
@@ -702,10 +692,6 @@ class OwnerCouponServiceTest {
 
         private MemberInfo member(MemberStatus state) {
             return new MemberInfo(17L, "테스트 회원", state, true, false, false, null, null, null, null);
-        }
-
-        private StoreInfo store(Double latitude, Double longitude) {
-            return new StoreInfo(10L, "테스트 매장", "https://example.test/store.png", latitude, longitude);
         }
 
         private CouponUseRequest request() {

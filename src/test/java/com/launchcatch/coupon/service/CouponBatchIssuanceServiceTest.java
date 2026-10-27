@@ -10,6 +10,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.launchcatch.adserving.contract.WishlistQueryService;
+import com.launchcatch.coupon.CouponTestProperties;
 import com.launchcatch.coupon.contract.CouponIssuedEvent;
 import com.launchcatch.coupon.entity.CouponEvent;
 import com.launchcatch.coupon.entity.DiscountTargetType;
@@ -57,15 +58,13 @@ class CouponBatchIssuanceServiceTest {
     private final ApplicationEventPublisher publisher = mock(ApplicationEventPublisher.class);
     private final Clock clock = Clock.fixed(Instant.parse("2026-10-20T03:00:00Z"), ZoneOffset.ofHours(9));
     private final CouponBatchIssuanceService service =
-            new CouponBatchIssuanceService(events, repository, members, wishes, sequences, publisher, clock);
+            new CouponBatchIssuanceService(CouponTestProperties.defaults(), events, repository, members, wishes, sequences, publisher, clock);
     private final CouponReservation reservation = new CouponReservation(81L, 1, "reservation");
     private final byte[] code = new byte[16];
 
     @BeforeEach
     void prepare() {
-        ReflectionTestUtils.setField(service, "dailyLimit", 3);
-        ReflectionTestUtils.setField(service, "issueStartTime", LocalTime.of(11, 0));
-        ReflectionTestUtils.setField(service, "issueEndTime", LocalTime.of(14, 0));
+        ReflectionTestUtils.setField(service, "properties", CouponTestProperties.with(java.util.Map.of("coupon.daily-limit", 3, "coupon.issue-start-time", LocalTime.of(11, 0), "coupon.issue-end-time", LocalTime.of(14, 0))));
         TransactionSynchronizationManager.initSynchronization();
         TransactionSynchronizationManager.setActualTransactionActive(true);
         CouponEvent event = CouponEvent.prepare(71L, DATE, 10, NOW, NOW.plusHours(2),

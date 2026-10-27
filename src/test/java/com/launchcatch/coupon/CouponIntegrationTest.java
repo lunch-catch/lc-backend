@@ -2984,6 +2984,15 @@ public class CouponIntegrationTest extends IntegrationTestSupport {
         private static final String PATH = "/v1/coupons/issuance-limit";
 
         @Test
+        void DB_카운터는_세_장을_넘어도_저장하고_음수는_거절한다() {
+            insertDailyLimit(17L, TODAY, 5);
+            assertThat(jdbcTemplate.queryForObject(
+                    "SELECT issued_count FROM coupon_daily_limit WHERE member_id=17 AND business_date=?",
+                    Integer.class, TODAY)).isEqualTo(5);
+            assertThatThrownBy(() -> insertDailyLimit(18L, TODAY, -1)).isInstanceOf(DataAccessException.class);
+        }
+
+        @Test
         void 인증된_회원의_오늘_기록만_조회한다() throws Exception {
             insertDailyLimit(17L, TODAY, 2);
             insertDailyLimit(18L, TODAY, 3);
@@ -4380,8 +4389,8 @@ public class CouponIntegrationTest extends IntegrationTestSupport {
 
 
         @ParameterizedTest
-        @ValueSource(strings = {"longitude", "latitude", "qrToken"})
-        void 위치와_QR_토큰의_필수값을_검사한다(String field) throws Exception {
+        @ValueSource(strings = {"qrToken"})
+        void QR_토큰의_필수값을_검사한다(String field) throws Exception {
             var request = objectMapper.readTree(body()).deepCopy();
             ((tools.jackson.databind.node.ObjectNode) request).remove(field);
             mockMvc.perform(post(PATH).with(user(OWNER)).contentType(MediaType.APPLICATION_JSON)
@@ -4401,30 +4410,35 @@ public class CouponIntegrationTest extends IntegrationTestSupport {
             assertUnchanged();
         }
 
-        // 시연 영상 촬영용 30km 제한을 검증하며 촬영 후 기존 100m 기준으로 복원한다.
         @ParameterizedTest
-        @CsvSource({"37.501,201", "37.7697,201", "37.7699,403"})
-        void 실제_HTTP로_30km_안팎의_사용_결과와_저장_상태를_확인한다(double latitude, int expectedStatus) throws Exception {
-            when(stores.findAllById(List.of(10L))).thenReturn(List.of(store(latitude)));
-
+        @ValueSource(doubles = {37.501, 38.0, -80.0})
+        void 실제_HTTP로_먼_위치에서도_쿠폰을_사용한다(double latitude) throws Exception {
+            var request = objectMapper.readTree(body());
+            ((tools.jackson.databind.node.ObjectNode) request).put("latitude", latitude);
             try (HttpClient client = HttpClient.newHttpClient()) {
-                var response = client.send(httpRequest("POST", PATH, body(), accessToken(Role.OWNER, 9L)),
+                var response = client.send(httpRequest("POST", PATH, request.toString(), accessToken(Role.OWNER, 9L)),
                         HttpResponse.BodyHandlers.ofString());
-                assertThat(response.statusCode()).isEqualTo(expectedStatus);
-                assertThat(objectMapper.readTree(response.body()).path("code").asText())
-                        .isEqualTo(expectedStatus == 201 ? "SUCCESS" : "COUPON-009");
+                assertThat(response.statusCode()).isEqualTo(201);
             }
-            assertThat(state()).isEqualTo(expectedStatus == 201 ? "USED" : "ISSUED");
-            assertThat(historyCount()).isEqualTo(expectedStatus == 201 ? 1 : 0);
+            assertThat(state()).isEqualTo("USED");
+            assertThat(historyCount()).isEqualTo(1);
+        }
+
+        @Test
+        void 좌표_없이_QR_토큰만으로_사용한다() throws Exception {
+            mockMvc.perform(post(PATH).with(user(OWNER)).contentType(MediaType.APPLICATION_JSON)
+                            .content("{\"qrToken\":\"" + TOKEN + "\"}"))
+                    .andExpect(status().isCreated());
+            assertThat(state()).isEqualTo("USED");
+            assertThat(historyCount()).isEqualTo(1);
         }
 
         @ParameterizedTest
-        @CsvSource({"inactive,COUPON-013", "permission,COUPON-011", "location,COUPON-009"})
-        void 점주_상태와_매장_권한과_위치를_검사한다(String condition, String code) throws Exception {
+        @CsvSource({"inactive,COUPON-013", "permission,COUPON-011"})
+        void 점주_상태와_매장_권한을_검사한다(String condition, String code) throws Exception {
             switch (condition) {
                 case "inactive" -> when(ownerStatusQuery.findCurrentStatus(9L)).thenReturn(Optional.of(OwnerAccountStatus.SUSPENDED));
                 case "permission" -> when(stores.canManageStore(9L, 10L)).thenReturn(false);
-                case "location" -> when(stores.findAllById(List.of(10L))).thenReturn(List.of(store(38.0)));
             }
             assertResponse(use(), 403, code);
             assertUnchanged();

@@ -1,5 +1,6 @@
 package com.launchcatch.coupon.entity;
 
+import com.launchcatch.coupon.CouponDiscountPrice;
 import com.launchcatch.coupon.exception.CouponException;
 import com.launchcatch.global.entity.BaseTimeEntity;
 import com.launchcatch.global.exception.CommonErrorCode;
@@ -146,7 +147,8 @@ public class CouponEvent extends BaseTimeEntity {
             return Math.toIntExact(targetMenuPrice - targetMenuDiscountedPrice);
         }
         if (discountTargetType == DiscountTargetType.ALL && discountType == DiscountType.AMOUNT) {
-            return Math.toIntExact(((long) discountValue + 5) / 10 * 10);
+            return Math.toIntExact(((long) discountValue + CouponDiscountPrice.ROUNDING_UNIT / 2)
+                    / CouponDiscountPrice.ROUNDING_UNIT * CouponDiscountPrice.ROUNDING_UNIT);
         }
         throw new CouponException(CommonErrorCode.INTERNAL_ERROR);
     }

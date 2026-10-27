@@ -1,9 +1,8 @@
 package com.launchcatch.coupon.service;
 
-import static com.launchcatch.coupon.CouponBatchTask.BATCH_SIZE;
-
 import com.launchcatch.coupon.CouponBatchTask;
 import com.launchcatch.coupon.CouponConsistencyFinding;
+import com.launchcatch.coupon.config.CouponProperties;
 import com.launchcatch.coupon.repository.CouponConsistencyRepository;
 import com.launchcatch.ops.contract.BatchAttemptGuard;
 import java.time.Clock;
@@ -19,11 +18,14 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class CouponConsistencyService {
 
+    private final CouponProperties properties;
+
     private final CouponConsistencyRepository repository;
     private final BatchAttemptGuard guard;
     private final Clock clock;
 
-    public CouponConsistencyService(CouponConsistencyRepository repository, BatchAttemptGuard guard, Clock clock) {
+    public CouponConsistencyService(CouponProperties properties, CouponConsistencyRepository repository, BatchAttemptGuard guard, Clock clock) {
+        this.properties = properties;
         this.repository = repository;
         this.guard = guard;
         this.clock = clock;
@@ -31,7 +33,7 @@ public class CouponConsistencyService {
 
     /*
      * 모든 페이지가 같은 DB 스냅샷과 검사 시각을 사용해야 페이지 사이의 변경을 불일치로 오인하지 않는다.
-     * 불일치 결과는 1,000건씩 읽고 유형과 ID를 커서로 사용해 같은 대상을 반복 출력하지 않는다.
+     * 불일치 결과는 설정된 크기로 읽고 유형과 ID를 커서로 사용해 같은 대상을 반복 출력하지 않는다.
      * 원본은 고치지 않으며 실행기의 processed_count에는 발견한 불일치 수를 돌려준다.
      * 실행 세대 검사가 운영 행을 잠그므로 읽기 전용 트랜잭션으로 선언하지 않는다.
      */
@@ -55,7 +57,7 @@ public class CouponConsistencyService {
                 afterType = last.type();
                 afterId = last.targetId();
             }
-        } while (findings.size() == BATCH_SIZE);
+        } while (findings.size() == properties.batch().pageSize());
         if (mismatches > 0) {
             log.error("event=COUPON_CONSISTENCY_DONE businessDate={} mismatchCount={}", date, mismatches);
         }

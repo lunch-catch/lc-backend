@@ -27,7 +27,7 @@ public class CouponExpirationJob implements StandaloneJob {
      * 과거 날짜도 조회하므로 서버 중단과 늦은 발급 커밋으로 남은 쿠폰을 다음 실행에서 처리한다.
      * 대상이 없으면 실행 이력을 만들거나 이미 성공한 실행을 다시 점유하지 않는다.
      */
-    @Scheduled(cron = "0 */5 * * * *", zone = "Asia/Seoul")
+    @Scheduled(cron = "${coupon.batch.expiration-cron}", zone = "#{@couponSchedule.zone()}")
     public void expireCoupons() {
         for (LocalDate businessDate : expiration.expiringDates()) {
             expireDue(businessDate);

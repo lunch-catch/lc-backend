@@ -11,6 +11,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.launchcatch.coupon.CouponTestProperties;
 import com.launchcatch.coupon.exception.CouponErrorCode;
 import com.launchcatch.coupon.exception.CouponException;
 import com.launchcatch.coupon.repository.CouponSequenceRepository;
@@ -33,12 +34,12 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 class CouponSequenceServiceTest {
 
     private final CouponSequenceRepository repository = mock(CouponSequenceRepository.class);
-    private final CouponSequenceService service = new CouponSequenceService(repository);
+    private final CouponSequenceService service = new CouponSequenceService(CouponTestProperties.defaults(), repository);
 
     // 트랜잭션 동기화를 켜고 Redis 묶음 예약이 순번 1을 돌려주게 고정한다.
     @BeforeEach
     void prepare() {
-        ReflectionTestUtils.setField(service, "staleAfter", Duration.ofSeconds(30));
+        ReflectionTestUtils.setField(service, "properties", CouponTestProperties.with(java.util.Map.of("coupon.sequence.stale-after", Duration.ofSeconds(30))));
         TransactionSynchronizationManager.initSynchronization();
         TransactionSynchronizationManager.setActualTransactionActive(true);
         when(repository.reserveAll(eq(81L), anyList(), anyLong())).thenReturn(List.of(1L));

@@ -1,6 +1,7 @@
 package com.launchcatch.coupon.service;
 
 import com.launchcatch.adserving.contract.WishlistQueryService;
+import com.launchcatch.coupon.config.CouponProperties;
 import com.launchcatch.coupon.contract.CouponIssuedEvent;
 import com.launchcatch.coupon.dto.CouponIssueResponse;
 import com.launchcatch.coupon.entity.CouponEvent;
@@ -23,7 +24,6 @@ import com.launchcatch.member.contract.MemberStatus;
 import java.time.Clock;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -35,7 +35,6 @@ import java.util.TreeSet;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Isolation;
@@ -51,6 +50,7 @@ public class CouponBatchIssuanceService {
 
     private static final String ISSUED_EVENT_ID_PREFIX = "coupon-issued:";
 
+    private final CouponProperties properties;
     private final CouponEventRepository couponEventRepository;
     private final CouponBatchIssueRepository batchRepository;
     private final MemberQueryService memberQueryService;
@@ -58,15 +58,6 @@ public class CouponBatchIssuanceService {
     private final CouponSequenceService sequenceService;
     private final ApplicationEventPublisher eventPublisher;
     private final Clock clock;
-
-    @Value("${coupon.daily-limit:3}")
-    private int dailyLimit;
-
-    @Value("${coupon.issue-start-time:11:00}")
-    private LocalTime issueStartTime;
-
-    @Value("${coupon.issue-end-time:14:00}")
-    private LocalTime issueEndTime;
 
     /**
      * 여러 발급 요청을 한 READ_COMMITTED 트랜잭션에서 처리하고 요청 순서대로 결과를 돌려준다.
@@ -93,7 +84,7 @@ public class CouponBatchIssuanceService {
      */
     @Transactional(isolation = Isolation.READ_COMMITTED)
     public List<CouponIssuanceOutcome> issueBatch(List<CouponIssuanceRequest> requests) {
-        return issueBatch(requests, new CouponBatchDeadline(System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(10)));
+        return issueBatch(requests, new CouponBatchDeadline(System.nanoTime() + properties.issue().batch().waitTimeout().toNanos()));
     }
 
     @Transactional(isolation = Isolation.READ_COMMITTED)
@@ -253,7 +244,7 @@ public class CouponBatchIssuanceService {
             if (!issued.add(new Pair(request.eventId(), request.memberId()))) {
                 outcomes[i] = CouponIssuanceOutcome.rejected(CouponErrorCode.EVENT_ALREADY_ISSUED);
             } else if (counts.getOrDefault(request.memberId(), 0) + eligibleCounts.getOrDefault(request.memberId(), 0)
-                    >= dailyLimit) {
+                    >= properties.dailyLimit()) {
                 outcomes[i] = CouponIssuanceOutcome.rejected(CouponErrorCode.DAILY_LIMIT_REACHED);
             } else {
                 eligibleCounts.merge(request.memberId(), 1, Integer::sum);
@@ -302,8 +293,8 @@ public class CouponBatchIssuanceService {
         return event.getStatus() == CouponEventStatus.ACTIVE
                 && event.getBusinessDate().equals(now.toLocalDate())
                 && requestTime.toLocalDate().equals(now.toLocalDate())
-                && !requestTime.toLocalTime().isBefore(issueStartTime)
-                && requestTime.toLocalTime().isBefore(issueEndTime)
+                && !requestTime.toLocalTime().isBefore(properties.issueStartTime())
+                && requestTime.toLocalTime().isBefore(properties.issueEndTime())
                 && now.isBefore(event.getUsableEndAt());
     }
 

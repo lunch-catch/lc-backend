@@ -1,8 +1,7 @@
 package com.launchcatch.coupon.service;
 
-import static com.launchcatch.coupon.CouponBatchTask.BATCH_SIZE;
-
 import com.launchcatch.coupon.CouponBatchTask;
+import com.launchcatch.coupon.config.CouponProperties;
 import com.launchcatch.coupon.repository.CouponBatchRepository;
 import com.launchcatch.ops.contract.BatchAttemptGuard;
 import java.time.LocalDate;
@@ -17,13 +16,16 @@ import org.springframework.transaction.support.TransactionTemplate;
 @Service
 public class CouponQueuePreparationService {
 
+    private final CouponProperties properties;
+
     private final CouponBatchRepository batches;
     private final CouponSequenceRecoveryService recovery;
     private final BatchAttemptGuard guard;
     private final TransactionTemplate transactions;
 
-    public CouponQueuePreparationService(CouponBatchRepository batches, CouponSequenceRecoveryService recovery,
+    public CouponQueuePreparationService(CouponProperties properties, CouponBatchRepository batches, CouponSequenceRecoveryService recovery,
             BatchAttemptGuard guard, PlatformTransactionManager manager) {
+        this.properties = properties;
         this.batches = batches;
         this.recovery = recovery;
         this.guard = guard;
@@ -31,7 +33,7 @@ public class CouponQueuePreparationService {
     }
 
     /*
-     * 회차 ID를 1,000건씩 읽고 회차마다 별도 트랜잭션에서 발급 오픈 전에 Redis 큐를 만든다.
+     * 설정된 크기로 회차 ID를 읽고 회차마다 별도 트랜잭션에서 발급 오픈 전에 Redis 큐를 만든다.
      * 회차 하나의 큐 생성이 실패하면 그 회차는 첫 발급 요청의 복구에 맡기고 다음 회차를 처리한다.
      * 실행 세대를 잃으면 남은 회차를 처리하지 않고 실패를 전달한다.
      */
@@ -57,7 +59,7 @@ public class CouponQueuePreparationService {
                 }));
                 cursor = id;
             }
-        } while (ids.size() == BATCH_SIZE);
+        } while (ids.size() == properties.batch().pageSize());
         return count;
     }
 }
