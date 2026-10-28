@@ -1,0 +1,462 @@
+{
+ "name": "노출 판정 코드",
+ "title": "노출 요청은 판정하고 바로 응답합니다.",
+ "logo": "LUNCHCATCH",
+ "speed": 0.42,
+ "loop": 16000,
+ "elements": [
+  {
+   "type": "panel",
+   "id": "lp",
+   "x": 100,
+   "y": 180,
+   "w": 700,
+   "h": 640,
+   "eyebrow": "ImpressionService.java",
+   "title": "요청 스레드가 하는 일은 여섯 줄입니다."
+  },
+  {
+   "type": "code",
+   "id": "code",
+   "parent": "lp",
+   "x": 22,
+   "y": 110,
+   "w": 656,
+   "h": 236,
+   "lines": [
+    "public ImpressionResponse record(Long memberId, ImpressionRequest request) {",
+    "    UUID serveId = UUID.fromString(request.serveId());",
+    "    LocalDateTime receivedAt = LocalDateTime.now(clock);",
+    "    Optional<ServeRecord> found = serveRecordRepository.findById(serveId);",
+    "    ImpressionLog log = judge(memberId, serveId, ..., found);",
+    "    writeBuffer.offer(new QueuedImpression(log, receivedAt, ...));",
+    "    return ImpressionResponse.of(log);  // 저장을 기다리지 않는다",
+    "}"
+   ]
+  },
+  {
+   "type": "label",
+   "parent": "lp",
+   "x": 24,
+   "y": 384,
+   "text": "판정 결과",
+   "color": "dim",
+   "size": "xs"
+  },
+  {
+   "type": "chips",
+   "id": "res",
+   "parent": "lp",
+   "x": 22,
+   "y": 408,
+   "size": "l",
+   "joined": false,
+   "gap": 10,
+   "items": [
+    {
+     "text": "VALID",
+     "tone": "ghost"
+    },
+    {
+     "text": "UNKNOWN",
+     "tone": "ghost"
+    },
+    {
+     "text": "NOT_OWNER",
+     "tone": "ghost"
+    }
+   ]
+  },
+  {
+   "type": "label",
+   "parent": "lp",
+   "x": 24,
+   "y": 476,
+   "w": 650,
+   "text": "serve 기록이 없으면 UNKNOWN, 기록의 회원이 다르면 NOT_OWNER 다.\n무효도 사유와 함께 저장한다.",
+   "color": "mid",
+   "size": "s"
+  },
+  {
+   "type": "panel",
+   "id": "rp",
+   "x": 830,
+   "y": 180,
+   "w": 670,
+   "h": 640,
+   "title": "응답은 저장보다 먼저 나갑니다."
+  },
+  {
+   "type": "box",
+   "id": "cli",
+   "parent": "rp",
+   "x": 24,
+   "y": 96,
+   "w": 180,
+   "h": 76,
+   "title": "사용자 앱",
+   "sub": "카드가 보인 순간",
+   "size": "s"
+  },
+  {
+   "type": "box",
+   "id": "svc",
+   "parent": "rp",
+   "x": 260,
+   "y": 96,
+   "w": 200,
+   "h": 76,
+   "title": "ImpressionService",
+   "sub": "판정만 한다",
+   "size": "s"
+  },
+  {
+   "type": "box",
+   "id": "vk",
+   "parent": "rp",
+   "x": 500,
+   "y": 96,
+   "w": 146,
+   "h": 76,
+   "title": "Valkey",
+   "sub": "serve 기록 30분",
+   "size": "s"
+  },
+  {
+   "type": "box",
+   "id": "buf",
+   "parent": "rp",
+   "x": 260,
+   "y": 270,
+   "w": 386,
+   "h": 110,
+   "title": "ImpressionWriteBuffer",
+   "sub": "500건이 차거나 200ms 가 지나면 쓴다",
+   "size": "s",
+   "hidden": true
+  },
+  {
+   "type": "cells",
+   "id": "q",
+   "parent": "buf",
+   "x": 16,
+   "y": 76,
+   "n": 14,
+   "size": 16,
+   "gap": 6
+  },
+  {
+   "type": "box",
+   "id": "db",
+   "parent": "rp",
+   "x": 260,
+   "y": 450,
+   "w": 386,
+   "h": 84,
+   "title": "impression_log",
+   "sub": "MySQL 8.4. INSERT IGNORE 라 같은 노출이 두 번 들어가지 않는다",
+   "size": "s",
+   "hidden": true
+  },
+  {
+   "type": "stat",
+   "id": "rt",
+   "parent": "rp",
+   "x": 24,
+   "y": 450,
+   "w": 200,
+   "h": 110,
+   "label": "응답까지",
+   "caption": "DB 쓰기 없음",
+   "value": "DB 0",
+   "size": "m",
+   "tone": "good",
+   "hidden": true
+  }
+ ],
+ "wires": [
+  {
+   "id": "w1",
+   "points": [
+    "cli.r-12",
+    "svc.l-12"
+   ],
+   "arrow": true
+  },
+  {
+   "id": "w2",
+   "points": [
+    "svc.r",
+    "vk.l"
+   ],
+   "arrow": true
+  },
+  {
+   "id": "w3",
+   "points": [
+    "svc.l+12",
+    "cli.r+12"
+   ],
+   "arrow": true,
+   "tone": "good",
+   "label": {
+    "text": "응답",
+    "at": [
+     1062,
+     330
+    ],
+    "dy": 24
+   }
+  },
+  {
+   "id": "w4",
+   "points": [
+    "svc.b",
+    "buf.t-100"
+   ],
+   "arrow": true,
+   "hidden": true
+  },
+  {
+   "id": "w5",
+   "points": [
+    "buf.b",
+    "db.t"
+   ],
+   "arrow": true,
+   "hidden": true
+  }
+ ],
+ "timeline": [
+  {
+   "at": 0,
+   "steps": [
+    {
+     "wait": 500
+    },
+    {
+     "line": "code",
+     "index": 0,
+     "to": "on"
+    },
+    {
+     "dot": [
+      "cli.c",
+      {
+       "wire": "w1"
+      },
+      "svc.c"
+     ]
+    },
+    {
+     "line": "code",
+     "index": 0,
+     "to": null
+    },
+    {
+     "line": "code",
+     "index": [
+      1,
+      2
+     ],
+     "to": "on"
+    },
+    {
+     "wait": 700
+    },
+    {
+     "line": "code",
+     "index": [
+      1,
+      2
+     ],
+     "to": null
+    },
+    {
+     "line": "code",
+     "index": 3,
+     "to": "on"
+    },
+    {
+     "dot": [
+      "svc.c",
+      {
+       "wire": "w2"
+      },
+      "vk.c"
+     ]
+    },
+    {
+     "hl": "vk",
+     "ms": 500,
+     "hold": true
+    },
+    {
+     "dot": [
+      "vk.c",
+      {
+       "wire": "w2",
+       "rev": true
+      },
+      "svc.c"
+     ]
+    },
+    {
+     "line": "code",
+     "index": 3,
+     "to": null
+    },
+    {
+     "line": "code",
+     "index": 4,
+     "to": "on"
+    },
+    {
+     "chip": "res",
+     "index": 0,
+     "to": "good"
+    },
+    {
+     "wait": 900
+    },
+    {
+     "line": "code",
+     "index": 4,
+     "to": null
+    },
+    {
+     "line": "code",
+     "index": 5,
+     "to": "add"
+    },
+    {
+     "show": [
+      "buf",
+      "w4"
+     ]
+    },
+    {
+     "dot": [
+      "svc.c",
+      {
+       "wire": "w4"
+      },
+      "buf.c"
+     ],
+     "color": "c"
+    },
+    {
+     "cells": "q",
+     "push": "c"
+    },
+    {
+     "line": "code",
+     "index": 5,
+     "to": null
+    },
+    {
+     "line": "code",
+     "index": 6,
+     "to": "add"
+    },
+    {
+     "dot": [
+      "svc.c",
+      {
+       "wire": "w3"
+      },
+      "cli.c"
+     ],
+     "color": "good"
+    },
+    {
+     "show": "rt",
+     "ms": 300
+    },
+    {
+     "wait": 800
+    },
+    {
+     "line": "code",
+     "index": 6,
+     "to": null
+    },
+    {
+     "par": [
+      {
+       "repeat": [
+        {
+         "cells": "q",
+         "push": "c"
+        },
+        {
+         "wait": 160
+        }
+       ],
+       "times": 9
+      },
+      {
+       "seq": [
+        {
+         "wait": 300
+        },
+        {
+         "chip": "res",
+         "index": 1,
+         "to": "bad"
+        },
+        {
+         "wait": 700
+        },
+        {
+         "chip": "res",
+         "index": 2,
+         "to": "bad"
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "show": [
+      "db",
+      "w5"
+     ]
+    },
+    {
+     "hl": "buf",
+     "ms": 500,
+     "hold": true
+    },
+    {
+     "cells": "q",
+     "set": []
+    },
+    {
+     "dot": [
+      "buf.c",
+      {
+       "wire": "w5"
+      },
+      "db.c"
+     ],
+     "color": "c",
+     "r": 6
+    },
+    {
+     "hl": "db",
+     "ms": 700,
+     "hold": true
+    },
+    {
+     "wait": 1800
+    }
+   ]
+  }
+ ],
+ "sources": [
+  "lc-backend: adserving/impression/service/ImpressionService.java (record, judge)",
+  "lc-backend: adserving/impression/service/ImpressionWriteBuffer.java (BATCH_SIZE 500, MAX_WAIT 200ms)",
+  "lc-backend: adserving/feed/repository/ServeRecordRepository.java (TTL 30분)"
+ ]
+}

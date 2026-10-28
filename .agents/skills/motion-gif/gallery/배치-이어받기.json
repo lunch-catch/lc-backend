@@ -1,0 +1,656 @@
+{
+ "name": "00:00 배치 이어받기",
+ "title": "00:00 묶음은 행 하나를 점유한 서버만 돌리고,\n그 서버가 멈추면 2분 뒤 다른 서버가 이어받습니다.",
+ "logo": "LUNCHCATCH",
+ "speed": 0.4,
+ "loop": 16500,
+ "elements": [
+  {
+   "type": "panel",
+   "id": "lp",
+   "x": 100,
+   "y": 200,
+   "w": 880,
+   "h": 620,
+   "eyebrow": "DailyJobScheduler.runDailyBundle",
+   "title": "두 대가 같은 시각에 묶음 행 하나를 점유하려 합니다",
+   "sub": "@Scheduled(cron = \"0 0 0 * * *\", zone = \"Asia/Seoul\")"
+  },
+  {
+   "type": "box",
+   "id": "A",
+   "parent": "lp",
+   "x": 40,
+   "y": 130,
+   "w": 300,
+   "h": 110,
+   "icon": "server",
+   "title": "배치 서버 A",
+   "sub": "00:00 에 점유를 시도한다",
+   "size": "s"
+  },
+  {
+   "type": "box",
+   "id": "B",
+   "parent": "lp",
+   "x": 540,
+   "y": 130,
+   "w": 300,
+   "h": 110,
+   "icon": "server",
+   "title": "배치 서버 B",
+   "sub": "00:00 에 점유를 시도한다",
+   "size": "s"
+  },
+  {
+   "type": "box",
+   "id": "row",
+   "parent": "lp",
+   "x": 190,
+   "y": 330,
+   "w": 500,
+   "h": 112,
+   "title": "DAILY_0000",
+   "sub": "batch_execution_log 에 아직 행이 없다",
+   "value": "owner_id  -",
+   "size": "l",
+   "tone": "ghost"
+  },
+  {
+   "type": "meter",
+   "id": "stale",
+   "parent": "lp",
+   "x": 40,
+   "y": 490,
+   "w": 800,
+   "h": 80,
+   "label": "묶음 행의 updated_at 이 멈춘 시간",
+   "value": 0,
+   "max": 150,
+   "threshold": 120,
+   "thresholdLabel": "STALE_AFTER 2분",
+   "unit": "초"
+  },
+  {
+   "type": "panel",
+   "id": "rp",
+   "x": 1004,
+   "y": 200,
+   "w": 496,
+   "h": 620,
+   "eyebrow": "BatchJobRunner.runBundle",
+   "title": "점유한 서버가 단계 열 개를 차례로 돕니다"
+  },
+  {
+   "type": "rows",
+   "id": "st",
+   "parent": "rp",
+   "x": 24,
+   "y": 100,
+   "w": 448,
+   "rowH": 40,
+   "gap": 4,
+   "items": [
+    {
+     "label": "10  CAMPAIGN_END_EXPIRED",
+     "meta": "대기"
+    },
+    {
+     "label": "20  CAMPAIGN_START_SCHEDULED",
+     "meta": "대기"
+    },
+    {
+     "label": "30  CAMPAIGN_STORE_SUMMARY",
+     "meta": "대기"
+    },
+    {
+     "label": "35  CAMPAIGN_APPLY_PENDING_BUDGET",
+     "meta": "대기"
+    },
+    {
+     "label": "40  BILLING_SPEND_RECON_PREV",
+     "meta": "대기"
+    },
+    {
+     "label": "50  BILLING_RESERVE",
+     "meta": "대기"
+    },
+    {
+     "label": "60  BILLING_FUNDING_JUDGE",
+     "meta": "대기"
+    },
+    {
+     "label": "75  ADSERVING_CANDIDATE_LOAD",
+     "meta": "대기"
+    },
+    {
+     "label": "80  ADSERVING_ENDED_WISHLIST_CLEANUP",
+     "meta": "대기"
+    },
+    {
+     "label": "90  ADSERVING_STORE_AUDIENCE",
+     "meta": "대기"
+    }
+   ]
+  },
+  {
+   "type": "label",
+   "parent": "rp",
+   "x": 24,
+   "y": 574,
+   "w": 448,
+   "text": "@Order 순서로 돈다. 앞 단계가 실패하면 뒤 단계는 돌지 않는다",
+   "color": "dim",
+   "size": "xs"
+  },
+  {
+   "type": "label",
+   "x": 100,
+   "y": 834,
+   "text": "근거: ops/job/DailyJobScheduler.java, ops/service/BatchExecutionService.java, BatchJobRunner.java, lc-infra terraform/compute.tf (배치 ASG 2대 고정). 시간은 줄여 그렸고 서버 이름은 예시다",
+   "color": "dim",
+   "size": "xs"
+  }
+ ],
+ "wires": [
+  {
+   "id": "wA",
+   "points": [
+    "A.b",
+    "row.t-100"
+   ],
+   "elbow": "vhv",
+   "arrow": true,
+   "label": {
+    "text": "30초마다 생존 신호",
+    "at": "A.b",
+    "dx": -12,
+    "dy": 46,
+    "align": "end"
+   }
+  },
+  {
+   "id": "wB",
+   "points": [
+    "B.b",
+    "row.t+100"
+   ],
+   "elbow": "vhv",
+   "arrow": true,
+   "label": {
+    "text": "1분마다 멈춘 행 찾기",
+    "at": "B.b",
+    "dx": 12,
+    "dy": 46,
+    "align": "start"
+   }
+  }
+ ],
+ "timeline": [
+  {
+   "at": 0,
+   "steps": [
+    {
+     "wait": 400
+    },
+    {
+     "par": [
+      {
+       "dot": [
+        "A.c",
+        {
+         "wire": "wA"
+        },
+        "row.c"
+       ],
+       "color": "accent"
+      },
+      {
+       "dot": [
+        "B.c",
+        {
+         "wire": "wB"
+        },
+        "row.c"
+       ],
+       "color": "accent"
+      }
+     ]
+    },
+    {
+     "retone": "row",
+     "to": null
+    },
+    {
+     "retone": "A",
+     "to": "accent"
+    },
+    {
+     "write": "row",
+     "field": "sub",
+     "value": "RUNNING, attempt_no 1"
+    },
+    {
+     "write": "row",
+     "field": "value",
+     "value": "owner_id  배치 A"
+    },
+    {
+     "write": "A",
+     "field": "sub",
+     "value": "점유했다. 단계를 차례로 돈다"
+    },
+    {
+     "write": "B",
+     "field": "sub",
+     "value": "점유 실패. 묶음을 건너뛴다"
+    },
+    {
+     "dim": "B"
+    },
+    {
+     "wait": 700
+    },
+    {
+     "row": "st",
+     "index": 0,
+     "meta": "A 실행",
+     "tone": "c"
+    },
+    {
+     "wait": 450
+    },
+    {
+     "row": "st",
+     "index": 0,
+     "meta": "SUCCESS",
+     "tone": "good",
+     "focus": false
+    },
+    {
+     "row": "st",
+     "index": 1,
+     "meta": "A 실행",
+     "tone": "c"
+    },
+    {
+     "wait": 450
+    },
+    {
+     "row": "st",
+     "index": 1,
+     "meta": "SUCCESS",
+     "tone": "good",
+     "focus": false
+    },
+    {
+     "row": "st",
+     "index": 2,
+     "meta": "A 실행",
+     "tone": "c"
+    },
+    {
+     "wait": 450
+    },
+    {
+     "row": "st",
+     "index": 2,
+     "meta": "SUCCESS",
+     "tone": "good",
+     "focus": false
+    },
+    {
+     "row": "st",
+     "index": 3,
+     "meta": "A 실행",
+     "tone": "c"
+    },
+    {
+     "wait": 450
+    },
+    {
+     "row": "st",
+     "index": 3,
+     "meta": "SUCCESS",
+     "tone": "good",
+     "focus": false
+    },
+    {
+     "row": "st",
+     "index": 4,
+     "meta": "A 실행",
+     "tone": "c"
+    },
+    {
+     "wait": 700
+    },
+    {
+     "retone": "A",
+     "to": "bad"
+    },
+    {
+     "write": "A",
+     "field": "sub",
+     "value": "멈췄다. 생존 신호가 끊긴다"
+    },
+    {
+     "row": "st",
+     "index": 4,
+     "meta": "멈춤",
+     "tone": "bad"
+    },
+    {
+     "undim": "B"
+    },
+    {
+     "meter": "stale",
+     "to": 130,
+     "ms": 2800
+    },
+    {
+     "retone": "stale",
+     "to": "bad"
+    },
+    {
+     "wait": 300
+    },
+    {
+     "dot": [
+      "B.c",
+      {
+       "wire": "wB"
+      },
+      "row.c"
+     ],
+     "color": "accent"
+    },
+    {
+     "hl": "row",
+     "ms": 700
+    },
+    {
+     "write": "row",
+     "field": "sub",
+     "value": "RUNNING, attempt_no 2"
+    },
+    {
+     "write": "row",
+     "field": "value",
+     "value": "owner_id  배치 B"
+    },
+    {
+     "retone": "B",
+     "to": "accent"
+    },
+    {
+     "write": "B",
+     "field": "sub",
+     "value": "이어받았다. 끝나지 않은 단계부터 돈다"
+    },
+    {
+     "seq": [
+      {
+       "meter": "stale",
+       "to": 0,
+       "ms": 500
+      },
+      {
+       "retone": "stale",
+       "to": null
+      }
+     ],
+     "async": true
+    },
+    {
+     "wait": 400
+    },
+    {
+     "row": "st",
+     "index": 0,
+     "meta": "B 건너뜀"
+    },
+    {
+     "wait": 260
+    },
+    {
+     "row": "st",
+     "index": 0,
+     "meta": "SUCCESS",
+     "focus": false
+    },
+    {
+     "row": "st",
+     "index": 1,
+     "meta": "B 건너뜀"
+    },
+    {
+     "wait": 260
+    },
+    {
+     "row": "st",
+     "index": 1,
+     "meta": "SUCCESS",
+     "focus": false
+    },
+    {
+     "row": "st",
+     "index": 2,
+     "meta": "B 건너뜀"
+    },
+    {
+     "wait": 260
+    },
+    {
+     "row": "st",
+     "index": 2,
+     "meta": "SUCCESS",
+     "focus": false
+    },
+    {
+     "row": "st",
+     "index": 3,
+     "meta": "B 건너뜀"
+    },
+    {
+     "wait": 260
+    },
+    {
+     "row": "st",
+     "index": 3,
+     "meta": "SUCCESS",
+     "focus": false
+    },
+    {
+     "row": "st",
+     "index": 4,
+     "meta": "B 실행",
+     "tone": "c"
+    },
+    {
+     "wait": 440
+    },
+    {
+     "row": "st",
+     "index": 4,
+     "meta": "SUCCESS",
+     "tone": "good",
+     "focus": false
+    },
+    {
+     "row": "st",
+     "index": 5,
+     "meta": "B 실행",
+     "tone": "c"
+    },
+    {
+     "wait": 440
+    },
+    {
+     "row": "st",
+     "index": 5,
+     "meta": "SUCCESS",
+     "tone": "good",
+     "focus": false
+    },
+    {
+     "row": "st",
+     "index": 6,
+     "meta": "B 실행",
+     "tone": "c"
+    },
+    {
+     "wait": 440
+    },
+    {
+     "row": "st",
+     "index": 6,
+     "meta": "SUCCESS",
+     "tone": "good",
+     "focus": false
+    },
+    {
+     "row": "st",
+     "index": 7,
+     "meta": "B 실행",
+     "tone": "c"
+    },
+    {
+     "wait": 440
+    },
+    {
+     "row": "st",
+     "index": 7,
+     "meta": "SUCCESS",
+     "tone": "good",
+     "focus": false
+    },
+    {
+     "row": "st",
+     "index": 8,
+     "meta": "B 실행",
+     "tone": "c"
+    },
+    {
+     "wait": 440
+    },
+    {
+     "row": "st",
+     "index": 8,
+     "meta": "SUCCESS",
+     "tone": "good",
+     "focus": false
+    },
+    {
+     "row": "st",
+     "index": 9,
+     "meta": "B 실행",
+     "tone": "c"
+    },
+    {
+     "wait": 440
+    },
+    {
+     "row": "st",
+     "index": 9,
+     "meta": "SUCCESS",
+     "tone": "good",
+     "focus": false
+    },
+    {
+     "row": "st",
+     "index": -1
+    },
+    {
+     "retone": "row",
+     "to": "good"
+    },
+    {
+     "write": "row",
+     "field": "sub",
+     "value": "SUCCESS, attempt_no 2"
+    },
+    {
+     "wait": 2300
+    }
+   ]
+  },
+  {
+   "at": 1800,
+   "steps": [
+    {
+     "repeat": [
+      {
+       "dot": [
+        {
+         "wire": "wA"
+        }
+       ],
+       "color": "c",
+       "r": 3.5
+      },
+      {
+       "wait": 450
+      }
+     ],
+     "times": 3
+    }
+   ]
+  },
+  {
+   "at": 5600,
+   "steps": [
+    {
+     "dot": [
+      {
+       "wire": "wB"
+      }
+     ],
+     "color": "dim",
+     "r": 3.5
+    },
+    {
+     "dot": [
+      {
+       "wire": "wB",
+       "rev": true
+      }
+     ],
+     "color": "dim",
+     "r": 3.5
+    }
+   ]
+  },
+  {
+   "at": 9600,
+   "steps": [
+    {
+     "repeat": [
+      {
+       "dot": [
+        {
+         "wire": "wB"
+        }
+       ],
+       "color": "c",
+       "r": 3.5
+      },
+      {
+       "wait": 450
+      }
+     ],
+     "times": 4
+    }
+   ]
+  }
+ ],
+ "sources": [
+  "lc-backend: ops/job/DailyJobScheduler.java (cron 0 0 0 Asia/Seoul, 생존 신호 30s, 이어받기 스캔 1m)",
+  "lc-backend: ops/service/BatchExecutionService.java (claim, STALE_AFTER 2분, takeOverStale)",
+  "lc-backend: ops/service/BatchJobRunner.java (runBundle, 단계마다 묶음 renew)",
+  "lc-backend: ops/repository/BatchExecutionLogRepository.java (upsertClaim, takeOver 에서 attempt_no + 1)",
+  "lc-backend: ops/scheduler/BatchJobRegistry.java (BUNDLE = DAILY_0000)",
+  "lc-backend: campaign/job, billing/job, adserving/*/job 의 @Order 10~90",
+  "lc-backend: docs/design/ops/런치캐치_배치_운영.md 2장",
+  "lc-infra: terraform/compute.tf aws_autoscaling_group.batch (min/max/desired 2)"
+ ]
+}

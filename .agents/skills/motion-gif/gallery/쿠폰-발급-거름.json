@@ -1,0 +1,557 @@
+{
+ "name": "쿠폰 발급 거름",
+ "title": "요청 5,000건 중 재고만큼인 2,000건만 발급됩니다.",
+ "logo": "LUNCHCATCH",
+ "speed": 0.42,
+ "loop": 14500,
+ "elements": [
+  {
+   "type": "panel",
+   "id": "fp",
+   "x": 100,
+   "y": 180,
+   "w": 1400,
+   "h": 450,
+   "eyebrow": "CouponCommandService -> CouponIssueBatcher -> CouponBatchIssuanceService",
+   "title": "요청 하나는 네 관문을 차례로 지납니다"
+  },
+  {
+   "type": "box",
+   "id": "req",
+   "parent": "fp",
+   "x": 24,
+   "y": 120,
+   "w": 150,
+   "h": 100,
+   "size": "s",
+   "title": "발급 요청",
+   "sub": "회원 5,000명이 한 번씩 보낸다"
+  },
+  {
+   "type": "box",
+   "id": "g1",
+   "parent": "fp",
+   "x": 222,
+   "y": 120,
+   "w": 200,
+   "h": 100,
+   "size": "s",
+   "title": "확정 소진 검사",
+   "sub": "Redis 만 읽고 DB 는 안 간다"
+  },
+  {
+   "type": "box",
+   "id": "g2",
+   "parent": "fp",
+   "x": 470,
+   "y": 120,
+   "w": 200,
+   "h": 100,
+   "size": "s",
+   "title": "대기열 접수",
+   "sub": "끝나지 않은 요청을 2,000건까지 받는다"
+  },
+  {
+   "type": "box",
+   "id": "g3",
+   "parent": "fp",
+   "x": 718,
+   "y": 120,
+   "w": 200,
+   "h": 100,
+   "size": "s",
+   "title": "자격과 하루 한도",
+   "sub": "500건 묶음에서 회원당 3장까지"
+  },
+  {
+   "type": "box",
+   "id": "g4",
+   "parent": "fp",
+   "x": 966,
+   "y": 120,
+   "w": 200,
+   "h": 100,
+   "size": "s",
+   "title": "순번 예약",
+   "sub": "통과한 수만큼 Redis 에서 순번을 잡는다"
+  },
+  {
+   "type": "box",
+   "id": "ok",
+   "parent": "fp",
+   "x": 1214,
+   "y": 120,
+   "w": 162,
+   "h": 100,
+   "size": "s",
+   "title": "발급",
+   "sub": "한 트랜잭션으로 커밋"
+  },
+  {
+   "type": "box",
+   "id": "r1",
+   "parent": "fp",
+   "x": 222,
+   "y": 320,
+   "w": 200,
+   "h": 92,
+   "size": "s",
+   "tone": "bad",
+   "dim": true,
+   "title": "COUPON-006 소진",
+   "sub": "재고가 다 나간 이벤트다"
+  },
+  {
+   "type": "box",
+   "id": "r2",
+   "parent": "fp",
+   "x": 470,
+   "y": 320,
+   "w": 200,
+   "h": 92,
+   "size": "s",
+   "tone": "bad",
+   "dim": true,
+   "title": "COUPON-008 가득 참",
+   "sub": "소진 확정이면 006 이 먼저다"
+  },
+  {
+   "type": "box",
+   "id": "r3",
+   "parent": "fp",
+   "x": 718,
+   "y": 320,
+   "w": 200,
+   "h": 92,
+   "size": "s",
+   "tone": "bad",
+   "dim": true,
+   "title": "COUPON-007 하루 한도",
+   "sub": "005 중복, 004 찜 없음도 여기서 거른다"
+  },
+  {
+   "type": "box",
+   "id": "r4",
+   "parent": "fp",
+   "x": 966,
+   "y": 320,
+   "w": 200,
+   "h": 92,
+   "size": "s",
+   "tone": "bad",
+   "dim": true,
+   "title": "COUPON-006 소진",
+   "sub": "예약할 순번이 남지 않았다"
+  },
+  {
+   "type": "panel",
+   "id": "cards",
+   "x": 100,
+   "y": 656,
+   "w": 1400,
+   "h": 160,
+   "bare": true
+  },
+  {
+   "type": "panel",
+   "id": "cs1",
+   "parent": "cards",
+   "x": 0,
+   "y": 0,
+   "w": 260,
+   "h": 160
+  },
+  {
+   "type": "stat",
+   "id": "s_req",
+   "parent": "cs1",
+   "x": 22,
+   "y": 22,
+   "w": 216,
+   "h": 120,
+   "size": "l",
+   "label": "요청",
+   "caption": "10초 동안 초당 500건",
+   "value": 0,
+   "unit": "건"
+  },
+  {
+   "type": "panel",
+   "id": "cs2",
+   "parent": "cards",
+   "x": 285,
+   "y": 0,
+   "w": 260,
+   "h": 160
+  },
+  {
+   "type": "stat",
+   "id": "s_sold",
+   "parent": "cs2",
+   "x": 22,
+   "y": 22,
+   "w": 216,
+   "h": 120,
+   "size": "l",
+   "tone": "bad",
+   "label": "소진 006",
+   "caption": "소진 검사와 순번 예약에서",
+   "value": 0,
+   "unit": "건"
+  },
+  {
+   "type": "panel",
+   "id": "cs3",
+   "parent": "cards",
+   "x": 570,
+   "y": 0,
+   "w": 260,
+   "h": 160
+  },
+  {
+   "type": "stat",
+   "id": "s_busy",
+   "parent": "cs3",
+   "x": 22,
+   "y": 22,
+   "w": 216,
+   "h": 120,
+   "size": "l",
+   "label": "대기열 가득 참 008",
+   "caption": "2,000건 상한에 닿지 않았다",
+   "value": 0,
+   "unit": "건"
+  },
+  {
+   "type": "panel",
+   "id": "cs4",
+   "parent": "cards",
+   "x": 855,
+   "y": 0,
+   "w": 260,
+   "h": 160
+  },
+  {
+   "type": "stat",
+   "id": "s_lim",
+   "parent": "cs4",
+   "x": 22,
+   "y": 22,
+   "w": 216,
+   "h": 120,
+   "size": "l",
+   "label": "하루 한도 007",
+   "caption": "회원마다 한 번만 요청했다",
+   "value": 0,
+   "unit": "건"
+  },
+  {
+   "type": "panel",
+   "id": "cs5",
+   "parent": "cards",
+   "x": 1140,
+   "y": 0,
+   "w": 260,
+   "h": 160
+  },
+  {
+   "type": "stat",
+   "id": "s_ok",
+   "parent": "cs5",
+   "x": 22,
+   "y": 22,
+   "w": 216,
+   "h": 120,
+   "size": "l",
+   "tone": "accent",
+   "label": "발급",
+   "caption": "이벤트 20개 x 재고 100장",
+   "value": 0,
+   "unit": "건"
+  },
+  {
+   "type": "label",
+   "x": 100,
+   "y": 834,
+   "size": "xs",
+   "color": "dim",
+   "text": "2026-10-26 AWS 쿠폰 v3 부하 시험 3회 평균. 세 회차 모두 HTTP 발급 2,000건과 DB 발급 2,000건이 일치했다"
+  }
+ ],
+ "wires": [
+  {
+   "id": "w0",
+   "points": [
+    "req.r",
+    "g1.l"
+   ],
+   "arrow": true
+  },
+  {
+   "id": "w1",
+   "points": [
+    "g1.r",
+    "g2.l"
+   ],
+   "arrow": true
+  },
+  {
+   "id": "w2",
+   "points": [
+    "g2.r",
+    "g3.l"
+   ],
+   "arrow": true
+  },
+  {
+   "id": "w3",
+   "points": [
+    "g3.r",
+    "g4.l"
+   ],
+   "arrow": true
+  },
+  {
+   "id": "w4",
+   "points": [
+    "g4.r",
+    "ok.l"
+   ],
+   "arrow": true
+  },
+  {
+   "id": "x1",
+   "points": [
+    "g1.b",
+    "r1.t"
+   ],
+   "arrow": true,
+   "dash": true,
+   "tone": "bad"
+  },
+  {
+   "id": "x2",
+   "points": [
+    "g2.b",
+    "r2.t"
+   ],
+   "arrow": true,
+   "dash": true,
+   "tone": "bad"
+  },
+  {
+   "id": "x3",
+   "points": [
+    "g3.b",
+    "r3.t"
+   ],
+   "arrow": true,
+   "dash": true,
+   "tone": "bad"
+  },
+  {
+   "id": "x4",
+   "points": [
+    "g4.b",
+    "r4.t"
+   ],
+   "arrow": true,
+   "dash": true,
+   "tone": "bad"
+  }
+ ],
+ "timeline": [
+  {
+   "at": 400,
+   "steps": [
+    {
+     "par": [
+      {
+       "stream": [
+        "req.c",
+        "g1.c",
+        "g2.c",
+        "g3.c",
+        "g4.c",
+        "ok.c"
+       ],
+       "count": 5,
+       "gap": 420,
+       "color": "accent"
+      },
+      {
+       "count": "s_req",
+       "to": 2000,
+       "ms": 2000
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "at": 3200,
+   "steps": [
+    {
+     "hl": "ok",
+     "ms": 900
+    },
+    {
+     "count": "s_ok",
+     "to": 2000,
+     "ms": 2200
+    }
+   ]
+  },
+  {
+   "at": 3400,
+   "steps": [
+    {
+     "stream": [
+      "req.c",
+      "g1.c",
+      "g2.c",
+      "g3.c",
+      "g4.c",
+      "r4.c"
+     ],
+     "count": 2,
+     "gap": 420,
+     "color": "bad"
+    }
+   ]
+  },
+  {
+   "at": 5900,
+   "steps": [
+    {
+     "retone": "g4",
+     "to": "bad"
+    },
+    {
+     "undim": "r4"
+    },
+    {
+     "hl": "r4",
+     "ms": 700
+    }
+   ]
+  },
+  {
+   "at": 6000,
+   "steps": [
+    {
+     "retone": "g1",
+     "to": "bad"
+    },
+    {
+     "undim": "r1"
+    },
+    {
+     "par": [
+      {
+       "stream": [
+        "req.c",
+        "g1.c",
+        "r1.c"
+       ],
+       "count": 7,
+       "gap": 260,
+       "color": "bad"
+      },
+      {
+       "seq": [
+        {
+         "wait": 500
+        },
+        {
+         "par": [
+          {
+           "count": "s_sold",
+           "to": 3000,
+           "ms": 2000
+          },
+          {
+           "count": "s_req",
+           "to": 5000,
+           "ms": 2000
+          }
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "at": 9200,
+   "steps": [
+    {
+     "hl": "cs3",
+     "ms": 700
+    },
+    {
+     "hl": "r2",
+     "ms": 700,
+     "hold": true
+    },
+    {
+     "hl": "cs4",
+     "ms": 700
+    },
+    {
+     "hl": "r3",
+     "ms": 700,
+     "hold": true
+    },
+    {
+     "active": "ok"
+    },
+    {
+     "focus": [
+      "cs2",
+      "cs5"
+     ],
+     "among": [
+      "cs1",
+      "cs2",
+      "cs3",
+      "cs4",
+      "cs5"
+     ]
+    },
+    {
+     "focus": [
+      "ok",
+      "r1",
+      "r4",
+      "g1",
+      "g4"
+     ],
+     "among": [
+      "req",
+      "g1",
+      "g2",
+      "g3",
+      "g4",
+      "ok",
+      "r1",
+      "r2",
+      "r3",
+      "r4"
+     ]
+    }
+   ]
+  }
+ ],
+ "sources": [
+  "lc-backend: coupon/service/CouponCommandService.java (issueAsync: 접수 상한 2,000 넘으면 rejectIfConfirmedSoldOut 뒤 COUPON-008, isConfirmedSoldOut 이면 COUPON-006)",
+  "lc-backend: coupon/service/CouponIssueBatcher.java (enqueue: admission Semaphore, queue.offer 실패 시 COUPON-008)",
+  "lc-backend: coupon/service/CouponBatchIssuanceService.java (issueBatch 1~7 단계, rejectDuplicateOrOverLimitRequests, reserveEligibleRequests)",
+  "lc-backend: coupon/service/CouponSequenceService.java (reserveAll 의 NO_AVAILABLE_SEQUENCE -> INVENTORY_EXHAUSTED)",
+  "lc-backend: coupon/exception/CouponErrorCode.java (004, 005, 006, 007, 008)",
+  "lc-backend: src/main/resources/application.yml (coupon.daily-limit 3, coupon.issue.batch workers 4, max-size 500, queue-capacity 2000)",
+  "lc-backend: docs/design/coupon/coupon-issuance-v3-design.md",
+  "lc-backend: docs/troubleshooting/coupon/coupon-v3-load-test-results.md, coupon-load-test-summary.md (5,000 요청, 2,000 발급, 3,000 소진, HTTP 오류 0)"
+ ]
+}

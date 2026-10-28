@@ -1,0 +1,210 @@
+{
+ "name": "점심 피크 확장",
+ "title": "11:00 에 몰리는 요청은 세 번째 서버가 받습니다.",
+ "logo": "LUNCHCATCH",
+ "loop": 15000,
+ "elements": [
+  {
+   "type": "panel",
+   "id": "cp",
+   "x": 100,
+   "y": 180,
+   "w": 960,
+   "h": 640,
+   "title": "API 서버 한 대가 받는 분당 요청 수",
+   "sub": "11:00 선착순 오픈에 몰리고 13:00 에 피드가 닫힌다. 곡선 모양은 예시다"
+  },
+  {
+   "type": "chart",
+   "id": "ch",
+   "parent": "cp",
+   "x": 24,
+   "y": 120,
+   "w": 912,
+   "h": 440,
+   "min": 0,
+   "max": 9000,
+   "xLabels": [
+    "10:00",
+    "10:30",
+    "11:00",
+    "11:30",
+    "12:00",
+    "12:30",
+    "13:00"
+   ],
+   "yLabel": "요청/분",
+   "threshold": 6000,
+   "thresholdLabel": "확장 기준 6,000",
+   "series": [
+    {
+     "values": [
+      1800,
+      2600,
+      7900,
+      6800,
+      5200,
+      3600,
+      1200
+     ],
+     "tone": "fg"
+    }
+   ],
+   "reveal": 0
+  },
+  {
+   "type": "panel",
+   "id": "sp",
+   "x": 1090,
+   "y": 180,
+   "w": 410,
+   "h": 640,
+   "title": "그때 ASG 는"
+  },
+  {
+   "type": "stat",
+   "id": "n",
+   "parent": "sp",
+   "x": 24,
+   "y": 96,
+   "w": 360,
+   "h": 150,
+   "label": "API 서버",
+   "caption": "min 2, max 3",
+   "value": 2,
+   "unit": "대",
+   "size": "xl"
+  },
+  {
+   "type": "ring",
+   "id": "rg",
+   "parent": "sp",
+   "x": 24,
+   "y": 276,
+   "w": 170,
+   "h": 170,
+   "value": 0.4,
+   "text": "40%",
+   "sub": "대상당 목표 대비",
+   "tone": null
+  },
+  {
+   "type": "label",
+   "parent": "sp",
+   "x": 214,
+   "y": 318,
+   "w": 170,
+   "text": "Target Tracking 이\nceil(대수 x 현재 / 목표)\n로 대수를 정한다",
+   "color": "mid",
+   "size": "s"
+  },
+  {
+   "type": "box",
+   "id": "boot",
+   "parent": "sp",
+   "x": 24,
+   "y": 480,
+   "w": 360,
+   "h": 120,
+   "title": "새 서버 기동",
+   "sub": "요청을 받기까지 약 160초(실측). warmup 180초 동안은 계산에서 뺀다",
+   "progress": 0,
+   "size": "s"
+  }
+ ],
+ "timeline": [
+  {
+   "at": 0,
+   "steps": [
+    {
+     "wait": 300
+    },
+    {
+     "chart": "ch",
+     "draw": true,
+     "ms": 2600
+    },
+    {
+     "wait": 200
+    }
+   ]
+  },
+  {
+   "at": 0,
+   "steps": [
+    {
+     "wait": 1300
+    },
+    {
+     "ring": "rg",
+     "to": 1.32,
+     "text": "132%",
+     "ms": 900
+    },
+    {
+     "retone": "rg",
+     "to": "bad"
+    },
+    {
+     "wait": 300
+    },
+    {
+     "active": "boot"
+    },
+    {
+     "progress": "boot",
+     "to": 1,
+     "ms": 2600
+    },
+    {
+     "active": "boot",
+     "on": false
+    },
+    {
+     "count": "n",
+     "to": 3,
+     "ms": 400
+    },
+    {
+     "retone": "n",
+     "to": "good"
+    },
+    {
+     "ring": "rg",
+     "to": 0.88,
+     "text": "88%",
+     "ms": 900
+    },
+    {
+     "retone": "rg",
+     "to": "good"
+    },
+    {
+     "wait": 2200
+    },
+    {
+     "chart": "ch",
+     "series": 0,
+     "values": [
+      1800,
+      2600,
+      5300,
+      4500,
+      3500,
+      2400,
+      800
+     ],
+     "ms": 1400
+    },
+    {
+     "wait": 1600
+    }
+   ]
+  }
+ ],
+ "sources": [
+  "lc-infra: terraform/compute.tf (min 2, max 3, 기동 실측 160초, warmup 180)",
+  "lc-infra: terraform/variables.tf (app_target_requests_per_instance 6000)",
+  "lc-backend: 요구사항(피드 10:00~12:59, 11:00 선착순 오픈)"
+ ]
+}

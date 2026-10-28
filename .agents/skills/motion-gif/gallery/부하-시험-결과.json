@@ -1,0 +1,430 @@
+{
+ "name": "노출 수집 부하 시험",
+ "title": "정산 묶음 차감으로 오류율 기준을 처음 넘었습니다.",
+ "logo": "LUNCHCATCH",
+ "loop": 12500,
+ "elements": [
+  {
+   "type": "tabs",
+   "id": "tabs",
+   "x": 100,
+   "y": 178,
+   "items": [
+    "v1 단건 동기",
+    "v2 정산 아웃박스",
+    "v3 응답 뒤 묶음 저장",
+    "v3b 정산 묶음 차감"
+   ],
+   "index": 0
+  },
+  {
+   "type": "panel",
+   "id": "cards",
+   "x": 100,
+   "y": 236,
+   "w": 1400,
+   "h": 170,
+   "bare": true
+  },
+  {
+   "type": "panel",
+   "id": "cs1",
+   "parent": "cards",
+   "x": 0,
+   "y": 0,
+   "w": 332,
+   "h": 170
+  },
+  {
+   "type": "stat",
+   "id": "s1",
+   "parent": "cs1",
+   "x": 22,
+   "y": 20,
+   "w": 288,
+   "h": 130,
+   "label": "피드 오류율",
+   "caption": "통과 기준 0.1% 미만",
+   "value": 5.3,
+   "unit": "%",
+   "decimals": 2,
+   "size": "l",
+   "tone": "bad"
+  },
+  {
+   "type": "panel",
+   "id": "cs2",
+   "parent": "cards",
+   "x": 356,
+   "y": 0,
+   "w": 332,
+   "h": 170
+  },
+  {
+   "type": "stat",
+   "id": "s2",
+   "parent": "cs2",
+   "x": 22,
+   "y": 20,
+   "w": 288,
+   "h": 130,
+   "label": "노출 오류율",
+   "caption": "통과 기준 0.1% 미만",
+   "value": 1.3,
+   "unit": "%",
+   "decimals": 2,
+   "size": "l",
+   "tone": "bad"
+  },
+  {
+   "type": "panel",
+   "id": "cs3",
+   "parent": "cards",
+   "x": 712,
+   "y": 0,
+   "w": 332,
+   "h": 170
+  },
+  {
+   "type": "stat",
+   "id": "s3",
+   "parent": "cs3",
+   "x": 22,
+   "y": 20,
+   "w": 288,
+   "h": 130,
+   "label": "커넥션 시간 초과",
+   "caption": "유지 구간 5분 동안",
+   "value": 1978,
+   "unit": "건",
+   "decimals": 0,
+   "size": "l",
+   "tone": "bad"
+  },
+  {
+   "type": "panel",
+   "id": "cs4",
+   "parent": "cards",
+   "x": 1068,
+   "y": 0,
+   "w": 332,
+   "h": 170
+  },
+  {
+   "type": "stat",
+   "id": "s4",
+   "parent": "cs4",
+   "x": 22,
+   "y": 20,
+   "w": 288,
+   "h": 130,
+   "label": "노출 처리량",
+   "caption": "초당 받은 노출",
+   "value": 305.7,
+   "unit": "건/초",
+   "decimals": 1,
+   "size": "l",
+   "tone": null
+  },
+  {
+   "type": "panel",
+   "id": "lat",
+   "x": 100,
+   "y": 430,
+   "w": 820,
+   "h": 380,
+   "title": "p99 응답 시간",
+   "sub": "통과 기준은 피드 300ms, 노출 500ms 다"
+  },
+  {
+   "type": "meter",
+   "id": "mf",
+   "parent": "lat",
+   "x": 22,
+   "y": 130,
+   "w": 776,
+   "h": 74,
+   "label": "피드 p99",
+   "value": 24400,
+   "max": 60000,
+   "threshold": 300,
+   "thresholdLabel": "기준 300ms",
+   "text": "24.4",
+   "unit": "초",
+   "tone": "bad"
+  },
+  {
+   "type": "meter",
+   "id": "mi",
+   "parent": "lat",
+   "x": 22,
+   "y": 250,
+   "w": 776,
+   "h": 74,
+   "label": "노출 p99",
+   "value": 19100,
+   "max": 60000,
+   "threshold": 500,
+   "thresholdLabel": "기준 500ms",
+   "text": "19.1",
+   "unit": "초",
+   "tone": "bad"
+  },
+  {
+   "type": "panel",
+   "id": "cp",
+   "x": 944,
+   "y": 430,
+   "w": 556,
+   "h": 380,
+   "title": "커넥션 시간 초과",
+   "sub": "앱 서버가 DB 커넥션을 기다리다 포기한 수"
+  },
+  {
+   "type": "columns",
+   "id": "col",
+   "parent": "cp",
+   "x": 26,
+   "y": 110,
+   "w": 504,
+   "h": 246,
+   "values": [
+    1978,
+    17096,
+    4717,
+    7
+   ],
+   "labels": [
+    "v1",
+    "v2",
+    "v3",
+    "v3b"
+   ],
+   "texts": [
+    "1,978",
+    "17,096",
+    "4,717",
+    "7"
+   ],
+   "on": [
+    0
+   ],
+   "tone": "bad"
+  },
+  {
+   "type": "label",
+   "x": 100,
+   "y": 834,
+   "text": "2026-10-27 노출 수집 부하 시험. v3b 는 1회차다. 서빙 최적화(#1042, #1044)는 들어 있지 않다",
+   "color": "dim",
+   "size": "xs"
+  }
+ ],
+ "timeline": [
+  {
+   "at": 0,
+   "steps": [
+    {
+     "wait": 1400
+    },
+    {
+     "tab": "tabs",
+     "index": 1
+    },
+    {
+     "columns": "col",
+     "on": [
+      1
+     ],
+     "ms": 200
+    },
+    {
+     "par": [
+      {
+       "count": "s1",
+       "to": 49.3,
+       "ms": 900
+      },
+      {
+       "count": "s2",
+       "to": 14.1,
+       "ms": 900
+      },
+      {
+       "count": "s3",
+       "to": 17096,
+       "ms": 900
+      },
+      {
+       "count": "s4",
+       "to": 197.7,
+       "ms": 900
+      },
+      {
+       "meter": "mf",
+       "to": 21000.0,
+       "text": "21.0",
+       "ms": 900
+      },
+      {
+       "meter": "mi",
+       "to": 14800.0,
+       "text": "14.8",
+       "ms": 900
+      }
+     ]
+    },
+    {
+     "wait": 1700
+    },
+    {
+     "tab": "tabs",
+     "index": 2
+    },
+    {
+     "columns": "col",
+     "on": [
+      2
+     ],
+     "ms": 200
+    },
+    {
+     "par": [
+      {
+       "count": "s1",
+       "to": 34.6,
+       "ms": 900
+      },
+      {
+       "count": "s2",
+       "to": 14.7,
+       "ms": 900
+      },
+      {
+       "count": "s3",
+       "to": 4717,
+       "ms": 900
+      },
+      {
+       "count": "s4",
+       "to": 285.8,
+       "ms": 900
+      },
+      {
+       "meter": "mf",
+       "to": 60000.0,
+       "text": "60.0",
+       "ms": 900
+      },
+      {
+       "meter": "mi",
+       "to": 60000.0,
+       "text": "60.0",
+       "ms": 900
+      }
+     ]
+    },
+    {
+     "wait": 1700
+    },
+    {
+     "tab": "tabs",
+     "index": 3
+    },
+    {
+     "columns": "col",
+     "on": [
+      3
+     ],
+     "ms": 200
+    },
+    {
+     "par": [
+      {
+       "count": "s1",
+       "to": 0.01,
+       "ms": 900
+      },
+      {
+       "count": "s2",
+       "to": 0.0,
+       "ms": 900
+      },
+      {
+       "count": "s3",
+       "to": 7,
+       "ms": 900
+      },
+      {
+       "count": "s4",
+       "to": 560.3,
+       "ms": 900
+      },
+      {
+       "meter": "mf",
+       "to": 11100.0,
+       "text": "11.1",
+       "ms": 900
+      },
+      {
+       "meter": "mi",
+       "to": 9800.0,
+       "text": "9.8",
+       "ms": 900
+      }
+     ]
+    },
+    {
+     "retone": "s1",
+     "to": "good"
+    },
+    {
+     "retone": "s2",
+     "to": "good"
+    },
+    {
+     "retone": "s3",
+     "to": "good"
+    },
+    {
+     "retone": "s4",
+     "to": "good"
+    },
+    {
+     "retone": "col",
+     "to": "good"
+    },
+    {
+     "focus": [
+      "cs1",
+      "cs2"
+     ],
+     "among": [
+      "cs1",
+      "cs2",
+      "cs3",
+      "cs4"
+     ]
+    },
+    {
+     "wait": 1600
+    },
+    {
+     "unfocus": [
+      "cs3",
+      "cs4"
+     ]
+    },
+    {
+     "wait": 1700
+    },
+    {
+     "wait": 600
+    }
+   ]
+  }
+ ],
+ "sources": [
+  "lc-backend: docs/troubleshooting/adserving/노출_수집_부하_시험_결과.md 1장, 2장"
+ ]
+}
