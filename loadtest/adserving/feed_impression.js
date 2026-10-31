@@ -22,7 +22,7 @@ const DURATION = __ENV.DURATION || '5m';
 const RAMP_UP_SECONDS = Number(__ENV.RAMP_UP_SECONDS || 60);
 const MEMBERS = Number(__ENV.MEMBERS || 10000);
 const MEMBER_BASE = Number(__ENV.MEMBER_BASE || 30000001);
-// gen_adserving.py 의 CENTER 와 같다
+// gen_data.py 의 CENTER 와 같다
 const CENTER = [37.5563, 126.9220];
 
 const impressionResults = new Counter('impression_results');
