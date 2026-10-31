@@ -14,7 +14,8 @@
 # LOADTEST_REF 로 부하 생성기가 받을 lc-backend 의 브랜치를 고른다. 기본은 develop 이다.
 set -euo pipefail
 
-PROJECT="${PROJECT:-lunchcatch}"
+# lc-infra 의 member-env.sh 가 어느 계정에서나 이 접두사로 띄운다 (lunch-catch/lc-infra#53). 리소스, SSM 경로, 컨테이너 이름이 모두 이것이다
+PROJECT="${PROJECT:-lunchcatch-lt}"
 REGION="${AWS_REGION:-ap-northeast-2}"
 REF="${LOADTEST_REF:-develop}"
 REPO="https://github.com/lunch-catch/lc-backend.git"
@@ -58,8 +59,9 @@ remote() {
 }
 
 # 앱 컨테이너의 접속 정보로 RDS 에 붙는다. 부하 생성기는 DB 보안 그룹이 받지 않아 앱 서버에서 돈다
+# 컨테이너 이름만 따옴표를 끊어 여기서 넣는다. 나머지는 원격에서 풀려야 해서 작은따옴표로 둔다
 DB_ENV='
-ENVS=$(docker inspect lunchcatch --format "{{range .Config.Env}}{{println .}}{{end}}")
+ENVS=$(docker inspect '"$PROJECT"' --format "{{range .Config.Env}}{{println .}}{{end}}")
 URL=$(echo "$ENVS" | grep "^DB_URL=" | cut -d= -f2-)
 DBU=$(echo "$ENVS" | grep "^DB_USERNAME=" | cut -d= -f2-)
 DBP=$(echo "$ENVS" | grep "^DB_PASSWORD=" | cut -d= -f2-)

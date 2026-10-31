@@ -20,7 +20,7 @@
 
 ## 2. 환경
 
-lc-infra 의 `member-env.sh up --sha <개발 ECR 이미지>` 로 운영과 같은 인프라를 한 벌 띄운다. 우리 계정은 운영이 떠 있으면 띄울 수 없어 팀원 계정에서 띄운다.
+lc-infra 의 `member-env.sh up --sha <커밋>` 으로 운영과 같은 인프라를 자기 AWS 계정에 한 벌 띄운다. 앱 이미지는 develop 커밋마다 GHCR 에 올라가는 `ghcr.io/lunch-catch/lc-backend:<SHA>` 다. 리소스 접두사는 `lunchcatch-lt` 이고, 같은 계정에 운영이 떠 있으면 띄우지 않는다.
 
 | 자리 | 구성 |
 |---|---|
