@@ -132,8 +132,8 @@ AWS_PROFILE=<프로필> loadtest/aws/adserving.sh rows
 AWS_PROFILE=<프로필> loadtest/aws/adserving.sh switch <다음 이미지>
 AWS_PROFILE=<프로필> loadtest/aws/adserving.sh reset
 
-# 5. 대시보드를 남기고 환경을 내린다(lc-infra 에서)
-./scripts/loadtest-snapshot.sh --label adserving-v1-run1 --from <시작 ms> --to <끝 ms> --dash fm-loadtest --dash fm-adserving
+# 5. 대시보드를 남기고 환경을 내린다(lc-infra 에서). --lt 가 부하 시험 환경을 가리킨다
+AWS_PROFILE=<프로필> ./scripts/loadtest-snapshot.sh --lt --label adserving-v1-run1 --from <시작 ms> --to <끝 ms> --dash fm-loadtest --dash fm-adserving
 AWS_PROFILE=<프로필> ./scripts/member-env.sh down
 ```
 
