@@ -4,7 +4,8 @@
 
 | 도메인 | 문서 |
 |---|---|
-| 광고 서빙 | [`docs/design/adserving/loadtest/adserving_부하_시험.md`](../docs/design/adserving/loadtest/adserving_부하_시험.md) |
+| 광고 서빙 | [`docs/design/adserving/loadtest/`](../docs/design/adserving/loadtest/adserving_부하_시험.md) |
+| 쿠폰 발급 | [`docs/design/coupon/loadtest/`](../docs/design/coupon/loadtest/coupon-load-test-summary.md) |
 
 부하 시험 환경을 띄우고 내리는 일은 lc-infra 가 갖는다(`docs/wiki/팀원-부하시험-환경.md`, `scripts/member-env.sh`).
 
@@ -25,4 +26,4 @@
 
 - 앱은 `loadtest` 프로필로 띄운다. 결제가 토스 대신 목을 쓴다.
 - 생성기의 SQL 은 부하 시험 DB 와 로컬에만 넣는다. 정해진 번호 대역의 행과 그날 배치 기록을 지우고 다시 넣는다.
-- 버전을 비교하려면 측정한 커밋과 조건을 함께 남긴다. 결과는 `docs/troubleshooting/{도메인}/loadtest/` 에 둔다. 파일을 몇 개로 나눌지는 그 도메인이 정한다.
+- 버전을 비교하려면 측정한 커밋과 조건을 함께 남긴다. 결과는 측정 조건과 같은 자리인 `docs/design/{도메인}/loadtest/` 에 둔다. 파일을 몇 개로 나눌지는 그 도메인이 정한다.

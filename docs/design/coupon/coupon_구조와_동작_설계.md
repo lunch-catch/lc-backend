@@ -466,7 +466,7 @@ v3도 같은 순번·복구 설계를 사용한다. 묶음 트랜잭션과 작�
 | 쿠폰 목록 | 회원 쿠폰 페이지와 이벤트 일괄 조회, 필요할 때 이력 일괄 조회를 수행한다. 만료된 반환 항목은 UPDATE한다 |
 | 이벤트 상태 | 이벤트 조회와 재고 집계, 회원 발급 이력과 카운터 조회를 수행한다. store·campaign·member·찜 조회는 매장마다 반복하지 않는다 |
 
-위 비용은 정상 경로의 논리적 SQL 기준이다. 대표 부하의 응답 시간과 데이터 정합성은 [쿠폰 부하 시험 통합 요약](../../troubleshooting/coupon/coupon-load-test-summary.md)에 기록한다. 이 결과는 v1 SQL의 실행 계획이나 잠금 대기를 측정한 자료가 아니다.
+위 비용은 정상 경로의 논리적 SQL 기준이다. 대표 부하의 응답 시간과 데이터 정합성은 [쿠폰 부하 시험 통합 요약](loadtest/coupon-load-test-summary.md)에 기록한다. 이 결과는 v1 SQL의 실행 계획이나 잠금 대기를 측정한 자료가 아니다.
 목표 피크 2,500 RPS에서 문장 수는 묶음 크기에 반비례한다. 묶음 평균이 25건이면 coupon DB 읽기와 쓰기는 각각 초당 400문장 수준이다.
 모든 요청이 이벤트 하나에 몰리면 재고 소비가 직렬화되는 구간은 요청당 평균 0.4ms 이하여야 그 처리율을 낼 수 있다.
 작은 동시성 테스트의 통과를 부하 목표 달성으로 보지 않는다.
@@ -500,7 +500,7 @@ QR 사용의 응답 시간·동시 요청 목표와 부하 검증은 아직 없�
 | 회차 갱신이 실패한다 | 같은 트랜잭션의 쿠폰 DB 쓰기가 실패한다 | 발행자의 변경도 롤백하며 재시도하면 함께 반영한다 | `회차_상태_저장이_실패하면_발행자_변경도_되돌리고_재시도하면_반영한다`, `회차_종료_저장이_실패하면_발행자_변경도_되돌리고_재시도하면_반영한다` |
 | 이미 발급한 쿠폰이 있다 | 캠페인이 중단·종료된다 | 기존 쿠폰·재고·한도를 보존하며 원래 사용 시간 안에서 QR 갱신과 사용을 허용한다 | `캠페인_중단과_종료는_새_발급만_막고_기존_쿠폰과_재고와_한도를_보존한다`, `캠페인이_중단되거나_끝나도_기존_쿠폰의_QR을_갱신하고_사용한다` |
 
-모든 행의 테스트는 [CouponIntegrationTest](../../../src/test/java/com/lunchcatch/coupon/CouponIntegrationTest.java)에 있다.
+모든 행의 테스트는 [CouponIntegrationTest](../../../src/integrationTest/java/com/lunchcatch/coupon/CouponIntegrationTest.java)에 있다.
 엔티티의 입력·상태 규칙과 서비스 분기는 [쿠폰 테스트 디렉터리](../../../src/test/java/com/lunchcatch/coupon/)의 단위 테스트가 보완한다.
 `CouponEventStateServiceTest`는 수신한 영업일·전이 시각의 보존과 상태 선택, 갱신 결과와 저장 실패 전파를 단위 테스트로 검증한다.
 기간 만료 시각과 삭제 날짜 경계, 목록·삭제 경합은 기존 통합 테스트에 있다.
@@ -522,6 +522,6 @@ USED 전이와 사용 시각·할인 계산, 실제 사용 요청의 동시 재�
 | 멱등성과 재시도 | 만료_QR은_거절하고_사용한_QR의_재요청은_만료_후에도_구분한다 |
 | 시각 경계 | 같은 중첩 HTTP 테스트와 MemberCouponRedemptionTest가 만료 경계와 판정·저장 시각의 일치를 검증한다 |
 
-QR 사용 테스트는 [CouponIntegrationTest](../../../src/test/java/com/lunchcatch/coupon/CouponIntegrationTest.java)의 Redeem에 있다.
+QR 사용 테스트는 [CouponIntegrationTest](../../../src/integrationTest/java/com/lunchcatch/coupon/CouponIntegrationTest.java)의 Redeem에 있다.
 MockMvc와 서버 포트로 보내는 실제 HTTP 요청에서 핵심 시나리오를 검증한다.
 owner·store의 공개 조회와 점주 AT 폐기 검증은 대역으로 제공하므로 이 검증을 제공자 내부 DB 조회 검증으로 해석하지 않는다.

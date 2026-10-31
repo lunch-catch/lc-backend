@@ -197,7 +197,7 @@ sequenceDiagram
 버전을 올리기 전에 지금 버전을 재고 올린 뒤에 같은 조건으로 다시 잰다. 시나리오와 데이터는 [`loadtest/`](../../../loadtest/README.md) 의 광고 서빙 시험이 갖는다.
 
 - 측정한 커밋에 `adserving-{쓰기}-v{버전}` 태그를 붙인다. 예를 들어 `adserving-impression-v1`, `adserving-serve-log-v1` 이다. 태그가 있어야 나중에 이전 버전을 다시 띄워 나란히 잴 수 있다.
-- 결과는 `docs/troubleshooting/adserving/` 에 버전마다 둔다. 이 문서는 결과를 담지 않는다.
+- 결과는 [`loadtest/`](loadtest/노출_수집_부하_시험_결과.md) 가 측정 조건과 함께 갖는다. 이 문서는 결과를 담지 않는다.
 - 응답 시간만 비교하지 않는다. 버전을 올린 이유를 확인하는 지표를 함께 본다.
 
 | 쓰기 | 공통 지표 | 버전을 올린 이유를 확인하는 지표 |
