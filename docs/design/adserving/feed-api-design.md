@@ -104,8 +104,8 @@
 
 1. serve 기록이 캐시에 있는지 본다. 없으면 `EXPIRED_OR_UNKNOWN`
 2. serve 기록의 사용자와 요청 사용자가 같은지 본다. 다르면 `NOT_OWNER`
-3. 판정을 돌려주고 `impression_log` 에 저장할 행은 인메모리 큐에 넣는다. 배처가 500건이 차거나 200ms 가 지나면 묶어 저장한다(노출 수집 v3, [요청 중 쓰기 설계](./adserving_요청_중_쓰기_설계.md) 4장). 정산은 부르지 않는다. 그날 후보가 쿠폰 소진이면 `sold_out` 으로 적는다(`NOT_BILLED_SOLD_OUT`). 무효 노출도 사유와 함께 저장한다
-4. 커밋된 유효 노출은 배치 서버의 릴레이가 1초마다 모아 정산에 넘긴다(노출 수집 v2, [요청 중 쓰기 설계](./adserving_요청_중_쓰기_설계.md) 3장). 과금 판정(`BILLED`, `NOT_BILLED_BUDGET`, `NOT_BILLED_PAUSED`, `NOT_BILLED_NO_PLAN`, `NOT_BILLED_CLOSED`)은 정산이 자기 기록(`deduction_result`)에 남긴다(FR-100). 넘기는 영업일은 노출을 받은 날이다. 자정을 넘겨 받은 노출은 다음 영업일로 넘긴다(#497, #498). 무효 노출과 소진 노출은 넘기지 않는다
+3. 판정을 돌려주고 `impression_log` 에 저장할 행은 인메모리 큐에 넣는다. 배처가 500건이 차거나 200ms 가 지나면 묶어 저장한다(노출 수집 v3, [노출 수집 v3 설계](./adserving-impression-v3-design.md)). 정산은 부르지 않는다. 그날 후보가 쿠폰 소진이면 `sold_out` 으로 적는다(`NOT_BILLED_SOLD_OUT`). 무효 노출도 사유와 함께 저장한다
+4. 커밋된 유효 노출은 배치 서버의 릴레이가 1초마다 모아 정산에 넘긴다(노출 수집 v2, [노출 수집 v2 설계](./adserving-impression-v2-design.md)). 과금 판정(`BILLED`, `NOT_BILLED_BUDGET`, `NOT_BILLED_PAUSED`, `NOT_BILLED_NO_PLAN`, `NOT_BILLED_CLOSED`)은 정산이 자기 기록(`deduction_result`)에 남긴다(FR-100). 넘기는 영업일은 노출을 받은 날이다. 자정을 넘겨 받은 노출은 다음 영업일로 넘긴다(#497, #498). 무효 노출과 소진 노출은 넘기지 않는다
 
 **정한 이유**
 

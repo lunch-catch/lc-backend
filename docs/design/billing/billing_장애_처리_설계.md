@@ -36,7 +36,7 @@
 - 실패한 노출은 릴레이가 다음 주기에 다시 넘긴다. `serveId` 멱등이라 다시 넘겨도 한 번만 과금된다. 다시 넘기는 사이 마감이 지나면 새 과금 대신 마감 미과금으로 남는다.
 - 묶음 전체의 트랜잭션이 실패해 점주별로 다시 처리하면 `billing_deduct_batch_fallback_total`에 1을 더하고 `BILLING_DEDUCT_BATCH_FALLBACK` WARN 로그를 남긴다.
 - 실패는 `billing_deduct_batch_failed_total{reason="owner_group"}`에 실패한 노출 수만큼 더하고 `BILLING_DEDUCT_BATCH_GROUP_FAILED` WARN 로그를 남긴다. 캠페인이 없는 노출은 `reason="unknown_campaign"`이다.
-- 같은 노출이 계속 실패하면 정산은 따로 빼 두지 않는다. 계속 실패하는 행을 빼 두는 일은 릴레이가 갖는다([광고 서빙 요청 중 쓰기 설계](../adserving/adserving_요청_중_쓰기_설계.md) "릴레이가 갖출 것").
+- 같은 노출이 계속 실패하면 정산은 따로 빼 두지 않는다. 계속 실패하는 행을 빼 두는 일은 릴레이가 갖는다([광고 서빙 노출 수집 v2 설계](../adserving/adserving-impression-v2-design.md)의 "릴레이").
 
 ### 결제대행사의 설정 오류
 
