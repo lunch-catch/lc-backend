@@ -113,7 +113,7 @@ HTTP가 아니라 **모듈 간 호출·이벤트·배치**다. 점주·관리자
 
 # I-01. 노출 차감 → 판정 기록·원장 기록
 
-광고 서빙의 노출 수집 v2는 노출 저장을 커밋한 뒤 `@Scheduled` 릴레이가 밀린 유효 노출을 모아 `billing.contract.PointDeductor.deductAll`을 트랜잭션 없이 호출한다. 노출 수집 v1은 요청 트랜잭션 안에서 단건 `deduct`를 부르고 정산은 `REQUIRED`로 그 트랜잭션에 참여한다. 노출 저장과 릴레이 전달은 [광고 서빙 요청 중 쓰기 설계](../adserving/adserving_요청_중_쓰기_설계.md) 3장이 소유한다.
+광고 서빙의 노출 수집 v2는 노출 저장을 커밋한 뒤 `@Scheduled` 릴레이가 밀린 유효 노출을 모아 `billing.contract.PointDeductor.deductAll`을 트랜잭션 없이 호출한다. 노출 수집 v1은 요청 트랜잭션 안에서 단건 `deduct`를 부르고 정산은 `REQUIRED`로 그 트랜잭션에 참여한다. 노출 저장과 릴레이 전달은 [광고 서빙 노출 수집 v2 설계](../adserving/adserving-impression-v2-design.md)가 소유한다.
 
 ```
 PointDeductor.deduct(serveId, campaignId, businessDate)
