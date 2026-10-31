@@ -8,20 +8,51 @@
 #   AWS_PROFILE=<프로필> loadtest/aws/adserving.sh run <이름> <회원 시작 번호> [초당 피드] [유지 시간]
 #   AWS_PROFILE=<프로필> loadtest/aws/adserving.sh metrics <시작 ms> <끝 ms>  그 구간의 서버 지표
 #   AWS_PROFILE=<프로필> loadtest/aws/adserving.sh rows                    시험 데이터의 행 수
-#   AWS_PROFILE=<프로필> loadtest/aws/adserving.sh switch <sha>            앱과 배치를 그 커밋 이미지로 다시 띄운다
+#   AWS_PROFILE=<프로필> loadtest/aws/adserving.sh switch <sha>            앱과 배치를 그 커밋 이미지로 다시 띄운다. GHCR 에 있어야 한다
 #   AWS_PROFILE=<프로필> loadtest/aws/adserving.sh reset [회원 수]         Valkey 를 비우고 시험 데이터를 다시 넣는다
 #
-# LOADTEST_REF 로 부하 생성기가 받을 lc-backend 의 브랜치를 고른다. 기본은 develop 이다.
+# 시나리오와 시드 생성기는 떠 있는 앱과 같은 커밋(SSM current-sha)에서 받는다. 값이 없으면 develop 이다.
+# LOADTEST_REF 로 브랜치나 커밋을 따로 고를 수 있다.
 set -euo pipefail
 
-PROJECT="${PROJECT:-lunchcatch}"
+# lc-infra 의 member-env.sh 가 어느 계정에서나 이 접두사로 띄운다 (lunch-catch/lc-infra#53). 리소스, SSM 경로, 컨테이너 이름이 모두 이것이다
+PROJECT="${PROJECT:-lunchcatch-lt}"
 REGION="${AWS_REGION:-ap-northeast-2}"
-REF="${LOADTEST_REF:-develop}"
 REPO="https://github.com/lunch-catch/lc-backend.git"
+IMAGE_REPO="lunch-catch/lc-backend"
 export AWS_REGION="$REGION"
 
 die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 [ -n "${AWS_PROFILE:-}${AWS_ACCESS_KEY_ID:-}" ] || die "AWS_PROFILE 을 준다. member-env.sh up 을 돌린 계정의 프로필이다"
+
+#
+# 앱과 같은 커밋의 시나리오를 쓴다. 브랜치 기본값만 두면 up --sha 로 예전 커밋을 띄웠을 때
+# 앱은 예전인데 시나리오와 시드는 최신 develop 이라, 경로나 스키마가 바뀐 커밋이면 앱이 아니라 시나리오가 틀린다.
+# switch 뒤의 실행은 바뀐 current-sha 를 읽으므로 새 커밋의 시나리오를 받는다.
+#
+REF="${LOADTEST_REF:-}"
+if [ -z "$REF" ]; then
+  REF=$(aws ssm get-parameter --name "/$PROJECT/current-sha" --query Parameter.Value --output text 2> /dev/null || true)
+  case "$REF" in ""|bootstrap|None) REF=develop ;; esac
+fi
+
+# 이미지 태그는 40자 SHA 다. 짧은 SHA 를 받으면 GitHub 에 물어 늘린다
+full_sha() {
+  [ ${#1} -eq 40 ] && { echo "$1"; return; }
+  curl -fsS "https://api.github.com/repos/$IMAGE_REPO/commits/$1" \
+    | python3 -c 'import json,sys; print(json.load(sys.stdin)["sha"])'
+}
+
+# GHCR 공개 패키지에 그 태그가 있는지 본다. 0 있음, 1 없음, 2 확인 못 함
+image_exists() {
+  local token code
+  token=$(curl -fsS "https://ghcr.io/token?scope=repository:$IMAGE_REPO:pull" \
+    | python3 -c 'import json,sys; print(json.load(sys.stdin)["token"])') || return 2
+  code=$(curl -sS -o /dev/null -w '%{http_code}' -I -H "Authorization: Bearer $token" \
+    -H "Accept: application/vnd.oci.image.index.v1+json,application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json,application/vnd.docker.distribution.manifest.list.v2+json" \
+    "https://ghcr.io/v2/$IMAGE_REPO/manifests/$1") || return 2
+  case "$code" in 200) return 0 ;; 404) return 1 ;; *) return 2 ;; esac
+}
 
 instance() {
   local id
@@ -58,8 +89,9 @@ remote() {
 }
 
 # 앱 컨테이너의 접속 정보로 RDS 에 붙는다. 부하 생성기는 DB 보안 그룹이 받지 않아 앱 서버에서 돈다
+# 컨테이너 이름만 따옴표를 끊어 여기서 넣는다. 나머지는 원격에서 풀려야 해서 작은따옴표로 둔다
 DB_ENV='
-ENVS=$(docker inspect lunchcatch --format "{{range .Config.Env}}{{println .}}{{end}}")
+ENVS=$(docker inspect '"$PROJECT"' --format "{{range .Config.Env}}{{println .}}{{end}}")
 URL=$(echo "$ENVS" | grep "^DB_URL=" | cut -d= -f2-)
 DBU=$(echo "$ENVS" | grep "^DB_USERNAME=" | cut -d= -f2-)
 DBP=$(echo "$ENVS" | grep "^DB_PASSWORD=" | cut -d= -f2-)
@@ -72,10 +104,10 @@ D=$(TZ=Asia/Seoul date +%F)
 # 부하 생성기에서 시나리오를 받고 서명 키를 읽는다
 K6_ENV="
 set -a; . /opt/loadtest/env; set +a
-DIR=/opt/loadtest/lc-backend-$REF
+DIR=/opt/loadtest/lc-backend-run
 export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0=\"\$DIR\"
-if [ -d \"\$DIR/.git\" ]; then git -C \"\$DIR\" fetch -q --depth 1 origin $REF && git -C \"\$DIR\" reset -q --hard FETCH_HEAD
-else git clone -q --depth 1 --branch $REF $REPO \"\$DIR\"; fi
+[ -d \"\$DIR/.git\" ] || git clone -q --depth 1 --no-checkout $REPO \"\$DIR\"
+git -C \"\$DIR\" fetch -q --depth 1 origin $REF && git -C \"\$DIR\" reset -q --hard FETCH_HEAD
 echo \"scenario \$(git -C \"\$DIR\" rev-parse --short HEAD)\"
 cd \"\$DIR\"
 JWT=\$(aws ssm get-parameter --name /$PROJECT/jwt-signing-key --with-decryption --region $REGION --query Parameter.Value --output text)
@@ -99,6 +131,18 @@ case "${1:-}" in
     ;;
   switch)
     sha="${2:?이미지 커밋을 준다}"
+    sha=$(full_sha "$sha") || die "lc-backend 에 그 커밋이 없다"
+    #
+    # current-sha 를 바꾸고 전부 다시 띄우기 전에 이미지가 있는지 본다.
+    # 없는 태그면 앱과 배치가 모두 이미지를 못 받아 죽고, 되돌릴 때까지 환경이 멈춘다.
+    #
+    rc=0
+    image_exists "$sha" || rc=$?
+    case "$rc" in
+      0) ;;
+      1) die "ghcr.io/$IMAGE_REPO:$sha 가 없다. develop 을 거친 커밋인지, Actions 의 '이미지 공개' 가 끝났는지 본다" ;;
+      *) die "GHCR 에 이미지가 있는지 확인하지 못했다. 네트워크를 보고 다시 부른다" ;;
+    esac
     aws ssm put-parameter --name "/$PROJECT/current-sha" --type String --overwrite --value "$sha" > /dev/null
     # 앱과 배치를 모두 새 이미지로 함께 다시 띄운다. 마이그레이션은 Flyway 가 먼저 뜬 쪽에서 한 번 돈다
     # 다시 뜨는 동안 헬스체크가 실패해 오토스케일링 그룹이 서버를 바꾸지 않게 교체를 멈춰 둔다
