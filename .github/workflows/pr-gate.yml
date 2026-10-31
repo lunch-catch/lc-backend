@@ -101,7 +101,10 @@ jobs:
         env:
           BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
         run: |
-          files=$(git diff --name-only "$BASE_SHA"...HEAD)
+          # core.quotePath=false 가 없으면 비ASCII 경로가 따옴표로 감싸이고 바이트가 역슬래시로
+          # 이스케이프된다. 그러면 경로가 d 가 아니라 " 로 시작해 아래 ^docs/ 에 걸리지 않고,
+          # 문서만 바꾼 PR 이 전부 전체 check 를 돌린다. docs/ 아래 39개가 한글 이름이다 (#1073).
+          files=$(git -c core.quotePath=false diff --name-only "$BASE_SHA"...HEAD)
           if [ -z "$files" ]; then
             echo "바뀐 파일이 없다. 전부 돌린다."
             echo "docs_only=false" >> "$GITHUB_OUTPUT"
