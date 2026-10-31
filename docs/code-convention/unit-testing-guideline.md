@@ -124,7 +124,7 @@ src/test/java/com/lunchcatch/campaign/CampaignIntegrationTest.java           도
 그 구현을 테스트할 수 없다.
 
 이름은 단위가 `~Test`, 통합이 `~IntegrationTest` 다. **이름이 유일한 구분 수단이다.**
-소스셋이 하나라 실행 기록이 `test.exec` 으로 모이므로, 커버리지 숫자가 단위 테스트에서 나온
+소스셋이 갈려 단위 테스트의 실행 기록만 `test.exec` 에 모인다. 그래도 한 소스셋 안에서는 커버리지 숫자가 단위 테스트에서 나온
 것인지 계층을 가로지르는 테스트에서 나온 것인지 이름 말고는 가릴 방법이 없다.
 
 **셋 다 빌드가 강제한다.** `TestPlacementTest` 가 `contract` 배치, 패키지 미러링,
@@ -139,7 +139,7 @@ src/test/java/com/lunchcatch/campaign/CampaignIntegrationTest.java           도
   슬라이스나 인메모리 DB 로 대신하면 "실제로 붙여 봤다" 가 성립하지 않는다.
   **통합 테스트가 없다는 것만으로 지적하지 않는다.** 쓸지 말지는 작성자가 판단한다.
 * `UT-5-03` 통합 테스트의 이름이 `~IntegrationTest` 로 끝나는가
-  소스셋이 하나라 이름이 커버리지 해석의 유일한 단서다. `TestPlacementTest` 가 확인한다.
+  소스셋이 갈려도 이름으로 두 종류를 가린다. 컨텍스트를 띄우면서 `~IntegrationTest` 가 아닌 클래스를 `TestPlacementTest` 가 막는다.
 
 ```java
 // 점검 대상: 슬라이스로 통합을 흉내 낸다. 컨텍스트 일부만 떠서 실제 연동이 아니다

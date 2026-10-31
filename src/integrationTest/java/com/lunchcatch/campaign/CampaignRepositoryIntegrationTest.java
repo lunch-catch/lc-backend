@@ -1,5 +1,6 @@
-package com.lunchcatch.campaign.repository;
+package com.lunchcatch.campaign;
 
+import com.lunchcatch.campaign.repository.CampaignRepository;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 

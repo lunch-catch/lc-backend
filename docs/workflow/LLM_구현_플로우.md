@@ -225,15 +225,15 @@ HTTP 입구면 둘을 더 읽는다.
 
    파일마다 이슈의 어느 항목에서 나왔는지 한 줄로 적는다. 댈 수 없는 파일은 커밋에서 뺀다.
    뺄 수 없으면 왜 담기는지 PR 단계의 `변경 내용` 에 적는다.
-2. **푸시 전에 `unitTest` 를 통과시킨다.** 단위 테스트가 깨진 채로 올려 `G-BUILD` 를 한 번
+2. **푸시 전에 `test` 를 통과시킨다.** 단위 테스트가 깨진 채로 올려 `G-BUILD` 를 한 번
    버리는 일을 줄인다. **이것은 보고의 근거가 아니다.** 최종 판정은 PR 단계의 `G-BUILD` 다.
 
 고치는 동안에는 더 좁혀 돌린다.
 
     ./gradlew rulesTest                           40초 남짓. 패키지를 옮기거나 contract 를 고친 직후
-    ./gradlew unitTest                            3분 안. 통합 테스트를 뺀 단위 테스트
+    ./gradlew test                                3분 안. 단위 테스트다. 소스셋이 갈려 통합이 안 섞인다
     ./gradlew test --tests '*FeedService*'        지금 고치는 것만
-    ./gradlew test --tests '*그IntegrationTest'    통합 테스트 하나를 봐야 할 때
+    ./gradlew integrationTest --tests '*그IntegrationTest'    통합 테스트 하나를 봐야 할 때
 
 좁히는 것은 중간 루프에서만 하고 최종 판정은 좁히지 않는다.
 

@@ -126,4 +126,20 @@ class FunnelEventRecorderTest {
 
         assertThat(count("rejected")).isEqualTo(1);
     }
+
+    /*
+     * 퍼널 기록 스레드는 데몬이어야 한다. 아니면 이 풀이 JVM 종료를 붙잡아, 배포 때 프로세스가
+     * 내려가지 않는다. 이름을 붙이는 것은 스레드 덤프에서 이 풀을 가려내려는 것이다.
+     */
+    @Test
+    void 기록_스레드는_데몬이고_번호가_붙는다() {
+        var factory = FunnelEventRecorder.daemonThreads();
+
+        Thread first = factory.newThread(() -> { });
+        Thread second = factory.newThread(() -> { });
+
+        assertThat(first.isDaemon()).isTrue();
+        assertThat(first.getName()).isEqualTo("funnel-event-1");
+        assertThat(second.getName()).isEqualTo("funnel-event-2");
+    }
 }

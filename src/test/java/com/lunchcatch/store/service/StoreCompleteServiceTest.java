@@ -23,6 +23,8 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 class StoreCompleteServiceTest {
     private final StoreRegistrationProgressRepository progresses = mock(StoreRegistrationProgressRepository.class);
@@ -129,5 +131,32 @@ class StoreCompleteServiceTest {
     void 진행_상태가_없으면_거절한다() {
         assertThatThrownBy(() -> service.complete(1L, 0)).isInstanceOf(StoreException.class);
         verifyNoInteractions(events);
+    }
+
+    /*
+     * 트랜잭션이 커밋되지 않으면 실패 로그를 남긴다. 확정이 롤백됐는데 아무 기록이 없으면,
+     * 점주가 "최종 등록을 눌렀는데 안 됐다" 고 할 때 무엇이 일어났는지 볼 자리가 없다.
+     *
+     * 그 로그는 트랜잭션이 살아 있을 때만 등록된다. 단위 테스트에는 트랜잭션이 없어
+     * 동기화를 직접 열고, 롤백 상태로 완료 콜백을 불러 그 경로를 지나게 한다.
+     */
+    @Test
+    void 커밋되지_않으면_실패_로그_콜백을_등록한다() {
+        progress();
+        draft();
+        when(onboarding.findByOwnerId(1L)).thenReturn(new StoreOnboardingQueryRow(10L, 5, false,
+                new StoreOnboardingReadiness(true, true, true, true, true, 0, true)));
+        TransactionSynchronizationManager.initSynchronization();
+        try {
+            service.complete(1L, 5);
+
+            var registered = TransactionSynchronizationManager.getSynchronizations();
+            assertThat(registered).isNotEmpty();
+            assertThatCode(() -> registered.forEach(sync ->
+                    sync.afterCompletion(TransactionSynchronization.STATUS_ROLLED_BACK)))
+                    .doesNotThrowAnyException();
+        } finally {
+            TransactionSynchronizationManager.clearSynchronization();
+        }
     }
 }

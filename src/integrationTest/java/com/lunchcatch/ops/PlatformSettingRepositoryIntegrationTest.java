@@ -1,5 +1,6 @@
-package com.lunchcatch.ops.repository;
+package com.lunchcatch.ops;
 
+import com.lunchcatch.ops.repository.PlatformSettingRepository;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.lunchcatch.ops.entity.PlatformSetting;

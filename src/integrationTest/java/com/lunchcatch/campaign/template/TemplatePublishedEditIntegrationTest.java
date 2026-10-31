@@ -1,5 +1,9 @@
-package com.lunchcatch.campaign.template.service;
+package com.lunchcatch.campaign.template;
 
+import com.lunchcatch.campaign.template.service.TemplatePublishService;
+import com.lunchcatch.campaign.template.service.TemplateQueryService;
+import com.lunchcatch.campaign.template.service.TemplateRenameService;
+import com.lunchcatch.campaign.template.service.TemplateReviseService;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.lunchcatch.campaign.AbstractCampaignIntegrationTest;

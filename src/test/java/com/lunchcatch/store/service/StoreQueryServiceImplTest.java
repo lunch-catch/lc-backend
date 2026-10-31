@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
 import com.lunchcatch.store.contract.StoreAdCandidateInfo;
+import com.lunchcatch.store.contract.OwnerStoreSnapshot;
 import com.lunchcatch.store.contract.StoreQueryService;
 import com.lunchcatch.store.dto.StoreAdCandidateQueryRow;
 import com.lunchcatch.store.contract.StoreInfo;
@@ -16,6 +17,7 @@ import com.lunchcatch.store.repository.StoreQueryRepository;
 import com.lunchcatch.store.repository.OwnerStoreQueryRepository;
 import com.lunchcatch.store.repository.StoreOnboardingQueryRepository;
 import java.math.BigDecimal;
+import java.util.Optional;
 import java.util.Arrays;
 import java.util.List;
 import org.junit.jupiter.api.Test;
@@ -26,7 +28,8 @@ import org.springframework.dao.DataAccessResourceFailureException;
 
 class StoreQueryServiceImplTest {
     private final StoreQueryRepository repository = mock(StoreQueryRepository.class);
-    private final StoreQueryServiceImpl service = new StoreQueryServiceImpl(repository, mock(OwnerStoreQueryRepository.class), mock(StoreOnboardingQueryRepository.class), "https://cdn.example.com/");
+    private final OwnerStoreQueryRepository ownerStores = mock(OwnerStoreQueryRepository.class);
+    private final StoreQueryServiceImpl service = new StoreQueryServiceImpl(repository, ownerStores, mock(StoreOnboardingQueryRepository.class), "https://cdn.example.com/");
 
     @Test
     void 정상_메뉴와_데이터_오류_메뉴_ID를_한번에_반환한다() {
@@ -268,5 +271,99 @@ class StoreQueryServiceImplTest {
         assertThatIllegalArgumentException().isThrownBy(() -> service.canManageStore(0L, 1L));
         assertThatIllegalArgumentException().isThrownBy(() -> service.canManageStore(1L, null));
         assertThatIllegalArgumentException().isThrownBy(() -> service.canManageStore(1L, -1L));
+    }
+
+    /*
+     * 상호 검색은 limit 보다 하나 더 받아 초과를 가린다. 초과면 DB 결과를 돌려주지 않고 거절한다.
+     * 관리자 검색이 전 점주를 끌어오는 것을 막으려는 것이다.
+     */
+    @Test
+    void 상호_검색은_limit를_넘으면_거절한다() {
+        when(repository.findOwnerIdsByNameContaining("런치", 3L)).thenReturn(List.of(1L, 2L, 3L));
+
+        assertThatThrownBy(() -> service.findOwnerIdsByNameContaining("런치", 2))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void 상호_검색은_limit_안이면_그대로_돌려준다() {
+        when(repository.findOwnerIdsByNameContaining("런치", 3L)).thenReturn(List.of(7L, 8L));
+
+        assertThat(service.findOwnerIdsByNameContaining("런치", 2)).containsExactly(7L, 8L);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"", " "})
+    void 상호_검색은_빈_검색어를_DB_조회_전에_거절한다(String keyword) {
+        assertThatThrownBy(() -> service.findOwnerIdsByNameContaining(keyword, 10))
+                .isInstanceOf(IllegalArgumentException.class);
+
+        verifyNoInteractions(repository);
+    }
+
+    @ParameterizedTest
+    @ValueSource(ints = {0, -1, 10_001})
+    void 상호_검색은_범위를_벗어난_limit를_DB_조회_전에_거절한다(int limit) {
+        assertThatThrownBy(() -> service.findOwnerIdsByNameContaining("런치", limit))
+                .isInstanceOf(IllegalArgumentException.class);
+
+        verifyNoInteractions(repository);
+    }
+
+    @Test
+    void 상호_검색은_검색어를_요구한다() {
+        assertThatThrownBy(() -> service.findOwnerIdsByNameContaining(null, 10))
+                .isInstanceOf(NullPointerException.class);
+    }
+
+    /*
+     * 점주 가게 조회는 저장된 이미지 키를 CDN 주소로 바꿔 돌려준다.
+     * 대표 이미지는 sortOrder 가 없는 것이고 내부 이미지는 있는 것이다. 메뉴 이미지도 같이 바꾼다.
+     */
+    @Test
+    void 점주_가게의_이미지_키를_CDN_주소로_바꾼다() {
+        var snapshot = new OwnerStoreSnapshot(5L, true, "런치 한식당", "한식", "홍길동",
+                "1234567890", "021234567", "VERIFIED", null, null, "서울시 마포구",
+                new BigDecimal("37.5563"), new BigDecimal("126.9220"), List.of(), null, List.of(), List.of());
+        when(ownerStores.findByOwnerId(5L)).thenReturn(Optional.of(snapshot));
+        when(ownerStores.findImages(5L)).thenReturn(List.of(
+                new OwnerStoreSnapshot.Image("stores/logo.png", null, null),
+                new OwnerStoreSnapshot.Image("stores/interior.png", null, 1)));
+        when(ownerStores.findMenus(5L)).thenReturn(List.of(new OwnerStoreSnapshot.Menu(
+                9L, "제육", 9000L, "맵다", 1, new OwnerStoreSnapshot.Image("menus/1.png", null, null))));
+        when(ownerStores.findBusinessHours(5L)).thenReturn(List.of());
+
+        var result = service.findOwnerStore(5L).orElseThrow();
+
+        assertThat(result.logoImage().url()).isEqualTo("https://cdn.example.com/stores/logo.png");
+        assertThat(result.interiorImages()).singleElement()
+                .extracting(OwnerStoreSnapshot.Image::url).isEqualTo("https://cdn.example.com/stores/interior.png");
+        assertThat(result.menus()).singleElement()
+                .extracting(m -> m.image().url()).isEqualTo("https://cdn.example.com/menus/1.png");
+    }
+
+    @Test
+    void 점주_가게에_이미지가_없으면_대표_이미지와_메뉴_이미지가_null_이다() {
+        var snapshot = new OwnerStoreSnapshot(5L, false, "런치 분식", "분식", "홍길동",
+                "1234567890", "021234567", "PENDING", null, null, null, null, null,
+                List.of(), null, List.of(), List.of());
+        when(ownerStores.findByOwnerId(5L)).thenReturn(Optional.of(snapshot));
+        when(ownerStores.findImages(5L)).thenReturn(List.of());
+        when(ownerStores.findMenus(5L)).thenReturn(List.of(new OwnerStoreSnapshot.Menu(
+                9L, "김밥", 4000L, null, 1, null)));
+        when(ownerStores.findBusinessHours(5L)).thenReturn(List.of());
+
+        var result = service.findOwnerStore(5L).orElseThrow();
+
+        assertThat(result.logoImage()).isNull();
+        assertThat(result.interiorImages()).isEmpty();
+        assertThat(result.menus()).singleElement().extracting(OwnerStoreSnapshot.Menu::image).isNull();
+    }
+
+    @Test
+    void 점주_가게가_없으면_빈_값이다() {
+        when(ownerStores.findByOwnerId(5L)).thenReturn(Optional.empty());
+
+        assertThat(service.findOwnerStore(5L)).isEmpty();
     }
 }

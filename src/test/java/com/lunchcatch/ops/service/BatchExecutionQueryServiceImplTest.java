@@ -49,4 +49,21 @@ class BatchExecutionQueryServiceImplTest {
         assertThat(record.failureReason()).isNull();
         assertThat(record.attemptNo()).isEqualTo(1);
     }
+
+    /*
+     * 성공한 영업일 조회는 저장소에 그대로 넘긴다.
+     * 분석이 전날 실패한 영업일을 가려내려고 부른다. 기간은 시작 포함, 끝 제외다.
+     */
+    @Test
+    @DisplayName("성공한 영업일 조회를 저장소에 그대로 넘긴다")
+    void 성공한_영업일_조회를_넘긴다() {
+        LocalDate from = LocalDate.of(2026, 10, 10);
+        LocalDate to = LocalDate.of(2026, 10, 14);
+        when(batchExecutionLogRepository.findSucceededBusinessDates("DAILY_AGGREGATION", from, to))
+                .thenReturn(List.of(LocalDate.of(2026, 10, 11), LocalDate.of(2026, 10, 13)));
+
+        List<LocalDate> result = service.findSucceededBusinessDates("DAILY_AGGREGATION", from, to);
+
+        assertThat(result).containsExactly(LocalDate.of(2026, 10, 11), LocalDate.of(2026, 10, 13));
+    }
 }

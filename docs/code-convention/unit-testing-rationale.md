@@ -185,7 +185,7 @@ class OrderIntegrationTest { }
 초안은 `src/integrationTest` 소스셋을 따로 두어 Gradle 이 둘을 갈랐다. 통합 테스트를 권장
 대상에서 빼면서 그 소스셋을 없앴고, 지금은 단위와 통합이 같은 `src/test` 에 있다.
 
-실행 기록이 `test.exec` 하나로 모이므로 커버리지 숫자가 어디서 나왔는지 Gradle 은 모른다.
+실행 기록이 `test.exec` 과 `integrationTest.exec` 으로 갈려 Gradle 이 둘을 가린다(#1069). 게이트는 `test.exec` 만 읽는다.
 남은 단서가 이름뿐이라 `~IntegrationTest` 를 `TestPlacementTest` 가 강제한다. 통합 테스트가
 드물다는 전제에 기대는 방어이고, 전제가 깨지면 소스셋을 다시 나눈다.
 

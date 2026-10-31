@@ -124,7 +124,11 @@ public class FunnelEventRecorder {
         }
     }
 
-    private static ThreadFactory daemonThreads() {
+    /*
+     * 데몬으로 만들지 않으면 이 풀의 스레드가 JVM 종료를 붙잡는다.
+     * 패키지 범위로 두어 테스트가 그 성질을 직접 본다. 위의 Executor 를 받는 생성자와 같은 이유다.
+     */
+    static ThreadFactory daemonThreads() {
         AtomicInteger sequence = new AtomicInteger();
         return task -> {
             Thread thread = new Thread(task, "funnel-event-" + sequence.incrementAndGet());
