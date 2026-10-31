@@ -22,13 +22,13 @@
 
 lc-infra 의 `member-env.sh up --sha <커밋>` 으로 운영과 같은 인프라를 자기 AWS 계정에 한 벌 띄운다. 앱 이미지는 develop 커밋마다 GHCR 에 올라가는 `ghcr.io/lunch-catch/lc-backend:<SHA>` 다. 리소스 접두사는 `lunchcatch-lt` 이고, 같은 계정에 운영이 떠 있으면 띄우지 않는다.
 
-| 자리 | 구성 |
+서버 크기와 대수, DB 와 캐시의 등급, 부하 생성기의 인스턴스는 lc-infra 의 `docs/system-design/런치캐치_팀원_부하시험환경.md` 1절이 갖는다. 운영과 무엇이 다른지도 거기 있다. 아래는 이 시험이 그 위에 정하는 것이다.
+
+| 자리 | 이 시험의 조건 |
 |---|---|
-| 앱 | t3.small 3대, 서버마다 DB 커넥션 풀 8 |
-| 배치 | t3.small 2대 |
-| DB | RDS MySQL 8.4(db.t4g.micro, 다중 AZ) |
-| 캐시 | ElastiCache Valkey 9.0(cache.t4g.micro 2노드) |
-| 부하 생성기 | m7i-flex.large, k6 1.7.1 |
+| 앱 대수 | 3대로 고정한다. 아래에 이유와 명령이 있다 |
+| 앱의 DB 커넥션 풀 | 서버마다 8. 7장이 이 값으로 커넥션 풀 병목을 가른다 |
+| k6 | 1.7.1 |
 
 **앱은 3대로 고정한다.** 앱 오토스케일링 그룹은 요청 수 기준으로 2대에서 3대까지 늘어난다. 회차 도중에 늘면 회차마다 조건이 달라 버전끼리 비교할 수 없다. `up` 뒤에 그룹의 최소와 원하는 대수를 3으로 올린다. `up` 을 다시 부르면 Terraform 이 되돌리므로 회차 전에 대수를 확인한다.
 
@@ -39,7 +39,7 @@ aws autoscaling update-auto-scaling-group --auto-scaling-group-name lunchcatch-l
 
 ## 3. 데이터
 
-`loadtest/data/gen_adserving.py` 가 만든다. 그날 예약과 후보는 넣지 않고 00:00 묶음이 만든다.
+`loadtest/adserving/gen_data.py` 가 만든다. 그날 예약과 후보는 넣지 않고 00:00 묶음이 만든다.
 
 | 데이터 | 값 |
 |---|---|
@@ -106,7 +106,7 @@ aws autoscaling update-auto-scaling-group --auto-scaling-group-name lunchcatch-l
 
 ## 6. 돌리는 순서
 
-`loadtest/aws/adserving.sh` 가 인스턴스에 SSM 으로 스크립트를 보내 돌린다. `AWS_PROFILE` 은 `member-env.sh up` 을 돌린 계정의 프로필이다. 시나리오와 시드 생성기는 떠 있는 앱과 같은 커밋(SSM `current-sha`)에서 받는다. `LOADTEST_REF` 로 브랜치나 커밋을 따로 고를 수 있다.
+`loadtest/adserving/run.sh` 가 인스턴스에 SSM 으로 스크립트를 보내 돌린다. `AWS_PROFILE` 은 `member-env.sh up` 을 돌린 계정의 프로필이다. 시나리오와 시드 생성기는 떠 있는 앱과 같은 커밋(SSM `current-sha`)에서 받는다. `LOADTEST_REF` 로 브랜치나 커밋을 따로 고를 수 있다.
 
 환경은 한 번만 띄운다. 첫 버전 뒤로는 버전마다 `switch` 와 `reset` 으로 바꾸고 2~4를 다시 한다(5장). `switch` 는 GHCR 에 그 커밋의 이미지가 있는지 먼저 보고, 없으면 아무것도 바꾸지 않고 멈춘다.
 
@@ -115,22 +115,22 @@ aws autoscaling update-auto-scaling-group --auto-scaling-group-name lunchcatch-l
 AWS_PROFILE=<프로필> ./scripts/member-env.sh up --sha <이미지>     # lc-infra 에서
 
 # 2. 데이터를 넣고 그날 00:00 묶음을 다시 돌린다
-AWS_PROFILE=<프로필> loadtest/aws/adserving.sh seed 40000
-AWS_PROFILE=<프로필> loadtest/aws/adserving.sh prepare
+AWS_PROFILE=<프로필> loadtest/adserving/run.sh seed 40000
+AWS_PROFILE=<프로필> loadtest/adserving/run.sh prepare
 
 # 3. 워밍업과 측정 3회
-AWS_PROFILE=<프로필> loadtest/aws/adserving.sh run v1-warmup 30030001 100 1m
-AWS_PROFILE=<프로필> loadtest/aws/adserving.sh run v1-run1 30000001
-AWS_PROFILE=<프로필> loadtest/aws/adserving.sh run v1-run2 30010001
-AWS_PROFILE=<프로필> loadtest/aws/adserving.sh run v1-run3 30020001
+AWS_PROFILE=<프로필> loadtest/adserving/run.sh run v1-warmup 30030001 100 1m
+AWS_PROFILE=<프로필> loadtest/adserving/run.sh run v1-run1 30000001
+AWS_PROFILE=<프로필> loadtest/adserving/run.sh run v1-run2 30010001
+AWS_PROFILE=<프로필> loadtest/adserving/run.sh run v1-run3 30020001
 
 # 4. 회차마다 출력된 구간으로 서버 지표를 모은다. 행 수는 마지막 회차가 끝나고 10초 뒤에 맞대 본다
-AWS_PROFILE=<프로필> loadtest/aws/adserving.sh metrics <시작 ms> <끝 ms>
-AWS_PROFILE=<프로필> loadtest/aws/adserving.sh rows
+AWS_PROFILE=<프로필> loadtest/adserving/run.sh metrics <시작 ms> <끝 ms>
+AWS_PROFILE=<프로필> loadtest/adserving/run.sh rows
 
 # 다음 버전: 앱과 배치를 그 이미지로 다시 띄우고 비운 뒤 2~4를 다시 한다. 앱이 3대인지 먼저 확인한다
-AWS_PROFILE=<프로필> loadtest/aws/adserving.sh switch <다음 이미지>
-AWS_PROFILE=<프로필> loadtest/aws/adserving.sh reset
+AWS_PROFILE=<프로필> loadtest/adserving/run.sh switch <다음 이미지>
+AWS_PROFILE=<프로필> loadtest/adserving/run.sh reset
 
 # 5. 대시보드를 남기고 환경을 내린다(lc-infra 에서). --lt 가 부하 시험 환경을 가리킨다
 AWS_PROFILE=<프로필> ./scripts/loadtest-snapshot.sh --lt --label adserving-v1-run1 --from <시작 ms> --to <끝 ms> --dash fm-loadtest --dash fm-adserving
@@ -143,7 +143,7 @@ AWS_PROFILE=<프로필> ./scripts/member-env.sh down
 
 ## 7. 모으는 지표
 
-회차마다 아래를 남긴다. 어느 쪽이 병목인지 가르고 버전을 올린 이유를 확인하는 데 쓴다. `loadtest/aws/adserving.sh metrics` 가 k6 밖의 지표를 회차 구간으로 뽑는다.
+회차마다 아래를 남긴다. 어느 쪽이 병목인지 가르고 버전을 올린 이유를 확인하는 데 쓴다. `loadtest/adserving/run.sh metrics` 가 k6 밖의 지표를 회차 구간으로 뽑는다.
 
 | 자리 | 지표 | 보는 것 |
 |---|---|---|
@@ -159,11 +159,8 @@ AWS_PROFILE=<프로필> ./scripts/member-env.sh down
 
 ## 8. 결과를 남기는 곳
 
+이 디렉터리가 함께 갖는다. 조건과 결과를 떨어뜨려 두면 다음 버전을 재려는 사람이 둘을 따로 찾는다. 이 문서는 결과를 담지 않는다.
+
 - 측정한 커밋에 `adserving-{쓰기}-v{버전}` 태그를 붙인다.
-- 결과는 `docs/troubleshooting/adserving/` 에 버전마다 둔다. 이 문서는 결과를 담지 않는다.
-
-## 9. 아직 정하지 못한 것
-
-| 항목 | 정할 때 |
-|---|---|
-| 부하 생성기의 `refresh.sh` 는 lc-backend `main` 의 `loadtest/mint-tokens.py` 를 찾는데 그 파일이 없다. lc-infra 가 받는 브랜치를 고를 수 있게 하고 그 파일이 없으면 토큰 찍기를 건너뛰게 고친다. 그때까지 `loadtest/aws/adserving.sh` 가 생성기에서 브랜치를 직접 받는다 | lunch-catch/lc-infra#42 |
+- **이 시험은 쓰기 방식마다 문서 하나를 둔다.** 노출 수집은 `노출_수집_부하_시험_결과.md` 가 v1 부터 v3b 까지를 갖는다. 버전끼리 비교하는 것이 목적이라 네 버전이 한 문서에 나란히 있어야 읽힌다. 다른 시험이 이 모양을 따를 이유는 없다.
+- 대시보드 PNG 는 버전마다 `impression-v{버전}/` 에 둔다.

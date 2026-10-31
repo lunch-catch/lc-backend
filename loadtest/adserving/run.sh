@@ -3,13 +3,13 @@
 # lc-infra 의 member-env.sh 로 띄운 부하 시험 환경에서 광고 서빙 시험을 돌린다(#997).
 # 인스턴스에 SSM Run Command 로 스크립트를 보내고 끝날 때까지 기다려 출력을 보인다.
 #
-#   AWS_PROFILE=<프로필> loadtest/aws/adserving.sh seed [회원 수]          시험 데이터를 RDS 에 넣는다
-#   AWS_PROFILE=<프로필> loadtest/aws/adserving.sh prepare                 그날 00:00 묶음을 다시 돌린다
-#   AWS_PROFILE=<프로필> loadtest/aws/adserving.sh run <이름> <회원 시작 번호> [초당 피드] [유지 시간]
-#   AWS_PROFILE=<프로필> loadtest/aws/adserving.sh metrics <시작 ms> <끝 ms>  그 구간의 서버 지표
-#   AWS_PROFILE=<프로필> loadtest/aws/adserving.sh rows                    시험 데이터의 행 수
-#   AWS_PROFILE=<프로필> loadtest/aws/adserving.sh switch <sha>            앱과 배치를 그 커밋 이미지로 다시 띄운다. GHCR 에 있어야 한다
-#   AWS_PROFILE=<프로필> loadtest/aws/adserving.sh reset [회원 수]         Valkey 를 비우고 시험 데이터를 다시 넣는다
+#   AWS_PROFILE=<프로필> loadtest/adserving/run.sh seed [회원 수]          시험 데이터를 RDS 에 넣는다
+#   AWS_PROFILE=<프로필> loadtest/adserving/run.sh prepare                 그날 00:00 묶음을 다시 돌린다
+#   AWS_PROFILE=<프로필> loadtest/adserving/run.sh run <이름> <회원 시작 번호> [초당 피드] [유지 시간]
+#   AWS_PROFILE=<프로필> loadtest/adserving/run.sh metrics <시작 ms> <끝 ms>  그 구간의 서버 지표
+#   AWS_PROFILE=<프로필> loadtest/adserving/run.sh rows                    시험 데이터의 행 수
+#   AWS_PROFILE=<프로필> loadtest/adserving/run.sh switch <sha>            앱과 배치를 그 커밋 이미지로 다시 띄운다. GHCR 에 있어야 한다
+#   AWS_PROFILE=<프로필> loadtest/adserving/run.sh reset [회원 수]         Valkey 를 비우고 시험 데이터를 다시 넣는다
 #
 # 시나리오와 시드 생성기는 떠 있는 앱과 같은 커밋(SSM current-sha)에서 받는다. 값이 없으면 develop 이다.
 # LOADTEST_REF 로 브랜치나 커밋을 따로 고를 수 있다.
@@ -113,11 +113,17 @@ cd \"\$DIR\"
 JWT=\$(aws ssm get-parameter --name /$PROJECT/jwt-signing-key --with-decryption --region $REGION --query Parameter.Value --output text)
 "
 
+#
+# 시드는 앱 서버에서 돈다. DB 보안 그룹이 부하 생성기를 받지 않아서다(부하 시험 문서 3장).
+# 앱 서버에는 저장소 사본이 없어 생성기만 raw 로 받는다. 경로가 $REF 에 박히므로
+# 이 파일을 옮기면 그 커밋부터만 받힌다. 경로를 옮긴 커밋보다 앞선 ref 를 쓸 때는
+# LOADTEST_REF 를 이 커밋 이후로 준다 (#1080).
+#
 seed() {
   remote "$(instance app)" 900 "set -euo pipefail
 $DB_ENV
 rm -rf /tmp/lt && mkdir -p /tmp/lt && cd /tmp/lt
-curl -fsSL https://raw.githubusercontent.com/lunch-catch/lc-backend/$REF/loadtest/data/gen_adserving.py -o gen.py
+curl -fsSL https://raw.githubusercontent.com/lunch-catch/lc-backend/$REF/loadtest/adserving/gen_data.py -o gen.py
 docker run --rm -v /tmp/lt:/w python:3.12-slim python /w/gen.py --date \"\$D\" --members $members --stores 1000 > seed.sql
 mysql < seed.sql
 mysql -N -e \"select 'member', count(*) from member where member_id >= 30000001;

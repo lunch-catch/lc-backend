@@ -1,6 +1,6 @@
 # 광고 서빙 부하 시험의 원천 데이터 SQL 을 만든다(#997). 그날 예약과 후보는 넣지 않고 00:00 묶음이 만든다.
 #
-#   python3 loadtest/data/gen_adserving.py --date 2026-10-27 > build/loadtest-adserving.sql
+#   python3 loadtest/adserving/gen_data.py --date 2026-10-27 > build/loadtest-adserving.sql
 #
 # 번호는 3,000만 대역(B = 30000000)이다. 다시 돌리면 그 대역의 행과 그날 배치 기록을 지우고 다시 넣는다.
 # 부하 시험 DB 와 로컬에서만 쓴다. 공유 환경의 배치 기록을 지우므로 개발과 운영에 넣지 않는다.
@@ -51,7 +51,7 @@ owners = range(B + 1, B + args.stores + 1)
 members = range(B + 1, B + args.members + 1)
 at = "TIMESTAMP(DATE_SUB(@d, INTERVAL 30 DAY), '09:00:00')"
 
-w(f'''-- 광고 서빙 부하 시험 원천 데이터(loadtest/data/gen_adserving.py 가 만든다)
+w(f'''-- 광고 서빙 부하 시험 원천 데이터(loadtest/adserving/gen_data.py 가 만든다)
 SET @d = DATE('{args.date}');
 SET @lo = {B + 1};
 SET @hi = {B + 999_999};

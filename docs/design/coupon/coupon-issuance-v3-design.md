@@ -10,7 +10,7 @@ HTTP 응답은 요청마다 따로 반환하며 DB 커밋 뒤에만 발급 성�
 복구에 성공한 요청이 정상 발급을 이어가는 조건은 [v2의 복구 시작 조건](./coupon-issuance-v2-design.md#71-복구를-시작하는-조건)이 갖는다.
 아래 그림은 정상 발급 한 번을 나타낸다. 복구할 수 있는 미발급 오류가 나면 복구 후 같은 요청으로 한 번만 이 경로를 다시 진행한다.
 설정값과 HTTP 계약은 [API 설계](./coupon-api-design.md#묶음으로-처리하는-쿠폰-발급), [발급 명세](../../api-spec/coupon-api-spec.md#쿠폰-발급)를 따른다.
-AWS에서 세 번 측정한 결과는 [쿠폰 v3 부하 시험 결과](../../troubleshooting/coupon/coupon-v3-load-test-results.md)에 있다. 측정 범위는 [통합 요약](../../troubleshooting/coupon/coupon-load-test-summary.md)을 따른다.
+AWS에서 세 번 측정한 결과는 [쿠폰 v3 부하 시험 결과](loadtest/coupon-v3-load-test-results.md)에 있다. 측정 범위는 [통합 요약](loadtest/coupon-load-test-summary.md)을 따른다.
 
 ## 1. 클래스와 스레드의 책임
 

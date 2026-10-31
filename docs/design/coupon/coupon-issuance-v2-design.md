@@ -9,7 +9,7 @@ v2는 요청마다 다른 재고 순번을 Redis에서 예약하고 MySQL에서 
 
 [v1 설계도](./coupon-issuance-v1-design.md)에서 재고 선택의 책임을 분리했다.
 여러 요청을 한 번에 커밋하는 구조는 [v3 설계도](./coupon-issuance-v3-design.md)다.
-AWS에서 세 번 측정한 결과는 [쿠폰 v2 부하 시험 결과](../../troubleshooting/coupon/coupon-v2-load-test-results.md)에 있다.
+AWS에서 세 번 측정한 결과는 [쿠폰 v2 부하 시험 결과](loadtest/coupon-v2-load-test-results.md)에 있다.
 
 ## 1. 구성 요소와 데이터의 책임
 
@@ -505,7 +505,7 @@ DB에 저장된 발급 상태로 세 키를 다시 만들면 응답 유실 전�
 | [CouponSequenceService](../../../src/main/java/com/lunchcatch/coupon/service/CouponSequenceService.java) | 로컬 차단과 트랜잭션 종료 결과별 반납·차단을 구현한다. |
 | [CouponSequenceRecoveryService](../../../src/main/java/com/lunchcatch/coupon/service/CouponSequenceRecoveryService.java) | DB 배타 잠금, 수량 검증, 복구 시도 조정과 재개를 구현한다. |
 | [CouponSequenceServiceTest](../../../src/test/java/com/lunchcatch/coupon/service/CouponSequenceServiceTest.java) | 롤백 확정·결과 불명·예약 응답 유실·반납 실패의 분기를 검증한다. |
-| [CouponIntegrationTest의 SequenceRecovery](../../../src/test/java/com/lunchcatch/coupon/CouponIntegrationTest.java) | 늦은 반납과 재구축 전 예약, 완료 응답 유실과 오래된 pending, 키 유실, 진행 중 DB 작업을 기다리는 복구를 다룬다. |
+| [CouponIntegrationTest의 SequenceRecovery](../../../src/integrationTest/java/com/lunchcatch/coupon/CouponIntegrationTest.java) | 늦은 반납과 재구축 전 예약, 완료 응답 유실과 오래된 pending, 키 유실, 진행 중 DB 작업을 기다리는 복구를 다룬다. |
 | [장애 시험 결과](../../troubleshooting/coupon/coupon-fault-test-results.md) | 로컬 전용 프록시 테스트로 확인한 연결 끊김·응답 지연과 과거 서버 종료 시험의 결과를 기록한다. 시험 코드는 저장소에 포함하지 않는다. |
 
 현재 통합 테스트는 v3 묶음 경로에서 공통 순번·복구 코드를 호출한다.

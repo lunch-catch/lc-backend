@@ -4,21 +4,26 @@
 
 | 도메인 | 문서 |
 |---|---|
-| 광고 서빙 | [`docs/design/adserving/loadtest/adserving_부하_시험.md`](../docs/design/adserving/loadtest/adserving_부하_시험.md) |
+| 광고 서빙 | [`docs/design/adserving/loadtest/`](../docs/design/adserving/loadtest/adserving_부하_시험.md) |
+| 쿠폰 발급 | [`docs/design/coupon/loadtest/`](../docs/design/coupon/loadtest/coupon-load-test-summary.md) |
 
 부하 시험 환경을 띄우고 내리는 일은 lc-infra 가 갖는다(`docs/wiki/팀원-부하시험-환경.md`, `scripts/member-env.sh`).
 
 ## 디렉터리
 
+**도메인 하나가 디렉터리 하나를 갖는다.** 그 도메인의 시나리오와 생성기와 실행 스크립트를 함께 둔다. 종류로 나누지 않는다.
+
 | 경로 | 하는 일 |
 |---|---|
+| `{도메인}/` | 그 도메인의 k6 시나리오, 시험 데이터 생성기, 실행 스크립트 |
+| `{도메인}/run.sh` | lc-infra 로 띄운 환경에서 데이터 넣기, 회차 실행, 지표 모으기를 돌린다 |
+| `{도메인}/gen_data.py` | 그 도메인의 시험 데이터 SQL 을 만든다 |
 | `lib/` | 여러 도메인이 함께 쓰는 것. `token.js` 가 회원과 관리자의 Access Token 을 `JWT_SECRET` 으로 서명한다 |
-| `data/` | 도메인마다 시험 데이터 SQL 을 만드는 생성기 |
-| `{도메인}/` | 그 도메인의 k6 시나리오 |
-| `aws/` | lc-infra 로 띄운 환경에서 데이터 넣기, 회차 실행, 지표 모으기를 돌리는 스크립트 |
+
+지금 있는 도메인은 `adserving/` 하나다.
 
 ## 공통 규칙
 
 - 앱은 `loadtest` 프로필로 띄운다. 결제가 토스 대신 목을 쓴다.
 - 생성기의 SQL 은 부하 시험 DB 와 로컬에만 넣는다. 정해진 번호 대역의 행과 그날 배치 기록을 지우고 다시 넣는다.
-- 버전을 비교하려면 측정한 커밋과 조건을 함께 남긴다. 결과는 `docs/troubleshooting/{도메인}/` 에 버전마다 둔다.
+- 버전을 비교하려면 측정한 커밋과 조건을 함께 남긴다. 결과는 측정 조건과 같은 자리인 `docs/design/{도메인}/loadtest/` 에 둔다. 파일을 몇 개로 나눌지는 그 도메인이 정한다.
