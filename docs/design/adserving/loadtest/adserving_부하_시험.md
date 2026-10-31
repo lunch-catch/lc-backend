@@ -33,7 +33,7 @@ lc-infra 의 `member-env.sh up --sha <커밋>` 으로 운영과 같은 인프라
 **앱은 3대로 고정한다.** 앱 오토스케일링 그룹은 요청 수 기준으로 2대에서 3대까지 늘어난다. 회차 도중에 늘면 회차마다 조건이 달라 버전끼리 비교할 수 없다. `up` 뒤에 그룹의 최소와 원하는 대수를 3으로 올린다. `up` 을 다시 부르면 Terraform 이 되돌리므로 회차 전에 대수를 확인한다.
 
 ```bash
-aws autoscaling update-auto-scaling-group --auto-scaling-group-name lunchcatch-app \
+aws autoscaling update-auto-scaling-group --auto-scaling-group-name lunchcatch-lt-app \
   --min-size 3 --desired-capacity 3 --max-size 3
 ```
 
@@ -106,9 +106,9 @@ aws autoscaling update-auto-scaling-group --auto-scaling-group-name lunchcatch-a
 
 ## 6. 돌리는 순서
 
-`loadtest/aws/adserving.sh` 가 인스턴스에 SSM 으로 스크립트를 보내 돌린다. `AWS_PROFILE` 은 `member-env.sh up` 을 돌린 계정의 프로필이다. `LOADTEST_REF` 로 부하 생성기가 받을 lc-backend 브랜치를 고른다.
+`loadtest/aws/adserving.sh` 가 인스턴스에 SSM 으로 스크립트를 보내 돌린다. `AWS_PROFILE` 은 `member-env.sh up` 을 돌린 계정의 프로필이다. 시나리오와 시드 생성기는 떠 있는 앱과 같은 커밋(SSM `current-sha`)에서 받는다. `LOADTEST_REF` 로 브랜치나 커밋을 따로 고를 수 있다.
 
-환경은 한 번만 띄운다. 첫 버전 뒤로는 버전마다 `switch` 와 `reset` 으로 바꾸고 2~4를 다시 한다(5장). 시드 생성기는 `LOADTEST_REF` 의 브랜치에서 받는다.
+환경은 한 번만 띄운다. 첫 버전 뒤로는 버전마다 `switch` 와 `reset` 으로 바꾸고 2~4를 다시 한다(5장). `switch` 는 GHCR 에 그 커밋의 이미지가 있는지 먼저 보고, 없으면 아무것도 바꾸지 않고 멈춘다.
 
 ```bash
 # 1. 환경을 띄우고 앱을 3대로 고정한다(2장)
@@ -155,7 +155,7 @@ AWS_PROFILE=<프로필> ./scripts/member-env.sh down
 | 노출 저장과 릴레이 | 릴레이의 밀린 노출 최대(v2 부터), 노출 저장 큐의 최대, 큐가 차서 버린 수, 실패한 묶음 수, 쓰지 못하고 버린 행 수(v3 부터) | 응답 뒤 저장이 따라가는지. 버린 노출은 유실률에 들어간다 |
 | 부하 생성기 | 1분 평균 CPU 의 최대 | 생성기가 병목이 아닌지. 유지 구간에서 80% 를 넘으면 그 회차는 무효로 보고 다시 잰다 |
 
-대시보드는 회차가 끝난 직후, 환경을 내리기 전에 05 부하 시험(`fm-loadtest`)과 06 광고 서빙(`fm-adserving`)을 lc-infra 의 `loadtest-snapshot.sh` 로 남긴다. 환경을 내리면 Prometheus 의 기록도 함께 사라진다.
+대시보드는 회차가 끝난 직후, 환경을 내리기 전에 05 부하 시험(`fm-loadtest`)과 06 광고 서빙(`fm-adserving`)을 lc-infra 의 `loadtest-snapshot.sh --lt` 로 남긴다. 환경을 내리면 Prometheus 의 기록도 함께 사라진다.
 
 ## 8. 결과를 남기는 곳
 
