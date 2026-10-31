@@ -1,4 +1,4 @@
-package com.lunchcatch.campaign.service;
+package com.lunchcatch.campaign;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;

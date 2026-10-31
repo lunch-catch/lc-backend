@@ -330,7 +330,8 @@ curl http://localhost:8081/actuator/health
 ## 테스트와 게이트
 
 ```bash
-./gradlew check                        # 테스트, 커버리지 검증, 커버리지 데이터 확인
+./gradlew check                        # 단위, 통합, 커버리지 검증, 커버리지 데이터 확인
+./gradlew test                         # 단위만. 3분 안, 도커가 필요 없다
 ./gradlew test --tests '*FeedService*' # 고치는 동안은 이렇게 좁힌다
 ```
 

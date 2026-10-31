@@ -1,5 +1,6 @@
-package com.lunchcatch.campaign.service;
+package com.lunchcatch.campaign;
 
+import com.lunchcatch.campaign.service.StoreAudienceUpdaterImpl;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.when;
 

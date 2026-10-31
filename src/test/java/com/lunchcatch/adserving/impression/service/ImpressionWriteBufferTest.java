@@ -1,5 +1,6 @@
 package com.lunchcatch.adserving.impression.service;
 
+import org.springframework.context.SmartLifecycle;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
@@ -314,5 +315,16 @@ class ImpressionWriteBufferTest {
                 inside = false;
             }
         }
+    }
+
+    /*
+     * 멈추는 순서가 유실을 가른다. 웹 서버가 요청을 다 받은 뒤에 큐를 비워야 한다.
+     * 단계를 올리면 웹 서버와 같거나 먼저 멈춰서, 배포마다 큐에 남은 것이 사라진다.
+     * 0 이라는 값이 아니라 웹 서버보다 늦게 멈춘다는 관계를 본다.
+     */
+    @Test
+    void 웹_서버보다_늦게_멈추도록_낮은_단계에_둔다() {
+        assertThat(buffer.getPhase())
+                .isLessThan(SmartLifecycle.DEFAULT_PHASE - 1024);
     }
 }

@@ -1,5 +1,7 @@
-package com.lunchcatch.campaign.template.repository;
+package com.lunchcatch.campaign.template;
 
+import com.lunchcatch.campaign.template.repository.TemplateRepository;
+import com.lunchcatch.campaign.template.repository.TemplateVersionRepository;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.lunchcatch.campaign.AbstractCampaignIntegrationTest;

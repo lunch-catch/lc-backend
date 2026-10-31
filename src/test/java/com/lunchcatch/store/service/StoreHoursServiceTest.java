@@ -9,6 +9,7 @@ import com.lunchcatch.store.contract.StoreHoursSaveCommand;
 import com.lunchcatch.store.dto.StoreRegistrationProgressSnapshot;
 import com.lunchcatch.store.entity.StoreRegistrationProgress;
 import com.lunchcatch.store.entity.StoreRegistrationStep;
+import com.lunchcatch.store.exception.StoreErrorCode;
 import com.lunchcatch.store.exception.StoreException;
 import com.lunchcatch.store.repository.OwnerStoreQueryRepository;
 import com.lunchcatch.store.repository.StoreBusinessHourRepository;
@@ -224,5 +225,20 @@ class StoreHoursServiceTest {
             hours.set(0, hour);
             return hours;
         }));
+    }
+
+    /*
+     * 진행 상태 행이 없으면 거절한다. 온보딩을 시작하지 않은 점주이거나 그 행이 지워진 경우다.
+     * 여기서 통과시키면 아래 버전 비교가 NPE 로 떨어져 원인이 가려진다.
+     */
+    @Test
+    void 진행_상태가_없으면_거절한다() {
+        when(progresses.findByOwnerIdForUpdate(1L)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.saveOnboarding(1L, new StoreHoursSaveCommand(3L, week)))
+                .isInstanceOf(StoreException.class)
+                .hasFieldOrPropertyWithValue("errorCode", StoreErrorCode.REGISTRATION_PROGRESS_NOT_FOUND);
+
+        verifyNoInteractions(hours);
     }
 }

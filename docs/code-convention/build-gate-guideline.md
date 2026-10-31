@@ -20,7 +20,7 @@
 * `BLD-1-03` 기준이 `minimum = 1.00`인가
 * `BLD-1-04` 통합 테스트로 커버리지를 채우지 않는가
   계층을 가로지르는 테스트는 메서드를 지나가기만 해도 커버리지가 차서, 서비스 로직을 단위 테스트 없이 통과시킬 수 있다.
-  소스셋이 하나라 실행 기록이 `test.exec` 으로 모이므로 Gradle 이 둘을 가르지 못한다. 이름(`~IntegrationTest`)이 유일한 단서이고 판정은 리뷰어가 한다.
+  소스셋이 `src/test` 와 `src/integrationTest` 로 갈려 실행 기록도 `test.exec` 과 `integrationTest.exec` 으로 나뉜다. 게이트는 `test.exec` 만 읽어 **Gradle 이 판정한다**(#1069). 리뷰어가 눈으로 가릴 필요가 없다.
 * `BLD-1-05` `check`가 `jacocoTestCoverageVerification`과 `coverageDataCheck`에 의존하는가
 * `BLD-1-06` `jacocoTestReport`가 `sonar` 태스크보다 먼저 도는가
   순서가 바뀌면 SonarQube에 커버리지가 0으로 표시된다.

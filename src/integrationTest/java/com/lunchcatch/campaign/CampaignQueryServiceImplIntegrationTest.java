@@ -1,5 +1,6 @@
-package com.lunchcatch.campaign.service;
+package com.lunchcatch.campaign;
 
+import com.lunchcatch.campaign.service.CampaignQueryServiceImpl;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.lunchcatch.campaign.contract.AgeGroup;
