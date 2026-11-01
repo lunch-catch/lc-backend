@@ -1,16 +1,16 @@
 # 쿠폰 발급 v3 설계도: 작업자가 여러 요청을 한 트랜잭션으로 처리한다
 
 v3는 HTTP 요청을 서버 메모리의 대기열에 넣고 작업자가 꺼낸 요청들을 묶어 발급한다.
-Redis 순번 예약과 DB 기준 복구는 [v2 설계](./coupon-issuance-v2-design.md)를 유지한다.
+Redis 순번 예약과 DB 기준 복구는 [v2 설계](v2-design.md)를 유지한다.
 바뀐 경계는 발급 트랜잭션이다. 요청 하나 대신 묶음 하나가 트랜잭션 하나를 사용한다.
 HTTP 응답은 요청마다 따로 반환하며 DB 커밋 뒤에만 발급 성공을 전달한다.
 
 이 문서는 현재 묶음 발급 코드의 구성과 실행 순서를 그린다.
 6.1절은 요청 취소와 커밋 시작을 같은 상태로 판정하는 현재 구현을 설명한다.
-복구에 성공한 요청이 정상 발급을 이어가는 조건은 [v2의 복구 시작 조건](./coupon-issuance-v2-design.md#71-복구를-시작하는-조건)이 갖는다.
+복구에 성공한 요청이 정상 발급을 이어가는 조건은 [v2의 복구 시작 조건](v2-design.md#71-복구를-시작하는-조건)이 갖는다.
 아래 그림은 정상 발급 한 번을 나타낸다. 복구할 수 있는 미발급 오류가 나면 복구 후 같은 요청으로 한 번만 이 경로를 다시 진행한다.
-설정값과 HTTP 계약은 [API 설계](./coupon-api-design.md#묶음으로-처리하는-쿠폰-발급), [발급 명세](../../api-spec/coupon-api-spec.md#쿠폰-발급)를 따른다.
-AWS에서 세 번 측정한 결과는 [쿠폰 v3 부하 시험 결과](loadtest/coupon-v3-load-test-results.md)에 있다. 측정 범위는 [통합 요약](loadtest/coupon-load-test-summary.md)을 따른다.
+설정값과 HTTP 계약은 [API 설계](../coupon-api-design.md#묶음으로-처리하는-쿠폰-발급), [발급 명세](../../../api-spec/coupon-api-spec.md#쿠폰-발급)를 따른다.
+AWS에서 세 번 측정한 결과는 [쿠폰 v3 부하 시험 결과](../loadtest/coupon-v3-load-test-results.md)에 있다. 측정 범위는 [통합 요약](../loadtest/coupon-load-test-summary.md)을 따른다.
 
 ## 1. 클래스와 스레드의 책임
 
@@ -22,7 +22,7 @@ AWS에서 세 번 측정한 결과는 [쿠폰 v3 부하 시험 결과](loadtest/
 | `CouponIssueBatcher.process` | 묶음 서비스를 호출하고 커밋 후 Redis 예약을 완료한다. 각 요청의 Future에 결과를 전달한다. |
 | `CouponBatchIssuanceService.issueBatch` | 묶음 하나의 자격·중복·한도를 판정하고 재고·카운터·회원 쿠폰을 한 트랜잭션으로 저장한다. |
 | `CouponBatchIssueRepository` | 여러 행을 다루는 SQL을 실행한다. JdbcTemplate은 서비스의 Spring 트랜잭션과 같은 커넥션을 사용한다. |
-| `CouponSoldOutNotificationService` | 별도 작업자 하나가 소진 통보를 처리한다. 중복 접수와 실패 재시도의 기준은 [API 설계](./coupon-api-design.md#찜과-소진-contract-연결)를 따른다. |
+| `CouponSoldOutNotificationService` | 별도 작업자 하나가 소진 통보를 처리한다. 중복 접수와 실패 재시도의 기준은 [API 설계](../coupon-api-design.md#찜과-소진-contract-연결)를 따른다. |
 
 작업자 수는 동시에 실행할 발급 묶음 수를 정한다. DB 커넥션 풀의 크기와 별도 설정이다.
 이 제한은 묶음 발급 경로에 적용하며 쿠폰 조회·사용·복구까지 같은 수로 제한하지 않는다.
@@ -125,7 +125,7 @@ Redis 예약은 자격·중복·한도 판정 뒤에 둔다. 거절할 요청이
 
 회원 상태는 `findCurrentStatuses`로 묶음당 한 번 조회하고 찜은 기존 공개 계약인 `findWishedMemberIds`로 캠페인당 한 번 조회한다.
 반환되지 않은 회원은 ACTIVE로 취급하지 않으며 반환된 찜 집합에 없는 회원은 찜 자격을 거절한다.
-공개 계약의 입력 상한은 [API 설계](./coupon-api-design.md#트랜잭션과-잠금)를 따른다.
+공개 계약의 입력 상한은 [API 설계](../coupon-api-design.md#트랜잭션과-잠금)를 따른다.
 다른 도메인의 내부 테이블을 JOIN해 공개 계약을 우회하지 않는다.
 
 ## 4. 같은 묶음과 서로 다른 묶음의 동시성을 나눠 제어한다
@@ -180,7 +180,7 @@ sequenceDiagram
 Redis 호출이 실패하면 어느 이벤트의 상태도 알 수 없으므로 묶음의 이벤트를 모두 차단하고 묶음을 실패시킨다.
 작업자는 실패한 묶음을 나누거나 자동으로 재시도하지 않는다. 묶음의 모든 요청에 원래 오류를 전달한다.
 요청별 업무 거절과 묶음 전체 실패의 구분은 유지한다.
-자동 재시도를 다시 추가할 때의 조건과 상한은 [장애 처리 설계](./coupon_장애_처리_설계.md#발급-묶음의-자동-재시도)가 갖는다.
+자동 재시도를 다시 추가할 때의 조건과 상한은 [장애 처리 설계](../coupon_장애_처리_설계.md#발급-묶음의-자동-재시도)가 갖는다.
 불확실한 커밋 결과의 순번을 무조건 반납하지 않는 원칙은 v2와 같다.
 
 ## 6. 대기열과 요청 수명
@@ -201,7 +201,7 @@ Redis 호출이 실패하면 어느 이벤트의 상태도 알 수 없으므로 
 예약과 메모리 대기열은 별개의 수명이다. 대기열에 넣을 때 Redis 순번을 미리 예약하지 않는다.
 소진 통보는 커밋과 예약 완료 뒤 DB의 실제 소진을 확인해 수행한다.
 분석 이벤트도 커밋 뒤 수신하며 후속 반영의 실패로 발급을 롤백하지 않는다.
-종료·장애별 세부 처리는 [장애 처리 설계](./coupon_장애_처리_설계.md)가 갖는다.
+종료·장애별 세부 처리는 [장애 처리 설계](../coupon_장애_처리_설계.md)가 갖는다.
 
 ### 6.1 요청 취소와 발급 작업의 기한을 연결한다
 
@@ -236,7 +236,7 @@ DB 커넥션 획득·잠금·쿼리와 Redis 호출에는 기존 의존 대상�
 트랜잭션 제한 시간만으로 모든 대기를 끊을 수 있다고 가정하지 않는다.
 드라이버가 취소를 반영하는 동안 기한을 넘길 수 있으며 실행 중인 Java 스레드를 강제로 종료하지 않는다.
 beforeCommit에서 커밋 시작을 표시한 뒤에는 취소 실패로 응답하지 않고 실제 결과를 기다린다. 따라서 커밋이나 정리 중에는 최초 처리 기한을 넘길 수 있다.
-커밋 결과 불명일 때는 순번을 반납하지 않고 [DB 기준 복구](./coupon-issuance-v2-design.md#7-복구는-db-작업의-종료를-기다린-뒤-수행한다)로 확정한다.
+커밋 결과 불명일 때는 순번을 반납하지 않고 [DB 기준 복구](v2-design.md#7-복구는-db-작업의-종료를-기다린-뒤-수행한다)로 확정한다.
 
 취소된 Future에 성공을 다시 전달하지 않더라도 커밋 뒤 Redis 완료와 롤백 뒤 반납은 생략하지 않는다.
 이 정리 작업은 만료된 요청의 기한과 별도로 제한 시간을 둔다. 정리에 실패하면 이벤트를 차단하고 복구로 넘긴다.
@@ -245,14 +245,14 @@ Redis 명령 제한 시간은 기존 1초이며 완료가 실패하면 차단을
 
 구현 검증은 대기열 취소, 꺼내기와 취소의 경쟁, 예약 후 취소의 묶음 롤백, 커밋과 취소의 경쟁을 포함한다.
 HTTP 대기 종료 뒤에도 완료·반납이 수행되는지와 커밋 결과 불명일 때 재발급하지 않는지도 확인한다.
-배포 중 같은 취소 상태를 사용하는 순서는 [발급 작업자의 종료](./coupon_장애_처리_설계.md#발급-작업자의-종료)가 갖는다.
+배포 중 같은 취소 상태를 사용하는 순서는 [발급 작업자의 종료](../coupon_장애_처리_설계.md#발급-작업자의-종료)가 갖는다.
 
 ## 7. 구현과 설계도의 대응
 
-- [CouponIssueBatcher](../../../src/main/java/com/lunchcatch/coupon/service/CouponIssueBatcher.java)는 접수·묶음 구성·예약 완료·결과 전달을 구현한다.
-- [CouponBatchIssuanceService](../../../src/main/java/com/lunchcatch/coupon/service/CouponBatchIssuanceService.java)는 묶음의 판정 순서와 DB 트랜잭션을 구현한다.
-- [CouponBatchIssueRepository](../../../src/main/java/com/lunchcatch/coupon/repository/CouponBatchIssueRepository.java)는 잠금 조회와 다건 쓰기를 구현한다.
-- [발급 전달값](./coupon_구조와_동작_설계.md#발급과-예약의-전달값)은 요청·예약·판정·최종 결과의 데이터 구조를 정의한다.
+- [CouponIssueBatcher](../../../../src/main/java/com/lunchcatch/coupon/service/CouponIssueBatcher.java)는 접수·묶음 구성·예약 완료·결과 전달을 구현한다.
+- [CouponBatchIssuanceService](../../../../src/main/java/com/lunchcatch/coupon/service/CouponBatchIssuanceService.java)는 묶음의 판정 순서와 DB 트랜잭션을 구현한다.
+- [CouponBatchIssueRepository](../../../../src/main/java/com/lunchcatch/coupon/repository/CouponBatchIssueRepository.java)는 잠금 조회와 다건 쓰기를 구현한다.
+- [발급 전달값](../coupon_구조와_동작_설계.md#발급과-예약의-전달값)은 요청·예약·판정·최종 결과의 데이터 구조를 정의한다.
 
 ## 8. 후속 검토 항목
 

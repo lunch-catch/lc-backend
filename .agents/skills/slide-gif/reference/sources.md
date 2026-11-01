@@ -21,7 +21,7 @@ git clone --depth 1 https://github.com/lunch-catch/lc-infra .slides/lc-infra
 | 한 도메인의 내부 | `docs/design/{도메인}/` 의 구조와 동작 설계서, `src/main/java/com/lunchcatch/{도메인}/` 의 패키지 | |
 | 피드 배정 | `adserving/engine/FeedAssembler.java`, `AllocationOrder.java`, `engine/filter/`, `engine/score/` | |
 | 노출 검증과 과금 | `adserving/impression/service/ImpressionService.java`, `adserving/feed/repository/ServeRecordRepository.java`, `billing/` 의 차감 서비스 | |
-| 선착순 쿠폰 발급 | `docs/design/coupon/` 의 발급 설계서 중 번호가 가장 큰 것(지금은 `coupon-issuance-v3-design.md`), `coupon/service/CouponIssueBatcher.java`, `CouponCommandService.java`, `CouponSequenceService.java`, `application.yml` 의 `coupon.issue` | |
+| 선착순 쿠폰 발급 | `docs/design/coupon/` 의 발급 설계서 중 번호가 가장 큰 것(지금은 `issuance/v3-design.md`), `coupon/service/CouponIssueBatcher.java`, `CouponCommandService.java`, `CouponSequenceService.java`, `application.yml` 의 `coupon.issue` | |
 | 00:00 배치 | `ops/job/DailyJobScheduler.java`, `ops/scheduler/DailyJob.java`, 각 도메인 `job/` 의 `@Order` 값 | |
 | 배치 운영 | `docs/design/ops/런치캐치_배치_운영.md` | `terraform/compute.tf` 의 배치 ASG |
 | API 서버 확장 | | `terraform/compute.tf` 의 `aws_autoscaling_group.app` 과 `aws_autoscaling_policy`, `terraform/variables.tf` |

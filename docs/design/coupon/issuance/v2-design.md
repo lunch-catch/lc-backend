@@ -7,9 +7,9 @@ v2는 요청마다 다른 재고 순번을 Redis에서 예약하고 MySQL에서 
 현재 공통 코드는 여러 건을 받는 `reserveAll`을 사용하며 v2의 단건 예약은 한 건을 예약하는 흐름으로 그린다.
 7.1절은 복구 성공 후 같은 요청의 발급을 이어가는 조건을 설명한다.
 
-[v1 설계도](./coupon-issuance-v1-design.md)에서 재고 선택의 책임을 분리했다.
-여러 요청을 한 번에 커밋하는 구조는 [v3 설계도](./coupon-issuance-v3-design.md)다.
-AWS에서 세 번 측정한 결과는 [쿠폰 v2 부하 시험 결과](loadtest/coupon-v2-load-test-results.md)에 있다.
+[v1 설계도](v1-design.md)에서 재고 선택의 책임을 분리했다.
+여러 요청을 한 번에 커밋하는 구조는 [v3 설계도](v3-design.md)다.
+AWS에서 세 번 측정한 결과는 [쿠폰 v2 부하 시험 결과](../loadtest/coupon-v2-load-test-results.md)에 있다.
 
 ## 1. 구성 요소와 데이터의 책임
 
@@ -112,7 +112,7 @@ DB 커밋 뒤 Redis 완료 전에는 해당 순번이 아직 pending에 들어 �
 DB 기준 재구축도 전량 발급을 확인했으면 SOLD_OUT으로 마친다.
 SOLD_OUT에서는 available과 pending이 모두 비어 있고 completed가 total과 같아야 한다.
 이전 코드가 남긴 READY와 `completed == total` 조합도 소진으로 읽으며 예약 Lua가 같은 조합을 만나면 SOLD_OUT으로 맞춘다.
-소진 사전 응답과 광고 후보 통보의 실행 위치는 [API 설계](./coupon-api-design.md#찜과-소진-contract-연결)를 따른다.
+소진 사전 응답과 광고 후보 통보의 실행 위치는 [API 설계](../coupon-api-design.md#찜과-소진-contract-연결)를 따른다.
 
 ### 2.5 세 키의 수량은 함께 맞아야 한다
 
@@ -368,7 +368,7 @@ Redis 단절 순간 모든 서버에 차단이 동시에 전파된다고 가정�
 ### 7.1 복구를 시작하는 조건
 
 차단을 확인하거나 순번 발급기의 이상을 만난 요청이 복구를 시도한다. 별도 복구 스케줄러는 없다.
-발급 오픈 전의 큐는 [발급 큐 사전 생성](./coupon-batch-design.md#발급-큐-사전-생성) 배치가 미리 만든다. 이 배치는 차단을 풀지 않으며 오픈 뒤 생긴 이상은 이 절의 복구가 맡는다.
+발급 오픈 전의 큐는 [발급 큐 사전 생성](../coupon-batch-design.md#발급-큐-사전-생성) 배치가 미리 만든다. 이 배치는 차단을 풀지 않으며 오픈 뒤 생긴 이상은 이 절의 복구가 맡는다.
 복구가 성공하면 아래 조건을 충족하는 요청은 같은 HTTP 요청 안에서 실제 발급까지 진행한다.
 요청이 없으면 오래된 예약 검사와 복구도 진행하지 않는다.
 
@@ -413,7 +413,7 @@ v3에서는 해당 요청 한 건을 기존 배처에 접수하며 실제 DB 발
 
 복구와 발급 결과 대기는 최초 `wait-timeout`을 공유한다. 복구는 남은 시간을 트랜잭션 제한 시간으로 적용한다.
 요청 시작 전, DB 잠금 뒤, Redis 재구축 전과 재접수 전에 기한을 확인한다. Redis 호출은 기존 클라이언트 제한 시간을 사용한다.
-이미 실행 중인 작업의 취소와 모든 의존 호출의 대기 상한을 요청 기한에 맞추는 변경은 [v3 보완 설계](./coupon-issuance-v3-design.md#61-요청-취소와-발급-작업의-기한을-연결한다)로 남아 있다.
+이미 실행 중인 작업의 취소와 모든 의존 호출의 대기 상한을 요청 기한에 맞추는 변경은 [v3 보완 설계](v3-design.md#61-요청-취소와-발급-작업의-기한을-연결한다)로 남아 있다.
 재접수할 때 기한을 새로 시작하지 않으며 최초 큐 접수 시각이 있으면 그대로 전달한다.
 재접수한 발급은 자격·중복·한도·운영 상태를 다시 검사하므로 복구가 성공해도 소진이나 업무 거절로 끝날 수 있다.
 요청이 없을 때 복구되지 않는 한계와 복구를 수행한 요청의 응답 지연을 받아들이는 대신 스케줄러와 복구 대기자 관리를 추가하지 않는다.
@@ -499,18 +499,18 @@ DB에 저장된 발급 상태로 세 키를 다시 만들면 응답 유실 전�
 
 | 근거 | 확인할 내용 |
 |---|---|
-| [CouponSequenceRepository](../../../src/main/java/com/lunchcatch/coupon/repository/CouponSequenceRepository.java) | 키 이름과 순서, StringRedisTemplate 사용, meta 조회와 BLOCKED 기록, 재구축 적재를 구현한다. |
-| [reserve_many.lua](../../../src/main/resources/scripts/coupon/reserve_many.lua) | READY·오래된 예약·수량 검사와 순번 예약, 요청별 결과 코드를 구현한다. |
-| [complete.lua](../../../src/main/resources/scripts/coupon/complete.lua), [release.lua](../../../src/main/resources/scripts/coupon/release.lua) | 예약 ID를 확인한 완료와 반납을 구현한다. |
-| [CouponSequenceService](../../../src/main/java/com/lunchcatch/coupon/service/CouponSequenceService.java) | 로컬 차단과 트랜잭션 종료 결과별 반납·차단을 구현한다. |
-| [CouponSequenceRecoveryService](../../../src/main/java/com/lunchcatch/coupon/service/CouponSequenceRecoveryService.java) | DB 배타 잠금, 수량 검증, 복구 시도 조정과 재개를 구현한다. |
-| [CouponSequenceServiceTest](../../../src/test/java/com/lunchcatch/coupon/service/CouponSequenceServiceTest.java) | 롤백 확정·결과 불명·예약 응답 유실·반납 실패의 분기를 검증한다. |
-| [CouponIntegrationTest의 SequenceRecovery](../../../src/integrationTest/java/com/lunchcatch/coupon/CouponIntegrationTest.java) | 늦은 반납과 재구축 전 예약, 완료 응답 유실과 오래된 pending, 키 유실, 진행 중 DB 작업을 기다리는 복구를 다룬다. |
-| [장애 시험 결과](../../troubleshooting/coupon/coupon-fault-test-results.md) | 로컬 전용 프록시 테스트로 확인한 연결 끊김·응답 지연과 과거 서버 종료 시험의 결과를 기록한다. 시험 코드는 저장소에 포함하지 않는다. |
+| [CouponSequenceRepository](../../../../src/main/java/com/lunchcatch/coupon/repository/CouponSequenceRepository.java) | 키 이름과 순서, StringRedisTemplate 사용, meta 조회와 BLOCKED 기록, 재구축 적재를 구현한다. |
+| [reserve_many.lua](../../../../src/main/resources/scripts/coupon/reserve_many.lua) | READY·오래된 예약·수량 검사와 순번 예약, 요청별 결과 코드를 구현한다. |
+| [complete.lua](../../../../src/main/resources/scripts/coupon/complete.lua), [release.lua](../../../../src/main/resources/scripts/coupon/release.lua) | 예약 ID를 확인한 완료와 반납을 구현한다. |
+| [CouponSequenceService](../../../../src/main/java/com/lunchcatch/coupon/service/CouponSequenceService.java) | 로컬 차단과 트랜잭션 종료 결과별 반납·차단을 구현한다. |
+| [CouponSequenceRecoveryService](../../../../src/main/java/com/lunchcatch/coupon/service/CouponSequenceRecoveryService.java) | DB 배타 잠금, 수량 검증, 복구 시도 조정과 재개를 구현한다. |
+| [CouponSequenceServiceTest](../../../../src/test/java/com/lunchcatch/coupon/service/CouponSequenceServiceTest.java) | 롤백 확정·결과 불명·예약 응답 유실·반납 실패의 분기를 검증한다. |
+| [CouponIntegrationTest의 SequenceRecovery](../../../../src/integrationTest/java/com/lunchcatch/coupon/CouponIntegrationTest.java) | 늦은 반납과 재구축 전 예약, 완료 응답 유실과 오래된 pending, 키 유실, 진행 중 DB 작업을 기다리는 복구를 다룬다. |
+| [장애 시험 결과](../../../troubleshooting/coupon/coupon-fault-test-results.md) | 로컬 전용 프록시 테스트로 확인한 연결 끊김·응답 지연과 과거 서버 종료 시험의 결과를 기록한다. 시험 코드는 저장소에 포함하지 않는다. |
 
 현재 통합 테스트는 v3 묶음 경로에서 공통 순번·복구 코드를 호출한다.
 이 테스트가 과거 v2 단건 경로를 그대로 실행한다는 뜻은 아니다.
-현재 복구에서 남은 문제는 [장애 시험 결과](../../troubleshooting/coupon/coupon-fault-test-results.md#아직-남은-문제)에 모았다.
+현재 복구에서 남은 문제는 [장애 시험 결과](../../../troubleshooting/coupon/coupon-fault-test-results.md#아직-남은-문제)에 모았다.
 Redis 재시작으로 인한 데이터 유실·페일오버와 여러 애플리케이션 프로세스의 동시 복구는 별도 검증이 필요하다.
 키에 해시 태그를 넣은 설계만으로 클러스터에서의 장애 복구 검증이 끝난 것으로 판단하지 않는다.
 복구 후 같은 요청의 발급 재개와 TTL은 단위 테스트와 실제 Redis·MySQL 통합 테스트로 검증한다.

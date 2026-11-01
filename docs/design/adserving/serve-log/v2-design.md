@@ -1,6 +1,6 @@
 # 서빙 로그 v2: Redis Stream 으로 옮긴다
 
-쓰기마다 어느 방식을 고르는지와 버전 목록은 [요청 중 쓰기 설계](./adserving_요청_중_쓰기_설계.md)가 갖는다.
+쓰기마다 어느 방식을 고르는지와 버전 목록은 [요청 중 쓰기 설계](../adserving_요청_중_쓰기_설계.md)가 갖는다.
 
 피드가 카드마다 serve 기록을 Valkey 에 쓰는 파이프라인(`ServeRecordRepository.saveAll`)에 `serve_log` 행의 XADD 를 함께 싣는다. 소비자가 스트림을 읽어 `serve_log` 에 묶어 쓴다. serve 기록과 서빙 로그의 내용이 거의 같고 같은 파이프라인이라 왕복이 늘지 않는다.
 

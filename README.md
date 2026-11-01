@@ -287,7 +287,7 @@ erDiagram
 
 아래 자리에서 가장 오래 고민했다. 각 줄의 문서가 그 판단의 근거와 버린 선택지를 갖는다.
 
-**선착순 쿠폰의 동시 발급** 같은 순간에 몰린 요청에서 수량을 넘기지 않고 순번을 하나씩 준다. Valkey 의 Lua 로 순번과 재고를 한 번에 다루고, 설계를 세 판에 걸쳐 바꿨다. [v1](./docs/design/coupon/coupon-issuance-v1-design.md), [v2](./docs/design/coupon/coupon-issuance-v2-design.md), [v3](./docs/design/coupon/coupon-issuance-v3-design.md)
+**선착순 쿠폰의 동시 발급** 같은 순간에 몰린 요청에서 수량을 넘기지 않고 순번을 하나씩 준다. Valkey 의 Lua 로 순번과 재고를 한 번에 다루고, 설계를 세 판에 걸쳐 바꿨다. [v1](./docs/design/coupon/issuance/v1-design.md), [v2](./docs/design/coupon/issuance/v2-design.md), [v3](./docs/design/coupon/issuance/v3-design.md)
 
 **광고 피드를 채우는 기준** 위치와 업종 선호, 하루 노출 횟수, 찜 이력으로 그날 후보에서 카드 10장을 고른다. 예산 진행률이 계획을 넘긴 캠페인과 노출 상한에 닿은 캠페인은 빠진다. [광고 서빙 설계](./docs/design/adserving/adserving_구조와_동작_설계.md)
 
