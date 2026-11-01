@@ -11,9 +11,9 @@ HTTP 경로의 버전과 발급 구조의 버전은 별개다.
 
 | 버전 | 설계도 |
 |---|---|
-| v1 | [MySQL에서 재고를 선택하고 요청마다 커밋했다.](./coupon-issuance-v1-design.md) |
-| v2 | [Redis 순번 발급기로 재고 선택을 분리했다.](./coupon-issuance-v2-design.md) |
-| v3 | [여러 발급 요청을 묶어 한 번에 커밋했다.](./coupon-issuance-v3-design.md) |
+| v1 | [MySQL에서 재고를 선택하고 요청마다 커밋했다.](./issuance/coupon-issuance-v1-design.md) |
+| v2 | [Redis 순번 발급기로 재고 선택을 분리했다.](./issuance/coupon-issuance-v2-design.md) |
+| v3 | [여러 발급 요청을 묶어 한 번에 커밋했다.](./issuance/coupon-issuance-v3-design.md) |
 
 ## 묶음으로 처리하는 쿠폰 발급
 
@@ -27,7 +27,7 @@ HTTP 경로의 버전과 발급 구조의 버전은 별개다.
 
 ### 대기열과 작업자
 
-묶음을 모으는 시간과 기한 판정은 [v3 설계](./coupon-issuance-v3-design.md#여러-이벤트의-redis-왕복을-함께-기다린다)를 따른다.
+묶음을 모으는 시간과 기한 판정은 [v3 설계](./issuance/coupon-issuance-v3-design.md#여러-이벤트의-redis-왕복을-함께-기다린다)를 따른다.
 작업자마다 DB 커넥션을 하나씩 쓰므로 작업자 수는 커넥션 풀보다 작게 둔다.
 설정은 `coupon.issue.batch` 아래에 두며 기본값은 아래와 같다.
 기본값의 기준은 `application.yml`의 `coupon` 절이며 `CouponProperties`가 설정을 검증한다.
@@ -67,7 +67,7 @@ DB에 새 테이블을 만들지 않으며 기존 UNIQUE·CHECK는 유지한다.
 공유 잠금은 복구가 진행 중인 발급의 종료를 기다리는 데 사용한다. 캠페인의 상태 변경 UPDATE도 진행 중 발급이 공유 잠금을 해제할 때까지 기다린다.
 Redis 키와 예약 ID는 [구조와 동작 설계](./coupon_구조와_동작_설계.md#redis-순번과-예약)가 소유한다.
 차단과 재구축, 복구 후 발급을 이어가는 조건은 [장애 처리 설계](./coupon_장애_처리_설계.md#redis-장애와-큐-복구)가 가리키는 공통 복구 설계를 따른다.
-Redis 키의 절대 만료 시각과 보관 여유시간은 [v2의 TTL 정책](./coupon-issuance-v2-design.md#26-ttl은-발급-종료-시각을-기준으로-설정한다)이 소유한다.
+Redis 키의 절대 만료 시각과 보관 여유시간은 [v2의 TTL 정책](./issuance/coupon-issuance-v2-design.md#26-ttl은-발급-종료-시각을-기준으로-설정한다)이 소유한다.
 
 ### 찜과 소진 contract 연결
 

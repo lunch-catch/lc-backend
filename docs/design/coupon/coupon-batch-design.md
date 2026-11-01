@@ -73,7 +73,7 @@ HTTP의 발급 판정과 시간 경계는 [쿠폰 명세](../../api-spec/coupon-
 발급 오픈보다 `coupon.batch.queue-preparation-lead`만큼 앞서 오늘 회차의 Redis 발급 큐를 DB 기준으로 만든다.
 큐를 만들지 않으면 발급 오픈 뒤 첫 요청들이 큐가 없는 회차를 만나 복구를 기다린다.
 회차 ID를 설정된 페이지 크기로 읽고 회차마다 별도 트랜잭션에서 실행 세대를 확인한다.
-큐 재구축은 [요청이 부르는 복구](./coupon-issuance-v2-design.md#72-재구축의-순서와-재개-조건)와 같은 절차를 쓴다.
+큐 재구축은 [요청이 부르는 복구](./issuance/coupon-issuance-v2-design.md#72-재구축의-순서와-재개-조건)와 같은 절차를 쓴다.
 회차를 배타 잠금하고 AVAILABLE 순번과 ISSUED 수의 합이 발급 수량과 같을 때만 만든다.
 키의 보존 기한도 복구와 같이 발급 종료 시각에 `coupon.sequence.retention-grace`를 더한 시각이다.
 

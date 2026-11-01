@@ -5,9 +5,9 @@ v1은 MySQL에서 재고를 선택하고 요청 한 건의 발급을 트랜잭�
 정상 시퀀스는 이벤트를 일반 조회하도록 바꾼 v1의 마지막 구조를 기준으로 그린다.
 초기 이벤트 배타 잠금과의 차이는 아래의 잠금 설계에 구분한다.
 
-업무 조건과 HTTP 응답은 [발급 명세](../../api-spec/coupon-api-spec.md#쿠폰-발급)를 따른다.
-AWS에서 세 번 측정한 결과는 [쿠폰 v1 부하 시험 결과](loadtest/coupon-v1-load-test-results.md)에 있다.
-다음 구조는 [v2 순번 발급기 설계도](./coupon-issuance-v2-design.md)다.
+업무 조건과 HTTP 응답은 [발급 명세](../../../api-spec/coupon-api-spec.md#쿠폰-발급)를 따른다.
+AWS에서 세 번 측정한 결과는 [쿠폰 v1 부하 시험 결과](../loadtest/coupon-v1-load-test-results.md)에 있다.
+다음 구조는 [v2 순번 발급기 설계도](coupon-issuance-v2-design.md)다.
 
 ## 1. 구성 요소의 책임
 
@@ -80,7 +80,7 @@ erDiagram
 
 그림의 연결은 데이터의 논리적 관계다. JPA 객체 연관이나 모든 연결의 FK를 뜻하지 않는다.
 재고와 회원 쿠폰은 이벤트 ID와 쿠폰 코드로 대응하며 일일 카운터는 회원·영업일로 대응한다.
-스키마 제약의 기준은 [쿠폰 마이그레이션](../../../src/main/resources/db/migration/coupon/)이다.
+스키마 제약의 기준은 [쿠폰 마이그레이션](../../../../src/main/resources/db/migration/coupon/)이다.
 
 한 발급에서 바꾸는 값은 재고 상태, 일일 발급 횟수, 새 회원 쿠폰이다.
 세 변경을 나눠 커밋하면 쿠폰 없이 횟수만 증가하거나 재고만 소비될 수 있다.
