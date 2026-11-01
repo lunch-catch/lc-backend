@@ -428,9 +428,9 @@ QR 생성·삭제·만료 저장은 같은 회원 쿠폰 행을 잠근다. 잠�
 
 ### Redis 순번과 예약
 
-Redis 키와 자료형, 예약·완료·반납의 변경 규칙은 [v2 설계도의 Redis 키 설계](./issuance/v2-design.md#2-redis-키-설계)가 소유한다.
-수량 불변식과 요청별 결과 코드는 [예약 상태 변경](./issuance/v2-design.md#3-예약완료반납이-키를-바꾸는-순서)을 따른다.
-v3도 같은 순번·복구 설계를 사용한다. 묶음 트랜잭션과 작업자의 책임은 [v3 설계도](./issuance/v3-design.md)가 갖는다.
+Redis 키와 자료형, 예약·완료·반납의 변경 규칙은 [v2 설계도의 Redis 키 설계](./issuance/coupon-issuance-v2-design.md#2-redis-키-설계)가 소유한다.
+수량 불변식과 요청별 결과 코드는 [예약 상태 변경](./issuance/coupon-issuance-v2-design.md#3-예약완료반납이-키를-바꾸는-순서)을 따른다.
+v3도 같은 순번·복구 설계를 사용한다. 묶음 트랜잭션과 작업자의 책임은 [v3 설계도](./issuance/coupon-issuance-v3-design.md)가 갖는다.
 
 ## 8. 외부 API
 

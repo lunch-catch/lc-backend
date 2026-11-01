@@ -14,8 +14,8 @@
 
 | 쓰기 | 목표 부하 | 유실 허용 | 버전과 방식 |
 |---|---|---|---|
-| 노출 수집(`impression_log` 와 정산의 판정 기록, 원장) | 초당 1,000건 | 0.1% 미만. 빠진 노출은 과금되지 않는다 | [v1](./impression/v1-design.md) 단건 동기. 노출 저장과 차감이 한 트랜잭션이다<br>[v2](./impression/v2-design.md) 차감을 아웃박스로 옮긴다<br>[v3](./impression/v3-design.md) 판정한 뒤 응답하고 `impression_log` 저장은 인메모리 큐에서 묶어 한다 |
-| 서빙 로그(`serve_log`) | 초당 1,000행 | 0.1% 미만 | [v1](./serve-log/v1-design.md) 인메모리 비동기<br>[v2](./serve-log/v2-design.md) Redis Stream 으로 옮긴다. 그 문서의 진행 조건이 맞을 때만 한다 |
+| 노출 수집(`impression_log` 와 정산의 판정 기록, 원장) | 초당 1,000건 | 0.1% 미만. 빠진 노출은 과금되지 않는다 | [v1](./impression/adserving-impression-v1-design.md) 단건 동기. 노출 저장과 차감이 한 트랜잭션이다<br>[v2](./impression/adserving-impression-v2-design.md) 차감을 아웃박스로 옮긴다<br>[v3](./impression/adserving-impression-v3-design.md) 판정한 뒤 응답하고 `impression_log` 저장은 인메모리 큐에서 묶어 한다 |
+| 서빙 로그(`serve_log`) | 초당 1,000행 | 0.1% 미만 | [v1](./serve-log/adserving-serve-log-v1-design.md) 인메모리 비동기<br>[v2](./serve-log/adserving-serve-log-v2-design.md) Redis Stream 으로 옮긴다. 그 문서의 진행 조건이 맞을 때만 한다 |
 | 접속 위치(`feed_visit_daily`) | 회원마다 하루 한 행 | 목표 없음 | v1 인메모리 비동기 |
 | 유효 노출 수 카운터(Valkey) | 초당 1,000건 | 빠지면 `impression_log` 로 다시 센다 | v1 커밋 뒤 실행 |
 | 분석으로 가는 퍼널 이벤트 | 초당 1,000건(노출) | 허용한다(아키텍처 설계 2.4) | v1 커밋 뒤 전달 |
@@ -32,8 +32,8 @@
 
 | 쓰기 | 방식 | 결정 |
 |---|---|---|
-| 노출 수집 | [단건 동기](./impression/v1-design.md) | 그 v1 문서. 구조와 동작 설계 7장의 트랜잭션 표는 현재 버전(v3)을 적는다 |
-| 서빙 로그와 접속 위치 | [인메모리 비동기](./serve-log/v1-design.md) | 구조와 동작 설계 7장 "서빙 로그와 접속 위치를 무엇으로 미루나"(#315), 장애 처리 설계 "DB 쓰기: 응답 뒤의 `serve_log`, `feed_visit_daily`" |
+| 노출 수집 | [단건 동기](./impression/adserving-impression-v1-design.md) | 그 v1 문서. 구조와 동작 설계 7장의 트랜잭션 표는 현재 버전(v3)을 적는다 |
+| 서빙 로그와 접속 위치 | [인메모리 비동기](./serve-log/adserving-serve-log-v1-design.md) | 구조와 동작 설계 7장 "서빙 로그와 접속 위치를 무엇으로 미루나"(#315), 장애 처리 설계 "DB 쓰기: 응답 뒤의 `serve_log`, `feed_visit_daily`" |
 | 유효 노출 수 카운터 | 커밋 뒤 실행 | 구조와 동작 설계 7장 "유효 노출 수 카운터를 언제 올리나"(#323) |
 | 퍼널 이벤트 | 커밋 뒤 전달 | 구조와 동작 설계 7장 "분석 이벤트를 커밋 뒤에 넘기는 일을 누가 맡나"(#349) |
 
