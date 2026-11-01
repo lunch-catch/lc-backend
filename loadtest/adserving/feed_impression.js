@@ -51,6 +51,12 @@ export const options = {
     'impression_results{phase:hold}': ['count>=0'],
   },
   summaryTrendStats: ['avg', 'p(50)', 'p(95)', 'p(99)', 'max'],
+  /*
+   * 기본 시스템 꼬리표에서 url 을 뺀다. 피드 주소에 무작위 좌표가 들어가 url 이 요청마다 달라
+   * Prometheus 로 보내는 지표가 요청마다 새 시계열이 된다(#1088). 요청은 name 꼬리표로 묶는다.
+   */
+  systemTags: ['proto', 'subproto', 'status', 'method', 'name', 'group', 'check', 'error', 'error_code',
+    'tls_version', 'scenario', 'service', 'expected_response'],
 };
 
 export function setup() {
@@ -66,7 +72,7 @@ export default function () {
   const [lat, lng] = [CENTER[0] + (Math.random() - 0.5) / 111, CENTER[1] + (Math.random() - 0.5) / 88];
 
   const feed = http.get(`${BASE_URL}/v1/feed?latitude=${lat.toFixed(6)}&longitude=${lng.toFixed(6)}`,
-    { headers, tags: { api: 'feed', phase } });
+    { headers, tags: { api: 'feed', phase, name: 'GET /v1/feed' } });
   if (!check(feed, { 'feed 200': (r) => r.status === 200 })) {
     return;
   }
@@ -80,7 +86,7 @@ export default function () {
       latitude: lat,
       longitude: lng,
       viewedMs: 1500,
-    }), { headers, tags: { api: 'impression', phase } });
+    }), { headers, tags: { api: 'impression', phase, name: 'POST /v1/impressions' } });
     if (check(res, { 'impression 202': (r) => r.status === 202 })) {
       impressionResults.add(1, { validity: res.json('data.validity'), phase });
     }

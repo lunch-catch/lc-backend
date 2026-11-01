@@ -48,6 +48,8 @@ public class ServeLogBuffer implements SmartLifecycle {
         this.serveLogRepository = serveLogRepository;
         this.feedVisitRepository = feedVisitRepository;
         this.meterRegistry = meterRegistry;
+        // 사건이 없어도 0 으로 보이게 기동 때 만든다
+        List.of(DROPPED_METRIC, FAILED_METRIC, VISIT_FAILED_METRIC).forEach(meterRegistry::counter);
     }
 
     // 넣지 못하면 그 피드의 카드 수만큼 버린 것으로 센다.
