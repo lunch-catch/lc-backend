@@ -184,6 +184,12 @@ k6 run -q -e BASE_URL=\"\$BASE_URL\" -e JWT_SECRET=\"\$JWT\" -e BUSINESS_DATE=\$
     ;;
   run)
     name="${2:?회차 이름을 준다}"; base="${3:?회원 시작 번호를 준다}"; rate="${4:-100}"; hold="${5:-5m}"
+    # 유지 구간의 끝을 캡처 범위의 끝으로 쓴다. 대시보드가 범위 끝으로 계산하므로 k6 가 마무리하는 몇 초를 넣지 않는다(#1088)
+    case "$hold" in
+      *m) hold_ms=$(( ${hold%m} * 60000 )) ;;
+      *s) hold_ms=$(( ${hold%s} * 1000 )) ;;
+      *) die "유지 시간은 5m 이나 300s 처럼 준다" ;;
+    esac
     remote "$(instance load-test)" 1800 "set -euo pipefail
 $K6_ENV
 ulimit -n 250000
@@ -193,7 +199,9 @@ k6 run -q -o experimental-prometheus-rw --tag testid=adserving-$name \
   -e MEMBERS=10000 -e MEMBER_BASE=$base -e PRE_VUS=200 -e MAX_VUS=2000 \
   --summary-export /opt/loadtest/summary-$name.json loadtest/adserving/feed_impression.js > /opt/loadtest/k6-$name.log 2>&1 || true
 echo \"window \$start \$(date +%s%3N)\"
-grep -E '✓|✗|↳|impression_results|http_reqs|http_req_duration|http_req_failed|iterations|vus_max' /opt/loadtest/k6-$name.log | head -40"
+echo \"hold \$((start + 60000)) \$((start + 60000 + $hold_ms))\"
+# 원격 쓰기 같은 k6 의 오류가 묻히지 않게 level=error 줄도 보인다(lc-infra#60)
+grep -E '✓|✗|↳|impression_results|http_reqs|http_req_duration|http_req_failed|iterations|vus_max|level=error' /opt/loadtest/k6-$name.log | head -40"
     ;;
   metrics)
     start="${2:?시작 ms 를 준다}"; end="${3:?끝 ms 를 준다}"

@@ -157,6 +157,11 @@ management:
     tags:
       application: "${APP_NAME:lunchcatch}"
       instance: "${APP_INSTANCE_ID:local}"
+    # HTTP 요청 시간을 히스토그램 버킷으로도 내보낸다. 기본은 횟수, 합계, 최대뿐이라 p99 를 계산할 수 없다.
+    # 대시보드가 서버 여러 대를 합치고 원하는 구간으로 잘라 API 별 p99 를 그린다(#1088)
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
 
   tracing:
     sampling:

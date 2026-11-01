@@ -124,8 +124,8 @@ AWS_PROFILE=<프로필> loadtest/adserving/run.sh run v1-run1 30000001
 AWS_PROFILE=<프로필> loadtest/adserving/run.sh run v1-run2 30010001
 AWS_PROFILE=<프로필> loadtest/adserving/run.sh run v1-run3 30020001
 
-# 4. 회차마다 출력된 구간으로 서버 지표를 모은다. 행 수는 마지막 회차가 끝나고 10초 뒤에 맞대 본다
-AWS_PROFILE=<프로필> loadtest/adserving/run.sh metrics <시작 ms> <끝 ms>
+# 4. 회차마다 출력된 window 구간으로 서버 지표를 모은다. 행 수는 마지막 회차가 끝나고 10초 뒤에 맞대 본다
+AWS_PROFILE=<프로필> loadtest/adserving/run.sh metrics <window 시작 ms> <window 끝 ms>
 AWS_PROFILE=<프로필> loadtest/adserving/run.sh rows
 
 # 다음 버전: 앱과 배치를 그 이미지로 다시 띄우고 비운 뒤 2~4를 다시 한다. 앱이 3대인지 먼저 확인한다
@@ -133,7 +133,7 @@ AWS_PROFILE=<프로필> loadtest/adserving/run.sh switch <다음 이미지>
 AWS_PROFILE=<프로필> loadtest/adserving/run.sh reset
 
 # 5. 대시보드를 남기고 환경을 내린다(lc-infra 에서). --lt 가 부하 시험 환경을 가리킨다
-AWS_PROFILE=<프로필> ./scripts/loadtest-snapshot.sh --lt --label adserving-v1-run1 --from <시작 ms> --to <끝 ms> --dash fm-loadtest --dash fm-adserving
+AWS_PROFILE=<프로필> ./scripts/loadtest-snapshot.sh --lt --label adserving-v1-run1 --from <window 시작 ms> --to <hold 끝 ms>
 AWS_PROFILE=<프로필> ./scripts/member-env.sh down
 ```
 
@@ -155,12 +155,16 @@ AWS_PROFILE=<프로필> ./scripts/member-env.sh down
 | 노출 저장과 릴레이 | 릴레이의 밀린 노출 최대(v2 부터), 노출 저장 큐의 최대, 큐가 차서 버린 수, 실패한 묶음 수, 쓰지 못하고 버린 행 수(v3 부터) | 응답 뒤 저장이 따라가는지. 버린 노출은 유실률에 들어간다 |
 | 부하 생성기 | 1분 평균 CPU 의 최대 | 생성기가 병목이 아닌지. 유지 구간에서 80% 를 넘으면 그 회차는 무효로 보고 다시 잰다 |
 
-대시보드는 회차가 끝난 직후, 환경을 내리기 전에 05 부하 시험(`fm-loadtest`)과 06 광고 서빙(`fm-adserving`)을 lc-infra 의 `loadtest-snapshot.sh --lt` 로 남긴다. 환경을 내리면 Prometheus 의 기록도 함께 사라진다.
+대시보드는 회차가 끝난 직후, 환경을 내리기 전에 lc-infra 의 `loadtest-snapshot.sh --lt` 로 남긴다. `--dash` 를 주지 않으면 01 개요부터 06 광고 서빙(`lc-overview` ~ `lc-adserving`)까지 여섯 장을 대시보드 높이 그대로 찍는다. 환경을 내리면 Prometheus 의 기록도 함께 사라진다.
+
+- **범위는 회차 시작부터 유지 구간 끝까지 한 번 준다.** `run` 이 출력하는 `window` 의 시작과 `hold` 의 끝이다. k6 가 회차를 마무리하는 몇 초는 넣지 않는다.
+- **대시보드는 흐름을 보는 시계열이다.** 결과 수치는 k6 요약과 `metrics` 로 적는다. 대시보드는 그 수치가 왜 나왔는지(어느 지표가 먼저 올랐는지, 유지 구간이 안정됐는지)를 보는 근거다.
+- **API 별 p99 는 둘을 견준다.** 05 의 응답 지연은 부하 생성기가 본 시간이고, API 별 p99(앱)는 앱이 잰 시간이다. 앞이 크면 그 차이가 앱 앞에서 스레드를 기다린 시간이다.
 
 ## 8. 결과를 남기는 곳
 
 이 디렉터리가 함께 갖는다. 조건과 결과를 떨어뜨려 두면 다음 버전을 재려는 사람이 둘을 따로 찾는다. 이 문서는 결과를 담지 않는다.
 
 - 측정한 커밋에 `adserving-{쓰기}-v{버전}` 태그를 붙인다.
-- **이 시험은 쓰기 방식마다 문서 하나를 둔다.** 노출 수집은 `노출_수집_부하_시험_결과.md` 가 v1 부터 v3b 까지를 갖는다. 버전끼리 비교하는 것이 목적이라 네 버전이 한 문서에 나란히 있어야 읽힌다. 다른 시험이 이 모양을 따를 이유는 없다.
+- **이 시험은 쓰기 방식마다 문서 하나를 둔다.** 노출 수집은 `노출_수집_부하_시험_결과.md` 가 v1 부터 v3c 까지를 갖는다. 버전끼리 비교하는 것이 목적이라 버전들이 한 문서에 나란히 있어야 읽힌다. 다른 시험이 이 모양을 따를 이유는 없다.
 - 대시보드 PNG 는 버전마다 `impression-v{버전}/` 에 둔다.
