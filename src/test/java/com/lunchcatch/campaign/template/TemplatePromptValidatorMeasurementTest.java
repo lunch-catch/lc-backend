@@ -1,6 +1,7 @@
 package com.lunchcatch.campaign.template;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.lunchcatch.campaign.exception.CampaignException;
@@ -68,13 +69,13 @@ class TemplatePromptValidatorMeasurementTest {
     @MethodSource("allSamples")
     @DisplayName("모든 표본을 검증기에 넣고 결과를 기록한다")
     void 표본을_검증기에_넣어_결과를_기록한다(Sample sample) {
-        REPORT.record(sample, VALIDATOR);
+        assertThatCode(() -> REPORT.record(sample, VALIDATOR)).doesNotThrowAnyException();
     }
 
     @Test
     @DisplayName("검증 1건의 처리 시간을 잰다")
     void 처리_시간을_잰다() {
-        REPORT.recordTiming(VALIDATOR, SAMPLES);
+        assertThatCode(() -> REPORT.recordTiming(VALIDATOR, SAMPLES)).doesNotThrowAnyException();
     }
 
     @AfterAll
