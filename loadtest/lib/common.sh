@@ -387,7 +387,7 @@ SH
 # 시험 환경은 앱 서버 모두에 SSM 으로 함께 보내고 모니터링 서버의 Pyroscope(lunch-catch/lc-infra#71)로 보낸다.
 #
 profile() {
-  local name="${1:?회차 이름을 준다}" secs="${2:-60}" mode="${3:-wall}" pyro id trim
+  local name="${1:?회차 이름을 준다}" secs="${2:-60}" mode="${3:-wall}" pyro id trim pids="" pid rc=0
   case "$mode" in cpu|wall) ;; *) die "모드는 cpu 나 wall 이다" ;; esac
   if [ -n "${LOCAL:-}" ]; then
     trim=$(mktemp)
@@ -399,13 +399,20 @@ profile() {
   pyro="http://$(aws ec2 describe-instances --filters "Name=tag:Project,Values=$PROJECT" "Name=tag:Role,Values=monitoring" \
     "Name=instance-state-name,Values=running" --query 'Reservations[0].Instances[0].PrivateIpAddress' --output text):4040"
   for id in $(instances app); do
-    remote "$id" $(( secs + 300 )) "cat > /tmp/lt-trim.py <<'PY'
+    # tail 이 프로파일러의 실패를 가리지 않게 pipefail 로 돈다
+    remote "$id" $(( secs + 300 )) "set -o pipefail
+cat > /tmp/lt-trim.py <<'PY'
 $TRIM_PY
 PY
 cat > /tmp/lt-profile.sh <<'SH'
 $PROFILE_SH
 SH
 bash /tmp/lt-profile.sh $name $secs $mode $pyro $PROJECT /tmp/lt-trim.py $ASPROF_VERSION | tail -3" &
+    pids="$pids $!"
   done
-  wait
+  # 앱 서버 하나라도 프로파일을 보내지 못했으면 실패로 끝난다
+  for pid in $pids; do
+    wait "$pid" || rc=1
+  done
+  return "$rc"
 }
