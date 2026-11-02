@@ -1,6 +1,11 @@
 package com.lunchcatch.billing;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.reset;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
 import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -32,8 +37,10 @@ import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+import org.springframework.transaction.CannotCreateTransactionException;
 import org.springframework.web.context.WebApplicationContext;
 
 /*
@@ -48,6 +55,8 @@ class PaymentRecheckIntegrationTest extends AbstractBillingIntegrationTest {
 
     private static final Long OWNER = 7L;
     private static final Long ADMIN = 3L;
+    // HTTP 로 승인 확정을 부르는 테스트의 점주다. 점주 API 는 ACTIVE 점주 행을 요구한다
+    private static final Long RECORD_FAILED_OWNER = 1100701L;
     private static final long AMOUNT = 30000L;
     private static final LocalDateTime APPROVED_AT = LocalDateTime.of(2026, 10, 11, 10, 0, 3);
 
@@ -68,6 +77,7 @@ class PaymentRecheckIntegrationTest extends AbstractBillingIntegrationTest {
         jdbc.update("delete from payment_reconciliation_outbox");
         jdbc.update("delete from payment");
         jdbc.update("delete from point_account");
+        jdbc.update("delete from owner where owner_id = ?", RECORD_FAILED_OWNER);
     }
 
     private record Order(Long paymentId, String orderId, String paymentKey) {
@@ -158,6 +168,61 @@ class PaymentRecheckIntegrationTest extends AbstractBillingIntegrationTest {
         assertThat(status(order.paymentId())).isEqualTo("APPROVED");
         assertThat(charges(order.paymentId())).isEqualTo(1);
         assertThat(outboxStatus(order.paymentId())).isEqualTo("RESOLVED");
+    }
+
+    /*
+     * 승인 뒤 결과 기록 트랜잭션이 커넥션을 얻지 못한 경우다(#1100).
+     * 결제는 REQUESTED 로 남지만 결제 식별자와 함께 커밋한 아웃박스 행이 있어 워커가 찾아 충전한다.
+     */
+    @Test
+    void 승인_뒤_결과_기록이_실패해도_재조회_아웃박스가_남아_워커가_충전한다() throws Exception {
+        jdbc.update("insert into owner (owner_id, email, password_hash, role, status, tutorial_viewed, "
+                + "created_at, updated_at) values (?, 'recheck-1100@lunchcatch.test', 'x', 'OWNER', 'ACTIVE', 1, "
+                + "now(6), now(6))", RECORD_FAILED_OWNER);
+        var ordered = orderService.order(RECORD_FAILED_OWNER, AMOUNT);
+        Order order = new Order(ordered.paymentId(), ordered.orderId(), "tgen_record_failed_1100");
+        doThrow(new CannotCreateTransactionException("pool exhausted"))
+                .when(resultService).approve(eq(order.paymentId()), any());
+
+        var mvc = MockMvcBuilders.webAppContextSetup(webContext).apply(springSecurity()).build();
+        mvc.perform(post("/v1/owner/payments/{paymentId}:confirm", order.paymentId())
+                        .with(user(new CustomUserDetails(RECORD_FAILED_OWNER, Role.OWNER)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"orderId\":\"" + order.orderId() + "\",\"pgTid\":\"" + order.paymentKey() + "\"}"))
+                .andExpect(result -> assertThat(result.getResponse().getStatus()).isGreaterThanOrEqualTo(500));
+
+        assertThat(status(order.paymentId())).isEqualTo("REQUESTED");
+        assertThat(charges(order.paymentId())).isZero();
+        assertThat(outboxStatus(order.paymentId())).isEqualTo("PENDING");
+
+        reset(resultService);
+        pgSays(order, Status.APPROVED);
+        makeDue(order.paymentId());
+
+        assertThat(recheckService.recheckDue()).isEqualTo(1);
+
+        assertThat(status(order.paymentId())).isEqualTo("APPROVED");
+        assertThat(charges(order.paymentId())).isEqualTo(1);
+        assertThat(outboxStatus(order.paymentId())).isEqualTo("RESOLVED");
+    }
+
+    @Test
+    void 결과를_기록하지_못한_결제를_워커가_확정하지_못하면_확인_중으로_바뀌어_관리자가_재조회할_수_있다() {
+        var ordered = orderService.order(OWNER, AMOUNT);
+        Order order = new Order(ordered.paymentId(), ordered.orderId(), "tgen_record_failed_miss_1100");
+        doThrow(new CannotCreateTransactionException("pool exhausted"))
+                .when(resultService).approve(eq(order.paymentId()), any());
+        assertThatThrownBy(() -> confirmationService.confirm(OWNER, order.paymentId(), order.orderId(),
+                order.paymentKey())).isInstanceOf(CannotCreateTransactionException.class);
+        reset(resultService);
+        pgSays(order, Status.PENDING);
+        makeDue(order.paymentId());
+
+        recheckService.recheckDue();
+
+        assertThat(status(order.paymentId())).isEqualTo("UNKNOWN");
+        assertThat(charges(order.paymentId())).isZero();
+        assertThat(outboxStatus(order.paymentId())).isEqualTo("PENDING");
     }
 
     @Test

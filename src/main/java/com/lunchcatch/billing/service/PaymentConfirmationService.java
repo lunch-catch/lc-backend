@@ -21,8 +21,10 @@ import jakarta.annotation.PostConstruct;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DataAccessException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.TransactionException;
 
 /*
  * 점주의 승인 확정 요청을 처리한다.
@@ -109,6 +111,7 @@ public class PaymentConfirmationService {
             return resultService.fail(payment.getId(), rejectionReason(e));
         } catch (PgNotSentException e) {
             meterRegistry.counter(CONFIRM_METRIC, "result", "not_sent").increment();
+            discardUnsentAttempt(payment.getId());
             throw new BillingException(BillingErrorCode.PG_REQUEST_NOT_SENT, e);
         } catch (PgUnknownException e) {
             return recheck(payment);
@@ -147,6 +150,20 @@ public class PaymentConfirmationService {
             case EXPIRED, CANCELED -> resultService.cancel(payment.getId());
             case PENDING, NOT_FOUND -> resultService.markUnknown(payment.getId());
         };
+    }
+
+    /*
+     * 보내지 않은 승인 요청의 재조회 아웃박스 행을 지운다.
+     * 지우다 DB 가 실패해도 예외를 올리지 않는다. 남은 행은 재조회 워커가 결제대행사에 물어 정하므로 돈이 어긋나지 않는다.
+     * 올리면 점주는 다시 시도하라는 BILLING-007 대신 서버 오류를 받는다.
+     */
+    private void discardUnsentAttempt(Long paymentId) {
+        try {
+            resultService.discardUnsentAttempt(paymentId);
+        } catch (DataAccessException | TransactionException e) {
+            log.warn("event=PAYMENT_UNSENT_OUTBOX_DISCARD_FAILED paymentId={} exceptionType={}",
+                    paymentId, e.getClass().getSimpleName());
+        }
     }
 
     private boolean matches(Payment payment, String orderId, long amount) {

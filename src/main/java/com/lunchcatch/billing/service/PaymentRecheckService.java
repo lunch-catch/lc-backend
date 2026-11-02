@@ -79,11 +79,14 @@ public class PaymentRecheckService {
     /*
      * 결제 한 건을 다시 조회해 반영한다. 이미 확정된 결제는 부르지 않고 지금 상태를 돌려준다.
      * 그 사이 웹훅이나 관리자가 확정했을 수 있다.
+     *
+     * UNKNOWN 과 함께 결제 식별자가 있는 REQUESTED 도 조회한다. 승인을 시도한 뒤 결과를 기록하지 못한 결제다.
+     * 결제 식별자가 없는 REQUESTED 는 승인을 시도하기 전이라 물을 것이 없다.
      */
     public Payment recheck(Long paymentId) {
         Payment payment = paymentRepository.findById(paymentId)
                 .orElseThrow(() -> new BillingException(BillingErrorCode.PAYMENT_NOT_FOUND));
-        if (payment.getStatus() != PaymentStatus.UNKNOWN) {
+        if (!awaitsResult(payment)) {
             return payment;
         }
         PaymentRecheckVerdict verdict = judge(payment);
@@ -125,6 +128,11 @@ public class PaymentRecheckService {
             case PENDING -> PaymentRecheckVerdict.miss(PENDING_REASON);
             case NOT_FOUND -> PaymentRecheckVerdict.miss(NOT_FOUND_REASON);
         };
+    }
+
+    private boolean awaitsResult(Payment payment) {
+        return payment.getStatus() == PaymentStatus.UNKNOWN
+                || (payment.getStatus() == PaymentStatus.REQUESTED && payment.getPgTid() != null);
     }
 
     private boolean matches(Payment payment, String orderId, long amount) {

@@ -134,6 +134,53 @@ class PaymentResultServiceTest {
     }
 
     @Test
+    void 결제_식별자를_적으면_같은_트랜잭션에서_첫_간격_뒤의_재조회_아웃박스를_만든다() {
+        locked(requested());
+        when(outboxRepository.findByPaymentId(PAYMENT_ID)).thenReturn(Optional.empty());
+
+        service().assignPgTid(PAYMENT_ID, PG_TID);
+
+        ArgumentCaptor<PaymentReconciliationOutbox> outbox =
+                ArgumentCaptor.forClass(PaymentReconciliationOutbox.class);
+        verify(outboxRepository).save(outbox.capture());
+        assertThat(outbox.getValue().getPaymentId()).isEqualTo(PAYMENT_ID);
+        assertThat(outbox.getValue().getStatus()).isEqualTo(OutboxStatus.PENDING);
+        assertThat(outbox.getValue().getMaxRetry()).isEqualTo(10);
+        assertThat(outbox.getValue().getNextRetryAt()).isEqualTo(NOW.plusMinutes(1));
+    }
+
+    @Test
+    void 같은_식별자를_다시_적을_때_재조회_아웃박스가_있으면_새로_만들지_않는다() {
+        locked(attempted());
+        when(outboxRepository.findByPaymentId(PAYMENT_ID))
+                .thenReturn(Optional.of(PaymentReconciliationOutbox.pending(PAYMENT_ID, 10, NOW)));
+
+        service().assignPgTid(PAYMENT_ID, PG_TID);
+
+        verify(outboxRepository, never()).save(any());
+    }
+
+    @Test
+    void 잠근_뒤_이미_결과가_정해졌으면_재조회_아웃박스를_만들지_않는다() {
+        Payment payment = attempted();
+        payment.approve(PG_APPROVED_AT);
+        locked(payment);
+
+        service().assignPgTid(PAYMENT_ID, PG_TID);
+
+        verifyNoInteractions(outboxRepository);
+    }
+
+    @Test
+    void 결제_식별자가_어긋나_거절하면_재조회_아웃박스를_만들지_않는다() {
+        locked(attempted());
+
+        assertThatThrownBy(() -> service().assignPgTid(PAYMENT_ID, "tgen_other"))
+                .isInstanceOf(BillingException.class);
+        verifyNoInteractions(outboxRepository);
+    }
+
+    @Test
     void 없는_결제면_BILLING_004다() {
         when(paymentRepository.findByIdForUpdate(PAYMENT_ID)).thenReturn(Optional.empty());
 
@@ -282,6 +329,18 @@ class PaymentResultServiceTest {
     }
 
     @Test
+    void 승인을_시도할_때_만든_아웃박스가_있으면_UNKNOWN으로만_바꾸고_새로_만들지_않는다() {
+        locked(attempted());
+        PaymentReconciliationOutbox outbox = pendingOutbox(10);
+
+        Payment result = service().markUnknown(PAYMENT_ID);
+
+        assertThat(result.getStatus()).isEqualTo(PaymentStatus.UNKNOWN);
+        assertThat(outbox.getStatus()).isEqualTo(OutboxStatus.PENDING);
+        verify(outboxRepository, never()).save(any());
+    }
+
+    @Test
     void 이미_승인된_결제는_확인_중으로_되돌리지_않는다() {
         Payment payment = attempted();
         payment.approve(PG_APPROVED_AT);
@@ -317,6 +376,18 @@ class PaymentResultServiceTest {
         assertThat(outbox.getLastError()).isEqualTo("처리 중");
         assertThat(outbox.getNextRetryAt()).isEqualTo(NOW.plusMinutes(2));
         assertThat(meterRegistry.find("billing.payment.recheck.exhausted").counter()).isNull();
+    }
+
+    @Test
+    void 결과를_기록하지_못한_결제를_재조회로도_확정하지_못하면_UNKNOWN으로_바꾸고_시도를_센다() {
+        locked(attempted());
+        PaymentReconciliationOutbox outbox = pendingOutbox(5);
+
+        Payment result = service(0.0).recordRecheckMiss(PAYMENT_ID, "처리 중");
+
+        assertThat(result.getStatus()).isEqualTo(PaymentStatus.UNKNOWN);
+        assertThat(outbox.getAttemptCount()).isEqualTo(1);
+        assertThat(outbox.getNextRetryAt()).isEqualTo(NOW.plusMinutes(2));
     }
 
     @Test
@@ -405,5 +476,46 @@ class PaymentResultServiceTest {
 
         assertThat(service().recordAdminRecheckMiss(PAYMENT_ID, "조회 불가").getStatus())
                 .isEqualTo(PaymentStatus.UNKNOWN);
+    }
+
+    @Test
+    void 요청이_결제대행사에_닿지_않았으면_승인을_시도할_때_만든_재조회_아웃박스를_지운다() {
+        locked(attempted());
+        PaymentReconciliationOutbox outbox = pendingOutbox(10);
+
+        Payment result = service().discardUnsentAttempt(PAYMENT_ID);
+
+        assertThat(result.getStatus()).isEqualTo(PaymentStatus.REQUESTED);
+        verify(outboxRepository).delete(outbox);
+    }
+
+    @Test
+    void 지울_재조회_아웃박스가_없어도_오류_없이_끝난다() {
+        locked(attempted());
+        when(outboxRepository.findByPaymentId(PAYMENT_ID)).thenReturn(Optional.empty());
+
+        service().discardUnsentAttempt(PAYMENT_ID);
+
+        verify(outboxRepository, never()).delete(any());
+    }
+
+    @Test
+    void 다른_요청이_확인_중으로_바꿨으면_미전송이어도_재조회_아웃박스를_지우지_않는다() {
+        unknown();
+
+        service().discardUnsentAttempt(PAYMENT_ID);
+
+        verifyNoInteractions(outboxRepository);
+    }
+
+    @Test
+    void 다른_요청이_결과를_냈으면_미전송이어도_재조회_아웃박스를_지우지_않는다() {
+        Payment payment = attempted();
+        payment.approve(PG_APPROVED_AT);
+        locked(payment);
+
+        service().discardUnsentAttempt(PAYMENT_ID);
+
+        verifyNoInteractions(outboxRepository);
     }
 }

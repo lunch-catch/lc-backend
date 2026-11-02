@@ -70,6 +70,9 @@ public class PaymentResultService {
      *
      * 다른 결제가 이미 같은 식별자를 갖고 있으면 uk_payment_pg_tid 위반이 이 메서드 안에서 난다.
      * 커밋까지 미루지 않고 flush 로 바로 드러내 부른 쪽이 오류 코드로 바꿀 수 있게 한다.
+     *
+     * 같은 커밋에 재조회 아웃박스 행을 만든다. 승인 뒤 결과 기록이 실패하거나 서버가 죽어도 재조회 워커가 이 결제를 찾는다.
+     * 정상이면 뒤이은 결과 기록이 그 행을 닫는다. 첫 재조회 시각은 승인 확정이 끝날 시간보다 뒤다.
      */
     @Transactional
     public Payment assignPgTid(Long paymentId, String pgTid) {
@@ -82,6 +85,7 @@ public class PaymentResultService {
         }
         payment.assignPgTid(pgTid);
         paymentRepository.flush();
+        openOutboxIfAbsent(paymentId);
         return payment;
     }
 
@@ -139,8 +143,8 @@ public class PaymentResultService {
     }
 
     /*
-     * 승인 결과를 확정하지 못했다. UNKNOWN 으로 두고 재조회 아웃박스 행을 같은 트랜잭션에서 만든다.
-     * 이미 UNKNOWN 이면 아웃박스도 이미 있으므로 아무것도 하지 않는다(결제당 한 행).
+     * 승인 결과를 확정하지 못했다. UNKNOWN 으로 두고 재조회 아웃박스 행이 없으면 같은 트랜잭션에서 만든다.
+     * 보통은 결제 식별자를 적을 때 만든 행이 이미 있다. 이미 UNKNOWN 이면 아무것도 하지 않는다(결제당 한 행).
      */
     @Transactional
     public Payment markUnknown(Long paymentId) {
@@ -149,9 +153,7 @@ public class PaymentResultService {
             return payment;
         }
         payment.markUnknown();
-        LocalDateTime nextRetryAt = LocalDateTime.now(clock).plus(recheckProperties.firstDelay());
-        outboxRepository.save(
-                PaymentReconciliationOutbox.pending(paymentId, recheckProperties.maxRetry(), nextRetryAt));
+        openOutboxIfAbsent(paymentId);
         return payment;
     }
 
@@ -162,12 +164,18 @@ public class PaymentResultService {
      * 그 사이에 웹훅이나 관리자가 결제를 확정했으면 아웃박스도 이미 닫혔으므로 아무것도 하지 않는다.
      * 시도 횟수가 상한에 닿으면 아웃박스를 FAILED_PERMANENT 로 두고 ERROR 로그와 지표를 남긴다.
      * 돈이 걸린 결제를 서버가 임의로 닫지 않고 관리자 재조회로 사람이 확정하게 하려는 것이다.
+     *
+     * 승인을 시도한 뒤 결과를 기록하지 못해 REQUESTED 로 남은 결제는 여기서 UNKNOWN 으로 바꾼다.
+     * 승인 요청을 보냈고 결과를 모르는 결제라서다. 관리자 재조회도 UNKNOWN 만 받는다.
      */
     @Transactional
     public Payment recordRecheckMiss(Long paymentId, String reason) {
         Payment payment = lock(paymentId);
         if (isDetermined(payment)) {
             return payment;
+        }
+        if (payment.getStatus() == PaymentStatus.REQUESTED) {
+            payment.markUnknown();
         }
         outboxRepository.findByPaymentId(paymentId)
                 .filter(outbox -> outbox.getStatus() == OutboxStatus.PENDING)
@@ -187,6 +195,20 @@ public class PaymentResultService {
         }
         outboxRepository.findByPaymentId(paymentId)
                 .ifPresent(outbox -> outbox.touch(LocalDateTime.now(clock), reason));
+        return payment;
+    }
+
+    /*
+     * 승인 요청이 결제대행사에 닿지 않은 것이 확실하다. 결제 식별자를 적을 때 만든 재조회 아웃박스 행을 지운다.
+     * 결제는 REQUESTED 로 남고 점주가 다시 승인하면 행을 새로 만든다.
+     * 잠근 뒤 REQUESTED 가 아니면 같은 주문의 다른 요청이 결과를 냈거나 확인 중으로 바꾼 것이라 행을 둔다.
+     */
+    @Transactional
+    public Payment discardUnsentAttempt(Long paymentId) {
+        Payment payment = lock(paymentId);
+        if (payment.getStatus() == PaymentStatus.REQUESTED) {
+            outboxRepository.findByPaymentId(paymentId).ifPresent(outboxRepository::delete);
+        }
         return payment;
     }
 
@@ -210,6 +232,15 @@ public class PaymentResultService {
         PaymentStatus status = payment.getStatus();
         return status == PaymentStatus.APPROVED || status == PaymentStatus.FAILED
                 || status == PaymentStatus.CANCELLED;
+    }
+
+    private void openOutboxIfAbsent(Long paymentId) {
+        if (outboxRepository.findByPaymentId(paymentId).isPresent()) {
+            return;
+        }
+        LocalDateTime nextRetryAt = LocalDateTime.now(clock).plus(recheckProperties.firstDelay());
+        outboxRepository.save(
+                PaymentReconciliationOutbox.pending(paymentId, recheckProperties.maxRetry(), nextRetryAt));
     }
 
     private void closeOutbox(Long paymentId, LocalDateTime now) {

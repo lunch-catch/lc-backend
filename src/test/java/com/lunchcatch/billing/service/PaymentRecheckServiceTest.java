@@ -220,6 +220,41 @@ class PaymentRecheckServiceTest {
         verifyNoInteractions(paymentGateway, resultService);
     }
 
+    private Payment stored(Payment payment) {
+        ReflectionTestUtils.setField(payment, "id", PAYMENT_ID);
+        when(paymentRepository.findById(PAYMENT_ID)).thenReturn(Optional.of(payment));
+        return payment;
+    }
+
+    @Test
+    void 승인을_시도한_뒤_결과를_기록하지_못한_결제도_조회해_승인을_기록한다() {
+        stored(Payment.order(7L, ORDER_ID, AMOUNT)).assignPgTid(PG_TID);
+        inquiryReturns(Status.APPROVED, ORDER_ID, AMOUNT);
+
+        service().recheck(PAYMENT_ID);
+
+        verify(resultService).approve(PAYMENT_ID, APPROVED_AT);
+    }
+
+    @Test
+    void 승인을_시도한_뒤_결과를_기록하지_못한_결제를_확정하지_못하면_시도를_기록한다() {
+        stored(Payment.order(7L, ORDER_ID, AMOUNT)).assignPgTid(PG_TID);
+        inquiryReturns(Status.PENDING, ORDER_ID, AMOUNT);
+
+        service().recheck(PAYMENT_ID);
+
+        verify(resultService).recordRecheckMiss(PAYMENT_ID, "결제대행사가 아직 처리 중입니다.");
+    }
+
+    @Test
+    void 승인을_시도하기_전_주문은_결제대행사를_부르지_않는다() {
+        stored(Payment.order(7L, ORDER_ID, AMOUNT));
+
+        service().recheck(PAYMENT_ID);
+
+        verifyNoInteractions(paymentGateway, resultService);
+    }
+
     @Test
     void 없는_결제면_BILLING_004다() {
         when(paymentRepository.findById(PAYMENT_ID)).thenReturn(Optional.empty());
