@@ -18,9 +18,9 @@
 | `{도메인}/` | 그 도메인의 k6 시나리오, 시험 데이터 생성기, 실행 스크립트 |
 | `{도메인}/run.sh` | lc-infra 로 띄운 환경에서 데이터 넣기, 회차 실행, 지표 모으기를 돌린다 |
 | `{도메인}/gen_data.py` | 그 도메인의 시험 데이터 SQL 을 만든다 |
-| `lib/` | 여러 도메인이 함께 쓰는 것. `token.js` 가 회원과 관리자의 Access Token 을 `JWT_SECRET` 으로 서명한다 |
+| `lib/` | 여러 도메인이 함께 쓰는 것. `token.js` 가 회원, 점주, 관리자의 Access Token 을 `JWT_SECRET` 으로 서명한다 |
 
-지금 있는 도메인은 `adserving/` 하나다.
+지금 있는 도메인은 `adserving/` 와 `billing/` 이다. `billing/` 은 생성기와 실행 스크립트 대신 `seed.sql` 과 `verify.sql` 을 둔다. `seed.sql` 은 시험 데이터를 넣고 `verify.sql` 은 시험이 끝난 뒤 충전이 맞는지 본다.
 
 ## 공통 규칙
 
