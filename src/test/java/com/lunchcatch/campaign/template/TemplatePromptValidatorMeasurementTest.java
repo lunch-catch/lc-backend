@@ -39,6 +39,22 @@ class TemplatePromptValidatorMeasurementTest {
         return SAMPLES.stream();
     }
 
+    @Test
+    @DisplayName("평가셋은 확정한 범주별 건수를 그대로 유지한다")
+    void 평가셋의_범주별_건수를_고정한다() {
+        assertThat(SAMPLES).hasSize(383);
+        assertThat(countOf(PromptMeasureSamples.CATEGORY_HIDDEN_CHARS)).isEqualTo(57);
+        assertThat(countOf(PromptMeasureSamples.CATEGORY_INJECTION)).isEqualTo(104);
+        assertThat(countOf(PromptMeasureSamples.CATEGORY_PERSONAL_INFO)).isEqualTo(52);
+        assertThat(countOf(PromptMeasureSamples.CATEGORY_TOO_SHORT)).isEqualTo(11);
+        assertThat(countOf(PromptMeasureSamples.CATEGORY_NORMAL)).isEqualTo(145);
+        assertThat(countOf(PromptMeasureSamples.CATEGORY_BORDERLINE)).isEqualTo(14);
+    }
+
+    private static long countOf(String category) {
+        return SAMPLES.stream().filter(s -> category.equals(s.category())).count();
+    }
+
     @ParameterizedTest(name = "{0}")
     @MethodSource("hiddenCharSamples")
     @DisplayName("숨은 문자 표본은 전부 POSTER-023 으로 차단된다")
