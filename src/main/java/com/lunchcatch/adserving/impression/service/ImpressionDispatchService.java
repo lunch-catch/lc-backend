@@ -65,6 +65,8 @@ public class ImpressionDispatchService {
         this.meterRegistry = meterRegistry;
         this.clock = clock;
         meterRegistry.gauge(BACKLOG_METRIC, backlog);
+        // 사건이 없어도 0 으로 보이게 기동 때 만든다
+        List.of(DISPATCHED_METRIC, FAILED_METRIC, ERROR_METRIC).forEach(meterRegistry::counter);
     }
 
     /*

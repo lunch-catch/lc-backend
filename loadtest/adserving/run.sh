@@ -148,13 +148,15 @@ docker run --rm valkey/valkey:9.0-alpine valkey-cli -h \"\$CACHE\" DBSIZE"
     name="${2:?회차 이름을 준다}"; base="${3:?회원 시작 번호를 준다}"; rate="${4:-100}"; hold="${5:-5m}"
     prof=""
     [ "${6:-}" != --profile ] || prof="${7:?--profile 뒤에 cpu 나 wall 을 준다}"
+    # 유지 시간은 k6 의 DURATION 그대로 넘기고, 유지 구간의 경계를 출력하려고 밀리초로도 바꾼다(#1092)
+    hold_ms=$(( $(k6_seconds "$hold") * 1000 ))
     #
     # 프로파일링은 램프업과 유지 구간 내내 붙인다. 표본을 뜨는 비용이 들어 그 회차는 결과에 적지 않는다.
     # 프로파일링 회차라는 것이 이름에 남게 -profile 로 끝나는 이름을 받는다.
     #
     if [ -n "$prof" ]; then
       case "$name" in *-profile) ;; *) die "프로파일링 회차는 이름을 -profile 로 끝낸다. 예: v3c-run1-profile" ;; esac
-      profile "$name" $(( 60 + $(k6_seconds "$hold") + 10 )) "$prof" &
+      profile "$name" $(( 60 + hold_ms / 1000 + 10 )) "$prof" &
     fi
     # 경고 로그를 셀 구간이다. k6 가 중간에 멈추거나 원격 명령이 실패해도 그때까지를 센다
     start=$(now_ms); rc=0
@@ -165,7 +167,15 @@ k6 run -q -o experimental-prometheus-rw --tag testid=adserving-$name \\
   -e MEMBERS=10000 -e MEMBER_BASE=$base -e PRE_VUS=200 -e MAX_VUS=2000 \\
   --summary-export \$OUT/summary-$name.json loadtest/adserving/feed_impression.js > \$OUT/k6-$name.log 2>&1 || true
 echo \"window \$start \$(ms)\"
-grep -E '✓|✗|↳|impression_results|http_reqs|http_req_duration|http_req_failed|iterations|vus_max' \$OUT/k6-$name.log | head -40" ) || rc=$?
+# 유지 구간의 경계는 k6 가 남긴 시나리오 시작 시각에 램프업 60초를 더해 낸다.
+# 그 줄이 없으면 k6 를 띄우기 전 시각으로 대신한다. 그때는 k6 가 뜨는 몇 초만큼 실제보다 이르다
+s0=\$(grep -m1 -o 'scenario_start [0-9]*' \$OUT/k6-$name.log | cut -d' ' -f2 || true)
+s0=\${s0:-\$start}
+echo \"hold \$((s0 + 60000)) \$((s0 + 60000 + $hold_ms))\"
+grep -E '✓|✗|↳|impression_results|http_reqs|http_req_duration|http_req_failed|iterations|vus_max' \$OUT/k6-$name.log | head -40 || true
+# 원격 쓰기 같은 k6 의 오류가 묻히지 않게 따로 보인다. 요약을 밀어내지 않게 마지막 몇 줄만 본다(lc-infra#60)
+echo \"errors\"
+grep 'level=error' \$OUT/k6-$name.log | tail -5 || true" ) || rc=$?
     record_warnings "$name" "$start" "$(now_ms)"
     wait
     exit "$rc"

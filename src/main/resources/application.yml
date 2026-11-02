@@ -128,6 +128,10 @@ server:
   tomcat:
     threads:
       max: 200
+    # 톰캣 스레드 지표(tomcat_threads_busy_threads 등)는 이 값을 켜야 나온다.
+    # 대시보드가 요청 처리 스레드가 얼마나 찼는지 보고 경보 임계값을 여기서 읽는다(#1092)
+    mbeanregistry:
+      enabled: true
 
 # 액추에이터를 8081 로 분리한다.
 # 8080 에 /actuator 경로가 존재하지 않게 되어 밖에서 막을 규칙이 필요 없다.
@@ -138,7 +142,8 @@ management:
   endpoints:
     web:
       exposure:
-        include: health, info, prometheus
+        # threaddump 는 스레드 수가 늘 때 어느 풀이 늘었는지 본다. 이미지가 JRE 라 jcmd 가 없어 이 길뿐이다
+        include: health, info, prometheus, threaddump
 
   endpoint:
     health:

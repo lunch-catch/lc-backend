@@ -6,6 +6,7 @@ import com.lunchcatch.adserving.engine.repository.CandidateBudget;
 import com.lunchcatch.billing.contract.BudgetProgress;
 import com.lunchcatch.billing.contract.BudgetQueryService;
 import io.micrometer.core.instrument.MeterRegistry;
+import jakarta.annotation.PostConstruct;
 import java.time.Clock;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -38,6 +39,12 @@ public class CandidateBudgetService {
     private final BudgetQueryService budgetQueryService;
     private final MeterRegistry meterRegistry;
     private final Clock clock;
+
+    // 사건이 없어도 0 으로 보이게 기동 때 만든다
+    @PostConstruct
+    void registerCounters() {
+        meterRegistry.counter(BUDGET_UNAVAILABLE_METRIC);
+    }
 
     // 갱신한 후보 수를 돌려주고 정산을 읽지 못하면 0 이다
     public int refresh(LocalDate businessDate) {

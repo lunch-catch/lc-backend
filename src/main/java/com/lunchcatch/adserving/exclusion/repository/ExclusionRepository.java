@@ -3,6 +3,7 @@ package com.lunchcatch.adserving.exclusion.repository;
 import com.lunchcatch.auth.RedisFailureClassifier;
 import io.micrometer.core.instrument.MeterRegistry;
 import com.lunchcatch.global.config.ClockConfig;
+import jakarta.annotation.PostConstruct;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -34,10 +35,20 @@ public class ExclusionRepository {
      */
     public static final String BYPASS_METRIC = "adserving_cache_bypass_total";
 
+    // 광고 서빙의 Valkey 저장소가 쓰는 use 태그다. 기동 때 쓰임새마다 0 으로 만든다
+    static final List<String> BYPASS_USES = List.of("exclusion", "feed_filter", "feed_rate_limit", "feed_wishes",
+            "impression_count", "serve_frequency", "serve_record");
+
     private static final RedisScript<Long> ADD_SCRIPT = loadScript();
 
     private final StringRedisTemplate redisTemplate;
     private final MeterRegistry meterRegistry;
+
+    // 사건이 없어도 0 으로 보이게 기동 때 만든다
+    @PostConstruct
+    void registerCounters() {
+        BYPASS_USES.forEach(use -> meterRegistry.counter(BYPASS_METRIC, "use", use));
+    }
 
     public static String key(LocalDate businessDate, Long memberId) {
         return KEY_PREFIX + businessDate + ":" + memberId;

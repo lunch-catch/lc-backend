@@ -76,7 +76,7 @@ loadtest/adserving/run.sh --local run local-run1 30000001 20 1m
 loadtest/adserving/run.sh --local metrics <window 시작 ms> <window 끝 ms>
 
 # 3. 대시보드를 찍는다(lc-infra 에서)
-./scripts/loadtest-snapshot.sh --local --label local-run1 --from <window 시작 ms> --to <window 끝 ms>
+./scripts/loadtest-snapshot.sh --local --label local-run1 --from <window 시작 ms> --to <hold 끝 ms>
 
 # 4. 내린다
 (cd <lc-infra>/observability/local && docker compose down -v)
