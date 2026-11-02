@@ -94,6 +94,9 @@ class ThreadKindMetricsTest {
             metrics.refresh();
 
             assertThat(registry.find(ThreadKindMetrics.METRIC).tag("kind", "kind-gone-worker").gauge()).isNull();
+        } finally {
+            hold.countDown();
+            worker.join();
         }
     }
 }
