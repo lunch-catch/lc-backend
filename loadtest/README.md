@@ -40,6 +40,7 @@
 | `record_warnings` | 회차 구간의 경고와 오류를 이벤트별로 세어 결과 문서에 적고 커밋한다 |
 | `profile` | 앱 서버에 프로파일링을 붙여 Pyroscope 로 보낸다 |
 | `full_sha`, `image_exists` | 이미지 커밋을 40자로 늘리고 GHCR 에 있는지 본다 |
+| `tracing_override`, `local_switch` | 앱에 OpenTelemetry 에이전트를 붙이는 compose 덮어쓰기 파일을 만들고, 로컬 앱을 그것으로 다시 띄운다 |
 
 새 도메인은 `run.sh` 의 앞에서 아래 값을 정하고 이 파일을 불러 쓴다. `loadtest/adserving/run.sh` 가 예다.
 
@@ -82,7 +83,7 @@ loadtest/adserving/run.sh --local metrics <window 시작 ms> <window 끝 ms>
 ```
 
 - 시나리오와 생성기는 지금 작업 트리의 것을 쓴다. k6 는 이 기계에서 돌고 지표를 로컬 Prometheus 로 보내 05 부하 시험 대시보드가 같은 화면으로 채워진다.
-- `switch`, `reset`, `rows` 처럼 AWS 에만 있는 일은 로컬에서 막는다.
+- `reset`, `rows` 처럼 AWS 에만 있는 일은 로컬에서 막는다. `switch` 는 커밋 없이 `[--tracing <이름>]` 만 받아 로컬 앱을 다시 띄운다.
 - 초당 피드는 노트북에 맞춰 낮춘다. 20 이면 초당 요청이 약 200 이다.
 
 ## 프로파일링
@@ -120,4 +121,32 @@ loadtest/adserving/run.sh run v1-run1-profile 30030001 100 5m --profile wall
 - 필터의 `*` 는 앞이나 끝에만 쓸 수 있다. 패키지로 고르지 못하고 `*Controller.*` 로 고른 뒤 다듬는 단계가 이 서비스의 패키지로 다시 고른다. 패키지를 빼는 `--simple` 을 쓰면 netty 와 JDK 의 `*Controller` 도 걸린다.
 - 그라파나의 노드 상한(16,384)을 넘으면 나머지가 `other` 로 뭉친다. 컨트롤러를 지나는 스택만 보내면 회차 하나가 수백 노드라 넘지 않는다.
 - wall 은 모든 스레드를 돌아가며 몇 개씩 뜬다. 톰캣 스레드가 200개 넘게 놀고 있으면 요청이 적을 때 표본이 적다. 부하가 걸린 회차 내내(`--profile`) 모은다.
+
+## 추적
+
+느린 요청 하나가 어느 단계에서 몇 ms 를 썼는지 본다. 앱에 OpenTelemetry Java 에이전트(`v2.32.0`)를 붙인다. 앱 코드는 바꾸지 않는다.
+
+```bash
+# 에이전트를 붙여 다시 띄운다. 이름이 추적의 run 라벨이 된다
+loadtest/adserving/run.sh switch <이미지> --tracing v1-tracing
+loadtest/adserving/run.sh run v1-run1-tracing 30030001 100 5m
+
+# 떼려면 --tracing 없이 다시 띄운다
+loadtest/adserving/run.sh switch <이미지>
+```
+
+- 앱 서버의 `/opt/lunchcatch-lt` 에 에이전트와 `compose.override.yaml` 을 둔다. compose 가 그 파일을 함께 읽어 lc-infra 의 설정을 고치지 않는다. `--tracing` 없이 띄우면 그 파일을 지운다. 로컬은 같은 파일을 `build/otel/` 에 만든다.
+- 앱은 같은 compose 의 Alloy(`http://alloy:4318`)로 스팬을 보낸다. 남길 추적은 Alloy 의 테일 샘플링이 고른다. 오류와 300ms 넘는 요청은 모두, 피드와 노출은 10%, 나머지는 1% 남긴다(lunch-catch/lc-infra#72).
+- 잴 메서드는 [`lib/otel-methods.txt`](lib/otel-methods.txt) 가 갖는다. 한 줄에 `패키지.클래스[메서드,메서드]` 이고 인터페이스가 아니라 실제 구현 클래스를 적는다. 도메인이 자기 메서드를 더한다.
+- 라벨은 JVM 이 뜰 때 정해진다. 한 번 띄운 뒤의 회차는 같은 라벨이라 회차는 시각 구간으로 가린다.
+
+**그라파나에서 보는 법:** Explore 에서 데이터 소스 `Tempo` 를 고르고 `{ resource.run = "v1-tracing" && name = "GET /v1/feed" && duration > 300ms }` 처럼 찾는다. 추적을 열면 메서드별 스팬이 시간 순으로 보인다. 스팬에서 그 요청의 로그(Loki)와 프로파일(Pyroscope)로 넘어간다. 로그의 `trace_id` 에서도 그 추적으로 넘어간다.
+
+지킬 것:
+
+- 측정 회차와 나눈다. 스팬을 만드는 비용이 p99 에 섞인다. 켠 회차는 이름을 `-tracing` 으로 끝내고 결과 표와 경고 로그 기록에 넣지 않는다.
+- 노출 저장과 서빙 로그 대기열은 응답 뒤에 돌아 추적이 거기서 끊긴다.
+- 에이전트 판은 `v2.32.0` 으로 고정한다. 새 판은 나온 지 2주가 지난 뒤에 올린다.
+- 켠 동안은 Valkey 명령 지연 지표(`lettuce_seconds_*`)가 없어 04 데이터 저장소 대시보드의 `Valkey 명령 지연` 패널이 빈다. 스프링 부트의 Lettuce 관측이 에이전트의 Lettuce 계측을 덮어 Valkey 명령이 스팬이 되지 않아, 켠 동안만 그 자동 설정(`LettuceObservationAutoConfiguration`)을 뺀다. 그 시간은 추적에서 명령마다 보인다.
+- 로그와 추적은 로그의 `trace_id` 로 잇는다. 요청 로그의 `traceId` 는 앱이 만든 별개의 값이라 추적과 이어지지 않는다.
 

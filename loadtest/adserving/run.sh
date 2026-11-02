@@ -8,12 +8,14 @@
 #   AWS_PROFILE=<프로필> loadtest/adserving/run.sh run <이름> <회원 시작 번호> [초당 피드] [유지 시간]
 #   AWS_PROFILE=<프로필> loadtest/adserving/run.sh metrics <시작 ms> <끝 ms>  그 구간의 서버 지표
 #   AWS_PROFILE=<프로필> loadtest/adserving/run.sh rows                    시험 데이터의 행 수
-#   AWS_PROFILE=<프로필> loadtest/adserving/run.sh switch <sha>            앱과 배치를 그 커밋 이미지로 다시 띄운다. GHCR 에 있어야 한다
+#   AWS_PROFILE=<프로필> loadtest/adserving/run.sh switch <sha> [--tracing <이름>]  앱과 배치를 그 커밋 이미지로 다시 띄운다. GHCR 에 있어야 한다
 #   AWS_PROFILE=<프로필> loadtest/adserving/run.sh reset [회원 수]         Valkey 를 비우고 시험 데이터를 다시 넣는다
 #   AWS_PROFILE=<프로필> loadtest/adserving/run.sh profile <이름> [초] [cpu|wall]  앱 서버에 프로파일링을 붙인다
 #
 # run 의 끝에 --profile cpu|wall 을 주면 회차 내내 프로파일링을 붙인다. 회차가 끝나면 경고 로그 건수를 결과 문서에 적고 커밋한다.
+# switch 에 --tracing <이름> 을 주면 OpenTelemetry 에이전트를 붙여 띄우고, 주지 않으면 뗀다. 이름은 추적의 run 라벨이 된다.
 # 첫 인자를 --local 로 주면 lc-infra 의 로컬 구성을 대상으로 seed, prepare, run, metrics, profile 을 같은 인자로 돌린다.
+# 로컬의 switch 는 커밋 없이 [--tracing <이름>] 만 받아 로컬 앱을 다시 띄운다.
 # 시나리오와 시드 생성기는 떠 있는 앱과 같은 커밋(SSM current-sha)에서 받는다. 값이 없으면 develop 이다.
 # LOADTEST_REF 로 브랜치나 커밋을 따로 고를 수 있다.
 set -euo pipefail
@@ -63,14 +65,21 @@ select 'batch', status from batch_execution_log where business_date = '\$D' and 
 }
 
 case "${LOCAL:+local-}${1:-}" in
-  local-switch|local-reset|local-rows)
-    die "로컬에서는 seed, prepare, run, metrics, profile 만 쓴다" ;;
+  local-reset|local-rows)
+    die "로컬에서는 seed, prepare, run, metrics, profile, switch 만 쓴다" ;;
+  local-switch)
+    label=""
+    [ "${2:-}" != --tracing ] || label="${3:?--tracing 뒤에 이름을 준다}"
+    local_switch "$label"
+    ;;
   seed|local-seed)
     members="${2:-40000}"
     seed
     ;;
   switch)
     sha="${2:?이미지 커밋을 준다}"
+    label=""
+    [ "${3:-}" != --tracing ] || label="${4:?--tracing 뒤에 이름을 준다}"
     sha=$(full_sha "$sha") || die "lc-backend 에 그 커밋이 없다"
     #
     # current-sha 를 바꾸고 전부 다시 띄우기 전에 이미지가 있는지 본다.
@@ -87,19 +96,40 @@ case "${LOCAL:+local-}${1:-}" in
     # 앱과 배치를 모두 새 이미지로 함께 다시 띄운다. 마이그레이션은 Flyway 가 먼저 뜬 쪽에서 한 번 돈다
     # 다시 뜨는 동안 헬스체크가 실패해 오토스케일링 그룹이 서버를 바꾸지 않게 교체를 멈춰 둔다
     aws autoscaling suspend-processes --auto-scaling-group-name "$PROJECT-app" --scaling-processes ReplaceUnhealthy
+    #
+    # 추적을 켜면 에이전트와 compose 덮어쓰기 파일을 두고, 끄면 그 파일을 지운다.
+    # compose 가 같은 디렉터리의 compose.override.yaml 을 함께 읽어 lc-infra 의 설정을 고치지 않는다.
+    #
+    if [ -n "$label" ]; then
+      # 받다 끊긴 jar 가 남아 다음에 그대로 쓰이지 않게 다 받은 뒤에만 제 이름으로 옮긴다
+      tracing="[ -s /opt/$PROJECT/otel-$OTEL_VERSION.jar ] || { curl -fsSL $OTEL_JAR_URL -o /opt/$PROJECT/otel-$OTEL_VERSION.jar.part && mv /opt/$PROJECT/otel-$OTEL_VERSION.jar.part /opt/$PROJECT/otel-$OTEL_VERSION.jar; }
+cat > /opt/$PROJECT/compose.override.yaml <<'OVERRIDE'
+$(tracing_override "$label" "./otel-$OTEL_VERSION.jar")
+OVERRIDE"
+    else
+      tracing="rm -f /opt/$PROJECT/compose.override.yaml"
+    fi
+    pids=""; rc=0
     for id in $(instances app) $(instances batch); do
       echo "restart $id"
       remote "$id" 600 "set -euo pipefail
+$tracing
 /usr/local/bin/$PROJECT-refresh-env
 systemctl restart $PROJECT
 for i in \$(seq 1 60); do
   curl -fs localhost:8081/actuator/health/readiness > /dev/null && break; sleep 5
 done
 docker inspect $PROJECT --format '{{.Config.Image}}'
+docker inspect $PROJECT --format '{{range .Config.Env}}{{println .}}{{end}}' | grep '^JDK_JAVA_OPTIONS=' || echo 'tracing off'
 curl -fs localhost:8081/actuator/health/readiness" &
+      pids="$pids $!"
     done
-    wait
+    for pid in $pids; do
+      wait "$pid" || rc=1
+    done
     aws autoscaling resume-processes --auto-scaling-group-name "$PROJECT-app" --scaling-processes ReplaceUnhealthy
+    # 서버 하나라도 새 이미지나 추적 설정으로 뜨지 못했으면 교체를 다시 켠 뒤 실패로 끝난다
+    [ "$rc" -eq 0 ] || die "다시 띄우지 못한 서버가 있다. 위 출력에서 그 서버를 확인한다"
     ;;
   reset)
     # 버전 사이에 앞 버전이 쌓은 것을 지운다(부하 시험 문서 5장). 시드가 시험 데이터와 그날 배치 기록을 지우고 다시 넣는다
@@ -155,5 +185,5 @@ select 'deduction', billing_status, count(*) from deduction_result where campaig
 select 'ledger', entry_type, count(*) from point_ledger where owner_id >= 30000001 group by entry_type;\""
     ;;
   *)
-    sed -n '3,17p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
+    sed -n '3,19p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
 esac
