@@ -21,6 +21,9 @@ LOCAL_PROJECT=lunchcatch-local
 LC_INFRA_DIR="${LC_INFRA_DIR:-$ROOT/../lc-infra}"
 # 2주가 지난 판을 고정한다. 4.2 부터 컨테이너 안에서 붙는다
 ASPROF_VERSION=4.5
+# OpenTelemetry Java 에이전트도 2주가 지난 판을 고정한다
+OTEL_VERSION=2.32.0
+OTEL_JAR_URL="https://github.com/open-telemetry/opentelemetry-java-instrumentation/releases/download/v$OTEL_VERSION/opentelemetry-javaagent.jar"
 
 die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 
@@ -295,12 +298,12 @@ open(path, 'w', encoding='utf-8').write('\n'.join(lines))
 PY
 
 #
-# 회차가 끝나면 경고 로그 건수를 출력하고 결과 문서에 적어 커밋한다. 워밍업과 프로파일링 회차는 적지 않는다.
+# 회차가 끝나면 경고 로그 건수를 출력하고 결과 문서에 적어 커밋한다. 워밍업, 프로파일링, 추적 회차는 적지 않는다.
 # 로컬은 노트북의 수치라 출력만 한다. 커밋은 결과 문서 하나만 지금 브랜치에 하고 푸시하지 않는다.
 #
 record_warnings() {
   local name="$1" start="$2" end="$3" rows rc=0
-  case "$name" in *-warmup|*-profile) echo "warnings: $name 은 결과에 적지 않는다"; return 0 ;; esac
+  case "$name" in *-warmup|*-profile|*-tracing) echo "warnings: $name 은 결과에 적지 않는다"; return 0 ;; esac
   # 회차 끝의 로그가 Alloy 를 거쳐 Loki 에 닿기를 기다린다
   sleep 10
   rows=$(warning_counts "$start" "$end") || { echo "WARN: 경고 로그를 묻지 못했다. 결과 문서에 적지 않았다" >&2; return 0; }
@@ -416,3 +419,57 @@ bash /tmp/lt-profile.sh $name $secs $mode $pyro $PROJECT /tmp/lt-trim.py $ASPROF
   done
   return "$rc"
 }
+
+#
+# 앱에 OpenTelemetry 에이전트를 붙이는 compose 덮어쓰기 파일을 낸다(#1099). 인자는 run 라벨과 에이전트 jar 경로다.
+# 시험 환경과 로컬 모두 앱 서비스가 app 이고 같은 compose 에 alloy 가 있어 같은 파일을 쓴다.
+# 운영 compose 가 JAVA_TOOL_OPTIONS 에 힙과 DNS 설정을 넣어 에이전트는 JDK_JAVA_OPTIONS 로 준다.
+# 남길 추적은 Alloy 의 테일 샘플링이 고른다(lunch-catch/lc-infra#72). 지표와 로그는 지금 길을 그대로 쓴다.
+# 스프링 부트의 Lettuce 관측이 에이전트의 Lettuce 계측을 덮어 Valkey 명령이 스팬이 되지 않아 그 자동 설정을 뺀다.
+# 그동안은 lettuce_seconds 지표가 없어 04 대시보드의 Valkey 명령 지연 패널이 빈다.
+#
+tracing_override() {
+  local label="$1" jar="$2" methods
+  methods=$(grep -v -e '^#' -e '^[[:space:]]*$' "$ROOT/loadtest/lib/otel-methods.txt" | paste -sd ';' -)
+  cat <<EOF
+services:
+  app:
+    volumes:
+      - $jar:/opt/otel.jar:ro
+    environment:
+      JDK_JAVA_OPTIONS: "-javaagent:/opt/otel.jar"
+      OTEL_SERVICE_NAME: lunchcatch
+      OTEL_RESOURCE_ATTRIBUTES: "run=$label"
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://alloy:4318
+      OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
+      OTEL_TRACES_SAMPLER: always_on
+      OTEL_METRICS_EXPORTER: none
+      OTEL_LOGS_EXPORTER: none
+      OTEL_INSTRUMENTATION_METHODS_INCLUDE: "$methods"
+      SPRING_AUTOCONFIGURE_EXCLUDE: org.springframework.boot.data.redis.autoconfigure.observation.LettuceObservationAutoConfiguration
+EOF
+}
+
+#
+# 로컬 앱을 다시 띄운다. 이름을 주면 에이전트를 붙이고 주지 않으면 뗀다.
+# 이미지는 다시 만들지 않는다. 앱 코드를 고쳤으면 로컬 구성에서 docker compose up -d --build app 을 먼저 돌린다.
+#
+local_switch() {
+  local label="${1:-}" dir="$ROOT/build/otel" over="" i
+  if [ -n "$label" ]; then
+    mkdir -p "$dir"
+    [ -s "$dir/otel-$OTEL_VERSION.jar" ] || curl -fsSL "$OTEL_JAR_URL" -o "$dir/otel-$OTEL_VERSION.jar"
+    over="$dir/compose.override.yaml"
+    tracing_override "$label" "$dir/otel-$OTEL_VERSION.jar" > "$over"
+  fi
+  LC_BACKEND_DIR="$ROOT" docker compose -f "$LC_INFRA_DIR/observability/local/compose.yaml" ${over:+-f "$over"} \
+    up -d --no-build app
+  for i in $(seq 1 60); do
+    docker exec "$LOCAL_PROJECT-app-1" curl -fs localhost:8081/actuator/health/readiness > /dev/null 2>&1 && break
+    sleep 5
+  done
+  docker exec "$LOCAL_PROJECT-app-1" curl -fs localhost:8081/actuator/health/readiness
+  echo
+  docker exec "$LOCAL_PROJECT-app-1" sh -c 'echo "JDK_JAVA_OPTIONS=${JDK_JAVA_OPTIONS:-}"'
+}
+
