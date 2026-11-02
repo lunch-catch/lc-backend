@@ -1,0 +1,418 @@
+#!/usr/bin/env bash
+#
+# 도메인마다 같은 부하 시험 일을 모은다(#1094). 도메인의 run.sh 가 아래 값을 정하고 이 파일을 불러 쓴다.
+# 쓰는 법은 loadtest/README.md 가 갖는다.
+#
+#   LOCAL                첫 인자가 --local 이면 1 이다. lc-infra 의 로컬 구성(observability/local)을 대상으로 돈다
+#   DOMAIN_EVENT_PREFIX  그 도메인 로그의 event 접두사다. 예: ADSERVING_
+#   RESULT_DOC           경고 로그 건수를 적을 결과 문서다. 저장소 루트에서의 경로다
+#   DOMAIN_METRICS       metrics 가 공통 지표 뒤에 더 묻는 지표다. 한 줄에 "이름 PromQL" 이고 구간은 $W 로 쓴다
+#
+
+# lc-infra 의 member-env.sh 가 어느 계정에서나 이 접두사로 띄운다 (lunch-catch/lc-infra#53). 리소스, SSM 경로, 컨테이너 이름이 모두 이것이다
+PROJECT="${PROJECT:-lunchcatch-lt}"
+REGION="${AWS_REGION:-ap-northeast-2}"
+REPO="https://github.com/lunch-catch/lc-backend.git"
+IMAGE_REPO="lunch-catch/lc-backend"
+export AWS_REGION="$REGION"
+ROOT=$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)
+# 로컬 구성의 compose 이름이다. 컨테이너가 lunchcatch-local-app-1 처럼 뜬다
+LOCAL_PROJECT=lunchcatch-local
+LC_INFRA_DIR="${LC_INFRA_DIR:-$ROOT/../lc-infra}"
+# 2주가 지난 판을 고정한다. 4.2 부터 컨테이너 안에서 붙는다
+ASPROF_VERSION=4.5
+
+die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
+
+if [ -n "${LOCAL:-}" ]; then
+  [ -f "$LC_INFRA_DIR/observability/local/.env" ] || die "LC_INFRA_DIR 에 lc-infra 경로를 준다. 그 observability/local/.env 의 서명 키를 쓴다"
+  docker inspect "$LOCAL_PROJECT-app-1" > /dev/null 2>&1 || die "로컬 구성이 떠 있지 않다. lc-infra 의 observability/local 에서 docker compose up -d --build 를 돌린다"
+else
+  [ -n "${AWS_PROFILE:-}${AWS_ACCESS_KEY_ID:-}" ] || die "AWS_PROFILE 을 준다. member-env.sh up 을 돌린 계정의 프로필이다"
+
+  #
+  # 앱과 같은 커밋의 시나리오를 쓴다. 브랜치 기본값만 두면 up --sha 로 예전 커밋을 띄웠을 때
+  # 앱은 예전인데 시나리오와 시드는 최신 develop 이라, 경로나 스키마가 바뀐 커밋이면 앱이 아니라 시나리오가 틀린다.
+  # switch 뒤의 실행은 바뀐 current-sha 를 읽으므로 새 커밋의 시나리오를 받는다.
+  #
+  REF="${LOADTEST_REF:-}"
+  if [ -z "$REF" ]; then
+    REF=$(aws ssm get-parameter --name "/$PROJECT/current-sha" --query Parameter.Value --output text 2> /dev/null || true)
+    case "$REF" in ""|bootstrap|None) REF=develop ;; esac
+  fi
+fi
+
+# 이미지 태그는 40자 SHA 다. 짧은 SHA 를 받으면 GitHub 에 물어 늘린다
+full_sha() {
+  [ ${#1} -eq 40 ] && { echo "$1"; return; }
+  curl -fsS "https://api.github.com/repos/$IMAGE_REPO/commits/$1" \
+    | python3 -c 'import json,sys; print(json.load(sys.stdin)["sha"])'
+}
+
+# GHCR 공개 패키지에 그 태그가 있는지 본다. 0 있음, 1 없음, 2 확인 못 함
+image_exists() {
+  local token code
+  token=$(curl -fsS "https://ghcr.io/token?scope=repository:$IMAGE_REPO:pull" \
+    | python3 -c 'import json,sys; print(json.load(sys.stdin)["token"])') || return 2
+  code=$(curl -sS -o /dev/null -w '%{http_code}' -I -H "Authorization: Bearer $token" \
+    -H "Accept: application/vnd.oci.image.index.v1+json,application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json,application/vnd.docker.distribution.manifest.list.v2+json" \
+    "https://ghcr.io/v2/$IMAGE_REPO/manifests/$1") || return 2
+  case "$code" in 200) return 0 ;; 404) return 1 ;; *) return 2 ;; esac
+}
+
+instance() {
+  local id
+  # 정해 둔 인스턴스가 있으면 그것을 쓴다. 새 이미지가 뜨지 못한 서버를 피할 때 쓴다
+  if [ "$1" = app ] && [ -n "${LT_APP:-}" ]; then echo "$LT_APP"; return; fi
+  id=$(aws ec2 describe-instances --filters "Name=tag:Project,Values=$PROJECT" "Name=tag:Role,Values=$1" \
+    "Name=instance-state-name,Values=running" --query 'Reservations[0].Instances[0].InstanceId' --output text)
+  [ "$id" != "None" ] || die "떠 있는 $1 인스턴스가 없다. member-env.sh status 로 환경을 확인한다"
+  echo "$id"
+}
+
+instances() {
+  aws ec2 describe-instances --filters "Name=tag:Project,Values=$PROJECT" "Name=tag:Role,Values=$1" \
+    "Name=instance-state-name,Values=running" --query 'Reservations[].Instances[].InstanceId' --output text
+}
+
+# 스크립트를 base64 로 실어 bash 로 돌린다. AWS-RunShellScript 는 sh 로 돌고 따옴표가 섞이면 깨진다
+remote() {
+  local id="$1" timeout="$2" script="$3" params cmd status
+  params=$(python3 -c 'import json,sys; print(json.dumps({"commands":["echo "+sys.argv[1]+" | base64 -d > /tmp/lt-job.sh && bash /tmp/lt-job.sh"],"executionTimeout":[sys.argv[2]]}))' \
+    "$(printf '%s' "$script" | base64 | tr -d '\n')" "$timeout")
+  cmd=$(aws ssm send-command --instance-ids "$id" --document-name AWS-RunShellScript --parameters "$params" \
+    --timeout-seconds 600 --query Command.CommandId --output text)
+  while :; do
+    sleep 5
+    status=$(aws ssm get-command-invocation --command-id "$cmd" --instance-id "$id" --query Status --output text 2> /dev/null || echo Pending)
+    case "$status" in Pending|InProgress|Delayed) ;; *) break ;; esac
+  done
+  aws ssm get-command-invocation --command-id "$cmd" --instance-id "$id" --query StandardOutputContent --output text
+  [ "$status" = "Success" ] || {
+    aws ssm get-command-invocation --command-id "$cmd" --instance-id "$id" --query StandardErrorContent --output text | tail -20 >&2
+    die "$status"
+  }
+}
+
+# 앱 컨테이너의 접속 정보로 RDS 에 붙는다. 부하 생성기는 DB 보안 그룹이 받지 않아 앱 서버에서 돈다
+# 컨테이너 이름만 따옴표를 끊어 여기서 넣는다. 나머지는 원격에서 풀려야 해서 작은따옴표로 둔다
+DB_ENV='
+ENVS=$(docker inspect '"$PROJECT"' --format "{{range .Config.Env}}{{println .}}{{end}}")
+URL=$(echo "$ENVS" | grep "^DB_URL=" | cut -d= -f2-)
+DBU=$(echo "$ENVS" | grep "^DB_USERNAME=" | cut -d= -f2-)
+DBP=$(echo "$ENVS" | grep "^DB_PASSWORD=" | cut -d= -f2-)
+HOST=$(echo "$URL" | sed -E "s#jdbc:mysql://([^:/]+).*#\1#")
+DB=$(echo "$URL" | sed -E "s#jdbc:mysql://[^/]+/([^?]+).*#\1#")
+mysql() { docker run --rm -i -e MYSQL_PWD="$DBP" mysql:8.4 mysql -h "$HOST" -u "$DBU" "$DB" "$@"; }
+D=$(TZ=Asia/Seoul date +%F)
+'
+
+# 로컬 구성의 MySQL 이다. 계정은 lc-infra 의 observability/local/compose.yaml 이 정한다
+local_mysql() { docker exec -i "$LOCAL_PROJECT-mysql-1" env MYSQL_PWD=root mysql -uroot lunchcatch "$@"; }
+
+# 로컬 구성의 앱이 쓰는 서명 키다. 출력하지 않고 변수로만 넘긴다
+local_jwt() { grep '^JWT_SECRET=' "$LC_INFRA_DIR/observability/local/.env" | cut -d= -f2-; }
+
+# 지금 시각의 밀리초다. 맥의 date 는 %3N 을 모른다
+MS_FN='ms() { python3 -c "import time; print(int(time.time() * 1000))"; }'
+
+#
+# 부하 생성기에서 스크립트를 돌린다. 스크립트는 저장소 루트에서 돌고 BASE_URL, JWT, OUT(로그를 둘 디렉터리)을 쓴다.
+# 시험 환경은 부하 생성기 인스턴스가 앱과 같은 커밋($REF)의 저장소를 받아 돌린다.
+# 로컬은 이 기계의 k6 가 지금 작업 트리로 돌고 지표를 로컬 Prometheus 로 보낸다.
+#
+loadgen() {
+  local timeout="$1" script="$2"
+  if [ -n "${LOCAL:-}" ]; then
+    (
+      export BASE_URL="http://localhost:${APP_PORT:-18080}" JWT OUT
+      JWT=$(local_jwt)
+      OUT=$(mktemp -d)
+      export K6_PROMETHEUS_RW_SERVER_URL="http://localhost:${PROMETHEUS_PORT:-19090}/api/v1/write"
+      export K6_PROMETHEUS_RW_PUSH_INTERVAL=5s K6_PROMETHEUS_RW_TREND_AS_NATIVE_HISTOGRAM=true
+      cd "$ROOT"
+      bash -c "set -euo pipefail
+$MS_FN
+$script"
+    )
+    return
+  fi
+  remote "$(instance load-test)" "$timeout" "set -euo pipefail
+set -a; . /opt/loadtest/env; set +a
+DIR=/opt/loadtest/lc-backend-run
+OUT=/opt/loadtest
+export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0=\"\$DIR\"
+[ -d \"\$DIR/.git\" ] || git clone -q --depth 1 --no-checkout $REPO \"\$DIR\"
+git -C \"\$DIR\" fetch -q --depth 1 origin $REF && git -C \"\$DIR\" reset -q --hard FETCH_HEAD
+echo \"scenario \$(git -C \"\$DIR\" rev-parse --short HEAD)\"
+cd \"\$DIR\"
+$MS_FN
+JWT=\$(aws ssm get-parameter --name /$PROJECT/jwt-signing-key --with-decryption --region $REGION --query Parameter.Value --output text)
+$script"
+}
+
+# k6 의 시간 꼴(5m, 300s, 1m30s, 1h)을 초로 바꾼다
+k6_seconds() {
+  local rest="$1" total=0 unit
+  while [[ "$rest" =~ ^([0-9]+)(h|m|s)(.*)$ ]]; do
+    case "${BASH_REMATCH[2]}" in h) unit=3600 ;; m) unit=60 ;; s) unit=1 ;; esac
+    total=$(( total + 10#${BASH_REMATCH[1]} * unit ))
+    rest="${BASH_REMATCH[3]}"
+  done
+  [ -z "$rest" ] && [ "$total" -gt 0 ] || die "시간은 k6 의 꼴로 준다. 예: 5m, 300s, 1m30s, 1h"
+  echo "$total"
+}
+
+now_ms() { echo $(( $(date +%s) * 1000 )); }
+
+#
+# 서버 지표를 묻는다. 인자는 Prometheus 주소, 시작 ms, 끝 ms 이고 물을 지표는 표준 입력으로 받는다.
+# 한 줄에 "이름 PromQL" 이고 PromQL 의 $W 는 구간 길이로 바뀐다. # 으로 시작하는 줄은 건너뛴다.
+#
+IFS= read -r -d '' METRICS_PY <<'PY' || true
+import json, sys, urllib.parse, urllib.request
+base, s, e = sys.argv[1], int(sys.argv[2]) / 1000, int(sys.argv[3]) / 1000
+w = f'{int(e - s)}s'
+def q(expr):
+    u = base + '/api/v1/query?' + urllib.parse.urlencode({'query': expr, 'time': e})
+    r = json.load(urllib.request.urlopen(u))['data']['result']
+    return [({k: v for k, v in x['metric'].items() if k in ('uri', 'status')}, round(float(x['value'][1]), 3)) for x in r]
+for line in sys.stdin:
+    line = line.strip()
+    if not line or line.startswith('#'):
+        continue
+    name, expr = line.split(' ', 1)
+    print(name, q(expr.replace('$W', w)))
+PY
+
+# 도메인과 상관없이 묻는 지표다. 도메인의 것은 DOMAIN_METRICS 가 뒤에 더한다
+COMMON_METRICS='
+hikari_pending_max max_over_time(sum(hikaricp_connections_pending{job=~".*app.*"})[$W:5s])
+hikari_active_max max_over_time(sum(hikaricp_connections_active{job=~".*app.*"})[$W:5s])
+hikari_timeout_inc sum(increase(hikaricp_connections_timeout_total[$W]))
+hikari_acquire_avg_ms 1000*sum(increase(hikaricp_connections_acquire_seconds_sum[$W]))/sum(increase(hikaricp_connections_acquire_seconds_count[$W]))
+hikari_usage_avg_ms 1000*sum(increase(hikaricp_connections_usage_seconds_sum[$W]))/sum(increase(hikaricp_connections_usage_seconds_count[$W]))
+mysql_commit_per_s sum(rate(mysql_global_status_commands_total{command="commit"}[$W]))
+mysql_insert_per_s sum(rate(mysql_global_status_commands_total{command="insert"}[$W]))
+mysql_threads_running_max max_over_time(max(mysql_global_status_threads_running)[$W:5s])
+app_cpu_avg avg(avg_over_time(process_cpu_usage{job=~".*app.*"}[$W]))
+app_cpu_max max(max_over_time(process_cpu_usage{job=~".*app.*"}[$W]))
+loadgen_cpu_max_pct max_over_time((100*(1-avg(rate(node_cpu_seconds_total{role="load-test",mode="idle"}[1m]))))[$W:15s])
+http_5xx_inc sum by (uri, status) (increase(http_server_requests_seconds_count{status=~"5.."}[$W]))
+'
+
+# 회차 구간의 서버 지표를 모은다. 로컬은 로컬 Prometheus 만 묻는다. RDS 와 ElastiCache 가 없다
+metrics() {
+  local start="${1:?시작 ms 를 준다}" end="${2:?끝 ms 를 준다}" queries
+  queries="$COMMON_METRICS${DOMAIN_METRICS:-}"
+  if [ -n "${LOCAL:-}" ]; then
+    printf '%s\n' "$queries" | python3 -c "$METRICS_PY" "http://localhost:${PROMETHEUS_PORT:-19090}" "$start" "$end"
+    return
+  fi
+  remote "$(instance monitoring)" 300 "cat > /tmp/lt-metrics.py <<'PY'
+$METRICS_PY
+PY
+python3 /tmp/lt-metrics.py http://localhost:9090 $start $end <<'Q'
+$queries
+Q"
+  # RDS 는 Prometheus 가 아니라 CloudWatch 에서 읽는다. t4g 라 CPU 크레딧이 바닥나면 기본 성능으로 떨어진다
+  for m in CPUUtilization:Maximum CPUCreditBalance:Minimum; do
+    printf 'rds_%s ' "${m%%:*}"
+    aws cloudwatch get-metric-statistics --namespace AWS/RDS --metric-name "${m%%:*}" \
+      --dimensions Name=DBInstanceIdentifier,Value="$PROJECT-db" --period 60 --statistics "${m##*:}" \
+      --start-time "$(date -u -r $((start / 1000)) +%FT%TZ)" --end-time "$(date -u -r $((end / 1000)) +%FT%TZ)" \
+      --query "sort_by(Datapoints,&Timestamp)[].${m##*:}" --output text
+  done
+  # ElastiCache 의 t4g 는 Unlimited 가 없어 CPU 크레딧이나 네트워크 버스트가 바닥나면 기준 성능으로 떨어진다
+  for node in $(aws elasticache describe-replication-groups --replication-group-id "$PROJECT-cache" \
+      --query 'ReplicationGroups[0].MemberClusters' --output text); do
+    for m in EngineCPUUtilization:Maximum CPUCreditBalance:Minimum NetworkBandwidthInAllowanceExceeded:Sum NetworkBandwidthOutAllowanceExceeded:Sum; do
+      printf 'valkey_%s_%s ' "$node" "${m%%:*}"
+      aws cloudwatch get-metric-statistics --namespace AWS/ElastiCache --metric-name "${m%%:*}" \
+        --dimensions Name=CacheClusterId,Value="$node" --period 60 --statistics "${m##*:}" \
+        --start-time "$(date -u -r $((start / 1000)) +%FT%TZ)" --end-time "$(date -u -r $((end / 1000)) +%FT%TZ)" \
+        --query "sort_by(Datapoints,&Timestamp)[].${m##*:}" --output text
+    done
+  done
+}
+
+#
+# Loki 에 그 구간의 경고와 오류를 이벤트별로 묻는다. 인자는 Loki 주소, event 접두사, 시작 ms, 끝 ms, 기본 인증(없으면 빈 값)이다.
+# 고르는 조건은 lc-infra 의 경고 로그 패널(lunch-catch/lc-infra#63)과 같다. 한 줄에 "수준 이벤트 건수" 를 많은 순으로 낸다.
+#
+IFS= read -r -d '' WARNINGS_PY <<'PY' || true
+import base64, json, sys, urllib.parse, urllib.request
+base, prefix, s, e, auth = sys.argv[1], sys.argv[2], int(sys.argv[3]) // 1000, int(sys.argv[4]) // 1000, sys.argv[5]
+expr = ('sum by (level, ev) (count_over_time({container=~"lunchcatch.*", role=~"app|batch"} |~ "event=%s"'
+        ' | json | level=~"WARN|ERROR" | regexp "event=(?P<ev>[A-Z_]+)" [%ds]))') % (prefix, max(e - s, 1))
+req = urllib.request.Request(base + '/loki/api/v1/query?' + urllib.parse.urlencode({'query': expr, 'time': e}))
+if auth:
+    req.add_header('Authorization', 'Basic ' + base64.b64encode(auth.encode()).decode())
+rows = [(x['metric'].get('level', '-'), x['metric'].get('ev', '-'), int(float(x['value'][1])))
+        for x in json.load(urllib.request.urlopen(req))['data']['result']]
+for level, ev, n in sorted(rows, key=lambda r: (-r[2], r[0], r[1])):
+    print(level, ev, n)
+PY
+
+# 로컬 Loki 는 포트를 열지 않아 그라파나의 데이터 소스 프록시로 묻는다
+warning_counts() {
+  local start="$1" end="$2"
+  if [ -n "${LOCAL:-}" ]; then
+    python3 -c "$WARNINGS_PY" "http://localhost:${GRAFANA_PORT:-13000}/api/datasources/proxy/uid/loki" \
+      "$DOMAIN_EVENT_PREFIX" "$start" "$end" admin:admin
+    return
+  fi
+  remote "$(instance monitoring)" 120 "cat > /tmp/lt-warnings.py <<'PY'
+$WARNINGS_PY
+PY
+python3 /tmp/lt-warnings.py http://localhost:3100 $DOMAIN_EVENT_PREFIX $start $end ''"
+}
+
+#
+# 결과 문서에서 제목에 "경고 로그" 가 든 절의 표에 회차 줄을 적는다. 표가 없으면 절 끝에 만든다.
+# 같은 회차의 줄이 이미 있으면 지우고 다시 적는다. 절이 없으면 3 으로 끝난다.
+#
+IFS= read -r -d '' WRITE_WARNINGS_PY <<'PY' || true
+import sys
+path, name = sys.argv[1], sys.argv[2]
+rows = [l.split() for l in sys.stdin.read().splitlines() if l.strip()]
+new = ['| %s | %s | %s | %s |' % (name, lv, ev, n) for lv, ev, n in rows] or ['| %s | - | 없음 | 0 |' % name]
+lines = open(path, encoding='utf-8').read().split('\n')
+head = next((i for i, l in enumerate(lines) if l.startswith('#') and '경고 로그' in l), None)
+if head is None:
+    sys.exit(3)
+end = next((i for i in range(head + 1, len(lines)) if lines[i].startswith('#')), len(lines))
+table = [i for i in range(head + 1, end) if lines[i].startswith('|')]
+if table:
+    keep = [i for i in table[2:] if not lines[i].startswith('| %s |' % name)]
+    at = table[0] + 2
+    body = [lines[i] for i in keep] + new
+    lines[at:table[-1] + 1] = body
+else:
+    last = max([i for i in range(head, end) if lines[i].strip()])
+    lines[last + 1:last + 1] = ['', '| 회차 | 수준 | 이벤트 | 건수 |', '|---|---|---|---|'] + new
+open(path, 'w', encoding='utf-8').write('\n'.join(lines))
+PY
+
+#
+# 회차가 끝나면 경고 로그 건수를 출력하고 결과 문서에 적어 커밋한다. 워밍업과 프로파일링 회차는 적지 않는다.
+# 로컬은 노트북의 수치라 출력만 한다. 커밋은 결과 문서 하나만 지금 브랜치에 하고 푸시하지 않는다.
+#
+record_warnings() {
+  local name="$1" start="$2" end="$3" rows rc=0
+  case "$name" in *-warmup|*-profile) echo "warnings: $name 은 결과에 적지 않는다"; return 0 ;; esac
+  # 회차 끝의 로그가 Alloy 를 거쳐 Loki 에 닿기를 기다린다
+  sleep 10
+  rows=$(warning_counts "$start" "$end") || { echo "WARN: 경고 로그를 묻지 못했다. 결과 문서에 적지 않았다" >&2; return 0; }
+  echo "warnings"
+  printf '%s\n' "${rows:-없음}"
+  [ -z "${LOCAL:-}" ] || return 0
+  printf '%s\n' "$rows" | python3 -c "$WRITE_WARNINGS_PY" "$ROOT/$RESULT_DOC" "$name" || rc=$?
+  case "$rc" in
+    0) ;;
+    3) echo "WARN: $RESULT_DOC 에 제목이 '경고 로그' 인 절이 없어 적지 않았다. 절의 머리말을 쓰고 다시 적는다" >&2; return 0 ;;
+    *) echo "WARN: $RESULT_DOC 에 적지 못했다" >&2; return 0 ;;
+  esac
+  if ! git -C "$ROOT" diff --cached --quiet; then
+    echo "WARN: 스테이징된 다른 파일이 있어 커밋하지 않았다. $RESULT_DOC 에는 적어 두었다" >&2
+    return 0
+  fi
+  git -C "$ROOT" add -- "$RESULT_DOC"
+  git -C "$ROOT" commit -q -m "test: $name 의 경고 로그 건수를 결과에 적는다 (#1094)" -- "$RESULT_DOC"
+  echo "committed $(git -C "$ROOT" rev-parse --short HEAD) $RESULT_DOC"
+}
+
+#
+# collapsed 스택을 그라파나에서 읽히게 다듬는다. 이 서비스의 컨트롤러를 지나는 스택만 남기고, 그 위의 톰캣과 스프링 프레임을 잘라
+# 그래프가 컨트롤러에서 시작하게 한다. 프레임 이름은 패키지를 뺀 클래스 이름(FeedController.getFeed)으로 줄인다.
+# 호출마다 되풀이되는 스프링 프록시와 AOP 프레임도 뺀다. 다듬기 전에는 컨트롤러까지 프레임이 100개 넘게 쌓여 이름이 잘렸다.
+#
+IFS= read -r -d '' TRIM_PY <<'PY' || true
+import re, sys
+from collections import Counter
+# async-profiler 의 --simple 로 패키지를 빼면 netty 와 JDK 의 *Controller 도 걸려 패키지로 고른 뒤에 줄인다
+CONTROLLER = re.compile(r'^com[/.]lunchcatch[/.].*Controller\.')
+PROXY = re.compile(r'\$\$SpringCGLIB\$\$|^\$Proxy\d*\.|^jdk\.proxy|^CglibAopProxy|^ReflectiveMethodInvocation\.'
+                   r'|^MethodProxy\.|^AopUtils\.|^Invokers\$Holder\.|^DirectMethodHandle\$Holder\.|^LambdaForm\$'
+                   r'|^DirectMethodHandleAccessor\.|^Method\.invoke$|^ExposeInvocationInterceptor\.')
+out = Counter()
+for line in sys.stdin:
+    stack, _, n = line.rstrip('\n').rpartition(' ')
+    frames = stack.split(';')
+    top = next((i for i, f in enumerate(frames) if CONTROLLER.search(f)), None)
+    if top is None:
+        continue
+    kept = [f for f in (x.rsplit('/', 1)[-1] for x in frames[top:]) if not PROXY.search(f)]
+    out[';'.join(kept)] += int(n)
+for stack, n in out.items():
+    print(stack, n)
+PY
+
+#
+# 앱 서버 하나에서 돈다. 인자는 회차 이름, 초, 모드, Pyroscope 주소, 앱 컨테이너, TRIM_PY 파일, async-profiler 판이다.
+# 앱을 다시 띄우지 않고 async-profiler 를 컨테이너에 넣어 붙인다. 10초씩 떠서 다듬은 뒤 Pyroscope 로 보낸다.
+# 컨테이너 안에서는 -e cpu 가 막혀(perf_event_paranoid=2) CPU 는 itimer 로 뜬다. 간격은 async-profiler 의 기본값이다.
+# --include 는 JFR 출력에 먹지 않아 collapsed 로 뜬다. 필터의 * 는 앞이나 끝에만 쓸 수 있어 패키지는 TRIM_PY 가 고른다.
+#
+IFS= read -r -d '' PROFILE_SH <<'SH' || true
+set -euo pipefail
+run="$1"; secs="$2"; mode="$3"; pyro="$4"; app="$5"; trim="$6"; ver="$7"
+case "$mode" in
+  cpu) ev=itimer; iv=10ms; rate=100 ;;
+  wall) ev=wall; iv=50ms; rate=20 ;;
+esac
+work=$(mktemp -d)
+if ! docker exec "$app" test -x /tmp/async-profiler/bin/asprof; then
+  case "$(docker exec "$app" uname -m)" in aarch64) arch=arm64 ;; *) arch=x64 ;; esac
+  curl -fsSL "https://github.com/async-profiler/async-profiler/releases/download/v$ver/async-profiler-$ver-linux-$arch.tar.gz" | tar -xz -C "$work"
+  docker cp "$work/async-profiler-$ver-linux-$arch" "$app:/tmp/async-profiler" > /dev/null
+fi
+stop=$(( $(date +%s) + secs ))
+while [ "$(date +%s)" -lt "$stop" ]; do
+  from=$(date +%s)
+  out=$(docker exec "$app" /tmp/async-profiler/bin/asprof -d 10 -e "$ev" -i "$iv" \
+    --include '*Controller.*' -o collapsed -f /tmp/lt-profile.txt 1 2>&1) || { echo "$out" >&2; exit 1; }
+  docker cp "$app:/tmp/lt-profile.txt" "$work/raw.txt" > /dev/null
+  python3 "$trim" < "$work/raw.txt" > "$work/folded.txt"
+  # 회차가 끝난 뒤의 조각처럼 요청이 없으면 보내지 않는다
+  [ -s "$work/folded.txt" ] || continue
+  curl -fsS -X POST --data-binary @"$work/folded.txt" \
+    "$pyro/ingest?name=lunchcatch.$mode%7Brun%3D$run%7D&from=$from&until=$(date +%s)&format=folded&sampleRate=$rate&spyName=javaspy&units=samples&aggregationType=sum"
+  echo "profile $mode $from $(wc -l < "$work/folded.txt") stacks"
+done
+SH
+
+#
+# 앱 서버마다 프로파일링을 붙여 그 시간 동안 Pyroscope 로 보낸다. 모드는 cpu 나 wall 이다.
+# 시험 환경은 앱 서버 모두에 SSM 으로 함께 보내고 모니터링 서버의 Pyroscope(lunch-catch/lc-infra#71)로 보낸다.
+#
+profile() {
+  local name="${1:?회차 이름을 준다}" secs="${2:-60}" mode="${3:-wall}" pyro id trim pids="" pid rc=0
+  case "$mode" in cpu|wall) ;; *) die "모드는 cpu 나 wall 이다" ;; esac
+  if [ -n "${LOCAL:-}" ]; then
+    trim=$(mktemp)
+    printf '%s\n' "$TRIM_PY" > "$trim"
+    bash -c "$PROFILE_SH" profile "$name" "$secs" "$mode" "http://localhost:${PYROSCOPE_PORT:-14040}" \
+      "$LOCAL_PROJECT-app-1" "$trim" "$ASPROF_VERSION"
+    return
+  fi
+  pyro="http://$(aws ec2 describe-instances --filters "Name=tag:Project,Values=$PROJECT" "Name=tag:Role,Values=monitoring" \
+    "Name=instance-state-name,Values=running" --query 'Reservations[0].Instances[0].PrivateIpAddress' --output text):4040"
+  for id in $(instances app); do
+    # tail 이 프로파일러의 실패를 가리지 않게 pipefail 로 돈다
+    remote "$id" $(( secs + 300 )) "set -o pipefail
+cat > /tmp/lt-trim.py <<'PY'
+$TRIM_PY
+PY
+cat > /tmp/lt-profile.sh <<'SH'
+$PROFILE_SH
+SH
+bash /tmp/lt-profile.sh $name $secs $mode $pyro $PROJECT /tmp/lt-trim.py $ASPROF_VERSION | tail -3" &
+    pids="$pids $!"
+  done
+  # 앱 서버 하나라도 프로파일을 보내지 못했으면 실패로 끝난다
+  for pid in $pids; do
+    wait "$pid" || rc=1
+  done
+  return "$rc"
+}

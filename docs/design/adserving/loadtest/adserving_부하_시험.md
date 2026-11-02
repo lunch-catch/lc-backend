@@ -101,6 +101,7 @@ aws autoscaling update-auto-scaling-group --auto-scaling-group-name lunchcatch-l
 | 측정 1 | 60초 | 5분 | 30000001 ~ 30010000 | 3회 평균 |
 | 측정 2 | 60초 | 5분 | 30010001 ~ 30020000 | 3회 평균 |
 | 측정 3 | 60초 | 5분 | 30020001 ~ 30030000 | 3회 평균 |
+| 프로파일링(필요할 때) | 60초 | 5분 | 30030001 ~ 30040000 | 뺀다. 측정 3회 뒤에 돌린다 |
 
 노출 횟수는 그날 내내 남는다. 같은 날 회차를 거듭하면서 같은 회원을 쓰면 뒤 회차일수록 카드가 줄어 회차마다 다른 대역을 쓴다.
 
@@ -124,6 +125,9 @@ AWS_PROFILE=<프로필> loadtest/adserving/run.sh run v1-run1 30000001
 AWS_PROFILE=<프로필> loadtest/adserving/run.sh run v1-run2 30010001
 AWS_PROFILE=<프로필> loadtest/adserving/run.sh run v1-run3 30020001
 
+# 어디서 시간을 쓰는지 보려면 측정 회차가 끝난 뒤 따로 돌린다. 결과에 적지 않아 워밍업 대역을 다시 쓴다
+AWS_PROFILE=<프로필> loadtest/adserving/run.sh run v1-run1-profile 30030001 100 5m --profile wall
+
 # 4. 회차마다 출력된 구간으로 서버 지표를 모은다. 행 수는 마지막 회차가 끝나고 10초 뒤에 맞대 본다
 AWS_PROFILE=<프로필> loadtest/adserving/run.sh metrics <시작 ms> <끝 ms>
 AWS_PROFILE=<프로필> loadtest/adserving/run.sh rows
@@ -139,6 +143,9 @@ AWS_PROFILE=<프로필> ./scripts/member-env.sh down
 
 - 생성기는 그날 배치 기록을 지우므로 시험하는 날에 넣는다. 앱이 판단하는 영업일(Asia/Seoul)과 같아야 한다.
 - 행 수를 회차 직후에 세면 아직 쓰이지 않은 행이 빠진다. 노출 수집 v3 는 응답 뒤 최대 200ms 에 저장하고 v2 부터는 릴레이가 1초마다 정산에 넘긴다.
+- **회차가 끝나면 경고 로그 건수가 결과 문서에 적히고 커밋이 하나 생긴다.** `run` 이 그 회차 구간의 `ADSERVING_` 경고와 오류를 이벤트별로 세어 `노출_수집_부하_시험_결과.md` 의 `경고 로그` 절 표에 적는다. 푸시는 하지 않는다. 지금 브랜치에 커밋하므로 시험용 브랜치에서 돌린다. develop 에서 돌리면 develop 에 커밋이 생긴다.
+- 워밍업(`-warmup`)과 프로파일링(`-profile`) 회차는 결과 문서에 적지 않는다. 프로파일링은 표본을 뜨는 비용이 들어 측정 회차와 나눈다. 무엇을 어떻게 보는지는 [`loadtest/README.md`](../../../../loadtest/README.md#프로파일링) 가 갖는다.
+- 같은 순서를 노트북에서 돌리려면 첫 인자로 `--local` 을 준다. 순서는 [`loadtest/README.md`](../../../../loadtest/README.md#로컬에서-돌리기) 가 갖는다.
 - 앱에 `CDN_BASE_URL` 이 비어 있으면 그날 후보 적재가 실패한다. 부하 시험 환경은 lc-infra 가 채운다. 로컬에서는 아무 값이나 준다.
 
 ## 7. 모으는 지표
