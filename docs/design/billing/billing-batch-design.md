@@ -278,18 +278,20 @@ PointCharged { ownerId, paymentId, amount }
 
 # I-04. 결제 재조회 워커 — 아웃박스
 
-`payment_reconciliation_outbox`는 PG 응답이 불명확한 결제(`UNKNOWN`)를 확정하기 위한 재시도 큐다.
+`payment_reconciliation_outbox`는 결과를 아직 확정하지 못한 결제를 확정하기 위한 재시도 큐다. 대상은 PG 응답이 불명확한 결제(`UNKNOWN`)와, 결제 식별자를 적었지만 결과를 기록하지 못해 `REQUESTED`로 남은 결제다. 두 경우는 원인이 다르다. 그래도 워커는 결제 식별자로 PG에 묻고 그 결과를 기록하는 같은 일을 하므로 큐를 나누지 않는다.
 
 워커와 관리자 재조회가 사용하는 조회 식별자는 [결제 승인 결과의 재조회](./billing_구조와_동작_설계.md#결제-승인-결과의-재조회)를 따른다.
 
-- **적재**: 승인 확정에서 결제를 `UNKNOWN`으로 만들 때 (웹훅은 `UNKNOWN`을 만들지 않는다. [billing API 설계](./billing-api-design.md)의 웹훅 절 참고) 같은 트랜잭션에서 `status=PENDING`, `attempt_count=0`, `max_retry`, `next_retry_at`을 채워 넣는다. 결제당 1행(`UNIQUE(payment_id)`).
+- **적재**: `PaymentResultService.assignPgTid`가 결제 식별자를 적는 트랜잭션에서 `status=PENDING`, `attempt_count=0`, `max_retry`, `next_retry_at`을 채워 넣는다. 승인 확정과 웹훅이 이 메서드를 함께 쓴다. `UNKNOWN` 전환은 그 행을 그대로 쓰고 행이 없을 때만 만든다. 결제당 1행(`UNIQUE(payment_id)`).
+- **삭제**: 승인 요청이 PG에 닿지 않은 것이 확실하면(`PgNotSentException`) 결제가 아직 `REQUESTED`일 때 그 행을 지운다. 점주가 다시 승인하면 행을 새로 만든다. 처리는 [billing API 설계](./billing-api-design.md#결제-주문과-승인-확정)를 따른다.
+- **첫 조회 시각**: 최초 조회 지연(1분)은 승인 확정이 PG 응답을 기다리는 읽기 타임아웃(10초)보다 길다. 그래서 정상 승인 확정이 행을 닫기 전에 워커가 그 행을 집지 않는다.
 - **처리**: 주기 스케줄러가 `status=PENDING AND next_retry_at ≤ now`인 건을 `(status, next_retry_at)` 인덱스로 가져와 PG 조회 API를 호출한다. 여러 인스턴스가 같은 건을 집지 않도록 행 잠금(`SKIP LOCKED`)을 쓴다.
 
 | PG 조회 결과 | 처리 |
 | --- | --- |
 | 승인 | `payment` → `APPROVED` + `CHARGE` 기록 + 아웃박스 `RESOLVED` + `PointCharged` |
 | 실패·취소 | `payment` → `FAILED` / `CANCELLED`, 충전 없음, 아웃박스 `RESOLVED` |
-| 여전히 불명 | `attempt_count + 1`, `next_retry_at`을 지수 백오프로 미룸, `last_checked_at`·`last_error` 갱신 |
+| 여전히 불명 | `attempt_count + 1`, `next_retry_at`을 지수 백오프로 미룸, `last_checked_at`·`last_error` 갱신. 결제가 `REQUESTED`면 `UNKNOWN`으로 바꾼다. 관리자 재조회가 `UNKNOWN`만 받기 때문이다 |
 | `attempt_count ≥ max_retry` | `FAILED_PERMANENT`. ERROR 로그(`event=PAYMENT_RECHECK_EXHAUSTED`)와 메트릭 `billing.payment.recheck.exhausted`로 알린다. 관리자 재조회 API로 사람이 재확정 |
 
 PG 호출에는 타임아웃과 서킷브레이커를 적용한다. 시작값은 연결 3초, 읽기 10초, 최근 10건 중 50% 실패면 열림, 30초 뒤 반개방이다. 워커의 기본 주기는 1분이고 최초 조회 지연은 1분, 이후 간격은 2·5·10·30분이며 ±10% 지터를 준다. 기본 `max_retry`는 5다. 설정 키는 `billing.toss.*`, `resilience4j.circuitbreaker.instances.tossPayment`, `billing.payment.recheck.*`다. 결제는 호출 수가 적어 시간 창으로 두면 최소 호출 수를 못 채워 서킷이 열리지 않으므로 건수 창을 쓴다. 읽기 타임아웃을 짧게 두면 결과를 모르는 `UNKNOWN` 결제가 늘어난다.
