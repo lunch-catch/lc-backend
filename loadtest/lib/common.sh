@@ -458,7 +458,11 @@ local_switch() {
   local label="${1:-}" dir="$ROOT/build/otel" over="" i
   if [ -n "$label" ]; then
     mkdir -p "$dir"
-    [ -s "$dir/otel-$OTEL_VERSION.jar" ] || curl -fsSL "$OTEL_JAR_URL" -o "$dir/otel-$OTEL_VERSION.jar"
+    # 받다 끊긴 jar 가 남아 다음에 그대로 쓰이지 않게 다 받은 뒤에만 제 이름으로 옮긴다
+    if [ ! -s "$dir/otel-$OTEL_VERSION.jar" ]; then
+      curl -fsSL "$OTEL_JAR_URL" -o "$dir/otel-$OTEL_VERSION.jar.part"
+      mv "$dir/otel-$OTEL_VERSION.jar.part" "$dir/otel-$OTEL_VERSION.jar"
+    fi
     over="$dir/compose.override.yaml"
     tracing_override "$label" "$dir/otel-$OTEL_VERSION.jar" > "$over"
   fi

@@ -101,13 +101,15 @@ case "${LOCAL:+local-}${1:-}" in
     # compose 가 같은 디렉터리의 compose.override.yaml 을 함께 읽어 lc-infra 의 설정을 고치지 않는다.
     #
     if [ -n "$label" ]; then
-      tracing="[ -s /opt/$PROJECT/otel-$OTEL_VERSION.jar ] || curl -fsSL $OTEL_JAR_URL -o /opt/$PROJECT/otel-$OTEL_VERSION.jar
+      # 받다 끊긴 jar 가 남아 다음에 그대로 쓰이지 않게 다 받은 뒤에만 제 이름으로 옮긴다
+      tracing="[ -s /opt/$PROJECT/otel-$OTEL_VERSION.jar ] || { curl -fsSL $OTEL_JAR_URL -o /opt/$PROJECT/otel-$OTEL_VERSION.jar.part && mv /opt/$PROJECT/otel-$OTEL_VERSION.jar.part /opt/$PROJECT/otel-$OTEL_VERSION.jar; }
 cat > /opt/$PROJECT/compose.override.yaml <<'OVERRIDE'
 $(tracing_override "$label" "./otel-$OTEL_VERSION.jar")
 OVERRIDE"
     else
       tracing="rm -f /opt/$PROJECT/compose.override.yaml"
     fi
+    pids=""; rc=0
     for id in $(instances app) $(instances batch); do
       echo "restart $id"
       remote "$id" 600 "set -euo pipefail
@@ -120,9 +122,14 @@ done
 docker inspect $PROJECT --format '{{.Config.Image}}'
 docker inspect $PROJECT --format '{{range .Config.Env}}{{println .}}{{end}}' | grep '^JDK_JAVA_OPTIONS=' || echo 'tracing off'
 curl -fs localhost:8081/actuator/health/readiness" &
+      pids="$pids $!"
     done
-    wait
+    for pid in $pids; do
+      wait "$pid" || rc=1
+    done
     aws autoscaling resume-processes --auto-scaling-group-name "$PROJECT-app" --scaling-processes ReplaceUnhealthy
+    # 서버 하나라도 새 이미지나 추적 설정으로 뜨지 못했으면 교체를 다시 켠 뒤 실패로 끝난다
+    [ "$rc" -eq 0 ] || die "다시 띄우지 못한 서버가 있다. 위 출력에서 그 서버를 확인한다"
     ;;
   reset)
     # 버전 사이에 앞 버전이 쌓은 것을 지운다(부하 시험 문서 5장). 시드가 시험 데이터와 그날 배치 기록을 지우고 다시 넣는다
