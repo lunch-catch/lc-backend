@@ -142,7 +142,8 @@ management:
   endpoints:
     web:
       exposure:
-        include: health, info, prometheus
+        # threaddump 는 스레드 수가 늘 때 어느 풀이 늘었는지 본다. 이미지가 JRE 라 jcmd 가 없어 이 길뿐이다
+        include: health, info, prometheus, threaddump
 
   endpoint:
     health:
