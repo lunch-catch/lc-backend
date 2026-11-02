@@ -63,6 +63,8 @@ export function setup() {
   if (!BASE_URL || !SECRET) {
     fail('BASE_URL 과 JWT_SECRET 이 필요하다');
   }
+  // 시나리오는 setup 이 끝나자마자 시작한다. run.sh 가 이 시각으로 유지 구간의 경계를 계산한다
+  console.log(`scenario_start ${Date.now()}`);
 }
 
 export default function () {

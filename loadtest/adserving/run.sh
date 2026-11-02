@@ -201,8 +201,11 @@ k6 run -q -o experimental-prometheus-rw --tag testid=adserving-$name \
   -e MEMBERS=10000 -e MEMBER_BASE=$base -e PRE_VUS=200 -e MAX_VUS=2000 \
   --summary-export /opt/loadtest/summary-$name.json loadtest/adserving/feed_impression.js > /opt/loadtest/k6-$name.log 2>&1 || true
 echo \"window \$start \$(date +%s%3N)\"
-# 그래프를 읽을 때 유지 구간이 어디인지 알려 주는 대략의 경계다. k6 가 뜨는 몇 초만큼 실제보다 이를 수 있다
-echo \"hold \$((start + 60000)) \$((start + 60000 + $hold_ms))\"
+# 유지 구간의 경계는 k6 가 남긴 시나리오 시작 시각에 램프업 60초를 더해 낸다.
+# 그 줄이 없으면 k6 를 띄우기 전 시각으로 대신한다. 그때는 k6 가 뜨는 몇 초만큼 실제보다 이르다
+s0=\$(grep -m1 -o 'scenario_start [0-9]*' /opt/loadtest/k6-$name.log | cut -d' ' -f2 || true)
+s0=\${s0:-\$start}
+echo \"hold \$((s0 + 60000)) \$((s0 + 60000 + $hold_ms))\"
 grep -E '✓|✗|↳|impression_results|http_reqs|http_req_duration|http_req_failed|iterations|vus_max' /opt/loadtest/k6-$name.log | head -40 || true
 # 원격 쓰기 같은 k6 의 오류가 묻히지 않게 따로 보인다. 요약을 밀어내지 않게 마지막 몇 줄만 본다(lc-infra#60)
 echo \"errors\"
