@@ -68,12 +68,13 @@ public class CouponBatchIssuanceService {
      *    큐가 준비되지 않은 이벤트는 그 이벤트의 요청만 복구 대상으로 끝내고 다른 이벤트는 계속 처리한다.
      * 3. 회원 상태는 묶음당 한 번, 찜은 캠페인당 한 번 조회해 자격이 없는 요청을 거절한다.
      * 4. 남은 회원의 일일 카운터를 만들고 회원 ID 순으로 잠근 뒤 기존 발급 기록을 읽는다.
-     *    이 값으로 요청 순서대로 중복과 일일 한도를 판정하며 같은 묶음 안의 앞 요청도 함께 센다.
+     *    이 값으로 요청 순서대로 중복과 일일 한도를 판정한다. 일일 한도는 같은 묶음 안의 앞 요청도 함께 센다.
      * 5. 판정을 통과한 요청 수만큼만 이벤트마다 Redis 호출 한 번으로 순번을 예약한다.
+     *    앞 요청이 순번을 받지 못한 중복 요청은 앞 요청의 결과로 끝난다.
      * 6. 예약한 순번의 재고를 한 문장으로 ISSUED로 바꾸고 쿠폰 코드를 읽는다.
      * 7. 카운터를 늘리고 회원 쿠폰을 다건 INSERT 한 문장으로 저장한 뒤 발급 이벤트를 발행한다.
      *
-     * <p>업무 거절은 쓰기 전에 걸러 같은 묶음의 다른 요청에 영향을 주지 않는다.
+     * <p>업무 거절은 쓰기 전에 걸러 같은 묶음의 중복이 아닌 요청에 영향을 주지 않는다.
      * 판정을 통과했지만 순번을 받지 못한 요청이 있어도 같은 회원의 뒤 요청은 한도 판정을 다시 하지 않는다.
      * 바꾼 재고 행 수가 예약 수와 다르면 Redis와 DB가 어긋난 것이므로 이벤트를 차단하고 묶음 전체를 실패시킨다.
      * 본문에서 예상하지 못한 오류가 나면 묶음 전체를 롤백하며 호출자는 묶음을 나누거나 자동으로 재시도하지 않는다.
@@ -131,13 +132,14 @@ public class CouponBatchIssuanceService {
         deadline.check();
         // 4. 자격을 통과한 회원의 카운터를 만들고 회원 ID 순으로 잠근 뒤 중복과 일일 한도를 판정한다.
         LocalDate businessDate = now.toLocalDate();
-        rejectDuplicateOrOverLimitRequests(requests, outcomes, businessDate, now);
+        Map<Integer, Integer> duplicateOf = rejectDuplicateOrOverLimitRequests(requests, outcomes, businessDate, now);
 
         /*
          * 5. 판정을 통과한 요청 수만큼만 이벤트마다 Redis 호출 한 번으로 예약한다.
          * 거절할 요청의 순번을 잡지 않아 같은 순간의 다른 묶음이 재고를 못 받는 일을 줄인다.
          */
         Map<Long, Integer> increments = reserveEligibleRequests(requests, outcomes, reservations, deadline);
+        applyFirstRequestOutcomes(duplicateOf, outcomes, reservations);
 
         deadline.check();
         // 모든 요청이 거절됐으면 쓸 것이 없으므로 카운터 행 생성만 커밋하고 끝낸다.
@@ -225,7 +227,8 @@ public class CouponBatchIssuanceService {
         }
     }
 
-    private void rejectDuplicateOrOverLimitRequests(List<CouponIssuanceRequest> requests,
+    // 중복과 일일 한도를 판정하고 같은 묶음의 중복 요청 위치마다 앞 요청의 위치를 돌려준다.
+    private Map<Integer, Integer> rejectDuplicateOrOverLimitRequests(List<CouponIssuanceRequest> requests,
             CouponIssuanceOutcome[] outcomes, LocalDate businessDate, LocalDateTime now) {
         List<Long> counterMembers = new ArrayList<>(new TreeSet<>(pendingMembers(requests, outcomes)));
         Map<Long, Integer> counts = new HashMap<>();
@@ -236,12 +239,19 @@ public class CouponBatchIssuanceService {
             issued.addAll(batchRepository.findIssuedPairs(pendingEvents(requests, outcomes), counterMembers));
         }
         Map<Long, Integer> eligibleCounts = new HashMap<>();
+        Map<Pair, Integer> firstIndexes = new HashMap<>();
+        Map<Integer, Integer> duplicateOf = new HashMap<>();
         for (int i = 0; i < requests.size(); i++) {
             if (outcomes[i] != null) {
                 continue;
             }
             CouponIssuanceRequest request = requests.get(i);
-            if (!issued.add(new Pair(request.eventId(), request.memberId()))) {
+            Pair pair = new Pair(request.eventId(), request.memberId());
+            Integer firstIndex = firstIndexes.putIfAbsent(pair, i);
+            if (firstIndex != null) {
+                outcomes[i] = CouponIssuanceOutcome.rejected(CouponErrorCode.EVENT_ALREADY_ISSUED);
+                duplicateOf.put(i, firstIndex);
+            } else if (issued.contains(pair)) {
                 outcomes[i] = CouponIssuanceOutcome.rejected(CouponErrorCode.EVENT_ALREADY_ISSUED);
             } else if (counts.getOrDefault(request.memberId(), 0) + eligibleCounts.getOrDefault(request.memberId(), 0)
                     >= properties.dailyLimit()) {
@@ -250,6 +260,20 @@ public class CouponBatchIssuanceService {
                 eligibleCounts.merge(request.memberId(), 1, Integer::sum);
             }
         }
+        return duplicateOf;
+    }
+
+    /*
+     * 같은 묶음의 중복 요청에 넣어 둔 COUPON-005는 앞 요청의 예약이 끝날 때까지 임시 결과다.
+     * 앞 요청이 순번을 받지 못해 쿠폰이 없으면 중복 요청도 앞 요청의 결과로 바꾼다.
+     */
+    private static void applyFirstRequestOutcomes(Map<Integer, Integer> duplicateOf, CouponIssuanceOutcome[] outcomes,
+            CouponReservation[] reservations) {
+        duplicateOf.forEach((duplicateIndex, firstIndex) -> {
+            if (reservations[firstIndex] == null) {
+                outcomes[duplicateIndex] = outcomes[firstIndex];
+            }
+        });
     }
 
     private Map<Long, Integer> reserveEligibleRequests(List<CouponIssuanceRequest> requests,

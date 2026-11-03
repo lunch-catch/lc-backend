@@ -101,6 +101,8 @@ aws autoscaling update-auto-scaling-group --auto-scaling-group-name lunchcatch-l
 | 측정 1 | 60초 | 5분 | 30000001 ~ 30010000 | 3회 평균 |
 | 측정 2 | 60초 | 5분 | 30010001 ~ 30020000 | 3회 평균 |
 | 측정 3 | 60초 | 5분 | 30020001 ~ 30030000 | 3회 평균 |
+| 프로파일링(필요할 때) | 60초 | 5분 | 30030001 ~ 30040000 | 뺀다. 측정 3회 뒤에 돌린다 |
+| 추적(필요할 때) | 60초 | 5분 | 30030001 ~ 30040000 | 뺀다. 측정 3회 뒤에 에이전트를 붙여 돌리고 뗀다 |
 
 노출 횟수는 그날 내내 남는다. 같은 날 회차를 거듭하면서 같은 회원을 쓰면 뒤 회차일수록 카드가 줄어 회차마다 다른 대역을 쓴다.
 
@@ -124,8 +126,16 @@ AWS_PROFILE=<프로필> loadtest/adserving/run.sh run v1-run1 30000001
 AWS_PROFILE=<프로필> loadtest/adserving/run.sh run v1-run2 30010001
 AWS_PROFILE=<프로필> loadtest/adserving/run.sh run v1-run3 30020001
 
-# 4. 회차마다 출력된 구간으로 서버 지표를 모은다. 행 수는 마지막 회차가 끝나고 10초 뒤에 맞대 본다
-AWS_PROFILE=<프로필> loadtest/adserving/run.sh metrics <시작 ms> <끝 ms>
+# 어디서 시간을 쓰는지 보려면 측정 회차가 끝난 뒤 따로 돌린다. 결과에 적지 않아 워밍업 대역을 다시 쓴다
+AWS_PROFILE=<프로필> loadtest/adserving/run.sh run v1-run1-profile 30030001 100 5m --profile wall
+
+# 요청 하나를 단계별로 보려면 에이전트를 붙여 다시 띄우고 돌린 뒤 뗀다. 프로파일링 회차와 같은 대역을 쓴다
+AWS_PROFILE=<프로필> loadtest/adserving/run.sh switch <이미지> --tracing v1-tracing
+AWS_PROFILE=<프로필> loadtest/adserving/run.sh run v1-run1-tracing 30030001 100 5m
+AWS_PROFILE=<프로필> loadtest/adserving/run.sh switch <이미지>
+
+# 4. 회차마다 출력된 window 구간으로 서버 지표를 모은다. 행 수는 마지막 회차가 끝나고 10초 뒤에 맞대 본다
+AWS_PROFILE=<프로필> loadtest/adserving/run.sh metrics <window 시작 ms> <window 끝 ms>
 AWS_PROFILE=<프로필> loadtest/adserving/run.sh rows
 
 # 다음 버전: 앱과 배치를 그 이미지로 다시 띄우고 비운 뒤 2~4를 다시 한다. 앱이 3대인지 먼저 확인한다
@@ -133,12 +143,15 @@ AWS_PROFILE=<프로필> loadtest/adserving/run.sh switch <다음 이미지>
 AWS_PROFILE=<프로필> loadtest/adserving/run.sh reset
 
 # 5. 대시보드를 남기고 환경을 내린다(lc-infra 에서). --lt 가 부하 시험 환경을 가리킨다
-AWS_PROFILE=<프로필> ./scripts/loadtest-snapshot.sh --lt --label adserving-v1-run1 --from <시작 ms> --to <끝 ms> --dash fm-loadtest --dash fm-adserving
+AWS_PROFILE=<프로필> ./scripts/loadtest-snapshot.sh --lt --label adserving-v1-run1 --from <window 시작 ms> --to <hold 끝 ms>
 AWS_PROFILE=<프로필> ./scripts/member-env.sh down
 ```
 
 - 생성기는 그날 배치 기록을 지우므로 시험하는 날에 넣는다. 앱이 판단하는 영업일(Asia/Seoul)과 같아야 한다.
 - 행 수를 회차 직후에 세면 아직 쓰이지 않은 행이 빠진다. 노출 수집 v3 는 응답 뒤 최대 200ms 에 저장하고 v2 부터는 릴레이가 1초마다 정산에 넘긴다.
+- **회차가 끝나면 경고 로그 건수가 결과 문서에 적히고 커밋이 하나 생긴다.** `run` 이 그 회차 구간의 `ADSERVING_` 경고와 오류를 이벤트별로 세어 `노출_수집_부하_시험_결과.md` 의 `경고 로그` 절 표에 적는다. 푸시는 하지 않는다. 지금 브랜치에 커밋하므로 시험용 브랜치에서 돌린다. develop 에서 돌리면 develop 에 커밋이 생긴다.
+- 워밍업(`-warmup`), 프로파일링(`-profile`), 추적(`-tracing`) 회차는 결과 문서에 적지 않는다. 프로파일링과 추적은 표본과 스팬을 만드는 비용이 들어 측정 회차와 나눈다. 무엇을 어떻게 보는지는 [`loadtest/README.md`](../../../../loadtest/README.md) 의 프로파일링 절과 추적 절이 갖는다.
+- 같은 순서를 노트북에서 돌리려면 첫 인자로 `--local` 을 준다. 순서는 [`loadtest/README.md`](../../../../loadtest/README.md#로컬에서-돌리기) 가 갖는다.
 - 앱에 `CDN_BASE_URL` 이 비어 있으면 그날 후보 적재가 실패한다. 부하 시험 환경은 lc-infra 가 채운다. 로컬에서는 아무 값이나 준다.
 
 ## 7. 모으는 지표
@@ -155,12 +168,16 @@ AWS_PROFILE=<프로필> ./scripts/member-env.sh down
 | 노출 저장과 릴레이 | 릴레이의 밀린 노출 최대(v2 부터), 노출 저장 큐의 최대, 큐가 차서 버린 수, 실패한 묶음 수, 쓰지 못하고 버린 행 수(v3 부터) | 응답 뒤 저장이 따라가는지. 버린 노출은 유실률에 들어간다 |
 | 부하 생성기 | 1분 평균 CPU 의 최대 | 생성기가 병목이 아닌지. 유지 구간에서 80% 를 넘으면 그 회차는 무효로 보고 다시 잰다 |
 
-대시보드는 회차가 끝난 직후, 환경을 내리기 전에 05 부하 시험(`fm-loadtest`)과 06 광고 서빙(`fm-adserving`)을 lc-infra 의 `loadtest-snapshot.sh --lt` 로 남긴다. 환경을 내리면 Prometheus 의 기록도 함께 사라진다.
+대시보드는 회차가 끝난 직후, 환경을 내리기 전에 lc-infra 의 `loadtest-snapshot.sh --lt` 로 남긴다. `--dash` 를 주지 않으면 01 개요부터 06 광고 서빙(`lc-overview` ~ `lc-adserving`)까지 여섯 장을 대시보드 높이 그대로 찍는다. 환경을 내리면 Prometheus 의 기록도 함께 사라진다.
+
+- **범위는 회차 시작부터 유지 구간 끝까지 한 번 준다.** `run` 이 출력하는 `window` 의 시작과 `hold` 의 끝이다. `hold` 는 k6 가 로그에 남긴 시나리오 시작 시각(`scenario_start`)에 램프업을 더해 계산한다.
+- **대시보드는 흐름을 보는 시계열이다.** 결과 수치는 k6 요약과 `metrics` 로 적는다. 대시보드는 그 수치가 왜 나왔는지(어느 지표가 먼저 올랐는지, 유지 구간이 안정됐는지)를 보는 근거다.
+- **API 별 p99 는 둘을 견준다.** 05 의 응답 지연은 부하 생성기가 본 시간이고, API 별 p99(앱)는 앱이 잰 시간이다. 앞이 크면 그 차이가 앱 앞에서 스레드를 기다린 시간이다.
 
 ## 8. 결과를 남기는 곳
 
 이 디렉터리가 함께 갖는다. 조건과 결과를 떨어뜨려 두면 다음 버전을 재려는 사람이 둘을 따로 찾는다. 이 문서는 결과를 담지 않는다.
 
 - 측정한 커밋에 `adserving-{쓰기}-v{버전}` 태그를 붙인다.
-- **이 시험은 쓰기 방식마다 문서 하나를 둔다.** 노출 수집은 `노출_수집_부하_시험_결과.md` 가 v1 부터 v3b 까지를 갖는다. 버전끼리 비교하는 것이 목적이라 네 버전이 한 문서에 나란히 있어야 읽힌다. 다른 시험이 이 모양을 따를 이유는 없다.
+- **이 시험은 쓰기 방식마다 문서 하나를 둔다.** 노출 수집은 `노출_수집_부하_시험_결과.md` 가 v1 부터 v3c 까지를 갖는다. 버전끼리 비교하는 것이 목적이라 버전들이 한 문서에 나란히 있어야 읽힌다. 다른 시험이 이 모양을 따를 이유는 없다.
 - 대시보드 PNG 는 버전마다 `impression-v{버전}/` 에 둔다.

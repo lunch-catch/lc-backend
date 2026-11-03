@@ -2262,6 +2262,32 @@ public class CouponIntegrationTest extends IntegrationTestSupport {
             assertThat(redis.opsForZSet().size("coupon:{" + eventId + "}:pending")).isZero();
         }
 
+        /*
+         * 재고가 한 장인 이벤트에서 다른 회원이 먼저 순번을 받으면 뒤 회원은 실제 Redis 예약에서 순번을 받지 못한다.
+         * 앞 순번이 아직 확정되지 않았으므로 뒤 회원의 요청은 예약 대기로 끝난다.
+         * 그 회원의 중복 요청도 쿠폰이 없으므로 COUPON-005가 아니라 같은 예약 대기로 끝나야 한다.
+         */
+        @Test
+        void 앞_요청이_순번을_받지_못하면_같은_묶음의_중복_요청도_같은_결과로_끝난다() {
+            long eventId = event(1);
+            LocalDateTime now = TODAY.atTime(12, 0);
+            List<CouponIssuanceOutcome> outcomes = batchIssuanceService.issueBatch(List.of(
+                    new CouponIssuanceRequest(memberBase, eventId, now),
+                    new CouponIssuanceRequest(memberBase + 1, eventId, now),
+                    new CouponIssuanceRequest(memberBase + 1, eventId, now)));
+
+            assertThat(outcomes.get(0).response()).isNotNull();
+            assertThat(outcomes.subList(1, 3)).allSatisfy(outcome -> {
+                assertThat(outcome.awaitingReservation()).isTrue();
+                assertThat(outcome.reservation()).isNull();
+            });
+            sequenceService.complete(outcomes.get(0).reservation());
+            assertConsistent(eventId, 1);
+            assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM member_coupon WHERE member_id=?",
+                    Integer.class, memberBase + 1)).isZero();
+            assertThat(redis.opsForZSet().size("coupon:{" + eventId + "}:pending")).isZero();
+        }
+
         @Test
         void 일괄_상태_조회에서_정지와_탈퇴와_없는_회원은_각각_거절한다() {
             long eventId = event(4);

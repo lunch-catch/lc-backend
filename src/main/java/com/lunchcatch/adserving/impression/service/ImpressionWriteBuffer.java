@@ -87,6 +87,8 @@ public class ImpressionWriteBuffer implements SmartLifecycle {
         this.transactions = transactions;
         this.meterRegistry = meterRegistry;
         meterRegistry.gaugeCollectionSize(QUEUE_METRIC, List.of(), queue);
+        // 사건이 없어도 0 으로 보이게 기동 때 만든다
+        List.of(DROPPED_METRIC, WRITE_FAILED_METRIC, LOST_METRIC, CAMPAIGN_MISMATCH_METRIC).forEach(meterRegistry::counter);
     }
 
     // 큐가 차면 100ms 까지 기다리고 그래도 넣지 못하면 버리고 센다.
