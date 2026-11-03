@@ -100,6 +100,11 @@ dependencies {
      * 피드 속도 제한 분당 2회.
      */
     implementation 'org.springframework.boot:spring-boot-starter-data-redis'
+    /*
+     * Lettuce 연결 풀이다. 파이프라인과 트랜잭션은 공유 연결을 쓰지 못하고 전용 연결이 필요하다.
+     * 풀이 없으면 쓸 때마다 Valkey 연결을 새로 맺고 닫는다(#1107). 버전은 스프링 부트가 정한다.
+     */
+    implementation 'org.apache.commons:commons-pool2'
 
     /*
      * JwtTokenProvider 가 io.jsonwebtoken(JJWT) 0.12.x 플루언트 API 를 쓴다.
