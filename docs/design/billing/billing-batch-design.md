@@ -23,7 +23,7 @@ HTTP가 아니라 **모듈 간 호출·이벤트·배치**다. 점주·관리자
 | --- | --- | --- | --- |
 | I-01 | 노출 차감 → 판정 기록·원장 기록 | 103 (참조 99·100) | 광고서빙이 `billing.contract.PointDeductor` 직접 호출 |
 | I-02 | 00:00 예약·해제 작업 | 98, 102 (3)(4)(5), 51 | 운영 스케줄러에 등록하는 배치 |
-| I-03 | 충전 직후 재예약 | 48, 49, 51 | billing 내부 `PointCharged` 핸들러 |
+| I-03 | 충전 직후 재예약 | 48, 49, 51 | 주기 스케줄러(재예약 아웃박스) |
 | I-04 | 결제 재조회 워커(아웃박스) | 22, 49 | 주기 스케줄러 |
 | I-05 | 정산 대사 배치 2종 | 102, 103 | 배치 |
 | I-06 | 예산 소진 진행률 조회 | 98 | 광고서빙이 `billing.contract.BudgetQueryService` 호출 |
@@ -45,7 +45,7 @@ HTTP가 아니라 **모듈 간 호출·이벤트·배치**다. 점주·관리자
 | analytics → billing | `billing.contract.BillingStatsQueryService` | I-08 |
 | campaign → billing | `CampaignStatusChangedEvent` | I-07 |
 
-**정산은 도메인 간 이벤트를 발행하지 않는다.** `PointCharged`(I-03)는 billing 내부 통보다. 저장소 아키텍처 테스트가 `Event`로 끝나는 타입을 발행 도메인의 `contract`에 두라고 요구하므로 공개하지 않는 이 통보는 이름이 `Event`로 끝나지 않는다.
+**정산은 도메인 간 이벤트를 발행하지 않는다.** 충전 직후 재예약(I-03)도 이벤트를 쓰지 않고 billing 안의 재예약 아웃박스로 넘긴다.
 
 현재 구현이 사용하는 공개 계약은 다음과 같다. 메서드 시그니처의 기준은 각 도메인의 `contract`다.
 
@@ -252,13 +252,15 @@ CampaignFundingUpdater: { campaignId, ownerId, businessDate,
 
 # I-03. 충전 직후 재예약
 
-승인 확정, 웹훅, 재조회 워커 어디서든 `CHARGE`가 확정되면 커밋 후 발행하는 billing 내부 이벤트다.
+승인 확정, 웹훅, 재조회 워커 어디서든 `CHARGE`가 확정되면 같은 트랜잭션에 재예약 대기 행을 남기고, 재예약 워커가 그 행을 집어 재예약한다.
 
-`CHARGE` 행이 **새로 만들어진** 커밋 뒤에는 경로와 관계없이 발행한다. 승인 확정(`POST /v1/owner/payments/{paymentId}:confirm`), 웹훅, 재조회 워커가 승인 확정 로직을 하나의 서비스 메서드로 공유하고 그 안에서 발행한다. 이미 `APPROVED`라 `(payment_id, CHARGE)` UNIQUE에 걸려 새 행이 없으면 발행하지 않는다. **`LEDGER_CORRECTION`이 만든 `CHARGE` 보정은 과거 영업일 값을 고치는 것이므로 발행하지 않는다.**
+`CHARGE` 행이 **새로 만들어진** 트랜잭션에서는 경로와 관계없이 대기 행을 남긴다. 승인 확정(`POST /v1/owner/payments/{paymentId}:confirm`), 웹훅, 재조회 워커가 승인 확정 로직을 하나의 서비스 메서드(`PaymentResultService.approve`)로 공유하고 그 안에서 남긴다. 이미 `APPROVED`라 새 `CHARGE`가 없으면 남기지 않는다. **`LEDGER_CORRECTION`이 만든 `CHARGE` 보정은 과거 영업일 값을 고치는 것이므로 남기지 않는다.**
 
 ```
-PointCharged { ownerId, paymentId, amount }
+recharge_reservation_outbox { payment_id, business_date, status, attempt_count, next_retry_at, last_error }
 ```
+
+`business_date`는 충전한 영업일이다. 워커는 그 결제의 점주와 금액으로 아래 순서를 부른다.
 
 캠페인 여럿을 캠페인 ID 오름차순으로 채우고, 각 캠페인은 원장을 쓰기 전에 다시 잠근다.
 
@@ -272,7 +274,17 @@ PointCharged { ownerId, paymentId, amount }
 
 재개된 캠페인의 진행률은 광고서빙이 늘어난 예약액으로 계산한다(I-06, #828).
 
-자리는 `billing.listener.PointChargedListener`(`@TransactionalEventListener(AFTER_COMMIT)`)이고 `RechargeReservationService` 하나만 부른다. 실패를 삼켜 ERROR로만 남긴다. 충전은 이미 커밋돼 있어 올리면 승인 확정 API·웹훅·재조회 워커가 성공한 충전에 실패를 돌려준다. 해시 반영(6)이 실패해도 지우지 않고 ERROR로만 남긴다 — 다른 해시 미러(상태 변경)는 실패하면 지워 DB 정본으로 다시 만들게 하지만, 여기서는 예약액이 실제보다 작게 보여 과금이 일찍 멈추는 쪽으로 남기는 선택이다.
+자리는 `billing.job.RechargeReservationWorker`이고 `RechargeReservationRetryService.reserveDue`가 행마다 `RechargeReservationService` 하나만 부른다. 결제 재조회 워커(I-04)와 같은 모양이다.
+
+- **처리**: 워커가 1분마다 `status=PENDING AND next_retry_at ≤ now`인 행을 배치 크기(20)만큼 `FOR UPDATE SKIP LOCKED`로 선점하고, 다음 시각을 선점 유지 시간(5분) 뒤로 민 채 커밋한다. 재예약과 결과 기록은 선점 트랜잭션 밖에서 각자의 트랜잭션으로 한다. 승인이 남긴 행의 첫 시각은 승인 시각이라 다음 워커 실행이 바로 집는다. 선점한 행이 배치 크기만큼이면 같은 실행에서 다시 선점해 빌 때까지 처리하고, 한 번 실행은 50초(`max-run-time`)를 넘지 않는다. 승인마다 행이 생기므로 한 번에 배치 크기만 처리하면 분당 20건을 넘는 충전에서 재개가 계속 밀린다. 로컬 부하 시험에서 1624건을 비우는 데 80분이 걸렸다. 배치 크기 20은 결제 재조회가 PG 읽기 타임아웃(10초)을 기준으로 잡은 값이고, 재예약은 DB 안에서 끝나 20건에 0.5초 안팎이 걸린다.
+- **재시도**: 재예약이 실패하면 행을 닫지 않고 `attempt_count + 1`, `next_retry_at`을 백오프로 민다. 간격은 1, 2, 5, 10분이고 그 뒤로는 10분을 유지한다. 간격은 그 행이 실패한 횟수로 정하므로, 오래 실패한 행이 새로 들어온 행을 밀어내지 않는다. 실패는 WARN `BILLING_RECHARGE_RESERVE_FAILED`와 지표 `billing.recharge.reservation{result=failed}`로 남긴다.
+- **끝**: 성공하면 `DONE`이다. 충전한 영업일이 지난 행은 재예약하지 않고 `EXPIRED`로 닫고 ERROR `BILLING_RECHARGE_RESERVE_EXPIRED`와 `billing.recharge.reservation{result=expired}`를 남긴다. 그날 캠페인을 다시 켤 기회는 지났고 00:00 예약(I-02)이 그 잔액을 새 날 예산으로 배분한다. 돈의 결과를 모르는 일이 아니라서 사람이 처리할 것은 없다. 그래서 횟수 상한을 두지 않고 영업일이 행의 수명을 하루로 묶는다.
+- **겹침**: 워커와 00:00 예약이 겹쳐도 막지 않는다. 둘 다 점주 계정 행을 먼저 잠가 차례로 돌고(2, 3), 재예약은 잠근 뒤의 잔액과 계획으로 다시 계산한다(5). 00:00 예약 전이면 계획 행이 없어 건너뛴다(2). 선점이 만료돼 같은 행을 다시 처리해도 결제×캠페인 UNIQUE(6)가 같은 예약을 두 번 쓰지 않게 막는다.
+- **받아들이는 것**: 충전 뒤 캠페인 재개가 워커 주기만큼, 최대 1분 남짓 늦어진다.
+
+커밋 뒤 리스너(`AFTER_COMMIT`)에서 재예약하지 않는 이유는 커넥션이다. Spring은 커밋 뒤 콜백을 승인의 커넥션을 반납하기 전에 부른다. 거기서 `REQUIRES_NEW`로 재예약하면 승인 하나가 커넥션 둘을 함께 쥔다. 풀이 차면 승인끼리 서로의 커넥션을 기다리다 `connection-timeout`으로만 풀린다. 로컬 부하 시험에서 초당 13건에 요청 실패율이 40.7%까지 올랐다(#1100). 리스너가 실패한 재예약을 다시 시도하지 않는 것도 고르지 않은 이유다. 실패하는 때는 대부분 DB가 느린 순간이라, 점심 전에 한 번 실패하면 그날 점심 노출을 놓친다.
+
+해시 반영(6)이 실패해도 지우지 않고 ERROR로만 남긴다. 다른 해시 미러(상태 변경)는 실패하면 지워 DB 정본으로 다시 만들게 한다. 여기서는 예약액이 실제보다 작게 보여 과금이 일찍 멈추는 쪽으로 남기는 선택이다.
 
 ---
 
@@ -289,7 +301,7 @@ PointCharged { ownerId, paymentId, amount }
 
 | PG 조회 결과 | 처리 |
 | --- | --- |
-| 승인 | `payment` → `APPROVED` + `CHARGE` 기록 + 아웃박스 `RESOLVED` + `PointCharged` |
+| 승인 | `payment` → `APPROVED` + `CHARGE` 기록 + 아웃박스 `RESOLVED` + 재예약 대기 행(I-03) |
 | 실패·취소 | `payment` → `FAILED` / `CANCELLED`, 충전 없음, 아웃박스 `RESOLVED` |
 | 여전히 불명 | `attempt_count + 1`, `next_retry_at`을 지수 백오프로 미룸, `last_checked_at`·`last_error` 갱신. 결제가 `REQUESTED`면 `UNKNOWN`으로 바꾼다. 관리자 재조회가 `UNKNOWN`만 받기 때문이다 |
 | `attempt_count ≥ max_retry` | `FAILED_PERMANENT`. ERROR 로그(`event=PAYMENT_RECHECK_EXHAUSTED`)와 메트릭 `billing.payment.recheck.exhausted`로 알린다. 관리자 재조회 API로 사람이 재확정 |

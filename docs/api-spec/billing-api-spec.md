@@ -472,7 +472,7 @@ GET /v1/admin/payments?from=&to=&status=&searchType=OWNER_ID&keyword=7&page=0&si
 FR-019는 `UNKNOWN`을 "PG 조회 API로 재확인한 뒤 상태 확정"하라고 한다. 정상 경로는 재조회 워커가 자동으로 하고, 이 API는 **`FAILED_PERMANENT`로 굳은 건을 사람이 다시 확정**하는 용도다. 요청 본문은 없다.
 
 - `UNKNOWN`일 때만 동작한다. 그 외 상태는 `409 BILLING-005`다.
-- PG를 한 번 조회해 결과에 따라 승인 확정의 4단계와 같은 전이를 수행한다(`APPROVED`이면 `CHARGE` 기록, 커밋 후 `PointCharged` 발행).
+- PG를 한 번 조회해 결과에 따라 승인 확정의 4단계와 같은 전이를 수행한다(`APPROVED`이면 `CHARGE`와 재예약 대기 행 기록).
 - 응답은 갱신된 결제 항목으로, 결제 내역 조회의 항목과 같은 모양이다.
 - 호출은 감사 로그(`PAYMENT_RECHECK`)에 관리자 ID와 결제 ID, 결과를 남긴다. PG가 아직 확정하지 못하면 결제는 `UNKNOWN`으로 남고 아웃박스의 마지막 조회 시각과 오류만 갱신한다.
 

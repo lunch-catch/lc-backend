@@ -226,7 +226,7 @@
 
 | ID | 시나리오 | 단계/트리거 | API 또는 작업 | 오류 코드 | 필요한 데이터 상태 | 기대 결과 | 시각 조건 |
 |---|---|---|---|---|---|---|---|
-| B-079 | 결제 웹훅 승인 반영 | PG 상태 변경 통보 -> 재조회 APPROVED | POST /webhook/payments | - | 인증 없음, 결제 UNKNOWN 또는 REQUESTED(pgTid 있음), 주문/금액 일치 | 200, APPROVED, 계정 행 생성, CHARGE 원장, 재조회 아웃박스 닫음, PointCharged -> 커밋 뒤 NO_POINTS 캠페인 재예약 | 재예약은 그날 계획 행 있는 캠페인만 |
+| B-079 | 결제 웹훅 승인 반영 | PG 상태 변경 통보 -> 재조회 APPROVED | POST /webhook/payments | - | 인증 없음, 결제 UNKNOWN 또는 REQUESTED(pgTid 있음), 주문/금액 일치 | 200, APPROVED, 계정 행 생성, CHARGE 원장, 재조회 아웃박스 닫음, 재예약 대기 행 PENDING -> 재예약 워커가 NO_POINTS 캠페인 재예약 | 재예약은 그날 계획 행 있는 캠페인만 |
 | B-080 | 결제 웹훅 결제창 전 주문 승인 | REQUESTED, pgTid 없음 -> APPROVED | POST /webhook/payments | - | 결제 REQUESTED, pgTid null | 200, 본문 paymentKey 를 pgTid 로 적고 승인 | - |
 | B-081 | 결제 웹훅 pgTid 충돌 | 다른 결제가 같은 키 사용 또는 다른 키가 이미 적힘 | POST /webhook/payments | - | uk_payment_pg_tid 위반 또는 기존 pgTid 다름 | 200, 무시(ignored) | - |
 | B-082 | 결제 웹훅 실패 반영 | 재조회 FAILED | POST /webhook/payments | - | 결제 UNKNOWN 또는 pgTid 있는 REQUESTED | 200, FAILED, 사유 기록, 아웃박스 닫음, 충전 없음 | - |
@@ -289,12 +289,11 @@
 | B-134 | 계획 없는 대상 건너뜀 | 60 단계 | FundingJudgementService | - | 대상인데 D 계획 없음(예약 뒤 대상 됨) | BILLING_FUNDING_JUDGE_SKIPPED reason=NO_PLAN, 판정 없음 | D |
 | B-135 | PAUSED(OWNER) 판정 제외 | 60 단계 isJudged | FundingJudgementService | - | PAUSED(OWNER) | 판정 대상 아님, 점주 재개 때 별도 판단 | D |
 | B-136 | 판정 재실행 멱등 | 60 단계 재실행 | CampaignStatusService(*FromFunding) | - | 이미 판정 반영됨 | 같은 판정 재전송해도 결과 동일, 캠페인별 트랜잭션이라 앞 판정 유지 | 같은 D |
-| B-137 | 충전 직후 재개 | 충전 커밋 AFTER_COMMIT | PointChargedListener -> RechargeReservationService.reserve | - | PAUSED(NO_POINTS), 기간 내, D 계획 있음, 충전 후 잔액 | RECHARGE_RESERVE 원장(delta), 계획 daily_budget 증가, newReserved >= unit_price 면 RESUME(cause=RECHARGE) -> ACTIVE | D 중 아무 때나(시각 제한 없음) |
+| B-137 | 충전 직후 재개 | fixedDelay PT1M, 재예약 대기 행 선점 | RechargeReservationWorker -> RechargeReservationService.reserve | - | PAUSED(NO_POINTS), 기간 내, D 계획 있음, 충전 후 잔액, 재예약 대기 행 PENDING | RECHARGE_RESERVE 원장(delta), 계획 daily_budget 증가, newReserved >= unit_price 면 RESUME(cause=RECHARGE) -> ACTIVE, 대기 행 DONE | D 중 아무 때나(시각 제한 없음), 충전 뒤 1분 주기 |
 | B-138 | 충전했으나 여전히 부족 | 충전 커밋 후 | RechargeReservationService | - | newReserved < unit_price | 예약액만 늘리고 PAUSED(NO_POINTS) 유지 | D |
 | B-139 | 충전 시 계획 없음 | 충전 커밋 후 | RechargeReservationService | - | 00:00 예약 전 또는 계획 없는 캠페인 | 건너뜀, 다음 00:00 예약이 충전 잔액으로 배분 | D |
-| B-140 | 같은 결제 이벤트 중복 | 충전 이벤트 재수신 | insertRechargeReserveIfAbsent | - | 같은 paymentId RECHARGE_RESERVE 존재 | 0건 삽입, 잔액 다시 빼지 않음 | D |
-| B-141 | 재예약 실패 | 충전 커밋 후 예외 | PointChargedListener | - | 재예약 중 예외 | 예외 삼키고 BILLING_RECHARGE_RESERVE_FAILED WARN, 충전은 성공 유지, 다음 00:00 예약이 반영 | D |
-| B-145 | 후보 적재 SERVABLE | 75 ADSERVING_CANDIDATE_LOAD | CandidateLoadService.load | - | ACTIVE, 가게 좌표 있음 | ad_candidate(D) upsert, state=SERVABLE | D |
+| B-140 | 같은 대기 행 재처리 | 선점 만료 뒤 같은 행 재선점 | insertRechargeReserveIfAbsent | - | 같은 paymentId RECHARGE_RESERVE 존재 | 0건 삽입, 잔액 다시 빼지 않음 | D |
+| B-141 | 재예약 실패 | 재예약 중 예외 | RechargeReservationWorker | - | 재예약 대기 행 PENDING | 예외 올리지 않음, BILLING_RECHARGE_RESERVE_FAILED WARN, attempt_count+1, 다음 시각 = 1m,2m,5m,10m(이후 10m), 충전은 성공 유지 | D || B-145 | 후보 적재 SERVABLE | 75 ADSERVING_CANDIDATE_LOAD | CandidateLoadService.load | - | ACTIVE, 가게 좌표 있음 | ad_candidate(D) upsert, state=SERVABLE | D |
 | B-146 | 후보 적재 PAUSED | 75 단계 | CandidateLoadService.load | - | PAUSED(OWNER 또는 NO_POINTS) | state=PAUSED 로 적재(피드 미노출) | D |
 | B-147 | 가게 없음/메뉴명 없음 | 75 단계 | CandidateLoadService.skip | - | 가게 미등록/좌표 없음, 또는 MENU 할인인데 메뉴 없음 | 해당 캠페인만 건너뜀, adserving_candidate_load_skipped_total{reason=store_missing/menu_missing} 증가 | D |
 | B-148 | 적재 중 상태 전이 반영 | 75 단계 reconcile | CandidateLoadService.reconcile | - | 적재 후 statusChangedAt 이 더 늦은 캠페인 | 별도 트랜잭션에서 상태를 SERVABLE/PAUSED 로 갱신 | D |
@@ -469,7 +468,7 @@
 
 | ID | 시나리오 | 단계/트리거 | API 또는 작업 | 오류 코드 | 필요한 데이터 상태 | 기대 결과 | 시각 조건 |
 |---|---|---|---|---|---|---|---|
-| B-260 | 재조회 승인 확정 | fixedDelay PT1M, outbox 선점 | PaymentRecheckWorker | - | payment UNKNOWN, outbox PENDING, next_retry_at <= now, PG 조회 APPROVED, orderId와 금액 일치 | payment APPROVED(승인 시각 없으면 now), point_account 없으면 생성, CHARGE 원장(REALTIME), outbox RESOLVED, PointCharged 커밋 후 재예약 | 1분 주기 |
+| B-260 | 재조회 승인 확정 | fixedDelay PT1M, outbox 선점 | PaymentRecheckWorker | - | payment UNKNOWN, outbox PENDING, next_retry_at <= now, PG 조회 APPROVED, orderId와 금액 일치 | payment APPROVED(승인 시각 없으면 now), point_account 없으면 생성, CHARGE 원장(REALTIME), outbox RESOLVED, 재예약 대기 행 PENDING | 1분 주기 |
 | B-261 | 재조회 실패 확정 | PG 조회 FAILED | PaymentRecheckWorker | - | UNKNOWN | payment FAILED(사유 "코드: 메시지"), outbox RESOLVED, 충전 없음 | 1분 주기 |
 | B-262 | 재조회 취소 확정 | PG 조회 EXPIRED 또는 CANCELED | PaymentRecheckWorker | - | UNKNOWN | payment CANCELLED, outbox RESOLVED, 충전 없음 | 1분 주기 |
 | B-263 | 재조회 미확정 | PG 조회 PENDING, NOT_FOUND, 조회 예외(PgNotSent/PgUnknown) | PaymentRecheckWorker | MISS | outbox PENDING, attempt_count < 4 | payment UNKNOWN 유지, attempt_count+1, 다음 시각 = 2m,5m,10m,30m(이후 30m) 에 지터 ±10% | 1분 주기 |

@@ -84,6 +84,8 @@ billing/
 │   ├── FundingJudgementService
 │   ├── PgChargeReconciliationService
 │   ├── PointDeductorImpl
+│   ├── RechargeReservationOutboxService
+│   ├── RechargeReservationRetryService
 │   ├── RechargeReservationService
 │   ├── SpendHashRebuildService
 │   └── SpendReconciliationService
@@ -92,28 +94,32 @@ billing/
 │   ├── FundingJudgementJob (00:00 묶음의 DailyJob)
 │   ├── PaymentRecheckWorker
 │   ├── PgChargeReconciliationScheduler (01:30)
-│   └── PreviousDaySpendReconciliationJob (00:00 묶음의 DailyJob)
+│   ├── PreviousDaySpendReconciliationJob (00:00 묶음의 DailyJob)
+│   └── RechargeReservationWorker
 ├── listener/
 │   ├── BudgetPlanStatusMirrorListener
-│   ├── CampaignStatusChangedListener
-│   └── PointChargedListener
+│   └── CampaignStatusChangedListener
 ├── repository/
 │   ├── BudgetDailyPlanRepository
 │   ├── DeductionResultRepository
 │   ├── PointLedgerRepository
+│   ├── RechargeReservationOutboxRepository
 │   └── SettlementMismatchRepository
 ├── entity/
 │   ├── BudgetDailyPlan
 │   ├── DeductionResult
 │   ├── PointLedger
+│   ├── RechargeReservationOutbox
 │   └── SettlementMismatch
 ├── dto/
 │   ├── BudgetPlanStatusChanged
 │   ├── CampaignSpend
 │   ├── PlanSnapshot
-│   └── PlanSnapshotKey
+│   ├── PlanSnapshotKey
+│   └── PointCharged
 └── config/
-    └── PlanSnapshotCacheProperties
+    ├── PlanSnapshotCacheProperties
+    └── RechargeReservationRetryProperties
 ```
 
 위 나무는 노출 차감부터 대사까지의 클래스만 적었다. `client/`(Toss), `controller/`(점주·관리자·웹훅), 결제·환불 서비스와 엔티티는 이 문서의 범위 밖이라 적지 않았다.
@@ -136,6 +142,7 @@ billing/
 | V9 | PG 대사 재검증 대기 행과 `payment` FK |
 | V11 | 대사 해결 유형 `MANUAL_ADJUSTMENT`, `NO_ADJUSTMENT_REQUIRED`와 그 둘의 해결자 필수, 기존 `OVERCHARGE_REVERSAL` 행의 전환 |
 | V12 | 계획의 해제 시각 `released_at`. `RELEASE` 원장이 있는 계획만 그 원장의 시각으로 채운다(#1049) |
+| V13 | 충전 직후 재예약 대기 행 `recharge_reservation_outbox`. 결제당 한 행이고 충전한 영업일을 갖는다(#1100) |
 
 | 데이터 | 원본과 의미 | 중복 또는 범위 제약 |
 |---|---|---|
@@ -143,6 +150,7 @@ billing/
 | 과금 판정 | `deduction_result`에 유효 노출의 정산 판정과 서빙 영업일을 둔다 | `serve_id` UNIQUE로 중복을 막는다 |
 | 확정 과금 | `point_ledger`의 `DEDUCT`를 음수 단가로 기록한다 | `(serve_id, entry_type)` UNIQUE와 금액 부호 CHECK를 둔다 |
 | PG 대사 재검증 대기 | `pg_charge_reconciliation_pending`은 PENDING 또는 조회·기록 실패 결제의 재조회 대상이다 | 결제당 한 행이며 `payment_id`는 같은 billing 도메인의 `payment`를 FK로 참조한다 |
+| 재예약 대기 | `recharge_reservation_outbox`는 새 `CHARGE`를 만든 승인이 남긴 충전 직후 재예약 대상이다. 충전한 영업일과 시도 횟수, 다음 시각을 갖는다 | 결제당 한 행이며 `payment`를 FK로 참조한다. `PENDING`이면 다음 시각이 필수다 |
 
 `DEDUCT.business_date`는 스키마 규칙에 따라 NULL이다. 캠페인·영업일의 실제 과금액은 `serve_id`로 판정 기록과 원장을 연결해 구한다. 수신 시각의 날짜로 대체하지 않는다. 원장 전체를 업데이트해서 잔액을 맞추지 않고 거래 행을 추가한다.
 
@@ -541,7 +549,7 @@ Lua는 당일 해시와 처리 표시 두 키를 사용한다. 현재 구현은 
 | 잔액 부족 판정 | `BILLING_FUNDING_JUDGE`, 묶음 `@Order(60)` | 예약액이 단가보다 작은 캠페인을 판정해 캠페인에 통보한다 | 같은 판정을 두 번 통보해도 캠페인 상태가 같아야 한다 |
 | 01:30 `PG_VS_CHARGE` 대사(#391) | `BILLING_PG_VS_CHARGE_RECON`, 독립 `@Scheduled`(01:30, Asia/Seoul) | 전일 생성 결제와 재검증 대기 결제를 PG 조회로 대사하고 빠진 `CHARGE`를 보정한다. PG 응답의 주문번호가 결제와 다르면 보정하지 않고 재검증 대기로 남기며, 대기 행은 불일치 기록이 끝난 뒤에 지운다 | 결제당 `CHARGE` 멱등 제약(`uk_point_ledger_payment_entry`)과 대사 불일치 UNIQUE를 지켜야 한다. 외부 API(PG 조회)의 처리는 [장애 처리 설계 7장](./billing_장애_처리_설계.md#7-pg_vs_charge-대사391의-외부-api-처리)이 갖는다 |
 
-`PG_VS_CHARGE` 작업은 00:00 묶음이 아니라서 `batch_execution_log` 점유(`claim`)로 배치 서버 두 대가 같은 날을 겹쳐 돌지 않게 한다. 충전 직후 재예약은 시각이 아니라 `PointCharged` 커밋 뒤 리스너가 입구다.
+`PG_VS_CHARGE` 작업은 00:00 묶음이 아니라서 `batch_execution_log` 점유(`claim`)로 배치 서버 두 대가 같은 날을 겹쳐 돌지 않게 한다. 충전 직후 재예약은 1분 주기의 재예약 워커가 입구다. 결제 재조회 워커처럼 대상 행을 `SKIP LOCKED`로 선점하므로 `batch_execution_log`로 점유하지 않는다. 처리 규칙은 [배치 설계 I-03](./billing-batch-design.md#i-03-충전-직후-재예약)이 갖는다.
 
 카운터 대사는 실제 표시를 읽어 누락 과금을 찾아내는 작업이 아니다. 원장과 카운터의 비교만으로 원장에도 없는 무료 노출을 복구할 수 없다. 그날 계획이 없는 캠페인의 노출은 `NOT_BILLED_NO_PLAN`으로 기록되고 과금되지 않는다. 00:00 예약이 돌지 않으면 그날 노출 전부가 그렇게 된다.
 

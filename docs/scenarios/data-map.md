@@ -981,7 +981,7 @@
 | B-137 | 충전 직후 재개 | `CMP.PAUSED_NO_POINTS`, `BIL.PLAN_D_INSUFFICIENT` |
 | B-138 | 충전했으나 여전히 부족 | `CMP.PAUSED_NO_POINTS`, `BIL.PLAN_D_INSUFFICIENT` |
 | B-139 | 충전 시 계획 없음 | `CMP.PAUSED_NO_POINTS` |
-| B-140 | 같은 결제 이벤트 중복 | `BIL.RECHARGE_RESERVE_EXISTS` |
+| B-140 | 같은 대기 행 재처리 | `BIL.RECHARGE_RESERVE_EXISTS` |
 | B-141 | 재예약 실패 | `NONE:장애` |
 | B-145 | 후보 적재 SERVABLE | `CMP.ACTIVE`, `STO.FINALIZED` |
 | B-146 | 후보 적재 PAUSED | `CMP.PAUSED_OWNER`, `CMP.PAUSED_NO_POINTS` |
