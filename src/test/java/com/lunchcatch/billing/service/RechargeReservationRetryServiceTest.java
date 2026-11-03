@@ -171,4 +171,18 @@ class RechargeReservationRetryServiceTest {
         assertThat(service().reserveDue()).isZero();
         verifyNoInteractions(rechargeReservation);
     }
+
+    // 결제가 없으면 재예약하지 않고 그 행을 닫지도 않아 선점 만료 뒤 다시 대상이 된다
+    @Test
+    void 결제가_없으면_재예약하지_않고_오류로_센다() {
+        when(outboxService.claimDue()).thenReturn(List.of(row(1L, 101L, TODAY)));
+        when(paymentRepository.findById(101L)).thenReturn(Optional.empty());
+
+        int handled = service().reserveDue();
+
+        assertThat(handled).isEqualTo(1);
+        verifyNoInteractions(rechargeReservation);
+        verify(outboxService, never()).complete(any());
+        assertThat(counted("error")).isEqualTo(1.0);
+    }
 }

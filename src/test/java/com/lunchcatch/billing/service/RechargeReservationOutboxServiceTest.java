@@ -1,6 +1,7 @@
 package com.lunchcatch.billing.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.when;
 
 import com.lunchcatch.billing.config.RechargeReservationRetryProperties;
@@ -102,5 +103,12 @@ class RechargeReservationOutboxServiceTest {
 
         assertThat(outbox.getAttemptCount()).isEqualTo(3);
         assertThat(outbox.getNextRetryAt()).isEqualTo(NOW.plusMinutes(5));
+    }
+
+    @Test
+    void 행이_없으면_결과를_적지_않고_예외를_던진다() {
+        when(outboxRepository.findById(OUTBOX_ID)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service().complete(OUTBOX_ID)).isInstanceOf(IllegalStateException.class);
     }
 }
