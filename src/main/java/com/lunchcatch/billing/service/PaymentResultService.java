@@ -169,6 +169,8 @@ public class PaymentResultService {
      *
      * 승인을 시도한 뒤 결과를 기록하지 못해 REQUESTED 로 남은 결제는 여기서 UNKNOWN 으로 바꾼다.
      * 승인 요청을 보냈고 결과를 모르는 결제라서다. 관리자 재조회도 UNKNOWN 만 받는다.
+     * 워커가 묻는 사이 같은 결제의 다른 승인 요청이 미전송으로 행을 지웠을 수 있어 행이 없으면 다시 만든다.
+     * 만들지 않으면 UNKNOWN 이 행 없이 남아 워커가 다시 집지 않는다.
      */
     @Transactional
     public Payment recordRecheckMiss(Long paymentId, String reason) {
@@ -178,6 +180,7 @@ public class PaymentResultService {
         }
         if (payment.getStatus() == PaymentStatus.REQUESTED) {
             payment.markUnknown();
+            openOutboxIfAbsent(paymentId);
         }
         outboxRepository.findByPaymentId(paymentId)
                 .filter(outbox -> outbox.getStatus() == OutboxStatus.PENDING)

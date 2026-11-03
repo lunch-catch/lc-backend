@@ -397,6 +397,21 @@ class PaymentResultServiceTest {
         assertThat(outbox.getNextRetryAt()).isEqualTo(NOW.plusMinutes(2));
     }
 
+    // 워커가 묻는 사이 미전송 정리가 행을 지웠으면 UNKNOWN 이 행 없이 남아 워커가 다시 집지 않는다
+    @Test
+    void 결과를_기록하지_못한_결제의_재조회_행이_사라졌으면_UNKNOWN으로_바꾸며_행을_다시_만든다() {
+        locked(attempted());
+
+        Payment result = service().recordRecheckMiss(PAYMENT_ID, "처리 중");
+
+        assertThat(result.getStatus()).isEqualTo(PaymentStatus.UNKNOWN);
+        ArgumentCaptor<PaymentReconciliationOutbox> outbox =
+                ArgumentCaptor.forClass(PaymentReconciliationOutbox.class);
+        verify(outboxRepository).save(outbox.capture());
+        assertThat(outbox.getValue().getPaymentId()).isEqualTo(PAYMENT_ID);
+        assertThat(outbox.getValue().getStatus()).isEqualTo(OutboxStatus.PENDING);
+    }
+
     @Test
     void 다음_시각은_지터_범위_안에서_흔들린다() {
         unknown();

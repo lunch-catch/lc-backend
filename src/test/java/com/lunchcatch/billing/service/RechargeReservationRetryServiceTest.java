@@ -2,8 +2,7 @@ package com.lunchcatch.billing.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.contains;
-import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -24,6 +23,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
@@ -57,10 +57,46 @@ class RechargeReservationRetryServiceTest {
     }
 
     private RechargeReservationRetryService service(int batchSize, Duration maxRunTime) {
+        return service(batchSize, maxRunTime, CLOCK);
+    }
+
+    private RechargeReservationRetryService service(int batchSize, Duration maxRunTime, Clock clock) {
         return new RechargeReservationRetryService(outboxService, rechargeReservation, paymentRepository,
                 new RechargeReservationRetryProperties(List.of(Duration.ofMinutes(1)), batchSize,
                         Duration.ofMinutes(5), maxRunTime),
-                meterRegistry, CLOCK);
+                meterRegistry, clock);
+    }
+
+    // 재예약 한 건이 걸리는 시간만큼 시계를 민다
+    private void reserveTakes(SteppingClock clock, Duration elapsed) {
+        doAnswer(invocation -> {
+            clock.advance(elapsed);
+            return null;
+        }).when(rechargeReservation).reserve(any(PointCharged.class));
+    }
+
+    private static final class SteppingClock extends Clock {
+
+        private Instant now = CLOCK.instant();
+
+        void advance(Duration elapsed) {
+            now = now.plus(elapsed);
+        }
+
+        @Override
+        public ZoneId getZone() {
+            return CLOCK.getZone();
+        }
+
+        @Override
+        public Clock withZone(ZoneId zone) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public Instant instant() {
+            return now;
+        }
     }
 
     private RechargeReservationOutbox row(long outboxId, long paymentId, LocalDate businessDate) {
@@ -102,7 +138,7 @@ class RechargeReservationRetryServiceTest {
 
         service().reserveDue();
 
-        verify(outboxService).recordFailure(eq(1L), contains("잠금 대기 시간 초과"));
+        verify(outboxService).recordFailure(1L, "IllegalStateException");
         verify(outboxService, never()).complete(any());
         assertThat(counted("failed")).isEqualTo(1.0);
     }
@@ -154,14 +190,33 @@ class RechargeReservationRetryServiceTest {
     // 선점 유지 시간 안에 실행을 끝내야 선점한 행을 다른 서버가 다시 집지 않는다
     @Test
     void 실행_시간_상한에_닿으면_남은_행은_다음_실행에_넘긴다() {
+        SteppingClock clock = new SteppingClock();
         when(outboxService.claimDue()).thenReturn(List.of(row(1L, 101L, TODAY), row(2L, 102L, TODAY)));
         approvedPayment(101L);
         approvedPayment(102L);
+        reserveTakes(clock, Duration.ofSeconds(30));
 
-        int handled = service(2, Duration.ZERO).reserveDue();
+        int handled = service(2, Duration.ofSeconds(50), clock).reserveDue();
 
         assertThat(handled).isEqualTo(2);
         verify(outboxService, times(1)).claimDue();
+    }
+
+    // 계정 잠금 대기가 길면 배치 하나가 선점 유지 시간을 넘길 수 있어 행마다 상한을 본다
+    @Test
+    void 배치_도중에_실행_시간_상한에_닿으면_남은_행은_처리하지_않는다() {
+        SteppingClock clock = new SteppingClock();
+        when(outboxService.claimDue()).thenReturn(
+                List.of(row(1L, 101L, TODAY), row(2L, 102L, TODAY), row(3L, 103L, TODAY)));
+        approvedPayment(101L);
+        approvedPayment(102L);
+        reserveTakes(clock, Duration.ofSeconds(30));
+
+        int handled = service(20, Duration.ofSeconds(50), clock).reserveDue();
+
+        assertThat(handled).isEqualTo(2);
+        verify(outboxService, never()).complete(3L);
+        verify(paymentRepository, never()).findById(103L);
     }
 
     @Test

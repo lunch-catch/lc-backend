@@ -276,7 +276,7 @@ recharge_reservation_outbox { payment_id, business_date, status, attempt_count, 
 
 자리는 `billing.job.RechargeReservationWorker`이고 `RechargeReservationRetryService.reserveDue`가 행마다 `RechargeReservationService` 하나만 부른다. 결제 재조회 워커(I-04)와 같은 모양이다.
 
-- **처리**: 워커가 1분마다 `status=PENDING AND next_retry_at ≤ now`인 행을 배치 크기(20)만큼 `FOR UPDATE SKIP LOCKED`로 선점하고, 다음 시각을 선점 유지 시간(5분) 뒤로 민 채 커밋한다. 재예약과 결과 기록은 선점 트랜잭션 밖에서 각자의 트랜잭션으로 한다. 승인이 남긴 행의 첫 시각은 승인 시각이라 다음 워커 실행이 바로 집는다. 선점한 행이 배치 크기만큼이면 같은 실행에서 다시 선점해 빌 때까지 처리하고, 한 번 실행은 50초(`max-run-time`)를 넘지 않는다. 승인마다 행이 생기므로 한 번에 배치 크기만 처리하면 분당 20건을 넘는 충전에서 재개가 계속 밀린다. 로컬 부하 시험에서 1624건을 비우는 데 80분이 걸렸다. 배치 크기 20은 결제 재조회가 PG 읽기 타임아웃(10초)을 기준으로 잡은 값이고, 재예약은 DB 안에서 끝나 20건에 0.5초 안팎이 걸린다.
+- **처리**: 워커가 1분마다 `status=PENDING AND next_retry_at ≤ now`인 행을 배치 크기(20)만큼 `FOR UPDATE SKIP LOCKED`로 선점하고, 다음 시각을 선점 유지 시간(5분) 뒤로 민 채 커밋한다. 재예약과 결과 기록은 선점 트랜잭션 밖에서 각자의 트랜잭션으로 한다. 승인이 남긴 행의 첫 시각은 승인 시각이라 다음 워커 실행이 바로 집는다. 선점한 행이 배치 크기만큼이면 같은 실행에서 다시 선점해 빌 때까지 처리한다. 실행 시간의 상한(50초, `max-run-time`)은 행마다 보고, 닿으면 선점한 행이 남아 있어도 멈춘다. 계정 잠금 대기가 길면 배치 하나가 선점 유지 시간을 넘길 수 있어서다. 남은 행은 선점이 만료된 뒤 다시 대상이 된다. 승인마다 행이 생기므로 한 번에 배치 크기만 처리하면 분당 20건을 넘는 충전에서 재개가 계속 밀린다. 로컬 부하 시험에서 1624건을 비우는 데 80분이 걸렸다. 배치 크기 20은 결제 재조회가 PG 읽기 타임아웃(10초)을 기준으로 잡은 값이고, 재예약은 DB 안에서 끝나 20건에 0.5초 안팎이 걸린다.
 - **재시도**: 재예약이 실패하면 행을 닫지 않고 `attempt_count + 1`, `next_retry_at`을 백오프로 민다. 간격은 1, 2, 5, 10분이고 그 뒤로는 10분을 유지한다. 간격은 그 행이 실패한 횟수로 정하므로, 오래 실패한 행이 새로 들어온 행을 밀어내지 않는다. 실패는 WARN `BILLING_RECHARGE_RESERVE_FAILED`와 지표 `billing.recharge.reservation{result=failed}`로 남긴다.
 - **끝**: 성공하면 `DONE`이다. 충전한 영업일이 지난 행은 재예약하지 않고 `EXPIRED`로 닫고 ERROR `BILLING_RECHARGE_RESERVE_EXPIRED`와 `billing.recharge.reservation{result=expired}`를 남긴다. 그날 캠페인을 다시 켤 기회는 지났고 00:00 예약(I-02)이 그 잔액을 새 날 예산으로 배분한다. 돈의 결과를 모르는 일이 아니라서 사람이 처리할 것은 없다. 그래서 횟수 상한을 두지 않고 영업일이 행의 수명을 하루로 묶는다.
 - **겹침**: 워커와 00:00 예약이 겹쳐도 막지 않는다. 둘 다 점주 계정 행을 먼저 잠가 차례로 돌고(2, 3), 재예약은 잠근 뒤의 잔액과 계획으로 다시 계산한다(5). 00:00 예약 전이면 계획 행이 없어 건너뛴다(2). 선점이 만료돼 같은 행을 다시 처리해도 결제×캠페인 UNIQUE(6)가 같은 예약을 두 번 쓰지 않게 막는다.
@@ -303,7 +303,7 @@ recharge_reservation_outbox { payment_id, business_date, status, attempt_count, 
 | --- | --- |
 | 승인 | `payment` → `APPROVED` + `CHARGE` 기록 + 아웃박스 `RESOLVED` + 재예약 대기 행(I-03) |
 | 실패·취소 | `payment` → `FAILED` / `CANCELLED`, 충전 없음, 아웃박스 `RESOLVED` |
-| 여전히 불명 | `attempt_count + 1`, `next_retry_at`을 지수 백오프로 미룸, `last_checked_at`·`last_error` 갱신. 결제가 `REQUESTED`면 `UNKNOWN`으로 바꾼다. 관리자 재조회가 `UNKNOWN`만 받기 때문이다 |
+| 여전히 불명 | `attempt_count + 1`, `next_retry_at`을 지수 백오프로 미룸, `last_checked_at`·`last_error` 갱신. 결제가 `REQUESTED`면 `UNKNOWN`으로 바꾼다. 관리자 재조회가 `UNKNOWN`만 받기 때문이다. 그 사이 다른 승인 요청이 미전송으로 행을 지웠으면 행을 다시 만든다 |
 | `attempt_count ≥ max_retry` | `FAILED_PERMANENT`. ERROR 로그(`event=PAYMENT_RECHECK_EXHAUSTED`)와 메트릭 `billing.payment.recheck.exhausted`로 알린다. 관리자 재조회 API로 사람이 재확정 |
 
 PG 호출에는 타임아웃과 서킷브레이커를 적용한다. 시작값은 연결 3초, 읽기 10초, 최근 10건 중 50% 실패면 열림, 30초 뒤 반개방이다. 워커의 기본 주기는 1분이고 최초 조회 지연은 1분, 이후 간격은 2·5·10·30분이며 ±10% 지터를 준다. 기본 `max_retry`는 5다. 설정 키는 `billing.toss.*`, `resilience4j.circuitbreaker.instances.tossPayment`, `billing.payment.recheck.*`다. 결제는 호출 수가 적어 시간 창으로 두면 최소 호출 수를 못 채워 서킷이 열리지 않으므로 건수 창을 쓴다. 읽기 타임아웃을 짧게 두면 결과를 모르는 `UNKNOWN` 결제가 늘어난다.

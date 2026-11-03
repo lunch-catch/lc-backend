@@ -117,6 +117,11 @@ class PaymentRecheckIntegrationTest extends AbstractBillingIntegrationTest {
                 String.class, paymentId);
     }
 
+    private int attemptCount(Long paymentId) {
+        return jdbc.queryForObject("select attempt_count from payment_reconciliation_outbox where payment_id = ?",
+                Integer.class, paymentId);
+    }
+
     @Test
     void 웹훅과_워커와_관리자_재조회가_동시에_같은_결제를_확정해도_충전은_한_번이다() throws Exception {
         Order order = unknownOrder(OWNER, "tgen_race_1");
@@ -224,6 +229,7 @@ class PaymentRecheckIntegrationTest extends AbstractBillingIntegrationTest {
         assertThat(status(order.paymentId())).isEqualTo("UNKNOWN");
         assertThat(charges(order.paymentId())).isZero();
         assertThat(outboxStatus(order.paymentId())).isEqualTo("PENDING");
+        assertThat(attemptCount(order.paymentId())).isEqualTo(1);
     }
 
     @Test

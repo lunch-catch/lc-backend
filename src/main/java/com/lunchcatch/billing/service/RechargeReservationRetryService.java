@@ -56,8 +56,10 @@ public class RechargeReservationRetryService {
      *
      * 선점한 행이 배치 크기만큼이면 남은 행이 더 있다고 보고 같은 실행에서 다시 선점한다. 승인마다 행이 생기므로
      * 한 번에 배치 크기만 처리하면 충전이 몰릴 때 재개가 계속 밀린다(#1100). 실패한 행은 다음 시각이 미래로,
-     * 예외가 난 행은 선점 만료 시각으로 밀려 있어 같은 실행에서 다시 잡히지 않는다. 실행 시간이 상한에 닿으면
-     * 남은 행은 다음 실행에 넘긴다. 선점 유지 시간 안에 끝내야 다른 서버가 같은 행을 다시 집지 않는다.
+     * 예외가 난 행은 선점 만료 시각으로 밀려 있어 같은 실행에서 다시 잡히지 않는다.
+     *
+     * 실행 시간의 상한은 행마다 본다. 계정 잠금 대기가 길면 배치 하나가 선점 유지 시간을 넘겨 다른 서버가 같은 행을
+     * 다시 집을 수 있어서다. 상한에 닿으면 선점한 행이 남아 있어도 멈추고, 남은 행은 선점이 만료된 뒤 다시 대상이 된다.
      * 처리를 시도한 건수를 돌려준다.
      */
     public int reserveDue() {
@@ -68,9 +70,12 @@ public class RechargeReservationRetryService {
             claimed = outboxService.claimDue();
             LocalDate today = LocalDate.now(clock);
             for (RechargeReservationOutbox outbox : claimed) {
+                if (!clock.instant().isBefore(deadline)) {
+                    return handled;
+                }
                 handleQuietly(outbox, today);
+                handled++;
             }
-            handled += claimed.size();
         } while (claimed.size() >= properties.batchSize() && clock.instant().isBefore(deadline));
         return handled;
     }
@@ -99,9 +104,12 @@ public class RechargeReservationRetryService {
         try {
             rechargeReservation.reserve(new PointCharged(payment.getOwnerId(), payment.getId(), payment.getAmount()));
         } catch (RuntimeException e) {
-            outboxService.recordFailure(outbox.getId(), e.getClass().getSimpleName() + ": " + e.getMessage());
-            log.warn("event=BILLING_RECHARGE_RESERVE_FAILED ownerId={} paymentId={} attemptCount={} fallback=RETRY",
-                    payment.getOwnerId(), payment.getId(), outbox.getAttemptCount() + 1, e);
+            // 예외 메시지에는 실행한 SQL 과 값이 들어갈 수 있어 종류만 남긴다(SEC-4-02)
+            String exceptionType = e.getClass().getSimpleName();
+            outboxService.recordFailure(outbox.getId(), exceptionType);
+            log.warn("event=BILLING_RECHARGE_RESERVE_FAILED ownerId={} paymentId={} attemptCount={} "
+                            + "exceptionType={} fallback=RETRY",
+                    payment.getOwnerId(), payment.getId(), outbox.getAttemptCount() + 1, exceptionType);
             meterRegistry.counter(RESERVE_METRIC, "result", "failed").increment();
             return;
         }
