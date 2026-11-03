@@ -7,6 +7,8 @@
 | 광고 서빙 | [`docs/design/adserving/loadtest/`](../docs/design/adserving/loadtest/adserving_부하_시험.md) |
 | 쿠폰 발급 | [`docs/design/coupon/loadtest/`](../docs/design/coupon/loadtest/coupon-load-test-summary.md) |
 
+**처음이면 lc-infra 의 [팀원 부하 시험 가이드](https://github.com/lunch-catch/lc-infra/blob/main/docs/wiki/팀원-부하시험-가이드.md)부터 본다.** 자기 AWS 계정 준비부터 시험, 그라파나로 보기, 결과 남기기, 내리기까지의 순서를 갖고 단계마다 이 문서와 다른 문서를 가리킨다.
+
 부하 시험 환경을 띄우고 내리는 일은 lc-infra 가 갖는다(`docs/wiki/팀원-부하시험-환경.md`, `scripts/member-env.sh`).
 
 ## 디렉터리
