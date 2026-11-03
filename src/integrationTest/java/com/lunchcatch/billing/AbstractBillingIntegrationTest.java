@@ -2,6 +2,7 @@ package com.lunchcatch.billing;
 
 import com.lunchcatch.IntegrationTestSupport;
 import com.lunchcatch.billing.client.CommitCheckingGateway;
+import com.lunchcatch.billing.service.PaymentResultService;
 import org.junit.jupiter.api.BeforeEach;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -10,6 +11,7 @@ import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Primary;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 
 /*
  * billing 통합 테스트가 공유하는 컨텍스트다.
@@ -31,6 +33,9 @@ import org.springframework.jdbc.core.JdbcTemplate;
 abstract class AbstractBillingIntegrationTest extends IntegrationTestSupport {
 
     @Autowired private CommitCheckingGateway gateway;
+
+    // 결과 기록이 실패하는 경우를 만들 때 쓴다. 기본은 실제 빈으로 위임하고 테스트마다 되돌린다
+    @MockitoSpyBean protected PaymentResultService resultService;
 
     /*
      * 가짜 결제대행사도 이제 테스트 클래스 여럿이 함께 쓴다. 앞 테스트가 심어 둔 실패와 커밋

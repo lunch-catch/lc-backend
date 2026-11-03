@@ -30,8 +30,8 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 /*
- * 충전 직후 재예약이다(V52 102행 (5)·51행, 배치 설계 I-03). PointChargedListener 가 커밋 뒤에 자기
- * 트랜잭션으로 부른다.
+ * 충전 직후 재예약이다(V52 102행 (5)·51행, 배치 설계 I-03). 재예약 워커(RechargeReservationRetryService)가
+ * 승인이 남긴 재예약 대기 행을 집어 자기 트랜잭션으로 부른다.
  *
  * 서빙이 하루 종일이라 시각 제한이 없다. 대상은 이 점주의 PAUSED(NO_POINTS) 캠페인 중 집행 기간 안이고 그날
  * 계획 행이 있는 것뿐이다. 00:00 예약이 아직 돌지 않아 계획이 없는 캠페인은 건너뛰고, 그 예약이 충전 뒤 잔액으로

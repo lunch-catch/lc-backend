@@ -37,6 +37,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.transaction.CannotCreateTransactionException;
 
 /*
  * 승인 확정의 흐름을 본다. 결제대행사는 목으로 대신한다(UT-5-01).
@@ -314,6 +315,28 @@ class PaymentConfirmationServiceTest {
         verify(resultService, never()).markUnknown(anyLong());
         verify(resultService, never()).fail(anyLong(), anyString());
         assertThat(counted("not_sent")).isEqualTo(1.0);
+    }
+
+    @Test
+    void 요청이_가지_않았으면_승인을_시도할_때_만든_재조회_아웃박스를_지운다() {
+        readyToCall();
+        when(paymentGateway.confirm(PG_TID, ORDER_ID, AMOUNT))
+                .thenThrow(new PgNotSentException("circuit open", new RuntimeException()));
+
+        assertThatThrownBy(this::confirm).isInstanceOf(BillingException.class);
+        verify(resultService).discardUnsentAttempt(PAYMENT_ID);
+    }
+
+    @Test
+    void 아웃박스를_지우다_DB가_실패해도_BILLING_007로_답한다() {
+        readyToCall();
+        when(paymentGateway.confirm(PG_TID, ORDER_ID, AMOUNT))
+                .thenThrow(new PgNotSentException("circuit open", new RuntimeException()));
+        when(resultService.discardUnsentAttempt(PAYMENT_ID))
+                .thenThrow(new CannotCreateTransactionException("pool exhausted"));
+
+        assertThatThrownBy(this::confirm).isInstanceOfSatisfying(BillingException.class,
+                e -> assertThat(e.getErrorCode()).isEqualTo(BillingErrorCode.PG_REQUEST_NOT_SENT));
     }
 
     // --- 응답이 불명일 때의 동기 재조회 ------------------------------------------------------

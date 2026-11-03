@@ -49,6 +49,14 @@ class BillingCounterRegistrationTest {
     }
 
     @Test
+    void 재예약_결과마다_카운터를_0으로_만든다() {
+        new RechargeReservationRetryService(null, null, null, null, registry, null).registerCounters();
+
+        assertZero(RechargeReservationRetryService.RESERVE_METRIC, "result",
+                List.of("done", "failed", "expired", "error"));
+    }
+
+    @Test
     void PG_대사_결과마다_카운터를_0으로_만든다() {
         new PgChargeReconciliationService(null, null, null, null, null, null, registry, null).registerCounters();
 

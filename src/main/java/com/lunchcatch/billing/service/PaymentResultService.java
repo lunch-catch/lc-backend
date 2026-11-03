@@ -1,19 +1,20 @@
 package com.lunchcatch.billing.service;
 
 import com.lunchcatch.billing.config.PaymentRecheckProperties;
-import com.lunchcatch.billing.dto.PointCharged;
 import com.lunchcatch.billing.entity.LedgerSource;
 import com.lunchcatch.billing.entity.OutboxStatus;
 import com.lunchcatch.billing.entity.Payment;
 import com.lunchcatch.billing.entity.PaymentReconciliationOutbox;
 import com.lunchcatch.billing.entity.PaymentStatus;
 import com.lunchcatch.billing.entity.PointLedger;
+import com.lunchcatch.billing.entity.RechargeReservationOutbox;
 import com.lunchcatch.billing.exception.BillingErrorCode;
 import com.lunchcatch.billing.exception.BillingException;
 import com.lunchcatch.billing.repository.PaymentReconciliationOutboxRepository;
 import com.lunchcatch.billing.repository.PaymentRepository;
 import com.lunchcatch.billing.repository.PointAccountRepository;
 import com.lunchcatch.billing.repository.PointLedgerRepository;
+import com.lunchcatch.billing.repository.RechargeReservationOutboxRepository;
 import io.micrometer.core.instrument.MeterRegistry;
 import jakarta.annotation.PostConstruct;
 import java.time.Clock;
@@ -21,7 +22,6 @@ import java.time.LocalDateTime;
 import java.util.concurrent.ThreadLocalRandom;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -48,7 +48,7 @@ public class PaymentResultService {
     private final PointAccountRepository pointAccountRepository;
     private final PaymentReconciliationOutboxRepository outboxRepository;
     private final PaymentRecheckProperties recheckProperties;
-    private final ApplicationEventPublisher eventPublisher;
+    private final RechargeReservationOutboxRepository rechargeOutboxRepository;
     private final MeterRegistry meterRegistry;
     private final Clock clock;
 
@@ -70,6 +70,9 @@ public class PaymentResultService {
      *
      * 다른 결제가 이미 같은 식별자를 갖고 있으면 uk_payment_pg_tid 위반이 이 메서드 안에서 난다.
      * 커밋까지 미루지 않고 flush 로 바로 드러내 부른 쪽이 오류 코드로 바꿀 수 있게 한다.
+     *
+     * 같은 커밋에 재조회 아웃박스 행을 만든다. 승인 뒤 결과 기록이 실패하거나 서버가 죽어도 재조회 워커가 이 결제를 찾는다.
+     * 정상이면 뒤이은 결과 기록이 그 행을 닫는다. 첫 재조회 시각은 승인 확정이 끝날 시간보다 뒤다.
      */
     @Transactional
     public Payment assignPgTid(Long paymentId, String pgTid) {
@@ -82,6 +85,7 @@ public class PaymentResultService {
         }
         payment.assignPgTid(pgTid);
         paymentRepository.flush();
+        openOutboxIfAbsent(paymentId);
         return payment;
     }
 
@@ -91,7 +95,9 @@ public class PaymentResultService {
      * 같은 트랜잭션에서 점주 계정 행이 없으면 만든다. 환불 승인, 음수 조정, 00:00 예약이 그 행을 잠그므로
      * 잔액이 생기는 첫 순간에 있어야 한다. 재조회 아웃박스가 있으면 닫는다.
      *
-     * 충전 통보는 새 CHARGE 행을 만든 이 경로에서만 낸다. 받는 쪽은 커밋 뒤에 돌므로 롤백되면 통보도 없다.
+     * 충전 직후 재예약은 새 CHARGE 행을 만든 이 경로에서만 같은 트랜잭션에 재예약 대기 행으로 남긴다.
+     * 재예약 워커가 그 행을 집어 재예약한다. 커밋 뒤 리스너로 재예약하면 이 트랜잭션의 커넥션을 쥔 채
+     * 커넥션을 하나 더 달라고 해서, 풀이 차면 승인끼리 서로를 기다린다(#1100).
      * 승인 시각이 비어 있으면 지금 시각을 쓴다. 결제대행사 조회 결과에 승인 시각이 빠지는 경우가 있다.
      */
     @Transactional
@@ -106,7 +112,7 @@ public class PaymentResultService {
         pointLedgerRepository.save(PointLedger.charge(
                 payment.getOwnerId(), payment.getId(), payment.getAmount(), LedgerSource.REALTIME));
         closeOutbox(paymentId, now);
-        eventPublisher.publishEvent(new PointCharged(payment.getOwnerId(), payment.getId(), payment.getAmount()));
+        rechargeOutboxRepository.save(RechargeReservationOutbox.pending(paymentId, now.toLocalDate(), now));
         return payment;
     }
 
@@ -139,8 +145,8 @@ public class PaymentResultService {
     }
 
     /*
-     * 승인 결과를 확정하지 못했다. UNKNOWN 으로 두고 재조회 아웃박스 행을 같은 트랜잭션에서 만든다.
-     * 이미 UNKNOWN 이면 아웃박스도 이미 있으므로 아무것도 하지 않는다(결제당 한 행).
+     * 승인 결과를 확정하지 못했다. UNKNOWN 으로 두고 재조회 아웃박스 행이 없으면 같은 트랜잭션에서 만든다.
+     * 보통은 결제 식별자를 적을 때 만든 행이 이미 있다. 이미 UNKNOWN 이면 아무것도 하지 않는다(결제당 한 행).
      */
     @Transactional
     public Payment markUnknown(Long paymentId) {
@@ -149,9 +155,7 @@ public class PaymentResultService {
             return payment;
         }
         payment.markUnknown();
-        LocalDateTime nextRetryAt = LocalDateTime.now(clock).plus(recheckProperties.firstDelay());
-        outboxRepository.save(
-                PaymentReconciliationOutbox.pending(paymentId, recheckProperties.maxRetry(), nextRetryAt));
+        openOutboxIfAbsent(paymentId);
         return payment;
     }
 
@@ -162,12 +166,21 @@ public class PaymentResultService {
      * 그 사이에 웹훅이나 관리자가 결제를 확정했으면 아웃박스도 이미 닫혔으므로 아무것도 하지 않는다.
      * 시도 횟수가 상한에 닿으면 아웃박스를 FAILED_PERMANENT 로 두고 ERROR 로그와 지표를 남긴다.
      * 돈이 걸린 결제를 서버가 임의로 닫지 않고 관리자 재조회로 사람이 확정하게 하려는 것이다.
+     *
+     * 승인을 시도한 뒤 결과를 기록하지 못해 REQUESTED 로 남은 결제는 여기서 UNKNOWN 으로 바꾼다.
+     * 승인 요청을 보냈고 결과를 모르는 결제라서다. 관리자 재조회도 UNKNOWN 만 받는다.
+     * 워커가 묻는 사이 같은 결제의 다른 승인 요청이 미전송으로 행을 지웠을 수 있어 행이 없으면 다시 만든다.
+     * 만들지 않으면 UNKNOWN 이 행 없이 남아 워커가 다시 집지 않는다.
      */
     @Transactional
     public Payment recordRecheckMiss(Long paymentId, String reason) {
         Payment payment = lock(paymentId);
         if (isDetermined(payment)) {
             return payment;
+        }
+        if (payment.getStatus() == PaymentStatus.REQUESTED) {
+            payment.markUnknown();
+            openOutboxIfAbsent(paymentId);
         }
         outboxRepository.findByPaymentId(paymentId)
                 .filter(outbox -> outbox.getStatus() == OutboxStatus.PENDING)
@@ -187,6 +200,20 @@ public class PaymentResultService {
         }
         outboxRepository.findByPaymentId(paymentId)
                 .ifPresent(outbox -> outbox.touch(LocalDateTime.now(clock), reason));
+        return payment;
+    }
+
+    /*
+     * 승인 요청이 결제대행사에 닿지 않은 것이 확실하다. 결제 식별자를 적을 때 만든 재조회 아웃박스 행을 지운다.
+     * 결제는 REQUESTED 로 남고 점주가 다시 승인하면 행을 새로 만든다.
+     * 잠근 뒤 REQUESTED 가 아니면 같은 주문의 다른 요청이 결과를 냈거나 확인 중으로 바꾼 것이라 행을 둔다.
+     */
+    @Transactional
+    public Payment discardUnsentAttempt(Long paymentId) {
+        Payment payment = lock(paymentId);
+        if (payment.getStatus() == PaymentStatus.REQUESTED) {
+            outboxRepository.findByPaymentId(paymentId).ifPresent(outboxRepository::delete);
+        }
         return payment;
     }
 
@@ -210,6 +237,15 @@ public class PaymentResultService {
         PaymentStatus status = payment.getStatus();
         return status == PaymentStatus.APPROVED || status == PaymentStatus.FAILED
                 || status == PaymentStatus.CANCELLED;
+    }
+
+    private void openOutboxIfAbsent(Long paymentId) {
+        if (outboxRepository.findByPaymentId(paymentId).isPresent()) {
+            return;
+        }
+        LocalDateTime nextRetryAt = LocalDateTime.now(clock).plus(recheckProperties.firstDelay());
+        outboxRepository.save(
+                PaymentReconciliationOutbox.pending(paymentId, recheckProperties.maxRetry(), nextRetryAt));
     }
 
     private void closeOutbox(Long paymentId, LocalDateTime now) {

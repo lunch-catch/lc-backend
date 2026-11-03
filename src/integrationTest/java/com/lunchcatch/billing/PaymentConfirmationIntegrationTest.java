@@ -61,6 +61,7 @@ class PaymentConfirmationIntegrationTest extends AbstractBillingIntegrationTest 
     void clean() {
         jdbc.update("delete from point_ledger");
         jdbc.update("delete from payment_reconciliation_outbox");
+        jdbc.update("delete from recharge_reservation_outbox");
         jdbc.update("delete from payment");
         jdbc.update("delete from point_account");
     }
@@ -218,8 +219,8 @@ class PaymentConfirmationIntegrationTest extends AbstractBillingIntegrationTest 
 
         assertThat(status(order.paymentId())).isEqualTo("APPROVED");
         assertThat(charges(order.paymentId())).isEqualTo(1);
-        assertThat(jdbc.queryForObject("select count(*) from payment_reconciliation_outbox where payment_id = ?",
-                Integer.class, order.paymentId())).isZero();
+        assertThat(jdbc.queryForObject("select status from payment_reconciliation_outbox where payment_id = ?",
+                String.class, order.paymentId())).isEqualTo("RESOLVED");
     }
 
     @Test
@@ -231,6 +232,8 @@ class PaymentConfirmationIntegrationTest extends AbstractBillingIntegrationTest 
                 .isInstanceOfSatisfying(BillingException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(BillingErrorCode.PG_REQUEST_NOT_SENT));
         assertThat(status(order.paymentId())).isEqualTo("REQUESTED");
+        assertThat(jdbc.queryForObject("select count(*) from payment_reconciliation_outbox where payment_id = ?",
+                Integer.class, order.paymentId())).isZero();
 
         gateway.failConfirmWith(null);
         assertThat(confirm(order, "tgen_retry_1").status()).isEqualTo(PaymentStatus.APPROVED);
