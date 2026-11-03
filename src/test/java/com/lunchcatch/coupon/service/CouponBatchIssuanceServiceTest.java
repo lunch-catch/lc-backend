@@ -161,6 +161,97 @@ class CouponBatchIssuanceServiceTest {
         org.mockito.Mockito.verify(repository, org.mockito.Mockito.never()).increaseCounters(any(), any(), any());
     }
 
+    // 앞 요청이 일일 한도로 거절되면 쿠폰이 없으므로 뒤 중복 요청도 COUPON-005가 아니라 일일 한도로 끝나는지 검증한다.
+    @Test
+    void 앞_요청이_일일_한도면_뒤_중복_요청도_일일_한도로_거절한다() {
+        when(repository.lockCounters(DATE, List.of(17L))).thenReturn(Map.of(17L, 3));
+
+        List<CouponIssuanceOutcome> results = service.issueBatch(List.of(request(17L), request(17L)));
+
+        assertThat(results).extracting(CouponIssuanceOutcome::rejection).containsExactly(
+                CouponErrorCode.DAILY_LIMIT_REACHED, CouponErrorCode.DAILY_LIMIT_REACHED);
+        verifyNoInteractions(publisher);
+    }
+
+    // 앞 요청이 예약에서 소진되면 뒤 중복 요청도 소진으로 끝나는지 검증한다.
+    @Test
+    void 앞_요청이_소진되면_뒤_중복_요청도_소진으로_거절한다() {
+        when(sequences.reserveAll(Map.of(81L, 1))).thenReturn(Map.of(81L, List.of(
+                new CouponReservationOutcome(null, CouponErrorCode.INVENTORY_EXHAUSTED, false, false))));
+
+        List<CouponIssuanceOutcome> results = service.issueBatch(List.of(request(17L), request(17L)));
+
+        assertThat(results).extracting(CouponIssuanceOutcome::rejection).containsExactly(
+                CouponErrorCode.INVENTORY_EXHAUSTED, CouponErrorCode.INVENTORY_EXHAUSTED);
+    }
+
+    // 중복 요청이 둘 이상이어도 모두 임시 COUPON-005가 아니라 첫 요청의 결과를 받는지 검증한다.
+    @Test
+    void 첫_요청이_소진되면_뒤_중복_요청이_여럿이어도_모두_소진으로_거절한다() {
+        when(sequences.reserveAll(Map.of(81L, 1))).thenReturn(Map.of(81L, List.of(
+                new CouponReservationOutcome(null, CouponErrorCode.INVENTORY_EXHAUSTED, false, false))));
+
+        List<CouponIssuanceOutcome> results = service.issueBatch(List.of(request(17L), request(17L), request(17L)));
+
+        assertThat(results).extracting(CouponIssuanceOutcome::rejection).containsExactly(
+                CouponErrorCode.INVENTORY_EXHAUSTED, CouponErrorCode.INVENTORY_EXHAUSTED, CouponErrorCode.INVENTORY_EXHAUSTED);
+    }
+
+    // 다른 회원이 사이에 끼어도 중복 요청은 자기 앞 요청의 결과만 받고 다른 회원의 발급은 유지되는지 검증한다.
+    @Test
+    void 다른_회원이_사이에_있어도_중복_요청은_자기_앞_요청의_결과를_받는다() {
+        when(members.findCurrentStatuses(Set.of(17L, 18L))).thenReturn(Map.of(
+                17L, MemberStatus.ACTIVE, 18L, MemberStatus.ACTIVE));
+        when(wishes.findWishedMemberIds(71L, Set.of(17L, 18L))).thenReturn(Set.of(17L, 18L));
+        when(sequences.reserveAll(Map.of(81L, 2))).thenReturn(Map.of(81L, List.of(
+                new CouponReservationOutcome(null, CouponErrorCode.INVENTORY_EXHAUSTED, false, false),
+                new CouponReservationOutcome(reservation, null, false, false))));
+        when(repository.issueSequences(Map.of(81L, List.of(1)), NOW)).thenReturn(1);
+        when(repository.findCouponCodes(Map.of(81L, List.of(1)))).thenReturn(Map.of(81L, Map.of(1, code)));
+        when(repository.insertCoupons(anyList())).thenReturn(List.of(1001L));
+
+        List<CouponIssuanceOutcome> results = service.issueBatch(List.of(request(17L), request(18L), request(17L)));
+
+        assertThat(results.get(0).rejection()).isEqualTo(CouponErrorCode.INVENTORY_EXHAUSTED);
+        assertThat(results.get(1).response().memberCouponId()).isEqualTo(1001L);
+        assertThat(results.get(2).rejection()).isEqualTo(CouponErrorCode.INVENTORY_EXHAUSTED);
+        verify(repository).increaseCounters(DATE, Map.of(18L, 1), NOW);
+    }
+
+    // 앞 요청이 예약 대기면 뒤 중복 요청도 함께 재접수되도록 같은 결과를 받는지 검증한다.
+    @Test
+    void 앞_요청이_예약_대기면_뒤_중복_요청도_예약_대기로_끝난다() {
+        when(sequences.reserveAll(Map.of(81L, 1))).thenReturn(Map.of(81L, List.of(
+                new CouponReservationOutcome(null, CouponErrorCode.ISSUANCE_BUSY, false, true))));
+
+        List<CouponIssuanceOutcome> results = service.issueBatch(List.of(request(17L), request(17L)));
+
+        assertThat(results).allSatisfy(result -> assertThat(result.awaitingReservation()).isTrue());
+    }
+
+    // 앞 요청이 복구 대상이면 뒤 중복 요청도 복구 뒤 재접수되도록 같은 결과를 받는지 검증한다.
+    @Test
+    void 앞_요청이_복구_대상이면_뒤_중복_요청도_복구_대상으로_끝난다() {
+        when(sequences.reserveAll(Map.of(81L, 1))).thenReturn(Map.of(81L, List.of(
+                new CouponReservationOutcome(null, CouponErrorCode.ISSUANCE_BUSY, true, false))));
+
+        List<CouponIssuanceOutcome> results = service.issueBatch(List.of(request(17L), request(17L)));
+
+        assertThat(results).allSatisfy(result -> assertThat(result.recoveryRequired()).isTrue());
+    }
+
+    // DB에 발급 기록이 있으면 일일 한도에 닿아 있어도 묶음 안의 모든 요청이 COUPON-005를 받는지 검증한다.
+    @Test
+    void DB에_발급_기록이_있으면_묶음의_모든_요청을_중복으로_거절한다() {
+        when(repository.lockCounters(DATE, List.of(17L))).thenReturn(Map.of(17L, 3));
+        when(repository.findIssuedPairs(Set.of(81L), List.of(17L))).thenReturn(Set.of(new CouponBatchIssueRepository.Pair(81L, 17L)));
+
+        List<CouponIssuanceOutcome> results = service.issueBatch(List.of(request(17L), request(17L)));
+
+        assertThat(results).extracting(CouponIssuanceOutcome::rejection).containsExactly(
+                CouponErrorCode.EVENT_ALREADY_ISSUED, CouponErrorCode.EVENT_ALREADY_ISSUED);
+    }
+
     @Test
     void 없는_이벤트와_발급_종료_시각의_요청은_자격_조회_전에_거절한다() {
         List<CouponEvent> found = events.findAllForIssue(Set.of(81L));
