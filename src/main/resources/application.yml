@@ -198,7 +198,8 @@ coupon:
   issue:
     batch:
       # 작업자마다 DB 커넥션을 하나씩 쓰므로 커넥션 풀보다 작게 둔다.
-      workers: "${COUPON_ISSUE_BATCH_WORKERS:4}"
+      # 쿠폰 오픈 때 광고 워커, 쿠폰 복구, 소진 통보와 같은 풀을 나눠 쓰므로 2개로 둔다.
+      workers: "${COUPON_ISSUE_BATCH_WORKERS:2}"
       max-size: "${COUPON_ISSUE_BATCH_MAX_SIZE:500}"
       queue-capacity: "${COUPON_ISSUE_BATCH_QUEUE_CAPACITY:2000}"
       wait-timeout: "${COUPON_ISSUE_BATCH_WAIT_TIMEOUT:10s}"
