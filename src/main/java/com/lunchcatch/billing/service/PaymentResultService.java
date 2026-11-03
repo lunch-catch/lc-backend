@@ -1,19 +1,20 @@
 package com.lunchcatch.billing.service;
 
 import com.lunchcatch.billing.config.PaymentRecheckProperties;
-import com.lunchcatch.billing.dto.PointCharged;
 import com.lunchcatch.billing.entity.LedgerSource;
 import com.lunchcatch.billing.entity.OutboxStatus;
 import com.lunchcatch.billing.entity.Payment;
 import com.lunchcatch.billing.entity.PaymentReconciliationOutbox;
 import com.lunchcatch.billing.entity.PaymentStatus;
 import com.lunchcatch.billing.entity.PointLedger;
+import com.lunchcatch.billing.entity.RechargeReservationOutbox;
 import com.lunchcatch.billing.exception.BillingErrorCode;
 import com.lunchcatch.billing.exception.BillingException;
 import com.lunchcatch.billing.repository.PaymentReconciliationOutboxRepository;
 import com.lunchcatch.billing.repository.PaymentRepository;
 import com.lunchcatch.billing.repository.PointAccountRepository;
 import com.lunchcatch.billing.repository.PointLedgerRepository;
+import com.lunchcatch.billing.repository.RechargeReservationOutboxRepository;
 import io.micrometer.core.instrument.MeterRegistry;
 import jakarta.annotation.PostConstruct;
 import java.time.Clock;
@@ -21,7 +22,6 @@ import java.time.LocalDateTime;
 import java.util.concurrent.ThreadLocalRandom;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -48,7 +48,7 @@ public class PaymentResultService {
     private final PointAccountRepository pointAccountRepository;
     private final PaymentReconciliationOutboxRepository outboxRepository;
     private final PaymentRecheckProperties recheckProperties;
-    private final ApplicationEventPublisher eventPublisher;
+    private final RechargeReservationOutboxRepository rechargeOutboxRepository;
     private final MeterRegistry meterRegistry;
     private final Clock clock;
 
@@ -95,7 +95,9 @@ public class PaymentResultService {
      * 같은 트랜잭션에서 점주 계정 행이 없으면 만든다. 환불 승인, 음수 조정, 00:00 예약이 그 행을 잠그므로
      * 잔액이 생기는 첫 순간에 있어야 한다. 재조회 아웃박스가 있으면 닫는다.
      *
-     * 충전 통보는 새 CHARGE 행을 만든 이 경로에서만 낸다. 받는 쪽은 커밋 뒤에 돌므로 롤백되면 통보도 없다.
+     * 충전 직후 재예약은 새 CHARGE 행을 만든 이 경로에서만 같은 트랜잭션에 재예약 대기 행으로 남긴다.
+     * 재예약 워커가 그 행을 집어 재예약한다. 커밋 뒤 리스너로 재예약하면 이 트랜잭션의 커넥션을 쥔 채
+     * 커넥션을 하나 더 달라고 해서, 풀이 차면 승인끼리 서로를 기다린다(#1100).
      * 승인 시각이 비어 있으면 지금 시각을 쓴다. 결제대행사 조회 결과에 승인 시각이 빠지는 경우가 있다.
      */
     @Transactional
@@ -110,7 +112,7 @@ public class PaymentResultService {
         pointLedgerRepository.save(PointLedger.charge(
                 payment.getOwnerId(), payment.getId(), payment.getAmount(), LedgerSource.REALTIME));
         closeOutbox(paymentId, now);
-        eventPublisher.publishEvent(new PointCharged(payment.getOwnerId(), payment.getId(), payment.getAmount()));
+        rechargeOutboxRepository.save(RechargeReservationOutbox.pending(paymentId, now.toLocalDate(), now));
         return payment;
     }
 

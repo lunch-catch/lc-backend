@@ -61,6 +61,7 @@ class PaymentConfirmationIntegrationTest extends AbstractBillingIntegrationTest 
     void clean() {
         jdbc.update("delete from point_ledger");
         jdbc.update("delete from payment_reconciliation_outbox");
+        jdbc.update("delete from recharge_reservation_outbox");
         jdbc.update("delete from payment");
         jdbc.update("delete from point_account");
     }

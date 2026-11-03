@@ -59,6 +59,10 @@ class SettlementMismatchResolutionIntegrationTest extends AbstractBillingIntegra
                 owner);
         jdbc.update("delete from point_ledger where owner_id = ?", owner);
         jdbc.update("delete from point_account where owner_id = ?", owner);
+        jdbc.update("""
+                delete o from recharge_reservation_outbox o join payment p on p.payment_id = o.payment_id
+                 where p.owner_id = ?
+                """, owner);
         jdbc.update("delete from payment where owner_id = ?", owner);
         jdbc.update("delete from owner where owner_id = ?", owner);
     }

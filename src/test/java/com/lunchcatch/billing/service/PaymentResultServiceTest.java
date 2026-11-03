@@ -9,7 +9,6 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.lunchcatch.billing.config.PaymentRecheckProperties;
-import com.lunchcatch.billing.dto.PointCharged;
 import com.lunchcatch.billing.entity.EntryType;
 import com.lunchcatch.billing.entity.LedgerSource;
 import com.lunchcatch.billing.entity.OutboxStatus;
@@ -17,18 +16,22 @@ import com.lunchcatch.billing.entity.Payment;
 import com.lunchcatch.billing.entity.PaymentReconciliationOutbox;
 import com.lunchcatch.billing.entity.PaymentStatus;
 import com.lunchcatch.billing.entity.PointLedger;
+import com.lunchcatch.billing.entity.RechargeReservationOutbox;
+import com.lunchcatch.billing.entity.RechargeReservationStatus;
 import com.lunchcatch.billing.exception.BillingErrorCode;
 import com.lunchcatch.billing.exception.BillingException;
 import com.lunchcatch.billing.repository.PaymentReconciliationOutboxRepository;
 import com.lunchcatch.billing.repository.PaymentRepository;
 import com.lunchcatch.billing.repository.PointAccountRepository;
 import com.lunchcatch.billing.repository.PointLedgerRepository;
+import com.lunchcatch.billing.repository.RechargeReservationOutboxRepository;
 import com.lunchcatch.global.config.ClockConfig;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
@@ -37,7 +40,6 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.test.util.ReflectionTestUtils;
 
 @ExtendWith(MockitoExtension.class)
@@ -58,7 +60,7 @@ class PaymentResultServiceTest {
     @Mock PointLedgerRepository pointLedgerRepository;
     @Mock PointAccountRepository pointAccountRepository;
     @Mock PaymentReconciliationOutboxRepository outboxRepository;
-    @Mock ApplicationEventPublisher eventPublisher;
+    @Mock RechargeReservationOutboxRepository rechargeOutboxRepository;
 
     private final MeterRegistry meterRegistry = new SimpleMeterRegistry();
 
@@ -70,7 +72,7 @@ class PaymentResultServiceTest {
         return new PaymentResultService(paymentRepository, pointLedgerRepository, pointAccountRepository,
                 outboxRepository, new PaymentRecheckProperties(10, Duration.ofMinutes(1),
                         List.of(Duration.ofMinutes(2), Duration.ofMinutes(5)), jitterRatio, 20, Duration.ofMinutes(5)),
-                eventPublisher, meterRegistry, CLOCK);
+                rechargeOutboxRepository, meterRegistry, CLOCK);
     }
 
     private Payment requested() {
@@ -190,7 +192,7 @@ class PaymentResultServiceTest {
     }
 
     @Test
-    void 승인하면_결제를_APPROVED로_바꾸고_충전_한_줄과_점주_계정과_충전_통보를_남긴다() {
+    void 승인하면_결제를_APPROVED로_바꾸고_충전_한_줄과_점주_계정과_재예약_대기_행을_남긴다() {
         locked(attempted());
         when(outboxRepository.findByPaymentId(PAYMENT_ID)).thenReturn(Optional.empty());
 
@@ -206,7 +208,12 @@ class PaymentResultServiceTest {
         assertThat(ledger.getValue().getOwnerId()).isEqualTo(OWNER);
         assertThat(ledger.getValue().getSource()).isEqualTo(LedgerSource.REALTIME);
         verify(pointAccountRepository).createIfAbsent(OWNER, NOW);
-        verify(eventPublisher).publishEvent(new PointCharged(OWNER, PAYMENT_ID, AMOUNT));
+        ArgumentCaptor<RechargeReservationOutbox> reservation = ArgumentCaptor.forClass(RechargeReservationOutbox.class);
+        verify(rechargeOutboxRepository).save(reservation.capture());
+        assertThat(reservation.getValue().getPaymentId()).isEqualTo(PAYMENT_ID);
+        assertThat(reservation.getValue().getBusinessDate()).isEqualTo(LocalDate.of(2026, 10, 11));
+        assertThat(reservation.getValue().getStatus()).isEqualTo(RechargeReservationStatus.PENDING);
+        assertThat(reservation.getValue().getNextRetryAt()).isEqualTo(NOW);
     }
 
     @Test
@@ -232,7 +239,7 @@ class PaymentResultServiceTest {
     }
 
     @Test
-    void 이미_승인된_결제는_다시_충전하지_않고_통보도_내지_않는다() {
+    void 이미_승인된_결제는_다시_충전하지_않고_재예약_대기_행도_만들지_않는다() {
         Payment payment = attempted();
         payment.approve(PG_APPROVED_AT);
         locked(payment);
@@ -240,7 +247,7 @@ class PaymentResultServiceTest {
         Payment result = service().approve(PAYMENT_ID, PG_APPROVED_AT.plusMinutes(1));
 
         assertThat(result.getApprovedAt()).isEqualTo(PG_APPROVED_AT);
-        verifyNoInteractions(pointLedgerRepository, pointAccountRepository, eventPublisher);
+        verifyNoInteractions(pointLedgerRepository, pointAccountRepository, rechargeOutboxRepository);
     }
 
     @Test
@@ -264,7 +271,7 @@ class PaymentResultServiceTest {
         Payment result = service().approve(PAYMENT_ID, PG_APPROVED_AT);
 
         assertThat(result.getStatus()).isEqualTo(PaymentStatus.FAILED);
-        verifyNoInteractions(pointLedgerRepository, eventPublisher);
+        verifyNoInteractions(pointLedgerRepository, rechargeOutboxRepository);
     }
 
     @Test
@@ -276,7 +283,7 @@ class PaymentResultServiceTest {
 
         assertThat(result.getStatus()).isEqualTo(PaymentStatus.FAILED);
         assertThat(result.getFailureReason()).isEqualTo("REJECT_CARD_COMPANY: 카드사 거절");
-        verifyNoInteractions(pointLedgerRepository, eventPublisher);
+        verifyNoInteractions(pointLedgerRepository, rechargeOutboxRepository);
     }
 
     @Test
@@ -289,7 +296,7 @@ class PaymentResultServiceTest {
         assertThat(result.getStatus()).isEqualTo(PaymentStatus.CANCELLED);
         assertThat(result.getCanceledAt()).isEqualTo(NOW);
         assertThat(result.getPgCancelId()).isNull();
-        verifyNoInteractions(pointLedgerRepository, eventPublisher);
+        verifyNoInteractions(pointLedgerRepository, rechargeOutboxRepository);
     }
 
     @Test

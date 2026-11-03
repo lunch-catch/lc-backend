@@ -73,6 +73,10 @@ class DailyReservationIntegrationTest extends AbstractBillingIntegrationTest {
         jdbc.update("delete from budget_daily_plan");
         jdbc.update("delete from point_ledger");
         jdbc.update("delete from refund_request where owner_id >= ?", BASE_ID);
+        jdbc.update("""
+                delete o from recharge_reservation_outbox o join payment p on p.payment_id = o.payment_id
+                 where p.owner_id >= ?
+                """, BASE_ID);
         jdbc.update("delete from payment where owner_id >= ?", BASE_ID);
         jdbc.update("delete from deduction_result");
         jdbc.update("delete from point_account");

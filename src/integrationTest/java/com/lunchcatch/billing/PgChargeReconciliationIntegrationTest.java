@@ -60,6 +60,10 @@ class PgChargeReconciliationIntegrationTest extends AbstractBillingIntegrationTe
         jdbc.update("delete from settlement_mismatch where check_type = 'PG_VS_CHARGE'"
                 + " and target_id in (select payment_id from payment where owner_id = ?)", OWNER);
         jdbc.update("delete from point_ledger where owner_id = ?", OWNER);
+        jdbc.update("""
+                delete o from recharge_reservation_outbox o join payment p on p.payment_id = o.payment_id
+                 where p.owner_id = ?
+                """, OWNER);
         jdbc.update("delete from payment where owner_id = ?", OWNER);
     }
 

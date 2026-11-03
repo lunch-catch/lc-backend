@@ -75,6 +75,7 @@ class PaymentRecheckIntegrationTest extends AbstractBillingIntegrationTest {
         jdbc.update("delete from audit_log");
         jdbc.update("delete from point_ledger");
         jdbc.update("delete from payment_reconciliation_outbox");
+        jdbc.update("delete from recharge_reservation_outbox");
         jdbc.update("delete from payment");
         jdbc.update("delete from point_account");
         jdbc.update("delete from owner where owner_id = ?", RECORD_FAILED_OWNER);
