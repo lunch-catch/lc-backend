@@ -68,4 +68,16 @@ FROM (
     FROM owner o
     WHERE o.owner_id BETWEEN @lo AND @hi
 ) b
-WHERE b.balance <> b.approved;
+WHERE b.balance <> b.approved
+UNION ALL
+-- 승인은 충전과 재예약 대기 행을 한 트랜잭션에서 남긴다
+SELECT 'approved_without_reservation: 승인됐는데 재예약 대기 행이 없다', COUNT(*)
+FROM payment p
+LEFT JOIN recharge_reservation_outbox r ON r.payment_id = p.payment_id
+WHERE p.owner_id BETWEEN @lo AND @hi AND p.status = 'APPROVED' AND r.recharge_reservation_outbox_id IS NULL
+UNION ALL
+-- k6 직후에는 남을 수 있다. 워커가 처리한 뒤 0 이어야 한다
+SELECT 'reservation_pending: 재예약 대기 행이 아직 처리되지 않았다', COUNT(*)
+FROM recharge_reservation_outbox r
+JOIN payment p ON p.payment_id = r.payment_id
+WHERE p.owner_id BETWEEN @lo AND @hi AND r.status <> 'DONE';

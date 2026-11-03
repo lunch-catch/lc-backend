@@ -16,6 +16,8 @@ DELETE FROM pg_charge_reconciliation_pending
 WHERE payment_id IN (SELECT payment_id FROM payment WHERE owner_id BETWEEN @lo AND @hi);
 DELETE FROM payment_reconciliation_outbox
 WHERE payment_id IN (SELECT payment_id FROM payment WHERE owner_id BETWEEN @lo AND @hi);
+DELETE FROM recharge_reservation_outbox
+WHERE payment_id IN (SELECT payment_id FROM payment WHERE owner_id BETWEEN @lo AND @hi);
 DELETE FROM point_ledger WHERE owner_id BETWEEN @lo AND @hi;
 DELETE FROM payment WHERE owner_id BETWEEN @lo AND @hi;
 DELETE FROM point_account WHERE owner_id BETWEEN @lo AND @hi;
