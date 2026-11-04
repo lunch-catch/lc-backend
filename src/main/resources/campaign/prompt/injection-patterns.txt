@@ -16,3 +16,19 @@ developer mode.{0,6}(전환|활성|해제|진입|켜줘|켜라|켜봐|켜고)
 (enable|activate|enter|unlock|disable|turn on|switch to).{0,10}developer mode
 developer mode.{0,10}(enable|activate|unlock|disable)
 jailbreak
+# 한국어 역할 탈취: "너는 이제부터 제한이 없는 AI", "모든 제한을 해제", DAN 모드(#1098).
+(너는|넌|네가|니가).{0,15}(제한|제약|검열|규칙).{0,6}(없는|없이|안 ?따|따르지|지키지|무시)
+모든 ?(제한|제약|검열|안전 ?장치).{0,6}(해제|해지|풀어|없애|끄|꺼)
+\bdan\b.{0,6}(모드|mode)
+# 한국어 출력 형식 강제: 출력 규칙을 깨라거나 내가 시키는 말만 그대로 출력하라는 문장(#1098).
+(출력|응답|답변|답) ?(형식|양식|규칙|규정|포맷).{0,6}(깨|버리|무시|어겨|지키지|따르지|벗어)
+(형식|양식|포맷) ?규칙.{0,4}(버리|깨|무시|어겨|지키지)
+내가 ?(말하는|시키는|부르는|정한) ?(형식|양식|포맷)(으로|대로)
+내가 ?(말하는|시키는|부르는) ?(문장|말|내용)만.{0,6}(출력|답|써)
+# 영어 지시 무시: 시스템 규칙이나 이전 지시를 잊거나 버리고 내 규칙을 따르라는 문장(#1098).
+(forget|discard|override|bypass).{0,20}(system|previous|prior|above|earlier|your|all).{0,10}(rule|instruction|prompt|guideline|direction)
+follow my (new |own )?(rule|instruction|command)
+# 영어 출력 형식 강제: 정해진 출력 규칙을 무시하고 내가 고른 형식으로만 답하라는 문장(#1098).
+(disregard|ignore|forget|do not follow|don't follow|break|bypass|override).{0,20}(output|response|required|mandated|given).{0,12}(format|rule|layout|structure)
+(reply|respond|answer) only in (the|my) (own )?format
+(print|output|write|say) (just )?(whatever|anything|exactly what) i (ask|say|tell|want)
