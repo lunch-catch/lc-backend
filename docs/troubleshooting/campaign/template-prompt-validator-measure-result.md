@@ -242,7 +242,7 @@
 | 새 표본 | 157건. 인젝션 52, 개인정보 26, 정상 72, 경계 7 |
 | 위치 | `src/test/resources/campaign/prompt/measure/` 의 `v2-injection.csv`, `v2-personal-info.csv`, `v2-normal.csv`, `v2-borderline.csv` |
 | 새 표본을 확정한 커밋 | `d7d2bac83` |
-| 수정 후 측정한 커밋 | `699ae0a8a` |
+| 수정 후 측정한 커밋 | `bd975a163` |
 | 실행 방법 | `./gradlew test --tests '*TemplatePromptValidator*MeasurementTest'` |
 | 집계 위치 | 기존 표본은 `build/measure/prompt-validator-measure.md`, 새 표본은 `build/measure/prompt-validator-measure-new.md` |
 
