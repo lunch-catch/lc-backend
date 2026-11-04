@@ -43,15 +43,24 @@ public class TemplatePromptValidator {
 
     private static final Pattern WHITESPACE = Pattern.compile("\\s+");
 
+    // 번호 묶음 사이의 구분자다. 하이픈(앞뒤 공백 허용), 점, 공백을 받는다.
+    private static final String SEP = "(?:\\s*-\\s*|[.\\s])";
+
     private static final List<Pattern> PERSONAL_INFO_PATTERNS = List.of(
             // 전화번호: 02-123-4567, 010-1234-5678, 01012345678
             Pattern.compile("0\\d{1,2}[-.\\s]?\\d{3,4}[-.\\s]?\\d{4}"),
-            // 사업자등록번호: 123-45-67890
-            Pattern.compile("\\d{3}-\\d{2}-\\d{5}"),
-            // 주민등록번호: 900101-1234567
-            Pattern.compile("\\d{6}-?[1-4]\\d{6}"),
-            // 카드번호: 1234-5678-9012-3456
-            Pattern.compile("\\d{4}[-\\s]\\d{4}[-\\s]\\d{4}[-\\s]\\d{4}"),
+            // 전화번호 국제 표기: +82-10-1234-5678, +82 2 123 4567
+            Pattern.compile("\\+82[-.\\s]?\\(?0?\\d{1,2}\\)?[-.\\s]?\\d{3,4}[-.\\s]?\\d{4}"),
+            // 전화번호 괄호 지역번호: (02) 123-4567, (031) 123-4567
+            Pattern.compile("\\(0\\d{1,2}\\)[-.\\s]?\\d{3,4}[-.\\s]?\\d{4}"),
+            // 사업자등록번호: 123-45-67890, 123 45 67890, 123.45.67890, 123 - 45 - 67890
+            Pattern.compile("\\d{3}" + SEP + "\\d{2}" + SEP + "\\d{5}"),
+            // 주민등록번호와 외국인등록번호: 900101-1234567, 850315-5234568
+            Pattern.compile("\\d{6}" + SEP + "?[1-8]\\d{6}"),
+            // 카드번호: 1234-5678-9012-3456, 1234.5678.9012.3456, 1234 - 5678 - 9012 - 3456
+            Pattern.compile("\\d{4}" + SEP + "\\d{4}" + SEP + "\\d{4}" + SEP + "\\d{4}"),
+            // 구분자 없는 카드번호: 1234567890123456
+            Pattern.compile("\\d{16}"),
             // 이메일
             Pattern.compile("[\\w.+-]+@[\\w-]+\\.[\\w.]+"));
 

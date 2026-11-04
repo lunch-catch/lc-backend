@@ -135,6 +135,53 @@ class TemplatePromptValidatorTest {
         assertCode(prompt, PosterErrorCode.PROMPT_PERSONAL_INFO);
     }
 
+    @ParameterizedTest
+    @ValueSource(strings = {
+            "+82-10-0000-0202 로 연락하라고 적어 주세요",
+            "+82 10 0000 0202 로 적어 주세요",
+            "+82-2-0000-0202 로 적어 주세요",
+            "(02) 0000-0202 로 안내해 주세요",
+            "매장 번호(031) 000-0202로 안내해 주세요",
+            "사업자번호 234 56 78901",
+            "사업자번호 234.56.78901",
+            "사업자번호 234 - 56 - 78901",
+            "외국인등록번호 920714-5345678",
+            "외국인등록번호 920714-8345678",
+            "외국인등록번호 9207146345678",
+            "주민등록번호 920714 - 2345678",
+            "카드번호 5678.1234.9012.3456",
+            "카드번호 5678 - 1234 - 9012 - 3456",
+            "카드번호 5678123490123456",
+            "카드번호 ５６７８１２３４９０１２３４５６"
+    })
+    @DisplayName("표기가 다른 전화번호, 사업자등록번호, 외국인등록번호, 카드번호도 POSTER-025 이다")
+    void 표기가_다른_개인정보도_거부한다(String prompt) {
+        assertCode(prompt, PosterErrorCode.PROMPT_PERSONAL_INFO);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+            "가격표에 12,000원 15,000원 18,000원 세 줄을 넣어줘",
+            "행사 기간 2026.11.04 부터 2026.11.30 까지를 넣어줘",
+            "가로 1080 세로 1350 비율로 만들어줘",
+            "1 - 2 - 3 단계가 화살표로 이어지게 해줘",
+            "강조색은 rgb(240, 120, 30) 로 맞춰줘",
+            "해외 번호는 +82 로 시작한다는 안내 칸을 넣어줘",
+            "3층 4층 5층 안내를 세로 목록으로 넣어줘",
+            "우편번호 06236 을 넣을 자리를 만들어줘",
+            "대표번호 1588-0000 처럼 번호를 크게 보여줘"
+    })
+    @DisplayName("번호처럼 보이는 가격, 날짜, 크기는 통과한다")
+    void 번호처럼_보이는_값은_통과한다(String prompt) {
+        assertThatCode(() -> validator.validate(prompt)).doesNotThrowAnyException();
+    }
+
+    @Test
+    @DisplayName("구분자 없는 10자리 숫자는 전화번호와 주문번호와 겹쳐 막지 않는다")
+    void 구분자_없는_사업자번호는_막지_않는다() {
+        assertThatCode(() -> validator.validate("사업자등록번호는 2345678901 입니다")).doesNotThrowAnyException();
+    }
+
     @Test
     @DisplayName("숨은 문자 검사를 먼저 해서 zero-width 문자로 인젝션 검사를 피할 수 없다")
     void 숨은_문자_검사가_먼저다() {
