@@ -1234,7 +1234,13 @@ public class CouponIntegrationTest extends IntegrationTestSupport {
 
         @Test
         void 서로_다른_회원_다섯_명이_동시에_요청해도_재고_세_장만_발급한다() throws Exception {
-            List<String> results = concurrently(IntStream.range(0, 5).mapToObj(i -> new long[] {100L + i, 81L}).toList());
+            /*
+             * 앞 테스트가 지운 회원 쿠폰과 같은 키를 다시 넣으면 MySQL 이 지운 행의 흔적에 갭 잠금을 건다.
+             * 그러면 동시에 도는 두 묶음의 INSERT 가 서로를 기다려 교착할 수 있어 81번 대신 처음 쓰는 이벤트로 발급한다.
+             */
+            long eventId = 60001L;
+            insertEvent(eventId, 3);
+            List<String> results = concurrently(IntStream.range(0, 5).mapToObj(i -> new long[] {100L + i, eventId}).toList());
             assertThat(results.stream().filter("CREATED"::equals)).hasSize(3);
             assertThat(results).allMatch(code -> List.of("CREATED", "COUPON-006", "COUPON-008").contains(code));
             assertConsistent(3);
