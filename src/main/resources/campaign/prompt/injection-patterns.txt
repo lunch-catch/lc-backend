@@ -11,5 +11,8 @@ disregard.{0,15}(instruction|prompt|rule)
 (reveal|show|print|repeat|leak).{0,20}(system|your|the).{0,10}(prompt|instruction)
 you are now
 from now on you
-developer mode
+# developer mode 는 전환, 활성화, 해제 같은 동사와 함께 쓰인 때만 막는다. 디자인 비유로 쓴 문장을 막지 않으려는 것이다(#1098).
+developer mode.{0,6}(전환|활성|해제|진입|켜줘|켜라|켜봐|켜고)
+(enable|activate|enter|unlock|disable|turn on|switch to).{0,10}developer mode
+developer mode.{0,10}(enable|activate|unlock|disable)
 jailbreak
