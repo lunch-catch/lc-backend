@@ -9,6 +9,7 @@ import java.nio.charset.StandardCharsets;
 import java.text.Normalizer;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 import java.util.regex.Pattern;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.stereotype.Component;
@@ -33,6 +34,12 @@ public class TemplatePromptValidator {
 
     // 글자나 숫자가 이만큼은 있어야 의미 있는 요청으로 본다. "ㅁ", ".", "ㅇㅇ" 같은 입력을 막는다.
     private static final int MIN_MEANINGFUL_CHARACTERS = 2;
+
+    /*
+     * 서식 문자도 제어 문자도 아니지만 화면에 비어 보이는 문자다. 한글 초성 채움, 한글 중성 채움,
+     * 한글 채움, 반각 한글 채움, 점자 빈칸이다. 글자 수를 채우거나 검사를 피하는 데 쓰여서 명시 목록으로 막는다(#1098).
+     */
+    private static final Set<Integer> BLANK_LOOKING = Set.of(0x115F, 0x1160, 0x3164, 0xFFA0, 0x2800);
 
     private static final Pattern WHITESPACE = Pattern.compile("\\s+");
 
@@ -68,12 +75,16 @@ public class TemplatePromptValidator {
         requireNoPersonalInfo(normalized);
     }
 
-    // 개행과 탭은 허용하고, 그 밖의 제어 문자와 서식 문자(zero-width, 방향 전환 등)는 거부한다.
+    /*
+     * 개행과 탭은 허용하고, 그 밖의 제어 문자와 서식 문자(zero-width, 방향 전환 등)는 거부한다.
+     * 이모지를 잇는 연결 문자(U+200D)도 서식 문자라 거부한다. 이 문자만 허용하면 같은 문자로 다른 검사를 피할 수 있다.
+     */
     private void requireVisibleCharacters(String text) {
         boolean invalid = text.codePoints().anyMatch(codePoint -> {
             int type = Character.getType(codePoint);
             boolean allowedControl = codePoint == '\n' || codePoint == '\r' || codePoint == '\t';
-            return (type == Character.CONTROL && !allowedControl) || type == Character.FORMAT;
+            return (type == Character.CONTROL && !allowedControl) || type == Character.FORMAT
+                    || BLANK_LOOKING.contains(codePoint);
         });
         if (invalid) {
             throw new CampaignException(PosterErrorCode.PROMPT_INVALID_CHARACTERS);
