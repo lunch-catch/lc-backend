@@ -54,19 +54,29 @@ public final class CampaignRaceFixture {
      */
     Draft newActivatableDraft() {
         Long ownerId = createActiveOwner();
-        Long storeId = createFinalizedStore(ownerId);
-        LocalDate today = LocalDate.now();
-        Campaign campaign = campaignRepository.saveAndFlush(Campaign.create(
-                ownerId, storeId,
-                DiscountTargetType.ALL, DiscountType.AMOUNT, 10, null,
-                50, LocalTime.of(12, 0), LocalTime.of(13, 30),
-                null, null,
-                1000, TargetGender.ALL, List.of(AgeGroup.AGE_20S),
-                10_000L, today.plusDays(1), today.plusDays(30),
-                LocalDateTime.now()));
-        Draft draft = new Draft(ownerId, storeId, campaign.getId());
-        drafts.add(draft);
-        return draft;
+        Long storeId = null;
+        try {
+            storeId = createFinalizedStore(ownerId);
+            LocalDate today = LocalDate.now();
+            Campaign campaign = campaignRepository.saveAndFlush(Campaign.create(
+                    ownerId, storeId,
+                    DiscountTargetType.ALL, DiscountType.AMOUNT, 10, null,
+                    50, LocalTime.of(12, 0), LocalTime.of(13, 30),
+                    null, null,
+                    1000, TargetGender.ALL, List.of(AgeGroup.AGE_20S),
+                    10_000L, today.plusDays(1), today.plusDays(30),
+                    LocalDateTime.now()));
+            Draft draft = new Draft(ownerId, storeId, campaign.getId());
+            drafts.add(draft);
+            return draft;
+        } catch (RuntimeException failure) {
+            // 캠페인까지 만들지 못하면 deleteAll 의 대상에 오르지 못하므로 여기서 치운다.
+            if (storeId != null) {
+                jdbc.update("delete from store where store_id = ?", storeId);
+            }
+            jdbc.update("delete from owner where owner_id = ?", ownerId);
+            throw failure;
+        }
     }
 
     // 포스터를 만들 수 있는 게시된 활성 템플릿이다.

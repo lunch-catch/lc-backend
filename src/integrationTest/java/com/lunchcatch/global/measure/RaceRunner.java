@@ -79,9 +79,13 @@ public final class RaceRunner {
         };
     }
 
-    private static void sleepUntil(long deadlineNanos) {
+    // 중단되면 parkNanos 가 바로 돌아와 기한까지 빈 회전을 하므로, 중단을 알리고 빠져나간다.
+    private static void sleepUntil(long deadlineNanos) throws InterruptedException {
         long remaining = deadlineNanos - System.nanoTime();
         while (remaining > 0) {
+            if (Thread.interrupted()) {
+                throw new InterruptedException("지터 대기 중 중단됐다");
+            }
             LockSupport.parkNanos(remaining);
             remaining = deadlineNanos - System.nanoTime();
         }
