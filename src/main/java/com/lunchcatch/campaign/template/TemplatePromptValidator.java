@@ -9,6 +9,7 @@ import java.nio.charset.StandardCharsets;
 import java.text.Normalizer;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 import java.util.regex.Pattern;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.stereotype.Component;
@@ -34,17 +35,32 @@ public class TemplatePromptValidator {
     // 글자나 숫자가 이만큼은 있어야 의미 있는 요청으로 본다. "ㅁ", ".", "ㅇㅇ" 같은 입력을 막는다.
     private static final int MIN_MEANINGFUL_CHARACTERS = 2;
 
+    /*
+     * 서식 문자도 제어 문자도 아니지만 화면에 비어 보이는 문자다. 한글 초성 채움, 한글 중성 채움,
+     * 한글 채움, 반각 한글 채움, 점자 빈칸이다. 글자 수를 채우거나 검사를 피하는 데 쓰여서 명시 목록으로 막는다(#1098).
+     */
+    private static final Set<Integer> BLANK_LOOKING = Set.of(0x115F, 0x1160, 0x3164, 0xFFA0, 0x2800);
+
     private static final Pattern WHITESPACE = Pattern.compile("\\s+");
+
+    // 번호 묶음 사이의 구분자다. 하이픈(앞뒤 공백 허용), 점, 공백을 받는다.
+    private static final String SEP = "(?:\\s*-\\s*|[.\\s])";
 
     private static final List<Pattern> PERSONAL_INFO_PATTERNS = List.of(
             // 전화번호: 02-123-4567, 010-1234-5678, 01012345678
             Pattern.compile("0\\d{1,2}[-.\\s]?\\d{3,4}[-.\\s]?\\d{4}"),
-            // 사업자등록번호: 123-45-67890
-            Pattern.compile("\\d{3}-\\d{2}-\\d{5}"),
-            // 주민등록번호: 900101-1234567
-            Pattern.compile("\\d{6}-?[1-4]\\d{6}"),
-            // 카드번호: 1234-5678-9012-3456
-            Pattern.compile("\\d{4}[-\\s]\\d{4}[-\\s]\\d{4}[-\\s]\\d{4}"),
+            // 전화번호 국제 표기: +82-10-1234-5678, +82 2 123 4567
+            Pattern.compile("\\+82[-.\\s]?\\(?0?\\d{1,2}\\)?[-.\\s]?\\d{3,4}[-.\\s]?\\d{4}"),
+            // 전화번호 괄호 지역번호: (02) 123-4567, (031) 123-4567
+            Pattern.compile("\\(0\\d{1,2}\\)[-.\\s]?\\d{3,4}[-.\\s]?\\d{4}"),
+            // 사업자등록번호: 123-45-67890, 123 45 67890, 123.45.67890, 123 - 45 - 67890
+            Pattern.compile("\\d{3}" + SEP + "\\d{2}" + SEP + "\\d{5}"),
+            // 주민등록번호와 외국인등록번호: 900101-1234567, 850315-5234568
+            Pattern.compile("\\d{6}" + SEP + "?[1-8]\\d{6}"),
+            // 카드번호: 1234-5678-9012-3456, 1234.5678.9012.3456, 1234 - 5678 - 9012 - 3456
+            Pattern.compile("\\d{4}" + SEP + "\\d{4}" + SEP + "\\d{4}" + SEP + "\\d{4}"),
+            // 구분자 없는 카드번호: 1234567890123456
+            Pattern.compile("\\d{16}"),
             // 이메일
             Pattern.compile("[\\w.+-]+@[\\w-]+\\.[\\w.]+"));
 
@@ -68,12 +84,16 @@ public class TemplatePromptValidator {
         requireNoPersonalInfo(normalized);
     }
 
-    // 개행과 탭은 허용하고, 그 밖의 제어 문자와 서식 문자(zero-width, 방향 전환 등)는 거부한다.
+    /*
+     * 개행과 탭은 허용하고, 그 밖의 제어 문자와 서식 문자(zero-width, 방향 전환 등)는 거부한다.
+     * 이모지를 잇는 연결 문자(U+200D)도 서식 문자라 거부한다. 이 문자만 허용하면 같은 문자로 다른 검사를 피할 수 있다.
+     */
     private void requireVisibleCharacters(String text) {
         boolean invalid = text.codePoints().anyMatch(codePoint -> {
             int type = Character.getType(codePoint);
             boolean allowedControl = codePoint == '\n' || codePoint == '\r' || codePoint == '\t';
-            return (type == Character.CONTROL && !allowedControl) || type == Character.FORMAT;
+            return (type == Character.CONTROL && !allowedControl) || type == Character.FORMAT
+                    || BLANK_LOOKING.contains(codePoint);
         });
         if (invalid) {
             throw new CampaignException(PosterErrorCode.PROMPT_INVALID_CHARACTERS);

@@ -32,6 +32,8 @@ final class PromptMeasureSamples {
     private static final List<String> FILES = List.of(
             "hidden-chars.csv", "injection.csv", "personal-info.csv",
             "too-short.csv", "normal.csv", "borderline.csv");
+    private static final List<String> NEW_FILES = List.of(
+            "v2-injection.csv", "v2-personal-info.csv", "v2-normal.csv", "v2-borderline.csv");
     private static final String BLOCK_PREFIX = "BLOCK:";
     private static final int COLUMNS = 5;
     private static final Pattern ESCAPE =
@@ -62,6 +64,11 @@ final class PromptMeasureSamples {
 
     static List<Sample> loadAll() {
         return FILES.stream().flatMap(file -> load(file).stream()).toList();
+    }
+
+    // #1098 이 수정 전에 확정한 새 표본이다. 숨은 문자와 짧음은 새로 만들지 않았다.
+    static List<Sample> loadNew() {
+        return NEW_FILES.stream().flatMap(file -> load(file).stream()).toList();
     }
 
     private static List<Sample> load(String file) {
