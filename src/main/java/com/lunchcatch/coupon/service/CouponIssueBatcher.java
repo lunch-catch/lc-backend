@@ -370,6 +370,7 @@ public class CouponIssueBatcher implements SmartLifecycle {
                         new CouponException(CouponErrorCode.INVENTORY_EXHAUSTED)));
             } else if (availability == CouponSequenceCode.AVAILABLE.code()) {
                 for (Pending pending : requests) {
+                    pending.markQueued();
                     if (!expireBeforeStart(pending) && (!running || !queue.offer(pending))) {
                         pending.future().completeExceptionally(new CouponException(CouponErrorCode.ISSUANCE_BUSY));
                     }
@@ -452,6 +453,19 @@ public class CouponIssueBatcher implements SmartLifecycle {
         }
     }
 
+    // 작업자를 기다리는 발급 요청 수를 돌려준다.
+    int queuedCount() {
+        BlockingQueue<Pending> current = queue;
+        return current == null ? 0 : current.size();
+    }
+
+    // 작업자를 가장 오래 기다린 발급 요청의 대기 시간을 초로 돌려주며 기다리는 요청이 없으면 0이다.
+    double oldestQueuedSeconds() {
+        BlockingQueue<Pending> current = queue;
+        Pending head = current == null ? null : current.peek();
+        return head == null ? 0 : (System.nanoTime() - head.queuedAtNanos()) / 1_000_000_000.0;
+    }
+
     // HTTP의 graceful 종료 단계보다 뒤에 멈추고 DB·Redis 연결보다 먼저 정리한다.
     @Override
     public int getPhase() {
@@ -472,6 +486,8 @@ public class CouponIssueBatcher implements SmartLifecycle {
         private final CompletableFuture<CouponIssuanceResult> future;
         private final long deadlineNanos;
         private final CouponLogContext logContext;
+        // 작업자 대기열에 마지막으로 들어간 시각(System.nanoTime 기준)이다.
+        private volatile long queuedAtNanos;
         private boolean cancelled;
         private CouponBatchDeadline deadline;
 
@@ -480,9 +496,12 @@ public class CouponIssueBatcher implements SmartLifecycle {
             this.future = future;
             this.deadlineNanos = deadlineNanos;
             this.logContext = CouponLogContext.capture();
+            this.queuedAtNanos = System.nanoTime();
         }
 
         CouponLogContext logContext() { return logContext; }
+        long queuedAtNanos() { return queuedAtNanos; }
+        void markQueued() { queuedAtNanos = System.nanoTime(); }
         CouponIssuanceRequest request() { return request; }
         CompletableFuture<CouponIssuanceResult> future() { return future; }
         long deadlineNanos() { return deadlineNanos; }

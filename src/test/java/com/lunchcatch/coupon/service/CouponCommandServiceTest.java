@@ -240,6 +240,36 @@ class CouponCommandServiceTest {
         }
     }
 
+    // 복구 작업자가 일하는 동안 뒤에 줄 선 복구 작업의 수와 가장 오래 기다린 시간을 읽는다.
+    @Test
+    void 복구_작업자를_기다리는_작업의_수와_가장_오래_기다린_시간을_읽는다() throws Exception {
+        CouponException rejection = CouponException.recoveryRequired(81L);
+        CountDownLatch recovering = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        when(batcher.submit(any(), anyLong())).thenReturn(CompletableFuture.failedFuture(rejection));
+        when(sequenceService.needsRecovery(81L)).thenReturn(true);
+        when(sequenceRecoveryService.recover(eq(81L), anyLong())).thenAnswer(invocation -> {
+            recovering.countDown();
+            release.await();
+            return false;
+        });
+        try {
+            assertThat(service.recoveryQueueSize()).isZero();
+            assertThat(service.oldestRecoveryWaitSeconds()).isZero();
+            service.issueAsync(MEMBER_ID, 81L);
+            assertThat(recovering.await(2, TimeUnit.SECONDS)).isTrue();
+            service.issueAsync(18L, 81L);
+            awaitQueuedRecoveries(1);
+            Thread.sleep(50);
+
+            assertThat(service.recoveryQueueSize()).isEqualTo(1);
+            assertThat(service.oldestRecoveryWaitSeconds()).isBetween(0.05, 2.0);
+        } finally {
+            release.countDown();
+            service.stopIssuanceRecovery();
+        }
+    }
+
     // 복구 작업자의 대기열에 작업이 count 개 쌓일 때까지 최대 2초 기다린다.
     private void awaitQueuedRecoveries(int count) {
         BlockingQueue<Runnable> queue = ((ThreadPoolExecutor) ReflectionTestUtils.getField(service, "issuanceRecovery")).getQueue();

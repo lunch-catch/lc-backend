@@ -272,6 +272,38 @@ class CouponIssueBatcherTest {
         }
     }
 
+    // 작업자가 묶음을 처리하는 동안 뒤에 들어온 요청의 수와 가장 오래 기다린 시간을 지표로 읽고, 다 꺼내면 0으로 돌아온다.
+    @Test
+    void 작업자를_기다리는_요청의_수와_가장_오래_기다린_시간을_읽는다() throws Exception {
+        ReflectionTestUtils.setField(batcher, "properties", CouponTestProperties.with(java.util.Map.of("coupon.issue.batch.max-size", 1)));
+        CountDownLatch started = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        when(batchService.issueBatch(anyList(), any())).thenAnswer(invocation -> {
+            started.countDown();
+            assertThat(release.await(5, TimeUnit.SECONDS)).isTrue();
+            return List.of(issued);
+        });
+        long deadline = System.nanoTime() + Duration.ofSeconds(5).toNanos();
+        try {
+            batcher.submit(new com.lunchcatch.coupon.model.CouponIssuanceRequest(17L, 81L, java.time.LocalDateTime.now(clock)), deadline);
+            assertThat(started.await(2, TimeUnit.SECONDS)).isTrue();
+            assertThat(batcher.queuedCount()).isZero();
+            assertThat(batcher.oldestQueuedSeconds()).isZero();
+
+            batcher.submit(new com.lunchcatch.coupon.model.CouponIssuanceRequest(18L, 81L, java.time.LocalDateTime.now(clock)), deadline);
+            batcher.submit(new com.lunchcatch.coupon.model.CouponIssuanceRequest(19L, 81L, java.time.LocalDateTime.now(clock)), deadline);
+
+            assertThat(batcher.queuedCount()).isEqualTo(2);
+            await().atMost(Duration.ofSeconds(2)).until(() -> batcher.oldestQueuedSeconds() >= 0.2);
+            assertThat(batcher.oldestQueuedSeconds()).isLessThan(5);
+            release.countDown();
+            await().atMost(Duration.ofSeconds(2)).until(() -> batcher.queuedCount() == 0);
+            assertThat(batcher.oldestQueuedSeconds()).isZero();
+        } finally {
+            release.countDown();
+        }
+    }
+
     @Test
     void 비동기_대기열에서_기한이_끝난_요청은_발급하지_않는다() throws Exception {
         ReflectionTestUtils.setField(batcher, "properties", CouponTestProperties.with(java.util.Map.of("coupon.issue.batch.max-size", 1)));

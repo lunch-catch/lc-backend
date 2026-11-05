@@ -48,6 +48,25 @@ class CouponSoldOutNotificationServiceTest {
         org.slf4j.MDC.clear();
     }
 
+    // 통보를 기다리는 이벤트 수와 처음 접수한 뒤 지난 시간을 읽으며, 실패해 다시 시도해도 처음 접수한 시각을 기준으로 센다.
+    @Test
+    void 통보를_기다리는_이벤트의_수와_처음_접수한_뒤_지난_시간을_읽는다() {
+        when(lookUp.findSoldOut(81L)).thenReturn(Optional.of(soldOut));
+        doThrow(new DataAccessResourceFailureException("unavailable"))
+                .when(candidates).markSoldOut(91L, DATE, soldOut.soldOutAt());
+        assertThat(service.pendingCount()).isZero();
+        assertThat(service.oldestPendingSeconds()).isZero();
+
+        service.request(81L);
+        when(clock.instant()).thenReturn(NOW.plusSeconds(2));
+        service.request(82L);
+        service.processPending();
+        when(clock.instant()).thenReturn(NOW.plusSeconds(3));
+
+        assertThat(service.pendingCount()).isEqualTo(2);
+        assertThat(service.oldestPendingSeconds()).isEqualTo(3.0);
+    }
+
     @Test
     void 접수는_DB나_광고_응답을_기다리지_않는다() {
         service.request(81L);
