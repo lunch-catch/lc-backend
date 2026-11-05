@@ -50,9 +50,12 @@ import java.util.Base64;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import javax.imageio.ImageIO;
@@ -169,6 +172,53 @@ class CouponCommandServiceTest {
         } finally {
             service.stopIssuanceRecovery();
         }
+    }
+
+    // 같은 이벤트의 복구 작업이 여러 개 줄 서도 큐는 첫 작업만 다시 만들고 나머지는 발급만 다시 시도한다.
+    @Test
+    void 앞선_복구가_차단을_풀었으면_뒤에_줄선_작업은_큐를_다시_만들지_않는다() throws Exception {
+        CouponException rejection = CouponException.recoveryRequired(81L);
+        rejection.confirmIssuanceNotCommitted();
+        CouponIssueResponse response = new CouponIssueResponse(COUPON_ID, ISSUE_DATE.atTime(12, 0).atOffset(ZoneOffset.ofHours(9)));
+        AtomicBoolean blocked = new AtomicBoolean(true);
+        CountDownLatch recovering = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        when(batcher.submit(any(), anyLong())).thenAnswer(invocation -> blocked.get()
+                ? CompletableFuture.failedFuture(rejection)
+                : CompletableFuture.completedFuture(new CouponIssuanceResult(response, false)));
+        when(sequenceService.needsRecovery(81L)).thenAnswer(invocation -> blocked.get());
+        when(sequenceRecoveryService.recover(eq(81L), anyLong())).thenAnswer(invocation -> {
+            recovering.countDown();
+            release.await();
+            blocked.set(false);
+            return true;
+        });
+        try {
+            CompletableFuture<CouponIssueResponse> first = service.issueAsync(MEMBER_ID, 81L);
+            assertThat(recovering.await(2, TimeUnit.SECONDS)).isTrue();
+            CompletableFuture<CouponIssueResponse> second = service.issueAsync(18L, 81L);
+            CompletableFuture<CouponIssueResponse> third = service.issueAsync(19L, 81L);
+            awaitQueuedRecoveries(2);
+            release.countDown();
+
+            assertThat(first.get(2, TimeUnit.SECONDS)).isEqualTo(response);
+            assertThat(second.get(2, TimeUnit.SECONDS)).isEqualTo(response);
+            assertThat(third.get(2, TimeUnit.SECONDS)).isEqualTo(response);
+            verify(sequenceRecoveryService, times(1)).recover(eq(81L), anyLong());
+        } finally {
+            release.countDown();
+            service.stopIssuanceRecovery();
+        }
+    }
+
+    // 복구 작업자의 대기열에 작업이 count 개 쌓일 때까지 최대 2초 기다린다.
+    private void awaitQueuedRecoveries(int count) {
+        BlockingQueue<Runnable> queue = ((ThreadPoolExecutor) ReflectionTestUtils.getField(service, "issuanceRecovery")).getQueue();
+        long until = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+        while (queue.size() < count && System.nanoTime() < until) {
+            Thread.onSpinWait();
+        }
+        assertThat(queue).hasSize(count);
     }
 
     @Test

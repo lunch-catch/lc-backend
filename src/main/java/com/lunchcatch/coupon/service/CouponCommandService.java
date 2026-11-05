@@ -153,7 +153,9 @@ public class CouponCommandService {
                 try {
                     issuanceRecovery.execute(new RecoveryTask(() -> {
                         try (var recoveryScope = context.open()) {
-                            boolean restored = sequenceRecoveryService.recover(request.eventId(), deadline);
+                            // 앞에 줄 선 복구가 이미 차단을 풀었으면 큐를 다시 만들지 않고 발급만 다시 시도한다.
+                            boolean restored = !sequenceService.needsRecovery(request.eventId())
+                                    || sequenceRecoveryService.recover(request.eventId(), deadline);
                             if (!issuanceRecovery.isShutdown() && !resumed && original instanceof CouponException couponError
                                     && couponError.getErrorCode() == CouponErrorCode.ISSUANCE_BUSY
                                     && couponError.canResumeIssuance(request.eventId()) && restored
