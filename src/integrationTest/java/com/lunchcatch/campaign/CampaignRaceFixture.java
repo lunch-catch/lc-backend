@@ -23,9 +23,9 @@ import org.springframework.jdbc.core.JdbcTemplate;
  *
  * 만든 행의 번호를 기억해 두었다가 deleteAll 이 외래 키 순서대로 지운다.
  */
-final class CampaignRaceFixture {
+public final class CampaignRaceFixture {
 
-    static final String TEMPLATE_HTML = "<div>"
+    public static final String TEMPLATE_HTML = "<div>"
             + "<h1 data-slot=\"eventName\">가게</h1>"
             + "<p data-slot=\"discount\">할인 내용</p>"
             + "<p data-slot=\"period\">기간</p>"
@@ -41,7 +41,7 @@ final class CampaignRaceFixture {
     private final List<Draft> drafts = new ArrayList<>();
     private final List<Long> templateIds = new ArrayList<>();
 
-    CampaignRaceFixture(JdbcTemplate jdbc, CampaignRepository campaignRepository,
+    public CampaignRaceFixture(JdbcTemplate jdbc, CampaignRepository campaignRepository,
                         TemplateRepository templateRepository) {
         this.jdbc = jdbc;
         this.campaignRepository = campaignRepository;
@@ -81,6 +81,23 @@ final class CampaignRaceFixture {
         return templateId;
     }
 
+    /*
+     * 버전을 count 개 가진 임시저장 템플릿을 만든다. 번호는 1부터 count 까지다.
+     * 요청 문구가 유효한 값을 갖고 requestId 가 서로 다르도록 채운다.
+     */
+    public Long newDraftTemplateWithVersions(int count) {
+        LocalDateTime now = LocalDateTime.now();
+        Template template = Template.createDraft("동시성 측정 임시저장 " + System.nanoTime());
+        for (int number = 1; number <= count; number++) {
+            template.addDraftVersion(
+                    1L, now, "초기 요청 " + number, "race-init-" + System.nanoTime() + "-" + number,
+                    TEMPLATE_HTML, number);
+        }
+        Long templateId = templateRepository.saveAndFlush(template).getId();
+        templateIds.add(templateId);
+        return templateId;
+    }
+
     int statusChangesToScheduled(Long campaignId) {
         Integer count = jdbc.queryForObject(
                 "select count(*) from campaign_status_log"
@@ -103,7 +120,7 @@ final class CampaignRaceFixture {
     record PosterSnapshot(String imageObjectKey, LocalDateTime updatedAt) {
     }
 
-    void deleteAll() {
+    public void deleteAll() {
         for (Draft draft : drafts) {
             jdbc.update("delete from poster_moderation_result where poster_id in"
                     + " (select poster_id from poster where campaign_id = ?)", draft.campaignId());
