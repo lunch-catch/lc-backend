@@ -24,9 +24,13 @@ import java.util.UUID;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Function;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
@@ -54,6 +58,10 @@ public class CouponCommandService {
 
     // 복구가 필요한 오류만 처리하며 정상 발급 결과를 기다리는 요청별 스레드는 만들지 않는다.
     private final ThreadPoolExecutor issuanceRecovery;
+
+    // Redis 를 읽는 접수를 톰캣 스레드 밖에서 하며 동시에 도는 접수 수는 접수 상한이 막는다.
+    private final ExecutorService issuanceAcceptance =
+            Executors.newThreadPerTaskExecutor(Thread.ofVirtual().name("coupon-accept-", 0).factory());
 
     public CouponCommandService(CouponProperties properties, MemberCouponRepository memberCouponRepository,
             CouponDailyLimitRepository couponDailyLimitRepository, MemberQueryService memberQueryService,
@@ -117,7 +125,17 @@ public class CouponCommandService {
             }
         }
         CouponLogContext context = CouponLogContext.capture();
-        return attemptAsync(request, deadline, false, context).whenComplete((response, error) -> {
+        CompletableFuture<CouponIssueResponse> issuance;
+        try {
+            issuance = CompletableFuture.supplyAsync(() -> {
+                try (CouponLogContext.Scope ignored = context.open()) {
+                    return attemptAsync(request, deadline, false, context);
+                }
+            }, issuanceAcceptance).thenCompose(Function.identity());
+        } catch (RejectedExecutionException rejected) {
+            issuance = CompletableFuture.failedFuture(new CouponException(CouponErrorCode.ISSUANCE_BUSY));
+        }
+        return issuance.whenComplete((response, error) -> {
             activeIssueRequests.decrementAndGet();
             issuanceMetrics.record(error);
         });
@@ -181,6 +199,7 @@ public class CouponCommandService {
 
     @PreDestroy
     void stopIssuanceRecovery() {
+        issuanceAcceptance.shutdown();
         issuanceRecovery.shutdown();
         try {
             if (issuanceRecovery.awaitTermination(properties.issue().batch().waitTimeout().plus(properties.issue().shutdown().grace()).toMillis(), TimeUnit.MILLISECONDS)) {
