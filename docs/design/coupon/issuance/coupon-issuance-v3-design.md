@@ -16,7 +16,7 @@ AWS에서 세 번 측정한 결과는 [쿠폰 v3 부하 시험 결과](../loadte
 
 | 구성 요소 | 실행 위치와 책임 |
 |---|---|
-| `CouponCommandService.issue` | 요청 스레드에서 Redis 확정 소진을 먼저 검사하고 소진이면 DB와 발급 대기열 없이 거절한다. 차단 복구와 소진 통보 접수도 조정하며 `Propagation.NEVER`로 호출자의 트랜잭션 안에서 대기하지 못하게 한다. |
+| `CouponCommandService.issue` | 배처에 접수하기 전에 Redis 확정 소진을 먼저 검사하고 소진이면 DB와 발급 대기열 없이 거절한다. 차단 복구와 소진 통보 접수도 조정하며 `Propagation.NEVER`로 호출자의 트랜잭션 안에서 대기하지 못하게 한다. |
 | `CouponIssueBatcher.submitAndAwait` | 요청 정보와 결과 통로인 Future를 대기열에 넣고 자기 결과를 기다린다. DB 커넥션을 잡지 않는다. |
 | `CouponIssueBatcher.runWorker` | 별도 작업자 스레드에서 첫 요청과 이미 쌓인 요청을 꺼내 묶음을 만든다. |
 | `CouponIssueBatcher.process` | 묶음 서비스를 호출하고 커밋 후 Redis 예약을 완료한다. 각 요청의 Future에 결과를 전달한다. |
@@ -283,7 +283,7 @@ DB 커밋 후 예약 완료도 이벤트별로 묶어 Lua 한 번에 처리한�
 이미 완료한 예약은 다시 세지 않으며 Redis 실패 시에도 DB 발급 성공은 유지하고 복구를 요청한다.
 
 Tomcat은 기본 실행기와 `server.tomcat.threads.max=200`을 유지한다.
-HTTP 컨트롤러는 기존 동기 응답을 사용하며 요청 스레드가 발급 결과를 기다린다.
+HTTP 요청 스레드는 Redis와 발급 결과를 기다리지 않는다. 접수와 응답 연결은 [완료 알림으로 HTTP 응답을 연결한다](#완료-알림으로-http-응답을-연결한다)를 따른다.
 공통 로깅 필터와 보안 설정을 변경하지 않으며 별도의 ASYNC 디스패치도 사용하지 않는다.
 
 발급 조정자와 배처는 각각 `queue-capacity`의 상한을 지킨다.
@@ -311,7 +311,7 @@ HTTP 연결 종료가 작업자에게 즉시 전달된다고 가정하지 않으
 
 ### 완료 알림으로 HTTP 응답을 연결한다
 
-쿠폰 발급 컨트롤러는 `DeferredResult`를 반환한다. `CouponCommandService.issueAsync`는 Redis 접수 조건을 확인하고 `CouponIssueBatcher.submit`의 완료 결과를 연결한다. 정상 발급 결과를 기다리는 요청별 가상 스레드는 만들지 않는다. 기존 동기 호출과 테스트를 위한 `submitAndAwait`는 같은 접수 절차를 사용한다.
+쿠폰 발급 컨트롤러는 `DeferredResult`를 반환한다. `CouponCommandService.issueAsync`는 Tomcat 스레드에서 접수 상한만 세고, Redis 접수 조건 확인과 `CouponIssueBatcher.submit` 접수는 가상 스레드(`coupon-accept-*`)에 맡긴다. Redis가 멈춰도 Tomcat 스레드는 Redis를 기다리지 않고, 동시에 도는 접수 수는 접수 상한이 막는다. 가상 스레드는 접수를 마치면 끝나며 정상 발급 결과를 기다리는 요청별 스레드는 만들지 않는다. 기존 동기 호출과 테스트를 위한 `submitAndAwait`는 같은 접수 절차를 사용한다.
 
 배처는 원래 요청 기한으로 취소 작업을 예약한다. 기한이 끝나도 커밋이 시작됐다면 결과를 먼저 실패로 확정하지 않고 실제 완료를 기다린다. 완료되면 예약한 취소 작업을 해제한다. 복구가 필요한 오류는 별도의 작업자 한 개와 최대 2,000개 대기열에서 처리한다. 복구 후 재접수는 기존처럼 한 번만 허용하며 최초 요청 시각과 기한을 유지한다.
 

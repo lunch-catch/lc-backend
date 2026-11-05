@@ -17,7 +17,7 @@ HTTP 경로의 버전과 발급 구조의 버전은 별개다.
 
 ## 묶음으로 처리하는 쿠폰 발급
 
-`POST /v1/coupons`는 기존 동기 컨트롤러에서 `CouponCommandService.issue`로 처리한다. HTTP 요청 스레드는 DB 연결을 잡지 않고 발급 결과를 기다리며 Tomcat 작업자 200개 제한은 유지한다.
+`POST /v1/coupons`는 `DeferredResult`를 반환하고 `CouponCommandService.issueAsync`로 처리한다. HTTP 요청 스레드는 접수 상한만 세고 바로 놓으며, Redis 사전 검사와 대기열 접수는 [v3 설계](./issuance/coupon-issuance-v3-design.md)의 접수 가상 스레드가 맡는다. Tomcat 작업자 200개 제한은 유지한다.
 조정 메서드는 `Propagation.NEVER`로 호출자의 트랜잭션 안에서 실행하는 것을 막는다.
 발급 조정자는 배처에 접수하기 전에 Redis의 확정 소진을 검사한다. 사전 검사의 응답 우선순위는 [발급 명세](../../api-spec/coupon-api-spec.md#쿠폰-발급)를 따른다.
 `CouponSequenceService.isConfirmedSoldOut`이 true면 발급 대기열이나 발급 DB 조회를 사용하지 않는다.

@@ -152,6 +152,35 @@ class CouponCommandServiceTest {
         verifyNoInteractions(batcher);
     }
 
+    // Redis 가 응답하지 않아도 요청 스레드는 접수를 기다리지 않고 돌아가며 Redis 조회는 다른 스레드가 맡는다.
+    @Test
+    void Redis가_멈춰도_요청_스레드는_소진_조회를_기다리지_않는다() throws Exception {
+        CountDownLatch reading = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        AtomicReference<Thread> readingThread = new AtomicReference<>();
+        CouponIssueResponse response = new CouponIssueResponse(COUPON_ID, ISSUE_DATE.atTime(12, 0).atOffset(ZoneOffset.ofHours(9)));
+        when(sequenceService.isConfirmedSoldOut(81L)).thenAnswer(invocation -> {
+            readingThread.set(Thread.currentThread());
+            reading.countDown();
+            release.await();
+            return false;
+        });
+        when(batcher.submit(any(), anyLong()))
+                .thenReturn(CompletableFuture.completedFuture(new CouponIssuanceResult(response, false)));
+        try {
+            CompletableFuture<CouponIssueResponse> result = service.issueAsync(MEMBER_ID, 81L);
+
+            assertThat(result).isNotDone();
+            assertThat(reading.await(2, TimeUnit.SECONDS)).isTrue();
+            assertThat(readingThread.get()).isNotSameAs(Thread.currentThread());
+            release.countDown();
+            assertThat(result.get(2, TimeUnit.SECONDS)).isEqualTo(response);
+        } finally {
+            release.countDown();
+            service.stopIssuanceRecovery();
+        }
+    }
+
     @Test
     void 비동기_복구가_실패하면_재접수하지_않고_원래_오류를_반환한다() {
         var rejection = CouponException.recoveryRequired(81L);
@@ -257,6 +286,13 @@ class CouponCommandServiceTest {
         try {
             assertThat(started.await(2, TimeUnit.SECONDS)).isTrue();
             var queued = service.issueAsync(MEMBER_ID, 82L);
+            java.util.concurrent.BlockingQueue<Runnable> recoveryQueue = ((java.util.concurrent.ThreadPoolExecutor) ReflectionTestUtils
+                    .getField(service, "issuanceRecovery")).getQueue();
+            long until = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+            while (recoveryQueue.isEmpty() && System.nanoTime() < until) {
+                Thread.onSpinWait();
+            }
+            assertThat(recoveryQueue).hasSize(1);
             Thread.currentThread().interrupt();
             service.stopIssuanceRecovery();
 
