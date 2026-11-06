@@ -139,10 +139,10 @@ loadtest/adserving/run.sh switch <이미지>
 
 - 앱 서버의 `/opt/lunchcatch-lt` 에 에이전트와 `compose.override.yaml` 을 둔다. compose 가 그 파일을 함께 읽어 lc-infra 의 설정을 고치지 않는다. `--tracing` 없이 띄우면 그 파일을 지운다. 로컬은 같은 파일을 `build/otel/` 에 만든다.
 - 앱은 같은 compose 의 Alloy(`http://alloy:4318`)로 스팬을 보낸다. 남길 추적은 Alloy 의 테일 샘플링이 고른다. 오류와 300ms 넘는 요청은 모두, 피드와 노출은 10%, 나머지는 1% 남긴다(lunch-catch/lc-infra#72).
-- 잴 메서드는 [`lib/otel-methods.txt`](lib/otel-methods.txt) 가 갖는다. 한 줄에 `패키지.클래스[메서드,메서드]` 이고 인터페이스가 아니라 실제 구현 클래스를 적는다. 도메인이 자기 메서드를 더한다.
+- 우리 코드의 메서드에는 스팬을 만들지 않는다. I/O 스팬 사이의 빈 구간은 프로파일링으로 본다([트레이싱과 프로파일링 설계](../docs/observability/트레이싱과_프로파일링_설계.md) 3장).
 - 라벨은 JVM 이 뜰 때 정해진다. 한 번 띄운 뒤의 회차는 같은 라벨이라 회차는 시각 구간으로 가린다.
 
-**그라파나에서 보는 법:** Explore 에서 데이터 소스 `Tempo` 를 고르고 `{ resource.run = "v1-tracing" && name = "GET /v1/feed" && duration > 300ms }` 처럼 찾는다. 추적을 열면 메서드별 스팬이 시간 순으로 보인다. 스팬에서 그 요청의 로그(Loki)와 프로파일(Pyroscope)로 넘어간다. 로그의 `trace_id` 에서도 그 추적으로 넘어간다.
+**그라파나에서 보는 법:** Explore 에서 데이터 소스 `Tempo` 를 고르고 `{ resource.run = "v1-tracing" && name = "GET /v1/feed" && duration > 300ms }` 처럼 찾는다. 추적을 열면 HTTP, DB 쿼리, Valkey 명령 스팬이 시간 순으로 보인다. 스팬에서 그 요청의 로그(Loki)와 프로파일(Pyroscope)로 넘어간다. 로그의 `trace_id` 에서도 그 추적으로 넘어간다.
 
 지킬 것:
 

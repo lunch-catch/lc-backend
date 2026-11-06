@@ -429,8 +429,7 @@ bash /tmp/lt-profile.sh $name $secs $mode $pyro $PROJECT /tmp/lt-trim.py $ASPROF
 # 그동안은 lettuce_seconds 지표가 없어 04 대시보드의 Valkey 명령 지연 패널이 빈다.
 #
 tracing_override() {
-  local label="$1" jar="$2" methods
-  methods=$(grep -v -e '^#' -e '^[[:space:]]*$' "$ROOT/loadtest/lib/otel-methods.txt" | paste -sd ';' -)
+  local label="$1" jar="$2"
   cat <<EOF
 services:
   app:
@@ -445,7 +444,6 @@ services:
       OTEL_TRACES_SAMPLER: always_on
       OTEL_METRICS_EXPORTER: none
       OTEL_LOGS_EXPORTER: none
-      OTEL_INSTRUMENTATION_METHODS_INCLUDE: "$methods"
       SPRING_AUTOCONFIGURE_EXCLUDE: org.springframework.boot.data.redis.autoconfigure.observation.LettuceObservationAutoConfiguration
 EOF
 }

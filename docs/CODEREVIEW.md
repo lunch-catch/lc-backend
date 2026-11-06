@@ -253,7 +253,7 @@ effective-java-guideline.md와 설계 문서의 경계 규칙은 변경 위치�
 | `**/repository/**` | qa-performance-efficiency-guideline.md |
 | `src/main/resources/db/migration/**/*.sql` | qa-compatibility-guideline.md |
 | `**/global/logging/**`, `src/main/resources/logback-spring.xml` | logging-project-guideline.md |
-| `loadtest/lib/otel-methods.txt`, `loadtest/lib/common.sh` 의 트레이싱과 프로파일링 부분 | [트레이싱과_프로파일링_설계.md](./observability/트레이싱과_프로파일링_설계.md) |
+| `loadtest/lib/common.sh` 의 트레이싱과 프로파일링 부분 | [트레이싱과_프로파일링_설계.md](./observability/트레이싱과_프로파일링_설계.md) |
 
 ### 도메인 경계 점검의 자동화
 
