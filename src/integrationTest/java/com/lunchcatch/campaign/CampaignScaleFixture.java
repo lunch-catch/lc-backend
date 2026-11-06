@@ -6,6 +6,7 @@ import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.EnumMap;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -56,12 +57,18 @@ public final class CampaignScaleFixture {
     private record StoreIds(long ownerId, long storeId, long menuId) {
     }
 
+    // 네 단계가 바꾸는 캠페인 컬럼이다. 복원이 이것을 처음 값과 견준다.
+    private record State(String status, LocalDateTime statusChangedAt, String pausedReason, long dailyBudget,
+                         Long pendingDailyBudget, LocalDateTime updatedAt) {
+    }
+
     private final JdbcTemplate jdbc;
     private int scale;
     private List<CampaignRef> campaigns = List.of();
     private List<StoreIds> stores = List.of();
     private List<CampaignRef> errorCandidates = List.of();
     private final Set<Long> errorIds = new HashSet<>();
+    private Map<Long, State> baseline = Map.of();
 
     public CampaignScaleFixture(JdbcTemplate jdbc) {
         this.jdbc = jdbc;
@@ -156,6 +163,68 @@ public final class CampaignScaleFixture {
         jdbc.batchUpdate("update campaign set target_menu_id = ? where campaign_id = ?", corrupt);
     }
 
+    // 지금의 캠페인 상태를 처음 상태로 기억해 둔다. 데이터를 만들고 오류 비율을 정한 뒤, 단계를 재기 전에 한 번 부른다.
+    public void captureBaseline() {
+        baseline = readStates();
+    }
+
+    /*
+     * 기억해 둔 처음 상태로 되돌리고 바뀌어 있던 캠페인의 수를 돌려준다. 재는 시간에 넣지 않는 준비 작업이다.
+     *
+     * 네 단계가 바꾸는 것은 캠페인의 상태 관련 컬럼, 상태 변경 로그, 가게 요약이다. 처음에는 로그와 요약이 없으므로 둘은
+     * 이 픽스처 몫을 모두 지운다. 캠페인은 읽어서 달라진 행만 고친다. 1만 건을 매번 다 쓰면 복원이 측정 시간보다 길어진다.
+     *
+     * 가게당 ACTIVE 는 하나라는 유일 키가 있어서 ACTIVE 가 아닌 상태로 돌아갈 행을 먼저 고친다. 시작 대상이 ACTIVE 가 된 가게는
+     * 기존 ACTIVE 가 ENDED 로 바뀐 채라, 새 ACTIVE 를 SCHEDULED 로 되돌린 다음에 기존 ACTIVE 를 되살려야 유일 키에 걸리지 않는다.
+     */
+    public int restoreBaseline() {
+        if (baseline.isEmpty()) {
+            throw new IllegalStateException("captureBaseline 을 먼저 불러야 한다");
+        }
+        String like = PREFIX + "%";
+        jdbc.update("delete from store_campaign_summary where store_id in"
+                + " (select store_id from store where owner_id in (select owner_id from owner where email like ?))",
+                like);
+        jdbc.update("delete from campaign_status_log where campaign_id in"
+                + " (select campaign_id from campaign where notice like ?)", like);
+
+        Map<Long, State> current = readStates();
+        List<Object[]> toNotActive = new ArrayList<>();
+        List<Object[]> toActive = new ArrayList<>();
+        baseline.forEach((campaignId, expected) -> {
+            if (expected.equals(current.get(campaignId))) {
+                return;
+            }
+            Object[] args = {expected.status(), expected.statusChangedAt(), expected.pausedReason(),
+                    expected.dailyBudget(), expected.pendingDailyBudget(), expected.updatedAt(), campaignId};
+            (expected.status().equals("ACTIVE") ? toActive : toNotActive).add(args);
+        });
+        String update = "update campaign set status = ?, status_changed_at = ?, paused_reason = ?,"
+                + " daily_budget = ?, pending_daily_budget = ?, updated_at = ? where campaign_id = ?";
+        jdbc.batchUpdate(update, toNotActive);
+        jdbc.batchUpdate(update, toActive);
+        return toNotActive.size() + toActive.size();
+    }
+
+    // 지금 캠페인 상태가 기억해 둔 처음 상태와 같은지 본다. 복원이 제대로 됐는지 확인하는 테스트가 쓴다.
+    public boolean matchesBaseline() {
+        return baseline.equals(readStates());
+    }
+
+    private Map<Long, State> readStates() {
+        Map<Long, State> states = new HashMap<>();
+        jdbc.query("select campaign_id, status, status_changed_at, paused_reason, daily_budget,"
+                        + " pending_daily_budget, updated_at from campaign where notice like ?",
+                rs -> {
+                    long pending = rs.getLong(6);
+                    Long pendingOrNull = rs.wasNull() ? null : pending;
+                    states.put(rs.getLong(1), new State(rs.getString(2),
+                            rs.getTimestamp(3).toLocalDateTime(), rs.getString(4), rs.getLong(5),
+                            pendingOrNull, rs.getTimestamp(7).toLocalDateTime()));
+                }, PREFIX + "%");
+        return states;
+    }
+
     // 접두어로 찾은 이 픽스처의 행을 외래 키 순서대로 지운다. 만든 적이 없어도 불러도 된다.
     public void deleteAll() {
         String ownerIds = "(select owner_id from owner where email like ?)";
@@ -172,6 +241,7 @@ public final class CampaignScaleFixture {
         stores = List.of();
         errorCandidates = List.of();
         errorIds.clear();
+        baseline = Map.of();
     }
 
     private static List<Spec> buildSpecs(int scale) {
