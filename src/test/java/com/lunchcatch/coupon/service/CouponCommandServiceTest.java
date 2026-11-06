@@ -258,12 +258,16 @@ class CouponCommandServiceTest {
             assertThat(service.oldestRecoveryWaitSeconds()).isZero();
             service.issueAsync(MEMBER_ID, 81L);
             assertThat(recovering.await(2, TimeUnit.SECONDS)).isTrue();
+            long submittedAtNanos = System.nanoTime();
             service.issueAsync(18L, 81L);
             awaitQueuedRecoveries(1);
             Thread.sleep(50);
 
             assertThat(service.recoveryQueueSize()).isEqualTo(1);
-            assertThat(service.oldestRecoveryWaitSeconds()).isBetween(0.05, 2.0);
+            double oldestWaitSeconds = service.oldestRecoveryWaitSeconds();
+            // 대기열에 넣기 직전부터 잰 시간을 상한으로 써서 CI 가 멈춰도 계산이 맞으면 통과한다.
+            double elapsedSeconds = (System.nanoTime() - submittedAtNanos) / 1_000_000_000.0;
+            assertThat(oldestWaitSeconds).isBetween(0.05, elapsedSeconds);
         } finally {
             release.countDown();
             service.stopIssuanceRecovery();
