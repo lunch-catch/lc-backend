@@ -457,7 +457,7 @@ v3도 같은 순번·복구 설계를 사용한다. 묶음 트랜잭션과 작�
 
 | 작업 | 끝나야 하는 때 | 늦거나 실패하면 |
 |---|---|---|
-| `COUPON_VERIFY` | 마감이 없다 | 결과를 기다리는 작업이 없다. 불일치는 오류 로그로만 남고 그날 서비스에 영향을 주지 않는다 |
+| `COUPON_VERIFY` | 마감이 없다 | 결과를 기다리는 작업이 없다. 검사는 불일치를 찾아 오류 로그로 남기기만 하고 원본을 고치지 않는다. 그래서 늦거나 실패해도 불일치를 늦게 알게 될 뿐 서비스 동작은 바뀌지 않는다 |
 | `COUPON_PREPARE` | 10:55 전에 끝난다 | 큐 준비가 그 회차를 찾지 못해 회차가 큐 없이 열린다. 회차가 생기기 전의 발급 요청은 발급하지 못한다 |
 | `COUPON_QUEUE_PREPARE` | 11:00 전에 끝난다 | 큐가 없는 회차의 첫 발급 요청들이 복구를 기다린다. 복구가 큐를 만든 뒤 발급이 이어진다 |
 | `COUPON_OPEN` | 마감이 없다 | 발급 API 가 시각을 직접 검사해 이 작업을 기다리지 않는다. 오픈 이벤트의 발행만 늦어진다 |
@@ -492,7 +492,7 @@ QR 사용의 응답 시간·동시 요청 목표와 부하 검증은 아직 없�
 |---|---|---|---|
 | 발급 대기열(`CouponIssueBatcher`, 작업자 2개) | `coupon_issue_queue_size`, `coupon_issue_queue_oldest_wait_seconds` | 1,000건, 1초 | 요청을 모아 묶음으로 처리하는 버퍼라 몰릴 때 수십 건이 쌓이는 것이 정상이다. 1,000건은 접수 상한 2,000의 절반이며 넘으면 곧 혼잡 거절이 시작된다. 1초는 `REL-3-02` 의 대기 시간을 따른다 |
 | 복구 대기열(`coupon-http-recovery`, 작업자 1개) | `coupon_recovery_queue_size`, `coupon_recovery_queue_oldest_wait_seconds` | 2건, 1초 | `REL-3-02` 의 시작값(작업자 수의 2배, 1초)이다. 평소에는 비어 있고 Redis 가 실패할 때만 쌓인다 |
-| 소진 통보(`CouponSoldOutNotificationService`, 작업자 1개) | `coupon_sold_out_pending_size`, `coupon_sold_out_pending_oldest_wait_seconds` | 수는 판정하지 않는다, 6초 | 1초마다 기다리는 이벤트를 모두 처리하므로 동시에 다 팔린 이벤트 수만큼 쌓이는 것이 정상이다. 6초는 조회 주기 1초와 실패 뒤 재시도 간격 5초를 더한 값이라, 넘으면 통보가 한 번 이상 실패한 것이다 |
+| 소진 통보(`CouponSoldOutNotificationService`, 작업자 1개) | `coupon_sold_out_pending_size`, `coupon_sold_out_pending_oldest_wait_seconds` | 수는 판정하지 않는다, 6초 | 1초마다 기다리는 이벤트를 모두 처리하므로 동시에 다 팔린 이벤트 수만큼 쌓이는 것이 정상이다. 6초는 조회 주기 1초와 실패 뒤 재시도 간격 5초를 더한 값이다. 넘으면 통보가 한 번 이상 실패했거나 작업자가 한 번 도는 데 오래 걸린 것이다. 어느 쪽인지는 `COUPON_SOLD_OUT_NOTIFICATION_FAILED reason=RETRY_SCHEDULED` 로그가 있는지로 가린다 |
 
 로컬 부하 시험(이벤트 20개, 10초에 5,000건, 작업자 2개)에서 읽은 최댓값은 아래와 같다. 지표를 0.2초마다 읽었다.
 
