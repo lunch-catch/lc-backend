@@ -19,6 +19,9 @@ public record ScaleMeasureSettings(List<Integer> scales, int rounds) {
 
     static final int DEFAULT_ROUNDS = 3;
 
+    // 캠페인 데이터 생성기가 받는 최솟값이다. 이보다 작으면 생성기가 측정 도중에 예외를 던진다.
+    static final int MIN_SCALE = 2;
+
     // 규모 하나가 만드는 행이 JVM 힙 2GB 와 컨테이너 디스크를 넘지 않게 막는 상한이다.
     static final int MAX_SCALE = 100_000;
 
@@ -27,9 +30,9 @@ public record ScaleMeasureSettings(List<Integer> scales, int rounds) {
             throw new IllegalArgumentException(SCALE_ENV + " 에 값이 하나도 없다");
         }
         for (int scale : scales) {
-            if (scale < 1 || scale > MAX_SCALE) {
+            if (scale < MIN_SCALE || scale > MAX_SCALE) {
                 throw new IllegalArgumentException(
-                        SCALE_ENV + " 의 값은 1 이상 " + MAX_SCALE + " 이하여야 한다: " + scale);
+                        SCALE_ENV + " 의 값은 " + MIN_SCALE + " 이상 " + MAX_SCALE + " 이하여야 한다: " + scale);
             }
         }
         if (rounds < 1) {
@@ -53,7 +56,8 @@ public record ScaleMeasureSettings(List<Integer> scales, int rounds) {
             throw new IllegalArgumentException(SCALE_ENV + " 가 없다. 예: 1000,10000");
         }
         try {
-            return Arrays.stream(raw.split(","))
+            // 한도를 -1 로 줘서 끝의 빈 항목(1000,)을 버리지 않고 parseInt 로 거부한다.
+            return Arrays.stream(raw.split(",", -1))
                     .map(String::trim)
                     .map(Integer::parseInt)
                     .toList();

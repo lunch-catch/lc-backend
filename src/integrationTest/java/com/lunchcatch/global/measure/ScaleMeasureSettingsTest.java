@@ -39,6 +39,16 @@ class ScaleMeasureSettingsTest {
                 .isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> ScaleMeasureSettings.from(Map.of(ScaleMeasureSettings.SCALE_ENV, "0")::get))
                 .isInstanceOf(IllegalArgumentException.class);
+        // 생성기는 2 미만을 받지 않는다. 설정에서 먼저 막아 측정 도중에 터지지 않게 한다.
+        assertThatThrownBy(() -> ScaleMeasureSettings.from(Map.of(ScaleMeasureSettings.SCALE_ENV, "1")::get))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThat(ScaleMeasureSettings.from(Map.of(ScaleMeasureSettings.SCALE_ENV, "2")::get).scales())
+                .containsExactly(2);
+        // 끝이나 가운데의 빈 항목은 버리지 않고 거부한다.
+        assertThatThrownBy(() -> ScaleMeasureSettings.from(Map.of(ScaleMeasureSettings.SCALE_ENV, "1000,")::get))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> ScaleMeasureSettings.from(Map.of(ScaleMeasureSettings.SCALE_ENV, "1000,,10000")::get))
+                .isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> ScaleMeasureSettings.from(Map.of(ScaleMeasureSettings.SCALE_ENV, "100001")::get))
                 .isInstanceOf(IllegalArgumentException.class);
     }
