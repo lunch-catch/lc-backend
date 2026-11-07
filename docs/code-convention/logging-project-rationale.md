@@ -89,13 +89,18 @@ MDC 는 스레드에 붙지만 Reactor `Context` 는 구독에 붙는다. Reacto
 남았고 다른 스레드에서 보내면 `traceId` 가 빠졌다. 실제 WebClient 요청의 콜백이 항상 Reactor Netty
 이벤트 루프에서 돈다고 단정하지 않는다. 이 저장소에는 Reactor 컨텍스트와 MDC 를 잇는 장치가 없다.
 
-`application.yml` 에 `management.tracing.sampling.probability` 가 있지만 추적 라이브러리 의존성이
-없어서 아무 효과가 없다. 이 설정은 이전 프로젝트(fm-backend)에서 함께 옮겨 왔다. fm-backend 에서는
-"장애 주입 실험 직전에 100% 로 올릴 수 있어야 한다" 는 의도로 넣었지만, 그 저장소의 히스토리 전체에
-추적 의존성이 들어온 적이 없어 그곳에서도 동작한 적이 없다. 남겨 두면 추적이 켜져 있다고 오해하게
-만들므로 지운다. 추적이 필요해지면 `micrometer-tracing` 브리지와 추적 백엔드를 함께 들인다.
-추적 브리지와 로그 상관관계를 구성하면 Micrometer Tracing 이 현재 span 의 `traceId` 와 `spanId` 를
-MDC 에 연결할 수 있다.[R15] 그때 `MdcLoggingFilter` 와 `TraceIdExchangeFilter` 의 역할을 함께 정리한다.
+부하 시험의 진단 회차에서는 앱에 OpenTelemetry Java 에이전트를 붙인다(#1099). 에이전트는 스팬이 열린
+스레드의 MDC 에 `trace_id` 를 넣고, 운영 프로필의 인코더가 그 값을 로그 필드로 낸다. 그래서 그 회차의
+요청 로그에는 `traceId` 와 `trace_id` 가 함께 찍힌다. 두 값은 따로 만들어져 서로 이어지지 않는다.
+로그에서 트레이스로 넘어갈 때는 `trace_id` 를 쓴다. 에이전트를 붙이지 않은 환경에는 `trace_id` 가 없다.
+언제 에이전트를 붙이고 무엇을 트레이싱하는지는
+[트레이싱과 프로파일링 설계](../observability/트레이싱과_프로파일링_설계.md) 가 갖는다.
+
+Micrometer Tracing 의 `management.tracing.sampling.probability` 는 `application.yml` 에 두지 않는다.
+이 저장소에는 Micrometer Tracing 의존성이 없어 그 설정은 어느 환경에서도 효과가 없다. 두면 트레이싱이
+켜져 있다고 오해하게 만든다. Micrometer Tracing 을 들이면 현재 스팬의 `traceId` 와 `spanId` 를 MDC 에
+잇는다.[R15] 이 저장소는 에이전트가 같은 일을 하므로 들이지 않는다. 트레이싱의 표본은 에이전트의 샘플러
+설정과 Alloy 의 테일 샘플링이 정한다.
 
 ## 5. clientIp 를 검증하는 방식
 
