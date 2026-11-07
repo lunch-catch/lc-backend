@@ -62,9 +62,9 @@
 유지할지는 개인정보 노출 위험과 진단 필요성을 함께 검토해 정한다.
 
 form-urlencoded 바디를 따로 잡는 이유는 JSON 패턴이 `password=1234&token=…` 모양에 걸리지 않기
-때문이다(OBS-3-04, SEC-4-02). 바디를 남기는 Content-Type 을 텍스트 계열로 제한한 이유는 이미지
+때문이다. 바디를 남기는 Content-Type 을 텍스트 계열로 제한한 이유는 이미지
 업로드 같은 바이너리를 UTF-8 로 억지로 디코딩해 깨진 문자를 남기고, 남기지 않는 정상 응답에서도
-매번 캐싱하는 낭비를 막기 위해서다(OBS-3-05). 요청 바디의 캐시 한도(8192바이트)를 로그 길이 한도
+매번 캐싱하는 낭비를 막기 위해서다. 요청 바디의 캐시 한도(8192바이트)를 로그 길이 한도
 (2000자)보다 넉넉히 잡은 이유는 한글이 UTF-8 에서 글자당 최대 3바이트라서다. 바이트 한도를 글자 수와
 같게 잡으면 남기기도 전에 글자가 중간에 잘린다.
 
@@ -89,19 +89,24 @@ MDC 는 스레드에 붙지만 Reactor `Context` 는 구독에 붙는다. Reacto
 남았고 다른 스레드에서 보내면 `traceId` 가 빠졌다. 실제 WebClient 요청의 콜백이 항상 Reactor Netty
 이벤트 루프에서 돈다고 단정하지 않는다. 이 저장소에는 Reactor 컨텍스트와 MDC 를 잇는 장치가 없다.
 
-`application.yml` 에 `management.tracing.sampling.probability` 가 있지만 추적 라이브러리 의존성이
-없어서 아무 효과가 없다. 이 설정은 이전 프로젝트(fm-backend)에서 함께 옮겨 왔다. fm-backend 에서는
-"장애 주입 실험 직전에 100% 로 올릴 수 있어야 한다" 는 의도로 넣었지만, 그 저장소의 히스토리 전체에
-추적 의존성이 들어온 적이 없어 그곳에서도 동작한 적이 없다. 남겨 두면 추적이 켜져 있다고 오해하게
-만들므로 지운다. 추적이 필요해지면 `micrometer-tracing` 브리지와 추적 백엔드를 함께 들인다.
-추적 브리지와 로그 상관관계를 구성하면 Micrometer Tracing 이 현재 span 의 `traceId` 와 `spanId` 를
-MDC 에 연결할 수 있다.[R15] 그때 `MdcLoggingFilter` 와 `TraceIdExchangeFilter` 의 역할을 함께 정리한다.
+부하 시험의 진단 회차에서는 앱에 OpenTelemetry Java 에이전트를 붙인다. 에이전트는 스팬이 열린
+스레드의 MDC 에 `trace_id` 를 넣고, 운영 프로필의 인코더가 그 값을 로그 필드로 낸다. 그래서 그 회차의
+요청 로그에는 `traceId` 와 `trace_id` 가 함께 찍힌다. 두 값은 따로 만들어져 서로 이어지지 않는다.
+로그에서 트레이스로 넘어갈 때는 `trace_id` 를 쓴다. 에이전트를 붙이지 않은 환경에는 `trace_id` 가 없다.
+언제 에이전트를 붙이고 무엇을 트레이싱하는지는
+[트레이싱과 프로파일링 설계](../observability/트레이싱과_프로파일링_설계.md) 가 갖는다.
+
+Micrometer Tracing 의 `management.tracing.sampling.probability` 는 `application.yml` 에 두지 않는다.
+이 저장소에는 Micrometer Tracing 의존성이 없어 그 설정은 어느 환경에서도 효과가 없다. 두면 트레이싱이
+켜져 있다고 오해하게 만든다. Micrometer Tracing 을 들이면 현재 스팬의 `traceId` 와 `spanId` 를 MDC 에
+잇는다.[R15] 이 저장소는 에이전트가 같은 일을 하므로 들이지 않는다. 트레이싱의 표본은 에이전트의 샘플러
+설정과 Alloy 의 테일 샘플링이 정한다.
 
 ## 5. clientIp 를 검증하는 방식
 
 `X-Trace-Id` 와 `X-Forwarded-For` 는 클라이언트가 마음대로 보낼 수 있는 헤더다. 그래서 허용 문자와
 길이를 검사한다. 목적은 정확한 IP 형식 검사가 아니라 로그 인젝션(개행, 제어 문자)과 비정상적으로 긴
-값을 막는 것이다(SEC-3-01).
+값을 막는 것이다.
 
 형식 검사로는 위조를 막지 못한다. 로드 밸런서는 실제 접속 IP 를 `X-Forwarded-For` 의 마지막 항목에
 덧붙인다. 앞쪽 항목은 클라이언트가 보낸 값이다. 그래서 `MdcLoggingFilter`, `AdminLoginAuditFilter`,
@@ -118,7 +123,7 @@ Tomcat 의 Remote IP Valve 에 맡기는 방법도 있다. 이 Valve 는 신뢰�
    `getRemoteAddr()` 가 된다. 이 설명은 Tomcat 이 오른쪽부터 처리한다는 구현에 기대고 있어서, 공식 문서가
    보장하는 사실이 아니다.[R8]
 2. **Tomcat 방식은 저장소 밖 확인이 선행 조건이다.** 실제 프록시 대역과 첫 프록시가 전달 헤더를 지우는지가
-   확인되지 않았다(lunch-catch/lc-infra#25). 해석기는 그 확인 없이 지금 맞는 값을 낸다.
+   확인되지 않았다. 해석기는 그 확인 없이 지금 맞는 값을 낸다.
 3. **`internalProxies` 기본값은 사설 대역 전체를 프록시로 본다.**[R8] VPC 안에서 ALB 를 거쳐 들어오는
    클라이언트의 IP 는 사설이라 함께 걷혀 나가고, 남는 항목이 없으면 ALB 의 IP 가 `getRemoteAddr()` 가
    된다. 그러면 시도 횟수 제한이 그 트래픽 전체를 한 바구니로 묶는다. 해석기는 마지막 항목을 그대로 쓰므로
@@ -131,7 +136,7 @@ Tomcat 의 Remote IP Valve 에 맡기는 방법도 있다. 이 Valve 는 신뢰�
 `server.forward-headers-strategy` 와 `server.tomcat.remoteip.internal-proxies` 를 켜면서 해석기도 쓰면
 위조한 IP 가 들어온다. Valve 는 신뢰 대역에 해당하는 항목을 `X-Forwarded-For` 에서 걷어 내 `getRemoteAddr()`
 로 옮기고 남은 항목만 헤더에 다시 쓴다. 남는 것은 클라이언트가 보낸 항목이다. 그 뒤에 마지막 항목을 읽는
-해석기가 돌면 위조한 값을 클라이언트 IP 로 돌려준다. 이 조합은 #722 가 막은 구멍을 다시 연다. 지금은
+해석기가 돌면 위조한 값을 클라이언트 IP 로 돌려준다. 이 조합은 해석기로 막아 둔 IP 위조를 다시 들인다. 지금은
 `forward-headers-strategy` 를 설정하지 않아 문제가 없다.
 
 ### Tomcat 방식으로 넘어가는 조건
@@ -152,7 +157,7 @@ Tomcat 의 Remote IP Valve 에 맡기는 방법도 있다. 이 Valve 는 신뢰�
 ## 6. 외부 호출 로그가 경로만 남기는 이유
 
 카카오처럼 인가 코드와 액세스 토큰을 쿼리 문자열로 주고받는 외부 API 가 있다. URL 을 그대로 남기면
-그 값이 샌다(SEC-4-02). 바디를 남기지 않는 이유는 `WebClient` 의 바디가 Publisher 라 가로채려면 따로
+그 값이 샌다. 바디를 남기지 않는 이유는 `WebClient` 의 바디가 Publisher 라 가로채려면 따로
 감싸야 하고 복잡도가 커지기 때문이다. 이 로그의 목적은 외부 API 가 느려서 우리가 멈췄는지를 증명하는
 것이고, 상태 코드와 소요 시간이면 충분하다.
 
@@ -304,12 +309,12 @@ jjwt 의 `JwtException` 과 Spring Security 의 `JwtException` 은 메시지 내
 이 문서의 런타임 동작 주장은 아래 테스트가 현재 의존성 버전에서 확인한다. 테스트로 확인하지 못한 것은
 본문에 확인하지 않았다고 적었다. 공통 로깅 문서 3개(`logging-guideline.md`, `logging-rationale.md`,
 `logging-implementation-guide.md`)는 이 저장소의 어느 브랜치 이력에도 없어서 링크하지 않는다. 복구할지는
-#703 이 이어서 정한다.
+정하지 않았다.
 
 | 주장 | 확인하는 곳 |
 |---|---|
 | 외부 호출 콜백이 요청 스레드에서 돌면 MDC 가 남고, 다른 스레드에서 돌면 자동으로 전파되지 않는다 | `ExternalApiLoggingExchangeFilterTest` 의 응답과 오류 콜백 테스트 3개 |
-| 스케줄러 작업이 실패하면 애스펙트와 Spring 오류 처리기가 스택을 각각 남긴다. Spring 쪽 메시지는 `Unexpected error occurred in scheduled task` 다.[R6][R7] | `SchedulerLoggingAspectTest.반복_작업이_실패하면_애스펙트와_Spring_오류_처리기가_스택을_각각_남긴다` |
+| 스케줄러 작업이 실패하면 애스펙트만 스택을 남긴다. Spring 의 기본 오류 처리기는 같은 실패를 `Unexpected error occurred in scheduled task` 로 한 번 더 남기는데[R6][R7], `SchedulingConfig` 가 그 처리기를 바꿔 다시 남기지 않는다 | `SchedulerLoggingAspectTest.반복_작업이_실패하면_애스펙트만_스택을_남기고_스케줄러의_오류_처리기는_다시_남기지_않는다`, `SchedulingConfigTest.스케줄러의_오류_처리기는_실패를_다시_로그로_남기지_않는다` |
 | `%X{key:-default}` 는 기본값을 출력하고, 리터럴 괄호는 이스케이프하지 않으면 뒤의 메시지가 사라진다 | `LogbackPatternTest` |
 | 민감 키 값이 가려진다 | `HttpBodyLoggingFilterTest` 의 민감 키 테스트 |
 | Loki 쿼리의 `json` 뒤 예시 | 확인하지 못했다. 수집한 JSON 에 `message` 필드가 있고 그 값이 logfmt 모양이라는 전제다.[R12] `lc-infra` 의 실제 레이블과 JSON 구조는 이번 PR 에서 확인하지 않았다 |

@@ -18,6 +18,7 @@ import com.lunchcatch.adserving.feed.repository.ServeLogRepository;
 import com.lunchcatch.adserving.feed.repository.ServeLogRepository.Row;
 import com.lunchcatch.adserving.feed.repository.ServeRecord;
 import com.lunchcatch.global.config.ClockConfig;
+import com.lunchcatch.global.logging.LogContext;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -34,6 +35,7 @@ import java.util.stream.IntStream;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.slf4j.MDC;
 import org.springframework.dao.DataAccessResourceFailureException;
 
 @DisplayName("서빙 로그 대기열")
@@ -61,6 +63,23 @@ class ServeLogBufferTest {
         ArgumentCaptor<List<Row>> captor = ArgumentCaptor.forClass(List.class);
         verify(serveLogRepository).insertAll(captor.capture());
         return captor.getValue();
+    }
+
+    @Test
+    void 묶음을_쓰는_동안_새_traceId와_워커_이름이_MDC에_있다() {
+        String[] seen = new String[2];
+        doAnswer(invocation -> {
+            seen[0] = MDC.get(LogContext.TRACE_ID);
+            seen[1] = MDC.get(LogContext.JOB);
+            return null;
+        }).when(serveLogRepository).insertAll(anyList());
+        buffer.offer(feedWithCards(3001L, 1));
+
+        buffer.flushOnce();
+
+        assertThat(seen[0]).isNotBlank();
+        assertThat(seen[1]).isEqualTo("serve-log-writer");
+        assertThat(MDC.getCopyOfContextMap()).isNullOrEmpty();
     }
 
     @Test

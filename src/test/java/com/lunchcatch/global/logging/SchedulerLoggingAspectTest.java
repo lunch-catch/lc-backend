@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.spi.ILoggingEvent;
+import com.lunchcatch.global.config.SchedulingConfig;
 import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Clock;
@@ -15,6 +16,7 @@ import java.util.List;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.slf4j.MDC;
 import org.springframework.aop.aspectj.annotation.AspectJProxyFactory;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.scheduling.support.TaskUtils;
@@ -204,6 +206,57 @@ class SchedulerLoggingAspectTest {
         assertThat(logs.events()).isEmpty();
     }
 
+    // --- MDC -------------------------------------------------------------------
+
+    @Test
+    void 실행_중에는_새_traceId와_작업_이름이_MDC에_있다() {
+        // given
+        String[] seen = new String[2];
+        target.work = () -> {
+            seen[0] = MDC.get(LogContext.TRACE_ID);
+            seen[1] = MDC.get(LogContext.JOB);
+        };
+
+        // when
+        job.run();
+
+        // then
+        assertThat(seen[0]).isNotBlank();
+        assertThat(seen[1]).contains("run()");
+    }
+
+    @Test
+    void 시작과_종료_로그에도_같은_traceId가_붙는다() {
+        // when
+        job.run();
+
+        // then
+        assertThat(logs.events()).extracting(event -> event.getMDCPropertyMap().get(LogContext.TRACE_ID))
+                .doesNotContainNull()
+                .containsOnly(logs.events().get(0).getMDCPropertyMap().get(LogContext.TRACE_ID));
+    }
+
+    @Test
+    void 실패해도_실패_로그에_traceId가_붙고_끝나면_MDC를_비운다() {
+        // when
+        failOnce();
+
+        // then
+        assertThat(logs.events().get(1).getMDCPropertyMap()).containsKey(LogContext.TRACE_ID);
+        assertThat(MDC.getCopyOfContextMap()).isNullOrEmpty();
+    }
+
+    @Test
+    void 실행마다_traceId가_다르다() {
+        // when
+        job.run();
+        job.run();
+
+        // then
+        assertThat(logs.events().get(0).getMDCPropertyMap().get(LogContext.TRACE_ID))
+                .isNotEqualTo(logs.events().get(2).getMDCPropertyMap().get(LogContext.TRACE_ID));
+    }
+
     // --- 마지막 성공 시각 게이지 ---------------------------------------------------------
 
     @Test
@@ -267,22 +320,21 @@ class SchedulerLoggingAspectTest {
     }
 
     @Test
-    void 반복_작업이_실패하면_애스펙트와_Spring_오류_처리기가_스택을_각각_남긴다() {
+    void 반복_작업이_실패하면_애스펙트만_스택을_남기고_스케줄러의_오류_처리기는_다시_남기지_않는다() {
         // given
         target.failure = new IllegalStateException("boom");
 
         try (LogCapture springLogs = LogCapture.attach(
                 "org.springframework.scheduling.support.TaskUtils$LoggingErrorHandler")) {
             // when
-            TaskUtils.decorateTaskWithErrorHandler(job::run, null, true).run();
+            TaskUtils.decorateTaskWithErrorHandler(job::run, SchedulingConfig.ALREADY_LOGGED, true).run();
 
             // then
             ILoggingEvent aspectFailure = logs.events().get(1);
-            ILoggingEvent springFailure = springLogs.only();
             assertThat(aspectFailure.getFormattedMessage()).startsWith("event=SCHEDULER_FAILED");
             assertThat(aspectFailure.getThrowableProxy()).isNotNull();
-            assertThat(springFailure.getFormattedMessage()).isEqualTo("Unexpected error occurred in scheduled task");
-            assertThat(springFailure.getThrowableProxy()).isNotNull();
+            assertThat(aspectFailure.getMDCPropertyMap()).containsKey(LogContext.TRACE_ID);
+            assertThat(springLogs.events()).isEmpty();
         }
     }
 }

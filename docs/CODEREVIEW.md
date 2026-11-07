@@ -44,9 +44,9 @@
 | 인시던트 대응 | `INC-` | [qa-incident-response-guideline.md](./software-quality/qa-incident-response-guideline.md) |
 | 속성 간 트레이드오프 | `TRD-` | [qa-tradeoffs-guideline.md](./software-quality/qa-tradeoffs-guideline.md) |
 
-**자동 리뷰가 보는 것은 219개 중 93개다.** `[코드]` 79개 전부, 그리고 파일 하나로 판정되는
+**자동 리뷰가 보는 것은 225개 중 96개다.** `[코드]` 82개 전부, 그리고 파일 하나로 판정되는
 `[설계]` 6개(마이그레이션 SQL)와 `[인프라]` 8개(`application.yml`, `logback-spring.xml`)다.
-나머지 126개는 PR 하나의 변경분으로 판정할 수 없다. `[설계]` 는 설계 리뷰와 ADR 에서,
+나머지 129개는 PR 하나의 변경분으로 판정할 수 없다. `[설계]` 는 설계 리뷰와 ADR 에서,
 `[인프라]` 는 인프라 변경에서, `[프로세스]` 는 정기 점검에서 사람이 본다.
 
 수치에 붙은 등급은 근거의 성격이다. `A` 는 산술로 도출한 값, `B` 는 출처가 있는 값,
@@ -178,7 +178,7 @@
 "타임아웃이 설정되어 있는가" 는 판정하지만 "3초가 맞는가" 는 판정하지 않는다. 그 값은 오른쪽
 열의 프로젝트 문서가 정한다. 둘이 다르게 말하면 프로젝트 문서가 이긴다.
 
-그리고 남은 126개는 소유 가이드가 있어도 **자동 리뷰가 지적하지 않는다.**
+그리고 남은 129개는 소유 가이드가 있어도 **자동 리뷰가 지적하지 않는다.**
 `[설계]` 는 설계 리뷰와 ADR, `[인프라]` 는 인프라 변경, `[프로세스]` 는 정기 점검에서 사람이 본다.
 **그 세 절차는 아직 만들어지지 않았다.** 지금은 아무도 보지 않는 상태라는 뜻이다.
 
@@ -253,6 +253,7 @@ effective-java-guideline.md와 설계 문서의 경계 규칙은 변경 위치�
 | `**/repository/**` | qa-performance-efficiency-guideline.md |
 | `src/main/resources/db/migration/**/*.sql` | qa-compatibility-guideline.md |
 | `**/global/logging/**`, `src/main/resources/logback-spring.xml` | logging-project-guideline.md |
+| `loadtest/lib/common.sh` 의 트레이싱과 프로파일링 부분 | [트레이싱과_프로파일링_설계.md](./observability/트레이싱과_프로파일링_설계.md) |
 
 ### 도메인 경계 점검의 자동화
 
