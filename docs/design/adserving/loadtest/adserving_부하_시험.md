@@ -43,7 +43,7 @@ aws autoscaling update-auto-scaling-group --auto-scaling-group-name lunchcatch-l
 
 | 데이터 | 값 |
 |---|---|
-| 회원 | 40,000명. 온보딩을 마쳤고 중심 1km 안에 산다 |
+| 회원 | 120,000명. 온보딩을 마쳤고 중심 1km 안에 산다. 노출, 서빙, 서빙의 풀 끔 회차가 4만 명씩 나눠 쓴다(5장). 2026-10-27 까지의 노출 결과(v1 ~ v3c)는 40,000명으로 쟀다 |
 | 가게와 캠페인 | 1,000개. 가게마다 진행 중 캠페인 하나, 반경 3,000m, 전 연령과 성별 |
 | 하루 예산 | 캠페인마다 1,000,000포인트. 시험 중 예약액에 닿지 않는다 |
 | 충전 | 점주마다 하루 예산의 40배 |
@@ -104,7 +104,7 @@ aws autoscaling update-auto-scaling-group --auto-scaling-group-name lunchcatch-l
 | 프로파일링(필요할 때) | 60초 | 5분 | 30030001 ~ 30040000 | 뺀다. 측정 3회 뒤에 돌린다 |
 | 추적(필요할 때) | 60초 | 5분 | 30030001 ~ 30040000 | 뺀다. 측정 3회 뒤에 에이전트를 붙여 돌리고 뗀다 |
 
-서빙 시험(피드만, `--scenario feed`)은 같은 표를 회원 대역만 4만 뒤로 옮겨 쓴다. 워밍업 30070001, 측정 1~3 은 30040001, 30050001, 30060001, 진단은 30070001 부터다. 같은 커밋의 노출 회차를 잰 뒤 `reset` 없이 이어 잰다. 그래서 시드는 회원 80,000명(30000001 ~ 30080000)을 넣는다.
+서빙 시험(피드만, `--scenario feed`)은 같은 표를 회원 대역만 4만 뒤로 옮겨 쓴다. 워밍업 30070001, 측정 1~3 은 30040001, 30050001, 30060001, 진단은 30070001 부터다. 같은 커밋의 노출 회차를 잰 뒤 `reset` 없이 이어 잰다. 서빙 v3 의 풀 끔 회차는 한 번 더 4만 뒤(워밍업 30110001, 측정 30080001, 30090001, 30100001)를 쓴다. 풀 켬 회차와 같은 상태(캠페인의 노출 수와 예산)에서 재 풀만의 효과를 가르려고 `reset` 하지 않는다. 그래서 시드는 회원 120,000명(30000001 ~ 30120000)을 넣는다.
 
 노출 횟수는 그날 내내 남는다. 같은 날 회차를 거듭하면서 같은 회원을 쓰면 뒤 회차일수록 카드가 줄어 회차마다 다른 대역을 쓴다.
 
@@ -119,7 +119,7 @@ aws autoscaling update-auto-scaling-group --auto-scaling-group-name lunchcatch-l
 AWS_PROFILE=<프로필> ./scripts/member-env.sh up --sha <이미지>     # lc-infra 에서
 
 # 2. 데이터를 넣고 그날 00:00 묶음을 다시 돌린다
-AWS_PROFILE=<프로필> loadtest/adserving/run.sh seed 80000
+AWS_PROFILE=<프로필> loadtest/adserving/run.sh seed 120000
 AWS_PROFILE=<프로필> loadtest/adserving/run.sh prepare
 
 # 3. 워밍업과 측정 3회
@@ -164,7 +164,7 @@ AWS_PROFILE=<프로필> ./scripts/member-env.sh down
 | 7 | 서빙 v2 | 피드만 | 그렇다(v3c) |
 | 8 | 노출 수집 v4 | 피드와 노출 | 아니다 |
 | 9 | 서빙 v3(풀 켬) | 피드만 | 그렇다(v4) |
-| 10 | 서빙 v3(풀 끔) | 피드만 | 그렇다. `switch <이미지> --no-pool` 로 다시 띄우고 `reset` 한 뒤 서빙 대역을 다시 쓴다. 풀 켬이 서빙 대역을 다 써서다 |
+| 10 | 서빙 v3(풀 끔) | 피드만 | 그렇다. `switch <이미지> --no-pool` 로 다시 띄우고 `reset` 하지 않는다. 풀 끔 대역(5장)을 쓰고 회차 이름에 `-nopool` 을 붙여 풀 켬의 결과 행을 덮어쓰지 않는다 |
 
 커밋마다 진단 회차를 하나 돌린다(#1088). 트레이싱을 붙이고 프로파일링을 `both` 로 함께 붙인 회차다. 결과에 적지 않는다.
 
@@ -179,7 +179,15 @@ AWS_PROFILE=<프로필> loadtest/adserving/run.sh run v1-run1-tracing-profile 30
 AWS_PROFILE=<프로필> loadtest/adserving/run.sh switch <이미지>
 ```
 
-- 피드만 보낸 회차의 경고 로그는 `서빙_부하_시험_결과.md` 에 적힌다.
+- 피드만 보낸 회차의 경고 로그는 `서빙_부하_시험_결과.md` 에 적힌다. `RESULT_DOC` 를 따로 주면 그 문서에 적는다.
+- 서빙 v1(`e8825ca8`)과 v2(`e229c45a`)는 피드만 보내는 시나리오가 생기기 전의 커밋이다. 시나리오는 떠 있는 앱의 커밋에서 받으므로 `LOADTEST_REF` 로 #1127 뒤의 ref 를 준다. 주지 않으면 `run` 이 시나리오가 없다며 멈춘다.
+
+```bash
+# 서빙 v3 의 풀 끔. 같은 커밋을 풀을 끄고 다시 띄워 풀 끔 대역으로 잰다
+AWS_PROFILE=<프로필> loadtest/adserving/run.sh switch <이미지> --no-pool
+AWS_PROFILE=<프로필> loadtest/adserving/run.sh run serving-v3-nopool-warmup 30110001 100 1m --scenario feed
+AWS_PROFILE=<프로필> loadtest/adserving/run.sh run serving-v3-nopool-run1 30080001 100 5m --scenario feed
+```
 - 생성기는 그날 배치 기록을 지우므로 시험하는 날에 넣는다. 앱이 판단하는 영업일(Asia/Seoul)과 같아야 한다.
 - 행 수를 회차 직후에 세면 아직 쓰이지 않은 행이 빠진다. 노출 수집 v3 는 응답 뒤 최대 200ms 에 저장하고 v2 부터는 릴레이가 1초마다 정산에 넘긴다.
 - **회차가 끝나면 경고 로그 건수가 결과 문서에 적히고 커밋이 하나 생긴다.** `run` 이 그 회차 구간의 `ADSERVING_` 경고와 오류를 이벤트별로 세어 `노출_수집_부하_시험_결과.md` 의 `경고 로그` 절 표에 적는다. 푸시는 하지 않는다. 지금 브랜치에 커밋하므로 시험용 브랜치에서 돌린다. develop 에서 돌리면 develop 에 커밋이 생긴다.

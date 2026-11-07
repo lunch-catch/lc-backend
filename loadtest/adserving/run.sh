@@ -26,6 +26,8 @@ set -euo pipefail
 LOCAL=""
 [ "${1:-}" = --local ] && { LOCAL=1; shift; }
 DOMAIN_EVENT_PREFIX=ADSERVING_
+# 따로 준 결과 문서는 시나리오가 바꾸지 않는다
+RESULT_DOC_GIVEN="${RESULT_DOC:-}"
 RESULT_DOC="${RESULT_DOC:-docs/design/adserving/loadtest/노출_수집_부하_시험_결과.md}"
 SERVING_RESULT_DOC="docs/design/adserving/loadtest/서빙_부하_시험_결과.md"
 # 공통 지표 뒤에 묻는 광고 서빙의 지표다. 꼴은 loadtest/lib/common.sh 가 정한다
@@ -89,7 +91,7 @@ case "${LOCAL:+local-}${1:-}" in
     local_switch "$label" "$nopool"
     ;;
   seed|local-seed)
-    members="${2:-80000}"
+    members="${2:-120000}"
     seed
     ;;
   switch)
@@ -152,7 +154,7 @@ curl -fs localhost:8081/actuator/health/readiness" &
     ;;
   reset)
     # 버전 사이에 앞 버전이 쌓은 것을 지운다(부하 시험 문서 5장). 시드가 시험 데이터와 그날 배치 기록을 지우고 다시 넣는다
-    members="${2:-80000}"
+    members="${2:-120000}"
     remote "$(instance app)" 300 "set -euo pipefail
 CACHE=\$(docker inspect $PROJECT --format '{{range .Config.Env}}{{println .}}{{end}}' | grep '^VALKEY_HOST=' | cut -d= -f2-)
 docker run --rm valkey/valkey:9.0-alpine valkey-cli -h \"\$CACHE\" FLUSHALL
@@ -164,9 +166,12 @@ docker run --rm valkey/valkey:9.0-alpine valkey-cli -h \"\$CACHE\" DBSIZE"
   loadtest/adserving/prepare.js 2>&1 | grep -E 'level=' || true"
     ;;
   run|local-run)
-    name="${2:?회차 이름을 준다}"; base="${3:?회원 시작 번호를 준다}"; rate="${4:-100}"; hold="${5:-5m}"
+    name="${2:?회차 이름을 준다}"; base="${3:?회원 시작 번호를 준다}"; rate=100; hold=5m
     prof=""; scenario=feed_impression
-    shift $(( $# < 5 ? $# : 5 ))
+    shift 3
+    # 초당 피드와 유지 시간은 생략할 수 있어 -- 로 시작하는 선택지가 나오기 전까지만 위치 인자로 읽는다
+    [ $# -eq 0 ] || [ "${1#--}" != "$1" ] || { rate="$1"; shift; }
+    [ $# -eq 0 ] || [ "${1#--}" != "$1" ] || { hold="$1"; shift; }
     while [ $# -gt 0 ]; do
       case "$1" in
         --profile) prof="${2:?--profile 뒤에 cpu, wall, both 가운데 하나를 준다}"; shift 2 ;;
@@ -175,7 +180,7 @@ docker run --rm valkey/valkey:9.0-alpine valkey-cli -h \"\$CACHE\" DBSIZE"
       esac
     done
     case "$scenario" in
-      feed) RESULT_DOC="$SERVING_RESULT_DOC" ;;
+      feed) [ -n "$RESULT_DOC_GIVEN" ] || RESULT_DOC="$SERVING_RESULT_DOC" ;;
       feed_impression) ;;
       *) die "시나리오는 feed 나 feed_impression 이다" ;;
     esac
@@ -192,6 +197,8 @@ docker run --rm valkey/valkey:9.0-alpine valkey-cli -h \"\$CACHE\" DBSIZE"
     # 경고 로그를 셀 구간이다. k6 가 중간에 멈추거나 원격 명령이 실패해도 그때까지를 센다
     start=$(now_ms); rc=0
     ( loadgen 1800 "ulimit -n 250000 2> /dev/null || true
+# 옛 커밋에는 피드만 보내는 시나리오가 없다. 없으면 피드를 보내지 않고 성공처럼 끝나므로 여기서 멈춘다
+[ -f loadtest/adserving/$scenario.js ] || { echo \"loadtest/adserving/$scenario.js 가 이 ref 에 없다. LOADTEST_REF 로 #1127 뒤의 ref 를 준다\" >&2; exit 2; }
 start=\$(ms)
 k6 run -q -o experimental-prometheus-rw --tag testid=adserving-$name \\
   -e BASE_URL=\"\$BASE_URL\" -e JWT_SECRET=\"\$JWT\" -e FEED_RATE=$rate -e RAMP_UP_SECONDS=60 -e DURATION=$hold \\
@@ -207,7 +214,8 @@ grep -E '✓|✗|↳|impression_results|http_reqs|http_req_duration|http_req_fai
 # 원격 쓰기 같은 k6 의 오류가 묻히지 않게 따로 보인다. 요약을 밀어내지 않게 마지막 몇 줄만 본다(lc-infra#60)
 echo \"errors\"
 grep 'level=error' \$OUT/k6-$name.log | tail -5 || true" ) || rc=$?
-    record_warnings "$name" "$start" "$(now_ms)"
+    # 시나리오가 없어 k6 를 띄우지 않은 회차(2)는 적을 것이 없다
+    [ "$rc" -eq 2 ] || record_warnings "$name" "$start" "$(now_ms)"
     wait
     exit "$rc"
     ;;
