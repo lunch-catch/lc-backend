@@ -103,7 +103,7 @@ loadtest/adserving/run.sh run v1-run1-profile 30030001 100 5m --profile wall
 | 모드 | 재는 것 | 간격 |
 |---|---|---|
 | `cpu` | 계산에 쓴 시간이다. 컨테이너 안에서는 `-e cpu` 가 막혀 `itimer` 로 뜬다 | 10ms. async-profiler 의 기본값이다 |
-| `wall` | 기다림까지 포함한 경과 시간이다. p99 를 줄이려면 이것을 먼저 본다 | 50ms. wall 모드의 기본값이다 |
+| `wall` | 대기까지 포함한 경과 시간이다. p99 를 줄이려면 이것을 먼저 본다 | 50ms. wall 모드의 기본값이다 |
 
 **그라파나에서 보는 법:** Drilldown -> Profiles 에서 서비스 `lunchcatch` 를 고르고, 프로파일 종류(`process_cpu` 나 `wall`)와 `run` 라벨로 그 회차를 고른다. 10초씩 끊어 보내 대시보드와 함께 10초 남짓 늦게 보인다. Split 과 Single 로 비교와 단독을, Top Table 과 Flame Graph 로 표와 그래프를 바꾼다.
 
