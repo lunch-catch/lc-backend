@@ -221,17 +221,24 @@ public class ImpressionWriteBuffer implements SmartLifecycle {
         return batch;
     }
 
-    // 다시 쓰기까지 묶음 하나를 한 문맥으로 둔다. 같은 묶음의 실패와 성공 로그가 한 traceId 로 묶인다
+    /*
+     * 다시 쓰기까지 묶음 하나를 한 문맥으로 둔다. 같은 묶음의 실패와 성공 로그가 한 traceId 로 묶인다.
+     * 예상 밖의 예외도 문맥 안에서 남긴다. 바깥의 runWorker 로 넘기면 문맥이 닫힌 뒤라 그 로그에 traceId 가 없다.
+     */
     private void writeUntilDone(List<QueuedImpression> batch) throws InterruptedException {
         try (LogContext.Scope ignored = LogContext.open(WORKER_NAME)) {
-            int attempt = 0;
-            while (!write(batch)) {
-                if (!running || attempt >= MAX_ATTEMPTS) {
-                    meterRegistry.counter(LOST_METRIC).increment(batch.size());
-                    return;
+            try {
+                int attempt = 0;
+                while (!write(batch)) {
+                    if (!running || attempt >= MAX_ATTEMPTS) {
+                        meterRegistry.counter(LOST_METRIC).increment(batch.size());
+                        return;
+                    }
+                    attempt++;
+                    pause.sleep(backoff(attempt, ThreadLocalRandom.current().nextDouble()).toMillis());
                 }
-                attempt++;
-                pause.sleep(backoff(attempt, ThreadLocalRandom.current().nextDouble()).toMillis());
+            } catch (RuntimeException e) {
+                log.error("event=ADSERVING_IMPRESSION_WORKER_FAILED fallback=CONTINUE", e);
             }
         }
     }

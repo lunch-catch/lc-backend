@@ -13,6 +13,9 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import com.lunchcatch.adserving.contract.ImpressionServedEvent;
 import com.lunchcatch.adserving.engine.SlotLabels;
 import com.lunchcatch.adserving.feed.repository.ImpressionCountRepository;
@@ -36,6 +39,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.dao.QueryTimeoutException;
@@ -277,6 +281,31 @@ class ImpressionWriteBufferTest {
             buffer.offer(valid(2, false));
 
             waitUntil(() -> mockingDetailsCalls() == 2);
+        }
+
+        @Test
+        void 커밋_뒤_예상_밖_예외의_로그에도_묶음의_traceId와_워커_이름이_붙는다() throws InterruptedException {
+            Logger logger = (Logger) LoggerFactory.getLogger(ImpressionWriteBuffer.class);
+            ListAppender<ILoggingEvent> appender = new ListAppender<>();
+            appender.start();
+            logger.addAppender(appender);
+            try {
+                insertAll();
+                doThrow(new IllegalStateException("직렬화 실패")).when(counts).increment(any(), any());
+                buffer.start();
+                buffer.offer(valid(1, false));
+
+                waitUntil(() -> appender.list.stream()
+                        .anyMatch(e -> e.getFormattedMessage().startsWith("event=ADSERVING_IMPRESSION_WORKER_FAILED")));
+
+                ILoggingEvent failed = appender.list.stream()
+                        .filter(e -> e.getFormattedMessage().startsWith("event=ADSERVING_IMPRESSION_WORKER_FAILED"))
+                        .findFirst().orElseThrow();
+                assertThat(failed.getMDCPropertyMap().get(LogContext.TRACE_ID)).isNotBlank();
+                assertThat(failed.getMDCPropertyMap().get(LogContext.JOB)).isEqualTo("impression-writer");
+            } finally {
+                logger.detachAppender(appender);
+            }
         }
 
         @Test
