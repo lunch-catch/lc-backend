@@ -72,7 +72,7 @@
 로거 레벨을 런타임에 바꾸는 수단(`LOG-5-07`)은 액추에이터의 `loggers` 엔드포인트다. 액추에이터는
 `management.server.port=8081` 로 분리되어 있다.
 
-로그의 보존 기간과 조회 권한(`LOG-8-10`)은 [qa-observability-guideline.md](../software-quality/qa-observability-guideline.md) 의 `OBS-3-06` 이 정한다.
+로그의 보존 기간과 조회 권한(`LOG-8-10`)은 아직 정하지 않았다.
 
 ## 5. 바디 마스킹
 

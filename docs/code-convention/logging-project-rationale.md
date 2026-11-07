@@ -62,9 +62,9 @@
 유지할지는 개인정보 노출 위험과 진단 필요성을 함께 검토해 정한다.
 
 form-urlencoded 바디를 따로 잡는 이유는 JSON 패턴이 `password=1234&token=…` 모양에 걸리지 않기
-때문이다(OBS-3-04, SEC-4-02). 바디를 남기는 Content-Type 을 텍스트 계열로 제한한 이유는 이미지
+때문이다. 바디를 남기는 Content-Type 을 텍스트 계열로 제한한 이유는 이미지
 업로드 같은 바이너리를 UTF-8 로 억지로 디코딩해 깨진 문자를 남기고, 남기지 않는 정상 응답에서도
-매번 캐싱하는 낭비를 막기 위해서다(OBS-3-05). 요청 바디의 캐시 한도(8192바이트)를 로그 길이 한도
+매번 캐싱하는 낭비를 막기 위해서다. 요청 바디의 캐시 한도(8192바이트)를 로그 길이 한도
 (2000자)보다 넉넉히 잡은 이유는 한글이 UTF-8 에서 글자당 최대 3바이트라서다. 바이트 한도를 글자 수와
 같게 잡으면 남기기도 전에 글자가 중간에 잘린다.
 
@@ -106,7 +106,7 @@ Micrometer Tracing 의 `management.tracing.sampling.probability` 는 `applicatio
 
 `X-Trace-Id` 와 `X-Forwarded-For` 는 클라이언트가 마음대로 보낼 수 있는 헤더다. 그래서 허용 문자와
 길이를 검사한다. 목적은 정확한 IP 형식 검사가 아니라 로그 인젝션(개행, 제어 문자)과 비정상적으로 긴
-값을 막는 것이다(SEC-3-01).
+값을 막는 것이다.
 
 형식 검사로는 위조를 막지 못한다. 로드 밸런서는 실제 접속 IP 를 `X-Forwarded-For` 의 마지막 항목에
 덧붙인다. 앞쪽 항목은 클라이언트가 보낸 값이다. 그래서 `MdcLoggingFilter`, `AdminLoginAuditFilter`,
@@ -123,7 +123,7 @@ Tomcat 의 Remote IP Valve 에 맡기는 방법도 있다. 이 Valve 는 신뢰�
    `getRemoteAddr()` 가 된다. 이 설명은 Tomcat 이 오른쪽부터 처리한다는 구현에 기대고 있어서, 공식 문서가
    보장하는 사실이 아니다.[R8]
 2. **Tomcat 방식은 저장소 밖 확인이 선행 조건이다.** 실제 프록시 대역과 첫 프록시가 전달 헤더를 지우는지가
-   확인되지 않았다(lunch-catch/lc-infra#25). 해석기는 그 확인 없이 지금 맞는 값을 낸다.
+   확인되지 않았다. 해석기는 그 확인 없이 지금 맞는 값을 낸다.
 3. **`internalProxies` 기본값은 사설 대역 전체를 프록시로 본다.**[R8] VPC 안에서 ALB 를 거쳐 들어오는
    클라이언트의 IP 는 사설이라 함께 걷혀 나가고, 남는 항목이 없으면 ALB 의 IP 가 `getRemoteAddr()` 가
    된다. 그러면 시도 횟수 제한이 그 트래픽 전체를 한 바구니로 묶는다. 해석기는 마지막 항목을 그대로 쓰므로
@@ -136,7 +136,7 @@ Tomcat 의 Remote IP Valve 에 맡기는 방법도 있다. 이 Valve 는 신뢰�
 `server.forward-headers-strategy` 와 `server.tomcat.remoteip.internal-proxies` 를 켜면서 해석기도 쓰면
 위조한 IP 가 들어온다. Valve 는 신뢰 대역에 해당하는 항목을 `X-Forwarded-For` 에서 걷어 내 `getRemoteAddr()`
 로 옮기고 남은 항목만 헤더에 다시 쓴다. 남는 것은 클라이언트가 보낸 항목이다. 그 뒤에 마지막 항목을 읽는
-해석기가 돌면 위조한 값을 클라이언트 IP 로 돌려준다. 이 조합은 #722 가 막은 구멍을 다시 연다. 지금은
+해석기가 돌면 위조한 값을 클라이언트 IP 로 돌려준다. 이 조합은 해석기로 막아 둔 IP 위조를 다시 들인다. 지금은
 `forward-headers-strategy` 를 설정하지 않아 문제가 없다.
 
 ### Tomcat 방식으로 넘어가는 조건
@@ -157,7 +157,7 @@ Tomcat 의 Remote IP Valve 에 맡기는 방법도 있다. 이 Valve 는 신뢰�
 ## 6. 외부 호출 로그가 경로만 남기는 이유
 
 카카오처럼 인가 코드와 액세스 토큰을 쿼리 문자열로 주고받는 외부 API 가 있다. URL 을 그대로 남기면
-그 값이 샌다(SEC-4-02). 바디를 남기지 않는 이유는 `WebClient` 의 바디가 Publisher 라 가로채려면 따로
+그 값이 샌다. 바디를 남기지 않는 이유는 `WebClient` 의 바디가 Publisher 라 가로채려면 따로
 감싸야 하고 복잡도가 커지기 때문이다. 이 로그의 목적은 외부 API 가 느려서 우리가 멈췄는지를 증명하는
 것이고, 상태 코드와 소요 시간이면 충분하다.
 
@@ -309,7 +309,7 @@ jjwt 의 `JwtException` 과 Spring Security 의 `JwtException` 은 메시지 내
 이 문서의 런타임 동작 주장은 아래 테스트가 현재 의존성 버전에서 확인한다. 테스트로 확인하지 못한 것은
 본문에 확인하지 않았다고 적었다. 공통 로깅 문서 3개(`logging-guideline.md`, `logging-rationale.md`,
 `logging-implementation-guide.md`)는 이 저장소의 어느 브랜치 이력에도 없어서 링크하지 않는다. 복구할지는
-#703 이 이어서 정한다.
+정하지 않았다.
 
 | 주장 | 확인하는 곳 |
 |---|---|
