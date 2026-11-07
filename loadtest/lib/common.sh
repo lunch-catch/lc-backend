@@ -326,26 +326,59 @@ record_warnings() {
 }
 
 #
-# collapsed 스택을 그라파나에서 읽히게 다듬는다. 이 서비스의 컨트롤러를 지나는 스택만 남기고, 그 위의 톰캣과 스프링 프레임을 잘라
-# 그래프가 컨트롤러에서 시작하게 한다. 프레임 이름은 패키지를 뺀 클래스 이름(FeedController.getFeed)으로 줄인다.
+# collapsed 스택을 그라파나에서 읽히게 다듬는다. 이 서비스의 코드가 일을 시작한 자리부터 남기고, 그 아래의 톰캣과 스프링,
+# 스레드 풀 프레임을 잘라 그래프가 우리 코드에서 시작하게 한다. 시작 자리는 셋이다(#1127).
+#   요청: 우리 컨트롤러
+#   @Scheduled 작업: 스프링의 ScheduledMethodRunnable 이 부른 우리 메서드(실행을 감싼 SchedulerLoggingAspect 는 건너뛴다)
+#   워커: 톰캣과 스케줄러가 아닌 스레드에서 처음 나오는 우리 프레임
+# 쉬는 스레드는 버린다. 요청이 없는 톰캣 스레드, 다음 실행을 기다리는 스케줄러, 대기열에서 다음 일을 기다리는 워커다.
+# 프레임 이름은 패키지를 뺀 클래스 이름(FeedController.getFeed)으로 줄인다. jfrconv 가 붙이는 프레임 종류 표시(_[j])도 뗀다.
 # 호출마다 되풀이되는 스프링 프록시와 AOP 프레임도 뺀다. 다듬기 전에는 컨트롤러까지 프레임이 100개 넘게 쌓여 이름이 잘렸다.
+# 람다 프레임(ServeLogBuffer$$Lambda.0x….run)도 뺀다. 이름에 주소가 들어 JVM 마다 달라져 같은 워커가 다른 이름으로 갈린다.
+# 패키지는 두 철자를 모두 받는다. #1060 전의 커밋은 com.launchcatch 다.
 #
 IFS= read -r -d '' TRIM_PY <<'PY' || true
 import re, sys
 from collections import Counter
-# async-profiler 의 --simple 로 패키지를 빼면 netty 와 JDK 의 *Controller 도 걸려 패키지로 고른 뒤에 줄인다
-CONTROLLER = re.compile(r'^com[/.]lunchcatch[/.].*Controller\.')
+OURS = re.compile(r'^com[/.]la?unchcatch[/.]')
+CONTROLLER = re.compile(r'^com[/.]la?unchcatch[/.].*Controller\.')
+SCHEDULED = re.compile(r'ScheduledMethodRunnable\.')
+ASPECT = re.compile(r'SchedulerLoggingAspect\.')
+REQUEST_THREAD = re.compile(r'^org[/.]apache[/.](catalina|tomcat|coyote)[/.]')
+IDLE = re.compile(r'BlockingQueue\.(poll|take)$|DelayedWorkQueue\.(poll|take)$')
+KIND = re.compile(r'_\[[^\]]*\]$')
 PROXY = re.compile(r'\$\$SpringCGLIB\$\$|^\$Proxy\d*\.|^jdk\.proxy|^CglibAopProxy|^ReflectiveMethodInvocation\.'
                    r'|^MethodProxy\.|^AopUtils\.|^Invokers\$Holder\.|^DirectMethodHandle\$Holder\.|^LambdaForm\$'
-                   r'|^DirectMethodHandleAccessor\.|^Method\.invoke$|^ExposeInvocationInterceptor\.')
+                   r'|^DirectMethodHandleAccessor\.|^Method\.invoke$|^ExposeInvocationInterceptor\.'
+                   r'|\$\$Lambda[./$]')
+
+def short(frame):
+    name = frame.rsplit('/', 1)[-1]
+    if '/' not in frame and name.count('.') > 1:
+        name = '.'.join(name.split('.')[-2:])
+    return name
+
+def start(frames):
+    top = next((i for i, f in enumerate(frames) if CONTROLLER.search(f)), None)
+    if top is not None:
+        return top
+    if any(REQUEST_THREAD.search(f) for f in frames):
+        return None
+    runner = next((i for i, f in enumerate(frames) if SCHEDULED.search(f)), None)
+    if runner is not None:
+        return next((i for i in range(runner + 1, len(frames))
+                     if OURS.search(frames[i]) and not ASPECT.search(frames[i])
+                     and not PROXY.search(short(frames[i]))), None)
+    return next((i for i, f in enumerate(frames) if OURS.search(f) and not PROXY.search(short(f))), None)
+
 out = Counter()
 for line in sys.stdin:
     stack, _, n = line.rstrip('\n').rpartition(' ')
-    frames = stack.split(';')
-    top = next((i for i, f in enumerate(frames) if CONTROLLER.search(f)), None)
-    if top is None:
+    frames = [KIND.sub('', f) for f in stack.split(';')]
+    top = start(frames)
+    if top is None or any(IDLE.search(short(f)) for f in frames[top:]):
         continue
-    kept = [f for f in (x.rsplit('/', 1)[-1] for x in frames[top:]) if not PROXY.search(f)]
+    kept = [f for f in (short(x) for x in frames[top:]) if not PROXY.search(f)]
     out[';'.join(kept)] += int(n)
 for stack, n in out.items():
     print(stack, n)
@@ -355,43 +388,65 @@ PY
 # 앱 서버 하나에서 돈다. 인자는 회차 이름, 초, 모드, Pyroscope 주소, 앱 컨테이너, TRIM_PY 파일, async-profiler 판이다.
 # 앱을 다시 띄우지 않고 async-profiler 를 컨테이너에 넣어 붙인다. 10초씩 떠서 다듬은 뒤 Pyroscope 로 보낸다.
 # 컨테이너 안에서는 -e cpu 가 막혀(perf_event_paranoid=2) CPU 는 itimer 로 뜬다. 간격은 async-profiler 의 기본값이다.
-# --include 는 JFR 출력에 먹지 않아 collapsed 로 뜬다. 필터의 * 는 앞이나 끝에만 쓸 수 있어 패키지는 TRIM_PY 가 고른다.
+# 고르는 일은 모두 TRIM_PY 가 한다. 요청, @Scheduled 작업, 워커의 스택을 함께 받아야 해서 프로파일러에서 거르지 않는다.
+#
+# both 는 cpu 와 wall 을 한 기록(JFR)으로 함께 뜨고 jfrconv 로 둘로 나눠 보낸다(#1127). 같은 시간, 같은 부하의 둘을 견줘
+# 계산과 대기를 가른다. jfrconv 는 컨테이너 안의 자바로 돌아 JDK_JAVA_OPTIONS 를 읽는다. 트레이싱을 켠 동안
+# 에이전트까지 붙어 느리게 뜨고 로그가 섞이므로 비우고 돌린다.
 #
 IFS= read -r -d '' PROFILE_SH <<'SH' || true
 set -euo pipefail
 run="$1"; secs="$2"; mode="$3"; pyro="$4"; app="$5"; trim="$6"; ver="$7"
-case "$mode" in
-  cpu) ev=itimer; iv=10ms; rate=100 ;;
-  wall) ev=wall; iv=50ms; rate=20 ;;
-esac
+ap=/tmp/async-profiler/bin
 work=$(mktemp -d)
-if ! docker exec "$app" test -x /tmp/async-profiler/bin/asprof; then
+if ! docker exec "$app" test -x "$ap/asprof"; then
   case "$(docker exec "$app" uname -m)" in aarch64) arch=arm64 ;; *) arch=x64 ;; esac
   curl -fsSL "https://github.com/async-profiler/async-profiler/releases/download/v$ver/async-profiler-$ver-linux-$arch.tar.gz" | tar -xz -C "$work"
   docker cp "$work/async-profiler-$ver-linux-$arch" "$app:/tmp/async-profiler" > /dev/null
 fi
+# 한 종류의 collapsed 를 다듬어 보낸다. 인자는 종류(cpu, wall), 파일, 시작과 끝 시각이다
+send() {
+  local kind="$1" raw="$2" from="$3" until="$4" rate
+  case "$kind" in cpu) rate=100 ;; wall) rate=20 ;; esac
+  python3 "$trim" < "$raw" > "$work/folded-$kind.txt"
+  # 회차가 끝난 뒤의 조각처럼 우리 코드의 스택이 없으면 보내지 않는다
+  [ -s "$work/folded-$kind.txt" ] || return 0
+  curl -fsS -X POST --data-binary @"$work/folded-$kind.txt" \
+    "$pyro/ingest?name=lunchcatch.$kind%7Brun%3D$run%7D&from=$from&until=$until&format=folded&sampleRate=$rate&spyName=javaspy&units=samples&aggregationType=sum"
+  echo "profile $kind $from $(wc -l < "$work/folded-$kind.txt") stacks"
+}
 stop=$(( $(date +%s) + secs ))
 while [ "$(date +%s)" -lt "$stop" ]; do
   from=$(date +%s)
-  out=$(docker exec "$app" /tmp/async-profiler/bin/asprof -d 10 -e "$ev" -i "$iv" \
-    --include '*Controller.*' -o collapsed -f /tmp/lt-profile.txt 1 2>&1) || { echo "$out" >&2; exit 1; }
-  docker cp "$app:/tmp/lt-profile.txt" "$work/raw.txt" > /dev/null
-  python3 "$trim" < "$work/raw.txt" > "$work/folded.txt"
-  # 회차가 끝난 뒤의 조각처럼 요청이 없으면 보내지 않는다
-  [ -s "$work/folded.txt" ] || continue
-  curl -fsS -X POST --data-binary @"$work/folded.txt" \
-    "$pyro/ingest?name=lunchcatch.$mode%7Brun%3D$run%7D&from=$from&until=$(date +%s)&format=folded&sampleRate=$rate&spyName=javaspy&units=samples&aggregationType=sum"
-  echo "profile $mode $from $(wc -l < "$work/folded.txt") stacks"
+  case "$mode" in
+    cpu|wall)
+      case "$mode" in cpu) ev=itimer; iv=10ms ;; wall) ev=wall; iv=50ms ;; esac
+      out=$(docker exec "$app" "$ap/asprof" -d 10 -e "$ev" -i "$iv" -o collapsed -f /tmp/lt-profile.txt 1 2>&1) \
+        || { echo "$out" >&2; exit 1; }
+      docker cp "$app:/tmp/lt-profile.txt" "$work/raw.txt" > /dev/null
+      send "$mode" "$work/raw.txt" "$from" "$(date +%s)"
+      ;;
+    both)
+      out=$(docker exec "$app" "$ap/asprof" -d 10 -e itimer -i 10ms --wall 50ms -o jfr -f /tmp/lt-profile.jfr 1 2>&1) \
+        || { echo "$out" >&2; exit 1; }
+      until=$(date +%s)
+      for kind in cpu wall; do
+        docker exec "$app" env -u JDK_JAVA_OPTIONS "$ap/jfrconv" "--$kind" -o collapsed /tmp/lt-profile.jfr "/tmp/lt-profile-$kind.txt" > /dev/null
+        docker cp "$app:/tmp/lt-profile-$kind.txt" "$work/raw-$kind.txt" > /dev/null
+        send "$kind" "$work/raw-$kind.txt" "$from" "$until"
+      done
+      ;;
+  esac
 done
 SH
 
 #
-# 앱 서버마다 프로파일링을 붙여 그 시간 동안 Pyroscope 로 보낸다. 모드는 cpu 나 wall 이다.
+# 앱 서버마다 프로파일링을 붙여 그 시간 동안 Pyroscope 로 보낸다. 모드는 cpu, wall, both 다.
 # 시험 환경은 앱 서버 모두에 SSM 으로 함께 보내고 모니터링 서버의 Pyroscope(lunch-catch/lc-infra#71)로 보낸다.
 #
 profile() {
   local name="${1:?회차 이름을 준다}" secs="${2:-60}" mode="${3:-wall}" pyro id trim pids="" pid rc=0
-  case "$mode" in cpu|wall) ;; *) die "모드는 cpu 나 wall 이다" ;; esac
+  case "$mode" in cpu|wall|both) ;; *) die "모드는 cpu, wall, both 다" ;; esac
   if [ -n "${LOCAL:-}" ]; then
     trim=$(mktemp)
     printf '%s\n' "$TRIM_PY" > "$trim"
@@ -421,21 +476,24 @@ bash /tmp/lt-profile.sh $name $secs $mode $pyro $PROJECT /tmp/lt-trim.py $ASPROF
 }
 
 #
-# 앱에 OpenTelemetry 에이전트를 붙이는 compose 덮어쓰기 파일을 낸다(#1099). 인자는 run 라벨과 에이전트 jar 경로다.
+# 앱의 compose 덮어쓰기 파일을 낸다. 인자는 트레이싱의 run 라벨, 에이전트 jar 경로, 연결 풀을 끌지(1)다.
 # 시험 환경과 로컬 모두 앱 서비스가 app 이고 같은 compose 에 alloy 가 있어 같은 파일을 쓴다.
+#
+# 라벨을 주면 OpenTelemetry 에이전트를 붙인다(#1099).
 # 운영 compose 가 JAVA_TOOL_OPTIONS 에 힙과 DNS 설정을 넣어 에이전트는 JDK_JAVA_OPTIONS 로 준다.
-# 남길 추적은 Alloy 의 테일 샘플링이 고른다(lunch-catch/lc-infra#72). 지표와 로그는 지금 길을 그대로 쓴다.
+# 남길 트레이스는 Alloy 의 테일 샘플링이 고른다(lunch-catch/lc-infra#72). 지표와 로그는 지금 길을 그대로 쓴다.
 # 스프링 부트의 Lettuce 관측이 에이전트의 Lettuce 계측을 덮어 Valkey 명령이 스팬이 되지 않아 그 자동 설정을 뺀다.
 # 그동안은 lettuce_seconds 지표가 없어 04 대시보드의 Valkey 명령 지연 패널이 빈다.
 #
-tracing_override() {
-  local label="$1" jar="$2"
-  cat <<EOF
-services:
-  app:
-    volumes:
-      - $jar:/opt/otel.jar:ro
-    environment:
+# 풀을 끄면 Valkey 연결 풀이 없던 때와 같이 돈다(#1127). 같은 커밋을 풀 켬과 끔으로 재 풀만의 효과를 가른다.
+#
+app_override() {
+  local label="$1" jar="$2" nopool="$3"
+  printf 'services:\n  app:\n'
+  [ -z "$label" ] || printf '    volumes:\n      - %s:/opt/otel.jar:ro\n' "$jar"
+  printf '    environment:\n'
+  if [ -n "$label" ]; then
+    cat <<EOF
       JDK_JAVA_OPTIONS: "-javaagent:/opt/otel.jar"
       OTEL_SERVICE_NAME: lunchcatch
       OTEL_RESOURCE_ATTRIBUTES: "run=$label"
@@ -446,14 +504,16 @@ services:
       OTEL_LOGS_EXPORTER: none
       SPRING_AUTOCONFIGURE_EXCLUDE: org.springframework.boot.data.redis.autoconfigure.observation.LettuceObservationAutoConfiguration
 EOF
+  fi
+  [ -z "$nopool" ] || printf '      SPRING_DATA_REDIS_LETTUCE_POOL_ENABLED: "false"\n'
 }
 
 #
-# 로컬 앱을 다시 띄운다. 이름을 주면 에이전트를 붙이고 주지 않으면 뗀다.
+# 로컬 앱을 다시 띄운다. 이름을 주면 에이전트를 붙이고 주지 않으면 뗀다. 둘째 인자가 1 이면 연결 풀을 끈다.
 # 이미지는 다시 만들지 않는다. 앱 코드를 고쳤으면 로컬 구성에서 docker compose up -d --build app 을 먼저 돌린다.
 #
 local_switch() {
-  local label="${1:-}" dir="$ROOT/build/otel" over="" i
+  local label="${1:-}" nopool="${2:-}" dir="$ROOT/build/otel" over="" i
   if [ -n "$label" ]; then
     mkdir -p "$dir"
     # 받다 끊긴 jar 가 남아 다음에 그대로 쓰이지 않게 다 받은 뒤에만 제 이름으로 옮긴다
@@ -461,8 +521,11 @@ local_switch() {
       curl -fsSL "$OTEL_JAR_URL" -o "$dir/otel-$OTEL_VERSION.jar.part"
       mv "$dir/otel-$OTEL_VERSION.jar.part" "$dir/otel-$OTEL_VERSION.jar"
     fi
+  fi
+  if [ -n "$label$nopool" ]; then
+    mkdir -p "$dir"
     over="$dir/compose.override.yaml"
-    tracing_override "$label" "$dir/otel-$OTEL_VERSION.jar" > "$over"
+    app_override "$label" "$dir/otel-$OTEL_VERSION.jar" "$nopool" > "$over"
   fi
   LC_BACKEND_DIR="$ROOT" docker compose -f "$LC_INFRA_DIR/observability/local/compose.yaml" ${over:+-f "$over"} \
     up -d --no-build app
@@ -473,5 +536,6 @@ local_switch() {
   docker exec "$LOCAL_PROJECT-app-1" curl -fs localhost:8081/actuator/health/readiness
   echo
   docker exec "$LOCAL_PROJECT-app-1" sh -c 'echo "JDK_JAVA_OPTIONS=${JDK_JAVA_OPTIONS:-}"'
+  docker exec "$LOCAL_PROJECT-app-1" sh -c 'if [ -n "${SPRING_DATA_REDIS_LETTUCE_POOL_ENABLED:-}" ]; then echo "SPRING_DATA_REDIS_LETTUCE_POOL_ENABLED=$SPRING_DATA_REDIS_LETTUCE_POOL_ENABLED"; else echo "pool on"; fi'
 }
 
