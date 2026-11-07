@@ -28,7 +28,7 @@
 | 기술 로그 | `HttpBodyLoggingFilter` | 요청마다 접근 로그를 남기고 4xx, 5xx 는 가린 바디를 함께 남긴다 | `HTTP_ACCESS` |
 | 기술 로그 | `ExternalApiLoggingExchangeFilter` | `WebClientConfig` 의 `WebClientCustomizer` 가 모든 `WebClient.Builder` 에 붙인다. 쿼리 문자열을 뺀 경로만 남긴다 | `EXTERNAL_API_CALL`, `EXTERNAL_API_CALL_FAILED` |
 | 기술 로그 | `TraceIdExchangeFilter` | 나가는 호출에 `X-Trace-Id` 헤더를 싣는다. 지금은 받는 쪽이 이 헤더를 쓰지 않아 효과가 없다 | 없음 |
-| 기술 로그 | `SchedulerLoggingAspect` | `@Scheduled` 메서드마다 시작, 끝, 실패를 남긴다. 마지막 성공 시각을 게이지 `batch.job.last.success.timestamp`(태그 `scheduler`)로 내보낸다. 실행의 MDC 는 스케줄러의 `TaskDecorator` 가 넣고(실행의 시작점), 애스펙트는 `SCHEDULER_FAILED` 에 `exceptionType` 만 남기고 다시 던진다. 스택은 Spring 의 기본 오류 처리기가 한 번 남기고, 알림은 `SCHEDULER_FAILED` 에 건다 | `SCHEDULER_START`, `SCHEDULER_END`, `SCHEDULER_FAILED` |
+| 기술 로그 | `SchedulerLoggingAspect` | `@Scheduled` 메서드마다 시작, 끝, 실패를 남긴다. 마지막 성공 시각을 게이지 `batch.job.last.success.timestamp`(태그 `scheduler`)로, 실행마다 걸린 시간을 타이머 `batch.job.duration`(태그 `scheduler`, `outcome`. 히스토그램)으로 내보낸다. 실행마다 `LogContext.open` 으로 새 `traceId` 와 `job`(작업 이름)을 MDC 에 넣고 끝나면 되돌린다. 실패하면 애스펙트가 `SCHEDULER_FAILED` 에 스택까지 남기고 다시 던진다. 스케줄러의 오류 처리기(`SchedulingConfig.ALREADY_LOGGED`)는 같은 실패를 다시 남기지 않는다. 알림은 `SCHEDULER_FAILED` 에 건다 | `SCHEDULER_START`, `SCHEDULER_END`, `SCHEDULER_FAILED` |
 | 기술 로그 | `AdminLoginService`·`AdminLoginAuditFilter`(`admin`) | 관리자 로그인 감사의 기록 대상과 처리 방식은 [관리자 API 설계의 로그인 절](../design/admin/admin-api-design.md#로그인)을 따른다 | `ADMIN_LOGIN_SUCCESS`, `ADMIN_LOGIN_FAILED`, `ADMIN_LOGIN_AUDIT_FAILED` |
 | 이벤트 로그 | `GlobalExceptionHandler`(`global/exception`), `AuthExceptionHandler`(`auth/exception`) | 전역 예외 핸들러다 | 이벤트명 없음 |
 
@@ -43,6 +43,8 @@
 | `PiiMasker` | 개인정보를 가리는 유일한 유틸이다. `maskEmail`, `maskPhone`, `maskName`, `maskProviderId`(외부 계정 식별자), `maskGeneric`, `redact`(완전히 가림) | `LOG-7-03` |
 | `RedisFailureClassifier.causeLabel(e)` | Redis 실패를 `TIMEOUT`, `OTHER` 로 분류한다. 값은 `reason` 키에 넣는다 | `LOG-4-01` |
 | `FailureLogDetails.from(e)` | 예외 메시지 없이 원인 타입, HTTP 상태, SQLState, 발생 위치를 뽑는다 | `LOG-4-04` |
+| `LogContext.open(job)` | 이어받을 문맥이 없는 실행(스케줄 작업 한 번, 묶음 워커의 묶음 하나)이 새 `traceId` 와 `job` 을 MDC 에 넣는다. try-with-resources 로 닫으면 열기 전의 MDC 로 돌아간다 | 없음 |
+| `LogContext.wrap(...)` | 요청 스레드가 실행기에 일을 넘길 때 넘기는 순간의 MDC 를 일에 싣는다. `Runnable`, `ExecutorService`, `ScheduledExecutorService` 를 감싸고 가상 스레드 실행기에도 그대로 쓴다. 실행기를 만드는 곳에서 감싼다 | 없음 |
 | `ClientIpResolver`(`global/http`) | 클라이언트 IP 를 정한다. `X-Forwarded-For` 의 마지막 항목을 쓰고 없거나 형식이 틀리면 `getRemoteAddr()` 로 돌아간다. `MdcLoggingFilter`, `AdminLoginAuditFilter`, `AuthRateLimitFilter` 가 같은 값을 쓴다. `getRemoteAddr()` 는 이 클래스 밖에서 부르지 않고 `ArchitectureTest` 가 막는다. `X-Forwarded-For` 를 읽는 코드는 리뷰에서 막는다. `server.forward-headers-strategy` 와 `server.tomcat.remoteip.internal-proxies` 는 함께 켜지 않는다. 이유는 [근거 문서 5장](./logging-project-rationale.md#5-clientip-를-검증하는-방식)에 있다 | `LOG-8-05` |
 | `LogCapture`(테스트) | 대상 클래스의 로거에 붙어 남긴 로그를 모은다. 로그 테스트에 쓴다 | `LOG-8-09` |
 | `AuditLogWriter`(`ops/contract`) | 관리자 행위와 돈이 오간 처리의 감사 기록을 DB 에 쓴다. 관리자 로그아웃, 계정 등록, 토큰 재발급, 포인트 정책, 환불, 포인트 조정, 결제 재조회, 재집계가 이미 쓴다 | `LOG-8-11` |
@@ -63,16 +65,24 @@
 |---|---|---|
 | `local` (기본 프로필) | 출력 | 콘솔 텍스트. 패턴에 MDC 값과 `%F:%line` 을 넣는다 |
 | `local` | 루트 레벨 | DEBUG |
-| `prod` | 인코더 | `LogstashEncoder`. MDC 키 `traceId`, `method`, `uri`, `clientIp` 를 필드로 넣고 `service=lunchcatch` 를 더한다 |
+| `prod` | 인코더 | `LogstashEncoder`. MDC 키 `traceId`, `method`, `uri`, `clientIp`, `job` 을 필드로 넣고 운영 필드를 더한다 |
 | `prod` | 스택 | `ShortenedThrowableConverter`. 예외당 30 프레임, 최대 8192자, 원인 먼저, 프레임워크 패키지 일부 제외 |
 | `prod` | appender | `AsyncAppender`. `queueSize=8192`, `discardingThreshold=0`, `neverBlock=true`, `includeCallerData=false`. `maxFlushTime` 은 지정하지 않아 기본 1초다 |
-| `prod` | 운영 필드 | `service=lunchcatch` |
+| `prod` | 운영 필드 | `service=lunchcatch`, `version`(배포가 넘기는 `APP_VERSION`. 없으면 `local`) |
 | `prod` | 루트 레벨 | INFO |
 
 로거 레벨을 런타임에 바꾸는 수단(`LOG-5-07`)은 액추에이터의 `loggers` 엔드포인트다. 액추에이터는
 `management.server.port=8081` 로 분리되어 있다.
 
-로그의 보존 기간과 조회 권한(`LOG-8-10`)은 [qa-observability-guideline.md](../software-quality/qa-observability-guideline.md) 의 `OBS-3-06` 이 정한다.
+로그의 보존 기간(`LOG-8-10`)은 아래와 같다. 기간을 정하는 설정은 lc-infra 가 갖는다.
+
+| 대상 | 보존 기간 |
+|---|---|
+| 운영 로그(Loki) | 30일 |
+| 개발 서버 로그(CloudWatch) | 30일 |
+| 감사 기록(`AuditLogWriter` 가 DB 에 쓰는 것) | 최소 1년. 지우는 작업을 두지 않는다 |
+
+운영 로그는 운영 Grafana 에서 본다. OIDC 로 로그인하고 허용한 대역에서 들어온 팀원은 모두 Viewer 로 가입되어 로그를 볼 수 있다.
 
 ## 5. 바디 마스킹
 

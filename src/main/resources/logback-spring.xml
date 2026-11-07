@@ -39,7 +39,9 @@
     <!-- ================================================================
          프로덕션: JSON 구조화 로그 (ELK / Loki / CloudWatch 수집용)
          의존성: net.logstash.logback:logstash-logback-encoder:8.0
-         - MDC 필드(traceId, method, uri, clientIp)가 JSON 키로 자동 포함
+         - MDC 필드(traceId, method, uri, clientIp, job)가 JSON 키로 자동 포함
+           job 은 LogContext 가 스케줄 작업과 워커의 실행마다 넣는다
+         - version 은 배포가 넘기는 APP_VERSION 이다. 없으면 local 이다
          - trace_id 는 OpenTelemetry 에이전트를 붙였을 때만 생기는 추적 ID 다(#1099).
            traceId 는 MdcLoggingFilter 가 만든 값이라 추적과 이어지지 않는다
          - AsyncAppender + neverBlock 으로 로깅이 요청 스레드를 막지 않게 함
@@ -51,6 +53,7 @@
                 <includeMdcKeyName>method</includeMdcKeyName>
                 <includeMdcKeyName>uri</includeMdcKeyName>
                 <includeMdcKeyName>clientIp</includeMdcKeyName>
+                <includeMdcKeyName>job</includeMdcKeyName>
                 <includeMdcKeyName>trace_id</includeMdcKeyName>
                 <!-- 스택트레이스 폭주 방지: 프레임/길이 제한 + 패키지 축약 -->
                 <throwableConverter class="net.logstash.logback.stacktrace.ShortenedThrowableConverter">
@@ -63,7 +66,7 @@
                     <exclude>^org\.springframework\.web\.filter\..*</exclude>
                     <exclude>^jakarta\.servlet\..*</exclude>
                 </throwableConverter>
-                <customFields>{"service":"lunchcatch"}</customFields>
+                <customFields>{"service":"lunchcatch","version":"${APP_VERSION:-local}"}</customFields>
             </encoder>
         </appender>
 

@@ -43,7 +43,7 @@ aws autoscaling update-auto-scaling-group --auto-scaling-group-name lunchcatch-l
 
 | 데이터 | 값 |
 |---|---|
-| 회원 | 40,000명. 온보딩을 마쳤고 중심 1km 안에 산다 |
+| 회원 | 120,000명. 온보딩을 마쳤고 중심 1km 안에 산다. 노출, 서빙, 서빙의 풀 끔 회차가 4만 명씩 나눠 쓴다(5장). 2026-10-27 까지의 노출 결과(v1 ~ v3c)는 40,000명으로 쟀다 |
 | 가게와 캠페인 | 1,000개. 가게마다 진행 중 캠페인 하나, 반경 3,000m, 전 연령과 성별 |
 | 하루 예산 | 캠페인마다 1,000,000포인트. 시험 중 예약액에 닿지 않는다 |
 | 충전 | 점주마다 하루 예산의 40배 |
@@ -85,7 +85,7 @@ aws autoscaling update-auto-scaling-group --auto-scaling-group-name lunchcatch-l
 - RDS(T4g)는 Unlimited 라 CPU 크레딧이 바닥나도 느려지지 않는다. 버전 사이에 이어져도 된다.
 - ElastiCache(t4g)는 Unlimited 가 없어 CPU 크레딧이나 네트워크 버스트가 바닥나면 기준 성능으로 떨어진다. 회차마다 `metrics` 로 보고 바닥났거나 네트워크 초과가 생긴 회차는 무효로 본다.
 - DB 의 버퍼 캐시는 데워진 채로 다음 버전에 넘어간다. 버전마다 워밍업 회차가 있어 영향이 작다고 본다.
-- 환경은 띄운 지 4시간 뒤 자동으로 지워진다. 두 버전은 약 2시간이라 그 안에 끝난다. 세 버전을 이어서 잴 때는 `MEMBER_HOURS` 를 늘린다.
+- 환경은 `member-env.sh up` 에 `MEMBER_HOURS` 를 주면 그 시간 뒤 자동으로 지워지고, 주지 않으면 지워지지 않는다(lunch-catch/lc-infra#92). 주면 측정 전체(6장의 순서)보다 넉넉히 준다. 주지 않았으면 끝난 뒤 `member-env.sh down` 으로 직접 내린다.
 
 | 버전 | 이미지 |
 |---|---|
@@ -104,6 +104,8 @@ aws autoscaling update-auto-scaling-group --auto-scaling-group-name lunchcatch-l
 | 프로파일링(필요할 때) | 60초 | 5분 | 30030001 ~ 30040000 | 뺀다. 측정 3회 뒤에 돌린다 |
 | 추적(필요할 때) | 60초 | 5분 | 30030001 ~ 30040000 | 뺀다. 측정 3회 뒤에 에이전트를 붙여 돌리고 뗀다 |
 
+서빙 시험(피드만, `--scenario feed`)은 같은 표를 회원 대역만 4만 뒤로 옮겨 쓴다. 워밍업 30070001, 측정 1~3 은 30040001, 30050001, 30060001, 진단은 30070001 부터다. 같은 커밋의 노출 회차를 잰 뒤 `reset` 없이 이어 잰다. 서빙 v3 의 풀 끔 회차는 한 번 더 4만 뒤(워밍업 30110001, 측정 30080001, 30090001, 30100001)를 쓴다. 풀 켬 회차와 같은 상태(캠페인의 노출 수와 예산)에서 재 풀만의 효과를 가르려고 `reset` 하지 않는다. 그래서 시드는 회원 120,000명(30000001 ~ 30120000)을 넣는다.
+
 노출 횟수는 그날 내내 남는다. 같은 날 회차를 거듭하면서 같은 회원을 쓰면 뒤 회차일수록 카드가 줄어 회차마다 다른 대역을 쓴다.
 
 ## 6. 돌리는 순서
@@ -117,7 +119,7 @@ aws autoscaling update-auto-scaling-group --auto-scaling-group-name lunchcatch-l
 AWS_PROFILE=<프로필> ./scripts/member-env.sh up --sha <이미지>     # lc-infra 에서
 
 # 2. 데이터를 넣고 그날 00:00 묶음을 다시 돌린다
-AWS_PROFILE=<프로필> loadtest/adserving/run.sh seed 40000
+AWS_PROFILE=<프로필> loadtest/adserving/run.sh seed 120000
 AWS_PROFILE=<프로필> loadtest/adserving/run.sh prepare
 
 # 3. 워밍업과 측정 3회
@@ -147,6 +149,45 @@ AWS_PROFILE=<프로필> ./scripts/loadtest-snapshot.sh --lt --label adserving-v1
 AWS_PROFILE=<프로필> ./scripts/member-env.sh down
 ```
 
+### 측정 순서
+
+커밋이 같은 버전은 이어 잰다. `switch` 와 `reset` 은 커밋이 바뀔 때만 한다.
+
+| 순서 | 버전 | 시나리오 | 앞 버전과 같은 커밋인가 |
+|---|---|---|---|
+| 1 | 노출 수집 v1 | 피드와 노출 | 처음 |
+| 2 | 노출 수집 v2 | 피드와 노출 | 아니다 |
+| 3 | 노출 수집 v3 | 피드와 노출 | 아니다 |
+| 4 | 노출 수집 v3b | 피드와 노출 | 아니다 |
+| 5 | 서빙 v1 | 피드만 | 그렇다(v3b) |
+| 6 | 노출 수집 v3c | 피드와 노출 | 아니다 |
+| 7 | 서빙 v2 | 피드만 | 그렇다(v3c) |
+| 8 | 노출 수집 v4 | 피드와 노출 | 아니다 |
+| 9 | 서빙 v3(풀 켬) | 피드만 | 그렇다(v4) |
+| 10 | 서빙 v3(풀 끔) | 피드만 | 그렇다. `switch <이미지> --no-pool` 로 다시 띄우고 `reset` 하지 않는다. 풀 끔 대역(5장)을 쓰고 회차 이름에 `-nopool` 을 붙여 풀 켬의 결과 행을 덮어쓰지 않는다 |
+
+커밋마다 진단 회차를 하나 돌린다(#1088). 트레이싱을 붙이고 프로파일링을 `both` 로 함께 붙인 회차다. 결과에 적지 않는다.
+
+```bash
+# 서빙 시험. 같은 커밋의 노출 회차 뒤에 이어 잰다
+AWS_PROFILE=<프로필> loadtest/adserving/run.sh run serving-v1-warmup 30070001 100 1m --scenario feed
+AWS_PROFILE=<프로필> loadtest/adserving/run.sh run serving-v1-run1 30040001 100 5m --scenario feed
+
+# 진단 회차. 트레이싱을 붙여 다시 띄우고 프로파일링을 함께 붙인다
+AWS_PROFILE=<프로필> loadtest/adserving/run.sh switch <이미지> --tracing v1-tracing
+AWS_PROFILE=<프로필> loadtest/adserving/run.sh run v1-run1-tracing-profile 30030001 100 5m --profile both
+AWS_PROFILE=<프로필> loadtest/adserving/run.sh switch <이미지>
+```
+
+- 피드만 보낸 회차의 경고 로그는 `서빙_부하_시험_결과.md` 에 적힌다. `RESULT_DOC` 를 따로 주면 그 문서에 적는다.
+- 서빙 v1(`e8825ca8`)과 v2(`e229c45a`)는 피드만 보내는 시나리오가 생기기 전의 커밋이다. 시나리오는 떠 있는 앱의 커밋에서 받으므로 `LOADTEST_REF` 로 #1127 뒤의 ref 를 준다. 주지 않으면 `run` 이 시나리오가 없다며 멈춘다.
+
+```bash
+# 서빙 v3 의 풀 끔. 같은 커밋을 풀을 끄고 다시 띄워 풀 끔 대역으로 잰다
+AWS_PROFILE=<프로필> loadtest/adserving/run.sh switch <이미지> --no-pool
+AWS_PROFILE=<프로필> loadtest/adserving/run.sh run serving-v3-nopool-warmup 30110001 100 1m --scenario feed
+AWS_PROFILE=<프로필> loadtest/adserving/run.sh run serving-v3-nopool-run1 30080001 100 5m --scenario feed
+```
 - 생성기는 그날 배치 기록을 지우므로 시험하는 날에 넣는다. 앱이 판단하는 영업일(Asia/Seoul)과 같아야 한다.
 - 행 수를 회차 직후에 세면 아직 쓰이지 않은 행이 빠진다. 노출 수집 v3 는 응답 뒤 최대 200ms 에 저장하고 v2 부터는 릴레이가 1초마다 정산에 넘긴다.
 - **회차가 끝나면 경고 로그 건수가 결과 문서에 적히고 커밋이 하나 생긴다.** `run` 이 그 회차 구간의 `ADSERVING_` 경고와 오류를 이벤트별로 세어 `노출_수집_부하_시험_결과.md` 의 `경고 로그` 절 표에 적는다. 푸시는 하지 않는다. 지금 브랜치에 커밋하므로 시험용 브랜치에서 돌린다. develop 에서 돌리면 develop 에 커밋이 생긴다.
@@ -178,6 +219,6 @@ AWS_PROFILE=<프로필> ./scripts/member-env.sh down
 
 이 디렉터리가 함께 갖는다. 조건과 결과를 떨어뜨려 두면 다음 버전을 재려는 사람이 둘을 따로 찾는다. 이 문서는 결과를 담지 않는다.
 
-- 측정한 커밋에 `adserving-{쓰기}-v{버전}` 태그를 붙인다.
-- **이 시험은 쓰기 방식마다 문서 하나를 둔다.** 노출 수집은 `노출_수집_부하_시험_결과.md` 가 v1 부터 v3c 까지를 갖는다. 버전끼리 비교하는 것이 목적이라 버전들이 한 문서에 나란히 있어야 읽힌다. 다른 시험이 이 모양을 따를 이유는 없다.
-- 대시보드 PNG 는 버전마다 `impression-v{버전}/` 에 둔다.
+- 측정한 커밋에 `adserving-{시험}-v{버전}` 태그를 붙인다. `{시험}` 은 결과 문서 하나에 대응하는 시험 이름이다. 노출 수집 부하 시험은 `impression`, 서빙 시험은 `serving` 이다. 무엇을 바꿨든 그 시험에서 잰 다음 커밋이면 다음 버전이다. 이미 붙인 `adserving-impression-v1` ~ `v3c` 는 그대로 둔다.
+- **이 시험은 시험마다 문서 하나를 둔다.** 노출 수집은 `노출_수집_부하_시험_결과.md`, 서빙은 `서빙_부하_시험_결과.md` 가 갖는다. 버전끼리 비교하는 것이 목적이라 버전들이 한 문서에 나란히 있어야 읽힌다. 다른 시험이 이 모양을 따를 이유는 없다.
+- 대시보드 PNG 는 버전마다 `impression-v{버전}/`, `serving-v{버전}/` 에 둔다.

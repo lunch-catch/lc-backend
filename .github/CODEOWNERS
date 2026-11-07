@@ -26,6 +26,7 @@
 /docs/api-spec/api-spec.md                      @devjohnpark
 /docs/architecture/                             @devjohnpark
 /docs/code-convention/                          @devjohnpark
+/docs/observability/                            @devjohnpark
 /docs/software-quality/                         @devjohnpark
 /docs/CODEREVIEW.md                             @devjohnpark
 /build.gradle                                   @devjohnpark

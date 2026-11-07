@@ -175,10 +175,7 @@ management:
     tags:
       application: "${APP_NAME:lunchcatch}"
       instance: "${APP_INSTANCE_ID:local}"
-
-  tracing:
-    sampling:
-      probability: "${TRACE_SAMPLE_RATE:0.1}"
+      version: "${APP_VERSION:local}"
 
 springdoc:
   swagger-ui:

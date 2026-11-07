@@ -5,17 +5,20 @@
 #
 #   AWS_PROFILE=<프로필> loadtest/adserving/run.sh seed [회원 수]          시험 데이터를 RDS 에 넣는다
 #   AWS_PROFILE=<프로필> loadtest/adserving/run.sh prepare                 그날 00:00 묶음을 다시 돌린다
-#   AWS_PROFILE=<프로필> loadtest/adserving/run.sh run <이름> <회원 시작 번호> [초당 피드] [유지 시간]
+#   AWS_PROFILE=<프로필> loadtest/adserving/run.sh run <이름> <회원 시작 번호> [초당 피드] [유지 시간] [--scenario feed] [--profile cpu|wall|both]
 #   AWS_PROFILE=<프로필> loadtest/adserving/run.sh metrics <시작 ms> <끝 ms>  그 구간의 서버 지표
 #   AWS_PROFILE=<프로필> loadtest/adserving/run.sh rows                    시험 데이터의 행 수
-#   AWS_PROFILE=<프로필> loadtest/adserving/run.sh switch <sha> [--tracing <이름>]  앱과 배치를 그 커밋 이미지로 다시 띄운다. GHCR 에 있어야 한다
+#   AWS_PROFILE=<프로필> loadtest/adserving/run.sh switch <sha> [--tracing <이름>] [--no-pool]  앱과 배치를 그 커밋 이미지로 다시 띄운다. GHCR 에 있어야 한다
 #   AWS_PROFILE=<프로필> loadtest/adserving/run.sh reset [회원 수]         Valkey 를 비우고 시험 데이터를 다시 넣는다
-#   AWS_PROFILE=<프로필> loadtest/adserving/run.sh profile <이름> [초] [cpu|wall]  앱 서버에 프로파일링을 붙인다
+#   AWS_PROFILE=<프로필> loadtest/adserving/run.sh profile <이름> [초] [cpu|wall|both]  앱 서버에 프로파일링을 붙인다
 #
-# run 의 끝에 --profile cpu|wall 을 주면 회차 내내 프로파일링을 붙인다. 회차가 끝나면 경고 로그 건수를 결과 문서에 적고 커밋한다.
-# switch 에 --tracing <이름> 을 주면 OpenTelemetry 에이전트를 붙여 띄우고, 주지 않으면 뗀다. 이름은 추적의 run 라벨이 된다.
+# run 의 끝에 --profile cpu|wall|both 를 주면 회차 내내 프로파일링을 붙인다. both 는 cpu 와 wall 을 한 기록(JFR)으로 함께 뜬다. 회차가 끝나면 경고 로그 건수를 결과 문서에 적고 커밋한다.
+# run 의 --scenario feed 는 노출을 보내지 않고 피드만 보낸다(feed.js). 주지 않으면 피드와 노출을 보낸다(feed_impression.js).
+# 피드만 보낸 회차는 경고 로그 건수를 서빙 결과 문서에 적는다.
+# switch 에 --tracing <이름> 을 주면 OpenTelemetry 에이전트를 붙여 띄우고, 주지 않으면 뗀다. 이름은 트레이싱의 run 라벨이 된다.
+# switch 에 --no-pool 을 주면 Valkey 연결 풀을 끄고 띄운다. 주지 않으면 켠다.
 # 첫 인자를 --local 로 주면 lc-infra 의 로컬 구성을 대상으로 seed, prepare, run, metrics, profile 을 같은 인자로 돌린다.
-# 로컬의 switch 는 커밋 없이 [--tracing <이름>] 만 받아 로컬 앱을 다시 띄운다.
+# 로컬의 switch 는 커밋 없이 [--tracing <이름>] [--no-pool] 만 받아 로컬 앱을 다시 띄운다.
 # 시나리오와 시드 생성기는 떠 있는 앱과 같은 커밋(SSM current-sha)에서 받는다. 값이 없으면 develop 이다.
 # LOADTEST_REF 로 브랜치나 커밋을 따로 고를 수 있다.
 set -euo pipefail
@@ -23,7 +26,10 @@ set -euo pipefail
 LOCAL=""
 [ "${1:-}" = --local ] && { LOCAL=1; shift; }
 DOMAIN_EVENT_PREFIX=ADSERVING_
+# 따로 준 결과 문서는 시나리오가 바꾸지 않는다
+RESULT_DOC_GIVEN="${RESULT_DOC:-}"
 RESULT_DOC="${RESULT_DOC:-docs/design/adserving/loadtest/노출_수집_부하_시험_결과.md}"
+SERVING_RESULT_DOC="docs/design/adserving/loadtest/서빙_부하_시험_결과.md"
 # 공통 지표 뒤에 묻는 광고 서빙의 지표다. 꼴은 loadtest/lib/common.sh 가 정한다
 DOMAIN_METRICS='
 served_cards_inc sum(increase(adserving_served_cards_total[$W]))
@@ -47,6 +53,18 @@ relay_deduct_rows_per_s sum(rate(adserving_impression_dispatch_deduct_batch_sum[
 # 이 파일을 옮기면 그 커밋부터만 받힌다. 경로를 옮긴 커밋보다 앞선 ref 를 쓸 때는
 # LOADTEST_REF 를 이 커밋 이후로 준다 (#1080).
 #
+# switch 의 선택지를 읽어 label 과 nopool 을 정한다
+switch_options() {
+  label=""; nopool=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --tracing) label="${2:?--tracing 뒤에 이름을 준다}"; shift 2 ;;
+      --no-pool) nopool=1; shift ;;
+      *) die "모르는 선택지다: $1" ;;
+    esac
+  done
+}
+
 seed() {
   # 로컬은 지금 작업 트리의 생성기로 로컬 MySQL 에 넣는다
   if [ -n "$LOCAL" ]; then
@@ -68,18 +86,18 @@ case "${LOCAL:+local-}${1:-}" in
   local-reset|local-rows)
     die "로컬에서는 seed, prepare, run, metrics, profile, switch 만 쓴다" ;;
   local-switch)
-    label=""
-    [ "${2:-}" != --tracing ] || label="${3:?--tracing 뒤에 이름을 준다}"
-    local_switch "$label"
+    shift
+    switch_options "$@"
+    local_switch "$label" "$nopool"
     ;;
   seed|local-seed)
-    members="${2:-40000}"
+    members="${2:-120000}"
     seed
     ;;
   switch)
     sha="${2:?이미지 커밋을 준다}"
-    label=""
-    [ "${3:-}" != --tracing ] || label="${4:?--tracing 뒤에 이름을 준다}"
+    shift 2
+    switch_options "$@"
     sha=$(full_sha "$sha") || die "lc-backend 에 그 커밋이 없다"
     #
     # current-sha 를 바꾸고 전부 다시 띄우기 전에 이미지가 있는지 본다.
@@ -97,14 +115,16 @@ case "${LOCAL:+local-}${1:-}" in
     # 다시 뜨는 동안 헬스체크가 실패해 오토스케일링 그룹이 서버를 바꾸지 않게 교체를 멈춰 둔다
     aws autoscaling suspend-processes --auto-scaling-group-name "$PROJECT-app" --scaling-processes ReplaceUnhealthy
     #
-    # 추적을 켜면 에이전트와 compose 덮어쓰기 파일을 두고, 끄면 그 파일을 지운다.
+    # 트레이싱을 켜거나 풀을 끄면 compose 덮어쓰기 파일을 두고, 둘 다 아니면 그 파일을 지운다.
     # compose 가 같은 디렉터리의 compose.override.yaml 을 함께 읽어 lc-infra 의 설정을 고치지 않는다.
     #
-    if [ -n "$label" ]; then
+    if [ -n "$label$nopool" ]; then
+      tracing=""
       # 받다 끊긴 jar 가 남아 다음에 그대로 쓰이지 않게 다 받은 뒤에만 제 이름으로 옮긴다
-      tracing="[ -s /opt/$PROJECT/otel-$OTEL_VERSION.jar ] || { curl -fsSL $OTEL_JAR_URL -o /opt/$PROJECT/otel-$OTEL_VERSION.jar.part && mv /opt/$PROJECT/otel-$OTEL_VERSION.jar.part /opt/$PROJECT/otel-$OTEL_VERSION.jar; }
+      [ -z "$label" ] || tracing="[ -s /opt/$PROJECT/otel-$OTEL_VERSION.jar ] || { curl -fsSL $OTEL_JAR_URL -o /opt/$PROJECT/otel-$OTEL_VERSION.jar.part && mv /opt/$PROJECT/otel-$OTEL_VERSION.jar.part /opt/$PROJECT/otel-$OTEL_VERSION.jar; }"
+      tracing="$tracing
 cat > /opt/$PROJECT/compose.override.yaml <<'OVERRIDE'
-$(tracing_override "$label" "./otel-$OTEL_VERSION.jar")
+$(app_override "$label" "./otel-$OTEL_VERSION.jar" "$nopool")
 OVERRIDE"
     else
       tracing="rm -f /opt/$PROJECT/compose.override.yaml"
@@ -121,6 +141,7 @@ for i in \$(seq 1 60); do
 done
 docker inspect $PROJECT --format '{{.Config.Image}}'
 docker inspect $PROJECT --format '{{range .Config.Env}}{{println .}}{{end}}' | grep '^JDK_JAVA_OPTIONS=' || echo 'tracing off'
+docker inspect $PROJECT --format '{{range .Config.Env}}{{println .}}{{end}}' | grep '^SPRING_DATA_REDIS_LETTUCE_POOL_ENABLED=' || echo 'pool on'
 curl -fs localhost:8081/actuator/health/readiness" &
       pids="$pids $!"
     done
@@ -133,7 +154,7 @@ curl -fs localhost:8081/actuator/health/readiness" &
     ;;
   reset)
     # 버전 사이에 앞 버전이 쌓은 것을 지운다(부하 시험 문서 5장). 시드가 시험 데이터와 그날 배치 기록을 지우고 다시 넣는다
-    members="${2:-40000}"
+    members="${2:-120000}"
     remote "$(instance app)" 300 "set -euo pipefail
 CACHE=\$(docker inspect $PROJECT --format '{{range .Config.Env}}{{println .}}{{end}}' | grep '^VALKEY_HOST=' | cut -d= -f2-)
 docker run --rm valkey/valkey:9.0-alpine valkey-cli -h \"\$CACHE\" FLUSHALL
@@ -145,9 +166,24 @@ docker run --rm valkey/valkey:9.0-alpine valkey-cli -h \"\$CACHE\" DBSIZE"
   loadtest/adserving/prepare.js 2>&1 | grep -E 'level=' || true"
     ;;
   run|local-run)
-    name="${2:?회차 이름을 준다}"; base="${3:?회원 시작 번호를 준다}"; rate="${4:-100}"; hold="${5:-5m}"
-    prof=""
-    [ "${6:-}" != --profile ] || prof="${7:?--profile 뒤에 cpu 나 wall 을 준다}"
+    name="${2:?회차 이름을 준다}"; base="${3:?회원 시작 번호를 준다}"; rate=100; hold=5m
+    prof=""; scenario=feed_impression
+    shift 3
+    # 초당 피드와 유지 시간은 생략할 수 있어 -- 로 시작하는 선택지가 나오기 전까지만 위치 인자로 읽는다
+    [ $# -eq 0 ] || [ "${1#--}" != "$1" ] || { rate="$1"; shift; }
+    [ $# -eq 0 ] || [ "${1#--}" != "$1" ] || { hold="$1"; shift; }
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --profile) prof="${2:?--profile 뒤에 cpu, wall, both 가운데 하나를 준다}"; shift 2 ;;
+        --scenario) scenario="${2:?--scenario 뒤에 feed 를 준다}"; shift 2 ;;
+        *) die "모르는 선택지다: $1" ;;
+      esac
+    done
+    case "$scenario" in
+      feed) [ -n "$RESULT_DOC_GIVEN" ] || RESULT_DOC="$SERVING_RESULT_DOC" ;;
+      feed_impression) ;;
+      *) die "시나리오는 feed 나 feed_impression 이다" ;;
+    esac
     # 유지 시간은 k6 의 DURATION 그대로 넘기고, 유지 구간의 경계를 출력하려고 밀리초로도 바꾼다(#1092)
     hold_ms=$(( $(k6_seconds "$hold") * 1000 ))
     #
@@ -159,13 +195,15 @@ docker run --rm valkey/valkey:9.0-alpine valkey-cli -h \"\$CACHE\" DBSIZE"
       profile "$name" $(( 60 + hold_ms / 1000 + 10 )) "$prof" &
     fi
     # 경고 로그를 셀 구간이다. k6 가 중간에 멈추거나 원격 명령이 실패해도 그때까지를 센다
-    start=$(now_ms); rc=0
+    start=$(now_ms); rc=0; out=$(mktemp)
     ( loadgen 1800 "ulimit -n 250000 2> /dev/null || true
+# 옛 커밋에는 피드만 보내는 시나리오가 없다. 없으면 피드를 보내지 않고 성공처럼 끝나므로 여기서 멈춘다
+[ -f loadtest/adserving/$scenario.js ] || { echo \"scenario-missing loadtest/adserving/$scenario.js 가 이 ref 에 없다. LOADTEST_REF 로 #1127 뒤의 ref 를 준다\"; exit 2; }
 start=\$(ms)
 k6 run -q -o experimental-prometheus-rw --tag testid=adserving-$name \\
   -e BASE_URL=\"\$BASE_URL\" -e JWT_SECRET=\"\$JWT\" -e FEED_RATE=$rate -e RAMP_UP_SECONDS=60 -e DURATION=$hold \\
   -e MEMBERS=10000 -e MEMBER_BASE=$base -e PRE_VUS=200 -e MAX_VUS=2000 \\
-  --summary-export \$OUT/summary-$name.json loadtest/adserving/feed_impression.js > \$OUT/k6-$name.log 2>&1 || true
+  --summary-export \$OUT/summary-$name.json loadtest/adserving/$scenario.js > \$OUT/k6-$name.log 2>&1 || true
 echo \"window \$start \$(ms)\"
 # 유지 구간의 경계는 k6 가 남긴 시나리오 시작 시각에 램프업 60초를 더해 낸다.
 # 그 줄이 없으면 k6 를 띄우기 전 시각으로 대신한다. 그때는 k6 가 뜨는 몇 초만큼 실제보다 이르다
@@ -175,8 +213,17 @@ echo \"hold \$((s0 + 60000)) \$((s0 + 60000 + $hold_ms))\"
 grep -E '✓|✗|↳|impression_results|http_reqs|http_req_duration|http_req_failed|iterations|vus_max' \$OUT/k6-$name.log | head -40 || true
 # 원격 쓰기 같은 k6 의 오류가 묻히지 않게 따로 보인다. 요약을 밀어내지 않게 마지막 몇 줄만 본다(lc-infra#60)
 echo \"errors\"
-grep 'level=error' \$OUT/k6-$name.log | tail -5 || true" ) || rc=$?
-    record_warnings "$name" "$start" "$(now_ms)"
+grep 'level=error' \$OUT/k6-$name.log | tail -5 || true" ) > "$out" || rc=$?
+    cat "$out"
+    #
+    # 시나리오가 없어 k6 를 띄우지 않은 회차는 적을 것이 없다. 원격은 remote 가 실패를 종료 코드 1 로 바꿔
+    # 종료 코드로 가를 수 없어 출력의 표시로 가른다.
+    #
+    if grep -q '^scenario-missing ' "$out"; then
+      rc=2
+    else
+      record_warnings "$name" "$start" "$(now_ms)"
+    fi
     wait
     exit "$rc"
     ;;
@@ -195,5 +242,5 @@ select 'deduction', billing_status, count(*) from deduction_result where campaig
 select 'ledger', entry_type, count(*) from point_ledger where owner_id >= 30000001 group by entry_type;\""
     ;;
   *)
-    sed -n '3,19p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
+    sed -n '3,23p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
 esac
