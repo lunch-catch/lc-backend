@@ -195,10 +195,10 @@ docker run --rm valkey/valkey:9.0-alpine valkey-cli -h \"\$CACHE\" DBSIZE"
       profile "$name" $(( 60 + hold_ms / 1000 + 10 )) "$prof" &
     fi
     # 경고 로그를 셀 구간이다. k6 가 중간에 멈추거나 원격 명령이 실패해도 그때까지를 센다
-    start=$(now_ms); rc=0
+    start=$(now_ms); rc=0; out=$(mktemp)
     ( loadgen 1800 "ulimit -n 250000 2> /dev/null || true
 # 옛 커밋에는 피드만 보내는 시나리오가 없다. 없으면 피드를 보내지 않고 성공처럼 끝나므로 여기서 멈춘다
-[ -f loadtest/adserving/$scenario.js ] || { echo \"loadtest/adserving/$scenario.js 가 이 ref 에 없다. LOADTEST_REF 로 #1127 뒤의 ref 를 준다\" >&2; exit 2; }
+[ -f loadtest/adserving/$scenario.js ] || { echo \"scenario-missing loadtest/adserving/$scenario.js 가 이 ref 에 없다. LOADTEST_REF 로 #1127 뒤의 ref 를 준다\"; exit 2; }
 start=\$(ms)
 k6 run -q -o experimental-prometheus-rw --tag testid=adserving-$name \\
   -e BASE_URL=\"\$BASE_URL\" -e JWT_SECRET=\"\$JWT\" -e FEED_RATE=$rate -e RAMP_UP_SECONDS=60 -e DURATION=$hold \\
@@ -213,9 +213,17 @@ echo \"hold \$((s0 + 60000)) \$((s0 + 60000 + $hold_ms))\"
 grep -E '✓|✗|↳|impression_results|http_reqs|http_req_duration|http_req_failed|iterations|vus_max' \$OUT/k6-$name.log | head -40 || true
 # 원격 쓰기 같은 k6 의 오류가 묻히지 않게 따로 보인다. 요약을 밀어내지 않게 마지막 몇 줄만 본다(lc-infra#60)
 echo \"errors\"
-grep 'level=error' \$OUT/k6-$name.log | tail -5 || true" ) || rc=$?
-    # 시나리오가 없어 k6 를 띄우지 않은 회차(2)는 적을 것이 없다
-    [ "$rc" -eq 2 ] || record_warnings "$name" "$start" "$(now_ms)"
+grep 'level=error' \$OUT/k6-$name.log | tail -5 || true" ) > "$out" || rc=$?
+    cat "$out"
+    #
+    # 시나리오가 없어 k6 를 띄우지 않은 회차는 적을 것이 없다. 원격은 remote 가 실패를 종료 코드 1 로 바꿔
+    # 종료 코드로 가를 수 없어 출력의 표시로 가른다.
+    #
+    if grep -q '^scenario-missing ' "$out"; then
+      rc=2
+    else
+      record_warnings "$name" "$start" "$(now_ms)"
+    fi
     wait
     exit "$rc"
     ;;
