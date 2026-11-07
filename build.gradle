@@ -63,6 +63,7 @@ dependencies {
 
     // 버전은 Boot 4.0.5 의 BOM 이 관리한다.
     implementation 'io.micrometer:micrometer-registry-prometheus'
+    implementation 'io.micrometer:context-propagation'
 
     /*
      * 로컬(JVM) 캐시. 인스턴스 사이에 공유할 필요가 없고 값이 한동안 불변인 조회에 쓴다.

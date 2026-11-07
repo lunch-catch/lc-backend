@@ -314,7 +314,7 @@ jjwt 의 `JwtException` 과 Spring Security 의 `JwtException` 은 메시지 내
 | 주장 | 확인하는 곳 |
 |---|---|
 | 외부 호출 콜백이 요청 스레드에서 돌면 MDC 가 남고, 다른 스레드에서 돌면 자동으로 전파되지 않는다 | `ExternalApiLoggingExchangeFilterTest` 의 응답과 오류 콜백 테스트 3개 |
-| 스케줄러 작업이 실패하면 애스펙트와 Spring 오류 처리기가 스택을 각각 남긴다. Spring 쪽 메시지는 `Unexpected error occurred in scheduled task` 다.[R6][R7] | `SchedulerLoggingAspectTest.반복_작업이_실패하면_애스펙트와_Spring_오류_처리기가_스택을_각각_남긴다` |
+| 스케줄러 작업이 실패하면 애스펙트만 스택을 남긴다. Spring 의 기본 오류 처리기는 같은 실패를 `Unexpected error occurred in scheduled task` 로 한 번 더 남기는데[R6][R7], `SchedulingConfig` 가 그 처리기를 바꿔 다시 남기지 않는다 | `SchedulerLoggingAspectTest.반복_작업이_실패하면_애스펙트만_스택을_남기고_스케줄러의_오류_처리기는_다시_남기지_않는다`, `SchedulingConfigTest.스케줄러의_오류_처리기는_실패를_다시_로그로_남기지_않는다` |
 | `%X{key:-default}` 는 기본값을 출력하고, 리터럴 괄호는 이스케이프하지 않으면 뒤의 메시지가 사라진다 | `LogbackPatternTest` |
 | 민감 키 값이 가려진다 | `HttpBodyLoggingFilterTest` 의 민감 키 테스트 |
 | Loki 쿼리의 `json` 뒤 예시 | 확인하지 못했다. 수집한 JSON 에 `message` 필드가 있고 그 값이 logfmt 모양이라는 전제다.[R12] `lc-infra` 의 실제 레이블과 JSON 구조는 이번 PR 에서 확인하지 않았다 |

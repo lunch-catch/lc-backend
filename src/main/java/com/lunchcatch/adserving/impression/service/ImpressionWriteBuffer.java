@@ -6,6 +6,7 @@ import com.lunchcatch.adserving.impression.entity.ImpressionLog;
 import com.lunchcatch.adserving.impression.entity.ImpressionLogId;
 import com.lunchcatch.adserving.impression.repository.ImpressionLogInsert.Row;
 import com.lunchcatch.adserving.impression.repository.ImpressionLogRepository;
+import com.lunchcatch.global.logging.LogContext;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -43,6 +44,7 @@ public class ImpressionWriteBuffer implements SmartLifecycle {
 
     // 초당 1,000건의 10초 분량이다.
     static final int CAPACITY = 10_000;
+    static final String WORKER_NAME = "impression-writer";
     static final int BATCH_SIZE = 500;
     static final Duration MAX_WAIT = Duration.ofMillis(200);
     static final Duration OFFER_TIMEOUT = Duration.ofMillis(100);
@@ -112,8 +114,10 @@ public class ImpressionWriteBuffer implements SmartLifecycle {
         try {
             List<QueuedImpression> batch = new ArrayList<>(BATCH_SIZE);
             while (queue.drainTo(batch, BATCH_SIZE) > 0) {
-                if (!write(batch)) {
-                    meterRegistry.counter(LOST_METRIC).increment(batch.size());
+                try (LogContext.Scope ignored = LogContext.open(WORKER_NAME)) {
+                    if (!write(batch)) {
+                        meterRegistry.counter(LOST_METRIC).increment(batch.size());
+                    }
                 }
                 batch.clear();
             }
@@ -217,22 +221,32 @@ public class ImpressionWriteBuffer implements SmartLifecycle {
         return batch;
     }
 
+    /*
+     * 다시 쓰기까지 묶음 하나를 한 문맥으로 둔다. 같은 묶음의 실패와 성공 로그가 한 traceId 로 묶인다.
+     * 예상 밖의 예외도 문맥 안에서 남긴다. 바깥의 runWorker 로 넘기면 문맥이 닫힌 뒤라 그 로그에 traceId 가 없다.
+     */
     private void writeUntilDone(List<QueuedImpression> batch) throws InterruptedException {
-        int attempt = 0;
-        while (!write(batch)) {
-            if (!running || attempt >= MAX_ATTEMPTS) {
-                meterRegistry.counter(LOST_METRIC).increment(batch.size());
-                return;
+        try (LogContext.Scope ignored = LogContext.open(WORKER_NAME)) {
+            try {
+                int attempt = 0;
+                while (!write(batch)) {
+                    if (!running || attempt >= MAX_ATTEMPTS) {
+                        meterRegistry.counter(LOST_METRIC).increment(batch.size());
+                        return;
+                    }
+                    attempt++;
+                    pause.sleep(backoff(attempt, ThreadLocalRandom.current().nextDouble()).toMillis());
+                }
+            } catch (RuntimeException e) {
+                log.error("event=ADSERVING_IMPRESSION_WORKER_FAILED fallback=CONTINUE", e);
             }
-            attempt++;
-            pause.sleep(backoff(attempt, ThreadLocalRandom.current().nextDouble()).toMillis());
         }
     }
 
     @Override
     public void start() {
         running = true;
-        worker = Thread.ofPlatform().name("impression-writer").daemon(true).start(this::runWorker);
+        worker = Thread.ofPlatform().name(WORKER_NAME).daemon(true).start(this::runWorker);
     }
 
     /*

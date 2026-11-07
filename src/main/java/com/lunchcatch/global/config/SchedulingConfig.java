@@ -1,8 +1,11 @@
 package com.lunchcatch.global.config;
 
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.boot.task.ThreadPoolTaskSchedulerCustomizer;
+import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.scheduling.annotation.EnableScheduling;
+import org.springframework.util.ErrorHandler;
 
 /*
  * 스케줄러는 배치 서버에서만 켠다.
@@ -20,4 +23,20 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 @ConditionalOnProperty(name = "lunchcatch.scheduler.enabled", havingValue = "true")
 @EnableScheduling
 public class SchedulingConfig {
+
+    /*
+     * 작업의 실패는 SchedulerLoggingAspect 가 traceId, job 과 함께 스택까지 SCHEDULER_FAILED 로 남긴다.
+     * 기본 오류 처리기는 같은 실패를 "Unexpected error occurred in scheduled task" 로 한 번 더 남기고,
+     * 그 줄은 애스펙트 밖이라 traceId 가 없다. 같은 스택이 두 번 찍히지 않게 기본 처리기를 바꾼다.
+     *
+     * 반복 작업은 기본 처리기처럼 예외를 삼켜 다음 실행을 이어 간다. 이 스케줄러에 일을 맡기는 곳은
+     * @Scheduled 메서드뿐이라 애스펙트를 거치지 않는 실패가 없다.
+     */
+    public static final ErrorHandler ALREADY_LOGGED = failure -> {
+    };
+
+    @Bean
+    ThreadPoolTaskSchedulerCustomizer schedulerErrorHandler() {
+        return scheduler -> scheduler.setErrorHandler(ALREADY_LOGGED);
+    }
 }
