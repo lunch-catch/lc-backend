@@ -33,6 +33,7 @@ public class SchedulerLoggingAspect {
 
     private static final String LAST_SUCCESS = "batch.job.last.success.timestamp";
     private static final String DURATION = "batch.job.duration";
+    private static final Duration MAX_EXPECTED_DURATION = Duration.ofHours(1);
 
     private final MeterRegistry meterRegistry;
     private final Clock clock;
@@ -80,12 +81,14 @@ public class SchedulerLoggingAspect {
     /*
      * 실행 한 번에 걸린 시간이다. 트레이싱을 끈 회차에도 작업 시간을 보려고 지표로 남긴다.
      * 태그는 마지막 성공 게이지와 같은 scheduler 다. 여러 대의 값을 합쳐 분위수를 내도록 히스토그램을 켠다.
+     * 상한은 1시간이다. 기본값 30초로는 00:00 묶음 같은 긴 작업이 가장 큰 버킷에 모여 p99 가 정확하지 않다.
      */
     private void recordDuration(String job, String outcome, Duration took) {
         Timer.builder(DURATION)
                 .tag("scheduler", job)
                 .tag("outcome", outcome)
                 .publishPercentileHistogram()
+                .maximumExpectedValue(MAX_EXPECTED_DURATION)
                 .description("Time taken by one scheduled run")
                 .register(meterRegistry)
                 .record(took);

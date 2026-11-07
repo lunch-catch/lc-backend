@@ -314,6 +314,22 @@ class SchedulerLoggingAspectTest {
         assertThat(prometheus.scrape()).contains("batch_job_duration_seconds_bucket{");
     }
 
+    // 기본 상한 30초를 넘는 작업도 버킷에 담겨야 p99 가 실제 시간에 가깝다
+    @Test
+    void 실행_시간_히스토그램은_30초를_넘는_작업도_버킷에_담는다() {
+        // given
+        PrometheusMeterRegistry prometheus = new PrometheusMeterRegistry(PrometheusConfig.DEFAULT);
+        AspectJProxyFactory factory = new AspectJProxyFactory(new FakeJob());
+        factory.addAspect(new SchedulerLoggingAspect(prometheus, clock));
+        FakeJob prometheusJob = factory.getProxy();
+
+        // when
+        prometheusJob.run();
+
+        // then
+        assertThat(prometheus.scrape()).containsPattern("batch_job_duration_seconds_bucket\\{[^}]*le=\"(1[0-9]{3}|[2-9][0-9]{3})\\.");
+    }
+
     // --- 마지막 성공 시각 게이지 ---------------------------------------------------------
 
     @Test
