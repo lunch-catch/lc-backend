@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.spi.ILoggingEvent;
+import com.lunchcatch.global.config.SchedulingConfig;
 import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Clock;
@@ -319,22 +320,21 @@ class SchedulerLoggingAspectTest {
     }
 
     @Test
-    void 반복_작업이_실패하면_애스펙트와_Spring_오류_처리기가_스택을_각각_남긴다() {
+    void 반복_작업이_실패하면_애스펙트만_스택을_남기고_스케줄러의_오류_처리기는_다시_남기지_않는다() {
         // given
         target.failure = new IllegalStateException("boom");
 
         try (LogCapture springLogs = LogCapture.attach(
                 "org.springframework.scheduling.support.TaskUtils$LoggingErrorHandler")) {
             // when
-            TaskUtils.decorateTaskWithErrorHandler(job::run, null, true).run();
+            TaskUtils.decorateTaskWithErrorHandler(job::run, SchedulingConfig.ALREADY_LOGGED, true).run();
 
             // then
             ILoggingEvent aspectFailure = logs.events().get(1);
-            ILoggingEvent springFailure = springLogs.only();
             assertThat(aspectFailure.getFormattedMessage()).startsWith("event=SCHEDULER_FAILED");
             assertThat(aspectFailure.getThrowableProxy()).isNotNull();
-            assertThat(springFailure.getFormattedMessage()).isEqualTo("Unexpected error occurred in scheduled task");
-            assertThat(springFailure.getThrowableProxy()).isNotNull();
+            assertThat(aspectFailure.getMDCPropertyMap()).containsKey(LogContext.TRACE_ID);
+            assertThat(springLogs.events()).isEmpty();
         }
     }
 }
