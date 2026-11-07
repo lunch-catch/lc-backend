@@ -34,7 +34,9 @@ import java.util.Set;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.scheduling.annotation.EnableScheduling;
 
 /*
  * 계층과 도메인 경계를 빌드에서 강제한다.
@@ -375,6 +377,52 @@ class ArchitectureTest {
                 }
             })
             .allowEmptyShould(true);
+
+    private static final String SCHEDULING_CONFIG = BASE + ".global.config.SchedulingConfig";
+
+    private static final String SCHEDULER_FLAG = "lunchcatch.scheduler.enabled";
+
+    /*
+     * 규칙 6. 스케줄러는 배치 서버에서만 켜고, 켜는 자리는 SchedulingConfig 하나다.
+     *
+     * @Scheduled 를 가진 클래스마다 @Profile 을 붙이지 않고 이 한 곳에서 가른다. 관리자 수동 재실행이
+     * API 서버에서 잡 빈을 이름으로 찾으므로 잡 빈은 어느 서버에나 있어야 한다.
+     * 그래서 안전성이 이 한 곳에 모인다. 다른 클래스에 @EnableScheduling 을 붙이거나 조건을 떼면
+     * API 서버마다 배치가 함께 켜진다.
+     * 그런데 그렇게 되어도 떨어지는 것이 없다. 중복 실행은 batch_execution_log 의 유일 제약이 조용히
+     * 막고, 통합 테스트는 기본 프로필이라 스케줄러가 꺼진 채로 돈다.
+     *
+     * 메타 애노테이션까지 본다. @EnableScheduling 을 단 애노테이션을 만들어 붙여도 같은 사고다.
+     * 이 규칙에는 allowEmptyShould 를 붙이지 않는다. @EnableScheduling 이 하나도 없으면 배치 서버에서도
+     * 스케줄러가 꺼진 것이라 그것도 실패로 본다.
+     */
+    @ArchTest
+    static final ArchRule 스케줄러는_설정값으로만_켠다 = classes()
+            .that().areMetaAnnotatedWith(EnableScheduling.class)
+            .should(new ArchCondition<>("SchedulingConfig 이고 " + SCHEDULER_FLAG + "=true 일 때만 뜬다") {
+                @Override
+                public void check(JavaClass c, ConditionEvents events) {
+                    if (!c.getName().equals(SCHEDULING_CONFIG)) {
+                        events.add(SimpleConditionEvent.violated(c,
+                                c.getName() + " 가 @EnableScheduling 을 갖는다. 스케줄러는 SchedulingConfig 에서만 켠다"));
+                    } else if (!isGatedBySchedulerFlag(c)) {
+                        events.add(SimpleConditionEvent.violated(c, c.getName()
+                                + " 에 @ConditionalOnProperty(name = \"" + SCHEDULER_FLAG
+                                + "\", havingValue = \"true\") 가 없다. 없으면 API 서버에서도 배치가 돈다"));
+                    }
+                }
+            });
+
+    // prefix 나 matchIfMissing 을 바꾸면 기본 프로필에서도 켜질 수 있어서 그 둘까지 기본값인지 본다.
+    private static boolean isGatedBySchedulerFlag(JavaClass c) {
+        return c.tryGetAnnotationOfType(ConditionalOnProperty.class)
+                .filter(p -> p.prefix().isEmpty())
+                .filter(p -> Stream.concat(Arrays.stream(p.name()), Arrays.stream(p.value()))
+                        .toList().equals(List.of(SCHEDULER_FLAG)))
+                .filter(p -> p.havingValue().equals("true"))
+                .filter(p -> !p.matchIfMissing())
+                .isPresent();
+    }
 
     private static String[] withExtra(String[] base, String... extra) {
         String[] merged = Arrays.copyOf(base, base.length + extra.length);
