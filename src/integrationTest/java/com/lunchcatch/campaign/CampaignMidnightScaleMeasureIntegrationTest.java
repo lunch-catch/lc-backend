@@ -88,6 +88,8 @@ class CampaignMidnightScaleMeasureIntegrationTest extends AbstractCampaignIntegr
     void 네_단계의_소요_시간을_규모와_오류_비율별로_잰다() {
         ScaleMeasureSettings settings = ScaleMeasureSettings.fromEnvironment();
         Statistics statistics = entityManagerFactory.unwrap(SessionFactory.class).getStatistics();
+        // 컨텍스트 캐시로 공유하는 SessionFactory 라서 켠 통계를 끝나면 원래대로 돌려놓는다.
+        boolean statisticsWasEnabled = statistics.isStatisticsEnabled();
         statistics.setStatisticsEnabled(true);
         ScenarioMeasure measure = new ScenarioMeasure("midnight-scale");
         fixture = new CampaignScaleFixture(jdbc);
@@ -106,6 +108,8 @@ class CampaignMidnightScaleMeasureIntegrationTest extends AbstractCampaignIntegr
                 }
                 fixture.deleteAll();
             }
+        } finally {
+            statistics.setStatisticsEnabled(statisticsWasEnabled);
         }
         measure.finish();
     }
