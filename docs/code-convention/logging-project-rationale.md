@@ -89,7 +89,7 @@ MDC 는 스레드에 붙지만 Reactor `Context` 는 구독에 붙는다. Reacto
 남았고 다른 스레드에서 보내면 `traceId` 가 빠졌다. 실제 WebClient 요청의 콜백이 항상 Reactor Netty
 이벤트 루프에서 돈다고 단정하지 않는다. 이 저장소에는 Reactor 컨텍스트와 MDC 를 잇는 장치가 없다.
 
-부하 시험의 진단 회차에서는 앱에 OpenTelemetry Java 에이전트를 붙인다(#1099). 에이전트는 스팬이 열린
+부하 시험의 진단 회차에서는 앱에 OpenTelemetry Java 에이전트를 붙인다. 에이전트는 스팬이 열린
 스레드의 MDC 에 `trace_id` 를 넣고, 운영 프로필의 인코더가 그 값을 로그 필드로 낸다. 그래서 그 회차의
 요청 로그에는 `traceId` 와 `trace_id` 가 함께 찍힌다. 두 값은 따로 만들어져 서로 이어지지 않는다.
 로그에서 트레이스로 넘어갈 때는 `trace_id` 를 쓴다. 에이전트를 붙이지 않은 환경에는 `trace_id` 가 없다.
