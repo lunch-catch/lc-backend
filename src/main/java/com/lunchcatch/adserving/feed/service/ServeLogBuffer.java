@@ -4,6 +4,7 @@ import com.lunchcatch.adserving.feed.repository.FeedVisitRepository;
 import com.lunchcatch.adserving.feed.repository.FeedVisitRepository.Visit;
 import com.lunchcatch.adserving.feed.repository.ServeLogRepository;
 import com.lunchcatch.adserving.feed.repository.ServeLogRepository.Row;
+import com.lunchcatch.global.logging.LogContext;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.util.ArrayList;
 import java.util.List;
@@ -29,6 +30,7 @@ public class ServeLogBuffer implements SmartLifecycle {
 
     // 피드 1회가 카드 10장이라 5,000건이 약 50,000행, 목표 처리량(초당 5,000행)으로 10초 분량이다.
     static final int CAPACITY = 5_000;
+    static final String WORKER_NAME = "serve-log-writer";
     static final int FEEDS_PER_BATCH = 50;
 
     static final String DROPPED_METRIC = "adserving_serve_log_dropped_total";
@@ -75,6 +77,12 @@ public class ServeLogBuffer implements SmartLifecycle {
      * 실패한 묶음은 다시 넣지 않고 버린다. 다시 넣으면 DB 가 멈춘 동안 같은 묶음이 계속 실패해 뒤의 것까지 막는다.
      */
     private void write(List<ServedFeed> batch) {
+        try (LogContext.Scope ignored = LogContext.open(WORKER_NAME)) {
+            writeInContext(batch);
+        }
+    }
+
+    private void writeInContext(List<ServedFeed> batch) {
         List<Row> rows = batch.stream()
                 .flatMap(f -> f.cards().stream().map(c -> new Row(f.businessDate(), f.feedId(), c.record(), c.progressRate(),
                         c.relevanceScore(), f.engineVersion())))
@@ -120,7 +128,7 @@ public class ServeLogBuffer implements SmartLifecycle {
     @Override
     public void start() {
         running = true;
-        worker = Thread.ofPlatform().name("serve-log-writer").daemon(true).start(this::runWorker);
+        worker = Thread.ofPlatform().name(WORKER_NAME).daemon(true).start(this::runWorker);
     }
 
     /*

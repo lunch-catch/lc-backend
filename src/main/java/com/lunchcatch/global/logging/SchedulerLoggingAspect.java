@@ -41,19 +41,21 @@ public class SchedulerLoggingAspect {
         String job = joinPoint.getSignature().toShortString();
         boolean quiet = isQuiet(joinPoint);
         Instant start = clock.instant();
-        logStep(quiet, "event=SCHEDULER_START job={}", job);
-        AtomicLong lastSuccess = lastSuccessGauge(job, start);
+        try (LogContext.Scope ignored = LogContext.open(job)) {
+            logStep(quiet, "event=SCHEDULER_START job={}", job);
+            AtomicLong lastSuccess = lastSuccessGauge(job, start);
 
-        try {
-            Object result = joinPoint.proceed();
-            lastSuccess.set(clock.instant().getEpochSecond());
-            logStep(quiet, "event=SCHEDULER_END job={} durationMs={}",
-                    job, Duration.between(start, clock.instant()).toMillis());
-            return result;
-        } catch (Throwable ex) {
-            log.error("event=SCHEDULER_FAILED job={} durationMs={}",
-                    job, Duration.between(start, clock.instant()).toMillis(), ex);
-            throw ex;
+            try {
+                Object result = joinPoint.proceed();
+                lastSuccess.set(clock.instant().getEpochSecond());
+                logStep(quiet, "event=SCHEDULER_END job={} durationMs={}",
+                        job, Duration.between(start, clock.instant()).toMillis());
+                return result;
+            } catch (Throwable ex) {
+                log.error("event=SCHEDULER_FAILED job={} durationMs={}",
+                        job, Duration.between(start, clock.instant()).toMillis(), ex);
+                throw ex;
+            }
         }
     }
 

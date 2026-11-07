@@ -15,6 +15,7 @@ import java.util.List;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.slf4j.MDC;
 import org.springframework.aop.aspectj.annotation.AspectJProxyFactory;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.scheduling.support.TaskUtils;
@@ -202,6 +203,57 @@ class SchedulerLoggingAspectTest {
 
         // then
         assertThat(logs.events()).isEmpty();
+    }
+
+    // --- MDC -------------------------------------------------------------------
+
+    @Test
+    void 실행_중에는_새_traceId와_작업_이름이_MDC에_있다() {
+        // given
+        String[] seen = new String[2];
+        target.work = () -> {
+            seen[0] = MDC.get(LogContext.TRACE_ID);
+            seen[1] = MDC.get(LogContext.JOB);
+        };
+
+        // when
+        job.run();
+
+        // then
+        assertThat(seen[0]).isNotBlank();
+        assertThat(seen[1]).contains("run()");
+    }
+
+    @Test
+    void 시작과_종료_로그에도_같은_traceId가_붙는다() {
+        // when
+        job.run();
+
+        // then
+        assertThat(logs.events()).extracting(event -> event.getMDCPropertyMap().get(LogContext.TRACE_ID))
+                .doesNotContainNull()
+                .containsOnly(logs.events().get(0).getMDCPropertyMap().get(LogContext.TRACE_ID));
+    }
+
+    @Test
+    void 실패해도_실패_로그에_traceId가_붙고_끝나면_MDC를_비운다() {
+        // when
+        failOnce();
+
+        // then
+        assertThat(logs.events().get(1).getMDCPropertyMap()).containsKey(LogContext.TRACE_ID);
+        assertThat(MDC.getCopyOfContextMap()).isNullOrEmpty();
+    }
+
+    @Test
+    void 실행마다_traceId가_다르다() {
+        // when
+        job.run();
+        job.run();
+
+        // then
+        assertThat(logs.events().get(0).getMDCPropertyMap().get(LogContext.TRACE_ID))
+                .isNotEqualTo(logs.events().get(2).getMDCPropertyMap().get(LogContext.TRACE_ID));
     }
 
     // --- 마지막 성공 시각 게이지 ---------------------------------------------------------

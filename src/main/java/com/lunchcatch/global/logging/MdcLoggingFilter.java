@@ -6,8 +6,6 @@ import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
-import java.util.HexFormat;
-import java.util.concurrent.ThreadLocalRandom;
 import java.util.regex.Pattern;
 import org.slf4j.MDC;
 import org.springframework.core.Ordered;
@@ -79,6 +77,6 @@ public class MdcLoggingFilter extends OncePerRequestFilter {
         if (incoming != null && SAFE_TRACE_ID.matcher(incoming).matches()) {
             return incoming;
         }
-        return HexFormat.of().toHexDigits(ThreadLocalRandom.current().nextLong());
+        return LogContext.newTraceId();
     }
 }

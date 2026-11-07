@@ -20,6 +20,7 @@ import com.lunchcatch.adserving.impression.entity.ImpressionLog;
 import com.lunchcatch.adserving.impression.entity.ImpressionLogId;
 import com.lunchcatch.adserving.impression.repository.ImpressionLogInsert.Row;
 import com.lunchcatch.adserving.impression.repository.ImpressionLogRepository;
+import com.lunchcatch.global.logging.LogContext;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Duration;
 import java.time.LocalDate;
@@ -35,6 +36,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.slf4j.MDC;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.dao.QueryTimeoutException;
 import org.springframework.transaction.support.SimpleTransactionStatus;
@@ -79,6 +81,28 @@ class ImpressionWriteBufferTest {
             List<Row> rows = invocation.getArgument(0);
             return rows.stream().map(row -> row.log().getId()).collect(Collectors.toSet());
         });
+    }
+
+    @Nested
+    @DisplayName("로그 문맥")
+    class LogContextScope {
+
+        @Test
+        void 묶음을_쓰는_동안_새_traceId와_워커_이름이_MDC에_있다() {
+            String[] seen = new String[2];
+            when(impressions.insertAllIgnore(anyList())).thenAnswer(invocation -> {
+                seen[0] = MDC.get(LogContext.TRACE_ID);
+                seen[1] = MDC.get(LogContext.JOB);
+                return Set.of();
+            });
+            buffer.offer(valid(1, false));
+
+            buffer.flush();
+
+            assertThat(seen[0]).isNotBlank();
+            assertThat(seen[1]).isEqualTo("impression-writer");
+            assertThat(MDC.getCopyOfContextMap()).isNullOrEmpty();
+        }
     }
 
     @Nested

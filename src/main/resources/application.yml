@@ -175,6 +175,7 @@ management:
     tags:
       application: "${APP_NAME:lunchcatch}"
       instance: "${APP_INSTANCE_ID:local}"
+      version: "${APP_VERSION:local}"
 
 springdoc:
   swagger-ui:
