@@ -188,7 +188,7 @@ public class CouponCommandService {
                         } catch (Throwable recoveryError) {
                             recovered.completeExceptionally(recoveryError);
                         }
-                    }, recovered));
+                    }, recovered, System.nanoTime()));
                 } catch (java.util.concurrent.RejectedExecutionException rejected) {
                     recovered.completeExceptionally(original);
                 }
@@ -229,7 +229,20 @@ public class CouponCommandService {
                 .completeExceptionally(new CouponException(CouponErrorCode.ISSUANCE_BUSY)));
     }
 
-    private record RecoveryTask(Runnable action, CompletableFuture<CouponIssueResponse> result) implements Runnable {
+    // 복구 작업자를 기다리는 작업 수를 돌려준다.
+    int recoveryQueueSize() {
+        return issuanceRecovery.getQueue().size();
+    }
+
+    // 복구 작업자를 가장 오래 기다린 작업의 대기 시간을 초로 돌려주며 기다리는 작업이 없으면 0이다.
+    double oldestRecoveryWaitSeconds() {
+        return issuanceRecovery.getQueue().peek() instanceof RecoveryTask task
+                ? (System.nanoTime() - task.queuedAtNanos()) / 1_000_000_000.0 : 0;
+    }
+
+    // queuedAtNanos 는 복구 대기열에 넣은 시각(System.nanoTime 기준)이다.
+    private record RecoveryTask(Runnable action, CompletableFuture<CouponIssueResponse> result, long queuedAtNanos)
+            implements Runnable {
         @Override
         public void run() {
             action.run();
