@@ -22,30 +22,24 @@ import org.springframework.core.io.ClassPathResource;
 class OverrunThresholdMetricsTest {
 
     @Test
-    @DisplayName("설정의 값마다 종류와 이름을 단 게이지를 초 단위로 낸다")
-    void 값마다_게이지를_낸다() {
+    @DisplayName("API 마다의 목표와 기본값을 kind api 의 게이지로 초 단위로 낸다")
+    void 목표와_기본값을_낸다() {
         OverrunThresholdProperties properties = new OverrunThresholdProperties(
-                Map.of(),
-                Map.of("GET /v1/feed", Duration.ofMillis(300)),
-                Map.of("adserving.impression", Duration.ofSeconds(5)),
-                Map.of(),
-                Map.of(),
-                Map.of("transaction", Duration.ofSeconds(1)));
+                Duration.ofMillis(500), Map.of("GET /v1/feed", Duration.ofMillis(300)));
         SimpleMeterRegistry registry = new SimpleMeterRegistry();
 
         new OverrunThresholdMetrics(properties).bindTo(registry);
 
-        assertThat(value(registry, "api", "GET /v1/feed")).isEqualTo(0.3);
-        assertThat(value(registry, "relay", "adserving.impression")).isEqualTo(5.0);
-        assertThat(value(registry, "global", "transaction")).isEqualTo(1.0);
-        assertThat(registry.find(OverrunThresholdMetrics.METRIC).gauges()).hasSize(3);
+        assertThat(value(registry, "GET /v1/feed")).isEqualTo(0.3);
+        assertThat(value(registry, OverrunThresholdMetrics.DEFAULT_NAME)).isEqualTo(0.5);
+        assertThat(registry.find(OverrunThresholdMetrics.METRIC).gauges()).hasSize(2);
     }
 
     @Test
     @DisplayName("Prometheus 에는 overrun_threshold_seconds 로 나간다")
     void Prometheus_이름() {
         OverrunThresholdProperties properties = new OverrunThresholdProperties(
-                Map.of(), Map.of("GET /v1/feed", Duration.ofMillis(300)), Map.of(), Map.of(), Map.of(), Map.of());
+                null, Map.of("GET /v1/feed", Duration.ofMillis(300)));
         PrometheusMeterRegistry registry = new PrometheusMeterRegistry(PrometheusConfig.DEFAULT);
 
         new OverrunThresholdMetrics(properties).bindTo(registry);
@@ -54,39 +48,18 @@ class OverrunThresholdMetricsTest {
     }
 
     @Test
-    @DisplayName("종류마다의 기본값은 이름 default 로 낸다")
-    void 기본값은_default_로_낸다() {
-        OverrunThresholdProperties properties = new OverrunThresholdProperties(
-                Map.of("worker", Duration.ofSeconds(5), "job", Duration.ofMinutes(10)),
-                Map.of(), Map.of(), Map.of(), Map.of(), Map.of());
-        SimpleMeterRegistry registry = new SimpleMeterRegistry();
-
-        new OverrunThresholdMetrics(properties).bindTo(registry);
-
-        assertThat(value(registry, "worker", OverrunThresholdMetrics.DEFAULT_NAME)).isEqualTo(5.0);
-        assertThat(value(registry, "job", OverrunThresholdMetrics.DEFAULT_NAME)).isEqualTo(600.0);
-    }
-
-    @Test
-    @DisplayName("0 이하의 기준은 앱이 뜰 때 막는다")
+    @DisplayName("0 이하의 목표는 앱이 뜰 때 막는다")
     void 영_이하는_막는다() {
-        assertThatThrownBy(() -> new OverrunThresholdProperties(
-                Map.of(), Map.of("GET /v1/feed", Duration.ZERO), Map.of(), Map.of(), Map.of(), Map.of()))
+        assertThatThrownBy(() -> new OverrunThresholdProperties(null, Map.of("GET /v1/feed", Duration.ZERO)))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("GET /v1/feed");
-    }
-
-    @Test
-    @DisplayName("기본값을 둘 수 없는 종류의 기본값은 앱이 뜰 때 막는다")
-    void 모르는_기본값_종류는_막는다() {
-        assertThatThrownBy(() -> new OverrunThresholdProperties(
-                Map.of("global", Duration.ofSeconds(1)), Map.of(), Map.of(), Map.of(), Map.of(), Map.of()))
+        assertThatThrownBy(() -> new OverrunThresholdProperties(Duration.ofMillis(-1), Map.of()))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("global");
+                .hasMessageContaining("api-default");
     }
 
     @Test
-    @DisplayName("application.yml 의 기준이 대괄호 키 그대로 묶인다")
+    @DisplayName("application.yml 의 목표가 대괄호 키 그대로 묶인다")
     void application_yml_을_묶는다() throws Exception {
         Binder binder = new Binder(ConfigurationPropertySources.from(applicationYml()));
 
@@ -94,10 +67,8 @@ class OverrunThresholdMetricsTest {
                 .bind(OverrunThresholdProperties.PREFIX, OverrunThresholdProperties.class)
                 .get();
 
+        assertThat(properties.apiDefault()).isEqualTo(Duration.ofMillis(500));
         assertThat(properties.api()).containsEntry("GET /v1/feed", Duration.ofMillis(300));
-        assertThat(properties.relay()).containsEntry("adserving.impression", Duration.ofSeconds(5));
-        assertThat(properties.global()).containsEntry("transaction", Duration.ofSeconds(1));
-        assertThat(properties.defaults()).containsOnlyKeys("api", "relay", "worker", "job");
     }
 
     @Test
@@ -110,9 +81,9 @@ class OverrunThresholdMetricsTest {
                 .isInstanceOf(BindException.class);
     }
 
-    private static double value(SimpleMeterRegistry registry, String kind, String name) {
-        Gauge gauge = registry.find(OverrunThresholdMetrics.METRIC).tag("kind", kind).tag("name", name).gauge();
-        assertThat(gauge).as("%s %s", kind, name).isNotNull();
+    private static double value(SimpleMeterRegistry registry, String name) {
+        Gauge gauge = registry.find(OverrunThresholdMetrics.METRIC).tag("kind", "api").tag("name", name).gauge();
+        assertThat(gauge).as(name).isNotNull();
         return gauge.value();
     }
 
