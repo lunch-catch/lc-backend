@@ -9,7 +9,6 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * 기준 초과를 가르는 기준이다. 키는 {@code lunchcatch.observability.targets.*} 이다.
  *
  * 값의 원본은 도메인 설계서와 품질 문서이고 이 설정은 그 사본이다. 원본을 바꾸면 이 설정도 같은 PR 에서 고친다.
- * 품질 문서의 {@code [인프라]} 항목 값(GC 일시정지, 커넥션 획득 대기)은 lc-infra 의 규칙 파일이 갖는다.
  * 종류마다 기본값이 있어야 한다. 이름별 값이 없는 것은 기본값으로 판정한다.
  *
  * @param apiDefault    목표가 없는 API 를 판정할 값

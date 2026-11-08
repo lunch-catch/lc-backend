@@ -10,7 +10,6 @@ import org.springframework.stereotype.Component;
 /*
  * 기준 초과를 가르는 기준을 지표로 낸다(#1165, #1173).
  * 06 기준 초과 대시보드와 부하 시험의 판정이 이 지표로 API 와 작업마다 다른 기준을 거른다.
- * GC 일시정지와 커넥션 획득 대기는 lc-infra 의 규칙 파일이 같은 이름에 kind="global" 로 낸다.
  */
 @Component
 @EnableConfigurationProperties(OverrunThresholdProperties.class)
