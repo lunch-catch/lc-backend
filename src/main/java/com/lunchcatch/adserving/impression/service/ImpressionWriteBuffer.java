@@ -56,7 +56,7 @@ public class ImpressionWriteBuffer implements SmartLifecycle {
     static final int MAX_ATTEMPTS = 10;
 
     static final String QUEUE_METRIC = "adserving_impression_queue_size";
-    // 공통 지표의 워커 이름이다. lc-infra 의 기준 규칙(thresholds.yml)의 name 과 같다
+    // 공통 지표의 워커 이름이다. 이름별 기준을 둘 때 application.yml 의 lunchcatch.observability.targets.worker 키로 쓴다
     static final String BACKLOG_NAME = "adserving.impression-write";
     static final String DROPPED_METRIC = "adserving_impression_dropped_total";
     static final String WRITE_FAILED_METRIC = "adserving_impression_write_failed_total";

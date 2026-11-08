@@ -35,7 +35,7 @@ public class ServeLogBuffer implements SmartLifecycle {
     static final String WORKER_NAME = "serve-log-writer";
     static final int FEEDS_PER_BATCH = 50;
 
-    // 공통 지표의 워커 이름이다. lc-infra 의 기준 규칙(thresholds.yml)의 name 과 같다
+    // 공통 지표의 워커 이름이다. 이름별 기준을 둘 때 application.yml 의 lunchcatch.observability.targets.worker 키로 쓴다
     static final String BACKLOG_NAME = "adserving.serve-log-write";
     static final String DROPPED_METRIC = "adserving_serve_log_dropped_total";
     static final String FAILED_METRIC = "adserving_serve_log_failed_total";

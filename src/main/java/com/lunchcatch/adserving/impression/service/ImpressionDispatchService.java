@@ -45,7 +45,7 @@ public class ImpressionDispatchService {
     static final String BACKLOG_METRIC = "adserving_impression_dispatch_backlog";
     static final String DEDUCT_DURATION_METRIC = "adserving_impression_dispatch_deduct_seconds";
     static final String DEDUCT_BATCH_METRIC = "adserving_impression_dispatch_deduct_batch";
-    // 공통 지표의 릴레이 이름이다. lc-infra 의 기준 규칙(thresholds.yml)의 name 과 같다
+    // 공통 지표의 릴레이 이름이다. 이름별 기준을 둘 때 application.yml 의 lunchcatch.observability.targets.relay 키로 쓴다
     static final String RELAY_NAME = "adserving.impression";
 
     // 1초 주기라 약 10초 동안 다시 해 본다. 닿으면 읽지 않고 밀린 수로만 보인다

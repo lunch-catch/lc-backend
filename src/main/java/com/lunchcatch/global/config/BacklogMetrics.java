@@ -12,7 +12,7 @@ import org.springframework.stereotype.Component;
 /*
  * 아웃박스 릴레이와 비동기 워커의 밀린 양을 공통 이름의 지표로 낸다(#1173, #1131).
  * 같은 것을 여러 곳에서 재면 이름을 하나로 두고 꼬리표로 나눈다. 06 기준 초과 대시보드가 쿼리 하나로 모두 그리고, 새 릴레이나 워커가 생겨도 대시보드를 고치지 않는다.
- * 이름은 lc-infra 의 기준 규칙(observability/prometheus/thresholds.yml)의 name 과 같게 쓴다. 판정은 대기 시간으로 한다.
+ * 이름은 기준 설정(lunchcatch.observability.targets 의 relay, worker)의 키와 같게 쓴다. 판정은 대기 시간으로 한다.
  */
 @Component
 public class BacklogMetrics {
