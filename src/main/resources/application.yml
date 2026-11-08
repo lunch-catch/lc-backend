@@ -177,6 +177,25 @@ management:
       instance: "${APP_INSTANCE_ID:local}"
       version: "${APP_VERSION:local}"
 
+lunchcatch:
+  observability:
+    # API 마다의 p99 목표다. 앱이 overrun_threshold_seconds{kind="api", name} 으로 내보내고
+    # 06 기준 초과 대시보드와 부하 시험의 판정이 그 값으로 거른다(#1165).
+    #
+    # 값의 원본은 그 도메인의 *-api-design.md 의 성능 목표 표다. 원본을 바꾸면 여기도 같은 PR 에서 고친다.
+    # 릴레이, 워커, cron 의 기준은 알리는 문턱이라 여기 두지 않고 lc-infra 의 규칙 파일이 같은 이름의 시계열로 갖는다.
+    # 앱이 멈추면 앱이 내보낸 기준도 사라져 그 작업이 멈춘 것을 알릴 수 없기 때문이다
+    targets:
+      # 목표가 없는 API 는 이 값으로 판정한다
+      api-default: 500ms
+      # 키는 메서드와 경로다
+      api:
+        "[GET /v1/feed]": 300ms
+        "[POST /v1/swipes]": 500ms
+        "[POST /v1/impressions]": 500ms
+        "[GET /v1/wishlist]": 300ms
+        "[POST /v1/coupons]": 1000ms
+
 springdoc:
   swagger-ui:
     path: /swagger-ui.html
