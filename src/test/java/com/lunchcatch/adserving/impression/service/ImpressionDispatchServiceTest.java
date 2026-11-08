@@ -32,6 +32,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import java.util.stream.IntStream;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.dao.QueryTimeoutException;
 import org.springframework.data.redis.RedisConnectionFailureException;
@@ -52,6 +53,12 @@ class ImpressionDispatchServiceTest {
     private final ImpressionDispatchService service = new ImpressionDispatchService(
             lease, impressions, pointDeductor, new ImmediateTransactions(), meterRegistry, clock,
             new BacklogMetrics(meterRegistry, clock));
+
+    // 밀린 양은 넘기기의 결과와 상관없이 회차마다 센다. 따로 보지 않는 시험은 밀린 것이 없는 것으로 둔다
+    @BeforeEach
+    void 밀린_것이_없다() {
+        when(impressions.countPending(any())).thenReturn(new PendingSummary(0, null));
+    }
 
     @Test
     void 다른_서버가_점유_중이면_넘기지_않는다() {
@@ -195,6 +202,33 @@ class ImpressionDispatchServiceTest {
                 .gauge().value()).isEqualTo(7);
         assertThat(meterRegistry.get("outbox.relay.oldest.age").tag("relay", ImpressionDispatchService.RELAY_NAME)
                 .gauge().value()).isEqualTo(4);
+    }
+
+    @Test
+    void 정산이_실패해도_밀린_양은_센다() {
+        when(lease.acquire(any())).thenReturn(true);
+        when(impressions.findPending(any(), any(), anyInt(), anyInt())).thenReturn(List.of(pending(1)));
+        when(pointDeductor.deductAll(anyList())).thenThrow(new QueryTimeoutException("정산의 Valkey 가 늦다"));
+        when(impressions.countPending(TODAY.minusDays(1).atStartOfDay()))
+                .thenReturn(new PendingSummary(3, NOW.minusSeconds(8)));
+
+        service.dispatchPending();
+
+        assertThat(relayGauge("outbox.relay.backlog")).isEqualTo(3);
+        assertThat(relayGauge("outbox.relay.oldest.age")).isEqualTo(8);
+    }
+
+    @Test
+    void 밀린_양을_세지_못하면_지난_값을_두고_오류로_센다() {
+        밀린_노출을_한_번_센다();
+        when(lease.acquire(any())).thenReturn(true);
+        when(impressions.countPending(any())).thenThrow(new QueryTimeoutException("DB 가 늦다"));
+
+        assertThatCode(service::dispatchPending).doesNotThrowAnyException();
+
+        assertThat(relayGauge("outbox.relay.backlog")).isEqualTo(7);
+        assertThat(meterRegistry.counter(ImpressionDispatchService.ERROR_METRIC).count()).isEqualTo(1);
+        verify(lease).release();
     }
 
     @Test

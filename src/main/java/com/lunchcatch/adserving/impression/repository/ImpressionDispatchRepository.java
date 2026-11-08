@@ -91,10 +91,10 @@ public class ImpressionDispatchRepository {
      * 밀린 것이 없으면 시각은 null 이다.
      */
     public PendingSummary countPending(LocalDateTime from) {
-        return jdbcTemplate.queryForObject(COUNT_PENDING, (rs, n) -> {
-            Timestamp oldest = rs.getTimestamp(2);
-            return new PendingSummary(rs.getLong(1), oldest == null ? null : oldest.toLocalDateTime());
-        }, Timestamp.valueOf(from));
+        // DATETIME 을 시간대 변환 없이 LocalDateTime 으로 읽는다. Timestamp 를 거치면 JVM 의 시간대로 바뀌어 대기 시간이 어긋난다
+        return jdbcTemplate.queryForObject(COUNT_PENDING,
+                (rs, n) -> new PendingSummary(rs.getLong(1), rs.getObject(2, LocalDateTime.class)),
+                Timestamp.valueOf(from));
     }
 
     private static MapSqlParameterSource params(Collection<PendingImpression> impressions, LocalDateTime at) {

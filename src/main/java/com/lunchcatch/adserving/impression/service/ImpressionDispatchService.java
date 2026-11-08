@@ -85,20 +85,35 @@ public class ImpressionDispatchService {
         if (!acquire()) {
             return;
         }
+        LocalDateTime from = LocalDate.now(clock).minusDays(1).atStartOfDay();
         try {
-            LocalDateTime from = LocalDate.now(clock).minusDays(1).atStartOfDay();
             boolean more = dispatchBatch(from);
             while (more && lease.renew(LEASE_TTL)) {
                 more = dispatchBatch(from);
             }
+        } catch (RuntimeException e) {
+            meterRegistry.counter(ERROR_METRIC).increment();
+            log.warn("event=ADSERVING_IMPRESSION_DISPATCH_FAILED fallback=RETRY_NEXT_RUN", e);
+        }
+        try {
+            countBacklog(from);
+        } finally {
+            release();
+        }
+    }
+
+    /*
+     * 넘기기가 실패해도 센다. 정산이 계속 실패해 노출이 쌓이는 때가 밀린 양을 가장 봐야 하는 때다.
+     * 세지 못하면(DB 장애) 지난 값을 그대로 두고 오류로 센다. 가장 이른 시각이 그대로라 대기 시간은 계속 는다.
+     */
+    private void countBacklog(LocalDateTime from) {
+        try {
             PendingSummary pending = impressions.countPending(from);
             backlog.set(pending.count());
             oldestPending.set(pending.oldest());
         } catch (RuntimeException e) {
             meterRegistry.counter(ERROR_METRIC).increment();
-            log.warn("event=ADSERVING_IMPRESSION_DISPATCH_FAILED fallback=RETRY_NEXT_RUN", e);
-        } finally {
-            release();
+            log.warn("event=ADSERVING_IMPRESSION_BACKLOG_COUNT_FAILED fallback=KEEP_LAST", e);
         }
     }
 
