@@ -24,8 +24,11 @@ import com.lunchcatch.adserving.impression.entity.ImpressionLogId;
 import com.lunchcatch.adserving.impression.repository.ImpressionLogInsert.Row;
 import com.lunchcatch.adserving.impression.repository.ImpressionLogRepository;
 import com.lunchcatch.global.logging.LogContext;
+import com.lunchcatch.global.config.BacklogMetrics;
+import com.lunchcatch.global.config.ClockConfig;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Duration;
+import java.time.Clock;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -58,8 +61,22 @@ class ImpressionWriteBufferTest {
     private final ApplicationEventPublisher publisher = mock(ApplicationEventPublisher.class);
     private final RecordingTransactions transactions = new RecordingTransactions();
     private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+    // 받은 시각보다 3초 뒤다. 대기열에 남은 노출의 대기 시간을 센다
+    private final Clock clock = Clock.fixed(RECEIVED_AT.plusSeconds(3).atZone(ClockConfig.ZONE).toInstant(), ClockConfig.ZONE);
     private final ImpressionWriteBuffer buffer = new ImpressionWriteBuffer(impressions, counts, publisher, transactions,
-            meterRegistry);
+            meterRegistry, new BacklogMetrics(meterRegistry, clock));
+
+    @Test
+    @DisplayName("대기열 길이와 가장 오래 기다린 노출의 대기 시간을 워커 공통 지표로 낸다")
+    void 워커_공통_지표() {
+        buffer.offer(valid(1, false));
+        buffer.offer(valid(2, false));
+
+        assertThat(meterRegistry.get("async.worker.queue.size").tag("worker", ImpressionWriteBuffer.BACKLOG_NAME)
+                .gauge().value()).isEqualTo(2);
+        assertThat(meterRegistry.get("async.worker.oldest.age").tag("worker", ImpressionWriteBuffer.BACKLOG_NAME)
+                .gauge().value()).isEqualTo(3);
+    }
 
     @AfterEach
     void stop() {

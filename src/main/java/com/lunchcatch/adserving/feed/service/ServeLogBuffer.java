@@ -4,8 +4,10 @@ import com.lunchcatch.adserving.feed.repository.FeedVisitRepository;
 import com.lunchcatch.adserving.feed.repository.FeedVisitRepository.Visit;
 import com.lunchcatch.adserving.feed.repository.ServeLogRepository;
 import com.lunchcatch.adserving.feed.repository.ServeLogRepository.Row;
+import com.lunchcatch.global.config.BacklogMetrics;
 import com.lunchcatch.global.logging.LogContext;
 import io.micrometer.core.instrument.MeterRegistry;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ArrayBlockingQueue;
@@ -33,6 +35,8 @@ public class ServeLogBuffer implements SmartLifecycle {
     static final String WORKER_NAME = "serve-log-writer";
     static final int FEEDS_PER_BATCH = 50;
 
+    // 공통 지표의 워커 이름이다. 이름별 기준을 둘 때 application.yml 의 lunchcatch.observability.targets.worker 키로 쓴다
+    static final String BACKLOG_NAME = "adserving.serve-log-write";
     static final String DROPPED_METRIC = "adserving_serve_log_dropped_total";
     static final String FAILED_METRIC = "adserving_serve_log_failed_total";
     static final String VISIT_FAILED_METRIC = "adserving_feed_visit_failed_total";
@@ -46,12 +50,19 @@ public class ServeLogBuffer implements SmartLifecycle {
     private Thread worker;
 
     public ServeLogBuffer(ServeLogRepository serveLogRepository, FeedVisitRepository feedVisitRepository,
-                          MeterRegistry meterRegistry) {
+                          MeterRegistry meterRegistry, BacklogMetrics backlogMetrics) {
         this.serveLogRepository = serveLogRepository;
         this.feedVisitRepository = feedVisitRepository;
         this.meterRegistry = meterRegistry;
         // 사건이 없어도 0 으로 보이게 기동 때 만든다
         List.of(DROPPED_METRIC, FAILED_METRIC, VISIT_FAILED_METRIC).forEach(meterRegistry::counter);
+        backlogMetrics.worker(BACKLOG_NAME, queue::size, this::oldestRequestedAt);
+    }
+
+    // 대기열의 맨 앞이 가장 오래 기다린 피드다. 비었으면 null 이다
+    private LocalDateTime oldestRequestedAt() {
+        ServedFeed head = queue.peek();
+        return head == null ? null : head.requestedAt();
     }
 
     // 넣지 못하면 그 피드의 카드 수만큼 버린 것으로 센다.
