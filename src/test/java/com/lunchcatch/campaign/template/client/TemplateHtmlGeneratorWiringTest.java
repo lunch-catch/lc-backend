@@ -6,6 +6,9 @@ import com.lunchcatch.campaign.template.TemplateHtmlSanitizer;
 import com.lunchcatch.campaign.template.TemplateSlotValidator;
 import com.lunchcatch.campaign.template.TemplateStructureValidator;
 import com.lunchcatch.campaign.template.config.BedrockConfig;
+import io.github.resilience4j.bulkhead.BulkheadRegistry;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 
@@ -22,7 +25,9 @@ class TemplateHtmlGeneratorWiringTest {
                     BedrockTemplateHtmlGenerator.class,
                     TemplateHtmlSanitizer.class,
                     TemplateSlotValidator.class,
-                    TemplateStructureValidator.class);
+                    TemplateStructureValidator.class)
+            .withBean(BulkheadRegistry.class, BulkheadRegistry::ofDefaults)
+            .withBean(MeterRegistry.class, SimpleMeterRegistry::new);
 
     @Test
     void bedrock_model_id가_없으면_Fake만_뜬다() {

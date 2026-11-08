@@ -6,6 +6,11 @@ import com.lunchcatch.campaign.template.dto.TemplateSanitizeResult;
 import com.lunchcatch.campaign.template.TemplateHtmlSanitizer;
 import com.lunchcatch.campaign.template.TemplateSlotValidator;
 import com.lunchcatch.campaign.template.TemplateStructureValidator;
+import io.github.resilience4j.bulkhead.Bulkhead;
+import io.github.resilience4j.bulkhead.BulkheadFullException;
+import io.github.resilience4j.bulkhead.BulkheadRegistry;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -14,7 +19,6 @@ import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
-import lombok.RequiredArgsConstructor;
 import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
 import org.springframework.beans.factory.annotation.Value;
@@ -48,8 +52,10 @@ import software.amazon.awssdk.services.bedrockruntime.model.ThrottlingException;
  */
 @Component
 @ConditionalOnProperty(name = "bedrock.model-id")
-@RequiredArgsConstructor
 public class BedrockTemplateHtmlGenerator implements TemplateHtmlGenerator {
+
+    /** application.yml 의 resilience4j.bulkhead.instances 이름과 같아야 한다. */
+    public static final String BULKHEAD_NAME = "bedrock";
 
     private static final int MAX_OUTPUT_TOKENS = 4000;
     private static final int MAX_RETRIES = 1;
@@ -176,9 +182,26 @@ public class BedrockTemplateHtmlGenerator implements TemplateHtmlGenerator {
     private final TemplateHtmlSanitizer templateHtmlSanitizer;
     private final TemplateSlotValidator templateSlotValidator;
     private final TemplateStructureValidator templateStructureValidator;
+    private final Bulkhead bulkhead;
+    private final Counter bulkheadRejected;
 
     @Value("${bedrock.model-id}")
     private String modelId;
+
+    public BedrockTemplateHtmlGenerator(
+            BedrockRuntimeClient bedrockRuntimeClient,
+            TemplateHtmlSanitizer templateHtmlSanitizer,
+            TemplateSlotValidator templateSlotValidator,
+            TemplateStructureValidator templateStructureValidator,
+            BulkheadRegistry bulkheadRegistry,
+            MeterRegistry meterRegistry) {
+        this.bedrockRuntimeClient = bedrockRuntimeClient;
+        this.templateHtmlSanitizer = templateHtmlSanitizer;
+        this.templateSlotValidator = templateSlotValidator;
+        this.templateStructureValidator = templateStructureValidator;
+        this.bulkhead = bulkheadRegistry.bulkhead(BULKHEAD_NAME);
+        this.bulkheadRejected = meterRegistry.counter("campaign_bedrock_bulkhead_rejected_total");
+    }
 
     @Override
     public GeneratedTemplate generate(String requestPrompt) {
@@ -283,7 +306,14 @@ public class BedrockTemplateHtmlGenerator implements TemplateHtmlGenerator {
                 .inferenceConfig(InferenceConfiguration.builder().maxTokens(MAX_OUTPUT_TOKENS).build())
                 .build();
         try {
-            return bedrockRuntimeClient.converse(request);
+            return bulkhead.executeSupplier(() -> bedrockRuntimeClient.converse(request));
+        } catch (BulkheadFullException e) {
+            /*
+             * 동시 호출 상한에 닿아 Bedrock 을 부르지 않았다. 호출이 일어나지 않았으니 재시도하지 않고,
+             * 일시적 실패와 같은 POSTER-012 로 바로 끝낸다(#1117).
+             */
+            bulkheadRejected.increment();
+            throw new CampaignException(PosterErrorCode.GENERATION_THROTTLED, e);
         } catch (ApiCallTimeoutException | ApiCallAttemptTimeoutException e) {
             throw new TemplateGenerationTimeoutException(
                     "Bedrock Converse 호출이 30초를 넘었다", e);
