@@ -2,6 +2,7 @@ package com.lunchcatch.adserving.impression.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.lunchcatch.global.config.BacklogMetrics;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Clock;
 import java.util.List;
@@ -20,7 +21,7 @@ class ImpressionCounterRegistrationTest {
 
     @Test
     void 노출_저장의_버림_실패_유실_불일치_카운터를_0으로_만든다() {
-        new ImpressionWriteBuffer(null, null, null, null, registry);
+        new ImpressionWriteBuffer(null, null, null, null, registry, new BacklogMetrics(registry, Clock.systemUTC()));
 
         assertZero(List.of(ImpressionWriteBuffer.DROPPED_METRIC, ImpressionWriteBuffer.WRITE_FAILED_METRIC,
                 ImpressionWriteBuffer.LOST_METRIC, ImpressionWriteBuffer.CAMPAIGN_MISMATCH_METRIC));
@@ -28,7 +29,8 @@ class ImpressionCounterRegistrationTest {
 
     @Test
     void 릴레이의_넘김_실패_오류_카운터를_0으로_만든다() {
-        new ImpressionDispatchService(null, null, null, null, registry, Clock.systemUTC());
+        new ImpressionDispatchService(null, null, null, null, registry, Clock.systemUTC(),
+                new BacklogMetrics(registry, Clock.systemUTC()));
 
         assertZero(List.of(ImpressionDispatchService.DISPATCHED_METRIC, ImpressionDispatchService.FAILED_METRIC,
                 ImpressionDispatchService.ERROR_METRIC));

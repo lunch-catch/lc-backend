@@ -6,9 +6,11 @@ import com.lunchcatch.adserving.impression.entity.ImpressionLog;
 import com.lunchcatch.adserving.impression.entity.ImpressionLogId;
 import com.lunchcatch.adserving.impression.repository.ImpressionLogInsert.Row;
 import com.lunchcatch.adserving.impression.repository.ImpressionLogRepository;
+import com.lunchcatch.global.config.BacklogMetrics;
 import com.lunchcatch.global.logging.LogContext;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.time.Duration;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -54,6 +56,8 @@ public class ImpressionWriteBuffer implements SmartLifecycle {
     static final int MAX_ATTEMPTS = 10;
 
     static final String QUEUE_METRIC = "adserving_impression_queue_size";
+    // 공통 지표의 워커 이름이다. lc-infra 의 기준 규칙(thresholds.yml)의 name 과 같다
+    static final String BACKLOG_NAME = "adserving.impression-write";
     static final String DROPPED_METRIC = "adserving_impression_dropped_total";
     static final String WRITE_FAILED_METRIC = "adserving_impression_write_failed_total";
     static final String LOST_METRIC = "adserving_impression_write_lost_total";
@@ -82,15 +86,22 @@ public class ImpressionWriteBuffer implements SmartLifecycle {
 
     public ImpressionWriteBuffer(ImpressionLogRepository impressions, ImpressionCountRepository counts,
                                  ApplicationEventPublisher publisher, TransactionTemplate transactions,
-                                 MeterRegistry meterRegistry) {
+                                 MeterRegistry meterRegistry, BacklogMetrics backlogMetrics) {
         this.impressions = impressions;
         this.counts = counts;
         this.publisher = publisher;
         this.transactions = transactions;
         this.meterRegistry = meterRegistry;
         meterRegistry.gaugeCollectionSize(QUEUE_METRIC, List.of(), queue);
+        backlogMetrics.worker(BACKLOG_NAME, queue::size, this::oldestReceivedAt);
         // 사건이 없어도 0 으로 보이게 기동 때 만든다
         List.of(DROPPED_METRIC, WRITE_FAILED_METRIC, LOST_METRIC, CAMPAIGN_MISMATCH_METRIC).forEach(meterRegistry::counter);
+    }
+
+    // 큐의 맨 앞이 가장 오래 기다린 노출이다. 비었으면 null 이다
+    private LocalDateTime oldestReceivedAt() {
+        QueuedImpression head = queue.peek();
+        return head == null ? null : head.receivedAt();
     }
 
     // 큐가 차면 100ms 까지 기다리고 그래도 넣지 못하면 버리고 센다.

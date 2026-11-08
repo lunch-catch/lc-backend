@@ -54,8 +54,9 @@ public class ImpressionDispatchRepository {
              WHERE (serve_id, member_id) IN (:keys)
             """;
 
+    // 건수와 가장 이른 시각을 같은 인덱스(dispatched_at, created_at)로 한 번에 읽는다
     private static final String COUNT_PENDING = """
-            SELECT COUNT(*) FROM impression_log WHERE dispatched_at IS NULL AND created_at >= ?
+            SELECT COUNT(*), MIN(created_at) FROM impression_log WHERE dispatched_at IS NULL AND created_at >= ?
             """;
 
     private final JdbcTemplate jdbcTemplate;
@@ -85,10 +86,15 @@ public class ImpressionDispatchRepository {
         namedJdbcTemplate.update(MARK_FAILED, params(impressions, at));
     }
 
-    // 넘기지 못하고 밀린 노출 수다. 상한에 닿아 건너뛴 행도 센다. 인덱스만 읽는다.
-    public long countPending(LocalDateTime from) {
-        Long count = jdbcTemplate.queryForObject(COUNT_PENDING, Long.class, Timestamp.valueOf(from));
-        return count == null ? 0 : count;
+    /*
+     * 넘기지 못하고 밀린 노출 수와 그 가운데 가장 이른 저장 시각이다. 상한에 닿아 건너뛴 행도 센다. 인덱스만 읽는다.
+     * 밀린 것이 없으면 시각은 null 이다.
+     */
+    public PendingSummary countPending(LocalDateTime from) {
+        return jdbcTemplate.queryForObject(COUNT_PENDING, (rs, n) -> {
+            Timestamp oldest = rs.getTimestamp(2);
+            return new PendingSummary(rs.getLong(1), oldest == null ? null : oldest.toLocalDateTime());
+        }, Timestamp.valueOf(from));
     }
 
     private static MapSqlParameterSource params(Collection<PendingImpression> impressions, LocalDateTime at) {
@@ -108,5 +114,8 @@ public class ImpressionDispatchRepository {
     }
 
     public record PendingImpression(UUID serveId, Long memberId, Long campaignId, LocalDate businessDate) {
+    }
+
+    public record PendingSummary(long count, LocalDateTime oldest) {
     }
 }

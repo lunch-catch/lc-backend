@@ -17,9 +17,11 @@ import com.lunchcatch.adserving.feed.repository.FeedVisitRepository.Visit;
 import com.lunchcatch.adserving.feed.repository.ServeLogRepository;
 import com.lunchcatch.adserving.feed.repository.ServeLogRepository.Row;
 import com.lunchcatch.adserving.feed.repository.ServeRecord;
+import com.lunchcatch.global.config.BacklogMetrics;
 import com.lunchcatch.global.config.ClockConfig;
 import com.lunchcatch.global.logging.LogContext;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -47,7 +49,20 @@ class ServeLogBufferTest {
     private final ServeLogRepository serveLogRepository = mock(ServeLogRepository.class);
     private final FeedVisitRepository feedVisitRepository = mock(FeedVisitRepository.class);
     private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
-    private final ServeLogBuffer buffer = new ServeLogBuffer(serveLogRepository, feedVisitRepository, meterRegistry);
+    // 요청 시각보다 2초 뒤다. 대기열에 남은 피드의 대기 시간을 센다
+    private final ServeLogBuffer buffer = new ServeLogBuffer(serveLogRepository, feedVisitRepository, meterRegistry,
+            new BacklogMetrics(meterRegistry, Clock.fixed(NOW.plusSeconds(2), ClockConfig.ZONE)));
+
+    @Test
+    @DisplayName("대기열 길이와 가장 오래 기다린 피드의 대기 시간을 워커 공통 지표로 낸다")
+    void 워커_공통_지표() {
+        buffer.offer(feedWithCards(1L, 3));
+
+        assertThat(meterRegistry.get("async.worker.queue.size").tag("worker", ServeLogBuffer.BACKLOG_NAME)
+                .gauge().value()).isEqualTo(1);
+        assertThat(meterRegistry.get("async.worker.oldest.age").tag("worker", ServeLogBuffer.BACKLOG_NAME)
+                .gauge().value()).isEqualTo(2);
+    }
     private static final LocalDateTime REQUESTED_AT = NOW.atZone(ClockConfig.ZONE).toLocalDateTime();
 
     private static ServedFeed feedWithCards(long memberId, int cards) {

@@ -7,6 +7,7 @@ import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -15,6 +16,8 @@ import static org.mockito.Mockito.when;
 import com.lunchcatch.adserving.impression.repository.DispatchLeaseRepository;
 import com.lunchcatch.adserving.impression.repository.ImpressionDispatchRepository;
 import com.lunchcatch.adserving.impression.repository.ImpressionDispatchRepository.PendingImpression;
+import com.lunchcatch.adserving.impression.repository.ImpressionDispatchRepository.PendingSummary;
+import com.lunchcatch.global.config.BacklogMetrics;
 import com.lunchcatch.billing.contract.DeductionOutcome;
 import com.lunchcatch.billing.contract.DeductionRequest;
 import com.lunchcatch.billing.contract.DeductionStatus;
@@ -47,7 +50,8 @@ class ImpressionDispatchServiceTest {
     private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
     private final Clock clock = Clock.fixed(NOW.atZone(ClockConfig.ZONE).toInstant(), ClockConfig.ZONE);
     private final ImpressionDispatchService service = new ImpressionDispatchService(
-            lease, impressions, pointDeductor, new ImmediateTransactions(), meterRegistry, clock);
+            lease, impressions, pointDeductor, new ImmediateTransactions(), meterRegistry, clock,
+            new BacklogMetrics(meterRegistry, clock));
 
     @Test
     void 다른_서버가_점유_중이면_넘기지_않는다() {
@@ -181,11 +185,63 @@ class ImpressionDispatchServiceTest {
     void 밀린_노출_수를_지표로_낸다() {
         when(lease.acquire(any())).thenReturn(true);
         when(impressions.findPending(any(), any(), anyInt(), anyInt())).thenReturn(List.of());
-        when(impressions.countPending(TODAY.minusDays(1).atStartOfDay())).thenReturn(7L);
+        when(impressions.countPending(TODAY.minusDays(1).atStartOfDay()))
+                .thenReturn(new PendingSummary(7, NOW.minusSeconds(4)));
 
         service.dispatchPending();
 
         assertThat(meterRegistry.get(ImpressionDispatchService.BACKLOG_METRIC).gauge().value()).isEqualTo(7);
+        assertThat(meterRegistry.get("outbox.relay.backlog").tag("relay", ImpressionDispatchService.RELAY_NAME)
+                .gauge().value()).isEqualTo(7);
+        assertThat(meterRegistry.get("outbox.relay.oldest.age").tag("relay", ImpressionDispatchService.RELAY_NAME)
+                .gauge().value()).isEqualTo(4);
+    }
+
+    @Test
+    void 다른_서버가_점유하면_이_서버의_밀린_양은_비운다() {
+        밀린_노출을_한_번_센다();
+        when(lease.acquire(any())).thenReturn(false);
+
+        service.dispatchPending();
+
+        assertThat(relayGauge("outbox.relay.backlog")).isZero();
+        assertThat(relayGauge("outbox.relay.oldest.age")).isZero();
+    }
+
+    @Test
+    void 점유를_확인하지_못하면_밀린_양을_그대로_두어_대기_시간이_계속_는다() {
+        밀린_노출을_한_번_센다();
+        when(lease.acquire(any())).thenThrow(new RedisConnectionFailureException("Valkey 가 멈췄다"));
+
+        service.dispatchPending();
+
+        assertThat(relayGauge("outbox.relay.backlog")).isEqualTo(7);
+        assertThat(relayGauge("outbox.relay.oldest.age")).isEqualTo(4);
+    }
+
+    private void 밀린_노출을_한_번_센다() {
+        when(lease.acquire(any())).thenReturn(true);
+        when(impressions.findPending(any(), any(), anyInt(), anyInt())).thenReturn(List.of());
+        when(impressions.countPending(TODAY.minusDays(1).atStartOfDay()))
+                .thenReturn(new PendingSummary(7, NOW.minusSeconds(4)));
+        service.dispatchPending();
+        reset(lease);
+    }
+
+    private double relayGauge(String name) {
+        return meterRegistry.get(name).tag("relay", ImpressionDispatchService.RELAY_NAME).gauge().value();
+    }
+
+    @Test
+    void 밀린_노출이_없으면_대기_시간은_0_이다() {
+        when(lease.acquire(any())).thenReturn(true);
+        when(impressions.findPending(any(), any(), anyInt(), anyInt())).thenReturn(List.of());
+        when(impressions.countPending(TODAY.minusDays(1).atStartOfDay())).thenReturn(new PendingSummary(0, null));
+
+        service.dispatchPending();
+
+        assertThat(meterRegistry.get("outbox.relay.oldest.age").tag("relay", ImpressionDispatchService.RELAY_NAME)
+                .gauge().value()).isZero();
     }
 
     private PendingImpression pending(int n) {

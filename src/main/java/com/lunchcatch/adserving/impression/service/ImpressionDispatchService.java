@@ -3,9 +3,11 @@ package com.lunchcatch.adserving.impression.service;
 import com.lunchcatch.adserving.impression.repository.DispatchLeaseRepository;
 import com.lunchcatch.adserving.impression.repository.ImpressionDispatchRepository;
 import com.lunchcatch.adserving.impression.repository.ImpressionDispatchRepository.PendingImpression;
+import com.lunchcatch.adserving.impression.repository.ImpressionDispatchRepository.PendingSummary;
 import com.lunchcatch.billing.contract.DeductionOutcome;
 import com.lunchcatch.billing.contract.DeductionRequest;
 import com.lunchcatch.billing.contract.PointDeductor;
+import com.lunchcatch.global.config.BacklogMetrics;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
 import java.time.Clock;
@@ -17,6 +19,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import lombok.extern.slf4j.Slf4j;
@@ -42,6 +45,8 @@ public class ImpressionDispatchService {
     static final String BACKLOG_METRIC = "adserving_impression_dispatch_backlog";
     static final String DEDUCT_DURATION_METRIC = "adserving_impression_dispatch_deduct_seconds";
     static final String DEDUCT_BATCH_METRIC = "adserving_impression_dispatch_deduct_batch";
+    // 공통 지표의 릴레이 이름이다. lc-infra 의 기준 규칙(thresholds.yml)의 name 과 같다
+    static final String RELAY_NAME = "adserving.impression";
 
     // 1초 주기라 약 10초 동안 다시 해 본다. 닿으면 읽지 않고 밀린 수로만 보인다
     static final int MAX_ATTEMPTS = 10;
@@ -54,10 +59,11 @@ public class ImpressionDispatchService {
     private final MeterRegistry meterRegistry;
     private final Clock clock;
     private final AtomicLong backlog = new AtomicLong();
+    private final AtomicReference<LocalDateTime> oldestPending = new AtomicReference<>();
 
     public ImpressionDispatchService(DispatchLeaseRepository lease, ImpressionDispatchRepository impressions,
                                      PointDeductor pointDeductor, TransactionTemplate transactions,
-                                     MeterRegistry meterRegistry, Clock clock) {
+                                     MeterRegistry meterRegistry, Clock clock, BacklogMetrics backlogMetrics) {
         this.lease = lease;
         this.impressions = impressions;
         this.pointDeductor = pointDeductor;
@@ -65,6 +71,7 @@ public class ImpressionDispatchService {
         this.meterRegistry = meterRegistry;
         this.clock = clock;
         meterRegistry.gauge(BACKLOG_METRIC, backlog);
+        backlogMetrics.relay(RELAY_NAME, backlog::get, oldestPending::get);
         // 사건이 없어도 0 으로 보이게 기동 때 만든다
         List.of(DISPATCHED_METRIC, FAILED_METRIC, ERROR_METRIC).forEach(meterRegistry::counter);
     }
@@ -84,7 +91,9 @@ public class ImpressionDispatchService {
             while (more && lease.renew(LEASE_TTL)) {
                 more = dispatchBatch(from);
             }
-            backlog.set(impressions.countPending(from));
+            PendingSummary pending = impressions.countPending(from);
+            backlog.set(pending.count());
+            oldestPending.set(pending.oldest());
         } catch (RuntimeException e) {
             meterRegistry.counter(ERROR_METRIC).increment();
             log.warn("event=ADSERVING_IMPRESSION_DISPATCH_FAILED fallback=RETRY_NEXT_RUN", e);
@@ -137,9 +146,18 @@ public class ImpressionDispatchService {
         return failed.isEmpty() && batch.size() == PointDeductor.MAX_BATCH_SIZE;
     }
 
+    /*
+     * 다른 서버가 점유했으면 그 서버가 넘기고 있으니 이 서버가 지난번에 센 밀린 양은 낡았다. 비워서 지표에 남지 않게 한다.
+     * 점유를 확인하지 못했으면(Valkey 장애) 아무도 넘기지 못하므로 그대로 두어 대기 시간이 계속 늘게 한다.
+     */
     private boolean acquire() {
         try {
-            return lease.acquire(LEASE_TTL);
+            boolean held = lease.acquire(LEASE_TTL);
+            if (!held) {
+                backlog.set(0);
+                oldestPending.set(null);
+            }
+            return held;
         } catch (DataAccessException e) {
             meterRegistry.counter(ERROR_METRIC).increment();
             log.warn("event=ADSERVING_IMPRESSION_DISPATCH_LEASE_FAILED fallback=SKIP_RUN", e);
