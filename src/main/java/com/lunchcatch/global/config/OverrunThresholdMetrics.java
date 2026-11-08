@@ -18,8 +18,6 @@ public class OverrunThresholdMetrics implements MeterBinder {
 
     static final String METRIC = "overrun.threshold";
     static final String KIND = "api";
-    // 목표가 없는 API 가 견줄 기본값의 이름이다
-    static final String DEFAULT_NAME = "default";
 
     private final OverrunThresholdProperties properties;
 
@@ -29,9 +27,7 @@ public class OverrunThresholdMetrics implements MeterBinder {
 
     @Override
     public void bindTo(MeterRegistry registry) {
-        if (properties.apiDefault() != null) {
-            register(registry, DEFAULT_NAME, properties.apiDefault());
-        }
+        register(registry, OverrunThresholdProperties.DEFAULT_NAME, properties.apiDefault());
         properties.api().forEach((name, value) -> register(registry, name, value));
     }
 

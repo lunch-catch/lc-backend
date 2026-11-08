@@ -31,7 +31,7 @@ class OverrunThresholdMetricsTest {
         new OverrunThresholdMetrics(properties).bindTo(registry);
 
         assertThat(value(registry, "GET /v1/feed")).isEqualTo(0.3);
-        assertThat(value(registry, OverrunThresholdMetrics.DEFAULT_NAME)).isEqualTo(0.5);
+        assertThat(value(registry, OverrunThresholdProperties.DEFAULT_NAME)).isEqualTo(0.5);
         assertThat(registry.find(OverrunThresholdMetrics.METRIC).gauges()).hasSize(2);
     }
 
@@ -39,7 +39,7 @@ class OverrunThresholdMetricsTest {
     @DisplayName("Prometheus 에는 overrun_threshold_seconds 로 나간다")
     void Prometheus_이름() {
         OverrunThresholdProperties properties = new OverrunThresholdProperties(
-                null, Map.of("GET /v1/feed", Duration.ofMillis(300)));
+                Duration.ofMillis(500), Map.of("GET /v1/feed", Duration.ofMillis(300)));
         PrometheusMeterRegistry registry = new PrometheusMeterRegistry(PrometheusConfig.DEFAULT);
 
         new OverrunThresholdMetrics(properties).bindTo(registry);
@@ -50,10 +50,27 @@ class OverrunThresholdMetricsTest {
     @Test
     @DisplayName("0 이하의 목표는 앱이 뜰 때 막는다")
     void 영_이하는_막는다() {
-        assertThatThrownBy(() -> new OverrunThresholdProperties(null, Map.of("GET /v1/feed", Duration.ZERO)))
+        assertThatThrownBy(() -> new OverrunThresholdProperties(Duration.ofMillis(500), Map.of("GET /v1/feed", Duration.ZERO)))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("GET /v1/feed");
         assertThatThrownBy(() -> new OverrunThresholdProperties(Duration.ofMillis(-1), Map.of()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("api-default");
+    }
+
+    @Test
+    @DisplayName("기본값이 빠지면 앱이 뜰 때 막는다")
+    void 기본값이_없으면_막는다() {
+        assertThatThrownBy(() -> new OverrunThresholdProperties(null, Map.of("GET /v1/feed", Duration.ofMillis(300))))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("api-default");
+    }
+
+    @Test
+    @DisplayName("API 의 키로 default 를 쓰면 기본값과 겹쳐 앱이 뜰 때 막는다")
+    void default_키는_막는다() {
+        assertThatThrownBy(() -> new OverrunThresholdProperties(
+                Duration.ofMillis(500), Map.of(OverrunThresholdProperties.DEFAULT_NAME, Duration.ofMillis(300))))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("api-default");
     }
@@ -74,8 +91,9 @@ class OverrunThresholdMetricsTest {
     @Test
     @DisplayName("설정의 값이 틀리면 묶을 때 실패한다")
     void 틀린_값은_묶지_못한다() {
-        Binder binder = new Binder(ConfigurationPropertySources.from(new MapPropertySource(
-                "test", Map.of(OverrunThresholdProperties.PREFIX + ".api.[GET /v1/feed]", "-1s"))));
+        Binder binder = new Binder(ConfigurationPropertySources.from(new MapPropertySource("test", Map.of(
+                OverrunThresholdProperties.PREFIX + ".api-default", "500ms",
+                OverrunThresholdProperties.PREFIX + ".api.[GET /v1/feed]", "-1s"))));
 
         assertThatThrownBy(() -> binder.bind(OverrunThresholdProperties.PREFIX, OverrunThresholdProperties.class))
                 .isInstanceOf(BindException.class);
