@@ -177,6 +177,41 @@ management:
       instance: "${APP_INSTANCE_ID:local}"
       version: "${APP_VERSION:local}"
 
+lunchcatch:
+  observability:
+    # 기준 초과를 가르는 기준이다. 앱이 overrun_threshold_seconds{kind, name} 으로 내보내고
+    # 06 기준 초과 대시보드와 부하 시험의 판정이 그 값으로 거른다(#1165).
+    #
+    # 값의 원본은 도메인 설계서와 품질 문서다. 원본을 바꾸면 여기도 같은 PR 에서 고친다.
+    # 품질 문서의 [인프라] 항목 값(GC 일시정지, 커넥션 획득 대기)은 여기 두지 않고 lc-infra 의 규칙 파일이 갖는다
+    targets:
+      # 이름별 값이 없는 것은 이 값으로 판정한다
+      defaults:
+        api: 500ms
+        # 품질 문서 데이터 무결성의 아웃박스 발행 지연
+        relay: 5s
+        # 릴레이와 같은 뒤에서 처리하는 늦음이라 같은 값을 둔다
+        worker: 5s
+        # 가장 자주 도는 cron(후보 예산 갱신, 10분마다)이 다음 실행 전에 끝나야 한다
+        job: 10m
+      # 키는 메서드와 경로다. 값은 그 도메인의 *-api-design.md 의 성능 목표 표에서 옮긴다
+      api:
+        "[GET /v1/feed]": 300ms
+        "[POST /v1/swipes]": 500ms
+        "[POST /v1/impressions]": 500ms
+        "[GET /v1/wishlist]": 300ms
+        "[POST /v1/coupons]": 1000ms
+      # 키는 릴레이 이름이다. 가장 오래 기다린 미발행 건의 대기 시간과 견준다
+      relay:
+        "[adserving.impression]": 5s
+      # 키는 워커 이름이다. 도메인이 정하기 전에는 기본값으로 판정한다(#1131)
+      worker: {}
+      # 키는 작업 타이머의 scheduler 꼬리표다. 도메인이 마감을 정하기 전에는 기본값으로 판정한다(#1131)
+      job: {}
+      # 이름마다 다르지 않은 앱 전체의 한도다. 품질 문서 데이터 무결성의 트랜잭션 지속 시간 상한이다
+      global:
+        "[transaction]": 1s
+
 springdoc:
   swagger-ui:
     path: /swagger-ui.html
