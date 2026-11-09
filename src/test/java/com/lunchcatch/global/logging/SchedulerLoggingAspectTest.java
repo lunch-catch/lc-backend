@@ -29,6 +29,7 @@ class SchedulerLoggingAspectTest {
 
     private static final String LAST_SUCCESS = "batch.job.last.success.timestamp";
     private static final String DURATION = "batch.job.duration";
+    private static final String RUNNING_SINCE = "batch.job.running.since";
     private static final Instant START = Instant.parse("2026-10-06T00:00:00Z");
 
     /*
@@ -390,6 +391,95 @@ class SchedulerLoggingAspectTest {
 
         // then
         assertThat(registry.find(LAST_SUCCESS).gauges()).hasSize(2);
+    }
+
+    // --- 도는 중의 시작 시각 게이지 -------------------------------------------------------
+
+    private double runningSince() {
+        return registry.find(RUNNING_SINCE).gauges().stream()
+                .filter(gauge -> gauge.getId().getTag("scheduler").contains("run()"))
+                .findFirst()
+                .orElseThrow()
+                .value();
+    }
+
+    @Test
+    void 도는_동안에는_시작_시각을_게이지로_낸다() {
+        // given
+        double[] seen = new double[1];
+        target.work = () -> {
+            clock.advanceSeconds(30);
+            seen[0] = runningSince();
+        };
+
+        // when
+        job.run();
+
+        // then
+        assertThat(seen[0]).isEqualTo(START.getEpochSecond());
+    }
+
+    @Test
+    void 성공하고_나면_시작_시각을_0으로_되돌린다() {
+        // when
+        job.run();
+
+        // then
+        assertThat(runningSince()).isZero();
+    }
+
+    @Test
+    void 실패해도_시작_시각을_0으로_되돌린다() {
+        // when
+        failOnce();
+
+        // then
+        assertThat(runningSince()).isZero();
+    }
+
+    @Test
+    void 다음_실행은_그_실행의_시작_시각을_낸다() {
+        // given
+        job.run();
+        clock.advanceSeconds(60);
+        double[] seen = new double[1];
+        target.work = () -> seen[0] = runningSince();
+
+        // when
+        job.run();
+
+        // then
+        assertThat(seen[0]).isEqualTo(START.getEpochSecond() + 60);
+    }
+
+    @Test
+    void 시작_시각_게이지는_작업마다_scheduler_태그로_따로_둔다() {
+        // when
+        job.run();
+        job.other();
+
+        // then
+        assertThat(registry.find(RUNNING_SINCE).gauges())
+                .extracting(gauge -> gauge.getId().getTag("scheduler"))
+                .hasSize(2)
+                .anyMatch(name -> name.contains("run()"))
+                .anyMatch(name -> name.contains("other()"));
+    }
+
+    // 06 과 부하 시험 판정이 이 이름으로 묻는다
+    @Test
+    void 시작_시각_게이지는_Prometheus_에서_batch_job_running_since_seconds_로_보인다() {
+        // given
+        PrometheusMeterRegistry prometheus = new PrometheusMeterRegistry(PrometheusConfig.DEFAULT);
+        AspectJProxyFactory factory = new AspectJProxyFactory(new FakeJob());
+        factory.addAspect(new SchedulerLoggingAspect(prometheus, clock));
+        FakeJob prometheusJob = factory.getProxy();
+
+        // when
+        prometheusJob.run();
+
+        // then
+        assertThat(prometheus.scrape()).contains("batch_job_running_since_seconds{");
     }
 
     @Test
