@@ -10,12 +10,18 @@ import io.lettuce.core.resource.ClientResources;
 import io.lettuce.core.resource.DefaultClientResources;
 import io.micrometer.core.instrument.Timer;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.time.Duration;
+import java.util.List;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.data.redis.autoconfigure.DataRedisProperties;
+import org.springframework.boot.data.redis.autoconfigure.observation.LettuceObservationAutoConfiguration;
+import org.springframework.boot.env.YamlPropertySourceLoader;
+import org.springframework.core.env.PropertySource;
+import org.springframework.core.io.ClassPathResource;
 
 class ValkeyConfigTest {
 
@@ -53,6 +59,20 @@ class ValkeyConfigTest {
         Timer completion = registry.get("lettuce.command.completion").tag("command", "GET").timer();
         assertThat(completion.count()).isEqualTo(1);
         assertThat(completion.totalTime(TimeUnit.MILLISECONDS)).isEqualTo(3.0);
+        Timer firstResponse = registry.get("lettuce.command.firstresponse").tag("command", "GET").timer();
+        assertThat(firstResponse.count()).isEqualTo(1);
+        assertThat(firstResponse.totalTime(TimeUnit.MILLISECONDS)).isEqualTo(1.0);
+    }
+
+    // 이 줄이 빠지면 명령마다 관측을 만드는 Spring Boot 의 Lettuce 관측이 새 기록기와 함께 돈다
+    @Test
+    @DisplayName("application.yml 이 Spring Boot 의 Lettuce 관측을 끈다")
+    void Spring_Boot_의_Lettuce_관측을_끈다() throws IOException {
+        List<PropertySource<?>> sources = new YamlPropertySourceLoader()
+                .load("application", new ClassPathResource("application.yml"));
+
+        assertThat(sources.getFirst().getProperty("spring.autoconfigure.exclude"))
+                .hasToString(LettuceObservationAutoConfiguration.class.getName());
     }
 
     // 분위수는 앱이 계산하지 않는다. Prometheus 가 필요하면 합계와 수로 평균을, 최대로 꼬리를 본다
