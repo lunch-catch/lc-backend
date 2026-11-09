@@ -276,8 +276,8 @@ Bedrock Converse 를 `BedrockTemplateHtmlGenerator` 가 부른다. `bedrock.mode
 | 작업이 하는 일 | `template_version` 중 `deleted_at`이 채워진(게시로 소프트삭제된) 행을 500건씩 나눠 반복해서 완전히 지운다(`#412`) |
 | 읽는 상태 | `TemplatePublishService.publish()`가 게시 시점에 이미 찍어 둔 `deleted_at`(`#150`). 이 배치는 그 전 단계를 따로 확인하지 않는다 |
 | 같은 날 두 번 돌면 | 두 번째 실행은 첫 호출의 `deleted_at is not null` 조건에 걸리는 행이 없어 0건을 지우고 성공으로 끝난다. 누적되지 않는다 |
-| 실패하면 그날 서비스는 | 영향 없다. 템플릿 조회·게시·생성·수정 어느 것도 `template_version`의 소프트삭제 행을 읽지 않는다(`findPage`, `findByTemplateIdAndVersionNumberAndDeletedAtIsNull` 모두 `deletedAt is null` 조건). 다음 날 다시 돌면 이어서 지운다 |
-| 끝나야 하는 때(마감) | 마감 없음. 이 배치가 늦거나 하루 걸러도 지울 행이 다음 날로 밀릴 뿐이라 서비스에 영향이 없다. 영향이 없는 이유는 위 "실패하면 그날 서비스는" 줄과 같다 |
+| 실패하면 그날 서비스는 | 조회·게시·생성은 영향 없다. 이 셋과 수정은 `template_version`의 소프트삭제 행을 읽지 않는다(`findPage`, `findByTemplateIdAndVersionNumberAndDeletedAtIsNull` 모두 `deletedAt is null` 조건). 다만 수정은 소프트삭제된 버전의 `requestId` 를 다시 보내면 `400` 으로 거절한다(`TemplateReviseService.rejectDiscardedRequestId`, `#880`). 배치가 그 행을 지울 때까지 클라이언트는 새 `requestId` 로 보내야 하고, 지운 뒤에는 같은 `requestId` 도 새 요청으로 처리한다. 다음 날 다시 돌면 이어서 지운다 |
+| 끝나야 하는 때(마감) | 마감 없음. 이 배치가 늦거나 하루 걸러도 지울 행이 다음 날로 밀릴 뿐이고 서비스에 미치는 영향은 위 "실패하면 그날 서비스는" 줄이 말하는 수정 요청의 `400` 뿐이다 |
 
 00:00 묶음(`DailyJob`)에는 태우지 않는다. 캠페인·정산·광고 서빙의 순서 보장용 묶음과 이 정리 작업 사이에 순서 의존이 없다. 매일 04시에 독립적으로 돌고, 멈춘 실행은 다른 서버가 `StandaloneJob` 으로 이어받는다(`#622`).
 
