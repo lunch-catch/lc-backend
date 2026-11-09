@@ -277,6 +277,7 @@ Bedrock Converse 를 `BedrockTemplateHtmlGenerator` 가 부른다. `bedrock.mode
 | 읽는 상태 | `TemplatePublishService.publish()`가 게시 시점에 이미 찍어 둔 `deleted_at`(`#150`). 이 배치는 그 전 단계를 따로 확인하지 않는다 |
 | 같은 날 두 번 돌면 | 두 번째 실행은 첫 호출의 `deleted_at is not null` 조건에 걸리는 행이 없어 0건을 지우고 성공으로 끝난다. 누적되지 않는다 |
 | 실패하면 그날 서비스는 | 영향 없다. 템플릿 조회·게시·생성·수정 어느 것도 `template_version`의 소프트삭제 행을 읽지 않는다(`findPage`, `findByTemplateIdAndVersionNumberAndDeletedAtIsNull` 모두 `deletedAt is null` 조건). 다음 날 다시 돌면 이어서 지운다 |
+| 끝나야 하는 때(마감) | 마감 없음. 이 배치가 늦거나 하루 걸러도 지울 행이 다음 날로 밀릴 뿐이라 서비스에 영향이 없다. 영향이 없는 이유는 위 "실패하면 그날 서비스는" 줄과 같다 |
 
 00:00 묶음(`DailyJob`)에는 태우지 않는다. 캠페인·정산·광고 서빙의 순서 보장용 묶음과 이 정리 작업 사이에 순서 의존이 없다. 매일 04시에 독립적으로 돌고, 멈춘 실행은 다른 서버가 `StandaloneJob` 으로 이어받는다(`#622`).
 
