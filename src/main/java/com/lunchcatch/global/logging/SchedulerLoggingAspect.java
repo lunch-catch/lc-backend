@@ -33,11 +33,13 @@ public class SchedulerLoggingAspect {
 
     private static final String LAST_SUCCESS = "batch.job.last.success.timestamp";
     private static final String DURATION = "batch.job.duration";
+    private static final String RUNNING_SINCE = "batch.job.running.since";
     private static final Duration MAX_EXPECTED_DURATION = Duration.ofHours(1);
 
     private final MeterRegistry meterRegistry;
     private final Clock clock;
     private final Map<String, AtomicLong> lastSuccessByJob = new ConcurrentHashMap<>();
+    private final Map<String, AtomicLong> runningSinceByJob = new ConcurrentHashMap<>();
 
     @Around("@annotation(org.springframework.scheduling.annotation.Scheduled)")
     public Object logScheduledExecution(ProceedingJoinPoint joinPoint) throws Throwable {
@@ -47,6 +49,8 @@ public class SchedulerLoggingAspect {
         try (LogContext.Scope ignored = LogContext.open(job)) {
             logStep(quiet, "event=SCHEDULER_START job={}", job);
             AtomicLong lastSuccess = lastSuccessGauge(job, start);
+            AtomicLong runningSince = runningSinceGauge(job);
+            runningSince.set(start.getEpochSecond());
 
             try {
                 Object result = joinPoint.proceed();
@@ -60,6 +64,8 @@ public class SchedulerLoggingAspect {
                 recordDuration(job, "failure", took);
                 log.error("event=SCHEDULER_FAILED job={} durationMs={}", job, took.toMillis(), ex);
                 throw ex;
+            } finally {
+                runningSince.set(0);
             }
         }
     }
@@ -92,6 +98,24 @@ public class SchedulerLoggingAspect {
                 .description("Time taken by one scheduled run")
                 .register(meterRegistry)
                 .record(took);
+    }
+
+    /*
+     * 도는 중인 실행이 시작된 시각이다. 돌지 않으면 0 이다(#1175).
+     * 걸린 시간 타이머는 실행이 끝나야 기록되어, 멈춰 끝나지 않는 작업은 마감을 넘겨도 보이지 않는다.
+     * 그래서 06 과 부하 시험 판정이 "지금 시각 - 시작 시각" 을 그 작업의 마감과 견준다.
+     * 한 JVM 에서는 같은 작업이 겹쳐 돌지 않아 작업마다 값 하나로 충분하다. 서버가 여러 대면 instance 꼬리표로 갈린다.
+     */
+    private AtomicLong runningSinceGauge(String job) {
+        return runningSinceByJob.computeIfAbsent(job, name -> {
+            AtomicLong holder = new AtomicLong();
+            Gauge.builder(RUNNING_SINCE, holder, AtomicLong::doubleValue)
+                    .tag("scheduler", name)
+                    .baseUnit("seconds")
+                    .description("Unix time the running execution started, 0 when idle")
+                    .register(meterRegistry);
+            return holder;
+        });
     }
 
     /*
