@@ -125,7 +125,7 @@ loadtest/adserving/run.sh switch <이미지>
 - 측정 회차와 나눈다. 스팬을 만드는 비용이 p99 에 섞인다. 켠 회차는 이름을 `-tracing` 으로 끝내고 결과 표와 경고 로그 기록에 넣지 않는다.
 - 노출 저장과 서빙 로그 대기열은 응답 뒤에 돌아 트레이스가 거기서 끊긴다.
 - 에이전트 판은 `v2.32.0` 으로 고정한다. 새 판은 나온 지 2주가 지난 뒤에 올린다.
-- 켠 동안은 Valkey 명령 지연 지표(`lettuce_seconds_*`)가 없어 04 데이터 저장소 대시보드의 `Valkey 명령 지연` 패널이 빈다. 스프링 부트의 Lettuce 관측이 에이전트의 Lettuce 계측을 덮어 Valkey 명령이 스팬이 되지 않아, 켠 동안만 그 자동 설정(`LettuceObservationAutoConfiguration`)을 뺀다. 그 시간은 트레이싱에서 명령마다 보인다.
+- Valkey 명령 지연 지표(`lettuce_command_completion_seconds`)는 켠 동안에도 남는다. 앱이 스프링 부트의 Lettuce 관측을 늘 꺼 두고 Lettuce 자체의 지연 기록기로 남기기 때문이다(#1180). 그래서 에이전트의 Lettuce 계측이 Valkey 명령을 스팬으로 만들고, 그 시간은 트레이싱에서 명령마다 보인다.
 - 로그와 트레이스는 로그의 `trace_id` 로 잇는다. 요청 로그의 `traceId` 는 앱이 만든 별개의 값이라 트레이스와 이어지지 않는다.
 
 ## 프로파일링

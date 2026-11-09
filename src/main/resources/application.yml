@@ -6,6 +6,11 @@ spring:
     # 아무도 프로필을 지정하지 않으면 local 로 본다. 배포와 테스트는 프로필을 직접 주므로 이 값이 덮인다
     default: local
 
+  autoconfigure:
+    # Spring Boot 의 Lettuce 관측은 Valkey 명령 하나마다 관측을 만들어 무겁다. 명령 시간은 ValkeyConfig 의 Lettuce 자체 기록기가 남긴다(#1180).
+    # 진단 회차에 붙이는 OpenTelemetry 에이전트의 Lettuce 계측도 이 관측이 없어야 Valkey 명령을 스팬으로 만든다
+    exclude: org.springframework.boot.data.redis.autoconfigure.observation.LettuceObservationAutoConfiguration
+
   jackson:
     deserialization:
       accept-float-as-int: false

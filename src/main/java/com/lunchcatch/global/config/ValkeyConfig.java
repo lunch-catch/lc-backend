@@ -3,7 +3,11 @@ package com.lunchcatch.global.config;
 import io.lettuce.core.SocketOptions;
 import io.lettuce.core.SocketOptions.KeepAliveOptions;
 import io.lettuce.core.SocketOptions.TcpUserTimeoutOptions;
+import io.lettuce.core.metrics.MicrometerCommandLatencyRecorder;
+import io.lettuce.core.metrics.MicrometerOptions;
+import io.micrometer.core.instrument.MeterRegistry;
 import java.time.Duration;
+import org.springframework.boot.data.redis.autoconfigure.ClientResourcesBuilderCustomizer;
 import org.springframework.boot.data.redis.autoconfigure.DataRedisProperties;
 import org.springframework.boot.data.redis.autoconfigure.LettuceClientOptionsBuilderCustomizer;
 import org.springframework.context.annotation.Bean;
@@ -31,6 +35,24 @@ public class ValkeyConfig {
     @Bean
     LettuceClientOptionsBuilderCustomizer valkeySocketOptionsCustomizer(DataRedisProperties properties) {
         return builder -> builder.socketOptions(socketOptions(properties.getConnectTimeout()));
+    }
+
+    /*
+     * Valkey 명령의 앱 쪽 시간을 Lettuce 자체의 지연 기록기로 남긴다(#1180).
+     * Spring Boot 의 Lettuce 관측은 명령 하나마다 관측을 만들고 도는 중인 명령까지 추적해 무거워 application.yml 에서 끈다.
+     * 이 기록기는 명령 이름과 원격 주소마다 타이머 하나에 완료 시간을 더한다(lettuce_command_completion_seconds).
+     * 앱 쪽 시간은 서버 쪽 지표(redis-exporter)와 견주어 대기가 서버에 있는지 앱에 있는지 가르는 데 쓴다.
+     * 분위수와 히스토그램은 끈다. 명령마다 계산하는 값이 늘고, 꼬리는 최대와 트레이스로 본다.
+     * 로컬 주소 구분도 끈다. 연결마다 시계열이 생긴다.
+     */
+    @Bean
+    ClientResourcesBuilderCustomizer valkeyCommandLatencyCustomizer(MeterRegistry registry) {
+        MicrometerOptions options = MicrometerOptions.builder()
+                .histogram(false)
+                .targetPercentiles(new double[0])
+                .localDistinction(false)
+                .build();
+        return builder -> builder.commandLatencyRecorder(new MicrometerCommandLatencyRecorder(registry, options));
     }
 
     static SocketOptions socketOptions(Duration connectTimeout) {
