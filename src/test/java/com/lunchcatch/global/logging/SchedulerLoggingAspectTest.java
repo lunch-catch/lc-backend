@@ -466,12 +466,15 @@ class SchedulerLoggingAspectTest {
                 .anyMatch(name -> name.contains("other()"));
     }
 
-    // 06 과 부하 시험 판정이 이 이름으로 묻는다
+    // 06 과 부하 시험 판정이 이 이름과 초 단위 값으로 묻는다
     @Test
     void 시작_시각_게이지는_Prometheus_에서_batch_job_running_since_seconds_로_보인다() {
         // given
         PrometheusMeterRegistry prometheus = new PrometheusMeterRegistry(PrometheusConfig.DEFAULT);
-        AspectJProxyFactory factory = new AspectJProxyFactory(new FakeJob());
+        FakeJob prometheusTarget = new FakeJob();
+        String[] scraped = new String[1];
+        prometheusTarget.work = () -> scraped[0] = prometheus.scrape();
+        AspectJProxyFactory factory = new AspectJProxyFactory(prometheusTarget);
         factory.addAspect(new SchedulerLoggingAspect(prometheus, clock));
         FakeJob prometheusJob = factory.getProxy();
 
@@ -479,7 +482,9 @@ class SchedulerLoggingAspectTest {
         prometheusJob.run();
 
         // then
-        assertThat(prometheus.scrape()).contains("batch_job_running_since_seconds{");
+        assertThat(scraped[0]).containsPattern(
+                "batch_job_running_since_seconds\\{[^}]*run\\(\\)[^}]*} " + (double) START.getEpochSecond());
+        assertThat(prometheus.scrape()).containsPattern("batch_job_running_since_seconds\\{[^}]*run\\(\\)[^}]*} 0\\.0");
     }
 
     @Test
