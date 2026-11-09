@@ -482,7 +482,8 @@ bash /tmp/lt-profile.sh $name $secs $mode $pyro $PROJECT /tmp/lt-trim.py $ASPROF
 # 라벨을 주면 OpenTelemetry 에이전트를 붙인다(#1099).
 # 운영 compose 가 JAVA_TOOL_OPTIONS 에 힙과 DNS 설정을 넣어 에이전트는 JDK_JAVA_OPTIONS 로 준다.
 # 남길 트레이스는 Alloy 의 테일 샘플링이 고른다(lunch-catch/lc-infra#72). 지표와 로그는 지금 길을 그대로 쓴다.
-# 스프링 부트의 Lettuce 관측은 앱이 늘 꺼 둔다(application.yml, #1180). 그래서 에이전트의 Lettuce 계측이 Valkey 명령을 스팬으로 만든다.
+# 에이전트의 Lettuce 계측은 끈다(#1177). 명령마다 스팬이라 피드 요청 하나의 스팬 가운데 Lettuce 가 가장 많다.
+# Valkey 명령의 시간은 앱의 lettuce_command_completion_seconds(#1180)와 Redis 서버 지표로 보고, 트레이스에서는 이름 없는 빈 구간이 된다.
 #
 # 풀을 끄면 Valkey 연결 풀이 없던 때와 같이 돈다(#1127). 같은 커밋을 풀 켬과 끔으로 재 풀만의 효과를 가른다.
 #
@@ -501,6 +502,7 @@ app_override() {
       OTEL_TRACES_SAMPLER: always_on
       OTEL_METRICS_EXPORTER: none
       OTEL_LOGS_EXPORTER: none
+      OTEL_INSTRUMENTATION_LETTUCE_ENABLED: "false"
 EOF
   fi
   [ -z "$nopool" ] || printf '      SPRING_DATA_REDIS_LETTUCE_POOL_ENABLED: "false"\n'
