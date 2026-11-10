@@ -15,6 +15,7 @@ import com.lunchcatch.coupon.CouponTestProperties;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.LocalDateTime;
 import java.time.LocalDate;
 import java.util.Optional;
 import java.util.concurrent.CountDownLatch;
@@ -33,7 +34,7 @@ class CouponSoldOutNotificationServiceTest {
     private final CouponLookUpService lookUp = mock(CouponLookUpService.class);
     private final CandidateStateUpdater candidates = mock(CandidateStateUpdater.class);
     private final Clock clock = mock(Clock.class);
-    private final CouponSoldOutNotificationService service = new CouponSoldOutNotificationService(CouponTestProperties.defaults(), lookUp, candidates, clock);
+    private final CouponSoldOutNotificationService service = new CouponSoldOutNotificationService(CouponTestProperties.defaults(), lookUp, candidates, clock, mock(com.lunchcatch.global.config.BacklogMetrics.class));
     private final CouponLookUpService.SoldOut soldOut = new CouponLookUpService.SoldOut(91L, DATE, DATE.atTime(12, 0));
 
     @BeforeEach
@@ -48,14 +49,14 @@ class CouponSoldOutNotificationServiceTest {
         org.slf4j.MDC.clear();
     }
 
-    // 통보를 기다리는 이벤트 수와 처음 접수한 뒤 지난 시간을 읽으며, 실패해 다시 시도해도 처음 접수한 시각을 기준으로 센다.
+    // 통보를 기다리는 이벤트 수와 처음 접수한 시각을 읽으며, 실패해 다시 시도해도 처음 접수한 시각을 유지한다.
     @Test
-    void 통보를_기다리는_이벤트의_수와_처음_접수한_뒤_지난_시간을_읽는다() {
+    void 통보를_기다리는_이벤트의_수와_처음_접수한_시각을_읽는다() {
         when(lookUp.findSoldOut(81L)).thenReturn(Optional.of(soldOut));
         doThrow(new DataAccessResourceFailureException("unavailable"))
                 .when(candidates).markSoldOut(91L, DATE, soldOut.soldOutAt());
         assertThat(service.pendingCount()).isZero();
-        assertThat(service.oldestPendingSeconds()).isZero();
+        assertThat(service.oldestPendingRequestedAt()).isNull();
 
         service.request(81L);
         when(clock.instant()).thenReturn(NOW.plusSeconds(2));
@@ -64,7 +65,7 @@ class CouponSoldOutNotificationServiceTest {
         when(clock.instant()).thenReturn(NOW.plusSeconds(3));
 
         assertThat(service.pendingCount()).isEqualTo(2);
-        assertThat(service.oldestPendingSeconds()).isEqualTo(3.0);
+        assertThat(service.oldestPendingRequestedAt()).isEqualTo(LocalDateTime.ofInstant(NOW, com.lunchcatch.global.config.ClockConfig.ZONE));
     }
 
     @Test

@@ -7,6 +7,7 @@ import com.lunchcatch.coupon.exception.CouponException;
 import com.lunchcatch.coupon.model.CouponIssuanceOutcome;
 import com.lunchcatch.coupon.model.CouponIssuanceRequest;
 import com.lunchcatch.coupon.model.CouponIssuanceResult;
+import com.lunchcatch.global.config.BacklogMetrics;
 import com.lunchcatch.global.config.ClockConfig;
 import java.time.Clock;
 import java.time.LocalDateTime;
@@ -26,6 +27,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.SmartLifecycle;
@@ -44,12 +46,15 @@ import org.springframework.stereotype.Component;
 public class CouponIssueBatcher implements SmartLifecycle {
 
     private static final int SHUTDOWN_PHASE_OFFSET = 2048;
+    // 공통 지표의 워커 이름이다. 이름별 기준을 둘 때 application.yml 의 lunchcatch.observability.targets.worker 키로 쓴다
+    static final String BACKLOG_NAME = "coupon.issue";
 
     private final CouponProperties properties;
     private final CouponBatchIssuanceService batchService;
     private final CouponSequenceService sequenceService;
     private final CouponSoldOutNotificationService soldOutNotifications;
     private final Clock clock;
+    private final BacklogMetrics backlogMetrics;
     private final List<Thread> workers = new ArrayList<>();
     // 요청 스레드가 넣고 작업자가 꺼내는 대기열이며 start에서 만든다.
     private BlockingQueue<Pending> queue;
@@ -133,7 +138,7 @@ public class CouponIssueBatcher implements SmartLifecycle {
         if (!running || !admission.tryAcquire()) {
             throw new CouponException(CouponErrorCode.ISSUANCE_BUSY);
         }
-        Pending pending = new Pending(request, new CompletableFuture<>(), deadlineNanos);
+        Pending pending = new Pending(request, new CompletableFuture<>(), deadlineNanos, queuedAt());
         active.add(pending);
         pending.future().whenComplete((result, error) -> {
             active.remove(pending);
@@ -370,7 +375,7 @@ public class CouponIssueBatcher implements SmartLifecycle {
                         new CouponException(CouponErrorCode.INVENTORY_EXHAUSTED)));
             } else if (availability == CouponSequenceCode.AVAILABLE.code()) {
                 for (Pending pending : requests) {
-                    pending.markQueued();
+                    pending.markQueued(queuedAt());
                     if (!expireBeforeStart(pending) && (!running || !queue.offer(pending))) {
                         pending.future().completeExceptionally(new CouponException(CouponErrorCode.ISSUANCE_BUSY));
                     }
@@ -453,17 +458,27 @@ public class CouponIssueBatcher implements SmartLifecycle {
         }
     }
 
+    // 공통 지표에 발급 대기열을 등록한다. 이름은 lunchcatch.observability.targets.worker 의 키다.
+    @PostConstruct
+    void registerBacklogMetrics() {
+        backlogMetrics.worker(BACKLOG_NAME, this::queuedCount, this::oldestQueuedAt);
+    }
+
     // 작업자를 기다리는 발급 요청 수를 돌려준다.
     int queuedCount() {
         BlockingQueue<Pending> current = queue;
         return current == null ? 0 : current.size();
     }
 
-    // 작업자를 가장 오래 기다린 발급 요청의 대기 시간을 초로 돌려주며 기다리는 요청이 없으면 0이다.
-    double oldestQueuedSeconds() {
+    // 작업자를 가장 오래 기다린 발급 요청이 대기열에 들어간 시각을 돌려주며 기다리는 요청이 없으면 null이다.
+    LocalDateTime oldestQueuedAt() {
         BlockingQueue<Pending> current = queue;
         Pending head = current == null ? null : current.peek();
-        return head == null ? 0 : (System.nanoTime() - head.queuedAtNanos()) / 1_000_000_000.0;
+        return head == null ? null : head.queuedAt();
+    }
+
+    private LocalDateTime queuedAt() {
+        return LocalDateTime.now(clock.withZone(ClockConfig.ZONE));
     }
 
     // HTTP의 graceful 종료 단계보다 뒤에 멈추고 DB·Redis 연결보다 먼저 정리한다.
@@ -486,22 +501,23 @@ public class CouponIssueBatcher implements SmartLifecycle {
         private final CompletableFuture<CouponIssuanceResult> future;
         private final long deadlineNanos;
         private final CouponLogContext logContext;
-        // 작업자 대기열에 마지막으로 들어간 시각(System.nanoTime 기준)이다.
-        private volatile long queuedAtNanos;
+        // 작업자 대기열에 마지막으로 들어간 시각이다.
+        private volatile LocalDateTime queuedAt;
         private boolean cancelled;
         private CouponBatchDeadline deadline;
 
-        private Pending(CouponIssuanceRequest request, CompletableFuture<CouponIssuanceResult> future, long deadlineNanos) {
+        private Pending(CouponIssuanceRequest request, CompletableFuture<CouponIssuanceResult> future, long deadlineNanos,
+                LocalDateTime queuedAt) {
             this.request = request;
             this.future = future;
             this.deadlineNanos = deadlineNanos;
             this.logContext = CouponLogContext.capture();
-            this.queuedAtNanos = System.nanoTime();
+            this.queuedAt = queuedAt;
         }
 
         CouponLogContext logContext() { return logContext; }
-        long queuedAtNanos() { return queuedAtNanos; }
-        void markQueued() { queuedAtNanos = System.nanoTime(); }
+        LocalDateTime queuedAt() { return queuedAt; }
+        void markQueued(LocalDateTime at) { queuedAt = at; }
         CouponIssuanceRequest request() { return request; }
         CompletableFuture<CouponIssuanceResult> future() { return future; }
         long deadlineNanos() { return deadlineNanos; }

@@ -12,6 +12,7 @@ import com.lunchcatch.coupon.repository.CouponDailyLimitRepository;
 import com.lunchcatch.coupon.repository.MemberCouponRepository;
 import com.lunchcatch.coupon.model.CouponIssuanceResult;
 import com.lunchcatch.coupon.model.CouponIssuanceRequest;
+import com.lunchcatch.global.config.BacklogMetrics;
 import com.lunchcatch.global.config.ClockConfig;
 import com.lunchcatch.member.contract.MemberInfo;
 import com.lunchcatch.member.contract.MemberQueryService;
@@ -41,6 +42,9 @@ import org.springframework.transaction.annotation.Transactional;
 @Transactional
 public class CouponCommandService {
 
+    // 공통 지표의 워커 이름이다. 이름별 기준을 둘 때 application.yml 의 lunchcatch.observability.targets.worker 키로 쓴다
+    static final String BACKLOG_NAME = "coupon.issue-recovery";
+
     private final CouponProperties properties;
 
     private final MemberCouponRepository memberCouponRepository;
@@ -67,7 +71,7 @@ public class CouponCommandService {
             CouponDailyLimitRepository couponDailyLimitRepository, MemberQueryService memberQueryService,
             CouponQrImageEncoder imageEncoder, Clock clock, CouponSoldOutNotificationService soldOutNotifications,
             CouponSequenceService sequenceService, CouponSequenceRecoveryService sequenceRecoveryService,
-            CouponIssueBatcher batcher, CouponIssuanceMetrics issuanceMetrics) {
+            CouponIssueBatcher batcher, CouponIssuanceMetrics issuanceMetrics, BacklogMetrics backlogMetrics) {
         this.properties = properties;
         this.memberCouponRepository = memberCouponRepository;
         this.couponDailyLimitRepository = couponDailyLimitRepository;
@@ -83,6 +87,7 @@ public class CouponCommandService {
                 properties.issue().recovery().workers(), 0, TimeUnit.SECONDS,
                 new ArrayBlockingQueue<>(properties.issue().batch().queueCapacity()),
                 Thread.ofPlatform().name("coupon-http-recovery-", 0).factory());
+        backlogMetrics.worker(BACKLOG_NAME, this::recoveryQueueSize, this::oldestRecoveryQueuedAt);
     }
 
     /*
@@ -188,7 +193,7 @@ public class CouponCommandService {
                         } catch (Throwable recoveryError) {
                             recovered.completeExceptionally(recoveryError);
                         }
-                    }, recovered, System.nanoTime()));
+                    }, recovered, LocalDateTime.now(clock.withZone(ClockConfig.ZONE))));
                 } catch (java.util.concurrent.RejectedExecutionException rejected) {
                     recovered.completeExceptionally(original);
                 }
@@ -234,14 +239,13 @@ public class CouponCommandService {
         return issuanceRecovery.getQueue().size();
     }
 
-    // 복구 작업자를 가장 오래 기다린 작업의 대기 시간을 초로 돌려주며 기다리는 작업이 없으면 0이다.
-    double oldestRecoveryWaitSeconds() {
-        return issuanceRecovery.getQueue().peek() instanceof RecoveryTask task
-                ? (System.nanoTime() - task.queuedAtNanos()) / 1_000_000_000.0 : 0;
+    // 복구 작업자를 가장 오래 기다린 작업이 대기열에 들어간 시각을 돌려주며 기다리는 작업이 없으면 null이다.
+    LocalDateTime oldestRecoveryQueuedAt() {
+        return issuanceRecovery.getQueue().peek() instanceof RecoveryTask task ? task.queuedAt() : null;
     }
 
-    // queuedAtNanos 는 복구 대기열에 넣은 시각(System.nanoTime 기준)이다.
-    private record RecoveryTask(Runnable action, CompletableFuture<CouponIssueResponse> result, long queuedAtNanos)
+    // queuedAt 은 복구 대기열에 넣은 시각이다.
+    private record RecoveryTask(Runnable action, CompletableFuture<CouponIssueResponse> result, LocalDateTime queuedAt)
             implements Runnable {
         @Override
         public void run() {

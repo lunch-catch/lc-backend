@@ -453,7 +453,7 @@ v3도 같은 순번·복구 설계를 사용한다. 묶음 트랜잭션과 작�
 ## 10. 배치
 
 여섯 StandaloneJob의 실행 시각과 조건, 트랜잭션과 재실행 정책은 [쿠폰 배치 설계](./coupon-batch-design.md)가 갖는다.
-아래 표는 작업마다 끝나야 하는 때와 그때까지 끝나지 않으면 생기는 일을 적는다. 부하 시험은 이 마감으로 작업이 늦었는지 판정한다.
+아래 표는 작업마다 끝나야 하는 때와 그때까지 끝나지 않으면 생기는 일을 적는다. 부하 시험은 이 마감으로 작업이 늦었는지 판정하며, 마감이 있는 작업의 값은 `application.yml` 의 `lunchcatch.observability.targets.job` 이 시작에서 잰 시간으로 옮겨 갖는다.
 
 | 작업 | 끝나야 하는 때 | 늦거나 실패하면 |
 |---|---|---|
@@ -485,14 +485,14 @@ QR 사용의 응답 시간·동시 요청 목표와 부하 검증은 아직 없�
 
 ### 백그라운드 대기열이 밀렸는지 보는 기준
 
-요청과 떨어져 도는 대기열 세 곳은 지금 기다리는 수와 가장 오래 기다린 건의 대기 시간(초)을 지표로 내보낸다. 지표는 `CouponBackgroundMetrics` 가 등록한다.
+요청과 떨어져 도는 대기열 세 곳은 지금 기다리는 수와 가장 오래 기다린 건의 대기 시간(초)을 공통 지표 `async.worker.queue.size`, `async.worker.oldest.age` 의 `worker` 꼬리표로 내보낸다. 판정은 대기 시간으로 하며, 기준은 `application.yml` 의 `lunchcatch.observability.targets.worker` 가 이 표의 대기 시간을 옮겨 갖는다. 건수는 참고로만 본다.
 복구 대기열은 요청을 하나씩 처리하므로 [신뢰성 `REL-3-02`](../../software-quality/qa-reliability-guideline.md#5-결함-허용과-부하-차단)의 시작값을 쓴다. 발급 대기열과 소진 통보는 일을 모아 한꺼번에 처리해 그 시작값이 맞지 않으므로 아래처럼 따로 정한다.
 
-| 대기열 | 지표 | 기준 | 근거 |
+| 대기열 | `worker` 꼬리표 | 기준 | 근거 |
 |---|---|---|---|
-| 발급 대기열(`CouponIssueBatcher`, 작업자 2개) | `coupon_issue_queue_size`, `coupon_issue_queue_oldest_wait_seconds` | 1,000건, 1초 | 요청을 모아 묶음으로 처리하는 버퍼라 몰릴 때 수십 건이 쌓이는 것이 정상이다. 1,000건은 접수 상한 2,000의 절반이며 넘으면 곧 혼잡 거절이 시작된다. 1초는 `REL-3-02` 의 대기 시간을 따른다 |
-| 복구 대기열(`coupon-http-recovery`, 작업자 1개) | `coupon_recovery_queue_size`, `coupon_recovery_queue_oldest_wait_seconds` | 2건, 1초 | `REL-3-02` 의 시작값(작업자 수의 2배, 1초)이다. 평소에는 비어 있고 Redis 가 실패할 때만 쌓인다 |
-| 소진 통보(`CouponSoldOutNotificationService`, 작업자 1개) | `coupon_sold_out_pending_size`, `coupon_sold_out_pending_oldest_wait_seconds` | 수는 판정하지 않는다, 6초 | 1초마다 기다리는 이벤트를 모두 처리하므로 동시에 다 팔린 이벤트 수만큼 쌓이는 것이 정상이다. 6초는 조회 주기 1초와 실패 뒤 재시도 간격 5초를 더한 값이다. 넘으면 통보가 한 번 이상 실패했거나 작업자가 한 번 도는 데 오래 걸린 것이다. 어느 쪽인지는 `COUPON_SOLD_OUT_NOTIFICATION_FAILED reason=RETRY_SCHEDULED` 로그가 있는지로 가린다 |
+| 발급 대기열(`CouponIssueBatcher`, 작업자 2개) | `coupon.issue` | 1,000건, 1초 | 요청을 모아 묶음으로 처리하는 버퍼라 몰릴 때 수십 건이 쌓이는 것이 정상이다. 1,000건은 접수 상한 2,000의 절반이며 넘으면 곧 혼잡 거절이 시작된다. 1초는 `REL-3-02` 의 대기 시간을 따른다 |
+| 복구 대기열(`coupon-http-recovery`, 작업자 1개) | `coupon.issue-recovery` | 2건, 1초 | `REL-3-02` 의 시작값(작업자 수의 2배, 1초)이다. 평소에는 비어 있고 Redis 가 실패할 때만 쌓인다 |
+| 소진 통보(`CouponSoldOutNotificationService`, 작업자 1개) | `coupon.sold-out-notification` | 수는 판정하지 않는다, 6초 | 1초마다 기다리는 이벤트를 모두 처리하므로 동시에 다 팔린 이벤트 수만큼 쌓이는 것이 정상이다. 6초는 조회 주기 1초와 실패 뒤 재시도 간격 5초를 더한 값이다. 넘으면 통보가 한 번 이상 실패했거나 작업자가 한 번 도는 데 오래 걸린 것이다. 어느 쪽인지는 `COUPON_SOLD_OUT_NOTIFICATION_FAILED reason=RETRY_SCHEDULED` 로그가 있는지로 가린다 |
 
 로컬 부하 시험(이벤트 20개, 10초에 5,000건, 작업자 2개)에서 읽은 최댓값은 아래와 같다. 지표를 0.2초마다 읽었다.
 
