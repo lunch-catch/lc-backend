@@ -87,7 +87,11 @@ public enum BillingErrorCode implements ErrorCode {
 
     // 점주 결제·포인트·환불 API는 ACTIVE 점주만 쓴다. 가게 등록 전이거나 정지, 탈퇴한 점주는 막는다
     OWNER_NOT_ACTIVE(HttpStatus.FORBIDDEN, "BILLING-023",
-            "점주 상태가 ACTIVE가 아닙니다.");
+            "점주 상태가 ACTIVE가 아닙니다."),
+
+    // 한 점주의 충전 주문과 승인 확정이 짧은 구간에 몰리면 막는다. 응답의 Retry-After 뒤에 다시 시도할 수 있다
+    CHARGE_RATE_LIMITED(HttpStatus.TOO_MANY_REQUESTS, "BILLING-024",
+            "충전 요청이 너무 잦습니다. 잠시 후 다시 시도해 주세요.");
 
     private final HttpStatus httpStatus;
     private final String code;
