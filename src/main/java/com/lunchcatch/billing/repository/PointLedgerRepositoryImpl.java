@@ -1,7 +1,7 @@
 package com.lunchcatch.billing.repository;
 
-import static com.lunchcatch.billing.entity.QDeductionResult.deductionResult;
-import static com.lunchcatch.billing.entity.QPayment.payment;
+import static com.lunchcatch.billing.deduction.entity.QDeductionResult.deductionResult;
+import static com.lunchcatch.billing.payment.entity.QPayment.payment;
 import static com.lunchcatch.billing.entity.QPointLedger.pointLedger;
 
 import com.lunchcatch.billing.dto.BalanceStep;

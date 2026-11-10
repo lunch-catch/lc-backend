@@ -2,7 +2,7 @@ package com.lunchcatch.billing;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.lunchcatch.billing.service.DailyReleaseMarker;
+import com.lunchcatch.billing.reservation.service.DailyReleaseMarker;
 import java.time.LocalDate;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;

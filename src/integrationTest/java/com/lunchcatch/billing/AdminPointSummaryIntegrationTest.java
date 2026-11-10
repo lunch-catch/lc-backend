@@ -2,8 +2,8 @@ package com.lunchcatch.billing;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.lunchcatch.billing.deduction.dto.ServeIds;
 import com.lunchcatch.billing.dto.AdminPointSummaryItem;
-import com.lunchcatch.billing.dto.ServeIds;
 import com.lunchcatch.billing.dto.SummaryPeriod;
 import com.lunchcatch.billing.service.AdminPointSummaryService;
 import java.time.LocalDate;

@@ -274,7 +274,7 @@ recharge_reservation_outbox { payment_id, business_date, status, attempt_count, 
 
 재개된 캠페인의 진행률은 광고서빙이 늘어난 예약액으로 계산한다(I-06, #828).
 
-자리는 `billing.job.RechargeReservationWorker`이고 `RechargeReservationRetryService.reserveDue`가 행마다 `RechargeReservationService` 하나만 부른다. 결제 재조회 워커(I-04)와 같은 모양이다.
+자리는 `billing.reservation.job.RechargeReservationWorker`이고 `RechargeReservationRetryService.reserveDue`가 행마다 `RechargeReservationService` 하나만 부른다. 결제 재조회 워커(I-04)와 같은 모양이다.
 
 - **처리**: 워커가 1분마다 `status=PENDING AND next_retry_at ≤ now`인 행을 배치 크기(20)만큼 `FOR UPDATE SKIP LOCKED`로 선점하고, 다음 시각을 선점 유지 시간(5분) 뒤로 민 채 커밋한다. 재예약과 결과 기록은 선점 트랜잭션 밖에서 각자의 트랜잭션으로 한다. 승인이 남긴 행의 첫 시각은 승인 시각이라 다음 워커 실행이 바로 집는다. 선점한 행이 배치 크기만큼이면 같은 실행에서 다시 선점해 빌 때까지 처리한다. 실행 시간의 상한(50초, `max-run-time`)은 행마다 보고, 닿으면 선점한 행이 남아 있어도 멈춘다. 계정 잠금 대기가 길면 배치 하나가 선점 유지 시간을 넘길 수 있어서다. 남은 행은 선점이 만료된 뒤 다시 대상이 된다. 승인마다 행이 생기므로 한 번에 배치 크기만 처리하면 분당 20건을 넘는 충전에서 재개가 계속 밀린다. 로컬 부하 시험에서 1624건을 비우는 데 80분이 걸렸다. 배치 크기 20은 결제 재조회가 PG 읽기 타임아웃(10초)을 기준으로 잡은 값이고, 재예약은 DB 안에서 끝나 20건에 0.5초 안팎이 걸린다.
 - **재시도**: 재예약이 실패하면 행을 닫지 않고 `attempt_count + 1`, `next_retry_at`을 백오프로 민다. 간격은 1, 2, 5, 10분이고 그 뒤로는 10분을 유지한다. 간격은 그 행이 실패한 횟수로 정하므로, 오래 실패한 행이 새로 들어온 행을 밀어내지 않는다. 실패는 WARN `BILLING_RECHARGE_RESERVE_FAILED`와 지표 `billing.recharge.reservation{result=failed}`로 남긴다.

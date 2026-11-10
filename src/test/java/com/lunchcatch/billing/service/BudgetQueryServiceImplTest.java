@@ -12,10 +12,12 @@ import static org.mockito.Mockito.when;
 
 import com.lunchcatch.billing.contract.BudgetProgress;
 import com.lunchcatch.billing.contract.BudgetQueryService;
-import com.lunchcatch.billing.dto.PlanSnapshot;
-import com.lunchcatch.billing.cache.DailySpend;
-import com.lunchcatch.billing.cache.DailySpendCounter;
-import com.lunchcatch.billing.exception.BudgetCounterUnavailableException;
+import com.lunchcatch.billing.deduction.cache.DailySpend;
+import com.lunchcatch.billing.deduction.cache.DailySpendCounter;
+import com.lunchcatch.billing.deduction.exception.BudgetCounterUnavailableException;
+import com.lunchcatch.billing.deduction.service.SpendHashRebuildService;
+import com.lunchcatch.billing.reservation.dto.PlanSnapshot;
+import com.lunchcatch.billing.reservation.service.DailyPlanSnapshotService;
 import java.time.LocalDate;
 import java.util.LinkedHashMap;
 import java.util.List;

@@ -141,7 +141,7 @@ DB 커밋은 성공했지만 응답만 유실된 경우에는 같은 노출의 �
 
 ### 중단 통보를 커밋한 뒤 해시 갱신에 실패함
 
-[상태 서비스](../../../src/main/java/com/lunchcatch/billing/service/BudgetPlanStatusService.java)는 DB 상태를 먼저 확정하고 커밋 뒤 Redis에 반영한다. 미러의 `DataAccessException`을 받으면 해시를 삭제한다. 다음 호출이 DB 정본으로 다시 만들게 하려는 것이다. 실행 수단과 대안의 비용은 [구조 설계 7장](./billing_구조와_동작_설계.md#트랜잭션-종료-뒤-실행하는-수단)이 소유한다.
+[상태 서비스](../../../src/main/java/com/lunchcatch/billing/reservation/service/BudgetPlanStatusService.java)는 DB 상태를 먼저 확정하고 커밋 뒤 Redis에 반영한다. 미러의 `DataAccessException`을 받으면 해시를 삭제한다. 다음 호출이 DB 정본으로 다시 만들게 하려는 것이다. 실행 수단과 대안의 비용은 [구조 설계 7장](./billing_구조와_동작_설계.md#트랜잭션-종료-뒤-실행하는-수단)이 소유한다.
 
 해시 삭제마저 실패하면 `BUDGET_STATUS_HASH_EVICT_FAILED` ERROR를 남긴다. 낡은 `paused` 값이 남을 수 있다. 미러 이벤트를 내구성 있게 다시 실행하는 작업자는 없다. 상태 커밋과 미러 실행 사이의 짧은 구간도 남으므로 중단 커밋 즉시 모든 과금이 차단된다는 보장은 아니다.
 
