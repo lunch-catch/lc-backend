@@ -2,6 +2,7 @@ package com.lunchcatch.global.logging;
 
 import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -31,10 +32,14 @@ import org.springframework.stereotype.Component;
 public class SchedulerLoggingAspect {
 
     private static final String LAST_SUCCESS = "batch.job.last.success.timestamp";
+    private static final String DURATION = "batch.job.duration";
+    private static final String RUNNING_SINCE = "batch.job.running.since";
+    private static final Duration MAX_EXPECTED_DURATION = Duration.ofHours(1);
 
     private final MeterRegistry meterRegistry;
     private final Clock clock;
     private final Map<String, AtomicLong> lastSuccessByJob = new ConcurrentHashMap<>();
+    private final Map<String, AtomicLong> runningSinceByJob = new ConcurrentHashMap<>();
 
     @Around("@annotation(org.springframework.scheduling.annotation.Scheduled)")
     public Object logScheduledExecution(ProceedingJoinPoint joinPoint) throws Throwable {
@@ -44,17 +49,23 @@ public class SchedulerLoggingAspect {
         try (LogContext.Scope ignored = LogContext.open(job)) {
             logStep(quiet, "event=SCHEDULER_START job={}", job);
             AtomicLong lastSuccess = lastSuccessGauge(job, start);
+            AtomicLong runningSince = runningSinceGauge(job);
+            runningSince.set(start.getEpochSecond());
 
             try {
                 Object result = joinPoint.proceed();
                 lastSuccess.set(clock.instant().getEpochSecond());
-                logStep(quiet, "event=SCHEDULER_END job={} durationMs={}",
-                        job, Duration.between(start, clock.instant()).toMillis());
+                Duration took = Duration.between(start, clock.instant());
+                recordDuration(job, "success", took);
+                logStep(quiet, "event=SCHEDULER_END job={} durationMs={}", job, took.toMillis());
                 return result;
             } catch (Throwable ex) {
-                log.error("event=SCHEDULER_FAILED job={} durationMs={}",
-                        job, Duration.between(start, clock.instant()).toMillis(), ex);
+                Duration took = Duration.between(start, clock.instant());
+                recordDuration(job, "failure", took);
+                log.error("event=SCHEDULER_FAILED job={} durationMs={}", job, took.toMillis(), ex);
                 throw ex;
+            } finally {
+                runningSince.set(0);
             }
         }
     }
@@ -71,6 +82,40 @@ public class SchedulerLoggingAspect {
         } else {
             log.info(format, args);
         }
+    }
+
+    /*
+     * 실행 한 번에 걸린 시간이다. 트레이싱을 끈 회차에도 작업 시간을 보려고 지표로 남긴다.
+     * 태그는 마지막 성공 게이지와 같은 scheduler 다. 여러 대의 값을 합쳐 분위수를 내도록 히스토그램을 켠다.
+     * 상한은 1시간이다. 기본값 30초로는 00:00 묶음 같은 긴 작업이 가장 큰 버킷에 모여 p99 가 정확하지 않다.
+     */
+    private void recordDuration(String job, String outcome, Duration took) {
+        Timer.builder(DURATION)
+                .tag("scheduler", job)
+                .tag("outcome", outcome)
+                .publishPercentileHistogram()
+                .maximumExpectedValue(MAX_EXPECTED_DURATION)
+                .description("Time taken by one scheduled run")
+                .register(meterRegistry)
+                .record(took);
+    }
+
+    /*
+     * 도는 중인 실행이 시작된 시각이다. 돌지 않으면 0 이다(#1175).
+     * 걸린 시간 타이머는 실행이 끝나야 기록되어, 멈춰 끝나지 않는 작업은 마감을 넘겨도 보이지 않는다.
+     * 그래서 06 과 부하 시험 판정이 "지금 시각 - 시작 시각" 을 그 작업의 마감과 견준다.
+     * 한 JVM 에서는 같은 작업이 겹쳐 돌지 않아 작업마다 값 하나로 충분하다. 서버가 여러 대면 instance 꼬리표로 갈린다.
+     */
+    private AtomicLong runningSinceGauge(String job) {
+        return runningSinceByJob.computeIfAbsent(job, name -> {
+            AtomicLong holder = new AtomicLong();
+            Gauge.builder(RUNNING_SINCE, holder, AtomicLong::doubleValue)
+                    .tag("scheduler", name)
+                    .baseUnit("seconds")
+                    .description("Unix time the running execution started, 0 when idle")
+                    .register(meterRegistry);
+            return holder;
+        });
     }
 
     /*

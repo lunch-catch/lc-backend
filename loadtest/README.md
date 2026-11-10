@@ -42,7 +42,7 @@
 | `record_warnings` | 회차 구간의 경고와 오류를 이벤트별로 세어 결과 문서에 적고 커밋한다 |
 | `profile` | 앱 서버에 프로파일링을 붙여 Pyroscope 로 보낸다 |
 | `full_sha`, `image_exists` | 이미지 커밋을 40자로 늘리고 GHCR 에 있는지 본다 |
-| `tracing_override`, `local_switch` | 앱에 OpenTelemetry 에이전트를 붙이는 compose 덮어쓰기 파일을 만들고, 로컬 앱을 그것으로 다시 띄운다 |
+| `app_override`, `local_switch` | 앱의 compose 덮어쓰기 파일(트레이싱 에이전트, 연결 풀 끔)을 만들고, 로컬 앱을 그것으로 다시 띄운다 |
 
 새 도메인은 `run.sh` 의 앞에서 아래 값을 정하고 이 파일을 불러 쓴다. `loadtest/adserving/run.sh` 가 예다.
 
@@ -88,14 +88,26 @@ loadtest/adserving/run.sh --local metrics <window 시작 ms> <window 끝 ms>
 - `reset`, `rows` 처럼 AWS 에만 있는 일은 로컬에서 막는다. `switch` 는 커밋 없이 `[--tracing <이름>]` 만 받아 로컬 앱을 다시 띄운다.
 - 초당 피드는 노트북에 맞춰 낮춘다. 20 이면 초당 요청이 약 200 이다.
 
+## 연결 풀을 끄고 재기
+
+같은 커밋을 Valkey 연결 풀 켬과 끔으로 재 풀만의 효과를 가른다. `switch` 에 `--no-pool` 을 주면 `SPRING_DATA_REDIS_LETTUCE_POOL_ENABLED=false` 를 넣어 다시 띄운다. 주지 않으면 켠다.
+
+```bash
+loadtest/adserving/run.sh switch <이미지> --no-pool
+loadtest/adserving/run.sh --local switch --no-pool
+```
+
+- 트레이싱과 같은 `compose.override.yaml` 에 들어간다. `--tracing` 과 함께 줄 수 있다.
+- 어느 쪽으로 떴는지 `switch` 의 출력 끝에 `pool on` 이나 `SPRING_DATA_REDIS_LETTUCE_POOL_ENABLED=false` 로 나온다.
+
 ## 트레이싱
 
 느린 요청 하나가 어느 단계에서 몇 ms 를 썼는지 본다. 앱에 OpenTelemetry Java 에이전트(`v2.32.0`)를 붙인다. 앱 코드는 바꾸지 않는다.
 
 ```bash
 # 에이전트를 붙여 다시 띄운다. 이름이 트레이스의 run 라벨이 된다
-loadtest/adserving/run.sh switch <이미지> --tracing v1-tracing
-loadtest/adserving/run.sh run v1-run1-tracing 30030001 100 5m
+loadtest/adserving/run.sh switch <이미지> --tracing v1
+loadtest/adserving/run.sh run v1-run1 30030001 100 5m
 
 # 떼려면 --tracing 없이 다시 띄운다
 loadtest/adserving/run.sh switch <이미지>
@@ -106,14 +118,14 @@ loadtest/adserving/run.sh switch <이미지>
 - 우리 코드의 메서드에는 스팬을 만들지 않는다. I/O 스팬 사이의 빈 구간은 프로파일링으로 본다([트레이싱과 프로파일링 설계](../docs/observability/트레이싱과_프로파일링_설계.md) 3장).
 - 라벨은 JVM 이 뜰 때 정해진다. 한 번 띄운 뒤의 회차는 같은 라벨이라 회차는 시각 구간으로 가린다.
 
-**그라파나에서 보는 법:** Explore 에서 데이터 소스 `Tempo` 를 고르고 `{ resource.run = "v1-tracing" && name = "GET /v1/feed" && duration > 300ms }` 처럼 찾는다. 트레이스를 열면 HTTP, DB 쿼리, Valkey 명령 스팬이 시간 순으로 보인다. 스팬에서 그 요청의 로그(Loki)와 프로파일(Pyroscope)로 넘어간다. 로그의 `trace_id` 에서도 그 트레이싱으로 넘어간다.
+**그라파나에서 보는 법:** Explore 에서 데이터 소스 `Tempo` 를 고르고 `{ resource.run = "v1" && name = "GET /v1/feed" && duration > 300ms }` 처럼 찾는다. 트레이스를 열면 HTTP 와 DB 쿼리 스팬이 시간 순으로 보인다. 스팬에서 그 요청의 로그(Loki)와 프로파일(Pyroscope)로 넘어간다. 로그의 `trace_id` 에서도 그 트레이싱으로 넘어간다.
 
 지킬 것:
 
-- 측정 회차와 나눈다. 스팬을 만드는 비용이 p99 에 섞인다. 켠 회차는 이름을 `-tracing` 으로 끝내고 결과 표와 경고 로그 기록에 넣지 않는다.
+- 측정 회차에도 켠다. 비용(앱 CPU 한도의 약 2.6%p)이 비용 한도 안이라 켠 채로 잰 수치를 결과에 쓴다([트레이싱과 프로파일링 설계](../docs/observability/트레이싱과_프로파일링_설계.md) 6장과 7장). 결과에 넣지 않을 회차만 이름을 `-tracing` 으로 끝낸다.
 - 노출 저장과 서빙 로그 대기열은 응답 뒤에 돌아 트레이스가 거기서 끊긴다.
 - 에이전트 판은 `v2.32.0` 으로 고정한다. 새 판은 나온 지 2주가 지난 뒤에 올린다.
-- 켠 동안은 Valkey 명령 지연 지표(`lettuce_seconds_*`)가 없어 04 데이터 저장소 대시보드의 `Valkey 명령 지연` 패널이 빈다. 스프링 부트의 Lettuce 관측이 에이전트의 Lettuce 계측을 덮어 Valkey 명령이 스팬이 되지 않아, 켠 동안만 그 자동 설정(`LettuceObservationAutoConfiguration`)을 뺀다. 그 시간은 트레이싱에서 명령마다 보인다.
+- 트레이스에는 Valkey 명령의 스팬이 없다. 명령마다 스팬이 생겨 피드 요청 하나의 스팬 가운데 가장 많아 에이전트의 Lettuce 계측을 끈다(#1177). Valkey 명령의 시간은 앱 쪽 지표(`lettuce_command_completion_seconds`, 04 데이터 저장소의 `Valkey 명령 지연`, #1180)와 Redis 서버 지표(진단 캡처의 `diag-{회차}-redis.txt`)로 본다. 트레이스에서는 그 시간이 이름 없는 빈 구간이 된다.
 - 로그와 트레이스는 로그의 `trace_id` 로 잇는다. 요청 로그의 `traceId` 는 앱이 만든 별개의 값이라 트레이스와 이어지지 않는다.
 
 ## 프로파일링
@@ -126,18 +138,22 @@ loadtest/adserving/run.sh profile v1-run1-profile 60 wall
 
 # 회차 내내 붙인다. 이름을 -profile 로 끝낸다
 loadtest/adserving/run.sh run v1-run1-profile 30030001 100 5m --profile wall
+
+# cpu 와 wall 을 한 기록으로 함께 뜬다
+loadtest/adserving/run.sh run v1-run1-profile 30030001 100 5m --profile both
 ```
 
 | 모드 | 재는 것 | 간격 |
 |---|---|---|
 | `cpu` | 계산에 쓴 시간이다. 컨테이너 안에서는 `-e cpu` 가 막혀 `itimer` 로 뜬다 | 10ms. async-profiler 의 기본값이다 |
 | `wall` | 대기까지 포함한 경과 시간이다. p99 를 줄이려면 이것을 먼저 본다 | 50ms. wall 모드의 기본값이다 |
+| `both` | 둘을 한 기록(JFR)으로 함께 뜨고 나눠 보낸다. 같은 시간, 같은 부하의 둘을 견줘 계산과 대기를 가른다 | 위 둘과 같다 |
 
 **그라파나에서 보는 법:** Drilldown -> Profiles 에서 서비스 `lunchcatch` 를 고르고, 프로파일 종류(`process_cpu` 나 `wall`)와 `run` 라벨로 그 회차를 고른다. 10초씩 끊어 보내 대시보드와 함께 10초 남짓 늦게 보인다. Split 과 Single 로 비교와 단독을, Top Table 과 Flame Graph 로 표와 그래프를 바꾼다.
 
 **읽는 법:** Self 는 그 메서드 자기 코드의 시간이고 Total 은 부른 메서드까지 합친 시간이다. 시간은 그 구간의 합계라 호출 한 번의 시간은 나오지 않는다.
 
-**보내기 전에 다듬는다.** 이 서비스의 컨트롤러를 지나는 스택만 남기고 그래프가 컨트롤러(`FeedController.getFeed`)에서 시작하게 자른다. 이름은 패키지를 빼고, 호출마다 되풀이되는 스프링 프록시와 AOP 프레임은 뺀다. 다듬지 않으면 컨트롤러까지 프레임이 100개 넘게 쌓여 이름이 잘린다.
+**보내기 전에 다듬는다.** 우리 코드가 일을 시작한 자리부터 남기고 그 아래의 톰캣, 스프링, 스레드 풀 프레임은 자른다. 시작 자리는 요청이면 컨트롤러(`FeedController.getFeed`), `@Scheduled` 작업이면 그 작업 메서드(`CandidateBudgetRefreshJob.refresh`), 워커면 처음 나오는 우리 프레임(`ImpressionWriteBuffer.runWorker`)이다. 쉬는 스레드(요청이 없는 톰캣 스레드, 다음 실행을 기다리는 스케줄러, 대기열을 기다리는 워커)는 버린다. 이름은 패키지를 빼고, 호출마다 되풀이되는 스프링 프록시와 AOP 프레임은 뺀다. 다듬지 않으면 컨트롤러까지 프레임이 100개 넘게 쌓여 이름이 잘린다. 패키지는 `com.lunchcatch` 와 `com.launchcatch`(#1060 전의 커밋) 둘 다 받는다.
 
 지킬 것:
 
@@ -147,7 +163,8 @@ loadtest/adserving/run.sh run v1-run1-profile 30030001 100 5m --profile wall
 
 만난 함정:
 
-- `--include` 필터는 JFR 출력에는 먹지 않는다. 그래서 collapsed 로 뜬다.
-- 필터의 `*` 는 앞이나 끝에만 쓸 수 있다. 패키지로 고르지 못하고 `*Controller.*` 로 고른 뒤 다듬는 단계가 이 서비스의 패키지로 다시 고른다. 패키지를 빼는 `--simple` 을 쓰면 netty 와 JDK 의 `*Controller` 도 걸린다.
-- 그라파나의 노드 상한(16,384)을 넘으면 나머지가 `other` 로 뭉친다. 컨트롤러를 지나는 스택만 보내면 회차 하나가 수백 노드라 넘지 않는다.
+- 프로파일러의 `--include` 로 거르지 않는다. 필터의 `*` 는 앞이나 끝에만 쓸 수 있어 패키지로 고르지 못하고, 요청과 작업과 워커를 한 필터로 고를 수도 없다. 고르는 일은 모두 다듬는 단계가 한다.
+- `jfrconv` 의 collapsed 는 프레임 이름 끝에 프레임 종류 표시(`_[j]`, `_[i]`)를 붙인다. 같은 메서드가 다른 이름으로 갈리지 않게 다듬는 단계가 뗀다.
+- `jfrconv` 는 컨테이너 안의 자바로 돌아 `JDK_JAVA_OPTIONS` 를 읽는다. 트레이싱을 켠 동안에는 에이전트까지 붙어 느리게 뜨고 로그가 섞여, 비우고 돌린다.
+- 그라파나의 노드 상한(16,384)을 넘으면 나머지가 `other` 로 뭉친다. 우리 코드의 스택만 보내면 회차 하나가 수백 노드라 넘지 않는다.
 - wall 은 모든 스레드를 돌아가며 몇 개씩 뜬다. 톰캣 스레드가 200개 넘게 놀고 있으면 요청이 적을 때 표본이 적다. 부하가 걸린 회차 내내(`--profile`) 모은다.

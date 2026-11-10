@@ -4,10 +4,24 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import io.lettuce.core.ClientOptions;
 import io.lettuce.core.SocketOptions;
+import io.lettuce.core.metrics.CommandLatencyRecorder;
+import io.lettuce.core.protocol.CommandType;
+import io.lettuce.core.resource.ClientResources;
+import io.lettuce.core.resource.DefaultClientResources;
+import io.micrometer.core.instrument.Timer;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import java.io.IOException;
+import java.net.InetSocketAddress;
 import java.time.Duration;
+import java.util.List;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.data.redis.autoconfigure.DataRedisProperties;
+import org.springframework.boot.data.redis.autoconfigure.observation.LettuceObservationAutoConfiguration;
+import org.springframework.boot.env.YamlPropertySourceLoader;
+import org.springframework.core.env.PropertySource;
+import org.springframework.core.io.ClassPathResource;
 
 class ValkeyConfigTest {
 
@@ -31,6 +45,73 @@ class ValkeyConfigTest {
         SocketOptions options = customizedSocketOptions(null);
 
         assertThat(options.getConnectTimeout()).isEqualTo(SocketOptions.DEFAULT_CONNECT_TIMEOUT_DURATION);
+    }
+
+    @Test
+    @DisplayName("Valkey 명령의 완료 시간을 명령 이름과 원격 주소로 나눠 타이머로 남긴다")
+    void 명령의_완료_시간을_타이머로_남긴다() {
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        CommandLatencyRecorder recorder = customizedLatencyRecorder(registry);
+
+        recorder.recordCommandLatency(new InetSocketAddress("app", 40000), new InetSocketAddress("valkey", 6379),
+                CommandType.GET, TimeUnit.MILLISECONDS.toNanos(1), TimeUnit.MILLISECONDS.toNanos(3));
+
+        Timer completion = registry.get("lettuce.command.completion").tag("command", "GET").timer();
+        assertThat(completion.count()).isEqualTo(1);
+        assertThat(completion.totalTime(TimeUnit.MILLISECONDS)).isEqualTo(3.0);
+        Timer firstResponse = registry.get("lettuce.command.firstresponse").tag("command", "GET").timer();
+        assertThat(firstResponse.count()).isEqualTo(1);
+        assertThat(firstResponse.totalTime(TimeUnit.MILLISECONDS)).isEqualTo(1.0);
+    }
+
+    // 이 줄이 빠지면 명령마다 관측을 만드는 Spring Boot 의 Lettuce 관측이 새 기록기와 함께 돈다
+    @Test
+    @DisplayName("application.yml 이 Spring Boot 의 Lettuce 관측을 끈다")
+    void Spring_Boot_의_Lettuce_관측을_끈다() throws IOException {
+        List<PropertySource<?>> sources = new YamlPropertySourceLoader()
+                .load("application", new ClassPathResource("application.yml"));
+
+        assertThat(sources.getFirst().getProperty("spring.autoconfigure.exclude"))
+                .hasToString(LettuceObservationAutoConfiguration.class.getName());
+    }
+
+    // 분위수는 앱이 계산하지 않는다. Prometheus 가 필요하면 합계와 수로 평균을, 최대로 꼬리를 본다
+    @Test
+    @DisplayName("명령 타이머는 분위수와 히스토그램을 내지 않는다")
+    void 명령_타이머는_분위수를_내지_않는다() {
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        CommandLatencyRecorder recorder = customizedLatencyRecorder(registry);
+
+        recorder.recordCommandLatency(new InetSocketAddress("app", 40000), new InetSocketAddress("valkey", 6379),
+                CommandType.GET, 1, 1);
+
+        Timer completion = registry.get("lettuce.command.completion").timer();
+        assertThat(completion.takeSnapshot().percentileValues()).isEmpty();
+        assertThat(completion.takeSnapshot().histogramCounts()).isEmpty();
+    }
+
+    // 로컬 주소를 꼬리표로 두면 연결마다 시계열이 생긴다
+    @Test
+    @DisplayName("명령 타이머는 로컬 주소로 나누지 않는다")
+    void 명령_타이머는_로컬_주소로_나누지_않는다() {
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        CommandLatencyRecorder recorder = customizedLatencyRecorder(registry);
+
+        recorder.recordCommandLatency(new InetSocketAddress("app", 40000), new InetSocketAddress("valkey", 6379),
+                CommandType.GET, 1, 1);
+        recorder.recordCommandLatency(new InetSocketAddress("app", 40001), new InetSocketAddress("valkey", 6379),
+                CommandType.GET, 1, 1);
+
+        assertThat(registry.find("lettuce.command.completion").tag("command", "GET").timers()).hasSize(1);
+    }
+
+    private static CommandLatencyRecorder customizedLatencyRecorder(SimpleMeterRegistry registry) {
+        DefaultClientResources.Builder builder = DefaultClientResources.builder();
+        new ValkeyConfig().valkeyCommandLatencyCustomizer(registry).customize(builder);
+        ClientResources resources = builder.build();
+        CommandLatencyRecorder recorder = resources.commandLatencyRecorder();
+        resources.shutdown();
+        return recorder;
     }
 
     private static SocketOptions customizedSocketOptions(Duration connectTimeout) {

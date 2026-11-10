@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -13,6 +14,11 @@ import com.lunchcatch.campaign.exception.PosterErrorCode;
 import com.lunchcatch.campaign.template.TemplateHtmlSanitizer;
 import com.lunchcatch.campaign.template.TemplateSlotValidator;
 import com.lunchcatch.campaign.template.TemplateStructureValidator;
+import io.github.resilience4j.bulkhead.Bulkhead;
+import io.github.resilience4j.bulkhead.BulkheadConfig;
+import io.github.resilience4j.bulkhead.BulkheadRegistry;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import java.time.Duration;
 import org.jsoup.Jsoup;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -65,14 +71,24 @@ class BedrockTemplateHtmlGeneratorTest {
     private BedrockRuntimeClient bedrockRuntimeClient;
 
     private BedrockTemplateHtmlGenerator generator;
+    private Bulkhead bulkhead;
+    private SimpleMeterRegistry meterRegistry;
 
     @BeforeEach
     void setUp() {
+        BulkheadRegistry bulkheadRegistry = BulkheadRegistry.of(BulkheadConfig.custom()
+                .maxConcurrentCalls(1)
+                .maxWaitDuration(Duration.ZERO)
+                .build());
+        meterRegistry = new SimpleMeterRegistry();
         generator = new BedrockTemplateHtmlGenerator(
                 bedrockRuntimeClient,
                 new TemplateHtmlSanitizer(),
                 new TemplateSlotValidator(),
-                new TemplateStructureValidator());
+                new TemplateStructureValidator(),
+                bulkheadRegistry,
+                meterRegistry);
+        bulkhead = bulkheadRegistry.bulkhead(BedrockTemplateHtmlGenerator.BULKHEAD_NAME);
         ReflectionTestUtils.setField(generator, "modelId", "openai.gpt-oss-120b-1:0");
     }
 
@@ -301,6 +317,44 @@ class BedrockTemplateHtmlGeneratorTest {
                 .extracting(e -> ((CampaignException) e).getErrorCode())
                 .isEqualTo(PosterErrorCode.GENERATION_THROTTLED);
         verify(bedrockRuntimeClient, times(1)).converse(any(ConverseRequest.class));
+    }
+
+    @Test
+    void 동시_호출_상한에_닿으면_Bedrock을_부르지_않고_POSTER_012를_던진다() {
+        bulkhead.acquirePermission();
+
+        assertThatThrownBy(() -> generator.generate("돈까스 세트 홍보"))
+                .isInstanceOf(CampaignException.class)
+                .extracting(e -> ((CampaignException) e).getErrorCode())
+                .isEqualTo(PosterErrorCode.GENERATION_THROTTLED);
+        verify(bedrockRuntimeClient, never()).converse(any(ConverseRequest.class));
+    }
+
+    @Test
+    void 동시_호출_상한에_닿아_거절하면_거절_횟수를_센다() {
+        bulkhead.acquirePermission();
+
+        assertThatThrownBy(() -> generator.generate("돈까스 세트 홍보"))
+                .isInstanceOf(CampaignException.class);
+        assertThatThrownBy(() -> generator.revise(PREVIOUS_STORED_HTML, "더 밝게"))
+                .isInstanceOf(CampaignException.class);
+
+        assertThat(meterRegistry.get("campaign_bedrock_bulkhead_rejected_total").counter().count())
+                .isEqualTo(2.0);
+    }
+
+    @Test
+    void 호출이_끝나면_성공이든_실패든_자리를_돌려준다() {
+        when(bedrockRuntimeClient.converse(any(ConverseRequest.class)))
+                .thenReturn(textResponse(StopReason.END_TURN, LLM_HTML))
+                .thenThrow(ThrottlingException.builder().message("Too many requests").build());
+
+        generator.generate("돈까스 세트 홍보");
+        assertThat(bulkhead.getMetrics().getAvailableConcurrentCalls()).isEqualTo(1);
+
+        assertThatThrownBy(() -> generator.generate("돈까스 세트 홍보"))
+                .isInstanceOf(CampaignException.class);
+        assertThat(bulkhead.getMetrics().getAvailableConcurrentCalls()).isEqualTo(1);
     }
 
     @Test
