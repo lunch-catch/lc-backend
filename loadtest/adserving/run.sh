@@ -62,7 +62,9 @@ switch_options() {
       --tracing) label="${2:?--tracing 뒤에 이름을 준다}"; shift 2 ;;
       --no-pool) nopool=1; shift ;;
       --env)
-        [[ "${2:-}" =~ ^[A-Z_][A-Z0-9_]*=.*$ ]] || die "--env 뒤에 KEY=VALUE 를 준다. KEY 는 대문자 환경변수 이름이다: ${2:-}"
+        [[ "${2:-}" =~ ^[A-Z_][A-Z0-9_]*= ]] || die "--env 뒤에 KEY=VALUE 를 준다. KEY 는 대문자 환경변수 이름이다: ${2:-}"
+        # 줄바꿈이 있으면 값 하나가 덮어쓰기 파일에서 여러 환경변수로 쪼개진다
+        [[ "$2" != *$'\n'* ]] || die "--env 의 VALUE 에 줄바꿈을 넣지 않는다: ${2%%$'\n'*}"
         extra="$extra$2"$'\n'; shift 2 ;;
       *) die "모르는 선택지다: $1" ;;
     esac

@@ -526,7 +526,8 @@ EOF
   # switch 의 --env 로 받은 설정 값이다. 다시 빌드하지 않고 조정 값을 바꿔 회차를 돈다(#1170)
   while IFS= read -r pair; do
     [ -n "$pair" ] || continue
-    printf '      %s: "%s"\n' "${pair%%=*}" "$(printf '%s' "${pair#*=}" | sed 's/[\\"]/\\&/g')"
+    # compose 가 $ 를 변수로 바꾸지 않게 $$ 로 적는다
+    printf '      %s: "%s"\n' "${pair%%=*}" "$(printf '%s' "${pair#*=}" | sed 's/[\\"]/\\&/g; s/\$/$$/g')"
   done <<< "$extra"
 }
 
