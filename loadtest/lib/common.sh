@@ -482,7 +482,11 @@ bash /tmp/lt-profile.sh $name $secs $mode $pyro $PROJECT /tmp/lt-trim.py $ASPROF
 # 라벨을 주면 OpenTelemetry 에이전트를 붙인다(#1099).
 # 운영 compose 가 JAVA_TOOL_OPTIONS 에 힙과 DNS 설정을 넣어 에이전트는 JDK_JAVA_OPTIONS 로 준다.
 # 남길 트레이스는 Alloy 의 테일 샘플링이 고른다(lunch-catch/lc-infra#72). 지표와 로그는 지금 길을 그대로 쓴다.
-# 에이전트의 Lettuce 계측은 끈다(#1177). 명령마다 스팬이라 피드 요청 하나의 스팬 가운데 Lettuce 가 가장 많다.
+# 에이전트가 기본으로 켜는 계측을 모두 끄고 앱이 쓰는 경계의 계측만 켠다(#1186). 쓰지 않는 계측도 메서드 진입마다 일을 한다.
+# 켜는 것: HTTP 받기(tomcat, servlet, spring-webmvc), DB(jdbc, hibernate, spring-data), 외부 HTTP(카카오와 토스의 WebClient: spring-webflux, reactor, reactor-netty),
+# AWS(S3, Bedrock, Rekognition: aws-sdk), 스케줄 작업(spring-scheduling), 문맥 전파(executors), 로그의 trace_id(logback-mdc).
+# 앱이 새 경계 라이브러리를 쓰면 이 목록에 더한다. 빠지면 그 경계가 트레이스에서 사라진다.
+# Lettuce 는 켜지 않는다(#1185). 명령마다 스팬이라 피드 요청 하나의 스팬 가운데 가장 많다.
 # Valkey 명령의 시간은 앱의 lettuce_command_completion_seconds(#1180)와 Redis 서버 지표로 보고, 트레이스에서는 이름 없는 빈 구간이 된다.
 #
 # 풀을 끄면 Valkey 연결 풀이 없던 때와 같이 돈다(#1127). 같은 커밋을 풀 켬과 끔으로 재 풀만의 효과를 가른다.
@@ -502,7 +506,20 @@ app_override() {
       OTEL_TRACES_SAMPLER: always_on
       OTEL_METRICS_EXPORTER: none
       OTEL_LOGS_EXPORTER: none
-      OTEL_INSTRUMENTATION_LETTUCE_ENABLED: "false"
+      OTEL_INSTRUMENTATION_COMMON_DEFAULT_ENABLED: "false"
+      OTEL_INSTRUMENTATION_TOMCAT_ENABLED: "true"
+      OTEL_INSTRUMENTATION_SERVLET_ENABLED: "true"
+      OTEL_INSTRUMENTATION_SPRING_WEBMVC_ENABLED: "true"
+      OTEL_INSTRUMENTATION_JDBC_ENABLED: "true"
+      OTEL_INSTRUMENTATION_HIBERNATE_ENABLED: "true"
+      OTEL_INSTRUMENTATION_SPRING_DATA_ENABLED: "true"
+      OTEL_INSTRUMENTATION_SPRING_WEBFLUX_ENABLED: "true"
+      OTEL_INSTRUMENTATION_REACTOR_ENABLED: "true"
+      OTEL_INSTRUMENTATION_REACTOR_NETTY_ENABLED: "true"
+      OTEL_INSTRUMENTATION_AWS_SDK_ENABLED: "true"
+      OTEL_INSTRUMENTATION_SPRING_SCHEDULING_ENABLED: "true"
+      OTEL_INSTRUMENTATION_EXECUTORS_ENABLED: "true"
+      OTEL_INSTRUMENTATION_LOGBACK_MDC_ENABLED: "true"
 EOF
   fi
   [ -z "$nopool" ] || printf '      SPRING_DATA_REDIS_LETTUCE_POOL_ENABLED: "false"\n'
