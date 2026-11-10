@@ -492,14 +492,14 @@ bash /tmp/lt-profile.sh $name $secs $mode $pyro $PROJECT /tmp/lt-trim.py $ASPROF
 # 풀을 끄면 Valkey 연결 풀이 없던 때와 같이 돈다(#1127). 같은 커밋을 풀 켬과 끔으로 재 풀만의 효과를 가른다.
 #
 app_override() {
-  local label="$1" jar="$2" nopool="$3" extra="${4:-}" pair
+  local label="$1" jar="$2" nopool="$3" extra="${4:-}" service="${5:-lunchcatch}" pair
   printf 'services:\n  app:\n'
   [ -z "$label" ] || printf '    volumes:\n      - %s:/opt/otel.jar:ro\n' "$jar"
   printf '    environment:\n'
   if [ -n "$label" ]; then
     cat <<EOF
       JDK_JAVA_OPTIONS: "-javaagent:/opt/otel.jar"
-      OTEL_SERVICE_NAME: lunchcatch
+      OTEL_SERVICE_NAME: $service
       OTEL_RESOURCE_ATTRIBUTES: "run=$label"
       OTEL_EXPORTER_OTLP_ENDPOINT: http://alloy:4318
       OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
