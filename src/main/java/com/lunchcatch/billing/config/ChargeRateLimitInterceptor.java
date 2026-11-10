@@ -28,11 +28,9 @@ public class ChargeRateLimitInterceptor implements HandlerInterceptor {
 
     @Override
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) {
-        if (!HttpMethod.POST.matches(request.getMethod())) {
-            return true;
-        }
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
-        if (authentication != null && authentication.getPrincipal() instanceof CustomUserDetails owner) {
+        if (HttpMethod.POST.matches(request.getMethod())
+                && authentication != null && authentication.getPrincipal() instanceof CustomUserDetails owner) {
             rateLimiter.checkLimit(owner.getId());
         }
         return true;
