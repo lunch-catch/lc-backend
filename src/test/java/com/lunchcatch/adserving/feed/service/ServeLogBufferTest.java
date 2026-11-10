@@ -12,6 +12,7 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
 import com.lunchcatch.adserving.config.AdservingTuningDefaults;
+import com.lunchcatch.adserving.config.ServeLogBufferProperties;
 import com.lunchcatch.adserving.engine.SlotLabels;
 import com.lunchcatch.adserving.feed.repository.FeedVisitRepository;
 import com.lunchcatch.adserving.feed.repository.FeedVisitRepository.Visit;
@@ -144,6 +145,21 @@ class ServeLogBufferTest {
         assertThat(writtenRows()).hasSize(AdservingTuningDefaults.serveLogBuffer().feedsPerBatch());
         assertThat(buffer.flushOnce()).isTrue();
         assertThat(buffer.flushOnce()).isFalse();
+    }
+
+    // 기본값만 쓰면 설정을 무시하고 옛 상수 50 을 써도 통과한다
+    @Test
+    void 설정한_묶음_크기까지만_꺼내_쓴다() {
+        ServeLogBuffer small = new ServeLogBuffer(serveLogRepository, feedVisitRepository, meterRegistry,
+                new BacklogMetrics(meterRegistry, Clock.fixed(NOW.plusSeconds(2), ClockConfig.ZONE)),
+                new ServeLogBufferProperties(10, 3));
+        IntStream.range(0, 4).forEach(i -> small.offer(feedWithCards(i, 1)));
+
+        small.flushOnce();
+
+        assertThat(writtenRows()).hasSize(3);
+        assertThat(small.flushOnce()).isTrue();
+        assertThat(small.flushOnce()).isFalse();
     }
 
     @Test
