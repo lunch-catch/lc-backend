@@ -106,8 +106,8 @@ loadtest/adserving/run.sh --local switch --no-pool
 
 ```bash
 # 에이전트를 붙여 다시 띄운다. 이름이 트레이스의 run 라벨이 된다
-loadtest/adserving/run.sh switch <이미지> --tracing v1-tracing
-loadtest/adserving/run.sh run v1-run1-tracing 30030001 100 5m
+loadtest/adserving/run.sh switch <이미지> --tracing v1
+loadtest/adserving/run.sh run v1-run1 30030001 100 5m
 
 # 떼려면 --tracing 없이 다시 띄운다
 loadtest/adserving/run.sh switch <이미지>
@@ -118,11 +118,11 @@ loadtest/adserving/run.sh switch <이미지>
 - 우리 코드의 메서드에는 스팬을 만들지 않는다. I/O 스팬 사이의 빈 구간은 프로파일링으로 본다([트레이싱과 프로파일링 설계](../docs/observability/트레이싱과_프로파일링_설계.md) 3장).
 - 라벨은 JVM 이 뜰 때 정해진다. 한 번 띄운 뒤의 회차는 같은 라벨이라 회차는 시각 구간으로 가린다.
 
-**그라파나에서 보는 법:** Explore 에서 데이터 소스 `Tempo` 를 고르고 `{ resource.run = "v1-tracing" && name = "GET /v1/feed" && duration > 300ms }` 처럼 찾는다. 트레이스를 열면 HTTP, DB 쿼리, Valkey 명령 스팬이 시간 순으로 보인다. 스팬에서 그 요청의 로그(Loki)와 프로파일(Pyroscope)로 넘어간다. 로그의 `trace_id` 에서도 그 트레이싱으로 넘어간다.
+**그라파나에서 보는 법:** Explore 에서 데이터 소스 `Tempo` 를 고르고 `{ resource.run = "v1" && name = "GET /v1/feed" && duration > 300ms }` 처럼 찾는다. 트레이스를 열면 HTTP 와 DB 쿼리 스팬이 시간 순으로 보인다. 스팬에서 그 요청의 로그(Loki)와 프로파일(Pyroscope)로 넘어간다. 로그의 `trace_id` 에서도 그 트레이싱으로 넘어간다.
 
 지킬 것:
 
-- 측정 회차와 나눈다. 스팬을 만드는 비용이 p99 에 섞인다. 켠 회차는 이름을 `-tracing` 으로 끝내고 결과 표와 경고 로그 기록에 넣지 않는다.
+- 측정 회차에도 켠다. 비용(앱 CPU 한도의 약 2.6%p)이 비용 한도 안이라 켠 채로 잰 수치를 결과에 쓴다([트레이싱과 프로파일링 설계](../docs/observability/트레이싱과_프로파일링_설계.md) 6장과 7장). 결과에 넣지 않을 회차만 이름을 `-tracing` 으로 끝낸다.
 - 노출 저장과 서빙 로그 대기열은 응답 뒤에 돌아 트레이스가 거기서 끊긴다.
 - 에이전트 판은 `v2.32.0` 으로 고정한다. 새 판은 나온 지 2주가 지난 뒤에 올린다.
 - 트레이스에는 Valkey 명령의 스팬이 없다. 명령마다 스팬이 생겨 피드 요청 하나의 스팬 가운데 가장 많아 에이전트의 Lettuce 계측을 끈다(#1177). Valkey 명령의 시간은 앱 쪽 지표(`lettuce_command_completion_seconds`, 04 데이터 저장소의 `Valkey 명령 지연`, #1180)와 Redis 서버 지표(진단 캡처의 `diag-{회차}-redis.txt`)로 본다. 트레이스에서는 그 시간이 이름 없는 빈 구간이 된다.
