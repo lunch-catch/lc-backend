@@ -372,6 +372,45 @@ adserving:
   # 측정값이 아닌 가정이다. 운영 뒤 시간대별 노출 분포로 고친다. 새벽을 0 으로 두면 노출 몇 건으로 진행률이 1.2 를 넘는다.
   pacing:
     hourly-weights: [2, 1, 1, 1, 1, 1, 1, 3, 4, 5, 8, 10, 9, 7, 4, 4, 4, 5, 7, 8, 6, 4, 2, 2]
+  # 아래는 부하 시험으로 바꿔 볼 조정 값이다(#1170). 측정이 아닌 가정이나 시작값이라 부하 시험 결과로 고친다.
+  # 다시 빌드하지 않고 환경변수로 바꾼다. 예: ADSERVING_IMPRESSION_WRITEBUFFER_BATCHSIZE=1000.
+  # 값끼리 맞물리는 것(묶음 <= 용량, 첫 백오프 <= 최대 백오프, 임대 > 주기)을 어기면 기동이 실패한다.
+  # 명세와 업무 규칙의 값(피드 10장, 요청 제한, 하루 노출 2회 등)은 계약이라 코드에 둔다.
+  impression:
+    # 노출 저장 버퍼(adserving.config.ImpressionWriteBufferProperties)
+    write-buffer:
+      # 초당 1,000건의 10초 분량이다
+      capacity: 10000
+      # 작업자 하나가 묶음이 차거나 첫 건부터 max-wait 가 지나면 쓴다
+      batch-size: 500
+      max-wait: 200ms
+      # 대기열이 찼을 때 요청이 넣으려고 기다리는 시간이다. 넘으면 그 노출을 버린 것으로 센다
+      offer-timeout: 100ms
+      first-backoff: 200ms
+      # 큐가 넘치기 전에 다시 쓰도록 큐 분량(10초)보다 짧게 둔다
+      max-backoff: 5s
+      max-attempts: 10
+    # 노출 릴레이(adserving.config.ImpressionDispatchProperties)
+    dispatch:
+      # 앞 실행이 끝난 뒤 다음 실행까지의 간격이다. @Scheduled 가 읽으므로 ISO-8601 로 적는다.
+      # 릴레이의 기준(가장 오래 기다린 미발행 건의 대기 5초, lunchcatch.observability.targets.relay-default)보다 길면 그 기준을 넘는다
+      interval: PT1S
+      # 1초 주기라 약 10초 동안 다시 해 본다. 닿으면 읽지 않고 밀린 수로만 보인다
+      max-attempts: 10
+      # 배치 서버 하나가 릴레이를 맡는 임대다. interval 보다 길어야 실행 사이에 다른 서버가 가져가지 않는다
+      lease-ttl: 30s
+  # 서빙 기록 버퍼(adserving.config.ServeLogBufferProperties)
+  serve-log:
+    buffer:
+      # 피드 1회가 카드 10장이라 5,000건이 약 50,000행, 목표 처리량(초당 5,000행)으로 10초 분량이다
+      capacity: 5000
+      feeds-per-batch: 50
+  # 앱 안의 캐시(adserving.config.AdservingCacheProperties)
+  cache:
+    # 후보 캐시를 통째로 다시 읽기까지의 시간이다. 바뀐 후보의 알림을 놓쳐도 이 시간 안에 메운다
+    candidate-max-age: 5s
+    # 회원 정보 캐시의 보관 시간이다. 위치와 노출 대상의 변경이 이만큼 늦게 반영된다
+    member-info-ttl: 30s
 
 # 카카오 OIDC 외부 API(토큰교환, 로그아웃, 연결 해제) 서킷브레이커.
 # 인스턴스를 API 별로 나눈다. 하나가 막혀도 다른 API 까지 같이 막히지 않는다.

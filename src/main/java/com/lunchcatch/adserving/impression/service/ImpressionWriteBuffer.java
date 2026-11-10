@@ -1,5 +1,6 @@
 package com.lunchcatch.adserving.impression.service;
 
+import com.lunchcatch.adserving.config.ImpressionWriteBufferProperties;
 import com.lunchcatch.adserving.contract.ImpressionServedEvent;
 import com.lunchcatch.adserving.feed.repository.ImpressionCountRepository;
 import com.lunchcatch.adserving.impression.entity.ImpressionLog;
@@ -37,23 +38,14 @@ import org.springframework.transaction.support.TransactionTemplate;
  * 그래도 실패하면 버리고 센다. 늘 실패하는 묶음이 작업자를 붙잡으면 큐가 차 모든 노출을 버리게 된다.
  * 서빙 로그 큐(ServeLogBuffer)는 실패한 묶음을 버리지만 노출은 과금 근거라 다시 쓴다.
  *
- * 작업자 스레드 하나가 500건이 차거나 첫 건부터 200ms 가 지나면 쓴다. 쓰는 동안 잠금을 쥐어 flush 가 쓰던 묶음을 기다리게 한다.
+ * 작업자 스레드 하나가 묶음이 차거나 첫 건부터 최대 대기가 지나면 쓴다. 묶음, 대기, 재시도의 값은 설정(adserving.impression.write-buffer)이 갖는다. 쓰는 동안 잠금을 쥐어 flush 가 쓰던 묶음을 기다리게 한다.
  * 작업자는 Clock 빈을 읽지 않는다. 저장 시각은 요청이 넣어 보낸다(#379).
  */
 @Slf4j
 @Service
 public class ImpressionWriteBuffer implements SmartLifecycle {
 
-    // 초당 1,000건의 10초 분량이다.
-    static final int CAPACITY = 10_000;
     static final String WORKER_NAME = "impression-writer";
-    static final int BATCH_SIZE = 500;
-    static final Duration MAX_WAIT = Duration.ofMillis(200);
-    static final Duration OFFER_TIMEOUT = Duration.ofMillis(100);
-    static final Duration FIRST_BACKOFF = Duration.ofMillis(200);
-    // 큐가 넘치기 전에 다시 쓰도록 큐 분량(10초)보다 짧게 둔다.
-    static final Duration MAX_BACKOFF = Duration.ofSeconds(5);
-    static final int MAX_ATTEMPTS = 10;
 
     static final String QUEUE_METRIC = "adserving_impression_queue_size";
     // 공통 지표의 워커 이름이다. 이름별 기준을 둘 때 application.yml 의 lunchcatch.observability.targets.worker 키로 쓴다
@@ -70,7 +62,8 @@ public class ImpressionWriteBuffer implements SmartLifecycle {
      */
     private static final String EVENT_ID_PREFIX = "impression:";
 
-    private final BlockingQueue<QueuedImpression> queue = new ArrayBlockingQueue<>(CAPACITY);
+    private final ImpressionWriteBufferProperties properties;
+    private final BlockingQueue<QueuedImpression> queue;
     private final ReentrantLock writing = new ReentrantLock();
     private final ImpressionLogRepository impressions;
     private final ImpressionCountRepository counts;
@@ -86,7 +79,10 @@ public class ImpressionWriteBuffer implements SmartLifecycle {
 
     public ImpressionWriteBuffer(ImpressionLogRepository impressions, ImpressionCountRepository counts,
                                  ApplicationEventPublisher publisher, TransactionTemplate transactions,
-                                 MeterRegistry meterRegistry, BacklogMetrics backlogMetrics) {
+                                 MeterRegistry meterRegistry, BacklogMetrics backlogMetrics,
+                                 ImpressionWriteBufferProperties properties) {
+        this.properties = properties;
+        this.queue = new ArrayBlockingQueue<>(properties.capacity());
         this.impressions = impressions;
         this.counts = counts;
         this.publisher = publisher;
@@ -107,7 +103,7 @@ public class ImpressionWriteBuffer implements SmartLifecycle {
     // 큐가 차면 100ms 까지 기다리고 그래도 넣지 못하면 버리고 센다.
     public void offer(QueuedImpression impression) {
         try {
-            if (queue.offer(impression, OFFER_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS)) {
+            if (queue.offer(impression, properties.offerTimeout().toMillis(), TimeUnit.MILLISECONDS)) {
                 return;
             }
         } catch (InterruptedException e) {
@@ -123,8 +119,8 @@ public class ImpressionWriteBuffer implements SmartLifecycle {
     public void flush() {
         writing.lock();
         try {
-            List<QueuedImpression> batch = new ArrayList<>(BATCH_SIZE);
-            while (queue.drainTo(batch, BATCH_SIZE) > 0) {
+            List<QueuedImpression> batch = new ArrayList<>(properties.batchSize());
+            while (queue.drainTo(batch, properties.batchSize()) > 0) {
                 try (LogContext.Scope ignored = LogContext.open(WORKER_NAME)) {
                     if (!write(batch)) {
                         meterRegistry.counter(LOST_METRIC).increment(batch.size());
@@ -137,10 +133,10 @@ public class ImpressionWriteBuffer implements SmartLifecycle {
         }
     }
 
-    // n 번째 다시 쓰기 전에 쉬는 시간이다. random(0, min(5초, 200ms x 2^(n-1))) 이고 random 은 [0, 1) 이다.
-    static Duration backoff(int attempt, double random) {
-        long ceiling = FIRST_BACKOFF.toMillis() << Math.min(attempt - 1, 20);
-        return Duration.ofMillis((long) (random * Math.min(MAX_BACKOFF.toMillis(), ceiling)));
+    // n 번째 다시 쓰기 전에 쉬는 시간이다. random(0, min(최대 백오프, 첫 백오프 x 2^(n-1))) 이고 random 은 [0, 1) 이다.
+    Duration backoff(int attempt, double random) {
+        long ceiling = properties.firstBackoff().toMillis() << Math.min(attempt - 1, 20);
+        return Duration.ofMillis((long) (random * Math.min(properties.maxBackoff().toMillis(), ceiling)));
     }
 
     /*
@@ -210,17 +206,17 @@ public class ImpressionWriteBuffer implements SmartLifecycle {
     }
 
     private List<QueuedImpression> collect() throws InterruptedException {
-        List<QueuedImpression> batch = new ArrayList<>(BATCH_SIZE);
-        QueuedImpression first = queue.poll(MAX_WAIT.toMillis(), TimeUnit.MILLISECONDS);
+        List<QueuedImpression> batch = new ArrayList<>(properties.batchSize());
+        QueuedImpression first = queue.poll(properties.maxWait().toMillis(), TimeUnit.MILLISECONDS);
         if (first == null) {
             return batch;
         }
         batch.add(first);
-        long deadline = System.nanoTime() + MAX_WAIT.toNanos();
-        while (batch.size() < BATCH_SIZE) {
-            queue.drainTo(batch, BATCH_SIZE - batch.size());
+        long deadline = System.nanoTime() + properties.maxWait().toNanos();
+        while (batch.size() < properties.batchSize()) {
+            queue.drainTo(batch, properties.batchSize() - batch.size());
             long remaining = deadline - System.nanoTime();
-            if (batch.size() >= BATCH_SIZE || remaining <= 0) {
+            if (batch.size() >= properties.batchSize() || remaining <= 0) {
                 break;
             }
             QueuedImpression next = queue.poll(remaining, TimeUnit.NANOSECONDS);
@@ -241,7 +237,7 @@ public class ImpressionWriteBuffer implements SmartLifecycle {
             try {
                 int attempt = 0;
                 while (!write(batch)) {
-                    if (!running || attempt >= MAX_ATTEMPTS) {
+                    if (!running || attempt >= properties.maxAttempts()) {
                         meterRegistry.counter(LOST_METRIC).increment(batch.size());
                         return;
                     }

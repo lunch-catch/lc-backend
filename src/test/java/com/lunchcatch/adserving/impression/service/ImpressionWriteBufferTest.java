@@ -16,6 +16,7 @@ import static org.mockito.Mockito.when;
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
+import com.lunchcatch.adserving.config.AdservingTuningDefaults;
 import com.lunchcatch.adserving.contract.ImpressionServedEvent;
 import com.lunchcatch.adserving.engine.SlotLabels;
 import com.lunchcatch.adserving.feed.repository.ImpressionCountRepository;
@@ -64,7 +65,7 @@ class ImpressionWriteBufferTest {
     // 받은 시각보다 3초 뒤다. 대기열에 남은 노출의 대기 시간을 센다
     private final Clock clock = Clock.fixed(RECEIVED_AT.plusSeconds(3).atZone(ClockConfig.ZONE).toInstant(), ClockConfig.ZONE);
     private final ImpressionWriteBuffer buffer = new ImpressionWriteBuffer(impressions, counts, publisher, transactions,
-            meterRegistry, new BacklogMetrics(meterRegistry, clock));
+            meterRegistry, new BacklogMetrics(meterRegistry, clock), AdservingTuningDefaults.writeBuffer());
 
     @Test
     @DisplayName("대기열 길이와 가장 오래 기다린 노출의 대기 시간을 워커 공통 지표로 낸다")
@@ -146,22 +147,22 @@ class ImpressionWriteBufferTest {
 
         @Test
         void 큐가_차면_100ms_기다린_뒤_버리고_센다() {
-            IntStream.range(0, ImpressionWriteBuffer.CAPACITY).forEach(i -> buffer.offer(invalid(i)));
+            IntStream.range(0, AdservingTuningDefaults.writeBuffer().capacity()).forEach(i -> buffer.offer(invalid(i)));
 
             long started = System.nanoTime();
-            buffer.offer(invalid(ImpressionWriteBuffer.CAPACITY));
+            buffer.offer(invalid(AdservingTuningDefaults.writeBuffer().capacity()));
             long waitedMs = Duration.ofNanos(System.nanoTime() - started).toMillis();
 
             assertThat(waitedMs).isGreaterThanOrEqualTo(90);
             assertThat(meterRegistry.counter(ImpressionWriteBuffer.DROPPED_METRIC).count()).isEqualTo(1);
             assertThat(meterRegistry.get(ImpressionWriteBuffer.QUEUE_METRIC).gauge().value())
-                    .isEqualTo(ImpressionWriteBuffer.CAPACITY);
+                    .isEqualTo(AdservingTuningDefaults.writeBuffer().capacity());
         }
 
         @Test
         void 비울_때_500건씩_나눠_저장한다() {
             insertAll();
-            IntStream.range(0, ImpressionWriteBuffer.BATCH_SIZE + 1).forEach(i -> buffer.offer(invalid(i)));
+            IntStream.range(0, AdservingTuningDefaults.writeBuffer().batchSize() + 1).forEach(i -> buffer.offer(invalid(i)));
 
             buffer.flush();
 
@@ -280,10 +281,10 @@ class ImpressionWriteBufferTest {
 
             waitUntil(() -> meterRegistry.counter(ImpressionWriteBuffer.LOST_METRIC).count() == 1);
             buffer.offer(next);
-            waitUntil(() -> mockingDetailsCalls() == ImpressionWriteBuffer.MAX_ATTEMPTS + 2);
+            waitUntil(() -> mockingDetailsCalls() == AdservingTuningDefaults.writeBuffer().maxAttempts() + 2);
 
             assertThat(meterRegistry.counter(ImpressionWriteBuffer.WRITE_FAILED_METRIC).count())
-                    .isEqualTo(ImpressionWriteBuffer.MAX_ATTEMPTS + 1);
+                    .isEqualTo(AdservingTuningDefaults.writeBuffer().maxAttempts() + 1);
             verify(counts).increment(TODAY, 101L);
         }
 
@@ -358,15 +359,15 @@ class ImpressionWriteBufferTest {
 
         @Test
         void 상한이_200ms_에서_두_배씩_늘고_5초에서_멈춘다() {
-            assertThat(ImpressionWriteBuffer.backoff(1, 0.999)).isLessThan(Duration.ofMillis(200));
-            assertThat(ImpressionWriteBuffer.backoff(2, 0.999)).isBetween(Duration.ofMillis(390), Duration.ofMillis(400));
-            assertThat(ImpressionWriteBuffer.backoff(6, 0.999)).isBetween(Duration.ofMillis(4_990), Duration.ofSeconds(5));
-            assertThat(ImpressionWriteBuffer.backoff(30, 0.999)).isLessThanOrEqualTo(Duration.ofSeconds(5));
+            assertThat(buffer.backoff(1, 0.999)).isLessThan(Duration.ofMillis(200));
+            assertThat(buffer.backoff(2, 0.999)).isBetween(Duration.ofMillis(390), Duration.ofMillis(400));
+            assertThat(buffer.backoff(6, 0.999)).isBetween(Duration.ofMillis(4_990), Duration.ofSeconds(5));
+            assertThat(buffer.backoff(30, 0.999)).isLessThanOrEqualTo(Duration.ofSeconds(5));
         }
 
         @Test
         void 무작위_값이_0_이면_쉬지_않는다() {
-            assertThat(ImpressionWriteBuffer.backoff(3, 0)).isZero();
+            assertThat(buffer.backoff(3, 0)).isZero();
         }
     }
 

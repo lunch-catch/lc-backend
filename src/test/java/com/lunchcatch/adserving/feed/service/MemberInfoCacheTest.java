@@ -6,6 +6,7 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.lunchcatch.adserving.config.AdservingTuningDefaults;
 import com.lunchcatch.global.config.ClockConfig;
 import com.lunchcatch.member.contract.MemberInfo;
 import com.lunchcatch.member.contract.MemberQueryService;
@@ -27,7 +28,7 @@ class MemberInfoCacheTest {
 
     private final MemberQueryService memberQueryService = mock(MemberQueryService.class);
     private final MovingClock clock = new MovingClock(LocalDateTime.of(2026, 10, 1, 12, 0).atZone(ClockConfig.ZONE).toInstant());
-    private final MemberInfoCache cache = new MemberInfoCache(memberQueryService, clock);
+    private final MemberInfoCache cache = new MemberInfoCache(memberQueryService, clock, AdservingTuningDefaults.cache());
 
     private static MemberInfo member(boolean onboarded) {
         return new MemberInfo(MEMBER_ID, "점심러", MemberStatus.ACTIVE, onboarded, true, true,

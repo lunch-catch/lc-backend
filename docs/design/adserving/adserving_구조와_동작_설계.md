@@ -43,8 +43,14 @@
 
 ```
 adserving/
+├── config/AdservingCacheProperties.java          후보 캐시와 회원 정보 캐시의 시간(`adserving.cache`, 11장 조정 값)
 ├── config/AdservingSecurityConfig.java
+├── config/AdservingTuningConfig.java             아래 조정 값 레코드를 빈으로 올린다
+├── config/ImpressionDispatchProperties.java      노출 릴레이의 주기, 시도, 임대(`adserving.impression.dispatch`)
+├── config/ImpressionWriteBufferProperties.java   노출 저장 버퍼의 용량, 묶음, 대기, 재시도(`adserving.impression.write-buffer`)
 ├── config/PacingProperties.java      진행률의 시간대별 가중치 24개(`adserving.pacing.hourly-weights`)
+├── config/ServeLogBufferProperties.java          서빙 기록 버퍼의 용량과 묶음(`adserving.serve-log.buffer`)
+├── config/TuningChecks.java                      조정 값 레코드가 함께 쓰는 검증
 ├── contract/
 │   ├── WishlistQueryService.java     쿠폰이 부르는 찜 조회
 │   ├── CandidateStateUpdater.java    쿠폰이 부르는 소진 반영
@@ -78,7 +84,7 @@ adserving/
 │   ├── service/CandidateStatusService.java      캠페인 상태 변경을 그날 후보의 서빙 상태에 반영한다
 │   ├── service/CandidateLoadService.java        00:00 에 그날 후보를 적재하고 적재 중의 상태 전이를 다시 읽어 반영한다
 │   ├── service/CandidateBudgetService.java      그날 후보의 예약액과 단가를 정산에서 읽어 둔다(#837)
-│   ├── service/CandidateCache.java              그날 후보를 서버 메모리에 두고 피드와 노출이 읽는다. 5초가 지나면 다시 읽는다(#1042)
+│   ├── service/CandidateCache.java              그날 후보를 서버 메모리에 두고 피드와 노출이 읽는다. `adserving.cache.candidate-max-age`(기본 5초)가 지나면 다시 읽는다(#1042)
 │   ├── job/LoadDailyCandidateJob.java           00:00 묶음 75. 적재와 재조회를 두 트랜잭션으로 부르고 끝에 예산을 읽는다
 │   ├── job/CandidateBudgetRefreshJob.java       10분마다 그날 후보의 예산을 다시 읽는다(#837)
 │   ├── repository/AdCandidateLoadImpl.java      적재의 upsert. 소진 시각을 덮지 않고 상태는 늦을 때만 바꾼다
@@ -98,7 +104,7 @@ adserving/
     ├── service/FeedService.java
     ├── service/SwipeService.java
     ├── service/FeedFilterService.java
-    ├── service/MemberInfoCache.java                 피드의 회원 조회를 서버 메모리에 30초 둔다. 온보딩 미완료는 두지 않는다
+    ├── service/MemberInfoCache.java                 피드의 회원 조회를 서버 메모리에 `adserving.cache.member-info-ttl`(기본 30초) 동안 둔다. 온보딩 미완료는 두지 않는다
     ├── service/ServeLogBuffer.java                  서빙 로그 대기열과 작업자
     ├── repository/FeedRateLimitRepository.java      Valkey
     ├── repository/FeedStateRepository.java          Valkey. 배정 전 다섯(하루와 세션 횟수, 당일 이력, 유효 노출 수, 필터, 30일 찜)을 파이프라인 하나로 읽는다
@@ -827,6 +833,19 @@ A 를 고른다. 분석의 결정과 어긋났을 때 B 는 노출 이벤트를 
 | 처리량 계산 | 목표 TPS 는 없다. 그날 노출 행 수에 비례한다. `idx_imp_date_reason` 은 날짜로 범위를 줄이지만 시간대, 슬롯, 회원을 읽으려 행마다 클러스터 인덱스를 다시 읽는다. 하루 노출이 커지면 그 읽기가 비용의 대부분이다 |
 | 확인 방법 | 아직 없다. 실제 하루치 규모의 `impression_log` 로 세 메서드의 실행 시간을 잰다. 느리면 날짜가 선두인 커버링 인덱스를 검토한다 |
 
+### 조정 값
+
+부하 시험으로 바꿔 볼 버퍼, 릴레이, 캐시의 값은 코드가 아니라 `application.yml` 의 `adserving.*` 설정이 갖는다(#1170). 다시 빌드하지 않고 환경변수로 바꿔 회차를 돈다. 이 문서에 적은 그 값들의 숫자는 기본값이고, 값을 고른 이유는 `application.yml` 의 같은 자리가 갖는다.
+
+| 묶음 | 설정 키 | 설정 레코드 | 쓰는 곳 |
+|---|---|---|---|
+| 노출 저장 버퍼 | `adserving.impression.write-buffer.*` | `ImpressionWriteBufferProperties` | `ImpressionWriteBuffer` |
+| 노출 릴레이 | `adserving.impression.dispatch.*` | `ImpressionDispatchProperties` | `ImpressionDispatchJob`(주기), `ImpressionDispatchService` |
+| 서빙 기록 버퍼 | `adserving.serve-log.buffer.*` | `ServeLogBufferProperties` | `ServeLogBuffer` |
+| 캐시 | `adserving.cache.*` | `AdservingCacheProperties` | `CandidateCache`, `MemberInfoCache` |
+
+명세와 업무 규칙의 값(피드 10장, 요청 제한, 하루 노출 2회, 신규 우선 0.8, 진행률 상한 1.2, 보관 기간)과 Valkey 키의 보관 시간은 계약이라 코드에 둔다. 값끼리 맞물리는 것(묶음 <= 용량, 첫 백오프 <= 최대 백오프, 릴레이의 임대 > 주기)을 어기면 앱이 뜨지 않는다.
+
 ## 12. 테스트와 미정 사항
 
 6장 상태 변경의 통보 두 가지와 7장 동시성 표의 행, 6장 주요 흐름의 실패 지점에서 시나리오를 뽑았다.
@@ -930,8 +949,8 @@ A 를 고른다. 분석의 결정과 어긋났을 때 B 는 노출 이벤트를 
 | 미정 항목 | 어디까지 정해졌나 | 막는 것 |
 |---|---|---|
 | 탐색 반경을 넓히는 기준 | 10장 미만으로 임시로 정했다 | 없다. 기준이 정해지면 `FeedAssembler` 한 곳을 바꾼다 |
-| 서빙 로그 대기열의 크기와 묶음 수 | 5,000건과 50건으로 임시로 정했다 | 없다. 부하 시험 뒤 `ServeLogBuffer` 의 두 값을 바꾼다 |
-| 노출 저장 큐의 크기, 묶음 수, 대기 상한 | 10,000건, 500건, 200ms 로 정했다(#1038) | 없다. 부하 시험 뒤 `ImpressionWriteBuffer` 의 값을 바꾼다 |
+| 서빙 로그 대기열의 크기와 묶음 수 | 5,000건과 50건으로 임시로 정했다 | 없다. 부하 시험 뒤 `adserving.serve-log.buffer` 의 두 값을 바꾼다(11장 조정 값) |
+| 노출 저장 큐의 크기, 묶음 수, 대기 상한 | 10,000건, 500건, 200ms 로 정했다(#1038) | 없다. 부하 시험 뒤 `adserving.impression.write-buffer` 의 값을 바꾼다(11장 조정 값) |
 | 세션을 늘리는 활동 | 피드 요청으로만 임시로 정했다 | 스와이프와 노출 요청도 세션을 늘릴지 정해야 한다. 두 API 모두 아직 늘리지 않는다 |
 | 가게 상세 찜의 퍼널 기록 | 스와이프 찜만 `SwipedEvent` 로 분석에 간다(#349 에서 정했다) | 가게 상세에서 찜한 것은 퍼널의 `wish` 에 잡히지 않는다. 분석이 원하면 이벤트를 더한다 |
 | 퍼널 이벤트의 수신자 | 분석 리스너가 아직 없다 | 수신자가 `fallbackExecution` 을 빠뜨리면 스와이프 이벤트가 오류 없이 사라진다. 조건은 `feed-api-design.md` 에 있다 |

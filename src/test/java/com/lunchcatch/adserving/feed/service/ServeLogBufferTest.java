@@ -11,6 +11,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
+import com.lunchcatch.adserving.config.AdservingTuningDefaults;
 import com.lunchcatch.adserving.engine.SlotLabels;
 import com.lunchcatch.adserving.feed.repository.FeedVisitRepository;
 import com.lunchcatch.adserving.feed.repository.FeedVisitRepository.Visit;
@@ -51,7 +52,8 @@ class ServeLogBufferTest {
     private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
     // 요청 시각보다 2초 뒤다. 대기열에 남은 피드의 대기 시간을 센다
     private final ServeLogBuffer buffer = new ServeLogBuffer(serveLogRepository, feedVisitRepository, meterRegistry,
-            new BacklogMetrics(meterRegistry, Clock.fixed(NOW.plusSeconds(2), ClockConfig.ZONE)));
+            new BacklogMetrics(meterRegistry, Clock.fixed(NOW.plusSeconds(2), ClockConfig.ZONE)),
+            AdservingTuningDefaults.serveLogBuffer());
 
     @Test
     @DisplayName("대기열 길이와 가장 오래 기다린 피드의 대기 시간을 워커 공통 지표로 낸다")
@@ -135,18 +137,18 @@ class ServeLogBufferTest {
 
     @Test
     void 한_번에_50건까지만_꺼내_쓴다() {
-        IntStream.range(0, ServeLogBuffer.FEEDS_PER_BATCH + 1).forEach(i -> buffer.offer(feedWithCards(i, 1)));
+        IntStream.range(0, AdservingTuningDefaults.serveLogBuffer().feedsPerBatch() + 1).forEach(i -> buffer.offer(feedWithCards(i, 1)));
 
         buffer.flushOnce();
 
-        assertThat(writtenRows()).hasSize(ServeLogBuffer.FEEDS_PER_BATCH);
+        assertThat(writtenRows()).hasSize(AdservingTuningDefaults.serveLogBuffer().feedsPerBatch());
         assertThat(buffer.flushOnce()).isTrue();
         assertThat(buffer.flushOnce()).isFalse();
     }
 
     @Test
     void 대기열이_차면_버리고_그_피드의_카드_수만큼_센다() {
-        IntStream.range(0, ServeLogBuffer.CAPACITY).forEach(i -> buffer.offer(feedWithCards(i, 0)));
+        IntStream.range(0, AdservingTuningDefaults.serveLogBuffer().capacity()).forEach(i -> buffer.offer(feedWithCards(i, 0)));
 
         buffer.offer(feedWithCards(9999L, 10));
         buffer.offer(feedWithCards(9998L, 0));
@@ -159,7 +161,7 @@ class ServeLogBufferTest {
     void 쓰기가_실패하면_그_묶음을_버리고_세며_다음_묶음은_쓴다() {
         doThrow(new DataAccessResourceFailureException("DB 멈춤")).doNothing()
                 .when(serveLogRepository).insertAll(anyList());
-        IntStream.range(0, ServeLogBuffer.FEEDS_PER_BATCH).forEach(i -> buffer.offer(feedWithCards(i, 2)));
+        IntStream.range(0, AdservingTuningDefaults.serveLogBuffer().feedsPerBatch()).forEach(i -> buffer.offer(feedWithCards(i, 2)));
         buffer.offer(feedWithCards(7777L, 3));
 
         buffer.flushOnce();

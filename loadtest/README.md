@@ -42,7 +42,7 @@
 | `record_warnings` | 회차 구간의 경고와 오류를 이벤트별로 세어 결과 문서에 적고 커밋한다 |
 | `profile` | 앱 서버에 프로파일링을 붙여 Pyroscope 로 보낸다 |
 | `full_sha`, `image_exists` | 이미지 커밋을 40자로 늘리고 GHCR 에 있는지 본다 |
-| `app_override`, `local_switch` | 앱의 compose 덮어쓰기 파일(트레이싱 에이전트, 연결 풀 끔)을 만들고, 로컬 앱을 그것으로 다시 띄운다 |
+| `app_override`, `local_switch` | 앱의 compose 덮어쓰기 파일(트레이싱 에이전트, 연결 풀 끔, `--env` 의 환경변수)을 만들고, 로컬 앱을 그것으로 다시 띄운다 |
 
 새 도메인은 `run.sh` 의 앞에서 아래 값을 정하고 이 파일을 불러 쓴다. `loadtest/adserving/run.sh` 가 예다.
 
@@ -99,6 +99,19 @@ loadtest/adserving/run.sh --local switch --no-pool
 
 - 트레이싱과 같은 `compose.override.yaml` 에 들어간다. `--tracing` 과 함께 줄 수 있다.
 - 어느 쪽으로 떴는지 `switch` 의 출력 끝에 `pool on` 이나 `SPRING_DATA_REDIS_LETTUCE_POOL_ENABLED=false` 로 나온다.
+
+## 조정 값 바꿔 재기
+
+광고 서빙의 버퍼, 릴레이, 캐시 값은 `application.yml` 의 `adserving.*` 설정이다(#1170). `switch` 에 `--env KEY=VALUE` 를 주면 그 환경변수를 넣어 다시 띄운다. 여러 번 줄 수 있고, 다시 빌드하지 않는다.
+
+```bash
+loadtest/adserving/run.sh switch <이미지> --env ADSERVING_IMPRESSION_WRITEBUFFER_BATCHSIZE=1000
+loadtest/adserving/run.sh --local switch --env ADSERVING_CACHE_CANDIDATEMAXAGE=10s
+```
+
+- 이름은 설정 키를 대문자로 바꾸고 점을 `_` 로, `-` 를 빼서 만든다. `adserving.impression.write-buffer.batch-size` 는 `ADSERVING_IMPRESSION_WRITEBUFFER_BATCHSIZE` 다.
+- 설정 키와 기본값, 값을 고른 이유는 `application.yml` 의 `adserving:` 에 있다. 값끼리 맞물리는 것(묶음 <= 용량, 첫 백오프 <= 최대 백오프, 릴레이의 임대 > 주기)을 어기면 앱이 뜨지 않는다.
+- 트레이싱, 풀 끔과 같은 `compose.override.yaml` 에 들어간다. `--env` 없이 다시 `switch` 하면 그 값이 빠진다.
 
 ## 트레이싱
 

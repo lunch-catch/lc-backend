@@ -1,5 +1,6 @@
 package com.lunchcatch.adserving.impression.service;
 
+import com.lunchcatch.adserving.config.ImpressionDispatchProperties;
 import com.lunchcatch.adserving.impression.repository.DispatchLeaseRepository;
 import com.lunchcatch.adserving.impression.repository.ImpressionDispatchRepository;
 import com.lunchcatch.adserving.impression.repository.ImpressionDispatchRepository.PendingImpression;
@@ -11,7 +12,6 @@ import com.lunchcatch.global.config.BacklogMetrics;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
 import java.time.Clock;
-import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -48,10 +48,8 @@ public class ImpressionDispatchService {
     // 공통 지표의 릴레이 이름이다. 이름별 기준을 둘 때 application.yml 의 lunchcatch.observability.targets.relay 키로 쓴다
     static final String RELAY_NAME = "adserving.impression";
 
-    // 1초 주기라 약 10초 동안 다시 해 본다. 닿으면 읽지 않고 밀린 수로만 보인다
-    static final int MAX_ATTEMPTS = 10;
-    static final Duration LEASE_TTL = Duration.ofSeconds(30);
-
+    // 시도 횟수와 임대 시간은 설정(adserving.impression.dispatch)이 갖는다
+    private final ImpressionDispatchProperties properties;
     private final DispatchLeaseRepository lease;
     private final ImpressionDispatchRepository impressions;
     private final PointDeductor pointDeductor;
@@ -63,7 +61,9 @@ public class ImpressionDispatchService {
 
     public ImpressionDispatchService(DispatchLeaseRepository lease, ImpressionDispatchRepository impressions,
                                      PointDeductor pointDeductor, TransactionTemplate transactions,
-                                     MeterRegistry meterRegistry, Clock clock, BacklogMetrics backlogMetrics) {
+                                     MeterRegistry meterRegistry, Clock clock, BacklogMetrics backlogMetrics,
+                                     ImpressionDispatchProperties properties) {
+        this.properties = properties;
         this.lease = lease;
         this.impressions = impressions;
         this.pointDeductor = pointDeductor;
@@ -88,7 +88,7 @@ public class ImpressionDispatchService {
         LocalDateTime from = LocalDate.now(clock).minusDays(1).atStartOfDay();
         try {
             boolean more = dispatchBatch(from);
-            while (more && lease.renew(LEASE_TTL)) {
+            while (more && lease.renew(properties.leaseTtl())) {
                 more = dispatchBatch(from);
             }
         } catch (RuntimeException e) {
@@ -122,7 +122,7 @@ public class ImpressionDispatchService {
      * 실패한 노출은 다시 넘길 시각을 미뤘으므로 같은 회차에 이어서 넘기지 않는다. 실패가 몰릴 때 정산을 거듭 부르지 않는다(REL-2-06).
      */
     private boolean dispatchBatch(LocalDateTime from) {
-        List<PendingImpression> batch = impressions.findPending(from, LocalDateTime.now(clock), MAX_ATTEMPTS,
+        List<PendingImpression> batch = impressions.findPending(from, LocalDateTime.now(clock), properties.maxAttempts(),
                 PointDeductor.MAX_BATCH_SIZE);
         if (batch.isEmpty()) {
             return false;
@@ -167,7 +167,7 @@ public class ImpressionDispatchService {
      */
     private boolean acquire() {
         try {
-            boolean held = lease.acquire(LEASE_TTL);
+            boolean held = lease.acquire(properties.leaseTtl());
             if (!held) {
                 backlog.set(0);
                 oldestPending.set(null);

@@ -10,6 +10,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import com.lunchcatch.adserving.config.AdservingTuningDefaults;
 import com.lunchcatch.adserving.config.PacingProperties;
 import com.lunchcatch.adserving.engine.FeedAssembler;
 import com.lunchcatch.adserving.engine.entity.AdCandidate;
@@ -98,7 +99,7 @@ class FeedServiceTest {
 
     private FeedService serviceAt(LocalDateTime now) {
         Clock clock = Clock.fixed(now.atZone(ClockConfig.ZONE).toInstant(), ClockConfig.ZONE);
-        return new FeedService(new MemberInfoCache(memberQueryService, clock), rateLimitRepository, candidateCache,
+        return new FeedService(new MemberInfoCache(memberQueryService, clock, AdservingTuningDefaults.cache()), rateLimitRepository, candidateCache,
                 feedStateRepository, filterCategoryRepository, feedFilterRepository, swipeLogRepository,
                 serveFrequencyRepository, pacingProperties, serveRecordRepository,
                 serveLogBuffer, meterRegistry, clock);
