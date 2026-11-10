@@ -11,13 +11,18 @@ import java.util.Arrays;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.springframework.boot.bootstrap.DefaultBootstrapContext;
+import org.springframework.boot.context.config.ConfigDataEnvironmentPostProcessor;
 import org.springframework.boot.context.properties.bind.Binder;
 import org.springframework.boot.context.properties.source.ConfigurationPropertySources;
 import org.springframework.boot.env.YamlPropertySourceLoader;
 import org.springframework.boot.micrometer.metrics.autoconfigure.MetricsProperties;
 import org.springframework.boot.micrometer.metrics.autoconfigure.PropertiesMeterFilter;
+import org.springframework.core.env.ConfigurableEnvironment;
 import org.springframework.core.env.PropertySource;
+import org.springframework.core.env.StandardEnvironment;
 import org.springframework.core.io.ClassPathResource;
+import org.springframework.core.io.DefaultResourceLoader;
 
 class LongTransactionSettingsTest {
 
@@ -26,15 +31,15 @@ class LongTransactionSettingsTest {
     // 끊는 장치가 아니라 오래 쥔 자리의 스택을 경고로 남기는 진단이다. 품질 문서 성능 효율성의 커넥션 누수 탐지 5000ms 다
     @Test
     @DisplayName("앱은 커넥션을 5초 넘게 쥐면 누수 경고를 남긴다")
-    void 앱은_5초_넘게_쥔_커넥션을_경고한다() throws IOException {
-        assertThat(load("application.yml").getProperty(LEAK_DETECTION)).hasToString("5000");
+    void 앱은_5초_넘게_쥔_커넥션을_경고한다() {
+        assertThat(resolved().getProperty(LEAK_DETECTION)).isEqualTo("5000");
     }
 
     // 배치는 00:00 묶음을 트랜잭션으로 감싸지 않아 오래 쥐는 것이 정상이 아니라 앱의 값을 그대로 쓴다(#1167)
     @Test
-    @DisplayName("배치는 누수 경고 문턱을 따로 두지 않고 앱의 값을 이어받는다")
-    void 배치는_앱의_누수_경고_문턱을_이어받는다() throws IOException {
-        assertThat(load("application-batch.yml").getProperty(LEAK_DETECTION)).isNull();
+    @DisplayName("batch 프로필을 켜도 누수 경고 문턱은 5초다")
+    void 배치도_5초_넘게_쥔_커넥션을_경고한다() {
+        assertThat(resolved("batch").getProperty(LEAK_DETECTION)).isEqualTo("5000");
     }
 
     // 버킷 경계가 품질 문서의 두 기준(100ms 이하, 상한 1초)과 맞아야 넘은 수를 근사 없이 센다
@@ -52,6 +57,14 @@ class LongTransactionSettingsTest {
         CountAtBucket[] buckets = usage.takeSnapshot().histogramCounts();
         assertThat(countAt(buckets, Duration.ofMillis(100))).isEqualTo(1);
         assertThat(countAt(buckets, Duration.ofSeconds(1))).isEqualTo(2);
+    }
+
+    // 앱이 뜰 때와 같은 순서로 application.yml 과 프로필 파일의 모든 문서를 읽어 겹친 결과다
+    private static ConfigurableEnvironment resolved(String... profiles) {
+        StandardEnvironment environment = new StandardEnvironment();
+        ConfigDataEnvironmentPostProcessor.applyTo(environment, new DefaultResourceLoader(),
+                new DefaultBootstrapContext(), profiles);
+        return environment;
     }
 
     private static PropertySource<?> load(String name) throws IOException {
