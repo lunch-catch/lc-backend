@@ -4,8 +4,11 @@ import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import com.lunchcatch.adserving.contract.CandidateStateUpdater;
 import com.lunchcatch.coupon.config.CouponProperties;
+import com.lunchcatch.global.config.BacklogMetrics;
+import com.lunchcatch.global.config.ClockConfig;
 import java.time.Clock;
 import java.time.Instant;
+import java.time.LocalDateTime;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
@@ -24,6 +27,9 @@ import org.springframework.stereotype.Service;
 @Slf4j
 public class CouponSoldOutNotificationService implements SmartLifecycle {
 
+    // 공통 지표의 워커 이름이다. 이름별 기준을 둘 때 application.yml 의 lunchcatch.observability.targets.worker 키로 쓴다
+    static final String BACKLOG_NAME = "coupon.sold-out-notification";
+
     private final CouponProperties properties;
 
     private final CouponLookUpService lookUpService;
@@ -35,13 +41,14 @@ public class CouponSoldOutNotificationService implements SmartLifecycle {
     private ScheduledExecutorService executor;
 
     public CouponSoldOutNotificationService(CouponProperties properties, CouponLookUpService lookUpService,
-            CandidateStateUpdater candidateStateUpdater, Clock clock) {
+            CandidateStateUpdater candidateStateUpdater, Clock clock, BacklogMetrics backlogMetrics) {
         this.properties = properties;
         this.lookUpService = lookUpService;
         this.candidateStateUpdater = candidateStateUpdater;
         this.clock = clock;
         completed = Caffeine.newBuilder().maximumSize(properties.soldOut().completedCacheSize())
                 .expireAfterWrite(properties.soldOut().completedCacheTtl()).build();
+        backlogMetrics.worker(BACKLOG_NAME, this::pendingCount, this::oldestPendingRequestedAt);
     }
 
     // 접수만 메모리에 기록하고 DB 조회와 통보가 끝나기를 기다리지 않는다.
@@ -55,7 +62,7 @@ public class CouponSoldOutNotificationService implements SmartLifecycle {
             return;
         }
         Instant now = clock.instant();
-        pending.put(eventId, new Pending(now, now.plus(properties.soldOut().retryWindow()), CouponLogContext.capture()));
+        pending.put(eventId, new Pending(now, now, now.plus(properties.soldOut().retryWindow()), CouponLogContext.capture()));
     }
 
     // DB에서 확인한 마지막 발급 시각으로 통보하며 실패한 이벤트만 다음 실행으로 넘긴다.
@@ -82,7 +89,8 @@ public class CouponSoldOutNotificationService implements SmartLifecycle {
                     pending.remove(eventId);
                     log.info("event=COUPON_SOLD_OUT_NOTIFICATION_DONE couponEventId={}", eventId);
                 } catch (RuntimeException error) {
-                    pending.put(eventId, new Pending(clock.instant().plus(properties.soldOut().retryInterval()), task.expiresAt(), task.logContext()));
+                    pending.put(eventId, new Pending(task.requestedAt(), clock.instant().plus(properties.soldOut().retryInterval()),
+                            task.expiresAt(), task.logContext()));
                     CouponFailureDetails details = CouponFailureDetails.from(error);
                     log.error("event=COUPON_SOLD_OUT_NOTIFICATION_FAILED reason=RETRY_SCHEDULED couponEventId={} fallback=RETRY requestTraceIds={} exceptionType={} httpStatus={} sqlState={} sqlErrorCode={} origin=\"{}\"",
                             eventId, CouponLogContext.requestTraceIds(), details.exceptionType(), details.httpStatus(),
@@ -134,5 +142,17 @@ public class CouponSoldOutNotificationService implements SmartLifecycle {
         return running;
     }
 
-    private record Pending(Instant retryAt, Instant expiresAt, CouponLogContext logContext) { }
+    // 통보를 기다리는 이벤트 수를 돌려준다.
+    int pendingCount() {
+        return pending.size();
+    }
+
+    // 처음 접수한 뒤 가장 오래 통보를 기다린 이벤트의 접수 시각을 돌려주며 기다리는 이벤트가 없으면 null이다.
+    LocalDateTime oldestPendingRequestedAt() {
+        return pending.values().stream().map(Pending::requestedAt).min(Instant::compareTo)
+                .map(requestedAt -> LocalDateTime.ofInstant(requestedAt, ClockConfig.ZONE)).orElse(null);
+    }
+
+    // requestedAt 은 처음 접수한 시각이며 재시도해도 바꾸지 않는다.
+    private record Pending(Instant requestedAt, Instant retryAt, Instant expiresAt, CouponLogContext logContext) { }
 }

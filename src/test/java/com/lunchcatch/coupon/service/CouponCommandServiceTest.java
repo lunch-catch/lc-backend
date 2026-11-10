@@ -102,6 +102,7 @@ class CouponCommandServiceTest {
     @Mock CouponSequenceRecoveryService sequenceRecoveryService;
     @Mock CouponIssueBatcher batcher;
     @Mock CouponIssuanceMetrics issuanceMetrics;
+    @Mock com.lunchcatch.global.config.BacklogMetrics backlogMetrics;
     @Spy CouponProperties properties = CouponTestProperties.defaults();
     @InjectMocks CouponCommandService service;
 
@@ -234,6 +235,35 @@ class CouponCommandServiceTest {
             assertThat(second.get(2, TimeUnit.SECONDS)).isEqualTo(response);
             assertThat(third.get(2, TimeUnit.SECONDS)).isEqualTo(response);
             verify(sequenceRecoveryService, times(1)).recover(eq(81L), anyLong());
+        } finally {
+            release.countDown();
+            service.stopIssuanceRecovery();
+        }
+    }
+
+    // 복구 작업자가 일하는 동안 뒤에 줄 선 복구 작업의 수와 가장 오래 기다린 작업의 접수 시각을 읽는다.
+    @Test
+    void 복구_작업자를_기다리는_작업의_수와_가장_오래_기다린_작업의_접수_시각을_읽는다() throws Exception {
+        CouponException rejection = CouponException.recoveryRequired(81L);
+        CountDownLatch recovering = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        when(batcher.submit(any(), anyLong())).thenReturn(CompletableFuture.failedFuture(rejection));
+        when(sequenceService.needsRecovery(81L)).thenReturn(true);
+        when(sequenceRecoveryService.recover(eq(81L), anyLong())).thenAnswer(invocation -> {
+            recovering.countDown();
+            release.await();
+            return false;
+        });
+        try {
+            assertThat(service.recoveryQueueSize()).isZero();
+            assertThat(service.oldestRecoveryQueuedAt()).isNull();
+            service.issueAsync(MEMBER_ID, 81L);
+            assertThat(recovering.await(2, TimeUnit.SECONDS)).isTrue();
+            service.issueAsync(18L, 81L);
+            awaitQueuedRecoveries(1);
+
+            assertThat(service.recoveryQueueSize()).isEqualTo(1);
+            assertThat(service.oldestRecoveryQueuedAt()).isEqualTo(LocalDateTime.of(2026, 10, 10, 12, 0));
         } finally {
             release.countDown();
             service.stopIssuanceRecovery();
@@ -525,7 +555,7 @@ class CouponCommandServiceTest {
             service = new CouponCommandService(CouponTestProperties.defaults(), repository, couponDailyLimitRepository, memberQuery,
                     new CouponQrImageEncoder(CouponTestProperties.defaults()),
                     Clock.fixed(Instant.parse("2026-10-10T03:00:00Z"), ZoneOffset.UTC), mock(CouponSoldOutNotificationService.class), mock(CouponSequenceService.class), mock(CouponSequenceRecoveryService.class),
-                    mock(CouponIssueBatcher.class), mock(CouponIssuanceMetrics.class));
+                    mock(CouponIssueBatcher.class), mock(CouponIssuanceMetrics.class), mock(com.lunchcatch.global.config.BacklogMetrics.class));
         }
 
         @ParameterizedTest

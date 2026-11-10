@@ -28,6 +28,7 @@ import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import com.lunchcatch.global.config.BacklogMetrics;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -39,8 +40,9 @@ class CouponIssueBatcherTest {
     private final CouponBatchIssuanceService batchService = mock(CouponBatchIssuanceService.class);
     private final CouponSequenceService sequenceService = mock(CouponSequenceService.class);
     private final CouponSoldOutNotificationService soldOutNotifications = mock(CouponSoldOutNotificationService.class);
+    private final BacklogMetrics backlogMetrics = mock(BacklogMetrics.class);
     private final Clock clock = Clock.fixed(Instant.parse("2026-10-20T03:00:00Z"), ZoneOffset.ofHours(9));
-    private final CouponIssueBatcher batcher = new CouponIssueBatcher(CouponTestProperties.defaults(), batchService, sequenceService, soldOutNotifications, clock);
+    private final CouponIssueBatcher batcher = new CouponIssueBatcher(CouponTestProperties.defaults(), batchService, sequenceService, soldOutNotifications, clock, backlogMetrics);
     private final CouponReservation reservation =
             new CouponReservation(81L, 1, "reservation");
     private final CouponIssueResponse response = new CouponIssueResponse(1001L, OffsetDateTime.now(clock));
@@ -269,6 +271,45 @@ class CouponIssueBatcherTest {
             } finally {
                 finishCollecting.countDown();
             }
+        }
+    }
+
+    // 작업자가 묶음을 처리하는 동안 뒤에 들어온 요청의 수와 가장 오래 기다린 시간을 지표로 읽고, 다 꺼내면 0으로 돌아온다.
+    // 발급 대기열을 공통 지표에 coupon.issue 워커로 등록한다.
+    @Test
+    void 발급_대기열을_공통_지표에_등록한다() {
+        batcher.registerBacklogMetrics();
+
+        verify(backlogMetrics).worker(org.mockito.ArgumentMatchers.eq("coupon.issue"), any(), any());
+    }
+
+    @Test
+    void 작업자를_기다리는_요청의_수와_가장_오래_기다린_요청의_접수_시각을_읽는다() throws Exception {
+        ReflectionTestUtils.setField(batcher, "properties", CouponTestProperties.with(java.util.Map.of("coupon.issue.batch.max-size", 1)));
+        CountDownLatch started = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        when(batchService.issueBatch(anyList(), any())).thenAnswer(invocation -> {
+            started.countDown();
+            assertThat(release.await(5, TimeUnit.SECONDS)).isTrue();
+            return List.of(issued);
+        });
+        long deadline = System.nanoTime() + Duration.ofSeconds(5).toNanos();
+        try {
+            batcher.submit(new com.lunchcatch.coupon.model.CouponIssuanceRequest(17L, 81L, java.time.LocalDateTime.now(clock)), deadline);
+            assertThat(started.await(2, TimeUnit.SECONDS)).isTrue();
+            assertThat(batcher.queuedCount()).isZero();
+            assertThat(batcher.oldestQueuedAt()).isNull();
+
+            batcher.submit(new com.lunchcatch.coupon.model.CouponIssuanceRequest(18L, 81L, java.time.LocalDateTime.now(clock)), deadline);
+            batcher.submit(new com.lunchcatch.coupon.model.CouponIssuanceRequest(19L, 81L, java.time.LocalDateTime.now(clock)), deadline);
+
+            assertThat(batcher.queuedCount()).isEqualTo(2);
+            assertThat(batcher.oldestQueuedAt()).isEqualTo(java.time.LocalDateTime.now(clock.withZone(com.lunchcatch.global.config.ClockConfig.ZONE)));
+            release.countDown();
+            await().atMost(Duration.ofSeconds(2)).until(() -> batcher.queuedCount() == 0);
+            assertThat(batcher.oldestQueuedAt()).isNull();
+        } finally {
+            release.countDown();
         }
     }
 
