@@ -1,13 +1,13 @@
 package com.lunchcatch.billing;
 
 import com.lunchcatch.IntegrationTestSupport;
-import com.lunchcatch.billing.client.CommitCheckingGateway;
-import com.lunchcatch.billing.service.PaymentResultService;
+import com.lunchcatch.billing.payment.client.CommitCheckingGateway;
+import com.lunchcatch.billing.payment.service.PaymentResultService;
 import org.junit.jupiter.api.BeforeEach;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Primary;
 import org.springframework.jdbc.core.JdbcTemplate;

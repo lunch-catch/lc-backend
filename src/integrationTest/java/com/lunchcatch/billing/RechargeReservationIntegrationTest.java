@@ -2,11 +2,11 @@ package com.lunchcatch.billing;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.lunchcatch.billing.repository.BudgetDailyPlanRepository;
+import com.lunchcatch.billing.payment.service.PaymentResultService;
 import com.lunchcatch.billing.repository.PointAccountRepository;
 import com.lunchcatch.billing.repository.PointLedgerRepository;
-import com.lunchcatch.billing.service.PaymentResultService;
-import com.lunchcatch.billing.service.RechargeReservationRetryService;
+import com.lunchcatch.billing.reservation.repository.BudgetDailyPlanRepository;
+import com.lunchcatch.billing.reservation.service.RechargeReservationRetryService;
 import com.lunchcatch.campaign.contract.CampaignFundingUpdater;
 import com.lunchcatch.campaign.contract.CampaignQueryService;
 import com.lunchcatch.global.config.ClockConfig;

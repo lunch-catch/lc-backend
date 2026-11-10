@@ -8,7 +8,7 @@ import com.lunchcatch.billing.contract.CampaignBillingCount;
 import com.lunchcatch.billing.contract.CampaignDailyBudget;
 import com.lunchcatch.billing.contract.DailyLedgerTotals;
 import com.lunchcatch.billing.contract.OwnerCampaignLedgerSum;
-import com.lunchcatch.billing.dto.ServeIds;
+import com.lunchcatch.billing.deduction.dto.ServeIds;
 import com.lunchcatch.billing.entity.PointLedger;
 import com.lunchcatch.billing.repository.PointLedgerRepository;
 import java.time.LocalDate;

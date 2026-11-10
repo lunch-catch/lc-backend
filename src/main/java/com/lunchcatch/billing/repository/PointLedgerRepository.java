@@ -1,7 +1,7 @@
 package com.lunchcatch.billing.repository;
 
+import com.lunchcatch.billing.deduction.dto.ServeIds;
 import com.lunchcatch.billing.dto.CampaignSpend;
-import com.lunchcatch.billing.dto.ServeIds;
 import com.lunchcatch.billing.entity.EntryType;
 import com.lunchcatch.billing.entity.PointLedger;
 import java.time.LocalDate;

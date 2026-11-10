@@ -1,7 +1,7 @@
 package com.lunchcatch.billing.config;
 
 import com.lunchcatch.auth.CustomUserDetails;
-import com.lunchcatch.billing.cache.ChargeRateLimiter;
+import com.lunchcatch.billing.payment.cache.ChargeRateLimiter;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
