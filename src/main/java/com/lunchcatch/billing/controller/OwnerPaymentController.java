@@ -8,6 +8,7 @@ import com.lunchcatch.billing.dto.PaymentHistoryItem;
 import com.lunchcatch.billing.dto.PaymentOrderRequest;
 import com.lunchcatch.billing.dto.PaymentOrderResponse;
 import com.lunchcatch.billing.entity.PaymentStatus;
+import com.lunchcatch.billing.exception.ChargeRateLimitedException;
 import com.lunchcatch.billing.service.PaymentConfirmationService;
 import com.lunchcatch.billing.service.PaymentOrderService;
 import com.lunchcatch.billing.service.PaymentQueryService;
@@ -19,9 +20,11 @@ import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -48,7 +51,8 @@ public class OwnerPaymentController {
     @ApiResponses({
             @ApiResponse(responseCode = "201", description = "주문 생성 성공. 응답의 orderId 와 amount 로 결제창을 엽니다."),
             @ApiResponse(responseCode = "400", description = "BILLING-001: 최소 충전 금액보다 적습니다. BILLING-002: 충전 상품에 없는 금액입니다. COMMON-002: 금액이 없거나 0 이하입니다."),
-            @ApiResponse(responseCode = "409", description = "BILLING-008: 확인 중인 결제가 있어 새로 주문할 수 없습니다.")
+            @ApiResponse(responseCode = "409", description = "BILLING-008: 확인 중인 결제가 있어 새로 주문할 수 없습니다."),
+            @ApiResponse(responseCode = "429", description = "BILLING-024: 주문과 승인 확정을 합쳐 10초에 3회를 넘었습니다. Retry-After 의 초만큼 기다린 뒤 다시 시도합니다.")
     })
     public ResponseEntity<ResponseEnvelope<PaymentOrderResponse>> order(
             @AuthenticationPrincipal CustomUserDetails owner,
@@ -74,6 +78,7 @@ public class OwnerPaymentController {
             @ApiResponse(responseCode = "404", description = "BILLING-004: 내 결제 중에 없는 결제입니다."),
             @ApiResponse(responseCode = "409", description = "BILLING-017: orderId 가 저장된 주문과 다르거나 pgTid 가 다른 결제에 이미 쓰였습니다. BILLING-009: 이미 취소된 주문이라 새로 주문해야 합니다."),
             @ApiResponse(responseCode = "422", description = "BILLING-003: 결제가 실패했거나 승인 전에 만료되어 충전되지 않았습니다."),
+            @ApiResponse(responseCode = "429", description = "BILLING-024: 주문과 승인 확정을 합쳐 10초에 3회를 넘었습니다. Retry-After 의 초만큼 기다린 뒤 같은 주문으로 다시 시도합니다."),
             @ApiResponse(responseCode = "503", description = "BILLING-007: 승인 요청이 결제대행사에 가지 않았습니다. 같은 주문으로 다시 시도할 수 있습니다.")
     })
     public ResponseEntity<ResponseEnvelope<PaymentConfirmResponse>> confirm(
@@ -114,5 +119,17 @@ public class OwnerPaymentController {
             @RequestParam(required = false) String pageToken,
             @RequestParam(defaultValue = "20") int pageSize) {
         return ResponseEnvelope.success(queryService.list(owner.getId(), pageToken, pageSize));
+    }
+
+    /*
+     * 429 의 Retry-After 는 다시 요청할 수 있을 때까지 남은 초여야 하고 그 값은 카운터를 든 쪽만 안다.
+     * GlobalExceptionHandler 는 상태 코드만 보고 1초를 붙이므로 이 예외만 여기서 받는다.
+     * 인터셉터가 던져도 처리할 핸들러가 이 컨트롤러의 메서드로 정해진 뒤라 이 핸들러가 받는다.
+     */
+    @ExceptionHandler(ChargeRateLimitedException.class)
+    public ResponseEntity<ResponseEnvelope<Void>> handleRateLimited(ChargeRateLimitedException e) {
+        return ResponseEntity.status(e.getErrorCode().getHttpStatus())
+                .header(HttpHeaders.RETRY_AFTER, String.valueOf(e.getRetryAfterSeconds()))
+                .body(ResponseEnvelope.fail(e.getErrorCode()));
     }
 }

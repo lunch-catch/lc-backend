@@ -7,8 +7,8 @@
  */
 SET @lo = 40000001;
 SET @hi = 40999999;
--- k6 의 OWNERS 보다 크거나 같아야 한다
-SET @owners = 1000;
+-- k6 의 OWNER_OFFSET + OWNERS 보다 크거나 같아야 한다. 두 회차를 대역을 나눠 함께 돌릴 수 있게 넉넉히 둔다
+SET @owners = 2000;
 SET SESSION cte_max_recursion_depth = 1000000;
 
 -- 1. 시험 대역의 결제, 원장, 점주를 지운다
