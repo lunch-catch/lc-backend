@@ -53,6 +53,11 @@ spring:
       keepalive-time: 120000
       # MySQL wait_timeout 보다 짧아야 죽은 커넥션을 잡는다
       max-lifetime: 1500000
+      # 커넥션을 이만큼 넘게 쥐면 그 커넥션을 빌린 자리의 스택을 경고 로그로 남긴다. 끊지는 않는다.
+      # 품질 문서 성능 효율성의 커넥션 누수 탐지 5000ms 다. Hikari 는 2000 보다 작은 값을 받지 않아
+      # 트랜잭션 상한 1초에는 맞출 수 없고, 그 기준은 아래 커넥션 사용 시간의 히스토그램으로 센다.
+      # 배치도 이 값을 이어받는다. 00:00 묶음을 트랜잭션으로 감싸지 않아 오래 쥐는 것이 정상이 아니다(#1167)
+      leak-detection-threshold: 5000
       # 인스턴스 수와 DB 사양이 정해지면 다시 잡는다. 안쪽(풀)이 더 작아야 톰캣 스레드가
       # DB 를 기다리다 고갈되지 않는다. 최소를 최대와 같게 두지 않는 이유는, 새로 뜬 인스턴스가
       # 요청 하나 받기 전에 최대치를 먼저 잡아 가장 빡빡한 순간에 노는 커넥션이 생기기 때문이다
@@ -181,6 +186,13 @@ management:
       application: "${APP_NAME:lunchcatch}"
       instance: "${APP_INSTANCE_ID:local}"
       version: "${APP_VERSION:local}"
+    # 커넥션을 빌려 돌려줄 때까지의 시간이다. 트랜잭션 시간에 가깝고, 트랜잭션 밖에서 빌린 커넥션도 섞인다.
+    # 경계에 품질 문서 데이터 무결성의 두 기준(100ms 이하, 상한 1초)을 넣어 넘은 수를 근사 없이 센다(#1167)
+    distribution:
+      percentiles-histogram:
+        "[hikaricp.connections.usage]": true
+      slo:
+        "[hikaricp.connections.usage]": 100ms, 1s
 
 lunchcatch:
   observability:
