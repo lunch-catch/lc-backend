@@ -148,6 +148,7 @@ class ServeLogBufferTest {
     }
 
     // 기본값만 쓰면 설정을 무시하고 옛 상수 50 을 써도 통과한다
+    @SuppressWarnings("unchecked")
     @Test
     void 설정한_묶음_크기까지만_꺼내_쓴다() {
         ServeLogBuffer small = new ServeLogBuffer(serveLogRepository, feedVisitRepository, meterRegistry,
@@ -156,9 +157,12 @@ class ServeLogBufferTest {
         IntStream.range(0, 4).forEach(i -> small.offer(feedWithCards(i, 1)));
 
         small.flushOnce();
+        small.flushOnce();
 
-        assertThat(writtenRows()).hasSize(3);
-        assertThat(small.flushOnce()).isTrue();
+        ArgumentCaptor<List<Row>> captor = ArgumentCaptor.forClass(List.class);
+        verify(serveLogRepository, times(2)).insertAll(captor.capture());
+        assertThat(captor.getAllValues().get(0)).extracting(row -> row.record().memberId()).containsExactly(0L, 1L, 2L);
+        assertThat(captor.getAllValues().get(1)).extracting(row -> row.record().memberId()).containsExactly(3L);
         assertThat(small.flushOnce()).isFalse();
     }
 
