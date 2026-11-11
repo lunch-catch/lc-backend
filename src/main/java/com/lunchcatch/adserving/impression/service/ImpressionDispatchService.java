@@ -169,13 +169,21 @@ public class ImpressionDispatchService {
             }
         }
         LocalDateTime now = LocalDateTime.now(clock);
-        transactions.executeWithoutResult(status -> {
-            impressions.markDispatched(dispatched, now);
+        Integer marked = transactions.execute(status -> {
+            int rows = impressions.markDispatched(dispatched, now);
             impressions.markFailed(failed, now, properties.maxAttempts());
+            return rows;
         });
-        dispatched.forEach(impression -> backlogMetrics.publishDelay(RELAY_NAME,
-                Duration.between(impression.createdAt().atZone(clock.getZone()), now.atZone(clock.getZone()))));
-        meterRegistry.counter(DISPATCHED_METRIC).increment(dispatched.size());
+        int markedCount = marked == null ? 0 : marked;
+        /*
+         * 넘긴 수는 실제로 표시한 행 수로 센다. 다른 서버가 먼저 표시한 노출은 그 서버가 센다(#1213).
+         * 어느 노출을 표시했는지는 행 수로 알 수 없어, 다 표시한 묶음만 발행 지연을 남긴다. 겹친 묶음은 먼저 표시한 서버가 남긴다.
+         */
+        if (markedCount == dispatched.size()) {
+            dispatched.forEach(impression -> backlogMetrics.publishDelay(RELAY_NAME,
+                    Duration.between(impression.createdAt().atZone(clock.getZone()), now.atZone(clock.getZone()))));
+        }
+        meterRegistry.counter(DISPATCHED_METRIC).increment(markedCount);
         meterRegistry.counter(FAILED_METRIC).increment(failed.size());
         return failed.isEmpty() && batch.size() == PointDeductor.MAX_BATCH_SIZE;
     }

@@ -61,6 +61,8 @@ class ImpressionDispatchServiceTest {
     @BeforeEach
     void 밀린_것이_없다() {
         when(impressions.countPending(any(), any())).thenReturn(new PendingSummary(0, null, 0, 0));
+        // 따로 보지 않는 시험은 넘긴 노출을 모두 표시한 것으로 둔다
+        when(impressions.markDispatched(anyList(), any())).thenAnswer(invocation -> ((List<?>) invocation.getArgument(0)).size());
     }
 
     @Test
@@ -206,6 +208,22 @@ class ImpressionDispatchServiceTest {
         Timer delay = meterRegistry.get("outbox.relay.publish.delay").tag("relay", ImpressionDispatchService.RELAY_NAME).timer();
         assertThat(delay.count()).isEqualTo(1);
         assertThat(delay.totalTime(TimeUnit.SECONDS)).isEqualTo(3);
+    }
+
+    // 다른 서버가 먼저 표시한 노출은 조건부 표시에서 빠진다. 넘긴 수는 실제로 표시한 행 수로 세고, 그 묶음의 발행 지연은 남기지 않는다(#1213)
+    @Test
+    void 일부만_표시하면_표시한_행_수로_세고_발행_지연은_남기지_않는다() {
+        PendingImpression first = pending(1);
+        PendingImpression second = pending(2);
+        when(lease.acquire(any())).thenReturn(true);
+        when(impressions.findPending(any(), any(), anyInt())).thenReturn(List.of(first, second));
+        when(pointDeductor.deductAll(anyList())).thenAnswer(invocation -> judgedAll(invocation.getArgument(0)));
+        when(impressions.markDispatched(anyList(), any())).thenReturn(1);
+
+        service.dispatchPending();
+
+        assertThat(meterRegistry.counter(ImpressionDispatchService.DISPATCHED_METRIC).count()).isEqualTo(1);
+        assertThat(meterRegistry.find("outbox.relay.publish.delay").timer()).isNull();
     }
 
     // 밀려 한 번 도는 실행이 길어져도 밀린 양이 묶음마다 새로 보인다. 두 번째 묶음을 읽을 때 첫 묶음 뒤의 값이 이미 게이지에 있어야 한다
