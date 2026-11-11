@@ -210,7 +210,7 @@ lunchcatch:
         "[POST /v1/impressions]": 500ms
         "[GET /v1/wishlist]": 300ms
         "[POST /v1/coupons]": 1000ms
-      # 가장 오래 기다린 미발행 건의 대기 시간이다. 품질 문서 데이터 무결성의 아웃박스 발행 지연이다
+      # 릴레이의 발행 지연(넘긴 순간에 잰 저장 뒤 넘기기까지의 시간)의 p99 기준이다. 품질 문서 데이터 무결성의 아웃박스 발행 지연이다(#1205)
       relay-default: 5s
       # 키는 공통 지표의 relay 꼬리표다
       relay: {}
@@ -403,7 +403,7 @@ adserving:
     # 노출 릴레이(adserving.config.ImpressionDispatchProperties)
     dispatch:
       # 앞 실행이 끝난 뒤 다음 실행까지의 간격이다. @Scheduled 가 읽으므로 ISO-8601 로 적는다.
-      # 릴레이의 기준(가장 오래 기다린 미발행 건의 대기 5초, lunchcatch.observability.targets.relay-default)보다 길면 그 기준을 넘는다
+      # 릴레이의 기준(발행 지연 p99 5초, lunchcatch.observability.targets.relay-default)보다 길면 그 기준을 넘는다
       interval: PT1S
       # 1초 주기라 약 10초 동안 다시 해 본다. 닿으면 읽지 않고 밀린 수로만 보인다
       max-attempts: 10
