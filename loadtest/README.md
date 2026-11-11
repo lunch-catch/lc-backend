@@ -115,7 +115,7 @@ loadtest/adserving/run.sh --local switch --env ADSERVING_CACHE_CANDIDATEMAXAGE=1
 
 ## 트레이싱
 
-느린 요청 하나가 어느 단계에서 몇 ms 를 썼는지 본다. 앱에 OpenTelemetry Java 에이전트(`v2.32.0`)를 붙인다. 앱 코드는 바꾸지 않는다.
+느린 요청 하나가 어느 단계에서 몇 ms 를 썼는지 본다. 앱 서버와 배치 서버에 OpenTelemetry Java 에이전트(`v2.32.0`)를 붙인다. 앱 코드는 바꾸지 않는다.
 
 ```bash
 # 에이전트를 붙여 다시 띄운다. 이름이 트레이스의 run 라벨이 된다
@@ -126,12 +126,12 @@ loadtest/adserving/run.sh run v1-run1 30030001 100 5m
 loadtest/adserving/run.sh switch <이미지>
 ```
 
-- 앱 서버의 `/opt/lunchcatch-lt` 에 에이전트와 `compose.override.yaml` 을 둔다. compose 가 그 파일을 함께 읽어 lc-infra 의 설정을 고치지 않는다. `--tracing` 없이 띄우면 그 파일을 지운다. 로컬은 같은 파일을 `build/otel/` 에 만든다.
+- 앱 서버와 배치 서버의 `/opt/lunchcatch-lt` 에 에이전트와 `compose.override.yaml` 을 둔다. 배치 서버는 서비스 이름을 `lunchcatch-batch` 로 띄워, Alloy 가 배치의 작업 트레이스를 따로 고른다. compose 가 그 파일을 함께 읽어 lc-infra 의 설정을 고치지 않는다. `--tracing` 없이 띄우면 그 파일을 지운다. 로컬은 같은 파일을 `build/otel/` 에 만든다.
 - 앱은 같은 compose 의 Alloy(`http://alloy:4318`)로 스팬을 보낸다. 남길 트레이스는 Alloy 의 테일 샘플링이 고른다. 규칙은 [트레이싱과 프로파일링 설계](../docs/observability/트레이싱과_프로파일링_설계.md) 4장에 있다.
 - 우리 코드의 메서드에는 스팬을 만들지 않는다. I/O 스팬 사이의 빈 구간은 프로파일링으로 본다([트레이싱과 프로파일링 설계](../docs/observability/트레이싱과_프로파일링_설계.md) 3장).
 - 라벨은 JVM 이 뜰 때 정해진다. 한 번 띄운 뒤의 회차는 같은 라벨이라 회차는 시각 구간으로 가린다.
 
-**그라파나에서 보는 법:** Explore 에서 데이터 소스 `Tempo` 를 고르고 `{ resource.run = "v1" && name = "GET /v1/feed" && duration > 300ms }` 처럼 찾는다. 트레이스를 열면 HTTP 와 DB 쿼리 스팬이 시간 순으로 보인다. 스팬에서 그 요청의 로그(Loki)와 프로파일(Pyroscope)로 넘어간다. 로그의 `trace_id` 에서도 그 트레이싱으로 넘어간다.
+**그라파나에서 보는 법:** Explore 에서 데이터 소스 `Tempo` 를 고르고 `{ resource.run = "v1" && name = "GET /v1/feed" && duration > 300ms }` 처럼 찾는다. 배치의 작업은 `{ resource.service.name = "lunchcatch-batch" && name = "ImpressionDispatchJob.dispatchPending" }` 처럼 찾는다. 트레이스를 열면 HTTP 와 DB 쿼리 스팬이 시간 순으로 보인다. 스팬에서 그 요청의 로그(Loki)와 프로파일(Pyroscope)로 넘어간다. 로그의 `trace_id` 에서도 그 트레이싱으로 넘어간다.
 
 지킬 것:
 

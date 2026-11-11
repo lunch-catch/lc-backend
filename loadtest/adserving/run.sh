@@ -130,19 +130,29 @@ case "${LOCAL:+local-}${1:-}" in
     # 트레이싱을 켜거나 풀을 끄면 compose 덮어쓰기 파일을 두고, 둘 다 아니면 그 파일을 지운다.
     # compose 가 같은 디렉터리의 compose.override.yaml 을 함께 읽어 lc-infra 의 설정을 고치지 않는다.
     #
+    # 배치 서버는 서비스 이름을 lunchcatch-batch 로 띄운다. Alloy 가 그 이름으로 배치의 작업 트레이스를 따로 고른다(#1199)
     if [ -n "$label$nopool$extra" ]; then
-      tracing=""
+      fetch=""
       # 받다 끊긴 jar 가 남아 다음에 그대로 쓰이지 않게 다 받은 뒤에만 제 이름으로 옮긴다
-      [ -z "$label" ] || tracing="[ -s /opt/$PROJECT/otel-$OTEL_VERSION.jar ] || { curl -fsSL $OTEL_JAR_URL -o /opt/$PROJECT/otel-$OTEL_VERSION.jar.part && mv /opt/$PROJECT/otel-$OTEL_VERSION.jar.part /opt/$PROJECT/otel-$OTEL_VERSION.jar; }"
-      tracing="$tracing
+      [ -z "$label" ] || fetch="[ -s /opt/$PROJECT/otel-$OTEL_VERSION.jar ] || { curl -fsSL $OTEL_JAR_URL -o /opt/$PROJECT/otel-$OTEL_VERSION.jar.part && mv /opt/$PROJECT/otel-$OTEL_VERSION.jar.part /opt/$PROJECT/otel-$OTEL_VERSION.jar; }"
+      app_tracing="$fetch
 cat > /opt/$PROJECT/compose.override.yaml <<'OVERRIDE'
-$(app_override "$label" "./otel-$OTEL_VERSION.jar" "$nopool" "$extra")
+$(app_override "$label" "./otel-$OTEL_VERSION.jar" "$nopool" "$extra" lunchcatch)
+OVERRIDE"
+      batch_tracing="$fetch
+cat > /opt/$PROJECT/compose.override.yaml <<'OVERRIDE'
+$(app_override "$label" "./otel-$OTEL_VERSION.jar" "$nopool" "$extra" lunchcatch-batch)
 OVERRIDE"
     else
-      tracing="rm -f /opt/$PROJECT/compose.override.yaml"
+      app_tracing="rm -f /opt/$PROJECT/compose.override.yaml"
+      batch_tracing="$app_tracing"
     fi
     pids=""; rc=0
-    for id in $(instances app) $(instances batch); do
+    # 여러 대면 aws 가 탭으로 잇는다. echo 로 공백 하나씩으로 펴서 아래 case 가 id 를 찾게 한다
+    batches=" $(echo $(instances batch)) "
+    for id in $(instances app) $batches; do
+      tracing="$app_tracing"
+      case "$batches" in *" $id "*) tracing="$batch_tracing" ;; esac
       echo "restart $id"
       remote "$id" 600 "set -euo pipefail
 $tracing
@@ -152,7 +162,7 @@ for i in \$(seq 1 60); do
   curl -fs localhost:8081/actuator/health/readiness > /dev/null && break; sleep 5
 done
 docker inspect $PROJECT --format '{{.Config.Image}}'
-docker inspect $PROJECT --format '{{range .Config.Env}}{{println .}}{{end}}' | grep '^JDK_JAVA_OPTIONS=' || echo 'tracing off'
+docker inspect $PROJECT --format '{{range .Config.Env}}{{println .}}{{end}}' | grep -E '^(JDK_JAVA_OPTIONS|OTEL_SERVICE_NAME)=' || echo 'tracing off'
 docker inspect $PROJECT --format '{{range .Config.Env}}{{println .}}{{end}}' | grep '^SPRING_DATA_REDIS_LETTUCE_POOL_ENABLED=' || echo 'pool on'
 curl -fs localhost:8081/actuator/health/readiness" &
       pids="$pids $!"
