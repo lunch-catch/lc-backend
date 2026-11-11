@@ -63,8 +63,8 @@ switch_options() {
       --no-pool) nopool=1; shift ;;
       --env)
         [[ "${2:-}" =~ ^[A-Z_][A-Z0-9_]*= ]] || die "--env 뒤에 KEY=VALUE 를 준다. KEY 는 대문자 환경변수 이름이다: ${2:-}"
-        # 줄바꿈이 있으면 값 하나가 덮어쓰기 파일에서 여러 환경변수로 쪼개진다
-        [[ "$2" != *$'\n'* ]] || die "--env 의 VALUE 에 줄바꿈을 넣지 않는다: ${2%%$'\n'*}"
+        # 줄바꿈은 값 하나를 여러 환경변수로 쪼개고, 다른 제어 문자는 compose 가 덮어쓰기 파일을 읽지 못하게 한다
+        [[ "$2" != *[[:cntrl:]]* ]] || die "--env 의 VALUE 에 줄바꿈이나 제어 문자를 넣지 않는다: ${2%%=*}"
         # 같은 키가 둘이면 compose 가 덮어쓰기 파일을 읽지 못해, current-sha 를 바꾼 뒤 다시 띄우다 멈춘다
         case "${2%%=*}" in
           JDK_JAVA_OPTIONS|OTEL_*|SPRING_DATA_REDIS_LETTUCE_POOL_ENABLED)
