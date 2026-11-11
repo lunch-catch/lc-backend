@@ -173,7 +173,8 @@ public class ImpressionDispatchService {
             impressions.markDispatched(dispatched, now);
             impressions.markFailed(failed, now, properties.maxAttempts());
         });
-        dispatched.forEach(impression -> backlogMetrics.publishDelay(RELAY_NAME, Duration.between(impression.createdAt(), now)));
+        dispatched.forEach(impression -> backlogMetrics.publishDelay(RELAY_NAME,
+                Duration.between(impression.createdAt().atZone(clock.getZone()), now.atZone(clock.getZone()))));
         meterRegistry.counter(DISPATCHED_METRIC).increment(dispatched.size());
         meterRegistry.counter(FAILED_METRIC).increment(failed.size());
         return failed.isEmpty() && batch.size() == PointDeductor.MAX_BATCH_SIZE;

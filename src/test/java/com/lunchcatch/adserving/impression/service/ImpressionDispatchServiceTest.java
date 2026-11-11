@@ -208,18 +208,25 @@ class ImpressionDispatchServiceTest {
         assertThat(delay.totalTime(TimeUnit.SECONDS)).isEqualTo(3);
     }
 
-    // 밀려 한 번 도는 실행이 길어져도 밀린 양이 묶음마다 새로 보인다
+    // 밀려 한 번 도는 실행이 길어져도 밀린 양이 묶음마다 새로 보인다. 두 번째 묶음을 읽을 때 첫 묶음 뒤의 값이 이미 게이지에 있어야 한다
     @Test
     void 묶음마다_밀린_양을_다시_센다() {
         List<PendingImpression> full = IntStream.rangeClosed(1, PointDeductor.MAX_BATCH_SIZE).mapToObj(this::pending).toList();
+        List<Double> seenAtSecondBatch = new ArrayList<>();
         when(lease.acquire(any())).thenReturn(true);
         when(lease.renew(any())).thenReturn(true);
-        when(impressions.findPending(any(), any(), anyInt())).thenReturn(full, List.of(pending(5_000)));
+        when(impressions.countPending(any(), any()))
+                .thenReturn(new PendingSummary(500, NOW, 0, 0), new PendingSummary(1, NOW, 0, 0));
+        when(impressions.findPending(any(), any(), anyInt())).thenReturn(full).thenAnswer(invocation -> {
+            seenAtSecondBatch.add(relayGauge("outbox.relay.backlog"));
+            return List.of(pending(5_000));
+        });
         when(pointDeductor.deductAll(anyList())).thenAnswer(invocation -> judgedAll(invocation.getArgument(0)));
 
         service.dispatchPending();
 
-        verify(impressions, times(2)).countPending(any(), any());
+        assertThat(seenAtSecondBatch).containsExactly(500.0);
+        assertThat(relayGauge("outbox.relay.backlog")).isEqualTo(1);
     }
 
     @Test
