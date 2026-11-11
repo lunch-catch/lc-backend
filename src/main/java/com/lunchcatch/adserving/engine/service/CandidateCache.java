@@ -1,5 +1,6 @@
 package com.lunchcatch.adserving.engine.service;
 
+import com.lunchcatch.adserving.config.AdservingCacheProperties;
 import com.lunchcatch.adserving.engine.CandidateChange;
 import com.lunchcatch.adserving.engine.entity.AdCandidate;
 import com.lunchcatch.adserving.engine.entity.CandidateCampaignState;
@@ -24,28 +25,30 @@ import org.springframework.stereotype.Service;
  * 피드마다 그날 후보를 범위 조회로 읽고 노출마다 쿠폰 소진을 읽던 것이 부하 시험에서 DB 커넥션 풀을 바닥냈다.
  *
  * 후보를 바꾼 서버가 커밋 뒤에 Valkey 로 알리면 모든 서버가 그 후보만 다시 읽는다(CandidateChangeNotifier).
- * 알림은 받는 쪽이 그 순간 붙어 있지 않으면 사라진다. 그래서 읽을 때 5초가 지났으면 통째로 다시 읽어 놓친 알림을 메운다.
+ * 알림은 받는 쪽이 그 순간 붙어 있지 않으면 사라진다. 그래서 읽을 때 다시 읽는 시간(설정 adserving.cache.candidate-max-age, 기본 5초)이 지났으면 통째로 다시 읽어 놓친 알림을 메운다.
  * 앱 서버는 스케줄러를 켜지 않아 주기 작업 대신 읽을 때 다시 읽는다.
  *
  * 다시 읽기는 한 스레드만 한다. 다른 스레드는 그동안 이전 후보를 읽는다. 처음 읽거나 날이 바뀌면 읽을 때까지 기다린다.
- * 다시 읽기가 실패하면 이전 후보를 그대로 쓰고 5초 뒤 다시 해 본다. 기본 처리(오류로 올린다)를 벗어난다.
- * DB 가 잠깐 멈춘 동안에도 피드와 노출이 이어 가고, 이전 후보는 최대 5초 남짓 낡았을 뿐이다.
+ * 다시 읽기가 실패하면 이전 후보를 그대로 쓰고 그 시간 뒤 다시 해 본다. 기본 처리(오류로 올린다)를 벗어난다.
+ * DB 가 잠깐 멈춘 동안에도 피드와 노출이 이어 가고, 이전 후보는 최대 그 시간 남짓 낡았을 뿐이다.
  */
 @Slf4j
 @Service
 public class CandidateCache {
 
-    static final Duration MAX_AGE = Duration.ofSeconds(5);
     static final String RELOAD_FAILED_METRIC = "adserving_candidate_cache_reload_failed_total";
 
     private final AdCandidateRepository repository;
+    private final AdservingCacheProperties properties;
     private final MeterRegistry meterRegistry;
     private final Clock clock;
     private final ReentrantLock loading = new ReentrantLock();
     private volatile Snapshot snapshot;
 
-    public CandidateCache(AdCandidateRepository repository, MeterRegistry meterRegistry, Clock clock) {
+    public CandidateCache(AdCandidateRepository repository, MeterRegistry meterRegistry, Clock clock,
+                          AdservingCacheProperties properties) {
         this.repository = repository;
+        this.properties = properties;
         this.meterRegistry = meterRegistry;
         this.clock = clock;
     }
@@ -108,7 +111,7 @@ public class CandidateCache {
 
     private Snapshot snapshotFor(LocalDate businessDate) {
         Snapshot current = snapshot;
-        if (current != null && current.freshFor(businessDate, clock.instant())) {
+        if (current != null && current.freshFor(businessDate, clock.instant(), properties.candidateMaxAge())) {
             return current;
         }
         boolean sameDay = current != null && current.businessDate().equals(businessDate);
@@ -121,7 +124,7 @@ public class CandidateCache {
         }
         try {
             current = snapshot;
-            if (current != null && current.freshFor(businessDate, clock.instant())) {
+            if (current != null && current.freshFor(businessDate, clock.instant(), properties.candidateMaxAge())) {
                 return current;
             }
             return reload(businessDate, current);
@@ -142,7 +145,7 @@ public class CandidateCache {
             }
             meterRegistry.counter(RELOAD_FAILED_METRIC).increment();
             log.warn("event=ADSERVING_CANDIDATE_CACHE_RELOAD_FAILED businessDate={} fallback=KEEP_PREVIOUS", businessDate, e);
-            // 실패한 뒤 요청마다 다시 읽지 않도록 5초 뒤에 다시 해 본다
+            // 실패한 뒤 요청마다 다시 읽지 않도록 다시 읽는 시간 뒤에 다시 해 본다
             snapshot = new Snapshot(businessDate, previous.byCampaign(), clock.instant());
             return snapshot;
         }
@@ -150,8 +153,8 @@ public class CandidateCache {
 
     private record Snapshot(LocalDate businessDate, Map<Long, AdCandidate> byCampaign, Instant loadedAt) {
 
-        boolean freshFor(LocalDate date, Instant now) {
-            return businessDate.equals(date) && now.isBefore(loadedAt.plus(MAX_AGE));
+        boolean freshFor(LocalDate date, Instant now, Duration maxAge) {
+            return businessDate.equals(date) && now.isBefore(loadedAt.plus(maxAge));
         }
     }
 }

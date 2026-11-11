@@ -8,6 +8,7 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.lunchcatch.adserving.config.AdservingTuningDefaults;
 import com.lunchcatch.adserving.engine.CandidateChange;
 import com.lunchcatch.adserving.engine.entity.AdCandidate;
 import com.lunchcatch.adserving.engine.entity.CandidateCampaignState;
@@ -38,7 +39,7 @@ class CandidateCacheTest {
     private final AdCandidateRepository repository = mock(AdCandidateRepository.class);
     private final MovingClock clock = new MovingClock(LocalDateTime.of(2026, 10, 1, 12, 0).atZone(ClockConfig.ZONE).toInstant());
     private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
-    private final CandidateCache cache = new CandidateCache(repository, meterRegistry, clock);
+    private final CandidateCache cache = new CandidateCache(repository, meterRegistry, clock, AdservingTuningDefaults.cache());
 
     private final AdCandidate near = candidate(101, LAT, LNG).build();
     private final AdCandidate far = candidate(102, LAT + 1, LNG).build();

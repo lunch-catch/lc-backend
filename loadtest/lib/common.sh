@@ -492,7 +492,7 @@ bash /tmp/lt-profile.sh $name $secs $mode $pyro $PROJECT /tmp/lt-trim.py $ASPROF
 # 풀을 끄면 Valkey 연결 풀이 없던 때와 같이 돈다(#1127). 같은 커밋을 풀 켬과 끔으로 재 풀만의 효과를 가른다.
 #
 app_override() {
-  local label="$1" jar="$2" nopool="$3"
+  local label="$1" jar="$2" nopool="$3" extra="${4:-}" pair
   printf 'services:\n  app:\n'
   [ -z "$label" ] || printf '    volumes:\n      - %s:/opt/otel.jar:ro\n' "$jar"
   printf '    environment:\n'
@@ -523,6 +523,12 @@ app_override() {
 EOF
   fi
   [ -z "$nopool" ] || printf '      SPRING_DATA_REDIS_LETTUCE_POOL_ENABLED: "false"\n'
+  # switch 의 --env 로 받은 설정 값이다. 다시 빌드하지 않고 조정 값을 바꿔 회차를 돈다(#1170)
+  while IFS= read -r pair; do
+    [ -n "$pair" ] || continue
+    # compose 가 $ 를 변수로 바꾸지 않게 $$ 로 적는다
+    printf '      %s: "%s"\n' "${pair%%=*}" "$(printf '%s' "${pair#*=}" | sed 's/[\\"]/\\&/g; s/\$/$$/g')"
+  done <<< "$extra"
 }
 
 #
@@ -530,7 +536,7 @@ EOF
 # 이미지는 다시 만들지 않는다. 앱 코드를 고쳤으면 로컬 구성에서 docker compose up -d --build app 을 먼저 돌린다.
 #
 local_switch() {
-  local label="${1:-}" nopool="${2:-}" dir="$ROOT/build/otel" over="" i
+  local label="${1:-}" nopool="${2:-}" extra="${3:-}" dir="$ROOT/build/otel" over="" i
   if [ -n "$label" ]; then
     mkdir -p "$dir"
     # 받다 끊긴 jar 가 남아 다음에 그대로 쓰이지 않게 다 받은 뒤에만 제 이름으로 옮긴다
@@ -539,10 +545,10 @@ local_switch() {
       mv "$dir/otel-$OTEL_VERSION.jar.part" "$dir/otel-$OTEL_VERSION.jar"
     fi
   fi
-  if [ -n "$label$nopool" ]; then
+  if [ -n "$label$nopool$extra" ]; then
     mkdir -p "$dir"
     over="$dir/compose.override.yaml"
-    app_override "$label" "$dir/otel-$OTEL_VERSION.jar" "$nopool" > "$over"
+    app_override "$label" "$dir/otel-$OTEL_VERSION.jar" "$nopool" "$extra" > "$over"
   fi
   LC_BACKEND_DIR="$ROOT" docker compose -f "$LC_INFRA_DIR/observability/local/compose.yaml" ${over:+-f "$over"} \
     up -d --no-build app

@@ -1,5 +1,6 @@
 package com.lunchcatch.adserving.impression.service;
 
+import com.lunchcatch.adserving.config.ImpressionDispatchProperties;
 import com.lunchcatch.adserving.impression.repository.DispatchLeaseRepository;
 import com.lunchcatch.adserving.impression.repository.ImpressionDispatchRepository;
 import com.lunchcatch.adserving.impression.repository.ImpressionDispatchRepository.PendingImpression;
@@ -48,10 +49,15 @@ public class ImpressionDispatchService {
     // 공통 지표의 릴레이 이름이다. 이름별 기준을 둘 때 application.yml 의 lunchcatch.observability.targets.relay 키로 쓴다
     static final String RELAY_NAME = "adserving.impression";
 
-    // 1초 주기라 약 10초 동안 다시 해 본다. 닿으면 읽지 않고 밀린 수로만 보인다
-    static final int MAX_ATTEMPTS = 10;
+    /*
+     * 배치 서버 하나가 릴레이를 맡는 임대의 시간이다.
+     * 묶음을 넘기는 동안 풀리면 다른 서버가 같은 노출을 함께 넘기므로 설정으로 두지 않는다.
+     * 묶음마다 늘리고 실행이 끝나면 푼다.
+     */
     static final Duration LEASE_TTL = Duration.ofSeconds(30);
 
+    // 주기와 시도 횟수는 설정(adserving.impression.dispatch)이 갖는다
+    private final ImpressionDispatchProperties properties;
     private final DispatchLeaseRepository lease;
     private final ImpressionDispatchRepository impressions;
     private final PointDeductor pointDeductor;
@@ -63,7 +69,9 @@ public class ImpressionDispatchService {
 
     public ImpressionDispatchService(DispatchLeaseRepository lease, ImpressionDispatchRepository impressions,
                                      PointDeductor pointDeductor, TransactionTemplate transactions,
-                                     MeterRegistry meterRegistry, Clock clock, BacklogMetrics backlogMetrics) {
+                                     MeterRegistry meterRegistry, Clock clock, BacklogMetrics backlogMetrics,
+                                     ImpressionDispatchProperties properties) {
+        this.properties = properties;
         this.lease = lease;
         this.impressions = impressions;
         this.pointDeductor = pointDeductor;
@@ -122,7 +130,7 @@ public class ImpressionDispatchService {
      * 실패한 노출은 다시 넘길 시각을 미뤘으므로 같은 회차에 이어서 넘기지 않는다. 실패가 몰릴 때 정산을 거듭 부르지 않는다(REL-2-06).
      */
     private boolean dispatchBatch(LocalDateTime from) {
-        List<PendingImpression> batch = impressions.findPending(from, LocalDateTime.now(clock), MAX_ATTEMPTS,
+        List<PendingImpression> batch = impressions.findPending(from, LocalDateTime.now(clock), properties.maxAttempts(),
                 PointDeductor.MAX_BATCH_SIZE);
         if (batch.isEmpty()) {
             return false;

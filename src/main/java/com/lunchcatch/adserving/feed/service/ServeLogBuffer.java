@@ -1,5 +1,6 @@
 package com.lunchcatch.adserving.feed.service;
 
+import com.lunchcatch.adserving.config.ServeLogBufferProperties;
 import com.lunchcatch.adserving.feed.repository.FeedVisitRepository;
 import com.lunchcatch.adserving.feed.repository.FeedVisitRepository.Visit;
 import com.lunchcatch.adserving.feed.repository.ServeLogRepository;
@@ -30,10 +31,7 @@ import org.springframework.stereotype.Service;
 @Service
 public class ServeLogBuffer implements SmartLifecycle {
 
-    // 피드 1회가 카드 10장이라 5,000건이 약 50,000행, 목표 처리량(초당 5,000행)으로 10초 분량이다.
-    static final int CAPACITY = 5_000;
     static final String WORKER_NAME = "serve-log-writer";
-    static final int FEEDS_PER_BATCH = 50;
 
     // 공통 지표의 워커 이름이다. 이름별 기준을 둘 때 application.yml 의 lunchcatch.observability.targets.worker 키로 쓴다
     static final String BACKLOG_NAME = "adserving.serve-log-write";
@@ -41,7 +39,9 @@ public class ServeLogBuffer implements SmartLifecycle {
     static final String FAILED_METRIC = "adserving_serve_log_failed_total";
     static final String VISIT_FAILED_METRIC = "adserving_feed_visit_failed_total";
 
-    private final BlockingQueue<ServedFeed> queue = new ArrayBlockingQueue<>(CAPACITY);
+    // 용량과 묶음은 설정(adserving.serve-log.buffer)이 갖는다
+    private final ServeLogBufferProperties properties;
+    private final BlockingQueue<ServedFeed> queue;
     private final ServeLogRepository serveLogRepository;
     private final FeedVisitRepository feedVisitRepository;
     private final MeterRegistry meterRegistry;
@@ -50,7 +50,10 @@ public class ServeLogBuffer implements SmartLifecycle {
     private Thread worker;
 
     public ServeLogBuffer(ServeLogRepository serveLogRepository, FeedVisitRepository feedVisitRepository,
-                          MeterRegistry meterRegistry, BacklogMetrics backlogMetrics) {
+                          MeterRegistry meterRegistry, BacklogMetrics backlogMetrics,
+                          ServeLogBufferProperties properties) {
+        this.properties = properties;
+        this.queue = new ArrayBlockingQueue<>(properties.capacity());
         this.serveLogRepository = serveLogRepository;
         this.feedVisitRepository = feedVisitRepository;
         this.meterRegistry = meterRegistry;
@@ -74,8 +77,8 @@ public class ServeLogBuffer implements SmartLifecycle {
 
     // 대기열에서 한 묶음을 꺼내 쓴다. 꺼낸 것이 있으면 true 다.
     boolean flushOnce() {
-        List<ServedFeed> batch = new ArrayList<>(FEEDS_PER_BATCH);
-        queue.drainTo(batch, FEEDS_PER_BATCH);
+        List<ServedFeed> batch = new ArrayList<>(properties.feedsPerBatch());
+        queue.drainTo(batch, properties.feedsPerBatch());
         if (batch.isEmpty()) {
             return false;
         }
@@ -125,9 +128,9 @@ public class ServeLogBuffer implements SmartLifecycle {
                 if (first == null) {
                     continue;
                 }
-                List<ServedFeed> batch = new ArrayList<>(FEEDS_PER_BATCH);
+                List<ServedFeed> batch = new ArrayList<>(properties.feedsPerBatch());
                 batch.add(first);
-                queue.drainTo(batch, FEEDS_PER_BATCH - 1);
+                queue.drainTo(batch, properties.feedsPerBatch() - 1);
                 write(batch);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();

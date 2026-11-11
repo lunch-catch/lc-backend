@@ -13,6 +13,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import com.lunchcatch.adserving.config.AdservingTuningDefaults;
 import com.lunchcatch.adserving.impression.repository.DispatchLeaseRepository;
 import com.lunchcatch.adserving.impression.repository.ImpressionDispatchRepository;
 import com.lunchcatch.adserving.impression.repository.ImpressionDispatchRepository.PendingImpression;
@@ -52,7 +53,7 @@ class ImpressionDispatchServiceTest {
     private final Clock clock = Clock.fixed(NOW.atZone(ClockConfig.ZONE).toInstant(), ClockConfig.ZONE);
     private final ImpressionDispatchService service = new ImpressionDispatchService(
             lease, impressions, pointDeductor, new ImmediateTransactions(), meterRegistry, clock,
-            new BacklogMetrics(meterRegistry, clock));
+            new BacklogMetrics(meterRegistry, clock), AdservingTuningDefaults.dispatch());
 
     // 밀린 양은 넘기기의 결과와 상관없이 회차마다 센다. 따로 보지 않는 시험은 밀린 것이 없는 것으로 둔다
     @BeforeEach
