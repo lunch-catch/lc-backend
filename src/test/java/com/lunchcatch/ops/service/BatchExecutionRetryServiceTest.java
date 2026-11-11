@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.timeout;
@@ -22,11 +23,16 @@ import com.lunchcatch.ops.scheduler.BatchJobRegistry.Kind;
 import java.time.LocalDate;
 import java.util.Optional;
 import java.util.concurrent.Executor;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.slf4j.MDC;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.transaction.PlatformTransactionManager;
 
@@ -177,6 +183,34 @@ class BatchExecutionRetryServiceTest {
 
         assertThat(runId).isEqualTo(301L);
         verify(runner, timeout(5000)).resume(JOB, DATE, 2);
+    }
+
+    @Test
+    void 요청의_MDC를_재개에_넘기고_끝나면_실행기_스레드의_MDC를_비운다() throws Exception {
+        when(registry.classify(JOB)).thenReturn(Kind.BUNDLE);
+        when(logs.findByJobNameAndBusinessDate(JOB, DATE))
+                .thenReturn(Optional.of(row(BatchStatus.FAILED, 301L, 1)))
+                .thenReturn(Optional.of(row(BatchStatus.RUNNING, 301L, 2)));
+        when(executions.retry(JOB, DATE)).thenReturn(true);
+        AtomicReference<String> seenInResume = new AtomicReference<>();
+        doAnswer(invocation -> {
+            seenInResume.set(MDC.get("traceId"));
+            return null;
+        }).when(runner).resume(JOB, DATE, 2);
+        ExecutorService single = Executors.newSingleThreadExecutor();
+
+        try {
+            MDC.put("traceId", "request-1");
+            service(single).retry(ADMIN_ID, JOB, DATE);
+            // 단일 스레드라 이 일은 재개가 끝난 뒤에 돈다
+            String leftOver = single.submit(() -> MDC.get("traceId")).get(5, TimeUnit.SECONDS);
+
+            assertThat(seenInResume.get()).isEqualTo("request-1");
+            assertThat(leftOver).isNull();
+        } finally {
+            MDC.clear();
+            single.shutdownNow();
+        }
     }
 
     @Test

@@ -1,5 +1,6 @@
 package com.lunchcatch.ops.service;
 
+import com.lunchcatch.global.logging.LogContext;
 import com.lunchcatch.ops.contract.AuditLogWriter;
 import com.lunchcatch.ops.entity.BatchExecutionLog;
 import com.lunchcatch.ops.entity.BatchStatus;
@@ -9,14 +10,12 @@ import com.lunchcatch.ops.repository.BatchExecutionLogRepository;
 import com.lunchcatch.ops.scheduler.BatchJobRegistry;
 import jakarta.annotation.PreDestroy;
 import java.time.LocalDate;
-import java.util.Map;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.Executor;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import lombok.extern.slf4j.Slf4j;
-import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.scheduling.concurrent.CustomizableThreadFactory;
 import org.springframework.stereotype.Service;
@@ -148,9 +147,8 @@ public class BatchExecutionRetryService {
         try {
             transactions.executeWithoutResult(status -> auditLogWriter.write(
                     adminId, AUDIT_ACTION, jobName + " " + businessDate, "관리자 수동 재실행"));
-            // 직접 만든 실행기의 스레드에는 요청의 MDC(traceId 등)가 없으므로 복사해 넘긴다(LOG-6-07).
-            Map<String, String> mdc = MDC.getCopyOfContextMap();
-            executor.execute(() -> resumeWithMdc(mdc, jobName, businessDate, attemptNo));
+            // 직접 만든 실행기의 스레드에는 요청의 MDC(traceId 등)가 없으므로 공용 장치로 넘긴다(LOG-6-07).
+            executor.execute(LogContext.wrap(() -> resume(jobName, businessDate, attemptNo)));
         } catch (RejectedExecutionException full) {
             executions.fail(jobName, businessDate, "수동 재실행을 시작하지 못했다");
             log.warn("event=BATCH_MANUAL_RETRY_REJECTED job={} businessDate={} reason=QUEUE_FULL", jobName, businessDate);
@@ -158,26 +156,6 @@ public class BatchExecutionRetryService {
         } catch (RuntimeException failed) {
             executions.fail(jobName, businessDate, "수동 재실행을 시작하지 못했다");
             throw failed;
-        }
-    }
-
-    // 실행기 스레드에는 요청의 MDC 가 없어, 넘겨받은 값을 심고 resume 을 부른 뒤 원래 MDC 로 되돌린다.
-    private void resumeWithMdc(Map<String, String> mdc, String jobName, LocalDate businessDate, int attemptNo) {
-        Map<String, String> previous = MDC.getCopyOfContextMap();
-        try {
-            if (mdc != null) {
-                MDC.setContextMap(mdc);
-            } else {
-                MDC.clear();
-            }
-            resume(jobName, businessDate, attemptNo);
-        } finally {
-            // 실행기가 호출 스레드에서 도는 경우(테스트 등)에도 호출자의 MDC 를 되돌려 놓는다.
-            if (previous != null) {
-                MDC.setContextMap(previous);
-            } else {
-                MDC.clear();
-            }
         }
     }
 
