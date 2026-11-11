@@ -4,10 +4,13 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import io.micrometer.prometheusmetrics.PrometheusConfig;
+import io.micrometer.prometheusmetrics.PrometheusMeterRegistry;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -98,5 +101,66 @@ class ThreadKindMetricsTest {
             hold.countDown();
             worker.join();
         }
+    }
+
+    @Test
+    @DisplayName("같은 종류의 스레드 수가 바뀌면 다음 세기에서 게이지 값이 따라 바뀐다")
+    void 스레드_수가_바뀌면_값이_바뀐다() throws InterruptedException {
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        CountDownLatch hold = new CountDownLatch(1);
+        Runnable waiting = () -> {
+            try {
+                hold.await();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        };
+        Thread first = Thread.ofPlatform().name("kind-grow-worker-1").start(waiting);
+        Thread second = null;
+        try (ThreadKindMetrics metrics = new ThreadKindMetrics()) {
+            metrics.bindTo(registry);
+            second = Thread.ofPlatform().name("kind-grow-worker-2").start(waiting);
+
+            metrics.refresh();
+
+            assertThat(registry.find(ThreadKindMetrics.METRIC).tag("kind", "kind-grow-worker").gauge().value()).isEqualTo(2.0);
+        } finally {
+            hold.countDown();
+            first.join();
+            if (second != null) {
+                second.join();
+            }
+        }
+    }
+
+    /*
+     * 다시 세는 동안 Prometheus 가 긁어도 같은 꼬리표가 둘 보이면 안 된다(#1219).
+     * 보이면 그 수집이 통째로 실패해 그 서버의 지표 전체가 한 칸 빈다.
+     */
+    @Test
+    @DisplayName("다시 세는 동안 긁어도 수집이 실패하지 않는다")
+    void 다시_세는_동안_긁어도_수집이_실패하지_않는다() throws InterruptedException {
+        PrometheusMeterRegistry registry = new PrometheusMeterRegistry(PrometheusConfig.DEFAULT);
+        AtomicBoolean stop = new AtomicBoolean();
+        List<String> failures = new ArrayList<>();
+        try (ThreadKindMetrics metrics = new ThreadKindMetrics()) {
+            metrics.bindTo(registry);
+            Thread refresher = Thread.ofPlatform().name("kind-race-refresher").start(() -> {
+                while (!stop.get()) {
+                    metrics.refresh();
+                }
+            });
+            for (int i = 0; i < 20_000 && failures.isEmpty(); i++) {
+                try {
+                    registry.scrape();
+                } catch (RuntimeException e) {
+                    failures.add(e.getMessage());
+                }
+            }
+            stop.set(true);
+            refresher.join();
+        }
+
+        assertThat(failures).isEmpty();
     }
 }

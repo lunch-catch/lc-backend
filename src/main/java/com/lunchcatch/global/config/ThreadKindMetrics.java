@@ -8,6 +8,7 @@ import java.lang.management.ManagementFactory;
 import java.lang.management.ThreadInfo;
 import java.lang.management.ThreadMXBean;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -16,6 +17,7 @@ import java.util.Set;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.regex.Pattern;
 import org.springframework.stereotype.Component;
 
@@ -37,6 +39,11 @@ public class ThreadKindMetrics implements MeterBinder, AutoCloseable {
     private final ThreadMXBean threads = ManagementFactory.getThreadMXBean();
     private final Set<String> knownKinds = new HashSet<>();
     /*
+     * 게이지는 이 값을 읽는다.
+     * 다시 세면 값만 바꾸고 게이지는 다시 등록하지 않는다.
+     */
+    private final Map<String, AtomicInteger> counts = new HashMap<>();
+    /*
      * @Scheduled 는 배치 서버에서만 켜져 앱 서버에서는 돌지 않는다.
      * 그래서 서버 역할과 상관없이 도는 데몬 스레드 하나로 센다.
      */
@@ -54,11 +61,21 @@ public class ThreadKindMetrics implements MeterBinder, AutoCloseable {
         refresher.scheduleWithFixedDelay(this::refresh, REFRESH_SECONDS, REFRESH_SECONDS, TimeUnit.SECONDS);
     }
 
+    /*
+     * 이미 있는 종류는 덮어써 다시 등록하지 않는다(#1219).
+     * 덮어쓰면 줄마다 지웠다 다시 넣고, 그 사이에 긁힌 수집은 같은 꼬리표가 둘 보여 통째로 실패한다.
+     */
     synchronized void refresh() {
+        Map<String, Integer> now = count(liveThreadNames());
+        counts.keySet().retainAll(now.keySet());
         List<MultiGauge.Row<?>> rows = new ArrayList<>();
-        count(liveThreadNames()).forEach((kind, n) -> rows.add(MultiGauge.Row.of(Tags.of("kind", kind), n)));
+        now.forEach((kind, n) -> {
+            AtomicInteger value = counts.computeIfAbsent(kind, k -> new AtomicInteger());
+            value.set(n);
+            rows.add(MultiGauge.Row.of(Tags.of("kind", kind), value, AtomicInteger::get));
+        });
         // 이번에 없는 종류의 시계열은 지운다
-        gauge.register(rows, true);
+        gauge.register(rows, false);
     }
 
     synchronized Map<String, Integer> count(List<String> names) {
