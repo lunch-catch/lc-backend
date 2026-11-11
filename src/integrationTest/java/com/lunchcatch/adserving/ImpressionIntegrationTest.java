@@ -2,7 +2,9 @@ package com.lunchcatch.adserving;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -32,10 +34,12 @@ import com.lunchcatch.member.contract.AgeGroup;
 import com.lunchcatch.member.contract.Gender;
 import com.lunchcatch.member.contract.MemberInfo;
 import com.lunchcatch.member.contract.MemberStatus;
+import io.micrometer.core.instrument.MeterRegistry;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -48,6 +52,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.QueryTimeoutException;
 import org.springframework.http.MediaType;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
@@ -70,6 +75,7 @@ class ImpressionIntegrationTest extends AbstractAdservingIntegrationTest {
     @Autowired ServeRecordRepository serveRecordRepository;
     @Autowired ImpressionDispatchService dispatch;
     @Autowired ImpressionWriteBuffer writeBuffer;
+    @Autowired MeterRegistry meterRegistry;
 
     private final UUID serveId = UUID.randomUUID();
     private final AtomicBoolean dispatchedInTransaction = new AtomicBoolean(true);
@@ -183,6 +189,74 @@ class ImpressionIntegrationTest extends AbstractAdservingIntegrationTest {
         LocalDateTime now = LocalDateTime.ofInstant(NOW, ClockConfig.ZONE);
         LocalDateTime next = jdbcTemplate.queryForObject("SELECT next_dispatch_at FROM impression_log", LocalDateTime.class);
         assertThat(next).isBetween(now, now.plusSeconds(1));
+    }
+
+    // 상한(10)에 닿으면 포기한 시각을 적는다. 상한을 올려도 포기한 노출이 다시 넘겨지지 않게 시도 횟수가 아니라 이 칸으로 가른다(#1205)
+    @Test
+    void 상한만큼_실패한_노출은_포기한_시각을_적고_다시_넘기지_않는다() throws Exception {
+        doAnswer(invocation -> {
+            List<DeductionRequest> requests = invocation.getArgument(0);
+            return requests.stream().map(request -> DeductionOutcome.failed(request.serveId())).toList();
+        }).when(pointDeductor).deductAll(anyList());
+        send(body(serveId, 101L), Role.MEMBER).andExpect(status().isAccepted());
+        writeBuffer.flush();
+        jdbcTemplate.update("UPDATE impression_log SET dispatch_attempts = 9");
+
+        dispatch.dispatchPending();
+        jdbcTemplate.update("UPDATE impression_log SET next_dispatch_at = NULL");
+        clearInvocations(pointDeductor);
+        dispatch.dispatchPending();
+
+        assertThat(jdbcTemplate.queryForMap("SELECT dispatch_attempts, dispatch_abandoned_at FROM impression_log"))
+                .containsEntry("dispatch_attempts", 10)
+                .containsEntry("dispatch_abandoned_at", LocalDateTime.ofInstant(NOW, ClockConfig.ZONE));
+        verifyNoInteractions(pointDeductor);
+        assertThat(relayGauge("outbox.relay.abandoned")).isEqualTo(1);
+        assertThat(relayGauge("outbox.relay.backlog")).isZero();
+    }
+
+    /*
+     * 정산이 예외를 던져 아무것도 넘기지 못한 회차에서 미발행을 넷으로 가르는지 본다.
+     * 바로 넘길 노출(2초 전), 다시 넘길 시각을 기다리는 노출(10초 전), 포기한 노출, 읽는 범위보다 오래된 노출이다.
+     * 대기 시간은 바로 넘길 노출만 봐 2초다. 기다리는 노출이 들어가면 10초가 된다.
+     */
+    @Test
+    void 밀린_양은_지금_넘길_수_있는_노출로_재고_포기와_범위_밖을_따로_센다() throws Exception {
+        doThrow(new QueryTimeoutException("정산이 늦다")).when(pointDeductor).deductAll(anyList());
+        send(body(serveId, 101L), Role.MEMBER).andExpect(status().isAccepted());
+        writeBuffer.flush();
+        LocalDateTime now = LocalDateTime.ofInstant(NOW, ClockConfig.ZONE);
+        jdbcTemplate.update("UPDATE impression_log SET created_at = ?", now.minusSeconds(2));
+        copyRow(1, "next_dispatch_at = ?, created_at = ?", now.plusHours(1), now.minusSeconds(10));
+        copyRow(2, "dispatch_abandoned_at = ?", now);
+        copyRow(3, "created_at = ?", TODAY.minusDays(2).atTime(12, 0));
+
+        dispatch.dispatchPending();
+
+        assertThat(relayGauge("outbox.relay.backlog")).isEqualTo(2);
+        assertThat(relayGauge("outbox.relay.oldest.age")).isEqualTo(2);
+        assertThat(relayGauge("outbox.relay.abandoned")).isEqualTo(1);
+        assertThat(meterRegistry.get("adserving_impression_dispatch_expired").gauge().value()).isEqualTo(1);
+    }
+
+    // 회원 번호만 바꿔 행을 복사하고 그 행의 칸을 고친다. PK 가 (serve_id, member_id) 다
+    private void copyRow(long memberOffset, String set, Object... values) {
+        jdbcTemplate.update("""
+                INSERT INTO impression_log (serve_id, member_id, business_date, campaign_id, store_id, slot_type, slot_position,
+                       displayed_at, lat_rounded, lng_rounded, validity, invalid_reason, sold_out, viewed_ms, created_at,
+                       updated_at, dispatched_at, dispatch_attempts, next_dispatch_at, dispatch_abandoned_at)
+                SELECT serve_id, member_id + ?, business_date, campaign_id, store_id, slot_type, slot_position,
+                       displayed_at, lat_rounded, lng_rounded, validity, invalid_reason, sold_out, viewed_ms, created_at,
+                       updated_at, dispatched_at, dispatch_attempts, next_dispatch_at, dispatch_abandoned_at
+                  FROM impression_log WHERE member_id = ?
+                """, memberOffset, MEMBER_ID);
+        Object[] args = Arrays.copyOf(values, values.length + 1);
+        args[values.length] = MEMBER_ID + memberOffset;
+        jdbcTemplate.update("UPDATE impression_log SET " + set + " WHERE member_id = ?", args);
+    }
+
+    private double relayGauge(String name) {
+        return meterRegistry.get(name).tag("relay", "adserving.impression").gauge().value();
     }
 
     @Test

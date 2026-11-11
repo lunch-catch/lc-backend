@@ -44,6 +44,7 @@ public class ImpressionDispatchService {
     static final String FAILED_METRIC = "adserving_impression_dispatch_failed_total";
     static final String ERROR_METRIC = "adserving_impression_dispatch_error_total";
     static final String BACKLOG_METRIC = "adserving_impression_dispatch_backlog";
+    static final String EXPIRED_METRIC = "adserving_impression_dispatch_expired";
     static final String DEDUCT_DURATION_METRIC = "adserving_impression_dispatch_deduct_seconds";
     static final String DEDUCT_BATCH_METRIC = "adserving_impression_dispatch_deduct_batch";
     // 공통 지표의 릴레이 이름이다. 이름별 기준을 둘 때 application.yml 의 lunchcatch.observability.targets.relay 키로 쓴다
@@ -66,6 +67,9 @@ public class ImpressionDispatchService {
     private final Clock clock;
     private final AtomicLong backlog = new AtomicLong();
     private final AtomicReference<LocalDateTime> oldestPending = new AtomicReference<>();
+    private final AtomicLong abandoned = new AtomicLong();
+    private final AtomicLong expired = new AtomicLong();
+    private final BacklogMetrics backlogMetrics;
 
     public ImpressionDispatchService(DispatchLeaseRepository lease, ImpressionDispatchRepository impressions,
                                      PointDeductor pointDeductor, TransactionTemplate transactions,
@@ -78,8 +82,12 @@ public class ImpressionDispatchService {
         this.transactions = transactions;
         this.meterRegistry = meterRegistry;
         this.clock = clock;
+        this.backlogMetrics = backlogMetrics;
         meterRegistry.gauge(BACKLOG_METRIC, backlog);
+        // 읽는 범위(어제 00:00 부터)는 광고 서빙의 마감 규칙이라 공통 지표가 아니라 이 릴레이의 지표로 둔다
+        meterRegistry.gauge(EXPIRED_METRIC, expired);
         backlogMetrics.relay(RELAY_NAME, backlog::get, oldestPending::get);
+        backlogMetrics.abandoned(RELAY_NAME, abandoned::get);
         // 사건이 없어도 0 으로 보이게 기동 때 만든다
         List.of(DISPATCHED_METRIC, FAILED_METRIC, ERROR_METRIC).forEach(meterRegistry::counter);
     }
@@ -94,16 +102,16 @@ public class ImpressionDispatchService {
             return;
         }
         LocalDateTime from = LocalDate.now(clock).minusDays(1).atStartOfDay();
+        // 밀린 양은 묶음마다 센다. 밀려 한 번 도는 실행이 길어져도 그동안 값이 낡지 않게 한다
         try {
-            boolean more = dispatchBatch(from);
-            while (more && lease.renew(LEASE_TTL)) {
+            boolean more;
+            do {
                 more = dispatchBatch(from);
-            }
+                countBacklog(from);
+            } while (more && lease.renew(LEASE_TTL));
         } catch (RuntimeException e) {
             meterRegistry.counter(ERROR_METRIC).increment();
             log.warn("event=ADSERVING_IMPRESSION_DISPATCH_FAILED fallback=RETRY_NEXT_RUN", e);
-        }
-        try {
             countBacklog(from);
         } finally {
             release();
@@ -116,9 +124,11 @@ public class ImpressionDispatchService {
      */
     private void countBacklog(LocalDateTime from) {
         try {
-            PendingSummary pending = impressions.countPending(from);
+            PendingSummary pending = impressions.countPending(from, LocalDateTime.now(clock));
             backlog.set(pending.count());
             oldestPending.set(pending.oldest());
+            abandoned.set(pending.abandoned());
+            expired.set(pending.expired());
         } catch (RuntimeException e) {
             meterRegistry.counter(ERROR_METRIC).increment();
             log.warn("event=ADSERVING_IMPRESSION_BACKLOG_COUNT_FAILED fallback=KEEP_LAST", e);
@@ -130,8 +140,7 @@ public class ImpressionDispatchService {
      * 실패한 노출은 다시 넘길 시각을 미뤘으므로 같은 회차에 이어서 넘기지 않는다. 실패가 몰릴 때 정산을 거듭 부르지 않는다(REL-2-06).
      */
     private boolean dispatchBatch(LocalDateTime from) {
-        List<PendingImpression> batch = impressions.findPending(from, LocalDateTime.now(clock), properties.maxAttempts(),
-                PointDeductor.MAX_BATCH_SIZE);
+        List<PendingImpression> batch = impressions.findPending(from, LocalDateTime.now(clock), PointDeductor.MAX_BATCH_SIZE);
         if (batch.isEmpty()) {
             return false;
         }
@@ -162,8 +171,9 @@ public class ImpressionDispatchService {
         LocalDateTime now = LocalDateTime.now(clock);
         transactions.executeWithoutResult(status -> {
             impressions.markDispatched(dispatched, now);
-            impressions.markFailed(failed, now);
+            impressions.markFailed(failed, now, properties.maxAttempts());
         });
+        dispatched.forEach(impression -> backlogMetrics.publishDelay(RELAY_NAME, Duration.between(impression.createdAt(), now)));
         meterRegistry.counter(DISPATCHED_METRIC).increment(dispatched.size());
         meterRegistry.counter(FAILED_METRIC).increment(failed.size());
         return failed.isEmpty() && batch.size() == PointDeductor.MAX_BATCH_SIZE;
@@ -179,6 +189,8 @@ public class ImpressionDispatchService {
             if (!held) {
                 backlog.set(0);
                 oldestPending.set(null);
+                abandoned.set(0);
+                expired.set(0);
             }
             return held;
         } catch (DataAccessException e) {

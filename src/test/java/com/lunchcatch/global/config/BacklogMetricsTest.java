@@ -29,6 +29,26 @@ class BacklogMetricsTest {
     }
 
     @Test
+    @DisplayName("릴레이가 포기한 건수를 공통 이름에 relay 꼬리표로 낸다")
+    void 포기한_건수() {
+        metrics.abandoned("adserving.impression", () -> 2);
+
+        assertThat(registry.scrape()).contains("outbox_relay_abandoned{relay=\"adserving.impression\"} 2.0");
+    }
+
+    // 품질 목표 5초를 넘은 비율을 버킷 경계로 정확히 센다
+    @Test
+    @DisplayName("넘긴 순간의 발행 지연을 5초 경계가 있는 히스토그램으로 남긴다")
+    void 발행_지연() {
+        metrics.publishDelay("adserving.impression", java.time.Duration.ofSeconds(3));
+        metrics.publishDelay("adserving.impression", java.time.Duration.ofSeconds(8));
+
+        assertThat(registry.scrape())
+                .contains("outbox_relay_publish_delay_seconds_bucket{relay=\"adserving.impression\",le=\"5.0\"} 1")
+                .contains("outbox_relay_publish_delay_seconds_count{relay=\"adserving.impression\"} 2");
+    }
+
+    @Test
     @DisplayName("워커의 대기열 길이와 가장 오래 기다린 일의 대기 시간을 공통 이름에 worker 꼬리표로 낸다")
     void 워커() {
         metrics.worker("adserving.impression-write", () -> 40, () -> NOW.minusNanos(1_500_000_000));
