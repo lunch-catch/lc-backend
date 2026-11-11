@@ -209,7 +209,7 @@ AWS_PROFILE=<프로필> loadtest/adserving/run.sh run serving-v3-nopool-run1 300
 | 노출 저장과 릴레이 | 릴레이의 밀린 노출 최대(v2 부터), 노출 저장 큐의 최대, 큐가 차서 버린 수, 실패한 묶음 수, 쓰지 못하고 버린 행 수(v3 부터) | 응답 뒤 저장이 따라가는지. 버린 노출은 유실률에 들어간다 |
 | 부하 생성기 | 1분 평균 CPU 의 최대 | 생성기가 병목이 아닌지. 유지 구간에서 80% 를 넘으면 그 회차는 무효로 보고 다시 잰다 |
 
-대시보드는 회차가 끝난 직후, 환경을 내리기 전에 lc-infra 의 `loadtest-snapshot.sh --lt` 로 남긴다. `--dash` 를 주지 않으면 01 개요부터 05 부하 시험까지와 07 광고 서빙(`lc-overview` ~ `lc-loadtest`, `lc-adserving`), 여섯 장을 대시보드 높이 그대로 찍는다. 06 기준 초과는 진단 회차에서만 찍는다(lunch-catch/lc-infra#106). 환경을 내리면 Prometheus 의 기록도 함께 사라진다.
+대시보드는 회차가 끝난 직후, 환경을 내리기 전에 lc-infra 의 `loadtest-snapshot.sh --lt` 로 남긴다. `--dash` 를 주지 않으면 01 개요부터 05 부하 시험까지와 07 광고 서빙(`lc-overview` ~ `lc-loadtest`, `lc-adserving`), 여섯 장을 대시보드 높이 그대로 찍는다. 06 처리 시간 목표 초과는 진단 회차에서만 찍는다(lunch-catch/lc-infra#106). 환경을 내리면 Prometheus 의 기록도 함께 사라진다.
 
 - **범위는 회차 시작부터 유지 구간 끝까지 한 번 준다.** `run` 이 출력하는 `window` 의 시작과 `hold` 의 끝이다. `hold` 는 k6 가 로그에 남긴 시나리오 시작 시각(`scenario_start`)에 램프업을 더해 계산한다.
 - **대시보드는 흐름을 보는 시계열이다.** 결과 수치는 k6 요약과 `metrics` 로 적는다. 대시보드는 그 수치가 왜 나왔는지(어느 지표가 먼저 올랐는지, 유지 구간이 안정됐는지)를 보는 근거다.

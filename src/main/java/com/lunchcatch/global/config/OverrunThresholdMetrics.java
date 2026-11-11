@@ -9,7 +9,7 @@ import org.springframework.stereotype.Component;
 
 /*
  * 기준 초과를 가르는 기준을 지표로 낸다(#1165, #1173).
- * 06 기준 초과 대시보드와 부하 시험의 판정이 이 지표로 API 와 작업마다 다른 기준을 거른다.
+ * 06 처리 시간 목표 초과 대시보드와 부하 시험의 판정이 이 지표로 API 와 작업마다 다른 기준을 거른다.
  */
 @Component
 @EnableConfigurationProperties(OverrunThresholdProperties.class)
