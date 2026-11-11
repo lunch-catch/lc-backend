@@ -61,7 +61,7 @@ class ImpressionDispatchServiceTest {
     @BeforeEach
     void 밀린_것이_없다() {
         when(impressions.countPending(any(), any())).thenReturn(new PendingSummary(0, null, 0, 0));
-        // 따로 보지 않는 시험은 넘긴 노출을 모두 표시한 것으로 둔다
+        // 따로 보지 않는 시험은 발행한 노출을 모두 표시한 것으로 둔다
         when(impressions.markDispatched(anyList(), any())).thenAnswer(invocation -> ((List<?>) invocation.getArgument(0)).size());
     }
 
@@ -210,7 +210,7 @@ class ImpressionDispatchServiceTest {
         assertThat(delay.totalTime(TimeUnit.SECONDS)).isEqualTo(3);
     }
 
-    // 다른 서버가 먼저 표시한 노출은 조건부 표시에서 빠진다. 넘긴 수는 실제로 표시한 행 수로 세고, 그 묶음의 발행 지연은 남기지 않는다(#1213)
+    // 다른 서버가 먼저 표시한 노출은 조건부 표시에서 빠진다. 발행 수는 실제로 표시한 행 수로 세고, 그 청크의 발행 지연은 남기지 않는다(#1213)
     @Test
     void 일부만_표시하면_표시한_행_수로_세고_발행_지연은_남기지_않는다() {
         PendingImpression first = pending(1);

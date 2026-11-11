@@ -176,8 +176,8 @@ public class ImpressionDispatchService {
         });
         int markedCount = marked[0];
         /*
-         * 넘긴 수는 실제로 표시한 행 수로 센다. 다른 서버가 먼저 표시한 노출은 그 서버가 센다(#1213).
-         * 어느 노출을 표시했는지는 행 수로 알 수 없어, 다 표시한 묶음만 발행 지연을 남긴다. 겹친 묶음은 먼저 표시한 서버가 남긴다.
+         * 발행 수는 실제로 표시한 행 수로 센다. 다른 서버가 먼저 표시한 노출은 그 서버가 센다(#1213).
+         * 어느 노출을 표시했는지는 행 수로 알 수 없어, 다 표시한 청크만 발행 지연을 남긴다. 겹친 청크는 먼저 표시한 서버가 남긴다.
          */
         if (markedCount == dispatched.size()) {
             dispatched.forEach(impression -> backlogMetrics.publishDelay(RELAY_NAME,

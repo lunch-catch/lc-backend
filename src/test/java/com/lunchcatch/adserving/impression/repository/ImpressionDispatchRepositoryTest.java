@@ -28,13 +28,13 @@ class ImpressionDispatchRepositoryTest {
 
     // 빈 키 목록은 IN () 이라 SQL 오류가 난다. 부르지 않고 0 을 돌려준다
     @Test
-    void 넘긴_노출이_없으면_DB_를_부르지_않고_0_을_돌려준다() {
+    void 발행할_노출이_없으면_DB_를_부르지_않고_0_을_돌려준다() {
         assertThat(repository.markDispatched(List.of(), NOW)).isZero();
 
         verifyNoInteractions(namedJdbcTemplate);
     }
 
-    // 다른 서버가 먼저 표시한 노출은 조건에서 빠져, 돌려주는 값이 넘긴 노출 수보다 작을 수 있다
+    // 다른 서버가 먼저 표시한 노출은 조건에서 빠져, 돌려주는 값이 발행한 노출 수보다 작을 수 있다
     @Test
     void 실제로_표시한_행_수를_돌려준다() {
         when(namedJdbcTemplate.update(anyString(), any(SqlParameterSource.class))).thenReturn(1);

@@ -260,11 +260,11 @@ class ImpressionIntegrationTest extends AbstractAdservingIntegrationTest {
     }
 
     /*
-     * 묶음이 임대 시간을 넘으면 두 배치 서버가 같은 노출을 함께 넘길 수 있다(#1213).
-     * 정산을 부르는 동안 다른 서버가 먼저 넘김 표시를 한 것을 흉내 낸다. 이 서버는 그 시각을 덮어쓰지 않고 넘긴 수에도 세지 않는다.
+     * 청크가 점유 시간을 넘으면 두 배치 서버가 같은 노출을 함께 발행할 수 있다(#1213).
+     * 정산을 부르는 동안 다른 서버가 먼저 발행 표시를 한 것을 흉내 낸다. 이 서버는 그 시각을 덮어쓰지 않고 발행 수에도 세지 않는다.
      */
     @Test
-    void 다른_서버가_먼저_넘긴_노출은_넘긴_시각을_덮어쓰지_않고_넘긴_수에_세지_않는다() throws Exception {
+    void 다른_서버가_먼저_발행한_노출은_발행_시각을_덮어쓰지_않고_발행_수에_세지_않는다() throws Exception {
         LocalDateTime otherServerAt = LocalDateTime.ofInstant(NOW, ClockConfig.ZONE).minusSeconds(1);
         doAnswer(invocation -> {
             jdbcTemplate.update("UPDATE impression_log SET dispatched_at = ?", otherServerAt);
@@ -281,9 +281,9 @@ class ImpressionIntegrationTest extends AbstractAdservingIntegrationTest {
         assertThat(meterRegistry.counter("adserving_impression_dispatched_total").count()).isEqualTo(before);
     }
 
-    // 정산이 실패로 돌려줘도 이미 다른 서버가 넘긴 노출에는 실패를 적지 않는다. 적으면 넘긴 노출의 시도 횟수가 오른다
+    // 정산이 실패로 돌려줘도 이미 다른 서버가 발행한 노출에는 실패를 적지 않는다. 적으면 발행한 노출의 시도 횟수가 오른다
     @Test
-    void 다른_서버가_먼저_넘긴_노출에는_실패를_적지_않는다() throws Exception {
+    void 다른_서버가_먼저_발행한_노출에는_실패를_적지_않는다() throws Exception {
         LocalDateTime otherServerAt = LocalDateTime.ofInstant(NOW, ClockConfig.ZONE).minusSeconds(1);
         doAnswer(invocation -> {
             jdbcTemplate.update("UPDATE impression_log SET dispatched_at = ?", otherServerAt);
