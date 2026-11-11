@@ -10,6 +10,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -162,17 +163,27 @@ class ThreadKindMetricsTest {
                     refreshError.set(e);
                 }
             });
-            started.await();
-            for (int i = 0; i < 20_000 && failures.isEmpty(); i++) {
-                try {
-                    registry.scrape();
-                } catch (RuntimeException e) {
-                    failures.add(e.getMessage());
+            try {
+                started.await();
+                int before = refreshes.get();
+                long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+                /*
+                 * 수집과 겹친 다시 세기가 충분히 쌓일 때까지 긁는다.
+                 * 다시 세기가 늦게 시작해도 정상 코드가 실패하지 않는다.
+                 */
+                for (int i = 0; (i < 20_000 || refreshes.get() - before < 100)
+                        && failures.isEmpty() && System.nanoTime() < deadline; i++) {
+                    try {
+                        registry.scrape();
+                    } catch (RuntimeException e) {
+                        failures.add(e.getMessage());
+                    }
                 }
+                refreshesWhileScraping = refreshes.get() - before;
+            } finally {
+                stop.set(true);
+                refresher.join();
             }
-            refreshesWhileScraping = refreshes.get();
-            stop.set(true);
-            refresher.join();
         }
 
         assertThat(refreshError.get()).isNull();
