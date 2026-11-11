@@ -55,19 +55,26 @@ class AwsSdkCallMetricsInterceptorTest {
     }
 
     @Test
-    @DisplayName("AWS SDK 호출마다 서비스, 작업, 결과를 단 타이머를 남긴다")
-    void SDK_호출마다_타이머를_남긴다() {
-        try (S3Client s3 = S3Client.builder().endpointOverride(endpoint).forcePathStyle(true)
-                .region(Region.AP_NORTHEAST_2).credentialsProvider(credentials()).build()) {
+    @DisplayName("성공한 AWS SDK 호출은 서비스, 작업, 성공을 단 타이머를 남긴다")
+    void 성공한_SDK_호출의_타이머를_남긴다() {
+        try (S3Client s3 = s3()) {
             s3.headBucket(b -> b.bucket("posters"));
-            assertThatThrownBy(() -> s3.headBucket(b -> b.bucket("missing"))).isInstanceOf(SdkException.class);
         }
 
         Timer success = registry.get(AwsSdkCallMetricsInterceptor.METRIC)
                 .tags("service", "S3", "operation", "HeadBucket", "outcome", "success", "model", "none").timer();
+        assertThat(success.count()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("실패한 AWS SDK 호출은 서비스, 작업, 실패를 단 타이머를 남긴다")
+    void 실패한_SDK_호출의_타이머를_남긴다() {
+        try (S3Client s3 = s3()) {
+            assertThatThrownBy(() -> s3.headBucket(b -> b.bucket("missing"))).isInstanceOf(SdkException.class);
+        }
+
         Timer failure = registry.get(AwsSdkCallMetricsInterceptor.METRIC)
                 .tags("service", "S3", "operation", "HeadBucket", "outcome", "failure", "model", "none").timer();
-        assertThat(success.count()).isEqualTo(1);
         assertThat(failure.count()).isEqualTo(1);
     }
 
@@ -86,6 +93,11 @@ class AwsSdkCallMetricsInterceptorTest {
         Timer converse = registry.get(AwsSdkCallMetricsInterceptor.METRIC)
                 .tags("operation", "Converse", "model", "missing-model", "outcome", "failure").timer();
         assertThat(converse.count()).isEqualTo(1);
+    }
+
+    private S3Client s3() {
+        return S3Client.builder().endpointOverride(endpoint).forcePathStyle(true)
+                .region(Region.AP_NORTHEAST_2).credentialsProvider(credentials()).build();
     }
 
     private static StaticCredentialsProvider credentials() {

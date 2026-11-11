@@ -1,5 +1,6 @@
 package com.lunchcatch.global.config;
 
+import io.micrometer.common.KeyValue;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
 import io.micrometer.observation.Observation;
@@ -47,16 +48,17 @@ public class HttpClientLatencyHistogramHandler implements ObservationHandler<Cli
 
     @Override
     public void onStop(ClientRequestObservationContext context) {
-        String clientName = context.getLowCardinalityKeyValue("client.name").getValue();
-        String uri = context.getLowCardinalityKeyValue("uri").getValue();
-        if (!admit(clientName + " " + uri)) {
+        KeyValue clientName = context.getLowCardinalityKeyValue("client.name");
+        KeyValue uri = context.getLowCardinalityKeyValue("uri");
+        // 관측 규약을 바꿔 꼬리표가 빠지면 그 호출은 남기지 않는다
+        if (clientName == null || uri == null || !admit(clientName.getValue() + " " + uri.getValue())) {
             return;
         }
         Timer.Sample sample = context.getRequired(Timer.Sample.class);
         sample.stop(Timer.builder(METRIC)
                 .description("외부 호출의 상대와 경로별 시간. p99 를 계산하는 버킷을 내보낸다")
-                .tag("client.name", clientName)
-                .tag("uri", uri)
+                .tag("client.name", clientName.getValue())
+                .tag("uri", uri.getValue())
                 .publishPercentileHistogram()
                 .maximumExpectedValue(MAX_EXPECTED)
                 .register(registry));

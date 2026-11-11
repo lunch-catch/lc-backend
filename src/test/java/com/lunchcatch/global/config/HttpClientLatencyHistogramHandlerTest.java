@@ -23,6 +23,7 @@ import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.boot.webclient.autoconfigure.WebClientAutoConfiguration;
 import org.springframework.boot.webclient.autoconfigure.WebClientObservationAutoConfiguration;
 import org.springframework.web.reactive.function.client.WebClient;
+import reactor.core.publisher.Mono;
 
 class HttpClientLatencyHistogramHandlerTest {
 
@@ -115,6 +116,6 @@ class HttpClientLatencyHistogramHandlerTest {
 
     private void call(WebClient client, String path) {
         client.get().uri("http://localhost:" + port + path).retrieve().toBodilessEntity()
-                .onErrorResume(error -> reactor.core.publisher.Mono.empty()).block();
+                .onErrorResume(error -> Mono.empty()).block();
     }
 }
