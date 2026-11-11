@@ -169,12 +169,12 @@ public class ImpressionDispatchService {
             }
         }
         LocalDateTime now = LocalDateTime.now(clock);
-        Integer marked = transactions.execute(status -> {
-            int rows = impressions.markDispatched(dispatched, now);
+        int[] marked = new int[1];
+        transactions.executeWithoutResult(status -> {
+            marked[0] = impressions.markDispatched(dispatched, now);
             impressions.markFailed(failed, now, properties.maxAttempts());
-            return rows;
         });
-        int markedCount = marked == null ? 0 : marked;
+        int markedCount = marked[0];
         /*
          * 넘긴 수는 실제로 표시한 행 수로 센다. 다른 서버가 먼저 표시한 노출은 그 서버가 센다(#1213).
          * 어느 노출을 표시했는지는 행 수로 알 수 없어, 다 표시한 묶음만 발행 지연을 남긴다. 겹친 묶음은 먼저 표시한 서버가 남긴다.
