@@ -12,6 +12,7 @@ import com.lunchcatch.global.config.BacklogMetrics;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -48,7 +49,14 @@ public class ImpressionDispatchService {
     // 공통 지표의 릴레이 이름이다. 이름별 기준을 둘 때 application.yml 의 lunchcatch.observability.targets.relay 키로 쓴다
     static final String RELAY_NAME = "adserving.impression";
 
-    // 시도 횟수와 임대 시간은 설정(adserving.impression.dispatch)이 갖는다
+    /*
+     * 배치 서버 하나가 릴레이를 맡는 임대의 시간이다.
+     * 묶음을 넘기는 동안 풀리면 다른 서버가 같은 노출을 함께 넘기므로 설정으로 두지 않는다.
+     * 묶음마다 늘리고 실행이 끝나면 푼다.
+     */
+    static final Duration LEASE_TTL = Duration.ofSeconds(30);
+
+    // 주기와 시도 횟수는 설정(adserving.impression.dispatch)이 갖는다
     private final ImpressionDispatchProperties properties;
     private final DispatchLeaseRepository lease;
     private final ImpressionDispatchRepository impressions;
@@ -88,7 +96,7 @@ public class ImpressionDispatchService {
         LocalDateTime from = LocalDate.now(clock).minusDays(1).atStartOfDay();
         try {
             boolean more = dispatchBatch(from);
-            while (more && lease.renew(properties.leaseTtl())) {
+            while (more && lease.renew(LEASE_TTL)) {
                 more = dispatchBatch(from);
             }
         } catch (RuntimeException e) {
@@ -167,7 +175,7 @@ public class ImpressionDispatchService {
      */
     private boolean acquire() {
         try {
-            boolean held = lease.acquire(properties.leaseTtl());
+            boolean held = lease.acquire(LEASE_TTL);
             if (!held) {
                 backlog.set(0);
                 oldestPending.set(null);

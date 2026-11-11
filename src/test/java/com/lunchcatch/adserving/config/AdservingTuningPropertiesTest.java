@@ -22,7 +22,7 @@ class AdservingTuningPropertiesTest {
                 Duration.ofMillis(200), Duration.ofSeconds(5), 10));
         assertThat(AdservingTuningDefaults.serveLogBuffer()).isEqualTo(new ServeLogBufferProperties(5_000, 50));
         assertThat(AdservingTuningDefaults.dispatch()).isEqualTo(
-                new ImpressionDispatchProperties(Duration.ofSeconds(1), 10, Duration.ofSeconds(30)));
+                new ImpressionDispatchProperties(Duration.ofSeconds(1), 10));
         assertThat(AdservingTuningDefaults.cache()).isEqualTo(
                 new AdservingCacheProperties(Duration.ofSeconds(5), Duration.ofSeconds(30)));
     }
@@ -85,14 +85,6 @@ class AdservingTuningPropertiesTest {
         assertThatThrownBy(() -> new ServeLogBufferProperties(10, 11))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("feeds-per-batch");
-    }
-
-    // 임대가 주기보다 짧으면 실행 사이에 임대가 풀려 다른 배치 서버가 가져간다
-    @Test
-    void 릴레이의_임대가_주기보다_길지_않으면_거부한다() {
-        assertThatThrownBy(() -> new ImpressionDispatchProperties(Duration.ofSeconds(30), 10, Duration.ofSeconds(30)))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("lease-ttl");
     }
 
     @Test

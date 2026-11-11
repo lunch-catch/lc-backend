@@ -46,7 +46,7 @@ adserving/
 ├── config/AdservingCacheProperties.java          후보 캐시와 회원 정보 캐시의 시간(`adserving.cache`, 11장 조정 값)
 ├── config/AdservingSecurityConfig.java
 ├── config/AdservingTuningConfig.java             아래 조정 값 레코드를 빈으로 올린다
-├── config/ImpressionDispatchProperties.java      노출 릴레이의 주기, 시도, 임대(`adserving.impression.dispatch`)
+├── config/ImpressionDispatchProperties.java      노출 릴레이의 주기와 시도(`adserving.impression.dispatch`)
 ├── config/ImpressionWriteBufferProperties.java   노출 저장 버퍼의 용량, 묶음, 대기, 재시도(`adserving.impression.write-buffer`)
 ├── config/PacingProperties.java      진행률의 시간대별 가중치 24개(`adserving.pacing.hourly-weights`)
 ├── config/ServeLogBufferProperties.java          서빙 기록 버퍼의 용량과 묶음(`adserving.serve-log.buffer`)

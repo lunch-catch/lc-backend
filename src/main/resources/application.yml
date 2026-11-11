@@ -397,8 +397,6 @@ adserving:
       interval: PT1S
       # 1초 주기라 약 10초 동안 다시 해 본다. 닿으면 읽지 않고 밀린 수로만 보인다
       max-attempts: 10
-      # 배치 서버 하나가 릴레이를 맡는 임대다. interval 보다 길어야 실행 사이에 다른 서버가 가져가지 않는다
-      lease-ttl: 30s
   # 서빙 기록 버퍼(adserving.config.ServeLogBufferProperties)
   serve-log:
     buffer:
