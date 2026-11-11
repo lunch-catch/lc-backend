@@ -11,6 +11,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -142,14 +144,25 @@ class ThreadKindMetricsTest {
     void 다시_세는_동안_긁어도_수집이_실패하지_않는다() throws InterruptedException {
         PrometheusMeterRegistry registry = new PrometheusMeterRegistry(PrometheusConfig.DEFAULT);
         AtomicBoolean stop = new AtomicBoolean();
+        CountDownLatch started = new CountDownLatch(1);
+        AtomicInteger refreshes = new AtomicInteger();
+        AtomicReference<Throwable> refreshError = new AtomicReference<>();
         List<String> failures = new ArrayList<>();
+        int refreshesWhileScraping;
         try (ThreadKindMetrics metrics = new ThreadKindMetrics()) {
             metrics.bindTo(registry);
             Thread refresher = Thread.ofPlatform().name("kind-race-refresher").start(() -> {
-                while (!stop.get()) {
-                    metrics.refresh();
+                started.countDown();
+                try {
+                    while (!stop.get()) {
+                        metrics.refresh();
+                        refreshes.incrementAndGet();
+                    }
+                } catch (Throwable e) {
+                    refreshError.set(e);
                 }
             });
+            started.await();
             for (int i = 0; i < 20_000 && failures.isEmpty(); i++) {
                 try {
                     registry.scrape();
@@ -157,10 +170,14 @@ class ThreadKindMetricsTest {
                     failures.add(e.getMessage());
                 }
             }
+            refreshesWhileScraping = refreshes.get();
             stop.set(true);
             refresher.join();
         }
 
+        assertThat(refreshError.get()).isNull();
+        // 다시 세기가 수집과 겹쳐 돌지 않았으면 이 테스트는 아무것도 보지 않은 것이다
+        assertThat(refreshesWhileScraping).isPositive();
         assertThat(failures).isEmpty();
     }
 }
