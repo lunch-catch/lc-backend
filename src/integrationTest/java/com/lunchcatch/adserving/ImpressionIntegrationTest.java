@@ -259,6 +259,46 @@ class ImpressionIntegrationTest extends AbstractAdservingIntegrationTest {
         return meterRegistry.get(name).tag("relay", "adserving.impression").gauge().value();
     }
 
+    /*
+     * 청크가 점유 시간을 넘으면 두 배치 서버가 같은 노출을 함께 발행할 수 있다(#1213).
+     * 정산을 부르는 동안 다른 서버가 먼저 발행 표시를 한 것을 흉내 낸다. 이 서버는 그 시각을 덮어쓰지 않고 발행 수에도 세지 않는다.
+     */
+    @Test
+    void 다른_서버가_먼저_발행한_노출은_발행_시각을_덮어쓰지_않고_발행_수에_세지_않는다() throws Exception {
+        LocalDateTime otherServerAt = LocalDateTime.ofInstant(NOW, ClockConfig.ZONE).minusSeconds(1);
+        doAnswer(invocation -> {
+            jdbcTemplate.update("UPDATE impression_log SET dispatched_at = ?", otherServerAt);
+            List<DeductionRequest> requests = invocation.getArgument(0);
+            return requests.stream().map(request -> DeductionOutcome.judged(request.serveId(), DeductionStatus.BILLED)).toList();
+        }).when(pointDeductor).deductAll(anyList());
+        send(body(serveId, 101L), Role.MEMBER).andExpect(status().isAccepted());
+        writeBuffer.flush();
+        double before = meterRegistry.counter("adserving_impression_dispatched_total").count();
+
+        dispatch.dispatchPending();
+
+        assertThat(dispatchState()).containsEntry("dispatched_at", otherServerAt);
+        assertThat(meterRegistry.counter("adserving_impression_dispatched_total").count()).isEqualTo(before);
+    }
+
+    // 정산이 실패로 돌려줘도 이미 다른 서버가 발행한 노출에는 실패를 적지 않는다. 적으면 발행한 노출의 시도 횟수가 오른다
+    @Test
+    void 다른_서버가_먼저_발행한_노출에는_실패를_적지_않는다() throws Exception {
+        LocalDateTime otherServerAt = LocalDateTime.ofInstant(NOW, ClockConfig.ZONE).minusSeconds(1);
+        doAnswer(invocation -> {
+            jdbcTemplate.update("UPDATE impression_log SET dispatched_at = ?", otherServerAt);
+            List<DeductionRequest> requests = invocation.getArgument(0);
+            return requests.stream().map(request -> DeductionOutcome.failed(request.serveId())).toList();
+        }).when(pointDeductor).deductAll(anyList());
+        send(body(serveId, 101L), Role.MEMBER).andExpect(status().isAccepted());
+        writeBuffer.flush();
+
+        dispatch.dispatchPending();
+
+        assertThat(dispatchState()).containsEntry("dispatched_at", otherServerAt).containsEntry("dispatch_attempts", 0);
+        assertThat(jdbcTemplate.queryForObject("SELECT next_dispatch_at FROM impression_log", LocalDateTime.class)).isNull();
+    }
+
     @Test
     void 무효_노출은_저장할_때_넘긴_것으로_적고_정산에_넘기지_않는다() throws Exception {
         send(body(UUID.randomUUID(), 101L), Role.MEMBER).andExpect(status().isAccepted());

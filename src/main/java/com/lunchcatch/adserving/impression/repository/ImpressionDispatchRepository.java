@@ -40,6 +40,7 @@ public class ImpressionDispatchRepository {
             UPDATE impression_log
                SET dispatched_at = :at, updated_at = :at
              WHERE (serve_id, member_id) IN (:keys)
+               AND dispatched_at IS NULL
             """;
 
     /*
@@ -53,6 +54,7 @@ public class ImpressionDispatchRepository {
                    dispatch_abandoned_at = IF(dispatch_attempts >= :maxAttempts, :at, NULL),
                    updated_at = :at
              WHERE (serve_id, member_id) IN (:keys)
+               AND dispatched_at IS NULL
             """;
 
     /*
@@ -83,14 +85,21 @@ public class ImpressionDispatchRepository {
     }
 
     // 정산이 판정을 커밋한 노출에 넘긴 시각을 적는다.
-    public void markDispatched(Collection<PendingImpression> impressions, LocalDateTime at) {
+    /*
+     * 아직 발행하지 않은 노출에만 발행 시각을 적고 적은 행 수를 돌려준다.
+     * 점유가 풀려 다른 배치 서버가 같은 노출을 먼저 발행했으면 그 시각을 덮어쓰지 않는다(#1213).
+     */
+    public int markDispatched(Collection<PendingImpression> impressions, LocalDateTime at) {
         if (impressions.isEmpty()) {
-            return;
+            return 0;
         }
-        namedJdbcTemplate.update(MARK_DISPATCHED, params(impressions, at));
+        return namedJdbcTemplate.update(MARK_DISPATCHED, params(impressions, at));
     }
 
-    // 정산이 실패로 돌려준 노출의 시도 횟수를 올리고 다시 넘길 시각을 미룬다. 상한에 닿으면 findPending 이 더는 읽지 않는다.
+    /*
+     * 정산이 실패로 돌려준 노출의 시도 횟수를 올리고 다시 넘길 시각을 미룬다. 상한에 닿으면 findPending 이 더는 읽지 않는다.
+     * 다른 서버가 이미 발행한 노출은 건드리지 않는다(#1213).
+     */
     public void markFailed(Collection<PendingImpression> impressions, LocalDateTime at, int maxAttempts) {
         if (impressions.isEmpty()) {
             return;
