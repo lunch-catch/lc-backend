@@ -125,7 +125,7 @@ public class ImpressionDispatchRepository {
         return new UUID(buffer.getLong(), buffer.getLong());
     }
 
-    // createdAt 은 노출을 저장한 시각이다. 넘긴 시각과의 차이가 발행 지연이다
+    // createdAt 은 노출 요청을 받은 시각이다(저장 시각이 아니다). 넘긴 시각과의 차이가 발행 지연이라 노출 저장 대기열에서 기다린 시간도 든다
     public record PendingImpression(UUID serveId, Long memberId, Long campaignId, LocalDate businessDate,
                                     LocalDateTime createdAt) {
     }

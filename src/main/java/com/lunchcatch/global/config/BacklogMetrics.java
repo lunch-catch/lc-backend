@@ -62,12 +62,13 @@ public class BacklogMetrics {
     }
 
     /*
-     * 넘긴 순간에 적힌 뒤 넘기기까지 걸린 시간을 남긴다. 재시도 끝에 넘긴 건도 든다. 품질 목표(아웃박스 발행 지연 5초)는 이 p99 로 판정한다.
+     * 넘긴 순간에 그 건이 생긴 뒤 넘기기까지 걸린 시간을 남긴다. 어느 시각을 생긴 때로 볼지는 릴레이가 정한다. 재시도 끝에 넘긴 건도 든다.
+     * 품질 목표(아웃박스 발행 지연 5초)는 이 p99 로 판정한다.
      * 5초를 경계로 두어 넘은 비율을 어림하지 않고 센다. 재시도 끝의 지연(백오프만 약 13.5분)까지 버킷에 담으려고 상한을 15분으로 둔다.
      */
     public void publishDelay(String name, Duration delay) {
         Timer.builder(RELAY_PUBLISH_DELAY)
-                .description("아웃박스 릴레이의 발행 지연. 적힌 뒤 넘기기까지 걸린 시간")
+                .description("아웃박스 릴레이의 발행 지연. 생긴 뒤 넘기기까지 걸린 시간")
                 .tag("relay", name)
                 .publishPercentileHistogram()
                 .serviceLevelObjectives(PUBLISH_DELAY_TARGET)

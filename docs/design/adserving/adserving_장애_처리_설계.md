@@ -62,7 +62,7 @@ B 를 고른다(#837 에서 정했다). 차감은 정산이 따로 막아(`NOT_B
 - 넘기지 못하고 밀린 노출 수는 `adserving_impression_dispatch_backlog` 와 공통 지표 `outbox_relay_backlog` 가 낸다. 포기한 노출은 빠진다. 다시 넘길 시각을 기다리는 노출은 든다.
 - 포기한 노출 수는 공통 지표 `outbox_relay_abandoned` 가 낸다. 0 보다 크면 사람이 원인을 고친 뒤 `dispatch_abandoned_at` 을 비워 다시 넘긴다. 상한을 바꿔도 포기한 노출은 그대로 남는다.
 - 가장 오래 기다린 노출의 나이(`outbox_relay_oldest_age_seconds`)는 지금 넘길 수 있는 노출만 본다. 다시 넘길 시각을 기다리는 노출과 포기한 노출은 넣지 않는다.
-- 발행 지연은 넘긴 순간에 `outbox_relay_publish_delay_seconds` 로 남긴다. 품질 목표(아웃박스 발행 지연 5초)는 이 p99 로 판정한다.
+- 발행 지연은 넘긴 순간에 `outbox_relay_publish_delay_seconds` 로 남긴다. 노출 요청을 받은 시각(`created_at`)부터 재서 노출 저장 대기열에서 기다린 시간도 든다. 품질 목표(아웃박스 발행 지연 5초)는 이 p99 로 판정한다.
 - 읽는 범위(어제 00:00 부터)보다 오래된 미발행은 마감이 지나 넘기지 않는다. 그 수는 `adserving_impression_dispatch_expired` 가 낸다.
 - 밀린 수와 대기 시간은 묶음마다 다시 센다. 밀려 한 번 도는 실행이 길어져도 값이 낡지 않는다.
 
