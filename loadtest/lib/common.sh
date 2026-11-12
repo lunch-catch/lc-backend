@@ -272,6 +272,33 @@ python3 /tmp/lt-warnings.py http://localhost:3100 $DOMAIN_EVENT_PREFIX $start $e
 }
 
 #
+# 회차 구간에 앱과 배치의 지표 수집이 빠진 칸(15초) 수를 묻는다(#1222). 인자는 Prometheus 주소, 시작 ms, 끝 ms 다.
+# 빠진 칸은 그 서버의 지표가 통째로 비어, 그 구간의 그래프와 판정이 "괜찮았다" 로 읽히지 않게 경고 로그와 함께 남긴다.
+# 앱과 배치를 0 이어도 늘 적어, 버전끼리 견줄 때 세지 않은 것과 0 을 가른다. 대상이 구간 내내 없었으면 셀 수 없어 0 이다.
+#
+IFS= read -r -d '' SCRAPE_GAPS_PY <<'PY' || true
+import json, sys, urllib.parse, urllib.request
+base, s, e = sys.argv[1], int(sys.argv[2]) // 1000, int(sys.argv[3]) // 1000
+expr = 'sum by (job) (count_over_time((up{job=~"app|batch"} == 0)[%ds:15s]))' % max(e - s, 15)
+r = json.load(urllib.request.urlopen(base + '/api/v1/query?' + urllib.parse.urlencode({'query': expr, 'time': e})))
+got = {x['metric'].get('job'): int(float(x['value'][1])) for x in r['data']['result']}
+for job in ('app', 'batch'):
+    print('수집', job.upper() + '_SCRAPE_MISSED', got.get(job, 0))
+PY
+
+scrape_gaps() {
+  local start="$1" end="$2"
+  if [ -n "${LOCAL:-}" ]; then
+    python3 -c "$SCRAPE_GAPS_PY" "http://localhost:${PROMETHEUS_PORT:-19090}" "$start" "$end"
+    return
+  fi
+  remote "$(instance monitoring)" 120 "cat > /tmp/lt-scrape-gaps.py <<'PY'
+$SCRAPE_GAPS_PY
+PY
+python3 /tmp/lt-scrape-gaps.py http://localhost:9090 $start $end"
+}
+
+#
 # 결과 문서에서 제목에 "경고 로그" 가 든 절의 표에 회차 줄을 적는다. 표가 없으면 절 끝에 만든다.
 # 같은 회차의 줄이 이미 있으면 지우고 다시 적는다. 절이 없으면 3 으로 끝난다.
 #
@@ -279,7 +306,10 @@ IFS= read -r -d '' WRITE_WARNINGS_PY <<'PY' || true
 import sys
 path, name = sys.argv[1], sys.argv[2]
 rows = [l.split() for l in sys.stdin.read().splitlines() if l.strip()]
-new = ['| %s | %s | %s | %s |' % (name, lv, ev, n) for lv, ev, n in rows] or ['| %s | - | 없음 | 0 |' % name]
+new = ['| %s | %s | %s | %s |' % (name, lv, ev, n) for lv, ev, n in rows]
+# 지표 수집 줄(수준 "수집")은 늘 오므로 경고와 오류가 없는지는 그 밖의 줄로 가른다
+if not any(lv != '수집' for lv, _, _ in rows):
+    new.insert(0, '| %s | - | 없음 | 0 |' % name)
 lines = open(path, encoding='utf-8').read().split('\n')
 head = next((i for i, l in enumerate(lines) if l.startswith('#') and '경고 로그' in l), None)
 if head is None:
@@ -298,17 +328,23 @@ open(path, 'w', encoding='utf-8').write('\n'.join(lines))
 PY
 
 #
-# 회차가 끝나면 경고 로그 건수를 출력하고 결과 문서에 적어 커밋한다. 워밍업, 프로파일링, 추적 회차는 적지 않는다.
+# 회차가 끝나면 경고 로그 건수를 출력하고 결과 문서에 적어 커밋한다. 이름이 -warmup, -profile, -tracing 으로 끝나는 회차는 적지 않는다.
+# 트레이싱을 켠 측정 회차는 이름으로 가르지 않아 적는다.
 # 로컬은 노트북의 수치라 출력만 한다. 커밋은 결과 문서 하나만 지금 브랜치에 하고 푸시하지 않는다.
 #
 record_warnings() {
-  local name="$1" start="$2" end="$3" rows rc=0
+  local name="$1" start="$2" end="$3" rows gaps rc=0
   case "$name" in *-warmup|*-profile|*-tracing) echo "warnings: $name 은 결과에 적지 않는다"; return 0 ;; esac
   # 회차 끝의 로그가 Alloy 를 거쳐 Loki 에 닿기를 기다린다
   sleep 10
   rows=$(warning_counts "$start" "$end") || { echo "WARN: 경고 로그를 묻지 못했다. 결과 문서에 적지 않았다" >&2; return 0; }
   echo "warnings"
   printf '%s\n' "${rows:-없음}"
+  # 지표 수집이 빠진 칸 수도 같은 표에 적는다(#1222). 묻지 못하면 경고 로그만 적는다
+  gaps=$(scrape_gaps "$start" "$end") || { echo "WARN: 지표 수집 실패 칸을 묻지 못했다. 경고 로그만 적는다" >&2; gaps=""; }
+  echo "scrape gaps"
+  printf '%s\n' "${gaps:-묻지 못함}"
+  rows=$(printf '%s\n%s\n' "$rows" "$gaps")
   [ -z "${LOCAL:-}" ] || return 0
   printf '%s\n' "$rows" | python3 -c "$WRITE_WARNINGS_PY" "$ROOT/$RESULT_DOC" "$name" || rc=$?
   case "$rc" in
@@ -321,7 +357,7 @@ record_warnings() {
     return 0
   fi
   git -C "$ROOT" add -- "$RESULT_DOC"
-  git -C "$ROOT" commit -q -m "test: $name 의 경고 로그 건수를 결과에 적는다 (#1094)" -- "$RESULT_DOC"
+  git -C "$ROOT" commit -q -m "test: $name 의 경고 로그 건수와 지표 수집 실패 칸을 결과에 적는다 (#1094)" -- "$RESULT_DOC"
   echo "committed $(git -C "$ROOT" rev-parse --short HEAD) $RESULT_DOC"
 }
 
