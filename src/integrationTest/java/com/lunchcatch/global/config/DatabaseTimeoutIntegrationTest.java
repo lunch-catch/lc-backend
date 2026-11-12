@@ -40,7 +40,7 @@ class DatabaseTimeoutIntegrationTest extends AbstractGlobalIntegrationTest {
 
         assertThatThrownBy(() -> jdbcTemplate.queryForObject(SLEEP_LONGER_THAN_QUERY_TIMEOUT, Integer.class))
                 .isInstanceOf(QueryTimeoutException.class);
-        assertThat(Duration.ofNanos(System.nanoTime() - start)).isLessThan(Duration.ofSeconds(7));
+        assertCutAtQueryTimeout(start);
     }
 
     @Test
@@ -50,7 +50,7 @@ class DatabaseTimeoutIntegrationTest extends AbstractGlobalIntegrationTest {
 
         assertThatThrownBy(() -> entityManager.createNativeQuery(SLEEP_LONGER_THAN_QUERY_TIMEOUT).getSingleResult())
                 .isInstanceOf(jakarta.persistence.QueryTimeoutException.class);
-        assertThat(Duration.ofNanos(System.nanoTime() - start)).isLessThan(Duration.ofSeconds(7));
+        assertCutAtQueryTimeout(start);
     }
 
     // Spring 은 트랜잭션 안의 쿼리에 쿼리 시간 제한 대신 트랜잭션의 남은 시간을 건다. 트랜잭션 제한도 5초라 안에서도 5초에 끊긴다
@@ -62,7 +62,7 @@ class DatabaseTimeoutIntegrationTest extends AbstractGlobalIntegrationTest {
         assertThatThrownBy(() -> new TransactionTemplate(transactionManager).executeWithoutResult(status ->
                 jdbcTemplate.queryForObject(SLEEP_LONGER_THAN_QUERY_TIMEOUT, Integer.class)))
                 .isInstanceOf(QueryTimeoutException.class);
-        assertThat(Duration.ofNanos(System.nanoTime() - start)).isLessThan(Duration.ofSeconds(7));
+        assertCutAtQueryTimeout(start);
     }
 
     @Test
@@ -72,8 +72,8 @@ class DatabaseTimeoutIntegrationTest extends AbstractGlobalIntegrationTest {
 
         assertThatThrownBy(() -> new TransactionTemplate(transactionManager).executeWithoutResult(status ->
                 entityManager.createNativeQuery(SLEEP_LONGER_THAN_QUERY_TIMEOUT).getSingleResult()))
-                .isInstanceOf(RuntimeException.class);
-        assertThat(Duration.ofNanos(System.nanoTime() - start)).isLessThan(Duration.ofSeconds(7));
+                .satisfies(DatabaseTimeoutIntegrationTest::timedOut);
+        assertCutAtQueryTimeout(start);
     }
 
     // 따로 정한 @Transactional(timeout) 이 없는 트랜잭션이 이 값을 쓴다
@@ -81,5 +81,22 @@ class DatabaseTimeoutIntegrationTest extends AbstractGlobalIntegrationTest {
     @DisplayName("트랜잭션의 기본 시간 제한은 5초다")
     void 트랜잭션_기본_시간_제한은_5초다() {
         assertThat(((AbstractPlatformTransactionManager) transactionManager).getDefaultTimeout()).isEqualTo(5);
+    }
+
+    // 쿼리가 돌다가 5초 언저리에서 끊긴 것이어야 한다. 바로 실패했으면 시간 제한을 본 것이 아니다
+    private static void assertCutAtQueryTimeout(long start) {
+        assertThat(Duration.ofNanos(System.nanoTime() - start))
+                .isGreaterThanOrEqualTo(Duration.ofMillis(4_500))
+                .isLessThan(Duration.ofSeconds(7));
+    }
+
+    // 트랜잭션 안의 JPA 는 감싸는 예외가 갈려도 원인 사슬에 드라이버나 JPA 의 시간 초과 예외가 있다
+    private static void timedOut(Throwable thrown) {
+        boolean timeout = false;
+        for (Throwable cause = thrown; cause != null && !timeout; cause = cause.getCause()) {
+            String name = cause.getClass().getSimpleName();
+            timeout = name.equals("MySQLTimeoutException") || name.equals("QueryTimeoutException");
+        }
+        assertThat(timeout).as("원인 사슬에 시간 초과 예외가 있다: %s", thrown).isTrue();
     }
 }
