@@ -150,6 +150,7 @@ class ThreadKindMetricsTest {
         AtomicReference<Throwable> refreshError = new AtomicReference<>();
         List<String> failures = new ArrayList<>();
         int refreshesWhileScraping;
+        int scrapes = 0;
         try (ThreadKindMetrics metrics = new ThreadKindMetrics()) {
             metrics.bindTo(registry);
             Thread refresher = Thread.ofPlatform().name("kind-race-refresher").start(() -> {
@@ -171,8 +172,9 @@ class ThreadKindMetricsTest {
                  * 수집과 겹친 다시 세기가 충분히 쌓일 때까지 긁는다.
                  * 다시 세기가 늦게 시작해도 정상 코드가 실패하지 않는다.
                  */
-                for (int i = 0; (i < 20_000 || refreshes.get() - before < 100)
-                        && failures.isEmpty() && System.nanoTime() < deadline; i++) {
+                while ((scrapes < 20_000 || refreshes.get() - before < 100)
+                        && failures.isEmpty() && System.nanoTime() < deadline) {
+                    scrapes++;
                     try {
                         registry.scrape();
                     } catch (RuntimeException e) {
@@ -187,8 +189,9 @@ class ThreadKindMetricsTest {
         }
 
         assertThat(refreshError.get()).isNull();
-        // 다시 세기가 수집과 겹쳐 돌지 않았으면 이 테스트는 아무것도 보지 않은 것이다
-        assertThat(refreshesWhileScraping).isPositive();
         assertThat(failures).isEmpty();
+        // 10초 상한에 걸려 끝났으면 겹쳐 돈 양이 모자라 아무것도 보지 않은 것일 수 있다
+        assertThat(scrapes).isGreaterThanOrEqualTo(20_000);
+        assertThat(refreshesWhileScraping).isGreaterThanOrEqualTo(100);
     }
 }
