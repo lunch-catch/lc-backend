@@ -2,7 +2,7 @@ package com.lunchcatch.global.config;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.lunchcatch.IntegrationTestSupport;
+import com.lunchcatch.global.AbstractGlobalIntegrationTest;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.file.Files;
@@ -13,7 +13,6 @@ import javax.sql.DataSource;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 /*
@@ -26,8 +25,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
  * 기대값을 숫자로 적지 않는다. 마이그레이션 파일의 CREATE TABLE 을 세어 견준다. 숫자로 적으면
  * 테이블을 더한 사람이 이 파일도 함께 고쳐야 하고, 잊으면 멀쩡한 변경이 빨갛게 뜬다.
  */
-@SpringBootTest
-class FlywayMigrationIntegrationTest extends IntegrationTestSupport {
+class FlywayMigrationIntegrationTest extends AbstractGlobalIntegrationTest {
 
     private static final Path MIGRATION_DIR =
             Path.of("src/main/resources", DomainFlywayMigrator.ROOT);
