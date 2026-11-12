@@ -229,7 +229,7 @@ spring:
       hikari:
         pool-name: batch-pool
         maximum-pool-size: 5        # 배치가 잠식할 수 있는 상한을 좁게
-        connection-timeout: 10000   # 배치는 대기를 더 견딜 수 있다
+        connection-timeout: 3000    # 배치도 짧게 둔다. 짧은 주기 작업이 커넥션을 오래 기다리면 뒤 작업이 밀린다
 ```
 
 캐시 키는 서비스와 버전을 접두어로 둔다.

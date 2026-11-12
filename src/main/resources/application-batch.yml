@@ -18,6 +18,19 @@ spring:
       # 평소에는 생존 신호와 이어받기만 돌아 1 이면 된다
       maximum-pool-size: 6
       minimum-idle: 1
+      data-source-properties:
+        # 쿼리 시간 제한(2분)보다 길게, 범위의 아래쪽으로 둔다. 끊긴 연결 하나가 스케줄러 스레드 다섯 가운데 하나를 오래 붙잡지 않게 한다(#1217)
+        socketTimeout: 300000
+  jpa:
+    properties:
+      # 작업마다 수 분이 흔해 앱의 5초를 쓰지 않는다. 넘는 작업이 생기면 그 작업만 따로 늘린다
+      jakarta.persistence.query.timeout: 120000
+  jdbc:
+    template:
+      query-timeout: 2m
+  # 00:00 묶음을 트랜잭션으로 감싸지 않아 걸 자리가 없다. 앱의 10초를 이어받지 않게 끈다
+  transaction:
+    default-timeout: -1s
   task:
     scheduling:
       pool:
