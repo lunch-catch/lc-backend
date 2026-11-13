@@ -6,8 +6,8 @@
 | 명세서 | [admin-api-spec.md](../../api-spec/admin-api-spec.md#배치-작업-수동-재실행) |
 | 관련 문서 | [런치캐치_배치_운영.md](./런치캐치_배치_운영.md) 2장, 3장(수동 재실행 행) |
 
-관리자가 화면에서 누르는 HTTP 경로로 실패한 작업을 수동 재실행한다. `BatchExecutionService.retry`는 상태만
-되돌리고 실제로 작업을 다시 돌리지는 않으므로, 이 API가 실제 재개를 접수해 둘을 잇는다.
+관리자가 화면에서 누르는 HTTP 경로로 실패한 작업을 수동 재실행한다. 요청을 받은 앱 서버는 행을 재실행
+요청 상태로 되돌리기만 하고, 실제 재개는 배치 서버의 이어받기(`DailyJobScheduler.takeOverStale`)가 한다(#1231).
 
 ## 서버가 하는 일
 
@@ -15,12 +15,14 @@
    (`BatchJobRegistry.classify(jobName).isRetryable()`, #585). 아니면 `422 OPS-001`이다.
 2. (`jobName`, `businessDate`) 행을 읽는다. 없으면 `404 OPS-002`다.
 3. 상태가 `FAILED`가 아니면 `409 OPS-003`이다.
-4. `BatchExecutionService.retry`로 조건부 `UPDATE`를 건다. 0건이면(동시에 다른 요청이 먼저
-   걸렸다) `409 OPS-003`이다.
-5. 감사 로그를 요청 트랜잭션에 남긴다.
-6. 재개를 별도 스레드에 접수시키고 `202`를 돌려준다. 실제 재개는 `BatchJobRunner.resume`이
-   한다. 실행기 대기열(4건)이 가득 차 접수하지 못하면(`RejectedExecutionException`) 되돌린 행을
-   `FAILED`로 다시 닫고 `503 OPS-005`를 돌려준다.
+4. 한 트랜잭션에서 `BatchExecutionService.requestRetry`로 조건부 `UPDATE`를 걸고 감사 로그를 남긴다.
+   `UPDATE`는 행을 `RUNNING`으로 되돌리고 소유자를 요청 표식(`RETRY_REQUESTED`)으로 둔다. 0건이면(동시에 다른
+   요청이 먼저 걸렸다) `409 OPS-003`이다.
+5. `202`를 돌려준다.
+6. 배치 서버의 이어받기 스캔(1분마다)이 소유자가 요청 표식인 행을 생존 신호가 멈출 때까지 기다리지 않고 집는다.
+   소유자를 자기로 바꾸고 `BatchJobRunner.resume`으로 다시 돈다. 두 배치 서버가 함께 집어도 조건부 `UPDATE`라
+   한쪽만 걸린다. 멈춘 서버를 이어받은 것이 아니라 이어받기 경보(`BATCH_JOB_TAKEN_OVER`) 대신
+   `BATCH_MANUAL_RETRY_STARTED`를 남긴다.
 
 재개 결과(성공/실패)는 배치 실행 이력 조회(`GET /v1/admin/batch-executions`)로 확인한다. 그 설계는
 [batch-execution-history-api-design.md](./batch-execution-history-api-design.md)가 갖는다.
@@ -37,6 +39,20 @@
 B를 고른다. 분석의 수동 재계산(A-05, `AggregationRecalculationService`)이 같은 이유로 이미 이
 방식을 쓰고 있어, 관리자가 배치를 다시 돌릴 때 기대하는 응답 모양이 이미 그렇게 자리 잡았다.
 
+**결정: 접수한 재실행을 어느 서버에서 돌릴지 (#1231)**
+
+| 선택지 | 장점 | 단점 |
+|---|---|---|
+| A. 배치 서버의 이어받기가 집어 돈다 | 묶음이 늘 배치 서버와 배치 설정(쿼리 2분, 트랜잭션 상한 없음)에서 돈다. 생존 신호를 보내는 서버가 돌려 2분을 넘겨도 다른 서버가 빼앗지 않는다. 이어받기와 점유를 그대로 쓴다 | 다음 스캔까지 최대 1분 남짓 기다린다. 배치 서버가 하나도 떠 있지 않으면 돌지 않는다 |
+| B. 요청을 받은 앱 서버가 별도 스레드에서 돈다 | 바로 돈다 | 앱 서버의 요청용 시간 제한(쿼리와 트랜잭션 5초, #1221)을 받아 5초를 넘는 단계가 있는 묶음은 재실행으로 복구되지 않는다. 앱 서버는 생존 신호를 보내지 않아 2분을 넘으면 배치 서버가 멈춘 것으로 보고 한 번 더 돌릴 수 있다 |
+
+A를 고른다. 처음에는 B였다. 2026-11-13 부하 시험 환경에서 00:00 묶음을 재실행하자 후보 예산 갱신이 5초 상한에
+걸려 세 번 모두 취소됐다. 묶음은 사람이 실패를 보고 누르는 일이라 1분 기다리는 비용이 작다.
+
+이어받기가 요청을 알아보는 방법은 소유자를 요청 표식(`RETRY_REQUESTED`)으로 두는 것으로 정했다. `updated_at`을
+2분 넘게 과거로 두어 지금의 이어받기 조건에 걸리게 하는 방법은 바꿀 곳이 가장 적지만, `updated_at`이 마지막 생존
+신호라는 뜻과 어긋나고 앱 서버가 소유자로 남아 누가 돌리는지 헷갈려 고르지 않았다.
+
 **결정: 재실행을 허용하는 jobName의 범위**
 
 | 선택지 | 장점 | 단점 |
@@ -51,16 +67,14 @@ A를 고른다. B는 이슈의 완료 조건("FAILED 행에 부르면 그 작업
 
 ## 재개 코드를 Service 계층에 둔 이유
 
-`DailyJobScheduler.takeOverStale`(이어받기)과 이 API(수동 재실행)는 "묶음이면 `runBundle`, 등록된
-`StandaloneJob`이면 `run`을 다시 부른다"는 같은 분기를 쓴다. 중복을 피하려고 그 분기를
-`isRetryable`/`resume` 두 공개 메서드로 뽑았다.
+묶음을 실제로 도는 로직(`runBundle`, `runStep`, `attempt`, `retryOrFail`)과 "묶음이면 `runBundle`, 등록된
+`StandaloneJob`이면 `run`을 다시 부른다"는 분기(`isRetryable`/`resume`)는 `ops.service.BatchJobRunner`
+(Service 계층)가 갖는다. `DailyJobScheduler`(`job/`, Entry 계층)는 점유 확인(`claim`)과 스케줄,
+이어받기 트리거만 하고 `BatchJobRunner`에 위임한다. 계층 규칙(설계 문서 1.5절)이 Entry 계층에 실행 로직을
+두지 않게 한다.
 
-그 둘을 어디에 둘지는 계층 규칙(설계 문서 1.5절, Service 는 Controller 와 Entry 에게만 불린다)이
-정했다. `DailyJobScheduler`는 `job/`(Entry 계층)이라 Service 계층인 이 API의
-`BatchExecutionRetryService`가 직접 부를 수 없다. 그래서 묶음을 실제로 도는 로직(`runBundle`,
-`runStep`, `attempt`, `retryOrFail`)과 `isRetryable`/`resume`은 `ops.service.BatchJobRunner`
-(Service 계층)가 갖는다. `DailyJobScheduler`는 점유 확인(`claim`)과 스케줄 트리거만 하고
-`BatchJobRunner`에 위임한다.
+수동 재실행도 이어받기 경로로 돌아(#1231) `resume`을 부르는 곳은 이어받기 하나다. 이 API 는 `resume`을
+부르지 않는다.
 
 이름 분류(`isStep`/`isRetryable`)는 `ops.scheduler.BatchJobRegistry.classify` 가 맡는다(#585). 실행 클래스를
 `BatchJobRunner` 라 부르는 것은 묶음만이 아니라 묶음 밖 작업의 재개도 맡기 때문이다.
@@ -68,26 +82,27 @@ A를 고른다. B는 이슈의 완료 조건("FAILED 행에 부르면 그 작업
 ## 동시성
 
 같은 (`jobName`, `businessDate`)로 두 요청이 거의 동시에 와도, 상태를 바꾸는 것은
-`BatchExecutionService.retry`의 조건부 `UPDATE`(`WHERE status = 'FAILED'`) 하나뿐이다. 먼저 걸린
+`BatchExecutionService.requestRetry`의 조건부 `UPDATE`(`WHERE status = 'FAILED'`) 하나뿐이다. 먼저 걸린
 요청만 `RUNNING`으로 바뀌고 뒤에 온 요청은 0건을 받아 `409`로 거부된다. 읽고 나서 판단하는
 구간이 없어 두 서버가 같은 상태를 함께 읽고 둘 다 자기 것이라 믿는 경쟁이 생기지 않는다.
 
+배치 서버 두 대가 같은 요청 행을 함께 집어도 이어받기의 조건부 `UPDATE`(`takeOver`)가 소유자를 먼저 바꾼 쪽만
+1건을 받는다. 뒤에 온 서버는 소유자가 이미 요청 표식이 아니고 `updated_at`도 방금 갱신되어 0건이다.
+
 ## 트랜잭션
 
-상태 조회와 조건부 `UPDATE`는 트랜잭션 밖에서 돈다. 감사 로그 기록만 별도 트랜잭션
-(`TransactionTemplate`)에 담는다. 실제 재개(`BatchJobRunner.resume`)는 트랜잭션 밖, 별도
-스레드에서 돈다. 감사 로그 기록이나 접수 자체(실행기 가득 참)가 실패하면 되돌린 행을 다시
-`FAILED`로 닫는다. 그러지 않으면 아무도 재개하지 않는 `RUNNING` 행이 영원히 남는다.
+상태 조회는 트랜잭션 밖에서 돈다. 조건부 `UPDATE`와 감사 로그 기록은 한 트랜잭션(`TransactionTemplate`)에
+담는다. 감사 로그를 남기지 못하면 되돌리기도 롤백되어 행이 `FAILED`로 남는다. 배치 서버는 커밋된 `RUNNING`
+행만 보므로 감사 없는 재실행이 돌지 않는다.
 
-실행기가 가득 찬 경우는 일반 `500`이 아니라 `503 OPS-005`로 돌려준다. 재실행 요청이 한꺼번에 몰려
-대기열이 찬 일시적 상태라 관리자가 잠시 뒤 다시 누르면 되고, 서버 오류와 구분해 알려야 화면이 다시
-시도하라고 안내할 수 있다. 감사 로그는 이미 요청 트랜잭션에 남은 뒤라 접수하지 못한 시도도 기록으로
-남는다. 접수 못한 사실은 `event=BATCH_MANUAL_RETRY_REJECTED` 로그가 남긴다.
+예전에는 조건부 `UPDATE`를 트랜잭션 밖에서 커밋한 뒤 같은 요청 안에서 재개를 별도 스레드에 접수했다. 재개를
+앱 서버가 하지 않게 되어 둘을 나눌 이유가 없어졌다. 그 접수의 대기열이 차면 주던 `503 OPS-005`도 함께 없앴다.
 
 ## 성능
 
-관리자가 누르는 수동 동작이라 트래픽이 거의 없다. 실행기는 1스레드, 대기열 4로 분석의 A-05와
-같은 크기를 쓴다. 목표 TPS를 따로 두지 않는다.
+관리자가 누르는 수동 동작이라 트래픽이 거의 없다. 요청은 조회 하나, `UPDATE` 하나, 감사 로그 INSERT 하나로
+끝난다. 재개는 배치 서버의 이어받기 스캔(1분 주기)이 집으므로 요청부터 시작까지 최대 1분 남짓 걸린다. 목표 TPS를
+따로 두지 않는다.
 
 ## 다른 도메인에 공개한 기능
 
@@ -97,3 +112,5 @@ A를 고른다. B는 이슈의 완료 조건("FAILED 행에 부르면 그 작업
 
 - V52 요구사항명세서 102행의 정확한 기능 ID(FR 번호)를 확인하지 못했다. `api-spec.md`의
   "도메인과 문서" 표에 임시로 비워 두었다.
+- 배치 서버가 하나도 떠 있지 않으면 요청 표식인 행이 `RUNNING`으로 남는다. 그때는 00:00 묶음도 돌지 않아
+  배치 서버부터 살려야 한다. 일정 시간 아무도 집지 않은 요청을 따로 알릴지는 정하지 않았다(#1231).
