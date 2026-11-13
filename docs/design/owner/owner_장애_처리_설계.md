@@ -11,7 +11,7 @@ DB 현재 상태·롤백은 [#137](https://github.com/lunch-catch/lc-backend/iss
 2026-10-23에 확인한 develop을 기준으로 하며 다른 작성자의 관리자 점주 목록 기능은 포함하지 않는다. 이미지·메뉴 업로드 장애는 [store 장애 설계](../store/store_장애_처리_설계.md)가 소유한다.
 
 새 로그인은 기존 Redis 소비 표시·DB 백업·회전 실패 복구·커밋 후 게시 순서를 기기별 세션에 적용한다.
-DB 장애 때 로그인·갱신·로그아웃은 `AUTH-002`이며 AT 인증도 허용하지 않는다. DB가 허용한 AT에만 Redis LENIENT 정책을 적용한다.
+DB 장애 때 로그인·갱신·로그아웃은 `AUTH-002`이며 AT 인증도 허용하지 않고 `AUTH-002`로 답한다. DB가 허용한 AT에만 Redis LENIENT 정책을 적용한다.
 Redis 게시 실패는 DB에서 확정된 발급을 유지하고 Redis 폐기 실패는 DB 폐기를 유지한 채 `AUTH-002`로 응답한다.
 [점주 세션 설계](owner-sessions.md)가 상세를 소유한다. 아래 단일 토큰용 키와 순번 정책은 기존 토큰의 호환 경로에 적용한다.
 
@@ -56,7 +56,7 @@ DB 실패 뒤 소비 표시 복원은 별도 잠금 아래 이전 RT가 여전�
 | A. Redis만 검사한다 | 인증마다 DB를 읽지 않는다 | 폐기 키 유실로 이전 AT가 다시 허용될 수 있다 |
 | B. DB를 먼저 확인하고 Redis를 추가 검사한다 | Redis 유실과 독립적으로 DB 폐기를 지킨다 | 인증마다 DB 읽기가 추가된다 |
 
-B를 따른다. DB 계정 부재·조회 장애는 `LENIENT`도 인증을 거부하고 `REQUIRED`의 조회 장애는 `AUTH-002`다. Redis 장애의 `LENIENT` 통과는 DB 검증을 통과한 AT에만 적용하며 `REQUIRED`는 `AUTH-002`다.
+B를 따른다. DB 계정 부재는 인증을 거부한다(`401 AUTH-005`). DB 조회 장애는 `LENIENT`와 `REQUIRED` 모두 `AUTH-002`(`503`)다. Redis 장애의 `LENIENT` 통과는 DB 검증을 통과한 AT에만 적용하며 `REQUIRED`는 `AUTH-002`다.
 근거는 [인증 설계](../auth/auth-api-design.md)의 점주 "AT 폐기 순번 검증" 절이다. Redis 장애 통과 지표·경보는 O1에 남긴다.
 
 ### 롤백 안 되는 효과: 커밋 뒤 상태 캐시 삭제
