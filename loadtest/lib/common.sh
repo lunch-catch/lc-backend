@@ -204,6 +204,11 @@ loadgen_cpu_max_pct max_over_time((100*(1-avg(rate(node_cpu_seconds_total{role="
 http_5xx_inc sum by (uri, status) (increase(http_server_requests_seconds_count{status=~"5.."}[$W]))
 '
 
+# 초를 CloudWatch 가 받는 UTC 시각으로 바꾼다. 리눅스와 WSL 의 date 는 -d @초 를, macOS 의 date 는 -r 초 를 받는다(#1228)
+utc_iso() {
+  date -u -d "@$1" +%FT%TZ 2> /dev/null || date -u -r "$1" +%FT%TZ
+}
+
 # 회차 구간의 서버 지표를 모은다. 로컬은 로컬 Prometheus 만 묻는다. RDS 와 ElastiCache 가 없다
 metrics() {
   local start="${1:?시작 ms 를 준다}" end="${2:?끝 ms 를 준다}" queries
@@ -223,7 +228,7 @@ Q"
     printf 'rds_%s ' "${m%%:*}"
     aws cloudwatch get-metric-statistics --namespace AWS/RDS --metric-name "${m%%:*}" \
       --dimensions Name=DBInstanceIdentifier,Value="$PROJECT-db" --period 60 --statistics "${m##*:}" \
-      --start-time "$(date -u -r $((start / 1000)) +%FT%TZ)" --end-time "$(date -u -r $((end / 1000)) +%FT%TZ)" \
+      --start-time "$(utc_iso $((start / 1000)))" --end-time "$(utc_iso $((end / 1000)))" \
       --query "sort_by(Datapoints,&Timestamp)[].${m##*:}" --output text
   done
   # ElastiCache 의 t4g 는 Unlimited 가 없어 CPU 크레딧이나 네트워크 버스트가 바닥나면 기준 성능으로 떨어진다
@@ -233,7 +238,7 @@ Q"
       printf 'valkey_%s_%s ' "$node" "${m%%:*}"
       aws cloudwatch get-metric-statistics --namespace AWS/ElastiCache --metric-name "${m%%:*}" \
         --dimensions Name=CacheClusterId,Value="$node" --period 60 --statistics "${m##*:}" \
-        --start-time "$(date -u -r $((start / 1000)) +%FT%TZ)" --end-time "$(date -u -r $((end / 1000)) +%FT%TZ)" \
+        --start-time "$(utc_iso $((start / 1000)))" --end-time "$(utc_iso $((end / 1000)))" \
         --query "sort_by(Datapoints,&Timestamp)[].${m##*:}" --output text
     done
   done
