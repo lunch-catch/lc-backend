@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.lunchcatch.auth.CustomUserDetails;
@@ -182,5 +183,6 @@ class JwtAuthenticationFilterTest {
             }
         });
         assertThat(continued[0]).isTrue();
+        verifyNoInteractions(exceptionResolver);
     }
 }

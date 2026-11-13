@@ -87,8 +87,15 @@ class AdminAccessTokenVersionTest {
         SecurityContextHolder.clearContext();
         var request = new MockHttpServletRequest("GET", "/v1/admin/test");
         request.setCookies(new Cookie("adminAccessToken", token));
-        new JwtAuthenticationFilter(jwt, legacy, java.util.List.of(new AdminAccessTokenVerifier(repository, new AccessTokenCutoffVerifier(legacy), revocations, org.mockito.Mockito.mock(com.lunchcatch.admin.service.AdminSessionService.class))), org.mockito.Mockito.mock(org.springframework.web.servlet.HandlerExceptionResolver.class)).doFilter(request, new MockHttpServletResponse(), (req, res) -> {
-            assertThat(SecurityContextHolder.getContext().getAuthentication() != null).isEqualTo(expected);
+        var exceptionResolver = org.mockito.Mockito.mock(org.springframework.web.servlet.HandlerExceptionResolver.class);
+        boolean[] authenticated = {false, false};
+        new JwtAuthenticationFilter(jwt, legacy, java.util.List.of(new AdminAccessTokenVerifier(repository, new AccessTokenCutoffVerifier(legacy), revocations, org.mockito.Mockito.mock(com.lunchcatch.admin.service.AdminSessionService.class))), exceptionResolver).doFilter(request, new MockHttpServletResponse(), (req, res) -> {
+            authenticated[0] = true;
+            authenticated[1] = SecurityContextHolder.getContext().getAuthentication() != null;
         });
+        // 체인이 멈추면 안의 단언이 돌지 않으므로 체인을 지났는지와 예외 처리로 넘기지 않았는지를 밖에서 본다
+        assertThat(authenticated[0]).isTrue();
+        assertThat(authenticated[1]).isEqualTo(expected);
+        org.mockito.Mockito.verifyNoInteractions(exceptionResolver);
     }
 }
