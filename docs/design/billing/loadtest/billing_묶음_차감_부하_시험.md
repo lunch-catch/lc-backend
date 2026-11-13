@@ -110,3 +110,12 @@ A 두 회차의 차이를 잡음의 크기로 본다. A 평균과 B 평균의 �
 ## 7. 경고 로그
 
 회차마다 `run` 이 그 회차 구간의 `ADSERVING_` 경고와 오류를 이벤트별로 세어 이 절의 표에 적는다. 이름이 `-warmup` 으로 끝나는 회차는 적지 않는다.
+
+| 회차 | 수준 | 이벤트 | 건수 |
+|---|---|---|---|
+| abba-a1 | - | 없음 | 0 |
+| abba-a1 | 수집 | APP_SCRAPE_MISSED | 0 |
+| abba-a1 | 수집 | BATCH_SCRAPE_MISSED | 0 |
+| abba-b1 | ERROR | ADSERVING_IMPRESSION_WRITE_FAILED | 4 |
+| abba-b1 | 수집 | APP_SCRAPE_MISSED | 0 |
+| abba-b1 | 수집 | BATCH_SCRAPE_MISSED | 0 |
