@@ -8,6 +8,7 @@
 #   AWS_PROFILE=<프로필> loadtest/adserving/run.sh run <이름> <회원 시작 번호> [초당 피드] [유지 시간] [--scenario feed] [--profile cpu|wall|both]
 #   AWS_PROFILE=<프로필> loadtest/adserving/run.sh metrics <시작 ms> <끝 ms>  그 구간의 서버 지표
 #   AWS_PROFILE=<프로필> loadtest/adserving/run.sh rows                    시험 데이터의 행 수
+#   AWS_PROFILE=<프로필> loadtest/adserving/run.sh drain <이름> [건수]       대기 노출을 넣고 릴레이가 다 비우는 시간과 그 구간의 지표를 잰다
 #   AWS_PROFILE=<프로필> loadtest/adserving/run.sh switch <sha> [--tracing <이름>] [--no-pool] [--env KEY=VALUE]...  앱과 배치를 그 커밋 이미지로 다시 띄운다. GHCR 에 있어야 한다
 #   AWS_PROFILE=<프로필> loadtest/adserving/run.sh reset [회원 수]         Valkey 를 비우고 시험 데이터를 다시 넣는다
 #   AWS_PROFILE=<프로필> loadtest/adserving/run.sh profile <이름> [초] [cpu|wall|both]  앱 서버에 프로파일링을 붙인다
@@ -20,6 +21,7 @@
 # switch 에 --env KEY=VALUE 를 주면 그 환경변수를 넣어 띄운다. 여러 번 줄 수 있다. 다시 빌드하지 않고 조정 값(예: ADSERVING_IMPRESSION_WRITEBUFFER_BATCHSIZE=1000)을 바꿔 잰다(#1170).
 # 첫 인자를 --local 로 주면 lc-infra 의 로컬 구성을 대상으로 seed, prepare, run, metrics, profile 을 같은 인자로 돌린다.
 # 로컬의 switch 는 커밋 없이 [--tracing <이름>] [--no-pool] [--env KEY=VALUE]... 만 받아 로컬 앱을 다시 띄운다.
+# drain 은 노출 API 를 부르지 않는다. 회차마다 같은 수의 대기 노출만 비우므로 밀림이 다음 회차로 넘어가지 않는다(#1198).
 # 시나리오와 시드 생성기는 떠 있는 앱과 같은 커밋(SSM current-sha)에서 받는다. 값이 없으면 develop 이다.
 # LOADTEST_REF 로 브랜치나 커밋을 따로 고를 수 있다.
 set -euo pipefail
@@ -95,7 +97,7 @@ select 'batch', status from batch_execution_log where business_date = '\$D' and 
 }
 
 case "${LOCAL:+local-}${1:-}" in
-  local-reset|local-rows)
+  local-reset|local-rows|local-drain)
     die "로컬에서는 seed, prepare, run, metrics, profile, switch 만 쓴다" ;;
   local-switch)
     shift
@@ -255,6 +257,42 @@ grep 'level=error' \$OUT/k6-$name.log | tail -5 || true" ) > "$out" || rc=$?
   profile|local-profile)
     profile "${2:-}" "${3:-60}" "${4:-wall}"
     ;;
+  drain)
+    #
+    # 노출 API 부하 없이 릴레이(ImpressionDispatchJob)가 대기 노출을 비우는 속도를 잰다(#1198).
+    # 앱 서버에서 그날 유효 노출 N건을 한 트랜잭션으로 넣고, 넣은 뒤부터 남은 노출이 0 이 될 때까지를 한 구간으로 본다.
+    # 노출은 시드의 캠페인 1,000개와 회원 5,000명에 고르게 나눈다. 캠페인 하루 예산이 커서 회차마다 같은 비율로 과금된다.
+    # 앞 회차의 노출이 남아 있으면 구간이 섞이므로 넣지 않고 멈춘다.
+    #
+    name="${2:?회차 이름을 준다}"; count="${3:-50000}"
+    case "$count" in ''|*[!0-9]*) die "건수는 양의 정수로 준다" ;; esac
+    [ "$count" -gt 0 ] || die "건수는 양의 정수로 준다"
+    out=$(remote "$(instance app)" 3900 "set -euo pipefail
+$DB_ENV
+PENDING=\"SELECT COUNT(*) FROM impression_log WHERE dispatched_at IS NULL AND dispatch_abandoned_at IS NULL AND created_at >= TIMESTAMP(DATE_SUB('\$D', INTERVAL 1 DAY))\"
+left=\$(mysql -N -e \"\$PENDING\")
+[ \"\$left\" -eq 0 ] || { echo \"앞 회차의 대기 노출 \$left 건이 남아 있다. 비워진 뒤 다시 부른다\" >&2; exit 1; }
+mysql -e \"SET SESSION cte_max_recursion_depth = $count;
+INSERT INTO impression_log (serve_id, member_id, business_date, campaign_id, store_id, slot_type, slot_position, displayed_at,
+                            lat_rounded, lng_rounded, validity, invalid_reason, sold_out, viewed_ms, created_at, updated_at)
+WITH RECURSIVE n (i) AS (SELECT 0 UNION ALL SELECT i + 1 FROM n WHERE i + 1 < $count)
+SELECT UUID_TO_BIN(UUID(), 1), 30000001 + MOD(i, 5000), '\$D', 30000001 + MOD(i, 1000), 30000001 + MOD(i, 1000),
+       'ALLOCATION', 1, NOW(6), 37.556, 126.922, 'VALID', NULL, FALSE, NULL, NOW(6), NOW(6)
+FROM n;\"
+echo \"start \$(date +%s%3N)\"
+for i in \$(seq 1 720); do
+  left=\$(mysql -N -e \"\$PENDING\")
+  [ \"\$left\" -eq 0 ] && { echo \"end \$(date +%s%3N)\"; exit 0; }
+  sleep 5
+done
+echo \"1시간 안에 비우지 못했다. 남은 노출 \$left 건\" >&2; exit 1")
+    printf '%s\n' "$out"
+    start=$(printf '%s\n' "$out" | awk '$1 == "start" {print $2}')
+    end=$(printf '%s\n' "$out" | awk '$1 == "end" {print $2}')
+    [ -n "$start" ] && [ -n "$end" ] || die "구간을 읽지 못했다"
+    echo "drain $name $count 건, $(( (end - start) / 1000 ))초, 초당 $(( count * 1000 / (end - start) ))건"
+    metrics "$start" "$end"
+    ;;
   rows)
     remote "$(instance app)" 300 "set -euo pipefail
 $DB_ENV
@@ -264,5 +302,5 @@ select 'deduction', billing_status, count(*) from deduction_result where campaig
 select 'ledger', entry_type, count(*) from point_ledger where owner_id >= 30000001 group by entry_type;\""
     ;;
   *)
-    sed -n '3,23p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
+    sed -n '3,25p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
 esac

@@ -86,7 +86,7 @@ loadtest/adserving/run.sh --local metrics <window 시작 ms> <window 끝 ms>
 ```
 
 - 시나리오와 생성기는 지금 작업 트리의 것을 쓴다. k6 는 이 기계에서 돌고 지표를 로컬 Prometheus 로 보내 05 부하 시험 대시보드가 같은 화면으로 채워진다.
-- `reset`, `rows` 처럼 AWS 에만 있는 일은 로컬에서 막는다. `switch` 는 커밋 없이 `[--tracing <이름>]` 만 받아 로컬 앱을 다시 띄운다.
+- `reset`, `rows`, `drain` 처럼 AWS 에만 있는 일은 로컬에서 막는다. `switch` 는 커밋 없이 `[--tracing <이름>]` 만 받아 로컬 앱을 다시 띄운다.
 - 초당 피드는 노트북에 맞춰 낮춘다. 20 이면 초당 요청이 약 200 이다.
 
 ## 연결 풀을 끄고 재기
@@ -113,6 +113,21 @@ loadtest/adserving/run.sh --local switch --env ADSERVING_CACHE_CANDIDATEMAXAGE=1
 - 이름은 설정 키를 대문자로 바꾸고 점을 `_` 로, `-` 를 빼서 만든다. `adserving.impression.write-buffer.batch-size` 는 `ADSERVING_IMPRESSION_WRITEBUFFER_BATCHSIZE` 다.
 - 설정 키와 기본값, 값을 고른 이유는 `application.yml` 의 `adserving:` 에 있다. 값끼리 맞물리는 것(묶음 <= 용량, 첫 백오프 <= 최대 백오프, 릴레이의 임대 > 주기)을 어기면 앱이 뜨지 않는다.
 - 트레이싱, 풀 끔과 같은 `compose.override.yaml` 에 들어간다. `--env` 없이 다시 `switch` 하면 그 값이 빠진다.
+
+## 대기 노출만 비우고 재기
+
+노출 릴레이와 정산의 묶음 차감(`deductAll`)만 잰다(#1198). 노출 API 를 부르지 않고, 그날 유효 노출을 미리 넣어 릴레이가 다 비울 때까지 기다린다.
+
+```bash
+loadtest/adserving/run.sh seed
+loadtest/adserving/run.sh prepare
+loadtest/adserving/run.sh drain drain-a1 50000
+```
+
+- 앱 서버에서 노출 N건(기본 50,000)을 한 트랜잭션으로 넣고, 넣은 뒤부터 남은 노출이 0 이 될 때까지를 한 구간으로 잰다. 끝나면 걸린 초와 초당 건수를 내고 그 구간으로 `metrics` 를 묻는다.
+- 노출은 시드의 캠페인 1,000개와 회원 5,000명에 고르게 나눈다. 캠페인 하루 예산이 커서 회차마다 같은 비율로 과금되어 원장에 DEDUCT 가 쓰인다. 그래서 `prepare` 로 그날 예약이 있어야 한다.
+- 회차가 끝나면 밀린 노출이 0 이라 다음 회차로 넘어가지 않고, 쌓이는 데이터도 회차마다 N건씩 같다. 노출 API 부하와 섞어 회차를 이어 돌면 밀림이 넘어가 뒤 회차일수록 느려진다.
+- 앞 회차의 노출이 남아 있으면 넣지 않고 멈춘다. 1시간 안에 비우지 못해도 멈춘다.
 
 ## 트레이싱
 
