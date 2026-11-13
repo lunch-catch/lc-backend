@@ -145,11 +145,13 @@ class OwnerLogoutSecurityIntegrationTest extends AbstractOwnerIntegrationTest {
     }
 
     @Test
-    void DB_조회_장애시_인증을_거부한다() throws Exception {
+    // 인증을 거부하되 무효(401)가 아니라 저장소 장애(503)로 답해 클라이언트가 재발급을 부르지 않게 한다(#1226)
+    void DB_조회_장애시_인증을_거부하고_503_AUTH002로_답한다() throws Exception {
         doThrow(new DataAccessResourceFailureException("DB")).when(revocations).findRevokedVersion(ownerId);
 
         mvc.perform(delete(PATH).cookie(ownerToken()))
-                .andExpect(status().isUnauthorized());
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(jsonPath("$.code").value("AUTH-002"));
 
         verifyNoInteractions(logoutService);
     }

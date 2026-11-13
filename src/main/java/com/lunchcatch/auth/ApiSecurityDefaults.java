@@ -75,7 +75,8 @@ public class ApiSecurityDefaults {
                 .httpBasic(AbstractHttpConfigurer::disable)
 
                 .addFilterBefore(
-                        new JwtAuthenticationFilter(jwtTokenProvider, accessTokenValidAfterRepository, validationPolicies),
+                        new JwtAuthenticationFilter(jwtTokenProvider, accessTokenValidAfterRepository,
+                                validationPolicies, handlerExceptionResolver),
                         UsernamePasswordAuthenticationFilter.class)
                 .addFilterBefore(
                         new AuthRateLimitFilter(redisTemplate),

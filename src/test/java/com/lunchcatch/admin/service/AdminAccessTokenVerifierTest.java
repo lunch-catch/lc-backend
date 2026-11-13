@@ -19,7 +19,8 @@ class AdminAccessTokenVerifierTest {
     private final com.lunchcatch.admin.repository.AdminAccessTokenRevocationRepository revocations = mock(com.lunchcatch.admin.repository.AdminAccessTokenRevocationRepository.class);
     private final AdminAccessTokenVersionRepository versions = mock(AdminAccessTokenVersionRepository.class);
     private final AccessTokenCutoffVerifier legacy = mock(AccessTokenCutoffVerifier.class);
-    private final AdminAccessTokenVerifier verifier = new AdminAccessTokenVerifier(versions, legacy, revocations, org.mockito.Mockito.mock(com.lunchcatch.admin.service.AdminSessionService.class));
+    private final AdminSessionService sessions = mock(AdminSessionService.class);
+    private final AdminAccessTokenVerifier verifier = new AdminAccessTokenVerifier(versions, legacy, revocations, sessions);
     private final LocalDateTime issuedAt = LocalDateTime.of(2026, 10, 12, 12, 0);
 
     @ParameterizedTest
@@ -114,10 +115,21 @@ class AdminAccessTokenVerifierTest {
     }
 
     @Test
-    void DB_장애는_완화정책에서도_인증하지_않는다() {
+    void DB_장애는_완화정책에서도_AUTH002다() {
         when(revocations.findRevocation(1L)).thenThrow(new DataAccessResourceFailureException("secret"));
-        assertThat(verifier.isValidAfter(Role.ADMIN, 1L, issuedAt, 12L, CutoffPolicy.LENIENT)).isFalse();
+        assertThatThrownBy(() -> verifier.isValidAfter(Role.ADMIN, 1L, issuedAt, 12L, CutoffPolicy.LENIENT))
+                .isInstanceOfSatisfying(AuthException.class,
+                        failure -> assertThat(failure.getErrorCode()).isEqualTo(AuthErrorCode.REFRESH_TOKEN_STORE_UNAVAILABLE));
         verifyNoInteractions(versions, legacy);
+    }
+
+    @ParameterizedTest
+    @EnumSource(CutoffPolicy.class)
+    void 세션_DB_장애는_완화정책에서도_AUTH002다(CutoffPolicy policy) {
+        AuthException unavailable = new AuthException(AuthErrorCode.REFRESH_TOKEN_STORE_UNAVAILABLE);
+        when(sessions.isValid(1L, Role.ADMIN, 12L)).thenThrow(unavailable);
+        assertThatThrownBy(() -> verifier.isValidAfter(Role.ADMIN, 1L, issuedAt, 12L, policy)).isSameAs(unavailable);
+        verifyNoInteractions(revocations, versions, legacy);
     }
 
     @Test
