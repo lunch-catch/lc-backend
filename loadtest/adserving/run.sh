@@ -272,7 +272,8 @@ $DB_ENV
 PENDING=\"SELECT COUNT(*) FROM impression_log WHERE dispatched_at IS NULL AND dispatch_abandoned_at IS NULL AND created_at >= TIMESTAMP(DATE_SUB('\$D', INTERVAL 1 DAY))\"
 left=\$(mysql -N -e \"\$PENDING\")
 [ \"\$left\" -eq 0 ] || { echo \"앞 회차의 대기 노출 \$left 건이 남아 있다. 비워진 뒤 다시 부른다\" >&2; exit 1; }
-mysql -e \"SET SESSION cte_max_recursion_depth = $count;
+mysql -e \"SET SESSION time_zone = '+09:00';
+SET SESSION cte_max_recursion_depth = $count;
 INSERT INTO impression_log (serve_id, member_id, business_date, campaign_id, store_id, slot_type, slot_position, displayed_at,
                             lat_rounded, lng_rounded, validity, invalid_reason, sold_out, viewed_ms, created_at, updated_at)
 WITH RECURSIVE n (i) AS (SELECT 0 UNION ALL SELECT i + 1 FROM n WHERE i + 1 < $count)
