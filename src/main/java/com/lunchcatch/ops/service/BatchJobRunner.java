@@ -17,9 +17,8 @@ import org.springframework.stereotype.Service;
  *
  * DailyJobScheduler(Entry 계층, job/)가 트리거(스케줄, 이어받기 스캔)를 쥐고, 이 클래스가
  * 실행을 책임진다. 계층 규칙(Service 는 Controller, Entry 에게만 불린다, 설계 문서 1.5절)
- * 때문에 나눴다. 관리자 수동 재실행(BatchExecutionRetryService, #362)은 Service 계층이라
- * Entry 계층인 DailyJobScheduler 를 직접 부를 수 없고, 같은 Service 계층인 이 클래스를
- * DailyJobScheduler 와 함께 쓴다.
+ * 때문에 나눴다. 관리자 수동 재실행(BatchExecutionRetryService, #362)은 직접 돌리지 않고
+ * DailyJobScheduler 의 이어받기가 집도록 행을 되돌린다(#1231).
  *
  * 작업 내용은 모른다. 각 도메인이 DailyJob 을 구현해 등록하고 순서는 @Order 가 정한다 (규칙 6).
  * 작업 이름이 묶음, 단계, 묶음 밖 작업 중 무엇인지는 BatchJobRegistry 가 가른다(#585).

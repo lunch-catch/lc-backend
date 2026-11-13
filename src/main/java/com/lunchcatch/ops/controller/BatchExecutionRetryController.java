@@ -32,15 +32,14 @@ public class BatchExecutionRetryController {
     @Operation(
             summary = "배치 수동 재실행",
             description = "FAILED 로 확정된 00:00 묶음 또는 등록된 묶음 밖 작업을 다시 실행합니다. "
-                    + "접수 즉시 202를 돌려주고 실제 재실행은 별도로 돕니다. 결과는 감사 로그와 "
-                    + "배치 실행 기록으로 확인합니다."
+                    + "접수 즉시 202를 돌려주고 실제 재실행은 배치 서버가 1분 안에 이어받아 돕니다. "
+                    + "결과는 감사 로그와 배치 실행 기록으로 확인합니다."
     )
     @ApiResponses({
             @ApiResponse(responseCode = "202", description = "접수 성공"),
             @ApiResponse(responseCode = "404", description = "OPS-002: 그 작업의 실행 기록이 없습니다."),
             @ApiResponse(responseCode = "409", description = "OPS-003: FAILED 상태가 아니면 재실행할 수 없습니다."),
-            @ApiResponse(responseCode = "422", description = "OPS-001: 다시 실행할 수 없는 작업입니다."),
-            @ApiResponse(responseCode = "503", description = "OPS-005: 재실행 요청이 몰려 지금은 받을 수 없습니다. 잠시 후 다시 시도해 주세요.")
+            @ApiResponse(responseCode = "422", description = "OPS-001: 다시 실행할 수 없는 작업입니다.")
     })
     public ResponseEnvelope<BatchExecutionRetryResponse> retry(
             @AuthenticationPrincipal CustomUserDetails admin,

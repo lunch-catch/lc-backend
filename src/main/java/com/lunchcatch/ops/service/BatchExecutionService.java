@@ -46,6 +46,12 @@ public class BatchExecutionService {
      */
     private static final int MAX_AUTO_RETRIES = 2;
 
+    /*
+     * 관리자가 재실행을 요청했고 아직 아무 배치 서버도 집지 않은 행의 소유자다(#1231).
+     * 서버 식별자(호스트명)와 겹치지 않는 값이다. 이어받기가 이 값의 행을 멈출 때까지 기다리지 않고 집는다.
+     */
+    public static final String RETRY_REQUESTED_OWNER = "RETRY_REQUESTED";
+
     private final BatchExecutionLogRepository logs;
     private final BatchAlert alert;
     private final Clock clock;
@@ -202,19 +208,28 @@ public class BatchExecutionService {
     }
 
     /*
-     * 멈춘 행을 찾아 이어받는다. 이어받은 행을 돌려준다.
+     * 멈춘 행과 재실행을 요청받은 행을 찾아 이어받는다. 이어받은 행을 돌려준다.
      *
      * 내 소유는 찾지 않는다. 내가 들고 있는데 갱신이 멈췄다면 내 생존 신호가 막힌 것이고,
      * 그것을 내가 다시 가져오는 것은 아무 의미가 없다.
+     *
+     * 재실행을 요청받은 행은 멈춘 서버를 이어받은 것이 아니라 관리자의 요청을 시작한 것이라
+     * 이어받기 경보를 보내지 않고 시작만 남긴다(#1231).
      */
     @Transactional
     public List<BatchExecutionLog> takeOverStale() {
         LocalDateTime staleBefore = now().minus(STALE_AFTER);
         List<BatchExecutionLog> taken = new ArrayList<>();
-        for (BatchExecutionLog stale : logs.findByStatusAndOwnerIdNotAndUpdatedAtBefore(
-                BatchStatus.RUNNING, ownerId, staleBefore)) {
-            if (logs.takeOver(stale.getJobName(), stale.getBusinessDate(), ownerId, now(), staleBefore) == 1) {
-                alert.takenOver(stale.getJobName(), stale.getBusinessDate(), stale.getOwnerId(), ownerId);
+        for (BatchExecutionLog stale : logs.findTakeOverTargets(
+                ownerId, staleBefore, RETRY_REQUESTED_OWNER)) {
+            if (logs.takeOver(stale.getJobName(), stale.getBusinessDate(), ownerId, now(), staleBefore,
+                    RETRY_REQUESTED_OWNER) == 1) {
+                if (RETRY_REQUESTED_OWNER.equals(stale.getOwnerId())) {
+                    log.info("event=BATCH_MANUAL_RETRY_STARTED job={} businessDate={} owner={}",
+                            stale.getJobName(), stale.getBusinessDate(), ownerId);
+                } else {
+                    alert.takenOver(stale.getJobName(), stale.getBusinessDate(), stale.getOwnerId(), ownerId);
+                }
                 /*
                  * takeOver 는 벌크 UPDATE라 stale 의 attemptNo 는 그대로다. 묶음 밖 작업을
                  * 다시 돌리려면 오른 세대가 필요해 다시 읽는다(#360).
@@ -249,13 +264,24 @@ public class BatchExecutionService {
     }
 
     /*
-     * 관리자의 수동 재실행이다. 실패한 행만 실행 중으로 되돌린다.
-     * 상태를 조건에 넣었으므로 두 번 눌러도 한 번만 걸린다. 시작 시각과 처리 건수도 이
+     * 실패한 행만 실행 중으로 되돌리고 이 서버가 소유한다. 되돌린 뒤 이 서버가 직접 돈다.
+     * 분석의 일별 집계가 실패한 날짜를 다시 잡을 때 쓴다(DailyAggregationRunner).
+     * 상태를 조건에 넣었으므로 두 번 불러도 한 번만 걸린다. 시작 시각과 처리 건수도 이
      * 시도의 것으로 새로 한다(#359).
      */
     @Transactional
     public boolean retry(String jobName, LocalDate businessDate) {
         return logs.restartFailed(jobName, businessDate, ownerId, now()) == 1;
+    }
+
+    /*
+     * 관리자의 수동 재실행이다. retry 와 같이 실패한 행만 되돌리되, 소유자를 이 서버가 아니라
+     * 요청 표식으로 둔다. 요청을 받은 앱 서버는 묶음을 돌리지 않고, 배치 서버의 이어받기가
+     * 다음 스캔에 집어 배치 설정의 시간 제한으로 돈다(#1231).
+     */
+    @Transactional
+    public boolean requestRetry(String jobName, LocalDate businessDate) {
+        return logs.restartFailed(jobName, businessDate, RETRY_REQUESTED_OWNER, now()) == 1;
     }
 
     /*
@@ -320,7 +346,7 @@ public class BatchExecutionService {
     /** 멈춘 실행 중 행 하나를 이어받는다. 조건에 걸린 서버만 1건을 받는다. */
     private boolean takeOver(String jobName, LocalDate businessDate) {
         LocalDateTime at = now();
-        return logs.takeOver(jobName, businessDate, ownerId, at, at.minus(STALE_AFTER)) == 1;
+        return logs.takeOver(jobName, businessDate, ownerId, at, at.minus(STALE_AFTER), RETRY_REQUESTED_OWNER) == 1;
     }
 
     private String shorten(String reason) {

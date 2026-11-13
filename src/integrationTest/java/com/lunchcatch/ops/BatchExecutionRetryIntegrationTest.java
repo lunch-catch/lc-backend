@@ -10,8 +10,10 @@ import com.lunchcatch.auth.CustomUserDetails;
 import com.lunchcatch.auth.Role;
 import com.lunchcatch.ops.exception.OpsErrorCode;
 import com.lunchcatch.ops.exception.OpsException;
+import com.lunchcatch.ops.job.DailyJobScheduler;
 import com.lunchcatch.ops.scheduler.BatchJobRegistry;
 import com.lunchcatch.ops.service.BatchExecutionRetryService;
+import com.lunchcatch.ops.service.BatchExecutionService;
 import java.sql.Timestamp;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -48,6 +50,9 @@ class BatchExecutionRetryIntegrationTest extends AbstractOpsIntegrationTest {
     private JdbcTemplate jdbc;
     @Autowired
     private BatchExecutionRetryService service;
+    // 배치 서버의 1분 이어받기 스캔을 대신 부른다. 이 컨텍스트는 스케줄러가 꺼져 있어 부르지 않으면 돌지 않는다
+    @Autowired
+    private DailyJobScheduler scheduler;
 
     @AfterEach
     void cleanUp() {
@@ -56,8 +61,13 @@ class BatchExecutionRetryIntegrationTest extends AbstractOpsIntegrationTest {
         jdbc.update("DELETE FROM audit_log WHERE admin_id = ?", ADMIN_ID);
     }
 
+    /*
+     * 앱 서버는 묶음을 돌리지 않고 행을 요청 표식으로 되돌리기만 한다(#1231).
+     * 배치 서버의 이어받기가 그 행을 2분을 기다리지 않고 집어 SUCCESS 로 닫는다.
+     * 세대는 재실행에서 하나, 이어받기에서 하나 올라 1 에서 3 이 된다.
+     */
     @Test
-    void FAILED_행을_재실행하면_202를_주고_결과로_행을_SUCCESS로_닫고_감사_로그를_남긴다() throws Exception {
+    void FAILED_행을_재실행하면_202를_주고_배치_서버의_이어받기가_돌려_SUCCESS로_닫고_감사_로그를_남긴다() throws Exception {
         insertFailed(JOB, DATE, 1);
 
         mvc.perform(post(path(JOB, DATE))
@@ -67,12 +77,30 @@ class BatchExecutionRetryIntegrationTest extends AbstractOpsIntegrationTest {
                 .andExpect(jsonPath("$.data.businessDate").value(DATE.toString()))
                 .andExpect(jsonPath("$.data.status").value("RUNNING"));
 
-        awaitStatus(JOB, DATE, "SUCCESS");
-        assertThat(attemptNoOf(JOB, DATE)).isEqualTo(2);
+        assertThat(statusOf(JOB, DATE)).isEqualTo("RUNNING");
+        assertThat(ownerOf(JOB, DATE)).isEqualTo(BatchExecutionService.RETRY_REQUESTED_OWNER);
         List<Long> auditAdmins = jdbc.queryForList(
                 "SELECT admin_id FROM audit_log WHERE admin_id = ? AND action = 'BATCH_EXECUTION_RETRY'",
                 Long.class, ADMIN_ID);
         assertThat(auditAdmins).hasSize(1);
+
+        scheduler.takeOverStale();
+
+        assertThat(statusOf(JOB, DATE)).isEqualTo("SUCCESS");
+        assertThat(ownerOf(JOB, DATE)).isNotEqualTo(BatchExecutionService.RETRY_REQUESTED_OWNER);
+        assertThat(attemptNoOf(JOB, DATE)).isEqualTo(3);
+    }
+
+    // 살아 있는 다른 서버가 방금 갱신한 실행 중 행은 요청 표식이 아니라 이어받지 않는다
+    @Test
+    void 이어받기는_생존_신호가_살아_있는_다른_서버의_행을_가져가지_않는다() {
+        insertLog(JOB, DATE, "RUNNING", 1);
+
+        scheduler.takeOverStale();
+
+        assertThat(statusOf(JOB, DATE)).isEqualTo("RUNNING");
+        assertThat(ownerOf(JOB, DATE)).isEqualTo("other-server");
+        assertThat(attemptNoOf(JOB, DATE)).isEqualTo(1);
     }
 
     @Test
@@ -143,7 +171,9 @@ class BatchExecutionRetryIntegrationTest extends AbstractOpsIntegrationTest {
             assertThat(conflicted).isEqualTo(1);
         }
 
-        awaitStatus(JOB, DATE, "SUCCESS");
+        scheduler.takeOverStale();
+        assertThat(statusOf(JOB, DATE)).isEqualTo("SUCCESS");
+        assertThat(attemptNoOf(JOB, DATE)).isEqualTo(3);
     }
 
     /** 성공해 접수됐으면 true, OPS-003(FAILED 아님)으로 거부됐으면 false다. 다른 예외는 그대로 던진다. */
@@ -203,14 +233,9 @@ class BatchExecutionRetryIntegrationTest extends AbstractOpsIntegrationTest {
                 Integer.class, jobName, java.sql.Date.valueOf(date));
     }
 
-    private void awaitStatus(String jobName, LocalDate date, String expected) throws InterruptedException {
-        long deadline = System.currentTimeMillis() + 10_000;
-        while (System.currentTimeMillis() < deadline) {
-            if (expected.equals(statusOf(jobName, date))) {
-                return;
-            }
-            Thread.sleep(100);
-        }
-        assertThat(statusOf(jobName, date)).isEqualTo(expected);
+    private String ownerOf(String jobName, LocalDate date) {
+        return jdbc.queryForObject(
+                "SELECT owner_id FROM batch_execution_log WHERE job_name = ? AND business_date = ?",
+                String.class, jobName, java.sql.Date.valueOf(date));
     }
 }
