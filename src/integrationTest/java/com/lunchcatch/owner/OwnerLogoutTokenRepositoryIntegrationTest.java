@@ -136,7 +136,8 @@ class OwnerLogoutTokenRepositoryIntegrationTest extends AbstractOwnerIntegration
         request.setCookies(new jakarta.servlet.http.Cookie("accessToken", token));
         var response = new org.springframework.mock.web.MockHttpServletResponse();
         try {
-            new com.lunchcatch.auth.jwt.JwtAuthenticationFilter(jwt, cutoff, java.util.List.of(new com.lunchcatch.owner.service.OwnerAccessTokenPolicy(org.mockito.Mockito.mock(com.lunchcatch.owner.service.OwnerSessionService.class), versions, revocations)))
+            new com.lunchcatch.auth.jwt.JwtAuthenticationFilter(jwt, cutoff, java.util.List.of(new com.lunchcatch.owner.service.OwnerAccessTokenPolicy(org.mockito.Mockito.mock(com.lunchcatch.owner.service.OwnerSessionService.class), versions, revocations)),
+                    org.mockito.Mockito.mock(org.springframework.web.servlet.HandlerExceptionResolver.class))
                     .doFilter(request, response, new org.springframework.mock.web.MockFilterChain());
             return org.springframework.security.core.context.SecurityContextHolder.getContext().getAuthentication() != null;
         } finally {

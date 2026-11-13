@@ -46,15 +46,11 @@ public class AdminAccessTokenVerifier implements AccessTokenValidationPolicy {
         if (!supports(role) || issuedAt == null) { return false; }
         if (id == null || (version != null && version <= 0)) { return false; }
         if (version != null) {
-            try {
-                var session = sessions.isValid(id, role, version);
-                if (session.isPresent()) { return session.get(); }
-            } catch (AuthException unavailable) {
-                if (policy == CutoffPolicy.REQUIRED) { throw unavailable; }
-                return false;
-            }
+            // 세션 저장소 장애(AUTH-002)는 일반 요청에서도 그대로 올려 503 으로 답한다(#1226)
+            var session = sessions.isValid(id, role, version);
+            if (session.isPresent()) { return session.get(); }
         }
-        if (!isValidInDatabase(id, issuedAt, version, policy)) { return false; }
+        if (!isValidInDatabase(id, issuedAt, version)) { return false; }
         // Redis는 이전 배포와의 호환을 위한 추가 검사이며 DB에서 폐기된 토큰을 허용하지 못한다.
         if (version == null) { return legacyCutoff.isValidAfter(role, id, issuedAt, policy); }
         try {
@@ -69,20 +65,20 @@ public class AdminAccessTokenVerifier implements AccessTokenValidationPolicy {
         }
     }
 
-    private boolean isValidInDatabase(Long id, LocalDateTime issuedAt, Long version, CutoffPolicy policy) {
+    private boolean isValidInDatabase(Long id, LocalDateTime issuedAt, Long version) {
         try {
             var state = revocations.findRevocation(id);
             if (state.isEmpty()) { return false; }
             if (version != null) { return version > state.get().version(); }
             return state.get().validAfter() == null || !issuedAt.isBefore(state.get().validAfter());
         } catch (DataAccessException | TransactionException failure) {
-            // DB 기준을 확인하지 못하면 Redis 장애 허용 정책과 관계없이 관리자 인증을 거부한다.
+            /*
+             * DB 기준을 확인하지 못하면 Redis 장애 허용 정책과 관계없이 관리자 인증을 거부한다.
+             * 일반 요청도 무효(401)가 아니라 저장소 장애(503)로 답해 재발급을 부르지 않게 한다(#1226).
+             */
             log.warn("event=ADMIN_ACCESS_TOKEN_DB_CHECK_FAILED adminId={} exceptionType={}",
                     id, failure.getClass().getSimpleName());
-            if (policy == CutoffPolicy.REQUIRED) {
-                throw new AuthException(AuthErrorCode.REFRESH_TOKEN_STORE_UNAVAILABLE);
-            }
-            return false;
+            throw new AuthException(AuthErrorCode.REFRESH_TOKEN_STORE_UNAVAILABLE);
         }
     }
 

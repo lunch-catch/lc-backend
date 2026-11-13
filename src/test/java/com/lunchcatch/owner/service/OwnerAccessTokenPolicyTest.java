@@ -16,6 +16,7 @@ import java.time.LocalDateTime;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.dao.DataAccessResourceFailureException;
 
@@ -122,13 +123,13 @@ class OwnerAccessTokenPolicyTest {
     }
 
     @Test
-    void DB_조회_장애는_LENIENT도_거부한다() {
+    void DB_조회_장애는_LENIENT도_AUTH002다() {
         when(revocations.findRevokedVersion(7L)).thenThrow(new DataAccessResourceFailureException("sensitive-db-error owner@example.com"));
         assertDatabaseFailure("DataAccessResourceFailureException");
     }
 
     @Test
-    void DB_트랜잭션_장애도_인증을_거부한다() {
+    void DB_트랜잭션_장애도_AUTH002다() {
         when(revocations.findRevokedVersion(7L)).thenThrow(new CannotCreateTransactionException("DB"));
         assertDatabaseFailure("CannotCreateTransactionException");
     }
@@ -136,10 +137,11 @@ class OwnerAccessTokenPolicyTest {
     private void assertDatabaseFailure(String exceptionType) {
         var claims = OwnerAccessTokenPolicy.additionalClaims(1L);
         try (var logs = LogCapture.attach(OwnerAccessTokenPolicy.class)) {
-            assertThat(valid(claims)).isFalse();
-            assertThatThrownBy(() -> policy.isValid(Role.OWNER, 7L, ISSUED_AT, claims, CutoffPolicy.REQUIRED))
-                    .isInstanceOfSatisfying(AuthException.class,
-                            e -> assertThat(e.getErrorCode().getCode()).isEqualTo("AUTH-002"));
+            for (CutoffPolicy cutoff : CutoffPolicy.values()) {
+                assertThatThrownBy(() -> policy.isValid(Role.OWNER, 7L, ISSUED_AT, claims, cutoff))
+                        .isInstanceOfSatisfying(AuthException.class,
+                                e -> assertThat(e.getErrorCode().getCode()).isEqualTo("AUTH-002"));
+            }
             assertThat(logs.events()).hasSize(2).allSatisfy(event -> {
                 assertThat(event.getLevel()).isEqualTo(Level.WARN);
                 assertThat(event.getFormattedMessage()).contains("event=OWNER_ACCESS_TOKEN_DB_CHECK_FAILED", "ownerId=7",
@@ -163,12 +165,12 @@ class OwnerAccessTokenPolicyTest {
         verifyNoInteractions(versions, revocations);
     }
 
-    @Test
-    void 세션_DB_조회_장애는_일반_인증도_통과시키지_않는다() {
+    @ParameterizedTest
+    @EnumSource(CutoffPolicy.class)
+    void 세션_DB_조회_장애는_일반_인증도_AUTH002다(CutoffPolicy cutoff) {
         when(sessions.isValid(eq(7L), eq("key"), any())).thenThrow(new DataAccessResourceFailureException("DB"));
         var claims = Map.<String, Object>of(OwnerSessionService.SESSION_CLAIM, "key");
-        assertThat(valid(claims)).isFalse();
-        assertThatThrownBy(() -> policy.isValid(Role.OWNER, 7L, ISSUED_AT, claims, CutoffPolicy.REQUIRED))
+        assertThatThrownBy(() -> policy.isValid(Role.OWNER, 7L, ISSUED_AT, claims, cutoff))
                 .isInstanceOfSatisfying(AuthException.class,
                         e -> assertThat(e.getErrorCode().getCode()).isEqualTo("AUTH-002"));
     }

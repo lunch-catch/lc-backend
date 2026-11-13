@@ -42,11 +42,12 @@ public class OwnerAccessTokenPolicy implements AccessTokenValidationPolicy {
             try {
                 return sessions.isValid(subjectId, claims.get(OwnerSessionService.SESSION_CLAIM), policy);
             } catch (DataAccessException | TransactionException e) {
+                /*
+                 * 세션을 확인하지 못한 토큰은 일반 요청에서도 통과시키지 않고 저장소 장애로 답한다(#1226).
+                 * 무효로 답하면 클라이언트가 재발급을 불러 DB 부하를 늘리고 장애가 토큰 만료에 섞인다.
+                 */
                 log.warn("event=OWNER_SESSION_ACCESS_CHECK_FAILED ownerId={} exceptionType={}", subjectId, e.getClass().getSimpleName());
-                if (policy == CutoffPolicy.REQUIRED) {
-                    throw new AuthException(AuthErrorCode.REFRESH_TOKEN_STORE_UNAVAILABLE, e);
-                }
-                return false;
+                throw new AuthException(AuthErrorCode.REFRESH_TOKEN_STORE_UNAVAILABLE, e);
             }
         }
         long version = issuanceVersion(claims.get(VERSION_CLAIM));
@@ -59,11 +60,9 @@ public class OwnerAccessTokenPolicy implements AccessTokenValidationPolicy {
                 return false;
             }
         } catch (DataAccessException | TransactionException e) {
+            // 폐기 순번을 읽지 못하면 세션 확인과 같은 이유로 일반 요청도 저장소 장애로 답한다(#1226)
             log.warn("event=OWNER_ACCESS_TOKEN_DB_CHECK_FAILED ownerId={} exceptionType={}", subjectId, e.getClass().getSimpleName());
-            if (policy == CutoffPolicy.REQUIRED) {
-                throw new AuthException(AuthErrorCode.REFRESH_TOKEN_STORE_UNAVAILABLE);
-            }
-            return false;
+            throw new AuthException(AuthErrorCode.REFRESH_TOKEN_STORE_UNAVAILABLE);
         }
         try {
             return versions.isValid(subjectId, version);

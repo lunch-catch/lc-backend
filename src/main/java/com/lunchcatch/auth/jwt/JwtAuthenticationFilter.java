@@ -4,6 +4,7 @@ import com.lunchcatch.auth.AuthCookieNames;
 import com.lunchcatch.auth.CustomUserDetails;
 import com.lunchcatch.auth.Role;
 import com.lunchcatch.auth.contract.AccessTokenValidationPolicy;
+import com.lunchcatch.auth.exception.AuthException;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -19,6 +20,7 @@ import org.springframework.security.authentication.UsernamePasswordAuthenticatio
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.web.authentication.WebAuthenticationDetailsSource;
 import org.springframework.web.filter.OncePerRequestFilter;
+import org.springframework.web.servlet.HandlerExceptionResolver;
 
 /*
  * 역할 넷의 토큰을 한 필터에서 처리한다. 체인을 역할마다 쪼개지 않고 role 클레임으로 주체를
@@ -39,20 +41,16 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     private final JwtTokenProvider jwtTokenProvider;
     private final AccessTokenCutoffVerifier cutoffVerifier;
     private final List<AccessTokenValidationPolicy> validationPolicies;
-
-    // 검증 정책을 전달하지 않는 기존 호출은 발급 시각 기준 검증을 유지한다.
-    public JwtAuthenticationFilter(
-            JwtTokenProvider jwtTokenProvider,
-            AccessTokenValidAfterRepository accessTokenValidAfterRepository) {
-        this(jwtTokenProvider, accessTokenValidAfterRepository, List.of());
-    }
+    private final HandlerExceptionResolver exceptionResolver;
 
     public JwtAuthenticationFilter(JwtTokenProvider jwtTokenProvider,
             AccessTokenValidAfterRepository accessTokenValidAfterRepository,
-            List<AccessTokenValidationPolicy> validationPolicies) {
+            List<AccessTokenValidationPolicy> validationPolicies,
+            HandlerExceptionResolver exceptionResolver) {
         this.jwtTokenProvider = jwtTokenProvider;
         this.cutoffVerifier = new AccessTokenCutoffVerifier(accessTokenValidAfterRepository);
         this.validationPolicies = List.copyOf(validationPolicies);
+        this.exceptionResolver = Objects.requireNonNull(exceptionResolver, "exceptionResolver");
     }
 
     @Override
@@ -81,9 +79,20 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
          * 이 역할을 담당하는 도메인 정책으로 토큰을 검증한다.
          * 등록된 정책이 없으면 기존 발급 시각 기준으로 검증한다.
          */
-        boolean valid = validationPolicies.stream().filter(policy -> policy.supports(role)).findFirst()
-                .map(policy -> policy.isValid(role, id, issuedAt, additionalClaims, CutoffPolicy.LENIENT))
-                .orElseGet(() -> cutoffVerifier.isValidAfter(role, id, issuedAt, CutoffPolicy.LENIENT));
+        boolean valid;
+        try {
+            valid = validationPolicies.stream().filter(policy -> policy.supports(role)).findFirst()
+                    .map(policy -> policy.isValid(role, id, issuedAt, additionalClaims, CutoffPolicy.LENIENT))
+                    .orElseGet(() -> cutoffVerifier.isValidAfter(role, id, issuedAt, CutoffPolicy.LENIENT));
+        } catch (AuthException e) {
+            /*
+             * 정책이 세션 저장소를 읽지 못하면 AUTH-002 를 던진다(#1226).
+             * 이 필터는 ExceptionTranslationFilter 앞에 있어 예외를 그대로 던지면 봉투 밖으로 나간다.
+             * 그래서 MVC 예외 처리에 직접 넘겨 503 과 Retry-After 를 받고 체인을 멈춘다.
+             */
+            exceptionResolver.resolveException(request, response, null, e);
+            return;
+        }
         if (!valid) {
             filterChain.doFilter(request, response);
             return;

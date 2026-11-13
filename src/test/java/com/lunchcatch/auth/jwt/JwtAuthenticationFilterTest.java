@@ -1,13 +1,21 @@
 package com.lunchcatch.auth.jwt;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.fail;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.lunchcatch.auth.CustomUserDetails;
 import com.lunchcatch.auth.Role;
+import com.lunchcatch.auth.contract.AccessTokenValidationPolicy;
+import com.lunchcatch.auth.exception.AuthErrorCode;
+import com.lunchcatch.auth.exception.AuthException;
 import jakarta.servlet.http.Cookie;
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -20,6 +28,7 @@ import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.web.servlet.HandlerExceptionResolver;
 
 class JwtAuthenticationFilterTest {
 
@@ -28,6 +37,7 @@ class JwtAuthenticationFilterTest {
 
     private final JwtTokenProvider tokenProvider = mock(JwtTokenProvider.class);
     private final AccessTokenValidAfterRepository cutoffRepository = mock(AccessTokenValidAfterRepository.class);
+    private final HandlerExceptionResolver exceptionResolver = mock(HandlerExceptionResolver.class);
     private final MockHttpServletRequest request = new MockHttpServletRequest("POST", "/v1/admin/admins");
     private final MockHttpServletResponse response = new MockHttpServletResponse();
 
@@ -51,7 +61,7 @@ class JwtAuthenticationFilterTest {
         when(cutoffRepository.isValidAfter(Role.SUPER_ADMIN, 1L, ISSUED_AT))
                 .thenThrow(new DataAccessResourceFailureException("Redis unavailable"));
 
-        assertAuthentication(new JwtAuthenticationFilter(tokenProvider, cutoffRepository), true);
+        assertAuthentication(filter(), true);
     }
 
     @ParameterizedTest
@@ -60,7 +70,7 @@ class JwtAuthenticationFilterTest {
         when(tokenProvider.getRole(TOKEN)).thenReturn(role);
         when(tokenProvider.getIssuedAt(TOKEN)).thenReturn(null);
 
-        assertAuthentication(new JwtAuthenticationFilter(tokenProvider, cutoffRepository), false);
+        assertAuthentication(filter(), false);
     }
 
     @ParameterizedTest
@@ -69,7 +79,7 @@ class JwtAuthenticationFilterTest {
         when(tokenProvider.getRole(TOKEN)).thenReturn(role);
         when(cutoffRepository.isValidAfter(role, 1L, ISSUED_AT)).thenReturn(true);
 
-        assertAuthentication(new JwtAuthenticationFilter(tokenProvider, cutoffRepository), true);
+        assertAuthentication(filter(), true);
     }
 
     @ParameterizedTest
@@ -78,7 +88,7 @@ class JwtAuthenticationFilterTest {
         when(tokenProvider.getRole(TOKEN)).thenReturn(role);
         when(cutoffRepository.isValidAfter(role, 1L, ISSUED_AT)).thenReturn(false);
 
-        assertAuthentication(new JwtAuthenticationFilter(tokenProvider, cutoffRepository), false);
+        assertAuthentication(filter(), false);
     }
 
     @ParameterizedTest
@@ -86,21 +96,21 @@ class JwtAuthenticationFilterTest {
     void 서명이나_만료_검증에_실패하면_인증하지_않는다(Role role) throws Exception {
         when(tokenProvider.validateToken(TOKEN)).thenReturn(false);
 
-        assertAuthentication(new JwtAuthenticationFilter(tokenProvider, cutoffRepository), false);
+        assertAuthentication(filter(), false);
     }
 
     @Test
     void 쿠키가_없으면_인증하지_않는다() throws Exception {
         request.setCookies((Cookie[]) null);
 
-        assertAuthentication(new JwtAuthenticationFilter(tokenProvider, cutoffRepository), false);
+        assertAuthentication(filter(), false);
     }
 
     @Test
     void 역할이_없으면_인증하지_않는다() throws Exception {
         when(tokenProvider.getRole(TOKEN)).thenReturn(null);
 
-        assertAuthentication(new JwtAuthenticationFilter(tokenProvider, cutoffRepository), false);
+        assertAuthentication(filter(), false);
     }
 
     /*
@@ -123,7 +133,7 @@ class JwtAuthenticationFilterTest {
                 .toArray(Cookie[]::new));
         when(cutoffRepository.isValidAfter(Role.SUPER_ADMIN, 1L, ISSUED_AT)).thenReturn(true);
 
-        assertAuthentication(new JwtAuthenticationFilter(tokenProvider, cutoffRepository), true);
+        assertAuthentication(filter(), true);
     }
 
     // 관리자 경로에 회원 쿠키만 있으면 읽지 않는다. 배포 전의 accessToken 으로 되돌아가 읽지 않는다(#841)
@@ -131,7 +141,28 @@ class JwtAuthenticationFilterTest {
     void 관리자_경로에_회원_쿠키만_있으면_인증하지_않는다() throws Exception {
         request.setCookies(new Cookie("accessToken", TOKEN));
 
-        assertAuthentication(new JwtAuthenticationFilter(tokenProvider, cutoffRepository), false);
+        assertAuthentication(filter(), false);
+    }
+
+    // 세션 DB 를 읽지 못한 정책은 AUTH-002 를 던진다. 인증 없이 넘기면 401 로 바뀌므로 예외 처리로 넘기고 체인을 멈춘다(#1226)
+    @Test
+    void 정책이_저장소_장애를_던지면_예외_처리로_넘기고_체인을_멈춘다() throws Exception {
+        AuthException unavailable = new AuthException(AuthErrorCode.REFRESH_TOKEN_STORE_UNAVAILABLE);
+        AccessTokenValidationPolicy policy = mock(AccessTokenValidationPolicy.class);
+        when(policy.supports(Role.SUPER_ADMIN)).thenReturn(true);
+        when(policy.isValid(eq(Role.SUPER_ADMIN), eq(1L), eq(ISSUED_AT), any(), eq(CutoffPolicy.LENIENT)))
+                .thenThrow(unavailable);
+        JwtAuthenticationFilter filter =
+                new JwtAuthenticationFilter(tokenProvider, cutoffRepository, List.of(policy), exceptionResolver);
+
+        filter.doFilter(request, response, (req, res) -> fail("저장소 장애면 다음 필터로 넘기지 않는다"));
+
+        verify(exceptionResolver).resolveException(request, response, null, unavailable);
+        assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
+    }
+
+    private JwtAuthenticationFilter filter() {
+        return new JwtAuthenticationFilter(tokenProvider, cutoffRepository, List.of(), exceptionResolver);
     }
 
     private void assertAuthentication(JwtAuthenticationFilter filter, boolean expected) throws Exception {

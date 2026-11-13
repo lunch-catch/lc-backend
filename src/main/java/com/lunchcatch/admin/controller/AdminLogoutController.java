@@ -27,7 +27,7 @@ class AdminLogoutController {
     @ApiResponse(responseCode = "204", description = "로그아웃 성공")
     @ApiResponse(responseCode = "401", description = "유효한 관리자 인증 필요 (AUTH-005)")
     @ApiResponse(responseCode = "403", description = "관리자 권한 필요 (AUTH-006)")
-    @ApiResponse(responseCode = "503", description = "필수 토큰 폐기 실패 (AUTH-002)")
+    @ApiResponse(responseCode = "503", description = "Access Token 의 세션 확인 또는 필수 토큰 폐기 실패 (AUTH-002)")
     @DeleteMapping
     ResponseEntity<Void> logout(@AuthenticationPrincipal CustomUserDetails principal) {
         adminLogoutService.logout(principal.getId(), principal.getRole(),
