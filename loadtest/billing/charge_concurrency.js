@@ -15,6 +15,9 @@ import { ownerCookie } from '../lib/token.js';
  * 앱은 점주마다 주문과 승인 확정을 합쳐 10초에 3회까지 받고 넘으면 429 로 돌려보낸다(#1122).
  * 429 는 실패로 세지 않고 rate_limited 로 따로 센다. 점주 수가 작은 회차에서는 429 가 나오는 것이 정상이다.
  * 점주 수가 큰 회차는 점주 한 명이 10초에 3회를 넘지 않아야 한다. 초당 반복 수(RATE + DUP_RATE)를 OWNERS 로 나눈 값이 0.1 보다 충분히 작게 둔다.
+ * 점주가 2명 이상이면 charge 와 duplicate 가 점주 대역을 초당 반복 수의 비율로 나눠 쓴다(#1224).
+ * 같은 점주를 함께 쓰면 10초 안에 charge 2회와 duplicate 3회를 함께 맞아 상한에 걸린다.
+ * 비율로 나누면 두 시나리오 모두 OWNERS / (RATE + DUP_RATE) 초마다 같은 점주로 돌아와 위 기준이 그대로 맞는다.
  *
  * 두 회차를 함께 돌릴 때는 OWNER_OFFSET 으로 점주 대역을 나눈다. 대역이 겹치면 몰린 회차의 상한이 다른 회차의 점주에도 걸린다.
  *
@@ -37,6 +40,12 @@ const OWNERS = Number(__ENV.OWNERS || 100);
 const OWNER_OFFSET = Number(__ENV.OWNER_OFFSET || 0);
 // seed.sql 의 @lo 와 같다
 const OWNER_BASE = 40000001;
+// charge 가 쓰는 점주 수다. 대역의 나머지를 duplicate 가 쓰고, 점주가 1명이면 둘이 같은 점주를 쓴다
+const CHARGE_OWNERS = OWNERS > 1 && DUP_RATE > 0
+  ? Math.min(OWNERS - 1, Math.max(1, Math.round(OWNERS * RATE / (RATE + DUP_RATE))))
+  : OWNERS;
+const DUP_START = OWNERS > 1 ? CHARGE_OWNERS : 0;
+const DUP_OWNERS = Math.max(1, OWNERS - DUP_START);
 // 충전 정책(point_policy)의 상품에 있는 금액이어야 한다. 없으면 주문이 400 이다
 const AMOUNT = Number(__ENV.AMOUNT || 10000);
 
@@ -113,8 +122,8 @@ function limited(res, api) {
   return true;
 }
 
-function order(phase) {
-  const ownerId = OWNER_BASE + OWNER_OFFSET + (exec.scenario.iterationInTest % OWNERS);
+function order(phase, start, count) {
+  const ownerId = OWNER_BASE + OWNER_OFFSET + start + (exec.scenario.iterationInTest % count);
   const headers = { Cookie: ownerCookie(SECRET, ownerId, sessionKey(ownerId)), 'Content-Type': 'application/json' };
   const res = http.post(`${BASE_URL}/v1/owner/payments`, JSON.stringify({ amount: AMOUNT }),
     { headers, tags: { api: 'order', phase } });
@@ -145,7 +154,7 @@ function record() {
 
 export function charge() {
   const phase = currentPhase();
-  const ordered = order(phase);
+  const ordered = order(phase, 0, CHARGE_OWNERS);
   if (!ordered) {
     return;
   }
@@ -162,7 +171,7 @@ export function charge() {
  */
 export function duplicate() {
   const phase = currentPhase();
-  const ordered = order(phase);
+  const ordered = order(phase, DUP_START, DUP_OWNERS);
   if (!ordered) {
     return;
   }
