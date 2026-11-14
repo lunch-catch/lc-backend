@@ -595,7 +595,11 @@ Lua는 당일 해시와 처리 표시 두 키를 사용한다. 현재 구현은 
 
 판정 3일치 290만 행, 원장 262만 행(로컬 MySQL 8.4, 버퍼 풀 128MB)에서 판정 수가 2.8초에서 0.4 ~ 0.8초, 예약과 해제 합계가 1.5초에서 0.13초가 됐다. 점주 조회 여섯의 실행 계획과 시간은 바꾸기 전과 같았다.
 
-기록 시각 범위로 원장을 읽는 조회(`sumChargeRefundBetween`, `sumAdjustOn`, `sumUnspentBefore`, `sumUnspentBetween`)와 원장 DEDUCT 를 판정과 조인하는 `sumDeductOn` 은 원장 전체를 읽는 그대로다. `(entry_type, created_at)` 이나 `(created_at, entry_type)` 인덱스는 어느 쪽이든 다른 조회 하나를 느리게 해 두지 않았다. `sumDeductOn` 을 판정의 BILLED 합으로 바꾸면 빨라지지만 분석의 정합성 점검 V-1(BILLED 수 x 단가 = 원장 DEDUCT 합)이 같은 데이터를 비교하게 되어 정하지 않았다. 둘은 #1241 에 남겼다.
+분석은 미소진 잔액을 앞서 저장한 날의 값에 그날 변동(`sumUnspentBetween`)을 더해 구한다. 그날 변동은 기록 시각 범위로 원장을 읽는데 `created_at` 이 앞인 인덱스가 없어 원장 전체를 읽었다(#1242). 그래서 원장에 `idx_point_ledger_created_type (created_at, entry_type, amount)` 를 더했다. 원장의 인덱스는 PK 를 포함해 12개에서 13개가 되고, 노출마다 쓰는 DEDUCT INSERT 에 B-tree 하나만큼 쓰기가 는다. 미소진 계산은 하루 한 번 도는 배치라 이 비용을 받아들였다. 늘어난 쓰기의 크기는 [묶음 차감 부하 시험](./loadtest/billing_묶음_차감_부하_시험.md)에서 함께 잰다.
+
+판정 3일치 300만 행, 원장 271만 행(같은 조건)에서 `sumUnspentBetween` 이 1.90초에서 0.40초, `sumUnspentBefore` 가 2.07초에서 0.82초가 됐다. 다른 원장 조회의 실행 계획과 시간은 그대로였다. `(entry_type, created_at)` 순서는 `sumDeductOn` 을 2배로 늦췄지만 `created_at` 이 앞인 이 순서는 `sumDeductOn` 을 늦추지 않았다.
+
+`sumChargeRefundBetween`, `sumAdjustOn`, `findCorrectionTargetDates` 는 이 인덱스를 고르지 않고 원장 전체를 읽는 그대로다. 셋 다 인덱스에 없는 열을 읽고, 그날 범위가 원장에서 차지하는 몫이 크다고 추정되어 옵티마이저가 전체 읽기를 고른다. 원장 DEDUCT 를 판정과 조인하는 `sumDeductOn` 도 원장 전체를 읽는다. `sumDeductOn` 을 판정의 BILLED 합으로 바꾸면 빨라지지만 분석의 정합성 점검 V-1(BILLED 수 x 단가 = 원장 DEDUCT 합)이 같은 데이터를 비교하게 되어 정하지 않았다. 이 조회는 원장에 DEDUCT 를 쓰지 않는 방향을 정할 때 함께 정한다(#1249).
 
 ## 12. 테스트와 미정 사항
 
