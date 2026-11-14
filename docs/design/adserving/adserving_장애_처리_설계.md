@@ -60,7 +60,7 @@ B 를 고른다(#837 에서 정했다). 차감은 정산이 따로 막아(`NOT_B
 - 결과를 적기 전에 멈추면 같은 노출을 다시 넘긴다. 정산이 serveId 로 멱등이라 처음 판정을 돌려줘 과금은 한 번이다.
 - 릴레이는 예외를 올리지 않는다. 스케줄러가 다음 주기를 그대로 돌게 하고 `adserving_impression_dispatch_error_total` 로 센다.
 - 넘기지 못하고 밀린 노출 수는 `adserving_impression_dispatch_backlog` 와 공통 지표 `outbox_relay_backlog` 가 낸다. 포기한 노출은 빠진다. 다시 넘길 시각을 기다리는 노출은 든다.
-- 포기한 노출 수는 공통 지표 `outbox_relay_abandoned` 가 낸다. 0 보다 크면 사람이 원인을 고친 뒤 `dispatch_abandoned_at` 을 비워 다시 넘긴다. 상한을 바꿔도 포기한 노출은 그대로 남는다.
+- 포기한 노출 수는 공통 지표 `outbox_relay_abandoned` 가 낸다. 0 보다 크면 사람이 원인을 고친 뒤 아래 "포기한 노출을 다시 발행하는 절차" 로 되살린다. 상한을 바꿔도 포기한 노출은 그대로 남는다.
 - 가장 오래 기다린 노출의 나이(`outbox_relay_oldest_age_seconds`)는 지금 넘길 수 있는 노출만 본다. 다시 넘길 시각을 기다리는 노출과 포기한 노출은 넣지 않는다.
 - 발행 지연은 넘긴 순간에 `outbox_relay_publish_delay_seconds` 로 남긴다. 노출 요청을 받은 시각(`created_at`)부터 재서 노출 저장 대기열에서 기다린 시간도 든다. 품질 목표(아웃박스 발행 지연 5초)는 이 p99 로 판정한다.
 - 읽는 범위(어제 00:00 부터)보다 오래된 미발행은 마감이 지나 넘기지 않는다. 그 수는 `adserving_impression_dispatch_expired` 가 낸다.
@@ -76,6 +76,43 @@ B 를 고른다(#837 에서 정했다). 차감은 정산이 따로 막아(`NOT_B
 - 정산이 커밋한 뒤 발행 표시 전에 내려가도 같은 노출을 다시 발행하고, 정산이 `serveId` 로 멱등이라 판정은 한 번이다
 - 30초 안에 끝나지 않으면 Spring 이 커넥션 풀을 닫아 막힌 호출도 실패로 끝난다. 그래도 내려가지 않으면 컨테이너의 정지 대기(`stop_grace_period: 45s`)가 지나 강제로 죽고, 점유는 만료로 풀린다
 - 로컬에서 청크 하나가 `deductAll` 안에서 막힌 채 내려가게 해 봤다. 20초 만에 내려가며 점유를 풀었고, 다시 띄운 뒤 남은 노출이 모두 발행됐으며 판정은 겹치지 않았다(5,000건, 판정 5,000개)
+
+**포기한 노출을 다시 발행하는 절차(#1214).** `RelayAbandoned` 경보가 울리면 사람이 아래 순서로 한다. 관리자 API 를 두지 않고 운영 DB 에서 SQL 로 한다.
+
+1. 원인을 찾는다. 배치 로그의 `ADSERVING_IMPRESSION_DISPATCH_FAILED` 와 정산의 오류 로그, 06 의 릴레이 줄을 본다. 어느 캠페인에 몰렸는지 아래로 센다
+2. 원인을 고친다. 고치지 않고 되살리면 같은 노출이 시도 상한(10회)만큼 다시 실패해 다시 포기된다
+3. 오늘 영업일의 포기한 노출을 되살린다. 원인이 캠페인 하나에 걸렸으면 그 캠페인만 되살린다
+4. 06 의 포기한 건수(`outbox_relay_abandoned`)가 0 으로 돌아오고, 미발행 건수가 비는지 본다
+
+```sql
+/*
+ * RDS 는 UTC 라 먼저 세션을 한국 시각으로 바꾼다.
+ * 빼면 한국 00:00 ~ 09:00 사이에 CURRENT_DATE 가 어제다.
+ */
+SET SESSION time_zone = '+09:00';
+
+-- 1. 오늘 포기한 노출을 캠페인마다 센다
+SELECT campaign_id, COUNT(*)
+  FROM impression_log
+ WHERE business_date = CURRENT_DATE
+   AND dispatched_at IS NULL
+   AND dispatch_abandoned_at IS NOT NULL
+ GROUP BY campaign_id;
+
+/*
+ * 3. 오늘 포기한 노출을 되살린다.
+ * 캠페인 하나만 되살리려면 AND campaign_id = ? 를 더한다.
+ */
+UPDATE impression_log
+   SET dispatch_abandoned_at = NULL, dispatch_attempts = 0, next_dispatch_at = NULL, updated_at = NOW(6)
+ WHERE business_date = CURRENT_DATE
+   AND dispatched_at IS NULL
+   AND dispatch_abandoned_at IS NOT NULL;
+```
+
+- 되살린 노출은 릴레이가 다음 주기(1초)부터 다시 발행한다. 정산이 `serveId` 로 멱등이라 이미 판정된 노출이 섞여도 판정은 한 번이다
+- 오늘 안에 한다. 다음 날 00:00 묶음이 그날 예약을 해제하면 정산이 `NOT_BILLED_CLOSED` 로 판정해 되살려도 과금되지 않는다. 그래서 범위를 오늘 영업일로 묶고 어제 이전은 되살리지 않는다
+- 로컬에서 오늘 영업일의 포기한 노출 200건(캠페인 둘)을 넣어 확인했다. 캠페인 조건을 넣은 SQL 은 그 캠페인의 100건만, 조건 없는 SQL 은 나머지 100건을 되살렸고, 모두 발행된 뒤 포기한 건수가 0 이 됐다
 
 ### DB 쓰기: 응답 뒤의 `serve_log`, `feed_visit_daily`
 
