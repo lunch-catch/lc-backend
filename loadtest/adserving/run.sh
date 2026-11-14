@@ -8,7 +8,7 @@
 #   AWS_PROFILE=<프로필> loadtest/adserving/run.sh run <이름> <회원 시작 번호> [초당 피드] [유지 시간] [--scenario feed] [--profile cpu|wall|both]
 #   AWS_PROFILE=<프로필> loadtest/adserving/run.sh metrics <시작 ms> <끝 ms>  그 구간의 서버 지표
 #   AWS_PROFILE=<프로필> loadtest/adserving/run.sh rows                    시험 데이터의 행 수
-#   AWS_PROFILE=<프로필> loadtest/adserving/run.sh switch <sha> [--tracing <이름>] [--no-pool] [--env KEY=VALUE]...  앱과 배치를 그 커밋 이미지로 다시 띄운다. GHCR 에 있어야 한다
+#   AWS_PROFILE=<프로필> loadtest/adserving/run.sh switch <sha> [--tracing <이름>] [--no-pool] [--env|--app-env|--batch-env KEY=VALUE]...  앱과 배치를 그 커밋 이미지로 다시 띄운다. GHCR 에 있어야 한다
 #   AWS_PROFILE=<프로필> loadtest/adserving/run.sh reset [회원 수]         Valkey 를 비우고 시험 데이터를 다시 넣는다
 #   AWS_PROFILE=<프로필> loadtest/adserving/run.sh profile <이름> [초] [cpu|wall|both]  앱 서버에 프로파일링을 붙인다
 #
@@ -18,8 +18,9 @@
 # switch 에 --tracing <이름> 을 주면 OpenTelemetry 에이전트를 붙여 띄우고, 주지 않으면 뗀다. 이름은 트레이싱의 run 라벨이 된다.
 # switch 에 --no-pool 을 주면 Valkey 연결 풀을 끄고 띄운다. 주지 않으면 켠다.
 # switch 에 --env KEY=VALUE 를 주면 그 환경변수를 넣어 띄운다. 여러 번 줄 수 있다. 다시 빌드하지 않고 조정 값(예: ADSERVING_IMPRESSION_WRITEBUFFER_BATCHSIZE=1000)을 바꿔 잰다(#1170).
+# --env 는 앱과 배치에 같게, --app-env 와 --batch-env 는 그 역할에만 넣는다(#1244).
 # 첫 인자를 --local 로 주면 lc-infra 의 로컬 구성을 대상으로 seed, prepare, run, metrics, profile 을 같은 인자로 돌린다.
-# 로컬의 switch 는 커밋 없이 [--tracing <이름>] [--no-pool] [--env KEY=VALUE]... 만 받아 로컬 앱을 다시 띄운다.
+# 로컬의 switch 는 커밋 없이 [--tracing <이름>] [--no-pool] [--env|--app-env|--batch-env KEY=VALUE]... 만 받아 로컬 앱과 배치를 다시 띄운다. 배치는 lc-infra 의 compose.lt-like.yaml 로 따로 뜬다.
 # 시나리오와 시드 생성기는 떠 있는 앱과 같은 커밋(SSM current-sha)에서 받는다. 값이 없으면 develop 이다.
 # LOADTEST_REF 로 브랜치나 커밋을 따로 고를 수 있다.
 set -euo pipefail
@@ -54,26 +55,41 @@ relay_deduct_rows_per_s sum(rate(adserving_impression_dispatch_deduct_batch_sum[
 # 이 파일을 옮기면 그 커밋부터만 받힌다. 경로를 옮긴 커밋보다 앞선 ref 를 쓸 때는
 # LOADTEST_REF 를 이 커밋 이후로 준다 (#1080).
 #
-# switch 의 선택지를 읽어 label, nopool, extra 를 정한다. extra 는 --env 로 받은 KEY=VALUE 를 줄마다 하나씩 담는다
+#
+# switch 의 선택지를 읽어 label, nopool, extra, app_extra, batch_extra 를 정한다. 셋 모두 KEY=VALUE 를 줄마다 하나씩 담는다.
+# --env 는 앱과 배치에 같게, --app-env 와 --batch-env 는 그 역할에만 넣는다(#1244). 앱과 배치의 DB 시간 제한처럼 값이 다를 때 쓴다.
+#
 switch_options() {
-  label=""; nopool=""; extra=""
+  label=""; nopool=""; extra=""; app_extra=""; batch_extra=""
+  local opt pair key
   while [ $# -gt 0 ]; do
-    case "$1" in
-      --tracing) label="${2:?--tracing 뒤에 이름을 준다}"; shift 2 ;;
-      --no-pool) nopool=1; shift ;;
-      --env)
-        [[ "${2:-}" =~ ^[A-Z_][A-Z0-9_]*= ]] || die "--env 뒤에 KEY=VALUE 를 준다. KEY 는 대문자 환경변수 이름이다: ${2:-}"
-        # 줄바꿈은 값 하나를 여러 환경변수로 쪼개고, 다른 제어 문자는 compose 가 덮어쓰기 파일을 읽지 못하게 한다
-        [[ "$2" != *[[:cntrl:]]* ]] || die "--env 의 VALUE 에 줄바꿈이나 제어 문자를 넣지 않는다: ${2%%=*}"
-        # 같은 키가 둘이면 compose 가 덮어쓰기 파일을 읽지 못해, current-sha 를 바꾼 뒤 다시 띄우다 멈춘다
-        case "${2%%=*}" in
-          JDK_JAVA_OPTIONS|OTEL_*|SPRING_DATA_REDIS_LETTUCE_POOL_ENABLED)
-            die "--env 로 ${2%%=*} 를 주지 않는다. 그 키는 --tracing 과 --no-pool 이 쓴다" ;;
-        esac
-        [[ $'\n'"$extra" != *$'\n'"${2%%=*}="* ]] || die "--env 에 같은 키를 두 번 주었다: ${2%%=*}"
-        extra="$extra$2"$'\n'; shift 2 ;;
-      *) die "모르는 선택지다: $1" ;;
+    opt="$1"
+    case "$opt" in
+      --tracing) label="${2:?--tracing 뒤에 이름을 준다}"; shift 2; continue ;;
+      --no-pool) nopool=1; shift; continue ;;
+      --env|--app-env|--batch-env) ;;
+      *) die "모르는 선택지다: $opt" ;;
     esac
+    pair="${2:-}"; key="${pair%%=*}"
+    [[ "$pair" =~ ^[A-Z_][A-Z0-9_]*= ]] || die "$opt 뒤에 KEY=VALUE 를 준다. KEY 는 대문자 환경변수 이름이다: $pair"
+    # 줄바꿈은 값 하나를 여러 환경변수로 쪼개고, 다른 제어 문자는 compose 가 덮어쓰기 파일을 읽지 못하게 한다
+    [[ "$pair" != *[[:cntrl:]]* ]] || die "$opt 의 VALUE 에 줄바꿈이나 제어 문자를 넣지 않는다: $key"
+    case "$key" in
+      JDK_JAVA_OPTIONS|OTEL_*|SPRING_DATA_REDIS_LETTUCE_POOL_ENABLED)
+        die "$opt 로 $key 를 주지 않는다. 그 키는 --tracing 과 --no-pool 이 쓴다" ;;
+    esac
+    # 한 역할에 같은 키가 둘이면 compose 가 덮어쓰기 파일을 읽지 못해, current-sha 를 바꾼 뒤 다시 띄우다 멈춘다
+    case "$opt" in
+      --env) [[ $'\n'"$extra$app_extra$batch_extra" != *$'\n'"$key="* ]] || die "$key 를 두 번 주었다" ;;
+      --app-env) [[ $'\n'"$extra$app_extra" != *$'\n'"$key="* ]] || die "앱에 $key 를 두 번 주었다" ;;
+      --batch-env) [[ $'\n'"$extra$batch_extra" != *$'\n'"$key="* ]] || die "배치에 $key 를 두 번 주었다" ;;
+    esac
+    case "$opt" in
+      --env) extra="$extra$pair"$'\n' ;;
+      --app-env) app_extra="$app_extra$pair"$'\n' ;;
+      --batch-env) batch_extra="$batch_extra$pair"$'\n' ;;
+    esac
+    shift 2
   done
 }
 
@@ -100,7 +116,7 @@ case "${LOCAL:+local-}${1:-}" in
   local-switch)
     shift
     switch_options "$@"
-    local_switch "$label" "$nopool" "$extra"
+    local_switch "$label" "$nopool" "$extra" "$app_extra" "$batch_extra"
     ;;
   seed|local-seed)
     members="${2:-120000}"
@@ -131,21 +147,23 @@ case "${LOCAL:+local-}${1:-}" in
     # compose 가 같은 디렉터리의 compose.override.yaml 을 함께 읽어 lc-infra 의 설정을 고치지 않는다.
     #
     # 배치 서버는 서비스 이름을 lunchcatch-batch 로 띄운다. Alloy 가 그 이름으로 배치의 작업 트레이스를 따로 고른다(#1199)
-    if [ -n "$label$nopool$extra" ]; then
-      fetch=""
-      # 받다 끊긴 jar 가 남아 다음에 그대로 쓰이지 않게 다 받은 뒤에만 제 이름으로 옮긴다
-      [ -z "$label" ] || fetch="[ -s /opt/$PROJECT/otel-$OTEL_VERSION.jar ] || { curl -fsSL $OTEL_JAR_URL -o /opt/$PROJECT/otel-$OTEL_VERSION.jar.part && mv /opt/$PROJECT/otel-$OTEL_VERSION.jar.part /opt/$PROJECT/otel-$OTEL_VERSION.jar; }"
+    # 앱 서버에는 --env 와 --app-env 를, 배치 서버에는 --env 와 --batch-env 를 넣는다(#1244). 넣을 것이 없는 쪽은 덮어쓰기를 지운다
+    fetch=""
+    # 받다 끊긴 jar 가 남아 다음에 그대로 쓰이지 않게 다 받은 뒤에만 제 이름으로 옮긴다
+    [ -z "$label" ] || fetch="[ -s /opt/$PROJECT/otel-$OTEL_VERSION.jar ] || { curl -fsSL $OTEL_JAR_URL -o /opt/$PROJECT/otel-$OTEL_VERSION.jar.part && mv /opt/$PROJECT/otel-$OTEL_VERSION.jar.part /opt/$PROJECT/otel-$OTEL_VERSION.jar; }"
+    app_tracing="rm -f /opt/$PROJECT/compose.override.yaml"
+    batch_tracing="$app_tracing"
+    if [ -n "$label$nopool$extra$app_extra" ]; then
       app_tracing="$fetch
 cat > /opt/$PROJECT/compose.override.yaml <<'OVERRIDE'
-$(app_override "$label" "./otel-$OTEL_VERSION.jar" "$nopool" "$extra" lunchcatch)
+$(app_override "$label" "./otel-$OTEL_VERSION.jar" "$nopool" "$extra$app_extra" lunchcatch)
 OVERRIDE"
+    fi
+    if [ -n "$label$nopool$extra$batch_extra" ]; then
       batch_tracing="$fetch
 cat > /opt/$PROJECT/compose.override.yaml <<'OVERRIDE'
-$(app_override "$label" "./otel-$OTEL_VERSION.jar" "$nopool" "$extra" lunchcatch-batch)
+$(app_override "$label" "./otel-$OTEL_VERSION.jar" "$nopool" "$extra$batch_extra" lunchcatch-batch)
 OVERRIDE"
-    else
-      app_tracing="rm -f /opt/$PROJECT/compose.override.yaml"
-      batch_tracing="$app_tracing"
     fi
     pids=""; rc=0
     # 여러 대면 aws 가 탭으로 잇는다. echo 로 공백 하나씩으로 펴서 아래 case 가 id 를 찾게 한다
@@ -264,5 +282,5 @@ select 'deduction', billing_status, count(*) from deduction_result where campaig
 select 'ledger', entry_type, count(*) from point_ledger where owner_id >= 30000001 group by entry_type;\""
     ;;
   *)
-    sed -n '3,23p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
+    sed -n '3,25p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
 esac
