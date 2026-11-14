@@ -7,6 +7,8 @@ import io.micrometer.observation.Observation;
 import io.micrometer.observation.ObservationRegistry;
 import io.micrometer.prometheusmetrics.PrometheusConfig;
 import io.micrometer.prometheusmetrics.PrometheusMeterRegistry;
+import java.time.Duration;
+import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.junit.jupiter.api.DisplayName;
@@ -19,6 +21,10 @@ import org.springframework.mock.web.MockHttpServletResponse;
 class HttpLatencyHistogramHandlerTest {
 
     private static final int MAX_URIS = 3;
+    // 피드만 목표를 넉넉히 두고 나머지는 기본값을 아주 짧게 둬 목표 안과 밖이 갈리게 한다
+    private static final OverrunThresholdProperties TARGETS = new OverrunThresholdProperties(
+            Duration.ofNanos(1), Map.of("GET /v1/feed", Duration.ofHours(1)),
+            Duration.ofSeconds(5), Map.of(), Duration.ofSeconds(5), Map.of(), Duration.ofMinutes(10), Map.of());
 
     private final PrometheusMeterRegistry registry = new PrometheusMeterRegistry(PrometheusConfig.DEFAULT);
     private final ObservationRegistry observations = ObservationRegistry.create();
@@ -27,7 +33,7 @@ class HttpLatencyHistogramHandlerTest {
         // 앱처럼 기존 요청 시간 지표와 새 히스토그램을 함께 기록한다
         observations.observationConfig()
                 .observationHandler(new DefaultMeterObservationHandler(registry))
-                .observationHandler(new HttpLatencyHistogramHandler(registry, MAX_URIS));
+                .observationHandler(new HttpLatencyHistogramHandler(registry, TARGETS, MAX_URIS));
     }
 
     @Test
@@ -67,6 +73,42 @@ class HttpLatencyHistogramHandlerTest {
         String scrape = registry.scrape();
         assertThat(scrape).doesNotContain("http_server_requests_histogram_seconds_count{uri=\"/v1/over\"}");
         assertThat(scrape).contains("http_server_requests_histogram_seconds_count{uri=\"/v1/api-0\"} 2");
+    }
+
+    @Test
+    @DisplayName("요청이 그 API 의 목표 안에 끝났는지 세고 목표가 없는 API 는 기본값으로 판정한다")
+    void 목표_안에_끝났는지_센다() {
+        request("/v1/feed", 200);
+        request("/v1/owners/me", 200);
+
+        String scrape = registry.scrape();
+        assertThat(scrape).contains(
+                "http_server_requests_target_total{method=\"GET\",outcome=\"SUCCESS\",result=\"within\",uri=\"/v1/feed\"} 1.0");
+        assertThat(scrape).contains(
+                "http_server_requests_target_total{method=\"GET\",outcome=\"SUCCESS\",result=\"over\",uri=\"/v1/owners/me\"} 1.0");
+    }
+
+    // 실패는 대개 빨리 끝나 섞이면 목표 안 비율이 좋아 보이므로 결과로 나눠 뺄 수 있게 한다
+    @Test
+    @DisplayName("목표 판정을 요청의 결과로 나눠 센다")
+    void 목표_판정을_결과로_나눈다() {
+        request("/v1/feed", 500);
+
+        assertThat(registry.scrape()).contains(
+                "http_server_requests_target_total{method=\"GET\",outcome=\"SERVER_ERROR\",result=\"within\",uri=\"/v1/feed\"} 1.0");
+    }
+
+    @Test
+    @DisplayName("API 종류가 상한을 넘으면 그 뒤에 처음 보는 API 는 목표 판정도 세지 않는다")
+    void 상한을_넘으면_목표_판정도_세지_않는다() {
+        for (int i = 0; i < MAX_URIS; i++) {
+            request("/v1/api-" + i, 200);
+        }
+        request("/v1/over", 200);
+
+        assertThat(registry.scrape().lines().filter(line -> line.startsWith("http_server_requests_target_total{")))
+                .isNotEmpty()
+                .noneMatch(line -> line.contains("uri=\"/v1/over\""));
     }
 
     @Test
