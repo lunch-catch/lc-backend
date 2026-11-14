@@ -7,10 +7,10 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.lunchcatch.auth.CustomUserDetails;
 import com.lunchcatch.auth.Role;
+import com.lunchcatch.ops.job.DailyJobScheduler;
 import java.sql.Timestamp;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -21,7 +21,8 @@ import org.springframework.test.web.servlet.MockMvc;
 /*
  * 관리자 수동 재실행으로 묶음 밖 작업을 다시 돌리면 runCounting 이 돌려준 건수가
  * batch_execution_log.processed_count 에 남는지 실제 입구부터 DB 재조회까지 확인한다(#559).
- * 이어받기도 같은 BatchJobRunner.resume 을 탄다.
+ * 수동 재실행은 배치 서버의 이어받기가 BatchJobRunner.resume 으로 돈다(#1231). 이 컨텍스트는 스케줄러가 꺼져 있어
+ * 테스트가 이어받기 스캔을 대신 부른다.
  */
 class StandaloneJobRunCountingIntegrationTest extends AbstractOpsIntegrationTest {
 
@@ -32,6 +33,8 @@ class StandaloneJobRunCountingIntegrationTest extends AbstractOpsIntegrationTest
     private MockMvc mvc;
     @Autowired
     private JdbcTemplate jdbc;
+    @Autowired
+    private DailyJobScheduler scheduler;
 
     @AfterEach
     void cleanUp() {
@@ -45,10 +48,13 @@ class StandaloneJobRunCountingIntegrationTest extends AbstractOpsIntegrationTest
         insertFailed(TestStandaloneJobs.COUNTED);
 
         retry(TestStandaloneJobs.COUNTED);
+        scheduler.takeOverStale();
 
-        Map<String, Object> row = awaitSuccess(TestStandaloneJobs.COUNTED);
+        Map<String, Object> row = rowOf(TestStandaloneJobs.COUNTED);
+        assertThat(row.get("status")).isEqualTo("SUCCESS");
         assertThat(((Number) row.get("processed_count")).intValue()).isEqualTo(TestStandaloneJobs.COUNT);
-        assertThat(((Number) row.get("attempt_no")).intValue()).isEqualTo(2);
+        // 재실행 요청과 이어받기에서 세대가 하나씩 오른다
+        assertThat(((Number) row.get("attempt_no")).intValue()).isEqualTo(3);
     }
 
     @Test
@@ -56,8 +62,10 @@ class StandaloneJobRunCountingIntegrationTest extends AbstractOpsIntegrationTest
         insertFailed(TestStandaloneJobs.UNCOUNTED);
 
         retry(TestStandaloneJobs.UNCOUNTED);
+        scheduler.takeOverStale();
 
-        Map<String, Object> row = awaitSuccess(TestStandaloneJobs.UNCOUNTED);
+        Map<String, Object> row = rowOf(TestStandaloneJobs.UNCOUNTED);
+        assertThat(row.get("status")).isEqualTo("SUCCESS");
         assertThat(row.get("processed_count")).isNull();
     }
 
@@ -77,18 +85,10 @@ class StandaloneJobRunCountingIntegrationTest extends AbstractOpsIntegrationTest
                 """, jobName, java.sql.Date.valueOf(DATE), now, now, now);
     }
 
-    private Map<String, Object> awaitSuccess(String jobName) throws InterruptedException {
-        long deadline = System.currentTimeMillis() + 10_000;
-        while (System.currentTimeMillis() < deadline) {
-            List<Map<String, Object>> rows = jdbc.queryForList(
-                    "SELECT status, processed_count, attempt_no FROM batch_execution_log"
-                            + " WHERE job_name = ? AND business_date = ?",
-                    jobName, java.sql.Date.valueOf(DATE));
-            if (!rows.isEmpty() && "SUCCESS".equals(rows.get(0).get("status"))) {
-                return rows.get(0);
-            }
-            Thread.sleep(100);
-        }
-        throw new AssertionError(jobName + " 이 10초 안에 SUCCESS 로 닫히지 않았다");
+    private Map<String, Object> rowOf(String jobName) {
+        return jdbc.queryForMap(
+                "SELECT status, processed_count, attempt_no FROM batch_execution_log"
+                        + " WHERE job_name = ? AND business_date = ?",
+                jobName, java.sql.Date.valueOf(DATE));
     }
 }

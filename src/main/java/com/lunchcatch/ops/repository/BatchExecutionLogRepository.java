@@ -84,8 +84,19 @@ public interface BatchExecutionLogRepository extends JpaRepository<BatchExecutio
                                           @Param("cursorId") Long cursorId,
                                           Pageable limit);
 
-    List<BatchExecutionLog> findByStatusAndOwnerIdNotAndUpdatedAtBefore(
-            BatchStatus status, String ownerId, LocalDateTime staleBefore);
+    /*
+     * 이어받을 실행 중 행을 찾는다. 다른 서버가 들고 있는데 갱신이 멈춘 행과, 관리자가 재실행을
+     * 요청해 소유자가 요청 표식인 행이다(#1231). 요청 표식인 행은 아무도 갱신하지 않으므로 멈출 때까지 기다리지 않는다.
+     */
+    @Query("""
+            SELECT l FROM BatchExecutionLog l
+             WHERE l.status = com.lunchcatch.ops.entity.BatchStatus.RUNNING
+               AND l.ownerId <> :ownerId
+               AND (l.updatedAt < :staleBefore OR l.ownerId = :requestedOwner)
+            """)
+    List<BatchExecutionLog> findTakeOverTargets(@Param("ownerId") String ownerId,
+                                                @Param("staleBefore") LocalDateTime staleBefore,
+                                                @Param("requestedOwner") String requestedOwner);
 
     /*
      * 점유를 시도한다. 이미 있는 행은 job_name 을 그대로 두는 값 없는 갱신으로 흡수해, 중복이
@@ -142,8 +153,9 @@ public interface BatchExecutionLogRepository extends JpaRepository<BatchExecutio
     int renewOwned(@Param("ownerId") String ownerId, @Param("now") LocalDateTime now);
 
     /*
-     * 멈춘 행의 소유자를 나로 바꾼다.
+     * 멈춘 행이나 재실행을 요청받은 행의 소유자를 나로 바꾼다.
      * updatedAt 조건을 함께 넣어, 그 사이 원래 서버가 살아나 갱신했으면 걸리지 않게 한다.
+     * 요청 표식인 행은 두 배치 서버가 함께 집어도 먼저 바꾼 쪽만 1건을 받는다(#1231).
      *
      * attemptNo 를 하나 올린다(#360). 이어받기도 소유자가 바뀌는 자리라 세대가 오른다.
      */
@@ -155,13 +167,14 @@ public interface BatchExecutionLogRepository extends JpaRepository<BatchExecutio
              WHERE l.jobName = :jobName
                AND l.businessDate = :businessDate
                AND l.status = com.lunchcatch.ops.entity.BatchStatus.RUNNING
-               AND l.updatedAt < :staleBefore
+               AND (l.updatedAt < :staleBefore OR l.ownerId = :requestedOwner)
             """)
     int takeOver(@Param("jobName") String jobName,
                  @Param("businessDate") LocalDate businessDate,
                  @Param("ownerId") String ownerId,
                  @Param("now") LocalDateTime now,
-                 @Param("staleBefore") LocalDateTime staleBefore);
+                 @Param("staleBefore") LocalDateTime staleBefore,
+                 @Param("requestedOwner") String requestedOwner);
 
     /*
      * 실행 중 행을 닫는다. 성공이면 사유가 없고 실패면 사유가 있다.

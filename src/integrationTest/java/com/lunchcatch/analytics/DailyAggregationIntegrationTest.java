@@ -172,6 +172,7 @@ class DailyAggregationIntegrationTest extends AbstractAnalyticsIntegrationTest {
         assertThat(statusOf(twoDaysAgo)).isNull();
     }
 
+    // 관리자 재실행은 행을 요청 표식으로 되돌리기만 하고, 배치 서버의 이어받기가 집계를 돌린다(#1231). 세대는 재실행과 이어받기에서 하나씩 오른다
     @Test
     void 관리자_수동_재실행이_실패한_집계_날짜를_다시_집계한다() throws Exception {
         insertLog(JOB, yesterday, "FAILED", OTHER, 1, now());
@@ -179,9 +180,10 @@ class DailyAggregationIntegrationTest extends AbstractAnalyticsIntegrationTest {
         mvc.perform(post("/v1/admin/batch-executions/" + JOB + "/" + yesterday + ":retry")
                         .with(user(new CustomUserDetails(1L, Role.ADMIN))))
                 .andExpect(status().isAccepted());
+        scheduler.takeOverStale();
 
-        awaitStatus(yesterday, "SUCCESS");
-        assertThat(attemptNoOf(yesterday)).isEqualTo(2);
+        assertThat(statusOf(yesterday)).isEqualTo("SUCCESS");
+        assertThat(attemptNoOf(yesterday)).isEqualTo(3);
         assertThat(processedCountOf(yesterday)).isEqualTo(publishedRows(yesterday));
     }
 

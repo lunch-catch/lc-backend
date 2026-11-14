@@ -2,6 +2,7 @@ package com.lunchcatch.ops.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -53,6 +54,7 @@ class BatchExecutionServiceTest {
             Clock.fixed(Instant.parse("2026-10-05T15:00:00Z"), ClockConfig.ZONE);
     private static final LocalDateTime NOW = LocalDateTime.of(2026, 10, 6, 0, 0);
     private static final LocalDateTime STALE_BEFORE = NOW.minusMinutes(2);
+    private static final String REQUESTED = BatchExecutionService.RETRY_REQUESTED_OWNER;
 
     @Mock
     private BatchExecutionLogRepository logs;
@@ -193,7 +195,7 @@ class BatchExecutionServiceTest {
                 .thenReturn(Optional.of(row(BatchStatus.FAILED, OTHER)));
 
         assertThat(service.begin(JOB, DATE)).isEqualTo(StepOutcome.BLOCKED);
-        verify(logs, never()).restartFailed(JOB, DATE, ME, NOW);
+        verify(logs, never()).restartFailed(any(), any(), any(), any());
     }
 
     /*
@@ -208,7 +210,7 @@ class BatchExecutionServiceTest {
                 .thenReturn(Optional.of(row(BatchStatus.RUNNING, ME)));
 
         assertThat(service.begin(JOB, DATE)).isEqualTo(StepOutcome.STARTED);
-        verify(logs, never()).takeOver(JOB, DATE, ME, NOW, STALE_BEFORE);
+        verify(logs, never()).takeOver(JOB, DATE, ME, NOW, STALE_BEFORE, REQUESTED);
     }
 
     @Test
@@ -216,7 +218,7 @@ class BatchExecutionServiceTest {
     void 단계_이어받기() {
         when(logs.findByJobNameAndBusinessDate(JOB, DATE))
                 .thenReturn(Optional.of(row(BatchStatus.RUNNING, OTHER)));
-        when(logs.takeOver(JOB, DATE, ME, NOW, STALE_BEFORE)).thenReturn(1);
+        when(logs.takeOver(JOB, DATE, ME, NOW, STALE_BEFORE, REQUESTED)).thenReturn(1);
 
         assertThat(service.begin(JOB, DATE)).isEqualTo(StepOutcome.STARTED);
     }
@@ -230,7 +232,7 @@ class BatchExecutionServiceTest {
     void 단계_이어받기_실패() {
         when(logs.findByJobNameAndBusinessDate(JOB, DATE))
                 .thenReturn(Optional.of(row(BatchStatus.RUNNING, OTHER)));
-        when(logs.takeOver(JOB, DATE, ME, NOW, STALE_BEFORE)).thenReturn(0);
+        when(logs.takeOver(JOB, DATE, ME, NOW, STALE_BEFORE, REQUESTED)).thenReturn(0);
 
         assertThat(service.begin(JOB, DATE)).isEqualTo(StepOutcome.BLOCKED);
     }
@@ -322,9 +324,9 @@ class BatchExecutionServiceTest {
     @Test
     @DisplayName("멈춘 행을 이어받고 관리자에게 알린다")
     void 멈춘_행을_이어받는다() {
-        when(logs.findByStatusAndOwnerIdNotAndUpdatedAtBefore(BatchStatus.RUNNING, ME, STALE_BEFORE))
+        when(logs.findTakeOverTargets(ME, STALE_BEFORE, REQUESTED))
                 .thenReturn(List.of(row(BatchStatus.RUNNING, OTHER)));
-        when(logs.takeOver(JOB, DATE, ME, NOW, STALE_BEFORE)).thenReturn(1);
+        when(logs.takeOver(JOB, DATE, ME, NOW, STALE_BEFORE, REQUESTED)).thenReturn(1);
         when(logs.findByJobNameAndBusinessDate(JOB, DATE))
                 .thenReturn(Optional.of(row(BatchStatus.RUNNING, ME)));
 
@@ -339,11 +341,28 @@ class BatchExecutionServiceTest {
     @Test
     @DisplayName("그 사이 되살아난 행은 이어받지 않는다")
     void 되살아난_행은_건드리지_않는다() {
-        when(logs.findByStatusAndOwnerIdNotAndUpdatedAtBefore(BatchStatus.RUNNING, ME, STALE_BEFORE))
+        when(logs.findTakeOverTargets(ME, STALE_BEFORE, REQUESTED))
                 .thenReturn(List.of(row(BatchStatus.RUNNING, OTHER)));
-        when(logs.takeOver(JOB, DATE, ME, NOW, STALE_BEFORE)).thenReturn(0);
+        when(logs.takeOver(JOB, DATE, ME, NOW, STALE_BEFORE, REQUESTED)).thenReturn(0);
 
         assertThat(service.takeOverStale()).isEmpty();
+        verifyNoInteractions(alert);
+    }
+
+    /*
+     * 관리자 수동 재실행은 배치 서버가 이어받아 돈다(#1231). 멈춘 서버를 이어받은 것이 아니라
+     * 요청받은 실행을 시작한 것이라 이어받기 경보를 보내지 않는다.
+     */
+    @Test
+    @DisplayName("재실행을 요청받은 행은 이어받되 이어받기 경보를 보내지 않는다")
+    void 재실행_요청_행은_경보_없이_이어받는다() {
+        when(logs.findTakeOverTargets(ME, STALE_BEFORE, REQUESTED))
+                .thenReturn(List.of(row(BatchStatus.RUNNING, REQUESTED)));
+        when(logs.takeOver(JOB, DATE, ME, NOW, STALE_BEFORE, REQUESTED)).thenReturn(1);
+        when(logs.findByJobNameAndBusinessDate(JOB, DATE))
+                .thenReturn(Optional.of(row(BatchStatus.RUNNING, ME)));
+
+        assertThat(service.takeOverStale()).hasSize(1);
         verifyNoInteractions(alert);
     }
 
@@ -423,8 +442,9 @@ class BatchExecutionServiceTest {
         assertThat(service.recordRetryAttempt(JOB, DATE, 3, "교착")).isTrue();
     }
 
+    // 분석의 일별 집계처럼 되돌린 뒤 이 서버가 직접 도는 재실행은 이 서버가 소유한다
     @Test
-    @DisplayName("실패한 행만 수동 재실행으로 되돌린다")
+    @DisplayName("실패한 행만 되돌리고 이 서버가 소유한다")
     void 수동_재실행() {
         when(logs.restartFailed(JOB, DATE, ME, NOW)).thenReturn(1);
 
@@ -438,6 +458,23 @@ class BatchExecutionServiceTest {
         when(logs.restartFailed(JOB, DATE, ME, NOW)).thenReturn(0);
 
         assertThat(service.retry(JOB, DATE)).isFalse();
+    }
+
+    // 관리자 수동 재실행은 이 서버가 돌리지 않고 배치 서버의 이어받기가 집도록 요청 표식을 소유자로 둔다(#1231)
+    @Test
+    @DisplayName("관리자 재실행 요청은 실패한 행을 되돌리고 소유자를 요청 표식으로 둔다")
+    void 관리자_재실행_요청() {
+        when(logs.restartFailed(JOB, DATE, REQUESTED, NOW)).thenReturn(1);
+
+        assertThat(service.requestRetry(JOB, DATE)).isTrue();
+    }
+
+    @Test
+    @DisplayName("실패 상태가 아니면 관리자 재실행 요청이 걸리지 않는다")
+    void 관리자_재실행_요청_무효() {
+        when(logs.restartFailed(JOB, DATE, REQUESTED, NOW)).thenReturn(0);
+
+        assertThat(service.requestRetry(JOB, DATE)).isFalse();
     }
 
     @Test
