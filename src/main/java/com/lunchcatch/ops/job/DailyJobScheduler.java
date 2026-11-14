@@ -20,7 +20,8 @@ import org.springframework.stereotype.Component;
  *
  * 실제로 묶음을 돌리고 재개하는 로직은 BatchJobRunner(Service 계층)가 갖는다. 이 클래스는
  * Entry 계층이라 Service 는 이 클래스를 부를 수 없다(설계 문서 1.5절). 관리자 수동 재실행
- * (BatchExecutionRetryService, #362)이 그 규칙 때문에 BatchJobRunner 를 직접 쓴다.
+ * (BatchExecutionRetryService, #362)은 행을 요청 표식으로 되돌리기만 하고, 이 클래스의 이어받기가
+ * 그 행을 집어 돈다(#1231).
  */
 @Slf4j
 @Component

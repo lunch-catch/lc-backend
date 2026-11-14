@@ -1,14 +1,11 @@
 package com.lunchcatch.ops.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyInt;
-import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -22,19 +19,15 @@ import com.lunchcatch.ops.scheduler.BatchJobRegistry;
 import com.lunchcatch.ops.scheduler.BatchJobRegistry.Kind;
 import java.time.LocalDate;
 import java.util.Optional;
-import java.util.concurrent.Executor;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.RejectedExecutionException;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicReference;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.slf4j.MDC;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionStatus;
 
 @ExtendWith(MockitoExtension.class)
 class BatchExecutionRetryServiceTest {
@@ -48,25 +41,25 @@ class BatchExecutionRetryServiceTest {
     @Mock
     private BatchExecutionService executions;
     @Mock
-    private BatchJobRunner runner;
-    @Mock
     private BatchJobRegistry registry;
     @Mock
     private AuditLogWriter auditLogWriter;
     @Mock
     private PlatformTransactionManager transactionManager;
+    @Mock
+    private TransactionStatus transaction;
 
-    private final Executor direct = Runnable::run;
+    private BatchExecutionRetryService service;
 
-    private BatchExecutionRetryService service(Executor executor) {
-        return new BatchExecutionRetryService(logs, executions, runner, registry, auditLogWriter, transactionManager, executor);
+    @BeforeEach
+    void setUp() {
+        service = new BatchExecutionRetryService(logs, executions, registry, auditLogWriter, transactionManager);
     }
 
-    private static BatchExecutionLog row(BatchStatus status, long id, int attemptNo) {
+    private static BatchExecutionLog row(BatchStatus status, long id) {
         BatchExecutionLog row = BatchExecutionLog.running(JOB, DATE, "owner-1");
         ReflectionTestUtils.setField(row, "status", status);
         ReflectionTestUtils.setField(row, "id", id);
-        ReflectionTestUtils.setField(row, "attemptNo", attemptNo);
         return row;
     }
 
@@ -74,7 +67,7 @@ class BatchExecutionRetryServiceTest {
     void 재실행_대상이_아니면_거부한다() {
         when(registry.classify(JOB)).thenReturn(Kind.UNKNOWN);
 
-        assertThatThrownBy(() -> service(direct).retry(ADMIN_ID, JOB, DATE))
+        assertThatThrownBy(() -> service.retry(ADMIN_ID, JOB, DATE))
                 .isInstanceOfSatisfying(OpsException.class, e ->
                         assertThat(e.getErrorCode()).isEqualTo(OpsErrorCode.NOT_RETRYABLE_JOB));
         verify(logs, never()).findByJobNameAndBusinessDate(any(), any());
@@ -85,136 +78,76 @@ class BatchExecutionRetryServiceTest {
         when(registry.classify(JOB)).thenReturn(Kind.BUNDLE);
         when(logs.findByJobNameAndBusinessDate(JOB, DATE)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> service(direct).retry(ADMIN_ID, JOB, DATE))
+        assertThatThrownBy(() -> service.retry(ADMIN_ID, JOB, DATE))
                 .isInstanceOfSatisfying(OpsException.class, e ->
                         assertThat(e.getErrorCode()).isEqualTo(OpsErrorCode.EXECUTION_NOT_FOUND));
-        verify(executions, never()).retry(any(), any());
+        verify(executions, never()).requestRetry(any(), any());
     }
 
     @Test
     void FAILED_상태가_아니면_거부한다() {
         when(registry.classify(JOB)).thenReturn(Kind.BUNDLE);
-        when(logs.findByJobNameAndBusinessDate(JOB, DATE))
-                .thenReturn(Optional.of(row(BatchStatus.RUNNING, 301L, 1)));
+        when(logs.findByJobNameAndBusinessDate(JOB, DATE)).thenReturn(Optional.of(row(BatchStatus.RUNNING, 301L)));
 
-        assertThatThrownBy(() -> service(direct).retry(ADMIN_ID, JOB, DATE))
+        assertThatThrownBy(() -> service.retry(ADMIN_ID, JOB, DATE))
                 .isInstanceOfSatisfying(OpsException.class, e ->
                         assertThat(e.getErrorCode()).isEqualTo(OpsErrorCode.EXECUTION_NOT_FAILED));
-        verify(executions, never()).retry(any(), any());
+        verify(executions, never()).requestRetry(any(), any());
     }
 
     /*
-     * 동시에 두 요청이 오면 둘 다 FAILED 를 읽을 수 있지만, BatchExecutionService.retry 의
+     * 동시에 두 요청이 오면 둘 다 FAILED 를 읽을 수 있지만, BatchExecutionService.requestRetry 의
      * 조건부 UPDATE 는 한쪽만 걸린다. 그 결과가 최종 판정이다.
      */
     @Test
-    void 조건부_갱신이_걸리지_않으면_거부한다() {
+    void 조건부_갱신이_걸리지_않으면_거부하고_감사_로그를_남기지_않는다() {
         when(registry.classify(JOB)).thenReturn(Kind.BUNDLE);
-        when(logs.findByJobNameAndBusinessDate(JOB, DATE))
-                .thenReturn(Optional.of(row(BatchStatus.FAILED, 301L, 1)));
-        when(executions.retry(JOB, DATE)).thenReturn(false);
+        when(logs.findByJobNameAndBusinessDate(JOB, DATE)).thenReturn(Optional.of(row(BatchStatus.FAILED, 301L)));
+        when(executions.requestRetry(JOB, DATE)).thenReturn(false);
 
-        assertThatThrownBy(() -> service(direct).retry(ADMIN_ID, JOB, DATE))
+        assertThatThrownBy(() -> service.retry(ADMIN_ID, JOB, DATE))
                 .isInstanceOfSatisfying(OpsException.class, e ->
                         assertThat(e.getErrorCode()).isEqualTo(OpsErrorCode.EXECUTION_NOT_FAILED));
         verify(auditLogWriter, never()).write(any(), any(), any(), any());
     }
 
+    /*
+     * 앱 서버는 묶음을 돌리지 않는다(#1231). 행을 되돌리고 감사 로그를 남긴 뒤 바로 돌려주고,
+     * 배치 서버의 이어받기가 그 행을 집어 배치 설정의 시간 제한으로 돌린다.
+     */
     @Test
-    void 성공하면_감사_로그를_남기고_재개를_시작시키고_실행_ID를_돌려준다() {
+    void 성공하면_행_되돌리기와_감사_로그를_한_트랜잭션에서_하고_실행_ID를_돌려준다() {
         when(registry.classify(JOB)).thenReturn(Kind.BUNDLE);
         when(logs.findByJobNameAndBusinessDate(JOB, DATE))
-                .thenReturn(Optional.of(row(BatchStatus.FAILED, 301L, 1)))
-                .thenReturn(Optional.of(row(BatchStatus.RUNNING, 301L, 2)));
-        when(executions.retry(JOB, DATE)).thenReturn(true);
+                .thenReturn(Optional.of(row(BatchStatus.FAILED, 301L)))
+                .thenReturn(Optional.of(row(BatchStatus.RUNNING, 301L)));
+        when(executions.requestRetry(JOB, DATE)).thenReturn(true);
+        when(transactionManager.getTransaction(any())).thenReturn(transaction);
 
-        long runId = service(direct).retry(ADMIN_ID, JOB, DATE);
+        long runId = service.retry(ADMIN_ID, JOB, DATE);
 
         assertThat(runId).isEqualTo(301L);
-        verify(auditLogWriter).write(ADMIN_ID, "BATCH_EXECUTION_RETRY", JOB + " " + DATE, "관리자 수동 재실행");
-        verify(runner).resume(JOB, DATE, 2);
+        InOrder order = inOrder(transactionManager, executions, auditLogWriter);
+        order.verify(transactionManager).getTransaction(any());
+        order.verify(executions).requestRetry(JOB, DATE);
+        order.verify(auditLogWriter).write(ADMIN_ID, "BATCH_EXECUTION_RETRY", JOB + " " + DATE, "관리자 수동 재실행");
+        order.verify(transactionManager).commit(transaction);
     }
 
+    /*
+     * 감사 로그를 남기지 못하면 같은 트랜잭션의 행 되돌리기도 롤백되어 FAILED 로 남는다.
+     * 배치 서버는 커밋된 RUNNING 행만 보므로 감사 없는 재실행이 돌지 않는다.
+     */
     @Test
-    void 실행기가_가득_차_재개를_시작하지_못하면_실패로_닫고_OPS_005를_올린다() {
+    void 감사_로그를_남기지_못하면_트랜잭션을_롤백하고_예외를_올린다() {
         when(registry.classify(JOB)).thenReturn(Kind.BUNDLE);
-        when(logs.findByJobNameAndBusinessDate(JOB, DATE))
-                .thenReturn(Optional.of(row(BatchStatus.FAILED, 301L, 1)))
-                .thenReturn(Optional.of(row(BatchStatus.RUNNING, 301L, 2)));
-        when(executions.retry(JOB, DATE)).thenReturn(true);
-        Executor full = task -> {
-            throw new RejectedExecutionException("가득 참");
-        };
+        when(logs.findByJobNameAndBusinessDate(JOB, DATE)).thenReturn(Optional.of(row(BatchStatus.FAILED, 301L)));
+        when(executions.requestRetry(JOB, DATE)).thenReturn(true);
+        when(transactionManager.getTransaction(any())).thenReturn(transaction);
+        doThrow(new IllegalStateException("감사 로그 실패")).when(auditLogWriter).write(any(), any(), any(), any());
 
-        assertThatThrownBy(() -> service(full).retry(ADMIN_ID, JOB, DATE))
-                .isInstanceOfSatisfying(OpsException.class,
-                        e -> assertThat(e.getErrorCode()).isEqualTo(OpsErrorCode.RETRY_QUEUE_FULL));
-        verify(executions).fail(JOB, DATE, "수동 재실행을 시작하지 못했다");
-    }
-
-    @Test
-    void 감사_로그를_남기지_못하면_재개하지_않고_실패로_닫고_예외를_올린다() {
-        when(registry.classify(JOB)).thenReturn(Kind.BUNDLE);
-        when(logs.findByJobNameAndBusinessDate(JOB, DATE))
-                .thenReturn(Optional.of(row(BatchStatus.FAILED, 301L, 1)))
-                .thenReturn(Optional.of(row(BatchStatus.RUNNING, 301L, 2)));
-        when(executions.retry(JOB, DATE)).thenReturn(true);
-        doThrow(new IllegalStateException("감사 로그 실패")).when(auditLogWriter)
-                .write(any(), any(), any(), any());
-
-        assertThatThrownBy(() -> service(direct).retry(ADMIN_ID, JOB, DATE))
-                .isInstanceOf(IllegalStateException.class);
-        verify(executions).fail(JOB, DATE, "수동 재실행을 시작하지 못했다");
-        verify(runner, never()).resume(any(), any(), anyInt());
-    }
-
-    @Test
-    void 서비스가_직접_만든_실행기에서_다른_스레드로_재개를_돌린다() {
-        when(registry.classify(JOB)).thenReturn(Kind.BUNDLE);
-        when(logs.findByJobNameAndBusinessDate(JOB, DATE))
-                .thenReturn(Optional.of(row(BatchStatus.FAILED, 301L, 1)))
-                .thenReturn(Optional.of(row(BatchStatus.RUNNING, 301L, 2)));
-        when(executions.retry(JOB, DATE)).thenReturn(true);
-        BatchExecutionRetryService owned = new BatchExecutionRetryService(
-                logs, executions, runner, registry, auditLogWriter, transactionManager);
-
-        long runId = owned.retry(ADMIN_ID, JOB, DATE);
-        owned.shutdown();
-
-        assertThat(runId).isEqualTo(301L);
-        verify(runner, timeout(5000)).resume(JOB, DATE, 2);
-    }
-
-    @Test
-    void 요청의_MDC를_재개에_넘기고_끝나면_실행기_스레드의_MDC를_비운다() throws Exception {
-        when(registry.classify(JOB)).thenReturn(Kind.BUNDLE);
-        when(logs.findByJobNameAndBusinessDate(JOB, DATE))
-                .thenReturn(Optional.of(row(BatchStatus.FAILED, 301L, 1)))
-                .thenReturn(Optional.of(row(BatchStatus.RUNNING, 301L, 2)));
-        when(executions.retry(JOB, DATE)).thenReturn(true);
-        AtomicReference<String> seenInResume = new AtomicReference<>();
-        doAnswer(invocation -> {
-            seenInResume.set(MDC.get("traceId"));
-            return null;
-        }).when(runner).resume(JOB, DATE, 2);
-        ExecutorService single = Executors.newSingleThreadExecutor();
-
-        try {
-            MDC.put("traceId", "request-1");
-            service(single).retry(ADMIN_ID, JOB, DATE);
-            // 단일 스레드라 이 일은 재개가 끝난 뒤에 돈다
-            String leftOver = single.submit(() -> MDC.get("traceId")).get(5, TimeUnit.SECONDS);
-
-            assertThat(seenInResume.get()).isEqualTo("request-1");
-            assertThat(leftOver).isNull();
-        } finally {
-            MDC.clear();
-            single.shutdownNow();
-        }
-    }
-
-    @Test
-    void 실행기를_받은_생성자로_만든_서비스는_내릴_실행기가_없어도_내려진다() {
-        assertThatCode(() -> service(direct).shutdown()).doesNotThrowAnyException();
+        assertThatThrownBy(() -> service.retry(ADMIN_ID, JOB, DATE)).isInstanceOf(IllegalStateException.class);
+        verify(transactionManager).rollback(transaction);
+        verify(transactionManager, never()).commit(any());
     }
 }

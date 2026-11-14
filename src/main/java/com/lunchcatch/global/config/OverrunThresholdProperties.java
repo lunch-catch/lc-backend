@@ -44,6 +44,11 @@ public record OverrunThresholdProperties(
         job = named("job", job);
     }
 
+    // 그 API 의 목표다. 이름별 값이 없으면 기본값이다
+    Duration api(String method, String uri) {
+        return api.getOrDefault(method + " " + uri, apiDefault);
+    }
+
     // 종류마다 기본값과 이름별 값을 함께 돌려준다. 기본값의 이름은 default 다
     Map<String, Map<String, Duration>> byKind() {
         Map<String, Map<String, Duration>> kinds = new LinkedHashMap<>();

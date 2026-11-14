@@ -260,7 +260,7 @@ public interface PointLedgerRepository extends JpaRepository<PointLedger, Long>,
             """)
     long sumUnspentBetween(@Param("from") LocalDateTime from, @Param("to") LocalDateTime to);
 
-    // 그 영업일에 RELEASE 가 이미 있는 캠페인이다. 점주 ID 로 걸러 idx_point_ledger_owner_business_date 를 탄다
+    // 그 영업일에 RELEASE 가 이미 있는 캠페인이다. 점주 ID 와 종류로 걸러 idx_point_ledger_owner_type_created 를 탄다(#1241)
     @Query("""
             select distinct l.campaignId
               from PointLedger l

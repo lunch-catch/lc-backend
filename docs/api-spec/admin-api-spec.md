@@ -215,7 +215,7 @@ Set-Cookie: refreshToken=<opaque>; Path=/v1/admin/auth/; Max-Age=86400; HttpOnly
 
 `FAILED`로 확정된 00:00 묶음(`DAILY_0000`) 또는 등록된 묶음 밖 작업(`StandaloneJob`)을 관리자가 다시 실행한다. 개별 단계 이름처럼 그 둘이 아닌 `jobName`은 받지 않는다. 그런 이름은 묶음 드라이버 없이 독자적으로 다시 실행할 경로가 없기 때문이다(상세 근거는 [batch-execution-retry-api-design.md](../design/ops/batch-execution-retry-api-design.md)).
 
-접수만 하고 바로 `202`를 돌려준다. 실제 재실행은 접수 뒤 별도로 돈다. 처리한 관리자는 감사 로그에 남는다.
+접수만 하고 바로 `202`를 돌려준다. 실제 재실행은 배치 서버가 1분 안에 이어받아 돈다. 처리한 관리자는 감사 로그에 남는다.
 
 ### 인증 및 권한
 
@@ -268,7 +268,6 @@ Cookie: adminAccessToken=<JWT>
 | `404` | `OPS-002` | 그 (`jobName`, `businessDate`)의 실행 기록이 없다 |
 | `409` | `OPS-003` | 실행 기록이 `FAILED` 상태가 아니다(`SUCCESS`, `RUNNING`). 동시에 두 번 오면 한쪽이 이 오류를 받는다 |
 | `422` | `OPS-001` | `jobName`이 `DAILY_0000`도 등록된 `StandaloneJob`도 아니다 |
-| `503` | `OPS-005` | 재실행 요청이 한꺼번에 몰려 대기열(4건)이 가득 찼다. 되돌린 행은 다시 `FAILED`로 닫히므로 잠시 뒤 다시 요청한다. 감사 로그에는 이 시도가 남는다 |
 
 ## 배치 실행 이력 조회
 
@@ -340,7 +339,7 @@ Cookie: adminAccessToken=<JWT>
 | `data.items[].executedBy` | string | 아니오 | 지금 그 기록을 가진 배치 서버. 이어받으면 이어받은 서버로 바뀐다 |
 | `data.items[].retryCount` | number | 아니오 | 이 시도에서 일시적 오류로 자동 재실행한 횟수. 0~2 |
 | `data.items[].failureReason` | string | 예 | 실패 사유 원문. 최대 500자. `FAILED`일 때만 값이 있다 |
-| `data.items[].attemptNo` | number | 아니오 | 실행 세대. 처음 실행하면 1이고 이어받기와 수동 재실행마다 1씩 오른다 |
+| `data.items[].attemptNo` | number | 아니오 | 실행 세대. 처음 실행하면 1이고 이어받기와 수동 재실행마다 1씩 오른다. 관리자 수동 재실행은 재실행 요청과 배치 서버의 이어받기에서 한 번씩, 모두 2가 오른다 |
 | `data.items[].retryable` | boolean | 아니오 | 지금 [배치 작업 수동 재실행](#배치-작업-수동-재실행)을 부를 수 있으면 `true`. `status`가 `FAILED`이고 작업명이 `DAILY_0000`이거나 등록된 묶음 밖 작업일 때만 `true`다 |
 | `data.nextPageToken` | string | 예 | 다음 페이지 커서. `null`이면 마지막 페이지다 |
 
@@ -371,6 +370,5 @@ Cookie: adminAccessToken=<JWT>
 | `OPS-002` | `404` | 그 작업의 실행 기록이 없습니다. |
 | `OPS-003` | `409` | FAILED 상태가 아니면 재실행할 수 없습니다. |
 | `OPS-004` | `400` | 조회 기간이 올바르지 않습니다. |
-| `OPS-005` | `503` | 재실행 요청이 몰려 지금은 받을 수 없습니다. 잠시 후 다시 시도해 주세요. |
 
 요청 검증과 JSON 형식 오류 등 `COMMON-*`는 [공통 규약](./api-spec.md#공통-오류-코드), `AUTH-*`는 [인증 오류 코드](./auth-api-spec.md#오류-코드)를 따른다.

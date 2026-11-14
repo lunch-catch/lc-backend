@@ -1,5 +1,6 @@
 package com.lunchcatch.global.config;
 
+import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
 import io.micrometer.observation.Observation;
@@ -16,27 +17,31 @@ import org.springframework.stereotype.Component;
  * 기존 http.server.requests 에 버킷을 켜면 상태값, 메서드, 예외의 조합마다 버킷이 70개 남짓 붙어 운영 Prometheus 의 시계열이 수만 개로 는다.
  * 같은 이름에서 일부만 켜면 지표 종류가 섞여 수집 전체가 실패하므로 이름을 따로 둔다.
  * 상태값별 요청 수와 오류율은 기존 지표가 그대로 갖는다.
+ * 그 API 의 목표 안에 끝났는지도 함께 센다(#1251). 버킷에는 목표 값이 없고 메서드도 없어 Prometheus 쿼리로는 API 마다의 목표로 세지 못한다.
  */
 @Component
 public class HttpLatencyHistogramHandler implements ObservationHandler<ServerRequestObservationContext> {
 
     static final String METRIC = "http.server.requests.histogram";
+    static final String TARGET_METRIC = "http.server.requests.target";
     // 엔드포인트가 늘어도 시계열이 이 수 x 버킷 수를 넘지 않게 막는다
     static final int MAX_URIS = 200;
     // k6 의 시간 초과가 60초라 그보다 느린 요청이 마지막 버킷에 뭉치지 않게 한다
     private static final Duration MAX_EXPECTED = Duration.ofSeconds(60);
 
     private final MeterRegistry registry;
+    private final OverrunThresholdProperties targets;
     private final int maxUris;
     private final Set<String> knownUris = ConcurrentHashMap.newKeySet();
 
     @Autowired
-    public HttpLatencyHistogramHandler(MeterRegistry registry) {
-        this(registry, MAX_URIS);
+    public HttpLatencyHistogramHandler(MeterRegistry registry, OverrunThresholdProperties targets) {
+        this(registry, targets, MAX_URIS);
     }
 
-    HttpLatencyHistogramHandler(MeterRegistry registry, int maxUris) {
+    HttpLatencyHistogramHandler(MeterRegistry registry, OverrunThresholdProperties targets, int maxUris) {
         this.registry = registry;
+        this.targets = targets;
         this.maxUris = maxUris;
     }
 
@@ -52,12 +57,21 @@ public class HttpLatencyHistogramHandler implements ObservationHandler<ServerReq
             return;
         }
         Timer.Sample sample = context.getRequired(Timer.Sample.class);
-        sample.stop(Timer.builder(METRIC)
+        long nanos = sample.stop(Timer.builder(METRIC)
                 .description("API 별 요청 시간. p99 를 계산하는 버킷을 내보낸다")
                 .tag("uri", uri)
                 .publishPercentileHistogram()
                 .maximumExpectedValue(MAX_EXPECTED)
                 .register(registry));
+        String method = context.getLowCardinalityKeyValue("method").getValue();
+        Counter.builder(TARGET_METRIC)
+                .description("API 별 요청이 그 API 의 목표 안에 끝났는지")
+                .tag("uri", uri)
+                .tag("method", method)
+                .tag("outcome", context.getLowCardinalityKeyValue("outcome").getValue())
+                .tag("result", nanos <= targets.api(method, uri).toNanos() ? "within" : "over")
+                .register(registry)
+                .increment();
     }
 
     @Override

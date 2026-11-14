@@ -84,12 +84,11 @@ flowchart LR
         DJS["job (Entry)<br/>DailyJobScheduler"]
         BRC[BatchExecutionRetryController] --> BRS["BatchExecutionRetryService"]
         BRS --> BES["BatchExecutionService"]
-        BRS --> DJR["BatchJobRunner<br/>resume, runBundle"]
         BRS --> REG["scheduler<br/>BatchJobRegistry<br/>classify"]
         DJS --> REG
         DJR --> REG
         DJS --> BES
-        DJS --> DJR
+        DJS --> DJR["BatchJobRunner<br/>resume, runBundle"]
         BES --> BELR[(BatchExecutionLogRepository)]
         DJR --> BES
         ALW -.-> ALWI[AuditLogWriterImpl]
@@ -107,11 +106,10 @@ flowchart LR
     SJ[("각 도메인의 StandaloneJob")] -.등록.-> REG
 ```
 
-`BatchExecutionRetryService`(Service)가 `DailyJobScheduler`(Entry, `job/`)를 부르지 않고
-`BatchJobRunner`(Service, `service/`)만 쓰는 것은 취향이 아니라 계층 규칙이다. "Entry 는
-누구에게도 불리지 않는다"(설계 문서 1.5절)가 그 방향을 막는다. 그래서 묶음을 실제로 도는
-로직과 재개 경로(`resume`)를 Service 계층으로 옮기고, `DailyJobScheduler`에는
-점유 확인과 스케줄 트리거만 남겼다.
+묶음을 실제로 도는 로직과 재개 경로(`resume`)는 Service 계층의 `BatchJobRunner`가 갖고, `DailyJobScheduler`(Entry,
+`job/`)에는 점유 확인과 스케줄, 이어받기 트리거만 남겼다. "Entry 는 누구에게도 불리지 않는다"(설계 문서 1.5절)
+때문이다. `BatchExecutionRetryService`는 `resume`을 부르지 않는다. 행을 요청 표식으로 되돌리면 배치 서버의
+`DailyJobScheduler.takeOverStale`이 집어 `resume`을 부른다(#1231).
 
 ### 상태 변경
 
@@ -121,13 +119,13 @@ stateDiagram-v2
     RUNNING --> SUCCESS: succeed
     RUNNING --> FAILED: fail (자동 재실행 상한 또는 비일시적 오류)
     RUNNING --> RUNNING: takeOver (다른 서버가 이어받음, 소유자만 바뀐다)
-    FAILED --> RUNNING: retry (관리자 수동, #362) / rerun (분석)
+    FAILED --> RUNNING: requestRetry (관리자 수동, 소유자는 요청 표식, #362, #1231) / retry, rerun (분석)
     SUCCESS --> RUNNING: rerun (분석만)
 ```
 
 | 전이 | 일으키는 쪽 | 나가는 이벤트 | 금지일 때 응답 |
 |---|---|---|---|
-| FAILED -> RUNNING (retry) | 관리자(HTTP, #362) | 없음 | `404`(행 없음), `409`(FAILED 아님) |
+| FAILED -> RUNNING (requestRetry) | 관리자(HTTP, #362). 배치 서버의 이어받기가 집어 돈다(#1231) | 없음 | `404`(행 없음), `409`(FAILED 아님) |
 | FAILED/SUCCESS -> RUNNING (rerun) | 분석(`BatchRerunner`) | 없음 | 해당 없음. 분석 내부에서 판정 |
 
 ### 주요 흐름
@@ -138,37 +136,37 @@ sequenceDiagram
     participant S as BatchExecutionRetryService
     participant E as BatchExecutionService
     participant A as AuditLogWriter
+    participant D as DailyJobScheduler (배치 서버)
     participant R as BatchJobRunner
 
     C->>S: retry(adminId, jobName, businessDate)
     S->>S: registry.classify(jobName).isRetryable() [트랜잭션 밖]
     S->>E: findByJobNameAndBusinessDate [조회]
-    S->>E: retry(jobName, businessDate) [조건부 UPDATE, 트랜잭션 밖]
+    S->>E: requestRetry(jobName, businessDate) [조건부 UPDATE, 소유자는 요청 표식, 트랜잭션 1]
     S->>A: write(감사 로그) [트랜잭션 1]
-    S->>S: executor.execute(다른 스레드) [트랜잭션 밖]
     S-->>C: runId (202)
-    Note over R: 다른 스레드
-    R->>R: resume(jobName, businessDate, attemptNo)
-    R->>E: succeed 또는 fail [트랜잭션 2]
+    Note over D: 1분 안의 다음 이어받기 스캔
+    D->>E: takeOverStale [요청 표식인 행을 기다리지 않고 집는다, 트랜잭션 2]
+    D->>R: resume(jobName, businessDate, attemptNo)
+    R->>E: succeed 또는 fail [트랜잭션 3]
 ```
 
 | 실패 지점 | 남는 상태 | 다시 요청하면 |
 |---|---|---|
-| 조건부 UPDATE 뒤, 감사 로그 기록 전 | 행은 RUNNING, 감사 로그 없음 | 서비스가 그 자리에서 잡아 FAILED로 되돌리고 예외를 올린다. 관리자가 다시 누르면 처음부터 다시 간다 |
-| 감사 로그 기록 뒤, 접수(executor.execute) 전 | 행은 RUNNING, 감사 로그는 남음 | 위와 같다. FAILED로 되돌리므로 관리자가 다시 누를 수 있다. 감사 로그는 "시도했다"는 기록으로 남는다 |
-| 접수 뒤, 실제 재개(resume) 전에 프로세스가 죽음 | 행은 RUNNING, 아무도 닫지 않는다 | 되돌릴 방법이 없다. `DailyJobScheduler.takeOverStale`이 2분 뒤 다른 서버에서 이어받아 같은 `BatchJobRunner.resume` 경로로 다시 돈다 |
+| 감사 로그 기록 실패 | 같은 트랜잭션의 조건부 UPDATE 도 롤백되어 행은 FAILED, 감사 로그 없음 | 관리자가 다시 누르면 처음부터 다시 간다 |
+| 커밋 뒤, 배치 서버가 집기 전 | 행은 RUNNING, 소유자는 요청 표식 | 배치 서버의 다음 이어받기 스캔이 집는다. 배치 서버가 하나도 없으면 아무도 집지 않는다 |
+| 배치 서버가 집은 뒤 재개 중에 그 서버가 죽음 | 행은 RUNNING, 소유자는 그 배치 서버 | 생존 신호가 멈춰 2분 뒤 다른 배치 서버가 이어받아 같은 `BatchJobRunner.resume` 경로로 다시 돈다 |
 
 ## 7. 트랜잭션과 동시성
 
 | 흐름 | 한 트랜잭션에 묶는 것 | 트랜잭션 밖 |
 |---|---|---|
-| 수동 재실행 접수(#362) | 감사 로그 기록 하나 | 상태 조회, 조건부 UPDATE(retry), 실제 재개(resume) |
+| 수동 재실행 접수(#362) | 조건부 UPDATE(requestRetry)와 감사 로그 기록 | 상태 조회. 실제 재개(resume)는 배치 서버의 이어받기가 따로 돈다(#1231) |
 | 배치 상태 전환(claim/succeed/fail/renew 등) | 그 UPDATE 또는 INSERT 하나 | 그 전후의 작업 실행 자체 |
 
-- 실제 재개(`BatchJobRunner.resume`)는 트랜잭션 밖, 별도 스레드에서 돈다. 00:00 묶음은
-  여러 단계가 걸려 오래 걸릴 수 있어 요청 스레드나 DB 트랜잭션을 묶어 두지 않는다.
-- 접수(`executor.execute`)가 실패(대기열 가득 참)하거나 감사 로그 기록이 실패하면 되돌린
-  행을 다시 `FAILED`로 닫는다(분석의 A-05, `AggregationRecalculationService`와 같은 처리).
+- 실제 재개(`BatchJobRunner.resume`)는 요청을 받은 서버가 아니라 배치 서버의 이어받기가 트랜잭션 밖에서 돈다(#1231).
+  00:00 묶음은 여러 단계가 걸려 오래 걸릴 수 있어 요청 스레드나 DB 트랜잭션을 묶어 두지 않고, 배치 설정의 시간 제한을 받게 한다.
+- 감사 로그 기록이 실패하면 같은 트랜잭션의 조건부 UPDATE 도 롤백되어 행이 `FAILED`로 남는다.
 
 | 상황 | 확인할 것 | 예 |
 |---|---|---|
@@ -192,7 +190,7 @@ sequenceDiagram
 
 | 흐름 | 불리하게 남는 경우 | 누구에게 | 막는 방법 |
 |---|---|---|---|
-| 수동 재실행 접수(#362) | 상태가 RUNNING으로 바뀌었는데 재개가 영원히 안 도는 경우 | 그 배치 작업에 기대는 모든 사용자(예: 00:00 묶음이 멈추면 그날 서비스가 영향받는다) | `takeOverStale`이 2분 뒤 다른 서버에서 이어받아 같은 재개 경로로 다시 돈다 |
+| 수동 재실행 접수(#362) | 상태가 RUNNING으로 바뀌었는데 재개가 영원히 안 도는 경우 | 그 배치 작업에 기대는 모든 사용자(예: 00:00 묶음이 멈추면 그날 서비스가 영향받는다) | 배치 서버의 `takeOverStale`이 요청 표식인 행을 다음 스캔에 집는다. 집은 서버가 죽으면 2분 뒤 다른 배치 서버가 이어받는다. 배치 서버가 하나도 없으면 막지 못한다 |
 
 세부 대상별 장애 처리는 [ops_장애_처리_설계.md](./ops_장애_처리_설계.md)에 있다.
 
@@ -209,7 +207,7 @@ sequenceDiagram
 
 | 적을 것 | 예 |
 |---|---|
-| 요청 하나의 비용(수동 재실행 접수) | DB 읽기 2(classify는 메모리 조회, 행 조회 1, 재조회 1), DB 쓰기 1(조건부 UPDATE) + 감사 로그 쓰기 1, 트랜잭션 1(감사 로그) |
+| 요청 하나의 비용(수동 재실행 접수) | DB 읽기 1(classify는 메모리 조회, 행 조회 1), DB 쓰기 1(조건부 UPDATE) + 감사 로그 쓰기 1, 트랜잭션 1 |
 | 처리량 계산 | 관리자가 누르는 수동 동작이라 목표 TPS를 두지 않는다 |
 | 확인 방법 | 해당 없음 |
 

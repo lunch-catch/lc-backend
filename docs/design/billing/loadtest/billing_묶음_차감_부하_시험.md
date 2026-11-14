@@ -23,6 +23,8 @@
 
 이 시험은 효과의 크기만 재고, 인덱스를 운영에서 지울지는 정하지 않는다.
 
+`V14__billing_stats_date_indexes.sql`(#1241) 부터는 `idx_point_ledger_owner_business_date` 가 `idx_point_ledger_date_type (business_date, entry_type)` 로 바뀌었다. 인덱스 수는 그대로라 다음 회차의 B 는 `idx_point_ledger_date_type` 와 `idx_point_ledger_owner_created` 를 지운다. `idx_point_ledger_date_type` 는 분석 집계의 예약과 해제 합계가 쓰므로 회차가 끝나면 되살린다.
+
 ```sql
 ALTER TABLE point_ledger
   DROP INDEX idx_point_ledger_owner_business_date,

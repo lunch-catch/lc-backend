@@ -586,7 +586,16 @@ Lua는 당일 해시와 처리 표시 두 키를 사용한다. 현재 구현은 
 
 과금 10,000건/초면 정산 INSERT만 최대 20,000건/초다. 광고 서빙의 노출 저장까지 더하면 DB 쓰기가 늘어난다.
 
-집계 조회(`BillingStatsQueryService`)의 기록 시각 범위와 영업일만의 집계에는 날짜가 앞에 오는 인덱스를 두지 않았다. 그런 인덱스는 노출마다 쓰는 판정과 원장 INSERT 에 인덱스 유지 비용을 더한다.
+집계 조회(`BillingStatsQueryService`)는 영업일 하나로 판정과 원장을 묶어 읽는다. 날짜가 앞에 오는 인덱스는 노출마다 쓰는 판정과 원장 INSERT 에 인덱스 유지 비용을 더해 처음에는 두지 않았다. 그러자 영업일만으로 거르는 조회가 보관된 판정과 원장 전체를 읽어, 시간이 그날이 아니라 쌓인 기간에 비례해 늘었다(#1241). 그래서 아래처럼 고쳤다.
+
+| 테이블 | 바꾼 것 | 쓰기 비용 |
+|---|---|---|
+| `deduction_result` | `idx_deduction_result_date (business_date, campaign_id, billing_status)` 를 더했다. `countByStatusOn` 이 그날 행만 읽는다 | 인덱스 하나만큼 는다. 인덱스가 3개인 테이블이라 원장보다 부담이 작다 |
+| `point_ledger` | `(owner_id, business_date)` 를 `idx_point_ledger_date_type (business_date, entry_type)` 로 바꿔 끼웠다. `sumReserveReleaseOn` 이 그날 행만 읽는다 | 인덱스 수가 같아 늘지 않는다. 그 인덱스를 쓰던 점주 조회는 `idx_point_ledger_owner_type_created` 가 받는다 |
+
+판정 3일치 290만 행, 원장 262만 행(로컬 MySQL 8.4, 버퍼 풀 128MB)에서 판정 수가 2.8초에서 0.4 ~ 0.8초, 예약과 해제 합계가 1.5초에서 0.13초가 됐다. 점주 조회 여섯의 실행 계획과 시간은 바꾸기 전과 같았다.
+
+기록 시각 범위로 원장을 읽는 조회(`sumChargeRefundBetween`, `sumAdjustOn`, `sumUnspentBefore`, `sumUnspentBetween`)와 원장 DEDUCT 를 판정과 조인하는 `sumDeductOn` 은 원장 전체를 읽는 그대로다. `(entry_type, created_at)` 이나 `(created_at, entry_type)` 인덱스는 어느 쪽이든 다른 조회 하나를 느리게 해 두지 않았다. `sumDeductOn` 을 판정의 BILLED 합으로 바꾸면 빨라지지만 분석의 정합성 점검 V-1(BILLED 수 x 단가 = 원장 DEDUCT 합)이 같은 데이터를 비교하게 되어 정하지 않았다. 둘은 #1241 에 남겼다.
 
 ## 12. 테스트와 미정 사항
 
