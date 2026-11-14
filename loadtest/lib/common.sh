@@ -593,7 +593,7 @@ local_override() {
 }
 
 local_switch() {
-  local label="${1:-}" nopool="${2:-}" extra="${3:-}" app_extra="${4:-}" batch_extra="${5:-}" dir="$ROOT/build/otel" over="" i svc
+  local label="${1:-}" nopool="${2:-}" extra="${3:-}" app_extra="${4:-}" batch_extra="${5:-}" dir="$ROOT/build/otel" over="" i svc ready
   if [ -n "$label" ]; then
     mkdir -p "$dir"
     # 받다 끊긴 jar 가 남아 다음에 그대로 쓰이지 않게 다 받은 뒤에만 제 이름으로 옮긴다
@@ -616,7 +616,9 @@ local_switch() {
       docker exec "$LOCAL_PROJECT-$svc-1" curl -fs localhost:8081/actuator/health/readiness > /dev/null 2>&1 && break
       sleep 5
     done
-    echo "$svc $(docker exec "$LOCAL_PROJECT-$svc-1" curl -fs localhost:8081/actuator/health/readiness)"
+    ready=$(docker exec "$LOCAL_PROJECT-$svc-1" curl -fs localhost:8081/actuator/health/readiness) \
+      || die "$svc 가 5분 안에 준비되지 않았다"
+    echo "$svc $ready"
     docker exec "$LOCAL_PROJECT-$svc-1" sh -c 'echo "JDK_JAVA_OPTIONS=${JDK_JAVA_OPTIONS:-}"'
     docker exec "$LOCAL_PROJECT-$svc-1" sh -c 'if [ -n "${SPRING_DATA_REDIS_LETTUCE_POOL_ENABLED:-}" ]; then echo "SPRING_DATA_REDIS_LETTUCE_POOL_ENABLED=$SPRING_DATA_REDIS_LETTUCE_POOL_ENABLED"; else echo "pool on"; fi'
   done
