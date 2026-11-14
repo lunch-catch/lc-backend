@@ -293,7 +293,9 @@
 | B-138 | 충전했으나 여전히 부족 | 충전 커밋 후 | RechargeReservationService | - | newReserved < unit_price | 예약액만 늘리고 PAUSED(NO_POINTS) 유지 | D |
 | B-139 | 충전 시 계획 없음 | 충전 커밋 후 | RechargeReservationService | - | 00:00 예약 전 또는 계획 없는 캠페인 | 건너뜀, 다음 00:00 예약이 충전 잔액으로 배분 | D |
 | B-140 | 같은 대기 행 재처리 | 선점 만료 뒤 같은 행 재선점 | insertRechargeReserveIfAbsent | - | 같은 paymentId RECHARGE_RESERVE 존재 | 0건 삽입, 잔액 다시 빼지 않음 | D |
-| B-141 | 재예약 실패 | 재예약 중 예외 | RechargeReservationWorker | - | 재예약 대기 행 PENDING | 예외 올리지 않음, BILLING_RECHARGE_RESERVE_FAILED WARN, attempt_count+1, 다음 시각 = 1m,2m,5m,10m(이후 10m), 충전은 성공 유지 | D || B-145 | 후보 적재 SERVABLE | 75 ADSERVING_CANDIDATE_LOAD | CandidateLoadService.load | - | ACTIVE, 가게 좌표 있음 | ad_candidate(D) upsert, state=SERVABLE | D |
+| B-141 | 재예약 실패 | 재예약 중 예외 | RechargeReservationWorker | - | 재예약 대기 행 PENDING | 예외 올리지 않음, BILLING_RECHARGE_RESERVE_FAILED WARN, attempt_count+1, 다음 시각 = 1m,2m,5m,10m(이후 10m), 충전은 성공 유지 | D |
+| B-432 | 충전한 영업일이 지난 재예약 | fixedDelay PT1M, 재예약 대기 행 선점 | RechargeReservationWorker -> RechargeReservationRetryService | - | 재예약 대기 행 PENDING, 그 행의 business_date < D | 대기 행 EXPIRED, 다음 시각 비움, RECHARGE_RESERVE 원장 없음, 계획 변경 없음, BILLING_RECHARGE_RESERVE_EXPIRED ERROR(fallback=NEXT_DAILY_RESERVE), billing.recharge.reservation 지표 result=expired +1, 충전은 성공 유지. 다음 00:00 예약이 충전 잔액으로 배분 | 충전한 영업일 다음 날 이후(D) |
+| B-145 | 후보 적재 SERVABLE | 75 ADSERVING_CANDIDATE_LOAD | CandidateLoadService.load | - | ACTIVE, 가게 좌표 있음 | ad_candidate(D) upsert, state=SERVABLE | D |
 | B-146 | 후보 적재 PAUSED | 75 단계 | CandidateLoadService.load | - | PAUSED(OWNER 또는 NO_POINTS) | state=PAUSED 로 적재(피드 미노출) | D |
 | B-147 | 가게 없음/메뉴명 없음 | 75 단계 | CandidateLoadService.skip | - | 가게 미등록/좌표 없음, 또는 MENU 할인인데 메뉴 없음 | 해당 캠페인만 건너뜀, adserving_candidate_load_skipped_total{reason=store_missing/menu_missing} 증가 | D |
 | B-148 | 적재 중 상태 전이 반영 | 75 단계 reconcile | CandidateLoadService.reconcile | - | 적재 후 statusChangedAt 이 더 늦은 캠페인 | 별도 트랜잭션에서 상태를 SERVABLE/PAUSED 로 갱신 | D |
