@@ -15,13 +15,17 @@ import java.util.UUID;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executor;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.slf4j.MDC;
 
 @ExtendWith(MockitoExtension.class)
 class FunnelEventRecorderTest {
@@ -125,6 +129,64 @@ class FunnelEventRecorderTest {
         recorder.record(record());
 
         assertThat(count("rejected")).isEqualTo(1);
+    }
+
+    @Test
+    void 기록하는_동안_부른_쪽의_MDC가_보인다() throws Exception {
+        AtomicReference<String> seen = new AtomicReference<>();
+        when(writer.write(any(EventRecord.class))).thenAnswer(call -> {
+            seen.set(MDC.get("traceId"));
+            return new EventWriteResult(1, 0);
+        });
+        ExecutorService worker = Executors.newSingleThreadExecutor();
+        try {
+            MDC.put("traceId", "request-trace");
+            new FunnelEventRecorder(writer, registry, worker).record(record());
+            MDC.clear();
+
+            worker.submit(() -> { }).get(5, TimeUnit.SECONDS);
+            assertThat(seen.get()).isEqualTo("request-trace");
+        } finally {
+            MDC.clear();
+            worker.shutdownNow();
+        }
+    }
+
+    @Test
+    void 기록이_끝나면_실행한_스레드의_MDC를_되돌린다() throws Exception {
+        when(writer.write(any(EventRecord.class))).thenReturn(new EventWriteResult(1, 0));
+        ExecutorService worker = Executors.newSingleThreadExecutor();
+        try {
+            worker.submit(() -> MDC.put("traceId", "worker-trace")).get(5, TimeUnit.SECONDS);
+            MDC.put("traceId", "request-trace");
+            new FunnelEventRecorder(writer, registry, worker).record(record());
+            MDC.clear();
+
+            assertThat(worker.submit(() -> MDC.get("traceId")).get(5, TimeUnit.SECONDS)).isEqualTo("worker-trace");
+        } finally {
+            MDC.clear();
+            worker.shutdownNow();
+        }
+    }
+
+    @Test
+    void 부른_쪽의_MDC가_비어_있으면_실행한_스레드에_남은_값을_쓰지_않는다() throws Exception {
+        AtomicReference<String> seen = new AtomicReference<>("not-called");
+        when(writer.write(any(EventRecord.class))).thenAnswer(call -> {
+            seen.set(MDC.get("traceId"));
+            return new EventWriteResult(1, 0);
+        });
+        ExecutorService worker = Executors.newSingleThreadExecutor();
+        try {
+            worker.submit(() -> MDC.put("traceId", "stale-trace")).get(5, TimeUnit.SECONDS);
+            MDC.clear();
+            new FunnelEventRecorder(writer, registry, worker).record(record());
+
+            worker.submit(() -> { }).get(5, TimeUnit.SECONDS);
+            assertThat(seen.get()).isNull();
+        } finally {
+            worker.shutdownNow();
+        }
     }
 
     /*
