@@ -533,8 +533,14 @@ bash /tmp/lt-profile.sh $name $secs $mode $pyro $PROJECT /tmp/lt-trim.py $ASPROF
 # 풀을 끄면 Valkey 연결 풀이 없던 때와 같이 돈다(#1127). 같은 커밋을 풀 켬과 끔으로 재 풀만의 효과를 가른다.
 #
 app_override() {
-  local label="$1" jar="$2" nopool="$3" extra="${4:-}" service="${5:-lunchcatch}" pair
-  printf 'services:\n  app:\n'
+  printf 'services:\n'
+  service_override app "$@"
+}
+
+# compose 덮어쓰기에서 서비스 한 칸이다. 첫 인자가 compose 의 서비스 이름이고 나머지는 app_override 와 같다
+service_override() {
+  local name="$1" label="$2" jar="$3" nopool="$4" extra="${5:-}" service="${6:-lunchcatch}" pair
+  printf '  %s:\n' "$name"
   [ -z "$label" ] || printf '    volumes:\n      - %s:/opt/otel.jar:ro\n' "$jar"
   printf '    environment:\n'
   if [ -n "$label" ]; then
@@ -576,8 +582,18 @@ EOF
 # 로컬 앱을 다시 띄운다. 이름을 주면 에이전트를 붙이고 주지 않으면 뗀다. 둘째 인자가 1 이면 연결 풀을 끈다.
 # 이미지는 다시 만들지 않는다. 앱 코드를 고쳤으면 로컬 구성에서 docker compose up -d --build app 을 먼저 돌린다.
 #
+#
+# 로컬의 앱과 배치를 한 덮어쓰기 파일에 함께 적는다(#1244). 인자는 이름, 에이전트 jar, 풀 끔, 둘에 같은 값, 앱만의 값, 배치만의 값이다.
+# 배치는 lc-infra 의 compose.lt-like.yaml 이 따로 띄우는 batch 서비스이고, 트레이스의 서비스 이름은 부하 시험 환경처럼 lunchcatch-batch 다.
+#
+local_override() {
+  printf 'services:\n'
+  service_override app "$1" "$2" "$3" "${4:-}${5:-}" lunchcatch
+  service_override batch "$1" "$2" "$3" "${4:-}${6:-}" lunchcatch-batch
+}
+
 local_switch() {
-  local label="${1:-}" nopool="${2:-}" extra="${3:-}" dir="$ROOT/build/otel" over="" i
+  local label="${1:-}" nopool="${2:-}" extra="${3:-}" app_extra="${4:-}" batch_extra="${5:-}" dir="$ROOT/build/otel" over="" i svc ready
   if [ -n "$label" ]; then
     mkdir -p "$dir"
     # 받다 끊긴 jar 가 남아 다음에 그대로 쓰이지 않게 다 받은 뒤에만 제 이름으로 옮긴다
@@ -586,20 +602,25 @@ local_switch() {
       mv "$dir/otel-$OTEL_VERSION.jar.part" "$dir/otel-$OTEL_VERSION.jar"
     fi
   fi
-  if [ -n "$label$nopool$extra" ]; then
+  if [ -n "$label$nopool$extra$app_extra$batch_extra" ]; then
     mkdir -p "$dir"
     over="$dir/compose.override.yaml"
-    app_override "$label" "$dir/otel-$OTEL_VERSION.jar" "$nopool" "$extra" > "$over"
+    local_override "$label" "$dir/otel-$OTEL_VERSION.jar" "$nopool" "$extra" "$app_extra" "$batch_extra" > "$over"
   fi
-  LC_BACKEND_DIR="$ROOT" docker compose -f "$LC_INFRA_DIR/observability/local/compose.yaml" ${over:+-f "$over"} \
-    up -d --no-build app
-  for i in $(seq 1 60); do
-    docker exec "$LOCAL_PROJECT-app-1" curl -fs localhost:8081/actuator/health/readiness > /dev/null 2>&1 && break
-    sleep 5
+  # 부하 시험 환경처럼 배치를 따로 띄운다(#1244). 앱은 스케줄러를 끄고 배치가 batch 프로필로 작업을 돈다
+  LC_BACKEND_DIR="$ROOT" docker compose -f "$LC_INFRA_DIR/observability/local/compose.yaml" \
+    -f "$LC_INFRA_DIR/observability/local/compose.lt-like.yaml" ${over:+-f "$over"} \
+    up -d --no-build app batch
+  for svc in app batch; do
+    for i in $(seq 1 60); do
+      docker exec "$LOCAL_PROJECT-$svc-1" curl -fs localhost:8081/actuator/health/readiness > /dev/null 2>&1 && break
+      sleep 5
+    done
+    ready=$(docker exec "$LOCAL_PROJECT-$svc-1" curl -fs localhost:8081/actuator/health/readiness) \
+      || die "$svc 가 5분 안에 준비되지 않았다"
+    echo "$svc $ready"
+    docker exec "$LOCAL_PROJECT-$svc-1" sh -c 'echo "JDK_JAVA_OPTIONS=${JDK_JAVA_OPTIONS:-}"'
+    docker exec "$LOCAL_PROJECT-$svc-1" sh -c 'if [ -n "${SPRING_DATA_REDIS_LETTUCE_POOL_ENABLED:-}" ]; then echo "SPRING_DATA_REDIS_LETTUCE_POOL_ENABLED=$SPRING_DATA_REDIS_LETTUCE_POOL_ENABLED"; else echo "pool on"; fi'
   done
-  docker exec "$LOCAL_PROJECT-app-1" curl -fs localhost:8081/actuator/health/readiness
-  echo
-  docker exec "$LOCAL_PROJECT-app-1" sh -c 'echo "JDK_JAVA_OPTIONS=${JDK_JAVA_OPTIONS:-}"'
-  docker exec "$LOCAL_PROJECT-app-1" sh -c 'if [ -n "${SPRING_DATA_REDIS_LETTUCE_POOL_ENABLED:-}" ]; then echo "SPRING_DATA_REDIS_LETTUCE_POOL_ENABLED=$SPRING_DATA_REDIS_LETTUCE_POOL_ENABLED"; else echo "pool on"; fi'
 }
 

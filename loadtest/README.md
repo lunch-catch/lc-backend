@@ -42,7 +42,7 @@
 | `record_warnings` | 회차 구간의 경고와 오류를 이벤트별로 세고, 앱과 배치의 지표 수집이 빠진 칸 수와 함께 결과 문서에 적고 커밋한다 |
 | `profile` | 앱 서버에 프로파일링을 붙여 Pyroscope 로 보낸다 |
 | `full_sha`, `image_exists` | 이미지 커밋을 40자로 늘리고 GHCR 에 있는지 본다 |
-| `app_override`, `local_switch` | 앱의 compose 덮어쓰기 파일(트레이싱 에이전트, 연결 풀 끔, `--env` 의 환경변수)을 만들고, 로컬 앱을 그것으로 다시 띄운다 |
+| `app_override`, `local_override`, `local_switch` | 앱과 배치의 compose 덮어쓰기 파일(트레이싱 에이전트, 연결 풀 끔, `--env`, `--app-env`, `--batch-env` 의 환경변수)을 만들고, 로컬 앱과 배치를 그것으로 다시 띄운다 |
 
 새 도메인은 `run.sh` 의 앞에서 아래 값을 정하고 이 파일을 불러 쓴다. `loadtest/adserving/run.sh` 가 예다.
 
@@ -69,7 +69,8 @@ lc-infra 의 로컬 구성(`observability/local`)에 앱과 관측 스택을 띄
 ```bash
 # 1. 로컬 구성을 띄운다(lc-infra 의 docs/wiki/팀원-도메인-모니터링.md)
 ./gradlew bootJar -x test
-(cd <lc-infra>/observability/local && docker compose up -d --build)
+# 배치를 따로 띄우는 구성이다. 로컬 switch 가 이 구성으로 앱과 배치를 다시 띄운다
+(cd <lc-infra>/observability/local && docker compose -f compose.yaml -f compose.lt-like.yaml up -d --build)
 
 # 2. 같은 인자로 돌린다. LC_INFRA_DIR 은 lc-infra 경로다. 서명 키를 그 .env 에서 읽는다
 export LC_INFRA_DIR=<lc-infra>
@@ -86,7 +87,7 @@ loadtest/adserving/run.sh --local metrics <window 시작 ms> <window 끝 ms>
 ```
 
 - 시나리오와 생성기는 지금 작업 트리의 것을 쓴다. k6 는 이 기계에서 돌고 지표를 로컬 Prometheus 로 보내 05 부하 시험 대시보드가 같은 화면으로 채워진다.
-- `reset`, `rows`, `drain` 처럼 AWS 에만 있는 일은 로컬에서 막는다. `switch` 는 커밋 없이 `[--tracing <이름>]` 만 받아 로컬 앱을 다시 띄운다.
+- `reset`, `rows`, `drain` 처럼 AWS 에만 있는 일은 로컬에서 막는다. `switch` 는 커밋 없이 `[--tracing <이름>] [--no-pool] [--env|--app-env|--batch-env KEY=VALUE]...` 를 받아 로컬 앱과 배치를 다시 띄운다. 배치는 lc-infra 의 `compose.lt-like.yaml` 로 따로 뜬다.
 - 초당 피드는 노트북에 맞춰 낮춘다. 20 이면 초당 요청이 약 200 이다.
 
 ## 연결 풀을 끄고 재기
@@ -128,6 +129,24 @@ loadtest/adserving/run.sh drain drain-a1 50000
 - 노출은 시드의 캠페인 1,000개와 회원 5,000명에 고르게 나눈다. 캠페인 하루 예산이 커서 회차마다 같은 비율로 과금되어 원장에 DEDUCT 가 쓰인다. 그래서 `prepare` 로 그날 예약이 있어야 한다.
 - 회차가 끝나면 밀린 노출이 0 이라 다음 회차로 넘어가지 않고, 쌓이는 데이터도 회차마다 N건씩 같다. 노출 API 부하와 섞어 회차를 이어 돌면 밀림이 넘어가 뒤 회차일수록 느려진다.
 - 앞 회차의 노출이 남아 있으면 넣지 않고 멈춘다. 1시간 안에 비우지 못해도 멈춘다.
+
+## 앱과 배치에 다른 값 넣기
+
+`--env` 는 앱과 배치에 같은 값을 넣는다. 앱에만 넣을 것은 `--app-env`, 배치에만 넣을 것은 `--batch-env` 로 준다(#1244). 섞어 줄 수 있고, 한 역할에 같은 키가 두 번 들어가면(`--env` 와 역할별을 함께 준 경우 포함) 띄우기 전에 멈춘다.
+
+```bash
+loadtest/adserving/run.sh switch <이미지> --app-env KEY=VALUE --batch-env KEY=VALUE
+loadtest/adserving/run.sh --local switch --app-env KEY=VALUE --batch-env KEY=VALUE
+```
+
+- 드라이버 옵션처럼 대소문자를 지켜야 하는 키는 환경변수 이름으로 넘기면 소문자로 바뀐다. `SPRING_APPLICATION_JSON` 으로 넘긴다.
+- #1088 은 예전 버전(v1 ~ v3c)의 이미지에 지금의 DB 시간 제한(#1217)을 넣고 잰다. 예전 이미지는 그 값을 갖고 있지 않아 버전마다 아래를 함께 준다.
+
+```bash
+loadtest/adserving/run.sh switch <이미지> --tracing <버전> \
+  --app-env 'SPRING_APPLICATION_JSON={"spring":{"datasource":{"hikari":{"data-source-properties":{"socketTimeout":10000}}},"jpa":{"properties":{"jakarta.persistence.query.timeout":5000}},"jdbc":{"template":{"query-timeout":"5s"}},"transaction":{"default-timeout":"5s"}}}' \
+  --batch-env 'SPRING_APPLICATION_JSON={"spring":{"datasource":{"hikari":{"data-source-properties":{"socketTimeout":300000}}},"jpa":{"properties":{"jakarta.persistence.query.timeout":120000}},"jdbc":{"template":{"query-timeout":"2m"}},"transaction":{"default-timeout":"-1s"}}}'
+```
 
 ## 트레이싱
 
