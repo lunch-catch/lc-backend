@@ -103,4 +103,19 @@ class BillingStatsQueryServiceImplTest {
 
         assertThat(service.dailyTotals(DAY)).isEqualTo(new DailyLedgerTotals(42000, 8000, 3));
     }
+
+    @Test
+    void 미소진_변동은_첫날_00시부터_끝날_다음_날_00시_전까지_기록된_합이다() {
+        LocalDate first = DAY.minusDays(2);
+        when(ledgerRepository.sumUnspentBetween(first.atStartOfDay(), TO)).thenReturn(-1500L);
+
+        assertThat(service.unspentChange(first, DAY)).isEqualTo(-1500L);
+    }
+
+    @Test
+    void 하루치_미소진_변동은_그날_00시부터_다음_날_00시_전까지다() {
+        when(ledgerRepository.sumUnspentBetween(FROM, TO)).thenReturn(8000L);
+
+        assertThat(service.unspentChange(DAY, DAY)).isEqualTo(8000L);
+    }
 }

@@ -8,12 +8,12 @@ import com.lunchcatch.analytics.batch.repository.SettlementAnalyticsRow;
 import com.lunchcatch.analytics.batch.service.AggregationStep;
 import com.lunchcatch.analytics.batch.service.DailyAggregationRunner;
 import com.lunchcatch.billing.contract.BillingStatsQueryService;
-import com.lunchcatch.billing.contract.DailyLedgerTotals;
 import com.lunchcatch.billing.contract.OwnerCampaignLedgerSum;
 import java.time.Clock;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Optional;
 import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 
@@ -70,17 +70,39 @@ public class SettlementMetricsStep implements AggregationStep<SettlementMetrics>
             positiveAdjust += sum.positiveAdjustAmount();
             negativeAdjust += sum.negativeAdjustAmount();
         }
-        DailyLedgerTotals totals = billing.dailyTotals(businessDate);
         return new SettlementMetrics(charge, reserve, deduct, release, refund, positiveAdjust,
-                negativeAdjust, totals.unspentBalance(), billing.correctionTargetDates(businessDate));
+                negativeAdjust, unspentBalance(businessDate), billing.correctionTargetDates(businessDate));
+    }
+
+    /*
+     * 미소진 잔액은 기록 시각으로 세고 원장은 덧붙이기만 해서 끝난 날의 값이 바뀌지 않는다.
+     * 그래서 가장 최근에 저장한 날의 값에 그다음 날부터 그날까지의 변동을 더해 원장 전체를 더하지 않는다.
+     * 앞선 행이 하나도 없을 때만 원장 전체 합을 받는다.
+     */
+    private long unspentBalance(LocalDate businessDate) {
+        return repository.findLatestUnspentBefore(businessDate)
+                .map(latest -> latest.unspentBalance()
+                        + billing.unspentChange(latest.businessDate().plusDays(1), businessDate))
+                .orElseGet(() -> billing.dailyTotals(businessDate).unspentBalance());
     }
 
     @Override
     public int publish(LocalDate businessDate, SettlementMetrics collected) {
         LocalDateTime now = LocalDateTime.now(clock);
+        Optional<Long> previous = repository.find(businessDate).map(SettlementAnalyticsRow::unspentBalance);
         repository.replace(businessDate, toRow(collected), now);
+        shiftLaterUnspent(businessDate, previous, collected.unspentBalance(), now);
         rememberCorrectionDates(businessDate, collected.correctionDates(), now);
         return 1;
+    }
+
+    /*
+     * 뒤 날짜들의 미소진 잔액은 이 날의 옛 값을 이어받아 저장돼 있다.
+     * 다시 집계해 값이 바뀌었으면 그 차이만큼 뒤 날짜들을 함께 고친다. 원장은 다시 읽지 않는다.
+     */
+    private void shiftLaterUnspent(LocalDate businessDate, Optional<Long> previous, long current, LocalDateTime now) {
+        previous.filter(value -> value != current)
+                .ifPresent(value -> repository.shiftUnspentAfter(businessDate, current - value, now));
     }
 
     private SettlementAnalyticsRow toRow(SettlementMetrics metrics) {

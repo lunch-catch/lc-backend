@@ -44,6 +44,20 @@ public class SettlementAnalyticsRepository {
             WHERE business_date = ?
             """;
 
+    private static final String SELECT_LATEST_UNSPENT_BEFORE = """
+            SELECT business_date, unspent_balance
+            FROM daily_settlement_analytics
+            WHERE business_date < ?
+            ORDER BY business_date DESC
+            LIMIT 1
+            """;
+
+    private static final String SHIFT_UNSPENT_AFTER = """
+            UPDATE daily_settlement_analytics
+            SET unspent_balance = unspent_balance + ?, updated_at = ?
+            WHERE business_date > ?
+            """;
+
     private final JdbcTemplate jdbc;
 
     public SettlementAnalyticsRepository(JdbcTemplate jdbc) {
@@ -66,5 +80,19 @@ public class SettlementAnalyticsRepository {
                         rs.getLong("positive_adjust_amount"), rs.getLong("unspent_balance")),
                 Date.valueOf(businessDate));
         return rows.stream().findFirst();
+    }
+
+    // 그 영업일보다 앞서 저장된 날 가운데 가장 최근 날의 미소진 잔액이다. 기본 키를 거꾸로 한 행만 읽는다
+    public Optional<DatedUnspentBalance> findLatestUnspentBefore(LocalDate businessDate) {
+        List<DatedUnspentBalance> rows = jdbc.query(SELECT_LATEST_UNSPENT_BEFORE,
+                (rs, index) -> new DatedUnspentBalance(
+                        rs.getDate("business_date").toLocalDate(), rs.getLong("unspent_balance")),
+                Date.valueOf(businessDate));
+        return rows.stream().findFirst();
+    }
+
+    // 그 영업일 뒤에 저장된 모든 날의 미소진 잔액에 차이를 더한다. 고친 행 수를 돌려준다
+    public int shiftUnspentAfter(LocalDate businessDate, long difference, LocalDateTime now) {
+        return jdbc.update(SHIFT_UNSPENT_AFTER, difference, Timestamp.valueOf(now), Date.valueOf(businessDate));
     }
 }
