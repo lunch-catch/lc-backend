@@ -66,6 +66,23 @@ class BacklogMetricsTest {
         assertThat(registry.scrape()).contains("async_worker_oldest_age_seconds{worker=\"adserving.serve-log-write\"} 0.0");
     }
 
+    // 대기열 길이 / 용량으로 포화를 본다. 용량은 조정 값이라 대시보드와 규칙에 숫자로 적지 않는다(#1212)
+    @Test
+    @DisplayName("용량을 받으면 대기열 용량을 같은 worker 꼬리표로 낸다")
+    void 용량() {
+        metrics.worker("adserving.impression-write", () -> 40, () -> null, 10_000);
+
+        assertThat(registry.scrape()).contains("async_worker_queue_capacity{worker=\"adserving.impression-write\"} 10000.0");
+    }
+
+    @Test
+    @DisplayName("용량을 받지 않으면 대기열 용량을 내지 않는다")
+    void 용량을_받지_않으면_내지_않는다() {
+        metrics.worker("coupon.issue", () -> 0, () -> null);
+
+        assertThat(registry.scrape()).doesNotContain("async_worker_queue_capacity");
+    }
+
     @Test
     @DisplayName("대기 시간은 긁을 때의 시각으로 센다. 값을 넘기는 쪽이 멈춰도 대기 시간은 계속 는다")
     void 긁을_때_센다() {

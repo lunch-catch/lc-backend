@@ -125,6 +125,7 @@ B 를 고른다(#1039). DB 가 멈추면 피드도 그날 후보를 읽지 못�
 | 지표 | 세는 것 |
 |---|---|
 | `adserving_impression_queue_size` | 큐에 남은 행 수 |
+| `async_worker_queue_capacity{worker="adserving.impression-write"}` | 큐 용량(조정 값 `adserving.impression.write-buffer.capacity`). 큐에 남은 행 수 ÷ 이 값으로 찬 정도를 본다 |
 | `adserving_impression_dropped_total` | 큐가 차서 버린 노출 수 |
 | `adserving_impression_write_failed_total` | 실패해 다시 쓴 묶음 수 |
 | `adserving_impression_write_lost_total` | 10번 다시 써도 실패했거나 서버가 내려가며 쓰지 못해 버린 행 수 |

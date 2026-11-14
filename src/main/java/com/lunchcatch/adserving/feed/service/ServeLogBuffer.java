@@ -59,7 +59,7 @@ public class ServeLogBuffer implements SmartLifecycle {
         this.meterRegistry = meterRegistry;
         // 사건이 없어도 0 으로 보이게 기동 때 만든다
         List.of(DROPPED_METRIC, FAILED_METRIC, VISIT_FAILED_METRIC).forEach(meterRegistry::counter);
-        backlogMetrics.worker(BACKLOG_NAME, queue::size, this::oldestRequestedAt);
+        backlogMetrics.worker(BACKLOG_NAME, queue::size, this::oldestRequestedAt, properties.capacity());
     }
 
     // 대기열의 맨 앞이 가장 오래 기다린 피드다. 비었으면 null 이다
