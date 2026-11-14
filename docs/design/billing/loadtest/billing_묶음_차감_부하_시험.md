@@ -25,6 +25,8 @@
 
 `V14__billing_stats_date_indexes.sql`(#1241) 부터는 `idx_point_ledger_owner_business_date` 가 `idx_point_ledger_date_type (business_date, entry_type)` 로 바뀌었다. 인덱스 수는 그대로라 다음 회차의 B 는 `idx_point_ledger_date_type` 와 `idx_point_ledger_owner_created` 를 지운다. `idx_point_ledger_date_type` 는 분석 집계의 예약과 해제 합계가 쓰므로 회차가 끝나면 되살린다.
 
+`V15__billing_ledger_created_type_index.sql`(#1242) 부터는 `idx_point_ledger_created_type (created_at, entry_type, amount)` 가 더해져 인덱스가 13개다. 다음 회차의 A 는 13개로 돌고, B 에서 지우는 둘은 그대로다. 분석의 그날 미소진 변동이 이 인덱스를 쓰므로 B 에서도 지우지 않는다.
+
 ```sql
 ALTER TABLE point_ledger
   DROP INDEX idx_point_ledger_owner_business_date,

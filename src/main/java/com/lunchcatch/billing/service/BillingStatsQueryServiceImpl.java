@@ -100,6 +100,11 @@ public class BillingStatsQueryServiceImpl implements BillingStatsQueryService {
                 settlementMismatchRepository.countByBusinessDate(businessDate));
     }
 
+    @Override
+    public long unspentChange(LocalDate from, LocalDate to) {
+        return pointLedgerRepository.sumUnspentBetween(from.atStartOfDay(), to.plusDays(1).atStartOfDay());
+    }
+
     private void merge(Map<Key, Sums> merged, List<LedgerSumRow> rows) {
         for (LedgerSumRow row : rows) {
             Sums sums = merged.computeIfAbsent(new Key(row.ownerId(), row.campaignId()), k -> new Sums());

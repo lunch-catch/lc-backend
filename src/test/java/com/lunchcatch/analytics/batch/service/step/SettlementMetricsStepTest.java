@@ -2,6 +2,7 @@ package com.lunchcatch.analytics.batch.service.step;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -9,6 +10,7 @@ import static org.mockito.Mockito.when;
 
 import com.lunchcatch.analytics.batch.PendingReason;
 import com.lunchcatch.analytics.batch.SettlementMetrics;
+import com.lunchcatch.analytics.batch.repository.DatedUnspentBalance;
 import com.lunchcatch.analytics.batch.repository.PendingDateRepository;
 import com.lunchcatch.analytics.batch.repository.SettlementAnalyticsRepository;
 import com.lunchcatch.analytics.batch.repository.SettlementAnalyticsRow;
@@ -21,6 +23,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.List;
+import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -86,6 +89,77 @@ class SettlementMetricsStepTest {
         SettlementMetrics metrics = step().collect(DAY);
 
         assertThat(metrics).isEqualTo(new SettlementMetrics(0, 0, 0, 0, 0, 0, 0, 777, List.of()));
+    }
+
+    @Test
+    void 전날_행이_있으면_전날_미소진_잔액에_그날_변동을_더하고_원장_전체_합을_부르지_않는다() {
+        when(billing.ledgerSums(DAY)).thenReturn(List.of());
+        when(billing.correctionTargetDates(DAY)).thenReturn(List.of());
+        when(repository.findLatestUnspentBefore(DAY))
+                .thenReturn(Optional.of(new DatedUnspentBalance(DAY.minusDays(1), 10_000)));
+        when(billing.unspentChange(DAY, DAY)).thenReturn(-300L);
+
+        SettlementMetrics metrics = step().collect(DAY);
+
+        assertThat(metrics.unspentBalance()).isEqualTo(9_700);
+        verify(billing, never()).dailyTotals(any());
+    }
+
+    @Test
+    void 전날_행이_빠졌으면_가장_최근_행의_다음_날부터_그날까지의_변동을_더한다() {
+        when(billing.ledgerSums(DAY)).thenReturn(List.of());
+        when(billing.correctionTargetDates(DAY)).thenReturn(List.of());
+        when(repository.findLatestUnspentBefore(DAY))
+                .thenReturn(Optional.of(new DatedUnspentBalance(DAY.minusDays(3), 10_000)));
+        when(billing.unspentChange(DAY.minusDays(2), DAY)).thenReturn(500L);
+
+        SettlementMetrics metrics = step().collect(DAY);
+
+        assertThat(metrics.unspentBalance()).isEqualTo(10_500);
+        verify(billing, never()).dailyTotals(any());
+    }
+
+    @Test
+    void 앞선_행이_하나도_없으면_원장_전체_합으로_구한다() {
+        when(billing.ledgerSums(DAY)).thenReturn(List.of());
+        when(billing.correctionTargetDates(DAY)).thenReturn(List.of());
+        when(repository.findLatestUnspentBefore(DAY)).thenReturn(Optional.empty());
+        when(billing.dailyTotals(DAY)).thenReturn(new DailyLedgerTotals(4_200, 0, 0));
+
+        SettlementMetrics metrics = step().collect(DAY);
+
+        assertThat(metrics.unspentBalance()).isEqualTo(4_200);
+        verify(billing, never()).unspentChange(any(), any());
+    }
+
+    @Test
+    void 다시_집계해_미소진_잔액이_바뀌면_뒤_날짜들의_미소진_잔액에_그_차이를_더한다() {
+        when(repository.find(DAY)).thenReturn(Optional.of(new SettlementAnalyticsRow(0, 0, 0, 0, 0, 0, 0, 1_000)));
+        SettlementMetrics metrics = new SettlementMetrics(0, 0, 0, 0, 0, 0, 0, 1_200, List.of());
+
+        step().publish(DAY, metrics);
+
+        verify(repository).shiftUnspentAfter(eq(DAY), eq(200L), any(LocalDateTime.class));
+    }
+
+    @Test
+    void 다시_집계해도_미소진_잔액이_같으면_뒤_날짜를_고치지_않는다() {
+        when(repository.find(DAY)).thenReturn(Optional.of(new SettlementAnalyticsRow(0, 0, 0, 0, 0, 0, 0, 1_200)));
+        SettlementMetrics metrics = new SettlementMetrics(0, 0, 0, 0, 0, 0, 0, 1_200, List.of());
+
+        step().publish(DAY, metrics);
+
+        verify(repository, never()).shiftUnspentAfter(any(), anyLong(), any());
+    }
+
+    @Test
+    void 처음_집계하는_날이면_뒤_날짜를_고치지_않는다() {
+        when(repository.find(DAY)).thenReturn(Optional.empty());
+        SettlementMetrics metrics = new SettlementMetrics(0, 0, 0, 0, 0, 0, 0, 1_200, List.of());
+
+        step().publish(DAY, metrics);
+
+        verify(repository, never()).shiftUnspentAfter(any(), anyLong(), any());
     }
 
     @Test
