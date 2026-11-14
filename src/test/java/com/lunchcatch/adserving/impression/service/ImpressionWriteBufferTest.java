@@ -79,6 +79,13 @@ class ImpressionWriteBufferTest {
                 .gauge().value()).isEqualTo(3);
     }
 
+    @Test
+    @DisplayName("대기열 용량을 워커 공통 지표로 낸다")
+    void 대기열_용량() {
+        assertThat(meterRegistry.get("async.worker.queue.capacity").tag("worker", ImpressionWriteBuffer.BACKLOG_NAME)
+                .gauge().value()).isEqualTo(AdservingTuningDefaults.writeBuffer().capacity());
+    }
+
     @AfterEach
     void stop() {
         if (buffer.isRunning()) {

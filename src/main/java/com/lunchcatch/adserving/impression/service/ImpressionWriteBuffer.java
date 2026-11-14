@@ -89,7 +89,7 @@ public class ImpressionWriteBuffer implements SmartLifecycle {
         this.transactions = transactions;
         this.meterRegistry = meterRegistry;
         meterRegistry.gaugeCollectionSize(QUEUE_METRIC, List.of(), queue);
-        backlogMetrics.worker(BACKLOG_NAME, queue::size, this::oldestReceivedAt);
+        backlogMetrics.worker(BACKLOG_NAME, queue::size, this::oldestReceivedAt, properties.capacity());
         // 사건이 없어도 0 으로 보이게 기동 때 만든다
         List.of(DROPPED_METRIC, WRITE_FAILED_METRIC, LOST_METRIC, CAMPAIGN_MISMATCH_METRIC).forEach(meterRegistry::counter);
     }

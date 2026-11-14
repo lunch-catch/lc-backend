@@ -66,6 +66,13 @@ class ServeLogBufferTest {
         assertThat(meterRegistry.get("async.worker.oldest.age").tag("worker", ServeLogBuffer.BACKLOG_NAME)
                 .gauge().value()).isEqualTo(2);
     }
+
+    @Test
+    @DisplayName("대기열 용량을 워커 공통 지표로 낸다")
+    void 대기열_용량() {
+        assertThat(meterRegistry.get("async.worker.queue.capacity").tag("worker", ServeLogBuffer.BACKLOG_NAME)
+                .gauge().value()).isEqualTo(AdservingTuningDefaults.serveLogBuffer().capacity());
+    }
     private static final LocalDateTime REQUESTED_AT = NOW.atZone(ClockConfig.ZONE).toLocalDateTime();
 
     private static ServedFeed feedWithCards(long memberId, int cards) {

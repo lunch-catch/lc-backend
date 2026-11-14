@@ -28,6 +28,7 @@ public class BacklogMetrics {
     private static final Duration PUBLISH_DELAY_MAX = Duration.ofMinutes(15);
     static final String WORKER_QUEUE_SIZE = "async.worker.queue.size";
     static final String WORKER_OLDEST_AGE = "async.worker.oldest.age";
+    static final String WORKER_QUEUE_CAPACITY = "async.worker.queue.capacity";
 
     private final MeterRegistry registry;
     private final Clock clock;
@@ -86,6 +87,18 @@ public class BacklogMetrics {
         Gauge.builder(WORKER_OLDEST_AGE, () -> ageSeconds(oldest.get()))
                 .description("비동기 워커의 대기열에서 가장 오래 기다린 일의 대기 시간")
                 .baseUnit("seconds")
+                .tag("worker", name)
+                .register(registry);
+    }
+
+    /*
+     * 대기열 용량도 함께 낸다(#1212). 대기열 길이 / 용량으로 포화를 본다.
+     * 용량은 조정 값이라 바뀔 수 있어 대시보드와 규칙에 숫자로 적지 않고 이 지표에서 읽는다.
+     */
+    public void worker(String name, LongSupplier queueSize, Supplier<LocalDateTime> oldest, int capacity) {
+        worker(name, queueSize, oldest);
+        Gauge.builder(WORKER_QUEUE_CAPACITY, () -> capacity)
+                .description("비동기 워커의 대기열 용량")
                 .tag("worker", name)
                 .register(registry);
     }
