@@ -177,6 +177,8 @@ GET /v1/admin/dashboard/funnel?period=DAILY&from=&to=
 
 실행 결과는 A-06으로 확인한다.
 
+접수만 하고 바로 `202`를 돌려준다. 실제 집계는 배치 서버가 1분 안에 이어받아 돈다. 이어받기 전까지 A-06의 `status`는 `RUNNING`이고 `executedBy`는 `RETRY_REQUESTED`다.
+
 ## A-06. `GET /v1/admin/aggregation-runs`
 
 ```

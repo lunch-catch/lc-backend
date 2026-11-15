@@ -115,18 +115,19 @@ flowchart LR
 
 ```mermaid
 stateDiagram-v2
-    [*] --> RUNNING: claim (점유)
+    [*] --> RUNNING: claim (점유) / requestClaim (분석 수동 재계산, 소유자는 요청 표식, #1238)
     RUNNING --> SUCCESS: succeed
     RUNNING --> FAILED: fail (자동 재실행 상한 또는 비일시적 오류)
     RUNNING --> RUNNING: takeOver (다른 서버가 이어받음, 소유자만 바뀐다)
-    FAILED --> RUNNING: requestRetry (관리자 수동, 소유자는 요청 표식, #362, #1231) / retry, rerun (분석)
-    SUCCESS --> RUNNING: rerun (분석만)
+    FAILED --> RUNNING: requestRetry (관리자 수동, 소유자는 요청 표식, #362, #1231) / retry, rerun, requestRerun (분석)
+    SUCCESS --> RUNNING: rerun, requestRerun (분석만)
 ```
 
 | 전이 | 일으키는 쪽 | 나가는 이벤트 | 금지일 때 응답 |
 |---|---|---|---|
 | FAILED -> RUNNING (requestRetry) | 관리자(HTTP, #362). 배치 서버의 이어받기가 집어 돈다(#1231) | 없음 | `404`(행 없음), `409`(FAILED 아님) |
 | FAILED/SUCCESS -> RUNNING (rerun) | 분석(`BatchRerunner`) | 없음 | 해당 없음. 분석 내부에서 판정 |
+| 없음/FAILED/SUCCESS -> RUNNING (requestClaim, requestRerun) | 분석의 수동 재계산(A-05). 소유자를 요청 표식으로 두어 배치 서버의 이어받기가 집어 돈다(#1238) | 없음 | 해당 없음. 분석이 `409`로 판정 |
 
 ### 주요 흐름
 
