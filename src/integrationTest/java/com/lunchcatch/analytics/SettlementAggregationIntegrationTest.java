@@ -7,6 +7,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.lunchcatch.analytics.batch.job.DailyAggregationJob;
+import com.lunchcatch.analytics.batch.service.DailyAggregationRunner;
 import com.lunchcatch.auth.CustomUserDetails;
 import com.lunchcatch.auth.Role;
 import com.lunchcatch.global.config.ClockConfig;
@@ -45,6 +46,8 @@ class SettlementAggregationIntegrationTest extends AbstractAnalyticsIntegrationT
     private MockMvc mvc;
     @Autowired
     private DailyAggregationJob job;
+    @Autowired
+    private DailyAggregationRunner runner;
 
     @BeforeEach
     void cleanUp() {
@@ -120,6 +123,44 @@ class SettlementAggregationIntegrationTest extends AbstractAnalyticsIntegrationT
         assertThat(jdbc.queryForObject(
                 "SELECT deduct_amount - positive_adjust_amount FROM daily_settlement_analytics WHERE business_date = ?",
                 Long.class, java.sql.Date.valueOf(yesterday))).isEqualTo(-250L);
+    }
+
+    @Test
+    void 미소진_잔액은_원장_전체를_더하지_않고_앞서_저장한_날의_값에_그_뒤_변동을_이어_더한다() {
+        LocalDate threeDaysAgo = today.minusDays(3);
+        storedUnspent(threeDaysAgo, 5_000);
+        ledger("CHARGE", null, 1_000, null, yesterday + " 12:00:00");
+
+        job.run();
+
+        assertThat(unspent(twoDaysAgo)).isEqualTo(5_000);
+        assertThat(unspent(yesterday)).isEqualTo(6_000);
+    }
+
+    @Test
+    void 다시_집계해_미소진_잔액이_바뀌면_뒤_날짜의_저장값에_그_차이를_더한다() {
+        LocalDate threeDaysAgo = today.minusDays(3);
+        storedUnspent(threeDaysAgo, 5_000);
+        storedUnspent(twoDaysAgo, 4_000);
+        storedUnspent(yesterday, 4_700);
+
+        runner.runDate(twoDaysAgo);
+
+        assertThat(unspent(twoDaysAgo)).isEqualTo(5_000);
+        assertThat(unspent(yesterday)).isEqualTo(5_700);
+    }
+
+    private void storedUnspent(LocalDate date, long unspent) {
+        Timestamp now = Timestamp.valueOf(LocalDateTime.now(ClockConfig.ZONE));
+        jdbc.update("""
+                INSERT INTO daily_settlement_analytics (business_date, unspent_balance, created_at, updated_at)
+                VALUES (?, ?, ?, ?)
+                """, java.sql.Date.valueOf(date), unspent, now, now);
+    }
+
+    private long unspent(LocalDate date) {
+        return jdbc.queryForObject("SELECT unspent_balance FROM daily_settlement_analytics WHERE business_date = ?",
+                Long.class, java.sql.Date.valueOf(date));
     }
 
     private void sourceDone(LocalDate date) {

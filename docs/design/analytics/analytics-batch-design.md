@@ -109,7 +109,8 @@ billing은 `BillingStatsQueryService`를 공개했고 `SettlementMetricsStep`과
 | `billingCounts(영업일)` | 캠페인별 `BILLED`, `NOT_BILLED_BUDGET`, `NOT_BILLED_PAUSED`, `NOT_BILLED_NO_PLAN`, `NOT_BILLED_CLOSED` 건수 | `CampaignReportStep` |
 | | | `NotBilledMetricsStep` |
 | `dailyBudgets(영업일)` | 캠페인별 그날 적용 하루 예산과 단가 | `CampaignReportStep` |
-| `dailyTotals(영업일)` | 그날 말 미소진 잔액, 원장 대조용 합계, 원장 불일치 건수 | `SettlementMetricsStep`은 미소진 잔액을 쓴다. 나머지 필드는 현재 단계에서 검증에 사용하지 않으며 A-07 응답에도 없다 |
+| `dailyTotals(영업일)` | 그날 말 미소진 잔액, 원장 대조용 합계, 원장 불일치 건수 | `SettlementMetricsStep`은 앞서 저장한 날이 하나도 없을 때만 미소진 잔액을 쓴다. 나머지 필드는 현재 단계에서 검증에 사용하지 않으며 A-07 응답에도 없다 |
+| `unspentChange(첫날, 끝날)` | 첫날 00:00 부터 끝날 다음 날 00:00 전까지 기록된 `CHARGE`, `REFUND`, `ADJUST`, `DEDUCT`의 합 | `SettlementMetricsStep`이 가장 최근에 저장한 날의 미소진 잔액에 더한다 |
 | `correctionTargetDates(기록 영업일)` | 그날 기록된 양수 `ADJUST`가 가리키는 정정 대상 영업일 | 재집계 대상 찾기 |
 
 - 합계의 부호는 저장 부호 그대로다. `RESERVE`, `DEDUCT`, `REFUND`와 음수 `ADJUST`는 0 이하다. 소진액 계산은 `SpendFormula`가 한 곳에서 한다.

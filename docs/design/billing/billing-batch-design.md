@@ -405,6 +405,7 @@ billing.contract.BillingStatsQueryService
   billingCounts(businessDate)          -> [ { campaignId, BILLED, NOT_BILLED_BUDGET, NOT_BILLED_PAUSED, NOT_BILLED_NO_PLAN 건수 } ]
   dailyBudgets(businessDate)           -> [ { campaignId, dailyBudget, unitPrice } ]
   dailyTotals(businessDate)            -> { unspentBalance, ledgerSum, mismatchCount }
+  unspentChange(from, to)              -> 첫날부터 끝날까지 기록된 미소진 변동의 합
   correctionTargetDates(recordedDate)  -> [ 정정 대상 영업일 ]
 ```
 
@@ -413,7 +414,8 @@ billing.contract.BillingStatsQueryService
 | `ledgerSums` | 매출, 점주별 소진, 캠페인 리포트 |
 | `billingCounts` | 캠페인 리포트, 미과금 지표 |
 | `dailyBudgets` | 캠페인 리포트 |
-| `dailyTotals` | 플랫폼 현황(그날 말 미소진 잔액, 원장 대조, 불일치 건수) |
+| `dailyTotals` | 플랫폼 현황(그날 말 미소진 잔액, 원장 대조, 불일치 건수). 앞서 집계한 날이 없을 때만 미소진 잔액을 쓴다 |
+| `unspentChange` | 플랫폼 현황의 미소진 잔액. 앞서 집계한 날의 값에 그다음 날부터 그날까지의 변동을 더해 원장 전체를 더하지 않는다 |
 | `correctionTargetDates` | 재집계 대상 찾기. 그날 기록된 양수 정정이 가리키는 과거 영업일을 `aggregation_pending_date`(`ADJUSTED`)에 남긴다 |
 
 - 미소진 잔액은 `CHARGE + REFUND + ADJUST + DEDUCT`의 누적 합이다. 점주 잔액에 예약 중 포인트를 더한 값과 같다. 원장 대조용 합계는 그날 기록된 같은 네 유형의 합이라 전날 말 값에 더하면 그날 말 값이 된다.

@@ -29,4 +29,11 @@ public interface BillingStatsQueryService {
 
     // 영업일의 미소진 잔액과 원장 대조용 합계, 원장 불일치 건수다
     DailyLedgerTotals dailyTotals(LocalDate businessDate);
+
+    /*
+     * 첫날 00:00 부터 끝날 다음 날 00:00 전까지 기록된 CHARGE, REFUND, ADJUST, DEDUCT 의 합이다.
+     * 이미 아는 날의 미소진 잔액에 그다음 날부터 영업일까지의 값을 더하면 그 영업일 말 미소진 잔액이 된다.
+     * 원장 전체를 더하는 dailyTotals 의 unspentBalance 대신 쓴다.
+     */
+    long unspentChange(LocalDate from, LocalDate to);
 }
