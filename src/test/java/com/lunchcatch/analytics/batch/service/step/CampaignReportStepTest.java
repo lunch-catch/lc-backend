@@ -8,6 +8,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.lunchcatch.analytics.batch.service.AggregationSources;
 import com.lunchcatch.adserving.contract.AdservingStatsQueryService;
 import com.lunchcatch.adserving.contract.CampaignImpressionStats;
 import com.lunchcatch.analytics.batch.CampaignReport;
@@ -71,7 +72,7 @@ class CampaignReportStepTest {
     private AggregationMetrics metrics;
 
     private CampaignReportStep step() {
-        return new CampaignReportStep(billing, adserving, coupons, campaigns, eventLog, repository, metrics, CLOCK);
+        return new CampaignReportStep(new AggregationSources(billing, adserving, coupons), campaigns, eventLog, repository, metrics, CLOCK);
     }
 
     private static List<Long> hourly(Map<Integer, Long> counts) {

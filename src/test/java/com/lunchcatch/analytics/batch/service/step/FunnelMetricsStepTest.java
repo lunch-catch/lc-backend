@@ -5,6 +5,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import com.lunchcatch.analytics.batch.service.AggregationSources;
 import com.lunchcatch.adserving.contract.AdservingStatsQueryService;
 import com.lunchcatch.adserving.contract.CampaignImpressionStats;
 import com.lunchcatch.analytics.batch.FunnelMetrics;
@@ -44,7 +45,7 @@ class FunnelMetricsStepTest {
     private FunnelAnalyticsRepository repository;
 
     private FunnelMetricsStep step() {
-        return new FunnelMetricsStep(adserving, coupons, eventLog, repository, CLOCK);
+        return new FunnelMetricsStep(new AggregationSources(null, adserving, coupons), eventLog, repository, CLOCK);
     }
 
     private static CampaignImpressionStats impressions(long campaignId, long valid, long expired, long notOwner,

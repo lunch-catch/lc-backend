@@ -8,6 +8,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -15,6 +16,7 @@ import com.lunchcatch.analytics.DailyAggregation;
 import com.lunchcatch.analytics.batch.AggregationOutcome;
 import com.lunchcatch.analytics.batch.PendingReason;
 import com.lunchcatch.analytics.batch.repository.PendingDateRepository;
+import com.lunchcatch.billing.contract.BillingStatsQueryService;
 import com.lunchcatch.ops.contract.BatchAttemptGuard;
 import com.lunchcatch.ops.contract.BatchExecutionQueryService;
 import com.lunchcatch.ops.contract.BatchExecutionRecord;
@@ -68,19 +70,23 @@ class DailyAggregationRunnerTest {
     private RetryBackoff backoff;
     @Mock
     private PlatformTransactionManager transactionManager;
+    @Mock
+    private BillingStatsQueryService billing;
 
     private SimpleMeterRegistry registry;
+    private AggregationSources sources;
     private final List<AggregationStep<?>> steps = new ArrayList<>();
     private final List<String> calls = new ArrayList<>();
 
     @BeforeEach
     void setUp() {
         registry = new SimpleMeterRegistry();
+        sources = new AggregationSources(billing, null, null);
     }
 
     private DailyAggregationRunner runner() {
         when(stepProvider.orderedStream()).thenAnswer(invocation -> steps.stream());
-        return new DailyAggregationRunner(stepProvider, executions, executionQuery, rerunner, guard, pending,
+        return new DailyAggregationRunner(stepProvider, sources, executions, executionQuery, rerunner, guard, pending,
                 new AggregationMetrics(registry), backoff, transactionManager, CLOCK);
     }
 
@@ -450,6 +456,44 @@ class DailyAggregationRunnerTest {
         verify(executions, never()).fail(any(), any(), any());
     }
 
+    // --- 원천 조회 나눠 쓰기 ---
+
+    @Test
+    void 한_시도의_단계들은_같은_원천_조회를_한_번만_읽는다() {
+        aggregatableSetUp();
+        steps.add(new LedgerReadingStep(sources));
+        steps.add(new LedgerReadingStep(sources));
+
+        assertThat(runner().aggregate(YESTERDAY, ATTEMPT)).isEqualTo(AggregationOutcome.SUCCEEDED);
+
+        verify(billing).ledgerSums(YESTERDAY);
+    }
+
+    @Test
+    void 일시적_오류로_다시_하면_원천_조회를_새로_읽는다() {
+        aggregatableSetUp();
+        when(executions.recordRetry(eq(JOB), eq(YESTERDAY), any(String.class))).thenReturn(true);
+        when(backoff.pause(1)).thenReturn(true);
+        steps.add(new LedgerReadingStep(sources));
+        steps.add(new FlakyStep(1));
+
+        assertThat(runner().aggregate(YESTERDAY, ATTEMPT)).isEqualTo(AggregationOutcome.SUCCEEDED);
+
+        verify(billing, times(2)).ledgerSums(YESTERDAY);
+    }
+
+    @Test
+    void 모으기가_실패해도_읽기_범위를_닫아_다음_시도가_앞의_결과를_쓰지_않는다() {
+        aggregatableSetUp();
+        steps.add(new LedgerReadingStep(sources));
+        steps.add(new FailingStep(new IllegalArgumentException("원인")));
+        runner().aggregate(YESTERDAY, ATTEMPT);
+
+        sources.ledgerSums(YESTERDAY);
+
+        verify(billing, times(2)).ledgerSums(YESTERDAY);
+    }
+
     @Test
     void 재실행_상한에_닿으면_일시적_오류여도_실패로_닫는다() {
         aggregatableSetUp();
@@ -637,6 +681,31 @@ class DailyAggregationRunnerTest {
         @Override
         public int publish(LocalDate businessDate, Void collected) {
             throw new IllegalStateException("교체 실패");
+        }
+    }
+
+    private static final class LedgerReadingStep implements AggregationStep<Void> {
+
+        private final AggregationSources sources;
+
+        LedgerReadingStep(AggregationSources sources) {
+            this.sources = sources;
+        }
+
+        @Override
+        public String name() {
+            return "LedgerReadingStep";
+        }
+
+        @Override
+        public Void collect(LocalDate businessDate) {
+            sources.ledgerSums(businessDate);
+            return null;
+        }
+
+        @Override
+        public int publish(LocalDate businessDate, Void collected) {
+            return 0;
         }
     }
 

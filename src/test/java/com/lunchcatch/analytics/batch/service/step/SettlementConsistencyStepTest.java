@@ -3,6 +3,7 @@ package com.lunchcatch.analytics.batch.service.step;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.when;
 
+import com.lunchcatch.analytics.batch.service.AggregationSources;
 import com.lunchcatch.analytics.batch.SettlementFindings;
 import com.lunchcatch.analytics.batch.repository.SettlementAnalyticsRepository;
 import com.lunchcatch.analytics.batch.repository.SettlementAnalyticsRow;
@@ -38,7 +39,7 @@ class SettlementConsistencyStepTest {
     @BeforeEach
     void setUp() {
         registry = new SimpleMeterRegistry();
-        step = new SettlementConsistencyStep(billing, repository, new AggregationMetrics(registry));
+        step = new SettlementConsistencyStep(new AggregationSources(billing, null, null), repository, new AggregationMetrics(registry));
     }
 
     private static OwnerCampaignLedgerSum ledger(Long campaign, long reserve, long deduct, long release,

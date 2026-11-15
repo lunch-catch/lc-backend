@@ -1,22 +1,20 @@
 package com.lunchcatch.analytics.batch.service.step;
 
-import com.lunchcatch.adserving.contract.AdservingStatsQueryService;
 import com.lunchcatch.adserving.contract.CampaignImpressionStats;
 import com.lunchcatch.analytics.batch.CampaignReport;
 import com.lunchcatch.analytics.batch.InvalidReasonCode;
 import com.lunchcatch.analytics.batch.NotBilledReason;
 import com.lunchcatch.analytics.batch.repository.CampaignReportRepository;
 import com.lunchcatch.analytics.batch.service.AggregationMetrics;
+import com.lunchcatch.analytics.batch.service.AggregationSources;
 import com.lunchcatch.analytics.batch.service.AggregationStep;
 import com.lunchcatch.analytics.batch.service.SpendFormula;
 import com.lunchcatch.analytics.event.repository.EventLogRepository;
-import com.lunchcatch.billing.contract.BillingStatsQueryService;
 import com.lunchcatch.billing.contract.CampaignBillingCount;
 import com.lunchcatch.billing.contract.CampaignDailyBudget;
 import com.lunchcatch.billing.contract.OwnerCampaignLedgerSum;
 import com.lunchcatch.campaign.contract.CampaignInfo;
 import com.lunchcatch.campaign.contract.CampaignQueryService;
-import com.lunchcatch.coupon.contract.CouponStatsQueryService;
 import com.lunchcatch.coupon.contract.DailyCampaignCouponStats;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -59,9 +57,7 @@ public class CampaignReportStep implements AggregationStep<CampaignReport> {
 
     private static final int RATE_SCALE = 6;
 
-    private final BillingStatsQueryService billing;
-    private final AdservingStatsQueryService adserving;
-    private final CouponStatsQueryService coupons;
+    private final AggregationSources sources;
     private final CampaignQueryService campaigns;
     private final EventLogRepository eventLog;
     private final CampaignReportRepository repository;
@@ -69,17 +65,13 @@ public class CampaignReportStep implements AggregationStep<CampaignReport> {
     private final Clock clock;
 
     public CampaignReportStep(
-            BillingStatsQueryService billing,
-            AdservingStatsQueryService adserving,
-            CouponStatsQueryService coupons,
+            AggregationSources sources,
             CampaignQueryService campaigns,
             EventLogRepository eventLog,
             CampaignReportRepository repository,
             AggregationMetrics metrics,
             Clock clock) {
-        this.billing = billing;
-        this.adserving = adserving;
-        this.coupons = coupons;
+        this.sources = sources;
         this.campaigns = campaigns;
         this.eventLog = eventLog;
         this.repository = repository;
@@ -94,15 +86,15 @@ public class CampaignReportStep implements AggregationStep<CampaignReport> {
 
     @Override
     public CampaignReport collect(LocalDate businessDate) {
-        Map<Long, CampaignDailyBudget> budgets = byCampaign(billing.dailyBudgets(businessDate),
+        Map<Long, CampaignDailyBudget> budgets = byCampaign(sources.dailyBudgets(businessDate),
                 CampaignDailyBudget::campaignId);
-        Map<Long, CampaignBillingCount> counts = byCampaign(billing.billingCounts(businessDate),
+        Map<Long, CampaignBillingCount> counts = byCampaign(sources.billingCounts(businessDate),
                 CampaignBillingCount::campaignId);
-        Map<Long, CampaignImpressionStats> impressions = byCampaign(adserving.campaignStats(businessDate),
+        Map<Long, CampaignImpressionStats> impressions = byCampaign(sources.campaignStats(businessDate),
                 CampaignImpressionStats::campaignId);
-        Map<Long, DailyCampaignCouponStats> couponStats = byCampaign(coupons.dailyCampaignStats(businessDate),
+        Map<Long, DailyCampaignCouponStats> couponStats = byCampaign(sources.dailyCampaignStats(businessDate),
                 DailyCampaignCouponStats::campaignId);
-        Map<Long, long[]> ledger = ledgerByCampaign(billing.ledgerSums(businessDate));
+        Map<Long, long[]> ledger = ledgerByCampaign(sources.ledgerSums(businessDate));
         Map<Long, Long> wishes = eventLog.countWishesByCampaign(businessDate);
 
         Set<Long> campaignIds = new TreeSet<>();

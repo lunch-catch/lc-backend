@@ -8,6 +8,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.lunchcatch.analytics.batch.service.AggregationSources;
 import com.lunchcatch.analytics.batch.PendingReason;
 import com.lunchcatch.analytics.batch.SettlementMetrics;
 import com.lunchcatch.analytics.batch.repository.DatedUnspentBalance;
@@ -45,7 +46,7 @@ class SettlementMetricsStepTest {
     private PendingDateRepository pending;
 
     private SettlementMetricsStep step() {
-        return new SettlementMetricsStep(billing, repository, pending, CLOCK);
+        return new SettlementMetricsStep(new AggregationSources(billing, null, null), billing, repository, pending, CLOCK);
     }
 
     private static OwnerCampaignLedgerSum sum(Long owner, Long campaign, long charge, long reserve, long deduct,

@@ -3,9 +3,9 @@ package com.lunchcatch.analytics.batch.service.step;
 import com.lunchcatch.analytics.batch.SettlementFindings;
 import com.lunchcatch.analytics.batch.repository.SettlementAnalyticsRepository;
 import com.lunchcatch.analytics.batch.service.AggregationMetrics;
+import com.lunchcatch.analytics.batch.service.AggregationSources;
 import com.lunchcatch.analytics.batch.service.AggregationStep;
 import com.lunchcatch.analytics.batch.service.SpendFormula;
-import com.lunchcatch.billing.contract.BillingStatsQueryService;
 import com.lunchcatch.billing.contract.CampaignBillingCount;
 import com.lunchcatch.billing.contract.CampaignDailyBudget;
 import com.lunchcatch.billing.contract.OwnerCampaignLedgerSum;
@@ -40,15 +40,15 @@ public class SettlementConsistencyStep implements AggregationStep<SettlementFind
     private static final int RELEASE = 2;
     private static final int POSITIVE_ADJUST = 3;
 
-    private final BillingStatsQueryService billing;
+    private final AggregationSources sources;
     private final SettlementAnalyticsRepository repository;
     private final AggregationMetrics metrics;
 
     public SettlementConsistencyStep(
-            BillingStatsQueryService billing,
+            AggregationSources sources,
             SettlementAnalyticsRepository repository,
             AggregationMetrics metrics) {
-        this.billing = billing;
+        this.sources = sources;
         this.repository = repository;
         this.metrics = metrics;
     }
@@ -62,7 +62,7 @@ public class SettlementConsistencyStep implements AggregationStep<SettlementFind
     public SettlementFindings collect(LocalDate businessDate) {
         Map<Long, long[]> ledgerByCampaign = new HashMap<>();
         long positiveAdjustWithoutCampaign = 0;
-        for (OwnerCampaignLedgerSum sum : billing.ledgerSums(businessDate)) {
+        for (OwnerCampaignLedgerSum sum : sources.ledgerSums(businessDate)) {
             if (sum.campaignId() == null) {
                 positiveAdjustWithoutCampaign += sum.positiveAdjustAmount();
                 continue;
@@ -74,11 +74,11 @@ public class SettlementConsistencyStep implements AggregationStep<SettlementFind
             ledger[POSITIVE_ADJUST] += sum.positiveAdjustAmount();
         }
         Map<Long, Long> billedCounts = new HashMap<>();
-        for (CampaignBillingCount count : billing.billingCounts(businessDate)) {
+        for (CampaignBillingCount count : sources.billingCounts(businessDate)) {
             billedCounts.put(count.campaignId(), count.billedCount());
         }
         Map<Long, Long> unitPrices = new HashMap<>();
-        for (CampaignDailyBudget budget : billing.dailyBudgets(businessDate)) {
+        for (CampaignDailyBudget budget : sources.dailyBudgets(businessDate)) {
             unitPrices.put(budget.campaignId(), budget.unitPrice());
         }
 
