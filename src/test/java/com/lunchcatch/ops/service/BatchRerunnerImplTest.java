@@ -18,4 +18,12 @@ class BatchRerunnerImplTest {
 
         assertThat(rerunner.rerun("DAILY_AGGREGATION", date)).isTrue();
     }
+
+    @Test
+    void 재실행_요청도_받은_인자와_반환값을_그대로_위임한다() {
+        LocalDate date = LocalDate.of(2026, 10, 15);
+        when(batchExecutionService.requestRerun("DAILY_AGGREGATION", date)).thenReturn(true);
+
+        assertThat(rerunner.requestRerun("DAILY_AGGREGATION", date)).isTrue();
+    }
 }

@@ -249,7 +249,7 @@ sequenceDiagram
 
 일별 집계, 퍼널 이벤트 수신, 보존 삭제의 상세는 [analytics 배치 설계](./analytics-batch-design.md)가 갖는다.
 
-일별 집계의 실행기(`DailyAggregationRunner`)는 01:00 작업(`DailyAggregationJob`)과 수동 재계산(A-05)이 함께 쓴다. 단계(`AggregationStep`)가 없어도 날짜를 잡고 공개하고 닫는 흐름이 돈다. 단계는 원천 집계 조회가 생긴 단위에서 더한다. 수동 재계산은 날짜를 잡은 뒤 202를 주고, 집계는 이 서비스가 직접 만든 단일 스레드 실행기(대기열 4개)에서 돈다. 스프링 빈으로 노출하지 않는다. `Executor` 빈이 있으면 부트가 기본 작업 실행기를 만들지 않아 뒤에 붙을 `@Async`가 이 실행기를 쓰게 되기 때문이다.
+일별 집계의 실행기(`DailyAggregationRunner`)는 01:00 작업(`DailyAggregationJob`)과 수동 재계산(A-05)이 함께 쓴다. 단계(`AggregationStep`)가 없어도 날짜를 잡고 공개하고 닫는 흐름이 돈다. 단계는 원천 집계 조회가 생긴 단위에서 더한다. 수동 재계산은 앱 서버에서 집계하지 않는다. 실행 행을 ops 의 요청 표식으로 넘기고 202를 주면, 배치 서버의 이어받기가 집어 `DailyAggregationJob.run`으로 그 날짜만 집계한다(#1238). 넘기는 방법과 이유는 [배치 설계](./analytics-batch-design.md#수동-재집계와-이어받기)가 갖는다.
 
 **정산 지표 단계.** `SettlementMetricsStep`(`@Order(100)`)이 `BillingStatsQueryService`의 점주와 캠페인별 합계를 더해 `daily_settlement_analytics`의 그날 한 행을 교체한다. 표의 CHECK가 금액을 0 이상으로 묶어 RESERVE, DEDUCT, REFUND는 절댓값으로 저장하고 조정액만 부호를 둔다. 미소진 잔액은 원장 전체를 더하지 않고, 그날보다 앞서 저장한 가장 최근 날의 값에 그다음 날부터 그날까지의 변동(`unspentChange`)을 더한다. 미소진 잔액은 기록 시각으로 세고 원장은 덧붙이기만 해서 끝난 날의 값이 바뀌지 않기 때문이다. 앞선 행이 하나도 없을 때만 `dailyTotals`의 원장 전체 합을 쓴다. 다시 집계해 그날 값이 바뀌면 그 차이를 뒤 날짜들의 저장값에 더한다. 뒤 날짜들은 그날의 옛 값을 이어받아 저장됐기 때문이다. 정정이 가리키는 원래 영업일은 공개 때 `ADJUSTED`로 미처리 날짜에 남긴다. `SettlementConsistencyStep`(`@Order(900)`)은 같은 공개 트랜잭션에서 방금 쓴 행을 읽어 V-1, V-2, V-3, V-7을 확인하고 어긋나도 집계를 실패시키지 않으며 지표 `analytics_consistency_violations{check}`와 로그로 알린다. 점주 잔액 >= 0(V-4)은 점주별 잔액을 주는 집계 조회가 없어 하지 않는다. 소진액 계산은 `SpendFormula` 한 곳에 둔다. 매출 조회(A-07)는 집계가 끝나지 않은 구간의 금액을 `null`로 내린다.
 
@@ -261,7 +261,7 @@ sequenceDiagram
 
 **부정 관리 단계.** `InvalidMetricsStep`(`@Order(500)`)은 `AdservingStatsQueryService.memberInvalidCounts`의 건수를 (캠페인, 회원, 사유) 행으로 옮긴다. `NotBilledMetricsStep`(`@Order(510)`)은 정산의 예산, 중단, 예산 계획 없음 건수와 광고 서빙의 쿠폰 소진 뒤 노출을 캠페인과 사유별로 합친다. `FraudMetricsStep`(`@Order(520)`)은 캠페인 통계와 `memberConcentrations`로 유효·무효 노출, 회원 수, 상위 회원의 노출 합과 집중 의심을 캠페인마다 한 행으로 만든다. 노출이 하나도 없는 캠페인은 행이 없다. 세 표 모두 다시 집계했을 때 사라진 행이 남지 않게 그날 행을 지우고 넣는다. 임계값은 `AnalyticsFraudProperties`(`analytics.fraud.*`)이고 범위를 벗어나면 기동이 실패한다. 무효 비율은 무효 ÷ 유효이고 그 식은 `InvalidRatio` 한 곳에 있다.
 
-**실행 세대 확인과 이어받기.** 실행기는 날짜를 잡은 직후 읽은 실행 세대를 끝까지 들고 가고, 실행 기록과 미처리 날짜에 쓰는 일을 `BatchAttemptGuard`로 세대를 확인한 트랜잭션에서만 한다. 수동 재계산은 접수할 때 확보한 세대를 실행기 작업에 고정한다. `DailyAggregationJob`은 `StandaloneJob`으로도 등록돼 ops의 이어받기와 관리자 수동 재실행이 넘겨준 날짜와 세대로 그 날짜만 집계한다. 무엇을 한 트랜잭션에 묶는지는 [배치 설계](./analytics-batch-design.md#실행-세대)가, 그렇게 고른 이유와 남은 틈은 [장애 처리 설계](./analytics_장애_처리_설계.md#애플리케이션-ops-실행-점유)가 갖는다.
+**실행 세대 확인과 이어받기.** 실행기는 날짜를 잡은 직후 읽은 실행 세대를 끝까지 들고 가고, 실행 기록과 미처리 날짜에 쓰는 일을 `BatchAttemptGuard`로 세대를 확인한 트랜잭션에서만 한다. `DailyAggregationJob`은 `StandaloneJob`으로도 등록돼 ops의 이어받기와 관리자 수동 재실행이 넘겨준 날짜와 세대로 그 날짜만 집계한다. 무엇을 한 트랜잭션에 묶는지는 [배치 설계](./analytics-batch-design.md#실행-세대)가, 그렇게 고른 이유와 남은 틈은 [장애 처리 설계](./analytics_장애_처리_설계.md#애플리케이션-ops-실행-점유)가 갖는다.
 
 **회원 사용 통계 단계.** `MemberUsageStep`(`@Order(700)`)이 `CouponStatsQueryService.dailyMemberStats`의 사용 수(`redeem_count`)와 확정 할인액(`saved_amount`), 분석 자기 `event_log`의 그날 `wish` 행 수(`wish_count`)를 `member_id`로 합쳐 `daily_member_usage`의 그날 행으로 교체한다. 사용 수는 `redeem` 이벤트로 세지 않는다. 찜은 쿠폰 계약의 값을 쓰지 않는다. 계약의 `wishCount` 는 31일이 지나면 0 이라 다시 집계하면 저장된 값을 덮는다. 찜 수는 영업일 하루(KST 자정 이상, 다음 자정 미만)로 센다. 사용도 찜도 없는 회원은 행이 없고 다시 집계했을 때 사라진 행이 남지 않게 그날 행을 지우고 넣는다. 이 표는 보존 삭제 대상이 아니고 탈퇴 회원의 행도 지우지 않는다. 조회(A-12)는 본인 행 전체의 합을 내리고 행이 없으면 세 값이 `0`이다. 전날까지 확정된 값의 합이라 오늘 쓴 쿠폰은 다음 날 반영된다.
 

@@ -190,7 +190,22 @@ public class DailyAggregationRunner {
     }
 
     /*
-     * 수동 재계산과 이어받기(DailyAggregationJob.run)가 날짜 하나만 집계할 때 부른다.
+     * 수동 재계산이 그 날짜를 배치 서버에 넘긴다(#1238). acquire 와 같이 행의 상태로 고르되 소유자를 요청
+     * 표식으로 둔다. 배치 서버의 이어받기가 다음 스캔에 집어 DailyAggregationJob.run 으로 그 날짜만 집계한다.
+     * 실행 중이면 넘기지 못한다.
+     */
+    public boolean request(LocalDate date, List<BatchExecutionRecord> records) {
+        Optional<BatchExecutionRecord> own = ownRecord(records);
+        return own.isEmpty()
+                ? executions.requestClaim(JOB_NAME, date)
+                : switch (own.get().status()) {
+                    case STATUS_FAILED, STATUS_SUCCESS -> rerunner.requestRerun(JOB_NAME, date);
+                    default -> false;
+                };
+    }
+
+    /*
+     * 이어받기(DailyAggregationJob.run)가 날짜 하나만 집계할 때 부른다. 수동 재계산도 이 길로 온다.
      * 그 날짜 하나가 한 실행이라 정합성 위반 수를 먼저 0 으로 되돌린다.
      */
     public AggregationOutcome aggregate(LocalDate date, int attemptNo) {

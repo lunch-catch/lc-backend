@@ -210,8 +210,12 @@ class DailyAggregationIntegrationTest extends AbstractAnalyticsIntegrationTest {
                 Long.class, java.sql.Date.valueOf(yesterday))).isZero();
     }
 
+    /*
+     * 접수한 앱 서버는 집계하지 않고 실행 행을 요청 표식으로 남긴다(#1238).
+     * 배치 서버의 이어받기가 그 행을 집어 집계하고 닫는다.
+     */
     @Test
-    void 재계산을_접수하면_202이고_집계가_끝난_뒤_실행_조회로_확인한다() throws Exception {
+    void 재계산을_접수하면_202이고_배치_서버의_이어받기가_집계한_뒤_실행_조회로_확인한다() throws Exception {
         mvc.perform(post("/v1/admin/aggregations:recalculate")
                         .with(user(new CustomUserDetails(1L, Role.ADMIN)))
                         .contentType(MediaType.APPLICATION_JSON)
@@ -219,8 +223,12 @@ class DailyAggregationIntegrationTest extends AbstractAnalyticsIntegrationTest {
                 .andExpect(status().isAccepted())
                 .andExpect(jsonPath("$.data.businessDate").value(yesterday.toString()))
                 .andExpect(jsonPath("$.data.status").value("RUNNING"));
+        assertThat(ownerOf(yesterday)).isEqualTo("RETRY_REQUESTED");
+        assertThat(statusOf(yesterday)).isEqualTo("RUNNING");
 
-        awaitStatus(yesterday, "SUCCESS");
+        scheduler.takeOverStale();
+
+        assertThat(statusOf(yesterday)).isEqualTo("SUCCESS");
         mvc.perform(get("/v1/admin/aggregation-runs")
                         .param("businessDate", yesterday.toString())
                         .with(user(new CustomUserDetails(1L, Role.ADMIN))))
@@ -228,6 +236,24 @@ class DailyAggregationIntegrationTest extends AbstractAnalyticsIntegrationTest {
                 .andExpect(jsonPath("$.data.jobName").value(JOB))
                 .andExpect(jsonPath("$.data.status").value("SUCCESS"))
                 .andExpect(jsonPath("$.data.processedCount").value(publishedRows(yesterday)));
+    }
+
+    @Test
+    void 이미_집계한_날짜의_재계산도_배치_서버의_이어받기가_다시_집계한다() throws Exception {
+        insertLog(JOB, yesterday, "SUCCESS", OTHER, 1, now());
+
+        mvc.perform(post("/v1/admin/aggregations:recalculate")
+                        .with(user(new CustomUserDetails(1L, Role.ADMIN)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"businessDate\":\"" + yesterday + "\"}"))
+                .andExpect(status().isAccepted());
+        assertThat(ownerOf(yesterday)).isEqualTo("RETRY_REQUESTED");
+
+        scheduler.takeOverStale();
+
+        assertThat(statusOf(yesterday)).isEqualTo("SUCCESS");
+        assertThat(attemptNoOf(yesterday)).isEqualTo(3);
+        assertThat(processedCountOf(yesterday)).isEqualTo(publishedRows(yesterday));
     }
 
     @Test
@@ -340,16 +366,5 @@ class DailyAggregationIntegrationTest extends AbstractAnalyticsIntegrationTest {
     private List<LocalDate> pendingDates() {
         return jdbc.queryForList(
                 "SELECT business_date FROM aggregation_pending_date ORDER BY business_date", LocalDate.class);
-    }
-
-    private void awaitStatus(LocalDate date, String expected) throws InterruptedException {
-        long deadline = System.currentTimeMillis() + 10_000;
-        while (System.currentTimeMillis() < deadline) {
-            if (expected.equals(statusOf(date))) {
-                return;
-            }
-            Thread.sleep(100);
-        }
-        assertThat(statusOf(date)).isEqualTo(expected);
     }
 }

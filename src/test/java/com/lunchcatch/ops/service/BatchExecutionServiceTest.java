@@ -494,6 +494,42 @@ class BatchExecutionServiceTest {
         assertThat(service.rerun(JOB, DATE)).isFalse();
     }
 
+    // 분석의 수동 재계산도 이 서버가 돌리지 않고 배치 서버의 이어받기가 집도록 요청 표식을 소유자로 둔다(#1238)
+    @Test
+    @DisplayName("재실행 요청은 끝난 행을 되돌리고 소유자를 요청 표식으로 둔다")
+    void 재실행_요청() {
+        when(logs.restartFinished(JOB, DATE, REQUESTED, NOW)).thenReturn(1);
+
+        assertThat(service.requestRerun(JOB, DATE)).isTrue();
+    }
+
+    @Test
+    @DisplayName("실행 중이면 재실행 요청이 걸리지 않는다")
+    void 재실행_요청_무효() {
+        when(logs.restartFinished(JOB, DATE, REQUESTED, NOW)).thenReturn(0);
+
+        assertThat(service.requestRerun(JOB, DATE)).isFalse();
+    }
+
+    @Test
+    @DisplayName("점유 요청은 행을 만들고 그 행이 요청 표식 소유의 실행 중 행이면 걸린 것이다")
+    void 점유_요청() {
+        when(logs.findByJobNameAndBusinessDate(JOB, DATE))
+                .thenReturn(Optional.of(row(BatchStatus.RUNNING, REQUESTED)));
+
+        assertThat(service.requestClaim(JOB, DATE)).isTrue();
+        verify(logs).upsertClaim(JOB, DATE, REQUESTED, NOW);
+    }
+
+    @Test
+    @DisplayName("다른 서버가 먼저 잡았으면 점유 요청이 걸리지 않는다")
+    void 점유_요청_실패() {
+        when(logs.findByJobNameAndBusinessDate(JOB, DATE))
+                .thenReturn(Optional.of(row(BatchStatus.RUNNING, OTHER)));
+
+        assertThat(service.requestClaim(JOB, DATE)).isFalse();
+    }
+
     private static BatchExecutionLog row(BatchStatus status, String owner, int attemptNo) {
         BatchExecutionLog row = row(status, owner);
         ReflectionTestUtils.setField(row, "attemptNo", attemptNo);
