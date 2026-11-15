@@ -15,4 +15,9 @@ public class BatchRerunnerImpl implements BatchRerunner {
     public boolean rerun(String jobName, LocalDate businessDate) {
         return batchExecutionService.rerun(jobName, businessDate);
     }
+
+    @Override
+    public boolean requestRerun(String jobName, LocalDate businessDate) {
+        return batchExecutionService.requestRerun(jobName, businessDate);
+    }
 }
