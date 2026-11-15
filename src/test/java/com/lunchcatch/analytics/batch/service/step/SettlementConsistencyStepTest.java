@@ -1,6 +1,8 @@
 package com.lunchcatch.analytics.batch.service.step;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.lunchcatch.analytics.batch.service.AggregationSources;
@@ -34,12 +36,14 @@ class SettlementConsistencyStepTest {
     private SettlementAnalyticsRepository repository;
 
     private SimpleMeterRegistry registry;
+    private AggregationSources sources;
     private SettlementConsistencyStep step;
 
     @BeforeEach
     void setUp() {
         registry = new SimpleMeterRegistry();
-        step = new SettlementConsistencyStep(new AggregationSources(billing, null, null), repository, new AggregationMetrics(registry));
+        sources = new AggregationSources(billing, null, null);
+        step = new SettlementConsistencyStep(sources, repository, new AggregationMetrics(registry));
     }
 
     private static OwnerCampaignLedgerSum ledger(Long campaign, long reserve, long deduct, long release,
@@ -186,5 +190,27 @@ class SettlementConsistencyStepTest {
         step.publish(DAY, step.collect(DAY));
 
         assertThat(violations("V-1") + violations("V-2") + violations("V-3") + violations("V-7")).isZero();
+    }
+
+    // 범위 안에서는 앞 단계가 읽은 목록을 나눠 쓴다. 나눠 쓴 결과가 단계마다 원천을 읽던 때와 같아야 한다(#1257)
+    @Test
+    void 범위_안에서_나눠_쓴_원천으로_모은_결과가_범위_밖에서_모은_결과와_같다() {
+        campaign(29, 100L,
+                ledger(CAMPAIGN, -5000, -3000, 0, 200),
+                ledger(null, 0, 0, 0, 100));
+
+        SettlementFindings outside = step.collect(DAY);
+        SettlementFindings first;
+        SettlementFindings second;
+        try (AggregationSources.Scope ignored = sources.open()) {
+            first = step.collect(DAY);
+            second = step.collect(DAY);
+        }
+
+        assertThat(first).isEqualTo(outside);
+        assertThat(second).isEqualTo(outside);
+        verify(billing, times(2)).ledgerSums(DAY);
+        verify(billing, times(2)).billingCounts(DAY);
+        verify(billing, times(2)).dailyBudgets(DAY);
     }
 }
