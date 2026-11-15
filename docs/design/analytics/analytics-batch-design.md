@@ -13,7 +13,7 @@ analytics가 등록하는 일별 집계, 퍼널 이벤트 수신, 이벤트 로�
 | 대상 날짜 | 전일, 전전일, `aggregation_pending_date`에 남은 날짜, 정산의 해제 완료 표시(`BILLING_DAILY_RELEASE`)가 `SUCCESS`인데 집계(`DAILY_AGGREGATION`)가 `SUCCESS`가 아닌 날짜를 오래된 순서로 처리한다. 마지막 조건이 여러 날 중단되어 미처리 기록마저 남지 않은 날짜를 찾는다 |
 | 보존 범위 | 현재 날짜에서 13개월 안의 날짜만 집계한다 |
 | 날짜 점유 | 실행 기록이 없으면 `claim`, FAILED면 `retry`, SUCCESS면 `rerun`, RUNNING이면 건너뛴다 |
-| 수동 재집계 | A-05가 정기 실행과 같은 실행기를 부른다 |
+| 수동 재집계 | A-05는 실행 행을 요청 표식으로 넘기기만 한다. 배치 서버의 이어받기가 집어 같은 실행기로 집계한다 |
 | 이어받기 | `StandaloneJob`으로 등록한다. 이어받은 서버와 관리자 수동 재실행이 넘겨준 날짜와 세대로 그 날짜만 집계한다 |
 | 실패 | 날짜를 미처리 목록에 남기고 실행 기록을 FAILED로 닫는다 |
 
@@ -56,9 +56,13 @@ Spring Batch는 사용하지 않는다. 각 단계는 평범한 서비스이고 
 
 ### 수동 재집계와 이어받기
 
-수동 재집계는 같은 실행기의 `acquire`와 `aggregate`를 사용하지만 정기 실행의 `runDate`가 하는 원천 해제 성공 확인을 거치지 않는다. 접수할 때 확보한 세대를 실행기 작업에 고정해 넘긴다. 실행기에서 기다리는 동안 소유자나 세대가 바뀌어도 새 세대를 자기 것으로 쓰지 않는다. 메모리 실행기는 한 스레드·대기열 네 개이며 서버 종료 시 작업을 잃을 수 있다. 시작 실패는 점유한 날짜를 FAILED·미처리로 남기지만 모든 중단에서 자동 복구된다는 보장은 없다.
+수동 재집계(A-05)를 받은 앱 서버는 집계하지 않는다(#1238). 실행기의 `request`가 `acquire`와 같이 행의 상태로 고르되 소유자를 ops 의 요청 표식(`RETRY_REQUESTED`)으로 둔다. 행이 없으면 `requestClaim`, FAILED나 SUCCESS면 `requestRerun`이고 RUNNING이면 넘기지 못해 409다. 요청 표식과 감사 로그를 한 트랜잭션에 커밋하고 202로 끝난다. 배치 서버의 이어받기 스캔(1분마다)이 그 행을 집어 아래 `StandaloneJob` 경로로 그 날짜만 집계한다. 정기 실행의 `runDate`가 하는 원천 해제 성공 확인은 거치지 않는다.
 
-`DailyAggregationJob`은 `StandaloneJob`으로도 등록한다. ops의 이어받기와 관리자 수동 재실행(`POST /v1/admin/batch-executions/DAILY_AGGREGATION/{영업일}:retry`)이 넘겨준 날짜와 세대로 그 날짜만 `aggregate`한다. 날짜를 다시 잡지 않고 01:00 전체 실행(`runAll`)도 부르지 않는다. 원천 해제 성공 확인은 수동 재집계와 같이 거치지 않는다.
+앱 서버에서 집계하지 않는 이유는 요청용 시간 제한(쿼리와 트랜잭션 5초)이다. 그날 노출 100만 건 규모에서 노출 집계가 약 15초, 정산 합계가 약 16초 걸려 앱 서버의 재집계로는 복구되지 않았다(#1238). 관리자 배치 재실행(#1231)과 같은 길이라 새 폴링이나 점유 장치를 두지 않는다. 요청과 이어받기에서 세대가 한 번씩 올라 세대가 2 오른다. 배치 서버가 하나도 없으면 요청 표식인 행이 `RUNNING`으로 남는다.
+
+접수한 앱 서버는 요청의 traceId 아래에 `ANALYTICS_RECALCULATION_REQUESTED`로 영업일과 실행 행 ID를 남긴다. 배치 서버 쪽의 `BATCH_MANUAL_RETRY_STARTED`와 `ANALYTICS_DAILY_AGGREGATION_RESUMED`는 새 traceId로 열리므로 두 쪽 로그는 영업일로 이어 본다.
+
+`DailyAggregationJob`은 `StandaloneJob`으로도 등록한다. ops의 이어받기와 관리자 수동 재실행(`POST /v1/admin/batch-executions/DAILY_AGGREGATION/{영업일}:retry`)이 넘겨준 날짜와 세대로 그 날짜만 `aggregate`한다. 날짜를 다시 잡지 않고 01:00 전체 실행(`runAll`)도 부르지 않는다. A-05 의 수동 재집계도 이 경로로 들어온다. 원천 해제 성공 확인은 거치지 않는다.
 
 * 집계가 실행 행을 처리 건수와 함께 먼저 닫는다. 이어서 ops가 부르는 건수 없는 `succeed`는 행이 이미 `RUNNING`이 아니라서 무시된다.
 * 실행권을 잃어도 `run`은 예외를 던지지 않는다. ops는 넘겨준 실행 세대(`attemptNo`)를 조건으로 행을 닫으므로 같은 서버가 잡은 새 세대의 행은 바뀌지 않는다(#591).

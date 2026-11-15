@@ -295,6 +295,28 @@ public class BatchExecutionService {
     }
 
     /*
+     * 분석의 수동 재계산이 끝난 행(FAILED, SUCCESS)을 배치 서버에 넘길 때 쓴다(#1238).
+     * rerun 과 같이 되돌리되 소유자를 요청 표식으로 두어, 배치 서버의 이어받기가 다음 스캔에 집는다.
+     */
+    @Transactional
+    public boolean requestRerun(String jobName, LocalDate businessDate) {
+        return logs.restartFinished(jobName, businessDate, RETRY_REQUESTED_OWNER, now()) == 1;
+    }
+
+    /*
+     * 분석의 수동 재계산이 실행 행이 아직 없는 날짜를 배치 서버에 넘길 때 쓴다(#1238).
+     * claim 과 같이 행을 만들고 다시 읽어 판정하되 소유자를 요청 표식으로 둔다.
+     * 배치 서버가 집기 전에 같은 날짜의 요청이 또 오면 소유자로 둘을 가르지 못해 둘 다 true 다.
+     * 그래도 이어받기의 조건부 UPDATE 가 한 서버에만 걸려 집계는 한 번만 돈다.
+     */
+    @Transactional
+    public boolean requestClaim(String jobName, LocalDate businessDate) {
+        logs.upsertClaim(jobName, businessDate, RETRY_REQUESTED_OWNER, now());
+        BatchExecutionLog row = reload(jobName, businessDate);
+        return row.getStatus() == BatchStatus.RUNNING && RETRY_REQUESTED_OWNER.equals(row.getOwnerId());
+    }
+
+    /*
      * 실행 행의 소유자와 세대가 지금도 맞는지 본다(#360).
      *
      * 호출자 트랜잭션에 참여해 행을 잠근다. succeed/fail의 소유자 조건만으로는 임대를 잃은

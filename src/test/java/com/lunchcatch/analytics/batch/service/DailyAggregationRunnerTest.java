@@ -246,6 +246,39 @@ class DailyAggregationRunnerTest {
         verify(rerunner, never()).rerun(any(), any());
     }
 
+    // --- 수동 재계산을 배치 서버에 넘기기 ---
+
+    @Test
+    void 수동_재계산은_행이_없으면_요청_표식으로_행을_만든다() {
+        when(executions.requestClaim(JOB, YESTERDAY)).thenReturn(true);
+
+        assertThat(runner().request(YESTERDAY, List.of())).isTrue();
+        verify(executions, never()).claim(any(), any());
+    }
+
+    @Test
+    void 수동_재계산은_실패한_행을_요청_표식으로_되돌린다() {
+        when(rerunner.requestRerun(JOB, YESTERDAY)).thenReturn(true);
+
+        assertThat(runner().request(YESTERDAY, List.of(execution(JOB, YESTERDAY, "FAILED")))).isTrue();
+        verify(executions, never()).retry(any(), any());
+    }
+
+    @Test
+    void 수동_재계산은_성공한_행을_요청_표식으로_되돌린다() {
+        when(rerunner.requestRerun(JOB, YESTERDAY)).thenReturn(true);
+
+        assertThat(runner().request(YESTERDAY, List.of(execution(JOB, YESTERDAY, "SUCCESS")))).isTrue();
+        verify(rerunner, never()).rerun(any(), any());
+    }
+
+    @Test
+    void 수동_재계산은_실행_중인_행을_넘기지_못한다() {
+        assertThat(runner().request(YESTERDAY, List.of(execution(JOB, YESTERDAY, "RUNNING")))).isFalse();
+        verify(executions, never()).requestClaim(any(), any());
+        verify(rerunner, never()).requestRerun(any(), any());
+    }
+
     @Test
     void 잡지_못하면_세대를_읽지_않는다() {
         when(executions.retry(JOB, YESTERDAY)).thenReturn(false);
