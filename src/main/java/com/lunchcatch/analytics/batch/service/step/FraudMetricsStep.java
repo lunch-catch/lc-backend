@@ -5,6 +5,7 @@ import com.lunchcatch.adserving.contract.CampaignImpressionStats;
 import com.lunchcatch.adserving.contract.CampaignMemberConcentration;
 import com.lunchcatch.analytics.batch.FraudMetrics;
 import com.lunchcatch.analytics.batch.repository.FraudAnalyticsRepository;
+import com.lunchcatch.analytics.batch.service.AggregationSources;
 import com.lunchcatch.analytics.batch.service.AggregationStep;
 import com.lunchcatch.analytics.config.AnalyticsFraudProperties;
 import java.time.Clock;
@@ -30,16 +31,19 @@ import org.springframework.stereotype.Component;
 @Order(520)
 public class FraudMetricsStep implements AggregationStep<FraudMetrics> {
 
+    private final AggregationSources sources;
     private final AdservingStatsQueryService adserving;
     private final AnalyticsFraudProperties properties;
     private final FraudAnalyticsRepository repository;
     private final Clock clock;
 
     public FraudMetricsStep(
+            AggregationSources sources,
             AdservingStatsQueryService adserving,
             AnalyticsFraudProperties properties,
             FraudAnalyticsRepository repository,
             Clock clock) {
+        this.sources = sources;
         this.adserving = adserving;
         this.properties = properties;
         this.repository = repository;
@@ -54,7 +58,7 @@ public class FraudMetricsStep implements AggregationStep<FraudMetrics> {
     @Override
     public FraudMetrics collect(LocalDate businessDate) {
         Map<Long, CampaignMemberConcentration> concentrations = new HashMap<>();
-        List<CampaignImpressionStats> stats = adserving.campaignStats(businessDate);
+        List<CampaignImpressionStats> stats = sources.campaignStats(businessDate);
         for (CampaignMemberConcentration concentration
                 : adserving.memberConcentrations(businessDate, properties.topMembers())) {
             concentrations.put(concentration.campaignId(), concentration);

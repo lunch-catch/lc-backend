@@ -30,6 +30,16 @@ Spring Batch는 사용하지 않는다. 각 단계는 평범한 서비스이고 
 
 공개 트랜잭션은 원천 도메인의 집계 조회를 호출하지 않는다. ops의 실행 세대 확인과 성공 기록만 함께 묶는다.
 
+단계 여럿이 같은 원천 조회를 쓴다. 단계는 그 조회를 원천 서비스가 아니라 `AggregationSources`로 부르고, 실행기는 한 시도의 모으기 앞뒤로 그 읽기 범위를 열고 닫는다(#1257). 범위 안에서는 (조회, 영업일)마다 처음 한 번만 읽고 단계들이 그 결과를 나눠 쓴다. 같은 조회를 단계마다 다시 부르면 하루치 노출과 원장을 그 횟수만큼 다시 읽기 때문이다. 재시도는 범위를 새로 열어 처음부터 다시 읽는다. 범위는 스레드마다 따로라 같은 서버에서 다른 시도의 결과를 쓰지 않는다. 단계는 받은 목록을 고치지 않는다.
+
+| 조회 | 나눠 쓰는 단계 |
+|---|---|
+| `AdservingStatsQueryService.campaignStats` | `CampaignReportStep`, `FraudMetricsStep`, `FunnelMetricsStep`, `NotBilledMetricsStep` |
+| `BillingStatsQueryService.billingCounts` | `CampaignReportStep`, `NotBilledMetricsStep`, `SettlementConsistencyStep` |
+| `BillingStatsQueryService.dailyBudgets` | `CampaignReportStep`, `SettlementConsistencyStep` |
+| `BillingStatsQueryService.ledgerSums` | `CampaignReportStep`, `SettlementConsistencyStep`, `SettlementMetricsStep` |
+| `CouponStatsQueryService.dailyCampaignStats` | `CampaignReportStep`, `FunnelMetricsStep` |
+
 ### 실행 세대
 
 `acquire`는 claim, retry, rerun이 성공한 직후 실행 기록을 다시 읽어 그 시도의 세대(`attemptNo`)를 돌려준다. 세 호출이 세대를 돌려주지 않아서다. 잡은 행은 `updated_at`이 지금이라 2분 안에는 이어받기에 걸리지 않으므로 그때 읽은 세대가 이 시도의 세대다. 실행기는 이 값을 끝까지 들고 가고 중간에 다시 읽지 않는다.

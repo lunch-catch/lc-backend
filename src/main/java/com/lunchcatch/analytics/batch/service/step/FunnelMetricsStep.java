@@ -1,13 +1,12 @@
 package com.lunchcatch.analytics.batch.service.step;
 
-import com.lunchcatch.adserving.contract.AdservingStatsQueryService;
 import com.lunchcatch.adserving.contract.CampaignImpressionStats;
 import com.lunchcatch.analytics.batch.FunnelMetrics;
 import com.lunchcatch.analytics.batch.repository.FunnelAnalyticsRepository;
+import com.lunchcatch.analytics.batch.service.AggregationSources;
 import com.lunchcatch.analytics.batch.service.AggregationStep;
 import com.lunchcatch.analytics.event.EventType;
 import com.lunchcatch.analytics.event.repository.EventLogRepository;
-import com.lunchcatch.coupon.contract.CouponStatsQueryService;
 import com.lunchcatch.coupon.contract.DailyCampaignCouponStats;
 import java.time.Clock;
 import java.time.LocalDate;
@@ -30,20 +29,17 @@ import org.springframework.stereotype.Component;
 @Order(400)
 public class FunnelMetricsStep implements AggregationStep<FunnelMetrics> {
 
-    private final AdservingStatsQueryService adserving;
-    private final CouponStatsQueryService coupons;
+    private final AggregationSources sources;
     private final EventLogRepository eventLog;
     private final FunnelAnalyticsRepository repository;
     private final Clock clock;
 
     public FunnelMetricsStep(
-            AdservingStatsQueryService adserving,
-            CouponStatsQueryService coupons,
+            AggregationSources sources,
             EventLogRepository eventLog,
             FunnelAnalyticsRepository repository,
             Clock clock) {
-        this.adserving = adserving;
-        this.coupons = coupons;
+        this.sources = sources;
         this.eventLog = eventLog;
         this.repository = repository;
         this.clock = clock;
@@ -58,13 +54,13 @@ public class FunnelMetricsStep implements AggregationStep<FunnelMetrics> {
     public FunnelMetrics collect(LocalDate businessDate) {
         long valid = 0;
         long invalid = 0;
-        for (CampaignImpressionStats stats : adserving.campaignStats(businessDate)) {
+        for (CampaignImpressionStats stats : sources.campaignStats(businessDate)) {
             valid += stats.validCount();
             invalid += stats.expiredOrUnknownCount() + stats.notOwnerCount();
         }
         long issued = 0;
         long redeemed = 0;
-        for (DailyCampaignCouponStats stats : coupons.dailyCampaignStats(businessDate)) {
+        for (DailyCampaignCouponStats stats : sources.dailyCampaignStats(businessDate)) {
             issued += stats.issuedCount();
             redeemed += stats.usedCount();
         }

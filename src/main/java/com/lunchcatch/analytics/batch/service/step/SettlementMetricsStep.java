@@ -5,6 +5,7 @@ import com.lunchcatch.analytics.batch.SettlementMetrics;
 import com.lunchcatch.analytics.batch.repository.PendingDateRepository;
 import com.lunchcatch.analytics.batch.repository.SettlementAnalyticsRepository;
 import com.lunchcatch.analytics.batch.repository.SettlementAnalyticsRow;
+import com.lunchcatch.analytics.batch.service.AggregationSources;
 import com.lunchcatch.analytics.batch.service.AggregationStep;
 import com.lunchcatch.analytics.batch.service.DailyAggregationRunner;
 import com.lunchcatch.billing.contract.BillingStatsQueryService;
@@ -31,16 +32,19 @@ import org.springframework.stereotype.Component;
 @Order(100)
 public class SettlementMetricsStep implements AggregationStep<SettlementMetrics> {
 
+    private final AggregationSources sources;
     private final BillingStatsQueryService billing;
     private final SettlementAnalyticsRepository repository;
     private final PendingDateRepository pending;
     private final Clock clock;
 
     public SettlementMetricsStep(
+            AggregationSources sources,
             BillingStatsQueryService billing,
             SettlementAnalyticsRepository repository,
             PendingDateRepository pending,
             Clock clock) {
+        this.sources = sources;
         this.billing = billing;
         this.repository = repository;
         this.pending = pending;
@@ -61,7 +65,7 @@ public class SettlementMetricsStep implements AggregationStep<SettlementMetrics>
         long refund = 0;
         long positiveAdjust = 0;
         long negativeAdjust = 0;
-        for (OwnerCampaignLedgerSum sum : billing.ledgerSums(businessDate)) {
+        for (OwnerCampaignLedgerSum sum : sources.ledgerSums(businessDate)) {
             charge += sum.chargeAmount();
             reserve += sum.reserveAmount();
             deduct += sum.deductAmount();

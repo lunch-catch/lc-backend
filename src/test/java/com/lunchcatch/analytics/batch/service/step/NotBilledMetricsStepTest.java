@@ -5,6 +5,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import com.lunchcatch.analytics.batch.service.AggregationSources;
 import com.lunchcatch.adserving.contract.AdservingStatsQueryService;
 import com.lunchcatch.adserving.contract.CampaignImpressionStats;
 import com.lunchcatch.analytics.batch.NotBilledMetrics;
@@ -41,7 +42,7 @@ class NotBilledMetricsStepTest {
     private NotBilledAnalyticsRepository repository;
 
     private NotBilledMetricsStep step() {
-        return new NotBilledMetricsStep(adserving, billing, repository, CLOCK);
+        return new NotBilledMetricsStep(new AggregationSources(billing, adserving, null), repository, CLOCK);
     }
 
     private static CampaignImpressionStats stats(long campaignId, long soldOutCount) {

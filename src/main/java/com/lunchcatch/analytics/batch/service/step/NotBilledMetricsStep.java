@@ -1,12 +1,11 @@
 package com.lunchcatch.analytics.batch.service.step;
 
-import com.lunchcatch.adserving.contract.AdservingStatsQueryService;
 import com.lunchcatch.adserving.contract.CampaignImpressionStats;
 import com.lunchcatch.analytics.batch.NotBilledMetrics;
 import com.lunchcatch.analytics.batch.NotBilledReason;
 import com.lunchcatch.analytics.batch.repository.NotBilledAnalyticsRepository;
+import com.lunchcatch.analytics.batch.service.AggregationSources;
 import com.lunchcatch.analytics.batch.service.AggregationStep;
-import com.lunchcatch.billing.contract.BillingStatsQueryService;
 import com.lunchcatch.billing.contract.CampaignBillingCount;
 import java.time.Clock;
 import java.time.LocalDate;
@@ -28,18 +27,15 @@ import org.springframework.stereotype.Component;
 @Order(510)
 public class NotBilledMetricsStep implements AggregationStep<NotBilledMetrics> {
 
-    private final AdservingStatsQueryService adserving;
-    private final BillingStatsQueryService billing;
+    private final AggregationSources sources;
     private final NotBilledAnalyticsRepository repository;
     private final Clock clock;
 
     public NotBilledMetricsStep(
-            AdservingStatsQueryService adserving,
-            BillingStatsQueryService billing,
+            AggregationSources sources,
             NotBilledAnalyticsRepository repository,
             Clock clock) {
-        this.adserving = adserving;
-        this.billing = billing;
+        this.sources = sources;
         this.repository = repository;
         this.clock = clock;
     }
@@ -52,13 +48,13 @@ public class NotBilledMetricsStep implements AggregationStep<NotBilledMetrics> {
     @Override
     public NotBilledMetrics collect(LocalDate businessDate) {
         Map<Long, Map<NotBilledReason, Long>> byCampaign = new TreeMap<>();
-        for (CampaignBillingCount count : billing.billingCounts(businessDate)) {
+        for (CampaignBillingCount count : sources.billingCounts(businessDate)) {
             add(byCampaign, count.campaignId(), NotBilledReason.NOT_BILLED_BUDGET, count.notBilledBudgetCount());
             add(byCampaign, count.campaignId(), NotBilledReason.NOT_BILLED_PAUSED, count.notBilledPausedCount());
             add(byCampaign, count.campaignId(), NotBilledReason.NOT_BILLED_NO_PLAN, count.notBilledNoPlanCount());
             add(byCampaign, count.campaignId(), NotBilledReason.NOT_BILLED_CLOSED, count.notBilledClosedCount());
         }
-        for (CampaignImpressionStats stats : adserving.campaignStats(businessDate)) {
+        for (CampaignImpressionStats stats : sources.campaignStats(businessDate)) {
             add(byCampaign, stats.campaignId(), NotBilledReason.NOT_BILLED_SOLD_OUT, stats.soldOutCount());
         }
         List<NotBilledMetrics.Row> rows = byCampaign.entrySet().stream()

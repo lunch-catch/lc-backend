@@ -65,6 +65,7 @@ public class DailyAggregationRunner {
     private static final String STATUS_FAILED = "FAILED";
 
     private final List<AggregationStep<?>> steps;
+    private final AggregationSources sources;
     private final BatchExecutionService executions;
     private final BatchExecutionQueryService executionQuery;
     private final BatchRerunner rerunner;
@@ -77,6 +78,7 @@ public class DailyAggregationRunner {
 
     public DailyAggregationRunner(
             ObjectProvider<AggregationStep<?>> steps,
+            AggregationSources sources,
             BatchExecutionService executions,
             BatchExecutionQueryService executionQuery,
             BatchRerunner rerunner,
@@ -87,6 +89,7 @@ public class DailyAggregationRunner {
             PlatformTransactionManager transactionManager,
             Clock clock) {
         this.steps = steps.orderedStream().toList();
+        this.sources = sources;
         this.executions = executions;
         this.executionQuery = executionQuery;
         this.rerunner = rerunner;
@@ -283,11 +286,14 @@ public class DailyAggregationRunner {
      */
     private AggregationOutcome attemptOnce(LocalDate date, int attemptNo) {
         List<Publication> publications = new ArrayList<>();
-        for (AggregationStep<?> step : steps) {
-            if (!leaseHeld(date)) {
-                return AggregationOutcome.LEASE_LOST;
+        // 단계들이 같은 원천 조회를 이 시도 안에서 한 번만 읽게 한다(#1257)
+        try (AggregationSources.Scope ignored = sources.open()) {
+            for (AggregationStep<?> step : steps) {
+                if (!leaseHeld(date)) {
+                    return AggregationOutcome.LEASE_LOST;
+                }
+                publications.add(collect(step, date));
             }
-            publications.add(collect(step, date));
         }
         if (!leaseHeld(date)) {
             return AggregationOutcome.LEASE_LOST;

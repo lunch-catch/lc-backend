@@ -5,6 +5,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import com.lunchcatch.analytics.batch.service.AggregationSources;
 import com.lunchcatch.adserving.contract.AdservingStatsQueryService;
 import com.lunchcatch.adserving.contract.CampaignImpressionStats;
 import com.lunchcatch.adserving.contract.CampaignMemberConcentration;
@@ -39,7 +40,7 @@ class FraudMetricsStepTest {
     private FraudAnalyticsRepository repository;
 
     private FraudMetricsStep step() {
-        return new FraudMetricsStep(adserving, PROPERTIES, repository, CLOCK);
+        return new FraudMetricsStep(new AggregationSources(null, adserving, null), adserving, PROPERTIES, repository, CLOCK);
     }
 
     private static CampaignImpressionStats stats(long campaignId, long valid, long expired, long notOwner) {

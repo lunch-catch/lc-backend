@@ -249,7 +249,7 @@ sequenceDiagram
 
 일별 집계, 퍼널 이벤트 수신, 보존 삭제의 상세는 [analytics 배치 설계](./analytics-batch-design.md)가 갖는다.
 
-일별 집계의 실행기(`DailyAggregationRunner`)는 01:00 작업(`DailyAggregationJob`)과 수동 재계산(A-05)이 함께 쓴다. 단계(`AggregationStep`)가 없어도 날짜를 잡고 공개하고 닫는 흐름이 돈다. 단계는 원천 집계 조회가 생긴 단위에서 더한다. 수동 재계산은 앱 서버에서 집계하지 않는다. 실행 행을 ops 의 요청 표식으로 넘기고 202를 주면, 배치 서버의 이어받기가 집어 `DailyAggregationJob.run`으로 그 날짜만 집계한다(#1238). 넘기는 방법과 이유는 [배치 설계](./analytics-batch-design.md#수동-재집계와-이어받기)가 갖는다.
+일별 집계의 실행기(`DailyAggregationRunner`)는 01:00 작업(`DailyAggregationJob`)과 수동 재계산(A-05)이 함께 쓴다. 단계(`AggregationStep`)가 없어도 날짜를 잡고 공개하고 닫는 흐름이 돈다. 단계는 원천 집계 조회가 생긴 단위에서 더한다. 단계 여럿이 쓰는 원천 조회는 한 시도 안에서 한 번만 읽어 나눠 쓴다(`AggregationSources`, #1257). 방법은 [배치 설계](./analytics-batch-design.md#모으기와-공개)가 갖는다. 수동 재계산은 앱 서버에서 집계하지 않는다. 실행 행을 ops 의 요청 표식으로 넘기고 202를 주면, 배치 서버의 이어받기가 집어 `DailyAggregationJob.run`으로 그 날짜만 집계한다(#1238). 넘기는 방법과 이유는 [배치 설계](./analytics-batch-design.md#수동-재집계와-이어받기)가 갖는다.
 
 **정산 지표 단계.** `SettlementMetricsStep`(`@Order(100)`)이 `BillingStatsQueryService`의 점주와 캠페인별 합계를 더해 `daily_settlement_analytics`의 그날 한 행을 교체한다. 표의 CHECK가 금액을 0 이상으로 묶어 RESERVE, DEDUCT, REFUND는 절댓값으로 저장하고 조정액만 부호를 둔다. 미소진 잔액은 원장 전체를 더하지 않고, 그날보다 앞서 저장한 가장 최근 날의 값에 그다음 날부터 그날까지의 변동(`unspentChange`)을 더한다. 미소진 잔액은 기록 시각으로 세고 원장은 덧붙이기만 해서 끝난 날의 값이 바뀌지 않기 때문이다. 앞선 행이 하나도 없을 때만 `dailyTotals`의 원장 전체 합을 쓴다. 다시 집계해 그날 값이 바뀌면 그 차이를 뒤 날짜들의 저장값에 더한다. 뒤 날짜들은 그날의 옛 값을 이어받아 저장됐기 때문이다. 정정이 가리키는 원래 영업일은 공개 때 `ADJUSTED`로 미처리 날짜에 남긴다. `SettlementConsistencyStep`(`@Order(900)`)은 같은 공개 트랜잭션에서 방금 쓴 행을 읽어 V-1, V-2, V-3, V-7을 확인하고 어긋나도 집계를 실패시키지 않으며 지표 `analytics_consistency_violations{check}`와 로그로 알린다. 점주 잔액 >= 0(V-4)은 점주별 잔액을 주는 집계 조회가 없어 하지 않는다. 소진액 계산은 `SpendFormula` 한 곳에 둔다. 매출 조회(A-07)는 집계가 끝나지 않은 구간의 금액을 `null`로 내린다.
 
