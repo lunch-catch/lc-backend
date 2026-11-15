@@ -47,7 +47,7 @@ public class AggregationSources {
     // 한 시도의 모으기 동안 읽은 결과를 나눠 쓰는 범위를 연다. 닫으면 그 결과를 버린다
     public Scope open() {
         READS.set(new HashMap<>());
-        return READS::remove;
+        return () -> READS.remove();
     }
 
     public List<OwnerCampaignLedgerSum> ledgerSums(LocalDate businessDate) {
