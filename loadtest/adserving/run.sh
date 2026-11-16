@@ -6,6 +6,7 @@
 #   AWS_PROFILE=<프로필> loadtest/adserving/run.sh seed [회원 수]          시험 데이터를 RDS 에 넣는다
 #   AWS_PROFILE=<프로필> loadtest/adserving/run.sh prepare                 그날 00:00 묶음을 다시 돌린다
 #   AWS_PROFILE=<프로필> loadtest/adserving/run.sh run <이름> <회원 시작 번호> [초당 피드] [유지 시간] [--scenario feed] [--profile cpu|wall|both]
+#   AWS_PROFILE=<프로필> loadtest/adserving/run.sh warmup <이름> <회원 시작 번호> [초당 피드] [--scenario feed]  앱의 JIT 컴파일이 가라앉을 때까지 데운다. 상한은 5분이다
 #   AWS_PROFILE=<프로필> loadtest/adserving/run.sh metrics <시작 ms> <끝 ms>  그 구간의 서버 지표
 #   AWS_PROFILE=<프로필> loadtest/adserving/run.sh rows                    시험 데이터의 행 수
 #   AWS_PROFILE=<프로필> loadtest/adserving/run.sh drain <이름> [건수]       대기 노출을 넣고 릴레이가 다 비우는 시간과 그 구간의 지표를 잰다
@@ -114,7 +115,7 @@ select 'batch', status from batch_execution_log where business_date = '\$D' and 
 
 case "${LOCAL:+local-}${1:-}" in
   local-reset|local-rows|local-drain)
-    die "로컬에서는 seed, prepare, run, metrics, profile, switch 만 쓴다" ;;
+    die "로컬에서는 seed, prepare, run, warmup, metrics, profile, switch 만 쓴다" ;;
   local-switch)
     shift
     switch_options "$@"
@@ -268,6 +269,40 @@ grep 'level=error' \$OUT/k6-$name.log | tail -5 || true" ) > "$out" || rc=$?
     fi
     wait
     exit "$rc"
+    ;;
+  warmup|local-warmup)
+    #
+    # 워밍업이다(#1267). 앱의 JIT 컴파일이 초당 10ms 아래가 될 때까지 한 회차로 부하를 이어 준다. 앱이 여러 대면 가장 높은 앱을 본다.
+    # 트레이싱 에이전트는 컴파일할 코드를 늘려, 짧게 데우면 그 데우는 비용이 측정 회차까지 넘어와 트레이싱 비용처럼 보인다.
+    # 상한은 램프업 뒤 5분이다. 넘으면 멈추고 덜 데워졌다고 알린다. 그 버전의 결과에 그렇게 적는다.
+    # 회차를 끊어 되풀이하지 않는다. 같은 회원 대역을 되풀이하면 노출 상한에 닿아 피드가 새 분기를 타고 JIT 이 다시 오른다.
+    #
+    name="${2:?회차 이름을 준다}"; base="${3:?회원 시작 번호를 준다}"; rate=100
+    shift 3
+    [ $# -eq 0 ] || [ "${1#--}" != "$1" ] || { rate="$1"; shift; }
+    case "$name" in *-warmup) ;; *) die "워밍업 회차는 이름을 -warmup 으로 끝낸다. 예: v1-warmup" ;; esac
+    jit_limit=10; cap=300
+    "$0" ${LOCAL:+--local} run "$name" "$base" "$rate" "${cap}s" "$@" &
+    pid=$!
+    sleep 60
+    began=$(date +%s); jit=NA; settled=""
+    while kill -0 "$pid" 2> /dev/null && [ $(( $(date +%s) - began )) -lt "$cap" ]; do
+      sleep 30
+      jit=$(prom_value 'max(rate(jvm_compilation_time_ms_total{job="app"}[1m]))') || jit=NA
+      echo "warmup $(( $(date +%s) - began ))s jit=$jit ms/s"
+      if python3 -c "import sys; sys.exit(0 if float('$jit') < $jit_limit else 1)" 2> /dev/null; then
+        settled=1
+        stop_k6 "$name"
+        break
+      fi
+    done
+    wait "$pid" || true
+    if [ -n "$settled" ]; then
+      echo "warmup-result $name settled after $(( $(date +%s) - began ))s jit=$jit ms/s"
+    else
+      echo "warmup-result $name cap ${cap}s jit=$jit ms/s"
+      echo "WARN: $name 이 상한 ${cap}초 안에 JIT ${jit_limit}ms/초 아래로 내려오지 않았다. 이 버전의 결과에 덜 데워졌다고 적는다" >&2
+    fi
     ;;
   metrics|local-metrics)
     metrics "${2:-}" "${3:-}"
