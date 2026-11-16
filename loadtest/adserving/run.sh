@@ -281,6 +281,8 @@ grep 'level=error' \$OUT/k6-$name.log | tail -5 || true" ) > "$out" || rc=$?
     # 앱 서버에서 그날 유효 노출 N건을 한 트랜잭션으로 넣고, 넣은 뒤부터 남은 노출이 0 이 될 때까지를 한 구간으로 본다.
     # 노출은 시드의 캠페인 1,000개와 회원 5,000명에 고르게 나눈다. 캠페인 하루 예산이 커서 회차마다 같은 비율로 과금된다.
     # 앞 회차의 노출이 남아 있으면 구간이 섞이므로 넣지 않고 멈춘다.
+    # 도는 동안에는 넘기지 않은 노출을 idx_imp_dispatch 만으로 센다. 포기한 노출을 거르려고 행 본문을 읽으면 그 읽기가 차감과 버퍼 풀을 나눠 써 잴 대상을 늦춘다.
+    # 그 수가 줄지 않을 때만 포기한 노출을 뺀 수를 다시 센다. 남은 것이 모두 포기한 노출이면 끝난 것이다.
     #
     name="${2:?회차 이름을 준다}"; count="${3:-50000}"
     case "$count" in ''|*[!0-9]*) die "건수는 양의 정수로 준다" ;; esac
@@ -288,6 +290,7 @@ grep 'level=error' \$OUT/k6-$name.log | tail -5 || true" ) > "$out" || rc=$?
     out=$(remote "$(instance app)" 3900 "set -euo pipefail
 $DB_ENV
 PENDING=\"SELECT COUNT(*) FROM impression_log WHERE dispatched_at IS NULL AND dispatch_abandoned_at IS NULL AND created_at >= TIMESTAMP(DATE_SUB('\$D', INTERVAL 1 DAY))\"
+UNSENT=\"SELECT COUNT(*) FROM impression_log WHERE dispatched_at IS NULL AND created_at >= TIMESTAMP(DATE_SUB('\$D', INTERVAL 1 DAY))\"
 left=\$(mysql -N -e \"\$PENDING\")
 [ \"\$left\" -eq 0 ] || { echo \"앞 회차의 대기 노출 \$left 건이 남아 있다. 비워진 뒤 다시 부른다\" >&2; exit 1; }
 mysql -e \"SET SESSION time_zone = '+09:00';
@@ -299,9 +302,14 @@ SELECT UUID_TO_BIN(UUID(), 1), 30000001 + MOD(i, 5000), '\$D', 30000001 + MOD(i,
        'ALLOCATION', 1, NOW(6), 37.556, 126.922, 'VALID', NULL, FALSE, NULL, NOW(6), NOW(6)
 FROM n;\"
 echo \"start \$(date +%s%3N)\"
+prev=-1
 for i in \$(seq 1 720); do
-  left=\$(mysql -N -e \"\$PENDING\")
+  left=\$(mysql -N -e \"\$UNSENT\")
   [ \"\$left\" -eq 0 ] && { echo \"end \$(date +%s%3N)\"; exit 0; }
+  if [ \"\$left\" -eq \"\$prev\" ]; then
+    [ \"\$(mysql -N -e \"\$PENDING\")\" -eq 0 ] && { echo \"end \$(date +%s%3N)\"; exit 0; }
+  fi
+  prev=\$left
   sleep 5
 done
 echo \"1시간 안에 비우지 못했다. 남은 노출 \$left 건\" >&2; exit 1")
