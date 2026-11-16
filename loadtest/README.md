@@ -50,7 +50,7 @@
 LOCAL=""
 [ "${1:-}" = --local ] && { LOCAL=1; shift; }
 DOMAIN_EVENT_PREFIX=COUPON_                                       # 그 도메인 로그의 event 접두사
-RESULT_DOC=docs/design/coupon/loadtest/쿠폰_부하_시험_결과.md       # 경고 로그를 적을 결과 문서
+RESULT_DOC=docs/design/coupon/loadtest/쿠폰_부하_시험_결과.md       # 경고 로그를 적을 결과 문서. 자리와 이름은 AGENTS.md 의 docs 표가 정한다
 DOMAIN_METRICS='
 issued_inc sum(increase(coupon_issued_total[$W]))
 '                                                                 # metrics 가 더 묻는 지표(예). 없으면 비운다
