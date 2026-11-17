@@ -288,7 +288,9 @@ grep 'level=error' \$OUT/k6-$name.log | tail -5 || true" ) > "$out" || rc=$?
     #
     # 원격은 k6 를 띄우기 전에 저장소를 받고 자격 정보를 읽어, run 을 띄운 시각과 부하가 걸린 시각이 다르다.
     # k6 가 보내는 요청 수가 최근 30초에 늘기 시작한 때부터 램프업과 유지를 센다. 같은 이름의 지난 회차 시계열과 섞이지 않게 증가로 본다.
+    # 같은 이름을 곧바로 다시 돌리면 최근 30초에 지난 회차의 증가가 남아 있으므로, 띄운 뒤 30초가 지나서부터 센다.
     #
+    sleep 30
     reqs="sum(increase(k6_http_reqs_total{testid=\"adserving-$name\"}[30s]))"
     waited=0
     until python3 -c "import sys; sys.exit(0 if float('$(prom_value "$reqs" || echo NA)') > 0 else 1)" 2> /dev/null; do
@@ -297,7 +299,13 @@ grep 'level=error' \$OUT/k6-$name.log | tail -5 || true" ) > "$out" || rc=$?
       sleep 10; waited=$(( waited + 10 ))
     done
     # 부하가 걸린 채로 끝나기 10초 전에 직전 3분을 본다. k6 가 끝난 뒤에 보면 부하가 빠진 구간이 섞인다
-    sleep $(( 60 + hold - 10 ))
+    kill -0 "$pid" 2> /dev/null && sleep $(( 60 + hold - 10 ))
+    # run 은 k6 의 실패를 삼키고 0 으로 끝난다. 정한 시간 전에 run 이 끝났으면 k6 가 일찍 멈춘 것이라 데움 결과로 적지 않는다
+    if ! kill -0 "$pid" 2> /dev/null; then
+      rc=0; wait "$pid" || rc=$?
+      echo "warmup-result $name failed rc=$rc"
+      die "$name 의 k6 가 정한 시간 전에 끝났다. run 이 남긴 k6 로그를 본다"
+    fi
     cpu1m='avg(avg_over_time(process_cpu_usage{job="app"}[1m]))'
     spread=$(prom_value "max_over_time(($cpu1m)[3m:1m]) - min_over_time(($cpu1m)[3m:1m])") || spread=NA
     jit=$(prom_value 'max(rate(jvm_compilation_time_ms_total{job="app"}[3m]))') || jit=NA
