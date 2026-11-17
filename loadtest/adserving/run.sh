@@ -283,35 +283,27 @@ grep 'level=error' \$OUT/k6-$name.log | tail -5 || true" ) > "$out" || rc=$?
     [ $# -eq 0 ] || [ "${1#--}" != "$1" ] || { rate="$1"; shift; }
     case "$name" in *-warmup) ;; *) die "워밍업 회차는 이름을 -warmup 으로 끝낸다. 예: v1-warmup" ;; esac
     hold=300; cpu_spread=0.05
-    "$0" ${LOCAL:+--local} run "$name" "$base" "$rate" "${hold}s" "$@" &
-    pid=$!
     #
-    # 원격은 k6 를 띄우기 전에 저장소를 받고 자격 정보를 읽어, run 을 띄운 시각과 부하가 걸린 시각이 다르다.
-    # k6 가 보내는 요청 수가 최근 30초에 늘기 시작한 때부터 램프업과 유지를 센다. 같은 이름의 지난 회차 시계열과 섞이지 않게 증가로 본다.
-    # 같은 이름을 곧바로 다시 돌리면 최근 30초에 지난 회차의 증가가 남아 있으므로, 띄운 뒤 30초가 지나서부터 센다.
+    # run 이 끝난 뒤 그 출력의 hold 줄(유지 구간)과 window 줄(k6 가 실제로 돈 구간)로 판정한다. 부하가 언제 걸렸는지 짐작해 기다리지 않는다.
+    # run 은 k6 의 실패를 삼키고 0 으로 끝나므로, k6 가 유지 구간 끝 전에 멈췄으면 여기서 실패로 본다.
     #
-    sleep 30
-    reqs="sum(increase(k6_http_reqs_total{testid=\"adserving-$name\"}[30s]))"
-    waited=0
-    until python3 -c "import sys; sys.exit(0 if float('$(prom_value "$reqs" || echo NA)') > 0 else 1)" 2> /dev/null; do
-      kill -0 "$pid" 2> /dev/null || break
-      [ "$waited" -lt 600 ] || { kill "$pid" 2> /dev/null; die "$name 의 k6 가 10분 안에 요청을 보내지 않았다"; }
-      sleep 10; waited=$(( waited + 10 ))
-    done
-    # 부하가 걸린 채로 끝나기 10초 전에 직전 3분을 본다. k6 가 끝난 뒤에 보면 부하가 빠진 구간이 섞인다
-    kill -0 "$pid" 2> /dev/null && sleep $(( 60 + hold - 10 ))
-    # run 은 k6 의 실패를 삼키고 0 으로 끝난다. 정한 시간 전에 run 이 끝났으면 k6 가 일찍 멈춘 것이라 데움 결과로 적지 않는다
-    if ! kill -0 "$pid" 2> /dev/null; then
-      rc=0; wait "$pid" || rc=$?
+    out=$(mktemp)
+    set +e
+    "$0" ${LOCAL:+--local} run "$name" "$base" "$rate" "${hold}s" "$@" 2>&1 | tee "$out"
+    rc=${PIPESTATUS[0]}
+    set -e
+    read -r _ _ hold_end < <(grep -m1 '^hold ' "$out" || echo "hold 0 0")
+    read -r _ _ k6_end < <(grep -m1 '^window ' "$out" || echo "window 0 0")
+    rm -f "$out"
+    if [ "$rc" -ne 0 ] || [ "$hold_end" -eq 0 ] || [ $(( k6_end + 5000 )) -lt "$hold_end" ]; then
       echo "warmup-result $name failed rc=$rc"
-      die "$name 의 k6 가 정한 시간 전에 끝났다. run 이 남긴 k6 로그를 본다"
+      die "$name 의 run 이 실패했거나 k6 가 유지 구간 끝 전에 멈췄다. run 이 남긴 k6 로그를 본다"
     fi
+    # 유지 구간 끝 5초 전을 기준으로 직전 3분을 묻는다. @ 로 시각을 정해 k6 가 끝난 뒤의 부하 없는 구간이 섞이지 않게 한다
+    at=$(( hold_end / 1000 - 5 ))
     cpu1m='avg(avg_over_time(process_cpu_usage{job="app"}[1m]))'
-    spread=$(prom_value "max_over_time(($cpu1m)[3m:1m]) - min_over_time(($cpu1m)[3m:1m])") || spread=NA
-    jit=$(prom_value 'max(rate(jvm_compilation_time_ms_total{job="app"}[3m]))') || jit=NA
-    # 자식 run 이 실패하면(시나리오가 없는 옛 커밋 등) 부하 없이 끝난 것이라 데움 결과로 적지 않는다
-    rc=0; wait "$pid" || rc=$?
-    [ "$rc" -eq 0 ] || { echo "warmup-result $name failed rc=$rc"; exit "$rc"; }
+    spread=$(prom_value "max_over_time(($cpu1m)[3m:1m] @ $at) - min_over_time(($cpu1m)[3m:1m] @ $at)") || spread=NA
+    jit=$(prom_value "max(rate(jvm_compilation_time_ms_total{job=\"app\"}[3m] @ $at))") || jit=NA
     echo "warmup-result $name hold ${hold}s cpu_spread=$spread jit=$jit ms/s"
     python3 -c "import sys; sys.exit(0 if float('$spread') <= $cpu_spread else 1)" 2> /dev/null \
       || echo "WARN: $name 의 끝 3분 앱 CPU 흔들림이 ${cpu_spread} 를 넘었다(또는 읽지 못했다). 이 버전의 결과에 덜 데워졌다고 적는다" >&2
