@@ -96,15 +96,16 @@ loadtest/adserving/run.sh --local metrics <window 시작 ms> <window 끝 ms>
 
 ## 워밍업
 
-`warmup` 은 앱의 JIT 컴파일이 가라앉을 때까지 한 회차로 부하를 이어 준다(#1267). 측정 회차 앞에 버전마다 한 번 돌린다.
+`warmup` 은 앱이 안정 상태에 닿을 때까지 한 회차로 부하를 이어 준다(#1267). 측정 회차 앞에 버전마다 한 번 돌린다.
 
 ```bash
 loadtest/adserving/run.sh warmup v1-warmup 30030001
 loadtest/adserving/run.sh --local warmup local-warmup 30030001 15
 ```
 
-- 램프업(1분) 뒤 30초마다 앱의 JIT 컴파일(`jvm_compilation_time_ms_total` 의 1분 비율)을 묻는다. 앱이 여러 대면 가장 높은 앱을 본다. 초당 10ms 아래가 되면 k6 를 멈춘다.
-- 상한은 램프업 뒤 5분이다. 넘으면 `WARN` 과 함께 `warmup-result <이름> cap 300s jit=<값>` 을 낸다. 그 버전의 결과 줄에 "덜 데워짐" 과 그때의 JIT 값을 적는다.
+- 램프업(1분) 뒤 1분마다 앱의 JIT 컴파일(`jvm_compilation_time_ms_total` 의 1분 비율)과 앱 CPU 를 묻는다. 앱이 여러 대면 JIT 은 가장 높은 앱을, CPU 는 평균을 본다.
+- 최근 3구간이 연속으로 JIT 초당 10ms 아래이고 CPU 의 흔들림(최대와 최소의 차)이 5%p 안이면 k6 를 멈춘다. 한 구간이라도 못 채우면 처음부터 다시 센다.
+- 상한은 램프업 뒤 10분이다. 넘으면 `WARN` 과 함께 `warmup-result <이름> cap 600s jit=<값>` 을 낸다. 그 버전의 결과 줄에 "덜 데워짐" 과 그때의 JIT 값을 적는다.
 - 이름은 `-warmup` 으로 끝낸다. 결과 문서에 적지 않는 회차다. 그 밖의 인자(초당 피드, `--scenario feed`)는 `run` 과 같다.
 - 트레이싱을 켠 앱은 끈 앱보다 늦게 데워진다. 에이전트가 계측 코드를 끼워 넣어 컴파일할 코드가 늘기 때문이다.
 

@@ -6,7 +6,7 @@
 #   AWS_PROFILE=<프로필> loadtest/adserving/run.sh seed [회원 수]          시험 데이터를 RDS 에 넣는다
 #   AWS_PROFILE=<프로필> loadtest/adserving/run.sh prepare                 그날 00:00 묶음을 다시 돌린다
 #   AWS_PROFILE=<프로필> loadtest/adserving/run.sh run <이름> <회원 시작 번호> [초당 피드] [유지 시간] [--scenario feed] [--profile cpu|wall|both]
-#   AWS_PROFILE=<프로필> loadtest/adserving/run.sh warmup <이름> <회원 시작 번호> [초당 피드] [--scenario feed]  앱의 JIT 컴파일이 가라앉을 때까지 데운다. 상한은 5분이다
+#   AWS_PROFILE=<프로필> loadtest/adserving/run.sh warmup <이름> <회원 시작 번호> [초당 피드] [--scenario feed]  앱이 안정 상태에 닿을 때까지 데운다. 상한은 10분이다
 #   AWS_PROFILE=<프로필> loadtest/adserving/run.sh metrics <시작 ms> <끝 ms>  그 구간의 서버 지표
 #   AWS_PROFILE=<프로필> loadtest/adserving/run.sh rows                    시험 데이터의 행 수
 #   AWS_PROFILE=<프로필> loadtest/adserving/run.sh drain <이름> [건수]       대기 노출을 넣고 릴레이가 다 비우는 시간과 그 구간의 지표를 잰다
@@ -272,36 +272,63 @@ grep 'level=error' \$OUT/k6-$name.log | tail -5 || true" ) > "$out" || rc=$?
     ;;
   warmup|local-warmup)
     #
-    # 워밍업이다(#1267). 앱의 JIT 컴파일이 초당 10ms 아래가 될 때까지 한 회차로 부하를 이어 준다. 앱이 여러 대면 가장 높은 앱을 본다.
-    # 트레이싱 에이전트는 컴파일할 코드를 늘려, 짧게 데우면 그 데우는 비용이 측정 회차까지 넘어와 트레이싱 비용처럼 보인다.
-    # 상한은 램프업 뒤 5분이다. 넘으면 멈추고 덜 데워졌다고 알린다. 그 버전의 결과에 그렇게 적는다.
+    # 워밍업이다(#1267). 앱이 안정 상태에 닿을 때까지 한 회차로 부하를 이어 준다. 버전마다 데워지는 시간이 달라 시간을 고정하지 않는다.
+    # 램프업 뒤 1분마다 보고, 최근 1분 구간 3개가 연속으로 둘을 채우면 안정으로 본다. 앱의 JIT 컴파일이 초당 10ms 아래이고(앱이 여러 대면
+    # 가장 높은 앱), 앱 CPU 의 흔들림(최대와 최소의 차)이 5%p 안이다. 한 번 내려왔다가 처음 타는 분기에서 다시 오르는 것을 거른다.
+    # 트레이싱 에이전트는 컴파일할 코드를 늘려, 덜 데우면 그 데우는 비용이 측정 회차까지 넘어와 트레이싱 비용처럼 보인다.
+    # 상한은 램프업 뒤 10분이다. 넘으면 멈추고 덜 데워졌다고 알린다. 그 버전의 결과에 그렇게 적는다.
     # 회차를 끊어 되풀이하지 않는다. 같은 회원 대역을 되풀이하면 노출 상한에 닿아 피드가 새 분기를 타고 JIT 이 다시 오른다.
     #
     name="${2:?회차 이름을 준다}"; base="${3:?회원 시작 번호를 준다}"; rate=100
     shift 3
     [ $# -eq 0 ] || [ "${1#--}" != "$1" ] || { rate="$1"; shift; }
     case "$name" in *-warmup) ;; *) die "워밍업 회차는 이름을 -warmup 으로 끝낸다. 예: v1-warmup" ;; esac
-    jit_limit=10; cap=300
+    jit_limit=10; cpu_spread=0.05; need=3; cap=600
     "$0" ${LOCAL:+--local} run "$name" "$base" "$rate" "${cap}s" "$@" &
     pid=$!
+    #
+    # 원격은 k6 를 띄우기 전에 저장소를 받고 자격 정보를 읽어, run 을 띄운 시각과 부하가 걸린 시각이 다르다.
+    # k6 가 보내는 요청 수가 최근 30초에 늘기 시작한 때부터 램프업과 상한을 센다. 같은 이름의 지난 회차 시계열과 섞이지 않게 증가로 본다.
+    #
+    reqs="sum(increase(k6_http_reqs_total{testid=\"adserving-$name\"}[30s]))"
+    waited=0
+    until python3 -c "import sys; sys.exit(0 if float('$(prom_value "$reqs" || echo NA)') > 0 else 1)" 2> /dev/null; do
+      kill -0 "$pid" 2> /dev/null || break
+      [ "$waited" -lt 600 ] || { kill "$pid" 2> /dev/null; die "$name 의 k6 가 10분 안에 요청을 보내지 않았다"; }
+      sleep 10; waited=$(( waited + 10 ))
+    done
     sleep 60
-    began=$(date +%s); jit=NA; settled=""
+    began=$(date +%s); jit=NA; cpu=NA; settled=""; window=""
     while kill -0 "$pid" 2> /dev/null && [ $(( $(date +%s) - began )) -lt "$cap" ]; do
-      sleep 30
+      sleep 60
       jit=$(prom_value 'max(rate(jvm_compilation_time_ms_total{job="app"}[1m]))') || jit=NA
-      echo "warmup $(( $(date +%s) - began ))s jit=$jit ms/s"
-      if python3 -c "import sys; sys.exit(0 if float('$jit') < $jit_limit else 1)" 2> /dev/null; then
+      cpu=$(prom_value 'avg(avg_over_time(process_cpu_usage{job="app"}[1m]))') || cpu=NA
+      # 최근 구간들을 "JIT CPU" 로 쌓고, 연속으로 채운 구간이 need 개면 안정이다. 하나라도 못 채우면 처음부터 다시 센다
+      window=$(printf '%s\n%s %s\n' "$window" "$jit" "$cpu" | sed '/^$/d' | tail -n "$need")
+      verdict=$(printf '%s\n' "$window" | python3 -c "
+import sys
+rows = [l.split() for l in sys.stdin if l.strip()]
+try:
+    jit = [float(a) for a, _ in rows]; cpu = [float(b) for _, b in rows]
+except ValueError:
+    print('wait'); sys.exit()
+ok = len(rows) >= $need and max(jit) < $jit_limit and max(cpu) - min(cpu) <= $cpu_spread
+print('stable' if ok else 'wait')")
+      echo "warmup $(( $(date +%s) - began ))s jit=$jit ms/s cpu=$cpu $verdict"
+      if [ "$verdict" = stable ]; then
         settled=1
         stop_k6 "$name"
         break
       fi
     done
-    wait "$pid" || true
+    # 자식 run 이 실패하면(시나리오가 없는 옛 커밋 등) 부하 없이 끝난 것이라 상한이나 가라앉음으로 적지 않는다
+    rc=0; wait "$pid" || rc=$?
+    [ "$rc" -eq 0 ] || { echo "warmup-result $name failed rc=$rc"; exit "$rc"; }
     if [ -n "$settled" ]; then
       echo "warmup-result $name settled after $(( $(date +%s) - began ))s jit=$jit ms/s"
     else
       echo "warmup-result $name cap ${cap}s jit=$jit ms/s"
-      echo "WARN: $name 이 상한 ${cap}초 안에 JIT ${jit_limit}ms/초 아래로 내려오지 않았다. 이 버전의 결과에 덜 데워졌다고 적는다" >&2
+      echo "WARN: $name 이 상한 ${cap}초 안에 안정 상태(JIT ${jit_limit}ms/초 아래와 CPU 흔들림 5%p 안이 ${need}분 연속)에 닿지 않았다. 이 버전의 결과에 덜 데워졌다고 적는다" >&2
     fi
     ;;
   metrics|local-metrics)
