@@ -173,16 +173,6 @@ PY
 python3 /tmp/lt-prom-value.py http://localhost:9090 '$expr'"
 }
 
-# 그 회차의 k6 에 멈추라고 알린다. k6 는 SIGINT 를 받으면 그 자리에서 요약을 내고 끝나, 회차의 마무리가 그대로 돈다
-stop_k6() {
-  local pattern="^k6 run .*testid=adserving-$1( |\$)"
-  if [ -n "${LOCAL:-}" ]; then
-    pkill -INT -f "$pattern" || true
-    return
-  fi
-  remote "$(instance load-test)" 60 "pkill -INT -f '$pattern' || true" > /dev/null
-}
-
 # k6 의 시간 꼴(5m, 300s, 1m30s, 1h)을 초로 바꾼다
 k6_seconds() {
   local rest="$1" total=0 unit
