@@ -286,6 +286,7 @@ grep 'level=error' \$OUT/k6-$name.log | tail -5 || true" ) > "$out" || rc=$?
     #
     # run 이 끝난 뒤 그 출력의 hold 줄(유지 구간)과 window 줄(k6 가 실제로 돈 구간)로 판정한다. 부하가 언제 걸렸는지 짐작해 기다리지 않는다.
     # run 은 k6 의 실패를 삼키고 0 으로 끝나므로, k6 가 유지 구간 끝 전에 멈췄으면 여기서 실패로 본다.
+    # k6 는 정상이면 유지 구간 끝 뒤에 끝난다. 구간 끝은 k6 의 시작 기록에서 내고, 그 기록이 없으면 run 을 띄운 더 이른 시각으로 내므로 여유를 두지 않는다.
     #
     out=$(mktemp)
     set +e
@@ -295,7 +296,7 @@ grep 'level=error' \$OUT/k6-$name.log | tail -5 || true" ) > "$out" || rc=$?
     read -r _ _ hold_end < <(grep -m1 '^hold ' "$out" || echo "hold 0 0")
     read -r _ _ k6_end < <(grep -m1 '^window ' "$out" || echo "window 0 0")
     rm -f "$out"
-    if [ "$rc" -ne 0 ] || [ "$hold_end" -eq 0 ] || [ $(( k6_end + 5000 )) -lt "$hold_end" ]; then
+    if [ "$rc" -ne 0 ] || [ "$hold_end" -eq 0 ] || [ "$k6_end" -lt "$hold_end" ]; then
       echo "warmup-result $name failed rc=$rc"
       die "$name 의 run 이 실패했거나 k6 가 유지 구간 끝 전에 멈췄다. run 이 남긴 k6 로그를 본다"
     fi
