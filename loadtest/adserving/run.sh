@@ -21,7 +21,7 @@
 # switch 에 --no-pool 을 주면 Valkey 연결 풀을 끄고 띄운다. 주지 않으면 켠다.
 # switch 에 --env KEY=VALUE 를 주면 그 환경변수를 넣어 띄운다. 여러 번 줄 수 있다. 다시 빌드하지 않고 조정 값(예: ADSERVING_IMPRESSION_WRITEBUFFER_BATCHSIZE=1000)을 바꿔 잰다(#1170).
 # --env 는 앱과 배치에 같게, --app-env 와 --batch-env 는 그 역할에만 넣는다(#1244).
-# 첫 인자를 --local 로 주면 lc-infra 의 로컬 구성을 대상으로 seed, prepare, run, metrics, profile 을 같은 인자로 돌린다.
+# 첫 인자를 --local 로 주면 lc-infra 의 로컬 구성을 대상으로 seed, reset, prepare, run, metrics, profile 을 같은 인자로 돌린다.
 # 로컬의 switch 는 커밋 없이 [--tracing <이름>] [--no-pool] [--env|--app-env|--batch-env KEY=VALUE]... 만 받아 로컬 앱과 배치를 다시 띄운다. 배치는 lc-infra 의 compose.lt-like.yaml 로 따로 뜬다.
 # drain 은 노출 API 를 부르지 않는다. 회차마다 같은 수의 대기 노출만 비우므로 밀림이 다음 회차로 넘어가지 않는다(#1198).
 # 시나리오와 시드 생성기는 떠 있는 앱과 같은 커밋(SSM current-sha)에서 받는다. 값이 없으면 develop 이다.
@@ -114,8 +114,15 @@ select 'batch', status from batch_execution_log where business_date = '\$D' and 
 }
 
 case "${LOCAL:+local-}${1:-}" in
-  local-reset|local-rows|local-drain)
-    die "로컬에서는 seed, prepare, run, warmup, metrics, profile, switch 만 쓴다" ;;
+  local-rows|local-drain)
+    die "로컬에서는 seed, reset, prepare, run, warmup, metrics, profile, switch 만 쓴다" ;;
+  local-reset)
+    # AWS 의 reset 과 같다. 회차를 이어 돌리면 기록 표가 쌓여 뒤 회차가 부풀어, 로컬도 같은 순서로 재려고 둔다(#1265)
+    members="${2:-120000}"
+    docker exec "$LOCAL_PROJECT-valkey-1" valkey-cli FLUSHALL > /dev/null
+    echo "valkey $(docker exec "$LOCAL_PROJECT-valkey-1" valkey-cli DBSIZE)"
+    seed
+    ;;
   local-switch)
     shift
     switch_options "$@"
