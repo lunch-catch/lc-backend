@@ -154,6 +154,25 @@ JWT=\$(aws ssm get-parameter --name /$PROJECT/jwt-signing-key --with-decryption 
 $script"
 }
 
+# Prometheus 에 식 하나를 지금 시각으로 묻고 값 하나를 낸다. 값이 없으면 NA 다
+IFS= read -r -d '' PROM_VALUE_PY <<'PY' || true
+import json, sys, urllib.parse, urllib.request
+r = json.load(urllib.request.urlopen(sys.argv[1] + '/api/v1/query?' + urllib.parse.urlencode({'query': sys.argv[2]})))['data']['result']
+print(round(float(r[0]['value'][1]), 2) if r else 'NA')
+PY
+
+prom_value() {
+  local expr="$1"
+  if [ -n "${LOCAL:-}" ]; then
+    python3 -c "$PROM_VALUE_PY" "http://localhost:${PROMETHEUS_PORT:-19090}" "$expr"
+    return
+  fi
+  remote "$(instance monitoring)" 60 "cat > /tmp/lt-prom-value.py <<'PY'
+$PROM_VALUE_PY
+PY
+python3 /tmp/lt-prom-value.py http://localhost:9090 '$expr'"
+}
+
 # k6 의 시간 꼴(5m, 300s, 1m30s, 1h)을 초로 바꾼다
 k6_seconds() {
   local rest="$1" total=0 unit
@@ -281,14 +300,22 @@ python3 /tmp/lt-warnings.py http://localhost:3100 $DOMAIN_EVENT_PREFIX $start $e
 # 빠진 칸은 그 서버의 지표가 통째로 비어, 그 구간의 그래프와 판정이 "괜찮았다" 로 읽히지 않게 경고 로그와 함께 남긴다.
 # 앱과 배치를 0 이어도 늘 적어, 버전끼리 견줄 때 세지 않은 것과 0 을 가른다. 대상이 구간 내내 없었으면 셀 수 없어 0 이다.
 #
+# 대상마다 받아야 할 칸에서 수집에 성공한 칸(up 이 1 인 표본)을 뺀다(#1267). 수집이 실패한 칸(up 이 0)과 표본이 아예 없는 칸을 함께 센다.
+# 로컬은 Prometheus 가 앱과 같은 Docker 가상 머신에 있어, 가상 머신이 멈추면 up 이 0 으로도 남지 않는다. up 이 0 인 칸만 세면 그 회차를 놓친다.
+# 회차 경계에서 한 칸이 어긋나는 것은 빼고 센다.
+#
 IFS= read -r -d '' SCRAPE_GAPS_PY <<'PY' || true
 import json, sys, urllib.parse, urllib.request
 base, s, e = sys.argv[1], int(sys.argv[2]) // 1000, int(sys.argv[3]) // 1000
-expr = 'sum by (job) (count_over_time((up{job=~"app|batch"} == 0)[%ds:15s]))' % max(e - s, 15)
-r = json.load(urllib.request.urlopen(base + '/api/v1/query?' + urllib.parse.urlencode({'query': expr, 'time': e})))
-got = {x['metric'].get('job'): int(float(x['value'][1])) for x in r['data']['result']}
+w = max(e - s, 15)
+def query(expr):
+    r = json.load(urllib.request.urlopen(base + '/api/v1/query?' + urllib.parse.urlencode({'query': expr, 'time': e})))
+    return {x['metric'].get('job'): float(x['value'][1]) for x in r['data']['result']}
+ok = query('sum by (job) (sum_over_time(up{job=~"app|batch"}[%ds]))' % w)
+targets = query('count by (job) (count_over_time(up{job=~"app|batch"}[%ds]))' % w)
 for job in ('app', 'batch'):
-    print('수집', job.upper() + '_SCRAPE_MISSED', got.get(job, 0))
+    want = targets.get(job, 0) * (round(w / 15) - 1)
+    print('수집', job.upper() + '_SCRAPE_MISSED', max(0, int(want - ok.get(job, 0))))
 PY
 
 scrape_gaps() {
@@ -339,16 +366,23 @@ PY
 #
 record_warnings() {
   local name="$1" start="$2" end="$3" rows gaps rc=0
+  #
+  # 지표 수집이 빠진 칸 수는 결과에 적지 않는 회차와 경고 로그를 묻지 못한 회차에도 먼저 출력한다(#1267).
+  # 빠진 칸이 있으면 그 구간의 앱이 멈췄거나 지표가 비어, 그 회차의 수치를 다른 회차와 견주지 않는다.
+  #
+  gaps=$(scrape_gaps "$start" "$end") || { echo "WARN: 지표 수집 실패 칸을 묻지 못했다" >&2; gaps=""; }
+  echo "scrape gaps"
+  printf '%s\n' "${gaps:-묻지 못함}"
+  if printf '%s\n' "$gaps" | awk '$3 > 0 { found = 1 } END { exit !found }'; then
+    echo "WARN: $name 의 구간에 지표 수집이 빠진 칸이 있다. 이 회차의 수치는 다른 회차와 견주지 않고, 원인을 본 뒤 다시 돈다" >&2
+  fi
   case "$name" in *-warmup|*-profile|*-tracing) echo "warnings: $name 은 결과에 적지 않는다"; return 0 ;; esac
   # 회차 끝의 로그가 Alloy 를 거쳐 Loki 에 닿기를 기다린다
   sleep 10
   rows=$(warning_counts "$start" "$end") || { echo "WARN: 경고 로그를 묻지 못했다. 결과 문서에 적지 않았다" >&2; return 0; }
   echo "warnings"
   printf '%s\n' "${rows:-없음}"
-  # 지표 수집이 빠진 칸 수도 같은 표에 적는다(#1222). 묻지 못하면 경고 로그만 적는다
-  gaps=$(scrape_gaps "$start" "$end") || { echo "WARN: 지표 수집 실패 칸을 묻지 못했다. 경고 로그만 적는다" >&2; gaps=""; }
-  echo "scrape gaps"
-  printf '%s\n' "${gaps:-묻지 못함}"
+  # 지표 수집이 빠진 칸 수도 같은 표에 적는다(#1222)
   rows=$(printf '%s\n%s\n' "$rows" "$gaps")
   [ -z "${LOCAL:-}" ] || return 0
   printf '%s\n' "$rows" | python3 -c "$WRITE_WARNINGS_PY" "$ROOT/$RESULT_DOC" "$name" || rc=$?
@@ -607,6 +641,11 @@ local_switch() {
     over="$dir/compose.override.yaml"
     local_override "$label" "$dir/otel-$OTEL_VERSION.jar" "$nopool" "$extra" "$app_extra" "$batch_extra" > "$over"
   fi
+  #
+  # 로컬은 관측 도구가 앱과 같은 Docker 가상 머신에 있다. 트레이싱 회차를 이어 돌리면 Alloy 와 Tempo 에 스팬과 트레이스가 쌓여
+  # 앱과 메모리를 나눠 써, 설정을 바꿀 때마다 둘을 다시 띄워 비운다(#1267). 부하 시험 환경은 모니터링 서버가 따로라 하지 않는다.
+  #
+  docker restart "$LOCAL_PROJECT-alloy-1" "$LOCAL_PROJECT-tempo-1" > /dev/null
   # 부하 시험 환경처럼 배치를 따로 띄운다(#1244). 앱은 스케줄러를 끄고 배치가 batch 프로필로 작업을 돈다
   LC_BACKEND_DIR="$ROOT" docker compose -f "$LC_INFRA_DIR/observability/local/compose.yaml" \
     -f "$LC_INFRA_DIR/observability/local/compose.lt-like.yaml" ${over:+-f "$over"} \

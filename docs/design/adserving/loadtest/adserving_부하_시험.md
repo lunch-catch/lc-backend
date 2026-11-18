@@ -95,9 +95,11 @@ aws autoscaling update-auto-scaling-group --auto-scaling-group-name lunchcatch-l
 
 버전마다 워밍업 1회와 측정 3회를 돌린다. 회차 사이에 JVM 을 다시 띄우지 않는다.
 
+**워밍업은 램프업 1분 뒤 5분을 정한 시간으로 돌린다(#1267).** 회차마다 같은 시간을 데워 버전 사이의 조건을 맞춘다. 5분은 로컬에서 길게 돌렸을 때 앱 CPU 가 트레이싱 켬과 끔 모두 램프업 뒤 3분부터 평평했던 것에 여유를 더한 값이다. `run.sh warmup` 이 끝나기 직전 3분의 앱 CPU 흔들림(1분 평균의 최대와 최소의 차)이 5%p 를 넘으면 덜 데워졌다고 알린다. 그 버전의 결과 줄에 "덜 데워짐" 과 그때의 값을 적는다. JIT 컴파일은 적기만 하고 끝내는 조건으로 쓰지 않는다. 트레이싱 에이전트를 붙이면 부하가 일정해도 초당 10 ~ 25ms 로 남아 내려오지 않는다. 측정 회차는 트레이싱을 켜는데, 에이전트가 컴파일할 코드를 늘려 짧게 데우면 그 데우는 비용이 측정 회차까지 넘어온다. 로컬에서 워밍업 2분으로 재면 켬의 앱 CPU 가 끔보다 9.5%p 높았고, JIT 이 가라앉은 뒤에는 2.9%p 였다(트레이싱과 프로파일링 설계 7장).
+
 | 회차 | 램프업 | 유지 | 회원 대역 | 결과 |
 |---|---|---|---|---|
-| 워밍업 | 60초 | 1분 | 30030001 ~ 30040000 | 뺀다 |
+| 워밍업 | 60초 | 5분 | 30030001 ~ 30040000 | 뺀다 |
 | 측정 1 | 60초 | 5분 | 30000001 ~ 30010000 | 3회 평균 |
 | 측정 2 | 60초 | 5분 | 30010001 ~ 30020000 | 3회 평균 |
 | 측정 3 | 60초 | 5분 | 30020001 ~ 30030000 | 3회 평균 |
@@ -123,7 +125,7 @@ AWS_PROFILE=<프로필> loadtest/adserving/run.sh seed 120000
 AWS_PROFILE=<프로필> loadtest/adserving/run.sh prepare
 
 # 3. 워밍업과 측정 3회
-AWS_PROFILE=<프로필> loadtest/adserving/run.sh run v1-warmup 30030001 100 1m
+AWS_PROFILE=<프로필> loadtest/adserving/run.sh warmup v1-warmup 30030001
 AWS_PROFILE=<프로필> loadtest/adserving/run.sh run v1-run1 30000001
 AWS_PROFILE=<프로필> loadtest/adserving/run.sh run v1-run2 30010001
 AWS_PROFILE=<프로필> loadtest/adserving/run.sh run v1-run3 30020001
@@ -170,7 +172,7 @@ AWS_PROFILE=<프로필> ./scripts/member-env.sh down
 
 ```bash
 # 서빙 시험. 같은 커밋의 노출 회차 뒤에 이어 잰다
-AWS_PROFILE=<프로필> loadtest/adserving/run.sh run serving-v1-warmup 30070001 100 1m --scenario feed
+AWS_PROFILE=<프로필> loadtest/adserving/run.sh warmup serving-v1-warmup 30070001 100 --scenario feed
 AWS_PROFILE=<프로필> loadtest/adserving/run.sh run serving-v1-run1 30040001 100 5m --scenario feed
 
 # 진단 회차. 트레이싱을 붙여 다시 띄우고 프로파일링을 함께 붙인다
@@ -185,7 +187,7 @@ AWS_PROFILE=<프로필> loadtest/adserving/run.sh switch <이미지>
 ```bash
 # 서빙 v3 의 풀 끔. 같은 커밋을 풀을 끄고 다시 띄워 풀 끔 대역으로 잰다
 AWS_PROFILE=<프로필> loadtest/adserving/run.sh switch <이미지> --no-pool
-AWS_PROFILE=<프로필> loadtest/adserving/run.sh run serving-v3-nopool-warmup 30110001 100 1m --scenario feed
+AWS_PROFILE=<프로필> loadtest/adserving/run.sh warmup serving-v3-nopool-warmup 30110001 100 --scenario feed
 AWS_PROFILE=<프로필> loadtest/adserving/run.sh run serving-v3-nopool-run1 30080001 100 5m --scenario feed
 ```
 - 생성기는 그날 배치 기록을 지우므로 시험하는 날에 넣는다. 앱이 판단하는 영업일(Asia/Seoul)과 같아야 한다.

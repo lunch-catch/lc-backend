@@ -6,6 +6,7 @@
 #   AWS_PROFILE=<프로필> loadtest/adserving/run.sh seed [회원 수]          시험 데이터를 RDS 에 넣는다
 #   AWS_PROFILE=<프로필> loadtest/adserving/run.sh prepare                 그날 00:00 묶음을 다시 돌린다
 #   AWS_PROFILE=<프로필> loadtest/adserving/run.sh run <이름> <회원 시작 번호> [초당 피드] [유지 시간] [--scenario feed] [--profile cpu|wall|both]
+#   AWS_PROFILE=<프로필> loadtest/adserving/run.sh warmup <이름> <회원 시작 번호> [초당 피드] [--scenario feed]  램프업 뒤 5분을 데우고 끝 3분의 CPU 흔들림을 본다
 #   AWS_PROFILE=<프로필> loadtest/adserving/run.sh metrics <시작 ms> <끝 ms>  그 구간의 서버 지표
 #   AWS_PROFILE=<프로필> loadtest/adserving/run.sh rows                    시험 데이터의 행 수
 #   AWS_PROFILE=<프로필> loadtest/adserving/run.sh drain <이름> [건수]       대기 노출을 넣고 릴레이가 다 비우는 시간과 그 구간의 지표를 잰다
@@ -114,7 +115,7 @@ select 'batch', status from batch_execution_log where business_date = '\$D' and 
 
 case "${LOCAL:+local-}${1:-}" in
   local-reset|local-rows|local-drain)
-    die "로컬에서는 seed, prepare, run, metrics, profile, switch 만 쓴다" ;;
+    die "로컬에서는 seed, prepare, run, warmup, metrics, profile, switch 만 쓴다" ;;
   local-switch)
     shift
     switch_options "$@"
@@ -268,6 +269,45 @@ grep 'level=error' \$OUT/k6-$name.log | tail -5 || true" ) > "$out" || rc=$?
     fi
     wait
     exit "$rc"
+    ;;
+  warmup|local-warmup)
+    #
+    # 워밍업이다(#1267). 램프업 1분 뒤 5분을 정한 시간으로 데운다. 회차마다 같은 시간을 데워 버전 사이의 조건을 맞춘다.
+    # 5분은 로컬에서 길게 돌렸을 때 앱 CPU 가 트레이싱 켬과 끔 모두 램프업 뒤 3분부터 평평했던 것에 여유를 더한 값이다.
+    # JIT 컴파일은 끝내는 조건으로 쓰지 않는다. 트레이싱 에이전트를 붙이면 부하가 일정해도 초당 10 ~ 25ms 로 남아 내려오지 않는다.
+    # 끝나기 직전 3분의 앱 CPU 흔들림(1분 평균의 최대와 최소의 차)이 5%p 를 넘으면 덜 데워졌다고 알린다. JIT 은 적기만 한다.
+    # 회차를 끊어 되풀이하지 않는다. 같은 회원 대역을 되풀이하면 노출 상한에 닿아 피드가 새 분기를 타고 JIT 이 다시 오른다.
+    #
+    name="${2:?회차 이름을 준다}"; base="${3:?회원 시작 번호를 준다}"; rate=100
+    shift 3
+    [ $# -eq 0 ] || [ "${1#--}" != "$1" ] || { rate="$1"; shift; }
+    case "$name" in *-warmup) ;; *) die "워밍업 회차는 이름을 -warmup 으로 끝낸다. 예: v1-warmup" ;; esac
+    hold=300; cpu_spread=0.05
+    #
+    # run 이 끝난 뒤 그 출력의 hold 줄(유지 구간)과 window 줄(k6 가 실제로 돈 구간)로 판정한다. 부하가 언제 걸렸는지 짐작해 기다리지 않는다.
+    # run 은 k6 의 실패를 삼키고 0 으로 끝나므로, k6 가 유지 구간 끝 전에 멈췄으면 여기서 실패로 본다.
+    # k6 는 정상이면 유지 구간 끝 뒤에 끝난다. 구간 끝은 k6 의 시작 기록에서 내고, 그 기록이 없으면 run 을 띄운 더 이른 시각으로 내므로 여유를 두지 않는다.
+    #
+    out=$(mktemp)
+    set +e
+    "$0" ${LOCAL:+--local} run "$name" "$base" "$rate" "${hold}s" "$@" 2>&1 | tee "$out"
+    rc=${PIPESTATUS[0]}
+    set -e
+    read -r _ _ hold_end < <(grep -m1 '^hold ' "$out" || echo "hold 0 0")
+    read -r _ _ k6_end < <(grep -m1 '^window ' "$out" || echo "window 0 0")
+    rm -f "$out"
+    if [ "$rc" -ne 0 ] || [ "$hold_end" -eq 0 ] || [ "$k6_end" -lt "$hold_end" ]; then
+      echo "warmup-result $name failed rc=$rc"
+      die "$name 의 run 이 실패했거나 k6 가 유지 구간 끝 전에 멈췄다. run 이 남긴 k6 로그를 본다"
+    fi
+    # 유지 구간 끝 5초 전을 기준으로 직전 3분을 묻는다. @ 로 시각을 정해 k6 가 끝난 뒤의 부하 없는 구간이 섞이지 않게 한다
+    at=$(( hold_end / 1000 - 5 ))
+    cpu1m='avg(avg_over_time(process_cpu_usage{job="app"}[1m]))'
+    spread=$(prom_value "max_over_time(($cpu1m)[3m:1m] @ $at) - min_over_time(($cpu1m)[3m:1m] @ $at)") || spread=NA
+    jit=$(prom_value "max(rate(jvm_compilation_time_ms_total{job=\"app\"}[3m] @ $at))") || jit=NA
+    echo "warmup-result $name hold ${hold}s cpu_spread=$spread jit=$jit ms/s"
+    python3 -c "import sys; sys.exit(0 if float('$spread') <= $cpu_spread else 1)" 2> /dev/null \
+      || echo "WARN: $name 의 끝 3분 앱 CPU 흔들림이 ${cpu_spread} 를 넘었다(또는 읽지 못했다). 이 버전의 결과에 덜 데워졌다고 적는다" >&2
     ;;
   metrics|local-metrics)
     metrics "${2:-}" "${3:-}"
