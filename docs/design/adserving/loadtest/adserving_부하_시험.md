@@ -145,7 +145,7 @@ AWS_PROFILE=<프로필> loadtest/adserving/run.sh switch <다음 이미지>
 AWS_PROFILE=<프로필> loadtest/adserving/run.sh reset
 
 # 5. 대시보드를 남기고 환경을 내린다(lc-infra 에서). --lt 가 부하 시험 환경을 가리킨다
-AWS_PROFILE=<프로필> ./scripts/loadtest-snapshot.sh --lt --label adserving-v1-run1 --from <window 시작 ms> --to <hold 끝 ms>
+AWS_PROFILE=<프로필> ./scripts/loadtest-snapshot.sh --lt --label adserving-v1-run1 --from <window 시작 ms> --to <hold 끝 ms> --domain adserving
 AWS_PROFILE=<프로필> ./scripts/member-env.sh down
 ```
 
@@ -209,11 +209,11 @@ AWS_PROFILE=<프로필> loadtest/adserving/run.sh run serving-v3-nopool-run1 300
 | 노출 저장과 릴레이 | 릴레이의 밀린 노출 최대(v2 부터), 노출 저장 큐의 최대, 큐가 차서 버린 수, 실패한 묶음 수, 쓰지 못하고 버린 행 수(v3 부터) | 응답 뒤 저장이 따라가는지. 버린 노출은 유실률에 들어간다 |
 | 부하 생성기 | 1분 평균 CPU 의 최대 | 생성기가 병목이 아닌지. 유지 구간에서 80% 를 넘으면 그 회차는 무효로 보고 다시 잰다 |
 
-대시보드는 회차가 끝난 직후, 환경을 내리기 전에 lc-infra 의 `loadtest-snapshot.sh --lt` 로 남긴다. `--dash` 를 주지 않으면 01 개요부터 05 부하 시험까지와 07 광고 서빙(`lc-overview` ~ `lc-loadtest`, `lc-adserving`), 여섯 장을 대시보드 높이 그대로 찍는다. 06 처리 시간 목표 초과는 진단 회차에서만 찍는다(lunch-catch/lc-infra#106). 환경을 내리면 Prometheus 의 기록도 함께 사라진다.
+대시보드는 회차가 끝난 직후, 환경을 내리기 전에 lc-infra 의 `loadtest-snapshot.sh --lt` 로 남긴다. `--dash` 를 주지 않으면 대시보드를 모두 계층 순서(1. 개요 ~ 7. 테스트)로, 대시보드 높이 그대로 찍는다. 이 시험은 `--domain adserving` 을 주어 도메인 폴더에서는 광고 서빙만 찍고, 원인을 찾는 나머지 계층은 모두 찍는다. 파일 이름 앞에 찍은 순서(`01-lc-overview.png` 같은 것)가 붙는다. 진단 회차(`--diag`)는 API 와 백그라운드 작업만 찍는다(lunch-catch/lc-infra#106, #169). 환경을 내리면 Prometheus 의 기록도 함께 사라진다.
 
 - **범위는 회차 시작부터 유지 구간 끝까지 한 번 준다.** `run` 이 출력하는 `window` 의 시작과 `hold` 의 끝이다. `hold` 는 k6 가 로그에 남긴 시나리오 시작 시각(`scenario_start`)에 램프업을 더해 계산한다.
 - **대시보드는 흐름을 보는 시계열이다.** 결과 수치는 k6 요약과 `metrics` 로 적는다. 대시보드는 그 수치가 왜 나왔는지(어느 지표가 먼저 올랐는지, 유지 구간이 안정됐는지)를 보는 근거다.
-- **API 별 p99 는 둘을 견준다.** 05 의 응답 지연은 부하 생성기가 본 시간이고, API 별 p99(앱)는 앱이 잰 시간이다. 앞이 크면 그 차이가 앱 앞에서 스레드를 기다린 시간이다.
+- **API 별 p99 는 둘을 견준다.** 부하 시험 대시보드의 응답 지연은 부하 생성기가 본 시간이고, API 대시보드의 API별 p99 는 앱이 잰 시간이다. 앞이 크면 앱 앞(톰캣 대기, 연결)에서 기다렸을 수 있지만, 두 값은 요청 집합과 집계 창이 달라 차이가 곧 대기는 아니다. 같은 요청으로 범위를 좁힌 뒤 ALB 가 잰 응답 시간과 트레이스로 확인한다.
 
 ## 8. 결과를 남기는 곳
 
