@@ -39,7 +39,8 @@
 | `remote`, `instance`, `instances` | 역할로 서버를 찾아 SSM 으로 스크립트를 보내고 끝날 때까지 기다린다 |
 | `loadgen` | 부하 생성기에서 스크립트를 돌린다. 스크립트는 `BASE_URL`, `JWT`, `OUT` 을 쓴다 |
 | `metrics` | 회차 구간의 앱, DB, 캐시, 부하 생성기 지표를 모은다 |
-| `record_warnings` | 회차 구간의 경고와 오류를 이벤트별로 세고, 앱과 배치의 지표 수집이 빠진 칸 수와 함께 결과 문서에 적고 커밋한다 |
+| `record_warnings` | 회차 구간의 앱과 배치의 지표 수집이 빠진 칸 수를 먼저 출력하고, 0 이 아니면 경고한다. 이어서 경고와 오류를 이벤트별로 세어 그 칸 수와 함께 결과 문서에 적고 커밋한다 |
+| `prom_value` | Prometheus 에 식 하나를 지금 시각으로 묻는다(`warmup` 이 쓴다) |
 | `profile` | 앱 서버에 프로파일링을 붙여 Pyroscope 로 보낸다 |
 | `full_sha`, `image_exists` | 이미지 커밋을 40자로 늘리고 GHCR 에 있는지 본다 |
 | `app_override`, `local_override`, `local_switch` | 앱과 배치의 compose 덮어쓰기 파일(트레이싱 에이전트, 연결 풀 끔, `--env`, `--app-env`, `--batch-env` 의 환경변수)을 만들고, 로컬 앱과 배치를 그것으로 다시 띄운다 |
@@ -59,6 +60,8 @@ issued_inc sum(increase(coupon_issued_total[$W]))
 
 - 회차를 돌린 뒤 `record_warnings <회차 이름> <시작 ms> <끝 ms>` 를 부르면 경고 로그가 남는다. 고르는 조건은 그라파나의 경고 로그 패널(lunch-catch/lc-infra#63)과 같다.
 - 같은 표에 앱과 배치의 지표 수집이 빠진 칸(15초) 수를 수준 `수집` 의 줄(`APP_SCRAPE_MISSED`, `BATCH_SCRAPE_MISSED`)로 늘 적는다. 0 이 아니면 그 칸의 서버 지표가 통째로 비어, 그 구간의 그래프와 판정을 그만큼 덜 믿는다(#1222).
+- 빠진 칸은 받아야 할 칸에서 수집에 성공한 칸을 뺀 수다. 수집이 실패한 칸과 표본이 아예 없는 칸을 함께 센다. 로컬은 Prometheus 가 앱과 같은 Docker 가상 머신에 있어, 가상 머신이 멈추면 실패도 기록되지 않는다(#1267).
+- 빠진 칸 수는 결과에 적지 않는 회차(`-warmup` 등)와 경고 로그를 묻지 못한 회차에도 출력한다. 0 이 아니면 `WARN` 을 띄운다. 그 회차의 수치는 다른 회차와 견주지 않고 원인을 본 뒤 다시 돈다.
 - 결과 문서에 제목에 `경고 로그` 가 든 절을 먼저 둔다. 절이 없으면 적지 않고 안내만 한다. 표는 처음 적을 때 만든다.
 - 커밋은 결과 문서 하나만 지금 브랜치에 한다. 다른 파일이 스테이징돼 있으면 커밋하지 않는다. 시험용 브랜치에서 돌린다.
 
@@ -89,6 +92,23 @@ loadtest/adserving/run.sh --local metrics <window 시작 ms> <window 끝 ms>
 - 시나리오와 생성기는 지금 작업 트리의 것을 쓴다. k6 는 이 기계에서 돌고 지표를 로컬 Prometheus 로 보내 05 부하 시험 대시보드가 같은 화면으로 채워진다.
 - `rows`, `drain` 처럼 AWS 에만 있는 일은 로컬에서 막는다. `reset` 은 로컬 Valkey 를 비우고 로컬 시드를 다시 넣어, AWS 와 같은 순서(`reset` → `prepare` → 워밍업 → 측정)로 잰다. `switch` 는 커밋 없이 `[--tracing <이름>] [--no-pool] [--env|--app-env|--batch-env KEY=VALUE]...` 를 받아 로컬 앱과 배치를 다시 띄운다. 배치는 lc-infra 의 `compose.lt-like.yaml` 로 따로 뜬다.
 - 초당 피드는 노트북에 맞춰 낮춘다. 20 이면 초당 요청이 약 200 이다.
+- 로컬 `switch` 는 Alloy 와 Tempo 를 다시 띄워 쌓인 스팬과 트레이스를 비운다. 관측 도구가 앱과 같은 Docker 가상 머신에 있어, 트레이싱 회차를 이어 돌리면 둘이 쌓여 앱과 메모리를 나눠 쓴다(#1267).
+
+## 워밍업
+
+`warmup` 은 램프업 1분 뒤 5분을 정한 시간으로 데운다(#1267). 측정 회차 앞에 버전마다 한 번 돌린다.
+
+```bash
+loadtest/adserving/run.sh warmup v1-warmup 30030001
+loadtest/adserving/run.sh --local warmup local-warmup 30030001 15
+```
+
+- 회차마다 같은 시간을 데워 버전 사이의 조건을 맞춘다. 5분은 로컬에서 길게 돌렸을 때 앱 CPU 가 트레이싱 켬과 끔 모두 램프업 뒤 3분부터 평평했던 것에 여유를 더한 값이다.
+- `run` 이 끝나면 그 출력의 유지 구간 끝 5초 전을 기준으로(PromQL `@`) 직전 3분의 앱 CPU 흔들림(1분 평균의 최대와 최소의 차)과 JIT 컴파일(`jvm_compilation_time_ms_total` 의 3분 비율, 가장 높은 앱)을 묻고 `warmup-result <이름> hold 300s cpu_spread=<값> jit=<값>` 을 낸다.
+- k6 가 정한 시간 전에 끝나거나 `run` 이 실패하면 `warmup-result <이름> failed rc=<값>` 을 내고 실패로 끝난다. 부하 없이 지나간 구간을 데운 것으로 적지 않는다.
+- CPU 흔들림이 5%p 를 넘으면 `WARN` 을 낸다. 그 버전의 결과 줄에 "덜 데워짐" 과 그때의 값을 적는다. JIT 은 적기만 한다. 트레이싱 에이전트를 붙이면 부하가 일정해도 초당 10 ~ 25ms 로 남아 끝내는 조건으로 쓸 수 없다.
+- 이름은 `-warmup` 으로 끝낸다. 결과 문서에 적지 않는 회차다. 그 밖의 인자(초당 피드, `--scenario feed`)는 `run` 과 같다.
+- 트레이싱을 켠 앱은 끈 앱보다 늦게 데워진다. 에이전트가 계측 코드를 끼워 넣어 컴파일할 코드가 늘기 때문이다.
 
 ## 연결 풀을 끄고 재기
 

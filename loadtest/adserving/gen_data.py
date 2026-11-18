@@ -123,14 +123,14 @@ rows('store_image', ['store_image_id', 'store_id', 'upload_id', 'image_type', 'o
 rows('store_menu', ['store_menu_id', 'store_id', 'name', 'price', 'description', 'sort_order', 'created_at', 'updated_at'],
      [[str(o), str(o), q(f'부하메뉴{o - B}'), '9000', "'부하 시험 메뉴'", '1', at, at] for o in owners])
 
-w('\n-- 4. 캠페인(가게마다 하나, 어제 시작해 진행 중, 전 연령과 성별, 반경 3000, 수량은 시험 중 소진되지 않게 크게)\n')
+w('\n-- 4. 캠페인(가게마다 하나, 어제 시작해 진행 중, 전 연령과 성별, 반경 3000, 쿠폰 수량 100. 00:00 묶음이 수량만큼 쿠폰 재고 행을 만들고 시나리오는 쿠폰을 발급하지 않아 작게 둔다)\n')
 start = "DATE_SUB(@d, INTERVAL 1 DAY)"
 changed = f"TIMESTAMP({start}, '00:00:00')"
 rows('campaign', ['campaign_id', 'owner_id', 'store_id', 'status', 'status_changed_at', 'paused_reason', 'discount_target_type',
                   'discount_type', 'discount_value', 'target_menu_id', 'issue_quantity', 'usable_start_time', 'usable_end_time',
                   'min_order_amount', 'notice', 'target_radius', 'target_gender', 'target_age_groups', 'daily_budget',
                   'pending_daily_budget', 'start_date', 'end_date', 'created_at', 'updated_at'],
-     [[str(o), str(o), str(o), "'ACTIVE'", changed, 'NULL', "'ALL'", "'AMOUNT'", str(1000 + (o % 5) * 500), 'NULL', '100000',
+     [[str(o), str(o), str(o), "'ACTIVE'", changed, 'NULL', "'ALL'", "'AMOUNT'", str(1000 + (o % 5) * 500), 'NULL', '100',
        "'11:30:00'", "'15:00:00'", 'NULL', 'NULL', '3000', "'ALL'", q(ALL_AGES), str(args.daily_budget), 'NULL', start,
        'DATE_ADD(@d, INTERVAL 30 DAY)', at, changed] for o in owners])
 rows('campaign_status_log', ['campaign_status_log_id', 'campaign_id', 'from_status', 'to_status', 'actor_type', 'reason',
