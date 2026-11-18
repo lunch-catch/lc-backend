@@ -173,6 +173,47 @@ PY
 python3 /tmp/lt-prom-value.py http://localhost:9090 '$expr'"
 }
 
+#
+# 워밍업이다(#1267, #1270). 도메인의 run.sh 가 warmup) 분기에서 회차 이름과 그 도메인의 run 명령을 넘겨 부른다.
+# run 명령은 목표 부하 구간을 WARMUP_HOLD 초로 돌리고, 출력에 hold <시작> <끝> 과 window <시작> <끝>(밀리초) 줄을 낸다.
+# hold 는 목표 부하 구간이고 window 는 k6 가 실제로 돈 구간이다. 이 두 줄이 도메인의 run 이 지킬 약속이다.
+# 정한 시간을 데워 버전 사이의 조건을 맞춘다. 5분은 로컬에서 길게 돌렸을 때 앱 CPU 가 트레이싱 켬과 끔 모두 목표 부하 3분째부터 평평했던 것에 여유를 더한 값이다.
+# JIT 컴파일은 끝내는 조건으로 쓰지 않는다. 트레이싱 에이전트를 붙이면 부하가 일정해도 초당 10 ~ 25ms 로 남아 내려오지 않는다.
+# 끝나기 직전 3분의 앱 CPU 흔들림(1분 평균의 최대와 최소의 차)이 WARMUP_CPU_SPREAD 를 넘으면 덜 데워졌다고 알린다. JIT 은 적기만 한다.
+#
+WARMUP_HOLD=300
+WARMUP_CPU_SPREAD=0.05
+warmup() {
+  local name="$1" out rc hold_end k6_end at cpu1m spread jit
+  shift
+  case "$name" in *-warmup) ;; *) die "워밍업 회차는 이름을 -warmup 으로 끝낸다. 예: v1-warmup" ;; esac
+  #
+  # run 이 끝난 뒤 그 출력의 hold 줄과 window 줄로 판정한다. 부하가 언제 걸렸는지 짐작해 기다리지 않는다.
+  # run 은 k6 의 실패를 삼키고 0 으로 끝나므로, k6 가 목표 부하 구간 끝 전에 멈췄으면 여기서 실패로 본다.
+  # k6 는 정상이면 구간 끝 뒤에 끝난다. 구간 끝은 k6 의 시작 기록에서 내고, 그 기록이 없으면 run 을 띄운 더 이른 시각으로 내므로 여유를 두지 않는다.
+  #
+  out=$(mktemp)
+  set +e
+  "$@" 2>&1 | tee "$out"
+  rc=${PIPESTATUS[0]}
+  set -e
+  read -r _ _ hold_end < <(grep -m1 '^hold ' "$out" || echo "hold 0 0")
+  read -r _ _ k6_end < <(grep -m1 '^window ' "$out" || echo "window 0 0")
+  rm -f "$out"
+  if [ "$rc" -ne 0 ] || [ "$hold_end" -eq 0 ] || [ "$k6_end" -lt "$hold_end" ]; then
+    echo "warmup-result $name failed rc=$rc"
+    die "$name 의 run 이 실패했거나 k6 가 목표 부하 구간 끝 전에 멈췄다. run 이 남긴 k6 로그를 본다"
+  fi
+  # 구간 끝 5초 전을 기준으로 직전 3분을 묻는다. @ 로 시각을 정해 k6 가 끝난 뒤의 부하 없는 구간이 섞이지 않게 한다
+  at=$(( hold_end / 1000 - 5 ))
+  cpu1m='avg(avg_over_time(process_cpu_usage{job="app"}[1m]))'
+  spread=$(prom_value "max_over_time(($cpu1m)[3m:1m] @ $at) - min_over_time(($cpu1m)[3m:1m] @ $at)") || spread=NA
+  jit=$(prom_value "max(rate(jvm_compilation_time_ms_total{job=\"app\"}[3m] @ $at))") || jit=NA
+  echo "warmup-result $name hold ${WARMUP_HOLD}s cpu_spread=$spread jit=$jit ms/s"
+  python3 -c "import sys; sys.exit(0 if float('$spread') <= $WARMUP_CPU_SPREAD else 1)" 2> /dev/null \
+    || echo "WARN: $name 의 끝 3분 앱 CPU 흔들림이 ${WARMUP_CPU_SPREAD} 를 넘었다(또는 읽지 못했다). 이 버전의 결과에 덜 데워졌다고 적는다" >&2
+}
+
 # k6 의 시간 꼴(5m, 300s, 1m30s, 1h)을 초로 바꾼다
 k6_seconds() {
   local rest="$1" total=0 unit
