@@ -28,6 +28,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.tomcat.TomcatWebServer;
 import org.springframework.boot.tomcat.servlet.TomcatServletWebServerFactory;
+import org.springframework.boot.web.server.PortInUseException;
 import org.springframework.boot.web.server.context.WebServerApplicationContext;
 import org.springframework.boot.web.server.context.WebServerInitializedEvent;
 
@@ -42,16 +43,36 @@ class TomcatQueuedRequestsMetricsTest {
     private final HttpClient client = HttpClient.newHttpClient();
     private TomcatWebServer server;
 
+    // 고른 포트를 닫은 뒤 서버가 묶기 전에 다른 프로세스가 가져가면 새 포트로 다시 띄운다
+    private static final int START_ATTEMPTS = 3;
+
     /*
      * 포트를 정해 띄운다. 앱도 8080 처럼 정한 포트로 뜬다.
      * 0 으로 띄우면 기존 톰캣 지표는 포트를 정하기 전의 이름(http-nio-auto-1)을 쓰고 커넥터는 포트를 붙인 이름을 돌려줘 두 꼬리표가 갈린다.
      */
     @BeforeEach
     void start() throws IOException {
-        int port;
-        try (ServerSocket socket = new ServerSocket(0)) {
-            port = socket.getLocalPort();
+        for (int attempt = 1; ; attempt++) {
+            server = server(freePort());
+            try {
+                server.start();
+                return;
+            } catch (PortInUseException e) {
+                server.stop();
+                if (attempt == START_ATTEMPTS) {
+                    throw e;
+                }
+            }
         }
+    }
+
+    private static int freePort() throws IOException {
+        try (ServerSocket socket = new ServerSocket(0)) {
+            return socket.getLocalPort();
+        }
+    }
+
+    private TomcatWebServer server(int port) {
         TomcatServletWebServerFactory factory = new TomcatServletWebServerFactory(port);
         // 앱은 server.tomcat.mbeanregistry.enabled 로 켠다. 기존 톰캣 지표는 이 레지스트리에서 읽는다
         factory.setDisableMBeanRegistry(false);
@@ -60,7 +81,7 @@ class TomcatQueuedRequestsMetricsTest {
             protocol.setMaxThreads(1);
             protocol.setMinSpareThreads(1);
         });
-        server = (TomcatWebServer) factory.getWebServer(context -> context
+        return (TomcatWebServer) factory.getWebServer(context -> context
                 .addServlet("hold", new HttpServlet() {
                     @Override
                     protected void doGet(HttpServletRequest request, HttpServletResponse response) {
@@ -72,7 +93,6 @@ class TomcatQueuedRequestsMetricsTest {
                     }
                 })
                 .addMapping("/"));
-        server.start();
     }
 
     @AfterEach
