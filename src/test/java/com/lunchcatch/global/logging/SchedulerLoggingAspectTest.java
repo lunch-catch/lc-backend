@@ -385,6 +385,23 @@ class SchedulerLoggingAspectTest {
         assertThat(duration("failure").count()).isEqualTo(1);
     }
 
+    // 스케줄러가 컨텍스트 새로 고침 때 fixedDelay 작업을 바로 돌리므로 그보다 앞에 0 이 있어야 한다
+    @Test
+    void 컨텍스트가_모든_싱글턴을_만들면_실패_타이머를_만든다() {
+        // given
+        GenericApplicationContext context = new GenericApplicationContext();
+        context.registerBean(SchedulerLoggingAspect.class, () -> new SchedulerLoggingAspect(registry, clock));
+        context.registerBean(FakeJob.class);
+        context.registerBean(ScheduledTaskHolder.class, () -> Set::of);
+
+        // when
+        context.refresh();
+        context.close();
+
+        // then
+        assertThat(failureTimerJobs()).containsExactly("FakeJob.other()", "FakeJob.quiet()", "FakeJob.run()");
+    }
+
     @Test
     void 스케줄러를_끈_서버는_실패_타이머를_만들지_않는다() {
         // given

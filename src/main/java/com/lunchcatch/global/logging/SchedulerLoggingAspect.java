@@ -17,9 +17,10 @@ import org.aspectj.lang.ProceedingJoinPoint;
 import org.aspectj.lang.annotation.Around;
 import org.aspectj.lang.annotation.Aspect;
 import org.aspectj.lang.reflect.MethodSignature;
+import org.springframework.beans.factory.BeanFactory;
+import org.springframework.beans.factory.BeanFactoryAware;
 import org.springframework.beans.factory.ListableBeanFactory;
-import org.springframework.boot.context.event.ApplicationReadyEvent;
-import org.springframework.context.event.EventListener;
+import org.springframework.beans.factory.SmartInitializingSingleton;
 import org.springframework.core.MethodIntrospector;
 import org.springframework.core.annotation.AnnotatedElementUtils;
 import org.springframework.core.annotation.AnnotationUtils;
@@ -39,7 +40,7 @@ import org.springframework.util.ClassUtils;
 @Aspect
 @Component
 @RequiredArgsConstructor
-public class SchedulerLoggingAspect {
+public class SchedulerLoggingAspect implements SmartInitializingSingleton, BeanFactoryAware {
 
     private static final String LAST_SUCCESS = "batch.job.last.success.timestamp";
     private static final String DURATION = "batch.job.duration";
@@ -48,6 +49,7 @@ public class SchedulerLoggingAspect {
 
     private final MeterRegistry meterRegistry;
     private final Clock clock;
+    private BeanFactory beanFactory;
     private final Map<String, AtomicLong> lastSuccessByJob = new ConcurrentHashMap<>();
     private final Map<String, AtomicLong> runningSinceByJob = new ConcurrentHashMap<>();
 
@@ -85,10 +87,18 @@ public class SchedulerLoggingAspect {
      * 첫 실패 때 생기는 시계열은 0 인 시점이 없어 increase() 가 그 첫 한 건을 세지 않는다.
      * 작업 이름은 @Scheduled 메서드에서 애스펙트가 붙이는 이름과 같은 꼴로 만든다.
      * 스케줄러를 켠 배치 서버에서만 만든다. 앱 서버에는 돌지 않는 작업의 시계열이 생기지 않는다.
+     * 모든 싱글턴을 만든 직후에 만든다. 스케줄러는 그 뒤 컨텍스트 새로 고침 때 작업을 걸어, fixedDelay 작업의 첫 실행도 0 뒤에 온다.
      */
-    @EventListener(ApplicationReadyEvent.class)
-    public void registerFailureTimers(ApplicationReadyEvent event) {
-        registerFailureTimers(event.getApplicationContext());
+    @Override
+    public void setBeanFactory(BeanFactory beanFactory) {
+        this.beanFactory = beanFactory;
+    }
+
+    @Override
+    public void afterSingletonsInstantiated() {
+        if (beanFactory instanceof ListableBeanFactory beans) {
+            registerFailureTimers(beans);
+        }
     }
 
     void registerFailureTimers(ListableBeanFactory beans) {
