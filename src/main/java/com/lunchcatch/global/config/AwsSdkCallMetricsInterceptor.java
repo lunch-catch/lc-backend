@@ -1,5 +1,6 @@
 package com.lunchcatch.global.config;
 
+import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.Metrics;
 import io.micrometer.core.instrument.Timer;
 import java.time.Duration;
@@ -16,10 +17,15 @@ import software.amazon.awssdk.core.interceptor.SdkExecutionAttribute;
  * 그래서 Bedrock 을 부르는 캠페인 코드를 고치지 않는다.
  * SDK 가 이 클래스를 직접 만들어 스프링 빈을 주입받지 못한다. Boot 가 앱의 레지스트리를 넣어 두는 Micrometer 전역 레지스트리에 남긴다.
  * 시간은 재시도까지 포함한 호출 한 번이다. 이 앱의 SDK 클라이언트는 SDK 재시도를 끄거나 기본값으로 둔다.
+ *
+ * 실패 수는 서비스만 단 카운터로 따로 센다(#1274).
+ * 타이머의 failure 시계열은 첫 실패 때 1 로 생겨 increase() 가 그 첫 한 건을 세지 않는다.
+ * 서비스의 첫 호출 때 0 으로 만든다. 배포 뒤 그 서비스의 맨 첫 호출이 실패하면 그 한 건은 놓친다.
  */
 public class AwsSdkCallMetricsInterceptor implements ExecutionInterceptor {
 
     static final String METRIC = "aws.sdk.calls";
+    static final String FAILURES = "aws.sdk.failures";
     // Bedrock 의 호출 시간 제한(30초)보다 넉넉히 둬 느린 호출이 마지막 버킷에 뭉치지 않게 한다
     private static final Duration MAX_EXPECTED = Duration.ofSeconds(60);
     private static final ExecutionAttribute<Long> STARTED_AT = new ExecutionAttribute<>("lunchcatch.startedAtNanos");
@@ -44,9 +50,17 @@ public class AwsSdkCallMetricsInterceptor implements ExecutionInterceptor {
         if (startedAt == null) {
             return;
         }
+        String service = String.valueOf(attributes.getAttribute(SdkExecutionAttribute.SERVICE_NAME));
+        Counter failures = Counter.builder(FAILURES)
+                .description("AWS SDK 호출 중 실패한 수. 서비스마다 첫 호출 때 0 부터 센다")
+                .tag("service", service)
+                .register(Metrics.globalRegistry);
+        if ("failure".equals(outcome)) {
+            failures.increment();
+        }
         Timer.builder(METRIC)
                 .description("AWS SDK 호출 한 번의 시간. p99 를 계산하는 버킷을 내보낸다")
-                .tag("service", String.valueOf(attributes.getAttribute(SdkExecutionAttribute.SERVICE_NAME)))
+                .tag("service", service)
                 .tag("operation", String.valueOf(attributes.getAttribute(SdkExecutionAttribute.OPERATION_NAME)))
                 // LLM 은 모델마다 정상 시간이 크게 달라 모델로 나눈다. 모델이 없는 호출은 none 이다
                 .tag("model", request.getValueForField("modelId", String.class).orElse("none"))

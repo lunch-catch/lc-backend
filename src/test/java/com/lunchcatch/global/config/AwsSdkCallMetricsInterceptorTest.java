@@ -95,6 +95,24 @@ class AwsSdkCallMetricsInterceptorTest {
         assertThat(converse.count()).isEqualTo(1);
     }
 
+    // 0 인 시점이 있어야 increase() 가 첫 실패를 센다
+    @Test
+    @DisplayName("서비스의 첫 호출 때 그 서비스의 실패 수를 0 으로 만들고 실패하면 1 을 더한다")
+    void 첫_호출_때_실패_수를_0으로_만들고_실패에_1을_더한다() {
+        try (S3Client s3 = s3()) {
+            s3.headBucket(b -> b.bucket("posters"));
+            double afterSuccess = s3Failures();
+            assertThatThrownBy(() -> s3.headBucket(b -> b.bucket("missing"))).isInstanceOf(SdkException.class);
+
+            assertThat(afterSuccess).isZero();
+            assertThat(s3Failures()).isEqualTo(1);
+        }
+    }
+
+    private double s3Failures() {
+        return registry.get(AwsSdkCallMetricsInterceptor.FAILURES).tag("service", "S3").counter().count();
+    }
+
     private S3Client s3() {
         return S3Client.builder().endpointOverride(endpoint).forcePathStyle(true)
                 .region(Region.AP_NORTHEAST_2).credentialsProvider(credentials()).build();

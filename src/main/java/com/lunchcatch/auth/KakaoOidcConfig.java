@@ -2,6 +2,7 @@ package com.lunchcatch.auth;
 
 import static com.lunchcatch.auth.KakaoOAuth.REGISTRATION_ID;
 
+import com.lunchcatch.global.config.HttpClientLatencyHistogramHandler;
 import java.util.List;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
@@ -32,6 +33,10 @@ import org.springframework.web.reactive.function.client.WebClient;
 // 자동으로 채워 넣는다.
 @Configuration
 public class KakaoOidcConfig {
+
+    // 토큰 교환은 인증 호스트로, 로그아웃과 연결 해제는 API 호스트로 나간다
+    static final String KAKAO_AUTH_HOST = "kauth.kakao.com";
+    static final String KAKAO_API_HOST = "kapi.kakao.com";
 
     // ClientRegistration.ProviderDetails에도 issuer-uri를 꺼내는 방법이 있지만, application.yml에
     // 이미 우리가 적어둔 값(spring.security.oauth2.client.provider.kakao.issuer-uri)을 그대로
@@ -81,9 +86,13 @@ public class KakaoOidcConfig {
      * clientConnector를 여기서 다시 지정하면 공통 커스터마이저가 걸어둔 connector(타임아웃/풀)만
      * 덮어쓰는 것이고, 트레이싱/로깅 필터는 builder에 이미 filter()로 붙어있어서 그대로
      * 유지된다 — 필터까지 다시 정의할 필요는 없다.
+     *
+     * 두 호스트의 실패 수를 기동 때 0 으로 만든다(#1274). 배포 뒤 첫 로그인 호출이 실패해도 실패율에 잡힌다.
      */
     @Bean
-    public WebClient kakaoApiWebClient(WebClient.Builder builder) {
+    public WebClient kakaoApiWebClient(WebClient.Builder builder, HttpClientLatencyHistogramHandler clientMetrics) {
+        clientMetrics.registerClient(KAKAO_AUTH_HOST);
+        clientMetrics.registerClient(KAKAO_API_HOST);
         return builder.build();
     }
 }

@@ -3,10 +3,12 @@ package com.lunchcatch.global.logging;
 import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
+import java.lang.reflect.Method;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 import lombok.RequiredArgsConstructor;
@@ -15,8 +17,16 @@ import org.aspectj.lang.ProceedingJoinPoint;
 import org.aspectj.lang.annotation.Around;
 import org.aspectj.lang.annotation.Aspect;
 import org.aspectj.lang.reflect.MethodSignature;
+import org.springframework.beans.factory.ListableBeanFactory;
+import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.context.event.EventListener;
+import org.springframework.core.MethodIntrospector;
+import org.springframework.core.annotation.AnnotatedElementUtils;
 import org.springframework.core.annotation.AnnotationUtils;
+import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.scheduling.config.ScheduledTaskHolder;
 import org.springframework.stereotype.Component;
+import org.springframework.util.ClassUtils;
 
 /**
  * {@code @Scheduled} 메서드 실행마다 시작/종료(또는 실패)/소요시간을 자동으로 로깅하고,
@@ -70,6 +80,41 @@ public class SchedulerLoggingAspect {
         }
     }
 
+    /*
+     * 작업마다 실패한 실행의 타이머를 기동 때 0 으로 만든다(#1274).
+     * 첫 실패 때 생기는 시계열은 0 인 시점이 없어 increase() 가 그 첫 한 건을 세지 않는다.
+     * 작업 이름은 @Scheduled 메서드에서 애스펙트가 붙이는 이름과 같은 꼴로 만든다.
+     * 스케줄러를 켠 배치 서버에서만 만든다. 앱 서버에는 돌지 않는 작업의 시계열이 생기지 않는다.
+     */
+    @EventListener(ApplicationReadyEvent.class)
+    public void registerFailureTimers(ApplicationReadyEvent event) {
+        registerFailureTimers(event.getApplicationContext());
+    }
+
+    void registerFailureTimers(ListableBeanFactory beans) {
+        if (beans.getBeanNamesForType(ScheduledTaskHolder.class, false, false).length == 0) {
+            return;
+        }
+        for (String name : beans.getBeanDefinitionNames()) {
+            Class<?> type = beans.getType(name, false);
+            if (type == null) {
+                continue;
+            }
+            Set<Method> scheduled = MethodIntrospector.selectMethods(ClassUtils.getUserClass(type),
+                    (MethodIntrospector.MetadataLookup<Boolean>) method ->
+                            AnnotatedElementUtils.hasAnnotation(method, Scheduled.class) ? Boolean.TRUE : null)
+                    .keySet();
+            for (Method method : scheduled) {
+                durationTimer(jobName(method), "failure");
+            }
+        }
+    }
+
+    // 스프링 AOP 의 MethodSignature.toShortString() 과 같은 꼴이다. @Scheduled 메서드는 인자가 없다
+    static String jobName(Method method) {
+        return method.getDeclaringClass().getSimpleName() + "." + method.getName() + "()";
+    }
+
     // @QuietSchedulerLog 가 붙은 짧은 주기 작업은 정상 실행을 DEBUG 로 내린다. 실패는 언제나 ERROR 다
     private static boolean isQuiet(ProceedingJoinPoint joinPoint) {
         return joinPoint.getSignature() instanceof MethodSignature signature
@@ -90,14 +135,17 @@ public class SchedulerLoggingAspect {
      * 상한은 1시간이다. 기본값 30초로는 00:00 묶음 같은 긴 작업이 가장 큰 버킷에 모여 p99 가 정확하지 않다.
      */
     private void recordDuration(String job, String outcome, Duration took) {
-        Timer.builder(DURATION)
+        durationTimer(job, outcome).record(took);
+    }
+
+    private Timer durationTimer(String job, String outcome) {
+        return Timer.builder(DURATION)
                 .tag("scheduler", job)
                 .tag("outcome", outcome)
                 .publishPercentileHistogram()
                 .maximumExpectedValue(MAX_EXPECTED_DURATION)
                 .description("Time taken by one scheduled run")
-                .register(meterRegistry)
-                .record(took);
+                .register(meterRegistry);
     }
 
     /*

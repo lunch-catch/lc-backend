@@ -16,13 +16,16 @@ import java.time.Instant;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.slf4j.MDC;
 import org.springframework.aop.aspectj.annotation.AspectJProxyFactory;
+import org.springframework.context.support.GenericApplicationContext;
 import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.scheduling.config.ScheduledTaskHolder;
 import org.springframework.scheduling.support.TaskUtils;
 
 class SchedulerLoggingAspectTest {
@@ -93,6 +96,7 @@ class SchedulerLoggingAspectTest {
     private final SimpleMeterRegistry registry = new SimpleMeterRegistry();
     private final MutableClock clock = new MutableClock();
     private LogCapture logs;
+    private SchedulerLoggingAspect aspect;
     private FakeJob target;
     private FakeJob job;
 
@@ -101,7 +105,8 @@ class SchedulerLoggingAspectTest {
         logs = LogCapture.attach(SchedulerLoggingAspect.class);
         target = new FakeJob();
         AspectJProxyFactory factory = new AspectJProxyFactory(target);
-        factory.addAspect(new SchedulerLoggingAspect(registry, clock));
+        aspect = new SchedulerLoggingAspect(registry, clock);
+        factory.addAspect(aspect);
         job = factory.getProxy();
     }
 
@@ -329,6 +334,68 @@ class SchedulerLoggingAspectTest {
 
         // then
         assertThat(prometheus.scrape()).containsPattern("batch_job_duration_seconds_bucket\\{[^}]*le=\"(1[0-9]{3}|[2-9][0-9]{3})\\.");
+    }
+
+    // --- 기동 때 만드는 실패 타이머 -------------------------------------------------------
+
+    private static GenericApplicationContext context(boolean schedulerEnabled) {
+        GenericApplicationContext context = new GenericApplicationContext();
+        context.registerBean(FakeJob.class);
+        if (schedulerEnabled) {
+            context.registerBean(ScheduledTaskHolder.class, () -> Set::of);
+        }
+        context.refresh();
+        return context;
+    }
+
+    private List<String> failureTimerJobs() {
+        return registry.find(DURATION).tag("outcome", "failure").timers().stream()
+                .map(timer -> timer.getId().getTag("scheduler"))
+                .sorted()
+                .toList();
+    }
+
+    @Test
+    void 스케줄러를_켠_서버는_기동_때_Scheduled_메서드마다_실패_타이머를_0으로_만든다() {
+        // given
+        try (GenericApplicationContext context = context(true)) {
+
+            // when
+            aspect.registerFailureTimers(context);
+        }
+
+        // then
+        assertThat(failureTimerJobs()).containsExactly("FakeJob.other()", "FakeJob.quiet()", "FakeJob.run()");
+        assertThat(duration("failure").count()).isZero();
+    }
+
+    // 기동 때 만든 이름이 실행 때 애스펙트가 붙이는 이름과 달라 따로 생기면 첫 실패를 또 놓친다
+    @Test
+    void 기동_때_만든_실패_타이머가_첫_실패에_0에서_1로_오른다() {
+        // given
+        try (GenericApplicationContext context = context(true)) {
+            aspect.registerFailureTimers(context);
+        }
+
+        // when
+        failOnce();
+
+        // then
+        assertThat(failureTimerJobs()).hasSize(3);
+        assertThat(duration("failure").count()).isEqualTo(1);
+    }
+
+    @Test
+    void 스케줄러를_끈_서버는_실패_타이머를_만들지_않는다() {
+        // given
+        try (GenericApplicationContext context = context(false)) {
+
+            // when
+            aspect.registerFailureTimers(context);
+        }
+
+        // then
+        assertThat(registry.find(DURATION).timers()).isEmpty();
     }
 
     // --- 마지막 성공 시각 게이지 ---------------------------------------------------------

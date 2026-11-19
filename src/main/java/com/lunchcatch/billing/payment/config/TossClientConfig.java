@@ -1,6 +1,8 @@
 package com.lunchcatch.billing.payment.config;
 
+import com.lunchcatch.global.config.HttpClientLatencyHistogramHandler;
 import io.netty.channel.ChannelOption;
+import java.net.URI;
 import java.time.Duration;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
@@ -27,9 +29,13 @@ public class TossClientConfig {
      * 공통 커스터마이저의 커넥터는 이 빈에서 덮어쓴다. 연결과 읽기 타임아웃을 설정으로 조정해야 해서다.
      * 호출 로깅과 추적 필터는 빌더에 이미 붙어 있어 그대로 남는다. 그 로깅 필터는 경로만 남기고
      * 헤더를 찍지 않으므로 Authorization 헤더가 로그에 실리지 않는다.
+     *
+     * 토스 호스트의 실패 수를 기동 때 0 으로 만든다(#1274). 배포 뒤 첫 승인 호출이 실패해도 실패율에 잡힌다.
      */
     @Bean
-    public WebClient tossPaymentWebClient(WebClient.Builder builder, TossProperties properties) {
+    public WebClient tossPaymentWebClient(WebClient.Builder builder, TossProperties properties,
+            HttpClientLatencyHistogramHandler clientMetrics) {
+        clientMetrics.registerClient(URI.create(properties.baseUrl()).getHost());
         ConnectionProvider pool = ConnectionProvider.builder("toss-payment")
                 .maxConnections(MAX_CONNECTIONS)
                 .pendingAcquireTimeout(PENDING_ACQUIRE_TIMEOUT)
