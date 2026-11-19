@@ -170,12 +170,13 @@ public class ImpressionWriteBuffer implements SmartLifecycle {
             meterRegistry.counter(WRITE_FAILED_METRIC).increment();
             return false;
         }
+        /*
+         * 쿠폰 소진 뒤 도착한 유효 노출은 정산에 넘기지 않아 릴레이가 판정을 받지 않는다. 여기서 그 판정으로 센다(#1273).
+         * 아래 카운터(Valkey)가 실패하면 묶음의 나머지를 돌지 못하고 다시 쓰지도 않아, 그 전에 묶음 전체를 한 번에 센다.
+         */
+        soldOut.increment(fresh.stream().filter(impression -> impression.log().isSoldOut()).count());
         for (QueuedImpression impression : fresh) {
             counts.increment(impression.log().getBusinessDate(), impression.log().getCampaignId());
-            // 쿠폰 소진 뒤 도착한 유효 노출은 정산에 넘기지 않아 릴레이가 판정을 받지 않는다. 여기서 그 판정으로 센다(#1273)
-            if (impression.log().isSoldOut()) {
-                soldOut.increment();
-            }
             if (impression.campaignMismatch()) {
                 meterRegistry.counter(CAMPAIGN_MISMATCH_METRIC).increment();
             }
