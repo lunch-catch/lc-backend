@@ -63,7 +63,7 @@ class ImpressionDispatchServiceTest {
     void 밀린_것이_없다() {
         when(impressions.countPending(any(), any())).thenReturn(new PendingSummary(0, null, 0, 0));
         // 따로 보지 않는 시험은 발행한 노출을 모두 표시한 것으로 둔다
-        when(impressions.markDispatched(anyList(), any())).thenAnswer(invocation -> List.copyOf((List<?>) invocation.getArgument(0)));
+        when(impressions.markDispatched(anyList(), any())).thenAnswer(invocation -> ((List<?>) invocation.getArgument(0)).size());
     }
 
     @Test
@@ -211,21 +211,21 @@ class ImpressionDispatchServiceTest {
         assertThat(delay.totalTime(TimeUnit.SECONDS)).isEqualTo(3);
     }
 
-    // 다른 서버가 먼저 표시한 노출은 표시에서 빠진다. 발행 수, 발행 지연, 판정별 수는 이 서버가 표시한 노출로만 센다(#1213, #1273)
+    // 다른 서버가 먼저 표시한 노출은 조건부 표시에서 빠진다. 발행 수는 실제로 표시한 행 수로 세고, 그 청크의 발행 지연과 판정별 수는 남기지 않는다(#1213, #1273)
     @Test
-    void 일부만_표시하면_표시한_노출만_발행_수와_발행_지연과_판정별_수에_센다() {
+    void 일부만_표시하면_표시한_행_수로_세고_발행_지연과_판정별_수는_남기지_않는다() {
         PendingImpression first = pending(1);
         PendingImpression second = pending(2);
         when(lease.acquire(any())).thenReturn(true);
         when(impressions.findPending(any(), any(), anyInt())).thenReturn(List.of(first, second));
         when(pointDeductor.deductAll(anyList())).thenAnswer(invocation -> judgedAll(invocation.getArgument(0)));
-        when(impressions.markDispatched(anyList(), any())).thenReturn(List.of(first));
+        when(impressions.markDispatched(anyList(), any())).thenReturn(1);
 
         service.dispatchPending();
 
         assertThat(meterRegistry.counter(ImpressionDispatchService.DISPATCHED_METRIC).count()).isEqualTo(1);
-        assertThat(meterRegistry.get("outbox.relay.publish.delay").timer().count()).isEqualTo(1);
-        assertThat(billing("BILLED")).isEqualTo(1);
+        assertThat(meterRegistry.find("outbox.relay.publish.delay").timer()).isNull();
+        assertThat(billing("BILLED")).isZero();
     }
 
     @Test

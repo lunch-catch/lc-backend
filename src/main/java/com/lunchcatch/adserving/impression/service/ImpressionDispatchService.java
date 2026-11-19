@@ -179,24 +179,28 @@ public class ImpressionDispatchService {
             }
         }
         LocalDateTime now = LocalDateTime.now(clock);
-        List<PendingImpression> marked = transactions.execute(status -> {
-            List<PendingImpression> mine = impressions.markDispatched(dispatched, now);
+        int[] marked = new int[1];
+        transactions.executeWithoutResult(status -> {
+            marked[0] = impressions.markDispatched(dispatched, now);
             impressions.markFailed(failed, now, properties.maxAttempts());
-            return mine;
         });
+        int markedCount = marked[0];
         /*
-         * 발행 수, 발행 지연, 판정별 수는 이 서버가 표시한 노출로만 센다. 다른 서버가 먼저 표시한 노출은 그 서버가 센다(#1213).
-         * 카운터는 되돌릴 수 없어 표시가 커밋된 뒤에 올린다.
+         * 발행 수는 실제로 표시한 행 수로 센다. 다른 서버가 먼저 표시한 노출은 그 서버가 센다(#1213).
+         * 어느 노출을 표시했는지는 행 수로 알 수 없어, 다 표시한 청크만 발행 지연과 판정별 수를 남긴다. 겹친 청크는 먼저 표시한 서버가 남긴다.
+         * 그래서 겹친 청크의 판정별 수는 실제보다 적게 남을 수 있다. 두 번 세지는 않는다(#1273).
          */
-        Map<UUID, DeductionStatus> statusByServeId = outcomes.stream()
-                .filter(outcome -> !outcome.failed())
-                .collect(Collectors.toMap(DeductionOutcome::serveId, DeductionOutcome::status, (first, second) -> first));
-        for (PendingImpression impression : marked) {
-            backlogMetrics.publishDelay(RELAY_NAME,
-                    Duration.between(impression.createdAt().atZone(clock.getZone()), now.atZone(clock.getZone())));
-            meterRegistry.counter(BILLING_METRIC, "status", statusByServeId.get(impression.serveId()).name()).increment();
+        if (markedCount == dispatched.size()) {
+            Map<UUID, DeductionStatus> statusByServeId = outcomes.stream()
+                    .filter(outcome -> !outcome.failed())
+                    .collect(Collectors.toMap(DeductionOutcome::serveId, DeductionOutcome::status, (first, second) -> first));
+            dispatched.forEach(impression -> {
+                backlogMetrics.publishDelay(RELAY_NAME,
+                        Duration.between(impression.createdAt().atZone(clock.getZone()), now.atZone(clock.getZone())));
+                meterRegistry.counter(BILLING_METRIC, "status", statusByServeId.get(impression.serveId()).name()).increment();
+            });
         }
-        meterRegistry.counter(DISPATCHED_METRIC).increment(marked.size());
+        meterRegistry.counter(DISPATCHED_METRIC).increment(markedCount);
         meterRegistry.counter(FAILED_METRIC).increment(failed.size());
         return failed.isEmpty() && batch.size() == PointDeductor.MAX_BATCH_SIZE;
     }
