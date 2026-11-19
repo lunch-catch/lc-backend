@@ -10,6 +10,7 @@ import com.lunchcatch.billing.contract.DeductionRequest;
 import com.lunchcatch.billing.contract.DeductionStatus;
 import com.lunchcatch.billing.contract.PointDeductor;
 import com.lunchcatch.global.config.BacklogMetrics;
+import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
 import java.time.Clock;
@@ -17,6 +18,7 @@ import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -77,6 +79,7 @@ public class ImpressionDispatchService {
     private final AtomicLong abandoned = new AtomicLong();
     private final AtomicLong expired = new AtomicLong();
     private final BacklogMetrics backlogMetrics;
+    private final Map<DeductionStatus, Counter> billing = new EnumMap<>(DeductionStatus.class);
 
     public ImpressionDispatchService(DispatchLeaseRepository lease, ImpressionDispatchRepository impressions,
                                      PointDeductor pointDeductor, TransactionTemplate transactions,
@@ -98,7 +101,7 @@ public class ImpressionDispatchService {
         // 사건이 없어도 0 으로 보이게 기동 때 만든다
         List.of(DISPATCHED_METRIC, FAILED_METRIC, ERROR_METRIC).forEach(meterRegistry::counter);
         for (DeductionStatus status : DeductionStatus.values()) {
-            meterRegistry.counter(BILLING_METRIC, "status", status.name());
+            billing.put(status, meterRegistry.counter(BILLING_METRIC, "status", status.name()));
         }
     }
 
@@ -172,10 +175,17 @@ public class ImpressionDispatchService {
                 .collect(Collectors.toMap(PendingImpression::serveId, Function.identity()));
         List<PendingImpression> dispatched = new ArrayList<>();
         List<PendingImpression> failed = new ArrayList<>();
+        Map<DeductionStatus, Integer> judged = new EnumMap<>(DeductionStatus.class);
         for (DeductionOutcome outcome : outcomes) {
             PendingImpression impression = byServeId.get(outcome.serveId());
-            if (impression != null) {
-                (outcome.failed() ? failed : dispatched).add(impression);
+            if (impression == null) {
+                continue;
+            }
+            if (outcome.failed()) {
+                failed.add(impression);
+            } else {
+                dispatched.add(impression);
+                judged.merge(outcome.status(), 1, Integer::sum);
             }
         }
         LocalDateTime now = LocalDateTime.now(clock);
@@ -191,14 +201,10 @@ public class ImpressionDispatchService {
          * 그래서 겹친 청크의 판정별 수는 실제보다 적게 남을 수 있다. 두 번 세지는 않는다(#1273).
          */
         if (markedCount == dispatched.size()) {
-            Map<UUID, DeductionStatus> statusByServeId = outcomes.stream()
-                    .filter(outcome -> !outcome.failed())
-                    .collect(Collectors.toMap(DeductionOutcome::serveId, DeductionOutcome::status, (first, second) -> first));
-            dispatched.forEach(impression -> {
-                backlogMetrics.publishDelay(RELAY_NAME,
-                        Duration.between(impression.createdAt().atZone(clock.getZone()), now.atZone(clock.getZone())));
-                meterRegistry.counter(BILLING_METRIC, "status", statusByServeId.get(impression.serveId()).name()).increment();
-            });
+            dispatched.forEach(impression -> backlogMetrics.publishDelay(RELAY_NAME,
+                    Duration.between(impression.createdAt().atZone(clock.getZone()), now.atZone(clock.getZone()))));
+            // 청크 안에서 판정별로 모은 수만큼 판정마다 한 번 올린다
+            judged.forEach((status, count) -> billing.get(status).increment(count));
         }
         meterRegistry.counter(DISPATCHED_METRIC).increment(markedCount);
         meterRegistry.counter(FAILED_METRIC).increment(failed.size());
