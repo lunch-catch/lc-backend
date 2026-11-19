@@ -5,10 +5,14 @@ import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.mock;
 
 import io.micrometer.core.instrument.Gauge;
+import io.micrometer.core.instrument.Tags;
+import io.micrometer.core.instrument.binder.tomcat.TomcatMetrics;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import jakarta.servlet.http.HttpServlet;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import java.io.IOException;
+import java.net.ServerSocket;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -38,9 +42,19 @@ class TomcatQueuedRequestsMetricsTest {
     private final HttpClient client = HttpClient.newHttpClient();
     private TomcatWebServer server;
 
+    /*
+     * 포트를 정해 띄운다. 앱도 8080 처럼 정한 포트로 뜬다.
+     * 0 으로 띄우면 기존 톰캣 지표는 포트를 정하기 전의 이름(http-nio-auto-1)을 쓰고 커넥터는 포트를 붙인 이름을 돌려줘 두 꼬리표가 갈린다.
+     */
     @BeforeEach
-    void start() {
-        TomcatServletWebServerFactory factory = new TomcatServletWebServerFactory(0);
+    void start() throws IOException {
+        int port;
+        try (ServerSocket socket = new ServerSocket(0)) {
+            port = socket.getLocalPort();
+        }
+        TomcatServletWebServerFactory factory = new TomcatServletWebServerFactory(port);
+        // 앱은 server.tomcat.mbeanregistry.enabled 로 켠다. 기존 톰캣 지표는 이 레지스트리에서 읽는다
+        factory.setDisableMBeanRegistry(false);
         factory.addConnectorCustomizers(connector -> {
             AbstractProtocol<?> protocol = (AbstractProtocol<?>) connector.getProtocolHandler();
             protocol.setMaxThreads(1);
@@ -82,12 +96,14 @@ class TomcatQueuedRequestsMetricsTest {
         assertThat(waitFor(this::queued, 0)).isZero();
     }
 
+    // 앱처럼 MBean 레지스트리를 켜고 Micrometer 의 톰캣 지표를 함께 묶어, 같은 서버의 쓰는 스레드 지표와 꼬리표 값을 견준다
     @Test
     void 기존_톰캣_지표와_같은_name_꼬리표를_단다() {
+        new TomcatMetrics(null, Tags.empty()).bindTo(registry);
         new TomcatQueuedRequestsMetrics(registry).bind(server);
 
         assertThat(registry.get(TomcatQueuedRequestsMetrics.METRIC).gauge().getId().getTag("name"))
-                .startsWith("http-nio-");
+                .isEqualTo(registry.get("tomcat.threads.busy").gauge().getId().getTag("name"));
     }
 
     @Test

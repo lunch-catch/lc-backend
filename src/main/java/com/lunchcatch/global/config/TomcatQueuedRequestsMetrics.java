@@ -45,7 +45,7 @@ public class TomcatQueuedRequestsMetrics implements ApplicationListener<WebServe
             if (connector.getProtocolHandler() instanceof AbstractProtocol<?> protocol
                     && protocol.getExecutor() instanceof ThreadPoolExecutor executor) {
                 Gauge.builder(METRIC, executor, pool -> pool.getQueue().size())
-                        // 기존 tomcat_threads_busy_threads 와 같은 꼬리표다. 톰캣은 JMX 이름이라 따옴표를 붙여 돌려준다
+                        // 정한 포트로 뜨면 기존 tomcat_threads_busy_threads 와 같은 꼬리표다. 톰캣은 JMX 이름이라 따옴표를 붙여 돌려준다
                         .tag("name", protocol.getName().replace("\"", ""))
                         .baseUnit("requests")
                         .description("작업 스레드를 기다리며 톰캣 실행기 대기열에 있는 요청 수")
