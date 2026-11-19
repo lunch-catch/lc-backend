@@ -10,9 +10,11 @@ import ch.qos.logback.core.read.ListAppender;
 import com.lunchcatch.billing.payment.config.TossCircuitBreakerConfig;
 import com.lunchcatch.billing.payment.config.TossClientConfig;
 import com.lunchcatch.billing.payment.config.TossProperties;
+import com.lunchcatch.global.config.HttpClientLatencyHistogramHandler;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerConfig;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.net.URI;
 import java.net.UnknownHostException;
 import java.nio.charset.StandardCharsets;
@@ -101,7 +103,8 @@ class TossPaymentGatewayTest {
 
     private static WebClient webClientTo(String baseUrl, Duration readTimeout) {
         TossProperties properties = new TossProperties(baseUrl, SECRET, Duration.ofSeconds(2), readTimeout);
-        return new TossClientConfig().tossPaymentWebClient(WebClient.builder(), properties);
+        return new TossClientConfig().tossPaymentWebClient(WebClient.builder(), properties,
+                new HttpClientLatencyHistogramHandler(new SimpleMeterRegistry()));
     }
 
     // 같은 서버와 같은 서킷을 쓰되 읽기 타임아웃만 짧은 게이트웨이다.

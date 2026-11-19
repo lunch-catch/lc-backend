@@ -3,13 +3,17 @@ package com.lunchcatch.global.config;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.sun.net.httpserver.HttpServer;
+import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.observation.DefaultMeterObservationHandler;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import io.micrometer.observation.ObservationRegistry;
 import io.micrometer.prometheusmetrics.PrometheusConfig;
 import io.micrometer.prometheusmetrics.PrometheusMeterRegistry;
 import java.io.IOException;
 import java.net.InetSocketAddress;
+import java.net.ServerSocket;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -36,7 +40,8 @@ class HttpClientLatencyHistogramHandlerTest {
     void startServer() throws IOException {
         server = HttpServer.create(new InetSocketAddress("localhost", 0), 0);
         server.createContext("/", exchange -> {
-            int status = exchange.getRequestURI().getPath().startsWith("/fail") ? 500 : 200;
+            String path = exchange.getRequestURI().getPath();
+            int status = path.startsWith("/fail") ? 500 : path.startsWith("/bad") ? 400 : 200;
             exchange.sendResponseHeaders(status, -1);
             exchange.close();
         });
@@ -106,11 +111,96 @@ class HttpClientLatencyHistogramHandlerTest {
                 });
     }
 
+    // --- 상대마다 실패 수 ---------------------------------------------------------------
+
+    private static double failures(MeterRegistry registry) {
+        return registry.get(HttpClientLatencyHistogramHandler.FAILURES).tag("client.name", "localhost").counter().count();
+    }
+
+    // 0 인 시점이 있어야 increase() 가 첫 실패를 센다
+    @Test
+    void 기동_때_등록한_상대는_호출_전에_실패_수_0으로_있고_첫_실패에_1이_된다() {
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        HttpClientLatencyHistogramHandler handler = new HttpClientLatencyHistogramHandler(registry, MAX_CALLS);
+        WebClient client = WebClient.builder().observationRegistry(observations(registry, handler)).build();
+
+        handler.registerClient("localhost");
+        double beforeCall = failures(registry);
+        call(client, "/fail/v1/payments/confirm");
+
+        assertThat(beforeCall).isZero();
+        assertThat(failures(registry)).isEqualTo(1);
+    }
+
+    @Test
+    void 등록하지_않은_상대는_첫_호출_때_실패_수_0으로_생긴다() {
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        WebClient client = WebClient.builder().observationRegistry(observations(registry, MAX_CALLS)).build();
+
+        call(client, "/v1/user/logout");
+
+        assertThat(failures(registry)).isZero();
+    }
+
+    @Test
+    void 응답이_없는_호출을_실패로_센다() throws IOException, InterruptedException {
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        WebClient client = WebClient.builder().observationRegistry(observations(registry, MAX_CALLS)).build();
+        int closedPort;
+        try (ServerSocket socket = new ServerSocket(0)) {
+            closedPort = socket.getLocalPort();
+        }
+
+        client.get().uri("http://localhost:" + closedPort + "/v1/payments").retrieve().toBodilessEntity()
+                .onErrorResume(error -> Mono.empty()).block();
+
+        assertThat(failuresAfterObservationStops(registry)).isEqualTo(1);
+    }
+
+    // 연결이 거절되면 관측이 호출자에게 오류를 넘긴 뒤 네티 스레드에서 끝나 잠시 기다린다
+    private static double failuresAfterObservationStops(MeterRegistry registry) throws InterruptedException {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+        Counter failures = registry.find(HttpClientLatencyHistogramHandler.FAILURES).counter();
+        while ((failures == null || failures.count() == 0) && System.nanoTime() < deadline) {
+            Thread.sleep(10);
+            failures = registry.find(HttpClientLatencyHistogramHandler.FAILURES).counter();
+        }
+        return failures == null ? 0 : failures.count();
+    }
+
+    // 카드 거절 같은 업무상 거절도 4xx 로 와서 실패로 세지 않는다
+    @Test
+    void 클라이언트_오류_4xx_응답은_실패로_세지_않는다() {
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        WebClient client = WebClient.builder().observationRegistry(observations(registry, MAX_CALLS)).build();
+
+        call(client, "/bad/v1/payments/confirm");
+
+        assertThat(failures(registry)).isZero();
+    }
+
+    // 실패 수는 상대마다 하나라 경로 상한과 상관없이 센다
+    @Test
+    void 경로_상한을_넘은_호출의_실패도_센다() {
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        WebClient client = WebClient.builder().observationRegistry(observations(registry, MAX_CALLS)).build();
+
+        call(client, "/a");
+        call(client, "/b");
+        call(client, "/fail/c");
+
+        assertThat(failures(registry)).isEqualTo(1);
+    }
+
     private static ObservationRegistry observations(MeterRegistry registry, int maxCalls) {
+        return observations(registry, new HttpClientLatencyHistogramHandler(registry, maxCalls));
+    }
+
+    private static ObservationRegistry observations(MeterRegistry registry, HttpClientLatencyHistogramHandler handler) {
         ObservationRegistry observations = ObservationRegistry.create();
         observations.observationConfig()
                 .observationHandler(new DefaultMeterObservationHandler(registry))
-                .observationHandler(new HttpClientLatencyHistogramHandler(registry, maxCalls));
+                .observationHandler(handler);
         return observations;
     }
 
