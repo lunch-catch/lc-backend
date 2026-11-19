@@ -99,6 +99,12 @@ class ImpressionWriteBufferTest {
                 new ImpressionLog.Sighting(RECEIVED_AT.minusSeconds(1), 37.5, 127.0, null), false), RECEIVED_AT, mismatch);
     }
 
+    private static QueuedImpression soldOut(int n) {
+        return new QueuedImpression(ImpressionLog.valid(new UUID(0, n), 3_000L + n, TODAY,
+                new ImpressionLog.Placement(101L, 55L, SlotLabels.ALLOCATION, 1),
+                new ImpressionLog.Sighting(RECEIVED_AT.minusSeconds(1), 37.5, 127.0, null), true), RECEIVED_AT, false);
+    }
+
     private static QueuedImpression invalid(int n) {
         return new QueuedImpression(ImpressionLog.unknown(new UUID(0, n), 3_000L + n, TODAY, 101L,
                 new ImpressionLog.Sighting(RECEIVED_AT.minusSeconds(1), 37.5, 127.0, null)), RECEIVED_AT, false);
@@ -232,6 +238,30 @@ class ImpressionWriteBufferTest {
             buffer.flush();
 
             assertThat(meterRegistry.counter(ImpressionWriteBuffer.CAMPAIGN_MISMATCH_METRIC).count()).isEqualTo(1);
+        }
+
+        // 정산에 넘기지 않아 릴레이가 판정을 받지 않는 노출이다. 새로 들어간 것만 판정별 수에 센다(#1273)
+        @Test
+        void 쿠폰_소진_뒤_노출은_새로_들어갔을_때만_NOT_BILLED_SOLD_OUT_으로_센다() {
+            QueuedImpression fresh = soldOut(1);
+            QueuedImpression stored = soldOut(2);
+            QueuedImpression billable = valid(3, false);
+            when(impressions.insertAllIgnore(anyList()))
+                    .thenReturn(Set.of(fresh.log().getId(), billable.log().getId()));
+            double before = soldOutCount();
+            buffer.offer(fresh);
+            buffer.offer(stored);
+            buffer.offer(billable);
+
+            buffer.flush();
+
+            assertThat(before).isZero();
+            assertThat(soldOutCount()).isEqualTo(1);
+        }
+
+        private double soldOutCount() {
+            return meterRegistry.get(ImpressionDispatchService.BILLING_METRIC)
+                    .tag("status", ImpressionDispatchService.SOLD_OUT_STATUS).counter().count();
         }
 
         @Test

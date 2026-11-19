@@ -5,7 +5,9 @@ import java.sql.Timestamp;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.Collection;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -36,6 +38,14 @@ public class ImpressionDispatchRepository {
             """;
 
     // 키 목록(:keys)은 NamedParameterJdbcTemplate 이 ((?, ?), (?, ?), ...) 로 펼친다. SQL 문자열은 상수로 둔다.
+    private static final String LOCK_UNDISPATCHED = """
+            SELECT serve_id, member_id
+              FROM impression_log
+             WHERE (serve_id, member_id) IN (:keys)
+               AND dispatched_at IS NULL
+               FOR UPDATE
+            """;
+
     private static final String MARK_DISPATCHED = """
             UPDATE impression_log
                SET dispatched_at = :at, updated_at = :at
@@ -86,14 +96,27 @@ public class ImpressionDispatchRepository {
 
     // 정산이 판정을 커밋한 노출에 넘긴 시각을 적는다.
     /*
-     * 아직 발행하지 않은 노출에만 발행 시각을 적고 적은 행 수를 돌려준다.
+     * 아직 발행하지 않은 노출에만 발행 시각을 적고 이 호출이 적은 노출을 돌려준다.
      * 점유가 풀려 다른 배치 서버가 같은 노출을 먼저 발행했으면 그 시각을 덮어쓰지 않는다(#1213).
+     * 어느 노출을 적었는지 알려고 아직 발행하지 않은 행을 먼저 잠가 읽는다(#1273). 호출자의 트랜잭션 안에서 불러야 잠금이 적기까지 이어진다.
+     * 잠그는 행은 이어지는 UPDATE 가 어차피 잠그는 행이라 잠금이 더 길어지지 않는다.
      */
-    public int markDispatched(Collection<PendingImpression> impressions, LocalDateTime at) {
+    public List<PendingImpression> markDispatched(Collection<PendingImpression> impressions, LocalDateTime at) {
         if (impressions.isEmpty()) {
-            return 0;
+            return List.of();
         }
-        return namedJdbcTemplate.update(MARK_DISPATCHED, params(impressions, at));
+        Set<Key> undispatched = new HashSet<>(namedJdbcTemplate.query(LOCK_UNDISPATCHED, params(impressions, at),
+                (rs, rowNum) -> new Key(uuid(rs.getBytes("serve_id")), rs.getLong("member_id"))));
+        List<PendingImpression> mine = impressions.stream()
+                .filter(impression -> undispatched.contains(new Key(impression.serveId(), impression.memberId())))
+                .toList();
+        if (!mine.isEmpty()) {
+            namedJdbcTemplate.update(MARK_DISPATCHED, params(mine, at));
+        }
+        return mine;
+    }
+
+    private record Key(UUID serveId, Long memberId) {
     }
 
     /*

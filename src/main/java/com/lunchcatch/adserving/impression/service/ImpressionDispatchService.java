@@ -7,6 +7,7 @@ import com.lunchcatch.adserving.impression.repository.ImpressionDispatchReposito
 import com.lunchcatch.adserving.impression.repository.ImpressionDispatchRepository.PendingSummary;
 import com.lunchcatch.billing.contract.DeductionOutcome;
 import com.lunchcatch.billing.contract.DeductionRequest;
+import com.lunchcatch.billing.contract.DeductionStatus;
 import com.lunchcatch.billing.contract.PointDeductor;
 import com.lunchcatch.global.config.BacklogMetrics;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -47,6 +48,12 @@ public class ImpressionDispatchService {
     static final String EXPIRED_METRIC = "adserving_impression_dispatch_expired";
     static final String DEDUCT_DURATION_METRIC = "adserving_impression_dispatch_deduct_seconds";
     static final String DEDUCT_BATCH_METRIC = "adserving_impression_dispatch_deduct_batch";
+    /*
+     * 유효 노출의 과금 판정별 수다(#1273). 꼬리표 status 는 정산의 DeductionStatus 값이다.
+     * 쿠폰 소진 뒤 도착해 정산에 넘기지 않은 노출은 ImpressionWriteBuffer 가 같은 지표에 NOT_BILLED_SOLD_OUT 으로 센다.
+     */
+    public static final String BILLING_METRIC = "adserving_impression_billing_total";
+    public static final String SOLD_OUT_STATUS = "NOT_BILLED_SOLD_OUT";
     // 공통 지표의 릴레이 이름이다. 이름별 기준을 둘 때 application.yml 의 lunchcatch.observability.targets.relay 키로 쓴다
     static final String RELAY_NAME = "adserving.impression";
 
@@ -90,6 +97,9 @@ public class ImpressionDispatchService {
         backlogMetrics.abandoned(RELAY_NAME, abandoned::get);
         // 사건이 없어도 0 으로 보이게 기동 때 만든다
         List.of(DISPATCHED_METRIC, FAILED_METRIC, ERROR_METRIC).forEach(meterRegistry::counter);
+        for (DeductionStatus status : DeductionStatus.values()) {
+            meterRegistry.counter(BILLING_METRIC, "status", status.name());
+        }
     }
 
     /*
@@ -169,21 +179,24 @@ public class ImpressionDispatchService {
             }
         }
         LocalDateTime now = LocalDateTime.now(clock);
-        int[] marked = new int[1];
-        transactions.executeWithoutResult(status -> {
-            marked[0] = impressions.markDispatched(dispatched, now);
+        List<PendingImpression> marked = transactions.execute(status -> {
+            List<PendingImpression> mine = impressions.markDispatched(dispatched, now);
             impressions.markFailed(failed, now, properties.maxAttempts());
+            return mine;
         });
-        int markedCount = marked[0];
         /*
-         * 발행 수는 실제로 표시한 행 수로 센다. 다른 서버가 먼저 표시한 노출은 그 서버가 센다(#1213).
-         * 어느 노출을 표시했는지는 행 수로 알 수 없어, 다 표시한 청크만 발행 지연을 남긴다. 겹친 청크는 먼저 표시한 서버가 남긴다.
+         * 발행 수, 발행 지연, 판정별 수는 이 서버가 표시한 노출로만 센다. 다른 서버가 먼저 표시한 노출은 그 서버가 센다(#1213).
+         * 카운터는 되돌릴 수 없어 표시가 커밋된 뒤에 올린다.
          */
-        if (markedCount == dispatched.size()) {
-            dispatched.forEach(impression -> backlogMetrics.publishDelay(RELAY_NAME,
-                    Duration.between(impression.createdAt().atZone(clock.getZone()), now.atZone(clock.getZone()))));
+        Map<UUID, DeductionStatus> statusByServeId = outcomes.stream()
+                .filter(outcome -> !outcome.failed())
+                .collect(Collectors.toMap(DeductionOutcome::serveId, DeductionOutcome::status, (first, second) -> first));
+        for (PendingImpression impression : marked) {
+            backlogMetrics.publishDelay(RELAY_NAME,
+                    Duration.between(impression.createdAt().atZone(clock.getZone()), now.atZone(clock.getZone())));
+            meterRegistry.counter(BILLING_METRIC, "status", statusByServeId.get(impression.serveId()).name()).increment();
         }
-        meterRegistry.counter(DISPATCHED_METRIC).increment(markedCount);
+        meterRegistry.counter(DISPATCHED_METRIC).increment(marked.size());
         meterRegistry.counter(FAILED_METRIC).increment(failed.size());
         return failed.isEmpty() && batch.size() == PointDeductor.MAX_BATCH_SIZE;
     }

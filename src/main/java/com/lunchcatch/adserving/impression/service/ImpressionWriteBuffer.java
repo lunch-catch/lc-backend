@@ -9,6 +9,7 @@ import com.lunchcatch.adserving.impression.repository.ImpressionLogInsert.Row;
 import com.lunchcatch.adserving.impression.repository.ImpressionLogRepository;
 import com.lunchcatch.global.config.BacklogMetrics;
 import com.lunchcatch.global.logging.LogContext;
+import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.time.Duration;
 import java.time.LocalDateTime;
@@ -70,6 +71,7 @@ public class ImpressionWriteBuffer implements SmartLifecycle {
     private final ApplicationEventPublisher publisher;
     private final TransactionTemplate transactions;
     private final MeterRegistry meterRegistry;
+    private final Counter soldOut;
 
     // 테스트가 쉬지 않게 바꾼다.
     Pause pause = Thread::sleep;
@@ -92,6 +94,8 @@ public class ImpressionWriteBuffer implements SmartLifecycle {
         backlogMetrics.worker(BACKLOG_NAME, queue::size, this::oldestReceivedAt, properties.capacity());
         // 사건이 없어도 0 으로 보이게 기동 때 만든다
         List.of(DROPPED_METRIC, WRITE_FAILED_METRIC, LOST_METRIC, CAMPAIGN_MISMATCH_METRIC).forEach(meterRegistry::counter);
+        soldOut = meterRegistry.counter(ImpressionDispatchService.BILLING_METRIC,
+                "status", ImpressionDispatchService.SOLD_OUT_STATUS);
     }
 
     // 큐의 맨 앞이 가장 오래 기다린 노출이다. 비었으면 null 이다
@@ -168,6 +172,10 @@ public class ImpressionWriteBuffer implements SmartLifecycle {
         }
         for (QueuedImpression impression : fresh) {
             counts.increment(impression.log().getBusinessDate(), impression.log().getCampaignId());
+            // 쿠폰 소진 뒤 도착한 유효 노출은 정산에 넘기지 않아 릴레이가 판정을 받지 않는다. 여기서 그 판정으로 센다(#1273)
+            if (impression.log().isSoldOut()) {
+                soldOut.increment();
+            }
             if (impression.campaignMismatch()) {
                 meterRegistry.counter(CAMPAIGN_MISMATCH_METRIC).increment();
             }
