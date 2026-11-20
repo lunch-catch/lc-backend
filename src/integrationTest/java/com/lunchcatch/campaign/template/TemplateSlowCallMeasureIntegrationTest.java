@@ -18,6 +18,7 @@ import java.net.http.HttpTimeoutException;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -27,6 +28,7 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.ScheduledExecutorService;
@@ -202,8 +204,13 @@ class TemplateSlowCallMeasureIntegrationTest extends AbstractCampaignIntegration
         }
         start.countDown();
         List<Result> results = new ArrayList<>();
-        for (Future<Result> future : futures) {
-            results.add(future.get());
+        try {
+            for (Future<Result> future : futures) {
+                results.add(future.get());
+            }
+        } finally {
+            // 한 요청이 실패해도 나머지 요청이 끝난 뒤에 tearDown 이 스텁과 데이터를 정리하게 한다.
+            awaitAll(futures);
         }
         window = null;
 
@@ -232,6 +239,19 @@ class TemplateSlowCallMeasureIntegrationTest extends AbstractCampaignIntegration
         round.sample("작업 스레드를 기다린 요청 최대", queuedMax.get());
         throttled.forEach(result -> round.sample("거절 응답 ms", result.elapsedMillis()));
         succeeded.forEach(result -> round.sample("성공 응답 ms", result.elapsedMillis()));
+    }
+
+    private static void awaitAll(List<Future<Result>> futures) {
+        for (Future<Result> future : futures) {
+            try {
+                future.get();
+            } catch (ExecutionException e) {
+                // 실패는 위에서 이미 던졌거나 던질 것이다. 여기서는 끝나기만 기다린다.
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return;
+            }
+        }
     }
 
     private Result send(String token) throws Exception {
@@ -265,13 +285,20 @@ class TemplateSlowCallMeasureIntegrationTest extends AbstractCampaignIntegration
     /*
      * 기준 구간과 생성 구간에 시작한 다른 API 호출을 회차에 담는다. Q3-2 는 생성 구간에서 시간 초과로 끝난 호출이 없는지 본다.
      * 실패 응답(2xx 가 아닌 응답)은 측정이 다른 이유로 막혔다는 뜻이라 따로 센다.
+     *
+     * 표본이 없는 구간은 시간 초과가 없다고 말할 수 없다. 200ms 간격인 목록 조회는 표본이 없으면 Q3-2 를 실패로 하고, 6.5초 간격인
+     * 로그인은 지연이 짧으면 표본이 없을 수 있어 실패로 하지 않고 표본 수와 함께 판정 불충분으로 적는다.
      */
     private void recordProbes(RoundWindows windows) {
         long timedOut = 0;
+        Map<String, Long> generationSamples = new HashMap<>();
         for (ProbeSample sample : probeSamples) {
             boolean inGeneration = sample.window().equals(windows.generation());
             if (!inGeneration && !sample.window().equals(windows.baseline())) {
                 continue;
+            }
+            if (inGeneration) {
+                generationSamples.merge(sample.api(), 1L, Long::sum);
             }
             String name = sample.api() + " " + sample.window().phase();
             if (sample.succeeded()) {
@@ -283,7 +310,13 @@ class TemplateSlowCallMeasureIntegrationTest extends AbstractCampaignIntegration
                 windows.round().count(name + " 실패 응답 " + sample.status());
             }
         }
-        windows.round().check("Q3-2", timedOut == 0, "생성 구간의 다른 API 시간 초과 " + timedOut + "건");
+        long listSamples = generationSamples.getOrDefault(LIST_API, 0L);
+        long loginSamples = generationSamples.getOrDefault(LOGIN_API, 0L);
+        windows.round().count(LIST_API + " 생성 중 표본", listSamples);
+        windows.round().count(LOGIN_API + " 생성 중 표본", loginSamples);
+        String detail = "생성 구간의 다른 API 시간 초과 " + timedOut + "건, 표본 " + LIST_API + " " + listSamples
+                + "개 " + LOGIN_API + " " + loginSamples + "개" + (loginSamples == 0 ? " (로그인은 판정 불충분)" : "");
+        windows.round().check("Q3-2", timedOut == 0 && listSamples > 0, detail);
     }
 
     private void probeList() {
