@@ -37,8 +37,8 @@ import org.springframework.web.util.ContentCachingResponseWrapper;
  * - 응답은 반드시 copyBodyToResponse()로 실제 클라이언트에게 흘려보내야 한다 — 안 하면 빈 응답이 나감.
  * - 바이너리(이미지 업로드 등)나 SSE처럼 긴 스트리밍 응답은 본문 로깅 대상에서 제외.
  *
- * MdcLoggingFilter(HIGHEST_PRECEDENCE)보다 뒤에 실행되게 순서를 한 칸 늦췄다 — traceId가 먼저 MDC에 박혀 있어야
- * 이 필터가 남기는 로그도 같은 traceId로 묶인다.
+ * MdcLoggingFilter(HIGHEST_PRECEDENCE)보다 뒤에 실행되게 순서를 한 칸 늦췄다 — trace_id가 먼저 MDC에 박혀 있어야
+ * 이 필터가 남기는 로그도 같은 trace_id로 묶인다.
  */
 @Slf4j
 @Component

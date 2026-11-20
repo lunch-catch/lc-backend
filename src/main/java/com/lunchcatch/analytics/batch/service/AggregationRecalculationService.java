@@ -59,7 +59,7 @@ public class AggregationRecalculationService {
      * 요청 표식과 감사 로그를 한 트랜잭션에 둔다. 감사 로그를 남기지 못하면 요청도 롤백된다. 배치 서버는
      * 커밋된 행만 보므로 감사 없는 재계산이 돌지 않는다.
      *
-     * 접수 로그는 요청의 traceId 아래에 영업일과 실행 행 ID 를 남긴다. 배치 서버 쪽 로그
+     * 접수 로그는 요청의 trace_id 아래에 영업일과 실행 행 ID 를 남긴다. 배치 서버 쪽 로그
      * (BATCH_MANUAL_RETRY_STARTED, ANALYTICS_DAILY_AGGREGATION_RESUMED)와 영업일로 이어 본다.
      */
     public long request(Long adminId, LocalDate businessDate) {

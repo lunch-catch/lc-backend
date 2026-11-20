@@ -401,7 +401,7 @@ class AdminLoginSecurityIntegrationTest extends AbstractAdminIntegrationTest {
                 assertThat(event.getFormattedMessage()).contains("httpStatus=")
                         .doesNotContain(PASSWORD, "password", "refreshToken", "occurredAt=", "clientIp=", "success=");
                 assertThat(event.getMDCPropertyMap()).containsEntry("clientIp", clientIp);
-                assertThat(event.getMDCPropertyMap().get("traceId")).isNotBlank();
+                assertThat(event.getMDCPropertyMap().get("trace_id")).isNotBlank();
                 assertThat(event.getThrowableProxy()).isNull();
             });
             assertThat(appender.list.get(0).getFormattedMessage())
@@ -423,7 +423,7 @@ class AdminLoginSecurityIntegrationTest extends AbstractAdminIntegrationTest {
                     .andExpect(status().isOk());
             assertThat(appender.list).singleElement().satisfies(event -> {
                 assertThat(event.getMDCPropertyMap()).containsEntry("clientIp", forwardedIp);
-                assertThat(event.getMDCPropertyMap().get("traceId")).isNotBlank();
+                assertThat(event.getMDCPropertyMap().get("trace_id")).isNotBlank();
                 assertThat(event.getFormattedMessage()).contains("event=ADMIN_LOGIN_SUCCESS", "httpStatus=200")
                         .doesNotContain("clientIp=", "198.51.100.10", forwardedIp, PASSWORD, "refreshToken");
             });

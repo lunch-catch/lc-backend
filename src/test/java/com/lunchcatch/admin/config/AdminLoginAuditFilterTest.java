@@ -131,12 +131,12 @@ class AdminLoginAuditFilterTest {
 
     @Test
     void 로그인_로그는_MDC를_유지하고_본문과_쿠키를_기록하지_않는다() throws Exception {
-        MDC.put("traceId", "admin-677-trace");
+        MDC.put("trace_id", "admin-677-trace");
         MDC.put("clientIp", "192.0.2.1");
         try {
             filter.doFilter(request, response, (req, res) -> { });
             assertThat(logs.list).singleElement().satisfies(event -> {
-                assertThat(event.getMDCPropertyMap()).containsEntry("traceId", "admin-677-trace")
+                assertThat(event.getMDCPropertyMap()).containsEntry("trace_id", "admin-677-trace")
                         .containsEntry("clientIp", "192.0.2.1");
                 assertThat(event.getThrowableProxy()).isNull();
                 assertThat(event.getFormattedMessage()).doesNotContain("Sensitive", "occurredAt=", "clientIp=");
@@ -148,16 +148,16 @@ class AdminLoginAuditFilterTest {
     @Test
     void 공유_해석기로_정한_IP를_기록한_뒤_기존_MDC를_복원한다() throws Exception {
         MDC.put("clientIp", "198.51.100.30");
-        MDC.put("traceId", "existing-trace");
+        MDC.put("trace_id", "existing-trace");
         request.addHeader("X-Forwarded-For", "198.51.100.10, 203.0.113.20");
 
         filter.doFilter(request, response, (req, res) -> { });
 
         assertThat(logs.list).singleElement().satisfies(event ->
                 assertThat(event.getMDCPropertyMap()).containsEntry("clientIp", "203.0.113.20")
-                        .containsEntry("traceId", "existing-trace"));
+                        .containsEntry("trace_id", "existing-trace"));
         assertThat(MDC.get("clientIp")).isEqualTo("198.51.100.30");
-        assertThat(MDC.get("traceId")).isEqualTo("existing-trace");
+        assertThat(MDC.get("trace_id")).isEqualTo("existing-trace");
     }
 
     @Test

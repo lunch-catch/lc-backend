@@ -68,12 +68,15 @@ form-urlencoded 바디를 따로 잡는 이유는 JSON 패턴이 `password=1234&
 (2000자)보다 넉넉히 잡은 이유는 한글이 UTF-8 에서 글자당 최대 3바이트라서다. 바이트 한도를 글자 수와
 같게 잡으면 남기기도 전에 글자가 중간에 잘린다.
 
-## 4. traceId 가 정식 분산 추적이 아닌 이유
+## 4. trace_id 하나로 로그를 묶는 이유
 
-`MdcLoggingFilter` 의 `traceId` 는 요청을 받을 때 만든 문자열 하나를 MDC 에 넣는 간이 구현이다.
+로그의 요청 ID 는 `trace_id` 하나다. 에이전트가 붙어 그 요청이나 실행의 트레이스가 열려 있으면 그 트레이스의 ID 를 쓰고(`AgentTrace`), 없으면 앱이 만든다.
+키 이름과 값을 에이전트와 같게 두어, 에이전트가 있으면 로그의 `trace_id` 로 Grafana 에서 트레이스까지 넘어간다.
+
+에이전트가 없을 때 `MdcLoggingFilter` 와 `LogContext` 가 만드는 값은 요청을 받을 때 만든 문자열 하나를 MDC 에 넣는 간이 구현이다.
 OpenTelemetry 같은 분산 추적이 아니라서 span 의 부모 자식 관계도, HTTP, DB, Redis 호출의 자동
 계측도 없다. 이 서비스는 모놀리스 하나이고 서비스 경계를 넘는 호출은 카카오와 토스뿐이다. 두
-외부 서비스는 우리 헤더를 이어받지 않는다. 그래서 지금 `traceId` 는 한 프로세스 안에서 요청 한 건의
+외부 서비스는 우리 헤더를 이어받지 않는다. 그래서 그때의 `trace_id` 는 한 프로세스 안에서 요청 한 건의
 로그를 묶는 데 쓰인다. 그것만으로도 접근 로그와 이벤트 로그를 잇고, 업무 식별자가 정해지기 전의
 로그까지 묶는다.
 
@@ -86,13 +89,11 @@ MDC 는 스레드에 붙지만 Reactor `Context` 는 구독에 붙는다. Reacto
 동기 호출하는 동안은 스레드가 바뀌지 않아 문제가 없다" 고 적었는데 틀린 설명이다. `.block()` 은 호출한
 스레드가 결과를 기다릴 뿐이다. `ExternalApiLoggingExchangeFilterTest` 로 확인한 결과 `doOnNext` 와
 `doOnError` 는 응답 Publisher 가 신호를 보낸 스레드에서 실행됐다. 요청 스레드에서 신호를 보내면 MDC 가
-남았고 다른 스레드에서 보내면 `traceId` 가 빠졌다. 실제 WebClient 요청의 콜백이 항상 Reactor Netty
+남았고 다른 스레드에서 보내면 `trace_id` 가 빠졌다. 실제 WebClient 요청의 콜백이 항상 Reactor Netty
 이벤트 루프에서 돈다고 단정하지 않는다. 이 저장소에는 Reactor 컨텍스트와 MDC 를 잇는 장치가 없다.
 
-부하 시험의 진단 회차에서는 앱에 OpenTelemetry Java 에이전트를 붙인다. 에이전트는 스팬이 열린
-스레드의 MDC 에 `trace_id` 를 넣고, 운영 프로필의 인코더가 그 값을 로그 필드로 낸다. 그래서 그 회차의
-요청 로그에는 `traceId` 와 `trace_id` 가 함께 찍힌다. 두 값은 따로 만들어져 서로 이어지지 않는다.
-로그에서 트레이스로 넘어갈 때는 `trace_id` 를 쓴다. 에이전트를 붙이지 않은 환경에는 `trace_id` 가 없다.
+에이전트도 스팬이 열린 스레드의 로그에 `trace_id` 를 넣는다. 앱이 같은 키에 같은 값을 넣으므로 두 값이 갈리지 않는다.
+전에는 앱이 `traceId` 를 따로 만들어, 에이전트를 붙인 환경의 요청 로그에 서로 이어지지 않는 두 값이 함께 찍혔다.
 언제 에이전트를 붙이고 무엇을 트레이싱하는지는
 [트레이싱과 프로파일링 설계](../observability/트레이싱과_프로파일링_설계.md) 가 갖는다.
 
@@ -186,9 +187,9 @@ Tomcat 의 Remote IP Valve 에 맡기는 방법도 있다. 이 Valve 는 신뢰�
 `LogbackPatternTest` 는 이스케이프하지 않으면 뒤의 메시지가 출력되지 않고 이스케이프하면 출력되는 것을
 현재 Logback 버전에서 확인한다. 지금 패턴은 괄호 없이 쓴다.
 
-`logback-spring.xml` 주석은 `%X{traceId:-}` 같은 기본값 문법이 Log4j2 전용이라 Logback 이 지원하지 않는다고
+`logback-spring.xml` 주석은 `%X{trace_id:-}` 같은 기본값 문법이 Log4j2 전용이라 Logback 이 지원하지 않는다고
 적는다. 1판도 이 설명을 옮겨 적었는데 틀렸다. Logback 의 `%X{key:-default}` 는 값이 없을 때 기본값을
-출력한다.[R2] `LogbackPatternTest` 도 같은 동작을 확인한다. 지금 패턴은 기본값 없이 `%X{traceId}` 를
+출력한다.[R2] `LogbackPatternTest` 도 같은 동작을 확인한다. 지금 패턴은 기본값 없이 `%X{trace_id}` 를
 써서 값이 없으면 빈 문자열이 찍힌다. 이 선택은 그대로 두고 주석만 고친다.
 
 로컬의 루트 레벨이 DEBUG 인 이유는 접근 로그 필터가 정상 응답의 바디를 DEBUG 에서만 남기기 때문이다.
@@ -334,7 +335,7 @@ Logback 1.5.32, Reactor Core 3.8.4, Tomcat 11.0.20, logstash-logback-encoder 8.0
 | R1 | 직접 | [Logback AsyncAppender](https://logback.qos.ch/manual/appenders-async-sift.html) | 큐가 차면 이벤트를 버리는 조건과 `discardingThreshold`, `maxFlushTime` 의 뜻. `maxFlushTime` 의 기본값은 매뉴얼에 없다. 매뉴얼에 버전 고정 주소가 없다 | 예 |
 | R2 | 직접 | [Logback PatternLayout](https://logback.qos.ch/manual/layouts.html) | `%F` 의 비용, 리터럴 괄호 이스케이프, `%X{key:-default}`. `LogbackPatternTest` 가 1.5.32 에서 같은 결과를 낸다 | 예 |
 | R3 | 직접 | [`ShortenedThrowableConverter` 8.0](https://github.com/logfellow/logstash-logback-encoder/blob/logstash-logback-encoder-8.0/src/main/java/net/logstash/logback/stacktrace/ShortenedThrowableConverter.java) | 프레임 줄이기와 예외 메시지를 그대로 출력하는 동작 | 예 |
-| R4 | 조건부 | [Reactor FAQ, MDC](https://projectreactor.io/docs/core/3.8.4/reference/faq.html#faq.mdc) | MDC 가 스레드에 붙고 Reactor 컨텍스트는 구독에 붙는다. 이 저장소에서 `traceId` 가 빠지는지는 콜백 스레드에 달려 있어 테스트로 가른다 | 예 |
+| R4 | 조건부 | [Reactor FAQ, MDC](https://projectreactor.io/docs/core/3.8.4/reference/faq.html#faq.mdc) | MDC 가 스레드에 붙고 Reactor 컨텍스트는 구독에 붙는다. 이 저장소에서 `trace_id` 가 빠지는지는 콜백 스레드에 달려 있어 테스트로 가른다 | 예 |
 | R5 | 직접 | [Reactor 스케줄러](https://projectreactor.io/docs/core/3.8.4/reference/coreFeatures/schedulers.html) | 스케줄러를 바꾸면 실행 스레드가 바뀐다 | 예 |
 | R6 | 직접 | [Spring `TaskUtils` 7.0.6](https://github.com/spring-projects/spring-framework/blob/v7.0.6/spring-context/src/main/java/org/springframework/scheduling/support/TaskUtils.java) | 반복 작업의 기본 오류 처리기가 `Unexpected error occurred in scheduled task` 로 스택을 남긴다 | 예 |
 | R7 | 조건부 | [`ThreadPoolTaskScheduler` 7.0.6](https://docs.spring.io/spring-framework/docs/7.0.6/javadoc-api/org/springframework/scheduling/concurrent/ThreadPoolTaskScheduler.html) | 오류 처리기를 따로 두지 않았을 때의 기본 처리. 이 저장소의 실제 스케줄러 빈 구성은 확인하지 않았다 | 예 |

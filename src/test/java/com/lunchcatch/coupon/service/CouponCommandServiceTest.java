@@ -325,22 +325,22 @@ class CouponCommandServiceTest {
         when(batcher.submit(any(), anyLong()))
                 .thenReturn(CompletableFuture.failedFuture(rejection))
                 .thenAnswer(invocation -> {
-                    retryTrace.set(MDC.get("traceId"));
+                    retryTrace.set(MDC.get("trace_id"));
                     return CompletableFuture.completedFuture(new CouponIssuanceResult(response, false));
                 });
         when(sequenceService.needsRecovery(81L)).thenReturn(true);
         when(sequenceRecoveryService.recover(eq(81L), anyLong())).thenAnswer(invocation -> {
-            recoveryTrace.set(MDC.get("traceId"));
+            recoveryTrace.set(MDC.get("trace_id"));
             return true;
         });
         try {
-            MDC.put("traceId", "request-trace");
+            MDC.put("trace_id", "request-trace");
 
             assertThat(service.issueAsync(MEMBER_ID, 81L).get(2, TimeUnit.SECONDS)).isEqualTo(response);
 
             assertThat(recoveryTrace.get()).isEqualTo("request-trace");
             assertThat(retryTrace.get()).isEqualTo("request-trace");
-            assertThat(MDC.get("traceId")).isEqualTo("request-trace");
+            assertThat(MDC.get("trace_id")).isEqualTo("request-trace");
             verify(issuanceMetrics).record(null);
             org.mockito.Mockito.verifyNoMoreInteractions(issuanceMetrics);
         } finally {

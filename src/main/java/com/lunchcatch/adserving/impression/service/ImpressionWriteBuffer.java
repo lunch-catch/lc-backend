@@ -238,8 +238,8 @@ public class ImpressionWriteBuffer implements SmartLifecycle {
     }
 
     /*
-     * 다시 쓰기까지 묶음 하나를 한 문맥으로 둔다. 같은 묶음의 실패와 성공 로그가 한 traceId 로 묶인다.
-     * 예상 밖의 예외도 문맥 안에서 남긴다. 바깥의 runWorker 로 넘기면 문맥이 닫힌 뒤라 그 로그에 traceId 가 없다.
+     * 다시 쓰기까지 묶음 하나를 한 문맥으로 둔다. 같은 묶음의 실패와 성공 로그가 한 trace_id 로 묶인다.
+     * 예상 밖의 예외도 문맥 안에서 남긴다. 바깥의 runWorker 로 넘기면 문맥이 닫힌 뒤라 그 로그에 trace_id 가 없다.
      */
     private void writeUntilDone(List<QueuedImpression> batch) throws InterruptedException {
         try (LogContext.Scope ignored = LogContext.open(WORKER_NAME)) {
