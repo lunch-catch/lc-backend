@@ -229,7 +229,7 @@ GET /v1/admin/sales?period=MONTHLY&from=2026-07-01&to=2026-09-30
 | 필드 | 의미 | 합산 |
 | --- | --- | --- |
 | `chargeAmount` | 충전액 | 합계 |
-| `spentAmount` | 소진액 = 광고 매출. 과거 과금의 정정은 정정 대상 영업일에 붙고 정정이 그날 차감보다 크면 음수일 수 있다. `DEDUCT` 합에서 과오 차감 정정인 양수 `ADJUST` 합을 뺀다. billing의 점주별 합계와 같은 정의다 | 합계 |
+| `spentAmount` | 소진액 = 광고 매출. 과거 과금의 정정은 정정 대상 영업일에 붙고 정정이 그날 차감보다 크면 음수일 수 있다. 판정의 `BILLED` 단가 합에서 과오 차감 정정인 양수 `ADJUST` 합을 뺀다. billing의 점주별 합계와 같은 정의다 | 합계 |
 | `refundAmount` | 환불액 | 합계 |
 | `adjustAmount` | 조정액 (±) | 합계 |
 | `unspentBalance` | **미소진 잔액 합계**. 플랫폼이 앞으로 이행해야 할 잔액 | 마지막 날 |
@@ -238,7 +238,7 @@ GET /v1/admin/sales?period=MONTHLY&from=2026-07-01&to=2026-09-30
 - **점주별 일·주·월 합계는 이 응답에 없다.** 관리자용 점주별 충전·사용·예약·해제·환불·조정 기간 합계는 billing의 `GET /v1/admin/point-ledger/summary`가 맡는다.
 - **`ledgerMismatchCount`는 이 응답에 없다.** 화면이 billing의 대사 불일치 조회를 따로 불러 `totalElements`를 쓴다.
 - `reservedAmount`·`releasedAmount`는 내려주지 않는다. 요구사항이 예약·해제를 표시하지 않고 해당 요구사항 필수 데이터에도 없다.
-- `unspentBalance`는 그날 말까지의 원장에서 `CHARGE − REFUND + ADJUST − DEDUCT`를 누적해 계산한다. 예약과 해제는 잔액과 예약 사이를 오갈 뿐이라 서로 지워진다.
+- `unspentBalance`는 그날 말까지 기록된 원장의 `CHARGE − REFUND + ADJUST` 누적에서 같은 때까지 기록된 판정 `BILLED` 단가 합을 빼서 계산한다. 예약과 해제는 잔액과 예약 사이를 오갈 뿐이라 서로 지워진다.
 
 ---
 

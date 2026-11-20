@@ -60,7 +60,7 @@
 | 항목 | 규약 |
 | --- | --- |
 | 금액 | 정수. **1원 = 1포인트.** 음수는 원장 변동에서만 쓴다 |
-| 잔액 | **저장하지 않는다.** 항상 원장에서 계산한다. `DEDUCT`가 아닌 행의 `SUM(amount)`이다. **`DEDUCT`는 제외한다** (소진분은 `RESERVE`에서 이미 빠져 있어 또 빼면 이중 차감, 요구사항 명세서 `비즈니스 규칙` 시트 16행). 캐시로 대신 내려주지 않는다(FR-047 예외). V51의 `CHARGE − RESERVE + RELEASE − REFUND + ADJUST`는 크기 기준 표기다. 원장은 부호를 포함해 저장하므로(`RESERVE`·`REFUND`는 음수) 그 식을 그대로 구현하면 부호가 뒤집힌다 |
+| 잔액 | **저장하지 않는다.** 항상 원장에서 계산한다. 원장의 `SUM(amount)`이다. 원장에는 노출마다의 `DEDUCT` 를 쓰지 않고 **전환 전에 남은 `DEDUCT` 행은 제외한다** (소진분은 `RESERVE`에서 이미 빠져 있어 또 빼면 이중 차감, 요구사항 명세서 `비즈니스 규칙` 시트 16행). 캐시로 대신 내려주지 않는다(FR-047 예외). V51의 `CHARGE − RESERVE + RELEASE − REFUND + ADJUST`는 크기 기준 표기다. 원장은 부호를 포함해 저장하므로(`RESERVE`·`REFUND`는 음수) 그 식을 그대로 구현하면 부호가 뒤집힌다 |
 | 영업일 | KST 기준, 00:00에 바뀐다. `business_date`는 서버가 `Asia/Seoul` 기준으로 계산해 넣고 **DB 날짜 함수를 쓰지 않는다**(요구사항 명세서 비기능 시트 42행) |
 | 오류 코드 | `BILLING-xxx`. 이 문서가 소유한다 |
 | 충전 요청 상한 | 점주마다 주문 생성(`POST /v1/owner/payments`)과 승인 확정(`:confirm`)을 합쳐 **10초에 3회**까지 받는다. 넘으면 `429 BILLING-024`이고 `Retry-After`에 다시 요청할 수 있을 때까지 남은 초를 준다. 결제 상태 조회와 내역은 세지 않는다. 점주 상태 검사보다 먼저 세므로 상한을 넘은 요청은 `403`이 아니라 `429`다 |
@@ -71,7 +71,7 @@
 | --- | --- | --- |
 | `CHARGE` | + | 결제가 `APPROVED`로 확정될 때만. 결제당 1건 |
 | `RESERVE` | − | 00:00에 그날 쓸 포인트를 캠페인 몫으로 배정, 또는 충전 직후 재예약 |
-| `DEDUCT` | − | 과금(`BILLED`) 노출 1건당 1행. 그날 예약액 안에서만 발생 |
+| `DEDUCT` | − | **쓰지 않는다.** 과금(`BILLED`) 노출의 소진은 판정 기록(`deduction_result`)이 갖는다. 전환 전에 쓴 행만 남고 어느 조회도 읽지 않는다(#1287) |
 | `RELEASE` | + | 다음 날 00:00에 전날 미소진 예약분을 잔액으로 반환 |
 | `REFUND` | − | 점주 환불 승인 시 |
 | `ADJUST` | ± | 관리자 수동 조정. 사유 필수, `source=MANUAL` 고정 |
@@ -295,8 +295,8 @@ PG 서버가 부르는 서버 간 경로라 **프론트는 부르지 않는다.*
 
 | 필드 | 계산 |
 | --- | --- |
-| `balance` | 원장 `SUM(amount)` (**`DEDUCT` 행 제외**, 부호를 포함한 저장값을 그대로 더한다) |
-| `reservedPoint` | 예약 중 포인트 = 오늘 영업일 `RESERVE` 합 − `DEDUCT` 합 − `RELEASE` 합(절댓값 기준, 0 미만이면 0). 해제는 다음 날 00:00이라 오늘 예약분은 하루 종일 여기 남는다. 해제된 몫은 `balance`로 넘어가 이중 계산되지 않는다 |
+| `balance` | 원장 `SUM(amount)` (**전환 전에 남은 `DEDUCT` 행 제외**, 부호를 포함한 저장값을 그대로 더한다) |
+| `reservedPoint` | 예약 중 포인트 = 오늘 영업일 `RESERVE` 합 − 판정의 `BILLED` 단가 합 − `RELEASE` 합(절댓값 기준, 0 미만이면 0). 해제는 다음 날 00:00이라 오늘 예약분은 하루 종일 여기 남는다. 해제된 몫은 `balance`로 넘어가 이중 계산되지 않는다 |
 | `unspentTotal` | `balance + reservedPoint` |
 
 **원장 조회가 실패하면 잔액 대신 `503 BILLING-006`을 내려준다.** 캐시된 값으로 대신 표시하지 않는다(FR-047 예외).
@@ -334,7 +334,7 @@ GET /v1/owner/points/ledger?type=&from=&to=&campaignId=&pageToken=&pageSize=20
 }
 ```
 
-- **`DEDUCT`는 이 목록에 내려주지 않는다.** 노출당 1행이라 초당 최대 1만 건이 쌓인다. 차감은 소진 집계로 본다.
+- **`DEDUCT`는 이 목록에 내려주지 않는다.** 원장에 노출마다의 `DEDUCT` 를 쓰지 않고 전환 전에 남은 행도 내리지 않는다. 차감은 소진 집계로 본다.
 - **`RESERVE`와 `RELEASE`는 별도 유형으로 구분해 표시한다.** FR-047 세부가 "사후 조사로 과오 차감을 되돌린 금액은 조정(`ADJUST`), 예약 해제는 `RELEASE`로 별도 유형으로 표시"를 요구한다. `RELEASE`의 `createdAt`은 보통 다음 날 00:00 직후다. `businessDate`는 해제한 전날이다.
 - `serveId`와 변동 전·후 잔액은 점주에게 내리지 않는다. 관리자 포인트 변동 조회 전용이다.
 
@@ -362,7 +362,7 @@ GET /v1/owner/points/spend-summary?groupBy=DAY&from=2026-09-24&to=2026-09-30&cam
 }
 ```
 
-`spentPoint`는 그 캠페인·영업일의 `DEDUCT` 합 절댓값, `reservedPoint`는 같은 날 `RESERVE` 합이다. 집계 테이블이 아니라 원장에서 계산하므로 `from`~`to`는 **최대 31일**로 제한한다.
+`spentPoint`는 그 캠페인·영업일의 판정 `BILLED` 단가 합, `reservedPoint`는 같은 날 `RESERVE` 합이다. 집계 테이블이 아니라 원장과 판정에서 계산하므로 `from`~`to`는 **최대 31일**로 제한한다.
 
 `spentPoint`는 그날 예산에서 집행된 금액이고 과오 차감 정정(양수 `ADJUST`)을 빼지 않는다. 정정은 그날 예산이 아니라 점주 잔액으로 돌아가기 때문이다. 정정을 뺀 광고 비용은 `analytics-api-spec.md` 캠페인 리포트의 `spentAmount`(= `chargedAmount − refundedAmount`)다. 그래서 같은 캠페인·날짜라도 정정이 있으면 두 값이 정정액만큼 다르다. 화면은 이 값을 "집행액", 리포트 값을 "광고 비용"처럼 다른 이름으로 보여 준다.
 
@@ -494,8 +494,8 @@ GET /v1/admin/point-ledger?ownerId=7&from=2026-09-01&to=2026-09-30&pageSize=20&s
 
 | 파라미터 | 필수 | 뜻 |
 | --- | --- | --- |
-| `from`, `to` | **예** | `created_at` 기준 기간(KST, 양끝 포함). **최대 31일**, 초과·역전은 `400`. `DEDUCT`가 노출당 1행이라 기간 없이 열 수 없다 |
-| `type` | 아니오 | 원장 유형 |
+| `from`, `to` | **예** | `created_at` 기준 기간(KST, 양끝 포함). **최대 31일**, 초과·역전은 `400`. 원장이 계속 쌓이는 표라 기간 없이 열지 않는다 |
+| `type` | 아니오 | 원장 유형. `DEDUCT` 를 주면 빈 목록이다(400 이 아니다). 원장에 노출마다의 `DEDUCT` 를 쓰지 않고 전환 전에 남은 행도 내리지 않는다 |
 | `campaignId` | 아니오 | 캠페인 |
 | `pageToken` | 아니오 | 이전 응답의 `nextPageToken`을 그대로 보낸다. 생략하거나 비우면 첫 페이지다 |
 | `pageSize` | 아니오 | 기본 20, 최대 100. 1 미만이면 20으로 보정하고 100을 넘으면 100으로 보정한다 |
@@ -527,9 +527,9 @@ GET /v1/admin/point-ledger?ownerId=7&from=2026-09-01&to=2026-09-30&pageSize=20&s
 }
 ```
 
-- **`balanceBefore`·`balanceAfter`는 저장값이 아니다.** `(created_at, point_ledger_id)` 순서로 그 점주의 누적을 계산해 표시한다(**`DEDUCT` 제외**, 잔액 공식과 동일). `DEDUCT` 행의 변동 전·후 잔액은 직전 값을 그대로 둔다.
-- FR-021 필수 데이터는 점주 ID, 원장 유형, 변동 전 잔액, 변동 금액, 변동 후 잔액, 일시다. 선택 데이터는 `campaignId`, `serveId`, PG 거래 ID(`pgTid`, `payment_id`로 조인)다.
-- 유형은 여섯 가지 전부를 조회하고 표시한다. FR-021 세부의 "예약/예약해제는 표시하지 않음"은 따르지 않는다. 관리자 화면이라 예약과 해제를 봐야 하고, 이 둘을 숨기면 변동 전·후 잔액이 이어지지 않는다. 점주용 FR-047은 `RESERVE`·`RELEASE`를 점주에게 보이되 `DEDUCT`는 내리지 않는다. 이 부분은 FR-021과 다르다. V51 xlsx는 고치지 않으며 **이 문서가 기준이다**.
+- **`balanceBefore`·`balanceAfter`는 저장값이 아니다.** `(created_at, point_ledger_id)` 순서로 그 점주의 누적을 계산해 표시한다(**전환 전에 남은 `DEDUCT` 행 제외**, 잔액 공식과 동일).
+- FR-021 필수 데이터는 점주 ID, 원장 유형, 변동 전 잔액, 변동 금액, 변동 후 잔액, 일시다. 선택 데이터는 `campaignId`, `serveId`, PG 거래 ID(`pgTid`, `payment_id`로 조인)다. `serveId` 는 `DEDUCT` 행에만 값이 있었으므로 이제 항상 `null` 이다. 응답 모양을 지키려고 필드는 남긴다.
+- 유형은 `DEDUCT` 를 뺀 다섯 가지(`CHARGE`, `RESERVE`, `RELEASE`, `REFUND`, `ADJUST`)를 조회하고 표시한다. 소진은 `RESERVE` 와 `RELEASE` 한 쌍과 기간별 합계의 `spentAmount` 로 읽는다. FR-021 세부의 "예약/예약해제는 표시하지 않음"은 따르지 않는다. 관리자 화면이라 예약과 해제를 봐야 하고, 이 둘을 숨기면 변동 전·후 잔액이 이어지지 않는다. 점주용 FR-047은 `RESERVE`·`RELEASE`를 점주에게 보이되 `DEDUCT`는 내리지 않는다. 이 부분은 FR-021과 다르다. V51 xlsx는 고치지 않으며 **이 문서가 기준이다**.
 - FR-021 세부의 기간별(일/주/월) 합계는 원장을 직접 읽어야 하므로 `analytics-api-spec.md`가 아니라 이 문서의 `GET /v1/admin/point-ledger/summary`가 맡는다(정산 테이블은 정산만 읽는다, [도메인 구조와 의존성 설계](../architecture/런치캐치_도메인_구조와_의존성_설계.md)의 규칙 4). 플랫폼 전체 합계는 계속 `analytics-api-spec.md` A-07이다.
 - 변동 전·후 잔액 계산은 커서 전환 뒤에도 유지한다.
 
@@ -571,7 +571,7 @@ GET /v1/admin/point-ledger/summary?ownerId=7&period=DAILY&from=2026-09-01&to=202
 | 필드 | 뜻 | 원장에서 |
 | --- | --- | --- |
 | `chargeAmount` | 충전액 | `CHARGE` 합 |
-| `spentAmount` | 소진액 | `DEDUCT` 합의 절댓값 − 과오 차감 정정(양수 `ADJUST`) 합. 양수 `ADJUST`는 모두 정정으로 본다. 요구사항 명세서 `비즈니스 규칙` 시트 16행과 `analytics-api-spec.md` A-07의 `spentAmount`와 같은 정의다 |
+| `spentAmount` | 소진액 | 판정의 `BILLED` 단가 합 − 과오 차감 정정(양수 `ADJUST`) 합. 양수 `ADJUST`는 모두 정정으로 본다. 요구사항 명세서 `비즈니스 규칙` 시트 16행과 `analytics-api-spec.md` A-07의 `spentAmount`와 같은 정의다 |
 | `reservedAmount` | 예약액 | `RESERVE` 합의 절댓값 |
 | `releasedAmount` | 예약 해제액 | `RELEASE` 합 |
 | `refundAmount` | 환불액 | `REFUND` 합의 절댓값 |
@@ -583,8 +583,8 @@ GET /v1/admin/point-ledger/summary?ownerId=7&period=DAILY&from=2026-09-01&to=202
 
 ### 계산 규칙
 
-- **날짜 귀속:** `RESERVE`·`RELEASE`는 원장의 영업일 구간에, 소진(`DEDUCT`)은 판정 기록(`deduction_result`)의 서빙 영업일 구간에, `CHARGE`·`REFUND`는 기록된 시각의 KST 날짜 구간에, `ADJUST`는 정정 대상 영업일 구간(없으면 기록된 시각의 KST 날짜 구간)에 들어간다. 자정 뒤에 기록된 전날 노출의 차감도 전날 구간에 들어간다.
-- `spentAmount`는 `DEDUCT`에서 읽으므로 00:00 해제가 실패하거나 아직 돌지 않은 영업일에도 예약 전체가 아니라 실제 소진만 보인다. 이때 `reservedAmount`는 예약액 그대로이고 `releasedAmount`는 0이다.
+- **날짜 귀속:** `RESERVE`·`RELEASE`는 원장의 영업일 구간에, 소진(판정의 `BILLED` 단가 합)은 판정 기록(`deduction_result`)의 서빙 영업일 구간에, `CHARGE`·`REFUND`는 기록된 시각의 KST 날짜 구간에, `ADJUST`는 정정 대상 영업일 구간(없으면 기록된 시각의 KST 날짜 구간)에 들어간다. 자정 뒤에 기록된 전날 노출의 차감도 전날 구간에 들어간다.
+- `spentAmount`는 판정에서 읽으므로 00:00 해제가 실패하거나 아직 돌지 않은 영업일에도 예약 전체가 아니라 실제 소진만 보인다. 이때 `reservedAmount`는 예약액 그대로이고 `releasedAmount`는 0이다.
 
 서버가 원장에서 이 합계를 계산하는 방법은 [billing API 설계](../design/billing/billing-api-design.md#get-v1adminpoint-ledgersummary)에 있다.
 
@@ -727,7 +727,7 @@ GET /v1/admin/point-policy/history?page=0&size=20
 | --- | --- |
 | `PG_VS_CHARGE` | `expectedValue`(PG가 승인한 금액)에서 그 결제가 `ownerId`에게 남긴 `CHARGE` 금액(없으면 0)을 뺀 값과 같아야 한다. 승인되지 않은 결제의 `CHARGE`는 음수로 회수한다. 캠페인과 무관한 돈이라 `campaignId`를 보낼 수 없다 |
 | `CAMPAIGN_OVERSPEND` | 0보다 크고 그 건의 초과액(`actualValue - expectedValue`) 이하여야 한다. 초과액을 전부 돌려줄지는 정책이라 일치를 요구하지 않는다. 덜 걷은 광고비는 회수하지 않아 음수는 받지 않는다 |
-| `CAMPAIGN_SPEND_VS_LEDGER` | 받지 않는다. 원장과 카운터의 차이는 어느 방향이든 정정액이 아니다. [조정 없는 종결](#post-v1adminsettlement-mismatchesmismatchidclosewithoutadjustment)로 닫는다 |
+| `CAMPAIGN_SPEND_VS_LEDGER` | 받지 않는다. 판정과 카운터의 차이는 어느 방향이든 정정액이 아니다. [조정 없는 종결](#post-v1adminsettlement-mismatchesmismatchidclosewithoutadjustment)로 닫는다 |
 
 `diff`는 조정액이 아니다. 화면은 `diff`를 금액 칸에 미리 채우지 않는다.
 
@@ -748,7 +748,7 @@ GET /v1/admin/point-policy/history?page=0&size=20
 | `amount` | 예 | 0이 아닌 정수. 양수면 잔액 증가 | `point_ledger.amount` |
 | `reason` | 예 | 사유. 비어 있으면 `400`(DB CHECK로도 막는다) | `point_ledger.reason` |
 | `campaignId` | 아니오 | 어느 캠페인의 정정인지 남긴다. 정산 안의 계산(00:00 해제, 대사, 진행률, 점주 소진 요약)에는 넣지 않고, `analytics-api-spec.md` 캠페인 리포트의 `refundedAmount`에는 들어간다. `mismatchId`가 `CAMPAIGN_OVERSPEND` 건이면 **필수**이고 그 건의 대상 캠페인과 같아야 한다. `PG_VS_CHARGE` 건이면 보낼 수 없고 `mismatchId`가 없으면 선택이다. 보내면 `targetBusinessDate`도 보내야 한다 | `point_ledger.campaign_id` |
-| `targetBusinessDate` | 조건부 | 정정이 가리키는 원래 영업일(`YYYY-MM-DD`). `campaignId`를 보내면 **필수**이고 보내지 않으면 보낼 수 없다. 오늘(KST) 이후면 `400`. 캠페인 대상 대사 건을 닫을 때는 그 건의 `businessDate`와 같아야 한다. 분석의 소진액(`DEDUCT` 합 − 양수 `ADJUST` 합)에서 이 정정은 기록한 날이 아니라 이 영업일에 붙는다. 과거 하한과 그 영업일의 예산 계획 존재는 검사하지 않는다 | `point_ledger.adjust_target_date` |
+| `targetBusinessDate` | 조건부 | 정정이 가리키는 원래 영업일(`YYYY-MM-DD`). `campaignId`를 보내면 **필수**이고 보내지 않으면 보낼 수 없다. 오늘(KST) 이후면 `400`. 캠페인 대상 대사 건을 닫을 때는 그 건의 `businessDate`와 같아야 한다. 분석의 소진액(판정의 `BILLED` 단가 합 − 양수 `ADJUST` 합)에서 이 정정은 기록한 날이 아니라 이 영업일에 붙는다. 과거 하한과 그 영업일의 예산 계획 존재는 검사하지 않는다 | `point_ledger.adjust_target_date` |
 | `mismatchId` | 아니오 | 대사 불일치 건. 있으면 그 건의 `resolution_type`을 `MANUAL_ADJUSTMENT`로 닫는다. 그 건이 `ownerId`의 것인지 확인한다. `PG_VS_CHARGE`는 대상 결제의 점주, 캠페인 대상 건은 대상 캠페인의 점주와 견준다. 조정액은 위 표를 따라야 한다. 없으면 `404 BILLING-020`, 이미 해결됐으면 `409 BILLING-021`, 다른 점주의 건이면 `409 BILLING-022`다 | 원장에 저장하지 않는다. 감사 로그에 남긴다 |
 
 ### 멱등
@@ -808,14 +808,14 @@ GET /v1/admin/settlement-mismatches?checkType=&resolved=false&from=&to=&page=0&s
 }
 ```
 
-- `checkType`은 `PG_VS_CHARGE` / `CAMPAIGN_SPEND_VS_LEDGER` / `CAMPAIGN_OVERSPEND` 3종이다. `CAMPAIGN_OVERSPEND`는 캠페인의 그날 원장 `DEDUCT` 합이 그날 예약액을 넘은 건이고 `targetId`는 캠페인 ID, `expectedValue`는 예약액, `actualValue`는 `DEDUCT` 합이다. V5. 해제가 끝난 날은 `DEDUCT` 합과 `RELEASE` 합의 합이다.
+- `checkType`은 `PG_VS_CHARGE` / `CAMPAIGN_SPEND_VS_LEDGER` / `CAMPAIGN_OVERSPEND` 3종이다. `CAMPAIGN_OVERSPEND`는 캠페인의 그날 판정 `BILLED` 단가 합이 그날 예약액을 넘은 건이고 `targetId`는 캠페인 ID, `expectedValue`는 예약액, `actualValue`는 `BILLED` 단가 합이다. V5. 해제가 끝난 날은 `BILLED` 단가 합과 `RELEASE` 합의 합이다. `CAMPAIGN_SPEND_VS_LEDGER` 는 소진 카운터와 판정 `BILLED` 단가 합의 대조다. 원장 `DEDUCT` 와 대조하던 때의 이름을 그대로 쓴다(#1287).
 - `targetId`는 `checkType`에 따라 결제 ID 또는 캠페인 ID다. `diff`는 `actualValue - expectedValue`로 계산한다.
 - `ownerId`는 `targetId`가 가리키는 결제나 캠페인의 점주 ID다. 포인트 수동 조정으로 그 건을 닫을 때 `ownerId`에 그대로 넣는다. 대상을 찾지 못하면 `null`이다.
 - `resolved=false`는 `resolution_type`이 `NULL`인 미해결 건이다. `resolutionType`은 아래 넷 중 하나다.
 
 | `resolutionType` | 닫은 주체 | 뜻 | `resolvedBy` |
 | --- | --- | --- | --- |
-| `CACHE_REBUILD` | 배치 | 카운터를 원장 기준으로 다시 만들었다 | `null` |
+| `CACHE_REBUILD` | 배치 | 카운터를 판정 기준으로 다시 만들었다 | `null` |
 | `LEDGER_CORRECTION` | 배치 | 빠진 `CHARGE`를 보정 기록했다 | `null` |
 | `MANUAL_ADJUSTMENT` | 관리자 | 포인트 수동 조정(양수나 음수)으로 금액을 바로잡았다. 포인트 수동 조정의 `mismatchId`로 닫는다 | 관리자 ID |
 | `NO_ADJUSTMENT_REQUIRED` | 관리자 | 원장을 바꾸지 않고 닫았다. 아래 조정 없는 종결로 닫는다 | 관리자 ID |
@@ -834,7 +834,7 @@ GET /v1/admin/settlement-mismatches?checkType=&resolved=false&from=&to=&page=0&s
 | --- | --- |
 | `PG_VS_CHARGE` | 결제와 충전 원장을 확인해 잔액에 문제가 없거나 다른 조정으로 이미 바로잡았을 때 |
 | `CAMPAIGN_OVERSPEND` | 초과 차감이 정당한 과금으로 확인됐을 때 |
-| `CAMPAIGN_SPEND_VS_LEDGER` | 항상 이 경로로 닫는다. 카운터가 크면 원장은 정확하고 서빙이 일찍 멈춘 것이다. 원장이 크면 과금은 실제로 있었고, 예약액을 넘긴 몫은 같은 날의 `CAMPAIGN_OVERSPEND` 건으로 정정한다. 해제가 끝난 날의 초과 소진은 이틀 뒤 00:00 에 기록되므로 그 건을 확인한 뒤 닫는다 |
+| `CAMPAIGN_SPEND_VS_LEDGER` | 항상 이 경로로 닫는다. 카운터가 크면 판정은 정확하고 서빙이 일찍 멈춘 것이다. 판정이 크면 과금은 실제로 있었고, 예약액을 넘긴 몫은 같은 날의 `CAMPAIGN_OVERSPEND` 건으로 정정한다. 해제가 끝난 날의 초과 소진은 이틀 뒤 00:00 에 기록되므로 그 건을 확인한 뒤 닫는다 |
 
 같은 건을 포인트 수동 조정과 함께 닫으려 하면 먼저 처리된 쪽만 닫는다. 성공한 요청을 다시 보내면 `409 BILLING-021`이다.
 

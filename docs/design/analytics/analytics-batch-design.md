@@ -102,10 +102,10 @@ A-04와 A-08을 구현하지 않으므로 `daily_segment_analytics`와 `daily_ow
 | 값 | 영업일 기준 |
 |---|---|
 | RESERVE, RELEASE | 원장의 `business_date` |
-| DEDUCT | 차감 판정의 `business_date` |
+| 소진(판정의 `BILLED` 단가 합) | 차감 판정의 `business_date` |
 | CHARGE, REFUND | 기록 시각의 KST 날짜 |
 | ADJUST | 정정 대상 영업일(`point_ledger.adjust_target_date`). 캠페인이 없는 조정과 그 컬럼을 두기 전에 기록된 행은 기록 시각의 KST 날짜 |
-| 미소진 잔액 | 영업일 다음 날 00:00 이전에 실제 기록된 `CHARGE`, `REFUND`, `ADJUST`, `DEDUCT`의 누적 합. 점주 잔액에 예약 중 포인트를 더한 값과 같다 |
+| 미소진 잔액 | 영업일 다음 날 00:00 이전에 실제 기록된 원장 `CHARGE`, `REFUND`, `ADJUST` 의 누적 합에서 같은 때까지 기록된 판정 `BILLED` 단가 합을 뺀 값. 점주 잔액에 예약 중 포인트를 더한 값과 같다 |
 | 노출 | 서빙한 영업일 |
 | 퍼널 이벤트 | `event_log.occurred_at`의 KST 날짜 |
 | 쿠폰 발급, 사용, 만료, 확정 할인액 | 쿠폰 도메인이 정한 영업일 |
@@ -117,17 +117,17 @@ billing은 `BillingStatsQueryService`를 공개했고 `SettlementMetricsStep`과
 
 | 메서드 | 돌려주는 것 | 쓰는 단계 |
 |---|---|---|
-| `ledgerSums(영업일)` | 점주와 캠페인별 `CHARGE`, `RESERVE`, `DEDUCT`, `RELEASE`, `REFUND`와 양수·음수 `ADJUST` 합 | `CampaignReportStep` |
+| `ledgerSums(영업일)` | 점주와 캠페인별 `CHARGE`, `RESERVE`, 소진(판정의 `BILLED` 단가 합, 음수), `RELEASE`, `REFUND`와 양수·음수 `ADJUST` 합 | `CampaignReportStep` |
 | | | `SettlementConsistencyStep` |
 | | | `SettlementMetricsStep` |
 | `billingCounts(영업일)` | 캠페인별 `BILLED`, `NOT_BILLED_BUDGET`, `NOT_BILLED_PAUSED`, `NOT_BILLED_NO_PLAN`, `NOT_BILLED_CLOSED` 건수 | `CampaignReportStep` |
 | | | `NotBilledMetricsStep` |
 | `dailyBudgets(영업일)` | 캠페인별 그날 적용 하루 예산과 단가 | `CampaignReportStep` |
 | `dailyTotals(영업일)` | 그날 말 미소진 잔액, 원장 대조용 합계, 원장 불일치 건수 | `SettlementMetricsStep`은 앞서 저장한 날이 하나도 없을 때만 미소진 잔액을 쓴다. 나머지 필드는 현재 단계에서 검증에 사용하지 않으며 A-07 응답에도 없다 |
-| `unspentChange(첫날, 끝날)` | 첫날 00:00 부터 끝날 다음 날 00:00 전까지 기록된 `CHARGE`, `REFUND`, `ADJUST`, `DEDUCT`의 합 | `SettlementMetricsStep`이 가장 최근에 저장한 날의 미소진 잔액에 더한다 |
+| `unspentChange(첫날, 끝날)` | 첫날 00:00 부터 끝날 다음 날 00:00 전까지 기록된 원장 `CHARGE`, `REFUND`, `ADJUST` 의 합에서 같은 때 기록된 판정 `BILLED` 단가 합을 뺀 값 | `SettlementMetricsStep`이 가장 최근에 저장한 날의 미소진 잔액에 더한다 |
 | `correctionTargetDates(기록 영업일)` | 그날 기록된 양수 `ADJUST`가 가리키는 정정 대상 영업일 | 재집계 대상 찾기 |
 
-- 합계의 부호는 저장 부호 그대로다. `RESERVE`, `DEDUCT`, `REFUND`와 음수 `ADJUST`는 0 이하다. 소진액 계산은 `SpendFormula`가 한 곳에서 한다.
+- 합계의 부호는 저장 부호 그대로다. `RESERVE`, 소진, `REFUND`와 음수 `ADJUST`는 0 이하다. 소진액 계산은 `SpendFormula`가 한 곳에서 한다.
 - `correctionTargetDates`는 그날 집계 뒤에 과거 영업일을 다시 집계할 날짜를 찾는 입력이다. 반환된 날짜를 `aggregation_pending_date`에 `ADJUSTED`로 남겨 다음 실행이 다시 집계하게 한다. 기록 영업일과 같은 날짜가 섞여 올 수 있어 같은 날은 거른다.
 - 정정은 영업일 합계에서는 정정 대상 영업일에, 미소진 잔액과 `dailyTotals.ledgerSum`에서는 기록한 날에 들어간다. 그래서 기록한 날의 `ledgerSum`과 대상 영업일의 `ledgerSums`는 서로 다른 몫이다.
 - 끝나지 않은 영업일을 넘겨도 billing은 막지 않고 그 시점까지 기록된 값을 돌려준다.
@@ -152,7 +152,7 @@ billing은 `BillingStatsQueryService`를 공개했고 `SettlementMetricsStep`과
 - `campaign_daily_report`는 ID를 유지하며 갱신한다. 자식 3개 테이블은 지우고 다시 넣는다.
 - 같은 날짜를 다시 실행해도 결과가 같아야 한다.
 - 공개 트랜잭션 동안 조회가 빈 결과를 보지 않아야 한다.
-- 소진액은 `DEDUCT 합 - 캠페인에 연결된 양수 ADJUST 합`이고 음수를 허용한다.
+- 소진액은 `판정의 BILLED 단가 합 - 캠페인에 연결된 양수 ADJUST 합`이고 음수를 허용한다.
 - 플랫폼 소진액은 `캠페인 소진액 합 - 캠페인 없는 양수 ADJUST 합`과 같아야 한다.
 - 등식이 어긋나면 지표와 구조화 로그를 남기고 값을 자동으로 고치지 않는다.
 
