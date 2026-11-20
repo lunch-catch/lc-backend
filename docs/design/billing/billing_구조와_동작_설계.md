@@ -170,8 +170,8 @@ B 를 골랐다. 묶음 차감 한 번이 0.430초에서 0.260초로 약 40% 줄
 
 | 인덱스 | 쓰는 조회 |
 |---|---|
-| `(owner_id, business_date, billing_status, unit_price)` | 점주 잔액 화면의 예약 중 포인트, 관리자 기간별 합계 |
-| `(created_at, billing_status, unit_price)` | 점주의 캠페인별 소진, 분석의 미소진 변동. 기록 시각으로 센다 |
+| `idx_deduction_result_owner_date (owner_id, business_date, billing_status, unit_price)` | 점주 잔액 화면의 예약 중 포인트, 관리자 기간별 합계 |
+| `idx_deduction_result_created (created_at, billing_status, unit_price)` | 점주의 캠페인별 소진, 분석의 미소진 변동. 기록 시각으로 센다 |
 
 ### 노출부터 과금까지 사용하는 Valkey 키
 
