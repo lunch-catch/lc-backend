@@ -113,6 +113,76 @@ D=$(TZ=Asia/Seoul date +%F)
 # 로컬 구성의 MySQL 이다. 계정은 lc-infra 의 observability/local/compose.yaml 이 정한다
 local_mysql() { docker exec -i "$LOCAL_PROJECT-mysql-1" env MYSQL_PWD=root mysql -uroot lunchcatch "$@"; }
 
+#
+# 앱의 데이터베이스를 지우고 같은 이름, 문자셋, 정렬 규칙으로 다시 만든다. 앱이 다시 뜰 때 Flyway 가 빈 데이터베이스에 표와 기준 데이터를 처음부터 만든다(#1296).
+# 표마다 시험 범위를 골라 지우면 시드의 목록에 없는 표(분석의 event_log, 쿠폰 재고)가 버전 사이에 쌓인다.
+# 지운 뒤에는 이 연결의 기본 데이터베이스가 없어져 이름을 먼저 변수로 읽어 둔다.
+#
+RECREATE_DATABASE="SELECT SCHEMA_NAME, DEFAULT_CHARACTER_SET_NAME, DEFAULT_COLLATION_NAME INTO @db, @cs, @co
+  FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = DATABASE();
+SET @s = CONCAT('DROP DATABASE ', CHAR(96), @db, CHAR(96));
+PREPARE st FROM @s; EXECUTE st; DEALLOCATE PREPARE st;
+SET @s = CONCAT('CREATE DATABASE ', CHAR(96), @db, CHAR(96), ' CHARACTER SET ', @cs, ' COLLATE ', @co);
+PREPARE st FROM @s; EXECUTE st; DEALLOCATE PREPARE st;
+SELECT CONCAT('database ', @db, ' tables ', COUNT(*)) FROM information_schema.TABLES WHERE TABLE_SCHEMA = @db;"
+
+#
+# 회차의 출발점을 만든다. 앱의 데이터베이스를 다시 만들고 앱과 배치를 다시 띄워 Flyway 가 표와 기준 데이터를 처음부터 만들게 한 뒤 Valkey 를 비운다(#1296).
+# 도메인마다 다른 것은 시드뿐이라 도메인의 run.sh 는 이것을 부른 뒤 자기 시드를 넣는다.
+# 로컬은 앱과 배치를 내린 뒤 지운다. 부하 시험 환경은 접속 정보를 앱 컨테이너에서 읽어야 해(DB_ENV) 앱이 떠 있는 채로 지우고 모든 서버를 다시 띄운다.
+# 그 사이 앱과 배치의 쿼리는 실패한다. 다시 뜨는 동안 헬스체크가 실패해 오토스케일링 그룹이 서버를 바꾸지 않게 교체를 멈춰 둔다(switch 와 같은 방법).
+#
+reset_state() {
+  local svc i id pids rc apps batches
+  if [ -n "$LOCAL" ]; then
+    docker stop "$LOCAL_PROJECT-app-1" "$LOCAL_PROJECT-batch-1" > /dev/null
+    printf '%s\n' "$RECREATE_DATABASE" | local_mysql -N
+    docker start "$LOCAL_PROJECT-app-1" "$LOCAL_PROJECT-batch-1" > /dev/null
+    for svc in app batch; do
+      for i in $(seq 1 60); do
+        docker exec "$LOCAL_PROJECT-$svc-1" curl -fs localhost:8081/actuator/health/readiness > /dev/null 2>&1 && break
+        sleep 5
+      done
+      docker exec "$LOCAL_PROJECT-$svc-1" curl -fs localhost:8081/actuator/health/readiness > /dev/null 2>&1 \
+        || die "$svc 가 5분 안에 준비되지 않았다"
+    done
+    docker exec "$LOCAL_PROJECT-valkey-1" valkey-cli FLUSHALL > /dev/null
+    echo "valkey $(docker exec "$LOCAL_PROJECT-valkey-1" valkey-cli DBSIZE)"
+    return
+  fi
+  # 데이터베이스를 지운 뒤에 서버를 찾지 못하면 다시 띄우지 못해 표 없이 남는다. 지우기 전에 앱과 배치를 찾아 둔다
+  apps=$(instances app) || die "앱 서버를 찾지 못했다. member-env.sh status 로 환경을 확인한다"
+  batches=$(instances batch) || die "배치 서버를 찾지 못했다. member-env.sh status 로 환경을 확인한다"
+  [ -n "$apps" ] || die "떠 있는 앱 서버가 없다"
+  [ -n "$batches" ] || die "떠 있는 배치 서버가 없다"
+  remote "$(instance app)" 300 "set -euo pipefail
+$DB_ENV
+mysql -N <<'SQL'
+$RECREATE_DATABASE
+SQL"
+  aws autoscaling suspend-processes --auto-scaling-group-name "$PROJECT-app" --scaling-processes ReplaceUnhealthy
+  pids=""; rc=0
+  for id in $apps $batches; do
+    echo "restart $id"
+    remote "$id" 600 "set -euo pipefail
+systemctl restart $PROJECT
+for i in \$(seq 1 60); do
+  curl -fs localhost:8081/actuator/health/readiness > /dev/null && break; sleep 5
+done
+curl -fs localhost:8081/actuator/health/readiness" &
+    pids="$pids $!"
+  done
+  for id in $pids; do
+    wait "$id" || rc=1
+  done
+  aws autoscaling resume-processes --auto-scaling-group-name "$PROJECT-app" --scaling-processes ReplaceUnhealthy
+  [ "$rc" -eq 0 ] || die "다시 띄우지 못한 서버가 있다. 위 출력에서 그 서버를 확인한다"
+  remote "$(instance app)" 300 "set -euo pipefail
+CACHE=\$(docker inspect $PROJECT --format '{{range .Config.Env}}{{println .}}{{end}}' | grep '^VALKEY_HOST=' | cut -d= -f2-)
+docker run --rm valkey/valkey:9.0-alpine valkey-cli -h \"\$CACHE\" FLUSHALL
+docker run --rm valkey/valkey:9.0-alpine valkey-cli -h \"\$CACHE\" DBSIZE"
+}
+
 # 로컬 구성의 앱이 쓰는 서명 키다. 출력하지 않고 변수로만 넘긴다
 local_jwt() { grep '^JWT_SECRET=' "$LC_INFRA_DIR/observability/local/.env" | cut -d= -f2-; }
 

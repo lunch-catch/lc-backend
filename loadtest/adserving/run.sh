@@ -121,8 +121,7 @@ case "${LOCAL:+local-}${1:-}" in
   local-reset)
     # AWS 의 reset 과 같다. 회차를 이어 돌리면 기록 표가 쌓여 뒤 회차가 부풀어, 로컬도 같은 순서로 재려고 둔다(#1265)
     members="${2:-120000}"
-    docker exec "$LOCAL_PROJECT-valkey-1" valkey-cli FLUSHALL > /dev/null
-    echo "valkey $(docker exec "$LOCAL_PROJECT-valkey-1" valkey-cli DBSIZE)"
+    reset_state
     seed
     ;;
   local-switch)
@@ -205,12 +204,9 @@ curl -fs localhost:8081/actuator/health/readiness" &
     [ "$rc" -eq 0 ] || die "다시 띄우지 못한 서버가 있다. 위 출력에서 그 서버를 확인한다"
     ;;
   reset)
-    # 버전 사이에 앞 버전이 쌓은 것을 지운다(부하 시험 문서 5장). 시드가 시험 데이터와 그날 배치 기록을 지우고 다시 넣는다
+    # 버전 사이에 앞 버전이 쌓은 것을 지운다(부하 시험 문서 5장). 데이터베이스와 캐시를 비운 뒤 시드를 넣는다
     members="${2:-120000}"
-    remote "$(instance app)" 300 "set -euo pipefail
-CACHE=\$(docker inspect $PROJECT --format '{{range .Config.Env}}{{println .}}{{end}}' | grep '^VALKEY_HOST=' | cut -d= -f2-)
-docker run --rm valkey/valkey:9.0-alpine valkey-cli -h \"\$CACHE\" FLUSHALL
-docker run --rm valkey/valkey:9.0-alpine valkey-cli -h \"\$CACHE\" DBSIZE"
+    reset_state
     seed
     ;;
   prepare|local-prepare)
