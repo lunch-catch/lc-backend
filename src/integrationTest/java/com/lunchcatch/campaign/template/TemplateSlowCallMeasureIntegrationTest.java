@@ -286,8 +286,9 @@ class TemplateSlowCallMeasureIntegrationTest extends AbstractCampaignIntegration
      * 기준 구간과 생성 구간에 시작한 다른 API 호출을 회차에 담는다. Q3-2 는 생성 구간에서 시간 초과로 끝난 호출이 없는지 본다.
      * 실패 응답(2xx 가 아닌 응답)은 측정이 다른 이유로 막혔다는 뜻이라 따로 센다.
      *
-     * 표본이 없는 구간은 시간 초과가 없다고 말할 수 없다. 200ms 간격인 목록 조회는 표본이 없으면 Q3-2 를 실패로 하고, 6.5초 간격인
-     * 로그인은 지연이 짧으면 표본이 없을 수 있어 실패로 하지 않고 표본 수와 함께 판정 불충분으로 적는다.
+     * 표본은 정상 응답(2xx)을 받은 호출만 센다. 실패 응답과 시간 초과만 있는 구간은 응답 시간을 잰 것이 아니다.
+     * 200ms 간격인 목록 조회는 표본이 없으면 Q3-2 를 실패로 하고, 6.5초 간격인 로그인은 지연이 짧으면 표본이 없을 수 있어
+     * 실패로 하지 않고 표본 수와 함께 판정 불충분으로 적는다.
      */
     private void recordProbes(RoundWindows windows) {
         long timedOut = 0;
@@ -297,7 +298,7 @@ class TemplateSlowCallMeasureIntegrationTest extends AbstractCampaignIntegration
             if (!inGeneration && !sample.window().equals(windows.baseline())) {
                 continue;
             }
-            if (inGeneration) {
+            if (inGeneration && sample.succeeded()) {
                 generationSamples.merge(sample.api(), 1L, Long::sum);
             }
             String name = sample.api() + " " + sample.window().phase();
