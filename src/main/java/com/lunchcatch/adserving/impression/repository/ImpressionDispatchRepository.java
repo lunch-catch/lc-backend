@@ -76,7 +76,7 @@ public class ImpressionDispatchRepository {
     private final JdbcTemplate jdbcTemplate;
     private final NamedParameterJdbcTemplate namedJdbcTemplate;
 
-    // idx_imp_dispatch(dispatched_at, created_at, ...) 로 비어 있는 행만 받은 순서대로 읽는다. 실패해 미뤄진 행은 다시 넘길 시각이 지나야 읽는다.
+    // idx_imp_dispatch(dispatched_at, created_at) 로 비어 있는 행만 받은 순서대로 읽는다. 실패해 미뤄진 행은 다시 넘길 시각이 지나야 읽는다.
     public List<PendingImpression> findPending(LocalDateTime from, LocalDateTime now, int limit) {
         return jdbcTemplate.query(FIND_PENDING, (rs, row) -> new PendingImpression(
                         uuid(rs.getBytes("serve_id")), rs.getLong("member_id"), rs.getLong("campaign_id"),
@@ -108,7 +108,7 @@ public class ImpressionDispatchRepository {
     }
 
     /*
-     * 넘기지 못하고 밀린 노출 수와 그 가운데 가장 이른 저장 시각이다. 상한에 닿아 건너뛴 행도 센다. 보는 열이 모두 idx_imp_dispatch 에 있어 인덱스만 읽는다(V10, #1280).
+     * 넘기지 못하고 밀린 노출 수와 그 가운데 가장 이른 저장 시각이다. 상한에 닿아 건너뛴 행도 센다. dispatched_at 만 인덱스로 거르고 나머지 열은 행 본문을 읽어, 릴레이가 묶음마다 부르지 않는다(#1280).
      * 밀린 것이 없으면 시각은 null 이다.
      */
     public PendingSummary countPending(LocalDateTime from, LocalDateTime now) {
