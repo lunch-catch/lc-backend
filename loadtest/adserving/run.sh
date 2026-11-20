@@ -98,6 +98,19 @@ switch_options() {
   done
 }
 
+#
+# 앱의 데이터베이스를 지우고 같은 이름, 문자셋, 정렬 규칙으로 다시 만든다. 앱이 다시 뜰 때 Flyway 가 빈 데이터베이스에 표와 기준 데이터를 처음부터 만든다(#1296).
+# 표마다 시험 범위를 골라 지우면 시드의 목록에 없는 표(분석의 event_log, 쿠폰 재고)가 버전 사이에 쌓인다.
+# 지운 뒤에는 이 연결의 기본 데이터베이스가 없어져 이름을 먼저 변수로 읽어 둔다.
+#
+RECREATE_DATABASE="SELECT SCHEMA_NAME, DEFAULT_CHARACTER_SET_NAME, DEFAULT_COLLATION_NAME INTO @db, @cs, @co
+  FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = DATABASE();
+SET @s = CONCAT('DROP DATABASE ', CHAR(96), @db, CHAR(96));
+PREPARE st FROM @s; EXECUTE st; DEALLOCATE PREPARE st;
+SET @s = CONCAT('CREATE DATABASE ', CHAR(96), @db, CHAR(96), ' CHARACTER SET ', @cs, ' COLLATE ', @co);
+PREPARE st FROM @s; EXECUTE st; DEALLOCATE PREPARE st;
+SELECT CONCAT('database ', @db, ' tables ', COUNT(*)) FROM information_schema.TABLES WHERE TABLE_SCHEMA = @db;"
+
 seed() {
   # 로컬은 지금 작업 트리의 생성기로 로컬 MySQL 에 넣는다
   if [ -n "$LOCAL" ]; then
@@ -120,7 +133,19 @@ case "${LOCAL:+local-}${1:-}" in
     die "로컬에서는 seed, reset, prepare, run, warmup, metrics, profile, switch 만 쓴다" ;;
   local-reset)
     # AWS 의 reset 과 같다. 회차를 이어 돌리면 기록 표가 쌓여 뒤 회차가 부풀어, 로컬도 같은 순서로 재려고 둔다(#1265)
+    # 앱과 배치를 내리고 데이터베이스를 지우고 다시 만든 뒤 다시 띄운다. 앱이 뜰 때 Flyway 가 빈 데이터베이스에 표를 다시 만든다(#1296)
     members="${2:-120000}"
+    docker stop "$LOCAL_PROJECT-app-1" "$LOCAL_PROJECT-batch-1" > /dev/null
+    printf '%s\n' "$RECREATE_DATABASE" | local_mysql -N
+    docker start "$LOCAL_PROJECT-app-1" "$LOCAL_PROJECT-batch-1" > /dev/null
+    for svc in app batch; do
+      for i in $(seq 1 60); do
+        docker exec "$LOCAL_PROJECT-$svc-1" curl -fs localhost:8081/actuator/health/readiness > /dev/null 2>&1 && break
+        sleep 5
+      done
+      docker exec "$LOCAL_PROJECT-$svc-1" curl -fs localhost:8081/actuator/health/readiness > /dev/null 2>&1 \
+        || die "$svc 가 5분 안에 준비되지 않았다"
+    done
     docker exec "$LOCAL_PROJECT-valkey-1" valkey-cli FLUSHALL > /dev/null
     echo "valkey $(docker exec "$LOCAL_PROJECT-valkey-1" valkey-cli DBSIZE)"
     seed
@@ -205,8 +230,34 @@ curl -fs localhost:8081/actuator/health/readiness" &
     [ "$rc" -eq 0 ] || die "다시 띄우지 못한 서버가 있다. 위 출력에서 그 서버를 확인한다"
     ;;
   reset)
-    # 버전 사이에 앞 버전이 쌓은 것을 지운다(부하 시험 문서 5장). 시드가 시험 데이터와 그날 배치 기록을 지우고 다시 넣는다
+    #
+    # 버전 사이에 앞 버전이 쌓은 것을 지운다(부하 시험 문서 5장). 데이터베이스를 지우고 다시 만든 뒤 앱과 배치를 다시 띄워 Flyway 가 표를 다시 만들고, 그 뒤 시드를 넣는다(#1296).
+    # 데이터베이스는 앱이 떠 있는 채로 지운다. 접속 정보를 앱 컨테이너에서 읽어서다(DB_ENV). 다시 띄우기 전까지 앱과 배치의 쿼리는 실패한다.
+    # 다시 뜨는 동안 헬스체크가 실패해 오토스케일링 그룹이 서버를 바꾸지 않게 교체를 멈춰 둔다. 마이그레이션은 Flyway 가 먼저 뜬 쪽에서 한 번 돈다
+    #
     members="${2:-120000}"
+    remote "$(instance app)" 300 "set -euo pipefail
+$DB_ENV
+mysql -N <<'SQL'
+$RECREATE_DATABASE
+SQL"
+    aws autoscaling suspend-processes --auto-scaling-group-name "$PROJECT-app" --scaling-processes ReplaceUnhealthy
+    pids=""; rc=0
+    for id in $(instances app) $(instances batch); do
+      echo "restart $id"
+      remote "$id" 600 "set -euo pipefail
+systemctl restart $PROJECT
+for i in \$(seq 1 60); do
+  curl -fs localhost:8081/actuator/health/readiness > /dev/null && break; sleep 5
+done
+curl -fs localhost:8081/actuator/health/readiness" &
+      pids="$pids $!"
+    done
+    for pid in $pids; do
+      wait "$pid" || rc=1
+    done
+    aws autoscaling resume-processes --auto-scaling-group-name "$PROJECT-app" --scaling-processes ReplaceUnhealthy
+    [ "$rc" -eq 0 ] || die "다시 띄우지 못한 서버가 있다. 위 출력에서 그 서버를 확인한다"
     remote "$(instance app)" 300 "set -euo pipefail
 CACHE=\$(docker inspect $PROJECT --format '{{range .Config.Env}}{{println .}}{{end}}' | grep '^VALKEY_HOST=' | cut -d= -f2-)
 docker run --rm valkey/valkey:9.0-alpine valkey-cli -h \"\$CACHE\" FLUSHALL
