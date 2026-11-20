@@ -2,6 +2,7 @@ package com.lunchcatch.campaign.template;
 
 import com.lunchcatch.campaign.AbstractCampaignIntegrationTest;
 import com.lunchcatch.campaign.CampaignRaceFixture;
+import com.lunchcatch.campaign.template.client.FakeTemplateHtmlGenerator;
 import com.lunchcatch.campaign.template.client.TemplateHtmlGenerator;
 import com.lunchcatch.campaign.template.dto.TemplateCreateResponse;
 import com.lunchcatch.campaign.template.repository.TemplateRepository;
@@ -42,8 +43,9 @@ import org.springframework.transaction.support.TransactionTemplate;
  * 재시도 판정에 걸리지 않게 하려는 것이다.
  *
  * 저장 구간의 대기 시간을 재려고 TransactionTemplate 을 시간을 기록하는 것으로 감싼 TemplateReviseService 를 직접
- * 만든다. 빈 오버라이드를 더하면 컨텍스트가 하나 늘어난다(#277). 모델은 bedrock.model-id 가 없을 때 켜지는
- * FakeTemplateHtmlGenerator 가 고정 HTML 로 대신하므로 AWS 없이 돈다.
+ * 만든다. 빈 오버라이드를 더하면 컨텍스트가 하나 늘어난다(#277). 모델은 FakeTemplateHtmlGenerator 를 직접 만들어
+ * 고정 HTML 로 대신하므로 AWS 없이 돈다. 공용 컨텍스트의 생성기 빈은 벌크헤드(동시 5개)를 거쳐서, 8명이 동시에 부르면
+ * 일부가 POSTER-012 로 거절될 수 있다. 이 측정은 저장 구간의 경쟁을 보므로 그 빈을 쓰지 않는다(#1269).
  */
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class TemplateReviseRaceIntegrationTest extends AbstractCampaignIntegrationTest {
@@ -57,8 +59,7 @@ class TemplateReviseRaceIntegrationTest extends AbstractCampaignIntegrationTest 
     private TemplateRepository templateRepository;
     @Autowired
     private TemplateVersionRepository templateVersionRepository;
-    @Autowired
-    private TemplateHtmlGenerator templateHtmlGenerator;
+    private final TemplateHtmlGenerator templateHtmlGenerator = new FakeTemplateHtmlGenerator();
     @Autowired
     private TemplateHtmlSanitizer templateHtmlSanitizer;
     @Autowired

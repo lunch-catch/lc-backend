@@ -17,7 +17,8 @@ import software.amazon.awssdk.services.bedrockruntime.model.StopReason;
  * 정한 시간만큼 늦게 응답하는 Bedrock 클라이언트 스텁이다(#1269).
  *
  * 벌크헤드가 BedrockTemplateHtmlGenerator 안의 converse 호출을 감싸므로, 생성기는 그대로 두고 이 클라이언트만 바꾼다.
- * 지연과 조건은 측정이 조건마다 바꾼다. 같은 순간에 진행 중인 호출 수의 최대와 호출 횟수를 센다.
+ * campaign 의 공용 컨텍스트가 지연 없이 꽂아 두고, 측정이 조건마다 지연과 조건을 바꾼다. 같은 순간에 진행 중인 호출 수의
+ * 최대와 호출 횟수를 센다.
  *
  * CORRECTION_RETRY 조건에서는 첫 호출에 슬롯이 빠진 HTML 을 준다. 생성기가 교정 지시를 덧붙여 다시 부르면 대화가
  * 3개 메시지로 늘어나므로, 메시지가 1개인 호출을 첫 호출로 본다.
