@@ -110,7 +110,7 @@ loadtest/adserving/run.sh --local metrics <window 시작 ms> <window 끝 ms>
 ```
 
 - 시나리오와 생성기는 지금 작업 트리의 것을 쓴다. k6 는 이 기계에서 돌고 지표를 로컬 Prometheus 로 보내 부하 시험 대시보드가 같은 화면으로 채워진다.
-- `rows`, `drain` 처럼 AWS 에만 있는 일은 로컬에서 막는다. `reset` 은 로컬 Valkey 를 비우고 로컬 시드를 다시 넣어, AWS 와 같은 순서(`reset` → `prepare` → 워밍업 → 측정)로 잰다. `switch` 는 커밋 없이 `[--tracing <이름>] [--no-pool] [--env|--app-env|--batch-env KEY=VALUE]...` 를 받아 로컬 앱과 배치를 다시 띄운다. 배치는 lc-infra 의 `compose.lt-like.yaml` 로 따로 뜬다.
+- `rows`, `drain`, `clean` 처럼 AWS 에만 있는 일은 로컬에서 막는다. `reset` 은 로컬 Valkey 를 비우고 로컬 시드를 다시 넣어, AWS 와 같은 순서(`reset` → `prepare` → 워밍업 → 측정)로 잰다. `switch` 는 커밋 없이 `[--tracing <이름>] [--no-pool] [--env|--app-env|--batch-env KEY=VALUE]...` 를 받아 로컬 앱과 배치를 다시 띄운다. 배치는 lc-infra 의 `compose.lt-like.yaml` 로 따로 뜬다.
 - 초당 피드는 노트북에 맞춰 낮춘다. 20 이면 초당 요청이 약 200 이다.
 - 로컬 `switch` 는 Alloy 와 Tempo 를 다시 띄워 쌓인 스팬과 트레이스를 비운다. 관측 도구가 앱과 같은 Docker 가상 머신에 있어, 트레이싱 회차를 이어 돌리면 둘이 쌓여 앱과 메모리를 나눠 쓴다(#1267).
 
@@ -176,12 +176,16 @@ loadtest/adserving/run.sh --local switch --env ADSERVING_CACHE_CANDIDATEMAXAGE=1
 loadtest/adserving/run.sh seed
 loadtest/adserving/run.sh prepare
 loadtest/adserving/run.sh drain drain-a1 50000
+loadtest/adserving/run.sh clean
+loadtest/adserving/run.sh drain drain-b1 50000
 ```
 
 - 앱 서버에서 노출 N건(기본 50,000)을 한 트랜잭션으로 넣고, 넣은 뒤부터 남은 노출이 0 이 될 때까지를 한 구간으로 잰다. 끝나면 걸린 초와 초당 건수를 내고 그 구간으로 `metrics` 를 묻는다.
 - 노출은 시드의 캠페인 1,000개와 회원 5,000명에 고르게 나눈다. 캠페인 하루 예산이 커서 회차마다 같은 비율로 과금되어 원장에 DEDUCT 가 쓰인다. 그래서 `prepare` 로 그날 예약이 있어야 한다.
-- 회차가 끝나면 밀린 노출이 0 이라 다음 회차로 넘어가지 않고, 쌓이는 데이터도 회차마다 N건씩 같다. 노출 API 부하와 섞어 회차를 이어 돌면 밀림이 넘어가 뒤 회차일수록 느려진다.
-- 앞 회차의 노출이 남아 있으면 넣지 않고 멈춘다. 1시간 안에 비우지 못해도 멈춘다.
+- 회차가 끝나면 밀린 노출이 0 이라 다음 회차로 넘어가지 않는다. 노출 API 부하와 섞어 회차를 이어 돌면 밀림이 넘어가 뒤 회차일수록 느려진다.
+- 회차 사이에 `clean` 으로 비운다(#1283). 비우지 않고 이어 재면 커지는 원장에 DEDUCT 를 쓰는 비용이 회차마다 늘어, 같은 조건의 회차가 2 ~ 4배 벌어졌다(`docs/design/billing/loadtest/` 의 묶음 차감 부하 시험 결과).
+- `clean` 은 노출과 판정을 TRUNCATE 한다. 원장은 그날 예약이 남아야 차감이 돌아 DEDUCT 가 아닌 행만 옮겨 두고 비운 뒤 되돌린다. 인덱스와 FK 는 그대로라 회차 앞에 붙이거나 지운 인덱스가 남는다. 다 비우면 dirty 페이지와 undo 가 가라앉을 때까지 기다린다. 2026-11-16 에는 노출 10만 건 회차 뒤에 비우는 데 31 ~ 38초 걸렸다.
+- `drain` 은 노출이 한 건이라도 남아 있으면 넣지 않고 멈춘다. 1시간 안에 비우지 못해도 멈춘다.
 - 도는 동안 남은 노출은 5초마다 인덱스만으로 센다. 행 본문까지 읽어 세면 회차 시작에 대기 노출 수만 행을 5초마다 읽어, 데이터가 버퍼 풀을 넘은 환경에서는 그 읽기가 차감을 늦춘다(#1198).
 - 후보 예산 갱신(`CandidateBudgetRefreshJob`)이 매시 0, 10, 20 ... 분에 배치 두 대에서 돈다. 회차를 그 직후에 시작해 회차 안에 섞이는 횟수를 맞춘다.
 
