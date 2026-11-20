@@ -29,12 +29,16 @@ import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Clock;
 import java.time.Duration;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.IntStream;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -264,9 +268,9 @@ class ImpressionDispatchServiceTest {
         return meterRegistry.get(ImpressionDispatchService.BILLING_METRIC).tag("status", status).counter().count();
     }
 
-    // 밀려 한 번 도는 실행이 길어져도 밀린 양이 묶음마다 새로 보인다. 두 번째 묶음을 읽을 때 첫 묶음 뒤의 값이 이미 게이지에 있어야 한다
+    // 밀려 한 번 도는 실행이 길어져도 밀린 양이 그 사이에 새로 보인다. 두 번째 묶음을 읽을 때 첫 묶음 뒤의 값이 이미 게이지에 있어야 한다
     @Test
-    void 묶음마다_밀린_양을_다시_센다() {
+    void 밀려_오래_도는_실행은_첫_묶음_뒤와_끝날_때_밀린_양을_센다() {
         List<PendingImpression> full = IntStream.rangeClosed(1, PointDeductor.MAX_BATCH_SIZE).mapToObj(this::pending).toList();
         List<Double> seenAtSecondBatch = new ArrayList<>();
         when(lease.acquire(any())).thenReturn(true);
@@ -283,6 +287,66 @@ class ImpressionDispatchServiceTest {
 
         assertThat(seenAtSecondBatch).containsExactly(500.0);
         assertThat(relayGauge("outbox.relay.backlog")).isEqualTo(1);
+    }
+
+    // 세는 쿼리는 밀린 노출이 많을수록 느려 묶음마다 세지 않는다. 실행 중에는 15초가 지나야 다시 세고 끝날 때 한 번 더 센다(#1280)
+    @Test
+    void 실행_중에는_15초가_지나야_밀린_양을_다시_센다() {
+        // 정산 한 번에 10초가 걸린다고 둔다. 묶음 뒤의 시각은 10, 20, 30, 40초다
+        List<LocalDateTime> countedAt = countedAtWhileDeducting(10, 10, 10, 10);
+
+        // 10초(처음), 30초(15초 지남), 끝날 때(40초)다. 20초는 처음 센 뒤 10초라 건너뛴다
+        assertThat(countedAt).containsExactly(NOW.plusSeconds(10), NOW.plusSeconds(30), NOW.plusSeconds(40));
+    }
+
+    @Test
+    void 처음_센_뒤_14초에는_건너뛰고_15초에는_센다() {
+        // 묶음 뒤의 시각은 1, 15, 16, 17초다. 처음 센 1초 뒤로 14초와 15초가 지난 때다
+        List<LocalDateTime> countedAt = countedAtWhileDeducting(1, 14, 1, 1);
+
+        assertThat(countedAt).containsExactly(NOW.plusSeconds(1), NOW.plusSeconds(16), NOW.plusSeconds(17));
+    }
+
+    // 가득 찬 묶음 셋과 덜 찬 묶음 하나를 넘기며 정산마다 시계를 주어진 초만큼 옮기고, 밀린 양을 센 시각을 돌려준다
+    private List<LocalDateTime> countedAtWhileDeducting(long... secondsPerDeduct) {
+        AtomicReference<Instant> now = new AtomicReference<>(NOW.atZone(ClockConfig.ZONE).toInstant());
+        Clock moving = new Clock() {
+            @Override
+            public ZoneId getZone() {
+                return ClockConfig.ZONE;
+            }
+
+            @Override
+            public Clock withZone(ZoneId zone) {
+                return this;
+            }
+
+            @Override
+            public Instant instant() {
+                return now.get();
+            }
+        };
+        ImpressionDispatchService relay = new ImpressionDispatchService(
+                lease, impressions, pointDeductor, new ImmediateTransactions(), new SimpleMeterRegistry(), moving,
+                new BacklogMetrics(new SimpleMeterRegistry(), moving), AdservingTuningDefaults.dispatch());
+        List<PendingImpression> full = IntStream.rangeClosed(1, PointDeductor.MAX_BATCH_SIZE).mapToObj(this::pending).toList();
+        when(lease.acquire(any())).thenReturn(true);
+        when(lease.renew(any())).thenReturn(true);
+        when(impressions.findPending(any(), any(), anyInt())).thenReturn(full, full, full, List.of(pending(5_000)));
+        AtomicInteger deducts = new AtomicInteger();
+        when(pointDeductor.deductAll(anyList())).thenAnswer(invocation -> {
+            now.set(now.get().plusSeconds(secondsPerDeduct[deducts.getAndIncrement()]));
+            return judgedAll(invocation.getArgument(0));
+        });
+        List<LocalDateTime> countedAt = new ArrayList<>();
+        when(impressions.countPending(any(), any())).thenAnswer(invocation -> {
+            countedAt.add(invocation.getArgument(1));
+            return new PendingSummary(0, null, 0, 0);
+        });
+
+        relay.dispatchPending();
+
+        return countedAt;
     }
 
     @Test

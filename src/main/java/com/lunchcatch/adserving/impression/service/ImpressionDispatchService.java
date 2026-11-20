@@ -15,6 +15,7 @@ import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
 import java.time.Clock;
 import java.time.Duration;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -65,6 +66,7 @@ public class ImpressionDispatchService {
      * 묶음마다 늘리고 실행이 끝나면 푼다.
      */
     static final Duration LEASE_TTL = Duration.ofSeconds(30);
+    static final Duration BACKLOG_COUNT_INTERVAL = Duration.ofSeconds(15);
 
     // 주기와 시도 횟수는 설정(adserving.impression.dispatch)이 갖는다
     private final ImpressionDispatchProperties properties;
@@ -78,6 +80,8 @@ public class ImpressionDispatchService {
     private final AtomicReference<LocalDateTime> oldestPending = new AtomicReference<>();
     private final AtomicLong abandoned = new AtomicLong();
     private final AtomicLong expired = new AtomicLong();
+    // 릴레이는 스케줄러 스레드 하나에서만 돈다
+    private Instant backlogCountedAt;
     private final BacklogMetrics backlogMetrics;
     private final Map<DeductionStatus, Counter> billing = new EnumMap<>(DeductionStatus.class);
 
@@ -115,13 +119,15 @@ public class ImpressionDispatchService {
             return;
         }
         LocalDateTime from = LocalDate.now(clock).minusDays(1).atStartOfDay();
-        // 밀린 양은 묶음마다 센다. 밀려 한 번 도는 실행이 길어져도 그동안 값이 낡지 않게 한다
         try {
             boolean more;
             do {
                 more = dispatchBatch(from);
-                countBacklog(from);
+                if (more && backlogCountDue()) {
+                    countBacklog(from);
+                }
             } while (more && lease.renew(LEASE_TTL));
+            countBacklog(from);
         } catch (RuntimeException e) {
             meterRegistry.counter(ERROR_METRIC).increment();
             log.warn("event=ADSERVING_IMPRESSION_DISPATCH_FAILED fallback=RETRY_NEXT_RUN", e);
@@ -132,10 +138,22 @@ public class ImpressionDispatchService {
     }
 
     /*
+     * 밀린 양은 실행이 끝날 때 세고, 밀려 한 번 도는 실행이 길어지면 그 사이에도 BACKLOG_COUNT_INTERVAL 마다 센다(#1280).
+     * 세는 쿼리는 dispatched_at 만 인덱스로 거르고 나머지 열은 행 본문을 읽어, 밀린 노출이 많을수록 느리다(20만 건에 약 0.3초).
+     * 묶음(약 0.2초)마다 세면 지표를 세느라 넘기는 일이 늦어진다. 커버링 인덱스는 인덱스가 약 2.7배로 커져 두지 않았다.
+     * 간격은 Prometheus 의 수집 간격이다. 더 자주 세도 수집에는 마지막 값만 남는다. 가장 오래 기다린 노출의 나이는 수집할 때 시각으로 내 그 사이에도 는다.
+     */
+    private boolean backlogCountDue() {
+        return backlogCountedAt == null
+                || !clock.instant().isBefore(backlogCountedAt.plus(BACKLOG_COUNT_INTERVAL));
+    }
+
+    /*
      * 넘기기가 실패해도 센다. 정산이 계속 실패해 노출이 쌓이는 때가 밀린 양을 가장 봐야 하는 때다.
      * 세지 못하면(DB 장애) 지난 값을 그대로 두고 오류로 센다. 가장 이른 시각이 그대로라 대기 시간은 계속 는다.
      */
     private void countBacklog(LocalDateTime from) {
+        backlogCountedAt = clock.instant();
         try {
             PendingSummary pending = impressions.countPending(from, LocalDateTime.now(clock));
             backlog.set(pending.count());

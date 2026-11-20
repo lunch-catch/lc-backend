@@ -108,7 +108,7 @@ public class ImpressionDispatchRepository {
     }
 
     /*
-     * 넘기지 못하고 밀린 노출 수와 그 가운데 가장 이른 저장 시각이다. 상한에 닿아 건너뛴 행도 센다. 인덱스만 읽는다.
+     * 넘기지 못하고 밀린 노출 수와 그 가운데 가장 이른 저장 시각이다. 상한에 닿아 건너뛴 행도 센다. dispatched_at 만 인덱스로 거르고 나머지 열은 행 본문을 읽어, 릴레이가 묶음마다 부르지 않는다(#1280).
      * 밀린 것이 없으면 시각은 null 이다.
      */
     public PendingSummary countPending(LocalDateTime from, LocalDateTime now) {
