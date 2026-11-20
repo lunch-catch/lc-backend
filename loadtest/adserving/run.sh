@@ -10,6 +10,7 @@
 #   AWS_PROFILE=<프로필> loadtest/adserving/run.sh metrics <시작 ms> <끝 ms>  그 구간의 서버 지표
 #   AWS_PROFILE=<프로필> loadtest/adserving/run.sh rows                    시험 데이터의 행 수
 #   AWS_PROFILE=<프로필> loadtest/adserving/run.sh drain <이름> [건수]       대기 노출을 넣고 릴레이가 다 비우는 시간과 그 구간의 지표를 잰다
+#   AWS_PROFILE=<프로필> loadtest/adserving/run.sh clean                   drain 회차 사이에 노출, 판정, 원장 DEDUCT 를 비운다
 #   AWS_PROFILE=<프로필> loadtest/adserving/run.sh switch <sha> [--tracing <이름>] [--no-pool] [--env|--app-env|--batch-env KEY=VALUE]...  앱과 배치를 그 커밋 이미지로 다시 띄운다. GHCR 에 있어야 한다
 #   AWS_PROFILE=<프로필> loadtest/adserving/run.sh reset [회원 수]         Valkey 를 비우고 시험 데이터를 다시 넣는다
 #   AWS_PROFILE=<프로필> loadtest/adserving/run.sh profile <이름> [초] [cpu|wall|both]  앱 서버에 프로파일링을 붙인다
@@ -24,6 +25,7 @@
 # 첫 인자를 --local 로 주면 lc-infra 의 로컬 구성을 대상으로 seed, reset, prepare, run, metrics, profile 을 같은 인자로 돌린다.
 # 로컬의 switch 는 커밋 없이 [--tracing <이름>] [--no-pool] [--env|--app-env|--batch-env KEY=VALUE]... 만 받아 로컬 앱과 배치를 다시 띄운다. 배치는 lc-infra 의 compose.lt-like.yaml 로 따로 뜬다.
 # drain 은 노출 API 를 부르지 않는다. 회차마다 같은 수의 대기 노출만 비우므로 밀림이 다음 회차로 넘어가지 않는다(#1198).
+# drain 은 노출이 남아 있으면 멈춘다. 회차 사이에 clean 을 부른다(#1283).
 # 시나리오와 시드 생성기는 떠 있는 앱과 같은 커밋(SSM current-sha)에서 받는다. 값이 없으면 develop 이다.
 # LOADTEST_REF 로 브랜치나 커밋을 따로 고를 수 있다.
 set -euo pipefail
@@ -114,7 +116,7 @@ select 'batch', status from batch_execution_log where business_date = '\$D' and 
 }
 
 case "${LOCAL:+local-}${1:-}" in
-  local-rows|local-drain)
+  local-rows|local-drain|local-clean)
     die "로컬에서는 seed, reset, prepare, run, warmup, metrics, profile, switch 만 쓴다" ;;
   local-reset)
     # AWS 의 reset 과 같다. 회차를 이어 돌리면 기록 표가 쌓여 뒤 회차가 부풀어, 로컬도 같은 순서로 재려고 둔다(#1265)
@@ -291,12 +293,50 @@ grep 'level=error' \$OUT/k6-$name.log | tail -5 || true" ) > "$out" || rc=$?
   profile|local-profile)
     profile "${2:-}" "${3:-60}" "${4:-wall}"
     ;;
+  clean)
+    #
+    # drain 회차 사이에 앞 회차가 남긴 노출, 판정, 원장 DEDUCT 를 비운다(#1283). 비우지 않고 이어 재면 커지는 원장에 DEDUCT 를 쓰는 비용이 회차마다 늘어 조건의 효과를 가를 수 없다.
+    # 대량 DELETE 는 쌓인 환경에서 15분 가까이 걸려(#1235) 노출과 판정은 TRUNCATE 한다.
+    # 원장은 그날 예약이 있어야 차감이 돌아 DEDUCT 가 아닌 행만 옮겨 두고 TRUNCATE 한 뒤 되돌린다. 표를 맞바꾸면 FK 가 따라오지 않아 그 표를 그대로 비운다.
+    # 생성 컬럼에는 값을 넣을 수 없어 그 컬럼을 뺀 목록으로 옮긴다. 옮겨 둔 표는 다 되돌린 뒤에만 지워, 중간에 끊겨도 남는다.
+    # 다 비우고 나면 dirty 페이지와 undo 가 가라앉을 때까지 기다린다. 비운 일의 뒷정리가 다음 회차와 겹치지 않게 한다.
+    #
+    remote "$(instance app)" 1200 "set -euo pipefail
+$DB_ENV
+[ \"\$(mysql -N -e \"SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'point_ledger_keep'\")\" -eq 0 ] \\
+  || { echo '앞의 clean 이 남긴 point_ledger_keep 이 있다. 원장에 되돌렸는지 보고 지운 뒤 다시 부른다' >&2; exit 1; }
+keep=\$(mysql -N -e \"SELECT COUNT(*) FROM point_ledger WHERE entry_type <> 'DEDUCT'\")
+mysql -e \"TRUNCATE TABLE impression_log;
+TRUNCATE TABLE deduction_result;
+SET SESSION group_concat_max_len = 65535;
+SET @cols = (SELECT GROUP_CONCAT(COLUMN_NAME ORDER BY ORDINAL_POSITION) FROM information_schema.COLUMNS
+             WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'point_ledger' AND GENERATION_EXPRESSION = '');
+SET @s = CONCAT('CREATE TABLE point_ledger_keep AS SELECT ', @cols, ' FROM point_ledger WHERE entry_type <> ''DEDUCT''');
+PREPARE st FROM @s; EXECUTE st; DEALLOCATE PREPARE st;
+TRUNCATE TABLE point_ledger;
+SET @s = CONCAT('INSERT INTO point_ledger (', @cols, ') SELECT ', @cols, ' FROM point_ledger_keep');
+PREPARE st FROM @s; EXECUTE st; DEALLOCATE PREPARE st;\"
+left=\$(mysql -N -e \"SELECT (SELECT COUNT(*) FROM impression_log), (SELECT COUNT(*) FROM deduction_result),
+  (SELECT COUNT(*) FROM point_ledger WHERE entry_type = 'DEDUCT'), (SELECT COUNT(*) FROM point_ledger)\")
+echo \"impression deduction ledger_deduct ledger: \$left\"
+[ \"\$(echo \$left | awk '{print \$1 + \$2 + \$3}')\" -eq 0 ] && [ \"\$(echo \$left | awk '{print \$4}')\" -eq \"\$keep\" ] \\
+  || { echo \"비우지 못했다. 원장에 되돌릴 행 \$keep 건은 point_ledger_keep 에 남아 있다\" >&2; exit 1; }
+mysql -e 'DROP TABLE point_ledger_keep'
+for i in \$(seq 1 90); do
+  # 부하 시험 RDS 는 performance_schema 가 꺼져 있어 dirty 페이지는 SHOW 로 읽는다
+  state=\"\$(mysql -N -e \"SHOW GLOBAL STATUS LIKE 'Innodb_buffer_pool_pages_dirty'\" | awk '{print \$2}') \$(mysql -N -e \"SELECT COUNT FROM information_schema.INNODB_METRICS WHERE NAME = 'trx_rseg_history_len'\")\"
+  echo \"dirty history: \$state\"
+  [ \"\$(echo \$state | awk '{print (\$1 < 200 && \$2 < 1000)}')\" -eq 1 ] && exit 0
+  sleep 10
+done
+echo '15분 안에 가라앉지 않았다' >&2; exit 1"
+    ;;
   drain)
     #
     # 노출 API 부하 없이 릴레이(ImpressionDispatchJob)가 대기 노출을 비우는 속도를 잰다(#1198).
     # 앱 서버에서 그날 유효 노출 N건을 한 트랜잭션으로 넣고, 넣은 뒤부터 남은 노출이 0 이 될 때까지를 한 구간으로 본다.
     # 노출은 시드의 캠페인 1,000개와 회원 5,000명에 고르게 나눈다. 캠페인 하루 예산이 커서 회차마다 같은 비율로 과금된다.
-    # 앞 회차의 노출이 남아 있으면 구간이 섞이므로 넣지 않고 멈춘다.
+    # 노출이 한 건이라도 남아 있으면 넣지 않고 멈춘다. 앞 회차가 남긴 판정과 원장 DEDUCT 위에서 재면 회차마다 느려져, 회차 사이에 clean 으로 비운다(#1283).
     # 도는 동안에는 넘기지 않은 노출을 idx_imp_dispatch 만으로 센다. 포기한 노출을 거르려고 행 본문을 읽으면 그 읽기가 차감과 버퍼 풀을 나눠 써 잴 대상을 늦춘다.
     # 그 수가 줄지 않을 때만 포기한 노출을 뺀 수를 다시 센다. 남은 것이 모두 포기한 노출이면 끝난 것이다.
     #
@@ -307,8 +347,7 @@ grep 'level=error' \$OUT/k6-$name.log | tail -5 || true" ) > "$out" || rc=$?
 $DB_ENV
 PENDING=\"SELECT COUNT(*) FROM impression_log WHERE dispatched_at IS NULL AND dispatch_abandoned_at IS NULL AND created_at >= TIMESTAMP(DATE_SUB('\$D', INTERVAL 1 DAY))\"
 UNSENT=\"SELECT COUNT(*) FROM impression_log WHERE dispatched_at IS NULL AND created_at >= TIMESTAMP(DATE_SUB('\$D', INTERVAL 1 DAY))\"
-left=\$(mysql -N -e \"\$PENDING\")
-[ \"\$left\" -eq 0 ] || { echo \"앞 회차의 대기 노출 \$left 건이 남아 있다. 비워진 뒤 다시 부른다\" >&2; exit 1; }
+[ \"\$(mysql -N -e 'SELECT EXISTS (SELECT 1 FROM impression_log)')\" -eq 0 ] || { echo '앞 회차의 노출이 남아 있다. run.sh clean 으로 비운 뒤 다시 부른다' >&2; exit 1; }
 mysql -e \"SET SESSION time_zone = '+09:00';
 SET SESSION cte_max_recursion_depth = $count;
 INSERT INTO impression_log (serve_id, member_id, business_date, campaign_id, store_id, slot_type, slot_position, displayed_at,
@@ -345,5 +384,5 @@ select 'deduction', billing_status, count(*) from deduction_result where campaig
 select 'ledger', entry_type, count(*) from point_ledger where owner_id >= 30000001 group by entry_type;\""
     ;;
   *)
-    sed -n '3,27p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
+    sed -n '3,29p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
 esac
