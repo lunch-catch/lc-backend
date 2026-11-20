@@ -30,6 +30,10 @@ import software.amazon.awssdk.services.bedrockruntime.BedrockRuntimeClient;
  * 부르는 Bedrock 클라이언트만 스텁으로 바꾼다. 벌크헤드가 실제 생성기 안에 있어 측정이 그것을 거쳐야 한다. 스텁은
  * 기본으로 지연 없이 슬롯 검증을 통과하는 HTML 을 주므로 다른 테스트에는 Fake 를 쓸 때와 같다. 지연을 바꾼
  * 테스트는 끝날 때 기본으로 되돌린다.
+ *
+ * 실제 생성기를 쓰므로 벌크헤드(동시 5개)도 함께 켜진다. 템플릿 생성이나 수정을 동시에 6개 이상 부르는 테스트는 지연이
+ * 없어도 일부가 POSTER-012 로 거절될 수 있다. 저장 구간의 경쟁만 보려는 테스트는 TemplateReviseRaceIntegrationTest 처럼
+ * 생성기 빈 대신 FakeTemplateHtmlGenerator 를 직접 만들어 쓴다.
  */
 @SpringBootTest(
         webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
