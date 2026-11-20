@@ -25,6 +25,7 @@ import com.lunchcatch.billing.contract.DeductionStatus;
 import com.lunchcatch.billing.contract.PointDeductor;
 import com.lunchcatch.global.config.ClockConfig;
 import io.micrometer.core.instrument.Timer;
+import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Clock;
 import java.time.Duration;
@@ -213,9 +214,9 @@ class ImpressionDispatchServiceTest {
         assertThat(delay.totalTime(TimeUnit.SECONDS)).isEqualTo(3);
     }
 
-    // 다른 서버가 먼저 표시한 노출은 조건부 표시에서 빠진다. 발행 수는 실제로 표시한 행 수로 세고, 그 청크의 발행 지연은 남기지 않는다(#1213)
+    // 다른 서버가 먼저 표시한 노출은 조건부 표시에서 빠진다. 발행 수는 실제로 표시한 행 수로 세고, 그 청크의 발행 지연과 판정별 수는 남기지 않는다(#1213, #1273)
     @Test
-    void 일부만_표시하면_표시한_행_수로_세고_발행_지연은_남기지_않는다() {
+    void 일부만_표시하면_표시한_행_수로_세고_발행_지연과_판정별_수는_남기지_않는다() {
         PendingImpression first = pending(1);
         PendingImpression second = pending(2);
         when(lease.acquire(any())).thenReturn(true);
@@ -227,6 +228,43 @@ class ImpressionDispatchServiceTest {
 
         assertThat(meterRegistry.counter(ImpressionDispatchService.DISPATCHED_METRIC).count()).isEqualTo(1);
         assertThat(meterRegistry.find("outbox.relay.publish.delay").timer()).isNull();
+        assertThat(billing("BILLED")).isZero();
+    }
+
+    @Test
+    void 표시한_노출을_정산이_돌려준_판정별로_센다() {
+        PendingImpression billed = pending(1);
+        PendingImpression budget = pending(2);
+        PendingImpression closed = pending(3);
+        PendingImpression failed = pending(4);
+        when(lease.acquire(any())).thenReturn(true);
+        when(impressions.findPending(any(), any(), anyInt())).thenReturn(List.of(billed, budget, closed, failed));
+        when(pointDeductor.deductAll(anyList())).thenReturn(List.of(
+                DeductionOutcome.judged(billed.serveId(), DeductionStatus.BILLED),
+                DeductionOutcome.judged(budget.serveId(), DeductionStatus.NOT_BILLED_BUDGET),
+                DeductionOutcome.judged(closed.serveId(), DeductionStatus.NOT_BILLED_CLOSED),
+                DeductionOutcome.failed(failed.serveId())));
+
+        service.dispatchPending();
+
+        assertThat(billing("BILLED")).isEqualTo(1);
+        assertThat(billing("NOT_BILLED_BUDGET")).isEqualTo(1);
+        assertThat(billing("NOT_BILLED_CLOSED")).isEqualTo(1);
+        // 실패한 노출은 판정이 없어 세지 않는다. 다음 주기에 판정을 받으면 그때 센다
+        assertThat(meterRegistry.find(ImpressionDispatchService.BILLING_METRIC).counters().stream()
+                .mapToDouble(Counter::count).sum()).isEqualTo(3);
+    }
+
+    // 첫 노출도 increase() 에 잡히게 판정마다 기동 때 0 으로 둔다
+    @Test
+    void 판정별_수는_기동_때_정산의_판정마다_0으로_있다() {
+        for (DeductionStatus status : DeductionStatus.values()) {
+            assertThat(billing(status.name())).isZero();
+        }
+    }
+
+    private double billing(String status) {
+        return meterRegistry.get(ImpressionDispatchService.BILLING_METRIC).tag("status", status).counter().count();
     }
 
     // 밀려 한 번 도는 실행이 길어져도 밀린 양이 그 사이에 새로 보인다. 두 번째 묶음을 읽을 때 첫 묶음 뒤의 값이 이미 게이지에 있어야 한다

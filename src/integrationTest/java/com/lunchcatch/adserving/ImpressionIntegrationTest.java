@@ -274,11 +274,58 @@ class ImpressionIntegrationTest extends AbstractAdservingIntegrationTest {
         send(body(serveId, 101L), Role.MEMBER).andExpect(status().isAccepted());
         writeBuffer.flush();
         double before = meterRegistry.counter("adserving_impression_dispatched_total").count();
+        double billedBefore = billing("BILLED");
 
         dispatch.dispatchPending();
 
         assertThat(dispatchState()).containsEntry("dispatched_at", otherServerAt);
         assertThat(meterRegistry.counter("adserving_impression_dispatched_total").count()).isEqualTo(before);
+        assertThat(billing("BILLED")).isEqualTo(billedBefore);
+    }
+
+    private double billing(String status) {
+        return meterRegistry.get("adserving_impression_billing_total").tag("status", status).counter().count();
+    }
+
+    // 정산의 판정을 받은 자리에서 판정별로 센다. 같은 노출을 다시 넘겨도 이미 발행 표시한 노출이라 다시 세지 않는다(#1273)
+    @Test
+    void 릴레이가_정산의_판정을_판정별_과금_지표로_한_번만_센다() throws Exception {
+        doAnswer(invocation -> {
+            List<DeductionRequest> requests = invocation.getArgument(0);
+            return requests.stream().map(request -> DeductionOutcome.judged(request.serveId(), DeductionStatus.NOT_BILLED_BUDGET)).toList();
+        }).when(pointDeductor).deductAll(anyList());
+        send(body(serveId, 101L), Role.MEMBER).andExpect(status().isAccepted());
+        writeBuffer.flush();
+        double before = billing("NOT_BILLED_BUDGET");
+
+        dispatch.dispatchPending();
+        dispatch.dispatchPending();
+
+        assertThat(billing("NOT_BILLED_BUDGET")).isEqualTo(before + 1);
+    }
+
+    // 쿠폰 소진 뒤 도착한 유효 노출은 정산에 넘기지 않아 판정을 받지 않는다. 저장한 자리에서 그 판정으로 센다(#1273)
+    @Test
+    void 쿠폰_소진_뒤_노출은_정산에_넘기지_않고_NOT_BILLED_SOLD_OUT_으로_한_번만_센다() throws Exception {
+        jdbcTemplate.update("""
+                INSERT INTO ad_candidate (business_date, campaign_id, store_id, store_name, category_code,
+                    latitude, longitude, target_radius, target_gender, target_age_groups,
+                    discount_target_type, discount_type, discount_value, usable_start_time, usable_end_time,
+                    issue_quantity, campaign_created_at, campaign_state, sold_out_at, created_at, updated_at)
+                VALUES (?, 101, 55, '점심식당', 'KOREAN', 37.4979, 127.0276, 1000, 'ALL', 'AGE_20S,AGE_30S',
+                    'ALL', 'PERCENT', 20, '12:00', '14:00', 30, NOW(6), 'SERVABLE', NOW(6), NOW(6), NOW(6))
+                """, TODAY);
+        double before = billing("NOT_BILLED_SOLD_OUT");
+
+        send(body(serveId, 101L), Role.MEMBER).andExpect(status().isAccepted());
+        writeBuffer.flush();
+        resendLater();
+        send(body(serveId, 101L), Role.MEMBER).andExpect(status().isAccepted());
+        writeBuffer.flush();
+        dispatch.dispatchPending();
+
+        assertThat(billing("NOT_BILLED_SOLD_OUT")).isEqualTo(before + 1);
+        verifyNoInteractions(pointDeductor);
     }
 
     // 정산이 실패로 돌려줘도 이미 다른 서버가 발행한 노출에는 실패를 적지 않는다. 적으면 발행한 노출의 시도 횟수가 오른다
