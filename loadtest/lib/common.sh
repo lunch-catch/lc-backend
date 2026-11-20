@@ -133,7 +133,7 @@ SELECT CONCAT('database ', @db, ' tables ', COUNT(*)) FROM information_schema.TA
 # 그 사이 앱과 배치의 쿼리는 실패한다. 다시 뜨는 동안 헬스체크가 실패해 오토스케일링 그룹이 서버를 바꾸지 않게 교체를 멈춰 둔다(switch 와 같은 방법).
 #
 reset_state() {
-  local svc i id pids rc
+  local svc i id pids rc apps batches
   if [ -n "$LOCAL" ]; then
     docker stop "$LOCAL_PROJECT-app-1" "$LOCAL_PROJECT-batch-1" > /dev/null
     printf '%s\n' "$RECREATE_DATABASE" | local_mysql -N
@@ -150,6 +150,11 @@ reset_state() {
     echo "valkey $(docker exec "$LOCAL_PROJECT-valkey-1" valkey-cli DBSIZE)"
     return
   fi
+  # 데이터베이스를 지운 뒤에 서버를 찾지 못하면 다시 띄우지 못해 표 없이 남는다. 지우기 전에 앱과 배치를 찾아 둔다
+  apps=$(instances app) || die "앱 서버를 찾지 못했다. member-env.sh status 로 환경을 확인한다"
+  batches=$(instances batch) || die "배치 서버를 찾지 못했다. member-env.sh status 로 환경을 확인한다"
+  [ -n "$apps" ] || die "떠 있는 앱 서버가 없다"
+  [ -n "$batches" ] || die "떠 있는 배치 서버가 없다"
   remote "$(instance app)" 300 "set -euo pipefail
 $DB_ENV
 mysql -N <<'SQL'
@@ -157,7 +162,7 @@ $RECREATE_DATABASE
 SQL"
   aws autoscaling suspend-processes --auto-scaling-group-name "$PROJECT-app" --scaling-processes ReplaceUnhealthy
   pids=""; rc=0
-  for id in $(instances app) $(instances batch); do
+  for id in $apps $batches; do
     echo "restart $id"
     remote "$id" 600 "set -euo pipefail
 systemctl restart $PROJECT
