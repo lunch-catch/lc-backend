@@ -103,7 +103,7 @@ A-03은 전용 `daily_funnel_analytics`에 영업일당 한 행으로 저장한�
 `SpendFormula`는 아래 계산을 한 곳에서 제공한다.
 
 ```text
-캠페인 소진액 = DEDUCT 합 - 캠페인에 연결된 양수 ADJUST 합
+캠페인 소진액 = 판정의 BILLED 단가 합 - 캠페인에 연결된 양수 ADJUST 합
 플랫폼 소진액 = 캠페인 소진액 합 - 캠페인 없는 양수 ADJUST 합
 ```
 
@@ -158,7 +158,7 @@ A-12(`MemberUsageStatsQueryService`)는 본인의 `daily_member_usage` 전체 �
 | 값 | 원천 |
 |---|---|
 | 하루 예산, 단가 | `BillingStatsQueryService.dailyBudgets` |
-| 과금액, 정정액, 소진액 | `BillingStatsQueryService.ledgerSums`의 캠페인별 `DEDUCT` 합(부호를 뒤집는다)과 양수 `ADJUST` 합. 소진액은 `SpendFormula`로 계산하고 음수를 허용한다 |
+| 과금액, 정정액, 소진액 | `BillingStatsQueryService.ledgerSums`의 캠페인별 소진 합(판정의 `BILLED` 단가 합, 부호를 뒤집는다)과 양수 `ADJUST` 합. 소진액은 `SpendFormula`로 계산하고 음수를 허용한다 |
 | 과금 노출, 미과금 사유 넷 | `BillingStatsQueryService.billingCounts`(`BILLED`, `NOT_BILLED_BUDGET`, `NOT_BILLED_PAUSED`, `NOT_BILLED_NO_PLAN`, `NOT_BILLED_CLOSED`) |
 | 쿠폰 소진 뒤 노출, 무효 사유, 시간대, 슬롯 | `AdservingStatsQueryService.campaignStats` |
 | 찜 | analytics 자기 `event_log`의 그날 `wish` 행 수. 계약의 `wishCount`는 31일이 지나면 0이라 쓰지 않는다(퍼널과 같다) |
