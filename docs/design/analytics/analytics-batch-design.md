@@ -60,7 +60,7 @@ Spring Batch는 사용하지 않는다. 각 단계는 평범한 서비스이고 
 
 앱 서버에서 집계하지 않는 이유는 요청용 시간 제한(쿼리와 트랜잭션 5초)이다. 그날 노출 100만 건 규모에서 노출 집계가 약 15초, 정산 합계가 약 16초 걸려 앱 서버의 재집계로는 복구되지 않았다(#1238). 관리자 배치 재실행(#1231)과 같은 길이라 새 폴링이나 점유 장치를 두지 않는다. 요청과 이어받기에서 세대가 한 번씩 올라 세대가 2 오른다. 배치 서버가 하나도 없으면 요청 표식인 행이 `RUNNING`으로 남는다.
 
-접수한 앱 서버는 요청의 traceId 아래에 `ANALYTICS_RECALCULATION_REQUESTED`로 영업일과 실행 행 ID를 남긴다. 배치 서버 쪽의 `BATCH_MANUAL_RETRY_STARTED`와 `ANALYTICS_DAILY_AGGREGATION_RESUMED`는 새 traceId로 열리므로 두 쪽 로그는 영업일로 이어 본다.
+접수한 앱 서버는 요청의 trace_id 아래에 `ANALYTICS_RECALCULATION_REQUESTED`로 영업일과 실행 행 ID를 남긴다. 배치 서버 쪽의 `BATCH_MANUAL_RETRY_STARTED`와 `ANALYTICS_DAILY_AGGREGATION_RESUMED`는 새 trace_id로 열리므로 두 쪽 로그는 영업일로 이어 본다.
 
 `DailyAggregationJob`은 `StandaloneJob`으로도 등록한다. ops의 이어받기와 관리자 수동 재실행(`POST /v1/admin/batch-executions/DAILY_AGGREGATION/{영업일}:retry`)이 넘겨준 날짜와 세대로 그 날짜만 `aggregate`한다. 날짜를 다시 잡지 않고 01:00 전체 실행(`runAll`)도 부르지 않는다. A-05 의 수동 재집계도 이 경로로 들어온다. 원천 해제 성공 확인은 거치지 않는다.
 

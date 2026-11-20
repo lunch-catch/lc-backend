@@ -101,10 +101,10 @@ class HttpBodyLoggingFilterTest {
         MockHttpServletResponse response = new MockHttpServletResponse();
         request.setAsyncSupported(true);
         try {
-            MDC.put("traceId", "request-trace");
+            MDC.put("trace_id", "request-trace");
             filter.doFilter(request, response, (req, res) -> req.startAsync(req, res));
             MockAsyncContext context = (MockAsyncContext) request.getAsyncContext();
-            MDC.put("traceId", "completion-thread");
+            MDC.put("trace_id", "completion-thread");
             for (var listener : context.getListeners()) {
                 listener.onError(new AsyncEvent(context, new java.io.IOException("secret-value")));
             }
@@ -114,8 +114,8 @@ class HttpBodyLoggingFilterTest {
             assertThat(logs.events()).hasSize(1);
             assertThat(logs.only().getFormattedMessage()).contains("reason=ASYNC_ERROR")
                     .doesNotContain("secret-value");
-            assertThat(logs.only().getMDCPropertyMap()).containsEntry("traceId", "request-trace");
-            assertThat(MDC.get("traceId")).isEqualTo("completion-thread");
+            assertThat(logs.only().getMDCPropertyMap()).containsEntry("trace_id", "request-trace");
+            assertThat(MDC.get("trace_id")).isEqualTo("completion-thread");
         } finally {
             MDC.clear();
         }

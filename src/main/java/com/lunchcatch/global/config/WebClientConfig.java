@@ -30,7 +30,7 @@ public class WebClientConfig {
     private static final Duration PENDING_ACQUIRE_TIMEOUT = Duration.ofSeconds(2);
 
     /**
-     * TraceIdExchangeFilter를 붙여뒀지만 카카오는 우리 traceId 규약을 모르니 지금은 사실상
+     * TraceIdExchangeFilter를 붙여뒀지만 카카오는 우리 trace_id 규약을 모르니 지금은 사실상
      * 무효과다(TraceIdExchangeFilter의 클래스 주석 참고) — 나중에 우리가 만든 다른 서비스를
      * WebClient로 호출하게 되면 그때부터 값어치가 생긴다.
      *

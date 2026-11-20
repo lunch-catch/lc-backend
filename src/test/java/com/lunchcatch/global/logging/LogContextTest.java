@@ -2,6 +2,11 @@ package com.lunchcatch.global.logging;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import io.opentelemetry.api.trace.Span;
+import io.opentelemetry.api.trace.SpanContext;
+import io.opentelemetry.api.trace.TraceFlags;
+import io.opentelemetry.api.trace.TraceState;
+import io.opentelemetry.context.Scope;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -28,6 +33,23 @@ class LogContextTest {
                 assertThat(MDC.get(LogContext.TRACE_ID)).isNotBlank();
                 assertThat(MDC.get(LogContext.JOB)).isEqualTo("impression-writer");
             }
+        }
+
+        // 에이전트가 붙으면 @Scheduled 실행을 감싼 스팬이 먼저 열린다. 그 실행의 로그가 그 트레이스를 가리키게 한다(#1300)
+        @Test
+        void 에이전트의_트레이스가_열려_있으면_그_ID로_연다() {
+            String agentTraceId = "4bf92f3577b34da6a3ce929d0e0e4736";
+            Span span = Span.wrap(SpanContext.create(agentTraceId, "00f067aa0ba902b7", TraceFlags.getSampled(),
+                    TraceState.getDefault()));
+
+            try (Scope ignored = span.makeCurrent(); LogContext.Scope opened = LogContext.open("daily-bundle")) {
+                assertThat(MDC.get(LogContext.TRACE_ID)).isEqualTo(agentTraceId);
+            }
+        }
+
+        @Test
+        void 키_이름은_에이전트와_같은_trace_id다() {
+            assertThat(LogContext.TRACE_ID).isEqualTo("trace_id");
         }
 
         @Test

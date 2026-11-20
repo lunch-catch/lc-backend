@@ -135,12 +135,12 @@ class FunnelEventRecorderTest {
     void 기록하는_동안_부른_쪽의_MDC가_보인다() throws Exception {
         AtomicReference<String> seen = new AtomicReference<>();
         when(writer.write(any(EventRecord.class))).thenAnswer(call -> {
-            seen.set(MDC.get("traceId"));
+            seen.set(MDC.get("trace_id"));
             return new EventWriteResult(1, 0);
         });
         ExecutorService worker = Executors.newSingleThreadExecutor();
         try {
-            MDC.put("traceId", "request-trace");
+            MDC.put("trace_id", "request-trace");
             new FunnelEventRecorder(writer, registry, worker).record(record());
             MDC.clear();
 
@@ -157,12 +157,12 @@ class FunnelEventRecorderTest {
         when(writer.write(any(EventRecord.class))).thenReturn(new EventWriteResult(1, 0));
         ExecutorService worker = Executors.newSingleThreadExecutor();
         try {
-            worker.submit(() -> MDC.put("traceId", "worker-trace")).get(5, TimeUnit.SECONDS);
-            MDC.put("traceId", "request-trace");
+            worker.submit(() -> MDC.put("trace_id", "worker-trace")).get(5, TimeUnit.SECONDS);
+            MDC.put("trace_id", "request-trace");
             new FunnelEventRecorder(writer, registry, worker).record(record());
             MDC.clear();
 
-            assertThat(worker.submit(() -> MDC.get("traceId")).get(5, TimeUnit.SECONDS)).isEqualTo("worker-trace");
+            assertThat(worker.submit(() -> MDC.get("trace_id")).get(5, TimeUnit.SECONDS)).isEqualTo("worker-trace");
         } finally {
             MDC.clear();
             worker.shutdownNow();
@@ -173,12 +173,12 @@ class FunnelEventRecorderTest {
     void 부른_쪽의_MDC가_비어_있으면_실행한_스레드에_남은_값을_쓰지_않는다() throws Exception {
         AtomicReference<String> seen = new AtomicReference<>("not-called");
         when(writer.write(any(EventRecord.class))).thenAnswer(call -> {
-            seen.set(MDC.get("traceId"));
+            seen.set(MDC.get("trace_id"));
             return new EventWriteResult(1, 0);
         });
         ExecutorService worker = Executors.newSingleThreadExecutor();
         try {
-            worker.submit(() -> MDC.put("traceId", "stale-trace")).get(5, TimeUnit.SECONDS);
+            worker.submit(() -> MDC.put("trace_id", "stale-trace")).get(5, TimeUnit.SECONDS);
             MDC.clear();
             new FunnelEventRecorder(writer, registry, worker).record(record());
 

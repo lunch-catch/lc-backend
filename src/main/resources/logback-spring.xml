@@ -2,7 +2,7 @@
 <configuration>
 
     <!-- ================================================================
-         로컬: 사람이 읽기 좋은 콘솔 포맷 + MDC(traceId 등) 노출 + DEBUG
+         로컬: 사람이 읽기 좋은 콘솔 포맷 + MDC(trace_id 등) 노출 + DEBUG
 
          application.yml 이 spring.profiles.default 를 local 로 두므로 프로필을 아무것도
          안 켠 실행도 이 블록에 걸린다. springProfile 은 기본 프로필도 활성으로 본다.
@@ -18,11 +18,11 @@
              PatternParser가 그 여는 괄호를 또 다른 컴포지트 컨버터(%word(...) 형태)의 시작으로
              오인해서 그 뒤 " - %msg%n"까지 파싱에 실패해 통째로 사라진다. 그래서 괄호 없이
              %F:%line으로 쓴다. Logback은 %X{key:-default} 문법을 지원한다. 지금은 값이 없을 때
-             빈 문자열을 내보내려고 기본값 없이 %X{traceId}로 쓴다. -->
+             빈 문자열을 내보내려고 기본값 없이 %X{trace_id}로 쓴다. -->
         <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
             <encoder>
                 <pattern>
-                    %d{yyyy-MM-dd HH:mm:ss.SSS} %highlight(%-5level) [%thread] [%X{traceId}] %X{method} %X{uri} %X{clientIp} %cyan(%logger{36}) %F:%line - %msg%n
+                    %d{yyyy-MM-dd HH:mm:ss.SSS} %highlight(%-5level) [%thread] [%X{trace_id}] %X{method} %X{uri} %X{clientIp} %cyan(%logger{36}) %F:%line - %msg%n
                 </pattern>
             </encoder>
         </appender>
@@ -39,17 +39,16 @@
     <!-- ================================================================
          프로덕션: JSON 구조화 로그 (ELK / Loki / CloudWatch 수집용)
          의존성: net.logstash.logback:logstash-logback-encoder:8.0
-         - MDC 필드(traceId, method, uri, clientIp, job)가 JSON 키로 자동 포함
+         - MDC 필드(trace_id, method, uri, clientIp, job)가 JSON 키로 자동 포함
            job 은 LogContext 가 스케줄 작업과 워커의 실행마다 넣는다
          - version 은 배포가 넘기는 APP_VERSION 이다. 없으면 local 이다
-         - trace_id 는 OpenTelemetry 에이전트를 붙였을 때만 생기는 추적 ID 다(#1099).
-           traceId 는 MdcLoggingFilter 가 만든 값이라 추적과 이어지지 않는다
+         - trace_id 는 에이전트를 붙였으면 그 트레이스의 ID 이고, 붙지 않았으면 MdcLoggingFilter 와
+           LogContext 가 만든 값이다(#1099, #1300). 에이전트도 같은 키에 같은 값을 넣는다
          - AsyncAppender + neverBlock 으로 로깅이 요청 스레드를 막지 않게 함
          ================================================================ -->
     <springProfile name="prod">
         <appender name="JSON_CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
             <encoder class="net.logstash.logback.encoder.LogstashEncoder">
-                <includeMdcKeyName>traceId</includeMdcKeyName>
                 <includeMdcKeyName>method</includeMdcKeyName>
                 <includeMdcKeyName>uri</includeMdcKeyName>
                 <includeMdcKeyName>clientIp</includeMdcKeyName>

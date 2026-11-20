@@ -1,5 +1,6 @@
 package com.lunchcatch.coupon.service;
 
+import com.lunchcatch.global.logging.LogContext;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
@@ -20,11 +21,11 @@ record CouponLogContext(Map<String, String> values) {
 
     static CouponLogContext shared(List<CouponLogContext> requests) {
         String traceIds = requests.stream()
-                .map(context -> context.values.getOrDefault("requestTraceIds", context.values.get("traceId")))
+                .map(context -> context.values.getOrDefault("requestTraceIds", context.values.get(LogContext.TRACE_ID)))
                 .filter(value -> value != null && !value.isBlank())
                 .flatMap(value -> Arrays.stream(value.split(",")))
                 .distinct().collect(Collectors.joining(","));
-        return new CouponLogContext(Map.of("traceId", UUID.randomUUID().toString().replace("-", ""),
+        return new CouponLogContext(Map.of(LogContext.TRACE_ID, UUID.randomUUID().toString().replace("-", ""),
                 "requestTraceIds", traceIds.isEmpty() ? "NONE" : traceIds));
     }
 

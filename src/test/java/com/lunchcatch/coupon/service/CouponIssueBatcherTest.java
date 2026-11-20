@@ -72,11 +72,11 @@ class CouponIssueBatcherTest {
             completionContexts.add(org.slf4j.MDC.getCopyOfContextMap());
             return Set.of();
         });
-        org.slf4j.MDC.put("traceId", "request-1");
+        org.slf4j.MDC.put("trace_id", "request-1");
         org.slf4j.MDC.put("clientIp", "127.0.0.1");
         batcher.submitAndAwait(17L, 81L);
-        assertThat(org.slf4j.MDC.get("traceId")).isEqualTo("request-1");
-        org.slf4j.MDC.put("traceId", "request-2");
+        assertThat(org.slf4j.MDC.get("trace_id")).isEqualTo("request-1");
+        org.slf4j.MDC.put("trace_id", "request-2");
         batcher.submitAndAwait(18L, 81L);
 
         assertThat(issuanceContexts).hasSize(2);
@@ -85,8 +85,8 @@ class CouponIssueBatcherTest {
         assertThat(completionContexts).hasSize(2);
         assertThat(completionContexts.get(0)).containsEntry("requestTraceIds", "request-1");
         assertThat(completionContexts.get(1)).containsEntry("requestTraceIds", "request-2");
-        assertThat(issuanceContexts.get(0).get("traceId")).matches("[a-f0-9]{32}");
-        assertThat(org.slf4j.MDC.get("traceId")).isEqualTo("request-2");
+        assertThat(issuanceContexts.get(0).get("trace_id")).matches("[a-f0-9]{32}");
+        assertThat(org.slf4j.MDC.get("trace_id")).isEqualTo("request-2");
     }
 
     @Test
@@ -98,12 +98,12 @@ class CouponIssueBatcherTest {
             context.set(org.slf4j.MDC.getCopyOfContextMap());
             return 0;
         });
-        org.slf4j.MDC.put("traceId", "request-1");
+        org.slf4j.MDC.put("trace_id", "request-1");
 
         assertThatThrownBy(() -> batcher.submitAndAwait(17L, 81L)).isInstanceOf(CouponException.class);
 
         assertThat(context.get()).containsEntry("requestTraceIds", "request-1");
-        assertThat(org.slf4j.MDC.get("traceId")).isEqualTo("request-1");
+        assertThat(org.slf4j.MDC.get("trace_id")).isEqualTo("request-1");
     }
 
     @Test
@@ -114,11 +114,11 @@ class CouponIssueBatcherTest {
             assertThat(CouponLogContext.requestTraceIds()).isEqualTo("request-1");
             return Set.of();
         });
-        org.slf4j.MDC.put("traceId", "request-1");
+        org.slf4j.MDC.put("trace_id", "request-1");
 
         assertThat(batcher.submitAndAwait(17L, 81L).response()).isEqualTo(response);
 
-        assertThat(org.slf4j.MDC.get("traceId")).isEqualTo("request-1");
+        assertThat(org.slf4j.MDC.get("trace_id")).isEqualTo("request-1");
     }
 
     @Test
@@ -126,7 +126,7 @@ class CouponIssueBatcherTest {
         var failure = new org.springframework.dao.DataIntegrityViolationException("secret-token",
                 new java.sql.SQLException("secret-value", "23000", 1062));
         when(batchService.issueBatch(anyList(), any())).thenThrow(failure);
-        org.slf4j.MDC.put("traceId", "request-1");
+        org.slf4j.MDC.put("trace_id", "request-1");
         try (var logs = new CouponLogCapture(CouponIssueBatcher.class)) {
             assertThatThrownBy(() -> batcher.submitAndAwait(17L, 81L)).isSameAs(failure);
 
@@ -507,11 +507,11 @@ class CouponIssueBatcherTest {
                 var first = executor.submit(() -> batcher.submitAndAwait(17L, 81L));
                 assertThat(started.await(5, TimeUnit.SECONDS)).isTrue();
                 var second = executor.submit(() -> {
-                    org.slf4j.MDC.put("traceId", "request-2");
+                    org.slf4j.MDC.put("trace_id", "request-2");
                     return batcher.submitAndAwait(18L, 81L);
                 });
                 var third = executor.submit(() -> {
-                    org.slf4j.MDC.put("traceId", "request-3");
+                    org.slf4j.MDC.put("trace_id", "request-3");
                     return batcher.submitAndAwait(19L, 81L);
                 });
                 BlockingQueue<?> queue = (BlockingQueue<?>) ReflectionTestUtils.getField(batcher, "queue");
@@ -525,7 +525,7 @@ class CouponIssueBatcherTest {
                         assertThat(logs.events).anySatisfy(event -> {
                             assertThat(event.getFormattedMessage()).contains("event=COUPON_BATCH_WORKER_FAILED", "requestCount=2",
                                     "request-2", "request-3", "exceptionType=AssertionError");
-                            assertThat(event.getMDCPropertyMap().get("traceId")).matches("[a-f0-9]{32}");
+                            assertThat(event.getMDCPropertyMap().get("trace_id")).matches("[a-f0-9]{32}");
                         }));
                 assertThat(batcher.submitAndAwait(20L, 81L).response()).isEqualTo(response);
             } finally {

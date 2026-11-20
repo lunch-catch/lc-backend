@@ -120,20 +120,20 @@ class ExternalApiLoggingExchangeFilterTest {
     @Test
     void 응답_콜백이_요청_스레드에서_돌면_MDC가_로그에_남는다() {
         // given
-        MDC.put("traceId", "same-thread-trace");
+        MDC.put("trace_id", "same-thread-trace");
         ClientRequest request = request("http://localhost/oauth/token");
 
         // when
         ExternalApiLoggingExchangeFilter.logCalls().filter(request, respondingWith(HttpStatus.OK)).block();
 
         // then
-        assertThat(logs.only().getMDCPropertyMap()).containsEntry("traceId", "same-thread-trace");
+        assertThat(logs.only().getMDCPropertyMap()).containsEntry("trace_id", "same-thread-trace");
     }
 
     @Test
     void 응답_콜백이_다른_스레드에서_돌면_요청_MDC가_자동으로_전파되지_않는다() {
         // given
-        MDC.put("traceId", "request-trace");
+        MDC.put("trace_id", "request-trace");
         ClientRequest request = request("http://localhost/oauth/token");
         Scheduler scheduler = Schedulers.newSingle("external-api-response");
         ExchangeFunction responding = ignored -> Mono.fromSupplier(
@@ -147,7 +147,7 @@ class ExternalApiLoggingExchangeFilterTest {
             // then
             ILoggingEvent event = logs.only();
             assertThat(event.getThreadName()).startsWith("external-api-response");
-            assertThat(event.getMDCPropertyMap()).doesNotContainKey("traceId");
+            assertThat(event.getMDCPropertyMap()).doesNotContainKey("trace_id");
         } finally {
             scheduler.dispose();
         }
@@ -156,7 +156,7 @@ class ExternalApiLoggingExchangeFilterTest {
     @Test
     void 오류_콜백이_다른_스레드에서_돌면_요청_MDC가_자동으로_전파되지_않는다() {
         // given
-        MDC.put("traceId", "request-trace");
+        MDC.put("trace_id", "request-trace");
         ClientRequest request = request("http://localhost/oauth/token");
         Scheduler scheduler = Schedulers.newSingle("external-api-error");
         ExchangeFunction failing = ignored -> Mono.<ClientResponse>error(new IllegalStateException("failed"))
@@ -170,7 +170,7 @@ class ExternalApiLoggingExchangeFilterTest {
             // then
             ILoggingEvent event = logs.only();
             assertThat(event.getThreadName()).startsWith("external-api-error");
-            assertThat(event.getMDCPropertyMap()).doesNotContainKey("traceId");
+            assertThat(event.getMDCPropertyMap()).doesNotContainKey("trace_id");
         } finally {
             scheduler.dispose();
         }

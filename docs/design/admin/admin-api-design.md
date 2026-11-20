@@ -62,7 +62,7 @@ IP별 횟수 제한은 분산 시도의 계정별 쓰기량 상한이 아니므�
 
 식별 가능한 계정의 로그인은 서비스가 결과에 따라 `ADMIN_LOGIN_SUCCESS` 또는 `ADMIN_LOGIN_FAILED`를 기록한다. 성공과 일반 거절은 INFO, HTTP 5xx에 해당하는 실패는 ERROR로 기록한다. 메시지 필드는 `adminId`, `httpStatus`이고 시각은 로깅 프레임워크가 기록한다. 없는 계정과 서비스 진입 전 거절은 `AdminLoginAuditFilter`가 최종 HTTP 상태와 `durationMs`를 기록한다.
 
-클라이언트 IP는 `ClientIpResolver.resolve(request)`로 정해 로그인 요청을 처리하는 동안 MDC의 `clientIp`에 넣는다. 기록 후 기존 값을 복원하고 기존 값이 없으면 제거한다. `traceId`는 변경하지 않는다. 본문과 쿠키를 읽지 않으며 비밀번호, 토큰 원문과 예외 메시지도 감사 로그에 담지 않는다.
+클라이언트 IP는 `ClientIpResolver.resolve(request)`로 정해 로그인 요청을 처리하는 동안 MDC의 `clientIp`에 넣는다. 기록 후 기존 값을 복원하고 기존 값이 없으면 제거한다. `trace_id`는 변경하지 않는다. 본문과 쿠키를 읽지 않으며 비밀번호, 토큰 원문과 예외 메시지도 감사 로그에 담지 않는다.
 
 로그인 서비스는 성공과 식별 가능한 계정의 실패를 `AuditLogWriter`로 별도 트랜잭션에 저장한다. `action=ADMIN_LOGIN`, `target`은 관리자 ID 문자열이며 `detail`은 `result=SUCCESS` 또는 `result=FAILURE`와 MDC의 `clientIp`를 담는다. 감사 저장 실패는 원래 로그인 결과를 바꾸지 않으며 `ADMIN_LOGIN_AUDIT_FAILED` ERROR와 `admin.login.audit.failed` 메트릭을 남긴다.
 
