@@ -5,23 +5,34 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.spi.ILoggingEvent;
+import com.launchcatch.global.config.SchedulingConfig;
 import io.micrometer.core.instrument.Gauge;
+import io.micrometer.core.instrument.Timer;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import io.micrometer.prometheusmetrics.PrometheusConfig;
+import io.micrometer.prometheusmetrics.PrometheusMeterRegistry;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Set;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.slf4j.MDC;
 import org.springframework.aop.aspectj.annotation.AspectJProxyFactory;
+import org.springframework.context.support.GenericApplicationContext;
 import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.scheduling.config.ScheduledTaskHolder;
 import org.springframework.scheduling.support.TaskUtils;
 
 class SchedulerLoggingAspectTest {
 
     private static final String LAST_SUCCESS = "batch.job.last.success.timestamp";
+    private static final String DURATION = "batch.job.duration";
+    private static final String RUNNING_SINCE = "batch.job.running.since";
     private static final Instant START = Instant.parse("2026-10-06T00:00:00Z");
 
     /*
@@ -85,6 +96,7 @@ class SchedulerLoggingAspectTest {
     private final SimpleMeterRegistry registry = new SimpleMeterRegistry();
     private final MutableClock clock = new MutableClock();
     private LogCapture logs;
+    private SchedulerLoggingAspect aspect;
     private FakeJob target;
     private FakeJob job;
 
@@ -93,7 +105,8 @@ class SchedulerLoggingAspectTest {
         logs = LogCapture.attach(SchedulerLoggingAspect.class);
         target = new FakeJob();
         AspectJProxyFactory factory = new AspectJProxyFactory(target);
-        factory.addAspect(new SchedulerLoggingAspect(registry, clock));
+        aspect = new SchedulerLoggingAspect(registry, clock);
+        factory.addAspect(aspect);
         job = factory.getProxy();
     }
 
@@ -204,6 +217,204 @@ class SchedulerLoggingAspectTest {
         assertThat(logs.events()).isEmpty();
     }
 
+    // --- MDC -------------------------------------------------------------------
+
+    @Test
+    void 실행_중에는_새_traceId와_작업_이름이_MDC에_있다() {
+        // given
+        String[] seen = new String[2];
+        target.work = () -> {
+            seen[0] = MDC.get(LogContext.TRACE_ID);
+            seen[1] = MDC.get(LogContext.JOB);
+        };
+
+        // when
+        job.run();
+
+        // then
+        assertThat(seen[0]).isNotBlank();
+        assertThat(seen[1]).contains("run()");
+    }
+
+    @Test
+    void 시작과_종료_로그에도_같은_traceId가_붙는다() {
+        // when
+        job.run();
+
+        // then
+        assertThat(logs.events()).extracting(event -> event.getMDCPropertyMap().get(LogContext.TRACE_ID))
+                .doesNotContainNull()
+                .containsOnly(logs.events().get(0).getMDCPropertyMap().get(LogContext.TRACE_ID));
+    }
+
+    @Test
+    void 실패해도_실패_로그에_traceId가_붙고_끝나면_MDC를_비운다() {
+        // when
+        failOnce();
+
+        // then
+        assertThat(logs.events().get(1).getMDCPropertyMap()).containsKey(LogContext.TRACE_ID);
+        assertThat(MDC.getCopyOfContextMap()).isNullOrEmpty();
+    }
+
+    @Test
+    void 실행마다_traceId가_다르다() {
+        // when
+        job.run();
+        job.run();
+
+        // then
+        assertThat(logs.events().get(0).getMDCPropertyMap().get(LogContext.TRACE_ID))
+                .isNotEqualTo(logs.events().get(2).getMDCPropertyMap().get(LogContext.TRACE_ID));
+    }
+
+    // --- 실행 시간 타이머 -----------------------------------------------------------
+
+    private Timer duration(String outcome) {
+        return registry.find(DURATION).tag("outcome", outcome).timers().stream()
+                .filter(timer -> timer.getId().getTag("scheduler").contains("run()"))
+                .findFirst()
+                .orElseThrow();
+    }
+
+    @Test
+    void 성공한_실행의_걸린_시간을_success_로_기록한다() {
+        // given
+        target.work = () -> clock.advanceSeconds(3);
+
+        // when
+        job.run();
+
+        // then
+        assertThat(duration("success").count()).isEqualTo(1);
+        assertThat(duration("success").totalTime(TimeUnit.SECONDS)).isEqualTo(3.0);
+    }
+
+    @Test
+    void 실패한_실행의_걸린_시간을_failure_로_기록한다() {
+        // given
+        target.work = () -> clock.advanceSeconds(2);
+
+        // when
+        failOnce();
+
+        // then
+        assertThat(duration("failure").count()).isEqualTo(1);
+        assertThat(duration("failure").totalTime(TimeUnit.SECONDS)).isEqualTo(2.0);
+        assertThat(registry.find(DURATION).tag("outcome", "success").timers()).isEmpty();
+    }
+
+    // 메모리 레지스트리는 히스토그램 버킷을 내보내지 않아 실제로 쓰는 Prometheus 레지스트리로 본다
+    @Test
+    void 실행_시간은_분위수를_합칠_수_있게_히스토그램을_낸다() {
+        // given
+        PrometheusMeterRegistry prometheus = new PrometheusMeterRegistry(PrometheusConfig.DEFAULT);
+        AspectJProxyFactory factory = new AspectJProxyFactory(new FakeJob());
+        factory.addAspect(new SchedulerLoggingAspect(prometheus, clock));
+        FakeJob prometheusJob = factory.getProxy();
+
+        // when
+        prometheusJob.run();
+
+        // then
+        assertThat(prometheus.scrape()).contains("batch_job_duration_seconds_bucket{");
+    }
+
+    // 기본 상한 30초를 넘는 작업도 버킷에 담겨야 p99 가 실제 시간에 가깝다
+    @Test
+    void 실행_시간_히스토그램은_30초를_넘는_작업도_버킷에_담는다() {
+        // given
+        PrometheusMeterRegistry prometheus = new PrometheusMeterRegistry(PrometheusConfig.DEFAULT);
+        AspectJProxyFactory factory = new AspectJProxyFactory(new FakeJob());
+        factory.addAspect(new SchedulerLoggingAspect(prometheus, clock));
+        FakeJob prometheusJob = factory.getProxy();
+
+        // when
+        prometheusJob.run();
+
+        // then
+        assertThat(prometheus.scrape()).containsPattern("batch_job_duration_seconds_bucket\\{[^}]*le=\"(1[0-9]{3}|[2-9][0-9]{3})\\.");
+    }
+
+    // --- 기동 때 만드는 실패 타이머 -------------------------------------------------------
+
+    private static GenericApplicationContext context(boolean schedulerEnabled) {
+        GenericApplicationContext context = new GenericApplicationContext();
+        context.registerBean(FakeJob.class);
+        if (schedulerEnabled) {
+            context.registerBean(ScheduledTaskHolder.class, () -> Set::of);
+        }
+        context.refresh();
+        return context;
+    }
+
+    private List<String> failureTimerJobs() {
+        return registry.find(DURATION).tag("outcome", "failure").timers().stream()
+                .map(timer -> timer.getId().getTag("scheduler"))
+                .sorted()
+                .toList();
+    }
+
+    @Test
+    void 스케줄러를_켠_서버는_기동_때_Scheduled_메서드마다_실패_타이머를_0으로_만든다() {
+        // given
+        try (GenericApplicationContext context = context(true)) {
+
+            // when
+            aspect.registerFailureTimers(context);
+        }
+
+        // then
+        assertThat(failureTimerJobs()).containsExactly("FakeJob.other()", "FakeJob.quiet()", "FakeJob.run()");
+        assertThat(duration("failure").count()).isZero();
+    }
+
+    // 기동 때 만든 이름이 실행 때 애스펙트가 붙이는 이름과 달라 따로 생기면 첫 실패를 또 놓친다
+    @Test
+    void 기동_때_만든_실패_타이머가_첫_실패에_0에서_1로_오른다() {
+        // given
+        try (GenericApplicationContext context = context(true)) {
+            aspect.registerFailureTimers(context);
+        }
+
+        // when
+        failOnce();
+
+        // then
+        assertThat(failureTimerJobs()).hasSize(3);
+        assertThat(duration("failure").count()).isEqualTo(1);
+    }
+
+    // 스케줄러가 컨텍스트 새로 고침 때 fixedDelay 작업을 바로 돌리므로 그보다 앞에 0 이 있어야 한다
+    @Test
+    void 컨텍스트가_모든_싱글턴을_만들면_실패_타이머를_만든다() {
+        // given
+        GenericApplicationContext context = new GenericApplicationContext();
+        context.registerBean(SchedulerLoggingAspect.class, () -> new SchedulerLoggingAspect(registry, clock));
+        context.registerBean(FakeJob.class);
+        context.registerBean(ScheduledTaskHolder.class, () -> Set::of);
+
+        // when
+        context.refresh();
+        context.close();
+
+        // then
+        assertThat(failureTimerJobs()).containsExactly("FakeJob.other()", "FakeJob.quiet()", "FakeJob.run()");
+    }
+
+    @Test
+    void 스케줄러를_끈_서버는_실패_타이머를_만들지_않는다() {
+        // given
+        try (GenericApplicationContext context = context(false)) {
+
+            // when
+            aspect.registerFailureTimers(context);
+        }
+
+        // then
+        assertThat(registry.find(DURATION).timers()).isEmpty();
+    }
+
     // --- 마지막 성공 시각 게이지 ---------------------------------------------------------
 
     @Test
@@ -266,23 +477,98 @@ class SchedulerLoggingAspectTest {
         assertThat(registry.find(LAST_SUCCESS).gauges()).hasSize(2);
     }
 
-    @Test
-    void 반복_작업이_실패하면_애스펙트와_Spring_오류_처리기가_스택을_각각_남긴다() {
-        // given
-        target.failure = new IllegalStateException("boom");
+    // --- 도는 중의 시작 시각 게이지 -------------------------------------------------------
 
-        try (LogCapture springLogs = LogCapture.attach(
-                "org.springframework.scheduling.support.TaskUtils$LoggingErrorHandler")) {
-            // when
-            TaskUtils.decorateTaskWithErrorHandler(job::run, null, true).run();
-
-            // then
-            ILoggingEvent aspectFailure = logs.events().get(1);
-            ILoggingEvent springFailure = springLogs.only();
-            assertThat(aspectFailure.getFormattedMessage()).startsWith("event=SCHEDULER_FAILED");
-            assertThat(aspectFailure.getThrowableProxy()).isNotNull();
-            assertThat(springFailure.getFormattedMessage()).isEqualTo("Unexpected error occurred in scheduled task");
-            assertThat(springFailure.getThrowableProxy()).isNotNull();
-        }
+    private double runningSince() {
+        return registry.find(RUNNING_SINCE).gauges().stream()
+                .filter(gauge -> gauge.getId().getTag("scheduler").contains("run()"))
+                .findFirst()
+                .orElseThrow()
+                .value();
     }
+
+    @Test
+    void 도는_동안에는_시작_시각을_게이지로_낸다() {
+        // given
+        double[] seen = new double[1];
+        target.work = () -> {
+            clock.advanceSeconds(30);
+            seen[0] = runningSince();
+        };
+
+        // when
+        job.run();
+
+        // then
+        assertThat(seen[0]).isEqualTo(START.getEpochSecond());
+    }
+
+    @Test
+    void 성공하고_나면_시작_시각을_0으로_되돌린다() {
+        // when
+        job.run();
+
+        // then
+        assertThat(runningSince()).isZero();
+    }
+
+    @Test
+    void 실패해도_시작_시각을_0으로_되돌린다() {
+        // when
+        failOnce();
+
+        // then
+        assertThat(runningSince()).isZero();
+    }
+
+    @Test
+    void 다음_실행은_그_실행의_시작_시각을_낸다() {
+        // given
+        job.run();
+        clock.advanceSeconds(60);
+        double[] seen = new double[1];
+        target.work = () -> seen[0] = runningSince();
+
+        // when
+        job.run();
+
+        // then
+        assertThat(seen[0]).isEqualTo(START.getEpochSecond() + 60);
+    }
+
+    @Test
+    void 시작_시각_게이지는_작업마다_scheduler_태그로_따로_둔다() {
+        // when
+        job.run();
+        job.other();
+
+        // then
+        assertThat(registry.find(RUNNING_SINCE).gauges())
+                .extracting(gauge -> gauge.getId().getTag("scheduler"))
+                .hasSize(2)
+                .anyMatch(name -> name.contains("run()"))
+                .anyMatch(name -> name.contains("other()"));
+    }
+
+    // 06 과 부하 시험 판정이 이 이름과 초 단위 값으로 묻는다
+    @Test
+    void 시작_시각_게이지는_Prometheus_에서_batch_job_running_since_seconds_로_보인다() {
+        // given
+        PrometheusMeterRegistry prometheus = new PrometheusMeterRegistry(PrometheusConfig.DEFAULT);
+        FakeJob prometheusTarget = new FakeJob();
+        String[] scraped = new String[1];
+        prometheusTarget.work = () -> scraped[0] = prometheus.scrape();
+        AspectJProxyFactory factory = new AspectJProxyFactory(prometheusTarget);
+        factory.addAspect(new SchedulerLoggingAspect(prometheus, clock));
+        FakeJob prometheusJob = factory.getProxy();
+
+        // when
+        prometheusJob.run();
+
+        // then
+        assertThat(scraped[0]).containsPattern(
+                "batch_job_running_since_seconds\\{[^}]*run\\(\\)[^}]*} " + (double) START.getEpochSecond());
+        assertThat(prometheus.scrape()).containsPattern("batch_job_running_since_seconds\\{[^}]*run\\(\\)[^}]*} 0\\.0");
+    }
+
 }

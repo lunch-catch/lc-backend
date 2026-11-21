@@ -38,7 +38,7 @@ class TraceIdExchangeFilterTest {
     @Test
     void MDC에_traceId가_있으면_X_Trace_Id_헤더로_실어_보낸다() {
         // given
-        MDC.put("traceId", "abc123");
+        MDC.put("trace_id", "abc123");
 
         // when
         ClientRequest request = requestSentThroughFilter();
@@ -59,7 +59,7 @@ class TraceIdExchangeFilterTest {
     @Test
     void 헤더를_붙여도_요청의_메서드와_주소는_그대로다() {
         // given
-        MDC.put("traceId", "abc123");
+        MDC.put("trace_id", "abc123");
 
         // when
         ClientRequest request = requestSentThroughFilter();

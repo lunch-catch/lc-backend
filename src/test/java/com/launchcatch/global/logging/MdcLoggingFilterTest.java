@@ -6,6 +6,11 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import jakarta.servlet.ServletException;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
+import io.opentelemetry.api.trace.Span;
+import io.opentelemetry.api.trace.SpanContext;
+import io.opentelemetry.api.trace.TraceFlags;
+import io.opentelemetry.api.trace.TraceState;
+import io.opentelemetry.context.Scope;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -37,6 +42,28 @@ class MdcLoggingFilterTest {
         return seen.get();
     }
 
+    // 에이전트가 붙으면 요청의 서버 스팬이 이 필터보다 먼저 열린다. 로그의 trace_id 가 그 트레이스를 가리키게 한다(#1300)
+    @Test
+    void 에이전트의_트레이스가_열려_있으면_X_Trace_Id보다_그_ID를_쓴다() throws Exception {
+        // given
+        String agentTraceId = "0af7651916cd43dd8448eb211c80319c";
+        MockHttpServletRequest request = request();
+        request.addHeader("X-Trace-Id", "abc-123_DEF.456");
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        Span span = Span.wrap(SpanContext.create(agentTraceId, "b7ad6b7169203331", TraceFlags.getSampled(),
+                TraceState.getDefault()));
+
+        // when
+        Map<String, String> mdc;
+        try (Scope ignored = span.makeCurrent()) {
+            mdc = mdcSeenByChain(request, response);
+        }
+
+        // then
+        assertThat(mdc.get("trace_id")).isEqualTo(agentTraceId);
+        assertThat(response.getHeader("X-Trace-Id")).isEqualTo(agentTraceId);
+    }
+
     @Test
     void 안전한_X_Trace_Id가_들어오면_그대로_이어받는다() throws Exception {
         // given
@@ -48,7 +75,7 @@ class MdcLoggingFilterTest {
         Map<String, String> mdc = mdcSeenByChain(request, response);
 
         // then
-        assertThat(mdc.get("traceId")).isEqualTo("abc-123_DEF.456");
+        assertThat(mdc.get("trace_id")).isEqualTo("abc-123_DEF.456");
         assertThat(response.getHeader("X-Trace-Id")).isEqualTo("abc-123_DEF.456");
     }
 
@@ -61,8 +88,8 @@ class MdcLoggingFilterTest {
         Map<String, String> mdc = mdcSeenByChain(request(), response);
 
         // then
-        assertThat(mdc.get("traceId")).matches(GENERATED_TRACE_ID);
-        assertThat(response.getHeader("X-Trace-Id")).isEqualTo(mdc.get("traceId"));
+        assertThat(mdc.get("trace_id")).matches(GENERATED_TRACE_ID);
+        assertThat(response.getHeader("X-Trace-Id")).isEqualTo(mdc.get("trace_id"));
     }
 
     @ParameterizedTest
@@ -76,7 +103,7 @@ class MdcLoggingFilterTest {
         Map<String, String> mdc = mdcSeenByChain(request, new MockHttpServletResponse());
 
         // then
-        assertThat(mdc.get("traceId")).matches(GENERATED_TRACE_ID);
+        assertThat(mdc.get("trace_id")).matches(GENERATED_TRACE_ID);
     }
 
     @Test
@@ -89,7 +116,7 @@ class MdcLoggingFilterTest {
         Map<String, String> mdc = mdcSeenByChain(request, new MockHttpServletResponse());
 
         // then
-        assertThat(mdc.get("traceId")).matches(GENERATED_TRACE_ID);
+        assertThat(mdc.get("trace_id")).matches(GENERATED_TRACE_ID);
     }
 
     @Test
@@ -103,7 +130,7 @@ class MdcLoggingFilterTest {
         Map<String, String> mdc = mdcSeenByChain(request, new MockHttpServletResponse());
 
         // then
-        assertThat(mdc.get("traceId")).isEqualTo(boundary);
+        assertThat(mdc.get("trace_id")).isEqualTo(boundary);
     }
 
     @Test
