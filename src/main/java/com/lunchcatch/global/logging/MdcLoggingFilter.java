@@ -6,8 +6,6 @@ import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
-import java.util.HexFormat;
-import java.util.concurrent.ThreadLocalRandom;
 import java.util.regex.Pattern;
 import org.slf4j.MDC;
 import org.springframework.core.Ordered;
@@ -16,12 +14,12 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 /**
- * 모든 요청의 컨텍스트(traceId, method, uri, clientIp)를 MDC 에 적재하는 필터.
+ * 모든 요청의 컨텍스트(trace_id, method, uri, clientIp)를 MDC 에 적재하는 필터.
  *
- * "traceId"라는 이름을 쓰지만 OpenTelemetry 같은 정식 분산 추적(distributed tracing) 라이브러리가
- * 아니다 — span 트리(부모-자식 인과관계), 자동 계측(HTTP/DB/Redis 호출마다 자동으로 구간 기록) 같은
- * 기능은 전혀 없고, 그냥 평평한 문자열 값 하나를 요청 시작 시점에 만들어서 MDC에 심어두는 게 전부인
- * 간이(simplified) 구현이다.
+ * trace_id 는 OpenTelemetry 에이전트가 붙어 있으면 그 요청의 트레이스 ID 이고, 붙지 않았으면 이 필터가
+ * 만든 값이다(#1300). 키 이름을 에이전트와 같게 두어 어느 환경이든 로그를 한 값으로 묶고, 에이전트가 있으면
+ * 그 값으로 Grafana 에서 트레이스까지 넘어간다. 에이전트가 없을 때의 값은 span 트리도 자동 계측도 없는
+ * 평평한 문자열 하나다.
  *
  * 이 값이 "여러 서비스에 걸친 추적"으로서 의미를 가지려면 이 값을 아웃바운드 호출에 실어 보내고
  * (TraceIdExchangeFilter), 받는 쪽 서비스도 그 값을 이어받아 쓰는 구조가 돼야 한다 — 즉 MSA
@@ -34,7 +32,7 @@ import org.springframework.web.filter.OncePerRequestFilter;
 @Order(Ordered.HIGHEST_PRECEDENCE)
 public class MdcLoggingFilter extends OncePerRequestFilter {
 
-    public static final String TRACE_ID = "traceId";
+    public static final String TRACE_ID = "trace_id";
     public static final String TRACE_ID_HEADER = "X-Trace-Id";
 
     private static final Pattern SAFE_TRACE_ID = Pattern.compile("^[a-zA-Z0-9\\-_.]{1,64}$");
@@ -71,14 +69,19 @@ public class MdcLoggingFilter extends OncePerRequestFilter {
         return false;
     }
 
-    // 들어온 요청에 이미 X-Trace-Id가 있으면(예: 우리 스스로가 호출한 다른 내부 서비스로부터
-    // 되돌아온 요청, 혹은 프론트/게이트웨이가 미리 붙여 보낸 값) 새로 안 만들고 그대로 이어받는다 —
-    // 이게 있어야 여러 홉에 걸쳐 같은 값이 유지될 수 있다(MSA 환경 한정).
+    /*
+     * 에이전트가 이 요청의 서버 스팬을 열었으면 그 트레이스 ID 를 쓴다. 로그와 트레이스가 같은 값으로 이어진다(#1300).
+     * 없으면 들어온 X-Trace-Id 를 이어받고(프론트나 게이트웨이가 붙여 보낸 값), 그것도 없으면 새로 만든다.
+     */
     private String resolveTraceId(HttpServletRequest request) {
+        String agentTraceId = AgentTrace.currentTraceId();
+        if (agentTraceId != null) {
+            return agentTraceId;
+        }
         String incoming = request.getHeader(TRACE_ID_HEADER);
         if (incoming != null && SAFE_TRACE_ID.matcher(incoming).matches()) {
             return incoming;
         }
-        return HexFormat.of().toHexDigits(ThreadLocalRandom.current().nextLong());
+        return LogContext.newTraceId();
     }
 }

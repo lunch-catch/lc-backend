@@ -128,6 +128,9 @@ server:
   tomcat:
     threads:
       max: 200
+    # 측정용 공통 관측 코드(#1302)
+    mbeanregistry:
+      enabled: true
 
 # 액추에이터를 8081 로 분리한다.
 # 8080 에 /actuator 경로가 존재하지 않게 되어 밖에서 막을 규칙이 필요 없다.
@@ -157,6 +160,12 @@ management:
     tags:
       application: "${APP_NAME:lunchcatch}"
       instance: "${APP_INSTANCE_ID:local}"
+      version: "${APP_VERSION:local}"
+    distribution:
+      percentiles-histogram:
+        "[hikaricp.connections.usage]": true
+      slo:
+        "[hikaricp.connections.usage]": 100ms, 1s
 
   tracing:
     sampling:
@@ -390,6 +399,30 @@ account:
   demo-admin-password-hash: "${ACCOUNT_DEMO_ADMIN_PASSWORD_HASH:}"
   demo-owner-password-hash: "${ACCOUNT_DEMO_OWNER_PASSWORD_HASH:}"
   scenario-password-hash: "${ACCOUNT_SCENARIO_PASSWORD_HASH:}"
+
+# 측정용 공통 관측 코드(#1302). develop 과 같은 기준이다
+lunchcatch:
+  observability:
+    targets:
+      api-default: 500ms
+      api:
+        "[GET /v1/feed]": 300ms
+        "[POST /v1/swipes]": 500ms
+        "[POST /v1/impressions]": 500ms
+        "[GET /v1/wishlist]": 300ms
+        "[POST /v1/coupons]": 1000ms
+      relay-default: 5s
+      relay: {}
+      worker-default: 5s
+      worker:
+        "[coupon.issue]": 1s
+        "[coupon.issue-recovery]": 1s
+        "[coupon.sold-out-notification]": 6s
+      job-default: 10m
+      job:
+        "[CouponPreparationJob.prepareCoupons()]": 475m
+        "[CouponQueuePreparationJob.prepareQueues()]": 5m
+        "[CouponExpirationJob.expireCoupons()]": 5m
 
 ---
 spring:
