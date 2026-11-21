@@ -237,6 +237,7 @@ loadtest/adserving/run.sh switch <이미지>
 - 에이전트 판은 `v2.32.0` 으로 고정한다. 새 판은 나온 지 2주가 지난 뒤에 올린다.
 - 트레이스에는 Valkey 명령의 스팬이 없다. 명령마다 스팬이 생겨 피드 요청 하나의 스팬 가운데 가장 많아 에이전트의 Lettuce 계측을 끈다(#1177). Valkey 명령의 시간은 앱 쪽 지표(`lettuce_command_completion_seconds`, 04 데이터 저장소의 `Valkey 명령 지연`, #1180)와 Redis 서버 지표(진단 캡처의 `diag-{회차}-redis.txt`)로 본다. 트레이스에서는 그 시간이 이름 없는 빈 구간이 된다.
 - 로그와 트레이스는 로그의 `trace_id` 로 잇는다. 앱도 에이전트가 연 트레이스의 ID 를 같은 키에 넣어 두 값이 갈리지 않는다(#1300).
+- 회차가 끝난 뒤의 캡처(lc-infra 의 `loadtest-snapshot.sh`)가 기준을 넘은 요청의 트레이스 화면과 그 로그를 함께 남긴다. 측정 회차도 같다(lunch-catch/lc-infra#187).
 
 ## 프로파일링
 
