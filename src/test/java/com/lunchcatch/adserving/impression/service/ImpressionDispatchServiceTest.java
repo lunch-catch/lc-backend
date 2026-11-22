@@ -228,7 +228,7 @@ class ImpressionDispatchServiceTest {
         service.dispatchPending();
 
         assertThat(meterRegistry.counter(ImpressionDispatchService.DISPATCHED_METRIC).count()).isEqualTo(1);
-        assertThat(meterRegistry.find("outbox.relay.publish.delay").timer()).isNull();
+        assertThat(meterRegistry.get("outbox.relay.publish.delay").timer().count()).isZero();
         assertThat(billing("BILLED")).isZero();
     }
 

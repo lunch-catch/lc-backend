@@ -36,6 +36,23 @@ class BacklogMetricsTest {
         assertThat(registry.scrape()).contains("outbox_relay_abandoned{relay=\"adserving.impression\"} 2.0");
     }
 
+    // 처음 보이는 시계열의 첫 값은 increase 와 rate 가 세지 못해, 다시 띄운 직후 발행 지연 p99 가 비었다(#1309)
+    @Test
+    @DisplayName("릴레이를 등록하면 발행 지연 히스토그램이 발행 전에 0 으로 있고 첫 발행에 1 이 된다")
+    void 등록_때_발행_지연을_0으로_둔다() {
+        metrics.relay("adserving.impression", () -> 0, () -> null);
+
+        assertThat(registry.scrape())
+                .contains("outbox_relay_publish_delay_seconds_count{relay=\"adserving.impression\"} 0")
+                .contains("outbox_relay_publish_delay_seconds_bucket{relay=\"adserving.impression\",le=\"5.0\"} 0");
+
+        metrics.publishDelay("adserving.impression", java.time.Duration.ofSeconds(3));
+
+        assertThat(registry.scrape())
+                .contains("outbox_relay_publish_delay_seconds_count{relay=\"adserving.impression\"} 1")
+                .contains("outbox_relay_publish_delay_seconds_bucket{relay=\"adserving.impression\",le=\"5.0\"} 1");
+    }
+
     // 품질 목표 5초를 넘은 비율을 버킷 경계로 정확히 센다
     @Test
     @DisplayName("넘긴 순간의 발행 지연을 5초 경계가 있는 히스토그램으로 남긴다")
