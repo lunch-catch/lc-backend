@@ -52,6 +52,8 @@ public class BacklogMetrics {
                 .baseUnit("seconds")
                 .tag("relay", name)
                 .register(registry);
+        // 발행 지연도 0 으로 미리 둔다. 첫 발행 때 처음 생기면 그 값을 increase 와 rate 가 세지 못해 다시 띄운 직후 p99 가 빈다(#1309)
+        publishDelayTimer(name);
     }
 
     // 릴레이가 상한만큼 실패해 넘기기를 포기한 건수를 받는다. 데드레터처럼 0 보다 크면 사람이 보고 고친다
@@ -68,14 +70,17 @@ public class BacklogMetrics {
      * 5초를 경계로 두어 넘은 비율을 어림하지 않고 센다. 재시도 끝의 지연(백오프만 약 13.5분)까지 버킷에 담으려고 상한을 15분으로 둔다.
      */
     public void publishDelay(String name, Duration delay) {
-        Timer.builder(RELAY_PUBLISH_DELAY)
+        publishDelayTimer(name).record(delay);
+    }
+
+    private Timer publishDelayTimer(String name) {
+        return Timer.builder(RELAY_PUBLISH_DELAY)
                 .description("아웃박스 릴레이의 발행 지연. 생긴 뒤 넘기기까지 걸린 시간")
                 .tag("relay", name)
                 .publishPercentileHistogram()
                 .serviceLevelObjectives(PUBLISH_DELAY_TARGET)
                 .maximumExpectedValue(PUBLISH_DELAY_MAX)
-                .register(registry)
-                .record(delay);
+                .register(registry);
     }
 
     // 워커의 대기열 길이와 대기열에서 가장 오래된 일의 시각을 받는다. 비었으면 시각은 null 이다
