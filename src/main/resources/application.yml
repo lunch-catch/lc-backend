@@ -221,6 +221,7 @@ lunchcatch:
     targets:
       api-default: 500ms
       # 키는 메서드와 경로다. 값은 그 도메인의 *-api-design.md 의 성능 목표 표에서 옮긴다
+      # lc-infra 의 observability/alloy/tracing.alloy 가 같은 값으로 기준을 넘은 요청의 트레이스를 고른다. 바꾸면 그 파일도 함께 고친다(#1311)
       api:
         "[GET /v1/feed]": 300ms
         "[POST /v1/swipes]": 500ms
