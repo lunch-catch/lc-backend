@@ -30,12 +30,7 @@ lc-infra 의 `member-env.sh up --sha <커밋>` 으로 운영과 같은 인프라
 | 앱의 DB 커넥션 풀 | 서버마다 8. 7장이 이 값으로 커넥션 풀 병목을 가른다 |
 | k6 | 1.7.1 |
 
-**앱은 3대로 고정한다.** 앱 오토스케일링 그룹은 요청 수 기준으로 2대에서 3대까지 늘어난다. 회차 도중에 늘면 회차마다 조건이 달라 버전끼리 비교할 수 없다. `up` 뒤에 그룹의 최소와 원하는 대수를 3으로 올린다. `up` 을 다시 부르면 Terraform 이 되돌리므로 회차 전에 대수를 확인한다.
-
-```bash
-aws autoscaling update-auto-scaling-group --auto-scaling-group-name lunchcatch-lt-app \
-  --min-size 3 --desired-capacity 3 --max-size 3
-```
+**앱은 3대로 고정한다.** 앱 오토스케일링 그룹은 요청 수 기준으로 2대에서 3대까지 늘어난다. 회차 도중에 늘면 회차마다 조건이 달라 버전끼리 비교할 수 없다. `run.sh version` 이 버전마다 처음에 그룹의 최소, 원하는, 최대 대수를 3으로 두고 3대가 다 설 때까지 기다린다(#1306). `up` 을 다시 부르면 Terraform 이 되돌리지만 다음 `version` 이 다시 맞춘다.
 
 ## 3. 데이터
 
@@ -112,41 +107,30 @@ aws autoscaling update-auto-scaling-group --auto-scaling-group-name lunchcatch-l
 
 `loadtest/adserving/run.sh` 가 인스턴스에 SSM 으로 스크립트를 보내 돌린다. `AWS_PROFILE` 은 `member-env.sh up` 을 돌린 계정의 프로필이다. 시나리오와 시드 생성기는 떠 있는 앱과 같은 커밋(SSM `current-sha`)에서 받는다. `LOADTEST_REF` 로 브랜치나 커밋을 따로 고를 수 있다.
 
-환경은 한 번만 띄운다. 첫 버전 뒤로는 버전마다 `switch` 와 `reset` 으로 바꾸고 2~4를 다시 한다(5장). `switch` 는 GHCR 에 그 커밋의 이미지가 있는지 먼저 보고, 없으면 아무것도 바꾸지 않고 멈춘다.
+환경은 한 번만 띄운다. 버전마다 `version` 하나가 앱 대수 고정, `switch`(트레이싱을 붙임), `reset`, `prepare`, 워밍업, 측정 3회, 행 수 대조를 돌고 멈춘다(#1306). 순서와 멈춤은 `loadtest/README.md` 의 회차 순서 절이 갖는다. `switch` 는 GHCR 에 그 커밋의 이미지가 있는지 먼저 보고, 없으면 아무것도 바꾸지 않고 멈춘다.
 
 ```bash
-# 1. 환경을 띄우고 앱을 3대로 고정한다(2장)
-AWS_PROFILE=<프로필> ./scripts/member-env.sh up --sha <이미지>     # lc-infra 에서
+# 1. 환경을 띄운다(lc-infra 에서)
+AWS_PROFILE=<프로필> ./scripts/member-env.sh up --sha <이미지>
 
-# 2. 데이터를 넣고 그날 00:00 묶음을 다시 돌린다
+# 2. 시드를 넣는다. 버전마다의 reset 도 시드를 다시 넣는다
 AWS_PROFILE=<프로필> loadtest/adserving/run.sh seed 120000
-AWS_PROFILE=<프로필> loadtest/adserving/run.sh prepare
 
-# 3. 워밍업과 측정 3회
-AWS_PROFILE=<프로필> loadtest/adserving/run.sh warmup v1-warmup 30030001
-AWS_PROFILE=<프로필> loadtest/adserving/run.sh run v1-run1 30000001
-AWS_PROFILE=<프로필> loadtest/adserving/run.sh run v1-run2 30010001
-AWS_PROFILE=<프로필> loadtest/adserving/run.sh run v1-run3 30020001
+# 3. 버전 하나의 측정. 측정 3회와 행 수 대조가 끝나면 요약과 이어서 할 명령을 출력하고 끝난다
+AWS_PROFILE=<프로필> loadtest/adserving/run.sh version v1 --sha <이미지>
 
-# 어디서 시간을 쓰는지 보려면 측정 회차가 끝난 뒤 따로 돌린다. 결과에 적지 않아 워밍업 대역을 다시 쓴다
-AWS_PROFILE=<프로필> loadtest/adserving/run.sh run v1-run1-profile 30030001 100 5m --profile wall
+# 4. 승인하면 진단 회차(프로파일링을 붙인 회차 하나). 끝나면 다시 멈춘다
+AWS_PROFILE=<프로필> loadtest/adserving/run.sh version v1 --sha <이미지> --from diag
 
-# 요청 하나를 단계별로 보려면 에이전트를 붙여 다시 띄우고 돌린 뒤 뗀다. 프로파일링 회차와 같은 대역을 쓴다
-AWS_PROFILE=<프로필> loadtest/adserving/run.sh switch <이미지> --tracing v1-tracing
-AWS_PROFILE=<프로필> loadtest/adserving/run.sh run v1-run1-tracing 30030001 100 5m
-AWS_PROFILE=<프로필> loadtest/adserving/run.sh switch <이미지>
+# 다음 버전은 3 부터 다시 한다. 서빙 시험은 --scenario feed, 풀 끔은 --scenario feed --no-pool 을 더한다
 
-# 4. 회차마다 run 이 끝나면 그 구간의 서버 지표, 대시보드와 트레이스 캡처, 무효 판정이 이어서 돈다(#1305). 무효면 3 으로 끝나 다음 회차를 돌지 않는다
-#    행 수는 마지막 회차가 끝나고 10초 뒤에 맞대 본다
-AWS_PROFILE=<프로필> loadtest/adserving/run.sh rows
-
-# 다음 버전: 앱과 배치를 그 이미지로 다시 띄우고 비운 뒤 2~4를 다시 한다. 앱이 3대인지 먼저 확인한다
-AWS_PROFILE=<프로필> loadtest/adserving/run.sh switch <다음 이미지>
-AWS_PROFILE=<프로필> loadtest/adserving/run.sh reset
-
-# 5. 환경을 내린다(lc-infra 에서). 캡처는 회차마다 4 에서 남았다
+# 5. 환경을 내린다(lc-infra 에서). 캡처는 회차마다 남았다
 AWS_PROFILE=<프로필> ./scripts/member-env.sh down
 ```
+
+- 회차마다의 지표, 캡처, 무효 판정은 `run` 이 끝날 때 이어서 돈다(#1305). 무효(3)나 캡처 실패(4)면 그 자리에서 멈춘다
+- 행 수 대조(#1306, 작성자가 2026-11-23 대화에서 정했다): 마지막 측정 회차가 끝나고 `ROWS_WAIT`(10초) 뒤에 정산에 넘긴 유효 노출 수(쿠폰 소진 뒤 노출 제외)와 과금 판정 수가 같은지, `BILLED` 판정 수와 원장의 차감 수가 같은지 본다. 어긋나면 그 수를 알리고 5 로 멈춘다. 행 수 자체는 `rows` 로 따로 볼 수 있다
+- 버전마다 회원 대역은 5장 그대로다. `version` 이 시나리오와 풀 끔에 따라 고른다
 
 ### 측정 순서
 
@@ -165,28 +149,19 @@ AWS_PROFILE=<프로필> ./scripts/member-env.sh down
 | 9 | 서빙 v3(풀 켬) | 피드만 | 그렇다(v4) |
 | 10 | 서빙 v3(풀 끔) | 피드만 | 그렇다. `switch <이미지> --no-pool` 로 다시 띄우고 `reset` 하지 않는다. 풀 끔 대역(5장)을 쓰고 회차 이름에 `-nopool` 을 붙여 풀 켬의 결과 행을 덮어쓰지 않는다 |
 
-커밋마다 진단 회차를 하나 돌린다(#1088). 트레이싱을 붙이고 프로파일링을 `both` 로 함께 붙인 회차다. 결과에 적지 않는다.
+커밋마다 진단 회차를 하나 돌린다(#1088). 측정 회차부터 붙인 트레이싱에 프로파일링을 `both` 로 더한 회차다. 결과에 적지 않는다. `version ... --from diag` 가 돈다.
 
 ```bash
-# 서빙 시험. 같은 커밋의 노출 회차 뒤에 이어 잰다
-AWS_PROFILE=<프로필> loadtest/adserving/run.sh warmup serving-v1-warmup 30070001 100 --scenario feed
-AWS_PROFILE=<프로필> loadtest/adserving/run.sh run serving-v1-run1 30040001 100 5m --scenario feed
+# 서빙 시험. 피드만 보내고 회원 대역은 4만 뒤다(5장)
+AWS_PROFILE=<프로필> loadtest/adserving/run.sh version serving-v1 --sha <이미지> --scenario feed
 
-# 진단 회차. 트레이싱을 붙여 다시 띄우고 프로파일링을 함께 붙인다
-AWS_PROFILE=<프로필> loadtest/adserving/run.sh switch <이미지> --tracing v1-tracing
-AWS_PROFILE=<프로필> loadtest/adserving/run.sh run v1-run1-tracing-profile 30030001 100 5m --profile both
-AWS_PROFILE=<프로필> loadtest/adserving/run.sh switch <이미지>
+# 서빙 v3 의 풀 끔. 같은 커밋을 풀을 끄고 다시 띄워 풀 끔 대역으로 잰다. 회차 이름이 풀 켬과 달라 결과 행을 덮어쓰지 않는다
+AWS_PROFILE=<프로필> loadtest/adserving/run.sh version serving-v3-nopool --sha <이미지> --scenario feed --no-pool
 ```
 
 - 피드만 보낸 회차의 경고 로그는 `서빙_부하_시험_결과.md` 에 적힌다. `RESULT_DOC` 를 따로 주면 그 문서에 적는다.
 - 서빙 v1(`e8825ca8`)과 v2(`e229c45a`)는 피드만 보내는 시나리오가 생기기 전의 커밋이다. 시나리오는 떠 있는 앱의 커밋에서 받으므로 `LOADTEST_REF` 로 #1127 뒤의 ref 를 준다. 주지 않으면 `run` 이 시나리오가 없다며 멈춘다.
-
-```bash
-# 서빙 v3 의 풀 끔. 같은 커밋을 풀을 끄고 다시 띄워 풀 끔 대역으로 잰다
-AWS_PROFILE=<프로필> loadtest/adserving/run.sh switch <이미지> --no-pool
-AWS_PROFILE=<프로필> loadtest/adserving/run.sh warmup serving-v3-nopool-warmup 30110001 100 --scenario feed
-AWS_PROFILE=<프로필> loadtest/adserving/run.sh run serving-v3-nopool-run1 30080001 100 5m --scenario feed
-```
+- `version` 은 버전마다 `switch` 와 `reset` 을 한다. 위 표의 "앞 버전과 같은 커밋" 을 이어 재는 규칙은 측정 계획(#1307)이 맡는다.
 - 생성기는 그날 배치 기록을 지우므로 시험하는 날에 넣는다. 앱이 판단하는 영업일(Asia/Seoul)과 같아야 한다.
 - 행 수를 회차 직후에 세면 아직 쓰이지 않은 행이 빠진다. 노출 수집 v3 는 응답 뒤 최대 200ms 에 저장하고 v2 부터는 릴레이가 1초마다 정산에 넘긴다.
 - **회차가 끝나면 경고 로그 건수가 결과 문서에 적히고 커밋이 하나 생긴다.** `run` 이 그 회차 구간의 `ADSERVING_` 경고와 오류를 이벤트별로 세어 `노출_수집_부하_시험_결과.md` 의 `경고 로그` 절 표에 적는다. 푸시는 하지 않는다. 지금 브랜치에 커밋하므로 시험용 브랜치에서 돌린다. develop 에서 돌리면 develop 에 커밋이 생긴다.
