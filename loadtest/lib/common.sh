@@ -668,6 +668,7 @@ bash /tmp/lt-profile.sh $name $secs $mode $pyro $PROJECT /tmp/lt-trim.py $ASPROF
 # 라벨을 주면 OpenTelemetry 에이전트를 붙인다(#1099).
 # 운영 compose 가 JAVA_TOOL_OPTIONS 에 힙과 DNS 설정을 넣어 에이전트는 JDK_JAVA_OPTIONS 로 준다.
 # 앱과 배치 모두 요청과 작업 실행의 10% 만 기록하고, 그 가운데 남길 트레이스는 Alloy 의 테일 샘플링이 고른다(lunch-catch/lc-infra#72, #195). 운영과 같다(#1311).
+# 비율은 TRACE_SAMPLE_RATIO 로 바꾼다(운영과 같은 이름, 기본 0.1). 장애 주입 실험처럼 모두 남길 때 1.0 을 주고 switch 한다.
 # 지표와 로그는 지금 길을 그대로 쓴다.
 # 에이전트가 기본으로 켜는 계측을 모두 끄고 앱이 쓰는 경계의 계측만 켠다(#1186). 쓰지 않는 계측도 메서드 진입마다 일을 한다.
 # 켜는 것: HTTP 받기(tomcat, servlet, spring-webmvc), DB(jdbc, hibernate, spring-data), 외부 HTTP(카카오와 토스의 WebClient: spring-webflux, reactor, reactor-netty),
@@ -697,7 +698,7 @@ service_override() {
       OTEL_EXPORTER_OTLP_ENDPOINT: http://alloy:4318
       OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
       OTEL_TRACES_SAMPLER: parentbased_traceidratio
-      OTEL_TRACES_SAMPLER_ARG: "0.1"
+      OTEL_TRACES_SAMPLER_ARG: "${TRACE_SAMPLE_RATIO:-0.1}"
       OTEL_METRICS_EXPORTER: none
       OTEL_LOGS_EXPORTER: none
       OTEL_INSTRUMENTATION_COMMON_DEFAULT_ENABLED: "false"
