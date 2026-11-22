@@ -339,10 +339,10 @@ utc_iso() {
   date -u -d "@$1" +%FT%TZ 2> /dev/null || date -u -r "$1" +%FT%TZ
 }
 
-# 회차 구간의 서버 지표를 모은다. 로컬은 로컬 Prometheus 만 묻는다. RDS 와 ElastiCache 가 없다
-metrics() {
-  local start="${1:?시작 ms 를 준다}" end="${2:?끝 ms 를 준다}" queries
-  queries="$COMMON_METRICS${DOMAIN_METRICS:-}"
+# 표준 입력으로 받은 "이름 PromQL" 줄들을 그 구간으로 Prometheus 에 묻는다. 로컬은 로컬 Prometheus 를, 부하 시험 환경은 모니터링 서버의 것을 묻는다
+prom_metrics() {
+  local start="$1" end="$2" queries
+  queries=$(cat)
   if [ -n "${LOCAL:-}" ]; then
     printf '%s\n' "$queries" | python3 -c "$METRICS_PY" "http://localhost:${PROMETHEUS_PORT:-19090}" "$start" "$end"
     return
@@ -353,6 +353,13 @@ PY
 python3 /tmp/lt-metrics.py http://localhost:9090 $start $end <<'Q'
 $queries
 Q"
+}
+
+# 회차 구간의 서버 지표를 모은다. 로컬은 로컬 Prometheus 만 묻는다. RDS 와 ElastiCache 가 없다
+metrics() {
+  local start="${1:?시작 ms 를 준다}" end="${2:?끝 ms 를 준다}"
+  printf '%s\n' "$COMMON_METRICS${DOMAIN_METRICS:-}" | prom_metrics "$start" "$end"
+  [ -z "${LOCAL:-}" ] || return 0
   # RDS 는 Prometheus 가 아니라 CloudWatch 에서 읽는다. t4g 라 CPU 크레딧이 바닥나면 기본 성능으로 떨어진다
   for m in CPUUtilization:Maximum CPUCreditBalance:Minimum; do
     printf 'rds_%s ' "${m%%:*}"
@@ -509,6 +516,81 @@ record_warnings() {
   git -C "$ROOT" add -- "$RESULT_DOC"
   git -C "$ROOT" commit -q -m "test: $name 의 경고 로그 건수와 지표 수집 실패 칸을 결과에 적는다 (#1094)" -- "$RESULT_DOC"
   echo "committed $(git -C "$ROOT" rev-parse --short HEAD) $RESULT_DOC"
+}
+
+#
+# 회차 하나가 끝난 뒤의 일을 잇는다(#1305). 도메인의 run 이 record_warnings 다음에 그 회차의 출력 파일로 부른다.
+# 출력의 window 줄과 hold 줄에서 구간을 읽어, 그 구간으로 서버 지표를 모으고 lc-infra 의 캡처를 부른 뒤 무효 회차를 판정한다.
+# 무효면 걸린 조건과 그 값을 출력하고 3 으로 끝난다. 캡처가 실패하면 4 로 끝난다. 어느 쪽이든 다음 회차로 넘어가지 않는다(#1088).
+# 워밍업 회차는 결과에 적지 않고 판정을 warmup 이 따로 해서 건너뛴다.
+# 도메인은 캡처의 도메인 이름을 DOMAIN_SNAPSHOT 으로 준다. 캡처를 버전 폴더에 바로 두려면 SNAPSHOT_OUT 을 준다.
+#
+# 회차를 돌기 전에 캡처 스크립트가 있는지 본다. 회차를 다 돈 뒤에 없다는 것을 알면 그 회차를 다시 돌아야 한다
+require_snapshot() {
+  case "$1" in *-warmup) return 0 ;; esac
+  [ -x "$LC_INFRA_DIR/scripts/loadtest-snapshot.sh" ] \
+    || die "LC_INFRA_DIR 에 lc-infra 경로를 준다. 회차가 끝나면 그 scripts/loadtest-snapshot.sh 로 캡처한다(#1305)"
+}
+
+# 유지 구간의 부하 생성기 1분 평균 CPU 가 이 값을 넘으면 무효다(광고 서빙 부하 시험 문서 2장과 7장)
+LOADGEN_CPU_MAX_PCT=80
+after_run() {
+  local name="$1" out="$2" ws we hs he metrics_out invalid="" target=--lt snap_rc=0
+  case "$name" in *-warmup) return 0 ;; esac
+  read -r _ ws we < <(grep -m1 '^window ' "$out" || echo "window 0 0")
+  read -r _ hs he < <(grep -m1 '^hold ' "$out" || echo "hold 0 0")
+  [ "$ws" -gt 0 ] && [ "$hs" -gt 0 ] || { echo "INVALID $name: run 의 출력에 window 나 hold 줄이 없다"; return 3; }
+  echo "metrics $name window $ws $we"
+  metrics_out=$(mktemp)
+  metrics "$ws" "$we" | tee "$metrics_out" || echo "WARN: $name 의 서버 지표를 다 모으지 못했다" >&2
+  echo "snapshot $name $ws ~ $he"
+  [ -z "${LOCAL:-}" ] || target=--local
+  "$LC_INFRA_DIR/scripts/loadtest-snapshot.sh" "$target" --label "$name" --from "$ws" --to "$he" \
+    ${DOMAIN_SNAPSHOT:+--domain "$DOMAIN_SNAPSHOT"} ${SNAPSHOT_OUT:+--out "$SNAPSHOT_OUT"} || snap_rc=$?
+  # k6 가 목표 부하 구간 끝 전에 멈췄으면 유지 구간이 짧아 다른 회차와 견줄 수 없다
+  [ "$we" -ge "$he" ] || invalid="$invalid
+k6 가 목표 부하 구간 끝 전에 멈췄다: window 끝 $we < hold 끝 $he"
+  invalid="$invalid$(loadgen_busy "$hs" "$he")$(cache_exhausted "$metrics_out")"
+  rm -f "$metrics_out"
+  # 캡처 실패는 무효 회차여도 알린다. 무효 회차도 원인을 보려면 그림이 있어야 한다
+  [ "$snap_rc" -eq 0 ] || echo "SNAPSHOT-FAILED $name: 캡처가 $snap_rc 로 끝났다. 환경을 내리기 전에 같은 구간(--from $ws --to $he)으로 다시 찍는다"
+  if [ -n "$invalid" ]; then
+    echo "INVALID $name$invalid"
+    return 3
+  fi
+  [ "$snap_rc" -eq 0 ] || return 4
+  echo "valid $name"
+}
+
+# 유지 구간의 부하 생성기 CPU 를 따로 묻는다. metrics 는 램프업이 든 window 구간이라 문서의 기준(유지 구간)과 다르다. 부하 생성기 지표가 없으면(로컬) 판정하지 않는다
+loadgen_busy() {
+  local pct
+  pct=$(printf '%s\n' "$COMMON_METRICS" | grep '^loadgen_cpu_max_pct ' | prom_metrics "$1" "$2" | python3 -c 'import sys, ast
+rows = [ast.literal_eval(l.split(" ", 1)[1]) for l in sys.stdin if l.startswith("loadgen_cpu_max_pct ")]
+print(rows[0][0][1] if rows and rows[0] else "")') || pct=""
+  if [ -z "$pct" ]; then
+    # 로컬은 부하 생성기가 없어 비는 것이 맞다. 부하 시험 환경에서 비면 이 조건을 판정하지 못한 것이라 알린다. 표준 출력은 무효 사유로 모이므로 표준 오류에 쓴다
+    [ -n "${LOCAL:-}" ] || echo "WARN: 부하 생성기 CPU 를 읽지 못해 그 무효 조건을 판정하지 않았다" >&2
+    return 0
+  fi
+  python3 -c "import sys; sys.exit(0 if float('$pct') <= $LOADGEN_CPU_MAX_PCT else 1)" \
+    || printf '\n부하 생성기 CPU 가 유지 구간에서 %s%% 를 넘었다: %s%%' "$LOADGEN_CPU_MAX_PCT" "$pct"
+}
+
+# ElastiCache 의 CPU 크레딧이 바닥났거나 네트워크 허용량을 넘긴 패킷이 있었는지 metrics 의 출력에서 본다. 로컬은 ElastiCache 가 없다
+cache_exhausted() {
+  python3 - "$1" <<'PY'
+import sys
+for line in open(sys.argv[1]):
+    parts = line.split()
+    if not parts or not parts[0].startswith("valkey_"):
+        continue
+    values = [float(v) for v in parts[1:] if v.replace(".", "", 1).isdigit()]
+    if parts[0].endswith("_CPUCreditBalance") and values and min(values) <= 0:
+        print(f"\nElastiCache CPU 크레딧이 바닥났다: {parts[0]} 최소 {min(values)}", end="")
+    if "AllowanceExceeded" in parts[0] and sum(values) > 0:
+        print(f"\nElastiCache 네트워크 허용량을 넘겼다: {parts[0]} 합 {sum(values):g}", end="")
+PY
 }
 
 #

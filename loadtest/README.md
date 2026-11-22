@@ -61,6 +61,9 @@ switch -> reset -> prepare -> warmup -> 측정 3회
 | `reset_state` | 회차의 출발점을 만든다. 앱의 데이터베이스를 다시 만들고 앱과 배치를 다시 띄워 Flyway 가 표와 기준 데이터를 처음부터 만들게 한 뒤 Valkey 를 비운다. 도메인의 `reset` 은 이것을 부른 뒤 자기 시드를 넣는다(#1296) |
 | `loadgen` | 부하 생성기에서 스크립트를 돌린다. 스크립트는 `BASE_URL`, `JWT`, `OUT` 을 쓴다 |
 | `metrics` | 회차 구간의 앱, DB, 캐시, 부하 생성기 지표를 모은다 |
+| `prom_metrics` | 표준 입력으로 받은 `이름 PromQL` 줄들을 그 구간으로 Prometheus 에 묻는다(`metrics` 와 `after_run` 이 쓴다) |
+| `after_run` | 회차 하나가 끝난 뒤의 일을 잇는다. `run` 의 출력에서 `window` 와 `hold` 를 읽어 `metrics` 를 부르고, lc-infra 의 `loadtest-snapshot.sh` 로 회차 이름을 붙여 캡처하고, 무효 회차를 판정한다. 무효면 걸린 조건과 값을 출력하고 3 으로 끝난다(#1305). 워밍업 회차는 건너뛴다 |
+| `require_snapshot` | 회차를 돌기 전에 `LC_INFRA_DIR` 의 캡처 스크립트가 있는지 본다 |
 | `record_warnings` | 회차 구간의 앱과 배치의 지표 수집이 빠진 칸 수를 먼저 출력하고, 0 이 아니면 경고한다. 이어서 경고와 오류를 이벤트별로 세어 그 칸 수와 함께 결과 문서에 적고 커밋한다 |
 | `prom_value` | Prometheus 에 식 하나를 지금 시각으로 묻는다(`warmup` 이 쓴다) |
 | `warmup` | 도메인의 `run` 을 정한 시간 돌리고, 끝 3분의 앱 CPU 흔들림으로 덜 데워졌는지 가린다(아래 `워밍업` 절) |
@@ -78,10 +81,14 @@ RESULT_DOC=docs/design/coupon/loadtest/쿠폰_부하_시험_결과.md       # �
 DOMAIN_METRICS='
 issued_inc sum(increase(coupon_issued_total[$W]))
 '                                                                 # metrics 가 더 묻는 지표(예). 없으면 비운다
+DOMAIN_SNAPSHOT=coupon                                            # 캡처가 대시보드의 도메인 폴더에서 찍을 도메인. 없으면 도메인 폴더를 모두 찍는다
 . "$(dirname "$0")/../lib/common.sh"
 ```
 
 - 회차를 돌린 뒤 `record_warnings <회차 이름> <시작 ms> <끝 ms>` 를 부르면 경고 로그가 남는다. 고르는 조건은 그라파나의 경고 로그 패널(lunch-catch/lc-infra#63)과 같다.
+- 그다음 `after_run <회차 이름> <run 의 출력 파일>` 을 부르면 지표, 캡처, 무효 판정이 이어서 돈다. 출력 파일에는 `window <시작> <끝>` 과 `hold <시작> <끝>`(ms) 줄이 있어야 한다. 무효면 3 을 돌려주므로 도메인의 `run` 은 그 값으로 끝난다. 회차를 돌기 전에 `require_snapshot <회차 이름>` 을 부른다.
+- 무효 조건은 도메인과 상관없는 것만 공통이 갖는다. 유지 구간의 부하 생성기 1분 평균 CPU 가 80% 를 넘음, ElastiCache 의 CPU 크레딧이 바닥나거나 네트워크 허용량을 넘긴 패킷이 생김, k6 가 목표 부하 구간 끝 전에 멈춤이다. RDS 는 Unlimited 라 크레딧이 바닥나도 무효로 보지 않는다. 로컬은 부하 생성기와 ElastiCache 지표가 없어 k6 조건만 본다.
+- 캡처는 `LC_INFRA_DIR`(기본은 이 저장소 옆의 `lc-infra`)의 스크립트로 한다. 캡처를 결과 문서 옆의 버전 폴더에 두려면 `SNAPSHOT_OUT` 에 그 폴더를 준다. 그 아래에 회차 폴더(`v1-run1/` 등)가 생기고, 안은 `dashboards/`(그라파나의 폴더와 제목), `traces/`(트레이스마다 화면과 로그)로 나뉜다(lunch-catch/lc-infra#191). 캡처가 실패하면 `after_run` 은 4 로 끝난다.
 - 같은 표에 앱과 배치의 지표 수집이 빠진 칸(15초) 수를 수준 `수집` 의 줄(`APP_SCRAPE_MISSED`, `BATCH_SCRAPE_MISSED`)로 늘 적는다. 0 이 아니면 그 칸의 서버 지표가 통째로 비어, 그 구간의 그래프와 판정을 그만큼 덜 믿는다(#1222).
 - 빠진 칸은 받아야 할 칸에서 수집에 성공한 칸을 뺀 수다. 수집이 실패한 칸과 표본이 아예 없는 칸을 함께 센다. 로컬은 Prometheus 가 앱과 같은 Docker 가상 머신에 있어, 가상 머신이 멈추면 실패도 기록되지 않는다(#1267).
 - 빠진 칸 수는 결과에 적지 않는 회차(`-warmup` 등)와 경고 로그를 묻지 못한 회차에도 출력한다. 0 이 아니면 `WARN` 을 띄운다. 그 회차의 수치는 다른 회차와 견주지 않고 원인을 본 뒤 다시 돈다.
@@ -102,13 +109,10 @@ lc-infra 의 로컬 구성(`observability/local`)에 앱과 관측 스택을 띄
 export LC_INFRA_DIR=<lc-infra>
 loadtest/adserving/run.sh --local seed
 loadtest/adserving/run.sh --local prepare
+# run 이 끝나면 그 구간의 지표, 대시보드와 트레이스 캡처(lc-infra 의 loadtest-runs/), 무효 판정이 이어서 돈다(#1305)
 loadtest/adserving/run.sh --local run local-run1 30000001 20 1m
-loadtest/adserving/run.sh --local metrics <window 시작 ms> <window 끝 ms>
 
-# 3. 대시보드를 찍는다(lc-infra 에서)
-./scripts/loadtest-snapshot.sh --local --label local-run1 --from <window 시작 ms> --to <hold 끝 ms> --domain adserving
-
-# 4. 내린다
+# 3. 내린다
 (cd <lc-infra>/observability/local && docker compose down -v)
 ```
 
