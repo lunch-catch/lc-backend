@@ -33,6 +33,8 @@ set -euo pipefail
 LOCAL=""
 [ "${1:-}" = --local ] && { LOCAL=1; shift; }
 DOMAIN_EVENT_PREFIX=ADSERVING_
+# 회차가 끝나면 lc-infra 의 캡처가 대시보드의 도메인 폴더에서 광고 서빙만 찍는다(#1305)
+DOMAIN_SNAPSHOT=adserving
 # 따로 준 결과 문서는 시나리오가 바꾸지 않는다
 RESULT_DOC_GIVEN="${RESULT_DOC:-}"
 RESULT_DOC="${RESULT_DOC:-docs/design/adserving/loadtest/노출_수집_부하_시험_결과.md}"
@@ -242,6 +244,7 @@ curl -fs localhost:8081/actuator/health/readiness" &
       case "$name" in *-profile) ;; *) die "프로파일링 회차는 이름을 -profile 로 끝낸다. 예: v3c-run1-profile" ;; esac
       profile "$name" $(( 60 + hold_ms / 1000 + 10 )) "$prof" &
     fi
+    require_snapshot "$name"
     # 경고 로그를 셀 구간이다. k6 가 중간에 멈추거나 원격 명령이 실패해도 그때까지를 센다
     start=$(now_ms); rc=0; out=$(mktemp)
     ( loadgen 1800 "ulimit -n 250000 2> /dev/null || true
@@ -273,6 +276,11 @@ grep 'level=error' \$OUT/k6-$name.log | tail -5 || true" ) > "$out" || rc=$?
       record_warnings "$name" "$start" "$(now_ms)"
     fi
     wait
+    # 회차의 지표, 캡처, 무효 판정을 잇는다. 무효면 3, 캡처가 실패하면 4 로 끝나 다음 회차로 넘어가지 않는다(#1305)
+    if [ "$rc" -ne 2 ]; then
+      arc=0; after_run "$name" "$out" || arc=$?
+      [ "$rc" -ne 0 ] || rc=$arc
+    fi
     exit "$rc"
     ;;
   warmup|local-warmup)
