@@ -14,6 +14,8 @@
 #   AWS_PROFILE=<프로필> loadtest/adserving/run.sh switch <sha> [--tracing <이름>] [--no-pool] [--env|--app-env|--batch-env KEY=VALUE]...  앱과 배치를 그 커밋 이미지로 다시 띄운다. GHCR 에 있어야 한다
 #   AWS_PROFILE=<프로필> loadtest/adserving/run.sh reset [회원 수]         Valkey 를 비우고 시험 데이터를 다시 넣는다
 #   AWS_PROFILE=<프로필> loadtest/adserving/run.sh profile <이름> [초] [cpu|wall|both]  앱 서버에 프로파일링을 붙인다
+#   AWS_PROFILE=<프로필> loadtest/adserving/run.sh version <버전> --sha <sha> [--from measure|diag] [--scenario feed] [--no-pool] [--env|--app-env|--batch-env KEY=VALUE]... [--rate 초당 피드] [--hold 유지 시간]
+#                      버전 하나를 앱 대수 고정, switch, reset, prepare, 워밍업, 측정 3회, 행 수 대조까지 돌고 멈춘다. --from diag 는 진단 회차를 돈다(#1306)
 #
 # run 의 끝에 --profile cpu|wall|both 를 주면 회차 내내 프로파일링을 붙인다. both 는 cpu 와 wall 을 한 기록(JFR)으로 함께 뜬다. 회차가 끝나면 경고 로그 건수를 결과 문서에 적고 커밋한다.
 # run 의 --scenario feed 는 노출을 보내지 않고 피드만 보낸다(feed.js). 주지 않으면 피드와 노출을 보낸다(feed_impression.js).
@@ -35,6 +37,9 @@ LOCAL=""
 DOMAIN_EVENT_PREFIX=ADSERVING_
 # 회차가 끝나면 lc-infra 의 캡처가 대시보드의 도메인 폴더에서 광고 서빙만 찍는다(#1305)
 DOMAIN_SNAPSHOT=adserving
+# version 이 쓰는 값이다(#1306). 마지막 측정 회차 뒤 노출 저장(응답 뒤 최대 200ms)과 릴레이(1초마다)가 다 쓸 때까지 기다린다(부하 시험 문서 6장). 그날 00:00 묶음을 다시 돌린다
+ROWS_WAIT=10
+PREPARE_STEP=1
 # 따로 준 결과 문서는 시나리오가 바꾸지 않는다
 RESULT_DOC_GIVEN="${RESULT_DOC:-}"
 RESULT_DOC="${RESULT_DOC:-docs/design/adserving/loadtest/노출_수집_부하_시험_결과.md}"
@@ -117,7 +122,54 @@ mysql -N -e \"select 'member', count(*) from member where member_id >= 30000001;
 select 'batch', status from batch_execution_log where business_date = '\$D' and job_name = 'DAILY_0000';\""
 }
 
+#
+# version 의 회원 대역이다(#1306). 대역은 부하 시험 문서 5장이 갖는다. 진단 회차는 결과에 적지 않아 워밍업 대역을 다시 쓴다.
+# 서빙(피드만) 시험은 같은 표를 4만 뒤로, 서빙의 풀 끔은 한 번 더 4만 뒤로 옮겨 쓴다. 노출 시험은 풀을 켠 조건으로만 잰다.
+#
+version_bands() {
+  local scenario="$1" nopool="$2"
+  case "$scenario:$nopool" in
+    :) WARMUP_BASE=30030001; RUN_BASES=(30000001 30010001 30020001) ;;
+    feed:) WARMUP_BASE=30070001; RUN_BASES=(30040001 30050001 30060001) ;;
+    feed:1) WARMUP_BASE=30110001; RUN_BASES=(30080001 30090001 30100001) ;;
+    *) die "노출 시험은 풀을 끄고 재지 않는다. 풀 끔은 --scenario feed 와 함께 준다" ;;
+  esac
+  DIAG_BASE=$WARMUP_BASE
+}
+
+#
+# 행 수 대조다(#1306, 작성자가 2026-11-23 대화에서 정했다). 노출이 빠짐없이 정산을 거쳤는지 본다.
+#   정산에 넘긴 유효 노출 수 = 과금 판정 수. 쿠폰이 다 나간 뒤의 유효 노출(sold_out)은 정산에 넘기지 않아 뺀다(#1273)
+#   BILLED 판정 수 = 원장의 차감 수. 차감은 과금한 노출마다 한 줄이다
+# 어긋나면 그 수를 출력하고 1 로 끝난다. 피드만 보낸 회차는 노출이 없어 모두 0 이다.
+#
+ROWS_CHECK_SQL="select
+  (select count(*) from impression_log where member_id >= 30000001 and validity = 'VALID' and not sold_out),
+  (select count(*) from deduction_result where campaign_id >= 30000001),
+  (select count(*) from deduction_result where campaign_id >= 30000001 and billing_status = 'BILLED'),
+  (select count(*) from point_ledger where owner_id >= 30000001 and entry_type = 'DEDUCT');"
+domain_rows_check() {
+  local row dispatchable judged billed deducted
+  if [ -n "$LOCAL" ]; then
+    row=$(local_mysql -N -e "$ROWS_CHECK_SQL")
+  else
+    row=$(remote "$(instance app)" 300 "set -euo pipefail
+$DB_ENV
+mysql -N -e \"$ROWS_CHECK_SQL\"" | tail -1)
+  fi
+  read -r dispatchable judged billed deducted <<< "$row"
+  echo "rows 정산에 넘긴 유효 노출 $dispatchable 판정 $judged BILLED $billed 차감 $deducted"
+  [ -n "$deducted" ] || { echo "rows 행 수를 읽지 못했다"; return 1; }
+  [ "$dispatchable" = "$judged" ] || { echo "rows 어긋남: 정산에 넘긴 유효 노출 $dispatchable 과 판정 $judged 이 다르다"; return 1; }
+  [ "$billed" = "$deducted" ] || { echo "rows 어긋남: BILLED $billed 과 차감 $deducted 이 다르다"; return 1; }
+}
+
 case "${LOCAL:+local-}${1:-}" in
+  version|local-version)
+    # 버전 하나를 측정 3회와 진단까지 돈다. 순서와 멈춤은 공통의 run_version 이 갖는다(#1306)
+    shift
+    run_version "$0" "${1:?버전 이름을 준다(예: v1)}" "${@:2}"
+    ;;
   local-rows|local-drain|local-clean)
     die "로컬에서는 seed, reset, prepare, run, warmup, metrics, profile, switch 만 쓴다" ;;
   local-reset)

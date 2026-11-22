@@ -525,6 +525,98 @@ record_warnings() {
 # 워밍업 회차는 결과에 적지 않고 판정을 warmup 이 따로 해서 건너뛴다.
 # 도메인은 캡처의 도메인 이름을 DOMAIN_SNAPSHOT 으로 준다. 캡처를 버전 폴더에 바로 두려면 SNAPSHOT_OUT 을 준다.
 #
+#
+# 버전 하나를 명령 하나로 돈다(#1306). 순서는 README 의 회차 순서다.
+#   측정(--from measure, 기본): 앱 대수 고정 -> switch(트레이싱을 붙임) -> reset -> prepare -> warmup -> 측정 3회 -> 행 수 대조 -> 멈춤
+#   진단(--from diag): 프로파일링을 붙인 진단 회차 하나 -> 멈춤
+# 멈출 자리에서 요약과 이어서 할 명령을 출력하고 끝난다. 입력을 기다리지 않는다. 승인은 사람이 대화로 하고, 승인을 받은 쪽이 이어서 할 명령을 부른다.
+# 회차마다의 지표, 캡처, 무효 판정은 도메인의 run 이 after_run 으로 한다(#1305). 무효(3)나 캡처 실패(4)면 그 자리에서 멈춘다.
+#
+# 도메인의 run.sh 가 정하는 것
+#   version_bands <시나리오> <풀 끔이면 1>  WARMUP_BASE, RUN_BASES(측정 3회), DIAG_BASE 를 정한다. 회원 대역은 도메인의 부하 시험 문서가 갖는다
+#   domain_rows_check                      행 수를 세고 맞는지 본다. 어긋나면 그 수를 출력하고 0 이 아닌 값으로 끝난다
+#   ROWS_WAIT                              마지막 측정 회차 뒤 행 수를 세기 전에 기다릴 초. 응답 뒤에 쓰는 일이 끝날 시간이다
+#   PREPARE_STEP                           1 이면 reset 뒤에 prepare 를 부른다
+#
+# 부하 시험 문서 2장: 앱 오토스케일링 그룹이 회차 도중에 늘면 회차마다 조건이 달라져 버전끼리 비교할 수 없어 대수를 고정한다
+APP_COUNT=3
+pin_app_count() {
+  [ -z "${LOCAL:-}" ] || return 0
+  local asg="$PROJECT-app" n i
+  aws autoscaling update-auto-scaling-group --auto-scaling-group-name "$asg" \
+    --min-size "$APP_COUNT" --desired-capacity "$APP_COUNT" --max-size "$APP_COUNT"
+  for i in $(seq 1 60); do
+    n=$(aws autoscaling describe-auto-scaling-groups --auto-scaling-group-names "$asg" \
+      --query 'length(AutoScalingGroups[0].Instances[?LifecycleState==`InService` && HealthStatus==`Healthy`])' --output text)
+    [ "$n" = "$APP_COUNT" ] && { echo "app count $n"; return 0; }
+    sleep 10
+  done
+  die "앱이 $APP_COUNT 대로 서지 않았다(지금 $n 대). 오토스케일링 그룹 $asg 를 본다"
+}
+
+run_version() {
+  local self="$1" name="$2"; shift 2
+  local sha="" from=measure scenario="" nopool="" rate="" hold="" switch_args=() scen_args=() i rc base
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --sha) sha="${2:?--sha 뒤에 이미지 커밋을 준다}"; shift 2 ;;
+      --from) from="${2:?--from 뒤에 measure 나 diag 를 준다}"; shift 2 ;;
+      --scenario) scenario="${2:?--scenario 뒤에 시나리오를 준다}"; scen_args=(--scenario "$2"); shift 2 ;;
+      --no-pool) nopool=1; switch_args+=(--no-pool); shift ;;
+      # 초당 피드와 유지 시간이다. 주지 않으면 도메인의 run 의 기본값이다. 로컬에서 짧게 돌려 볼 때 쓴다
+      --rate) rate="${2:?--rate 뒤에 초당 피드를 준다}"; shift 2 ;;
+      --hold) hold="${2:?--hold 뒤에 유지 시간을 준다}"; shift 2 ;;
+      --env|--app-env|--batch-env) switch_args+=("$1" "${2:?$1 뒤에 KEY=VALUE 를 준다}"); shift 2 ;;
+      *) die "version 이 모르는 선택지다: $1" ;;
+    esac
+  done
+  [ -n "${LOCAL:-}" ] || [ -n "$sha" ] || die "부하 시험 환경의 version 은 --sha 로 이미지 커밋을 준다"
+  version_bands "$scenario" "$nopool"
+  local again="$self ${LOCAL:+--local }version $name${sha:+ --sha $sha}${scenario:+ --scenario $scenario}${switch_args[*]:+ ${switch_args[*]}}${rate:+ --rate $rate}${hold:+ --hold $hold}"
+  case "$from" in
+    measure)
+      pin_app_count
+      # 측정 회차부터 트레이싱을 붙인다(#1177). 이름이 트레이스의 run 라벨이 된다
+      if [ -n "${LOCAL:-}" ]; then
+        "$self" --local switch --tracing "$name" ${switch_args[@]+"${switch_args[@]}"} || die "$name 의 switch 가 실패했다"
+      else
+        "$self" switch "$sha" --tracing "$name" ${switch_args[@]+"${switch_args[@]}"} || die "$name 의 switch 가 실패했다"
+      fi
+      "$self" ${LOCAL:+--local} reset || die "$name 의 reset 이 실패했다"
+      [ "${PREPARE_STEP:-}" != 1 ] || "$self" ${LOCAL:+--local} prepare || die "$name 의 prepare 가 실패했다"
+      "$self" ${LOCAL:+--local} warmup "$name-warmup" "$WARMUP_BASE" $rate ${scen_args[@]+"${scen_args[@]}"} || die "$name 의 워밍업이 실패했다"
+      i=0
+      for base in "${RUN_BASES[@]}"; do
+        i=$((i + 1)); rc=0
+        "$self" ${LOCAL:+--local} run "$name-run$i" "$base" ${rate:-100} ${hold:-5m} ${scen_args[@]+"${scen_args[@]}"} || rc=$?
+        if [ "$rc" -ne 0 ]; then
+          echo "STOP $name-run$i 가 $rc 로 끝났다(3 무효, 4 캡처 실패). 위 출력의 INVALID 나 SNAPSHOT-FAILED 를 본다"
+          echo "next 다시 재려면: $again"
+          return "$rc"
+        fi
+      done
+      sleep "${ROWS_WAIT:-10}"
+      rc=0; domain_rows_check || rc=$?
+      if [ "$rc" -ne 0 ]; then
+        echo "STOP $name 의 행 수가 맞지 않는다. 위 rows 출력을 본다"
+        echo "next 다시 재려면: $again"
+        return 5
+      fi
+      echo "STOP measure-done $name. 측정 3회가 끝났다. 위의 회차마다 valid, metrics, scrape gaps, 캡처 폴더를 보고 진단 회차를 돌릴지 정한다"
+      echo "next 진단을 돌리려면: $again --from diag"
+      echo "next 진단 없이 다음 버전으로 가려면 다음 버전의 version 을 부른다"
+      ;;
+    diag)
+      rc=0
+      "$self" ${LOCAL:+--local} run "$name-run1-profile" "$DIAG_BASE" ${rate:-100} ${hold:-5m} ${scen_args[@]+"${scen_args[@]}"} --profile both || rc=$?
+      [ "$rc" -eq 0 ] || { echo "STOP $name-run1-profile 가 $rc 로 끝났다. 위 출력을 본다"; echo "next 다시 돌리려면: $again --from diag"; return "$rc"; }
+      echo "STOP diag-done $name. 진단 회차가 끝났다. 진단 캡처(Call Tree, 트레이스, Redis 지표)를 보고 다음 버전으로 갈지 정한다"
+      echo "next 다음 버전으로 가려면 다음 버전의 version 을 부른다"
+      ;;
+    *) die "--from 은 measure 나 diag 다" ;;
+  esac
+}
+
 # 회차를 돌기 전에 캡처 스크립트가 있는지 본다. 회차를 다 돈 뒤에 없다는 것을 알면 그 회차를 다시 돌아야 한다
 require_snapshot() {
   case "$1" in *-warmup) return 0 ;; esac
@@ -545,6 +637,19 @@ after_run() {
   metrics "$ws" "$we" | tee "$metrics_out" || echo "WARN: $name 의 서버 지표를 다 모으지 못했다" >&2
   echo "snapshot $name $ws ~ $he"
   [ -z "${LOCAL:-}" ] || target=--local
+  #
+  # 진단 회차(-profile)는 Call Tree 까지 찍고 무효를 판정하지 않는다. 표본을 뜨는 비용이 들어 결과에 쓰지 않는 회차다(#1306).
+  # 진단 회차의 캡처는 API 와 백그라운드 작업 대시보드만 찍어 --domain 을 주지 않는다.
+  #
+  case "$name" in
+    *-profile)
+      "$LC_INFRA_DIR/scripts/loadtest-snapshot.sh" "$target" --diag "$name" --from "$ws" --to "$he" \
+        ${SNAPSHOT_OUT:+--out "$SNAPSHOT_OUT"} || snap_rc=$?
+      rm -f "$metrics_out"
+      [ "$snap_rc" -eq 0 ] || { echo "SNAPSHOT-FAILED $name: 캡처가 $snap_rc 로 끝났다. 환경을 내리기 전에 같은 구간(--from $ws --to $he)으로 다시 찍는다"; return 4; }
+      echo "captured $name"
+      return 0 ;;
+  esac
   "$LC_INFRA_DIR/scripts/loadtest-snapshot.sh" "$target" --label "$name" --from "$ws" --to "$he" \
     ${DOMAIN_SNAPSHOT:+--domain "$DOMAIN_SNAPSHOT"} ${SNAPSHOT_OUT:+--out "$SNAPSHOT_OUT"} || snap_rc=$?
   # k6 가 목표 부하 구간 끝 전에 멈췄으면 유지 구간이 짧아 다른 회차와 견줄 수 없다
