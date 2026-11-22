@@ -16,6 +16,7 @@
 #   AWS_PROFILE=<프로필> loadtest/adserving/run.sh profile <이름> [초] [cpu|wall|both]  앱 서버에 프로파일링을 붙인다
 #   AWS_PROFILE=<프로필> loadtest/adserving/run.sh version <버전> --sha <sha> [--from measure|diag] [--scenario feed] [--no-pool] [--env|--app-env|--batch-env KEY=VALUE]... [--rate 초당 피드] [--hold 유지 시간]
 #                      버전 하나를 앱 대수 고정, switch, reset, prepare, 워밍업, 측정 3회, 행 수 대조까지 돌고 멈춘다. --from diag 는 진단 회차를 돈다(#1306)
+#   AWS_PROFILE=<프로필> loadtest/adserving/run.sh plan <계획 파일> [--diag|--skip-diag]  측정 계획의 다음 걸음 하나를 간다(#1307). 계획은 loadtest/adserving/plans/ 에 있다
 #
 # run 의 끝에 --profile cpu|wall|both 를 주면 회차 내내 프로파일링을 붙인다. both 는 cpu 와 wall 을 한 기록(JFR)으로 함께 뜬다. 회차가 끝나면 경고 로그 건수를 결과 문서에 적고 커밋한다.
 # run 의 --scenario feed 는 노출을 보내지 않고 피드만 보낸다(feed.js). 주지 않으면 피드와 노출을 보낸다(feed_impression.js).
@@ -165,6 +166,11 @@ mysql -N -e \"$ROWS_CHECK_SQL\"" | tail -1)
 }
 
 case "${LOCAL:+local-}${1:-}" in
+  plan|local-plan)
+    # 측정 계획의 다음 걸음 하나를 간다. 상태와 멈춤은 공통의 run_plan 이 갖는다(#1307)
+    shift
+    run_plan "$0" "${1:?계획 파일을 준다(예: loadtest/adserving/plans/1088-remeasure.plan)}" "${2:-}"
+    ;;
   version|local-version)
     # 버전 하나를 측정 3회와 진단까지 돈다. 순서와 멈춤은 공통의 run_version 이 갖는다(#1306)
     shift
