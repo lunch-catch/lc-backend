@@ -572,7 +572,20 @@ run_version() {
   done
   [ -n "${LOCAL:-}" ] || [ -n "$sha" ] || die "부하 시험 환경의 version 은 --sha 로 이미지 커밋을 준다"
   version_bands "$scenario" "$nopool"
-  local again="$self ${LOCAL:+--local }version $name${sha:+ --sha $sha}${scenario:+ --scenario $scenario}${switch_args[*]:+ ${switch_args[*]}}${rate:+ --rate $rate}${hold:+ --hold $hold}"
+  #
+  # 멈출 때 출력하는 이어서 할 명령이다. 그대로 복사해 부를 수 있게 인자마다 셸 인용을 붙이고(공백이 든 --app-env 값 등),
+  # 부하 시험 환경이면 명령 앞에만 준 AWS_PROFILE 도 붙인다. 접근 키는 붙이지 않는다.
+  #
+  local again_args=("$self") again
+  [ -z "${LOCAL:-}" ] || again_args+=(--local)
+  again_args+=(version "$name")
+  [ -z "$sha" ] || again_args+=(--sha "$sha")
+  [ -z "$scenario" ] || again_args+=(--scenario "$scenario")
+  again_args+=(${switch_args[@]+"${switch_args[@]}"})
+  [ -z "$rate" ] || again_args+=(--rate "$rate")
+  [ -z "$hold" ] || again_args+=(--hold "$hold")
+  again=$(printf '%q ' "${again_args[@]}"); again="${again% }"
+  [ -n "${LOCAL:-}" ] || [ -z "${AWS_PROFILE:-}" ] || again="AWS_PROFILE=$(printf '%q' "$AWS_PROFILE") $again"
   case "$from" in
     measure)
       pin_app_count
