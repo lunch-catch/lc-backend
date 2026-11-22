@@ -552,14 +552,13 @@ after_run() {
 k6 가 목표 부하 구간 끝 전에 멈췄다: window 끝 $we < hold 끝 $he"
   invalid="$invalid$(loadgen_busy "$hs" "$he")$(cache_exhausted "$metrics_out")"
   rm -f "$metrics_out"
+  # 캡처 실패는 무효 회차여도 알린다. 무효 회차도 원인을 보려면 그림이 있어야 한다
+  [ "$snap_rc" -eq 0 ] || echo "SNAPSHOT-FAILED $name: 캡처가 $snap_rc 로 끝났다. 환경을 내리기 전에 같은 구간(--from $ws --to $he)으로 다시 찍는다"
   if [ -n "$invalid" ]; then
     echo "INVALID $name$invalid"
     return 3
   fi
-  if [ "$snap_rc" -ne 0 ]; then
-    echo "SNAPSHOT-FAILED $name: 캡처가 $snap_rc 로 끝났다. 환경을 내리기 전에 같은 구간(--from $ws --to $he)으로 다시 찍는다"
-    return 4
-  fi
+  [ "$snap_rc" -eq 0 ] || return 4
   echo "valid $name"
 }
 
@@ -569,7 +568,11 @@ loadgen_busy() {
   pct=$(printf '%s\n' "$COMMON_METRICS" | grep '^loadgen_cpu_max_pct ' | prom_metrics "$1" "$2" | python3 -c 'import sys, ast
 rows = [ast.literal_eval(l.split(" ", 1)[1]) for l in sys.stdin if l.startswith("loadgen_cpu_max_pct ")]
 print(rows[0][0][1] if rows and rows[0] else "")') || pct=""
-  [ -n "$pct" ] || return 0
+  if [ -z "$pct" ]; then
+    # 로컬은 부하 생성기가 없어 비는 것이 맞다. 부하 시험 환경에서 비면 이 조건을 판정하지 못한 것이라 알린다. 표준 출력은 무효 사유로 모이므로 표준 오류에 쓴다
+    [ -n "${LOCAL:-}" ] || echo "WARN: 부하 생성기 CPU 를 읽지 못해 그 무효 조건을 판정하지 않았다" >&2
+    return 0
+  fi
   python3 -c "import sys; sys.exit(0 if float('$pct') <= $LOADGEN_CPU_MAX_PCT else 1)" \
     || printf '\n부하 생성기 CPU 가 유지 구간에서 %s%% 를 넘었다: %s%%' "$LOADGEN_CPU_MAX_PCT" "$pct"
 }
