@@ -6,7 +6,7 @@ description: 설명하고 싶은 설계, 동작, 흐름, 수치를 받아 코드
 # 이해를 돕는 HTML 애니메이션
 
 사용자가 설명하고 싶은 것을 받아 근거 자료에서 사실을 읽고, 그 내용에 맞는 장면을 처음부터 짜서 HTML 파일 하나로 만든다.
-결과 HTML 은 브라우저로 열면 무대가 창 크기에 맞춰 늘고 줄며 끝없이 되풀이된다. 무대를 누르면 멈추고 다시 누르면 이어 간다. GIF 가 필요하면 `project-motion-gif` 스킬을 쓴다.
+결과 HTML 은 브라우저로 열면 무대가 창 크기에 맞춰 늘고 줄며 끝없이 되풀이된다. 무대를 누르면 멈추고 다시 누르면 이어 간다. GIF 가 필요하면 7장에서 같은 HTML 로 만든다.
 장면은 분류를 고르지 않는다. [화면 문법](reference/visual-language.md)과 [패턴 모음](reference/patterns.md)에서 필요한 것을 골라 섞는다.
 
 아래에서 `$S` 는 이 SKILL.md 가 있는 폴더다. 작업 파일은 모두 작업 폴더의 `project-motion/{이름}/` 에 둔다.
@@ -96,6 +96,16 @@ node $E/pack.js project-motion/{이름}/{이름}.html project-motion/{이름}/{�
 | Canva, Notion 같은 곳에 웹 주소로 임베드한다 | 기본으로 만들어 올린 뒤 그 주소를 쓴다 |
 
 `project-motion/{이름}/{이름}-final.html` 을 `{이름}.html` 로 이름을 바꿔 사용자에게 파일로 보내고 한 반복의 길이, 크기, 근거 파일 목록을 알린다. 장면 `.json` 은 다시 고칠 때 쓰니 함께 보내도 된다. 확인용 PNG 는 지운다.
+
+**GIF 를 달라고 하면 같은 HTML 에서 만든다.**
+
+```bash
+node $E/record.js project-motion/{이름}/{이름}.html project-motion/{이름}/{이름}.gif
+```
+
+선택은 `--fps 25` 와 `--width 1280` 이다. 브라우저 시계를 멈춘 채 한 프레임씩 넘겨 컴퓨터 속도와 무관하게 같은 결과가 나온다.
+
+**먼저 HTML 을 권한다.** GIF 는 멈출 수 없고 크기가 몇 배다. 발표 자료가 HTML 을 받지 못하는 자리에만 쓴다.
 
 ## 규칙
 
