@@ -1,0 +1,17 @@
+{
+  "name": "project-motion-html-engine",
+  "private": true,
+  "description": "이해를 돕는 애니메이션 장면을 그리고 혼자 열리는 HTML 로 묶는다",
+  "scripts": {
+    "build": "node build.js",
+    "record": "node record.js"
+  },
+  "dependencies": {
+    "@fontsource/ibm-plex-mono": "5.1.0",
+    "@fontsource/ibm-plex-sans-kr": "5.1.0",
+    "playwright": "1.63.0"
+  },
+  "optionalDependencies": {
+    "ffmpeg-static": "5.2.0"
+  }
+}
