@@ -22,7 +22,9 @@ on:
   # 승인이 들어와도 체크가 다시 돌지 않으면 영원히 실패로 남는다.
   #
   # 이 이벤트는 기본 브랜치의 워크플로만 돈다. 기본 브랜치가 develop 이라 develop 에
-  # 병합해야 살아난다. 이 PR 자신은 그래서 승인 판정을 받지 않는다.
+  # 병합해야 살아난다. pull_request 는 PR 의 머지 ref 에 있는 워크플로가 돌아서 그 제약을
+  # 받지 않는다. 그래서 이 게이트를 들여오는 PR 에서는 처음 판정만 돌고, 승인을 받아도
+  # 재판정이 돌지 않는다.
   pull_request_review:
     types: [submitted, dismissed]
 
@@ -53,7 +55,9 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
-          sparse-checkout: .github/scripts
+          sparse-checkout: |
+            .github/scripts
+            .github/workflows
           sparse-checkout-cone-mode: false
 
       # 이벤트 값을 ${{ }} 로 셸에 끼워 넣지 않는다(slack-notify.yml 과 같은 규칙).
@@ -81,4 +85,23 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ steps.pr.outputs.number }}
-        run: python3 .github/scripts/review-gate.py
+        run: |
+          set -euo pipefail
+          S=.github/scripts/review-gate.py
+          W=.github/workflows/review-gate.yml
+
+          # base 에 둘 다 없으면 이 게이트를 처음 들여오는 PR 이다. base 를 기준으로 삼는
+          # 설계라 그 PR 에서는 판정할 근거가 아직 없다.
+          if [ ! -f "$S" ] && [ ! -f "$W" ]; then
+            echo "::notice::base 에 이 게이트가 아직 없다. 들여오는 PR 로 보고 통과시킨다."
+            exit 0
+          fi
+
+          # 워크플로는 있는데 스크립트만 없으면 누가 지운 것이다. 통과시키면 스크립트를
+          # 지우는 것이 게이트를 끄는 수단이 된다. 그 구멍을 막는다.
+          if [ ! -f "$S" ]; then
+            echo "::error::base 에 $W 는 있는데 $S 가 없다. 판정 없이 통과시키지 않는다."
+            exit 1
+          fi
+
+          python3 "$S"
