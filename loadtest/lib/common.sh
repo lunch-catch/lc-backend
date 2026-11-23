@@ -797,20 +797,24 @@ def detail_value(name, rows):
 
 def k6_failed(path):
     # k6 요약의 유지 구간 실패 칸(http_req_failed{api:...,phase:hold})이다. passes 가 실패한 요청 수, passes + fails 가 요청 수다
+    # 요약이 깨졌거나 꼴이 다르면 k6 의 표만 비운다. 핵심 수치와 상세는 그대로 남긴다
     out = {}
     try:
-        metrics = json.load(open(path, encoding='utf-8'))['metrics']
-    except (OSError, ValueError, KeyError, TypeError):
+        metrics = json.load(open(path, encoding='utf-8')).get('metrics')
+    except (OSError, ValueError, AttributeError):
+        return out
+    if not isinstance(metrics, dict):
         return out
     for key, v in metrics.items():
         m = re.fullmatch(r'http_req_failed\{(.*)\}', key)
-        if not m:
+        if not m or not isinstance(v, dict):
             continue
         tags = dict(t.split(':', 1) for t in m.group(1).split(',') if ':' in t)
-        if tags.get('phase') != 'hold' or 'passes' not in v:
+        passes, fails = v.get('passes'), v.get('fails')
+        if tags.get('phase') != 'hold' or not all(isinstance(n, int) and not isinstance(n, bool) and n >= 0 for n in (passes, fails)):
             continue
-        total = v['passes'] + v['fails']
-        out[tags.get('api', '-')] = {'requests': total, 'failed': v['passes'], 'rate': v['passes'] / total if total else None}
+        total = passes + fails
+        out[tags.get('api', '-')] = {'requests': total, 'failed': passes, 'rate': passes / total if total else None}
     return out
 
 def collect(run_dir, name, hs, he, metrics_file, k6_file=''):
