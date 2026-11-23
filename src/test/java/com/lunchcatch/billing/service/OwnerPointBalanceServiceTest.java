@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.when;
 
+import com.lunchcatch.billing.deduction.repository.DeductionResultRepository;
 import com.lunchcatch.billing.dto.PointBalanceResponse;
 import com.lunchcatch.billing.entity.EntryType;
 import com.lunchcatch.billing.exception.BillingErrorCode;
@@ -30,22 +31,24 @@ class OwnerPointBalanceServiceTest {
     private static final LocalDateTime DAY_END = LocalDateTime.of(2026, 10, 2, 0, 0);
 
     @Mock PointLedgerRepository repository;
+    @Mock DeductionResultRepository deductionRepository;
 
     // 2026-10-01 12:00 KST
     private final Clock clock = Clock.fixed(Instant.parse("2026-10-01T03:00:00Z"), ClockConfig.ZONE);
 
     private OwnerPointBalanceService service() {
-        return new OwnerPointBalanceService(repository, clock);
+        return new OwnerPointBalanceService(repository, deductionRepository, clock);
     }
 
-    private void reserved(long amount) {
-        when(repository.sumReservedPoint(OWNER)).thenReturn(amount);
+    private void reserved(long reservedNotReleased, long billed) {
+        when(repository.sumReservedNotReleased(OWNER)).thenReturn(reservedNotReleased);
+        when(deductionRepository.sumBilledForOwner(OWNER)).thenReturn(billed);
     }
 
     @Test
-    void 예약_중인_포인트는_예약에서_차감과_해제를_뺀_크기다() {
+    void 예약_중인_포인트는_예약에서_해제와_BILLED_단가_합을_뺀_크기다() {
         when(repository.sumBalance(OWNER)).thenReturn(12000L);
-        reserved(3500);
+        reserved(5000, 1500);
 
         PointBalanceResponse response = service().getBalance(OWNER);
 
@@ -58,7 +61,7 @@ class OwnerPointBalanceServiceTest {
     @Test
     void 해제가_끝나면_예약_중인_포인트는_0이고_잔액과_겹치지_않는다() {
         when(repository.sumBalance(OWNER)).thenReturn(15500L);
-        reserved(0);
+        reserved(9800, 9800);
 
         PointBalanceResponse response = service().getBalance(OWNER);
 
@@ -69,7 +72,7 @@ class OwnerPointBalanceServiceTest {
     @Test
     void 계산이_음수가_되어도_예약_중인_포인트는_0_미만으로_내리지_않는다() {
         when(repository.sumBalance(OWNER)).thenReturn(0L);
-        reserved(-500);
+        reserved(1000, 1500);
 
         assertThat(service().getBalance(OWNER).reservedPoint()).isZero();
     }

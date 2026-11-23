@@ -1,5 +1,6 @@
 package com.lunchcatch.billing.service;
 
+import com.lunchcatch.billing.deduction.repository.DeductionResultRepository;
 import com.lunchcatch.billing.dto.PointBalanceResponse;
 import com.lunchcatch.billing.entity.EntryType;
 import com.lunchcatch.billing.exception.BillingErrorCode;
@@ -24,6 +25,7 @@ import org.springframework.transaction.TransactionException;
 public class OwnerPointBalanceService {
 
     private final PointLedgerRepository pointLedgerRepository;
+    private final DeductionResultRepository deductionRepository;
     private final Clock clock;
 
     public PointBalanceResponse getBalance(Long ownerId) {
@@ -39,10 +41,11 @@ public class OwnerPointBalanceService {
 
     /*
      * 오늘 영업일에 예약했지만 아직 쓰지도 돌려받지도 않은 금액이다.
-     * 저장값의 부호는 RESERVE 와 DEDUCT 가 음수, RELEASE 가 양수라서 크기로 옮기면
-     * 예약 크기 - 차감 크기 - 해제 크기가 된다. 해제는 다음 날 00:00 이라 오늘 예약분은 하루 종일 남는다.
+     * 원장의 예약 크기에서 해제 크기를 빼고 판정의 BILLED 단가 합을 뺀다. 소진은 판정이 정본이다(#1287).
+     * 해제는 다음 날 00:00 이라 오늘 예약분은 하루 종일 남는다. 지난 날은 해제가 예약에서 소진을 뺀 만큼이라 0 이 된다.
      */
     private long reservedPoint(Long ownerId) {
-        return Math.max(0, pointLedgerRepository.sumReservedPoint(ownerId));
+        long notReleased = pointLedgerRepository.sumReservedNotReleased(ownerId);
+        return Math.max(0, notReleased - deductionRepository.sumBilledForOwner(ownerId));
     }
 }

@@ -11,6 +11,7 @@ import static org.mockito.Mockito.when;
 
 import com.lunchcatch.billing.deduction.cache.DailySpend;
 import com.lunchcatch.billing.deduction.cache.DailySpendCounter;
+import com.lunchcatch.billing.deduction.repository.DeductionResultRepository;
 import com.lunchcatch.billing.dto.CampaignSpend;
 import com.lunchcatch.billing.reconciliation.dto.CampaignCounterMismatch;
 import com.lunchcatch.billing.reconciliation.dto.CampaignOverspend;
@@ -49,6 +50,8 @@ class SpendReconciliationServiceTest {
     @Mock
     private PointLedgerRepository ledgerRepository;
     @Mock
+    private DeductionResultRepository deductionRepository;
+    @Mock
     private SpendMismatchRecorder mismatchRecorder;
     @Mock
     private DailySpendCounter spendCounter;
@@ -59,8 +62,8 @@ class SpendReconciliationServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new SpendReconciliationService(planRepository, ledgerRepository, mismatchRecorder,
-                spendCounter, batchExecutions, CLOCK);
+        service = new SpendReconciliationService(planRepository, ledgerRepository, deductionRepository,
+                mismatchRecorder, spendCounter, batchExecutions, CLOCK);
     }
 
     private static BudgetDailyPlan plan(long campaignId) {
@@ -90,7 +93,7 @@ class SpendReconciliationServiceTest {
                 .thenReturn(List.of(run(11L, "BILLING_RESERVE"), run(42L, JOB)));
         when(spendCounter.readAll(PREV, List.of(7L, 8L, 9L)))
                 .thenReturn(Map.of(7L, new DailySpend(1000L, 300L), 8L, new DailySpend(1000L, 500L)));
-        when(ledgerRepository.sumDeductForCampaignsOn(List.of(7L, 8L, 9L), PREV))
+        when(deductionRepository.sumBilledForCampaignsOn(List.of(7L, 8L, 9L), PREV))
                 .thenReturn(List.of(new CampaignSpend(7L, 300L), new CampaignSpend(8L, 400L)));
 
         assertThat(service.reconcilePreviousDay(RUN_DATE, JOB)).isEqualTo(1);
@@ -104,7 +107,7 @@ class SpendReconciliationServiceTest {
         when(planRepository.findByBusinessDate(PREV)).thenReturn(List.of(plan(7L)));
         when(batchExecutions.findByBusinessDate(RUN_DATE)).thenReturn(List.of());
         when(spendCounter.readAll(PREV, List.of(7L))).thenReturn(Map.of(7L, new DailySpend(1000L, 100L)));
-        when(ledgerRepository.sumDeductForCampaignsOn(List.of(7L), PREV)).thenReturn(List.of());
+        when(deductionRepository.sumBilledForCampaignsOn(List.of(7L), PREV)).thenReturn(List.of());
 
         assertThat(service.reconcilePreviousDay(RUN_DATE, JOB)).isEqualTo(1);
         verify(mismatchRecorder).record(PREV, null, NOW, List.of(), List.of(new CampaignCounterMismatch(7L, 0L, 100L)));
@@ -118,7 +121,7 @@ class SpendReconciliationServiceTest {
         // 7 은 해시가 원장으로 재구성돼 카운터도 1200 이다. 8 은 해시가 없다. 9 는 예약액만큼 썼다
         when(spendCounter.readAll(PREV, List.of(7L, 8L, 9L)))
                 .thenReturn(Map.of(7L, new DailySpend(1000L, 1200L), 9L, new DailySpend(1000L, 1000L)));
-        when(ledgerRepository.sumDeductForCampaignsOn(List.of(7L, 8L, 9L), PREV)).thenReturn(List.of(
+        when(deductionRepository.sumBilledForCampaignsOn(List.of(7L, 8L, 9L), PREV)).thenReturn(List.of(
                 new CampaignSpend(7L, 1200L), new CampaignSpend(8L, 1100L), new CampaignSpend(9L, 1000L)));
 
         assertThat(service.reconcilePreviousDay(RUN_DATE, JOB)).isEqualTo(2);
@@ -134,7 +137,7 @@ class SpendReconciliationServiceTest {
         when(planRepository.findByBusinessDate(PREV)).thenReturn(List.of(plan(7L, 1000L)));
         when(batchExecutions.findByBusinessDate(RUN_DATE)).thenReturn(List.of(run(42L, JOB)));
         when(spendCounter.readAll(PREV, List.of(7L))).thenReturn(Map.of(7L, new DailySpend(1000L, 990L)));
-        when(ledgerRepository.sumDeductForCampaignsOn(List.of(7L), PREV)).thenReturn(List.of(new CampaignSpend(7L, 1010L)));
+        when(deductionRepository.sumBilledForCampaignsOn(List.of(7L), PREV)).thenReturn(List.of(new CampaignSpend(7L, 1010L)));
 
         assertThat(service.reconcilePreviousDay(RUN_DATE, JOB)).isEqualTo(2);
         verify(mismatchRecorder).record(PREV, 42L, NOW,
@@ -151,11 +154,11 @@ class SpendReconciliationServiceTest {
         when(planRepository.findByBusinessDate(PREV)).thenReturn(plans);
         when(batchExecutions.findByBusinessDate(RUN_DATE)).thenReturn(List.of(run(42L, JOB)));
         when(spendCounter.readAll(eq(PREV), any())).thenReturn(Map.of());
-        when(ledgerRepository.sumDeductForCampaignsOn(any(), eq(PREV))).thenReturn(List.of());
+        when(deductionRepository.sumBilledForCampaignsOn(any(), eq(PREV))).thenReturn(List.of());
 
         assertThat(service.reconcilePreviousDay(RUN_DATE, JOB)).isZero();
         verify(spendCounter, times(2)).readAll(eq(PREV), any());
-        verify(ledgerRepository, times(2)).sumDeductForCampaignsOn(any(), eq(PREV));
+        verify(deductionRepository, times(2)).sumBilledForCampaignsOn(any(), eq(PREV));
         verifyNoInteractions(mismatchRecorder);
     }
 
@@ -178,7 +181,7 @@ class SpendReconciliationServiceTest {
         // 7 은 소진 400 에 해제 600 이 정확히 예약액이다. 8 은 해제 뒤 소진 100 이 더 들어와 1100 이다. 9 는 해제가 없다
         when(ledgerRepository.sumReleaseForCampaignsOn(List.of(7L, 8L, 9L), released))
                 .thenReturn(List.of(new CampaignSpend(7L, 600L), new CampaignSpend(8L, 600L)));
-        when(ledgerRepository.sumDeductForCampaignsOn(List.of(7L, 8L, 9L), released)).thenReturn(List.of(
+        when(deductionRepository.sumBilledForCampaignsOn(List.of(7L, 8L, 9L), released)).thenReturn(List.of(
                 new CampaignSpend(7L, 400L), new CampaignSpend(8L, 500L), new CampaignSpend(9L, 1200L)));
 
         assertThat(service.reconcileReleasedDay(RUN_DATE, JOB)).isEqualTo(1);
@@ -202,7 +205,7 @@ class SpendReconciliationServiceTest {
         when(ledgerRepository.sumReleaseForCampaignsOn(List.of(7L), released)).thenReturn(List.of());
 
         assertThat(service.reconcileReleasedDay(RUN_DATE, JOB)).isZero();
-        verify(ledgerRepository, never()).sumDeductForCampaignsOn(any(), any());
+        verify(deductionRepository, never()).sumBilledForCampaignsOn(any(), any());
         verifyNoInteractions(mismatchRecorder);
     }
 }

@@ -1,5 +1,6 @@
 package com.lunchcatch.billing.reservation.service;
 
+import com.lunchcatch.billing.deduction.repository.DeductionResultRepository;
 import com.lunchcatch.billing.dto.CampaignSpend;
 import com.lunchcatch.billing.entity.EntryType;
 import com.lunchcatch.billing.entity.PointLedger;
@@ -35,6 +36,7 @@ public class DailyReservationRecorder {
 
     private final PointAccountRepository accountRepository;
     private final PointLedgerRepository ledgerRepository;
+    private final DeductionResultRepository deductionRepository;
     private final BudgetDailyPlanRepository planRepository;
     private final CampaignQueryService campaignQuery;
     private final BudgetPlanStatusService planStatus;
@@ -167,7 +169,7 @@ public class DailyReservationRecorder {
         List<BudgetDailyPlan> plans = planRepository.findAllForUpdate(businessDate, campaignIds);
         Set<Long> released = ledgerRepository.findReleasedCampaignIds(Set.of(ownerId), businessDate).stream()
                 .collect(Collectors.toSet());
-        Map<Long, Long> spends = ledgerRepository.sumDeductForCampaignsOn(campaignIds, businessDate).stream()
+        Map<Long, Long> spends = deductionRepository.sumBilledForCampaignsOn(campaignIds, businessDate).stream()
                 .collect(Collectors.toMap(CampaignSpend::campaignId, CampaignSpend::spend));
         for (BudgetDailyPlan plan : plans) {
             if (!ownerId.equals(plan.getOwnerId()) || released.contains(plan.getCampaignId())) {

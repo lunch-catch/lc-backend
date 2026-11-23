@@ -2,6 +2,7 @@ package com.lunchcatch.billing.reconciliation.service;
 
 import com.lunchcatch.billing.deduction.cache.DailySpend;
 import com.lunchcatch.billing.deduction.cache.DailySpendCounter;
+import com.lunchcatch.billing.deduction.repository.DeductionResultRepository;
 import com.lunchcatch.billing.dto.CampaignSpend;
 import com.lunchcatch.billing.reconciliation.dto.CampaignCounterMismatch;
 import com.lunchcatch.billing.reconciliation.dto.CampaignOverspend;
@@ -22,8 +23,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 /*
- * 당일 소진 카운터와 원장 DEDUCT 합을 캠페인마다 견준다(CAMPAIGN_SPEND_VS_LEDGER, 배치 설계 I-05).
- * 원장과 카운터만 본다. 노출 로그와 판정 기록은 읽지 않는다.
+ * 당일 소진 카운터와 판정의 BILLED 단가 합을 캠페인마다 견준다(CAMPAIGN_SPEND_VS_LEDGER, 배치 설계 I-05).
+ * 판정과 카운터만 본다. 노출 로그는 읽지 않는다. 판정이 소진의 정본이라 아래의 "원장" 은 판정 BILLED 합을 뜻한다(#1287).
  *
  * 대조는 00:00 전일 대조(reconcilePreviousDay) 하나다. 다르면 불일치를 기록만 한다. 그날이 끝나 카운터를 고쳐도
  * 쓰일 곳이 없어서 카운터를 다시 만들지 않고 resolution_type 도 비워 둔다. 서빙이 하루 종일이라 당일 대조는 두지 않는다.
@@ -51,6 +52,7 @@ public class SpendReconciliationService {
 
     private final BudgetDailyPlanRepository planRepository;
     private final PointLedgerRepository ledgerRepository;
+    private final DeductionResultRepository deductionRepository;
     private final SpendMismatchRecorder mismatchRecorder;
     private final DailySpendCounter spendCounter;
     private final BatchExecutionQueryService batchExecutions;
@@ -187,7 +189,7 @@ public class SpendReconciliationService {
 
     private Map<Long, Long> ledgerSpends(List<Long> campaignIds, LocalDate businessDate) {
         Map<Long, Long> spends = new HashMap<>();
-        for (CampaignSpend spend : ledgerRepository.sumDeductForCampaignsOn(campaignIds, businessDate)) {
+        for (CampaignSpend spend : deductionRepository.sumBilledForCampaignsOn(campaignIds, businessDate)) {
             spends.put(spend.campaignId(), spend.spend());
         }
         return spends;
