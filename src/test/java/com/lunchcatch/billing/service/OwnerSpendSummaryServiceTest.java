@@ -9,10 +9,11 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.lunchcatch.billing.deduction.repository.CampaignBilledRow;
+import com.lunchcatch.billing.deduction.repository.DeductionResultRepository;
 import com.lunchcatch.billing.dto.SpendGroupBy;
 import com.lunchcatch.billing.dto.SpendSummaryItem;
 import com.lunchcatch.billing.exception.BillingException;
-import com.lunchcatch.billing.repository.DeductSumRow;
 import com.lunchcatch.billing.repository.PointLedgerRepository;
 import com.lunchcatch.billing.repository.ReserveSumRow;
 import com.lunchcatch.global.exception.CommonErrorCode;
@@ -33,15 +34,16 @@ class OwnerSpendSummaryServiceTest {
     private static final LocalDate D30 = LocalDate.of(2026, 9, 30);
 
     @Mock PointLedgerRepository repository;
+    @Mock DeductionResultRepository deductionRepository;
     @InjectMocks OwnerSpendSummaryService service;
 
     private void ledgerOfTwoDays() {
-        when(repository.sumDeductedByCampaign(eq(OWNER), eq(LocalDateTime.of(2026, 9, 29, 0, 0)),
-                eq(LocalDateTime.of(2026, 9, 30, 0, 0)), isNull()))
-                .thenReturn(List.of(new DeductSumRow(12L, -9800L, 980L), new DeductSumRow(13L, -200L, 20L)));
-        when(repository.sumDeductedByCampaign(eq(OWNER), eq(LocalDateTime.of(2026, 9, 30, 0, 0)),
-                eq(LocalDateTime.of(2026, 10, 1, 0, 0)), isNull()))
-                .thenReturn(List.of(new DeductSumRow(12L, -5000L, 500L)));
+        when(deductionRepository.sumBilledByCampaignRecordedBetween(eq(OWNER),
+                eq(LocalDateTime.of(2026, 9, 29, 0, 0)), eq(LocalDateTime.of(2026, 9, 30, 0, 0)), isNull()))
+                .thenReturn(List.of(new CampaignBilledRow(12L, 9800L, 980L), new CampaignBilledRow(13L, 200L, 20L)));
+        when(deductionRepository.sumBilledByCampaignRecordedBetween(eq(OWNER),
+                eq(LocalDateTime.of(2026, 9, 30, 0, 0)), eq(LocalDateTime.of(2026, 10, 1, 0, 0)), isNull()))
+                .thenReturn(List.of(new CampaignBilledRow(12L, 5000L, 500L)));
         when(repository.sumReservedByBusinessDate(OWNER, D29, D30, null))
                 .thenReturn(List.of(new ReserveSumRow(D29, 12L, -10000L), new ReserveSumRow(D29, 13L, -1000L),
                         new ReserveSumRow(D30, 12L, -10000L)));
@@ -102,7 +104,7 @@ class OwnerSpendSummaryServiceTest {
     void 캠페인_필터를_저장소에_넘긴다() {
         service.summarize(OWNER, SpendGroupBy.DAY, D30, D30, 12L);
 
-        verify(repository).sumDeductedByCampaign(OWNER, LocalDateTime.of(2026, 9, 30, 0, 0),
+        verify(deductionRepository).sumBilledByCampaignRecordedBetween(OWNER, LocalDateTime.of(2026, 9, 30, 0, 0),
                 LocalDateTime.of(2026, 10, 1, 0, 0), 12L);
         verify(repository).sumReservedByBusinessDate(OWNER, D30, D30, 12L);
     }
@@ -124,6 +126,6 @@ class OwnerSpendSummaryServiceTest {
         assertThatThrownBy(() -> service.summarize(OWNER, SpendGroupBy.DAY, D30, D29, null))
                 .isInstanceOf(BillingException.class);
 
-        verify(repository, never()).sumDeductedByCampaign(any(), any(), any(), any());
+        verify(deductionRepository, never()).sumBilledByCampaignRecordedBetween(any(), any(), any(), any());
     }
 }

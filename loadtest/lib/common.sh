@@ -309,7 +309,7 @@ w = f'{int(e - s)}s'
 def q(expr):
     u = base + '/api/v1/query?' + urllib.parse.urlencode({'query': expr, 'time': e})
     r = json.load(urllib.request.urlopen(u))['data']['result']
-    return [({k: v for k, v in x['metric'].items() if k in ('uri', 'status')}, round(float(x['value'][1]), 3)) for x in r]
+    return [({k: v for k, v in x['metric'].items() if k in ('uri', 'status', 'method')}, round(float(x['value'][1]), 3)) for x in r]
 for line in sys.stdin:
     line = line.strip()
     if not line or line.startswith('#'):
@@ -537,6 +537,7 @@ record_warnings() {
 #   domain_rows_check                      행 수를 세고 맞는지 본다. 어긋나면 그 수를 출력하고 0 이 아닌 값으로 끝난다
 #   ROWS_WAIT                              마지막 측정 회차 뒤 행 수를 세기 전에 기다릴 초. 응답 뒤에 쓰는 일이 끝날 시간이다
 #   PREPARE_STEP                           1 이면 reset 뒤에 prepare 를 부른다
+#   version_dir <버전 이름> <시나리오>      결과 문서 옆의 버전 폴더(저장소 기준 경로)를 출력한다. 회차 폴더와 결과 문서의 그림이 그 아래에 남는다(#1326)
 #
 # 부하 시험 문서 2장: 앱 오토스케일링 그룹이 회차 도중에 늘면 회차마다 조건이 달라져 버전끼리 비교할 수 없어 대수를 고정한다
 APP_COUNT=3
@@ -587,6 +588,16 @@ run_version() {
   [ -z "$hold" ] || again_args+=(--hold "$hold")
   again=$(printf '%q ' "${again_args[@]}"); again="${again% }"
   [ -n "${LOCAL:-}" ] || [ -z "${AWS_PROFILE:-}" ] || again="AWS_PROFILE=$(printf '%q' "$AWS_PROFILE") $again"
+  #
+  # 캡처와 결과(#1326)를 버전 폴더에 둔다. 회차 폴더는 그 아래 회차 이름이다. 로컬은 결과 문서 대신 build/loadtest-results/ 에 둔다.
+  # 따로 준 SNAPSHOT_OUT 이 있으면 그것을 쓴다
+  #
+  if [ -z "${SNAPSHOT_OUT:-}" ]; then
+    SNAPSHOT_OUT="$ROOT/$(version_dir "$name" "$scenario")"
+    [ -z "${LOCAL:-}" ] || SNAPSHOT_OUT="$ROOT/build/loadtest-results/$(basename "$SNAPSHOT_OUT")"
+  fi
+  export SNAPSHOT_OUT
+  mkdir -p "$SNAPSHOT_OUT"
   case "$from" in
     measure)
       pin_app_count
@@ -707,6 +718,343 @@ require_snapshot() {
     || die "LC_INFRA_DIR 에 lc-infra 경로를 준다. 회차가 끝나면 그 scripts/loadtest-snapshot.sh 로 캡처한다(#1305)"
 }
 
+#
+# 회차의 핵심 수치를 묻는다(#1326). API 마다 요청 수, 5xx 수, p50 / p95 / p99 다. 유지 구간만 센다.
+# 분위수는 uri 만 단 히스토그램(http_server_requests_histogram_seconds, #1092)으로 내 같은 uri 의 메서드를 합쳐 센다.
+# 요청 수와 5xx 는 메서드를 단 기존 지표로 센다.
+#
+CORE_METRICS='
+core_count sum by (method, uri) (increase(http_server_requests_seconds_count{job=~".*app.*", uri!~"UNKNOWN|/actuator.*"}[$W]))
+core_5xx sum by (method, uri) (increase(http_server_requests_seconds_count{job=~".*app.*", uri!~"UNKNOWN|/actuator.*", status=~"5.."}[$W]))
+core_p50 histogram_quantile(0.5, sum by (uri, le) (increase(http_server_requests_histogram_seconds_bucket{job=~".*app.*", uri!~"UNKNOWN|/actuator.*"}[$W])))
+core_p95 histogram_quantile(0.95, sum by (uri, le) (increase(http_server_requests_histogram_seconds_bucket{job=~".*app.*", uri!~"UNKNOWN|/actuator.*"}[$W])))
+core_p99 histogram_quantile(0.99, sum by (uri, le) (increase(http_server_requests_histogram_seconds_bucket{job=~".*app.*", uri!~"UNKNOWN|/actuator.*"}[$W])))
+'
+
+#
+# 결과 문서의 버전 절을 쓴다(#1326). 두 일을 한다.
+#   collect <회차 폴더> <이름> <유지 시작 ms> <유지 끝 ms> <서버 지표 파일>  표준 입력의 핵심 수치와 서버 지표를 회차 폴더의 result.json 에 남긴다
+#   render <결과 문서> <버전 폴더>                                         버전 폴더의 회차들(result.json)을 모두 읽어 결과 문서의 그 버전 절을 다시 쓴다
+# 버전 절은 제목에 "회차별 결과" 가 든 절 안의 <!-- result:<버전 폴더 이름> --> 와 <!-- /result:<버전 폴더 이름> --> 사이다. 그 밖은 건드리지 않는다.
+# 절이 없으면 3 으로 끝난다.
+#
+IFS= read -r -d '' RESULT_PY <<'PY' || true
+import glob, json, os, re, sys
+
+def parse(lines):
+    # metrics 의 출력이다. Prometheus 는 "이름 [(꼬리표, 값), ...]", CloudWatch 는 "이름 값 값 ..." 이다
+    out = {}
+    for line in lines:
+        line = line.rstrip('\n')
+        if not line.strip() or ' ' not in line:
+            continue
+        name, rest = line.split(' ', 1)
+        rest = rest.strip()
+        if rest.startswith('['):
+            # 값이 없는 분위수는 nan 으로 온다. literal_eval 은 nan 을 읽지 못해 그 이름만 풀어 준다
+            try:
+                out[name] = eval(rest, {'__builtins__': {}}, {'nan': float('nan'), 'NaN': float('nan'), 'inf': float('inf')})
+            except (ValueError, SyntaxError, NameError, TypeError):
+                continue
+        else:
+            nums = []
+            for t in rest.split():
+                try:
+                    nums.append(float(t))
+                except ValueError:
+                    pass
+            out[name] = [({}, n) for n in nums]
+    return out
+
+def kind(name):
+    # 3회 묶음과 CloudWatch 의 여러 값을 하나로 줄이는 법이다. 크레딧과 최소는 가장 작은 값, 최대와 건수는 가장 큰 값, 나머지는 평균이다
+    if 'Credit' in name or name.endswith('_min'):
+        return 'min'
+    if name.endswith(('_max', '_inc', '_max_pct')) or 'Exceeded' in name or 'CPUUtilization' in name:
+        return 'max'
+    return 'avg'
+
+def reduce(values, how):
+    values = [v for v in values if v is not None]
+    if not values:
+        return None
+    if how == 'min':
+        return min(values)
+    if how == 'max':
+        return max(values)
+    return sum(values) / len(values)
+
+def detail_value(name, rows):
+    vals = [v for _, v in rows if v == v]
+    if not vals:
+        return None
+    if len(vals) == 1:
+        return vals[0]
+    # 꼬리표로 나뉜 건수(5xx 를 uri 와 상태마다 센 것)와 CloudWatch 의 분마다 허용량 초과는 합친다. CloudWatch 의 나머지는 종류대로 줄인다
+    if rows[0][0] or 'Exceeded' in name:
+        return sum(vals)
+    return reduce(vals, kind(name))
+
+def k6_failed(path):
+    # k6 요약의 유지 구간 실패 칸(http_req_failed{api:...,phase:hold})이다. passes 가 실패한 요청 수, passes + fails 가 요청 수다
+    # 요약이 깨졌거나 꼴이 다르면 k6 의 표만 비운다. 핵심 수치와 상세는 그대로 남긴다
+    out = {}
+    try:
+        metrics = json.load(open(path, encoding='utf-8')).get('metrics')
+    except (OSError, ValueError, AttributeError):
+        return out
+    if not isinstance(metrics, dict):
+        return out
+    for key, v in metrics.items():
+        m = re.fullmatch(r'http_req_failed\{(.*)\}', key)
+        if not m or not isinstance(v, dict):
+            continue
+        tags = dict(t.split(':', 1) for t in m.group(1).split(',') if ':' in t)
+        passes, fails = v.get('passes'), v.get('fails')
+        if tags.get('phase') != 'hold' or not all(isinstance(n, int) and not isinstance(n, bool) and n >= 0 for n in (passes, fails)):
+            continue
+        total = passes + fails
+        out[tags.get('api', '-')] = {'requests': total, 'failed': passes, 'rate': passes / total if total else None}
+    return out
+
+def collect(run_dir, name, hs, he, metrics_file, k6_file=''):
+    core = parse(sys.stdin)
+    hold = (int(he) - int(hs)) / 1000
+    apis = {}
+    for key in ('core_count', 'core_5xx'):
+        for labels, v in core.get(key, []):
+            a = apis.setdefault(labels.get('uri', '-'), {'methods': set(), 'count': 0.0, 'errors': 0.0})
+            a['methods'].add(labels.get('method', '-'))
+            a['count' if key == 'core_count' else 'errors'] += v
+    for q in ('p50', 'p95', 'p99'):
+        for labels, v in core.get('core_' + q, []):
+            if labels.get('uri') in apis and v == v:
+                apis[labels['uri']][q] = v
+    for uri, a in apis.items():
+        a['methods'] = sorted(a['methods'])
+        a['tps'] = a['count'] / hold if hold > 0 else None
+        a['error_rate'] = a['errors'] / a['count'] if a['count'] else None
+    detail = {}
+    if metrics_file and os.path.exists(metrics_file):
+        for n, rows in parse(open(metrics_file, encoding='utf-8')).items():
+            detail[n] = detail_value(n, rows)
+    os.makedirs(run_dir, exist_ok=True)
+    # 다 쓴 뒤에 바꿔 끼운다. 쓰다 멈추면 앞의 result.json 이 그대로 남는다
+    tmp = os.path.join(run_dir, 'result.json.tmp')
+    json.dump({'name': name, 'hold': [int(hs), int(he)], 'core': {u: a for u, a in apis.items() if a['count'] > 0},
+               'k6': k6_failed(k6_file) if k6_file else {}, 'detail': detail},
+              open(tmp, 'w', encoding='utf-8'), ensure_ascii=False, indent=1)
+    os.replace(tmp, os.path.join(run_dir, 'result.json'))
+
+def fmt_s(v):
+    if v is None:
+        return '-'
+    return '%.1fms' % (v * 1000) if v < 1 else '%.2f초' % v
+
+def fmt_n(v):
+    if v is None:
+        return '-'
+    if abs(v - round(v)) < 1e-9:
+        return '{:,}'.format(int(round(v)))
+    return '{:,.3f}'.format(v).rstrip('0').rstrip('.')
+
+def fmt_pct(v):
+    return '-' if v is None else '%.2f%%' % (v * 100)
+
+def trace_rows(run_dir):
+    path = os.path.join(run_dir, 'traces.txt')
+    if not os.path.exists(path):
+        return None
+    rows, notes = [], []
+    for line in open(path, encoding='utf-8').read().splitlines()[1:]:
+        cols = line.split('\t')
+        if len(cols) < 7:
+            # 고르지 못한 까닭을 캡처가 표 아래 글로 남긴다
+            if line.strip():
+                notes.append(line.strip())
+            continue
+        events = []
+        logs = os.path.join(run_dir, cols[1], 'logs.txt')
+        if os.path.exists(logs):
+            for l in open(logs, encoding='utf-8'):
+                if re.search(r'"level":"(WARN|ERROR)"', l):
+                    for ev in re.findall(r'event=([A-Z][A-Z0-9_]+)', l):
+                        if ev not in events:
+                            events.append(ev)
+        rows.append({'dir': cols[1], 'panel': cols[2], 'target': cols[3], 'value': cols[4], 'ms': float(cols[5] or 0), 'id': cols[6], 'events': events})
+    return rows, notes
+
+def render(doc, version_dir):
+    runs = []
+    for p in sorted(glob.glob(os.path.join(version_dir, '*', 'result.json'))):
+        r = json.load(open(p, encoding='utf-8'))
+        if r['name'].endswith(('-warmup', '-profile')):
+            continue
+        r['dir'] = os.path.dirname(p)
+        runs.append(r)
+    runs.sort(key=lambda r: [int(x) if x.isdigit() else x for x in re.split(r'(\d+)', r['name'])])
+    tag = os.path.basename(os.path.normpath(version_dir))
+    rel = os.path.relpath(version_dir, os.path.dirname(os.path.abspath(doc)))
+    version = re.sub(r'-run\d+$', '', runs[0]['name']) if runs else tag
+    out = ['<!-- result:%s -->' % tag, '### %s' % version, '']
+    out.append('`run` 이 회차마다 적는다(#1326). 핵심 수치는 앱이 잰 API 별 요청 시간으로 유지 구간만 센다. 오류율은 5xx 의 비율이다. 분위수는 같은 uri 의 메서드를 합쳐 센다.')
+    out.append('3회 묶음은 핵심 수치와 상세의 평균, 시간, 초당 값은 평균이고, 이름이 `_max`, `_inc`(건수)로 끝나거나 CPU 최대, 허용량 초과인 값은 가장 큰 값, 크레딧과 `_min` 은 가장 작은 값이다.')
+    out += ['', '**핵심 수치**', '', '| API | 회차 | 초당 | p50 / p95 / p99 | 오류율 |', '|---|---|---|---|---|']
+    uris = sorted({u for r in runs for u in r['core']})
+    for u in uris:
+        methods = sorted({m for r in runs if u in r['core'] for m in r['core'][u]['methods']})
+        label = '%s %s' % (', '.join(methods), u)
+        cells = []
+        for r in runs:
+            a = r['core'].get(u)
+            if not a:
+                continue
+            cells.append(a)
+            out.append('| %s | %s | %s | %s / %s / %s | %s |' % (label, r['name'], fmt_n(round(a['tps'], 1) if a['tps'] is not None else None),
+                       fmt_s(a.get('p50')), fmt_s(a.get('p95')), fmt_s(a.get('p99')), fmt_pct(a['error_rate'])))
+        if len(cells) > 1:
+            avg = lambda k: reduce([c.get(k) for c in cells], 'avg')
+            tps = avg('tps')
+            out.append('| %s | **%d회 평균** | %s | %s / %s / %s | %s |' % (label, len(cells), fmt_n(round(tps, 1) if tps is not None else None),
+                       fmt_s(avg('p50')), fmt_s(avg('p95')), fmt_s(avg('p99')), fmt_pct(avg('error_rate'))))
+    if not uris:
+        out.append('| 요청 없음 | - | - | - | - |')
+    # 통과 기준의 오류율은 k6 가 본 실패로 판정한다(#1329). 시간 초과와 앱에 닿기 전의 실패가 든다
+    out += ['', '**k6 가 본 실패(유지 구간)**', '', '통과 기준의 오류율은 이 실패율로 판정한다. 위의 오류율(앱의 5xx)에 들지 않는 시간 초과와 앱에 닿기 전의 실패가 든다.',
+            '', '| API(k6 꼬리표) | 회차 | 요청 | 실패 | 실패율 |', '|---|---|---|---|---|']
+    apis = sorted({a for r in runs for a in r.get('k6', {})})
+    for a in apis:
+        cells = []
+        for r in runs:
+            k = r.get('k6', {}).get(a)
+            if not k:
+                continue
+            cells.append(k)
+            out.append('| %s | %s | %s | %s | %s |' % (a, r['name'], fmt_n(k['requests']), fmt_n(k['failed']), fmt_pct(k['rate'])))
+        if len(cells) > 1:
+            out.append('| %s | **%d회 평균** | %s | %s | %s |' % (a, len(cells), fmt_n(round(reduce([c['requests'] for c in cells], 'avg'), 1)),
+                       fmt_n(round(reduce([c['failed'] for c in cells], 'avg'), 1)), fmt_pct(reduce([c['rate'] for c in cells], 'avg'))))
+    if not apis:
+        out.append('| 요약 없음 | - | - | - | - |')
+    names = []
+    for r in runs:
+        for n in r['detail']:
+            if n not in names:
+                names.append(n)
+    out += ['', '**상세**', '', '| 지표 | ' + ' | '.join(r['name'] for r in runs) + (' | %d회 묶음 |' % len(runs) if len(runs) > 1 else ' |'),
+            '|---|' + '---|' * (len(runs) + (1 if len(runs) > 1 else 0))]
+    for n in names:
+        vals = [r['detail'].get(n) for r in runs]
+        row = '| `%s` | ' % n + ' | '.join(fmt_n(v) for v in vals)
+        if len(runs) > 1:
+            row += ' | ' + fmt_n(reduce(vals, kind(n)))
+        out.append(row + ' |')
+    for r in runs:
+        d = os.path.join(rel, os.path.basename(r['dir']))
+        out += ['', '**%s**' % r['name'], '']
+        shown = []
+        for title, pattern in (('API', 'dashboards/2._서비스/2._API.png'), ('도메인', 'dashboards/3._도메인/*.png')):
+            for f in sorted(glob.glob(os.path.join(r['dir'], pattern))):
+                f = os.path.relpath(f, r['dir'])
+                shown.append(f)
+                out.append('![%s %s](%s)' % (r['name'], os.path.splitext(os.path.basename(f))[0].replace('_', ' '), os.path.join(d, f)))
+        traces, notes = trace_rows(r['dir']) or (None, [])
+        if traces:
+            slow = max(traces, key=lambda t: t['ms'])
+            f = os.path.join(slow['dir'], 'trace.png')
+            if os.path.exists(os.path.join(r['dir'], f)):
+                shown.append(f)
+                out.append('![%s 가장 느린 트레이스 %s](%s)' % (r['name'], slow['id'], os.path.join(d, f)))
+        others = sorted(os.path.relpath(f, r['dir']) for f in glob.glob(os.path.join(r['dir'], 'dashboards', '**', '*.png'), recursive=True))
+        others = [f for f in others if f not in shown]
+        if others:
+            out += ['', '나머지 대시보드: ' + ', '.join('[%s](%s)' % (os.path.splitext(os.path.basename(f))[0].replace('_', ' '), os.path.join(d, f)) for f in others)]
+        if traces is None:
+            out += ['', '트레이스: 고른 목록(`traces.txt`)이 없다. 트레이싱을 켜지 않았거나 캡처가 트레이스를 찍지 않았다']
+        elif not traces:
+            out += ['', '트레이스: ' + (' '.join(notes) or '기준을 넘은 트레이스가 없다')]
+        else:
+            out += ['', '| 대상 | 판정 값 | 걸린 시간 | 트레이스 ID | 화면 | 경고와 오류 |', '|---|---|---|---|---|---|']
+            for t in traces:
+                base = os.path.join(d, t['dir'])
+                out.append('| %s %s | %s | %s | `%s` | [트레이스](%s) [로그](%s) [로그 글](%s) | %s |' % (
+                    t['panel'], t['target'], t['value'], fmt_s(t['ms'] / 1000), t['id'],
+                    os.path.join(base, 'trace.png'), os.path.join(base, 'logs.png'), os.path.join(base, 'logs.txt'),
+                    ', '.join(t['events']) or '-'))
+    out.append('<!-- /result:%s -->' % tag)
+    lines = open(doc, encoding='utf-8').read().split('\n')
+    head = next((i for i, l in enumerate(lines) if l.startswith('#') and '회차별 결과' in l), None)
+    if head is None:
+        sys.exit(3)
+    level = len(lines[head]) - len(lines[head].lstrip('#'))
+    end = next((i for i in range(head + 1, len(lines)) if lines[i].startswith('#') and len(lines[i]) - len(lines[i].lstrip('#')) <= level), len(lines))
+    start_mark, end_mark = '<!-- result:%s -->' % tag, '<!-- /result:%s -->' % tag
+    s = next((i for i in range(head, end) if lines[i] == start_mark), None)
+    e = next((i for i in range(head, end) if lines[i] == end_mark), None)
+    if s is not None and e is not None and e > s:
+        lines[s:e + 1] = out
+    else:
+        last = max([i for i in range(head, end) if lines[i].strip()])
+        lines[last + 1:last + 1] = [''] + out
+    open(doc, 'w', encoding='utf-8').write('\n'.join(lines))
+
+if sys.argv[1] == 'collect':
+    collect(*sys.argv[2:8])
+else:
+    render(sys.argv[2], sys.argv[3])
+PY
+
+#
+# 유효한 측정 회차의 핵심 수치와 서버 지표를 회차 폴더에 남기고 결과 문서의 버전 절을 다시 쓴다(#1326). after_run 이 부른다.
+# 회차 폴더는 SNAPSHOT_OUT 아래의 회차 이름이다. SNAPSHOT_OUT 이 없으면(버전 하나를 돌지 않고 run 만 부른 경우) 적을 자리가 없어 건너뛴다.
+# 로컬은 결과 문서 대신 build/loadtest-results/ 의 사본에 적고 커밋하지 않는다. 부하 시험 환경은 결과 문서와 회차 폴더를 커밋한다.
+#
+record_result() {
+  local name="$1" hs="$2" he="$3" metrics_file="$4" run_out="${5:-}" run_dir doc rc=0 core k6 f dirs=()
+  [ -n "${SNAPSHOT_OUT:-}" ] || { echo "result: SNAPSHOT_OUT 이 없어 $name 을 결과 문서에 적지 않는다. version 으로 돌면 적는다"; return 0; }
+  run_dir="$SNAPSHOT_OUT/$name"
+  # 묻기가 끝까지 성공한 뒤에만 모은다. 중간에 실패한 출력으로 모으면 빠진 건수가 0 으로 들어간다
+  core=$(mktemp); k6=$(mktemp)
+  # run 의 출력에 남은 k6 요약이다(#1329). 없으면(옛 run) k6 의 실패 표를 비운다
+  [ -z "$run_out" ] || sed -n 's/^k6-summary //p' "$run_out" | head -1 > "$k6"
+  if ! printf '%s\n' "$CORE_METRICS" | prom_metrics "$hs" "$he" > "$core" \
+    || ! python3 -c "$RESULT_PY" collect "$run_dir" "$name" "$hs" "$he" "$metrics_file" "$k6" < "$core"; then
+    rm -f "$core" "$k6"
+    echo "WARN: $name 의 핵심 수치를 모으지 못했다. 결과 문서에 적지 않았다" >&2
+    return 0
+  fi
+  rm -f "$core" "$k6"
+  doc="$ROOT/$RESULT_DOC"
+  if [ -n "${LOCAL:-}" ]; then
+    doc="$(dirname "$SNAPSHOT_OUT")/$(basename "$RESULT_DOC")"
+    [ -f "$doc" ] || cp "$ROOT/$RESULT_DOC" "$doc"
+  fi
+  python3 -c "$RESULT_PY" render "$doc" "$SNAPSHOT_OUT" || rc=$?
+  case "$rc" in
+    0) echo "result $name -> $doc" ;;
+    3) echo "WARN: $RESULT_DOC 에 제목에 '회차별 결과' 가 든 절이 없어 적지 않았다. 절의 머리말을 쓰고 다시 적는다" >&2; return 0 ;;
+    *) echo "WARN: $RESULT_DOC 에 적지 못했다" >&2; return 0 ;;
+  esac
+  [ -z "${LOCAL:-}" ] || return 0
+  if ! git -C "$ROOT" diff --cached --quiet; then
+    echo "WARN: 스테이징된 다른 파일이 있어 커밋하지 않았다. $RESULT_DOC 와 $run_dir 에는 적어 두었다" >&2
+    return 0
+  fi
+  # 버전 절은 그 버전의 회차를 모두 그린다. 앞 회차의 커밋을 건너뛰었으면 그 회차 폴더도 함께 담아 문서의 링크가 깨지지 않게 한다
+  for f in "$SNAPSHOT_OUT"/*/result.json; do
+    [ -f "$f" ] && dirs+=("$(dirname "$f")")
+  done
+  if ! git -C "$ROOT" add -- "$RESULT_DOC" "${dirs[@]}"; then
+    echo "WARN: 결과를 스테이징하지 못했다. git -C $ROOT restore --staged -- $RESULT_DOC $SNAPSHOT_OUT 로 풀고 손으로 커밋한다" >&2
+    return 0
+  fi
+  if ! git -C "$ROOT" commit -q -m "test: $name 의 핵심 수치와 캡처를 결과에 적는다 (#1326)" -- "$RESULT_DOC" "${dirs[@]}"; then
+    echo "WARN: 결과를 커밋하지 못했다. git -C $ROOT restore --staged -- $RESULT_DOC $SNAPSHOT_OUT 로 풀고 손으로 커밋한다" >&2
+    return 0
+  fi
+  echo "committed $(git -C "$ROOT" rev-parse --short HEAD) $RESULT_DOC ${dirs[*]}"
+}
+
 # 유지 구간의 부하 생성기 1분 평균 CPU 가 이 값을 넘으면 무효다(광고 서빙 부하 시험 문서 2장과 7장)
 LOADGEN_CPU_MAX_PCT=80
 after_run() {
@@ -739,6 +1087,8 @@ after_run() {
   [ "$we" -ge "$he" ] || invalid="$invalid
 k6 가 목표 부하 구간 끝 전에 멈췄다: window 끝 $we < hold 끝 $he"
   invalid="$invalid$(loadgen_busy "$hs" "$he")$(cache_exhausted "$metrics_out")"
+  # 유효한 회차만 결과 문서에 적는다. 무효 회차와 캡처가 실패한 회차는 다시 잴 회차다
+  [ -n "$invalid" ] || [ "$snap_rc" -ne 0 ] || record_result "$name" "$hs" "$he" "$metrics_out" "$out"
   rm -f "$metrics_out"
   # 캡처 실패는 무효 회차여도 알린다. 무효 회차도 원인을 보려면 그림이 있어야 한다
   [ "$snap_rc" -eq 0 ] || echo "SNAPSHOT-FAILED $name: 캡처가 $snap_rc 로 끝났다. 환경을 내리기 전에 같은 구간(--from $ws --to $he)으로 다시 찍는다"

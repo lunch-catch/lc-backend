@@ -60,19 +60,15 @@ public interface PointLedgerRepository extends JpaRepository<PointLedger, Long>,
                            @Param("entryType") EntryType entryType,
                            @Param("businessDate") LocalDate businessDate);
 
+    // 예약 크기에서 해제 크기를 뺀 값이다. 예약 중 포인트의 원장 몫이고 소진 몫은 판정이 갖는다(#1287)
     @Query("""
-            select coalesce(sum(case
-                when l.entryType = com.lunchcatch.billing.entity.EntryType.RESERVE then -l.amount
-                when l.entryType = com.lunchcatch.billing.entity.EntryType.RELEASE then -l.amount
-                when l.entryType = com.lunchcatch.billing.entity.EntryType.DEDUCT then l.amount
-                else 0L end), 0L)
+            select coalesce(-sum(l.amount), 0L)
               from PointLedger l
              where l.ownerId = :ownerId
                and l.entryType in (com.lunchcatch.billing.entity.EntryType.RESERVE,
-                                   com.lunchcatch.billing.entity.EntryType.RELEASE,
-                                   com.lunchcatch.billing.entity.EntryType.DEDUCT)
+                                   com.lunchcatch.billing.entity.EntryType.RELEASE)
             """)
-    long sumReservedPoint(@Param("ownerId") Long ownerId);
+    long sumReservedNotReleased(@Param("ownerId") Long ownerId);
 
     // 기간 시작 전의 잔액이다. 변동 전후 잔액 누적의 출발점이 된다
     @Query("""
@@ -115,38 +111,6 @@ public interface PointLedgerRepository extends JpaRepository<PointLedger, Long>,
         return insertDeductIfAbsent(ownerId, campaignId, ServeIds.toBytes(serveId), amount, now);
     }
 
-    /*
-     * 캠페인이 그 영업일에 쓴 금액이다. 부호를 뒤집어 양수로 돌려준다.
-     *
-     * DEDUCT 행에는 영업일이 없어서 deduction_result 와 serve_id 로 맞춰 영업일로 거른다.
-     * 해시 재구성이 Valkey 의 spend 를 다시 채울 때 쓰는 정본 값이다.
-     */
-    @Query("""
-            select coalesce(-sum(l.amount), 0L)
-              from PointLedger l, DeductionResult d
-             where d.serveId = l.serveId
-               and l.entryType = com.lunchcatch.billing.entity.EntryType.DEDUCT
-               and l.campaignId = :campaignId
-               and d.businessDate = :businessDate
-            """)
-    long sumDeductForCampaignOn(@Param("campaignId") Long campaignId, @Param("businessDate") LocalDate businessDate);
-
-    /*
-     * 위와 같은 합을 캠페인 여러 개에 대해 한 번에 구한다. 그날 DEDUCT 가 없는 캠페인은 결과에 없다(소진 0).
-     * 해시가 한꺼번에 사라진 직후의 진행률 조회가 캠페인마다 쿼리를 내지 않게 한다.
-     */
-    @Query("""
-            select new com.lunchcatch.billing.dto.CampaignSpend(l.campaignId, -sum(l.amount))
-              from PointLedger l, DeductionResult d
-             where d.serveId = l.serveId
-               and l.entryType = com.lunchcatch.billing.entity.EntryType.DEDUCT
-               and l.campaignId in :campaignIds
-               and d.businessDate = :businessDate
-             group by l.campaignId
-            """)
-    List<CampaignSpend> sumDeductForCampaignsOn(@Param("campaignIds") Collection<Long> campaignIds,
-                                                @Param("businessDate") LocalDate businessDate);
-
     // 그 영업일에 캠페인 여러 개가 돌려받은 RELEASE 합이다. RELEASE 가 없는 캠페인은 결과에 없다
     @Query("""
             select new com.lunchcatch.billing.dto.CampaignSpend(l.campaignId, sum(l.amount))
@@ -174,19 +138,6 @@ public interface PointLedgerRepository extends JpaRepository<PointLedger, Long>,
              group by l.ownerId, l.campaignId, l.entryType
             """)
     List<LedgerSumRow> sumReserveReleaseOn(@Param("businessDate") LocalDate businessDate);
-
-    // DEDUCT 는 영업일이 차감 판정에 있어 serve_id 로 맞춰 묻는다
-    @Query("""
-            select new com.lunchcatch.billing.repository.LedgerSumRow(l.ownerId, l.campaignId, l.entryType,
-                       sum(case when l.amount > 0 then l.amount else 0L end),
-                       sum(case when l.amount < 0 then l.amount else 0L end))
-              from PointLedger l, DeductionResult d
-             where d.serveId = l.serveId
-               and l.entryType = com.lunchcatch.billing.entity.EntryType.DEDUCT
-               and d.businessDate = :businessDate
-             group by l.ownerId, l.campaignId, l.entryType
-            """)
-    List<LedgerSumRow> sumDeductOn(@Param("businessDate") LocalDate businessDate);
 
     // CHARGE, REFUND 는 영업일 컬럼이 없어 기록 시각 [from, to) 로 묻는다
     @Query("""
@@ -233,32 +184,30 @@ public interface PointLedgerRepository extends JpaRepository<PointLedger, Long>,
     List<LocalDate> findCorrectionTargetDates(@Param("from") LocalDateTime from, @Param("to") LocalDateTime to);
 
     /*
-     * 전 점주의 미소진 포인트다. before 이전에 기록된 CHARGE, REFUND, ADJUST, DEDUCT 의 합이다.
-     * 점주 잔액에 예약 중 포인트(예약액 - 소진 - 해제)를 더한 값과 같다. RESERVE 와 RELEASE 는 그 둘 사이에서 상쇄되어 세지 않는다.
+     * 전 점주의 미소진 포인트 가운데 원장 몫이다. before 이전에 기록된 CHARGE, REFUND, ADJUST 의 합이다.
+     * 소진 몫(BILLED 단가 합)은 판정이 갖고 호출하는 쪽이 뺀다(#1287). RESERVE 와 RELEASE 는 잔액과 예약 중 포인트 사이에서 상쇄되어 세지 않는다.
      */
     @Query("""
             select coalesce(sum(l.amount), 0L)
               from PointLedger l
              where l.entryType in (com.lunchcatch.billing.entity.EntryType.CHARGE,
                                    com.lunchcatch.billing.entity.EntryType.REFUND,
-                                   com.lunchcatch.billing.entity.EntryType.ADJUST,
-                                   com.lunchcatch.billing.entity.EntryType.DEDUCT)
+                                   com.lunchcatch.billing.entity.EntryType.ADJUST)
                and l.createdAt < :before
             """)
-    long sumUnspentBefore(@Param("before") LocalDateTime before);
+    long sumUnspentLedgerBefore(@Param("before") LocalDateTime before);
 
-    // 기록 시각이 [from, to) 인 미소진 포인트 변동의 합이다. 위와 같은 네 유형을 센다
+    // 기록 시각이 [from, to) 인 미소진 포인트 변동 가운데 원장 몫이다. 위와 같은 세 유형을 센다
     @Query("""
             select coalesce(sum(l.amount), 0L)
               from PointLedger l
              where l.entryType in (com.lunchcatch.billing.entity.EntryType.CHARGE,
                                    com.lunchcatch.billing.entity.EntryType.REFUND,
-                                   com.lunchcatch.billing.entity.EntryType.ADJUST,
-                                   com.lunchcatch.billing.entity.EntryType.DEDUCT)
+                                   com.lunchcatch.billing.entity.EntryType.ADJUST)
                and l.createdAt >= :from
                and l.createdAt < :to
             """)
-    long sumUnspentBetween(@Param("from") LocalDateTime from, @Param("to") LocalDateTime to);
+    long sumUnspentLedgerBetween(@Param("from") LocalDateTime from, @Param("to") LocalDateTime to);
 
     // 그 영업일에 RELEASE 가 이미 있는 캠페인이다. 점주 ID 와 종류로 걸러 idx_point_ledger_owner_type_created 를 탄다(#1241)
     @Query("""

@@ -1,5 +1,6 @@
 package com.lunchcatch.billing.reservation.service;
 
+import com.lunchcatch.billing.deduction.repository.DeductionResultRepository;
 import com.lunchcatch.billing.entity.PointLedger;
 import com.lunchcatch.billing.repository.PointAccountRepository;
 import com.lunchcatch.billing.repository.PointLedgerRepository;
@@ -54,6 +55,7 @@ public class RechargeReservationService {
     private final CampaignFundingUpdater fundingUpdater;
     private final PointAccountRepository accountRepository;
     private final PointLedgerRepository ledgerRepository;
+    private final DeductionResultRepository deductionRepository;
     private final BudgetDailyPlanRepository planRepository;
     private final ApplicationEventPublisher eventPublisher;
 
@@ -121,7 +123,7 @@ public class RechargeReservationService {
 
     private void notifyResume(PointCharged charged, LocalDate businessDate, CampaignInfo campaign,
                               BudgetDailyPlan plan, long newReserved) {
-        long todaySpend = ledgerRepository.sumDeductForCampaignOn(campaign.campaignId(), businessDate);
+        long todaySpend = deductionRepository.sumBilledForCampaignOn(campaign.campaignId(), businessDate);
         fundingUpdater.applyFundingJudgement(new FundingJudgement(campaign.campaignId(), charged.ownerId(),
                 businessDate, Judgement.RESUME, Cause.RECHARGE, newReserved, plan.getUnitPrice(),
                 dailyBudgetOf(campaign), todaySpend));

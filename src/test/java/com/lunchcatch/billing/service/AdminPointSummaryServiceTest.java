@@ -7,6 +7,8 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.lunchcatch.billing.deduction.repository.BusinessDateBilledRow;
+import com.lunchcatch.billing.deduction.repository.DeductionResultRepository;
 import com.lunchcatch.billing.dto.AdminPointSummaryItem;
 import com.lunchcatch.billing.dto.AdminPointSummaryResponse;
 import com.lunchcatch.billing.dto.SummaryPeriod;
@@ -33,9 +35,10 @@ class AdminPointSummaryServiceTest {
     private static final LocalDate D01 = LocalDate.of(2026, 10, 1);
 
     @Mock PointLedgerRepository repository;
+    @Mock DeductionResultRepository deductionRepository;
 
     private AdminPointSummaryService service() {
-        return new AdminPointSummaryService(repository);
+        return new AdminPointSummaryService(repository, deductionRepository);
     }
 
     private void threeDaysOfLedger() {
@@ -51,14 +54,14 @@ class AdminPointSummaryServiceTest {
                 new BusinessDateSumRow(D30, EntryType.RESERVE, -10000L),
                 new BusinessDateSumRow(D30, EntryType.RELEASE, 200L),
                 new BusinessDateSumRow(D01, EntryType.RESERVE, -10000L)));
-        when(repository.sumDeductByServedBusinessDate(OWNER, D29, D01)).thenReturn(List.of(
-                new BusinessDateSumRow(D29, EntryType.DEDUCT, -9800L),
-                new BusinessDateSumRow(D30, EntryType.DEDUCT, -9800L),
-                new BusinessDateSumRow(D01, EntryType.DEDUCT, -4000L)));
+        when(deductionRepository.sumBilledByBusinessDate(OWNER, D29, D01)).thenReturn(List.of(
+                new BusinessDateBilledRow(D29, 9800L),
+                new BusinessDateBilledRow(D30, 9800L),
+                new BusinessDateBilledRow(D01, 4000L)));
     }
 
     @Test
-    void 날짜별_소진은_서빙_영업일의_DEDUCT_합이다() {
+    void 날짜별_소진은_서빙_영업일의_BILLED_단가_합이다() {
         threeDaysOfLedger();
 
         AdminPointSummaryResponse response = service().summarize(OWNER, SummaryPeriod.DAILY, D29, D01, null);
@@ -87,12 +90,12 @@ class AdminPointSummaryServiceTest {
     }
 
     @Test
-    void 소진은_기록일이_아니라_서빙_영업일의_DEDUCT로_센다() {
+    void 소진은_기록일이_아니라_서빙_영업일의_BILLED로_센다() {
         when(repository.sumReserveAndReleaseByBusinessDate(OWNER, D01, D01)).thenReturn(List.of(
                 new BusinessDateSumRow(D01, EntryType.RESERVE, -10000L),
                 new BusinessDateSumRow(D01, EntryType.RELEASE, 3500L)));
-        when(repository.sumDeductByServedBusinessDate(OWNER, D01, D01))
-                .thenReturn(List.of(new BusinessDateSumRow(D01, EntryType.DEDUCT, -6500L)));
+        when(deductionRepository.sumBilledByBusinessDate(OWNER, D01, D01))
+                .thenReturn(List.of(new BusinessDateBilledRow(D01, 6500L)));
 
         AdminPointSummaryItem item = service().summarize(OWNER, SummaryPeriod.DAILY, D01, D01, "asc").items().get(0);
 
@@ -100,9 +103,9 @@ class AdminPointSummaryServiceTest {
     }
 
     @Test
-    void 예약과_해제가_없는_날도_서빙_영업일의_DEDUCT가_있으면_소진으로_보인다() {
-        when(repository.sumDeductByServedBusinessDate(OWNER, D30, D30))
-                .thenReturn(List.of(new BusinessDateSumRow(D30, EntryType.DEDUCT, -700L)));
+    void 예약과_해제가_없는_날도_서빙_영업일의_BILLED가_있으면_소진으로_보인다() {
+        when(deductionRepository.sumBilledByBusinessDate(OWNER, D30, D30))
+                .thenReturn(List.of(new BusinessDateBilledRow(D30, 700L)));
 
         AdminPointSummaryItem item = service().summarize(OWNER, SummaryPeriod.DAILY, D30, D30, null).items().get(0);
 

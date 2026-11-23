@@ -1,7 +1,7 @@
 {
-  "name": "lc-slide-gif-engine",
+  "name": "project-motion-html-engine",
   "private": true,
-  "description": "런치캐치 발표용 애니메이션 슬라이드를 그리고 GIF 와 MP4 로 녹화한다",
+  "description": "이해를 돕는 애니메이션 장면을 그리고 혼자 열리는 HTML 로 묶는다",
   "scripts": {
     "build": "node build.js",
     "record": "node record.js"

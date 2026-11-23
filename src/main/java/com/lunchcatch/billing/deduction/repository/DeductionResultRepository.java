@@ -3,8 +3,10 @@ package com.lunchcatch.billing.deduction.repository;
 import com.lunchcatch.billing.contract.DeductionStatus;
 import com.lunchcatch.billing.deduction.dto.ServeIds;
 import com.lunchcatch.billing.deduction.entity.DeductionResult;
+import com.lunchcatch.billing.dto.CampaignSpend;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -67,6 +69,101 @@ public interface DeductionResultRepository extends JpaRepository<DeductionResult
              group by d.campaignId, d.billingStatus
             """)
     List<DeductionCountRow> countByStatusOn(@Param("businessDate") LocalDate businessDate);
+
+    /*
+     * 캠페인이 그 서빙 영업일에 쓴 금액이다. BILLED 판정의 단가 합이고 행이 없으면 0 이다.
+     * 소진의 정본이다(#1287). 해시 재구성이 Valkey 의 spend 를 다시 채우고, 재예약이 재개를 알릴 때 쓴다.
+     */
+    @Query("""
+            select coalesce(sum(d.unitPrice), 0L)
+              from DeductionResult d
+             where d.campaignId = :campaignId
+               and d.businessDate = :businessDate
+               and d.billingStatus = com.lunchcatch.billing.contract.DeductionStatus.BILLED
+            """)
+    long sumBilledForCampaignOn(@Param("campaignId") Long campaignId, @Param("businessDate") LocalDate businessDate);
+
+    // 위와 같은 합을 캠페인 여러 개에 대해 한 번에 구한다. 그날 BILLED 가 없는 캠페인은 결과에 없다(소진 0)
+    @Query("""
+            select new com.lunchcatch.billing.dto.CampaignSpend(d.campaignId, sum(d.unitPrice))
+              from DeductionResult d
+             where d.campaignId in :campaignIds
+               and d.businessDate = :businessDate
+               and d.billingStatus = com.lunchcatch.billing.contract.DeductionStatus.BILLED
+             group by d.campaignId
+            """)
+    List<CampaignSpend> sumBilledForCampaignsOn(@Param("campaignIds") Collection<Long> campaignIds,
+                                                @Param("businessDate") LocalDate businessDate);
+
+    // 집계 조회가 쓰는 그 서빙 영업일의 점주와 캠페인별 BILLED 단가 합이다
+    @Query("""
+            select new com.lunchcatch.billing.deduction.repository.OwnerCampaignBilledRow(
+                       d.ownerId, d.campaignId, sum(d.unitPrice))
+              from DeductionResult d
+             where d.businessDate = :businessDate
+               and d.billingStatus = com.lunchcatch.billing.contract.DeductionStatus.BILLED
+             group by d.ownerId, d.campaignId
+            """)
+    List<OwnerCampaignBilledRow> sumBilledOn(@Param("businessDate") LocalDate businessDate);
+
+    // 점주의 모든 BILLED 단가 합이다. 예약 중 포인트(예약 - 해제 - 소진)의 소진 몫이다
+    @Query("""
+            select coalesce(sum(d.unitPrice), 0L)
+              from DeductionResult d
+             where d.ownerId = :ownerId
+               and d.billingStatus = com.lunchcatch.billing.contract.DeductionStatus.BILLED
+            """)
+    long sumBilledForOwner(@Param("ownerId") Long ownerId);
+
+    // 기록 시각이 before 이전인 BILLED 단가 합이다. 미소진 포인트의 소진 몫이라 영업일이 아니라 기록 시각으로 센다
+    @Query("""
+            select coalesce(sum(d.unitPrice), 0L)
+              from DeductionResult d
+             where d.createdAt < :before
+               and d.billingStatus = com.lunchcatch.billing.contract.DeductionStatus.BILLED
+            """)
+    long sumBilledRecordedBefore(@Param("before") LocalDateTime before);
+
+    // 기록 시각이 [from, to) 인 BILLED 단가 합이다
+    @Query("""
+            select coalesce(sum(d.unitPrice), 0L)
+              from DeductionResult d
+             where d.createdAt >= :from
+               and d.createdAt < :to
+               and d.billingStatus = com.lunchcatch.billing.contract.DeductionStatus.BILLED
+            """)
+    long sumBilledRecordedBetween(@Param("from") LocalDateTime from, @Param("to") LocalDateTime to);
+
+    // 점주의 기록 시각이 [from, to) 인 캠페인별 BILLED 단가 합과 건수다. campaignId 가 null 이면 캠페인을 거르지 않는다
+    @Query("""
+            select new com.lunchcatch.billing.deduction.repository.CampaignBilledRow(
+                       d.campaignId, sum(d.unitPrice), count(d))
+              from DeductionResult d
+             where d.ownerId = :ownerId
+               and d.createdAt >= :from
+               and d.createdAt < :to
+               and d.billingStatus = com.lunchcatch.billing.contract.DeductionStatus.BILLED
+               and (:campaignId is null or d.campaignId = :campaignId)
+             group by d.campaignId
+            """)
+    List<CampaignBilledRow> sumBilledByCampaignRecordedBetween(@Param("ownerId") Long ownerId,
+                                                               @Param("from") LocalDateTime from,
+                                                               @Param("to") LocalDateTime to,
+                                                               @Param("campaignId") Long campaignId);
+
+    // 점주의 서빙 영업일이 [from, to] 인 영업일별 BILLED 단가 합이다. 자정 뒤에 기록된 전날 노출도 전날에 들어간다
+    @Query("""
+            select new com.lunchcatch.billing.deduction.repository.BusinessDateBilledRow(
+                       d.businessDate, sum(d.unitPrice))
+              from DeductionResult d
+             where d.ownerId = :ownerId
+               and d.businessDate between :from and :to
+               and d.billingStatus = com.lunchcatch.billing.contract.DeductionStatus.BILLED
+             group by d.businessDate
+            """)
+    List<BusinessDateBilledRow> sumBilledByBusinessDate(@Param("ownerId") Long ownerId,
+                                                        @Param("from") LocalDate from,
+                                                        @Param("to") LocalDate to);
 
     // serve_id 를 BINARY(16) 바이트로 바꿔 넘기는 호출 편의 메서드다
     default int insertIfAbsent(UUID serveId, Long campaignId, Long ownerId, LocalDate businessDate,

@@ -7,6 +7,7 @@ import com.lunchcatch.billing.contract.DailyLedgerTotals;
 import com.lunchcatch.billing.contract.OwnerCampaignLedgerSum;
 import com.lunchcatch.billing.deduction.repository.DeductionCountRow;
 import com.lunchcatch.billing.deduction.repository.DeductionResultRepository;
+import com.lunchcatch.billing.deduction.repository.OwnerCampaignBilledRow;
 import com.lunchcatch.billing.reconciliation.repository.SettlementMismatchRepository;
 import com.lunchcatch.billing.repository.LedgerSumRow;
 import com.lunchcatch.billing.repository.PointLedgerRepository;
@@ -25,7 +26,7 @@ import org.springframework.transaction.annotation.Transactional;
 /*
  * 분석 배치가 영업일마다 부르는 집계 조회다. 읽기만 하므로 읽기 전용 트랜잭션 하나로 묶어 한 호출 안의 쿼리들이 같은 스냅샷을 본다.
  *
- * 영업일 귀속은 유형마다 다르다. RESERVE, RELEASE 는 원장의 영업일, DEDUCT 는 차감 판정의 영업일, ADJUST 는 정정 대상 영업일,
+ * 영업일 귀속은 유형마다 다르다. RESERVE, RELEASE 는 원장의 영업일, 소진(판정 BILLED)은 판정의 영업일, ADJUST 는 정정 대상 영업일,
  * CHARGE, REFUND 는 기록 시각이다. 기록 시각의 하루는 날짜를 DB 함수로 자르지 않고 [당일 00:00, 다음 날 00:00) 범위로 묻는다.
  * 저장 시각은 Asia/Seoul 기준 LocalDateTime 이라 영업일 경계와 같다.
  *
@@ -48,7 +49,10 @@ public class BillingStatsQueryServiceImpl implements BillingStatsQueryService {
         LocalDateTime to = businessDate.plusDays(1).atStartOfDay();
         Map<Key, Sums> merged = new LinkedHashMap<>();
         merge(merged, pointLedgerRepository.sumReserveReleaseOn(businessDate));
-        merge(merged, pointLedgerRepository.sumDeductOn(businessDate));
+        // 소진은 판정의 BILLED 단가 합이다(#1287). 공개 계약의 deductAmount 가 음수라 부호를 뒤집어 더한다
+        for (OwnerCampaignBilledRow row : deductionResultRepository.sumBilledOn(businessDate)) {
+            merged.computeIfAbsent(new Key(row.ownerId(), row.campaignId()), k -> new Sums()).deduct -= row.amount();
+        }
         merge(merged, pointLedgerRepository.sumChargeRefundBetween(from, to));
         merge(merged, pointLedgerRepository.sumAdjustOn(businessDate, from, to));
 
@@ -95,14 +99,20 @@ public class BillingStatsQueryServiceImpl implements BillingStatsQueryService {
         LocalDateTime from = businessDate.atStartOfDay();
         LocalDateTime to = businessDate.plusDays(1).atStartOfDay();
         return new DailyLedgerTotals(
-                pointLedgerRepository.sumUnspentBefore(to),
-                pointLedgerRepository.sumUnspentBetween(from, to),
+                pointLedgerRepository.sumUnspentLedgerBefore(to) - deductionResultRepository.sumBilledRecordedBefore(to),
+                unspentBetween(from, to),
                 settlementMismatchRepository.countByBusinessDate(businessDate));
     }
 
     @Override
     public long unspentChange(LocalDate from, LocalDate to) {
-        return pointLedgerRepository.sumUnspentBetween(from.atStartOfDay(), to.plusDays(1).atStartOfDay());
+        return unspentBetween(from.atStartOfDay(), to.plusDays(1).atStartOfDay());
+    }
+
+    // 원장의 CHARGE, REFUND, ADJUST 합에서 판정의 BILLED 단가 합을 뺀다. 둘 다 기록 시각 [from, to) 로 센다(#1287)
+    private long unspentBetween(LocalDateTime from, LocalDateTime to) {
+        return pointLedgerRepository.sumUnspentLedgerBetween(from, to)
+                - deductionResultRepository.sumBilledRecordedBetween(from, to);
     }
 
     private void merge(Map<Key, Sums> merged, List<LedgerSumRow> rows) {
@@ -113,7 +123,6 @@ public class BillingStatsQueryServiceImpl implements BillingStatsQueryService {
             switch (row.entryType()) {
                 case CHARGE -> sums.charge += positive;
                 case RESERVE -> sums.reserve += negative;
-                case DEDUCT -> sums.deduct += negative;
                 case RELEASE -> sums.release += positive;
                 case REFUND -> sums.refund += negative;
                 case ADJUST -> {
