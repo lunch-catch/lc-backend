@@ -38,6 +38,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -340,6 +342,34 @@ class TemplateReviseServiceTest {
                     assertThat(e.getErrorCode()).isEqualTo(PosterErrorCode.GENERATION_TIMEOUT);
                     assertThat(e.getCause()).isSameAs(timeout);
                 });
+        verify(templateVersionRepository, never()).saveAndFlush(any());
+    }
+
+    @Test
+    @DisplayName("LLM 응답이 시간 초과되면 처리 중 표식을 풀어 같은 requestId 로 바로 다시 시도할 수 있다(#1298)")
+    void LLM_시간_초과면_처리_중_표식을_푼다() {
+        when(templateHtmlGenerator.revise(PREVIOUS_HTML, "버튼 색 바꿔줘"))
+                .thenThrow(new TemplateGenerationTimeoutException("30초 초과"));
+
+        assertThatThrownBy(() -> service.revise(TEMPLATE_ID, "버튼 색 바꿔줘", REQUEST_ID, ADMIN_ID))
+                .isInstanceOf(CampaignException.class);
+
+        verify(redisTemplate).delete("templateGenerationInFlight:" + REQUEST_ID);
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = PosterErrorCode.class, names = {
+            "SLOT_CONTRACT_VIOLATION", "STRUCTURE_CHANGED", "GENERATION_TRUNCATED", "DISALLOWED_ELEMENT",
+            "GENERATION_THROTTLED", "GENERATION_BLOCKED"})
+    @DisplayName("저장된 것이 없는 모델 호출 실패면 처리 중 표식을 풀고 같은 오류를 그대로 던진다(#1298)")
+    void 모델_호출_실패면_처리_중_표식을_푼다(PosterErrorCode errorCode) {
+        when(templateHtmlGenerator.revise(PREVIOUS_HTML, "버튼 색 바꿔줘")).thenThrow(new CampaignException(errorCode));
+
+        assertThatThrownBy(() -> service.revise(TEMPLATE_ID, "버튼 색 바꿔줘", REQUEST_ID, ADMIN_ID))
+                .isInstanceOfSatisfying(CampaignException.class, e ->
+                        assertThat(e.getErrorCode()).isEqualTo(errorCode));
+
+        verify(redisTemplate).delete("templateGenerationInFlight:" + REQUEST_ID);
         verify(templateVersionRepository, never()).saveAndFlush(any());
     }
 
