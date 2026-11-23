@@ -81,7 +81,7 @@ plan            -> 다음 버전의 측정 ...
 - 커밋이 `TBD` 인 줄에 닿으면 멈춘다. 측정 직전에 정할 커밋이다
 - `ref` 는 그 버전의 시나리오와 시드 생성기를 받을 ref 다. 예전 커밋에 시나리오가 없을 때 준다
 - 선택지는 `version` 과 같다(`--scenario`, `--no-pool`, `--env`, `--app-env`, `--batch-env`). 값에 공백을 넣지 않는다
-- 어디까지 했는지는 `build/loadtest-plans/<계획 파일 이름>.state` 에 남는다. 줄마다 버전, 단계(`measure-done`, `diag-done`, `diag-skipped`), 시작과 끝의 UTC 시각이다. 측정이 멈추면 다시 부를 때 그 버전의 측정부터 다시 한다
+- 어디까지 했는지는 `build/loadtest-plans/<계획 파일 이름>.<local|lt>.state` 에 남는다. 로컬과 부하 시험 환경은 따로 센다. 줄마다 버전, 단계(`measure-done`, `diag-done`, `diag-skipped`), 시작과 끝의 UTC 시각이다. 측정이 멈추면 다시 부를 때 그 버전의 측정부터 다시 한다
 - 환경을 띄우고 내리는 일(lc-infra 의 `member-env.sh`)은 계획에 넣지 않는다. 내린 뒤에는 되돌릴 수 없어 사람이 정한다
 
 ## 실행 스크립트의 공통 부분

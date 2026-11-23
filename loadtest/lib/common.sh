@@ -544,7 +544,8 @@ pin_app_count() {
   [ -z "${LOCAL:-}" ] || return 0
   local asg="$PROJECT-app" n i
   aws autoscaling update-auto-scaling-group --auto-scaling-group-name "$asg" \
-    --min-size "$APP_COUNT" --desired-capacity "$APP_COUNT" --max-size "$APP_COUNT"
+    --min-size "$APP_COUNT" --desired-capacity "$APP_COUNT" --max-size "$APP_COUNT" \
+    || die "오토스케일링 그룹 $asg 의 대수를 $APP_COUNT 로 고정하지 못했다"
   for i in $(seq 1 60); do
     n=$(aws autoscaling describe-auto-scaling-groups --auto-scaling-group-names "$asg" \
       --query 'length(AutoScalingGroups[0].Instances[?LifecycleState==`InService` && HealthStatus==`Healthy`])' --output text)
@@ -640,13 +641,15 @@ run_version() {
 #
 # 한 번 부르면 한 걸음만 간다. 승인을 받는 자리마다 멈추기 때문이다(#1088).
 #   다음 버전의 측정 -> 멈춤(진단을 돌릴지 정한다) -> --diag 나 --skip-diag -> 멈춤(다음 버전으로 갈지 정한다) -> 다시 부르면 다음 버전
-# 상태 파일은 build/loadtest-plans/<계획 파일 이름>.state 다. 줄마다 버전, 단계, 시작과 끝의 UTC 시각이다. 버전마다 잰 시각을 결과 문서에 옮긴다(#1088).
+# 상태 파일은 build/loadtest-plans/<계획 파일 이름>.<local|lt>.state 다. 로컬과 부하 시험 환경을 따로 센다. 로컬로 먼저 돌린 기록이 부하 시험 환경의 버전을 건너뛰게 하지 않는다. 줄마다 버전, 단계, 시작과 끝의 UTC 시각이다. 버전마다 잰 시각을 결과 문서에 옮긴다(#1088).
 #
 run_plan() {
   local self="$1" plan="$2" choice="${3:-}" state line name commit ref args step started rc lines=()
   [ -f "$plan" ] || die "계획 파일이 없다: $plan"
   case "$choice" in ""|--diag|--skip-diag) ;; *) die "plan 의 선택지는 --diag 나 --skip-diag 다" ;; esac
-  state="$ROOT/build/loadtest-plans/$(basename "$plan").state"
+  local target=lt
+  [ -z "${LOCAL:-}" ] || target=local
+  state="$ROOT/build/loadtest-plans/$(basename "$plan").$target.state"
   mkdir -p "$(dirname "$state")"; touch "$state"
   # 멈출 때 출력하는 다음 걸음 명령이다. run_version 의 것과 같게 인자마다 셸 인용을 붙이고 부하 시험 환경이면 AWS_PROFILE 을 앞에 붙인다
   local next_cmd
