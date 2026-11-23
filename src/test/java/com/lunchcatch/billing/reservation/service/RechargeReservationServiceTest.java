@@ -9,6 +9,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import com.lunchcatch.billing.deduction.repository.DeductionResultRepository;
 import com.lunchcatch.billing.repository.PointAccountRepository;
 import com.lunchcatch.billing.repository.PointLedgerRepository;
 import com.lunchcatch.billing.reservation.dto.PointCharged;
@@ -53,6 +54,8 @@ class RechargeReservationServiceTest {
     @Mock
     private PointLedgerRepository ledgerRepository;
     @Mock
+    private DeductionResultRepository deductionRepository;
+    @Mock
     private BudgetDailyPlanRepository planRepository;
     @Mock
     private ApplicationEventPublisher eventPublisher;
@@ -63,7 +66,7 @@ class RechargeReservationServiceTest {
 
     private RechargeReservationService service(LocalTime now) {
         return new RechargeReservationService(clockAt(now), campaignQuery, fundingUpdater,
-                accountRepository, ledgerRepository, planRepository, eventPublisher);
+                accountRepository, ledgerRepository, deductionRepository, planRepository, eventPublisher);
     }
 
     private static CampaignInfo campaign(long id, PauseReason reason, LocalDate start, LocalDate end, long dailyBudget) {
@@ -90,7 +93,7 @@ class RechargeReservationServiceTest {
         when(ledgerRepository.sumBalance(OWNER_ID)).thenReturn(20000L);
         when(ledgerRepository.insertRechargeReserveIfAbsent(eq(OWNER_ID), eq(PAYMENT_ID), eq(1L), eq(DAY), eq(-7000L), any()))
                 .thenReturn(1);
-        when(ledgerRepository.sumDeductForCampaignOn(1L, DAY)).thenReturn(500L);
+        when(deductionRepository.sumBilledForCampaignOn(1L, DAY)).thenReturn(500L);
 
         service(LocalTime.of(12, 0)).reserve(new PointCharged(OWNER_ID, PAYMENT_ID, 20000L));
 
@@ -188,7 +191,7 @@ class RechargeReservationServiceTest {
         when(ledgerRepository.sumBalance(OWNER_ID)).thenReturn(15000L);
         when(ledgerRepository.insertRechargeReserveIfAbsent(any(), any(), any(), any(), any(Long.class), any()))
                 .thenReturn(1);
-        when(ledgerRepository.sumDeductForCampaignOn(any(), any())).thenReturn(0L);
+        when(deductionRepository.sumBilledForCampaignOn(any(), any())).thenReturn(0L);
 
         service(LocalTime.of(12, 0)).reserve(new PointCharged(OWNER_ID, PAYMENT_ID, 15000L));
 
@@ -244,7 +247,7 @@ class RechargeReservationServiceTest {
         stubExistingPlan(3L, 0L, 10L);
         when(ledgerRepository.sumBalance(OWNER_ID)).thenReturn(15000L);
         when(ledgerRepository.insertRechargeReserveIfAbsent(any(), any(), any(), any(), any(Long.class), any())).thenReturn(1);
-        when(ledgerRepository.sumDeductForCampaignOn(any(), any())).thenReturn(0L);
+        when(deductionRepository.sumBilledForCampaignOn(any(), any())).thenReturn(0L);
 
         service(LocalTime.of(12, 0)).reserve(new PointCharged(OWNER_ID, PAYMENT_ID, 15000L));
 

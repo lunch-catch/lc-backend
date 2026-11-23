@@ -10,8 +10,8 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.lunchcatch.billing.deduction.cache.DailySpendCounter;
+import com.lunchcatch.billing.deduction.repository.DeductionResultRepository;
 import com.lunchcatch.billing.dto.CampaignSpend;
-import com.lunchcatch.billing.repository.PointLedgerRepository;
 import com.lunchcatch.billing.reservation.entity.BudgetDailyPlan;
 import com.lunchcatch.billing.reservation.repository.BudgetDailyPlanRepository;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
@@ -37,7 +37,7 @@ class SpendHashRebuildServiceTest {
     @Mock
     private BudgetDailyPlanRepository planRepository;
     @Mock
-    private PointLedgerRepository ledgerRepository;
+    private DeductionResultRepository deductionRepository;
     @Mock
     private DailySpendCounter spendCounter;
 
@@ -46,7 +46,7 @@ class SpendHashRebuildServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new SpendHashRebuildService(planRepository, ledgerRepository, spendCounter, meterRegistry);
+        service = new SpendHashRebuildService(planRepository, deductionRepository, spendCounter, meterRegistry);
     }
 
     private static BudgetDailyPlan planOf(long campaignId, long dailyBudget) {
@@ -71,7 +71,7 @@ class SpendHashRebuildServiceTest {
     @Test
     void 계획과_원장_합으로_해시를_만들고_지표를_올린다() {
         when(planRepository.findForShare(7L, DAY)).thenReturn(Optional.of(plan()));
-        when(ledgerRepository.sumDeductForCampaignOn(7L, DAY)).thenReturn(250L);
+        when(deductionRepository.sumBilledForCampaignOn(7L, DAY)).thenReturn(250L);
         when(spendCounter.rebuildIfAbsent(DAY, 7L, 1000L, 250L, true, CHANGED_AT)).thenReturn(true);
 
         assertThat(service.rebuildIfAbsent(DAY, 7L)).isTrue();
@@ -91,7 +91,7 @@ class SpendHashRebuildServiceTest {
     @Test
     void 이미_있어_만들지_않았으면_지표를_올리지_않는다() {
         when(planRepository.findForShare(7L, DAY)).thenReturn(Optional.of(plan()));
-        when(ledgerRepository.sumDeductForCampaignOn(7L, DAY)).thenReturn(0L);
+        when(deductionRepository.sumBilledForCampaignOn(7L, DAY)).thenReturn(0L);
         when(spendCounter.rebuildIfAbsent(DAY, 7L, 1000L, 0L, true, CHANGED_AT)).thenReturn(false);
 
         assertThat(service.rebuildIfAbsent(DAY, 7L)).isFalse();
@@ -102,7 +102,7 @@ class SpendHashRebuildServiceTest {
     void 여러_캠페인은_계획과_원장_합을_한_번씩만_읽고_소진이_없는_캠페인은_0으로_만든다() {
         when(planRepository.findAllForShare(DAY, List.of(7L, 8L)))
                 .thenReturn(List.of(planOf(7L, 1000L), planOf(8L, 2000L)));
-        when(ledgerRepository.sumDeductForCampaignsOn(List.of(7L, 8L), DAY))
+        when(deductionRepository.sumBilledForCampaignsOn(List.of(7L, 8L), DAY))
                 .thenReturn(List.of(new CampaignSpend(7L, 250L)));
         when(spendCounter.rebuildIfAbsent(DAY, 7L, 1000L, 250L, true, CHANGED_AT)).thenReturn(true);
         when(spendCounter.rebuildIfAbsent(DAY, 8L, 2000L, 0L, true, CHANGED_AT)).thenReturn(false);
@@ -111,7 +111,7 @@ class SpendHashRebuildServiceTest {
         assertThat(rebuildCount()).isEqualTo(1.0);
         verify(planRepository, times(1)).findAllForShare(DAY, List.of(7L, 8L));
         verify(planRepository, never()).findByBusinessDateAndCampaignIdIn(any(), any());
-        verify(ledgerRepository, times(1)).sumDeductForCampaignsOn(List.of(7L, 8L), DAY);
+        verify(deductionRepository, times(1)).sumBilledForCampaignsOn(List.of(7L, 8L), DAY);
     }
 
     @Test
@@ -122,7 +122,7 @@ class SpendHashRebuildServiceTest {
         assertThatThrownBy(() -> service.rebuildAllIfAbsent(DAY, List.of(7L, 8L)))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("campaignId=8");
-        verifyNoInteractions(spendCounter, ledgerRepository);
+        verifyNoInteractions(spendCounter, deductionRepository);
     }
 
     @Test
@@ -132,6 +132,6 @@ class SpendHashRebuildServiceTest {
         assertThatThrownBy(() -> service.rebuildIfAbsent(DAY, 7L))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("campaignId=7");
-        verifyNoInteractions(spendCounter, ledgerRepository);
+        verifyNoInteractions(spendCounter, deductionRepository);
     }
 }

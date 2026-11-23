@@ -1,6 +1,5 @@
 package com.lunchcatch.billing.repository;
 
-import static com.lunchcatch.billing.deduction.entity.QDeductionResult.deductionResult;
 import static com.lunchcatch.billing.payment.entity.QPayment.payment;
 import static com.lunchcatch.billing.entity.QPointLedger.pointLedger;
 
@@ -55,23 +54,6 @@ class PointLedgerRepositoryImpl implements PointLedgerRepositoryCustom {
                         pointLedger.businessDate.between(from, to),
                         campaignIdIs(campaignId))
                 .groupBy(pointLedger.businessDate, pointLedger.campaignId)
-                .fetch();
-    }
-
-    @Override
-    public List<DeductSumRow> sumDeductedByCampaign(Long ownerId, LocalDateTime from, LocalDateTime to,
-                                                    Long campaignId) {
-        return queryFactory
-                .select(Projections.constructor(DeductSumRow.class,
-                        pointLedger.campaignId, pointLedger.amount.sum(), pointLedger.count()))
-                .from(pointLedger)
-                .where(
-                        pointLedger.ownerId.eq(ownerId),
-                        pointLedger.entryType.eq(EntryType.DEDUCT),
-                        pointLedger.createdAt.goe(from),
-                        pointLedger.createdAt.lt(to),
-                        campaignIdIs(campaignId))
-                .groupBy(pointLedger.campaignId)
                 .fetch();
     }
 
@@ -149,24 +131,11 @@ class PointLedgerRepositoryImpl implements PointLedgerRepositoryCustom {
                 .fetch();
     }
 
-    @Override
-    public List<BusinessDateSumRow> sumDeductByServedBusinessDate(Long ownerId, LocalDate from, LocalDate to) {
-        return queryFactory
-                .select(Projections.constructor(BusinessDateSumRow.class,
-                        deductionResult.businessDate, pointLedger.entryType, pointLedger.amount.sum()))
-                .from(pointLedger)
-                .join(deductionResult).on(deductionResult.serveId.eq(pointLedger.serveId))
-                .where(
-                        pointLedger.ownerId.eq(ownerId),
-                        pointLedger.entryType.eq(EntryType.DEDUCT),
-                        deductionResult.businessDate.between(from, to))
-                .groupBy(deductionResult.businessDate, pointLedger.entryType)
-                .fetch();
-    }
-
     private BooleanExpression[] adminFilters(AdminLedgerCondition condition) {
         return new BooleanExpression[]{
                 pointLedger.ownerId.eq(condition.ownerId()),
+                // 원장에 노출마다의 DEDUCT 를 쓰지 않는다. 전환 전에 남은 행도 내리지 않아 type=DEDUCT 는 빈 목록이다(#1287)
+                pointLedger.entryType.ne(EntryType.DEDUCT),
                 condition.type() == null ? null : pointLedger.entryType.eq(condition.type()),
                 pointLedger.createdAt.goe(condition.fromInclusive()),
                 pointLedger.createdAt.lt(condition.toExclusive()),

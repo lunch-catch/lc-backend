@@ -7,8 +7,8 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import com.lunchcatch.billing.deduction.repository.DeductionResultRepository;
 import com.lunchcatch.billing.dto.CampaignSpend;
-import com.lunchcatch.billing.repository.PointLedgerRepository;
 import com.lunchcatch.billing.reservation.entity.BudgetDailyPlan;
 import com.lunchcatch.billing.reservation.repository.BudgetDailyPlanRepository;
 import com.lunchcatch.campaign.contract.CampaignFundingUpdater;
@@ -43,13 +43,13 @@ class FundingJudgementServiceTest {
     @Mock
     private BudgetDailyPlanRepository planRepository;
     @Mock
-    private PointLedgerRepository ledgerRepository;
+    private DeductionResultRepository deductionRepository;
 
     private FundingJudgementService service;
 
     @BeforeEach
     void setUp() {
-        service = new FundingJudgementService(campaignQuery, fundingUpdater, planRepository, ledgerRepository);
+        service = new FundingJudgementService(campaignQuery, fundingUpdater, planRepository, deductionRepository);
     }
 
     private static CampaignInfo campaign(long id, CampaignStatus status, PauseReason reason) {
@@ -73,7 +73,7 @@ class FundingJudgementServiceTest {
                 .thenReturn(List.of(campaign(1L, CampaignStatus.PAUSED, PauseReason.OWNER)));
 
         assertThat(service.judge(DAY)).isZero();
-        verifyNoInteractions(fundingUpdater, planRepository, ledgerRepository);
+        verifyNoInteractions(fundingUpdater, planRepository, deductionRepository);
     }
 
     @Test
@@ -86,7 +86,7 @@ class FundingJudgementServiceTest {
                 campaign(5L, CampaignStatus.PAUSED, PauseReason.OWNER)));
         when(planRepository.findByBusinessDateAndCampaignIdIn(DAY, List.of(1L, 2L, 3L, 4L)))
                 .thenReturn(List.of(plan(1L, 5L), plan(2L, 10000L), plan(3L, 10L), plan(4L, 0L)));
-        when(ledgerRepository.sumDeductForCampaignsOn(List.of(1L, 2L, 3L, 4L), DAY))
+        when(deductionRepository.sumBilledForCampaignsOn(List.of(1L, 2L, 3L, 4L), DAY))
                 .thenReturn(List.of(new CampaignSpend(2L, 300L)));
 
         assertThat(service.judge(DAY)).isEqualTo(2);
@@ -104,7 +104,7 @@ class FundingJudgementServiceTest {
     void 판정에는_51행의_필수_값을_함께_싣는다() {
         when(campaignQuery.findServableOn(DAY)).thenReturn(List.of(campaign(2L, CampaignStatus.ACTIVE, null)));
         when(planRepository.findByBusinessDateAndCampaignIdIn(DAY, List.of(2L))).thenReturn(List.of(plan(2L, 3000L)));
-        when(ledgerRepository.sumDeductForCampaignsOn(List.of(2L), DAY)).thenReturn(List.of(new CampaignSpend(2L, 300L)));
+        when(deductionRepository.sumBilledForCampaignsOn(List.of(2L), DAY)).thenReturn(List.of(new CampaignSpend(2L, 300L)));
 
         service.judge(DAY);
 
@@ -118,7 +118,7 @@ class FundingJudgementServiceTest {
                 campaign(1L, CampaignStatus.ACTIVE, null),
                 campaign(2L, CampaignStatus.ACTIVE, null)));
         when(planRepository.findByBusinessDateAndCampaignIdIn(DAY, List.of(1L, 2L))).thenReturn(List.of(plan(2L, 5L)));
-        when(ledgerRepository.sumDeductForCampaignsOn(List.of(1L, 2L), DAY)).thenReturn(List.of());
+        when(deductionRepository.sumBilledForCampaignsOn(List.of(1L, 2L), DAY)).thenReturn(List.of());
 
         assertThat(service.judge(DAY)).isEqualTo(1);
         assertThat(judgements(1)).extracting(FundingJudgement::campaignId).containsExactly(2L);

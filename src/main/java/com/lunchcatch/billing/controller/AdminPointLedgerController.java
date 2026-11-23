@@ -38,7 +38,7 @@ public class AdminPointLedgerController {
     @GetMapping
     @Operation(
             summary = "점주별 포인트 변동 조회",
-            description = "점주 한 명의 원장을 여섯 종류 모두 보여 주고 변동 전후 잔액을 누적으로 계산해 붙입니다. 기간은 최대 31일입니다."
+            description = "점주 한 명의 원장을 DEDUCT 를 뺀 다섯 종류로 보여 주고 변동 전후 잔액을 누적으로 계산해 붙입니다. type=DEDUCT 는 빈 목록입니다. 기간은 최대 31일입니다."
     )
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "조회 성공. nextPageToken 이 비어 있으면 마지막 페이지입니다."),
