@@ -905,7 +905,7 @@ SH
 # 고르지 않고 늘 둘 다 붙인다. 프로파일링 회차는 결과에 쓰지 않아 배치에 붙는 비용이 측정에 섞이지 않는다.
 #
 profile() {
-  local name="${1:?회차 이름을 준다}" secs="${2:-60}" mode="${3:-wall}" pyro id role trim pids="" pid rc=0
+  local name="${1:?회차 이름을 준다}" secs="${2:-60}" mode="${3:-wall}" pyro id ids role trim pids="" pid rc=0
   case "$mode" in cpu|wall|both) ;; *) die "모드는 cpu, wall, both 다" ;; esac
   if [ -n "${LOCAL:-}" ]; then
     trim=$(mktemp)
@@ -919,7 +919,10 @@ profile() {
     pyro="http://$(aws ec2 describe-instances --filters "Name=tag:Project,Values=$PROJECT" "Name=tag:Role,Values=monitoring" \
       "Name=instance-state-name,Values=running" --query 'Reservations[0].Instances[0].PrivateIpAddress' --output text):4040"
     for role in app batch; do
-      for id in $(instances "$role"); do
+      # 한 역할의 서버를 찾지 못하면 그 역할의 프로파일이 빠진 채 성공하지 않게 실패로 남기고 나머지는 이어서 뜬다
+      ids=$(instances "$role") || { echo "profile $role 서버를 찾지 못했다" >&2; rc=1; continue; }
+      [ -n "$ids" ] || { echo "profile 떠 있는 $role 서버가 없다" >&2; rc=1; continue; }
+      for id in $ids; do
         # tail 이 프로파일러의 실패를 가리지 않게 pipefail 로 돈다. 배치 서버의 앱 컨테이너 이름도 $PROJECT 다
         remote "$id" $(( secs + 300 )) "set -o pipefail
 cat > /tmp/lt-trim.py <<'PY'
