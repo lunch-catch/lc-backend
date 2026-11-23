@@ -317,6 +317,8 @@ curl -fs localhost:8081/actuator/health/readiness" &
 # 옛 커밋에는 피드만 보내는 시나리오가 없다. 없으면 피드를 보내지 않고 성공처럼 끝나므로 여기서 멈춘다
 [ -f loadtest/adserving/$scenario.js ] || { echo \"scenario-missing loadtest/adserving/$scenario.js 가 이 ref 에 없다. LOADTEST_REF 로 #1127 뒤의 ref 를 준다\"; exit 2; }
 start=\$(ms)
+# 원격의 OUT 은 회차 사이에 남는다. 같은 이름으로 다시 돌다 k6 가 요약을 쓰기 전에 멈추면 앞 회차의 요약을 읽게 되어 먼저 지운다(#1329)
+rm -f \$OUT/summary-$name.json
 k6 run -q -o experimental-prometheus-rw --tag testid=adserving-$name \\
   -e BASE_URL=\"\$BASE_URL\" -e JWT_SECRET=\"\$JWT\" -e FEED_RATE=$rate -e RAMP_UP_SECONDS=60 -e DURATION=$hold \\
   -e MEMBERS=10000 -e MEMBER_BASE=$base -e PRE_VUS=200 -e MAX_VUS=2000 \\
@@ -327,11 +329,13 @@ echo \"window \$start \$(ms)\"
 s0=\$(grep -m1 -o 'scenario_start [0-9]*' \$OUT/k6-$name.log | cut -d' ' -f2 || true)
 s0=\${s0:-\$start}
 echo \"hold \$((s0 + 60000)) \$((s0 + 60000 + $hold_ms))\"
+# 유지 구간의 실패를 결과 문서에 적으려고 k6 요약을 한 줄로 남긴다(#1329). 화면에는 내지 않는다
+echo \"k6-summary \$(tr -d '\\n' < \$OUT/summary-$name.json 2> /dev/null || true)\"
 grep -E '✓|✗|↳|impression_results|http_reqs|http_req_duration|http_req_failed|iterations|vus_max' \$OUT/k6-$name.log | head -40 || true
 # 원격 쓰기 같은 k6 의 오류가 묻히지 않게 따로 보인다. 요약을 밀어내지 않게 마지막 몇 줄만 본다(lc-infra#60)
 echo \"errors\"
 grep 'level=error' \$OUT/k6-$name.log | tail -5 || true" ) > "$out" || rc=$?
-    cat "$out"
+    grep -v '^k6-summary ' "$out" || true
     #
     # 시나리오가 없어 k6 를 띄우지 않은 회차는 적을 것이 없다. 원격은 remote 가 실패를 종료 코드 1 로 바꿔
     # 종료 코드로 가를 수 없어 출력의 표시로 가른다.

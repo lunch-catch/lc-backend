@@ -795,7 +795,29 @@ def detail_value(name, rows):
         return sum(vals)
     return reduce(vals, kind(name))
 
-def collect(run_dir, name, hs, he, metrics_file):
+def k6_failed(path):
+    # k6 요약의 유지 구간 실패 칸(http_req_failed{api:...,phase:hold})이다. passes 가 실패한 요청 수, passes + fails 가 요청 수다
+    # 요약이 깨졌거나 꼴이 다르면 k6 의 표만 비운다. 핵심 수치와 상세는 그대로 남긴다
+    out = {}
+    try:
+        metrics = json.load(open(path, encoding='utf-8')).get('metrics')
+    except (OSError, ValueError, AttributeError):
+        return out
+    if not isinstance(metrics, dict):
+        return out
+    for key, v in metrics.items():
+        m = re.fullmatch(r'http_req_failed\{(.*)\}', key)
+        if not m or not isinstance(v, dict):
+            continue
+        tags = dict(t.split(':', 1) for t in m.group(1).split(',') if ':' in t)
+        passes, fails = v.get('passes'), v.get('fails')
+        if tags.get('phase') != 'hold' or not all(isinstance(n, int) and not isinstance(n, bool) and n >= 0 for n in (passes, fails)):
+            continue
+        total = passes + fails
+        out[tags.get('api', '-')] = {'requests': total, 'failed': passes, 'rate': passes / total if total else None}
+    return out
+
+def collect(run_dir, name, hs, he, metrics_file, k6_file=''):
     core = parse(sys.stdin)
     hold = (int(he) - int(hs)) / 1000
     apis = {}
@@ -819,7 +841,8 @@ def collect(run_dir, name, hs, he, metrics_file):
     os.makedirs(run_dir, exist_ok=True)
     # 다 쓴 뒤에 바꿔 끼운다. 쓰다 멈추면 앞의 result.json 이 그대로 남는다
     tmp = os.path.join(run_dir, 'result.json.tmp')
-    json.dump({'name': name, 'hold': [int(hs), int(he)], 'core': {u: a for u, a in apis.items() if a['count'] > 0}, 'detail': detail},
+    json.dump({'name': name, 'hold': [int(hs), int(he)], 'core': {u: a for u, a in apis.items() if a['count'] > 0},
+               'k6': k6_failed(k6_file) if k6_file else {}, 'detail': detail},
               open(tmp, 'w', encoding='utf-8'), ensure_ascii=False, indent=1)
     os.replace(tmp, os.path.join(run_dir, 'result.json'))
 
@@ -896,6 +919,23 @@ def render(doc, version_dir):
                        fmt_s(avg('p50')), fmt_s(avg('p95')), fmt_s(avg('p99')), fmt_pct(avg('error_rate'))))
     if not uris:
         out.append('| 요청 없음 | - | - | - | - |')
+    # 통과 기준의 오류율은 k6 가 본 실패로 판정한다(#1329). 시간 초과와 앱에 닿기 전의 실패가 든다
+    out += ['', '**k6 가 본 실패(유지 구간)**', '', '통과 기준의 오류율은 이 실패율로 판정한다. 위의 오류율(앱의 5xx)에 들지 않는 시간 초과와 앱에 닿기 전의 실패가 든다.',
+            '', '| API(k6 꼬리표) | 회차 | 요청 | 실패 | 실패율 |', '|---|---|---|---|---|']
+    apis = sorted({a for r in runs for a in r.get('k6', {})})
+    for a in apis:
+        cells = []
+        for r in runs:
+            k = r.get('k6', {}).get(a)
+            if not k:
+                continue
+            cells.append(k)
+            out.append('| %s | %s | %s | %s | %s |' % (a, r['name'], fmt_n(k['requests']), fmt_n(k['failed']), fmt_pct(k['rate'])))
+        if len(cells) > 1:
+            out.append('| %s | **%d회 평균** | %s | %s | %s |' % (a, len(cells), fmt_n(round(reduce([c['requests'] for c in cells], 'avg'), 1)),
+                       fmt_n(round(reduce([c['failed'] for c in cells], 'avg'), 1)), fmt_pct(reduce([c['rate'] for c in cells], 'avg'))))
+    if not apis:
+        out.append('| 요약 없음 | - | - | - | - |')
     names = []
     for r in runs:
         for n in r['detail']:
@@ -959,7 +999,7 @@ def render(doc, version_dir):
     open(doc, 'w', encoding='utf-8').write('\n'.join(lines))
 
 if sys.argv[1] == 'collect':
-    collect(*sys.argv[2:7])
+    collect(*sys.argv[2:8])
 else:
     render(sys.argv[2], sys.argv[3])
 PY
@@ -970,18 +1010,20 @@ PY
 # 로컬은 결과 문서 대신 build/loadtest-results/ 의 사본에 적고 커밋하지 않는다. 부하 시험 환경은 결과 문서와 회차 폴더를 커밋한다.
 #
 record_result() {
-  local name="$1" hs="$2" he="$3" metrics_file="$4" run_dir doc rc=0 core f dirs=()
+  local name="$1" hs="$2" he="$3" metrics_file="$4" run_out="${5:-}" run_dir doc rc=0 core k6 f dirs=()
   [ -n "${SNAPSHOT_OUT:-}" ] || { echo "result: SNAPSHOT_OUT 이 없어 $name 을 결과 문서에 적지 않는다. version 으로 돌면 적는다"; return 0; }
   run_dir="$SNAPSHOT_OUT/$name"
   # 묻기가 끝까지 성공한 뒤에만 모은다. 중간에 실패한 출력으로 모으면 빠진 건수가 0 으로 들어간다
-  core=$(mktemp)
+  core=$(mktemp); k6=$(mktemp)
+  # run 의 출력에 남은 k6 요약이다(#1329). 없으면(옛 run) k6 의 실패 표를 비운다
+  [ -z "$run_out" ] || sed -n 's/^k6-summary //p' "$run_out" | head -1 > "$k6"
   if ! printf '%s\n' "$CORE_METRICS" | prom_metrics "$hs" "$he" > "$core" \
-    || ! python3 -c "$RESULT_PY" collect "$run_dir" "$name" "$hs" "$he" "$metrics_file" < "$core"; then
-    rm -f "$core"
+    || ! python3 -c "$RESULT_PY" collect "$run_dir" "$name" "$hs" "$he" "$metrics_file" "$k6" < "$core"; then
+    rm -f "$core" "$k6"
     echo "WARN: $name 의 핵심 수치를 모으지 못했다. 결과 문서에 적지 않았다" >&2
     return 0
   fi
-  rm -f "$core"
+  rm -f "$core" "$k6"
   doc="$ROOT/$RESULT_DOC"
   if [ -n "${LOCAL:-}" ]; then
     doc="$(dirname "$SNAPSHOT_OUT")/$(basename "$RESULT_DOC")"
@@ -1046,7 +1088,7 @@ after_run() {
 k6 가 목표 부하 구간 끝 전에 멈췄다: window 끝 $we < hold 끝 $he"
   invalid="$invalid$(loadgen_busy "$hs" "$he")$(cache_exhausted "$metrics_out")"
   # 유효한 회차만 결과 문서에 적는다. 무효 회차와 캡처가 실패한 회차는 다시 잴 회차다
-  [ -n "$invalid" ] || [ "$snap_rc" -ne 0 ] || record_result "$name" "$hs" "$he" "$metrics_out"
+  [ -n "$invalid" ] || [ "$snap_rc" -ne 0 ] || record_result "$name" "$hs" "$he" "$metrics_out" "$out"
   rm -f "$metrics_out"
   # 캡처 실패는 무효 회차여도 알린다. 무효 회차도 원인을 보려면 그림이 있어야 한다
   [ "$snap_rc" -eq 0 ] || echo "SNAPSHOT-FAILED $name: 캡처가 $snap_rc 로 끝났다. 환경을 내리기 전에 같은 구간(--from $ws --to $he)으로 다시 찍는다"
