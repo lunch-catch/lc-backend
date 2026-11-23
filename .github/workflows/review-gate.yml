@@ -1,0 +1,84 @@
+# 리뷰 게이트. 변경 경로의 소유자를 보고 승인이 필요한지 판정한다 (#1321).
+#
+# 자기가 유일한 소유자인 경로만 고친 PR 은 승인 없이 통과시킨다. 남의 도메인이나 공용
+# 경로가 섞이면 그 경로 소유자의 승인을 요구한다. 소유자가 아닌 사람의 승인으로는 통과하지
+# 않는다. GitHub 의 필요 승인 수를 0 으로 내리고 이 체크가 그 자리를 맡는다.
+#
+# 판정은 결정론적이다. CODEOWNERS 파싱과 집합 연산뿐이고 LLM 이 끼지 않는다.
+# 그래서 병합을 막아도 근거가 있다(docs/code-convention/build-gate-guideline.md 머리글, BLD-2-06).
+# 재현율이 측정되지 않은 판정으로 막지 않는다는 BLD-2-03 의 원칙에 걸리지 않는 이유가 이것이다.
+#
+# 규약은 build-gate-guideline.md 의 BLD-2-06 에 있다.
+
+name: 리뷰 게이트
+
+on:
+  pull_request:
+    branches: [main, develop]
+    # synchronize 는 승인을 받은 뒤 남의 경로를 밀어 넣는 것을 다시 잡기 위한 것이고,
+    # ready_for_review 는 초안에서 올라온 PR 을 위한 것이다.
+    types: [opened, synchronize, reopened, ready_for_review]
+
+  # 승인이 들어와도 체크가 다시 돌지 않으면 영원히 실패로 남는다.
+  #
+  # 이 이벤트는 기본 브랜치의 워크플로만 돈다. 기본 브랜치가 develop 이라 develop 에
+  # 병합해야 살아난다. 이 PR 자신은 그래서 승인 판정을 받지 않는다.
+  pull_request_review:
+    types: [submitted, dismissed]
+
+  # merge queue 가 만든 임시 브랜치에서도 돌아야 한다. 이 트리거가 없으면 큐에 들어간 PR 이
+  # G-REVIEW 를 영원히 기다린다. 필수 검사로 등록하기 전에 이 줄이 기본 브랜치에 들어가 있어야 한다.
+  merge_group:
+
+# pr-gate.yml 과 같은 이유로 큐에서는 head_sha 로 가른다. merge_group 에는 pull_request 가
+# 없어 번호가 비고, 그대로 두면 큐 항목 전부가 한 그룹에 묶여 서로를 취소한다.
+concurrency:
+  group: review-gate-${{ github.event.pull_request.number || github.event.merge_group.head_sha }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  review:
+    name: G-REVIEW
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      # 판정 스크립트를 base 에서 가져온다. 기본 체크아웃은 PR 코드가 섞인 머지 커밋이라
+      # PR 이 스크립트를 고쳐 자기에게 유리하게 판정하게 만들 수 있다. CODEOWNERS 도 같은
+      # 이유로 스크립트가 API 로 base 에서 읽는다.
+      - name: 판정 스크립트를 base 에서 가져온다
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          sparse-checkout: .github/scripts
+          sparse-checkout-cone-mode: false
+
+      # 이벤트 값을 ${{ }} 로 셸에 끼워 넣지 않는다(slack-notify.yml 과 같은 규칙).
+      # head_ref 는 GitHub 이 만든 ref 라 위험이 낮지만 예외를 두지 않는다.
+      - name: PR 번호를 정한다
+        id: pr
+        env:
+          PR_FROM_EVENT: ${{ github.event.pull_request.number }}
+          QUEUE_HEAD_REF: ${{ github.event.merge_group.head_ref }}
+        run: |
+          set -euo pipefail
+          N="${PR_FROM_EVENT:-}"
+          if [ -z "$N" ]; then
+            # refs/heads/gh-readonly-queue/develop/pr-1234-<sha> 에서 번호를 뽑는다
+            N=$(printf '%s' "${QUEUE_HEAD_REF:-}" | sed -n 's|.*/pr-\([0-9][0-9]*\)-[0-9a-f]*$|\1|p')
+          fi
+          if [ -z "$N" ]; then
+            echo "::error::PR 번호를 정할 수 없다. 이벤트=${{ github.event_name }}"
+            exit 1
+          fi
+          echo "number=$N" >> "$GITHUB_OUTPUT"
+
+      - name: 소유자 승인이 필요한지 판정한다
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+        run: python3 .github/scripts/review-gate.py
