@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -32,8 +33,10 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -371,6 +374,51 @@ class TemplateReviseServiceTest {
 
         verify(redisTemplate).delete("templateGenerationInFlight:" + REQUEST_ID);
         verify(templateVersionRepository, never()).saveAndFlush(any());
+    }
+
+    @Test
+    @DisplayName("모델 호출이 실패한 뒤 같은 requestId 로 다시 보내면 POSTER-004 로 막히지 않고 모델을 다시 부른다(#1298)")
+    void 모델_호출이_실패한_뒤_같은_requestId_로_다시_시도하면_새로_시도된다() {
+        표식을_실제처럼_기억하도록_설정한다();
+        when(templateHtmlGenerator.revise(PREVIOUS_HTML, "버튼 색 바꿔줘"))
+                .thenThrow(new CampaignException(PosterErrorCode.GENERATION_THROTTLED))
+                .thenReturn(new GeneratedTemplate(PREVIOUS_HTML, ""));
+
+        assertThatThrownBy(() -> service.revise(TEMPLATE_ID, "버튼 색 바꿔줘", REQUEST_ID, ADMIN_ID))
+                .isInstanceOfSatisfying(CampaignException.class, e ->
+                        assertThat(e.getErrorCode()).isEqualTo(PosterErrorCode.GENERATION_THROTTLED));
+        TemplateCreateResponse retried = service.revise(TEMPLATE_ID, "버튼 색 바꿔줘", REQUEST_ID, ADMIN_ID);
+
+        assertThat(retried.templateId()).isEqualTo(TEMPLATE_ID);
+        verify(templateHtmlGenerator, times(2)).revise(PREVIOUS_HTML, "버튼 색 바꿔줘");
+    }
+
+    @Test
+    @DisplayName("모델 호출이 아직 끝나지 않은 같은 requestId 는 지금처럼 POSTER-004 로 막는다(#1298)")
+    void 모델_호출이_끝나기_전_같은_requestId_는_막는다() {
+        표식을_실제처럼_기억하도록_설정한다();
+        when(templateHtmlGenerator.revise(PREVIOUS_HTML, "버튼 색 바꿔줘")).thenAnswer(invocation -> {
+            // 모델을 부르는 동안 같은 requestId 가 다시 들어온 경우다.
+            assertThatThrownBy(() -> service.revise(TEMPLATE_ID, "버튼 색 바꿔줘", REQUEST_ID, ADMIN_ID))
+                    .isInstanceOfSatisfying(CampaignException.class, e ->
+                            assertThat(e.getErrorCode()).isEqualTo(PosterErrorCode.GENERATION_TIMEOUT));
+            return GeneratedTemplate.chatOnly("안내");
+        });
+
+        service.revise(TEMPLATE_ID, "버튼 색 바꿔줘", REQUEST_ID, ADMIN_ID);
+
+        verify(templateHtmlGenerator, times(1)).revise(PREVIOUS_HTML, "버튼 색 바꿔줘");
+    }
+
+    /*
+     * 처리 중 표식을 Redis 처럼 기억하게 한다. 세우면 true, 이미 있으면 false 를 돌려주고 지우면 사라진다.
+     * 실패 뒤 재시도가 표식 때문에 막히는지는 이 동작이 있어야 보인다.
+     */
+    private void 표식을_실제처럼_기억하도록_설정한다() {
+        Set<String> keys = new HashSet<>();
+        when(valueOperations.setIfAbsent(anyString(), anyString(), any(Duration.class)))
+                .thenAnswer(invocation -> keys.add(invocation.getArgument(0)));
+        when(redisTemplate.delete(anyString())).thenAnswer(invocation -> keys.remove(invocation.getArgument(0)));
     }
 
     @Test
