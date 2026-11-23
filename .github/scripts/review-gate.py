@@ -84,6 +84,11 @@ def parse_codeowners(text):
     return rules
 
 
+def is_contract(path):
+    """도메인 간 접점이다. 소유자 블록이 호출자까지 담고 있어 작성자를 빼지 않는다."""
+    return "/contract/" in "/" + path
+
+
 def owners_of(path, rules):
     """그 경로의 소유자. 맞는 줄이 없으면 None."""
     found = None
@@ -125,7 +130,15 @@ def main():
     if not files:
         die("변경된 파일이 없다. 판정할 것이 없으면 통과시키지 않는다")
 
-    # 경로마다 소유자를 모은다. 작성자 자신은 뺀다.
+    # 경로마다 소유자를 모은다.
+    #
+    # 공동 소유 경로는 작성자가 그 가운데 하나면 넘어간다. `auth` 와 `ops` 처럼 둘이 함께
+    # 갖는 경로를 그 담당이 고칠 때마다 상대의 승인을 기다리게 할 이유가 없다.
+    #
+    # `contract` 만 예외다. CODEOWNERS 가 그 블록을 따로 둔 이유를 적어 두었다.
+    # "contract 는 도메인 간 유일한 접점이다. 그 모양이 바뀌면 부르는 도메인이 깨진다.
+    #  소유자만 요청하면 깨질 사람이 모르는 채로 병합된다."
+    # 그래서 contract 는 작성자가 소유자여도 다른 소유자(부르는 쪽)의 승인을 받는다.
     others = set()
     unowned = []
     for f in files:
@@ -133,7 +146,10 @@ def main():
         if o is None:
             unowned.append(f)
             continue
-        others |= {x for x in o if x != author}
+        if is_contract(f):
+            others |= {x for x in o if x != author}
+        elif author not in o:
+            others |= set(o)
     if unowned:
         die("맞는 CODEOWNERS 규칙이 없는 경로가 있다:\n  " + "\n  ".join(unowned))
 
