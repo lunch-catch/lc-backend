@@ -50,6 +50,7 @@ application-local.properties
 *.jks
 *.keystore
 
+
 .gradle-user/
 .gradle-user-home
 
