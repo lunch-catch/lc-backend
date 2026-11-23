@@ -123,6 +123,14 @@ mysql -N -e \"select 'member', count(*) from member where member_id >= 30000001;
 select 'batch', status from batch_execution_log where business_date = '\$D' and job_name = 'DAILY_0000';\""
 }
 
+# 버전 폴더는 결과 문서 옆에 시험 이름을 붙여 둔다(부하 시험 문서 8장). 서빙 버전은 이름이 serving- 으로 시작해 그대로 쓴다
+version_dir() {
+  case "$1" in
+    serving-*) echo "$(dirname "$SERVING_RESULT_DOC")/$1" ;;
+    *) echo "$(dirname "$RESULT_DOC")/impression-$1" ;;
+  esac
+}
+
 #
 # version 의 회원 대역이다(#1306). 대역은 부하 시험 문서 5장이 갖는다. 진단 회차는 결과에 적지 않아 워밍업 대역을 다시 쓴다.
 # 서빙(피드만) 시험은 같은 표를 4만 뒤로, 서빙의 풀 끔은 한 번 더 4만 뒤로 옮겨 쓴다. 노출 시험은 풀을 켠 조건으로만 잰다.
