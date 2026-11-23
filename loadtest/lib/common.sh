@@ -537,7 +537,7 @@ record_warnings() {
 #   domain_rows_check                      행 수를 세고 맞는지 본다. 어긋나면 그 수를 출력하고 0 이 아닌 값으로 끝난다
 #   ROWS_WAIT                              마지막 측정 회차 뒤 행 수를 세기 전에 기다릴 초. 응답 뒤에 쓰는 일이 끝날 시간이다
 #   PREPARE_STEP                           1 이면 reset 뒤에 prepare 를 부른다
-#   version_dir <버전 이름> <시나리오>      결과 문서 옆의 버전 폴더(저장소 기준 경로)를 출력한다. 회차 폴더와 결과 문서의 그림이 그 아래에 남는다(#1128)
+#   version_dir <버전 이름> <시나리오>      결과 문서 옆의 버전 폴더(저장소 기준 경로)를 출력한다. 회차 폴더와 결과 문서의 그림이 그 아래에 남는다(#1326)
 #
 # 부하 시험 문서 2장: 앱 오토스케일링 그룹이 회차 도중에 늘면 회차마다 조건이 달라져 버전끼리 비교할 수 없어 대수를 고정한다
 APP_COUNT=3
@@ -589,7 +589,7 @@ run_version() {
   again=$(printf '%q ' "${again_args[@]}"); again="${again% }"
   [ -n "${LOCAL:-}" ] || [ -z "${AWS_PROFILE:-}" ] || again="AWS_PROFILE=$(printf '%q' "$AWS_PROFILE") $again"
   #
-  # 캡처와 결과(#1128)를 버전 폴더에 둔다. 회차 폴더는 그 아래 회차 이름이다. 로컬은 결과 문서 대신 build/loadtest-results/ 에 둔다.
+  # 캡처와 결과(#1326)를 버전 폴더에 둔다. 회차 폴더는 그 아래 회차 이름이다. 로컬은 결과 문서 대신 build/loadtest-results/ 에 둔다.
   # 따로 준 SNAPSHOT_OUT 이 있으면 그것을 쓴다
   #
   if [ -z "${SNAPSHOT_OUT:-}" ]; then
@@ -719,7 +719,7 @@ require_snapshot() {
 }
 
 #
-# 회차의 핵심 수치를 묻는다(#1128). API 마다 요청 수, 5xx 수, p50 / p95 / p99 다. 유지 구간만 센다.
+# 회차의 핵심 수치를 묻는다(#1326). API 마다 요청 수, 5xx 수, p50 / p95 / p99 다. 유지 구간만 센다.
 # 분위수는 uri 만 단 히스토그램(http_server_requests_histogram_seconds, #1092)으로 내 같은 uri 의 메서드를 합쳐 센다.
 # 요청 수와 5xx 는 메서드를 단 기존 지표로 센다.
 #
@@ -732,7 +732,7 @@ core_p99 histogram_quantile(0.99, sum by (uri, le) (increase(http_server_request
 '
 
 #
-# 결과 문서의 버전 절을 쓴다(#1128). 두 일을 한다.
+# 결과 문서의 버전 절을 쓴다(#1326). 두 일을 한다.
 #   collect <회차 폴더> <이름> <유지 시작 ms> <유지 끝 ms> <서버 지표 파일>  표준 입력의 핵심 수치와 서버 지표를 회차 폴더의 result.json 에 남긴다
 #   render <결과 문서> <버전 폴더>                                         버전 폴더의 회차들(result.json)을 모두 읽어 결과 문서의 그 버전 절을 다시 쓴다
 # 버전 절은 제목에 "회차별 결과" 가 든 절 안의 <!-- result:<버전 폴더 이름> --> 와 <!-- /result:<버전 폴더 이름> --> 사이다. 그 밖은 건드리지 않는다.
@@ -817,8 +817,11 @@ def collect(run_dir, name, hs, he, metrics_file):
         for n, rows in parse(open(metrics_file, encoding='utf-8')).items():
             detail[n] = detail_value(n, rows)
     os.makedirs(run_dir, exist_ok=True)
+    # 다 쓴 뒤에 바꿔 끼운다. 쓰다 멈추면 앞의 result.json 이 그대로 남는다
+    tmp = os.path.join(run_dir, 'result.json.tmp')
     json.dump({'name': name, 'hold': [int(hs), int(he)], 'core': {u: a for u, a in apis.items() if a['count'] > 0}, 'detail': detail},
-              open(os.path.join(run_dir, 'result.json'), 'w', encoding='utf-8'), ensure_ascii=False, indent=1)
+              open(tmp, 'w', encoding='utf-8'), ensure_ascii=False, indent=1)
+    os.replace(tmp, os.path.join(run_dir, 'result.json'))
 
 def fmt_s(v):
     if v is None:
@@ -871,7 +874,7 @@ def render(doc, version_dir):
     rel = os.path.relpath(version_dir, os.path.dirname(os.path.abspath(doc)))
     version = re.sub(r'-run\d+$', '', runs[0]['name']) if runs else tag
     out = ['<!-- result:%s -->' % tag, '### %s' % version, '']
-    out.append('`run` 이 회차마다 적는다(#1128). 핵심 수치는 앱이 잰 API 별 요청 시간으로 유지 구간만 센다. 오류율은 5xx 의 비율이다. 분위수는 같은 uri 의 메서드를 합쳐 센다.')
+    out.append('`run` 이 회차마다 적는다(#1326). 핵심 수치는 앱이 잰 API 별 요청 시간으로 유지 구간만 센다. 오류율은 5xx 의 비율이다. 분위수는 같은 uri 의 메서드를 합쳐 센다.')
     out.append('3회 묶음은 핵심 수치와 상세의 평균, 시간, 초당 값은 평균이고, 이름이 `_max`, `_inc`(건수)로 끝나거나 CPU 최대, 허용량 초과인 값은 가장 큰 값, 크레딧과 `_min` 은 가장 작은 값이다.')
     out += ['', '**핵심 수치**', '', '| API | 회차 | 초당 | p50 / p95 / p99 | 오류율 |', '|---|---|---|---|---|']
     uris = sorted({u for r in runs for u in r['core']})
@@ -962,17 +965,23 @@ else:
 PY
 
 #
-# 유효한 측정 회차의 핵심 수치와 서버 지표를 회차 폴더에 남기고 결과 문서의 버전 절을 다시 쓴다(#1128). after_run 이 부른다.
+# 유효한 측정 회차의 핵심 수치와 서버 지표를 회차 폴더에 남기고 결과 문서의 버전 절을 다시 쓴다(#1326). after_run 이 부른다.
 # 회차 폴더는 SNAPSHOT_OUT 아래의 회차 이름이다. SNAPSHOT_OUT 이 없으면(버전 하나를 돌지 않고 run 만 부른 경우) 적을 자리가 없어 건너뛴다.
 # 로컬은 결과 문서 대신 build/loadtest-results/ 의 사본에 적고 커밋하지 않는다. 부하 시험 환경은 결과 문서와 회차 폴더를 커밋한다.
 #
 record_result() {
-  local name="$1" hs="$2" he="$3" metrics_file="$4" run_dir doc rc=0
+  local name="$1" hs="$2" he="$3" metrics_file="$4" run_dir doc rc=0 core f dirs=()
   [ -n "${SNAPSHOT_OUT:-}" ] || { echo "result: SNAPSHOT_OUT 이 없어 $name 을 결과 문서에 적지 않는다. version 으로 돌면 적는다"; return 0; }
   run_dir="$SNAPSHOT_OUT/$name"
-  printf '%s\n' "$CORE_METRICS" | prom_metrics "$hs" "$he" \
-    | python3 -c "$RESULT_PY" collect "$run_dir" "$name" "$hs" "$he" "$metrics_file" \
-    || { echo "WARN: $name 의 핵심 수치를 모으지 못했다. 결과 문서에 적지 않았다" >&2; return 0; }
+  # 묻기가 끝까지 성공한 뒤에만 모은다. 중간에 실패한 출력으로 모으면 빠진 건수가 0 으로 들어간다
+  core=$(mktemp)
+  if ! printf '%s\n' "$CORE_METRICS" | prom_metrics "$hs" "$he" > "$core" \
+    || ! python3 -c "$RESULT_PY" collect "$run_dir" "$name" "$hs" "$he" "$metrics_file" < "$core"; then
+    rm -f "$core"
+    echo "WARN: $name 의 핵심 수치를 모으지 못했다. 결과 문서에 적지 않았다" >&2
+    return 0
+  fi
+  rm -f "$core"
   doc="$ROOT/$RESULT_DOC"
   if [ -n "${LOCAL:-}" ]; then
     doc="$(dirname "$SNAPSHOT_OUT")/$(basename "$RESULT_DOC")"
@@ -989,9 +998,19 @@ record_result() {
     echo "WARN: 스테이징된 다른 파일이 있어 커밋하지 않았다. $RESULT_DOC 와 $run_dir 에는 적어 두었다" >&2
     return 0
   fi
-  git -C "$ROOT" add -- "$RESULT_DOC" "$run_dir"
-  git -C "$ROOT" commit -q -m "test: $name 의 핵심 수치와 캡처를 결과에 적는다 (#1128)" -- "$RESULT_DOC" "$run_dir"
-  echo "committed $(git -C "$ROOT" rev-parse --short HEAD) $RESULT_DOC $run_dir"
+  # 버전 절은 그 버전의 회차를 모두 그린다. 앞 회차의 커밋을 건너뛰었으면 그 회차 폴더도 함께 담아 문서의 링크가 깨지지 않게 한다
+  for f in "$SNAPSHOT_OUT"/*/result.json; do
+    [ -f "$f" ] && dirs+=("$(dirname "$f")")
+  done
+  if ! git -C "$ROOT" add -- "$RESULT_DOC" "${dirs[@]}"; then
+    echo "WARN: 결과를 스테이징하지 못했다. git -C $ROOT restore --staged -- $RESULT_DOC $SNAPSHOT_OUT 로 풀고 손으로 커밋한다" >&2
+    return 0
+  fi
+  if ! git -C "$ROOT" commit -q -m "test: $name 의 핵심 수치와 캡처를 결과에 적는다 (#1326)" -- "$RESULT_DOC" "${dirs[@]}"; then
+    echo "WARN: 결과를 커밋하지 못했다. git -C $ROOT restore --staged -- $RESULT_DOC $SNAPSHOT_OUT 로 풀고 손으로 커밋한다" >&2
+    return 0
+  fi
+  echo "committed $(git -C "$ROOT" rev-parse --short HEAD) $RESULT_DOC ${dirs[*]}"
 }
 
 # 유지 구간의 부하 생성기 1분 평균 CPU 가 이 값을 넘으면 무효다(광고 서빙 부하 시험 문서 2장과 7장)
