@@ -332,6 +332,34 @@ class OpaqueRefreshTokenLifecycleTest {
                 TokenHasher.sha256("old"), TokenHasher.sha256("new"), Role.MEMBER, 1L);
     }
 
+    // 응답은 처음 실패가 가른다. 뒤따른 확인의 시간 초과가 SQL 버그를 503 으로 덮지 않는다(#1320 리뷰)
+    @Test
+    void DB_회전의_SQL_오류_뒤_확인까지_실패해도_원래_예외를_던지고_확인_실패를_덧붙인다() {
+        stubSuccessfulRedisRotation();
+        BadSqlGrammarException bug = new BadSqlGrammarException("rotate", "UPDATE", new SQLException("syntax"));
+        QueryTimeoutException confirmation = new QueryTimeoutException("confirm timeout");
+        when(backupStore.rotateIfMatches(any(), any(), any(), any(), any())).thenThrow(bug);
+        when(backupStore.findCurrentHash(1L)).thenThrow(confirmation);
+        OpaqueRefreshTokenLifecycle lifecycle = lifecycle();
+
+        assertThatThrownBy(() -> reissue(lifecycle)).isSameAs(bug);
+        assertThat(bug.getSuppressed()).containsExactly(confirmation);
+        verify(refreshTokenRepository).revokeIfActiveHashMatches(TokenHasher.sha256("new"), Role.MEMBER, 1L);
+    }
+
+    @Test
+    void DB_회전의_커넥션_실패_뒤_확인까지_실패하면_저장소_장애다() {
+        stubSuccessfulRedisRotation();
+        when(backupStore.rotateIfMatches(any(), any(), any(), any(), any()))
+                .thenThrow(new CannotCreateTransactionException("pool exhausted"));
+        when(backupStore.findCurrentHash(1L)).thenThrow(new CannotCreateTransactionException("pool exhausted"));
+        OpaqueRefreshTokenLifecycle lifecycle = lifecycle();
+
+        assertThatThrownBy(() -> reissue(lifecycle))
+                .isInstanceOf(com.lunchcatch.auth.exception.AuthException.class)
+                .hasMessageContaining("일시적으로 처리할 수 없습니다");
+    }
+
     @Test
     void 폴백_조회가_커넥션을_얻지_못하면_저장소_장애_오류로_변환한다() {
         stubRedisDown();

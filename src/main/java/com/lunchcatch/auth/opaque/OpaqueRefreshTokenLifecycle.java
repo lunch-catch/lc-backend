@@ -87,23 +87,24 @@ public class OpaqueRefreshTokenLifecycle {
                     oldHash, newHash, outcome.data().role(), outcome.data().id());
             throw new AuthException(AuthErrorCode.REFRESH_TOKEN_INVALID);
         }
+        boolean rotated;
         try {
-            if (!store(role).rotateIfMatches(
-                    outcome.data().id(), oldHash, newHash, now.plus(refreshTokenTtl), now)) {
-                if (!confirmOrRollbackDatabaseRotation(
-                        outcome.data().id(), role, oldHash, newHash)) {
-                    throw unavailable();
-                }
-            }
+            rotated = store(role).rotateIfMatches(
+                    outcome.data().id(), oldHash, newHash, now.plus(refreshTokenTtl), now);
         } catch (DataAccessException | TransactionException dbFailure) {
             /*
              * 별도 트랜잭션이 커넥션을 얻지 못하면 TransactionException 으로 온다. 그 경우도 보상한다(#1320).
-             * 보상은 실패의 종류와 상관없이 하고, 던지는 응답만 StoreFailures 가 가른다.
+             * 보상은 실패의 종류와 상관없이 하고, 던지는 응답만 StoreFailures 가 회전의 실패로 가른다.
+             * 확인은 이 catch 밖에서 한 번만 한다. 확인이 던진 예외가 이 catch 에 다시 걸려 두 번 확인하지 않게 한다.
              */
             if (!confirmOrRollbackDatabaseRotation(
-                    outcome.data().id(), role, oldHash, newHash)) {
+                    outcome.data().id(), role, oldHash, newHash, dbFailure)) {
                 throw StoreFailures.toResponse(dbFailure);
             }
+            rotated = true;
+        }
+        if (!rotated && !confirmOrRollbackDatabaseRotation(outcome.data().id(), role, oldHash, newHash, null)) {
+            throw unavailable();
         }
         /*
          * 회원 DB 백업이 확정되기 전의 중복 요청은 처리 중으로 거부한다.
@@ -212,14 +213,22 @@ public class OpaqueRefreshTokenLifecycle {
         }
     }
 
+    /*
+     * rotationFailure 는 회전이 예외로 끝났을 때의 그 예외이고, 회전이 false 를 돌려줬으면 null 이다.
+     * 확인까지 실패하면 응답은 처음 실패가 가른다. 확인의 시간 초과가 SQL 버그를 503 으로 덮지 않게 확인 실패는 덧붙이기만 한다.
+     */
     private boolean confirmOrRollbackDatabaseRotation(
-            Long subjectId, Role role, String oldHash, String newHash) {
+            Long subjectId, Role role, String oldHash, String newHash, RuntimeException rotationFailure) {
         String currentHash;
         try {
             currentHash = store(role).findCurrentHash(subjectId).orElse(null);
         } catch (DataAccessException | TransactionException confirmationFailure) {
             compensate(newHash, role, subjectId);
-            throw StoreFailures.toResponse(confirmationFailure);
+            if (rotationFailure == null) {
+                throw StoreFailures.toResponse(confirmationFailure);
+            }
+            rotationFailure.addSuppressed(confirmationFailure);
+            throw StoreFailures.toResponse(rotationFailure);
         }
         if (newHash.equals(currentHash)) {
             return true;
