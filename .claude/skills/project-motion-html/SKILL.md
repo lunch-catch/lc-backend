@@ -5,4 +5,4 @@ description: 설명하고 싶은 설계, 동작, 흐름, 수치를 받아 코드
 
 `.agents/skills/project-motion-html/SKILL.md` 를 읽고 그 순서대로 진행한다. 이 파일은 원본을 가리키는 입구라 규칙을 여기에 쓰지 않는다.
 
-결과물은 저장소 루트의 `project-motion/` 에 둔다.
+결과물은 저장소 루트의 `project-motion/{이름}/` 에 둔다. 주제마다 디렉터리 하나다.
