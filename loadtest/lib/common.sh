@@ -1055,6 +1055,27 @@ record_result() {
   echo "committed $(git -C "$ROOT" rev-parse --short HEAD) $RESULT_DOC ${dirs[*]}"
 }
 
+#
+# 진단 회차의 폴더(대시보드, Call Tree, 트레이스, Redis 지표, 프로파일 파일)를 커밋한다(#1335). after_run 이 캡처가 성공한 뒤 부른다.
+# 결과 문서에는 적지 않는 회차라 record_result 의 커밋을 거치지 않는다. 커밋하지 않으면 작업 트리를 지울 때 프로파일 파일도 사라진다.
+# 측정 회차와 같은 규칙이다. 로컬과 SNAPSHOT_OUT 이 없는 회차는 하지 않고, 다른 파일이 스테이징돼 있으면 커밋하지 않는다.
+#
+commit_diag() {
+  local name="$1" run_dir
+  [ -z "${LOCAL:-}" ] && [ -n "${SNAPSHOT_OUT:-}" ] || return 0
+  run_dir="$SNAPSHOT_OUT/$name"
+  [ -d "$run_dir" ] || return 0
+  if ! git -C "$ROOT" diff --cached --quiet; then
+    echo "WARN: 스테이징된 다른 파일이 있어 커밋하지 않았다. $run_dir 에는 남아 있다" >&2
+    return 0
+  fi
+  if ! git -C "$ROOT" add -- "$run_dir" || ! git -C "$ROOT" commit -q -m "test: $name 의 진단 캡처와 프로파일을 남긴다 (#1335)" -- "$run_dir"; then
+    echo "WARN: 진단 회차를 커밋하지 못했다. git -C $ROOT restore --staged -- $run_dir 로 풀고 손으로 커밋한다" >&2
+    return 0
+  fi
+  echo "committed $(git -C "$ROOT" rev-parse --short HEAD) $run_dir"
+}
+
 # 유지 구간의 부하 생성기 1분 평균 CPU 가 이 값을 넘으면 무효다(광고 서빙 부하 시험 문서 2장과 7장)
 LOADGEN_CPU_MAX_PCT=80
 after_run() {
@@ -1070,15 +1091,17 @@ after_run() {
   [ -z "${LOCAL:-}" ] || target=--local
   #
   # 진단 회차(-profile)는 Call Tree 까지 찍고 무효를 판정하지 않는다. 표본을 뜨는 비용이 들어 결과에 쓰지 않는 회차다(#1306).
-  # 진단 회차의 캡처는 API 와 백그라운드 작업 대시보드만 찍어 --domain 을 주지 않는다.
+  # 진단 회차도 측정 회차와 같은 대시보드를 찍어 --domain 을 준다(#1335). 원인을 볼 때 같은 회차의 서버 자원, RDB, 캐시를 견준다.
+  # 그 화면에는 표본을 뜨는 비용이 섞여 측정 회차와 견주지 않는다.
   #
   case "$name" in
     *-profile)
       "$LC_INFRA_DIR/scripts/loadtest-snapshot.sh" "$target" --diag "$name" --from "$ws" --to "$he" \
-        ${SNAPSHOT_OUT:+--out "$SNAPSHOT_OUT"} || snap_rc=$?
+        ${DOMAIN_SNAPSHOT:+--domain "$DOMAIN_SNAPSHOT"} ${SNAPSHOT_OUT:+--out "$SNAPSHOT_OUT"} || snap_rc=$?
       rm -f "$metrics_out"
       [ "$snap_rc" -eq 0 ] || { echo "SNAPSHOT-FAILED $name: 캡처가 $snap_rc 로 끝났다. 환경을 내리기 전에 같은 구간(--from $ws --to $he)으로 다시 찍는다"; return 4; }
       echo "captured $name"
+      commit_diag "$name"
       return 0 ;;
   esac
   "$LC_INFRA_DIR/scripts/loadtest-snapshot.sh" "$target" --label "$name" --from "$ws" --to "$he" \
