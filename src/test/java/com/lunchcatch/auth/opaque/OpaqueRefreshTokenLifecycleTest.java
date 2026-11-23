@@ -12,6 +12,7 @@ import static org.mockito.Mockito.when;
 
 import com.lunchcatch.auth.Role;
 import com.lunchcatch.auth.jwt.AccessTokenValidAfterRepository;
+import java.sql.SQLException;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -21,6 +22,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.QueryTimeoutException;
+import org.springframework.jdbc.BadSqlGrammarException;
+import org.springframework.transaction.CannotCreateTransactionException;
 
 @ExtendWith(MockitoExtension.class)
 class OpaqueRefreshTokenLifecycleTest {
@@ -295,6 +298,79 @@ class OpaqueRefreshTokenLifecycleTest {
 
         verify(refreshTokenRepository, never()).rollbackRotation(any(), any(), any(), any());
         verify(accessTokenValidAfterRepository, never()).invalidateBefore(any(), any(), any(), any());
+    }
+
+    // 안쪽 별도 트랜잭션이 커넥션을 얻지 못하면 TransactionException 이 온다. DataAccessException 이 아니어도 보상하고 503 이다(#1320)
+    @Test
+    void DB_회전이_커넥션을_얻지_못해도_옛_해시가_확인되면_Redis_회전을_롤백하고_저장소_장애다() {
+        stubSuccessfulRedisRotation();
+        when(backupStore.rotateIfMatches(any(), any(), any(), any(), any()))
+                .thenThrow(new CannotCreateTransactionException("pool exhausted"));
+        when(backupStore.findCurrentHash(1L)).thenReturn(Optional.of(TokenHasher.sha256("old")));
+        when(refreshTokenRepository.rollbackRotation(any(), any(), any(), any())).thenReturn(true);
+        OpaqueRefreshTokenLifecycle lifecycle = lifecycle();
+
+        assertThatThrownBy(() -> reissue(lifecycle))
+                .isInstanceOf(com.lunchcatch.auth.exception.AuthException.class)
+                .hasMessageContaining("일시적으로 처리할 수 없습니다");
+        verify(refreshTokenRepository).rollbackRotation(
+                TokenHasher.sha256("old"), TokenHasher.sha256("new"), Role.MEMBER, 1L);
+    }
+
+    // 코드 버그는 기다려도 낫지 않아 503 으로 감추지 않는다. 보상은 그대로 한다(#1320)
+    @Test
+    void DB_회전이_SQL_오류로_실패하면_Redis_회전을_롤백하고_원래_예외를_던진다() {
+        stubSuccessfulRedisRotation();
+        BadSqlGrammarException bug = new BadSqlGrammarException("rotate", "UPDATE", new SQLException("syntax"));
+        when(backupStore.rotateIfMatches(any(), any(), any(), any(), any())).thenThrow(bug);
+        when(backupStore.findCurrentHash(1L)).thenReturn(Optional.of(TokenHasher.sha256("old")));
+        when(refreshTokenRepository.rollbackRotation(any(), any(), any(), any())).thenReturn(true);
+        OpaqueRefreshTokenLifecycle lifecycle = lifecycle();
+
+        assertThatThrownBy(() -> reissue(lifecycle)).isSameAs(bug);
+        verify(refreshTokenRepository).rollbackRotation(
+                TokenHasher.sha256("old"), TokenHasher.sha256("new"), Role.MEMBER, 1L);
+    }
+
+    @Test
+    void 폴백_조회가_커넥션을_얻지_못하면_저장소_장애_오류로_변환한다() {
+        stubRedisDown();
+        when(backupStore.findValidByHash(any(), any())).thenThrow(new CannotCreateTransactionException("db down"));
+        OpaqueRefreshTokenLifecycle lifecycle = lifecycle();
+
+        assertThatThrownBy(() -> fallbackReissue(lifecycle, LocalDateTime.now()))
+                .isInstanceOf(com.lunchcatch.auth.exception.AuthException.class)
+                .hasMessageContaining("일시적으로 처리할 수 없습니다");
+    }
+
+    @Test
+    void 폴백_조회가_SQL_오류면_원래_예외를_던진다() {
+        stubRedisDown();
+        BadSqlGrammarException bug = new BadSqlGrammarException("find", "SELECT", new SQLException("syntax"));
+        when(backupStore.findValidByHash(any(), any())).thenThrow(bug);
+        OpaqueRefreshTokenLifecycle lifecycle = lifecycle();
+
+        assertThatThrownBy(() -> fallbackReissue(lifecycle, LocalDateTime.now())).isSameAs(bug);
+    }
+
+    @Test
+    void 폐기가_커넥션을_얻지_못하면_저장소_장애다() {
+        when(backupStore.findCurrentHash(1L)).thenThrow(new CannotCreateTransactionException("pool exhausted"));
+        OpaqueRefreshTokenLifecycle lifecycle = lifecycle();
+
+        assertThatThrownBy(() -> lifecycle.revoke(Role.MEMBER, 1L, LocalDateTime.now(), Duration.ofMinutes(5)))
+                .isInstanceOf(com.lunchcatch.auth.exception.AuthException.class)
+                .hasMessageContaining("일시적으로 처리할 수 없습니다");
+    }
+
+    @Test
+    void 발급의_DB_저장이_SQL_오류면_원래_예외를_던진다() {
+        BadSqlGrammarException bug = new BadSqlGrammarException("save", "UPDATE", new SQLException("syntax"));
+        when(backupStore.save(any(), any(), any(), any())).thenThrow(bug);
+        OpaqueRefreshTokenLifecycle lifecycle = lifecycle();
+
+        assertThatThrownBy(() -> lifecycle.issue(1L, Role.MEMBER, "token", Duration.ofDays(14), LocalDateTime.now()))
+                .isSameAs(bug);
     }
 
     private OpaqueRefreshTokenLifecycle.ReissueResult fallbackReissue(

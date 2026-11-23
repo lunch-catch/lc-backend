@@ -1,16 +1,20 @@
 package com.lunchcatch.member.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.lunchcatch.auth.Role;
+import com.lunchcatch.auth.exception.AuthErrorCode;
+import com.lunchcatch.auth.exception.AuthException;
 import com.lunchcatch.auth.jwt.JwtTokenProvider;
 import com.lunchcatch.auth.opaque.OpaqueRefreshTokenLifecycle;
 import com.lunchcatch.member.client.KakaoLogoutClient;
 import com.lunchcatch.member.entity.Member;
 import com.lunchcatch.member.repository.MemberRepository;
+import java.sql.SQLException;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneId;
@@ -19,8 +23,12 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.jdbc.BadSqlGrammarException;
+import org.springframework.transaction.CannotCreateTransactionException;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 @ExtendWith(MockitoExtension.class)
 class MemberTokenServiceTest {
@@ -29,9 +37,11 @@ class MemberTokenServiceTest {
     @Mock MemberRepository memberRepository;
     @Mock KakaoLogoutClient kakaoLogoutClient;
     @Mock Member member;
+    @Mock PlatformTransactionManager transactionManager;
 
     private MemberTokenService service() {
         return new MemberTokenService(jwtTokenProvider, refreshTokenLifecycle, memberRepository, kakaoLogoutClient,
+                new TransactionTemplate(transactionManager),
                 Clock.fixed(Instant.parse("2026-10-06T04:00:00Z"), ZoneId.of("Asia/Seoul")));
     }
 
@@ -62,6 +72,24 @@ class MemberTokenServiceTest {
         when(jwtTokenProvider.getAccessTokenValidityMs()).thenReturn(30_000L);
         service().logout(1L);
         verify(refreshTokenLifecycle).revoke(any(), any(), any(), any());
+    }
+
+    // 커넥션을 얻지 못하는 실패는 트랜잭션을 여는 순간에 난다. 그 자리도 명세대로 503 AUTH-002 다(#1320)
+    @Test
+    void 로그아웃이_트랜잭션을_열지_못하면_AUTH002다() {
+        when(transactionManager.getTransaction(any())).thenThrow(new CannotCreateTransactionException("pool exhausted"));
+
+        assertThatThrownBy(() -> service().logout(1L))
+                .isInstanceOfSatisfying(AuthException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(AuthErrorCode.REFRESH_TOKEN_STORE_UNAVAILABLE));
+    }
+
+    @Test
+    void 로그아웃의_SQL_오류는_AUTH002로_바꾸지_않는다() {
+        BadSqlGrammarException bug = new BadSqlGrammarException("find", "SELECT", new SQLException("syntax"));
+        when(memberRepository.findById(1L)).thenThrow(bug);
+
+        assertThatThrownBy(() -> service().logout(1L)).isSameAs(bug);
     }
 
     @Test

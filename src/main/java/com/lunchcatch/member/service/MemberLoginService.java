@@ -1,5 +1,6 @@
 package com.lunchcatch.member.service;
 
+import com.lunchcatch.auth.StoreFailures;
 import com.lunchcatch.global.exception.BusinessException;
 import com.lunchcatch.global.logging.FailureLogDetails;
 import com.lunchcatch.global.logging.TransactionLogging;
@@ -57,7 +58,8 @@ public class MemberLoginService {
             throw e;
         } catch (RuntimeException e) {
             log.error("event=MEMBER_LOGIN_FAILED memberId={} reason=SYSTEM_ERROR exceptionType={}", attempt.memberId, e.getClass().getSimpleName());
-            throw e;
+            // 회원을 찾는 트랜잭션에서 DB 를 쓸 수 없어도 명세대로 AUTH-002 다. 코드 버그는 그대로 던진다(#1320)
+            throw StoreFailures.toResponse(e);
         }
     }
 
