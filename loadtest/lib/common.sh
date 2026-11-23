@@ -841,7 +841,8 @@ for stack, n in out.items():
 PY
 
 #
-# 앱 서버 하나에서 돈다. 인자는 회차 이름, 초, 모드, Pyroscope 주소, 앱 컨테이너, TRIM_PY 파일, async-profiler 판이다.
+# 앱이나 배치 서버 하나에서 돈다. 인자는 회차 이름, 초, 모드, Pyroscope 주소, 앱 컨테이너, TRIM_PY 파일, async-profiler 판, 서비스 이름이다.
+# 서비스 이름은 앱이 lunchcatch, 배치가 lunchcatch-batch 다. 트레이스의 서비스 이름과 같아 두 서버의 프로파일이 섞이지 않는다(#1234).
 # 앱을 다시 띄우지 않고 async-profiler 를 컨테이너에 넣어 붙인다. 10초씩 떠서 다듬은 뒤 Pyroscope 로 보낸다.
 # 컨테이너 안에서는 -e cpu 가 막혀(perf_event_paranoid=2) CPU 는 itimer 로 뜬다. 간격은 async-profiler 의 기본값이다.
 # 고르는 일은 모두 TRIM_PY 가 한다. 요청, @Scheduled 작업, 워커의 스택을 함께 받아야 해서 프로파일러에서 거르지 않는다.
@@ -852,7 +853,7 @@ PY
 #
 IFS= read -r -d '' PROFILE_SH <<'SH' || true
 set -euo pipefail
-run="$1"; secs="$2"; mode="$3"; pyro="$4"; app="$5"; trim="$6"; ver="$7"
+run="$1"; secs="$2"; mode="$3"; pyro="$4"; app="$5"; trim="$6"; ver="$7"; svc="$8"
 ap=/tmp/async-profiler/bin
 work=$(mktemp -d)
 if ! docker exec "$app" test -x "$ap/asprof"; then
@@ -868,8 +869,8 @@ send() {
   # 회차가 끝난 뒤의 조각처럼 우리 코드의 스택이 없으면 보내지 않는다
   [ -s "$work/folded-$kind.txt" ] || return 0
   curl -fsS -X POST --data-binary @"$work/folded-$kind.txt" \
-    "$pyro/ingest?name=lunchcatch.$kind%7Brun%3D$run%7D&from=$from&until=$until&format=folded&sampleRate=$rate&spyName=javaspy&units=samples&aggregationType=sum"
-  echo "profile $kind $from $(wc -l < "$work/folded-$kind.txt") stacks"
+    "$pyro/ingest?name=$svc.$kind%7Brun%3D$run%7D&from=$from&until=$until&format=folded&sampleRate=$rate&spyName=javaspy&units=samples&aggregationType=sum"
+  echo "profile $svc $kind $from $(wc -l < "$work/folded-$kind.txt") stacks"
 }
 stop=$(( $(date +%s) + secs ))
 while [ "$(date +%s)" -lt "$stop" ]; do
@@ -897,38 +898,51 @@ done
 SH
 
 #
-# 앱 서버마다 프로파일링을 붙여 그 시간 동안 Pyroscope 로 보낸다. 모드는 cpu, wall, both 다.
-# 시험 환경은 앱 서버 모두에 SSM 으로 함께 보내고 모니터링 서버의 Pyroscope(lunch-catch/lc-infra#71)로 보낸다.
+# 앱과 배치 서버마다 프로파일링을 붙여 그 시간 동안 Pyroscope 로 보낸다. 모드는 cpu, wall, both 다.
+# 시험 환경은 서버 모두에 SSM 으로 함께 보내고 모니터링 서버의 Pyroscope(lunch-catch/lc-infra#71)로 보낸다.
+#
+# 배치 서버에도 붙인다(#1234). 노출 릴레이와 묶음 차감, 00:00 묶음, 재조회와 재예약 워커는 스케줄러가 켜진 배치 서버에서만 돈다.
+# 고르지 않고 늘 둘 다 붙인다. 프로파일링 회차는 결과에 쓰지 않아 배치에 붙는 비용이 측정에 섞이지 않는다.
 #
 profile() {
-  local name="${1:?회차 이름을 준다}" secs="${2:-60}" mode="${3:-wall}" pyro id trim pids="" pid rc=0
+  local name="${1:?회차 이름을 준다}" secs="${2:-60}" mode="${3:-wall}" pyro id role trim pids="" pid rc=0
   case "$mode" in cpu|wall|both) ;; *) die "모드는 cpu, wall, both 다" ;; esac
   if [ -n "${LOCAL:-}" ]; then
     trim=$(mktemp)
     printf '%s\n' "$TRIM_PY" > "$trim"
-    bash -c "$PROFILE_SH" profile "$name" "$secs" "$mode" "http://localhost:${PYROSCOPE_PORT:-14040}" \
-      "$LOCAL_PROJECT-app-1" "$trim" "$ASPROF_VERSION"
-    return
-  fi
-  pyro="http://$(aws ec2 describe-instances --filters "Name=tag:Project,Values=$PROJECT" "Name=tag:Role,Values=monitoring" \
-    "Name=instance-state-name,Values=running" --query 'Reservations[0].Instances[0].PrivateIpAddress' --output text):4040"
-  for id in $(instances app); do
-    # tail 이 프로파일러의 실패를 가리지 않게 pipefail 로 돈다
-    remote "$id" $(( secs + 300 )) "set -o pipefail
+    for role in app batch; do
+      bash -c "$PROFILE_SH" profile "$name" "$secs" "$mode" "http://localhost:${PYROSCOPE_PORT:-14040}" \
+        "$LOCAL_PROJECT-$role-1" "$trim" "$ASPROF_VERSION" "$(profile_service "$role")" &
+      pids="$pids $!"
+    done
+  else
+    pyro="http://$(aws ec2 describe-instances --filters "Name=tag:Project,Values=$PROJECT" "Name=tag:Role,Values=monitoring" \
+      "Name=instance-state-name,Values=running" --query 'Reservations[0].Instances[0].PrivateIpAddress' --output text):4040"
+    for role in app batch; do
+      for id in $(instances "$role"); do
+        # tail 이 프로파일러의 실패를 가리지 않게 pipefail 로 돈다. 배치 서버의 앱 컨테이너 이름도 $PROJECT 다
+        remote "$id" $(( secs + 300 )) "set -o pipefail
 cat > /tmp/lt-trim.py <<'PY'
 $TRIM_PY
 PY
 cat > /tmp/lt-profile.sh <<'SH'
 $PROFILE_SH
 SH
-bash /tmp/lt-profile.sh $name $secs $mode $pyro $PROJECT /tmp/lt-trim.py $ASPROF_VERSION | tail -3" &
-    pids="$pids $!"
-  done
-  # 앱 서버 하나라도 프로파일을 보내지 못했으면 실패로 끝난다
+bash /tmp/lt-profile.sh $name $secs $mode $pyro $PROJECT /tmp/lt-trim.py $ASPROF_VERSION $(profile_service "$role") | tail -3" &
+        pids="$pids $!"
+      done
+    done
+  fi
+  # 서버 하나라도 프로파일을 보내지 못했으면 실패로 끝난다
   for pid in $pids; do
     wait "$pid" || rc=1
   done
   return "$rc"
+}
+
+# Pyroscope 의 서비스 이름이다. 트레이스의 서비스 이름과 같게 둔다
+profile_service() {
+  case "$1" in app) echo lunchcatch ;; batch) echo lunchcatch-batch ;; esac
 }
 
 #
