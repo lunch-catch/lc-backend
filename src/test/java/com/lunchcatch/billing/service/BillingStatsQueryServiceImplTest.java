@@ -10,6 +10,7 @@ import com.lunchcatch.billing.contract.DeductionStatus;
 import com.lunchcatch.billing.contract.OwnerCampaignLedgerSum;
 import com.lunchcatch.billing.deduction.repository.DeductionCountRow;
 import com.lunchcatch.billing.deduction.repository.DeductionResultRepository;
+import com.lunchcatch.billing.deduction.repository.OwnerCampaignBilledRow;
 import com.lunchcatch.billing.entity.EntryType;
 import com.lunchcatch.billing.reconciliation.repository.SettlementMismatchRepository;
 import com.lunchcatch.billing.repository.LedgerSumRow;
@@ -43,8 +44,8 @@ class BillingStatsQueryServiceImplTest {
         when(ledgerRepository.sumReserveReleaseOn(DAY)).thenReturn(List.of(
                 new LedgerSumRow(1L, 10L, EntryType.RESERVE, 0L, -5000L),
                 new LedgerSumRow(1L, 10L, EntryType.RELEASE, 2000L, 0L)));
-        when(ledgerRepository.sumDeductOn(DAY)).thenReturn(List.of(
-                new LedgerSumRow(1L, 10L, EntryType.DEDUCT, 0L, -3000L)));
+        when(deductionRepository.sumBilledOn(DAY)).thenReturn(List.of(
+                new OwnerCampaignBilledRow(1L, 10L, 3000L)));
         when(ledgerRepository.sumChargeRefundBetween(FROM, TO)).thenReturn(List.of(
                 new LedgerSumRow(1L, null, EntryType.CHARGE, 10000L, 0L),
                 new LedgerSumRow(2L, null, EntryType.REFUND, 0L, -700L)));
@@ -57,6 +58,16 @@ class BillingStatsQueryServiceImplTest {
                 new OwnerCampaignLedgerSum(1L, 10L, 0, -5000, -3000, 2000, 0, 300, -50),
                 new OwnerCampaignLedgerSum(1L, null, 10000, 0, 0, 0, 0, 0, 0),
                 new OwnerCampaignLedgerSum(2L, null, 0, 0, 0, 0, -700, 0, 0));
+    }
+
+    // 판정만 있고 그날 원장 줄이 없는 캠페인이다. 예약은 전날 했고 오늘은 노출만 과금됐다
+    @Test
+    void 원장_줄이_없어도_BILLED_판정이_있으면_소진만_있는_합계를_낸다() {
+        when(deductionRepository.sumBilledOn(DAY)).thenReturn(List.of(
+                new OwnerCampaignBilledRow(3L, 30L, 1200L)));
+
+        assertThat(service.ledgerSums(DAY)).containsExactly(
+                new OwnerCampaignLedgerSum(3L, 30L, 0, 0, -1200, 0, 0, 0, 0));
     }
 
     @Test
@@ -97,8 +108,10 @@ class BillingStatsQueryServiceImplTest {
 
     @Test
     void 날짜_말_잔액과_그날_합계와_불일치_건수를_묶는다() {
-        when(ledgerRepository.sumUnspentBefore(TO)).thenReturn(42000L);
-        when(ledgerRepository.sumUnspentBetween(FROM, TO)).thenReturn(8000L);
+        when(ledgerRepository.sumUnspentLedgerBefore(TO)).thenReturn(45000L);
+        when(deductionRepository.sumBilledRecordedBefore(TO)).thenReturn(3000L);
+        when(ledgerRepository.sumUnspentLedgerBetween(FROM, TO)).thenReturn(9000L);
+        when(deductionRepository.sumBilledRecordedBetween(FROM, TO)).thenReturn(1000L);
         when(mismatchRepository.countByBusinessDate(DAY)).thenReturn(3L);
 
         assertThat(service.dailyTotals(DAY)).isEqualTo(new DailyLedgerTotals(42000, 8000, 3));
@@ -107,14 +120,16 @@ class BillingStatsQueryServiceImplTest {
     @Test
     void 미소진_변동은_첫날_00시부터_끝날_다음_날_00시_전까지_기록된_합이다() {
         LocalDate first = DAY.minusDays(2);
-        when(ledgerRepository.sumUnspentBetween(first.atStartOfDay(), TO)).thenReturn(-1500L);
+        when(ledgerRepository.sumUnspentLedgerBetween(first.atStartOfDay(), TO)).thenReturn(-500L);
+        when(deductionRepository.sumBilledRecordedBetween(first.atStartOfDay(), TO)).thenReturn(1000L);
 
         assertThat(service.unspentChange(first, DAY)).isEqualTo(-1500L);
     }
 
     @Test
     void 하루치_미소진_변동은_그날_00시부터_다음_날_00시_전까지다() {
-        when(ledgerRepository.sumUnspentBetween(FROM, TO)).thenReturn(8000L);
+        when(ledgerRepository.sumUnspentLedgerBetween(FROM, TO)).thenReturn(9000L);
+        when(deductionRepository.sumBilledRecordedBetween(FROM, TO)).thenReturn(1000L);
 
         assertThat(service.unspentChange(DAY, DAY)).isEqualTo(8000L);
     }

@@ -1,7 +1,7 @@
 package com.lunchcatch.billing.reservation.service;
 
+import com.lunchcatch.billing.deduction.repository.DeductionResultRepository;
 import com.lunchcatch.billing.dto.CampaignSpend;
-import com.lunchcatch.billing.repository.PointLedgerRepository;
 import com.lunchcatch.billing.reservation.entity.BudgetDailyPlan;
 import com.lunchcatch.billing.reservation.repository.BudgetDailyPlanRepository;
 import com.lunchcatch.campaign.contract.CampaignFundingUpdater;
@@ -39,7 +39,7 @@ public class FundingJudgementService {
     private final CampaignQueryService campaignQuery;
     private final CampaignFundingUpdater fundingUpdater;
     private final BudgetDailyPlanRepository planRepository;
-    private final PointLedgerRepository ledgerRepository;
+    private final DeductionResultRepository deductionRepository;
 
     // 판정을 통보하고 NO_POINTS 로 판정한 캠페인 수를 돌려준다
     public int judge(LocalDate businessDate) {
@@ -55,7 +55,7 @@ public class FundingJudgementService {
             plans.put(plan.getCampaignId(), plan);
         }
         Map<Long, Long> spends = new HashMap<>();
-        for (CampaignSpend spend : ledgerRepository.sumDeductForCampaignsOn(campaignIds, businessDate)) {
+        for (CampaignSpend spend : deductionRepository.sumBilledForCampaignsOn(campaignIds, businessDate)) {
             spends.put(spend.campaignId(), spend.spend());
         }
 

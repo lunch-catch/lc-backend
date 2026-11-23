@@ -14,10 +14,7 @@ public interface PointLedgerRepositoryCustom {
     // 영업일 범위의 RESERVE 를 영업일과 캠페인별로 묶는다. campaignId 가 null 이면 전체 캠페인이다
     List<ReserveSumRow> sumReservedByBusinessDate(Long ownerId, LocalDate from, LocalDate to, Long campaignId);
 
-    // 기록 시각이 [from, to) 인 DEDUCT 를 캠페인별로 묶는다. 하루 단위로 호출한다
-    List<DeductSumRow> sumDeductedByCampaign(Long ownerId, LocalDateTime from, LocalDateTime to, Long campaignId);
-
-    // 관리자 원장 목록의 한 페이지다
+    // 관리자 원장 목록의 한 페이지다. 전환 전에 남은 DEDUCT 는 내리지 않는다
     List<AdminLedgerRow> findAdminLedger(AdminLedgerCondition condition);
 
     // 기간 안에서 잔액을 바꾸는 줄(DEDUCT 제외)을 기록 시각, ID 오름차순으로 돌려준다
@@ -27,8 +24,4 @@ public interface PointLedgerRepositoryCustom {
     List<FlowRow> findFlowRows(Long ownerId, LocalDateTime fromInclusive, LocalDateTime toExclusive);
 
     // 영업일 범위의 RESERVE 와 RELEASE 를 영업일과 종류별로 묶는다
-    List<BusinessDateSumRow> sumReserveAndReleaseByBusinessDate(Long ownerId, LocalDate from, LocalDate to);
-
-    // 영업일 범위의 DEDUCT 를 판정 기록의 서빙 영업일로 묶는다. 원장 DEDUCT 의 영업일은 NULL 이라 판정 기록과 serve_id 로 잇는다
-    List<BusinessDateSumRow> sumDeductByServedBusinessDate(Long ownerId, LocalDate from, LocalDate to);
-}
+    List<BusinessDateSumRow> sumReserveAndReleaseByBusinessDate(Long ownerId, LocalDate from, LocalDate to);}

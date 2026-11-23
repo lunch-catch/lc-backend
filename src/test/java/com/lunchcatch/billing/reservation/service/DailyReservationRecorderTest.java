@@ -14,6 +14,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import com.lunchcatch.billing.deduction.repository.DeductionResultRepository;
 import com.lunchcatch.billing.dto.CampaignSpend;
 import com.lunchcatch.billing.entity.EntryType;
 import com.lunchcatch.billing.entity.PointLedger;
@@ -58,6 +59,8 @@ class DailyReservationRecorderTest {
     @Mock
     private PointLedgerRepository ledgerRepository;
     @Mock
+    private DeductionResultRepository deductionRepository;
+    @Mock
     private BudgetDailyPlanRepository planRepository;
     @Mock
     private CampaignQueryService campaignQuery;
@@ -68,8 +71,8 @@ class DailyReservationRecorderTest {
 
     @BeforeEach
     void setUp() {
-        recorder = new DailyReservationRecorder(accountRepository, ledgerRepository, planRepository, campaignQuery,
-                planStatus, CLOCK);
+        recorder = new DailyReservationRecorder(accountRepository, ledgerRepository, deductionRepository,
+                planRepository, campaignQuery, planStatus, CLOCK);
     }
 
     private static CampaignInfo campaign(long id, CampaignStatus status, PauseReason reason, Long dailyBudget) {
@@ -244,14 +247,15 @@ class DailyReservationRecorderTest {
                 BudgetDailyPlan.create(1L, OWNER, DAY, 5000L, UNIT, false, CHANGED_AT),
                 BudgetDailyPlan.create(2L, OWNER, DAY, 1000L, UNIT, false, CHANGED_AT)));
         when(ledgerRepository.findReleasedCampaignIds(Set.of(OWNER), DAY)).thenReturn(List.of(2L));
-        when(ledgerRepository.sumDeductForCampaignsOn(List.of(1L, 2L), DAY))
+        when(deductionRepository.sumBilledForCampaignsOn(List.of(1L, 2L), DAY))
                 .thenReturn(List.of(new CampaignSpend(1L, 3000L)));
 
         recorder.releaseForOwner(OWNER, DAY, List.of(1L, 2L));
 
-        InOrder order = inOrder(accountRepository, planRepository, ledgerRepository);
+        InOrder order = inOrder(accountRepository, planRepository, deductionRepository, ledgerRepository);
         order.verify(accountRepository).lockByOwnerId(OWNER);
         order.verify(planRepository).findAllForUpdate(DAY, List.of(1L, 2L));
+        order.verify(deductionRepository).sumBilledForCampaignsOn(List.of(1L, 2L), DAY);
         order.verify(ledgerRepository).insertReleaseIfAbsent(OWNER, 1L, DAY, 2000L, LocalDateTime.now(CLOCK));
         order.verify(planRepository).markReleased(DAY, List.of(1L, 2L), LocalDateTime.now(CLOCK));
         verify(ledgerRepository, never()).insertReleaseIfAbsent(OWNER, 2L, DAY, 1000L, LocalDateTime.now(CLOCK));

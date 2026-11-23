@@ -1,5 +1,7 @@
 package com.lunchcatch.billing.service;
 
+import com.lunchcatch.billing.deduction.repository.BusinessDateBilledRow;
+import com.lunchcatch.billing.deduction.repository.DeductionResultRepository;
 import com.lunchcatch.billing.dto.AdminPointSummaryItem;
 import com.lunchcatch.billing.dto.AdminPointSummaryResponse;
 import com.lunchcatch.billing.dto.DateRange;
@@ -29,10 +31,7 @@ import org.springframework.transaction.annotation.Transactional;
  * CHARGE, REFUND, ADJUST 는 몇십 건뿐이라 읽어서 서버가 구간에 넣는다. CHARGE 와 REFUND 는 기록 시각의 KST 날짜,
  * ADJUST 는 정정 대상 영업일(없으면 기록 시각의 KST 날짜)로 넣는다. 분석의 소진액과 같은 귀속이다.
  *
- * DEDUCT 는 노출당 한 줄이라 기간 합계를 위해 훑지 않는다. 영업일마다 RELEASE = RESERVE - DEDUCT 이므로
- * 지난 영업일의 소진은 -(RESERVE 합 + RELEASE 합) 으로 구한다. 오늘 영업일은 다음 날 00:00 해제 전이라서
- * 그날 RELEASE 가 아직 없으면 하루치 DEDUCT 를 직접 읽는다.
- * 00:00 해제가 실패한 영업일은 다음 00:00 해제가 들어오기 전까지 소진이 실제보다 크게 보인다.
+ * 소진은 판정의 BILLED 단가 합을 서빙 영업일로 묶어 읽는다. 판정이 소진의 정본이다(#1287).
  */
 @Service
 @RequiredArgsConstructor
@@ -40,6 +39,7 @@ import org.springframework.transaction.annotation.Transactional;
 public class AdminPointSummaryService {
 
     private final PointLedgerRepository pointLedgerRepository;
+    private final DeductionResultRepository deductionRepository;
 
     public AdminPointSummaryResponse summarize(Long ownerId, SummaryPeriod period,
                                                LocalDate from, LocalDate to, String sortDir) {
@@ -99,20 +99,20 @@ public class AdminPointSummaryService {
             (row.entryType() == EntryType.RESERVE ? reserve : release).put(row.businessDate(), row.amount());
         }
 
-        Map<LocalDate, Long> deduct = new HashMap<>();
-        for (BusinessDateSumRow row : pointLedgerRepository.sumDeductByServedBusinessDate(
+        Map<LocalDate, Long> billed = new HashMap<>();
+        for (BusinessDateBilledRow row : deductionRepository.sumBilledByBusinessDate(
                 ownerId, range.from(), range.to())) {
-            deduct.put(row.businessDate(), row.amount());
+            billed.put(row.businessDate(), row.amount());
         }
 
         Set<LocalDate> dates = new HashSet<>(reserve.keySet());
         dates.addAll(release.keySet());
-        dates.addAll(deduct.keySet());
+        dates.addAll(billed.keySet());
         for (LocalDate date : dates) {
             long reserved = -reserve.getOrDefault(date, 0L);
             long released = release.getOrDefault(date, 0L);
-            // 소진은 DEDUCT 를 서빙 영업일로 읽는다. 자정 뒤에 기록된 전날 노출도 전날에 들어간다
-            long spent = -deduct.getOrDefault(date, 0L);
+            // 소진은 BILLED 판정을 서빙 영업일로 읽는다. 자정 뒤에 기록된 전날 노출도 전날에 들어간다
+            long spent = billed.getOrDefault(date, 0L);
             byDate.get(date).addReservation(reserved, released, spent);
         }
     }

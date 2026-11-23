@@ -72,7 +72,7 @@ public class OwnerPointController {
     @GetMapping("/spend-summary")
     @Operation(
             summary = "캠페인·일별 소진 집계",
-            description = "원장에서 직접 계산하므로 기간은 최대 31일입니다. groupBy 는 DAY, CAMPAIGN, DAY_CAMPAIGN 입니다."
+            description = "판정과 원장에서 직접 계산하므로 기간은 최대 31일입니다. groupBy 는 DAY, CAMPAIGN, DAY_CAMPAIGN 입니다."
     )
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "조회 성공"),
