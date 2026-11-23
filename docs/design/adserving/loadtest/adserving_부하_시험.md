@@ -134,20 +134,17 @@ AWS_PROFILE=<프로필> ./scripts/member-env.sh down
 
 ### 측정 순서
 
-커밋이 같은 버전은 이어 잰다. `switch` 와 `reset` 은 커밋이 바뀔 때만 한다.
+#1088 재측정의 버전과 순서, 버전마다의 커밋과 인자는 측정 계획 [`loadtest/adserving/plans/1088-remeasure.plan`](../../../../loadtest/adserving/plans/1088-remeasure.plan) 이 갖는다(#1307). `run.sh plan <계획 파일>` 을 부를 때마다 다음 걸음 하나를 간다. 돌리는 법은 [`loadtest/README.md`](../../../../loadtest/README.md#측정-계획) 의 측정 계획 절이 갖는다.
 
-| 순서 | 버전 | 시나리오 | 앞 버전과 같은 커밋인가 |
-|---|---|---|---|
-| 1 | 노출 수집 v1 | 피드와 노출 | 처음 |
-| 2 | 노출 수집 v2 | 피드와 노출 | 아니다 |
-| 3 | 노출 수집 v3 | 피드와 노출 | 아니다 |
-| 4 | 노출 수집 v3b | 피드와 노출 | 아니다 |
-| 5 | 서빙 v1 | 피드만 | 그렇다(v3b) |
-| 6 | 노출 수집 v3c | 피드와 노출 | 아니다 |
-| 7 | 서빙 v2 | 피드만 | 그렇다(v3c) |
-| 8 | 노출 수집 v4 | 피드와 노출 | 아니다 |
-| 9 | 서빙 v3(풀 켬) | 피드만 | 그렇다(v4) |
-| 10 | 서빙 v3(풀 끔) | 피드만 | 그렇다. `switch <이미지> --no-pool` 로 다시 띄우고 `reset` 하지 않는다. 풀 끔 대역(5장)을 쓰고 회차 이름에 `-nopool` 을 붙여 풀 켬의 결과 행을 덮어쓰지 않는다 |
+```bash
+# 다음 버전의 측정. 측정 3회와 행 수 대조가 끝나면 멈춘다
+AWS_PROFILE=<프로필> loadtest/adserving/run.sh plan loadtest/adserving/plans/1088-remeasure.plan
+# 진단을 돌리거나 건너뛴다. 끝나면 멈춘다
+AWS_PROFILE=<프로필> loadtest/adserving/run.sh plan loadtest/adserving/plans/1088-remeasure.plan --diag
+AWS_PROFILE=<프로필> loadtest/adserving/run.sh plan loadtest/adserving/plans/1088-remeasure.plan --skip-diag
+```
+
+버전마다 `switch` 와 `reset` 을 한다. 같은 커밋의 서빙 시험도 노출 시험의 데이터가 쌓인 위에서 돌지 않게 `reset` 하고 따로 잰다(#1088, 작성자가 2026-11-09 대화에서 정했다). 서빙 v3 의 풀 끔도 같은 커밋을 풀을 끄고 다시 띄운 뒤 같은 순서로 돈다.
 
 커밋마다 진단 회차를 하나 돌린다(#1088). 측정 회차부터 붙인 트레이싱에 프로파일링을 `both` 로 더한 회차다. 결과에 적지 않는다. `version ... --from diag` 가 돈다.
 
@@ -161,7 +158,6 @@ AWS_PROFILE=<프로필> loadtest/adserving/run.sh version serving-v3-nopool --sh
 
 - 피드만 보낸 회차의 경고 로그는 `서빙_부하_시험_결과.md` 에 적힌다. `RESULT_DOC` 를 따로 주면 그 문서에 적는다.
 - 서빙 v1(`e8825ca8`)과 v2(`e229c45a`)는 피드만 보내는 시나리오가 생기기 전의 커밋이다. 시나리오는 떠 있는 앱의 커밋에서 받으므로 `LOADTEST_REF` 로 #1127 뒤의 ref 를 준다. 주지 않으면 `run` 이 시나리오가 없다며 멈춘다.
-- `version` 은 버전마다 `switch` 와 `reset` 을 한다. 위 표의 "앞 버전과 같은 커밋" 을 이어 재는 규칙은 측정 계획(#1307)이 맡는다.
 - 생성기는 그날 배치 기록을 지우므로 시험하는 날에 넣는다. 앱이 판단하는 영업일(Asia/Seoul)과 같아야 한다.
 - 행 수를 회차 직후에 세면 아직 쓰이지 않은 행이 빠진다. 노출 수집 v3 는 응답 뒤 최대 200ms 에 저장하고 v2 부터는 릴레이가 1초마다 정산에 넘긴다.
 - **회차가 끝나면 경고 로그 건수가 결과 문서에 적히고 커밋이 하나 생긴다.** `run` 이 그 회차 구간의 `ADSERVING_` 경고와 오류를 이벤트별로 세어 `노출_수집_부하_시험_결과.md` 의 `경고 로그` 절 표에 적는다. 푸시는 하지 않는다. 지금 브랜치에 커밋하므로 시험용 브랜치에서 돌린다. develop 에서 돌리면 develop 에 커밋이 생긴다.

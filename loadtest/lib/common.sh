@@ -544,7 +544,8 @@ pin_app_count() {
   [ -z "${LOCAL:-}" ] || return 0
   local asg="$PROJECT-app" n i
   aws autoscaling update-auto-scaling-group --auto-scaling-group-name "$asg" \
-    --min-size "$APP_COUNT" --desired-capacity "$APP_COUNT" --max-size "$APP_COUNT"
+    --min-size "$APP_COUNT" --desired-capacity "$APP_COUNT" --max-size "$APP_COUNT" \
+    || die "오토스케일링 그룹 $asg 의 대수를 $APP_COUNT 로 고정하지 못했다"
   for i in $(seq 1 60); do
     n=$(aws autoscaling describe-auto-scaling-groups --auto-scaling-group-names "$asg" \
       --query 'length(AutoScalingGroups[0].Instances[?LifecycleState==`InService` && HealthStatus==`Healthy`])' --output text)
@@ -628,6 +629,75 @@ run_version() {
       ;;
     *) die "--from 은 measure 나 diag 다" ;;
   esac
+}
+
+#
+# 측정 계획 하나를 받아 버전 여럿을 차례로 돈다(#1307). 버전마다 run_version 을 부르고, 어디까지 했는지 상태 파일에 남겨 멈춘 자리부터 잇는다.
+#
+# 계획 파일은 한 줄에 버전 하나다. # 으로 시작하는 줄과 빈 줄은 건너뛴다.
+#   <버전 이름> <커밋, 태그나 SHA> [ref=<LOADTEST_REF>] [version 의 선택지...]
+# 커밋이 TBD 인 줄에 닿으면 멈춘다. 측정 직전에 정할 커밋이다.
+# ref 는 그 버전의 시나리오와 시드 생성기를 받을 ref 다. 주지 않으면 떠 있는 앱의 커밋이다.
+#
+# 한 번 부르면 한 걸음만 간다. 승인을 받는 자리마다 멈추기 때문이다(#1088).
+#   다음 버전의 측정 -> 멈춤(진단을 돌릴지 정한다) -> --diag 나 --skip-diag -> 멈춤(다음 버전으로 갈지 정한다) -> 다시 부르면 다음 버전
+# 상태 파일은 build/loadtest-plans/<계획 파일 이름>.<local|lt>.state 다. 로컬과 부하 시험 환경을 따로 센다. 로컬로 먼저 돌린 기록이 부하 시험 환경의 버전을 건너뛰게 하지 않는다. 줄마다 버전, 단계, 시작과 끝의 UTC 시각이다. 버전마다 잰 시각을 결과 문서에 옮긴다(#1088).
+#
+run_plan() {
+  local self="$1" plan="$2" choice="${3:-}" state line name commit ref args step started rc lines=()
+  [ -f "$plan" ] || die "계획 파일이 없다: $plan"
+  case "$choice" in ""|--diag|--skip-diag) ;; *) die "plan 의 선택지는 --diag 나 --skip-diag 다" ;; esac
+  local target=lt
+  [ -z "${LOCAL:-}" ] || target=local
+  state="$ROOT/build/loadtest-plans/$(basename "$plan").$target.state"
+  mkdir -p "$(dirname "$state")"; touch "$state"
+  # 멈출 때 출력하는 다음 걸음 명령이다. run_version 의 것과 같게 인자마다 셸 인용을 붙이고 부하 시험 환경이면 AWS_PROFILE 을 앞에 붙인다
+  local next_cmd
+  next_cmd=$(printf '%q ' "$self" ${LOCAL:+--local} plan "$plan"); next_cmd="${next_cmd% }"
+  [ -n "${LOCAL:-}" ] || [ -z "${AWS_PROFILE:-}" ] || next_cmd="AWS_PROFILE=$(printf '%q' "$AWS_PROFILE") $next_cmd"
+  # 계획을 먼저 다 읽는다. 표준 입력으로 읽으며 돌면 안에서 부르는 명령(docker exec -i 등)이 남은 줄을 먹는다
+  while IFS= read -r line || [ -n "$line" ]; do lines+=("$line"); done < "$plan"
+  for line in ${lines[@]+"${lines[@]}"}; do
+    line="${line%%#*}"; [ -n "${line//[[:space:]]/}" ] || continue
+    read -r name commit args <<< "$line"
+    # 진단을 돌렸거나 건너뛴 버전은 끝났다
+    awk -v n="$name" '$1 == n && ($2 == "diag-done" || $2 == "diag-skipped") { found = 1 } END { exit !found }' "$state" && continue
+    [ "$commit" != TBD ] || die "$name 의 커밋을 정하지 않았다(TBD). 측정 직전에 정해 $plan 에 적는다"
+    ref=""; step=""
+    if [[ "$args" == ref=* ]] || [[ "$args" == *" ref="* ]]; then
+      ref=$(sed -E 's/.*(^| )ref=([^ ]+).*/\2/' <<< "$args"); args=$(sed -E 's/(^| )ref=[^ ]+//' <<< "$args")
+    fi
+    awk -v n="$name" '$1 == n && $2 == "measure-done" { found = 1 } END { exit !found }' "$state" && step=measured
+    started=$(date -u +%FT%TZ); rc=0
+    if [ -z "$step" ]; then
+      [ -z "$choice" ] || die "$name 은 아직 측정하지 않았다. --diag 나 --skip-diag 없이 부른다"
+      echo "plan $name 측정을 시작한다($commit${ref:+, LOADTEST_REF=$ref})"
+      # shellcheck disable=SC2086
+      LOADTEST_REF="${ref:-${LOADTEST_REF:-}}" run_version "$self" "$name" --sha "$commit" $args || rc=$?
+      [ "$rc" -eq 0 ] || { echo "plan $name 측정이 $rc 로 멈췄다. 고친 뒤 다시 부르면 이 버전의 측정부터 다시 한다"; return "$rc"; }
+      echo "$name measure-done $started $(date -u +%FT%TZ)" >> "$state"
+      echo "next 진단을 돌리려면: $next_cmd --diag"
+      echo "next 진단을 건너뛰려면: $next_cmd --skip-diag"
+      return 0
+    fi
+    case "$choice" in
+      --diag)
+        # shellcheck disable=SC2086
+        LOADTEST_REF="${ref:-${LOADTEST_REF:-}}" run_version "$self" "$name" --sha "$commit" $args --from diag || rc=$?
+        [ "$rc" -eq 0 ] || { echo "plan $name 진단이 $rc 로 멈췄다. 고친 뒤 --diag 로 다시 부른다"; return "$rc"; }
+        echo "$name diag-done $started $(date -u +%FT%TZ)" >> "$state" ;;
+      --skip-diag)
+        echo "$name diag-skipped $started $started" >> "$state"
+        echo "plan $name 의 진단을 건너뛰었다" ;;
+      *)
+        echo "STOP $name 은 측정이 끝났다. 진단을 돌릴지 정해 --diag 나 --skip-diag 로 부른다"
+        return 0 ;;
+    esac
+    echo "STOP $name 이 끝났다. 다음 버전으로 가려면 --diag, --skip-diag 없이 다시 부른다"
+    echo "next $next_cmd"
+    return 0
+  done
+  echo "plan 계획의 버전을 모두 돌았다. 잰 시각은 $state 에 있다"
 }
 
 # 회차를 돌기 전에 캡처 스크립트가 있는지 본다. 회차를 다 돈 뒤에 없다는 것을 알면 그 회차를 다시 돌아야 한다
