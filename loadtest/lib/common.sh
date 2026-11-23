@@ -1070,12 +1070,13 @@ after_run() {
   [ -z "${LOCAL:-}" ] || target=--local
   #
   # 진단 회차(-profile)는 Call Tree 까지 찍고 무효를 판정하지 않는다. 표본을 뜨는 비용이 들어 결과에 쓰지 않는 회차다(#1306).
-  # 진단 회차의 캡처는 API 와 백그라운드 작업 대시보드만 찍어 --domain 을 주지 않는다.
+  # 진단 회차도 측정 회차와 같은 대시보드를 찍어 --domain 을 준다(#1335). 원인을 볼 때 같은 회차의 서버 자원, RDB, 캐시를 견준다.
+  # 그 화면에는 표본을 뜨는 비용이 섞여 측정 회차와 견주지 않는다.
   #
   case "$name" in
     *-profile)
       "$LC_INFRA_DIR/scripts/loadtest-snapshot.sh" "$target" --diag "$name" --from "$ws" --to "$he" \
-        ${SNAPSHOT_OUT:+--out "$SNAPSHOT_OUT"} || snap_rc=$?
+        ${DOMAIN_SNAPSHOT:+--domain "$DOMAIN_SNAPSHOT"} ${SNAPSHOT_OUT:+--out "$SNAPSHOT_OUT"} || snap_rc=$?
       rm -f "$metrics_out"
       [ "$snap_rc" -eq 0 ] || { echo "SNAPSHOT-FAILED $name: 캡처가 $snap_rc 로 끝났다. 환경을 내리기 전에 같은 구간(--from $ws --to $he)으로 다시 찍는다"; return 4; }
       echo "captured $name"
