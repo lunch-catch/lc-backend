@@ -2,6 +2,7 @@ package com.lunchcatch.billing.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
 
 import com.lunchcatch.billing.deduction.repository.DeductionResultRepository;
@@ -21,6 +22,8 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.transaction.CannotCreateTransactionException;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 @ExtendWith(MockitoExtension.class)
 class OwnerPointBalanceServiceTest {
@@ -32,12 +35,14 @@ class OwnerPointBalanceServiceTest {
 
     @Mock PointLedgerRepository repository;
     @Mock DeductionResultRepository deductionRepository;
+    @Mock PlatformTransactionManager transactionManager;
 
     // 2026-10-01 12:00 KST
     private final Clock clock = Clock.fixed(Instant.parse("2026-10-01T03:00:00Z"), ClockConfig.ZONE);
 
     private OwnerPointBalanceService service() {
-        return new OwnerPointBalanceService(repository, deductionRepository, clock);
+        return new OwnerPointBalanceService(repository, deductionRepository,
+                new TransactionTemplate(transactionManager), clock);
     }
 
     private void reserved(long reservedNotReleased, long billed) {
@@ -88,7 +93,7 @@ class OwnerPointBalanceServiceTest {
 
     @Test
     void 커넥션을_얻지_못한_실패도_BILLING_006으로_옮긴다() {
-        when(repository.sumBalance(OWNER)).thenThrow(new CannotCreateTransactionException("no connection"));
+        when(transactionManager.getTransaction(any())).thenThrow(new CannotCreateTransactionException("no connection"));
 
         assertThatThrownBy(() -> service().getBalance(OWNER))
                 .isInstanceOfSatisfying(BillingException.class,

@@ -131,6 +131,27 @@ class SpendFromJudgementIntegrationTest extends AbstractBillingIntegrationTest {
                 .andExpect(jsonPath("$.data.items[1].impressionCount").value(3));
     }
 
+    /*
+     * 원장 DEDUCT 없이 판정만 있는 노출이다. 쓰기 제거(#1294) 뒤의 모양이다.
+     * 원장 DEDUCT 를 읽는 조회로 되돌리면 이 노출이 빠져 소진과 예약 중 포인트가 어긋난다.
+     */
+    @Test
+    void DEDUCT_없이_BILLED_판정만_있는_노출도_소진과_예약_중_포인트에_든다() throws Exception {
+        judgement(DAY, "BILLED", 500, DAY.atTime(14, 0).toString());
+
+        mvc.perform(get("/v1/owner/points/balance").with(user(new CustomUserDetails(OWNER, Role.OWNER))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.balance").value(88000))
+                .andExpect(jsonPath("$.data.reservedPoint").value(6500));
+        mvc.perform(get("/v1/owner/points/spend-summary")
+                        .with(user(new CustomUserDetails(OWNER, Role.OWNER)))
+                        .param("from", DAY.toString())
+                        .param("to", DAY.toString()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.items[0].spentPoint").value(3500))
+                .andExpect(jsonPath("$.data.items[0].impressionCount").value(4));
+    }
+
     @Test
     void 점주_소진_집계는_캠페인으로_거를_수_있다() throws Exception {
         mvc.perform(get("/v1/owner/points/spend-summary")
