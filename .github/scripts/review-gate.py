@@ -39,6 +39,11 @@ def lines(out):
 
 GLOB = set("*?[]!")
 
+# `**/이름/` 꼴이다. 깊이를 가리지 않고 그 이름의 디렉터리 아래를 모두 잡는다.
+# 도메인 하나가 코드, 마이그레이션, 테스트, 설계 문서, 부하 시험에 흩어져 있어
+# 경로마다 한 줄씩 적으면 디렉터리가 늘 때마다 CODEOWNERS 를 함께 고쳐야 한다(#1331).
+ANY_DIR = re.compile(r"\*\*/[A-Za-z0-9._-]+/")
+
 
 def parse_codeowners(text):
     """(종류, 패턴, 소유자들) 목록을 파일에 적힌 순서대로 돌려준다.
@@ -61,6 +66,8 @@ def parse_codeowners(text):
                 die(f"CODEOWNERS {no}줄: 팀 소유자는 지원하지 않는다 -> {o}")
         if pattern == "*":
             kind = "all"
+        elif ANY_DIR.fullmatch(pattern):
+            kind = "anydir"
         elif pattern.startswith("/") and pattern.endswith("/") and not (set(pattern) & GLOB):
             kind = "prefix"
         elif pattern.startswith("/") and not (set(pattern) & GLOB):
@@ -68,7 +75,7 @@ def parse_codeowners(text):
         else:
             die(
                 f"CODEOWNERS {no}줄: 지원하지 않는 패턴이다 -> {pattern}\n"
-                "이 게이트는 `*`, `/디렉터리/`, `/정확한/파일` 세 꼴만 판정한다. "
+                "이 게이트는 `*`, `**/이름/`, `/디렉터리/`, `/정확한/파일` 네 꼴만 판정한다. "
                 "다른 꼴을 쓰려면 review-gate.py 에 그 꼴을 더하고 확인까지 한 뒤에 쓴다."
             )
         rules.append((kind, pattern, [o[1:] for o in owners]))
@@ -83,6 +90,8 @@ def owners_of(path, rules):
     probe = "/" + path
     for kind, pattern, owners in rules:
         if kind == "all":
+            found = owners
+        elif kind == "anydir" and ("/" + pattern[3:]) in probe:
             found = owners
         elif kind == "prefix" and probe.startswith(pattern):
             found = owners
