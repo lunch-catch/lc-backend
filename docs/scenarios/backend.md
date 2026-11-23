@@ -349,7 +349,7 @@
 | B-171 | 예상 못한 예외 | runGuarded | DailyAggregationRunner | FAILED | runDate 자체 예외 | ERROR 로그, pending(FAILED), 다음 날짜 진행 | T |
 | B-172 | 세대 읽기 실패 | acquire 직후 재조회 실패 | DailyAggregationRunner.abandon | FAILED | 점유 성공 후 조회 예외 | 행 FAILED, pending(FAILED) | T |
 | B-173 | 정정 날짜 기록 | 100 SettlementMetricsStep | rememberCorrectionDates | ADJUSTED | 그날 원장에 다른 영업일 대상 정정(ADJUST) | 그 날짜를 pending(ADJUSTED)로 남겨 다음 01:00 재집계(자기 날짜, 오늘 이후, 보존 밖 제외) | T |
-| B-174 | 정산 정합성 위반 | 900 SettlementConsistencyStep | V-1, V-2, V-3, V-7 검사 | - | BILLED x 단가 != DEDUCT 등 | 집계 실패시키지 않고 analytics_consistency_violations{check} 지표와 로그만 | T |
+| B-174 | 정산 정합성 위반 | 900 SettlementConsistencyStep | V-2, V-3, V-7 검사 | - | DEDUCT > RESERVE, RELEASE != RESERVE - DEDUCT 등 | 집계 실패시키지 않고 analytics_consistency_violations{check} 지표와 로그만 | T |
 | B-175 | 이어받은 집계 | takeOverStale -> resume(STANDALONE) | DailyAggregationJob.run(date, attemptNo) -> runner.aggregate | SUCCEEDED 등 | (DAILY_AGGREGATION, 날짜) RUNNING, 2분 넘게 갱신 없음 | 넘겨받은 세대로 그 날짜만 집계, 집계가 행을 건수와 함께 닫고 BatchJobRunner 의 succeedAttempt 는 무시됨 | 1분 주기 스캔 |
 
 ### 01:30 PG 대조
