@@ -327,11 +327,13 @@ echo \"window \$start \$(ms)\"
 s0=\$(grep -m1 -o 'scenario_start [0-9]*' \$OUT/k6-$name.log | cut -d' ' -f2 || true)
 s0=\${s0:-\$start}
 echo \"hold \$((s0 + 60000)) \$((s0 + 60000 + $hold_ms))\"
+# 유지 구간의 실패를 결과 문서에 적으려고 k6 요약을 한 줄로 남긴다(#1329). 화면에는 내지 않는다
+echo \"k6-summary \$(tr -d '\\n' < \$OUT/summary-$name.json 2> /dev/null || true)\"
 grep -E '✓|✗|↳|impression_results|http_reqs|http_req_duration|http_req_failed|iterations|vus_max' \$OUT/k6-$name.log | head -40 || true
 # 원격 쓰기 같은 k6 의 오류가 묻히지 않게 따로 보인다. 요약을 밀어내지 않게 마지막 몇 줄만 본다(lc-infra#60)
 echo \"errors\"
 grep 'level=error' \$OUT/k6-$name.log | tail -5 || true" ) > "$out" || rc=$?
-    cat "$out"
+    grep -v '^k6-summary ' "$out" || true
     #
     # 시나리오가 없어 k6 를 띄우지 않은 회차는 적을 것이 없다. 원격은 remote 가 실패를 종료 코드 1 로 바꿔
     # 종료 코드로 가를 수 없어 출력의 표시로 가른다.
