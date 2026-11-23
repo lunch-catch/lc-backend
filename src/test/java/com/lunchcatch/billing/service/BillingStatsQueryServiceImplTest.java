@@ -60,6 +60,16 @@ class BillingStatsQueryServiceImplTest {
                 new OwnerCampaignLedgerSum(2L, null, 0, 0, 0, 0, -700, 0, 0));
     }
 
+    // 판정만 있고 그날 원장 줄이 없는 캠페인이다. 예약은 전날 했고 오늘은 노출만 과금됐다
+    @Test
+    void 원장_줄이_없어도_BILLED_판정이_있으면_소진만_있는_합계를_낸다() {
+        when(deductionRepository.sumBilledOn(DAY)).thenReturn(List.of(
+                new OwnerCampaignBilledRow(3L, 30L, 1200L)));
+
+        assertThat(service.ledgerSums(DAY)).containsExactly(
+                new OwnerCampaignLedgerSum(3L, 30L, 0, 0, -1200, 0, 0, 0, 0));
+    }
+
     @Test
     void 정정_대상_영업일은_그날_기록된_양수_정정이_가리키는_날짜를_그대로_돌려준다() {
         when(ledgerRepository.findCorrectionTargetDates(FROM, TO))
