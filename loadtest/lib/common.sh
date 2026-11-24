@@ -772,7 +772,15 @@ def threshold(kind, name):
         return named[name], False
     return named.get('default'), True
 
-def search(traceql, limit=500, spss=100):
+LIMIT, SPSS = 500, 100
+
+def truncated(traces, limit, spss):
+    # 상한에 닿았는지 본다. 트레이스가 상한만큼 왔거나, 맞은 스팬(matched)이 돌려받은 스팬보다 많으면 일부만 센 것이다
+    if len(traces) >= limit:
+        return True
+    return any(int(ss.get('matched', 0)) > len(ss.get('spans', [])) for tr in traces for ss in tr.get('spanSets', []))
+
+def search(traceql, limit=LIMIT, spss=SPSS):
     if not tempo:
         return None
     params = {'q': traceql, 'start': int(hs / 1000), 'end': int(he / 1000) + 1, 'limit': limit, 'spss': spss}
@@ -785,7 +793,16 @@ def p99(values):
 flt = 'job=~".*app.*", uri!~"UNKNOWN|/actuator.*"'
 counts = q('sum by (method, uri) (increase(http_server_requests_seconds_count{%s}[%ds])) > 0' % (flt, w))
 quant = by(q('histogram_quantile(0.99, sum by (uri, le) (increase(http_server_requests_histogram_seconds_bucket{%s}[%ds])))' % (flt, w)), 'uri')
-traced = tempo and bool(search('{ }', limit=1, spss=1))
+# 추적의 상태다. Tempo 가 없으면 추적을 켜지 않은 환경이고, Tempo 는 있는데 이 구간에 남은 트레이스가 없으면
+# 앱에 추적을 붙이지 않았거나 샘플링에서 모두 빠진 것이다. 둘은 여기서 가르지 못해 나눠 적는다
+if not tempo:
+    tracing = 'no-tempo'
+else:
+    try:
+        tracing = 'ok' if search('{ }', limit=1, spss=1) else 'no-traces'
+    except OSError:
+        tracing = 'no-tempo'
+traced = tracing == 'ok'
 apis, methods = [], []
 for m, _ in sorted(counts, key=lambda r: (r[0].get('uri', ''), r[0].get('method', ''))):
     name = '%s %s' % (m.get('method'), m.get('uri'))
@@ -795,11 +812,15 @@ for m, _ in sorted(counts, key=lambda r: (r[0].get('uri', ''), r[0].get('method'
            'over': None if v is None or t is None else v > t, 'trace': None}
     if traced and t is not None:
         roots = search('{ name = "%s" && duration > %dms }' % (name, round(t * 1000)), spss=1)
+        # 루트는 트레이스마다 하나라 트레이스 수의 상한만 본다
+        row['partial'] = len(roots or []) >= LIMIT
         if roots:
             slow = max(roots, key=lambda r: r.get('durationMs', 0))
             row['trace'] = {'id': slow['traceID'], 'ms': slow.get('durationMs')}
         spans = {}
-        for tr in search('{ name = "%s" } >> { duration > %dms } | select(name)' % (name, round(t * 1000))) or []:
+        found = search('{ name = "%s" } >> { duration > %dms } | select(name)' % (name, round(t * 1000))) or []
+        partial = truncated(found, LIMIT, SPSS)
+        for tr in found:
             for ss in tr.get('spanSets', []):
                 for sp in ss.get('spans', []):
                     n = next((a['value'].get('stringValue') for a in sp.get('attributes', []) if a['key'] == 'name'), sp.get('name')) or '-'
@@ -810,7 +831,7 @@ for m, _ in sorted(counts, key=lambda r: (r[0].get('uri', ''), r[0].get('method'
                         e['slow'] = (d, tr['traceID'])
         for n, e in sorted(spans.items(), key=lambda kv: -len(kv[1]['durations'])):
             methods.append({'api': name, 'method': n, 'threshold': t, 'count': len(e['durations']),
-                            'p99': p99(e['durations']), 'trace': e['slow'][1]})
+                            'p99': p99(e['durations']), 'trace': e['slow'][1], 'partial': partial})
     apis.append(row)
 
 jobs = []
@@ -841,7 +862,7 @@ for name in sorted(took):
                  'default': default, 'value': None if idle else v, 'value_label': '실행 한 번',
                  'over': None if status or idle or t is None else v > t,
                  'note': '판정하지 않는다' if status else ('구간에 실행이 없다' if idle else '')})
-print(json.dumps({'traced': bool(traced), 'apis': apis, 'methods': methods, 'jobs': jobs}, ensure_ascii=False, separators=(',', ':')))
+print(json.dumps({'traced': bool(traced), 'tracing': tracing, 'limit': LIMIT, 'spss': SPSS, 'apis': apis, 'methods': methods, 'jobs': jobs}, ensure_ascii=False, separators=(',', ':')))
 PY
 
 # 그 회차의 기준 초과를 묻는다. 로컬은 로컬 Prometheus 와 그라파나 프록시의 Tempo 를, 부하 시험 환경은 모니터링 서버에서 묻는다.
@@ -1039,19 +1060,27 @@ def render_overrun(o):
     out += ['| API | 기준 | p99 | 판정 | 가장 오래 걸린 트레이스 |', '|---|---|---|---|---|']
     for a in o['apis']:
         tr = '`%s` %s' % (a['trace']['id'], fmt_s((a['trace'].get('ms') or 0) / 1000)) if a.get('trace') else '-'
+        if a.get('trace') and a.get('partial'):
+            tr += '(일부에서 고름)'
         out.append('| %s | %s | %s | %s | %s |' % (a['name'], basis(a['threshold'], a['default']), fmt_s(a['p99']), judge(a['over']), tr))
     if not o['apis']:
         out.append('| 요청 없음 | - | - | - | - |')
     out.append('')
-    if not o.get('traced'):
-        out.append('메서드: 추적을 켜지 않았다')
+    tracing = o.get('tracing') or ('ok' if o.get('traced') else 'no-tempo')
+    if tracing == 'no-tempo':
+        out.append('메서드: 추적을 켜지 않았다(Tempo 가 없다)')
+    elif tracing == 'no-traces':
+        out.append('메서드: Tempo 에 이 구간의 남은 트레이스가 없다. 앱에 추적을 붙이지 않았거나 샘플링에서 모두 빠졌다')
     elif not o['methods']:
         out.append('메서드: 그 API 의 기준을 넘은 자식 스팬이 없다')
     else:
         out += ['메서드는 그 API 아래에서 그 API 의 기준을 넘은 자식 스팬이다. 남은 트레이스(앞단 샘플링과 테일 샘플링을 지난 것)만 세어 넘은 수는 전체 요청의 수가 아니다. 우리 코드의 메서드에는 스팬이 없어 DB 쿼리, 외부 호출 같은 경계만 나온다',
                 '', '| API | 메서드 | 기준 | 넘은 수 | p99 | 가장 오래 걸린 트레이스 |', '|---|---|---|---|---|---|']
         for m in o['methods']:
-            out.append('| %s | `%s` | %s | %s | %s | `%s` |' % (m['api'], m['method'], fmt_s(m['threshold']), fmt_n(m['count']), fmt_s(m['p99']), m['trace']))
+            count = fmt_n(m['count']) + (' 이상(일부만 셌다)' if m.get('partial') else '')
+            out.append('| %s | `%s` | %s | %s | %s | `%s` |' % (m['api'], m['method'], fmt_s(m['threshold']), count, fmt_s(m['p99']), m['trace']))
+        if any(m.get('partial') for m in o['methods']) or any(a.get('partial') for a in o['apis']):
+            out += ['', '일부만 셌다: Tempo 검색은 트레이스 %s개, 트레이스마다 스팬 %s개까지만 돌려줘, 그 상한에 닿은 API 는 넘은 수와 p99, 가장 오래 걸린 트레이스가 그 일부에서 센 값이다' % (o.get('limit', 500), o.get('spss', 100))]
     out += ['', '| 작업 | 종류 | 기준 | 값 | 판정 | 참고 |', '|---|---|---|---|---|---|']
     idle = []
     for j in o['jobs']:
