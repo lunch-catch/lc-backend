@@ -1272,7 +1272,7 @@ def render(doc, version_dir):
                 for t in rows:
                     cells = [file_link(r['dir'], d, t['dir'], f) for f in files]
                     lead = [t['kind']] if 'kind' in t else []
-                    out.append('| ' + ' | '.join(lead + [t['target'], t['value'], fmt_s(t['ms'] / 1000), '`%s`' % t['id']] + cells
+                    out.append('| ' + ' | '.join(lead + ['`%s`' % t['target'], t['value'], fmt_s(t['ms'] / 1000), '`%s`' % t['id']] + cells
                                                  + [', '.join('`%s`' % e for e in t['events']) or '-']) + ' |')
         out += render_overrun(r.get('overrun'))
     out.append('<!-- /result:%s -->' % tag)
@@ -1544,7 +1544,7 @@ def render_diag(doc, version_dir):
                     step = '`%s` %s' % (step[0], fmt_s(step[1])) if step else '-'
                     cells = [file_link(run_dir, d, t['dir'], f) for f in files]
                     lead = [t['kind']] if 'kind' in t else []
-                    out.append('| ' + ' | '.join(lead + [t['target'], t['value'], fmt_s(t['ms'] / 1000), step, '`%s`' % t['id']] + cells) + ' |')
+                    out.append('| ' + ' | '.join(lead + ['`%s`' % t['target'], t['value'], fmt_s(t['ms'] / 1000), step, '`%s`' % t['id']] + cells) + ' |')
         archive = next(iter(glob.glob(os.path.join(run_dir, 'diag-*-profile.tar.gz'))), None)
         selfs = profile_self(archive) if archive else None
         if not selfs:
