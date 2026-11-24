@@ -107,7 +107,7 @@ lc-infra 의 `member-env.sh up --sha <커밋>` 으로 운영과 같은 인프라
 
 `loadtest/adserving/run.sh` 가 인스턴스에 SSM 으로 스크립트를 보내 돌린다. `AWS_PROFILE` 은 `member-env.sh up` 을 돌린 계정의 프로필이다. 시나리오와 시드 생성기는 떠 있는 앱과 같은 커밋(SSM `current-sha`)에서 받는다. `LOADTEST_REF` 로 브랜치나 커밋을 따로 고를 수 있다.
 
-환경은 한 번만 띄운다. 버전마다 `version` 하나가 앱 대수 고정, `switch`(트레이싱을 붙임), `reset`, `prepare`, 워밍업, 측정 3회, 행 수 대조를 돌고 멈춘다(#1306). 순서와 멈춤은 `loadtest/README.md` 의 회차 순서 절이 갖는다. `switch` 는 GHCR 에 그 커밋의 이미지가 있는지 먼저 보고, 없으면 아무것도 바꾸지 않고 멈춘다.
+환경은 한 번만 띄운다. 버전마다 `version` 하나가 앱 대수 고정, `switch`(트레이싱을 붙임), `reset`, `prepare`, 워밍업, 측정 3회를 돌고 멈춘다(#1306). 순서와 멈춤은 `loadtest/README.md` 의 회차 순서 절이 갖는다. `switch` 는 GHCR 에 그 커밋의 이미지가 있는지 먼저 보고, 없으면 아무것도 바꾸지 않고 멈춘다.
 
 ```bash
 # 1. 환경을 띄운다(lc-infra 에서)
@@ -116,7 +116,7 @@ AWS_PROFILE=<프로필> ./scripts/member-env.sh up --sha <이미지>
 # 2. 시드를 넣는다. 버전마다의 reset 도 시드를 다시 넣는다
 AWS_PROFILE=<프로필> loadtest/adserving/run.sh seed 120000
 
-# 3. 버전 하나의 측정. 측정 3회와 행 수 대조가 끝나면 요약과 이어서 할 명령을 출력하고 끝난다
+# 3. 버전 하나의 측정. 측정 3회가 끝나면 요약과 이어서 할 명령을 출력하고 끝난다
 AWS_PROFILE=<프로필> loadtest/adserving/run.sh version v1 --sha <이미지>
 
 # 4. 승인하면 진단 회차(프로파일링을 붙인 회차 하나). 끝나면 다시 멈춘다
@@ -129,7 +129,7 @@ AWS_PROFILE=<프로필> ./scripts/member-env.sh down
 ```
 
 - 회차마다의 지표, 캡처, 무효 판정은 `run` 이 끝날 때 이어서 돈다(#1305). 무효(3)나 캡처 실패(4)면 그 자리에서 멈춘다
-- 행 수 대조(#1306, 작성자가 2026-11-23 대화에서 정했다): 마지막 측정 회차가 끝나고 `ROWS_WAIT`(10초) 뒤에 정산에 넘긴 유효 노출 수(쿠폰 소진 뒤 노출 제외)와 과금 판정 수가 같은지, `BILLED` 판정 수와 원장의 차감 수가 같은지 본다. 어긋나면 그 수를 알리고 5 로 멈춘다. 행 수 자체는 `rows` 로 따로 볼 수 있다
+- 행 수 대조는 하지 않는다(#1357, 작성자가 2026-11-25 대화에서 정했다). 처음에는 측정 3회 뒤 정산에 넘긴 유효 노출 수와 과금 판정 수, `BILLED` 판정 수와 원장의 차감 수를 견줬다(#1306). #1294 로 묶음 차감이 원장에 노출마다의 차감을 쓰지 않아 develop 커밋의 버전은 늘 어긋나고, 서빙 시험은 노출이 없어 늘 0 이었다. 돈의 정합성은 정산의 대사 배치가 본다. 행 수 자체는 `rows` 로 따로 볼 수 있다
 - 버전마다 회원 대역은 5장 그대로다. `version` 이 시나리오와 풀 끔에 따라 고른다
 
 ### 측정 순서
@@ -137,7 +137,7 @@ AWS_PROFILE=<프로필> ./scripts/member-env.sh down
 #1088 재측정의 버전과 순서, 버전마다의 커밋과 인자는 측정 계획 [`loadtest/adserving/plans/1088-remeasure.plan`](../../../../loadtest/adserving/plans/1088-remeasure.plan) 이 갖는다(#1307). `run.sh plan <계획 파일>` 을 부를 때마다 다음 걸음 하나를 간다. 돌리는 법은 [`loadtest/README.md`](../../../../loadtest/README.md#측정-계획) 의 측정 계획 절이 갖는다.
 
 ```bash
-# 다음 버전의 측정. 측정 3회와 행 수 대조가 끝나면 멈춘다
+# 다음 버전의 측정. 측정 3회가 끝나면 멈춘다
 AWS_PROFILE=<프로필> loadtest/adserving/run.sh plan loadtest/adserving/plans/1088-remeasure.plan
 # 진단을 돌리거나 건너뛴다. 끝나면 멈춘다
 AWS_PROFILE=<프로필> loadtest/adserving/run.sh plan loadtest/adserving/plans/1088-remeasure.plan --diag
@@ -175,7 +175,7 @@ AWS_PROFILE=<프로필> loadtest/adserving/run.sh version serving-v3-nopool --sh
 | 앱 | Hikari 대기 최대, 사용 최대, 시간 초과 수, 커넥션 획득 평균 시간, 커넥션을 쥔 평균 시간, CPU 평균과 최대, 5xx 수 | 커넥션 풀이 병목인지 |
 | DB | 초당 커밋과 INSERT, 돌고 있는 스레드 최대, RDS CPU 최대와 CPU 크레딧 잔량 | DB 서버가 병목인지. RDS 의 t4g 는 Unlimited 라 크레딧이 바닥나도 느려지지 않는다 |
 | 캐시 | 노드마다 엔진 CPU 최대, CPU 크레딧 잔량 최소, 네트워크 허용량을 넘긴 패킷 수 | Valkey 가 병목인지. ElastiCache 의 t4g 는 크레딧이나 네트워크 버스트가 바닥나면 느려진다 |
-| 쓰기 | `serve_log` 쓰기 실패와 버린 수, 내려준 카드 수, 노출과 `serve_log` 와 차감과 원장의 행 수 대조(`rows`) | 유실과 쓰기가 맞는지 |
+| 쓰기 | `serve_log` 쓰기 실패와 버린 수, 내려준 카드 수, 노출과 `serve_log` 와 차감과 원장의 행 수(`rows` 로 손으로 센다. `version` 은 대조하지 않는다) | 유실과 쓰기가 맞는지 |
 | 노출 저장과 릴레이 | 릴레이의 밀린 노출 최대(v2 부터), 노출 저장 큐의 최대, 큐가 차서 버린 수, 실패한 묶음 수, 쓰지 못하고 버린 행 수(v3 부터) | 응답 뒤 저장이 따라가는지. 버린 노출은 유실률에 들어간다 |
 | 부하 생성기 | 1분 평균 CPU 의 최대 | 생성기가 병목이 아닌지. 유지 구간에서 80% 를 넘으면 그 회차는 무효로 보고 다시 잰다 |
 

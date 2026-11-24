@@ -581,15 +581,13 @@ record_warnings() {
 #
 #
 # 버전 하나를 명령 하나로 돈다(#1306). 순서는 README 의 회차 순서다.
-#   측정(--from measure, 기본): 앱 대수 고정 -> switch(트레이싱을 붙임) -> reset -> prepare -> warmup -> 측정 3회 -> 행 수 대조 -> 멈춤
+#   측정(--from measure, 기본): 앱 대수 고정 -> switch(트레이싱을 붙임) -> reset -> prepare -> warmup -> 측정 3회 -> 멈춤
 #   진단(--from diag): 프로파일링을 붙인 진단 회차 하나 -> 멈춤
 # 멈출 자리에서 요약과 이어서 할 명령을 출력하고 끝난다. 입력을 기다리지 않는다. 승인은 사람이 대화로 하고, 승인을 받은 쪽이 이어서 할 명령을 부른다.
 # 회차마다의 지표, 캡처, 무효 판정은 도메인의 run 이 after_run 으로 한다(#1305). 무효(3)나 캡처 실패(4)면 그 자리에서 멈춘다.
 #
 # 도메인의 run.sh 가 정하는 것
 #   version_bands <시나리오> <풀 끔이면 1>  WARMUP_BASE, RUN_BASES(측정 3회), DIAG_BASE 를 정한다. 회원 대역은 도메인의 부하 시험 문서가 갖는다
-#   domain_rows_check                      행 수를 세고 맞는지 본다. 어긋나면 그 수를 출력하고 0 이 아닌 값으로 끝난다
-#   ROWS_WAIT                              마지막 측정 회차 뒤 행 수를 세기 전에 기다릴 초. 응답 뒤에 쓰는 일이 끝날 시간이다
 #   PREPARE_STEP                           1 이면 reset 뒤에 prepare 를 부른다
 #   version_dir <버전 이름> <시나리오>      결과 문서 옆의 버전 폴더(저장소 기준 경로)를 출력한다. 회차 폴더와 결과 문서의 그림이 그 아래에 남는다(#1326)
 #
@@ -684,13 +682,6 @@ run_version() {
           return "$rc"
         fi
       done
-      sleep "${ROWS_WAIT:-10}"
-      rc=0; domain_rows_check || rc=$?
-      if [ "$rc" -ne 0 ]; then
-        echo "STOP $name 의 행 수가 맞지 않는다. 위 rows 출력을 본다"
-        echo "next 다시 재려면: $again"
-        return 5
-      fi
       # 앞 버전과의 고친 함수 후보다(#1343). 진단 회차의 Diff 와 비교 표가 그 함수까지 펼친다. 확인해 빼거나 더한 목록을 --fixed 로 넘긴다
       if [ -n "$baseline_sha" ] && [ -n "$sha" ]; then
         if fixed_candidates "$baseline_sha" "$sha" > "$SNAPSHOT_OUT/fixed-candidates.txt"; then
