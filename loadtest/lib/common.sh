@@ -655,6 +655,7 @@ run_version() {
   # 캡처와 결과(#1326)를 버전 폴더에 둔다. 회차 폴더는 그 아래 회차 이름이다. 로컬은 결과 문서 대신 build/loadtest-results/ 에 둔다.
   # 따로 준 SNAPSHOT_OUT 이 있으면 그것을 쓴다
   #
+  local given_out="${SNAPSHOT_OUT:-}"
   if [ -z "${SNAPSHOT_OUT:-}" ]; then
     SNAPSHOT_OUT="$ROOT/$(version_dir "$name" "$scenario")"
     [ -z "${LOCAL:-}" ] || SNAPSHOT_OUT="$ROOT/build/loadtest-results/$(basename "$SNAPSHOT_OUT")"
@@ -713,7 +714,10 @@ run_version() {
       # 조건은 두 회차가 같은 조건인지 견주려고 남긴다
       #
       DIAG_BASELINE_DIR=""
-      if [ -n "$baseline" ]; then
+      if [ -n "$baseline" ] && [ -n "$given_out" ]; then
+        # SNAPSHOT_OUT 을 따로 주었으면 버전끼리 한 폴더를 쓴다. 앞 버전의 진단 회차도 그 아래에 있다
+        DIAG_BASELINE_DIR="$given_out/$baseline-run1-profile"
+      elif [ -n "$baseline" ]; then
         DIAG_BASELINE_DIR="$ROOT/$(version_dir "$baseline" "$scenario")"
         [ -z "${LOCAL:-}" ] || DIAG_BASELINE_DIR="$ROOT/build/loadtest-results/$(basename "$DIAG_BASELINE_DIR")"
         DIAG_BASELINE_DIR="$DIAG_BASELINE_DIR/$baseline-run1-profile"
