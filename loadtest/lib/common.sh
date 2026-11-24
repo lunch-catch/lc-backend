@@ -1259,13 +1259,13 @@ def render(doc, version_dir):
         elif not traces:
             out += ['', '트레이스: ' + (' '.join(notes) or '기준을 넘은 트레이스가 없다')]
         else:
-            out += ['', '| 대상 | 판정 값 | 걸린 시간 | 트레이스 ID | 화면 | 경고와 오류 |', '|---|---|---|---|---|---|']
+            # 파일마다 칸을 둔다. 한 칸에 링크를 모으면 표가 좁을 때 링크마다 줄이 바뀌어 줄이 길어진다
+            out += ['', '| 패널 | 대상 | 판정 값 | 걸린 시간 | 트레이스 ID | 트레이스 그림 | 로그 그림 | 로그 원문 | 경고와 오류 |',
+                    '|---|---|---|---|---|---|---|---|---|']
             for t in traces:
-                base = os.path.join(d, t['dir'])
-                out.append('| %s %s | %s | %s | `%s` | [트레이스 그림](%s) [로그 그림](%s) [로그 원문](%s) | %s |' % (
-                    t['panel'], t['target'], t['value'], fmt_s(t['ms'] / 1000), t['id'],
-                    os.path.join(base, 'trace.png'), os.path.join(base, 'logs.png'), os.path.join(base, 'logs.txt'),
-                    ', '.join(t['events']) or '-'))
+                cells = [file_link(r['dir'], d, t['dir'], f) for f in ('trace.png', 'logs.png', 'logs.txt')]
+                out.append('| %s | %s | %s | %s | `%s` | %s | %s | %s | %s |' % (
+                    t['panel'], t['target'], t['value'], fmt_s(t['ms'] / 1000), t['id'], *cells, ', '.join(t['events']) or '-'))
         out += render_overrun(r.get('overrun'))
     out.append('<!-- /result:%s -->' % tag)
     lines = open(doc, encoding='utf-8').read().split('\n')
@@ -1283,6 +1283,10 @@ def render(doc, version_dir):
         last = max([i for i in range(head, end) if lines[i].strip()])
         lines[last + 1:last + 1] = [''] + out
     open(doc, 'w', encoding='utf-8').write('\n'.join(lines))
+
+def file_link(run_dir, rel, sub, name):
+    # 트레이스 표의 파일 칸이다. 칸 머리가 파일의 이름이라 칸 안은 짧게 "보기" 로 잇고, 파일이 없으면 - 다
+    return '[보기](%s)' % os.path.join(rel, sub, name) if os.path.exists(os.path.join(run_dir, sub, name)) else '-'
 
 def longest_step(path):
     # 트레이스에서 루트를 뺀 스팬 가운데 가장 오래 걸린 것이다(#1341). trace.json 은 Tempo 의 원본(batches)이다
@@ -1493,15 +1497,14 @@ def render_diag(doc, version_dir):
         elif not traces:
             out += ['', '트레이스: ' + (' '.join(notes) or '기준을 넘은 트레이스가 없다')]
         else:
-            out += ['', '| 대상 | 판정 값 | 걸린 시간 | 가장 오래 걸린 단계 | 트레이스 ID | 화면 |', '|---|---|---|---|---|---|']
+            out += ['', '| 패널 | 대상 | 판정 값 | 걸린 시간 | 가장 오래 걸린 단계 | 트레이스 ID | 트레이스 그림 | 로그 그림 | 로그 원문 | 트레이스 원본 |',
+                    '|---|---|---|---|---|---|---|---|---|---|']
             for t in traces:
-                base = os.path.join(d, t['dir'])
                 step = longest_step(os.path.join(run_dir, t['dir'], 'trace.json'))
                 step = '`%s` %s' % (step[0], fmt_s(step[1])) if step else '-'
-                files = ' '.join('[%s](%s)' % (label, os.path.join(base, f)) for label, f in
-                                 (('트레이스 그림', 'trace.png'), ('로그 그림', 'logs.png'), ('로그 원문', 'logs.txt'), ('트레이스 원본', 'trace.json'))
-                                 if os.path.exists(os.path.join(run_dir, t['dir'], f)))
-                out.append('| %s %s | %s | %s | %s | `%s` | %s |' % (t['panel'], t['target'], t['value'], fmt_s(t['ms'] / 1000), step, t['id'], files))
+                cells = [file_link(run_dir, d, t['dir'], f) for f in ('trace.png', 'logs.png', 'logs.txt', 'trace.json')]
+                out.append('| %s | %s | %s | %s | %s | `%s` | %s | %s | %s | %s |' % (
+                    t['panel'], t['target'], t['value'], fmt_s(t['ms'] / 1000), step, t['id'], *cells))
         archive = next(iter(glob.glob(os.path.join(run_dir, 'diag-*-profile.tar.gz'))), None)
         selfs = profile_self(archive) if archive else None
         if not selfs:
