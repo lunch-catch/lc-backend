@@ -728,7 +728,7 @@ run_version() {
 # 상태 파일은 build/loadtest-plans/<계획 파일 이름>.<local|lt>.state 다. 로컬과 부하 시험 환경을 따로 센다. 로컬로 먼저 돌린 기록이 부하 시험 환경의 버전을 건너뛰게 하지 않는다. 줄마다 버전, 단계, 시작과 끝의 UTC 시각이다. 버전마다 잰 시각을 결과 문서에 옮긴다(#1088).
 #
 run_plan() {
-  local self="$1" plan="$2" choice="${3:-}" state line name commit ref args step started rc lines=() fixed=() scen prev_args i
+  local self="$1" plan="$2" choice="${3:-}" state line name commit ref args step started rc lines=() fixed=() scen prev_args i toks=()
   [ -f "$plan" ] || die "계획 파일이 없다: $plan"
   case "$choice" in ""|--diag|--skip-diag) ;; *) die "plan 의 선택지는 --diag 나 --skip-diag 다" ;; esac
   # --diag 뒤의 --fixed 는 진단 회차가 앞 버전과 견줄 때 고친 함수다(#1343)
@@ -752,7 +752,12 @@ run_plan() {
   for line in ${lines[@]+"${lines[@]}"}; do
     line="${line%%#*}"; [ -n "${line//[[:space:]]/}" ] || continue
     read -r name commit args <<< "$line"
-    scen=$(sed -nE 's/.*--scenario ([^ ]+).*/\1/p' <<< "$args")
+    # run_version 에는 $args 를 공백으로 나눠 넘긴다. 같은 방법으로 나눈 낱말에서 --scenario 의 값을 읽어 실제로 도는 시나리오와 맞춘다
+    scen=""
+    read -r -a toks <<< "$args"
+    for (( i = 0; i < ${#toks[@]} - 1; i++ )); do
+      [ "${toks[$i]}" != --scenario ] || scen="${toks[$((i + 1))]}"
+    done
     # 시나리오를 주지 않으면 run_version 이 feed_impression 으로 돈다. 같은 시나리오로 견주게 맞춘다
     scen="${scen:-feed_impression}"
     prev_args=()
