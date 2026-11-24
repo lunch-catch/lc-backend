@@ -360,7 +360,7 @@ loadtest/adserving/run.sh run v1-run1-profile 30030001 100 5m --profile both
 | `wall` | 대기까지 포함한 경과 시간이다. p99 를 줄이려면 이것을 먼저 본다 | 50ms. wall 모드의 기본값이다 |
 | `both` | 둘을 한 기록(JFR)으로 함께 뜨고 나눠 보낸다. 같은 시간, 같은 부하의 둘을 견줘 계산과 대기를 가른다 | 위 둘과 같다 |
 
-**그라파나에서 보는 법:** Drilldown -> Profiles 에서 서비스를 고른다. 앱 서버는 `lunchcatch`, 배치 서버는 `lunchcatch-batch` 로 트레이스의 서비스 이름과 같다. 그다음 프로파일 종류(`process_cpu` 나 `wall`)와 `run` 라벨로 그 회차를 고른다. 10초씩 끊어 보내 대시보드와 함께 10초 남짓 늦게 보인다. Split 과 Single 로 비교와 단독을, Top Table 과 Flame Graph 로 표와 그래프를 바꾼다.
+**그라파나에서 보는 법:** Drilldown -> Profiles 에서 서비스를 고른다. 앱 서버는 `lunchcatch`, 배치 서버는 `lunchcatch-batch` 로 트레이스의 서비스 이름과 같다. 그다음 프로파일 종류(`process_cpu` 나 `wall`)와 `run` 라벨로 그 회차를 고른다. `cpu`, `wall` 모드는 10초씩 끊어 보내 대시보드와 함께 10초 남짓 늦게 보인다. `both` 는 회차가 끝난 뒤에 나눠 보내므로 회차가 끝난 다음에 본다. Split 과 Single 로 비교와 단독을, Top Table 과 Flame Graph 로 표와 그래프를 바꾼다.
 
 **읽는 법:** Self 는 그 메서드 자기 코드의 시간이고 Total 은 부른 메서드까지 합친 시간이다. 시간은 그 구간의 합계라 호출 한 번의 시간은 나오지 않는다.
 

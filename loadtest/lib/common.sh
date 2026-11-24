@@ -2120,6 +2120,10 @@ while [ "$(date +%s)" -lt "$stop" ]; do
       send "$mode" "$work/raw.txt" "$from" "$(date +%s)"
       ;;
     both)
+      # 이번 실행이 만든 JFR 은 끝날 때 지운다. 나누다 실패해 set -e 로 멈춰도 컨테이너의 /tmp 에 쌓이지 않는다
+      # 뜨기 전에 경로를 적어, 뜨다 실패한 묶음의 파일도 지운다
+      [ -n "${jfr_trap:-}" ] || { trap 'while read -r f; do docker exec "$app" rm -f "/tmp/lt-profile-$f.jfr" 2> /dev/null || true; done < "$work/jfr-files" 2> /dev/null' EXIT; jfr_trap=1; }
+      echo "$from" >> "$work/jfr-files"
       # 회차 동안은 JFR 만 뜬다(#1345). 변환(jfrconv, 자바)은 묶음마다 앱 CPU 약 0.47초를 쓰고 그동안 프로파일러가 멈춰, 회차가 끝난 뒤로 미룬다
       out=$(docker exec "$app" "$ap/asprof" -d 10 -e itimer -i 10ms --wall 50ms -o jfr -f "/tmp/lt-profile-$from.jfr" 1 2>&1) \
         || { echo "$out" >&2; exit 1; }
