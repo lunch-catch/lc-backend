@@ -19,7 +19,7 @@ class DeductionCounterRegistrationTest {
 
     @Test
     void 노출_차감의_되돌리기_계획없음_묶음실패_묶음대체_카운터를_0으로_만든다() {
-        new PointDeductorImpl(null, null, null, null, null, null, null, null, registry, null, null, null)
+        new PointDeductorImpl(null, null, null, null, null, null, null, registry, null, null, null)
                 .registerCounters();
 
         assertZero(PointDeductorImpl.UNDO_METRIC, "result", List.of("ok", "failed"));

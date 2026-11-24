@@ -8,11 +8,9 @@ import com.lunchcatch.billing.deduction.cache.DailySpendCounter;
 import com.lunchcatch.billing.deduction.cache.DeductOutcome;
 import com.lunchcatch.billing.deduction.cache.SpendDeduction;
 import com.lunchcatch.billing.deduction.repository.DeductionBatchRepository;
-import com.lunchcatch.billing.deduction.repository.DeductionBatchRepository.DeductRow;
 import com.lunchcatch.billing.deduction.repository.DeductionBatchRepository.ResultRow;
 import com.lunchcatch.billing.deduction.repository.DeductionBatchRepository.StoredResult;
 import com.lunchcatch.billing.deduction.repository.DeductionResultRepository;
-import com.lunchcatch.billing.repository.PointLedgerRepository;
 import com.lunchcatch.billing.reservation.dto.PlanSnapshot;
 import com.lunchcatch.billing.reservation.entity.BudgetDailyPlan;
 import com.lunchcatch.billing.reservation.repository.BudgetDailyPlanRepository;
@@ -53,15 +51,16 @@ import org.springframework.transaction.support.TransactionTemplate;
 /*
  * 유효 노출의 과금을 판정하고 기록한다(I-01). 1건은 deduct, 여러 건은 deductAll 이 받는다.
  *
- * 순서는 ① 그날 계획의 점주와 단가 ② 당일 소진 해시에서 판정 ③ 판정 기록 ④ BILLED 면 원장 DEDUCT 다.
+ * 순서는 ① 그날 계획의 점주와 단가 ② 당일 소진 해시에서 판정 ③ 판정 기록이다.
+ * 원장에는 노출마다의 DEDUCT 를 쓰지 않는다. 소진의 정본은 판정의 BILLED 다(#1294, 구조와 동작 설계 3장).
  * 그날 계획이 없으면 NOT_BILLED_NO_PLAN 판정만 남긴다.
  * 해시가 없으면 DB 정본으로 한 번 만들고 다시 판정한다. 그래도 없으면 예외다.
- * 판정 기록과 원장은 무변경 갱신 INSERT 라서 같은 serveId 의 재호출이 예외 없이 지나가고, 판정은 Valkey 가
+ * 판정 기록은 무변경 갱신 INSERT 라서 같은 serveId 의 재호출이 예외 없이 지나가고, 판정은 Valkey 가
  * 첫 결과를 돌려준다. 잔액은 읽지 않는다.
  *
  * Valkey 는 DB 트랜잭션에 묶이지 않아서 판정이 소진을 올린 뒤 트랜잭션이 롤백되면 소진만 앞서간다(L-1).
  * 그래서 이번 호출이 새로 판정했으면 롤백 직후 그 판정을 되돌린다(처리 표시 삭제, BILLED 였으면 소진 감소).
- * 되돌리기가 실패하거나 프로세스가 죽으면 소진이 원장보다 큰 채로 그날 끝까지 남고, 다음 날 00:00 대사가 기록한다.
+ * 되돌리기가 실패하거나 프로세스가 죽으면 소진이 판정보다 큰 채로 그날 끝까지 남고, 다음 날 00:00 대사가 기록한다.
  *
  * 호출자 트랜잭션이 있으면 참여하고 없으면 정산 트랜잭션을 시작한다.
  * 마감은 날짜가 아니라 그 계획의 해제 여부로 본다(#1049). 그날 계획 행을 공유 잠금으로 읽어 해제 시각을 검사하고
@@ -78,7 +77,6 @@ public class PointDeductorImpl implements PointDeductor {
     private final SpendHashRebuildService rebuildService;
     private final DailySpendCounter spendCounter;
     private final DeductionResultRepository deductionResultRepository;
-    private final PointLedgerRepository ledgerRepository;
     private final CampaignQueryService campaignQuery;
     private final PlatformSettingQueryService platformSetting;
     private final Clock clock;
@@ -104,7 +102,7 @@ public class PointDeductorImpl implements PointDeductor {
     }
 
     /*
-     * 묶음 전체를 한 트랜잭션에서 판정하고 기록한다(#1049). 마감 확인, 소진 판정, 판정 기록, 원장을 노출마다가 아니라 묶음마다 한 번씩 한다.
+     * 묶음 전체를 한 트랜잭션에서 판정하고 기록한다(#1049). 마감 확인, 소진 판정, 판정 기록을 노출마다가 아니라 묶음마다 한 번씩 한다.
      * 한 트랜잭션이 실패하면 그 묶음만 점주별 트랜잭션으로 다시 처리한다. 한 노출의 실패가 다른 점주의 과금까지 되돌리지 않게 한다.
      * 점주별로도 실패한 묶음은 예외를 올리지 않고 그 노출들을 실패로 돌려준다. 릴레이가 다음 주기에 다시 넘기고 serveId 멱등이 중복 과금을 막는다.
      * 정산의 DB 나 Valkey 에 닿지 못하는 장애는 예외로 올린다. 트랜잭션을 열지 못하는 것(커넥션 풀 고갈)도 같다. 모든 묶음이 같은 이유로 실패할 것이라
@@ -221,7 +219,6 @@ public class PointDeductorImpl implements PointDeductor {
                 .map(charge -> new ResultRow(charge.request().serveId(), charge.request().campaignId(), charge.ownerId(),
                         charge.request().businessDate(), judged.get(charge.request().serveId()), charge.unitPrice()))
                 .toList(), now);
-        List<DeductRow> deducts = new ArrayList<>();
         Map<UUID, DeductionStatus> finals = new HashMap<>();
         for (Charge charge : unique.values()) {
             UUID serveId = charge.request().serveId();
@@ -229,16 +226,10 @@ public class PointDeductorImpl implements PointDeductor {
             if (result == null) {
                 throw new IllegalStateException("판정 행을 넣었는데 읽을 수 없습니다. serveId=" + serveId);
             }
-            if (result.inserted() && result.status() == DeductionStatus.BILLED) {
-                deducts.add(new DeductRow(serveId, charge.request().campaignId(), charge.ownerId(), charge.unitPrice()));
-            }
             if (!result.inserted()) {
                 warnIfRejudged(serveId, result.status(), judged.get(serveId));
             }
             finals.put(serveId, result.status());
-        }
-        if (!deducts.isEmpty()) {
-            batchRepository.insertDeducts(deducts, now);
         }
         return charges.stream()
                 .map(charge -> DeductionOutcome.judged(charge.request().serveId(), finals.get(charge.request().serveId())))
@@ -394,10 +385,6 @@ public class PointDeductorImpl implements PointDeductor {
         if (inserted != 1) {
             return firstStatus(serveId, status);
         }
-
-        if (status == DeductionStatus.BILLED) {
-            ledgerRepository.insertDeductIfAbsent(plan.ownerId(), campaignId, serveId, -plan.unitPrice(), now);
-        }
         return status;
     }
 
@@ -418,7 +405,7 @@ public class PointDeductorImpl implements PointDeductor {
     /*
      * 계획이 없으면 마감 여부에 따라 NOT_BILLED_CLOSED 또는 NOT_BILLED_NO_PLAN 을 기록한다.
      * 행을 남겨야 광고 서빙의 유효 노출 수가 판정 합과 맞는다.
-     * 계획이 없으니 점주는 캠페인에서, 단가는 운영 설정에서 읽는다. 과금하지 않으므로 Valkey 와 원장은 건드리지 않는다.
+     * 계획이 없으니 점주는 캠페인에서, 단가는 운영 설정에서 읽는다. 과금하지 않으므로 Valkey 는 건드리지 않는다.
      */
     private DeductionStatus recordWithoutPlan(UUID serveId, Long campaignId, LocalDate businessDate,
                                               DeductionStatus status) {
@@ -442,7 +429,7 @@ public class PointDeductorImpl implements PointDeductor {
     /*
      * 이 트랜잭션이 롤백으로 끝나면 이번 호출이 새로 남긴 판정을 되돌린다. 커밋이면 두고, 결과를 알 수 없으면(UNKNOWN)
      * 커밋됐을 수 있으니 되돌리지 않는다. 되돌리기 실패는 노출 저장의 결과를 바꾸지 못하므로 예외를 올리지 않고
-     * 기록한다. 소진이 원장보다 큰 채로 남으면 안전한 쪽의 오차이고 다음 날 00:00 대사가 기록한다.
+     * 기록한다. 소진이 판정보다 큰 채로 남으면 안전한 쪽의 오차이고 다음 날 00:00 대사가 기록한다.
      */
     private void undoOnRollback(LocalDate businessDate, Long campaignId, UUID serveId, long unitPrice) {
         TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
@@ -465,8 +452,7 @@ public class PointDeductorImpl implements PointDeductor {
 
     /*
      * 같은 serveId 의 판정 행이 이미 있으면 그 행의 판정이 정본이다. 처리 표시(2일)가 사라진 뒤 도착한 재호출은 Lua 가
-     * 현재 예산으로 다시 판정하므로 처음 판정과 다를 수 있다. 계약은 처음 판정을 약속하고 원장은 처음 판정이
-     * BILLED 일 때 같은 트랜잭션에서 이미 남았으므로, 저장된 판정을 돌려주고 원장은 쓰지 않는다.
+     * 현재 예산으로 다시 판정하므로 처음 판정과 다를 수 있다. 계약은 처음 판정을 약속하므로 저장된 판정을 돌려준다.
      * 다시 판정하면서 올라간 카운터는 되돌리지 않는다. 다음 날 00:00 대사가 불일치로 기록한다.
      */
     private DeductionStatus firstStatus(UUID serveId, DeductionStatus judged) {
