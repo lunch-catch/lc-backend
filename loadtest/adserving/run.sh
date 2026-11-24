@@ -60,6 +60,19 @@ impression_write_lost_inc sum(increase(adserving_impression_write_lost_total[$W]
 relay_deduct_avg_s sum(increase(adserving_impression_dispatch_deduct_seconds_sum[$W]))/sum(increase(adserving_impression_dispatch_deduct_seconds_count[$W]))
 relay_deduct_rows_per_s sum(rate(adserving_impression_dispatch_deduct_batch_sum[$W]))
 '
+# 결과 문서의 상세 표에 적는 광고 서빙 지표의 뜻이다. 꼴은 loadtest/lib/common.sh 의 COMMON_METRIC_NOTES 와 같다
+DOMAIN_METRIC_NOTES='
+served_cards_inc 피드로 내보낸 카드 수
+serve_log_failed_inc 서빙 로그를 쓰다 실패해 버린 행 수
+serve_log_dropped_inc 서빙 로그 대기열이 차 버린 카드 수
+impression_dispatch_backlog_max 정산에 넘기지 않은 노출 수의 최대
+impression_queue_max 노출 저장 대기열 길이의 최대(앱 서버 합)
+impression_dropped_inc 노출 저장 대기열이 차 버린 노출 수
+impression_write_failed_inc 노출 묶음 쓰기가 실패한 횟수(다시 쓴다)
+impression_write_lost_inc 다시 써도 실패해 버린 노출 수
+relay_deduct_avg_s 릴레이가 정산 차감 한 번에 걸린 평균 시간(초)
+relay_deduct_rows_per_s 릴레이가 초당 정산에 넘긴 노출 수
+'
 . "$(dirname "$0")/../lib/common.sh"
 
 #
