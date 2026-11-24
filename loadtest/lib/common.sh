@@ -1298,12 +1298,19 @@ def render(doc, version_dir):
             out += ['', '트레이스: ' + (' '.join(notes) or '기준을 넘은 트레이스가 없다')]
         else:
             # 파일마다 칸을 둔다. 한 칸에 링크를 모으면 표가 좁을 때 링크마다 줄이 바뀌어 줄이 길어진다
-            out += ['', '| 패널 | 대상 | 판정 값 | 걸린 시간 | 트레이스 ID | 트레이스 그림 | 로그 그림 | 로그 원문 | 경고와 오류 |',
-                    '|---|---|---|---|---|---|---|---|---|']
-            for t in traces:
-                cells = [file_link(r['dir'], d, t['dir'], f) for f in ('trace.png', 'logs.png', 'logs.txt')]
-                out.append('| %s | %s | %s | %s | `%s` | %s | %s | %s | %s |' % (
-                    t['panel'], t['target'], t['value'], fmt_s(t['ms'] / 1000), t['id'], *cells, ', '.join(t['events']) or '-'))
+            files = ('trace.png', 'logs.png', 'logs.txt')
+            tail = ' 트레이스 ID | 트레이스 그림 | 로그 그림 | 로그 원문 | 경고와 오류 |'
+            api, background = trace_groups(traces)
+            for title, rows, head in (('기준을 넘은 API', api, '| 대상 | 판정 값 | 걸린 시간 |'),
+                                      ('기준을 넘은 백그라운드 작업', background, '| 종류 | 대상 | 판정 값 | 걸린 시간 |')):
+                if not rows:
+                    continue
+                out += ['', '%s(판정 값은 회차 구간의 최댓값)' % title, '', head + tail, '|---' * (head.count('|') - 1 + 5) + '|']
+                for t in rows:
+                    cells = [file_link(r['dir'], d, t['dir'], f) for f in files]
+                    lead = [t['kind']] if 'kind' in t else []
+                    out.append('| ' + ' | '.join(lead + [t['target'], t['value'], fmt_s(t['ms'] / 1000), '`%s`' % t['id']] + cells
+                                                 + [', '.join(t['events']) or '-']) + ' |')
         out += render_overrun(r.get('overrun'))
     out.append('<!-- /result:%s -->' % tag)
     lines = open(doc, encoding='utf-8').read().split('\n')
@@ -1321,6 +1328,32 @@ def render(doc, version_dir):
         last = max([i for i in range(head, end) if lines[i].strip()])
         lines[last + 1:last + 1] = [''] + out
     open(doc, 'w', encoding='utf-8').write('\n'.join(lines))
+
+def trace_groups(traces):
+    # 고른 트레이스를 기준을 넘은 API 와 백그라운드 작업으로 나눈다. 패널 이름은 표 머리가 대신하고, 백그라운드는 종류 칸에 남긴다.
+    # 판정 값은 판정 패널(lc-infra 의 lc-api, lc-background)의 식을 회차 구간에서 훑은 최댓값이고 모든 패널이 초 단위다.
+    # 대상은 꼬리표 이름(uri=, job_name= 등)을 떼고 값만 둔다
+    api, background = [], []
+    for t in traces:
+        row = dict(t, target=re.sub(r'(?:^|(?<=\s))[\w.]+=', '', t['target']).strip())
+        try:
+            row['value'] = fmt_s(float(t['value']))
+        except ValueError:
+            pass
+        title = t['panel']
+        if title == '기준을 넘은 API':
+            api.append(row)
+            continue
+        if '릴레이' in title:
+            row['kind'] = '아웃박스 릴레이'
+        elif '워커' in title:
+            row['kind'] = '비동기 워커'
+        elif 'cron' in title:
+            row['kind'] = 'cron 배치, ' + ('실행 한 번' if '실행 한 번' in title else '시작 뒤 지난 시간')
+        else:
+            row['kind'] = title
+        background.append(row)
+    return api, background
 
 def file_link(run_dir, rel, sub, name):
     # 트레이스 표의 파일 칸이다. 칸 머리가 파일의 이름이라 칸 안은 짧게 "보기" 로 잇고, 파일이 없으면 - 다
@@ -1535,14 +1568,20 @@ def render_diag(doc, version_dir):
         elif not traces:
             out += ['', '트레이스: ' + (' '.join(notes) or '기준을 넘은 트레이스가 없다')]
         else:
-            out += ['', '| 패널 | 대상 | 판정 값 | 걸린 시간 | 가장 오래 걸린 단계 | 트레이스 ID | 트레이스 그림 | 로그 그림 | 로그 원문 | 트레이스 원본 |',
-                    '|---|---|---|---|---|---|---|---|---|---|']
-            for t in traces:
-                step = longest_step(os.path.join(run_dir, t['dir'], 'trace.json'))
-                step = '`%s` %s' % (step[0], fmt_s(step[1])) if step else '-'
-                cells = [file_link(run_dir, d, t['dir'], f) for f in ('trace.png', 'logs.png', 'logs.txt', 'trace.json')]
-                out.append('| %s | %s | %s | %s | %s | `%s` | %s | %s | %s | %s |' % (
-                    t['panel'], t['target'], t['value'], fmt_s(t['ms'] / 1000), step, t['id'], *cells))
+            files = ('trace.png', 'logs.png', 'logs.txt', 'trace.json')
+            tail = ' 가장 오래 걸린 단계 | 트레이스 ID | 트레이스 그림 | 로그 그림 | 로그 원문 | 트레이스 원본 |'
+            api, background = trace_groups(traces)
+            for title, rows, head in (('기준을 넘은 API', api, '| 대상 | 판정 값 | 걸린 시간 |'),
+                                      ('기준을 넘은 백그라운드 작업', background, '| 종류 | 대상 | 판정 값 | 걸린 시간 |')):
+                if not rows:
+                    continue
+                out += ['', '%s(판정 값은 회차 구간의 최댓값)' % title, '', head + tail, '|---' * (head.count('|') - 1 + 6) + '|']
+                for t in rows:
+                    step = longest_step(os.path.join(run_dir, t['dir'], 'trace.json'))
+                    step = '`%s` %s' % (step[0], fmt_s(step[1])) if step else '-'
+                    cells = [file_link(run_dir, d, t['dir'], f) for f in files]
+                    lead = [t['kind']] if 'kind' in t else []
+                    out.append('| ' + ' | '.join(lead + [t['target'], t['value'], fmt_s(t['ms'] / 1000), step, '`%s`' % t['id']] + cells) + ' |')
         archive = next(iter(glob.glob(os.path.join(run_dir, 'diag-*-profile.tar.gz'))), None)
         selfs = profile_self(archive) if archive else None
         if not selfs:
