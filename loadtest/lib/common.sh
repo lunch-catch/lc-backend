@@ -1397,7 +1397,9 @@ def profile_self(archive, top=5):
                 for f, _ in sorted(by_kind.get(kind, {}).items(), key=lambda kv: -kv[1])[:top]:
                     if f not in picked:
                         picked.append(f)
-            out[svc][basis] = [(f, by_kind.get('wall', {}).get(f), by_kind.get('cpu', {}).get(f)) for f in picked]
+            # 그 종류에 표본이 있으면 빠진 함수는 0% 다. 표본이 없는 종류만 '-'(None)로 둔다
+            at = lambda kind, f: by_kind[kind].get(f, 0.0) if by_kind.get(kind) else None
+            out[svc][basis] = [(f, at('wall', f), at('cpu', f)) for f in picked]
     return out
 
 def fmt_delta(v):
