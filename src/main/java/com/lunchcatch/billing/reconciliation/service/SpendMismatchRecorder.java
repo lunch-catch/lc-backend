@@ -31,7 +31,7 @@ public class SpendMismatchRecorder {
         recordOverspends(businessDate, jobExecutionId, now, overspends);
         for (CampaignCounterMismatch mismatch : counterMismatches) {
             mismatchRepository.insertCampaignSpendMismatchIfAbsent(businessDate, mismatch.campaignId(),
-                    mismatch.ledgerSpend(), mismatch.counterSpend(), jobExecutionId, now);
+                    mismatch.billedSpend(), mismatch.counterSpend(), jobExecutionId, now);
         }
     }
 
@@ -39,7 +39,7 @@ public class SpendMismatchRecorder {
                                   List<CampaignOverspend> overspends) {
         for (CampaignOverspend overspend : overspends) {
             mismatchRepository.insertCampaignOverspendIfAbsent(businessDate, overspend.campaignId(),
-                    overspend.reserved(), overspend.ledgerSpend(), jobExecutionId, now);
+                    overspend.reserved(), overspend.billedSpend(), jobExecutionId, now);
         }
     }
 }

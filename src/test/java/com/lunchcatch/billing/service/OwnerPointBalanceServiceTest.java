@@ -12,6 +12,7 @@ import com.lunchcatch.billing.exception.BillingErrorCode;
 import com.lunchcatch.billing.exception.BillingException;
 import com.lunchcatch.billing.repository.PointLedgerRepository;
 import com.lunchcatch.global.config.ClockConfig;
+import java.sql.SQLException;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -21,7 +22,10 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.DataAccessResourceFailureException;
+import org.springframework.dao.QueryTimeoutException;
+import org.springframework.jdbc.BadSqlGrammarException;
 import org.springframework.transaction.CannotCreateTransactionException;
+import org.springframework.transaction.IllegalTransactionStateException;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -98,5 +102,29 @@ class OwnerPointBalanceServiceTest {
         assertThatThrownBy(() -> service().getBalance(OWNER))
                 .isInstanceOfSatisfying(BillingException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(BillingErrorCode.LEDGER_UNAVAILABLE));
+    }
+
+    @Test
+    void SQL_문법_오류는_BILLING_006으로_감추지_않고_그대로_던진다() {
+        BadSqlGrammarException bug = new BadSqlGrammarException("sumBalance", "select", new SQLException("bad"));
+        when(repository.sumBalance(OWNER)).thenThrow(bug);
+
+        assertThatThrownBy(() -> service().getBalance(OWNER)).isSameAs(bug);
+    }
+
+    @Test
+    void 쿼리_시간_초과는_잠그지_않는_합계의_문제라_BILLING_006으로_바꾸지_않는다() {
+        QueryTimeoutException timeout = new QueryTimeoutException("slow sum");
+        when(repository.sumBalance(OWNER)).thenThrow(timeout);
+
+        assertThatThrownBy(() -> service().getBalance(OWNER)).isSameAs(timeout);
+    }
+
+    @Test
+    void 트랜잭션_전파_위반은_BILLING_006으로_바꾸지_않는다() {
+        IllegalTransactionStateException bug = new IllegalTransactionStateException("no existing transaction");
+        when(transactionManager.getTransaction(any())).thenThrow(bug);
+
+        assertThatThrownBy(() -> service().getBalance(OWNER)).isSameAs(bug);
     }
 }

@@ -46,8 +46,8 @@ import org.springframework.transaction.support.TransactionTemplate;
  * 노출 차감을 실제 MySQL 8.4 와 Valkey 9 로 검증한다. 돈이 걸린 경로라 이 테스트 하나만 둔다.
  *
  * 목으로 확인할 수 없는 것을 본다. 판정 Lua 가 동시 요청에서 예약액을 넘기지 않는지, 같은 serveId 의 재호출이
- * 행과 소진을 한 번만 남기는지, 무변경 갱신 INSERT 가 실제로 중복을 흡수하는지, 롤백이 두 INSERT 를 함께
- * 되돌리는지, 해시가 사라졌을 때 재구성이 한 번만 일어나고 소진이 원장과 맞는지다.
+ * 행과 소진을 한 번만 남기는지, 무변경 갱신 INSERT 가 실제로 중복을 흡수하는지, 롤백이 판정 INSERT 를
+ * 되돌리는지, 해시가 사라졌을 때 재구성이 한 번만 일어나고 소진이 판정과 맞는지다. 원장에는 DEDUCT 를 쓰지 않는다(#1294).
  *
  * 커밋을 봐야 하므로 테스트 트랜잭션을 걸지 않고 TransactionTemplate 으로 부른다. 매번 행과 키를 지운다.
  * 그날 계획의 캐시가 테스트 사이에 남으므로 테스트마다 다른 캠페인 ID 를 쓴다.
@@ -130,9 +130,9 @@ class ImpressionDeductionIntegrationTest extends AbstractBillingIntegrationTest 
         return results.stream().filter(result -> result == status).count();
     }
 
-    private long ledgerDeductSum(long campaignId) {
+    private long billedSum(long campaignId) {
         return jdbc.queryForObject(
-                "select coalesce(sum(amount), 0) from point_ledger where entry_type = 'DEDUCT' and campaign_id = ?",
+                "select coalesce(sum(unit_price), 0) from deduction_result where billing_status = 'BILLED' and campaign_id = ?",
                 Long.class, campaignId);
     }
 
@@ -154,7 +154,7 @@ class ImpressionDeductionIntegrationTest extends AbstractBillingIntegrationTest 
     }
 
     @Test
-    void 같은_캠페인에_동시_20건이_와도_예약액을_넘기지_않고_소진이_원장과_맞는다() throws Exception {
+    void 같은_캠페인에_동시_20건이_와도_예약액을_넘기지_않고_소진이_판정과_맞고_원장은_쓰지_않는다() throws Exception {
         long campaignId = plan(10, false);
 
         List<DeductionStatus> results = deductConcurrently(serveIds(20), campaignId);
@@ -162,8 +162,8 @@ class ImpressionDeductionIntegrationTest extends AbstractBillingIntegrationTest 
         assertThat(count(DeductionStatus.BILLED, results)).isEqualTo(10);
         assertThat(count(DeductionStatus.NOT_BILLED_BUDGET, results)).isEqualTo(10);
         assertThat(rows("deduction_result", campaignId)).isEqualTo(20);
-        assertThat(rows("point_ledger", campaignId)).isEqualTo(10);
-        assertThat(ledgerDeductSum(campaignId)).isEqualTo(-10 * UNIT);
+        assertThat(rows("point_ledger", campaignId)).isZero();
+        assertThat(billedSum(campaignId)).isEqualTo(10 * UNIT);
         assertThat(spendInValkey(campaignId)).isEqualTo(10 * UNIT);
     }
 
@@ -178,7 +178,7 @@ class ImpressionDeductionIntegrationTest extends AbstractBillingIntegrationTest 
         assertThat(first).isEqualTo(DeductionStatus.BILLED);
         assertThat(second).isEqualTo(first);
         assertThat(rows("deduction_result", campaignId)).isEqualTo(1);
-        assertThat(rows("point_ledger", campaignId)).isEqualTo(1);
+        assertThat(rows("point_ledger", campaignId)).isZero();
         assertThat(spendInValkey(campaignId)).isEqualTo(UNIT);
     }
 
@@ -197,12 +197,12 @@ class ImpressionDeductionIntegrationTest extends AbstractBillingIntegrationTest 
         assertThat(deductInTx(billed, campaignId)).isEqualTo(DeductionStatus.BILLED);
 
         assertThat(rows("deduction_result", campaignId)).isEqualTo(2);
-        assertThat(rows("point_ledger", campaignId)).isEqualTo(1);
-        assertThat(ledgerDeductSum(campaignId)).isEqualTo(-UNIT);
+        assertThat(rows("point_ledger", campaignId)).isZero();
+        assertThat(billedSum(campaignId)).isEqualTo(UNIT);
     }
 
     @Test
-    void 해시가_모두_사라진_뒤_진행률_한_번의_조회가_원장_합으로_재구성한다() {
+    void 해시가_모두_사라진_뒤_진행률_한_번의_조회가_판정_합으로_재구성한다() {
         long first = plan(30, false);
         long second = plan(30, false);
         long third = plan(30, false);
@@ -234,12 +234,12 @@ class ImpressionDeductionIntegrationTest extends AbstractBillingIntegrationTest 
 
         assertThat(results).containsOnly(DeductionStatus.BILLED);
         assertThat(rows("deduction_result", campaignId)).isEqualTo(1);
-        assertThat(rows("point_ledger", campaignId)).isEqualTo(1);
+        assertThat(rows("point_ledger", campaignId)).isZero();
         assertThat(spendInValkey(campaignId)).isEqualTo(UNIT);
     }
 
     @Test
-    void 롤백하면_판정_행과_원장_행이_함께_사라지고_재호출이_다시_남긴다() {
+    void 롤백하면_판정_행이_사라지고_재호출이_다시_남긴다() {
         long campaignId = plan(30, false);
         UUID serveId = UUID.randomUUID();
 
@@ -256,7 +256,7 @@ class ImpressionDeductionIntegrationTest extends AbstractBillingIntegrationTest 
 
         assertThat(deductInTx(serveId, campaignId)).isEqualTo(DeductionStatus.BILLED);
         assertThat(rows("deduction_result", campaignId)).isEqualTo(1);
-        assertThat(rows("point_ledger", campaignId)).isEqualTo(1);
+        assertThat(rows("point_ledger", campaignId)).isZero();
         assertThat(spendInValkey(campaignId)).isEqualTo(UNIT);
     }
 
@@ -271,7 +271,7 @@ class ImpressionDeductionIntegrationTest extends AbstractBillingIntegrationTest 
 
         assertThat(deductInTx(UUID.randomUUID(), campaignId)).isEqualTo(DeductionStatus.BILLED);
         assertThat(spendInValkey(campaignId)).isEqualTo(UNIT);
-        assertThat(ledgerDeductSum(campaignId)).isEqualTo(-UNIT);
+        assertThat(billedSum(campaignId)).isEqualTo(UNIT);
     }
 
     @Test
@@ -287,7 +287,7 @@ class ImpressionDeductionIntegrationTest extends AbstractBillingIntegrationTest 
 
         assertThat(spendInValkey(campaignId)).isEqualTo(UNIT);
         assertThat(redis.hasKey("billing:served:" + serveId)).isTrue();
-        assertThat(rows("point_ledger", campaignId)).isEqualTo(1);
+        assertThat(rows("point_ledger", campaignId)).isZero();
     }
 
     @Test
@@ -295,7 +295,7 @@ class ImpressionDeductionIntegrationTest extends AbstractBillingIntegrationTest 
         long campaignId = plan(30, false);
 
         assertThat(deductor.deduct(UUID.randomUUID(), campaignId, DAY)).isEqualTo(DeductionStatus.BILLED);
-        assertThat(ledgerDeductSum(campaignId)).isEqualTo(-UNIT);
+        assertThat(billedSum(campaignId)).isEqualTo(UNIT);
         assertThat(rows("deduction_result", campaignId)).isEqualTo(1);
     }
 
@@ -310,7 +310,7 @@ class ImpressionDeductionIntegrationTest extends AbstractBillingIntegrationTest 
         assertThat(outcomes).extracting(DeductionOutcome::serveId).containsExactlyInAnyOrderElementsOf(ids);
         assertThat(outcomes).filteredOn(outcome -> outcome.status() == DeductionStatus.BILLED).hasSize(3);
         assertThat(outcomes).filteredOn(outcome -> outcome.status() == DeductionStatus.NOT_BILLED_BUDGET).hasSize(2);
-        assertThat(ledgerDeductSum(campaignId)).isEqualTo(-3 * UNIT);
+        assertThat(billedSum(campaignId)).isEqualTo(3 * UNIT);
         assertThat(rows("deduction_result", campaignId)).isEqualTo(5);
         assertThat(spendInValkey(campaignId)).isEqualTo(3 * UNIT);
     }
@@ -337,7 +337,7 @@ class ImpressionDeductionIntegrationTest extends AbstractBillingIntegrationTest 
         assertThat(outcomes).containsExactlyInAnyOrder(
                 DeductionOutcome.failed(brokenServe),
                 DeductionOutcome.judged(healthyServe, DeductionStatus.BILLED));
-        assertThat(ledgerDeductSum(healthy)).isEqualTo(-UNIT);
+        assertThat(billedSum(healthy)).isEqualTo(UNIT);
         assertThat(rows("deduction_result", broken)).isZero();
         assertThat(rows("point_ledger", broken)).isZero();
     }
@@ -390,7 +390,7 @@ class ImpressionDeductionIntegrationTest extends AbstractBillingIntegrationTest 
         assertThat(rebuilds).isEqualTo(1.0);
         assertThat(count(DeductionStatus.BILLED, results)).isEqualTo(5);
         assertThat(count(DeductionStatus.NOT_BILLED_BUDGET, results)).isEqualTo(15);
-        assertThat(ledgerDeductSum(campaignId)).isEqualTo(-10 * UNIT);
+        assertThat(billedSum(campaignId)).isEqualTo(10 * UNIT);
         assertThat(spendInValkey(campaignId)).isEqualTo(10 * UNIT);
     }
 

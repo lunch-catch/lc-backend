@@ -9,6 +9,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.lunchcatch.auth.exception.AuthErrorCode;
 import com.lunchcatch.auth.exception.AuthException;
 import com.lunchcatch.member.client.KakaoUnlinkClient;
 import com.lunchcatch.member.contract.MemberStatus;
@@ -26,6 +27,7 @@ import com.lunchcatch.member.repository.MemberRepository;
 import com.lunchcatch.member.repository.MemberWithdrawalHistoryRepository;
 import java.lang.reflect.Field;
 import java.nio.charset.StandardCharsets;
+import java.sql.SQLException;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneId;
@@ -39,6 +41,8 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.jdbc.BadSqlGrammarException;
+import org.springframework.transaction.CannotCreateTransactionException;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.TransactionStatus;
@@ -75,6 +79,30 @@ class MemberWithdrawalServiceTest {
                 kakaoUnlinkClient,
                 new TransactionTemplate(transactionManager),
                 clock);
+    }
+
+    // 로컬 탈퇴 트랜잭션을 열지 못해도 명세대로 503 AUTH-002 다(#1320)
+    @Test
+    void 탈퇴_트랜잭션을_열지_못하면_AUTH002다() {
+        when(kakaoIdTokenExchanger.exchange("code", "state")).thenReturn(identity("kakao-1"));
+        // 기본으로 걸어 둔 트랜잭션 시작을 지우고 커넥션을 얻지 못하게 바꾼다
+        org.mockito.Mockito.reset(transactionManager);
+        when(transactionManager.getTransaction(any(TransactionDefinition.class)))
+                .thenThrow(new CannotCreateTransactionException("pool exhausted"));
+
+        assertThatThrownBy(() -> memberWithdrawalService.withdraw(1L, "code", "state"))
+                .isInstanceOfSatisfying(AuthException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(AuthErrorCode.REFRESH_TOKEN_STORE_UNAVAILABLE));
+        verify(kakaoUnlinkClient, never()).unlink(any());
+    }
+
+    @Test
+    void 탈퇴의_SQL_오류는_AUTH002로_바꾸지_않는다() {
+        when(kakaoIdTokenExchanger.exchange("code", "state")).thenReturn(identity("kakao-1"));
+        BadSqlGrammarException bug = new BadSqlGrammarException("find", "SELECT", new SQLException("syntax"));
+        when(memberRepository.findByIdForUpdate(1L)).thenThrow(bug);
+
+        assertThatThrownBy(() -> memberWithdrawalService.withdraw(1L, "code", "state")).isSameAs(bug);
     }
 
     @Test

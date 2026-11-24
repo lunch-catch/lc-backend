@@ -5,7 +5,6 @@ package com.lunchcatch.analytics.batch;
  * 계산한 플랫폼 소진액이다. 공개 때 방금 쓴 행과 맞대는 값이다.
  */
 public record SettlementFindings(
-        long billedAmountViolations,
         long overDeductViolations,
         long releaseViolations,
         long expectedSpent

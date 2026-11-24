@@ -257,10 +257,10 @@
 | B-102 | 앱 인스턴스에서는 돌지 않음 | 스케줄러 설정 꺼짐 | SchedulingConfig(@ConditionalOnProperty) | - | lunchcatch.scheduler.enabled 미설정 또는 false | @Scheduled 작업 전부 미기동 | 상시 |
 | B-103 | 단계 사이 묶음 점유 상실 | 각 단계 전 renew(DAILY_0000) 0건 | BatchJobRunner.runBundle | - | 다른 서버가 묶음 행을 이어받음 | 다음 단계로 가지 않고 중단, 묶음 행은 이어받은 서버가 판정 | 실행 중 |
 | B-104 | 앞 단계 실패 시 뒤 단계 미실행 | 단계 예외(비일시적) | BatchJobRunner.runStep | FAILED | 예: 40 단계 실패 | 그 단계 행 FAILED, (DAILY_0000, D) FAILED 사유 "<단계> 단계가 실패했다", 50 이후 단계 행 없음 | D 00:00 |
-| B-105 | 전일 소진 대사 일치 | 40 BILLING_SPEND_RECON_PREV | SpendReconciliationService.reconcilePreviousDay | - | D-1 budget_daily_plan 존재, Valkey 카운터 = 원장 DEDUCT 합, DEDUCT 합 <= daily_budget | settlement_mismatch 기록 없음, 단계 SUCCESS | 대상일 D-1 |
+| B-105 | 전일 소진 대사 일치 | 40 BILLING_SPEND_RECON_PREV | SpendReconciliationService.reconcilePreviousDay | - | D-1 budget_daily_plan 존재, Valkey 카운터 = 판정 BILLED 단가 합, BILLED 단가 합 <= daily_budget | settlement_mismatch 기록 없음, 단계 SUCCESS | 대상일 D-1 |
 | B-106 | 전일 계획 없음 | 40 단계 | SpendReconciliationService | - | D-1 budget_daily_plan 0건 | 0 반환, 기록 없음, SUCCESS | 대상일 D-1 |
-| B-107 | 카운터와 원장 불일치 | 40 단계 | SpendMismatchRecorder.insertCampaignSpendMismatchIfAbsent | CAMPAIGN_SPEND_VS_LEDGER | 카운터 spend != 원장 DEDUCT 합 | 불일치 행 1건(종류+캠페인당 1건), resolution_type 비움, 카운터 재구성 안 함, 단계 SUCCESS | 대상일 D-1 |
-| B-108 | 초과 소진 | 40 단계 | SpendMismatchRecorder.insertCampaignOverspendIfAbsent | CAMPAIGN_OVERSPEND | 원장 DEDUCT 합 > 계획 daily_budget, 또는 해제된 D-2 의 DEDUCT 합 + RELEASE 합 > daily_budget(자정 직전에 시작해 해제 뒤 커밋된 전날 차감, reconcileReleasedDay) | 기대값=예약액, 실제값=DEDUCT 합(해제 뒤 대조는 DEDUCT 합 + RELEASE 합)으로 기록, 되돌리지 않음, 카운터 없는 캠페인도 검사 | 대상일 D-1(해제 뒤 대조는 D-2) |
+| B-107 | 카운터와 판정 불일치 | 40 단계 | SpendMismatchRecorder.insertCampaignSpendMismatchIfAbsent | CAMPAIGN_SPEND_VS_LEDGER | 카운터 spend != 판정 BILLED 단가 합 | 불일치 행 1건(종류+캠페인당 1건), resolution_type 비움, 카운터 재구성 안 함, 단계 SUCCESS | 대상일 D-1 |
+| B-108 | 초과 소진 | 40 단계 | SpendMismatchRecorder.insertCampaignOverspendIfAbsent | CAMPAIGN_OVERSPEND | 판정 BILLED 단가 합 > 계획 daily_budget, 또는 해제된 D-2 의 BILLED 단가 합 + RELEASE 합 > daily_budget(자정 직전에 시작해 해제 뒤 커밋된 전날 차감, reconcileReleasedDay) | 기대값=예약액, 실제값=BILLED 단가 합(해제 뒤 대조는 BILLED 단가 합 + RELEASE 합)으로 기록, 되돌리지 않음, 카운터 없는 캠페인도 검사 | 대상일 D-1(해제 뒤 대조는 D-2) |
 | B-109 | Valkey 해시 없음 | 40 단계 | SpendReconciliationService | - | 계획은 있으나 카운터 해시 없음(재시작/만료) | 카운터 대조 건너뜀, BILLING_SPEND_RECON_HASH_MISSING WARN, 초과 소진 검사는 수행 | 대상일 D-1 |
 | B-110 | 대사 재실행 멱등 | 40 단계 재실행 | SettlementMismatchRepository(ON DUPLICATE KEY) | - | 같은 D-1 불일치가 이미 있음 | 불일치 행 중복 없음 | 같은 D |
 | B-111 | 전일 남은 예약 해제 | 50 BILLING_RESERVE 앞부분 release(D-1) | DailyReservationService.release -> DailyReservationRecorder.releaseForOwner | - | D-1 계획 daily_budget - DEDUCT 합 > 0, RELEASE 없음 | 점주마다 계정 행 잠금 후 RELEASE 원장 1줄, 잔액 복귀 | 대상일 D-1 |
@@ -349,7 +349,7 @@
 | B-171 | 예상 못한 예외 | runGuarded | DailyAggregationRunner | FAILED | runDate 자체 예외 | ERROR 로그, pending(FAILED), 다음 날짜 진행 | T |
 | B-172 | 세대 읽기 실패 | acquire 직후 재조회 실패 | DailyAggregationRunner.abandon | FAILED | 점유 성공 후 조회 예외 | 행 FAILED, pending(FAILED) | T |
 | B-173 | 정정 날짜 기록 | 100 SettlementMetricsStep | rememberCorrectionDates | ADJUSTED | 그날 원장에 다른 영업일 대상 정정(ADJUST) | 그 날짜를 pending(ADJUSTED)로 남겨 다음 01:00 재집계(자기 날짜, 오늘 이후, 보존 밖 제외) | T |
-| B-174 | 정산 정합성 위반 | 900 SettlementConsistencyStep | V-1, V-2, V-3, V-7 검사 | - | BILLED x 단가 != DEDUCT 등 | 집계 실패시키지 않고 analytics_consistency_violations{check} 지표와 로그만 | T |
+| B-174 | 정산 정합성 위반 | 900 SettlementConsistencyStep | V-2, V-3, V-7 검사 | - | DEDUCT > RESERVE, RELEASE != RESERVE - DEDUCT 등 | 집계 실패시키지 않고 analytics_consistency_violations{check} 지표와 로그만 | T |
 | B-175 | 이어받은 집계 | takeOverStale -> resume(STANDALONE) | DailyAggregationJob.run(date, attemptNo) -> runner.aggregate | SUCCEEDED 등 | (DAILY_AGGREGATION, 날짜) RUNNING, 2분 넘게 갱신 없음 | 넘겨받은 세대로 그 날짜만 집계, 집계가 행을 건수와 함께 닫고 BatchJobRunner 의 succeedAttempt 는 무시됨 | 1분 주기 스캔 |
 
 ### 01:30 PG 대조
