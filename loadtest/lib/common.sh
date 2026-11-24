@@ -127,6 +127,50 @@ PREPARE st FROM @s; EXECUTE st; DEALLOCATE PREPARE st;
 SELECT CONCAT('database ', @db, ' tables ', COUNT(*)) FROM information_schema.TABLES WHERE TABLE_SCHEMA = @db;"
 
 #
+# 다시 띄운 앱이나 배치가 준비되기를 5분까지 기다린다(#1347). 꺼진 채(exited, dead)로 두 번 연달아 보이면 다시 뜨지 않는 것이라
+# 기다리지 않고 마지막 오류 로그를 보이고 실패한다. 다시 띄우기 정책이 있으면 꺼져도 곧 restarting 이 되어 계속 기다린다.
+# 준비된 뒤 다시 뜬 적이 있으면 그 횟수를 낸다. 다시 떠서 이어진 회차인지 나중에 알 수 있게 한다.
+# 로컬은 local_ready 를 부르고, 부하 시험 환경은 READY_SH 를 서버에서 돌린다. 둘은 같은 순서다
+#
+local_ready() {
+  local svc="$1" name="$LOCAL_PROJECT-$1-1" i st down=0 restarts
+  for i in $(seq 1 60); do
+    docker exec "$name" curl -fs localhost:8081/actuator/health/readiness > /dev/null 2>&1 && break
+    st=$(docker inspect -f '{{.State.Status}}' "$name" 2> /dev/null || echo missing)
+    case "$st" in
+      exited|dead|missing) down=$((down + 1)) ;;
+      *) down=0 ;;
+    esac
+    if [ "$down" -ge 2 ]; then
+      echo "ERROR: $svc 컨테이너가 꺼졌다($st). 마지막 오류 로그다" >&2
+      docker logs --tail 300 "$name" 2>&1 | grep '"level":"ERROR"' | tail -2 | cut -c1-600 >&2 || true
+      die "$svc 가 뜨지 못했다"
+    fi
+    sleep 5
+  done
+  docker exec "$name" curl -fs localhost:8081/actuator/health/readiness > /dev/null 2>&1 || die "$svc 가 5분 안에 준비되지 않았다"
+  restarts=$(docker inspect -f '{{.RestartCount}}' "$name")
+  [ "$restarts" -eq 0 ] || echo "WARN: $svc 가 뜨는 동안 $restarts 번 다시 떴다. docker logs $name 로 그 오류를 본다" >&2
+}
+
+IFS= read -r -d '' READY_SH <<'SH' || true
+down=0
+for i in $(seq 1 60); do
+  curl -fs localhost:8081/actuator/health/readiness > /dev/null && break
+  st=$(docker inspect "$PROJECT" --format '{{.State.Status}}' 2> /dev/null || echo missing)
+  case "$st" in exited|dead|missing) down=$((down + 1)) ;; *) down=0 ;; esac
+  if [ "$down" -ge 2 ]; then
+    echo "ERROR: 컨테이너가 꺼졌다($st). 마지막 오류 로그다"
+    docker logs --tail 300 "$PROJECT" 2>&1 | grep '"level":"ERROR"' | tail -2 | cut -c1-600 || true
+    exit 1
+  fi
+  sleep 5
+done
+restarts=$(docker inspect "$PROJECT" --format '{{.RestartCount}}' 2> /dev/null || echo 0)
+[ "$restarts" = 0 ] || echo "WARN: 뜨는 동안 $restarts 번 다시 떴다. docker logs $PROJECT 로 그 오류를 본다"
+SH
+
+#
 # 회차의 출발점을 만든다. 앱의 데이터베이스를 다시 만들고 앱과 배치를 다시 띄워 Flyway 가 표와 기준 데이터를 처음부터 만들게 한 뒤 Valkey 를 비운다(#1296).
 # 도메인마다 다른 것은 시드뿐이라 도메인의 run.sh 는 이것을 부른 뒤 자기 시드를 넣는다.
 # 로컬은 앱과 배치를 내린 뒤 지운다. 부하 시험 환경은 접속 정보를 앱 컨테이너에서 읽어야 해(DB_ENV) 앱이 떠 있는 채로 지우고 모든 서버를 다시 띄운다.
@@ -139,12 +183,7 @@ reset_state() {
     printf '%s\n' "$RECREATE_DATABASE" | local_mysql -N
     docker start "$LOCAL_PROJECT-app-1" "$LOCAL_PROJECT-batch-1" > /dev/null
     for svc in app batch; do
-      for i in $(seq 1 60); do
-        docker exec "$LOCAL_PROJECT-$svc-1" curl -fs localhost:8081/actuator/health/readiness > /dev/null 2>&1 && break
-        sleep 5
-      done
-      docker exec "$LOCAL_PROJECT-$svc-1" curl -fs localhost:8081/actuator/health/readiness > /dev/null 2>&1 \
-        || die "$svc 가 5분 안에 준비되지 않았다"
+      local_ready "$svc"
     done
     docker exec "$LOCAL_PROJECT-valkey-1" valkey-cli FLUSHALL > /dev/null
     echo "valkey $(docker exec "$LOCAL_PROJECT-valkey-1" valkey-cli DBSIZE)"
@@ -166,9 +205,8 @@ SQL"
     echo "restart $id"
     remote "$id" 600 "set -euo pipefail
 systemctl restart $PROJECT
-for i in \$(seq 1 60); do
-  curl -fs localhost:8081/actuator/health/readiness > /dev/null && break; sleep 5
-done
+PROJECT=$PROJECT
+$READY_SH
 curl -fs localhost:8081/actuator/health/readiness" &
     pids="$pids $!"
   done
@@ -2152,10 +2190,7 @@ local_switch() {
     -f "$LC_INFRA_DIR/observability/local/compose.lt-like.yaml" ${over:+-f "$over"} \
     up -d --no-build app batch
   for svc in app batch; do
-    for i in $(seq 1 60); do
-      docker exec "$LOCAL_PROJECT-$svc-1" curl -fs localhost:8081/actuator/health/readiness > /dev/null 2>&1 && break
-      sleep 5
-    done
+    local_ready "$svc"
     ready=$(docker exec "$LOCAL_PROJECT-$svc-1" curl -fs localhost:8081/actuator/health/readiness) \
       || die "$svc 가 5분 안에 준비되지 않았다"
     echo "$svc $ready"

@@ -255,9 +255,8 @@ OVERRIDE"
 $tracing
 /usr/local/bin/$PROJECT-refresh-env
 systemctl restart $PROJECT
-for i in \$(seq 1 60); do
-  curl -fs localhost:8081/actuator/health/readiness > /dev/null && break; sleep 5
-done
+PROJECT=$PROJECT
+$READY_SH
 docker inspect $PROJECT --format '{{.Config.Image}}'
 docker inspect $PROJECT --format '{{range .Config.Env}}{{println .}}{{end}}' | grep -E '^(JDK_JAVA_OPTIONS|OTEL_SERVICE_NAME)=' || echo 'tracing off'
 docker inspect $PROJECT --format '{{range .Config.Env}}{{println .}}{{end}}' | grep '^SPRING_DATA_REDIS_LETTUCE_POOL_ENABLED=' || echo 'pool on'

@@ -189,6 +189,7 @@ loadtest/adserving/run.sh --local run local-run1 30000001 20 1m
 - `rows`, `drain`, `clean` 처럼 AWS 에만 있는 일은 로컬에서 막는다. `reset` 은 로컬 앱과 배치를 내리고 로컬 데이터베이스를 지우고 다시 만든 뒤 다시 띄우고, 로컬 Valkey 를 비우고 로컬 시드를 넣어, AWS 와 같은 순서(`reset` → `prepare` → 워밍업 → 측정)로 잰다. `switch` 는 커밋 없이 `[--tracing <이름>] [--no-pool] [--env|--app-env|--batch-env KEY=VALUE]...` 를 받아 로컬 앱과 배치를 다시 띄운다. 배치는 lc-infra 의 `compose.lt-like.yaml` 로 따로 뜬다.
 - 초당 피드는 노트북에 맞춰 낮춘다. 20 이면 초당 요청이 약 200 이다.
 - 로컬 `switch` 는 Alloy 와 Tempo 를 다시 띄워 쌓인 스팬과 트레이스를 비운다. 관측 도구가 앱과 같은 Docker 가상 머신에 있어, 트레이싱 회차를 이어 돌리면 둘이 쌓여 앱과 메모리를 나눠 쓴다(#1267).
+- `switch` 와 `reset` 은 다시 띄운 앱과 배치가 준비되기를 5분까지 기다린다. 컨테이너가 꺼진 채로 두 번 연달아 보이면 기다리지 않고 마지막 오류 로그를 보이며 실패한다. 다시 띄우기 정책(lc-infra 의 `compose.lt-like.yaml`, 부하 시험 환경의 compose)으로 다시 떴으면 `WARN: <서버> 가 뜨는 동안 N 번 다시 떴다` 를 낸다(#1347).
 - `run` 만 부르면 결과 문서의 사본에 적지 않는다. 적을 버전 폴더가 없어서다. `version` 으로 돌거나 `SNAPSHOT_OUT=$PWD/build/loadtest-results/<시나리오>-<버전>` 을 주고 `run` 을 부르면 `build/loadtest-results/` 의 사본에 회차별 결과와 기준 초과 표가 적힌다.
 
 ### 기준 초과 표를 로컬에서 확인하기
