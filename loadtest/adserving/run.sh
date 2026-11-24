@@ -316,6 +316,7 @@ curl -fs localhost:8081/actuator/health/readiness" &
       fi
       export PROFILE_BATCHES
       profile "$name" $(( 60 + hold_ms / 1000 + 10 )) "$prof" &
+      prof_pid=$!
     fi
     require_snapshot "$name"
     # 경고 로그를 셀 구간이다. k6 가 중간에 멈추거나 원격 명령이 실패해도 그때까지를 센다
@@ -352,12 +353,19 @@ grep 'level=error' \$OUT/k6-$name.log | tail -5 || true" ) > "$out" || rc=$?
     else
       record_warnings "$name" "$start" "$(now_ms)"
     fi
-    # 프로파일링은 회차가 끝난 뒤 JFR 을 변환해 보낸다(#1345). 그것이 끝나야 캡처의 Call Tree 와 프로파일 보관이 모든 묶음을 본다
+    # 프로파일링은 회차가 끝난 뒤 JFR 을 변환해 보낸다(#1345). 그것이 끝나야 캡처의 Call Tree 와 프로파일 보관이 모든 묶음을 본다.
+    # 실패하면 캡처는 그대로 남기되 5 로 끝난다. 묶음이 빠진 진단을 끝난 것으로 적지 않아 plan --diag 로 다시 돌게 한다
+    prc=0
+    [ -z "${prof_pid:-}" ] || wait "$prof_pid" || prc=$?
     wait
     # 회차의 지표, 캡처, 무효 판정을 잇는다. 무효면 3, 캡처가 실패하면 4 로 끝나 다음 회차로 넘어가지 않는다(#1305)
     if [ "$rc" -ne 2 ]; then
       arc=0; after_run "$name" "$out" || arc=$?
       [ "$rc" -ne 0 ] || rc=$arc
+    fi
+    if [ "$prc" -ne 0 ] && [ "$rc" -eq 0 ]; then
+      echo "PROFILE-FAILED $name: 프로파일링이 $prc 로 끝났다. 빠진 묶음이 있을 수 있어 진단을 끝난 것으로 적지 않는다" >&2
+      rc=5
     fi
     exit "$rc"
     ;;
