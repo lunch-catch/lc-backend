@@ -1966,6 +1966,11 @@ after_run() {
       rm -f "$metrics_out"
       [ "$snap_rc" -eq 0 ] || { echo "SNAPSHOT-FAILED $name: 캡처가 $snap_rc 로 끝났다. 환경을 내리기 전에 같은 구간(--from $ws --to $he)으로 다시 찍는다"; return 4; }
       echo "captured $name"
+      # 프로파일링이 실패한 진단은 묶음이 빠졌을 수 있다. 캡처는 분석용으로 남기고 진단 절과 커밋은 건너뛴다. 실패는 run 이 5 로 낸다
+      if [ -n "${PROFILE_FAILED:-}" ]; then
+        echo "WARN: $name 의 프로파일링이 실패해 진단 절에 적지 않고 커밋하지 않았다. 캡처는 $SNAPSHOT_OUT/$name 에 있다" >&2
+        return 0
+      fi
       record_diag "$name"
       commit_diag "$name"
       return 0 ;;

@@ -374,7 +374,8 @@ grep 'level=error' \$OUT/k6-$name.log | tail -5 || true" ) > "$out" || rc=$?
     wait
     # 회차의 지표, 캡처, 무효 판정을 잇는다. 무효면 3, 캡처가 실패하면 4 로 끝나 다음 회차로 넘어가지 않는다(#1305)
     if [ "$rc" -ne 2 ]; then
-      arc=0; after_run "$name" "$out" || arc=$?
+      # 프로파일링이 실패했으면 캡처만 남기고 결과 문서와 커밋은 건너뛰게 알린다
+      arc=0; PROFILE_FAILED="$([ "$prc" -eq 0 ] || echo 1)" after_run "$name" "$out" || arc=$?
       [ "$rc" -ne 0 ] || rc=$arc
     fi
     if [ "$prc" -ne 0 ] && [ "$rc" -eq 0 ]; then
