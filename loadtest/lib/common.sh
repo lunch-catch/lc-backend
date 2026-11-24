@@ -1028,7 +1028,8 @@ def judge(over):
 def basis(t, default):
     if t is None:
         return '지표 없음'
-    return '%s(%s)' % (fmt_s(t), '기본값' if default else '설계서')
+    # 이름별 값이 있으면 설정의 값(설계서에서 옮긴 값이거나 실행 인자로 바꾼 값)이고, 없으면 그 종류의 기본값이다
+    return '%s(%s)' % (fmt_s(t), '기본값' if default else '설정')
 
 def render_overrun(o):
     # 회차의 기준 초과 표다(#1339). 기준은 앱의 overrun_threshold_seconds 이고 값은 유지 구간으로 센다
