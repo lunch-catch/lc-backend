@@ -71,7 +71,7 @@ public class TemplateReviseService {
         Template template = findTemplate(templateId);
         String previousHtml = previousHtml(template);
         Document previousDocument = Jsoup.parseBodyFragment(previousHtml);
-        GeneratedTemplate generated = generate(previousHtml, requestPrompt);
+        GeneratedTemplate generated = generate(previousHtml, requestPrompt, requestId);
         if (generated.chatOnly()) {
             return chatOnlyResponse(requestId, generated);
         }
@@ -141,11 +141,19 @@ public class TemplateReviseService {
                 .orElseThrow(() -> new CampaignException(PosterErrorCode.TEMPLATE_NOT_FOUND));
     }
 
-    private GeneratedTemplate generate(String previousHtml, String requestPrompt) {
+    /*
+     * 모델 호출 단계에서 실패하면 저장된 것이 없고 호출한 스레드도 끝났다. 같은 requestId 재시도가 POSTER-004 로
+     * 막히지 않게 처리 중 표식을 푼다(#1298). 분당 3회에 이미 센 횟수는 되돌리지 않는다.
+     */
+    private GeneratedTemplate generate(String previousHtml, String requestPrompt, String requestId) {
         try {
             return templateHtmlGenerator.revise(previousHtml, requestPrompt);
         } catch (TemplateGenerationTimeoutException e) {
+            templateGenerationRateLimiter.releaseInFlight(requestId);
             throw new CampaignException(PosterErrorCode.GENERATION_TIMEOUT, e);
+        } catch (CampaignException e) {
+            templateGenerationRateLimiter.releaseInFlight(requestId);
+            throw e;
         }
     }
 

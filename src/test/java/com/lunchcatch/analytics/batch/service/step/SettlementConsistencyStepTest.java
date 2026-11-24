@@ -11,8 +11,6 @@ import com.lunchcatch.analytics.batch.repository.SettlementAnalyticsRepository;
 import com.lunchcatch.analytics.batch.repository.SettlementAnalyticsRow;
 import com.lunchcatch.analytics.batch.service.AggregationMetrics;
 import com.lunchcatch.billing.contract.BillingStatsQueryService;
-import com.lunchcatch.billing.contract.CampaignBillingCount;
-import com.lunchcatch.billing.contract.CampaignDailyBudget;
 import com.lunchcatch.billing.contract.OwnerCampaignLedgerSum;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.LocalDate;
@@ -51,11 +49,8 @@ class SettlementConsistencyStepTest {
         return new OwnerCampaignLedgerSum(1L, campaign, 0, reserve, deduct, release, 0, positiveAdjust, 0);
     }
 
-    private void campaign(long billed, Long unitPrice, OwnerCampaignLedgerSum... ledgers) {
+    private void ledgers(OwnerCampaignLedgerSum... ledgers) {
         when(billing.ledgerSums(DAY)).thenReturn(List.of(ledgers));
-        when(billing.billingCounts(DAY)).thenReturn(List.of(new CampaignBillingCount(CAMPAIGN, billed, 0, 0, 0)));
-        when(billing.dailyBudgets(DAY)).thenReturn(unitPrice == null
-                ? List.of() : List.of(new CampaignDailyBudget(CAMPAIGN, 10_000, unitPrice)));
     }
 
     private double violations(String check) {
@@ -68,8 +63,8 @@ class SettlementConsistencyStepTest {
     }
 
     @Test
-    void 과금_수와_단가와_예약_해제가_모두_맞으면_위반이_없다() {
-        campaign(30, 100L, ledger(CAMPAIGN, -5000, -3000, 2000, 0));
+    void 예약_해제와_소진액이_모두_맞으면_위반이_없다() {
+        ledgers(ledger(CAMPAIGN, -5000, -3000, 2000, 0));
         when(repository.find(DAY)).thenReturn(Optional.of(
                 new SettlementAnalyticsRow(0, 3000, 5000, 2000, 0, 0, 0, 0)));
 
@@ -77,39 +72,26 @@ class SettlementConsistencyStepTest {
         int rows = step.publish(DAY, findings);
 
         assertThat(rows).isZero();
-        assertThat(violations("V-1")).isZero();
         assertThat(violations("V-2")).isZero();
         assertThat(violations("V-3")).isZero();
         assertThat(violations("V-7")).isZero();
     }
 
+    // 판정 BILLED 와 원장 DEDUCT 두 사본이 판정 하나가 되어 맞댈 것이 없다(#1249, #1293)
     @Test
-    void 과금_수_곱하기_단가가_차감_합과_다르면_V1_위반이다() {
-        campaign(29, 100L, ledger(CAMPAIGN, -5000, -3000, 2000, 0));
+    void BILLED_수와_원장_DEDUCT_를_맞대던_V1_은_더_기록하지_않는다() {
+        ledgers(ledger(CAMPAIGN, -5000, -3000, 2000, 0));
         when(repository.find(DAY)).thenReturn(Optional.of(
                 new SettlementAnalyticsRow(0, 3000, 5000, 2000, 0, 0, 0, 0)));
 
         step.publish(DAY, step.collect(DAY));
 
-        assertThat(violations("V-1")).isEqualTo(1.0);
-        assertThat(violations("V-2")).isZero();
-        assertThat(violations("V-3")).isZero();
-    }
-
-    @Test
-    void 단가가_없는_캠페인에_차감이_있으면_V1_위반이다() {
-        campaign(0, null, ledger(CAMPAIGN, -5000, -3000, 2000, 0));
-        when(repository.find(DAY)).thenReturn(Optional.of(
-                new SettlementAnalyticsRow(0, 3000, 5000, 2000, 0, 0, 0, 0)));
-
-        step.publish(DAY, step.collect(DAY));
-
-        assertThat(violations("V-1")).isEqualTo(1.0);
+        assertThat(registry.find("analytics_consistency_violations").tag("check", "V-1").gauge()).isNull();
     }
 
     @Test
     void 차감이_예약을_넘으면_V2_위반이다() {
-        campaign(15, 100L, ledger(CAMPAIGN, -1000, -1500, 0, 0));
+        ledgers(ledger(CAMPAIGN, -1000, -1500, 0, 0));
         when(repository.find(DAY)).thenReturn(Optional.of(
                 new SettlementAnalyticsRow(0, 1500, 1000, 0, 0, 0, 0, 0)));
 
@@ -120,7 +102,7 @@ class SettlementConsistencyStepTest {
 
     @Test
     void 해제가_예약에서_차감을_뺀_값이_아니면_V3_위반이다() {
-        campaign(30, 100L, ledger(CAMPAIGN, -5000, -3000, 0, 0));
+        ledgers(ledger(CAMPAIGN, -5000, -3000, 0, 0));
         when(repository.find(DAY)).thenReturn(Optional.of(
                 new SettlementAnalyticsRow(0, 3000, 5000, 0, 0, 0, 0, 0)));
 
@@ -132,7 +114,7 @@ class SettlementConsistencyStepTest {
 
     @Test
     void 캠페인_없는_양수_정정은_플랫폼_소진액에서만_빠진다() {
-        campaign(30, 100L,
+        ledgers(
                 ledger(CAMPAIGN, -5000, -3000, 2000, 200),
                 ledger(null, 0, 0, 0, 100));
         when(repository.find(DAY)).thenReturn(Optional.of(
@@ -147,7 +129,7 @@ class SettlementConsistencyStepTest {
 
     @Test
     void 저장된_소진액이_원장에서_다시_계산한_값과_다르면_V7_위반이다() {
-        campaign(30, 100L, ledger(CAMPAIGN, -5000, -3000, 2000, 0));
+        ledgers(ledger(CAMPAIGN, -5000, -3000, 2000, 0));
         when(repository.find(DAY)).thenReturn(Optional.of(
                 new SettlementAnalyticsRow(0, 2900, 5000, 2000, 0, 0, 0, 0)));
 
@@ -158,7 +140,7 @@ class SettlementConsistencyStepTest {
 
     @Test
     void 저장된_행이_없으면_V7_위반이다() {
-        campaign(30, 100L, ledger(CAMPAIGN, -5000, -3000, 2000, 0));
+        ledgers(ledger(CAMPAIGN, -5000, -3000, 2000, 0));
         when(repository.find(DAY)).thenReturn(Optional.empty());
 
         step.publish(DAY, step.collect(DAY));
@@ -168,7 +150,7 @@ class SettlementConsistencyStepTest {
 
     @Test
     void 정정이_차감보다_커서_소진액이_음수여도_저장된_값과_맞으면_위반이_아니다() {
-        campaign(1, 100L, ledger(CAMPAIGN, -1000, -100, 900, 350));
+        ledgers(ledger(CAMPAIGN, -1000, -100, 900, 350));
         when(repository.find(DAY)).thenReturn(Optional.of(
                 new SettlementAnalyticsRow(0, 100, 1000, 900, 0, 350, 350, 0)));
 
@@ -182,20 +164,18 @@ class SettlementConsistencyStepTest {
     @Test
     void 그날_원장이_하나도_없으면_모든_검사가_위반_없이_지나간다() {
         when(billing.ledgerSums(DAY)).thenReturn(List.of());
-        when(billing.billingCounts(DAY)).thenReturn(List.of());
-        when(billing.dailyBudgets(DAY)).thenReturn(List.of());
         when(repository.find(DAY)).thenReturn(Optional.of(
                 new SettlementAnalyticsRow(0, 0, 0, 0, 0, 0, 0, 0)));
 
         step.publish(DAY, step.collect(DAY));
 
-        assertThat(violations("V-1") + violations("V-2") + violations("V-3") + violations("V-7")).isZero();
+        assertThat(violations("V-2") + violations("V-3") + violations("V-7")).isZero();
     }
 
     // 범위 안에서는 앞 단계가 읽은 목록을 나눠 쓴다. 나눠 쓴 결과가 단계마다 원천을 읽던 때와 같아야 한다(#1257)
     @Test
     void 범위_안에서_나눠_쓴_원천으로_모은_결과가_범위_밖에서_모은_결과와_같다() {
-        campaign(29, 100L,
+        ledgers(
                 ledger(CAMPAIGN, -5000, -3000, 0, 200),
                 ledger(null, 0, 0, 0, 100));
 
@@ -210,7 +190,5 @@ class SettlementConsistencyStepTest {
         assertThat(first).isEqualTo(outside);
         assertThat(second).isEqualTo(outside);
         verify(billing, times(2)).ledgerSums(DAY);
-        verify(billing, times(2)).billingCounts(DAY);
-        verify(billing, times(2)).dailyBudgets(DAY);
     }
 }

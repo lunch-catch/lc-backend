@@ -1,5 +1,6 @@
 package com.lunchcatch.member.service;
 
+import com.lunchcatch.auth.StoreFailures;
 import com.lunchcatch.auth.exception.AuthErrorCode;
 import com.lunchcatch.auth.exception.AuthException;
 import com.lunchcatch.global.exception.BusinessException;
@@ -81,7 +82,8 @@ public class MemberWithdrawalService {
             throw e;
         } catch (RuntimeException e) {
             log.error("event=MEMBER_WITHDRAWAL_FAILED memberId={} reason=SYSTEM_ERROR exceptionType={}", memberId, e.getClass().getSimpleName());
-            throw e;
+            // 로컬 탈퇴 트랜잭션에서 DB 를 쓸 수 없어도 명세대로 AUTH-002 다. 코드 버그는 그대로 던진다(#1320)
+            throw StoreFailures.toResponse(e);
         }
         try {
             kakaoUnlinkClient.unlink(target.providerUserId());
