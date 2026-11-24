@@ -46,7 +46,7 @@ public class DeductionResult extends BaseTimeEntity {
     @Column(name = "billing_status", nullable = false, length = 20, updatable = false)
     private DeductionStatus billingStatus;
 
-    /** 그날 단가다. BILLED 면 원장 DEDUCT 의 금액이다. */
+    /** 그날 단가다. BILLED 면 이 노출의 소진 금액이다. */
     @Column(name = "unit_price", nullable = false, updatable = false)
     private long unitPrice;
 }

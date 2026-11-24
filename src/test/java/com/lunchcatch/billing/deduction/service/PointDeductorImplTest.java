@@ -22,7 +22,6 @@ import com.lunchcatch.billing.deduction.cache.DeductOutcome;
 import com.lunchcatch.billing.deduction.cache.InMemoryDailySpendCounter;
 import com.lunchcatch.billing.deduction.repository.DeductionBatchRepository;
 import com.lunchcatch.billing.deduction.repository.DeductionResultRepository;
-import com.lunchcatch.billing.repository.PointLedgerRepository;
 import com.lunchcatch.billing.reservation.dto.PlanSnapshot;
 import com.lunchcatch.billing.reservation.entity.BudgetDailyPlan;
 import com.lunchcatch.billing.reservation.repository.BudgetDailyPlanRepository;
@@ -81,8 +80,6 @@ class PointDeductorImplTest {
     @Mock
     private DeductionResultRepository deductionResultRepository;
     @Mock
-    private PointLedgerRepository ledgerRepository;
-    @Mock
     private CampaignQueryService campaignQuery;
     @Mock
     private PlatformSettingQueryService platformSetting;
@@ -124,7 +121,7 @@ class PointDeductorImplTest {
         // 운영에서는 REQUIRED 트랜잭션이 동기화를 켜 둔다. 시험도 같은 상태로 만든다
         TransactionSynchronizationManager.initSynchronization();
         deductor = new PointDeductorImpl(snapshotService, rebuildService, spendCounter,
-                deductionResultRepository, ledgerRepository, campaignQuery, platformSetting, CLOCK, meterRegistry,
+                deductionResultRepository, campaignQuery, platformSetting, CLOCK, meterRegistry,
                 planRepository, batchRepository, transactions);
         lenient().when(snapshotService.find(DAY, CAMPAIGN_ID)).thenReturn(Optional.of(PLAN));
         lenient().when(planRepository.findForShare(CAMPAIGN_ID, DAY)).thenReturn(Optional.of(plan(DAY, null)));
@@ -167,14 +164,13 @@ class PointDeductorImplTest {
     }
 
     @Test
-    void 과금하면_판정을_기록하고_단가의_음수로_원장에_남긴다() {
+    void 과금하면_판정만_기록하고_원장에는_쓰지_않는다() {
         when(spendCounter.deduct(DAY, CAMPAIGN_ID, SERVE_ID, 10L)).thenReturn(DeductOutcome.of(DeductionStatus.BILLED));
 
         DeductionStatus status = deductor.deduct(SERVE_ID, CAMPAIGN_ID, DAY);
 
         assertThat(status).isEqualTo(DeductionStatus.BILLED);
         verify(deductionResultRepository).insertIfAbsent(SERVE_ID, CAMPAIGN_ID, 3L, DAY, DeductionStatus.BILLED, 10L, NOW);
-        verify(ledgerRepository).insertDeductIfAbsent(3L, CAMPAIGN_ID, SERVE_ID, -10L, NOW);
         verify(rebuildService, never()).rebuildIfAbsent(any(), any());
     }
 
@@ -186,7 +182,6 @@ class PointDeductorImplTest {
 
         assertThat(status).isEqualTo(DeductionStatus.NOT_BILLED_BUDGET);
         verify(deductionResultRepository).insertIfAbsent(SERVE_ID, CAMPAIGN_ID, 3L, DAY, DeductionStatus.NOT_BILLED_BUDGET, 10L, NOW);
-        verify(ledgerRepository, never()).insertDeductIfAbsent(any(), any(), any(UUID.class), anyLong(), any());
     }
 
     @Test
@@ -197,7 +192,6 @@ class PointDeductorImplTest {
 
         assertThat(status).isEqualTo(DeductionStatus.NOT_BILLED_PAUSED);
         verify(deductionResultRepository).insertIfAbsent(SERVE_ID, CAMPAIGN_ID, 3L, DAY, DeductionStatus.NOT_BILLED_PAUSED, 10L, NOW);
-        verify(ledgerRepository, never()).insertDeductIfAbsent(any(), any(), any(UUID.class), anyLong(), any());
     }
 
     @Test
@@ -212,7 +206,6 @@ class PointDeductorImplTest {
 
         assertThat(first).isEqualTo(DeductionStatus.BILLED);
         assertThat(second).isEqualTo(first);
-        verify(ledgerRepository, times(1)).insertDeductIfAbsent(3L, CAMPAIGN_ID, SERVE_ID, -10L, NOW);
     }
 
     @Test
@@ -226,7 +219,6 @@ class PointDeductorImplTest {
         DeductionStatus status = deductor.deduct(SERVE_ID, CAMPAIGN_ID, DAY);
 
         assertThat(status).isEqualTo(DeductionStatus.NOT_BILLED_BUDGET);
-        verify(ledgerRepository, never()).insertDeductIfAbsent(any(), any(), any(UUID.class), anyLong(), any());
     }
 
     @Test
@@ -239,7 +231,7 @@ class PointDeductorImplTest {
 
         assertThat(status).isEqualTo(DeductionStatus.NOT_BILLED_NO_PLAN);
         verify(deductionResultRepository).insertIfAbsent(SERVE_ID, CAMPAIGN_ID, 5L, DAY, DeductionStatus.NOT_BILLED_NO_PLAN, 12L, NOW);
-        verifyNoInteractions(spendCounter, rebuildService, ledgerRepository);
+        verifyNoInteractions(spendCounter, rebuildService);
         assertThat(meterRegistry.counter(PointDeductorImpl.NO_PLAN_METRIC).count()).isEqualTo(1.0);
     }
 
@@ -322,7 +314,7 @@ class PointDeductorImplTest {
         assertThat(status).isEqualTo(DeductionStatus.NOT_BILLED_CLOSED);
         verify(deductionResultRepository).insertIfAbsent(SERVE_ID, CAMPAIGN_ID, 3L, yesterday,
                 DeductionStatus.NOT_BILLED_CLOSED, 10L, NOW);
-        verifyNoInteractions(spendCounter, rebuildService, ledgerRepository);
+        verifyNoInteractions(spendCounter, rebuildService);
     }
 
     // 자정 직전에 받은 노출을 릴레이가 자정 뒤에 넘겨도 해제 전이면 그날 예산으로 과금한다
@@ -333,7 +325,6 @@ class PointDeductorImplTest {
         when(spendCounter.deduct(yesterday, CAMPAIGN_ID, SERVE_ID, 10L)).thenReturn(DeductOutcome.of(DeductionStatus.BILLED));
 
         assertThat(deductor.deduct(SERVE_ID, CAMPAIGN_ID, yesterday)).isEqualTo(DeductionStatus.BILLED);
-        verify(ledgerRepository).insertDeductIfAbsent(3L, CAMPAIGN_ID, SERVE_ID, -10L, NOW);
     }
 
     // 해제는 다음 날 00:00 에 끝나고 릴레이는 어제 이후 노출만 넘긴다. 그보다 앞선 영업일은 계획을 잠그지 않고 마감으로 본다
@@ -344,7 +335,7 @@ class PointDeductorImplTest {
 
         assertThat(deductor.deduct(SERVE_ID, CAMPAIGN_ID, twoDaysAgo)).isEqualTo(DeductionStatus.NOT_BILLED_CLOSED);
         verify(planRepository, never()).findForShare(CAMPAIGN_ID, twoDaysAgo);
-        verifyNoInteractions(spendCounter, rebuildService, ledgerRepository);
+        verifyNoInteractions(spendCounter, rebuildService);
     }
 
     @Test
@@ -361,7 +352,7 @@ class PointDeductorImplTest {
         when(planRepository.findForShare(CAMPAIGN_ID, DAY)).thenReturn(Optional.of(plan(DAY, NOW)));
 
         assertThat(deductor.deduct(SERVE_ID, CAMPAIGN_ID, DAY)).isEqualTo(DeductionStatus.NOT_BILLED_CLOSED);
-        verifyNoInteractions(spendCounter, rebuildService, ledgerRepository);
+        verifyNoInteractions(spendCounter, rebuildService);
     }
 
     @Test
@@ -374,7 +365,7 @@ class PointDeductorImplTest {
         when(deductionResultRepository.findFirstStatus(SERVE_ID)).thenReturn(Optional.of(DeductionStatus.BILLED));
 
         assertThat(deductor.deduct(SERVE_ID, CAMPAIGN_ID, yesterday)).isEqualTo(DeductionStatus.BILLED);
-        verifyNoInteractions(spendCounter, rebuildService, ledgerRepository);
+        verifyNoInteractions(spendCounter, rebuildService);
     }
 
     @Test
@@ -387,7 +378,7 @@ class PointDeductorImplTest {
         assertThat(deductor.deduct(SERVE_ID, CAMPAIGN_ID, yesterday)).isEqualTo(DeductionStatus.NOT_BILLED_CLOSED);
         verify(deductionResultRepository).insertIfAbsent(SERVE_ID, CAMPAIGN_ID, 5L, yesterday,
                 DeductionStatus.NOT_BILLED_CLOSED, 12L, NOW);
-        verifyNoInteractions(spendCounter, rebuildService, ledgerRepository);
+        verifyNoInteractions(spendCounter, rebuildService);
     }
 
     @Test
@@ -396,12 +387,12 @@ class PointDeductorImplTest {
 
         assertThatThrownBy(() -> deductor.deduct(SERVE_ID, CAMPAIGN_ID, DAY))
                 .isInstanceOf(IllegalStateException.class).hasMessageContaining("campaignId=7");
-        verifyNoInteractions(spendCounter, rebuildService, ledgerRepository, deductionResultRepository);
+        verifyNoInteractions(spendCounter, rebuildService, deductionResultRepository);
     }
 
     private PointDeductorImpl deductorAt(Clock time) {
         return new PointDeductorImpl(snapshotService, rebuildService, spendCounter, deductionResultRepository,
-                ledgerRepository, campaignQuery, platformSetting, time, meterRegistry, planRepository, batchRepository, transactions);
+                campaignQuery, platformSetting, time, meterRegistry, planRepository, batchRepository, transactions);
     }
 
     @Test
@@ -482,7 +473,7 @@ class PointDeductorImplTest {
 
     // 아래 시험은 Mockito 대신 Lua 와 같은 규칙의 Fake 를 연결해 판정이 쌓이는 모습을 그대로 본다
     private PointDeductorImpl deductorWith(InMemoryDailySpendCounter fake) {
-        return new PointDeductorImpl(snapshotService, rebuildService, fake, deductionResultRepository, ledgerRepository,
+        return new PointDeductorImpl(snapshotService, rebuildService, fake, deductionResultRepository,
                 campaignQuery, platformSetting, CLOCK,
                 meterRegistry, planRepository, batchRepository, transactions);
     }
@@ -499,7 +490,6 @@ class PointDeductorImplTest {
         DeductionStatus eleventh = real.deduct(UUID.randomUUID(), CAMPAIGN_ID, DAY);
 
         assertThat(eleventh).isEqualTo(DeductionStatus.NOT_BILLED_BUDGET);
-        verify(ledgerRepository, times(10)).insertDeductIfAbsent(any(), any(), any(UUID.class), anyLong(), any());
         verify(deductionResultRepository, times(11))
                 .insertIfAbsent(any(UUID.class), any(), any(), any(), any(DeductionStatus.class), anyLong(), any());
     }
@@ -526,25 +516,23 @@ class PointDeductorImplTest {
         DeductionStatus status = deductorWith(fake).deduct(UUID.randomUUID(), CAMPAIGN_ID, DAY);
 
         assertThat(status).isEqualTo(DeductionStatus.NOT_BILLED_PAUSED);
-        verify(ledgerRepository, never()).insertDeductIfAbsent(any(), any(), any(UUID.class), anyLong(), any());
     }
 
     private static final Long OTHER_CAMPAIGN_ID = 8L;
     private static final PlanSnapshot OTHER_OWNER_PLAN = new PlanSnapshot(4L, 10L);
 
     /*
-     * 묶음 차감 시험은 소진 해시를 인메모리 Fake 로, 판정과 원장 저장을 트랜잭션을 따르는 맵으로 둔다.
-     * 롤백되면 그 트랜잭션이 넣은 판정과 원장이 사라진다. 점주별로 다시 처리할 때 새 판정으로 보여야 해서다.
+     * 묶음 차감 시험은 소진 해시를 인메모리 Fake 로, 판정 저장을 트랜잭션을 따르는 맵으로 둔다.
+     * 롤백되면 그 트랜잭션이 넣은 판정이 사라진다. 점주별로 다시 처리할 때 새 판정으로 보여야 해서다.
      */
     private final InMemoryDailySpendCounter counter = new InMemoryDailySpendCounter();
     private final java.util.Map<UUID, DeductionStatus> storedResults = new java.util.HashMap<>();
-    private final List<DeductionBatchRepository.DeductRow> storedDeducts = new ArrayList<>();
     private final java.util.Set<String> missingPlans = new java.util.HashSet<>();
     private final java.util.Map<String, LocalDateTime> releasedPlans = new java.util.HashMap<>();
 
     private PointDeductorImpl batchDeductor() {
         return new PointDeductorImpl(snapshotService, rebuildService, counter, deductionResultRepository,
-                ledgerRepository, campaignQuery, platformSetting, CLOCK, meterRegistry, planRepository, batchRepository,
+                campaignQuery, platformSetting, CLOCK, meterRegistry, planRepository, batchRepository,
                 transactions);
     }
 
@@ -584,12 +572,6 @@ class PointDeductorImplTest {
             onRollback(() -> inserted.forEach(storedResults::remove));
             return stored;
         });
-        lenient().doAnswer(invocation -> {
-            List<DeductionBatchRepository.DeductRow> rows = invocation.getArgument(0);
-            storedDeducts.addAll(rows);
-            onRollback(() -> storedDeducts.removeAll(rows));
-            return null;
-        }).when(batchRepository).insertDeducts(any(), any());
     }
 
     private static void onRollback(Runnable undo) {
@@ -626,9 +608,6 @@ class PointDeductorImplTest {
         assertThat(finishedTransactions).containsExactly("commit");
         verify(planRepository).findAllForShareIn(any(), any());
         verify(batchRepository).insertResults(any(), any());
-        verify(batchRepository).insertDeducts(any(), any());
-        assertThat(storedDeducts).extracting(DeductionBatchRepository.DeductRow::serveId)
-                .containsExactlyInAnyOrder(first, second, third);
         assertThat(spend(CAMPAIGN_ID)).isEqualTo(20L);
     }
 
@@ -638,7 +617,7 @@ class PointDeductorImplTest {
         UUID first = UUID.randomUUID();
         UUID second = UUID.randomUUID();
         UUID third = UUID.randomUUID();
-        doThrow(new IllegalStateException("원장 쓰기 실패")).when(batchRepository).insertDeducts(
+        doThrow(new IllegalStateException("판정 쓰기 실패")).when(batchRepository).insertResults(
                 org.mockito.ArgumentMatchers.argThat(rows -> rows.stream().anyMatch(row -> row.ownerId() == 3L)), any());
 
         List<DeductionOutcome> outcomes = batchDeductor().deductAll(List.of(
@@ -704,7 +683,7 @@ class PointDeductorImplTest {
     }
 
     @Test
-    void 이미_판정된_노출을_다시_넘기면_첫_판정을_돌려주고_원장은_쓰지_않는다() {
+    void 이미_판정된_노출을_다시_넘기면_첫_판정을_돌려준다() {
         outsideTransaction();
         UUID replayed = UUID.randomUUID();
         storedResults.put(replayed, DeductionStatus.NOT_BILLED_BUDGET);
@@ -712,7 +691,6 @@ class PointDeductorImplTest {
         List<DeductionOutcome> outcomes = batchDeductor().deductAll(List.of(new DeductionRequest(replayed, CAMPAIGN_ID, DAY)));
 
         assertThat(outcomes).containsExactly(DeductionOutcome.judged(replayed, DeductionStatus.NOT_BILLED_BUDGET));
-        verify(batchRepository, never()).insertDeducts(any(), any());
     }
 
     @Test
@@ -728,7 +706,6 @@ class PointDeductorImplTest {
                 DeductionOutcome.judged(twice, DeductionStatus.BILLED),
                 DeductionOutcome.judged(twice, DeductionStatus.BILLED));
         assertThat(spend(CAMPAIGN_ID)).isEqualTo(10L);
-        assertThat(storedDeducts).hasSize(1);
     }
 
     @Test
@@ -891,11 +868,11 @@ class PointDeductorImplTest {
     void 롤백된_판정을_되돌리지_못해도_점주별로_다시_처리하고_실패를_센다() {
         outsideTransaction();
         PointDeductorImpl withBrokenUndo = new PointDeductorImpl(snapshotService, rebuildService, spendCounter,
-                deductionResultRepository, ledgerRepository, campaignQuery, platformSetting, CLOCK, meterRegistry,
+                deductionResultRepository, campaignQuery, platformSetting, CLOCK, meterRegistry,
                 planRepository, batchRepository, transactions);
         when(spendCounter.deductAll(any())).thenAnswer(invocation -> counter.deductAll(invocation.getArgument(0)));
         doThrow(new IllegalStateException("되돌리기 실패")).when(spendCounter).undoAll(any());
-        doThrow(new IllegalStateException("원장 쓰기 실패")).when(batchRepository).insertDeducts(any(), any());
+        doThrow(new IllegalStateException("판정 쓰기 실패")).when(batchRepository).insertResults(any(), any());
         UUID serveId = UUID.randomUUID();
 
         List<DeductionOutcome> outcomes = withBrokenUndo.deductAll(List.of(new DeductionRequest(serveId, CAMPAIGN_ID, DAY)));
@@ -933,7 +910,7 @@ class PointDeductorImplTest {
             }
         });
         PointDeductorImpl withoutDb = new PointDeductorImpl(snapshotService, rebuildService, counter,
-                deductionResultRepository, ledgerRepository, campaignQuery, platformSetting, CLOCK, meterRegistry,
+                deductionResultRepository, campaignQuery, platformSetting, CLOCK, meterRegistry,
                 planRepository, batchRepository, noConnection);
 
         assertThatThrownBy(() -> withoutDb.deductAll(List.of(
