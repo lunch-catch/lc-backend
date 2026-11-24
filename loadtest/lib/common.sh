@@ -689,8 +689,22 @@ run_version() {
         DIAG_BASELINE_DIR="$DIAG_BASELINE_DIR/$baseline-run1-profile"
       fi
       DIAG_FIXED=$(printf '%s\n' ${fixed[@]+"${fixed[@]}"})
-      DIAG_CONDITION=$(python3 -c 'import json, sys; print(json.dumps(dict(zip(("rate", "hold", "members", "scenario", "pool"), sys.argv[1:])), ensure_ascii=False))' \
-        "${rate:-100}" "${hold:-5m}" "$DIAG_BASE" "${scenario:-feed_impression}" "$([ -n "$nopool" ] && echo off || echo on)")
+      # 조건에는 switch 에 넘긴 설정(--env, --app-env, --batch-env)도 넣는다. 연결 풀처럼 설정으로 바뀐 것이 조건 차이로 보이게 한다.
+      # 값은 남기지 않고 지문(sha256 앞 8자리)만 남긴다. 비밀이 들어 있어도 문서와 저장소에 남지 않는다
+      local cond_args=() j
+      for ((j = 0; j < ${#switch_args[@]}; j++)); do
+        [ "${switch_args[$j]}" = --no-pool ] && continue
+        cond_args+=("${switch_args[$j]}" "${switch_args[$((j + 1))]}"); j=$((j + 1))
+      done
+      DIAG_CONDITION=$(python3 -c '
+import hashlib, json, sys
+rate, hold, members, scenario, pool, *pairs = sys.argv[1:]
+cond = dict(rate=rate, hold=hold, members=members, scenario=scenario, pool=pool)
+for flag, pair in zip(pairs[::2], pairs[1::2]):
+    key, _, value = pair.partition("=")
+    cond["%s %s" % (flag.lstrip("-"), key)] = "값 " + hashlib.sha256(value.encode()).hexdigest()[:8]
+print(json.dumps(cond, ensure_ascii=False))' \
+        "${rate:-100}" "${hold:-5m}" "$DIAG_BASE" "${scenario:-feed_impression}" "$([ -n "$nopool" ] && echo off || echo on)" ${cond_args[@]+"${cond_args[@]}"})
       export DIAG_BASELINE_DIR DIAG_FIXED DIAG_CONDITION
       "$self" ${LOCAL:+--local} run "$name-run1-profile" "$DIAG_BASE" ${rate:-100} ${hold:-5m} ${scen_args[@]+"${scen_args[@]}"} --profile both || rc=$?
       [ "$rc" -eq 0 ] || { echo "STOP $name-run1-profile 가 $rc 로 끝났다. 위 출력을 본다"; echo "next 다시 돌리려면: $again --from diag"; return "$rc"; }
@@ -1415,6 +1429,13 @@ def load_profile(archive):
         tar = tarfile.open(archive)
     except (OSError, tarfile.TarError):
         return None
+    try:
+        return read_profile(tar)
+    except (KeyError, ValueError, OSError, tarfile.TarError, AttributeError):
+        # 안의 manifest.json 이나 묶음 파일이 없거나 깨졌다. 부른 쪽이 비교만 건너뛴다
+        return None
+
+def read_profile(tar):
     with tar:
         manifest = json.load(tar.extractfile('manifest.json'))
         layout = ({svc: (m['kinds'], svc + '/') for svc, m in manifest['services'].items()} if 'services' in manifest
@@ -1487,6 +1508,9 @@ def render_compare(run_dir, d, rel_of):
     if not base_arc or not cur_arc:
         return ['', '### 앞 버전과의 비교', '', '앞 버전 %s 의 진단 회차 폴더나 프로파일 파일이 없다' % base]
     before, after = load_profile(base_arc), load_profile(cur_arc)
+    if before is None or after is None:
+        bad = [a for a, p in ((base_arc, before), (cur_arc, after)) if p is None]
+        return ['', '### 앞 버전과의 비교', '', '프로파일 파일을 읽지 못해 견주지 않았다: ' + ', '.join('`%s`' % rel_of(a) for a in bad)]
     out = ['', '### 앞 버전과의 비교', '', '%s 를 기준으로 견준다.' % base]
     # 두 회차의 조건이 다르면 몫의 차이에 조건의 차이가 섞인다
     def condition(path):
@@ -2147,9 +2171,11 @@ PY
 cat > /tmp/lt-profile.sh <<'SH'
 $PROFILE_SH
 SH
-# batch 줄은 모두, 나머지는 끝의 몇 줄만 돌려준다. SSM 출력 한도(24,000자) 안에 든다(회차 5분이면 서버마다 60줄 남짓)
+# batch 줄은 모두, 나머지는 끝의 몇 줄만 돌려준다. SSM 출력 한도(24,000자)는 앞에서부터 남기므로 batch 줄의 수를 맨 앞에 낸다.
+# 받는 쪽이 받은 줄 수와 견줘, 한도에 걸려 뒤가 잘렸으면 실패로 센다(회차 5분이면 서버마다 60줄 남짓, 약 3,000자)
 bash /tmp/lt-profile.sh $name $secs $mode $pyro $PROJECT /tmp/lt-trim.py $ASPROF_VERSION $(profile_service "$role") > /tmp/lt-profile.out 2>&1
 rc=\$?
+echo \"batch-count \$(grep -c '^batch ' /tmp/lt-profile.out)\"
 grep '^batch ' /tmp/lt-profile.out
 grep -v '^batch ' /tmp/lt-profile.out | tail -3
 exit \$rc" > "$outs/$id.out" 2>&1 &
@@ -2161,16 +2187,27 @@ exit \$rc" > "$outs/$id.out" 2>&1 &
   for pid in $pids; do
     wait "$pid" || rc=1
   done
-  keep_batches "$outs"
+  keep_batches "$outs" || rc=1
   return "$rc"
 }
 
 # 서버마다의 프로파일링 출력에서 batch 줄은 PROFILE_BATCHES 에 더하고 나머지는 보인다
+# 원격 출력은 맨 앞의 batch-count 와 받은 batch 줄 수를 견준다. 다르면 출력 한도에 걸려 잘린 것이라 1 로 끝난다
 keep_batches() {
-  local outs="$1"
+  local outs="$1" f want got rc=0
+  for f in "$outs"/*.out; do
+    [ -f "$f" ] || continue
+    want=$(sed -n 's/^batch-count //p' "$f" | head -1)
+    got=$(grep -c '^batch ' "$f" || true)
+    if [ -n "$want" ] && [ "$want" != "$got" ]; then
+      echo "ERROR: $(basename "$f" .out) 의 묶음 줄을 $want 줄 가운데 $got 줄만 받았다. SSM 출력 한도에 걸렸다. 회차를 줄여 다시 돈다" >&2
+      rc=1
+    fi
+  done
   [ -z "${PROFILE_BATCHES:-}" ] || grep -h '^batch ' "$outs"/*.out >> "$PROFILE_BATCHES" || true
-  grep -hv '^batch ' "$outs"/*.out || true
+  grep -hv '^batch \|^batch-count ' "$outs"/*.out || true
   rm -rf "$outs"
+  return "$rc"
 }
 
 # Pyroscope 의 서비스 이름이다. 트레이스의 서비스 이름과 같게 둔다
