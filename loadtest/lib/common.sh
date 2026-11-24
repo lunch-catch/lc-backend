@@ -1119,7 +1119,14 @@ def collect(run_dir, name, hs, he, metrics_file, k6_file='', overrun_file=''):
 def fmt_s(v):
     if v is None:
         return '-'
-    return '%.1fms' % (v * 1000) if v < 1 else '%.2f초' % v
+    if v < 1:
+        return '%.1fms' % (v * 1000)
+    if v < 60:
+        return '%.2f초' % v
+    # 1분 이상은 분과 시간으로 적는다. 28500.00초보다 7시간 55분이 읽힌다. 초는 반올림해 버린다
+    m, sec = divmod(int(round(v)), 60)
+    h, m = divmod(m, 60)
+    return ' '.join(x for x in ('%d시간' % h if h else '', '%d분' % m if m else '', '%d초' % sec if sec else '') if x)
 
 def fmt_n(v):
     if v is None:
