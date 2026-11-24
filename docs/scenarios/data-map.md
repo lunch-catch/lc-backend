@@ -948,7 +948,7 @@
 | B-104 | 앞 단계 실패 시 뒤 단계 미실행 | `OPS.UNIT_PRICE_ZERO`, `CMP.ACTIVE` |
 | B-105 | 전일 소진 대사 일치 | `BIL.PLAN_D1`, `CACHE.SPEND_HASH_D1_MATCH` |
 | B-106 | 전일 계획 없음 | `NONE:없음` |
-| B-107 | 카운터와 원장 불일치 | `BIL.PLAN_D1`, `CACHE.SPEND_HASH_D1_MISMATCH` |
+| B-107 | 카운터와 판정 불일치 | `BIL.PLAN_D1`, `CACHE.SPEND_HASH_D1_MISMATCH` |
 | B-108 | 초과 소진 | `BIL.PLAN_D1_OVERSPEND` |
 | B-109 | Valkey 해시 없음 | `BIL.PLAN_D1` |
 | B-110 | 대사 재실행 멱등 | `BIL.PLAN_D1`, `CACHE.SPEND_HASH_D1_MISMATCH`, `BIL.MISMATCH_D1_EXISTS` |
