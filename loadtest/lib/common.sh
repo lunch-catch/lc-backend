@@ -649,6 +649,8 @@ run_version() {
   for i in ${fixed[@]+"${fixed[@]}"}; do again_args+=(--fixed "$i"); done
   again=$(printf '%q ' "${again_args[@]}"); again="${again% }"
   [ -n "${LOCAL:-}" ] || [ -z "${AWS_PROFILE:-}" ] || again="AWS_PROFILE=$(printf '%q' "$AWS_PROFILE") $again"
+  # 결과 폴더를 따로 주었으면 다시 부를 때도 같은 폴더를 쓴다. 아직 기본값을 채우기 전이라 여기서는 준 값만 있다
+  [ -z "${SNAPSHOT_OUT:-}" ] || again="SNAPSHOT_OUT=$(printf '%q' "$SNAPSHOT_OUT") $again"
   #
   # 캡처와 결과(#1326)를 버전 폴더에 둔다. 회차 폴더는 그 아래 회차 이름이다. 로컬은 결과 문서 대신 build/loadtest-results/ 에 둔다.
   # 따로 준 SNAPSHOT_OUT 이 있으면 그것을 쓴다
@@ -823,7 +825,7 @@ run_plan() {
         # shellcheck disable=SC2086
         LOADTEST_REF="${ref:-${LOADTEST_REF:-}}" run_version "$self" "$name" --sha "$commit" $args ${prev_args[@]+"${prev_args[@]}"} \
           ${fixed[@]+"${fixed[@]}"} --from diag || rc=$?
-        [ "$rc" -eq 0 ] || { echo "plan $name 진단이 $rc 로 멈췄다. 고친 뒤 --diag 로 다시 부른다"; return "$rc"; }
+        [ "$rc" -eq 0 ] || { echo "plan $name 진단이 $rc 로 멈췄다. 고친 뒤 다시 부른다: $next_cmd --diag$( [ ${#fixed[@]} -eq 0 ] || printf ' %q' "${fixed[@]}")"; return "$rc"; }
         echo "$name diag-done $started $(date -u +%FT%TZ)" >> "$state" ;;
       --skip-diag)
         echo "$name diag-skipped $started $started" >> "$state"
@@ -1542,12 +1544,13 @@ def render_compare(run_dir, d, rel_of):
         return ['', '### 앞 버전과의 비교', '', '프로파일 파일을 읽지 못해 견주지 않았다: ' + ', '.join('`%s`' % rel_of(a) for a in bad)]
     out = ['', '### 앞 버전과의 비교', '', '%s 를 기준으로 견준다.' % base]
     # 두 회차의 조건이 다르면 몫의 차이에 조건의 차이가 섞인다
+    unread = []
     def condition(path):
         c = {}
         try:
             c = json.load(open(os.path.join(path, 'condition.json'), encoding='utf-8'))
         except (OSError, ValueError):
-            pass
+            unread.append(os.path.basename(path))
         try:
             w = {l.split()[0]: int(l.split()[1]) for l in open(os.path.join(path, '구간.txt'), encoding='utf-8') if l.split() and l.split()[0] in ('from', 'to')}
             c['구간 길이'] = '%d초' % round((w['to'] - w['from']) / 1000)
@@ -1557,7 +1560,12 @@ def render_compare(run_dir, d, rel_of):
     cb, cc = condition(base_dir), condition(run_dir)
     diff = [(k, cb.get(k, '-'), cc.get(k, '-')) for k in sorted(set(cb) | set(cc)) if cb.get(k) != cc.get(k)]
     out.append('')
-    out.append('조건: 같다' if not diff else '조건이 다르다: ' + ', '.join('%s %s → %s' % row for row in diff))
+    # 조건 파일을 둘 다 읽었고 적힌 값이 모두 같을 때만 같다고 한다. 하나라도 못 읽었으면 견준 항목만 적는다
+    if unread:
+        out.append('조건 파일(`condition.json`)을 읽지 못한 회차: %s. 구간 길이만 견줬다%s' % (
+            ', '.join('`%s`' % u for u in unread), '' if not diff else ': ' + ', '.join('%s %s → %s' % row for row in diff)))
+    else:
+        out.append('조건: 같다' if not diff else '조건이 다르다: ' + ', '.join('%s %s → %s' % row for row in diff))
     images = [f for f in ('diff/wall.png', 'diff/batch-wall.png') if os.path.exists(os.path.join(run_dir, f))]
     if images:
         out.append('')
