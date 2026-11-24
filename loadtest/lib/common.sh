@@ -732,6 +732,156 @@ core_p99 histogram_quantile(0.99, sum by (uri, le) (increase(http_server_request
 '
 
 #
+# 회차의 기준 초과를 묻는다(#1339). 인자는 Prometheus 주소, Tempo 주소(없으면 빈 값), Tempo 의 기본 인증(없으면 빈 값), 유지 구간의 시작과 끝 ms 다.
+# 기준은 앱이 내는 overrun_threshold_seconds{kind, name} 이다. 이름별 값이 없으면 그 종류의 default 로 판정하고 기본값이라고 남긴다.
+# 판정은 06 의 기준을 넘은 패널(lc-infra 의 service 대시보드)과 같은 지표로 한다. 패널은 시점마다, 여기는 유지 구간 전체로 센다.
+#   API          유지 구간의 p99 를 그 API 의 기준에 견준다. 넘었으면 기준을 넘은 루트 스팬 가운데 가장 오래 걸린 트레이스를 붙인다
+#   메서드       그 API 아래에서 그 API 의 기준을 넘은 자식 스팬을 TraceQL 로 묻는다. 남은 트레이스(앞단 10% 와 테일 샘플링을 지난 것)만 센다
+#   릴레이       발행 지연 p99(#1205). 미발행 건수와 가장 오래 기다린 미발행 건의 대기 시간의 최대를 참고로 둔다
+#   워커         가장 오래 기다린 일의 대기 시간의 최대. 대기열 길이의 최대를 참고로 둔다
+#   cron         실행 한 번에 걸린 시간의 최대. 릴레이로 보는 fixedDelay 작업은 대시보드처럼 빼고, 상태만 보는 작업은 판정하지 않는다
+# 한 줄로 JSON 을 낸다. 부하 시험 환경은 SSM 출력 한도(24,000자) 안에 들게 모은 값만 낸다.
+#
+IFS= read -r -d '' OVERRUN_PY <<'PY' || true
+import base64, json, math, sys, urllib.parse, urllib.request
+prom, tempo, auth, hs, he = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4]), int(sys.argv[5])
+w, at = max(int((he - hs) / 1000), 1), he / 1000
+RELAY_JOBS = 'ImpressionDispatchJob.dispatchPending|PaymentRecheckWorker.recheckUnknownPayments|RechargeReservationWorker.reserveCharged'
+STATUS_JOBS = ('DailyJobScheduler.sendHeartbeat()', 'DailyJobScheduler.takeOverStale()')
+
+def get(url):
+    req = urllib.request.Request(url)
+    if auth:
+        req.add_header('Authorization', 'Basic ' + base64.b64encode(auth.encode()).decode())
+    return json.load(urllib.request.urlopen(req, timeout=60))
+
+def q(expr):
+    r = get(prom + '/api/v1/query?' + urllib.parse.urlencode({'query': expr, 'time': at}))['data']['result']
+    return [(x['metric'], float(x['value'][1])) for x in r if x['value'][1] not in ('NaN', '+Inf', '-Inf')]
+
+def by(rows, label):
+    return {m.get(label, ''): v for m, v in rows}
+
+thr = {}
+for m, v in q('max by (kind, name) (overrun_threshold_seconds)'):
+    thr.setdefault(m['kind'], {})[m['name']] = v
+
+def threshold(kind, name):
+    named = thr.get(kind, {})
+    if name in named:
+        return named[name], False
+    return named.get('default'), True
+
+LIMIT, SPSS = 500, 100
+
+def truncated(traces, limit, spss):
+    # 상한에 닿았는지 본다. 트레이스가 상한만큼 왔거나, 맞은 스팬(matched)이 돌려받은 스팬보다 많으면 일부만 센 것이다
+    if len(traces) >= limit:
+        return True
+    return any(int(ss.get('matched', 0)) > len(ss.get('spans', [])) for tr in traces for ss in tr.get('spanSets', []))
+
+def search(traceql, limit=LIMIT, spss=SPSS):
+    if not tempo:
+        return None
+    params = {'q': traceql, 'start': int(hs / 1000), 'end': int(he / 1000) + 1, 'limit': limit, 'spss': spss}
+    return get(tempo + '/api/search?' + urllib.parse.urlencode(params)).get('traces', [])
+
+def p99(values):
+    values = sorted(values)
+    return values[max(0, math.ceil(len(values) * 0.99) - 1)] if values else None
+
+flt = 'job=~".*app.*", uri!~"UNKNOWN|/actuator.*"'
+counts = q('sum by (method, uri) (increase(http_server_requests_seconds_count{%s}[%ds])) > 0' % (flt, w))
+quant = by(q('histogram_quantile(0.99, sum by (uri, le) (increase(http_server_requests_histogram_seconds_bucket{%s}[%ds])))' % (flt, w)), 'uri')
+# 추적의 상태다. Tempo 가 없으면 추적을 켜지 않은 환경이고, Tempo 는 있는데 이 구간에 남은 트레이스가 없으면
+# 앱에 추적을 붙이지 않았거나 샘플링에서 모두 빠진 것이다. 둘은 여기서 가르지 못해 나눠 적는다
+if not tempo:
+    tracing = 'no-tempo'
+else:
+    try:
+        tracing = 'ok' if search('{ }', limit=1, spss=1) else 'no-traces'
+    except OSError:
+        tracing = 'no-tempo'
+traced = tracing == 'ok'
+apis, methods = [], []
+for m, _ in sorted(counts, key=lambda r: (r[0].get('uri', ''), r[0].get('method', ''))):
+    name = '%s %s' % (m.get('method'), m.get('uri'))
+    t, default = threshold('api', name)
+    v = quant.get(m.get('uri'))
+    row = {'name': name, 'threshold': t, 'default': default, 'p99': v,
+           'over': None if v is None or t is None else v > t, 'trace': None}
+    if traced and t is not None:
+        roots = search('{ name = "%s" && duration > %dms }' % (name, round(t * 1000)), spss=1)
+        # 루트는 트레이스마다 하나라 트레이스 수의 상한만 본다
+        row['partial'] = len(roots or []) >= LIMIT
+        if roots:
+            slow = max(roots, key=lambda r: r.get('durationMs', 0))
+            row['trace'] = {'id': slow['traceID'], 'ms': slow.get('durationMs')}
+        spans = {}
+        found = search('{ name = "%s" } >> { duration > %dms } | select(name)' % (name, round(t * 1000))) or []
+        partial = truncated(found, LIMIT, SPSS)
+        for tr in found:
+            for ss in tr.get('spanSets', []):
+                for sp in ss.get('spans', []):
+                    n = next((a['value'].get('stringValue') for a in sp.get('attributes', []) if a['key'] == 'name'), sp.get('name')) or '-'
+                    d = int(sp.get('durationNanos', 0)) / 1e9
+                    e = spans.setdefault(n, {'durations': [], 'slow': (0, None)})
+                    e['durations'].append(d)
+                    if d > e['slow'][0]:
+                        e['slow'] = (d, tr['traceID'])
+        for n, e in sorted(spans.items(), key=lambda kv: -len(kv[1]['durations'])):
+            methods.append({'api': name, 'method': n, 'threshold': t, 'count': len(e['durations']),
+                            'p99': p99(e['durations']), 'trace': e['slow'][1], 'partial': partial})
+    apis.append(row)
+
+jobs = []
+delay = by(q('histogram_quantile(0.99, sum by (relay, le) (increase(outbox_relay_publish_delay_seconds_bucket[%ds])))' % w), 'relay')
+backlog = by(q('max_over_time((max by (relay) (outbox_relay_backlog))[%ds:5s])' % w), 'relay')
+oldest = by(q('max_over_time((max by (relay) (outbox_relay_oldest_age_seconds))[%ds:5s])' % w), 'relay')
+for name in sorted(set(delay) | set(backlog)):
+    t, default = threshold('relay', name)
+    v = delay.get(name)
+    jobs.append({'kind': '아웃박스 릴레이', 'name': name, 'threshold': t, 'default': default, 'value': v, 'value_label': '발행 지연 p99',
+                 'over': None if v is None or t is None else v > t,
+                 'note': '미발행 최대 %s, 가장 오래 기다린 미발행 %s초' % (round(backlog.get(name, 0)), round(oldest.get(name, 0), 1))})
+age = by(q('max_over_time((max by (worker) (async_worker_oldest_age_seconds))[%ds:5s])' % w), 'worker')
+queue = by(q('max_over_time((sum by (worker) (async_worker_queue_size))[%ds:5s])' % w), 'worker')
+for name in sorted(age):
+    t, default = threshold('worker', name)
+    v = age[name]
+    jobs.append({'kind': '비동기 워커', 'name': name, 'threshold': t, 'default': default, 'value': v, 'value_label': '가장 오래 기다린 일',
+                 'over': None if t is None else v > t, 'note': '대기열 최대 %s' % round(queue.get(name, 0))})
+took = by(q('max_over_time((max by (scheduler) (batch_job_duration_seconds_max{scheduler!~"(%s)\\\\(\\\\)"}))[%ds:15s])' % (RELAY_JOBS, w)), 'scheduler')
+for name in sorted(took):
+    t, default = threshold('job', name)
+    v = took[name]
+    status = name in STATUS_JOBS
+    # 작업 타이머의 최대는 시간이 지나면 0 으로 돌아온다. 구간 내내 0 이면 그 구간에 돌지 않은 것이다
+    idle = v == 0
+    jobs.append({'kind': 'cron 배치' if not status else '상태 확인', 'name': name, 'threshold': None if status else t,
+                 'default': default, 'value': None if idle else v, 'value_label': '실행 한 번',
+                 'over': None if status or idle or t is None else v > t,
+                 'note': '판정하지 않는다' if status else ('구간에 실행이 없다' if idle else '')})
+print(json.dumps({'traced': bool(traced), 'tracing': tracing, 'limit': LIMIT, 'spss': SPSS, 'apis': apis, 'methods': methods, 'jobs': jobs}, ensure_ascii=False, separators=(',', ':')))
+PY
+
+# 그 회차의 기준 초과를 묻는다. 로컬은 로컬 Prometheus 와 그라파나 프록시의 Tempo 를, 부하 시험 환경은 모니터링 서버에서 묻는다.
+# 모니터링 서버는 Tempo 포트를 호스트에 열지 않아 컨테이너의 내부 주소로 묻는다. 트레이싱을 켜지 않은 환경이면 Tempo 가 없어 비운다
+overrun() {
+  local start="$1" end="$2"
+  if [ -n "${LOCAL:-}" ]; then
+    python3 -c "$OVERRUN_PY" "http://localhost:${PROMETHEUS_PORT:-19090}" \
+      "http://localhost:${GRAFANA_PORT:-13000}/api/datasources/proxy/uid/tempo" admin:admin "$start" "$end"
+    return
+  fi
+  remote "$(instance monitoring)" 300 "cat > /tmp/lt-overrun.py <<'PY'
+$OVERRUN_PY
+PY
+ip=\$(docker inspect tempo --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' 2> /dev/null || true)
+python3 /tmp/lt-overrun.py http://localhost:9090 \"\${ip:+http://\$ip:3200}\" '' $start $end"
+}
+
+#
 # 결과 문서의 버전 절을 쓴다(#1326). 두 일을 한다.
 #   collect <회차 폴더> <이름> <유지 시작 ms> <유지 끝 ms> <서버 지표 파일>  표준 입력의 핵심 수치와 서버 지표를 회차 폴더의 result.json 에 남긴다
 #   render <결과 문서> <버전 폴더>                                         버전 폴더의 회차들(result.json)을 모두 읽어 결과 문서의 그 버전 절을 다시 쓴다
@@ -817,7 +967,15 @@ def k6_failed(path):
         out[tags.get('api', '-')] = {'requests': total, 'failed': passes, 'rate': passes / total if total else None}
     return out
 
-def collect(run_dir, name, hs, he, metrics_file, k6_file=''):
+def read_overrun(path):
+    # 기준 초과를 묻지 못했거나 깨졌으면 None 이다. 표는 "묻지 못함" 이 된다
+    try:
+        data = json.loads(open(path, encoding='utf-8').read().strip() or 'null')
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) and 'apis' in data else None
+
+def collect(run_dir, name, hs, he, metrics_file, k6_file='', overrun_file=''):
     core = parse(sys.stdin)
     hold = (int(he) - int(hs)) / 1000
     apis = {}
@@ -842,7 +1000,8 @@ def collect(run_dir, name, hs, he, metrics_file, k6_file=''):
     # 다 쓴 뒤에 바꿔 끼운다. 쓰다 멈추면 앞의 result.json 이 그대로 남는다
     tmp = os.path.join(run_dir, 'result.json.tmp')
     json.dump({'name': name, 'hold': [int(hs), int(he)], 'core': {u: a for u, a in apis.items() if a['count'] > 0},
-               'k6': k6_failed(k6_file) if k6_file else {}, 'detail': detail},
+               'k6': k6_failed(k6_file) if k6_file else {}, 'overrun': read_overrun(overrun_file) if overrun_file else None,
+               'detail': detail},
               open(tmp, 'w', encoding='utf-8'), ensure_ascii=False, indent=1)
     os.replace(tmp, os.path.join(run_dir, 'result.json'))
 
@@ -883,6 +1042,57 @@ def trace_rows(run_dir):
                             events.append(ev)
         rows.append({'dir': cols[1], 'panel': cols[2], 'target': cols[3], 'value': cols[4], 'ms': float(cols[5] or 0), 'id': cols[6], 'events': events})
     return rows, notes
+
+def judge(over):
+    return {True: '**넘음**', False: '안 넘음', None: '-'}[over]
+
+def basis(t, default):
+    if t is None:
+        return '지표 없음'
+    # 이름별 값이 있으면 설정의 값(설계서에서 옮긴 값이거나 실행 인자로 바꾼 값)이고, 없으면 그 종류의 기본값이다
+    return '%s(%s)' % (fmt_s(t), '기본값' if default else '설정')
+
+def render_overrun(o):
+    # 회차의 기준 초과 표다(#1339). 기준은 앱의 overrun_threshold_seconds 이고 값은 유지 구간으로 센다
+    out = ['', '기준 초과(유지 구간)', '']
+    if o is None:
+        return out + ['기준 초과를 묻지 못했다']
+    out += ['| API | 기준 | p99 | 판정 | 가장 오래 걸린 트레이스 |', '|---|---|---|---|---|']
+    for a in o['apis']:
+        tr = '`%s` %s' % (a['trace']['id'], fmt_s((a['trace'].get('ms') or 0) / 1000)) if a.get('trace') else '-'
+        if a.get('trace') and a.get('partial'):
+            tr += '(일부에서 고름)'
+        out.append('| %s | %s | %s | %s | %s |' % (a['name'], basis(a['threshold'], a['default']), fmt_s(a['p99']), judge(a['over']), tr))
+    if not o['apis']:
+        out.append('| 요청 없음 | - | - | - | - |')
+    out.append('')
+    tracing = o.get('tracing') or ('ok' if o.get('traced') else 'no-tempo')
+    if tracing == 'no-tempo':
+        out.append('메서드: 추적을 켜지 않았다(Tempo 가 없다)')
+    elif tracing == 'no-traces':
+        out.append('메서드: Tempo 에 이 구간의 남은 트레이스가 없다. 앱에 추적을 붙이지 않았거나 샘플링에서 모두 빠졌다')
+    elif not o['methods']:
+        out.append('메서드: 그 API 의 기준을 넘은 자식 스팬이 없다')
+    else:
+        out += ['메서드는 그 API 아래에서 그 API 의 기준을 넘은 자식 스팬이다. 남은 트레이스(앞단 샘플링과 테일 샘플링을 지난 것)만 세어 넘은 수는 전체 요청의 수가 아니다. 우리 코드의 메서드에는 스팬이 없어 DB 쿼리, 외부 호출 같은 경계만 나온다',
+                '', '| API | 메서드 | 기준 | 넘은 수 | p99 | 가장 오래 걸린 트레이스 |', '|---|---|---|---|---|---|']
+        for m in o['methods']:
+            count = fmt_n(m['count']) + (' 이상(일부만 셌다)' if m.get('partial') else '')
+            out.append('| %s | `%s` | %s | %s | %s | `%s` |' % (m['api'], m['method'], fmt_s(m['threshold']), count, fmt_s(m['p99']), m['trace']))
+        if any(m.get('partial') for m in o['methods']) or any(a.get('partial') for a in o['apis']):
+            out += ['', '일부만 셌다: Tempo 검색은 트레이스 %s개, 트레이스마다 스팬 %s개까지만 돌려줘, 그 상한에 닿은 API 는 넘은 수와 p99, 가장 오래 걸린 트레이스가 그 일부에서 센 값이다' % (o.get('limit', 500), o.get('spss', 100))]
+    out += ['', '| 작업 | 종류 | 기준 | 값 | 판정 | 참고 |', '|---|---|---|---|---|---|']
+    idle = []
+    for j in o['jobs']:
+        if j['note'] == '구간에 실행이 없다':
+            idle.append(j['name'])
+            continue
+        value = '%s %s' % (j['value_label'], fmt_s(j['value'])) if j['value'] is not None else '지표 없음'
+        crit = '판정하지 않음' if j['kind'] == '상태 확인' else basis(j['threshold'], j['default'])
+        out.append('| `%s` | %s | %s | %s | %s | %s |' % (j['name'], j['kind'], crit, value, judge(j['over']), j['note'] or '-'))
+    if idle:
+        out += ['', '구간에 실행이 없던 cron: ' + ', '.join('`%s`' % n for n in idle)]
+    return out
 
 def render(doc, version_dir):
     runs = []
@@ -981,6 +1191,7 @@ def render(doc, version_dir):
                     t['panel'], t['target'], t['value'], fmt_s(t['ms'] / 1000), t['id'],
                     os.path.join(base, 'trace.png'), os.path.join(base, 'logs.png'), os.path.join(base, 'logs.txt'),
                     ', '.join(t['events']) or '-'))
+        out += render_overrun(r.get('overrun'))
     out.append('<!-- /result:%s -->' % tag)
     lines = open(doc, encoding='utf-8').read().split('\n')
     head = next((i for i, l in enumerate(lines) if l.startswith('#') and '회차별 결과' in l), None)
@@ -999,7 +1210,7 @@ def render(doc, version_dir):
     open(doc, 'w', encoding='utf-8').write('\n'.join(lines))
 
 if sys.argv[1] == 'collect':
-    collect(*sys.argv[2:8])
+    collect(*sys.argv[2:9])
 else:
     render(sys.argv[2], sys.argv[3])
 PY
@@ -1014,16 +1225,18 @@ record_result() {
   [ -n "${SNAPSHOT_OUT:-}" ] || { echo "result: SNAPSHOT_OUT 이 없어 $name 을 결과 문서에 적지 않는다. version 으로 돌면 적는다"; return 0; }
   run_dir="$SNAPSHOT_OUT/$name"
   # 묻기가 끝까지 성공한 뒤에만 모은다. 중간에 실패한 출력으로 모으면 빠진 건수가 0 으로 들어간다
-  core=$(mktemp); k6=$(mktemp)
+  core=$(mktemp); k6=$(mktemp); over=$(mktemp)
   # run 의 출력에 남은 k6 요약이다(#1329). 없으면(옛 run) k6 의 실패 표를 비운다
   [ -z "$run_out" ] || sed -n 's/^k6-summary //p' "$run_out" | head -1 > "$k6"
+  # 기준 초과는 묻지 못해도 나머지는 적는다(#1339). 그 회차의 표는 "묻지 못함" 이 된다
+  overrun "$hs" "$he" | tail -1 > "$over" || { echo "WARN: $name 의 기준 초과를 묻지 못했다" >&2; : > "$over"; }
   if ! printf '%s\n' "$CORE_METRICS" | prom_metrics "$hs" "$he" > "$core" \
-    || ! python3 -c "$RESULT_PY" collect "$run_dir" "$name" "$hs" "$he" "$metrics_file" "$k6" < "$core"; then
-    rm -f "$core" "$k6"
+    || ! python3 -c "$RESULT_PY" collect "$run_dir" "$name" "$hs" "$he" "$metrics_file" "$k6" "$over" < "$core"; then
+    rm -f "$core" "$k6" "$over"
     echo "WARN: $name 의 핵심 수치를 모으지 못했다. 결과 문서에 적지 않았다" >&2
     return 0
   fi
-  rm -f "$core" "$k6"
+  rm -f "$core" "$k6" "$over"
   doc="$ROOT/$RESULT_DOC"
   if [ -n "${LOCAL:-}" ]; then
     doc="$(dirname "$SNAPSHOT_OUT")/$(basename "$RESULT_DOC")"
