@@ -624,7 +624,7 @@ run_version() {
         i=$((i + 1)); rc=0
         "$self" ${LOCAL:+--local} run "$name-run$i" "$base" ${rate:-100} ${hold:-5m} ${scen_args[@]+"${scen_args[@]}"} || rc=$?
         if [ "$rc" -ne 0 ]; then
-          echo "STOP $name-run$i 가 $rc 로 끝났다(3 무효, 4 캡처 실패). 위 출력의 INVALID 나 SNAPSHOT-FAILED 를 본다"
+          echo "STOP $name-run$i 가 $rc 로 끝났다(3 무효, 4 캡처 실패, 5 프로파일링 실패). 위 출력의 INVALID, SNAPSHOT-FAILED, PROFILE-FAILED 를 본다"
           echo "next 다시 재려면: $again"
           return "$rc"
         fi
@@ -669,7 +669,7 @@ run_version() {
         "${rate:-100}" "${hold:-5m}" "$DIAG_BASE" "${scenario:-feed_impression}" "$([ -n "$nopool" ] && echo off || echo on)")
       export DIAG_BASELINE_DIR DIAG_FIXED DIAG_CONDITION
       "$self" ${LOCAL:+--local} run "$name-run1-profile" "$DIAG_BASE" ${rate:-100} ${hold:-5m} ${scen_args[@]+"${scen_args[@]}"} --profile both || rc=$?
-      [ "$rc" -eq 0 ] || { echo "STOP $name-run1-profile 가 $rc 로 끝났다. 위 출력을 본다"; echo "next 다시 돌리려면: $again --from diag"; return "$rc"; }
+      [ "$rc" -eq 0 ] || { echo "STOP $name-run1-profile 가 $rc 로 끝났다(4 캡처 실패, 5 프로파일링 실패). 위 출력을 본다"; echo "next 다시 돌리려면: $again --from diag"; return "$rc"; }
       echo "STOP diag-done $name. 진단 회차가 끝났다. 진단 캡처(Call Tree, 트레이스, Redis 지표)를 보고 다음 버전으로 갈지 정한다"
       echo "next 다음 버전으로 가려면 다음 버전의 version 을 부른다"
       ;;
