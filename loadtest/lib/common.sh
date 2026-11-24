@@ -1262,7 +1262,7 @@ def render(doc, version_dir):
             out += ['', '| 대상 | 판정 값 | 걸린 시간 | 트레이스 ID | 화면 | 경고와 오류 |', '|---|---|---|---|---|---|']
             for t in traces:
                 base = os.path.join(d, t['dir'])
-                out.append('| %s %s | %s | %s | `%s` | [트레이스](%s) [로그](%s) [로그 글](%s) | %s |' % (
+                out.append('| %s %s | %s | %s | `%s` | [트레이스 그림](%s) [로그 그림](%s) [로그 원문](%s) | %s |' % (
                     t['panel'], t['target'], t['value'], fmt_s(t['ms'] / 1000), t['id'],
                     os.path.join(base, 'trace.png'), os.path.join(base, 'logs.png'), os.path.join(base, 'logs.txt'),
                     ', '.join(t['events']) or '-'))
@@ -1499,7 +1499,7 @@ def render_diag(doc, version_dir):
                 step = longest_step(os.path.join(run_dir, t['dir'], 'trace.json'))
                 step = '`%s` %s' % (step[0], fmt_s(step[1])) if step else '-'
                 files = ' '.join('[%s](%s)' % (label, os.path.join(base, f)) for label, f in
-                                 (('트레이스', 'trace.png'), ('로그', 'logs.png'), ('로그 글', 'logs.txt'), ('원본', 'trace.json'))
+                                 (('트레이스 그림', 'trace.png'), ('로그 그림', 'logs.png'), ('로그 원문', 'logs.txt'), ('트레이스 원본', 'trace.json'))
                                  if os.path.exists(os.path.join(run_dir, t['dir'], f)))
                 out.append('| %s %s | %s | %s | %s | `%s` | %s |' % (t['panel'], t['target'], t['value'], fmt_s(t['ms'] / 1000), step, t['id'], files))
         archive = next(iter(glob.glob(os.path.join(run_dir, 'diag-*-profile.tar.gz'))), None)
