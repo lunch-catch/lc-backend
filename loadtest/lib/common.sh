@@ -1166,7 +1166,8 @@ def render_overrun(o):
         crit = '판정하지 않음' if j['kind'] == '상태 확인' else basis(j['threshold'], j['default'])
         out.append('| `%s` | %s | %s | %s | %s | %s |' % (j['name'], j['kind'], crit, value, judge(j['over']), j['note'] or '-'))
     if idle:
-        out += ['', '구간에 실행이 없던 cron: ' + ', '.join('`%s`' % n for n in idle)]
+        # 하루 한 번 도는 cron 은 거의 늘 여기에 든다. 한 줄로 이으면 길어 접어 두고 한 줄에 하나씩 적는다
+        out += ['', '<details><summary>구간에 실행이 없던 cron %d개</summary>' % len(idle), ''] + ['- `%s`' % n for n in idle] + ['', '</details>']
     return out
 
 def render(doc, version_dir):
@@ -1272,7 +1273,7 @@ def render(doc, version_dir):
                     cells = [file_link(r['dir'], d, t['dir'], f) for f in files]
                     lead = [t['kind']] if 'kind' in t else []
                     out.append('| ' + ' | '.join(lead + [t['target'], t['value'], fmt_s(t['ms'] / 1000), '`%s`' % t['id']] + cells
-                                                 + [', '.join(t['events']) or '-']) + ' |')
+                                                 + [', '.join('`%s`' % e for e in t['events']) or '-']) + ' |')
         out += render_overrun(r.get('overrun'))
     out.append('<!-- /result:%s -->' % tag)
     lines = open(doc, encoding='utf-8').read().split('\n')
