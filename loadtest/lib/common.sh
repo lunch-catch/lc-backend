@@ -559,9 +559,14 @@ pin_app_count() {
 run_version() {
   local self="$1" name="$2"; shift 2
   local sha="" from=measure scenario="" nopool="" rate="" hold="" switch_args=() scen_args=() i rc base
+  local baseline="" baseline_sha="" fixed=()
   while [ $# -gt 0 ]; do
     case "$1" in
       --sha) sha="${2:?--sha 뒤에 이미지 커밋을 준다}"; shift 2 ;;
+      # 견줄 앞 버전과 그 커밋, 이 버전에서 고친 함수다(#1343). 계획 실행기는 같은 시나리오의 바로 앞 줄을 준다
+      --baseline) baseline="${2:?--baseline 뒤에 앞 버전 이름을 준다}"; shift 2 ;;
+      --baseline-sha) baseline_sha="${2:?--baseline-sha 뒤에 앞 버전 커밋을 준다}"; shift 2 ;;
+      --fixed) fixed+=("${2:?--fixed 뒤에 함수를 준다}"); shift 2 ;;
       --from) from="${2:?--from 뒤에 measure 나 diag 를 준다}"; shift 2 ;;
       --scenario) scenario="${2:?--scenario 뒤에 시나리오를 준다}"; scen_args=(--scenario "$2"); shift 2 ;;
       --no-pool) nopool=1; switch_args+=(--no-pool); shift ;;
@@ -586,6 +591,8 @@ run_version() {
   again_args+=(${switch_args[@]+"${switch_args[@]}"})
   [ -z "$rate" ] || again_args+=(--rate "$rate")
   [ -z "$hold" ] || again_args+=(--hold "$hold")
+  [ -z "$baseline" ] || again_args+=(--baseline "$baseline")
+  [ -z "$baseline_sha" ] || again_args+=(--baseline-sha "$baseline_sha")
   again=$(printf '%q ' "${again_args[@]}"); again="${again% }"
   [ -n "${LOCAL:-}" ] || [ -z "${AWS_PROFILE:-}" ] || again="AWS_PROFILE=$(printf '%q' "$AWS_PROFILE") $again"
   #
@@ -627,12 +634,38 @@ run_version() {
         echo "next 다시 재려면: $again"
         return 5
       fi
+      # 앞 버전과의 고친 함수 후보다(#1343). 진단 회차의 Diff 와 비교 표가 그 함수까지 펼친다. 확인해 빼거나 더한 목록을 --fixed 로 넘긴다
+      if [ -n "$baseline_sha" ] && [ -n "$sha" ]; then
+        if fixed_candidates "$baseline_sha" "$sha" > "$SNAPSHOT_OUT/fixed-candidates.txt"; then
+          echo "fixed 앞 버전 $baseline($baseline_sha) 과 견준 고친 함수 후보 $(grep -c . "$SNAPSHOT_OUT/fixed-candidates.txt") 개: $SNAPSHOT_OUT/fixed-candidates.txt"
+        else
+          echo "WARN: 고친 함수 후보를 뽑지 못했다. $baseline_sha 와 $sha 가 이 저장소에 있는지 본다(git fetch --tags)" >&2
+          rm -f "$SNAPSHOT_OUT/fixed-candidates.txt"
+        fi
+      fi
       echo "STOP measure-done $name. 측정 3회가 끝났다. 위의 회차마다 valid, metrics, scrape gaps, 캡처 폴더를 보고 진단 회차를 돌릴지 정한다"
       echo "next 진단을 돌리려면: $again --from diag"
+      # 후보는 앞 버전과 이 버전 사이의 develop 작업이 많으면 수십 개가 된다. 명령에 붙이지 않고 고른 것만 넘긴다
+      [ ! -s "$SNAPSHOT_OUT/fixed-candidates.txt" ] \
+        || echo "next 고친 함수는 $SNAPSHOT_OUT/fixed-candidates.txt 의 후보에서 골라 --fixed <함수> 로 하나씩 붙인다"
       echo "next 진단 없이 다음 버전으로 가려면 다음 버전의 version 을 부른다"
       ;;
     diag)
       rc=0
+      #
+      # 진단 회차의 캡처와 진단 절에 넘긴다(#1343). 앞 버전의 진단 회차 폴더가 있으면 그것과 견주고, 이 Pyroscope 에 남아 있으면 Diff 그림도 찍는다.
+      # 조건은 두 회차가 같은 조건인지 견주려고 남긴다
+      #
+      DIAG_BASELINE_DIR=""
+      if [ -n "$baseline" ]; then
+        DIAG_BASELINE_DIR="$ROOT/$(version_dir "$baseline" "$scenario")"
+        [ -z "${LOCAL:-}" ] || DIAG_BASELINE_DIR="$ROOT/build/loadtest-results/$(basename "$DIAG_BASELINE_DIR")"
+        DIAG_BASELINE_DIR="$DIAG_BASELINE_DIR/$baseline-run1-profile"
+      fi
+      DIAG_FIXED=$(printf '%s\n' ${fixed[@]+"${fixed[@]}"})
+      DIAG_CONDITION=$(python3 -c 'import json, sys; print(json.dumps(dict(zip(("rate", "hold", "members", "scenario", "pool"), sys.argv[1:])), ensure_ascii=False))' \
+        "${rate:-100}" "${hold:-5m}" "$DIAG_BASE" "${scenario:-feed_impression}" "$([ -n "$nopool" ] && echo off || echo on)")
+      export DIAG_BASELINE_DIR DIAG_FIXED DIAG_CONDITION
       "$self" ${LOCAL:+--local} run "$name-run1-profile" "$DIAG_BASE" ${rate:-100} ${hold:-5m} ${scen_args[@]+"${scen_args[@]}"} --profile both || rc=$?
       [ "$rc" -eq 0 ] || { echo "STOP $name-run1-profile 가 $rc 로 끝났다. 위 출력을 본다"; echo "next 다시 돌리려면: $again --from diag"; return "$rc"; }
       echo "STOP diag-done $name. 진단 회차가 끝났다. 진단 캡처(Call Tree, 트레이스, Redis 지표)를 보고 다음 버전으로 갈지 정한다"
@@ -655,9 +688,17 @@ run_version() {
 # 상태 파일은 build/loadtest-plans/<계획 파일 이름>.<local|lt>.state 다. 로컬과 부하 시험 환경을 따로 센다. 로컬로 먼저 돌린 기록이 부하 시험 환경의 버전을 건너뛰게 하지 않는다. 줄마다 버전, 단계, 시작과 끝의 UTC 시각이다. 버전마다 잰 시각을 결과 문서에 옮긴다(#1088).
 #
 run_plan() {
-  local self="$1" plan="$2" choice="${3:-}" state line name commit ref args step started rc lines=()
+  local self="$1" plan="$2" choice="${3:-}" state line name commit ref args step started rc lines=() fixed=() scen prev_args i
   [ -f "$plan" ] || die "계획 파일이 없다: $plan"
   case "$choice" in ""|--diag|--skip-diag) ;; *) die "plan 의 선택지는 --diag 나 --skip-diag 다" ;; esac
+  # --diag 뒤의 --fixed 는 진단 회차가 앞 버전과 견줄 때 고친 함수다(#1343)
+  shift $(( $# < 3 ? $# : 3 ))
+  while [ $# -gt 0 ]; do
+    [ "$choice" = --diag ] && [ "$1" = --fixed ] || die "plan 의 --fixed 는 --diag 뒤에 준다"
+    fixed+=(--fixed "${2:?--fixed 뒤에 함수를 준다}"); shift 2
+  done
+  # 앞 버전은 같은 시나리오(--scenario)인 바로 앞 줄이다. 노출 수집과 서빙처럼 시험이 다르면 견주지 않는다(#1343)
+  local -a prev_names=() prev_commits=() prev_scens=()
   local target=lt
   [ -z "${LOCAL:-}" ] || target=local
   state="$ROOT/build/loadtest-plans/$(basename "$plan").$target.state"
@@ -671,6 +712,13 @@ run_plan() {
   for line in ${lines[@]+"${lines[@]}"}; do
     line="${line%%#*}"; [ -n "${line//[[:space:]]/}" ] || continue
     read -r name commit args <<< "$line"
+    scen=$(sed -nE 's/.*--scenario ([^ ]+).*/\1/p' <<< "$args")
+    prev_args=()
+    for (( i = ${#prev_names[@]} - 1; i >= 0; i-- )); do
+      [ "${prev_scens[$i]}" = "$scen" ] || continue
+      prev_args=(--baseline "${prev_names[$i]}" --baseline-sha "${prev_commits[$i]}"); break
+    done
+    prev_names+=("$name"); prev_commits+=("$commit"); prev_scens+=("$scen")
     # 진단을 돌렸거나 건너뛴 버전은 끝났다
     awk -v n="$name" '$1 == n && ($2 == "diag-done" || $2 == "diag-skipped") { found = 1 } END { exit !found }' "$state" && continue
     [ "$commit" != TBD ] || die "$name 의 커밋을 정하지 않았다(TBD). 측정 직전에 정해 $plan 에 적는다"
@@ -684,17 +732,21 @@ run_plan() {
       [ -z "$choice" ] || die "$name 은 아직 측정하지 않았다. --diag 나 --skip-diag 없이 부른다"
       echo "plan $name 측정을 시작한다($commit${ref:+, LOADTEST_REF=$ref})"
       # shellcheck disable=SC2086
-      LOADTEST_REF="${ref:-${LOADTEST_REF:-}}" run_version "$self" "$name" --sha "$commit" $args || rc=$?
+      LOADTEST_REF="${ref:-${LOADTEST_REF:-}}" run_version "$self" "$name" --sha "$commit" $args ${prev_args[@]+"${prev_args[@]}"} || rc=$?
       [ "$rc" -eq 0 ] || { echo "plan $name 측정이 $rc 로 멈췄다. 고친 뒤 다시 부르면 이 버전의 측정부터 다시 한다"; return "$rc"; }
       echo "$name measure-done $started $(date -u +%FT%TZ)" >> "$state"
       echo "next 진단을 돌리려면: $next_cmd --diag"
+      # 고친 함수는 run_version 이 보인 후보 파일에서 골라 --diag 뒤에 붙인다(#1343)
+      [ ! -s "${SNAPSHOT_OUT:-/nonexistent}/fixed-candidates.txt" ] \
+        || echo "next 고친 함수를 붙이려면: $next_cmd --diag --fixed <함수> ... (후보: $SNAPSHOT_OUT/fixed-candidates.txt)"
       echo "next 진단을 건너뛰려면: $next_cmd --skip-diag"
       return 0
     fi
     case "$choice" in
       --diag)
         # shellcheck disable=SC2086
-        LOADTEST_REF="${ref:-${LOADTEST_REF:-}}" run_version "$self" "$name" --sha "$commit" $args --from diag || rc=$?
+        LOADTEST_REF="${ref:-${LOADTEST_REF:-}}" run_version "$self" "$name" --sha "$commit" $args ${prev_args[@]+"${prev_args[@]}"} \
+          ${fixed[@]+"${fixed[@]}"} --from diag || rc=$?
         [ "$rc" -eq 0 ] || { echo "plan $name 진단이 $rc 로 멈췄다. 고친 뒤 --diag 로 다시 부른다"; return "$rc"; }
         echo "$name diag-done $started $(date -u +%FT%TZ)" >> "$state" ;;
       --skip-diag)
@@ -1234,10 +1286,8 @@ def java_leaf(stack):
     frames = stack.split(';')
     return next((f for f in reversed(frames) if JAVA_FRAME.match(f)), frames[-1])
 
-def profile_self(archive, top=5):
-    # 서비스와 종류마다 Self 의 몫이다. 서비스가 나뉘기 전의 파일은 앱 하나다(#1341)
-    #   frame  그 함수가 스택의 맨 끝인 표본이다. 그라파나 Call Tree 의 Self 와 같다
-    #   java   맨 끝에서부터 처음 만나는 자바 함수에 붙인다. 네이티브 프레임(poll 등)에서 기다린 몫이 그것을 부른 자바 함수로 간다
+def load_profile(archive):
+    # 프로파일 파일을 서비스와 종류마다 (스택, 표본 수) 목록으로 읽는다. 서비스가 나뉘기 전의 파일은 앱 하나다
     import tarfile
     try:
         tar = tarfile.open(archive)
@@ -1249,34 +1299,142 @@ def profile_self(archive, top=5):
                   else {'lunchcatch': (manifest['kinds'], '')})
         out = {}
         for svc, (kinds, prefix) in layout.items():
-            shares = {'frame': {}, 'java': {}}
+            out[svc] = {}
             for kind, meta in kinds.items():
-                own, java, total = {}, {}, 0
+                rows = []
                 for b in meta['batches']:
                     for line in tar.extractfile('%s%s/%d.folded' % (prefix, kind, b['at'])).read().decode().splitlines():
                         stack, _, n = line.rpartition(' ')
-                        n = int(n); total += n
-                        leaf = stack.rsplit(';', 1)[-1]
-                        own[leaf] = own.get(leaf, 0) + n
-                        j = java_leaf(stack)
-                        java[j] = java.get(j, 0) + n
-                shares['frame'][kind] = {f: c / total for f, c in own.items()} if total else {}
-                shares['java'][kind] = {f: c / total for f, c in java.items()} if total else {}
-            out[svc] = {}
-            for basis, by_kind in shares.items():
-                picked = []
-                for kind in ('wall', 'cpu'):
-                    for f, _ in sorted(by_kind.get(kind, {}).items(), key=lambda kv: -kv[1])[:top]:
-                        if f not in picked:
-                            picked.append(f)
-                out[svc][basis] = [(f, by_kind.get('wall', {}).get(f), by_kind.get('cpu', {}).get(f)) for f in picked]
+                        rows.append((stack, int(n)))
+                out[svc][kind] = rows
         return out
+
+def shares(rows, key):
+    # 표본을 key(스택 -> 함수)로 모은 몫이다
+    total = sum(n for _, n in rows)
+    own = {}
+    for stack, n in rows:
+        k = key(stack)
+        own[k] = own.get(k, 0) + n
+    return {k: c / total for k, c in own.items()} if total else {}
+
+def inclusive(rows, function):
+    # 그 함수가 든 스택의 몫이다. Call Tree 의 Total 과 같다
+    total = sum(n for _, n in rows)
+    hit = sum(n for stack, n in rows if function in stack.split(';'))
+    return hit / total if total else None
+
+def profile_self(archive, top=5):
+    # 서비스와 종류마다 Self 의 몫이다(#1341)
+    #   frame  그 함수가 스택의 맨 끝인 표본이다. 그라파나 Call Tree 의 Self 와 같다
+    #   java   맨 끝에서부터 처음 만나는 자바 함수에 붙인다. 네이티브 프레임(poll 등)에서 기다린 몫이 그것을 부른 자바 함수로 간다
+    prof = load_profile(archive)
+    if prof is None:
+        return None
+    out = {}
+    for svc, kinds in prof.items():
+        by = {'frame': {k: shares(rows, lambda st: st.rsplit(';', 1)[-1]) for k, rows in kinds.items()},
+              'java': {k: shares(rows, java_leaf) for k, rows in kinds.items()}}
+        out[svc] = {}
+        for basis, by_kind in by.items():
+            picked = []
+            for kind in ('wall', 'cpu'):
+                for f, _ in sorted(by_kind.get(kind, {}).items(), key=lambda kv: -kv[1])[:top]:
+                    if f not in picked:
+                        picked.append(f)
+            out[svc][basis] = [(f, by_kind.get('wall', {}).get(f), by_kind.get('cpu', {}).get(f)) for f in picked]
+    return out
+
+def fmt_delta(v):
+    return '-' if v is None else '%+.2f%%p' % (v * 100)
+
+def render_compare(run_dir, d, rel_of):
+    # 앞 버전의 진단 회차와 견준다(#1343). 프로파일 파일로 세어 환경이 떠 있지 않아도 된다
+    try:
+        meta = json.load(open(os.path.join(run_dir, 'baseline.json'), encoding='utf-8'))
+    except (OSError, ValueError):
+        return []
+    if not meta.get('dir'):
+        return ['', '앞 버전과의 비교: 견줄 앞 버전이 없다(첫 버전)']
+    base_dir = os.path.normpath(os.path.join(run_dir, meta['dir']))
+    base = os.path.basename(base_dir)
+    cur_arc = next(iter(glob.glob(os.path.join(run_dir, 'diag-*-profile.tar.gz'))), None)
+    base_arc = next(iter(glob.glob(os.path.join(base_dir, 'diag-*-profile.tar.gz'))), None)
+    if not base_arc or not cur_arc:
+        return ['', '앞 버전과의 비교: 앞 버전 %s 의 진단 회차 폴더나 프로파일 파일이 없다' % base]
+    before, after = load_profile(base_arc), load_profile(cur_arc)
+    out = ['', '앞 버전과의 비교(%s 를 기준으로)' % base]
+    # 두 회차의 조건이 다르면 몫의 차이에 조건의 차이가 섞인다
+    def condition(path):
+        c = {}
+        try:
+            c = json.load(open(os.path.join(path, 'condition.json'), encoding='utf-8'))
+        except (OSError, ValueError):
+            pass
+        try:
+            w = {l.split()[0]: int(l.split()[1]) for l in open(os.path.join(path, '구간.txt'), encoding='utf-8') if l.split() and l.split()[0] in ('from', 'to')}
+            c['구간 길이'] = '%d초' % round((w['to'] - w['from']) / 1000)
+        except (OSError, KeyError, ValueError, IndexError):
+            pass
+        return c
+    cb, cc = condition(base_dir), condition(run_dir)
+    diff = [(k, cb.get(k, '-'), cc.get(k, '-')) for k in sorted(set(cb) | set(cc)) if cb.get(k) != cc.get(k)]
+    out.append('')
+    out.append('조건: 같다' if not diff else '조건이 다르다: ' + ', '.join('%s %s → %s' % row for row in diff))
+    images = [f for f in ('diff/wall.png', 'diff/batch-wall.png') if os.path.exists(os.path.join(run_dir, f))]
+    if images:
+        out.append('')
+        out += ['![Diff %s](%s)' % (f[5:-4], os.path.join(d, f)) for f in images]
+        links = [f for f in ('diff/cpu.png', 'diff/batch-cpu.png') if os.path.exists(os.path.join(run_dir, f))]
+        if links:
+            out.append('Diff: ' + ', '.join('[%s](%s)' % (f[5:-4], os.path.join(d, f)) for f in links))
+    else:
+        out += ['', 'Diff 그림: 앞 버전이 이 환경의 Pyroscope 에 없어 찍지 않았다. lc-infra 에서 아래로 찍어 이 회차 폴더의 `diff/` 에 넣는다', '',
+                '```bash', './scripts/loadtest-diff.sh %s %s%s' % (rel_of(base_dir), rel_of(run_dir), ''.join(' --fixed %s' % f for f in meta.get('fixed', []))), '```']
+    fixed = meta.get('fixed', [])
+    cand = os.path.join(os.path.dirname(run_dir), 'fixed-candidates.txt')
+    note = '고친 함수: ' + (', '.join('`%s`' % f for f in fixed) if fixed else '넘기지 않았다')
+    if os.path.exists(cand):
+        n = len([l for l in open(cand, encoding='utf-8').read().splitlines() if l.strip()])
+        note += '. 후보 %d개는 [fixed-candidates.txt](%s) 에 있다(앞 버전 커밋과의 git diff)' % (n, os.path.join(os.path.dirname(d), 'fixed-candidates.txt'))
+    out += ['', note]
+    for svc in [s for s in after if s in before]:
+        out += ['', '`%s`' % svc]
+        if fixed:
+            out += ['', '고친 함수의 몫(그 함수 아래 전체, Call Tree 의 Total)', '', '| 함수 | wall 앞 → 이 버전 | cpu 앞 → 이 버전 |', '|---|---|---|']
+            for f in fixed:
+                cells = []
+                for kind in ('wall', 'cpu'):
+                    a, b = inclusive(before[svc].get(kind, []), f), inclusive(after[svc].get(kind, []), f)
+                    cells.append('%s → %s(%s)' % (fmt_pct(a), fmt_pct(b), fmt_delta(None if a is None or b is None else b - a)))
+                out.append('| `%s` | %s | %s |' % (f, cells[0], cells[1]))
+        for kind in ('wall', 'cpu'):
+            a = shares(before[svc].get(kind, []), java_leaf)
+            b = shares(after[svc].get(kind, []), java_leaf)
+            delta = {k: b.get(k, 0) - a.get(k, 0) for k in set(a) | set(b) if k not in fixed}
+            up = sorted(delta.items(), key=lambda kv: -kv[1])[:5]
+            down = sorted(delta.items(), key=lambda kv: kv[1])[:5]
+            out += ['', '%s 에서 Self 몫이 가장 많이 바뀐 함수(자바 함수 기준, 고친 함수 밖)' % kind, '',
+                    '| 늘어난 함수 | 앞 → 이 버전 | 줄어든 함수 | 앞 → 이 버전 |', '|---|---|---|---|']
+            for (fu, du), (fd, dd) in zip(up, down):
+                out.append('| `%s` | %s → %s(%s) | `%s` | %s → %s(%s) |' % (fu, fmt_pct(a.get(fu, 0)), fmt_pct(b.get(fu, 0)), fmt_delta(du),
+                                                                       fd, fmt_pct(a.get(fd, 0)), fmt_pct(b.get(fd, 0)), fmt_delta(dd)))
+    gone = [s for s in before if s not in after]
+    new = [s for s in after if s not in before]
+    if gone or new:
+        out += ['', '한쪽에만 있는 서비스: ' + ', '.join(['`%s`(앞 버전만)' % s for s in gone] + ['`%s`(이 버전만)' % s for s in new])]
+    return out
 
 def render_diag(doc, version_dir):
     # 진단 회차를 결과 문서에서 제목에 "진단" 이 든 절에 적는다(#1341). 버전 폴더의 -profile 회차를 모두 그린다
     tag = os.path.basename(os.path.normpath(version_dir))
     rel = os.path.relpath(version_dir, os.path.dirname(os.path.abspath(doc)))
     runs = sorted(d for d in glob.glob(os.path.join(version_dir, '*-profile')) if os.path.isdir(d))
+    # loadtest-diff.sh 에 넘길 경로다. 저장소의 결과 문서면 저장소 기준, 아니면 절대 경로다
+    def rel_of(path):
+        root = os.environ.get('LOADTEST_ROOT', '')
+        path = os.path.abspath(path)
+        return '<lc-backend>/' + os.path.relpath(path, root) if root and path.startswith(root + os.sep) else path
     version = re.sub(r'-run\d+-profile$', '', os.path.basename(runs[0])) if runs else tag
     out = ['<!-- diag:%s -->' % tag, '### %s' % version, '',
            '`run` 이 진단 회차마다 적는다(#1341). 진단 회차의 수치에는 프로파일링의 비용이 섞여 측정 회차와 견주지 않는다.']
@@ -1319,6 +1477,7 @@ def render_diag(doc, version_dir):
                 out += ['', title, '', '| 함수 | wall Self | cpu Self |', '|---|---|---|']
                 for f, w, c in bases[basis]:
                     out.append('| `%s` | %s | %s |' % (f, fmt_pct(w), fmt_pct(c)))
+        out += render_compare(run_dir, d, rel_of)
     out.append('<!-- /diag:%s -->' % tag)
     lines = open(doc, encoding='utf-8').read().split('\n')
     head = next((i for i, l in enumerate(lines) if l.startswith('#') and '진단' in l), None)
@@ -1399,6 +1558,64 @@ record_result() {
 # 측정 회차와 같은 규칙이다. 로컬과 SNAPSHOT_OUT 이 없는 회차는 하지 않고, 다른 파일이 스테이징돼 있으면 커밋하지 않는다.
 #
 #
+# 앞 버전 커밋과 이 버전 커밋 사이에 고친 함수 후보를 "클래스.메서드" 로 낸다(#1343). 진단 회차의 Diff 와 비교 표가 그 함수까지 펼친다.
+# Java 용 diff 규칙(*.java diff=java)을 주면 바뀐 조각마다 그 조각을 감싼 메서드가 조각 머리에 나온다. 그 머리에서 메서드 이름을 읽는다.
+# 새로 만든 파일은 머리가 없어 더한 줄의 메서드 선언을 읽는다. 시험 코드(src/test)는 뺀다. 람다와 안쪽 클래스는 프로파일의 이름과 다를 수 있다
+#
+IFS= read -r -d '' FIXED_PY <<'PY' || true
+import re, sys
+DECL = re.compile(r'^\s*(?:(?:public|protected|private|static|final|synchronized|abstract|default)\s+)*(?:<[^>]+>\s+)?[\w<>\[\],.? ]+\s+(\w+)\s*\(')
+SKIP = {'if', 'for', 'while', 'switch', 'catch', 'return', 'new', 'else', 'try', 'synchronized', 'super', 'this'}
+# 패키지 이름을 바꾸면 모든 파일의 package, import 줄이 바뀐다. 그런 줄과 빈 줄, 주석만 바뀐 조각은 고친 것으로 치지 않는다
+TRIVIAL = re.compile(r'^\s*(?:package\s|import\s|//|/\*|\*|$)')
+out, cls, new_file, hunk, body = [], None, False, None, []
+def add(name):
+    if cls and name and name not in SKIP and '%s.%s' % (cls, name) not in out:
+        out.append('%s.%s' % (cls, name))
+def close():
+    # 조각 하나를 닫는다. 의미 있는 줄이 바뀌었으면 조각 머리의 메서드를, 새 파일이면 더한 줄의 메서드 선언을 넣는다
+    global hunk, body
+    if hunk is not None and any(not TRIVIAL.match(l) for l in body):
+        if new_file:
+            for l in body:
+                m = DECL.match(l)
+                if m:
+                    add(m.group(1))
+        else:
+            m = DECL.match(hunk)
+            if m:
+                add(m.group(1))
+    hunk, body = None, []
+for line in sys.stdin:
+    line = line.rstrip('\n')
+    if line.startswith('diff --git'):
+        close()
+        cls, new_file = None, False
+    elif line.startswith('--- '):
+        new_file = line == '--- /dev/null'
+    elif line.startswith('+++ '):
+        path = line[6:] if line.startswith('+++ b/') else ''
+        cls = path.rsplit('/', 1)[-1][:-5] if path.endswith('.java') and '/src/main/' in '/' + path else None
+    elif line.startswith('@@'):
+        close()
+        hunk = line.split('@@')[-1]
+    elif hunk is not None and line[:1] in '+-' and not line.startswith(('+++', '---')):
+        body.append(line[1:])
+close()
+print('\n'.join(out))
+PY
+
+fixed_candidates() {
+  local from="$1" to="$2" attrs
+  attrs=$(mktemp)
+  echo '*.java diff=java' > "$attrs"
+  git -C "$ROOT" rev-parse -q --verify "$from^{commit}" > /dev/null && git -C "$ROOT" rev-parse -q --verify "$to^{commit}" > /dev/null \
+    || { rm -f "$attrs"; return 1; }
+  git -C "$ROOT" -c core.attributesFile="$attrs" diff --no-color -U0 "$from" "$to" -- '*.java' | python3 -c "$FIXED_PY"
+  rm -f "$attrs"
+}
+
+#
 # 로컬이 적는 결과 문서 사본이다. 처음에는 원본을 복사하고, 그 뒤 원본에 새로 생긴 절(회차별 결과, 진단)은 사본 끝에 더한다.
 # 사본은 회차가 쌓인 것이라 덮어쓰지 않는다. 절을 더하지 않으면 원본에 나중에 생긴 절이 사본에 없어 적지 못한다(#1341)
 #
@@ -1433,7 +1650,7 @@ record_diag() {
   [ -n "${SNAPSHOT_OUT:-}" ] || return 0
   doc="$ROOT/$RESULT_DOC"
   [ -z "${LOCAL:-}" ] || doc=$(local_doc)
-  python3 -c "$RESULT_PY" diag "$doc" "$SNAPSHOT_OUT" || rc=$?
+  LOADTEST_ROOT="$ROOT" python3 -c "$RESULT_PY" diag "$doc" "$SNAPSHOT_OUT" || rc=$?
   case "$rc" in
     0) echo "diag $name -> $doc" ;;
     3) echo "WARN: $RESULT_DOC 에 제목에 '진단' 이 든 절이 없어 적지 않았다" >&2 ;;
@@ -1451,8 +1668,11 @@ commit_diag() {
     return 0
   fi
   # 진단 절을 적은 결과 문서도 함께 담는다(#1341)
-  if ! git -C "$ROOT" add -- "$run_dir" "$RESULT_DOC" \
-    || ! git -C "$ROOT" commit -q -m "test: $name 의 진단 캡처와 프로파일을 남기고 진단 절에 적는다 (#1335, #1341)" -- "$run_dir" "$RESULT_DOC"; then
+  # 고친 함수 후보(#1343)도 버전 폴더에 있으면 함께 담는다
+  local extra=()
+  [ ! -f "$SNAPSHOT_OUT/fixed-candidates.txt" ] || extra=("$SNAPSHOT_OUT/fixed-candidates.txt")
+  if ! git -C "$ROOT" add -- "$run_dir" "$RESULT_DOC" ${extra[@]+"${extra[@]}"} \
+    || ! git -C "$ROOT" commit -q -m "test: $name 의 진단 캡처와 프로파일을 남기고 진단 절에 적는다 (#1335, #1341, #1343)" -- "$run_dir" "$RESULT_DOC" ${extra[@]+"${extra[@]}"}; then
     echo "WARN: 진단 회차를 커밋하지 못했다. git -C $ROOT restore --staged -- $run_dir $RESULT_DOC 로 풀고 손으로 커밋한다" >&2
     return 0
   fi
@@ -1479,8 +1699,24 @@ after_run() {
   #
   case "$name" in
     *-profile)
+      #
+      # 앞 버전의 진단 회차가 있으면 Diff 를 같이 찍는다(#1343). 그 회차가 이 Pyroscope 에 남아 있을 때만 그림이 나오고,
+      # 없으면 캡처가 건너뛰어 진단 절에 loadtest-diff.sh 로 찍는 명령을 적는다. 비교 표는 프로파일 파일로 늘 센다
+      #
+      local diff_args=() f bfrom bto
+      if [ -n "${DIAG_BASELINE_DIR:-}" ] && [ -f "$DIAG_BASELINE_DIR/구간.txt" ]; then
+        bfrom=$(awk '$1 == "from" {print $2}' "$DIAG_BASELINE_DIR/구간.txt"); bto=$(awk '$1 == "to" {print $2}' "$DIAG_BASELINE_DIR/구간.txt")
+        diff_args=(--baseline "$(basename "$DIAG_BASELINE_DIR")" --baseline-from "$bfrom" --baseline-to "$bto")
+        while IFS= read -r f; do [ -z "$f" ] || diff_args+=(--fixed "$f"); done <<< "${DIAG_FIXED:-}"
+      fi
       "$LC_INFRA_DIR/scripts/loadtest-snapshot.sh" "$target" --diag "$name" --from "$ws" --to "$he" \
-        ${DOMAIN_SNAPSHOT:+--domain "$DOMAIN_SNAPSHOT"} ${SNAPSHOT_OUT:+--out "$SNAPSHOT_OUT"} || snap_rc=$?
+        ${DOMAIN_SNAPSHOT:+--domain "$DOMAIN_SNAPSHOT"} ${SNAPSHOT_OUT:+--out "$SNAPSHOT_OUT"} ${diff_args[@]+"${diff_args[@]}"} || snap_rc=$?
+      # 두 회차의 조건과 견준 앞 회차를 남긴다. 진단 절의 비교가 읽는다
+      if [ -n "${SNAPSHOT_OUT:-}" ] && [ -d "$SNAPSHOT_OUT/$name" ]; then
+        printf '%s\n' "${DIAG_CONDITION:-{\}}" > "$SNAPSHOT_OUT/$name/condition.json"
+        python3 -c 'import json, os, sys; print(json.dumps({"dir": os.path.relpath(sys.argv[1], sys.argv[2]) if sys.argv[1] else "", "fixed": [f for f in sys.argv[3].splitlines() if f]}, ensure_ascii=False))' \
+          "${DIAG_BASELINE_DIR:-}" "$SNAPSHOT_OUT/$name" "${DIAG_FIXED:-}" > "$SNAPSHOT_OUT/$name/baseline.json"
+      fi
       rm -f "$metrics_out"
       [ "$snap_rc" -eq 0 ] || { echo "SNAPSHOT-FAILED $name: 캡처가 $snap_rc 로 끝났다. 환경을 내리기 전에 같은 구간(--from $ws --to $he)으로 다시 찍는다"; return 4; }
       echo "captured $name"
@@ -1627,6 +1863,8 @@ send() {
   curl -fsS -X POST --data-binary @"$work/folded-$kind.txt" \
     "$pyro/ingest?name=lunchcatch.$kind%7Brun%3D$run%7D&from=$from&until=$until&format=folded&sampleRate=$rate&spyName=javaspy&units=samples&aggregationType=sum"
   echo "profile $kind $from $(wc -l < "$work/folded-$kind.txt") stacks"
+  # 보낸 묶음의 원래 구간이다(#1343). Pyroscope 는 묶음을 from 한 점에 찍고 until 은 돌려주지 않아, 다시 올릴 때 원래 until 을 쓰려고 남긴다
+  echo "batch ${svc:-lunchcatch} $kind $from $until"
 }
 stop=$(( $(date +%s) + secs ))
 while [ "$(date +%s)" -lt "$stop" ]; do
@@ -1658,14 +1896,20 @@ SH
 # 시험 환경은 앱 서버 모두에 SSM 으로 함께 보내고 모니터링 서버의 Pyroscope(lunch-catch/lc-infra#71)로 보낸다.
 #
 profile() {
-  local name="${1:?회차 이름을 준다}" secs="${2:-60}" mode="${3:-wall}" pyro id trim pids="" pid rc=0
+  local name="${1:?회차 이름을 준다}" secs="${2:-60}" mode="${3:-wall}" pyro id trim pids="" pid rc=0 outs
   case "$mode" in cpu|wall|both) ;; *) die "모드는 cpu, wall, both 다" ;; esac
+  #
+  # 보낸 묶음마다 원래 from 과 until 을 PROFILE_BATCHES 에 모은다(#1343). 프로파일 보관이 그 until 을 남겨 다시 올릴 때 원래 값을 쓴다.
+  # 앱 서버마다의 출력을 파일로 받아 batch 줄은 모으고 나머지는 지금처럼 보인다
+  #
+  outs=$(mktemp -d)
   if [ -n "${LOCAL:-}" ]; then
     trim=$(mktemp)
     printf '%s\n' "$TRIM_PY" > "$trim"
     bash -c "$PROFILE_SH" profile "$name" "$secs" "$mode" "http://localhost:${PYROSCOPE_PORT:-14040}" \
-      "$LOCAL_PROJECT-app-1" "$trim" "$ASPROF_VERSION"
-    return
+      "$LOCAL_PROJECT-app-1" "$trim" "$ASPROF_VERSION" > "$outs/local.out" 2>&1 || rc=$?
+    keep_batches "$outs"
+    return "$rc"
   fi
   pyro="http://$(aws ec2 describe-instances --filters "Name=tag:Project,Values=$PROJECT" "Name=tag:Role,Values=monitoring" \
     "Name=instance-state-name,Values=running" --query 'Reservations[0].Instances[0].PrivateIpAddress' --output text):4040"
@@ -1678,14 +1922,28 @@ PY
 cat > /tmp/lt-profile.sh <<'SH'
 $PROFILE_SH
 SH
-bash /tmp/lt-profile.sh $name $secs $mode $pyro $PROJECT /tmp/lt-trim.py $ASPROF_VERSION | tail -3" &
+# batch 줄은 모두, 나머지는 끝의 몇 줄만 돌려준다. SSM 출력 한도(24,000자) 안에 든다(회차 5분이면 서버마다 60줄 남짓)
+bash /tmp/lt-profile.sh $name $secs $mode $pyro $PROJECT /tmp/lt-trim.py $ASPROF_VERSION > /tmp/lt-profile.out 2>&1
+rc=\$?
+grep '^batch ' /tmp/lt-profile.out
+grep -v '^batch ' /tmp/lt-profile.out | tail -3
+exit \$rc" > "$outs/$id.out" 2>&1 &
     pids="$pids $!"
   done
   # 앱 서버 하나라도 프로파일을 보내지 못했으면 실패로 끝난다
   for pid in $pids; do
     wait "$pid" || rc=1
   done
+  keep_batches "$outs"
   return "$rc"
+}
+
+# 서버마다의 프로파일링 출력에서 batch 줄은 PROFILE_BATCHES 에 더하고 나머지는 보인다
+keep_batches() {
+  local outs="$1"
+  [ -z "${PROFILE_BATCHES:-}" ] || grep -h '^batch ' "$outs"/*.out >> "$PROFILE_BATCHES" || true
+  grep -hv '^batch ' "$outs"/*.out || true
+  rm -rf "$outs"
 }
 
 #

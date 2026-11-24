@@ -177,7 +177,7 @@ case "${LOCAL:+local-}${1:-}" in
   plan|local-plan)
     # 측정 계획의 다음 걸음 하나를 간다. 상태와 멈춤은 공통의 run_plan 이 갖는다(#1307)
     shift
-    run_plan "$0" "${1:?계획 파일을 준다(예: loadtest/adserving/plans/1088-remeasure.plan)}" "${2:-}"
+    run_plan "$0" "${1:?계획 파일을 준다(예: loadtest/adserving/plans/1088-remeasure.plan)}" "${@:2}"
     ;;
   version|local-version)
     # 버전 하나를 측정 3회와 진단까지 돈다. 순서와 멈춤은 공통의 run_version 이 갖는다(#1306)
@@ -308,6 +308,14 @@ curl -fs localhost:8081/actuator/health/readiness" &
     #
     if [ -n "$prof" ]; then
       case "$name" in *-profile) ;; *) die "프로파일링 회차는 이름을 -profile 로 끝낸다. 예: v3c-run1-profile" ;; esac
+      # 보낸 묶음의 원래 구간을 회차 폴더에 모은다(#1343). 캡처의 프로파일 보관이 읽는다
+      PROFILE_BATCHES=""
+      if [ -n "${SNAPSHOT_OUT:-}" ]; then
+        mkdir -p "$SNAPSHOT_OUT/$name"
+        PROFILE_BATCHES="$SNAPSHOT_OUT/$name/profile-batches.txt"
+        : > "$PROFILE_BATCHES"
+      fi
+      export PROFILE_BATCHES
       profile "$name" $(( 60 + hold_ms / 1000 + 10 )) "$prof" &
     fi
     require_snapshot "$name"
