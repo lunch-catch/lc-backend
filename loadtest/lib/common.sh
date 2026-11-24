@@ -1134,10 +1134,10 @@ def basis(t, default):
 
 def render_overrun(o):
     # 회차의 기준 초과 표다(#1339). 기준은 앱의 overrun_threshold_seconds 이고 값은 유지 구간으로 센다
-    out = ['', '기준 초과(유지 구간)', '']
+    out = ['', '#### 기준 초과(유지 구간)', '']
     if o is None:
         return out + ['기준 초과를 묻지 못했다']
-    out += ['| API | 기준 | p99 | 판정 | 가장 오래 걸린 트레이스 |', '|---|---|---|---|---|']
+    out += ['##### API', '', '| API | 기준 | p99 | 판정 | 가장 오래 걸린 트레이스 |', '|---|---|---|---|---|']
     for a in o['apis']:
         tr = '`%s` %s' % (a['trace']['id'], fmt_s((a['trace'].get('ms') or 0) / 1000)) if a.get('trace') else '-'
         if a.get('trace') and a.get('partial'):
@@ -1145,7 +1145,7 @@ def render_overrun(o):
         out.append('| %s | %s | %s | %s | %s |' % (a['name'], basis(a['threshold'], a['default']), fmt_s(a['p99']), judge(a['over']), tr))
     if not o['apis']:
         out.append('| 요청 없음 | - | - | - | - |')
-    out.append('')
+    out += ['', '##### 요청 경로의 메서드', '']
     tracing = o.get('tracing') or ('ok' if o.get('traced') else 'no-tempo')
     if tracing == 'no-tempo':
         out.append('메서드: 추적을 켜지 않았다(Tempo 가 없다)')
@@ -1168,12 +1168,12 @@ def render_overrun(o):
     crons = [j for j in o['jobs'] if j['kind'] in ('cron 배치', '상태 확인')]
     others = [j for j in o['jobs'] if j not in crons]
     if others:
-        out += ['', '| 작업 | 종류 | 기준 | 값 | 판정 | 참고 |', '|---|---|---|---|---|---|']
+        out += ['', '##### 릴레이와 워커', '', '| 작업 | 종류 | 기준 | 값 | 판정 | 참고 |', '|---|---|---|---|---|---|']
         for j in others:
             value = '%s %s' % (j['value_label'], fmt_s(j['value'])) if j['value'] is not None else '지표 없음'
             out.append('| `%s` | %s | %s | %s | %s | %s |' % (j['name'], j['kind'], basis(j['threshold'], j['default']), value, judge(j['over']), j['note'] or '-'))
     if crons:
-        out += ['', '기준을 넘은 cron', '', '| 작업 | 기준 | 구간에 실행 | 실행 한 번 | 판정 |', '|---|---|---|---|---|']
+        out += ['', '##### 기준을 넘은 cron', '', '| 작업 | 기준 | 구간에 실행 | 실행 한 번 | 판정 |', '|---|---|---|---|---|']
         # 구간에 돈 작업을 먼저 적는다
         for j in sorted(crons, key=lambda j: (j['value'] is None, j['name'])):
             ran = j['value'] is not None
@@ -1197,7 +1197,7 @@ def render(doc, version_dir):
     out = ['<!-- result:%s -->' % tag, '### %s' % version, '']
     out.append('`run` 이 회차마다 적는다(#1326). 핵심 수치는 앱이 잰 API 별 요청 시간으로 유지 구간만 센다. 오류율은 5xx 의 비율이다. 분위수는 같은 uri 의 메서드를 합쳐 센다.')
     out.append('3회 묶음은 핵심 수치와 상세의 평균, 시간, 초당 값은 평균이고, 이름이 `_max`, `_inc`(건수)로 끝나거나 CPU 최대, 허용량 초과인 값은 가장 큰 값, 크레딧과 `_min` 은 가장 작은 값이다.')
-    out += ['', '**핵심 수치**', '', '| API | 회차 | 초당 | p50 / p95 / p99 | 오류율 |', '|---|---|---|---|---|']
+    out += ['', '#### 핵심 수치', '', '| API | 회차 | 초당 | p50 / p95 / p99 | 오류율 |', '|---|---|---|---|---|']
     uris = sorted({u for r in runs for u in r['core']})
     for u in uris:
         methods = sorted({m for r in runs if u in r['core'] for m in r['core'][u]['methods']})
@@ -1218,7 +1218,7 @@ def render(doc, version_dir):
     if not uris:
         out.append('| 요청 없음 | - | - | - | - |')
     # 통과 기준의 오류율은 k6 가 본 실패로 판정한다(#1329). 시간 초과와 앱에 닿기 전의 실패가 든다
-    out += ['', '**k6 가 본 실패(유지 구간)**', '', '통과 기준의 오류율은 이 실패율로 판정한다. 위의 오류율(앱의 5xx)에 들지 않는 시간 초과와 앱에 닿기 전의 실패가 든다.',
+    out += ['', '#### k6 가 본 실패(유지 구간)', '', '통과 기준의 오류율은 이 실패율로 판정한다. 위의 오류율(앱의 5xx)에 들지 않는 시간 초과와 앱에 닿기 전의 실패가 든다.',
             '', '| API(k6 꼬리표) | 회차 | 요청 | 실패 | 실패율 |', '|---|---|---|---|---|']
     apis = sorted({a for r in runs for a in r.get('k6', {})})
     for a in apis:
@@ -1239,7 +1239,7 @@ def render(doc, version_dir):
         for n in r['detail']:
             if n not in names:
                 names.append(n)
-    out += ['', '**상세**', '', '| 지표 | ' + ' | '.join(r['name'] for r in runs) + (' | %d회 묶음 |' % len(runs) if len(runs) > 1 else ' |'),
+    out += ['', '#### 상세', '', '| 지표 | ' + ' | '.join(r['name'] for r in runs) + (' | %d회 묶음 |' % len(runs) if len(runs) > 1 else ' |'),
             '|---|' + '---|' * (len(runs) + (1 if len(runs) > 1 else 0))]
     for n in names:
         vals = [r['detail'].get(n) for r in runs]
@@ -1251,7 +1251,7 @@ def render(doc, version_dir):
         d = os.path.join(rel, os.path.basename(r['dir']))
         # 회차마다의 그림, 트레이스, 기준 초과는 접어 둔다. 회차 셋이면 버전 절이 300줄 남짓이 된다. 위의 요약 표는 펼쳐 둔다.
         # 접기 안의 Markdown 이 그려지려면 summary 뒤와 끝 앞에 빈 줄이 있어야 한다(GitHub, VS Code)
-        out += ['', '<details><summary><b>%s</b>: 대시보드, 트레이스, 기준 초과</summary>' % r['name'], '']
+        out += ['', '<details><summary><b>%s</b>: 대시보드, 트레이스, 기준 초과</summary>' % r['name'], '', '#### 대시보드', '']
         shown = []
         for title, pattern in (('API', 'dashboards/2._서비스/2._API.png'), ('도메인', 'dashboards/3._도메인/*.png')):
             for f in sorted(glob.glob(os.path.join(r['dir'], pattern))):
@@ -1267,7 +1267,8 @@ def render(doc, version_dir):
                 out.append('![%s 가장 느린 트레이스 %s](%s)' % (r['name'], slow['id'], os.path.join(d, f)))
         rest = dashboard_table(r['dir'], d, shown)
         if rest:
-            out += ['', '나머지 대시보드'] + rest
+            out += ['', '##### 나머지 대시보드'] + rest
+        out += ['', '#### 트레이스']
         if traces is None:
             out += ['', '트레이스: 고른 목록(`traces.txt`)이 없다. 트레이싱을 켜지 않았거나 캡처가 트레이스를 찍지 않았다']
         elif not traces:
@@ -1281,7 +1282,7 @@ def render(doc, version_dir):
                                       ('기준을 넘은 백그라운드 작업', background, '| 종류 | 대상 | 판정 값 | 걸린 시간 |')):
                 if not rows:
                     continue
-                out += ['', '%s(판정 값은 회차 구간의 최댓값)' % title, '', head + tail, '|---' * (head.count('|') - 1 + 5) + '|']
+                out += ['', '##### %s' % title, '', '판정 값은 회차 구간의 최댓값이다.', '', head + tail, '|---' * (head.count('|') - 1 + 5) + '|']
                 for t in rows:
                     cells = [file_link(r['dir'], d, t['dir'], f) for f in files]
                     lead = [t['kind']] if 'kind' in t else []
@@ -1447,15 +1448,15 @@ def render_compare(run_dir, d, rel_of):
     except (OSError, ValueError):
         return []
     if not meta.get('dir'):
-        return ['', '앞 버전과의 비교: 견줄 앞 버전이 없다(첫 버전)']
+        return ['', '##### 앞 버전과의 비교', '', '견줄 앞 버전이 없다(첫 버전)']
     base_dir = os.path.normpath(os.path.join(run_dir, meta['dir']))
     base = os.path.basename(base_dir)
     cur_arc = next(iter(glob.glob(os.path.join(run_dir, 'diag-*-profile.tar.gz'))), None)
     base_arc = next(iter(glob.glob(os.path.join(base_dir, 'diag-*-profile.tar.gz'))), None)
     if not base_arc or not cur_arc:
-        return ['', '앞 버전과의 비교: 앞 버전 %s 의 진단 회차 폴더나 프로파일 파일이 없다' % base]
+        return ['', '##### 앞 버전과의 비교', '', '앞 버전 %s 의 진단 회차 폴더나 프로파일 파일이 없다' % base]
     before, after = load_profile(base_arc), load_profile(cur_arc)
-    out = ['', '앞 버전과의 비교(%s 를 기준으로)' % base]
+    out = ['', '##### 앞 버전과의 비교', '', '%s 를 기준으로 견준다.' % base]
     # 두 회차의 조건이 다르면 몫의 차이에 조건의 차이가 섞인다
     def condition(path):
         c = {}
@@ -1544,7 +1545,7 @@ def render_diag(doc, version_dir):
     for run_dir in runs:
         name = os.path.basename(run_dir)
         d = os.path.join(rel, name)
-        out += ['', '**%s**' % name, '']
+        out += ['', '#### %s' % name, '', '##### Call Tree', '']
         for f in ('calltree/wall.png', 'calltree/batch-wall.png'):
             if os.path.exists(os.path.join(run_dir, f)):
                 out.append('![%s %s](%s)' % (name, f.replace('calltree/', 'Call Tree ').replace('.png', ''), os.path.join(d, f)))
@@ -1554,10 +1555,11 @@ def render_diag(doc, version_dir):
         named += [(os.path.relpath(f, run_dir), '프로파일 보관(다시 보기와 Diff 용)') for f in sorted(glob.glob(os.path.join(run_dir, 'diag-*-profile.tar.gz')))]
         rows = ['| [%s](%s) | %s |' % (f, os.path.join(d, f), what) for f, what in named if os.path.exists(os.path.join(run_dir, f))]
         if rows:
-            out += ['', '| 파일 | 내용 |', '|---|---|'] + rows
+            out += ['', '##### 파일', '', '| 파일 | 내용 |', '|---|---|'] + rows
         dash = dashboard_table(run_dir, d)
         if dash:
-            out += ['', '대시보드'] + dash
+            out += ['', '##### 대시보드'] + dash
+        out += ['', '##### 트레이스']
         traces, notes = trace_rows(run_dir) or (None, [])
         if traces is None:
             out += ['', '트레이스: 고른 목록(`traces.txt`)이 없다']
@@ -1571,7 +1573,7 @@ def render_diag(doc, version_dir):
                                       ('기준을 넘은 백그라운드 작업', background, '| 종류 | 대상 | 판정 값 | 걸린 시간 |')):
                 if not rows:
                     continue
-                out += ['', '%s(판정 값은 회차 구간의 최댓값)' % title, '', head + tail, '|---' * (head.count('|') - 1 + 6) + '|']
+                out += ['', '**%s**(판정 값은 회차 구간의 최댓값)' % title, '', head + tail, '|---' * (head.count('|') - 1 + 6) + '|']
                 for t in rows:
                     step = longest_step(os.path.join(run_dir, t['dir'], 'trace.json'))
                     step = '`%s` %s' % (step[0], fmt_s(step[1])) if step else '-'
@@ -1580,13 +1582,14 @@ def render_diag(doc, version_dir):
                     out.append('| ' + ' | '.join(lead + ['`%s`' % t['target'], t['value'], fmt_s(t['ms'] / 1000), step, '`%s`' % t['id']] + cells) + ' |')
         archive = next(iter(glob.glob(os.path.join(run_dir, 'diag-*-profile.tar.gz'))), None)
         selfs = profile_self(archive) if archive else None
+        out += ['', '##### Self 가 큰 함수']
         if not selfs:
             out += ['', '프로파일: 파일이 없다']
         for svc, bases in (selfs or {}).items():
-            out += ['', '프로파일 `%s`: Self 가 큰 함수(wall 과 cpu 의 상위 5개를 합침). wall 이 크고 cpu 가 작으면 기다린 시간, 둘 다 크면 계산이다' % svc]
+            out += ['', '`%s`: wall 과 cpu 의 상위 5개를 합쳤다. wall 이 크고 cpu 가 작으면 기다린 시간, 둘 다 크면 계산이다' % svc]
             for basis, title in (('frame', '맨 끝 프레임 기준(그라파나 Call Tree 의 Self 와 같다)'),
                                  ('java', '자바 함수 기준(네이티브 프레임의 몫을 그것을 부른 가장 가까운 자바 함수에 붙였다)')):
-                out += ['', title, '', '| 함수 | wall Self | cpu Self |', '|---|---|---|']
+                out += ['', '**%s**' % title, '', '| 함수 | wall Self | cpu Self |', '|---|---|---|']
                 for f, w, c in bases[basis]:
                     out.append('| `%s` | %s | %s |' % (f, fmt_pct(w), fmt_pct(c)))
         out += render_compare(run_dir, d, rel_of)
