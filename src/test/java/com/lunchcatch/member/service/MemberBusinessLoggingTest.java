@@ -62,7 +62,12 @@ class MemberBusinessLoggingTest {
         RuntimeException failure = new DataAccessResourceFailureException("요청 개인정보 원문");
         LoggedOperation operation = operation(mutation, failure);
         try (Capture capture = new Capture(operation.logger())) {
-            assertThatThrownBy(operation.call()::run).isSameAs(failure);
+            if (mutation == Mutation.LOGOUT) {
+                // 로그아웃은 DB 를 쓸 수 없으면 명세대로 AUTH-002 로 바꿔 던진다. 원래 예외는 원인으로 남는다(#1320)
+                assertThatThrownBy(operation.call()::run).isInstanceOf(AuthException.class).hasCause(failure);
+            } else {
+                assertThatThrownBy(operation.call()::run).isSameAs(failure);
+            }
 
             assertThat(capture.appender.list).singleElement().satisfies(event -> {
                 assertThat(event.getLevel()).isEqualTo(Level.ERROR);
@@ -74,8 +79,28 @@ class MemberBusinessLoggingTest {
         }
     }
 
+    // 로그아웃은 트랜잭션을 직접 열어 커밋 실패가 자기 catch 로 온다. 탈퇴처럼 업무 실패 한 번으로 남긴다(#1320)
+    @Test
+    void 로그아웃의_커밋_실패는_업무_실패를_한_번만_기록한다() {
+        when(members.findById(42L)).thenReturn(Optional.of(member()));
+        TestTransactionManager manager = new TestTransactionManager();
+        manager.failCommit = true;
+        MemberTokenService service = new MemberTokenService(mock(JwtTokenProvider.class),
+                mock(OpaqueRefreshTokenLifecycle.class), members, mock(KakaoLogoutClient.class),
+                new TransactionTemplate(manager), clock);
+        try (Capture capture = new Capture(MemberTokenService.class)) {
+            assertThatThrownBy(() -> service.logout(42L)).isInstanceOf(IllegalStateException.class);
+
+            assertThat(capture.appender.list).singleElement().satisfies(event -> {
+                assertThat(event.getLevel()).isEqualTo(Level.ERROR);
+                assertThat(event.getFormattedMessage())
+                        .isEqualTo("event=MEMBER_LOGOUT_FAILED memberId=42 reason=SYSTEM_ERROR exceptionType=IllegalStateException");
+            });
+        }
+    }
+
     @ParameterizedTest
-    @EnumSource(Mutation.class)
+    @EnumSource(value = Mutation.class, names = "LOGOUT", mode = EnumSource.Mode.EXCLUDE)
     void 커밋_실패는_성공_대신_업무_실패를_한_번만_기록한다(Mutation mutation) {
         LoggedOperation operation = operation(mutation, null);
         TestTransactionManager manager = new TestTransactionManager();
@@ -100,10 +125,12 @@ class MemberBusinessLoggingTest {
         Class<? extends RuntimeException> expectedType = failCommit
                 ? IllegalStateException.class : DataAccessResourceFailureException.class;
         try (Capture capture = new Capture(MemberWithdrawalService.class)) {
-            var failure = assertThatThrownBy(() -> service.withdraw(42L, "인가코드원문", "상태검증원문"))
-                    .isInstanceOf(expectedType);
+            var failure = assertThatThrownBy(() -> service.withdraw(42L, "인가코드원문", "상태검증원문"));
             if (failCommit) {
-                failure.hasMessage("커밋 실패");
+                failure.isInstanceOf(expectedType).hasMessage("커밋 실패");
+            } else {
+                // DB 를 쓸 수 없으면 명세대로 AUTH-002 로 바꿔 던지고 기록에는 원래 예외의 종류를 남긴다(#1320)
+                failure.isInstanceOf(AuthException.class).hasCauseInstanceOf(expectedType);
             }
 
             assertThat(capture.appender.list).singleElement().satisfies(event -> {
@@ -176,7 +203,8 @@ class MemberBusinessLoggingTest {
         }
         MemberProfileService profileService = new MemberProfileService(members, profiles, clock);
         MemberLocationService locationService = new MemberLocationService(members, profiles);
-        MemberTokenService tokens = new MemberTokenService(jwt, lifecycle, members, mock(KakaoLogoutClient.class), clock);
+        MemberTokenService tokens = new MemberTokenService(jwt, lifecycle, members, mock(KakaoLogoutClient.class),
+                new TransactionTemplate(new TestTransactionManager()), clock);
         return switch (mutation) {
             case ONBOARDING -> new LoggedOperation(MemberProfileService.class, "MEMBER_ONBOARDING",
                     () -> profileService.completeOnboarding(42L, onboarding()));
@@ -287,7 +315,7 @@ class MemberBusinessLoggingTest {
         when(lifecycle.reissue(any(), any(), any(), any(), any(), any()))
                 .thenThrow(new AuthException(AuthErrorCode.REFRESH_TOKEN_INVALID));
         MemberTokenService service = new MemberTokenService(mock(JwtTokenProvider.class), lifecycle,
-                members, mock(KakaoLogoutClient.class), clock);
+                members, mock(KakaoLogoutClient.class), new TransactionTemplate(new TestTransactionManager()), clock);
         try (Capture capture = new Capture(MemberTokenService.class)) {
             assertThatThrownBy(() -> service.reissue("갱신토큰원문")).isInstanceOf(AuthException.class);
 
@@ -301,7 +329,7 @@ class MemberBusinessLoggingTest {
         AuthException failure = storeFailure();
         when(lifecycle.reissue(any(), any(), any(), any(), any(), any())).thenThrow(failure);
         MemberTokenService service = new MemberTokenService(mock(JwtTokenProvider.class), lifecycle,
-                members, mock(KakaoLogoutClient.class), clock);
+                members, mock(KakaoLogoutClient.class), new TransactionTemplate(new TestTransactionManager()), clock);
         try (Capture capture = new Capture(MemberTokenService.class)) {
             assertThatThrownBy(() -> service.reissue("갱신토큰원문")).isSameAs(failure);
 
@@ -316,7 +344,7 @@ class MemberBusinessLoggingTest {
         when(members.findById(42L)).thenReturn(Optional.empty());
         doThrow(failure).when(lifecycle).revoke(any(), any(), any(), any());
         MemberTokenService service = new MemberTokenService(mock(JwtTokenProvider.class), lifecycle,
-                members, mock(KakaoLogoutClient.class), clock);
+                members, mock(KakaoLogoutClient.class), new TransactionTemplate(new TestTransactionManager()), clock);
         try (Capture capture = new Capture(MemberTokenService.class)) {
             assertThatThrownBy(() -> service.logout(42L)).isSameAs(failure);
 
@@ -350,7 +378,7 @@ class MemberBusinessLoggingTest {
         doThrow(org.springframework.web.reactive.function.client.WebClientResponseException.create(
                 503, "응답원문", org.springframework.http.HttpHeaders.EMPTY, new byte[0], null)).when(client).logout(any());
         MemberTokenService service = new MemberTokenService(mock(JwtTokenProvider.class), mock(OpaqueRefreshTokenLifecycle.class),
-                members, client, clock);
+                members, client, new TransactionTemplate(new TestTransactionManager()), clock);
         try (Capture capture = new Capture(MemberTokenService.class)) {
             new TransactionTemplate(new TestTransactionManager()).executeWithoutResult(status -> service.logout(42L));
 

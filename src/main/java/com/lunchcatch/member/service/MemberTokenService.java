@@ -1,6 +1,7 @@
 package com.lunchcatch.member.service;
 
 import com.lunchcatch.auth.Role;
+import com.lunchcatch.auth.StoreFailures;
 import com.lunchcatch.auth.exception.AuthException;
 import com.lunchcatch.auth.jwt.JwtTokenProvider;
 import com.lunchcatch.auth.opaque.OpaqueTokenGenerator;
@@ -20,6 +21,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 @Slf4j
 @Service
@@ -32,9 +34,13 @@ public class MemberTokenService {
     private final OpaqueRefreshTokenLifecycle refreshTokenLifecycle;
     private final MemberRepository memberRepository;
     private final KakaoLogoutClient kakaoLogoutClient;
+    private final TransactionTemplate transactionTemplate;
     private final Clock clock;
 
-    @Transactional
+    /*
+     * 바깥 트랜잭션을 열지 않는다. DB 쓰기는 백업 저장 하나이고 그 쿼리가 자기 트랜잭션을 연다.
+     * 바깥에서 열면 커넥션을 얻지 못한 실패가 lifecycle 의 처리 밖에서 나 명세의 AUTH-002 대신 500 이 된다(#1320).
+     */
     public TokenPair issue(Member member) {
         String accessToken = jwtTokenProvider.createAccessToken(member.getId(), ROLE);
         String refreshToken = OpaqueTokenGenerator.generate();
@@ -43,7 +49,11 @@ public class MemberTokenService {
         return new TokenPair(accessToken, refreshToken, member.getId());
     }
 
-    @Transactional(noRollbackFor = AuthException.class)
+    /*
+     * 바깥 트랜잭션을 열지 않는다. DB 일은 모두 lifecycle 이 부르는 백업 저장소의 별도 트랜잭션에서 한다.
+     * 바깥에서 열면 DB 일 없이 커넥션 하나를 쥔 채 별도 트랜잭션이 하나를 더 얻어, 재발급이 몰릴 때 풀이 먼저 바닥난다.
+     * 커넥션을 얻지 못한 실패도 lifecycle 이 보상한 뒤 AUTH-002 로 바꾼다(#1320).
+     */
     public TokenPair reissue(String oldRefreshToken) {
         Long memberId = null;
         try {
@@ -80,35 +90,40 @@ public class MemberTokenService {
         refreshTokenLifecycle.revoke(ROLE, memberId, now(), Duration.ofMillis(jwtTokenProvider.getAccessTokenValidityMs()));
     }
 
-    @Transactional
+    /*
+     * 트랜잭션을 try 안에서 연다. @Transactional 이면 커넥션을 얻지 못한 실패가 메서드 밖에서 나 아래 catch 를 거치지 않고
+     * 명세의 AUTH-002 대신 500 이 된다(#1320). 기다리면 나아질 실패만 AUTH-002 로 바꾸고 코드 버그는 그대로 던진다.
+     * 트랜잭션을 직접 열어 커밋 실패도 아래 catch 로 온다. 그래서 커밋 실패를 따로 기록하지 않는다. 같은 실패를 두 번 남기지 않는다.
+     */
     public void logout(Long memberId) {
         try {
-            String providerUserId = memberRepository.findById(memberId)
-                    .map(Member::getProviderUserId)
-                    .orElse(null);
-            revoke(memberId);
-            TransactionLogging.afterCommit(() -> log.info("event=MEMBER_LOGOUT_SUCCESS memberId={}", memberId));
-            if (providerUserId != null) {
-                TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
-                    @Override
-                    public void afterCommit() {
-                        try {
-                            kakaoLogoutClient.logout(providerUserId);
-                        } catch (RuntimeException e) {
-                            String reason = e instanceof CallNotPermittedException
-                                    ? "CIRCUIT_OPEN" : "EXTERNAL_REQUEST_FAILED";
-                            log.warn("event=KAKAO_LOGOUT_AFTER_COMMIT_FAILED memberId={} reason={} details={}", memberId, reason, FailureLogDetails.from(e));
+            transactionTemplate.executeWithoutResult(status -> {
+                String providerUserId = memberRepository.findById(memberId)
+                        .map(Member::getProviderUserId)
+                        .orElse(null);
+                revoke(memberId);
+                TransactionLogging.afterCommit(() -> log.info("event=MEMBER_LOGOUT_SUCCESS memberId={}", memberId));
+                if (providerUserId != null) {
+                    TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                        @Override
+                        public void afterCommit() {
+                            try {
+                                kakaoLogoutClient.logout(providerUserId);
+                            } catch (RuntimeException e) {
+                                String reason = e instanceof CallNotPermittedException
+                                        ? "CIRCUIT_OPEN" : "EXTERNAL_REQUEST_FAILED";
+                                log.warn("event=KAKAO_LOGOUT_AFTER_COMMIT_FAILED memberId={} reason={} details={}", memberId, reason, FailureLogDetails.from(e));
+                            }
                         }
-                    }
-                });
-            }
-            TransactionLogging.afterFailure(() -> log.error("event=MEMBER_LOGOUT_FAILED memberId={} reason=TRANSACTION_COMPLETION_FAILED", memberId));
+                    });
+                }
+            });
         } catch (AuthException e) {
             log.error("event=MEMBER_LOGOUT_FAILED memberId={} errorCode={} details={}", memberId, e.getErrorCode().getCode(), FailureLogDetails.from(e));
             throw e;
         } catch (RuntimeException e) {
             log.error("event=MEMBER_LOGOUT_FAILED memberId={} reason=SYSTEM_ERROR exceptionType={}", memberId, e.getClass().getSimpleName());
-            throw e;
+            throw StoreFailures.toResponse(e);
         }
     }
 
