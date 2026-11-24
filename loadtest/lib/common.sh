@@ -1842,6 +1842,8 @@ PY
 # both 는 cpu 와 wall 을 한 기록(JFR)으로 함께 뜨고 jfrconv 로 둘로 나눠 보낸다(#1127). 같은 시간, 같은 부하의 둘을 견줘
 # 계산과 대기를 가른다. jfrconv 는 컨테이너 안의 자바로 돌아 JDK_JAVA_OPTIONS 를 읽는다. 트레이싱을 켠 동안
 # 에이전트까지 붙어 느리게 뜨고 로그가 섞이므로 비우고 돌린다.
+# 변환은 회차가 끝난 뒤에 한다(#1345). 회차 동안은 10초마다 JFR 만 떠 그 시각을 남기고, 끝나면 묶음마다 변환해 원래 시각으로 보낸다.
+# 회차 도중에 그라파나에서 실시간으로 보는 것은 잃는다. 진단 회차는 끝난 뒤에 분석해 손해가 아니다
 #
 IFS= read -r -d '' PROFILE_SH <<'SH' || true
 set -euo pipefail
@@ -1878,17 +1880,24 @@ while [ "$(date +%s)" -lt "$stop" ]; do
       send "$mode" "$work/raw.txt" "$from" "$(date +%s)"
       ;;
     both)
-      out=$(docker exec "$app" "$ap/asprof" -d 10 -e itimer -i 10ms --wall 50ms -o jfr -f /tmp/lt-profile.jfr 1 2>&1) \
+      # 회차 동안은 JFR 만 뜬다(#1345). 변환(jfrconv, 자바)은 묶음마다 앱 CPU 약 0.47초를 쓰고 그동안 프로파일러가 멈춰, 회차가 끝난 뒤로 미룬다
+      out=$(docker exec "$app" "$ap/asprof" -d 10 -e itimer -i 10ms --wall 50ms -o jfr -f "/tmp/lt-profile-$from.jfr" 1 2>&1) \
         || { echo "$out" >&2; exit 1; }
-      until=$(date +%s)
-      for kind in cpu wall; do
-        docker exec "$app" env -u JDK_JAVA_OPTIONS "$ap/jfrconv" "--$kind" -o collapsed /tmp/lt-profile.jfr "/tmp/lt-profile-$kind.txt" > /dev/null
-        docker cp "$app:/tmp/lt-profile-$kind.txt" "$work/raw-$kind.txt" > /dev/null
-        send "$kind" "$work/raw-$kind.txt" "$from" "$until"
-      done
+      echo "$from $(date +%s)" >> "$work/jfr-batches"
       ;;
   esac
 done
+# 회차가 끝나면 모은 JFR 을 묶음마다 cpu 와 wall 로 나눠 원래 from, until 로 보낸다. 다 보낸 JFR 은 지운다
+if [ -f "$work/jfr-batches" ]; then
+  while read -r from until; do
+    for kind in cpu wall; do
+      docker exec "$app" env -u JDK_JAVA_OPTIONS "$ap/jfrconv" "--$kind" -o collapsed "/tmp/lt-profile-$from.jfr" "/tmp/lt-profile-$kind.txt" > /dev/null
+      docker cp "$app:/tmp/lt-profile-$kind.txt" "$work/raw-$kind.txt" > /dev/null
+      send "$kind" "$work/raw-$kind.txt" "$from" "$until"
+    done
+    docker exec "$app" rm -f "/tmp/lt-profile-$from.jfr"
+  done < "$work/jfr-batches"
+fi
 SH
 
 #

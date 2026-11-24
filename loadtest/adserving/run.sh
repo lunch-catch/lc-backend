@@ -353,6 +353,7 @@ grep 'level=error' \$OUT/k6-$name.log | tail -5 || true" ) > "$out" || rc=$?
     else
       record_warnings "$name" "$start" "$(now_ms)"
     fi
+    # 프로파일링은 회차가 끝난 뒤 JFR 을 변환해 보낸다(#1345). 그것이 끝나야 캡처의 Call Tree 와 프로파일 보관이 모든 묶음을 본다
     wait
     # 회차의 지표, 캡처, 무효 판정을 잇는다. 무효면 3, 캡처가 실패하면 4 로 끝나 다음 회차로 넘어가지 않는다(#1305)
     if [ "$rc" -ne 2 ]; then
