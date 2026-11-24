@@ -1269,23 +1269,9 @@ def render(doc, version_dir):
         d = os.path.join(rel, os.path.basename(r['dir']))
         # 회차마다의 그림, 트레이스, 기준 초과는 접어 둔다. 회차 셋이면 버전 절이 300줄 남짓이 된다. 위의 요약 표는 펼쳐 둔다.
         # 접기 안의 Markdown 이 그려지려면 summary 뒤와 끝 앞에 빈 줄이 있어야 한다(GitHub, VS Code)
-        out += ['', '<details><summary><b>%s</b>: 대시보드, 트레이스, 기준 초과</summary>' % r['name'], '', '### 대시보드', '']
-        shown = []
-        for title, pattern in (('API', 'dashboards/2._서비스/2._API.png'), ('도메인', 'dashboards/3._도메인/*.png')):
-            for f in sorted(glob.glob(os.path.join(r['dir'], pattern))):
-                f = os.path.relpath(f, r['dir'])
-                shown.append(f)
-                out.append('![%s %s](%s)' % (r['name'], os.path.splitext(os.path.basename(f))[0].replace('_', ' '), os.path.join(d, f)))
+        out += ['', '<details><summary><b>%s</b>: 대시보드, 트레이스, 기준 초과</summary>' % r['name']]
         traces, notes = trace_rows(r['dir']) or (None, [])
-        if traces:
-            slow = max(traces, key=lambda t: t['ms'])
-            f = os.path.join(slow['dir'], 'trace.png')
-            if os.path.exists(os.path.join(r['dir'], f)):
-                shown.append(f)
-                out.append('![%s 가장 느린 트레이스 %s](%s)' % (r['name'], slow['id'], os.path.join(d, f)))
-        rest = dashboard_table(r['dir'], d, shown)
-        if rest:
-            out += ['', '#### 나머지 대시보드'] + rest
+        out += dashboard_section(r['dir'], d, r['name'], traces)
         out += ['', '### 트레이스']
         if traces is None:
             out += ['', '트레이스: 고른 목록(`traces.txt`)이 없다. 트레이싱을 켜지 않았거나 캡처가 트레이스를 찍지 않았다']
@@ -1324,6 +1310,25 @@ def render(doc, version_dir):
         last = max([i for i in range(head, end) if lines[i].strip()])
         lines[last + 1:last + 1] = [''] + out
     open(doc, 'w', encoding='utf-8').write('\n'.join(lines))
+
+def dashboard_section(run_dir, rel, name, traces):
+    # 회차의 대시보드 절이다. 측정 회차와 진단 회차가 같이 쓴다. API 와 도메인 대시보드, 가장 느린 트레이스 그림을 펼치고 나머지는 분류마다의 표로 잇는다
+    out, shown = ['', '### 대시보드', ''], []
+    for pattern in ('dashboards/2._서비스/2._API.png', 'dashboards/3._도메인/*.png'):
+        for f in sorted(glob.glob(os.path.join(run_dir, pattern))):
+            f = os.path.relpath(f, run_dir)
+            shown.append(f)
+            out.append('![%s %s](%s)' % (name, os.path.splitext(os.path.basename(f))[0].replace('_', ' '), os.path.join(rel, f)))
+    if traces:
+        slow = max(traces, key=lambda t: t['ms'])
+        f = os.path.join(slow['dir'], 'trace.png')
+        if os.path.exists(os.path.join(run_dir, f)):
+            shown.append(f)
+            out.append('![%s 가장 느린 트레이스 %s](%s)' % (name, slow['id'], os.path.join(rel, f)))
+    rest = dashboard_table(run_dir, rel, shown)
+    if rest:
+        out += ['', '#### 나머지 대시보드'] + rest
+    return out
 
 def dashboard_table(run_dir, rel, skip=()):
     # 회차 폴더의 대시보드를 분류(캡처의 폴더)마다 한 줄로 적는다. 한 줄로 이으면 열 장 남짓이 이어져 읽기 어렵다.
@@ -1563,22 +1568,11 @@ def render_diag(doc, version_dir):
     for run_dir in runs:
         name = os.path.basename(run_dir)
         d = os.path.join(rel, name)
-        out += ['', '**%s**' % name, '', '### Call Tree', '']
-        for f in ('calltree/wall.png', 'calltree/batch-wall.png'):
-            if os.path.exists(os.path.join(run_dir, f)):
-                out.append('![%s %s](%s)' % (name, f.replace('calltree/', 'Call Tree ').replace('.png', ''), os.path.join(d, f)))
-        # 회차 폴더의 나머지 파일이다. 무엇인지 한 칸에 적는다
-        named = [('calltree/cpu.png', 'Call Tree cpu'), ('calltree/batch-cpu.png', '배치 Call Tree cpu'),
-                 ('redis.txt', 'Redis 명령별 서버 처리 시간'), ('metrics.json.gz', '지표 원본(다시 보기용)'), ('logs.jsonl.gz', '경고와 오류 로그 원본(다시 보기용)')]
-        named += [(os.path.relpath(f, run_dir), '프로파일 보관(다시 보기와 Diff 용)') for f in sorted(glob.glob(os.path.join(run_dir, 'diag-*-profile.tar.gz')))]
-        rows = ['| [%s](%s) | %s |' % (f, os.path.join(d, f), what) for f, what in named if os.path.exists(os.path.join(run_dir, f))]
-        if rows:
-            out += ['', '### 파일', '', '| 파일 | 내용 |', '|---|---|'] + rows
-        dash = dashboard_table(run_dir, d)
-        if dash:
-            out += ['', '### 대시보드'] + dash
-        out += ['', '### 트레이스']
+        # 측정 회차와 같게 회차를 접고 대시보드, 트레이스를 먼저 둔다. 그 뒤에 진단에만 있는 Call Tree, Self, 앞 버전과의 비교, 파일을 잇는다
+        out += ['', '<details><summary><b>%s</b>: 대시보드, 트레이스, Call Tree, 프로파일, 앞 버전과의 비교</summary>' % name]
         traces, notes = trace_rows(run_dir) or (None, [])
+        out += dashboard_section(run_dir, d, name, traces)
+        out += ['', '### 트레이스']
         if traces is None:
             out += ['', '트레이스: 고른 목록(`traces.txt`)이 없다']
         elif not traces:
@@ -1598,6 +1592,10 @@ def render_diag(doc, version_dir):
                     cells = [file_link(run_dir, d, t['dir'], f) for f in files]
                     lead = [t['kind']] if 'kind' in t else []
                     out.append('| ' + ' | '.join(lead + ['`%s`' % t['target'], t['value'], fmt_s(t['ms'] / 1000), step, '`%s`' % t['id']] + cells) + ' |')
+        out += ['', '### Call Tree', '']
+        for f in ('calltree/wall.png', 'calltree/batch-wall.png'):
+            if os.path.exists(os.path.join(run_dir, f)):
+                out.append('![%s %s](%s)' % (name, f.replace('calltree/', 'Call Tree ').replace('.png', ''), os.path.join(d, f)))
         archive = next(iter(glob.glob(os.path.join(run_dir, 'diag-*-profile.tar.gz'))), None)
         selfs = profile_self(archive) if archive else None
         out += ['', '### Self 가 큰 함수']
@@ -1611,6 +1609,14 @@ def render_diag(doc, version_dir):
                 for f, w, c in bases[basis]:
                     out.append('| `%s` | %s | %s |' % (f, fmt_pct(w), fmt_pct(c)))
         out += render_compare(run_dir, d, rel_of)
+        # 회차 폴더의 나머지 파일이다. 무엇인지 한 칸에 적는다
+        named = [('calltree/cpu.png', 'Call Tree cpu'), ('calltree/batch-cpu.png', '배치 Call Tree cpu'),
+                 ('redis.txt', 'Redis 명령별 서버 처리 시간'), ('metrics.json.gz', '지표 원본(다시 보기용)'), ('logs.jsonl.gz', '경고와 오류 로그 원본(다시 보기용)')]
+        named += [(os.path.relpath(f, run_dir), '프로파일 보관(다시 보기와 Diff 용)') for f in sorted(glob.glob(os.path.join(run_dir, 'diag-*-profile.tar.gz')))]
+        rows = ['| [%s](%s) | %s |' % (f, os.path.join(d, f), what) for f, what in named if os.path.exists(os.path.join(run_dir, f))]
+        if rows:
+            out += ['', '### 파일', '', '| 파일 | 내용 |', '|---|---|'] + rows
+        out += ['', '</details>']
     out.append('<!-- /diag:%s -->' % tag)
     lines = open(doc, encoding='utf-8').read().split('\n')
     head = next((i for i, l in enumerate(lines) if l.startswith('#') and '진단' in l), None)
