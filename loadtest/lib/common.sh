@@ -1289,10 +1289,9 @@ def render(doc, version_dir):
             if os.path.exists(os.path.join(r['dir'], f)):
                 shown.append(f)
                 out.append('![%s 가장 느린 트레이스 %s](%s)' % (r['name'], slow['id'], os.path.join(d, f)))
-        others = sorted(os.path.relpath(f, r['dir']) for f in glob.glob(os.path.join(r['dir'], 'dashboards', '**', '*.png'), recursive=True))
-        others = [f for f in others if f not in shown]
-        if others:
-            out += ['', '나머지 대시보드: ' + ', '.join('[%s](%s)' % (os.path.splitext(os.path.basename(f))[0].replace('_', ' '), os.path.join(d, f)) for f in others)]
+        rest = dashboard_table(r['dir'], d, shown)
+        if rest:
+            out += ['', '나머지 대시보드'] + rest
         if traces is None:
             out += ['', '트레이스: 고른 목록(`traces.txt`)이 없다. 트레이싱을 켜지 않았거나 캡처가 트레이스를 찍지 않았다']
         elif not traces:
@@ -1329,6 +1328,21 @@ def render(doc, version_dir):
         last = max([i for i in range(head, end) if lines[i].strip()])
         lines[last + 1:last + 1] = [''] + out
     open(doc, 'w', encoding='utf-8').write('\n'.join(lines))
+
+def dashboard_table(run_dir, rel, skip=()):
+    # 회차 폴더의 대시보드를 분류(캡처의 폴더)마다 한 줄로 적는다. 한 줄로 이으면 열 장 남짓이 이어져 읽기 어렵다.
+    # 폴더와 파일 이름 앞의 번호(1._)와 밑줄은 떼고 보인다
+    plain = lambda n: re.sub(r'^\d+\._', '', n).replace('_', ' ')
+    groups = {}
+    for f in sorted(os.path.relpath(f, run_dir) for f in glob.glob(os.path.join(run_dir, 'dashboards', '**', '*.png'), recursive=True)):
+        if f in skip:
+            continue
+        parts = f.split(os.sep)
+        group = plain(parts[1]) if len(parts) > 2 else '-'
+        groups.setdefault(group, []).append('[%s](%s)' % (plain(os.path.splitext(parts[-1])[0]), os.path.join(rel, f)))
+    if not groups:
+        return []
+    return ['', '| 분류 | 대시보드 |', '|---|---|'] + ['| %s | %s |' % (g, ', '.join(links)) for g, links in groups.items()]
 
 def trace_groups(traces):
     # 고른 트레이스를 기준을 넘은 API 와 백그라운드 작업으로 나눈다. 패널 이름은 표 머리가 대신하고, 백그라운드는 종류 칸에 남긴다.
@@ -1557,12 +1571,16 @@ def render_diag(doc, version_dir):
         for f in ('calltree/wall.png', 'calltree/batch-wall.png'):
             if os.path.exists(os.path.join(run_dir, f)):
                 out.append('![%s %s](%s)' % (name, f.replace('calltree/', 'Call Tree ').replace('.png', ''), os.path.join(d, f)))
-        links = [f for f in ('calltree/cpu.png', 'calltree/batch-cpu.png', 'redis.txt', 'metrics.json.gz', 'logs.jsonl.gz')
-                 if os.path.exists(os.path.join(run_dir, f))]
-        links += sorted(os.path.relpath(f, run_dir) for f in glob.glob(os.path.join(run_dir, 'diag-*-profile.tar.gz')))
-        links += sorted(os.path.relpath(f, run_dir) for f in glob.glob(os.path.join(run_dir, 'dashboards', '**', '*.png'), recursive=True))
-        if links:
-            out += ['', '파일: ' + ', '.join('[%s](%s)' % (os.path.splitext(os.path.basename(f))[0].replace('_', ' '), os.path.join(d, f)) for f in links)]
+        # 회차 폴더의 나머지 파일이다. 무엇인지 한 칸에 적는다
+        named = [('calltree/cpu.png', 'Call Tree cpu'), ('calltree/batch-cpu.png', '배치 Call Tree cpu'),
+                 ('redis.txt', 'Redis 명령별 서버 처리 시간'), ('metrics.json.gz', '지표 원본(다시 보기용)'), ('logs.jsonl.gz', '경고와 오류 로그 원본(다시 보기용)')]
+        named += [(os.path.relpath(f, run_dir), '프로파일 보관(다시 보기와 Diff 용)') for f in sorted(glob.glob(os.path.join(run_dir, 'diag-*-profile.tar.gz')))]
+        rows = ['| [%s](%s) | %s |' % (f, os.path.join(d, f), what) for f, what in named if os.path.exists(os.path.join(run_dir, f))]
+        if rows:
+            out += ['', '| 파일 | 내용 |', '|---|---|'] + rows
+        dash = dashboard_table(run_dir, d)
+        if dash:
+            out += ['', '대시보드'] + dash
         traces, notes = trace_rows(run_dir) or (None, [])
         if traces is None:
             out += ['', '트레이스: 고른 목록(`traces.txt`)이 없다']
