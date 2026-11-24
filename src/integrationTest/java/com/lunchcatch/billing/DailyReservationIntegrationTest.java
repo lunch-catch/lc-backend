@@ -223,6 +223,7 @@ class DailyReservationIntegrationTest extends AbstractBillingIntegrationTest {
     /*
      * 남은 해제액이 0 인 날짜(전액 소진)는 RELEASE 를 만들 것이 없어 다시 찾지 않는다. 더 오래된 날짜에 남은 몫이 있으면
      * 이번 예약이 해제하고 그 날짜의 해제 표시도 남긴다.
+     * 소진은 원장 DEDUCT 없이 판정 BILLED 만 있다(#1294). 원장 DEDUCT 로 세면 전액 소진한 날짜가 계속 해제 대상으로 남는다.
      */
     @Test
     void 남은_해제액이_0인_날짜는_다시_찾지_않고_오래된_날짜는_해제하며_표시를_남긴다() {
@@ -248,10 +249,6 @@ class DailyReservationIntegrationTest extends AbstractBillingIntegrationTest {
                         (serve_id, campaign_id, owner_id, business_date, billing_status, unit_price, created_at, updated_at)
                     values (?, ?, ?, ?, 'BILLED', 1000, now(6), now(6))
                     """, serveId, exhausted, owner, PREV);
-            jdbc.update("""
-                    insert into point_ledger (owner_id, campaign_id, serve_id, entry_type, source, amount, created_at, updated_at)
-                    values (?, ?, ?, 'DEDUCT', 'REALTIME', -1000, now(6), now(6))
-                    """, owner, exhausted, serveId);
         }
 
         assertThat(planRepository.findUnreleasedBusinessDatesBefore(DAY)).containsExactly(older);

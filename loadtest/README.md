@@ -104,7 +104,7 @@ plan            -> 다음 버전의 측정 ...
 | `record_warnings` | 회차 구간의 앱과 배치의 지표 수집이 빠진 칸 수를 먼저 출력하고, 0 이 아니면 경고한다. 이어서 경고와 오류를 이벤트별로 세어 그 칸 수와 함께 결과 문서에 적고 커밋한다 |
 | `prom_value` | Prometheus 에 식 하나를 지금 시각으로 묻는다(`warmup` 이 쓴다) |
 | `warmup` | 도메인의 `run` 을 정한 시간 돌리고, 끝 3분의 앱 CPU 흔들림으로 덜 데워졌는지 가린다(아래 `워밍업` 절) |
-| `profile` | 앱 서버에 프로파일링을 붙여 Pyroscope 로 보낸다 |
+| `profile` | 앱과 배치 서버에 프로파일링을 붙여 Pyroscope 로 보낸다 |
 | `full_sha`, `image_exists` | 이미지 커밋을 40자로 늘리고 GHCR 에 있는지 본다 |
 | `app_override`, `local_override`, `local_switch` | 앱과 배치의 compose 덮어쓰기 파일(트레이싱 에이전트, 연결 풀 끔, `--env`, `--app-env`, `--batch-env` 의 환경변수)을 만들고, 로컬 앱과 배치를 그것으로 다시 띄운다 |
 
@@ -339,7 +339,9 @@ loadtest/adserving/run.sh switch <이미지>
 
 ## 프로파일링
 
-느린 요청이 어느 코드에서 시간을 쓰는지 본다. async-profiler(`v4.5`)를 앱 컨테이너에 넣어 붙인다. 앱을 다시 띄우지 않는다.
+느린 요청과 작업이 어느 코드에서 시간을 쓰는지 본다. async-profiler(`v4.5`)를 앱과 배치 서버의 앱 컨테이너에 넣어 붙인다. 앱을 다시 띄우지 않는다.
+
+배치 서버에도 늘 함께 붙는다(#1234). 노출 릴레이와 묶음 차감, 00:00 묶음, 재조회와 재예약 워커는 스케줄러가 켜진 배치 서버에서만 돌아, 앱 서버만 떠서는 플레임그래프에 나오지 않는다. 프로파일링 회차는 결과에 쓰지 않아 배치에 붙는 비용이 측정에 섞이지 않는다. 로컬에서는 lc-infra 의 `compose.lt-like.yaml` 까지 함께 띄워야 배치 컨테이너가 떠서 배치에도 붙는다. `compose.yaml` 만 띄우면 배치 쪽이 실패한다.
 
 ```bash
 # 회차 도중에 붙인다. 기본은 60초, wall 이다
@@ -358,7 +360,7 @@ loadtest/adserving/run.sh run v1-run1-profile 30030001 100 5m --profile both
 | `wall` | 대기까지 포함한 경과 시간이다. p99 를 줄이려면 이것을 먼저 본다 | 50ms. wall 모드의 기본값이다 |
 | `both` | 둘을 한 기록(JFR)으로 함께 뜨고 나눠 보낸다. 같은 시간, 같은 부하의 둘을 견줘 계산과 대기를 가른다 | 위 둘과 같다 |
 
-**그라파나에서 보는 법:** Drilldown -> Profiles 에서 서비스 `lunchcatch` 를 고르고, 프로파일 종류(`process_cpu` 나 `wall`)와 `run` 라벨로 그 회차를 고른다. 10초씩 끊어 보내 대시보드와 함께 10초 남짓 늦게 보인다. Split 과 Single 로 비교와 단독을, Top Table 과 Flame Graph 로 표와 그래프를 바꾼다.
+**그라파나에서 보는 법:** Drilldown -> Profiles 에서 서비스를 고른다. 앱 서버는 `lunchcatch`, 배치 서버는 `lunchcatch-batch` 로 트레이스의 서비스 이름과 같다. 그다음 프로파일 종류(`process_cpu` 나 `wall`)와 `run` 라벨로 그 회차를 고른다. 10초씩 끊어 보내 대시보드와 함께 10초 남짓 늦게 보인다. Split 과 Single 로 비교와 단독을, Top Table 과 Flame Graph 로 표와 그래프를 바꾼다.
 
 **읽는 법:** Self 는 그 메서드 자기 코드의 시간이고 Total 은 부른 메서드까지 합친 시간이다. 시간은 그 구간의 합계라 호출 한 번의 시간은 나오지 않는다.
 

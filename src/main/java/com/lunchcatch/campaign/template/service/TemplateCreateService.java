@@ -67,7 +67,7 @@ public class TemplateCreateService {
         if (templateRepository.count() >= maxTemplates) {
             throw new CampaignException(PosterErrorCode.TEMPLATE_LIMIT_EXCEEDED);
         }
-        GeneratedTemplate generated = generate(requestPrompt);
+        GeneratedTemplate generated = generate(requestPrompt, requestId);
         if (generated.chatOnly()) {
             return chatOnlyResponse(requestId, generated);
         }
@@ -103,11 +103,19 @@ public class TemplateCreateService {
         return TemplateCreateResponse.chatOnly(generated.message());
     }
 
-    private GeneratedTemplate generate(String requestPrompt) {
+    /*
+     * 모델 호출 단계에서 실패하면 저장된 것이 없고 호출한 스레드도 끝났다. 같은 requestId 재시도가 POSTER-004 로
+     * 막히지 않게 처리 중 표식을 푼다(#1298). 분당 3회에 이미 센 횟수는 되돌리지 않는다.
+     */
+    private GeneratedTemplate generate(String requestPrompt, String requestId) {
         try {
             return templateHtmlGenerator.generate(requestPrompt);
         } catch (TemplateGenerationTimeoutException e) {
+            templateGenerationRateLimiter.releaseInFlight(requestId);
             throw new CampaignException(PosterErrorCode.GENERATION_TIMEOUT, e);
+        } catch (CampaignException e) {
+            templateGenerationRateLimiter.releaseInFlight(requestId);
+            throw e;
         }
     }
 

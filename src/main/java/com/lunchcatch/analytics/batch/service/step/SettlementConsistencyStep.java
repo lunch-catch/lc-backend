@@ -6,14 +6,10 @@ import com.lunchcatch.analytics.batch.service.AggregationMetrics;
 import com.lunchcatch.analytics.batch.service.AggregationSources;
 import com.lunchcatch.analytics.batch.service.AggregationStep;
 import com.lunchcatch.analytics.batch.service.SpendFormula;
-import com.lunchcatch.billing.contract.CampaignBillingCount;
-import com.lunchcatch.billing.contract.CampaignDailyBudget;
 import com.lunchcatch.billing.contract.OwnerCampaignLedgerSum;
 import java.time.LocalDate;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.Map;
-import java.util.Set;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
@@ -22,11 +18,12 @@ import org.springframework.stereotype.Component;
  * 정산 숫자가 서로 맞는지 매일 확인한다. 맞지 않아도 집계를 실패시키지 않고 고치지도 않는다. 위반
  * 수를 지표(analytics_consistency_violations{check})와 로그로 알릴 뿐이다.
  *
- *   V-1 캠페인마다 BILLED 수 x 단가 = |DEDUCT| 합
  *   V-2 캠페인마다 |DEDUCT| 합 <= |RESERVE| 합
  *   V-3 캠페인마다 RELEASE = |RESERVE| - |DEDUCT|
  *   V-7 방금 쓴 플랫폼 소진액 = 캠페인별 소진 합 - 캠페인 없는 양수 ADJUST
  *
+ * DEDUCT 는 계약의 deductAmount 이고 billing 이 판정의 BILLED 단가 합으로 준다(#1287).
+ * V-1(BILLED 수 x 단가 = 원장 DEDUCT 합)은 하지 않는다. 두 사본이 판정 하나가 되어 맞댈 것이 없다(#1249, #1293).
  * V-4(점주 잔액 >= 0)는 하지 않는다. 점주별 잔액을 주는 집계 조회가 없고, 그 검사는 정산이 잔액을
  * 가진 쪽에서 해야 한다. 마지막 단계(@Order 900)로 돌아 앞 단계가 쓴 행을 같은 공개 트랜잭션에서 읽는다.
  */
@@ -73,28 +70,6 @@ public class SettlementConsistencyStep implements AggregationStep<SettlementFind
             ledger[RELEASE] += sum.releaseAmount();
             ledger[POSITIVE_ADJUST] += sum.positiveAdjustAmount();
         }
-        Map<Long, Long> billedCounts = new HashMap<>();
-        for (CampaignBillingCount count : sources.billingCounts(businessDate)) {
-            billedCounts.put(count.campaignId(), count.billedCount());
-        }
-        Map<Long, Long> unitPrices = new HashMap<>();
-        for (CampaignDailyBudget budget : sources.dailyBudgets(businessDate)) {
-            unitPrices.put(budget.campaignId(), budget.unitPrice());
-        }
-
-        long billedAmountViolations = 0;
-        Set<Long> campaigns = new HashSet<>(ledgerByCampaign.keySet());
-        campaigns.addAll(billedCounts.keySet());
-        for (Long campaign : campaigns) {
-            long billed = billedCounts.getOrDefault(campaign, 0L);
-            long deduct = ledgerByCampaign.getOrDefault(campaign, new long[4])[DEDUCT];
-            Long unitPrice = unitPrices.get(campaign);
-            boolean consistent = unitPrice == null ? billed == 0 && deduct == 0 : billed * unitPrice == deduct;
-            if (!consistent) {
-                billedAmountViolations++;
-            }
-        }
-
         long overDeductViolations = 0;
         long releaseViolations = 0;
         long expectedSpent = -positiveAdjustWithoutCampaign;
@@ -107,8 +82,7 @@ public class SettlementConsistencyStep implements AggregationStep<SettlementFind
             }
             expectedSpent += SpendFormula.spentAmount(ledger[DEDUCT], ledger[POSITIVE_ADJUST]);
         }
-        return new SettlementFindings(billedAmountViolations, overDeductViolations, releaseViolations,
-                expectedSpent);
+        return new SettlementFindings(overDeductViolations, releaseViolations, expectedSpent);
     }
 
     @Override
@@ -117,15 +91,12 @@ public class SettlementConsistencyStep implements AggregationStep<SettlementFind
                 .map(row -> SpendFormula.spentAmount(row.deductAmount(), row.positiveAdjustAmount())
                         == findings.expectedSpent() ? 0L : 1L)
                 .orElse(1L);
-        metrics.recordViolations("V-1", findings.billedAmountViolations());
         metrics.recordViolations("V-2", findings.overDeductViolations());
         metrics.recordViolations("V-3", findings.releaseViolations());
         metrics.recordViolations("V-7", spentViolations);
-        if (findings.billedAmountViolations() + findings.overDeductViolations()
-                + findings.releaseViolations() + spentViolations > 0) {
-            log.error("event=ANALYTICS_SETTLEMENT_CONSISTENCY_MISMATCH businessDate={} v1={} v2={} v3={} v7={}",
-                    businessDate, findings.billedAmountViolations(), findings.overDeductViolations(),
-                    findings.releaseViolations(), spentViolations);
+        if (findings.overDeductViolations() + findings.releaseViolations() + spentViolations > 0) {
+            log.error("event=ANALYTICS_SETTLEMENT_CONSISTENCY_MISMATCH businessDate={} v2={} v3={} v7={}",
+                    businessDate, findings.overDeductViolations(), findings.releaseViolations(), spentViolations);
         }
         return 0;
     }

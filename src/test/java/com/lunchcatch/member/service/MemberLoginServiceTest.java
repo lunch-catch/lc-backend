@@ -7,6 +7,8 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.lunchcatch.auth.exception.AuthErrorCode;
+import com.lunchcatch.auth.exception.AuthException;
 import com.lunchcatch.member.contract.MemberStatus;
 import com.lunchcatch.member.entity.Member;
 import com.lunchcatch.member.entity.MemberWithdrawalHistory;
@@ -19,6 +21,7 @@ import com.lunchcatch.member.repository.MemberProfileRepository;
 import com.lunchcatch.member.repository.MemberRepository;
 import com.lunchcatch.member.repository.MemberWithdrawalHistoryRepository;
 import java.lang.reflect.Field;
+import java.sql.SQLException;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDateTime;
@@ -35,6 +38,8 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.CannotAcquireLockException;
+import org.springframework.jdbc.BadSqlGrammarException;
+import org.springframework.transaction.CannotCreateTransactionException;
 import org.springframework.transaction.support.TransactionCallback;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -76,6 +81,28 @@ class MemberLoginServiceTest {
             TransactionCallback<?> callback = invocation.getArgument(0);
             return callback.doInTransaction(null);
         });
+    }
+
+    // 토큰 발급 전에 회원을 찾는 트랜잭션에서 먼저 막혀도 명세대로 503 AUTH-002 다(#1320)
+    @Test
+    void 회원을_찾는_트랜잭션을_열지_못하면_AUTH002다() {
+        when(kakaoIdTokenExchanger.exchange("code", "state")).thenReturn(new KakaoIdentity("kakao-1", "점심헌터", null));
+        // 기본으로 걸어 둔 트랜잭션 실행을 지우고 커넥션을 얻지 못하게 바꾼다
+        org.mockito.Mockito.reset(transactionTemplate);
+        org.mockito.Mockito.doThrow(new CannotCreateTransactionException("db down")).when(transactionTemplate).execute(any());
+
+        assertThatThrownBy(() -> service.login("code", "state"))
+                .isInstanceOfSatisfying(AuthException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(AuthErrorCode.REFRESH_TOKEN_STORE_UNAVAILABLE));
+    }
+
+    @Test
+    void 로그인의_SQL_오류는_AUTH002로_바꾸지_않는다() {
+        when(kakaoIdTokenExchanger.exchange("code", "state")).thenReturn(new KakaoIdentity("kakao-1", "점심헌터", null));
+        BadSqlGrammarException bug = new BadSqlGrammarException("find", "SELECT", new SQLException("syntax"));
+        when(memberRepository.findByProviderUserIdForUpdate("kakao-1")).thenThrow(bug);
+
+        assertThatThrownBy(() -> service.login("code", "state")).isSameAs(bug);
     }
 
     @Test
