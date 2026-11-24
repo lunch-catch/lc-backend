@@ -1160,14 +1160,15 @@ def render_overrun(o):
     idle = []
     for j in o['jobs']:
         if j['note'] == '구간에 실행이 없다':
-            idle.append(j['name'])
+            idle.append(j)
             continue
         value = '%s %s' % (j['value_label'], fmt_s(j['value'])) if j['value'] is not None else '지표 없음'
         crit = '판정하지 않음' if j['kind'] == '상태 확인' else basis(j['threshold'], j['default'])
         out.append('| `%s` | %s | %s | %s | %s | %s |' % (j['name'], j['kind'], crit, value, judge(j['over']), j['note'] or '-'))
     if idle:
         # 하루 한 번 도는 cron 은 거의 늘 여기에 든다. 한 줄로 이으면 길어 접어 두고 한 줄에 하나씩 적는다
-        out += ['', '<details><summary>구간에 실행이 없던 cron %d개</summary>' % len(idle), ''] + ['- `%s`' % n for n in idle] + ['', '</details>']
+        out += ['', '<details><summary>구간에 실행이 없던 cron %d개</summary>' % len(idle), '', '| 작업 | 기준 |', '|---|---|']
+        out += ['| `%s` | %s |' % (j['name'], basis(j['threshold'], j['default'])) for j in idle] + ['', '</details>']
     return out
 
 def render(doc, version_dir):
