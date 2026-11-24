@@ -1785,10 +1785,9 @@ def ranges(text):
     # 메서드마다 (이름, 첫 줄, 끝 줄) 이다. 선언 뒤 ; 보다 { 가 먼저 오면 메서드다. 중괄호로 끝을 찾는다
     found, stack, depth, pending = [], [], 0, None
     for n, l in enumerate(clean(text.split('\n')), start=1):
-        m = None
-        for m in DECL.finditer(l):
-            pass
-        if m and m.group(2) not in SKIP and m.group(1).split()[-1] not in NOT_TYPE:
+        # 한 줄 메서드(int f() { return g(); })는 선언과 호출이 한 줄에 있다. 호출이 아닌 첫 선언으로 범위를 연다
+        m = next((x for x in DECL.finditer(l) if x.group(2) not in SKIP and x.group(1).split()[-1] not in NOT_TYPE), None)
+        if m:
             pending = (m.group(2), n, m.end())
         for k, c in enumerate(l):
             if pending and pending[1] == n and k < pending[2]:
@@ -2212,7 +2211,15 @@ keep_batches() {
       rc=1
     fi
   done
-  [ -z "${PROFILE_BATCHES:-}" ] || grep -h '^batch ' "$outs"/*.out >> "$PROFILE_BATCHES" || true
+  # 묶음 줄이 없는 것(grep 이 1)은 실패가 아니다. 파일에 쓰지 못한 것은 원래 구간을 잃으므로 실패로 센다
+  if [ -n "${PROFILE_BATCHES:-}" ]; then
+    local lines
+    lines=$(grep -h '^batch ' "$outs"/*.out || true)
+    if [ -n "$lines" ] && ! printf '%s\n' "$lines" >> "$PROFILE_BATCHES"; then
+      echo "ERROR: 묶음 줄을 $PROFILE_BATCHES 에 쓰지 못했다" >&2
+      rc=1
+    fi
+  fi
   grep -hv '^batch \|^batch-count ' "$outs"/*.out || true
   rm -rf "$outs"
   return "$rc"
