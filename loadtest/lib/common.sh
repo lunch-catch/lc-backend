@@ -593,6 +593,8 @@ run_version() {
   [ -z "$hold" ] || again_args+=(--hold "$hold")
   [ -z "$baseline" ] || again_args+=(--baseline "$baseline")
   [ -z "$baseline_sha" ] || again_args+=(--baseline-sha "$baseline_sha")
+  # 고른 고친 함수도 남긴다. 빠지면 다시 돌린 진단 회차의 baseline.json 에 고친 함수가 없다
+  for i in ${fixed[@]+"${fixed[@]}"}; do again_args+=(--fixed "$i"); done
   again=$(printf '%q ' "${again_args[@]}"); again="${again% }"
   [ -n "${LOCAL:-}" ] || [ -z "${AWS_PROFILE:-}" ] || again="AWS_PROFILE=$(printf '%q' "$AWS_PROFILE") $again"
   #
@@ -713,6 +715,8 @@ run_plan() {
     line="${line%%#*}"; [ -n "${line//[[:space:]]/}" ] || continue
     read -r name commit args <<< "$line"
     scen=$(sed -nE 's/.*--scenario ([^ ]+).*/\1/p' <<< "$args")
+    # 시나리오를 주지 않으면 run_version 이 feed_impression 으로 돈다. 같은 시나리오로 견주게 맞춘다
+    scen="${scen:-feed_impression}"
     prev_args=()
     for (( i = ${#prev_names[@]} - 1; i >= 0; i-- )); do
       [ "${prev_scens[$i]}" = "$scen" ] || continue
@@ -914,7 +918,18 @@ for name in sorted(took):
                  'default': default, 'value': None if idle else v, 'value_label': '실행 한 번',
                  'over': None if status or idle or t is None else v > t,
                  'note': '판정하지 않는다' if status else ('구간에 실행이 없다' if idle else '')})
-print(json.dumps({'traced': bool(traced), 'tracing': tracing, 'limit': LIMIT, 'spss': SPSS, 'apis': apis, 'methods': methods, 'jobs': jobs}, ensure_ascii=False, separators=(',', ':')))
+# 부하 시험 환경은 이 한 줄을 SSM 으로 돌려받아 출력 한도(24,000자) 안에 들어야 한다. 넘으면 메서드 행을 p99 가 작은 것부터 덜어 내고
+# 덜어 낸 수를 남긴다. 잘린 JSON 은 읽지 못해 그 회차의 판정이 모두 "묻지 못함" 이 된다
+OUT_LIMIT = 20000
+doc = {'traced': bool(traced), 'tracing': tracing, 'limit': LIMIT, 'spss': SPSS, 'apis': apis, 'methods': methods, 'jobs': jobs, 'methods_cut': 0}
+text = json.dumps(doc, ensure_ascii=False, separators=(',', ':'))
+if len(text) > OUT_LIMIT:
+    kept = sorted(methods, key=lambda m: -(m.get('p99') or 0))
+    while kept and len(text) > OUT_LIMIT:
+        kept = kept[:max(len(kept) * 3 // 4, len(kept) - 1)]
+        doc.update(methods=kept, methods_cut=len(methods) - len(kept))
+        text = json.dumps(doc, ensure_ascii=False, separators=(',', ':'))
+print(text)
 PY
 
 # 그 회차의 기준 초과를 묻는다. 로컬은 로컬 Prometheus 와 그라파나 프록시의 Tempo 를, 부하 시험 환경은 모니터링 서버에서 묻는다.
@@ -1131,6 +1146,8 @@ def render_overrun(o):
         for m in o['methods']:
             count = fmt_n(m['count']) + (' 이상(일부만 셌다)' if m.get('partial') else '')
             out.append('| %s | `%s` | %s | %s | %s | `%s` |' % (m['api'], m['method'], fmt_s(m['threshold']), count, fmt_s(m['p99']), m['trace']))
+        if o.get('methods_cut'):
+            out += ['', '메서드 %s줄은 출력 한도 때문에 덜어 냈다. p99 가 큰 것부터 남겼다' % fmt_n(o['methods_cut'])]
         if any(m.get('partial') for m in o['methods']) or any(a.get('partial') for a in o['apis']):
             out += ['', '일부만 셌다: Tempo 검색은 트레이스 %s개, 트레이스마다 스팬 %s개까지만 돌려줘, 그 상한에 닿은 API 는 넘은 수와 p99, 가장 오래 걸린 트레이스가 그 일부에서 센 값이다' % (o.get('limit', 500), o.get('spss', 100))]
     out += ['', '| 작업 | 종류 | 기준 | 값 | 판정 | 참고 |', '|---|---|---|---|---|---|']
@@ -1389,8 +1406,9 @@ def render_compare(run_dir, d, rel_of):
         if links:
             out.append('Diff: ' + ', '.join('[%s](%s)' % (f[5:-4], os.path.join(d, f)) for f in links))
     else:
-        out += ['', 'Diff 그림: 앞 버전이 이 환경의 Pyroscope 에 없어 찍지 않았다. lc-infra 에서 아래로 찍어 이 회차 폴더의 `diff/` 에 넣는다', '',
-                '```bash', './scripts/loadtest-diff.sh %s %s%s' % (rel_of(base_dir), rel_of(run_dir), ''.join(' --fixed %s' % f for f in meta.get('fixed', []))), '```']
+        import shlex
+        out += ['', 'Diff 그림: 앞 버전이 이 환경의 Pyroscope 에 없어 찍지 않았다. lc-infra 에서 아래로 찍어 이 회차 폴더의 `diff/` 에 넣는다. `LC_BACKEND_DIR` 은 lc-backend 경로다', '',
+                '```bash', './scripts/loadtest-diff.sh %s %s%s' % (rel_of(base_dir), rel_of(run_dir), ''.join(' --fixed %s' % shlex.quote(f) for f in meta.get('fixed', []))), '```']
     fixed = meta.get('fixed', [])
     cand = os.path.join(os.path.dirname(run_dir), 'fixed-candidates.txt')
     note = '고친 함수: ' + (', '.join('`%s`' % f for f in fixed) if fixed else '넘기지 않았다')
@@ -1412,13 +1430,19 @@ def render_compare(run_dir, d, rel_of):
             a = shares(before[svc].get(kind, []), java_leaf)
             b = shares(after[svc].get(kind, []), java_leaf)
             delta = {k: b.get(k, 0) - a.get(k, 0) for k in set(a) | set(b) if k not in fixed}
-            up = sorted(delta.items(), key=lambda kv: -kv[1])[:5]
-            down = sorted(delta.items(), key=lambda kv: kv[1])[:5]
-            out += ['', '%s 에서 Self 몫이 가장 많이 바뀐 함수(자바 함수 기준, 고친 함수 밖)' % kind, '',
-                    '| 늘어난 함수 | 앞 → 이 버전 | 줄어든 함수 | 앞 → 이 버전 |', '|---|---|---|---|']
-            for (fu, du), (fd, dd) in zip(up, down):
-                out.append('| `%s` | %s → %s(%s) | `%s` | %s → %s(%s) |' % (fu, fmt_pct(a.get(fu, 0)), fmt_pct(b.get(fu, 0)), fmt_delta(du),
-                                                                       fd, fmt_pct(a.get(fd, 0)), fmt_pct(b.get(fd, 0)), fmt_delta(dd)))
+            # 늘어난 쪽에는 늘어난 함수만, 줄어든 쪽에는 줄어든 함수만 넣는다. 한쪽이 모자라면 빈 칸으로 둔다
+            up = sorted([kv for kv in delta.items() if kv[1] > 0], key=lambda kv: -kv[1])[:5]
+            down = sorted([kv for kv in delta.items() if kv[1] < 0], key=lambda kv: kv[1])[:5]
+            out += ['', '%s 에서 Self 몫이 가장 많이 바뀐 함수(자바 함수 기준, 고친 함수 밖)' % kind, '']
+            if not up and not down:
+                out.append('바뀐 함수가 없다')
+                continue
+            out += ['| 늘어난 함수 | 앞 → 이 버전 | 줄어든 함수 | 앞 → 이 버전 |', '|---|---|---|---|']
+            cell = lambda f, dv: ('`%s`' % f, '%s → %s(%s)' % (fmt_pct(a.get(f, 0)), fmt_pct(b.get(f, 0)), fmt_delta(dv))) if f else ('', '')
+            for i in range(max(len(up), len(down))):
+                u = cell(*up[i]) if i < len(up) else cell(None, None)
+                dn = cell(*down[i]) if i < len(down) else cell(None, None)
+                out.append('| %s | %s | %s | %s |' % (u + dn))
     gone = [s for s in before if s not in after]
     new = [s for s in after if s not in before]
     if gone or new:
@@ -1432,9 +1456,13 @@ def render_diag(doc, version_dir):
     runs = sorted(d for d in glob.glob(os.path.join(version_dir, '*-profile')) if os.path.isdir(d))
     # loadtest-diff.sh 에 넘길 경로다. 저장소의 결과 문서면 저장소 기준, 아니면 절대 경로다
     def rel_of(path):
+        # 명령을 그대로 붙여 넣어 돌게 저장소 안의 경로는 "$LC_BACKEND_DIR"/<상대 경로> 로, 그 밖은 절대 경로로 쓰고 셸 인용을 붙인다
+        import shlex
         root = os.environ.get('LOADTEST_ROOT', '')
         path = os.path.abspath(path)
-        return '<lc-backend>/' + os.path.relpath(path, root) if root and path.startswith(root + os.sep) else path
+        if root and path.startswith(root + os.sep):
+            return '"$LC_BACKEND_DIR"/' + shlex.quote(os.path.relpath(path, root))
+        return shlex.quote(path)
     version = re.sub(r'-run\d+-profile$', '', os.path.basename(runs[0])) if runs else tag
     out = ['<!-- diag:%s -->' % tag, '### %s' % version, '',
            '`run` 이 진단 회차마다 적는다(#1341). 진단 회차의 수치에는 프로파일링의 비용이 섞여 측정 회차와 견주지 않는다.']
@@ -1563,56 +1591,121 @@ record_result() {
 # 새로 만든 파일은 머리가 없어 더한 줄의 메서드 선언을 읽는다. 시험 코드(src/test)는 뺀다. 람다와 안쪽 클래스는 프로파일의 이름과 다를 수 있다
 #
 IFS= read -r -d '' FIXED_PY <<'PY' || true
-import re, sys
-DECL = re.compile(r'^\s*(?:(?:public|protected|private|static|final|synchronized|abstract|default)\s+)*(?:<[^>]+>\s+)?[\w<>\[\],.? ]+\s+(\w+)\s*\(')
-SKIP = {'if', 'for', 'while', 'switch', 'catch', 'return', 'new', 'else', 'try', 'synchronized', 'super', 'this'}
-# 패키지 이름을 바꾸면 모든 파일의 package, import 줄이 바뀐다. 그런 줄과 빈 줄, 주석만 바뀐 조각은 고친 것으로 치지 않는다
+import re, subprocess, sys
+root, base, head = sys.argv[1:4]
+# 메서드 선언의 머리다. 이름 앞의 낱말이 return, new 같은 것이면 호출이라 뺀다
+DECL = re.compile(r'(?:^|[\s;{}])((?:[\w$<>\[\],.?]+\s+)+)(\w+)\s*\(')
+NOT_TYPE = {'return', 'new', 'throw', 'else', 'case', 'yield', 'await', 'assert', '='}
+SKIP = {'if', 'for', 'while', 'switch', 'catch', 'synchronized', 'super', 'this', 'try'}
+# 패키지 이름을 바꾸면 모든 파일의 package, import 줄이 바뀐다. 그런 줄과 빈 줄, 주석만 바뀐 줄은 고친 것으로 치지 않는다
 TRIVIAL = re.compile(r'^\s*(?:package\s|import\s|//|/\*|\*|$)')
-out, cls, new_file, hunk, body = [], None, False, None, []
-def add(name):
-    if cls and name and name not in SKIP and '%s.%s' % (cls, name) not in out:
-        out.append('%s.%s' % (cls, name))
-def close():
-    # 조각 하나를 닫는다. 의미 있는 줄이 바뀌었으면 조각 머리의 메서드를, 새 파일이면 더한 줄의 메서드 선언을 넣는다
-    global hunk, body
-    if hunk is not None and any(not TRIVIAL.match(l) for l in body):
-        if new_file:
-            for l in body:
-                m = DECL.match(l)
-                if m:
-                    add(m.group(1))
-        else:
-            m = DECL.match(hunk)
-            if m:
-                add(m.group(1))
-    hunk, body = None, []
+
+def clean(lines):
+    # 문자열, 문자, 주석을 지운 줄이다. 중괄호를 셀 때 그 안의 것을 세지 않는다
+    out, block = [], False
+    for l in lines:
+        t, i = '', 0
+        while i < len(l):
+            if block:
+                j = l.find('*/', i)
+                if j < 0:
+                    i = len(l)
+                else:
+                    block, i = False, j + 2
+                continue
+            c = l[i]
+            if l.startswith('/*', i):
+                block, i = True, i + 2
+            elif l.startswith('//', i):
+                break
+            elif c in '"\'':
+                j = i + 1
+                while j < len(l) and l[j] != c:
+                    j += 2 if l[j] == '\\' else 1
+                t += c + c; i = j + 1
+            else:
+                t += c; i += 1
+        out.append(t)
+    return out
+
+def ranges(text):
+    # 메서드마다 (이름, 첫 줄, 끝 줄) 이다. 선언 뒤 ; 보다 { 가 먼저 오면 메서드다. 중괄호로 끝을 찾는다
+    found, stack, depth, pending = [], [], 0, None
+    for n, l in enumerate(clean(text.split('\n')), start=1):
+        m = None
+        for m in DECL.finditer(l):
+            pass
+        if m and m.group(2) not in SKIP and m.group(1).split()[-1] not in NOT_TYPE:
+            pending = (m.group(2), n, m.end())
+        for k, c in enumerate(l):
+            if pending and pending[1] == n and k < pending[2]:
+                continue
+            if c == ';' and pending:
+                pending = None
+            elif c == '{':
+                if pending:
+                    stack.append((pending[0], pending[1], depth))
+                    pending = None
+                depth += 1
+            elif c == '}':
+                depth -= 1
+                if stack and stack[-1][2] == depth:
+                    name, first, _ = stack.pop()
+                    found.append((name, first, n))
+    return found
+
+def show(ref, path):
+    r = subprocess.run(['git', '-C', root, 'show', '%s:%s' % (ref, path)], capture_output=True, text=True)
+    return r.stdout if r.returncode == 0 else ''
+
+def owner(spans, line):
+    # 그 줄을 감싼 가장 안쪽 메서드다
+    inside = [s for s in spans if s[1] <= line <= s[2]]
+    return min(inside, key=lambda s: s[2] - s[1])[0] if inside else None
+
+out, files = [], []
+cur = None
 for line in sys.stdin:
     line = line.rstrip('\n')
     if line.startswith('diff --git'):
-        close()
-        cls, new_file = None, False
+        cur = {'old': None, 'new': None, 'hunks': []}
+        files.append(cur)
+    elif cur is None:
+        continue
     elif line.startswith('--- '):
-        new_file = line == '--- /dev/null'
+        cur['old'] = line[6:] if line.startswith('--- a/') else None
     elif line.startswith('+++ '):
-        path = line[6:] if line.startswith('+++ b/') else ''
-        cls = path.rsplit('/', 1)[-1][:-5] if path.endswith('.java') and '/src/main/' in '/' + path else None
+        cur['new'] = line[6:] if line.startswith('+++ b/') else None
     elif line.startswith('@@'):
-        close()
-        hunk = line.split('@@')[-1]
-    elif hunk is not None and line[:1] in '+-' and not line.startswith(('+++', '---')):
-        body.append(line[1:])
-close()
+        m = re.match(r'@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@', line)
+        cur['hunks'].append({'old': int(m.group(1)), 'new': int(m.group(3)), 'minus': [], 'plus': []})
+    elif cur['hunks'] and line[:1] == '-':
+        cur['hunks'][-1]['minus'].append(line[1:])
+    elif cur['hunks'] and line[:1] == '+':
+        cur['hunks'][-1]['plus'].append(line[1:])
+for f in files:
+    path = f['new'] or f['old']
+    if not path or not path.endswith('.java') or '/src/main/' not in '/' + path:
+        continue
+    cls = path.rsplit('/', 1)[-1][:-5]
+    old_spans = ranges(show(base, f['old'])) if f['old'] else []
+    new_spans = ranges(show(head, f['new'])) if f['new'] else []
+    for h in f['hunks']:
+        hits = [owner(old_spans, h['old'] + i) for i, l in enumerate(h['minus']) if not TRIVIAL.match(l)]
+        hits += [owner(new_spans, h['new'] + i) for i, l in enumerate(h['plus']) if not TRIVIAL.match(l)]
+        for name in hits:
+            if name and '%s.%s' % (cls, name) not in out:
+                out.append('%s.%s' % (cls, name))
 print('\n'.join(out))
 PY
 
 fixed_candidates() {
-  local from="$1" to="$2" attrs
-  attrs=$(mktemp)
-  echo '*.java diff=java' > "$attrs"
+  local from="$1" to="$2"
   git -C "$ROOT" rev-parse -q --verify "$from^{commit}" > /dev/null && git -C "$ROOT" rev-parse -q --verify "$to^{commit}" > /dev/null \
-    || { rm -f "$attrs"; return 1; }
-  git -C "$ROOT" -c core.attributesFile="$attrs" diff --no-color -U0 "$from" "$to" -- '*.java' | python3 -c "$FIXED_PY"
-  rm -f "$attrs"
+    || return 1
+  # 바뀐 줄 번호를 두 커밋의 메서드 범위와 대조한다. 조각 머리(diff=java)는 바뀐 줄보다 앞의 메서드를 가리킬 수 있어 쓰지 않는다
+  # 이름만 바꾼 파일은 바뀐 줄만 보게 이름 바꿈을 찾는다. 파일이 많으면 git 이 찾기를 그만두고 새 파일로 보여 상한을 올린다
+  git -C "$ROOT" -c diff.renameLimit=20000 diff --no-color -M -U0 "$from" "$to" -- '*.java' | python3 -c "$FIXED_PY" "$ROOT" "$from" "$to"
 }
 
 #
