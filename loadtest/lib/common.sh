@@ -2184,6 +2184,7 @@ bash /tmp/lt-profile.sh $name $secs $mode $pyro $PROJECT /tmp/lt-trim.py $ASPROF
 rc=\$?
 echo \"batch-count \$(grep -c '^batch ' /tmp/lt-profile.out)\"
 grep '^batch ' /tmp/lt-profile.out
+echo batch-end
 grep -v '^batch ' /tmp/lt-profile.out | tail -3
 exit \$rc" > "$outs/$id.out" 2>&1 &
         pids="$pids $!"
@@ -2199,28 +2200,31 @@ exit \$rc" > "$outs/$id.out" 2>&1 &
 }
 
 # 서버마다의 프로파일링 출력에서 batch 줄은 PROFILE_BATCHES 에 더하고 나머지는 보인다
-# 원격 출력은 맨 앞의 batch-count 와 받은 batch 줄 수를 견준다. 다르면 출력 한도에 걸려 잘린 것이라 1 로 끝난다
+# 원격 출력은 맨 앞의 batch-count, 묶음 줄들, 끝 표식 batch-end 다. 표식이 없거나 온전한 줄의 수가 다르면
+# 출력 한도에 걸려 잘린 것이라 1 로 끝난다. 마지막 줄이 중간에서 잘려도 온전한 꼴(서비스, 종류, from, until)이 아니라 세지 않는다
+BATCH_LINE='^batch [^ ]+ [^ ]+ [0-9]+ [0-9]+$'
 keep_batches() {
   local outs="$1" f want got rc=0
   for f in "$outs"/*.out; do
     [ -f "$f" ] || continue
     want=$(sed -n 's/^batch-count //p' "$f" | head -1)
-    got=$(grep -c '^batch ' "$f" || true)
-    if [ -n "$want" ] && [ "$want" != "$got" ]; then
-      echo "ERROR: $(basename "$f" .out) 의 묶음 줄을 $want 줄 가운데 $got 줄만 받았다. SSM 출력 한도에 걸렸다. 회차를 줄여 다시 돈다" >&2
+    [ -n "$want" ] || continue
+    got=$(grep -Ec "$BATCH_LINE" "$f" || true)
+    if [ "$want" != "$got" ] || ! grep -qx 'batch-end' "$f"; then
+      echo "ERROR: $(basename "$f" .out) 의 묶음 줄을 $want 줄 가운데 온전한 $got 줄만 받았다(끝 표식 $(grep -qx 'batch-end' "$f" && echo 있음 || echo 없음)). SSM 출력 한도에 걸렸다. 회차를 줄여 다시 돈다" >&2
       rc=1
     fi
   done
   # 묶음 줄이 없는 것(grep 이 1)은 실패가 아니다. 파일에 쓰지 못한 것은 원래 구간을 잃으므로 실패로 센다
-  if [ -n "${PROFILE_BATCHES:-}" ]; then
+  if [ -n "${PROFILE_BATCHES:-}" ] && [ "$rc" -eq 0 ]; then
     local lines
-    lines=$(grep -h '^batch ' "$outs"/*.out || true)
+    lines=$(grep -hE "$BATCH_LINE" "$outs"/*.out || true)
     if [ -n "$lines" ] && ! printf '%s\n' "$lines" >> "$PROFILE_BATCHES"; then
       echo "ERROR: 묶음 줄을 $PROFILE_BATCHES 에 쓰지 못했다" >&2
       rc=1
     fi
   fi
-  grep -hv '^batch \|^batch-count ' "$outs"/*.out || true
+  grep -hv '^batch \|^batch-count \|^batch-end$' "$outs"/*.out || true
   rm -rf "$outs"
   return "$rc"
 }
