@@ -1968,7 +1968,7 @@ after_run() {
       echo "captured $name"
       # 프로파일링이 실패한 진단은 묶음이 빠졌을 수 있다. 캡처는 분석용으로 남기고 진단 절과 커밋은 건너뛴다. 실패는 run 이 5 로 낸다
       if [ -n "${PROFILE_FAILED:-}" ]; then
-        echo "WARN: $name 의 프로파일링이 실패해 진단 절에 적지 않고 커밋하지 않았다. 캡처는 $SNAPSHOT_OUT/$name 에 있다" >&2
+        echo "WARN: $name 의 프로파일링이 실패해 진단 절에 적지 않고 커밋하지 않았다.${SNAPSHOT_OUT:+ 캡처는 $SNAPSHOT_OUT/$name 에 있다}" >&2
         return 0
       fi
       record_diag "$name"
