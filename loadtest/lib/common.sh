@@ -1249,7 +1249,9 @@ def render(doc, version_dir):
         out.append(row + ' |')
     for r in runs:
         d = os.path.join(rel, os.path.basename(r['dir']))
-        out += ['', '**%s**' % r['name'], '']
+        # 회차마다의 그림, 트레이스, 기준 초과는 접어 둔다. 회차 셋이면 버전 절이 300줄 남짓이 된다. 위의 요약 표는 펼쳐 둔다.
+        # 접기 안의 Markdown 이 그려지려면 summary 뒤와 끝 앞에 빈 줄이 있어야 한다(GitHub, VS Code)
+        out += ['', '<details><summary><b>%s</b>: 대시보드, 트레이스, 기준 초과</summary>' % r['name'], '']
         shown = []
         for title, pattern in (('API', 'dashboards/2._서비스/2._API.png'), ('도메인', 'dashboards/3._도메인/*.png')):
             for f in sorted(glob.glob(os.path.join(r['dir'], pattern))):
@@ -1286,6 +1288,7 @@ def render(doc, version_dir):
                     out.append('| ' + ' | '.join(lead + ['`%s`' % t['target'], t['value'], fmt_s(t['ms'] / 1000), '`%s`' % t['id']] + cells
                                                  + [', '.join('`%s`' % e for e in t['events']) or '-']) + ' |')
         out += render_overrun(r.get('overrun'))
+        out += ['', '</details>']
     out.append('<!-- /result:%s -->' % tag)
     lines = open(doc, encoding='utf-8').read().split('\n')
     head = next((i for i, l in enumerate(lines) if l.startswith('#') and '회차별 결과' in l), None)
