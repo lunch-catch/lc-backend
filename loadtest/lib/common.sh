@@ -372,6 +372,22 @@ loadgen_cpu_max_pct max_over_time((100*(1-avg(rate(node_cpu_seconds_total{role="
 http_5xx_inc sum by (uri, status) (increase(http_server_requests_seconds_count{status=~"5.."}[$W]))
 '
 
+# 결과 문서의 상세 표에서 지표마다 적는 뜻이다. 한 줄에 "이름 뜻" 이다. 도메인의 것은 DOMAIN_METRIC_NOTES 가 뒤에 더한다
+COMMON_METRIC_NOTES='
+hikari_pending_max DB 연결을 기다린 요청 수의 최대(앱 서버 합)
+hikari_active_max 쓰고 있는 DB 연결 수의 최대(앱 서버 합)
+hikari_timeout_inc DB 연결을 얻지 못하고 시간이 초과된 수
+hikari_acquire_avg_ms DB 연결을 얻는 데 걸린 평균 시간(ms)
+hikari_usage_avg_ms DB 연결을 빌려 쓴 평균 시간(ms)
+mysql_commit_per_s MySQL 의 초당 커밋 수
+mysql_insert_per_s MySQL 의 초당 INSERT 수
+mysql_threads_running_max MySQL 에서 동시에 실행 중인 스레드 수의 최대
+app_cpu_avg 앱 JVM 의 CPU 사용률 평균(1 이 한도 전부, 앱 서버 평균)
+app_cpu_max 앱 JVM 의 CPU 사용률 최대(1 이 한도 전부)
+loadgen_cpu_max_pct 부하 생성기 CPU 사용률(1분 평균)의 최대(%). 회차의 무효 판정에 쓴다
+http_5xx_inc 앱이 낸 5xx 응답 수(uri, 상태 코드마다)
+'
+
 # 초를 CloudWatch 가 받는 UTC 시각으로 바꾼다. 리눅스와 WSL 의 date 는 -d @초 를, macOS 의 date 는 -r 초 를 받는다(#1228)
 utc_iso() {
   date -u -d "@$1" +%FT%TZ 2> /dev/null || date -u -r "$1" +%FT%TZ
@@ -1277,11 +1293,13 @@ def render(doc, version_dir):
         for n in r['detail']:
             if n not in names:
                 names.append(n)
-    out += ['', '#### 상세', '', '| 지표 | ' + ' | '.join(r['name'] for r in runs) + (' | %d회 묶음 |' % len(runs) if len(runs) > 1 else ' |'),
-            '|---|' + '---|' * (len(runs) + (1 if len(runs) > 1 else 0))]
+    # 지표의 뜻은 record_result 가 METRIC_NOTES 로 넘긴다(공통과 도메인). 없으면 비운다
+    notes = dict(l.strip().split(' ', 1) for l in os.environ.get('METRIC_NOTES', '').splitlines() if ' ' in l.strip())
+    out += ['', '#### 상세', '', '| 뜻 | 지표 | ' + ' | '.join(r['name'] for r in runs) + (' | %d회 묶음 |' % len(runs) if len(runs) > 1 else ' |'),
+            '|---|---|' + '---|' * (len(runs) + (1 if len(runs) > 1 else 0))]
     for n in names:
         vals = [r['detail'].get(n) for r in runs]
-        row = '| `%s` | ' % n + ' | '.join(fmt_n(v) for v in vals)
+        row = '| %s | `%s` | ' % (notes.get(n, '-'), n) + ' | '.join(fmt_n(v) for v in vals)
         if len(runs) > 1:
             row += ' | ' + fmt_n(reduce(vals, kind(n)))
         out.append(row + ' |')
@@ -1679,7 +1697,7 @@ record_result() {
   rm -f "$core" "$k6" "$over"
   doc="$ROOT/$RESULT_DOC"
   [ -z "${LOCAL:-}" ] || doc=$(local_doc)
-  python3 -c "$RESULT_PY" render "$doc" "$SNAPSHOT_OUT" || rc=$?
+  METRIC_NOTES="$COMMON_METRIC_NOTES${DOMAIN_METRIC_NOTES:-}" python3 -c "$RESULT_PY" render "$doc" "$SNAPSHOT_OUT" || rc=$?
   case "$rc" in
     0) echo "result $name -> $doc" ;;
     3) echo "WARN: $RESULT_DOC 에 제목에 '회차별 결과' 가 든 절이 없어 적지 않았다. 절의 머리말을 쓰고 다시 적는다" >&2; return 0 ;;
