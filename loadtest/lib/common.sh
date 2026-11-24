@@ -654,19 +654,23 @@ run_version() {
         return 5
       fi
       # 앞 버전과의 고친 함수 후보다(#1343). 진단 회차의 Diff 와 비교 표가 그 함수까지 펼친다. 확인해 빼거나 더한 목록을 --fixed 로 넘긴다
+      # 파일 이름에 버전을 넣는다. SNAPSHOT_OUT 을 버전끼리 함께 쓰면 뒤 버전이 앞 버전의 후보를 덮어쓰기 때문이다.
+      # 다 뽑은 뒤에만 제 이름으로 옮긴다. 뽑다 실패하면 같은 버전의 앞 후보가 그대로 남는다
+      local cand="$SNAPSHOT_OUT/$name-fixed-candidates.txt"
       if [ -n "$baseline_sha" ] && [ -n "$sha" ]; then
-        if fixed_candidates "$baseline_sha" "$sha" > "$SNAPSHOT_OUT/fixed-candidates.txt"; then
-          echo "fixed 앞 버전 $baseline($baseline_sha) 과 견준 고친 함수 후보 $(grep -c . "$SNAPSHOT_OUT/fixed-candidates.txt") 개: $SNAPSHOT_OUT/fixed-candidates.txt"
+        if fixed_candidates "$baseline_sha" "$sha" > "$cand.part"; then
+          mv "$cand.part" "$cand"
+          echo "fixed 앞 버전 $baseline($baseline_sha) 과 견준 고친 함수 후보 $(grep -c . "$cand") 개: $cand"
         else
+          rm -f "$cand.part"
           echo "WARN: 고친 함수 후보를 뽑지 못했다. $baseline_sha 와 $sha 가 이 저장소에 있는지 본다(git fetch --tags)" >&2
-          rm -f "$SNAPSHOT_OUT/fixed-candidates.txt"
         fi
       fi
       echo "STOP measure-done $name. 측정 3회가 끝났다. 위의 회차마다 valid, metrics, scrape gaps, 캡처 폴더를 보고 진단 회차를 돌릴지 정한다"
       echo "next 진단을 돌리려면: $again --from diag"
       # 후보는 앞 버전과 이 버전 사이의 develop 작업이 많으면 수십 개가 된다. 명령에 붙이지 않고 고른 것만 넘긴다
-      [ ! -s "$SNAPSHOT_OUT/fixed-candidates.txt" ] \
-        || echo "next 고친 함수는 $SNAPSHOT_OUT/fixed-candidates.txt 의 후보에서 골라 --fixed <함수> 로 하나씩 붙인다"
+      [ ! -s "$cand" ] \
+        || echo "next 고친 함수는 $cand 의 후보에서 골라 --fixed <함수> 로 하나씩 붙인다"
       echo "next 진단 없이 다음 버전으로 가려면 다음 버전의 version 을 부른다"
       ;;
     diag)
@@ -766,8 +770,8 @@ run_plan() {
       echo "$name measure-done $started $(date -u +%FT%TZ)" >> "$state"
       echo "next 진단을 돌리려면: $next_cmd --diag"
       # 고친 함수는 run_version 이 보인 후보 파일에서 골라 --diag 뒤에 붙인다(#1343)
-      [ ! -s "${SNAPSHOT_OUT:-/nonexistent}/fixed-candidates.txt" ] \
-        || echo "next 고친 함수를 붙이려면: $next_cmd --diag --fixed <함수> ... (후보: $SNAPSHOT_OUT/fixed-candidates.txt)"
+      [ ! -s "${SNAPSHOT_OUT:-/nonexistent}/$name-fixed-candidates.txt" ] \
+        || echo "next 고친 함수를 붙이려면: $next_cmd --diag --fixed <함수> ... (후보: $SNAPSHOT_OUT/$name-fixed-candidates.txt)"
       echo "next 진단을 건너뛰려면: $next_cmd --skip-diag"
       return 0
     fi
@@ -1513,11 +1517,13 @@ def render_compare(run_dir, d, rel_of):
         out += ['', 'Diff 그림: 앞 버전이 이 환경의 Pyroscope 에 없어 찍지 않았다. lc-infra 에서 아래로 찍어 이 회차 폴더의 `diff/` 에 넣는다. `LC_BACKEND_DIR` 은 lc-backend 경로다', '',
                 '```bash', './scripts/loadtest-diff.sh %s %s%s' % (rel_of(base_dir), rel_of(run_dir), ''.join(' --fixed %s' % shlex.quote(f) for f in meta.get('fixed', []))), '```']
     fixed = meta.get('fixed', [])
-    cand = os.path.join(os.path.dirname(run_dir), 'fixed-candidates.txt')
+    # 후보 파일은 버전 이름을 앞에 단다(<버전>-fixed-candidates.txt). 진단 회차 이름에서 -run1-profile 을 떼면 버전이다
+    cand_name = re.sub(r'-run\d+-profile$', '', os.path.basename(run_dir)) + '-fixed-candidates.txt'
+    cand = os.path.join(os.path.dirname(run_dir), cand_name)
     note = '고친 함수: ' + (', '.join('`%s`' % f for f in fixed) if fixed else '넘기지 않았다')
     if os.path.exists(cand):
         n = len([l for l in open(cand, encoding='utf-8').read().splitlines() if l.strip()])
-        note += '. 후보 %d개는 [fixed-candidates.txt](%s) 에 있다(앞 버전 커밋과의 git diff)' % (n, os.path.join(os.path.dirname(d), 'fixed-candidates.txt'))
+        note += '. 후보 %d개는 [%s](%s) 에 있다(앞 버전 커밋과의 git diff)' % (n, cand_name, os.path.join(os.path.dirname(d), cand_name))
     out += ['', note]
     for svc in [s for s in after if s in before]:
         out += ['', '`%s`' % svc]
@@ -1878,7 +1884,8 @@ commit_diag() {
   # 진단 절을 적은 결과 문서도 함께 담는다(#1341)
   # 고친 함수 후보(#1343)도 버전 폴더에 있으면 함께 담는다
   local extra=()
-  [ ! -f "$SNAPSHOT_OUT/fixed-candidates.txt" ] || extra=("$SNAPSHOT_OUT/fixed-candidates.txt")
+  local cand="$SNAPSHOT_OUT/${name%-run1-profile}-fixed-candidates.txt"
+  [ ! -f "$cand" ] || extra=("$cand")
   if ! git -C "$ROOT" add -- "$run_dir" "$RESULT_DOC" ${extra[@]+"${extra[@]}"} \
     || ! git -C "$ROOT" commit -q -m "test: $name 의 진단 캡처와 프로파일을 남기고 진단 절에 적는다 (#1335, #1341, #1343)" -- "$run_dir" "$RESULT_DOC" ${extra[@]+"${extra[@]}"}; then
     echo "WARN: 진단 회차를 커밋하지 못했다. git -C $ROOT restore --staged -- $run_dir $RESULT_DOC 로 풀고 손으로 커밋한다" >&2
