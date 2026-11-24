@@ -926,7 +926,8 @@ text = json.dumps(doc, ensure_ascii=False, separators=(',', ':'))
 if len(text) > OUT_LIMIT:
     kept = sorted(methods, key=lambda m: -(m.get('p99') or 0))
     while kept and len(text) > OUT_LIMIT:
-        kept = kept[:max(len(kept) * 3 // 4, len(kept) - 1)]
+        # 한 번에 4분의 1 이상씩 덜어 다시 셈하는 횟수를 줄인다
+        kept = kept[:min(len(kept) * 3 // 4, len(kept) - 1)]
         doc.update(methods=kept, methods_cut=len(methods) - len(kept))
         text = json.dumps(doc, ensure_ascii=False, separators=(',', ':'))
 print(text)
