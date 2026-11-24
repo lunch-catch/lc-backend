@@ -1209,8 +1209,138 @@ def render(doc, version_dir):
         lines[last + 1:last + 1] = [''] + out
     open(doc, 'w', encoding='utf-8').write('\n'.join(lines))
 
+def longest_step(path):
+    # 트레이스에서 루트를 뺀 스팬 가운데 가장 오래 걸린 것이다(#1341). trace.json 은 Tempo 의 원본(batches)이다
+    try:
+        data = json.load(open(path, encoding='utf-8'))
+    except (OSError, ValueError):
+        return None
+    best = None
+    for b in data.get('batches') or data.get('resourceSpans') or []:
+        for ss in b.get('scopeSpans') or b.get('instrumentationLibrarySpans') or []:
+            for sp in ss.get('spans', []):
+                if not sp.get('parentSpanId'):
+                    continue
+                d = (int(sp.get('endTimeUnixNano', 0)) - int(sp.get('startTimeUnixNano', 0))) / 1e9
+                if best is None or d > best[1]:
+                    best = (sp.get('name', '-'), d)
+    return best
+
+# 자바 함수의 이름이다(TRIM_PY 가 패키지를 뗀 Class.method, 안쪽 클래스와 람다 포함). libc.so.6, poll, itable stub 같은 네이티브 프레임은 아니다
+JAVA_FRAME = re.compile(r'^[A-Z][\w$]*\.[\w$<>]+$')
+
+def java_leaf(stack):
+    # 맨 끝에서부터 처음 만나는 자바 함수다. 네이티브 프레임의 몫을 그것을 부른 자바 함수에 붙이려는 것이다
+    frames = stack.split(';')
+    return next((f for f in reversed(frames) if JAVA_FRAME.match(f)), frames[-1])
+
+def profile_self(archive, top=5):
+    # 서비스와 종류마다 Self 의 몫이다. 서비스가 나뉘기 전의 파일은 앱 하나다(#1341)
+    #   frame  그 함수가 스택의 맨 끝인 표본이다. 그라파나 Call Tree 의 Self 와 같다
+    #   java   맨 끝에서부터 처음 만나는 자바 함수에 붙인다. 네이티브 프레임(poll 등)에서 기다린 몫이 그것을 부른 자바 함수로 간다
+    import tarfile
+    try:
+        tar = tarfile.open(archive)
+    except (OSError, tarfile.TarError):
+        return None
+    with tar:
+        manifest = json.load(tar.extractfile('manifest.json'))
+        layout = ({svc: (m['kinds'], svc + '/') for svc, m in manifest['services'].items()} if 'services' in manifest
+                  else {'lunchcatch': (manifest['kinds'], '')})
+        out = {}
+        for svc, (kinds, prefix) in layout.items():
+            shares = {'frame': {}, 'java': {}}
+            for kind, meta in kinds.items():
+                own, java, total = {}, {}, 0
+                for b in meta['batches']:
+                    for line in tar.extractfile('%s%s/%d.folded' % (prefix, kind, b['at'])).read().decode().splitlines():
+                        stack, _, n = line.rpartition(' ')
+                        n = int(n); total += n
+                        leaf = stack.rsplit(';', 1)[-1]
+                        own[leaf] = own.get(leaf, 0) + n
+                        j = java_leaf(stack)
+                        java[j] = java.get(j, 0) + n
+                shares['frame'][kind] = {f: c / total for f, c in own.items()} if total else {}
+                shares['java'][kind] = {f: c / total for f, c in java.items()} if total else {}
+            out[svc] = {}
+            for basis, by_kind in shares.items():
+                picked = []
+                for kind in ('wall', 'cpu'):
+                    for f, _ in sorted(by_kind.get(kind, {}).items(), key=lambda kv: -kv[1])[:top]:
+                        if f not in picked:
+                            picked.append(f)
+                # 그 종류에 표본이 있으면 빠진 함수는 0% 다. 표본이 없는 종류만 '-'(None)로 둔다
+                at = lambda kind, f: by_kind[kind].get(f, 0.0) if by_kind.get(kind) else None
+                out[svc][basis] = [(f, at('wall', f), at('cpu', f)) for f in picked]
+        return out
+
+def render_diag(doc, version_dir):
+    # 진단 회차를 결과 문서에서 제목에 "진단" 이 든 절에 적는다(#1341). 버전 폴더의 -profile 회차를 모두 그린다
+    tag = os.path.basename(os.path.normpath(version_dir))
+    rel = os.path.relpath(version_dir, os.path.dirname(os.path.abspath(doc)))
+    runs = sorted(d for d in glob.glob(os.path.join(version_dir, '*-profile')) if os.path.isdir(d))
+    version = re.sub(r'-run\d+-profile$', '', os.path.basename(runs[0])) if runs else tag
+    out = ['<!-- diag:%s -->' % tag, '### %s' % version, '',
+           '`run` 이 진단 회차마다 적는다(#1341). 진단 회차의 수치에는 프로파일링의 비용이 섞여 측정 회차와 견주지 않는다.']
+    for run_dir in runs:
+        name = os.path.basename(run_dir)
+        d = os.path.join(rel, name)
+        out += ['', '**%s**' % name, '']
+        for f in ('calltree/wall.png', 'calltree/batch-wall.png'):
+            if os.path.exists(os.path.join(run_dir, f)):
+                out.append('![%s %s](%s)' % (name, f.replace('calltree/', 'Call Tree ').replace('.png', ''), os.path.join(d, f)))
+        links = [f for f in ('calltree/cpu.png', 'calltree/batch-cpu.png', 'redis.txt', 'metrics.json.gz', 'logs.jsonl.gz')
+                 if os.path.exists(os.path.join(run_dir, f))]
+        links += sorted(os.path.relpath(f, run_dir) for f in glob.glob(os.path.join(run_dir, 'diag-*-profile.tar.gz')))
+        links += sorted(os.path.relpath(f, run_dir) for f in glob.glob(os.path.join(run_dir, 'dashboards', '**', '*.png'), recursive=True))
+        if links:
+            out += ['', '파일: ' + ', '.join('[%s](%s)' % (os.path.splitext(os.path.basename(f))[0].replace('_', ' '), os.path.join(d, f)) for f in links)]
+        traces, notes = trace_rows(run_dir) or (None, [])
+        if traces is None:
+            out += ['', '트레이스: 고른 목록(`traces.txt`)이 없다']
+        elif not traces:
+            out += ['', '트레이스: ' + (' '.join(notes) or '기준을 넘은 트레이스가 없다')]
+        else:
+            out += ['', '| 대상 | 판정 값 | 걸린 시간 | 가장 오래 걸린 단계 | 트레이스 ID | 화면 |', '|---|---|---|---|---|---|']
+            for t in traces:
+                base = os.path.join(d, t['dir'])
+                step = longest_step(os.path.join(run_dir, t['dir'], 'trace.json'))
+                step = '`%s` %s' % (step[0], fmt_s(step[1])) if step else '-'
+                files = ' '.join('[%s](%s)' % (label, os.path.join(base, f)) for label, f in
+                                 (('트레이스', 'trace.png'), ('로그', 'logs.png'), ('로그 글', 'logs.txt'), ('원본', 'trace.json'))
+                                 if os.path.exists(os.path.join(run_dir, t['dir'], f)))
+                out.append('| %s %s | %s | %s | %s | `%s` | %s |' % (t['panel'], t['target'], t['value'], fmt_s(t['ms'] / 1000), step, t['id'], files))
+        archive = next(iter(glob.glob(os.path.join(run_dir, 'diag-*-profile.tar.gz'))), None)
+        selfs = profile_self(archive) if archive else None
+        if not selfs:
+            out += ['', '프로파일: 파일이 없다']
+        for svc, bases in (selfs or {}).items():
+            out += ['', '프로파일 `%s`: Self 가 큰 함수(wall 과 cpu 의 상위 5개를 합침). wall 이 크고 cpu 가 작으면 기다린 시간, 둘 다 크면 계산이다' % svc]
+            for basis, title in (('frame', '맨 끝 프레임 기준(그라파나 Call Tree 의 Self 와 같다)'),
+                                 ('java', '자바 함수 기준(네이티브 프레임의 몫을 그것을 부른 가장 가까운 자바 함수에 붙였다)')):
+                out += ['', title, '', '| 함수 | wall Self | cpu Self |', '|---|---|---|']
+                for f, w, c in bases[basis]:
+                    out.append('| `%s` | %s | %s |' % (f, fmt_pct(w), fmt_pct(c)))
+    out.append('<!-- /diag:%s -->' % tag)
+    lines = open(doc, encoding='utf-8').read().split('\n')
+    head = next((i for i, l in enumerate(lines) if l.startswith('#') and '진단' in l), None)
+    if head is None:
+        sys.exit(3)
+    level = len(lines[head]) - len(lines[head].lstrip('#'))
+    end = next((i for i in range(head + 1, len(lines)) if lines[i].startswith('#') and len(lines[i]) - len(lines[i].lstrip('#')) <= level), len(lines))
+    s = next((i for i in range(head, end) if lines[i] == out[0]), None)
+    e = next((i for i in range(head, end) if lines[i] == out[-1]), None)
+    if s is not None and e is not None and e > s:
+        lines[s:e + 1] = out
+    else:
+        last = max([i for i in range(head, end) if lines[i].strip()])
+        lines[last + 1:last + 1] = [''] + out
+    open(doc, 'w', encoding='utf-8').write('\n'.join(lines))
+
 if sys.argv[1] == 'collect':
     collect(*sys.argv[2:9])
+elif sys.argv[1] == 'diag':
+    render_diag(sys.argv[2], sys.argv[3])
 else:
     render(sys.argv[2], sys.argv[3])
 PY
@@ -1238,10 +1368,7 @@ record_result() {
   fi
   rm -f "$core" "$k6" "$over"
   doc="$ROOT/$RESULT_DOC"
-  if [ -n "${LOCAL:-}" ]; then
-    doc="$(dirname "$SNAPSHOT_OUT")/$(basename "$RESULT_DOC")"
-    [ -f "$doc" ] || cp "$ROOT/$RESULT_DOC" "$doc"
-  fi
+  [ -z "${LOCAL:-}" ] || doc=$(local_doc)
   python3 -c "$RESULT_PY" render "$doc" "$SNAPSHOT_OUT" || rc=$?
   case "$rc" in
     0) echo "result $name -> $doc" ;;
@@ -1273,6 +1400,49 @@ record_result() {
 # 결과 문서에는 적지 않는 회차라 record_result 의 커밋을 거치지 않는다. 커밋하지 않으면 작업 트리를 지울 때 프로파일 파일도 사라진다.
 # 측정 회차와 같은 규칙이다. 로컬과 SNAPSHOT_OUT 이 없는 회차는 하지 않고, 다른 파일이 스테이징돼 있으면 커밋하지 않는다.
 #
+#
+# 로컬이 적는 결과 문서 사본이다. 처음에는 원본을 복사하고, 그 뒤 원본에 새로 생긴 절(회차별 결과, 진단)은 사본 끝에 더한다.
+# 사본은 회차가 쌓인 것이라 덮어쓰지 않는다. 절을 더하지 않으면 원본에 나중에 생긴 절이 사본에 없어 적지 못한다(#1341)
+#
+local_doc() {
+  local doc
+  doc="$(dirname "$SNAPSHOT_OUT")/$(basename "$RESULT_DOC")"
+  [ -f "$doc" ] || cp "$ROOT/$RESULT_DOC" "$doc"
+  python3 - "$ROOT/$RESULT_DOC" "$doc" <<'PY'
+import sys
+src, dst = (open(p, encoding='utf-8').read() for p in sys.argv[1:3])
+lines = src.split('\n')
+for word in ('회차별 결과', '진단'):
+    if any(l.startswith('#') and word in l for l in dst.split('\n')):
+        continue
+    head = next((i for i, l in enumerate(lines) if l.startswith('#') and word in l), None)
+    if head is None:
+        continue
+    level = len(lines[head]) - len(lines[head].lstrip('#'))
+    end = next((i for i in range(head + 1, len(lines)) if lines[i].startswith('#') and len(lines[i]) - len(lines[i].lstrip('#')) <= level), len(lines))
+    dst = dst.rstrip('\n') + '\n\n' + '\n'.join(lines[head:end]).rstrip('\n') + '\n'
+open(sys.argv[2], 'w', encoding='utf-8').write(dst)
+PY
+  echo "$doc"
+}
+
+#
+# 진단 회차를 결과 문서의 진단 절에 적는다(#1341). 로컬은 build/loadtest-results/ 의 결과 문서 사본에 적는다.
+# 결과 문서에 제목에 "진단" 이 든 절이 없으면 적지 않고 안내만 한다
+#
+record_diag() {
+  local name="$1" doc rc=0
+  [ -n "${SNAPSHOT_OUT:-}" ] || return 0
+  doc="$ROOT/$RESULT_DOC"
+  [ -z "${LOCAL:-}" ] || doc=$(local_doc)
+  python3 -c "$RESULT_PY" diag "$doc" "$SNAPSHOT_OUT" || rc=$?
+  case "$rc" in
+    0) echo "diag $name -> $doc" ;;
+    3) echo "WARN: $RESULT_DOC 에 제목에 '진단' 이 든 절이 없어 적지 않았다" >&2 ;;
+    *) echo "WARN: $name 의 진단을 $RESULT_DOC 에 적지 못했다" >&2 ;;
+  esac
+}
+
 commit_diag() {
   local name="$1" run_dir
   [ -z "${LOCAL:-}" ] && [ -n "${SNAPSHOT_OUT:-}" ] || return 0
@@ -1282,8 +1452,10 @@ commit_diag() {
     echo "WARN: 스테이징된 다른 파일이 있어 커밋하지 않았다. $run_dir 에는 남아 있다" >&2
     return 0
   fi
-  if ! git -C "$ROOT" add -- "$run_dir" || ! git -C "$ROOT" commit -q -m "test: $name 의 진단 캡처와 프로파일을 남긴다 (#1335)" -- "$run_dir"; then
-    echo "WARN: 진단 회차를 커밋하지 못했다. git -C $ROOT restore --staged -- $run_dir 로 풀고 손으로 커밋한다" >&2
+  # 진단 절을 적은 결과 문서도 함께 담는다(#1341)
+  if ! git -C "$ROOT" add -- "$run_dir" "$RESULT_DOC" \
+    || ! git -C "$ROOT" commit -q -m "test: $name 의 진단 캡처와 프로파일을 남기고 진단 절에 적는다 (#1335, #1341)" -- "$run_dir" "$RESULT_DOC"; then
+    echo "WARN: 진단 회차를 커밋하지 못했다. git -C $ROOT restore --staged -- $run_dir $RESULT_DOC 로 풀고 손으로 커밋한다" >&2
     return 0
   fi
   echo "committed $(git -C "$ROOT" rev-parse --short HEAD) $run_dir"
@@ -1314,6 +1486,7 @@ after_run() {
       rm -f "$metrics_out"
       [ "$snap_rc" -eq 0 ] || { echo "SNAPSHOT-FAILED $name: 캡처가 $snap_rc 로 끝났다. 환경을 내리기 전에 같은 구간(--from $ws --to $he)으로 다시 찍는다"; return 4; }
       echo "captured $name"
+      record_diag "$name"
       commit_diag "$name"
       return 0 ;;
   esac
