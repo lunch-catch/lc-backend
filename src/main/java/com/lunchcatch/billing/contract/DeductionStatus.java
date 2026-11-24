@@ -3,7 +3,7 @@ package com.lunchcatch.billing.contract;
 // 노출 1건의 과금 판정이다. deduction_result.billing_status 에 같은 값으로 남는다
 public enum DeductionStatus {
 
-    // 과금했다. 이 판정의 단가가 소진이다. 원장에는 노출마다의 DEDUCT 를 쓰지 않는다(#1294)
+    // 과금했다. 원장에 DEDUCT 1행이 남는다
     BILLED,
 
     // 그날 예약액에 닿아 과금하지 않았다. 노출은 노출 상한까지 계속 받는다
