@@ -1156,19 +1156,23 @@ def render_overrun(o):
             out += ['', '메서드 %s줄은 출력 한도 때문에 덜어 냈다. p99 가 큰 것부터 남겼다' % fmt_n(o['methods_cut'])]
         if any(m.get('partial') for m in o['methods']) or any(a.get('partial') for a in o['apis']):
             out += ['', '일부만 셌다: Tempo 검색은 트레이스 %s개, 트레이스마다 스팬 %s개까지만 돌려줘, 그 상한에 닿은 API 는 넘은 수와 p99, 가장 오래 걸린 트레이스가 그 일부에서 센 값이다' % (o.get('limit', 500), o.get('spss', 100))]
-    out += ['', '| 작업 | 종류 | 기준 | 값 | 판정 | 참고 |', '|---|---|---|---|---|---|']
-    idle = []
-    for j in o['jobs']:
-        if j['note'] == '구간에 실행이 없다':
-            idle.append(j)
-            continue
-        value = '%s %s' % (j['value_label'], fmt_s(j['value'])) if j['value'] is not None else '지표 없음'
-        crit = '판정하지 않음' if j['kind'] == '상태 확인' else basis(j['threshold'], j['default'])
-        out.append('| `%s` | %s | %s | %s | %s | %s |' % (j['name'], j['kind'], crit, value, judge(j['over']), j['note'] or '-'))
-    if idle:
-        # 하루 한 번 도는 cron 은 거의 늘 여기에 든다. 한 줄로 이으면 길어 접어 두고 한 줄에 하나씩 적는다
-        out += ['', '<details><summary>구간에 실행이 없던 cron %d개</summary>' % len(idle), '', '| 작업 | 기준 |', '|---|---|']
-        out += ['| `%s` | %s |' % (j['name'], basis(j['threshold'], j['default'])) for j in idle] + ['', '</details>']
+    # 릴레이와 워커는 늘 돌아 값이 있다. cron 은 하루 한 번 도는 것이 많아 구간에 실행이 없을 때가 많아 따로 표를 두고,
+    # 실행 여부를 칸으로 적는다. 작업이 늘어도 표의 줄이 늘 뿐 글을 고치지 않는다
+    crons = [j for j in o['jobs'] if j['kind'] in ('cron 배치', '상태 확인')]
+    others = [j for j in o['jobs'] if j not in crons]
+    if others:
+        out += ['', '| 작업 | 종류 | 기준 | 값 | 판정 | 참고 |', '|---|---|---|---|---|---|']
+        for j in others:
+            value = '%s %s' % (j['value_label'], fmt_s(j['value'])) if j['value'] is not None else '지표 없음'
+            out.append('| `%s` | %s | %s | %s | %s | %s |' % (j['name'], j['kind'], basis(j['threshold'], j['default']), value, judge(j['over']), j['note'] or '-'))
+    if crons:
+        out += ['', '기준을 넘은 cron', '', '| 작업 | 기준 | 구간에 실행 | 실행 한 번 | 판정 |', '|---|---|---|---|---|']
+        # 구간에 돈 작업을 먼저 적는다
+        for j in sorted(crons, key=lambda j: (j['value'] is None, j['name'])):
+            ran = j['value'] is not None
+            crit = '판정하지 않음(상태 확인)' if j['kind'] == '상태 확인' else basis(j['threshold'], j['default'])
+            verdict = '-' if j['kind'] == '상태 확인' or not ran else judge(j['over'])
+            out.append('| `%s` | %s | %s | %s | %s |' % (j['name'], crit, '있음' if ran else '없음', fmt_s(j['value']) if ran else '-', verdict))
     return out
 
 def render(doc, version_dir):
