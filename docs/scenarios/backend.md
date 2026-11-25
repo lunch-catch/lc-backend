@@ -263,7 +263,7 @@
 | B-108 | 초과 소진 | 40 단계 | SpendMismatchRecorder.insertCampaignOverspendIfAbsent | CAMPAIGN_OVERSPEND | 판정 BILLED 단가 합 > 계획 daily_budget, 또는 해제된 D-2 의 BILLED 단가 합 + RELEASE 합 > daily_budget(자정 직전에 시작해 해제 뒤 커밋된 전날 차감, reconcileReleasedDay) | 기대값=예약액, 실제값=BILLED 단가 합(해제 뒤 대조는 BILLED 단가 합 + RELEASE 합)으로 기록, 되돌리지 않음, 카운터 없는 캠페인도 검사 | 대상일 D-1(해제 뒤 대조는 D-2) |
 | B-109 | Valkey 해시 없음 | 40 단계 | SpendReconciliationService | - | 계획은 있으나 카운터 해시 없음(재시작/만료) | 카운터 대조 건너뜀, BILLING_SPEND_RECON_HASH_MISSING WARN, 초과 소진 검사는 수행 | 대상일 D-1 |
 | B-110 | 대사 재실행 멱등 | 40 단계 재실행 | SettlementMismatchRepository(ON DUPLICATE KEY) | - | 같은 D-1 불일치가 이미 있음 | 불일치 행 중복 없음 | 같은 D |
-| B-111 | 전일 남은 예약 해제 | 50 BILLING_RESERVE 앞부분 release(D-1) | DailyReservationService.release -> DailyReservationRecorder.releaseForOwner | - | D-1 계획 daily_budget - DEDUCT 합 > 0, RELEASE 없음 | 점주마다 계정 행 잠금 후 RELEASE 원장 1줄, 잔액 복귀 | 대상일 D-1 |
+| B-111 | 전일 남은 예약 해제 | 50 BILLING_RESERVE 앞부분 release(D-1) | DailyReservationService.release -> DailyReservationRecorder.releaseForOwner | - | D-1 계획 daily_budget - 판정 BILLED 단가 합 > 0, RELEASE 없음 | 점주마다 계정 행 잠금 후 RELEASE 원장 1줄, 잔액 복귀 | 대상일 D-1 |
 | B-112 | 해제 대상 아님(음수/0/이미 해제) | 50 단계 release | DailyReservationService.release | - | 남은 몫 <= 0 또는 RELEASE 이미 있음 | RELEASE 미기록(음수는 40 단계가 CAMPAIGN_OVERSPEND 로 남김) | 대상일 D-1 |
 | B-113 | 단가 설정 오류 | 50 단계 unitPriceOf | DailyReservationService | FAILED | D 계획 없음, platform_setting 노출 단가 <= 0 | IllegalStateException, 아무것도 쓰지 않고 단계 FAILED, 묶음 FAILED | D 00:00 |
 | B-114 | 같은 날 단가 여럿 저장 | 50 단계 재실행 | DailyReservationService.unitPriceOf | FAILED | D 계획에 서로 다른 unit_price 2개 이상 | IllegalStateException 으로 단계 FAILED | 같은 D 재실행 |
