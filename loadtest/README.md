@@ -190,6 +190,30 @@ loadtest/adserving/run.sh --local run local-run1 30000001 20 1m
 - `rows`, `drain`, `clean` 처럼 AWS 에만 있는 일은 로컬에서 막는다. `reset` 은 로컬 앱과 배치를 내리고 로컬 데이터베이스를 지우고 다시 만든 뒤 다시 띄우고, 로컬 Valkey 를 비우고 로컬 시드를 넣어, AWS 와 같은 순서(`reset` → `prepare` → 워밍업 → 측정)로 잰다. `switch` 는 커밋 없이 `[--tracing <이름>] [--no-pool] [--env|--app-env|--batch-env KEY=VALUE]...` 를 받아 로컬 앱과 배치를 다시 띄운다. 배치는 lc-infra 의 `compose.lt-like.yaml` 로 따로 뜬다.
 - 초당 피드는 노트북에 맞춰 낮춘다. 20 이면 초당 요청이 약 200 이다.
 - 로컬 `switch` 는 Alloy 와 Tempo 를 다시 띄워 쌓인 스팬과 트레이스를 비운다. 관측 도구가 앱과 같은 Docker 가상 머신에 있어, 트레이싱 회차를 이어 돌리면 둘이 쌓여 앱과 메모리를 나눠 쓴다(#1267).
+- `run` 만 부르면 결과 문서의 사본에 적지 않는다. 적을 버전 폴더가 없어서다. `version` 으로 돌거나 `SNAPSHOT_OUT=$PWD/build/loadtest-results/<시나리오>-<버전>` 을 주고 `run` 을 부르면 `build/loadtest-results/` 의 사본에 회차별 결과와 기준 초과 표가 적힌다.
+
+### 기준 초과 표를 로컬에서 확인하기
+
+일부러 느리게 만든 회차로 기준을 넘은 API, 메서드, 백그라운드 작업이 표에 나오는지 본다(#1128). 앱 코드는 고치지 않는다.
+
+```bash
+# 트레이싱을 붙이고 피드의 기준을 300ms 에서 200ms 로 바꿔 띄운다. 기준은 앱의 설정(application.yml 의 lunchcatch.observability.targets)을 따른다
+loadtest/adserving/run.sh --local switch --tracing slow \
+  --env 'SPRING_APPLICATION_JSON={"lunchcatch":{"observability":{"targets":{"api":{"[GET /v1/feed]":"200ms"}}}}}'
+
+# 유지 구간 동안 6초마다 Valkey 를 1초 멈춘다(램프업 1분 뒤부터)
+( sleep 70; end=$(( $(date +%s) + 55 )); while [ "$(date +%s)" -lt "$end" ]; do
+    docker pause lunchcatch-local-valkey-1 > /dev/null; sleep 1; docker unpause lunchcatch-local-valkey-1 > /dev/null; sleep 5
+  done ) &
+SNAPSHOT_OUT=$PWD/build/loadtest-results/impression-slow loadtest/adserving/run.sh --local run slow-run1 30000001 15 1m
+wait
+
+# 끝나면 기준과 트레이싱을 되돌린다
+loadtest/adserving/run.sh --local switch
+```
+
+- 기준은 앱과 배치가 내보낸 값 가운데 큰 값으로 판정한다. 둘은 같은 설정 파일을 읽는다. 위처럼 바꿀 때는 `--env` 로 둘 다 바꾼다. `--app-env` 로 앱만 바꾸면 배치의 300ms 로 판정된다.
+- 2026-11-24 에 돌렸을 때 피드가 200.0ms(설정)에 p99 3.08초로 넘었고, 메서드 표에 그 기준을 넘은 DB 쿼리 7줄, 백그라운드 작업 표에 노출 릴레이와 노출 저장 워커가 넘음으로 나왔다. Valkey 명령은 스팬이 아니라 메서드 표에 나오지 않는다. 멈춘 동안 밀린 요청이 연결 풀을 기다려 DB 쿼리가 길어진다.
 
 ## 워밍업
 
@@ -336,11 +360,13 @@ loadtest/adserving/run.sh run v1-run1-profile 30030001 100 5m --profile both
 | `wall` | 대기까지 포함한 경과 시간이다. p99 를 줄이려면 이것을 먼저 본다 | 50ms. wall 모드의 기본값이다 |
 | `both` | 둘을 한 기록(JFR)으로 함께 뜨고 나눠 보낸다. 같은 시간, 같은 부하의 둘을 견줘 계산과 대기를 가른다 | 위 둘과 같다 |
 
-**그라파나에서 보는 법:** Drilldown -> Profiles 에서 서비스를 고른다. 앱 서버는 `lunchcatch`, 배치 서버는 `lunchcatch-batch` 로 트레이스의 서비스 이름과 같다. 그다음 프로파일 종류(`process_cpu` 나 `wall`)와 `run` 라벨로 그 회차를 고른다. 10초씩 끊어 보내 대시보드와 함께 10초 남짓 늦게 보인다. Split 과 Single 로 비교와 단독을, Top Table 과 Flame Graph 로 표와 그래프를 바꾼다.
+**그라파나에서 보는 법:** Drilldown -> Profiles 에서 서비스를 고른다. 앱 서버는 `lunchcatch`, 배치 서버는 `lunchcatch-batch` 로 트레이스의 서비스 이름과 같다. 그다음 프로파일 종류(`process_cpu` 나 `wall`)와 `run` 라벨로 그 회차를 고른다. `cpu`, `wall` 모드는 10초씩 끊어 보내 대시보드와 함께 10초 남짓 늦게 보인다. `both` 는 회차가 끝난 뒤에 나눠 보내므로 회차가 끝난 다음에 본다. Split 과 Single 로 비교와 단독을, Top Table 과 Flame Graph 로 표와 그래프를 바꾼다.
 
 **읽는 법:** Self 는 그 메서드 자기 코드의 시간이고 Total 은 부른 메서드까지 합친 시간이다. 시간은 그 구간의 합계라 호출 한 번의 시간은 나오지 않는다.
 
 **보내기 전에 다듬는다.** 우리 코드가 일을 시작한 자리부터 남기고 그 아래의 톰캣, 스프링, 스레드 풀 프레임은 자른다. 시작 자리는 요청이면 컨트롤러(`FeedController.getFeed`), `@Scheduled` 작업이면 그 작업 메서드(`CandidateBudgetRefreshJob.refresh`), 워커면 처음 나오는 우리 프레임(`ImpressionWriteBuffer.runWorker`)이다. 쉬는 스레드(요청이 없는 톰캣 스레드, 다음 실행을 기다리는 스케줄러, 대기열을 기다리는 워커)는 버린다. 이름은 패키지를 빼고, 호출마다 되풀이되는 스프링 프록시와 AOP 프레임은 뺀다. 다듬지 않으면 컨트롤러까지 프레임이 100개 넘게 쌓여 이름이 잘린다. 패키지는 `com.lunchcatch` 와 `com.launchcatch`(#1060 전의 커밋) 둘 다 받는다.
+
+**cpu 와 wall 은 회차가 끝난 뒤에 나눈다(#1345).** `both` 는 회차 동안 10초마다 JFR 만 떠 앱 컨테이너의 `/tmp` 에 쌓고, 회차가 끝나면 묶음마다 `jfrconv` 로 나누고 다듬어 원래 시각(`from`, `until`)으로 보낸 뒤 지운다. 회차 동안 나누면 그 2 ~ 3초는 뜨기를 쉬고, 나누는 자바 프로세스가 앱과 같은 컨테이너의 CPU 를 나눠 쓴다. 그래서 회차 도중에는 그라파나에서 볼 수 없고, `run` 은 다 보낸 뒤에 캡처한다. 나누는 때에 따른 비용은 [설계 문서 7장](../docs/observability/트레이싱과_프로파일링_설계.md#프로파일을-나누는-때로컬)이 갖는다.
 
 지킬 것:
 

@@ -643,7 +643,7 @@ run_version() {
         i=$((i + 1)); rc=0
         "$self" ${LOCAL:+--local} run "$name-run$i" "$base" ${rate:-100} ${hold:-5m} ${scen_args[@]+"${scen_args[@]}"} || rc=$?
         if [ "$rc" -ne 0 ]; then
-          echo "STOP $name-run$i 가 $rc 로 끝났다(3 무효, 4 캡처 실패). 위 출력의 INVALID 나 SNAPSHOT-FAILED 를 본다"
+          echo "STOP $name-run$i 가 $rc 로 끝났다(3 무효, 4 캡처 실패, 5 프로파일링 실패). 위 출력의 INVALID, SNAPSHOT-FAILED, PROFILE-FAILED 를 본다"
           echo "next 다시 재려면: $again"
           return "$rc"
         fi
@@ -709,7 +709,7 @@ print(json.dumps(cond, ensure_ascii=False))' \
         "${rate:-100}" "${hold:-5m}" "$DIAG_BASE" "${scenario:-feed_impression}" "$([ -n "$nopool" ] && echo off || echo on)" ${cond_args[@]+"${cond_args[@]}"})
       export DIAG_BASELINE_DIR DIAG_FIXED DIAG_CONDITION
       "$self" ${LOCAL:+--local} run "$name-run1-profile" "$DIAG_BASE" ${rate:-100} ${hold:-5m} ${scen_args[@]+"${scen_args[@]}"} --profile both || rc=$?
-      [ "$rc" -eq 0 ] || { echo "STOP $name-run1-profile 가 $rc 로 끝났다. 위 출력을 본다"; echo "next 다시 돌리려면: $again --from diag"; return "$rc"; }
+      [ "$rc" -eq 0 ] || { echo "STOP $name-run1-profile 가 $rc 로 끝났다(4 캡처 실패, 5 프로파일링 실패). 위 출력을 본다"; echo "next 다시 돌리려면: $again --from diag"; return "$rc"; }
       echo "STOP diag-done $name. 진단 회차가 끝났다. 진단 캡처(Call Tree, 트레이스, Redis 지표)를 보고 다음 버전으로 갈지 정한다"
       echo "next 다음 버전으로 가려면 다음 버전의 version 을 부른다"
       ;;
@@ -1610,6 +1610,10 @@ def render_diag(doc, version_dir):
     for run_dir in runs:
         name = os.path.basename(run_dir)
         d = os.path.join(rel, name)
+        # 프로파일링이 실패한 회차(#1345)는 끝난 진단으로 그리지 않고 한 줄만 남긴다
+        if os.path.exists(os.path.join(run_dir, 'profile-failed.txt')):
+            out += ['', '**%s**: 프로파일링이 실패해 진단으로 적지 않았다. 캡처는 회차 폴더에 남아 있다' % name]
+            continue
         # 측정 회차와 같게 회차를 접고 대시보드, 트레이스를 먼저 둔다. 그 뒤에 진단에만 있는 Call Tree, Self, 앞 버전과의 비교, 파일을 잇는다
         out += ['', '<details><summary><b>%s</b>: 대시보드, 트레이스, Call Tree, 프로파일, 앞 버전과의 비교</summary>' % name]
         traces, notes = trace_rows(run_dir) or (None, [])
@@ -1964,8 +1968,20 @@ after_run() {
           "${DIAG_BASELINE_DIR:-}" "$SNAPSHOT_OUT/$name" "${DIAG_FIXED:-}" > "$SNAPSHOT_OUT/$name/baseline.json"
       fi
       rm -f "$metrics_out"
+      # 프로파일링이 실패했으면 캡처의 성공과 상관없이 먼저 표식을 남긴다. 뒤 회차의 진단 절이 이 회차를 끝난 진단으로 그리지 않게 한다
+      if [ -n "${PROFILE_FAILED:-}" ] && [ -n "${SNAPSHOT_OUT:-}" ]; then
+        mkdir -p "$SNAPSHOT_OUT/$name"
+        echo "프로파일링이 실패한 진단 회차다(#1345). 묶음이 빠졌을 수 있어 진단 절에 적지 않는다" > "$SNAPSHOT_OUT/$name/profile-failed.txt"
+      fi
       [ "$snap_rc" -eq 0 ] || { echo "SNAPSHOT-FAILED $name: 캡처가 $snap_rc 로 끝났다. 환경을 내리기 전에 같은 구간(--from $ws --to $he)으로 다시 찍는다"; return 4; }
       echo "captured $name"
+      # 프로파일링이 실패한 진단은 묶음이 빠졌을 수 있다. 캡처는 분석용으로 남기고 진단 절과 커밋은 건너뛴다. 실패는 run 이 5 로 낸다
+      # 성공했으면 앞 시도의 실패 표식을 지운다. 실패 표식은 캡처 실패로 돌아가기 전에 이미 남겼다
+      [ -n "${PROFILE_FAILED:-}" ] || [ -z "${SNAPSHOT_OUT:-}" ] || rm -f "$SNAPSHOT_OUT/$name/profile-failed.txt"
+      if [ -n "${PROFILE_FAILED:-}" ]; then
+        echo "WARN: $name 의 프로파일링이 실패해 진단 절에 적지 않고 커밋하지 않았다.${SNAPSHOT_OUT:+ 캡처는 $SNAPSHOT_OUT/$name 에 있다}" >&2
+        return 0
+      fi
       record_diag "$name"
       commit_diag "$name"
       return 0 ;;
@@ -2089,6 +2105,8 @@ PY
 # both 는 cpu 와 wall 을 한 기록(JFR)으로 함께 뜨고 jfrconv 로 둘로 나눠 보낸다(#1127). 같은 시간, 같은 부하의 둘을 견줘
 # 계산과 대기를 가른다. jfrconv 는 컨테이너 안의 자바로 돌아 JDK_JAVA_OPTIONS 를 읽는다. 트레이싱을 켠 동안
 # 에이전트까지 붙어 느리게 뜨고 로그가 섞이므로 비우고 돌린다.
+# 변환은 회차가 끝난 뒤에 한다(#1345). 회차 동안은 10초마다 JFR 만 떠 그 시각을 남기고, 끝나면 묶음마다 변환해 원래 시각으로 보낸다.
+# 회차 도중에 그라파나에서 실시간으로 보는 것은 잃는다. 진단 회차는 끝난 뒤에 분석해 손해가 아니다
 #
 IFS= read -r -d '' PROFILE_SH <<'SH' || true
 set -euo pipefail
@@ -2125,17 +2143,28 @@ while [ "$(date +%s)" -lt "$stop" ]; do
       send "$mode" "$work/raw.txt" "$from" "$(date +%s)"
       ;;
     both)
-      out=$(docker exec "$app" "$ap/asprof" -d 10 -e itimer -i 10ms --wall 50ms -o jfr -f /tmp/lt-profile.jfr 1 2>&1) \
+      # 이번 실행이 만든 JFR 은 끝날 때 지운다. 나누다 실패해 set -e 로 멈춰도 컨테이너의 /tmp 에 쌓이지 않는다
+      # 뜨기 전에 경로를 적어, 뜨다 실패한 묶음의 파일도 지운다
+      [ -n "${jfr_trap:-}" ] || { trap 'while read -r f; do docker exec "$app" rm -f "/tmp/lt-profile-$f.jfr" 2> /dev/null || true; done < "$work/jfr-files" 2> /dev/null' EXIT; jfr_trap=1; }
+      echo "$from" >> "$work/jfr-files"
+      # 회차 동안은 JFR 만 뜬다(#1345). 변환(jfrconv, 자바)은 묶음마다 앱 CPU 약 0.47초를 쓰고 그동안 프로파일러가 멈춰, 회차가 끝난 뒤로 미룬다
+      out=$(docker exec "$app" "$ap/asprof" -d 10 -e itimer -i 10ms --wall 50ms -o jfr -f "/tmp/lt-profile-$from.jfr" 1 2>&1) \
         || { echo "$out" >&2; exit 1; }
-      until=$(date +%s)
-      for kind in cpu wall; do
-        docker exec "$app" env -u JDK_JAVA_OPTIONS "$ap/jfrconv" "--$kind" -o collapsed /tmp/lt-profile.jfr "/tmp/lt-profile-$kind.txt" > /dev/null
-        docker cp "$app:/tmp/lt-profile-$kind.txt" "$work/raw-$kind.txt" > /dev/null
-        send "$kind" "$work/raw-$kind.txt" "$from" "$until"
-      done
+      echo "$from $(date +%s)" >> "$work/jfr-batches"
       ;;
   esac
 done
+# 회차가 끝나면 모은 JFR 을 묶음마다 cpu 와 wall 로 나눠 원래 from, until 로 보낸다. 다 보낸 JFR 은 지운다
+if [ -f "$work/jfr-batches" ]; then
+  while read -r from until; do
+    for kind in cpu wall; do
+      docker exec "$app" env -u JDK_JAVA_OPTIONS "$ap/jfrconv" "--$kind" -o collapsed "/tmp/lt-profile-$from.jfr" "/tmp/lt-profile-$kind.txt" > /dev/null
+      docker cp "$app:/tmp/lt-profile-$kind.txt" "$work/raw-$kind.txt" > /dev/null
+      send "$kind" "$work/raw-$kind.txt" "$from" "$until"
+    done
+    docker exec "$app" rm -f "/tmp/lt-profile-$from.jfr"
+  done < "$work/jfr-batches"
+fi
 SH
 
 #
