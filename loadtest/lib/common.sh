@@ -133,7 +133,7 @@ SELECT CONCAT('database ', @db, ' tables ', COUNT(*)) FROM information_schema.TA
 # 로컬은 local_ready 를 부르고, 부하 시험 환경은 READY_SH 를 서버에서 돌린다. 둘은 같은 순서다
 #
 local_ready() {
-  local svc="$1" name="$LOCAL_PROJECT-$1-1" i st down=0 restarts
+  local svc="$1" name="$LOCAL_PROJECT-$1-1" i st down=0 restarts errs
   for i in $(seq 1 60); do
     docker exec "$name" curl -fs localhost:8081/actuator/health/readiness > /dev/null 2>&1 && break
     st=$(docker inspect -f '{{.State.Status}}' "$name" 2> /dev/null || echo missing)
@@ -143,7 +143,10 @@ local_ready() {
     esac
     if [ "$down" -ge 2 ]; then
       echo "ERROR: $svc 컨테이너가 꺼졌다($st). 마지막 오류 로그다" >&2
-      docker logs --tail 300 "$name" 2>&1 | grep '"level":"ERROR"' | tail -2 | cut -c1-600 >&2 || true
+      # 로거가 뜨기 전에 꺼지면(jar 를 못 찾는 등) JSON 오류 줄이 없다. 그때는 마지막 몇 줄을 그대로 보인다
+      errs=$(docker logs --tail 300 "$name" 2>&1 | grep '"level":"ERROR"' | tail -2 | cut -c1-600 || true)
+      [ -n "$errs" ] || errs=$(docker logs --tail 5 "$name" 2>&1 | cut -c1-600 || true)
+      printf '%s\n' "$errs" >&2
       die "$svc 가 뜨지 못했다"
     fi
     sleep 5
@@ -161,7 +164,9 @@ for i in $(seq 1 60); do
   case "$st" in exited|dead|missing) down=$((down + 1)) ;; *) down=0 ;; esac
   if [ "$down" -ge 2 ]; then
     echo "ERROR: 컨테이너가 꺼졌다($st). 마지막 오류 로그다"
-    docker logs --tail 300 "$PROJECT" 2>&1 | grep '"level":"ERROR"' | tail -2 | cut -c1-600 || true
+    errs=$(docker logs --tail 300 "$PROJECT" 2>&1 | grep '"level":"ERROR"' | tail -2 | cut -c1-600 || true)
+    [ -n "$errs" ] || errs=$(docker logs --tail 5 "$PROJECT" 2>&1 | cut -c1-600 || true)
+    printf '%s\n' "$errs"
     exit 1
   fi
   sleep 5
