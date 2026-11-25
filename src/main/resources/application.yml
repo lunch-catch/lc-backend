@@ -50,7 +50,9 @@ spring:
       #
       # Hikari 는 connection-timeout 과 validation-timeout 에 하한 250ms 를 강제한다. 그보다
       # 작게 적으면 경고 로그와 함께 250 으로 덮어써서 적힌 값과 도는 값이 갈린다.
-      connection-timeout: 3000
+      # 품질 문서 범위(1 ~ 5s)의 가장 큰 값이다. 3초일 때 부하 시험에서 앱이 CPU 를 다 쓴 동안 커넥션을 받지 못한 실패가 났다(#1359).
+      # 커넥션을 받은 뒤 트랜잭션 상한 5초가 따로 걸려, 요청 하나는 최대 10초로 API 게이트웨이 상한을 넘지 않는다
+      connection-timeout: 5000
       validation-timeout: 1000
       keepalive-time: 120000
       # MySQL wait_timeout 보다 짧아야 죽은 커넥션을 잡는다

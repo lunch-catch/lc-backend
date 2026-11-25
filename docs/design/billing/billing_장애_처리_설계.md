@@ -34,7 +34,7 @@
 
 `deductAll`은 묶음 전체를 한 트랜잭션으로 처리하다 실패하면 점주 묶음마다 다시 처리한다. 점주 묶음 하나가 실패해도 예외를 올리지 않는다. 그 묶음을 롤백하고 그 노출들을 실패로 담은 뒤 다음 묶음을 처리한다. 기본 처리(예외 전파)를 따르면 한 점주의 DB 오류나 잠금 실패가 같은 호출의 다른 점주 과금까지 막는다.
 
-- 정산의 DB 나 Valkey 에 닿지 못하는 장애(`DataAccessResourceFailureException`, `QueryTimeoutException`)와 점주 묶음의 트랜잭션을 열지 못하는 장애(`CannotCreateTransactionException`, 커넥션 풀 고갈)는 이 예외에서 빠진다. 기본대로 예외를 올린다. 모든 묶음이 같은 이유로 실패하므로 점주별 실패로 돌려주면 점주마다 커넥션 대기(3초)를 되풀이하고, 릴레이가 노출마다 시도 횟수를 올려 상한에 금방 닿는다. 그 전에 커밋된 묶음은 다시 넘겨받으면 첫 판정을 돌려준다.
+- 정산의 DB 나 Valkey 에 닿지 못하는 장애(`DataAccessResourceFailureException`, `QueryTimeoutException`)와 점주 묶음의 트랜잭션을 열지 못하는 장애(`CannotCreateTransactionException`, 커넥션 풀 고갈)는 이 예외에서 빠진다. 기본대로 예외를 올린다. 모든 묶음이 같은 이유로 실패하므로 점주별 실패로 돌려주면 점주마다 커넥션 대기(5초)를 되풀이하고, 릴레이가 노출마다 시도 횟수를 올려 상한에 금방 닿는다. 그 전에 커밋된 묶음은 다시 넘겨받으면 첫 판정을 돌려준다.
 - 롤백된 묶음 안에서 새로 판정한 노출의 소진은 2장의 `afterCompletion` 되돌리기가 되돌린다. 묶음 차감은 그 노출들을 파이프라인 한 번으로 되돌린다.
 - 실패한 노출은 릴레이가 다음 주기에 다시 넘긴다. `serveId` 멱등이라 다시 넘겨도 한 번만 과금된다. 다시 넘기는 사이 마감이 지나면 새 과금 대신 마감 미과금으로 남는다.
 - 묶음 전체의 트랜잭션이 실패해 점주별로 다시 처리하면 `billing_deduct_batch_fallback_total`에 1을 더하고 `BILLING_DEDUCT_BATCH_FALLBACK` WARN 로그를 남긴다.
