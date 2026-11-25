@@ -1610,6 +1610,10 @@ def render_diag(doc, version_dir):
     for run_dir in runs:
         name = os.path.basename(run_dir)
         d = os.path.join(rel, name)
+        # 프로파일링이 실패한 회차(#1345)는 끝난 진단으로 그리지 않고 한 줄만 남긴다
+        if os.path.exists(os.path.join(run_dir, 'profile-failed.txt')):
+            out += ['', '**%s**: 프로파일링이 실패해 진단으로 적지 않았다. 캡처는 회차 폴더에 남아 있다' % name]
+            continue
         # 측정 회차와 같게 회차를 접고 대시보드, 트레이스를 먼저 둔다. 그 뒤에 진단에만 있는 Call Tree, Self, 앞 버전과의 비교, 파일을 잇는다
         out += ['', '<details><summary><b>%s</b>: 대시보드, 트레이스, Call Tree, 프로파일, 앞 버전과의 비교</summary>' % name]
         traces, notes = trace_rows(run_dir) or (None, [])
@@ -1967,6 +1971,14 @@ after_run() {
       [ "$snap_rc" -eq 0 ] || { echo "SNAPSHOT-FAILED $name: 캡처가 $snap_rc 로 끝났다. 환경을 내리기 전에 같은 구간(--from $ws --to $he)으로 다시 찍는다"; return 4; }
       echo "captured $name"
       # 프로파일링이 실패한 진단은 묶음이 빠졌을 수 있다. 캡처는 분석용으로 남기고 진단 절과 커밋은 건너뛴다. 실패는 run 이 5 로 낸다
+      # 실패한 회차는 표식을 남겨 뒤 회차의 진단 절이 이 회차를 끝난 진단으로 그리지 않게 한다. 다시 돌아 성공하면 지운다
+      if [ -n "${SNAPSHOT_OUT:-}" ] && [ -d "$SNAPSHOT_OUT/$name" ]; then
+        if [ -n "${PROFILE_FAILED:-}" ]; then
+          echo "프로파일링이 실패한 진단 회차다(#1345). 묶음이 빠졌을 수 있어 진단 절에 적지 않는다" > "$SNAPSHOT_OUT/$name/profile-failed.txt"
+        else
+          rm -f "$SNAPSHOT_OUT/$name/profile-failed.txt"
+        fi
+      fi
       if [ -n "${PROFILE_FAILED:-}" ]; then
         echo "WARN: $name 의 프로파일링이 실패해 진단 절에 적지 않고 커밋하지 않았다.${SNAPSHOT_OUT:+ 캡처는 $SNAPSHOT_OUT/$name 에 있다}" >&2
         return 0
