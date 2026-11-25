@@ -2006,17 +2006,16 @@ after_run() {
           "${DIAG_BASELINE_DIR:-}" "$SNAPSHOT_OUT/$name" "${DIAG_FIXED:-}" > "$SNAPSHOT_OUT/$name/baseline.json"
       fi
       rm -f "$metrics_out"
+      # 프로파일링이 실패했으면 캡처의 성공과 상관없이 먼저 표식을 남긴다. 뒤 회차의 진단 절이 이 회차를 끝난 진단으로 그리지 않게 한다
+      if [ -n "${PROFILE_FAILED:-}" ] && [ -n "${SNAPSHOT_OUT:-}" ]; then
+        mkdir -p "$SNAPSHOT_OUT/$name"
+        echo "프로파일링이 실패한 진단 회차다(#1345). 묶음이 빠졌을 수 있어 진단 절에 적지 않는다" > "$SNAPSHOT_OUT/$name/profile-failed.txt"
+      fi
       [ "$snap_rc" -eq 0 ] || { echo "SNAPSHOT-FAILED $name: 캡처가 $snap_rc 로 끝났다. 환경을 내리기 전에 같은 구간(--from $ws --to $he)으로 다시 찍는다"; return 4; }
       echo "captured $name"
       # 프로파일링이 실패한 진단은 묶음이 빠졌을 수 있다. 캡처는 분석용으로 남기고 진단 절과 커밋은 건너뛴다. 실패는 run 이 5 로 낸다
-      # 실패한 회차는 표식을 남겨 뒤 회차의 진단 절이 이 회차를 끝난 진단으로 그리지 않게 한다. 다시 돌아 성공하면 지운다
-      if [ -n "${SNAPSHOT_OUT:-}" ] && [ -d "$SNAPSHOT_OUT/$name" ]; then
-        if [ -n "${PROFILE_FAILED:-}" ]; then
-          echo "프로파일링이 실패한 진단 회차다(#1345). 묶음이 빠졌을 수 있어 진단 절에 적지 않는다" > "$SNAPSHOT_OUT/$name/profile-failed.txt"
-        else
-          rm -f "$SNAPSHOT_OUT/$name/profile-failed.txt"
-        fi
-      fi
+      # 성공했으면 앞 시도의 실패 표식을 지운다. 실패 표식은 캡처 실패로 돌아가기 전에 이미 남겼다
+      [ -n "${PROFILE_FAILED:-}" ] || [ -z "${SNAPSHOT_OUT:-}" ] || rm -f "$SNAPSHOT_OUT/$name/profile-failed.txt"
       if [ -n "${PROFILE_FAILED:-}" ]; then
         echo "WARN: $name 의 프로파일링이 실패해 진단 절에 적지 않고 커밋하지 않았다.${SNAPSHOT_OUT:+ 캡처는 $SNAPSHOT_OUT/$name 에 있다}" >&2
         return 0
