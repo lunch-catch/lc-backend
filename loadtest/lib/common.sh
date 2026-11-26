@@ -1529,6 +1529,16 @@ def profile_self(archive, top=5):
 def fmt_delta(v):
     return '-' if v is None else '%+.2f%%p' % (v * 100)
 
+# 진단 회차의 그림을 서버마다 찾는다. API 서버의 그림은 앞말 api- 를 붙인다(#1363). 그 전에 찍은 회차는 앞말이 없어 그 이름도 찾는다
+def pictures(run_dir, folder, kind):
+    found = []
+    for label, names in (('API 서버', ('api-%s.png' % kind, '%s.png' % kind)), ('배치 서버', ('batch-%s.png' % kind,))):
+        f = next(('%s/%s' % (folder, n) for n in names if os.path.exists(os.path.join(run_dir, folder, n))), None)
+        if f:
+            found.append((label, f))
+    return found
+
+
 def render_compare(run_dir, d, rel_of):
     # 앞 버전의 진단 회차와 견준다(#1343). 프로파일 파일로 세어 환경이 떠 있지 않아도 된다
     try:
@@ -1571,13 +1581,13 @@ def render_compare(run_dir, d, rel_of):
             ', '.join('`%s`' % u for u in unread), '' if not diff else ': ' + ', '.join('%s %s → %s' % row for row in diff)))
     else:
         out.append('조건: 같다' if not diff else '조건이 다르다: ' + ', '.join('%s %s → %s' % row for row in diff))
-    images = [f for f in ('diff/wall.png', 'diff/batch-wall.png') if os.path.exists(os.path.join(run_dir, f))]
+    images = pictures(run_dir, 'diff', 'wall')
     if images:
         out.append('')
-        out += ['![Diff %s](%s)' % (f[5:-4], os.path.join(d, f)) for f in images]
-        links = [f for f in ('diff/cpu.png', 'diff/batch-cpu.png') if os.path.exists(os.path.join(run_dir, f))]
+        out += ['![Diff %s wall](%s)' % (label, os.path.join(d, f)) for label, f in images]
+        links = pictures(run_dir, 'diff', 'cpu')
         if links:
-            out.append('Diff: ' + ', '.join('[%s](%s)' % (f[5:-4], os.path.join(d, f)) for f in links))
+            out.append('Diff: ' + ', '.join('[%s cpu](%s)' % (label, os.path.join(d, f)) for label, f in links))
     else:
         import shlex
         out += ['', 'Diff 그림: 앞 버전이 이 환경의 Pyroscope 에 없어 찍지 않았다. lc-infra 에서 아래로 찍어 이 회차 폴더의 `diff/` 에 넣는다. `LC_BACKEND_DIR` 은 lc-backend 경로다', '',
@@ -1673,9 +1683,8 @@ def render_diag(doc, version_dir):
                     lead = [t['kind']] if 'kind' in t else []
                     out.append('| ' + ' | '.join(lead + ['`%s`' % t['target'], t['value'], fmt_s(t['ms'] / 1000), step, '`%s`' % t['id']] + cells) + ' |')
         out += ['', '### Call Tree', '']
-        for f in ('calltree/wall.png', 'calltree/batch-wall.png'):
-            if os.path.exists(os.path.join(run_dir, f)):
-                out.append('![%s %s](%s)' % (name, f.replace('calltree/', 'Call Tree ').replace('.png', ''), os.path.join(d, f)))
+        for label, f in pictures(run_dir, 'calltree', 'wall'):
+            out.append('![%s %s Call Tree wall](%s)' % (name, label, os.path.join(d, f)))
         archive = next(iter(glob.glob(os.path.join(run_dir, 'diag-*-profile.tar.gz'))), None)
         selfs = profile_self(archive) if archive else None
         out += ['', '### Self 가 큰 함수']
@@ -1690,8 +1699,8 @@ def render_diag(doc, version_dir):
                     out.append('| `%s` | %s | %s |' % (f, fmt_pct(w), fmt_pct(c)))
         out += render_compare(run_dir, d, rel_of)
         # 회차 폴더의 나머지 파일이다. 무엇인지 한 칸에 적는다
-        named = [('calltree/cpu.png', 'Call Tree cpu'), ('calltree/batch-cpu.png', '배치 Call Tree cpu'),
-                 ('redis.txt', 'Redis 명령별 서버 처리 시간'), ('metrics.json.gz', '지표 원본(다시 보기용)'), ('logs.jsonl.gz', '경고와 오류 로그 원본(다시 보기용)')]
+        named = [(f, '%s Call Tree cpu' % label) for label, f in pictures(run_dir, 'calltree', 'cpu')]
+        named += [('redis.txt', 'Redis 명령별 서버 처리 시간'), ('metrics.json.gz', '지표 원본(다시 보기용)'), ('logs.jsonl.gz', '경고와 오류 로그 원본(다시 보기용)')]
         named += [(os.path.relpath(f, run_dir), '프로파일 보관(다시 보기와 Diff 용)') for f in sorted(glob.glob(os.path.join(run_dir, 'diag-*-profile.tar.gz')))]
         rows = ['| [%s](%s) | %s |' % (f, os.path.join(d, f), what) for f, what in named if os.path.exists(os.path.join(run_dir, f))]
         if rows:
