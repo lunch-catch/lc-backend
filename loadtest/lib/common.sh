@@ -1963,6 +1963,31 @@ commit_diag() {
   echo "committed $(git -C "$ROOT" rev-parse --short HEAD) $run_dir"
 }
 
+#
+# 진단 회차의 Call Tree 에서 펼칠 함수를 고른다(#1365). 기준 초과 표에서 넘은 API 와 백그라운드 작업을 Call Tree 의 진입점 함수로 바꾼다.
+# cron 과 상태 확인은 이름이 이미 클래스.메서드() 라 괄호만 뗀다. API 와 워커, 릴레이는 도메인의 run.sh 가 CALLTREE_ENTRIES 에 "이름=함수" 로 준다.
+# 잇지 못한 이름은 넘기지 않고 경고한다. 넘은 것이 없으면 아무것도 내지 않고, 캡처가 큰 진입점을 대신 펼친다(lunch-catch/lc-infra#221)
+#
+IFS= read -r -d '' EXPAND_PY <<'PY' || true
+import json, sys
+try:
+    over = json.loads(sys.argv[1])
+except ValueError:
+    sys.exit(0)
+entries = dict(line.split('=', 1) for line in sys.argv[2].splitlines() if '=' in line)
+picked = []
+for row in over.get('apis', []) + over.get('jobs', []):
+    if not row.get('over'):
+        continue
+    name = row['name']
+    function = entries.get(name) or (name[:-2] if name.endswith('()') else None)
+    if function is None:
+        print('WARN: 기준을 넘은 %s 를 Call Tree 의 함수로 잇지 못했다. 도메인의 run.sh 의 CALLTREE_ENTRIES 에 더한다' % name, file=sys.stderr)
+    elif function not in picked:
+        picked.append(function)
+print('\n'.join(picked))
+PY
+
 # 유지 구간의 부하 생성기 1분 평균 CPU 가 이 값을 넘으면 무효다(광고 서빙 부하 시험 문서 2장과 7장)
 LOADGEN_CPU_MAX_PCT=80
 after_run() {
@@ -1987,7 +2012,9 @@ after_run() {
       # 앞 버전의 진단 회차가 있으면 Diff 를 같이 찍는다(#1343). 그 회차가 이 Pyroscope 에 남아 있을 때만 그림이 나오고,
       # 없으면 캡처가 건너뛰어 진단 절에 loadtest-diff.sh 로 찍는 명령을 적는다. 비교 표는 프로파일 파일로 늘 센다
       #
-      local diff_args=() f bfrom bto
+      local diff_args=() f bfrom bto over
+      over=$(overrun "$hs" "$he" | tail -1) || { echo "WARN: $name 의 기준 초과를 묻지 못해 펼칠 함수를 넘기지 않는다" >&2; over=""; }
+      while IFS= read -r f; do [ -z "$f" ] || diff_args+=(--expand "$f"); done < <(python3 -c "$EXPAND_PY" "$over" "${CALLTREE_ENTRIES:-}")
       if [ -n "${DIAG_BASELINE_DIR:-}" ] && [ -f "$DIAG_BASELINE_DIR/구간.txt" ]; then
         bfrom=$(awk '$1 == "from" {print $2}' "$DIAG_BASELINE_DIR/구간.txt"); bto=$(awk '$1 == "to" {print $2}' "$DIAG_BASELINE_DIR/구간.txt")
         diff_args=(--baseline "$(basename "$DIAG_BASELINE_DIR")" --baseline-from "$bfrom" --baseline-to "$bto")
