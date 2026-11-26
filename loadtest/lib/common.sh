@@ -2015,13 +2015,22 @@ after_run() {
       local diff_args=() f bfrom bto over
       over=$(overrun "$hs" "$he" | tail -1) || { echo "WARN: $name 의 기준 초과를 묻지 못해 펼칠 함수를 넘기지 않는다" >&2; over=""; }
       while IFS= read -r f; do [ -z "$f" ] || diff_args+=(--expand "$f"); done < <(python3 -c "$EXPAND_PY" "$over" "${CALLTREE_ENTRIES:-}")
+      #
+      # 우리 코드의 클래스 이름을 넘긴다. 캡처가 Call Tree 그림에 우리 코드의 줄과 그 바로 아래의 첫 라이브러리 줄만 남긴다(#1365).
+      # 프로파일의 함수 이름은 TRIM_PY 가 패키지를 떼어 이름만으로 가를 수 없다. 이 저장소의 지금 커밋에서 뽑아, 그 뒤에 없어진 클래스는 라이브러리로 보인다
+      #
+      local ours
+      ours=$(mktemp)
+      git -C "$ROOT" ls-tree -r --name-only HEAD -- src/main/java | sed -n 's#.*/\([^/]*\)\.java$#\1#p' | sort -u > "$ours"
+      [ ! -s "$ours" ] || diff_args+=(--ours "$ours")
       if [ -n "${DIAG_BASELINE_DIR:-}" ] && [ -f "$DIAG_BASELINE_DIR/구간.txt" ]; then
         bfrom=$(awk '$1 == "from" {print $2}' "$DIAG_BASELINE_DIR/구간.txt"); bto=$(awk '$1 == "to" {print $2}' "$DIAG_BASELINE_DIR/구간.txt")
-        diff_args=(--baseline "$(basename "$DIAG_BASELINE_DIR")" --baseline-from "$bfrom" --baseline-to "$bto")
+        diff_args+=(--baseline "$(basename "$DIAG_BASELINE_DIR")" --baseline-from "$bfrom" --baseline-to "$bto")
         while IFS= read -r f; do [ -z "$f" ] || diff_args+=(--fixed "$f"); done <<< "${DIAG_FIXED:-}"
       fi
       "$LC_INFRA_DIR/scripts/loadtest-snapshot.sh" "$target" --diag "$name" --from "$ws" --to "$he" \
         ${DOMAIN_SNAPSHOT:+--domain "$DOMAIN_SNAPSHOT"} ${SNAPSHOT_OUT:+--out "$SNAPSHOT_OUT"} ${diff_args[@]+"${diff_args[@]}"} || snap_rc=$?
+      rm -f "$ours"
       # 두 회차의 조건과 견준 앞 회차를 남긴다. 진단 절의 비교가 읽는다
       if [ -n "${SNAPSHOT_OUT:-}" ] && [ -d "$SNAPSHOT_OUT/$name" ]; then
         printf '%s\n' "${DIAG_CONDITION:-{\}}" > "$SNAPSHOT_OUT/$name/condition.json"
