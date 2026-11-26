@@ -129,47 +129,58 @@ SELECT CONCAT('database ', @db, ' tables ', COUNT(*)) FROM information_schema.TA
 #
 # 다시 띄운 앱이나 배치가 준비되기를 5분까지 기다린다(#1347). 꺼진 채(exited, dead)로 두 번 연달아 보이면 다시 뜨지 않는 것이라
 # 기다리지 않고 마지막 오류 로그를 보이고 실패한다. 다시 띄우기 정책이 있으면 꺼져도 곧 restarting 이 되어 계속 기다린다.
+# 기다리는 동안 다시 떴으면 그 기동을 처음부터 5분 기다린다. 다시 뜬 횟수가 READY_MAX_RESTARTS 를 넘으면 계속 꺼지는 것이라 멈춘다(#1367).
 # 준비된 뒤 다시 뜬 적이 있으면 그 횟수를 낸다. 다시 떠서 이어진 회차인지 나중에 알 수 있게 한다.
 # 로컬은 local_ready 를 부르고, 부하 시험 환경은 READY_SH 를 서버에서 돌린다. 둘은 같은 순서다
 #
+# lc-infra 의 경보 ContainerRestartLoop(10분에 3번)과 맞춘 값이다(작성자가 2026-11-26 대화에서 정했다)
+READY_MAX_RESTARTS=3
 local_ready() {
-  local svc="$1" name="$LOCAL_PROJECT-$1-1" i st down=0 restarts errs
-  for i in $(seq 1 60); do
-    docker exec "$name" curl -fs localhost:8081/actuator/health/readiness > /dev/null 2>&1 && break
+  local svc="$1" name="$LOCAL_PROJECT-$1-1" waited=0 seen st down=0 restarts errs
+  seen=$(docker inspect -f '{{.RestartCount}}' "$name" 2> /dev/null || echo 0)
+  local base="$seen"
+  while ! docker exec "$name" curl -fs localhost:8081/actuator/health/readiness > /dev/null 2>&1; do
+    restarts=$(docker inspect -f '{{.RestartCount}}' "$name" 2> /dev/null || echo "$seen")
+    [ "$restarts" -le "$seen" ] || { seen=$restarts; waited=0; }
     st=$(docker inspect -f '{{.State.Status}}' "$name" 2> /dev/null || echo missing)
     case "$st" in
       exited|dead|missing) down=$((down + 1)) ;;
       *) down=0 ;;
     esac
-    if [ "$down" -ge 2 ]; then
-      echo "ERROR: $svc 컨테이너가 꺼졌다($st). 마지막 오류 로그다" >&2
+    if [ "$down" -ge 2 ] || [ $((restarts - base)) -gt "$READY_MAX_RESTARTS" ]; then
+      [ "$down" -ge 2 ] && echo "ERROR: $svc 컨테이너가 꺼졌다($st). 마지막 오류 로그다" >&2 \
+        || echo "ERROR: $svc 가 기다리는 동안 $((restarts - base)) 번 다시 떠 ${READY_MAX_RESTARTS} 번을 넘었다. 마지막 오류 로그다" >&2
       # 로거가 뜨기 전에 꺼지면(jar 를 못 찾는 등) JSON 오류 줄이 없다. 그때는 마지막 몇 줄을 그대로 보인다
       errs=$(docker logs --tail 300 "$name" 2>&1 | grep '"level":"ERROR"' | tail -2 | cut -c1-600 || true)
       [ -n "$errs" ] || errs=$(docker logs --tail 5 "$name" 2>&1 | cut -c1-600 || true)
       printf '%s\n' "$errs" >&2
       die "$svc 가 뜨지 못했다"
     fi
-    sleep 5
+    [ "$waited" -lt 300 ] || die "$svc 가 5분 안에 준비되지 않았다"
+    sleep 5; waited=$((waited + 5))
   done
-  docker exec "$name" curl -fs localhost:8081/actuator/health/readiness > /dev/null 2>&1 || die "$svc 가 5분 안에 준비되지 않았다"
   restarts=$(docker inspect -f '{{.RestartCount}}' "$name")
   [ "$restarts" -eq 0 ] || echo "WARN: $svc 가 뜨는 동안 $restarts 번 다시 떴다. docker logs $name 로 그 오류를 본다" >&2
 }
 
 IFS= read -r -d '' READY_SH <<'SH' || true
-down=0
-for i in $(seq 1 60); do
-  curl -fs localhost:8081/actuator/health/readiness > /dev/null && break
+down=0; waited=0
+seen=$(docker inspect "$PROJECT" --format '{{.RestartCount}}' 2> /dev/null || echo 0); base=$seen
+until curl -fs localhost:8081/actuator/health/readiness > /dev/null; do
+  restarts=$(docker inspect "$PROJECT" --format '{{.RestartCount}}' 2> /dev/null || echo "$seen")
+  [ "$restarts" -le "$seen" ] || { seen=$restarts; waited=0; }
   st=$(docker inspect "$PROJECT" --format '{{.State.Status}}' 2> /dev/null || echo missing)
   case "$st" in exited|dead|missing) down=$((down + 1)) ;; *) down=0 ;; esac
-  if [ "$down" -ge 2 ]; then
-    echo "ERROR: 컨테이너가 꺼졌다($st). 마지막 오류 로그다"
+  if [ "$down" -ge 2 ] || [ $((restarts - base)) -gt "$READY_MAX_RESTARTS" ]; then
+    [ "$down" -ge 2 ] && echo "ERROR: 컨테이너가 꺼졌다($st). 마지막 오류 로그다" \
+      || echo "ERROR: 기다리는 동안 $((restarts - base)) 번 다시 떠 $READY_MAX_RESTARTS 번을 넘었다. 마지막 오류 로그다"
     errs=$(docker logs --tail 300 "$PROJECT" 2>&1 | grep '"level":"ERROR"' | tail -2 | cut -c1-600 || true)
     [ -n "$errs" ] || errs=$(docker logs --tail 5 "$PROJECT" 2>&1 | cut -c1-600 || true)
     printf '%s\n' "$errs"
     exit 1
   fi
-  sleep 5
+  [ "$waited" -lt 300 ] || { echo "ERROR: 5분 안에 준비되지 않았다"; exit 1; }
+  sleep 5; waited=$((waited + 5))
 done
 restarts=$(docker inspect "$PROJECT" --format '{{.RestartCount}}' 2> /dev/null || echo 0)
 [ "$restarts" = 0 ] || echo "WARN: 뜨는 동안 $restarts 번 다시 떴다. docker logs $PROJECT 로 그 오류를 본다"
@@ -208,9 +219,11 @@ SQL"
   pids=""; rc=0
   for id in $apps $batches; do
     echo "restart $id"
-    remote "$id" 600 "set -euo pipefail
+    # 다시 뜰 때마다 5분을 새로 기다려, 다시 뜨기 READY_MAX_RESTARTS 번까지의 시간을 준다
+    remote "$id" 1800 "set -euo pipefail
 systemctl restart $PROJECT
 PROJECT=$PROJECT
+READY_MAX_RESTARTS=$READY_MAX_RESTARTS
 $READY_SH
 curl -fs localhost:8081/actuator/health/readiness" &
     pids="$pids $!"
@@ -2025,7 +2038,7 @@ after_run() {
   # k6 가 목표 부하 구간 끝 전에 멈췄으면 유지 구간이 짧아 다른 회차와 견줄 수 없다
   [ "$we" -ge "$he" ] || invalid="$invalid
 k6 가 목표 부하 구간 끝 전에 멈췄다: window 끝 $we < hold 끝 $he"
-  invalid="$invalid$(loadgen_busy "$hs" "$he")$(cache_exhausted "$metrics_out")"
+  invalid="$invalid$(loadgen_busy "$hs" "$he")$(cache_exhausted "$metrics_out")$(client_errors "$hs" "$he")"
   # 유효한 회차만 결과 문서에 적는다. 무효 회차와 캡처가 실패한 회차는 다시 잴 회차다
   [ -n "$invalid" ] || [ "$snap_rc" -ne 0 ] || record_result "$name" "$hs" "$he" "$metrics_out" "$out"
   rm -f "$metrics_out"
@@ -2055,6 +2068,34 @@ print(rows[0][0][1] if rows and rows[0] else "")') || pct=""
 }
 
 # ElastiCache 의 CPU 크레딧이 바닥났거나 네트워크 허용량을 넘긴 패킷이 있었는지 metrics 의 출력에서 본다. 로컬은 ElastiCache 가 없다
+#
+# 유지 구간에서 k6 가 받은 4xx 응답이 전체 요청의 이 비율(%)을 넘으면 무효다(#1367). 회원 대역을 잘못 주는 것 같은 시험 설정의 오류다.
+# 정상 회차는 0 이다. 요청 제한(429)도 나지 않게 회원 수를 잡았다. 5xx 와 시간 초과는 그 버전의 결과라 결과 문서의 실패율로 판정한다(#1329).
+# 1% 는 작성자가 2026-11-26 대화에서 정했다
+#
+CLIENT_ERROR_MAX_PCT=1
+client_errors() {
+  local out
+  out=$(printf '%s\n' 'k6_4xx sum by (status) (increase(k6_http_reqs_total{phase="hold",status=~"4.."}[$W]))' \
+      'k6_all sum(increase(k6_http_reqs_total{phase="hold"}[$W]))' | prom_metrics "$1" "$2" | python3 -c 'import sys, ast
+rows = dict(l.split(" ", 1) for l in sys.stdin.read().splitlines() if " " in l)
+total = ast.literal_eval(rows.get("k6_all", "[]"))
+errors = ast.literal_eval(rows.get("k6_4xx", "[]"))
+if not total or not total[0][1]:
+    print("NA")
+else:
+    n = sum(v for _, v in errors)
+    print("%.2f %d %d %s" % (100 * n / total[0][1], n, total[0][1], ",".join("%s:%d" % (m.get("status"), v) for m, v in errors if v)))') || out=NA
+  if [ "$out" = NA ]; then
+    # 표준 출력은 무효 사유로 모이므로 표준 오류에 쓴다
+    echo "WARN: 유지 구간의 k6 요청 수를 읽지 못해 4xx 의 무효 조건을 판정하지 않았다" >&2
+    return 0
+  fi
+  read -r pct n total codes <<< "$out"
+  python3 -c "import sys; sys.exit(0 if float('$pct') <= $CLIENT_ERROR_MAX_PCT else 1)" \
+    || printf '\n유지 구간의 4xx 응답이 %s%% 를 넘었다: %s%% (%s / %s, %s). 회원 대역과 시드를 본다' "$CLIENT_ERROR_MAX_PCT" "$pct" "$n" "$total" "${codes:--}"
+}
+
 cache_exhausted() {
   python3 - "$1" <<'PY'
 import sys
