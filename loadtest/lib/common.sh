@@ -267,66 +267,6 @@ JWT=\$(aws ssm get-parameter --name /$PROJECT/jwt-signing-key --with-decryption 
 $script"
 }
 
-# Prometheus 에 식 하나를 지금 시각으로 묻고 값 하나를 낸다. 값이 없으면 NA 다
-IFS= read -r -d '' PROM_VALUE_PY <<'PY' || true
-import json, sys, urllib.parse, urllib.request
-r = json.load(urllib.request.urlopen(sys.argv[1] + '/api/v1/query?' + urllib.parse.urlencode({'query': sys.argv[2]})))['data']['result']
-print(round(float(r[0]['value'][1]), 2) if r else 'NA')
-PY
-
-prom_value() {
-  local expr="$1"
-  if [ -n "${LOCAL:-}" ]; then
-    python3 -c "$PROM_VALUE_PY" "http://localhost:${PROMETHEUS_PORT:-19090}" "$expr"
-    return
-  fi
-  remote "$(instance monitoring)" 60 "cat > /tmp/lt-prom-value.py <<'PY'
-$PROM_VALUE_PY
-PY
-python3 /tmp/lt-prom-value.py http://localhost:9090 '$expr'"
-}
-
-#
-# 워밍업이다(#1267, #1270). 도메인의 run.sh 가 warmup) 분기에서 회차 이름과 그 도메인의 run 명령을 넘겨 부른다.
-# run 명령은 목표 부하 구간을 WARMUP_HOLD 초로 돌리고, 출력에 hold <시작> <끝> 과 window <시작> <끝>(밀리초) 줄을 낸다.
-# hold 는 목표 부하 구간이고 window 는 k6 가 실제로 돈 구간이다. 이 두 줄이 도메인의 run 이 지킬 약속이다.
-# 정한 시간을 데워 버전 사이의 조건을 맞춘다. 5분은 로컬에서 길게 돌렸을 때 앱 CPU 가 트레이싱 켬과 끔 모두 목표 부하 3분째부터 평평했던 것에 여유를 더한 값이다.
-# JIT 컴파일은 끝내는 조건으로 쓰지 않는다. 트레이싱 에이전트를 붙이면 부하가 일정해도 초당 10 ~ 25ms 로 남아 내려오지 않는다.
-# 끝나기 직전 3분의 앱 CPU 흔들림(1분 평균의 최대와 최소의 차)이 WARMUP_CPU_SPREAD 를 넘으면 덜 데워졌다고 알린다. JIT 은 적기만 한다.
-#
-WARMUP_HOLD=300
-WARMUP_CPU_SPREAD=0.05
-warmup() {
-  local name="$1" out rc hold_end k6_end at cpu1m spread jit
-  shift
-  case "$name" in *-warmup) ;; *) die "워밍업 회차는 이름을 -warmup 으로 끝낸다. 예: v1-warmup" ;; esac
-  #
-  # run 이 끝난 뒤 그 출력의 hold 줄과 window 줄로 판정한다. 부하가 언제 걸렸는지 짐작해 기다리지 않는다.
-  # run 은 k6 의 실패를 삼키고 0 으로 끝나므로, k6 가 목표 부하 구간 끝 전에 멈췄으면 여기서 실패로 본다.
-  # k6 는 정상이면 구간 끝 뒤에 끝난다. 구간 끝은 k6 의 시작 기록에서 내고, 그 기록이 없으면 run 을 띄운 더 이른 시각으로 내므로 여유를 두지 않는다.
-  #
-  out=$(mktemp)
-  set +e
-  "$@" 2>&1 | tee "$out"
-  rc=${PIPESTATUS[0]}
-  set -e
-  read -r _ _ hold_end < <(grep -m1 '^hold ' "$out" || echo "hold 0 0")
-  read -r _ _ k6_end < <(grep -m1 '^window ' "$out" || echo "window 0 0")
-  rm -f "$out"
-  if [ "$rc" -ne 0 ] || [ "$hold_end" -eq 0 ] || [ "$k6_end" -lt "$hold_end" ]; then
-    echo "warmup-result $name failed rc=$rc"
-    die "$name 의 run 이 실패했거나 k6 가 목표 부하 구간 끝 전에 멈췄다. run 이 남긴 k6 로그를 본다"
-  fi
-  # 구간 끝 5초 전을 기준으로 직전 3분을 묻는다. @ 로 시각을 정해 k6 가 끝난 뒤의 부하 없는 구간이 섞이지 않게 한다
-  at=$(( hold_end / 1000 - 5 ))
-  cpu1m='avg(avg_over_time(process_cpu_usage{job="app"}[1m]))'
-  spread=$(prom_value "max_over_time(($cpu1m)[3m:1m] @ $at) - min_over_time(($cpu1m)[3m:1m] @ $at)") || spread=NA
-  jit=$(prom_value "max(rate(jvm_compilation_time_ms_total{job=\"app\"}[3m] @ $at))") || jit=NA
-  echo "warmup-result $name hold ${WARMUP_HOLD}s cpu_spread=$spread jit=$jit ms/s"
-  python3 -c "import sys; sys.exit(0 if float('$spread') <= $WARMUP_CPU_SPREAD else 1)" 2> /dev/null \
-    || echo "WARN: $name 의 끝 3분 앱 CPU 흔들림이 ${WARMUP_CPU_SPREAD} 를 넘었다(또는 읽지 못했다). 이 버전의 결과에 덜 데워졌다고 적는다" >&2
-}
-
 # k6 의 시간 꼴(5m, 300s, 1m30s, 1h)을 초로 바꾼다
 k6_seconds() {
   local rest="$1" total=0 unit
@@ -537,7 +477,7 @@ open(path, 'w', encoding='utf-8').write('\n'.join(lines))
 PY
 
 #
-# 회차가 끝나면 경고 로그 건수를 출력하고 결과 문서에 적어 커밋한다. 이름이 -warmup, -profile, -tracing 으로 끝나는 회차는 적지 않는다.
+# 회차가 끝나면 경고 로그 건수를 출력하고 결과 문서에 적어 커밋한다. 이름이 -profile, -tracing 으로 끝나는 회차는 적지 않는다.
 # 트레이싱을 켠 측정 회차는 이름으로 가르지 않아 적는다.
 # 로컬은 노트북의 수치라 출력만 한다. 커밋은 결과 문서 하나만 지금 브랜치에 하고 푸시하지 않는다.
 #
@@ -553,7 +493,7 @@ record_warnings() {
   if printf '%s\n' "$gaps" | awk '$3 > 0 { found = 1 } END { exit !found }'; then
     echo "WARN: $name 의 구간에 지표 수집이 빠진 칸이 있다. 이 회차의 수치는 다른 회차와 견주지 않고, 원인을 본 뒤 다시 돈다" >&2
   fi
-  case "$name" in *-warmup|*-profile|*-tracing) echo "warnings: $name 은 결과에 적지 않는다"; return 0 ;; esac
+  case "$name" in *-profile|*-tracing) echo "warnings: $name 은 결과에 적지 않는다"; return 0 ;; esac
   # 회차 끝의 로그가 Alloy 를 거쳐 Loki 에 닿기를 기다린다
   sleep 10
   rows=$(warning_counts "$start" "$end") || { echo "WARN: 경고 로그를 묻지 못했다. 결과 문서에 적지 않았다" >&2; return 0; }
@@ -581,18 +521,19 @@ record_warnings() {
 # 회차 하나가 끝난 뒤의 일을 잇는다(#1305). 도메인의 run 이 record_warnings 다음에 그 회차의 출력 파일로 부른다.
 # 출력의 window 줄과 hold 줄에서 구간을 읽어, 그 구간으로 서버 지표를 모으고 lc-infra 의 캡처를 부른 뒤 무효 회차를 판정한다.
 # 무효면 걸린 조건과 그 값을 출력하고 3 으로 끝난다. 캡처가 실패하면 4 로 끝난다. 어느 쪽이든 다음 회차로 넘어가지 않는다(#1088).
-# 워밍업 회차는 결과에 적지 않고 판정을 warmup 이 따로 해서 건너뛴다.
 # 도메인은 캡처의 도메인 이름을 DOMAIN_SNAPSHOT 으로 준다. 캡처를 버전 폴더에 바로 두려면 SNAPSHOT_OUT 을 준다.
 #
 #
 # 버전 하나를 명령 하나로 돈다(#1306). 순서는 README 의 회차 순서다.
-#   측정(--from measure, 기본): 앱 대수 고정 -> switch(트레이싱을 붙임) -> reset -> prepare -> warmup -> 측정 3회 -> 멈춤
+#   측정(--from measure, 기본): 앱 대수 고정 -> switch(트레이싱을 붙임) -> 측정 3회 -> 멈춤
 #   진단(--from diag): 프로파일링을 붙인 진단 회차 하나 -> 멈춤
+# 측정 회차와 진단 회차는 회차마다 reset -> prepare -> run 이다. run 은 램프업으로 데운 뒤 유지 구간을 잰다(#1361).
+# 앞 회차가 남긴 데이터와 데워진 상태가 다음 회차로 넘어가지 않아 회차끼리 같은 조건에서 시작한다.
 # 멈출 자리에서 요약과 이어서 할 명령을 출력하고 끝난다. 입력을 기다리지 않는다. 승인은 사람이 대화로 하고, 승인을 받은 쪽이 이어서 할 명령을 부른다.
 # 회차마다의 지표, 캡처, 무효 판정은 도메인의 run 이 after_run 으로 한다(#1305). 무효(3)나 캡처 실패(4)면 그 자리에서 멈춘다.
 #
 # 도메인의 run.sh 가 정하는 것
-#   version_bands <시나리오> <풀 끔이면 1>  WARMUP_BASE, RUN_BASES(측정 3회), DIAG_BASE 를 정한다. 회원 대역은 도메인의 부하 시험 문서가 갖는다
+#   version_bands <시나리오> <풀 끔이면 1>  RUN_BASES(측정 3회), DIAG_BASE 를 정한다. 회원 대역은 도메인의 부하 시험 문서가 갖는다
 #   PREPARE_STEP                           1 이면 reset 뒤에 prepare 를 부른다
 #   version_dir <버전 이름> <시나리오>      결과 문서 옆의 버전 폴더(저장소 기준 경로)를 출력한다. 회차 폴더와 결과 문서의 그림이 그 아래에 남는다(#1326)
 #
@@ -611,6 +552,13 @@ pin_app_count() {
     sleep 10
   done
   die "앱이 $APP_COUNT 대로 서지 않았다(지금 $n 대). 오토스케일링 그룹 $asg 를 본다"
+}
+
+# 회차 하나를 같은 조건에서 시작한다(#1361). 데이터를 처음 상태로 되돌리고, 도메인이 PREPARE_STEP 을 1 로 두면 prepare 도 부른다
+fresh_run() {
+  local self="$1" name="$2"
+  "$self" ${LOCAL:+--local} reset || die "$name 앞의 reset 이 실패했다"
+  [ "${PREPARE_STEP:-}" != 1 ] || "$self" ${LOCAL:+--local} prepare || die "$name 앞의 prepare 가 실패했다"
 }
 
 run_version() {
@@ -676,12 +624,10 @@ run_version() {
       else
         "$self" switch "$sha" --tracing "$name" ${switch_args[@]+"${switch_args[@]}"} || die "$name 의 switch 가 실패했다"
       fi
-      "$self" ${LOCAL:+--local} reset || die "$name 의 reset 이 실패했다"
-      [ "${PREPARE_STEP:-}" != 1 ] || "$self" ${LOCAL:+--local} prepare || die "$name 의 prepare 가 실패했다"
-      "$self" ${LOCAL:+--local} warmup "$name-warmup" "$WARMUP_BASE" $rate ${scen_args[@]+"${scen_args[@]}"} || die "$name 의 워밍업이 실패했다"
       i=0
       for base in "${RUN_BASES[@]}"; do
         i=$((i + 1)); rc=0
+        fresh_run "$self" "$name-run$i"
         "$self" ${LOCAL:+--local} run "$name-run$i" "$base" ${rate:-100} ${hold:-5m} ${scen_args[@]+"${scen_args[@]}"} || rc=$?
         if [ "$rc" -ne 0 ]; then
           echo "STOP $name-run$i 가 $rc 로 끝났다(3 무효, 4 캡처 실패, 5 프로파일링 실패). 위 출력의 INVALID, SNAPSHOT-FAILED, PROFILE-FAILED 를 본다"
@@ -742,6 +688,7 @@ for flag, pair in zip(pairs[::2], pairs[1::2]):
 print(json.dumps(cond, ensure_ascii=False))' \
         "${rate:-100}" "${hold:-5m}" "$DIAG_BASE" "${scenario:-feed_impression}" "$([ -n "$nopool" ] && echo off || echo on)" ${cond_args[@]+"${cond_args[@]}"})
       export DIAG_BASELINE_DIR DIAG_FIXED DIAG_CONDITION
+      fresh_run "$self" "$name-run1-profile"
       "$self" ${LOCAL:+--local} run "$name-run1-profile" "$DIAG_BASE" ${rate:-100} ${hold:-5m} ${scen_args[@]+"${scen_args[@]}"} --profile both || rc=$?
       [ "$rc" -eq 0 ] || { echo "STOP $name-run1-profile 가 $rc 로 끝났다(4 캡처 실패, 5 프로파일링 실패). 위 출력을 본다"; echo "next 다시 돌리려면: $again --from diag"; return "$rc"; }
       echo "STOP diag-done $name. 진단 회차가 끝났다. 진단 캡처(Call Tree, 트레이스, Redis 지표)를 보고 다음 버전으로 갈지 정한다"
@@ -848,7 +795,6 @@ run_plan() {
 
 # 회차를 돌기 전에 캡처 스크립트가 있는지 본다. 회차를 다 돈 뒤에 없다는 것을 알면 그 회차를 다시 돌아야 한다
 require_snapshot() {
-  case "$1" in *-warmup) return 0 ;; esac
   [ -x "$LC_INFRA_DIR/scripts/loadtest-snapshot.sh" ] \
     || die "LC_INFRA_DIR 에 lc-infra 경로를 준다. 회차가 끝나면 그 scripts/loadtest-snapshot.sh 로 캡처한다(#1305)"
 }
@@ -1260,7 +1206,7 @@ def render(doc, version_dir):
     runs = []
     for p in sorted(glob.glob(os.path.join(version_dir, '*', 'result.json'))):
         r = json.load(open(p, encoding='utf-8'))
-        if r['name'].endswith(('-warmup', '-profile')):
+        if r['name'].endswith('-profile'):
             continue
         r['dir'] = os.path.dirname(p)
         runs.append(r)
@@ -1967,7 +1913,6 @@ commit_diag() {
 LOADGEN_CPU_MAX_PCT=80
 after_run() {
   local name="$1" out="$2" ws we hs he metrics_out invalid="" target=--lt snap_rc=0
-  case "$name" in *-warmup) return 0 ;; esac
   read -r _ ws we < <(grep -m1 '^window ' "$out" || echo "window 0 0")
   read -r _ hs he < <(grep -m1 '^hold ' "$out" || echo "hold 0 0")
   [ "$ws" -gt 0 ] && [ "$hs" -gt 0 ] || { echo "INVALID $name: run 의 출력에 window 나 hold 줄이 없다"; return 3; }

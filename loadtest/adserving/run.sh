@@ -6,7 +6,6 @@
 #   AWS_PROFILE=<프로필> loadtest/adserving/run.sh seed [회원 수]          시험 데이터를 RDS 에 넣는다
 #   AWS_PROFILE=<프로필> loadtest/adserving/run.sh prepare                 그날 00:00 묶음을 다시 돌린다
 #   AWS_PROFILE=<프로필> loadtest/adserving/run.sh run <이름> <회원 시작 번호> [초당 피드] [유지 시간] [--scenario feed] [--profile cpu|wall|both]
-#   AWS_PROFILE=<프로필> loadtest/adserving/run.sh warmup <이름> <회원 시작 번호> [초당 피드] [--scenario feed]  램프업 뒤 5분을 데우고 끝 3분의 CPU 흔들림을 본다
 #   AWS_PROFILE=<프로필> loadtest/adserving/run.sh metrics <시작 ms> <끝 ms>  그 구간의 서버 지표
 #   AWS_PROFILE=<프로필> loadtest/adserving/run.sh rows                    시험 데이터의 행 수
 #   AWS_PROFILE=<프로필> loadtest/adserving/run.sh drain <이름> [건수]       대기 노출을 넣고 릴레이가 다 비우는 시간과 그 구간의 지표를 잰다
@@ -15,7 +14,7 @@
 #   AWS_PROFILE=<프로필> loadtest/adserving/run.sh reset [회원 수]         Valkey 를 비우고 시험 데이터를 다시 넣는다
 #   AWS_PROFILE=<프로필> loadtest/adserving/run.sh profile <이름> [초] [cpu|wall|both]  앱 서버에 프로파일링을 붙인다
 #   AWS_PROFILE=<프로필> loadtest/adserving/run.sh version <버전> --sha <sha> [--from measure|diag] [--scenario feed] [--no-pool] [--env|--app-env|--batch-env KEY=VALUE]... [--rate 초당 피드] [--hold 유지 시간]
-#                      버전 하나를 앱 대수 고정, switch, reset, prepare, 워밍업, 측정 3회까지 돌고 멈춘다. --from diag 는 진단 회차를 돈다(#1306)
+#                      버전 하나를 앱 대수 고정, switch, 측정 3회까지 돌고 멈춘다. 회차마다 reset, prepare 를 먼저 부른다. --from diag 는 진단 회차를 돈다(#1306, #1361)
 #   AWS_PROFILE=<프로필> loadtest/adserving/run.sh plan <계획 파일> [--diag|--skip-diag]  측정 계획의 다음 걸음 하나를 간다(#1307). 계획은 loadtest/adserving/plans/ 에 있다
 #
 # run 의 끝에 --profile cpu|wall|both 를 주면 회차 내내 프로파일링을 붙인다. both 는 cpu 와 wall 을 한 기록(JFR)으로 함께 뜬다. 회차가 끝나면 경고 로그 건수를 결과 문서에 적고 커밋한다.
@@ -38,6 +37,8 @@ LOCAL=""
 DOMAIN_EVENT_PREFIX=ADSERVING_
 # 회차가 끝나면 lc-infra 의 캡처가 대시보드의 도메인 폴더에서 광고 서빙만 찍는다(#1305)
 DOMAIN_SNAPSHOT=adserving
+# 회차의 램프업 초다. 0 에서 목표 부하까지 이 시간에 걸쳐 올리며 데운다. 회차마다 reset 으로 다시 띄운 앱을 이것으로 데운다(#1361)
+RAMP_SECONDS=300
 # version 이 쓰는 값이다(#1306). 그날 00:00 묶음을 다시 돌린다
 PREPARE_STEP=1
 # 따로 준 결과 문서는 시나리오가 바꾸지 않는다
@@ -144,18 +145,17 @@ version_dir() {
 }
 
 #
-# version 의 회원 대역이다(#1306). 대역은 부하 시험 문서 5장이 갖는다. 진단 회차는 결과에 적지 않아 워밍업 대역을 다시 쓴다.
+# version 의 회원 대역이다(#1306). 대역은 부하 시험 문서 5장이 갖는다.
 # 서빙(피드만) 시험은 같은 표를 4만 뒤로, 서빙의 풀 끔은 한 번 더 4만 뒤로 옮겨 쓴다. 노출 시험은 풀을 켠 조건으로만 잰다.
 #
 version_bands() {
   local scenario="$1" nopool="$2"
   case "$scenario:$nopool" in
-    :) WARMUP_BASE=30030001; RUN_BASES=(30000001 30010001 30020001) ;;
-    feed:) WARMUP_BASE=30070001; RUN_BASES=(30040001 30050001 30060001) ;;
-    feed:1) WARMUP_BASE=30110001; RUN_BASES=(30080001 30090001 30100001) ;;
+    :) RUN_BASES=(30000001 30010001 30020001); DIAG_BASE=30030001 ;;
+    feed:) RUN_BASES=(30040001 30050001 30060001); DIAG_BASE=30070001 ;;
+    feed:1) RUN_BASES=(30080001 30090001 30100001); DIAG_BASE=30110001 ;;
     *) die "노출 시험은 풀을 끄고 재지 않는다. 풀 끔은 --scenario feed 와 함께 준다" ;;
   esac
-  DIAG_BASE=$WARMUP_BASE
 }
 
 case "${LOCAL:+local-}${1:-}" in
@@ -170,7 +170,7 @@ case "${LOCAL:+local-}${1:-}" in
     run_version "$0" "${1:?버전 이름을 준다(예: v1)}" "${@:2}"
     ;;
   local-rows|local-drain|local-clean)
-    die "로컬에서는 seed, reset, prepare, run, warmup, metrics, profile, switch 만 쓴다" ;;
+    die "로컬에서는 seed, reset, prepare, run, metrics, profile, switch 만 쓴다" ;;
   local-reset)
     # AWS 의 reset 과 같다. 회차를 이어 돌리면 기록 표가 쌓여 뒤 회차가 부풀어, 로컬도 같은 순서로 재려고 둔다(#1265)
     members="${2:-120000}"
@@ -300,7 +300,7 @@ curl -fs localhost:8081/actuator/health/readiness" &
         : > "$PROFILE_BATCHES"
       fi
       export PROFILE_BATCHES
-      profile "$name" $(( 60 + hold_ms / 1000 + 10 )) "$prof" &
+      profile "$name" $(( RAMP_SECONDS + hold_ms / 1000 + 10 )) "$prof" &
       prof_pid=$!
     fi
     require_snapshot "$name"
@@ -313,15 +313,15 @@ start=\$(ms)
 # 원격의 OUT 은 회차 사이에 남는다. 같은 이름으로 다시 돌다 k6 가 요약을 쓰기 전에 멈추면 앞 회차의 요약을 읽게 되어 먼저 지운다(#1329)
 rm -f \$OUT/summary-$name.json
 k6 run -q -o experimental-prometheus-rw --tag testid=adserving-$name \\
-  -e BASE_URL=\"\$BASE_URL\" -e JWT_SECRET=\"\$JWT\" -e FEED_RATE=$rate -e RAMP_UP_SECONDS=60 -e DURATION=$hold \\
+  -e BASE_URL=\"\$BASE_URL\" -e JWT_SECRET=\"\$JWT\" -e FEED_RATE=$rate -e RAMP_UP_SECONDS=$RAMP_SECONDS -e DURATION=$hold \\
   -e MEMBERS=10000 -e MEMBER_BASE=$base -e PRE_VUS=200 -e MAX_VUS=2000 \\
   --summary-export \$OUT/summary-$name.json loadtest/adserving/$scenario.js > \$OUT/k6-$name.log 2>&1 || true
 echo \"window \$start \$(ms)\"
-# 유지 구간의 경계는 k6 가 남긴 시나리오 시작 시각에 램프업 60초를 더해 낸다.
+# 유지 구간의 경계는 k6 가 남긴 시나리오 시작 시각에 램프업(RAMP_SECONDS)을 더해 낸다.
 # 그 줄이 없으면 k6 를 띄우기 전 시각으로 대신한다. 그때는 k6 가 뜨는 몇 초만큼 실제보다 이르다
 s0=\$(grep -m1 -o 'scenario_start [0-9]*' \$OUT/k6-$name.log | cut -d' ' -f2 || true)
 s0=\${s0:-\$start}
-echo \"hold \$((s0 + 60000)) \$((s0 + 60000 + $hold_ms))\"
+echo \"hold \$((s0 + $((RAMP_SECONDS * 1000)))) \$((s0 + $((RAMP_SECONDS * 1000)) + $hold_ms))\"
 # 유지 구간의 실패를 결과 문서에 적으려고 k6 요약을 한 줄로 남긴다(#1329). 화면에는 내지 않는다
 echo \"k6-summary \$(tr -d '\\n' < \$OUT/summary-$name.json 2> /dev/null || true)\"
 grep -E '✓|✗|↳|impression_results|http_reqs|http_req_duration|http_req_failed|iterations|vus_max' \$OUT/k6-$name.log | head -40 || true
@@ -354,14 +354,6 @@ grep 'level=error' \$OUT/k6-$name.log | tail -5 || true" ) > "$out" || rc=$?
       rc=5
     fi
     exit "$rc"
-    ;;
-  warmup|local-warmup)
-    # 워밍업이다(#1267). 판정은 공통 함수 warmup 이 갖고, 여기서는 광고 서빙의 run 에 넘길 인자만 정한다(#1270)
-    # 회차를 끊어 되풀이하지 않는다. 같은 회원 대역을 되풀이하면 노출 상한에 닿아 피드가 새 분기를 타고 JIT 이 다시 오른다
-    name="${2:?회차 이름을 준다}"; base="${3:?회원 시작 번호를 준다}"; rate=100
-    shift 3
-    [ $# -eq 0 ] || [ "${1#--}" != "$1" ] || { rate="$1"; shift; }
-    warmup "$name" "$0" ${LOCAL:+--local} run "$name" "$base" "$rate" "${WARMUP_HOLD}s" "$@"
     ;;
   metrics|local-metrics)
     metrics "${2:-}" "${3:-}"
