@@ -1529,6 +1529,16 @@ def profile_self(archive, top=5):
 def fmt_delta(v):
     return '-' if v is None else '%+.2f%%p' % (v * 100)
 
+# 진단 회차의 그림을 서버마다 찾는다. API 서버의 그림은 앞말 api- 를 붙인다(#1363). 그 전에 찍은 회차는 앞말이 없어 그 이름도 찾는다
+def pictures(run_dir, folder, kind):
+    found = []
+    for label, names in (('API 서버', ('api-%s.png' % kind, '%s.png' % kind)), ('배치 서버', ('batch-%s.png' % kind,))):
+        f = next(('%s/%s' % (folder, n) for n in names if os.path.exists(os.path.join(run_dir, folder, n))), None)
+        if f:
+            found.append((label, f))
+    return found
+
+
 def render_compare(run_dir, d, rel_of):
     # 앞 버전의 진단 회차와 견준다(#1343). 프로파일 파일로 세어 환경이 떠 있지 않아도 된다
     try:
@@ -1571,13 +1581,13 @@ def render_compare(run_dir, d, rel_of):
             ', '.join('`%s`' % u for u in unread), '' if not diff else ': ' + ', '.join('%s %s → %s' % row for row in diff)))
     else:
         out.append('조건: 같다' if not diff else '조건이 다르다: ' + ', '.join('%s %s → %s' % row for row in diff))
-    images = [f for f in ('diff/wall.png', 'diff/batch-wall.png') if os.path.exists(os.path.join(run_dir, f))]
-    if images:
-        out.append('')
-        out += ['![Diff %s](%s)' % (f[5:-4], os.path.join(d, f)) for f in images]
-        links = [f for f in ('diff/cpu.png', 'diff/batch-cpu.png') if os.path.exists(os.path.join(run_dir, f))]
-        if links:
-            out.append('Diff: ' + ', '.join('[%s](%s)' % (f[5:-4], os.path.join(d, f)) for f in links))
+    # Call Tree 처럼 wall 다음에 cpu 를 펼친다(작성자가 2026-11-27 대화에서 정했다)
+    images = {kind: pictures(run_dir, 'diff', kind) for kind in ('wall', 'cpu')}
+    if images['wall'] or images['cpu']:
+        for kind in ('wall', 'cpu'):
+            if images[kind]:
+                out += ['', '#### %s' % kind, '']
+                out += ['![Diff %s %s](%s)' % (label, kind, os.path.join(d, f)) for label, f in images[kind]]
     else:
         import shlex
         out += ['', 'Diff 그림: 앞 버전이 이 환경의 Pyroscope 에 없어 찍지 않았다. lc-infra 에서 아래로 찍어 이 회차 폴더의 `diff/` 에 넣는다. `LC_BACKEND_DIR` 은 lc-backend 경로다', '',
@@ -1590,7 +1600,8 @@ def render_compare(run_dir, d, rel_of):
     if os.path.exists(cand):
         n = len([l for l in open(cand, encoding='utf-8').read().splitlines() if l.strip()])
         note += '. 후보 %d개는 [%s](%s) 에 있다(앞 버전 커밋과의 git diff)' % (n, cand_name, os.path.join(os.path.dirname(d), cand_name))
-    out += ['', note]
+    # 위의 그림 제목(wall, cpu) 아래에 딸리지 않게 몫의 변화에 제목을 둔다
+    out += ['', '#### Self 몫의 변화', '', note]
     for svc in [s for s in after if s in before]:
         out += ['', '`%s`' % svc]
         if fixed:
@@ -1679,12 +1690,12 @@ def render_diag(doc, version_dir):
                     out.append('| ' + ' | '.join(lead + ['`%s`' % t['target'], t['value'], fmt_s(t['ms'] / 1000), step, '`%s`' % t['id']] + cells) + ' |')
         # 캡처가 우리 코드에서 잘라 들여쓰기가 크게 뛰는 자리가 생긴다. 그 줄이 무엇인지 그림 위에 밝힌다(#1365)
         out += ['', '### Call Tree', '', CALLTREE_NOTE]
-        # wall 다음에 cpu 를 펼친다. 둘을 나란히 보아 기다린 시간인지 계산인지 가른다(작성자가 2026-11-27 대화에서 정했다)
+        # wall 다음에 cpu 를 펼친다. 둘을 나란히 보아 대기인지 계산인지 가른다(작성자가 2026-11-27 대화에서 정했다)
         for kind in ('wall', 'cpu'):
-            files = [f for f in ('calltree/%s.png' % kind, 'calltree/batch-%s.png' % kind) if os.path.exists(os.path.join(run_dir, f))]
-            if files:
+            found = pictures(run_dir, 'calltree', kind)
+            if found:
                 out += ['', '#### %s' % kind, '']
-                out += ['![%s %s](%s)' % (name, f.replace('calltree/', 'Call Tree ').replace('.png', ''), os.path.join(d, f)) for f in files]
+                out += ['![%s %s Call Tree %s](%s)' % (name, label, kind, os.path.join(d, f)) for label, f in found]
         archive = next(iter(glob.glob(os.path.join(run_dir, 'diag-*-profile.tar.gz'))), None)
         selfs = profile_self(archive) if archive else None
         out += ['', '### Self 가 큰 함수']
