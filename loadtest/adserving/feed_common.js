@@ -18,7 +18,7 @@ const BASE_URL = __ENV.BASE_URL;
 const SECRET = __ENV.JWT_SECRET;
 const FEED_RATE = Number(__ENV.FEED_RATE || 100);
 const DURATION = __ENV.DURATION || '5m';
-const RAMP_UP_SECONDS = Number(__ENV.RAMP_UP_SECONDS || 60);
+const RAMP_UP_SECONDS = Number(__ENV.RAMP_UP_SECONDS || 300);
 const MEMBERS = Number(__ENV.MEMBERS || 10000);
 const MEMBER_BASE = Number(__ENV.MEMBER_BASE || 30000001);
 // gen_data.py 의 CENTER 와 같다
