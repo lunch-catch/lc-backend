@@ -1677,12 +1677,11 @@ def render_diag(doc, version_dir):
                     cells = [file_link(run_dir, d, t['dir'], f) for f in files]
                     lead = [t['kind']] if 'kind' in t else []
                     out.append('| ' + ' | '.join(lead + ['`%s`' % t['target'], t['value'], fmt_s(t['ms'] / 1000), step, '`%s`' % t['id']] + cells) + ' |')
-        out += ['', '### Call Tree', '']
+        # 캡처가 우리 코드에서 잘라 들여쓰기가 크게 뛰는 자리가 생긴다. 그 줄이 무엇인지 그림 위에 밝힌다(#1365)
+        out += ['', '### Call Tree', '', CALLTREE_NOTE, '']
         for f in ('calltree/wall.png', 'calltree/batch-wall.png'):
             if os.path.exists(os.path.join(run_dir, f)):
                 out.append('![%s %s](%s)' % (name, f.replace('calltree/', 'Call Tree ').replace('.png', ''), os.path.join(d, f)))
-        # 캡처가 우리 코드에서 잘라 들여쓰기가 크게 뛰는 자리가 생긴다. 그 줄이 무엇인지 그림 아래에 밝힌다(#1365)
-        out += ['', CALLTREE_NOTE]
         archive = next(iter(glob.glob(os.path.join(run_dir, 'diag-*-profile.tar.gz'))), None)
         selfs = profile_self(archive) if archive else None
         out += ['', '### Self 가 큰 함수']
