@@ -135,8 +135,16 @@ SELECT CONCAT('database ', @db, ' tables ', COUNT(*)) FROM information_schema.TA
 #
 # lc-infra 의 경보 ContainerRestartLoop(10분에 3번)과 맞춘 값이다(작성자가 2026-11-26 대화에서 정했다)
 READY_MAX_RESTARTS=3
+# 꺼졌거나 너무 많이 다시 뜬 컨테이너의 마지막 오류 로그를 보인다
+ready_logs() {
+  local name="$1" errs
+  # 로거가 뜨기 전에 꺼지면(jar 를 못 찾는 등) JSON 오류 줄이 없다. 그때는 마지막 몇 줄을 그대로 보인다
+  errs=$(docker logs --tail 300 "$name" 2>&1 | grep '"level":"ERROR"' | tail -2 | cut -c1-600 || true)
+  [ -n "$errs" ] || errs=$(docker logs --tail 5 "$name" 2>&1 | cut -c1-600 || true)
+  printf '%s\n' "$errs" >&2
+}
 local_ready() {
-  local svc="$1" name="$LOCAL_PROJECT-$1-1" waited=0 seen st down=0 restarts errs
+  local svc="$1" name="$LOCAL_PROJECT-$1-1" waited=0 seen st down=0 restarts
   seen=$(docker inspect -f '{{.RestartCount}}' "$name" 2> /dev/null || echo 0)
   local base="$seen"
   while ! docker exec "$name" curl -fs localhost:8081/actuator/health/readiness > /dev/null 2>&1; do
@@ -150,20 +158,28 @@ local_ready() {
     if [ "$down" -ge 2 ] || [ $((restarts - base)) -gt "$READY_MAX_RESTARTS" ]; then
       [ "$down" -ge 2 ] && echo "ERROR: $svc 컨테이너가 꺼졌다($st). 마지막 오류 로그다" >&2 \
         || echo "ERROR: $svc 가 기다리는 동안 $((restarts - base)) 번 다시 떠 ${READY_MAX_RESTARTS} 번을 넘었다. 마지막 오류 로그다" >&2
-      # 로거가 뜨기 전에 꺼지면(jar 를 못 찾는 등) JSON 오류 줄이 없다. 그때는 마지막 몇 줄을 그대로 보인다
-      errs=$(docker logs --tail 300 "$name" 2>&1 | grep '"level":"ERROR"' | tail -2 | cut -c1-600 || true)
-      [ -n "$errs" ] || errs=$(docker logs --tail 5 "$name" 2>&1 | cut -c1-600 || true)
-      printf '%s\n' "$errs" >&2
+      ready_logs "$name"
       die "$svc 가 뜨지 못했다"
     fi
     [ "$waited" -lt 300 ] || die "$svc 가 5분 안에 준비되지 않았다"
     sleep 5; waited=$((waited + 5))
   done
   restarts=$(docker inspect -f '{{.RestartCount}}' "$name")
+  # 다시 뜬 바로 뒤에 준비 확인이 성공하면 반복문 안의 검사를 건너뛴다. 그래서 준비된 뒤에도 횟수를 다시 본다
+  if [ $((restarts - base)) -gt "$READY_MAX_RESTARTS" ]; then
+    echo "ERROR: $svc 가 기다리는 동안 $((restarts - base)) 번 다시 떠 ${READY_MAX_RESTARTS} 번을 넘었다. 마지막 오류 로그다" >&2
+    ready_logs "$name"
+    die "$svc 가 뜨지 못했다"
+  fi
   [ "$restarts" -eq 0 ] || echo "WARN: $svc 가 뜨는 동안 $restarts 번 다시 떴다. docker logs $name 로 그 오류를 본다" >&2
 }
 
 IFS= read -r -d '' READY_SH <<'SH' || true
+ready_logs() {
+  errs=$(docker logs --tail 300 "$PROJECT" 2>&1 | grep '"level":"ERROR"' | tail -2 | cut -c1-600 || true)
+  [ -n "$errs" ] || errs=$(docker logs --tail 5 "$PROJECT" 2>&1 | cut -c1-600 || true)
+  printf '%s\n' "$errs"
+}
 down=0; waited=0
 seen=$(docker inspect "$PROJECT" --format '{{.RestartCount}}' 2> /dev/null || echo 0); base=$seen
 until curl -fs localhost:8081/actuator/health/readiness > /dev/null; do
@@ -174,15 +190,18 @@ until curl -fs localhost:8081/actuator/health/readiness > /dev/null; do
   if [ "$down" -ge 2 ] || [ $((restarts - base)) -gt "$READY_MAX_RESTARTS" ]; then
     [ "$down" -ge 2 ] && echo "ERROR: 컨테이너가 꺼졌다($st). 마지막 오류 로그다" \
       || echo "ERROR: 기다리는 동안 $((restarts - base)) 번 다시 떠 $READY_MAX_RESTARTS 번을 넘었다. 마지막 오류 로그다"
-    errs=$(docker logs --tail 300 "$PROJECT" 2>&1 | grep '"level":"ERROR"' | tail -2 | cut -c1-600 || true)
-    [ -n "$errs" ] || errs=$(docker logs --tail 5 "$PROJECT" 2>&1 | cut -c1-600 || true)
-    printf '%s\n' "$errs"
+    ready_logs
     exit 1
   fi
   [ "$waited" -lt 300 ] || { echo "ERROR: 5분 안에 준비되지 않았다"; exit 1; }
   sleep 5; waited=$((waited + 5))
 done
 restarts=$(docker inspect "$PROJECT" --format '{{.RestartCount}}' 2> /dev/null || echo 0)
+if [ $((restarts - base)) -gt "$READY_MAX_RESTARTS" ]; then
+  echo "ERROR: 기다리는 동안 $((restarts - base)) 번 다시 떠 $READY_MAX_RESTARTS 번을 넘었다. 마지막 오류 로그다"
+  ready_logs
+  exit 1
+fi
 [ "$restarts" = 0 ] || echo "WARN: 뜨는 동안 $restarts 번 다시 떴다. docker logs $PROJECT 로 그 오류를 본다"
 SH
 
@@ -2076,8 +2095,10 @@ print(rows[0][0][1] if rows and rows[0] else "")') || pct=""
 CLIENT_ERROR_MAX_PCT=1
 client_errors() {
   local out
-  out=$(printf '%s\n' 'k6_4xx sum by (status) (increase(k6_http_reqs_total{phase="hold",status=~"4.."}[$W]))' \
-      'k6_all sum(increase(k6_http_reqs_total{phase="hold"}[$W]))' | prom_metrics "$1" "$2" | python3 -c 'import sys, ast
+  # increase 는 구간 안의 첫 표본을 기준값으로만 써, 구간에 처음 생긴 계열의 첫 누적값을 빠뜨린다.
+  # 유지 구간의 계열(phase="hold")은 유지 구간이 시작될 때 생겨 누적값이 그 구간의 건수다. 그래서 구간 안의 가장 큰 누적값으로 센다
+  out=$(printf '%s\n' 'k6_4xx sum by (status) (max_over_time(k6_http_reqs_total{phase="hold",status=~"4.."}[$W]))' \
+      'k6_all sum(max_over_time(k6_http_reqs_total{phase="hold"}[$W]))' | prom_metrics "$1" "$2" | python3 -c 'import sys, ast
 rows = dict(l.split(" ", 1) for l in sys.stdin.read().splitlines() if " " in l)
 total = ast.literal_eval(rows.get("k6_all", "[]"))
 errors = ast.literal_eval(rows.get("k6_4xx", "[]"))
@@ -2085,15 +2106,18 @@ if not total or not total[0][1]:
     print("NA")
 else:
     n = sum(v for _, v in errors)
-    print("%.2f %d %d %s" % (100 * n / total[0][1], n, total[0][1], ",".join("%s:%d" % (m.get("status"), v) for m, v in errors if v)))') || out=NA
+    pct = 100 * n / total[0][1]
+    # 넘었는지는 반올림하지 않은 값으로 가린다. 둘째 자리는 출력에만 쓴다
+    codes = ",".join("%s:%d" % (m.get("status"), v) for m, v in errors if v) or "-"
+    print("%.2f %d %d %s %d" % (pct, n, total[0][1], codes, pct > float(sys.argv[1])))' "$CLIENT_ERROR_MAX_PCT") || out=NA
   if [ "$out" = NA ]; then
     # 표준 출력은 무효 사유로 모이므로 표준 오류에 쓴다
     echo "WARN: 유지 구간의 k6 요청 수를 읽지 못해 4xx 의 무효 조건을 판정하지 않았다" >&2
     return 0
   fi
-  read -r pct n total codes <<< "$out"
-  python3 -c "import sys; sys.exit(0 if float('$pct') <= $CLIENT_ERROR_MAX_PCT else 1)" \
-    || printf '\n유지 구간의 4xx 응답이 %s%% 를 넘었다: %s%% (%s / %s, %s). 회원 대역과 시드를 본다' "$CLIENT_ERROR_MAX_PCT" "$pct" "$n" "$total" "${codes:--}"
+  read -r pct n total codes over <<< "$out"
+  [ "$over" != 1 ] \
+    || printf '\n유지 구간의 4xx 응답이 %s%% 를 넘었다: %s%% (%s / %s, %s). 회원 대역과 시드를 본다' "$CLIENT_ERROR_MAX_PCT" "$pct" "$n" "$total" "$codes"
 }
 
 cache_exhausted() {
