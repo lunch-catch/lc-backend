@@ -1584,6 +1584,8 @@ def render_compare(run_dir, d, rel_of):
     # Call Tree 처럼 wall 다음에 cpu 를 펼친다(작성자가 2026-11-27 대화에서 정했다)
     images = {kind: pictures(run_dir, 'diff', kind) for kind in ('wall', 'cpu')}
     if images['wall'] or images['cpu']:
+        # 펼친 줄이 적을 때 무엇을 펼쳤는지 그림 위에 밝힌다(작성자가 2026-11-27 대화에서 정했다)
+        out += ['', DIFF_NOTE]
         for kind in ('wall', 'cpu'):
             if images[kind]:
                 out += ['', '#### %s' % kind, '']
@@ -1635,6 +1637,9 @@ def render_compare(run_dir, d, rel_of):
         out += ['', '한쪽에만 있는 서비스: ' + ', '.join(['`%s`(앞 버전만)' % s for s in gone] + ['`%s`(이 버전만)' % s for s in new])]
     return out
 
+DIFF_NOTE = ('Diff 그림은 진입점 몫의 5% 이상 변한 갈래만 펼친다. 그보다 작은 변화는 회차 사이의 흔들림과 가르기 어려워서다. '
+             '고친 함수는 몫이 거의 변하지 않았어도 그 함수까지 가는 경로를 펼친다. 빨강은 몫이 늘어난 함수, 초록은 줄어든 함수다. '
+             '시간이 아니라 몫을 견주므로, 다른 함수가 줄면 손대지 않은 함수도 빨갛게 보일 수 있다.')
 CALLTREE_NOTE = ('그림은 진입점 Total 의 5% 이상인 줄 가운데 우리 코드의 줄과 그 바로 아래의 첫 라이브러리 줄만 남겼다. '
                  '들여쓰기가 크게 뛰는 자리는 그 사이의 라이브러리 줄(스프링 프록시, 트랜잭션, 계측 등)을 뺀 것이다. '
                  '빼기 전의 전체는 그라파나의 Call Tree 에서 그 줄을 펼쳐 본다.')
