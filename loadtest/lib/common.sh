@@ -1581,13 +1581,15 @@ def render_compare(run_dir, d, rel_of):
             ', '.join('`%s`' % u for u in unread), '' if not diff else ': ' + ', '.join('%s %s → %s' % row for row in diff)))
     else:
         out.append('조건: 같다' if not diff else '조건이 다르다: ' + ', '.join('%s %s → %s' % row for row in diff))
-    images = pictures(run_dir, 'diff', 'wall')
-    if images:
-        out.append('')
-        out += ['![Diff %s wall](%s)' % (label, os.path.join(d, f)) for label, f in images]
-        links = pictures(run_dir, 'diff', 'cpu')
-        if links:
-            out.append('Diff: ' + ', '.join('[%s cpu](%s)' % (label, os.path.join(d, f)) for label, f in links))
+    # Call Tree 처럼 wall 다음에 cpu 를 펼친다(작성자가 2026-11-27 대화에서 정했다)
+    images = {kind: pictures(run_dir, 'diff', kind) for kind in ('wall', 'cpu')}
+    if images['wall'] or images['cpu']:
+        # 펼친 줄이 적을 때 무엇을 펼쳤는지 그림 위에 밝힌다(작성자가 2026-11-27 대화에서 정했다)
+        out += ['', DIFF_NOTE]
+        for kind in ('wall', 'cpu'):
+            if images[kind]:
+                out += ['', '#### %s' % kind, '']
+                out += ['![Diff %s %s](%s)' % (label, kind, os.path.join(d, f)) for label, f in images[kind]]
     else:
         import shlex
         out += ['', 'Diff 그림: 앞 버전이 이 환경의 Pyroscope 에 없어 찍지 않았다. lc-infra 에서 아래로 찍어 이 회차 폴더의 `diff/` 에 넣는다. `LC_BACKEND_DIR` 은 lc-backend 경로다', '',
@@ -1600,7 +1602,8 @@ def render_compare(run_dir, d, rel_of):
     if os.path.exists(cand):
         n = len([l for l in open(cand, encoding='utf-8').read().splitlines() if l.strip()])
         note += '. 후보 %d개는 [%s](%s) 에 있다(앞 버전 커밋과의 git diff)' % (n, cand_name, os.path.join(os.path.dirname(d), cand_name))
-    out += ['', note]
+    # 위의 그림 제목(wall, cpu) 아래에 딸리지 않게 몫의 변화에 제목을 둔다
+    out += ['', '#### Self 몫의 변화', '', note]
     for svc in [s for s in after if s in before]:
         out += ['', '`%s`' % svc]
         if fixed:
@@ -1633,6 +1636,14 @@ def render_compare(run_dir, d, rel_of):
     if gone or new:
         out += ['', '한쪽에만 있는 서비스: ' + ', '.join(['`%s`(앞 버전만)' % s for s in gone] + ['`%s`(이 버전만)' % s for s in new])]
     return out
+
+DIFF_NOTE = ('Diff 그림은 진입점 몫의 5% 이상 변한 갈래만 펼친다. 그보다 작은 변화는 회차 사이의 흔들림과 가르기 어려워서다. '
+             '고친 함수는 몫이 거의 변하지 않았어도 그 함수까지 가는 경로를 펼친다. 빨강은 몫이 늘어난 함수, 초록은 줄어든 함수다. '
+             '시간이 아니라 몫을 견주므로, 다른 함수가 줄면 손대지 않은 함수도 빨갛게 보일 수 있다.')
+CALLTREE_NOTE = ('그림은 진입점 Total 의 5% 이상인 줄 가운데 우리 코드의 줄과 그 바로 아래의 첫 라이브러리 줄만 남겼다. '
+                 '들여쓰기가 크게 뛰는 자리는 그 사이의 라이브러리 줄(스프링 프록시, 트랜잭션, 계측 등)을 뺀 것이다. '
+                 '빼기 전의 전체는 그라파나의 Call Tree 에서 그 줄을 펼쳐 본다.')
+
 
 def render_diag(doc, version_dir):
     # 진단 회차를 결과 문서에서 제목에 "진단" 이 든 절에 적는다(#1341). 버전 폴더의 -profile 회차를 모두 그린다
@@ -1682,16 +1693,21 @@ def render_diag(doc, version_dir):
                     cells = [file_link(run_dir, d, t['dir'], f) for f in files]
                     lead = [t['kind']] if 'kind' in t else []
                     out.append('| ' + ' | '.join(lead + ['`%s`' % t['target'], t['value'], fmt_s(t['ms'] / 1000), step, '`%s`' % t['id']] + cells) + ' |')
-        out += ['', '### Call Tree', '']
-        for label, f in pictures(run_dir, 'calltree', 'wall'):
-            out.append('![%s %s Call Tree wall](%s)' % (name, label, os.path.join(d, f)))
+        # 캡처가 우리 코드에서 잘라 들여쓰기가 크게 뛰는 자리가 생긴다. 그 줄이 무엇인지 그림 위에 밝힌다(#1365)
+        out += ['', '### Call Tree', '', CALLTREE_NOTE]
+        # wall 다음에 cpu 를 펼친다. 둘을 나란히 보아 대기인지 계산인지 가른다(작성자가 2026-11-27 대화에서 정했다)
+        for kind in ('wall', 'cpu'):
+            found = pictures(run_dir, 'calltree', kind)
+            if found:
+                out += ['', '#### %s' % kind, '']
+                out += ['![%s %s Call Tree %s](%s)' % (name, label, kind, os.path.join(d, f)) for label, f in found]
         archive = next(iter(glob.glob(os.path.join(run_dir, 'diag-*-profile.tar.gz'))), None)
         selfs = profile_self(archive) if archive else None
         out += ['', '### Self 가 큰 함수']
         if not selfs:
             out += ['', '프로파일: 파일이 없다']
         for svc, bases in (selfs or {}).items():
-            out += ['', '`%s`: wall 과 cpu 의 상위 5개를 합쳤다. wall 이 크고 cpu 가 작으면 기다린 시간, 둘 다 크면 계산이다' % svc]
+            out += ['', '`%s`: wall 과 cpu 의 상위 5개를 합쳤다. wall 이 크고 cpu 가 작으면 대기, 둘 다 크면 계산이다' % svc]
             for basis, title in (('frame', '맨 끝 프레임 기준(그라파나 Call Tree 의 Self 와 같다)'),
                                  ('java', '자바 함수 기준(네이티브 프레임의 몫을 그것을 부른 가장 가까운 자바 함수에 붙였다)')):
                 out += ['', '#### %s' % title, '', '| 함수 | wall Self | cpu Self |', '|---|---|---|']
@@ -1699,8 +1715,7 @@ def render_diag(doc, version_dir):
                     out.append('| `%s` | %s | %s |' % (f, fmt_pct(w), fmt_pct(c)))
         out += render_compare(run_dir, d, rel_of)
         # 회차 폴더의 나머지 파일이다. 무엇인지 한 칸에 적는다
-        named = [(f, '%s Call Tree cpu' % label) for label, f in pictures(run_dir, 'calltree', 'cpu')]
-        named += [('redis.txt', 'Redis 명령별 서버 처리 시간'), ('metrics.json.gz', '지표 원본(다시 보기용)'), ('logs.jsonl.gz', '경고와 오류 로그 원본(다시 보기용)')]
+        named = [('redis.txt', 'Redis 명령별 서버 처리 시간'), ('metrics.json.gz', '지표 원본(다시 보기용)'), ('logs.jsonl.gz', '경고와 오류 로그 원본(다시 보기용)')]
         named += [(os.path.relpath(f, run_dir), '프로파일 보관(다시 보기와 Diff 용)') for f in sorted(glob.glob(os.path.join(run_dir, 'diag-*-profile.tar.gz')))]
         rows = ['| [%s](%s) | %s |' % (f, os.path.join(d, f), what) for f, what in named if os.path.exists(os.path.join(run_dir, f))]
         if rows:
@@ -1972,6 +1987,31 @@ commit_diag() {
   echo "committed $(git -C "$ROOT" rev-parse --short HEAD) $run_dir"
 }
 
+#
+# 진단 회차의 Call Tree 에서 펼칠 함수를 고른다(#1365). 기준 초과 표에서 넘은 API 와 백그라운드 작업을 Call Tree 의 진입점 함수로 바꾼다.
+# cron 과 상태 확인은 이름이 이미 클래스.메서드() 라 괄호만 뗀다. API 와 워커, 릴레이는 도메인의 run.sh 가 CALLTREE_ENTRIES 에 "이름=함수" 로 준다.
+# 잇지 못한 이름은 넘기지 않고 경고한다. 넘은 것이 없으면 아무것도 내지 않고, 캡처가 큰 진입점을 대신 펼친다(lunch-catch/lc-infra#221)
+#
+IFS= read -r -d '' EXPAND_PY <<'PY' || true
+import json, sys
+try:
+    over = json.loads(sys.argv[1])
+except ValueError:
+    sys.exit(0)
+entries = dict(line.split('=', 1) for line in sys.argv[2].splitlines() if '=' in line)
+picked = []
+for row in over.get('apis', []) + over.get('jobs', []):
+    if not row.get('over'):
+        continue
+    name = row['name']
+    function = entries.get(name) or (name[:-2] if name.endswith('()') else None)
+    if function is None:
+        print('WARN: 기준을 넘은 %s 를 Call Tree 의 함수로 잇지 못했다. 도메인의 run.sh 의 CALLTREE_ENTRIES 에 더한다' % name, file=sys.stderr)
+    elif function not in picked:
+        picked.append(function)
+print('\n'.join(picked))
+PY
+
 # 유지 구간의 부하 생성기 1분 평균 CPU 가 이 값을 넘으면 무효다(광고 서빙 부하 시험 문서 2장과 7장)
 LOADGEN_CPU_MAX_PCT=80
 after_run() {
@@ -1996,14 +2036,25 @@ after_run() {
       # 앞 버전의 진단 회차가 있으면 Diff 를 같이 찍는다(#1343). 그 회차가 이 Pyroscope 에 남아 있을 때만 그림이 나오고,
       # 없으면 캡처가 건너뛰어 진단 절에 loadtest-diff.sh 로 찍는 명령을 적는다. 비교 표는 프로파일 파일로 늘 센다
       #
-      local diff_args=() f bfrom bto
+      local diff_args=() f bfrom bto over
+      over=$(overrun "$hs" "$he" | tail -1) || { echo "WARN: $name 의 기준 초과를 묻지 못해 펼칠 함수를 넘기지 않는다" >&2; over=""; }
+      while IFS= read -r f; do [ -z "$f" ] || diff_args+=(--expand "$f"); done < <(python3 -c "$EXPAND_PY" "$over" "${CALLTREE_ENTRIES:-}")
+      #
+      # 우리 코드의 클래스 이름을 넘긴다. 캡처가 Call Tree 그림에 우리 코드의 줄과 그 바로 아래의 첫 라이브러리 줄만 남긴다(#1365).
+      # 프로파일의 함수 이름은 TRIM_PY 가 패키지를 떼어 이름만으로 가를 수 없다. 이 저장소의 지금 커밋에서 뽑아, 그 뒤에 없어진 클래스는 라이브러리로 보인다
+      #
+      local ours
+      ours=$(mktemp)
+      git -C "$ROOT" ls-tree -r --name-only HEAD -- src/main/java | sed -n 's#.*/\([^/]*\)\.java$#\1#p' | sort -u > "$ours"
+      [ ! -s "$ours" ] || diff_args+=(--ours "$ours")
       if [ -n "${DIAG_BASELINE_DIR:-}" ] && [ -f "$DIAG_BASELINE_DIR/구간.txt" ]; then
         bfrom=$(awk '$1 == "from" {print $2}' "$DIAG_BASELINE_DIR/구간.txt"); bto=$(awk '$1 == "to" {print $2}' "$DIAG_BASELINE_DIR/구간.txt")
-        diff_args=(--baseline "$(basename "$DIAG_BASELINE_DIR")" --baseline-from "$bfrom" --baseline-to "$bto")
+        diff_args+=(--baseline "$(basename "$DIAG_BASELINE_DIR")" --baseline-from "$bfrom" --baseline-to "$bto")
         while IFS= read -r f; do [ -z "$f" ] || diff_args+=(--fixed "$f"); done <<< "${DIAG_FIXED:-}"
       fi
       "$LC_INFRA_DIR/scripts/loadtest-snapshot.sh" "$target" --diag "$name" --from "$ws" --to "$he" \
         ${DOMAIN_SNAPSHOT:+--domain "$DOMAIN_SNAPSHOT"} ${SNAPSHOT_OUT:+--out "$SNAPSHOT_OUT"} ${diff_args[@]+"${diff_args[@]}"} || snap_rc=$?
+      rm -f "$ours"
       # 두 회차의 조건과 견준 앞 회차를 남긴다. 진단 절의 비교가 읽는다
       if [ -n "${SNAPSHOT_OUT:-}" ] && [ -d "$SNAPSHOT_OUT/$name" ]; then
         printf '%s\n' "${DIAG_CONDITION:-{\}}" > "$SNAPSHOT_OUT/$name/condition.json"
