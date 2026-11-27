@@ -245,11 +245,13 @@ OVERRIDE"
       tracing="$app_tracing"
       case "$batches" in *" $id "*) tracing="$batch_tracing" ;; esac
       echo "restart $id"
-      remote "$id" 600 "set -euo pipefail
+      # 다시 뜰 때마다 5분을 새로 기다려, 다시 뜨기 READY_MAX_RESTARTS 번까지의 시간을 준다(#1367)
+      remote "$id" 1800 "set -euo pipefail
 $tracing
 /usr/local/bin/$PROJECT-refresh-env
 systemctl restart $PROJECT
 PROJECT=$PROJECT
+READY_MAX_RESTARTS=$READY_MAX_RESTARTS
 $READY_SH
 docker inspect $PROJECT --format '{{.Config.Image}}'
 docker inspect $PROJECT --format '{{range .Config.Env}}{{println .}}{{end}}' | grep -E '^(JDK_JAVA_OPTIONS|OTEL_SERVICE_NAME)=' || echo 'tracing off'
