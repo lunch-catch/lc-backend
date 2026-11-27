@@ -324,7 +324,7 @@ loadtest/adserving/run.sh switch <이미지>
 - 우리 코드의 메서드에는 스팬을 만들지 않는다. I/O 스팬 사이의 빈 구간은 프로파일링으로 본다([트레이싱과 프로파일링 설계](../docs/observability/트레이싱과_프로파일링_설계.md) 3장).
 - 라벨은 JVM 이 뜰 때 정해진다. 한 번 띄운 뒤의 회차는 같은 라벨이라 회차는 시각 구간으로 가린다.
 
-**그라파나에서 보는 법:** Explore 에서 데이터 소스 `Tempo` 를 고르고 `{ resource.run = "v1" && name = "GET /v1/feed" && duration > 300ms }` 처럼 찾는다. 배치의 작업은 `{ resource.service.name = "lunchcatch-batch" && name = "ImpressionDispatchJob.dispatchPending" }` 처럼 찾는다. 트레이스를 열면 HTTP 와 DB 쿼리 스팬이 시간 순으로 보인다. 스팬에서 그 요청의 로그(Loki)와 프로파일(Pyroscope)로 넘어간다. 로그의 `trace_id` 에서도 그 트레이싱으로 넘어간다.
+**그라파나에서 보는 법:** Explore 에서 데이터 소스 `Tempo` 를 고르고 `{ resource.run = "v1" && name = "GET /v1/feed" && duration > 300ms }` 처럼 찾는다. 배치의 작업은 `{ resource.service.name = "lunchcatch-batch" && name = "ImpressionDispatchJob.dispatchPending" }` 처럼 찾는다. 트레이스를 열면 HTTP 와 DB 쿼리 스팬이 시간 순으로 보인다. 스팬에서 그 요청의 로그(Loki)와 프로파일(Pyroscope)로 넘어간다. 로그의 `trace_id` 에서도 그 트레이싱으로 넘어간다. 읽고 병목을 찾는 법은 [트레이싱과 프로파일링 설계](../docs/observability/트레이싱과_프로파일링_설계.md#8-읽는-법) 8장이 갖는다.
 
 지킬 것:
 
@@ -358,7 +358,7 @@ loadtest/adserving/run.sh run v1-run1-profile 30030001 100 5m --profile both
 | `wall` | 대기까지 포함한 경과 시간이다. p99 를 줄이려면 이것을 먼저 본다 | 50ms. wall 모드의 기본값이다 |
 | `both` | 둘을 한 기록(JFR)으로 함께 뜨고 나눠 보낸다. 같은 시간, 같은 부하의 둘을 견줘 계산과 대기를 가른다 | 위 둘과 같다 |
 
-**그라파나에서 보는 법:** Drilldown -> Profiles 에서 서비스를 고른다. 앱 서버는 `lunchcatch`, 배치 서버는 `lunchcatch-batch` 로 트레이스의 서비스 이름과 같다. 그다음 프로파일 종류(`process_cpu` 나 `wall`)와 `run` 라벨로 그 회차를 고른다. `cpu`, `wall` 모드는 10초씩 끊어 보내 대시보드와 함께 10초 남짓 늦게 보인다. `both` 는 회차가 끝난 뒤에 나눠 보내므로 회차가 끝난 다음에 본다. Split 과 Single 로 비교와 단독을, Top Table 과 Flame Graph 로 표와 그래프를 바꾼다.
+**그라파나에서 보는 법:** Drilldown -> Profiles 에서 서비스를 고른다. 앱 서버는 `lunchcatch`, 배치 서버는 `lunchcatch-batch` 로 트레이스의 서비스 이름과 같다. 그다음 프로파일 종류(`process_cpu` 나 `wall`)와 `run` 라벨로 그 회차를 고른다. `cpu`, `wall` 모드는 10초씩 끊어 보내 대시보드와 함께 10초 남짓 늦게 보인다. `both` 는 회차가 끝난 뒤에 나눠 보내므로 회차가 끝난 다음에 본다. Split 과 Single 로 비교와 단독을, Top Table 과 Flame Graph 로 표와 그래프를 바꾼다. 읽고 병목을 찾는 법은 [트레이싱과 프로파일링 설계](../docs/observability/트레이싱과_프로파일링_설계.md#8-읽는-법) 8장이 갖는다.
 
 **읽는 법:** Self 는 그 메서드 자기 코드의 시간이고 Total 은 부른 메서드까지 합친 시간이다. 시간은 그 구간의 합계라 호출 한 번의 시간은 나오지 않는다.
 
