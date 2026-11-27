@@ -1624,6 +1624,11 @@ def render_compare(run_dir, d, rel_of):
         out += ['', '한쪽에만 있는 서비스: ' + ', '.join(['`%s`(앞 버전만)' % s for s in gone] + ['`%s`(이 버전만)' % s for s in new])]
     return out
 
+CALLTREE_NOTE = ('그림은 진입점 Total 의 5% 이상인 줄 가운데 우리 코드의 줄과 그 바로 아래의 첫 라이브러리 줄만 남겼다. '
+                 '들여쓰기가 크게 뛰는 자리는 그 사이의 라이브러리 줄(스프링 프록시, 트랜잭션, 계측 등)을 뺀 것이다. '
+                 '빼기 전의 전체는 그라파나의 Call Tree 에서 그 줄을 펼쳐 본다.')
+
+
 def render_diag(doc, version_dir):
     # 진단 회차를 결과 문서에서 제목에 "진단" 이 든 절에 적는다(#1341). 버전 폴더의 -profile 회차를 모두 그린다
     tag = os.path.basename(os.path.normpath(version_dir))
@@ -1676,6 +1681,8 @@ def render_diag(doc, version_dir):
         for f in ('calltree/wall.png', 'calltree/batch-wall.png'):
             if os.path.exists(os.path.join(run_dir, f)):
                 out.append('![%s %s](%s)' % (name, f.replace('calltree/', 'Call Tree ').replace('.png', ''), os.path.join(d, f)))
+        # 캡처가 우리 코드에서 잘라 들여쓰기가 크게 뛰는 자리가 생긴다. 그 줄이 무엇인지 그림 아래에 밝힌다(#1365)
+        out += ['', CALLTREE_NOTE]
         archive = next(iter(glob.glob(os.path.join(run_dir, 'diag-*-profile.tar.gz'))), None)
         selfs = profile_self(archive) if archive else None
         out += ['', '### Self 가 큰 함수']
