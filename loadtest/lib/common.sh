@@ -1691,7 +1691,7 @@ def render_diag(doc, version_dir):
         if not selfs:
             out += ['', '프로파일: 파일이 없다']
         for svc, bases in (selfs or {}).items():
-            out += ['', '`%s`: wall 과 cpu 의 상위 5개를 합쳤다. wall 이 크고 cpu 가 작으면 기다린 시간, 둘 다 크면 계산이다' % svc]
+            out += ['', '`%s`: wall 과 cpu 의 상위 5개를 합쳤다. wall 이 크고 cpu 가 작으면 대기, 둘 다 크면 계산이다' % svc]
             for basis, title in (('frame', '맨 끝 프레임 기준(그라파나 Call Tree 의 Self 와 같다)'),
                                  ('java', '자바 함수 기준(네이티브 프레임의 몫을 그것을 부른 가장 가까운 자바 함수에 붙였다)')):
                 out += ['', '#### %s' % title, '', '| 함수 | wall Self | cpu Self |', '|---|---|---|']
