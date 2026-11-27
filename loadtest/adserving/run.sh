@@ -37,6 +37,15 @@ LOCAL=""
 DOMAIN_EVENT_PREFIX=ADSERVING_
 # 회차가 끝나면 lc-infra 의 캡처가 대시보드의 도메인 폴더에서 광고 서빙만 찍는다(#1305)
 DOMAIN_SNAPSHOT=adserving
+#
+# 기준 초과 표의 API 와 백그라운드 작업(워커, 릴레이)을 Call Tree 의 진입점 함수로 잇는다(#1365). 진단 회차의 캡처가 넘은 것을 펼친다.
+# cron 작업은 이름이 클래스.메서드() 라 적지 않는다. 메서드 이름이 바뀌면 여기를 고친다. 맞지 않으면 캡처가 어느 진입점에도 없다고 출력한다
+#
+CALLTREE_ENTRIES='GET /v1/feed=FeedController.getFeed
+POST /v1/impressions=ImpressionController.record
+adserving.impression=ImpressionDispatchJob.dispatchPending
+adserving.impression-write=ImpressionWriteBuffer.runWorker
+adserving.serve-log-write=ServeLogBuffer.runWorker'
 # 회차의 램프업 초다. 0 에서 목표 부하까지 이 시간에 걸쳐 올리며 데운다. 회차마다 reset 으로 다시 띄운 앱을 이것으로 데운다(#1361)
 RAMP_SECONDS=300
 # version 이 쓰는 값이다(#1306). 그날 00:00 묶음을 다시 돌린다
