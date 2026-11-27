@@ -1679,7 +1679,8 @@ def render_diag(doc, version_dir):
                     out.append('| ' + ' | '.join(lead + ['`%s`' % t['target'], t['value'], fmt_s(t['ms'] / 1000), step, '`%s`' % t['id']] + cells) + ' |')
         # 캡처가 우리 코드에서 잘라 들여쓰기가 크게 뛰는 자리가 생긴다. 그 줄이 무엇인지 그림 위에 밝힌다(#1365)
         out += ['', '### Call Tree', '', CALLTREE_NOTE, '']
-        for f in ('calltree/wall.png', 'calltree/batch-wall.png'):
+        # wall 다음에 cpu 를 펼친다. 둘을 나란히 보아 기다린 시간인지 계산인지 가른다(작성자가 2026-11-27 대화에서 정했다)
+        for f in ('calltree/wall.png', 'calltree/batch-wall.png', 'calltree/cpu.png', 'calltree/batch-cpu.png'):
             if os.path.exists(os.path.join(run_dir, f)):
                 out.append('![%s %s](%s)' % (name, f.replace('calltree/', 'Call Tree ').replace('.png', ''), os.path.join(d, f)))
         archive = next(iter(glob.glob(os.path.join(run_dir, 'diag-*-profile.tar.gz'))), None)
@@ -1696,8 +1697,7 @@ def render_diag(doc, version_dir):
                     out.append('| `%s` | %s | %s |' % (f, fmt_pct(w), fmt_pct(c)))
         out += render_compare(run_dir, d, rel_of)
         # 회차 폴더의 나머지 파일이다. 무엇인지 한 칸에 적는다
-        named = [('calltree/cpu.png', 'Call Tree cpu'), ('calltree/batch-cpu.png', '배치 Call Tree cpu'),
-                 ('redis.txt', 'Redis 명령별 서버 처리 시간'), ('metrics.json.gz', '지표 원본(다시 보기용)'), ('logs.jsonl.gz', '경고와 오류 로그 원본(다시 보기용)')]
+        named = [('redis.txt', 'Redis 명령별 서버 처리 시간'), ('metrics.json.gz', '지표 원본(다시 보기용)'), ('logs.jsonl.gz', '경고와 오류 로그 원본(다시 보기용)')]
         named += [(os.path.relpath(f, run_dir), '프로파일 보관(다시 보기와 Diff 용)') for f in sorted(glob.glob(os.path.join(run_dir, 'diag-*-profile.tar.gz')))]
         rows = ['| [%s](%s) | %s |' % (f, os.path.join(d, f), what) for f, what in named if os.path.exists(os.path.join(run_dir, f))]
         if rows:
