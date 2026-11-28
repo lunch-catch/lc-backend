@@ -1,13 +1,14 @@
 # 로깅 규칙: 런치캐치 백엔드
 
-이 문서는 공통 로깅 규칙 4판(2026-10-21)을 이 저장소에 적용한 결과다. 이 저장소의 장치 이름,
-설정값, 마스킹 키를 갖는다. 이 저장소에만 해당하는 이유는
-[logging-project-rationale.md](./logging-project-rationale.md) 가 갖는다.
+이 문서는 공통 로깅 규칙 4판(2026-10-21)을 이 저장소에 적용한 결과다. 문서가 셋으로 나뉘고 역할이 다르다.
 
 | 문서 | 소유 |
 |---|---|
-| `logging-project-guideline.md` | 이 문서. 이 저장소의 장치, 설정, 마스킹 키 |
-| `logging-project-rationale.md` | 이 저장소에만 해당하는 근거 |
+| `logging-project-guideline.md` | 이 문서. 업무 코드가 쓰는 도구, 공통 규칙의 예외, 바디 마스킹의 키, 로그를 찾는 쿼리 |
+| [logging-project-rationale.md](./logging-project-rationale.md) | 이 문서의 도구와 규칙이 왜 지금 모양인지 |
+| [로그_설계.md](../observability/로그_설계.md) | 공통 장치의 구조, 로그의 모양과 설정, 보존 기간, 그리고 그렇게 정한 까닭 |
+
+**장치와 설정의 내용은 설계 문서가 소유한다.** 같은 설명을 이 문서나 근거 문서에 옮기지 않는다.
 
 이 문서가 기대는 외부 자료의 출처와 확인 범위는 [logging-project-rationale.md](./logging-project-rationale.md) 의
 17장이 갖는다. 이 문서에는 출처 목록을 복사하지 않는다.
@@ -19,18 +20,7 @@
 
 ## 1. 공통 장치
 
-모든 장치는 `global/logging` 패키지에 있다. 업무 코드에서 이 장치들이 남기는 내용을 다시 쓰지
-않는다(`LOG-1-01`).
-
-| 층 | 클래스 | 하는 일 | 남기는 이벤트 |
-|---|---|---|---|
-| 요청 컨텍스트 | `MdcLoggingFilter` | 가장 먼저 실행된다. MDC 에 `trace_id`, `method`, `uri`, `clientIp` 를 넣고 요청이 끝나면 비운다. `trace_id` 는 에이전트가 연 트레이스가 있으면 그 ID, 없으면 형식에 맞는 요청 헤더 `X-Trace-Id`, 그것도 없으면 새로 만든 값이다. 응답 헤더 `X-Trace-Id` 로 돌려준다 | 없음 |
-| 기술 로그 | `HttpBodyLoggingFilter` | 요청마다 접근 로그를 남기고 4xx, 5xx 는 가린 바디를 함께 남긴다 | `HTTP_ACCESS` |
-| 기술 로그 | `ExternalApiLoggingExchangeFilter` | `WebClientConfig` 의 `WebClientCustomizer` 가 모든 `WebClient.Builder` 에 붙인다. 쿼리 문자열을 뺀 경로만 남긴다 | `EXTERNAL_API_CALL`, `EXTERNAL_API_CALL_FAILED` |
-| 기술 로그 | `TraceIdExchangeFilter` | 나가는 호출에 `X-Trace-Id` 헤더를 싣는다. 지금은 받는 쪽이 이 헤더를 쓰지 않아 효과가 없다 | 없음 |
-| 기술 로그 | `SchedulerLoggingAspect` | `@Scheduled` 메서드마다 시작, 끝, 실패를 남긴다. 마지막 성공 시각을 게이지 `batch.job.last.success.timestamp`(태그 `scheduler`)로, 도는 동안 그 실행이 시작된 시각을 게이지 `batch.job.running.since`(태그 `scheduler`. 돌지 않으면 0)로, 실행마다 걸린 시간을 타이머 `batch.job.duration`(태그 `scheduler`, `outcome`. 히스토그램)으로 내보낸다. 스케줄러를 켠 서버는 기동 때 `@Scheduled` 메서드마다 `outcome="failure"` 타이머를 0 으로 만들어 첫 실패도 `increase()` 에 잡힌다. 실행마다 `LogContext.open` 으로 새 `trace_id` 와 `job`(작업 이름)을 MDC 에 넣고 끝나면 되돌린다. 실패하면 애스펙트가 `SCHEDULER_FAILED` 에 스택까지 남기고 다시 던진다. 스케줄러의 오류 처리기(`SchedulingConfig.ALREADY_LOGGED`)는 같은 실패를 다시 남기지 않는다. 알림은 `SCHEDULER_FAILED` 에 건다 | `SCHEDULER_START`, `SCHEDULER_END`, `SCHEDULER_FAILED` |
-| 기술 로그 | `AdminLoginService`·`AdminLoginAuditFilter`(`admin`) | 관리자 로그인 감사의 기록 대상과 처리 방식은 [관리자 API 설계의 로그인 절](../design/admin/admin-api-design.md#로그인)을 따른다 | `ADMIN_LOGIN_SUCCESS`, `ADMIN_LOGIN_FAILED`, `ADMIN_LOGIN_AUDIT_FAILED` |
-| 이벤트 로그 | `GlobalExceptionHandler`(`global/exception`), `AuthExceptionHandler`(`auth/exception`) | 전역 예외 핸들러다 | 이벤트명 없음 |
+업무 코드에서 공통 장치가 남기는 내용을 다시 쓰지 않는다(`LOG-1-01`). 장치마다 하는 일과 남기는 이벤트는 [로그 설계 2장](../observability/로그_설계.md#2-공통-장치)이 갖는다.
 
 ## 2. 업무 코드가 쓰는 도구
 
@@ -59,30 +49,7 @@
 
 ## 4. 설정값
 
-`src/main/resources/logback-spring.xml` 이 갖는다.
-
-| 프로필 | 항목 | 값 |
-|---|---|---|
-| `local` (기본 프로필) | 출력 | 콘솔 텍스트. 패턴에 MDC 값과 `%F:%line` 을 넣는다 |
-| `local` | 루트 레벨 | DEBUG |
-| `prod` | 인코더 | `LogstashEncoder`. MDC 키 `trace_id`, `method`, `uri`, `clientIp`, `job` 을 필드로 넣고 운영 필드를 더한다 |
-| `prod` | 스택 | `ShortenedThrowableConverter`. 예외당 30 프레임, 최대 8192자, 원인 먼저, 프레임워크 패키지 일부 제외 |
-| `prod` | appender | `AsyncAppender`. `queueSize=8192`, `discardingThreshold=0`, `neverBlock=true`, `includeCallerData=false`. `maxFlushTime` 은 지정하지 않아 기본 1초다 |
-| `prod` | 운영 필드 | `service=lunchcatch`, `version`(배포가 넘기는 `APP_VERSION`. 없으면 `local`) |
-| `prod` | 루트 레벨 | INFO |
-
-로거 레벨을 런타임에 바꾸는 수단(`LOG-5-07`)은 액추에이터의 `loggers` 엔드포인트다. 액추에이터는
-`management.server.port=8081` 로 분리되어 있다.
-
-로그의 보존 기간(`LOG-8-10`)은 아래와 같다. 기간을 정하는 설정은 lc-infra 가 갖는다.
-
-| 대상 | 보존 기간 |
-|---|---|
-| 운영 로그(Loki) | 30일 |
-| 개발 서버 로그(CloudWatch) | 30일 |
-| 감사 기록(`AuditLogWriter` 가 DB 에 쓰는 것) | 최소 1년. 지우는 작업을 두지 않는다 |
-
-운영 로그는 운영 Grafana 에서 본다. OIDC 로 로그인하고 허용한 대역에서 들어온 팀원은 모두 Viewer 로 가입되어 로그를 볼 수 있다.
+프로필마다의 로그 모양, appender, 로거 레벨을 바꾸는 수단, 보존 기간은 [로그 설계 4장 ~ 8장](../observability/로그_설계.md#4-로그의-모양과-설정)이 갖는다.
 
 ## 5. 바디 마스킹
 
