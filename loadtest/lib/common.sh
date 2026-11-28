@@ -370,6 +370,11 @@ utc_iso() {
   date -u -d "@$1" +%FT%TZ 2> /dev/null || date -u -r "$1" +%FT%TZ
 }
 
+# 사람이 읽는 기록의 지금 시각이다. 한국 시각은 일광 절약이 없어 +09:00 으로 고정한다
+kst_now() {
+  TZ=Asia/Seoul date +%FT%T+09:00
+}
+
 # 표준 입력으로 받은 "이름 PromQL" 줄들을 그 구간으로 Prometheus 에 묻는다. 로컬은 로컬 Prometheus 를, 부하 시험 환경은 모니터링 서버의 것을 묻는다
 prom_metrics() {
   local start="$1" end="$2" queries
@@ -740,7 +745,7 @@ print(json.dumps(cond, ensure_ascii=False))' \
 #
 # 한 번 부르면 한 걸음만 간다. 승인을 받는 자리마다 멈추기 때문이다(#1088).
 #   다음 버전의 측정 -> 멈춤(진단을 돌릴지 정한다) -> --diag 나 --skip-diag -> 멈춤(다음 버전으로 갈지 정한다) -> 다시 부르면 다음 버전
-# 상태 파일은 build/loadtest-plans/<계획 파일 이름>.<local|lt>.state 다. 로컬과 부하 시험 환경을 따로 센다. 로컬로 먼저 돌린 기록이 부하 시험 환경의 버전을 건너뛰게 하지 않는다. 줄마다 버전, 단계, 시작과 끝의 UTC 시각이다. 버전마다 잰 시각을 결과 문서에 옮긴다(#1088).
+# 상태 파일은 build/loadtest-plans/<계획 파일 이름>.<local|lt>.state 다. 로컬과 부하 시험 환경을 따로 센다. 로컬로 먼저 돌린 기록이 부하 시험 환경의 버전을 건너뛰게 하지 않는다. 줄마다 버전, 단계, 시작과 끝의 한국 시각이다. 대시보드 그림과 앱 로그도 한국 시각이라 결과 문서에 그대로 옮긴다. 버전마다 잰 시각을 결과 문서에 옮긴다(#1088).
 #
 run_plan() {
   local self="$1" plan="$2" choice="${3:-}" state line name commit ref args step started rc lines=() fixed=() scen prev_args i toks=()
@@ -789,14 +794,14 @@ run_plan() {
       ref=$(sed -E 's/.*(^| )ref=([^ ]+).*/\2/' <<< "$args"); args=$(sed -E 's/(^| )ref=[^ ]+//' <<< "$args")
     fi
     awk -v n="$name" '$1 == n && $2 == "measure-done" { found = 1 } END { exit !found }' "$state" && step=measured
-    started=$(date -u +%FT%TZ); rc=0
+    started=$(kst_now); rc=0
     if [ -z "$step" ]; then
       [ -z "$choice" ] || die "$name 은 아직 측정하지 않았다. --diag 나 --skip-diag 없이 부른다"
       echo "plan $name 측정을 시작한다($commit${ref:+, LOADTEST_REF=$ref})"
       # shellcheck disable=SC2086
       LOADTEST_REF="${ref:-${LOADTEST_REF:-}}" run_version "$self" "$name" --sha "$commit" $args ${prev_args[@]+"${prev_args[@]}"} || rc=$?
       [ "$rc" -eq 0 ] || { echo "plan $name 측정이 $rc 로 멈췄다. 고친 뒤 다시 부르면 이 버전의 측정부터 다시 한다"; return "$rc"; }
-      echo "$name measure-done $started $(date -u +%FT%TZ)" >> "$state"
+      echo "$name measure-done $started $(kst_now)" >> "$state"
       echo "next 진단을 돌리려면: $next_cmd --diag"
       # 고친 함수는 run_version 이 보인 후보 파일에서 골라 --diag 뒤에 붙인다(#1343)
       [ ! -s "${SNAPSHOT_OUT:-/nonexistent}/$name-fixed-candidates.txt" ] \
@@ -810,7 +815,7 @@ run_plan() {
         LOADTEST_REF="${ref:-${LOADTEST_REF:-}}" run_version "$self" "$name" --sha "$commit" $args ${prev_args[@]+"${prev_args[@]}"} \
           ${fixed[@]+"${fixed[@]}"} --from diag || rc=$?
         [ "$rc" -eq 0 ] || { echo "plan $name 진단이 $rc 로 멈췄다. 고친 뒤 다시 부른다: $next_cmd --diag$( [ ${#fixed[@]} -eq 0 ] || printf ' %q' "${fixed[@]}")"; return "$rc"; }
-        echo "$name diag-done $started $(date -u +%FT%TZ)" >> "$state" ;;
+        echo "$name diag-done $started $(kst_now)" >> "$state" ;;
       --skip-diag)
         echo "$name diag-skipped $started $started" >> "$state"
         echo "plan $name 의 진단을 건너뛰었다" ;;
