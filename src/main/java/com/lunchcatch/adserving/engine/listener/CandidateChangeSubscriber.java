@@ -3,6 +3,11 @@ package com.lunchcatch.adserving.engine.listener;
 import com.lunchcatch.adserving.engine.CandidateChange;
 import com.lunchcatch.adserving.engine.service.CandidateCache;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
+import java.util.function.BooleanSupplier;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
@@ -27,6 +32,9 @@ import org.springframework.data.redis.listener.RedisMessageListenerContainer;
 @RequiredArgsConstructor
 public class CandidateChangeSubscriber implements MessageListener {
 
+    // 메모리를 통째로 다시 읽는 주기와 맞춘다. 구독이 없는 동안에도 그만큼은 늦지 않는다
+    static final Duration RETRY_INTERVAL = Duration.ofSeconds(5);
+
     private final CandidateCache candidateCache;
 
     @Bean
@@ -38,16 +46,44 @@ public class CandidateChangeSubscriber implements MessageListener {
         return container;
     }
 
-    // 연결 실패면 컨테이너가 뒤에서 5초마다 다시 맺는다. 그 밖의 실패는 다시 맺지 않고 5초 다시 읽기에 맡긴다
     @Bean
     ApplicationListener<ApplicationReadyEvent> candidateChangeSubscription(RedisMessageListenerContainer candidateChangeListenerContainer) {
-        return event -> {
-            try {
-                candidateChangeListenerContainer.start();
-            } catch (RuntimeException e) {
-                log.warn("event=ADSERVING_CANDIDATE_SUBSCRIBE_FAILED fallback=RELOAD_WITHIN_5S", e);
+        return event -> subscribe(candidateChangeListenerContainer, RETRY_INTERVAL, event.getApplicationContext()::isClosed);
+    }
+
+    /*
+     * 처음 맺기에 실패하면 컨테이너는 스스로 다시 시도하지 않는다. 연결을 얻지 못한 첫 시도는 재시도 경로를 타지 않고,
+     * 실패한 뒤에도 시작된 것으로 남아 start() 를 다시 불러도 아무 일도 하지 않는다(Spring Data Redis 4.0.4).
+     * 그래서 맺어질 때까지 멈췄다 다시 시작한다. 맺은 뒤 끊기면 컨테이너가 스스로 다시 맺는다.
+     * 앱이 닫히는 중이면 멈춘 컨테이너를 다시 띄우지 않게 그만둔다.
+     */
+    static void subscribe(RedisMessageListenerContainer container, Duration interval, BooleanSupplier closing) {
+        try {
+            container.start();
+            return;
+        } catch (RuntimeException e) {
+            log.warn("event=ADSERVING_CANDIDATE_SUBSCRIBE_FAILED retryIn={} fallback=RELOAD_WITHIN_5S", interval, e);
+        }
+        ScheduledExecutorService retry = Executors.newSingleThreadScheduledExecutor(
+                Thread.ofPlatform().name("candidate-subscribe-retry").daemon(true).factory());
+        retry.scheduleWithFixedDelay(() -> {
+            if (closing.getAsBoolean()) {
+                retry.shutdown();
+                return;
             }
-        };
+            if (container.isListening()) {
+                log.info("event=ADSERVING_CANDIDATE_SUBSCRIBE_RECOVERED");
+                retry.shutdown();
+                return;
+            }
+            container.stop();
+            try {
+                container.start();
+            } catch (RuntimeException e) {
+                // 첫 실패를 WARN 으로 남겼다. Valkey 가 멈춘 동안 주기마다 WARN 을 쌓지 않는다
+                log.debug("event=ADSERVING_CANDIDATE_SUBSCRIBE_RETRY_FAILED retryIn={}", interval, e);
+            }
+        }, interval.toMillis(), interval.toMillis(), TimeUnit.MILLISECONDS);
     }
 
     @Override
