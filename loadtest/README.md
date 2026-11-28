@@ -320,15 +320,15 @@ loadtest/adserving/run.sh switch <이미지>
 ```
 
 - 앱 서버와 배치 서버의 `/opt/lunchcatch-lt` 에 에이전트와 `compose.override.yaml` 을 둔다. 배치 서버는 서비스 이름을 `lunchcatch-batch` 로 띄워, Alloy 가 배치의 작업 트레이스를 따로 고른다. compose 가 그 파일을 함께 읽어 lc-infra 의 설정을 고치지 않는다. `--tracing` 없이 띄우면 그 파일을 지운다. 로컬은 같은 파일을 `build/otel/` 에 만든다.
-- 앱은 같은 compose 의 Alloy(`http://alloy:4318`)로 스팬을 보낸다. 남길 트레이스는 Alloy 의 테일 샘플링이 고른다. 규칙은 [트레이싱과 프로파일링 설계](../docs/observability/트레이싱과_프로파일링_설계.md) 4장에 있다.
-- 우리 코드의 메서드에는 스팬을 만들지 않는다. I/O 스팬 사이의 빈 구간은 프로파일링으로 본다([트레이싱과 프로파일링 설계](../docs/observability/트레이싱과_프로파일링_설계.md) 3장).
+- 앱은 같은 compose 의 Alloy(`http://alloy:4318`)로 스팬을 보낸다. 남길 트레이스는 Alloy 의 테일 샘플링이 고른다. 규칙은 [트레이싱 설계](../docs/observability/트레이싱_설계.md) 4장에 있다.
+- 우리 코드의 메서드에는 스팬을 만들지 않는다. I/O 스팬 사이의 빈 구간은 프로파일링으로 본다([트레이싱 설계](../docs/observability/트레이싱_설계.md) 3장).
 - 라벨은 JVM 이 뜰 때 정해진다. 한 번 띄운 뒤의 회차는 같은 라벨이라 회차는 시각 구간으로 가린다.
 
-**그라파나에서 보는 법:** Explore 에서 데이터 소스 `Tempo` 를 고르고 `{ resource.run = "v1" && name = "GET /v1/feed" && duration > 300ms }` 처럼 찾는다. 배치의 작업은 `{ resource.service.name = "lunchcatch-batch" && name = "ImpressionDispatchJob.dispatchPending" }` 처럼 찾는다. 트레이스를 열면 HTTP 와 DB 쿼리 스팬이 시간 순으로 보인다. 스팬에서 그 요청의 로그(Loki)와 프로파일(Pyroscope)로 넘어간다. 로그의 `trace_id` 에서도 그 트레이싱으로 넘어간다. 읽고 병목을 찾는 법은 [트레이싱과 프로파일링 설계](../docs/observability/트레이싱과_프로파일링_설계.md#8-읽는-법) 8장이 갖는다.
+**그라파나에서 보는 법:** Explore 에서 데이터 소스 `Tempo` 를 고르고 `{ resource.run = "v1" && name = "GET /v1/feed" && duration > 300ms }` 처럼 찾는다. 배치의 작업은 `{ resource.service.name = "lunchcatch-batch" && name = "ImpressionDispatchJob.dispatchPending" }` 처럼 찾는다. 트레이스를 열면 HTTP 와 DB 쿼리 스팬이 시간 순으로 보인다. 스팬에서 그 요청의 로그(Loki)와 프로파일(Pyroscope)로 넘어간다. 로그의 `trace_id` 에서도 그 트레이싱으로 넘어간다. 읽고 병목을 찾는 법은 [프로파일링 설계](../docs/observability/프로파일링_설계.md#5-읽는-법) 5장이, 트레이스는 [트레이싱 설계](../docs/observability/트레이싱_설계.md#7-트레이스-읽기) 7장이 갖는다.
 
 지킬 것:
 
-- 측정 회차에도 켠다. 비용(앱 CPU 한도의 약 2.6%p)이 비용 한도 안이라 켠 채로 잰 수치를 결과에 쓴다([트레이싱과 프로파일링 설계](../docs/observability/트레이싱과_프로파일링_설계.md) 6장과 7장). 결과에 넣지 않을 회차만 이름을 `-tracing` 으로 끝낸다.
+- 측정 회차에도 켠다. 비용(앱 CPU 한도의 약 2.6%p)이 비용 한도 안이라 켠 채로 잰 수치를 결과에 쓴다([트레이싱 설계](../docs/observability/트레이싱_설계.md) 5장과 6장). 결과에 넣지 않을 회차만 이름을 `-tracing` 으로 끝낸다.
 - 노출 저장과 서빙 로그 대기열은 응답 뒤에 돌아 트레이스가 거기서 끊긴다.
 - 에이전트 판은 `v2.32.0` 으로 고정한다. 새 판은 나온 지 2주가 지난 뒤에 올린다.
 - 트레이스에는 Valkey 명령의 스팬이 없다. 명령마다 스팬이 생겨 피드 요청 하나의 스팬 가운데 가장 많아 에이전트의 Lettuce 계측을 끈다(#1177). Valkey 명령의 시간은 앱 쪽 지표(`lettuce_command_completion_seconds`, 04 데이터 저장소의 `Valkey 명령 지연`, #1180)와 Redis 서버 지표(진단 캡처의 `diag-{회차}-redis.txt`)로 본다. 트레이스에서는 그 시간이 이름 없는 빈 구간이 된다.
@@ -358,13 +358,13 @@ loadtest/adserving/run.sh run v1-run1-profile 30030001 100 5m --profile both
 | `wall` | 대기까지 포함한 경과 시간이다. p99 를 줄이려면 이것을 먼저 본다 | 50ms. wall 모드의 기본값이다 |
 | `both` | 둘을 한 기록(JFR)으로 함께 뜨고 나눠 보낸다. 같은 시간, 같은 부하의 둘을 견줘 계산과 대기를 가른다 | 위 둘과 같다 |
 
-**그라파나에서 보는 법:** Drilldown -> Profiles 에서 서비스를 고른다. 앱 서버는 `lunchcatch`, 배치 서버는 `lunchcatch-batch` 로 트레이스의 서비스 이름과 같다. 그다음 프로파일 종류(`process_cpu` 나 `wall`)와 `run` 라벨로 그 회차를 고른다. `cpu`, `wall` 모드는 10초씩 끊어 보내 대시보드와 함께 10초 남짓 늦게 보인다. `both` 는 회차가 끝난 뒤에 나눠 보내므로 회차가 끝난 다음에 본다. Split 과 Single 로 비교와 단독을, Top Table 과 Flame Graph 로 표와 그래프를 바꾼다. 읽고 병목을 찾는 법은 [트레이싱과 프로파일링 설계](../docs/observability/트레이싱과_프로파일링_설계.md#8-읽는-법) 8장이 갖는다.
+**그라파나에서 보는 법:** Drilldown -> Profiles 에서 서비스를 고른다. 앱 서버는 `lunchcatch`, 배치 서버는 `lunchcatch-batch` 로 트레이스의 서비스 이름과 같다. 그다음 프로파일 종류(`process_cpu` 나 `wall`)와 `run` 라벨로 그 회차를 고른다. `cpu`, `wall` 모드는 10초씩 끊어 보내 대시보드와 함께 10초 남짓 늦게 보인다. `both` 는 회차가 끝난 뒤에 나눠 보내므로 회차가 끝난 다음에 본다. Split 과 Single 로 비교와 단독을, Top Table 과 Flame Graph 로 표와 그래프를 바꾼다. 읽고 병목을 찾는 법은 [프로파일링 설계](../docs/observability/프로파일링_설계.md#5-읽는-법) 5장이, 트레이스는 [트레이싱 설계](../docs/observability/트레이싱_설계.md#7-트레이스-읽기) 7장이 갖는다.
 
 **읽는 법:** Self 는 그 메서드 자기 코드의 시간이고 Total 은 부른 메서드까지 합친 시간이다. 시간은 그 구간의 합계라 호출 한 번의 시간은 나오지 않는다.
 
 **보내기 전에 다듬는다.** 우리 코드가 일을 시작한 자리부터 남기고 그 아래의 톰캣, 스프링, 스레드 풀 프레임은 자른다. 시작 자리는 요청이면 컨트롤러(`FeedController.getFeed`), `@Scheduled` 작업이면 그 작업 메서드(`CandidateBudgetRefreshJob.refresh`), 워커면 처음 나오는 우리 프레임(`ImpressionWriteBuffer.runWorker`)이다. 쉬는 스레드(요청이 없는 톰캣 스레드, 다음 실행을 기다리는 스케줄러, 대기열을 기다리는 워커)는 버린다. 이름은 패키지를 빼고, 호출마다 되풀이되는 스프링 프록시와 AOP 프레임은 뺀다. 다듬지 않으면 컨트롤러까지 프레임이 100개 넘게 쌓여 이름이 잘린다. 패키지는 `com.lunchcatch` 와 `com.launchcatch`(#1060 전의 커밋) 둘 다 받는다.
 
-**cpu 와 wall 은 회차가 끝난 뒤에 나눈다(#1345).** `both` 는 회차 동안 10초마다 JFR 만 떠 앱 컨테이너의 `/tmp` 에 쌓고, 회차가 끝나면 묶음마다 `jfrconv` 로 나누고 다듬어 원래 시각(`from`, `until`)으로 보낸 뒤 지운다. 회차 동안 나누면 그 2 ~ 3초는 뜨기를 쉬고, 나누는 자바 프로세스가 앱과 같은 컨테이너의 CPU 를 나눠 쓴다. 그래서 회차 도중에는 그라파나에서 볼 수 없고, `run` 은 다 보낸 뒤에 캡처한다. 나누는 때에 따른 비용은 [설계 문서 7장](../docs/observability/트레이싱과_프로파일링_설계.md#프로파일을-나누는-때로컬)이 갖는다.
+**cpu 와 wall 은 회차가 끝난 뒤에 나눈다(#1345).** `both` 는 회차 동안 10초마다 JFR 만 떠 앱 컨테이너의 `/tmp` 에 쌓고, 회차가 끝나면 묶음마다 `jfrconv` 로 나누고 다듬어 원래 시각(`from`, `until`)으로 보낸 뒤 지운다. 회차 동안 나누면 그 2 ~ 3초는 뜨기를 쉬고, 나누는 자바 프로세스가 앱과 같은 컨테이너의 CPU 를 나눠 쓴다. 그래서 회차 도중에는 그라파나에서 볼 수 없고, `run` 은 다 보낸 뒤에 캡처한다. 나누는 때에 따른 비용은 [프로파일링 설계 4장](../docs/observability/프로파일링_설계.md#프로파일을-나누는-때로컬)이 갖는다.
 
 지킬 것:
 
