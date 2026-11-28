@@ -58,7 +58,7 @@ HTTP 요청·응답은 [관리자 명세](../../api-spec/admin-api-spec.md)와 [
 없는 계정은 `audit_log.admin_id`의 NOT NULL 제약 때문에 저장할 수 없으며 공격 시 쓰기 부하도 고려해 로그와 메트릭으로 처리한다.
 IP별 횟수 제한은 분산 시도의 계정별 쓰기량 상한이 아니므로 계정별 실패 메트릭을 제공한다.
 계정 잠금은 정상 관리자의 해제 절차까지 필요한 별도 보안 기능이어서 포함하지 않는다.
-법령상 접속기록 요건과 보존의 한계는 [공통 로깅 근거](../../code-convention/logging-project-rationale.md#10-관리자-로그인-감사-필터를-따로-둔-이유)를 따른다.
+법령상 접속기록 요건과 보존의 한계는 [로그 설계 12.1절](../../observability/로그_설계.md#121-감사-기록과-법령)를 따른다.
 
 식별 가능한 계정의 로그인은 서비스가 결과에 따라 `ADMIN_LOGIN_SUCCESS` 또는 `ADMIN_LOGIN_FAILED`를 기록한다. 성공과 일반 거절은 INFO, HTTP 5xx에 해당하는 실패는 ERROR로 기록한다. 메시지 필드는 `adminId`, `httpStatus`이고 시각은 로깅 프레임워크가 기록한다. 없는 계정과 서비스 진입 전 거절은 `AdminLoginAuditFilter`가 최종 HTTP 상태와 `durationMs`를 기록한다.
 
